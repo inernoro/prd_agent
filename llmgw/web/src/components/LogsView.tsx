@@ -33,6 +33,7 @@ import {
   fmtCompact,
   fmtCost,
   statusBadgeStyle,
+  shortModelName,
   userLabel,
   deriveLifecycle,
   getProtocolMeta,
@@ -479,9 +480,9 @@ export function LogsView() {
             actionLabel="查看模型"
             icon={<ModelEntityIcon model={modelName} size="lg" />}
           >
-            <span className="lg-log-entity" title={[it.logicalModelPublicId ? `实际上游 ${it.model}` : null, proto ? `协议 ${proto.label}` : null, tp ? `传输 ${tp.label}` : null].filter(Boolean).join('；')}>
+            <span className="lg-log-entity" title={[`完整标识 ${modelName}`, it.logicalModelPublicId ? `实际上游 ${it.model}` : null, proto ? `协议 ${proto.label}` : null, tp ? `传输 ${tp.label}` : null].filter(Boolean).join('；')}>
               <ModelEntityIcon model={modelName} />
-              <span className="lg-truncate lg-log-model-name">{modelName}</span>
+              <span className="lg-truncate lg-log-model-name">{shortModelName(modelName)}</span>
             </span>
           </LogEntityHoverCard>
         );
@@ -555,6 +556,9 @@ export function LogsView() {
         return <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
         const s = statusBadgeStyle(it.status, it.statusCode);
+        // quiet = 成功。渲染成普通小字而不是 chip，把 chip 这种「亮起来」的
+        // 表达留给真正需要人看一眼的失败与进行中（风格调性原则 4）。
+        if (s.quiet) return <span className="tabular" style={{ color: 'var(--text-muted)' }}>{s.label}</span>;
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'usage':
@@ -601,7 +605,7 @@ export function LogsView() {
           >
             <span className="lg-log-entity" title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
               <ModelEntityIcon model={it.logicalModelPublicId || it.model} />
-              <span className="lg-truncate lg-log-model-name">{it.logicalModelPublicId || it.model || DASH}</span>
+              <span className="lg-truncate lg-log-model-name">{shortModelName(it.logicalModelPublicId || it.model)}</span>
             </span>
           </LogEntityHoverCard>
         );
@@ -631,6 +635,9 @@ export function LogsView() {
         );
       case 'status': {
         const s = statusBadgeStyle(it.status, it.statusCode);
+        // quiet = 成功。渲染成普通小字而不是 chip，把 chip 这种「亮起来」的
+        // 表达留给真正需要人看一眼的失败与进行中（风格调性原则 4）。
+        if (s.quiet) return <span className="tabular" style={{ color: 'var(--text-muted)' }}>{s.label}</span>;
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'attempts':
@@ -922,20 +929,30 @@ export function LogsView() {
   const successRate = summary?.total
     ? `${Math.round((summary.succeeded / summary.total) * 1000) / 10}%`
     : DASH;
+  // 汇总条只列拿得到的事实。fmtCompact / fmtCost 在无值时返回 DASH，
+  // 这里据此过滤掉整项——「没有」不该占着一个位置显示成「—」。
+  const summaryFacts = [
+    { label: '业务请求', value: fmtCompact(summary?.total) },
+    { label: '上游调用', value: fmtCompact(summary?.upstreamCalls) },
+    { label: '状态查询', value: fmtCompact(summary?.statusQueries) },
+    { label: '成功率', value: successRate },
+    { label: 'Token', value: fmtCompact(summary?.totalTokens) },
+    { label: '费用', value: fmtCost(summary?.estimatedCostUsd, 'USD') },
+  ].filter((fact) => fact.value !== DASH);
 
   return (
     <div className="lg-logs-view" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <header className="lg-logs-heading">
         <div>
           <h1>Logs</h1>
+          {/* 汇总条：拿不到值的项**整条不渲染**，而不是渲染成「上游调用 —」。
+              一排破折号既不承载信息，又和真实数字抢同样的横向位置，
+              读起来是「这里坏了」而不是「这里没有」。过滤在 summaryFacts 里做。 */}
           {subtab === 'generations' ? (
             <p className="lg-log-summary-strip">
-              <span>业务请求 <strong className="tabular">{fmtCompact(summary?.total)}</strong></span>
-              <span>上游调用 <strong className="tabular">{fmtCompact(summary?.upstreamCalls)}</strong></span>
-              <span>状态查询 <strong className="tabular">{fmtCompact(summary?.statusQueries)}</strong></span>
-              <span>成功率 <strong className="tabular">{successRate}</strong></span>
-              <span>Token <strong className="tabular">{fmtCompact(summary?.totalTokens)}</strong></span>
-              <span>费用 <strong className="tabular">{fmtCost(summary?.estimatedCostUsd, 'USD')}</strong></span>
+              {summaryFacts.map((fact) => (
+                <span key={fact.label}>{fact.label} <strong className="tabular">{fact.value}</strong></span>
+              ))}
               {summary?.unknownCostRequests ? <span className="lg-log-summary-warn">{summary.unknownCostRequests} 条费用未知</span> : null}
             </p>
           ) : null}

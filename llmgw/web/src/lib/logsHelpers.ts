@@ -94,15 +94,33 @@ export function rangeFromPreset(days: number): { from: string; to: string } {
 export function statusBadgeStyle(
   status?: string | null,
   statusCode?: number | null,
-): { label: string; color: string; bg: string } {
+): { label: string; color: string; bg: string; quiet?: boolean } {
   const code = statusCode ?? 0;
+  // 成功是绝大多数行的常态，给它一枚亮绿底 chip 等于让整屏最刺眼的东西恰好是
+  // 「一切正常」。风格调性原则 4 说得很直白：只有异常才配拥有视觉噪音。
+  // 成功保留文字（用户仍要能读到 200），但降成一句普通小字，不占底色。
   if (status === 'succeeded' || (code >= 200 && code < 300))
-    return { label: code ? String(code) : '成功', color: 'var(--ok)', bg: 'var(--ok-bg)' };
+    return { label: code ? String(code) : '成功', color: 'var(--text-muted)', bg: 'transparent', quiet: true };
   if (status === 'failed' || code >= 400)
     return { label: code ? String(code) : '失败', color: 'var(--err)', bg: 'var(--err-bg)' };
   if (status === 'running') return { label: '进行中', color: 'var(--info)', bg: 'var(--info-bg)' };
   if (status === 'cancelled') return { label: '已取消', color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
   return { label: status || DASH, color: 'var(--text-muted)', bg: 'rgba(148,163,184,0.15)' };
+}
+
+/**
+ * 模型列要显示的短名：去掉厂商命名空间前缀（`deepseek-ai/DeepSeek-V4-Fast` → `DeepSeek-V4-Fast`）。
+ *
+ * 由来：这一列宽 158px，而一整屏的模型往往同属一个命名空间，于是每一行都被截成
+ * `deepseek-ai/Dee…`——**截断点落在公共前缀里，整列的信息量归零**，光看列表分不出
+ * 任何两行。Provider 已经单独成列，厂商信息不必在模型列再占一次位置。
+ * 完整标识不丢：hover 卡片的标题与单元格 title 仍给全量 slug。
+ */
+export function shortModelName(raw?: string | null): string {
+  if (!raw) return DASH;
+  const slash = raw.lastIndexOf('/');
+  if (slash < 0 || slash === raw.length - 1) return raw;
+  return raw.slice(slash + 1);
 }
 
 // ── 仅注册后端有真实数据来源的视图 ──

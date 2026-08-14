@@ -106,6 +106,27 @@ const violations = [];
   if (!/\.lg-sidebar-footer\s*\{/.test(css)) {
     violations.push('theme.css  缺少 .lg-sidebar-footer 样式 ← 入口会退化成一个没排版的裸按钮');
   }
+
+  // 滚动归属：必须是侧栏里的 <nav> 滚，侧栏自身不滚。
+  // 反过来写（侧栏整体 overflow-y:auto + 页脚 margin-top:auto）会在导航项一多时
+  // 把页脚顶出可视框——实测 1440x900 下内容高 889px、可视框 844px，页脚底边落在
+  // y=933，用户必须滚动侧栏才找得到「提交缺陷」。入口还在，但等于消失了。
+  const sidebar = /\.lg-console-sidebar\s*\{([^}]*)\}/.exec(css);
+  if (!sidebar) {
+    violations.push('theme.css  找不到 .lg-console-sidebar 样式块 ← 守卫失去判据，请更新本脚本');
+  } else if (/overflow(-y)?:\s*(auto|scroll)/.test(sidebar[1])) {
+    violations.push(
+      'theme.css  .lg-console-sidebar 自己变成了滚动容器\n'
+      + '      ← 滚动要归 .lg-console-sidebar > nav。侧栏整体滚会把页脚的「提交缺陷」顶出可视框',
+    );
+  }
+  const nav = /\.lg-console-sidebar\s*>\s*nav\s*\{([^}]*)\}/.exec(css);
+  if (!nav || !/overflow-y:\s*auto/.test(nav[1]) || !/min-height:\s*0/.test(nav[1])) {
+    violations.push(
+      'theme.css  .lg-console-sidebar > nav 缺少 overflow-y:auto + min-height:0\n'
+      + '      ← 少了 min-height:0 时 flex 子项不肯收缩，nav 会把页脚一起撑出去',
+    );
+  }
 }
 
 if (violations.length) {

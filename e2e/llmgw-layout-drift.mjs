@@ -37,11 +37,23 @@ const PLATFORMS = [
 const MODELS = [
   row({ id: 'm1', name: 'demo-chat', modelName: 'demo/chat-1', protocol: 'openai', platformId: 'p1', platformName: '教程假上游', group: 'chat', timeout: 60, maxRetries: 2, maxConcurrency: 10, maxTokens: 8192, priority: 10, isMain: true, hasKey: true, capabilities: [] }),
 ];
-const LOGS = [{
-  id: 'l1', requestId: 'req-demo-0001', provider: 'demo', model: 'demo/chat-1', status: 'succeeded',
-  startedAt: nowIso, durationMs: 1234, inputTokens: 100, outputTokens: 200, totalTokens: 300,
-  appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
-}];
+/* 必须同时有成功行与异常行。
+   成功状态从 2026-08-14 起渲染成普通小字而不是 chip（只有异常才配拥有视觉噪音），
+   桩里若只剩成功行，基准页就一个 chip 都不出——`chip规格种类` 的上限被人为收窄到 0，
+   其余 8 条路由会集体"漂移"，而真实页面上从来都有失败行。
+   同一个道理已经在上面的 timeseries 注释里写过一次：桩不代表真实版面，基准就是假的。 */
+const LOGS = [
+  {
+    id: 'l1', requestId: 'req-demo-0001', provider: 'demo', model: 'demo/chat-1', status: 'succeeded',
+    startedAt: nowIso, durationMs: 1234, inputTokens: 100, outputTokens: 200, totalTokens: 300,
+    appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
+  },
+  {
+    id: 'l2', requestId: 'req-demo-0002', provider: 'demo', model: 'demo/chat-1', status: 'failed',
+    statusCode: 502, startedAt: nowIso, durationMs: 880, inputTokens: 100, outputTokens: null,
+    totalTokens: 100, appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
+  },
+];
 /* 模型池的卡片、成员行、操作区才是这个检测器要盯的规格来源；
    空列表只会渲染空状态，改坏了内边距/间距也照样"与基准一致"。 */
 const poolMember = (over) => ({
@@ -134,9 +146,9 @@ const STUBS = {
   '/auth/tenants': [],
   '/platforms': { ...LIST, items: PLATFORMS, platforms: PLATFORMS },
   '/models': { ...LIST, items: MODELS, models: MODELS },
-  '/logs': { ...LIST, total: 1, items: LOGS },
+  '/logs': { ...LIST, total: LOGS.length, items: LOGS },
   '/logs/meta': { models: [], providers: [], statuses: [], appCallerCodes: [], sessions: [], teams: [], serviceKeys: [], clientCodes: [], environments: [] },
-  '/logs/summary': { total: 1, succeeded: 1, failed: 0, totalTokens: 300, estimatedCostUsd: 0.01 },
+  '/logs/summary': { total: 2, succeeded: 1, failed: 1, totalTokens: 400, estimatedCostUsd: 0.01 },
   // 趋势图是基准页自身的一部分，空 points 会让它整块不渲染 —— 基准就不再代表真实版面。
   '/logs/timeseries': { items: Array.from({ length: 14 }, (_, i) => ({ date: `2026-07-${String(i + 1).padStart(2, '0')}`, count: 3 + ((i * 7) % 11) })) },
   '/service-keys': [row({ id: 'k1', name: 'runtime-key', keyPrefix: 'gwk_demo', teamId: null, createdByUsername: 'demo', sourceSystem: 'map', clientCode: 'demo', environment: 'production', purpose: 'runtime', appCallerCodes: ['demo.chat::chat'], ingressProtocols: ['openai'], scopes: ['chat'], allowedCidrs: [] })],
@@ -336,6 +348,24 @@ const exchangeLayout = await page.evaluate(() => {
     equalWidths: new Set(cards.map((rect) => Math.round(rect.width))).size <= 1,
   };
 });
+// 侧栏页脚（「提交缺陷」的唯一可见入口）必须不滚动就在视口内。
+// 这是运行时判据，源码扫描替代不了：CSS 写法看着对，导航项一多照样把页脚顶出去。
+// 2026-08-14 就是这么翻的车——页脚底边落在 y=933、视口 900，入口等于消失。
+const sidebarFooter = await page.evaluate(() => {
+  const aside = document.querySelector('.lg-console-sidebar');
+  const foot = document.querySelector('.lg-sidebar-footer');
+  if (!aside || !foot) return { 存在: false };
+  const a = aside.getBoundingClientRect();
+  const f = foot.getBoundingClientRect();
+  return {
+    存在: true,
+    需要滚动: aside.scrollHeight > Math.ceil(a.height) + 1,
+    在视口内: f.top >= 0 && f.bottom <= window.innerHeight + 1,
+    页脚底部y: Math.round(f.bottom),
+    视口高: window.innerHeight,
+  };
+});
+
 if (process.env.LLMGW_SCREENSHOT_PATH) {
   await page.screenshot({ path: process.env.LLMGW_SCREENSHOT_PATH, fullPage: true });
 }
@@ -380,6 +410,18 @@ for (const [route, m] of Object.entries(data)) {
   drift += diffs.length;
 }
 console.log(`\n合计漂移项: ${drift}`);
+console.log('侧栏页脚:', JSON.stringify(sidebarFooter));
+if (!sidebarFooter.存在) {
+  console.error('侧栏页脚 .lg-sidebar-footer 不存在——「提交缺陷」失去唯一可见入口。');
+  drift += 1;
+} else if (!sidebarFooter.在视口内 || sidebarFooter.需要滚动) {
+  console.error(
+    `侧栏页脚不滚动就够不着（页脚底边 y=${sidebarFooter.页脚底部y}，视口高 ${sidebarFooter.视口高}）。`
+    + '\n  滚动要归 .lg-console-sidebar > nav，侧栏自身 overflow:hidden，页脚 flex:0 0 auto。',
+  );
+  drift += 1;
+}
+
 console.log('Exchange 布局:', JSON.stringify(exchangeLayout));
 if (exchangeLayout.cardCount > 1 && (exchangeLayout.columns !== 1 || !exchangeLayout.equalWidths)) {
   console.error('Exchange 列表必须保持单列且卡片等宽。');

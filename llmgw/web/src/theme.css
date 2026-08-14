@@ -1222,21 +1222,33 @@ a:focus-visible {
   display: flex;
 }
 
+/* 侧栏自身**不滚动**，滚动交给里面的 <nav>。
+   这一点是硬要求，不是风格选择：早先写成侧栏整体 overflow-y:auto + 页脚
+   margin-top:auto，导航项一多（当前 6 组 16 项，内容高 889px）就把页脚顶到
+   844px 的可视框以外——1440x900 下页脚底边落在 y=933，用户必须滚动侧栏才能
+   找到「提交缺陷」，等于入口消失。margin-top:auto 只在有富余空间时才推得动。 */
 .lg-console-sidebar {
   width: 224px;
   flex: 0 0 224px;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 14px 10px 12px;
   border-right: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--bg-surface) 70%, var(--bg-page));
 }
 
-/* 侧栏页脚：全局动作（提交缺陷）的常驻位置。
-   margin-top:auto 把它压到底，导航短时也不会浮在半空。 */
+.lg-console-sidebar > nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 侧栏页脚：全局动作（提交缺陷）的常驻位置，永远贴在可视区底部。 */
 .lg-sidebar-footer {
-  margin-top: auto;
+  flex: 0 0 auto;
+  margin-top: 0;
   padding-top: 12px;
   border-top: 1px solid var(--border-subtle);
 }
@@ -4033,13 +4045,33 @@ a:focus-visible {
   color: var(--warn);
 }
 
-/* 只有异常行才需要视觉噪音：整行左侧一道色条，成功行保持干净（替代原来每行都有的状态圆点）。 */
-.lg-log-table-row.is-error > div:first-child {
-  box-shadow: inset 3px 0 0 var(--err);
+/* 只有异常行才需要视觉噪音：整行左侧一道色条，成功行保持干净（替代原来每行都有的状态圆点）。
+   色条必须落在**行**上而不是第一个单元格上：行是 align-items:center 的 grid，
+   单元格高度只有一行文字那么高，把 inset box-shadow 打在单元格上，画出来是一段
+   悬在半空、还内缩了 16px 行内边距的短竖线——用户看到的原话是「左侧这是什么」，
+   它读起来像渲染残缺的字符，而不像状态标记。改成 ::before 贴着行的左缘、撑满行高。 */
+.lg-log-table-row {
+  position: relative;
 }
 
-.lg-log-table-row.is-running > div:first-child {
-  box-shadow: inset 3px 0 0 var(--info);
+.lg-log-table-row.is-error::before,
+.lg-log-table-row.is-running::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.lg-log-table-row.is-error::before {
+  background: var(--err);
+}
+
+.lg-log-table-row.is-running::before {
+  background: var(--info);
 }
 
 .lg-log-insights {
@@ -4073,7 +4105,9 @@ a:focus-visible {
   display: flex;
   min-width: 0;
   align-items: stretch;
-  gap: 3px;
+  /* 柱宽/间隙比：间隙从 3px 收到 2px、柱宽上限从 24px 放到 30px。
+     窄柱配宽缝会把一排柱子读成一把梳子，高低差反而看不出来。 */
+  gap: 2px;
   padding: 4px 2px 18px;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -4093,12 +4127,21 @@ a:focus-visible {
 
 .lg-mini-bar-value {
   width: 100%;
-  max-width: 24px;
+  max-width: 30px;
   min-height: 2px;
   border-radius: 3px 3px 0 0;
   background: var(--ok);
   opacity: 0.88;
   transition: opacity 120ms ease;
+}
+
+/* 零值：基线上一段 2px 灰刻度。既不冒充柱子，也不假装这天不存在。 */
+.lg-mini-bar-value.is-zero {
+  height: 2px;
+  min-height: 2px;
+  border-radius: 0;
+  background: var(--border-strong);
+  opacity: 1;
 }
 
 .lg-mini-bar-item:hover .lg-mini-bar-value {
