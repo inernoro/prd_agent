@@ -271,21 +271,24 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
     // 列宽照参考稿走（见下一条），这里只管「窄屏自然流 + 桌面才交给各栏内滚」这个契约，
     // 别把两件事写死在同一个字符串里——改一下列宽就要连带改这条，久了就没人敢动。
     expect(PAGE).toMatch(
-      /flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-\[[^\]]+\]/,
+      /flex h-full min-h-0 flex-col gap-4 overflow-y-auto xl:grid xl:grid-cols-\[[^\]]+\]/,
     );
-    expect(PAGE).toContain('lg:overflow-hidden');
+    expect(PAGE).toContain('xl:overflow-hidden');
   });
 
   /**
-   * 列宽取自参考稿 f8d4af4b 的实测值。用户 2026-08-13 的原话是「你应该按照
-   * 参考稿的设定，包括宽度」——首版自己拍了 264/348，看着就是不对味。
+   * 三栏在 xl（1280）才接管，不是 lg（1024）。
    *
-   * 但参考稿是在宽画布上量的：288+380+32 在 1024 宽只给中栏剩一条缝。
-   * 所以参考值挂在 2xl，lg..2xl 先收窄。
+   * 参考稿 f8d4af4b 的列宽是在宽画布上量的：两侧固定列一共吃掉 600-700px，
+   * 1024 宽下中栏只剩 278px——流水线卡 232 之后给实时输出留 32px，一格都读不了。
+   * 实测过才发现：三栏这个结构本身就要 ~1280 才成立，硬塞进 lg 只是换一种坏。
+   * 1024-1280 用自然流（各块竖排、自身限高滚动），到 xl 才切回固定外壳三栏。
    */
-  it('宽画布上用参考稿列宽，笔记本宽度先收窄', () => {
+  it('三栏在 xl 才接管，lg 段仍走自然流', () => {
+    expect(PAGE).toContain('xl:grid-cols-[264px_minmax(0,1fr)_340px]');
     expect(PAGE).toContain('2xl:grid-cols-[288px_minmax(0,1fr)_380px]');
-    expect(PAGE).toContain('lg:grid-cols-[248px_minmax(0,1fr)_320px]');
+    // lg 段不许再出现任何三栏/内滚开关，否则 1024 又会被塞回去
+    expect(PAGE).not.toMatch(/(?<![a-z0-9-])lg:/);
   });
 
   /**
@@ -311,14 +314,14 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
   /**
    * 窄屏顺序：状态在最前。用户来这一页第一眼要看的是「现在成没成」，
    * 按 DOM 顺序（左栏在前）会把状态卡压到第一屏之外——正是「点了之后就卡住
-   * 没后续」这个抱怨的成因。桌面不受影响，order 只在 max-lg 生效。
+   * 没后续」这个抱怨的成因。桌面不受影响，order 只在 max-xl 生效。
    */
   it('窄屏把状态排到第一位，项目与记录退到后面', () => {
-    expect(PAGE).toContain('max-lg:order-1 lg:overflow-hidden');
-    expect(PAGE).toContain('max-lg:order-2');
-    expect(PAGE).toContain('max-lg:order-3');
-    const mainAt = PAGE.indexOf('max-lg:order-1');
-    const asideAt = PAGE.indexOf('max-lg:order-2');
+    expect(PAGE).toContain('max-xl:order-1 xl:overflow-hidden');
+    expect(PAGE).toContain('max-xl:order-2');
+    expect(PAGE).toContain('max-xl:order-3');
+    const mainAt = PAGE.indexOf('max-xl:order-1');
+    const asideAt = PAGE.indexOf('max-xl:order-2');
     // order-1 必须挂在 <main> 上：挂错元素时这条会红
     expect(PAGE.slice(PAGE.lastIndexOf('<', mainAt), mainAt)).toContain('main');
     expect(PAGE.slice(PAGE.lastIndexOf('<', asideAt), asideAt)).toContain('aside');

@@ -484,12 +484,12 @@ export function ReleaseConsolePage(): JSX.Element {
             中栏**不给 min-width**——曾经写过 minmax(560px,1fr)，实测 1024 下右栏被切掉
             382px（grid 到 982 就没了，右栏画到 1364），1280 下仍切 126px。 */}
         <div
-          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-[248px_minmax(0,1fr)_320px] lg:gap-4 lg:overflow-hidden 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
+          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto xl:grid xl:grid-cols-[264px_minmax(0,1fr)_340px] xl:gap-4 xl:overflow-hidden 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
               不是项目列表。桌面三栏不受影响（order 只在 max-lg 生效）。 */}
-          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-lg:order-2 lg:overflow-hidden">
+          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-xl:order-2 xl:overflow-hidden">
             <div className="shrink-0 border-b border-[hsl(var(--hairline))] p-3">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Projects</span>
@@ -508,7 +508,7 @@ export function ReleaseConsolePage(): JSX.Element {
 
             {/* 项目列表按内容占高（多了才滚），环境块紧跟其后 —— 钉底会在项目少时
                 在两块之间挖出一个大洞，看着像没做完。空白留在最下面才读作「还能长」。 */}
-            <div className="min-h-0 shrink overflow-y-auto p-2 max-lg:max-h-[38vh] lg:max-h-[46%]">
+            <div className="min-h-0 shrink overflow-y-auto p-2 max-xl:max-h-[38vh] xl:max-h-[46%]">
               {filteredProjects.length === 0 ? (
                 <p className="p-3 text-xs text-muted-foreground">没有匹配的项目。</p>
               ) : filteredProjects.map((item) => (
@@ -541,7 +541,7 @@ export function ReleaseConsolePage(): JSX.Element {
               {rows.length === 0 ? (
                 <p className="text-xs text-muted-foreground">这个项目还没有发布目标，去发布中心添加环境。</p>
               ) : (
-                <div className="flex max-h-[34vh] flex-col gap-2 overflow-y-auto lg:max-h-[42vh]">
+                <div className="flex max-h-[34vh] flex-col gap-2 overflow-y-auto xl:max-h-[42vh]">
                   {envSections.map((section) => (
                     <div key={section.environment} className="flex flex-col gap-1.5">
                       {/* 后端没下发分组时 buildEnvironmentSections 退化成单组，此时不画组标题 */}
@@ -605,7 +605,7 @@ export function ReleaseConsolePage(): JSX.Element {
           </aside>
 
           {/* ══ 中栏：状态是主角 ══ */}
-          <main className="flex min-h-0 flex-col gap-3 max-lg:order-1 lg:overflow-hidden">
+          <main className="flex min-h-0 flex-col gap-3 max-xl:order-1 xl:overflow-hidden">
             {error ? (
               <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-3 py-2 text-sm text-red-600 dark:text-red-400">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -813,7 +813,7 @@ export function ReleaseConsolePage(): JSX.Element {
 
             {/* 参考稿的流水线列是 300px，同样只在宽画布上成立：中栏 560 的时候
                 300 会把实时输出压到 246px，日志头那一排按钮直接被卡片切掉。 */}
-            <div className="grid min-h-0 flex-1 gap-3.5 lg:grid-cols-[232px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)]">
+            <div className="grid min-h-0 flex-1 gap-3.5 xl:grid-cols-[232px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)]">
               {/* 与右侧日志等高（参考稿 grid 两列 stretch）。之前用 self-start 让它按内容收高，
                   结果卡片底边下面空出一大块底色 —— 悬空的短卡读起来是「洞」，不是「省地方」。 */}
               <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border">
@@ -832,7 +832,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     </button>
                   </span>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-1.5 max-lg:max-h-64">
+                <div className="min-h-0 flex-1 overflow-y-auto p-1.5 max-xl:max-h-64">
                   {progress.steps.map((step) => (
                     <div
                       key={step.id}
@@ -894,7 +894,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
                     if (!atBottom && following) setFollowing(false);
                   }}
-                  className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 cds-ident text-[12.5px] leading-relaxed max-lg:max-h-72"
+                  className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 cds-ident text-[12.5px] leading-relaxed max-xl:max-h-72"
                 >
                   {shownLogs.length === 0
                     ? '还没有输出。点「开始发布」后，这里会逐行滚动。'
@@ -907,7 +907,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 右栏：只放「看记录」。配置与 Agent 走全屏浮层 ══ */}
           {/* 348px 的窄栏装不下发布流水线和一整段任务文本 —— 塞进来就是逼人在
               一条窄缝里横向读命令。这两块改成浮层，右栏专心做记录。 */}
-          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-lg:order-3 lg:overflow-hidden">
+          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-xl:order-3 xl:overflow-hidden">
             <div className="flex shrink-0 items-center gap-1 border-b border-[hsl(var(--hairline))] px-2 pt-2">
               {([['history', '历史发布'], ['failed', '失败']] as Array<[RailPane, string]>).map(([key, label]) => (
                 <button
@@ -943,7 +943,7 @@ export function ReleaseConsolePage(): JSX.Element {
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-3 max-lg:max-h-[420px]">
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 max-xl:max-h-[420px]">
               {(() => {
                 const list = pane === 'failed' ? failedRuns : runsOfProject;
                 if (list.length === 0) {
