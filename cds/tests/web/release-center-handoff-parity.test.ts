@@ -248,6 +248,21 @@ describe('稿子 §6 证据归档', () => {
     expect(evidence).toContain('cursor-not-allowed');
   });
 
+  /**
+   * 「环境」这一列只有横跨环境时才有意义。只列选中环境的记录，这一列就是 40 行
+   * 一模一样的值——稿子画它是因为这张表是全项目的归档，不是单环境的日志页。
+   */
+  it('证据表横跨所有环境：环境名按 run.targetId 归属，不是照抄选中环境', () => {
+    expect(evidence).toContain('rows.find((item) => item.target.id === targetId)');
+    expect(evidence).toContain('const owner = rowOf(run.targetId)');
+    expect(evidence).toContain('owner?.target.name || run.targetId');
+    expect(evidence).not.toContain('>{row.target.name}</span>');
+    // 页面要把全项目的 run 传进来，不是只传选中目标那一份
+    expect(page).toContain('rows={rows}');
+    const at = page.indexOf('<EvidenceSection');
+    expect(page.slice(at, at + 400)).toContain('runs={runs}');
+  });
+
   it('底部日志预览 + 保留策略写在分区头部', () => {
     expect(evidence).toContain('日志预览');
     expect(evidence).toContain('保留 90 天，生产永久');

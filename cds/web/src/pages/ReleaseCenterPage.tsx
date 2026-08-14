@@ -830,7 +830,8 @@ export function ReleaseCenterPage(): JSX.Element {
                         {section === 'evidence' ? (
                           <EvidenceSection
                             row={selectedRow}
-                            runs={selectedRuns}
+                            rows={rows}
+                            runs={runs}
                             commitMeta={commitMeta}
                             filter={historyFilter === 'failed' ? 'failed' : 'all'}
                             onFilter={setHistoryFilter}

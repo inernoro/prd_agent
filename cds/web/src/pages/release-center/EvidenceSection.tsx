@@ -28,7 +28,14 @@ import type { CenterRow, ReleaseRun, ReleaseTargetChange } from './types';
 import { RELEASE_CHANGE_KIND_LABELS, isReleaseFailed } from './types';
 
 export interface EvidenceSectionProps {
+  /** 当前选中的环境。只用于底部的配置变更历史与日志预览的默认选中。 */
   row: CenterRow;
+  /**
+   * 同项目的全部环境。稿子的证据表**有「环境」这一列**——它只有横跨环境时才有意义；
+   * 只列选中环境的话这一列会是 40 行一模一样的值，纯噪音。
+   */
+  rows: CenterRow[];
+  /** 全部环境的发布记录（`center.runs`），按 run.targetId 归属到各自环境。 */
   runs: ReleaseRun[];
   /** 提交说明。缺席时只显示 short sha，不拿别的字段顶替。 */
   commitMeta: Record<string, { subject?: string }>;
@@ -52,8 +59,9 @@ function durationOf(run: ReleaseRun): string {
 const COLUMNS = '150px 130px 92px 104px 88px minmax(0,1fr) auto';
 
 export function EvidenceSection({
-  row, runs, commitMeta, filter, onFilter, onRollback, onRetry, retryingRunId,
+  row, rows, runs, commitMeta, filter, onFilter, onRollback, onRetry, retryingRunId,
 }: EvidenceSectionProps): JSX.Element {
+  const rowOf = (targetId: string): CenterRow | undefined => rows.find((item) => item.target.id === targetId);
   const [selectedId, setSelectedId] = useState('');
   const [diagnosedId, setDiagnosedId] = useState('');
   const visible = filter === 'failed' ? runs.filter((run) => isReleaseFailed(run.status)) : runs;
@@ -108,7 +116,7 @@ export function EvidenceSection({
 
       {visible.length === 0 ? (
         <p className="px-[18px] py-6 text-xs text-muted-foreground">
-          {runs.length === 0 ? `${row.target.name} 还没有发布记录。` : '这个环境近期没有失败的发布。'}
+          {runs.length === 0 ? '这个项目还没有发布记录。' : '近期没有失败的发布。'}
         </p>
       ) : (
         <>
@@ -123,6 +131,10 @@ export function EvidenceSection({
               const failed = isReleaseFailed(run.status);
               const subject = commitMeta[run.commitSha]?.subject;
               const diagnosed = diagnosedId === run.releaseId;
+              // 这条 run 属于哪个环境。归档里会有已停用/已归档目标的历史记录，
+              // 查不到就写目标 id，不静默显示成当前选中的那个环境（会张冠李戴）。
+              const owner = rowOf(run.targetId);
+              const ownerName = owner?.target.name || run.targetId;
               return (
                 <div key={run.releaseId} className="border-b border-[hsl(var(--hairline)/0.6)]">
                   <div
@@ -132,7 +144,7 @@ export function EvidenceSection({
                     style={{ gridTemplateColumns: COLUMNS }}
                   >
                     <span className="cds-ident text-[11.5px] text-muted-foreground">{formatDateTime(run.startedAt)}</span>
-                    <span className="truncate font-semibold">{row.target.name}</span>
+                    <span className="truncate font-semibold" title={ownerName}>{ownerName}</span>
                     <span className="cds-ident">{run.commitSha.slice(0, 7)}</span>
                     <span className="flex items-center gap-1.5">
                       <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${failed ? 'bg-red-500' : 'bg-emerald-500'}`} />
@@ -163,7 +175,7 @@ export function EvidenceSection({
                         <ScrollText />
                         日志
                       </Button>
-                      {row.canRollback && !failed ? (
+                      {owner?.canRollback && !failed ? (
                         <Button variant="outline" size="sm" onClick={() => onRollback(run)}>
                           <RotateCcw />
                           回滚到此版本
@@ -185,9 +197,9 @@ export function EvidenceSection({
                     <div className="border-t border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] px-[18px] py-3">
                       <FailureDiagnosis
                         run={run}
-                        row={row}
+                        row={owner}
                         retrying={retryingRunId === run.releaseId}
-                        canRollback={Boolean(row.canRollback)}
+                        canRollback={Boolean(owner?.canRollback)}
                         onRetry={onRetry}
                         onRollback={onRollback}
                       />
