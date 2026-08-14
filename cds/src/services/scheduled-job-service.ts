@@ -17,6 +17,7 @@ import type {
 import type { CdsEventType } from './cds-events-bus.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { isReleaseRunTerminal, isSuccessfulReleaseRun } from './release-retention.js';
+import { isTimerDrivenSchedule, selectPushRuleJobs, type PushRuleContext } from './release-push-rules.js';
 import type { ReleasePreflightResult, ReleaseStartInput, ReleaseTargetBusyState } from './release-service.js';
 
 /**
@@ -124,9 +125,32 @@ export class ScheduledJobService {
     this.timer = null;
   }
 
+  /**
+   * 事件驱动的「自动发布规则」入口：GitHub webhook 命中分支后调这里。
+   *
+   * 与定时任务共用 runJob，所以并发（isTargetBusy）、审批、失败回滚、运行记录
+   * 全部复用同一套，不另起执行器。
+   *
+   * **绝不向上抛**：这条链路挂在 webhook 处理里，一条规则配错不该把整个
+   * push 的建分支/部署一起打掉。失败只记日志，返回真正跑起来的规则数。
+   */
+  async runPushRules(ctx: PushRuleContext): Promise<number> {
+    const matched = selectPushRuleJobs(this.deps.stateService.listScheduledJobs(), ctx);
+    let started = 0;
+    for (const job of matched) {
+      try {
+        await this.runJob(job.id, 'push');
+        started += 1;
+      } catch (err) {
+        console.error('[scheduled-jobs] push 规则执行失败:', job.id, (err as Error).message);
+      }
+    }
+    return started;
+  }
+
   async tick(now = new Date()): Promise<void> {
     const due = this.deps.stateService.listScheduledJobs()
-      .filter((job) => job.enabled && job.schedule.type !== 'manual')
+      .filter((job) => job.enabled && isTimerDrivenSchedule(job.schedule))
       .filter((job) => isJobDue(job, now));
     for (const job of due) {
       try {
@@ -210,7 +234,8 @@ export class ScheduledJobService {
   }
 
   computeNextRunAt(schedule: ScheduledJobSchedule, from = new Date()): string | null {
-    if (schedule.type === 'manual') return null;
+    // manual 与 push 都没有「下一次运行时刻」：前者等人点，后者等事件。
+    if (!isTimerDrivenSchedule(schedule)) return null;
     if (schedule.type === 'interval') {
       const minutes = Math.max(1, Math.floor(schedule.intervalMinutes || 1));
       return new Date(from.getTime() + minutes * 60_000).toISOString();
@@ -236,7 +261,7 @@ export class ScheduledJobService {
 
   normalizeJob(job: ScheduledJob, options: NormalizeScheduledJobOptions = {}): ScheduledJob {
     const now = new Date().toISOString();
-    const shouldPreserveNext = options.preserveNextRunAt && Boolean(job.nextRunAt || job.schedule.type === 'manual');
+    const shouldPreserveNext = options.preserveNextRunAt && Boolean(job.nextRunAt || !isTimerDrivenSchedule(job.schedule));
     const next = !job.enabled
       ? null
       : shouldPreserveNext
@@ -257,7 +282,7 @@ export class ScheduledJobService {
 
   private reconcileNextRunAt(): void {
     for (const job of this.deps.stateService.listScheduledJobs()) {
-      if (!job.enabled || job.schedule.type === 'manual') continue;
+      if (!job.enabled || !isTimerDrivenSchedule(job.schedule)) continue;
       if (parseTimestamp(job.nextRunAt) !== null) continue;
       try {
         const nextRunAt = this.computeNextRunAt(job.schedule);
@@ -281,7 +306,7 @@ export class ScheduledJobService {
   }
 
   private claimScheduledOccurrence(job: ScheduledJob, now: Date): boolean {
-    if (job.schedule.type === 'manual') return false;
+    if (!isTimerDrivenSchedule(job.schedule)) return false;
     const latest = this.deps.stateService.getScheduledJob(job.id);
     if (!latest || !latest.enabled) return false;
     if (!isJobDue(latest, now)) return false;
@@ -366,7 +391,7 @@ export class ScheduledJobService {
   }
 
   private resolveNextRunAtAfterRun(job: ScheduledJob): string | null {
-    if (!job.enabled || job.schedule.type === 'manual') return null;
+    if (!job.enabled || !isTimerDrivenSchedule(job.schedule)) return null;
     if (parseTimestamp(job.nextRunAt) !== null) return job.nextRunAt || null;
     return this.computeNextRunAt(job.schedule, new Date());
   }

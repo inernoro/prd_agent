@@ -213,6 +213,56 @@ describe('稿子 §3 环境与配置（唯一写入口）', () => {
   });
 });
 
+describe('稿子 §4 自动发布规则', () => {
+  const rules = read('pages/release-center/AutoRulesSection.tsx');
+
+  it('分区头：标题 + 说明 + 新建规则', () => {
+    expect(rules).toContain('自动发布规则');
+    expect(rules).toContain('分支满足条件时自动发到目标环境');
+    expect(rules).toContain('新建规则');
+  });
+
+  it('每行照标注：分支胶囊 → 箭头 → 环境名 + 类型；触发 170 / 最近触发 150 / 状态 96 / 编辑 30', () => {
+    expect(rules).toContain('job.schedule.branchPattern');
+    expect(rules).toContain('<ArrowRight');
+    expect(rules).toContain("rounded-[7px]");
+    expect(rules).toContain('w-[170px]');
+    expect(rules).toContain('w-[150px]');
+    expect(rules).toContain('w-[96px]');
+    expect(rules).toContain('[&_button]:h-[30px]');
+    expect(rules).toContain('尚未触发');
+    expect(rules).toContain("job.enabled ? '启用' : '暂停'");
+    // 行内第一组：宽屏 min-width 280，窄屏 0 且换行
+    expect(rules).toContain('flex-wrap');
+    expect(rules).toContain('xl:min-w-[280px]');
+  });
+
+  /**
+   * 这一屏此前是旧的定时任务编辑器顶替的——事件驱动规则在后端压根不存在。
+   * 判据钉住整条链路，任何一环缺席都会让规则「建得出、存得下、永远不触发」。
+   */
+  it('事件驱动是真做了后端，不是拿定时任务改个标签', () => {
+    const service = fs.readFileSync(path.resolve(process.cwd(), '../cds/src/services/release-push-rules.ts'), 'utf8');
+    expect(service).toContain('export function evaluatePushRule');
+    expect(service).toContain('export function selectPushRuleJobs');
+    const types = fs.readFileSync(path.resolve(process.cwd(), '../cds/src/types.ts'), 'utf8');
+    expect(types).toContain("type: 'push';");
+    expect(types).toContain('branchPattern: string;');
+    // 页面确实挂了新组件
+    const at = page.indexOf("section === 'rules' ? (");
+    expect(page.slice(at, at + 700)).toContain('<AutoRulesSection');
+  });
+
+  /** 定时发布是既有且有人在用的功能，稿子没画它不等于可以删掉。 */
+  it('定时规则没被这一屏顶掉：编辑器仍在，且两块不重复列同一条规则', () => {
+    const at = page.indexOf("section === 'rules' ? (");
+    expect(page.slice(at, at + 700)).toContain('<AutoReleaseTab');
+    const timer = read('pages/release-center/AutoReleaseTab.tsx');
+    expect(timer).toContain("job.schedule.type !== 'push'");
+    expect(rules).toContain("job.schedule.type === 'push'");
+  });
+});
+
 describe('稿子 §5 健康监测', () => {
   it('左卡片 420px 探测配置四项齐全', () => {
     expect(health).toContain('xl:grid-cols-[420px_minmax(0,1fr)]');

@@ -4468,6 +4468,8 @@ export function createServer(deps: ServerDeps): express.Express {
     config: deps.config,
     githubApp: githubAppClient,
     serverEventLogStore: deps.serverEventLogStore,
+    // 自动发布规则：push 命中分支时由发布侧判据决定叫醒哪些规则。
+    runPushRules: (ctx) => scheduledJobService.runPushRules(ctx),
   }));
 
   // P4 Part 18 (D.3): storage-mode management endpoints. Requires the

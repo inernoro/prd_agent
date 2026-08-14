@@ -40,7 +40,6 @@ import {
 } from '@/lib/releaseEnvironments';
 import type { PreviewMode, PreviewUrlConfig } from '@/lib/previewUrl';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
-import { AutoReleaseTab } from '@/pages/release-center/AutoReleaseTab';
 import { ConfigTab } from '@/pages/release-center/ConfigTab';
 import {
   ArchiveTargetDialog,
@@ -52,6 +51,8 @@ import {
 import { EnvironmentSidebar } from '@/pages/release-center/EnvironmentSidebar';
 import { OverviewTab } from '@/pages/release-center/OverviewTab';
 import { FleetMatrix } from '@/pages/release-center/FleetMatrix';
+import { AutoReleaseTab } from '@/pages/release-center/AutoReleaseTab';
+import { AutoRulesSection } from '@/pages/release-center/AutoRulesSection';
 import { EnvConfigSection } from '@/pages/release-center/EnvConfigSection';
 import { HealthSection } from '@/pages/release-center/HealthSection';
 import { EvidenceSection } from '@/pages/release-center/EvidenceSection';
@@ -810,13 +811,19 @@ export function ReleaseCenterPage(): JSX.Element {
                           </div>
                         ) : null}
 
+                        {/* 上：稿子 §4 的事件规则（分支 → 环境）。
+                            下：既有的定时规则编辑器——定时发布是真实在用的功能，
+                            稿子没画不等于可以删掉，它是另一种触发面。 */}
                         {section === 'rules' ? (
-                          <AutoReleaseTab
-                            row={selectedRow}
-                            otherRows={otherRows}
-                            branches={branches}
-                            onToast={setToast}
-                          />
+                          <div className="flex min-w-0 flex-col gap-4">
+                            <AutoRulesSection projectId={projectId} rows={rows} onToast={setToast} />
+                            <AutoReleaseTab
+                              row={selectedRow}
+                              otherRows={otherRows}
+                              branches={branches}
+                              onToast={setToast}
+                            />
+                          </div>
                         ) : null}
 
                         {section === 'health' ? (

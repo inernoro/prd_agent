@@ -357,6 +357,19 @@ export interface WebhookDispatcherDeps {
   shell: IShellExecutor;
   config: CdsConfig;
   githubApp?: GitHubAppClient;
+  /**
+   * 发布中心「自动发布规则」的触发钩子（ScheduledJobService.runPushRules）。
+   *
+   * 用回调而不是直接注入 ScheduledJobService：dispatcher 只负责「发生了什么事件」，
+   * 「谁该被这个事件叫醒」是发布侧的判据，两边不该互相 import。
+   * 缺省不注入时整条规则链路静默不启用——所以 server 的接线有守卫盯着。
+   */
+  runPushRules?: (ctx: {
+    projectId: string;
+    branch: string;
+    event: 'push' | 'pr-open';
+    changedPaths: string[];
+  }) => Promise<number>;
 }
 
 export class GitHubWebhookDispatcher {
@@ -1206,6 +1219,26 @@ export class GitHubWebhookDispatcher {
         action: 'ignored-bot-push',
         message: `Project '${project.name}' 已过滤机器人账号 '${senderLogin}' 的 push，不创建 CDS 版本。`,
       };
+    }
+
+    // 发布中心「自动发布规则」（design_handoff_release_center §4）。
+    //
+    // 位置刻意放在这里：机器人过滤之后（机器人 push 不该自动发生产），但在
+    // docs-only 提前 return **之前**——`docs/** → docs-site` 这类规则要的正好是
+    // docs-only 那种 push，放在 return 之后它永远不会被触发。
+    //
+    // 不 await：规则执行会真的跑一次发布，可能几分钟；webhook 必须尽快回 200，
+    // 否则 GitHub 会判超时重投，同一个 push 被处理多次。失败只记日志，绝不
+    // 影响下面的建分支 / 部署链路。
+    if (!dryRun && this.deps.runPushRules) {
+      void this.deps.runPushRules({
+        projectId: project.id,
+        branch: branchName,
+        event: 'push',
+        changedPaths: this.changedPathsFromPush(event),
+      }).catch((err) => {
+        console.error('[webhook] 自动发布规则执行失败:', project.id, branchName, (err as Error).message);
+      });
     }
 
     // Ensure branch exists — auto-create a worktree when the push hits a

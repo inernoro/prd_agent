@@ -275,9 +275,16 @@ export interface ScheduledJobSummary {
   description?: string;
   enabled: boolean;
   schedule: {
-    type: 'manual' | 'interval' | 'daily';
+    /** push = 事件驱动的「自动发布规则」（设计稿 §4）；其余三种是定时调度。 */
+    type: 'manual' | 'interval' | 'daily' | 'push';
     intervalMinutes?: number;
     timeOfDay?: string;
+    /** push 专用：分支 glob，如 `main` / `release/*`。 */
+    branchPattern?: string;
+    /** push 专用：push = 每次推送；pr-open = 开 PR 时。 */
+    event?: 'push' | 'pr-open';
+    /** push 专用：只有命中这个路径 glob 的改动才触发，如 `docs/**`。 */
+    pathPattern?: string;
     timezone?: string;
   };
   actions?: Array<ScheduledJobActionSummary>;

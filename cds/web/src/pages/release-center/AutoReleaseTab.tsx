@@ -94,7 +94,11 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
 
   useEffect(() => { void load(); }, [load]);
 
-  const releaseJobs = jobs.filter((job) => releaseActionOf(job, row.target.id) !== undefined);
+  // 事件驱动的 push 规则归 AutoRulesSection（设计稿 §4）。不排掉的话同一条规则
+  // 会在两块里各出现一次，而且在这里被当成定时规则编辑。
+  const releaseJobs = jobs.filter(
+    (job) => job.schedule.type !== 'push' && releaseActionOf(job, row.target.id) !== undefined,
+  );
 
   const submit = async (): Promise<void> => {
     if (!draft) return;
@@ -573,7 +577,9 @@ function draftFromJob(
   return {
     id: job.id,
     name: job.name,
-    scheduleType: job.schedule.type,
+    // 这个编辑器只管定时调度；push 规则归 AutoRulesSection，本页不列它们。
+    // 真被喂进来（列表过滤漏了）时退回 manual，不把一条事件规则改写成定时规则。
+    scheduleType: job.schedule.type === 'push' ? 'manual' : job.schedule.type,
     timeOfDay: job.schedule.timeOfDay || '03:00',
     intervalMinutes: String(job.schedule.intervalMinutes || 60),
     timezone: job.schedule.timezone || 'Asia/Shanghai',
