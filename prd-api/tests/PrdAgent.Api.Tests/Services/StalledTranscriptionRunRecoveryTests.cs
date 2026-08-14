@@ -228,12 +228,18 @@ public sealed class StalledTranscriptionRunRecoveryTests
             null,
             DocumentStoreRunStatus.Queued);
         await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None);
 
         await Should.ThrowAsync<InvalidOperationException>(() =>
             DocumentStoreRunGenerationPublisher.PublishAsync(
                 fixture.Db,
                 entry.Id,
                 run,
+                outputLease,
                 CancellationToken.None,
                 (_, _) => throw new InvalidOperationException("injected insert failure")));
 
@@ -262,11 +268,17 @@ public sealed class StalledTranscriptionRunRecoveryTests
             null,
             DocumentStoreRunStatus.Queued);
         await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None);
 
         var published = await DocumentStoreRunGenerationPublisher.PublishAsync(
             fixture.Db,
             entry.Id,
             run,
+            outputLease,
             CancellationToken.None,
             async (candidate, token) =>
             {
@@ -282,6 +294,282 @@ public sealed class StalledTranscriptionRunRecoveryTests
             .AgentOutputGeneration.ShouldBe(4);
         (await fixture.Db.DocumentStoreAgentRuns.Find(r => r.Id == run.Id).SingleAsync())
             .OutputGeneration.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task GenerationPublisher_InsertAndReadbackFailure_ShouldNotAdvanceGeneration()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-publish-double-failure", 7);
+        var run = Run(
+            "run-publish-double-failure",
+            entry.Id,
+            "user-1",
+            "self",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            run.Kind,
+            CancellationToken.None);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() =>
+            DocumentStoreRunGenerationPublisher.PublishAsync(
+                fixture.Db,
+                entry.Id,
+                run,
+                outputLease,
+                CancellationToken.None,
+                (_, _) => throw new TimeoutException("injected marker insert failure"),
+                (_, _) => throw new TimeoutException("injected marker readback failure")));
+
+        error.Message.ShouldContain("正文代次尚未推进");
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(7);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(item => item.Id == run.Id))
+            .ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task PendingCreation_MarkerCommittedButClientAndReadbackFailed_ShouldReconcileAfterRestart()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-publish-marker-unknown", 3);
+        var run = Run(
+            "run-publish-marker-unknown",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+
+        await using (var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+                         fixture.Db,
+                         entry.Id,
+                         run.Kind,
+                         CancellationToken.None))
+        {
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                DocumentStoreRunGenerationPublisher.PublishAsync(
+                    fixture.Db,
+                    entry.Id,
+                    run,
+                    outputLease,
+                    CancellationToken.None,
+                    async (candidate, token) =>
+                    {
+                        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(
+                            candidate,
+                            cancellationToken: token);
+                        throw new TimeoutException("injected marker response loss");
+                    },
+                    (_, _) => throw new TimeoutException("injected marker readback outage")));
+
+            (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+                .AgentOutputGeneration.ShouldBe(3);
+            var marker = await fixture.Db.DocumentStoreAgentRuns
+                .Find(item => item.Id == run.Id)
+                .SingleAsync();
+            marker.Status.ShouldBe(DocumentStoreRunStatus.Publishing);
+            marker.OutputGeneration.ShouldBe(3);
+            (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+                    item => item.Id == run.Id && item.Status == DocumentStoreRunStatus.Queued))
+                .ShouldBe(0);
+        }
+
+        await CreateRecoveryWorker(fixture).RecoverPendingRunCreationsAsync();
+
+        var recovered = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == run.Id)
+            .SingleAsync();
+        recovered.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        recovered.OutputGeneration.ShouldBe(4);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(4);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(item => item.Id == run.Id))
+            .ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task PendingCreation_AfterGenerationAdvanced_ShouldFinalizeOnceWithoutSecondIncrement()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-publish-resume-after-generation", 6);
+        var marker = Run(
+            "run-publish-resume-after-generation",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Publishing);
+        marker.OutputGeneration = 5;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(marker);
+        var worker = CreateRecoveryWorker(fixture);
+
+        await worker.RecoverPendingRunCreationsAsync();
+        await worker.RecoverPendingRunCreationsAsync();
+
+        var recovered = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == marker.Id)
+            .SingleAsync();
+        recovered.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        recovered.OutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(item => item.Id == marker.Id))
+            .ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task PendingRestyleCreation_AfterWorkerReconciles_ShouldReuseSameRunOnHttpRetry()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-publish-restyle-retry", 4);
+        var firstRun = Run(
+            "run-publish-restyle-original",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued,
+            "meeting");
+        firstRun.RestyleOfRunId = "prior-transcribe-run";
+        firstRun.StyleContext = "参会人：甲、乙";
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+
+        await using (var firstLease = await DocumentStoreRunOutputLease.AcquireAsync(
+                         fixture.Db,
+                         entry.Id,
+                         firstRun.Kind,
+                         CancellationToken.None))
+        {
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                DocumentStoreRunGenerationPublisher.PublishAsync(
+                    fixture.Db,
+                    entry.Id,
+                    firstRun,
+                    firstLease,
+                    CancellationToken.None,
+                    async (candidate, token) =>
+                    {
+                        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(
+                            candidate,
+                            cancellationToken: token);
+                        throw new TimeoutException("injected restyle marker response loss");
+                    },
+                    (_, _) => throw new TimeoutException("injected restyle marker readback outage")));
+        }
+
+        await CreateRecoveryWorker(fixture).RecoverPendingRunCreationsAsync();
+        var retryRun = Run(
+            "run-publish-restyle-http-retry",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow.AddSeconds(1),
+            null,
+            DocumentStoreRunStatus.Queued,
+            "meeting");
+        retryRun.RestyleOfRunId = firstRun.RestyleOfRunId;
+        retryRun.StyleContext = firstRun.StyleContext;
+        await using var retryLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            retryRun.Kind,
+            CancellationToken.None);
+
+        var published = await DocumentStoreRunGenerationPublisher.PublishAsync(
+            fixture.Db,
+            entry.Id,
+            retryRun,
+            retryLease,
+            CancellationToken.None);
+
+        published.ShouldNotBeNull();
+        retryRun.Id.ShouldBe(firstRun.Id);
+        retryRun.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        retryRun.OutputGeneration.ShouldBe(5);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(5);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+                item => item.SourceEntryId == entry.Id && item.RestyleOfRunId == firstRun.RestyleOfRunId))
+            .ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task RestyleRetry_ShouldNotReuseSameRequestFromSupersededGeneration()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-restyle-stale-retry", 6);
+        var staleSameRequest = Run(
+            "run-restyle-stale-same-request",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow.AddMinutes(-2),
+            null,
+            DocumentStoreRunStatus.Queued,
+            "meeting");
+        staleSameRequest.RestyleOfRunId = "prior-transcribe-run";
+        staleSameRequest.StyleContext = "参会人：甲、乙";
+        staleSameRequest.OutputGeneration = 5;
+        var currentDifferentRequest = Run(
+            "run-restyle-current-different-request",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow.AddMinutes(-1),
+            null,
+            DocumentStoreRunStatus.Queued,
+            "summary");
+        currentDifferentRequest.RestyleOfRunId = staleSameRequest.RestyleOfRunId;
+        currentDifferentRequest.OutputGeneration = 6;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertManyAsync(
+            [staleSameRequest, currentDifferentRequest]);
+
+        var retry = Run(
+            "run-restyle-current-retry",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued,
+            staleSameRequest.TemplateKey);
+        retry.RestyleOfRunId = staleSameRequest.RestyleOfRunId;
+        retry.StyleContext = staleSameRequest.StyleContext;
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            retry.Kind,
+            CancellationToken.None);
+
+        var published = await DocumentStoreRunGenerationPublisher.PublishAsync(
+            fixture.Db,
+            entry.Id,
+            retry,
+            outputLease,
+            CancellationToken.None);
+
+        published.ShouldNotBeNull();
+        retry.Id.ShouldBe("run-restyle-current-retry");
+        retry.Id.ShouldNotBe(staleSameRequest.Id);
+        retry.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        retry.OutputGeneration.ShouldBe(7);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(7);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+                item => item.SourceEntryId == entry.Id))
+            .ShouldBe(3);
     }
 
     [Fact]

@@ -27,3 +27,6 @@
 | test | prd-api | 补齐输出租约过期接管后旧恢复者不得回滚、新恢复者幂等收敛的真实 Mongo 回归 |
 | fix | prd-api | 中断恢复 marker 独立于心跳和旧终态持续收敛，并禁止普通执行改写协议中间态 |
 | test | prd-api | 补齐旧心跳恢复和旧执行已终态时 pending marker 仍能重排的真实 Mongo 回归 |
+| fix | prd-api | 首次转录任务改为 marker-first 两阶段发布，并由周期协调收敛未知 Mongo 写入结果 |
+| test | prd-api | 补齐任务 marker 写入与回读双失败、重启续跑和唯一代次发布的真实 Mongo 回归 |
+| fix | prd-api | 相同录音整理请求在 marker 后台收敛后复用原任务，避免 HTTP 重试重复推进代次 |

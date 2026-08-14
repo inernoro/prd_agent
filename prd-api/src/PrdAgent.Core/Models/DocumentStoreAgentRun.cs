@@ -150,6 +150,8 @@ public static class DocumentStoreAgentRunKind
 
 public static class DocumentStoreRunStatus
 {
+    /// <summary>首次发布协议的持久 marker；尚未推进正文代次，普通 Worker 不得领取。</summary>
+    public const string Publishing = "publishing";
     public const string Queued = "queued";
     public const string Running = "running";
     public const string Done = "done";

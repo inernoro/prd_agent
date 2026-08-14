@@ -51,6 +51,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                         nextInterruptedRecoveryAt = DateTime.UtcNow + InterruptedRecoveryInterval;
                         try
                         {
+                            await RecoverPendingRunCreationsAsync();
                             await RecoverInterruptedRunsAsync();
                         }
                         catch (Exception ex)
@@ -133,6 +134,56 @@ public class DocumentStoreAgentWorker : BackgroundService
                         cancellationToken: CancellationToken.None);
                 }
                 catch { /* ignore */ }
+            }
+        }
+    }
+
+    internal async Task RecoverPendingRunCreationsAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+        var ownerScope = LegacyOwnerScope.Build<DocumentStoreAgentRun>(
+            nameof(DocumentStoreAgentRun.OwnerInstanceId),
+            compatibleOwnerIds,
+            includeUnowned: true,
+            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+            legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
+        var candidates = await db.DocumentStoreAgentRuns
+            .Find(Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    run => run.Kind,
+                    DocumentStoreAgentRunKind.Transcribe),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    run => run.Status,
+                    DocumentStoreRunStatus.Publishing),
+                ownerScope))
+            .SortBy(run => run.CreatedAt)
+            .Limit(100)
+            .ToListAsync(CancellationToken.None);
+
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+                    db,
+                    candidate.SourceEntryId,
+                    candidate.Kind,
+                    CancellationToken.None);
+                await DocumentStoreRunGenerationPublisher.ReconcilePublishingRunAsync(
+                    db,
+                    candidate.Id,
+                    outputLease,
+                    CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "[doc-store-agent] Pending run creation reconciliation skipped run {RunId}",
+                    candidate.Id);
             }
         }
     }

@@ -5483,6 +5483,7 @@ public class DocumentStoreController : ControllerBase
             _db,
             noteEntry!.Id,
             run,
+            outputLease,
             CancellationToken.None);
         if (generationEntry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录笔记不存在"));
@@ -5632,6 +5633,7 @@ public class DocumentStoreController : ControllerBase
                 _db,
                 entryId,
                 run,
+                outputLease,
                 CancellationToken.None);
             if (generationEntry == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));

@@ -7,7 +7,8 @@ namespace PrdAgent.Api.Services;
 
 /// <summary>
 /// 在持有 <see cref="DocumentStoreRunOutputLease"/> 时发布转录任务代次。
-/// 若 run 插入明确失败，则条件回滚代次；若驱动报告未知结果但 run 已落库，则按 runId 幂等确认。
+/// 首次创建先插入不可领取的 publishing run marker，再推进 entry generation，最后切到 queued；
+/// 任一步结果未知时都可由周期 reconciliation 沿同一 runId 幂等续跑。
 /// </summary>
 internal static class DocumentStoreRunGenerationPublisher
 {
@@ -15,57 +16,241 @@ internal static class DocumentStoreRunGenerationPublisher
         MongoDbContext db,
         string generationEntryId,
         DocumentStoreAgentRun run,
+        DocumentStoreRunOutputLease.LeaseHandle outputLease,
         CancellationToken cancellationToken,
-        Func<DocumentStoreAgentRun, CancellationToken, Task>? insertRun = null)
+        Func<DocumentStoreAgentRun, CancellationToken, Task>? insertRun = null,
+        Func<string, CancellationToken, Task<DocumentStoreAgentRun?>>? readRun = null)
     {
-        var generationEntry = await db.DocumentEntries.FindOneAndUpdateAsync(
-            Builders<DocumentEntry>.Filter.Eq(entry => entry.Id, generationEntryId),
-            Builders<DocumentEntry>.Update.Inc(entry => entry.AgentOutputGeneration, 1),
-            new FindOneAndUpdateOptions<DocumentEntry, DocumentEntry>
+        await outputLease.EnsureHeldAsync(cancellationToken);
+        var generationEntry = await db.DocumentEntries
+            .Find(entry => entry.Id == generationEntryId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (generationEntry == null)
+            return null;
+
+        // restyle 的首次响应可能在 marker 已落库后丢失。周期 Worker 若已把它收敛为
+        // queued/running，HTTP 重试必须复用同一精确请求，不能再推进一代并制造必然
+        // superseded 的重复任务。普通完整转录仍保留 Controller 既有的定向去重语义。
+        if (!string.IsNullOrWhiteSpace(run.RestyleOfRunId))
+        {
+            var inFlightRestyles = await db.DocumentStoreAgentRuns
+                .Find(candidate => candidate.SourceEntryId == generationEntryId
+                                   && candidate.Kind == DocumentStoreAgentRunKind.Transcribe
+                                   && candidate.UserId == run.UserId
+                                   && candidate.RestyleOfRunId == run.RestyleOfRunId
+                                   && (candidate.Status == DocumentStoreRunStatus.Queued
+                                       || candidate.Status == DocumentStoreRunStatus.Running))
+                .ToListAsync(cancellationToken);
+            var reusable = inFlightRestyles.FirstOrDefault(candidate =>
+                candidate.OutputGeneration == generationEntry.AgentOutputGeneration
+                && MatchesSameRequest(candidate, run));
+            if (reusable != null)
             {
-                ReturnDocument = ReturnDocument.After,
-            },
-            cancellationToken);
+                run.Id = reusable.Id;
+                run.Status = reusable.Status;
+                run.OutputGeneration = reusable.OutputGeneration;
+                return generationEntry;
+            }
+        }
+
+        // 先收敛同一条目的遗留 publishing marker，避免上一次响应丢失后再次点击
+        // 产生两个持有同一 base generation 的 marker。
+        var pendingMarkers = await db.DocumentStoreAgentRuns
+            .Find(candidate => candidate.SourceEntryId == generationEntryId
+                               && candidate.Kind == DocumentStoreAgentRunKind.Transcribe
+                               && candidate.Status == DocumentStoreRunStatus.Publishing)
+            .SortBy(candidate => candidate.CreatedAt)
+            .ToListAsync(cancellationToken);
+        foreach (var marker in pendingMarkers)
+        {
+            var reconciledEntry = await ReconcilePublishingRunAsync(
+                db,
+                marker.Id,
+                outputLease,
+                cancellationToken);
+            var reconciledRun = await db.DocumentStoreAgentRuns
+                .Find(candidate => candidate.Id == marker.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (reconciledRun != null
+                && reconciledRun.Status is DocumentStoreRunStatus.Queued or DocumentStoreRunStatus.Running
+                && reconciledEntry != null
+                && reconciledRun.OutputGeneration == reconciledEntry.AgentOutputGeneration
+                && MatchesSameRequest(reconciledRun, run))
+            {
+                run.Id = reconciledRun.Id;
+                run.Status = reconciledRun.Status;
+                run.OutputGeneration = reconciledRun.OutputGeneration;
+                return reconciledEntry;
+            }
+        }
+
+        generationEntry = await db.DocumentEntries
+            .Find(entry => entry.Id == generationEntryId)
+            .FirstOrDefaultAsync(cancellationToken);
         if (generationEntry == null)
             return null;
 
         run.OutputGeneration = generationEntry.AgentOutputGeneration;
+        run.Status = DocumentStoreRunStatus.Publishing;
         insertRun ??= (candidate, token) =>
             db.DocumentStoreAgentRuns.InsertOneAsync(candidate, cancellationToken: token);
+        readRun ??= async (runId, token) => await db.DocumentStoreAgentRuns
+            .Find(candidate => candidate.Id == runId)
+            .FirstOrDefaultAsync(token);
 
         try
         {
             await insertRun(run, cancellationToken);
-            return generationEntry;
         }
         catch (Exception insertException)
         {
-            // Mongo 写入可能在服务端成功、客户端却因断线收到异常。先按确定 runId 回读，
-            // 匹配即视为幂等成功，不能回滚一个已经有对应任务的代次。
-            var existing = await db.DocumentStoreAgentRuns
-                .Find(candidate => candidate.Id == run.Id)
-                .FirstOrDefaultAsync(cancellationToken);
-            if (MatchesPublishedRun(existing, run))
-                return generationEntry;
+            try
+            {
+                var existing = await readRun(run.Id, cancellationToken);
+                if (!MatchesPublishingMarker(existing, run))
+                {
+                    ExceptionDispatchInfo.Capture(insertException).Throw();
+                }
+            }
+            catch (Exception readException) when (readException != insertException)
+            {
+                // marker 写入结果和回读结果都未知时，entry generation 尚未推进。
+                // 若 marker 实际落库，周期 reconciliation 会继续；若未落库则无需回滚。
+                throw new InvalidOperationException(
+                    $"任务 {run.Id} 的创建 marker 结果未知，正文代次尚未推进。",
+                    new AggregateException(insertException, readException));
+            }
+        }
 
-            var previousGeneration = generationEntry.AgentOutputGeneration - 1;
-            var rollback = await db.DocumentEntries.UpdateOneAsync(
-                entry => entry.Id == generationEntryId
-                         && entry.AgentOutputGeneration == generationEntry.AgentOutputGeneration,
-                Builders<DocumentEntry>.Update.Set(
-                    entry => entry.AgentOutputGeneration,
-                    previousGeneration),
+        var published = await ReconcilePublishingRunAsync(
+            db,
+            run.Id,
+            outputLease,
+            cancellationToken);
+        var persisted = await db.DocumentStoreAgentRuns
+            .Find(candidate => candidate.Id == run.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (persisted != null)
+        {
+            run.Status = persisted.Status;
+            run.OutputGeneration = persisted.OutputGeneration;
+        }
+        return published;
+    }
+
+    internal static async Task<DocumentEntry?> ReconcilePublishingRunAsync(
+        MongoDbContext db,
+        string runId,
+        DocumentStoreRunOutputLease.LeaseHandle outputLease,
+        CancellationToken cancellationToken)
+    {
+        await outputLease.EnsureHeldAsync(cancellationToken);
+        var marker = await db.DocumentStoreAgentRuns
+            .Find(run => run.Id == runId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (marker == null)
+            return null;
+        if (marker.Status != DocumentStoreRunStatus.Publishing)
+        {
+            return await db.DocumentEntries
+                .Find(entry => entry.Id == marker.SourceEntryId)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        var baseGeneration = marker.OutputGeneration;
+        var nextGeneration = checked(baseGeneration + 1);
+        var entry = await db.DocumentEntries
+            .Find(candidate => candidate.Id == marker.SourceEntryId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (entry == null)
+        {
+            await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                run => run.Id == marker.Id
+                       && run.Status == DocumentStoreRunStatus.Publishing
+                       && run.OutputGeneration == baseGeneration,
+                Builders<DocumentStoreAgentRun>.Update
+                    .Set(run => run.Status, DocumentStoreRunStatus.Failed)
+                    .Set(run => run.Phase, "源录音不存在")
+                    .Set(run => run.ErrorMessage, "源录音已不存在，任务无法继续。")
+                    .Set(run => run.FailureCode, "SOURCE_ENTRY_NOT_FOUND")
+                    .Set(run => run.EndedAt, DateTime.UtcNow),
                 cancellationToken: cancellationToken);
-            if (rollback.ModifiedCount != 1)
+            return null;
+        }
+
+        if (entry.AgentOutputGeneration == baseGeneration)
+        {
+            await outputLease.EnsureHeldAsync(cancellationToken);
+            try
+            {
+                entry = await db.DocumentEntries.FindOneAndUpdateAsync(
+                    Builders<DocumentEntry>.Filter.And(
+                        Builders<DocumentEntry>.Filter.Eq(
+                            candidate => candidate.Id,
+                            marker.SourceEntryId),
+                        Builders<DocumentEntry>.Filter.Eq(
+                            candidate => candidate.AgentOutputGeneration,
+                            baseGeneration)),
+                    Builders<DocumentEntry>.Update.Set(
+                        candidate => candidate.AgentOutputGeneration,
+                        nextGeneration),
+                    new FindOneAndUpdateOptions<DocumentEntry, DocumentEntry>
+                    {
+                        ReturnDocument = ReturnDocument.After,
+                    },
+                    cancellationToken);
+            }
+            catch
+            {
+                entry = await db.DocumentEntries
+                    .Find(candidate => candidate.Id == marker.SourceEntryId)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (entry?.AgentOutputGeneration != nextGeneration)
+                    throw;
+            }
+        }
+
+        if (entry?.AgentOutputGeneration != nextGeneration)
+        {
+            await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                run => run.Id == marker.Id
+                       && run.Status == DocumentStoreRunStatus.Publishing
+                       && run.OutputGeneration == baseGeneration,
+                Builders<DocumentStoreAgentRun>.Update
+                    .Set(run => run.Status, DocumentStoreRunStatus.Failed)
+                    .Set(run => run.Phase, "已有更新的录音任务接管")
+                    .Set(run => run.ErrorMessage, "创建任务的输出代次已失效，不会覆盖更新结果。")
+                    .Set(run => run.FailureCode, "TRANSCRIPTION_RUN_SUPERSEDED")
+                    .Set(run => run.EndedAt, DateTime.UtcNow),
+                cancellationToken: cancellationToken);
+            throw new DocumentStoreRunLeaseLostException(
+                $"任务 {marker.Id} 的创建代次 {nextGeneration} 已被更新任务取代。");
+        }
+
+        await outputLease.EnsureHeldAsync(cancellationToken);
+        var finalized = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            run => run.Id == marker.Id
+                   && run.Status == DocumentStoreRunStatus.Publishing
+                   && run.OutputGeneration == baseGeneration,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(run => run.Status, DocumentStoreRunStatus.Queued)
+                .Set(run => run.Phase, "排队中")
+                .Set(run => run.OutputGeneration, nextGeneration),
+            cancellationToken: cancellationToken);
+        if (finalized.ModifiedCount != 1)
+        {
+            var existing = await db.DocumentStoreAgentRuns
+                .Find(run => run.Id == marker.Id)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (existing?.Status != DocumentStoreRunStatus.Queued
+                || existing.OutputGeneration != nextGeneration)
             {
                 throw new InvalidOperationException(
-                    $"任务 {run.Id} 插入失败，且代次 {generationEntry.AgentOutputGeneration} 回滚失败。",
-                    insertException);
+                    $"任务 {marker.Id} 的创建 marker 尚未完成，等待下轮协调。");
             }
-
-            ExceptionDispatchInfo.Capture(insertException).Throw();
-            throw;
         }
+
+        return entry;
     }
 
     /// <summary>
@@ -255,15 +440,30 @@ internal static class DocumentStoreRunGenerationPublisher
         throw new InvalidOperationException($"任务 {current.Id} 恢复重排未提交，输出代次已安全回滚。");
     }
 
-    private static bool MatchesPublishedRun(
+    private static bool MatchesPublishingMarker(
         DocumentStoreAgentRun? existing,
         DocumentStoreAgentRun expected)
         => existing != null
+           && existing.Id == expected.Id
            && existing.SourceEntryId == expected.SourceEntryId
            && existing.StoreId == expected.StoreId
            && existing.UserId == expected.UserId
            && existing.Kind == expected.Kind
+           && existing.Status == DocumentStoreRunStatus.Publishing
            && existing.OutputGeneration == expected.OutputGeneration;
+
+    private static bool MatchesSameRequest(
+        DocumentStoreAgentRun existing,
+        DocumentStoreAgentRun requested)
+        => existing.SourceEntryId == requested.SourceEntryId
+           && existing.StoreId == requested.StoreId
+           && existing.UserId == requested.UserId
+           && existing.Kind == requested.Kind
+           && existing.OwnerInstanceId == requested.OwnerInstanceId
+           && existing.RestyleOfRunId == requested.RestyleOfRunId
+           && existing.TemplateKey == requested.TemplateKey
+           && existing.CustomPrompt == requested.CustomPrompt
+           && existing.StyleContext == requested.StyleContext;
 
     private static bool MatchesRecoveredRun(
         DocumentStoreAgentRun? existing,
