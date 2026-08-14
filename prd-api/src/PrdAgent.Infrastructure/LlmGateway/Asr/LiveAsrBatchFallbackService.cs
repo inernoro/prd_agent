@@ -224,6 +224,23 @@ public sealed class LiveAsrBatchFallbackService
         for (var index = 0; index < orderedCandidates.Length; index++)
         {
             var candidate = orderedCandidates[index];
+            if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                    candidate.ActualModel,
+                    candidate.Protocol,
+                    candidate.PlatformType,
+                    candidate.OfferingEndpointPath,
+                    candidate.IsExchange,
+                    out var routeError))
+            {
+                _logger.LogError(
+                    "滚动窗口 ASR 拒绝不兼容的 Offering window={Window} offering={Offering} model={Model} endpoint={Endpoint} error={Error}",
+                    windowIndex,
+                    candidate.OfferingId,
+                    candidate.ActualModel,
+                    candidate.OfferingEndpointPath,
+                    routeError);
+                continue;
+            }
             for (var providerAttempt = 1;
                  providerAttempt <= ProviderValidationAttempts;
                  providerAttempt++)
@@ -481,13 +498,8 @@ public sealed class LiveAsrBatchFallbackService
         return BaseRequest(
             candidate,
             requestContext,
-            endpointPath: "/v1/audio/transcriptions",
-            multipartFields: new Dictionary<string, object>
-            {
-                ["model"] = candidate.ActualModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-            },
+            endpointPath: AsrRequestContractPolicy.TranscriptionsEndpoint,
+            multipartFields: AsrRequestContractPolicy.BuildTranscriptionFields(candidate.ActualModel),
             multipartFiles: new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("live-window.wav", wave, "audio/wav"),
@@ -504,6 +516,7 @@ public sealed class LiveAsrBatchFallbackService
     {
         return new GatewayRawRequest
         {
+            RequiredOfferingId = candidate.OfferingId,
             AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
             ModelType = ModelTypes.Asr,
             ExpectedModel = candidate.ActualModel,
@@ -524,21 +537,10 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     private static bool ShouldUseChatAudio(ModelResolutionResult candidate)
-    {
-        var model = candidate.ActualModel?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (model.Contains("whisper", StringComparison.Ordinal) || model.Length == 0)
-            return false;
-        if (!model.Contains("audio", StringComparison.Ordinal)
-            && !model.Contains("gemini", StringComparison.Ordinal))
-            return false;
-
-        var protocol = candidate.Protocol?.Trim().ToLowerInvariant();
-        if (!string.IsNullOrWhiteSpace(protocol) && protocol != "unknown")
-            return protocol is "openai" or "openai-compatible" or "openrouter";
-
-        var platform = candidate.PlatformType?.Trim().ToLowerInvariant();
-        return platform is not ("google" or "gemini" or "anthropic" or "claude" or "exchange");
-    }
+        => AsrRequestContractPolicy.ShouldUseChatAudio(
+            candidate.ActualModel,
+            candidate.Protocol,
+            candidate.PlatformType);
 
     private static byte[] TakePrefix(MemoryStream stream, int count)
     {

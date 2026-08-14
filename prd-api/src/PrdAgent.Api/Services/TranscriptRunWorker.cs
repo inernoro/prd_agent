@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.LlmGateway;
@@ -280,6 +281,9 @@ public class TranscriptRunWorker : BackgroundService
             {
                 return new GatewayRawRequest
                 {
+                    RequiredOfferingId = candidate.OfferingId,
+                    PinnedPlatformId = candidate.ActualPlatformId,
+                    PinnedModelId = candidate.ActualModel,
                     AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
                     ModelType = ModelTypes.Asr,
                     RequestBody = new JsonObject { ["audio_data"] = Convert.ToBase64String(audioBytes) },
@@ -296,6 +300,9 @@ public class TranscriptRunWorker : BackgroundService
                     : $"这是第 {validationAttempt - 1} 次结果校验。必须读取本消息 input_audio 里的 WAV 音频，只输出真实人声原文；禁止要求用户再次提供、上传或播放音频。没有人声时只输出 NO_SPEECH。";
                 return new GatewayRawRequest
                 {
+                    RequiredOfferingId = candidate.OfferingId,
+                    PinnedPlatformId = candidate.ActualPlatformId,
+                    PinnedModelId = candidate.ActualModel,
                     AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
                     ModelType = ModelTypes.Asr,
                     EndpointPath = "/v1/chat/completions",
@@ -332,16 +339,14 @@ public class TranscriptRunWorker : BackgroundService
 
             return new GatewayRawRequest
             {
+                RequiredOfferingId = candidate.OfferingId,
+                PinnedPlatformId = candidate.ActualPlatformId,
+                PinnedModelId = candidate.ActualModel,
                 AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
                 ModelType = ModelTypes.Asr,
-                EndpointPath = "/v1/audio/transcriptions",
+                EndpointPath = AsrRequestContractPolicy.TranscriptionsEndpoint,
                 IsMultipart = true,
-                MultipartFields = new Dictionary<string, object>
-                {
-                    ["model"] = candidate.ActualModel ?? "whisper-1",
-                    ["response_format"] = "verbose_json",
-                    ["timestamp_granularities[]"] = "segment"
-                },
+                MultipartFields = AsrRequestContractPolicy.BuildTranscriptionFields(candidate.ActualModel),
                 MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
                 {
                     ["file"] = ("audio.wav", audioBytes, "audio/wav")
@@ -359,6 +364,26 @@ public class TranscriptRunWorker : BackgroundService
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
             var candidate = candidates[candidateIndex];
+            if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                    candidate.ActualModel,
+                    candidate.Protocol,
+                    candidate.PlatformType,
+                    candidate.OfferingEndpointPath,
+                    candidate.IsExchange,
+                    out var routeError))
+            {
+                rawResp = GatewayRawResponse.Fail(
+                    AsrRequestContractPolicy.InvalidRouteErrorCode,
+                    routeError ?? "ASR Offering 端点与模型协议不兼容",
+                    409);
+                _logger.LogError(
+                    "[transcript-agent] 拒绝不兼容的 ASR Offering: RunId={RunId}, Offering={Offering}, Model={Model}, Endpoint={Endpoint}",
+                    run.Id,
+                    candidate.OfferingId,
+                    candidate.ActualModel,
+                    candidate.OfferingEndpointPath);
+                continue;
+            }
             var candidateIsChatAudio = AsrAudioRoutePolicy.ShouldUseChatAudio(
                 candidate.ActualModel,
                 candidate.Protocol,

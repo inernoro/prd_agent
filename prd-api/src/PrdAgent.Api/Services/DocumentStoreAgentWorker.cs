@@ -23,6 +23,8 @@ public class DocumentStoreAgentWorker : BackgroundService
 
     /// <summary>每 3 秒轮询一次 queued 任务</summary>
     private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan InterruptedRecoveryInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan InterruptedRunStaleAfter = TimeSpan.FromMinutes(1);
 
     public DocumentStoreAgentWorker(
         IServiceScopeFactory scopeFactory,
@@ -36,88 +38,26 @@ public class DocumentStoreAgentWorker : BackgroundService
     {
         _logger.LogInformation("[doc-store-agent] Worker started");
 
-        // 启动兜底回收：上一个容器异常退出（重新部署 / 崩溃 / SIGKILL）时，正在处理的
-        // run 会残留为 Running 状态——此刻已没有任何 worker 在跑它，但前端 getAgentRun
-        // 永远拿到非终态、SSE 续传也收不到 done/error，进度卡片就卡死在「调用 LLM N%」。
-        // 这里把所有残留 Running 标记为失败，让前端刷新后自愈为「加工失败」（server-authority #5）。
-        // 注意：只回收 Running，Queued 留给正常拾取流程，不误杀未开始的任务。
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-            // 只回收【本实例】残留的 Running——共享 Mongo 下，不能把别的分支/主干正在处理的
-            // Running 任务误判成"崩溃残留"标记失败（定向消费，见 InstanceIdentity）。
-            var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-            var instanceId = InstanceIdentity.Get(configuration);
-            var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
-            var ownerScope = LegacyOwnerScope.Build<DocumentStoreAgentRun>(
-                nameof(DocumentStoreAgentRun.OwnerInstanceId),
-                compatibleOwnerIds,
-                includeUnowned: true,
-                retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
-                legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
-            // 回收范围 = 本实例 Running + 历史无主 Running（OwnerInstanceId 空）。
-            // 无主 Running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
-            // 这些 run 的容器一旦退出就永远没人回收、永远卡 running。把无主 Running 一并
-            // 回收是一次性过渡兜底（上线后新 run 认领即打主，不再产生无主 Running）。
-            // 代价：若另一实例此刻正在跑某个无主 Running，会被本实例误判失败——但无主 =
-            // 旧代码遗留，归属本就不可分辨，这个过渡期代价可接受（Bugbot Medium）。
-            var recoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Running),
-                ownerScope);
-            var automaticRetryBudgetFilter = DocumentRecordingArchiveWorker
-                .BuildDeferredTranscriptionAutomaticRetryBudgetFilter();
-            var deferredRecoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
-                recoverFilter,
-                Builders<DocumentStoreAgentRun>.Filter.Eq(
-                    r => r.Kind,
-                    DocumentStoreAgentRunKind.Transcribe),
-                automaticRetryBudgetFilter,
-                Builders<DocumentStoreAgentRun>.Filter.Regex(
-                    r => r.Id,
-                    new MongoDB.Bson.BsonRegularExpression("^recording-archive-transcribe-")));
-            var restartAt = DateTime.UtcNow;
-            var recoveredDeferred = await db.DocumentStoreAgentRuns.UpdateManyAsync(
-                deferredRecoverFilter,
-                Builders<DocumentStoreAgentRun>.Update
-                    .Set(r => r.Status, DocumentStoreRunStatus.Queued)
-                    .Set(r => r.Phase, "服务重启，正在恢复完整录音转录")
-                    .Set(r => r.Progress, 0)
-                    .Set(r => r.ErrorMessage, null)
-                    .Set(r => r.EndedAt, null)
-                    .Set(r => r.StartedAt, null)
-                    .Set(r => r.AutomaticRetryNextAt, null)
-                    .Set(r => r.OwnerInstanceId, instanceId)
-                    .Set(
-                        r => r.AutomaticRetryReason,
-                        DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
-                    .Inc(r => r.AutomaticRetryCount, 1),
-                cancellationToken: CancellationToken.None);
-            var recoveredOther = await db.DocumentStoreAgentRuns.UpdateManyAsync(
-                recoverFilter,
-                Builders<DocumentStoreAgentRun>.Update
-                    .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                    .Set(r => r.OwnerInstanceId, instanceId)
-                    .Set(r => r.ErrorMessage, "服务重启，任务被中断")
-                    .Set(r => r.EndedAt, restartAt),
-                cancellationToken: CancellationToken.None);
-            var recoveredCount = recoveredDeferred.ModifiedCount + recoveredOther.ModifiedCount;
-            if (recoveredCount > 0)
-                _logger.LogWarning(
-                    "[doc-store-agent] 启动兜底：回收 {Count} 个残留 Running 任务",
-                    recoveredCount);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[doc-store-agent] 启动兜底回收失败");
-        }
-
+        var nextInterruptedRecoveryAt = DateTime.MinValue;
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
                 try
                 {
+                    if (DateTime.UtcNow >= nextInterruptedRecoveryAt)
+                    {
+                        nextInterruptedRecoveryAt = DateTime.UtcNow + InterruptedRecoveryInterval;
+                        try
+                        {
+                            await RecoverInterruptedRunsAsync();
+                        }
+                        catch (Exception ex)
+                        {
+                            // 回收是维护路径，单次失败不能阻断正常 queued 任务消费。
+                            _logger.LogError(ex, "[doc-store-agent] Interrupted run recovery failed");
+                        }
+                    }
                     await ProcessNextRunAsync();
                 }
                 catch (Exception ex)
@@ -155,7 +95,9 @@ public class DocumentStoreAgentWorker : BackgroundService
                                 .Set(r => r.Phase, "Worker 关闭，正在恢复完整录音转录")
                                 .Set(r => r.Progress, 0)
                                 .Set(r => r.ErrorMessage, null)
+                                .Set(r => r.FailureCode, null)
                                 .Set(r => r.StartedAt, null)
+                                .Set(r => r.HeartbeatAt, null)
                                 .Set(r => r.EndedAt, null)
                                 .Set(r => r.AutomaticRetryNextAt, null)
                                 .Set(
@@ -170,14 +112,134 @@ public class DocumentStoreAgentWorker : BackgroundService
                         Builders<DocumentStoreAgentRun>.Update
                             .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                             .Set(r => r.ErrorMessage, "Worker 关闭，任务被中断")
+                            .Set(r => r.FailureCode, "WORKER_INTERRUPTED")
                             .Set(r => r.EndedAt, interruptedAt)
+                            .Set(r => r.HeartbeatAt, null)
                             .Set(
                                 r => r.AutomaticRetryNextAt,
-                                null),
+                                null)
+                            .Set(r => r.AutomaticRetryReason, null),
                         cancellationToken: CancellationToken.None);
                 }
                 catch { /* ignore */ }
             }
+        }
+    }
+
+    internal async Task RecoverInterruptedRunsAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var instanceId = InstanceIdentity.Get(configuration);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+        var ownerScope = LegacyOwnerScope.Build<DocumentStoreAgentRun>(
+            nameof(DocumentStoreAgentRun.OwnerInstanceId),
+            compatibleOwnerIds,
+            includeUnowned: true,
+            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+            legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
+        var now = DateTime.UtcNow;
+        var staleAt = now - InterruptedRunStaleAfter;
+        var staleClock = Builders<DocumentStoreAgentRun>.Filter.Or(
+            Builders<DocumentStoreAgentRun>.Filter.Lt(r => r.HeartbeatAt, staleAt),
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.HeartbeatAt, null),
+                Builders<DocumentStoreAgentRun>.Filter.Lt(r => r.StartedAt, staleAt)),
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.HeartbeatAt, null),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StartedAt, null),
+                Builders<DocumentStoreAgentRun>.Filter.Lt(r => r.CreatedAt, staleAt)));
+        var recoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                r => r.Status,
+                DocumentStoreRunStatus.Running),
+            ownerScope,
+            staleClock);
+        var candidates = await db.DocumentStoreAgentRuns
+            .Find(recoverFilter)
+            .Limit(100)
+            .ToListAsync(CancellationToken.None);
+        var recovered = 0;
+        foreach (var candidate in candidates)
+        {
+            IAsyncDisposable? outputLease = null;
+            try
+            {
+                // AutoLink 等知识库级任务没有 SourceEntryId，属于合法模型，不应强行取得条目锁。
+                if (!string.IsNullOrWhiteSpace(candidate.SourceEntryId))
+                {
+                    outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+                        db,
+                        candidate.SourceEntryId,
+                        candidate.Kind,
+                        CancellationToken.None);
+                }
+                var current = await db.DocumentStoreAgentRuns
+                    .Find(Builders<DocumentStoreAgentRun>.Filter.And(
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, candidate.Id),
+                        recoverFilter))
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (current == null) continue;
+
+                UpdateDefinition<DocumentStoreAgentRun> update;
+                if (DocumentRecordingArchiveWorker.HasDeferredTranscriptionAutomaticRetryBudget(current))
+                {
+                    update = Builders<DocumentStoreAgentRun>.Update
+                        .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                        .Set(r => r.Phase, "服务中断，正在恢复完整录音转录")
+                        .Set(r => r.Progress, 0)
+                        .Set(r => r.ErrorMessage, null)
+                        .Set(r => r.FailureCode, null)
+                        .Set(r => r.EndedAt, null)
+                        .Set(r => r.StartedAt, null)
+                        .Set(r => r.HeartbeatAt, null)
+                        .Set(r => r.AutomaticRetryNextAt, null)
+                        .Set(r => r.OwnerInstanceId, instanceId)
+                        .Set(
+                            r => r.AutomaticRetryReason,
+                            DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
+                        .Inc(r => r.AutomaticRetryCount, 1);
+                }
+                else
+                {
+                    update = Builders<DocumentStoreAgentRun>.Update
+                        .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                        .Set(r => r.OwnerInstanceId, instanceId)
+                        .Set(r => r.ErrorMessage, "后台任务已失联，请手动重试；原始内容仍然保留。")
+                        .Set(r => r.FailureCode, "WORKER_INTERRUPTED")
+                        .Set(r => r.HeartbeatAt, null)
+                        .Set(r => r.EndedAt, now)
+                        .Set(r => r.AutomaticRetryNextAt, null)
+                        .Set(r => r.AutomaticRetryReason, null);
+                }
+                var result = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    Builders<DocumentStoreAgentRun>.Filter.And(
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, current.Id),
+                        recoverFilter),
+                    update,
+                    cancellationToken: CancellationToken.None);
+                if (result.ModifiedCount == 1) recovered++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "[doc-store-agent] Interrupted run recovery skipped run {RunId}",
+                    candidate.Id);
+            }
+            finally
+            {
+                if (outputLease != null)
+                    await outputLease.DisposeAsync();
+            }
+        }
+
+        if (recovered > 0)
+        {
+            _logger.LogWarning(
+                "[doc-store-agent] Recovered {Count} heartbeat-stalled run(s)",
+                recovered);
         }
     }
 
@@ -208,6 +270,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                     r => r.AutomaticRetryNextAt,
                     DateTime.UtcNow)),
             ownerScope);
+        var claimedAt = DateTime.UtcNow;
         var update = Builders<DocumentStoreAgentRun>.Update
             .Set(r => r.Status, DocumentStoreRunStatus.Running)
             // 认领时盖上本实例归属：领取历史无主任务后必须打主，否则本实例崩溃重启时
@@ -215,8 +278,10 @@ public class DocumentStoreAgentWorker : BackgroundService
             .Set(r => r.OwnerInstanceId, instanceId)
             .Set(r => r.AutomaticRetryNextAt, null)
             .Set(r => r.ErrorMessage, null)
+            .Set(r => r.FailureCode, null)
             .Set(r => r.EndedAt, null)
-            .Set(r => r.StartedAt, DateTime.UtcNow);
+            .Set(r => r.StartedAt, claimedAt)
+            .Set(r => r.HeartbeatAt, claimedAt);
         var run = await db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
             filter, update,
             new FindOneAndUpdateOptions<DocumentStoreAgentRun>
@@ -230,6 +295,8 @@ public class DocumentStoreAgentWorker : BackgroundService
         _logger.LogInformation("[doc-store-agent] Picked run {RunId} kind={Kind} entry={EntryId}",
             run.Id, run.Kind, run.SourceEntryId);
 
+        using var heartbeatCts = new CancellationTokenSource();
+        var heartbeatTask = MaintainRunHeartbeatAsync(db, run.Id, heartbeatCts.Token);
         try
         {
             var kindForEvents = KindForEvents(run.Kind);
@@ -264,16 +331,25 @@ public class DocumentStoreAgentWorker : BackgroundService
 
             // 读最新状态（processor 可能已经更新了 OutputEntryId 等）
             var finalRun = await db.DocumentStoreAgentRuns.Find(r => r.Id == run.Id).FirstOrDefaultAsync();
-            await db.DocumentStoreAgentRuns.UpdateOneAsync(
-                r => r.Id == run.Id,
+            var completed = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                r => r.Id == run.Id && r.Status == DocumentStoreRunStatus.Running,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Done)
                     .Set(r => r.Phase, "完成")
                     .Set(r => r.Progress, 100)
                     .Set(r => r.AutomaticRetryNextAt, null)
                     .Set(r => r.AutomaticRetryReason, null)
+                    .Set(r => r.FailureCode, null)
+                    .Set(r => r.HeartbeatAt, null)
                     .Set(r => r.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
+            if (completed.ModifiedCount == 0)
+            {
+                _logger.LogWarning(
+                    "[doc-store-agent] Run {RunId} lost its lease before completion; terminal write skipped",
+                    run.Id);
+                return;
+            }
 
             if (run.Kind == DocumentStoreAgentRunKind.Transcribe)
             {
@@ -305,18 +381,40 @@ public class DocumentStoreAgentWorker : BackgroundService
 
             _logger.LogInformation("[doc-store-agent] Run {RunId} done", run.Id);
         }
+        catch (DocumentStoreRunLeaseLostException)
+        {
+            _logger.LogWarning(
+                "[doc-store-agent] Run {RunId} was superseded while processing; stale output was not written",
+                run.Id);
+            var supersededAt = DateTime.UtcNow;
+            var superseded = await TryMarkSupersededAsync(
+                db.DocumentStoreAgentRuns,
+                run.Id,
+                supersededAt,
+                CancellationToken.None);
+            if (superseded)
+            {
+                await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "error", new
+                {
+                    message = "这次后台转录已由更新的任务接管，旧任务不会覆盖新结果。",
+                });
+            }
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[doc-store-agent] Run {RunId} failed", run.Id);
-            var userMessage = ex is SubtitleAsrException
+            var transcriptionFailure = ex is SubtitleAsrException
                 || run.Kind == DocumentStoreAgentRunKind.Transcribe
                 || run.Kind == DocumentStoreAgentRunKind.Subtitle
-                ? AudioTranscriptionUserError.FromException(ex)
-                : "内容处理暂时失败。请稍后重试；已上传的原始内容仍会保留。";
-
+                ? AudioTranscriptionUserError.Classify(ex)
+                : null;
             var failedAt = DateTime.UtcNow;
             var willRetry = DocumentRecordingArchiveWorker
-                .HasDeferredTranscriptionAutomaticRetryBudget(run);
+                .HasDeferredTranscriptionAutomaticRetryBudget(run)
+                && (transcriptionFailure?.AutomaticRetryAllowed ?? true);
+            var userMessage = transcriptionFailure is null
+                ? "内容处理暂时失败。请稍后重试；已上传的原始内容仍会保留。"
+                : AudioTranscriptionUserError.ForRetryOutcome(transcriptionFailure, willRetry);
             UpdateDefinition<DocumentStoreAgentRun> failedUpdate;
             DateTime? retryAt = null;
             if (willRetry)
@@ -328,7 +426,9 @@ public class DocumentStoreAgentWorker : BackgroundService
                     .Set(r => r.Phase, "转录暂时不可用，等待自动重试")
                     .Set(r => r.Progress, 0)
                     .Set(r => r.ErrorMessage, null)
+                    .Set(r => r.FailureCode, null)
                     .Set(r => r.StartedAt, null)
+                    .Set(r => r.HeartbeatAt, null)
                     .Set(r => r.EndedAt, null)
                     .Set(
                         r => r.AutomaticRetryNextAt,
@@ -343,15 +443,24 @@ public class DocumentStoreAgentWorker : BackgroundService
                 failedUpdate = Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                     .Set(r => r.ErrorMessage, userMessage)
+                    .Set(r => r.FailureCode, transcriptionFailure?.Code)
+                    .Set(r => r.HeartbeatAt, null)
                     .Set(r => r.EndedAt, failedAt)
                     .Set(r => r.AutomaticRetryNextAt, null)
                     .Set(r => r.AutomaticRetryReason, null);
             }
 
-            await db.DocumentStoreAgentRuns.UpdateOneAsync(
-                r => r.Id == run.Id,
+            var failedWrite = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                r => r.Id == run.Id && r.Status == DocumentStoreRunStatus.Running,
                 failedUpdate,
                 cancellationToken: CancellationToken.None);
+            if (failedWrite.ModifiedCount == 0)
+            {
+                _logger.LogWarning(
+                    "[doc-store-agent] Run {RunId} lost its lease before failure persistence; stale outbox and events skipped",
+                    run.Id);
+                return;
+            }
 
             if (!willRetry && run.Kind == DocumentStoreAgentRunKind.Transcribe)
             {
@@ -395,8 +504,58 @@ public class DocumentStoreAgentWorker : BackgroundService
         }
         finally
         {
+            heartbeatCts.Cancel();
+            try { await heartbeatTask; }
+            catch (OperationCanceledException) { }
             _currentRunId = null;
         }
+    }
+
+    private static async Task MaintainRunHeartbeatAsync(
+        MongoDbContext db,
+        string runId,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
+            try
+            {
+                await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    r => r.Id == runId && r.Status == DocumentStoreRunStatus.Running,
+                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.HeartbeatAt, DateTime.UtcNow),
+                    cancellationToken: cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Mongo 短暂抖动不能让心跳协程反向击穿业务任务；下一轮会继续续租。
+            }
+        }
+    }
+
+    internal static async Task<bool> TryMarkSupersededAsync(
+        IMongoCollection<DocumentStoreAgentRun> runs,
+        string runId,
+        DateTime supersededAt,
+        CancellationToken cancellationToken)
+    {
+        var result = await runs.UpdateOneAsync(
+            r => r.Id == runId && r.Status == DocumentStoreRunStatus.Running,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                .Set(r => r.Phase, "已有更新的录音任务接管")
+                .Set(r => r.ErrorMessage, "这次后台转录已由更新的任务接管，旧任务不会覆盖新结果。")
+                .Set(r => r.FailureCode, "TRANSCRIPTION_RUN_SUPERSEDED")
+                .Set(r => r.HeartbeatAt, null)
+                .Set(r => r.EndedAt, supersededAt)
+                .Set(r => r.AutomaticRetryNextAt, null)
+                .Set(r => r.AutomaticRetryReason, null),
+            cancellationToken: cancellationToken);
+        return result.ModifiedCount == 1;
     }
 
     /// <summary>Run kind → IRunEventStore 事件 kind 的映射（Controller 的 SSE 端点用同一映射）。</summary>
@@ -424,3 +583,6 @@ public class DocumentStoreAgentWorker : BackgroundService
         catch { /* 事件失败不阻塞主流程 */ }
     }
 }
+
+internal sealed class DocumentStoreRunLeaseLostException(string runId)
+    : InvalidOperationException($"Document store run lease lost: {runId}");

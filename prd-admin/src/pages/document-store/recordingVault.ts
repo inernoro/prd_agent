@@ -134,17 +134,223 @@ export function enqueueBackgroundTranscriptionRun(
   return [...current, normalized];
 }
 
+export interface BackgroundTranscriptionSource {
+  entryId: string;
+  vaultSessionId?: string;
+}
+
+/**
+ * 将抽屉异步返回的 runId 与条目绑定。entry 和 runId 无论谁先返回，调用方都可在
+ * 第二个值到达时补齐映射，后台看护因而始终能够按 entry 查询服务端最新任务。
+ */
+export function bindBackgroundTranscriptionSource(
+  sources: Map<string, BackgroundTranscriptionSource>,
+  runId: string | null | undefined,
+  source: BackgroundTranscriptionSource | null | undefined,
+): boolean {
+  const normalizedRunId = runId?.trim();
+  const normalizedEntryId = source?.entryId.trim();
+  if (!normalizedRunId || !source || !normalizedEntryId) return false;
+  sources.set(normalizedRunId, { ...source, entryId: normalizedEntryId });
+  return true;
+}
+
 /**
  * 刷新或重新进入录音结果页时，根据服务端最近一次 run 恢复后台看护。
  * 只接管真正处于在途状态的任务，终态 run 不应让页面永久显示“处理中”。
  */
 export function recoverableBackgroundTranscriptionRunId(
-  run: { id?: string | null; status?: string | null } | null | undefined,
+  run: {
+    id?: string | null;
+    status?: string | null;
+    heartbeatAt?: string | null;
+    startedAt?: string | null;
+    createdAt?: string | null;
+    automaticRetryNextAt?: string | null;
+  } | null | undefined,
+  nowMs = Date.now(),
 ): string | null {
   const runId = run?.id?.trim();
   const status = run?.status?.trim().toLowerCase();
   if (!runId || (status !== 'queued' && status !== 'running')) return null;
+  if (isStalledBackgroundTranscriptionRun(run, nowMs)) return null;
   return runId;
+}
+
+export const BACKGROUND_TRANSCRIPTION_STALLED_MS = 60 * 60 * 1000;
+
+/** Worker 超过一小时没有心跳，不能继续向用户保证它仍会自行完成。 */
+export function isStalledBackgroundTranscriptionRun(
+  run: {
+    status?: string | null;
+    heartbeatAt?: string | null;
+    startedAt?: string | null;
+    createdAt?: string | null;
+    automaticRetryNextAt?: string | null;
+  } | null | undefined,
+  nowMs = Date.now(),
+): boolean {
+  const status = run?.status?.trim().toLowerCase();
+  if (status !== 'queued' && status !== 'running') return false;
+  // 定时自动重试的 queued run 以实际计划时间为基准。CreatedAt 可能是数小时前，
+  // 不能在退避窗口尚未到达时把一条合法任务误判成失联。
+  const timestamp = Date.parse(
+    status === 'queued' && run?.automaticRetryNextAt
+      ? run.automaticRetryNextAt
+      : run?.heartbeatAt ?? run?.startedAt ?? run?.createdAt ?? '',
+  );
+  return Number.isFinite(timestamp) && nowMs - timestamp > BACKGROUND_TRANSCRIPTION_STALLED_MS;
+}
+
+/** 直查失败时只接受同一 runId 的条目最新任务，避免永久等待或串到后来新建的任务。 */
+export function selectObservedBackgroundTranscriptionRun<T extends {
+  id?: string | null;
+  status?: string | null;
+}>(
+  runId: string,
+  directRun: T | null | undefined,
+  latestEntryRun: T | null | undefined,
+): T | null {
+  const latestStatus = latestEntryRun?.status?.trim().toLowerCase();
+  if (latestEntryRun?.id === runId
+      && (latestStatus === 'done' || latestStatus === 'failed' || latestStatus === 'cancelled')) {
+    return latestEntryRun;
+  }
+  if (directRun) return directRun;
+  return latestEntryRun?.id === runId ? latestEntryRun : null;
+}
+
+export type BackgroundRunLookupDecision<T> =
+  | { kind: 'observe'; run: T }
+  | { kind: 'keep-watching' }
+  | {
+      kind: 'retire-watcher';
+      reason: 'access-lost' | 'run-missing' | 'superseded' | 'lookup-unavailable' | 'stalled-run';
+      replacementRun: T | null;
+    };
+
+const PERMANENT_RUN_LOOKUP_ERRORS = new Set([
+  'UNAUTHORIZED',
+  'PERMISSION_DENIED',
+  'FORBIDDEN',
+  'NOT_FOUND',
+  'RUN_NOT_FOUND',
+  'AGENT_RUN_NOT_FOUND',
+]);
+
+/**
+ * 后台任务看护的收敛决策。旧 run 已删除、权限已变化或已被同条目的新 run 取代时，
+ * 必须撤销旧 watcher；临时网络错误最多保留有限轮次，避免“后台处理中”永久挂住。
+ */
+export function decideBackgroundRunLookup<T extends {
+  id?: string | null;
+  status?: string | null;
+  heartbeatAt?: string | null;
+  startedAt?: string | null;
+  createdAt?: string | null;
+}>(args: {
+  runId: string;
+  directRun: T | null | undefined;
+  directErrorCode?: string | null;
+  latestEntryRun: T | null | undefined;
+  latestLookupSucceeded: boolean;
+  consecutiveFailures: number;
+  maxTransientFailures?: number;
+  nowMs?: number;
+}): BackgroundRunLookupDecision<T> {
+  const latestId = args.latestEntryRun?.id?.trim();
+  // 同一条目已经有更新的任务时，即使旧 run 仍能直查到 running，也必须撤销旧看护。
+  if (args.latestLookupSucceeded && latestId && latestId !== args.runId) {
+    return { kind: 'retire-watcher', reason: 'superseded', replacementRun: args.latestEntryRun ?? null };
+  }
+  const observed = selectObservedBackgroundTranscriptionRun(
+    args.runId,
+    args.directRun,
+    args.latestEntryRun,
+  );
+  if (observed) {
+    if (isStalledBackgroundTranscriptionRun(observed, args.nowMs)) {
+      return { kind: 'retire-watcher', reason: 'stalled-run', replacementRun: null };
+    }
+    return { kind: 'observe', run: observed };
+  }
+
+  const code = args.directErrorCode?.trim().toUpperCase() ?? '';
+  if (code === 'UNAUTHORIZED' || code === 'PERMISSION_DENIED' || code === 'FORBIDDEN') {
+    return { kind: 'retire-watcher', reason: 'access-lost', replacementRun: null };
+  }
+  if (PERMANENT_RUN_LOOKUP_ERRORS.has(code)) {
+    return { kind: 'retire-watcher', reason: 'run-missing', replacementRun: null };
+  }
+
+  const maxFailures = Math.max(1, args.maxTransientFailures ?? 12);
+  if (args.consecutiveFailures >= maxFailures) {
+    return { kind: 'retire-watcher', reason: 'lookup-unavailable', replacementRun: null };
+  }
+  return { kind: 'keep-watching' };
+}
+
+export type BackgroundTranscriptionBannerCopy = { title: string; detail: string };
+
+/** 当前失败条目与其他在途录音分开表述，禁止同屏看起来既失败又处理中。 */
+export function describeBackgroundTranscriptionBanner(args: {
+  selectedEntryId?: string | null;
+  selectedHasFailure: boolean;
+  runs: Array<{ entryId?: string | null; title?: string | null }>;
+}): BackgroundTranscriptionBannerCopy | null {
+  if (args.runs.length === 0) return null;
+  const selectedId = args.selectedEntryId?.trim();
+  const currentIsRunning = !args.selectedHasFailure
+    && Boolean(selectedId)
+    && args.runs.some((run) => run.entryId === selectedId);
+  const titles = args.runs
+    .map((run) => run.title?.trim())
+    .filter((title): title is string => Boolean(title));
+  const uniqueTitles = [...new Set(titles)];
+  const titleList = uniqueTitles.slice(0, 2).map((title) => `“${title}”`).join('、');
+  const overflow = uniqueTitles.length > 2 ? `等 ${args.runs.length} 条录音` : '';
+
+  if (args.selectedHasFailure) {
+    return {
+      title: `其他录音正在后台处理${args.runs.length > 1 ? `（${args.runs.length} 条）` : ''}`,
+      detail: titleList
+        ? `${titleList}${overflow}仍在继续；当前录音已经失败，可单独点击重试。`
+        : `知识库中另有 ${args.runs.length} 条录音仍在继续；当前录音已经失败，可单独点击重试。`,
+    };
+  }
+  if (currentIsRunning) {
+    return {
+      title: args.runs.length > 1 ? `当前录音和另外 ${args.runs.length - 1} 条正在后台处理` : '当前录音正在后台处理',
+      detail: '已恢复进度看护，完成后本页会自动更新；可以继续查看其他内容。',
+    };
+  }
+  return {
+    title: `其他录音正在后台处理${args.runs.length > 1 ? `（${args.runs.length} 条）` : ''}`,
+    detail: titleList
+      ? `${titleList}${overflow}仍在继续，完成后本页会自动更新。`
+      : `知识库中另有 ${args.runs.length} 条录音仍在继续，完成后本页会自动更新。`,
+  };
+}
+
+/** 串行轮询器：只有上一轮 Promise 完成后才安排下一轮，慢请求不会叠出并发风暴。 */
+export function startSerialBackgroundPoller(
+  poll: () => Promise<void>,
+  delayMs: number,
+): () => void {
+  let stopped = false;
+  let timer: number | null = null;
+  const tick = async () => {
+    try {
+      await poll();
+    } finally {
+      if (!stopped) timer = globalThis.setTimeout(() => { void tick(); }, delayMs) as unknown as number;
+    }
+  };
+  timer = globalThis.setTimeout(() => { void tick(); }, delayMs) as unknown as number;
+  return () => {
+    stopped = true;
+    if (timer !== null) globalThis.clearTimeout(timer);
+  };
 }
 
 /**
@@ -157,13 +363,20 @@ export function recoverableBackgroundTranscriptionRunId(
  * 只认失败态；诊断块（后端追加的 [diagnostic] JSON）给的是排障细节，不是给用户看的，截掉。
  */
 export function describeFailedTranscription(
-  run: { status?: string | null; errorMessage?: string | null; updatedAt?: string | null; createdAt?: string | null } | null | undefined,
+  run: {
+    status?: string | null;
+    errorMessage?: string | null;
+    failureCode?: string | null;
+    endedAt?: string | null;
+    updatedAt?: string | null;
+    createdAt?: string | null;
+  } | null | undefined,
 ): { reason: string; at: string | null } | null {
   if (run?.status?.trim().toLowerCase() !== 'failed') return null;
   const raw = (run.errorMessage ?? '').split('[diagnostic]')[0].trim();
   return {
     reason: raw || '转录失败，原因未知',
-    at: (run.updatedAt ?? run.createdAt ?? null),
+    at: (run.endedAt ?? run.updatedAt ?? run.createdAt ?? null),
   };
 }
 

@@ -180,6 +180,7 @@ public class LiveAsrProtocolTests
         var candidate = new ModelResolutionResult
         {
             Success = true,
+            OfferingId = "offering-live-primary",
             ActualPlatformId = "openrouter",
             ActualPlatformName = "OpenRouter",
             ActualModel = "openai/gpt-audio",
@@ -249,6 +250,7 @@ public class LiveAsrProtocolTests
         gateway.Verify(x => x.SendRawWithResolutionAsync(
             It.Is<GatewayRawRequest>(request =>
                 request.EndpointPath == "/v1/chat/completions"
+                && request.RequiredOfferingId == "offering-live-primary"
                 && request.RequestBody != null
                 && request.Context != null
                 && request.Context.TenantId == "tenant-external"

@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.LlmGateway;
 
@@ -258,25 +259,56 @@ public class VideoToDocRunWorker : BackgroundService
             return (new List<TranscriptSegment>(), "unknown");
         }
 
+        if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                asrResolution.ActualModel,
+                asrResolution.Protocol,
+                asrResolution.PlatformType,
+                asrResolution.OfferingEndpointPath,
+                asrResolution.IsExchange,
+                out var routeError))
+        {
+            _logger.LogError(
+                "VideoToDoc ASR Offering 契约不兼容，拒绝发送: runId={RunId}, offering={Offering}, error={Error}",
+                run.Id,
+                asrResolution.OfferingId,
+                routeError);
+            return (new List<TranscriptSegment>(), "unknown");
+        }
+
         var audioBytes = await File.ReadAllBytesAsync(audioPath);
+        var useChatAudio = AsrRequestContractPolicy.ShouldUseChatAudio(
+            asrResolution.ActualModel,
+            asrResolution.Protocol,
+            asrResolution.PlatformType);
 
         var rawRequest = new GatewayRawRequest
         {
+            RequiredOfferingId = asrResolution.OfferingId,
+            PinnedPlatformId = asrResolution.ActualPlatformId,
+            PinnedModelId = asrResolution.ActualModel,
             AppCallerCode = AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
             ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/audio/transcriptions",
-            MultipartFields = new Dictionary<string, object>
-            {
-                // model 字段由 Gateway 根据 ASR 模型池调度结果自动替换
-                ["model"] = "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = run.Language == "auto" ? "" : run.Language
-            },
-            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
-            {
-                ["file"] = ("audio.wav", audioBytes, "audio/wav")
-            },
+            EndpointPath = useChatAudio
+                ? AsrRequestContractPolicy.ChatCompletionsEndpoint
+                : AsrRequestContractPolicy.TranscriptionsEndpoint,
+            IsMultipart = !useChatAudio,
+            RequestBody = useChatAudio
+                ? AsrRequestContractPolicy.BuildChatAudioBody(
+                    asrResolution.ActualModel,
+                    audioBytes,
+                    "请逐字转写这段视频音轨，只输出音频中真实说出的话，不要解释。没有人声时只输出 NO_SPEECH。")
+                : null,
+            MultipartFields = useChatAudio
+                ? null
+                : AsrRequestContractPolicy.BuildTranscriptionFields(
+                    asrResolution.ActualModel,
+                    run.Language == "auto" ? null : run.Language),
+            MultipartFiles = useChatAudio
+                ? null
+                : new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                {
+                    ["file"] = ("audio.wav", audioBytes, "audio/wav")
+                },
             TimeoutSeconds = 600, // 长音频可能需要较长时间
             Context = new GatewayRequestContext { UserId = run.OwnerAdminId }
         };
@@ -306,7 +338,9 @@ public class VideoToDocRunWorker : BackgroundService
 
         if (rawResp?.Success == true && rawResp.Content != null)
         {
-            return ParseWhisperResponse(rawResp.Content);
+            return useChatAudio
+                ? ParseChatAudioResponse(rawResp.Content)
+                : ParseWhisperResponse(rawResp.Content);
         }
 
         // 降级方案：ASR 模型池未配置或不可用时，仅依赖关键帧视觉分析
@@ -337,11 +371,37 @@ public class VideoToDocRunWorker : BackgroundService
                 }
             }
 
+            if (segments.Count == 0)
+            {
+                var compactText = AsrResponseContractPolicy.ExtractCompactTranscript(json);
+                if (compactText is not null)
+                    segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = compactText });
+            }
+
             return (segments, lang);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "VideoToDoc 解析 Whisper 响应失败");
+            return (new List<TranscriptSegment>(), "unknown");
+        }
+    }
+
+    private (List<TranscriptSegment> segments, string language) ParseChatAudioResponse(string json)
+    {
+        try
+        {
+            var text = AsrResponseContractPolicy.ExtractCompactTranscript(json);
+            if (text is null) return (new List<TranscriptSegment>(), "unknown");
+
+            return (new List<TranscriptSegment>
+            {
+                new() { Start = 0, End = 0, Text = text },
+            }, "unknown");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "VideoToDoc 解析 chat 音频响应失败");
             return (new List<TranscriptSegment>(), "unknown");
         }
     }

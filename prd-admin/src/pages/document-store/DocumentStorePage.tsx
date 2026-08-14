@@ -178,12 +178,17 @@ import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { RecordAudioSheet } from './RecordAudioSheet';
 import {
   decideUploadedRecordingFollowUp,
+  decideBackgroundRunLookup,
+  bindBackgroundTranscriptionSource,
+  describeBackgroundTranscriptionBanner,
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
   recoverableBackgroundTranscriptionRunId,
+  isStalledBackgroundTranscriptionRun,
   describeFailedTranscription,
   shouldRetryVaultServerCompletion,
+  startSerialBackgroundPoller,
   vaultClearServerCompletion,
   vaultDeleteSession,
   vaultListSessions,
@@ -1207,7 +1212,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [bgTranscribeRunIds, setBgTranscribeRunIds] = useState<string[]>([]);
   const revealCompletedTranscribeRunsRef = useRef(new Set<string>());
   const recordingVaultByEntryIdRef = useRef(new Map<string, string>());
-  const recordingRunSourceRef = useRef(new Map<string, { entryId: string; vaultSessionId: string }>());
+  const recordingRunSourceRef = useRef(new Map<string, { entryId: string; vaultSessionId?: string }>());
+  // 抽屉回调存在 entry 先创建、runId 后返回的合法时序；不能只在两个值同时存在时建映射。
+  const latestTranscribeSourceRef = useRef<{ entryId: string; vaultSessionId?: string } | null>(null);
+  useEffect(() => {
+    latestTranscribeSourceRef.current = transcribeFlow?.entryId
+      ? {
+          entryId: transcribeFlow.entryId,
+          ...(transcribeFlow.vaultSessionId ? { vaultSessionId: transcribeFlow.vaultSessionId } : {}),
+        }
+      : null;
+  }, [transcribeFlow?.entryId, transcribeFlow?.vaultSessionId]);
   const localRecordingPlaybackUrlsRef = useRef(new Map<string, string>());
   const localRecordingPlaybackLoadsRef = useRef(new Map<string, Promise<string | null>>());
   const resolveLocalRecordingPlaybackUrl = useCallback(async (
@@ -1269,17 +1284,25 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     let recovered = false;
     const recover = async () => {
       if (cancelled || recovered) return;
-      const res = await getLatestAgentRun(entryId, 'transcribe');
+      const res = await getLatestAgentRun(entryId, 'transcribe', { ownUserOnly: true });
       if (cancelled || !res.success) return;
       // getAgentRun 只允许读取自己发起的任务；团队库里若最近一次在途 run 属于
       // 其他协作者，不能把它加入当前用户的轮询队列，否则 404 会让提示永久不消失。
       if (!currentUserId || res.data?.userId !== currentUserId) return;
+      if (isStalledBackgroundTranscriptionRun(res.data)) {
+        setTranscribeFailure({
+          reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
+          at: res.data.heartbeatAt ?? res.data.startedAt ?? res.data.createdAt ?? null,
+        });
+        return;
+      }
       // 失败态在这里落地：在途 run 有下面的看护、成功 run 会长出笔记，
       // 只有失败 run 两头不沾，不接住就等于「跑过但界面装作没跑过」。
       setTranscribeFailure(describeFailedTranscription(res.data));
       const runId = recoverableBackgroundTranscriptionRunId(res.data);
       if (!runId) return;
       recovered = true;
+      recordingRunSourceRef.current.set(runId, { entryId });
       watchBackgroundTranscription(runId);
     };
     void recover();
@@ -1680,47 +1703,122 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, [loadEntries]);
 
   // 「后台运行」看护：轮询在途转录 run 到终态 → 刷新列表 + toast 告知结果
+  const backgroundRunPollFailuresRef = useRef(new Map<string, number>());
   useEffect(() => {
     if (bgTranscribeRunIds.length === 0) return;
     let cancelled = false;
-    const timer = window.setInterval(async () => {
+    const handledRunIds = new Set<string>();
+    const poll = async () => {
       for (const runId of bgTranscribeRunIds) {
+        if (handledRunIds.has(runId)) continue;
         const res = await getAgentRun(runId);
-        if (cancelled || !res.success) continue;
-        const st = res.data.status;
+        if (cancelled) continue;
+        let latestRun: Awaited<ReturnType<typeof getLatestAgentRun>>['data'] = null;
+        let latestLookupSucceeded = false;
+        // 直接按 runId 读取可能因团队库发起人不同或短暂路由错误失败；不能因此让
+        // “后台处理中”永久留在页面。用源 entry 的服务端最新 run 做同 ID 交叉确认。
+        const source = recordingRunSourceRef.current.get(runId);
+        // 即使旧 run 仍可直查到 running，也要对照同条目的最新 own run；共享 Mongo
+        // 允许不同部署各建任务，旧 owner 下线后旧 run 可能永远不变终态。
+        if (source) {
+          const latest = await getLatestAgentRun(
+            source.entryId,
+            'transcribe',
+            { ownUserOnly: true },
+          );
+          latestLookupSucceeded = latest.success;
+          latestRun = latest.success ? latest.data : null;
+        }
+        const failureCount = res.success
+          ? 0
+          : (backgroundRunPollFailuresRef.current.get(runId) ?? 0) + 1;
+        const decision = decideBackgroundRunLookup({
+          runId,
+          directRun: res.success ? res.data : null,
+          directErrorCode: res.success ? null : res.error.code,
+          latestEntryRun: latestRun,
+          latestLookupSucceeded,
+          consecutiveFailures: failureCount,
+        });
+        if (decision.kind === 'keep-watching') {
+          backgroundRunPollFailuresRef.current.set(runId, failureCount);
+          continue;
+        }
+        backgroundRunPollFailuresRef.current.delete(runId);
+        if (decision.kind === 'retire-watcher') {
+          handledRunIds.add(runId);
+          const recordingSource = recordingRunSourceRef.current.get(runId);
+          recordingRunSourceRef.current.delete(runId);
+          revealCompletedTranscribeRunsRef.current.delete(runId);
+          setBgTranscribeRunIds(current => current.filter(id => id !== runId));
+          if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
+
+          const replacementRunId = recoverableBackgroundTranscriptionRunId(decision.replacementRun);
+          if (replacementRunId && recordingSource) {
+            recordingRunSourceRef.current.set(replacementRunId, recordingSource);
+            watchBackgroundTranscription(replacementRunId);
+          } else if (decision.replacementRun?.status === 'failed'
+              && recordingSource?.entryId === selectedEntryIdRef.current) {
+            setTranscribeFailure(describeFailedTranscription(decision.replacementRun));
+          }
+
+          if (decision.reason === 'access-lost') {
+            toast.error('录音状态看护已停止', '登录状态或访问权限已变化，请刷新页面后重试');
+          } else if (decision.reason === 'lookup-unavailable') {
+            toast.error('暂时无法确认录音状态', '已停止持续等待；录音仍保留，请刷新页面或点击重试');
+          } else if (decision.reason === 'stalled-run') {
+            if (recordingSource?.entryId === selectedEntryIdRef.current) {
+              const staleRun = res.success ? res.data : latestRun;
+              setTranscribeFailure({
+                reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
+                at: staleRun?.heartbeatAt ?? staleRun?.startedAt ?? staleRun?.createdAt ?? null,
+              });
+            }
+            toast.error('录音任务超过一小时未报告状态', '已停止等待旧任务；录音仍保留，可以点击重试');
+          }
+          void loadEntries();
+          continue;
+        }
+        const observedRun = decision.run;
+        const st = observedRun.status;
         if (st !== 'done' && st !== 'failed' && st !== 'cancelled') continue;
+        handledRunIds.add(runId);
         const recordingSource = recordingRunSourceRef.current.get(runId);
         recordingRunSourceRef.current.delete(runId);
         // 只有转录真正完成才证明云端归档已经可供后续消费。失败或取消时继续保留
         // 本地保险音频，避免后台任务失败反而让用户失去唯一可播放副本。
         if (recordingSource && st === 'done') {
           recordingVaultByEntryIdRef.current.delete(recordingSource.entryId);
-          void vaultDeleteSession(recordingSource.vaultSessionId);
+          if (recordingSource.vaultSessionId) void vaultDeleteSession(recordingSource.vaultSessionId);
         }
         setBgTranscribeRunIds(current => current.filter(id => id !== runId));
         if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
         void loadEntries();
         if (st === 'done') {
           const shouldReveal = revealCompletedTranscribeRunsRef.current.delete(runId);
-          if (shouldReveal && res.data.outputEntryId) {
-            setSelectedEntryId(res.data.outputEntryId);
+          if (shouldReveal && observedRun.outputEntryId) {
+            setSelectedEntryId(observedRun.outputEntryId);
             toast.success('录音转录完成', '已打开录音原文');
           } else {
             toast.success('录音转录完成', '录音原文已保存');
           }
         } else if (st === 'failed') {
           revealCompletedTranscribeRunsRef.current.delete(runId);
-          toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
+          toast.error('录音转录失败', (observedRun.errorMessage ?? '').split('\n')[0] || '请重试');
           // 失败说明也要落到常驻的失败卡上，不能只弹一条会自己消失的 toast。
           // 只有 toast 的话，它消失之后页面又变回「跑过但装作没跑过」——正是这张卡要治的病；
           // 原先只有「重新选中条目 / 刷新页面」那条恢复路径才会填这个 state。
-          if (res.data.sourceEntryId && res.data.sourceEntryId === selectedEntryIdRef.current) {
-            setTranscribeFailure(describeFailedTranscription(res.data));
+          if (observedRun.sourceEntryId && observedRun.sourceEntryId === selectedEntryIdRef.current) {
+            setTranscribeFailure(describeFailedTranscription(observedRun));
           }
         }
       }
-    }, 5000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    };
+    const stopPolling = startSerialBackgroundPoller(poll, 5000);
+    return () => {
+      cancelled = true;
+      stopPolling();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bgTranscribeRunIds]);
 
@@ -2171,6 +2269,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const syncButtonTitle = syncEstablished
     ? `同步面板：与「${store.peerSyncNodeName ?? '对端'}」的同步关系、立即同步、自动同步与记录`
     : '同步面板：选择方向（发送 / 拉回 / 双向）建立与对端节点的同步关系';
+  const backgroundTranscriptionBanner = describeBackgroundTranscriptionBanner({
+    selectedEntryId,
+    selectedHasFailure: Boolean(transcribeFailure),
+    runs: bgTranscribeRunIds.map((runId) => {
+      const source = recordingRunSourceRef.current.get(runId);
+      return {
+        entryId: source?.entryId,
+        title: source ? entries.find((entry) => entry.id === source.entryId)?.title : null,
+      };
+    }),
+  });
 
   return (
     <div className="h-full min-h-0 flex flex-col overflow-hidden"
@@ -2442,7 +2551,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       {/* 左右分栏文档浏览器 —— 与上方 TabBar 左右边缘对齐（不再额外 px-5 内缩，
           消除左上角空白竖条）；仅留 pt-3 作为与标题栏的视觉间距 */}
       <div className="flex-1 min-h-0 flex flex-col pt-3">
-        {bgTranscribeRunIds.length > 0 && !transcribeFlow && (
+        {backgroundTranscriptionBanner && !transcribeFlow && (
           <div
             role="status"
             aria-live="polite"
@@ -2451,10 +2560,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             <div className="mt-0.5 shrink-0"><MapSpinner size={16} /></div>
             <div className="min-w-0">
               <p className="text-[12px] font-semibold text-token-primary">
-                后台正在处理{bgTranscribeRunIds.length > 1 ? ` ${bgTranscribeRunIds.length} 条` : ''}录音
+                {backgroundTranscriptionBanner.title}
               </p>
               <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
-                已恢复进度看护，通常需要几十秒至数分钟；完成后本页会自动更新，可以继续查看其他内容。
+                {backgroundTranscriptionBanner.detail}
               </p>
             </div>
           </div>
@@ -2771,9 +2880,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 );
               }
               if (followUp.kind === 'watch-deferred-run') {
-                if (archivePending) {
-                  recordingRunSourceRef.current.set(followUp.runId, { entryId: entry.id, vaultSessionId });
-                }
+                recordingRunSourceRef.current.set(followUp.runId, { entryId: entry.id, vaultSessionId });
                 if (!archivePending) {
                   toast.info(
                     '录音已安全保存',
@@ -2836,10 +2943,27 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setTranscribeFlow(null);
               transcribeFlowOpenRef.current = false;
               // 「后台运行」：run 仍在途 → 页面接手看护（轮询到终态刷新列表）
-              if (transcribeRunRef.current) watchBackgroundTranscription(transcribeRunRef.current);
+              if (transcribeRunRef.current) {
+                const runId = transcribeRunRef.current;
+                const source = latestTranscribeSourceRef.current;
+                bindBackgroundTranscriptionSource(recordingRunSourceRef.current, runId, source);
+                watchBackgroundTranscription(runId);
+              }
             }}
             onEntryCreated={(entry) => {
               if ((transcribeFlow.storeId || storeId) === storeId) setEntries(prev => [entry, ...prev]);
+              const source = {
+                entryId: entry.id,
+                ...(transcribeFlow?.vaultSessionId ? { vaultSessionId: transcribeFlow.vaultSessionId } : {}),
+              };
+              latestTranscribeSourceRef.current = source;
+              if (transcribeRunRef.current) {
+                bindBackgroundTranscriptionSource(
+                  recordingRunSourceRef.current,
+                  transcribeRunRef.current,
+                  source,
+                );
+              }
               // 录音已成功上传到服务端 → 本机保险箱使命完成，清除该会话
               if (transcribeFlow?.vaultSessionId) void vaultDeleteSession(transcribeFlow.vaultSessionId);
             }}
@@ -2861,6 +2985,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             onOpenEntry={(id) => setSelectedEntryId(id)}
             onRunTracking={(rid) => {
               transcribeRunRef.current = rid;
+              const source = latestTranscribeSourceRef.current;
+              bindBackgroundTranscriptionSource(recordingRunSourceRef.current, rid, source);
               // 上传期间点「后台运行」→ 抽屉已关、runId 迟到：此刻直接接手看护
               if (rid && !transcribeFlowOpenRef.current) watchBackgroundTranscription(rid);
             }}

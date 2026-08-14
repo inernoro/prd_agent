@@ -132,6 +132,7 @@ public class SubtitleGenerationProcessorTests
         {
             Success = true,
             ResolutionType = "DedicatedPool",
+            OfferingId = "offering-doubao-primary",
             ActualModel = "doubao-asr-bigmodel",
             ActualPlatformId = "exchange-doubao-asr",
             ActualPlatformName = "Exchange:Doubao ASR",
@@ -169,6 +170,7 @@ public class SubtitleGenerationProcessorTests
         capturedRequest.ShouldNotBeNull();
         capturedResolution.ShouldNotBeNull();
         capturedRequest.AppCallerCode.ShouldBe(AppCallerRegistry.TranscriptAgent.Transcribe.Audio);
+        capturedRequest.RequiredOfferingId.ShouldBe("offering-doubao-primary");
         capturedRequest.IsMultipart.ShouldBeFalse();
         capturedRequest.MultipartFiles.ShouldBeNull();
         capturedRequest.MultipartFields.ShouldBeNull();

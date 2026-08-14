@@ -167,8 +167,15 @@ public class ContentReprocessApplyService
         string content,
         string actorId,
         MongoDbContext db,
-        bool preserveFileIdentity = false)
-        => SaveContentToEntryAsync(entry, content, actorId, db, preserveFileIdentity);
+        bool preserveFileIdentity = false,
+        long? expectedOutputGeneration = null)
+        => SaveContentToEntryAsync(
+            entry,
+            content,
+            actorId,
+            db,
+            preserveFileIdentity,
+            expectedOutputGeneration);
 
     /// <summary>读取 entry 完整正文（优先 DocumentId 的 RawContent，退回 ContentIndex）。</summary>
     public Task<string> LoadContentAsync(DocumentEntry entry) => LoadEntryContentAsync(entry);
@@ -189,7 +196,8 @@ public class ContentReprocessApplyService
         string content,
         string actorId,
         MongoDbContext db,
-        bool preserveFileIdentity = false)
+        bool preserveFileIdentity = false,
+        long? expectedOutputGeneration = null)
     {
         var normalized = await _assetNormalizer.NormalizeAsync(content, null, null, CancellationToken.None);
         content = normalized.Content;
@@ -203,7 +211,7 @@ public class ContentReprocessApplyService
             parsed.Title = existing?.Title ?? entry.Title;
             // 内容寻址 + 共享保护：旧 ParsedPrd 被别的 entry 共享（相同内容上传等）时不得就地覆盖，
             // 否则会改到别的 entry 正文；改为按新内容 hash 落库 + 只重指向本 entry（Codex P1）。
-            if (parsed.Id != entry.DocumentId)
+            if (parsed.Id != entry.DocumentId && expectedOutputGeneration == null)
             {
                 var sharedByOthers = await db.DocumentEntries.CountDocumentsAsync(
                     e => e.DocumentId == entry.DocumentId && e.Id != entry.Id) > 0;
@@ -219,12 +227,6 @@ public class ContentReprocessApplyService
             parsed.Title = entry.Title;
         }
         await _documentService.SaveAsync(parsed);
-
-        // 版本快照：AI 再加工（replace/append）也走版本控制，否则历史里缺这次写入、
-        // 用户无法用「历史版本」撤销 AI 改写（Codex P2）。先存改动前基线，再存新内容（去重）。
-        if (oldContent != null)
-            await _versions.SnapshotAsync(entry.Id, entry.StoreId, oldContent, DocumentVersionSource.Edit, actorId, null);
-        await _versions.SnapshotAsync(entry.Id, entry.StoreId, content, DocumentVersionSource.Edit, actorId, null);
 
         // 与 UpdateEntryContent 保持一致：把"最近编辑者"更新到当前 actor，
         // 否则团队场景下 audit/活动流会错误归属（Codex P2 十轮）
@@ -244,10 +246,25 @@ public class ContentReprocessApplyService
                 .Set(e => e.FileSize, Encoding.UTF8.GetByteCount(content))
                 .Set(e => e.ContentType, "text/markdown");
         }
-        await db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entry.Id,
+        var entryFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id);
+        if (expectedOutputGeneration.HasValue)
+        {
+            entryFilter &= Builders<DocumentEntry>.Filter.Eq(
+                e => e.AgentOutputGeneration,
+                expectedOutputGeneration.Value);
+        }
+        var entryWrite = await db.DocumentEntries.UpdateOneAsync(
+            entryFilter,
             update,
             cancellationToken: CancellationToken.None);
+        if (expectedOutputGeneration.HasValue && entryWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(entry.Id);
+
+        // 只有正文指针通过代次栅栏发布后才写版本历史。旧 Worker 即使恢复，也只能留下
+        // 一个未被引用的内容寻址文档，不能污染用户可见正文或历史版本。
+        if (oldContent != null)
+            await _versions.SnapshotAsync(entry.Id, entry.StoreId, oldContent, DocumentVersionSource.Edit, actorId, null);
+        await _versions.SnapshotAsync(entry.Id, entry.StoreId, content, DocumentVersionSource.Edit, actorId, null);
 
         _logger.LogInformation(
             "[doc-store-agent] Apply entry={EntryId} chars={Len}", entry.Id, content.Length);

@@ -118,6 +118,8 @@ public class AsrAudioRoutePolicyTests
     [InlineData("openai/gpt-4o-audio-preview", "unknown", "openai", true)]
     [InlineData("openai/gpt-4o-audio-preview", null, "google", false)]
     [InlineData("whisper-large-v3", null, "openai", false)]
+    [InlineData("gpt-4o-transcribe", null, "openai", false)]
+    [InlineData("gpt-4o-mini-transcribe", "openai-compatible", "openai", false)]
     [InlineData("gpt-4o", null, "openai", false)]
     public void ShouldUseChatAudio_WhenProtocolMissing_ShouldFallbackToLegacyPlatformGate(
         string model,

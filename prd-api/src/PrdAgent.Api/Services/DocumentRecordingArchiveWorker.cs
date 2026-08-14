@@ -541,6 +541,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 .Set(candidate => candidate.Phase, "等待完整录音转录")
                 .Set(candidate => candidate.Progress, 0)
                 .Set(candidate => candidate.ErrorMessage, null)
+                .Set(candidate => candidate.FailureCode, null)
                 .Set(candidate => candidate.StartedAt, null)
                 .Set(candidate => candidate.EndedAt, null)
                 .Set(candidate => candidate.OwnerInstanceId, ownerInstanceId)

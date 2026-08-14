@@ -5454,8 +5454,24 @@ public class DocumentStoreController : ControllerBase
         if (styleErr != null) return styleErr;
 
         // 笔记 entry 的写权限（协作者也可整理，与转录发起对称）
-        var (_, _, err) = await LoadWritableEntryAsync(prior.OutputEntryId, userId);
+        var (noteEntry, _, err) = await LoadWritableEntryAsync(prior.OutputEntryId, userId);
         if (err != null) return err;
+
+        // restyle 与完整转录会写同一篇录音笔记。排队时先取得同一输出锁并分配
+        // 新代次，使较早启动但较晚返回的任务无法覆盖用户刚得到的新原文。
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            _db,
+            prior.SourceEntryId,
+            DocumentStoreAgentRunKind.Transcribe,
+            CancellationToken.None);
+        var generationFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, noteEntry!.Id);
+        var generationEntry = await _db.DocumentEntries.FindOneAndUpdateAsync(
+            generationFilter,
+            Builders<DocumentEntry>.Update.Inc(e => e.AgentOutputGeneration, 1),
+            new FindOneAndUpdateOptions<DocumentEntry, DocumentEntry> { ReturnDocument = ReturnDocument.After },
+            CancellationToken.None);
+        if (generationEntry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录笔记不存在"));
 
         var run = new DocumentStoreAgentRun
         {
@@ -5467,6 +5483,7 @@ public class DocumentStoreController : ControllerBase
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
             RestyleOfRunId = prior.Id,
+            OutputGeneration = generationEntry.AgentOutputGeneration,
             TemplateKey = request.StyleKey?.Trim().ToLowerInvariant(),
             CustomPrompt = string.IsNullOrWhiteSpace(request.CustomPrompt) ? null : request.CustomPrompt.Trim(),
             StyleContext = string.IsNullOrWhiteSpace(request.StyleContext) ? null : request.StyleContext.Trim(),
@@ -5504,6 +5521,13 @@ public class DocumentStoreController : ControllerBase
     {
         var entryId = entry.Id;
         var userId = GetUserId();
+        // 与 Worker 最终发布正文共用跨实例互斥锁。失联任务回收、新任务创建和旧任务
+        // 最后写回不能并发，否则旧 Worker 可能在重试已经创建后覆盖新结果。
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            _db,
+            entryId,
+            kind,
+            CancellationToken.None);
         // 去重：同一 entry 已有 queued 或 running 的同 kind run → 直接返回。
         // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
         // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
@@ -5522,6 +5546,31 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.TemplateKey, reqTemplateKey),
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.CustomPrompt, reqCustomPrompt),
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StyleContext, reqStyleContext));
+
+        // 转录任务由 Worker 每 15 秒续一次 HeartbeatAt。用户重试时先原子终结超过一小时
+        // 没有心跳的同用户在途任务，否则下面的去重会把旧 runId 原样返回，界面永远只能
+        // “重试同一个坏任务”。旧文档没有 HeartbeatAt 时回退 StartedAt / CreatedAt。
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var stalledEndedAt = DateTime.UtcNow;
+            var stalledCount = await StalledTranscriptionRunRecovery.ReapAsync(
+                _db.DocumentStoreAgentRuns,
+                entryId,
+                userId,
+                reqTemplateKey,
+                reqCustomPrompt,
+                reqStyleContext,
+                compatibleOwnerIds,
+                stalledEndedAt,
+                CancellationToken.None);
+            if (stalledCount > 0)
+            {
+                _logger.LogWarning(
+                    "[doc-store-agent] Reaped {Count} stalled transcription run(s) before retry entry={EntryId}",
+                    stalledCount,
+                    entryId);
+            }
+        }
 
         // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
         // 本实例。用 FindOneAndUpdate 杜绝 TOCTOU——若先 Find 再 UpdateOne，期间别的实例
@@ -5566,6 +5615,19 @@ public class DocumentStoreController : ControllerBase
         // 刻意取舍（用户 2026-06-18 确认「各自处理」）：宁可两个部署各转一次（共享 Mongo 下
         // 偶发重复，真实部署处理端基本单实例，重复罕见），也不让本实例的用户卡等一个可能跑旧
         // 代码/已下线实例的 run（那正是定向消费要根治的「被别人消费」原 bug 的反向版本）。
+        var outputGeneration = entry.AgentOutputGeneration;
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var generationFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, entryId);
+            var generationEntry = await _db.DocumentEntries.FindOneAndUpdateAsync(
+                generationFilter,
+                Builders<DocumentEntry>.Update.Inc(e => e.AgentOutputGeneration, 1),
+                new FindOneAndUpdateOptions<DocumentEntry, DocumentEntry> { ReturnDocument = ReturnDocument.After },
+                CancellationToken.None);
+            if (generationEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));
+            outputGeneration = generationEntry.AgentOutputGeneration;
+        }
         var run = new DocumentStoreAgentRun
         {
             Kind = kind,
@@ -5575,6 +5637,7 @@ public class DocumentStoreController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
+            OutputGeneration = outputGeneration,
             TemplateKey = reqTemplateKey,
             CustomPrompt = reqCustomPrompt,
             StyleContext = reqStyleContext,
@@ -5738,6 +5801,7 @@ public class DocumentStoreController : ControllerBase
                     .Set(r => r.GeneratedText, null)
                     .Set(r => r.EndedAt, (DateTime?)null)
                     .Set(r => r.ErrorMessage, null)
+                    .Set(r => r.FailureCode, null)
                     .Set(r => r.ForceFullShadowSample, _llmRequestContext.Current?.ForceFullShadowSample == true),
                 cancellationToken: CancellationToken.None);
             if (updateResult.ModifiedCount == 0)
@@ -6144,7 +6208,8 @@ public class DocumentStoreController : ControllerBase
         string entryId,
         [FromQuery] string kind,
         [FromQuery] string? status = null,
-        [FromQuery] bool requireOutput = false)
+        [FromQuery] bool requireOutput = false,
+        [FromQuery] bool ownUserOnly = false)
     {
         // writable 而非 owner-only：团队库协作者能转录/编辑笔记，也必须能查最近 run
         // 来发起「换个整理方式」（Codex P2：restyle 协作者被 404）
@@ -6163,6 +6228,8 @@ public class DocumentStoreController : ControllerBase
         };
         if (!string.IsNullOrWhiteSpace(status))
             filters.Add(Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, status.Trim().ToLowerInvariant()));
+        if (ownUserOnly)
+            filters.Add(Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, GetUserId()));
         if (requireOutput)
         {
             filters.Add(Builders<DocumentStoreAgentRun>.Filter.And(

@@ -42,6 +42,9 @@ public class DocumentStoreAgentRun
     /// <summary>失败时的错误信息</summary>
     public string? ErrorMessage { get; set; }
 
+    /// <summary>机器可判定的失败类别；前端不得从自然语言错误中猜测状态。</summary>
+    public string? FailureCode { get; set; }
+
     /// <summary>后台自动恢复已实际重新排队的次数；用于限制确定性录音转录的重放。</summary>
     public int AutomaticRetryCount { get; set; }
 
@@ -53,6 +56,9 @@ public class DocumentStoreAgentRun
 
     /// <summary>生成成功后对应的新 entry ID（字幕/再加工产物）</summary>
     public string? OutputEntryId { get; set; }
+
+    /// <summary>创建任务时取得的条目产物代次；终态写入必须与条目当前代次一致。</summary>
+    public long OutputGeneration { get; set; }
 
     /// <summary>再加工模板 key（summary/minutes/blog/custom）；转录任务复用为整理方式 key（general/meeting/interview/todo/custom）</summary>
     public string? TemplateKey { get; set; }
@@ -83,6 +89,8 @@ public class DocumentStoreAgentRun
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
+    /// <summary>Worker 存活心跳；用于区分仍在处理与已失联的 running 任务。</summary>
+    public DateTime? HeartbeatAt { get; set; }
     public DateTime? EndedAt { get; set; }
 
     /// <summary>
