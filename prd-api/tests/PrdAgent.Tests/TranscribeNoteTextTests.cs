@@ -106,6 +106,67 @@ public class TranscribeNoteTextTests
         Assert.Null(TranscribeNoteText.ExtractTranscriptFromNote("没有标记的文本"));
     }
 
+    [Fact]
+    public void ResolveTranscriptForRestyle_旧笔记缺少标记时复用任务快照()
+    {
+        const string legacyNote = "# 录音笔记\n\n旧版正文没有固定小节";
+
+        Assert.Equal(
+            "旧任务保存的完整转录",
+            TranscribeNoteText.ResolveTranscriptForRestyle(
+                legacyNote,
+                " 旧任务保存的完整转录 "));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_当前笔记原文优先于任务快照()
+    {
+        const string currentNote = "# 录音笔记\n\n## 转录全文\n\n用户校对后的原文";
+
+        Assert.Equal(
+            "用户校对后的原文",
+            TranscribeNoteText.ResolveTranscriptForRestyle(
+                currentNote,
+                "旧任务快照"));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_现代笔记发布复核不允许回退旧快照()
+    {
+        const string markerRemovedDuringRestyle = "# 录音笔记\n\n用户在整理期间删除了全文小节";
+
+        Assert.Null(TranscribeNoteText.ResolveTranscriptForRestylePublication(
+            markerRemovedDuringRestyle,
+            "旧任务快照",
+            usedLegacyFallback: false));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_旧笔记发布复核继续使用同一任务快照()
+    {
+        const string unchangedLegacyNote = "# 录音笔记\n\n旧版正文没有固定小节";
+
+        Assert.Equal(
+            "旧任务保存的完整转录",
+            TranscribeNoteText.ResolveTranscriptForRestylePublication(
+                unchangedLegacyNote,
+                "旧任务保存的完整转录",
+                usedLegacyFallback: true));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_旧笔记发布前新增不同全文时返回新全文()
+    {
+        const string editedDuringRestyle = "# 录音笔记\n\n## 转录全文\n\n用户新写的原文";
+
+        Assert.Equal(
+            "用户新写的原文",
+            TranscribeNoteText.ResolveTranscriptForRestylePublication(
+                editedDuringRestyle,
+                "旧任务快照",
+                usedLegacyFallback: true));
+    }
+
     // ── BuildSummarySystemPrompt ──
 
     [Fact]

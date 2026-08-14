@@ -104,6 +104,29 @@ public static class TranscribeNoteText
     }
 
     /// <summary>
+    /// 一键整理读取原文时优先使用当前笔记里的固定小节；旧版笔记缺少小节标记时，
+    /// 使用原转录任务保存的纯文本快照。初次读取与发布前复核必须共用此规则。
+    /// </summary>
+    public static string? ResolveTranscriptForRestyle(string noteMd, string? runTranscriptText)
+    {
+        var current = ExtractTranscriptFromNote(noteMd);
+        if (!string.IsNullOrWhiteSpace(current)) return current.Trim();
+        return string.IsNullOrWhiteSpace(runTranscriptText) ? null : runTranscriptText.Trim();
+    }
+
+    /// <summary>
+    /// 整理结果发布前复核原文。只有初次读取确实使用旧任务快照时才允许继续回退，
+    /// 现代笔记在整理期间被删除全文小节时必须返回 null，由调用方拒绝迟到写入。
+    /// </summary>
+    public static string? ResolveTranscriptForRestylePublication(
+        string noteMd,
+        string? runTranscriptText,
+        bool usedLegacyFallback)
+        => ResolveTranscriptForRestyle(
+            noteMd,
+            usedLegacyFallback ? runTranscriptText : null);
+
+    /// <summary>
     /// 替换笔记中的「转录全文」正文。摘要和用户在其前方补充的内容保持不动；
     /// 老文档缺少固定标题时，在末尾补上转录全文小节。
     /// </summary>

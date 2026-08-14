@@ -42,10 +42,15 @@ public sealed class AsrOfferingContractPolicyTests
 
     [Theory]
     [InlineData("gpt-4o-transcribe", "/v1/chat/completions", true)]
+    [InlineData("gpt-4o-transcribe", "/v1/chat/completions/", true)]
+    [InlineData("gpt-4o-transcribe", "/v1/chat/completions/?region=cn", true)]
     [InlineData("gpt-4o-mini-transcribe", "v1/chat/completions", true)]
     [InlineData("openai/gpt-audio", "/v1/audio/transcriptions", true)]
+    [InlineData("openai/gpt-audio", "/v1/audio/transcriptions/?api-version=2026-08-15", true)]
     [InlineData("gpt-4o-transcribe", "/v1/audio/transcriptions", false)]
+    [InlineData("gpt-4o-transcribe", "/v1/audio/transcriptions/#region", false)]
     [InlineData("openai/gpt-audio", "/v1/chat/completions", false)]
+    [InlineData("openai/gpt-audio", "/v1/chat/completions/?region=cn", false)]
     public void AsrStandardEndpointConflictsAreRejectedAtWriteTime(
         string model,
         string endpoint,

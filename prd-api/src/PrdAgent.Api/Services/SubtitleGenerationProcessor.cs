@@ -449,8 +449,9 @@ public class SubtitleGenerationProcessor
 
         // 笔记正文是用户可编辑的权威原文：优先读取当前「转录全文」，run 快照只做老数据兜底。
         // 否则用户刚校对的内容会在下一次一键整理时被旧 ASR 快照悄悄覆盖语义。
-        var transcript = TranscribeNoteText.ExtractTranscriptFromNote(noteMd);
-        if (string.IsNullOrWhiteSpace(transcript)) transcript = prior.TranscriptText;
+        var usedLegacyTranscriptFallback = string.IsNullOrWhiteSpace(
+            TranscribeNoteText.ExtractTranscriptFromNote(noteMd));
+        var transcript = TranscribeNoteText.ResolveTranscriptForRestyle(noteMd, prior.TranscriptText);
         if (string.IsNullOrWhiteSpace(transcript))
             throw new InvalidOperationException("找不到原转录文本（笔记可能被改动过），请对源音频重新发起转录");
 
@@ -482,7 +483,10 @@ public class SubtitleGenerationProcessor
         if (latestNoteEntry == null)
             throw new InvalidOperationException("转录笔记已被删除，无法重新整理");
         var latestNoteMd = await _applyService.LoadContentAsync(latestNoteEntry);
-        var latestTranscript = TranscribeNoteText.ExtractTranscriptFromNote(latestNoteMd);
+        var latestTranscript = TranscribeNoteText.ResolveTranscriptForRestylePublication(
+            latestNoteMd,
+            prior.TranscriptText,
+            usedLegacyTranscriptFallback);
         if (!string.Equals(latestTranscript?.Trim(), transcript.Trim(), StringComparison.Ordinal))
         {
             throw new DocumentStoreRunLeaseLostException(run.Id);

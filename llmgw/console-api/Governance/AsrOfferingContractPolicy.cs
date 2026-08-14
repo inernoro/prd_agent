@@ -33,7 +33,7 @@ public static class AsrOfferingContractPolicy
             return null;
         }
 
-        var endpoint = "/" + endpointPath.Trim().TrimStart('/').ToLowerInvariant();
+        var endpoint = NormalizeEndpointPath(endpointPath);
         var isChatEndpoint = endpoint.EndsWith("/chat/completions", StringComparison.Ordinal);
         var isTranscriptionEndpoint = endpoint.EndsWith("/audio/transcriptions", StringComparison.Ordinal);
         if (!isChatEndpoint && !isTranscriptionEndpoint) return null;
@@ -78,5 +78,13 @@ public static class AsrOfferingContractPolicy
         return string.IsNullOrWhiteSpace(normalized) || normalized == "unknown"
             ? null
             : normalized;
+    }
+
+    private static string NormalizeEndpointPath(string endpointPath)
+    {
+        var endpoint = "/" + endpointPath.Trim().TrimStart('/');
+        var suffixIndex = endpoint.IndexOfAny(['?', '#']);
+        if (suffixIndex >= 0) endpoint = endpoint[..suffixIndex];
+        return endpoint.TrimEnd('/').ToLowerInvariant();
     }
 }

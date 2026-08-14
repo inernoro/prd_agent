@@ -112,7 +112,7 @@ public static class AsrRequestContractPolicy
         error = null;
         if (isExchange || string.IsNullOrWhiteSpace(offeringEndpointPath)) return true;
 
-        var endpoint = "/" + offeringEndpointPath.Trim().TrimStart('/').ToLowerInvariant();
+        var endpoint = NormalizeEndpointPath(offeringEndpointPath);
         var isChatEndpoint = endpoint.EndsWith("/chat/completions", StringComparison.Ordinal);
         var isTranscriptionEndpoint = endpoint.EndsWith("/audio/transcriptions", StringComparison.Ordinal);
         if (!isChatEndpoint && !isTranscriptionEndpoint) return true;
@@ -134,5 +134,13 @@ public static class AsrRequestContractPolicy
         return string.IsNullOrWhiteSpace(normalized) || normalized == "unknown"
             ? null
             : normalized;
+    }
+
+    private static string NormalizeEndpointPath(string endpointPath)
+    {
+        var endpoint = "/" + endpointPath.Trim().TrimStart('/');
+        var suffixIndex = endpoint.IndexOfAny(['?', '#']);
+        if (suffixIndex >= 0) endpoint = endpoint[..suffixIndex];
+        return endpoint.TrimEnd('/').ToLowerInvariant();
     }
 }

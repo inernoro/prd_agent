@@ -32,10 +32,15 @@ public sealed class AsrRequestContractPolicyTests
 
     [Theory]
     [InlineData("gpt-4o-transcribe", "/v1/chat/completions", false)]
+    [InlineData("gpt-4o-transcribe", "/v1/chat/completions/", false)]
+    [InlineData("gpt-4o-transcribe", "/v1/chat/completions/?region=cn", false)]
     [InlineData("gpt-4o-mini-transcribe", "v1/chat/completions", false)]
     [InlineData("openai/gpt-audio", "/v1/audio/transcriptions", false)]
+    [InlineData("openai/gpt-audio", "/v1/audio/transcriptions/?api-version=2026-08-15", false)]
     [InlineData("gpt-4o-transcribe", "/v1/audio/transcriptions", true)]
+    [InlineData("gpt-4o-transcribe", "/v1/audio/transcriptions/#region", true)]
     [InlineData("openai/gpt-audio", "/v1/chat/completions", true)]
+    [InlineData("openai/gpt-audio", "/v1/chat/completions/?region=cn", true)]
     [InlineData("gpt-4o-transcribe", "/custom/asr", true)]
     public void OfferingEndpointMustMatchThePhysicalModelContract(
         string model,
