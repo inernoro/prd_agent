@@ -117,6 +117,7 @@ function command(name, args, options = {}) {
 export function applyCredentialRegistry(values, registry, secretReader = () => '') {
   const next = { ...values };
   for (const binding of registry.localBindings || []) {
+    if (binding.state === 'deprecated') continue;
     if (!next[binding.envKey] && binding.value) next[binding.envKey] = binding.value;
     if (!next[binding.envKey] && binding.keychainService) {
       const secret = secretReader(binding.keychainService, binding.keychainAccount || 'stable-smoke');

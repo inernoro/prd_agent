@@ -768,6 +768,34 @@ test('凭据登记表只在环境变量缺失时读取 Keychain', () => {
   assert.deepEqual(calls, [['cds-key', 'stable-smoke']]);
 });
 
+test('凭据登记表不会重新注入已废弃凭据', () => {
+  const calls = [];
+  const values = applyCredentialRegistry(
+    {},
+    { localBindings: [
+      {
+        envKey: 'STABLE_SMOKE_NOTIFY_AI_ACCESS_KEY',
+        keychainService: 'deprecated-key',
+        keychainAccount: 'stable-smoke',
+        state: 'deprecated',
+      },
+      {
+        envKey: 'STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID',
+        value: 'current-signing-key',
+        state: 'provisioned',
+      },
+    ] },
+    (service, account) => {
+      calls.push([service, account]);
+      return 'legacy-secret';
+    },
+  );
+
+  assert.equal(values.STABLE_SMOKE_NOTIFY_AI_ACCESS_KEY, undefined);
+  assert.equal(values.STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID, 'current-signing-key');
+  assert.deepEqual(calls, []);
+});
+
 test('CDS 地址始终来自 preview-url 并拒绝过期缓存', () => {
   const authoritative = () => ({
     status: 0,
