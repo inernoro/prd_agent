@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Buffers.Binary;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.LlmGateway;
@@ -96,6 +98,77 @@ public class AsrAudioRoutePolicyTests
             AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes).ShouldBeFalse();
         AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds.ShouldBeGreaterThan(2000);
         AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds.ShouldBeLessThan(2200);
+    }
+
+    [Fact]
+    public void NormalizedSpeechGate_ShouldRejectPureSilenceAndKeepAudiblePcm()
+    {
+        var silence = LiveAsrBatchFallbackService.EncodeWave(
+            new byte[LiveAsrBatchFallbackService.WindowBytes],
+            LiveAsrBatchFallbackService.MinimumProviderSeconds);
+        AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(silence).ShouldBeTrue();
+
+        var audiblePcm = new byte[LiveAsrBatchFallbackService.WindowBytes];
+        for (var offset = 0; offset + 1 < audiblePcm.Length; offset += 2)
+            BinaryPrimitives.WriteInt16LittleEndian(audiblePcm.AsSpan(offset, 2), 512);
+        var audible = LiveAsrBatchFallbackService.EncodeWave(
+            audiblePcm,
+            LiveAsrBatchFallbackService.MinimumProviderSeconds);
+        AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(audible).ShouldBeFalse();
+        AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave([1, 2, 3]).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void NormalizedSpeechGate_ShouldKeepSparseSpeechInsideLongRecording()
+    {
+        var pcm = new byte[10 * 60 * LiveAsrBatchFallbackService.SampleRate * 2];
+        var speechStart = 5 * 60 * LiveAsrBatchFallbackService.SampleRate * 2;
+        for (var offset = speechStart;
+             offset < speechStart + LiveAsrBatchFallbackService.WindowBytes;
+             offset += 2)
+        {
+            BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(offset, 2), 512);
+        }
+
+        var wave = LiveAsrBatchFallbackService.EncodeWave(pcm, minimumSeconds: 0);
+
+        AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(wave).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void NormalizedSpeechGate_ShouldKeepShortSpeechFollowedByPadding()
+    {
+        var pcm = new byte[AsrAudioNormalizationPolicy.MinimumDurationSeconds
+            * LiveAsrBatchFallbackService.SampleRate * 2];
+        for (var offset = 0;
+             offset < LiveAsrBatchFallbackService.SampleRate * 2;
+             offset += 2)
+        {
+            BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(offset, 2), 512);
+        }
+
+        var wave = LiveAsrBatchFallbackService.EncodeWave(
+            pcm,
+            AsrAudioNormalizationPolicy.MinimumDurationSeconds);
+
+        AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(wave).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void NormalizedSpeechGate_ShouldKeepTheEstablishedAmplitudeBoundary()
+    {
+        var below = new byte[LiveAsrBatchFallbackService.WindowBytes];
+        var atBoundary = new byte[LiveAsrBatchFallbackService.WindowBytes];
+        for (var offset = 0; offset + 1 < below.Length; offset += 2)
+        {
+            BinaryPrimitives.WriteInt16LittleEndian(below.AsSpan(offset, 2), 127);
+            BinaryPrimitives.WriteInt16LittleEndian(atBoundary.AsSpan(offset, 2), 128);
+        }
+
+        AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(
+            LiveAsrBatchFallbackService.EncodeWave(below, minimumSeconds: 0)).ShouldBeTrue();
+        AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(
+            LiveAsrBatchFallbackService.EncodeWave(atBoundary, minimumSeconds: 0)).ShouldBeFalse();
     }
 
     [Theory]

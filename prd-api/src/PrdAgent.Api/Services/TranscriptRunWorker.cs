@@ -266,6 +266,8 @@ public class TranscriptRunWorker : BackgroundService
             "[transcript-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes}",
             sourceByteCount,
             audioBytes.Length);
+        if (AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(audioBytes))
+            throw new InvalidOperationException("ASR 没有识别到有效语音：完整音频经信号检测确认为静音或音量过低。");
 
         await UpdateProgress(db, run, 30);
 

@@ -616,6 +616,9 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     public static bool HasLikelySpeech(byte[] pcm)
+        => HasLikelySpeech(pcm.AsSpan());
+
+    public static bool HasLikelySpeech(ReadOnlySpan<byte> pcm)
     {
         if (pcm.Length < BytesPerSample)
             return false;
@@ -626,7 +629,7 @@ public sealed class LiveAsrBatchFallbackService
         for (var offset = 0; offset + 1 < pcm.Length; offset += BytesPerSample)
         {
             var amplitude = Math.Abs((int)BinaryPrimitives.ReadInt16LittleEndian(
-                pcm.AsSpan(offset, BytesPerSample)));
+                pcm.Slice(offset, BytesPerSample)));
             if (amplitude < SpeechAmplitudeThreshold)
                 continue;
             activeSamples++;

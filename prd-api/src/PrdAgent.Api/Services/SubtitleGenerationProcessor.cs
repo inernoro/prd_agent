@@ -576,6 +576,16 @@ public class SubtitleGenerationProcessor
         _logger.LogInformation(
             "[doc-store-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes} isVideo={IsVideo}",
             sourceBytes, bytes.Length, isVideo);
+        if (AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(bytes))
+        {
+            throw new SubtitleAsrException(
+                "没有识别到有效语音：完整音频经信号检测确认为静音或音量过低。",
+                new Dictionary<string, object?>
+                {
+                    ["stage"] = "audio-signal-gate",
+                    ["reason"] = "no-speech",
+                });
+        }
 
         // 解析 ASR 模型 —— 每个受治理调用标识只解析一次完整候选计划，发送阶段复用已解析结果。
         //
