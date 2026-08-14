@@ -3116,6 +3116,14 @@
     height: calc(100% + var(--cds-main-pt) + var(--cds-main-pb));
   }
 
+  /*
+   * 满铺页不需要给滚动条留位：它自己不滚（--fill 是固定外壳 + 各栏内滚）。
+   * 留着 scrollbar-gutter 会让右栏离视口右边差 10px，贴边就贴不到底。
+   */
+  .cds-main:has(> .cds-workspace--bleed) {
+    scrollbar-gutter: auto;
+  }
+
   /* ══ 发布控制台的节奏 ══════════════════════════════════════════════
    *
    * 参考稿 f8d4af4b 跑起来的时候是有节拍的：进度条在流、状态图标在呼吸、

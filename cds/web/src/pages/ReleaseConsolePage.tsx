@@ -16,7 +16,7 @@
  *   GET  /api/projects                              项目列表
  *   GET  /api/releases/center?project=<id>          目标 / 记录 / 提交说明
  *   GET  /api/branches?project=<id>&live=false      可发布的分支
- *   POST /api/releases/branches/:branchId/preflight 试跑（只检查不发布）
+ *   POST /api/releases/branches/:branchId/preflight 发布前检查（发布的第一步，不单独暴露）
  *   POST /api/releases/branches/:branchId/runs      开始发布
  *   GET  /api/releases/runs/:id/stream              实时状态与输出（SSE）
  *   POST /api/releases/runs/:id/cancel              中止
@@ -350,11 +350,43 @@ export function ReleaseConsolePage(): JSX.Element {
   });
 
   /* ── 动作 ─────────────────────────────────────────────── */
+  /**
+   * 发布前检查。返回「能不能继续发」——**不由用户单独触发**。
+   *
+   * 后端 startRelease 本来就会先跑一遍（release-service 的 resolvePreflight，
+   * 不过就抛错），所以单独摆一个「试跑」按钮既多一步，又让人以为不点就不检查。
+   * 现在的口径：点发布 → 自动先检查 → 有阻断项就停在发布前并把原因摊开，
+   * 没有就直接往下发。用户不需要知道有「预检」这个概念。
+   */
+  const passesPreflight = async (): Promise<boolean> => {
+    if (!row || !branchId) return false;
+    try {
+      const res = await apiRequest<PreflightResult>(
+        `/api/releases/branches/${encodeURIComponent(branchId)}/preflight`,
+        { method: 'POST', body: { targetId: row.target.id, previewUrl } },
+      );
+      const blocking = res.checks.filter((check) => check.blocking && check.status === 'fail');
+      // 有阻断项才把结果摊开；全过的话不用拿一屏绿勾去打扰人。
+      setPreflight(blocking.length > 0 ? res : null);
+      if (blocking.length > 0) {
+        say(`发布前检查未通过，已停在发布前（${blocking.length} 项）`);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      setPreflight(null);
+      say(err instanceof ApiError ? err.message : String(err));
+      return false;
+    }
+  };
+
   const startRelease = async (): Promise<void> => {
     if (!row || !branchId) return;
     setBusy('deploy');
     setPreflight(null);
     try {
+      // 先过发布前检查。不通过就停在这儿——用户不需要先自己点一次「试跑」。
+      if (!(await passesPreflight())) return;
       const res = await apiRequest<{ run: ReleaseRun }>(
         `/api/releases/branches/${encodeURIComponent(branchId)}/runs`,
         { method: 'POST', body: { targetId: row.target.id, previewUrl } },
@@ -363,22 +395,6 @@ export function ReleaseConsolePage(): JSX.Element {
       setLogs(dedupeLogs(res.run.logs || []));
       setFollowing(true);
       void loadCenter();
-    } catch (err) {
-      say(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const runPreflight = async (): Promise<void> => {
-    if (!row || !branchId) return;
-    setBusy('preflight');
-    try {
-      const res = await apiRequest<PreflightResult>(
-        `/api/releases/branches/${encodeURIComponent(branchId)}/preflight`,
-        { method: 'POST', body: { targetId: row.target.id, previewUrl } },
-      );
-      setPreflight(res);
     } catch (err) {
       say(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -538,7 +554,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
               不是项目列表。桌面三栏不受影响（order 只在 max-lg 生效）。 */}
-          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-2 max-xl:shrink-0 max-xl:rounded-[14px] max-xl:border xl:border-r xl:overflow-hidden">
+          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-2 max-xl:shrink-0 max-xl:rounded-[14px] max-xl:border xl:rounded-none xl:border-r xl:overflow-hidden">
             <div className="shrink-0 px-4 pb-2.5 pt-4">
               <div className="mb-2.5 flex items-center justify-between">
                 <SectionLabel>PROJECTS</SectionLabel>
@@ -706,7 +722,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     <select
                       value={branchId}
                       onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
-                      title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，试跑会拦下这一项'}
+                      title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，发布前检查会拦下这一项'}
                       aria-label="要发布的版本"
                       className="cds-ident h-7 max-w-[190px] shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[11px] outline-none focus:border-[hsl(var(--hairline-strong))]"
                     >
@@ -740,7 +756,18 @@ export function ReleaseConsolePage(): JSX.Element {
                   </div>
                 </div>
 
-                <div className="flex w-full flex-wrap items-center gap-2 [&_button]:h-10 sm:w-auto sm:shrink-0">
+                {/* 顺序照用户 2026-08-14 定的：开始永远在最右，中止只在跑的时候出现。
+                    「试跑」这个按钮删了——它现在是发布的第一步，不是一个并列选项。 */}
+                <div className="flex w-full flex-wrap items-center justify-end gap-2 [&_button]:h-10 sm:w-auto sm:shrink-0">
+                  {running ? (
+                    <Button variant="outline" onClick={() => void cancelRun()} disabled={busy === 'cancel'}>
+                      <Ban />
+                      中止
+                    </Button>
+                  ) : null}
+                  {awaitingConfirm ? (
+                    <Button variant="ghost" onClick={() => setConfirmTargetId(null)}>取消</Button>
+                  ) : null}
                   {/* 受保护环境走两段式：第一下只是把按钮换成「确认发布到 X」，第二下才真发。
                       不用 window.confirm —— 那东西在窄屏和无障碍上都不好使，也没法说清发的是哪一版。 */}
                   <Button
@@ -753,26 +780,12 @@ export function ReleaseConsolePage(): JSX.Element {
                     disabled={!row || !branchId || running || blockedByOther || busy === 'deploy'}
                     className={awaitingConfirm ? 'ring-2 ring-red-500/60' : undefined}
                   >
-                    {busy === 'deploy' ? <Loader2 className="animate-spin" /> : <Rocket />}
-                    {/* 参考稿的按钮就三个词：开始发布 / 重新发布 / 发布中…。
-                        原来写「发布到 {很长的目标名}」，一个按钮就把 banner 顶成两行
-                        ——目标名副标题里已经有了，不用在按钮上再说一遍。
-                        只有二次确认那一下才点名目标：那是要人看清「到底发到哪」的时刻。 */}
+                    {busy === 'deploy' || running ? <Loader2 className="animate-spin" /> : <Rocket />}
                     {awaitingConfirm
                       ? `确认发布到 ${row?.target.name}`
-                      : busy === 'deploy' ? '发布中'
+                      : busy === 'deploy' ? '检查并发布'
+                      : running ? '发布中'
                       : failed ? '重新发布' : '开始发布'}
-                  </Button>
-                  {awaitingConfirm ? (
-                    <Button variant="ghost" onClick={() => setConfirmTargetId(null)}>取消</Button>
-                  ) : null}
-                  <Button variant="outline" onClick={() => void runPreflight()} disabled={!row || !branchId || running || busy === 'preflight'}>
-                    {busy === 'preflight' ? <Loader2 className="animate-spin" /> : null}
-                    试跑
-                  </Button>
-                  <Button variant="outline" onClick={() => void cancelRun()} disabled={!running || busy === 'cancel'}>
-                    <Ban />
-                    中止
                   </Button>
                 </div>
               </div>
@@ -843,14 +856,16 @@ export function ReleaseConsolePage(): JSX.Element {
               </div>
             ) : null}
 
+            {/* 只在检查拦下来时出现（passesPreflight 里全过就置 null）。
+                全过的话没必要拿一屏绿勾去打扰人——它已经继续往下发了。 */}
             {preflight ? (
-              <div className="cds-surface-raised cds-hairline shrink-0 rounded-lg border p-3">
+              <div className="shrink-0 rounded-[10px] border border-amber-500/40 bg-amber-500/[0.06] px-3.5 py-2.5">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold">试跑结果 · 只检查未发布</span>
+                  <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+                    发布前检查未通过，已停在发布前
+                  </span>
                   <Chip tone={preflight.checks.some((c) => c.status === 'fail' && c.blocking) ? 'bad' : 'ok'}>
-                    {preflight.checks.filter((c) => c.status === 'fail').length > 0
-                      ? `${preflight.checks.filter((c) => c.status === 'fail').length} 项未通过`
-                      : '全部通过'}
+                    {preflight.checks.filter((c) => c.status === 'fail').length} 项未通过
                   </Chip>
                 </div>
                 <ul className="flex flex-col gap-1">
@@ -968,7 +983,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 右栏：只放「看记录」。配置与 Agent 走全屏浮层 ══ */}
           {/* 348px 的窄栏装不下发布流水线和一整段任务文本 —— 塞进来就是逼人在
               一条窄缝里横向读命令。这两块改成浮层，右栏专心做记录。 */}
-          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-3 max-xl:shrink-0 max-xl:rounded-[14px] max-xl:border xl:border-l xl:overflow-hidden">
+          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-3 max-xl:shrink-0 max-xl:rounded-[14px] max-xl:border xl:rounded-none xl:border-l xl:overflow-hidden">
             {/* 参考稿是一条四格 tab（历史 / 失败 / 高级 / Agent），不是「左两个 tab
                 右两个链接」。后两个在这里打开全屏浮层——348px 的窄栏装不下流水线
                 与整段任务文本，这一条是对参考稿结构问题的有意修正，其余照抄。 */}

@@ -84,7 +84,7 @@ describe('发布控制台 · 数据接线', () => {
     const start = bodyAfter(PAGE, 'const startRelease = async ()');
     expect(start).toContain('previewUrl }');
     expect(start).not.toContain("previewUrl: ''");
-    const preflight = bodyAfter(PAGE, 'const runPreflight = async ()');
+    const preflight = bodyAfter(PAGE, 'const passesPreflight = async ()');
     expect(preflight).toContain('previewUrl }');
     expect(preflight).not.toContain("previewUrl: ''");
     // 前端自己 slugify 预览域名是 CLAUDE.md §11 明令禁止的
@@ -467,5 +467,63 @@ describe('发布控制台 · 节奏', () => {
     for (const cls of ['.cds-progress-fill--running', '.cds-status-pulse', '.cds-log-line']) {
       expect(reduce.slice(0, 400), `${cls} 应当在 reduced-motion 里被关掉`).toContain(cls);
     }
+  });
+});
+
+/**
+ * 发布前检查并进发布，不再是一个并列按钮（用户 2026-08-14：「干脆合并，不让单独
+ * 试跑，让软件根据情况自动做决定」）。后端 startRelease 本来就会先跑一遍
+ * （release-service 的 resolvePreflight，不过就抛错），单独摆个按钮既多一步，
+ * 又让人以为不点就不检查。
+ */
+describe('发布控制台 · 发布前检查是发布的第一步', () => {
+  it('没有单独的试跑按钮，检查在 startRelease 里先跑', () => {
+    const group = PAGE.slice(PAGE.indexOf('flex w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
+    expect(group, '操作组里不该再有试跑按钮').not.toContain('试跑');
+    const start = bodyAfter(PAGE, 'const startRelease = async ()');
+    expect(start, '发布前必须先过检查').toContain('if (!(await passesPreflight())) return;');
+  });
+
+  /** 检查全过时不弹结果面板——它已经继续往下发了，一屏绿勾是噪音。 */
+  it('检查全过不打扰，只有被拦下才摊开原因', () => {
+    const fn = bodyAfter(PAGE, 'const passesPreflight = async ()');
+    expect(fn).toContain("check.blocking && check.status === 'fail'");
+    expect(fn).toContain('setPreflight(blocking.length > 0 ? res : null)');
+    expect(PAGE).toContain('发布前检查未通过，已停在发布前');
+  });
+
+  /**
+   * 按钮顺序：开始永远在最右，中止只在跑的时候出现（用户定）。
+   * 中止常驻时是一个 90% 时间都点不了的灰按钮，占位又没用。
+   */
+  it('开始在最右，中止只在进行中出现', () => {
+    const group = PAGE.slice(PAGE.indexOf('flex w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
+    const cancelAt = group.indexOf('中止');
+    const startAt = group.lastIndexOf('开始发布');
+    expect(cancelAt, '中止应当在开始之前（即更靠左）').toBeLessThan(startAt);
+    expect(group).toContain('{running ? (');
+    expect(group).toContain('justify-end');
+  });
+});
+
+/**
+ * 满铺的两栏不许有圆角。`.cds-surface-*` 自带 --radius，贴边时读作
+ * 「圆角矩形硬怼在视口边上」——用户 2026-08-14 圈的就是这个（实测 radius 10px）。
+ * 要么全都贴边不带角，要么全都留距离带角；不许一半一半。
+ */
+describe('发布控制台 · 贴边的栏不带圆角', () => {
+  it('左右两栏在桌面档 rounded-none，窄屏浮起来时才给圆角', () => {
+    for (const order of ['max-xl:order-2', 'max-xl:order-3']) {
+      const at = PAGE.indexOf(order);
+      const cls = PAGE.slice(PAGE.lastIndexOf('className="', at), PAGE.indexOf('"', at));
+      expect(cls, `${order} 那一栏贴边时不许有圆角`).toContain('xl:rounded-none');
+      expect(cls, `${order} 那一栏窄屏浮起来时要有圆角`).toContain('max-xl:rounded-[14px]');
+    }
+  });
+
+  /** 满铺页自己不滚，留着 scrollbar-gutter 会让右栏差 10px 贴不到边。 */
+  it('满铺页不给滚动条留位', () => {
+    expect(CSS).toContain('.cds-main:has(> .cds-workspace--bleed)');
+    expect(CSS).toMatch(/\.cds-main:has\(> \.cds-workspace--bleed\) \{[\s\S]{0,80}scrollbar-gutter: auto/);
   });
 });
