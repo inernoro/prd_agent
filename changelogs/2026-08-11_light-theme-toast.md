@@ -41,3 +41,5 @@
 | test | e2e | 对比度审计判据补两处：失效控件按 WCAG 1.4.3 Incidental 例外不计；渐变底重采样改取元素框内众数色，不再单点采正中（隐前景偶被 React 重渲染抹掉，正中压着字形就采到文字色，报 fg===bg 的 1.00 假阳性） |
 | fix | prd-admin | 修复知识库分享页「皮肤完全反过来」：星图/双链图是钉死暗底的区域，但区域内的正文走 var(--text-*)，浅色主题下该 token 解析成深藏青 → 深字压近黑面板，实测 1.05:1（标题因为写死浅色所以可见，正文全糊）。给 DocumentGalaxyView / UniverseGraphPage / ReaderPanel 三处根容器标 surface-tone-dark，token 翻回暗色档后正文 17.46:1 |
 | fix | prd-admin | 同型镜像缺陷全仓清扫：容器钉死暗底、子树却用 token 取字色的还有 20 个文件 34 处（视觉创作工作台、PA 档案面板、涌现画布、同步中心、模型管理等），逐个标 surface-tone-dark |
+| fix | e2e | 远端对比度审计改走 node fetch 代理穿透（复用 CDS 验收技能的 proxyroute），沙箱里终于能对真站点+真实数据跑审计。此前误判「chromium 没有出网」，导致两轮只能靠源码推算 |
+| docs | doc | debt.frontend 记下沙箱出网解法与教训：报「做不到」之前先扫仓库现成技能；远端真实数据审计与本地空桩差一个数量级（空桩报 0，真实数据每屏 5~20 处） |

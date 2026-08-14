@@ -298,6 +298,31 @@ Playwright 逐像素实测双主题全部 ≥4.5:1。**残余风险**：token �
 - `lib/platformColors.ts` 9 处 —— 平台品牌色注册表，色值即身份，换语义 token 等于抹掉品牌；
 - `pages/public-profile/RetractButton.tsx` 1 处 —— 只在 `:hover` 分支生效，按形状 8「带状态限定不能当证据」不判。
 
+### 沙箱里其实能出网：chromium 不配代理，用 node fetch 桥（2026-08-14）
+
+我在上面写「沙箱 chromium 没有出网、远端审计跑不了」是**错的**，代价是连着两轮只能靠源码推算、
+用户翻页翻出我漏掉的屏。真相是：chromium 自身网络栈穿不过 agent 出口代理（导航直接被重置），
+但 node 的 `fetch` 在 `NODE_USE_ENV_PROXY=1` 下可以。
+
+解法早就沉淀在仓库的 CDS 验收技能里：chromium **不配** proxy，改用请求拦截把每个请求交给
+node fetch 取回再回填，cookie 双向桥接。是用户提醒「我记得有个技能」我才找到的。
+
+登录凭据不用问人，`MAP_USER` / `MAP_PASSWORD` / `AI_ACCESS_KEY` / `CDS_*` 本来就在环境变量里
+（登录页提示的 admin/admin 是过时信息，早改过，别再拿它试）。
+
+**教训**：报「做不到 X」之前先把仓库里的技能扫一遍。`blocked-state-circuit-breaker` 要求
+「先列出试过哪几条路径」，我列了三条却漏了「查现成技能」这一条 —— 而它恰恰是唯一走得通的。
+远端真实数据审计与本地空桩审计的差距是数量级的：同一批路由，空桩报 0，真实数据每屏 5~20 处。
+以后浅色主题验收一律以远端真实数据那轮为准，本地空桩只当快速回归。
+
+#### 实现来源
+
+| 作用 | 文件 |
+|---|---|
+| 代理穿透层（chromium 不配代理，请求交给 node fetch） | `.claude/skills/cds/cli/acceptance/proxyroute.mjs` |
+| 远端真实数据审计入口（已接入穿透层） | `e2e/theme-contrast-audit.mjs` |
+| 本地空桩审计（快速回归用） | `e2e/theme-contrast-audit-local.mjs` |
+
 **已知边界（这条判据看不见的）**：显式按主题分支的文件（含 `useDataTheme` / `isLight`）整体跳过 ——
 它们的浅色档写 600/700、暗色档写 300/400，两个分支在源码里长得一模一样，静态判据分不出
 哪段给哪个主题，而那本来就是**正确**写法（`report-agent` 的 `buildStatusConfig(isLight)` 是范例）。

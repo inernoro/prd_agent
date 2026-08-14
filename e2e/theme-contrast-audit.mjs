@@ -25,6 +25,7 @@ import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installNodeFetchRoute } from '../.claude/skills/cds/cli/acceptance/proxyroute.mjs';
 import { AUDIT_FN, aggregate, renderMarkdown } from './contrast-audit-core.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -51,19 +52,27 @@ const ROUTES = loadRoutes();
 fs.mkdirSync(OUT, { recursive: true });
 console.log(`路由 ${ROUTES.length} 条 × 双主题，产物目录 ${OUT}`);
 
+/*
+ * 出网走「node fetch 桥接」，不要给 chromium 配 proxy。
+ * 本沙箱的 chromium 自身网络栈穿不过 agent 出口代理（page.goto 直接 ERR_CONNECTION_RESET），
+ * 但 node 的 fetch 在 NODE_USE_ENV_PROXY=1 下可以。installNodeFetchRoute 让 chromium 不配代理、
+ * 改用 context.route 拦截全部请求交给 node fetch 取回 + cookie 双向桥接。
+ * 解法沉淀在 .claude/skills/cds/cli/acceptance/proxyroute.mjs，别再重造。
+ * 运行：NODE_USE_ENV_PROXY=1 MAP_USER=.. MAP_PASSWORD=.. AUDIT_BASE=.. node theme-contrast-audit.mjs
+ */
 const browser = await chromium.launch({
   ...(process.env.PLAYWRIGHT_CHROMIUM_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH } : {}),
-  ...(process.env.HTTPS_PROXY ? { proxy: { server: process.env.HTTPS_PROXY } } : {}),
 });
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
+await installNodeFetchRoute(ctx);
 const page = await ctx.newPage();
 
-await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' });
-await page.waitForTimeout(1200);
-await page.getByPlaceholder('admin').first().fill(USER);
-await page.locator('input[type="password"]').first().fill(PASS);
-await page.keyboard.press('Enter');
+await page.goto(`${BASE}/login`, { waitUntil: 'commit', timeout: 60000 });
 await page.waitForTimeout(3500);
+await page.locator('input[type="text"]').first().fill(USER);
+await page.locator('input[type="password"]').first().fill(PASS);
+await page.getByRole('button', { name: /进入控制台/ }).click();
+await page.waitForTimeout(8000);
 if (page.url().includes('/login')) {
   await page.screenshot({ path: path.join(OUT, 'login-failed.png') });
   console.error('登录失败，见 login-failed.png');
@@ -79,8 +88,8 @@ for (const theme of ['light', 'dark']) {
   }, theme);
   for (const route of ROUTES) {
     try {
-      await page.goto(`${BASE}${route}`, { waitUntil: 'domcontentloaded', timeout: 45000 });
-      await page.waitForTimeout(2600);
+      await page.goto(`${BASE}${route}`, { waitUntil: 'commit', timeout: 45000 });
+      await page.waitForTimeout(5200);   // 真实数据渲染比空桩慢，给足时间否则扫到骨架屏
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
       if (actual !== theme) { console.log(`  [跳过] ${route} 主题未生效(${actual})`); continue; }
       const findings = await page.evaluate(AUDIT_FN);
