@@ -26,9 +26,11 @@ import { useNowTick } from '@/hooks/useNowTick';
 import {
   initialReleaseCenterProject,
   releaseCenterDeepLink,
+  releaseCenterSection,
   normalizeProductionOrigin,
   rememberReleaseCenterProject,
 } from '@/lib/releaseCenter';
+import type { ReleaseCenterSection } from '@/lib/releaseCenter';
 import {
   buildEnvironmentSections,
   canonicalEnvironments,
@@ -48,10 +50,11 @@ import {
   type RollbackState,
 } from '@/pages/release-center/dialogs';
 import { EnvironmentSidebar } from '@/pages/release-center/EnvironmentSidebar';
-import { EvidenceTab } from '@/pages/release-center/EvidenceTab';
-import { HealthTab } from '@/pages/release-center/HealthTab';
 import { OverviewTab } from '@/pages/release-center/OverviewTab';
 import { FleetMatrix } from '@/pages/release-center/FleetMatrix';
+import { EnvConfigSection } from '@/pages/release-center/EnvConfigSection';
+import { HealthSection } from '@/pages/release-center/HealthSection';
+import { EvidenceSection } from '@/pages/release-center/EvidenceSection';
 import { buildFleetMetrics, buildFleetVerdict, toFleetEnv, type FleetSortKey } from '@/lib/releaseFleet';
 import { ReleaseTimeline, type TimelineFilter } from '@/pages/release-center/ReleaseTimeline';
 import { formatDateTime } from '@/pages/release-center/shared';
@@ -88,7 +91,7 @@ type LoadState =
  * 换名字：旧结构是「先选一个目标，再看它的六个页签」（控制台视角），新结构第一屏
  * 是横着比所有环境的矩阵（治理视角），后四段才落到单个环境上。
  */
-type CenterSection = 'fleet' | 'config' | 'rules' | 'health' | 'evidence';
+type CenterSection = ReleaseCenterSection;
 
 const SECTIONS: Array<{ id: CenterSection; label: string }> = [
   { id: 'fleet', label: '全环境矩阵' },
@@ -119,7 +122,7 @@ function useMeasuredWide(threshold = 1264): [React.RefObject<HTMLDivElement>, bo
 }
 
 export function ReleaseCenterPage(): JSX.Element {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialProject = initialReleaseCenterProject(
     searchParams,
     typeof window === 'undefined' ? undefined : window.localStorage,
@@ -141,7 +144,7 @@ export function ReleaseCenterPage(): JSX.Element {
     ? { targetId: deepLink.targetId, branchId: deepLink.branchId, commitSha: deepLink.commitSha }
     : null));
   const navigate = useNavigate();
-  const [section, setSection] = useState<CenterSection>('fleet');
+  const [section, setSection] = useState<CenterSection>(() => releaseCenterSection(searchParams));
   const [fleetSort, setFleetSort] = useState<FleetSortKey>('severity');
   const [rootRef, wide] = useMeasuredWide();
   const configCardRef = useRef<HTMLDivElement>(null);
@@ -187,6 +190,18 @@ export function ReleaseCenterPage(): JSX.Element {
   useEffect(() => {
     rememberReleaseCenterProject(projectId, typeof window === 'undefined' ? undefined : window.localStorage);
   }, [projectId]);
+
+  // 当前分区回写 URL，「我在看这一屏」就能整条链接发给别人（设计稿 Interactions）。
+  // replace 而不是 push：切分区不是导航，不该在浏览器后退键上堆五层历史。
+  useEffect(() => {
+    setSearchParams((current) => {
+      if (releaseCenterSection(current) === section) return current;
+      const next = new URLSearchParams(current);
+      if (section === 'fleet') next.delete('section');
+      else next.set('section', section);
+      return next;
+    }, { replace: true });
+  }, [section, setSearchParams]);
 
   // 项目列表用于「项目」下拉（best-effort，失败退回手输）。
   useEffect(() => {
@@ -750,7 +765,29 @@ export function ReleaseCenterPage(): JSX.Element {
                     {selectedRow ? (
                       <div className="flex min-w-0 flex-col gap-4">
                         {section === 'config' ? (
-                          <>
+                          <div ref={configCardRef} className="flex flex-col gap-4">
+                            {/*
+                              稿子 §3 只有这张策略表单。这里多留了下面两块，各有实打实的理由：
+                              - ConfigTab：接入信息（主机 / 路径 / 脚本原文）与归档入口，
+                                策略表单管「怎么发」，它管「这台机器是什么、不要了怎么归档」。
+                              - OverviewTab：带 expectedCommitSha 钳制的「提升版本」目前只在这里。
+                                矩阵那颗「提升版本」跳的是控制台，而控制台还没实现带钳制的提升——
+                                在补上之前删掉它，等于把「分支已前进就拒绝发布」这道保护弄丢。
+                              这两块要按稿子拿掉，前置条件是先把带钳制的提升搬进控制台。
+                            */}
+                            <EnvConfigSection
+                              row={selectedRow}
+                              onSaved={setToast}
+                              onReload={() => void load()}
+                            />
+                            {/* 只读的接入信息与归档入口留在下面：策略表单管「怎么发」，
+                                这一块管「这台机器是什么、不要了怎么归档」，两件事。 */}
+                            <ConfigTab
+                              row={selectedRow}
+                              publicUrl={publicUrlOf(selectedRow)}
+                              onConfigure={() => openConfigureWizard(selectedRow.target)}
+                              onArchive={() => setArchiveState({ row: selectedRow, reason: '' })}
+                            />
                             <OverviewTab
                               row={selectedRow}
                               runs={selectedRuns}
@@ -766,15 +803,7 @@ export function ReleaseCenterPage(): JSX.Element {
                               onSeeAll={() => setSection('evidence')}
                               onOpenConfig={() => configCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
                             />
-                            <div ref={configCardRef}>
-                              <ConfigTab
-                                row={selectedRow}
-                                publicUrl={publicUrlOf(selectedRow)}
-                                onConfigure={() => openConfigureWizard(selectedRow.target)}
-                                onArchive={() => setArchiveState({ row: selectedRow, reason: '' })}
-                              />
-                            </div>
-                          </>
+                          </div>
                         ) : null}
 
                         {section === 'rules' ? (
@@ -786,7 +815,9 @@ export function ReleaseCenterPage(): JSX.Element {
                           />
                         ) : null}
 
-                        {section === 'health' ? <HealthTab row={selectedRow} nowMs={nowMs} /> : null}
+                        {section === 'health' ? (
+                          <HealthSection envs={fleetEnvs} selected={fleetEnvs.find((env) => env.id === selectedRow.target.id)} />
+                        ) : null}
 
                         {section === 'evidence' ? (
                           <>
@@ -804,7 +835,7 @@ export function ReleaseCenterPage(): JSX.Element {
                               onRetry={(run) => void retryRelease(run)}
                               onRollback={(run) => openRollback(selectedRow, run)}
                             />
-                            <EvidenceTab row={selectedRow} runs={selectedRuns} />
+                            <EvidenceSection row={selectedRow} runs={selectedRuns} />
                           </>
                         ) : null}
                       </div>

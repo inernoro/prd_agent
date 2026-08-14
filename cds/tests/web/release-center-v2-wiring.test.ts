@@ -72,7 +72,7 @@ const sidebar = read('pages/release-center/EnvironmentSidebar.tsx');
 const overview = read('pages/release-center/OverviewTab.tsx');
 const timeline = read('pages/release-center/ReleaseTimeline.tsx');
 const diagnosis = read('pages/release-center/FailureDiagnosis.tsx');
-const health = read('pages/release-center/HealthTab.tsx');
+const health = read('pages/release-center/HealthSection.tsx');
 const config = read('pages/release-center/ConfigTab.tsx');
 const startDialog = read('pages/release-center/StartReleaseDialog.tsx');
 const branchList = read('pages/BranchListPage.tsx');
@@ -133,8 +133,13 @@ describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
     expect(body).not.toMatch(/changeFailure\.ratio\s*\|\|\s*0/);
   });
 
-  it('availability24h → 健康页与概览健康格；未监测不许显示成 0%', () => {
-    expect(health).toContain('health?.availability24h');
+  it('availability24h → 健康分区与概览健康格；未监测不许显示成 0%', () => {
+    // 健康分区改走 releaseFleet 的统一口径（设计稿 §5 重构后），
+    // 但「值必须真的画到屏幕上」「没监测就不许写 0%」这两条判据不变。
+    expect(health).toContain('fleetAvailabilityText(env)');
+    const fleet = read('lib/releaseFleet.ts');
+    expect(fleet).toContain('probe?.availability24h');
+    expect(functionBody(fleet, 'export function fleetAvailabilityText(')).toContain("'未监测'");
     expect(functionBody(overview, 'export function OverviewTab(')).toContain('row.health?.availability24h');
     const shared = read('pages/release-center/shared.tsx');
     expect(functionBody(shared, 'export function formatAvailability(')).toContain("'未监测'");
@@ -187,7 +192,7 @@ describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
 });
 
 describe('发布中心 v2 · 变更历史的字段形状要跨层对齐', () => {
-  const evidence = read('pages/release-center/EvidenceTab.tsx');
+  const evidence = read('pages/release-center/EvidenceSection.tsx');
   const types = read('pages/release-center/types.ts');
   const backend = fs.readFileSync(
     path.resolve(process.cwd(), '../cds/src/services/release-target-history.ts'),
@@ -282,7 +287,9 @@ describe('发布中心 · 分区外壳', () => {
     for (const label of ['全环境矩阵', '环境与配置', '自动发布规则', '健康监测', '证据归档']) {
       expect(page, `缺分区 ${label}`).toContain(`label: '${label}'`);
     }
-    expect(page).toContain("useState<CenterSection>('fleet')");
+    // 初值来自 URL（`?section=`），缺省/非法值由 releaseCenterSection 退回 fleet，
+    // 所以第一屏仍然是矩阵而不是单目标详情。
+    expect(page).toContain('useState<CenterSection>(() => releaseCenterSection(searchParams))');
   });
 
   it('宽屏判定用实测宽度，不用媒体查询', () => {

@@ -51,6 +51,22 @@ export function releaseCenterDeepLink(searchParams: URLSearchParams): {
   };
 }
 
+/** 发布中心的五个分区。顺序即导航顺序，设计稿 §0 点名的那五格。 */
+export const RELEASE_CENTER_SECTIONS = ['fleet', 'config', 'rules', 'health', 'evidence'] as const;
+
+export type ReleaseCenterSection = (typeof RELEASE_CENTER_SECTIONS)[number];
+
+/**
+ * `?section=fleet|config|rules|health|evidence`——让「我看的是这一屏」可以直接发给别人。
+ *
+ * 不认识的值一律退回 fleet：分区是有限枚举，URL 上多打一个字母不该让页面白屏，
+ * 也不该把它当成一个真实分区去渲染空内容。
+ */
+export function releaseCenterSection(searchParams: URLSearchParams): ReleaseCenterSection {
+  const raw = searchParams.get('section')?.trim() as ReleaseCenterSection | undefined;
+  return raw && RELEASE_CENTER_SECTIONS.includes(raw) ? raw : 'fleet';
+}
+
 export function rememberReleaseCenterProject(projectId: string, storage?: Storage): void {
   const normalized = projectId.trim();
   if (!normalized) return;

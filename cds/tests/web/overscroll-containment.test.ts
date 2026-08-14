@@ -40,7 +40,7 @@ const MUST_STAY_CLEAN = [
   'pages/ReleaseCenterPage.tsx',
   'pages/ReleaseConsolePage.tsx',
   'pages/release-center/EnvironmentSidebar.tsx',
-  'pages/release-center/EvidenceTab.tsx',
+  'pages/release-center/EvidenceSection.tsx',
   'pages/release-center/ConfigTab.tsx',
   'pages/release-center/FailureDiagnosis.tsx',
   'pages/release-center/shared.tsx',
