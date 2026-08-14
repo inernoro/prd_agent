@@ -260,6 +260,11 @@ describe('稿子 §4 自动发布规则', () => {
     const timer = read('pages/release-center/AutoReleaseTab.tsx');
     expect(timer).toContain("job.schedule.type !== 'push'");
     expect(rules).toContain("job.schedule.type === 'push'");
+    // 两块同屏，标题与主按钮不许重名——否则屏幕上是两个「自动发布规则」
+    // 和两个「新建规则」，用户分不清点哪个。
+    expect(timer).toContain('>定时发布规则</h3>');
+    expect(timer).not.toContain('>自动发布规则</h3>');
+    expect(timer).toContain('新建定时规则');
   });
 });
 
