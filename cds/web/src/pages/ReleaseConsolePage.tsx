@@ -671,12 +671,11 @@ export function ReleaseConsolePage(): JSX.Element {
                     : <Rocket className="h-[22px] w-[22px] text-muted-foreground" />}
                 </div>
 
-                {/* basis-0：这一格是可伸缩的中段，basis 定的是「换行前它想要多宽」。
-                    给固定值（试过 280、200）就是在跟右侧操作组抢那条线——操作组
-                    （版本选择 + 三个按钮）约 520px，1600 宽下差几个像素就把状态条
-                    挤成两行，跟参考稿的一行差在这。basis-0 让它只吃剩余空间，
-                    换行与否只由「图标 + 操作组 + 这里的 min-width」决定，不再是巧合。 */}
-                <div className="min-w-[160px] flex-1 basis-0">
+                {/* basis-0 + min-width：换行判据用的是各项的**假想主尺寸**（basis，中段被
+                    min-width 兜住），不是 grow 之后的结果。1600 宽下内容行 764px，
+                    52(图标) + 18 + 340 + 18 + 300(三个按钮) = 728，留得下一行。
+                    版本选择挪进标题行之后操作组才收得到 300 —— 它在操作组里时是 480。 */}
+                <div className="min-w-[340px] flex-1 basis-0">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <h2 className={`text-xl font-bold ${failed ? 'text-red-600 dark:text-red-400' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
@@ -698,6 +697,27 @@ export function ReleaseConsolePage(): JSX.Element {
                         </>
                       ) : '选择一个环境'}
                     </span>
+                    {/* 版本选择跟着标题走，不进右侧操作组。进操作组时那一行要装
+                        「选择 + 三个按钮」约 480px，中段只剩 194px，进度条被压成一小截
+                        ——参考稿的进度条是横贯整个中段的。原来它连同「来源 / 二次确认」
+                        独占 banner 上方两行，那两行正是用户框出来的「过于丑陋」的一半；
+                        来源地址收进 title 提示。 */}
+                    <select
+                      value={branchId}
+                      onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
+                      title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，试跑会拦下这一项'}
+                      aria-label="要发布的版本"
+                      className="cds-ident h-7 max-w-[190px] shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[11px] outline-none focus:border-[hsl(var(--hairline-strong))]"
+                    >
+                      {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
+                      {branches.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.branch}
+                          {item.commitSha ? ` · ${item.commitSha.slice(0, 7)}` : ''}
+                          {commitMeta[item.commitSha || '']?.subject ? ` · ${commitMeta[item.commitSha || ''].subject}` : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded bg-[hsl(var(--surface-sunken))]">
                     <div
@@ -718,25 +738,6 @@ export function ReleaseConsolePage(): JSX.Element {
                 </div>
 
                 <div className="flex w-full flex-wrap items-center gap-2 [&_button]:h-10 sm:w-auto sm:shrink-0">
-                  {/* 版本选择贴着发布按钮：先定发哪一版，右手边就是发。
-                      原来它连同「来源 / 二次确认」独占 banner 上方两行，那两行正是
-                      用户框出来的「过于丑陋」的一半。来源地址移到试跑结果里去说。 */}
-                  <select
-                    value={branchId}
-                    onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
-                    title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，试跑会拦下这一项'}
-                    aria-label="要发布的版本"
-                    className="cds-ident h-10 max-w-[190px] rounded-[10px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-xs outline-none focus:border-[hsl(var(--hairline-strong))]"
-                  >
-                    {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
-                    {branches.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.branch}
-                        {item.commitSha ? ` · ${item.commitSha.slice(0, 7)}` : ''}
-                        {commitMeta[item.commitSha || '']?.subject ? ` · ${commitMeta[item.commitSha || ''].subject}` : ''}
-                      </option>
-                    ))}
-                  </select>
                   {/* 受保护环境走两段式：第一下只是把按钮换成「确认发布到 X」，第二下才真发。
                       不用 window.confirm —— 那东西在窄屏和无障碍上都不好使，也没法说清发的是哪一版。 */}
                   <Button

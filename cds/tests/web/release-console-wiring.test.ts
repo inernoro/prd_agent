@@ -405,15 +405,24 @@ describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
  * 这条守卫钉住两个预算值，改大任意一个都要重新量。
  */
 describe('发布控制台 · 状态条一行的宽度预算', () => {
-  it('中段 min-width 与版本选择宽度合起来留得下操作组', () => {
-    expect(PAGE).toContain('min-w-[160px] flex-1 basis-0');
-    expect(PAGE).toContain('max-w-[190px]');
-    const STACK_MIN = 160;
-    const SELECT_MAX = 190;
+  it('中段 min-width 留得下操作组，且版本选择不在操作组里', () => {
+    expect(PAGE).toContain('min-w-[340px] flex-1 basis-0');
+    const STACK_MIN = 340;
     const ICON = 52;
     const GAP = 18;
-    // 操作组 = 版本选择 + 发布 + 试跑 + 中止 + 三个 8px 间隔（1600 实测 512，此处按 190 的选择宽反推）
-    const GROUP = SELECT_MAX + 120 + 72 + 90 + 8 * 3;
+    // 操作组只有三个按钮：发布 + 试跑 + 中止 + 两个 8px 间隔
+    const GROUP = 120 + 72 + 90 + 8 * 2;
     expect(ICON + GAP + STACK_MIN + GAP + GROUP, '1600 宽下内容行只有 764px').toBeLessThanOrEqual(764);
+  });
+
+  /**
+   * 版本选择必须在标题行，不在操作组。放进操作组时那一行要装「选择 + 三个按钮」
+   * 约 480px，中段只剩 194px——进度条被压成一小截，而参考稿的进度条横贯整个中段。
+   */
+  it('版本选择在标题行，进度条才横贯中段', () => {
+    const titleRow = PAGE.slice(PAGE.indexOf('flex flex-wrap items-baseline gap-x-3'), PAGE.indexOf('overflow-hidden rounded bg-[hsl(var(--surface-sunken))]'));
+    expect(titleRow, '版本选择应当在标题行里').toContain('aria-label="要发布的版本"');
+    const group = PAGE.slice(PAGE.indexOf('[&_button]:h-10'), PAGE.indexOf('试跑'));
+    expect(group, '操作组里不该再有版本选择').not.toContain('aria-label="要发布的版本"');
   });
 });
