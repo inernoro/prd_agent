@@ -231,11 +231,19 @@ describe('发布中心 v2 · 预览地址推导只有一份', () => {
 
 describe('发布中心 v2 · 布局纪律', () => {
   it('桌面 fill 配移动端 flow 兜底（< lg 自然流 + 限高滚动）', () => {
-    // 整页：手机竖滚，lg 起交给各窗格自己滚。
-    expect(page).toContain('overflow-y-auto lg:overflow-hidden');
+    // 整页竖滚，桌面端也一样。
+    //
+    // 这里原本要求 `overflow-y-auto lg:overflow-hidden`（桌面锁死整页、只让各窗格内滚）。
+    // 2026-08-13 用户反馈「红色框框部分无法向上拖动，好像被焊死了一样，上半部分偏高偏大，
+    // 想低头看看人家的裤子什么颜色，怎么都看不到」——锁死整页正是那个「焊死」。
+    // 顶部标题块与版本流水轴必须能被推上去，所以桌面端不再 lg:overflow-hidden。
+    expect(page).toContain('flex min-h-0 flex-col gap-4 overflow-y-auto');
+    const shell = page.slice(page.indexOf('flex min-h-0 flex-col gap-4 overflow-y-auto'), page.indexOf('<header'));
+    expect(shell, '外层不许再 lg:overflow-hidden——那会把顶部永久钉在首屏').not.toContain('lg:overflow-hidden');
     // 主从：手机单列自然堆叠（flex-1 / min-h-0 一律收进 lg:，否则在无界高度里塌成 0），
-    // lg 起才回到网格 + 填满整列高度。
-    expect(page).toContain('flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[264px_minmax(0,1fr)]');
+    // lg 起才回到网格。整页可滚之后主区不能再靠 min-h-0 取高（那会塌成内容高），
+    // 改为 min-h-[560px] 给个下界，短内容时也不会缩成矮条。
+    expect(page).toContain('flex flex-col gap-4 lg:grid lg:min-h-[560px] lg:flex-1 lg:grid-cols-[288px_minmax(0,1fr)]');
     // 左栏手机限高 + 自身滚动，lg 解除限高改为填满整列。
     expect(sidebar).toContain('max-h-[46vh]');
     expect(sidebar).toContain('lg:h-full lg:max-h-none');

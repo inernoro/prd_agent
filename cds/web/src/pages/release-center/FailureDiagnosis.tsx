@@ -107,7 +107,7 @@ export function FailureDiagnosis({
                   {diagnosis.report.failCount > 0 ? `${diagnosis.report.failCount} 项未通过` : '全部通过'}
                 </Chip>
               </div>
-              <div className="overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
+              <div className="overflow-x-auto">
                 <table className="w-full min-w-[520px] border-collapse text-[12.5px]">
                   <thead>
                     <tr>
@@ -200,7 +200,6 @@ export function FailureDiagnosis({
             </summary>
             <pre
               className="max-h-[40vh] overflow-auto border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
-              style={{ overscrollBehavior: 'contain' }}
             >
               {(run.logs || [])
                 .map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`)
@@ -337,7 +336,6 @@ function DiskDiagnosisCard({ targetId, shortfall }: {
       {output ? (
         <pre
           className="mt-3 max-h-72 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11px] leading-5"
-          style={{ overscrollBehavior: 'contain' }}
         >
           {output}
         </pre>

@@ -182,7 +182,6 @@ export function ReleaseLogPane({ text, className = '', style }: { text: string; 
           syncFollowing(shouldFollowLog(pane.scrollTop, pane.scrollHeight, pane.clientHeight));
         }}
         className="h-full max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
-        style={{ overscrollBehavior: 'contain' }}
       >
         {text || '等待发布日志...'}
       </pre>

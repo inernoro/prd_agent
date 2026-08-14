@@ -104,7 +104,7 @@ function Sheet({ title, subtitle, onClose, foot, children }: {
           </Button>
         </div>
         {/* 窄屏整体竖滚；桌面也是这一块滚，头脚不动 */}
-        <div className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {children}
         </div>
         {foot ? (
@@ -475,16 +475,17 @@ export function ReleaseConsolePage(): JSX.Element {
         />
       )}
     >
-      <Workspace fluid>
+      {/* --fill：三栏是固定外壳 + 各栏内滚（参考稿即如此）。缺它时 h-full 解析不到
+          高度，实时输出会把整页撑到近万像素——看着像填满，其实是页面在长。 */}
+      <Workspace fluid className="cds-workspace--fill">
         {/* 移动端整页自然流；lg 起切回三栏填满，各栏自己滚 */}
         <div
-          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-[264px_minmax(0,1fr)_348px] lg:gap-4 lg:overflow-hidden"
-          style={{ overscrollBehavior: 'contain' }}
+          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-[288px_minmax(560px,1fr)_380px] lg:gap-4 lg:overflow-hidden"
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
               不是项目列表。桌面三栏不受影响（order 只在 max-lg 生效）。 */}
-          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-lg max-lg:order-2 lg:overflow-hidden">
+          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-lg:order-2 lg:overflow-hidden">
             <div className="shrink-0 border-b border-[hsl(var(--hairline))] p-3">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Projects</span>
@@ -503,7 +504,7 @@ export function ReleaseConsolePage(): JSX.Element {
 
             {/* 项目列表按内容占高（多了才滚），环境块紧跟其后 —— 钉底会在项目少时
                 在两块之间挖出一个大洞，看着像没做完。空白留在最下面才读作「还能长」。 */}
-            <div className="min-h-0 shrink overflow-y-auto p-2 max-lg:max-h-[38vh] lg:max-h-[46%]" style={{ overscrollBehavior: 'contain' }}>
+            <div className="min-h-0 shrink overflow-y-auto p-2 max-lg:max-h-[38vh] lg:max-h-[46%]">
               {filteredProjects.length === 0 ? (
                 <p className="p-3 text-xs text-muted-foreground">没有匹配的项目。</p>
               ) : filteredProjects.map((item) => (
@@ -536,7 +537,7 @@ export function ReleaseConsolePage(): JSX.Element {
               {rows.length === 0 ? (
                 <p className="text-xs text-muted-foreground">这个项目还没有发布目标，去发布中心添加环境。</p>
               ) : (
-                <div className="flex max-h-[34vh] flex-col gap-2 overflow-y-auto lg:max-h-[42vh]" style={{ overscrollBehavior: 'contain' }}>
+                <div className="flex max-h-[34vh] flex-col gap-2 overflow-y-auto lg:max-h-[42vh]">
                   {envSections.map((section) => (
                     <div key={section.environment} className="flex flex-col gap-1.5">
                       {/* 后端没下发分组时 buildEnvironmentSections 退化成单组，此时不画组标题 */}
@@ -640,13 +641,13 @@ export function ReleaseConsolePage(): JSX.Element {
               </span>
             </div>
 
-            <section className={`cds-surface-raised shrink-0 rounded-lg border p-4 ${toneRing}`}>
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
-                  {running ? <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    : failed ? <XCircle className="h-5 w-5 text-red-500" />
-                    : shown ? <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                    : <Rocket className="h-5 w-5 text-muted-foreground" />}
+            <section className={`cds-surface-raised shrink-0 rounded-[14px] border px-5 py-[18px] ${toneRing}`}>
+              <div className="flex flex-wrap items-center gap-[18px]">
+                <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[14px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
+                  {running ? <Loader2 className="h-[22px] w-[22px] animate-spin text-primary" />
+                    : failed ? <XCircle className="h-[22px] w-[22px] text-red-500" />
+                    : shown ? <CheckCircle2 className="h-[22px] w-[22px] text-emerald-500" />
+                    : <Rocket className="h-[22px] w-[22px] text-muted-foreground" />}
                 </div>
 
                 <div className="min-w-0 flex-1 basis-[280px]">
@@ -667,9 +668,9 @@ export function ReleaseConsolePage(): JSX.Element {
                       ) : '选择一个环境'}
                     </span>
                   </div>
-                  <div className="mt-2 h-0.5 w-full overflow-hidden rounded bg-[hsl(var(--hairline))]">
+                  <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded bg-[hsl(var(--surface-sunken))]">
                     <div
-                      className={`h-full transition-[width] duration-500 ${failed ? 'bg-red-500' : running ? 'bg-primary' : 'bg-emerald-500'}`}
+                      className={`h-full rounded transition-[width] duration-500 ${failed ? 'bg-red-500' : running ? 'bg-primary' : 'bg-emerald-500'}`}
                       style={{ width: `${progress.steps.length ? Math.round((progress.steps.filter((s) => s.state === 'done').length / progress.steps.length) * 100) : 0}%` }}
                     />
                   </div>
@@ -684,7 +685,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   </div>
                 </div>
 
-                <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0">
+                <div className="flex w-full flex-wrap gap-2 [&_button]:h-10 sm:w-auto sm:shrink-0">
                   {/* 受保护环境走两段式：第一下只是把按钮换成「确认发布到 X」，第二下才真发。
                       不用 window.confirm —— 那东西在窄屏和无障碍上都不好使，也没法说清发的是哪一版。 */}
                   <Button
@@ -806,10 +807,11 @@ export function ReleaseConsolePage(): JSX.Element {
               </div>
             ) : null}
 
-            <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[288px_minmax(0,1fr)]">
-              {/* self-start：步骤条按内容收高，不撑成一个八成留白的高盒子 */}
-              <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-lg border lg:max-h-full lg:self-start">
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
+            <div className="grid min-h-0 flex-1 gap-3.5 lg:grid-cols-[300px_minmax(0,1fr)]">
+              {/* 与右侧日志等高（参考稿 grid 两列 stretch）。之前用 self-start 让它按内容收高，
+                  结果卡片底边下面空出一大块底色 —— 悬空的短卡读起来是「洞」，不是「省地方」。 */}
+              <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border">
+                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
                   <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Pipeline</span>
                   <span className="flex items-center gap-2">
                     <span className="cds-ident text-[11px] text-muted-foreground">
@@ -824,7 +826,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     </button>
                   </span>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-1.5 max-lg:max-h-64" style={{ overscrollBehavior: 'contain' }}>
+                <div className="min-h-0 flex-1 overflow-y-auto p-1.5 max-lg:max-h-64">
                   {progress.steps.map((step) => (
                     <div
                       key={step.id}
@@ -861,8 +863,8 @@ export function ReleaseConsolePage(): JSX.Element {
                 </div>
               </section>
 
-              <section className="cds-hairline flex min-h-0 flex-col overflow-hidden rounded-lg border bg-[hsl(var(--surface-sunken))]">
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2">
+              <section className="cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border bg-[hsl(var(--surface-sunken))]">
+                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
                   <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Live output</span>
                   <span className="flex items-center gap-2">
                     <span className="cds-ident text-[11px] text-muted-foreground">{shownLogs.length} 行</span>
@@ -884,7 +886,6 @@ export function ReleaseConsolePage(): JSX.Element {
                     if (!atBottom && following) setFollowing(false);
                   }}
                   className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 cds-ident text-[12.5px] leading-relaxed max-lg:max-h-72"
-                  style={{ overscrollBehavior: 'contain' }}
                 >
                   {shownLogs.length === 0
                     ? '还没有输出。点「开始发布」后，这里会逐行滚动。'
@@ -897,7 +898,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 右栏：只放「看记录」。配置与 Agent 走全屏浮层 ══ */}
           {/* 348px 的窄栏装不下发布流水线和一整段任务文本 —— 塞进来就是逼人在
               一条窄缝里横向读命令。这两块改成浮层，右栏专心做记录。 */}
-          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-lg max-lg:order-3 lg:overflow-hidden">
+          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-lg:order-3 lg:overflow-hidden">
             <div className="flex shrink-0 items-center gap-1 border-b border-[hsl(var(--hairline))] px-2 pt-2">
               {([['history', '历史发布'], ['failed', '失败']] as Array<[RailPane, string]>).map(([key, label]) => (
                 <button
@@ -933,7 +934,7 @@ export function ReleaseConsolePage(): JSX.Element {
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-3 max-lg:max-h-[420px]" style={{ overscrollBehavior: 'contain' }}>
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 max-lg:max-h-[420px]">
               {(() => {
                 const list = pane === 'failed' ? failedRuns : runsOfProject;
                 if (list.length === 0) {

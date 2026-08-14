@@ -519,15 +519,22 @@ export function ReleaseCenterPage(): JSX.Element {
       <Workspace fluid>
         {/* 移动端整页自然流竖滚；lg 起切回填满视口、各窗格自己滚。 */}
         <div
-          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:overflow-hidden"
-          style={{ overscrollBehavior: 'contain' }}
+          /*
+           * 桌面端也允许整页滚动。此前是 lg:overflow-hidden + 顶部两块 shrink-0，
+           * 于是「站点发布」头部与版本流水轴被永久钉在首屏，下面的详情再也推不上去
+           * ——用户原话「像被焊死了一样，想低头看看裤子什么颜色都看不到」。
+           * 详情区仍用 lg:min-h 拿到一个体面的首屏高度，超出部分整页滚。
+           */
+          className="flex min-h-0 flex-col gap-4 overflow-y-auto"
         >
-          <header className="cds-surface-raised cds-hairline shrink-0 rounded-lg p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h1 className="text-lg font-semibold">站点发布</h1>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                  一个项目的所有环境都在这里：谁停在哪个提交、健不健康、坏了退哪一版。
+          {/* 头部压成一行：标题与说明同排。原来说明独占一行 + p-4，
+              两块顶部加起来吃掉近 40% 首屏，正是「头大的矮子」那个体感。 */}
+          <header className="cds-surface-raised cds-hairline shrink-0 rounded-[14px] px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h1 className="text-base font-semibold">站点发布</h1>
+                <p className="min-w-0 text-[12.5px] text-muted-foreground">
+                  谁停在哪个提交、健不健康、坏了退哪一版。
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -600,7 +607,7 @@ export function ReleaseCenterPage(): JSX.Element {
 
               {/* 手机：单列自然堆叠，高度由内容决定（flex-1 + basis 0 在无界高度里会塌成 0）。
                   lg 起才切回主从网格并填满剩余高度。 */}
-              <div className="flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[264px_minmax(0,1fr)] lg:items-stretch">
+              <div className="flex flex-col gap-4 lg:grid lg:min-h-[560px] lg:flex-1 lg:grid-cols-[288px_minmax(0,1fr)] lg:items-stretch">
                 <EnvironmentSidebar
                   sections={sections}
                   selectedTargetId={effectiveTargetId}
@@ -641,7 +648,7 @@ export function ReleaseCenterPage(): JSX.Element {
                       </div>
                     </div>
 
-                    <nav className="flex shrink-0 gap-0.5 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3" style={{ overscrollBehavior: 'contain' }}>
+                    <nav className="flex shrink-0 gap-0.5 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3">
                       {DETAIL_TABS.map((item) => (
                         <button
                           key={item.id}
@@ -661,7 +668,6 @@ export function ReleaseCenterPage(): JSX.Element {
                     {/* 主产物区：移动端给最小高度避免塌成 0，lg 起 flex-1 填满整列。 */}
                     <div
                       className="min-h-[320px] p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
-                      style={{ overscrollBehavior: 'contain' }}
                     >
                       {tab === 'overview' ? (
                         <OverviewTab

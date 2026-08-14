@@ -32,7 +32,7 @@ export function CommitRail({ rail, markers, selectedPosition, nowMs, onSelectMar
   const refsAgo = formatAgo(rail.refsAsOf, nowMs);
 
   return (
-    <section className="cds-surface-raised cds-hairline shrink-0 rounded-lg px-4 py-3">
+    <section className="cds-surface-raised cds-hairline shrink-0 rounded-[14px] px-4 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold">{rail.branch || '主干'} 分支版本流水</h2>
@@ -46,12 +46,12 @@ export function CommitRail({ rail, markers, selectedPosition, nowMs, onSelectMar
         </div>
       </div>
 
-      <div className="mt-3 overflow-x-auto pb-1" style={{ overscrollBehavior: 'contain' }}>
+      <div className="mt-2 overflow-x-auto pb-1">
         <ol className="flex min-w-max items-stretch gap-0">
           {nodes.map((node, index) => {
             const hasMarker = node.markers.length > 0;
             return (
-              <li key={node.sha} className="relative flex min-w-[124px] flex-1 flex-col items-center gap-1.5 px-2 pt-7">
+              <li key={node.sha} className="relative flex min-w-[124px] flex-1 flex-col items-center gap-1 px-2 pt-6">
                 {/* 轴线：首尾各裁掉一半，避免两端悬空的线头 */}
                 <span
                   aria-hidden

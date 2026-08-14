@@ -268,8 +268,21 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
 
 describe('发布控制台 · 窄屏与主题纪律', () => {
   it('桌面三栏、窄屏自然流（desktop-fill 必须配 mobile-flow 兜底）', () => {
-    expect(PAGE).toContain('flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-[264px_minmax(0,1fr)_348px]');
+    // 列宽照参考稿走（见下一条），这里只管「窄屏自然流 + 桌面才交给各栏内滚」这个契约，
+    // 别把两件事写死在同一个字符串里——改一下列宽就要连带改这条，久了就没人敢动。
+    expect(PAGE).toMatch(
+      /flex h-full min-h-0 flex-col gap-4 overflow-y-auto lg:grid lg:grid-cols-\[[^\]]+\]/,
+    );
     expect(PAGE).toContain('lg:overflow-hidden');
+  });
+
+  /**
+   * 列宽取自参考稿 f8d4af4b 的实测值。用户 2026-08-13 的原话是「你应该按照
+   * 参考稿的设定，包括宽度」——首版自己拍了 264/348，看着就是不对味。
+   * 中栏给 560px 下界，是为了不让实时输出在中等宽度被两侧挤成细条。
+   */
+  it('三栏列宽照参考稿，不自己拍脑袋', () => {
+    expect(PAGE).toContain('lg:grid-cols-[288px_minmax(560px,1fr)_380px]');
   });
 
   /**

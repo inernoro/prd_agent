@@ -84,7 +84,6 @@ export function EvidenceTab({ row, runs }: EvidenceTabProps): JSX.Element {
 
             <pre
               className="max-h-[44vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
-              style={{ overscrollBehavior: 'contain' }}
             >
               {(selected.logs || [])
                 .map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`)

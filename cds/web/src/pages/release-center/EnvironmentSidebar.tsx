@@ -42,7 +42,7 @@ export function EnvironmentSidebar({
         <span className="text-xs text-muted-foreground">{activeCount}</span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {sections.map((section) => (
           <div key={`${section.environment}-${section.label}`}>
             {section.entries.map((entry) => (
