@@ -74,6 +74,16 @@ export interface ScheduledJobTargetCheckResult {
 interface ScheduledJobExecutionContext {
   mode: 'run' | 'check';
   jobId?: string;
+  /**
+   * 事件驱动规则（schedule.type = 'push'）本次真正被推的那个分支。
+   *
+   * push 规则存的是分支 **glob**（`release/*`），不是某一个固定分支——真正要发
+   * 哪个分支只有事件发生时才知道。所以这里由 runPushRules 现场带下来，覆盖
+   * action.source 里那个占位值。不覆盖的话，`release/*` 这条规则不管哪个
+   * release 分支被推，发的永远是建规则时选中的那一个——**发错分支**，
+   * 而且日志里看着一切正常。
+   */
+  overrideBranchId?: string;
 }
 
 export interface NormalizeScheduledJobOptions {
@@ -136,10 +146,19 @@ export class ScheduledJobService {
    */
   async runPushRules(ctx: PushRuleContext): Promise<number> {
     const matched = selectPushRuleJobs(this.deps.stateService.listScheduledJobs(), ctx);
+    if (matched.length === 0) return 0;
+    // 本次被推的那个分支在 CDS 里对应哪条记录。规则存的是 glob，发的必须是这一个。
+    const branch = this.deps.stateService.findBranchByProjectAndName(ctx.projectId, ctx.branch);
+    if (!branch) {
+      console.warn(
+        `[scheduled-jobs] ${matched.length} 条规则命中 ${ctx.branch}，但该分支在 CDS 里还没有记录，本次不发`,
+      );
+      return 0;
+    }
     let started = 0;
     for (const job of matched) {
       try {
-        await this.runJob(job.id, 'push');
+        await this.runJob(job.id, 'push', { overrideBranchId: branch.id });
         started += 1;
       } catch (err) {
         console.error('[scheduled-jobs] push 规则执行失败:', job.id, (err as Error).message);
@@ -162,7 +181,11 @@ export class ScheduledJobService {
     }
   }
 
-  async runJob(jobId: string, trigger: ScheduledJobRun['trigger']): Promise<ScheduledJobRun> {
+  async runJob(
+    jobId: string,
+    trigger: ScheduledJobRun['trigger'],
+    options: { overrideBranchId?: string } = {},
+  ): Promise<ScheduledJobRun> {
     const job = this.deps.stateService.getScheduledJob(jobId);
     if (!job) throw new Error('任务不存在');
 
@@ -195,6 +218,7 @@ export class ScheduledJobService {
         job,
         Date.now() + timeoutMs,
         Math.max(0, Math.floor(job.retryCount || 0)),
+        options.overrideBranchId,
       );
       run.exitCode = result.exitCode;
       run.httpStatus = result.httpStatus;
@@ -396,7 +420,12 @@ export class ScheduledJobService {
     return this.computeNextRunAt(job.schedule, new Date());
   }
 
-  private async executeActions(job: ScheduledJob, deadlineMs: number, retryCount: number): Promise<ScheduledJobTargetCheckResult> {
+  private async executeActions(
+    job: ScheduledJob,
+    deadlineMs: number,
+    retryCount: number,
+    overrideBranchId?: string,
+  ): Promise<ScheduledJobTargetCheckResult> {
     const actions = normalizeActions(job.actions, job.target);
     if (actions.length === 0) {
       return { ok: false, exitCode: 1, log: '', error: '任务至少需要一个动作' };
@@ -412,7 +441,10 @@ export class ScheduledJobService {
       const title = action.name || defaultActionName(action);
       logs.push(`[${index + 1}/${actions.length}] ${title}`);
       const sandboxKey = actions.length === 1 ? job.id : `${job.id}-${index + 1}-${action.id}`;
-      const result = await this.executeTargetWithRetry(action, deadlineMs, sandboxKey, retryCount, { mode: 'run', jobId: job.id });
+      const result = await this.executeTargetWithRetry(
+        action, deadlineMs, sandboxKey, retryCount,
+        { mode: 'run', jobId: job.id, ...(overrideBranchId ? { overrideBranchId } : {}) },
+      );
       lastExitCode = result.exitCode;
       lastHttpStatus = result.httpStatus;
       if (result.log) logs.push(result.log);
@@ -573,7 +605,7 @@ export class ScheduledJobService {
     const releaseTarget = this.deps.stateService.getReleaseTarget(target.targetId);
     if (!releaseTarget) return fail(`发布目标不存在：${target.targetId}`);
 
-    const source = this.resolveReleaseSource(target);
+    const source = this.resolveReleaseSource(target, context.overrideBranchId);
     if ('error' in source) return fail(source.error);
     logs.push(source.summary);
 
@@ -705,7 +737,15 @@ export class ScheduledJobService {
    */
   private resolveReleaseSource(
     target: Extract<ScheduledJobTarget, { type: 'release' }>,
+    overrideBranchId?: string,
   ): { branchId: string; previewUrl: string; expectedCommitSha?: string; candidateCommitSha: string; summary: string } | { error: string } {
+    // 事件驱动规则：发的是本次被推的那个分支，不是建规则时存下来的占位值。
+    // promote 来源不受影响——它的语义是「把某环境正在跑的那一版原样搬过来」，
+    // 与哪个分支被推无关。
+    const source = overrideBranchId && target.source.kind === 'branch'
+      ? { ...target, source: { kind: 'branch' as const, branchId: overrideBranchId } }
+      : target;
+    target = source;
     if (target.source.kind === 'promote') {
       const fromTarget = this.deps.stateService.getReleaseTarget(target.source.fromTargetId);
       if (!fromTarget) return { error: `来源环境不存在：${target.source.fromTargetId}` };

@@ -199,3 +199,42 @@ describe('触发条件文案', () => {
     expect(describePushRule(rule({ pathPattern: 'docs/**' }), false)).toBe('每次 push · 仅 docs/** 变更 · 自动发布');
   });
 });
+
+/**
+ * 来源分支的**归属**。这一条是自测时被真实 API 打回来才发现的：
+ * 建规则时 `POST /api/scheduled-jobs` 报「动作 1: 来源分支必填」——
+ * 因为定时规则要求绑定一个具体分支，而事件规则存的是 glob，发哪个分支
+ * 只有事件发生时才知道。两边语义不同，判据必须分开。
+ */
+describe('事件规则的来源分支由事件决定，不是建规则时钉死的那一个', () => {
+  const read = (rel: string): string => fs.readFileSync(path.resolve(process.cwd(), '../cds', rel), 'utf8');
+
+  it('路由：push 规则允许留空来源分支，定时规则仍然必填', () => {
+    const route = read('src/routes/scheduled-jobs.ts');
+    expect(route).toContain('allowDeferredBranch');
+    expect(route).toContain("allowDeferredBranch: schedule.type === 'push'");
+    // 留空只在 push 下放行，其余仍然报错
+    expect(route).toContain("if (ctx.allowDeferredBranch) return { kind: 'branch', branchId: '' };");
+    expect(route).toContain("return { error: '来源分支必填' };");
+  });
+
+  it('执行：runPushRules 把事件里的真实分支带下去覆盖占位值', () => {
+    const service = read('src/services/scheduled-job-service.ts');
+    expect(service).toContain('findBranchByProjectAndName(ctx.projectId, ctx.branch)');
+    expect(service).toContain("this.runJob(job.id, 'push', { overrideBranchId: branch.id })");
+    expect(service).toContain('overrideBranchId?: string;');
+    // 覆盖只作用于 branch 来源；promote 的语义与哪个分支被推无关
+    expect(service).toContain("overrideBranchId && target.source.kind === 'branch'");
+  });
+
+  it('前端建规则时不填固定分支，避免 release/* 只发其中一个', () => {
+    const ui = read('web/src/pages/release-center/AutoRulesSection.tsx');
+    expect(ui).toContain("source: { kind: 'branch', branchId: '' }");
+    expect(ui).not.toContain('latestRun?.branchId');
+  });
+
+  it('分支在 CDS 里还没有记录时不发，并说明原因', () => {
+    const service = read('src/services/scheduled-job-service.ts');
+    expect(service).toContain('该分支在 CDS 里还没有记录，本次不发');
+  });
+});

@@ -118,7 +118,6 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
     setSaving(true);
     setError('');
     try {
-      const branchId = rowOf(draft.targetId)?.latestRun?.branchId || '';
       const body = {
         projectId,
         name: `${draft.branchPattern} → ${rowOf(draft.targetId)?.target.name || draft.targetId}`,
@@ -132,9 +131,10 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
         actions: [{
           type: 'release',
           targetId: draft.targetId,
-          // 分支来源用规则里那个 glob 命中的分支：后端触发时按事件里的真实分支跑，
-          // 这里存的是建规则时的默认值，仅在手动执行该规则时用到。
-          source: { kind: 'branch', branchId },
+          // 来源分支**故意留空**：这条规则匹配的是分支 glob，真正发哪个分支由
+          // 触发它的那次 push 决定（后端 runPushRules 现场覆盖）。填一个固定
+          // 分支会让 `release/*` 这类规则永远只发其中一个。
+          source: { kind: 'branch', branchId: '' },
           requireApproval: draft.requireApproval,
           rollbackOnFailure: true,
           skipWhenUnchanged: true,

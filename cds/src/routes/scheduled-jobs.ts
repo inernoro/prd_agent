@@ -183,7 +183,13 @@ function parseJobInput(body: any, stateService: StateService): {
 
   const schedule = parseSchedule(body?.schedule);
   if ('error' in schedule) return schedule;
-  const actions = parseActions(body?.actions, body?.target, { projectId, stateService });
+  const actions = parseActions(body?.actions, body?.target, {
+    projectId,
+    stateService,
+    // 只有事件驱动规则才允许留空来源分支——定时规则仍然必须绑定一个具体分支，
+    // 否则到点了没人知道要发什么。
+    allowDeferredBranch: schedule.type === 'push',
+  });
   if ('error' in actions) return actions;
 
   const hasRelease = actions.some((action) => action.type === 'release');
@@ -232,6 +238,8 @@ function parseSchedule(raw: any): ScheduledJobSchedule | { error: string } {
 interface ParseTargetContext {
   projectId: string;
   stateService: StateService;
+  /** push 规则专用：来源分支由事件决定，建规则时允许留空。 */
+  allowDeferredBranch?: boolean;
 }
 
 function parseActions(rawActions: any, legacyTarget: any, ctx: ParseTargetContext): ScheduledJobAction[] | { error: string } {
@@ -319,7 +327,13 @@ function parseReleaseSource(raw: any, ctx: ParseTargetContext): ReleaseJobSource
   }
   if (raw?.kind === 'branch') {
     const branchId = cleanText(raw.branchId, 120);
-    if (!branchId) return { error: '来源分支必填' };
+    // 事件驱动规则（schedule.type = 'push'）存的是分支 **glob**，发哪个分支要等事件
+    // 发生才知道，由 runPushRules 现场覆盖。所以这里允许留空——若照定时规则那样
+    // 要求填一个固定分支，`release/*` 这条规则就只能绑死其中一个 release 分支。
+    if (!branchId) {
+      if (ctx.allowDeferredBranch) return { kind: 'branch', branchId: '' };
+      return { error: '来源分支必填' };
+    }
     const branch = ctx.stateService.getBranch(branchId);
     if (!branch) return { error: `来源分支不存在: ${branchId}` };
     if (branch.projectId !== ctx.projectId) {
