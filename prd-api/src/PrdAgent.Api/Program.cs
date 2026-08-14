@@ -164,6 +164,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncSchedul
 // 双链 + 反向链接（详见 doc/design.knowledge-base.mention-network.md）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.IDocumentVersionSnapshotWriter>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>());
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();

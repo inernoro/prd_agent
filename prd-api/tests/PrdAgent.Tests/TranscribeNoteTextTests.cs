@@ -37,6 +37,8 @@ public class TranscribeNoteTextTests
     [InlineData("请提供音频文件。")]
     [InlineData("我没有听到任何内容")]
     [InlineData("谢谢观看")]
+    [InlineData("I'm sorry, I can't.")]
+    [InlineData("I’m sorry, I can’t")]
     public void LooksLikeNoSpeech_拒答与哨兵_判定为无语音(string transcript)
     {
         Assert.True(TranscribeNoteText.LooksLikeNoSpeech(transcript));
@@ -45,11 +47,36 @@ public class TranscribeNoteTextTests
     [Theory]
     [InlineData("明天上午十点开产品评审会，记得带上原型稿。")]
     [InlineData("买牛奶")]
+    [InlineData("接口返回 NO_SPEECH 时需要检查录音设备。")]
+    [InlineData("客户说 I'm sorry, I can't. 然后离开了。")]
     // 超过 40 字的真实内容即使包含敏感词也不误伤
     [InlineData("会上老板说请播放上次的演示视频，然后大家讨论了第三季度的目标和预算分配，最后定了三条待办。")]
     public void LooksLikeNoSpeech_真实语音_不误伤(string transcript)
     {
         Assert.False(TranscribeNoteText.LooksLikeNoSpeech(transcript));
+    }
+
+    [Theory]
+    [InlineData("NO_SPEECH.")]
+    [InlineData("\"NO_SPEECH\"")]
+    [InlineData("'NO_SPEECH.'")]
+    [InlineData("“NO_SPEECH。”")]
+    [InlineData("\"NO_SPEECH\".")]
+    [InlineData("‘NO_SPEECH？’")]
+    [InlineData("好的，NO_SPEECH！")]
+    public void IsNoSpeechSentinel_外围引号与终止标点_仍按整句识别(string transcript)
+    {
+        Assert.True(TranscribeNoteText.IsNoSpeechSentinel(transcript));
+    }
+
+    [Theory]
+    [InlineData("接口返回 NO_SPEECH. 时需要检查录音设备。")]
+    [InlineData("客户说 \"NO_SPEECH\" 然后继续发言。")]
+    [InlineData("NO_SPEECH 之后继续处理录音。")]
+    [InlineData("\"NO_SPEECH")]
+    public void IsNoSpeechSentinel_真实句子包含标记_不误判(string transcript)
+    {
+        Assert.False(TranscribeNoteText.IsNoSpeechSentinel(transcript));
     }
 
     // ── ReplaceSummarySection ──
@@ -100,6 +127,67 @@ public class TranscribeNoteTextTests
     public void ExtractTranscriptFromNote_无标记返回null()
     {
         Assert.Null(TranscribeNoteText.ExtractTranscriptFromNote("没有标记的文本"));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_旧笔记缺少标记时复用任务快照()
+    {
+        const string legacyNote = "# 录音笔记\n\n旧版正文没有固定小节";
+
+        Assert.Equal(
+            "旧任务保存的完整转录",
+            TranscribeNoteText.ResolveTranscriptForRestyle(
+                legacyNote,
+                " 旧任务保存的完整转录 "));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_当前笔记原文优先于任务快照()
+    {
+        const string currentNote = "# 录音笔记\n\n## 转录全文\n\n用户校对后的原文";
+
+        Assert.Equal(
+            "用户校对后的原文",
+            TranscribeNoteText.ResolveTranscriptForRestyle(
+                currentNote,
+                "旧任务快照"));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_现代笔记发布复核不允许回退旧快照()
+    {
+        const string markerRemovedDuringRestyle = "# 录音笔记\n\n用户在整理期间删除了全文小节";
+
+        Assert.Null(TranscribeNoteText.ResolveTranscriptForRestylePublication(
+            markerRemovedDuringRestyle,
+            "旧任务快照",
+            usedLegacyFallback: false));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_旧笔记发布复核继续使用同一任务快照()
+    {
+        const string unchangedLegacyNote = "# 录音笔记\n\n旧版正文没有固定小节";
+
+        Assert.Equal(
+            "旧任务保存的完整转录",
+            TranscribeNoteText.ResolveTranscriptForRestylePublication(
+                unchangedLegacyNote,
+                "旧任务保存的完整转录",
+                usedLegacyFallback: true));
+    }
+
+    [Fact]
+    public void ResolveTranscriptForRestyle_旧笔记发布前新增不同全文时返回新全文()
+    {
+        const string editedDuringRestyle = "# 录音笔记\n\n## 转录全文\n\n用户新写的原文";
+
+        Assert.Equal(
+            "用户新写的原文",
+            TranscribeNoteText.ResolveTranscriptForRestylePublication(
+                editedDuringRestyle,
+                "旧任务快照",
+                usedLegacyFallback: true));
     }
 
     // ── BuildSummarySystemPrompt ──

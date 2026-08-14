@@ -132,6 +132,7 @@ public class SubtitleGenerationProcessorTests
         {
             Success = true,
             ResolutionType = "DedicatedPool",
+            OfferingId = "offering-doubao-primary",
             ActualModel = "doubao-asr-bigmodel",
             ActualPlatformId = "exchange-doubao-asr",
             ActualPlatformName = "Exchange:Doubao ASR",
@@ -169,6 +170,7 @@ public class SubtitleGenerationProcessorTests
         capturedRequest.ShouldNotBeNull();
         capturedResolution.ShouldNotBeNull();
         capturedRequest.AppCallerCode.ShouldBe(AppCallerRegistry.TranscriptAgent.Transcribe.Audio);
+        capturedRequest.RequiredOfferingId.ShouldBe("offering-doubao-primary");
         capturedRequest.IsMultipart.ShouldBeFalse();
         capturedRequest.MultipartFiles.ShouldBeNull();
         capturedRequest.MultipartFields.ShouldBeNull();
@@ -278,6 +280,52 @@ public class SubtitleGenerationProcessorTests
             request.AppCallerCode.ShouldBe(AppCallerRegistry.TranscriptAgent.Transcribe.Audio);
             request.RequestBody!.ToJsonString().ShouldContain(Convert.ToBase64String(audioBytes));
         }
+    }
+
+    [Fact]
+    public async Task ChatAudio_ShouldPreserveSpokenSentenceMentioningNoSpeechSentinel()
+    {
+        const string spoken = "接口返回 NO_SPEECH 时需要检查录音设备。";
+        var gateway = new Mock<ILlmGateway>();
+        gateway.SetupSequence(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = $"{{\"choices\":[{{\"message\":{{\"content\":\"{spoken}\"}}}}]}}",
+            })
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = $"{{\"choices\":[{{\"message\":{{\"content\":\"[说话人1] {spoken}\"}}}}]}}",
+            });
+
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeViaChatAudioAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object[]
+            {
+                BuildRun(),
+                new byte[] { 1, 2, 3 },
+                new GatewayModelResolution { ActualModel = "openai/gpt-audio" },
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            })!;
+
+        var segments = await task;
+
+        segments.Count.ShouldBe(1);
+        segments[0].Text.ShouldBe(spoken);
+        gateway.Verify(g => g.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]
@@ -413,6 +461,90 @@ public class SubtitleGenerationProcessorTests
         segments.Count.ShouldBe(1);
         segments[0].Text.ShouldBe("备用 Whisper 识别成功");
         attempts.ShouldBe([(1, 2), (2, 2)]);
+        gateway.Verify(g => g.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task AsrFallback_AllCandidatesReturnEmpty_ShouldStopAutomaticRetryAsNoSpeech()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"text\":\"\",\"segments\":[]}",
+            });
+        var primary = BuildDoubaoResolution();
+        primary.RetryCandidates = [BuildWhisperResolution()];
+
+        var exception = await InvokeFallbackExpectingFailure(gateway.Object, primary);
+        var failure = AudioTranscriptionUserError.Classify(exception);
+
+        exception.Message.ShouldContain(AudioTranscriptionUserError.AllCandidatesNoSpeech);
+        failure.Code.ShouldBe(AudioTranscriptionUserError.NoSpeech);
+        failure.AutomaticRetryAllowed.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task AsrFallback_ProviderFailureThenEmpty_ShouldKeepAutomaticRetry()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((
+                GatewayRawRequest _,
+                GatewayModelResolution resolution,
+                CancellationToken _) => resolution.ActualModel == "doubao-asr-bigmodel"
+                ? GatewayRawResponse.Fail("PROVIDER_FAILED", "上游暂时失败", 503)
+                : new GatewayRawResponse
+                {
+                    Success = true,
+                    StatusCode = 200,
+                    Content = "{\"text\":\"\",\"segments\":[]}",
+                });
+        var primary = BuildDoubaoResolution();
+        primary.RetryCandidates = [BuildWhisperResolution()];
+
+        var exception = await InvokeFallbackExpectingFailure(gateway.Object, primary);
+        var failure = AudioTranscriptionUserError.Classify(exception);
+
+        exception.Message.ShouldNotContain(AudioTranscriptionUserError.AllCandidatesNoSpeech);
+        failure.Code.ShouldBe(AudioTranscriptionUserError.UpstreamTemporary);
+        failure.AutomaticRetryAllowed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AsrFallback_ChatAudioConfirmsNoSpeech_ShouldStopAutomaticRetry()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = "{\"choices\":[{\"message\":{\"content\":\"NO_SPEECH\"}}]}",
+            });
+
+        var exception = await InvokeFallbackExpectingFailure(
+            gateway.Object,
+            BuildChatAudioResolution());
+        var failure = AudioTranscriptionUserError.Classify(exception);
+
+        exception.Message.ShouldContain(AudioTranscriptionUserError.AllCandidatesNoSpeech);
+        failure.Code.ShouldBe(AudioTranscriptionUserError.NoSpeech);
+        failure.AutomaticRetryAllowed.ShouldBeFalse();
         gateway.Verify(g => g.SendRawWithResolutionAsync(
             It.IsAny<GatewayRawRequest>(),
             It.IsAny<GatewayModelResolution>(),
@@ -681,6 +813,50 @@ public class SubtitleGenerationProcessorTests
             ApiUrl = "https://example.test/asr",
             ApiKey = "test-key",
         };
+
+    private static ModelResolutionResult BuildWhisperResolution()
+        => new()
+        {
+            Success = true,
+            ResolutionType = "DedicatedPool",
+            ActualModel = "whisper-large-v3",
+            ActualPlatformId = "whisper-provider",
+            ActualPlatformName = "Whisper Provider",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://example.test/v1",
+            ApiKey = "test-key",
+        };
+
+    private static ModelResolutionResult BuildChatAudioResolution()
+        => new()
+        {
+            Success = true,
+            ResolutionType = "DedicatedPool",
+            ActualModel = "openai/gpt-audio",
+            ActualPlatformId = "openrouter",
+            ActualPlatformName = "OpenRouter",
+            PlatformType = "openai",
+            Protocol = "openai",
+            ApiUrl = "https://example.test/v1",
+            ApiKey = "test-key",
+        };
+
+    private static async Task<SubtitleAsrException> InvokeFallbackExpectingFailure(
+        ILlmGateway gateway,
+        ModelResolutionResult primary)
+    {
+        var processor = BuildProcessor(gateway);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeWithFallbackAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        method.ShouldNotBeNull();
+        var task = (Task<List<SubtitleSegment>>)method.Invoke(
+            processor,
+            new object?[] { BuildRun(), new byte[] { 1, 2, 3 }, primary, null })!;
+
+        return await Should.ThrowAsync<SubtitleAsrException>(() => task);
+    }
 
     private static DocumentStoreAgentRun BuildRun()
         => new()
