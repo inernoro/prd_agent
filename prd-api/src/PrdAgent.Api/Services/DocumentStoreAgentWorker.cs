@@ -170,7 +170,7 @@ public class DocumentStoreAgentWorker : BackgroundService
         var recovered = 0;
         foreach (var candidate in candidates)
         {
-            IAsyncDisposable? outputLease = null;
+            DocumentStoreRunOutputLease.LeaseHandle? outputLease = null;
             try
             {
                 // AutoLink 等知识库级任务没有 SourceEntryId，属于合法模型，不应强行取得条目锁。
@@ -189,9 +189,56 @@ public class DocumentStoreAgentWorker : BackgroundService
                     .FirstOrDefaultAsync(CancellationToken.None);
                 if (current == null) continue;
 
+                if (outputLease != null)
+                    await outputLease.EnsureHeldAsync(CancellationToken.None);
+
                 UpdateDefinition<DocumentStoreAgentRun> update;
+                long? recoveredOutputGeneration = null;
                 if (DocumentRecordingArchiveWorker.HasDeferredTranscriptionAutomaticRetryBudget(current))
                 {
+                    // 同一 deferred run 会保留 runId 重排，但必须取得新的输出代次。仅更换
+                    // ExecutionId 只能保护 run 状态，无法阻止旧 execution 在网络恢复后凭
+                    // 原代次覆盖正文；DocumentEntry 的 generation CAS 才是最终数据栅栏。
+                    var generationFilter = Builders<DocumentEntry>.Filter.And(
+                        Builders<DocumentEntry>.Filter.Eq(
+                            entry => entry.Id,
+                            current.SourceEntryId),
+                        Builders<DocumentEntry>.Filter.Eq(
+                            entry => entry.AgentOutputGeneration,
+                            current.OutputGeneration));
+                    var generationEntry = await db.DocumentEntries.FindOneAndUpdateAsync(
+                        generationFilter,
+                        Builders<DocumentEntry>.Update.Inc(
+                            entry => entry.AgentOutputGeneration,
+                            1),
+                        new FindOneAndUpdateOptions<DocumentEntry>
+                        {
+                            ReturnDocument = ReturnDocument.After,
+                        },
+                        CancellationToken.None);
+                    if (generationEntry == null)
+                    {
+                        await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                            Builders<DocumentStoreAgentRun>.Filter.And(
+                                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, current.Id),
+                                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                    r => r.ExecutionId,
+                                    current.ExecutionId),
+                                recoverFilter),
+                            Builders<DocumentStoreAgentRun>.Update
+                                .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                                .Set(r => r.Phase, "已有更新的录音任务接管")
+                                .Set(r => r.ErrorMessage, "旧任务的输出代次已失效，不会覆盖更新结果。")
+                                .Set(r => r.FailureCode, "TRANSCRIPTION_RUN_SUPERSEDED")
+                                .Set(r => r.HeartbeatAt, null)
+                                .Set(r => r.ExecutionId, string.Empty)
+                                .Set(r => r.EndedAt, now)
+                                .Set(r => r.AutomaticRetryNextAt, null)
+                                .Set(r => r.AutomaticRetryReason, null),
+                            cancellationToken: CancellationToken.None);
+                        continue;
+                    }
+                    recoveredOutputGeneration = generationEntry.AgentOutputGeneration;
                     update = Builders<DocumentStoreAgentRun>.Update
                         .Set(r => r.Status, DocumentStoreRunStatus.Queued)
                         .Set(r => r.Phase, "服务中断，正在恢复完整录音转录")
@@ -202,6 +249,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                         .Set(r => r.StartedAt, null)
                         .Set(r => r.HeartbeatAt, null)
                         .Set(r => r.ExecutionId, string.Empty)
+                        .Set(r => r.OutputGeneration, recoveredOutputGeneration.Value)
                         .Set(r => r.AutomaticRetryNextAt, null)
                         .Set(r => r.OwnerInstanceId, instanceId)
                         .Set(
@@ -231,7 +279,25 @@ public class DocumentStoreAgentWorker : BackgroundService
                         recoverFilter),
                     update,
                     cancellationToken: CancellationToken.None);
-                if (result.ModifiedCount == 1) recovered++;
+                if (result.ModifiedCount == 1)
+                {
+                    recovered++;
+                }
+                else if (recoveredOutputGeneration.HasValue)
+                {
+                    var rollback = await db.DocumentEntries.UpdateOneAsync(
+                        entry => entry.Id == current.SourceEntryId
+                                 && entry.AgentOutputGeneration == recoveredOutputGeneration.Value,
+                        Builders<DocumentEntry>.Update.Set(
+                            entry => entry.AgentOutputGeneration,
+                            current.OutputGeneration),
+                        cancellationToken: CancellationToken.None);
+                    if (rollback.ModifiedCount != 1)
+                    {
+                        throw new InvalidOperationException(
+                            $"任务 {current.Id} 恢复认领失败，且输出代次 {recoveredOutputGeneration.Value} 回滚失败。");
+                    }
+                }
             }
             catch (Exception ex)
             {

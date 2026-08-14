@@ -132,9 +132,19 @@ public class SubtitleGenerationProcessor
             CancellationToken.None);
         await UpdateProgressAsync(db, runStore, run, 85, "写入中");
 
+        async Task EnsurePublicationOwnershipAsync(CancellationToken cancellationToken)
+        {
+            await outputLease.EnsureHeldAsync(cancellationToken);
+            await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+                db.DocumentStoreAgentRuns,
+                run,
+                cancellationToken);
+        }
+
         // 4) 落库：创建新 entry 承载字幕
         var parsed = await _documentService.ParseAsync(subtitleMd);
         parsed.Title = BuildSubtitleTitle(entry.Title);
+        await EnsurePublicationOwnershipAsync(CancellationToken.None);
         await _documentService.SaveAsync(parsed);
 
         var newEntry = new DocumentEntry
@@ -157,6 +167,7 @@ public class SubtitleGenerationProcessor
                 ["source_entry_id"] = entry.Id,
             },
         };
+        await EnsurePublicationOwnershipAsync(CancellationToken.None);
         await db.DocumentEntries.InsertOneAsync(newEntry);
 
         // 更新知识库文档计数
@@ -304,6 +315,15 @@ public class SubtitleGenerationProcessor
             CancellationToken.None);
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
 
+        async Task EnsurePublicationOwnershipAsync(CancellationToken cancellationToken)
+        {
+            await outputLease.EnsureHeldAsync(cancellationToken);
+            await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+                db.DocumentStoreAgentRuns,
+                run,
+                cancellationToken);
+        }
+
         // 3) 落库：转录全文原地写回源音频 entry；整理结果存在时才附加。
         // DocumentEntry 允许 AttachmentId + DocumentId 并存：前者继续负责播放，后者承载正文。
         var noteMd = SubtitleFormatter.FormatTranscriptNote(entry.Title, summary, segments);
@@ -313,7 +333,8 @@ public class SubtitleGenerationProcessor
             run.UserId,
             db,
             preserveFileIdentity: true,
-            expectedOutputGeneration: run.OutputGeneration);
+            expectedOutputGeneration: run.OutputGeneration,
+            beforeEntryWrite: EnsurePublicationOwnershipAsync);
 
         // 源音频 entry 标记「转录已写入本页」；值就是自身 Id，兼容旧前端读取同一 metadata key。
         // 定点 $set 单个键而非整字典回写：字幕/转录两个处理器可能并行更新同一 entry 的
@@ -334,10 +355,13 @@ public class SubtitleGenerationProcessor
                 selectedStyleKey == null
                     ? Builders<DocumentEntry>.Update.Unset(e => e.Metadata["transcribe_style_key"])
                     : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_style_key"], selectedStyleKey));
-        await db.DocumentEntries.UpdateOneAsync(
+        await EnsurePublicationOwnershipAsync(CancellationToken.None);
+        var metadataWrite = await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entry.Id && e.AgentOutputGeneration == run.OutputGeneration,
             metaUpdate,
             cancellationToken: CancellationToken.None);
+        if (metadataWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
 
         await db.DocumentStores.UpdateOneAsync(
             s => s.Id == entry.StoreId,
@@ -444,6 +468,14 @@ public class SubtitleGenerationProcessor
             db.DocumentStoreAgentRuns,
             run,
             CancellationToken.None);
+        async Task EnsurePublicationOwnershipAsync(CancellationToken cancellationToken)
+        {
+            await outputLease.EnsureHeldAsync(cancellationToken);
+            await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+                db.DocumentStoreAgentRuns,
+                run,
+                cancellationToken);
+        }
         var latestNoteEntry = await db.DocumentEntries
             .Find(e => e.Id == noteEntry.Id)
             .FirstOrDefaultAsync(CancellationToken.None);
@@ -463,7 +495,8 @@ public class SubtitleGenerationProcessor
             run.UserId,
             db,
             preserveFileIdentity: !string.IsNullOrEmpty(latestNoteEntry.AttachmentId),
-            expectedOutputGeneration: run.OutputGeneration);
+            expectedOutputGeneration: run.OutputGeneration,
+            beforeEntryWrite: EnsurePublicationOwnershipAsync);
 
         // 播放器页签必须展示这份摘要真实使用的后端整理方式，不能在前端猜测。
         // 旧条目 Metadata 可能为 null，沿用转录写入时的兼容策略。
@@ -474,6 +507,7 @@ public class SubtitleGenerationProcessor
                 ["transcribe_style_key"] = styleKey,
             })
             : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_style_key"], styleKey);
+        await EnsurePublicationOwnershipAsync(CancellationToken.None);
         var metadataWrite = await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == latestNoteEntry.Id && e.AgentOutputGeneration == run.OutputGeneration,
             styleMetaUpdate,

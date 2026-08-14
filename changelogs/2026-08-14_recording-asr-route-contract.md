@@ -20,4 +20,6 @@
 | fix | prd-api | 录音任务代次发布在 run 插入失败时条件回滚，并对未知写入结果按 runId 幂等确认 |
 | fix | prd-api | 正文发布后的版本快照失败不再把已成功的录音转录任务误标失败 |
 | fix | prd-api | 为录音任务每次认领分配独立执行身份，阻止失联旧 Worker 写入新执行的心跳、进度、正文和终态 |
-| test | prd-api | 补齐同 runId 同输出代次重排后的旧执行身份栅栏 Mongo 并发回归 |
+| test | prd-api | 补齐同 runId 重排后的旧执行身份栅栏 Mongo 并发回归 |
+| fix | prd-api | 输出租约失效后立即熔断旧执行，并为中断恢复分配新正文代次防止迟到覆盖 |
+| test | prd-api | 补齐租约过期接管与同 runId 新代次发布的真实 Mongo 并发回归 |

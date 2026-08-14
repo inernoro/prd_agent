@@ -168,14 +168,16 @@ public class ContentReprocessApplyService
         string actorId,
         MongoDbContext db,
         bool preserveFileIdentity = false,
-        long? expectedOutputGeneration = null)
+        long? expectedOutputGeneration = null,
+        Func<CancellationToken, Task>? beforeEntryWrite = null)
         => SaveContentToEntryAsync(
             entry,
             content,
             actorId,
             db,
             preserveFileIdentity,
-            expectedOutputGeneration);
+            expectedOutputGeneration,
+            beforeEntryWrite);
 
     /// <summary>读取 entry 完整正文（优先 DocumentId 的 RawContent，退回 ContentIndex）。</summary>
     public Task<string> LoadContentAsync(DocumentEntry entry) => LoadEntryContentAsync(entry);
@@ -197,7 +199,8 @@ public class ContentReprocessApplyService
         string actorId,
         MongoDbContext db,
         bool preserveFileIdentity = false,
-        long? expectedOutputGeneration = null)
+        long? expectedOutputGeneration = null,
+        Func<CancellationToken, Task>? beforeEntryWrite = null)
     {
         var normalized = await _assetNormalizer.NormalizeAsync(content, null, null, CancellationToken.None);
         content = normalized.Content;
@@ -246,6 +249,8 @@ public class ContentReprocessApplyService
                 .Set(e => e.FileSize, Encoding.UTF8.GetByteCount(content))
                 .Set(e => e.ContentType, "text/markdown");
         }
+        if (beforeEntryWrite != null)
+            await beforeEntryWrite(CancellationToken.None);
         var entryFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id);
         if (expectedOutputGeneration.HasValue)
         {

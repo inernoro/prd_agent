@@ -19,11 +19,14 @@ internal static class DocumentStoreRunOutputLease
     private static readonly TimeSpan AcquireTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromMilliseconds(100);
 
-    internal static async Task<IAsyncDisposable> AcquireAsync(
+    internal static async Task<LeaseHandle> AcquireAsync(
         MongoDbContext db,
         string entryId,
         string kind,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? leaseDuration = null,
+        TimeSpan? renewalInterval = null,
+        TimeSpan? acquireTimeout = null)
     {
         var normalizedEntryId = (entryId ?? string.Empty).Trim().ToLowerInvariant();
         var normalizedKind = (kind ?? string.Empty).Trim().ToLowerInvariant();
@@ -35,7 +38,9 @@ internal static class DocumentStoreRunOutputLease
         var key = $"{normalizedKind}:{normalizedEntryId}";
         var collection = db.Database.GetCollection<BsonDocument>(CollectionName);
         var owner = Guid.NewGuid().ToString("N");
-        var deadline = DateTime.UtcNow + AcquireTimeout;
+        var effectiveLeaseDuration = leaseDuration ?? LeaseDuration;
+        var effectiveRenewalInterval = renewalInterval ?? RenewalInterval;
+        var deadline = DateTime.UtcNow + (acquireTimeout ?? AcquireTimeout);
         while (DateTime.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -47,7 +52,7 @@ internal static class DocumentStoreRunOutputLease
             var update = Builders<BsonDocument>.Update
                 .SetOnInsert("_id", key)
                 .Set("owner", owner)
-                .Set("expiresAt", now + LeaseDuration);
+                .Set("expiresAt", now + effectiveLeaseDuration);
             try
             {
                 var claimed = await collection.FindOneAndUpdateAsync(
@@ -60,7 +65,13 @@ internal static class DocumentStoreRunOutputLease
                     },
                     cancellationToken);
                 if (claimed?.GetValue("owner", string.Empty).AsString == owner)
-                    return new LeaseHandle(collection, key, owner, RenewalInterval, LeaseDuration);
+                    return new LeaseHandle(
+                        collection,
+                        key,
+                        owner,
+                        effectiveRenewalInterval,
+                        effectiveLeaseDuration,
+                        now + effectiveLeaseDuration);
             }
             catch (MongoWriteException ex) when (
                 ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
@@ -78,13 +89,16 @@ internal static class DocumentStoreRunOutputLease
         throw new TimeoutException("该录音正在完成状态切换，请稍后重试。");
     }
 
-    private sealed class LeaseHandle : IAsyncDisposable
+    internal sealed class LeaseHandle : IAsyncDisposable
     {
         private readonly IMongoCollection<BsonDocument> _collection;
         private readonly string _key;
         private readonly string _owner;
         private readonly CancellationTokenSource _renewalCts = new();
+        private readonly CancellationTokenSource _lostCts = new();
         private readonly Task _renewalTask;
+        private readonly TimeSpan _leaseDuration;
+        private long _expiresAtUtcTicks;
         private int _released;
 
         internal LeaseHandle(
@@ -92,12 +106,51 @@ internal static class DocumentStoreRunOutputLease
             string key,
             string owner,
             TimeSpan renewalInterval,
-            TimeSpan leaseDuration)
+            TimeSpan leaseDuration,
+            DateTime expiresAtUtc)
         {
             _collection = collection;
             _key = key;
             _owner = owner;
+            _leaseDuration = leaseDuration;
+            _expiresAtUtcTicks = expiresAtUtc.Ticks;
             _renewalTask = RenewAsync(renewalInterval, leaseDuration);
+        }
+
+        internal bool IsLost => _lostCts.IsCancellationRequested;
+        internal CancellationToken LostToken => _lostCts.Token;
+
+        /// <summary>
+        /// 在产物最终发布前重新确认当前 holder，并把有效期延长一个完整租期。
+        /// owner 已被替换或租期内无法再确认时 fail-closed，旧 Worker 不得继续写正文。
+        /// </summary>
+        internal async Task EnsureHeldAsync(CancellationToken cancellationToken)
+        {
+            ThrowIfLost();
+            var now = DateTime.UtcNow;
+            try
+            {
+                var renewedUntil = now + _leaseDuration;
+                var result = await _collection.UpdateOneAsync(
+                    Builders<BsonDocument>.Filter.Eq("_id", _key)
+                    & Builders<BsonDocument>.Filter.Eq("owner", _owner)
+                    & Builders<BsonDocument>.Filter.Gt("expiresAt", now),
+                    Builders<BsonDocument>.Update.Set("expiresAt", renewedUntil),
+                    cancellationToken: cancellationToken);
+                if (result.MatchedCount == 0)
+                {
+                    MarkLost();
+                    ThrowIfLost();
+                }
+
+                Interlocked.Exchange(ref _expiresAtUtcTicks, renewedUntil.Ticks);
+            }
+            catch when (DateTime.UtcNow.Ticks >= Interlocked.Read(ref _expiresAtUtcTicks))
+            {
+                MarkLost();
+                ThrowIfLost();
+                throw;
+            }
         }
 
         public async ValueTask DisposeAsync()
@@ -118,6 +171,8 @@ internal static class DocumentStoreRunOutputLease
             {
                 // 释放失败时由 expiresAt 兜底，不能覆盖主业务结果。
             }
+            _lostCts.Dispose();
+            _renewalCts.Dispose();
         }
 
         private async Task RenewAsync(TimeSpan interval, TimeSpan duration)
@@ -127,13 +182,18 @@ internal static class DocumentStoreRunOutputLease
                 await Task.Delay(interval, _renewalCts.Token);
                 try
                 {
+                    var renewedUntil = DateTime.UtcNow + duration;
                     var result = await _collection.UpdateOneAsync(
                         Builders<BsonDocument>.Filter.Eq("_id", _key)
                         & Builders<BsonDocument>.Filter.Eq("owner", _owner),
-                        Builders<BsonDocument>.Update.Set("expiresAt", DateTime.UtcNow + duration),
+                        Builders<BsonDocument>.Update.Set("expiresAt", renewedUntil),
                         cancellationToken: _renewalCts.Token);
                     if (result.MatchedCount == 0)
+                    {
+                        MarkLost();
                         return;
+                    }
+                    Interlocked.Exchange(ref _expiresAtUtcTicks, renewedUntil.Ticks);
                 }
                 catch (OperationCanceledException) when (_renewalCts.IsCancellationRequested)
                 {
@@ -141,9 +201,26 @@ internal static class DocumentStoreRunOutputLease
                 }
                 catch
                 {
-                    // Mongo 短暂抖动时下一轮继续；即使最终失锁，条目代次仍是发布栅栏。
+                    // 短暂抖动可在原租期内重试；一旦本地已知租期耗尽就永久失锁。
+                    if (DateTime.UtcNow.Ticks >= Interlocked.Read(ref _expiresAtUtcTicks))
+                    {
+                        MarkLost();
+                        return;
+                    }
                 }
             }
+        }
+
+        private void MarkLost()
+        {
+            try { _lostCts.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+
+        private void ThrowIfLost()
+        {
+            if (IsLost)
+                throw new DocumentStoreRunLeaseLostException(_key);
         }
     }
 }

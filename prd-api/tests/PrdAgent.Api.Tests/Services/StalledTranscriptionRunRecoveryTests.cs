@@ -123,6 +123,40 @@ public sealed class StalledTranscriptionRunRecoveryTests
     }
 
     [Fact]
+    public async Task OutputLease_ShouldFailClosedAfterExpiredHolderIsReplaced()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var oldLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            "entry-expired-lease",
+            DocumentStoreAgentRunKind.Transcribe,
+            CancellationToken.None,
+            leaseDuration: TimeSpan.FromMilliseconds(150),
+            renewalInterval: TimeSpan.FromSeconds(5),
+            acquireTimeout: TimeSpan.FromSeconds(2));
+
+        await Task.Delay(250);
+        await using var replacementLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            "entry-expired-lease",
+            DocumentStoreAgentRunKind.Transcribe,
+            CancellationToken.None,
+            leaseDuration: TimeSpan.FromSeconds(5),
+            renewalInterval: TimeSpan.FromSeconds(1),
+            acquireTimeout: TimeSpan.FromSeconds(2));
+
+        await Should.ThrowAsync<DocumentStoreRunLeaseLostException>(() =>
+            oldLease.EnsureHeldAsync(CancellationToken.None));
+        oldLease.IsLost.ShouldBeTrue();
+        oldLease.LostToken.IsCancellationRequested.ShouldBeTrue();
+        await oldLease.DisposeAsync();
+
+        // 旧 holder 释放时只能按自己的 owner 删除，不能误删 replacement 的租约。
+        await replacementLease.EnsureHeldAsync(CancellationToken.None);
+        replacementLease.IsLost.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task OutputGeneration_ShouldFenceOldWorkerAfterStalledRunWasReplaced()
     {
         await using var fixture = await RecordingRunMongoFixture.CreateAsync();
@@ -278,7 +312,7 @@ public sealed class StalledTranscriptionRunRecoveryTests
     }
 
     [Fact]
-    public async Task ReclaimedSameRunAndGeneration_ShouldFenceStaleExecutionFromAllWrites()
+    public async Task ReclaimedSameRun_ShouldAssignNewGenerationAndFenceStaleExecutionFromAllWrites()
     {
         await using var fixture = await RecordingRunMongoFixture.CreateAsync();
         var now = DateTime.UtcNow;
@@ -325,7 +359,9 @@ public sealed class StalledTranscriptionRunRecoveryTests
             .SingleAsync();
         requeued.Status.ShouldBe(DocumentStoreRunStatus.Queued);
         requeued.ExecutionId.ShouldBeEmpty();
-        requeued.OutputGeneration.ShouldBe(staleExecution.OutputGeneration);
+        requeued.OutputGeneration.ShouldBe(staleExecution.OutputGeneration + 1);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(requeued.OutputGeneration);
 
         const string newExecutionId = "execution-new";
         var reclaimWrite = await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
@@ -339,7 +375,7 @@ public sealed class StalledTranscriptionRunRecoveryTests
         var reclaimed = await fixture.Db.DocumentStoreAgentRuns
             .Find(run => run.Id == staleExecution.Id)
             .SingleAsync();
-        reclaimed.OutputGeneration.ShouldBe(staleExecution.OutputGeneration);
+        reclaimed.OutputGeneration.ShouldBe(requeued.OutputGeneration);
 
         (await DocumentStoreAgentWorker.TryRenewHeartbeatAsync(
             fixture.Db.DocumentStoreAgentRuns,
@@ -368,6 +404,48 @@ public sealed class StalledTranscriptionRunRecoveryTests
         }
         (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
             .ContentIndex.ShouldBe("新执行认领前的正文");
+
+        const string replacementNote = "# 转录全文\n\n新执行发布的正文";
+        const string staleNote = "# 转录全文\n\n旧执行迟到的正文";
+        var documents = new Dictionary<string, ParsedPrd>(StringComparer.Ordinal);
+        var documentService = new Mock<IDocumentService>();
+        documentService.Setup(service => service.GetByIdAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => documents.GetValueOrDefault(id));
+        documentService.Setup(service => service.ParseAsync(It.IsAny<string>()))
+            .ReturnsAsync((string content) => Parsed(ContentId(content), content));
+        documentService.Setup(service => service.SaveAsync(It.IsAny<ParsedPrd>()))
+            .ReturnsAsync((ParsedPrd document) =>
+            {
+                documents[document.Id] = document;
+                return document;
+            });
+        var apply = new ContentReprocessApplyService(
+            documentService.Object,
+            new DocumentStoreAssetNormalizer(
+                new NullAssetStorage(),
+                NullLogger<DocumentStoreAssetNormalizer>.Instance),
+            new DocumentVersionService(fixture.Db),
+            NullLogger<ContentReprocessApplyService>.Instance);
+        var replacementEntry = await fixture.Db.DocumentEntries
+            .Find(item => item.Id == entry.Id)
+            .SingleAsync();
+        await apply.SaveContentAsync(
+            replacementEntry,
+            replacementNote,
+            reclaimed.UserId,
+            fixture.Db,
+            expectedOutputGeneration: reclaimed.OutputGeneration);
+        await Should.ThrowAsync<DocumentStoreRunLeaseLostException>(() => apply.SaveContentAsync(
+            entry,
+            staleNote,
+            staleExecution.UserId,
+            fixture.Db,
+            expectedOutputGeneration: staleExecution.OutputGeneration));
+        var publishedEntry = await fixture.Db.DocumentEntries
+            .Find(item => item.Id == entry.Id)
+            .SingleAsync();
+        publishedEntry.DocumentId.ShouldBe(ContentId(replacementNote));
+        documents[publishedEntry.DocumentId!].RawContent.ShouldBe(replacementNote);
 
         var staleProgress = await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
             DocumentStoreAgentWorker.CurrentExecutionFilter(staleExecution),
