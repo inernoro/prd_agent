@@ -512,7 +512,11 @@ async function waitForGatewayLog(
     if (!response.ok()) return '';
     const body = await response.json() as ApiEnvelope<{ items: GatewayLogItem[] }>;
     matched = body.success
-      ? body.data.items.find((item) => item.requestId === requestId)
+      ? body.data.items.find((item) => (
+        item.requestId === requestId
+        && Boolean(item.logicalModelPublicId)
+        && !/gateway-auth/i.test(item.provider || '')
+      ))
       : undefined;
     return matched && !/running|pending/i.test(matched.status) ? matched.id : '';
   }, {
