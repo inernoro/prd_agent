@@ -5525,6 +5525,19 @@ public class DocumentStoreController : ControllerBase
             entryId,
             kind,
             CancellationToken.None);
+        // entry 在取得跨实例输出锁前加载，等待锁期间可能已被另一任务推进代次。
+        // 转录去重必须以锁内重读的代次为准，否则会复用一个注定 superseded 的旧 run。
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var refreshedEntry = await ReloadMediaGenerationEntryAsync(
+                _db.DocumentEntries,
+                entry,
+                kind,
+                CancellationToken.None);
+            if (refreshedEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));
+            entry = refreshedEntry;
+        }
         // 去重：同一 entry 已有 queued 或 running 的同 kind run → 直接返回。
         // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
         // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
@@ -5543,6 +5556,10 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.TemplateKey, reqTemplateKey),
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.CustomPrompt, reqCustomPrompt),
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StyleContext, reqStyleContext));
+        var generationMatch = BuildReusableMediaRunGenerationFilter(
+            kind,
+            entryId,
+            entry.AgentOutputGeneration);
 
         // 转录任务由 Worker 每 15 秒续一次 HeartbeatAt。用户重试时先原子终结超过一小时
         // 没有心跳的同用户在途任务，否则下面的去重会把旧 runId 原样返回，界面永远只能
@@ -5582,6 +5599,7 @@ public class DocumentStoreController : ControllerBase
                 // restyle run 是「换个整理方式」专用任务，不能被普通转录请求认领/复用
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
                 styleMatch,
+                generationMatch,
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
@@ -5602,6 +5620,7 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
                 styleMatch,
+                generationMatch,
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
@@ -5646,6 +5665,37 @@ public class DocumentStoreController : ControllerBase
         _logger.LogInformation("[doc-store-agent] {Kind} run queued: {RunId} entry={EntryId}", kind, run.Id, entryId);
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
     }
+
+    internal static FilterDefinition<DocumentStoreAgentRun> BuildReusableMediaRunGenerationFilter(
+        string kind,
+        string generationEntryId,
+        long currentOutputGeneration)
+    {
+        var filter = Builders<DocumentStoreAgentRun>.Filter;
+        if (kind != DocumentStoreAgentRunKind.Transcribe)
+            return filter.Empty;
+
+        return filter.And(
+            filter.Eq(run => run.OutputGeneration, currentOutputGeneration),
+            filter.Or(
+                filter.Eq(run => run.GenerationEntryId, generationEntryId),
+                filter.And(
+                    filter.Or(
+                        filter.Eq(run => run.GenerationEntryId, string.Empty),
+                        filter.Eq(run => run.GenerationEntryId, null!),
+                        filter.Exists(run => run.GenerationEntryId, false)),
+                    filter.Eq(run => run.SourceEntryId, generationEntryId))));
+    }
+
+    internal static async Task<DocumentEntry?> ReloadMediaGenerationEntryAsync(
+        IMongoCollection<DocumentEntry> entries,
+        DocumentEntry entry,
+        string kind,
+        CancellationToken cancellationToken)
+        => kind == DocumentStoreAgentRunKind.Transcribe
+            ? await entries.Find(candidate => candidate.Id == entry.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+            : entry;
 
     /// <summary>发起文档再加工任务（保留旧接口，等价于一次性发送首条 chat 消息）</summary>
     [HttpPost("entries/{entryId}/reprocess")]

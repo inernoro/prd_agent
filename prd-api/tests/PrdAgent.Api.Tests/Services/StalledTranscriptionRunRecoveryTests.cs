@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.Api.Controllers.Api;
 using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
@@ -18,6 +19,164 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class StalledTranscriptionRunRecoveryTests
 {
+    [Fact]
+    public async Task ReusableRunGenerationFilter_ShouldSkipStaleClaimAndSelfRunThenPublishUniqueCurrentRun()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = RecoveryEntry("entry-dedupe-stale-generation", 2);
+        var staleUnowned = Run(
+            "run-dedupe-stale-unowned",
+            entry.Id,
+            "user-1",
+            null,
+            DateTime.UtcNow.AddMinutes(-2),
+            null,
+            DocumentStoreRunStatus.Queued);
+        staleUnowned.GenerationEntryId = entry.Id;
+        staleUnowned.OutputGeneration = 1;
+        var staleSelf = Run(
+            "run-dedupe-stale-self",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow.AddMinutes(-1),
+            DateTime.UtcNow,
+            DocumentStoreRunStatus.Running);
+        staleSelf.GenerationEntryId = entry.Id;
+        staleSelf.OutputGeneration = 1;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertManyAsync([staleUnowned, staleSelf]);
+
+        var generationMatch = DocumentStoreController.BuildReusableMediaRunGenerationFilter(
+            DocumentStoreAgentRunKind.Transcribe,
+            entry.Id,
+            entry.AgentOutputGeneration);
+        var claimed = await fixture.Db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(run => run.Id, staleUnowned.Id),
+                generationMatch),
+            Builders<DocumentStoreAgentRun>.Update.Set(
+                run => run.OwnerInstanceId,
+                "prd-agent:test::main"),
+            new FindOneAndUpdateOptions<DocumentStoreAgentRun>
+            {
+                ReturnDocument = ReturnDocument.After,
+            });
+        claimed.ShouldBeNull();
+        (await fixture.Db.DocumentStoreAgentRuns
+                .Find(Builders<DocumentStoreAgentRun>.Filter.And(
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(run => run.Id, staleSelf.Id),
+                    generationMatch))
+                .AnyAsync())
+            .ShouldBeFalse();
+
+        var replacement = Run(
+            "run-dedupe-current-replacement",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued);
+        await using var lease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            entry.Id,
+            replacement.Kind,
+            CancellationToken.None);
+        await DocumentStoreRunGenerationPublisher.PublishAsync(
+            fixture.Db,
+            entry.Id,
+            replacement,
+            lease,
+            CancellationToken.None);
+
+        replacement.OutputGeneration.ShouldBe(3);
+        replacement.GenerationEntryId.ShouldBe(entry.Id);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(3);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+                run => run.Id == replacement.Id && run.OutputGeneration == 3))
+            .ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ReusableRunGenerationFilter_ShouldKeepMatchingClaimAndSelfRun()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var claimedEntry = RecoveryEntry("entry-dedupe-current-claim", 4);
+        var selfEntry = RecoveryEntry("entry-dedupe-current-self", 7);
+        var unowned = Run(
+            "run-dedupe-current-unowned",
+            claimedEntry.Id,
+            "user-1",
+            null,
+            DateTime.UtcNow.AddMinutes(-1),
+            null,
+            DocumentStoreRunStatus.Queued);
+        unowned.GenerationEntryId = claimedEntry.Id;
+        unowned.OutputGeneration = 4;
+        var self = Run(
+            "run-dedupe-current-self",
+            selfEntry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow,
+            DateTime.UtcNow,
+            DocumentStoreRunStatus.Running);
+        self.GenerationEntryId = selfEntry.Id;
+        self.OutputGeneration = 7;
+        await fixture.Db.DocumentEntries.InsertManyAsync([claimedEntry, selfEntry]);
+        await fixture.Db.DocumentStoreAgentRuns.InsertManyAsync([unowned, self]);
+
+        var claimedGeneration = DocumentStoreController.BuildReusableMediaRunGenerationFilter(
+            DocumentStoreAgentRunKind.Transcribe,
+            claimedEntry.Id,
+            claimedEntry.AgentOutputGeneration);
+        var claimed = await fixture.Db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(run => run.Id, unowned.Id),
+                claimedGeneration),
+            Builders<DocumentStoreAgentRun>.Update.Set(
+                run => run.OwnerInstanceId,
+                "prd-agent:test::main"),
+            new FindOneAndUpdateOptions<DocumentStoreAgentRun>
+            {
+                ReturnDocument = ReturnDocument.After,
+            });
+        claimed.ShouldNotBeNull();
+        claimed.Id.ShouldBe(unowned.Id);
+
+        var selfGeneration = DocumentStoreController.BuildReusableMediaRunGenerationFilter(
+            DocumentStoreAgentRunKind.Transcribe,
+            selfEntry.Id,
+            selfEntry.AgentOutputGeneration);
+        var reusableSelf = await fixture.Db.DocumentStoreAgentRuns
+            .Find(Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(run => run.Id, self.Id),
+                selfGeneration))
+            .SingleAsync();
+        reusableSelf.Id.ShouldBe(self.Id);
+    }
+
+    [Fact]
+    public async Task ReloadMediaGenerationEntry_ShouldIgnoreStaleSnapshotAfterLeaseWait()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var staleSnapshot = RecoveryEntry("entry-dedupe-stale-snapshot", 1);
+        var persisted = RecoveryEntry(staleSnapshot.Id, 2);
+        await fixture.Db.DocumentEntries.InsertOneAsync(persisted);
+
+        var current = await DocumentStoreController.ReloadMediaGenerationEntryAsync(
+            fixture.Db.DocumentEntries,
+            staleSnapshot,
+            DocumentStoreAgentRunKind.Transcribe,
+            CancellationToken.None);
+
+        current.ShouldNotBeNull();
+        current.AgentOutputGeneration.ShouldBe(2);
+        staleSnapshot.AgentOutputGeneration.ShouldBe(1);
+    }
+
     [Fact]
     public async Task Reaper_ShouldOnlyTerminateMatchingStalledRuns_ThenAllowNewRun()
     {
