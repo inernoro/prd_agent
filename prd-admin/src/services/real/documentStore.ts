@@ -976,7 +976,7 @@ export async function getLatestAgentRun(
   entryId: string,
   kind: 'subtitle' | 'reprocess' | 'transcribe',
   opts?: {
-    status?: 'done' | 'failed' | 'running' | 'queued';
+    status?: 'done' | 'failed' | 'running' | 'queued' | 'publishing';
     requireOutput?: boolean;
     ownUserOnly?: boolean;
   },

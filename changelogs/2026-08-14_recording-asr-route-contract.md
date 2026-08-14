@@ -41,3 +41,5 @@
 | fix | prd-admin | 替代转录任务失联时保留可重试停滞错误而非静默撤销后台提示 |
 | test | prd-api | 补齐无人声哨兵外围标点与真实句子包含标记的精确正反例 |
 | test | prd-admin | 补齐旧转录被失联替代任务取代时的后台看护收敛回归 |
+| fix | prd-admin | 将转录首次发布 marker 视为可恢复在途状态并纳入失联判定 |
+| test | prd-admin | 补齐 publishing 状态刷新接管、停滞收敛与失败提示互斥回归 |

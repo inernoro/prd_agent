@@ -230,7 +230,7 @@ export type DocumentStoreAgentRun = {
   sourceEntryId: string;
   storeId: string;
   userId: string;
-  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  status: 'publishing' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
   phase: string;
   progress: number;
   errorMessage?: string;

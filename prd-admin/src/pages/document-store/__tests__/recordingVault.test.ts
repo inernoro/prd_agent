@@ -105,7 +105,8 @@ describe('recording vault deferred transcription recovery', () => {
     expect(sources.get('run-recorded')).toEqual(recordedUpload);
   });
 
-  it('recovers only queued or running runs after a page refresh', () => {
+  it('recovers publishing, queued, or running runs after a page refresh', () => {
+    expect(recoverableBackgroundTranscriptionRunId({ id: 'run-publishing', status: 'publishing' })).toBe('run-publishing');
     expect(recoverableBackgroundTranscriptionRunId({ id: ' run-1 ', status: 'queued' })).toBe('run-1');
     expect(recoverableBackgroundTranscriptionRunId({ id: 'run-2', status: 'RUNNING' })).toBe('run-2');
     expect(recoverableBackgroundTranscriptionRunId({ id: 'run-3', status: 'done' })).toBeNull();
@@ -114,11 +115,59 @@ describe('recording vault deferred transcription recovery', () => {
     expect(recoverableBackgroundTranscriptionRunId(null)).toBeNull();
   });
 
+  it('keeps a publishing marker watched across immediate and delayed recovery until it reaches a terminal state', () => {
+    const publishing = {
+      id: 'run-publishing-transition',
+      status: 'publishing',
+      createdAt: '2026-08-14T11:59:00Z',
+    };
+    expect(recoverableBackgroundTranscriptionRunId(
+      publishing,
+      Date.parse('2026-08-14T12:00:00Z'),
+    )).toBe('run-publishing-transition');
+    expect(recoverableBackgroundTranscriptionRunId(
+      publishing,
+      Date.parse('2026-08-14T12:00:02.500Z'),
+    )).toBe('run-publishing-transition');
+
+    for (const status of ['queued', 'running']) {
+      expect(decideBackgroundRunLookup({
+        runId: 'run-publishing-transition',
+        directRun: { ...publishing, status },
+        latestEntryRun: { ...publishing, status },
+        latestLookupSucceeded: true,
+        consecutiveFailures: 0,
+        nowMs: Date.parse('2026-08-14T12:00:02.500Z'),
+      })).toEqual({ kind: 'observe', run: { ...publishing, status } });
+    }
+    for (const status of ['done', 'failed']) {
+      expect(recoverableBackgroundTranscriptionRunId({ ...publishing, status })).toBeNull();
+      expect(decideBackgroundRunLookup({
+        runId: 'run-publishing-transition',
+        directRun: { ...publishing, status },
+        latestEntryRun: { ...publishing, status },
+        latestLookupSucceeded: true,
+        consecutiveFailures: 0,
+        nowMs: Date.parse('2026-08-14T12:00:02.500Z'),
+      })).toEqual({ kind: 'observe', run: { ...publishing, status } });
+    }
+  });
+
   it('does not recover a run that has had no progress for over one hour', () => {
     const now = Date.parse('2026-08-14T12:00:00Z');
     const stale = { id: 'run-old', status: 'running', startedAt: '2026-08-14T10:59:59Z' };
     expect(isStalledBackgroundTranscriptionRun(stale, now)).toBe(true);
     expect(recoverableBackgroundTranscriptionRunId(stale, now)).toBeNull();
+    expect(recoverableBackgroundTranscriptionRunId({
+      id: 'run-stalled-publishing',
+      status: 'publishing',
+      createdAt: '2026-08-14T10:00:00Z',
+    }, now)).toBeNull();
+    expect(recoverableBackgroundTranscriptionRunId({
+      id: 'run-fresh-publishing',
+      status: 'publishing',
+      createdAt: '2026-08-14T11:59:00Z',
+    }, now)).toBe('run-fresh-publishing');
     expect(recoverableBackgroundTranscriptionRunId({
       id: 'run-fresh',
       status: 'running',

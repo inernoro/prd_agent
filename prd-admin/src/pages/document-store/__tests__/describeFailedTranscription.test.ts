@@ -34,7 +34,7 @@ describe('describeFailedTranscription', () => {
   });
 
   it('在途与成功都不算失败——这两种另有归宿，重复提示等于误报', () => {
-    for (const status of ['queued', 'running', 'done']) {
+    for (const status of ['publishing', 'queued', 'running', 'done']) {
       expect(describeFailedTranscription({ status, errorMessage: 'x' })).toBeNull();
     }
     expect(describeFailedTranscription(null)).toBeNull();
@@ -44,9 +44,12 @@ describe('describeFailedTranscription', () => {
   it('与在途看护判据互斥：同一个 run 不会既被接管又被报失败', () => {
     const failed = { id: 'r1', status: 'failed', errorMessage: '炸了' };
     const running = { id: 'r2', status: 'running' };
+    const publishing = { id: 'r3', status: 'publishing' };
     expect(recoverableBackgroundTranscriptionRunId(failed)).toBeNull();
     expect(describeFailedTranscription(failed)).not.toBeNull();
     expect(recoverableBackgroundTranscriptionRunId(running)).toBe('r2');
     expect(describeFailedTranscription(running)).toBeNull();
+    expect(recoverableBackgroundTranscriptionRunId(publishing)).toBe('r3');
+    expect(describeFailedTranscription(publishing)).toBeNull();
   });
 });

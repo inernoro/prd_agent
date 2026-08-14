@@ -172,7 +172,7 @@ export function recoverableBackgroundTranscriptionRunId(
 ): string | null {
   const runId = run?.id?.trim();
   const status = run?.status?.trim().toLowerCase();
-  if (!runId || (status !== 'queued' && status !== 'running')) return null;
+  if (!runId || (status !== 'publishing' && status !== 'queued' && status !== 'running')) return null;
   if (isStalledBackgroundTranscriptionRun(run, nowMs)) return null;
   return runId;
 }
@@ -191,7 +191,7 @@ export function isStalledBackgroundTranscriptionRun(
   nowMs = Date.now(),
 ): boolean {
   const status = run?.status?.trim().toLowerCase();
-  if (status !== 'queued' && status !== 'running') return false;
+  if (status !== 'publishing' && status !== 'queued' && status !== 'running') return false;
   // 定时自动重试的 queued run 以实际计划时间为基准。CreatedAt 可能是数小时前，
   // 不能在退避窗口尚未到达时把一条合法任务误判成失联。
   const timestamp = Date.parse(
