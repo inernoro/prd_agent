@@ -16,7 +16,20 @@ namespace PrdAgent.Infrastructure.Services.DocumentStore;
 /// - 去重：与最新版本正文 hash 相同则不重复落库（github 无变化同步 / 重复保存不产生噪音版本）；
 /// - 留存上限 <see cref="MaxVersionsPerEntry"/>，超出裁剪最旧（保留最近 N 条）。
 /// </summary>
-public class DocumentVersionService
+public interface IDocumentVersionSnapshotWriter
+{
+    Task<DocumentEntryVersion?> SnapshotAsync(
+        string entryId,
+        string storeId,
+        string content,
+        string source,
+        string userId,
+        string? userName,
+        string? restoredFromVersionId = null,
+        CancellationToken ct = default);
+}
+
+public class DocumentVersionService : IDocumentVersionSnapshotWriter
 {
     private readonly MongoDbContext _db;
 

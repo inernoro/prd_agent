@@ -234,6 +234,8 @@ export type DocumentStoreAgentRun = {
   phase: string;
   progress: number;
   errorMessage?: string;
+  /** 机器可判定的失败类别；用于区分配置错误、音频问题和临时上游故障。 */
+  failureCode?: string;
   outputEntryId?: string;
   templateKey?: string;
   customPrompt?: string;
@@ -253,6 +255,8 @@ export type DocumentStoreAgentRun = {
   messages?: ReprocessChatMessage[];
   createdAt: string;
   startedAt?: string;
+  /** Worker 存活心跳；超过一小时没有更新时允许用户启动全新重试。 */
+  heartbeatAt?: string;
   endedAt?: string;
 };
 

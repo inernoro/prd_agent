@@ -3128,6 +3128,23 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为 1 到 1000000"), jsonOptions, 400);
     if (!IsSafeOfferingEndpointPath(body?.EndpointPath))
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
+    var targetPlatform = targetKind == "model" && !string.IsNullOrWhiteSpace(target.AsNullableString("PlatformId"))
+        ? await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", target.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
+        : null;
+    var createAsrContractError = AsrOfferingContractPolicy.Validate(
+        logical.GetStringOrEmpty("ModelType"),
+        targetKind,
+        AsrOfferingContractPolicy.ResolvePhysicalModel(
+            body?.UpstreamModelId,
+            target.AsNullableString("ModelName"),
+            target.AsNullableString("ModelId")),
+        body?.EndpointPath,
+        body?.Protocol ?? target.AsNullableString("Protocol"),
+        targetPlatform?.AsNullableString("PlatformType"));
+    if (createAsrContractError is not null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            AsrOfferingContractPolicy.ErrorCode,
+            createAsrContractError), jsonOptions, 409);
     var duplicate = fb.And(
         fb.Eq("TenantId", tenantId),
         fb.Eq("LogicalModelId", id),
@@ -3186,6 +3203,42 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         return Json(ApiEnvelope<ModelOfferingItem>.Fail(
             "OFFERING_SUPERSEDED",
             "该 Offering 已有新版本，请刷新后编辑当前版本"), jsonOptions, 409);
+    var logicalForContract = await gwLogicalModels.Find(TenantAccess.Filter(
+        http,
+        Builders<BsonDocument>.Filter.Eq("_id", logicalId))).FirstOrDefaultAsync();
+    if (logicalForContract is null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail("LOGICAL_MODEL_NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    var targetKind = existing.GetStringOrEmpty("TargetKind");
+    var targetId = existing.GetStringOrEmpty("TargetId");
+    var target = targetKind == "model"
+        ? await gwModels.Find(TenantAccess.Filter(http, fb.Eq("_id", targetId))).FirstOrDefaultAsync()
+        : await gwModelExchanges.Find(TenantAccess.Filter(http, fb.Eq("_id", targetId))).FirstOrDefaultAsync();
+    var effectiveUpstreamModel = AsrOfferingContractPolicy.ResolvePhysicalModel(
+        body.UpstreamModelId is null ? existing.AsNullableString("UpstreamModelId") : body.UpstreamModelId,
+        target?.AsNullableString("ModelName"),
+        target?.AsNullableString("ModelId"));
+    var effectiveEndpointPath = body.EndpointPath is null
+        ? existing.AsNullableString("EndpointPath")
+        : body.EndpointPath;
+    var effectiveProtocol = body.Protocol is null
+        ? existing.AsNullableString("Protocol") ?? target?.AsNullableString("Protocol")
+        : string.IsNullOrWhiteSpace(body.Protocol)
+            ? target?.AsNullableString("Protocol")
+            : body.Protocol.Trim();
+    var targetPlatform = targetKind == "model" && !string.IsNullOrWhiteSpace(target?.AsNullableString("PlatformId"))
+        ? await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", target!.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
+        : null;
+    var updateAsrContractError = AsrOfferingContractPolicy.Validate(
+        logicalForContract.GetStringOrEmpty("ModelType"),
+        targetKind,
+        effectiveUpstreamModel,
+        effectiveEndpointPath,
+        effectiveProtocol,
+        targetPlatform?.AsNullableString("PlatformType"));
+    if (updateAsrContractError is not null)
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            AsrOfferingContractPolicy.ErrorCode,
+            updateAsrContractError), jsonOptions, 409);
     var updates = new List<UpdateDefinition<BsonDocument>>();
     if (body.UpstreamModelId is not null) updates.Add(SetOrUnset("UpstreamModelId", body.UpstreamModelId));
     if (body.Protocol is not null) updates.Add(SetOrUnset("Protocol", body.Protocol.ToLowerInvariant()));
@@ -3324,10 +3377,34 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
     if (body?.Enabled is not bool enabled)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "缺少 enabled 字段"), jsonOptions, 400);
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwLogicalModels.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    if (enabled && string.Equals(existing.GetStringOrEmpty("ModelType"), "asr", StringComparison.OrdinalIgnoreCase))
+    {
+        var enabledOfferings = await gwModelOfferings.Find(TenantAccess.Filter(http,
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("LogicalModelId", id),
+                Builders<BsonDocument>.Filter.Eq("Enabled", true),
+                Builders<BsonDocument>.Filter.Not(Builders<BsonDocument>.Filter.Exists("SupersededByOfferingId")))))
+            .ToListAsync();
+        var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+        var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+        foreach (var offering in enabledOfferings)
+        {
+            var target = modelDocs.FirstOrDefault(model => model.GetStringOrEmpty("_id") == offering.GetStringOrEmpty("TargetId"));
+            var platform = target is null
+                ? null
+                : platformDocs.FirstOrDefault(item => item.GetStringOrEmpty("_id") == target.AsNullableString("PlatformId"));
+            var contractError = ValidateAsrOfferingContract(existing, offering, target, platform);
+            if (contractError is not null)
+                return Json(ApiEnvelope<LogicalModelItem>.Fail(
+                    AsrOfferingContractPolicy.ErrorCode,
+                    contractError), jsonOptions, 409);
+        }
+    }
     var updated = await gwLogicalModels.FindOneAndUpdateAsync(filter,
         Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow),
         new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
-    if (updated is null) return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
     return Json(ApiEnvelope<LogicalModelItem>.Ok(MapLogicalModel(
         updated,
         Array.Empty<BsonDocument>(),
@@ -3342,11 +3419,29 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled", asyn
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_INPUT", "缺少 enabled 字段"), jsonOptions, 400);
     var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
         Builders<BsonDocument>.Filter.Eq("_id", offeringId), Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+    var existing = await gwModelOfferings.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", logicalId))).FirstOrDefaultAsync();
+    if (logical is null) return Json(ApiEnvelope<ModelOfferingItem>.Fail("LOGICAL_MODEL_NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    if (enabled)
+    {
+        var targetKind = existing.GetStringOrEmpty("TargetKind");
+        var targetId = existing.GetStringOrEmpty("TargetId");
+        var target = targetKind == "model"
+            ? await gwModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", targetId))).FirstOrDefaultAsync()
+            : await gwModelExchanges.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", targetId))).FirstOrDefaultAsync();
+        var platform = targetKind == "model" && !string.IsNullOrWhiteSpace(target?.AsNullableString("PlatformId"))
+            ? await gwPlatforms.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", target!.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
+            : null;
+        var contractError = ValidateAsrOfferingContract(logical, existing, target, platform);
+        if (contractError is not null)
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                AsrOfferingContractPolicy.ErrorCode,
+                contractError), jsonOptions, 409);
+    }
     var updated = await gwModelOfferings.FindOneAndUpdateAsync(filter,
         Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow),
         new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
-    if (updated is null) return Json(ApiEnvelope<ModelOfferingItem>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
-    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", logicalId))).FirstOrDefaultAsync();
     var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
     var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
     var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
@@ -4521,6 +4616,24 @@ app.MapPost("/gw/config-authority/bulk-claim", async (HttpContext http, [FromBod
         return Json(ApiEnvelope<BulkClaimConfigAuthorityResult>.Fail("INTERNAL_GOVERNANCE_ONLY", "配置权威迁移仅供内部租户使用"), jsonOptions, 403);
     var overwrite = body?.Overwrite == true;
     var now = DateTime.UtcNow;
+
+    if (overwrite)
+    {
+        var sourcePlatforms = await platforms.Find(FilterDefinition<BsonDocument>.Empty).ToListAsync();
+        var sourceModels = await models.Find(FilterDefinition<BsonDocument>.Empty).ToListAsync();
+        var contractError = await ValidateAsrBulkMutationAsync(
+            http,
+            sourcePlatforms,
+            sourceModels,
+            gwPlatforms,
+            gwModels,
+            gwModelOfferings,
+            gwLogicalModels);
+        if (contractError is not null)
+            return Json(ApiEnvelope<BulkClaimConfigAuthorityResult>.Fail(
+                AsrOfferingContractPolicy.ErrorCode,
+                contractError), jsonOptions, 409);
+    }
 
     async Task<(int claimed, int skipped)> ClaimCollectionAsync(
         IMongoCollection<BsonDocument> sourceCollection,
@@ -7979,6 +8092,16 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
         filter = sourceFilter;
     }
     if (doc is null) return Json(ApiEnvelope<PlatformItem>.Fail("NOT_FOUND", $"平台不存在：{id}"), jsonOptions, 404);
+    if (enabled && targetAuthority == "llm_gateway")
+    {
+        var proposed = new BsonDocument(doc) { ["Enabled"] = true };
+        var contractError = await ValidateAsrPlatformMutationAsync(
+            http, proposed, gwModels, gwModelOfferings, gwLogicalModels);
+        if (contractError is not null)
+            return Json(ApiEnvelope<PlatformItem>.Fail(
+                AsrOfferingContractPolicy.ErrorCode,
+                contractError), jsonOptions, 409);
+    }
     var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
     await targetPlatforms.UpdateOneAsync(filter, update);
     await WriteOperationAuditAsync(
@@ -8019,6 +8142,16 @@ app.MapPut("/gw/models/{id}/enabled", async (HttpContext http, string id, Toggle
         filter = sourceFilter;
     }
     if (doc is null) return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
+    if (enabled && targetAuthority == "llm_gateway")
+    {
+        var proposed = new BsonDocument(doc) { ["Enabled"] = true };
+        var contractError = await ValidateAsrModelMutationAsync(
+            http, proposed, gwPlatforms, gwModelOfferings, gwLogicalModels);
+        if (contractError is not null)
+            return Json(ApiEnvelope<ModelItem>.Fail(
+                AsrOfferingContractPolicy.ErrorCode,
+                contractError), jsonOptions, 409);
+    }
     var update = Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow);
     await targetModels.UpdateOneAsync(filter, update);
     await WriteOperationAuditAsync(
@@ -8113,6 +8246,13 @@ app.MapPut("/gw/platforms/{id}/claim", async (HttpContext http, string id) =>
     claimed["Authority"] = "llm_gateway";
     claimed["ClaimedAt"] = now;
     claimed["UpdatedAt"] = now;
+
+    var platformContractError = await ValidateAsrPlatformMutationAsync(
+        http, claimed, gwModels, gwModelOfferings, gwLogicalModels);
+    if (platformContractError is not null)
+        return Json(ApiEnvelope<PlatformItem>.Fail(
+            AsrOfferingContractPolicy.ErrorCode,
+            platformContractError), jsonOptions, 409);
 
     await gwPlatforms.ReplaceOneAsync(filter, claimed, new ReplaceOptions { IsUpsert = true });
     await WriteOperationAuditAsync(
@@ -8479,6 +8619,13 @@ app.MapPut("/gw/models/{id}/claim", async (HttpContext http, string id) =>
     claimed["Authority"] = "llm_gateway";
     claimed["ClaimedAt"] = now;
     claimed["UpdatedAt"] = now;
+
+    var modelContractError = await ValidateAsrModelMutationAsync(
+        http, claimed, gwPlatforms, gwModelOfferings, gwLogicalModels);
+    if (modelContractError is not null)
+        return Json(ApiEnvelope<ModelItem>.Fail(
+            AsrOfferingContractPolicy.ErrorCode,
+            modelContractError), jsonOptions, 409);
 
     await gwModels.ReplaceOneAsync(filter, claimed, new ReplaceOptions { IsUpsert = true });
     await WriteOperationAuditAsync(
@@ -12896,6 +13043,138 @@ static ModelItem MapModel(BsonDocument d)
 
 static (string Mode, string? FieldFormat) MapImageSizeControl(IEnumerable<BsonDocument> capabilities)
     => GatewayConfigurationProvisioning.MapImageSizeControl(capabilities);
+
+static string? ValidateAsrOfferingContract(
+    BsonDocument logical,
+    BsonDocument offering,
+    BsonDocument? target,
+    BsonDocument? platform)
+{
+    var targetKind = offering.GetStringOrEmpty("TargetKind");
+    return AsrOfferingContractPolicy.Validate(
+        logical.GetStringOrEmpty("ModelType"),
+        targetKind,
+        AsrOfferingContractPolicy.ResolvePhysicalModel(
+            offering.AsNullableString("UpstreamModelId"),
+            target?.AsNullableString("ModelName"),
+            target?.AsNullableString("ModelId")),
+        offering.AsNullableString("EndpointPath"),
+        offering.AsNullableString("Protocol") ?? target?.AsNullableString("Protocol"),
+        platform?.AsNullableString("PlatformType"));
+}
+
+static async Task<string?> ValidateAsrModelMutationAsync(
+    HttpContext http,
+    BsonDocument proposedModel,
+    IMongoCollection<BsonDocument> platforms,
+    IMongoCollection<BsonDocument> offerings,
+    IMongoCollection<BsonDocument> logicalModels)
+{
+    var modelId = proposedModel.GetStringOrEmpty("_id");
+    if (modelId.Length == 0) return null;
+    var fb = Builders<BsonDocument>.Filter;
+    var referencedOfferings = await offerings.Find(TenantAccess.Filter(http, fb.And(
+        fb.Eq("TargetKind", "model"),
+        fb.Eq("TargetId", modelId),
+        fb.Eq("Enabled", true),
+        fb.Not(fb.Exists("SupersededByOfferingId"))))).ToListAsync();
+    if (referencedOfferings.Count == 0) return null;
+
+    var logicalIds = referencedOfferings.Select(item => item.GetStringOrEmpty("LogicalModelId")).Distinct().ToList();
+    var logicals = await logicalModels.Find(TenantAccess.Filter(http, fb.In("_id", logicalIds))).ToListAsync();
+    var platformId = proposedModel.AsNullableString("PlatformId");
+    var platform = string.IsNullOrWhiteSpace(platformId)
+        ? null
+        : await platforms.Find(TenantAccess.Filter(http, fb.Eq("_id", platformId))).FirstOrDefaultAsync();
+    foreach (var offering in referencedOfferings)
+    {
+        var logical = logicals.FirstOrDefault(item => item.GetStringOrEmpty("_id") == offering.GetStringOrEmpty("LogicalModelId"));
+        if (logical is null) continue;
+        var error = ValidateAsrOfferingContract(logical, offering, proposedModel, platform);
+        if (error is not null)
+            return $"认领模型会破坏已启用 ASR Offering {offering.GetStringOrEmpty("_id")}：{error}";
+    }
+    return null;
+}
+
+static async Task<string?> ValidateAsrPlatformMutationAsync(
+    HttpContext http,
+    BsonDocument proposedPlatform,
+    IMongoCollection<BsonDocument> models,
+    IMongoCollection<BsonDocument> offerings,
+    IMongoCollection<BsonDocument> logicalModels)
+{
+    var platformId = proposedPlatform.GetStringOrEmpty("_id");
+    if (platformId.Length == 0) return null;
+    var fb = Builders<BsonDocument>.Filter;
+    var affectedModels = await models.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", platformId))).ToListAsync();
+    if (affectedModels.Count == 0) return null;
+    var modelIds = affectedModels.Select(item => item.GetStringOrEmpty("_id")).Where(id => id.Length > 0).ToList();
+    var referencedOfferings = await offerings.Find(TenantAccess.Filter(http, fb.And(
+        fb.Eq("TargetKind", "model"),
+        fb.In("TargetId", modelIds),
+        fb.Eq("Enabled", true),
+        fb.Not(fb.Exists("SupersededByOfferingId"))))).ToListAsync();
+    if (referencedOfferings.Count == 0) return null;
+
+    var logicalIds = referencedOfferings.Select(item => item.GetStringOrEmpty("LogicalModelId")).Distinct().ToList();
+    var logicals = await logicalModels.Find(TenantAccess.Filter(http, fb.In("_id", logicalIds))).ToListAsync();
+    foreach (var offering in referencedOfferings)
+    {
+        var logical = logicals.FirstOrDefault(item => item.GetStringOrEmpty("_id") == offering.GetStringOrEmpty("LogicalModelId"));
+        var model = affectedModels.FirstOrDefault(item => item.GetStringOrEmpty("_id") == offering.GetStringOrEmpty("TargetId"));
+        if (logical is null || model is null) continue;
+        var error = ValidateAsrOfferingContract(logical, offering, model, proposedPlatform);
+        if (error is not null)
+            return $"认领平台会破坏已启用 ASR Offering {offering.GetStringOrEmpty("_id")}：{error}";
+    }
+    return null;
+}
+
+static async Task<string?> ValidateAsrBulkMutationAsync(
+    HttpContext http,
+    IReadOnlyCollection<BsonDocument> proposedPlatforms,
+    IReadOnlyCollection<BsonDocument> proposedModels,
+    IMongoCollection<BsonDocument> platforms,
+    IMongoCollection<BsonDocument> models,
+    IMongoCollection<BsonDocument> offerings,
+    IMongoCollection<BsonDocument> logicalModels)
+{
+    var currentPlatforms = await platforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    var currentModels = await models.Find(TenantAccess.Filter(http)).ToListAsync();
+    var platformSnapshot = currentPlatforms
+        .Concat(proposedPlatforms)
+        .Where(item => item.GetStringOrEmpty("_id").Length > 0)
+        .GroupBy(item => item.GetStringOrEmpty("_id"), StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+    var modelSnapshot = currentModels
+        .Concat(proposedModels)
+        .Where(item => item.GetStringOrEmpty("_id").Length > 0)
+        .GroupBy(item => item.GetStringOrEmpty("_id"), StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+
+    var fb = Builders<BsonDocument>.Filter;
+    var enabledOfferings = await offerings.Find(TenantAccess.Filter(http, fb.And(
+        fb.Eq("TargetKind", "model"),
+        fb.Eq("Enabled", true),
+        fb.Not(fb.Exists("SupersededByOfferingId"))))).ToListAsync();
+    var logicalIds = enabledOfferings.Select(item => item.GetStringOrEmpty("LogicalModelId")).Distinct().ToList();
+    var logicals = await logicalModels.Find(TenantAccess.Filter(http, fb.In("_id", logicalIds))).ToListAsync();
+    foreach (var offering in enabledOfferings)
+    {
+        var logical = logicals.FirstOrDefault(item => item.GetStringOrEmpty("_id") == offering.GetStringOrEmpty("LogicalModelId"));
+        modelSnapshot.TryGetValue(offering.GetStringOrEmpty("TargetId"), out var model);
+        var platformId = model?.AsNullableString("PlatformId");
+        var platform = !string.IsNullOrWhiteSpace(platformId) && platformSnapshot.TryGetValue(platformId, out var matched)
+            ? matched
+            : null;
+        if (logical is null || model is null) continue;
+        var error = ValidateAsrOfferingContract(logical, offering, model, platform);
+        if (error is not null)
+            return $"批量认领会破坏已启用 ASR Offering {offering.GetStringOrEmpty("_id")}：{error}";
+    }
+    return null;
+}
 
 static bool IsSafeOfferingEndpointPath(string? value)
 {

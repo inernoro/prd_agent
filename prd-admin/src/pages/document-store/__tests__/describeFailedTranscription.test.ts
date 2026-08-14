@@ -13,10 +13,11 @@ describe('describeFailedTranscription', () => {
     const r = describeFailedTranscription({
       status: 'failed',
       errorMessage: '自动尝试 2 个 ASR 方案仍失败：大模型平台额度已用尽或被限额',
+      endedAt: '2026-08-07T16:04:30Z',
       updatedAt: '2026-08-07T16:05:00Z',
     });
     expect(r?.reason).toBe('自动尝试 2 个 ASR 方案仍失败：大模型平台额度已用尽或被限额');
-    expect(r?.at).toBe('2026-08-07T16:05:00Z');
+    expect(r?.at).toBe('2026-08-07T16:04:30Z');
   });
 
   it('诊断块是排障细节，不端给用户', () => {

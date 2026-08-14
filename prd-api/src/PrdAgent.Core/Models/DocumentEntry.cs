@@ -59,6 +59,12 @@ public class DocumentEntry
     /// <summary>扩展元数据（键值对，便于不同来源携带额外信息）</summary>
     public Dictionary<string, string> Metadata { get; set; } = new();
 
+    /// <summary>
+    /// 后台任务产物发布代次。创建新的字幕或转录任务时原子递增，旧 Worker 只能向
+    /// 自己持有的代次发布，防止失联任务恢复后覆盖新结果。
+    /// </summary>
+    public long AgentOutputGeneration { get; set; }
+
     /// <summary>上传/创建者 UserId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 
