@@ -287,7 +287,7 @@
 
 ### 与网关的边界
 
-MAP 只单向依赖 LLM Gateway 对外暴露的 `image-layering` 公开能力标识，不感知具体使用了哪个上游平台和模型；这个能力标识不会出现在视觉创作的常规「选择模型」列表里，因为它只能被分层这个专用动作调用，不是用户可自由选择的普通生成模型（四个 models 端点已统一收敛过滤口径，详见 [design.platform.llm-gateway.md](./design.platform.llm-gateway.md)）。
+MAP 只单向依赖 LLM Gateway 对外暴露的 `image-layering` 公开能力标识，不感知具体使用了哪个上游平台和模型；这个能力标识不会出现在视觉创作的常规「选择模型」列表里，因为它只能被分层这个专用动作调用，不是用户可自由选择的普通生成模型（这类仅供特定动作调用的操作性能力，在网关对外的模型目录出口统一被过滤掉，详见 [design.platform.llm-gateway.md](./design.platform.llm-gateway.md)）。
 
 分层这条链路上仍缺机械判据验证的部分（如「自然语言拆法是否真的影响拆分结果」「多上游兼容性」），见 [debt.visual-agent.layering.md](./debt.visual-agent.layering.md)。
 
