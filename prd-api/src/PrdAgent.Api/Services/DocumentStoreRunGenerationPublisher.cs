@@ -291,8 +291,6 @@ internal static class DocumentStoreRunGenerationPublisher
            && existing.StoreId == expected.StoreId
            && existing.UserId == expected.UserId
            && existing.Kind == expected.Kind
-           && existing.Status == DocumentStoreRunStatus.Running
-           && existing.ExecutionId == expected.ExecutionId
            && existing.OutputGeneration == expected.OutputGeneration
            && existing.RecoveryAttemptId == recoveryAttemptId
            && existing.PendingRecoveryOutputGeneration == outputGeneration;

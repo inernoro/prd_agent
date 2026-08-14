@@ -25,3 +25,5 @@
 | test | prd-api | 补齐租约过期接管与同 runId 新代次发布的真实 Mongo 并发回归 |
 | fix | prd-api | 中断恢复在任务重排结果未知时按恢复身份幂等确认并安全回滚正文代次 |
 | test | prd-api | 补齐输出租约过期接管后旧恢复者不得回滚、新恢复者幂等收敛的真实 Mongo 回归 |
+| fix | prd-api | 中断恢复 marker 独立于心跳和旧终态持续收敛，并禁止普通执行改写协议中间态 |
+| test | prd-api | 补齐旧心跳恢复和旧执行已终态时 pending marker 仍能重排的真实 Mongo 回归 |

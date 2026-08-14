@@ -93,6 +93,9 @@ public class DocumentStoreAgentWorker : BackgroundService
                                 Builders<DocumentStoreAgentRun>.Filter.Eq(
                                     r => r.ExecutionId,
                                     _currentExecutionId),
+                                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                    r => r.PendingRecoveryOutputGeneration,
+                                    null),
                                 automaticRetryBudgetFilter),
                             Builders<DocumentStoreAgentRun>.Update
                                 .Set(r => r.Status, DocumentStoreRunStatus.Queued)
@@ -115,7 +118,8 @@ public class DocumentStoreAgentWorker : BackgroundService
                     await db.DocumentStoreAgentRuns.UpdateOneAsync(
                         r => r.Id == _currentRunId
                              && r.Status == DocumentStoreRunStatus.Running
-                             && r.ExecutionId == _currentExecutionId,
+                             && r.ExecutionId == _currentExecutionId
+                             && r.PendingRecoveryOutputGeneration == null,
                         Builders<DocumentStoreAgentRun>.Update
                             .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                             .Set(r => r.ErrorMessage, "Worker 关闭，任务被中断")
@@ -163,8 +167,21 @@ public class DocumentStoreAgentWorker : BackgroundService
                 DocumentStoreRunStatus.Running),
             ownerScope,
             staleClock);
+        var pendingRecoveryFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                r => r.Kind,
+                DocumentStoreAgentRunKind.Transcribe),
+            ownerScope,
+            Builders<DocumentStoreAgentRun>.Filter.Ne(r => r.RecoveryAttemptId, string.Empty),
+            Builders<DocumentStoreAgentRun>.Filter.Ne(
+                r => r.PendingRecoveryOutputGeneration,
+                null));
+        var recoveryCandidateFilter = Builders<DocumentStoreAgentRun>.Filter.Or(
+            pendingRecoveryFilter,
+            recoverFilter);
         var candidates = await db.DocumentStoreAgentRuns
-            .Find(recoverFilter)
+            .Find(recoveryCandidateFilter)
+            .SortByDescending(r => r.PendingRecoveryOutputGeneration)
             .Limit(100)
             .ToListAsync(CancellationToken.None);
         var recovered = 0;
@@ -185,7 +202,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                 var current = await db.DocumentStoreAgentRuns
                     .Find(Builders<DocumentStoreAgentRun>.Filter.And(
                         Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, candidate.Id),
-                        recoverFilter))
+                        recoveryCandidateFilter))
                     .FirstOrDefaultAsync(CancellationToken.None);
                 if (current == null) continue;
 
@@ -193,21 +210,36 @@ public class DocumentStoreAgentWorker : BackgroundService
                     await outputLease.EnsureHeldAsync(CancellationToken.None);
 
                 UpdateDefinition<DocumentStoreAgentRun> update;
-                if (DocumentRecordingArchiveWorker.HasDeferredTranscriptionAutomaticRetryBudget(current))
+                var hasPendingRecovery = current.PendingRecoveryOutputGeneration.HasValue
+                                         && !string.IsNullOrWhiteSpace(current.RecoveryAttemptId);
+                if (hasPendingRecovery
+                    || DocumentRecordingArchiveWorker.HasDeferredTranscriptionAutomaticRetryBudget(current))
                 {
                     // 同一 deferred run 会保留 runId 重排，但必须取得新的输出代次。仅更换
                     // ExecutionId 只能保护 run 状态，无法阻止旧 execution 在网络恢复后凭
                     // 原代次覆盖正文；DocumentEntry 的 generation CAS 才是最终数据栅栏。
-                    var recoveryAttemptId = current.PendingRecoveryOutputGeneration.HasValue
-                                            && !string.IsNullOrWhiteSpace(current.RecoveryAttemptId)
+                    var recoveryAttemptId = hasPendingRecovery
                         ? current.RecoveryAttemptId
                         : Guid.NewGuid().ToString("N");
-                    var currentRunFilter = Builders<DocumentStoreAgentRun>.Filter.And(
-                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, current.Id),
-                        Builders<DocumentStoreAgentRun>.Filter.Eq(
-                            r => r.ExecutionId,
-                            current.ExecutionId),
-                        recoverFilter);
+                    var currentRunFilter = hasPendingRecovery
+                        ? Builders<DocumentStoreAgentRun>.Filter.And(
+                            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, current.Id),
+                            ownerScope,
+                            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                r => r.RecoveryAttemptId,
+                                recoveryAttemptId),
+                            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                r => r.PendingRecoveryOutputGeneration,
+                                current.PendingRecoveryOutputGeneration),
+                            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                r => r.OutputGeneration,
+                                current.OutputGeneration))
+                        : Builders<DocumentStoreAgentRun>.Filter.And(
+                            Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, current.Id),
+                            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                r => r.ExecutionId,
+                                current.ExecutionId),
+                            recoverFilter);
                     var generationEntry = await DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
                         db,
                         current.SourceEntryId,
@@ -236,12 +268,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                     if (generationEntry == null)
                     {
                         await db.DocumentStoreAgentRuns.UpdateOneAsync(
-                            Builders<DocumentStoreAgentRun>.Filter.And(
-                                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, current.Id),
-                                Builders<DocumentStoreAgentRun>.Filter.Eq(
-                                    r => r.ExecutionId,
-                                    current.ExecutionId),
-                                recoverFilter),
+                            currentRunFilter,
                             Builders<DocumentStoreAgentRun>.Update
                                 .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                                 .Set(r => r.Phase, "已有更新的录音任务接管")
@@ -302,7 +329,7 @@ public class DocumentStoreAgentWorker : BackgroundService
         if (recovered > 0)
         {
             _logger.LogWarning(
-                "[doc-store-agent] Recovered {Count} heartbeat-stalled run(s)",
+                "[doc-store-agent] Recovered {Count} interrupted or pending run(s)",
                 recovered);
         }
     }
@@ -326,6 +353,9 @@ public class DocumentStoreAgentWorker : BackgroundService
             legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
         var filter = Builders<DocumentStoreAgentRun>.Filter.And(
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                r => r.PendingRecoveryOutputGeneration,
+                null),
             Builders<DocumentStoreAgentRun>.Filter.Or(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(
                     r => r.AutomaticRetryNextAt,
@@ -625,7 +655,8 @@ public class DocumentStoreAgentWorker : BackgroundService
         var result = await runs.UpdateOneAsync(
             r => r.Id == runId
                  && r.Status == DocumentStoreRunStatus.Running
-                 && r.ExecutionId == executionId,
+                 && r.ExecutionId == executionId
+                 && r.PendingRecoveryOutputGeneration == null,
             Builders<DocumentStoreAgentRun>.Update.Set(r => r.HeartbeatAt, heartbeatAt),
             cancellationToken: cancellationToken);
         return result.ModifiedCount == 1;
@@ -640,7 +671,10 @@ public class DocumentStoreAgentWorker : BackgroundService
                 DocumentStoreRunStatus.Running),
             Builders<DocumentStoreAgentRun>.Filter.Eq(
                 candidate => candidate.ExecutionId,
-                run.ExecutionId));
+                run.ExecutionId),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                candidate => candidate.PendingRecoveryOutputGeneration,
+                null));
 
     internal static async Task EnsureCurrentExecutionAsync(
         IMongoCollection<DocumentStoreAgentRun> runs,

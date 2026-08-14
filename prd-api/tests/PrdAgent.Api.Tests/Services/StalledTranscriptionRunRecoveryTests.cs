@@ -443,6 +443,92 @@ public sealed class StalledTranscriptionRunRecoveryTests
     }
 
     [Fact]
+    public async Task PendingRecovery_WithFreshHeartbeat_ShouldFenceOldExecutionAndStillRequeue()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        var entry = RecoveryEntry("entry-pending-fresh-heartbeat", 9);
+        var run = Run(
+            "recording-archive-transcribe-pending-fresh-heartbeat",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            now,
+            now);
+        run.OutputGeneration = 8;
+        run.RecoveryAttemptId = "recovery-attempt-fresh-heartbeat";
+        run.PendingRecoveryOutputGeneration = 9;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        (await DocumentStoreAgentWorker.TryRenewHeartbeatAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            run.Id,
+            run.ExecutionId,
+            now.AddSeconds(15),
+            CancellationToken.None)).ShouldBeFalse();
+        (await fixture.Db.DocumentStoreAgentRuns
+                .Find(DocumentStoreAgentWorker.CurrentExecutionFilter(run))
+                .AnyAsync())
+            .ShouldBeFalse();
+
+        await CreateRecoveryWorker(fixture).RecoverInterruptedRunsAsync();
+
+        var recovered = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == run.Id)
+            .SingleAsync();
+        recovered.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        recovered.OutputGeneration.ShouldBe(9);
+        recovered.RecoveryAttemptId.ShouldBe("recovery-attempt-fresh-heartbeat");
+        recovered.PendingRecoveryOutputGeneration.ShouldBeNull();
+        recovered.ExecutionId.ShouldBeEmpty();
+        recovered.AutomaticRetryCount.ShouldBe(1);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(recovered.OutputGeneration);
+    }
+
+    [Fact]
+    public async Task PendingRecovery_AfterOldExecutionBecameTerminal_ShouldStillRequeue()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        var entry = RecoveryEntry("entry-pending-terminal", 12);
+        var run = Run(
+            "recording-archive-transcribe-pending-terminal",
+            entry.Id,
+            "user-1",
+            "prd-agent:test::main",
+            now,
+            null,
+            DocumentStoreRunStatus.Failed);
+        run.OutputGeneration = 11;
+        run.RecoveryAttemptId = "recovery-attempt-terminal";
+        run.PendingRecoveryOutputGeneration = 12;
+        run.FailureCode = "TRANSCRIPTION_RUN_SUPERSEDED";
+        run.ErrorMessage = "旧执行已终态";
+        run.EndedAt = now;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        await CreateRecoveryWorker(fixture).RecoverInterruptedRunsAsync();
+
+        var recovered = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == run.Id)
+            .SingleAsync();
+        recovered.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        recovered.OutputGeneration.ShouldBe(12);
+        recovered.RecoveryAttemptId.ShouldBe("recovery-attempt-terminal");
+        recovered.PendingRecoveryOutputGeneration.ShouldBeNull();
+        recovered.ExecutionId.ShouldBeEmpty();
+        recovered.FailureCode.ShouldBeNull();
+        recovered.ErrorMessage.ShouldBeNull();
+        recovered.EndedAt.ShouldBeNull();
+        recovered.AutomaticRetryCount.ShouldBe(1);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(recovered.OutputGeneration);
+    }
+
+    [Fact]
     public async Task RecoveryPublisher_LostLeaseCannotRollbackReplacementAttempt()
     {
         await using var fixture = await RecordingRunMongoFixture.CreateAsync();
@@ -924,6 +1010,25 @@ public sealed class StalledTranscriptionRunRecoveryTests
             .Set(item => item.ExecutionId, string.Empty)
             .Set(item => item.OutputGeneration, generation)
             .Inc(item => item.AutomaticRetryCount, 1);
+
+    private static DocumentStoreAgentWorker CreateRecoveryWorker(RecordingRunMongoFixture fixture)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ASPNETCORE_ENVIRONMENT"] = "test",
+                ["Deployment:Identity"] = "prd-agent:test",
+                ["Changelog:GitHubBranch"] = "main",
+            })
+            .Build();
+        var services = new ServiceCollection()
+            .AddSingleton(fixture.Db)
+            .AddSingleton<IConfiguration>(configuration)
+            .BuildServiceProvider();
+        return new DocumentStoreAgentWorker(
+            services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<DocumentStoreAgentWorker>.Instance);
+    }
 
     private static DocumentStoreAgentRun Run(
         string id,
