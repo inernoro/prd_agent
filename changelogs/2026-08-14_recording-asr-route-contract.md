@@ -7,3 +7,5 @@
 | fix | llmgw | 拒绝模型、协议与端点不兼容的 ASR Offering 配置及重新启用 |
 | test | prd-api | 补齐 ASR 路由矩阵、Offering 锁定、参数兼容与失败分类回归 |
 | test | prd-api | 补齐失联回收、并发输出、旧任务拒写与整理竞态的 Mongo 回归 |
+| fix | prd-api | 修复跨进程固定 ASR 模型被网关按健康度重新选成其他协议模型 |
+| test | prd-api | 补齐异构 ASR 池在前后端健康快照不一致时仍保持物理模型锁定的 Mongo 回归 |

@@ -108,7 +108,6 @@ public class ModelResolver : IModelResolver
         }
 
         // pinned 是精确模型语义，但不能越过 appCaller 的专用池治理边界。
-        var pinnedWithinGatewayPool = false;
         // model_policy=pool 会把用户选中的池写入 ExpectedModel；保留这份池身份，
         // 因为下面为了精确 Provider 匹配会把 ExpectedModel 改成 PinnedModelId。
         var requestedPoolIdentity = expectedModel?.Trim();
@@ -137,21 +136,33 @@ public class ModelResolver : IModelResolver
             }
 
             var pinnedScope = requestedPool is null ? gatewayRegistry.Groups : [requestedPool];
-            var pinnedAllowed = !string.IsNullOrWhiteSpace(pinnedPlatformId)
-                                && !string.IsNullOrWhiteSpace(pinnedModelId)
-                                && pinnedScope.Any(group => group.Models.Any(model =>
-                                    string.Equals(model.PlatformId, pinnedPlatformId.Trim(), StringComparison.Ordinal)
-                                    && string.Equals(model.ModelId, pinnedModelId.Trim(), StringComparison.Ordinal)));
-            if (!pinnedAllowed)
+            var pinnedTarget = !string.IsNullOrWhiteSpace(pinnedPlatformId)
+                               && !string.IsNullOrWhiteSpace(pinnedModelId)
+                ? pinnedScope
+                    .SelectMany(group => group.Models.Select(model => (Group: group, Model: model)))
+                    .FirstOrDefault(candidate =>
+                        string.Equals(candidate.Model.PlatformId, pinnedPlatformId.Trim(), StringComparison.Ordinal)
+                        && string.Equals(candidate.Model.ModelId, pinnedModelId.Trim(), StringComparison.Ordinal))
+                : default;
+            if (pinnedTarget.Model is null)
             {
                 return ModelResolutionResult.NotFound(
                     expectedModel ?? pinnedModelId,
                     $"PinnedModel 不在 appCaller 专用模型池内: AppCallerCode={appCallerCode}, ModelType={modelType}");
             }
-            pinnedWithinGatewayPool = true;
-            expectedModel = pinnedModelId!.Trim();
+            // compute-then-send 的第二次解析必须真正锁定第一次选中的物理模型。
+            // 过去这里只把 expectedModel 改成模型名，随后仍进入模型池健康调度；当 MAP 与
+            // serving 的健康快照不一致时，serving 会把已锁定的 gpt-audio 重新选成
+            // gpt-4o-transcribe，却继续沿用前者构造的 chat-audio 请求，最终把转写模型发到
+            // /v1/chat/completions。治理边界已由上面的池成员匹配完成，此处应直接
+            // 解析该平台与模型，找不到就失败关闭，绝不能静默换成池内另一个成员。
+            return await ResolvePinnedGatewayPoolMemberAsync(
+                pinnedTarget.Group,
+                pinnedTarget.Model,
+                pinnedModelId,
+                ct);
         }
-        if (!pinnedWithinGatewayPool)
+        if (!string.IsNullOrWhiteSpace(pinnedPlatformId) || !string.IsNullOrWhiteSpace(pinnedModelId))
         {
             var pinned = await TryResolvePinnedModelAsync(
                 expectedModel,
@@ -168,23 +179,7 @@ public class ModelResolver : IModelResolver
         if (gatewayRegistry.Groups.Count > 0)
         {
             candidateGroups = gatewayRegistry.Groups;
-            if (gatewayRegistry.StrictPoolContract && pinnedWithinGatewayPool)
-            {
-                // 精确 Provider 也必须留在用户选择的池内；否则“池 A + pin(B)”
-                // 会绕过跨池开关，直接把请求送进同一 AppCaller 的另一池。
-                if (!string.IsNullOrWhiteSpace(requestedPoolIdentity))
-                {
-                    var selectedPool = candidateGroups.FirstOrDefault(group =>
-                        string.Equals(group.Id, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(group.Code, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(group.Name, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase));
-                    // 非 pool 策略也可能把 Provider 模型名放在 ExpectedModel；只有确实命中
-                    // 一个池身份时才收窄范围，避免把旧的精确 Provider 语义误判为非法池。
-                    if (selectedPool is not null)
-                        candidateGroups = [selectedPool];
-                }
-            }
-            else if (gatewayRegistry.StrictPoolContract)
+            if (gatewayRegistry.StrictPoolContract)
             {
                 var requestedPool = string.IsNullOrWhiteSpace(expectedModel)
                     ? gatewayRegistry.DefaultModelPoolId
@@ -1474,6 +1469,129 @@ public class ModelResolver : IModelResolver
             model.ModelName);
 
         return ModelResolutionResult.FromPinned(expectedModel ?? model.ModelName, model, platform, apiKey);
+    }
+
+    private async Task<ModelResolutionResult> ResolvePinnedGatewayPoolMemberAsync(
+        ModelGroup group,
+        ModelGroupItem member,
+        string? expectedModel,
+        CancellationToken ct)
+    {
+        var exchange = await FindExchangeForPoolItemAsync(
+            member,
+            allowMapFallback: false,
+            ct);
+        if (exchange is not null)
+        {
+            var exchangeApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(
+                exchange.TargetApiKeyEncrypted,
+                _config);
+            if (string.IsNullOrWhiteSpace(exchange.TargetUrl))
+            {
+                return ModelResolutionResult.NotFound(
+                    expectedModel,
+                    $"PinnedModel Exchange API URL 配置不完整: exchange={exchange.Id}, model={member.ModelId}");
+            }
+
+            if (string.IsNullOrWhiteSpace(exchangeApiKey))
+            {
+                return ModelResolutionResult.NotFound(
+                    expectedModel,
+                    $"PinnedModel Exchange API Key 配置不完整: exchange={exchange.Id}, model={member.ModelId}");
+            }
+
+            return ModelResolutionResult.FromExchangePool(
+                "GatewayRegistryPool",
+                expectedModel,
+                member,
+                group,
+                exchange,
+                exchangeApiKey);
+        }
+
+        if (string.Equals(
+                member.PlatformId,
+                ModelResolverConstants.ExchangePlatformId,
+                StringComparison.Ordinal))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel Exchange 配置不存在或未启用: model={member.ModelId}");
+        }
+
+        var platform = await FindGatewayOwnedOrMapPlatformAsync(
+            member.PlatformId,
+            enabledOnly: true,
+            ct,
+            allowMapFallback: false);
+        if (platform is null)
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel 平台不存在或未启用: {member.PlatformId}");
+        }
+
+        var model = await FindGatewayOwnedOrMapModelAsync(
+            member.PlatformId,
+            member.ModelId,
+            ct,
+            allowMapFallback: false);
+        if (model is null)
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel 模型不存在或未启用: platform={member.PlatformId}, model={member.ModelId}");
+        }
+
+        var encryptedKey = string.IsNullOrWhiteSpace(model.ApiKeyEncrypted)
+            ? platform.ApiKeyEncrypted
+            : model.ApiKeyEncrypted;
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(encryptedKey, _config);
+        var effectiveApiUrl = string.IsNullOrWhiteSpace(model.ApiUrl)
+            ? platform.ApiUrl
+            : model.ApiUrl;
+        if (string.IsNullOrWhiteSpace(effectiveApiUrl))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel API URL 配置不完整: platform={member.PlatformId}, model={member.ModelId}");
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel API Key 配置不完整: platform={member.PlatformId}, model={member.ModelId}");
+        }
+
+        var endpointPlatform = new LLMPlatform
+        {
+            Id = platform.Id,
+            Name = platform.Name,
+            PlatformType = platform.PlatformType,
+            ProviderId = platform.ProviderId,
+            ApiUrl = effectiveApiUrl,
+            ApiKeyEncrypted = platform.ApiKeyEncrypted,
+            Enabled = platform.Enabled,
+            MaxConcurrency = platform.MaxConcurrency,
+            Remark = platform.Remark,
+            CreatedAt = platform.CreatedAt,
+            UpdatedAt = platform.UpdatedAt
+        };
+        _logger.LogInformation(
+            "[ModelResolver] GW 模型池物理锁定完成: Pool={Pool}, Platform={Platform}, Model={Model}, Health={Health}",
+            group.Id,
+            member.PlatformId,
+            member.ModelId,
+            member.HealthStatus);
+        return ModelResolutionResult.FromPool(
+            "GatewayRegistryPool",
+            expectedModel,
+            member,
+            group,
+            endpointPlatform,
+            apiKey,
+            model);
     }
 
     private async Task<ModelResolutionResult?> TryResolveLegacyConfigFallbackAsync(string modelType, string? expectedModel, CancellationToken ct)
