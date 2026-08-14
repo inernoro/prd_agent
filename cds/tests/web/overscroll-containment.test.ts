@@ -40,7 +40,6 @@ const MUST_STAY_CLEAN = [
   'pages/ReleaseCenterPage.tsx',
   'pages/ReleaseConsolePage.tsx',
   'pages/release-center/EnvironmentSidebar.tsx',
-  'pages/release-center/CommitRail.tsx',
   'pages/release-center/EvidenceTab.tsx',
   'pages/release-center/ConfigTab.tsx',
   'pages/release-center/FailureDiagnosis.tsx',
@@ -66,13 +65,17 @@ describe('滚动链不许被页内面板切断', () => {
   });
 
   /**
-   * 发布中心必须能整页滚：顶部的标题块与版本流水轴要能被推上去。
-   * lg:overflow-hidden 一旦加回来，顶部又会被永久钉在首屏。
+   * 发布中心桌面端是固定一屏（用户 2026-08-14：「应该固定一屏，不应该这样滑动」）。
+   *
+   * 这里一度是反过来的守卫（「不许锁死整页滚动」），因为 08-13 用户说下半部分
+   * 拖不上去、像被焊死。两次并不矛盾：焊死的直接原因是本文件禁的那条
+   * containment 切断了滚动链，而「上半部分偏高偏大」的原因是顶部两块太占地方。
+   * 版本流水轴删掉、头部压成一行之后，固定一屏重新成立——所以 fill 回来了，
+   * containment 的禁令继续有效。
    */
-  it('发布中心桌面端不锁死整页滚动', () => {
+  it('发布中心桌面端固定一屏', () => {
     const src = fs.readFileSync(path.join(WEB, 'pages/ReleaseCenterPage.tsx'), 'utf8');
-    const shell = src.slice(src.indexOf('flex min-h-0 flex-col gap-4 overflow-y-auto'), src.indexOf('<header'));
-    expect(shell, '外层不许再 lg:overflow-hidden').not.toContain('lg:overflow-hidden');
+    expect(src).toContain('overflow-y-auto lg:h-full lg:overflow-hidden');
   });
 
   /**

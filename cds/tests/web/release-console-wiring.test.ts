@@ -247,22 +247,50 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
     expect(PAGE).toContain('cds-ident');
   });
 
-  it('没有 11px 以下的字号：等宽字在 10px 下笔画会糊', () => {
+  /**
+   * 字号下限 10px。原本卡在 11px——那是 2026-08-13「字体 low 爆了」之后自己定的，
+   * 当时页面上确实有一片 10/10.5 的碎字。参考稿 f8d4af4b 的角标与元信息行就是
+   * 10 / 10.5px 等宽，用户 08-14 明确要求照它做，所以下限跟着参考稿走。
+   * 10px 以下仍然不行：等宽字到那个尺寸笔画会糊。
+   */
+  it('没有 10px 以下的字号：等宽字再小笔画会糊', () => {
     const tooSmall = [...PAGE.matchAll(/text-\[(\d+(?:\.\d+)?)px\]/g)]
       .map((m) => Number(m[1]))
-      .filter((n) => n < 11);
+      .filter((n) => n < 10);
     expect(tooSmall, `这些字号太小: ${tooSmall.join(', ')}`).toEqual([]);
   });
 
-  it('分区标题走 CDS 房内惯例，不用 demo 的终端风宽字距', () => {
-    expect(PAGE).toContain('text-xs font-semibold uppercase tracking-normal text-muted-foreground');
-    expect(PAGE).not.toContain('tracking-[0.14em]');
+  /**
+   * 分区标题按参考稿走终端风：11px 等宽 + 0.14em 字距。
+   * 曾经改成过房内惯例（text-xs font-semibold uppercase tracking-normal），
+   * 用户 08-14 的原话是「严格对照参考稿，不要自己创意」——改回来。
+   * 而且必须是**唯一一份定义**（SectionLabel），四处各写各的就会漂移。
+   */
+  it('分区标题照参考稿的终端风，且只有一份定义', () => {
+    expect(PAGE).toContain("className=\"cds-ident text-[11px] uppercase tracking-[0.14em] text-muted-foreground\"");
+    // 除 SectionLabel 自身外，不许再有第二处手写同款标题样式
+    expect(PAGE.match(/tracking-\[0\.14em\]/g) || []).toHaveLength(1);
+    for (const label of ['PROJECTS', 'ENVIRONMENTS', 'Pipeline', 'Live output']) {
+      expect(PAGE, `${label} 应当走 SectionLabel`).toContain(`<SectionLabel>${label}</SectionLabel>`);
+    }
   });
 
   it('日志区不用 break-all —— 它会把正常英文单词从中间劈开', () => {
-    const log = PAGE.slice(PAGE.indexOf('ref={logRef}'), PAGE.indexOf('shownLogs.length === 0'));
+    const log = PAGE.slice(PAGE.indexOf('ref={logRef}'), PAGE.indexOf('LOG_TONE_CLASS[logLineTone') + 200);
     expect(log).toContain('break-words');
     expect(log).not.toContain('break-all');
+  });
+
+  /**
+   * 实时输出是终端，不是一块同色文本。参考稿里命令行提亮、成功行绿、错误行红，
+   * 左边固定一列时间——扫一眼就知道跑到哪、哪步炸了。着色判据只看真实内容
+   * （后端给的 level + `$ ` 前缀），不猜。
+   */
+  it('日志按语义着色，时间单独成列', () => {
+    expect(PAGE).toContain('LOG_TONE_CLASS[logLineTone(log.level, log.message)]');
+    expect(PAGE).toContain('text-muted-foreground/60">{formatClock(log.at)}');
+    // 别再把 `[时间] LEVEL 正文` 拼成一整行塞进 pre
+    expect(PAGE).not.toContain('log.level.toUpperCase()');
   });
 });
 
@@ -271,7 +299,7 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
     // 列宽照参考稿走（见下一条），这里只管「窄屏自然流 + 桌面才交给各栏内滚」这个契约，
     // 别把两件事写死在同一个字符串里——改一下列宽就要连带改这条，久了就没人敢动。
     expect(PAGE).toMatch(
-      /flex h-full min-h-0 flex-col gap-4 overflow-y-auto xl:grid xl:grid-cols-\[[^\]]+\]/,
+      /flex h-full min-h-0 flex-col overflow-y-auto max-xl:gap-4 max-xl:p-4 xl:grid xl:grid-cols-\[[^\]]+\]/,
     );
     expect(PAGE).toContain('xl:overflow-hidden');
   });
@@ -302,13 +330,13 @@ describe('发布控制台 · 窄屏与主题纪律', () => {
   });
 
   /**
-   * 流水线卡与实时输出卡都是 overflow-hidden，头部那一排（标签 + 计数 + 按钮）
-   * 超宽时会被直接裁掉——实测 scrollWidth 291 / clientWidth 244，「交给智能体」
-   * 半个按钮消失在卡片外。宽度不够必须换行，不许裁。
+   * 实时输出的卡头带按钮，而卡片是 overflow-hidden——超宽会被直接裁掉
+   * （实测 scrollWidth 291 / clientWidth 244，「交给智能体」半个按钮消失在卡外）。
+   * 宽度不够必须换行，不许裁。流水线卡头照参考稿只有一个标签，无此风险。
    */
-  it('两张卡的头部可换行，不会把按钮裁在卡片外', () => {
-    const heads = PAGE.match(/flex shrink-0 flex-wrap items-center justify-between[^"]*/g) || [];
-    expect(heads.length, 'Pipeline 与 Live output 两个卡头都要能换行').toBeGreaterThanOrEqual(2);
+  it('实时输出卡头可换行，不会把按钮裁在卡片外', () => {
+    const head = PAGE.slice(PAGE.indexOf('<SectionLabel>Live output</SectionLabel>') - 400, PAGE.indexOf('<SectionLabel>Live output</SectionLabel>'));
+    expect(head).toContain('flex-wrap');
   });
 
   /**

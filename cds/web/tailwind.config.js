@@ -5,6 +5,10 @@ export default {
   theme: {
     container: { center: true, padding: '1rem' },
     extend: {
+      // Tailwind 默认档只有 xl(1280) 和 2xl(1536)，中间空了 256px。
+      // 三栏这类「宽了才成立」的布局卡在这段里：1280 勉强、1536 才舒服，
+      // 中间的 1440（最常见的笔记本外接屏）无处安放。补一档。
+      screens: { wide: '1440px' },
       colors: {
         // CDS design tokens — single source of truth.
         // Resolves to CSS custom properties in src/index.css. Both dark and

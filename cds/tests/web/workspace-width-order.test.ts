@@ -52,7 +52,9 @@ describe('Workspace 宽度秩序', () => {
     const overrides = [...CSS.matchAll(/\.cds-workspace[.\w-]*\s*\{[^}]*max-width[^}]*\}/g)]
       .map((m) => m[0].split('{')[0].trim())
       // 三档本体 + --fill（它只管高度）允许出现
-      .filter((sel) => !['.cds-workspace', '.cds-workspace-wide', '.cds-workspace--fluid', '.cds-workspace-settings'].includes(sel));
+      // 三档本体 + --fill（只管高度）+ --bleed（只管抵消 .cds-main 内边距，
+      // max-width:none 是「不设上限」而不是「另设一档」）允许出现
+      .filter((sel) => !['.cds-workspace', '.cds-workspace-wide', '.cds-workspace--fluid', '.cds-workspace-settings', '.cds-workspace--bleed'].includes(sel));
     expect(overrides, `这些选择器在覆写 workspace 宽度: ${overrides.join(', ')}`).toEqual([]);
   });
 
@@ -73,9 +75,19 @@ describe('Workspace 宽度秩序', () => {
     expect(read('pages/ProjectListPage.tsx')).not.toContain('xl:grid-cols-3');
   });
 
-  /** 满铺不等于顶到边：窄屏 16 / 常规 32 / 超宽 48，两侧始终留呼吸位。 */
+  /**
+   * 满铺不等于顶到边：窄屏 16 / 常规 32 / 超宽 48，两侧始终留呼吸位。
+   *
+   * 这组值写成变量而不是 Tailwind 类，是为了让 .cds-workspace--bleed 能精确抵消
+   * （满铺到边的三栏台面需要）。抄一份数值出去就会漂移，所以这里连带守「只有
+   * 一组定义」：三档 padding 只许在 --cds-main-* 上出现。
+   */
   it('横向留白按视口分档，超宽屏更宽松', () => {
-    expect(CSS).toContain('px-8 pb-12 pt-6 2xl:px-12');
-    expect(CSS).toMatch(/@media \(max-width: 767px\)[\s\S]{0,120}px-4/);
+    expect(CSS).toContain('--cds-main-px: 2rem');
+    expect(CSS).toMatch(/@media \(min-width: 1536px\)[\s\S]{0,120}--cds-main-px: 3rem/);
+    expect(CSS).toMatch(/@media \(max-width: 767px\)[\s\S]{0,160}--cds-main-px: 1rem/);
+    expect(CSS).toContain('padding: var(--cds-main-pt) var(--cds-main-px) var(--cds-main-pb)');
+    // bleed 必须用同一组变量抵消，不许自己抄一份数值
+    expect(CSS).toMatch(/\.cds-workspace--bleed \{[\s\S]{0,200}calc\(var\(--cds-main-px\) \* -1\)/);
   });
 });

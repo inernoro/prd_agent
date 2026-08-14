@@ -36,11 +36,9 @@ import {
   resolveSelectedTargetId,
   type EnvironmentSection,
 } from '@/lib/releaseEnvironments';
-import { railIsVisible, type RailMarker } from '@/lib/releaseRail';
 import type { PreviewMode, PreviewUrlConfig } from '@/lib/previewUrl';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { AutoReleaseTab } from '@/pages/release-center/AutoReleaseTab';
-import { CommitRail } from '@/pages/release-center/CommitRail';
 import { ConfigTab } from '@/pages/release-center/ConfigTab';
 import {
   ArchiveTargetDialog,
@@ -260,17 +258,6 @@ export function ReleaseCenterPage(): JSX.Element {
     () => rows.filter((row) => row.target.id !== effectiveTargetId && row.target.projectId === selectedRow?.target.projectId),
     [rows, effectiveTargetId, selectedRow],
   );
-
-  const railMarkers: RailMarker[] = useMemo(() => sections.flatMap((section) => (
-    section.entries
-      .filter((entry) => entry.row.currentCommit)
-      .map((entry) => ({
-        targetId: entry.targetId,
-        label: section.degraded ? entry.row.target.name : section.label,
-        environment: section.environment,
-        commitSha: entry.row.currentCommit,
-      }))
-  )), [sections]);
 
   // 存在非终态 run 时静默轮询到终态：关掉日志弹窗后页面也要自己跟进，
   // 否则环境卡会永远停在「发布中」，失败也无提示。
@@ -520,12 +507,18 @@ export function ReleaseCenterPage(): JSX.Element {
         {/* 移动端整页自然流竖滚；lg 起切回填满视口、各窗格自己滚。 */}
         <div
           /*
-           * 桌面端也允许整页滚动。此前是 lg:overflow-hidden + 顶部两块 shrink-0，
-           * 于是「站点发布」头部与版本流水轴被永久钉在首屏，下面的详情再也推不上去
-           * ——用户原话「像被焊死了一样，想低头看看裤子什么颜色都看不到」。
-           * 详情区仍用 lg:min-h 拿到一个体面的首屏高度，超出部分整页滚。
+           * 桌面端固定一屏：头部 shrink-0，详情区吃掉剩余高度并在自己那一格里滚。
+           *
+           * 这里曾经改成整页可滚，因为顶部的「站点发布」头部 + main 分支版本流水轴
+           * 把首屏吃掉近一半，下面的详情再也推不上去（用户原话「像被焊死了一样」）。
+           * 真正的病根是顶部太占地方，不是不该固定一屏——版本流水轴删掉、头部压成
+           * 一行之后，固定一屏重新成立，也不用再上下拖。
+           *
+           * 注意：页内面板一律不许 overscroll-behavior: contain（见
+           * tests/web/overscroll-containment.test.ts）。当初「滚不动」的直接原因是
+           * 它切断了滚动链，与这里 fill 还是 scroll 是两件事。
            */
-          className="flex min-h-0 flex-col gap-4 overflow-y-auto"
+          className="flex min-h-0 flex-col gap-4 overflow-y-auto lg:h-full lg:overflow-hidden"
         >
           {/* 头部压成一行：标题与说明同排。原来说明独占一行 + p-4，
               两块顶部加起来吃掉近 40% 首屏，正是「头大的矮子」那个体感。 */}
@@ -595,19 +588,9 @@ export function ReleaseCenterPage(): JSX.Element {
 
           {state.status === 'ok' && rows.length > 0 ? (
             <>
-              {railIsVisible(rail) ? (
-                <CommitRail
-                  rail={rail}
-                  markers={railMarkers}
-                  selectedPosition={selectedRow?.commitPosition}
-                  nowMs={nowMs}
-                  onSelectMarker={setSelectedTargetId}
-                />
-              ) : null}
-
               {/* 手机：单列自然堆叠，高度由内容决定（flex-1 + basis 0 在无界高度里会塌成 0）。
                   lg 起才切回主从网格并填满剩余高度。 */}
-              <div className="flex flex-col gap-4 lg:grid lg:min-h-[560px] lg:flex-1 lg:grid-cols-[288px_minmax(0,1fr)] lg:items-stretch">
+              <div className="flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[288px_minmax(0,1fr)] lg:items-stretch">
                 <EnvironmentSidebar
                   sections={sections}
                   selectedTargetId={effectiveTargetId}

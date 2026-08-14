@@ -3026,8 +3026,14 @@
 
   .cds-main {
     /* 横向留白按视口分档：窄屏 16 / 常规 32 / 超宽 48。满铺不等于顶到边，
-       2000px 以上还贴着 32px 边会显得局促。 */
-    @apply min-w-0 px-8 pb-12 pt-6 2xl:px-12;
+       2000px 以上还贴着 32px 边会显得局促。
+       写成变量是为了让 .cds-workspace--bleed 能精确抵消，而不是再抄一份数值
+       ——抄一份就是下一次「改了一处忘了另一处」。 */
+    --cds-main-px: 2rem;
+    --cds-main-pt: 1.5rem;
+    --cds-main-pb: 3rem;
+    @apply min-w-0;
+    padding: var(--cds-main-pt) var(--cds-main-px) var(--cds-main-pb);
     /*
      * flex-grow + min-height:0 让 main 填满 topbar 之下的列高。2026-06-23 起壳改为
      * h-screen 固定高,本列(grid item)被 stretch 成视口高,main = flex:1 拿到确定高度,
@@ -3041,10 +3047,27 @@
     scrollbar-gutter: stable;
   }
 
+  @media (min-width: 1536px) {
+    .cds-main {
+      --cds-main-px: 3rem;
+    }
+  }
+
   @media (max-width: 767px) {
     .cds-main {
-      @apply px-4 pt-4;
+      --cds-main-px: 1rem;
+      --cds-main-pt: 1rem;
     }
+  }
+
+  /*
+   * 满铺到边（参考稿的三栏台面：左右两栏是贴边的整块面板，用一条边框分隔，
+   * 不是浮在底色上的圆角卡）。抵消 .cds-main 的内边距，值从同一组变量来。
+   */
+  .cds-workspace--bleed {
+    margin: calc(var(--cds-main-pt) * -1) calc(var(--cds-main-px) * -1) calc(var(--cds-main-pb) * -1);
+    width: auto;
+    max-width: none;
   }
 
   /*

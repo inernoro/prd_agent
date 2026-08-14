@@ -117,6 +117,42 @@ function Sheet({ title, subtitle, onClose, foot, children }: {
   );
 }
 
+/**
+ * 分区标签。参考稿的 PIPELINE / LIVE OUTPUT / PROJECTS / ENVIRONMENTS 是同一种：
+ * 11px 等宽 + 0.14em 字距 + 弱化色。抽出来是为了四处只有一份定义——
+ * 之前四处各写各的，改一处漏三处。
+ */
+function SectionLabel({ children }: { children: ReactNode }): JSX.Element {
+  return <span className="cds-ident text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{children}</span>;
+}
+
+/**
+ * 一行日志该用什么颜色。
+ *
+ * 参考稿的实时输出不是一片灰——命令行、成功行、错误行各有各的颜色，扫一眼就知道
+ * 「跑到哪了、哪一步炸了」。判据只看真实内容，不猜：
+ *   - level=error/warn 由后端给，直接用
+ *   - `$ ` 开头是正在执行的命令（发布脚本原样回显），提亮成正文色
+ *   - 勾号（U+2713）/ ok / 发布完成 / 已生效 这类收尾行给成功色
+ * 都不命中就是普通输出，弱化色。
+ */
+export function logLineTone(level: string, message: string): 'error' | 'warn' | 'command' | 'ok' | 'plain' {
+  if (level === 'error') return 'error';
+  if (level === 'warn') return 'warn';
+  const text = message.trimStart();
+  if (text.startsWith('$ ') || text.startsWith('# ')) return 'command';
+  if (/^[+]?(\u2713|OK\b|ok\b)/.test(text) || /(发布完成|健康检查通过|已生效)/.test(text)) return 'ok';
+  return 'plain';
+}
+
+const LOG_TONE_CLASS: Record<ReturnType<typeof logLineTone>, string> = {
+  error: 'text-red-600 dark:text-red-400',
+  warn: 'text-amber-600 dark:text-amber-400',
+  command: 'text-foreground',
+  ok: 'text-emerald-600 dark:text-emerald-400',
+  plain: 'text-muted-foreground',
+};
+
 export function ReleaseConsolePage(): JSX.Element {
   const [params, setParams] = useSearchParams();
   const [projects, setProjects] = useState<ProjectLite[]>([]);
@@ -138,7 +174,7 @@ export function ReleaseConsolePage(): JSX.Element {
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [following, setFollowing] = useState(true);
-  const logRef = useRef<HTMLPreElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
 
   const say = useCallback((message: string) => {
     setToast(message);
@@ -424,6 +460,19 @@ export function ReleaseConsolePage(): JSX.Element {
     });
   };
 
+  const copyLogs = async (): Promise<void> => {
+    if (shownLogs.length === 0) { say('还没有输出'); return; }
+    // 复制的是「时间 + 原文」，与屏幕上看到的一致——不带 level 前缀，
+    // 那是渲染时的着色依据，不是日志内容。
+    const text = shownLogs.map((log) => `${formatClock(log.at)} ${log.message}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      say(`已复制 ${shownLogs.length} 行`);
+    } catch {
+      say('浏览器拦截了复制，请手动选中日志');
+    }
+  };
+
   const copyAgentTask = async (): Promise<void> => {
     const text = agentTask();
     if (!text) { say('当前没有可整理的现场'); return; }
@@ -475,24 +524,24 @@ export function ReleaseConsolePage(): JSX.Element {
         />
       )}
     >
-      {/* --fill：三栏是固定外壳 + 各栏内滚（参考稿即如此）。缺它时 h-full 解析不到
-          高度，实时输出会把整页撑到近万像素——看着像填满，其实是页面在长。 */}
-      <Workspace fluid className="cds-workspace--fill">
-        {/* 移动端整页自然流；lg 起切回三栏填满，各栏自己滚。
-            列宽照参考稿是 288/380，但那是在宽画布上量的：笔记本宽度下两侧一共吃掉
-            700px，中栏只剩一条缝。所以 lg..2xl 先收成 248/320，2xl 起才回到参考值。
-            中栏**不给 min-width**——曾经写过 minmax(560px,1fr)，实测 1024 下右栏被切掉
-            382px（grid 到 982 就没了，右栏画到 1364），1280 下仍切 126px。 */}
+      {/* --fill 给高度，--bleed 抵消 .cds-main 的内边距：参考稿的左右两栏是**贴边的
+          整块面板**，靠一条 1px 边框分隔，不是浮在底色上、四周留缝的圆角卡。
+          这一条是这一页与参考稿观感差最远的地方，先把它对上。 */}
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        {/* 桌面三栏无间距（分隔线由各栏自己的 border 画），窄屏回落自然流。
+            列宽照参考稿 288/380，但参考稿是在宽画布上量的（它自己写死 min-width:1228
+            并让页面横滚，本仓库不允许——见 cds/.claude/rules/mobile-layout-fallback.md）。
+            所以：xl 收成 240/300，wide(1440) 回到 264/340，2xl 才是参考值 288/380。 */}
         <div
-          className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto xl:grid xl:grid-cols-[240px_minmax(0,1fr)_300px] xl:gap-4 xl:overflow-hidden 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
+          className="flex h-full min-h-0 flex-col overflow-y-auto max-xl:gap-4 max-xl:p-4 xl:grid xl:grid-cols-[240px_minmax(0,1fr)_300px] xl:overflow-hidden wide:grid-cols-[264px_minmax(0,1fr)_340px] 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
               不是项目列表。桌面三栏不受影响（order 只在 max-lg 生效）。 */}
-          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-xl:order-2 max-xl:shrink-0 xl:overflow-hidden">
-            <div className="shrink-0 border-b border-[hsl(var(--hairline))] p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Projects</span>
+          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-2 max-xl:shrink-0 max-xl:rounded-[14px] max-xl:border xl:border-r xl:overflow-hidden">
+            <div className="shrink-0 px-4 pb-2.5 pt-4">
+              <div className="mb-2.5 flex items-center justify-between">
+                <SectionLabel>PROJECTS</SectionLabel>
                 <span className="cds-ident text-[11px] text-muted-foreground">{projects.length} 个</span>
               </div>
               <div className="relative">
@@ -506,9 +555,9 @@ export function ReleaseConsolePage(): JSX.Element {
               </div>
             </div>
 
-            {/* 项目列表按内容占高（多了才滚），环境块紧跟其后 —— 钉底会在项目少时
-                在两块之间挖出一个大洞，看着像没做完。空白留在最下面才读作「还能长」。 */}
-            <div className="min-h-0 shrink overflow-y-auto p-2 max-xl:max-h-[38vh] xl:max-h-[46%]">
+            {/* 参考稿：项目列表 flex:1 吃掉中间所有高度，环境块 border-top 钉在底部。
+                之前让列表按内容收高、环境紧随其后，空白就全落在最下面——那才是洞。 */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-3 max-xl:max-h-[38vh]">
               {filteredProjects.length === 0 ? (
                 <p className="p-3 text-xs text-muted-foreground">没有匹配的项目。</p>
               ) : filteredProjects.map((item) => (
@@ -517,10 +566,10 @@ export function ReleaseConsolePage(): JSX.Element {
                   type="button"
                   aria-pressed={item.id === projectId}
                   onClick={() => { setProjectId(item.id); setRun(null); setLogs([]); setPreflight(null); }}
-                  className={`mb-1 flex w-full flex-col gap-1 rounded-md px-3 py-2.5 text-left transition-colors ${
+                  className={`mb-1 flex w-full flex-col gap-1 rounded-[9px] border px-3 py-2.5 text-left transition-colors ${
                     item.id === projectId
-                      ? 'border border-primary/40 bg-primary/[0.08]'
-                      : 'border border-transparent hover:bg-[hsl(var(--surface-sunken))]'
+                      ? 'border-primary/40 bg-primary/[0.08]'
+                      : 'border-transparent hover:border-[hsl(var(--hairline-strong))]'
                   }`}
                 >
                   <span className={`truncate text-[13px] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
@@ -533,15 +582,15 @@ export function ReleaseConsolePage(): JSX.Element {
               ))}
             </div>
 
-            <div className="min-h-0 shrink-0 border-t border-[hsl(var(--hairline))] p-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Environments</span>
+            <div className="min-h-0 shrink-0 border-t border-[hsl(var(--hairline))] px-4 py-3.5">
+              <div className="mb-2.5 flex items-center justify-between gap-2">
+                <SectionLabel>ENVIRONMENTS</SectionLabel>
                 <span className="cds-ident text-[11px] text-muted-foreground">{rows.length} 个</span>
               </div>
               {rows.length === 0 ? (
                 <p className="text-xs text-muted-foreground">这个项目还没有发布目标，去发布中心添加环境。</p>
               ) : (
-                <div className="flex max-h-[34vh] flex-col gap-2 overflow-y-auto xl:max-h-[42vh]">
+                <div className="flex max-h-[34vh] flex-col gap-2 overflow-y-auto xl:max-h-[38vh]">
                   {envSections.map((section) => (
                     <div key={section.environment} className="flex flex-col gap-1.5">
                       {/* 后端没下发分组时 buildEnvironmentSections 退化成单组，此时不画组标题 */}
@@ -561,7 +610,7 @@ export function ReleaseConsolePage(): JSX.Element {
                               setTargetId(item.target.id);
                               setRun(null); setLogs([]); setPreflight(null); setConfirmTargetId(null);
                             }}
-                            className={`flex items-center gap-2.5 rounded-md border px-3 py-2 text-left ${
+                            className={`flex items-center gap-2.5 rounded-[9px] border px-2.5 py-2 text-left ${
                               selected
                                 ? 'border-primary/40 bg-primary/[0.08]'
                                 : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 hover:border-[hsl(var(--hairline-strong))]'
@@ -605,45 +654,13 @@ export function ReleaseConsolePage(): JSX.Element {
           </aside>
 
           {/* ══ 中栏：状态是主角 ══ */}
-          <main className="flex min-h-0 flex-col gap-3 max-xl:order-1 max-xl:shrink-0 xl:overflow-hidden">
+          <main className="flex min-h-0 flex-col gap-3.5 max-xl:order-1 max-xl:shrink-0 xl:overflow-hidden xl:px-[22px] xl:py-[18px]">
             {error ? (
               <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-3 py-2 text-sm text-red-600 dark:text-red-400">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
                 <span className="min-w-0 break-words">{error}</span>
               </div>
             ) : null}
-
-            {/* 版本选在状态之上：先定「发哪一版」，再看「发得怎么样」。 */}
-            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
-              <span className="shrink-0 text-xs font-semibold uppercase tracking-normal text-muted-foreground">要发布的版本</span>
-              <select
-                value={branchId}
-                onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
-                className="cds-ident h-8 max-w-[min(560px,50vw)] rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[13px] outline-none"
-              >
-                {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
-                {branches.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.branch}
-                    {item.commitSha ? ` · ${item.commitSha.slice(0, 7)}` : ''}
-                    {commitMeta[item.commitSha || '']?.subject ? ` · ${commitMeta[item.commitSha || ''].subject}` : ''}
-                  </option>
-                ))}
-              </select>
-              {/* 对照与来源都放第二行：跟 select 抢同一行的剩余宽度，窄屏必被截成「替换线上…」 */}
-              <span className="min-w-0 basis-full text-[11.5px] text-muted-foreground">
-                {row && commitSha
-                  ? (commitSha.slice(0, 7) === (row.currentCommit || '').slice(0, 7)
-                    ? '与线上同版'
-                    : `替换线上的 ${row.currentCommit ? row.currentCommit.slice(0, 7) : '（未发布）'}`)
-                  : ''}
-                {isProtected ? ' · 受保护环境需二次确认' : ''}
-                <span className="ml-2 cds-ident text-xs">
-                  · 来源 {previewUrl || '取不到预览地址，试跑会拦下这一项'}
-                  {sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}
-                </span>
-              </span>
-            </div>
 
             <section className={`cds-surface-raised shrink-0 rounded-[14px] border px-5 py-[18px] ${toneRing}`}>
               <div className="flex flex-wrap items-center gap-[18px]">
@@ -659,15 +676,20 @@ export function ReleaseConsolePage(): JSX.Element {
                     <h2 className={`text-xl font-bold ${failed ? 'text-red-600 dark:text-red-400' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
                     </h2>
-                    <span className="min-w-0 truncate text-[13px] text-muted-foreground">
+                    {/* 参考稿的副标题就一句「项目 → 环境」。这里补一段「替换线上的 X」——
+                        那是发布前唯一必须确认的事实，原来它单占一行挂在 banner 外面。 */}
+                    <span className="min-w-0 truncate cds-ident text-xs text-muted-foreground">
                       {row ? (
                         <>
-                          <span className="cds-ident font-medium text-foreground/80">{row.target.name}</span>
-                          {shown ? <span className="cds-ident font-medium"> · {shown.commitSha.slice(0, 7)}</span> : null}
-                          {!shown && row.currentCommit ? <span className="cds-ident font-medium"> · 当前 {row.currentCommit.slice(0, 7)}</span> : null}
-                          {typeof row.commitPosition?.behindCount === 'number' && row.commitPosition.behindCount > 0
-                            ? `，落后主干 ${row.commitPosition.behindCount} 个提交`
-                            : ''}
+                          {projects.find((item) => item.id === projectId)?.name || projectId}
+                          {' → '}
+                          <span className="text-foreground/80">{row.target.name}</span>
+                          {shown ? ` · ${shown.commitSha.slice(0, 7)}` : null}
+                          {!shown && commitSha
+                            ? (commitSha.slice(0, 7) === (row.currentCommit || '').slice(0, 7)
+                              ? ' · 与线上同版'
+                              : ` · 替换线上的 ${row.currentCommit ? row.currentCommit.slice(0, 7) : '（未发布）'}`)
+                            : null}
                         </>
                       ) : '选择一个环境'}
                     </span>
@@ -678,18 +700,38 @@ export function ReleaseConsolePage(): JSX.Element {
                       style={{ width: `${progress.steps.length ? Math.round((progress.steps.filter((s) => s.state === 'done').length / progress.steps.length) * 100) : 0}%` }}
                     />
                   </div>
-                  <div className="mt-2 flex flex-wrap justify-between gap-x-4 gap-y-1 cds-ident text-xs text-muted-foreground">
-                    <span>
+                  {/* 参考稿这一行只有两个值：左边步数、右边耗时。别再往里塞日期——
+                      塞了就换行，换行就把 banner 顶高，就是「头大」。 */}
+                  <div className="mt-2 flex items-center justify-between gap-4 cds-ident text-[11px] text-muted-foreground">
+                    <span className="truncate">
                       {progress.steps.filter((s) => s.state === 'done').length}/{progress.steps.length || 0} 步骤
-                      {shown ? ` · ${formatDateTime(shown.startedAt)}` : row?.currentCommit ? ` · 线上 ${row.currentCommit.slice(0, 7)}` : ''}
                     </span>
-                    <span>
+                    <span className="shrink-0">
                       {etaText || (shown ? formatDuration(shown.startedAt, shown.finishedAt) || '进行中' : '未开始')}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex w-full flex-wrap gap-2 [&_button]:h-10 sm:w-auto sm:shrink-0">
+                <div className="flex w-full flex-wrap items-center gap-2 [&_button]:h-10 sm:w-auto sm:shrink-0">
+                  {/* 版本选择贴着发布按钮：先定发哪一版，右手边就是发。
+                      原来它连同「来源 / 二次确认」独占 banner 上方两行，那两行正是
+                      用户框出来的「过于丑陋」的一半。来源地址移到试跑结果里去说。 */}
+                  <select
+                    value={branchId}
+                    onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
+                    title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，试跑会拦下这一项'}
+                    aria-label="要发布的版本"
+                    className="cds-ident h-10 max-w-[220px] rounded-[10px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 text-xs outline-none focus:border-[hsl(var(--hairline-strong))]"
+                  >
+                    {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
+                    {branches.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.branch}
+                        {item.commitSha ? ` · ${item.commitSha.slice(0, 7)}` : ''}
+                        {commitMeta[item.commitSha || '']?.subject ? ` · ${commitMeta[item.commitSha || ''].subject}` : ''}
+                      </option>
+                    ))}
+                  </select>
                   {/* 受保护环境走两段式：第一下只是把按钮换成「确认发布到 X」，第二下才真发。
                       不用 window.confirm —— 那东西在窄屏和无障碍上都不好使，也没法说清发的是哪一版。 */}
                   <Button
@@ -817,20 +859,8 @@ export function ReleaseConsolePage(): JSX.Element {
               {/* 与右侧日志等高（参考稿 grid 两列 stretch）。之前用 self-start 让它按内容收高，
                   结果卡片底边下面空出一大块底色 —— 悬空的短卡读起来是「洞」，不是「省地方」。 */}
               <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border">
-                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
-                  <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Pipeline</span>
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span className="cds-ident text-[11px] text-muted-foreground">
-                      {progress.steps.filter((s) => s.state === 'done').length}/{progress.steps.length} 步骤
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setSheet('pipeline')}
-                      className="cds-ident text-[11px] text-muted-foreground hover:text-primary"
-                    >
-                      看流水线
-                    </button>
-                  </span>
+                <div className="shrink-0 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
+                  <SectionLabel>Pipeline</SectionLabel>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto p-1.5 max-xl:max-h-64">
                   {progress.steps.map((step) => (
@@ -870,36 +900,47 @@ export function ReleaseConsolePage(): JSX.Element {
               </section>
 
               <section className="cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border bg-[hsl(var(--surface-sunken))]">
-                {/* flex-wrap 不是可有可无：卡片是 overflow-hidden，这一排一旦超出宽度
-                    就被直接切掉（实测 scrollWidth 291 / clientWidth 244，「交给智能体」
-                    半个按钮消失在卡片外）。宽度不够时换行，不许裁。 */}
-                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
-                  <span className="text-xs font-semibold uppercase tracking-normal text-muted-foreground">Live output</span>
-                  <span className="flex flex-wrap items-center gap-2">
-                    <span className="cds-ident text-[11px] text-muted-foreground">{shownLogs.length} 行</span>
-                    <Button variant="outline" size="sm" onClick={() => setFollowing((current) => !current)}>
+                {/* 参考稿这一排是 24px 高的小按钮，不是常规 sm 按钮。
+                    flex-wrap 保留：卡片 overflow-hidden，超宽会被直接裁掉
+                    （实测过 scrollWidth 291 / clientWidth 244，半个按钮消失在卡外）。 */}
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-3.5 py-2.5">
+                  <SectionLabel>Live output</SectionLabel>
+                  <span className="flex flex-wrap items-center gap-2 [&>button]:h-6 [&>button]:rounded-md [&>button]:border [&>button]:border-[hsl(var(--hairline))] [&>button]:px-2.5 [&>button]:text-[11px]">
+                    <button type="button" onClick={() => void copyLogs()} disabled={shownLogs.length === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-40">
+                      复制日志
+                    </button>
+                    <button type="button" onClick={() => setFollowing((current) => !current)} className={following ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}>
                       {following ? '跟随最新' : '已暂停跟随'}
-                    </Button>
+                    </button>
                     {/* 现场就在这一屏，取证入口也该在这一屏，不用绕去右栏 */}
-                    <Button variant="outline" size="sm" onClick={() => setSheet('agent')} disabled={!shown}>
-                      <Clipboard />
+                    <button type="button" onClick={() => setSheet('agent')} disabled={!shown} className="border-primary/40 bg-primary/[0.08] text-primary disabled:opacity-40">
                       交给智能体
-                    </Button>
+                    </button>
                   </span>
                 </div>
-                <pre
+                {/* 参考稿的日志是**终端**：左侧固定时间列 + 右侧按语义着色的正文，
+                    命令行提亮、成功行绿、错误行红。原来这里是一整块同色 pre，
+                    每行前缀还硬拼 `[时间] LEVEL`，扫读全靠自己找。 */}
+                <div
                   ref={logRef}
                   onScroll={(event) => {
                     const node = event.currentTarget;
                     const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
                     if (!atBottom && following) setFollowing(false);
                   }}
-                  className="m-0 min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 cds-ident text-[12.5px] leading-relaxed max-xl:max-h-72"
+                  className="min-h-0 flex-1 overflow-auto px-3.5 py-2.5 cds-ident text-[11.5px] leading-[1.75] max-xl:max-h-72"
                 >
-                  {shownLogs.length === 0
-                    ? '还没有输出。点「开始发布」后，这里会逐行滚动。'
-                    : shownLogs.map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.message}`).join('\n')}
-                </pre>
+                  {shownLogs.length === 0 ? (
+                    <p className="text-muted-foreground">还没有输出。点「开始发布」后，这里会逐行滚动。</p>
+                  ) : shownLogs.map((log) => (
+                    <div key={log.seq} className="flex gap-2.5">
+                      <span className="shrink-0 text-muted-foreground/60">{formatClock(log.at)}</span>
+                      <span className={`min-w-0 whitespace-pre-wrap break-words ${LOG_TONE_CLASS[logLineTone(log.level, log.message)]}`}>
+                        {log.message}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </section>
             </div>
           </main>
@@ -907,8 +948,11 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 右栏：只放「看记录」。配置与 Agent 走全屏浮层 ══ */}
           {/* 348px 的窄栏装不下发布流水线和一整段任务文本 —— 塞进来就是逼人在
               一条窄缝里横向读命令。这两块改成浮层，右栏专心做记录。 */}
-          <aside className="cds-surface-raised cds-hairline flex min-h-0 flex-col rounded-[14px] max-xl:order-3 max-xl:shrink-0 xl:overflow-hidden">
-            <div className="flex shrink-0 items-center gap-1 border-b border-[hsl(var(--hairline))] px-2 pt-2">
+          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-3 max-xl:shrink-0 max-xl:rounded-[14px] max-xl:border xl:border-l xl:overflow-hidden">
+            {/* 参考稿是一条四格 tab（历史 / 失败 / 高级 / Agent），不是「左两个 tab
+                右两个链接」。后两个在这里打开全屏浮层——348px 的窄栏装不下流水线
+                与整段任务文本，这一条是对参考稿结构问题的有意修正，其余照抄。 */}
+            <div className="flex shrink-0 gap-0.5 border-b border-[hsl(var(--hairline))] px-2.5 pt-2.5">
               {([['history', '历史发布'], ['failed', '失败']] as Array<[RailPane, string]>).map(([key, label]) => (
                 <button
                   key={key}
@@ -916,34 +960,29 @@ export function ReleaseConsolePage(): JSX.Element {
                   role="tab"
                   aria-selected={pane === key}
                   onClick={() => setPane(key)}
-                  className={`-mb-px flex items-center gap-1.5 border-b-2 px-2.5 pb-2.5 pt-1.5 text-xs ${
+                  className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 pb-2.5 pt-2 text-xs ${
                     pane === key ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   {label}
                   {key === 'failed' && failedRuns.length > 0 ? (
-                    <span className="rounded bg-red-500/15 px-1 cds-ident text-[11px] text-red-600 dark:text-red-400">{failedRuns.length}</span>
+                    <span className="rounded bg-red-500/15 px-1.5 cds-ident text-[10px] text-red-600 dark:text-red-400">{failedRuns.length}</span>
                   ) : null}
                 </button>
               ))}
-              <span className="flex-1" />
-              <button
-                type="button"
-                onClick={() => setSheet('pipeline')}
-                className="mb-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:text-primary"
-              >
-                流水线
-              </button>
-              <button
-                type="button"
-                onClick={() => setSheet('agent')}
-                className="mb-1.5 rounded px-2 py-1 text-[11px] text-muted-foreground hover:text-primary"
-              >
-                Agent
-              </button>
+              {([['pipeline', '流水线'], ['agent', 'Agent']] as Array<['pipeline' | 'agent', string]>).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setSheet(key)}
+                  className="-mb-px border-b-2 border-transparent px-3 pb-2.5 pt-2 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-3 max-xl:max-h-[420px]">
+            <div className="min-h-0 flex-1 overflow-y-auto p-3.5 max-xl:max-h-[420px]">
               {(() => {
                 const list = pane === 'failed' ? failedRuns : runsOfProject;
                 if (list.length === 0) {
@@ -959,30 +998,36 @@ export function ReleaseConsolePage(): JSX.Element {
                       return (
                         <div
                           key={item.releaseId}
-                          className={`flex min-w-0 flex-col gap-2 rounded-lg border p-3 ${
+                          className={`flex min-w-0 flex-col gap-[7px] rounded-[10px] border px-3 py-[11px] ${
                             itemFailed ? 'border-red-500/30 bg-red-500/[0.05]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50'
                           }`}
                         >
-                          <div className="flex min-w-0 items-baseline justify-between gap-2">
-                            <span className="flex min-w-0 items-baseline gap-2">
-                              <span className="shrink-0 cds-ident text-[12.5px] font-medium">{item.commitSha.slice(0, 7)}</span>
-                              <span className="truncate text-[11.5px] text-muted-foreground">
+                          {/* 第一行：状态圆点 + 版本 + 环境，右端是结论。参考稿的圆点在最左，
+                              一列扫下来就能数出「几次成功几次失败」。 */}
+                          <div className="flex min-w-0 items-center justify-between gap-2">
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span
+                                className={`h-[7px] w-[7px] shrink-0 rounded-full ${
+                                  itemFailed ? 'bg-red-500' : live ? 'bg-primary' : 'bg-emerald-500'
+                                }`}
+                              />
+                              <span className="shrink-0 cds-ident text-xs font-medium">{item.commitSha.slice(0, 7)}</span>
+                              <span className="truncate text-[11px] text-muted-foreground">
                                 {itemRow?.target.name || item.targetId}
                               </span>
                             </span>
-                            <span className={`shrink-0 text-[11px] ${itemFailed ? 'text-red-600 dark:text-red-400' : live ? 'text-primary' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                            <span className={`shrink-0 cds-ident text-[10.5px] ${itemFailed ? 'text-red-600 dark:text-red-400' : live ? 'text-primary' : 'text-emerald-600 dark:text-emerald-400'}`}>
                               {itemFailed ? '失败' : live ? '线上' : '成功'}
                             </span>
                           </div>
-                          {/* 换行而不是 truncate：这一行末尾是耗时，truncate 先吃掉的正好是它
-                              （300px 的右栏里 `1m42s` 被截成 `1m4…`）。三段都是要看的信息，
-                              宁可占两行。 */}
-                          <div className="min-w-0 cds-ident text-xs leading-snug text-muted-foreground">
-                            {item.operator || '-'} · {formatDateTime(item.startedAt)}
-                            {formatDuration(item.startedAt, item.finishedAt) ? ` · ${formatDuration(item.startedAt, item.finishedAt)}` : ''}
-                          </div>
-                          {/* 行内操作：每条记录当场能做的事都在这儿，不用先选中再去别处找按钮 */}
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px]">
+                          {/* 第二行：左元信息右操作（参考稿同一行）。元信息不 truncate——
+                              300px 栏里先被吃掉的正好是末尾的耗时（1m42s 截成 1m4…）。 */}
+                          <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 cds-ident text-[10.5px] text-muted-foreground">
+                            <span className="min-w-0">
+                              {item.operator || '-'} · {formatDateTime(item.startedAt)}
+                              {formatDuration(item.startedAt, item.finishedAt) ? ` · ${formatDuration(item.startedAt, item.finishedAt)}` : ''}
+                            </span>
+                            <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                             <button
                               type="button"
                               className="text-muted-foreground hover:text-primary"
@@ -1027,6 +1072,7 @@ export function ReleaseConsolePage(): JSX.Element {
                                 回滚到此版本
                               </button>
                             ) : null}
+                            </span>
                           </div>
                         </div>
                       );

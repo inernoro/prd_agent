@@ -1,7 +1,6 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { CommitRail } from '../../web/src/pages/release-center/CommitRail.js';
 import { FailureDiagnosis } from '../../web/src/pages/release-center/FailureDiagnosis.js';
 import { EnvironmentSidebar } from '../../web/src/pages/release-center/EnvironmentSidebar.js';
 import { buildEnvironmentSections } from '../../web/src/lib/releaseEnvironments.js';
@@ -198,42 +197,6 @@ describe('发布中心渲染冒烟 · 失败诊断', () => {
     }));
     expect(same).not.toContain('生产未受影响');
     expect(same).not.toContain('本次版本没有切换上线');
-  });
-});
-
-describe('发布中心渲染冒烟 · 流水轴', () => {
-  const rail = {
-    branch: 'main',
-    ref: 'origin/main',
-    nodes: [
-      { sha: '307301aac0de0000000000000000000000000000', shortSha: '307301a', subject: '修复知识库正文链接', committedAt: '2026-07-29T10:00:00Z' },
-      { sha: '1b751ad0000000000000000000000000000000aa', shortSha: '1b751ad', subject: '补齐录音分片生命周期清理闭环', committedAt: '2026-07-24T05:00:00Z' },
-    ],
-    refsAsOf: '2026-07-29T15:30:00Z',
-  };
-
-  it('环境旗插在对应提交上，并带上提交说明', () => {
-    const html = render(createElement(CommitRail, {
-      rail,
-      markers: [{ targetId: 'rt_prod', label: '生产', environment: 'production', commitSha: '1b751ad0000000000000000000000000000000aa' }],
-      selectedPosition: productionRow().commitPosition,
-      nowMs: NOW,
-    }));
-    expect(html).toContain('生产在此');
-    expect(html).toContain('修复知识库正文链接');
-    expect(html).toContain('补齐录音分片生命周期清理闭环');
-    // 不 fetch 的代价如实标注，而不是偷偷补一次网络往返把数字「修准」。
-    expect(html).toContain('本地 origin/main 读取于');
-  });
-
-  it('不在最近提交里的环境单独列出，不凭空造一个节点', () => {
-    const html = render(createElement(CommitRail, {
-      rail,
-      markers: [{ targetId: 'rt_old', label: '演示', environment: 'other', commitSha: 'deadbee0000' }],
-      nowMs: NOW,
-    }));
-    expect(html).toContain('不在最近提交里');
-    expect(html).toContain('deadbee');
   });
 });
 
