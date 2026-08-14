@@ -1041,7 +1041,7 @@ public class SubtitleGenerationProcessor
                 appCallerCode,
                 BuildChatAudioPrompt(attempt));
             lastResponse = result.Response;
-            if (!result.Text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+            if (!TranscribeNoteText.IsNoSpeechSentinel(result.Text))
             {
                 transcript = result.Text.Trim();
                 break;

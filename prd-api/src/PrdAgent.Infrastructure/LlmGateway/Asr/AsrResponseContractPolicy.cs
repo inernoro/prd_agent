@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Infrastructure.LlmGateway.Asr;
 
@@ -45,7 +46,7 @@ public static class AsrResponseContractPolicy
         var normalized = value?.Trim();
         if (string.IsNullOrWhiteSpace(normalized)) return null;
         var sentinel = normalized.Trim(' ', '\t', '\r', '\n', '.', '。', '!', '！', '?', '？', '"', '\'', '`');
-        return string.Equals(sentinel, "NO_SPEECH", StringComparison.OrdinalIgnoreCase)
+        return TranscribeNoteText.IsNoSpeechSentinel(sentinel)
             ? null
             : normalized;
     }

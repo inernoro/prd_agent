@@ -283,6 +283,52 @@ public class SubtitleGenerationProcessorTests
     }
 
     [Fact]
+    public async Task ChatAudio_ShouldPreserveSpokenSentenceMentioningNoSpeechSentinel()
+    {
+        const string spoken = "接口返回 NO_SPEECH 时需要检查录音设备。";
+        var gateway = new Mock<ILlmGateway>();
+        gateway.SetupSequence(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = $"{{\"choices\":[{{\"message\":{{\"content\":\"{spoken}\"}}}}]}}",
+            })
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = $"{{\"choices\":[{{\"message\":{{\"content\":\"[说话人1] {spoken}\"}}}}]}}",
+            });
+
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeViaChatAudioAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object[]
+            {
+                BuildRun(),
+                new byte[] { 1, 2, 3 },
+                new GatewayModelResolution { ActualModel = "openai/gpt-audio" },
+                AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+            })!;
+
+        var segments = await task;
+
+        segments.Count.ShouldBe(1);
+        segments[0].Text.ShouldBe(spoken);
+        gateway.Verify(g => g.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
     public async Task ChatAudio_ShouldKeepConfirmedTranscript_WhenDiarizationFails()
     {
         var gateway = new Mock<ILlmGateway>();

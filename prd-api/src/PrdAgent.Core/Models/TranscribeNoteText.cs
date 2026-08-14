@@ -38,15 +38,7 @@ public static class TranscribeNoteText
     public static bool LooksLikeNoSpeech(string transcript)
     {
         var t = transcript.Trim();
-        // NO_SPEECH 只能作为受控的完整哨兵出现。不能做包含匹配，否则会议里讨论
-        // “接口返回 NO_SPEECH”也会被误判为静音并丢弃真实发言。
-        if (t.Equals("NO_SPEECH", StringComparison.OrdinalIgnoreCase)
-            || t.Equals("NO_SPEECH。", StringComparison.OrdinalIgnoreCase)
-            || t.Equals("好的，NO_SPEECH", StringComparison.OrdinalIgnoreCase)
-            || t.Equals("好的，NO_SPEECH。", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
+        if (IsNoSpeechSentinel(t)) return true;
         // CDS 实机复现：纯静音被上游作为聊天请求处理后返回这句独立拒答。
         // 只接受完整等值，不用 Contains，避免误伤会议里引用该原话的真实发言。
         if (t.Equals("I'm sorry, I can't.", StringComparison.OrdinalIgnoreCase)
@@ -63,6 +55,20 @@ public static class TranscribeNoteText
             "没有听到", "未能识别", "无法识别", "没有可识别", "音频为空", "没有音频", "谢谢观看",
         };
         return patterns.Any(p => t.Contains(p, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// 判断模型是否只返回受控的无人声哨兵。必须整句匹配，禁止用 Contains，
+    /// 否则真实发言“接口返回 NO_SPEECH”会在进入正文守卫前被丢弃。
+    /// </summary>
+    public static bool IsNoSpeechSentinel(string? transcript)
+    {
+        var t = transcript?.Trim();
+        return t != null
+            && (t.Equals("NO_SPEECH", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("NO_SPEECH。", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("好的，NO_SPEECH", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("好的，NO_SPEECH。", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>把笔记 markdown 的「## 摘要」小节替换为新摘要；「## 转录全文」及其后内容原样保留。</summary>

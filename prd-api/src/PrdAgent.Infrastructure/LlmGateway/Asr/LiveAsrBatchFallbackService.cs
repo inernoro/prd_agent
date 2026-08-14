@@ -552,7 +552,7 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     private static bool IsNoSpeech(string text)
-        => text.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase);
+        => TranscribeNoteText.IsNoSpeechSentinel(text);
 
     public static bool LooksLikeAssistantReply(string text)
     {

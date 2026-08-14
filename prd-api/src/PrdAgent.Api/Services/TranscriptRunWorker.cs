@@ -417,7 +417,7 @@ public class TranscriptRunWorker : BackgroundService
                     {
                         var nonChatText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
                         if (!string.IsNullOrWhiteSpace(nonChatText)
-                            && !nonChatText.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+                            && !TranscribeNoteText.IsNoSpeechSentinel(nonChatText))
                         {
                             candidateSegments.Add(new TranscriptSegment { Start = 0, End = 0, Text = nonChatText.Trim() });
                         }
@@ -438,7 +438,7 @@ public class TranscriptRunWorker : BackgroundService
                 }
 
                 var candidateText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
-                var isNoSpeech = candidateText?.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase) == true;
+                var isNoSpeech = TranscribeNoteText.IsNoSpeechSentinel(candidateText);
                 var isAssistantReply = !string.IsNullOrWhiteSpace(candidateText)
                     && PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.LooksLikeAssistantReply(candidateText);
                 if (!string.IsNullOrWhiteSpace(candidateText) && !isNoSpeech && !isAssistantReply)
@@ -492,7 +492,7 @@ public class TranscriptRunWorker : BackgroundService
         {
             var text = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
             if (!string.IsNullOrWhiteSpace(text)
-                && !text.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+                && !TranscribeNoteText.IsNoSpeechSentinel(text))
             {
                 segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = text.Trim() });
             }
