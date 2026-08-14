@@ -63,13 +63,34 @@ public static class TranscribeNoteText
     /// </summary>
     public static bool IsNoSpeechSentinel(string? transcript)
     {
-        var t = transcript?.Trim();
+        var t = NormalizeNoSpeechSentinel(transcript);
         return t != null
             && (t.Equals("NO_SPEECH", StringComparison.OrdinalIgnoreCase)
-                || t.Equals("NO_SPEECH。", StringComparison.OrdinalIgnoreCase)
-                || t.Equals("好的，NO_SPEECH", StringComparison.OrdinalIgnoreCase)
-                || t.Equals("好的，NO_SPEECH。", StringComparison.OrdinalIgnoreCase));
+                || t.Equals("好的，NO_SPEECH", StringComparison.OrdinalIgnoreCase));
     }
+
+    private static string? NormalizeNoSpeechSentinel(string? transcript)
+    {
+        if (transcript == null) return null;
+        var normalized = transcript.Trim();
+        while (normalized.Length > 0)
+        {
+            var previous = normalized;
+            normalized = normalized.TrimEnd('.', '。', '!', '！', '?', '？').Trim();
+            if (normalized.Length >= 2 && IsMatchingOuterQuote(normalized[0], normalized[^1]))
+            {
+                normalized = normalized[1..^1].Trim();
+            }
+            if (normalized.Equals(previous, StringComparison.Ordinal)) break;
+        }
+        return normalized;
+    }
+
+    private static bool IsMatchingOuterQuote(char first, char last)
+        => (first == '"' && last == '"')
+            || (first == '\'' && last == '\'')
+            || (first == '“' && last == '”')
+            || (first == '‘' && last == '’');
 
     /// <summary>把笔记 markdown 的「## 摘要」小节替换为新摘要；「## 转录全文」及其后内容原样保留。</summary>
     public static string ReplaceSummarySection(string noteMd, string newSummary)

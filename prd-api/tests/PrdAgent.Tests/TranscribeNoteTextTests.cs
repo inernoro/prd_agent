@@ -56,6 +56,29 @@ public class TranscribeNoteTextTests
         Assert.False(TranscribeNoteText.LooksLikeNoSpeech(transcript));
     }
 
+    [Theory]
+    [InlineData("NO_SPEECH.")]
+    [InlineData("\"NO_SPEECH\"")]
+    [InlineData("'NO_SPEECH.'")]
+    [InlineData("“NO_SPEECH。”")]
+    [InlineData("\"NO_SPEECH\".")]
+    [InlineData("‘NO_SPEECH？’")]
+    [InlineData("好的，NO_SPEECH！")]
+    public void IsNoSpeechSentinel_外围引号与终止标点_仍按整句识别(string transcript)
+    {
+        Assert.True(TranscribeNoteText.IsNoSpeechSentinel(transcript));
+    }
+
+    [Theory]
+    [InlineData("接口返回 NO_SPEECH. 时需要检查录音设备。")]
+    [InlineData("客户说 \"NO_SPEECH\" 然后继续发言。")]
+    [InlineData("NO_SPEECH 之后继续处理录音。")]
+    [InlineData("\"NO_SPEECH")]
+    public void IsNoSpeechSentinel_真实句子包含标记_不误判(string transcript)
+    {
+        Assert.False(TranscribeNoteText.IsNoSpeechSentinel(transcript));
+    }
+
     // ── ReplaceSummarySection ──
 
     private const string Note =

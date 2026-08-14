@@ -197,7 +197,42 @@ describe('recording vault deferred transcription recovery', () => {
       latestEntryRun: replacement,
       latestLookupSucceeded: true,
       consecutiveFailures: 0,
+      nowMs: Date.parse('2026-08-14T12:00:00Z'),
     })).toEqual({ kind: 'retire-watcher', reason: 'superseded', replacementRun: replacement });
+  });
+
+  it('reports a stalled replacement instead of silently retiring the superseded watcher', () => {
+    const replacement = {
+      id: 'run-new-stalled',
+      status: 'running',
+      heartbeatAt: '2026-08-14T10:00:00Z',
+    };
+    expect(decideBackgroundRunLookup({
+      runId: 'run-old',
+      directRun: { id: 'run-old', status: 'running', heartbeatAt: '2026-08-14T11:59:00Z' },
+      latestEntryRun: replacement,
+      latestLookupSucceeded: true,
+      consecutiveFailures: 0,
+      nowMs: Date.parse('2026-08-14T12:00:00Z'),
+    })).toEqual({ kind: 'retire-watcher', reason: 'stalled-run', replacementRun: replacement });
+  });
+
+  it('reports a queued replacement whose automatic retry window expired over one hour ago', () => {
+    const replacement = {
+      id: 'run-new-expired-retry',
+      status: 'queued',
+      createdAt: '2026-08-14T08:00:00Z',
+      automaticRetryNextAt: '2026-08-14T10:30:00Z',
+    };
+    expect(decideBackgroundRunLookup({
+      runId: 'run-old',
+      directRun: null,
+      directErrorCode: 'NOT_FOUND',
+      latestEntryRun: replacement,
+      latestLookupSucceeded: true,
+      consecutiveFailures: 1,
+      nowMs: Date.parse('2026-08-14T12:00:00Z'),
+    })).toEqual({ kind: 'retire-watcher', reason: 'stalled-run', replacementRun: replacement });
   });
 
   it('retires a directly readable run that has stopped progressing for over one hour', () => {

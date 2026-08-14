@@ -1768,7 +1768,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             toast.error('暂时无法确认录音状态', '已停止持续等待；录音仍保留，请刷新页面或点击重试');
           } else if (decision.reason === 'stalled-run') {
             if (recordingSource?.entryId === selectedEntryIdRef.current) {
-              const staleRun = res.success ? res.data : latestRun;
+              const staleRun = decision.replacementRun ?? (res.success ? res.data : latestRun);
               setTranscribeFailure({
                 reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
                 at: staleRun?.heartbeatAt ?? staleRun?.startedAt ?? staleRun?.createdAt ?? null,

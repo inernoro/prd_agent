@@ -248,6 +248,7 @@ export function decideBackgroundRunLookup<T extends {
   heartbeatAt?: string | null;
   startedAt?: string | null;
   createdAt?: string | null;
+  automaticRetryNextAt?: string | null;
 }>(args: {
   runId: string;
   directRun: T | null | undefined;
@@ -261,7 +262,11 @@ export function decideBackgroundRunLookup<T extends {
   const latestId = args.latestEntryRun?.id?.trim();
   // 同一条目已经有更新的任务时，即使旧 run 仍能直查到 running，也必须撤销旧看护。
   if (args.latestLookupSucceeded && latestId && latestId !== args.runId) {
-    return { kind: 'retire-watcher', reason: 'superseded', replacementRun: args.latestEntryRun ?? null };
+    const replacementRun = args.latestEntryRun ?? null;
+    if (isStalledBackgroundTranscriptionRun(replacementRun, args.nowMs)) {
+      return { kind: 'retire-watcher', reason: 'stalled-run', replacementRun };
+    }
+    return { kind: 'retire-watcher', reason: 'superseded', replacementRun };
   }
   const observed = selectObservedBackgroundTranscriptionRun(
     args.runId,
