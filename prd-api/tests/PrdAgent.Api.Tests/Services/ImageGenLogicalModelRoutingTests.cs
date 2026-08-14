@@ -116,6 +116,20 @@ public sealed class ImageGenLogicalModelRoutingTests
         Assert.Equal(expected, OpenAIImageClient.ShouldUseOpenAIImagesEditApi(protocol, model));
     }
 
+    [Theory]
+    [InlineData(null, 600)]
+    [InlineData(30, 60)]
+    [InlineData(900, 900)]
+    [InlineData(5000, 3600)]
+    public void ImageGenerationTimeout_UsesConfiguredValueWithinSharedBounds(
+        int? configuredTimeoutSeconds,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            OpenAIImageClient.ResolveImageGenerationTimeoutSeconds(configuredTimeoutSeconds));
+    }
+
     [Fact]
     public void ResolveEffectiveIsAdaptive_PrefersConfiguredPromptCapability()
     {

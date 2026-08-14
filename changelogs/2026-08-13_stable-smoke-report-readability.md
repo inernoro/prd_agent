@@ -23,3 +23,4 @@
 | fix | acceptance | 恢复显式本地诊断草稿命令，同时保持正式验收只能归档 CDS |
 | fix | stable-smoke | 正式环境只读报告按安全门实际用例统计，并统一最终归档缺口数量说明 |
 | fix | stable-smoke | 区分正式环境只读探针缺证与被安全门阻止的写入用例 |
+| fix | prd-api | 多图 OpenAI 编辑备用线路统一使用可配置的生图超时 |

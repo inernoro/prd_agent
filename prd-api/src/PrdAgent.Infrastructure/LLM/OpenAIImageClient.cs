@@ -146,6 +146,9 @@ public class OpenAIImageClient : IImageGenerationClient
             && modelConfig?.SupportsImageToImage == true;
     }
 
+    internal static int ResolveImageGenerationTimeoutSeconds(int? configuredTimeoutSeconds)
+        => Math.Clamp(configuredTimeoutSeconds ?? 600, 60, 3600);
+
 
     /// <summary>
     /// 统一图片生成入口：文生图 / 图生图 / 多图生图由 images 参数自动决定。
@@ -399,8 +402,8 @@ public class OpenAIImageClient : IImageGenerationClient
         }
 
         // 生图请求超时配置（默认 600s，可通过配置 LLM:ImageGenTimeoutSeconds 覆盖）
-        var imageGenTimeoutSeconds = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
-        imageGenTimeoutSeconds = Math.Clamp(imageGenTimeoutSeconds, 60, 3600);
+        var imageGenTimeoutSeconds = ResolveImageGenerationTimeoutSeconds(
+            _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds"));
 
         // 使用能力路径作为 EndpointPath（Gateway 会自动拼接 baseUrl + 版本前缀）
         // 注意：不能从 endpoint URL 中提取路径，因为那样会导致版本前缀重复
@@ -1437,8 +1440,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 "[OpenAIImageClient] Exchange 统一多图请求: AppCallerCode={AppCallerCode}, ImageCount={Count}, Size={Size}",
                 appCallerCode, imageRefs.Count, size);
 
-            var exchangeTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
-            exchangeTimeout = Math.Clamp(exchangeTimeout, 60, 3600);
+            var exchangeTimeout = ResolveImageGenerationTimeoutSeconds(
+                _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds"));
 
             try
             {
@@ -1611,8 +1614,8 @@ public class OpenAIImageClient : IImageGenerationClient
                     "AspectRatio={AspectRatio}, ImageSize={ImageSize}",
                     appCallerCode, imageRefs.Count, googleAspectRatio, googleImageSize);
 
-                var googleTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
-                googleTimeout = Math.Clamp(googleTimeout, 60, 3600);
+                var googleTimeout = ResolveImageGenerationTimeoutSeconds(
+                    _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds"));
 
                 var gatewayResp = await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
                 {
@@ -1877,7 +1880,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 IsMultipart = false,
                 CanonicalImageRequest = canonicalImageRequest,
                 RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
-                TimeoutSeconds = 120,
+                TimeoutSeconds = ResolveImageGenerationTimeoutSeconds(
+                    _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds")),
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,
