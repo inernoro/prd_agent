@@ -671,10 +671,12 @@ export function ReleaseConsolePage(): JSX.Element {
                     : <Rocket className="h-[22px] w-[22px] text-muted-foreground" />}
                 </div>
 
-                {/* basis 给小一点：这一格是可伸缩的中段，basis 定的是「换行前它想要多宽」。
-                    280 时右侧操作组（版本选择 + 三个按钮 ≈ 520px）在 1600 宽下挤不进同一行，
-                    状态条就从参考稿的一行变成两行。给 200 让宽屏能排成一行，窄屏照常换行。 */}
-                <div className="min-w-0 flex-1 basis-[200px]">
+                {/* basis-0：这一格是可伸缩的中段，basis 定的是「换行前它想要多宽」。
+                    给固定值（试过 280、200）就是在跟右侧操作组抢那条线——操作组
+                    （版本选择 + 三个按钮）约 520px，1600 宽下差几个像素就把状态条
+                    挤成两行，跟参考稿的一行差在这。basis-0 让它只吃剩余空间，
+                    换行与否只由「图标 + 操作组 + 这里的 min-width」决定，不再是巧合。 */}
+                <div className="min-w-[180px] flex-1 basis-0">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <h2 className={`text-xl font-bold ${failed ? 'text-red-600 dark:text-red-400' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
