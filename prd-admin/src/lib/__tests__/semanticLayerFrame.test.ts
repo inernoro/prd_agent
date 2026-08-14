@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectSemanticLayerFrames,
   computeHorizontalClampShift,
+  computeVerticalClampShift,
   createLiveGroupOrigin,
   planLayeredCopyRect,
   planSemanticLayerFrame,
@@ -185,6 +186,21 @@ describe('semantic layer frame', () => {
       elementLeft: 300,
       elementRight: 640,
       currentShift: -80,
+    })).toBe(0);
+
+    expect(computeVerticalClampShift({
+      stageTop: 0,
+      stageBottom: 800,
+      elementTop: -96,
+      elementBottom: -60,
+    })).toBe(108);
+
+    expect(computeVerticalClampShift({
+      stageTop: 0,
+      stageBottom: 800,
+      elementTop: 120,
+      elementBottom: 156,
+      currentShift: 108,
     })).toBe(0);
   });
 });

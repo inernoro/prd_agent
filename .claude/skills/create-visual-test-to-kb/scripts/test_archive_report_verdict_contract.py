@@ -1,9 +1,14 @@
 import importlib.util
+import json
 import pathlib
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
 SCRIPT = pathlib.Path(__file__).with_name("archive_report.py")
+CONFIG = SCRIPT.parent.parent / "acceptance.config.json"
 TEMPLATES = SCRIPT.parent.parent / "templates"
 STANDARD = SCRIPT.parent.parent / "reference" / "standard-v2.md"
 REPO_ROOT = SCRIPT.parents[4]
@@ -91,6 +96,62 @@ def report_body(nature: str, counts=(0, 0, 0, 0)) -> str:
 
 
 class DailyVerdictContractTests(unittest.TestCase):
+    def test_local_diagnostic_requires_explicit_flag_and_local_mode(self):
+        with self.assertRaisesRegex(ValueError, "正式验收报告只允许"):
+            archive_report.resolve_report_execution_mode("local")
+        with self.assertRaisesRegex(ValueError, "只接受 report.mode=local"):
+            archive_report.resolve_report_execution_mode("cds", local_diagnostic=True)
+        self.assertEqual(
+            "local",
+            archive_report.resolve_report_execution_mode("local", local_diagnostic=True),
+        )
+        self.assertEqual("cds", archive_report.resolve_report_execution_mode("cds"))
+
+    def test_local_diagnostic_cli_generates_non_delivery_draft(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+            cfg["report"]["mode"] = "local"
+            cfg["report"]["localOutDir"] = str(temp / "drafts")
+            config_path = temp / "acceptance.config.json"
+            report_path = temp / "report.md"
+            manifest_path = temp / "manifest.json"
+            config_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+            report_path.write_text("# 本地诊断草稿\n\n仅用于验证离线诊断链路。", encoding="utf-8")
+            manifest_path.write_text("[]", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--local-diagnostic",
+                    "--force",
+                    "--config",
+                    str(config_path),
+                    "--target",
+                    "离线诊断链路",
+                    "--report-date",
+                    "2026-08-14",
+                    "--verdict",
+                    "conditional",
+                    "--tier",
+                    "L0",
+                    "--report-md",
+                    str(report_path),
+                    "--manifest",
+                    str(manifest_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+            output = json.loads(result.stdout.splitlines()[-1])
+            self.assertEqual("local", output["mode"])
+            self.assertTrue(pathlib.Path(output["reportPath"]).is_file())
+            self.assertTrue(pathlib.Path(output["reportPath"]).is_relative_to(temp))
+
     def test_shipped_templates_have_one_exact_conclusion_section(self):
         for template_name in ("zz-report.md", "report-template.md"):
             with self.subTest(template=template_name):
@@ -758,6 +819,78 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         "warnings": [],
     }]
     figure_srcs = {"fig-01-proof": "https://assets.example.test/01-proof.png"}
+
+    @staticmethod
+    def business_decision_body(not_run: int, inconclusive: int) -> str:
+        passed = 1
+        return f"""
+## 结论与处理顺序
+
+| 指标 | 数量 |
+|---|---:|
+| 计划测试 | {passed + not_run} |
+| 已完成 | {passed} |
+| 通过 | {passed} |
+| 失败 | 0 |
+| 未执行 | {not_run} |
+
+## 截图证据怎么读
+
+| 视觉指标 | 数量 |
+|---|---:|
+| 计划截图槽位 | {inconclusive + 1} |
+| 已采集且可审核 | {inconclusive + 1} |
+| 能直接证明通过 | 1 |
+| 明确不通过 | 0 |
+| 不能证明业务结果 | {inconclusive} |
+"""
+
+    def test_visual_and_functional_counts_only_claim_equality_when_equal(self):
+        unequal = archive_report.build_interactive_html(
+            "稳定冒烟 · 不同缺口数",
+            "conditional",
+            self.business_decision_body(0, 5),
+            [],
+            figure_srcs={},
+        )
+        equal = archive_report.build_interactive_html(
+            "稳定冒烟 · 相同缺口数",
+            "conditional",
+            self.business_decision_body(5, 5),
+            [],
+            figure_srcs={},
+        )
+
+        self.assertIn("功能未执行 0 项与不能证明业务结果 5 张是两个独立维度；两者不能一一对应", unequal)
+        self.assertNotIn("数字相同纯属巧合", unequal)
+        self.assertIn("数字相同纯属巧合", equal)
+
+    def test_zero_failure_sentinel_renders_empty_state_instead_of_failure_card(self):
+        content = archive_report.build_interactive_html(
+            "稳定冒烟 · 零失败报告",
+            "pass",
+            """
+## 结论与处理顺序
+
+| 指标 | 数量 |
+|---|---:|
+| 计划测试 | 1 |
+| 已完成 | 1 |
+| 通过 | 1 |
+| 失败 | 0 |
+| 未执行 | 0 |
+
+## 不通过问题与复现
+
+| 根因 | 影响项数 | 影响模块 | 验收项编号 |
+|---|---:|---|---|
+| 无 | 0 | 无 | 无 |
+""",
+            [],
+            figure_srcs={},
+        )
+        self.assertIn("本轮没有业务失败项。", content)
+        self.assertNotIn('<article class="business-failure-card">', content)
 
     @staticmethod
     def body(gap_heading: str) -> str:

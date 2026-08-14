@@ -46,7 +46,7 @@ public class OfficialSkillCatalogTests
 
         Assert.NotNull(entry);
         Assert.Equal("create-visual-test-to-kb", entry.Key);
-        Assert.Equal("1.0.0", entry.Version);
+        Assert.Equal("1.0.1", entry.Version);
 
         var paths = entry.Files.Select(f => f.Path).ToHashSet(StringComparer.Ordinal);
         Assert.Contains("SKILL.md", paths);
@@ -66,7 +66,7 @@ public class OfficialSkillCatalogTests
 
         var skillMd = entry.Files.Single(f => f.Path == "SKILL.md").Content;
         Assert.Contains("name: create-visual-test-to-kb", skillMd);
-        Assert.Contains("version: 1.0.0", skillMd);
+        Assert.Contains("version: 1.0.1", skillMd);
     }
 
     [Fact]
@@ -110,7 +110,7 @@ public class OfficialSkillCatalogTests
 
         var item = ReadObject(response!, "item");
         Assert.Equal("official-create-visual-test-to-kb", Read<string>(item, "Id"));
-        Assert.Equal("1.0.0", Read<string>(item, "version"));
+        Assert.Equal("1.0.1", Read<string>(item, "version"));
     }
 
     [Fact]
