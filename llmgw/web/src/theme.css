@@ -638,7 +638,9 @@
 .lg-exchange-key-editor span { color: var(--text-muted); font-size: var(--fs-micro); }
 
 @media (max-width: 760px) {
-  .lg-exchange-page { padding-bottom: 82px; }
+  /* 原本这里还有一条 `.lg-exchange-page { padding-bottom: 82px }`——同样是为
+     右下角浮标让位的窄断点补丁，而 .lg-exchange-page 这个类早已没有任何 TSX
+     在用（只剩注释提到），是双重死代码。随浮标一并删除。 */
   .lg-exchange-hero,
   .lg-exchange-form-head,
   .lg-exchange-card-footer,
@@ -1223,10 +1225,52 @@ a:focus-visible {
 .lg-console-sidebar {
   width: 224px;
   flex: 0 0 224px;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
-  padding: 14px 10px 24px;
+  padding: 14px 10px 12px;
   border-right: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--bg-surface) 70%, var(--bg-page));
+}
+
+/* 侧栏页脚：全局动作（提交缺陷）的常驻位置。
+   margin-top:auto 把它压到底，导航短时也不会浮在半空。 */
+.lg-sidebar-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.lg-sidebar-footer button {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.lg-sidebar-footer button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.lg-sidebar-footer kbd {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
 }
 
 .lg-nav-group + .lg-nav-group {
@@ -1272,12 +1316,13 @@ a:focus-visible {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* 底部多留一条 72px 的净空，专门让开右下角固定的「提交缺陷」浮标
-     （BugReportDialog 的 launcher：right/bottom 16px、z-index 1100、约 40px 高）。
-     不留的话，页面最底部那一行的按钮会被它盖住——验收时的原话是「反馈浮层遮挡底部按钮」，
-     和 chief-designer-usability 第三原则点名过的「发送按钮被 FAB 遮住」是同一种。
-     浮标是全局固定的，页面各自去躲它躲不干净，只能在这里一次性把它的落点让出来。 */
-  padding: 22px 24px 72px;
+  /* 四边内边距一致。**不要**为任何固定浮层在这里预留净空：
+     曾经为右下角的「提交缺陷」FAB 留过 72px，结果是一个本该「浮」在内容之上的
+     东西，在全部 19 个页面永久占掉一条横带——请求记录页的表格因此被顶起一整行，
+     而移动端断点又把这条 padding 覆盖成 12/16px，浮标照样遮挡，两头不讨好。
+     正解是把全局动作放进导航壳（见 ConsoleLayout 的 .lg-sidebar-footer），
+     内容画布之上不放常驻浮标。守卫：scripts/check-overlay-space.mjs。 */
+  padding: 22px 24px;
   overflow: hidden;
 }
 
