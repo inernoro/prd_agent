@@ -3335,6 +3335,7 @@ export function DocumentStorePage() {
         if (!alive) return;
         if (!res.success) {
           toast.error('快捷录音启动失败', res.error?.message ?? '无法准备快捷知识库');
+          setQuickCaptureResolving(false);
           navigate({
             pathname: location.pathname,
             search: withoutQuickRecordRequest(location.search),
@@ -3350,6 +3351,9 @@ export function DocumentStorePage() {
           action: 'record',
         });
         setSelectedStoreId(res.data.id);
+        // navigate 会先触发本 effect 的 cleanup；若只依赖 finally，alive 已变为 false，
+        // 页面会永久停在“正在打开快捷录音”。在改变 URL 前先结束准备态。
+        setQuickCaptureResolving(false);
         navigate({
           pathname: location.pathname,
           search: withDocumentStoreEntry(withoutQuickRecordRequest(location.search), res.data.id, null),

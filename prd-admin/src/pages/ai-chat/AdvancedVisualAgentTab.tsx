@@ -100,6 +100,7 @@ import { boundsToCanvasRect } from '@/lib/layerTrim';
 import {
   collectSemanticLayerFrames,
   computeHorizontalClampShift,
+  computeVerticalClampShift,
   createLiveGroupOrigin,
   planLayeredCopyRect,
   planSemanticLayerFrame,
@@ -925,6 +926,7 @@ function StageClampedQuickActionBar({
 }) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const [shiftWorldX, setShiftWorldX] = useState(0);
+  const [shiftWorldY, setShiftWorldY] = useState(0);
 
   useLayoutEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -946,9 +948,19 @@ function StageClampedQuickActionBar({
       });
       const nextShiftWorld = nextShiftScreen / Math.max(zoom, 0.01);
       setShiftWorldX((current) => Math.abs(current - nextShiftWorld) < 0.25 ? current : nextShiftWorld);
+      const currentShiftY = shiftWorldY * Math.max(zoom, 0.01);
+      const nextShiftYScreen = computeVerticalClampShift({
+        stageTop: stageRect.top,
+        stageBottom: stageRect.bottom,
+        elementTop: barRect.top,
+        elementBottom: barRect.bottom,
+        currentShift: currentShiftY,
+      });
+      const nextShiftWorldY = nextShiftYScreen / Math.max(zoom, 0.01);
+      setShiftWorldY((current) => Math.abs(current - nextShiftWorldY) < 0.25 ? current : nextShiftWorldY);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [obstacleRef, positionKey, shiftWorldX, stageRef, zoom]);
+  }, [obstacleRef, positionKey, shiftWorldX, shiftWorldY, stageRef, zoom]);
 
   return (
     <div
@@ -956,7 +968,7 @@ function StageClampedQuickActionBar({
       style={{
         position: 'absolute',
         left: `calc(50% + ${shiftWorldX}px)`,
-        top: 0,
+        top: shiftWorldY,
         transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
         transformOrigin: 'center bottom',
         pointerEvents: 'auto',
@@ -7938,7 +7950,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               stageRef={stageRef}
                               obstacleRef={chatPanelRef}
                               zoom={zoom}
-                              positionKey={`${it.key}:${ix}:${iy}:${sW}:${camera.x}:${stageSize.w}`}
+                              positionKey={`${it.key}:${ix}:${iy}:${sW}:${camera.x}:${camera.y}:${stageSize.w}:${stageSize.h}`}
                             >
                               <ImageQuickActionBar
                                 actions={mergedQuickActions}
