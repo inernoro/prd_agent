@@ -129,7 +129,7 @@ type ShellUser = {
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
-const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
+const preloadReleaseConsolePage = (): void => { void import('@/pages/ReleaseConsolePage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
 const preloadStatusPage = (): void => { void import('@/pages/StatusPage'); };
@@ -454,15 +454,20 @@ function RailNav({
           <LayoutGrid />
           <span>Projects</span>
         </Link>
+        {/*
+         * 落地页是发布控制台（发布这件事本身）；发布中心退居为低频的管理面
+         * （建站向导 / 配置 / 自动发布 / 健康监测 / 证据），由控制台里的链接进入。
+         * 两页共用一个高亮项，见 activeNavKeyFor。
+         */}
         <Link
-          to="/release-center"
+          to="/release-console"
           className="cds-rail-item"
           data-active={active === 'release-center' ? 'true' : 'false'}
-          aria-label="发布中心"
-          title="发布中心（目标 / 版本 / 日志 / 回滚）"
+          aria-label="发布控制台"
+          title="发布控制台（选版本 / 发布 / 实时输出 / 历史）"
           onClick={onNavigate}
-          onMouseEnter={preloadReleaseCenterPage}
-          onFocus={preloadReleaseCenterPage}
+          onMouseEnter={preloadReleaseConsolePage}
+          onFocus={preloadReleaseConsolePage}
         >
           <Rocket />
           <span>Releases</span>

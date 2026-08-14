@@ -97,7 +97,12 @@ export function resolveAgentPageContext(
       || location.pathname.startsWith('/agent-requests/')
     ) id = 'branches';
     else if (location.pathname.startsWith('/settings/')) id = 'project-settings';
-    else if (location.pathname.startsWith('/release-center')) id = 'release';
+    // 发布控制台是发布的落地页；两页同属 release 语境，漏掉 console 会让
+    // 接入 Agent 在新落地页上退化成 general。
+    else if (
+      location.pathname.startsWith('/release-center')
+      || location.pathname.startsWith('/release-console')
+    ) id = 'release';
     else if (location.pathname.startsWith('/task-schedule')) id = 'tasks';
     else if (location.pathname.startsWith('/reports')) id = 'reports';
     else if (location.pathname.startsWith('/project-list')) id = 'projects';

@@ -57,6 +57,15 @@ describe('发布控制台 · 路由与入口接线', () => {
     expect(fn).toMatch(/release-console'\)\)\s*return\s*'release-center'/);
   });
 
+  /** 用户 2026-08-13：「肯定是要新版的」——左栏落地页必须是控制台，不是发布中心。 */
+  it('左栏导航落地到发布控制台，发布中心退居管理面', () => {
+    const rail = SHELL.slice(SHELL.indexOf('to="/release-console"'), SHELL.indexOf('<span>Releases</span>'));
+    expect(rail, '左栏 Releases 应指向 /release-console').toContain('preloadReleaseConsolePage');
+    expect(SHELL).not.toContain('to="/release-center"');
+    // 接入 Agent 的语境识别要认得新落地页，否则在它上面退化成 general
+    expect(read('lib/agent-onboarding.ts')).toContain("startsWith('/release-console')");
+  });
+
   it('发布中心有进这一页的入口，并把当前项目带过去', () => {
     expect(CENTER).toContain('/release-console?project=');
     expect(CENTER).toContain('encodeURIComponent(projectId)');

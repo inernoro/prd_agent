@@ -28,3 +28,4 @@
 | fix | cds | 全站 workspace 宽度归一：修掉「页面声明的档位被 CSS 别名类悄悄改写」——项目列表与分支列表都写了 `wide`，前者被 `.cds-workspace-project-list` 压回 1240（宽屏两条死白），后者被 `.cds-branch-list-workspace` 放开成无上限，两页都没拿到 wide。改为档位只由 `<Workspace>` 的 props 决定，新增 `fluid` 档，删掉两个覆写类 |
 | polish | cds | 网格/台面类页面统一满铺（项目列表 / 分支列表 / 发布中心 / 发布控制台 / 状态页 / 报告页）；项目卡网格从写死 `xl:grid-cols-3` 改走共享的 `.cds-card-grid`（auto-fill，列数由可用宽度算）；横向留白按视口分档 16/32/48，满铺不顶到边 |
 | fix | cds | 项目卡暂停态的常驻操作条压住标题（「Claude SDK Sidecar Pool」被徽章和图标盖掉半截），paused 时给标题行留出让位内边距 |
+| feat | cds | 左栏 Releases 落地页改为发布控制台（用户定：新版为准）；发布中心退居低频管理面（建站向导 / 配置 / 自动发布 / 健康监测 / 证据），由控制台顶栏链接进入。接入 Agent 的语境识别同步认得新落地页，否则在它上面会退化成 general |
