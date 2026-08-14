@@ -3161,6 +3161,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       const picker = page.locator('input[type="file"][accept="image/*"]');
+      await expect(picker, '工作区回放完成后才允许上传，避免服务器空快照覆盖新图片').toBeEnabled({ timeout: 30_000 });
       const aFile = file('a.png', 220, 45, 60);
       const bFile = file('b.png', 35, 115, 225);
       const cFile = file('c.png', 45, 185, 90);
@@ -3177,6 +3178,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         );
         return detail.assets.map((asset) => asset.sha256).sort();
       }, { timeout: 30_000 }).toEqual([aSha256, bSha256, cSha256].sort());
+      await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+      await expect(page.locator('[data-testid="canvas-image"][alt="a.png"], [data-testid="canvas-image"][alt="b.png"], [data-testid="canvas-image"][alt="c.png"]')).toHaveCount(3);
       const uploadedDetail = await readEnvelope<{
         assets: Array<{ id: string; sha256: string; url: string }>;
       }>(await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail?assetLimit=20`, {
@@ -3186,8 +3189,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(deletedAssets).toHaveLength(2);
 
       await page.locator('[data-tour-id="visual-editor-canvas"]').click({ position: { x: 180, y: 180 } });
-      await page.locator('[title="b.png"]').click();
-      await page.locator('[title="a.png"]').click({ modifiers: ['Shift'] });
+      await page.locator('[data-testid="canvas-image"][alt="b.png"]').click();
+      await page.locator('[data-testid="canvas-image"][alt="a.png"]').click({ modifiers: ['Shift'] });
       const chips = page.locator('.image-chip-node');
       await expect(chips).toHaveCount(2);
       const chipLabels = await chips.allTextContents();
@@ -3198,8 +3201,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       // 自身的引用顺序与删除持久化，防止上游额度故障把本地状态回归伪装成超时。
       expect(chipLabels).toEqual(['b.png', 'a.png']);
 
-      await page.locator('[title="b.png"]').click();
-      await page.locator('[title="a.png"]').click({ modifiers: ['Shift'] });
+      await page.locator('[data-testid="canvas-image"][alt="b.png"]').click();
+      await page.locator('[data-testid="canvas-image"][alt="a.png"]').click({ modifiers: ['Shift'] });
 
       const deleteResponses: Response[] = [];
       const captureDeleteResponse = (response: Response) => {
@@ -3221,8 +3224,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(page.getByText('确认删除选中的 2 项？')).toBeVisible();
       await page.getByRole('button', { name: '删除', exact: true }).click();
       await expect(chips).toHaveCount(0);
-      await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
-      await expect(page.locator('[title="c.png"]')).toBeVisible();
+      await expect(page.locator('[data-testid="canvas-image"][alt="a.png"], [data-testid="canvas-image"][alt="b.png"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="canvas-image"][alt="c.png"]')).toBeVisible();
 
       await expect.poll(() => deleteResponses.length, { timeout: 30_000 }).toBe(2);
       page.off('response', captureDeleteResponse);
@@ -3248,8 +3251,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }
 
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await expect(page.locator('[title="a.png"], [title="b.png"]')).toHaveCount(0);
-      await expect(page.locator('[title="c.png"]')).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator('input[type="file"][accept="image/*"]')).toBeEnabled({ timeout: 30_000 });
+      await expect(page.locator('[data-testid="canvas-image"][alt="a.png"], [data-testid="canvas-image"][alt="b.png"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="canvas-image"][alt="c.png"]')).toBeVisible({ timeout: 30_000 });
       const reloadedDetail = await readEnvelope<{
         assets: Array<{ id: string; sha256: string; url: string }>;
         canvas: { payloadJson: string } | null;
@@ -3266,7 +3270,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(reloadedDetail.canvas?.payloadJson || '').not.toContain(asset.url);
       }
 
-      await page.locator('[title="c.png"]').click();
+      await page.locator('[data-testid="canvas-image"][alt="c.png"]').click();
       const verificationChips = page.locator('.image-chip-node');
       await expect(verificationChips).toHaveCount(1);
       await expect(verificationChips.first()).toContainText('c.png');
@@ -3294,6 +3298,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
       const picker = page.locator('input[type="file"][accept="image/*"]');
+      await expect(picker, '工作区回放完成后才允许上传，避免服务器空快照覆盖新图片').toBeEnabled({ timeout: 30_000 });
 
       await picker.setInputFiles([file('dup1.png'), file('dup2.png')]);
       await expect(page.getByTestId('canvas-image')).toHaveCount(2, { timeout: 30_000 });

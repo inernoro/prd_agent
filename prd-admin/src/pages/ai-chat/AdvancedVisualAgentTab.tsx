@@ -2110,7 +2110,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, []);
 
   const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
-  const [, setBooting] = useState(false);
+  const [booting, setBooting] = useState(true);
+  const workspaceReady = !booting && workspace?.id === workspaceId;
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
 
   // 触发缺陷提交按钮闪烁（生图失败时调用，持续闪烁直到用户点击）
@@ -5809,6 +5810,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
+    // 工作区初始画布仍在回放时接收上传，会被稍后返回的服务器快照覆盖：界面提示
+    // “已加入”但图片随即消失。入口和处理函数双重门禁，覆盖文件选择、拖放与粘贴路径。
+    if (!workspaceReady) {
+      showUploadToast('画板正在恢复，请稍后再上传图片');
+      return;
+    }
     const imageFiles = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
     if (imageFiles.length > 20) {
       showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
@@ -8757,9 +8764,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   移除未开发的"上传视频/智能画板"禁用占位，见 .claude/rules/chief-designer-usability.md 奥卡姆原则）*/}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
-                title="上传图片"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft disabled:cursor-wait disabled:opacity-50"
+                title={workspaceReady ? '上传图片' : '画板正在恢复'}
                 aria-label="上传图片"
+                disabled={!workspaceReady}
                 onClick={() => openImageFilePicker()}
               >
                 <ImagePlus size={18} />
@@ -8995,6 +9003,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             className="hidden"
             accept="image/*"
             multiple
+            disabled={!workspaceReady}
             onChange={(e) => {
               const fs = Array.from(e.currentTarget.files ?? []);
               e.currentTarget.value = '';
