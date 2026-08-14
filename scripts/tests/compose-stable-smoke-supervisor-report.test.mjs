@@ -402,6 +402,24 @@ test('正式环境结论依据安全门与实际覆盖而不是固定归因给 C
   assert.doesNotMatch(successful, /CDS 失败触发/);
   assert.match(identityMissing, /正式环境完成 0\/2，仍有 2 项未执行/);
   assert.match(restricted, /安全门已限制为只读检查：CDS 视觉门禁未通过/);
+  assert.match(restricted, /当前只能有条件放行/);
+  assert.doesNotMatch(restricted, /当前可以放行/);
+});
+
+test('正式环境只读安全门即使唯一检查通过也不得授权发布', () => {
+  const functional = '# 功能报告\n\n> 验收结论：通过。共 1 项，1 项通过、0 项不通过、0 项未执行。';
+  const summary = {
+    coverage: { total: 1, passed: 1, failed: 0, notRun: 0, verdict: 'pass' },
+    productionSafetyGate: { restricted: true, reasons: ['本轮仅执行正式环境只读检查'] },
+    environmentCoverage: [
+      { environment: 'production', planned: 1, completed: 1, passed: 1, failed: 0, notRun: 0 },
+    ],
+  };
+  const report = composeSupervisorReport(functional, '', '', '', '', summary);
+
+  assert.match(report, /Verdict: conditional/);
+  assert.match(report, /当前只能有条件放行/);
+  assert.doesNotMatch(report, /当前可以放行/);
 });
 
 test('视觉只有缺证而没有产品失败时验收报告判为有条件通过', () => {

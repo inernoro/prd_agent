@@ -129,6 +129,7 @@ function strictestVerdict(...values) {
 function authoritativeExecutionVerdict(executionSummary) {
   const coverage = executionSummary?.coverage;
   if (Array.isArray(coverage?.executionFailures) && coverage.executionFailures.length > 0) return 'fail';
+  if (executionSummary?.productionSafetyGate?.restricted === true) return 'conditional';
   return normalizedVerdict(coverage?.verdict);
 }
 
@@ -399,7 +400,8 @@ export function renderBusinessDecisionPage(
     : counts.notRun > 0 || visualNeedsEvidence
       ? 'conditional'
       : 'pass';
-  const releaseVerdict = strictestVerdict(evidenceVerdict, overallVerdict);
+  const productionSafetyVerdict = productionSafetyGate?.restricted === true ? 'conditional' : 'pass';
+  const releaseVerdict = strictestVerdict(evidenceVerdict, overallVerdict, productionSafetyVerdict);
   const releaseConclusion = releaseVerdict === 'fail'
     ? '当前不能放行。'
     : releaseVerdict === 'conditional'
