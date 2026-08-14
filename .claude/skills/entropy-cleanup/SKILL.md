@@ -415,10 +415,14 @@ git push -u origin $(git branch --show-current)
 
 ```bash
 git rev-parse --is-shallow-repository | grep -q true && git fetch --unshallow --quiet
-git fetch origin --prune --quiet
+# 必须显式给全量 refspec：单分支克隆的 remote.origin.fetch 只映射 main，
+# 裸 `git fetch origin --prune` 不会把其它 head 落成 origin/<branch>，
+# 于是下面每个分支都走 SKIP(no ref)，整个清理**静默扫不到任何东西**（又一处 fail-silent）
+git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune --quiet
 
 for b in $(git ls-remote --heads origin | awk '{print $2}' | sed 's|refs/heads/||' \
            | grep -vE '^(main|master|release/.*)$'); do          # 必须排掉 main，否则它恒被判冗余
+  # 走到这里还缺 ref 属异常，必须报出来；SKIP 总数与候选数相等 = 判据没在工作，不是「没有冗余分支」
   git rev-parse --verify -q "origin/$b" >/dev/null 2>&1 || { echo "SKIP(no ref): $b"; continue; }
   mb=$(git merge-base origin/main "origin/$b" 2>/dev/null)
   [ -z "$mb" ] && { echo "SKIP(no merge-base): $b"; continue; }  # 失败即保守保留，绝不当成干净
@@ -542,7 +546,18 @@ commit_title:  每日熵减计划 YYYY-WXX — <本次主要修复内容>
 - 合并成功 → 记录 SHA，结束任务。
 - 若 6.4 发现 PR `dirty` 需要本地解冲突，解完 force-push 后回到 6.4 重新核查再合并。
 - 全程**禁止**用 `sleep` 空转轮询；合并是同步调用，拿到结果即结束。
-- **本轮 PR 必须在本轮内落地**（合并、或关闭并说明原因）。**禁止留一个「还在等评审」的 PR 过夜**——下一次定时任务会另开分支另开 PR，两个都会烂在那里。做不到就按 6.5.1 熔断合并。
+- **本轮 PR 必须在本轮内落地**——落地有且只有两种结果：**合并**，或**关闭并说明原因**。**禁止留一个「还在等评审」的 PR 过夜**，下一次定时任务会另开分支另开 PR，两个都会烂在那里。
+
+  **「当轮落地」不是合并的第四条通道。** 三道闸（CI 绿 / 6.4 核查 / 未命中 D4 硬闸）任一不满足时，落地方式**只能是关闭**，不是熔断合并：
+
+  | 落不了地的原因 | 正确动作 |
+  |---|---|
+  | CI 红 | 当轮修得好就修；修不好 → **关闭 PR**，把结论写进关闭说明，下轮重开 |
+  | Step 4.5 命中 D4 硬闸 | 保持 `[需人工] ` 前缀留给人工，**这是唯一允许过夜的例外**（它本来就不该由 Agent 合） |
+  | 仍有未解决的 A 类缺陷 | 按 6.5.1：修掉；连续两轮还在冒 A 类 → **关闭并缩小范围重开** |
+  | 只剩 B/C 类意见没回完 | 这才是熔断适用场景 → 直接合并 |
+
+  换句话说：熔断解决的是「意见没完没了」，不解决「东西还没做对」。**为了当轮收工而合并一个已知有问题的 PR，比留它过夜更糟**（2026-08-14 PR #1369 第二轮评审提出，判断成立）。
 
 ---
 
