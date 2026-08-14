@@ -544,6 +544,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 .Set(candidate => candidate.FailureCode, null)
                 .Set(candidate => candidate.StartedAt, null)
                 .Set(candidate => candidate.EndedAt, null)
+                .Set(candidate => candidate.ExecutionId, string.Empty)
                 .Set(candidate => candidate.OwnerInstanceId, ownerInstanceId)
                 .Set(candidate => candidate.AutomaticRetryNextAt, null)
                 .Inc(candidate => candidate.AutomaticRetryCount, 1),

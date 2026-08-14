@@ -30,6 +30,12 @@ public class DocumentStoreAgentRun
     /// </summary>
     public string? OwnerInstanceId { get; set; }
 
+    /// <summary>
+    /// 当前执行尝试的唯一身份。每次 queued -> running 认领都会换新；
+    /// 心跳、进度、正文发布和终态写入必须同时匹配它，防止失联旧 Worker 恢复后继续写入。
+    /// </summary>
+    public string ExecutionId { get; set; } = string.Empty;
+
     /// <summary>任务状态</summary>
     public string Status { get; set; } = DocumentStoreRunStatus.Queued;
 

@@ -126,6 +126,10 @@ public class SubtitleGenerationProcessor
             run.SourceEntryId,
             run.Kind,
             CancellationToken.None);
+        await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+            db.DocumentStoreAgentRuns,
+            run,
+            CancellationToken.None);
         await UpdateProgressAsync(db, runStore, run, 85, "写入中");
 
         // 4) 落库：创建新 entry 承载字幕
@@ -174,12 +178,14 @@ public class SubtitleGenerationProcessor
             cancellationToken: CancellationToken.None);
 
         // 写回 Run 的 OutputEntryId
-        await db.DocumentStoreAgentRuns.UpdateOneAsync(
-            r => r.Id == run.Id,
+        var runWrite = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            DocumentStoreAgentWorker.CurrentExecutionFilter(run),
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.OutputEntryId, newEntry.Id)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
+        if (runWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
 
         _logger.LogInformation("[doc-store-agent] Subtitle generated for {EntryId} → {NewEntryId}, {Len} chars",
             entry.Id, newEntry.Id, subtitleMd.Length);
@@ -292,6 +298,10 @@ public class SubtitleGenerationProcessor
             run.SourceEntryId,
             run.Kind,
             CancellationToken.None);
+        await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+            db.DocumentStoreAgentRuns,
+            run,
+            CancellationToken.None);
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
 
         // 3) 落库：转录全文原地写回源音频 entry；整理结果存在时才附加。
@@ -334,10 +344,12 @@ public class SubtitleGenerationProcessor
             Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 
-        await db.DocumentStoreAgentRuns.UpdateOneAsync(
-            r => r.Id == run.Id
-                 && r.Status == DocumentStoreRunStatus.Running
-                 && r.OutputGeneration == run.OutputGeneration,
+        var runWrite = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                DocumentStoreAgentWorker.CurrentExecutionFilter(run),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    candidate => candidate.OutputGeneration,
+                    run.OutputGeneration)),
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.OutputEntryId, entry.Id)
                 .Set(r => r.GeneratedText, summary)
@@ -345,6 +357,8 @@ public class SubtitleGenerationProcessor
                 .Set(r => r.TranscriptText, transcriptPlain.Length > 60000 ? transcriptPlain[..60000] : transcriptPlain)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
+        if (runWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
 
         // 若对象归档先完成，转录就是最后一个分片读取者，应立即释放 Mongo 音频。
         // 若归档仍在进行则保留；归档端完成后会回读本 run 的 OutputEntryId 并清理。
@@ -426,6 +440,10 @@ public class SubtitleGenerationProcessor
             run.SourceEntryId,
             run.Kind,
             CancellationToken.None);
+        await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+            db.DocumentStoreAgentRuns,
+            run,
+            CancellationToken.None);
         var latestNoteEntry = await db.DocumentEntries
             .Find(e => e.Id == noteEntry.Id)
             .FirstOrDefaultAsync(CancellationToken.None);
@@ -464,9 +482,11 @@ public class SubtitleGenerationProcessor
             throw new DocumentStoreRunLeaseLostException(run.Id);
 
         var runWrite = await db.DocumentStoreAgentRuns.UpdateOneAsync(
-            r => r.Id == run.Id
-                 && r.Status == DocumentStoreRunStatus.Running
-                 && r.OutputGeneration == run.OutputGeneration,
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                DocumentStoreAgentWorker.CurrentExecutionFilter(run),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    candidate => candidate.OutputGeneration,
+                    run.OutputGeneration)),
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.OutputEntryId, latestNoteEntry.Id)
                 .Set(r => r.GeneratedText, summary)
@@ -1761,7 +1781,7 @@ public class SubtitleGenerationProcessor
         int progress, string phase)
     {
         var result = await db.DocumentStoreAgentRuns.UpdateOneAsync(
-            r => r.Id == run.Id && r.Status == DocumentStoreRunStatus.Running,
+            DocumentStoreAgentWorker.CurrentExecutionFilter(run),
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.Progress, progress)
                 .Set(r => r.Phase, phase)

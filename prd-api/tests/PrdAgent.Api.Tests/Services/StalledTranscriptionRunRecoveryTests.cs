@@ -260,12 +260,12 @@ public sealed class StalledTranscriptionRunRecoveryTests
 
         (await DocumentStoreAgentWorker.TryMarkSupersededAsync(
             fixture.Db.DocumentStoreAgentRuns,
-            run.Id,
+            run,
             now,
             CancellationToken.None)).ShouldBeTrue();
         (await DocumentStoreAgentWorker.TryMarkSupersededAsync(
             fixture.Db.DocumentStoreAgentRuns,
-            run.Id,
+            run,
             now.AddSeconds(1),
             CancellationToken.None)).ShouldBeFalse();
 
@@ -275,6 +275,126 @@ public sealed class StalledTranscriptionRunRecoveryTests
         terminal.HeartbeatAt.ShouldBeNull();
         terminal.EndedAt.ShouldNotBeNull();
         terminal.EndedAt.Value.ShouldBe(now, TimeSpan.FromMilliseconds(1));
+    }
+
+    [Fact]
+    public async Task ReclaimedSameRunAndGeneration_ShouldFenceStaleExecutionFromAllWrites()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        const string owner = "prd-agent:test::main";
+        var entry = new DocumentEntry
+        {
+            Id = "entry-same-run-reclaim",
+            StoreId = "store-1",
+            Title = "录音.m4a",
+            AgentOutputGeneration = 7,
+            ContentIndex = "新执行认领前的正文",
+        };
+        var staleExecution = Run(
+            "recording-archive-transcribe-same-run-reclaim",
+            entry.Id,
+            "user-1",
+            owner,
+            now.AddMinutes(-5),
+            now.AddMinutes(-5));
+        staleExecution.ExecutionId = "execution-old";
+        staleExecution.OutputGeneration = entry.AgentOutputGeneration;
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(staleExecution);
+
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ASPNETCORE_ENVIRONMENT"] = "test",
+                ["Deployment:Identity"] = "prd-agent:test",
+                ["Changelog:GitHubBranch"] = "main",
+            })
+            .Build();
+        var services = new ServiceCollection()
+            .AddSingleton(fixture.Db)
+            .AddSingleton<IConfiguration>(configuration)
+            .BuildServiceProvider();
+        var worker = new DocumentStoreAgentWorker(
+            services.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<DocumentStoreAgentWorker>.Instance);
+
+        await worker.RecoverInterruptedRunsAsync();
+        var requeued = await fixture.Db.DocumentStoreAgentRuns
+            .Find(run => run.Id == staleExecution.Id)
+            .SingleAsync();
+        requeued.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        requeued.ExecutionId.ShouldBeEmpty();
+        requeued.OutputGeneration.ShouldBe(staleExecution.OutputGeneration);
+
+        const string newExecutionId = "execution-new";
+        var reclaimWrite = await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            run => run.Id == staleExecution.Id && run.Status == DocumentStoreRunStatus.Queued,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(run => run.Status, DocumentStoreRunStatus.Running)
+                .Set(run => run.ExecutionId, newExecutionId)
+                .Set(run => run.StartedAt, now)
+                .Set(run => run.HeartbeatAt, now));
+        reclaimWrite.ModifiedCount.ShouldBe(1);
+        var reclaimed = await fixture.Db.DocumentStoreAgentRuns
+            .Find(run => run.Id == staleExecution.Id)
+            .SingleAsync();
+        reclaimed.OutputGeneration.ShouldBe(staleExecution.OutputGeneration);
+
+        (await DocumentStoreAgentWorker.TryRenewHeartbeatAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            staleExecution.Id,
+            staleExecution.ExecutionId,
+            now.AddSeconds(1),
+            CancellationToken.None)).ShouldBeFalse();
+        (await DocumentStoreAgentWorker.TryRenewHeartbeatAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            reclaimed.Id,
+            reclaimed.ExecutionId,
+            now.AddSeconds(2),
+            CancellationToken.None)).ShouldBeTrue();
+
+        await using (var staleOutputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+                         fixture.Db,
+                         entry.Id,
+                         DocumentStoreAgentRunKind.Transcribe,
+                         CancellationToken.None))
+        {
+            await Should.ThrowAsync<DocumentStoreRunLeaseLostException>(() =>
+                DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+                    fixture.Db.DocumentStoreAgentRuns,
+                    staleExecution,
+                    CancellationToken.None));
+        }
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == entry.Id).SingleAsync())
+            .ContentIndex.ShouldBe("新执行认领前的正文");
+
+        var staleProgress = await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            DocumentStoreAgentWorker.CurrentExecutionFilter(staleExecution),
+            Builders<DocumentStoreAgentRun>.Update.Set(run => run.Progress, 90));
+        staleProgress.MatchedCount.ShouldBe(0);
+        (await DocumentStoreAgentWorker.TryMarkSupersededAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            staleExecution,
+            now.AddSeconds(3),
+            CancellationToken.None)).ShouldBeFalse();
+        var staleTerminal = await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            DocumentStoreAgentWorker.CurrentExecutionFilter(staleExecution),
+            Builders<DocumentStoreAgentRun>.Update.Set(run => run.Status, DocumentStoreRunStatus.Done));
+        staleTerminal.MatchedCount.ShouldBe(0);
+
+        var newTerminal = await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            DocumentStoreAgentWorker.CurrentExecutionFilter(reclaimed),
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(run => run.Status, DocumentStoreRunStatus.Done)
+                .Set(run => run.EndedAt, now.AddSeconds(4)));
+        newTerminal.ModifiedCount.ShouldBe(1);
+        var terminal = await fixture.Db.DocumentStoreAgentRuns
+            .Find(run => run.Id == staleExecution.Id)
+            .SingleAsync();
+        terminal.Status.ShouldBe(DocumentStoreRunStatus.Done);
+        terminal.ExecutionId.ShouldBe(newExecutionId);
+        terminal.FailureCode.ShouldBeNull();
     }
 
     [Fact]
@@ -474,6 +594,7 @@ public sealed class StalledTranscriptionRunRecoveryTests
             StoreId = "store-1",
             UserId = userId,
             OwnerInstanceId = owner,
+            ExecutionId = status == DocumentStoreRunStatus.Running ? "execution-1" : string.Empty,
             Status = status,
             TemplateKey = templateKey,
             CreatedAt = createdAt,

@@ -20,6 +20,7 @@ public class DocumentStoreAgentWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<DocumentStoreAgentWorker> _logger;
     private string? _currentRunId;
+    private string? _currentExecutionId;
 
     /// <summary>每 3 秒轮询一次 queued 任务</summary>
     private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(3);
@@ -70,7 +71,7 @@ public class DocumentStoreAgentWorker : BackgroundService
         finally
         {
             // Worker 关闭时把进行中的任务标记为失败
-            if (_currentRunId != null)
+            if (_currentRunId != null && _currentExecutionId != null)
             {
                 try
                 {
@@ -89,6 +90,9 @@ public class DocumentStoreAgentWorker : BackgroundService
                                 Builders<DocumentStoreAgentRun>.Filter.Eq(
                                     r => r.Status,
                                     DocumentStoreRunStatus.Running),
+                                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                    r => r.ExecutionId,
+                                    _currentExecutionId),
                                 automaticRetryBudgetFilter),
                             Builders<DocumentStoreAgentRun>.Update
                                 .Set(r => r.Status, DocumentStoreRunStatus.Queued)
@@ -99,6 +103,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                                 .Set(r => r.StartedAt, null)
                                 .Set(r => r.HeartbeatAt, null)
                                 .Set(r => r.EndedAt, null)
+                                .Set(r => r.ExecutionId, string.Empty)
                                 .Set(r => r.AutomaticRetryNextAt, null)
                                 .Set(
                                     r => r.AutomaticRetryReason,
@@ -108,7 +113,9 @@ public class DocumentStoreAgentWorker : BackgroundService
                             cancellationToken: CancellationToken.None);
                     }
                     await db.DocumentStoreAgentRuns.UpdateOneAsync(
-                        r => r.Id == _currentRunId && r.Status == DocumentStoreRunStatus.Running,
+                        r => r.Id == _currentRunId
+                             && r.Status == DocumentStoreRunStatus.Running
+                             && r.ExecutionId == _currentExecutionId,
                         Builders<DocumentStoreAgentRun>.Update
                             .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                             .Set(r => r.ErrorMessage, "Worker 关闭，任务被中断")
@@ -194,6 +201,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                         .Set(r => r.EndedAt, null)
                         .Set(r => r.StartedAt, null)
                         .Set(r => r.HeartbeatAt, null)
+                        .Set(r => r.ExecutionId, string.Empty)
                         .Set(r => r.AutomaticRetryNextAt, null)
                         .Set(r => r.OwnerInstanceId, instanceId)
                         .Set(
@@ -209,6 +217,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                         .Set(r => r.ErrorMessage, "后台任务已失联，请手动重试；原始内容仍然保留。")
                         .Set(r => r.FailureCode, "WORKER_INTERRUPTED")
                         .Set(r => r.HeartbeatAt, null)
+                        .Set(r => r.ExecutionId, string.Empty)
                         .Set(r => r.EndedAt, now)
                         .Set(r => r.AutomaticRetryNextAt, null)
                         .Set(r => r.AutomaticRetryReason, null);
@@ -216,6 +225,9 @@ public class DocumentStoreAgentWorker : BackgroundService
                 var result = await db.DocumentStoreAgentRuns.UpdateOneAsync(
                     Builders<DocumentStoreAgentRun>.Filter.And(
                         Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, current.Id),
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(
+                            r => r.ExecutionId,
+                            current.ExecutionId),
                         recoverFilter),
                     update,
                     cancellationToken: CancellationToken.None);
@@ -271,6 +283,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                     DateTime.UtcNow)),
             ownerScope);
         var claimedAt = DateTime.UtcNow;
+        var executionId = Guid.NewGuid().ToString("N");
         var update = Builders<DocumentStoreAgentRun>.Update
             .Set(r => r.Status, DocumentStoreRunStatus.Running)
             // 认领时盖上本实例归属：领取历史无主任务后必须打主，否则本实例崩溃重启时
@@ -281,7 +294,8 @@ public class DocumentStoreAgentWorker : BackgroundService
             .Set(r => r.FailureCode, null)
             .Set(r => r.EndedAt, null)
             .Set(r => r.StartedAt, claimedAt)
-            .Set(r => r.HeartbeatAt, claimedAt);
+            .Set(r => r.HeartbeatAt, claimedAt)
+            .Set(r => r.ExecutionId, executionId);
         var run = await db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
             filter, update,
             new FindOneAndUpdateOptions<DocumentStoreAgentRun>
@@ -292,11 +306,16 @@ public class DocumentStoreAgentWorker : BackgroundService
         if (run == null) return;
 
         _currentRunId = run.Id;
+        _currentExecutionId = run.ExecutionId;
         _logger.LogInformation("[doc-store-agent] Picked run {RunId} kind={Kind} entry={EntryId}",
             run.Id, run.Kind, run.SourceEntryId);
 
         using var heartbeatCts = new CancellationTokenSource();
-        var heartbeatTask = MaintainRunHeartbeatAsync(db, run.Id, heartbeatCts.Token);
+        var heartbeatTask = MaintainRunHeartbeatAsync(
+            db,
+            run.Id,
+            run.ExecutionId,
+            heartbeatCts.Token);
         try
         {
             var kindForEvents = KindForEvents(run.Kind);
@@ -330,9 +349,11 @@ public class DocumentStoreAgentWorker : BackgroundService
             }
 
             // 读最新状态（processor 可能已经更新了 OutputEntryId 等）
-            var finalRun = await db.DocumentStoreAgentRuns.Find(r => r.Id == run.Id).FirstOrDefaultAsync();
+            var finalRun = await db.DocumentStoreAgentRuns
+                .Find(CurrentExecutionFilter(run))
+                .FirstOrDefaultAsync();
             var completed = await db.DocumentStoreAgentRuns.UpdateOneAsync(
-                r => r.Id == run.Id && r.Status == DocumentStoreRunStatus.Running,
+                CurrentExecutionFilter(run),
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Done)
                     .Set(r => r.Phase, "完成")
@@ -389,7 +410,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             var supersededAt = DateTime.UtcNow;
             var superseded = await TryMarkSupersededAsync(
                 db.DocumentStoreAgentRuns,
-                run.Id,
+                run,
                 supersededAt,
                 CancellationToken.None);
             if (superseded)
@@ -429,6 +450,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                     .Set(r => r.FailureCode, null)
                     .Set(r => r.StartedAt, null)
                     .Set(r => r.HeartbeatAt, null)
+                    .Set(r => r.ExecutionId, string.Empty)
                     .Set(r => r.EndedAt, null)
                     .Set(
                         r => r.AutomaticRetryNextAt,
@@ -451,7 +473,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             }
 
             var failedWrite = await db.DocumentStoreAgentRuns.UpdateOneAsync(
-                r => r.Id == run.Id && r.Status == DocumentStoreRunStatus.Running,
+                CurrentExecutionFilter(run),
                 failedUpdate,
                 cancellationToken: CancellationToken.None);
             if (failedWrite.ModifiedCount == 0)
@@ -508,12 +530,14 @@ public class DocumentStoreAgentWorker : BackgroundService
             try { await heartbeatTask; }
             catch (OperationCanceledException) { }
             _currentRunId = null;
+            _currentExecutionId = null;
         }
     }
 
     private static async Task MaintainRunHeartbeatAsync(
         MongoDbContext db,
         string runId,
+        string executionId,
         CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -521,10 +545,12 @@ public class DocumentStoreAgentWorker : BackgroundService
             await Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
             try
             {
-                await db.DocumentStoreAgentRuns.UpdateOneAsync(
-                    r => r.Id == runId && r.Status == DocumentStoreRunStatus.Running,
-                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.HeartbeatAt, DateTime.UtcNow),
-                    cancellationToken: cancellationToken);
+                await TryRenewHeartbeatAsync(
+                    db.DocumentStoreAgentRuns,
+                    runId,
+                    executionId,
+                    DateTime.UtcNow,
+                    cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -537,14 +563,50 @@ public class DocumentStoreAgentWorker : BackgroundService
         }
     }
 
-    internal static async Task<bool> TryMarkSupersededAsync(
+    internal static async Task<bool> TryRenewHeartbeatAsync(
         IMongoCollection<DocumentStoreAgentRun> runs,
         string runId,
+        string executionId,
+        DateTime heartbeatAt,
+        CancellationToken cancellationToken)
+    {
+        var result = await runs.UpdateOneAsync(
+            r => r.Id == runId
+                 && r.Status == DocumentStoreRunStatus.Running
+                 && r.ExecutionId == executionId,
+            Builders<DocumentStoreAgentRun>.Update.Set(r => r.HeartbeatAt, heartbeatAt),
+            cancellationToken: cancellationToken);
+        return result.ModifiedCount == 1;
+    }
+
+    internal static FilterDefinition<DocumentStoreAgentRun> CurrentExecutionFilter(
+        DocumentStoreAgentRun run)
+        => Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(candidate => candidate.Id, run.Id),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                candidate => candidate.Status,
+                DocumentStoreRunStatus.Running),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                candidate => candidate.ExecutionId,
+                run.ExecutionId));
+
+    internal static async Task EnsureCurrentExecutionAsync(
+        IMongoCollection<DocumentStoreAgentRun> runs,
+        DocumentStoreAgentRun run,
+        CancellationToken cancellationToken)
+    {
+        if (!await runs.Find(CurrentExecutionFilter(run)).AnyAsync(cancellationToken))
+            throw new DocumentStoreRunLeaseLostException(run.Id);
+    }
+
+    internal static async Task<bool> TryMarkSupersededAsync(
+        IMongoCollection<DocumentStoreAgentRun> runs,
+        DocumentStoreAgentRun run,
         DateTime supersededAt,
         CancellationToken cancellationToken)
     {
         var result = await runs.UpdateOneAsync(
-            r => r.Id == runId && r.Status == DocumentStoreRunStatus.Running,
+            CurrentExecutionFilter(run),
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                 .Set(r => r.Phase, "已有更新的录音任务接管")
