@@ -426,3 +426,46 @@ describe('发布控制台 · 状态条一行的宽度预算', () => {
     expect(group, '操作组里不该再有版本选择').not.toContain('aria-label="要发布的版本"');
   });
 });
+
+/**
+ * 节奏（用户 2026-08-14：「demo 的节奏性很足，而我们的节奏性差很多」）。
+ *
+ * 参考稿跑起来时有三处在动：进度条流动的斜纹、状态图标的呼吸光晕、日志一行行落下。
+ * 首版只搬了静态版式——一根实心条 + 一个转圈图标，于是「在动」看着像「卡着」。
+ * 三条都只在进行中出现，终态一律静止：动效是用来表达「还在跑」的。
+ */
+describe('发布控制台 · 节奏', () => {
+  it('进度条跑动时是流动斜纹，终态静止', () => {
+    expect(CSS).toContain('.cds-progress-fill--running');
+    expect(CSS).toContain('@keyframes cds-progress-flow');
+    expect(CSS).toContain('background-size: 40px 40px');
+    // 只有 running 才挂 --running，终态不许一直流
+    expect(PAGE).toContain("${running ? 'cds-progress-fill--running' : ''}");
+  });
+
+  it('状态图标进行中呼吸，终态静止', () => {
+    expect(CSS).toContain('@keyframes cds-status-pulse');
+    expect(PAGE).toContain("${running ? 'cds-status-pulse' : ''}");
+  });
+
+  it('日志新行是落下来的，不是整块突然变长', () => {
+    expect(CSS).toContain('@keyframes cds-log-line-in');
+    expect(PAGE).toContain('className="cds-log-line flex gap-2.5"');
+  });
+
+  it('正在跑的那一步说出来，不只靠一个转圈图标', () => {
+    const list = PAGE.slice(PAGE.indexOf('{progress.steps.map((step)'), PAGE.indexOf('{progress.degraded ?'));
+    expect(list).toContain("step.state === 'running' ? (");
+    expect(list).toContain('运行中');
+    expect(list).toContain('transition-colors duration-200');
+  });
+
+  /** 三条动效都必须能被系统偏好关掉——这是本仓库对「克制动效」的一贯要求。 */
+  it('三条动效都走 prefers-reduced-motion 兜底', () => {
+    const block = CSS.slice(CSS.indexOf('.cds-progress-fill {'));
+    const reduce = block.slice(block.indexOf('@media (prefers-reduced-motion: reduce)'));
+    for (const cls of ['.cds-progress-fill--running', '.cds-status-pulse', '.cds-log-line']) {
+      expect(reduce.slice(0, 400), `${cls} 应当在 reduced-motion 里被关掉`).toContain(cls);
+    }
+  });
+});

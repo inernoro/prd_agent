@@ -3116,6 +3116,76 @@
     height: calc(100% + var(--cds-main-pt) + var(--cds-main-pb));
   }
 
+  /* ══ 发布控制台的节奏 ══════════════════════════════════════════════
+   *
+   * 参考稿 f8d4af4b 跑起来的时候是有节拍的：进度条在流、状态图标在呼吸、
+   * 日志一行行落下来。首版只搬了静态版式，一根实心条 + 一个转圈图标，
+   * 于是「在动」变成了「卡着」——用户原话「节奏性差很多」。
+   *
+   * 三条都只在进行中出现，终态一律静止：动效是用来表达「还在跑」的，
+   * 跑完了还在动就是噪音。全部走 prefers-reduced-motion 兜底。
+   */
+
+  /* 进度条：跑动时是流动的斜纹（参考稿 background-size:40px + barFlow）。
+     斜纹用白色低透明度叠在已经有颜色的填充条上，两个主题都成立，
+     所以不需要一对 token —— 它叠的是明度，不是自己定一个底色。 */
+  .cds-progress-fill {
+    transition: width 400ms ease;
+  }
+
+  .cds-progress-fill--running {
+    background-image: linear-gradient(
+      45deg,
+      hsl(0 0% 100% / 0.20) 25%,
+      transparent 25%,
+      transparent 50%,
+      hsl(0 0% 100% / 0.20) 50%,
+      hsl(0 0% 100% / 0.20) 75%,
+      transparent 75%,
+      transparent
+    );
+    background-size: 40px 40px;
+    animation: cds-progress-flow 1s linear infinite;
+  }
+
+  @keyframes cds-progress-flow {
+    from { background-position: 0 0; }
+    to { background-position: 40px 0; }
+  }
+
+  /* 状态图标：进行中时向外扩一圈光晕（参考稿 pulseRing）。
+     只有进行中会用到，所以颜色直接锁 primary，不做多态。 */
+  .cds-status-pulse {
+    animation: cds-status-pulse 2s ease-out infinite;
+  }
+
+  @keyframes cds-status-pulse {
+    0% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45); }
+    70% { box-shadow: 0 0 0 12px hsl(var(--primary) / 0); }
+    100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+  }
+
+  /* 日志：新的一行落下来，不是整块突然变长。
+     key 是 seq，已有行不会重挂，所以只有真正的新行会播这 180ms。 */
+  .cds-log-line {
+    animation: cds-log-line-in 180ms ease-out both;
+  }
+
+  @keyframes cds-log-line-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-progress-fill,
+    .cds-progress-fill--running,
+    .cds-status-pulse,
+    .cds-log-line {
+      animation: none;
+      transition: none;
+    }
+  }
+
 
   .cds-workspace-wide {
     max-width: var(--workspace-wide, 1440px);

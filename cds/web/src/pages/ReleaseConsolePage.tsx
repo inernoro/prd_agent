@@ -569,7 +569,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   className={`mb-1 flex w-full flex-col gap-1 rounded-[9px] border px-3 py-2.5 text-left transition-colors ${
                     item.id === projectId
                       ? 'border-primary/40 bg-primary/[0.08]'
-                      : 'border-transparent hover:border-[hsl(var(--hairline-strong))]'
+                      : 'border-transparent hover:border-[hsl(var(--hairline-strong))] hover:bg-[hsl(var(--surface-sunken))]/60'
                   }`}
                 >
                   <span className={`truncate text-[13px] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
@@ -610,7 +610,7 @@ export function ReleaseConsolePage(): JSX.Element {
                               setTargetId(item.target.id);
                               setRun(null); setLogs([]); setPreflight(null); setConfirmTargetId(null);
                             }}
-                            className={`flex items-center gap-2.5 rounded-[9px] border px-2.5 py-2 text-left ${
+                            className={`flex items-center gap-2.5 rounded-[9px] border px-2.5 py-2 text-left transition-colors duration-150 ${
                               selected
                                 ? 'border-primary/40 bg-primary/[0.08]'
                                 : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 hover:border-[hsl(var(--hairline-strong))]'
@@ -664,7 +664,8 @@ export function ReleaseConsolePage(): JSX.Element {
 
             <section className={`cds-surface-raised shrink-0 rounded-[14px] border px-5 py-[18px] ${toneRing}`}>
               <div className="flex flex-wrap items-center gap-[18px]">
-                <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[14px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
+                {/* 进行中时向外扩一圈光晕（参考稿 pulseRing）。终态静止。 */}
+                <div className={`flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[14px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] ${running ? 'cds-status-pulse' : ''}`}>
                   {running ? <Loader2 className="h-[22px] w-[22px] animate-spin text-primary" />
                     : failed ? <XCircle className="h-[22px] w-[22px] text-red-500" />
                     : shown ? <CheckCircle2 className="h-[22px] w-[22px] text-emerald-500" />
@@ -721,7 +722,9 @@ export function ReleaseConsolePage(): JSX.Element {
                   </div>
                   <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded bg-[hsl(var(--surface-sunken))]">
                     <div
-                      className={`h-full rounded transition-[width] duration-500 ${failed ? 'bg-red-500' : running ? 'bg-primary' : 'bg-emerald-500'}`}
+                      className={`cds-progress-fill h-full rounded ${running ? 'cds-progress-fill--running' : ''} ${
+                        failed ? 'bg-red-500' : running ? 'bg-primary' : 'bg-emerald-500'
+                      }`}
                       style={{ width: `${progress.steps.length ? Math.round((progress.steps.filter((s) => s.state === 'done').length / progress.steps.length) * 100) : 0}%` }}
                     />
                   </div>
@@ -870,14 +873,14 @@ export function ReleaseConsolePage(): JSX.Element {
               {/* 与右侧日志等高（参考稿 grid 两列 stretch）。之前用 self-start 让它按内容收高，
                   结果卡片底边下面空出一大块底色 —— 悬空的短卡读起来是「洞」，不是「省地方」。 */}
               <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border">
-                <div className="shrink-0 border-b border-[hsl(var(--hairline))] px-3.5 py-3">
+                <div className="shrink-0 border-b border-[hsl(var(--hairline)/0.6)] px-3.5 py-3">
                   <SectionLabel>Pipeline</SectionLabel>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto p-1.5 max-xl:max-h-64">
                   {progress.steps.map((step) => (
                     <div
                       key={step.id}
-                      className={`flex items-start gap-2.5 rounded-md px-2.5 py-2.5 ${
+                      className={`flex items-start gap-2.5 rounded-[9px] px-2.5 py-2.5 transition-colors duration-200 ${
                         step.state === 'failed' ? 'bg-red-500/[0.08]' : step.state === 'running' ? 'bg-primary/[0.08]' : ''
                       }`}
                     >
@@ -888,7 +891,13 @@ export function ReleaseConsolePage(): JSX.Element {
                           : <span className="ml-0.5 block h-2.5 w-2.5 rounded-full border border-[hsl(var(--hairline-strong))]" />}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className={`block truncate text-xs ${step.state === 'pending' ? 'text-muted-foreground' : ''}`}>{step.label}</span>
+                        <span className="flex items-center gap-2">
+                          <span className={`min-w-0 truncate text-xs ${step.state === 'pending' ? 'text-muted-foreground' : ''}`}>{step.label}</span>
+                          {/* 「哪一步正在跑」要说出来，不能只靠一个转圈图标（参考稿有这枚标签） */}
+                          {step.state === 'running' ? (
+                            <span className="shrink-0 cds-ident text-[10px] text-primary">运行中</span>
+                          ) : null}
+                        </span>
                         {/* 这一步实际跑的命令。计划里没有就不显示——不拿别的步骤的命令顶上。 */}
                         {stepDetails.get(step.id)?.command ? (
                           <span className="mt-0.5 block truncate cds-ident text-xs text-muted-foreground">
@@ -914,7 +923,7 @@ export function ReleaseConsolePage(): JSX.Element {
                 {/* 参考稿这一排是 24px 高的小按钮，不是常规 sm 按钮。
                     flex-wrap 保留：卡片 overflow-hidden，超宽会被直接裁掉
                     （实测过 scrollWidth 291 / clientWidth 244，半个按钮消失在卡外）。 */}
-                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-[hsl(var(--hairline))] px-3.5 py-2.5">
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-[hsl(var(--hairline)/0.6)] px-3.5 py-2.5">
                   <SectionLabel>Live output</SectionLabel>
                   <span className="flex flex-wrap items-center gap-2 [&>button]:h-6 [&>button]:rounded-md [&>button]:border [&>button]:border-[hsl(var(--hairline))] [&>button]:px-2.5 [&>button]:text-[11px]">
                     <button type="button" onClick={() => void copyLogs()} disabled={shownLogs.length === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-40">
@@ -944,7 +953,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   {shownLogs.length === 0 ? (
                     <p className="text-muted-foreground">还没有输出。点「开始发布」后，这里会逐行滚动。</p>
                   ) : shownLogs.map((log) => (
-                    <div key={log.seq} className="flex gap-2.5">
+                    <div key={log.seq} className="cds-log-line flex gap-2.5">
                       <span className="shrink-0 text-muted-foreground/60">{formatClock(log.at)}</span>
                       <span className={`min-w-0 whitespace-pre-wrap break-words ${LOG_TONE_CLASS[logLineTone(log.level, log.message)]}`}>
                         {log.message}
@@ -1009,7 +1018,7 @@ export function ReleaseConsolePage(): JSX.Element {
                       return (
                         <div
                           key={item.releaseId}
-                          className={`flex min-w-0 flex-col gap-[7px] rounded-[10px] border px-3 py-[11px] ${
+                          className={`flex min-w-0 flex-col gap-[7px] rounded-[10px] border px-3 py-[11px] transition-colors duration-150 hover:border-[hsl(var(--hairline-strong))] ${
                             itemFailed ? 'border-red-500/30 bg-red-500/[0.05]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50'
                           }`}
                         >
