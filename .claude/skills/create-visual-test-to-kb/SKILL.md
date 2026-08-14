@@ -27,7 +27,16 @@ metadata:
 | **CDS 归档 env**(默认 cds 模式) | 落 CDS 验收中心鉴权 | `CDS_HOST`(CDS 服务地址) + (`CDS_PROJECT_KEY`=项目级最小权限 key,推荐;或 `AI_ACCESS_KEY`=全局)。**禁止写进文件**,运行时 export |
 | **cdscli** | 取预览域名 + report/report-folder 命令 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
 
-`report.mode=local` 仅允许在断网排障时生成本机诊断草稿,默认写入 `/tmp/map-acceptance-local`;它不是验收报告,不得交付、通知或标记为完成。正式验收必须恢复 CDS 归档并通过线上 `verify-open`。任何临时产物都不得写入仓库内 `doc/acceptance/`。
+`report.mode=local` 仅允许在断网排障时配合归档命令的显式 `--local-diagnostic` 参数生成本机诊断草稿,默认写入 `/tmp/map-acceptance-local`;只改配置而不带参数会被拒绝。它不是验收报告,不得交付、通知或标记为完成。正式验收必须恢复 CDS 归档并通过线上 `verify-open`。任何临时产物都不得写入仓库内 `doc/acceptance/`。
+
+本地诊断沿用下文正式归档命令的全部必填参数,但配置必须为 `report.mode=local`,并额外添加:
+
+```bash
+python3 "$SKILLS_ROOT/create-visual-test-to-kb/scripts/archive_report.py" \
+  --local-diagnostic \
+  --config "$SKILLS_ROOT/create-visual-test-to-kb/acceptance.config.json" \
+  <其余报告与证据参数>
+```
 `report.format=html` 是每日验收默认交付格式。报告正文仍用 Markdown 写作,归档脚本会转换成交互 HTML,提供证据导航、指标卡、证据缩略图、表格筛选、章节折叠和图号锚点跳转。HTML 与 Markdown 必须使用不同模板:Markdown 保持审计文本结构不变,HTML 才启用更强的视觉和交互阅读层。只有下游系统明确要求 Markdown 时才改 `format=md`。
 
 接入新仓库:见文末"跨仓库复用",改 `acceptance.config.json` 一处即可。

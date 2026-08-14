@@ -1,9 +1,14 @@
 import importlib.util
+import json
 import pathlib
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
 SCRIPT = pathlib.Path(__file__).with_name("archive_report.py")
+CONFIG = SCRIPT.parent.parent / "acceptance.config.json"
 TEMPLATES = SCRIPT.parent.parent / "templates"
 STANDARD = SCRIPT.parent.parent / "reference" / "standard-v2.md"
 REPO_ROOT = SCRIPT.parents[4]
@@ -91,6 +96,62 @@ def report_body(nature: str, counts=(0, 0, 0, 0)) -> str:
 
 
 class DailyVerdictContractTests(unittest.TestCase):
+    def test_local_diagnostic_requires_explicit_flag_and_local_mode(self):
+        with self.assertRaisesRegex(ValueError, "正式验收报告只允许"):
+            archive_report.resolve_report_execution_mode("local")
+        with self.assertRaisesRegex(ValueError, "只接受 report.mode=local"):
+            archive_report.resolve_report_execution_mode("cds", local_diagnostic=True)
+        self.assertEqual(
+            "local",
+            archive_report.resolve_report_execution_mode("local", local_diagnostic=True),
+        )
+        self.assertEqual("cds", archive_report.resolve_report_execution_mode("cds"))
+
+    def test_local_diagnostic_cli_generates_non_delivery_draft(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+            cfg["report"]["mode"] = "local"
+            cfg["report"]["localOutDir"] = str(temp / "drafts")
+            config_path = temp / "acceptance.config.json"
+            report_path = temp / "report.md"
+            manifest_path = temp / "manifest.json"
+            config_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+            report_path.write_text("# 本地诊断草稿\n\n仅用于验证离线诊断链路。", encoding="utf-8")
+            manifest_path.write_text("[]", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--local-diagnostic",
+                    "--force",
+                    "--config",
+                    str(config_path),
+                    "--target",
+                    "离线诊断链路",
+                    "--report-date",
+                    "2026-08-14",
+                    "--verdict",
+                    "conditional",
+                    "--tier",
+                    "L0",
+                    "--report-md",
+                    str(report_path),
+                    "--manifest",
+                    str(manifest_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+            output = json.loads(result.stdout.splitlines()[-1])
+            self.assertEqual("local", output["mode"])
+            self.assertTrue(pathlib.Path(output["reportPath"]).is_file())
+            self.assertTrue(pathlib.Path(output["reportPath"]).is_relative_to(temp))
+
     def test_shipped_templates_have_one_exact_conclusion_section(self):
         for template_name in ("zz-report.md", "report-template.md"):
             with self.subTest(template=template_name):

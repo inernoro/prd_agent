@@ -9,8 +9,8 @@
     → 交互 HTML → POST /api/reports，
     按项目 + 文件夹归类，带 verdict / tier / 部署上下文元数据 → 出 /reports 直达深链。
     依赖 env：CDS_HOST + (CDS_PROJECT_KEY 或 AI_ACCESS_KEY)。
-  - local / doc-store：归档器会明确拒绝。离线文件只能由独立诊断流程生成，不能通过
-    正式归档入口产出，以免调用方把本地草稿误记为已完成验收。
+  - local / doc-store：正式归档入口会明确拒绝。离线文件只能显式传
+    --local-diagnostic 生成诊断草稿，以免调用方把本地草稿误记为已完成验收。
 
 用法：
   python3 archive_report.py \
@@ -50,6 +50,19 @@ def require_cds_report_mode(mode):
             "[归档拒绝] 正式验收报告只允许 report.mode=cds，并且必须完成线上 verify-open；"
             f"当前 mode={mode!r}。本地文件只能作为独立诊断草稿，不能由正式归档入口交付。"
         )
+
+
+def resolve_report_execution_mode(mode, local_diagnostic=False):
+    """Select an explicit delivery or diagnostic path without implicit fallback."""
+    if local_diagnostic:
+        if mode != "local":
+            raise ValueError(
+                "[诊断拒绝] --local-diagnostic 只接受 report.mode=local；"
+                f"当前 mode={mode!r}。正式 CDS 归档请移除该参数。"
+            )
+        return "local"
+    require_cds_report_mode(mode)
+    return "cds"
 
 DAILY_REQUIRED_SECTIONS = (
     "结论分层",
@@ -3668,7 +3681,7 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     print("说明：报告已入 CDS（验收能力的唯一归属）；MAP 等系统通过知识库开放协议从 CDS 拉取展示，无需另建验收知识库。")
 
 
-def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
+def run_local(cfg, a, title, report_id, body, manifest, now, tags=None):
     out_dir = cfg["report"].get("localOutDir") or LOCAL_DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     shot_dir = os.path.join(out_dir, report_id)
@@ -3682,6 +3695,7 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
         img_md[m["name"]] = f"![{m['caption']}]({rel})"
         figure_srcs[_figure_anchor(_figure_key(m["name"]))] = rel
         print(f"  拷贝截图 {m['name']} -> {dst}")
+    meta = build_meta(report_id, now, "local-diagnostic", a, "")
     content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
     fmt = report_format(cfg, "local")
     content = build_interactive_html(
@@ -4608,6 +4622,11 @@ def main():
         help="验收档案版本号；默认 v0.9。只接受显式人工改版，不根据 Verdict 自动升级",
     )
     ap.add_argument("--force", action="store_true", help="越过准入校验（仅在确知合理时用，会打印告警）")
+    ap.add_argument(
+        "--local-diagnostic",
+        action="store_true",
+        help="显式生成仓库外本地诊断草稿；要求 report.mode=local，产物不得交付或标记验收完成",
+    )
     a = ap.parse_args()
 
     cfg = json.load(open(a.config))
@@ -4615,7 +4634,7 @@ def main():
     # 否则调用方可能把本地草稿或旧知识库条目误记为已完成验收。
     mode = cfg.get("report", {}).get("mode", "cds")
     try:
-        require_cds_report_mode(mode)
+        execution_mode = resolve_report_execution_mode(mode, a.local_diagnostic)
     except ValueError as error:
         raise SystemExit(str(error)) from error
     now = datetime.datetime.now().astimezone()
@@ -4641,6 +4660,9 @@ def main():
     preview = (cfg.get("previewUrlOverride") or "").strip()
 
     try:
+        if execution_mode == "local":
+            run_local(cfg, a, title, report_id, body, manifest, now, tags)
+            return
         run_cds(cfg, a, title, report_id, body, manifest, now, tags)
     except Exception as e:
         import sys as _sys
