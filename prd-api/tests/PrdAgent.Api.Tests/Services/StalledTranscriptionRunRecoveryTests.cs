@@ -175,6 +175,82 @@ public sealed class StalledTranscriptionRunRecoveryTests
     }
 
     [Fact]
+    public async Task GenerationPublisher_ShouldRollbackWhenRunInsertDefinitelyFails()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = new DocumentEntry
+        {
+            Id = "entry-publish-rollback",
+            StoreId = "store-1",
+            Title = "录音.m4a",
+            AgentOutputGeneration = 7,
+        };
+        var run = Run(
+            "run-publish-rollback",
+            entry.Id,
+            "user-1",
+            "self",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            DocumentStoreRunGenerationPublisher.PublishAsync(
+                fixture.Db,
+                entry.Id,
+                run,
+                CancellationToken.None,
+                (_, _) => throw new InvalidOperationException("injected insert failure")));
+
+        var persistedEntry = await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync();
+        persistedEntry.AgentOutputGeneration.ShouldBe(7);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(r => r.Id == run.Id)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task GenerationPublisher_ShouldAcceptUnknownInsertOutcomeWhenRunExists()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var entry = new DocumentEntry
+        {
+            Id = "entry-publish-unknown",
+            StoreId = "store-1",
+            Title = "录音.m4a",
+            AgentOutputGeneration = 3,
+        };
+        var run = Run(
+            "run-publish-unknown",
+            entry.Id,
+            "user-1",
+            "self",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+
+        var published = await DocumentStoreRunGenerationPublisher.PublishAsync(
+            fixture.Db,
+            entry.Id,
+            run,
+            CancellationToken.None,
+            async (candidate, token) =>
+            {
+                await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(
+                    candidate,
+                    cancellationToken: token);
+                throw new TimeoutException("injected unknown result");
+            });
+
+        published.ShouldNotBeNull();
+        published.AgentOutputGeneration.ShouldBe(4);
+        (await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(4);
+        (await fixture.Db.DocumentStoreAgentRuns.Find(r => r.Id == run.Id).SingleAsync())
+            .OutputGeneration.ShouldBe(4);
+    }
+
+    [Fact]
     public async Task SupersededRun_ShouldImmediatelyBecomeTerminal_ExactlyOnce()
     {
         await using var fixture = await RecordingRunMongoFixture.CreateAsync();
@@ -266,6 +342,59 @@ public sealed class StalledTranscriptionRunRecoveryTests
         published.AgentOutputGeneration.ShouldBe(1);
         published.DocumentId.ShouldBe(ContentId(newNote));
         published.DocumentId.ShouldNotBeNull();
+        documents[published.DocumentId!].RawContent.ShouldBe(newNote);
+    }
+
+    [Fact]
+    public async Task PublishedTranscript_ShouldRemainSuccessfulWhenVersionSnapshotFails()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        const string oldNote = "# 转录全文\n\n旧原文";
+        const string newNote = "# 转录全文\n\n新原文";
+        var entry = new DocumentEntry
+        {
+            Id = "entry-snapshot-failure",
+            StoreId = "store-1",
+            Title = "录音笔记",
+            DocumentId = "doc-old",
+            AgentOutputGeneration = 1,
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+
+        var documents = new Dictionary<string, ParsedPrd>(StringComparer.Ordinal)
+        {
+            ["doc-old"] = Parsed("doc-old", oldNote),
+        };
+        var documentService = new Mock<IDocumentService>();
+        documentService.Setup(service => service.GetByIdAsync(It.IsAny<string>()))
+            .ReturnsAsync((string id) => documents.GetValueOrDefault(id));
+        documentService.Setup(service => service.ParseAsync(It.IsAny<string>()))
+            .ReturnsAsync((string content) => Parsed(ContentId(content), content));
+        documentService.Setup(service => service.SaveAsync(It.IsAny<ParsedPrd>()))
+            .ReturnsAsync((ParsedPrd document) =>
+            {
+                documents[document.Id] = document;
+                return document;
+            });
+        var snapshots = new FailingVersionSnapshotWriter();
+        var apply = new ContentReprocessApplyService(
+            documentService.Object,
+            new DocumentStoreAssetNormalizer(
+                new NullAssetStorage(),
+                NullLogger<DocumentStoreAssetNormalizer>.Instance),
+            snapshots,
+            NullLogger<ContentReprocessApplyService>.Instance);
+
+        await apply.SaveContentAsync(
+            entry,
+            newNote,
+            "user-1",
+            fixture.Db,
+            expectedOutputGeneration: entry.AgentOutputGeneration);
+
+        snapshots.Attempts.ShouldBe(2);
+        var published = await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync();
+        published.DocumentId.ShouldBe(ContentId(newNote));
         documents[published.DocumentId!].RawContent.ShouldBe(newNote);
     }
 
@@ -385,5 +514,25 @@ public sealed class StalledTranscriptionRunRecoveryTests
 
         public async ValueTask DisposeAsync()
             => await _client.DropDatabaseAsync(_databaseName);
+    }
+
+    private sealed class FailingVersionSnapshotWriter : IDocumentVersionSnapshotWriter
+    {
+        internal int Attempts { get; private set; }
+
+        public Task<DocumentEntryVersion?> SnapshotAsync(
+            string entryId,
+            string storeId,
+            string content,
+            string source,
+            string userId,
+            string? userName,
+            string? restoredFromVersionId = null,
+            CancellationToken ct = default)
+        {
+            Attempts++;
+            return Task.FromException<DocumentEntryVersion?>(
+                new InvalidOperationException("injected snapshot failure"));
+        }
     }
 }

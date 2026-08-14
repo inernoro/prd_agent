@@ -19,13 +19,13 @@ public class ContentReprocessApplyService
 {
     private readonly IDocumentService _documentService;
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
-    private readonly DocStoreServices.DocumentVersionService _versions;
+    private readonly DocStoreServices.IDocumentVersionSnapshotWriter _versions;
     private readonly ILogger<ContentReprocessApplyService> _logger;
 
     public ContentReprocessApplyService(
         IDocumentService documentService,
         DocumentStoreAssetNormalizer assetNormalizer,
-        DocStoreServices.DocumentVersionService versions,
+        DocStoreServices.IDocumentVersionSnapshotWriter versions,
         ILogger<ContentReprocessApplyService> logger)
     {
         _documentService = documentService;
@@ -262,12 +262,40 @@ public class ContentReprocessApplyService
 
         // 只有正文指针通过代次栅栏发布后才写版本历史。旧 Worker 即使恢复，也只能留下
         // 一个未被引用的内容寻址文档，不能污染用户可见正文或历史版本。
+        // 正文指针已经发布，版本快照属于后置维护，失败不能把已成功的转录任务反标为失败。
+        // 两份快照独立尝试，便于下一次保存或维护任务补齐其中缺失的一份。
         if (oldContent != null)
-            await _versions.SnapshotAsync(entry.Id, entry.StoreId, oldContent, DocumentVersionSource.Edit, actorId, null);
-        await _versions.SnapshotAsync(entry.Id, entry.StoreId, content, DocumentVersionSource.Edit, actorId, null);
+            await TrySnapshotPublishedContentAsync(entry, oldContent, actorId, "before");
+        await TrySnapshotPublishedContentAsync(entry, content, actorId, "after");
 
         _logger.LogInformation(
             "[doc-store-agent] Apply entry={EntryId} chars={Len}", entry.Id, content.Length);
+    }
+
+    private async Task TrySnapshotPublishedContentAsync(
+        DocumentEntry entry,
+        string content,
+        string actorId,
+        string position)
+    {
+        try
+        {
+            await _versions.SnapshotAsync(
+                entry.Id,
+                entry.StoreId,
+                content,
+                DocumentVersionSource.Edit,
+                actorId,
+                null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "[doc-store-agent] Published content snapshot failed entry={EntryId} position={Position}",
+                entry.Id,
+                position);
+        }
     }
 
     private static string BuildOutputTitle(string srcTitle)

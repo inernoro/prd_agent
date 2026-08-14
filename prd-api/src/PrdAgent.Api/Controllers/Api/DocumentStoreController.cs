@@ -5464,15 +5464,6 @@ public class DocumentStoreController : ControllerBase
             prior.SourceEntryId,
             DocumentStoreAgentRunKind.Transcribe,
             CancellationToken.None);
-        var generationFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, noteEntry!.Id);
-        var generationEntry = await _db.DocumentEntries.FindOneAndUpdateAsync(
-            generationFilter,
-            Builders<DocumentEntry>.Update.Inc(e => e.AgentOutputGeneration, 1),
-            new FindOneAndUpdateOptions<DocumentEntry, DocumentEntry> { ReturnDocument = ReturnDocument.After },
-            CancellationToken.None);
-        if (generationEntry == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录笔记不存在"));
-
         var run = new DocumentStoreAgentRun
         {
             Kind = DocumentStoreAgentRunKind.Transcribe,
@@ -5483,13 +5474,18 @@ public class DocumentStoreController : ControllerBase
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
             RestyleOfRunId = prior.Id,
-            OutputGeneration = generationEntry.AgentOutputGeneration,
             TemplateKey = request.StyleKey?.Trim().ToLowerInvariant(),
             CustomPrompt = string.IsNullOrWhiteSpace(request.CustomPrompt) ? null : request.CustomPrompt.Trim(),
             StyleContext = string.IsNullOrWhiteSpace(request.StyleContext) ? null : request.StyleContext.Trim(),
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
-        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        var generationEntry = await DocumentStoreRunGenerationPublisher.PublishAsync(
+            _db,
+            noteEntry!.Id,
+            run,
+            CancellationToken.None);
+        if (generationEntry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录笔记不存在"));
 
         _logger.LogInformation(
             "[doc-store-agent] transcribe restyle queued: {RunId} prior={PriorId} style={Style}",
@@ -5615,19 +5611,6 @@ public class DocumentStoreController : ControllerBase
         // 刻意取舍（用户 2026-06-18 确认「各自处理」）：宁可两个部署各转一次（共享 Mongo 下
         // 偶发重复，真实部署处理端基本单实例，重复罕见），也不让本实例的用户卡等一个可能跑旧
         // 代码/已下线实例的 run（那正是定向消费要根治的「被别人消费」原 bug 的反向版本）。
-        var outputGeneration = entry.AgentOutputGeneration;
-        if (kind == DocumentStoreAgentRunKind.Transcribe)
-        {
-            var generationFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, entryId);
-            var generationEntry = await _db.DocumentEntries.FindOneAndUpdateAsync(
-                generationFilter,
-                Builders<DocumentEntry>.Update.Inc(e => e.AgentOutputGeneration, 1),
-                new FindOneAndUpdateOptions<DocumentEntry, DocumentEntry> { ReturnDocument = ReturnDocument.After },
-                CancellationToken.None);
-            if (generationEntry == null)
-                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));
-            outputGeneration = generationEntry.AgentOutputGeneration;
-        }
         var run = new DocumentStoreAgentRun
         {
             Kind = kind,
@@ -5637,13 +5620,26 @@ public class DocumentStoreController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
-            OutputGeneration = outputGeneration,
+            OutputGeneration = entry.AgentOutputGeneration,
             TemplateKey = reqTemplateKey,
             CustomPrompt = reqCustomPrompt,
             StyleContext = reqStyleContext,
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
-        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var generationEntry = await DocumentStoreRunGenerationPublisher.PublishAsync(
+                _db,
+                entryId,
+                run,
+                CancellationToken.None);
+            if (generationEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));
+        }
+        else
+        {
+            await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        }
 
         _logger.LogInformation("[doc-store-agent] {Kind} run queued: {RunId} entry={EntryId}", kind, run.Id, entryId);
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
