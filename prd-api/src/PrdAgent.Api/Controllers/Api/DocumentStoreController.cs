@@ -5461,7 +5461,7 @@ public class DocumentStoreController : ControllerBase
         // 新代次，使较早启动但较晚返回的任务无法覆盖用户刚得到的新原文。
         await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
             _db,
-            prior.SourceEntryId,
+            noteEntry!.Id,
             DocumentStoreAgentRunKind.Transcribe,
             CancellationToken.None);
         var run = new DocumentStoreAgentRun

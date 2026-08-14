@@ -30,3 +30,5 @@
 | fix | prd-api | 首次转录任务改为 marker-first 两阶段发布，并由周期协调收敛未知 Mongo 写入结果 |
 | test | prd-api | 补齐任务 marker 写入与回读双失败、重启续跑和唯一代次发布的真实 Mongo 回归 |
 | fix | prd-api | 相同录音整理请求在 marker 后台收敛后复用原任务，避免 HTTP 重试重复推进代次 |
+| fix | prd-api | 转录任务 marker 持久化独立代次目标，兼容源音频与旧版输出笔记分离的整理恢复 |
+| test | prd-api | 补齐旧版独立转录笔记恢复只推进输出笔记且复用同一任务的真实 Mongo 回归 |

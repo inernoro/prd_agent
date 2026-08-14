@@ -167,9 +167,14 @@ public class DocumentStoreAgentWorker : BackgroundService
         {
             try
             {
+                var generationEntryId = await DocumentStoreRunGenerationPublisher
+                    .ResolveAndBackfillGenerationEntryIdAsync(
+                        db,
+                        candidate,
+                        CancellationToken.None);
                 await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
                     db,
-                    candidate.SourceEntryId,
+                    generationEntryId,
                     candidate.Kind,
                     CancellationToken.None);
                 await DocumentStoreRunGenerationPublisher.ReconcilePublishingRunAsync(
@@ -177,6 +182,14 @@ public class DocumentStoreAgentWorker : BackgroundService
                     candidate.Id,
                     outputLease,
                     CancellationToken.None);
+            }
+            catch (DocumentStoreGenerationTargetUnresolvedException ex)
+            {
+                await FailUnresolvedGenerationTargetAsync(db, candidate.Id, ex.Message);
+                _logger.LogError(
+                    ex,
+                    "[doc-store-agent] Pending run creation has no recoverable output target {RunId}",
+                    candidate.Id);
             }
             catch (Exception ex)
             {
@@ -244,9 +257,14 @@ public class DocumentStoreAgentWorker : BackgroundService
                 // AutoLink 等知识库级任务没有 SourceEntryId，属于合法模型，不应强行取得条目锁。
                 if (!string.IsNullOrWhiteSpace(candidate.SourceEntryId))
                 {
+                    var generationEntryId = await DocumentStoreRunGenerationPublisher
+                        .ResolveAndBackfillGenerationEntryIdAsync(
+                            db,
+                            candidate,
+                            CancellationToken.None);
                     outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
                         db,
-                        candidate.SourceEntryId,
+                        generationEntryId,
                         candidate.Kind,
                         CancellationToken.None);
                 }
@@ -256,6 +274,11 @@ public class DocumentStoreAgentWorker : BackgroundService
                         recoveryCandidateFilter))
                     .FirstOrDefaultAsync(CancellationToken.None);
                 if (current == null) continue;
+
+                await DocumentStoreRunGenerationPublisher.ResolveAndBackfillGenerationEntryIdAsync(
+                    db,
+                    current,
+                    CancellationToken.None);
 
                 if (outputLease != null)
                     await outputLease.EnsureHeldAsync(CancellationToken.None);
@@ -293,7 +316,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                             recoverFilter);
                     var generationEntry = await DocumentStoreRunGenerationPublisher.RequeueExistingAsync(
                         db,
-                        current.SourceEntryId,
+                        DocumentStoreRunGenerationPublisher.ResolveGenerationEntryId(current),
                         current,
                         outputLease!,
                         recoveryAttemptId,
@@ -363,6 +386,14 @@ public class DocumentStoreAgentWorker : BackgroundService
                     recovered++;
                 }
             }
+            catch (DocumentStoreGenerationTargetUnresolvedException ex)
+            {
+                await FailUnresolvedGenerationTargetAsync(db, candidate.Id, ex.Message);
+                _logger.LogError(
+                    ex,
+                    "[doc-store-agent] Interrupted run has no recoverable output target {RunId}",
+                    candidate.Id);
+            }
             catch (Exception ex)
             {
                 _logger.LogError(
@@ -384,6 +415,32 @@ public class DocumentStoreAgentWorker : BackgroundService
                 recovered);
         }
     }
+
+    private static Task FailUnresolvedGenerationTargetAsync(
+        MongoDbContext db,
+        string runId,
+        string errorMessage)
+        => db.DocumentStoreAgentRuns.UpdateOneAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(run => run.Id, runId),
+                Builders<DocumentStoreAgentRun>.Filter.In(
+                    run => run.Status,
+                    [DocumentStoreRunStatus.Publishing, DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running]),
+                Builders<DocumentStoreAgentRun>.Filter.Or(
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(run => run.GenerationEntryId, string.Empty),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(run => run.GenerationEntryId, null!),
+                    Builders<DocumentStoreAgentRun>.Filter.Exists(run => run.GenerationEntryId, false))),
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(run => run.Status, DocumentStoreRunStatus.Failed)
+                .Set(run => run.Phase, "转录输出目标无法恢复")
+                .Set(run => run.ErrorMessage, errorMessage)
+                .Set(run => run.FailureCode, "TRANSCRIPTION_GENERATION_TARGET_UNRESOLVED")
+                .Set(run => run.EndedAt, DateTime.UtcNow)
+                .Set(run => run.HeartbeatAt, null)
+                .Set(run => run.ExecutionId, string.Empty)
+                .Set(run => run.AutomaticRetryNextAt, null)
+                .Set(run => run.AutomaticRetryReason, null),
+            cancellationToken: CancellationToken.None);
 
     private async Task ProcessNextRunAsync()
     {

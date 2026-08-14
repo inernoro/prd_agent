@@ -78,6 +78,12 @@ public class DocumentStoreAgentRun
     /// <summary>创建任务时取得的条目产物代次；终态写入必须与条目当前代次一致。</summary>
     public long OutputGeneration { get; set; }
 
+    /// <summary>
+    /// OutputGeneration 所属的目标条目。SourceEntryId 始终表示输入来源；旧版独立转录
+    /// 笔记的 restyle 会写 OutputEntryId，因此两者不能混用。
+    /// </summary>
+    public string GenerationEntryId { get; set; } = string.Empty;
+
     /// <summary>再加工模板 key（summary/minutes/blog/custom）；转录任务复用为整理方式 key（general/meeting/interview/todo/custom）</summary>
     public string? TemplateKey { get; set; }
 

@@ -306,7 +306,7 @@ public class SubtitleGenerationProcessor
 
         await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
             db,
-            run.SourceEntryId,
+            DocumentStoreRunGenerationPublisher.ResolveGenerationEntryId(run),
             run.Kind,
             CancellationToken.None);
         await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
@@ -461,7 +461,7 @@ public class SubtitleGenerationProcessor
 
         await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
             db,
-            run.SourceEntryId,
+            DocumentStoreRunGenerationPublisher.ResolveGenerationEntryId(run),
             run.Kind,
             CancellationToken.None);
         await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(

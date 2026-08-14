@@ -27,6 +27,7 @@ internal static class DocumentStoreRunGenerationPublisher
             .FirstOrDefaultAsync(cancellationToken);
         if (generationEntry == null)
             return null;
+        run.GenerationEntryId = generationEntryId;
 
         // restyle 的首次响应可能在 marker 已落库后丢失。周期 Worker 若已把它收敛为
         // queued/running，HTTP 重试必须复用同一精确请求，不能再推进一代并制造必然
@@ -34,12 +35,18 @@ internal static class DocumentStoreRunGenerationPublisher
         if (!string.IsNullOrWhiteSpace(run.RestyleOfRunId))
         {
             var inFlightRestyles = await db.DocumentStoreAgentRuns
-                .Find(candidate => candidate.SourceEntryId == generationEntryId
-                                   && candidate.Kind == DocumentStoreAgentRunKind.Transcribe
-                                   && candidate.UserId == run.UserId
-                                   && candidate.RestyleOfRunId == run.RestyleOfRunId
-                                   && (candidate.Status == DocumentStoreRunStatus.Queued
-                                       || candidate.Status == DocumentStoreRunStatus.Running))
+                .Find(Builders<DocumentStoreAgentRun>.Filter.And(
+                    RequestGenerationEntryFilter(generationEntryId, run),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(
+                        candidate => candidate.Kind,
+                        DocumentStoreAgentRunKind.Transcribe),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(candidate => candidate.UserId, run.UserId),
+                    Builders<DocumentStoreAgentRun>.Filter.Eq(
+                        candidate => candidate.RestyleOfRunId,
+                        run.RestyleOfRunId),
+                    Builders<DocumentStoreAgentRun>.Filter.In(
+                        candidate => candidate.Status,
+                        [DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running])))
                 .ToListAsync(cancellationToken);
             var reusable = inFlightRestyles.FirstOrDefault(candidate =>
                 candidate.OutputGeneration == generationEntry.AgentOutputGeneration
@@ -56,13 +63,19 @@ internal static class DocumentStoreRunGenerationPublisher
         // 先收敛同一条目的遗留 publishing marker，避免上一次响应丢失后再次点击
         // 产生两个持有同一 base generation 的 marker。
         var pendingMarkers = await db.DocumentStoreAgentRuns
-            .Find(candidate => candidate.SourceEntryId == generationEntryId
-                               && candidate.Kind == DocumentStoreAgentRunKind.Transcribe
-                               && candidate.Status == DocumentStoreRunStatus.Publishing)
+            .Find(Builders<DocumentStoreAgentRun>.Filter.And(
+                RequestGenerationEntryFilter(generationEntryId, run),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    candidate => candidate.Kind,
+                    DocumentStoreAgentRunKind.Transcribe),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    candidate => candidate.Status,
+                    DocumentStoreRunStatus.Publishing)))
             .SortBy(candidate => candidate.CreatedAt)
             .ToListAsync(cancellationToken);
         foreach (var marker in pendingMarkers)
         {
+            await ResolveAndBackfillGenerationEntryIdAsync(db, marker, cancellationToken);
             var reconciledEntry = await ReconcilePublishingRunAsync(
                 db,
                 marker.Id,
@@ -150,17 +163,19 @@ internal static class DocumentStoreRunGenerationPublisher
             .FirstOrDefaultAsync(cancellationToken);
         if (marker == null)
             return null;
+        await ResolveAndBackfillGenerationEntryIdAsync(db, marker, cancellationToken);
         if (marker.Status != DocumentStoreRunStatus.Publishing)
         {
             return await db.DocumentEntries
-                .Find(entry => entry.Id == marker.SourceEntryId)
+                .Find(entry => entry.Id == ResolveGenerationEntryId(marker))
                 .FirstOrDefaultAsync(cancellationToken);
         }
 
+        var generationEntryId = ResolveGenerationEntryId(marker);
         var baseGeneration = marker.OutputGeneration;
         var nextGeneration = checked(baseGeneration + 1);
         var entry = await db.DocumentEntries
-            .Find(candidate => candidate.Id == marker.SourceEntryId)
+            .Find(candidate => candidate.Id == generationEntryId)
             .FirstOrDefaultAsync(cancellationToken);
         if (entry == null)
         {
@@ -170,9 +185,9 @@ internal static class DocumentStoreRunGenerationPublisher
                        && run.OutputGeneration == baseGeneration,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(run => run.Status, DocumentStoreRunStatus.Failed)
-                    .Set(run => run.Phase, "源录音不存在")
-                    .Set(run => run.ErrorMessage, "源录音已不存在，任务无法继续。")
-                    .Set(run => run.FailureCode, "SOURCE_ENTRY_NOT_FOUND")
+                    .Set(run => run.Phase, "转录输出目标不存在")
+                    .Set(run => run.ErrorMessage, "转录输出目标已不存在，任务无法继续。")
+                    .Set(run => run.FailureCode, "TRANSCRIPTION_OUTPUT_TARGET_NOT_FOUND")
                     .Set(run => run.EndedAt, DateTime.UtcNow),
                 cancellationToken: cancellationToken);
             return null;
@@ -187,7 +202,7 @@ internal static class DocumentStoreRunGenerationPublisher
                     Builders<DocumentEntry>.Filter.And(
                         Builders<DocumentEntry>.Filter.Eq(
                             candidate => candidate.Id,
-                            marker.SourceEntryId),
+                            generationEntryId),
                         Builders<DocumentEntry>.Filter.Eq(
                             candidate => candidate.AgentOutputGeneration,
                             baseGeneration)),
@@ -203,7 +218,7 @@ internal static class DocumentStoreRunGenerationPublisher
             catch
             {
                 entry = await db.DocumentEntries
-                    .Find(candidate => candidate.Id == marker.SourceEntryId)
+                    .Find(candidate => candidate.Id == generationEntryId)
                     .FirstOrDefaultAsync(cancellationToken);
                 if (entry?.AgentOutputGeneration != nextGeneration)
                     throw;
@@ -450,6 +465,7 @@ internal static class DocumentStoreRunGenerationPublisher
            && existing.UserId == expected.UserId
            && existing.Kind == expected.Kind
            && existing.Status == DocumentStoreRunStatus.Publishing
+           && ResolveGenerationEntryId(existing) == ResolveGenerationEntryId(expected)
            && existing.OutputGeneration == expected.OutputGeneration;
 
     private static bool MatchesSameRequest(
@@ -460,10 +476,81 @@ internal static class DocumentStoreRunGenerationPublisher
            && existing.UserId == requested.UserId
            && existing.Kind == requested.Kind
            && existing.OwnerInstanceId == requested.OwnerInstanceId
+           && ResolveGenerationEntryId(existing) == ResolveGenerationEntryId(requested)
            && existing.RestyleOfRunId == requested.RestyleOfRunId
            && existing.TemplateKey == requested.TemplateKey
            && existing.CustomPrompt == requested.CustomPrompt
            && existing.StyleContext == requested.StyleContext;
+
+    internal static string ResolveGenerationEntryId(DocumentStoreAgentRun run)
+        => string.IsNullOrWhiteSpace(run.GenerationEntryId)
+            ? run.SourceEntryId
+            : run.GenerationEntryId;
+
+    internal static async Task<string> ResolveAndBackfillGenerationEntryIdAsync(
+        MongoDbContext db,
+        DocumentStoreAgentRun run,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(run.GenerationEntryId))
+            return run.GenerationEntryId;
+        if (string.IsNullOrWhiteSpace(run.RestyleOfRunId))
+            return run.SourceEntryId;
+
+        var prior = await db.DocumentStoreAgentRuns
+            .Find(candidate => candidate.Id == run.RestyleOfRunId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (prior == null || string.IsNullOrWhiteSpace(prior.OutputEntryId))
+        {
+            throw new DocumentStoreGenerationTargetUnresolvedException(
+                $"整理任务 {run.Id} 无法解析输出代次目标，已停止恢复以保护源录音。");
+        }
+
+        var generationEntryId = prior.OutputEntryId;
+        await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(candidate => candidate.Id, run.Id),
+                MissingGenerationEntryFilter()),
+            Builders<DocumentStoreAgentRun>.Update.Set(
+                candidate => candidate.GenerationEntryId,
+                generationEntryId),
+            cancellationToken: cancellationToken);
+        run.GenerationEntryId = generationEntryId;
+        return generationEntryId;
+    }
+
+    private static FilterDefinition<DocumentStoreAgentRun> RequestGenerationEntryFilter(
+        string entryId,
+        DocumentStoreAgentRun requested)
+    {
+        var filter = Builders<DocumentStoreAgentRun>.Filter;
+        if (string.IsNullOrWhiteSpace(requested.RestyleOfRunId))
+            return GenerationEntryFilter(entryId);
+        return filter.Or(
+            GenerationEntryFilter(entryId),
+            filter.And(
+                MissingGenerationEntryFilter(),
+                filter.Eq(run => run.RestyleOfRunId, requested.RestyleOfRunId)));
+    }
+
+    private static FilterDefinition<DocumentStoreAgentRun> GenerationEntryFilter(string entryId)
+    {
+        var filter = Builders<DocumentStoreAgentRun>.Filter;
+        return filter.Or(
+            filter.Eq(run => run.GenerationEntryId, entryId),
+            filter.And(
+                MissingGenerationEntryFilter(),
+                filter.Eq(run => run.SourceEntryId, entryId)));
+    }
+
+    private static FilterDefinition<DocumentStoreAgentRun> MissingGenerationEntryFilter()
+    {
+        var filter = Builders<DocumentStoreAgentRun>.Filter;
+        return filter.Or(
+            filter.Eq(run => run.GenerationEntryId, string.Empty),
+            filter.Eq(run => run.GenerationEntryId, null!),
+            filter.Exists(run => run.GenerationEntryId, false));
+    }
 
     private static bool MatchesRecoveredRun(
         DocumentStoreAgentRun? existing,
@@ -495,3 +582,6 @@ internal static class DocumentStoreRunGenerationPublisher
            && existing.RecoveryAttemptId == recoveryAttemptId
            && existing.PendingRecoveryOutputGeneration == outputGeneration;
 }
+
+internal sealed class DocumentStoreGenerationTargetUnresolvedException(string message)
+    : InvalidOperationException(message);

@@ -382,7 +382,8 @@ public sealed class StalledTranscriptionRunRecoveryTests
                 .ShouldBe(0);
         }
 
-        await CreateRecoveryWorker(fixture).RecoverPendingRunCreationsAsync();
+        var worker = CreateRecoveryWorker(fixture);
+        await worker.RecoverPendingRunCreationsAsync();
 
         var recovered = await fixture.Db.DocumentStoreAgentRuns
             .Find(item => item.Id == run.Id)
@@ -502,6 +503,230 @@ public sealed class StalledTranscriptionRunRecoveryTests
         (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
                 item => item.SourceEntryId == entry.Id && item.RestyleOfRunId == firstRun.RestyleOfRunId))
             .ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task PendingLegacyRestyle_ShouldAdvanceOnlyOutputNoteGenerationAndReuseRecoveredRun()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var sourceAudio = RecoveryEntry("entry-legacy-restyle-audio", 20);
+        var outputNote = RecoveryEntry("entry-legacy-restyle-note", 5);
+        var firstRun = Run(
+            "run-legacy-restyle-original",
+            sourceAudio.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued,
+            "meeting");
+        firstRun.RestyleOfRunId = "prior-legacy-transcribe-run";
+        firstRun.StyleContext = "参会人：甲、乙";
+        await fixture.Db.DocumentEntries.InsertManyAsync([sourceAudio, outputNote]);
+
+        await using (var firstLease = await DocumentStoreRunOutputLease.AcquireAsync(
+                         fixture.Db,
+                         outputNote.Id,
+                         firstRun.Kind,
+                         CancellationToken.None))
+        {
+            await Should.ThrowAsync<InvalidOperationException>(() =>
+                DocumentStoreRunGenerationPublisher.PublishAsync(
+                    fixture.Db,
+                    outputNote.Id,
+                    firstRun,
+                    firstLease,
+                    CancellationToken.None,
+                    async (candidate, token) =>
+                    {
+                        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(
+                            candidate,
+                            cancellationToken: token);
+                        throw new TimeoutException("injected legacy marker response loss");
+                    },
+                    (_, _) => throw new TimeoutException("injected legacy marker readback outage")));
+        }
+
+        var marker = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == firstRun.Id)
+            .SingleAsync();
+        marker.Status.ShouldBe(DocumentStoreRunStatus.Publishing);
+        marker.SourceEntryId.ShouldBe(sourceAudio.Id);
+        marker.GenerationEntryId.ShouldBe(outputNote.Id);
+        await CreateRecoveryWorker(fixture).RecoverPendingRunCreationsAsync();
+
+        var recovered = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == firstRun.Id)
+            .SingleAsync();
+        recovered.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        recovered.GenerationEntryId.ShouldBe(outputNote.Id);
+        recovered.OutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == outputNote.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == sourceAudio.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(20);
+
+        var retry = Run(
+            "run-legacy-restyle-http-retry",
+            sourceAudio.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow.AddSeconds(1),
+            null,
+            DocumentStoreRunStatus.Queued,
+            firstRun.TemplateKey);
+        retry.RestyleOfRunId = firstRun.RestyleOfRunId;
+        retry.StyleContext = firstRun.StyleContext;
+        await using var retryLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            outputNote.Id,
+            retry.Kind,
+            CancellationToken.None);
+
+        var published = await DocumentStoreRunGenerationPublisher.PublishAsync(
+            fixture.Db,
+            outputNote.Id,
+            retry,
+            retryLease,
+            CancellationToken.None);
+
+        published.ShouldNotBeNull();
+        retry.Id.ShouldBe(firstRun.Id);
+        retry.GenerationEntryId.ShouldBe(outputNote.Id);
+        retry.OutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == outputNote.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == sourceAudio.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(20);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+                item => item.SourceEntryId == sourceAudio.Id
+                        && item.RestyleOfRunId == firstRun.RestyleOfRunId))
+            .ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task LegacyPublishingRestyleWithoutGenerationTarget_ShouldBackfillOutputNoteAndRecover()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var sourceAudio = RecoveryEntry("entry-legacy-source-before-upgrade", 20);
+        var outputNote = RecoveryEntry("entry-legacy-note-before-upgrade", 5);
+        var prior = Run(
+            "run-legacy-prior-before-upgrade",
+            sourceAudio.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow.AddMinutes(-3),
+            null,
+            DocumentStoreRunStatus.Done,
+            "general");
+        prior.OutputEntryId = outputNote.Id;
+        prior.OutputGeneration = 5;
+        var marker = Run(
+            "run-legacy-marker-before-upgrade",
+            sourceAudio.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow.AddMinutes(-2),
+            null,
+            DocumentStoreRunStatus.Publishing,
+            "meeting");
+        marker.RestyleOfRunId = prior.Id;
+        marker.StyleContext = "参会人：甲、乙";
+        marker.OutputGeneration = 5;
+
+        await fixture.Db.DocumentEntries.InsertManyAsync([sourceAudio, outputNote]);
+        await fixture.Db.DocumentStoreAgentRuns.InsertManyAsync([prior, marker]);
+        await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            item => item.Id == marker.Id,
+            Builders<DocumentStoreAgentRun>.Update.Unset(item => item.GenerationEntryId));
+
+        await CreateRecoveryWorker(fixture).RecoverPendingRunCreationsAsync();
+
+        var recovered = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == marker.Id)
+            .SingleAsync();
+        recovered.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        recovered.GenerationEntryId.ShouldBe(outputNote.Id);
+        recovered.OutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == outputNote.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == sourceAudio.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(20);
+
+        var retry = Run(
+            "run-legacy-marker-http-retry",
+            sourceAudio.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow,
+            null,
+            DocumentStoreRunStatus.Queued,
+            marker.TemplateKey);
+        retry.RestyleOfRunId = prior.Id;
+        retry.StyleContext = marker.StyleContext;
+        await using var lease = await DocumentStoreRunOutputLease.AcquireAsync(
+            fixture.Db,
+            outputNote.Id,
+            retry.Kind,
+            CancellationToken.None);
+        var published = await DocumentStoreRunGenerationPublisher.PublishAsync(
+            fixture.Db,
+            outputNote.Id,
+            retry,
+            lease,
+            CancellationToken.None);
+
+        published.ShouldNotBeNull();
+        retry.Id.ShouldBe(marker.Id);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+                item => item.SourceEntryId == sourceAudio.Id
+                        && item.RestyleOfRunId == prior.Id))
+            .ShouldBe(1);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == outputNote.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(6);
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == sourceAudio.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(20);
+    }
+
+    [Fact]
+    public async Task LegacyPublishingRestyleWithoutPriorOutput_ShouldNotAdvanceSourceGeneration()
+    {
+        await using var fixture = await RecordingRunMongoFixture.CreateAsync();
+        var sourceAudio = RecoveryEntry("entry-legacy-source-without-prior", 20);
+        var marker = Run(
+            "run-legacy-marker-without-prior",
+            sourceAudio.Id,
+            "user-1",
+            "prd-agent:test::main",
+            DateTime.UtcNow.AddMinutes(-2),
+            null,
+            DocumentStoreRunStatus.Publishing,
+            "meeting");
+        marker.RestyleOfRunId = "missing-prior-run";
+        marker.OutputGeneration = 5;
+        await fixture.Db.DocumentEntries.InsertOneAsync(sourceAudio);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(marker);
+        await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            item => item.Id == marker.Id,
+            Builders<DocumentStoreAgentRun>.Update.Unset(item => item.GenerationEntryId));
+
+        var worker = CreateRecoveryWorker(fixture);
+        await worker.RecoverPendingRunCreationsAsync();
+
+        (await fixture.Db.DocumentEntries.Find(item => item.Id == sourceAudio.Id).SingleAsync())
+            .AgentOutputGeneration.ShouldBe(20);
+        var preserved = await fixture.Db.DocumentStoreAgentRuns
+            .Find(item => item.Id == marker.Id)
+            .SingleAsync();
+        preserved.Status.ShouldBe(DocumentStoreRunStatus.Failed);
+        preserved.GenerationEntryId.ShouldBeEmpty();
+        preserved.FailureCode.ShouldBe("TRANSCRIPTION_GENERATION_TARGET_UNRESOLVED");
+        preserved.EndedAt.ShouldNotBeNull();
+        var endedAt = preserved.EndedAt;
+
+        await worker.RecoverPendingRunCreationsAsync();
+        (await fixture.Db.DocumentStoreAgentRuns.Find(item => item.Id == marker.Id).SingleAsync())
+            .EndedAt.ShouldBe(endedAt);
     }
 
     [Fact]
