@@ -131,14 +131,18 @@ describe('归因指标：算不出的那一块直接不出，归因从真实数�
     ]);
     const byKey = Object.fromEntries(metrics.map((m) => [m.key, m]));
     expect(byKey.deploys.value).toBe('55 次');
-    expect(byKey.deploys.attribution).toBe('staging 占 41 次');
+    expect(byKey.deploys.attributionName).toBe('staging');
+    expect(byKey.deploys.attributionDetail).toBe('占 41 次');
     // 变更失败率取最高的那个环境，不是拍一个写死的名字
     expect(byKey.changeFailure.value).toBe('7.10%');
-    expect(byKey.changeFailure.attribution).toBe('prod-main 最高');
-    expect(byKey.recovery.attribution).toBe('staging 为 1 小时 48 分');
+    expect(byKey.changeFailure.attributionName).toBe('prod-main');
+    expect(byKey.changeFailure.attributionDetail).toBe('最高');
+    expect(byKey.recovery.attributionName).toBe('staging');
+    expect(byKey.recovery.attributionDetail).toBe('为 1 小时 48 分');
     expect(byKey.behind.value).toBe('48 个提交');
     // 两个环境时中位数是两者均值 25.5，不是「取上面那个」（那会得出 +0%，读作没差距）
-    expect(byKey.behind.attribution).toBe('staging · 中位数的 +88%');
+    expect(byKey.behind.attributionName).toBe('staging');
+    expect(byKey.behind.attributionDetail).toBe('中位数的 +88%');
   });
 
   it('超过三倍才换 ×N 量纲', () => {
@@ -147,12 +151,14 @@ describe('归因指标：算不出的那一块直接不出，归因从真实数�
       env({ id: 'b', name: 'stg', behindMain: 3 }),
       env({ id: 'c', name: 'docs-site', behindMain: 48 }),
     ]);
-    expect(metrics.find((m) => m.key === 'behind')?.attribution).toBe('docs-site · 中位数的 ×16');
+    expect(metrics.find((m) => m.key === 'behind')?.attributionDetail).toBe('中位数的 ×16');
   });
 
   it('只有一个环境时不说「中位数的 +0%」那种废话', () => {
     const metrics = buildFleetMetrics([env({ name: 'only', behindMain: 7 })]);
-    expect(metrics.find((m) => m.key === 'behind')?.attribution).toBe('only');
+    expect(metrics.find((m) => m.key === 'behind')?.attributionName).toBe('only');
+    // 只有一个环境时「最多 vs 中位」恒等，那半句不出
+    expect(metrics.find((m) => m.key === 'behind')?.attributionDetail).toBe('');
   });
 });
 

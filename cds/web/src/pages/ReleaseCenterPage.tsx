@@ -56,7 +56,7 @@ import { EnvConfigSection } from '@/pages/release-center/EnvConfigSection';
 import { HealthSection } from '@/pages/release-center/HealthSection';
 import { EvidenceSection } from '@/pages/release-center/EvidenceSection';
 import { buildFleetMetrics, buildFleetVerdict, toFleetEnv, type FleetSortKey } from '@/lib/releaseFleet';
-import { ReleaseTimeline, type TimelineFilter } from '@/pages/release-center/ReleaseTimeline';
+import type { TimelineFilter } from '@/pages/release-center/ReleaseTimeline';
 import { formatDateTime } from '@/pages/release-center/shared';
 import {
   SiteWizardDialog,
@@ -564,10 +564,6 @@ export function ReleaseCenterPage(): JSX.Element {
     navigate(consoleHref(envId, intent === 'rollback' ? 'rollback' : undefined));
   };
 
-  const historyRuns = historyFilter === 'failed'
-    ? selectedRuns.filter((run) => run.status === 'failed' || run.status === 'rollback_failed')
-    : selectedRuns;
-
   return (
     <AppShell
       active="release-center"
@@ -717,8 +713,16 @@ export function ReleaseCenterPage(): JSX.Element {
                           }`}>
                             {metric.value}
                           </div>
-                          <div className="truncate text-[10.5px] text-muted-foreground" title={metric.attribution}>
-                            {metric.attribution}
+                          {/* 名字可截、数字不可截：省略号从尾巴吃起，先吃掉的会是
+                              「占 25 次」这半句——而那才是归因句里唯一有信息的部分。 */}
+                          <div
+                            className="flex items-baseline gap-1 text-[10.5px] text-muted-foreground"
+                            title={`${metric.attributionName} ${metric.attributionDetail}`.trim()}
+                          >
+                            <span className="min-w-0 truncate">{metric.attributionName}</span>
+                            {metric.attributionDetail
+                              ? <span className="shrink-0">{metric.attributionDetail}</span>
+                              : null}
                           </div>
                         </div>
                       ))}
@@ -819,24 +823,21 @@ export function ReleaseCenterPage(): JSX.Element {
                           <HealthSection envs={fleetEnvs} selected={fleetEnvs.find((env) => env.id === selectedRow.target.id)} />
                         ) : null}
 
+                        {/* 稿子 §6 的六列表是唯一的证据表。这里曾经把旧的
+                            ReleaseTimeline 也一起渲染，同一批 run 出现两遍——
+                            两张表比任意一张都糟。时间线独有的能力（仅失败筛选、
+                            看失败原因、回滚到此版本、提交说明）已折进这一张表。 */}
                         {section === 'evidence' ? (
-                          <>
-                            <ReleaseTimeline
-                              title="发布历史"
-                              runs={historyRuns}
-                              row={selectedRow}
-                              commitMeta={commitMeta}
-                              nowMs={nowMs}
-                              liveReleaseId={selectedRow.currentVersion}
-                              retryingRunId={retryingRunId}
-                              filter={historyFilter}
-                              onFilter={setHistoryFilter}
-                              onOpenLogs={setLogRun}
-                              onRetry={(run) => void retryRelease(run)}
-                              onRollback={(run) => openRollback(selectedRow, run)}
-                            />
-                            <EvidenceSection row={selectedRow} runs={selectedRuns} />
-                          </>
+                          <EvidenceSection
+                            row={selectedRow}
+                            runs={selectedRuns}
+                            commitMeta={commitMeta}
+                            filter={historyFilter === 'failed' ? 'failed' : 'all'}
+                            onFilter={setHistoryFilter}
+                            retryingRunId={retryingRunId}
+                            onRetry={(run) => void retryRelease(run)}
+                            onRollback={(run) => openRollback(selectedRow, run)}
+                          />
                         ) : null}
                       </div>
                     ) : null}

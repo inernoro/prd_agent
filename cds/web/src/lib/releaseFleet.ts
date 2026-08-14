@@ -262,8 +262,15 @@ export interface FleetMetric {
   key: 'deploys' | 'changeFailure' | 'recovery' | 'behind';
   label: string;
   value: string;
-  /** 归因一行。说清这个数主要是谁贡献的——只说数字不说来源，读者没法行动。 */
-  attribution: string;
+  /**
+   * 归因一行。说清这个数主要是谁贡献的——只说数字不说来源，读者没法行动。
+   *
+   * 拆成两段是因为环境名可以很长（真实数据里就有「MAP 正式环境受管发布」），
+   * 单串渲染时省略号会从尾巴吃起，先吃掉的恰恰是那个数字——归因句里最该活下来的
+   * 就是数字，名字才是可以截的那半。所以 name 允许截断，detail 永不收缩。
+   */
+  attributionName: string;
+  attributionDetail: string;
   tone: 'plain' | 'warn' | 'bad';
 }
 
@@ -284,7 +291,8 @@ export function buildFleetMetrics(envs: FleetEnv[]): FleetMetric[] {
       key: 'deploys',
       label: '近 30 天发布',
       value: `${total} 次`,
-      attribution: top && top.dora ? `${top.name} 占 ${top.dora.deploys} 次` : '样本不足',
+      attributionName: top && top.dora ? top.name : '',
+      attributionDetail: top && top.dora ? `占 ${top.dora.deploys} 次` : '样本不足',
       tone: 'plain',
     });
   }
@@ -297,7 +305,8 @@ export function buildFleetMetrics(envs: FleetEnv[]): FleetMetric[] {
       key: 'changeFailure',
       label: '变更失败率',
       value: formatFleetPercent(Math.round(ratio * 100) / 100) || '样本不足',
-      attribution: `${worst.name} 最高`,
+      attributionName: worst.name,
+      attributionDetail: '最高',
       tone: ratio >= 15 ? 'bad' : 'warn',
     });
   }
@@ -310,7 +319,8 @@ export function buildFleetMetrics(envs: FleetEnv[]): FleetMetric[] {
       key: 'recovery',
       label: '恢复中位',
       value: formatFleetMinutes(mid) || '样本不足',
-      attribution: `${slowest.name} 为 ${formatFleetMinutes(slowest.dora?.medianRecoveryMin) || '样本不足'}`,
+      attributionName: slowest.name,
+      attributionDetail: `为 ${formatFleetMinutes(slowest.dora?.medianRecoveryMin) || '样本不足'}`,
       tone: 'plain',
     });
   }
@@ -328,7 +338,8 @@ export function buildFleetMetrics(envs: FleetEnv[]): FleetMetric[] {
       key: 'behind',
       label: '落后最多',
       value: `${worst.behindMain} 个提交`,
-      attribution: ratio && ratio !== '+0%' ? `${worst.name} · 中位数的 ${ratio}` : worst.name,
+      attributionName: worst.name,
+      attributionDetail: ratio && ratio !== '+0%' ? `中位数的 ${ratio}` : '',
       tone: (worst.behindMain || 0) >= BEHIND_ALERT ? 'bad' : 'plain',
     });
   }

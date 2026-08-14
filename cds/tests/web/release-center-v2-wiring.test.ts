@@ -110,9 +110,14 @@ describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
       .toContain('describeCommitPosition(row.commitPosition, branch)');
   });
 
-  it('commitMeta → 时间线上的提交说明（缺席时只显示 short sha，不拿别的字段顶替）', () => {
+  it('commitMeta → 提交说明（缺席时只显示 short sha，不拿别的字段顶替）', () => {
     expect(jsxElement(page, 'OverviewTab')).toContain('commitMeta={commitMeta}');
-    expect(jsxElement(page, 'ReleaseTimeline')).toContain('commitMeta={commitMeta}');
+    // 证据归档改成稿子的六列表后，本页不再直接挂 ReleaseTimeline（它还在 OverviewTab 里用），
+    // 提交说明由 EvidenceSection 承接——两处的兜底口径必须一致。
+    expect(jsxElement(page, 'EvidenceSection')).toContain('commitMeta={commitMeta}');
+    const evidenceSource = read('pages/release-center/EvidenceSection.tsx');
+    expect(evidenceSource).toContain('commitMeta[run.commitSha]');
+    expect(evidenceSource).toContain("subject || `提交 ${run.commitSha.slice(0, 12)}`");
     expect(timeline).toContain('commitMeta[run.commitSha]');
     expect(timeline).toContain("meta?.subject || `提交 ${run.commitSha.slice(0, 12)}`");
   });

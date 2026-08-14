@@ -89,6 +89,16 @@ function Field({ label, span, children }: { label: string; span?: boolean; child
 const CONTROL = 'h-9 w-full rounded-[9px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-3 text-[12.5px] outline-none focus:border-primary/60';
 /** 命令类输入用代码底色。白天是浅底深字（cds-theme-tokens 最高原则）。 */
 const CODE_CONTROL = `${CONTROL} cds-ident bg-[hsl(var(--surface-base))]`;
+/**
+ * 部署命令 / 回滚命令必须是 textarea，不能是 input。
+ *
+ * 真实数据里这两个字段装的是整段 shell 脚本（本项目的部署命令有上百行）。
+ * `<input>` 在设值时会把换行**吃掉**：屏幕上显示成一长条，用户改一个字母后
+ * onChange 回来的就是被压平的单行串，保存下去等于把生产发布脚本毁了——
+ * 而且编译、类型、测试全都发现不了。稿子画的是「跨两列的宽输入框」，
+ * 宽度照做，控件类型必须按真实数据选。
+ */
+const CODE_AREA = 'min-h-[76px] w-full resize-y rounded-[9px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] px-3 py-2 cds-ident text-[12.5px] leading-[1.7] outline-none focus:border-primary/60';
 
 export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionProps): JSX.Element {
   const [draft, setDraft] = useState<StrategyDraft>(() => draftOf(row));
@@ -173,11 +183,13 @@ export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionPro
           />
         </Field>
         <Field label="部署命令" span>
-          <input
+          <textarea
             value={draft.deployCommand}
             placeholder="未配置"
+            spellCheck={false}
+            rows={draft.deployCommand.includes('\n') ? 8 : 2}
             onChange={(event) => setDraft((current) => ({ ...current, deployCommand: event.target.value }))}
-            className={CODE_CONTROL}
+            className={CODE_AREA}
           />
         </Field>
         <Field label="健康检查地址">
@@ -189,11 +201,13 @@ export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionPro
           />
         </Field>
         <Field label="回滚命令">
-          <input
+          <textarea
             value={draft.rollbackCommand}
             placeholder="该环境不支持回滚"
+            spellCheck={false}
+            rows={draft.rollbackCommand.includes('\n') ? 8 : 2}
             onChange={(event) => setDraft((current) => ({ ...current, rollbackCommand: event.target.value }))}
-            className={CODE_CONTROL}
+            className={CODE_AREA}
           />
         </Field>
 
@@ -213,7 +227,9 @@ export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionPro
 
       <div className="border-t border-[hsl(var(--hairline)/0.6)] px-[18px] py-3.5">
         <div className="mb-2 text-[11.5px] text-muted-foreground">生效序列预览（保存后按这个顺序执行）</div>
-        <pre className="m-0 overflow-x-auto whitespace-pre-wrap rounded-[9px] bg-[hsl(var(--surface-base))] px-3 py-2.5 cds-ident text-xs leading-[1.7]">
+        {/* 限高：部署命令是整段脚本时，不限高会把这一块拉成几屏长，
+            下面的内容全被挤没。脚本本身在上面的 textarea 里可以完整编辑。 */}
+        <pre className="m-0 max-h-[260px] overflow-auto whitespace-pre-wrap rounded-[9px] bg-[hsl(var(--surface-base))] px-3 py-2.5 cds-ident text-xs leading-[1.7]">
           {sequence}
         </pre>
       </div>

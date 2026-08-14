@@ -54,6 +54,43 @@ describe('稿子 §0 全局外壳', () => {
   });
 });
 
+/**
+ * 分区必须真的挂上对应组件——这条守卫是补上一次的漏。
+ *
+ * 上一轮我把三个分区组件都写好了、也都 import 了，parity 守卫逐条读文件内容全绿，
+ * 部署后打开「证据归档」看到的却还是旧的 ReleaseTimeline：EvidenceSection 被渲染在
+ * 它下面，第一屏根本看不见。**只读组件文件的守卫证明不了页面在用它**
+ * （predicate-and-wiring-discipline 形状 2）。所以这里断言的是「哪个分区渲染哪个组件」，
+ * 并且明确禁止旧组件回到这几个分区里。
+ */
+describe('分区 → 组件的接线', () => {
+  const branchOf = (id: string): string => {
+    const start = page.indexOf(`section === '${id}' ? (`);
+    expect(start, `页面里找不到 section === '${id}' 的分支`).toBeGreaterThanOrEqual(0);
+    return page.slice(start, start + 1400);
+  };
+
+  it('每个分区渲染稿子指定的那个组件', () => {
+    expect(branchOf('fleet')).toContain('<FleetMatrix');
+    expect(branchOf('config')).toContain('<EnvConfigSection');
+    expect(branchOf('health')).toContain('<HealthSection');
+    expect(branchOf('evidence')).toContain('<EvidenceSection');
+  });
+
+  it('证据归档只有一张表：旧的 ReleaseTimeline 不许再出现在本页', () => {
+    // 同一批 run 渲染两遍（时间线 + 六列表）比任意一张都糟。时间线独有的能力
+    // 已折进 EvidenceSection，所以本页连 import 都不该再有值引用。
+    expect(page).not.toContain('<ReleaseTimeline');
+    expect(page).toContain("import type { TimelineFilter }");
+  });
+
+  it('筛选口径只有一份：页面不再自己过滤一遍 failed', () => {
+    // 页面先过滤、再把过滤结果交给同样会过滤的分区，会让「全部 N」显示成过滤后的条数。
+    expect(page).not.toContain('historyRuns');
+    expect(evidence).toContain('isReleaseFailed(run.status)');
+  });
+});
+
 describe('稿子 §1 监控条', () => {
   it('状态点 + 判断句 + 数据截至 + 四指标 + 去处理按钮', () => {
     expect(page).toContain('cds-verdict-pulse');
@@ -138,6 +175,21 @@ describe('稿子 §3 环境与配置（唯一写入口）', () => {
     expect(config).toContain('CODE_CONTROL');
     expect(config).toContain('未配置');
     expect(config).toContain('该环境不支持回滚');
+  });
+
+  /**
+   * 真实数据里部署命令是整段 shell 脚本。`<input>` 设值时会吃掉换行，
+   * 用户改一个字母保存下去就把生产脚本压成了一行——编译、类型、测试全都发现不了。
+   */
+  it('命令类字段必须是 textarea，不能用 input（换行会被吃掉）', () => {
+    for (const field of ['deployCommand', 'rollbackCommand']) {
+      const at = config.indexOf(`value={draft.${field}}`);
+      expect(at, `找不到 ${field} 的控件`).toBeGreaterThanOrEqual(0);
+      const control = config.slice(Math.max(0, at - 200), at);
+      expect(control, `${field} 用了 input，多行脚本会被压平`).toContain('<textarea');
+    }
+    // 生效序列预览要限高，否则整段脚本会把下面的内容挤没
+    expect(config).toContain('max-h-[260px]');
   });
 
   it('两个开关卡片，轨道与滑块尺寸照稿子', () => {

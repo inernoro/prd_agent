@@ -18,10 +18,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Circle, FileText, Loader2, ScrollText, XCircle } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Circle, FileText, Loader2, RotateCcw, ScrollText, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
+import { FailureDiagnosis } from './FailureDiagnosis';
 import { formatDateTime } from './shared';
 import type { CenterRow, ReleaseRun, ReleaseTargetChange } from './types';
 import { RELEASE_CHANGE_KIND_LABELS, isReleaseFailed } from './types';
@@ -29,6 +30,14 @@ import { RELEASE_CHANGE_KIND_LABELS, isReleaseFailed } from './types';
 export interface EvidenceSectionProps {
   row: CenterRow;
   runs: ReleaseRun[];
+  /** 提交说明。缺席时只显示 short sha，不拿别的字段顶替。 */
+  commitMeta: Record<string, { subject?: string }>;
+  filter: 'all' | 'failed';
+  onFilter: (next: 'all' | 'failed') => void;
+  /** 失败行的「看失败原因」——展开就地诊断，不必跳页。 */
+  onRollback: (run: ReleaseRun) => void;
+  onRetry: (run: ReleaseRun) => void;
+  retryingRunId: string;
 }
 
 function durationOf(run: ReleaseRun): string {
@@ -42,9 +51,14 @@ function durationOf(run: ReleaseRun): string {
 
 const COLUMNS = '150px 130px 92px 104px 88px minmax(0,1fr) auto';
 
-export function EvidenceSection({ row, runs }: EvidenceSectionProps): JSX.Element {
+export function EvidenceSection({
+  row, runs, commitMeta, filter, onFilter, onRollback, onRetry, retryingRunId,
+}: EvidenceSectionProps): JSX.Element {
   const [selectedId, setSelectedId] = useState('');
-  const selected = runs.find((run) => run.releaseId === selectedId) || runs[0];
+  const [diagnosedId, setDiagnosedId] = useState('');
+  const visible = filter === 'failed' ? runs.filter((run) => isReleaseFailed(run.status)) : runs;
+  const selected = runs.find((run) => run.releaseId === selectedId) || visible[0] || runs[0];
+  const failedCount = runs.filter((run) => isReleaseFailed(run.status)).length;
   const [changes, setChanges] = useState<ReleaseTargetChange[]>([]);
   const [changesError, setChangesError] = useState('');
   const [changesLoading, setChangesLoading] = useState(false);
@@ -72,10 +86,30 @@ export function EvidenceSection({ row, runs }: EvidenceSectionProps): JSX.Elemen
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-4">
         <h2 className="text-sm font-bold">证据归档</h2>
         <span className="text-[11.5px] text-muted-foreground">日志与验收报告保留 90 天，生产永久</span>
+        <span className="flex-1" />
+        <span className="flex items-center gap-1">
+          {([['all', `全部 ${runs.length}`], ['failed', `仅失败 ${failedCount}`]] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={filter === key}
+              onClick={() => onFilter(key)}
+              className={`h-[26px] rounded-[7px] px-2.5 text-[11.5px] transition-colors duration-150 ${
+                filter === key
+                  ? 'bg-primary/[0.12] font-semibold text-primary'
+                  : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </span>
       </div>
 
-      {runs.length === 0 ? (
-        <p className="px-[18px] py-6 text-xs text-muted-foreground">{row.target.name} 还没有发布记录。</p>
+      {visible.length === 0 ? (
+        <p className="px-[18px] py-6 text-xs text-muted-foreground">
+          {runs.length === 0 ? `${row.target.name} 还没有发布记录。` : '这个环境近期没有失败的发布。'}
+        </p>
       ) : (
         <>
           <div
@@ -85,43 +119,80 @@ export function EvidenceSection({ row, runs }: EvidenceSectionProps): JSX.Elemen
             <span>时间</span><span>环境</span><span>SHA</span><span>结果</span><span>耗时</span><span>操作人</span><span />
           </div>
           <div>
-            {runs.slice(0, 40).map((run) => {
+            {visible.slice(0, 40).map((run) => {
               const failed = isReleaseFailed(run.status);
+              const subject = commitMeta[run.commitSha]?.subject;
+              const diagnosed = diagnosedId === run.releaseId;
               return (
-                <div
-                  key={run.releaseId}
-                  className={`grid items-center gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-[13px] text-[12.5px] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] max-xl:grid-cols-[92px_minmax(0,1fr)] ${
-                    run.releaseId === selected?.releaseId ? 'bg-[hsl(var(--surface-sunken))]' : ''
-                  }`}
-                  style={{ gridTemplateColumns: COLUMNS }}
-                >
-                  <span className="cds-ident text-[11.5px] text-muted-foreground">{formatDateTime(run.startedAt)}</span>
-                  <span className="truncate font-semibold">{row.target.name}</span>
-                  <span className="cds-ident">{run.commitSha.slice(0, 7)}</span>
-                  <span className="flex items-center gap-1.5">
-                    <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${failed ? 'bg-red-500' : 'bg-emerald-500'}`} />
-                    <span className={failed ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}>
-                      {failed ? '失败' : '成功'}
+                <div key={run.releaseId} className="border-b border-[hsl(var(--hairline)/0.6)]">
+                  <div
+                    className={`grid items-center gap-3 px-[18px] py-[13px] text-[12.5px] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] max-xl:grid-cols-[92px_minmax(0,1fr)] ${
+                      failed ? 'bg-red-500/[0.05]' : ''
+                    } ${run.releaseId === selected?.releaseId ? 'bg-[hsl(var(--surface-sunken))]' : ''}`}
+                    style={{ gridTemplateColumns: COLUMNS }}
+                  >
+                    <span className="cds-ident text-[11.5px] text-muted-foreground">{formatDateTime(run.startedAt)}</span>
+                    <span className="truncate font-semibold">{row.target.name}</span>
+                    <span className="cds-ident">{run.commitSha.slice(0, 7)}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${failed ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                      <span className={failed ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}>
+                        {failed ? '失败' : '成功'}
+                      </span>
                     </span>
-                  </span>
-                  <span className="cds-ident text-muted-foreground">{durationOf(run)}</span>
-                  <span className="truncate text-muted-foreground">{run.operator || '-'}</span>
-                  <span className="flex items-center justify-end gap-1.5 [&_button]:h-[29px] [&_button]:px-2.5">
-                    <Button variant="outline" size="sm" onClick={() => setSelectedId(run.releaseId)}>
-                      <ScrollText />
-                      日志
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled
-                      title="验收报告归在 CDS 验收中心（/reports），这条发布没有关联报告"
-                      className="cursor-not-allowed opacity-40"
-                    >
-                      <FileText />
-                      验收报告
-                    </Button>
-                  </span>
+                    <span className="cds-ident text-muted-foreground">{durationOf(run)}</span>
+                    {/* 稿子这一格只有操作人。提交说明是既有页面上真有的信息，
+                        合进同一格（说明在上、操作人在下），不额外加一列破坏列宽标注。 */}
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate">{subject || `提交 ${run.commitSha.slice(0, 12)}`}</span>
+                      <span className="truncate text-[11px] text-muted-foreground">{run.operator || '-'}</span>
+                    </span>
+                    <span className="flex flex-wrap items-center justify-end gap-1.5 [&_button]:h-[29px] [&_button]:px-2.5">
+                      {failed ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDiagnosedId(diagnosed ? '' : run.releaseId)}
+                          className="border-red-500/40 text-red-600 dark:text-red-400"
+                        >
+                          <ChevronRight className={diagnosed ? 'rotate-90 transition-transform' : 'transition-transform'} />
+                          {diagnosed ? '收起诊断' : '看失败原因'}
+                        </Button>
+                      ) : null}
+                      <Button variant="outline" size="sm" onClick={() => setSelectedId(run.releaseId)}>
+                        <ScrollText />
+                        日志
+                      </Button>
+                      {row.canRollback && !failed ? (
+                        <Button variant="outline" size="sm" onClick={() => onRollback(run)}>
+                          <RotateCcw />
+                          回滚到此版本
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled
+                        title="验收报告归在 CDS 验收中心（/reports），这条发布没有关联报告"
+                        className="cursor-not-allowed opacity-40"
+                      >
+                        <FileText />
+                        验收报告
+                      </Button>
+                    </span>
+                  </div>
+                  {diagnosed ? (
+                    <div className="border-t border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] px-[18px] py-3">
+                      <FailureDiagnosis
+                        run={run}
+                        row={row}
+                        retrying={retryingRunId === run.releaseId}
+                        canRollback={Boolean(row.canRollback)}
+                        onRetry={onRetry}
+                        onRollback={onRollback}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
