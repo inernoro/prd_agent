@@ -44,6 +44,12 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const RGBA = /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*([\d.]+)\s*)?\)/g;
+/*
+ * 十六进制也要认。判据最初只扫 rgba(...)，于是 NOTIFICATION_TYPE_REGISTRY 的九档
+ * accent（'#5eead4' 这种 300/400 亮彩）整个溜过去 —— 而通知抽屉挂在 AppShell 上、
+ * 全部 36 条路由都渲染它，一处错就是 144 处糊，占那轮真实数据审计的一半。
+ */
+const HEXC = /#([0-9a-fA-F]{6})\b/g;
 
 interface ColorUse { rgb: string; alpha: number; index: number; }
 
@@ -172,6 +178,34 @@ function findClassViolations(text: string): { cls: string; bg: string; fg: strin
   return hits;
 }
 
+/**
+ * 判据 C：同一个变量既被拼成淡底（`${x}22` —— 两位十六进制 alpha 后缀），
+ * 又被直接当字色（`color: x`）。
+ *
+ * 这是真实规模最大的那一次事故的形状：NOTIFICATION_TYPE_REGISTRY 的 accent
+ * 一值两用 —— 当底色用 `${accent}22` 拼，两个主题都成立；直接当字色，浅色档
+ * 只有 1.29:1。通知抽屉挂在 AppShell 上，全部 36 条路由都渲染，一处错 144 处糊。
+ *
+ * 判据 A/B 对它是瞎的：底是模板串不是颜色字面量，判据扫不到「淡底」这一半。
+ * 补 hex、补 accent 键都救不了，必须单独认这个形状。
+ *
+ * 修法：拆字段 —— 拼接用的保持 hex，当字色的另起一个走 --accent-fg-* 的字段。
+ */
+function findDualUseViolations(text: string): { expr: string; alpha: string }[] {
+  const hits: { expr: string; alpha: string }[] = [];
+  const tinted = new Map<string, string>();
+  // `${x}22` / `${x}1f`：两位十六进制 alpha ≤ 0x4d(30%) 才算「淡底」
+  for (const m of text.matchAll(/\$\{([\w.]+)\}([0-9a-fA-F]{2})\b/g)) {
+    if (parseInt(m[2], 16) <= 0x4d) tinted.set(m[1], m[2]);
+  }
+  if (!tinted.size) return hits;
+  for (const m of text.matchAll(/\bcolor\s*:\s*([\w.]+)\b/g)) {
+    const a = tinted.get(m[1]);
+    if (a) hits.push({ expr: m[1], alpha: a });
+  }
+  return hits;
+}
+
 const BASELINE_PATH = path.join(HERE, 'sameHueTintBaseline.json');
 
 describe('同色调浅底浅字棘轮（浅色主题最高频缺陷）', () => {
@@ -192,11 +226,13 @@ describe('同色调浅底浅字棘轮（浅色主题最高频缺陷）', () => {
       if (/useDataTheme|isLight|data-theme/.test(text)) continue;
       const a = findInlineViolations(text);
       const b = findClassViolations(text);
-      const n = a.length + b.length;
+      const c = findDualUseViolations(text);
+      const n = a.length + b.length + c.length;
       if (!n) continue;
       found[rel] = n;
       for (const h of a) detail.push(`${rel}: rgb(${h.rgb}) 同时当 ${h.fgA} 前景与 ${h.bgA} 背景`);
       for (const h of b) detail.push(`${rel}: bg-${h.bg} 配 text-${h.fg}`);
+      for (const h of c) detail.push(`${rel}: ${h.expr} 既拼成 \`\${...}${h.alpha}\` 淡底又直接当字色`);
     }
 
     if (process.env.UPDATE_SAME_HUE_BASELINE) {
@@ -240,6 +276,14 @@ describe('同色调浅底浅字棘轮（浅色主题最高频缺陷）', () => {
     expect(findInlineViolations(
       "{ bg: 'rgba(56,189,248,0.14)', text: 'rgba(125,211,252,0.98)' }",
     ).length).toBe(1);
+    // 判据 C 自检：这就是 144 处那次的原样，必须认出来
+    expect(findDualUseViolations(
+      'style={{ background: `${variant.accent}22` }}\nstyle={{ color: variant.accent }}',
+    ).length).toBe(1);
+    // 拆成两个字段之后（拼接用 accent、字色用 fg），判据必须放行
+    expect(findDualUseViolations(
+      'style={{ background: `${variant.accent}22` }}\nstyle={{ color: variant.fg }}',
+    ).length).toBe(0);
     // 深色前景压同色淡底 = 浅色主题的正确写法，判据不许把它当缺陷
     expect(findInlineViolations(
       "{ background: 'rgba(29,78,216,0.10)', color: 'rgba(29,78,216,1)' }",
