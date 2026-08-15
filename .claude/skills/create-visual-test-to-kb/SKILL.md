@@ -32,6 +32,8 @@ metadata:
 本地诊断沿用下文正式归档命令的全部必填参数,但配置必须为 `report.mode=local`,并额外添加:
 
 ```bash
+# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 python3 "$SKILLS_ROOT/create-visual-test-to-kb/scripts/archive_report.py" \
   --local-diagnostic \
   --config "$SKILLS_ROOT/create-visual-test-to-kb/acceptance.config.json" \
