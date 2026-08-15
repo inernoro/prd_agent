@@ -15,7 +15,7 @@ function buildStatusLabels(isLight: boolean): Record<string, { label: string; co
       'not-started': { label: '未开始', color: 'rgba(71, 85, 105, 1)' },     // slate-600
       draft:         { label: '草稿',   color: 'rgba(180, 83, 9, 1)' },      // amber-700
       submitted:     { label: '已提交', color: 'rgba(29, 78, 216, 1)' },     // blue-700
-      reviewed:      { label: '已审阅', color: 'rgba(21, 128, 61, 1)' },     // green-700
+      reviewed:      { label: '已审阅', color: 'rgba(22, 101, 52, 1)' },     // green-700
       returned:      { label: '已退回', color: 'rgba(185, 28, 28, 1)' },     // red-700
       overdue:       { label: '逾期',   color: 'rgba(185, 28, 28, 1)' },
       vacation:      { label: '请假',   color: 'rgba(109, 40, 217, 1)' },    // violet-700
@@ -359,7 +359,7 @@ export function HistoryTrendsPanel() {
                             style={{
                               width: `${rateWidth}%`,
                               background: isLight
-                                ? `linear-gradient(90deg, rgba(21,128,61,0.80), rgba(21,128,61,0.35))`
+                                ? `linear-gradient(90deg, rgba(22,101,52,0.80), rgba(22,101,52,0.35))`
                                 : `linear-gradient(90deg, rgba(34,197,94,0.65), rgba(34,197,94,0.25))`,
                             }}
                           />
@@ -405,7 +405,7 @@ export function HistoryTrendsPanel() {
             {teamData.length > 0 && (
               <div className="flex items-center gap-5 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-2.5 rounded-sm" style={{ background: isLight ? 'rgba(21,128,61,0.75)' : 'rgba(34,197,94,0.5)' }} />
+                  <div className="w-3 h-2.5 rounded-sm" style={{ background: isLight ? 'rgba(22,101,52,0.75)' : 'rgba(34,197,94,0.5)' }} />
                   <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>提交率</span>
                 </div>
                 <div className="flex items-center gap-1.5">

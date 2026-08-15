@@ -1615,7 +1615,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                           <span
                             className="text-[10px] px-1.5 py-[2px] rounded font-medium uppercase tracking-wider"
                             style={{
-                              color: isLight ? 'rgba(194, 65, 12, 0.95)' : 'rgba(251, 146, 60, 0.9)',
+                              color: isLight ? 'rgba(154, 52, 18, 0.95)' : 'rgba(251, 146, 60, 0.9)',
                               background: isLight ? 'rgba(249, 115, 22, 0.08)' : 'rgba(249, 115, 22, 0.12)',
                               letterSpacing: '0.06em',
                             }}

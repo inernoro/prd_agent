@@ -252,10 +252,28 @@ describe('同色调浅底浅字棘轮（浅色主题最高频缺陷）', () => {
         .replace(/\/\*[\s\S]*?\*\//g, '')     // 块注释
         .replace(/(^|[^:])\/\/.*$/gm, '$1');  // 行注释（避开 http:// 这类）
       const branchesOnTheme = /useDataTheme\s*\(|\bisLight\b|\[data-theme=/.test(codeOnly);
-      if (branchesOnTheme) continue;
-      const a = findInlineViolations(text);
-      const b = findClassViolations(text);
-      const c = findDualUseViolations(text);
+      /*
+       * 分支文件不再整份跳过 —— 只跳「前景是浅色档」的那些。
+       *
+       * 原来一律 continue，理由是分支文件的暗色档会写 300/400，静态判据分不出
+       * 哪段给哪个主题。但这个豁免连**深色前景**一起放走了，而深色前景只可能是
+       * 浅色档的值（暗底上没人用 700 档当字），完全判得动。
+       * 实测代价：DailyLogPanel 的三档因此藏了整整一轮 ——
+       * 沟通 orange-700 4.09、文档 green-700 4.00、Todo emerald-700 4.36，
+       * 都在 4.5 以下（Codex 在 PR #1374 第二十二轮抓到，而我上一版还在
+       * debt 里写「实测敞口为 0」，那句是错的）。
+       *
+       * 判据：前景相对亮度 < 0.30 就必须判。实测两类分得很开 ——
+       * 浅色档的 700 档在 0.14~0.16，暗色档的 300 档在 0.52~0.58。
+       */
+      const isLightShadeFg = (rgb: string) => {
+        const [r, g, b] = rgb.split(',').map(Number);
+        return relLum([r, g, b]) >= 0.30;
+      };
+      const a = findInlineViolations(text)
+        .filter((h) => !branchesOnTheme || !isLightShadeFg(h.rgb));
+      const b = branchesOnTheme ? [] : findClassViolations(text);
+      const c = branchesOnTheme ? [] : findDualUseViolations(text);
       const n = a.length + b.length + c.length;
       if (!n) continue;
       found[rel] = n;

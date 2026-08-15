@@ -61,7 +61,7 @@ function buildStatusConfig(isLight: boolean): Record<string, { label: string; co
       [WeeklyReportStatus.NotStarted]: { label: '未开始', color: 'rgba(71,85,105,1)',  bg: 'rgba(71,85,105,.10)',  icon: Clock },
       [WeeklyReportStatus.Draft]:      { label: '草稿',   color: 'rgba(71,85,105,1)',  bg: 'rgba(71,85,105,.10)',  icon: Clock },
       [WeeklyReportStatus.Submitted]:  { label: '待审阅', color: 'rgba(29,78,216,1)',  bg: 'rgba(29,78,216,.10)',  icon: AlertCircle },
-      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(21,128,61,1)',  bg: 'rgba(21,128,61,.10)',  icon: CheckCircle2 },
+      [WeeklyReportStatus.Reviewed]:   { label: '已审阅', color: 'rgba(22,101,52,1)',  bg: 'rgba(22,101,52,.10)',  icon: CheckCircle2 },
       [WeeklyReportStatus.Returned]:   { label: '已打回', color: 'rgba(185,28,28,1)',  bg: 'rgba(185,28,28,.10)',  icon: AlertCircle },
       [WeeklyReportStatus.Overdue]:    { label: '逾期',   color: 'rgba(185,28,28,1)',  bg: 'rgba(185,28,28,.10)',  icon: AlertCircle },
       [WeeklyReportStatus.Viewed]:     { label: '已查看', color: 'rgba(3,105,161,1)',  bg: 'rgba(3,105,161,.10)',  icon: CheckCircle2 },
@@ -797,7 +797,7 @@ export function TeamDashboard() {
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200"
               style={{
                 background: teamScope === 'joined' ? (isLight ? 'rgba(34,197,94,.18)' : 'rgba(34,197,94,.15)') : 'transparent',
-                color: teamScope === 'joined' ? (isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)') : 'var(--text-secondary)',
+                color: teamScope === 'joined' ? (isLight ? 'rgba(22,101,52,1)' : 'rgba(34,197,94,.95)') : 'var(--text-secondary)',
               }}
               onClick={() => setTeamScope('joined')}
             >
@@ -896,13 +896,13 @@ export function TeamDashboard() {
                 <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: 'var(--text-secondary)' }}>
                   团队人数 {reportsView?.stats.totalMembers ?? 0}
                 </span>
-                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)' }}>
+                <span className="surface-inset rounded-full px-2 py-0.5" style={{ color: isLight ? 'rgba(22,101,52,1)' : 'rgba(34,197,94,.95)' }}>
                   已提交 {reportsView?.stats.submittedCount ?? 0}
                 </span>
                 <span
                   ref={pendingChipRef}
                   className="surface-inset rounded-full px-2 py-0.5 cursor-default"
-                  style={{ color: isLight ? 'rgba(194,65,12,1)' : 'rgba(249,115,22,.95)' }}
+                  style={{ color: isLight ? 'rgba(154,52,18,1)' : 'rgba(249,115,22,.95)' }}
                   onMouseEnter={openPendingPopover}
                   onMouseLeave={schedulePendingClose}
                 >

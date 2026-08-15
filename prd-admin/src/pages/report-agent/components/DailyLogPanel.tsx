@@ -107,10 +107,10 @@ function buildCategoryConfig(isLight: boolean): Record<string, { label: string; 
     return {
       development:   { label: '开发', color: 'rgba(29, 78, 216, 1)',   bg: 'rgba(29, 78, 216, 0.10)',   icon: Code2 },
       meeting:       { label: '会议', color: 'rgba(126, 34, 206, 1)',  bg: 'rgba(126, 34, 206, 0.10)',  icon: Users },
-      communication: { label: '沟通', color: 'rgba(194, 65, 12, 1)',   bg: 'rgba(194, 65, 12, 0.10)',   icon: MessageCircle },
-      documentation: { label: '文档', color: 'rgba(21, 128, 61, 1)',   bg: 'rgba(21, 128, 61, 0.10)',   icon: FileText },
+      communication: { label: '沟通', color: 'rgba(154, 52, 18, 1)',   bg: 'rgba(154, 52, 18, 0.10)',   icon: MessageCircle },
+      documentation: { label: '文档', color: 'rgba(22, 101, 52, 1)',   bg: 'rgba(22, 101, 52, 0.10)',   icon: FileText },
       testing:       { label: '测试', color: 'rgba(190, 24, 93, 1)',   bg: 'rgba(190, 24, 93, 0.10)',   icon: TestTube },
-      todo:          { label: 'Todo', color: 'rgba(4, 120, 87, 1)',    bg: 'rgba(4, 120, 87, 0.10)',    icon: Check },
+      todo:          { label: 'Todo', color: 'rgba(6, 95, 70, 1)',     bg: 'rgba(6, 95, 70, 0.10)',    icon: Check },
       other:         { label: '其他', color: 'rgba(71, 85, 105, 1)',   bg: 'rgba(71, 85, 105, 0.10)',   icon: MoreHorizontal },
     };
   }

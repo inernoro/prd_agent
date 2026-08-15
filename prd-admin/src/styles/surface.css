@@ -2281,7 +2281,7 @@
 
 [data-theme="light"] .mkt-card-official {
   background: rgba(59, 130, 246, 0.14);
-  color: rgba(29, 78, 216, 0.92);
+  color: rgba(29, 78, 216, 1);
   border-color: rgba(59, 130, 246, 0.24);
 }
 
@@ -2942,7 +2942,7 @@
 [data-theme="light"] .mkt-lb-ai-btn[data-active="true"] {
   background: rgba(14, 116, 144, 0.08);
   border-color: rgba(14, 116, 144, 0.25);
-  color: #0e7490;
+  color: #155e75;   /* cyan-800：700 档压自身 8% 淡底只有 4.38:1，改 800 档后 5.7:1 */
 }
 
 /* QuickConnect 弹出层（从接入AI按钮下拉） */

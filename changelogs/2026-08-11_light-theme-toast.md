@@ -101,3 +101,7 @@
 | fix | e2e | 修 Codex 第二十轮 P2：截图名只替换了斜杠，带 query 的自定义路由留着 `?` 在 Windows 上是非法文件名，会让该路由被记成 errored——而带 query 正是 AUDIT_ROUTES 的用法 |
 | docs | e2e | 修 Codex 第二十轮 P1：审计只扫「打开即渲染」的静态 DOM，Toast/Tooltip/抽屉/Popover/悬浮卡/下拉/hover 一个都没触发过，而本 PR 改的大半正是这些浮层。收尾显式声明未覆盖，并记入 debt.frontend（写触发夹具属独立工程） |
 | refactor | e2e | 修 Codex 第二十一轮两条 P1/P2（同一成因）：路由清单与视口两处判据在远端版/本地版各抄一份，于是视口矩阵、空清单兜底都只加在远端、本地漏掉。抽进 contrast-audit-core（resolveRoutes / resolveViewports / parameterizedRoutes / VIEWPORTS），两个入口共用一份，本地版同步补上双视口 |
+| fix | prd-admin | 修 Codex 第二十二轮 P2 揭出的真缺陷：棘轮的「按主题分支跳过」是文件级，连深色前景一起放走，藏住了 report-agent 三档（沟通 orange-700 4.09 / 文档 green-700 4.00 / Todo emerald-700 4.36）与海鲜市场接入 AI 按钮 hover（cyan-700 4.38）。全部提到 800 档（5.6~5.7），涉及 5 个 report-agent 文件 18 处 + surface.css |
+| test | prd-admin | 棘轮豁免按前景亮度收窄：分支文件不再整份跳过，亮度 < 0.30 的前景仍判（浅色档 700 在 0.14~0.16、暗色档 300 在 0.52~0.58，两类分得很开）|
+| fix | e2e | 修 Codex 第二十二轮 P1：多色 SVG 只判根节点，根 fill 为黑/none 时整个跳过——本 PR 刚改的 LevelHat 正是这种（颜色全在 path 上）。改为遍历上色子形状；paint server 标 unresolved 不硬算成假 1:1，低透明度装饰描边不按 3:1 判 |
+| docs | doc | 更正 debt.frontend 里「实测敞口为 0」那句错误结论 |

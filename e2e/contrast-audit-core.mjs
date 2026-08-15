@@ -225,10 +225,72 @@ export const AUDIT_FN = () => {
     const cs = getComputedStyle(el);
     const strokeOn = cs.stroke && cs.stroke !== 'none';
     const raw = strokeOn ? cs.stroke : (cs.fill && cs.fill !== 'none') ? cs.fill : cs.color;
-    // 多色装饰 svg：自己没描边、fill 是 UA 默认黑、但子元素各自带 fill/stroke。
-    // 这种取根节点的黑是假的（第一版因此误报 44 条路由）。
-    if (!strokeOn && cs.fill === 'rgb(0, 0, 0)'
-        && el.querySelector('[fill],[stroke],stop')) continue;
+    /*
+     * 多色 svg：根节点自己没描边、fill 是 UA 默认黑（或显式 none），真正的颜色在子形状上。
+     * 取根节点那个黑是假的（第一版因此误报 44 条路由），但**直接跳过整个 svg 也是错的** ——
+     * 那等于整类多色图标从没被量过。本 PR 刚改的 LevelHat 正是这种：根 fill="none"，
+     * 七级帽子的颜色全在各个 path 的 fill/stroke 上（Codex 在 PR #1374 第二十二轮抓到）。
+     * 正解：不取根节点的假色，改为遍历**真正上色的子形状**逐个判。
+     */
+    const rootPaintUseless = !strokeOn
+      && (cs.fill === 'rgb(0, 0, 0)' || cs.fill === 'none')
+      && el.querySelector('[fill],[stroke],stop');
+    if (rootPaintUseless) {
+      const { bg: sbg, needsEye: sEye } = effectiveBg(el.parentElement || el);
+      for (const kid of el.querySelectorAll('path,circle,rect,polygon,polyline,ellipse,line')) {
+        const ks = getComputedStyle(kid);
+        const kStrokeOn = ks.stroke && ks.stroke !== 'none';
+        const kRaw = kStrokeOn ? ks.stroke : (ks.fill && ks.fill !== 'none') ? ks.fill : null;
+        if (!kRaw || isTransparent(kRaw)) continue;
+        /*
+         * paint server（url(#grad)）取不出颜色，硬算会得到一个假的 1:1。
+         * 它的真实颜色只有像素采样知道 —— 标 needsEye 交给重采样，
+         * 别在报告里塞一条「比值 1:1」的噪音（那正是我一直在骂的那种数字）。
+         */
+        const isPaintServer = /^url\(/.test(kRaw);
+        if (isPaintServer) {
+          const kKeyU = `svgkid|paint-server|${sbg}|${label(el)}`;
+          if (seen.has(kKeyU)) continue;
+          seen.add(kKeyU);
+          const kru = el.getBoundingClientRect();
+          kid.setAttribute('data-audit-id', String(++auditId));
+          /*
+           * 直接标 unresolved，不走 needsEye —— 重采样同样解析不了 url()，
+           * 交给它只会composed 出一个假的 1:1 回来（第一版就是这样，噪音换了个来源）。
+           * 「没量成」有专门的桶和退出码，这条属于那一类：真实比值未知，需人工看。
+           */
+          out.push({ auditId, kind: 'icon', text: '', sel: `${label(el)}>${kid.tagName}`,
+            fg: kRaw, bg: `rgb(${sbg})`, ratio: 0, need: 3, needsEye: false,
+            unresolved: true, unresolvedWhy: 'paint-server',
+            fgOpacity: cumulativeOpacity(kid),
+            box: { x: Math.round(kru.x), y: Math.round(kru.y + scrollY), w: Math.round(kru.width), h: Math.round(kru.height) },
+            vbox: { x: Math.round(kru.x), y: Math.round(kru.y), w: Math.round(kru.width), h: Math.round(kru.height) } });
+          continue;
+        }
+        /*
+         * 低透明度描边基本是「进度环底槽 / 分隔线」这类纯装饰，本来就该若隐若现，
+         * 按 3:1 判它等于要求装饰件跟内容一样显眼 —— 会稳定灌进一批没人会去"修"的噪音。
+         * WCAG 1.4.11 只约束「理解内容所必需」的图形部件，底槽不在其列。
+         */
+        const kAlphaOnly = kRaw.match(/^rgba?\([^)]*,\s*([\d.]+)\s*\)$/);
+        if (kAlphaOnly && parseFloat(kAlphaOnly[1]) < 0.25) continue;
+        const kComposed = composeFg(kRaw, sbg, kid);
+        if (!kComposed) continue;
+        const kc = contrast(kComposed, sbg);
+        if (kc >= 3 && !sEye) continue;
+        const kKey = `svgkid|${kRaw}|${sbg}|${label(el)}`;
+        if (seen.has(kKey)) continue;
+        seen.add(kKey);
+        const kr = el.getBoundingClientRect();   // 报根节点的框：子形状的框常常小到取不出像素
+        kid.setAttribute('data-audit-id', String(++auditId));
+        out.push({ auditId, kind: 'icon', text: '', sel: `${label(el)}>${kid.tagName}`,
+          fg: kRaw, bg: `rgb(${sbg})`, ratio: +kc.toFixed(2), need: 3, needsEye: sEye,
+          fgOpacity: cumulativeOpacity(kid),
+          box: { x: Math.round(kr.x), y: Math.round(kr.y + scrollY), w: Math.round(kr.width), h: Math.round(kr.height) },
+          vbox: { x: Math.round(kr.x), y: Math.round(kr.y), w: Math.round(kr.width), h: Math.round(kr.height) } });
+      }
+      continue;
+    }
     if (isTransparent(raw) || isPlatformOverlay(el)) continue;
     const { bg, needsEye } = effectiveBg(el.parentElement || el);
     const composed = composeFg(raw, bg, el);
