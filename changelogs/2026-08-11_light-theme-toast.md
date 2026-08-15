@@ -66,3 +66,5 @@
 | fix | prd-admin | 修 Codex 第七轮 P2：sameHueTintRatchet 的「按主题分支跳过」判据太宽，命中注释与 DOM 属性字符串就跳过整个文件——AppShell 因此被整体排除，而它正是这条守卫为之而建的文件。收紧为「剥注释后仅认 useDataTheme( / isLight 标识符 / [data-theme= 选择器」，11 个文件重回检查范围 |
 | fix | prd-admin | 修 Codex 第七轮 P1：我的 token 改造把 --accent-fg-* 放进了钉死暗底的容器，浅色档下深字压深底（ProductGraphCanvas 抽屉实测约 1.9:1）。同型全仓 33 个文件 49 处，逐处补 surface-tone-dark |
 | fix | e2e | 修 Codex 第七轮 P1：重采样失败的候选留着不可信的近似比值，被调用方按「达标」丢弃。改为标 unresolved 并把比值压 0，报告里与「实测不达标」分开计数 |
+| fix | prd-admin | 修 Codex 第八轮实证的产品缺陷：DailyLogPanel 五处无条件写死的 emerald-500/95 压同色 12% 淡底，浅色档实测 2.0:1（需 4.5），改走 --accent-fg-success 后 5.83:1 |
+| docs | doc | PR #1374 触发 AGENTS.md §5.5 熔断（Review 修复提交达 8 个 + 同一判据二次收窄），审计工具剩余三项精度记入 debt.frontend 并说明为何不在本 PR 展开 |

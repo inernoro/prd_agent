@@ -1515,7 +1515,7 @@ export function DailyLogPanel() {
                   className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150 whitespace-nowrap"
                   style={{
                     background: showTagManager ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
-                    color: showTagManager ? 'rgba(16, 185, 129, 0.95)' : 'var(--text-muted)',
+                    color: showTagManager ? 'var(--accent-fg-success)' : 'var(--text-muted)',
                     border: `1px solid ${showTagManager ? 'rgba(16, 185, 129, 0.35)' : 'rgba(148, 163, 184, 0.14)'}`,
                   }}
                   onClick={() => setShowTagManager((v) => !v)}
@@ -1539,7 +1539,7 @@ export function DailyLogPanel() {
                         className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-150"
                         style={{
                           background: isActive ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
-                          color: isActive ? 'rgba(16, 185, 129, 0.95)' : 'var(--text-muted)',
+                          color: isActive ? 'var(--accent-fg-success)' : 'var(--text-muted)',
                           border: `1px solid ${isActive ? 'rgba(16, 185, 129, 0.3)' : 'rgba(148, 163, 184, 0.18)'}`,
                         }}
                         onClick={() => setSelectedTodoPlanTarget(opt.key)}
@@ -1601,7 +1601,7 @@ export function DailyLogPanel() {
                         onClick={() => void handleCompletePendingTodo(todo)}
                         disabled={saving}
                       >
-                        <Check size={12} style={{ color: 'rgba(16, 185, 129, 0.95)' }} />
+                        <Check size={12} style={{ color: 'var(--accent-fg-success)' }} />
                       </button>
                       <button
                         className="p-1 rounded transition-colors"
@@ -1835,7 +1835,7 @@ export function DailyLogPanel() {
                                           className="px-2 py-0.5 rounded text-[10px] transition-colors"
                                           style={{
                                             background: active ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
-                                            color: active ? 'rgba(16, 185, 129, 0.95)' : 'var(--text-muted)',
+                                            color: active ? 'var(--accent-fg-success)' : 'var(--text-muted)',
                                             border: `1px solid ${active ? 'rgba(16, 185, 129, 0.3)' : 'transparent'}`,
                                           }}
                                           onClick={() => setEditTodoPlanTarget(opt.key)}
@@ -1970,7 +1970,7 @@ export function DailyLogPanel() {
                                   title="标记完成"
                                   disabled={saving}
                                 >
-                                  <Check size={12} style={{ color: 'rgba(16, 185, 129, 0.95)' }} />
+                                  <Check size={12} style={{ color: 'var(--accent-fg-success)' }} />
                                 </button>
                               )
                             ) : (
