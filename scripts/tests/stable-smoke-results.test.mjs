@@ -208,6 +208,130 @@ test('单环境技术报告明确展示另一环境未选择', () => {
   }
 });
 
+test('正式环境只读报告只统计安全门实际选择的用例', () => {
+  const runDirectory = mkdtempSync(join(tmpdir(), 'stable-smoke-production-only-report-'));
+  try {
+    const planPath = join(runDirectory, 'plan.json');
+    const productionResultPath = join(runDirectory, 'production.json');
+    const summaryPath = join(runDirectory, 'summary.json');
+    const reportPath = join(runDirectory, 'report.md');
+    const supervisorPath = join(runDirectory, 'supervisor.md');
+    writeFileSync(planPath, JSON.stringify({
+      verdict: 'pass',
+      requiredCaseIdsByEnvironment: {
+        production: ['CORE-001', 'REC-003', 'VIDEO-004'],
+      },
+      featureLines: [],
+    }));
+    writeFileSync(productionResultPath, JSON.stringify({
+      suites: [{
+        specs: [{
+          title: '[CORE-001] 首页可用',
+          tests: [{ results: [{ status: 'passed', duration: 10 }] }],
+        }],
+      }],
+    }));
+    writeFileSync(summaryPath, JSON.stringify({
+      productionSafetyGate: {
+        restricted: true,
+        grep: '\\[CORE-001\\]',
+        reasons: ['本轮仅执行正式环境只读检查'],
+      },
+      executions: [{
+        environment: 'production',
+        requiredCaseIds: ['CORE-001', 'REC-003', 'VIDEO-004'],
+        grep: '\\[CORE-001\\]',
+      }],
+    }));
+
+    const result = spawnSync(process.execPath, [
+      'scripts/render-stable-smoke-report.mjs',
+      '--plan', planPath,
+      '--production-input', productionResultPath,
+      '--execution-summary', summaryPath,
+      '--output', reportPath,
+      '--supervisor-output', supervisorPath,
+      '--environments', 'production',
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr);
+    const report = readFileSync(reportPath, 'utf8');
+    assert.match(report, /计划 1 条环境用例，通过 1 条，失败 0 条，未执行 0 条/);
+    assert.doesNotMatch(report, /REC-003|VIDEO-004/);
+    const supervisor = readFileSync(supervisorPath, 'utf8');
+    assert.doesNotMatch(supervisor, /REC-003|VIDEO-004/);
+  } finally {
+    rmSync(runDirectory, { recursive: true, force: true });
+  }
+});
+
+test('双环境受限运行保留被安全门阻止的正式写入用例', () => {
+  const runDirectory = mkdtempSync(join(tmpdir(), 'stable-smoke-restricted-dual-report-'));
+  try {
+    const planPath = join(runDirectory, 'plan.json');
+    const cdsResultPath = join(runDirectory, 'cds.json');
+    const productionResultPath = join(runDirectory, 'production.json');
+    const summaryPath = join(runDirectory, 'summary.json');
+    const reportPath = join(runDirectory, 'report.md');
+    const supervisorPath = join(runDirectory, 'supervisor.md');
+    writeFileSync(planPath, JSON.stringify({
+      verdict: 'pass',
+      requiredCaseIdsByEnvironment: {
+        cds: ['CORE-001'],
+        production: ['CORE-001', 'REC-003', 'VIDEO-004'],
+      },
+      featureLines: [],
+    }));
+    const coreResult = JSON.stringify({
+      suites: [{
+        specs: [{
+          title: '[CORE-001] 首页可用',
+          tests: [{ results: [{ status: 'passed', duration: 10 }] }],
+        }],
+      }],
+    });
+    writeFileSync(cdsResultPath, coreResult);
+    writeFileSync(productionResultPath, coreResult);
+    writeFileSync(summaryPath, JSON.stringify({
+      productionSafetyGate: {
+        restricted: true,
+        grep: '\\[CORE-001\\]',
+        reasons: ['CDS 核心用例失败，正式环境只允许只读检查'],
+      },
+      executions: [
+        { environment: 'cds', requiredCaseIds: ['CORE-001'], grep: '\\[CORE-001\\]' },
+        {
+          environment: 'production',
+          requiredCaseIds: ['CORE-001', 'REC-003', 'VIDEO-004'],
+          grep: '\\[CORE-001\\]',
+        },
+      ],
+    }));
+
+    const result = spawnSync(process.execPath, [
+      'scripts/render-stable-smoke-report.mjs',
+      '--plan', planPath,
+      '--cds-input', cdsResultPath,
+      '--production-input', productionResultPath,
+      '--execution-summary', summaryPath,
+      '--output', reportPath,
+      '--supervisor-output', supervisorPath,
+      '--environments', 'cds,production',
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr);
+    const report = readFileSync(reportPath, 'utf8');
+    assert.match(report, /计划 4 条环境用例，通过 2 条，失败 0 条，未执行 2 条/);
+    assert.match(report, /\| REC-003 \| 正式环境 \| production-safety-restricted \|/);
+    assert.match(report, /\| VIDEO-004 \| 正式环境 \| production-safety-restricted \|/);
+    const supervisor = readFileSync(supervisorPath, 'utf8');
+    assert.match(supervisor, /REC-003/);
+    assert.match(supervisor, /VIDEO-004/);
+  } finally {
+    rmSync(runDirectory, { recursive: true, force: true });
+  }
+});
+
 function expectCaseIds(actual, expected) {
   assert.deepEqual(actual, expected);
 }
@@ -237,6 +361,51 @@ test('正式环境已有报告但缺步骤时给正式环境补跑命令', () =>
   assert.match(ledger[0].command, /stable-smoke-run\.mjs --grep/);
   assert.doesNotMatch(ledger[0].command, /--production-only/);
   assert.doesNotMatch(ledger[0].command, /--cds-only/);
+});
+
+test('正式环境安全门受限时未执行账本展示真实原因而不固定归因给业务失败', () => {
+  const ledger = buildNotRunLedger([
+    { caseId: 'VIDEO-001', environment: 'production', status: 'not-run' },
+  ], {
+    cds: true,
+    production: true,
+    productionRestricted: true,
+    productionSafetyGate: {
+      restricted: true,
+      reasons: ['CDS 仅执行了筛选用例，未满足正式环境写入所需的全量验证'],
+    },
+  });
+  assert.equal(ledger[0].reasonCode, 'production-safety-restricted');
+  assert.match(ledger[0].reason, /仅执行了筛选用例/);
+  assert.doesNotMatch(ledger[0].reason, /业务失败/);
+  assert.match(ledger[0].command, /按安全门原因/);
+  assert.match(ledger[0].closeCondition, /安全门解除/);
+  assert.doesNotMatch(ledger[0].command, /实现 \[VIDEO-001\]/);
+});
+
+test('正式环境只读安全门允许的探针缺证时不得解释为写入受限', () => {
+  const ledger = buildNotRunLedger([
+    { caseId: 'CORE-001', environment: 'production', status: 'not-run' },
+    { caseId: 'VIDEO-001', environment: 'production', status: 'not-run' },
+  ], {
+    cds: false,
+    production: false,
+    productionRestricted: true,
+    productionSafetyGate: {
+      restricted: true,
+      grep: '\\[CORE-001\\]',
+      reasons: ['本轮未执行 CDS 全量测试，正式环境仅允许只读健康检查'],
+    },
+  });
+
+  assert.equal(ledger[0].reasonCode, 'production-read-only-evidence-missing');
+  assert.match(ledger[0].reason, /已允许只读检查 CORE-001/);
+  assert.doesNotMatch(ledger[0].reason, /写入旅程未运行/);
+  assert.match(ledger[0].command, /--production-only/);
+  assert.doesNotMatch(ledger[0].closeCondition, /安全门解除/);
+  assert.equal(ledger[1].reasonCode, 'production-safety-restricted');
+  assert.match(ledger[1].reason, /写入旅程未运行/);
+  assert.match(ledger[1].closeCondition, /安全门解除/);
 });
 
 test('失败优先于未执行，重试通过仍是 conditional', () => {

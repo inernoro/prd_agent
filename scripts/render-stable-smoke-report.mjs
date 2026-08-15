@@ -62,9 +62,37 @@ try {
 const evidenceRows = [
   ...collectPlaywrightCases(cdsReport, 'cds'),
   ...collectPlaywrightCases(productionReport, 'production'),
+  ...(Array.isArray(executionSummary?.supplementalEvidenceRows)
+    ? executionSummary.supplementalEvidenceRows
+    : []),
 ];
+const requiredCaseIdsByEnvironment = Object.fromEntries(selectedEnvironments.map((targetEnvironment) => {
+  const execution = executionSummary?.executions?.find((item) => item.environment === targetEnvironment);
+  const fromExecution = Array.isArray(execution?.requiredCaseIds) ? execution.requiredCaseIds : null;
+  const plannedCaseIds = fromExecution
+    || plan?.requiredCaseIdsByEnvironment?.[targetEnvironment]
+    || plan?.requiredCaseIds
+    || [];
+  const environmentRows = evidenceRows.filter((row) => row.environment === targetEnvironment);
+  const productionReadOnlyGrep = targetEnvironment === 'production'
+    && selectedEnvironments.length === 1
+    && executionSummary?.productionSafetyGate?.restricted === true
+    ? executionSummary.productionSafetyGate.grep
+    : '';
+  const productionRestrictedInDualRun = targetEnvironment === 'production'
+    && selectedEnvironments.length > 1
+    && executionSummary?.productionSafetyGate?.restricted === true;
+  const executionGrep = productionRestrictedInDualRun ? '' : execution?.grep;
+  const effectiveGrep = productionReadOnlyGrep || executionGrep || grepExpression;
+  return [
+    targetEnvironment,
+    effectiveGrep
+      ? selectRequiredCaseIds(plannedCaseIds, effectiveGrep, environmentRows)
+      : plannedCaseIds,
+  ];
+}));
 const rows = reconcileCaseCoverage(
-  selectRequiredCaseIds(plan?.requiredCaseIds || [], grepExpression, evidenceRows),
+  requiredCaseIdsByEnvironment,
   evidenceRows,
   selectedEnvironments.length > 0 ? selectedEnvironments : ['cds', 'production'],
 );
@@ -78,6 +106,8 @@ const summary = executionFailures.length > 0
 const notRunLedger = buildNotRunLedger(rows, {
   cds: Boolean(cdsReport),
   production: Boolean(productionReport),
+  productionRestricted: executionSummary?.productionSafetyGate?.restricted === true,
+  productionSafetyGate: executionSummary?.productionSafetyGate,
 });
 const verdict = summary.verdict;
 const totalDuration = rows.reduce((sum, row) => sum + row.durationMs, 0);
