@@ -339,6 +339,13 @@ AGENTS.md §5.5 熔断（Review 修复提交达 8 个；且「按主题分支跳
 **这意味着**：审计给出的数在「文字压非匀渐变」这一类上仍可能偏低。用它做回归对比是可靠的
 （同一把尺子前后量），用它宣称「全站零缺陷」则不可靠。
 
+**「暗底声明」有四种写法，自动扫描只覆盖前三种。** 把浅彩前景 token 化时要给
+钉死深底的容器补 `surface-tone-dark`，而「深底」可以写成：
+① className 里的 `bg-[#xxxxxx]`；② 内联 style 的 hex；③ 内联 style 的 rgba；
+④ **具名 style 对象**（`const panelBase = { background: 'rgba(18,18,24,.92)' }` 再 `style={panelBase}`）。
+第四种按「同一个开标签」判定时够不着，只能手工兜 —— VisualCreationMiniPanel 就是这么漏的
+（PR #1374 第九轮）。新增这类改造时，除自动扫描外还要 grep 一遍具名样式对象。
+
 **已知边界（这条判据看不见的）**：显式按主题分支的文件（含 `useDataTheme` / `isLight`）整体跳过 ——
 它们的浅色档写 600/700、暗色档写 300/400，两个分支在源码里长得一模一样，静态判据分不出
 哪段给哪个主题，而那本来就是**正确**写法（`report-agent` 的 `buildStatusConfig(isLight)` 是范例）。

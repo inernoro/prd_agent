@@ -285,7 +285,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                 title={defect.resolution || ''}
               >
                 <div
-                  className="flex flex-col items-center px-4 py-2.5 rounded-xl"
+                  className="surface-tone-dark flex flex-col items-center px-4 py-2.5 rounded-xl"
                   style={{
                     ...glassBadge,
                     border: '3px solid rgba(120, 220, 180, 0.7)',
@@ -324,7 +324,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                 title={defect.rejectReason || ''}
               >
                 <div
-                  className="flex flex-col items-center px-4 py-2.5 rounded-xl"
+                  className="surface-tone-dark flex flex-col items-center px-4 py-2.5 rounded-xl"
                   style={{
                     ...glassBadge,
                     border: '3px solid rgba(255, 120, 120, 0.7)',

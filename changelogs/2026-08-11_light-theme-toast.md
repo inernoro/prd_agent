@@ -68,3 +68,4 @@
 | fix | e2e | 修 Codex 第七轮 P1：重采样失败的候选留着不可信的近似比值，被调用方按「达标」丢弃。改为标 unresolved 并把比值压 0，报告里与「实测不达标」分开计数 |
 | fix | prd-admin | 修 Codex 第八轮实证的产品缺陷：DailyLogPanel 五处无条件写死的 emerald-500/95 压同色 12% 淡底，浅色档实测 2.0:1（需 4.5），改走 --accent-fg-success 后 5.83:1 |
 | docs | doc | PR #1374 触发 AGENTS.md §5.5 熔断（Review 修复提交达 8 个 + 同一判据二次收窄），审计工具剩余三项精度记入 debt.frontend 并说明为何不在本 PR 展开 |
+| fix | prd-admin | 修 Codex 第九轮：VisualCreationMiniPanel 面板钉死深底却未标暗岛，错误文案约 2.6:1。底色写在具名 style 对象里，自动扫描按「同一开标签」判定够不着，手工补；同轮 rgba 写法的暗底再扫出 DefectCard 2 处、ReviewAgentDimensionsModal 1 处 |

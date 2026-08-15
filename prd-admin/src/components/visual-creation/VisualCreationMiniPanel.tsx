@@ -466,7 +466,14 @@ export function VisualCreationMiniPanel({
   const originalBtnLabel = gettingPrompt ? '正在据原文构思画面…' : '用原文';
 
   return (
-    <div style={panelBase}>
+    /*
+     * 这块面板自己钉死了深底（panelBase 的 rgba(18,18,24,0.92)），却没标暗岛，
+     * 于是里面走 --accent-fg-* 的文字在浅色主题下解析成深色档 —— 报错文案实测约 2.6:1
+     * （Codex 在 PR #1374 第九轮抓到）。标上暗岛，token 才跟着这块底走。
+     * 注意：底色写在具名 style 对象里，不是内联在标签上，自动扫描按「同一开标签」判定时够不着，
+     * 这类只能手工兜。
+     */
+    <div className="surface-tone-dark" style={panelBase}>
       {/* 提示词区 */}
       <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
