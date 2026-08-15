@@ -53,3 +53,5 @@
 | fix | prd-admin | 修 Codex 第二轮 P2：surface-tone-dark 按「真实消费」补齐 41 个 token（上一轮按族名清单只补 14 个，--overlay-panel-solid 以 overlay 开头就漏了）；守卫判据同步从族名清单换成消费关系 |
 | feat | prd-admin | 新增 useSurfaceTone：解析元素**所处表面**的明暗而非全局主题。Mermaid 图接上后不再在深色岛里用浅色调色板（原约 1.1:1） |
 | fix | e2e | 两个审计脚本补覆盖账本：跳过/报错不再静默吞掉，收尾打印实际覆盖对数、写 coverage.json，未全覆盖以非零码退出 |
+| fix | e2e | 修 Codex 第三轮 P1：页内 slice(0,60) 发生在渐变重采样**之前**，候选超 60 的页面尾部真实缺陷被永久丢弃、且前 60 条被重采样纠正后报告会显示 0。改为全量返回，展示上限挪到渲染层并自报省略了多少组 |
+| fix | e2e | 修 Codex 第三轮 P2：两个审计脚本改为每主题独立 context。此前在同一 page 上反复 addInitScript，light 那份跑到 dark 时仍常驻、两份都写主题 key 而执行顺序未定义，dark 轮可能整轮被判「主题未生效」跳过 |

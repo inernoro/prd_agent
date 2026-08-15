@@ -136,7 +136,14 @@ export const AUDIT_FN = () => {
       vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });
   }
 
-  return out.sort((a, b) => a.ratio - b.ratio).slice(0, 60);
+  /*
+   * 全量返回，不在页内截断。
+   * 原来这里 slice(0, 60)，截断发生在 resampleGradientFindings **之前** ——
+   * 候选超过 60 的页面，尾部真实缺陷被永久丢弃；而前 60 条若被重采样纠正为达标，
+   * 报告就会显示「0 处」，实际还有一批从没查过（Codex 在 PR #1374 第三轮抓到）。
+   * 展示用的上限放到 renderMarkdown 里，只影响呈现、不影响判定。
+   */
+  return out.sort((a, b) => a.ratio - b.ratio);
 };
 
 /** 按「同一组前景/背景配色」聚合：公共组件坏掉会在几十条路由上重复命中，聚合后排最前的就是病根。 */
@@ -156,6 +163,9 @@ export function aggregate(report) {
     .sort((a, b) => b.routeCount - a.routeCount || a.ratio - b.ratio);
 }
 
+/** 报告表格的展示上限。只影响呈现，判定与 report.json 始终是全量。 */
+const TABLE_LIMIT = 40;
+
 export function renderMarkdown({ title, base, routeCount, report, groups, note }) {
   const total = report.reduce((s, r) => s + r.findings.length, 0);
   return [
@@ -165,8 +175,12 @@ export function renderMarkdown({ title, base, routeCount, report, groups, note }
     '## 按配色聚合（影响路由数从多到少）', '',
     '| 影响路由数 | 类型 | 前景 | 背景 | 实测 | 需要 | 样例元素 |',
     '|---|---|---|---|---|---|---|',
-    ...groups.slice(0, 40).map((g) =>
+    ...groups.slice(0, TABLE_LIMIT).map((g) =>
       `| ${g.routeCount} | ${g.kind} | \`${g.fg}\` | \`${g.bg}\` | ${g.ratio}:1 | ${g.need}:1 | \`${g.samples[0]}\` |`),
+    // 截断必须说出来：省略了多少条如果不写，读者会把这张表当成全集
+    ...(groups.length > TABLE_LIMIT
+      ? ['', `> 表内只列前 ${TABLE_LIMIT} 组，另有 ${groups.length - TABLE_LIMIT} 组未列出，完整数据见 report.json。`]
+      : []),
   ].join('\n');
 }
 

@@ -89,10 +89,24 @@ const report = [];
  * 现在记账：任何一对没扫成，收尾时必须报出来并以非零码退出。
  */
 const coverage = { done: [], skipped: [], errored: [] };
+/*
+ * 每个主题开一个全新 context，别在同一个 page 上反复 addInitScript。
+ * init 脚本跨导航常驻且**互不覆盖**：跑到 dark 时 light 那份还在，两份都写
+ * map-mobile-theme-v2，而 Playwright 明确说多份 init 脚本的执行顺序未定义 ——
+ * 于是 dark 轮可能整轮落成 light、被判「主题未生效」全部跳过
+ * （Codex 在 PR #1374 第三轮抓到）。
+ * 登录态用 storageState 带过去，不必每个主题重登一次。
+ */
+const loggedInState = await ctx.storageState();
 for (const theme of ['light', 'dark']) {
-  await page.addInitScript((t) => {
+  const themeCtx = await browser.newContext({
+    viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true, storageState: loggedInState,
+  });
+  await installNodeFetchRoute(themeCtx);
+  await themeCtx.addInitScript((t) => {
     localStorage.setItem('map-mobile-theme-v2', JSON.stringify({ state: { mode: t }, version: 0 }));
   }, theme);
+  const page = await themeCtx.newPage();
   for (const route of ROUTES) {
     try {
       await page.goto(`${BASE}${route}`, { waitUntil: 'commit', timeout: 45000 });
@@ -125,6 +139,7 @@ for (const theme of ['light', 'dark']) {
       console.log(`[${theme}] ${route.padEnd(30)} ERROR ${String(e).split('\n')[0].slice(0, 70)}`);
     }
   }
+  await themeCtx.close();
 }
 
 fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 2));

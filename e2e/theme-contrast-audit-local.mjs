@@ -88,17 +88,21 @@ console.log(`本地静态服务 ${BASE}（dist=${DIST}）｜路由 ${ROUTES.leng
 const browser = await chromium.launch({
   ...(process.env.PLAYWRIGHT_CHROMIUM_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH } : {}),
 });
-const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-const page = await ctx.newPage();
-page.on('pageerror', () => {});   // 桩数据下组件报错属预期，不打断扫描
+// context/page 改为**每个主题各开一份**（见下方循环），这里不再建共享的那一份
 
 const report = [];
 // 覆盖账本，同远端版：跳过/报错不许静默吞掉（判据见 theme-contrast-audit.mjs 收尾处注释）
 const coverage = { done: [], skipped: [], errored: [] };
+/*
+ * 每个主题开一个全新 context —— 同远端版：init 脚本跨导航常驻且互不覆盖，
+ * 跑到 dark 时 light 那份还在，两份都写 map-mobile-theme-v2 而执行顺序未定义，
+ * dark 轮可能整轮落成 light 被判「主题未生效」跳过。
+ */
 for (const theme of ['light', 'dark']) {
-  // 预置登录态 + 主题；两者都走 localStorage，无需真实后端
-  await ctx.clearCookies();
-  await page.addInitScript(({ theme: t, perms }) => {
+  const themeCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await themeCtx.newPage();
+  page.on('pageerror', () => {});   // 桩数据下组件报错属预期，不打断扫描
+  await themeCtx.addInitScript(({ theme: t, perms }) => {
     localStorage.setItem('map-mobile-theme-v2', JSON.stringify({ state: { mode: t }, version: 0 }));
     localStorage.setItem('prd-admin-auth', JSON.stringify({
       state: {
@@ -137,6 +141,7 @@ for (const theme of ['light', 'dark']) {
       console.log(`[${theme}] ${route.padEnd(30)} ERROR ${String(e).split('\n')[0].slice(0, 70)}`);
     }
   }
+  await themeCtx.close();
 }
 
 const groups = aggregate(report);
