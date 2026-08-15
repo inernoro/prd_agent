@@ -158,6 +158,30 @@ export const AUDIT_FN = () => {
     const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
     if (!hasText || !visible(el) || inactive(el) || isPlatformOverlay(el)) continue;
     const cs = getComputedStyle(el);
+    /*
+     * `background-clip: text` 的渐变文字：真正画出来的是被裁切的背景渐变本身，
+     * 而 `color` 是 transparent —— 任何按 color 取值的判据都够不着它，于是这类
+     * 文字（StatsStrip 的渐变大数就是）从来没进过报告，一屏不可读的标题也能报绿
+     * （Codex 在 PR #1374 第二十六轮抓到）。
+     *
+     * 要真量它得逐字形采像素，属独立工程；现在先**如实计成「没量成」**，
+     * 不猜数、也不再当它不存在 —— 这一桶有专门的退出码和复核提示。
+     */
+    const clipped = (cs.webkitBackgroundClip === 'text' || cs.backgroundClip === 'text')
+      && isTransparent(cs.color);
+    if (clipped) {
+      const ck = `clip|${label(el)}`;
+      if (seen.has(ck)) continue;
+      seen.add(ck);
+      const cr = el.getBoundingClientRect();
+      tagAudit(el, ++auditId);
+      out.push({ auditId, kind: 'text', text: el.textContent.trim().slice(0, 24), sel: label(el),
+        fg: cs.backgroundImage.slice(0, 60), bg: 'rgb(0,0,0)', ratio: 0, need: 4.5, needsEye: false,
+        unresolved: true, unresolvedWhy: 'background-clip-text', fgOpacity: cumulativeOpacity(el),
+        box: { x: Math.round(cr.x), y: Math.round(cr.y + scrollY), w: Math.round(cr.width), h: Math.round(cr.height) },
+        vbox: { x: Math.round(cr.x), y: Math.round(cr.y), w: Math.round(cr.width), h: Math.round(cr.height) } });
+      continue;
+    }
     if (isTransparent(cs.color)) continue;
     const { bg, needsEye } = effectiveBg(el);
     const composed = composeFg(cs.color, bg, el);
