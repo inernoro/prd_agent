@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useDataTheme } from '@/hooks/useDataTheme';
+import { useSurfaceTone } from '@/hooks/useSurfaceTone';
 import { ChevronDown, ChevronUp, Copy, Loader2 } from 'lucide-react';
 
 /**
@@ -52,7 +52,12 @@ export function MermaidDiagram({ code }: { code: string }) {
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [showSource, setShowSource] = useState(false);
-  const theme = useDataTheme();
+  /*
+   * 取**所处表面**的明暗，不是全局主题。图画在哪块底上就跟哪块走 ——
+   * CDS Agent 的回答区钉死深底（surface-tone-dark），全局却可能是浅色主题，
+   * 只读全局就会拿浅色调色板去画深底：字约 1.1:1、连线约 2.3:1（Codex 在 PR #1374 抓到）。
+   */
+  const theme = useSurfaceTone(containerRef);
 
   useEffect(() => {
     let cancelled = false;

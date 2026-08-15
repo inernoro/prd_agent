@@ -50,3 +50,6 @@
 | fix | prd-admin | 教程中心承接卡落地方案 A（用户选）：七级帽子拆双皮肤——暗色档保持石墨→暖银的提亮递进，浅色档另配石墨→暖青铜的加深递进（5.3~6.6:1，原来 Lv.3 只有 1.86:1 且越高阶越看不见）；卡片补实底与描边；进度环底槽改走 --nested-block-bg |
 | fix | prd-admin | 修 Codex P1：surface-tone-dark 只覆盖半套 token，暗岛内用 var(--bg-elevated) 等 14 个表面 token 时会「近白字压浅暖底」（arena 两个下拉实例，全仓 6 个文件受影响）。补齐 14 个并加守卫，红绿闭环验过 |
 | chore | repo | 修 Codex P2：116 个审计截图共 23MB 被误提交入库，git rm --cached 移除；.gitignore 从枚举目录名改成 .audit-*/ 前缀通配，换 AUDIT_OUT 也堵得住 |
+| fix | prd-admin | 修 Codex 第二轮 P2：surface-tone-dark 按「真实消费」补齐 41 个 token（上一轮按族名清单只补 14 个，--overlay-panel-solid 以 overlay 开头就漏了）；守卫判据同步从族名清单换成消费关系 |
+| feat | prd-admin | 新增 useSurfaceTone：解析元素**所处表面**的明暗而非全局主题。Mermaid 图接上后不再在深色岛里用浅色调色板（原约 1.1:1） |
+| fix | e2e | 两个审计脚本补覆盖账本：跳过/报错不再静默吞掉，收尾打印实际覆盖对数、写 coverage.json，未全覆盖以非零码退出 |

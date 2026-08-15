@@ -82,6 +82,13 @@ if (page.url().includes('/login')) {
 console.log('登录 OK');
 
 const report = [];
+/*
+ * 覆盖账本。此前跳过与报错只打一行日志就继续，最后照样打印「完成」、
+ * 按 ROUTES.length 写报告、exit 0 —— 于是「主题没生效被跳过 4 条」
+ * 和「全部扫完 0 命中」在输出里长得一样，我自己就据此报过「双主题 0 命中」。
+ * 现在记账：任何一对没扫成，收尾时必须报出来并以非零码退出。
+ */
+const coverage = { done: [], skipped: [], errored: [] };
 for (const theme of ['light', 'dark']) {
   await page.addInitScript((t) => {
     localStorage.setItem('map-mobile-theme-v2', JSON.stringify({ state: { mode: t }, version: 0 }));
@@ -91,7 +98,11 @@ for (const theme of ['light', 'dark']) {
       await page.goto(`${BASE}${route}`, { waitUntil: 'commit', timeout: 45000 });
       await page.waitForTimeout(5200);   // 真实数据渲染比空桩慢，给足时间否则扫到骨架屏
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
-      if (actual !== theme) { console.log(`  [跳过] ${route} 主题未生效(${actual})`); continue; }
+      if (actual !== theme) {
+        coverage.skipped.push(`${theme}${route}（主题未生效，实际 ${actual}）`);
+        console.log(`  [跳过] ${route} 主题未生效(${actual})`);
+        continue;
+      }
       let findings = await page.evaluate(AUDIT_FN);
       if (findings.length) {
         const shot = `${theme}${route.replace(/\//g, '_')}.png`;
@@ -107,8 +118,10 @@ for (const theme of ['light', 'dark']) {
         findings = findings.filter((f) => f.ratio < f.need);
         if (findings.length) report.push({ theme, route, shot, findings });
       }
+      coverage.done.push(`${theme}${route}`);
       console.log(`[${theme}] ${route.padEnd(30)} ${findings.length} 处`);
     } catch (e) {
+      coverage.errored.push(`${theme}${route}: ${String(e).split('\n')[0].slice(0, 90)}`);
       console.log(`[${theme}] ${route.padEnd(30)} ERROR ${String(e).split('\n')[0].slice(0, 70)}`);
     }
   }
@@ -121,6 +134,24 @@ fs.writeFileSync(path.join(OUT, 'report.md'), renderMarkdown({
   title: '全站双主题对比度审计', base: BASE, routeCount: ROUTES.length, report, groups,
 }));
 
-console.log(`\n完成：${report.length} 个「路由×主题」命中，配色组 ${groups.length}`);
+const expected = ROUTES.length * 2;
+console.log(`\n覆盖：${coverage.done.length}/${expected} 对「路由×主题」实际扫过`);
+console.log(`命中：${report.length} 个「路由×主题」，配色组 ${groups.length}`);
 console.log(`报告：${path.join(OUT, 'report.md')} / report.json，截图同目录`);
+fs.writeFileSync(path.join(OUT, 'coverage.json'), JSON.stringify({ expected, ...coverage }, null, 2));
+
 await browser.close();
+
+/*
+ * 覆盖不全就是不合格，不许当成「干净」。
+ * 跳过与报错此前只打一行日志，最后照样 exit 0 —— 一次超时、一次主题没落上、
+ * 一条路由挂了，输出看起来和「全扫完 0 命中」一模一样。
+ * 报告里的数只有在这里绿了才有意义。
+ */
+if (coverage.skipped.length || coverage.errored.length) {
+  console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length} 对没扫成，本轮结果不能当作「已覆盖」：`);
+  for (const x of coverage.skipped) console.error(`  跳过  ${x}`);
+  for (const x of coverage.errored) console.error(`  报错  ${x}`);
+  console.error('\n明细见 coverage.json。修掉原因后重跑，或在交付里明写这几屏未覆盖。');
+  process.exit(1);
+}

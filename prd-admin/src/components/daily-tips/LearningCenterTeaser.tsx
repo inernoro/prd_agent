@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
-import { useDataTheme } from '@/pages/report-agent/hooks/useDataTheme';
+import { useDataTheme } from '@/hooks/useDataTheme';
 
 /**
  * 首页顶部「教程中心」承接卡（徽章环样式）。「只是承接」—— 卡内只展示等级 + 累计经验 +

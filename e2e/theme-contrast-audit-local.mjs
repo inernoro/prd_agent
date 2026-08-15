@@ -93,6 +93,8 @@ const page = await ctx.newPage();
 page.on('pageerror', () => {});   // 桩数据下组件报错属预期，不打断扫描
 
 const report = [];
+// 覆盖账本，同远端版：跳过/报错不许静默吞掉（判据见 theme-contrast-audit.mjs 收尾处注释）
+const coverage = { done: [], skipped: [], errored: [] };
 for (const theme of ['light', 'dark']) {
   // 预置登录态 + 主题；两者都走 localStorage，无需真实后端
   await ctx.clearCookies();
@@ -114,7 +116,11 @@ for (const theme of ['light', 'dark']) {
       await page.goto(`${BASE}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(1800);
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
-      if (actual !== theme) { console.log(`  [跳过] ${route} 主题未生效(${actual})`); continue; }
+      if (actual !== theme) {
+        coverage.skipped.push(`${theme}${route}（主题未生效，实际 ${actual}）`);
+        console.log(`  [跳过] ${route} 主题未生效(${actual})`);
+        continue;
+      }
       let findings = await page.evaluate(AUDIT_FN);
       if (findings.length) {
         const shot = `${theme}${route.replace(/\//g, '_')}.png`;
@@ -124,8 +130,10 @@ for (const theme of ['light', 'dark']) {
         findings = findings.filter((f) => f.ratio < f.need);   // 重算后达标的直接剔除
         if (findings.length) report.push({ theme, route, shot, findings });
       }
+      coverage.done.push(`${theme}${route}`);
       console.log(`[${theme}] ${route.padEnd(30)} ${findings.length} 处`);
     } catch (e) {
+      coverage.errored.push(`${theme}${route}: ${String(e).split('\n')[0].slice(0, 90)}`);
       console.log(`[${theme}] ${route.padEnd(30)} ERROR ${String(e).split('\n')[0].slice(0, 70)}`);
     }
   }
@@ -138,7 +146,17 @@ fs.writeFileSync(path.join(OUT, 'report.md'), renderMarkdown({
   base: BASE, routeCount: ROUTES.length, report, groups,
   note: '本轮用空数据桩，覆盖外壳/导航/按钮/图标/空状态；列表被真实数据填满后的行需用远端版复扫。',
 }));
-console.log(`\n完成：${report.length} 个「路由×主题」命中，配色组 ${groups.length}`);
+const expected = ROUTES.length * 2;
+console.log(`\n覆盖：${coverage.done.length}/${expected} 对「路由×主题」实际扫过`);
+console.log(`命中：${report.length} 个「路由×主题」，配色组 ${groups.length}`);
 console.log(`报告：${path.join(OUT, 'report.md')}`);
+fs.writeFileSync(path.join(OUT, 'coverage.json'), JSON.stringify({ expected, ...coverage }, null, 2));
 await browser.close();
 server.close();
+
+if (coverage.skipped.length || coverage.errored.length) {
+  console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length} 对没扫成，本轮结果不能当作「已覆盖」：`);
+  for (const x of coverage.skipped) console.error(`  跳过  ${x}`);
+  for (const x of coverage.errored) console.error(`  报错  ${x}`);
+  process.exit(1);
+}

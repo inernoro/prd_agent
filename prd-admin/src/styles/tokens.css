@@ -891,6 +891,55 @@
   --panel: linear-gradient(180deg, rgba(30, 30, 36, 0.92) 0%, rgba(30, 30, 36, 0.78) 100%);
   --panel-solid: rgba(30, 30, 36, 0.92);
   --accent-on-gold: #1a1a1a;
+  /*
+   * 下面这批不是「表面族」，是**按真实消费**补的：凡两个主题取值不同、且被任何带
+   * surface-tone-dark 的文件消费的 token，暗岛都必须覆盖。
+   * 上一轮我按族名清单补（bg/panel/text/border/glass…），结果 --overlay-panel-solid
+   * 以 overlay 开头、不在清单里，UniverseGraphPage 的提示面板照样近白压近白
+   * （Codex 在 PR #1374 第二轮抓到）。族名清单是猜的，消费关系是真的。
+   */
+  --accent-gold: #D97757;
+  --accent-gold-2: #E8A87C;
+  --accent-primary: #D97757;
+  --accent-primary-rgb: 217, 119, 87;
+  --button-primary-bg: #D97757;
+  --button-primary-shadow: 0 4px 16px -4px rgba(217, 119, 87, 0.42);
+  --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
+  --hairline: rgba(255, 255, 255, 0.08);
+  --media-card-edge: rgba(247, 247, 251, 0.08);
+  --overlay-panel-solid: rgba(24, 24, 30, 0.96);
+  --report-accent: var(--accent-primary);
+  --report-accent-border: rgba(var(--accent-primary-rgb), 0.32);
+  --report-accent-hover: var(--accent-gold-2);
+  --report-accent-soft: rgba(var(--accent-primary-rgb), 0.14);
+  --report-status-done: var(--semantic-success-text);
+  --report-status-done-border: var(--semantic-success-border);
+  --report-status-done-soft: var(--semantic-success-soft);
+  --report-status-going: var(--semantic-warning-text);
+  --report-status-going-border: var(--semantic-warning-border);
+  --report-status-going-soft: var(--semantic-warning-soft);
+  --report-status-idle: var(--semantic-neutral-text);
+  --report-status-idle-border: var(--semantic-neutral-border);
+  --report-status-idle-soft: var(--semantic-neutral-soft);
+  --selection-bg: rgba(217, 119, 87, 0.16);
+  --selection-border: rgba(217, 119, 87, 0.38);
+  --selection-checkbox-bg: rgba(255, 255, 255, 0.10);
+  --selection-text: #F0C9A8;
+  --semantic-danger-text: #fca5a5;
+  --semantic-indigo-text: #a5b4fc;
+  --semantic-neutral-border: rgba(148, 163, 184, 0.20);
+  --semantic-neutral-soft: rgba(148, 163, 184, 0.10);
+  --semantic-neutral-text: #cbd5e1;
+  --semantic-success-border: rgba(34, 197, 94, 0.24);
+  --semantic-success-soft: rgba(34, 197, 94, 0.12);
+  --semantic-success-text: #86efac;
+  --semantic-warning-border: rgba(245, 158, 11, 0.24);
+  --semantic-warning-soft: rgba(245, 158, 11, 0.12);
+  --semantic-warning-text: #fcd34d;
+  --shadow-card: 0 2px 14px rgba(0, 0, 0, 0.35);
+  --shadow-card-sm: 0 2px 6px rgba(0, 0, 0, 0.20);
+  --shadow-glass-toast: 0 8px 32px rgba(0, 0, 0, 0.28);
+
 }
 
 html, body {

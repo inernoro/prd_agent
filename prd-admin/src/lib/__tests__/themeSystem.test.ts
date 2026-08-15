@@ -162,29 +162,60 @@ describe('主题系统契约', () => {
     });
   });
 
-  it('surface-tone-dark 必须整族覆盖表面与文字 token', () => {
+  it('surface-tone-dark 必须覆盖岛内真实用到的每个主题相关 token', () => {
     /*
-     * 暗岛（钉死深色的局部区域）只覆盖半套 token 会静默翻车：
-     * 文字翻回近白、底色却仍是浅色档的值 —— 近白字压浅暖底，几乎不可读。
-     * Codex 在 PR #1374 抓到 arena 的两个下拉正是这样（用 var(--bg-elevated)），
-     * 当时 .surface-tone-dark 少了 14 个表面 token，全仓 6 个文件的暗岛都受影响。
-     * 这条守卫盯的是「浅色档定义了的表面/文字族 token，暗岛必须都有对应项」。
+     * 暗岛（钉死深色的局部区域）只覆盖一部分 token 会静默翻车：
+     * 文字翻回近白、底色仍是浅色档的值 —— 近白字压近白底，几乎不可读。
+     *
+     * 判据换过一次，值得记：第一版按**族名清单**判（bg/panel/text/border/glass…），
+     * 结果 --overlay-panel-solid 以 overlay 开头、不在清单里，UniverseGraphPage
+     * 的提示面板照样糊（Codex 在 PR #1374 连抓两轮，同一个「判据太窄」）。
+     * 族名清单是猜的，会漏；**消费关系是真的**。
+     *
+     * 现判据：凡「两个主题取值不同」且「被任何带 surface-tone-dark 的文件用 var() 消费」
+     * 的 token，暗岛必须覆盖。新写一个暗岛并用到某个主题相关 token 时，这条会自动收紧。
      */
     const css = fs.readFileSync(TOKENS_PATH, 'utf8');
     const blockOf = (head: string) => {
       const i = css.indexOf(head);
       expect(i, `找不到 ${head}`).toBeGreaterThan(-1);
       const j = css.indexOf('\n}', i);
-      return new Set([...css.slice(i, j).matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+      return new Map([...css.slice(i, j).matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)]
+        .map((m) => [m[1], m[2].trim()] as const));
     };
-    const FAMILY = /^--(bg|panel|surface|text|border|glass|accent-fg|accent-on)/;
+    const root = blockOf(':root {');
     const light = blockOf('[data-theme="light"] {');
     const island = blockOf('.surface-tone-dark {');
-    const missing = [...light].filter((t) => FAMILY.test(t) && !island.has(t)).sort();
+    const themed = [...light].filter(([k, v]) => root.has(k) && root.get(k) !== v).map(([k]) => k);
+
+    // 找出所有带 surface-tone-dark 的源文件，看它们真实消费了哪些未覆盖的主题 token
+    const islandFiles: string[] = [];
+    const walkSrc = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        // 测试目录要排掉：本文件自己就写着 surface-tone-dark（就是这条用例），
+        // 又在别处断言里引用了一堆 var(--xxx)，不排就会把自己算成暗岛消费方、凭空多报。
+        if (e.isDirectory()) { if (e.name !== 'node_modules' && e.name !== '__tests__') walkSrc(full); continue; }
+        if (!/\.(tsx?|css)$/.test(e.name)) continue;
+        // tokens.css 是 token 的**定义**处，不是暗岛的消费方。
+        // 它自己就写着 .surface-tone-dark，不排掉的话它内部的 var() 引用会被
+        // 当成「岛内有人在用」，判据凭空多报十几个。
+        if (full === TOKENS_PATH) continue;
+        const text = fs.readFileSync(full, 'utf8');
+        if (text.includes('surface-tone-dark')) islandFiles.push(text);
+      }
+    };
+    walkSrc(path.resolve(TEST_DIR, '../..'));
+
+    const missing = themed
+      .filter((t) => !island.has(t))
+      .filter((t) => islandFiles.some((text) => text.includes(`var(${t}`)))
+      .sort();
+
     expect(
       missing.length
-        ? `surface-tone-dark 缺这些表面/文字 token，暗岛内用到就会「近白字压浅底」：\n  ${missing.join('\n  ')}\n`
-          + '补上暗色档对应值（取 :root 的值）即可。'
+        ? `surface-tone-dark 缺这些 token，而暗岛内确实有元素在用，浅色档下会「近白字压近白底」：\n  ${missing.join('\n  ')}\n`
+          + '补上 :root 里的对应值即可。'
         : '',
     ).toBe('');
   });
