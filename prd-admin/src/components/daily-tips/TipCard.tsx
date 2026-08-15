@@ -18,8 +18,17 @@ import { X, ChevronRight, Check, BellOff } from 'lucide-react';
 export interface TipCardProps {
   /** 左上角图标(如 MapPin / Sparkles / BookOpen) */
   icon?: ReactNode;
-  /** accent 主色,默认绿(参考文学版教程),也可传红(isTargeted)或紫(默认 tip) */
+  /**
+   * accent 装饰色,默认绿(参考文学版教程),也可传红(isTargeted)或紫(默认 tip)。
+   * **只用于装饰**:边框、渐变底、tint。为暗底调的 pastel,压在浅色面板上只有 1.7:1。
+   */
   accent?: string;
+  /**
+   * accent 前景色(图标与 CTA 文字),必须是双写 token。
+   * 与 accent 分开的原因:气泡底从钉死深色改走 --overlay-panel-bg 之后,浅色档是暖纸,
+   * 再拿 accent 当前景就是 1.72:1（图标需 3:1）。装饰色能跟着底走,前景色不能。
+   */
+  accentFg?: string;
   /** 标题 */
   title: string;
   /** 正文(字符串或自定义节点,支持多行 pre-wrap) */
@@ -44,11 +53,13 @@ export interface TipCardProps {
   className?: string;
 }
 
-const DEFAULT_ACCENT = 'rgba(52, 211, 153, 0.95)'; // 文学教程的绿色
+const DEFAULT_ACCENT = 'rgba(52, 211, 153, 0.95)'; // 文学教程的绿色（装饰用）
+const DEFAULT_ACCENT_FG = 'var(--accent-fg-success)';                // 同色系的双写前景档
 
 export function TipCard({
   icon,
   accent = DEFAULT_ACCENT,
+  accentFg = DEFAULT_ACCENT_FG,
   title,
   body,
   targeted,
@@ -157,7 +168,7 @@ export function TipCard({
         {icon && (
           <span
             style={{
-              color: accent,
+              color: accentFg,
               flexShrink: 0,
               display: 'inline-flex',
             }}
@@ -228,7 +239,7 @@ export function TipCard({
               fontWeight: 600,
               border: 'none',
               background: ack ? accent : 'transparent',
-              color: ack ? '#0b1020' : accent,
+              color: ack ? '#0b1020' : accentFg,
               cursor: 'pointer',
               padding: ack ? '5px 12px' : 0,
               borderRadius: ack ? 8 : 0,

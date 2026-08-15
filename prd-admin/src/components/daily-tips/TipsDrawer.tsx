@@ -668,11 +668,22 @@ export function TipsDrawer() {
               const xpReward = t.xpReward ?? 0;
               const isUpdate = isUpdateTip(t);
               const isPageGuide = t.sourceId?.endsWith('-page-guide') ?? false;
-              const accent = t.isTargeted
+              /*
+               * 装饰色与前景色必须分开。
+               * 抽屉底翻成 --overlay-panel-bg（浅色档是暖纸）之后，这批为暗底调的
+               * pastel 当左边框还行（纯装饰），当图标前景就只剩 1.4~1.7:1。
+               * 左边框保留原值，前景一律走双写 token。
+               */
+              const accentBorder = t.isTargeted
                 ? 'rgba(244,63,94,0.95)'
                 : t.learned
                   ? 'rgba(52,211,153,0.85)'
                   : 'rgba(167,139,250,0.95)';
+              const accentFg = t.isTargeted
+                ? 'var(--accent-fg-danger)'
+                : t.learned
+                  ? 'var(--accent-fg-success)'
+                  : 'var(--accent-fg-violet)';
               const chip = t.learned
                 ? { text: '已学会', bg: 'rgba(52,211,153,0.14)', fg: 'var(--accent-fg-success)', cap: true }
                 : t.isTargeted
@@ -685,10 +696,10 @@ export function TipsDrawer() {
               return (
                 <div
                   key={t.id}
-                  className="border border-token-subtle bg-token-nested" style={{ position: 'relative', borderRadius: 12, borderLeft: `3px solid ${accent}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}
+                  className="border border-token-subtle bg-token-nested" style={{ position: 'relative', borderRadius: 12, borderLeft: `3px solid ${accentBorder}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}
                 >
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                    <span style={{ color: accent, marginTop: 1, flexShrink: 0, display: 'inline-flex' }}>
+                    <span style={{ color: accentFg, marginTop: 1, flexShrink: 0, display: 'inline-flex' }}>
                       {stepCount > 0 ? <MapPin size={14} /> : <Sparkles size={14} />}
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>

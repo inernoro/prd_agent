@@ -219,10 +219,13 @@ const realFindings = report.reduce((n, r) => n + r.findings.filter((f) => !f.unr
 if (realFindings) {
   console.error(`\n[不合格] 实测不达标 ${realFindings} 处，详见 report.md / report.json`);
 }
-if (coverage.skipped.length || coverage.errored.length) {
-  console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length} 对没扫成，本轮结果不能当作「已覆盖」：`);
+// 重定向进不合格判定，但只算「落地页没人扫」的那些（判据同远端版，见那边注释）
+const unscannedRedirects = coverage.redirected.filter((x) => !ROUTES.includes(x.split(' → ')[1]));
+if (coverage.skipped.length || coverage.errored.length || unscannedRedirects.length) {
+  console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length + unscannedRedirects.length} 对没扫成，本轮结果不能当作「已覆盖」：`);
   for (const x of coverage.skipped) console.error(`  跳过  ${x}`);
   for (const x of coverage.errored) console.error(`  报错  ${x}`);
+  for (const x of unscannedRedirects) console.error(`  重定向到无人扫描的页面  ${x}`);
   process.exit(1);
 }
 if (realFindings) process.exit(1);

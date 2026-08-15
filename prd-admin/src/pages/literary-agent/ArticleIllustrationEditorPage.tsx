@@ -2921,7 +2921,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 onClick={() => removeAnchorParagraph(pIdx)}
                                 className="opacity-70 hover:opacity-100 transition-opacity flex items-center gap-1 text-[11px]"
                                 title="移除此锚点"
-                                style={{ color: 'rgba(52, 211, 153, 0.95)' }}
+                                style={{ color: 'var(--accent-fg-success)' }}
                               >
                                 <Trash2 size={11} />
                                 移除
@@ -5003,7 +5003,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               setParagraphCtxMenu(m => ({ ...m, visible: false }));
             }}
           >
-            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            <MapPin size={12} style={{ color: 'var(--accent-fg-success)' }} />
             在此段上方插入配图
           </button>
           <button
@@ -5015,7 +5015,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               setParagraphCtxMenu(m => ({ ...m, visible: false }));
             }}
           >
-            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            <MapPin size={12} style={{ color: 'var(--accent-fg-success)' }} />
             在此段下方插入配图
           </button>
         </div>
@@ -5037,11 +5037,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 <div style={{ marginBottom: 6 }}>· 右上角「📍 位置策略」可切换 4 种生成策略</div>
                 <div style={{ marginBottom: 6 }}>
                   · 鼠标悬停段落左侧 → 点{' '}
-                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点
+                  <span style={{ color: 'var(--accent-fg-success)' }}>+</span> 在上方打锚点
                 </div>
                 <div>
                   · 段落上
-                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> →
+                  <span style={{ color: 'var(--accent-fg-success)' }}>右键</span> →
                   选择"在上方/下方插入配图"
                 </div>
               </div>

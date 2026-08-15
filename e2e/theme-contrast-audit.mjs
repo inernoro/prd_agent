@@ -243,10 +243,26 @@ const realFindings = report.reduce((n, r) => n + r.findings.filter((f) => !f.unr
 if (realFindings) {
   console.error(`\n[不合格] 实测不达标 ${realFindings} 处，详见 report.md / report.json`);
 }
-if (coverage.skipped.length || coverage.errored.length) {
-  console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length} 对没扫成，本轮结果不能当作「已覆盖」：`);
+/*
+ * 重定向也要进不合格判定，但只算「落地页没人扫」的那些。
+ *
+ * 上一轮把 redirected 单列出来却没接进这道门：`/login` `/stats` `/prd-agent`
+ * 仍在 ROUTES 里、仍计进 expected，于是 coverage.done 永远小于 expected，
+ * 而一次干净的审计照样 exit 0（Codex 在 PR #1374 第十三轮抓到）。
+ *
+ * 判据不是「有重定向就红」—— 那三条是**故意的别名**，落地的 `/` 本身就在清单里、
+ * 会被独立扫一遍，覆盖并没有丢。一条永远红的门禁没人会看。
+ * 真正的漏洞是「跳到一个谁也不扫的地方」：那一屏没人量过，必须红。
+ */
+const unscannedRedirects = coverage.redirected.filter((x) => {
+  const landed = x.split(' → ')[1];
+  return !ROUTES.includes(landed);
+});
+if (coverage.skipped.length || coverage.errored.length || unscannedRedirects.length) {
+  console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length + unscannedRedirects.length} 对没扫成，本轮结果不能当作「已覆盖」：`);
   for (const x of coverage.skipped) console.error(`  跳过  ${x}`);
   for (const x of coverage.errored) console.error(`  报错  ${x}`);
+  for (const x of unscannedRedirects) console.error(`  重定向到无人扫描的页面  ${x}`);
   console.error('\n明细见 coverage.json。修掉原因后重跑，或在交付里明写这几屏未覆盖。');
   process.exit(1);
 }
