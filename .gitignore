@@ -122,5 +122,6 @@ doc/acceptance/
 
 # 对比度审计的扫描产物（截图 + 报告），跑一次 e2e/theme-contrast-audit-local.mjs 就能重生成，不入库
 .audit-contrast-local/
-.audit-data/
-.audit-real/
+
+# 对比度审计每轮产出的截图与报告，属临时产物：跑一次脚本即重生成，不入库
+.audit-*/
