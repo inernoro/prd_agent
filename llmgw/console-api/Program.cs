@@ -2161,8 +2161,12 @@ app.MapGet("/gw/logs", async (
     var filter = TenantAccess.FilterTeamScope(http, BuildFilter(fromUtc, toUtc, model, status, provider, appCallerCode, transport, requestType, sourceSystem, ingressProtocol, modelPolicy, releaseCommit, runId, requestId, sessionId, modelPoolId, serviceKeyId, clientCode, environment, operation, view, platformId));
 
     var total = await logs.CountDocumentsAsync(filter);
+    // 排序必须带唯一 tiebreaker。只按 StartedAt 排时，并列的文档在两次查询之间不保证同序
+    // （StartedAt 是毫秒精度，忙时并列很常见），跨页边界就会重复一批、漏掉一批。
+    // 前端改成瀑布累加后这不再只是「某页重复一行」：重复行把 rows.length 顶高，
+    // `rows.length < total` 提前变假，用户看到「已全部加载」而记录其实还缺。
     var docs = await logs.Find(filter)
-        .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
+        .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt").Ascending("_id"))
         .Skip((p - 1) * ps)
         .Limit(ps)
         .ToListAsync();

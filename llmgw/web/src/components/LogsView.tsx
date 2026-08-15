@@ -606,6 +606,22 @@ export function LogsView() {
   // 而且当页码本来就是 1 时 setState 同值不会触发 effect，刷新会静默失效。
   const [refreshToken, setRefreshToken] = useState(0);
 
+  // 追加时按 id 去重。
+  // 服务端分页只要排序不稳定（并列 StartedAt 跨页边界），前后两页就可能重叠；
+  // 累加语义下重复行会把 rows.length 顶高，而 hasMore 判据是 `rows.length < total`,
+  // 于是「还没取完」被提前判成「已全部加载」——实测重叠 5 条时表尾显示
+  // 「已加载 100 / 共 95 条 · 已全部加载」，多出来的是重复行，真实记录反而缺。
+  // 这里只治「重复」；「被跳过的记录取不回来」得靠服务端排序稳定（见同批的 _id tiebreaker）。
+  // key 由调用方给：日志按 id，会话按 sessionId（SessionItem 没有 id）。
+  // 取不到 key 的条目一律保留——宁可留一条重复，也不要因为 key 缺失把真实记录吞掉。
+  const appendUnique = <T,>(current: T[], incoming: T[], keyOf: (item: T) => string | null | undefined): T[] => {
+    const seen = new Set(current.map(keyOf).filter((key): key is string => !!key));
+    return [...current, ...incoming.filter((item) => {
+      const key = keyOf(item);
+      return !key || !seen.has(key);
+    })];
+  };
+
   const rowsRef = useRef<LlmLogListItem[]>([]);
   rowsRef.current = rows;
   const sessionsRef = useRef<SessionItem[]>([]);
@@ -627,7 +643,7 @@ export function LogsView() {
       if (seq !== listSeq.current) return;
       if (res.success && res.data) {
         const incoming = res.data.items ?? [];
-        setRows((current) => (p === 1 ? incoming : [...current, ...incoming]));
+        setRows((current) => (p === 1 ? incoming : appendUnique(current, incoming, (item) => item.id)));
         setTotal(res.data.total ?? 0);
         setListError(null);
         setMoreError(null);
@@ -653,7 +669,7 @@ export function LogsView() {
       if (seq !== sessSeq.current) return;
       if (res.success && res.data) {
         const incoming = res.data.items ?? [];
-        setSessions((current) => (p === 1 ? incoming : [...current, ...incoming]));
+        setSessions((current) => (p === 1 ? incoming : appendUnique(current, incoming, (item) => item.sessionId)));
         setSessTotal(res.data.total ?? 0);
         setListError(null);
         setSessMoreError(null);
