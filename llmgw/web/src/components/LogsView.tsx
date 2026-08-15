@@ -268,10 +268,18 @@ export function LogTable<T>({
   // 表格最小宽度必须由列自身的下限推出来，不能写死。
   // 以前这里对 generations 硬编码 1832px，无论列怎么配都强制横向滚动，
   // 右侧列被切、齿轮压住表头，中间还空出大片没人用的宽度。
+  //
+  // **只数非 sticky 的数据列。** 网格实际是 `visibleColumns.length + 1` 条轨道
+  //（末尾那条 42px 是列设置齿轮），但齿轮那格是 `position: sticky; right: 0`，
+  // 被钉在右缘、盖在内容上，不参与滚动范围——实测：轨道合计 1022 + 间隙 108 +
+  // 内边距 32 = 1162，而滚动容器 clientWidth 与 scrollWidth 同为 1156、没有横向滚动条，
+  // 因为齿轮的 42px 与它前面那个间隙都由 sticky 吸收了。
+  // 所以下限 = 数据列下限之和 + 数据列之间的间隙 + 左右内边距，齿轮不占额外宽度。
+  // （首列同样是 sticky，但它靠左、始终在流内起始位置，正常计入。）
+  const dataColumnCount = visibleColumns.length;
   const contentMinWidth = visibleColumns.reduce((sum, column) => sum + columnMinWidth(column.width), 0)
-    + (visibleColumns.length - 1) * 12 // column-gap
-    + 32 // 左右内边距
-    + 42; // 列设置齿轮
+    + Math.max(0, dataColumnCount - 1) * 12 // 数据列之间的 column-gap
+    + 32; // 左右内边距
   const tableMinWidth = isNarrowViewport ? NARROW_TABLE_MIN_WIDTH[tableKey] : contentMinWidth;
   const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
 

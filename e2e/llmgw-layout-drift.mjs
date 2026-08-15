@@ -439,6 +439,21 @@ await page.waitForTimeout(2500);
 await page.unroute('**/gw/logs?*');
 const failStormCalls = failingCalls;
 
+// 1440 视口下请求记录页不得出现横向滚动条。
+// 列宽下限是推算出来的，而推算模型很容易和网格实际对不上（末尾的列设置齿轮是
+// sticky-right，被钉在右缘、不撑开滚动范围，所以它和它前面那个间隙都不该计入下限）。
+// 与其在注释里论证，不如让浏览器直接回答：这是「列宽调整不许把横向滚动条调回来」的
+// 唯一判据。
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.goto(`${base}/logs`);
+await page.waitForSelector('.lg-log-table-scroll');
+await page.waitForTimeout(900);
+const horizontalScroll = await page.evaluate(() => {
+  const scroll = document.querySelector('.lg-log-table-scroll');
+  if (!scroll) return { 有: false, 原因: '找不到滚动容器' };
+  return { 有: scroll.scrollWidth > scroll.clientWidth + 1, 容器: scroll.clientWidth, 内容: scroll.scrollWidth };
+});
+
 // 表体的滚动位置必须能扛住一次重渲染。
 // 这条判据针对的是真实踩过的形状：LogTable 若定义在 LogsView 函数体里，
 // 组件类型每次渲染都变，React 整棵卸载重挂，.lg-log-table-body 的 DOM 节点被换掉、
@@ -502,6 +517,15 @@ for (const [route, m] of Object.entries(data)) {
   console.log(`${route.padEnd(17)} ${diffs.length ? '漂移: ' + diffs.join('；') : '与基准一致'}`);
   drift += diffs.length;
 }
+console.log('1440 横向滚动:', JSON.stringify(horizontalScroll));
+if (horizontalScroll.有) {
+  console.error(
+    `1440 视口下请求记录页出现了横向滚动条（容器 ${horizontalScroll.容器} / 内容 ${horizontalScroll.内容}）。`
+    + '\n  列宽下限之和超了容器宽：要么某列下限调太大，要么把 sticky 的列设置齿轮也算进了下限。',
+  );
+  drift += 1;
+}
+
 console.log('空闲时列表请求次数:', JSON.stringify(idleFetches));
 for (const [label, calls] of Object.entries(idleFetches)) {
   if (calls !== 1) {
