@@ -22,9 +22,27 @@ describe('TranscriptKaraoke unified playback', () => {
     );
 
     expect(html).toContain('精准时间轴，播放时逐句高亮');
+    expect(html).toContain('播放台词');
+    expect(html).toContain('播放后逐句跟随');
+    expect(html).toContain('data-testid="recording-karaoke-active-cue"');
+    expect(html.indexOf('播放台词')).toBeLessThan(html.indexOf('录音理解'));
     expect(html).not.toContain('普通播放');
     expect(html).not.toContain('交互式播放');
     expect(html.match(/title="播放"/g)).toHaveLength(1);
+  });
+
+  it('无时间戳长录音在播放器下方直接展示当前与下一句', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptKaraoke
+        src="/recording.m4a"
+        noteMd={'## 转录全文\n\n如果不是为了打赌，语文将是最美的学科，我们会认真读完每一篇文章，也会记住那些让人感动的句子，后来大家继续讨论生活，讨论选择，讨论各自真正想做的事情。'}
+        documentMode
+      />,
+    );
+
+    expect(html).toContain('data-testid="recording-karaoke-now-playing"');
+    expect(html).toContain('如果不是为了打赌，语文将是最美的学科，');
+    expect(html).toContain('下一句');
   });
 
   it('renders recording search, word cloud, speaker management and grounded question entry', () => {

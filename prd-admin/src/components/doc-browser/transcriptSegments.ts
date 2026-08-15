@@ -279,6 +279,66 @@ export function buildTranscriptWordCloud(
     .map(([word, count]) => ({ word, count }));
 }
 
+const PRIMARY_PLAYBACK_CUE_RE = /[^。！？!?；;\n]+[。！？!?；;]?/g;
+const CLAUSE_PLAYBACK_CUE_RE = /[^，,\n]+[，,]?/g;
+const TARGET_PLAYBACK_CUE_LENGTH = 20;
+const MAX_PLAYBACK_CUE_LENGTH = 42;
+const MIN_PLAYBACK_CUE_LENGTH = 10;
+
+function playbackCueLength(text: string): number {
+  return Array.from(text.trim()).length;
+}
+
+/**
+ * 把无时间戳转录拆成适合播放跟随的语义短句。
+ *
+ * ASR 经常只返回逗号，不返回句号。只按句末标点拆分会让一分钟录音只有两三条超长台词，
+ * 播放十几秒画面也不变化，看起来就像跟随失效。这里优先保留完整句；完整句过长时才按
+ * 逗号子句聚合成约 10-42 字的播放提示，不在没有语义边界的位置硬切文字。
+ */
+export function splitTranscriptPlaybackCues(source: string): string[] {
+  const primary = source.match(PRIMARY_PLAYBACK_CUE_RE) ?? [source];
+  const cues: string[] = [];
+
+  for (const rawSentence of primary) {
+    const sentence = rawSentence.trim();
+    if (!sentence) continue;
+    if (playbackCueLength(sentence) <= MAX_PLAYBACK_CUE_LENGTH) {
+      cues.push(sentence);
+      continue;
+    }
+
+    const clauses = (sentence.match(CLAUSE_PLAYBACK_CUE_RE) ?? [sentence])
+      .map(clause => clause.trim())
+      .filter(Boolean);
+    if (clauses.length < 2) {
+      cues.push(sentence);
+      continue;
+    }
+
+    let pending = '';
+    for (const clause of clauses) {
+      if (!pending) {
+        pending = clause;
+        continue;
+      }
+      const candidate = pending + clause;
+      if (
+        playbackCueLength(candidate) <= TARGET_PLAYBACK_CUE_LENGTH
+        || playbackCueLength(pending) < MIN_PLAYBACK_CUE_LENGTH
+      ) {
+        pending = candidate;
+        continue;
+      }
+      cues.push(pending);
+      pending = clause;
+    }
+    if (pending) cues.push(pending);
+  }
+
+  return cues;
+}
+
 /**
  * 替换无时间戳原文经「按语速估算」拆出的第 index 句。
  * 拆句规则与 estimateTranscriptSegments 保持一致，避免估算跟随开启后只能编辑第一大段。
@@ -298,7 +358,7 @@ export function replaceEstimatedTranscriptSentenceText(
     const line = raw.trim();
     if (!line || line.startsWith('#') || line.startsWith('>') || /^_.*_$/.test(line)) return raw;
     const indent = raw.match(/^\s*/)?.[0] ?? '';
-    const sentences = line.match(/[^。！？!?；;\n]+[。！？!?；;]?/g) ?? [line];
+    const sentences = splitTranscriptPlaybackCues(line);
     const updated = sentences.map((sentence) => {
       cursor += 1;
       return cursor === index ? nextText.trim() : sentence;
@@ -349,9 +409,7 @@ export function estimateTranscriptSegments(
   const source = segments.map(s => s.text.trim()).filter(Boolean).join('\n');
   if (!source) return [];
 
-  const sentences = (source.match(/[^。！？!?；;\n]+[。！？!?；;]?/g) ?? [source])
-    .map(text => text.trim())
-    .filter(Boolean);
+  const sentences = splitTranscriptPlaybackCues(source);
   const weights = sentences.map(text => Math.max(1, Array.from(text).length));
   const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
   let cursor = 0;

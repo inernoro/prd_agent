@@ -13,6 +13,7 @@ import {
   buildTranscriptWordCloud,
   parseRecordingAnswerParts,
   parseSpeakerSourceNote,
+  splitTranscriptPlaybackCues,
 } from '../transcriptSegments';
 
 /**
@@ -376,6 +377,38 @@ describe('estimateTranscriptSegments', () => {
     const note = '## 转录全文\n\n第一句。第二句更长。第三句。';
     expect(replaceEstimatedTranscriptSentenceText(note, 1, '修改后的第二句。'))
       .toContain('第一句。修改后的第二句。第三句。');
+  });
+
+  it('只有逗号的长转录会拆成连续短台词，不再整段停留十几秒', () => {
+    const source = '如果不是为了打赌，语文将是最美的学科，我们会认真读完每一篇文章，也会记住那些让人感动的句子，后来大家继续讨论生活，讨论选择，讨论各自真正想做的事情，最后才慢慢安静下来';
+    const cues = splitTranscriptPlaybackCues(source);
+    const estimated = estimateTranscriptSegments([{ start: -1, end: -1, text: source }], 65);
+
+    expect(cues.length).toBeGreaterThanOrEqual(6);
+    expect(cues.every(cue => Array.from(cue).length <= 42)).toBe(true);
+    expect(cues.join('')).toBe(source);
+    expect(estimated).toHaveLength(cues.length);
+    expect(estimated[0].start).toBe(0);
+    expect(estimated.at(-1)?.end).toBe(65);
+    for (let index = 1; index < estimated.length; index += 1) {
+      expect(estimated[index].start).toBe(estimated[index - 1].end);
+    }
+  });
+
+  it('短句保持完整，不为了动画把语义硬切碎', () => {
+    expect(splitTranscriptPlaybackCues('客户确认报价合理。下一步安排上线。')).toEqual([
+      '客户确认报价合理。',
+      '下一步安排上线。',
+    ]);
+  });
+
+  it('逗号拆出的短台词仍能单独校对，并保留前后内容', () => {
+    const note = '## 转录全文\n\n第一段内容很长需要继续说明并且补充很多细节，第二段内容也要继续说明并且补充更多细节，第三段内容作为最后结论并且补充很多细节';
+    const next = replaceEstimatedTranscriptSentenceText(note, 1, '用户修订的中间一句，');
+
+    expect(next).toContain('第一段内容很长需要继续说明并且补充很多细节，');
+    expect(next).toContain('用户修订的中间一句，');
+    expect(next).toContain('第三段内容作为最后结论并且补充很多细节');
   });
 });
 

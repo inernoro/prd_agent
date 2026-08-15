@@ -12,6 +12,7 @@ import {
   buildTranscriptWordCloud,
   parseRecordingAnswerParts,
   parseSpeakerSourceNote,
+  splitTranscriptPlaybackCues,
 } from '@/components/doc-browser/transcriptSegments';
 import { streamDirectChat } from '@/services/real/aiToolbox';
 import { getTranscriptLexicon, updateSystemTranscriptLexicon, updateTranscriptLexicon } from '@/services/real/userPreferences';
@@ -139,9 +140,23 @@ export function TranscriptKaraoke({
     () => synced ? [] : estimateTranscriptSegments(segments, duration),
     [duration, segments, synced],
   );
-  const timelineSegments = synced ? segments : estimatedSegments.length > 0 ? estimatedSegments : segments;
-  const followEnabled = synced || estimatedSegments.length > 1;
+  const previewSegments = useMemo(() => {
+    if (synced) return [];
+    return splitTranscriptPlaybackCues(segments.map(segment => segment.text).join('\n'))
+      .map(text => ({ start: -1, end: -1, text, speaker: undefined }));
+  }, [segments, synced]);
+  const timelineSegments = synced
+    ? segments
+    : estimatedSegments.length > 0
+      ? estimatedSegments
+      : previewSegments.length > 1
+        ? previewSegments
+        : segments;
+  const followEnabled = synced || timelineSegments.length > 1;
   const estimated = !synced && estimatedSegments.length > 1;
+  const displayActiveIdx = Math.min(activeIdx, Math.max(0, timelineSegments.length - 1));
+  const activeSegment = timelineSegments[displayActiveIdx];
+  const nextSegment = timelineSegments[displayActiveIdx + 1];
   // 词典三层，合并后喂给分词：
   //   L0 本篇说话人名 —— 零配置。ICU 词典不收人名，会上被反复叫到的人恰恰是高价值信息，
   //      而这批名字笔记里本来就有（[说话人] 标签），不需要任何人去维护。
@@ -231,10 +246,12 @@ export function TranscriptKaraoke({
 
   // 当前句滚到滚轮中心
   useEffect(() => {
-    if (!followEnabled) return;
+    // 文档页把完整原文放在下方供校对，播放器旁另有始终可见的当前台词。
+    // 在这里滚动会拖走整个页面，让播放器和当前台词一起离开视野。
+    if (!followEnabled || documentMode) return;
     if (Date.now() < manualUntilRef.current) return;
     lineRefs.current[activeIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [activeIdx, followEnabled]);
+  }, [activeIdx, documentMode, followEnabled]);
 
   useEffect(() => () => cancelQaRef.current?.(), []);
 
@@ -282,6 +299,65 @@ export function TranscriptKaraoke({
         onPlaybackChange={setPlaying}
         registerSeek={(seek) => { seekRef.current = seek; }}
       />
+
+      {documentMode && followEnabled && activeSegment && (
+        <section
+          data-testid="recording-karaoke-now-playing"
+          className="w-full max-w-[760px] overflow-hidden rounded-[14px] p-4"
+          style={{
+            background: 'linear-gradient(135deg, rgba(168,85,247,0.13), rgba(59,130,246,0.08))',
+            border: '1px solid rgba(168,85,247,0.24)',
+          }}
+          aria-label="播放台词"
+        >
+          <style>{`
+            @keyframes recording-karaoke-cue-enter {
+              from { opacity: 0.35; transform: translateY(6px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+            @media (prefers-reduced-motion: reduce) {
+              .recording-karaoke-cue { animation: none !important; }
+            }
+          `}</style>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[12px] font-semibold text-token-secondary">播放台词</p>
+            <p className="text-[11px] tabular-nums text-token-muted">
+              {playing ? '正在跟随' : '播放后逐句跟随'} · {displayActiveIdx + 1}/{timelineSegments.length}
+            </p>
+          </div>
+          <button
+            key={`active-${displayActiveIdx}`}
+            type="button"
+            data-testid="recording-karaoke-active-cue"
+            onClick={() => activeSegment.start >= 0 && seekRef.current?.(activeSegment.start)}
+            className="recording-karaoke-cue mt-3 min-h-11 w-full text-left text-[16px] font-semibold leading-[1.75] text-token-primary"
+            style={{ animation: playing ? 'recording-karaoke-cue-enter 260ms ease-out' : undefined }}
+            aria-live="polite"
+            aria-atomic="true"
+            title="从当前句开头播放"
+          >
+            {activeSegment.speaker && (
+              <span className="mr-2 inline-block rounded-full px-2 py-0.5 align-middle text-[10px] font-semibold" style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--text-secondary)' }}>
+                {activeSegment.speaker}
+              </span>
+            )}
+            {activeSegment.text}
+          </button>
+          {nextSegment && (
+            <button
+              type="button"
+              data-testid="recording-karaoke-next-cue"
+              onClick={() => nextSegment.start >= 0 && seekRef.current?.(nextSegment.start)}
+              className="mt-2 min-h-11 w-full border-t pt-2 text-left text-[12px] leading-relaxed text-token-muted"
+              style={{ borderColor: 'var(--border-faint)' }}
+              title="跳到下一句"
+            >
+              <span className="mr-2 text-[10px] font-semibold">下一句</span>
+              {nextSegment.text}
+            </button>
+          )}
+        </section>
+      )}
 
       {documentMode && (
         <section className="w-full max-w-[760px] rounded-[14px] p-4" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
@@ -516,8 +592,8 @@ export function TranscriptKaraoke({
           className="flex flex-col items-center gap-1"
           style={!documentMode && followEnabled ? { padding: '104px 8px' } : { padding: '4px 0' }}>
           {timelineSegments.map((s, i) => {
-            const active = followEnabled && i === activeIdx;
-            const dist = Math.abs(i - activeIdx);
+            const active = followEnabled && i === displayActiveIdx;
+            const dist = Math.abs(i - displayActiveIdx);
             if (documentMode && editingIndex === i && onSaveNote) {
               return (
                 <div key={i} className="w-full rounded-[10px] p-2" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
