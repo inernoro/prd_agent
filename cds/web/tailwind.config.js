@@ -82,6 +82,16 @@ export default {
           foreground: 'hsl(var(--code-fg) / <alpha-value>)',
         },
       },
+      // 主色**文字**单独走 --primary-ink。
+      //
+      // bg-primary 用的是那抹亮绿（#c8f04a），配深底的按钮很好看；但同一个颜色
+      // 当文字用、落在白天的浅绿底上就几乎读不出来（实测「全环境矩阵」「严重度」
+      // 「主目标」三处全糊）。模板为此专门分了 --accent / --accent-ink 两个值，
+      // 这里照做：text-primary → ink（白天是深橄榄，黑夜与 primary 同值，
+      // 所以黑夜零变化），bg-primary / border-primary 仍用亮绿。
+      textColor: {
+        primary: 'hsl(var(--primary-ink) / <alpha-value>)',
+      },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
