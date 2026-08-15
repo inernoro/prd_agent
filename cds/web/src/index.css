@@ -33,96 +33,142 @@
  */
 @layer base {
   [data-theme='dark'] {
-    --background: 240 5% 8%;
-    --foreground: 240 6% 90%;
+    /* ── 照抄 design_handoff_release_center 的调色板 ──────────────────
+       模板 → CDS 的名字映射（值原样搬，只换记法：hex → HSL 三元组）：
+         --bg      → --surface-base / --background
+         --surface → --surface-raised / --card
+         --surface2→ --surface-sunken
+         --raise   → --secondary / --muted
+         --line    → --hairline / --border
+         --line2   → --hairline-strong / --input
+         --fg/fg2/fg3 → --foreground / --foreground-muted / --muted-foreground
+         --accent  → --primary（注意：shadcn 的 --accent 是「悬停中性面」，
+                     不是品牌色，两者同名不同义，不能混）
+       状态色 ok/warn/bad 是**新增**的：站里此前 1200 多处硬编码
+       emerald/amber/red/sky，换调色板时它们不会跟着走，必须先有 token 才能收。 */
+    --background: 220 13% 5%;
+    --foreground: 216 12% 92%;
+    /* 次级正文（模板 --fg2）。介于正文与弱化之间，此前 CDS 缺这一档，
+       于是「不那么重要但也不是灰字」的内容只能在两档之间硬选一个。 */
+    --foreground-muted: 213 12% 69%;
 
-    --card: 240 4% 12%;
-    --card-foreground: 240 6% 90%;
+    --card: 216 16% 6%;
+    --card-foreground: 216 12% 92%;
 
-    --primary: 24 100% 60%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 74 85% 62%;
+    --primary-foreground: 220 13% 5%;
+    /* 主色的低饱和底（模板 --accent-soft）：选中态、当前分区、徽章底色用它，
+       不要再用 primary/[0.12] 那种透明度硬算——透明度叠在不同底上颜色会漂。 */
+    --primary-soft: 84 38% 10%;
+    --primary-ink: 74 85% 62%;
 
-    --secondary: 240 4% 16%;
-    --secondary-foreground: 240 6% 90%;
+    --secondary: 216 18% 11%;
+    --secondary-foreground: 216 12% 92%;
 
-    --muted: 240 4% 14%;
-    --muted-foreground: 240 4% 60%;
+    --muted: 216 18% 11%;
+    --muted-foreground: 219 10% 46%;
 
-    --accent: 240 4% 18%;
-    --accent-foreground: 240 6% 95%;
+    --accent: 216 18% 11%;
+    --accent-foreground: 216 12% 92%;
 
-    --destructive: 0 70% 55%;
-    --destructive-foreground: 0 0% 100%;
+    --destructive: 358 86% 64%;
+    --destructive-foreground: 220 13% 5%;
 
-    --border: 240 4% 18%;
-    --input: 240 4% 16%;
-    --ring: 24 100% 60%;
+    --border: 222 15% 13%;
+    --input: 217 13% 19%;
+    --ring: 74 85% 62%;
 
     --radius: 0.625rem;
 
-    /* Surface system — tuned for Railway/Linear-style elevation contrast.
-       The raised tier is noticeably brighter than base (Δ7%) so cards
-       don't look glued onto the page; the sunken tier sits slightly
-       below base for inputs / log panels. Hue carries a faint blue cast. */
-    --surface-base: 222 14% 6%;
-    --surface-raised: 222 12% 13%;
-    --surface-sunken: 222 16% 4%;
-    --hairline: 222 10% 18%;
-    --hairline-strong: 222 10% 26%;
+    --surface-base: 220 13% 5%;
+    --surface-raised: 216 16% 6%;
+    --surface-sunken: 218 18% 9%;
+    --hairline: 222 15% 13%;
+    --hairline-strong: 217 13% 19%;
 
-    /* 多层阴影配方(ring + inset 顶高光 + 接触影 + 中距影 + 远距氛围影)。
-       单层大糊影是"贴纸感"的来源;五层影让卡片有真实体积。 */
+    /* 状态色。每档一对：实色（图标/圆点/进度条/文字）+ soft（整块底色）。
+       模板没有 info 这一档，但站里 sky-* 有 200 处在表示「进行中」，
+       按同样配方补一档，免得它无处可去又退回硬编码。 */
+    --ok: 142 69% 58%;
+    --ok-soft: 146 41% 10%;
+    --warn: 37 91% 55%;
+    --warn-soft: 40 50% 9%;
+    --bad: 358 86% 64%;
+    --bad-soft: 353 42% 12%;
+    --info: 205 85% 62%;
+    --info-soft: 208 45% 11%;
+
+    --code-bg: 218 20% 8%;
+    --code-fg: 214 20% 84%;
+
+    /* 模板的影子极克制（--shadow: 0 1px 0 rgba(255,255,255,.02)），
+       整个观感靠 hairline 而不是靠阴影堆体积。这里跟它走：
+       保留 ring + 一层极淡接触影，去掉原来那套五层大糊影——
+       那是上一版「贴纸感」的来源，和这套设计语言不是一路。 */
     --shadow-card:
       0 0 0 1px hsl(var(--hairline)),
-      inset 0 1px 0 hsl(0 0% 100% / 0.06),
-      0 1px 2px rgb(0 0 0 / 0.32),
-      0 12px 28px -12px rgb(0 0 0 / 0.5),
-      0 40px 80px -32px rgb(0 0 0 / 0.6);
+      0 1px 0 hsl(0 0% 100% / 0.02);
   }
 
   [data-theme='light'] {
-    --background: 30 30% 95%;
-    --foreground: 24 20% 15%;
+    /* 同一套映射的白天档，值同样来自模板。注意白天的主色分两个：
+       --primary 仍是那抹亮绿（用于填充按钮底），但**文字不能用它**——
+       亮绿配白底对比度不够。模板为此单给了 --accent-ink（深橄榄），
+       CDS 这里叫 --primary-ink，凡是「主色文字」一律用 ink 那一个。 */
+    --background: 200 16% 96%;
+    --foreground: 218 17% 9%;
+    --foreground-muted: 215 11% 34%;
 
     --card: 0 0% 100%;
-    --card-foreground: 24 20% 15%;
+    --card-foreground: 218 17% 9%;
 
-    --primary: 24 90% 50%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 74 85% 62%;
+    --primary-foreground: 218 17% 9%;
+    --primary-soft: 73 66% 92%;
+    --primary-ink: 86 69% 23%;
 
-    --secondary: 30 20% 90%;
-    --secondary-foreground: 24 20% 15%;
+    --secondary: 210 21% 95%;
+    --secondary-foreground: 218 17% 9%;
 
-    --muted: 30 18% 92%;
-    --muted-foreground: 24 10% 40%;
+    --muted: 210 21% 95%;
+    --muted-foreground: 216 8% 51%;
 
-    --accent: 30 22% 88%;
-    --accent-foreground: 24 20% 15%;
+    --accent: 210 21% 95%;
+    --accent-foreground: 218 17% 9%;
 
-    --destructive: 0 65% 50%;
+    --destructive: 358 66% 45%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 30 15% 82%;
-    --input: 30 15% 88%;
-    --ring: 24 90% 50%;
+    --border: 210 16% 90%;
+    --input: 212 16% 84%;
+    --ring: 74 85% 62%;
 
     --radius: 0.625rem;
 
-    /* Surface system — light mode mirrors the dark elevation pattern:
-       raised is the brightest (pure white), base sits in warm beige,
-       sunken is a tone darker for inputs / log panels. */
-    --surface-base: 30 28% 96%;
+    --surface-base: 200 16% 96%;
     --surface-raised: 0 0% 100%;
-    --surface-sunken: 30 24% 91%;
-    --hairline: 30 15% 84%;
-    --hairline-strong: 30 12% 70%;
+    --surface-sunken: 220 23% 97%;
+    --hairline: 210 16% 90%;
+    --hairline-strong: 212 16% 84%;
+
+    /* 白天的状态色是**深色实字**（ok #15803d / warn #a55b00 / bad #c0272d），
+       不是黑夜那组亮色——亮绿亮黄配白底看不清。soft 则是极淡的同色底。
+       这也是为什么组件里可以写 text-ok 一个类就够：token 自己会翻。 */
+    --ok: 142 72% 29%;
+    --ok-soft: 140 40% 94%;
+    --warn: 33 100% 32%;
+    --warn-soft: 37 87% 94%;
+    --bad: 358 66% 45%;
+    --bad-soft: 356 81% 96%;
+    --info: 205 75% 38%;
+    --info-soft: 205 70% 95%;
+
+    --code-bg: 210 25% 97%;
+    --code-fg: 216 17% 17%;
 
     --shadow-card:
-      0 0 0 1px hsl(30 15% 86%),
-      inset 0 1px 0 hsl(0 0% 100% / 0.9),
-      0 1px 2px hsl(24 30% 20% / 0.05),
-      0 8px 24px -12px hsl(24 30% 20% / 0.12),
-      0 32px 64px -32px hsl(24 30% 20% / 0.15);
+      0 0 0 1px hsl(var(--hairline)),
+      0 1px 2px hsl(218 17% 9% / 0.05);
   }
 
   :root {
