@@ -199,7 +199,7 @@ function columnMinWidth(width: string): number {
 export function LogTable<T>({
   tableKey, columns, items, rowKey, onRow, render, rowTone, empty,
   preferences, onPreferencesChange, settingsOpen, onSettingsOpenChange, settingsTab, onSettingsTabChange,
-  isNarrowViewport, hasMore, loadingMore, onLoadMore,
+  isNarrowViewport, hasMore, loadingMore, onLoadMore, paused,
 }: {
   tableKey: LogsSubTab;
   columns: ColumnDef[];
@@ -219,6 +219,8 @@ export function LogTable<T>({
   hasMore: boolean;
   loadingMore: boolean;
   onLoadMore: () => void;
+  /** 上一次续取失败：暂停哨兵自动加载，改由用户点「重试」。 */
+  paused: boolean;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -228,15 +230,30 @@ export function LogTable<T>({
   loadMoreRef.current = onLoadMore;
 
   useEffect(() => {
-    const root = bodyRef.current;
+    const body = bodyRef.current;
     const target = sentinelRef.current;
-    if (!root || !target || !hasMore || loadingMore) return;
+    // paused 时不装 observer：续取失败后哨兵通常还压在视野里，
+    // 继续观察就是对着一个正在报错的接口无限重打。
+    if (!body || !target || !hasMore || loadingMore || paused) return;
+    // root 必须是**真的在裁剪**的那个盒子。
+    // 桌面态表体自己是滚动容器；但 ≤680px 的断点把它改成了
+    // `overflow: visible !important`（表格整体交给页面滚），此时再拿它当 root，
+    // 哨兵永远落在 root 的盒子里 —— 实测「只打开页面什么都不做，6 秒内发了 23 个请求、
+    // 拉了 690 行」，大租户等于一进 Logs 就把整个结果集拖下来。
+    // 拿不到裁剪盒就退回视口（root: null），那才是移动端真正决定「看没看到底」的东西。
+    const clips = (el: HTMLElement) => {
+      const overflowY = getComputedStyle(el).overflowY;
+      return overflowY === 'auto' || overflowY === 'scroll';
+    };
+    const root = clips(body) ? body : null;
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) loadMoreRef.current();
     }, { root, rootMargin: '240px 0px' });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [hasMore, loadingMore]);
+    // isNarrowViewport 进依赖：跨过 680px 断点时表体的 overflow 会翻转，
+    // observer 必须按新的 root 重建，否则会一直用旧断点算出来的那个。
+  }, [hasMore, loadingMore, paused, isNarrowViewport]);
 
   const visibleColumns = resolveLogTableColumns(columns, preferences);
   const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
@@ -328,7 +345,7 @@ export function LogTable<T>({
               <span className="lg-log-loading-more-text">正在加载更多…</span>
             </div>
           ) : null}
-          {hasMore ? <div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" /> : null}
+          {hasMore && !paused ? <div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" /> : null}
         </div>
       </div>
     </div>
@@ -340,17 +357,29 @@ export function LogTable<T>({
  * 常驻在滚动区之外，所以它同时承担两件事——告诉用户「已加载多少 / 还有没有」，
  * 以及给键盘用户和 observer 没触发时留一条确定能用的路。
  */
-function LogTableFooter({ loaded, total, hasMore, busy, onLoadMore }: {
-  loaded: number; total: number; hasMore: boolean; busy: boolean; onLoadMore: () => void;
+function LogTableFooter({ loaded, total, hasMore, busy, error, onLoadMore, onRetry }: {
+  loaded: number; total: number; hasMore: boolean; busy: boolean;
+  error: string | null; onLoadMore: () => void; onRetry: () => void;
 }) {
   return (
     <div className="lg-log-table-footer">
-      <span>
-        {total > 0 ? `已加载 ${loaded} / 共 ${total} 条` : `共 ${loaded} 条`}
-        {!hasMore && loaded > 0 ? ' · 已全部加载' : ''}
-      </span>
+      {error ? (
+        // 续取失败必须说清「失败了 + 下一步」。不能只是停住不动——
+        // 用户看到的会是「滚到底就再也没有了」，把一次可重试的失败误读成数据到头了。
+        <span className="lg-log-footer-error" role="alert">已加载 {loaded} 条，继续加载失败：{error}</span>
+      ) : (
+        <span>
+          {total > 0 ? `已加载 ${loaded} / 共 ${total} 条` : `共 ${loaded} 条`}
+          {!hasMore && loaded > 0 ? ' · 已全部加载' : ''}
+        </span>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        {hasMore ? (
+        {error ? (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={onRetry}>
+            {busy ? <Spinner size={14} /> : null}
+            {busy ? '重试中' : '重试'}
+          </Button>
+        ) : hasMore ? (
           <Button variant="ghost" size="sm" disabled={busy} onClick={onLoadMore}>
             {busy ? <Spinner size={14} /> : null}
             {busy ? '加载中' : '加载更多'}
@@ -424,15 +453,17 @@ export function LogsView() {
 
   const [rows, setRows] = useState<LlmLogListItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // 续取失败的提示。有值时哨兵停止自动取，改由用户点「重试」——
+  // 否则哨兵还压在视野里，会对着一个正在报错的接口无限重打。
+  const [moreError, setMoreError] = useState<string | null>(null);
 
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [sessTotal, setSessTotal] = useState(0);
-  const [sessPage, setSessPage] = useState(1);
   const [sessLoading, setSessLoading] = useState(false);
   const [sessLoadingMore, setSessLoadingMore] = useState(false);
+  const [sessMoreError, setSessMoreError] = useState<string | null>(null);
   const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
 
@@ -547,6 +578,18 @@ export function LogsView() {
   }, []);
 
   // 请求序号守卫：切筛选/翻页/tab 时丢弃过期响应，避免乱序覆盖（竞态）。
+  // 「已成功加载到第几页」。刻意用 ref 而不是 state，且**只在成功时前进**：
+  //   - 写成 state + 触底就 setPage(p+1)，失败时页码已经跨过去了，而哨兵通常还在视野里，
+  //     下一次触发直接请求再下一页 —— 失败那一页从此永久缺失（Codex P1 抓到的就是这个）。
+  //   - 写成 state 还会让「刷新」很难做对：refresh 调 loadList(page)，page>1 时按累加语义
+  //     把同一页又追加了一遍，60 行刷成 90 行（另一条 P1）。
+  // 现在页码只是取数的入参，刷新一律回第 1 页做替换。
+  const loadedPage = useRef(0);
+  const loadedSessPage = useRef(0);
+  // 刷新令牌：refresh 时递增，驱动首页重取。不用 setPage(1) 是因为 page 已经不是 state，
+  // 而且当页码本来就是 1 时 setState 同值不会触发 effect，刷新会静默失效。
+  const [refreshToken, setRefreshToken] = useState(0);
+
   const rowsRef = useRef<LlmLogListItem[]>([]);
   rowsRef.current = rows;
   const sessionsRef = useRef<SessionItem[]>([]);
@@ -571,10 +614,14 @@ export function LogsView() {
         setRows((current) => (p === 1 ? incoming : [...current, ...incoming]));
         setTotal(res.data.total ?? 0);
         setListError(null);
+        setMoreError(null);
+        loadedPage.current = p; // 只有成功才算「这一页取到了」
         // 后端返回空页时把 total 拉回已加载数，避免 total 偏大导致哨兵反复触发。
         if (incoming.length === 0 && p > 1) setTotal((t) => Math.min(t, rowsRef.current.length));
       } else {
-        setListError(res.error?.message || '加载日志失败');
+        const message = res.error?.message || '加载日志失败';
+        // 首页失败是整屏错误；续取失败只影响底部那一截，两者的出口不同。
+        if (p === 1) setListError(message); else setMoreError(message);
       }
       setLoading(false);
       setLoadingMore(false);
@@ -593,9 +640,12 @@ export function LogsView() {
         setSessions((current) => (p === 1 ? incoming : [...current, ...incoming]));
         setSessTotal(res.data.total ?? 0);
         setListError(null);
+        setSessMoreError(null);
+        loadedSessPage.current = p;
         if (incoming.length === 0 && p > 1) setSessTotal((t) => Math.min(t, sessionsRef.current.length));
       } else {
-        setListError(res.error?.message || '加载会话失败');
+        const message = res.error?.message || '加载会话失败';
+        if (p === 1) setListError(message); else setSessMoreError(message);
       }
       setSessLoading(false);
       setSessLoadingMore(false);
@@ -614,24 +664,29 @@ export function LogsView() {
     setSeries(seriesResult.success && seriesResult.data ? seriesResult.data.items ?? [] : []);
   }, [baseParams]);
 
-  // 筛选一变就把累加结果清空并回到第 1 页；不清空的话新旧两套筛选的行会串在一起。
+  // 筛选一变就把累加结果清空；不清空的话新旧两套筛选的行会串在一起。
   useEffect(() => {
-    setPage(1);
-    setSessPage(1);
+    loadedPage.current = 0;
+    loadedSessPage.current = 0;
     setRows([]);
     setSessions([]);
+    setMoreError(null);
+    setSessMoreError(null);
   }, [baseParams]);
   // 切 tab 同理：业务请求与上游调用共用 rows，留着上一个 tab 的行会先闪一屏错数据。
   useEffect(() => {
-    setPage(1);
+    loadedPage.current = 0;
     setRows([]);
+    setMoreError(null);
   }, [subtab]);
+  // 首页取数。后续页不走 effect，由 loadMore 直接调用——页码是「取到第几页」的结果，
+  // 不是驱动取数的输入，把它做成 effect 依赖就会出现「失败也算数」的推进。
   useEffect(() => {
-    if (subtab === 'generations' || subtab === 'upstream') loadList(page);
-  }, [subtab, page, loadList]);
+    if (subtab === 'generations' || subtab === 'upstream') void loadList(1);
+  }, [subtab, loadList, refreshToken]);
   useEffect(() => {
-    if (subtab === 'sessions') loadSessions(sessPage);
-  }, [subtab, sessPage, loadSessions]);
+    if (subtab === 'sessions') void loadSessions(1);
+  }, [subtab, loadSessions, refreshToken]);
   useEffect(() => {
     void loadInsights();
   }, [loadInsights]);
@@ -649,10 +704,12 @@ export function LogsView() {
     openLogDetail(matched.id);
   }, [filterRequestId, loading, openLogDetail, rows]);
 
+  // 刷新 = 回到第 1 页重新取并**替换**列表。
+  // 之前写的是 loadList(page)：累加语义下，停在第 2 页时刷新会把第 2 页再追加一遍
+  // （实测 60 行刷成 90 行）。刷新是「重新看一眼现在的样子」，不是「再取一次当前页」。
   const refresh = () => {
     void loadInsights();
-    if (subtab === 'sessions') loadSessions(sessPage);
-    else loadList(page);
+    setRefreshToken((t) => t + 1);
   };
 
   // ── 单元格渲染 ──
@@ -992,14 +1049,23 @@ export function LogsView() {
   };
   const hasMoreRows = rows.length < total;
   const hasMoreSessions = sessions.length < sessTotal;
+  // 取「已成功加载到的页 + 1」。失败时 loadedPage 不动，所以重试打的还是同一页。
   const loadMoreRows = useCallback(() => {
-    if (loading || loadingMore || !hasMoreRows) return;
-    setPage((p) => p + 1);
-  }, [hasMoreRows, loading, loadingMore]);
+    if (loading || loadingMore || !hasMoreRows || moreError) return;
+    void loadList(loadedPage.current + 1);
+  }, [hasMoreRows, loadList, loading, loadingMore, moreError]);
+  const retryMoreRows = useCallback(() => {
+    setMoreError(null);
+    void loadList(loadedPage.current + 1);
+  }, [loadList]);
   const loadMoreSessions = useCallback(() => {
-    if (sessLoading || sessLoadingMore || !hasMoreSessions) return;
-    setSessPage((p) => p + 1);
-  }, [hasMoreSessions, sessLoading, sessLoadingMore]);
+    if (sessLoading || sessLoadingMore || !hasMoreSessions || sessMoreError) return;
+    void loadSessions(loadedSessPage.current + 1);
+  }, [hasMoreSessions, loadSessions, sessLoading, sessLoadingMore, sessMoreError]);
+  const retryMoreSessions = useCallback(() => {
+    setSessMoreError(null);
+    void loadSessions(loadedSessPage.current + 1);
+  }, [loadSessions]);
 
   const successRate = summary?.total
     ? `${Math.round((summary.succeeded / summary.total) * 1000) / 10}%`
@@ -1189,6 +1255,7 @@ export function LogsView() {
                 hasMore={hasMoreRows}
                 loadingMore={loadingMore}
                 onLoadMore={loadMoreRows}
+                paused={moreError != null}
                 columns={GENERATIONS_COLUMNS}
                 items={rows}
                 rowKey={(it) => it.id}
@@ -1202,7 +1269,7 @@ export function LogsView() {
                 empty={emptyCell('该时间范围内还没有请求记录', true)}
               />
             )}
-            <LogTableFooter loaded={rows.length} total={total} hasMore={hasMoreRows} busy={loadingMore} onLoadMore={loadMoreRows} />
+            <LogTableFooter loaded={rows.length} total={total} hasMore={hasMoreRows} busy={loadingMore} error={moreError} onLoadMore={loadMoreRows} onRetry={retryMoreRows} />
           </>
         )}
         {subtab === 'upstream' && (
@@ -1222,6 +1289,7 @@ export function LogsView() {
                 hasMore={hasMoreRows}
                 loadingMore={loadingMore}
                 onLoadMore={loadMoreRows}
+                paused={moreError != null}
                 columns={UPSTREAM_COLUMNS}
                 items={rows}
                 rowKey={(it) => it.id}
@@ -1230,7 +1298,7 @@ export function LogsView() {
                 empty={emptyCell('该时间范围内还没有上游调用记录', true)}
               />
             )}
-            <LogTableFooter loaded={rows.length} total={total} hasMore={hasMoreRows} busy={loadingMore} onLoadMore={loadMoreRows} />
+            <LogTableFooter loaded={rows.length} total={total} hasMore={hasMoreRows} busy={loadingMore} error={moreError} onLoadMore={loadMoreRows} onRetry={retryMoreRows} />
           </>
         )}
         {subtab === 'sessions' && (
@@ -1250,6 +1318,7 @@ export function LogsView() {
                 hasMore={hasMoreSessions}
                 loadingMore={sessLoadingMore}
                 onLoadMore={loadMoreSessions}
+                paused={sessMoreError != null}
                 columns={SESSIONS_COLUMNS}
                 items={sessions}
                 rowKey={(it, idx) => it.sessionId || String(idx)}
@@ -1257,7 +1326,7 @@ export function LogsView() {
                 empty={emptyCell('该时间范围内暂无带会话 ID 的请求')}
               />
             )}
-            <LogTableFooter loaded={sessions.length} total={sessTotal} hasMore={hasMoreSessions} busy={sessLoadingMore} onLoadMore={loadMoreSessions} />
+            <LogTableFooter loaded={sessions.length} total={sessTotal} hasMore={hasMoreSessions} busy={sessLoadingMore} error={sessMoreError} onLoadMore={loadMoreSessions} onRetry={retryMoreSessions} />
           </>
         )}
       </Card>

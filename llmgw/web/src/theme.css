@@ -7094,3 +7094,9 @@ a:focus-visible {
     transition: none !important;
   }
 }
+
+/* 续取失败的表尾提示。用 --err 而不是灰字：这是需要用户动作的状态，
+   和「已全部加载」那种终态不是一回事。 */
+.lg-log-footer-error {
+  color: var(--err);
+}
