@@ -217,8 +217,19 @@ server.close();
  * 覆盖与命中是两件事，各自都能让这次审计不合格。
  */
 const realFindings = report.reduce((n, r) => n + r.findings.filter((f) => !f.unresolved).length, 0);
+/*
+ * 没量成的候选同样让本轮不合格 —— 只是理由不同，所以分开报。
+ * unresolved = 渐变重采样时元素消失/取不出像素，它的真实比值**从来没测出来过**。
+ * 此前 realFindings 显式把它排除，于是「其余全达标 + 一堆没量成」会 exit 0：
+ * 一份需要人工复核的结果被当成绿灯（Codex 在 PR #1374 第十七轮抓到）。
+ * 「实测不达标」与「没量成」是两种不合格，都不许静默通过。
+ */
+const unresolvedFindings = report.reduce((n, r) => n + r.findings.filter((f) => f.unresolved).length, 0);
 if (realFindings) {
   console.error(`\n[不合格] 实测不达标 ${realFindings} 处，详见 report.md / report.json`);
+}
+if (unresolvedFindings) {
+  console.error(`\n[不合格] ${unresolvedFindings} 处没量成（渐变重采样失败，真实比值未知），需人工复核`);
 }
 // 重定向进不合格判定，但只算「落地页没人扫」的那些（判据同远端版，见那边注释）
 const unscannedRedirects = coverage.redirected.filter((x) => {
@@ -233,4 +244,4 @@ if (coverage.skipped.length || coverage.errored.length || unscannedRedirects.len
   for (const x of unscannedRedirects) console.error(`  重定向到无人扫描的页面  ${x}`);
   process.exit(1);
 }
-if (realFindings) process.exit(1);
+if (realFindings || unresolvedFindings) process.exit(1);

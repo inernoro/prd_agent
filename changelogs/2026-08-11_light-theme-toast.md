@@ -89,3 +89,5 @@
 | fix | e2e | 修 Codex 第十六轮 P1：可见性只看元素自身 opacity，而 opacity 不继承——祖先 opacity-0 的 hover 控件子元素自报 1，被当成可见元素测量，再被 cumulativeOpacity 合成成 fg===bg，稳定产出 1:1 假阳性。单 /document-store 一页就 12 条（红绿闭环验过，修复后 0 条，命中 21/15 → 15/9） |
 | fix | e2e | 修 Codex 第十六轮 P1：input/textarea 的值与 placeholder 都不是 DOM 文本节点，hasText 恒 false，整类表单控件从没被量过。补测两者（placeholder 走 ::placeholder 伪元素色），当场扫出知识库搜索框 placeholder 浅色 3.35:1 |
 | fix | e2e | 修 Codex 第十六轮 P1：重登重试这条路径绕过了渲染异常门禁，重试渲染出的错误边界会被当成干净路由计进覆盖 |
+| fix | prd-admin | 修 Codex 第十七轮 P2：--fg-on-bright-fill 第一版取 #1a1a1f，最难的 #a855f7 压暗底只有 4.07:1，而那里是 9px 计数文字要 4.5。按最差色定值改 #0a0a0c（最差档 4.65:1，#0f0f12 恰好 4.5 属擦线不取） |
+| fix | e2e | 修 Codex 第十七轮 P1：unresolved（渐变重采样失败、真实比值未知）被显式排除在 realFindings 之外，于是「其余全达标 + 一堆没量成」会 exit 0。改为单独计数并同样触发非零退出 |

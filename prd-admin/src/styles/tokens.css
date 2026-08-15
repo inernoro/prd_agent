@@ -357,10 +357,14 @@
    *
    * 典型是批注线程的调色板（#f5b301 #22d3ee #34d399 #a3e635 …）：那 8 个色
    * 在暗/浅两档都是同一个亮色，只有 5% 的底噪不同。给它配 --text-primary
-   * 就等于「暗色档白字压亮底」——实测白字 1.55~3.98:1，深字 4.07~10.48:1，
-   * 8 个色无一例外。凡是这种底，前景一律用本 token，别用会翻的 --text-*。
+   * 就等于「暗色档白字压亮底」——实测白字只有 1.55~3.98:1。
+   *
+   * 取值按**最差那一个色**定，不是按平均：8 色 × 双主题里最难的是 #a855f7
+   * 压暗底，#1a1a1f 在那一档只有 4.07:1（我第一版就栽在这里 —— 注释里写着
+   * 4.07 却当它达标，而这里是 9px 的 +N 计数，要的是 4.5 不是 3）。
+   * #0f0f12 恰好 4.5 属于擦线，故取 #0a0a0c，最差档 4.65:1 留出余量。
    */
-  --fg-on-bright-fill: #1a1a1f;
+  --fg-on-bright-fill: #0a0a0c;
   --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
 
   /* 选择/键盘游标是共享交互语义，不由页面各写一套蓝色。 */
@@ -652,7 +656,7 @@
   --accent-primary-solid: #A64B35;   /* 浅色档本身已够深，白字 5.71:1 */
   --accent-gold: #A64B35;
   --accent-on-gold: #FBF8F2;   /* 浅色档按暖纸美学不用纯白（themeSystem 契约会拦纯白字面量）：暖白压深赭 gold 仍有 5.38:1 */
-  --fg-on-bright-fill: #1a1a1f;   /* 底两档同色，故前景也两档同值（见 :root 处注释） */
+  --fg-on-bright-fill: #0a0a0c;   /* 底两档同色，故前景也两档同值（见 :root 处注释） */
   --accent-gold-2: #C36F52;
   --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);
   --selection-bg: rgba(166, 75, 53, 0.10);
@@ -910,7 +914,7 @@
   --panel: linear-gradient(180deg, rgba(30, 30, 36, 0.92) 0%, rgba(30, 30, 36, 0.78) 100%);
   --panel-solid: rgba(30, 30, 36, 0.92);
   --accent-on-gold: #1a1a1a;
-  --fg-on-bright-fill: #1a1a1f;
+  --fg-on-bright-fill: #0a0a0c;
   /*
    * 下面这批不是「表面族」，是**按真实消费**补的：凡两个主题取值不同、且被任何带
    * surface-tone-dark 的文件消费的 token，暗岛都必须覆盖。
