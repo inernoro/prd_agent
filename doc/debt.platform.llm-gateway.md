@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 26 / in-progress: 8 / paid: 25 / 总计: 59
+当前 open: 28 / in-progress: 8 / paid: 25 / 总计: 61
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -20,6 +20,8 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-14-appcallers-search-not-anchored | low | 2026-08-14 | `GET /gw/app-callers` 的 `search` 是无锚定 Mongo regex，且 Skip/Limit 发生在按 `LastSeenAt` 排序**之后**；前端 App 详情页只能在这 50 行截断结果里做精确匹配。真实以 `G-` 开头的 appCallerCode，若比 50 个匹配其去前缀形式的记录更旧，就会被判成「未注册、仅观测到」 | 同时满足：存在真实以 `G-` 开头的 appCallerCode；且匹配其去前缀形式的记录超过一页 | open | PR #1371 Review 抓到。前端连打两次请求只是绕过，正解是端点支持按 code 精确查（锚定 regex 或独立的 by-code 端点）。触发面窄，按 §5.5 判 B 类不在该 PR 展开 |
+| 2026-08-14-sessions-endpoint-full-scan | medium | 2026-08-14 | `GET /gw/logs/sessions` 先把时间窗内全部日志物化再在内存按 SessionId 分组，最后才 Skip/Take；每翻一页都要重跑一次全扫描 | 大租户在会话视图连续翻页 | open | PR #1371 因此把会话视图的触底自动续取关掉（`autoLoad={false}`），只保留手动「加载更多」，避免把偶发翻页放大成连续全扫描。端点改成聚合层分页后可以打开自动续取 |
 | 2026-08-12-unavailable-pool-no-passive-half-open | critical | 2026-08-12 | 模型成员连续失败后会进入 `Unavailable`，Resolver 随即永久排除该成员；但健康恢复只发生在一次成功请求之后，导致成员没有机会通过真实流量恢复。控制台也没有恢复或切换入口。生产不能用 CDS 或定时生图探测兜底，因为主动调用会消耗供应商额度 | 任一 generation 上游连续失败并被熔断时 | in-progress | 已实现冷却后由真实请求原子领取半开租约，人工恢复也只授予半开资格，不直接改成健康；成功和失败会清理租约，默认探测服务保持关闭。单元与全量非集成回归通过。尚欠指数退避、多实例并发故障演练和生产证据，完成前不得标为 paid。 |
 | 2026-08-12-appcaller-single-pool-binding | critical | 2026-08-12 | 当前 GW AppCaller 只有单值 `ModelPoolId`，无法表达“多个获准池 + 一个默认池 + 跨池代选默认关闭”。MAP 因此不能从 AppCaller 配置取得完整业务模型集合，紧急切默认池还会把模型目录压缩成一个选项 | 任一 AppCaller 需要向用户提供多个可选模型池，或值班人切换默认池时 | in-progress | 已增加获准池集合、默认池和跨池开关，控制台支持多池编辑，旧单值迁移会补成严格单池且默认禁止跨池。尚欠临时授权失效时间、生产数据迁移与回滚演练。 |
 | 2026-08-12-explicit-selection-can-bypass-pool-boundary | critical | 2026-08-12 | 显式 expected model / 逻辑模型解析发生在 AppCaller 单池边界之前，逻辑目录或额外池搜索可能使命中的执行目标不属于当前 AppCaller 绑定池。现有语义不能证明“用户选池 A，默认绝不执行池 B” | MAP 允许用户显式选择模型，或逻辑目录存在多个模型时 | in-progress | 严格配置已先校验池授权并跳过逻辑目录旁路；默认仅保留所选池，显式开启时按获准集合顺序代选，未知选择 fail-closed。4 条严格路由与半开合同测试通过。尚欠真实 Serving 请求的请求池与实际池审计验收。 |

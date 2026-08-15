@@ -485,7 +485,7 @@ function observedAppCaller(item: LlmLogListItem, requestedCode: string): Gateway
   return {
     id: `observed:${requestedCode}`,
     teamId: item.teamId || null,
-    appCallerCode: item.appCallerCode?.replace(/^G-/, '') || requestedCode,
+    appCallerCode: item.appCallerCode || requestedCode,
     requestType,
     sourceSystem: item.sourceSystem || '未标注',
     clientCode: item.clientCode || '未标注',
@@ -522,7 +522,14 @@ function observedAppCaller(item: LlmLogListItem, requestedCode: string): Gateway
 
 export function AppCallerDetailsPage() {
   const [params] = useSearchParams();
-  const requestedCode = (params.get('code') || '').replace(/^G-/, '');
+  // 先按**原样**认，削掉 G- 只作为兜底。
+  // 要兼容的是 2026-08-14 之前控制台把 App 名显示成 `G-<code>` 时用户收藏的链接；
+  // 但 appCallerCode 本身完全可能真的以 G- 开头（GatewayAppCallerIdentity.NormalizePart
+  // 只做 trim，不限制字符），无条件削前缀会让 `G-suite.sync::chat` 这类真实 App
+  // 从自己的日志行点进来时报「找不到」。所以顺序是：精确优先，兜底其次。
+  const requestedCode = (params.get('code') || '').trim();
+  const legacyCode = requestedCode.replace(/^G-/, '');
+  const matchesRequested = (code?: string | null) => !!code && (code === requestedCode || code === legacyCode);
   const requestedId = params.get('id') || '';
   const [app, setApp] = useState<GatewayAppCaller | null>(null);
   const [pool, setPool] = useState<ModelPool | null>(null);
@@ -536,7 +543,9 @@ export function AppCallerDetailsPage() {
     setLoading(true);
     const range = last30Days();
     Promise.all([
-      getGatewayAppCallers({ page: 1, pageSize: 50, search: requestedCode || requestedId }),
+      // search 用削过前缀的那个（更宽）：它同时能捞回 `foo` 与 `G-foo`，
+      // 具体认哪一个交给下面的精确优先匹配，避免为两种写法各发一次请求。
+      getGatewayAppCallers({ page: 1, pageSize: 50, search: legacyCode || requestedId }),
       getPools(),
       requestedCode ? getLogs({ ...range, appCallerCode: requestedCode, view: 'logical', page: 1, pageSize: 8 }) : Promise.resolve(null),
     ]).then(([appResult, poolResult, logResult]) => {
@@ -546,12 +555,16 @@ export function AppCallerDetailsPage() {
         setLoading(false);
         return;
       }
-      const matched = appResult.data.items.find((item) => (
-        item.id === requestedId
-        || item.appCallerCode.replace(/^G-/, '') === requestedCode
-      )) ?? null;
+      // 精确命中优先于兜底命中：同时存在 `G-foo` 与 `foo` 两个 App 时，
+      // 从 `G-foo` 的日志行点进来必须落到 `G-foo`，而不能被兜底规则拐到 `foo`。
+      const items = appResult.data.items;
+      const matched = items.find((item) => item.id === requestedId || item.appCallerCode === requestedCode)
+        ?? items.find((item) => matchesRequested(item.appCallerCode))
+        ?? null;
       const recentItems = logResult?.success ? logResult.data.items : [];
-      const observed = recentItems.find((item) => item.appCallerCode?.replace(/^G-/, '') === requestedCode) ?? recentItems[0] ?? null;
+      const observed = recentItems.find((item) => item.appCallerCode === requestedCode)
+        ?? recentItems.find((item) => matchesRequested(item.appCallerCode))
+        ?? recentItems[0] ?? null;
       const resolved = matched ?? (observed ? observedAppCaller(observed, requestedCode) : null);
       setRegistered(Boolean(matched));
       setApp(resolved);
@@ -568,7 +581,7 @@ export function AppCallerDetailsPage() {
   if (error) return <DetailError message={error} backHref="/logs" />;
   if (!app) return <DetailError message="当前租户中没有找到该 App，可能尚未注册或不在你的团队范围内。" backHref="/logs" />;
 
-  const displayCode = app.appCallerCode.startsWith('G-') ? app.appCallerCode : `G-${app.appCallerCode}`;
+  const displayCode = app.appCallerCode;
   return (
     <EntityDetailsShell
       kind="app"

@@ -80,7 +80,11 @@ export function AppCallersPage() {
   const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
   const { confirm, promptText } = useDialogs();
   const [searchParams] = useSearchParams();
-  const focusedAppCallerCode = (searchParams.get('focus') || '').replace(/^G-/, '');
+  // 与 App 详情页同一口径：精确优先，削 `G-` 前缀只作兜底。
+  // 详情页现在会原样保留真实的 `G-` 开头 code，它的「打开治理配置」链接把该 code
+  // 作为 focus 传到这里；这边若无条件削前缀，要么定位不到、要么定位到另一个没前缀的同名记录。
+  const focusedAppCallerCode = (searchParams.get('focus') || '').trim();
+  const focusedLegacyCode = focusedAppCallerCode.replace(/^G-/, '');
   const [data, setData] = useState<GatewayAppCallersData | null>(null);
   const [pools, setPools] = useState<ModelPool[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -150,9 +154,10 @@ export function AppCallersPage() {
 
   useEffect(() => {
     if (!focusedAppCallerCode || !data?.items.length) return;
-    const focused = data.items.find((item) => item.appCallerCode === focusedAppCallerCode);
+    const focused = data.items.find((item) => item.appCallerCode === focusedAppCallerCode)
+      ?? data.items.find((item) => item.appCallerCode === focusedLegacyCode);
     if (focused) setExpandedId(focused.id);
-  }, [data?.items, focusedAppCallerCode]);
+  }, [data?.items, focusedAppCallerCode, focusedLegacyCode]);
 
   useEffect(() => {
     let alive = true;
