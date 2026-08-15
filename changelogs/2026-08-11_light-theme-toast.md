@@ -91,3 +91,7 @@
 | fix | e2e | 修 Codex 第十六轮 P1：重登重试这条路径绕过了渲染异常门禁，重试渲染出的错误边界会被当成干净路由计进覆盖 |
 | fix | prd-admin | 修 Codex 第十七轮 P2：--fg-on-bright-fill 第一版取 #1a1a1f，最难的 #a855f7 压暗底只有 4.07:1，而那里是 9px 计数文字要 4.5。按最差色定值改 #0a0a0c（最差档 4.65:1，#0f0f12 恰好 4.5 属擦线不取） |
 | fix | e2e | 修 Codex 第十七轮 P1：unresolved（渐变重采样失败、真实比值未知）被显式排除在 realFindings 之外，于是「其余全达标 + 一堆没量成」会 exit 0。改为单独计数并同样触发非零退出 |
+| fix | e2e | 修 Codex 第十八轮 P1：select 收起态的显示值同样量不到（无文本节点、option 无布局盒），而本 PR 恰好两次改动原生 select/option 主题。补测选中项文案 |
+| fix | e2e | 修 Codex 第十八轮 P1：两个入口写死 1440x900，靠 useBreakpoint 分流的移动端分支一屏都没渲染过，而本 PR 改了 4 个移动端组件。视口升为第三个维度（默认 desktop+mobile，AUDIT_VIEWPORTS 可收窄），账本与截图名都带视口 |
+| fix | e2e | 渐变重采样从「整页截图 + 文档坐标」改为「按屏滚动 + 视口坐标」：本应用遵守 full-height-layout（滚动在内层容器），document.scrollHeight 恒等于视口高，fullPage 截出来就是视口那一张，首屏以下的候选一律落在图外。单是首页就有 84 个候选从没被真实测量过，修好后 unresolved 84 → 0、真实缺陷 12 → 39 |
+| fix | e2e | 重采样失败带原因码（element-gone / box-too-small / no-pixels / compose-failed / not-reached），此前只回 null，没法判是几何问题还是元素没了 |

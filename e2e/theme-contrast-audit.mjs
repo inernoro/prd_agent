@@ -73,9 +73,24 @@ function loadRoutes() {
   return only.length ? list.filter((p) => only.includes(p)) : list;
 }
 
+/*
+ * 视口是**第三个维度**，不是常数。
+ * 此前两个入口都写死 1440×900，于是 App.tsx 里靠 useBreakpoint 分流的移动端分支
+ * （MobileHomePage / MobileTabBar / MobileNotificationsPage / MobileSafeBoundary…）
+ * 一屏都没渲染过 —— 而本 PR 恰好改了其中四个组件，审计却在报「双主题覆盖完整」
+ * （Codex 在 PR #1374 第十八轮抓到）。
+ * 默认两档都跑；迭代时用 AUDIT_VIEWPORTS=desktop 收窄。
+ */
+const VIEWPORTS = {
+  desktop: { width: 1440, height: 900 },
+  mobile: { width: 390, height: 844 },
+};
+const ACTIVE_VIEWPORTS = (process.env.AUDIT_VIEWPORTS || 'desktop,mobile')
+  .split(',').map((x) => x.trim()).filter((x) => VIEWPORTS[x]);
+
 const ROUTES = loadRoutes();
 fs.mkdirSync(OUT, { recursive: true });
-console.log(`路由 ${ROUTES.length} 条 × 双主题，产物目录 ${OUT}`);
+console.log(`路由 ${ROUTES.length} 条 × 双主题 × 视口 ${ACTIVE_VIEWPORTS.join("/")}，产物目录 ${OUT}`);
 
 /*
  * 出网走「node fetch 桥接」，不要给 chromium 配 proxy。
@@ -134,9 +149,10 @@ const coverage = { done: [], skipped: [], errored: [], redirected: [] };
  * 登录态用 storageState 带过去，不必每个主题重登一次。
  */
 const loggedInState = await ctx.storageState();
+for (const vpName of ACTIVE_VIEWPORTS) {
 for (const theme of ['light', 'dark']) {
   const themeCtx = await browser.newContext({
-    viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true, storageState: loggedInState,
+    viewport: VIEWPORTS[vpName], ignoreHTTPSErrors: true, storageState: loggedInState,
   });
   await installNodeFetchRoute(themeCtx);
   await themeCtx.addInitScript((t) => {
@@ -157,8 +173,8 @@ for (const theme of ['light', 'dark']) {
        * 必须在跑 AUDIT_FN 之前就把这一对判掉。
        */
       if (pageErrors.length) {
-        coverage.errored.push(`${theme}${route}: 渲染异常 ${pageErrors[0]}`);
-        console.log(`[${theme}] ${route.padEnd(30)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
+        coverage.errored.push(`${vpName}/${theme}${route}: 渲染异常 ${pageErrors[0]}`);
+        console.log(`[${vpName}/${theme}] ${route.padEnd(26)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
         continue;
       }
       /*
@@ -195,27 +211,27 @@ for (const theme of ['light', 'dark']) {
            * （Codex 在 PR #1374 第十六轮抓到；同一形状第三次出现）。
            */
           if (pageErrors.length) {
-            coverage.errored.push(`${theme}${route}: 重登后渲染异常 ${pageErrors[0]}`);
-            console.log(`[${theme}] ${route.padEnd(30)} 重登后渲染异常 ${pageErrors[0].slice(0, 40)}`);
+            coverage.errored.push(`${vpName}/${theme}${route}: 重登后渲染异常 ${pageErrors[0]}`);
+            console.log(`[${vpName}/${theme}] ${route.padEnd(26)} 重登后渲染异常 ${pageErrors[0].slice(0, 40)}`);
             continue;
           }
           landed = await page.evaluate(() => location.pathname);
         }
       }
       if (landed !== routePath) {
-        coverage.redirected.push(`${theme}${route} → ${landed}`);
+        coverage.redirected.push(`${vpName}/${theme}${route} → ${landed}`);
         console.log(`  [重定向] ${route} → ${landed}，不计入覆盖`);
         continue;
       }
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
       if (actual !== theme) {
-        coverage.skipped.push(`${theme}${route}（主题未生效，实际 ${actual}）`);
+        coverage.skipped.push(`${vpName}/${theme}${route}（主题未生效，实际 ${actual}）`);
         console.log(`  [跳过] ${route} 主题未生效(${actual})`);
         continue;
       }
       let findings = await page.evaluate(AUDIT_FN);
       if (findings.length) {
-        const shot = `${theme}${route.replace(/\//g, '_')}.png`;
+        const shot = `${vpName}_${theme}${route.replace(/\//g, '_')}.png`;
         const buf = await page.screenshot({ path: path.join(OUT, shot) });
         /*
          * 渐变底必须用截图真实像素重算 —— 本地版一直有这一步，远端版漏了。
@@ -226,16 +242,17 @@ for (const theme of ['light', 'dark']) {
          */
         findings = await resampleGradientFindings(page, buf, findings);
         findings = findings.filter((f) => f.ratio < f.need);
-        if (findings.length) report.push({ theme, route, shot, findings });
+        if (findings.length) report.push({ viewport: vpName, theme, route, shot, findings });
       }
-      coverage.done.push(`${theme}${route}`);
-      console.log(`[${theme}] ${route.padEnd(30)} ${findings.length} 处`);
+      coverage.done.push(`${vpName}/${theme}${route}`);
+      console.log(`[${vpName}/${theme}] ${route.padEnd(26)} ${findings.length} 处`);
     } catch (e) {
-      coverage.errored.push(`${theme}${route}: ${String(e).split('\n')[0].slice(0, 90)}`);
-      console.log(`[${theme}] ${route.padEnd(30)} ERROR ${String(e).split('\n')[0].slice(0, 70)}`);
+      coverage.errored.push(`${vpName}/${theme}${route}: ${String(e).split('\n')[0].slice(0, 90)}`);
+      console.log(`[${vpName}/${theme}] ${route.padEnd(26)} ERROR ${String(e).split('\n')[0].slice(0, 70)}`);
     }
   }
   await themeCtx.close();
+}
 }
 
 fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 2));
@@ -245,7 +262,7 @@ fs.writeFileSync(path.join(OUT, 'report.md'), renderMarkdown({
   title: '全站双主题对比度审计', base: BASE, routeCount: ROUTES.length, report, groups,
 }));
 
-const expected = ROUTES.length * 2;
+const expected = ROUTES.length * 2 * ACTIVE_VIEWPORTS.length;
 console.log(`\n覆盖：${coverage.done.length}/${expected} 对「路由×主题」实际扫过`);
 console.log(`命中：${report.length} 个「路由×主题」，配色组 ${groups.length}`);
 /*

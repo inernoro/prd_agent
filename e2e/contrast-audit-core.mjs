@@ -179,12 +179,22 @@ export const AUDIT_FN = () => {
    * placeholder 的颜色取伪元素：getComputedStyle(el, '::placeholder')。
    * 有值时量 cs.color，没值且有 placeholder 时量伪元素色 —— 用户当下看到的是哪个就量哪个。
    */
-  for (const el of document.querySelectorAll('input, textarea')) {
+  for (const el of document.querySelectorAll('input, textarea, select')) {
     if (!visible(el) || inactive(el) || isPlatformOverlay(el)) continue;
     if (el.type === 'hidden' || el.type === 'checkbox' || el.type === 'radio') continue;
     const cs = getComputedStyle(el);
-    const hasValue = !!(el.value || '').trim();
-    const ph = (el.getAttribute('placeholder') || '').trim();
+    /*
+     * select 的显示值同样量不到：它没有直接文本节点（子节点是 <option>），
+     * 而 option 在收起状态下没有布局盒，visible() 判 false。于是「收起的下拉框
+     * 显示的那行字」整类从没被量过 —— 本 PR 恰好两次改动原生 select/option 的
+     * 主题绘制，改的正是这块（Codex 在 PR #1374 第十八轮抓到）。
+     * 取当前选中项的文案 + select 自身的 color 即可；展开后的弹层由 UA 绘制、
+     * 不在文档流里，本审计够不着，属已知边界。
+     */
+    const isSelect = el.tagName === 'SELECT';
+    const selText = isSelect ? ((el.selectedOptions && el.selectedOptions[0]?.text) || '').trim() : '';
+    const hasValue = isSelect ? !!selText : !!(el.value || '').trim();
+    const ph = isSelect ? '' : (el.getAttribute('placeholder') || '').trim();
     if (!hasValue && !ph) continue;
     const isPh = !hasValue;
     const fg = isPh ? getComputedStyle(el, '::placeholder').color : cs.color;
@@ -202,7 +212,8 @@ export const AUDIT_FN = () => {
     seen.add(key);
     const r = el.getBoundingClientRect();
     el.setAttribute('data-audit-id', String(++auditId));
-    out.push({ auditId, kind: isPh ? 'placeholder' : 'input', text: (isPh ? ph : el.value).slice(0, 24), sel: label(el),
+    out.push({ auditId, kind: isPh ? 'placeholder' : (isSelect ? 'select' : 'input'),
+      text: (isPh ? ph : (isSelect ? selText : el.value)).slice(0, 24), sel: label(el),
       fg, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
       fgOpacity: cumulativeOpacity(el),
       box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
@@ -306,127 +317,151 @@ export async function resampleGradientFindings(page, _unused, findings) {
   const targets = findings.filter((f) => f.needsEye && f.auditId);
   if (!targets.length) return findings;
 
-  const ids = targets.map((f) => f.auditId);
-  // 隐前景
-  await page.evaluate((idList) => {
-    window.__auditRestore = [];
-    for (const id of idList) {
-      const el = document.querySelector(`[data-audit-id="${id}"]`);
-      if (!el) continue;
-      window.__auditRestore.push([el, el.style.color, el.style.fill, el.style.stroke]);
-      el.style.setProperty('color', 'transparent', 'important');
-      el.style.setProperty('fill', 'transparent', 'important');
-      el.style.setProperty('stroke', 'transparent', 'important');
-    }
-  }, ids);
   /*
-   * 必须整页截图。此前用默认的**视口**截图，而候选是按 getBoundingClientRect 收的、
-   * 不限于首屏 —— 屏下的渐变底元素坐标一夹紧就无效，重采样返回 null，
-   * 于是那条留着不可信的祖先近似值，既可能假失败也可能假通过。
+   * 为什么不是「整页截一张、按文档坐标采样」——那是上一版，前提是错的。
+   *
+   * 本应用遵守 full-height-layout：外壳撑满视口、滚动发生在**内层容器**里，
+   * 于是 document.scrollHeight === 视口高度，`fullPage: true` 截出来的就是
+   * 视口那一张（实测 imgH 恒为 900）。而候选是按 getBoundingClientRect 收的，
+   * 首屏以下的元素 r.y 会到 1500+，一律落在图外 —— 单是首页就有 84 个候选
+   * 因此从来没被真实测量过，只是被标成 unresolved。这个洞在第十七轮把
+   * unresolved 计入不合格之后才暴露出来，此前它一直是静默的。
+   *
+   * 改成「按屏采样」：把还没采到的目标滚进视口（scrollIntoView 会自动滚动
+   * 它所在的那个内层容器），截当前视口，然后把**此刻落在视口内**的目标一次采完。
+   * 复杂度是 O(屏数) 而不是 O(元素数)，一页通常 3~6 屏。
    */
-  const clean = await page.screenshot({ fullPage: true });
-  // 还原
-  await page.evaluate(() => {
-    for (const [el, c, f, st] of window.__auditRestore || []) {
-      el.style.color = c; el.style.fill = f; el.style.stroke = st;
-    }
-    delete window.__auditRestore;
-  });
+  const pending = new Map(targets.map((f) => [f.auditId, f]));
+  let guard = 0;
 
-  const results = await page.evaluate(async ({ b64, idList }) => {
-    const img = new Image();
-    img.src = `data:image/png;base64,${b64}`;
-    await img.decode();
-    // 整页截图 → 用文档宽度定标，坐标也要换成文档坐标（见下方 r.x + scrollX）
-    const docW = Math.max(document.documentElement.scrollWidth, window.innerWidth);
-    const scale = img.width / docW;
-    const cv = document.createElement('canvas');
-    cv.width = img.width; cv.height = img.height;
-    const cx = cv.getContext('2d', { willReadFrequently: true });
-    cx.drawImage(img, 0, 0);
-    const one = document.createElement('canvas');
-    one.width = one.height = 1;
-    const oc = one.getContext('2d', { willReadFrequently: true });
-    const compose = (color, bg) => {
-      oc.clearRect(0, 0, 1, 1);
-      oc.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`;
-      oc.fillRect(0, 0, 1, 1);
-      try { oc.fillStyle = color; } catch { return null; }
-      oc.fillRect(0, 0, 1, 1);
-      const d = oc.getImageData(0, 0, 1, 1).data;
-      return [d[0], d[1], d[2]];
-    };
-    const chan = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
-    const lum = ([r, g, b]) => 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
-    const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+  while (pending.size && guard < 24) {
+    guard += 1;
+    const ids = [...pending.keys()];
 
-    return idList.map(({ id, fg, opacity }) => {
-      const el = document.querySelector(`[data-audit-id="${id}"]`);
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      // 文档坐标（配整页截图）；视口坐标只在首屏成立，屏下元素会被夹成空框
-      const dx = r.x + window.scrollX;
-      const dy = r.y + window.scrollY;
-      const x0 = Math.max(0, Math.round(dx * scale));
-      const y0 = Math.max(0, Math.round(dy * scale));
-      const x1 = Math.min(img.width, Math.round((dx + r.width) * scale));
-      const y1 = Math.min(img.height, Math.round((dy + r.height) * scale));
-      if (x1 - x0 < 2 || y1 - y0 < 2) return null;
-      /*
-       * 取元素框内的**众数色**当底色，而不是正中一个点。
-       * 单点采样在小控件上会翻车：把前景设成 transparent 这一步偶尔不生效
-       * （React 重渲染会抹掉临时 inline style），正中恰好压着字形，采到的
-       * 就是文字色本身 —— 报出来是 fg === bg、比值 1.00 的假阳性
-       * （/pa-agent 的 A- 按钮就是这样被误报的）。字形只占框内少数像素，
-       * 众数天然是底色，所以即使隐前景失败这一层也兜得住。
-       */
-      const px = cx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
-      const buckets = new Map();
-      for (let i = 0; i < px.length; i += 4) {
-        const key = (px[i] >> 3 << 10) | (px[i + 1] >> 3 << 5) | (px[i + 2] >> 3);
-        let b = buckets.get(key);
-        if (!b) buckets.set(key, (b = [0, 0, 0, 0]));
-        b[0] += px[i]; b[1] += px[i + 1]; b[2] += px[i + 2]; b[3] += 1;
+    // 把第一个还没采到的目标滚进视口（连带滚动它所在的内层滚动容器）
+    const ok = await page.evaluate((idList) => {
+      for (const id of idList) {
+        const el = document.querySelector(`[data-audit-id="${id}"]`);
+        if (!el) continue;
+        el.scrollIntoView({ block: 'center', inline: 'center' });
+        return true;
       }
-      let best = null;
-      for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
-      if (!best) return null;
-      const bg = [Math.round(best[0] / best[3]), Math.round(best[1] / best[3]), Math.round(best[2] / best[3])];
-      const solid = compose(fg, bg);
-      if (!solid) return null;
-      // 按累计 opacity 把前景衰减回底色，得到浏览器实际画出来的颜色 —— 与初扫口径一致
-      const o = typeof opacity === 'number' ? opacity : 1;
-      const composed = o >= 0.999
-        ? solid
-        : [0, 1, 2].map((i) => Math.round(solid[i] * o + bg[i] * (1 - o)));
-      return { bg, ratio: +contrast(composed, bg).toFixed(2) };
-    });
-    /*
-     * 把累计 opacity 一起带进来。初扫时前景是按 opacity 衰减后参与计算的，
-     * 而这里若直接拿原色 f.fg 重算，等于把衰减又抹掉 —— opacity-50 的目标
-     * 会以全强度通过（Codex 在 PR #1374 第十轮抓到：我那个 opacity 修复只接了一半）。
-     */
-  }, { b64: clean.toString('base64'), idList: targets.map((f) => ({ id: f.auditId, fg: f.fg, opacity: f.fgOpacity ?? 1 })) });
+      return false;
+    }, ids);
+    if (!ok) break;
+    await page.waitForTimeout(150);
 
-  targets.forEach((f, i) => {
-    const r = results[i];
-    if (!r) {
-      /*
-       * 采样失败 ≠ 达标。元素在收集与截图之间消失、或框小到取不出像素时，
-       * 这条会留着**祖先推断出的那个不可信比值**；两个调用方随后一律
-       * `filter(f => f.ratio < f.need)`，于是「近似恰好判达标、真实值从没量过」
-       * 的候选就被静默丢掉（Codex 在 PR #1374 第七轮抓到，是「未解析当作通过」
-       * 的第三次变体）。
-       * 显式标成未解析，并把比值压到 0 —— 宁可留在报告里让人看一眼，
-       * 也不要假装它达标。unresolved 字段供报告区分「实测不达标」与「没量成」。
-       */
-      f.unresolved = true;
-      f.ratio = 0;
-      return;
+    // 隐前景（只隐还没采到的），截当前视口，再还原
+    await page.evaluate((idList) => {
+      window.__auditRestore = [];
+      for (const id of idList) {
+        const el = document.querySelector(`[data-audit-id="${id}"]`);
+        if (!el) continue;
+        window.__auditRestore.push([el, el.style.color, el.style.fill, el.style.stroke]);
+        el.style.setProperty('color', 'transparent', 'important');
+        el.style.setProperty('fill', 'transparent', 'important');
+        el.style.setProperty('stroke', 'transparent', 'important');
+      }
+    }, ids);
+    const shot = await page.screenshot();          // 视口截图，配视口坐标
+    await page.evaluate(() => {
+      for (const [el, c, f, st] of window.__auditRestore || []) {
+        el.style.color = c; el.style.fill = f; el.style.stroke = st;
+      }
+      delete window.__auditRestore;
+    });
+
+    const batch = await page.evaluate(async ({ b64, idList }) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      const scale = img.width / window.innerWidth;   // 视口截图 → 用视口宽定标
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(img, 0, 0);
+      const one = document.createElement('canvas');
+      one.width = one.height = 1;
+      const oc = one.getContext('2d', { willReadFrequently: true });
+      const compose = (color, bg) => {
+        oc.clearRect(0, 0, 1, 1);
+        oc.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`;
+        oc.fillRect(0, 0, 1, 1);
+        try { oc.fillStyle = color; } catch { return null; }
+        oc.fillRect(0, 0, 1, 1);
+        const d = oc.getImageData(0, 0, 1, 1).data;
+        return [d[0], d[1], d[2]];
+      };
+      const chan = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+      const lum = ([r, g, b]) => 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+      const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+
+      const out = {};
+      for (const { id, fg, opacity } of idList) {
+        const el = document.querySelector(`[data-audit-id="${id}"]`);
+        if (!el) { out[id] = { why: 'element-gone' }; continue; }
+        const r = el.getBoundingClientRect();
+        // 只处理此刻真正落在视口内的；其余留到下一屏
+        if (r.bottom <= 0 || r.top >= window.innerHeight || r.right <= 0 || r.left >= window.innerWidth) continue;
+        const x0 = Math.max(0, Math.round(r.x * scale));
+        const y0 = Math.max(0, Math.round(r.y * scale));
+        const x1 = Math.min(img.width, Math.round((r.x + r.width) * scale));
+        const y1 = Math.min(img.height, Math.round((r.y + r.height) * scale));
+        if (x1 - x0 < 2 || y1 - y0 < 2) { out[id] = { why: 'box-too-small' }; continue; }
+        /*
+         * 取元素框内的**众数色**当底色，而不是正中一个点。
+         * 单点采样在小控件上会翻车：隐前景那一步偶尔不生效（React 重渲染会抹掉
+         * 临时 inline style），正中恰好压着字形就采到文字色本身 —— 报出来是
+         * fg === bg、比值 1.00 的假阳性。字形只占框内少数像素，众数天然是底色。
+         */
+        const px = cx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+        const buckets = new Map();
+        for (let i = 0; i < px.length; i += 4) {
+          const key = (px[i] >> 3 << 10) | (px[i + 1] >> 3 << 5) | (px[i + 2] >> 3);
+          let b = buckets.get(key);
+          if (!b) buckets.set(key, (b = [0, 0, 0, 0]));
+          b[0] += px[i]; b[1] += px[i + 1]; b[2] += px[i + 2]; b[3] += 1;
+        }
+        let best = null;
+        for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
+        if (!best) { out[id] = { why: 'no-pixels' }; continue; }
+        const bg = [Math.round(best[0] / best[3]), Math.round(best[1] / best[3]), Math.round(best[2] / best[3])];
+        const solid = compose(fg, bg);
+        if (!solid) { out[id] = { why: 'compose-failed' }; continue; }
+        // 按累计 opacity 把前景衰减回底色，与初扫口径一致
+        const o = typeof opacity === 'number' ? opacity : 1;
+        const composed = o >= 0.999
+          ? solid
+          : [0, 1, 2].map((i) => Math.round(solid[i] * o + bg[i] * (1 - o)));
+        out[id] = { bg, ratio: +contrast(composed, bg).toFixed(2) };
+      }
+      return out;
+    }, { b64: shot.toString('base64'), idList: ids.map((id) => ({ id, fg: pending.get(id).fg, opacity: pending.get(id).fgOpacity ?? 1 })) });
+
+    let progressed = false;
+    for (const [idStr, r] of Object.entries(batch)) {
+      const id = Number(idStr);
+      const f = pending.get(id);
+      if (!f) continue;
+      progressed = true;
+      if (r.why) { f.unresolved = true; f.unresolvedWhy = r.why; f.ratio = 0; }
+      else { f.bg = `rgb(${r.bg})`; f.ratio = r.ratio; f.sampled = true; }
+      pending.delete(id);
     }
-    f.bg = `rgb(${r.bg})`;
-    f.ratio = r.ratio;
-    f.sampled = true;
-  });
+    // 这一屏一个都没推进（滚动没生效 / 目标始终不在视口）——再转下去也是死循环
+    if (!progressed) break;
+  }
+
+  /*
+   * 采样失败 ≠ 达标。剩下没采到的显式标成未解析并把比值压 0 ——
+   * 两个调用方随后一律 `filter(f => f.ratio < f.need)`，若留着祖先推断的近似值，
+   * 「近似恰好判达标、真实值从没量过」的候选就被静默丢掉。
+   * unresolved 供报告区分「实测不达标」与「没量成」，两者都算不合格。
+   */
+  for (const f of pending.values()) {
+    f.unresolved = true;
+    f.unresolvedWhy = f.unresolvedWhy || 'not-reached';
+    f.ratio = 0;
+  }
   return findings;
 }
