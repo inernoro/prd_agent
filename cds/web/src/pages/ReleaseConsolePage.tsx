@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Ban, CheckCircle2, Clipboard, Clock, Loader2, RefreshCw, Rocket, RotateCcw, Search, X, XCircle } from 'lucide-react';
+import { AlertTriangle, Ban, CheckCircle2, Clipboard, Clock, History, Loader2, RefreshCw, Rocket, RotateCcw, Search, X, XCircle } from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { useNowTick } from '@/hooks/useNowTick';
@@ -34,6 +34,7 @@ import { detectStall, resolveStepDetails, type ConsolePlanLike } from '@/lib/rel
 import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/releaseEnvironments';
 import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress';
 import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
+import { buildConsoleStance, sameCommit } from '@/lib/releaseConsoleState';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { Chip, formatClock, formatDateTime, formatDuration } from './release-center/shared';
@@ -518,11 +519,21 @@ export function ReleaseConsolePage(): JSX.Element {
   };
 
   /* ── 渲染 ─────────────────────────────────────────────── */
-  const statusTitle = !shown ? '待发布'
-    : running ? '发布中'
-    : failed ? '发布失败'
-    : shown.status === 'success' || shown.status === 'rollback_success' ? '发布成功'
-    : shown.status;
+  /*
+   * 「我现在在哪」。从发布中心跳过来、本次什么都没做时，`shown` 退回该环境的
+   * 上一次历史发布，于是标题「发布成功」+ 满格绿进度条 + 打勾的步骤，整屏都在说
+   * 「你刚成功发布了一版」——用户的原话是「很有心智负担」。判定收在
+   * lib/releaseConsoleState.ts，页面只负责渲染。
+   */
+  const stance = buildConsoleStance({
+    sessionRun: run,
+    latestRun: row?.latestRun ?? null,
+    liveCommit: row?.currentCommit || '',
+    selectedCommit: commitSha,
+    running,
+    failed,
+  });
+  const statusTitle = stance.title;
 
   const tone = !shown ? 'muted' : running ? 'warn' : failed ? 'bad' : 'ok';
   const toneRing = tone === 'bad'
@@ -714,6 +725,18 @@ export function ReleaseConsolePage(): JSX.Element {
                     <h2 className={`text-xl font-bold ${failed ? 'text-red-600 dark:text-red-400' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
                     </h2>
+                    {/* 「历史记录」这一枚是本次改动的核心：没有它，满格绿的进度条
+                        会被读成「我刚发布成功了」，而用户其实什么都没做。 */}
+                    {stance.badge ? (
+                      <span className="shrink-0 rounded-[6px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[10.5px] text-muted-foreground">
+                        {stance.badge}
+                      </span>
+                    ) : null}
+                    {stance.selectedIsLive ? (
+                      <span className="shrink-0 rounded-[6px] bg-emerald-500/[0.14] px-1.5 py-0.5 text-[10.5px] text-emerald-700 dark:text-emerald-300">
+                        选中版本已在线上
+                      </span>
+                    ) : null}
                     {/* 参考稿的副标题就一句「项目 → 环境」。这里补一段「替换线上的 X」——
                         那是发布前唯一必须确认的事实，原来它单占一行挂在 banner 外面。 */}
                     <span className="min-w-0 truncate cds-ident text-xs text-muted-foreground">
@@ -748,6 +771,9 @@ export function ReleaseConsolePage(): JSX.Element {
                         <option key={item.id} value={item.id}>
                           {item.branch}
                           {item.commitSha ? ` · ${item.commitSha.slice(0, 7)}` : ''}
+                          {/* 已经在线上的那一版直接标出来——用户问的正是
+                              「这些没有被标记为已发布吗」。 */}
+                          {sameCommit(item.commitSha, row?.currentCommit) ? ' · 线上' : ''}
                           {commitMeta[item.commitSha || '']?.subject ? ` · ${commitMeta[item.commitSha || ''].subject}` : ''}
                         </option>
                       ))}
@@ -801,12 +827,27 @@ export function ReleaseConsolePage(): JSX.Element {
                     {awaitingConfirm
                       ? `确认发布到 ${row?.target.name}`
                       : busy === 'deploy' ? '检查并发布'
-                      : running ? '发布中'
-                      : failed ? '重新发布' : '开始发布'}
+                      : stance.primaryLabel}
                   </Button>
                 </div>
               </div>
             </section>
+
+            {/*
+              「你现在在哪」。历史态时这一条必须出现：屏幕上那套满格进度条 + 打勾步骤
+              + 一屏日志全是上一次发布留下的，不说清楚，用户会以为是自己刚做的
+              （用户原话：「很有心智负担」）。本次真发起了就不出——那时屏幕自己说得清。
+            */}
+            {stance.hint ? (
+              <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-[10px] border px-3.5 py-2.5 text-xs ${
+                stance.selectedIsLive
+                  ? 'border-emerald-500/40 bg-emerald-500/[0.06] text-emerald-800 dark:text-emerald-300'
+                  : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
+              }`}>
+                <History className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 flex-1">{stance.hint}</span>
+              </div>
+            ) : null}
 
             {/*
               从发布中心点「回滚」跳过来。只做一件事：把人接住并指出下一步在哪。

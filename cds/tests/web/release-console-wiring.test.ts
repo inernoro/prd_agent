@@ -448,7 +448,18 @@ describe('发布控制台 · 窄屏不许叠印', () => {
 describe('发布控制台 · 状态条不许被按钮文案顶高', () => {
   it('发布按钮是短词，不把目标名塞进按钮', () => {
     expect(PAGE).not.toContain('`发布到 ${row.target.name}`');
-    expect(PAGE).toContain("failed ? '重新发布' : '开始发布'");
+    // 文案改由 buildConsoleStance 统一给（历史态要说「重新发布这一版」）。
+    // 断言的是「短」这个行为，不是某一段三元表达式的字面存在：
+    // 钉字面量会让下一个人改文案时被迫改测试，或者干脆把测试注释掉。
+    expect(PAGE).toContain('stance.primaryLabel');
+    const stance = fs.readFileSync(
+      path.resolve(process.cwd(), '../cds/web/src/lib/releaseConsoleState.ts'),
+      'utf8',
+    );
+    for (const label of stance.match(/primaryLabel: '[^']+'/g) || []) {
+      const text = label.replace(/^primaryLabel: '|'$/g, '');
+      expect(text.length, `按钮文案「${text}」太长，会把状态条顶成两行`).toBeLessThanOrEqual(8);
+    }
     // 二次确认那一下例外：要人看清发到哪
     expect(PAGE).toContain('`确认发布到 ${row?.target.name}`');
   });
@@ -557,7 +568,11 @@ describe('发布控制台 · 发布前检查是发布的第一步', () => {
   it('开始在最右，中止只在进行中出现', () => {
     const group = PAGE.slice(PAGE.indexOf('flex w-full flex-wrap items-center justify-end'), PAGE.indexOf('</section>'));
     const cancelAt = group.indexOf('中止');
-    const startAt = group.lastIndexOf('开始发布');
+    // 主按钮的文案已收进 buildConsoleStance，锚点换成它的渲染点，
+    // 不再依赖「开始发布」这个字面量出现在页面里。
+    const startAt = group.indexOf('stance.primaryLabel');
+    expect(cancelAt, '中止按钮应当存在').toBeGreaterThanOrEqual(0);
+    expect(startAt, '主发布按钮应当存在').toBeGreaterThanOrEqual(0);
     expect(cancelAt, '中止应当在开始之前（即更靠左）').toBeLessThan(startAt);
     expect(group).toContain('{running ? (');
     expect(group).toContain('justify-end');
