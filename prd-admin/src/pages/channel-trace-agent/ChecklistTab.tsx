@@ -170,7 +170,7 @@ export function ChecklistTab() {
                   <div className="text-base font-medium text-token-primary">{selected.title}</div>
                   <div className="text-xs text-token-muted mt-1 flex flex-wrap items-center gap-1.5">
                     {selected.scene && (
-                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-[color:var(--accent-fg-success)]/80">
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-[color:var(--accent-fg-success)]">
                         {selected.scene}
                       </span>
                     )}

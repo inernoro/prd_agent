@@ -286,7 +286,7 @@ export function RequirementRtfImportDialog({
             </div>
           )}
           {imageWarnings.length > 0 && (
-            <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]/90">
+            <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]">
               <div className="font-medium text-amber-100 mb-1">部分图片未上传（需求已继续导入）</div>
               <ul className="list-disc pl-4 space-y-0.5 text-amber-100/75">
                 {imageWarnings.map((warning) => (

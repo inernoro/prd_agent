@@ -273,7 +273,7 @@ export function CcasKnowledgePickerDrawer({
 
         {/* 提示 */}
         {associationModeLabel && (
-          <div className="shrink-0 px-5 py-1.5 text-[11px] text-[color:var(--accent-fg-amber)]/70 bg-amber-500/5 border-b border-token-subtle">
+          <div className="shrink-0 px-5 py-1.5 text-[11px] text-[color:var(--accent-fg-amber)] bg-amber-500/5 border-b border-token-subtle">
             提示：在知识库的空间或条目上加 <code className="px-1 rounded bg-token-nested">ccas-agent</code> 或
             <code className="px-1 rounded bg-token-nested ml-1">{associationModeLabel}</code> tag，会优先排在前面。
           </div>
@@ -345,10 +345,10 @@ export function CcasKnowledgePickerDrawer({
                           整库
                         </button>
                         {store.appKey === 'ccas-agent' && (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[color:var(--accent-fg-amber)]/85">赋码</span>
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[color:var(--accent-fg-amber)]">赋码</span>
                         )}
                         {store.isPublic && (
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-[color:var(--accent-fg-success)]/80">公开</span>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-[color:var(--accent-fg-success)]">公开</span>
                         )}
                         <span>{store.documentCount} 条</span>
                       </div>

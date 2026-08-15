@@ -303,7 +303,7 @@ export function ProductDefectDetail({
     <div className="flex flex-col gap-4 min-h-0">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-red-500/10 text-[color:var(--accent-fg-danger)]/90 border border-red-500/25">
+          <span className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-red-500/10 text-[color:var(--accent-fg-danger)] border border-red-500/25">
             <Bug size={12} /> {defect.defectNo}
           </span>
           <input

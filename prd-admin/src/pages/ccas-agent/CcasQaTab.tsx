@@ -391,7 +391,7 @@ function Welcome({
       </p>
 
       {!hasReference && (
-        <div className="mb-5 w-full rounded-lg border border-amber-400/20 bg-amber-500/8 px-4 py-3 text-[12px] text-[color:var(--accent-fg-amber)]/85">
+        <div className="mb-5 w-full rounded-lg border border-amber-400/20 bg-amber-500/8 px-4 py-3 text-[12px] text-[color:var(--accent-fg-amber)]">
           <div className="flex items-center gap-2 mb-1.5">
             <BookOpen className="w-3.5 h-3.5" />
             <span className="font-medium">先挂载知识库</span>

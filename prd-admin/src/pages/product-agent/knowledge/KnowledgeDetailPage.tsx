@@ -305,7 +305,7 @@ export function KnowledgeDetailPage() {
               {editable && <TopBtn onClick={startEdit} icon={Pencil} label="编辑" />}
               <TopBtn onClick={() => setLinkOpen(true)} icon={GitBranch} label="关联版本" />
               {entry?.attachmentId && <TopBtn onClick={() => replaceInputRef.current?.click()} icon={RefreshCw} label="重新上传" />}
-              <button onClick={() => void handleDelete()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm text-[color:var(--accent-fg-danger)]/60 hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10" title="删除">
+              <button onClick={() => void handleDelete()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10" title="删除">
                 <Trash2 size={13} /> 删除
               </button>
             </>
@@ -368,7 +368,7 @@ export function KnowledgeDetailPage() {
                     </button>
                   ) : (
                     vIds.map((id) => (
-                      <button key={id} onClick={() => setLinkOpen(true)} className="text-[11px] px-1.5 py-0.5 rounded bg-purple-500/10 text-[color:var(--accent-fg-violet)]/90 border border-purple-500/20 inline-flex items-center gap-1 hover:bg-purple-500/20">
+                      <button key={id} onClick={() => setLinkOpen(true)} className="text-[11px] px-1.5 py-0.5 rounded bg-purple-500/10 text-[color:var(--accent-fg-violet)] border border-purple-500/20 inline-flex items-center gap-1 hover:bg-purple-500/20">
                         <GitBranch size={10} /> {versionName.get(id) ?? '已删版本'}
                       </button>
                     ))
@@ -427,7 +427,7 @@ export function KnowledgeDetailPage() {
                   </div>
                 </div>
                 {publishedCreative && (
-                  <div className="mt-3 flex flex-col gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-[color:var(--accent-fg-success)]/85 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="mt-3 flex flex-col gap-2 rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-[color:var(--accent-fg-success)] sm:flex-row sm:items-center sm:justify-between">
                     <span className="min-w-0 truncate">已发布：{publishedCreative.title}</span>
                     <a
                       href={publishedCreative.siteUrl}

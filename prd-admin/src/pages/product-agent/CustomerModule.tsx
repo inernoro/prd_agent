@@ -148,7 +148,7 @@ function CustomerManage({ isAdmin, onConsult }: { isAdmin: boolean; onConsult: (
                     <button
                       onClick={() => onConsult(c.id)}
                       title="带该客户信息去营销问策"
-                      className="inline-flex items-center gap-1 rounded-md border border-cyan-500/25 px-2 py-1 text-[11px] text-[color:var(--accent-fg-blue)]/90 opacity-0 hover:bg-cyan-500/15 group-hover:opacity-100"
+                      className="inline-flex items-center gap-1 rounded-md border border-cyan-500/25 px-2 py-1 text-[11px] text-[color:var(--accent-fg-blue)] opacity-0 hover:bg-cyan-500/15 group-hover:opacity-100"
                     >
                       <Sparkles size={11} /> 营销问策
                     </button>

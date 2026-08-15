@@ -1168,7 +1168,7 @@ function RequirementDetail({
                   <FieldLabel>来源缺陷</FieldLabel>
                   <button
                     onClick={() => gotoDefect(requirement.sourceDefectId!)}
-                    className="self-start flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-red-500/10 text-[color:var(--accent-fg-danger)]/90 border border-red-500/30 hover:bg-red-500/20"
+                    className="self-start flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-red-500/10 text-[color:var(--accent-fg-danger)] border border-red-500/30 hover:bg-red-500/20"
                   >
                     <Bug size={12} /> {tracedDefects.find((d) => d.id === requirement.sourceDefectId)?.defectNo ?? '由缺陷转化'}
                   </button>

@@ -164,7 +164,7 @@ export function FeatureModuleSearchSelect({
           {browseParentId && (
             <button
               type="button"
-              className="mt-2 w-full rounded-md border border-cyan-400/20 bg-cyan-400/5 px-2 py-1.5 text-left text-[11px] text-[color:var(--accent-fg-blue)]/90 hover:bg-cyan-400/10"
+              className="mt-2 w-full rounded-md border border-cyan-400/20 bg-cyan-400/5 px-2 py-1.5 text-left text-[11px] text-[color:var(--accent-fg-blue)] hover:bg-cyan-400/10"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const current = flatOptions.find((o) => o.featureId === browseParentId);
@@ -334,7 +334,7 @@ function CatalogRow({
       {(mode === 'browse' && option.hasChildren) || mode === 'search' ? (
         <button
           type="button"
-          className="shrink-0 rounded px-2 py-1 text-[10px] text-[color:var(--accent-fg-blue)]/80 hover:bg-cyan-400/10"
+          className="shrink-0 rounded px-2 py-1 text-[10px] text-[color:var(--accent-fg-blue)] hover:bg-cyan-400/10"
           onMouseDown={(e) => e.preventDefault()}
           onClick={onSelect}
         >

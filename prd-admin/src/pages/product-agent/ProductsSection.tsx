@@ -256,7 +256,7 @@ export function ProductsSection() {
                       e.stopPropagation();
                       void confirmDelete(p);
                     }}
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)]/70 hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10"
                   >
                     <Trash2 size={12} /> 删除
                   </button>
@@ -377,7 +377,7 @@ export function ProductsSection() {
                   <button
                     type="button"
                     onClick={() => void confirmDelete(p)}
-                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-danger)]/70 hover:bg-red-500/10 hover:text-[color:var(--accent-fg-danger)]"
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 hover:text-[color:var(--accent-fg-danger)]"
                   >
                     <Trash2 size={12} /> 删除
                   </button>

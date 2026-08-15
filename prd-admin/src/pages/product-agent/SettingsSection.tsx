@@ -404,7 +404,7 @@ export function DescTemplateManager({ entityType }: { entityType: ProductEntityT
               <button onClick={() => setEditing(t)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-token-secondary hover-text-primary hover-bg-soft">
                 <Save size={12} /> 编辑
               </button>
-              <button onClick={() => remove(t.id)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)]/60 hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10">
+              <button onClick={() => remove(t.id)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10">
                 <Trash2 size={12} />
               </button>
             </div>
@@ -618,7 +618,7 @@ function CategoryRow({ category, onChanged }: { category: ProductCategory; onCha
       <button
         onClick={save}
         disabled={!dirty || !name.trim() || busy}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-blue)]/80 hover:text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
       >
         {busy ? <MapSpinner size={12} /> : <Save size={12} />} 保存
       </button>
@@ -626,7 +626,7 @@ function CategoryRow({ category, onChanged }: { category: ProductCategory; onCha
         onClick={remove}
         disabled={category.isBuiltin || busy}
         title={category.isBuiltin ? '内置类型不可删除' : '删除'}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)]/60 hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 disabled:opacity-30 shrink-0"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 disabled:opacity-30 shrink-0"
       >
         <Trash2 size={12} />
       </button>
@@ -758,7 +758,7 @@ function RequirementTypeRow({ item, onChanged }: { item: RequirementType; onChan
         <button
           onClick={save}
           disabled={!dirty || !name.trim() || busy}
-          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-blue)]/80 hover:text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
         >
           {busy ? <MapSpinner size={12} /> : <Save size={12} />} 保存
         </button>
@@ -766,7 +766,7 @@ function RequirementTypeRow({ item, onChanged }: { item: RequirementType; onChan
           onClick={remove}
           disabled={item.isBuiltin || busy}
           title={item.isBuiltin ? '内置类型不可删除' : '删除'}
-          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)]/60 hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 disabled:opacity-30 shrink-0"
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 disabled:opacity-30 shrink-0"
         >
           <Trash2 size={12} />
         </button>

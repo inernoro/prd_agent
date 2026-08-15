@@ -231,7 +231,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                 {currentRun?.errorMessage || '未知错误'}
               </div>
               {currentRun?.errorCode === 'OPENROUTER_NOT_CONFIGURED' && (
-                <div className="mt-2 text-[11px] text-[color:var(--accent-fg-amber)]/80 bg-amber-500/10 rounded-lg px-3 py-2 border border-amber-500/30">
+                <div className="mt-2 text-[11px] text-[color:var(--accent-fg-amber)] bg-amber-500/10 rounded-lg px-3 py-2 border border-amber-500/30">
                   提示：管理员需在容器环境变量中注入 <code className="font-mono">OPENROUTER_API_KEY</code>
                 </div>
               )}

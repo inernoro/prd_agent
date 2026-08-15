@@ -296,12 +296,12 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                         {e.title}
                       </span>
                     )}
-                    {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-[color:var(--accent-fg-blue)]/90 border border-cyan-500/20 shrink-0">{e.category}</span>}
+                    {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-[color:var(--accent-fg-blue)] border border-cyan-500/20 shrink-0">{e.category}</span>}
                     {(e.tags ?? []).slice(0, 3).map((t) => (
                       <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary shrink-0">{t}</span>
                     ))}
                     {vIds.slice(0, 3).map((id) => (
-                      <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-[color:var(--accent-fg-violet)]/90 border border-purple-500/20 shrink-0 inline-flex items-center gap-0.5">
+                      <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-[color:var(--accent-fg-violet)] border border-purple-500/20 shrink-0 inline-flex items-center gap-0.5">
                         <GitBranch size={9} /> {versionName.get(id) ?? '已删版本'}
                       </span>
                     ))}

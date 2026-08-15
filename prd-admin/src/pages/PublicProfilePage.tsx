@@ -763,7 +763,7 @@ function WorkflowsGrid({
             <div className="flex flex-wrap items-center gap-1 rounded-md border border-cyan-400/10 bg-cyan-500/[0.04] px-2 py-1.5">
               {w.nodeTypes.map((t, i) => (
                 <span key={`${t}-${i}`} className="inline-flex items-center gap-1">
-                  <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9.5px] text-[color:var(--accent-fg-blue)]/85">
+                  <span className="rounded bg-cyan-500/15 px-1.5 py-0.5 font-mono text-[9.5px] text-[color:var(--accent-fg-blue)]">
                     {t}
                   </span>
                   {i < w.nodeTypes!.length - 1 && (

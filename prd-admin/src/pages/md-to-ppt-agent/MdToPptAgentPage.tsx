@@ -2812,7 +2812,7 @@ export function MdToPptAgentPage() {
           </div>
 
           {publishedUrl && (
-            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-[color:var(--accent-fg-success)]/80">
+            <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 px-3 py-2 text-xs text-[color:var(--accent-fg-success)]">
               <div className="font-semibold text-emerald-100">已发布为网页</div>
               <a href={publishedUrl} target="_blank" rel="noreferrer" className="mt-1 block truncate underline decoration-emerald-200/40">
                 {publishedUrl}
@@ -2849,7 +2849,7 @@ export function MdToPptAgentPage() {
                   </span>
                 ))}
                 {pendingKbRefs.map((r, i) => (
-                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[10px] text-[color:var(--accent-fg-blue)]/80">
+                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-blue-400/20 bg-blue-400/10 px-2 py-1 text-[10px] text-[color:var(--accent-fg-blue)]">
                     <BookOpen size={10} />
                     <span className="max-w-[180px] truncate">{r.entryTitle}</span>
                     <button onClick={() => removeKbRef(i)}><X size={10} /></button>

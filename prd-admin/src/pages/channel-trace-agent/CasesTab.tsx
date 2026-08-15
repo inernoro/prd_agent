@@ -587,7 +587,7 @@ export function CasesTab() {
                         {it.tags.map((t) => (
                           <span
                             key={t}
-                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-[color:var(--accent-fg-success)]/80"
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-[color:var(--accent-fg-success)]"
                           >
                             {t}
                           </span>

@@ -837,7 +837,7 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
             <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.stdout}</pre>
           )}
           {typeof detail.stderr === 'string' && detail.stderr && (
-            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]/75">{detail.stderr}</pre>
+            <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]">{detail.stderr}</pre>
           )}
         </div>
       );
@@ -856,10 +856,10 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
             <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{state.domTree}</pre>
           )}
           {Array.isArray(state.consoleErrors) && state.consoleErrors.length > 0 && (
-            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]/75">{JSON.stringify(state.consoleErrors, null, 2)}</pre>
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]">{JSON.stringify(state.consoleErrors, null, 2)}</pre>
           )}
           {Array.isArray(state.networkErrors) && state.networkErrors.length > 0 && (
-            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]/75">{JSON.stringify(state.networkErrors, null, 2)}</pre>
+            <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap break-words rounded bg-red-950/30 p-2 text-[color:var(--accent-fg-danger)]">{JSON.stringify(state.networkErrors, null, 2)}</pre>
           )}
         </div>
       );

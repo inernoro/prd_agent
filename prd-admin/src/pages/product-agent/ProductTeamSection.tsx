@@ -177,7 +177,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
                     <button
                       onClick={() => onRemove(m.userId)}
                       disabled={busy}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-[color:var(--accent-fg-danger)]/70 hover:bg-red-500/15 disabled:opacity-40"
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-[color:var(--accent-fg-danger)] hover:bg-red-500/15 disabled:opacity-40"
                       title="移除成员"
                     >
                       <Trash2 size={13} /> 移除

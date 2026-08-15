@@ -318,4 +318,28 @@ describe('同色调浅底浅字棘轮（浅色主题最高频缺陷）', () => {
       "{ background: 'rgba(29,78,216,0.10)', color: 'rgba(29,78,216,1)' }",
     ).length).toBe(0);
   });
+  /*
+   * 零容忍：--accent-fg-* 不许再叠 alpha 后缀。
+   *
+   * 这一族 token 的浅色档是按「实色恰好压过 4.5:1」调出来的（700/800 档），
+   * 暗色档同理。再叠一层不透明度就是直接把它拉回阈值以下：实测五色 × 双主题里
+   * 最差的一档，alpha 0.85 是 4.53、0.8 就掉到 4.07、0.7 只有 3.35。
+   *
+   * 这个形状已经被抓两次：第一次剥掉 30 处（PR #1374 中途），漏网 46 处，
+   * Codex 第十一轮拿 ProductsSection 的删除按钮（暗 3.54 / 浅 3.57）又抓一次。
+   * 靠「记得手动剥干净」显然不成立，所以钉成恒为 0 的守卫 —— 判据是
+   * 「删掉修复之后测试要变红」，这条满足。
+   */
+  it('--accent-fg-* 不得叠 alpha 后缀（叠了必然跌破 4.5:1）', () => {
+    const ALPHA_SUFFIX = /text-\[color:var\(--accent-fg-[a-z-]+\)\]\/\d+/g;
+    const hits: string[] = [];
+    for (const file of walk(SRC)) {
+      if (file.includes('__tests__')) continue;
+      const text = fs.readFileSync(file, 'utf8');
+      for (const m of text.matchAll(ALPHA_SUFFIX)) {
+        hits.push(`${path.relative(SRC, file)}: ${m[0]}`);
+      }
+    }
+    expect(hits.join('\n'), '这些地方给语义前景 token 叠了不透明度，实色本来就只是刚好达标').toBe('');
+  });
 });

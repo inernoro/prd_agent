@@ -212,7 +212,7 @@ export function EmailAgentPage() {
                         )}
                       </div>
                       <div className="mt-1 flex items-center gap-2 text-[11px] text-token-muted">
-                        <span className="px-1.5 py-0.5 rounded bg-sky-500/10 text-[color:var(--accent-fg-blue)]/80">{catLabel(t.category)}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-sky-500/10 text-[color:var(--accent-fg-blue)]">{catLabel(t.category)}</span>
                         {t.usageCount > 0 && (
                           <span className="inline-flex items-center gap-0.5"><Star className="w-2.5 h-2.5" /> {t.usageCount}</span>
                         )}
@@ -332,7 +332,7 @@ function EmailTemplateDetail({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-lg font-semibold text-token-primary">{tpl.title}</h2>
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-500/10 text-[color:var(--accent-fg-blue)]/80">{catLabel(tpl.category)}</span>
+            <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-500/10 text-[color:var(--accent-fg-blue)]">{catLabel(tpl.category)}</span>
             {tpl.isSystem && <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">系统预置</span>}
           </div>
           {tpl.scenario && <p className="mt-1 text-xs text-token-secondary">{tpl.scenario}</p>}

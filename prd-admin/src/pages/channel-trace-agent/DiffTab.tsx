@@ -136,7 +136,7 @@ export function DiffTab() {
             )}
           </div>
           {!tokenConfigured && (
-            <div className="flex items-start gap-1.5 text-[11px] text-[color:var(--accent-fg-amber)]/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
+            <div className="flex items-start gap-1.5 text-[11px] text-[color:var(--accent-fg-amber)] bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <span>
                 未检测到服务级 GitHub PAT，私有仓库将无法克隆。请在部署环境注入密钥{' '}

@@ -62,7 +62,7 @@ export function VersionKnowledgeCard({ productId, versionId }: { productId: stri
               >
                 <Icon size={13} className="shrink-0" style={{ color: kind.color }} />
                 <span className="text-sm text-token-primary truncate flex-1">{e.title}</span>
-                {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-[color:var(--accent-fg-blue)]/80 shrink-0">{e.category}</span>}
+                {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-[color:var(--accent-fg-blue)] shrink-0">{e.category}</span>}
                 <span className="text-[10px] text-token-muted shrink-0">{fmtTime(e.updatedAt)}</span>
               </button>
             );

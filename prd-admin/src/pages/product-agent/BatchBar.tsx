@@ -67,7 +67,7 @@ export function BatchBar({
       <button
         disabled={busy}
         onClick={() => run('delete')}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-[color:var(--accent-fg-danger)]/80 border border-red-500/30 hover:bg-red-500/10 disabled:opacity-50"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-[color:var(--accent-fg-danger)] border border-red-500/30 hover:bg-red-500/10 disabled:opacity-50"
       >
         <Trash2 size={12} /> 删除
       </button>

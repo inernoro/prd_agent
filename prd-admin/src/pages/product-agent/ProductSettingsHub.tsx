@@ -385,7 +385,7 @@ function GradeOptionRow({ option, onChanged }: { option: ProductGradeOption; onC
       <button
         onClick={save}
         disabled={!dirty || !name.trim() || busy}
-        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-blue)]/80 hover:bg-cyan-500/10 hover:text-[color:var(--accent-fg-blue)] disabled:opacity-30"
+        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10 hover:text-[color:var(--accent-fg-blue)] disabled:opacity-30"
       >
         {busy ? <MapSpinner size={12} /> : <Save size={12} />} 保存
       </button>
@@ -393,7 +393,7 @@ function GradeOptionRow({ option, onChanged }: { option: ProductGradeOption; onC
         onClick={remove}
         disabled={option.isBuiltin || busy}
         title={option.isBuiltin ? '内置项不可删除' : '删除'}
-        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-danger)]/60 hover:bg-red-500/10 hover:text-[color:var(--accent-fg-danger)] disabled:opacity-30"
+        className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 hover:text-[color:var(--accent-fg-danger)] disabled:opacity-30"
       >
         <Trash2 size={12} />
       </button>
