@@ -702,7 +702,7 @@
 
   .cds-site-notice-trigger--active {
     border-color: hsl(var(--primary) / 0.58);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.18),
       0 0 20px -10px hsl(var(--primary) / 0.88);
@@ -1594,7 +1594,7 @@
     border: 1px solid hsl(var(--primary) / 0.28) !important;
     background:
       linear-gradient(135deg, hsl(var(--primary) / 0.12), hsl(var(--primary) / 0.04)) !important;
-    color: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-ink)) !important;
     box-shadow: inset 0 1px 0 hsl(var(--primary) / 0.12);
   }
 
@@ -1619,7 +1619,7 @@
   .cds-bug-report-entry:hover {
     border-color: hsl(var(--primary) / 0.38) !important;
     background-color: hsl(var(--surface-raised)) !important;
-    color: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-ink)) !important;
   }
 
   .cds-bug-report-entry:focus-visible {
@@ -1671,7 +1671,7 @@
     border: 1px solid hsl(var(--primary) / 0.24);
     border-radius: 0.65rem;
     background: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-route-trigger-icon svg {
@@ -1690,7 +1690,7 @@
   }
 
   .cds-agent-route-trigger-kicker {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -1732,7 +1732,7 @@
     border-radius: 999px;
     background: hsl(var(--surface-raised) / 0.72);
     padding: 0.24rem 0.55rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 650;
   }
@@ -1779,7 +1779,7 @@
     border: 1px solid hsl(var(--primary) / 0.28);
     border-radius: 0.75rem;
     background: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-world-title-icon svg {
@@ -1807,7 +1807,7 @@
     place-items: center;
     border-radius: 999px;
     background: hsl(var(--primary) / 0.11);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 750;
   }
@@ -1910,7 +1910,7 @@
 
   .cds-agent-continent[data-selected='true'] .cds-agent-continent-marker {
     background: hsl(var(--primary) / 0.14);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     box-shadow: 0 0 0 4px hsl(var(--primary) / 0.07);
   }
 
@@ -1951,7 +1951,7 @@
   }
 
   .cds-agent-world-current-continent small {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.5625rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -2202,7 +2202,7 @@
   }
 
   .cds-agent-world-region[data-selected='true'] .cds-agent-world-data-node {
-    color: hsl(var(--primary) / 0.78);
+    color: hsl(var(--primary-ink) / 0.78);
   }
 
   .cds-agent-world-region-feature {
@@ -2438,7 +2438,7 @@
     border-radius: 0.6rem;
     background: hsl(var(--primary) / 0.1);
     padding: 0.55rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-world-route-summary small,
@@ -2448,7 +2448,7 @@
   }
 
   .cds-agent-world-route-summary small {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.5625rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -2776,7 +2776,7 @@
     right: 0.25rem;
     width: 0.75rem;
     height: 0.75rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   /*
@@ -2817,7 +2817,7 @@
   .cds-agent-access-floating svg {
     width: 1.125rem;
     height: 1.125rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-access-floating:hover {
@@ -4362,7 +4362,7 @@
   }
 
   .cds-auth-ticker-k {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-weight: 700;
   }
 
@@ -4784,7 +4784,7 @@
 }
 
 .cds-agent-territory-legend-heading strong {
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
   font-family: var(--cds-font-latin);
   font-size: 0.6875rem;
 }
@@ -4861,7 +4861,7 @@
 .cds-agent-territory-option > svg:last-child {
   width: 0.875rem;
   height: 0.875rem;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-territory-option strong,
@@ -5402,7 +5402,7 @@
   width: 1rem;
   height: 1rem;
   flex: 0 0 auto;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-mission-categories {
@@ -5562,7 +5562,7 @@
 .cds-agent-mission-card[data-selected='true'] .cds-agent-mission-card-icon {
   border-color: hsl(var(--primary) / 0.3);
   background: hsl(var(--primary) / 0.1);
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-mission-card-copy {
@@ -5596,7 +5596,7 @@
 .cds-agent-mission-card-check {
   width: 0.95rem;
   height: 0.95rem;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
   opacity: 0;
 }
 
