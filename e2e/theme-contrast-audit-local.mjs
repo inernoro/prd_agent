@@ -34,10 +34,23 @@ if (!fs.existsSync(path.join(DIST, 'index.html'))) {
 }
 fs.mkdirSync(OUT, { recursive: true });
 
+/*
+ * 路由清单：navRegistry 与 App.tsx 两处都要读（同远端版，判据见那边注释）。
+ * 只读 navRegistry 会漏掉 App.tsx 里的嵌套写法（`<Route path="skills">`，无前导斜杠），
+ * /skills、/weekly-poster、/data-transfers、/notifications 四条都是这样。
+ */
 const ROUTES = (() => {
-  const src = fs.readFileSync(path.join(ADMIN, 'src/app/navRegistry.tsx'), 'utf8');
-  const all = [...src.matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]);
-  const list = [...new Set(all.filter((p) => !p.includes(':') && !p.includes('*')))].sort();
+  const collect = (file, re) => {
+    const src = fs.readFileSync(path.join(ADMIN, file), 'utf8');
+    return [...src.matchAll(re)].map((m) => m[1]);
+  };
+  const all = [
+    ...collect('src/app/navRegistry.tsx', /path:\s*'([^']+)'/g),
+    ...collect('src/app/App.tsx', /<Route\s+path="([^"]+)"/g),
+  ]
+    .map((p) => (p.startsWith('/') ? p : `/${p}`))
+    .filter((p) => p !== '/' && !p.includes(':') && !p.includes('*'));
+  const list = [...new Set(all)].sort();
   // AUDIT_ONLY=/a,/b 只跑指定路由（冒烟用）
   const only = (process.env.AUDIT_ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
   return only.length ? list.filter((p) => only.includes(p)) : list;
@@ -101,7 +114,15 @@ const coverage = { done: [], skipped: [], errored: [] };
 for (const theme of ['light', 'dark']) {
   const themeCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await themeCtx.newPage();
-  page.on('pageerror', () => {});   // 桩数据下组件报错属预期，不打断扫描
+  /*
+   * 渲染期异常必须记账，不能一律吞掉。
+   * 组件在桩数据下崩溃会渲染成错误边界，导航仍算成功、AUDIT_FN 照扫不误、
+   * 该「路由×主题」照样进 coverage.done —— 一个崩掉的页面就这样变成
+   * 「已覆盖且干净」（Codex 在 PR #1374 第六轮抓到）。
+   * 收进 pageErrors，由每条路由自己判定；确属桩数据不可避免的异常再逐条加白名单。
+   */
+  let pageErrors = [];
+  page.on('pageerror', (e) => { pageErrors.push(String(e).split('\n')[0].slice(0, 120)); });
   await themeCtx.addInitScript(({ theme: t, perms }) => {
     localStorage.setItem('map-mobile-theme-v2', JSON.stringify({ state: { mode: t }, version: 0 }));
     localStorage.setItem('prd-admin-auth', JSON.stringify({
@@ -117,8 +138,19 @@ for (const theme of ['light', 'dark']) {
 
   for (const route of ROUTES) {
     try {
+      pageErrors = [];
       await page.goto(`${BASE}${route}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.waitForTimeout(1800);
+      /*
+       * 先判渲染异常，再谈扫描：页面崩了渲染成错误边界，此时扫出来的命中
+       * 全是错误边界自己的配色 —— 既污染数字，又会误导人去「修」一个错误页。
+       * 必须在跑 AUDIT_FN 之前就把这一对判掉。
+       */
+      if (pageErrors.length) {
+        coverage.errored.push(`${theme}${route}: 渲染异常 ${pageErrors[0]}`);
+        console.log(`[${theme}] ${route.padEnd(30)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
+        continue;
+      }
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
       if (actual !== theme) {
         coverage.skipped.push(`${theme}${route}（主题未生效，实际 ${actual}）`);

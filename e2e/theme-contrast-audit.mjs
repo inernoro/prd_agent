@@ -40,12 +40,30 @@ if (!BASE || !USER || !PASS) {
   process.exit(1);
 }
 
-/** 路由清单从 navRegistry 现读，避免维护第二份会漂移的拷贝。 */
+/**
+ * 路由清单：**navRegistry 与 App.tsx 两处都要读**。
+ *
+ * 只读 navRegistry 会漏掉直接写在 App.tsx 里的路由 —— 它们是嵌套写法
+ * （`<Route path="skills">`，无前导斜杠），/skills、/weekly-poster、
+ * /data-transfers、/notifications 四条都是这样，而这四个页面恰恰都被本 PR 改过。
+ * 于是审计一边跳过我改的屏、一边报「覆盖完整、0 命中」
+ * （Codex 在 PR #1374 第六轮抓到）。
+ * 参数化（含 :）与通配（含 *）仍然跳过：它们要具体 id 才打得开。
+ */
 function loadRoutes() {
   if (process.env.AUDIT_ROUTES) return JSON.parse(fs.readFileSync(process.env.AUDIT_ROUTES, 'utf8'));
-  const src = fs.readFileSync(path.join(ADMIN, 'src/app/navRegistry.tsx'), 'utf8');
-  const all = [...src.matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]);
-  return [...new Set(all.filter((p) => !p.includes(':') && !p.includes('*')))].sort();
+  const collect = (file, re) => {
+    const src = fs.readFileSync(path.join(ADMIN, file), 'utf8');
+    return [...src.matchAll(re)].map((m) => m[1]);
+  };
+  const fromRegistry = collect('src/app/navRegistry.tsx', /path:\s*'([^']+)'/g);
+  const fromRouter = collect('src/app/App.tsx', /<Route\s+path="([^"]+)"/g);
+  const all = [...fromRegistry, ...fromRouter]
+    .map((p) => (p.startsWith('/') ? p : `/${p}`))   // App.tsx 的嵌套写法没有前导斜杠
+    .filter((p) => p !== '/' && !p.includes(':') && !p.includes('*'));
+  const list = [...new Set(all)].sort();
+  const only = (process.env.AUDIT_ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
+  return only.length ? list.filter((p) => only.includes(p)) : list;
 }
 
 const ROUTES = loadRoutes();
@@ -107,10 +125,24 @@ for (const theme of ['light', 'dark']) {
     localStorage.setItem('map-mobile-theme-v2', JSON.stringify({ state: { mode: t }, version: 0 }));
   }, theme);
   const page = await themeCtx.newPage();
+  // 渲染期异常同样记账，理由见本地版注释：崩掉的页面不许算「已覆盖且干净」
+  let pageErrors = [];
+  page.on('pageerror', (e) => { pageErrors.push(String(e).split('\n')[0].slice(0, 120)); });
   for (const route of ROUTES) {
     try {
+      pageErrors = [];
       await page.goto(`${BASE}${route}`, { waitUntil: 'commit', timeout: 45000 });
       await page.waitForTimeout(5200);   // 真实数据渲染比空桩慢，给足时间否则扫到骨架屏
+      /*
+       * 先判渲染异常，再谈扫描：页面崩了渲染成错误边界，此时扫出来的命中
+       * 全是错误边界自己的配色 —— 既污染数字，又会误导人去「修」一个错误页。
+       * 必须在跑 AUDIT_FN 之前就把这一对判掉。
+       */
+      if (pageErrors.length) {
+        coverage.errored.push(`${theme}${route}: 渲染异常 ${pageErrors[0]}`);
+        console.log(`[${theme}] ${route.padEnd(30)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
+        continue;
+      }
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
       if (actual !== theme) {
         coverage.skipped.push(`${theme}${route}（主题未生效，实际 ${actual}）`);

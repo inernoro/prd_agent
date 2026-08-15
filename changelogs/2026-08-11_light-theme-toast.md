@@ -60,3 +60,6 @@
 | fix | prd-admin | arena 主视觉徽章里的剑图标压在 HERO_GRADIENT 上用了 --text-primary，实测 2.82:1（图标线需 3:1）。改用该渐变配套的 HERO_GRADIENT_FG，复扫归零 |
 | fix | e2e | 修 Codex 第五轮三条测量失真：WCAG 大字阈值是磅被当成 CSS 像素用（18.66/14 → 24/18.67），18.66~24px 正文与 14~18.67px 粗体被错误放宽到 3:1；前景未计元素与祖先累计 opacity，opacity-50 的字按全强度算；重采样用视口截图配视口坐标，屏下渐变元素一律采空。三条都导致少报 |
 | chore | e2e | 审计排除 CDS 注入的分支徽章（#bt-branch-badge）：平台浮层不在仓库源码里、本 PR 改不了，不排除会让每条路由稳定多报一处、淹没真实回归 |
+| fix | e2e | 修 Codex 第六轮 P1（最实质的一条）：路由清单只从 navRegistry 取，漏掉 App.tsx 里的嵌套写法。实测 48 → 80 条，漏的 32 条里就有本 PR 改过的 /skills /weekly-poster /data-transfers /notifications —— 审计一边跳过我改的屏、一边报「覆盖完整」 |
+| fix | e2e | 修 Codex 第六轮 P1：pageerror 被静默吞掉，页面崩成错误边界仍算「已覆盖且干净」。改为记账并在跑 AUDIT_FN **之前**判掉（否则错误边界自己的配色会污染报告） |
+| chore | doc | 移除 doc/assets 下两张无人引用的对照截图（810 KiB），与本 PR 刚写进 debt 的「扫描产物不入库」自相矛盾 |
