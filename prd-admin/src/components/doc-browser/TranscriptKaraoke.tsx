@@ -244,6 +244,12 @@ export function TranscriptKaraoke({
     setActiveIdx(prev => (prev === idx ? prev : idx));
   }, [followEnabled, timelineSegments]);
 
+  // 同一个详情组件切换到另一条录音时，不沿用上一条录音的高亮位置。
+  // 音频时长尚未就绪时也从第一句开始，时长就绪后的 timeupdate 再推进。
+  useEffect(() => {
+    setActiveIdx(0);
+  }, [noteMd, src]);
+
   // 当前句滚到滚轮中心
   useEffect(() => {
     // 文档页把完整原文放在下方供校对，播放器旁另有始终可见的当前台词。

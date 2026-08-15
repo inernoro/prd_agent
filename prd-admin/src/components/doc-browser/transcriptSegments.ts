@@ -391,6 +391,9 @@ export function hasUsableTimestamps(segments: TranscriptSegment[]): boolean {
 export function activeSegmentIndex(segments: TranscriptSegment[], currentSec: number): number {
   let active = 0;
   for (let i = 0; i < segments.length; i++) {
+    // 未读取到音频时长时，预览句的 start=-1。它只用于先把台词展示出来，
+    // 不能参与时间轴计算，否则 0 秒会命中每一条预览句并直接跳到最后一句。
+    if (segments[i].start < 0) continue;
     if (segments[i].start <= currentSec) active = i;
     else break;
   }

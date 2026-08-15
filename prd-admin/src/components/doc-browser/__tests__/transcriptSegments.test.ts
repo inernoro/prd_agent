@@ -344,6 +344,14 @@ describe('activeSegmentIndex', () => {
   it('超过末句 → 末句', () => {
     expect(activeSegmentIndex(segs, 999)).toBe(2);
   });
+  it('音频时长未就绪的预览句在 0 秒必须停留第一句', () => {
+    const preview = [
+      { start: -1, end: -1, text: '第一句' },
+      { start: -1, end: -1, text: '第二句' },
+      { start: -1, end: -1, text: '第三句' },
+    ];
+    expect(activeSegmentIndex(preview, 0)).toBe(0);
+  });
 });
 
 describe('extractTranscriptSummary', () => {
