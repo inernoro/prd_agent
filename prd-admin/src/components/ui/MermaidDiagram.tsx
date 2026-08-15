@@ -47,6 +47,32 @@ function loadMermaid() {
 
 let seq = 0;
 
+/*
+ * initialize + render 必须成对串行执行。
+ *
+ * mermaid 是全局单例：`initialize` 改的是那一份全局配置，而 `render` 内部又有
+ * 自己的队列。一页上有多张图、且分处明暗不同的表面时（比如 CDS Agent 回答区是
+ * 深岛、外面是浅色主题），后一张图的 initialize 完全可能在前一张图真正开始
+ * render 之前就把配置改掉 —— 前一张于是用错调色板画出来，深底配浅色档，
+ * 又变回那个 1.1:1 的老毛病（Codex 在 PR #1374 第二十七轮抓到）。
+ *
+ * 用一条 promise 链把「配置 + 渲染」锁成一个原子操作。失败不打断后续。
+ */
+let mermaidChain: Promise<unknown> = Promise.resolve();
+function renderSerialized(
+  mermaid: { initialize: (c: Record<string, unknown>) => void; render: (id: string, code: string) => Promise<{ svg: string }> },
+  config: Record<string, unknown>,
+  id: string,
+  code: string,
+): Promise<{ svg: string }> {
+  const task = mermaidChain.then(() => {
+    mermaid.initialize(config);
+    return mermaid.render(id, code);
+  });
+  mermaidChain = task.catch(() => undefined);
+  return task;
+}
+
 export function MermaidDiagram({ code }: { code: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
@@ -67,15 +93,15 @@ export function MermaidDiagram({ code }: { code: string }) {
         if (cancelled) return;
         // 每次渲染前按当前主题重新 initialize：mermaid 是全局单例，
         // 主题切换后必须重烘一遍，否则沿用上一套配色。
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
-          ...MERMAID_THEME[theme],
-        });
         const id = `mermaid-${Date.now().toString(36)}-${++seq}`;
         try {
-          const { svg } = await mermaid.render(id, code);
+          // 配置与渲染成对串行，别让后一张图的 initialize 抢在前一张 render 之前
+          const { svg } = await renderSerialized(mermaid, {
+            startOnLoad: false,
+            securityLevel: 'strict',
+            fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
+            ...MERMAID_THEME[theme],
+          }, id, code);
           if (cancelled) return;
           if (containerRef.current) containerRef.current.innerHTML = svg;
           setStatus('ok');

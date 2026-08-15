@@ -470,10 +470,20 @@ export async function resampleGradientFindings(page, _unused, findings) {
 
     // 隐前景（只隐还没采到的），截当前视口，再还原
     await page.evaluate((idList) => {
+      /*
+       * 同一个元素只能记一次原样式。
+       * SVG 子形状的 fill 与 stroke 是两条候选、却落在同一个 DOM 节点上，
+       * 按 id 遍历会把它记两遍 —— 第二遍记下的是**已经被改成 transparent 的值**。
+       * 还原时先写回原值、再写回 transparent，结果这个形状永久隐形，
+       * 后续候选的截图里它就消失了，底色自然采错（Codex 在 PR #1374 第二十七轮抓到，
+       * 又是我加双通道时引入的连带伤害）。
+       */
       window.__auditRestore = [];
+      const seenEl = new Set();
       for (const id of idList) {
         const el = document.querySelector(`[data-audit-id~="${id}"]`);
-        if (!el) continue;
+        if (!el || seenEl.has(el)) continue;
+        seenEl.add(el);
         window.__auditRestore.push([el, el.style.color, el.style.fill, el.style.stroke]);
         el.style.setProperty('color', 'transparent', 'important');
         el.style.setProperty('fill', 'transparent', 'important');
