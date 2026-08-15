@@ -199,7 +199,7 @@ function columnMinWidth(width: string): number {
 export function LogTable<T>({
   tableKey, columns, items, rowKey, onRow, render, rowTone, empty,
   preferences, onPreferencesChange, settingsOpen, onSettingsOpenChange, settingsTab, onSettingsTabChange,
-  isNarrowViewport, hasMore, loadingMore, onLoadMore, paused,
+  isNarrowViewport, hasMore, loadingMore, onLoadMore, paused, autoLoad = true,
 }: {
   tableKey: LogsSubTab;
   columns: ColumnDef[];
@@ -221,6 +221,14 @@ export function LogTable<T>({
   onLoadMore: () => void;
   /** 上一次续取失败：暂停哨兵自动加载，改由用户点「重试」。 */
   paused: boolean;
+  /**
+   * 是否允许触底自动续取。默认允许；会话视图显式关掉——
+   * `/logs/sessions` 是先把时间窗内**全部**日志物化再在内存里按 SessionId 分组、
+   * 最后才 Skip/Take（console-api/Program.cs 的会话聚合），每翻一页都要重跑一遍全扫描。
+   * 自动续取会把「用户偶尔翻一页」变成「滚一下就连打好几页」，开销近似二次放大。
+   * 该端点改成聚合层分页之前，这一档保持手动：按钮还在，只是不自动打。
+   */
+  autoLoad?: boolean;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -234,7 +242,7 @@ export function LogTable<T>({
     const target = sentinelRef.current;
     // paused 时不装 observer：续取失败后哨兵通常还压在视野里，
     // 继续观察就是对着一个正在报错的接口无限重打。
-    if (!body || !target || !hasMore || loadingMore || paused) return;
+    if (!body || !target || !hasMore || loadingMore || paused || !autoLoad) return;
     // root 必须是**真的在裁剪**的那个盒子。
     // 桌面态表体自己是滚动容器；但 ≤680px 的断点把它改成了
     // `overflow: visible !important`（表格整体交给页面滚），此时再拿它当 root，
@@ -253,7 +261,7 @@ export function LogTable<T>({
     return () => observer.disconnect();
     // isNarrowViewport 进依赖：跨过 680px 断点时表体的 overflow 会翻转，
     // observer 必须按新的 root 重建，否则会一直用旧断点算出来的那个。
-  }, [hasMore, loadingMore, paused, isNarrowViewport]);
+  }, [hasMore, loadingMore, paused, autoLoad, isNarrowViewport]);
 
   const visibleColumns = resolveLogTableColumns(columns, preferences);
   const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
@@ -345,7 +353,7 @@ export function LogTable<T>({
               <span className="lg-log-loading-more-text">正在加载更多…</span>
             </div>
           ) : null}
-          {hasMore && !paused ? <div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" /> : null}
+          {hasMore && !paused && autoLoad ? <div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" /> : null}
         </div>
       </div>
     </div>
@@ -1328,6 +1336,7 @@ export function LogsView() {
                 loadingMore={sessLoadingMore}
                 onLoadMore={loadMoreSessions}
                 paused={sessMoreError != null}
+                autoLoad={false}
                 columns={SESSIONS_COLUMNS}
                 items={sessions}
                 rowKey={(it, idx) => it.sessionId || String(idx)}

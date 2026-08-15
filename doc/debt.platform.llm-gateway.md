@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 27 / in-progress: 8 / paid: 24 / 总计: 59
+当前 open: 29 / in-progress: 8 / paid: 24 / 总计: 61
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -765,6 +765,8 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-14-appcallers-search-not-anchored | low | 2026-08-14 | `GET /gw/app-callers` 的 `search` 是无锚定 Mongo regex，且 Skip/Limit 发生在按 `LastSeenAt` 排序**之后**；前端 App 详情页只能在这 50 行截断结果里做精确匹配。真实以 `G-` 开头的 appCallerCode，若比 50 个匹配其去前缀形式的记录更旧，就会被判成「未注册、仅观测到」 | 同时满足：存在真实以 `G-` 开头的 appCallerCode；且匹配其去前缀形式的记录超过一页 | open | PR #1371 Review 抓到。前端连打两次请求只是绕过，正解是端点支持按 code 精确查（锚定 regex 或独立的 by-code 端点）。触发面窄，按 §5.5 判 B 类不在该 PR 展开 |
+| 2026-08-14-sessions-endpoint-full-scan | medium | 2026-08-14 | `GET /gw/logs/sessions` 先把时间窗内全部日志物化再在内存按 SessionId 分组，最后才 Skip/Take；每翻一页都要重跑一次全扫描 | 大租户在会话视图连续翻页 | open | PR #1371 因此把会话视图的触底自动续取关掉（`autoLoad={false}`），只保留手动「加载更多」，避免把偶发翻页放大成连续全扫描。端点改成聚合层分页后可以打开自动续取 |
 | 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | paid | PR #1085、#1086 已落地 tenant/team/user/membership/RBAC、服务端租户解析、租户数据隔离、tenant-scoped key 和自助接入；请求自报 tenantId 不进入权威上下文 |
 | 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
 | 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | paid | PR #1076、#1079、#1080 已完成 `--maintenance-from-commit`、基线审计和部署层证据交接；最终 commit 的 `http-full success` 台账已验证该路径 |
