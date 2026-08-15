@@ -47,3 +47,4 @@
 | fix | prd-admin | 修 AppShell notificationTone 与 ChangelogBell TYPE_COLOR_MAP 两处一值两用（36 条路由各一处）：底保持淡色调、字改走双写 token |
 | fix | prd-admin | ArenaPage 空态 27 处写死白字改走 token —— 该屏外层无深底，浅色档下就是白字压暖纸（实测 1.01~1.2:1） |
 | fix | e2e | 远端审计补渐变重采样（本地版一直有、远端漏了）：元素坐在 radial-gradient 上时 backgroundColor 透明，祖先链会一路取到页面底，把「深色渐变页上的浅字」误报成缺陷。task-tree 整页栽在这上面，照误报改会造新 bug |
+| fix | prd-admin | 教程中心承接卡落地方案 A（用户选）：七级帽子拆双皮肤——暗色档保持石墨→暖银的提亮递进，浅色档另配石墨→暖青铜的加深递进（5.3~6.6:1，原来 Lv.3 只有 1.86:1 且越高阶越看不见）；卡片补实底与描边；进度环底槽改走 --nested-block-bg |
