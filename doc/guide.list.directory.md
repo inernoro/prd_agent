@@ -129,6 +129,7 @@
 - [平台存储切换与资产登记设计 · 设计](./design.platform.storage-migration.md) `design.platform.storage-migration`
 - [CLI Agent 工作空间 · 设计](./design.platform.workspace.md) `design.platform.workspace`
 - [PR Review V2 设计（OAuth 最小可审查工作台） · 设计](./design.pr-review.v2.md) `design.pr-review.v2`
+- [头像沉浸式编辑器 · 设计](./design.prd-agent.avatar-editor.md) `design.prd-agent.avatar-editor`
 - [文档再加工智能体调用路由 · 设计](./design.prd-agent.reprocess-chat-routing.md) `design.prd-agent.reprocess-chat-routing`
 - [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
