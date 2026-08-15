@@ -98,7 +98,14 @@ export const AUDIT_FN = () => {
     const c = contrast(composed, bg);
     const size = parseFloat(cs.fontSize);
     const need = (size >= 18.66 || (size >= 14 && +cs.fontWeight >= 700)) ? 3 : 4.5;
-    if (c >= need) continue;
+    /*
+     * needsEye（底是渐变/背景图）时不许在这里以「近似达标」为由丢弃。
+     * 祖先链推断出的底色在渐变上本来就不可信：深字压在真实很暗的渐变上，
+     * 而推断一路穿到白色页底，算出来是「深压白、达标」—— 一丢，
+     * resampleGradientFindings 就再也没机会拿真实像素纠正它，报告显示 0 而缺陷仍在。
+     * 全部留到重采样之后，由调用方按 ratio < need 过滤（两个审计脚本都已这么做）。
+     */
+    if (c >= need && !needsEye) continue;
     const key = `${cs.color}|${bg}|${label(el)}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -124,7 +131,7 @@ export const AUDIT_FN = () => {
     const composed = compose(raw, bg);
     if (!composed) continue;
     const c = contrast(composed, bg);
-    if (c >= 3) continue;
+    if (c >= 3 && !needsEye) continue;   // 同文字分支：渐变底上的「达标」是近似值，留给重采样定夺
     const key = `svg|${raw}|${bg}|${label(el)}`;
     if (seen.has(key)) continue;
     seen.add(key);

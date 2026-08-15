@@ -55,3 +55,6 @@
 | fix | e2e | 两个审计脚本补覆盖账本：跳过/报错不再静默吞掉，收尾打印实际覆盖对数、写 coverage.json，未全覆盖以非零码退出 |
 | fix | e2e | 修 Codex 第三轮 P1：页内 slice(0,60) 发生在渐变重采样**之前**，候选超 60 的页面尾部真实缺陷被永久丢弃、且前 60 条被重采样纠正后报告会显示 0。改为全量返回，展示上限挪到渲染层并自报省略了多少组 |
 | fix | e2e | 修 Codex 第三轮 P2：两个审计脚本改为每主题独立 context。此前在同一 page 上反复 addInitScript，light 那份跑到 dark 时仍常驻、两份都写主题 key 而执行顺序未定义，dark 轮可能整轮被判「主题未生效」跳过 |
+| fix | prd-admin | 修 Codex 第四轮 P2：拆 accent/fg 时漏了两个 success 分支——只改 accent 没改 fg，「缺陷已解决」通知底绿字紫。补上并加成对守卫（红绿闭环验过） |
+| fix | e2e | 修 Codex 第四轮 P1：渐变底候选在「近似达标」时被提前丢弃，重采样再也看不到它。改为 needsEye 一律留到重采样后再判 —— 这个修复当场挖出一处此前被藏住的真实缺陷 |
+| fix | prd-admin | arena 主视觉徽章里的剑图标压在 HERO_GRADIENT 上用了 --text-primary，实测 2.82:1（图标线需 3:1）。改用该渐变配套的 HERO_GRADIENT_FG，复扫归零 |

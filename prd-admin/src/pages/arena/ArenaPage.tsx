@@ -1407,7 +1407,9 @@ export function ArenaPage() {
                     '0 0 24px rgba(124, 58, 237, 0.28), 0 0 48px rgba(0, 240, 255, 0.12)',
                 }}
               >
-                <Swords className="w-4 h-4 text-token-primary drop-shadow" />
+                {/* 压在 HERO_GRADIENT 上必须用它配套的前景色：这条渐变对白字只有 2.23~3.62:1
+                    （越往右越亮越糟），用 --text-primary 实测 2.82:1，图标线要求 3:1。 */}
+                <Swords className="w-4 h-4 drop-shadow" style={{ color: HERO_GRADIENT_FG }} />
               </div>
               <h1
                 className="text-[17px] font-medium text-token-primary"

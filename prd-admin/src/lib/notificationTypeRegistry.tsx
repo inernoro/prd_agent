@@ -115,7 +115,8 @@ export function getNotificationType(
   if (base) {
     // 缺陷协作 + 成功语义 → 庆祝气质（缺陷已解决 / 已修复）
     if (base.key === 'defect-agent' && level === 'success') {
-      return { ...base, icon: CheckCircle2, accent: '#86efac', popupStyle: 'celebrate' };
+      // accent 与 fg 必须成对改：只改 accent 会让底变绿、字仍继承 base 的紫
+      return { ...base, icon: CheckCircle2, accent: '#86efac', fg: 'var(--accent-fg-success)', popupStyle: 'celebrate' };
     }
     return base;
   }
@@ -125,7 +126,8 @@ export function getNotificationType(
     return { ...DEFAULT_TYPE, key: 'alert', label: '系统告警', icon: AlertTriangle, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' };
   }
   if (level === 'success') {
-    return { ...DEFAULT_TYPE, key: 'success', icon: CheckCircle2, accent: '#86efac', popupStyle: 'celebrate' };
+    // 同上：不带 fg 就会继承 DEFAULT_TYPE 的蓝
+    return { ...DEFAULT_TYPE, key: 'success', icon: CheckCircle2, accent: '#86efac', fg: 'var(--accent-fg-success)', popupStyle: 'celebrate' };
   }
   return DEFAULT_TYPE;
 }
