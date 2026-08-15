@@ -44,12 +44,14 @@ const ROUTES = (() => {
     const src = fs.readFileSync(path.join(ADMIN, file), 'utf8');
     return [...src.matchAll(re)].map((m) => m[1]);
   };
+  // `/` 显式留着，理由同远端版：它原本只靠三条重定向路由顺带扫到，排除重定向后会变成零覆盖
   const all = [
     ...collect('src/app/navRegistry.tsx', /path:\s*'([^']+)'/g),
     ...collect('src/app/App.tsx', /<Route\s+path="([^"]+)"/g),
+    '/',
   ]
     .map((p) => (p.startsWith('/') ? p : `/${p}`))
-    .filter((p) => p !== '/' && !p.includes(':') && !p.includes('*'));
+    .filter((p) => !p.includes(':') && !p.includes('*'));
   const list = [...new Set(all)].sort();
   // AUDIT_ONLY=/a,/b 只跑指定路由（冒烟用）
   const only = (process.env.AUDIT_ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
@@ -105,7 +107,7 @@ const browser = await chromium.launch({
 
 const report = [];
 // 覆盖账本，同远端版：跳过/报错不许静默吞掉（判据见 theme-contrast-audit.mjs 收尾处注释）
-const coverage = { done: [], skipped: [], errored: [] };
+const coverage = { done: [], skipped: [], errored: [], redirected: [] };
 /*
  * 每个主题开一个全新 context —— 同远端版：init 脚本跨导航常驻且互不覆盖，
  * 跑到 dark 时 light 那份还在，两份都写 map-mobile-theme-v2 而执行顺序未定义，
@@ -151,6 +153,13 @@ for (const theme of ['light', 'dark']) {
         console.log(`[${theme}] ${route.padEnd(30)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
         continue;
       }
+      // 落地在哪就是扫了哪，判据与远端版同（见那边注释：三条重定向路由曾把首页命中计了三次）
+      const landed = await page.evaluate(() => location.pathname);
+      if (landed !== route) {
+        coverage.redirected.push(`${theme}${route} → ${landed}`);
+        console.log(`  [重定向] ${route} → ${landed}，不计入覆盖`);
+        continue;
+      }
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
       if (actual !== theme) {
         coverage.skipped.push(`${theme}${route}（主题未生效，实际 ${actual}）`);
@@ -186,8 +195,17 @@ fs.writeFileSync(path.join(OUT, 'report.md'), renderMarkdown({
 const expected = ROUTES.length * 2;
 console.log(`\n覆盖：${coverage.done.length}/${expected} 对「路由×主题」实际扫过`);
 console.log(`命中：${report.length} 个「路由×主题」，配色组 ${groups.length}`);
+// 参数化路由从来没被扫过，必须写在脸上（判据同远端版，见那边注释）
+const parameterized = [...new Set([
+  ...[...fs.readFileSync(path.join(ADMIN, 'src/app/navRegistry.tsx'), 'utf8').matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]),
+  ...[...fs.readFileSync(path.join(ADMIN, 'src/app/App.tsx'), 'utf8').matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]),
+])].filter((p) => p.includes(':'));
+console.log(`未覆盖：参数化路由 ${parameterized.length} 条（要真实 id 才打得开）`);
+if (coverage.redirected.length) {
+  console.log(`未覆盖：重定向路由 ${coverage.redirected.length} 对（请求 A 落到 B，不计入 A）`);
+}
 console.log(`报告：${path.join(OUT, 'report.md')}`);
-fs.writeFileSync(path.join(OUT, 'coverage.json'), JSON.stringify({ expected, ...coverage }, null, 2));
+fs.writeFileSync(path.join(OUT, 'coverage.json'), JSON.stringify({ expected, parameterized, ...coverage }, null, 2));
 await browser.close();
 server.close();
 

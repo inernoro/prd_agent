@@ -58,9 +58,16 @@ function loadRoutes() {
   };
   const fromRegistry = collect('src/app/navRegistry.tsx', /path:\s*'([^']+)'/g);
   const fromRouter = collect('src/app/App.tsx', /<Route\s+path="([^"]+)"/g);
-  const all = [...fromRegistry, ...fromRouter]
+  /*
+   * `/` 必须显式留着。
+   * 它此前被 `p !== '/'` 过滤掉，靠 /login、/stats、/prd-agent 三条重定向路由
+   * 「顺带」扫到——而那三条一旦按落地地址正确排除，首页就变成零覆盖：
+   * 全站最重要的一屏一次都没量过，报告还显示满覆盖。
+   * 排除重定向与补回 `/` 必须同一次改完，只做前一半是把重复计数换成漏扫。
+   */
+  const all = [...fromRegistry, ...fromRouter, '/']
     .map((p) => (p.startsWith('/') ? p : `/${p}`))   // App.tsx 的嵌套写法没有前导斜杠
-    .filter((p) => p !== '/' && !p.includes(':') && !p.includes('*'));
+    .filter((p) => !p.includes(':') && !p.includes('*'));
   const list = [...new Set(all)].sort();
   const only = (process.env.AUDIT_ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
   return only.length ? list.filter((p) => only.includes(p)) : list;
@@ -106,7 +113,7 @@ const report = [];
  * 和「全部扫完 0 命中」在输出里长得一样，我自己就据此报过「双主题 0 命中」。
  * 现在记账：任何一对没扫成，收尾时必须报出来并以非零码退出。
  */
-const coverage = { done: [], skipped: [], errored: [] };
+const coverage = { done: [], skipped: [], errored: [], redirected: [] };
 /*
  * 每个主题开一个全新 context，别在同一个 page 上反复 addInitScript。
  * init 脚本跨导航常驻且**互不覆盖**：跑到 dark 时 light 那份还在，两份都写
@@ -141,6 +148,22 @@ for (const theme of ['light', 'dark']) {
       if (pageErrors.length) {
         coverage.errored.push(`${theme}${route}: 渲染异常 ${pageErrors[0]}`);
         console.log(`[${theme}] ${route.padEnd(30)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
+        continue;
+      }
+      /*
+       * 落地在哪就是扫了哪 —— 请求了 A 却被重定向到 B，不许记成「A 已扫」。
+       *
+       * App.tsx 里 /prd-agent、/stats 是纯 `<Navigate to="/" replace />`，
+       * /login 在已登录态下同样跳走。此前三条都被当成独立页面credit，实际扫的
+       * 全是首页：同一轮里 /login 61 处、/stats 61 处、/prd-agent 61 处，
+       * 三份逐条相同的首页命中被计了三次，凭空给总数灌进约 180 条
+       * （Codex 在 PR #1374 第十二轮抓到）。
+       * 记进 redirected 单列，不计入 done、findings 不进报告。
+       */
+      const landed = await page.evaluate(() => location.pathname);
+      if (landed !== route) {
+        coverage.redirected.push(`${theme}${route} → ${landed}`);
+        console.log(`  [重定向] ${route} → ${landed}，不计入覆盖`);
         continue;
       }
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
@@ -184,8 +207,23 @@ fs.writeFileSync(path.join(OUT, 'report.md'), renderMarkdown({
 const expected = ROUTES.length * 2;
 console.log(`\n覆盖：${coverage.done.length}/${expected} 对「路由×主题」实际扫过`);
 console.log(`命中：${report.length} 个「路由×主题」，配色组 ${groups.length}`);
+/*
+ * 参数化路由从来没被扫过，这件事必须写在脸上。
+ * `loadRoutes` 过滤掉全部含 `:` 的路由（要具体 id 才打得开），而 expected 又是从
+ * 过滤后的清单算的 —— 于是「132/160」看起来像满覆盖，实际 /review-agent/submissions/:id
+ * 这类详情页一屏都没进过。数字不假，但标签会骗人（Codex 在 PR #1374 第十二轮抓到）。
+ * 要覆盖它们得喂真实 id，走 AUDIT_ROUTES 传具体路径。
+ */
+const parameterized = [...new Set([
+  ...[...fs.readFileSync(path.join(ADMIN, 'src/app/navRegistry.tsx'), 'utf8').matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]),
+  ...[...fs.readFileSync(path.join(ADMIN, 'src/app/App.tsx'), 'utf8').matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]),
+])].filter((p) => p.includes(':'));
+console.log(`未覆盖：参数化路由 ${parameterized.length} 条（要真实 id 才打得开，用 AUDIT_ROUTES 传具体路径才能扫）`);
+if (coverage.redirected.length) {
+  console.log(`未覆盖：重定向路由 ${coverage.redirected.length} 对（请求 A 落到 B，不计入 A）`);
+}
 console.log(`报告：${path.join(OUT, 'report.md')} / report.json，截图同目录`);
-fs.writeFileSync(path.join(OUT, 'coverage.json'), JSON.stringify({ expected, ...coverage }, null, 2));
+fs.writeFileSync(path.join(OUT, 'coverage.json'), JSON.stringify({ expected, parameterized, ...coverage }, null, 2));
 
 await browser.close();
 
