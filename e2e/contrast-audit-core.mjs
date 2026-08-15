@@ -55,12 +55,15 @@ export const AUDIT_FN = () => {
    * 排除范围写死成具体 id，不做宽泛通配 —— 免得顺手把应用自己的东西也滤掉。
    */
   /*
-   * 选择器写全：徽章 DOM 换过一次外壳（现在是 #cds-widget > .cds-badge），
-   * 只钉旧的 #bt-branch-badge 就漏了 —— 全量扫描里它稳定贡献 412 条，
-   * 占本来 1742 条总数的 24%，把仓库自己的真实缺陷淹在噪音里。
-   * 仍然写具体类名、不做宽泛通配，免得顺手滤掉应用自己的东西。
+   * 只排除**外部注入**的浮层，别把自家组件也滤掉。
+   *
+   * `#bt-branch-badge` 其实是仓库自己的 `components/BranchBadge.tsx`，由 App.tsx 直接挂载，
+   * 本 PR 还改过它的配色 —— 我当初当成平台注入物排掉，等于让审计对一个自己刚改过的
+   * 组件永久失明（Codex 在 PR #1374 第二十三轮抓到）。
+   * 真正外部注入的是 CDS 的 `#cds-widget` / `.cds-badge`：不在仓库源码里、本 PR 改不了，
+   * 且它一家在全量扫描里贡献 412 条（占 24%），不排除会把真实缺陷压在排序下面。
    */
-  const PLATFORM_OVERLAY = '#bt-branch-badge, #cds-widget, .cds-badge';
+  const PLATFORM_OVERLAY = '#cds-widget, .cds-badge';
   const isPlatformOverlay = (el) => !!el.closest(PLATFORM_OVERLAY);
 
   const visible = (el) => {
@@ -245,8 +248,16 @@ export const AUDIT_FN = () => {
       const { bg: sbg, needsEye: sEye } = effectiveBg(el.parentElement || el);
       for (const kid of el.querySelectorAll('path,circle,rect,polygon,polyline,ellipse,line')) {
         const ks = getComputedStyle(kid);
-        const kStrokeOn = ks.stroke && ks.stroke !== 'none';
-        const kRaw = kStrokeOn ? ks.stroke : (ks.fill && ks.fill !== 'none') ? ks.fill : null;
+        /*
+         * fill 与 stroke 是**两个独立通道**，都要各判一次。
+         * 原来写成 `stroke ? stroke : fill`，同时有描边和填充时只量描边 ——
+         * LevelHat 的帽冠正是 `fill={t.tassel} stroke={t.board}`，流苏色一次都没被量过
+         * （Codex 在 PR #1374 第二十三轮抓到，又是我自己刚改的那个组件）。
+         */
+        const kPaints = [];
+        if (ks.stroke && ks.stroke !== 'none') kPaints.push(ks.stroke);
+        if (ks.fill && ks.fill !== 'none') kPaints.push(ks.fill);
+        for (const kRaw of kPaints) {
         if (!kRaw || isTransparent(kRaw)) continue;
         /*
          * paint server（url(#grad)）取不出颜色，硬算会得到一个假的 1:1。
@@ -294,6 +305,7 @@ export const AUDIT_FN = () => {
           fgOpacity: cumulativeOpacity(kid),
           box: { x: Math.round(kr.x), y: Math.round(kr.y + scrollY), w: Math.round(kr.width), h: Math.round(kr.height) },
           vbox: { x: Math.round(kr.x), y: Math.round(kr.y), w: Math.round(kr.width), h: Math.round(kr.height) } });
+        }
       }
       continue;
     }
@@ -477,12 +489,25 @@ export async function resampleGradientFindings(page, _unused, findings) {
         const y1 = Math.min(img.height, Math.round((r.y + r.height) * scale));
         if (x1 - x0 < 2 || y1 - y0 < 2) { out[id] = { why: 'box-too-small' }; continue; }
         /*
+         * 采样区向内缩，别把元素自己的边缘算成底色。
+         *
+         * 小圆徽章最典型：AvatarProgressRing 的等级角标只有 14×14，还带 1.5px 的
+         * 环形描边，整框采样里「描边 + 抗锯齿边缘 + 背后头像」混出来的颜色能占到
+         * 显著比例 —— 于是报出 4.16:1，而字实际压着的纯底色是 6.0~8.2:1。
+         * 这一条在全量结果里横跨 121 个组合，是最大的一组「缺陷」，实为测量假象。
+         * 缩进取 20%（上下左右各 10%），小框至少留 2px，避免缩没了。
+         */
+        const insetX = Math.min(Math.floor((x1 - x0) * 0.2), Math.max(0, Math.floor((x1 - x0 - 2) / 2)));
+        const insetY = Math.min(Math.floor((y1 - y0) * 0.2), Math.max(0, Math.floor((y1 - y0 - 2) / 2)));
+        const sx0 = x0 + insetX, sy0 = y0 + insetY;
+        const sx1 = x1 - insetX, sy1 = y1 - insetY;
+        /*
          * 取元素框内的**众数色**当底色，而不是正中一个点。
          * 单点采样在小控件上会翻车：隐前景那一步偶尔不生效（React 重渲染会抹掉
          * 临时 inline style），正中恰好压着字形就采到文字色本身 —— 报出来是
          * fg === bg、比值 1.00 的假阳性。字形只占框内少数像素，众数天然是底色。
          */
-        const px = cx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+        const px = cx.getImageData(sx0, sy0, sx1 - sx0, sy1 - sy0).data;
         const buckets = new Map();
         for (let i = 0; i < px.length; i += 4) {
           const key = (px[i] >> 3 << 10) | (px[i + 1] >> 3 << 5) | (px[i + 2] >> 3);
@@ -490,18 +515,50 @@ export async function resampleGradientFindings(page, _unused, findings) {
           if (!b) buckets.set(key, (b = [0, 0, 0, 0]));
           b[0] += px[i]; b[1] += px[i + 1]; b[2] += px[i + 2]; b[3] += 1;
         }
-        let best = null;
-        for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
-        if (!best) { out[id] = { why: 'no-pixels' }; continue; }
-        const bg = [Math.round(best[0] / best[3]), Math.round(best[1] / best[3]), Math.round(best[2] / best[3])];
-        const solid = compose(fg, bg);
-        if (!solid) { out[id] = { why: 'compose-failed' }; continue; }
-        // 按累计 opacity 把前景衰减回底色，与初扫口径一致
+        /*
+         * 取「显著色块里最差的那一块」，不是最频繁的那一块。
+         *
+         * 众数只代表框内占地最多的底色：一行字横跨渐变时，大半个框压在安全的深色段上、
+         * 只有几个字压在浅色段，众数会判它达标，而那几个字确实看不清
+         * （Codex 在 PR #1374 第二十三轮抓到；而这个值直接决定退出码）。
+         *
+         * 但也不能直接取「最差单像素」——隐前景那步偶尔不生效（React 重渲染会抹掉
+         * 临时 inline style），字形像素就会变成最差色块，稳定产出 fg===bg 的假阳性。
+         * 折中：只看占比 ≥ 12% 的色块（字形抗锯齿和零星像素达不到这个量），
+         * 并剔掉与前景色极近的色块，然后在剩下的里取最差。
+         */
+        const total = (sx1 - sx0) * (sy1 - sy0);
+        const solidFg = compose(fg, [0, 0, 0]) && compose(fg, [255, 255, 255]);
+        const fgProbe = compose(fg, [128, 128, 128]);
+        const near = (c) => fgProbe && Math.abs(c[0] - fgProbe[0]) + Math.abs(c[1] - fgProbe[1]) + Math.abs(c[2] - fgProbe[2]) < 24;
+        const cands = [];
+        for (const b of buckets.values()) {
+          if (b[3] / total < 0.12) continue;
+          const c = [Math.round(b[0] / b[3]), Math.round(b[1] / b[3]), Math.round(b[2] / b[3])];
+          if (near(c)) continue;      // 极可能是没隐掉的字形本身
+          cands.push(c);
+        }
+        if (!cands.length) {
+          // 没有任何显著且非前景色的色块 —— 退回众数，宁可保守也不要凭空判失败
+          let best = null;
+          for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
+          if (!best) { out[id] = { why: 'no-pixels' }; continue; }
+          cands.push([Math.round(best[0] / best[3]), Math.round(best[1] / best[3]), Math.round(best[2] / best[3])]);
+        }
         const o = typeof opacity === 'number' ? opacity : 1;
-        const composed = o >= 0.999
-          ? solid
-          : [0, 1, 2].map((i) => Math.round(solid[i] * o + bg[i] * (1 - o)));
-        out[id] = { bg, ratio: +contrast(composed, bg).toFixed(2) };
+        let worst = null;
+        for (const bg of cands) {
+          const solid = compose(fg, bg);
+          if (!solid) continue;
+          const composed = o >= 0.999
+            ? solid
+            : [0, 1, 2].map((i) => Math.round(solid[i] * o + bg[i] * (1 - o)));
+          const ratio = +contrast(composed, bg).toFixed(2);
+          if (!worst || ratio < worst.ratio) worst = { bg, ratio };
+        }
+        if (!worst) { out[id] = { why: 'compose-failed' }; continue; }
+        void solidFg;
+        out[id] = worst;
       }
       return out;
     }, { b64: shot.toString('base64'), idList: ids.map((id) => ({ id, fg: pending.get(id).fg, opacity: pending.get(id).fgOpacity ?? 1 })) });

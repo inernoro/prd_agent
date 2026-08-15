@@ -106,3 +106,7 @@
 | fix | e2e | 修 Codex 第二十二轮 P1：多色 SVG 只判根节点，根 fill 为黑/none 时整个跳过——本 PR 刚改的 LevelHat 正是这种（颜色全在 path 上）。改为遍历上色子形状；paint server 标 unresolved 不硬算成假 1:1，低透明度装饰描边不按 3:1 判 |
 | docs | doc | 更正 debt.frontend 里「实测敞口为 0」那句错误结论 |
 | fix | e2e | 平台徽章排除选择器补全：徽章 DOM 换过外壳（现为 #cds-widget > .cds-badge），只钉旧的 #bt-branch-badge 会漏——全量扫描里它稳定贡献 412 条，占总数 24%，把仓库自己的缺陷淹在噪音里 |
+| fix | prd-admin | 修全量扫描里影响面最大的一组（121 个「路由×主题×视口」组合）：头像等级角标底与字各自独立取值互不知情，底显示成绿色时字仍是未满环的深紫 #1a1033，9px 数字实测 4.07:1。改「深底 + 白字」（满环 #047857 5.48:1，未满环 #7c3aed→#4f46e5 5.7~6.29:1），字走 --accent-on-solid |
+| fix | e2e | 修 Codex 第二十三轮 P1：#bt-branch-badge 其实是仓库自己的 BranchBadge.tsx（App.tsx 直接挂载，本 PR 还改过它的配色），我当初当平台注入物排掉，等于让审计对自己刚改的组件永久失明。排除范围收敛为真正外部注入的 #cds-widget / .cds-badge |
+| fix | e2e | 修 Codex 第二十三轮 P1：SVG 子形状同时有 fill 和 stroke 时只量了 stroke（LevelHat 帽冠正是 fill={t.tassel} stroke={t.board}，流苏色从没被量过）。两个通道各判一次 |
+| fix | e2e | 修 Codex 第二十三轮 P1：渐变底取众数色只代表框内占地最多的那段，一行字横跨渐变时少数几个字失败会被判达标。改取「占比 ≥12% 且非前景色的显著色块里最差的那块」，并把采样区向内缩 20% 避开元素自身描边 |
