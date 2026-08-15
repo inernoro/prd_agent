@@ -45,14 +45,14 @@ export default {
           foreground: 'hsl(var(--card-foreground) / <alpha-value>)',
         },
 
-        // 状态语义色（照抄设计稿的 ok / warn / bad，另按同配方补 info）。
+        // 状态语义色。**颜色本身已回归改动前那套**（emerald / amber / red / sky），
+        // 这一层保留的是「组件不再硬编码调色板」这个结构收益：
         //
-        // 为什么必须有这一组：站里此前有 1600+ 处直接写 emerald-600 / amber-500 /
-        // red-500 / sky-500。它们**不跟主题走**——换调色板时整站的状态色会留在
-        // 原地，与新底色打架；而且每处都得写成 `text-emerald-600 dark:text-emerald-400`
-        // 这种双主题对，漏一半就在某个主题下看不清。
+        // 硬编码的 emerald-600 不跟主题走，每处都得写成
+        // `text-emerald-600 dark:text-emerald-400` 双主题对，漏一半就在某个主题
+        // 下看不清；换配色时它们也全部留在原地。收成 token 之后组件里写
+        // `text-ok` 一个类就够，以后要微调某一档只改 index.css 一处。
         //
-        // token 自己会翻主题，所以组件里写 `text-ok` 一个类就够，不用再挂 dark:。
         // 每档两个值：DEFAULT 是实色（圆点 / 图标 / 进度条 / 文字），
         // soft 是整块底色（行底、提示条底、徽章底）。
         ok: {
@@ -73,7 +73,7 @@ export default {
         },
 
         // 主色的两个补充档：soft 是低饱和底（选中态/徽章底），
-        // ink 是「主色文字」——白天那抹亮绿配白底对比度不够，必须用深橄榄。
+        // ink 是「主色文字」——见下方 textColor 的说明。
         'primary-soft': 'hsl(var(--primary-soft) / <alpha-value>)',
         'primary-ink': 'hsl(var(--primary-ink) / <alpha-value>)',
         'foreground-muted': 'hsl(var(--foreground-muted) / <alpha-value>)',
@@ -84,11 +84,10 @@ export default {
       },
       // 主色**文字**单独走 --primary-ink。
       //
-      // bg-primary 用的是那抹亮绿（#c8f04a），配深底的按钮很好看；但同一个颜色
-      // 当文字用、落在白天的浅绿底上就几乎读不出来（实测「全环境矩阵」「严重度」
-      // 「主目标」三处全糊）。模板为此专门分了 --accent / --accent-ink 两个值，
-      // 这里照做：text-primary → ink（白天是深橄榄，黑夜与 primary 同值，
-      // 所以黑夜零变化），bg-primary / border-primary 仍用亮绿。
+      // 填充色（bg-primary）和文字色对对比度的要求不一样：白天的橙色
+      // 24 90% 50% 当按钮底很好看，当文字落在浅底上只有约 3:1，偏弱——
+      // 「有些按钮都看不清了」就是这么来的。所以文字单独压深两档；
+      // 暗色下两者同值，零变化。bg-primary / border-primary 不受影响。
       textColor: {
         primary: 'hsl(var(--primary-ink) / <alpha-value>)',
       },
@@ -97,15 +96,12 @@ export default {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
-      // 全站只有一套英文字形，定义在 index.css 的 --cds-font-latin。
-      //
-      // 这两个键此前各自写了一份栈，而且两份都点名了**仓库从没打包过的字体**
-      // （Inter / JetBrains Mono）：装了它们的机器和没装的机器看到的是两种字形，
-      // `font-sans` 与 `font-mono` 之间也对不齐。现在都指回同一个 token，
-      // 想换字体只改 index.css 那一处（predicate-and-wiring-discipline 形状 3）。
+      // 字体两档，定义在 index.css：sans 管正文（自托管 Inter），
+      // mono 管标识符（自托管 JetBrains Mono）。两个键都指回 token，
+      // 不在这里再写一份栈——此前它们各写一份、且都点名了仓库没打包的字体。
       fontFamily: {
-        sans: ['var(--cds-font-latin)', 'var(--cds-font-cjk)'],
-        mono: ['var(--cds-font-latin)'],
+        sans: ['var(--cds-font-sans)', 'var(--cds-font-cjk)'],
+        mono: ['var(--cds-font-mono)'],
       },
       keyframes: {
         'accordion-down': {

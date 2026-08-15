@@ -1,14 +1,17 @@
 /*
- * 自托管 JetBrains Mono（可变字重 100-800，单文件 40KB）。
+ * 两款自托管字体（都是可变字重，各一个 woff2）。
  *
- * 必须自托管、不能只在 font-family 里写名字——那正是这次事故的根因：
- * 仓库此前点名 Inter / JetBrains Mono 却从没加载过任何一个，于是每台机器
- * 各凭系统兜底，英文字形是「看运气」，用户看到的像素点就是他那台机器的兜底字体。
+ * 必须自托管、不能只在 font-family 里写名字：仓库此前点名 Inter / JetBrains Mono
+ * 却从没加载过任何一个，于是每台机器各凭系统兜底，英文字形是「看运气」——
+ * 用户看到的像素点就是他那台机器的兜底字体。
  *
- * wght.css 里声明了 6 个子集（latin / latin-ext / cyrillic / greek / vietnamese），
- * 每个带自己的 unicode-range，浏览器只会下载内容真正命中的那一两个——本站基本
- * 只会取 latin 那 40KB。字体里没有汉字，中文自然落到 --cds-font-cjk。
+ * 分工：Inter 管正文（比例字，中英混排的默认），JetBrains Mono 只管标识符
+ * （分支名 / sha / 域名 / 时间戳）。上一轮把等宽当成全站默认，导致整页横向
+ * 撑大约 10%、中文观感也被带坏，已回退成这个分工。
+ *
+ * 两款字体都没有汉字字形，中文一律落到 --cds-font-cjk，不受影响。
  */
+@import '@fontsource-variable/inter/wght.css';
 @import '@fontsource-variable/jetbrains-mono/wght.css';
 
 @tailwind base;
@@ -33,142 +36,138 @@
  */
 @layer base {
   [data-theme='dark'] {
-    /* ── 照抄 design_handoff_release_center 的调色板 ──────────────────
-       模板 → CDS 的名字映射（值原样搬，只换记法：hex → HSL 三元组）：
-         --bg      → --surface-base / --background
-         --surface → --surface-raised / --card
-         --surface2→ --surface-sunken
-         --raise   → --secondary / --muted
-         --line    → --hairline / --border
-         --line2   → --hairline-strong / --input
-         --fg/fg2/fg3 → --foreground / --foreground-muted / --muted-foreground
-         --accent  → --primary（注意：shadcn 的 --accent 是「悬停中性面」，
-                     不是品牌色，两者同名不同义，不能混）
-       状态色 ok/warn/bad 是**新增**的：站里此前 1200 多处硬编码
-       emerald/amber/red/sky，换调色板时它们不会跟着走，必须先有 token 才能收。 */
-    --background: 220 13% 5%;
-    --foreground: 216 12% 92%;
-    /* 次级正文（模板 --fg2）。介于正文与弱化之间，此前 CDS 缺这一档，
-       于是「不那么重要但也不是灰字」的内容只能在两档之间硬选一个。 */
-    --foreground-muted: 213 12% 69%;
+    --background: 240 5% 8%;
+    --foreground: 240 6% 90%;
 
-    --card: 216 16% 6%;
-    --card-foreground: 216 12% 92%;
+    --card: 240 4% 12%;
+    --card-foreground: 240 6% 90%;
 
-    --primary: 74 85% 62%;
-    --primary-foreground: 220 13% 5%;
-    /* 主色的低饱和底（模板 --accent-soft）：选中态、当前分区、徽章底色用它，
-       不要再用 primary/[0.12] 那种透明度硬算——透明度叠在不同底上颜色会漂。 */
-    --primary-soft: 84 38% 10%;
-    --primary-ink: 74 85% 62%;
+    --primary: 24 100% 60%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 216 18% 11%;
-    --secondary-foreground: 216 12% 92%;
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 240 6% 90%;
 
-    --muted: 216 18% 11%;
-    --muted-foreground: 219 10% 46%;
+    --muted: 240 4% 14%;
+    --muted-foreground: 240 4% 60%;
 
-    --accent: 216 18% 11%;
-    --accent-foreground: 216 12% 92%;
+    --accent: 240 4% 18%;
+    --accent-foreground: 240 6% 95%;
 
-    --destructive: 358 86% 64%;
-    --destructive-foreground: 220 13% 5%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 222 15% 13%;
-    --input: 217 13% 19%;
-    --ring: 74 85% 62%;
+    --border: 240 4% 18%;
+    --input: 240 4% 16%;
+    --ring: 24 100% 60%;
 
     --radius: 0.625rem;
 
-    --surface-base: 220 13% 5%;
-    --surface-raised: 216 16% 6%;
-    --surface-sunken: 218 18% 9%;
-    --hairline: 222 15% 13%;
-    --hairline-strong: 217 13% 19%;
+    /* Surface system — tuned for Railway/Linear-style elevation contrast.
+       The raised tier is noticeably brighter than base (Δ7%) so cards
+       don't look glued onto the page; the sunken tier sits slightly
+       below base for inputs / log panels. Hue carries a faint blue cast. */
+    --surface-base: 222 14% 6%;
+    --surface-raised: 222 12% 13%;
+    --surface-sunken: 222 16% 4%;
+    --hairline: 222 10% 18%;
+    --hairline-strong: 222 10% 26%;
 
-    /* 状态色。每档一对：实色（图标/圆点/进度条/文字）+ soft（整块底色）。
-       模板没有 info 这一档，但站里 sky-* 有 200 处在表示「进行中」，
-       按同样配方补一档，免得它无处可去又退回硬编码。 */
-    --ok: 142 69% 58%;
-    --ok-soft: 146 41% 10%;
-    --warn: 37 91% 55%;
-    --warn-soft: 40 50% 9%;
-    --bad: 358 86% 64%;
-    --bad-soft: 353 42% 12%;
-    --info: 205 85% 62%;
-    --info-soft: 208 45% 11%;
-
-    --code-bg: 218 20% 8%;
-    --code-fg: 214 20% 84%;
-
-    /* 模板的影子极克制（--shadow: 0 1px 0 rgba(255,255,255,.02)），
-       整个观感靠 hairline 而不是靠阴影堆体积。这里跟它走：
-       保留 ring + 一层极淡接触影，去掉原来那套五层大糊影——
-       那是上一版「贴纸感」的来源，和这套设计语言不是一路。 */
+    /* 多层阴影配方(ring + inset 顶高光 + 接触影 + 中距影 + 远距氛围影)。
+       单层大糊影是"贴纸感"的来源;五层影让卡片有真实体积。 */
     --shadow-card:
       0 0 0 1px hsl(var(--hairline)),
-      0 1px 0 hsl(0 0% 100% / 0.02);
+      inset 0 1px 0 hsl(0 0% 100% / 0.06),
+      0 1px 2px rgb(0 0 0 / 0.32),
+      0 12px 28px -12px rgb(0 0 0 / 0.5),
+      0 40px 80px -32px rgb(0 0 0 / 0.6);
+
+    /* ── 语义状态色 ────────────────────────────────────────────────
+       组件侧已统一用 ok / warn / bad / info（1291 处，见 palette-contrast-guard），
+       这一层只决定它们**长什么颜色**。这里的值刻意对齐改配色之前的观感：
+       暗色取 Tailwind 的 -400（原来 `dark:text-x-400` 的实际取值），
+       soft 对应原来 `bg-x-500/[0.06]` 那层淡底。
+       换句话说：token 化保留了，颜色回到你熟悉的那套。 */
+    --ok: 158 64% 52%;
+    --ok-soft: 160 40% 10%;
+    --warn: 43 96% 56%;
+    --warn-soft: 38 45% 10%;
+    --bad: 0 91% 71%;
+    --bad-soft: 0 45% 12%;
+    --info: 199 95% 74%;
+    --info-soft: 199 45% 11%;
+
+    /* 主色的两个补充档。暗色下 ink 与 primary 同值（橙字在深底上够清楚）；
+       白天必须分开，见 light 块的说明。 */
+    --primary-soft: 24 60% 12%;
+    --primary-ink: 24 100% 60%;
+    --foreground-muted: 240 5% 74%;
+    --code-bg: 222 16% 4%;
+    --code-fg: 240 6% 86%;
   }
 
   [data-theme='light'] {
-    /* 同一套映射的白天档，值同样来自模板。注意白天的主色分两个：
-       --primary 仍是那抹亮绿（用于填充按钮底），但**文字不能用它**——
-       亮绿配白底对比度不够。模板为此单给了 --accent-ink（深橄榄），
-       CDS 这里叫 --primary-ink，凡是「主色文字」一律用 ink 那一个。 */
-    --background: 200 16% 96%;
-    --foreground: 218 17% 9%;
-    --foreground-muted: 215 11% 34%;
+    --background: 30 30% 95%;
+    --foreground: 24 20% 15%;
 
     --card: 0 0% 100%;
-    --card-foreground: 218 17% 9%;
+    --card-foreground: 24 20% 15%;
 
-    --primary: 74 85% 62%;
-    --primary-foreground: 218 17% 9%;
-    --primary-soft: 73 66% 92%;
-    --primary-ink: 86 69% 23%;
+    --primary: 24 90% 50%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 21% 95%;
-    --secondary-foreground: 218 17% 9%;
+    --secondary: 30 20% 90%;
+    --secondary-foreground: 24 20% 15%;
 
-    --muted: 210 21% 95%;
-    --muted-foreground: 216 8% 51%;
+    --muted: 30 18% 92%;
+    --muted-foreground: 24 10% 40%;
 
-    --accent: 210 21% 95%;
-    --accent-foreground: 218 17% 9%;
+    --accent: 30 22% 88%;
+    --accent-foreground: 24 20% 15%;
 
-    --destructive: 358 66% 45%;
+    --destructive: 0 65% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 210 16% 90%;
-    --input: 212 16% 84%;
-    --ring: 74 85% 62%;
+    --border: 30 15% 82%;
+    --input: 30 15% 88%;
+    --ring: 24 90% 50%;
 
     --radius: 0.625rem;
 
-    --surface-base: 200 16% 96%;
+    /* Surface system — light mode mirrors the dark elevation pattern:
+       raised is the brightest (pure white), base sits in warm beige,
+       sunken is a tone darker for inputs / log panels. */
+    --surface-base: 30 28% 96%;
     --surface-raised: 0 0% 100%;
-    --surface-sunken: 220 23% 97%;
-    --hairline: 210 16% 90%;
-    --hairline-strong: 212 16% 84%;
-
-    /* 白天的状态色是**深色实字**（ok #15803d / warn #a55b00 / bad #c0272d），
-       不是黑夜那组亮色——亮绿亮黄配白底看不清。soft 则是极淡的同色底。
-       这也是为什么组件里可以写 text-ok 一个类就够：token 自己会翻。 */
-    --ok: 142 72% 29%;
-    --ok-soft: 140 40% 94%;
-    --warn: 33 100% 32%;
-    --warn-soft: 37 87% 94%;
-    --bad: 358 66% 45%;
-    --bad-soft: 356 81% 96%;
-    --info: 205 75% 38%;
-    --info-soft: 205 70% 95%;
-
-    --code-bg: 210 25% 97%;
-    --code-fg: 216 17% 17%;
+    --surface-sunken: 30 24% 91%;
+    --hairline: 30 15% 84%;
+    --hairline-strong: 30 12% 70%;
 
     --shadow-card:
-      0 0 0 1px hsl(var(--hairline)),
-      0 1px 2px hsl(218 17% 9% / 0.05);
+      0 0 0 1px hsl(30 15% 86%),
+      inset 0 1px 0 hsl(0 0% 100% / 0.9),
+      0 1px 2px hsl(24 30% 20% / 0.05),
+      0 8px 24px -12px hsl(24 30% 20% / 0.12),
+      0 32px 64px -32px hsl(24 30% 20% / 0.15);
+
+    /* 白天取 Tailwind 的 -600（原来 `text-x-600` 的实际取值），soft 是极淡同色底。 */
+    --ok: 161 94% 30%;
+    --ok-soft: 160 60% 95%;
+    --warn: 32 95% 44%;
+    --warn-soft: 38 90% 95%;
+    --bad: 0 74% 42%;
+    --bad-soft: 0 85% 96%;
+    --info: 201 98% 39%;
+    --info-soft: 199 85% 95%;
+
+    /* 白天的橙色主色（24 90% 50%）当文字落在浅底上对比度约 3:1，偏弱，
+       所以 ink 压深两档专供文字用；填充仍用 primary 那一档。
+       这一层是上一轮唯一值得留下的东西——它治的是「按钮看不清」。 */
+    --primary-soft: 30 80% 94%;
+    --primary-ink: 24 85% 38%;
+    --foreground-muted: 24 12% 32%;
+    --code-bg: 30 24% 93%;
+    --code-fg: 24 20% 20%;
   }
 
   :root {
@@ -197,7 +196,8 @@
      * CJK 不受影响：等宽栈里没有汉字字形，中文会自然落到后面的中文栈。
      * 这正是「英文换字形、中文照旧」的实现方式，不需要 unicode-range。
      */
-    --cds-font-latin: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --cds-font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --cds-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     --cds-font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   }
 
@@ -239,15 +239,13 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    /* 英文走 --cds-font-latin（= 分支名一直用的那套系统等宽栈），中文走 CJK 栈。
-       等宽栈没有汉字字形，中文自然掉到后面，不需要 unicode-range。
-       此前这里首选 'Inter' 但仓库从没加载过它，等于把英文字形交给各机器兜底
-       ——那正是「有像素点」的来源。cv11/ss01 是 Inter 专有特性，一并去掉。 */
-    font-family: var(--cds-font-latin), var(--cds-font-cjk);
-    /* 等宽字的 advance 比比例字宽，中文串里那些手写空格（「落后 3 个」「1 天前 · user」）
-       会被撑成双倍空隙，数字在句子里「浮」起来。收 0.015em 把它拉回来——
-       与 .cds-ident 同一个值，两边字距才是一套。 */
-    letter-spacing: -0.015em;
+    /* 英文走 --cds-font-sans（自托管 Inter），中文走 CJK 栈。
+       Inter 没有汉字字形，中文自然掉到后面，不需要 unicode-range。
+       等宽只留给标识符（.cds-ident），不做全站默认——那样会把页面横向撑大约 10%。 */
+    font-family: var(--cds-font-sans), var(--cds-font-cjk);
+    /* 正文**不设** letter-spacing。上一轮为了收紧等宽英文加了 -0.015em，
+       它对中文同样生效——汉字本来就不需要负字距，被收紧后整段中文发挤，
+       这是「中文完全不能看」的直接原因。负字距只留给 .cds-ident 那一档。 */
     text-rendering: optimizeLegibility;
     background-color: hsl(var(--surface-base));
   }
@@ -973,7 +971,7 @@
      `.cds-branch-name` 是历史名字，保留给分支卡；新代码用 `.cds-ident`。 */
   .cds-ident,
   .cds-branch-name {
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     letter-spacing: -0.015em;
     font-variant-numeric: tabular-nums;
   }
@@ -2074,7 +2072,7 @@
 
   .cds-agent-world-hud text {
     fill: hsl(var(--map-cyan) / 0.42);
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     font-size: 8px;
     letter-spacing: 0.08em;
   }
@@ -3691,7 +3689,7 @@
 
   /* 故事从用户自己的动作开始:一行命令。 */
   .cds-auth-cmd {
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     font-size: 0.8125rem;
     color: hsl(var(--muted-foreground));
   }
@@ -3826,7 +3824,7 @@
 
   .cds-auth-line-m-station b {
     min-width: 2.9rem;
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -3836,7 +3834,7 @@
   .cds-auth-line-m-station em {
     min-width: 2rem;
     font-style: normal;
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     color: hsl(var(--muted-foreground) / 0.75);
     font-variant-numeric: tabular-nums;
@@ -3943,7 +3941,7 @@
 
   .cds-auth-station b {
     margin-top: 0.75rem;
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -3953,7 +3951,7 @@
   .cds-auth-station em {
     margin-top: 0.125rem;
     font-style: normal;
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     color: hsl(var(--muted-foreground) / 0.7);
     font-variant-numeric: tabular-nums;
@@ -4098,7 +4096,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     letter-spacing: 0.02em;
     color: hsl(var(--muted-foreground));
@@ -4356,7 +4354,7 @@
     align-items: baseline;
     gap: 0.5rem;
     min-width: 0;
-    font-family: var(--cds-font-latin);
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     color: hsl(var(--muted-foreground));
   }
@@ -4785,7 +4783,7 @@
 
 .cds-agent-territory-legend-heading strong {
   color: hsl(var(--primary-ink));
-  font-family: var(--cds-font-latin);
+  font-family: var(--cds-font-mono);
   font-size: 0.6875rem;
 }
 

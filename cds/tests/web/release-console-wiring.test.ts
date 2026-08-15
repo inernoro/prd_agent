@@ -269,17 +269,40 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
   it('标识符字形是唯一一份定义，分支名与新页面共用', () => {
     // 同一条规则里同时挂两个选择器 = SSOT；抄成两份迟早漂移
     expect(CSS).toMatch(/\.cds-ident,\s*\n\s*\.cds-branch-name\s*\{/);
-    expect(CSS).toContain('font-family: var(--cds-font-latin)');
+    expect(CSS).toContain('font-family: var(--cds-font-mono)');
     expect(CSS).toContain('letter-spacing: -0.015em');
   });
 
-  it('全站英文字形只有一个来源：body 与标识符共用 --cds-font-latin', () => {
-    // token 只定义一次
-    expect((CSS.match(/--cds-font-latin:/g) || []).length).toBe(1);
-    // body 用它（英文），CJK 落到后面的中文栈
-    expect(CSS).toContain('font-family: var(--cds-font-latin), var(--cds-font-cjk);');
-    // 不许再出现第二份手写栈——那正是「分支名一种字、正文另一种字」的来源
-    expect(CSS).not.toMatch(/font-family:\s*(ui-monospace|'Inter')/);
+  /**
+   * 字体分两档，各只定义一次。
+   *
+   * 2026-08-15 曾把等宽当成**全站默认**，两个后果都是全局性的：整页横向撑大
+   * 约 10%（等宽 advance 比比例字宽），中文观感被带坏（为收紧英文加的
+   * -0.015em 负字距对汉字同样生效）。所以这条守卫钉的是「分工」而不是「统一」。
+   */
+  it('字体分两档：正文比例字、标识符等宽，各定义一次', () => {
+    expect((CSS.match(/--cds-font-sans:/g) || []).length).toBe(1);
+    expect((CSS.match(/--cds-font-mono:/g) || []).length).toBe(1);
+    // body 走 sans，CJK 落到后面的中文栈
+    expect(CSS).toContain('font-family: var(--cds-font-sans), var(--cds-font-cjk);');
+    // 等宽不许当全站默认
+    expect(CSS).not.toContain('font-family: var(--cds-font-mono), var(--cds-font-cjk)');
+    // 不许再出现第二份手写栈
+    expect(CSS).not.toMatch(/font-family:\s*(ui-monospace|'Inter Variable')/);
+  });
+
+  /**
+   * 负字距只许给标识符。给 body 设负字距会把中文一起收紧——汉字本来就不需要
+   * 负字距，收紧后整段中文发挤，这是「中文完全不能看」的直接原因。
+   */
+  it('正文不设 letter-spacing（负字距只给 .cds-ident）', () => {
+    // 先剥注释：解释「为什么不设 letter-spacing」的那段注释本身含这个词，
+    // 不剥的话判据读到的又是自己的注释（这已经是第三次栽在同一个形状上）。
+    const noComments = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+    const at = noComments.indexOf('\n  body {');
+    const bodyBlock = noComments.slice(at, noComments.indexOf('\n  }', at));
+    expect(bodyBlock).toContain('var(--cds-font-sans)');
+    expect(bodyBlock, '正文设了字距会把中文一起收紧').not.toContain('letter-spacing');
   });
 
   /**
@@ -294,15 +317,22 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
     const strip = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const cssCode = strip(CSS);
 
-    // 取 --cds-font-latin 里所有带引号的字族（系统关键字如 ui-monospace 不带引号）
-    const decl = /--cds-font-latin:\s*([^;]+);/.exec(cssCode);
-    expect(decl, '找不到 --cds-font-latin').not.toBeNull();
-    const custom = (decl![1].match(/'[^']+'/g) || []).map((x) => x.replace(/'/g, ''));
-    expect(custom.length, '至少要自托管一款字体，否则又回到各机器兜底').toBeGreaterThan(0);
+    // 取两档字体栈里所有带引号的字族（系统关键字如 ui-monospace 不带引号）
+    const custom: string[] = [];
+    for (const key of ['--cds-font-sans', '--cds-font-mono']) {
+      const decl = new RegExp(`${key}:\\s*([^;]+);`).exec(cssCode);
+      expect(decl, `找不到 ${key}`).not.toBeNull();
+      custom.push(...(decl![1].match(/'[^']+'/g) || []).map((x) => x.replace(/'/g, '')));
+    }
+    expect(custom.length, '两档字体都要自托管，否则又回到各机器兜底').toBeGreaterThanOrEqual(2);
 
+    // 系统自带的字族不需要自托管——它们是兜底档，本来就指望操作系统提供。
+    // 需要「点名了就必须加载」的只有 webfont。
+    const SYSTEM = new Set(['segoe ui', 'sf pro', 'helvetica neue', 'pingfang sc', 'hiragino sans gb', 'microsoft yahei', 'noto sans sc']);
     // 每个自定义字族都要有加载来源：本文件里的 @font-face，或 @fontsource 的 @import
     const imports = cssCode.match(/@import\s+'[^']+'/g) || [];
     for (const family of custom) {
+      if (SYSTEM.has(family.toLowerCase())) continue;
       const slug = family.toLowerCase().replace(/\s+variable$/, '').replace(/\s+/g, '-');
       const loaded = cssCode.includes(`@font-face`) || imports.some((line) => line.toLowerCase().includes(slug));
       expect(loaded, `字体栈点名了 ${family}，但仓库里找不到它的 @font-face / @fontsource 引入`).toBe(true);
@@ -316,13 +346,11 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
       expect(fs.existsSync(dir), `${pkg} 在 CSS 里被 import，但没装进依赖`).toBe(true);
     }
 
-    // Inter 从没被打包过，别再让它出现在任何字体栈里
+    // Tailwind 那两个键只能指回 token，不许自己再写一份栈
     const tailwind = strip(fs.readFileSync(path.resolve(process.cwd(), '../cds/web/tailwind.config.js'), 'utf8'));
-    for (const [name, source] of [['index.css', cssCode], ['tailwind.config.js', tailwind]] as const) {
-      expect(source, `${name} 点名了从未加载的 Inter`).not.toContain('Inter');
-    }
-    // Tailwind 那两个键仍然只能指回 token，不许自己再写一份栈
-    expect(tailwind).toContain('var(--cds-font-latin)');
+    expect(tailwind).toContain('var(--cds-font-sans)');
+    expect(tailwind).toContain('var(--cds-font-mono)');
+    expect(tailwind, 'Tailwind 里不许再手写字体栈').not.toMatch(/'(Inter|JetBrains Mono|Segoe UI)/);
   });
 
   it('页面不用 Tailwind 的 font-mono —— 那个栈把没打包的 JetBrains Mono 排在第一位', () => {
