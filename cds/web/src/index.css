@@ -185,6 +185,10 @@
        此前这里首选 'Inter' 但仓库从没加载过它，等于把英文字形交给各机器兜底
        ——那正是「有像素点」的来源。cv11/ss01 是 Inter 专有特性，一并去掉。 */
     font-family: var(--cds-font-latin), var(--cds-font-cjk);
+    /* 等宽字的 advance 比比例字宽，中文串里那些手写空格（「落后 3 个」「1 天前 · user」）
+       会被撑成双倍空隙，数字在句子里「浮」起来。收 0.015em 把它拉回来——
+       与 .cds-ident 同一个值，两边字距才是一套。 */
+    letter-spacing: -0.015em;
     text-rendering: optimizeLegibility;
     background-color: hsl(var(--surface-base));
   }
