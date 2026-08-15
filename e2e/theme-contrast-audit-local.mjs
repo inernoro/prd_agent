@@ -220,7 +220,11 @@ if (realFindings) {
   console.error(`\n[不合格] 实测不达标 ${realFindings} 处，详见 report.md / report.json`);
 }
 // 重定向进不合格判定，但只算「落地页没人扫」的那些（判据同远端版，见那边注释）
-const unscannedRedirects = coverage.redirected.filter((x) => !ROUTES.includes(x.split(' → ')[1]));
+const unscannedRedirects = coverage.redirected.filter((x) => {
+  const landed = x.split(' → ')[1];
+  // 掉登录永远算失败，不能因为 /login 也在 ROUTES 里就放行（判据同远端版）
+  return landed === '/login' || !ROUTES.includes(landed);
+});
 if (coverage.skipped.length || coverage.errored.length || unscannedRedirects.length) {
   console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length + unscannedRedirects.length} 对没扫成，本轮结果不能当作「已覆盖」：`);
   for (const x of coverage.skipped) console.error(`  跳过  ${x}`);

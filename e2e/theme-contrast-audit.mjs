@@ -92,12 +92,23 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, i
 await installNodeFetchRoute(ctx);
 const page = await ctx.newPage();
 
-await page.goto(`${BASE}/login`, { waitUntil: 'commit', timeout: 60000 });
-await page.waitForTimeout(3500);
-await page.locator('input[type="text"]').first().fill(USER);
-await page.locator('input[type="password"]').first().fill(PASS);
-await page.getByRole('button', { name: /进入控制台/ }).click();
-await page.waitForTimeout(8000);
+/*
+ * 抽成函数是因为**跑到一半会掉登录**。
+ * 一轮 80 条路由 × 每条 5.2s 要十几分钟，实测 light 轮第 55 条、dark 轮第 63 条
+ * 之后全部被弹回 /login，27 对（占 162 的 17%）根本没量过。
+ * 扫描循环里检测到落地 /login 就地重登一次再重试该路由，把这个洞堵上。
+ */
+async function login(p) {
+  await p.goto(`${BASE}/login`, { waitUntil: 'commit', timeout: 60000 });
+  await p.waitForTimeout(3500);
+  await p.locator('input[type="text"]').first().fill(USER);
+  await p.locator('input[type="password"]').first().fill(PASS);
+  await p.getByRole('button', { name: /进入控制台/ }).click();
+  await p.waitForTimeout(8000);
+  return !p.url().includes('/login');
+}
+
+await login(page);
 if (page.url().includes('/login')) {
   await page.screenshot({ path: path.join(OUT, 'login-failed.png') });
   console.error('登录失败，见 login-failed.png');
@@ -160,7 +171,17 @@ for (const theme of ['light', 'dark']) {
        * （Codex 在 PR #1374 第十二轮抓到）。
        * 记进 redirected 单列，不计入 done、findings 不进报告。
        */
-      const landed = await page.evaluate(() => location.pathname);
+      let landed = await page.evaluate(() => location.pathname);
+      // 掉登录就地重登一次再重试本条（长跑必然掉，见 login() 上方注释）
+      if (landed === '/login' && route !== '/login') {
+        console.log(`  [重登] ${route} 被弹回登录页，重新登录后重试`);
+        if (await login(page)) {
+          pageErrors = [];
+          await page.goto(`${BASE}${route}`, { waitUntil: 'commit', timeout: 45000 });
+          await page.waitForTimeout(5200);
+          landed = await page.evaluate(() => location.pathname);
+        }
+      }
       if (landed !== route) {
         coverage.redirected.push(`${theme}${route} → ${landed}`);
         console.log(`  [重定向] ${route} → ${landed}，不计入覆盖`);
@@ -256,6 +277,16 @@ if (realFindings) {
  */
 const unscannedRedirects = coverage.redirected.filter((x) => {
   const landed = x.split(' → ')[1];
+  /*
+   * 掉登录页永远是失败，不能因为 `/login` 恰好也在 ROUTES 里就放行。
+   *
+   * 我上一版的判据是「落地页在清单里就算覆盖没丢」，看着讲得通，实测直接漏掉
+   * 一个 27 对的大洞：审计跑到一半登录态失效，light 轮从第 55 条起、dark 轮从
+   * 第 63 条起，其后每一条都被弹回 /login —— 而 `/login` 在 ROUTES 里，
+   * 于是这 27 对「根本没量过」被我自己的判据判成了良性。
+   * 别名跳转与掉登录是两回事：前者落地页确实有人扫，后者是这一屏没人扫。
+   */
+  if (landed === '/login') return true;
   return !ROUTES.includes(landed);
 });
 if (coverage.skipped.length || coverage.errored.length || unscannedRedirects.length) {
