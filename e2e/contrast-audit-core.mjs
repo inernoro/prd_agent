@@ -60,6 +60,16 @@ export const AUDIT_FN = () => {
   const visible = (el) => {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) return false;
+    /*
+     * opacity **不继承**：祖先 opacity:0 时，子元素自己报的仍是 1。
+     * 只看自己就会把「hover 才出现的控件」当成可见元素测量 —— 而下面的
+     * cumulativeOpacity 又会把它的前景按 0 合成到底色上，于是稳定产出一条
+     * 「fg === bg、比值 1:1」的假阳性。MarkdownViewer 的复制按钮
+     * （外层 opacity-0、内层 svg opacity 1）就是这个形状，它出现在每一个
+     * 渲染 markdown 的页面上（Codex 在 PR #1374 第十六轮抓到）。
+     * 判可见性必须走整条祖先链。
+     */
+    if (cumulativeOpacity(el) === 0) return false;
     const r = el.getBoundingClientRect();
     return r.width > 2 && r.height > 2;
   };
@@ -155,6 +165,45 @@ export const AUDIT_FN = () => {
     el.setAttribute('data-audit-id', String(++auditId));
     out.push({ auditId, kind: 'text', text: el.textContent.trim().slice(0, 24), sel: label(el),
       fg: cs.color, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
+      fgOpacity: cumulativeOpacity(el),
+      box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
+      vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });
+  }
+
+  /*
+   * 表单控件要单独测：input / textarea 的**值**与 **placeholder** 都不是 DOM 文本节点，
+   * 上面那条 `hasText`（只认 nodeType === 3）对它们永远为 false，于是整类控件从来没被量过。
+   * 一个全是输入框的页面因此可以报「干净」，而用户看到的主要文字恰恰就在框里
+   * （Codex 在 PR #1374 第十六轮抓到）。
+   *
+   * placeholder 的颜色取伪元素：getComputedStyle(el, '::placeholder')。
+   * 有值时量 cs.color，没值且有 placeholder 时量伪元素色 —— 用户当下看到的是哪个就量哪个。
+   */
+  for (const el of document.querySelectorAll('input, textarea')) {
+    if (!visible(el) || inactive(el) || isPlatformOverlay(el)) continue;
+    if (el.type === 'hidden' || el.type === 'checkbox' || el.type === 'radio') continue;
+    const cs = getComputedStyle(el);
+    const hasValue = !!(el.value || '').trim();
+    const ph = (el.getAttribute('placeholder') || '').trim();
+    if (!hasValue && !ph) continue;
+    const isPh = !hasValue;
+    const fg = isPh ? getComputedStyle(el, '::placeholder').color : cs.color;
+    if (!fg || isTransparent(fg)) continue;
+    const { bg, needsEye } = effectiveBg(el);
+    const composed = composeFg(fg, bg, el);
+    if (!composed) continue;
+    const c = contrast(composed, bg);
+    const size = parseFloat(cs.fontSize);
+    const bold = +cs.fontWeight >= 700;
+    const need = (size >= 24 || (size >= 18.67 && bold)) ? 3 : 4.5;
+    if (c >= need && !needsEye) continue;
+    const key = `${fg}|${bg}|${label(el)}|${isPh ? 'ph' : 'val'}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const r = el.getBoundingClientRect();
+    el.setAttribute('data-audit-id', String(++auditId));
+    out.push({ auditId, kind: isPh ? 'placeholder' : 'input', text: (isPh ? ph : el.value).slice(0, 24), sel: label(el),
+      fg, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
       fgOpacity: cumulativeOpacity(el),
       box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
       vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });

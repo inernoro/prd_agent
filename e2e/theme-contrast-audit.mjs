@@ -188,6 +188,17 @@ for (const theme of ['light', 'dark']) {
           pageErrors = [];
           await page.goto(`${BASE}${route}`, { waitUntil: 'commit', timeout: 45000 });
           await page.waitForTimeout(5200);
+          /*
+           * 重试这一次的渲染异常同样要判 —— 上面那道门在重试**之前**，
+           * 重试渲染出的错误边界会绕过它，然后被照常扫描并计进 coverage.done，
+           * 「崩掉的页面算干净」就从正常路径搬到了重试路径上
+           * （Codex 在 PR #1374 第十六轮抓到；同一形状第三次出现）。
+           */
+          if (pageErrors.length) {
+            coverage.errored.push(`${theme}${route}: 重登后渲染异常 ${pageErrors[0]}`);
+            console.log(`[${theme}] ${route.padEnd(30)} 重登后渲染异常 ${pageErrors[0].slice(0, 40)}`);
+            continue;
+          }
           landed = await page.evaluate(() => location.pathname);
         }
       }

@@ -86,3 +86,6 @@
 | fix | prd-admin | 修 Codex 第十三轮 P2：批注线程计数徽章底是 8 色亮色调色板（两个主题同色），前景却走会翻的 --text-primary，暗色档白字压亮底 1.55~3.98:1。新增 --fg-on-bright-fill（两档同值的深字），8 个色全部 4.07~10.48:1 |
 | fix | e2e | 修 Codex 第十五轮 P2：重定向判据拿 location.pathname 跟原始 route 串比，而 AUDIT_ROUTES（覆盖参数化/带 tab 页面的唯一入口）传进来的路径基本都带 query，于是那批页面会被自己的判据全判成重定向跳过。改为 pathname 对 pathname，导航仍用完整串 |
 | chore | e2e | 删掉误提交的一次性调试脚本 _probe-local.mjs（写死 /home/user/prd_agent 绝对路径，功能与 theme-contrast-audit-local.mjs 重复，无人引用） |
+| fix | e2e | 修 Codex 第十六轮 P1：可见性只看元素自身 opacity，而 opacity 不继承——祖先 opacity-0 的 hover 控件子元素自报 1，被当成可见元素测量，再被 cumulativeOpacity 合成成 fg===bg，稳定产出 1:1 假阳性。单 /document-store 一页就 12 条（红绿闭环验过，修复后 0 条，命中 21/15 → 15/9） |
+| fix | e2e | 修 Codex 第十六轮 P1：input/textarea 的值与 placeholder 都不是 DOM 文本节点，hasText 恒 false，整类表单控件从没被量过。补测两者（placeholder 走 ::placeholder 伪元素色），当场扫出知识库搜索框 placeholder 浅色 3.35:1 |
+| fix | e2e | 修 Codex 第十六轮 P1：重登重试这条路径绕过了渲染异常门禁，重试渲染出的错误边界会被当成干净路由计进覆盖 |
