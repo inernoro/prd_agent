@@ -665,11 +665,19 @@ export function LogsView() {
   }, [baseParams]);
 
   // 筛选一变就把累加结果清空；不清空的话新旧两套筛选的行会串在一起。
+  //
+  // **total 必须跟着清零。** 只清 rows 会留下 `rows.length(0) < total(上一套筛选的 95)`，
+  // 于是空表格照样挂出哨兵；而首页失败走的是 listError 而不是 moreError（paused 为假），
+  // 哨兵没被暂停，就对着 page=1 无限重打。实测切一次筛选、什么都不做，
+  // 6 秒内发了 312 个请求——这是在自己 DoS 自己。
+  // 清零后 hasMore = 0 < 0 = false，首页回来之前根本不会有哨兵。
   useEffect(() => {
     loadedPage.current = 0;
     loadedSessPage.current = 0;
     setRows([]);
     setSessions([]);
+    setTotal(0);
+    setSessTotal(0);
     setMoreError(null);
     setSessMoreError(null);
   }, [baseParams]);
@@ -677,6 +685,7 @@ export function LogsView() {
   useEffect(() => {
     loadedPage.current = 0;
     setRows([]);
+    setTotal(0);
     setMoreError(null);
   }, [subtab]);
   // 首页取数。后续页不走 effect，由 loadMore 直接调用——页码是「取到第几页」的结果，

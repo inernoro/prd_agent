@@ -148,7 +148,9 @@ const STUBS = {
   '/auth/tenants': [],
   '/platforms': { ...LIST, items: PLATFORMS, platforms: PLATFORMS },
   '/models': { ...LIST, items: MODELS, models: MODELS },
-  '/logs': { ...LIST, total: LOGS.length, items: LOGS },
+  // total 刻意大于返回条数：只有 hasMore 为真时瀑布加载才会挂出哨兵，
+  // 下面「空闲时只发一次列表请求」的断言才有东西可测；相等的话它是空跑的绿灯。
+  '/logs': { ...LIST, total: 200, items: LOGS },
   '/logs/meta': { models: [], providers: [], statuses: [], appCallerCodes: [], sessions: [], teams: [], serviceKeys: [], clientCodes: [], environments: [] },
   '/logs/summary': { total: LOGS.length, succeeded: LOGS.length - 1, failed: 1, totalTokens: 400, estimatedCostUsd: 0.01 },
   // 趋势图是基准页自身的一部分，空 points 会让它整块不渲染 —— 基准就不再代表真实版面。
@@ -332,6 +334,7 @@ await page.waitForURL('**/llmgw/logs');
 
 const ROUTES = ['/logs', '/platforms', '/models', '/service-keys', '/audits', '/app-callers', '/pools', '/logical-models', '/exchanges'];
 const data = {};
+const idleFetches = {};
 for (const route of ROUTES) {
   await page.goto(`${base}${route}`);
   await page.waitForTimeout(800);
@@ -367,6 +370,74 @@ const sidebarFooter = await page.evaluate(() => {
     视口高: window.innerHeight,
   };
 });
+
+// 空闲时不许自动续取。
+// 这条针对的是同一族反复出现的缺陷：哨兵一旦落在「不裁剪的 root」里，或者列表被清空
+// 而 total 没跟着清零，它就会一直触发。已经踩过三个变体：
+//   1) ≤680px 断点把表体改成 overflow:visible，哨兵永远在 root 盒子里 —— 开页 6 秒 23 个请求
+//   2) 切筛选只清 rows 不清 total，空表挂着哨兵且首页失败不 pause —— 6 秒 312 个请求
+//   3) 触底失败后页码照常前进，哨兵继续推进 —— 跳过失败那一页
+// 判据统一成一句话：**打开页面什么都不做，列表请求只能发一次**（桌面与移动各测一次）。
+for (const [label, size] of [['桌面', { width: 1440, height: 900 }], ['移动', { width: 390, height: 844 }]]) {
+  await page.setViewportSize(size);
+  let listCalls = 0;
+  const count = (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/gw/logs')) listCalls += 1;
+  };
+  page.on('request', count);
+  await page.goto(`${base}/logs`);
+  await page.waitForSelector('.lg-log-table-body');
+  await page.waitForTimeout(2500); // 不滚动、不点击，纯等
+  idleFetches[label] = listCalls;
+
+  // 再切一次筛选。首屏后什么都不做只能测到「root 是否在裁剪」那一族；
+  // 「清空列表却没清 total」要等到列表被清空、而新首页还没回来的那一瞬间才暴露，
+  // 所以必须真的切一次。切完同样只许再发一次请求。
+  listCalls = 0;
+  await page.evaluate(() => {
+    const select = [...document.querySelectorAll('select')]
+      .find((el) => [...el.options].some((option) => option.textContent.includes('近 7 天')));
+    if (!select) return;
+    const option = [...select.options].find((item) => item.value !== select.value);
+    if (!option) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    setter.call(select, option.value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(2500);
+  page.off('request', count);
+  idleFetches[`${label}·切筛选后`] = listCalls;
+}
+await page.setViewportSize({ width: 1440, height: 900 });
+
+// 上面那组用的是「永远成功」的桩，只能测出「root 不裁剪」那一族：
+// 列表清空后哨兵虽然会多打一两次，但首页一旦成功、行填回来，它自己就停了。
+// 「清空列表却没清 total」的真正杀伤力要在**首页持续失败**时才显形——
+// 空表 + hasMore 恒真 + 首页失败不进 paused，哨兵就对着 page=1 无限重打
+// （实测 6 秒 312 个请求，等于自己 DoS 自己）。这里强制让列表接口全失败来测它。
+let failingCalls = 0;
+await page.route('**/gw/logs?*', async (route) => {
+  failingCalls += 1;
+  await route.fulfill({
+    status: 500,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: false, error: { message: '注入失败（守卫用）' }, data: null }),
+  });
+});
+await page.evaluate(() => {
+  const select = [...document.querySelectorAll('select')]
+    .find((el) => [...el.options].some((option) => option.textContent.includes('近 30 天')));
+  if (!select) return;
+  const option = [...select.options].find((item) => item.value !== select.value);
+  if (!option) return;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+  setter.call(select, option.value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+});
+await page.waitForTimeout(2500);
+await page.unroute('**/gw/logs?*');
+const failStormCalls = failingCalls;
 
 // 表体的滚动位置必须能扛住一次重渲染。
 // 这条判据针对的是真实踩过的形状：LogTable 若定义在 LogsView 函数体里，
@@ -431,6 +502,28 @@ for (const [route, m] of Object.entries(data)) {
   console.log(`${route.padEnd(17)} ${diffs.length ? '漂移: ' + diffs.join('；') : '与基准一致'}`);
   drift += diffs.length;
 }
+console.log('空闲时列表请求次数:', JSON.stringify(idleFetches));
+for (const [label, calls] of Object.entries(idleFetches)) {
+  if (calls !== 1) {
+    console.error(
+      `${label}视口下打开 Logs 什么都不做，列表请求发了 ${calls} 次（应为 1 次）。`
+      + '\n  哨兵在自动续取：检查 IntersectionObserver 的 root 是不是真的在裁剪，'
+      + '以及清空列表时 total 有没有跟着清零。',
+    );
+    drift += 1;
+  }
+}
+
+console.log('首页持续失败时 2.5s 内的列表请求次数:', failStormCalls);
+if (failStormCalls > 3) {
+  console.error(
+    `首页失败时列表接口被打了 ${failStormCalls} 次（上限 3）。`
+    + '\n  清空累加结果时 total 必须一并清零，否则空表仍然 hasMore 恒真、哨兵不停重打；'
+    + '\n  首页失败走的是 listError 而不是 moreError，不会进 paused，挡不住这个循环。',
+  );
+  drift += 1;
+}
+
 console.log('表体滚动保持:', JSON.stringify(scrollKeep));
 if (!scrollKeep.可滚动) {
   console.error(`无法验证滚动保持：${scrollKeep.原因}——这条断言正在空跑，请修桩数据。`);
