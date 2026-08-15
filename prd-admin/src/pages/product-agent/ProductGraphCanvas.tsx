@@ -937,7 +937,7 @@ function NodeDrawer({
   }, [node.id, productId, type, rawId]);
 
   return (
-    <div className="absolute top-0 right-0 h-full w-80 max-w-[80%] bg-[#16181d] border-l border-token-subtle flex flex-col shadow-2xl" style={{ zIndex: 20 }}>
+    <div className="surface-tone-dark absolute top-0 right-0 h-full w-80 max-w-[80%] bg-[#16181d] border-l border-token-subtle flex flex-col shadow-2xl" style={{ zIndex: 20 }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
         <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: meta?.color ?? '#fff' }}>
           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: meta?.color ?? '#888' }} />

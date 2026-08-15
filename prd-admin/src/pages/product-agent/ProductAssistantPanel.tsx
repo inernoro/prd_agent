@@ -415,7 +415,7 @@ function AiRow({ text, streaming, children }: { text?: string; streaming?: boole
         {!streaming && text && (
           <button
             onClick={copy}
-            className="absolute -bottom-2.5 right-1 flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1c22] border border-token-subtle text-token-secondary hover-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+            className="surface-tone-dark absolute -bottom-2.5 right-1 flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1c22] border border-token-subtle text-token-secondary hover-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
             title="复制内容"
           >
             {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? '已复制' : '复制'}

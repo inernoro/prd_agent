@@ -63,7 +63,7 @@ export function AppealHistoryDrawer({ open, onClose, submissionId, canResolve, o
 
   return (
     <MobileDrawer open={open} onOpenChange={(v) => { if (!v) onClose(); }} side="right" width={520}>
-      <div className="h-full flex flex-col bg-[#15171b]">
+      <div className="surface-tone-dark h-full flex flex-col bg-[#15171b]">
         {/* 标题栏 */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-token-subtle">
           <div className="flex items-center gap-2.5">

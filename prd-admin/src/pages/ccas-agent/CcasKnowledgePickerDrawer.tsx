@@ -228,7 +228,7 @@ export function CcasKnowledgePickerDrawer({
       onClick={onClose}
     >
       <div
-        className="rounded-xl border border-token-subtle bg-[#0f1014] flex flex-col shadow-2xl"
+        className="surface-tone-dark rounded-xl border border-token-subtle bg-[#0f1014] flex flex-col shadow-2xl"
         style={{ width: '90vw', maxWidth: 980, height: '85vh', maxHeight: '85vh' }}
         onClick={(e) => e.stopPropagation()}
       >

@@ -134,7 +134,7 @@ function PmQuickActionsConfigDialog({
   const dialog = (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
+        className="surface-tone-dark rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ width: 480, maxWidth: '92vw', maxHeight: '82vh' }}
         onClick={(e) => e.stopPropagation()}
       >

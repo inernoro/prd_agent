@@ -234,12 +234,25 @@ describe('同色调浅底浅字棘轮（浅色主题最高频缺陷）', () => {
       const rel = file.slice(SRC.length).replace(/\\/g, '/');
       const text = fs.readFileSync(file, 'utf8');
       /*
-       * 显式按主题分支的文件跳过。这类文件里浅色档写 600/700、暗色档写 300/400，
-       * 两个分支在源码里长得一模一样，静态判据分不出哪段是给哪个主题的
-       * （report-agent 的 buildStatusConfig(isLight) 就是范例，且它本来就是**正确**写法）。
-       * 代价：这些文件的同类缺陷本判据看不见，靠它们自己的分支纪律兜。
+       * 显式按主题分支的文件跳过 —— 但判定必须**窄**。
+       *
+       * 第一版写成 /useDataTheme|isLight|data-theme/ 命中即跳过整个文件，
+       * 结果 AppShell.tsx 因为注释里提到 data-theme、以及 removeAttribute('data-theme')
+       * 就被整体排除 —— 而它正是这条守卫为之而建的那个文件（通知注册表 accent
+       * 一值两用，36 条路由 × 4 处）。守卫把自己要守的目标排除在外，
+       * 全仓共 48 个文件这样被静默跳过（Codex 在 PR #1374 第七轮抓到）。
+       *
+       * 现在只认三种「真的在按主题分支」的信号，且先剥掉注释再判：
+       *   - useDataTheme( ：拿到了主题值
+       *   - isLight 作为标识符：典型的分支变量
+       *   - [data-theme= ：CSS 属性选择器写的双档
+       * 只是提到字符串、或操作 DOM 属性，不算分支。
        */
-      if (/useDataTheme|isLight|data-theme/.test(text)) continue;
+      const codeOnly = text
+        .replace(/\/\*[\s\S]*?\*\//g, '')     // 块注释
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');  // 行注释（避开 http:// 这类）
+      const branchesOnTheme = /useDataTheme\s*\(|\bisLight\b|\[data-theme=/.test(codeOnly);
+      if (branchesOnTheme) continue;
       const a = findInlineViolations(text);
       const b = findClassViolations(text);
       const c = findDualUseViolations(text);

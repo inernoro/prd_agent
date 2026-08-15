@@ -81,7 +81,7 @@ export function OverviewKnowledgeList() {
         <select
           value={productFilter}
           onChange={(e) => { setProductFilter(e.target.value); setPage(1); }}
-          className="px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-secondary outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]"
+          className="surface-tone-dark px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-secondary outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]"
         >
           <option value="">全部产品</option>
           {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}

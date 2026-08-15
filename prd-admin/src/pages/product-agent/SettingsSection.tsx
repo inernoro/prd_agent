@@ -457,7 +457,7 @@ function DescTemplateEditModal({
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-2xl rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
+        className="surface-tone-dark w-full max-w-2xl rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ maxHeight: '88vh' }}
         onClick={(e) => e.stopPropagation()}
       >

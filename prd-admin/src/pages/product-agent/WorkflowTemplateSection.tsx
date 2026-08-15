@@ -246,7 +246,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
           <table className="w-full min-w-[640px] border-collapse text-xs">
             <thead>
               <tr className="border-b border-token-subtle bg-token-nested">
-                <th className="sticky left-0 z-10 bg-[#16181d] px-3 py-2.5 text-left font-medium text-token-secondary w-[148px] border-r border-token-subtle">
+                <th className="surface-tone-dark sticky left-0 z-10 bg-[#16181d] px-3 py-2.5 text-left font-medium text-token-secondary w-[148px] border-r border-token-subtle">
                   从 \ 到
                 </th>
                 {sortedStates.map((col) => (
@@ -269,7 +269,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
             <tbody>
               {sortedStates.map((from) => (
                 <tr key={from.key} className="border-b border-token-subtle last:border-0">
-                  <td className="sticky left-0 z-10 bg-[#14161b] px-3 py-2 text-token-secondary border-r border-token-subtle whitespace-nowrap">
+                  <td className="surface-tone-dark sticky left-0 z-10 bg-[#14161b] px-3 py-2 text-token-secondary border-r border-token-subtle whitespace-nowrap">
                     从【{from.label || from.key}】可流转到
                   </td>
                   {sortedStates.map((to) => {

@@ -585,7 +585,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
   );
 
   return (
-    <div className="h-full min-h-0 flex flex-col" data-tour-id="visual-editor-root" style={{ background: '#101014' }}>
+    <div className="surface-tone-dark h-full min-h-0 flex flex-col" data-tour-id="visual-editor-root" style={{ background: '#101014' }}>
       {/* 顶部栏 */}
       <div className="shrink-0 h-12 px-2 flex items-center gap-1" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
         <button
@@ -827,7 +827,7 @@ export default function MobileVisualAgentEditor(props: { workspaceId: string; on
         ? createPortal(
             <div className="fixed inset-0 z-[120] flex flex-col justify-end" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setPoolSheetOpen(false)}>
               <div
-                className="rounded-t-2xl px-3 pt-3 flex flex-col gap-1"
+                className="surface-tone-dark rounded-t-2xl px-3 pt-3 flex flex-col gap-1"
                 style={{
                   background: '#1a1a20',
                   maxHeight: '60vh',

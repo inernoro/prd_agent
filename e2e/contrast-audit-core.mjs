@@ -220,6 +220,11 @@ export function renderMarkdown({ title, base, routeCount, report, groups, note }
   return [
     `# ${title}`, '',
     `站点 ${base}｜路由 ${routeCount} 条｜命中 ${total} 处｜配色组 ${groups.length}`,
+    ...(() => {
+      // 「没量成」必须与「实测不达标」分开报：前者是工具没够着，后者才是缺陷
+      const un = report.reduce((s2, r) => s2 + r.findings.filter((f) => f.unresolved).length, 0);
+      return un ? ['', `> 其中 ${un} 处是**采样失败**（渐变底没量成，不是实测不达标），需人工看一眼。`] : [];
+    })(),
     ...(note ? ['', `> ${note}`] : []), '',
     '## 按配色聚合（影响路由数从多到少）', '',
     '| 影响路由数 | 类型 | 前景 | 背景 | 实测 | 需要 | 样例元素 |',
@@ -345,7 +350,20 @@ export async function resampleGradientFindings(page, _unused, findings) {
 
   targets.forEach((f, i) => {
     const r = results[i];
-    if (!r) return;
+    if (!r) {
+      /*
+       * 采样失败 ≠ 达标。元素在收集与截图之间消失、或框小到取不出像素时，
+       * 这条会留着**祖先推断出的那个不可信比值**；两个调用方随后一律
+       * `filter(f => f.ratio < f.need)`，于是「近似恰好判达标、真实值从没量过」
+       * 的候选就被静默丢掉（Codex 在 PR #1374 第七轮抓到，是「未解析当作通过」
+       * 的第三次变体）。
+       * 显式标成未解析，并把比值压到 0 —— 宁可留在报告里让人看一眼，
+       * 也不要假装它达标。unresolved 字段供报告区分「实测不达标」与「没量成」。
+       */
+      f.unresolved = true;
+      f.ratio = 0;
+      return;
+    }
     f.bg = `rgb(${r.bg})`;
     f.ratio = r.ratio;
     f.sampled = true;

@@ -132,7 +132,7 @@ export function VersionWorkflowImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
-        className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
+        className="surface-tone-dark flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
@@ -173,7 +173,7 @@ export function VersionWorkflowImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-token-subtle">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-token-muted">
+                <thead className="surface-tone-dark bg-[#1a1c22] text-token-muted">
                   <tr>
                     <th className="px-3 py-2">行号</th>
                     <th className="px-3 py-2">应用</th>

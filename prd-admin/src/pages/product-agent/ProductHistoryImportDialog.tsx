@@ -224,7 +224,7 @@ export function ProductHistoryImportDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
-      <div className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl" style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}>
+      <div className="surface-tone-dark flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl" style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}>
         <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
           <div>
             <div className="text-base font-semibold text-token-primary">导入历史{TYPE_LABEL[type]}</div>
@@ -262,7 +262,7 @@ export function ProductHistoryImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-token-subtle">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-token-muted"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{isCrossProduct && <th className="px-3 py-2">归属产品</th>}<th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
+                <thead className="surface-tone-dark bg-[#1a1c22] text-token-muted"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{isCrossProduct && <th className="px-3 py-2">归属产品</th>}<th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
                 <tbody>{rows.slice(0, 30).map((row, index) => {
                   const routeLabel = row.sourceFields?.['应用']
                     || row.sourceFields?.['所属产品']

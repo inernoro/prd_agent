@@ -109,7 +109,7 @@ export function FeatureImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
       <div
-        className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
+        className="surface-tone-dark flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
         onClick={(e) => e.stopPropagation()}
       >

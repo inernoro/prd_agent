@@ -85,7 +85,7 @@ export function CustomerSearchSelect({
       {quickOpen && createPortal(
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/45" onClick={() => setQuickOpen(false)}>
           <div
-            className="rounded-xl border border-token-subtle bg-[#16181d] w-[min(400px,92vw)] shadow-2xl"
+            className="surface-tone-dark rounded-xl border border-token-subtle bg-[#16181d] w-[min(400px,92vw)] shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle">

@@ -49,7 +49,7 @@ export function ImportPasswordModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-xl border border-token-subtle bg-[#0f1014] flex flex-col"
+        className="surface-tone-dark w-full max-w-sm rounded-xl border border-token-subtle bg-[#0f1014] flex flex-col"
       >
         <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-token-subtle">
           <div className="text-sm font-medium text-token-primary inline-flex items-center gap-1.5">

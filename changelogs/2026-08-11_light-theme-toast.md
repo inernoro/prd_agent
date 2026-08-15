@@ -63,3 +63,6 @@
 | fix | e2e | 修 Codex 第六轮 P1（最实质的一条）：路由清单只从 navRegistry 取，漏掉 App.tsx 里的嵌套写法。实测 48 → 80 条，漏的 32 条里就有本 PR 改过的 /skills /weekly-poster /data-transfers /notifications —— 审计一边跳过我改的屏、一边报「覆盖完整」 |
 | fix | e2e | 修 Codex 第六轮 P1：pageerror 被静默吞掉，页面崩成错误边界仍算「已覆盖且干净」。改为记账并在跑 AUDIT_FN **之前**判掉（否则错误边界自己的配色会污染报告） |
 | chore | doc | 移除 doc/assets 下两张无人引用的对照截图（810 KiB），与本 PR 刚写进 debt 的「扫描产物不入库」自相矛盾 |
+| fix | prd-admin | 修 Codex 第七轮 P2：sameHueTintRatchet 的「按主题分支跳过」判据太宽，命中注释与 DOM 属性字符串就跳过整个文件——AppShell 因此被整体排除，而它正是这条守卫为之而建的文件。收紧为「剥注释后仅认 useDataTheme( / isLight 标识符 / [data-theme= 选择器」，11 个文件重回检查范围 |
+| fix | prd-admin | 修 Codex 第七轮 P1：我的 token 改造把 --accent-fg-* 放进了钉死暗底的容器，浅色档下深字压深底（ProductGraphCanvas 抽屉实测约 1.9:1）。同型全仓 33 个文件 49 处，逐处补 surface-tone-dark |
+| fix | e2e | 修 Codex 第七轮 P1：重采样失败的候选留着不可信的近似比值，被调用方按「达标」丢弃。改为标 unresolved 并把比值压 0，报告里与「实测不达标」分开计数 |

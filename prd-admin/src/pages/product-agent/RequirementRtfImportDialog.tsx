@@ -215,7 +215,7 @@ export function RequirementRtfImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
-        className="w-full max-w-4xl rounded-xl border border-token-subtle bg-[#111319] shadow-2xl flex flex-col"
+        className="surface-tone-dark w-full max-w-4xl rounded-xl border border-token-subtle bg-[#111319] shadow-2xl flex flex-col"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
       >
         <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-token-subtle">

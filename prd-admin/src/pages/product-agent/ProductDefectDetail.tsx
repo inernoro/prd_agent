@@ -87,7 +87,7 @@ function TraceRelationDrawer({ productId, nodeId, title, onClose }: { productId:
     <div className="fixed inset-0 z-[100] flex">
       <div className="flex-1 bg-token-nested" style={{ opacity: shown ? 1 : 0, transition: 'opacity .25s ease' }} onClick={onClose} />
       <div
-        className="h-full bg-[#0f1014] border-l border-token-subtle flex flex-col shadow-2xl"
+        className="surface-tone-dark h-full bg-[#0f1014] border-l border-token-subtle flex flex-col shadow-2xl"
         style={{ width: '70%', transform: shown ? 'translateX(0)' : 'translateX(100%)', transition: 'transform .25s ease' }}
       >
         <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-token-subtle">

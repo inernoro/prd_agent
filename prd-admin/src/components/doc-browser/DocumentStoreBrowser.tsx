@@ -432,7 +432,7 @@ function ListManagerDialog({
   const [editValue, setEditValue] = useState('');
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col" style={{ width: 440, maxWidth: '92vw', maxHeight: '80vh' }} onClick={(e) => e.stopPropagation()}>
+      <div className="surface-tone-dark rounded-xl border border-token-subtle bg-[#16181d] flex flex-col" style={{ width: 440, maxWidth: '92vw', maxHeight: '80vh' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
           <h2 className="text-sm font-semibold text-token-primary">{title}</h2>
           <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={16} /></button>

@@ -183,7 +183,7 @@ export function CcasSqlSnippets() {
         <div className="flex-1 min-h-0" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {selected ? (
             <article className="flex flex-col">
-              <header className="sticky top-0 z-10 px-4 py-3 border-b border-token-subtle bg-[#0f1014]/95 backdrop-blur flex items-center justify-between gap-3">
+              <header className="surface-tone-dark sticky top-0 z-10 px-4 py-3 border-b border-token-subtle bg-[#0f1014]/95 backdrop-blur flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <h3 className="text-sm font-semibold text-token-primary truncate">{selected.title}</h3>
                   <DialectBadge dialect={selected.dialect} />

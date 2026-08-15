@@ -65,7 +65,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-4xl mx-4 rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
+        className="surface-tone-dark relative w-full max-w-4xl mx-4 rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
         style={{ height: '90vh', maxHeight: '90vh' }}
         onClick={(e) => e.stopPropagation()}
       >

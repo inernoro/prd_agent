@@ -277,7 +277,7 @@ export function FeatureCatalogTab({
         </div>
       )}
       <div className="flex h-full min-h-0 flex-1">
-        <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-token-subtle bg-[#121317]">
+        <aside className="surface-tone-dark flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-token-subtle bg-[#121317]">
           <div className="shrink-0 border-b border-token-subtle px-3 py-2">
             <div className="flex items-center gap-1.5 text-[11px] text-token-muted">
               <FolderTree size={13} /> 功能目录
@@ -312,7 +312,7 @@ export function FeatureCatalogTab({
           </div>
         </aside>
 
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-[#0f1014]">
+        <div className="surface-tone-dark flex h-full min-h-0 min-w-0 flex-1 flex-col bg-[#0f1014]">
           <div className="shrink-0 border-b border-token-subtle px-4 py-2.5">
             <div className="text-sm font-medium text-token-primary truncate">
               {selectedNode ? selectedNode.title : '全部功能'}
@@ -340,7 +340,7 @@ export function FeatureCatalogTab({
             <select
               value={releaseId}
               onChange={(e) => { setReleaseId(e.target.value); setSelectedId(null); }}
-              className="h-8 min-w-[140px] max-w-[200px] shrink-0 rounded-lg border border-token-subtle bg-[#15171c] px-2.5 text-xs text-token-primary outline-none focus:border-cyan-400/50"
+              className="surface-tone-dark h-8 min-w-[140px] max-w-[200px] shrink-0 rounded-lg border border-token-subtle bg-[#15171c] px-2.5 text-xs text-token-primary outline-none focus:border-cyan-400/50"
             >
               <option value="">全部正式版本</option>
               {releases.map((r) => (
@@ -399,7 +399,7 @@ export function FeatureCatalogTab({
                 <colgroup>
                   <col style={{ width: LIST_SELECTION_COL_WIDTH }} />
                 </colgroup>
-                <thead className="sticky top-0 z-10 bg-[#0f1014] text-token-muted border-b border-token-subtle">
+                <thead className="surface-tone-dark sticky top-0 z-10 bg-[#0f1014] text-token-muted border-b border-token-subtle">
                   <tr>
                     <ListTableSelectionHeader selection={tableSelection} disabled={visibleRows.length === 0} />
                     <th className="px-3 py-2.5 font-medium whitespace-nowrap">编号</th>

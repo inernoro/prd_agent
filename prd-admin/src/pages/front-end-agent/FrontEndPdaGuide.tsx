@@ -202,7 +202,7 @@ export function FrontEndPdaGuideModal({ open, onClose }: { open: boolean; onClos
         role="dialog"
         aria-modal="true"
         aria-label="PDA 项目手册"
-        className="fea-modal-panel w-full max-w-5xl rounded-2xl border border-token-subtle bg-[#0b0d12] shadow-2xl flex flex-col"
+        className="surface-tone-dark fea-modal-panel w-full max-w-5xl rounded-2xl border border-token-subtle bg-[#0b0d12] shadow-2xl flex flex-col"
         style={{ height: '90vh', maxHeight: '90vh' }}
         onClick={(e) => e.stopPropagation()}
       >
