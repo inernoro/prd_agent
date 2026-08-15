@@ -48,11 +48,46 @@ export const AUDIT_FN = () => {
     return { bg, needsEye };
   };
 
+  /*
+   * 平台注入的浮层不属于被审对象：CDS 会往每个预览页塞一个分支徽章
+   * （#bt-branch-badge），它不在仓库源码里、这个 PR 也改不了它。
+   * 不排除的话每条路由都会稳定多报一处，真实回归反而被淹没。
+   * 排除范围写死成具体 id，不做宽泛通配 —— 免得顺手把应用自己的东西也滤掉。
+   */
+  const PLATFORM_OVERLAY = '#bt-branch-badge';
+  const isPlatformOverlay = (el) => !!el.closest(PLATFORM_OVERLAY);
+
   const visible = (el) => {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) return false;
     const r = el.getBoundingClientRect();
     return r.width > 2 && r.height > 2;
+  };
+
+  /**
+   * 元素自身与祖先链累计的 opacity。
+   * getComputedStyle(el).color 是**未经 opacity 衰减**的原色，直接拿去算对比度
+   * 会把 opacity-50 的文字当成全强度前景 —— 实际渲染只有一半浓度，
+   * 真实对比度低于 4.5:1 的也会被判达标（仓库里 DataTransferPage 就有 opacity-50 的计数标签）。
+   */
+  const cumulativeOpacity = (el) => {
+    let o = 1, node = el;
+    while (node && node !== document.documentElement) {
+      const v = parseFloat(getComputedStyle(node).opacity);
+      if (!Number.isNaN(v)) o *= v;
+      node = node.parentElement;
+    }
+    return o;
+  };
+
+  /** 把前景色按累计 opacity 衰减后再合成到底色上，得到浏览器**实际画出来**的那个颜色。 */
+  const composeFg = (color, bg, el) => {
+    const o = cumulativeOpacity(el);
+    if (o >= 0.999) return compose(color, bg);
+    const solid = compose(color, bg);
+    if (!solid) return null;
+    // 整个元素带 opacity 时，等价于把「已合成的前景」再按 o 混回底色
+    return [0, 1, 2].map((i) => Math.round(solid[i] * o + bg[i] * (1 - o)));
   };
 
   /*
@@ -89,15 +124,22 @@ export const AUDIT_FN = () => {
 
   for (const el of document.querySelectorAll('body *')) {
     const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-    if (!hasText || !visible(el) || inactive(el)) continue;
+    if (!hasText || !visible(el) || inactive(el) || isPlatformOverlay(el)) continue;
     const cs = getComputedStyle(el);
     if (isTransparent(cs.color)) continue;
     const { bg, needsEye } = effectiveBg(el);
-    const composed = compose(cs.color, bg);
+    const composed = composeFg(cs.color, bg, el);
     if (!composed) continue;
     const c = contrast(composed, bg);
+    /*
+     * WCAG 的「大字」是 18pt / 14pt 粗体，而 getComputedStyle().fontSize 给的是 **CSS 像素**。
+     * 1pt = 4/3 px，所以换算过来是 24px / 18.67px 粗体 —— 原来直接拿 18.66 和 14 去比像素，
+     * 等于把 18.66~24px 的正文、14~18.67px 的粗体标签统统放宽到 3:1，
+     * 落在 3~4.5 之间的真实缺陷就此消失在一份「干净」的报告里（Codex 在 PR #1374 第五轮抓到）。
+     */
     const size = parseFloat(cs.fontSize);
-    const need = (size >= 18.66 || (size >= 14 && +cs.fontWeight >= 700)) ? 3 : 4.5;
+    const bold = +cs.fontWeight >= 700;
+    const need = (size >= 24 || (size >= 18.67 && bold)) ? 3 : 4.5;
     /*
      * needsEye（底是渐变/背景图）时不许在这里以「近似达标」为由丢弃。
      * 祖先链推断出的底色在渐变上本来就不可信：深字压在真实很暗的渐变上，
@@ -126,9 +168,9 @@ export const AUDIT_FN = () => {
     // 这种取根节点的黑是假的（第一版因此误报 44 条路由）。
     if (!strokeOn && cs.fill === 'rgb(0, 0, 0)'
         && el.querySelector('[fill],[stroke],stop')) continue;
-    if (isTransparent(raw)) continue;
+    if (isTransparent(raw) || isPlatformOverlay(el)) continue;
     const { bg, needsEye } = effectiveBg(el.parentElement || el);
-    const composed = compose(raw, bg);
+    const composed = composeFg(raw, bg, el);
     if (!composed) continue;
     const c = contrast(composed, bg);
     if (c >= 3 && !needsEye) continue;   // 同文字分支：渐变底上的「达标」是近似值，留给重采样定夺
@@ -222,7 +264,12 @@ export async function resampleGradientFindings(page, _unused, findings) {
       el.style.setProperty('stroke', 'transparent', 'important');
     }
   }, ids);
-  const clean = await page.screenshot();
+  /*
+   * 必须整页截图。此前用默认的**视口**截图，而候选是按 getBoundingClientRect 收的、
+   * 不限于首屏 —— 屏下的渐变底元素坐标一夹紧就无效，重采样返回 null，
+   * 于是那条留着不可信的祖先近似值，既可能假失败也可能假通过。
+   */
+  const clean = await page.screenshot({ fullPage: true });
   // 还原
   await page.evaluate(() => {
     for (const [el, c, f, st] of window.__auditRestore || []) {
@@ -235,7 +282,9 @@ export async function resampleGradientFindings(page, _unused, findings) {
     const img = new Image();
     img.src = `data:image/png;base64,${b64}`;
     await img.decode();
-    const scale = img.width / window.innerWidth;
+    // 整页截图 → 用文档宽度定标，坐标也要换成文档坐标（见下方 r.x + scrollX）
+    const docW = Math.max(document.documentElement.scrollWidth, window.innerWidth);
+    const scale = img.width / docW;
     const cv = document.createElement('canvas');
     cv.width = img.width; cv.height = img.height;
     const cx = cv.getContext('2d', { willReadFrequently: true });
@@ -260,10 +309,13 @@ export async function resampleGradientFindings(page, _unused, findings) {
       const el = document.querySelector(`[data-audit-id="${id}"]`);
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      const x0 = Math.max(0, Math.round(r.x * scale));
-      const y0 = Math.max(0, Math.round(r.y * scale));
-      const x1 = Math.min(img.width, Math.round((r.x + r.width) * scale));
-      const y1 = Math.min(img.height, Math.round((r.y + r.height) * scale));
+      // 文档坐标（配整页截图）；视口坐标只在首屏成立，屏下元素会被夹成空框
+      const dx = r.x + window.scrollX;
+      const dy = r.y + window.scrollY;
+      const x0 = Math.max(0, Math.round(dx * scale));
+      const y0 = Math.max(0, Math.round(dy * scale));
+      const x1 = Math.min(img.width, Math.round((dx + r.width) * scale));
+      const y1 = Math.min(img.height, Math.round((dy + r.height) * scale));
       if (x1 - x0 < 2 || y1 - y0 < 2) return null;
       /*
        * 取元素框内的**众数色**当底色，而不是正中一个点。

@@ -58,3 +58,5 @@
 | fix | prd-admin | 修 Codex 第四轮 P2：拆 accent/fg 时漏了两个 success 分支——只改 accent 没改 fg，「缺陷已解决」通知底绿字紫。补上并加成对守卫（红绿闭环验过） |
 | fix | e2e | 修 Codex 第四轮 P1：渐变底候选在「近似达标」时被提前丢弃，重采样再也看不到它。改为 needsEye 一律留到重采样后再判 —— 这个修复当场挖出一处此前被藏住的真实缺陷 |
 | fix | prd-admin | arena 主视觉徽章里的剑图标压在 HERO_GRADIENT 上用了 --text-primary，实测 2.82:1（图标线需 3:1）。改用该渐变配套的 HERO_GRADIENT_FG，复扫归零 |
+| fix | e2e | 修 Codex 第五轮三条测量失真：WCAG 大字阈值是磅被当成 CSS 像素用（18.66/14 → 24/18.67），18.66~24px 正文与 14~18.67px 粗体被错误放宽到 3:1；前景未计元素与祖先累计 opacity，opacity-50 的字按全强度算；重采样用视口截图配视口坐标，屏下渐变元素一律采空。三条都导致少报 |
+| chore | e2e | 审计排除 CDS 注入的分支徽章（#bt-branch-badge）：平台浮层不在仓库源码里、本 PR 改不了，不排除会让每条路由稳定多报一处、淹没真实回归 |
