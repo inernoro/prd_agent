@@ -965,9 +965,9 @@ function VerdictBadge({ verdict }: { verdict: NonNullable<AcceptanceReport['verd
 }
 
 function VerdictIcon({ verdict }: { verdict?: AcceptanceReport['verdict'] | null }): JSX.Element {
-  if (verdict === 'pass') return <CircleCheck className="h-4 w-4 shrink-0 text-emerald-500" aria-label="通过" />;
-  if (verdict === 'fail') return <CircleX className="h-4 w-4 shrink-0 text-red-500" aria-label="不通过" />;
-  if (verdict === 'conditional') return <CircleAlert className="h-4 w-4 shrink-0 text-amber-500" aria-label="有条件" />;
+  if (verdict === 'pass') return <CircleCheck className="h-4 w-4 shrink-0 text-ok" aria-label="通过" />;
+  if (verdict === 'fail') return <CircleX className="h-4 w-4 shrink-0 text-bad" aria-label="不通过" />;
+  if (verdict === 'conditional') return <CircleAlert className="h-4 w-4 shrink-0 text-warn" aria-label="有条件" />;
   return <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="无结论" />;
 }
 

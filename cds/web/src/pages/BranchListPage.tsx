@@ -673,10 +673,10 @@ function requestKindLabel(kind?: HttpRequestKind): string {
 
 function requestKindTone(kind?: HttpRequestKind): string {
   switch (kind) {
-    case 'user-traffic': return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700';
-    case 'deploy': return 'border-amber-500/30 bg-amber-500/10 text-amber-700';
-    case 'container-op': return 'border-orange-500/30 bg-orange-500/10 text-orange-700';
-    case 'control-plane': return 'border-sky-500/30 bg-sky-500/10 text-sky-700';
+    case 'user-traffic': return 'border-ok/30 bg-ok-soft text-ok';
+    case 'deploy': return 'border-warn/30 bg-warn-soft text-warn';
+    case 'container-op': return 'border-warn/30 bg-warn-soft text-warn';
+    case 'control-plane': return 'border-info/30 bg-info-soft text-info';
     case 'polling': return 'border-muted-foreground/20 bg-muted/30 text-muted-foreground';
     case 'sse': return 'border-violet-500/30 bg-violet-500/10 text-violet-700';
     default: return 'border-border bg-muted/30 text-muted-foreground';
@@ -697,8 +697,8 @@ function activityLabel(event: ActivityEvent): string {
 
 function activityStatusClass(status: number): string {
   if (status >= 500) return 'border-destructive/30 bg-destructive/10 text-destructive';
-  if (status >= 400) return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
-  return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+  if (status >= 400) return 'border-warn/30 bg-warn-soft text-warn';
+  return 'border-ok/30 bg-ok-soft text-ok';
 }
 
 function activitySourceLabel(event: ActivityEvent): string {
@@ -763,11 +763,11 @@ function branchSortRank(branchName: string): number {
 function branchRoleCardClass(role: BranchVisualRole): string {
   switch (role) {
     case 'main':
-      return 'border-emerald-400/55 shadow-[0_0_0_1px_rgba(52,211,153,0.16),0_16px_34px_-28px_rgba(52,211,153,0.85)]';
+      return 'border-ok/55 shadow-[0_0_0_1px_rgba(52,211,153,0.16),0_16px_34px_-28px_rgba(52,211,153,0.85)]';
     case 'master':
       return 'border-cyan-400/55 shadow-[0_0_0_1px_rgba(34,211,238,0.15),0_16px_34px_-28px_rgba(34,211,238,0.8)]';
     case 'environment':
-      return 'border-amber-400/42 shadow-[0_0_0_1px_rgba(251,191,36,0.12),0_16px_34px_-30px_rgba(251,191,36,0.72)]';
+      return 'border-warn/42 shadow-[0_0_0_1px_rgba(251,191,36,0.12),0_16px_34px_-30px_rgba(251,191,36,0.72)]';
     default:
       return '';
   }
@@ -1137,9 +1137,9 @@ function AiRail({
 function aiBadgeClass(status: AiOperationStatus): string {
   switch (status) {
     case 'active':
-      return 'border-sky-400/50 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15';
+      return 'border-info/50 bg-info/10 text-info hover:bg-info/15';
     case 'timeout':
-      return 'border-amber-400/45 bg-amber-400/10 text-amber-300 hover:bg-amber-400/15';
+      return 'border-warn/45 bg-warn/10 text-warn hover:bg-warn/15';
     case 'released':
       return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground hover:text-foreground';
     default:
@@ -1294,10 +1294,10 @@ function branchIssueClass(branch: BranchSummary): string {
     return 'border-destructive/40 bg-destructive/15 text-destructive font-semibold';
   }
   if (category === 'app-code') {
-    return 'border-amber-500/45 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold';
+    return 'border-warn/45 bg-warn-soft text-warn font-semibold';
   }
   if (category === 'deploy-config') {
-    return 'border-orange-500/45 bg-orange-500/10 text-orange-700 dark:text-orange-300 font-semibold';
+    return 'border-warn/45 bg-warn-soft text-warn font-semibold';
   }
   return 'border-muted-foreground/30 bg-muted/30 text-muted-foreground font-semibold';
 }
@@ -1305,8 +1305,8 @@ function branchIssueClass(branch: BranchSummary): string {
 function branchIssueRailClass(branch: BranchSummary): string {
   const category = branchIssueCategory(branch);
   if (category === 'cds-runtime') return 'bg-destructive';
-  if (category === 'app-code') return 'bg-amber-500';
-  if (category === 'deploy-config') return 'bg-orange-500';
+  if (category === 'app-code') return 'bg-warn';
+  if (category === 'deploy-config') return 'bg-warn';
   return 'bg-muted-foreground/40';
 }
 
@@ -1318,10 +1318,10 @@ function branchIssueCardClass(branch: BranchSummary): string {
     return 'border-destructive/60 bg-destructive/5 ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_4px_16px_-4px_hsl(var(--destructive)/0.35)]';
   }
   if (category === 'app-code') {
-    return 'border-amber-500/55 bg-amber-500/5 ring-1 ring-amber-500/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]';
+    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_4px_16px_-4px_rgba(245,158,11,0.32)]';
   }
   if (category === 'deploy-config') {
-    return 'border-orange-500/55 bg-orange-500/5 ring-1 ring-orange-500/20 shadow-[0_4px_16px_-4px_rgba(249,115,22,0.32)]';
+    return 'border-warn/55 bg-warn-soft ring-1 ring-warn/20 shadow-[0_4px_16px_-4px_rgba(249,115,22,0.32)]';
   }
   return 'border-muted-foreground/40 bg-muted/20 ring-1 ring-muted-foreground/15 shadow-[0_4px_16px_-4px_rgba(100,116,139,0.28)]';
 }
@@ -3362,7 +3362,7 @@ export function BranchListPage(): JSX.Element {
                 title={perfCriticals.length > 0
                   ? `运维健康告警：${perfCriticals[0].message}${perfCriticals.length > 1 ? `（共 ${perfCriticals.length} 条，点击查看）` : ''}`
                   : '运维（性能 / 执行器 / 活动 / 运维操作）'}
-                className={perfCriticals.length > 0 ? 'relative text-red-600 ring-1 ring-red-500/45 dark:text-red-400' : undefined}
+                className={perfCriticals.length > 0 ? 'relative text-bad ring-1 ring-bad/45 ' : undefined}
               >
                 <Activity />
                 运维
@@ -3377,7 +3377,7 @@ export function BranchListPage(): JSX.Element {
                   onClick={() => void refresh(false, true)}
                   aria-label="重新拉取(SSE 已中断)"
                   title="实时连接中断,点击手动刷新"
-                  className="text-amber-500 hover:text-amber-600"
+                  className="text-warn hover:text-warn"
                 >
                   <RefreshCw />
                   <span className="md:hidden">手动刷新</span>
@@ -3407,13 +3407,13 @@ export function BranchListPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' && state.projectWarning ? (
-          <div className="mt-6 rounded-md border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+          <div className="mt-6 rounded-md border border-warn/35 bg-warn-soft px-4 py-3 text-sm text-warn">
             {state.projectWarning}
           </div>
         ) : null}
 
         {state.status === 'ok' && state.project.cloneStatus && state.project.cloneStatus !== 'ready' ? (
-          <div className="mt-6 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+          <div className="mt-6 rounded-md border border-warn/40 bg-warn-soft px-4 py-3 text-sm text-warn">
             当前项目仓库状态为 {state.project.cloneStatus}，克隆完成前不能创建或部署分支。
             {state.project.cloneError ? <span className="ml-2">{state.project.cloneError}</span> : null}
           </div>
@@ -3764,7 +3764,7 @@ export function BranchListPage(): JSX.Element {
                     </div>
                     <div className={`mt-3 rounded-md border px-3 py-2 text-xs leading-5 ${
                       selectedCapacityWarning
-                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                        ? 'border-warn/30 bg-warn-soft text-warn'
                         : 'border-border bg-muted/20 text-muted-foreground'
                     }`}
                     >
@@ -3782,8 +3782,8 @@ export function BranchListPage(): JSX.Element {
                       )}
                     </div>
                     {capacityAssist.deficit > 0 ? (
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs">
-                        <span className="text-amber-700 dark:text-amber-300">
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs">
+                        <span className="text-warn">
                           还差 {capacityAssist.deficit} 个容量槽，可停止 {capacityAssist.candidates.length} 个较旧运行分支。
                         </span>
                         <ConfirmAction
@@ -3859,7 +3859,7 @@ export function BranchListPage(): JSX.Element {
                                   <span className={`rounded border px-1.5 py-0.5 ${requestKindTone(item.requestKind)}`}>{requestKindLabel(item.requestKind)}</span>
                                   <span className="rounded border border-border px-1.5 py-0.5 font-mono">{item.method}</span>
                                   <code className="min-w-0 flex-1 truncate font-mono" title={`${item.host || ''}${item.path}`}>{item.path}</code>
-                                  <span className="font-mono text-amber-600">{formatLatency(item.ageMs)}</span>
+                                  <span className="font-mono text-warn">{formatLatency(item.ageMs)}</span>
                                 </div>
                               ))}
                             </div>
@@ -3885,7 +3885,7 @@ export function BranchListPage(): JSX.Element {
                                         <code className="min-w-0 flex-1 truncate font-mono" title={`${item.method} ${item.endpoint}`}>
                                           {item.endpoint}
                                         </code>
-                                        <span className="font-mono text-amber-600">{formatLatency(item.p95Ms)}</span>
+                                        <span className="font-mono text-warn">{formatLatency(item.p95Ms)}</span>
                                       </div>
                                       <div className="mt-1 flex flex-wrap gap-2 text-muted-foreground">
                                         <span>count {item.count}</span>
@@ -4090,7 +4090,7 @@ function ProjectSwitcher({
           >
             <span className="flex w-full items-start gap-2">
               <span
-                className={`mt-2 h-1.5 w-1.5 rounded-full ${isCurrent ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`}
+                className={`mt-2 h-1.5 w-1.5 rounded-full ${isCurrent ? 'bg-ok' : 'bg-muted-foreground/40'}`}
                 aria-hidden
               />
               <span className="min-w-0 flex-1">
@@ -4219,7 +4219,7 @@ function BranchSearchDropdown({
                     </span>
                   </span>
                   {busy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
-                  {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
+                  {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-warn" /> : null}
                 </button>
               );
             })}
@@ -4273,7 +4273,7 @@ function BranchSearchDropdown({
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="truncate text-sm font-medium">{remoteBranch.name}</span>
                       {remoteBranch.isDefault ? (
-                        <span className="shrink-0 rounded border border-sky-500/35 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+                        <span className="shrink-0 rounded border border-info/35 bg-info-soft px-1.5 py-0.5 text-[10px] text-info">
                           默认分支
                         </span>
                       ) : null}
@@ -4507,7 +4507,7 @@ function ReleaseBranchDialog({
                 </label>
 
                 {targets.length === 0 && !loadingTargets ? (
-                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
+                  <div className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">
                     当前项目没有站点发布目标。先到发布中心添加站点发布。
                   </div>
                 ) : null}
@@ -4573,10 +4573,10 @@ function ReleaseBranchDialog({
                           key={check.id}
                           className={`rounded-md border text-sm ${
                             check.status === 'pass'
-                              ? 'border-emerald-500/30 bg-emerald-500/10'
+                              ? 'border-ok/30 bg-ok-soft'
                               : check.status === 'warn'
-                                ? 'border-amber-500/30 bg-amber-500/10'
-                                : 'border-red-500/30 bg-red-500/10'
+                                ? 'border-warn/30 bg-warn-soft'
+                                : 'border-bad/30 bg-bad-soft'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3 px-3 py-2">
@@ -4734,9 +4734,9 @@ function ReleaseWizardRail({ stage, status }: { stage: 'config' | 'preflight' | 
             : 'active';
         } else state = 'pending';
         const dotClass = state === 'done'
-          ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-500'
+          ? 'border-ok/70 bg-ok-soft text-ok'
           : state === 'failed'
-            ? 'border-red-500/70 bg-red-500/15 text-red-500'
+            ? 'border-bad/70 bg-bad-soft text-bad'
             : state === 'active'
               ? 'border-primary bg-primary/12 text-primary'
               : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
@@ -4749,7 +4749,7 @@ function ReleaseWizardRail({ stage, status }: { stage: 'config' | 'preflight' | 
               <span className={`text-xs font-medium ${state === 'pending' ? 'text-muted-foreground' : 'text-foreground'}`}>{node.label}</span>
             </div>
             {idx < nodes.length - 1 ? (
-              <span className={`mx-2 h-px flex-1 ${idx < currentIdx ? 'bg-emerald-500/60' : 'bg-[hsl(var(--hairline-strong))]'}`} />
+              <span className={`mx-2 h-px flex-1 ${idx < currentIdx ? 'bg-ok/60' : 'bg-[hsl(var(--hairline-strong))]'}`} />
             ) : null}
           </div>
         );
@@ -4777,7 +4777,7 @@ function ReleaseStageSummary({
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-3 py-2 text-xs">
       {total > 0 ? (
-        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-400">
+        <span className="inline-flex items-center gap-1 rounded-full bg-ok-soft px-2 py-0.5 font-medium text-ok">
           <CheckCircle2 className="h-3 w-3" />
           预检 {pass}/{total}
         </span>
@@ -4819,9 +4819,9 @@ function ReleaseRunStepList({
           key={step.id}
           className={`flex items-start gap-2 rounded-md border px-3 py-2 text-sm ${
             step.state === 'failed'
-              ? 'border-red-500/30 bg-red-500/10'
+              ? 'border-bad/30 bg-bad-soft'
               : step.state === 'done'
-                ? 'border-emerald-500/30 bg-emerald-500/10'
+                ? 'border-ok/30 bg-ok-soft'
                 : step.state === 'running'
                   ? 'border-primary/30 bg-primary/10'
                   : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40'
@@ -4838,8 +4838,8 @@ function ReleaseRunStepList({
 }
 
 function ReleaseStepIcon({ state }: { state: ReleaseStepState }): JSX.Element {
-  if (state === 'done') return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />;
-  if (state === 'failed') return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />;
+  if (state === 'done') return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" />;
+  if (state === 'failed') return <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" />;
   if (state === 'running') return <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />;
   return <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />;
 }
@@ -5047,7 +5047,7 @@ function CoolPolicyEditorModal({ onClose }: { onClose: () => void }): JSX.Elemen
             </label>
           </>
         )}
-        {message ? <div className={`mt-3 text-xs ${message.startsWith('已保存') ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>{message}</div> : null}
+        {message ? <div className={`mt-3 text-xs ${message.startsWith('已保存') ? 'text-ok' : 'text-destructive'}`}>{message}</div> : null}
         <div className="mt-4 flex justify-end gap-2">
           <Button type="button" size="sm" variant="outline" onClick={onClose}>取消</Button>
           <Button type="button" size="sm" disabled={phase !== 'ready'} onClick={() => void save()}>
@@ -5227,14 +5227,14 @@ const BranchCard = memo(function BranchCard({
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
   const runtimeIconClass = runtime?.kind === 'pending'
-    ? 'text-amber-500'
+    ? 'text-warn'
     : runtime?.prebuilt
-    ? 'text-sky-500'
+    ? 'text-info'
     : runtime?.kind === 'mixed'
       ? 'text-violet-500'
       : runtime?.kind === 'release'
-        ? 'text-emerald-500'
-        : 'text-sky-500';
+        ? 'text-ok'
+        : 'text-info';
   const runtimeIconTitle = runtime
     ? `${runtime.label}: ${runtime.title}\n来源: ${origin.label} — ${origin.title}`
     : `源码版: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`;
@@ -5504,7 +5504,7 @@ const BranchCard = memo(function BranchCard({
                     「被接管」的表达，再叠一层扫光就是四个动效同时抢注意力。 */}
                 {branch.branch}
               </h3>
-              {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
+              {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-warn" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
               {/* PR 徽章 2026-08-05 收进右上角 ... 菜单：它挤占标题宽度，而标题
                   （分支名）才是这张卡最需要看清的东西。入口见 BranchMoreMenu。 */}
@@ -5559,10 +5559,10 @@ const BranchCard = memo(function BranchCard({
         >
           <div className="mb-2 flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2 font-semibold">
-              <Bot className={`h-4 w-4 ${isAiActive ? 'text-sky-300' : aiState.status === 'timeout' ? 'text-amber-300' : 'text-muted-foreground'}`} />
+              <Bot className={`h-4 w-4 ${isAiActive ? 'text-info' : aiState.status === 'timeout' ? 'text-warn' : 'text-muted-foreground'}`} />
               <span className="truncate">{aiState.label}</span>
               {recentAiAgent ? (
-                <span className="max-w-[120px] truncate rounded border border-sky-400/25 bg-sky-400/10 px-1.5 py-0.5 text-[10px] text-sky-300">
+                <span className="max-w-[120px] truncate rounded border border-info/25 bg-info/10 px-1.5 py-0.5 text-[10px] text-info">
                   {recentAiAgent}
                 </span>
               ) : null}
@@ -5843,10 +5843,10 @@ const BranchCard = memo(function BranchCard({
         ) : null}
         {branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false ? (
           <span
-            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs text-amber-500"
+            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
             title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}）。可切回源码编译,或重试 CI 后再部署。`}
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
+            <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />
             CI 构建失败
             {branch.ciWorkflowRunUrl ? (
               <a
@@ -5877,11 +5877,11 @@ const BranchCard = memo(function BranchCard({
               const showDot = isError || isInterim;
               const showPort = chipDisplay.port && typeof resource.port === 'number';
               const chipToneClass = chipStatus === 'running'
-                ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
+                ? 'border-ok/25 bg-ok-soft text-foreground/85 hover:border-ok/40 hover:bg-ok-soft hover:text-foreground'
                 : chipStatus === 'error'
                   ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
                   : isInterim
-                    ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
+                    ? 'border-info/30 bg-info-soft text-foreground/85 hover:border-info/45 hover:bg-info-soft hover:text-foreground'
                     : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
               return (
                 <button
@@ -6050,12 +6050,12 @@ const BranchCard = memo(function BranchCard({
                 onDeploy();
               }}
               disabled={busy || isInterim}
-              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-300"
+              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs font-medium text-warn transition-colors hover:bg-warn-soft disabled:opacity-50 "
               title={detailLines.join('\n')}
             >
               <AlertTriangle className="h-3 w-3" aria-hidden />
               <span>{parts.join(' · ')}</span>
-              <span className="text-amber-600/70 dark:text-amber-400/70">重新部署</span>
+              <span className="text-warn/70 /70">重新部署</span>
             </button>
           );
         })() : null}
@@ -6194,7 +6194,7 @@ const BranchCard = memo(function BranchCard({
               </div>
               <div className="rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-2 text-xs leading-5 text-foreground">
                 从 <span className="font-medium">{branch.branch}</span> 移除{' '}
-                <span className="font-mono text-emerald-300">#{tagDeleteTarget}</span>
+                <span className="font-mono text-ok">#{tagDeleteTarget}</span>
               </div>
               <div className="mt-2.5 flex justify-end gap-2">
                 <button
@@ -6329,7 +6329,7 @@ const BranchCard = memo(function BranchCard({
                 className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
                 title={`构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排队等待构建槽位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`}
               >
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" aria-hidden />
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-info" aria-hidden />
                 排队 · 前面 {branch.buildQueue.ahead} 个
               </span>
             ) : null}
@@ -6359,13 +6359,13 @@ const BranchCard = memo(function BranchCard({
                   {estimate ? (
                     // 窄卡（<640px）只留净耗时，预计值 + 进度条收进 sm: 以上——防 footer 换行拥挤
                     <>
-                      <span className={`hidden font-mono sm:inline ${overdue ? 'text-amber-400' : 'text-foreground/70'}`}>/ {formatDurationMs(estimate.medianMs)}</span>
+                      <span className={`hidden font-mono sm:inline ${overdue ? 'text-warn' : 'text-foreground/70'}`}>/ {formatDurationMs(estimate.medianMs)}</span>
                       <span
                         className="hidden h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--hairline))] sm:block"
                         aria-hidden
                       >
                         <span
-                          className={`block h-full rounded-full transition-[width] duration-700 ease-out ${overdue ? 'bg-amber-400/70' : 'bg-primary/60'}`}
+                          className={`block h-full rounded-full transition-[width] duration-700 ease-out ${overdue ? 'bg-warn/70' : 'bg-primary/60'}`}
                           style={{ width: `${Math.round(ratio * 100)}%` }}
                         />
                       </span>
@@ -6502,7 +6502,7 @@ function BranchMoreMenu({
         </DropdownItem>
         <DropdownDivider />
         <DropdownItem onSelect={onToggleFavorite} disabled={busy}>
-          <Star className={`h-4 w-4 shrink-0 ${branch.isFavorite ? 'fill-current text-amber-500' : ''}`} />
+          <Star className={`h-4 w-4 shrink-0 ${branch.isFavorite ? 'fill-current text-warn' : ''}`} />
           {branch.isFavorite ? '取消收藏' : '收藏'}
         </DropdownItem>
         <DropdownItem onSelect={onToggleDebug} disabled={busy}>
@@ -6546,7 +6546,7 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
         prebuilt: true,
         label: '极速版·待生效',
         title: runtime.title || '已配置极速版（CI 预构建），但容器还没以极速版跑起来（重部署后生效）',
-        className: 'border-amber-400/40 bg-amber-400/10 text-amber-700 dark:text-amber-300',
+        className: 'border-warn/40 bg-warn/10 text-warn',
       };
     }
     return {
@@ -6554,7 +6554,7 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
       prebuilt: true,
       label: '极速版',
       title: runtime.title || '极速版（CI 预构建）：拉取 GitHub Actions 编译的镜像运行,CDS 不本机编译',
-      className: 'border-sky-400/35 bg-sky-400/10 text-sky-700 dark:text-sky-300',
+      className: 'border-info/35 bg-info/10 text-info',
     };
   }
   if (runtime?.kind === 'release') {
@@ -6562,7 +6562,7 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
       kind: 'release',
       label: runtime.label || '发布版',
       title: runtime.title || '当前分支使用发布版构建模式',
-      className: 'border-emerald-400/35 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300',
+      className: 'border-ok/35 bg-ok/10 text-ok',
     };
   }
   // 2026-05-14 真实态徽章：配置已切发布版但容器还没真正以发布版跑起来
@@ -6573,7 +6573,7 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
       kind: 'pending',
       label: '发布版·待生效',
       title: runtime.title || '已配置发布版，等待重新部署后真正生效',
-      className: 'border-amber-400/40 bg-amber-400/10 text-amber-700 dark:text-amber-300',
+      className: 'border-warn/40 bg-warn/10 text-warn',
     };
   }
   if (runtime?.kind === 'mixed') {
@@ -6592,7 +6592,7 @@ function branchOriginBadge(branch: BranchSummary): { label: string; title: strin
     return {
       label: 'Webhook',
       title: `GitHub webhook 关联${branch.githubRepoFullName ? `: ${branch.githubRepoFullName}` : ''}`,
-      className: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+      className: 'border-info/35 bg-info-soft text-info',
     };
   }
   if ((branch.deployCount || 0) > 0 || (branch.pullCount || 0) > 0) {
@@ -6605,6 +6605,6 @@ function branchOriginBadge(branch: BranchSummary): { label: string; title: strin
   return {
     label: '待配置',
     title: '未检测到 webhook 元数据或部署记录。打开详情后可重新部署、拉取或检查项目设置',
-    className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    className: 'border-warn/35 bg-warn-soft text-warn',
   };
 }

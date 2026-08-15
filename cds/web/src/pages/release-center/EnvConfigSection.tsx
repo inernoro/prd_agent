@@ -151,8 +151,8 @@ export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionPro
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-4">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className="truncate text-sm font-bold">{row.target.name} · 发布策略</h2>
-          <span className="rounded-[6px] bg-amber-500/[0.14] px-1.5 py-0.5 text-[10px] text-amber-700 dark:text-amber-300">唯一写入口</span>
-          {dirty ? <span className="text-[11.5px] text-amber-600 dark:text-amber-400">有未保存更改</span> : null}
+          <span className="rounded-[6px] bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">唯一写入口</span>
+          {dirty ? <span className="text-[11.5px] text-warn">有未保存更改</span> : null}
         </div>
         <Button size="sm" className="h-8" disabled={!dirty || saving} onClick={() => void save()}>
           {saving ? <Loader2 className="animate-spin" /> : null}
@@ -161,7 +161,7 @@ export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionPro
       </div>
 
       {error ? (
-        <p className="border-b border-[hsl(var(--hairline)/0.6)] bg-red-500/[0.06] px-[18px] py-2.5 text-xs text-red-600 dark:text-red-400">{error}</p>
+        <p className="border-b border-[hsl(var(--hairline)/0.6)] bg-bad-soft px-[18px] py-2.5 text-xs text-bad">{error}</p>
       ) : null}
 
       <div className="grid gap-x-[18px] gap-y-3.5 p-[18px] sm:grid-cols-2">

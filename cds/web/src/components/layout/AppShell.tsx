@@ -369,7 +369,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {previewInstance && (
         <div className="pointer-events-none fixed bottom-3 left-1/2 z-[120] w-max max-w-[calc(100vw-7rem)] -translate-x-1/2">
           <div className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-1 shadow-sm">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+            <span className="h-2 w-2 shrink-0 rounded-full bg-warn" aria-hidden />
             <span className="truncate text-xs text-muted-foreground">
               CDS 预览实例 — 仅用于验收 CDS 自身改动，部署 / docker 操作已禁用
             </span>

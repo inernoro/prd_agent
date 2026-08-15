@@ -292,11 +292,11 @@ function statusLabel(status: BranchSummary['status'] | ServiceState['status'] | 
 }
 
 function statusTone(status: BranchSummary['status'] | ServiceState['status'] | InfraService['status']): string {
-  if (status === 'running') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+  if (status === 'running') return 'border-ok/30 bg-ok-soft text-ok';
   if (status === 'building' || status === 'starting' || status === 'restarting') {
-    return 'border-sky-500/30 bg-sky-500/10 text-sky-600';
+    return 'border-info/30 bg-info-soft text-info';
   }
-  if (status === 'stopping') return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
+  if (status === 'stopping') return 'border-warn/30 bg-warn-soft text-warn';
   if (status === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive';
   return 'border-border bg-muted text-muted-foreground';
 }
@@ -716,7 +716,7 @@ export function BranchTopologyPage(): JSX.Element {
           </div>
 
           {state.status === 'ok' && state.projectWarning ? (
-            <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+            <div className="border-t border-warn/20 bg-warn-soft px-4 py-2 text-sm text-warn">
               {state.projectWarning}
             </div>
           ) : null}
@@ -1203,7 +1203,7 @@ function TopologyMetric({
         <span
           className={
             tone === 'warning'
-              ? 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-500'
+              ? 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-warn/30 bg-warn-soft text-warn'
               : 'inline-flex h-7 w-7 items-center justify-center cds-surface-sunken cds-hairline text-muted-foreground'
           }
         >
@@ -1401,7 +1401,7 @@ function InfraNode({
 function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceState['status'] | InfraService['status'] }): JSX.Element {
   if (status === 'running') {
     return (
-      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-500">
+      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-ok/30 bg-ok-soft text-ok">
         <CheckCircle2 className="h-4 w-4" />
       </span>
     );
@@ -1415,7 +1415,7 @@ function StatusGlyph({ status }: { status: BranchSummary['status'] | ServiceStat
   }
   if (status === 'building' || status === 'starting' || status === 'restarting' || status === 'stopping') {
     return (
-      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-sky-500/30 bg-sky-500/10 text-sky-500">
+      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-info/30 bg-info-soft text-info">
         <Clock3 className="h-4 w-4" />
       </span>
     );

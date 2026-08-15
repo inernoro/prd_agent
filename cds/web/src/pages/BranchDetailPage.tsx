@@ -339,26 +339,26 @@ function statusLabel(status: BranchSummary['status'] | ServiceState['status'] | 
 
 function statusClass(status: string): string {
   if (status === 'running' || status === 'completed' || status === 'done') {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+    return 'border-ok/30 bg-ok-soft text-ok';
   }
   if (status === 'building' || status === 'starting' || status === 'running' || status === 'restarting') {
-    return 'border-sky-500/30 bg-sky-500/10 text-sky-600';
+    return 'border-info/30 bg-info-soft text-info';
   }
   if (status === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive';
-  if (status === 'warning' || status === 'stopping') return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
+  if (status === 'warning' || status === 'stopping') return 'border-warn/30 bg-warn-soft text-warn';
   return 'border-border bg-muted text-muted-foreground';
 }
 
 function proxyOutcomeClass(outcome: ProxyLogEvent['outcome']): string {
-  if (outcome === 'ok') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
-  if (outcome === 'client-error' || outcome === 'branch-not-running') return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
+  if (outcome === 'ok') return 'border-ok/30 bg-ok-soft text-ok';
+  if (outcome === 'client-error' || outcome === 'branch-not-running') return 'border-warn/30 bg-warn-soft text-warn';
   return 'border-destructive/30 bg-destructive/10 text-destructive';
 }
 
 function httpStatusClass(status: number): string {
   if (status >= 500) return 'border-destructive/30 bg-destructive/10 text-destructive';
-  if (status >= 400) return 'border-amber-500/30 bg-amber-500/10 text-amber-600';
-  if (status >= 200) return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+  if (status >= 400) return 'border-warn/30 bg-warn-soft text-warn';
+  if (status >= 200) return 'border-ok/30 bg-ok-soft text-ok';
   return 'border-border bg-muted text-muted-foreground';
 }
 
@@ -1422,14 +1422,14 @@ export function BranchDetailPage(): JSX.Element {
                   {state.branch.lastStoppedAt &&
                   !['running', 'building', 'starting', 'restarting'].includes(state.branch.status) ? (
                     <div
-                      className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+                      className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn "
                       title="分支变灰 = 容器已停止。下面这条来自 lastStoppedAt / lastStopReason 字段，2026-05-14 起记录。"
                     >
                       <div className="mb-1 flex items-center gap-2">
                         <span className="font-medium">上次停止</span>
                         <span className="opacity-80">{formatDate(state.branch.lastStoppedAt)}</span>
                         {state.branch.lastStopSource ? (
-                          <span className="rounded border border-amber-500/40 px-1.5 py-0.5 opacity-90">
+                          <span className="rounded border border-warn/40 px-1.5 py-0.5 opacity-90">
                             {state.branch.lastStopSource === 'user' ? '用户'
                               : state.branch.lastStopSource === 'scheduler' ? '调度器'
                               : state.branch.lastStopSource === 'executor' ? '执行器'
@@ -1475,7 +1475,7 @@ export function BranchDetailPage(): JSX.Element {
                       </div>
                     </div>
                     {state.branch.githubCommitSha && state.branch.commitSha && !sameCommit(state.branch.githubCommitSha, state.branch.commitSha) ? (
-                      <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300">
+                      <div className="mt-3 rounded border border-warn/30 bg-warn-soft px-2 py-1 text-xs text-warn">
                         当前运行提交与 GitHub 目标提交不一致，请重新部署并观察构建日志中的拉取前后版本。
                       </div>
                     ) : null}
@@ -1541,7 +1541,7 @@ export function BranchDetailPage(): JSX.Element {
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              {service.status === 'running' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Code2 className="h-4 w-4 text-muted-foreground" />}
+                              {service.status === 'running' ? <CheckCircle2 className="h-4 w-4 text-ok" /> : <Code2 className="h-4 w-4 text-muted-foreground" />}
                               <span className="font-medium">{profile?.profileName || service.profileId}</span>
                             </div>
                             <div className="mt-2 flex flex-wrap gap-2 text-xs">
@@ -1928,7 +1928,7 @@ export function BranchDetailPage(): JSX.Element {
                     placeholder="搜索提交"
                   />
                   {state.branch.pinnedCommit ? (
-                    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs text-warn">
                       当前固定在 {shortCommit(state.branch.pinnedCommit)}。下次部署会恢复到分支最新提交；也可以直接点最新提交旁的“恢复最新”。
                     </div>
                   ) : null}
@@ -1952,11 +1952,11 @@ export function BranchDetailPage(): JSX.Element {
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              {isCurrent ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <GitCommitHorizontal className="h-4 w-4 text-muted-foreground" />}
+                              {isCurrent ? <CheckCircle2 className="h-4 w-4 text-ok" /> : <GitCommitHorizontal className="h-4 w-4 text-muted-foreground" />}
                               <CodePill>{commit.hash}</CodePill>
-                              {isActuallyLatest ? <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600 dark:text-emerald-300">最新</span> : null}
+                              {isActuallyLatest ? <span className="rounded border border-ok/40 bg-ok-soft px-2 py-0.5 text-xs text-ok">最新</span> : null}
                               {isCurrent ? <span className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs text-primary">当前</span> : null}
-                              {isPinned ? <span className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">已固定</span> : null}
+                              {isPinned ? <span className="rounded border border-warn/40 bg-warn-soft px-2 py-0.5 text-xs text-warn">已固定</span> : null}
                               <span className="text-xs text-muted-foreground">{commit.date}</span>
                             </div>
                             <div className="mt-2 line-clamp-2">{commit.subject}</div>
@@ -2102,7 +2102,7 @@ function Field({ label, value }: { label: string; value: string | number }): JSX
 function LogPanel({ title, lines, status = 'running' }: { title: string; lines: string[]; status?: ActionState['status'] }): JSX.Element {
   const [copied, setCopied] = useState(false);
   const icon = status === 'done'
-    ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+    ? <CheckCircle2 className="h-3.5 w-3.5 text-ok" />
     : status === 'error'
       ? <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
       : <Loader2 className="h-3.5 w-3.5 animate-spin" />;
@@ -2131,7 +2131,7 @@ function LogPanel({ title, lines, status = 'running' }: { title: string; lines: 
         </Button>
       </div>
       {suggestion ? (
-        <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-amber-700 dark:text-amber-300">
+        <div className="mt-2 rounded-md border border-warn/30 bg-warn-soft px-2 py-1.5 text-warn">
           下一步：{suggestion}
         </div>
       ) : null}

@@ -121,7 +121,7 @@ const MOBILE_SEGMENTS = 40;
 const POLL_INTERVAL_MS = 30_000;
 
 const STATUS_META: Record<UptimeStatus, { label: string; icon: typeof CheckCircle2; className: string }> = {
-  up: { label: '正常', icon: CheckCircle2, className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' },
+  up: { label: '正常', icon: CheckCircle2, className: 'border-ok/40 bg-ok-soft text-ok' },
   down: { label: '故障', icon: AlertTriangle, className: 'border-destructive/40 bg-destructive/10 text-destructive' },
   paused: { label: '已暂停', icon: PauseCircle, className: 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
   unknown: { label: '待确认', icon: HelpCircle, className: 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
@@ -206,9 +206,9 @@ function BarSegment({ bucket }: { bucket: UptimeBucket }): JSX.Element {
         'repeating-linear-gradient(45deg, transparent 0 2px, hsl(var(--destructive-foreground) / 0.6) 2px 3px)',
     };
   const tone = bucket.status === 'up'
-    ? 'h-full bg-emerald-500'
+    ? 'h-full bg-ok'
     : bucket.status === 'partial'
-      ? 'h-full bg-amber-500'
+      ? 'h-full bg-warn'
       : 'h-full bg-destructive';
   return (
     <span
@@ -283,9 +283,9 @@ function OverallBanner({ summary }: { summary: UptimeSummary }): JSX.Element {
       // 有目标还没确认（首轮探测中、或连续失败还没到去抖阈值）时不许报「全部正常」：
       // 绿色横幅会盖住正在成形的故障，而它下面一行就写着「待确认 N」，自相矛盾
       // （Codex PR #1273 P2）。用中性的「确认中」档，颜色也不给绿。
-      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+      ? 'border-warn/40 bg-warn-soft text-warn'
       : overall.up > 0
-        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+        ? 'border-ok/40 bg-ok-soft text-ok'
         : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
   const Icon = overall.down > 0
     ? AlertTriangle
@@ -347,7 +347,7 @@ function TargetRow({ target, segments }: { target: UptimeTargetSummary; segments
           </span>
           {target.degraded ? (
             <span
-              className="hidden shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700 sm:inline-flex dark:text-amber-300"
+              className="hidden shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn sm:inline-flex "
               title={target.degradeReason}
             >
               <ShieldAlert className="h-3 w-3" />

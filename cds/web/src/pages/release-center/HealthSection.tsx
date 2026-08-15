@@ -58,9 +58,9 @@ function barClass(bucket: UptimeBucket): string {
   if (bucket.status === 'none') return 'bg-[hsl(var(--hairline))]';
   const total = bucket.up + bucket.down;
   const ratio = total > 0 ? (bucket.up / total) * 100 : 0;
-  if (ratio < 98) return 'bg-red-500';
-  if (ratio < 99.5) return 'bg-amber-500';
-  return 'bg-emerald-500';
+  if (ratio < 98) return 'bg-bad';
+  if (ratio < 99.5) return 'bg-warn';
+  return 'bg-ok';
 }
 
 export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Element {
@@ -108,14 +108,14 @@ export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Eleme
             {typeof selectedProbe?.lastSample?.ms === 'number' ? `${selectedProbe.lastSample.ms} ms` : '无数据'}
           </dd>
         </dl>
-        {error ? <p className="px-[18px] pb-4 text-xs text-red-600 dark:text-red-400">{error}</p> : null}
+        {error ? <p className="px-[18px] pb-4 text-xs text-bad">{error}</p> : null}
         {summary && !summary.enabled ? (
-          <p className="mx-[18px] mb-4 rounded-[9px] border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2.5 text-[11.5px] text-amber-700 dark:text-amber-300">
+          <p className="mx-[18px] mb-4 rounded-[9px] border border-warn/40 bg-warn-soft px-3 py-2.5 text-[11.5px] text-warn">
             存活监控当前是关闭的，下面的可用率与趋势都不会更新。
           </p>
         ) : null}
         {unmonitored.length > 0 ? (
-          <div className="mx-[18px] mb-4 rounded-[9px] border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2.5 text-[11.5px] text-amber-700 dark:text-amber-300">
+          <div className="mx-[18px] mb-4 rounded-[9px] border border-warn/40 bg-warn-soft px-3 py-2.5 text-[11.5px] text-warn">
             {unmonitored.length} 个环境未监测（{unmonitored.map((env) => env.name).join('、')}）：
             它们的可用率、恢复时长算不出来，本页留空而不是写 0。
           </div>

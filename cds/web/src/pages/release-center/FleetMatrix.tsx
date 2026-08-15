@@ -43,20 +43,20 @@ export interface FleetMatrixProps {
 }
 
 const TYPE_CLASS: Record<FleetEnv['type'], string> = {
-  production: 'text-red-600 dark:text-red-400',
-  staging: 'text-amber-600 dark:text-amber-400',
+  production: 'text-bad',
+  staging: 'text-warn',
   other: 'text-muted-foreground',
 };
 
 const HEALTH_DOT: Record<FleetEnv['health'], string> = {
-  healthy: 'bg-emerald-500',
-  failed: 'bg-red-500',
+  healthy: 'bg-ok',
+  failed: 'bg-bad',
   unmonitored: 'bg-[hsl(var(--hairline-strong))]',
 };
 
 const HEALTH_TEXT: Record<FleetEnv['health'], string> = {
-  healthy: 'text-emerald-600 dark:text-emerald-400 font-medium',
-  failed: 'text-red-600 dark:text-red-400 font-bold',
+  healthy: 'text-ok font-medium',
+  failed: 'text-bad font-bold',
   unmonitored: 'text-muted-foreground',
 };
 
@@ -71,7 +71,7 @@ function LastReleaseCell({ env, nowMs }: { env: FleetEnv; nowMs: number }): JSX.
       <span className="block truncate text-xs">
         {formatFleetAgo(env.lastRelease.atMs, nowMs)} · {env.lastRelease.by}
       </span>
-      <span className={`block truncate cds-ident text-[10.5px] ${env.lastRelease.ok ? 'text-muted-foreground' : 'text-red-600 dark:text-red-400'}`}>
+      <span className={`block truncate cds-ident text-[10.5px] ${env.lastRelease.ok ? 'text-muted-foreground' : 'text-bad'}`}>
         {duration ? `${duration} · ` : ''}{env.lastRelease.ok ? '成功' : '失败'}
       </span>
     </span>
@@ -218,7 +218,7 @@ export function FleetMatrix({ envs, sort, onSort, nowMs, wide, onInspect, onExec
                 onClick={() => onInspect(env.id)}
                 onKeyDown={(event) => { if (event.key === 'Enter') onInspect(env.id); }}
                 className={`grid cursor-pointer items-center gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-[13px] text-[12.5px] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] ${
-                  env.health === 'failed' ? 'bg-red-500/[0.05]' : ''
+                  env.health === 'failed' ? 'bg-bad-soft' : ''
                 } ${env.enabled ? '' : 'opacity-55'}`}
                 style={{ gridTemplateColumns: COLUMNS }}
               >
@@ -235,14 +235,14 @@ export function FleetMatrix({ envs, sort, onSort, nowMs, wide, onInspect, onExec
                   <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${HEALTH_DOT[env.health]}`} />
                   <span className={`text-xs ${HEALTH_TEXT[env.health]}`}>{fleetHealthText(env.health)}</span>
                 </span>
-                <span className={`cds-ident text-[12.5px] ${env.availability24h !== null && env.availability24h < 99 ? 'text-red-600 dark:text-red-400' : env.availability24h === null ? 'text-muted-foreground' : ''}`}>
+                <span className={`cds-ident text-[12.5px] ${env.availability24h !== null && env.availability24h < 99 ? 'text-bad' : env.availability24h === null ? 'text-muted-foreground' : ''}`}>
                   {fleetAvailabilityText(env)}
                 </span>
                 <span className="cds-ident text-[12.5px]">{env.liveSha ? env.liveSha.slice(0, 7) : <span className="text-muted-foreground">未发布过</span>}</span>
                 <span className={`text-xs ${
                   env.behindMain === null ? 'text-muted-foreground'
-                    : env.behindMain === 0 ? 'text-emerald-600 dark:text-emerald-400'
-                    : env.behindMain >= 12 ? 'font-bold text-red-600 dark:text-red-400' : ''
+                    : env.behindMain === 0 ? 'text-ok'
+                    : env.behindMain >= 12 ? 'font-bold text-bad' : ''
                 }`}>
                   {fleetBehindText(env)}
                 </span>
@@ -262,7 +262,7 @@ export function FleetMatrix({ envs, sort, onSort, nowMs, wide, onInspect, onExec
             <div
               key={env.id}
               className={`rounded-[10px] border p-3 ${
-                env.health === 'failed' ? 'border-red-500/30 bg-red-500/[0.05]' : 'border-[hsl(var(--hairline))]'
+                env.health === 'failed' ? 'border-bad/30 bg-bad-soft' : 'border-[hsl(var(--hairline))]'
               } ${env.enabled ? '' : 'opacity-55'}`}
             >
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">

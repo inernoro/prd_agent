@@ -84,8 +84,8 @@ export function FailureDiagnosis({
             只在能被数据证明时出现（目标当前版本 ≠ 本次版本），证明不了就不说。 */}
         {productionUntouched && row ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
-            <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-500" />
-            <span className="font-semibold text-emerald-600 dark:text-emerald-400">生产未受影响</span>
+            <ShieldCheck className="h-4 w-4 shrink-0 text-ok" />
+            <span className="font-semibold text-ok">生产未受影响</span>
             <span className="text-muted-foreground">
               {row.target.name}仍在 <CodeText>{row.currentCommit.slice(0, 7)}</CodeText>，本次版本没有切换上线
             </span>
@@ -157,13 +157,13 @@ export function FailureDiagnosis({
                   <span
                     className={`h-3 w-3 shrink-0 rounded-full border-2 ${
                       step.state === 'done'
-                        ? 'border-emerald-500 bg-emerald-500'
+                        ? 'border-ok bg-ok'
                         : step.state === 'failed'
-                          ? 'border-red-500 bg-red-500'
+                          ? 'border-bad bg-bad'
                           : 'border-[hsl(var(--hairline-strong))]'
                     }`}
                   />
-                  <span className={`min-w-0 flex-1 truncate text-[13px] ${step.state === 'failed' ? 'text-red-600 dark:text-red-400' : ''}`}>
+                  <span className={`min-w-0 flex-1 truncate text-[13px] ${step.state === 'failed' ? 'text-bad' : ''}`}>
                     {step.label}
                   </span>
                 </li>
@@ -178,7 +178,7 @@ export function FailureDiagnosis({
             <section className="cds-surface-raised cds-hairline rounded-lg p-4">
               <div className="flex items-center justify-between gap-2">
                 <h4 className="flex items-center gap-1.5 text-sm font-semibold">
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
+                  <AlertTriangle className="h-4 w-4 text-warn" />
                   顺带发现的噪音
                 </h4>
                 <Chip tone="warn">{describeGroups(diagnosis.noiseGroups)}</Chip>
@@ -258,7 +258,7 @@ function orderChecks(checks: ReadonlyArray<ReleaseGateCheck>): ReleaseGateCheck[
 
 function CheckRow({ check }: { check: ReleaseGateCheck }): JSX.Element {
   return (
-    <tr className={check.ok ? '' : 'bg-red-500/10'}>
+    <tr className={check.ok ? '' : 'bg-bad-soft'}>
       <td className="border-b border-[hsl(var(--hairline))] px-3 py-2 align-top font-mono text-[12px]">{check.name}</td>
       <td className="border-b border-[hsl(var(--hairline))] px-3 py-2 align-top">
         <Chip tone={check.ok ? 'ok' : 'bad'}>{check.ok ? '通过' : '失败'}</Chip>
@@ -313,11 +313,11 @@ function DiskDiagnosisCard({ targetId, shortfall }: {
   };
 
   return (
-    <section className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-4">
+    <section className="rounded-lg border border-warn/35 bg-warn-soft p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <HardDrive className="h-4 w-4 shrink-0 text-amber-500" />
+            <HardDrive className="h-4 w-4 shrink-0 text-warn" />
             磁盘空间不足：{shortfall.mountPoint} 还差 {shortfall.shortfallMb}MB
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -331,7 +331,7 @@ function DiskDiagnosisCard({ targetId, shortfall }: {
         </Button>
       </div>
       {state === 'error' ? (
-        <p className="mt-2 text-xs text-red-500">诊断失败：{error}</p>
+        <p className="mt-2 text-xs text-bad">诊断失败：{error}</p>
       ) : null}
       {output ? (
         <pre

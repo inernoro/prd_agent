@@ -226,11 +226,11 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                       <td className="px-3 py-2.5 font-mono text-xs">
                         {h.sshUser}@{h.host}:{h.sshPort}
                         {h.lastTestOk === true ? (
-                          <span className="ml-2 inline-flex items-center gap-1 text-emerald-500">
+                          <span className="ml-2 inline-flex items-center gap-1 text-ok">
                             <CheckCircle2 className="h-3 w-3" /> ok
                           </span>
                         ) : h.lastTestOk === false ? (
-                          <span className="ml-2 inline-flex items-center gap-1 text-rose-500" title={h.lastTestError}>
+                          <span className="ml-2 inline-flex items-center gap-1 text-bad" title={h.lastTestError}>
                             <XCircle className="h-3 w-3" /> fail
                           </span>
                         ) : null}
@@ -244,8 +244,8 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                             <div
                               className={
                                 inst.healthy
-                                  ? 'text-xs text-emerald-500'
-                                  : 'text-xs text-amber-500'
+                                  ? 'text-xs text-ok'
+                                  : 'text-xs text-warn'
                               }
                             >
                               {inst.healthy ? 'running' : 'unhealthy'}
@@ -279,7 +279,7 @@ export function RemoteHostsTab({ onToast }: { onToast: (msg: string) => void }):
                           onClick={() => void handleToggleEnabled(h)}
                           className={
                             h.isEnabled
-                              ? 'rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-600 hover:bg-emerald-500/25'
+                              ? 'rounded-full bg-ok-soft px-2.5 py-0.5 text-xs font-medium text-ok hover:bg-ok/25'
                               : 'rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted/70'
                           }
                         >
@@ -520,7 +520,7 @@ function DeploySidecarDialog({
               ) : null}
             </div>
             {errorMsg ? (
-              <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600">
+              <div className="rounded-md border border-bad/30 bg-bad-soft px-3 py-2 text-xs text-bad">
                 {errorMsg}
               </div>
             ) : null}
@@ -695,18 +695,18 @@ function CreateHostForm({
 function StatusBadge({ status }: { status: string }): JSX.Element {
   const tone =
     status === 'running'
-      ? 'bg-emerald-500/15 text-emerald-600'
+      ? 'bg-ok-soft text-ok'
       : status === 'failed'
-        ? 'bg-rose-500/15 text-rose-600'
-        : 'bg-amber-500/15 text-amber-600';
+        ? 'bg-bad-soft text-bad'
+        : 'bg-warn-soft text-warn';
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>{status}</span>
   );
 }
 
 function logLevelClass(level: string): string {
-  if (level === 'error') return 'text-rose-500';
-  if (level === 'warn') return 'text-amber-500';
+  if (level === 'error') return 'text-bad';
+  if (level === 'warn') return 'text-warn';
   return '';
 }
 

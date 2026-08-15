@@ -116,8 +116,8 @@ function formatRelativeTime(iso: string): string {
 
 function dispatchActionTone(action: GithubWebhookDelivery['dispatchAction']): string {
   switch (action) {
-    case 'deploy':         return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
-    case 'branch-created': return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+    case 'deploy': return 'border-ok/40 bg-ok-soft text-ok';
+    case 'branch-created': return 'border-info/40 bg-info-soft text-info';
     case 'skipped':        return 'border-muted bg-muted/20 text-muted-foreground';
     case 'ignored':        return 'border-muted bg-muted/20 text-muted-foreground';
     case 'error':          return 'border-destructive/40 bg-destructive/10 text-destructive';
@@ -291,12 +291,12 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                           {dispatchActionLabel(d.dispatchAction)}
                         </span>
                         {d.githubWhitelistDecision === 'blocked' ? (
-                          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                          <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">
                             白名单拦截
                           </span>
                         ) : null}
                         {d.githubWhitelistCommentPosted ? (
-                          <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-700 dark:text-sky-300">
+                          <span className="rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[11px] text-info">
                             已回复评论区
                           </span>
                         ) : null}
@@ -309,7 +309,7 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                           </span>
                         ) : null}
                         {d.deployDispatched ? (
-                          <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+                          <span className="rounded border border-ok/40 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">
                             已派发
                           </span>
                         ) : null}
@@ -319,13 +319,13 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                           </span>
                         ) : null}
                         {d.deployDedupSkipped ? (
-                          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
+                          <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">
                             去重跳过
                           </span>
                         ) : null}
                         {d.selfStatusBroadcast ? (
                           <span
-                            className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-700 dark:text-sky-300"
+                            className="rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[11px] text-info"
                             title="这只说明左下角 self-update 提示收到刷新,不等同于部署成功"
                           >
                             左下角已通知

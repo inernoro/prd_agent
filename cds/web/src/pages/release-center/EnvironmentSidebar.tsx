@@ -160,11 +160,11 @@ function EnvironmentRow({
           {releasedAgo ? ` · ${releasedAgo}` : ''}
           {isCanonical ? ' · 主目标' : ''}
         </span>
-        <span className={`mt-1 block truncate text-[11px] ${position.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+        <span className={`mt-1 block truncate text-[11px] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
           {position.text}
         </span>
         {latestFailed && row.latestRun ? (
-          <span className="mt-1 block truncate text-[11px] text-red-600 dark:text-red-400">
+          <span className="mt-1 block truncate text-[11px] text-bad">
             最近一次尝试 {row.latestRun.commitSha.slice(0, 7)} 失败
           </span>
         ) : null}

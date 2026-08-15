@@ -428,10 +428,10 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
         </div>
 
         {(hasSchemafulDb || databaseInit.recommendation || databaseInit.status === 'loading') ? (
-          <div className="rounded-md border border-sky-500/35 bg-sky-500/5 px-3 py-2 text-xs">
+          <div className="rounded-md border border-info/35 bg-info-soft px-3 py-2 text-xs">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 gap-2 text-muted-foreground">
-                <Database className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-sky-500" />
+                <Database className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-info" />
                 <div className="min-w-0 space-y-1">
                   <div className="font-medium text-foreground">数据库初始化</div>
                   {databaseInit.status === 'loading' ? (
@@ -514,8 +514,8 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
             <div className="space-y-4">
               {/* 必填项 — 顶部最显眼 */}
               {groups.required.length > 0 ? (
-                <section className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4">
-                  <header className="mb-3 flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber-300">
+                <section className="rounded-md border border-warn/40 bg-warn-soft p-4">
+                  <header className="mb-3 flex items-center gap-2 text-sm font-semibold text-warn">
                     <KeyRound className="h-4 w-4" />
                     你必须填写({groups.required.length} 项)
                   </header>
@@ -531,9 +531,9 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                           <label className="block text-xs font-medium text-foreground">
                             {key}
                             {isEmpty ? (
-                              <span className="ml-2 text-amber-600">必填</span>
+                              <span className="ml-2 text-warn">必填</span>
                             ) : (
-                              <span className="ml-2 inline-flex items-center text-emerald-600">
+                              <span className="ml-2 inline-flex items-center text-ok">
                                 <CheckCircle2 className="mr-0.5 h-3 w-3" />
                                 已填
                               </span>
@@ -550,7 +550,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                                 setDraft((current) => ({ ...current, [key]: e.target.value }))
                               }
                               placeholder={hint || `请填写 ${key}`}
-                              className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                              className="min-w-0 flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:border-warn focus:outline-none focus:ring-1 focus:ring-warn"
                               autoComplete="off"
                               spellCheck={false}
                             />
@@ -588,7 +588,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                   </div>
                 </section>
               ) : (
-                <section className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-4 text-sm text-emerald-700 dark:text-emerald-300">
+                <section className="rounded-md border border-ok/40 bg-ok-soft p-4 text-sm text-ok">
                   <CheckCircle2 className="mr-2 inline h-4 w-4" />
                   本项目无必填项,CDS 会全部自动处理。
                 </section>
@@ -597,7 +597,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
               {/* CDS 自动生成 */}
               {groups.auto.length > 0 ? (
                 <DisclosurePanel
-                  icon={<Sparkles className="h-4 w-4 text-emerald-500" />}
+                  icon={<Sparkles className="h-4 w-4 text-ok" />}
                   title={`CDS 已自动生成(${groups.auto.length} 项)`}
                   subtitle="密码 / JWT 等,默认随机强值,你不需要管。展开可以修改。"
                 >
@@ -647,7 +647,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
               {/* 基础设施推导 */}
               {groups.derived.length > 0 ? (
                 <DisclosurePanel
-                  icon={<Database className="h-4 w-4 text-sky-500" />}
+                  icon={<Database className="h-4 w-4 text-info" />}
                   title={`基础设施推导(${groups.derived.length} 项)`}
                   subtitle="DATABASE_URL / REDIS_URL 等,由 CDS 根据 infra 配置自动拼接,无需你管。"
                 >

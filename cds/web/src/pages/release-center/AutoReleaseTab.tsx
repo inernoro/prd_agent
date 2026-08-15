@@ -312,7 +312,7 @@ function RuleRow({
             : ''}
         </div>
         {job.autoDisabledReason ? (
-          <div className="mt-1.5 rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 text-[11.5px] text-amber-700 dark:text-amber-300">
+          <div className="mt-1.5 rounded-md border border-warn/35 bg-warn-soft px-2.5 py-1.5 text-[11.5px] text-warn">
             已被系统自动停用：{job.autoDisabledReason}
           </div>
         ) : null}

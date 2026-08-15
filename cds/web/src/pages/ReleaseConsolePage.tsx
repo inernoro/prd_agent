@@ -147,10 +147,10 @@ export function logLineTone(level: string, message: string): 'error' | 'warn' | 
 }
 
 const LOG_TONE_CLASS: Record<ReturnType<typeof logLineTone>, string> = {
-  error: 'text-red-600 dark:text-red-400',
-  warn: 'text-amber-600 dark:text-amber-400',
+  error: 'text-bad',
+  warn: 'text-warn',
   command: 'text-foreground',
-  ok: 'text-emerald-600 dark:text-emerald-400',
+  ok: 'text-ok',
   plain: 'text-muted-foreground',
 };
 
@@ -537,9 +537,9 @@ export function ReleaseConsolePage(): JSX.Element {
 
   const tone = !shown ? 'muted' : running ? 'warn' : failed ? 'bad' : 'ok';
   const toneRing = tone === 'bad'
-    ? 'border-red-500/30 bg-red-500/[0.06]'
+    ? 'border-bad/30 bg-bad-soft'
     : tone === 'ok'
-      ? 'border-emerald-500/30 bg-emerald-500/[0.05]'
+      ? 'border-ok/30 bg-ok-soft'
       : tone === 'warn'
         ? 'border-primary/30 bg-primary/[0.06]'
         : 'border-[hsl(var(--hairline))]';
@@ -662,8 +662,8 @@ export function ReleaseConsolePage(): JSX.Element {
                           >
                             <span
                               className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                                item.healthStatus === 'healthy' ? 'bg-emerald-500'
-                                  : item.healthStatus === 'failed' ? 'bg-red-500' : 'bg-muted-foreground/60'
+                                item.healthStatus === 'healthy' ? 'bg-ok'
+                                  : item.healthStatus === 'failed' ? 'bg-bad' : 'bg-muted-foreground/60'
                               }`}
                             />
                             <span className="min-w-0 flex-1">
@@ -683,7 +683,7 @@ export function ReleaseConsolePage(): JSX.Element {
                             </span>
                             {/* 落后主干几个提交由后端 commitPosition 给；算不出时它缺席，这里就不显示 */}
                             {typeof behind === 'number' && behind > 0 ? (
-                              <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 cds-ident text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                              <span className="shrink-0 rounded bg-warn-soft px-1.5 py-0.5 cds-ident text-[11px] font-medium text-warn">
                                 落后 {behind}
                               </span>
                             ) : null}
@@ -700,7 +700,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 中栏：状态是主角 ══ */}
           <main className="flex min-h-0 flex-col gap-3.5 max-xl:order-1 max-xl:shrink-0 xl:overflow-hidden xl:px-[22px] xl:py-[18px]">
             {error ? (
-              <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/[0.07] px-3 py-2 text-sm text-red-600 dark:text-red-400">
+              <div className="flex items-center gap-2 rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
                 <span className="min-w-0 break-words">{error}</span>
               </div>
@@ -711,8 +711,8 @@ export function ReleaseConsolePage(): JSX.Element {
                 {/* 进行中时向外扩一圈光晕（参考稿 pulseRing）。终态静止。 */}
                 <div className={`flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[14px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] ${running ? 'cds-status-pulse' : ''}`}>
                   {running ? <Loader2 className="h-[22px] w-[22px] animate-spin text-primary" />
-                    : failed ? <XCircle className="h-[22px] w-[22px] text-red-500" />
-                    : shown ? <CheckCircle2 className="h-[22px] w-[22px] text-emerald-500" />
+                    : failed ? <XCircle className="h-[22px] w-[22px] text-bad" />
+                    : shown ? <CheckCircle2 className="h-[22px] w-[22px] text-ok" />
                     : <Rocket className="h-[22px] w-[22px] text-muted-foreground" />}
                 </div>
 
@@ -722,7 +722,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     版本选择挪进标题行之后操作组才收得到 300 —— 它在操作组里时是 480。 */}
                 <div className="min-w-[340px] flex-1 basis-0">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <h2 className={`text-xl font-bold ${failed ? 'text-red-600 dark:text-red-400' : running ? 'text-primary' : ''}`}>
+                    <h2 className={`text-xl font-bold ${failed ? 'text-bad' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
                     </h2>
                     {/* 「历史记录」这一枚是本次改动的核心：没有它，满格绿的进度条
@@ -733,7 +733,7 @@ export function ReleaseConsolePage(): JSX.Element {
                       </span>
                     ) : null}
                     {stance.selectedIsLive ? (
-                      <span className="shrink-0 rounded-[6px] bg-emerald-500/[0.14] px-1.5 py-0.5 text-[10.5px] text-emerald-700 dark:text-emerald-300">
+                      <span className="shrink-0 rounded-[6px] bg-ok-soft px-1.5 py-0.5 text-[10.5px] text-ok">
                         选中版本已在线上
                       </span>
                     ) : null}
@@ -782,7 +782,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded bg-[hsl(var(--surface-sunken))]">
                     <div
                       className={`cds-progress-fill h-full rounded ${running ? 'cds-progress-fill--running' : ''} ${
-                        failed ? 'bg-red-500' : running ? 'bg-primary' : 'bg-emerald-500'
+                        failed ? 'bg-bad' : running ? 'bg-primary' : 'bg-ok'
                       }`}
                       style={{ width: `${progress.steps.length ? Math.round((progress.steps.filter((s) => s.state === 'done').length / progress.steps.length) * 100) : 0}%` }}
                     />
@@ -821,7 +821,7 @@ export function ReleaseConsolePage(): JSX.Element {
                       void startRelease();
                     }}
                     disabled={!row || !branchId || running || blockedByOther || busy === 'deploy'}
-                    className={awaitingConfirm ? 'ring-2 ring-red-500/60' : undefined}
+                    className={awaitingConfirm ? 'ring-2 ring-bad/60' : undefined}
                   >
                     {busy === 'deploy' || running ? <Loader2 className="animate-spin" /> : <Rocket />}
                     {awaitingConfirm
@@ -841,7 +841,7 @@ export function ReleaseConsolePage(): JSX.Element {
             {stance.hint ? (
               <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-[10px] border px-3.5 py-2.5 text-xs ${
                 stance.selectedIsLive
-                  ? 'border-emerald-500/40 bg-emerald-500/[0.06] text-emerald-800 dark:text-emerald-300'
+                  ? 'border-ok/40 bg-ok-soft text-ok'
                   : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
               }`}>
                 <History className="h-3.5 w-3.5 shrink-0" />
@@ -855,7 +855,7 @@ export function ReleaseConsolePage(): JSX.Element {
               退线上版本，那是把一个危险动作降级成一条链接。
             */}
             {arrivedIntent === 'rollback' && row ? (
-              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-[10px] border border-amber-500/40 bg-amber-500/[0.06] px-3.5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-[10px] border border-warn/40 bg-warn-soft px-3.5 py-2.5 text-xs text-warn">
                 <RotateCcw className="h-3.5 w-3.5 shrink-0" />
                 <span className="min-w-0 flex-1 basis-full sm:basis-0">
                   从发布中心过来回滚 {row.target.name}
@@ -880,7 +880,7 @@ export function ReleaseConsolePage(): JSX.Element {
             {/* 卡住判定：还在跑但久无输出。用户原话——「点击之后就卡住没后续了，
                 到底是否成功，我们不清楚」。这条就是回答它的。 */}
             {stall.stalled ? (
-              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-warn/40 bg-warn-soft px-3 py-2 text-xs text-warn">
                 <Clock className="h-3.5 w-3.5 shrink-0" />
                 <span className="min-w-0 flex-1 basis-full sm:basis-0">
                   已经 {Math.round(stall.silentMs / 1000)} 秒没有新输出了。
@@ -901,8 +901,8 @@ export function ReleaseConsolePage(): JSX.Element {
             {shown && !running ? (
               <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
                 failed
-                  ? 'border-red-500/30 bg-red-500/[0.06] text-red-600 dark:text-red-400'
-                  : 'border-emerald-500/30 bg-emerald-500/[0.06] text-emerald-700 dark:text-emerald-400'
+                  ? 'border-bad/30 bg-bad-soft text-bad'
+                  : 'border-ok/30 bg-ok-soft text-ok'
               }`}>
                 {failed ? <XCircle className="h-3.5 w-3.5 shrink-0" /> : <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />}
                 <span className="min-w-0 flex-1 basis-full break-words sm:basis-0">
@@ -935,9 +935,9 @@ export function ReleaseConsolePage(): JSX.Element {
             {/* 只在检查拦下来时出现（passesPreflight 里全过就置 null）。
                 全过的话没必要拿一屏绿勾去打扰人——它已经继续往下发了。 */}
             {preflight ? (
-              <div className="shrink-0 rounded-[10px] border border-amber-500/40 bg-amber-500/[0.06] px-3.5 py-2.5">
+              <div className="shrink-0 rounded-[10px] border border-warn/40 bg-warn-soft px-3.5 py-2.5">
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+                  <span className="text-xs font-semibold text-warn">
                     发布前检查未通过，已停在发布前
                   </span>
                   <Chip tone={preflight.checks.some((c) => c.status === 'fail' && c.blocking) ? 'bad' : 'ok'}>
@@ -947,7 +947,7 @@ export function ReleaseConsolePage(): JSX.Element {
                 <ul className="flex flex-col gap-1">
                   {preflight.checks.map((check, index) => (
                     <li key={check.id || check.name || index} className="flex items-start gap-2 text-[11.5px]">
-                      <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${check.status === 'fail' ? 'bg-red-500' : check.status === 'warn' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                      <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${check.status === 'fail' ? 'bg-bad' : check.status === 'warn' ? 'bg-warn' : 'bg-ok'}`} />
                       <span className="min-w-0 break-words">
                         {check.label || check.name || check.id}
                         {check.detail ? <span className="text-muted-foreground"> · {check.detail}</span> : null}
@@ -972,12 +972,12 @@ export function ReleaseConsolePage(): JSX.Element {
                     <div
                       key={step.id}
                       className={`flex items-start gap-2.5 rounded-[9px] px-2.5 py-2.5 transition-colors duration-200 ${
-                        step.state === 'failed' ? 'bg-red-500/[0.08]' : step.state === 'running' ? 'bg-primary/[0.08]' : ''
+                        step.state === 'failed' ? 'bg-bad-soft' : step.state === 'running' ? 'bg-primary/[0.08]' : ''
                       }`}
                     >
                       <span className="mt-0.5 shrink-0">
-                        {step.state === 'done' ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                          : step.state === 'failed' ? <XCircle className="h-3.5 w-3.5 text-red-500" />
+                        {step.state === 'done' ? <CheckCircle2 className="h-3.5 w-3.5 text-ok" />
+                          : step.state === 'failed' ? <XCircle className="h-3.5 w-3.5 text-bad" />
                           : step.state === 'running' ? <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                           : <span className="ml-0.5 block h-2.5 w-2.5 rounded-full border border-[hsl(var(--hairline-strong))]" />}
                       </span>
@@ -1077,7 +1077,7 @@ export function ReleaseConsolePage(): JSX.Element {
                 >
                   {label}
                   {key === 'failed' && failedRuns.length > 0 ? (
-                    <span className="rounded bg-red-500/15 px-1.5 cds-ident text-[10px] text-red-600 dark:text-red-400">{failedRuns.length}</span>
+                    <span className="rounded bg-bad-soft px-1.5 cds-ident text-[10px] text-bad">{failedRuns.length}</span>
                   ) : null}
                 </button>
               ))}
@@ -1110,7 +1110,7 @@ export function ReleaseConsolePage(): JSX.Element {
                         <div
                           key={item.releaseId}
                           className={`flex min-w-0 flex-col gap-[7px] rounded-[10px] border px-3 py-[11px] transition-colors duration-150 hover:border-[hsl(var(--hairline-strong))] ${
-                            itemFailed ? 'border-red-500/30 bg-red-500/[0.05]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50'
+                            itemFailed ? 'border-bad/30 bg-bad-soft' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50'
                           }`}
                         >
                           {/* 第一行：状态圆点 + 版本 + 环境，右端是结论。参考稿的圆点在最左，
@@ -1119,7 +1119,7 @@ export function ReleaseConsolePage(): JSX.Element {
                             <span className="flex min-w-0 items-center gap-2">
                               <span
                                 className={`h-[7px] w-[7px] shrink-0 rounded-full ${
-                                  itemFailed ? 'bg-red-500' : live ? 'bg-primary' : 'bg-emerald-500'
+                                  itemFailed ? 'bg-bad' : live ? 'bg-primary' : 'bg-ok'
                                 }`}
                               />
                               <span className="shrink-0 cds-ident text-xs font-medium">{item.commitSha.slice(0, 7)}</span>
@@ -1127,7 +1127,7 @@ export function ReleaseConsolePage(): JSX.Element {
                                 {itemRow?.target.name || item.targetId}
                               </span>
                             </span>
-                            <span className={`shrink-0 cds-ident text-[10.5px] ${itemFailed ? 'text-red-600 dark:text-red-400' : live ? 'text-primary' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                            <span className={`shrink-0 cds-ident text-[10.5px] ${itemFailed ? 'text-bad' : live ? 'text-primary' : 'text-ok'}`}>
                               {itemFailed ? '失败' : live ? '线上' : '成功'}
                             </span>
                           </div>

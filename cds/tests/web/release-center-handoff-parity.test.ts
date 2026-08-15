@@ -149,7 +149,8 @@ describe('稿子 §2 全环境矩阵', () => {
   });
 
   it('行状态：失败行整行底色、未启用行降透明、整行可点且行内按钮 stopPropagation', () => {
-    expect(matrix).toContain("env.health === 'failed' ? 'bg-red-500/[0.05]'");
+    // 底色改走语义 token（bad-soft）——它自己会翻主题，不再需要 dark: 对。
+    expect(matrix).toContain("env.health === 'failed' ? 'bg-bad-soft'");
     expect(matrix).toContain("env.enabled ? '' : 'opacity-55'");
     expect(matrix).toContain('event.stopPropagation()');
   });
@@ -285,9 +286,10 @@ describe('稿子 §5 健康监测', () => {
     expect(health).toContain("gap-[3px]");
     expect(health).toContain('h-[34px]');
     expect(health).toContain('rounded-t-[2px]');
-    expect(health).toContain('bg-red-500');
-    expect(health).toContain('bg-amber-500');
-    expect(health).toContain('bg-emerald-500');
+    // 三档阈值配色改走语义 token；判据仍是「有三档且各不相同」。
+    expect(health).toContain('bg-bad');
+    expect(health).toContain('bg-warn');
+    expect(health).toContain('bg-ok');
     expect(health).toContain('未配置健康检查地址，趋势不可绘制');
   });
 });

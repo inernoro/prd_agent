@@ -43,8 +43,8 @@ const TYPE_TEXT: Record<string, string> = { production: '生产', staging: '预�
 
 /** 类型的文字分级配色，与矩阵那一列同源（稿子：类型用文字分级，不用色块）。 */
 function typeTone(environment: string | undefined): string {
-  if (environment === 'production') return 'text-red-600 dark:text-red-400';
-  if (environment === 'staging') return 'text-amber-600 dark:text-amber-400';
+  if (environment === 'production') return 'text-bad';
+  if (environment === 'staging') return 'text-warn';
   return 'text-muted-foreground';
 }
 
@@ -180,7 +180,7 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
         </div>
 
         {error ? (
-          <p className="border-b border-[hsl(var(--hairline)/0.6)] bg-red-500/[0.06] px-[18px] py-2.5 text-xs text-red-600 dark:text-red-400">{error}</p>
+          <p className="border-b border-[hsl(var(--hairline)/0.6)] bg-bad-soft px-[18px] py-2.5 text-xs text-bad">{error}</p>
         ) : null}
 
         {draft ? (
@@ -288,7 +288,7 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
                     {job.lastRunAt ? formatDateTime(job.lastRunAt) : '尚未触发'}
                   </div>
                   <div className="flex w-[96px] shrink-0 items-center gap-[7px]">
-                    <span className={`h-[7px] w-[7px] rounded-full ${job.enabled ? 'bg-emerald-500' : 'bg-[hsl(var(--hairline-strong))]'}`} />
+                    <span className={`h-[7px] w-[7px] rounded-full ${job.enabled ? 'bg-ok' : 'bg-[hsl(var(--hairline-strong))]'}`} />
                     <span className={`text-[12px] ${job.enabled ? 'font-semibold' : 'text-muted-foreground'}`}>
                       {job.enabled ? '启用' : '暂停'}
                     </span>

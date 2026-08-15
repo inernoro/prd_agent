@@ -500,7 +500,7 @@ export function GlobalUpdateBadge({
       style={{ pointerEvents: 'auto' }}
     >
       <div
-        className={`flex w-full min-w-0 items-stretch gap-0 overflow-hidden rounded-md border shadow-sm transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-amber-400/40' : ''} ${expanded ? '' : 'h-9'}`}
+        className={`flex w-full min-w-0 items-stretch gap-0 overflow-hidden rounded-md border shadow-sm transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-warn/40' : ''} ${expanded ? '' : 'h-9'}`}
         onMouseEnter={handleEnter}
         onMouseLeave={handleLeave}
       >
@@ -527,7 +527,7 @@ export function GlobalUpdateBadge({
               void triggerSelfUpdate();
             }}
             disabled={triggering}
-            className="flex shrink-0 items-center gap-1 border-l border-current/20 bg-amber-500/10 px-3 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-300"
+            className="flex shrink-0 items-center gap-1 border-l border-current/20 bg-warn-soft px-3 text-xs font-semibold text-warn transition-colors hover:bg-warn-soft disabled:opacity-50 "
             title="立即更新到最新版本"
           >
             {triggering ? '触发中…' : '立即更新'}
@@ -605,9 +605,9 @@ function visualForState(
         icon: <CheckCircle2 className="h-4 w-4" />,
         label: `CDS 已更新 (${state.fromSha.slice(0, 7)} → ${state.toSha.slice(0, 7)}) · 点击刷新`,
         title: 'CDS 后端已切换到新版本,刷新页面加载新 UI',
-        bgClass: 'bg-emerald-50 dark:bg-emerald-950/30',
-        borderClass: 'border-emerald-500/40',
-        textClass: 'text-emerald-700 dark:text-emerald-300',
+        bgClass: 'bg-ok-soft ',
+        borderClass: 'border-ok/40',
+        textClass: 'text-ok',
         onClick: () => {
           window.location.reload();
         },
@@ -619,9 +619,9 @@ function visualForState(
           ? `GitHub 有 ${state.count} 个新 commit · 「${truncate(state.firstSubject, 28)}」`
           : `GitHub 有 ${state.count} 个新 commit · 点击查看`,
         title: '远端比当前部署新,可在 CDS 系统设置 → 维护 触发更新',
-        bgClass: 'bg-amber-50 dark:bg-amber-950/30',
-        borderClass: 'border-amber-500/40',
-        textClass: 'text-amber-700 dark:text-amber-300',
+        bgClass: 'bg-warn-soft ',
+        borderClass: 'border-warn/40',
+        textClass: 'text-warn',
         onClick: () => {
           opts.onNavigate('/cds-settings');
         },
@@ -639,9 +639,9 @@ function visualForState(
         icon: <CdsLogoLoader size="sm" />,
         label: `${triggerLabel}进行中 ${elapsed}s · ${truncate(stepText, 42)}${staleText}`,
         title: 'CDS 正在执行 self-update。点击打开更新与重启查看完整流水。',
-        bgClass: 'bg-amber-50 dark:bg-amber-950/30',
-        borderClass: 'border-amber-500/40',
-        textClass: 'text-amber-700 dark:text-amber-300',
+        bgClass: 'bg-warn-soft ',
+        borderClass: 'border-warn/40',
+        textClass: 'text-warn',
         onClick: () => {
           opts.onNavigate('/cds-settings#maintenance');
         },
@@ -654,9 +654,9 @@ function visualForState(
         icon: <AlertTriangle className="h-4 w-4" />,
         label: `更新状态已失联 · ${staleSeconds}s 无业务心跳 · ${truncate(stepText, 32)}`,
         title: 'CDS 已停止把该状态视为进行中，并正在强制核对服务端终态。点击可再次检查。',
-        bgClass: 'bg-red-50 dark:bg-red-950/30',
-        borderClass: 'border-red-500/40',
-        textClass: 'text-red-700 dark:text-red-300',
+        bgClass: 'bg-bad-soft ',
+        borderClass: 'border-bad/40',
+        textClass: 'text-bad',
         onClick: opts.onRetry,
       };
     }
@@ -666,9 +666,9 @@ function visualForState(
         icon: <CdsLogoLoader size="sm" />,
         label: `CDS 正在重启 ${elapsed}s · 自动恢复中`,
         title: 'CDS 已明确发起自更新重启。恢复探针会持续工作，点击可立即重试。',
-        bgClass: 'bg-blue-50 dark:bg-blue-950/30',
-        borderClass: 'border-blue-500/40',
-        textClass: 'text-blue-700 dark:text-blue-300',
+        bgClass: 'bg-info-soft ',
+        borderClass: 'border-info/40',
+        textClass: 'text-info',
         onClick: opts.onRetry,
       };
     }
@@ -680,9 +680,9 @@ function visualForState(
         icon: <AlertTriangle className="h-4 w-4" />,
         label: `CDS 服务不可达 ${elapsed}s · ${retryText}`,
         title: `无法确认是重启、网络还是服务退出。系统会持续重连，点击可立即重试${state.lastError ? `。最近错误：${state.lastError}` : ''}`,
-        bgClass: 'bg-red-50 dark:bg-red-950/30',
-        borderClass: 'border-red-500/40',
-        textClass: 'text-red-700 dark:text-red-300',
+        bgClass: 'bg-bad-soft ',
+        borderClass: 'border-bad/40',
+        textClass: 'text-bad',
         onClick: opts.onRetry,
       };
     }
@@ -691,9 +691,9 @@ function visualForState(
         icon: <AlertTriangle className="h-4 w-4" />,
         label: `前端 bundle 比后端旧 (后端 ${state.backendSha} / 前端 ${state.bundleSha}) · 上次 web 构建可能失败`,
         title: 'web/dist/.build-sha 与 git HEAD 不一致 — exec_cds.sh 的 build_web 可能静默失败,检查日志',
-        bgClass: 'bg-red-50 dark:bg-red-950/30',
-        borderClass: 'border-red-500/40',
-        textClass: 'text-red-700 dark:text-red-300',
+        bgClass: 'bg-bad-soft ',
+        borderClass: 'border-bad/40',
+        textClass: 'text-bad',
         onClick: () => {
           opts.onNavigate('/cds-settings');
         },

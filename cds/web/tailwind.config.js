@@ -44,6 +44,43 @@ export default {
           DEFAULT: 'hsl(var(--card) / <alpha-value>)',
           foreground: 'hsl(var(--card-foreground) / <alpha-value>)',
         },
+
+        // 状态语义色（照抄设计稿的 ok / warn / bad，另按同配方补 info）。
+        //
+        // 为什么必须有这一组：站里此前有 1600+ 处直接写 emerald-600 / amber-500 /
+        // red-500 / sky-500。它们**不跟主题走**——换调色板时整站的状态色会留在
+        // 原地，与新底色打架；而且每处都得写成 `text-emerald-600 dark:text-emerald-400`
+        // 这种双主题对，漏一半就在某个主题下看不清。
+        //
+        // token 自己会翻主题，所以组件里写 `text-ok` 一个类就够，不用再挂 dark:。
+        // 每档两个值：DEFAULT 是实色（圆点 / 图标 / 进度条 / 文字），
+        // soft 是整块底色（行底、提示条底、徽章底）。
+        ok: {
+          DEFAULT: 'hsl(var(--ok) / <alpha-value>)',
+          soft: 'hsl(var(--ok-soft) / <alpha-value>)',
+        },
+        warn: {
+          DEFAULT: 'hsl(var(--warn) / <alpha-value>)',
+          soft: 'hsl(var(--warn-soft) / <alpha-value>)',
+        },
+        bad: {
+          DEFAULT: 'hsl(var(--bad) / <alpha-value>)',
+          soft: 'hsl(var(--bad-soft) / <alpha-value>)',
+        },
+        info: {
+          DEFAULT: 'hsl(var(--info) / <alpha-value>)',
+          soft: 'hsl(var(--info-soft) / <alpha-value>)',
+        },
+
+        // 主色的两个补充档：soft 是低饱和底（选中态/徽章底），
+        // ink 是「主色文字」——白天那抹亮绿配白底对比度不够，必须用深橄榄。
+        'primary-soft': 'hsl(var(--primary-soft) / <alpha-value>)',
+        'primary-ink': 'hsl(var(--primary-ink) / <alpha-value>)',
+        'foreground-muted': 'hsl(var(--foreground-muted) / <alpha-value>)',
+        code: {
+          DEFAULT: 'hsl(var(--code-bg) / <alpha-value>)',
+          foreground: 'hsl(var(--code-fg) / <alpha-value>)',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',

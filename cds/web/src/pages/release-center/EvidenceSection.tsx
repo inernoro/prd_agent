@@ -139,7 +139,7 @@ export function EvidenceSection({
                 <div key={run.releaseId} className="border-b border-[hsl(var(--hairline)/0.6)]">
                   <div
                     className={`grid items-center gap-3 px-[18px] py-[13px] text-[12.5px] transition-colors duration-150 hover:bg-[hsl(var(--surface-sunken))] max-xl:grid-cols-[92px_minmax(0,1fr)] ${
-                      failed ? 'bg-red-500/[0.05]' : ''
+                      failed ? 'bg-bad-soft' : ''
                     } ${run.releaseId === selected?.releaseId ? 'bg-[hsl(var(--surface-sunken))]' : ''}`}
                     style={{ gridTemplateColumns: COLUMNS }}
                   >
@@ -147,8 +147,8 @@ export function EvidenceSection({
                     <span className="truncate font-semibold" title={ownerName}>{ownerName}</span>
                     <span className="cds-ident">{run.commitSha.slice(0, 7)}</span>
                     <span className="flex items-center gap-1.5">
-                      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${failed ? 'bg-red-500' : 'bg-emerald-500'}`} />
-                      <span className={failed ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}>
+                      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${failed ? 'bg-bad' : 'bg-ok'}`} />
+                      <span className={failed ? 'text-bad' : 'text-ok'}>
                         {failed ? '失败' : '成功'}
                       </span>
                     </span>
@@ -165,7 +165,7 @@ export function EvidenceSection({
                           variant="outline"
                           size="sm"
                           onClick={() => setDiagnosedId(diagnosed ? '' : run.releaseId)}
-                          className="border-red-500/40 text-red-600 dark:text-red-400"
+                          className="border-bad/40 text-bad"
                         >
                           <ChevronRight className={diagnosed ? 'rotate-90 transition-transform' : 'transition-transform'} />
                           {diagnosed ? '收起诊断' : '看失败原因'}
@@ -289,9 +289,9 @@ function RunSteps({ run }: { run: ReleaseRun }): JSX.Element {
           key={step.id}
           className="flex items-center gap-2 rounded-[9px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5 text-[12px]"
         >
-          {step.state === 'done' ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-            : step.state === 'failed' ? <XCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />
-              : step.state === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-sky-500" />
+          {step.state === 'done' ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-ok" />
+            : step.state === 'failed' ? <XCircle className="h-3.5 w-3.5 shrink-0 text-bad" />
+              : step.state === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-info" />
                 : <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
           <span className="cds-ident shrink-0 text-[10.5px] text-muted-foreground">{index + 1}/{progress.total}</span>
           <span className="min-w-0 truncate">{step.label}</span>

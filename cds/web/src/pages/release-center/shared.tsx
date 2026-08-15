@@ -14,17 +14,17 @@ import { shouldFollowLog } from '@/lib/releaseDialogAddress';
 export type Tone = 'ok' | 'warn' | 'bad' | 'live' | 'muted';
 
 const TONE_CLASS: Record<Tone, string> = {
-  ok: 'border-transparent bg-emerald-500/12 text-emerald-600 dark:text-emerald-400',
-  warn: 'border-transparent bg-amber-500/14 text-amber-600 dark:text-amber-400',
-  bad: 'border-transparent bg-red-500/12 text-red-600 dark:text-red-400',
+  ok: 'border-transparent bg-ok-soft text-ok',
+  warn: 'border-transparent bg-warn-soft text-warn',
+  bad: 'border-transparent bg-bad-soft text-bad',
   live: 'border-transparent bg-primary text-primary-foreground',
   muted: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground',
 };
 
 const LED_CLASS: Record<Tone, string> = {
-  ok: 'bg-emerald-500 ring-emerald-500/25',
-  warn: 'bg-amber-500 ring-amber-500/25',
-  bad: 'bg-red-500 ring-red-500/25',
+  ok: 'bg-ok ring-ok/25',
+  warn: 'bg-warn ring-warn/25',
+  bad: 'bg-bad ring-bad/25',
   live: 'bg-primary ring-primary/25',
   muted: 'bg-muted-foreground/60 ring-muted-foreground/15',
 };

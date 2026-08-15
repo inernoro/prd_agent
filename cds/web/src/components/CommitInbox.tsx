@@ -222,7 +222,7 @@ export function CommitInbox({
       // 不自己定位：GitHub push 只作为信息中心里的一个消息源展示。
       className="w-full select-none"
     >
-      <div className="overflow-hidden rounded-md border border-sky-500/30 bg-[hsl(var(--surface-raised))] shadow-2xl">
+      <div className="overflow-hidden rounded-md border border-info/30 bg-[hsl(var(--surface-raised))] shadow-2xl">
         <button
           type="button"
           className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]/80"
@@ -230,8 +230,8 @@ export function CommitInbox({
           title={title}
         >
           <span className="flex items-center gap-3">
-            <Inbox className="h-4 w-4 shrink-0 text-sky-600 dark:text-sky-300" />
-            <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+            <Inbox className="h-4 w-4 shrink-0 text-info" />
+            <span className={`h-2 w-2 shrink-0 rounded-full ${connected ? 'bg-ok' : 'bg-warn'}`} />
           </span>
           <span className="min-w-0">
             <span className="flex min-w-0 items-center gap-2">
@@ -262,7 +262,7 @@ export function CommitInbox({
               </span>
             ) : null}
             {unreadCount > 0 ? (
-              <span className="rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-1 font-mono text-xs text-sky-700 dark:text-sky-300">
+              <span className="rounded-md border border-info/30 bg-info-soft px-2 py-1 font-mono text-xs text-info">
                 {unreadCount}
               </span>
             ) : null}
@@ -279,7 +279,7 @@ export function CommitInbox({
                 {notices.map((notice) => (
                   <div
                     key={notice.id}
-                    className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5 transition-colors hover:bg-[hsl(var(--surface-sunken))]/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500/60 last:border-b-0"
+                    className="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2.5 transition-colors hover:bg-[hsl(var(--surface-sunken))]/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-info/60 last:border-b-0"
                     role="link"
                     tabIndex={0}
                     onClick={() => openNotice(notice)}

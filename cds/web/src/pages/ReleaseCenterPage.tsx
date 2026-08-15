@@ -674,8 +674,8 @@ export function ReleaseCenterPage(): JSX.Element {
                   <div className="flex min-w-0 flex-1 basis-[320px] items-start gap-3">
                     <span
                       className={`mt-2 h-[9px] w-[9px] shrink-0 rounded-full ${
-                        verdict.tone === 'bad' ? 'bg-red-500 cds-verdict-pulse'
-                          : verdict.tone === 'warn' ? 'bg-amber-500 cds-verdict-pulse' : 'bg-emerald-500'
+                        verdict.tone === 'bad' ? 'bg-bad cds-verdict-pulse'
+                          : verdict.tone === 'warn' ? 'bg-warn cds-verdict-pulse' : 'bg-ok'
                       }`}
                     />
                     <div className="min-w-0">
@@ -709,8 +709,8 @@ export function ReleaseCenterPage(): JSX.Element {
                         >
                           <div className="text-[10.5px] text-muted-foreground">{metric.label}</div>
                           <div className={`cds-ident text-base font-bold ${
-                            metric.tone === 'bad' ? 'text-red-600 dark:text-red-400'
-                              : metric.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : ''
+                            metric.tone === 'bad' ? 'text-bad'
+                              : metric.tone === 'warn' ? 'text-warn' : ''
                           }`}>
                             {metric.value}
                           </div>
@@ -734,7 +734,7 @@ export function ReleaseCenterPage(): JSX.Element {
                     <Button
                       variant="outline"
                       onClick={() => inspectEnv(verdict.actionEnvId as string)}
-                      className="h-9 shrink-0 border-red-500/40 bg-red-500/[0.08] text-red-600 hover:bg-red-500/[0.14] dark:text-red-400 max-lg:w-full"
+                      className="h-9 shrink-0 border-bad/40 bg-bad-soft text-bad hover:bg-bad-soft max-lg:w-full"
                     >
                       去处理 {fleetEnvs.find((env) => env.id === verdict.actionEnvId)?.name || verdict.actionEnvId}
                     </Button>
