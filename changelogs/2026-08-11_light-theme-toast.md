@@ -105,3 +105,4 @@
 | test | prd-admin | 棘轮豁免按前景亮度收窄：分支文件不再整份跳过，亮度 < 0.30 的前景仍判（浅色档 700 在 0.14~0.16、暗色档 300 在 0.52~0.58，两类分得很开）|
 | fix | e2e | 修 Codex 第二十二轮 P1：多色 SVG 只判根节点，根 fill 为黑/none 时整个跳过——本 PR 刚改的 LevelHat 正是这种（颜色全在 path 上）。改为遍历上色子形状；paint server 标 unresolved 不硬算成假 1:1，低透明度装饰描边不按 3:1 判 |
 | docs | doc | 更正 debt.frontend 里「实测敞口为 0」那句错误结论 |
+| fix | e2e | 平台徽章排除选择器补全：徽章 DOM 换过外壳（现为 #cds-widget > .cds-badge），只钉旧的 #bt-branch-badge 会漏——全量扫描里它稳定贡献 412 条，占总数 24%，把仓库自己的缺陷淹在噪音里 |

@@ -54,7 +54,13 @@ export const AUDIT_FN = () => {
    * 不排除的话每条路由都会稳定多报一处，真实回归反而被淹没。
    * 排除范围写死成具体 id，不做宽泛通配 —— 免得顺手把应用自己的东西也滤掉。
    */
-  const PLATFORM_OVERLAY = '#bt-branch-badge';
+  /*
+   * 选择器写全：徽章 DOM 换过一次外壳（现在是 #cds-widget > .cds-badge），
+   * 只钉旧的 #bt-branch-badge 就漏了 —— 全量扫描里它稳定贡献 412 条，
+   * 占本来 1742 条总数的 24%，把仓库自己的真实缺陷淹在噪音里。
+   * 仍然写具体类名、不做宽泛通配，免得顺手滤掉应用自己的东西。
+   */
+  const PLATFORM_OVERLAY = '#bt-branch-badge, #cds-widget, .cds-badge';
   const isPlatformOverlay = (el) => !!el.closest(PLATFORM_OVERLAY);
 
   const visible = (el) => {
