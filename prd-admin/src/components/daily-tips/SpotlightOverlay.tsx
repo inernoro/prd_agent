@@ -852,6 +852,12 @@ export function SpotlightOverlay() {
         <div
           ref={bubbleRef}
           onClick={(e) => e.stopPropagation()}
+          /*
+           * 气泡底是钉死的深色渐变（下面 background 那行），而里面的按钮/图标
+           * 走 --accent-fg-*：浅色主题下那些 token 解析成 600/700 深色档，
+           * 深字压深底 —— 「我已学会」实测约 2.2:1。标成暗岛让区域内 token 翻回暗色档。
+           */
+          className="surface-tone-dark"
           style={{
             position: 'fixed',
             left: bubbleLeft,

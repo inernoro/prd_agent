@@ -1775,7 +1775,12 @@ export function ReprocessChatDrawer({
             {pickerOpen && (
               <motion.div
                 id="reprocess-agent-picker-dropdown"
-                className="absolute left-5 right-5 mt-1.5 rounded-[12px] shadow-2xl overflow-hidden"
+                /*
+                 * 底钉死 rgba(20,18,26,0.98)，而下拉项的文字/图标走 --accent-fg-*：
+                 * 浅色主题下 token 解析成深色档，深字压深底（实测约 2.8:1）。
+                 * 标成暗岛让区域内 token 翻回暗色档。
+                 */
+                className="surface-tone-dark absolute left-5 right-5 mt-1.5 rounded-[12px] shadow-2xl overflow-hidden"
                 style={{
                   background: 'rgba(20, 18, 26, 0.98)',
                   border: '1px solid var(--border-subtle)',

@@ -95,3 +95,5 @@
 | fix | e2e | 修 Codex 第十八轮 P1：两个入口写死 1440x900，靠 useBreakpoint 分流的移动端分支一屏都没渲染过，而本 PR 改了 4 个移动端组件。视口升为第三个维度（默认 desktop+mobile，AUDIT_VIEWPORTS 可收窄），账本与截图名都带视口 |
 | fix | e2e | 渐变重采样从「整页截图 + 文档坐标」改为「按屏滚动 + 视口坐标」：本应用遵守 full-height-layout（滚动在内层容器），document.scrollHeight 恒等于视口高，fullPage 截出来就是视口那一张，首屏以下的候选一律落在图外。单是首页就有 84 个候选从没被真实测量过，修好后 unresolved 84 → 0、真实缺陷 12 → 39 |
 | fix | e2e | 重采样失败带原因码（element-gone / box-too-small / no-pixels / compose-failed / not-reached），此前只回 null，没法判是几何问题还是元素没了 |
+| fix | prd-admin | 修 Codex 第十九轮两条 P1（同一形状）：SpotlightOverlay 教程气泡（深色渐变底，「我已学会」约 2.2:1）与 ReprocessChatDrawer 智能体下拉（rgba(20,18,26,0.98) 底，约 2.8:1）钉死深底却未标暗岛。按此形状全仓复扫确认只此两处 |
+| fix | e2e | 修 Codex 第十九轮 P2：AUDIT_VIEWPORTS 拼错会静默变成零视口，两层循环各跑 0 次、expected 也是 0，于是一次什么都没扫的运行 exit 0。改为校验名字、无效即非零退出 |

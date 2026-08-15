@@ -85,8 +85,19 @@ const VIEWPORTS = {
   desktop: { width: 1440, height: 900 },
   mobile: { width: 390, height: 844 },
 };
-const ACTIVE_VIEWPORTS = (process.env.AUDIT_VIEWPORTS || 'desktop,mobile')
-  .split(',').map((x) => x.trim()).filter((x) => VIEWPORTS[x]);
+const requestedViewports = (process.env.AUDIT_VIEWPORTS || 'desktop,mobile')
+  .split(',').map((x) => x.trim()).filter(Boolean);
+const unknownViewports = requestedViewports.filter((x) => !VIEWPORTS[x]);
+const ACTIVE_VIEWPORTS = requestedViewports.filter((x) => VIEWPORTS[x]);
+/*
+ * 拼错一个名字就静默变成「零视口」：两层循环各跑 0 次、expected 也算成 0，
+ * 于是一次**什么都没扫**的运行会以「无命中、无覆盖缺口」exit 0。
+ * 配置打错字不该产出绿灯（Codex 在 PR #1374 第十九轮抓到）。
+ */
+if (unknownViewports.length || !ACTIVE_VIEWPORTS.length) {
+  console.error(`AUDIT_VIEWPORTS 无效：${unknownViewports.join(', ') || '(空)'}；可选 ${Object.keys(VIEWPORTS).join(' / ')}`);
+  process.exit(1);
+}
 
 const ROUTES = loadRoutes();
 fs.mkdirSync(OUT, { recursive: true });
