@@ -1147,6 +1147,39 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void EveryAsrRawPathPinsTheResolvedPhysicalModelAcrossHttpServing()
+    {
+        var paths = new[]
+        {
+            "prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs",
+            "prd-api/src/PrdAgent.Api/Services/SubtitleGenerationProcessor.cs",
+            "prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs",
+            "prd-api/src/PrdAgent.Api/Services/VideoToDocRunWorker.cs",
+            "prd-api/src/PrdAgent.Api/Controllers/Api/LlmGatewayOpsCanaryController.cs",
+            "prd-api/src/PrdAgent.Infrastructure/LlmGateway/Asr/LiveAsrBatchFallbackService.cs",
+        };
+
+        foreach (var path in paths)
+        {
+            var source = ReadRepoFile(path);
+            Assert.Contains("RequiredOfferingId =", source);
+            Assert.Contains("PinnedPlatformId =", source);
+            Assert.Contains("PinnedModelId =", source);
+        }
+    }
+
+    [Fact]
+    public void LatestTranscriptionRunCanBeScopedToTheCurrentUserAfterRefresh()
+    {
+        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs");
+        var page = ReadRepoFile("prd-admin/src/pages/document-store/DocumentStorePage.tsx");
+
+        Assert.Contains("[FromQuery] bool ownUserOnly = false", controller);
+        Assert.Contains("Filter.Eq(r => r.UserId, GetUserId())", controller);
+        Assert.Contains("{ ownUserOnly: true }", page);
+    }
+
+    [Fact]
     public void TranscriptRuns_AreConsumedOnlyByTheirCreatingDeployment()
     {
         var model = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/TranscriptRun.cs");
@@ -5202,6 +5235,21 @@ public class GatewayDataDomainGuardTests
         Assert.True(
             orphans.Count == 0,
             $"api.ts 有 {orphans.Count} 个导出没有任何调用点，功能建了一半：{string.Join("、", orphans)}");
+    }
+
+    [Fact]
+    public void AsrTargets_CannotBeReenabledWithoutReverseContractValidation()
+    {
+        var source = ReadRepoFile("llmgw/console-api/Program.cs");
+        var platformEnable = EndpointBody(source, "app.MapPut(\"/gw/platforms/{id}/enabled\"");
+        var modelEnable = EndpointBody(source, "app.MapPut(\"/gw/models/{id}/enabled\"");
+
+        Assert.Contains("if (enabled && targetAuthority == \"llm_gateway\")", platformEnable);
+        Assert.Contains("ValidateAsrPlatformMutationAsync", platformEnable);
+        Assert.Contains("AsrOfferingContractPolicy.ErrorCode", platformEnable);
+        Assert.Contains("if (enabled && targetAuthority == \"llm_gateway\")", modelEnable);
+        Assert.Contains("ValidateAsrModelMutationAsync", modelEnable);
+        Assert.Contains("AsrOfferingContractPolicy.ErrorCode", modelEnable);
     }
 
     /// <summary>

@@ -975,11 +975,16 @@ export async function startAutoLink(storeId: string) {
 export async function getLatestAgentRun(
   entryId: string,
   kind: 'subtitle' | 'reprocess' | 'transcribe',
-  opts?: { status?: 'done' | 'failed' | 'running' | 'queued'; requireOutput?: boolean },
+  opts?: {
+    status?: 'done' | 'failed' | 'running' | 'queued' | 'publishing';
+    requireOutput?: boolean;
+    ownUserOnly?: boolean;
+  },
 ) {
   const params = new URLSearchParams({ kind });
   if (opts?.status) params.set('status', opts.status);
   if (opts?.requireOutput) params.set('requireOutput', 'true');
+  if (opts?.ownUserOnly) params.set('ownUserOnly', 'true');
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(
     `${api.documentStore.entries.latestAgentRun(entryId)}?${params.toString()}`,
     { method: 'GET' },

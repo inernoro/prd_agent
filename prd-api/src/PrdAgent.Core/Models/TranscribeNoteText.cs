@@ -38,7 +38,16 @@ public static class TranscribeNoteText
     public static bool LooksLikeNoSpeech(string transcript)
     {
         var t = transcript.Trim();
-        if (t.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase)) return true;
+        if (IsNoSpeechSentinel(t)) return true;
+        // CDS 实机复现：纯静音被上游作为聊天请求处理后返回这句独立拒答。
+        // 只接受完整等值，不用 Contains，避免误伤会议里引用该原话的真实发言。
+        if (t.Equals("I'm sorry, I can't.", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I'm sorry, I can't", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I’m sorry, I can’t.", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I’m sorry, I can’t", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
         if (t.Length > 40) return false;
         string[] patterns =
         {
@@ -47,6 +56,41 @@ public static class TranscribeNoteText
         };
         return patterns.Any(p => t.Contains(p, StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// 判断模型是否只返回受控的无人声哨兵。必须整句匹配，禁止用 Contains，
+    /// 否则真实发言“接口返回 NO_SPEECH”会在进入正文守卫前被丢弃。
+    /// </summary>
+    public static bool IsNoSpeechSentinel(string? transcript)
+    {
+        var t = NormalizeNoSpeechSentinel(transcript);
+        return t != null
+            && (t.Equals("NO_SPEECH", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("好的，NO_SPEECH", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? NormalizeNoSpeechSentinel(string? transcript)
+    {
+        if (transcript == null) return null;
+        var normalized = transcript.Trim();
+        while (normalized.Length > 0)
+        {
+            var previous = normalized;
+            normalized = normalized.TrimEnd('.', '。', '!', '！', '?', '？').Trim();
+            if (normalized.Length >= 2 && IsMatchingOuterQuote(normalized[0], normalized[^1]))
+            {
+                normalized = normalized[1..^1].Trim();
+            }
+            if (normalized.Equals(previous, StringComparison.Ordinal)) break;
+        }
+        return normalized;
+    }
+
+    private static bool IsMatchingOuterQuote(char first, char last)
+        => (first == '"' && last == '"')
+            || (first == '\'' && last == '\'')
+            || (first == '“' && last == '”')
+            || (first == '‘' && last == '’');
 
     /// <summary>把笔记 markdown 的「## 摘要」小节替换为新摘要；「## 转录全文」及其后内容原样保留。</summary>
     public static string ReplaceSummarySection(string noteMd, string newSummary)
@@ -79,6 +123,29 @@ public static class TranscribeNoteText
         }
         return string.IsNullOrWhiteSpace(body) ? null : body;
     }
+
+    /// <summary>
+    /// 一键整理读取原文时优先使用当前笔记里的固定小节；旧版笔记缺少小节标记时，
+    /// 使用原转录任务保存的纯文本快照。初次读取与发布前复核必须共用此规则。
+    /// </summary>
+    public static string? ResolveTranscriptForRestyle(string noteMd, string? runTranscriptText)
+    {
+        var current = ExtractTranscriptFromNote(noteMd);
+        if (!string.IsNullOrWhiteSpace(current)) return current.Trim();
+        return string.IsNullOrWhiteSpace(runTranscriptText) ? null : runTranscriptText.Trim();
+    }
+
+    /// <summary>
+    /// 整理结果发布前复核原文。只有初次读取确实使用旧任务快照时才允许继续回退，
+    /// 现代笔记在整理期间被删除全文小节时必须返回 null，由调用方拒绝迟到写入。
+    /// </summary>
+    public static string? ResolveTranscriptForRestylePublication(
+        string noteMd,
+        string? runTranscriptText,
+        bool usedLegacyFallback)
+        => ResolveTranscriptForRestyle(
+            noteMd,
+            usedLegacyFallback ? runTranscriptText : null);
 
     /// <summary>
     /// 替换笔记中的「转录全文」正文。摘要和用户在其前方补充的内容保持不动；
