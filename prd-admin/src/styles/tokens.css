@@ -868,6 +868,28 @@
   --accent-fg-amber: #fbbf24;
   --accent-fg-danger: #f87171;
   --accent-fg-emerald: #34d399;
+  /*
+   * 表面族必须**整族**覆盖，缺一个就翻车。
+   * Codex 在 PR #1374 抓到：arena 的两个下拉用 var(--bg-elevated)，
+   * 而这块暗岛只把 --text-* 翻回近白、没翻 --bg-elevated ——
+   * 浅色档下就是近白字压 #E4DED5 浅暖底，核心控件几乎不可读。
+   * 全仓有 6 个文件的暗岛内用到这一族，属同一个缺口。
+   * 判据：浅色档定义了的表面/文字类 token，这里必须都有对应项（见同文件末尾的守卫说明）。
+   */
+  --bg-base: #141418;
+  --bg-elevated: #1e1e24;
+  --bg-primary: #1E1F20;
+  --bg-secondary: rgba(255, 255, 255, 0.06);
+  --bg-tertiary: rgba(255, 255, 255, 0.10);
+  --border-focus: rgba(217, 119, 87, 0.55);
+  --border-primary: rgba(255, 255, 255, 0.12);
+  --border-secondary: rgba(255, 255, 255, 0.06);
+  --glass-bg: rgba(15, 23, 42, 0.55);
+  --glass-bg-strong: rgba(15, 23, 42, 0.72);
+  --glass-ring: rgba(255, 255, 255, 0.10);
+  --glass-shadow: 0 18px 54px rgba(0, 0, 0, 0.55);
+  --panel: linear-gradient(180deg, rgba(30, 30, 36, 0.92) 0%, rgba(30, 30, 36, 0.78) 100%);
+  --panel-solid: rgba(30, 30, 36, 0.92);
   --accent-on-gold: #1a1a1a;
 }
 

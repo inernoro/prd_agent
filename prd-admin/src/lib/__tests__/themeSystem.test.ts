@@ -162,6 +162,33 @@ describe('主题系统契约', () => {
     });
   });
 
+  it('surface-tone-dark 必须整族覆盖表面与文字 token', () => {
+    /*
+     * 暗岛（钉死深色的局部区域）只覆盖半套 token 会静默翻车：
+     * 文字翻回近白、底色却仍是浅色档的值 —— 近白字压浅暖底，几乎不可读。
+     * Codex 在 PR #1374 抓到 arena 的两个下拉正是这样（用 var(--bg-elevated)），
+     * 当时 .surface-tone-dark 少了 14 个表面 token，全仓 6 个文件的暗岛都受影响。
+     * 这条守卫盯的是「浅色档定义了的表面/文字族 token，暗岛必须都有对应项」。
+     */
+    const css = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const blockOf = (head: string) => {
+      const i = css.indexOf(head);
+      expect(i, `找不到 ${head}`).toBeGreaterThan(-1);
+      const j = css.indexOf('\n}', i);
+      return new Set([...css.slice(i, j).matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+    };
+    const FAMILY = /^--(bg|panel|surface|text|border|glass|accent-fg|accent-on)/;
+    const light = blockOf('[data-theme="light"] {');
+    const island = blockOf('.surface-tone-dark {');
+    const missing = [...light].filter((t) => FAMILY.test(t) && !island.has(t)).sort();
+    expect(
+      missing.length
+        ? `surface-tone-dark 缺这些表面/文字 token，暗岛内用到就会「近白字压浅底」：\n  ${missing.join('\n  ')}\n`
+          + '补上暗色档对应值（取 :root 的值）即可。'
+        : '',
+    ).toBe('');
+  });
+
   it('强调色配置保持统一结构：底是淡色调、字走双写 token', () => {
     Object.values(ACCENT_STYLES).forEach((accent) => {
       // 底与描边保持低透明度同色调 —— 这一层在两个主题下都成立

@@ -48,3 +48,5 @@
 | fix | prd-admin | ArenaPage 空态 27 处写死白字改走 token —— 该屏外层无深底，浅色档下就是白字压暖纸（实测 1.01~1.2:1） |
 | fix | e2e | 远端审计补渐变重采样（本地版一直有、远端漏了）：元素坐在 radial-gradient 上时 backgroundColor 透明，祖先链会一路取到页面底，把「深色渐变页上的浅字」误报成缺陷。task-tree 整页栽在这上面，照误报改会造新 bug |
 | fix | prd-admin | 教程中心承接卡落地方案 A（用户选）：七级帽子拆双皮肤——暗色档保持石墨→暖银的提亮递进，浅色档另配石墨→暖青铜的加深递进（5.3~6.6:1，原来 Lv.3 只有 1.86:1 且越高阶越看不见）；卡片补实底与描边；进度环底槽改走 --nested-block-bg |
+| fix | prd-admin | 修 Codex P1：surface-tone-dark 只覆盖半套 token，暗岛内用 var(--bg-elevated) 等 14 个表面 token 时会「近白字压浅暖底」（arena 两个下拉实例，全仓 6 个文件受影响）。补齐 14 个并加守卫，红绿闭环验过 |
+| chore | repo | 修 Codex P2：116 个审计截图共 23MB 被误提交入库，git rm --cached 移除；.gitignore 从枚举目录名改成 .audit-*/ 前缀通配，换 AUDIT_OUT 也堵得住 |
