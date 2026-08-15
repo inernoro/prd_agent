@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.LlmGateway;
@@ -265,6 +266,8 @@ public class TranscriptRunWorker : BackgroundService
             "[transcript-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes}",
             sourceByteCount,
             audioBytes.Length);
+        if (AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(audioBytes))
+            throw new InvalidOperationException("ASR 没有识别到有效语音：完整音频经信号检测确认为静音或音量过低。");
 
         await UpdateProgress(db, run, 30);
 
@@ -280,6 +283,9 @@ public class TranscriptRunWorker : BackgroundService
             {
                 return new GatewayRawRequest
                 {
+                    RequiredOfferingId = candidate.OfferingId,
+                    PinnedPlatformId = candidate.ActualPlatformId,
+                    PinnedModelId = candidate.ActualModel,
                     AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
                     ModelType = ModelTypes.Asr,
                     RequestBody = new JsonObject { ["audio_data"] = Convert.ToBase64String(audioBytes) },
@@ -296,6 +302,9 @@ public class TranscriptRunWorker : BackgroundService
                     : $"这是第 {validationAttempt - 1} 次结果校验。必须读取本消息 input_audio 里的 WAV 音频，只输出真实人声原文；禁止要求用户再次提供、上传或播放音频。没有人声时只输出 NO_SPEECH。";
                 return new GatewayRawRequest
                 {
+                    RequiredOfferingId = candidate.OfferingId,
+                    PinnedPlatformId = candidate.ActualPlatformId,
+                    PinnedModelId = candidate.ActualModel,
                     AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
                     ModelType = ModelTypes.Asr,
                     EndpointPath = "/v1/chat/completions",
@@ -332,16 +341,14 @@ public class TranscriptRunWorker : BackgroundService
 
             return new GatewayRawRequest
             {
+                RequiredOfferingId = candidate.OfferingId,
+                PinnedPlatformId = candidate.ActualPlatformId,
+                PinnedModelId = candidate.ActualModel,
                 AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
                 ModelType = ModelTypes.Asr,
-                EndpointPath = "/v1/audio/transcriptions",
+                EndpointPath = AsrRequestContractPolicy.TranscriptionsEndpoint,
                 IsMultipart = true,
-                MultipartFields = new Dictionary<string, object>
-                {
-                    ["model"] = candidate.ActualModel ?? "whisper-1",
-                    ["response_format"] = "verbose_json",
-                    ["timestamp_granularities[]"] = "segment"
-                },
+                MultipartFields = AsrRequestContractPolicy.BuildTranscriptionFields(candidate.ActualModel),
                 MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
                 {
                     ["file"] = ("audio.wav", audioBytes, "audio/wav")
@@ -359,6 +366,26 @@ public class TranscriptRunWorker : BackgroundService
         for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
             var candidate = candidates[candidateIndex];
+            if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                    candidate.ActualModel,
+                    candidate.Protocol,
+                    candidate.PlatformType,
+                    candidate.OfferingEndpointPath,
+                    candidate.IsExchange,
+                    out var routeError))
+            {
+                rawResp = GatewayRawResponse.Fail(
+                    AsrRequestContractPolicy.InvalidRouteErrorCode,
+                    routeError ?? "ASR Offering 端点与模型协议不兼容",
+                    409);
+                _logger.LogError(
+                    "[transcript-agent] 拒绝不兼容的 ASR Offering: RunId={RunId}, Offering={Offering}, Model={Model}, Endpoint={Endpoint}",
+                    run.Id,
+                    candidate.OfferingId,
+                    candidate.ActualModel,
+                    candidate.OfferingEndpointPath);
+                continue;
+            }
             var candidateIsChatAudio = AsrAudioRoutePolicy.ShouldUseChatAudio(
                 candidate.ActualModel,
                 candidate.Protocol,
@@ -392,7 +419,7 @@ public class TranscriptRunWorker : BackgroundService
                     {
                         var nonChatText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
                         if (!string.IsNullOrWhiteSpace(nonChatText)
-                            && !nonChatText.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+                            && !TranscribeNoteText.IsNoSpeechSentinel(nonChatText))
                         {
                             candidateSegments.Add(new TranscriptSegment { Start = 0, End = 0, Text = nonChatText.Trim() });
                         }
@@ -413,7 +440,7 @@ public class TranscriptRunWorker : BackgroundService
                 }
 
                 var candidateText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
-                var isNoSpeech = candidateText?.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase) == true;
+                var isNoSpeech = TranscribeNoteText.IsNoSpeechSentinel(candidateText);
                 var isAssistantReply = !string.IsNullOrWhiteSpace(candidateText)
                     && PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.LooksLikeAssistantReply(candidateText);
                 if (!string.IsNullOrWhiteSpace(candidateText) && !isNoSpeech && !isAssistantReply)
@@ -467,7 +494,7 @@ public class TranscriptRunWorker : BackgroundService
         {
             var text = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
             if (!string.IsNullOrWhiteSpace(text)
-                && !text.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+                && !TranscribeNoteText.IsNoSpeechSentinel(text))
             {
                 segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = text.Trim() });
             }

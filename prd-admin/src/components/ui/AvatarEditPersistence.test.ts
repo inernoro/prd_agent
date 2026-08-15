@@ -42,4 +42,9 @@ describe('头像持久化单次写入契约', () => {
     expect(dialogSource).toContain('resumeMyAvatarPreview({');
     expect(dialogSource).not.toContain('if (!runId) return;');
   });
+
+  it('空描述时说明不能继续的原因和恢复动作', () => {
+    expect(dialogSource).toContain('aria-describedby="avatar-ai-prompt-help"');
+    expect(dialogSource).toContain('请先描述想怎么修改头像，输入后即可生成预览。');
+  });
 });

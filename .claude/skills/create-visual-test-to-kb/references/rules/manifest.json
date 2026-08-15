@@ -1,13 +1,13 @@
 {
   "kind": "acceptance-rule-snapshots",
-  "sourceCommit": "06efeb6e6135a39b280d4b3fe94cb9064b135998+worktree",
-  "generatedAt": "2026-08-05T06:24:45.073885+00:00",
+  "sourceCommit": "44a28a6d86c5ca51354d72821fb950eed50a3ab4+worktree",
+  "generatedAt": "2026-08-14T04:20:32.508810+00:00",
   "sources": [
     {
       "sourceId": "acceptance.rule.enterprise",
       "sourcePath": "doc/rule.acceptance.map-enterprise.md",
       "snapshotPath": "references/rules/rule.acceptance.map-enterprise.md",
-      "contentHash": "sha256:a36d4863b202ae24e50c577c2830ca0e15c735b3e8a876478c09ed1c25f7725e"
+      "contentHash": "sha256:cf3365adbbe6c803287f6ed03dca63e1e58a1ad40c91395abc31408689ed4aec"
     },
     {
       "sourceId": "acceptance.rule.ssot",

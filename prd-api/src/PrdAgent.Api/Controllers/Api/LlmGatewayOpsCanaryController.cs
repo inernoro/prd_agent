@@ -5,6 +5,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Core.LlmGateway;
 
@@ -115,26 +116,61 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
                 AudioBytes: audio.Length));
         }
 
+        if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                resolution.ActualModel,
+                resolution.Protocol,
+                resolution.PlatformType,
+                resolution.OfferingEndpointPath,
+                resolution.IsExchange,
+                out var routeError))
+        {
+            return Ok(new LlmGatewayAsrCanaryResponse(
+                Success: false,
+                RequestId: requestId,
+                AppCallerCode: appCallerCode,
+                Stage: "contract",
+                Model: resolution.ActualModel,
+                StatusCode: 409,
+                ErrorCode: AsrRequestContractPolicy.InvalidRouteErrorCode,
+                ErrorMessage: Truncate(routeError, 1000),
+                ContentPreview: null,
+                ContentType: null,
+                AudioBytes: audio.Length));
+        }
+
+        var useChatAudio = AsrRequestContractPolicy.ShouldUseChatAudio(
+            resolution.ActualModel,
+            resolution.Protocol,
+            resolution.PlatformType);
         var rawRequest = new GatewayRawRequest
         {
+            RequiredOfferingId = resolution.OfferingId,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/audio/transcriptions",
+            EndpointPath = useChatAudio
+                ? AsrRequestContractPolicy.ChatCompletionsEndpoint
+                : AsrRequestContractPolicy.TranscriptionsEndpoint,
             ExpectedModel = resolution.ActualModel,
-            PinnedPlatformId = request?.PinnedPlatformId,
-            PinnedModelId = request?.PinnedModelId,
-            IsMultipart = true,
-            MultipartFields = new Dictionary<string, object>
-            {
-                ["model"] = resolution.ActualModel ?? request?.ExpectedModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = request?.Language ?? "",
-            },
-            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
-            {
-                ["file"] = ("llmgw-asr-canary.wav", audio, "audio/wav"),
-            },
+            PinnedPlatformId = resolution.ActualPlatformId,
+            PinnedModelId = resolution.ActualModel,
+            IsMultipart = !useChatAudio,
+            RequestBody = useChatAudio
+                ? AsrRequestContractPolicy.BuildChatAudioBody(
+                    resolution.ActualModel ?? request?.ExpectedModel,
+                    audio,
+                    "请逐字转写这段探针音频，只输出转写文字。没有人声时只输出 NO_SPEECH。")
+                : null,
+            MultipartFields = useChatAudio
+                ? null
+                : AsrRequestContractPolicy.BuildTranscriptionFields(
+                    resolution.ActualModel ?? request?.ExpectedModel,
+                    request?.Language),
+            MultipartFiles = useChatAudio
+                ? null
+                : new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                {
+                    ["file"] = ("llmgw-asr-canary.wav", audio, "audio/wav"),
+                },
             TimeoutSeconds = timeoutSeconds,
             Context = new GatewayRequestContext
             {

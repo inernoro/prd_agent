@@ -36,8 +36,8 @@ test('主管报告把异常提前并保留全量逐项账本', () => {
       { caseId: 'VIS-003', environment: 'production', status: 'not-run', durationMs: 0, error: '' },
     ],
     notRunLedger: [
-      { caseId: 'CORE-001', environment: 'production', reason: '正式身份未就绪' },
-      { caseId: 'VIS-003', environment: 'production', reason: '正式身份未就绪' },
+      { caseId: 'CORE-001', environment: 'production', reasonCode: 'identity-missing', reason: '正式身份未就绪', sourcePath: 'e2e/specs/core.spec.ts', command: 'node scripts/stable-smoke-run.mjs', closeCondition: '身份预检通过并复测' },
+      { caseId: 'VIS-003', environment: 'production', reasonCode: 'identity-missing', reason: '正式身份未就绪', sourcePath: 'e2e/specs/visual.spec.ts', command: 'node scripts/stable-smoke-run.mjs', closeCondition: '身份预检通过并复测' },
     ],
   });
   assert.match(report, /主管结论：不通过/);
@@ -47,10 +47,15 @@ test('主管报告把异常提前并保留全量逐项账本', () => {
   assert.match(report, /正式合成身份未就绪/);
   assert.match(report, /正式环境 \| 全部计划模块 \| 2 项/);
   assert.equal((report.match(/正式合成身份未就绪/g) || []).length, 1);
+  assert.match(report, /## 执行覆盖账本/);
+  assert.match(report, /正式环境 \| 2 \| 0 \| 0 \| 0 \| 2 \|/);
+  assert.match(report, /CORE-001 \| 正式环境 \| identity-missing \| 正式身份未就绪/);
+  assert.match(report, /代码或页面入口 \| 补跑命令 \| 关闭条件/);
   assert.match(report, /## 逐项验收账本/);
   assert.match(report, /#method-vis-003/);
-  assert.doesNotMatch(report, /\| VIS-003 \|/);
-  assert.doesNotMatch(report, /node scripts|e2e\/|curl /);
+  assert.match(report, /\| VIS-003 \| 正式环境 \| identity-missing \|/);
+  assert.match(report, /node scripts\/stable-smoke-run\.mjs/);
+  assert.doesNotMatch(report, /curl /);
 });
 
 test('用例行通过但 Playwright 进程失败时主管结论仍是不通过', () => {
