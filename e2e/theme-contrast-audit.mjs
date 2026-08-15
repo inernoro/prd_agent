@@ -171,9 +171,18 @@ for (const theme of ['light', 'dark']) {
        * （Codex 在 PR #1374 第十二轮抓到）。
        * 记进 redirected 单列，不计入 done、findings 不进报告。
        */
+      /*
+       * 比的是 pathname 对 pathname —— route 可能带 query。
+       * `AUDIT_ROUTES` 正是覆盖参数化/带 tab 页面的唯一入口（收尾处就是这么写的），
+       * 而那类路径基本都带 query：`/open-platform?tab=open-api` 导航成功后
+       * `location.pathname` 只有 `/open-platform`，直接拿它跟原串比就恒不相等，
+       * 于是刚说「用 AUDIT_ROUTES 就能扫」的那批页面会被自己的重定向判据全部判成
+       * 重定向跳过（Codex 在 PR #1374 第十五轮抓到）。导航仍用完整串。
+       */
+      const routePath = route.split(/[?#]/)[0];
       let landed = await page.evaluate(() => location.pathname);
       // 掉登录就地重登一次再重试本条（长跑必然掉，见 login() 上方注释）
-      if (landed === '/login' && route !== '/login') {
+      if (landed === '/login' && routePath !== '/login') {
         console.log(`  [重登] ${route} 被弹回登录页，重新登录后重试`);
         if (await login(page)) {
           pageErrors = [];
@@ -182,7 +191,7 @@ for (const theme of ['light', 'dark']) {
           landed = await page.evaluate(() => location.pathname);
         }
       }
-      if (landed !== route) {
+      if (landed !== routePath) {
         coverage.redirected.push(`${theme}${route} → ${landed}`);
         console.log(`  [重定向] ${route} → ${landed}，不计入覆盖`);
         continue;
@@ -287,7 +296,8 @@ const unscannedRedirects = coverage.redirected.filter((x) => {
    * 别名跳转与掉登录是两回事：前者落地页确实有人扫，后者是这一屏没人扫。
    */
   if (landed === '/login') return true;
-  return !ROUTES.includes(landed);
+  // 同样比 pathname 对 pathname：ROUTES 里可能是带 query 的自定义路由
+  return !ROUTES.some((r) => r.split(/[?#]/)[0] === landed);
 });
 if (coverage.skipped.length || coverage.errored.length || unscannedRedirects.length) {
   console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length + unscannedRedirects.length} 对没扫成，本轮结果不能当作「已覆盖」：`);

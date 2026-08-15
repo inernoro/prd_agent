@@ -153,9 +153,10 @@ for (const theme of ['light', 'dark']) {
         console.log(`[${theme}] ${route.padEnd(30)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
         continue;
       }
-      // 落地在哪就是扫了哪，判据与远端版同（见那边注释：三条重定向路由曾把首页命中计了三次）
+      // 落地在哪就是扫了哪，判据与远端版同（含 pathname 对 pathname，route 可能带 query）
+      const routePath = route.split(/[?#]/)[0];
       const landed = await page.evaluate(() => location.pathname);
-      if (landed !== route) {
+      if (landed !== routePath) {
         coverage.redirected.push(`${theme}${route} → ${landed}`);
         console.log(`  [重定向] ${route} → ${landed}，不计入覆盖`);
         continue;
@@ -223,7 +224,7 @@ if (realFindings) {
 const unscannedRedirects = coverage.redirected.filter((x) => {
   const landed = x.split(' → ')[1];
   // 掉登录永远算失败，不能因为 /login 也在 ROUTES 里就放行（判据同远端版）
-  return landed === '/login' || !ROUTES.includes(landed);
+  return landed === '/login' || !ROUTES.some((r) => r.split(/[?#]/)[0] === landed);
 });
 if (coverage.skipped.length || coverage.errored.length || unscannedRedirects.length) {
   console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length + unscannedRedirects.length} 对没扫成，本轮结果不能当作「已覆盖」：`);

@@ -84,3 +84,5 @@
 | fix | e2e | 审计跑到一半掉登录：一轮十几分钟，light 从第 55 条、dark 从第 63 条起全部被弹回 /login，27 对（占 162 的 17%）从没量过。检测到落地 /login 就地重登再重试该路由。实测 /users 上一轮报「2 处」（其实扫的是登录页），修好后是 64 处 |
 | fix | e2e | 修上一轮自己的判据漏洞：「落地页在 ROUTES 里就算覆盖没丢」把掉登录也放行了（/login 恰好在清单里）。别名跳转与掉登录是两回事，后者永远算失败 |
 | fix | prd-admin | 修 Codex 第十三轮 P2：批注线程计数徽章底是 8 色亮色调色板（两个主题同色），前景却走会翻的 --text-primary，暗色档白字压亮底 1.55~3.98:1。新增 --fg-on-bright-fill（两档同值的深字），8 个色全部 4.07~10.48:1 |
+| fix | e2e | 修 Codex 第十五轮 P2：重定向判据拿 location.pathname 跟原始 route 串比，而 AUDIT_ROUTES（覆盖参数化/带 tab 页面的唯一入口）传进来的路径基本都带 query，于是那批页面会被自己的判据全判成重定向跳过。改为 pathname 对 pathname，导航仍用完整串 |
+| chore | e2e | 删掉误提交的一次性调试脚本 _probe-local.mjs（写死 /home/user/prd_agent 绝对路径，功能与 theme-contrast-audit-local.mjs 重复，无人引用） |
