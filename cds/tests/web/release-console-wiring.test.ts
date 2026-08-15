@@ -253,17 +253,51 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
 });
 
 /**
- * 英文字形。用户原话「你的字体 low 爆了」，对照物是分支卡的分支名。
- * 差距是三件事叠出来的：字号（10px vs 17px）、字重（400 vs 600）、
- * 字距（撑开 0.14em vs 收紧 0.015em），外加字体栈根本不是同一个。
- * 这几条删掉之后页面照样跑，所以必须钉住。
+ * 英文字形。用户原话「你的字体 low 爆了」，对照物是分支卡的分支名；
+ * 2026-08-15 进一步要求「把分支名的字体作为 CDS 的默认英文字体，
+ * 现在整个站都是像素点」。
+ *
+ * 根因是一个真实缺陷而不只是审美：body 首选 `Inter`、Tailwind 的 font-mono
+ * 首选 `JetBrains Mono`，而这两个字体**仓库从来没有加载过**——没有 @font-face、
+ * 没有 CDN link、没有 @fontsource 依赖。于是英文字形在每台机器上各凭兜底，
+ * 用户看到的像素点就是他那台机器的兜底字体。
+ *
+ * 现在全站英文只有一个来源 `--cds-font-latin`（系统自带的 UI 等宽栈，
+ * 一定装得到、一定带 hinting）。下面三条把它钉死。
  */
 describe('发布控制台 · 英文字形与分支卡同源', () => {
   it('标识符字形是唯一一份定义，分支名与新页面共用', () => {
     // 同一条规则里同时挂两个选择器 = SSOT；抄成两份迟早漂移
     expect(CSS).toMatch(/\.cds-ident,\s*\n\s*\.cds-branch-name\s*\{/);
-    expect(CSS).toContain('font-family: ui-monospace, SFMono-Regular, Menlo, monospace');
+    expect(CSS).toContain('font-family: var(--cds-font-latin)');
     expect(CSS).toContain('letter-spacing: -0.015em');
+  });
+
+  it('全站英文字形只有一个来源：body 与标识符共用 --cds-font-latin', () => {
+    // token 只定义一次
+    expect((CSS.match(/--cds-font-latin:/g) || []).length).toBe(1);
+    // body 用它（英文），CJK 落到后面的中文栈
+    expect(CSS).toContain('font-family: var(--cds-font-latin), var(--cds-font-cjk);');
+    // 不许再出现第二份手写栈——那正是「分支名一种字、正文另一种字」的来源
+    expect(CSS).not.toMatch(/font-family:\s*(ui-monospace|'Inter')/);
+  });
+
+  /**
+   * 声明了却没加载的字体是这次事故的根因：它不会报错，只会让每台机器
+   * 各自兜底，于是「我这边看着好好的」和「用户说有像素点」同时成立。
+   * 除非仓库真的打包了字体文件，否则不许在字体栈里点名任何非系统字体。
+   */
+  it('不许再点名仓库没有加载的字体（Inter / JetBrains Mono）', () => {
+    const tailwind = fs.readFileSync(path.resolve(process.cwd(), '../cds/web/tailwind.config.js'), 'utf8');
+    // 先剥注释再判：注释里解释「为什么不用 Inter」的那段话本身含 Inter 字样，
+    // 不剥的话判据读到的是自己的注释，永远红（形状 6：读的不是生效的那个值）。
+    const strip = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const cssCode = strip(CSS);
+    expect(cssCode, '若真要用自带字体，请先加 @font-face 再放进字体栈').not.toMatch(/@font-face\s*\{/);
+    for (const [name, source] of [['index.css', cssCode], ['tailwind.config.js', strip(tailwind)]] as const) {
+      expect(source, `${name} 点名了未加载的 Inter`).not.toContain('Inter');
+      expect(source, `${name} 点名了未加载的 JetBrains Mono`).not.toContain('JetBrains Mono');
+    }
   });
 
   it('页面不用 Tailwind 的 font-mono —— 那个栈把没打包的 JetBrains Mono 排在第一位', () => {

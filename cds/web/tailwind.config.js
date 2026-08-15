@@ -50,16 +50,15 @@ export default {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+      // 全站只有一套英文字形，定义在 index.css 的 --cds-font-latin。
+      //
+      // 这两个键此前各自写了一份栈，而且两份都点名了**仓库从没打包过的字体**
+      // （Inter / JetBrains Mono）：装了它们的机器和没装的机器看到的是两种字形，
+      // `font-sans` 与 `font-mono` 之间也对不齐。现在都指回同一个 token，
+      // 想换字体只改 index.css 那一处（predicate-and-wiring-discipline 形状 3）。
       fontFamily: {
-        sans: [
-          'Inter',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          'Segoe UI',
-          'Roboto',
-          'sans-serif',
-        ],
-        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+        sans: ['var(--cds-font-latin)', 'var(--cds-font-cjk)'],
+        mono: ['var(--cds-font-latin)'],
       },
       keyframes: {
         'accordion-down': {
