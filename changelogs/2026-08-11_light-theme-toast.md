@@ -117,3 +117,5 @@
 | docs | doc | 按 Codex 第二十六轮 P1 精简 debt.frontend 对比度段：已修项、修法机制、轮次过程一律移出，只留尚未解决的边界；补记「滚动揭示内容没扫到」这条新边界 |
 | fix | prd-admin | 修 Codex 第二十七轮 P2：mermaid 是全局单例，initialize 改全局配置而 render 内部有自己的队列。一页多张图分处明暗不同表面时，后一张的 initialize 可能抢在前一张 render 之前，前一张就用错调色板——深底配浅色档，正是本 PR 要修的那个 1.1:1 老毛病。用 promise 链把「配置 + 渲染」锁成原子操作 |
 | fix | e2e | 修 Codex 第二十七轮 P2：SVG 双通道让两条候选落在同一节点，隐前景时按 id 遍历会把它记两遍，第二遍记下的是已改成 transparent 的值；还原时先写原值再写 transparent，该形状永久隐形、后续候选采错底色。改为按元素去重，原样式只记一次 |
+| fix | prd-admin | 修 Codex 第二十八轮 P2：PA 工具条激活态的字色我按浅底档改成深蓝 #1d4ed8（默认/gemini 实测 5.11:1），但那条是共享规则、同样命中深底的 mountain 主题——深蓝压 14% 蓝调深底只剩 2.16:1，改之前的浅蓝有 8.03:1。给 mountain 补回浅蓝 #93c5fd（8.03:1） |
+| chore | prd-admin | 双皮肤棘轮基线 paAgent.css 浅色前景 9→10：新增值锁死在 [data-pa-theme="mountain"] 这一钉死深色主题下，属规则允许的暗色专用例外 |

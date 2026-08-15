@@ -1431,7 +1431,7 @@
     "whiteAlpha": 14,
     "darkHex": 8,
     "darkRgbaBg": 1,
-    "lightFg": 9
+    "lightFg": 10
   },
   "/pages/pa-agent/PaAgentPage.tsx": {
     "whiteAlpha": 0,
