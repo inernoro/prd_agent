@@ -76,6 +76,15 @@ export type HorizontalClampInput = {
   padding?: number;
 };
 
+export type VerticalClampInput = {
+  stageTop: number;
+  stageBottom: number;
+  elementTop: number;
+  elementBottom: number;
+  currentShift?: number;
+  padding?: number;
+};
+
 function positive(value: number | undefined, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }
@@ -101,6 +110,30 @@ export function computeHorizontalClampShift({
   if (width > available) return safeLeft - rawLeft;
   if (rawLeft < safeLeft) return safeLeft - rawLeft;
   if (rawRight > safeRight) return safeRight - rawRight;
+  return 0;
+}
+
+/**
+ * 返回浮层相对原始锚点应采用的绝对屏幕纵向偏移，避免图片贴近画布顶部时操作栏被裁掉。
+ */
+export function computeVerticalClampShift({
+  stageTop,
+  stageBottom,
+  elementTop,
+  elementBottom,
+  currentShift = 0,
+  padding = 12,
+}: VerticalClampInput): number {
+  const safeTop = stageTop + padding;
+  const safeBottom = stageBottom - padding;
+  const rawTop = elementTop - currentShift;
+  const rawBottom = elementBottom - currentShift;
+  const height = Math.max(0, elementBottom - elementTop);
+  const available = Math.max(0, safeBottom - safeTop);
+
+  if (height > available) return safeTop - rawTop;
+  if (rawTop < safeTop) return safeTop - rawTop;
+  if (rawBottom > safeBottom) return safeBottom - rawBottom;
   return 0;
 }
 

@@ -12,6 +12,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
@@ -6554,6 +6555,16 @@ function safeChart(canvasId, config) {
                         RequestType: ModelTypes.Asr,
                         AppCallerCode: resolvedCaller!,
                         ForceFullShadowSample: forceFullShadowSample));
+                    if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                            gwRes.ActualModel,
+                            gwRes.Protocol,
+                            gwRes.PlatformType,
+                            gwRes.OfferingEndpointPath,
+                            gwRes.IsExchange,
+                            out var routeError))
+                    {
+                        throw new InvalidOperationException(routeError);
+                    }
                     var gatewayResult = !gwRes.IsExchange && AsrAudioRoutePolicy.ShouldUseChatAudio(gwRes.ActualModel, gwRes.Protocol, gwRes.PlatformType)
                         ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
                         : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
@@ -6708,16 +6719,14 @@ function safeChart(canvasId, config) {
     {
         var rawRequest = new GatewayRawRequest
         {
+            RequiredOfferingId = resolution.OfferingId,
+            PinnedPlatformId = resolution.ActualPlatformId,
+            PinnedModelId = resolution.ActualModel,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/audio/transcriptions",
+            EndpointPath = AsrRequestContractPolicy.TranscriptionsEndpoint,
             IsMultipart = true,
-            MultipartFields = new Dictionary<string, object>
-            {
-                ["model"] = resolution.ActualModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-            },
+            MultipartFields = AsrRequestContractPolicy.BuildTranscriptionFields(resolution.ActualModel),
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("audio.wav", audioBytes, "audio/wav"),
@@ -6778,9 +6787,12 @@ function safeChart(canvasId, config) {
 
         var rawRequest = new GatewayRawRequest
         {
+            RequiredOfferingId = resolution.OfferingId,
+            PinnedPlatformId = resolution.ActualPlatformId,
+            PinnedModelId = resolution.ActualModel,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/chat/completions",
+            EndpointPath = AsrRequestContractPolicy.ChatCompletionsEndpoint,
             IsMultipart = false,
             RequestBody = body,
             TimeoutSeconds = 600,

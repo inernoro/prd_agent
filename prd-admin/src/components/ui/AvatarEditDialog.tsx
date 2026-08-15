@@ -366,8 +366,12 @@ export function AvatarEditDialog(props: {
                   </button>
                   <input
                     id="avatar-ai-prompt"
+                    aria-describedby="avatar-ai-prompt-help"
                     value={prompt}
-                    onChange={(event) => setPrompt(event.target.value.slice(0, 500))}
+                    onChange={(event) => {
+                      setPrompt(event.target.value.slice(0, 500));
+                      if (error === '请描述想怎么修改头像') setError(null);
+                    }}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.nativeEvent.isComposing && prompt.trim() && !generating && !uploading) {
                         event.preventDefault();
@@ -389,6 +393,11 @@ export function AvatarEditDialog(props: {
                     <span className="max-[420px]:sr-only">{generatedUrl ? '重新生成' : '生成预览'}</span>
                   </Button>
                 </div>
+                <p id="avatar-ai-prompt-help" className="mt-2 px-1 text-[11px] text-token-muted">
+                  {prompt.trim()
+                    ? '可以继续补充细节，点击生成预览后再确认替换。'
+                    : '请先描述想怎么修改头像，输入后即可生成预览。'}
+                </p>
               </div>
 
               {generatedUrl && !generating && (

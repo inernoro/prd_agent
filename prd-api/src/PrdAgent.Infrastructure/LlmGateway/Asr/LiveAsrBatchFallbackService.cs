@@ -56,7 +56,7 @@ public sealed class LiveAsrBatchFallbackService
             // 首个成功窗口开始写入 partial/final 与会话结果。
             Provider = null,
             Model = null,
-            Message = "实时转写暂时不可用，录音仍会安全保存；结束录音后可重试完整转写。",
+            Message = "已启用分段实时转写，约 5 秒后显示第一段；录音仍会安全保存，结束后将用完整音频自动校准。",
         });
 
         // 候选状态属于整个录音会话，不属于单个五秒窗口。某候选完整失败后从
@@ -224,6 +224,23 @@ public sealed class LiveAsrBatchFallbackService
         for (var index = 0; index < orderedCandidates.Length; index++)
         {
             var candidate = orderedCandidates[index];
+            if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                    candidate.ActualModel,
+                    candidate.Protocol,
+                    candidate.PlatformType,
+                    candidate.OfferingEndpointPath,
+                    candidate.IsExchange,
+                    out var routeError))
+            {
+                _logger.LogError(
+                    "滚动窗口 ASR 拒绝不兼容的 Offering window={Window} offering={Offering} model={Model} endpoint={Endpoint} error={Error}",
+                    windowIndex,
+                    candidate.OfferingId,
+                    candidate.ActualModel,
+                    candidate.OfferingEndpointPath,
+                    routeError);
+                continue;
+            }
             for (var providerAttempt = 1;
                  providerAttempt <= ProviderValidationAttempts;
                  providerAttempt++)
@@ -481,13 +498,8 @@ public sealed class LiveAsrBatchFallbackService
         return BaseRequest(
             candidate,
             requestContext,
-            endpointPath: "/v1/audio/transcriptions",
-            multipartFields: new Dictionary<string, object>
-            {
-                ["model"] = candidate.ActualModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-            },
+            endpointPath: AsrRequestContractPolicy.TranscriptionsEndpoint,
+            multipartFields: AsrRequestContractPolicy.BuildTranscriptionFields(candidate.ActualModel),
             multipartFiles: new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
                 ["file"] = ("live-window.wav", wave, "audio/wav"),
@@ -504,6 +516,7 @@ public sealed class LiveAsrBatchFallbackService
     {
         return new GatewayRawRequest
         {
+            RequiredOfferingId = candidate.OfferingId,
             AppCallerCode = AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
             ModelType = ModelTypes.Asr,
             ExpectedModel = candidate.ActualModel,
@@ -524,21 +537,10 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     private static bool ShouldUseChatAudio(ModelResolutionResult candidate)
-    {
-        var model = candidate.ActualModel?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (model.Contains("whisper", StringComparison.Ordinal) || model.Length == 0)
-            return false;
-        if (!model.Contains("audio", StringComparison.Ordinal)
-            && !model.Contains("gemini", StringComparison.Ordinal))
-            return false;
-
-        var protocol = candidate.Protocol?.Trim().ToLowerInvariant();
-        if (!string.IsNullOrWhiteSpace(protocol) && protocol != "unknown")
-            return protocol is "openai" or "openai-compatible" or "openrouter";
-
-        var platform = candidate.PlatformType?.Trim().ToLowerInvariant();
-        return platform is not ("google" or "gemini" or "anthropic" or "claude" or "exchange");
-    }
+        => AsrRequestContractPolicy.ShouldUseChatAudio(
+            candidate.ActualModel,
+            candidate.Protocol,
+            candidate.PlatformType);
 
     private static byte[] TakePrefix(MemoryStream stream, int count)
     {
@@ -550,7 +552,7 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     private static bool IsNoSpeech(string text)
-        => text.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase);
+        => TranscribeNoteText.IsNoSpeechSentinel(text);
 
     public static bool LooksLikeAssistantReply(string text)
     {
@@ -614,6 +616,9 @@ public sealed class LiveAsrBatchFallbackService
     }
 
     public static bool HasLikelySpeech(byte[] pcm)
+        => HasLikelySpeech(pcm.AsSpan());
+
+    public static bool HasLikelySpeech(ReadOnlySpan<byte> pcm)
     {
         if (pcm.Length < BytesPerSample)
             return false;
@@ -624,7 +629,7 @@ public sealed class LiveAsrBatchFallbackService
         for (var offset = 0; offset + 1 < pcm.Length; offset += BytesPerSample)
         {
             var amplitude = Math.Abs((int)BinaryPrimitives.ReadInt16LittleEndian(
-                pcm.AsSpan(offset, BytesPerSample)));
+                pcm.Slice(offset, BytesPerSample)));
             if (amplitude < SpeechAmplitudeThreshold)
                 continue;
             activeSamples++;

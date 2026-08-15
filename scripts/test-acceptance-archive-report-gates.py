@@ -50,6 +50,15 @@ def compiled_markdown(archive, body, manifest):
 
 def main() -> None:
     archive = load_archive_module()
+    for rejected_mode in ("local", "doc-store"):
+        try:
+            archive.require_cds_report_mode(rejected_mode)
+        except ValueError as error:
+            if "只允许 report.mode=cds" not in str(error):
+                raise AssertionError(f"unexpected mode rejection: {error}") from error
+        else:
+            raise AssertionError(f"formal archive must reject report.mode={rejected_mode}")
+    archive.require_cds_report_mode("cds")
 
     naming_now = datetime(2026, 7, 23, 10, 0)
     naming_cfg = {"project": "prd-agent"}
@@ -280,6 +289,164 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         raise AssertionError("standard interactive HTML is missing the acceptance template marker")
     if html.count('class="edition-version">v0.9</small>') != 2:
         raise AssertionError("report version must be visible in the sidebar and masthead")
+
+    business_report = """
+## 结论与处理顺序
+
+| 指标 | 数量 | 给业务读者的解释 |
+|---|---:|---|
+| 计划测试 | 191 | 本轮合同项 |
+| 已完成 | 79 | 已有明确结果 |
+| 通过 | 48 | 业务断言成立 |
+| 失败 | 31 | 需要处理和复测 |
+| 功能未执行 | 112 | 不能按通过计算 |
+
+## 双环境覆盖差异
+
+| 环境 | 计划 | 已完成 | 通过 | 失败 | 未执行 | 业务结论 |
+|---|---:|---:|---:|---:|---:|---|
+| CDS | 103 | 78 | 47 | 31 | 25 | 已执行完整矩阵，仍有失败 |
+| 正式环境 | 88 | 1 | 1 | 0 | 87 | 安全门槛下仅执行只读检查 |
+
+## 截图证据怎么读
+
+| 视觉指标 | 数量 | 代表什么 |
+|---|---:|---|
+| 计划截图槽位 | 148 | 合同要求 |
+| 已采集且可审核 | 148 | 字段齐全，不等于通过 |
+| 能直接证明通过 | 36 | 目标状态成立 |
+| 明确不通过 | 0 | 图片直接呈现失败 |
+| 不能证明业务结果 | 112 | 仍需运行态证据 |
+
+## 执行覆盖账本
+
+| 环境 | 计划 | 已完成 | 未执行 |
+|---|---:|---:|---:|
+| CDS | 103 | 78 | 25 |
+
+## 逐项验收账本
+
+| 编号 | 结果 |
+|---|---|
+| REC-003 | 失败 |
+
+## 不通过问题与复现
+
+| 根因 | 影响项数 | 影响模块 | 验收项编号 | 实际结果 | 期望结果 | 复现方式 | 本次直接证据 | 复测方法 | 当前责任角色 | 完成时限 | 恢复动作 |
+|---|---:|---|---|---|---|---|---|---|---|---|---|
+| ASR 默认池没有健康成员 | 6 | 录音转笔记 | REC-003 | 无法转录 | 返回转录笔记 | 首页 → 知识库 → 上传音频 → 等待转录 | [失败记录](#结论与处理顺序) | [方法](#结论与处理顺序) | 录音负责人 | 下一轮复测前 | 恢复模型池后复测 |
+
+## 关联测试方法
+
+沿相同业务路径复测并回读结果。
+"""
+    actionable_manifest = [dict(item) for item in annotated_manifest]
+    actionable_manifest[0].update({
+        "module": "录音和音频上传",
+        "primaryState": "上传",
+        "status": "需干预",
+        "caption": "录音和音频上传：上传尚未形成通过证据，需要干预或补跑",
+    })
+    business_html = archive.build_interactive_html(
+        "稳定冒烟",
+        "fail",
+        compiled_markdown(archive, business_report, actionable_manifest),
+        actionable_manifest,
+    )
+    for needle in (
+        '<span>计划测试</span><strong>191</strong>',
+        '<span>已完成</span><strong>79</strong>',
+        '<span>通过</span><strong>48</strong>',
+        '<span>失败</span><strong>31</strong>',
+        '<span>功能未执行</span><strong>112</strong>',
+        '计划 191 项，完成 79 项',
+        '已采集”只代表图、路径、时间和方法齐全，不代表业务已经通过',
+        'CDS：完成 78/103',
+        '正式环境：完成 1/88',
+        '数字相同纯属巧合，不能一一对应',
+        'ASR默认池没有健康成员',
+        '<b>复现：</b>首页→知识库→上传音频→等待转录',
+        '<b>恢复：</b>恢复模型池后复测',
+        '<b>编号：</b>REC-003',
+        '<b>责任：</b>录音负责人；<b>时限：</b>下一轮复测前',
+        '第一步：确认结论',
+        'aria-label="报告处理步骤"',
+        'href="#执行覆盖账本"',
+        'href="#逐项验收账本"',
+        'href="#不通过问题与复现"',
+        'href="#关联测试方法"',
+        '<em>查看明细</em>',
+        'data-report-filter="all"',
+        'data-report-filter="completed"',
+        'data-report-filter="pass"',
+        'data-report-filter="fail"',
+        'data-report-filter="not-run"',
+        'href="#双环境覆盖差异"><b>1</b>',
+        'aria-label="结论明细入口"',
+        '查看执行覆盖',
+        '查看失败结果',
+        '查看复测方法',
+        '录音和音频上传：上传待录音与转写负责人补证；报告查看者无需操作',
+        '<b>当前只证明：</b>本图只证明页面已到达，尚未证明“上传”后的真实业务结果',
+        '<b>谁来处理：</b>录音与转写负责人',
+        '<b>处理动作：</b>录音与转写负责人使用合同规定的真实文件，完成选择、上传、预览和保存，并刷新页面回读结果',
+        '<b>完成标准：</b>“上传”出现预期业务结果，刷新后仍可回读；如产生测试数据，清理后再次确认不存在',
+    ):
+        if needle not in business_html:
+            raise AssertionError(f"business decision page is missing: {needle}")
+    if "未抽取到结构化重点项" in business_html:
+        raise AssertionError("business decision reports must not show the generic extraction fallback")
+    if any(role_text in business_html for role_text in (
+        "老板先看", "主管先看", "主管报告", "主管结论", "主管动作", "代码不干扰主管",
+    )):
+        raise AssertionError("report guidance must be expressed as process steps, not reader roles")
+    if "上传尚未形成通过证据，需要干预或补跑" in business_html:
+        raise AssertionError("vague intervention captions must be replaced by owned close-out actions")
+    if any(needle not in business_html for needle in (
+        "var metricFilter=''",
+        "matchesMetricFilter(row)",
+        "else if(metricFilter)",
+    )):
+        raise AssertionError("business metric cards must filter the item ledger to the selected result")
+    visual_failure_report = """
+# 稳定冒烟
+
+## 结论与处理顺序
+
+| 指标 | 数量 | 给业务读者的解释 |
+|---|---:|---|
+| 计划测试 | 1 | 本轮合同 |
+| 已完成 | 1 | 已有结果 |
+| 通过 | 1 | 业务断言成立 |
+| 失败 | 0 | 无功能失败 |
+| 未执行 | 0 | 已全部执行 |
+
+## 截图证据怎么读
+
+| 视觉指标 | 数量 | 代表什么 |
+|---|---:|---|
+| 计划截图槽位 | 1 | 视觉合同 |
+| 已采集且可审核 | 1 | 字段完整 |
+| 能直接证明通过 | 0 | 无 |
+| 明确不通过 | 1 | 截图呈现错误结果 |
+| 不能证明业务结果 | 0 | 无 |
+"""
+    visual_failure_html = archive.build_interactive_html(
+        "稳定冒烟",
+        "pass",
+        compiled_markdown(archive, visual_failure_report, annotated_manifest),
+        annotated_manifest,
+    )
+    if "当前不能放行" not in visual_failure_html or "当前可以放行" in visual_failure_html:
+        raise AssertionError("archived release banner must fail closed when visual evidence explicitly fails")
+    offering_action = archive._evidence_action({
+        "module": "图片模型路由与切换",
+        "primaryState": "Offering",
+        "status": "需干预",
+        "caption": "图片模型路由与切换：Offering尚未形成通过证据，需要干预或补跑",
+    })
+    if not offering_action or offering_action["state"] != "可用模型通道":
+        raise AssertionError("technical evidence states must be translated before rendering close-out actions")
 
     daily_report = """
 # 每日验收报告
