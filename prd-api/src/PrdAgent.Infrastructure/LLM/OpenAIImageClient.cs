@@ -136,6 +136,19 @@ public class OpenAIImageClient : IImageGenerationClient
         return adapter?.SizeConstraintType == SizeConstraintTypes.Adaptive;
     }
 
+    internal static bool ShouldUseOpenAIImagesEditApi(string? wireProtocol, string? modelId)
+    {
+        var protocol = (wireProtocol ?? string.Empty).Trim().ToLowerInvariant();
+        if (protocol is not ("openai" or "openai-compatible")) return false;
+
+        var modelConfig = ImageGenModelAdapterRegistry.TryMatch(modelId);
+        return string.Equals(modelConfig?.PlatformType, "openai", StringComparison.OrdinalIgnoreCase)
+            && modelConfig?.SupportsImageToImage == true;
+    }
+
+    internal static int ResolveImageGenerationTimeoutSeconds(int? configuredTimeoutSeconds)
+        => Math.Clamp(configuredTimeoutSeconds ?? 600, 60, 3600);
+
 
     /// <summary>
     /// 统一图片生成入口：文生图 / 图生图 / 多图生图由 images 参数自动决定。
@@ -389,8 +402,8 @@ public class OpenAIImageClient : IImageGenerationClient
         }
 
         // 生图请求超时配置（默认 600s，可通过配置 LLM:ImageGenTimeoutSeconds 覆盖）
-        var imageGenTimeoutSeconds = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
-        imageGenTimeoutSeconds = Math.Clamp(imageGenTimeoutSeconds, 60, 3600);
+        var imageGenTimeoutSeconds = ResolveImageGenerationTimeoutSeconds(
+            _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds"));
 
         // 使用能力路径作为 EndpointPath（Gateway 会自动拼接 baseUrl + 版本前缀）
         // 注意：不能从 endpoint URL 中提取路径，因为那样会导致版本前缀重复
@@ -1388,6 +1401,8 @@ public class OpenAIImageClient : IImageGenerationClient
         if (string.Equals(visionWireProtocol, "unknown", StringComparison.OrdinalIgnoreCase))
             visionWireProtocol = null;
         var isOpenRouterImageApi = visionWireProtocol is "openrouter-image" or "openrouter-images";
+        var isOpenAIImagesEditApi = !isOpenRouterImageApi
+            && ShouldUseOpenAIImagesEditApi(visionWireProtocol, effectiveModelName);
         var canonicalImageRequest = new GatewayCanonicalImageRequest
         {
             Prompt = prompt,
@@ -1425,8 +1440,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 "[OpenAIImageClient] Exchange 统一多图请求: AppCallerCode={AppCallerCode}, ImageCount={Count}, Size={Size}",
                 appCallerCode, imageRefs.Count, size);
 
-            var exchangeTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
-            exchangeTimeout = Math.Clamp(exchangeTimeout, 60, 3600);
+            var exchangeTimeout = ResolveImageGenerationTimeoutSeconds(
+                _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds"));
 
             try
             {
@@ -1599,8 +1614,8 @@ public class OpenAIImageClient : IImageGenerationClient
                     "AspectRatio={AspectRatio}, ImageSize={ImageSize}",
                     appCallerCode, imageRefs.Count, googleAspectRatio, googleImageSize);
 
-                var googleTimeout = _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds") ?? 600;
-                googleTimeout = Math.Clamp(googleTimeout, 60, 3600);
+                var googleTimeout = ResolveImageGenerationTimeoutSeconds(
+                    _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds"));
 
                 var gatewayResp = await requestGateway.SendRawWithResolutionAsync(new GatewayRawRequest
                 {
@@ -1811,7 +1826,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
         try
         {
-            JsonObject requestBody;
+            JsonObject? requestBody;
             string endpointPath;
             if (isOpenRouterImageApi)
             {
@@ -1833,6 +1848,22 @@ public class OpenAIImageClient : IImageGenerationClient
                     imageRefs.Count,
                     effectiveModelName);
             }
+            else if (isOpenAIImagesEditApi)
+            {
+                // 标准 OpenAI 图片模型的多图输入必须走 images/edits multipart。
+                // 只保留 canonical IR，让 Gateway 根据已解析 Offering 构建 wire；否则在
+                // image2 首选 OpenRouter 不可用、直接选中 OpenAI 备用供给时，旧的
+                // chat/completions 请求只会携带文本，参考图会被静默丢失。
+                // null 明确表示 wire 尚未构建，禁止 PrepareCanonicalImageRequestForResolution
+                // 把空对象误判为调用方已准备好的 JSON 请求而跳过 multipart 重建。
+                requestBody = null;
+                endpointPath = "images/edits";
+                _logger.LogInformation(
+                    "[OpenAIImageClient] OpenAI Images 多图请求: AppCallerCode={AppCallerCode}, ImageCount={Count}, Model={Model}",
+                    appCallerCode,
+                    imageRefs.Count,
+                    effectiveModelName);
+            }
             else
             {
                 requestBody = JsonNode.Parse(requestJson)?.AsObject() ?? new JsonObject();
@@ -1849,7 +1880,8 @@ public class OpenAIImageClient : IImageGenerationClient
                 IsMultipart = false,
                 CanonicalImageRequest = canonicalImageRequest,
                 RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
-                TimeoutSeconds = 120,
+                TimeoutSeconds = ResolveImageGenerationTimeoutSeconds(
+                    _config.GetValue<int?>("LLM:ImageGenTimeoutSeconds")),
                 Context = new GatewayRequestContext
                 {
                     RequestId = requestId,

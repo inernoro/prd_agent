@@ -20,6 +20,9 @@
       "name": "登录、权限与头像",
       "breadcrumb": "登录 → 合成登录 → 首页 → 顶部头像 → 修改头像 → 上传或描述 → 生成预览 → 保存",
       "entryPath": "/",
+      "stateBindings": {
+        "登录": {"entryPath": "/login"}
+      },
       "uniqueScreenshotFloor": 14,
       "requiredThemes": ["dark"],
       "requiredViewportClasses": ["desktop", "mobile"],
