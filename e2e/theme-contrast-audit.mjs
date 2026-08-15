@@ -70,7 +70,19 @@ function loadRoutes() {
     .filter((p) => !p.includes(':') && !p.includes('*'));
   const list = [...new Set(all)].sort();
   const only = (process.env.AUDIT_ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
-  return only.length ? list.filter((p) => only.includes(p)) : list;
+  if (!only.length) return list;
+  /*
+   * AUDIT_ONLY 打错字同样会静默变成空清单 —— 与上一轮修的 AUDIT_VIEWPORTS 同族：
+   * 两层循环各跑 0 次、expected 也算成 0，一次什么都没扫的运行 exit 0。
+   * 上一轮我只给视口加了兜底，没顺手看隔壁这条同形状的入参（Codex 第二十轮抓到）。
+   * 逐条报出「哪个名字没匹配上」，别让人对着空报告猜。
+   */
+  const missing = only.filter((p) => !list.includes(p));
+  if (missing.length) {
+    console.error(`AUDIT_ONLY 里这些路由不在清单中：${missing.join(', ')}`);
+    process.exit(1);
+  }
+  return list.filter((p) => only.includes(p));
 }
 
 /*
@@ -100,6 +112,10 @@ if (unknownViewports.length || !ACTIVE_VIEWPORTS.length) {
 }
 
 const ROUTES = loadRoutes();
+if (!ROUTES.length) {
+  console.error('路由清单为空（检查 AUDIT_ROUTES / AUDIT_ONLY）——空清单不许当成一次成功的审计');
+  process.exit(1);
+}
 fs.mkdirSync(OUT, { recursive: true });
 console.log(`路由 ${ROUTES.length} 条 × 双主题 × 视口 ${ACTIVE_VIEWPORTS.join("/")}，产物目录 ${OUT}`);
 
@@ -242,7 +258,9 @@ for (const theme of ['light', 'dark']) {
       }
       let findings = await page.evaluate(AUDIT_FN);
       if (findings.length) {
-        const shot = `${vpName}_${theme}${route.replace(/\//g, '_')}.png`;
+        // 文件名必须整条 route 都清洗：带 query 的自定义路由留着 `?` 在 Windows 上是非法文件名，
+        // page.screenshot 会抛，这条路由被记成 errored —— 而带 query 正是 AUDIT_ROUTES 的用法
+        const shot = `${vpName}_${theme}${route.replace(/[^a-zA-Z0-9._-]/g, '_')}.png`;
         const buf = await page.screenshot({ path: path.join(OUT, shot) });
         /*
          * 渐变底必须用截图真实像素重算 —— 本地版一直有这一步，远端版漏了。
@@ -288,6 +306,17 @@ const parameterized = [...new Set([
   ...[...fs.readFileSync(path.join(ADMIN, 'src/app/App.tsx'), 'utf8').matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]),
 ])].filter((p) => p.includes(':'));
 console.log(`未覆盖：参数化路由 ${parameterized.length} 条（要真实 id 才打得开，用 AUDIT_ROUTES 传具体路径才能扫）`);
+/*
+ * 瞬时/交互态一概没测，这件事必须写在脸上。
+ * 本审计只做「打开路由 → 扫当前 DOM」，不点、不 hover、不触发。于是 Toast
+ * （ToastContainer 只在 store 里有 toast 时才渲染）、Tooltip、抽屉、Popover、
+ * 悬浮卡、下拉菜单、hover 态一个都没出现过 —— 而本 PR 改的恰恰大半是这些浮层。
+ * 「路由 A 已覆盖」只意味着它的静态首屏被量过，不代表它的浮层被量过
+ * （Codex 在 PR #1374 第二十轮抓到）。
+ * 要真覆盖需要给每类浮层写触发夹具，属独立工程，记在 debt.frontend。
+ */
+console.log('未覆盖：浮层与交互态（Toast / Tooltip / 抽屉 / Popover / 悬浮卡 / 下拉 / hover）'
+  + ' —— 本审计只扫「打开即渲染」的静态 DOM，不触发任何交互');
 if (coverage.redirected.length) {
   console.log(`未覆盖：重定向路由 ${coverage.redirected.length} 对（请求 A 落到 B，不计入 A）`);
 }

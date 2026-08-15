@@ -97,3 +97,6 @@
 | fix | e2e | 重采样失败带原因码（element-gone / box-too-small / no-pixels / compose-failed / not-reached），此前只回 null，没法判是几何问题还是元素没了 |
 | fix | prd-admin | 修 Codex 第十九轮两条 P1（同一形状）：SpotlightOverlay 教程气泡（深色渐变底，「我已学会」约 2.2:1）与 ReprocessChatDrawer 智能体下拉（rgba(20,18,26,0.98) 底，约 2.8:1）钉死深底却未标暗岛。按此形状全仓复扫确认只此两处 |
 | fix | e2e | 修 Codex 第十九轮 P2：AUDIT_VIEWPORTS 拼错会静默变成零视口，两层循环各跑 0 次、expected 也是 0，于是一次什么都没扫的运行 exit 0。改为校验名字、无效即非零退出 |
+| fix | e2e | 修 Codex 第二十轮 P2：AUDIT_ONLY 打错字同样会静默变成空清单（上一轮只给 AUDIT_VIEWPORTS 加了兜底，没看隔壁同形状的入参）。改为逐条报出哪个名字没匹配上，空清单一律非零退出 |
+| fix | e2e | 修 Codex 第二十轮 P2：截图名只替换了斜杠，带 query 的自定义路由留着 `?` 在 Windows 上是非法文件名，会让该路由被记成 errored——而带 query 正是 AUDIT_ROUTES 的用法 |
+| docs | e2e | 修 Codex 第二十轮 P1：审计只扫「打开即渲染」的静态 DOM，Toast/Tooltip/抽屉/Popover/悬浮卡/下拉/hover 一个都没触发过，而本 PR 改的大半正是这些浮层。收尾显式声明未覆盖，并记入 debt.frontend（写触发夹具属独立工程） |
