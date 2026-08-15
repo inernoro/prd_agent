@@ -137,6 +137,19 @@ export const AUDIT_FN = () => {
     return parts.join('>');
   };
 
+  /*
+   * 一个元素可能同时是多个候选：SVG 子形状的 fill 与 stroke 是两个独立通道，
+   * 各自成一条 finding。直接 setAttribute 会让后写的把先写的覆盖掉 ——
+   * 重采样时先那条 querySelector 找不到，被判 element-gone 计成「没量成」，
+   * 于是一个完全达标的图标也能让整轮非零退出（Codex 在 PR #1374 第二十四轮抓到，
+   * 是我上一轮加双通道时引入的）。
+   * 改成空格分隔累加，查询侧用 ~= （whitespace-separated 属性选择器）。
+   */
+  const tagAudit = (node, id) => {
+    const prev = node.getAttribute('data-audit-id');
+    node.setAttribute('data-audit-id', prev ? `${prev} ${id}` : String(id));
+  };
+
   const out = [], seen = new Set();
   let auditId = 0;
   document.querySelectorAll('[data-audit-id]').forEach((n) => n.removeAttribute('data-audit-id'));
@@ -171,7 +184,7 @@ export const AUDIT_FN = () => {
     if (seen.has(key)) continue;
     seen.add(key);
     const r = el.getBoundingClientRect();
-    el.setAttribute('data-audit-id', String(++auditId));
+    tagAudit(el, ++auditId);
     out.push({ auditId, kind: 'text', text: el.textContent.trim().slice(0, 24), sel: label(el),
       fg: cs.color, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
       fgOpacity: cumulativeOpacity(el),
@@ -220,7 +233,7 @@ export const AUDIT_FN = () => {
     if (seen.has(key)) continue;
     seen.add(key);
     const r = el.getBoundingClientRect();
-    el.setAttribute('data-audit-id', String(++auditId));
+    tagAudit(el, ++auditId);
     out.push({ auditId, kind: isPh ? 'placeholder' : (isSelect ? 'select' : 'input'),
       text: (isPh ? ph : (isSelect ? selText : el.value)).slice(0, 24), sel: label(el),
       fg, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
@@ -270,7 +283,7 @@ export const AUDIT_FN = () => {
           if (seen.has(kKeyU)) continue;
           seen.add(kKeyU);
           const kru = el.getBoundingClientRect();
-          kid.setAttribute('data-audit-id', String(++auditId));
+          tagAudit(kid, ++auditId);
           /*
            * 直接标 unresolved，不走 needsEye —— 重采样同样解析不了 url()，
            * 交给它只会composed 出一个假的 1:1 回来（第一版就是这样，噪音换了个来源）。
@@ -299,7 +312,7 @@ export const AUDIT_FN = () => {
         if (seen.has(kKey)) continue;
         seen.add(kKey);
         const kr = el.getBoundingClientRect();   // 报根节点的框：子形状的框常常小到取不出像素
-        kid.setAttribute('data-audit-id', String(++auditId));
+        tagAudit(kid, ++auditId);
         out.push({ auditId, kind: 'icon', text: '', sel: `${label(el)}>${kid.tagName}`,
           fg: kRaw, bg: `rgb(${sbg})`, ratio: +kc.toFixed(2), need: 3, needsEye: sEye,
           fgOpacity: cumulativeOpacity(kid),
@@ -319,7 +332,7 @@ export const AUDIT_FN = () => {
     if (seen.has(key)) continue;
     seen.add(key);
     const r = el.getBoundingClientRect();
-    el.setAttribute('data-audit-id', String(++auditId));
+    tagAudit(el, ++auditId);
     out.push({ auditId, kind: 'icon', text: '', sel: label(el), fg: raw, bg: `rgb(${bg})`,
       ratio: +c.toFixed(2), need: 3, needsEye, fgOpacity: cumulativeOpacity(el),
       box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
@@ -421,7 +434,7 @@ export async function resampleGradientFindings(page, _unused, findings) {
     // 把第一个还没采到的目标滚进视口（连带滚动它所在的内层滚动容器）
     const ok = await page.evaluate((idList) => {
       for (const id of idList) {
-        const el = document.querySelector(`[data-audit-id="${id}"]`);
+        const el = document.querySelector(`[data-audit-id~="${id}"]`);
         if (!el) continue;
         el.scrollIntoView({ block: 'center', inline: 'center' });
         return true;
@@ -435,7 +448,7 @@ export async function resampleGradientFindings(page, _unused, findings) {
     await page.evaluate((idList) => {
       window.__auditRestore = [];
       for (const id of idList) {
-        const el = document.querySelector(`[data-audit-id="${id}"]`);
+        const el = document.querySelector(`[data-audit-id~="${id}"]`);
         if (!el) continue;
         window.__auditRestore.push([el, el.style.color, el.style.fill, el.style.stroke]);
         el.style.setProperty('color', 'transparent', 'important');
@@ -478,7 +491,7 @@ export async function resampleGradientFindings(page, _unused, findings) {
 
       const out = {};
       for (const { id, fg, opacity } of idList) {
-        const el = document.querySelector(`[data-audit-id="${id}"]`);
+        const el = document.querySelector(`[data-audit-id~="${id}"]`);
         if (!el) { out[id] = { why: 'element-gone' }; continue; }
         const r = el.getBoundingClientRect();
         // 只处理此刻真正落在视口内的；其余留到下一屏

@@ -177,9 +177,17 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) walk(full, out);
-    // .ts 也要扫：glassStyles.ts / appStoreTokens.ts 这类「配色 SSOT」都是 .ts，
-    // 只扫 .tsx 等于放过影响面最大的那批文件。
-    else if (entry.name.endsWith('.tsx') || entry.name.endsWith('.ts')) out.push(full);
+    /*
+     * .ts 也要扫：glassStyles.ts / appStoreTokens.ts 这类「配色 SSOT」都是 .ts，
+     * 只扫 .tsx 等于放过影响面最大的那批文件。
+     *
+     * .css 同理，而且漏得更久：整条棘轮从来没看过样式表，基线里一条 CSS 记录都没有。
+     * 而 surface.css 里刚查出过真缺陷（海鲜市场「接入 AI」按钮 hover 4.38:1），
+     * 也就是说「写死颜色」这件事在样式表里一直不受约束
+     * （Codex 在 PR #1374 第二十四轮抓到）。tokens.css 除外——它就是双写 token 的
+     * 定义处，那里出现深色/白透明字面量正是它的职责。
+     */
+    else if (/\.(tsx?|css)$/.test(entry.name) && !entry.name.endsWith('tokens.css')) out.push(full);
   }
   return out;
 }

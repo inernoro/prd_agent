@@ -110,3 +110,5 @@
 | fix | e2e | 修 Codex 第二十三轮 P1：#bt-branch-badge 其实是仓库自己的 BranchBadge.tsx（App.tsx 直接挂载，本 PR 还改过它的配色），我当初当平台注入物排掉，等于让审计对自己刚改的组件永久失明。排除范围收敛为真正外部注入的 #cds-widget / .cds-badge |
 | fix | e2e | 修 Codex 第二十三轮 P1：SVG 子形状同时有 fill 和 stroke 时只量了 stroke（LevelHat 帽冠正是 fill={t.tassel} stroke={t.board}，流苏色从没被量过）。两个通道各判一次 |
 | fix | e2e | 修 Codex 第二十三轮 P1：渐变底取众数色只代表框内占地最多的那段，一行字横跨渐变时少数几个字失败会被判达标。改取「占比 ≥12% 且非前景色的显著色块里最差的那块」，并把采样区向内缩 20% 避开元素自身描边 |
+| test | prd-admin | 修 Codex 第二十四轮 P1：双皮肤硬编码棘轮只扫 .ts/.tsx，19 个样式表从来不在覆盖内（而 surface.css 里刚查出过真缺陷）。纳入 .css 并录基线，暴露 452 处存量硬编码，从此只减不增（tokens.css 除外，那是双写定义处） |
+| fix | e2e | 修 Codex 第二十四轮 P2：上一轮加的 SVG 双通道会用同一个元素承载两条候选，第二次 setAttribute 覆盖第一次，重采样时先那条被判 element-gone、计成没量成，一个达标图标也能让整轮非零退出。句柄改空格累加 + 查询用 ~= |
