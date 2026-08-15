@@ -1,3 +1,16 @@
+/*
+ * 自托管 JetBrains Mono（可变字重 100-800，单文件 40KB）。
+ *
+ * 必须自托管、不能只在 font-family 里写名字——那正是这次事故的根因：
+ * 仓库此前点名 Inter / JetBrains Mono 却从没加载过任何一个，于是每台机器
+ * 各凭系统兜底，英文字形是「看运气」，用户看到的像素点就是他那台机器的兜底字体。
+ *
+ * wght.css 里声明了 6 个子集（latin / latin-ext / cyrillic / greek / vietnamese），
+ * 每个带自己的 unicode-range，浏览器只会下载内容真正命中的那一两个——本站基本
+ * 只会取 latin 那 40KB。字体里没有汉字，中文自然落到 --cds-font-cjk。
+ */
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -131,14 +144,14 @@
      * Segoe UI、Linux 落随机 DejaVu 一类），站点的英文字形一直是「看运气」。
      * 用户看到的像素点就是他那台机器的兜底字体。
      *
-     * 现在统一成分支名一直在用的那套系统等宽栈：它是操作系统自带的 UI 等宽
-     * 字体（macOS SF Mono / Windows Cascadia Mono / Linux 系统等宽），**一定
-     * 装得到、一定带 hinting**，不存在「声明了却没加载」这种事。
+     * 现在统一成**自托管**的 JetBrains Mono（见文件顶部的 @import）：字体文件
+     * 打进包里，每台机器渲染完全一致，不再有「声明了却没加载」这种事。
+     * 后面的系统等宽栈只作字体还没下载完时的兜底（font-display: swap）。
      *
      * CJK 不受影响：等宽栈里没有汉字字形，中文会自然落到后面的中文栈。
      * 这正是「英文换字形、中文照旧」的实现方式，不需要 unicode-range。
      */
-    --cds-font-latin: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --cds-font-latin: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     --cds-font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   }
 

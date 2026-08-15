@@ -285,19 +285,44 @@ describe('发布控制台 · 英文字形与分支卡同源', () => {
   /**
    * 声明了却没加载的字体是这次事故的根因：它不会报错，只会让每台机器
    * 各自兜底，于是「我这边看着好好的」和「用户说有像素点」同时成立。
-   * 除非仓库真的打包了字体文件，否则不许在字体栈里点名任何非系统字体。
+   *
+   * 所以判据不是「不许点名非系统字体」，而是**点名了就必须真的加载**：
+   * 字体栈里每一个带引号的自定义字族，都要能在本仓库找到对应的 @font-face
+   * （自己写的，或 @fontsource 包提供的）。
    */
-  it('不许再点名仓库没有加载的字体（Inter / JetBrains Mono）', () => {
-    const tailwind = fs.readFileSync(path.resolve(process.cwd(), '../cds/web/tailwind.config.js'), 'utf8');
-    // 先剥注释再判：注释里解释「为什么不用 Inter」的那段话本身含 Inter 字样，
-    // 不剥的话判据读到的是自己的注释，永远红（形状 6：读的不是生效的那个值）。
+  it('字体栈里点名的自定义字族，必须真的被加载', () => {
     const strip = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const cssCode = strip(CSS);
-    expect(cssCode, '若真要用自带字体，请先加 @font-face 再放进字体栈').not.toMatch(/@font-face\s*\{/);
-    for (const [name, source] of [['index.css', cssCode], ['tailwind.config.js', strip(tailwind)]] as const) {
-      expect(source, `${name} 点名了未加载的 Inter`).not.toContain('Inter');
-      expect(source, `${name} 点名了未加载的 JetBrains Mono`).not.toContain('JetBrains Mono');
+
+    // 取 --cds-font-latin 里所有带引号的字族（系统关键字如 ui-monospace 不带引号）
+    const decl = /--cds-font-latin:\s*([^;]+);/.exec(cssCode);
+    expect(decl, '找不到 --cds-font-latin').not.toBeNull();
+    const custom = (decl![1].match(/'[^']+'/g) || []).map((x) => x.replace(/'/g, ''));
+    expect(custom.length, '至少要自托管一款字体，否则又回到各机器兜底').toBeGreaterThan(0);
+
+    // 每个自定义字族都要有加载来源：本文件里的 @font-face，或 @fontsource 的 @import
+    const imports = cssCode.match(/@import\s+'[^']+'/g) || [];
+    for (const family of custom) {
+      const slug = family.toLowerCase().replace(/\s+variable$/, '').replace(/\s+/g, '-');
+      const loaded = cssCode.includes(`@font-face`) || imports.some((line) => line.toLowerCase().includes(slug));
+      expect(loaded, `字体栈点名了 ${family}，但仓库里找不到它的 @font-face / @fontsource 引入`).toBe(true);
     }
+
+    // 引入的包必须真的装了，不能只在 CSS 里写一行 import 就当加载了
+    for (const line of imports) {
+      const spec = line.replace(/@import\s+'|'$/g, '');
+      const pkg = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+      const dir = path.resolve(process.cwd(), '../cds/web/node_modules', pkg);
+      expect(fs.existsSync(dir), `${pkg} 在 CSS 里被 import，但没装进依赖`).toBe(true);
+    }
+
+    // Inter 从没被打包过，别再让它出现在任何字体栈里
+    const tailwind = strip(fs.readFileSync(path.resolve(process.cwd(), '../cds/web/tailwind.config.js'), 'utf8'));
+    for (const [name, source] of [['index.css', cssCode], ['tailwind.config.js', tailwind]] as const) {
+      expect(source, `${name} 点名了从未加载的 Inter`).not.toContain('Inter');
+    }
+    // Tailwind 那两个键仍然只能指回 token，不许自己再写一份栈
+    expect(tailwind).toContain('var(--cds-font-latin)');
   });
 
   it('页面不用 Tailwind 的 font-mono —— 那个栈把没打包的 JetBrains Mono 排在第一位', () => {
