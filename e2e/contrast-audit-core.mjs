@@ -155,6 +155,7 @@ export const AUDIT_FN = () => {
     el.setAttribute('data-audit-id', String(++auditId));
     out.push({ auditId, kind: 'text', text: el.textContent.trim().slice(0, 24), sel: label(el),
       fg: cs.color, bg: `rgb(${bg})`, ratio: +c.toFixed(2), need, needsEye,
+      fgOpacity: cumulativeOpacity(el),
       box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
       vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });
   }
@@ -180,7 +181,7 @@ export const AUDIT_FN = () => {
     const r = el.getBoundingClientRect();
     el.setAttribute('data-audit-id', String(++auditId));
     out.push({ auditId, kind: 'icon', text: '', sel: label(el), fg: raw, bg: `rgb(${bg})`,
-      ratio: +c.toFixed(2), need: 3, needsEye,
+      ratio: +c.toFixed(2), need: 3, needsEye, fgOpacity: cumulativeOpacity(el),
       box: { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) },
       vbox: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } });
   }
@@ -310,7 +311,7 @@ export async function resampleGradientFindings(page, _unused, findings) {
     const lum = ([r, g, b]) => 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
     const contrast = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
 
-    return idList.map(({ id, fg }) => {
+    return idList.map(({ id, fg, opacity }) => {
       const el = document.querySelector(`[data-audit-id="${id}"]`);
       if (!el) return null;
       const r = el.getBoundingClientRect();
@@ -342,11 +343,21 @@ export async function resampleGradientFindings(page, _unused, findings) {
       for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
       if (!best) return null;
       const bg = [Math.round(best[0] / best[3]), Math.round(best[1] / best[3]), Math.round(best[2] / best[3])];
-      const composed = compose(fg, bg);
-      if (!composed) return null;
+      const solid = compose(fg, bg);
+      if (!solid) return null;
+      // 按累计 opacity 把前景衰减回底色，得到浏览器实际画出来的颜色 —— 与初扫口径一致
+      const o = typeof opacity === 'number' ? opacity : 1;
+      const composed = o >= 0.999
+        ? solid
+        : [0, 1, 2].map((i) => Math.round(solid[i] * o + bg[i] * (1 - o)));
       return { bg, ratio: +contrast(composed, bg).toFixed(2) };
     });
-  }, { b64: clean.toString('base64'), idList: targets.map((f) => ({ id: f.auditId, fg: f.fg })) });
+    /*
+     * 把累计 opacity 一起带进来。初扫时前景是按 opacity 衰减后参与计算的，
+     * 而这里若直接拿原色 f.fg 重算，等于把衰减又抹掉 —— opacity-50 的目标
+     * 会以全强度通过（Codex 在 PR #1374 第十轮抓到：我那个 opacity 修复只接了一半）。
+     */
+  }, { b64: clean.toString('base64'), idList: targets.map((f) => ({ id: f.auditId, fg: f.fg, opacity: f.fgOpacity ?? 1 })) });
 
   targets.forEach((f, i) => {
     const r = results[i];

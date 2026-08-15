@@ -195,6 +195,16 @@ await browser.close();
  * 一条路由挂了，输出看起来和「全扫完 0 命中」一模一样。
  * 报告里的数只有在这里绿了才有意义。
  */
+/*
+ * 有实测不达标就必须非零退出。
+ * 原来只在「覆盖不全」时才失败 —— 全部路由都跑通、但报告里躺着一堆真实缺陷时，
+ * 这条命令照样 exit 0，CI 或调用方会把它当绿灯（Codex 在 PR #1374 第十轮抓到）。
+ * 覆盖与命中是两件事，各自都能让这次审计不合格。
+ */
+const realFindings = report.reduce((n, r) => n + r.findings.filter((f) => !f.unresolved).length, 0);
+if (realFindings) {
+  console.error(`\n[不合格] 实测不达标 ${realFindings} 处，详见 report.md / report.json`);
+}
 if (coverage.skipped.length || coverage.errored.length) {
   console.error(`\n[不合格] ${coverage.skipped.length + coverage.errored.length} 对没扫成，本轮结果不能当作「已覆盖」：`);
   for (const x of coverage.skipped) console.error(`  跳过  ${x}`);
@@ -202,3 +212,4 @@ if (coverage.skipped.length || coverage.errored.length) {
   console.error('\n明细见 coverage.json。修掉原因后重跑，或在交付里明写这几屏未覆盖。');
   process.exit(1);
 }
+if (realFindings) process.exit(1);

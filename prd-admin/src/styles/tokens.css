@@ -60,6 +60,14 @@
 
   /* 玻璃效果变量（默认值，可被主题系统覆盖）
      B 方案（2026-06-16）：底色提一档 + 边框提亮，配合低模糊保证正文在花哨背景上仍耐读、玻璃边缘更清晰。 */
+  /*
+   * 兜底定义：此前 --nested-block-bg 只在 [data-material="solid"] 与浅色档里有值，
+   * 「暗色 + 玻璃材质」这一档它是**未定义**的 —— 消费方拿到 invalid 值，
+   * 比如 SVG 的 stroke="var(--nested-block-bg)" 会直接变成无描边，
+   * 学习中心的掌握度进度环底槽就这么整条消失（Codex 在 PR #1374 第十轮抓到）。
+   * 放进 :root 当基线值，下面两个作用域的覆盖照旧生效。
+   */
+  --nested-block-bg: rgba(255, 255, 255, 0.05);
   --glass-bg-start: rgba(255, 255, 255, 0.07);
   --glass-bg-end: rgba(255, 255, 255, 0.03);
   --glass-border: rgba(255, 255, 255, 0.18);
@@ -907,6 +915,7 @@
   --gold-gradient: linear-gradient(135deg, #F0C9A8 0%, #C8623A 45%, #E8A87C 100%);
   --hairline: rgba(255, 255, 255, 0.08);
   --media-card-edge: rgba(247, 247, 251, 0.08);
+  --nested-block-bg: rgba(255, 255, 255, 0.05);
   --overlay-panel-solid: rgba(24, 24, 30, 0.96);
   --report-accent: var(--accent-primary);
   --report-accent-border: rgba(var(--accent-primary-rgb), 0.32);

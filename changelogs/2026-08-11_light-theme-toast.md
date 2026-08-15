@@ -69,3 +69,7 @@
 | fix | prd-admin | 修 Codex 第八轮实证的产品缺陷：DailyLogPanel 五处无条件写死的 emerald-500/95 压同色 12% 淡底，浅色档实测 2.0:1（需 4.5），改走 --accent-fg-success 后 5.83:1 |
 | docs | doc | PR #1374 触发 AGENTS.md §5.5 熔断（Review 修复提交达 8 个 + 同一判据二次收窄），审计工具剩余三项精度记入 debt.frontend 并说明为何不在本 PR 展开 |
 | fix | prd-admin | 修 Codex 第九轮：VisualCreationMiniPanel 面板钉死深底却未标暗岛，错误文案约 2.6:1。底色写在具名 style 对象里，自动扫描按「同一开标签」判定够不着，手工补；同轮 rgba 写法的暗底再扫出 DefectCard 2 处、ReviewAgentDimensionsModal 1 处 |
+| fix | prd-admin | 修 Codex 第十轮：--nested-block-bg 此前只在 [data-material="solid"] 与浅色档有值，暗色 + 玻璃材质下整个未定义（学习中心进度环底槽直接消失）。补进 :root 与 .surface-tone-dark 两处兜底 |
+| fix | e2e | 修 Codex 第十轮：上一轮的累计 opacity 只接了一半——渐变重采样路径既没记录 fgOpacity 也没参与合成，半透明字在渐变底上仍按全强度算。两端补齐 |
+| fix | e2e | 两个审计脚本改为「扫出真实缺陷即非零码退出」，此前只有覆盖不全才失败，带缺陷的扫描会报绿 |
+| docs | doc | debt.frontend 的对比度审计段按 AGENTS.md §10 精简为四条未解边界，过程与计数归验收知识库；源码路径收进文末「实现来源」小节 |
