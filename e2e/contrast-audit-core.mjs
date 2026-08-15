@@ -465,3 +465,76 @@ export async function resampleGradientFindings(page, _unused, findings) {
   }
   return findings;
 }
+
+/*
+ * ── 两个入口的共享入参判据 ────────────────────────────────────────────────
+ *
+ * 为什么非抽不可：路由清单与视口这两处判据，之前各自在远端版和本地版抄了一份。
+ * 结果是同一个坑修两遍还漏一遍 —— 第十八轮给远端加视口矩阵、本地没加；
+ * 第二十轮给远端加空清单兜底、本地没加；第二十一轮两条一起被抓回来。
+ * 这正是 predicate-and-wiring-discipline 形状 3（判据分裂后各自漂移）。
+ * 从此判据只此一份，两个入口都从这里取。
+ */
+
+export const VIEWPORTS = {
+  desktop: { width: 1440, height: 900 },
+  mobile: { width: 390, height: 844 },
+};
+
+/**
+ * 解析 AUDIT_VIEWPORTS。拼错名字或解析成空一律抛错 ——
+ * 否则循环跑 0 次、expected 也是 0，一次什么都没扫的运行会 exit 0。
+ */
+export function resolveViewports(raw) {
+  const requested = (raw || 'desktop,mobile').split(',').map((x) => x.trim()).filter(Boolean);
+  const unknown = requested.filter((x) => !VIEWPORTS[x]);
+  const active = requested.filter((x) => VIEWPORTS[x]);
+  if (unknown.length || !active.length) {
+    throw new Error(`AUDIT_VIEWPORTS 无效：${unknown.join(', ') || '(空)'}；可选 ${Object.keys(VIEWPORTS).join(' / ')}`);
+  }
+  return active;
+}
+
+/**
+ * 审计路由清单：navRegistry（前端 SSOT）+ App.tsx（嵌套写法只在这里）+ 显式的 `/`。
+ *
+ * `/` 必须显式留着：它原本被 `p !== '/'` 过滤掉，靠 /login、/stats、/prd-agent
+ * 三条重定向路由「顺带」扫到；那三条一旦按落地地址正确排除，首页就会变成零覆盖 ——
+ * 全站最重要的一屏一次都没量过，报告还显示满覆盖。
+ *
+ * 参数化（含 `:`）与通配（含 `*`）跳过：要真实 id 才打得开，走 AUDIT_ROUTES 传具体路径。
+ * AUDIT_ONLY 里有名字没匹配上、或最终清单为空，一律抛错而不是静默跑 0 条。
+ */
+export function resolveRoutes({ adminDir, readFile, routesFile, only }) {
+  let list;
+  if (routesFile) {
+    list = JSON.parse(readFile(routesFile));
+  } else {
+    const grab = (rel, re) => [...readFile(`${adminDir}/${rel}`).matchAll(re)].map((m) => m[1]);
+    const all = [
+      ...grab('src/app/navRegistry.tsx', /path:\s*'([^']+)'/g),
+      ...grab('src/app/App.tsx', /<Route\s+path="([^"]+)"/g),
+      '/',
+    ]
+      .map((p) => (p.startsWith('/') ? p : `/${p}`))   // App.tsx 的嵌套写法没有前导斜杠
+      .filter((p) => !p.includes(':') && !p.includes('*'));
+    list = [...new Set(all)].sort();
+  }
+  const wanted = (only || '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (wanted.length) {
+    const missing = wanted.filter((p) => !list.includes(p));
+    if (missing.length) throw new Error(`AUDIT_ONLY 里这些路由不在清单中：${missing.join(', ')}`);
+    list = list.filter((p) => wanted.includes(p));
+  }
+  if (!list.length) throw new Error('路由清单为空（检查 AUDIT_ROUTES / AUDIT_ONLY）——空清单不许当成一次成功的审计');
+  return list;
+}
+
+/** 参数化路由（从来没扫过的那批），供收尾如实声明未覆盖范围。 */
+export function parameterizedRoutes(adminDir, readFile) {
+  const grab = (rel, re) => [...readFile(`${adminDir}/${rel}`).matchAll(re)].map((m) => m[1]);
+  return [...new Set([
+    ...grab('src/app/navRegistry.tsx', /path:\s*'([^']+)'/g),
+    ...grab('src/app/App.tsx', /<Route\s+path="([^"]+)"/g),
+  ])].filter((p) => p.includes(':'));
+}

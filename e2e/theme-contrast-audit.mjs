@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installNodeFetchRoute } from '../.claude/skills/cds/cli/acceptance/proxyroute.mjs';
-import { AUDIT_FN, aggregate, renderMarkdown, resampleGradientFindings } from './contrast-audit-core.mjs';
+import { AUDIT_FN, VIEWPORTS, aggregate, parameterizedRoutes, renderMarkdown, resampleGradientFindings, resolveRoutes, resolveViewports } from './contrast-audit-core.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN = path.join(REPO_ROOT, 'prd-admin');
@@ -50,72 +50,17 @@ if (!BASE || !USER || !PASS) {
  * （Codex 在 PR #1374 第六轮抓到）。
  * 参数化（含 :）与通配（含 *）仍然跳过：它们要具体 id 才打得开。
  */
-function loadRoutes() {
-  if (process.env.AUDIT_ROUTES) return JSON.parse(fs.readFileSync(process.env.AUDIT_ROUTES, 'utf8'));
-  const collect = (file, re) => {
-    const src = fs.readFileSync(path.join(ADMIN, file), 'utf8');
-    return [...src.matchAll(re)].map((m) => m[1]);
-  };
-  const fromRegistry = collect('src/app/navRegistry.tsx', /path:\s*'([^']+)'/g);
-  const fromRouter = collect('src/app/App.tsx', /<Route\s+path="([^"]+)"/g);
-  /*
-   * `/` 必须显式留着。
-   * 它此前被 `p !== '/'` 过滤掉，靠 /login、/stats、/prd-agent 三条重定向路由
-   * 「顺带」扫到——而那三条一旦按落地地址正确排除，首页就变成零覆盖：
-   * 全站最重要的一屏一次都没量过，报告还显示满覆盖。
-   * 排除重定向与补回 `/` 必须同一次改完，只做前一半是把重复计数换成漏扫。
-   */
-  const all = [...fromRegistry, ...fromRouter, '/']
-    .map((p) => (p.startsWith('/') ? p : `/${p}`))   // App.tsx 的嵌套写法没有前导斜杠
-    .filter((p) => !p.includes(':') && !p.includes('*'));
-  const list = [...new Set(all)].sort();
-  const only = (process.env.AUDIT_ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
-  if (!only.length) return list;
-  /*
-   * AUDIT_ONLY 打错字同样会静默变成空清单 —— 与上一轮修的 AUDIT_VIEWPORTS 同族：
-   * 两层循环各跑 0 次、expected 也算成 0，一次什么都没扫的运行 exit 0。
-   * 上一轮我只给视口加了兜底，没顺手看隔壁这条同形状的入参（Codex 第二十轮抓到）。
-   * 逐条报出「哪个名字没匹配上」，别让人对着空报告猜。
-   */
-  const missing = only.filter((p) => !list.includes(p));
-  if (missing.length) {
-    console.error(`AUDIT_ONLY 里这些路由不在清单中：${missing.join(', ')}`);
-    process.exit(1);
-  }
-  return list.filter((p) => only.includes(p));
-}
-
-/*
- * 视口是**第三个维度**，不是常数。
- * 此前两个入口都写死 1440×900，于是 App.tsx 里靠 useBreakpoint 分流的移动端分支
- * （MobileHomePage / MobileTabBar / MobileNotificationsPage / MobileSafeBoundary…）
- * 一屏都没渲染过 —— 而本 PR 恰好改了其中四个组件，审计却在报「双主题覆盖完整」
- * （Codex 在 PR #1374 第十八轮抓到）。
- * 默认两档都跑；迭代时用 AUDIT_VIEWPORTS=desktop 收窄。
- */
-const VIEWPORTS = {
-  desktop: { width: 1440, height: 900 },
-  mobile: { width: 390, height: 844 },
-};
-const requestedViewports = (process.env.AUDIT_VIEWPORTS || 'desktop,mobile')
-  .split(',').map((x) => x.trim()).filter(Boolean);
-const unknownViewports = requestedViewports.filter((x) => !VIEWPORTS[x]);
-const ACTIVE_VIEWPORTS = requestedViewports.filter((x) => VIEWPORTS[x]);
-/*
- * 拼错一个名字就静默变成「零视口」：两层循环各跑 0 次、expected 也算成 0，
- * 于是一次**什么都没扫**的运行会以「无命中、无覆盖缺口」exit 0。
- * 配置打错字不该产出绿灯（Codex 在 PR #1374 第十九轮抓到）。
- */
-if (unknownViewports.length || !ACTIVE_VIEWPORTS.length) {
-  console.error(`AUDIT_VIEWPORTS 无效：${unknownViewports.join(', ') || '(空)'}；可选 ${Object.keys(VIEWPORTS).join(' / ')}`);
+const readSrc = (f) => fs.readFileSync(f, 'utf8');
+let ROUTES, ACTIVE_VIEWPORTS;
+try {
+  // 判据只此一份（contrast-audit-core），本地版共用同一套 —— 此前两边各抄一份，同一个坑修两遍还漏一遍
+  ROUTES = resolveRoutes({ adminDir: ADMIN, readFile: readSrc, routesFile: process.env.AUDIT_ROUTES, only: process.env.AUDIT_ONLY });
+  ACTIVE_VIEWPORTS = resolveViewports(process.env.AUDIT_VIEWPORTS);
+} catch (e) {
+  console.error(String(e.message || e));
   process.exit(1);
 }
 
-const ROUTES = loadRoutes();
-if (!ROUTES.length) {
-  console.error('路由清单为空（检查 AUDIT_ROUTES / AUDIT_ONLY）——空清单不许当成一次成功的审计');
-  process.exit(1);
-}
 fs.mkdirSync(OUT, { recursive: true });
 console.log(`路由 ${ROUTES.length} 条 × 双主题 × 视口 ${ACTIVE_VIEWPORTS.join("/")}，产物目录 ${OUT}`);
 
@@ -301,10 +246,7 @@ console.log(`命中：${report.length} 个「路由×主题」，配色组 ${gro
  * 这类详情页一屏都没进过。数字不假，但标签会骗人（Codex 在 PR #1374 第十二轮抓到）。
  * 要覆盖它们得喂真实 id，走 AUDIT_ROUTES 传具体路径。
  */
-const parameterized = [...new Set([
-  ...[...fs.readFileSync(path.join(ADMIN, 'src/app/navRegistry.tsx'), 'utf8').matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]),
-  ...[...fs.readFileSync(path.join(ADMIN, 'src/app/App.tsx'), 'utf8').matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]),
-])].filter((p) => p.includes(':'));
+const parameterized = parameterizedRoutes(ADMIN, readSrc);
 console.log(`未覆盖：参数化路由 ${parameterized.length} 条（要真实 id 才打得开，用 AUDIT_ROUTES 传具体路径才能扫）`);
 /*
  * 瞬时/交互态一概没测，这件事必须写在脸上。

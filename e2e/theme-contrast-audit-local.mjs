@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
-import { AUDIT_FN, aggregate, renderMarkdown, resampleGradientFindings } from './contrast-audit-core.mjs';
+import { AUDIT_FN, VIEWPORTS, aggregate, parameterizedRoutes, renderMarkdown, resampleGradientFindings, resolveRoutes, resolveViewports } from './contrast-audit-core.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN = path.join(REPO_ROOT, 'prd-admin');
@@ -39,24 +39,17 @@ fs.mkdirSync(OUT, { recursive: true });
  * 只读 navRegistry 会漏掉 App.tsx 里的嵌套写法（`<Route path="skills">`，无前导斜杠），
  * /skills、/weekly-poster、/data-transfers、/notifications 四条都是这样。
  */
-const ROUTES = (() => {
-  const collect = (file, re) => {
-    const src = fs.readFileSync(path.join(ADMIN, file), 'utf8');
-    return [...src.matchAll(re)].map((m) => m[1]);
-  };
-  // `/` 显式留着，理由同远端版：它原本只靠三条重定向路由顺带扫到，排除重定向后会变成零覆盖
-  const all = [
-    ...collect('src/app/navRegistry.tsx', /path:\s*'([^']+)'/g),
-    ...collect('src/app/App.tsx', /<Route\s+path="([^"]+)"/g),
-    '/',
-  ]
-    .map((p) => (p.startsWith('/') ? p : `/${p}`))
-    .filter((p) => !p.includes(':') && !p.includes('*'));
-  const list = [...new Set(all)].sort();
-  // AUDIT_ONLY=/a,/b 只跑指定路由（冒烟用）
-  const only = (process.env.AUDIT_ONLY || '').split(',').map((x) => x.trim()).filter(Boolean);
-  return only.length ? list.filter((p) => only.includes(p)) : list;
-})();
+const readSrc = (f) => fs.readFileSync(f, 'utf8');
+let ROUTES, ACTIVE_VIEWPORTS;
+try {
+  // 判据与远端版共用同一份（contrast-audit-core）——此前两边各抄一份，
+  // 视口矩阵与空清单兜底都只加在远端、本地漏掉，同一个坑被抓了两轮。
+  ROUTES = resolveRoutes({ adminDir: ADMIN, readFile: readSrc, only: process.env.AUDIT_ONLY });
+  ACTIVE_VIEWPORTS = resolveViewports(process.env.AUDIT_VIEWPORTS);
+} catch (e) {
+  console.error(String(e.message || e));
+  process.exit(1);
+}
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
@@ -113,8 +106,9 @@ const coverage = { done: [], skipped: [], errored: [], redirected: [] };
  * 跑到 dark 时 light 那份还在，两份都写 map-mobile-theme-v2 而执行顺序未定义，
  * dark 轮可能整轮落成 light 被判「主题未生效」跳过。
  */
+for (const vpName of ACTIVE_VIEWPORTS) {
 for (const theme of ['light', 'dark']) {
-  const themeCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const themeCtx = await browser.newContext({ viewport: VIEWPORTS[vpName] });
   const page = await themeCtx.newPage();
   /*
    * 渲染期异常必须记账，不能一律吞掉。
@@ -149,41 +143,42 @@ for (const theme of ['light', 'dark']) {
        * 必须在跑 AUDIT_FN 之前就把这一对判掉。
        */
       if (pageErrors.length) {
-        coverage.errored.push(`${theme}${route}: 渲染异常 ${pageErrors[0]}`);
-        console.log(`[${theme}] ${route.padEnd(30)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
+        coverage.errored.push(`${vpName}/${theme}${route}: 渲染异常 ${pageErrors[0]}`);
+        console.log(`[${vpName}/${theme}] ${route.padEnd(26)} 渲染异常 ${pageErrors[0].slice(0, 50)}`);
         continue;
       }
       // 落地在哪就是扫了哪，判据与远端版同（含 pathname 对 pathname，route 可能带 query）
       const routePath = route.split(/[?#]/)[0];
       const landed = await page.evaluate(() => location.pathname);
       if (landed !== routePath) {
-        coverage.redirected.push(`${theme}${route} → ${landed}`);
+        coverage.redirected.push(`${vpName}/${theme}${route} → ${landed}`);
         console.log(`  [重定向] ${route} → ${landed}，不计入覆盖`);
         continue;
       }
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
       if (actual !== theme) {
-        coverage.skipped.push(`${theme}${route}（主题未生效，实际 ${actual}）`);
+        coverage.skipped.push(`${vpName}/${theme}${route}（主题未生效，实际 ${actual}）`);
         console.log(`  [跳过] ${route} 主题未生效(${actual})`);
         continue;
       }
       let findings = await page.evaluate(AUDIT_FN);
       if (findings.length) {
-        const shot = `${theme}${route.replace(/\//g, '_')}.png`;
+        const shot = `${vpName}_${theme}${route.replace(/[^a-zA-Z0-9._-]/g, '_')}.png`;
         const buf = await page.screenshot({ path: path.join(OUT, shot) });
         // 渐变/背景图上的元素：祖先链推断出的底色是假的，改用截图真实像素重算
         findings = await resampleGradientFindings(page, buf, findings);
         findings = findings.filter((f) => f.ratio < f.need);   // 重算后达标的直接剔除
-        if (findings.length) report.push({ theme, route, shot, findings });
+        if (findings.length) report.push({ viewport: vpName, theme, route, shot, findings });
       }
-      coverage.done.push(`${theme}${route}`);
-      console.log(`[${theme}] ${route.padEnd(30)} ${findings.length} 处`);
+      coverage.done.push(`${vpName}/${theme}${route}`);
+      console.log(`[${vpName}/${theme}] ${route.padEnd(26)} ${findings.length} 处`);
     } catch (e) {
-      coverage.errored.push(`${theme}${route}: ${String(e).split('\n')[0].slice(0, 90)}`);
-      console.log(`[${theme}] ${route.padEnd(30)} ERROR ${String(e).split('\n')[0].slice(0, 70)}`);
+      coverage.errored.push(`${vpName}/${theme}${route}: ${String(e).split('\n')[0].slice(0, 90)}`);
+      console.log(`[${vpName}/${theme}] ${route.padEnd(26)} ERROR ${String(e).split('\n')[0].slice(0, 70)}`);
     }
   }
   await themeCtx.close();
+}
 }
 
 const groups = aggregate(report);
@@ -193,14 +188,11 @@ fs.writeFileSync(path.join(OUT, 'report.md'), renderMarkdown({
   base: BASE, routeCount: ROUTES.length, report, groups,
   note: '本轮用空数据桩，覆盖外壳/导航/按钮/图标/空状态；列表被真实数据填满后的行需用远端版复扫。',
 }));
-const expected = ROUTES.length * 2;
+const expected = ROUTES.length * 2 * ACTIVE_VIEWPORTS.length;
 console.log(`\n覆盖：${coverage.done.length}/${expected} 对「路由×主题」实际扫过`);
 console.log(`命中：${report.length} 个「路由×主题」，配色组 ${groups.length}`);
 // 参数化路由从来没被扫过，必须写在脸上（判据同远端版，见那边注释）
-const parameterized = [...new Set([
-  ...[...fs.readFileSync(path.join(ADMIN, 'src/app/navRegistry.tsx'), 'utf8').matchAll(/path:\s*'([^']+)'/g)].map((m) => m[1]),
-  ...[...fs.readFileSync(path.join(ADMIN, 'src/app/App.tsx'), 'utf8').matchAll(/<Route\s+path="([^"]+)"/g)].map((m) => m[1]),
-])].filter((p) => p.includes(':'));
+const parameterized = parameterizedRoutes(ADMIN, readSrc);
 console.log(`未覆盖：参数化路由 ${parameterized.length} 条（要真实 id 才打得开）`);
 if (coverage.redirected.length) {
   console.log(`未覆盖：重定向路由 ${coverage.redirected.length} 对（请求 A 落到 B，不计入 A）`);

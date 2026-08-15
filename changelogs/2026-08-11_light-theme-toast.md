@@ -100,3 +100,4 @@
 | fix | e2e | 修 Codex 第二十轮 P2：AUDIT_ONLY 打错字同样会静默变成空清单（上一轮只给 AUDIT_VIEWPORTS 加了兜底，没看隔壁同形状的入参）。改为逐条报出哪个名字没匹配上，空清单一律非零退出 |
 | fix | e2e | 修 Codex 第二十轮 P2：截图名只替换了斜杠，带 query 的自定义路由留着 `?` 在 Windows 上是非法文件名，会让该路由被记成 errored——而带 query 正是 AUDIT_ROUTES 的用法 |
 | docs | e2e | 修 Codex 第二十轮 P1：审计只扫「打开即渲染」的静态 DOM，Toast/Tooltip/抽屉/Popover/悬浮卡/下拉/hover 一个都没触发过，而本 PR 改的大半正是这些浮层。收尾显式声明未覆盖，并记入 debt.frontend（写触发夹具属独立工程） |
+| refactor | e2e | 修 Codex 第二十一轮两条 P1/P2（同一成因）：路由清单与视口两处判据在远端版/本地版各抄一份，于是视口矩阵、空清单兜底都只加在远端、本地漏掉。抽进 contrast-audit-core（resolveRoutes / resolveViewports / parameterizedRoutes / VIEWPORTS），两个入口共用一份，本地版同步补上双视口 |
