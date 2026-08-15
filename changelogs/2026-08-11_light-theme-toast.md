@@ -44,3 +44,6 @@
 | fix | e2e | 远端对比度审计改走 node fetch 代理穿透（复用 CDS 验收技能的 proxyroute），沙箱里终于能对真站点+真实数据跑审计。此前误判「chromium 没有出网」，导致两轮只能靠源码推算 |
 | docs | doc | debt.frontend 记下沙箱出网解法与教训：报「做不到」之前先扫仓库现成技能；远端真实数据审计与本地空桩差一个数量级（空桩报 0，真实数据每屏 5~20 处） |
 | test | prd-admin | sameHueTintRatchet 判据补三个缺口：认 #hex 字面量（此前只扫 rgba）、认 accent 键（注册表惯用）、新增判据 C 认「一值两用」——同一个变量既被拼成 `${x}22` 淡底又直接当字色。判据 C 是真实规模最大那次事故（144 处）的形状，A/B 对它完全瞎 |
+| fix | prd-admin | 修 AppShell notificationTone 与 ChangelogBell TYPE_COLOR_MAP 两处一值两用（36 条路由各一处）：底保持淡色调、字改走双写 token |
+| fix | prd-admin | ArenaPage 空态 27 处写死白字改走 token —— 该屏外层无深底，浅色档下就是白字压暖纸（实测 1.01~1.2:1） |
+| fix | e2e | 远端审计补渐变重采样（本地版一直有、远端漏了）：元素坐在 radial-gradient 上时 backgroundColor 透明，祖先链会一路取到页面底，把「深色渐变页上的浅字」误报成缺陷。task-tree 整页栽在这上面，照误报改会造新 bug |

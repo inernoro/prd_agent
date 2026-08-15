@@ -16,6 +16,11 @@ interface ChangelogBellProps {
   compact?: boolean;
 }
 
+/*
+ * 一值两用会翻车：这些 300 档亮彩既被 `${c}22` 拼成淡底、又直接当字色。
+ * 拼接那半必须保持 hex（两个主题都成立），当字色那半浅色档只有 1.5:1 上下。
+ * 所以拆两张表：COLOR 供拼接，FG 走双写 token 供字色。
+ */
 const TYPE_COLOR_MAP: Record<string, string> = {
   feat: '#86efac',
   fix: '#fdba74',
@@ -23,6 +28,15 @@ const TYPE_COLOR_MAP: Record<string, string> = {
   perf: '#c4b5fd',
   docs: '#67e8f9',
   chore: '#d4d4d8',
+};
+
+const TYPE_FG_MAP: Record<string, string> = {
+  feat: 'var(--accent-fg-success)',
+  fix: 'var(--accent-fg-warning)',
+  refactor: 'var(--accent-fg-blue)',
+  perf: 'var(--accent-fg-violet)',
+  docs: 'var(--accent-fg-blue)',
+  chore: 'var(--text-secondary)',
 };
 
 const TYPE_LABEL_MAP: Record<string, string> = {
@@ -204,6 +218,7 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
                 <div className="flex flex-col gap-1.5 py-1">
                   {recent.map((entry, idx) => {
                     const typeColor = TYPE_COLOR_MAP[entry.type.toLowerCase()] ?? '#d4d4d8';
+                    const typeFg = TYPE_FG_MAP[entry.type.toLowerCase()] ?? 'var(--text-secondary)';
                     const typeLabel = TYPE_LABEL_MAP[entry.type.toLowerCase()] ?? entry.type[0]?.toUpperCase() ?? '?';
                     return (
                       <div
@@ -215,7 +230,7 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
                           className="shrink-0 h-5 w-5 rounded inline-flex items-center justify-center text-[10px] font-bold mt-0.5"
                           style={{
                             background: `${typeColor}22`,
-                            color: typeColor,
+                            color: typeFg,
                             border: `1px solid ${typeColor}44`,
                           }}
                         >

@@ -95,8 +95,24 @@ function collect(text: string): { fg: ColorUse[]; bg: ColorUse[] } {
       });
     }
   };
-  scan(/(?:^|[\s{;,])(?:color|fg|text|iconColor|stroke)\s*:\s*'?"?rgba?\([^)]*\)/gim, fg);
+  scan(/(?:^|[\s{;,])(?:color|fg|text|iconColor|accent|stroke)\s*:\s*'?"?rgba?\([^)]*\)/gim, fg);
   scan(/(?:^|[\s{;,])(?:background(?:-color)?|bg)\s*:\s*'?"?rgba?\([^)]*\)/gim, bg);
+  // hex 写法同样两类键各扫一遍：注册表里的 accent 普遍是 '#5eead4' 这种，不是 rgba()
+  const scanHex = (re: RegExp, sink: ColorUse[]) => {
+    for (const m of text.matchAll(re)) {
+      HEXC.lastIndex = 0;
+      const c = HEXC.exec(m[0]);
+      if (!c) continue;
+      const h = c[1];
+      sink.push({
+        rgb: [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).join(','),
+        alpha: 1,
+        index: m.index ?? 0,
+      });
+    }
+  };
+  scanHex(/(?:^|[\s{;,])(?:color|fg|text|iconColor|accent|stroke)\s*:\s*'?"?#[0-9a-fA-F]{6}\b/gim, fg);
+  scanHex(/(?:^|[\s{;,])(?:background(?:-color)?|bg)\s*:\s*'?"?#[0-9a-fA-F]{6}\b/gim, bg);
   return { fg, bg };
 }
 

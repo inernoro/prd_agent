@@ -175,11 +175,16 @@ const iconMap: Record<string, LucideIcon> = {
   [PA_SECRETARY_ICON]: PaSecretary,
 };
 
+/*
+ * 底与描边保持淡色调（两个主题都成立），字必须走双写 token。
+ * 原来 text 写死同色 300 档，浅色档下与 8% 淡底一起被暖纸稀释 —— 实测 1.51:1。
+ * 通知条挂在 AppShell 上，36 条路由全渲染，一处错就是 36 处糊。
+ */
 const notificationTone = {
-  info: { border: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.08)', text: '#93c5fd' },
-  warning: { border: 'rgba(251, 146, 60, 0.45)', bg: 'rgba(251, 146, 60, 0.1)', text: '#fdba74' },
-  error: { border: 'rgba(248, 113, 113, 0.45)', bg: 'rgba(248, 113, 113, 0.08)', text: '#fca5a5' },
-  success: { border: 'rgba(34, 197, 94, 0.45)', bg: 'rgba(34, 197, 94, 0.08)', text: '#86efac' },
+  info: { border: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.08)', text: 'var(--accent-fg-blue)' },
+  warning: { border: 'rgba(251, 146, 60, 0.45)', bg: 'rgba(251, 146, 60, 0.1)', text: 'var(--accent-fg-warning)' },
+  error: { border: 'rgba(248, 113, 113, 0.45)', bg: 'rgba(248, 113, 113, 0.08)', text: 'var(--accent-fg-danger)' },
+  success: { border: 'rgba(34, 197, 94, 0.45)', bg: 'rgba(34, 197, 94, 0.08)', text: 'var(--accent-fg-success)' },
 };
 
 function getNotificationTone(level?: string) {

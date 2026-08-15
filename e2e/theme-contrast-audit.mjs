@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installNodeFetchRoute } from '../.claude/skills/cds/cli/acceptance/proxyroute.mjs';
-import { AUDIT_FN, aggregate, renderMarkdown } from './contrast-audit-core.mjs';
+import { AUDIT_FN, aggregate, renderMarkdown, resampleGradientFindings } from './contrast-audit-core.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADMIN = path.join(REPO_ROOT, 'prd-admin');
@@ -92,11 +92,20 @@ for (const theme of ['light', 'dark']) {
       await page.waitForTimeout(5200);   // 真实数据渲染比空桩慢，给足时间否则扫到骨架屏
       const actual = await page.evaluate(() => document.documentElement.dataset.theme || 'dark');
       if (actual !== theme) { console.log(`  [跳过] ${route} 主题未生效(${actual})`); continue; }
-      const findings = await page.evaluate(AUDIT_FN);
+      let findings = await page.evaluate(AUDIT_FN);
       if (findings.length) {
         const shot = `${theme}${route.replace(/\//g, '_')}.png`;
-        await page.screenshot({ path: path.join(OUT, shot) });
-        report.push({ theme, route, shot, findings });
+        const buf = await page.screenshot({ path: path.join(OUT, shot) });
+        /*
+         * 渐变底必须用截图真实像素重算 —— 本地版一直有这一步，远端版漏了。
+         * 元素坐在 radial-gradient 上时 backgroundColor 是透明的，祖先链推断会一路
+         * 走到页面底，于是「深色渐变页上的浅色字」被误报成「浅字压暖纸」。
+         * task-tree 自带整套深色皮肤（--tt-* + 深色渐变底），整页都栽在这上面；
+         * 照着误报去改，等于把本来正确的浅字改成深字压深底 —— 造新 bug。
+         */
+        findings = await resampleGradientFindings(page, buf, findings);
+        findings = findings.filter((f) => f.ratio < f.need);
+        if (findings.length) report.push({ theme, route, shot, findings });
       }
       console.log(`[${theme}] ${route.padEnd(30)} ${findings.length} 处`);
     } catch (e) {
