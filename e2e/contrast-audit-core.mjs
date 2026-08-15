@@ -520,47 +520,49 @@ export async function resampleGradientFindings(page, _unused, findings) {
          * 临时 inline style），正中恰好压着字形就采到文字色本身 —— 报出来是
          * fg === bg、比值 1.00 的假阳性。字形只占框内少数像素，众数天然是底色。
          */
-        const px = cx.getImageData(sx0, sy0, sx1 - sx0, sy1 - sy0).data;
-        const buckets = new Map();
-        for (let i = 0; i < px.length; i += 4) {
-          const key = (px[i] >> 3 << 10) | (px[i + 1] >> 3 << 5) | (px[i + 2] >> 3);
-          let b = buckets.get(key);
-          if (!b) buckets.set(key, (b = [0, 0, 0, 0]));
-          b[0] += px[i]; b[1] += px[i + 1]; b[2] += px[i + 2]; b[3] += 1;
-        }
+        const sw = sx1 - sx0, sh = sy1 - sy0;
+        const px = cx.getImageData(sx0, sy0, sw, sh).data;
         /*
-         * 取「显著色块里最差的那一块」，不是最频繁的那一块。
+         * 按**空间网格**取最差，不按颜色直方图。
          *
-         * 众数只代表框内占地最多的底色：一行字横跨渐变时，大半个框压在安全的深色段上、
-         * 只有几个字压在浅色段，众数会判它达标，而那几个字确实看不清
-         * （Codex 在 PR #1374 第二十三轮抓到；而这个值直接决定退出码）。
+         * 上一版的做法是「量化成 5bit 色桶、只看占比 ≥12% 的桶」。它对平滑渐变失效：
+         * 渐变把像素摊到几十个桶里，每个桶都不到 12%，于是全部被丢掉、退回众数 ——
+         * 又变回「按占地最多的那段判」，等于修了个寂寞（Codex 在 PR #1374 第二十五轮抓到）。
          *
-         * 但也不能直接取「最差单像素」——隐前景那步偶尔不生效（React 重渲染会抹掉
-         * 临时 inline style），字形像素就会变成最差色块，稳定产出 fg===bg 的假阳性。
-         * 折中：只看占比 ≥ 12% 的色块（字形抗锯齿和零星像素达不到这个量），
-         * 并剔掉与前景色极近的色块，然后在剩下的里取最差。
+         * 改成把采样区切成网格，每格取**去掉近前景色像素后的均值**，再在各格之间取
+         * 最差对比度。均值天然压掉字形抗锯齿，网格天然覆盖渐变两端，两个毛病一起治。
          */
-        const total = (sx1 - sx0) * (sy1 - sy0);
-        const solidFg = compose(fg, [0, 0, 0]) && compose(fg, [255, 255, 255]);
+        const COLS = 5, ROWS = 3;
         const fgProbe = compose(fg, [128, 128, 128]);
-        const near = (c) => fgProbe && Math.abs(c[0] - fgProbe[0]) + Math.abs(c[1] - fgProbe[1]) + Math.abs(c[2] - fgProbe[2]) < 24;
-        const cands = [];
-        for (const b of buckets.values()) {
-          if (b[3] / total < 0.12) continue;
-          const c = [Math.round(b[0] / b[3]), Math.round(b[1] / b[3]), Math.round(b[2] / b[3])];
-          if (near(c)) continue;      // 极可能是没隐掉的字形本身
-          cands.push(c);
+        const nearFg = (r, g, b) => fgProbe
+          && Math.abs(r - fgProbe[0]) + Math.abs(g - fgProbe[1]) + Math.abs(b - fgProbe[2]) < 24;
+        const cells = [];
+        for (let cy = 0; cy < ROWS; cy += 1) {
+          for (let cx2 = 0; cx2 < COLS; cx2 += 1) {
+            const x0c = Math.floor((cx2 * sw) / COLS), x1c = Math.floor(((cx2 + 1) * sw) / COLS);
+            const y0c = Math.floor((cy * sh) / ROWS), y1c = Math.floor(((cy + 1) * sh) / ROWS);
+            let r = 0, g = 0, b = 0, n = 0;
+            for (let y = y0c; y < y1c; y += 1) {
+              for (let x = x0c; x < x1c; x += 1) {
+                const i = (y * sw + x) * 4;
+                if (nearFg(px[i], px[i + 1], px[i + 2])) continue;   // 极可能是没隐掉的字形
+                r += px[i]; g += px[i + 1]; b += px[i + 2]; n += 1;
+              }
+            }
+            if (n < 4) continue;   // 这一格几乎全是字形，取不出可信底色
+            cells.push([Math.round(r / n), Math.round(g / n), Math.round(b / n)]);
+          }
         }
-        if (!cands.length) {
-          // 没有任何显著且非前景色的色块 —— 退回众数，宁可保守也不要凭空判失败
-          let best = null;
-          for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
-          if (!best) { out[id] = { why: 'no-pixels' }; continue; }
-          cands.push([Math.round(best[0] / best[3]), Math.round(best[1] / best[3]), Math.round(best[2] / best[3])]);
+        if (!cells.length) {
+          // 整框都被字形占满：退回全框均值，宁可保守也不要凭空判失败
+          let r = 0, g = 0, b = 0, n = 0;
+          for (let i = 0; i < px.length; i += 4) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n += 1; }
+          if (!n) { out[id] = { why: 'no-pixels' }; continue; }
+          cells.push([Math.round(r / n), Math.round(g / n), Math.round(b / n)]);
         }
         const o = typeof opacity === 'number' ? opacity : 1;
         let worst = null;
-        for (const bg of cands) {
+        for (const bg of cells) {
           const solid = compose(fg, bg);
           if (!solid) continue;
           const composed = o >= 0.999
@@ -570,7 +572,6 @@ export async function resampleGradientFindings(page, _unused, findings) {
           if (!worst || ratio < worst.ratio) worst = { bg, ratio };
         }
         if (!worst) { out[id] = { why: 'compose-failed' }; continue; }
-        void solidFg;
         out[id] = worst;
       }
       return out;
