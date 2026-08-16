@@ -33,6 +33,8 @@ import {
   copySiteToTeam,
 } from '@/services';
 import type { HostedSite, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
+import { getSiteAskConfig } from '@/services/real/webPages';
+import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
 import {
   canDeleteInWebHosting,
@@ -46,6 +48,7 @@ import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
+import AskConfigDrawer from '@/components/web-hosting/ask/AskConfigDrawer';
 import { createPortal } from 'react-dom';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import type { DocumentStore } from '@/services/contracts/documentStore';
@@ -98,6 +101,7 @@ import {
   Plus,
   Settings2,
   MoreHorizontal,
+  MessageCircleQuestion,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -421,6 +425,9 @@ export default function WebPagesPage() {
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
   // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
+  // 提问设置：站点卡「更多设置」直达。原先只有大预览顶栏的齿轮一个入口，
+  // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
+  const [askConfigSite, setAskConfigSite] = useState<HostedSite | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   const [showDesktopFilters, setShowDesktopFilters] = useState(false);
 
@@ -774,6 +781,7 @@ export default function WebPagesPage() {
             onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
             onMove={() => setMovingSite(site)}
             onComments={() => setCommentSite(site)}
+            onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
           />
         ))}
       </div>
@@ -793,6 +801,7 @@ export default function WebPagesPage() {
             onQrCode={() => setQrSite(site)}
             onTogglePublic={() => handleMakePublic(site)}
             onComments={() => setCommentSite(site)}
+            onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
           />
         ))}
       </div>
@@ -1628,6 +1637,24 @@ export default function WebPagesPage() {
             setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, commentsEnabled: enabled } : prev));
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, commentsEnabled: enabled } : x)));
           }}
+          onAskEnabledChange={(sid, enabled) => {
+            setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, askEnabled: enabled } : prev));
+            setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, askEnabled: enabled } : x)));
+          }}
+        />
+      )}
+
+      {/* 提问设置：站点卡「更多设置 → 提问设置」直达，不必先打开大预览再找齿轮 */}
+      {askConfigSite && (
+        <AskConfigDrawer
+          siteId={askConfigSite.id}
+          siteTitle={askConfigSite.title}
+          onClose={() => setAskConfigSite(null)}
+          onSaved={(cfg) => {
+            // 与评论开关同一处理：回填列表，避免关掉再开退回旧值
+            setSites((prev) => prev.map((x) => (x.id === askConfigSite.id ? { ...x, askEnabled: cfg.enabled } : x)));
+            setAskConfigSite((prev) => (prev ? { ...prev, askEnabled: cfg.enabled } : prev));
+          }}
         />
       )}
 
@@ -2260,7 +2287,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
+export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments, onAskConfig }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -2278,6 +2305,8 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
   onReplaceFile: (file: File) => void;
   onMove?: () => void;
   onComments?: () => void;
+  /** 提问设置抽屉；仅 canEdit 时传入 */
+  onAskConfig?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
@@ -2439,6 +2468,9 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
                   : null,
                 onComments
                   ? { label: '评论管理', icon: <MessageSquare size={13} />, onClick: onComments }
+                  : null,
+                onAskConfig
+                  ? { label: '提问设置', icon: <MessageCircleQuestion size={13} />, onClick: onAskConfig }
                   : null,
                 onViewers
                   ? { label: '访客', icon: <Eye size={13} />, onClick: onViewers }
@@ -2615,7 +2647,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -2627,6 +2659,8 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onQrCode: () => void;
   onTogglePublic: () => void;
   onComments?: () => void;
+  /** 提问设置抽屉；仅 canEdit 时传入 */
+  onAskConfig?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
@@ -2746,6 +2780,9 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
               : null,
             onComments
               ? { label: '评论管理', icon: <MessageSquare size={13} />, onClick: onComments }
+              : null,
+            onAskConfig
+              ? { label: '提问设置', icon: <MessageCircleQuestion size={13} />, onClick: onAskConfig }
               : null,
             c.canDelete
               ? { label: '删除', icon: <Trash2 size={13} />, onClick: onDelete, danger: true }
@@ -3036,8 +3073,40 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
   const [showRiskGate, setShowRiskGate] = useState(false);
   const [riskCountdown, setRiskCountdown] = useState(10);
 
+  // ── 分享时自选开场问题 ──
+  // 站点题库（owner 在「提问设置」里维护）。只有单站点分享 + 站点开了提问才拉。
+  const [askLibrary, setAskLibrary] = useState<string[] | null>(null);
+  const [askPicked, setAskPicked] = useState<string[]>([]);
+  const [askCustom, setAskCustom] = useState('');
+  /**
+   * 用户有没有动过这一栏。
+   * 没动 = 不传该字段（后端 null → 继承站点题库，日后 owner 改题库这条链接会跟着变）；
+   * 动过 = 传数组（哪怕是空数组，表示"这条链接不显示开场问题"）。
+   * 把"没动"也当成"选了当前全部"会把题库冻结成快照，是两回事。
+   */
+  const [askTouched, setAskTouched] = useState(false);
+
   const isCollection = !siteId && siteIds && siteIds.length > 1;
   const isShort = linkType === 'short';
+
+  // 合集分享一期不支持按站点挑问题（一条链接对多个站点，题库无法归一），故只在单站点时拉
+  useEffect(() => {
+    if (!siteId || isCollection) return;
+    let alive = true;
+    void getSiteAskConfig(siteId).then((res) => {
+      if (!alive) return;
+      if (res.success && res.data?.enabled) {
+        const lib = res.data.suggestedQuestions ?? [];
+        setAskLibrary(lib);
+        // 题库可能有 12 条，但面板只显示 ASK_MAX_DISPLAY 条——初始勾选也必须按上限截，
+        // 否则一进来就是"选了 12 条"，存下去只留 4 条，其余静默消失。
+        setAskPicked(lib.slice(0, ASK_MAX_DISPLAY));
+      } else {
+        setAskLibrary(null);
+      }
+    });
+    return () => { alive = false; };
+  }, [siteId, isCollection]);
   const pwdInvalid = isShort && usePassword && !STRONG_PWD_RE.test(password);
 
   // 切到短链：强制开启密码，且若现有密码不达强密码标准就自动重生成
@@ -3094,6 +3163,9 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
         // /s/{seq}，否则后端不写 short_links，只发不可枚举的 /s/wp/{token} 长链——
         // 杜绝「用户没选短链却拿到数字链」+「管理员短链页冒出几百条」。
         allocateShortLink: isShort,
+        // 三态：没动过就整个字段不传（继承站点题库），动过才传数组（空数组=这条链接不显示）。
+        // 判定收在 resolveShareAskSelection 里，有守卫盯着，别在这儿就地写三元。
+        askSuggestedQuestions: resolveShareAskSelection(askTouched, askPicked),
       });
       if (res.success) {
         onCreated?.();
@@ -3350,6 +3422,103 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                   })}
                 </div>
               </div>
+
+              {/* 开场问题 — 这条链接上访客一点即问的引子。
+                  发给客户和发给同事可以不一样，所以按分享链接各自选，而不是全站一套。 */}
+              {askLibrary !== null && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs text-token-muted">
+                    <MessageCircleQuestion size={12} className="inline mr-1" />开场问题
+                    <span className="ml-1 text-token-muted">（访客打开提问面板时可一点即问）</span>
+                  </span>
+
+                  {askLibrary.length === 0 && askPicked.length === 0 && (
+                    <span className="text-xs text-token-muted">
+                      这个站点还没有开场问题，可在「提问设置」里建题库，也可以在下面直接加。
+                    </span>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    {Array.from(new Set([...askLibrary, ...askPicked])).map((q) => {
+                      const active = askPicked.includes(q);
+                      // 挑满就挡住：这份选择就是面板要显示的那份，选超了后端也存不下，
+                      // 与其让第 5 条静默消失，不如当场说明「最多几条」。
+                      const blocked = !active && askPicked.length >= ASK_MAX_DISPLAY;
+                      return (
+                        <button
+                          key={q}
+                          type="button"
+                          disabled={blocked}
+                          title={blocked ? `一个面板最多显示 ${ASK_MAX_DISPLAY} 条，取消一条再选` : undefined}
+                          onClick={() => {
+                            setAskTouched(true);
+                            setAskPicked((prev) => toggleAskPick(prev, q));
+                          }}
+                          className="px-3 py-1 rounded-lg text-xs text-left"
+                          style={{
+                            cursor: blocked ? 'not-allowed' : 'pointer',
+                            opacity: blocked ? 0.45 : 1,
+                            maxWidth: '100%',
+                            transition: 'border-color 120ms, background 120ms',
+                            border: active ? '1.5px solid #3b82f6' : '1px solid var(--border-default)',
+                            background: active ? 'rgba(59,130,246,0.10)' : 'var(--bg-sunken)',
+                            color: active ? '#3b82f6' : 'var(--text-secondary)',
+                          }}
+                        >
+                          {q}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={askCustom}
+                      maxLength={60}
+                      disabled={askPicked.length >= ASK_MAX_DISPLAY}
+                      onChange={(e) => setAskCustom(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return;
+                        e.preventDefault();
+                        const q = askCustom.trim();
+                        if (!q) return;
+                        setAskTouched(true);
+                        setAskPicked((prev) => addAskPick(prev, q));
+                        setAskCustom('');
+                      }}
+                      placeholder={askPicked.length >= ASK_MAX_DISPLAY
+                        ? `最多 ${ASK_MAX_DISPLAY} 条，取消一条再加`
+                        : '给这条链接单独加一个问题…'}
+                      className="flex-1 px-3 py-1.5 rounded-lg text-xs outline-none"
+                      style={inputStyle}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const q = askCustom.trim();
+                        if (!q) return;
+                        setAskTouched(true);
+                        setAskPicked((prev) => addAskPick(prev, q));
+                        setAskCustom('');
+                      }}
+                      disabled={!askCustom.trim() || askPicked.length >= ASK_MAX_DISPLAY}
+                      className="px-3 py-1.5 rounded-lg text-xs"
+                      style={{
+                        cursor: askCustom.trim() ? 'pointer' : 'default',
+                        border: '1px solid var(--border-default)',
+                        background: 'var(--bg-sunken)',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      添加
+                    </button>
+                  </div>
+
+                  {askTouched && askPicked.length === 0 && (
+                    <span className="text-xs text-token-muted">这条链接不显示开场问题，访客直接自己打字提问。</span>
+                  )}
+                </div>
+              )}
 
               {/* 高级选项 — 链接形式（收起时只显示当前值） */}
               <button

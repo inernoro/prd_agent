@@ -43,6 +43,7 @@ describe('notificationTypeRegistry', () => {
       expect(getNotificationType({ source: 'defect-agent', level: 'info', title: '' }).label).toBe('缺陷协作');
       expect(getNotificationType({ source: 'report-agent', level: 'info', title: '' }).label).toBe('周报月报');
       expect(getNotificationType({ source: 'system-alert', level: 'warning', title: '' }).popupStyle).toBe('alert');
+      expect(getNotificationType({ source: 'stable-smoke', level: 'error', title: '' }).label).toBe('稳定冒烟');
     });
 
     it('缺陷解决(success)走庆祝气质', () => {

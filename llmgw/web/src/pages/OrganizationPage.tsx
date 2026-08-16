@@ -11,11 +11,16 @@
 //   - 成员从「一人一张卡」改成表格：一屏看完谁是谁、什么角色、在哪个团队、是否停用；
 //     增改走抽屉，不占版面。
 import { useCallback, useEffect, useState } from 'react';
-import { KeyRound, Plus, RefreshCw, RotateCcw, Save, UserPlus, X } from 'lucide-react';
+import { KeyRound, Plus, RefreshCw, RotateCcw, Save, Trash2, UserPlus, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import {
   createMember,
   createTeam,
+  deleteMember,
+  deleteTeam,
+  deleteTenant,
+  updateTeam,
   createTenant,
   getOrganization,
   invalidateMemberSessions,
@@ -24,6 +29,7 @@ import {
   updateMember,
 } from '@/lib/api';
 import type { CreateMemberRequest, OrganizationData, UpdateMemberRequest } from '@/lib/types';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { invalidateOnboardingCache } from '@/lib/onboarding';
 import { Button, Card, Chip, InlineAlert, SectionLoader } from '@/components/ui';
@@ -69,7 +75,7 @@ function RoleHelp({ align }: { align?: 'start' | 'end' }) {
 type DrawerState = { mode: 'create' } | { mode: 'edit'; member: MemberItem } | null;
 
 export function OrganizationPage() {
-  const { tenant: sessionTenant, user } = useAuth();
+  const { tenant: sessionTenant, user, logout } = useAuth();
   const [data, setData] = useState<OrganizationData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -81,6 +87,7 @@ export function OrganizationPage() {
   const currentRole = sessionTenant?.role ?? 'viewer';
   const canManage = canUseCapability(sessionTenant?.role, 'organizationWrite');
   const canCreateTenant = canUseCapability(sessionTenant?.role, 'tenantOwner');
+  const { confirm, promptText } = useDialogs();
 
   const load = useCallback(async () => {
     setError(null);
@@ -90,6 +97,90 @@ export function OrganizationPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // 后端一直有 PUT /gw/teams/{id}，但前端从没给过入口 —— 团队名一旦打错就永远改不回来。
+  // 这是断头自检里唯一一条 A 类（后端有能力、前端无入口），补在团队 chip 上。
+  const renameTeam = async (team: OrganizationData['teams'][number]) => {
+    const next = await promptText({ title: `把团队“${team.name}”改成什么名字？`, inputLabel: '新的团队名称', defaultValue: team.name, confirmLabel: '改名' });
+    if (next === null) return;
+    const name = next.trim();
+    if (name.length < 2) { setError('团队名称至少 2 个字符'); return; }
+    if (name === team.name) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const response = await updateTeam(team.id, name);
+    setBusy(false);
+    if (!response.success) { setError(response.error.message); return; }
+    invalidateOnboardingCache(sessionTenant?.id);
+    setNotice(`团队已改名为“${name}”`);
+    await load();
+  };
+
+  // 团队删掉后引用方不会报错，只会被当成「没有范围」——所以后端先查三类引用，
+  // 这里把它报回来的原文原样端出去，运维才知道该先解哪一个。
+  const removeTeam = async (team: OrganizationData['teams'][number]) => {
+    if (!await confirm({ title: `删除团队“${team.name}”？`, description: '成员、接入密钥、appCaller 只要还引用它就会被拒绝。', tone: 'danger', confirmLabel: '删除' })) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const response = await deleteTeam(team.id);
+    setBusy(false);
+    if (!response.success) { setError(response.error.message); return; }
+    invalidateOnboardingCache(sessionTenant?.id);
+    setNotice(`团队“${team.name}”已删除`);
+    await load();
+  };
+
+  // 删成员是不可逆的移出租户（账号本身还在，可能还属于别的租户）。
+  // 「不能删自己 / 只有 owner 能删 owner / 不能删最后一个 owner」三条由后端判定，
+  // 前端只在按钮可见性上先挡掉前两条，最后一条只有服务端知道。
+  const removeMember = async (member: MemberItem) => {
+    const label = member.displayName || member.username || member.userId;
+    const typed = await promptText({
+      title: `把“${label}”移出本租户？`,
+      description: '账号本身保留，租户内的角色与团队归属会消失，无法撤销。',
+      inputLabel: '确认请输入成员账号',
+      requireExact: member.username || member.userId,
+      tone: 'danger',
+      confirmLabel: '移出',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== (member.username || member.userId)) { setError('输入的账号不一致，已取消删除'); return; }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const response = await deleteMember(member.id);
+    setBusy(false);
+    if (!response.success) { setError(response.error.message); return; }
+    invalidateOnboardingCache(sessionTenant?.id);
+    setNotice(`“${label}”已移出本租户`);
+    await load();
+  };
+
+  // 删租户只删空租户：不做级联是有意的——级联写错不可逆，「先自己清干净」可逆。
+  // 删成功后当前会话所在的租户就没了，只能回登录页重新选租户。
+  const removeTenant = async () => {
+    if (!data?.tenant) return;
+    const typed = await promptText({
+      title: `删除租户“${data.tenant.name}”`,
+      description: '只有完全清空的租户能删：上游、模型、模型池、交换所、逻辑模型、接入密钥、appCaller、其他成员都必须为零。\n删除后当前会话失效，需要重新登录。',
+      inputLabel: '确认请输入租户 slug',
+      requireExact: data.tenant.slug,
+      tone: 'danger',
+      confirmLabel: '删除租户',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== data.tenant.slug) { setError('输入的 slug 不一致，已取消删除'); return; }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const response = await deleteTenant(data.tenant.id);
+    setBusy(false);
+    if (!response.success) { setError(response.error.message); return; }
+    // 租户没了，当前会话签发时绑定的租户也就不存在了：走正规登出，别留一个指向空租户的 token。
+    logout();
+  };
 
   const addTeam = async () => {
     setBusy(true);
@@ -133,6 +224,9 @@ export function OrganizationPage() {
             {canCreateTenant ? (
               <Button size="sm" variant="secondary" onClick={() => setTenantDialogOpen(true)}><Plus size={14} />新建租户</Button>
             ) : null}
+            {canCreateTenant && data?.tenant ? (
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void removeTenant()}><Trash2 size={14} />删除租户</Button>
+            ) : null}
           </>
         )}
       />
@@ -156,14 +250,40 @@ export function OrganizationPage() {
                 <Prose style={{ marginBottom: GAP.section }}>还没有团队。团队把成员、appCaller 和接入密钥放进同一工作范围。</Prose>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginBottom: GAP.section }}>
-                  {data.teams.map((team) => (
-                    <Chip
-                      key={team.id}
-                      label={team.status === 'active' ? team.name : `${team.name}（已停用）`}
-                      color={team.status === 'active' ? 'var(--accent)' : 'var(--text-muted)'}
-                      bg={team.status === 'active' ? 'var(--accent-soft)' : 'var(--bg-elevated)'}
-                    />
-                  ))}
+                  {data.teams.map((team) => {
+                    const chip = (
+                      <Chip
+                        label={team.status === 'active' ? team.name : `${team.name}（已停用）`}
+                        color={team.status === 'active' ? 'var(--accent)' : 'var(--text-muted)'}
+                        bg={team.status === 'active' ? 'var(--accent-soft)' : 'var(--bg-elevated)'}
+                      />
+                    );
+                    if (!canManage) return <span key={team.id}>{chip}</span>;
+                    return (
+                      <span key={team.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <button
+                          type="button"
+                          aria-label={`重命名团队 ${team.name}`}
+                          title="点击重命名"
+                          disabled={busy}
+                          onClick={() => void renameTeam(team)}
+                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0 }}
+                        >
+                          {chip}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`删除团队 ${team.name}`}
+                          title="删除团队"
+                          disabled={busy}
+                          onClick={() => void removeTeam(team)}
+                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', lineHeight: 0, color: 'var(--text-muted)' }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
               )}
               {canManage ? (
@@ -226,11 +346,22 @@ export function OrganizationPage() {
                           </td>
                           <td style={{ ...TABLE_CELL, textAlign: 'right' }}>
                             {editable ? (
-                              <Button size="sm" variant="ghost" onClick={() => setDrawer({ mode: 'edit', member })}>编辑</Button>
+                              <>
+                                <Button size="sm" variant="ghost" onClick={() => setDrawer({ mode: 'edit', member })}>编辑</Button>
+                                <Button size="sm" variant="ghost" disabled={busy} onClick={() => void removeMember(member)}>移出</Button>
+                              </>
                             ) : (
-                              <span style={{ ...HINT_TEXT, whiteSpace: 'nowrap' }}>
-                                {selfLocked ? '不能在这里修改自己' : ownerLocked ? '只有 Owner 可以修改 Owner' : '只读'}
-                              </span>
+                              // 「不能在这里修改自己」原本是条死路：成员区确实不该改自己的角色，
+                              // 但用户真正想改的口令当时也无处可去。指到账号页，路才通。
+                              selfLocked ? (
+                                <Link to="/account" style={{ ...HINT_TEXT, whiteSpace: 'nowrap', color: 'var(--accent)' }}>
+                                  管自己的口令去「账号与安全」
+                                </Link>
+                              ) : (
+                                <span style={{ ...HINT_TEXT, whiteSpace: 'nowrap' }}>
+                                  {ownerLocked ? '只有 Owner 可以修改 Owner' : '只读'}
+                                </span>
+                              )
                             )}
                           </td>
                         </tr>
@@ -297,6 +428,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
   const [memberInitialPassword, setMemberInitialPassword] = useState('');
   const [memberRole, setMemberRole] = useState<MemberRole>((member?.role as MemberRole) ?? 'viewer');
   const [status, setStatus] = useState<'active' | 'disabled'>(member?.status === 'disabled' ? 'disabled' : 'active');
+  const { confirm } = useDialogs();
   const [memberTeamIds, setMemberTeamIds] = useState<string[]>(member?.teamIds ?? []);
   const [busy, setBusy] = useState(false);
 
@@ -346,7 +478,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
 
   const invalidate = async () => {
     if (!member) return;
-    if (!window.confirm(`让“${who}”的现有登录立即失效？`)) return;
+    if (!await confirm({ title: `让“${who}”的现有登录立即失效？`, description: '该成员需要重新登录。', tone: 'danger', confirmLabel: '强制重新登录' })) return;
     setBusy(true);
     setFailure(null);
     const response = await invalidateMemberSessions(member.id);

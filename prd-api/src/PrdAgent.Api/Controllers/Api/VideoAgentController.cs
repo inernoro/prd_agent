@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -8,6 +9,8 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -27,9 +30,13 @@ public class VideoAgentController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IAssetStorage _assetStorage;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<VideoAgentController> _logger;
+    private readonly IDataProtector _directVideoJobProtector;
+    private readonly IDataProtector _videoDownloadTicketProtector;
 
-    private const string AppKey = "video-agent";
+    private const string AppKey = VideoDownloadTicket.ExpectedAppKey;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public VideoAgentController(
@@ -39,6 +46,9 @@ public class VideoAgentController : ControllerBase
         IModelPoolQueryService modelPoolQuery,
         IOpenRouterVideoClient videoClient,
         ILLMRequestContextAccessor llmRequestContext,
+        IAssetStorage assetStorage,
+        IHttpClientFactory httpClientFactory,
+        IDataProtectionProvider dataProtectionProvider,
         ILogger<VideoAgentController> logger)
     {
         _videoGenService = videoGenService;
@@ -47,7 +57,13 @@ public class VideoAgentController : ControllerBase
         _modelPoolQuery = modelPoolQuery;
         _videoClient = videoClient;
         _llmRequestContext = llmRequestContext;
+        _assetStorage = assetStorage;
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _directVideoJobProtector = dataProtectionProvider.CreateProtector(
+            "PrdAgent.VideoAgent.DirectJobOwnership.v1");
+        _videoDownloadTicketProtector = dataProtectionProvider.CreateProtector(
+            VideoDownloadTicket.ProtectorPurpose);
     }
 
     private readonly IOpenRouterVideoClient _videoClient;
@@ -192,16 +208,360 @@ public class VideoAgentController : ControllerBase
             UserId = GetAdminId()
         }, ct);
 
-        return Ok(ApiResponse<object>.Ok(new { result.Success, result.JobId, result.ActualModel, result.Cost, result.ErrorMessage }));
+        if (result.Success && !string.IsNullOrWhiteSpace(result.JobId))
+        {
+            var now = DateTime.UtcNow;
+            var ownership = new DirectVideoJobOwnership
+            {
+                AppKey = AppKey,
+                OwnerAdminId = GetAdminId(),
+                JobId = result.JobId,
+                Model = result.ActualModel ?? req.Model,
+                OfferingId = result.OfferingId,
+                CreatedAt = now,
+                ExpiresAt = now.Add(DirectVideoJobOwnership.Retention),
+            };
+            ownership.JobNamespace = DirectVideoJobOwnership.BuildJobNamespace(
+                ownership.OfferingId,
+                ownership.Model);
+            var recoveryToken = CreateDirectVideoJobRecoveryToken(ownership);
+            var ownershipPersisted = await TryPersistDirectVideoJobOwnershipAsync(ownership);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                result.Success,
+                result.JobId,
+                result.ActualModel,
+                result.Cost,
+                ErrorMessage = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                    ? result.ErrorMessage
+                    : VideoGenerationUserError.ForPersistence("OPENROUTER_SUBMIT_FAILED", result.ErrorMessage),
+                RecoveryToken = recoveryToken,
+                OwnershipPersisted = ownershipPersisted,
+            }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            result.Success,
+            result.JobId,
+            result.ActualModel,
+            result.Cost,
+            ErrorMessage = string.IsNullOrWhiteSpace(result.ErrorMessage)
+                ? result.ErrorMessage
+                : VideoGenerationUserError.ForPersistence("OPENROUTER_SUBMIT_FAILED", result.ErrorMessage),
+        }));
     }
 
     [HttpGet("videogen-direct/status/{jobId}")]
-    public async Task<IActionResult> VideoGenDirectStatus(string jobId, CancellationToken ct)
+    public async Task<IActionResult> VideoGenDirectStatus(
+        string jobId,
+        [FromQuery] string? recoveryToken,
+        CancellationToken ct)
     {
-        var status = await _videoClient.GetStatusAsync(
-            AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, expectedModel: null, ct: ct);
-        return Ok(ApiResponse<object>.Ok(new { status.Status, status.VideoUrl, status.Cost, status.ErrorMessage, status.IsCompleted, status.IsFailed }));
+        var ownership = await FindOwnedDirectVideoJobAsync(jobId, recoveryToken);
+        if (ownership == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
+
+        var status = string.IsNullOrWhiteSpace(ownership.OfferingId)
+            ? await _videoClient.GetStatusAsync(
+                AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                jobId,
+                ownership.Model,
+                ct)
+            : await _videoClient.GetStatusForOfferingAsync(
+                AppCallerRegistry.VideoAgent.VideoGen.Generate,
+                jobId,
+                ownership.Model,
+                ownership.OfferingId,
+                ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            status.Status,
+            status.VideoUrl,
+            status.Cost,
+            ErrorMessage = string.IsNullOrWhiteSpace(status.ErrorMessage)
+                ? status.ErrorMessage
+                : VideoGenerationUserError.ForPersistence("OPENROUTER_GEN_FAILED", status.ErrorMessage),
+            status.IsCompleted,
+            status.IsFailed,
+        }));
     }
+
+    [HttpGet("videogen-direct/content/{jobId}")]
+    public async Task<IActionResult> DownloadDirectVideo(
+        string jobId,
+        [FromQuery] string? recoveryToken,
+        CancellationToken ct)
+    {
+        var ownership = await FindOwnedDirectVideoJobAsync(jobId, recoveryToken);
+        if (ownership == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "视频任务不存在或不可访问，请从本人的任务记录重新打开"));
+
+        await using var downloaded = await _videoClient.OpenVideoStreamForOfferingAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            jobId,
+            0,
+            ownership.Model,
+            ownership.OfferingId,
+            ct);
+        if (!downloaded.Success || downloaded.Content == null)
+        {
+            _logger.LogWarning(
+                "直出视频下载失败 jobId={JobId} model={Model} reason={Reason}",
+                jobId,
+                ownership.Model,
+                downloaded.ErrorMessage);
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.LLM_ERROR,
+                "视频已经生成，但暂时无法下载，请稍后重试或切换模型"));
+        }
+
+        Response.ContentType = downloaded.ContentType ?? "video/mp4";
+        Response.ContentLength = downloaded.ContentLength;
+        Response.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+        {
+            FileName = $"video-{jobId}.mp4",
+            FileNameStar = $"video-{jobId}.mp4",
+        }.ToString();
+        await downloaded.Content.CopyToAsync(Response.Body, 128 * 1024, ct);
+        return new EmptyResult();
+    }
+
+    [HttpDelete("videogen-direct/{jobId}")]
+    public async Task<IActionResult> DeleteDirectVideoJob(
+        string jobId,
+        [FromQuery] string? recoveryToken,
+        CancellationToken ct)
+    {
+        var ownerAdminId = GetAdminId();
+        var hasRecoveryOwnership = TryReadDirectVideoJobRecoveryToken(
+            recoveryToken,
+            jobId,
+            ownerAdminId,
+            out var recoveryOwnership);
+        DirectVideoJobOwnership? ownership;
+        try
+        {
+            var now = DateTime.UtcNow;
+            var ownershipFilter = Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.AppKey, AppKey)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.JobId, jobId)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.OwnerAdminId, ownerAdminId)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Gt(item => item.ExpiresAt, now);
+            if (hasRecoveryOwnership)
+            {
+                ownershipFilter &= Builders<DirectVideoJobOwnership>.Filter.Eq(
+                    item => item.JobNamespace,
+                    recoveryOwnership.JobNamespace);
+            }
+            var candidates = await _db.DirectVideoJobOwnerships
+                .Find(ownershipFilter)
+                .Limit(hasRecoveryOwnership ? 1 : 2)
+                .ToListAsync(ct);
+            ownership = candidates.Count == 1 ? candidates[0] : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "直出视频清理前无法读取归属记录 jobId={JobId}", jobId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "视频任务暂时无法清理，请稍后重试"));
+        }
+
+        if (ownership == null && !hasRecoveryOwnership)
+        {
+            // 不存在且没有本人有效恢复凭证时保持幂等，不为无法证明归属的任务创建墓碑。
+            return Ok(ApiResponse<object>.Ok(new { cleaned = true }));
+        }
+        ownership ??= recoveryOwnership;
+
+        var revokedAt = DateTime.UtcNow;
+        var tombstoneExpiresAt = ownership.ExpiresAt > revokedAt
+            ? ownership.ExpiresAt
+            : revokedAt.Add(DirectVideoJobOwnership.Retention);
+        try
+        {
+            var update = Builders<DirectVideoJobOwnership>.Update
+                .Set(item => item.RevokedAt, revokedAt)
+                .Set(item => item.ExpiresAt, tombstoneExpiresAt)
+                .SetOnInsert(item => item.Id, ownership.Id)
+                .SetOnInsert(item => item.AppKey, ownership.AppKey)
+                .SetOnInsert(item => item.OwnerAdminId, ownership.OwnerAdminId)
+                .SetOnInsert(item => item.JobId, ownership.JobId)
+                .SetOnInsert(item => item.JobNamespace, ownership.JobNamespace)
+                .SetOnInsert(item => item.Model, ownership.Model)
+                .SetOnInsert(item => item.OfferingId, ownership.OfferingId)
+                .SetOnInsert(item => item.CreatedAt, ownership.CreatedAt);
+            await _db.DirectVideoJobOwnerships.UpdateOneAsync(
+                item => item.AppKey == AppKey
+                        && item.JobId == jobId
+                        && item.JobNamespace == ownership.JobNamespace
+                        && item.OwnerAdminId == ownerAdminId,
+                update,
+                new UpdateOptions { IsUpsert = true },
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "直出视频清理撤销凭证失败 jobId={JobId}", jobId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "视频任务暂时无法清理，请稍后重试"));
+        }
+
+        // 撤销墓碑保留到恢复凭证过期，重复清理仍然安全成功。
+        return Ok(ApiResponse<object>.Ok(new { cleaned = true }));
+    }
+
+    private async Task<DirectVideoJobOwnership?> FindOwnedDirectVideoJobAsync(
+        string jobId,
+        string? recoveryToken)
+    {
+        if (string.IsNullOrWhiteSpace(jobId)) return null;
+        var ownerAdminId = GetAdminId();
+        var hasRecoveryOwnership = TryReadDirectVideoJobRecoveryToken(
+            recoveryToken,
+            jobId,
+            ownerAdminId,
+            out var recovered);
+        try
+        {
+            var now = DateTime.UtcNow;
+            var ownershipFilter = Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.JobId, jobId)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.OwnerAdminId, ownerAdminId)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Eq(item => item.AppKey, AppKey)
+                                  & Builders<DirectVideoJobOwnership>.Filter.Gt(item => item.ExpiresAt, now);
+            if (hasRecoveryOwnership)
+            {
+                ownershipFilter &= Builders<DirectVideoJobOwnership>.Filter.Eq(
+                    item => item.JobNamespace,
+                    recovered.JobNamespace);
+            }
+            var candidates = await _db.DirectVideoJobOwnerships
+                .Find(ownershipFilter)
+                .Limit(hasRecoveryOwnership ? 1 : 2)
+                .ToListAsync(CancellationToken.None);
+            if (candidates.Count == 1)
+            {
+                var persisted = candidates[0];
+                return persisted.RevokedAt.HasValue ? null : persisted;
+            }
+            if (candidates.Count > 1) return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "直出视频归属读取失败，无法安全确认恢复凭证是否已撤销 jobId={JobId}", jobId);
+            return null;
+        }
+
+        if (!hasRecoveryOwnership)
+            return null;
+
+        var ownershipRestored = await TryPersistDirectVideoJobOwnershipAsync(recovered);
+        return ownershipRestored ? recovered : null;
+    }
+
+    private async Task<bool> TryPersistDirectVideoJobOwnershipAsync(DirectVideoJobOwnership ownership)
+    {
+        try
+        {
+            var update = Builders<DirectVideoJobOwnership>.Update
+                .Set(item => item.Model, ownership.Model)
+                .Set(item => item.OfferingId, ownership.OfferingId)
+                .Set(item => item.JobNamespace, ownership.JobNamespace)
+                .Set(item => item.ExpiresAt, ownership.ExpiresAt)
+                .SetOnInsert(item => item.Id, ownership.Id)
+                .SetOnInsert(item => item.AppKey, ownership.AppKey)
+                .SetOnInsert(item => item.OwnerAdminId, ownership.OwnerAdminId)
+                .SetOnInsert(item => item.JobId, ownership.JobId)
+                .SetOnInsert(item => item.CreatedAt, ownership.CreatedAt);
+            await _db.DirectVideoJobOwnerships.UpdateOneAsync(
+                item => item.AppKey == ownership.AppKey
+                        && item.JobId == ownership.JobId
+                        && item.JobNamespace == ownership.JobNamespace
+                        && item.OwnerAdminId == ownership.OwnerAdminId
+                        && item.RevokedAt == null,
+                update,
+                new UpdateOptions { IsUpsert = true },
+                CancellationToken.None);
+            return true;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            _logger.LogWarning(
+                "直出视频恢复凭证已被撤销，拒绝重建归属记录 jobId={JobId}",
+                ownership.JobId);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "直出视频已由上游受理，但归属记录暂未写入；客户端可用签名凭证恢复 jobId={JobId}",
+                ownership.JobId);
+            return false;
+        }
+    }
+
+    private string CreateDirectVideoJobRecoveryToken(DirectVideoJobOwnership ownership)
+    {
+        var payload = new DirectVideoJobRecoveryPayload(
+            ownership.AppKey,
+            ownership.OwnerAdminId,
+            ownership.JobId,
+            ownership.Model,
+            ownership.OfferingId,
+            ownership.ExpiresAt);
+        return _directVideoJobProtector.Protect(JsonSerializer.Serialize(payload, JsonOptions));
+    }
+
+    private bool TryReadDirectVideoJobRecoveryToken(
+        string? recoveryToken,
+        string jobId,
+        string ownerAdminId,
+        out DirectVideoJobOwnership ownership)
+    {
+        ownership = null!;
+        if (string.IsNullOrWhiteSpace(recoveryToken)) return false;
+        try
+        {
+            var payload = JsonSerializer.Deserialize<DirectVideoJobRecoveryPayload>(
+                _directVideoJobProtector.Unprotect(recoveryToken),
+                JsonOptions);
+            if (payload == null
+                || payload.ExpiresAt <= DateTime.UtcNow
+                || !string.Equals(payload.AppKey, AppKey, StringComparison.Ordinal)
+                || !string.Equals(payload.OwnerAdminId, ownerAdminId, StringComparison.Ordinal)
+                || !string.Equals(payload.JobId, jobId, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            ownership = new DirectVideoJobOwnership
+            {
+                AppKey = payload.AppKey,
+                OwnerAdminId = payload.OwnerAdminId,
+                JobId = payload.JobId,
+                Model = payload.Model,
+                OfferingId = payload.OfferingId,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = payload.ExpiresAt,
+            };
+            ownership.JobNamespace = DirectVideoJobOwnership.BuildJobNamespace(
+                ownership.OfferingId,
+                ownership.Model);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private sealed record DirectVideoJobRecoveryPayload(
+        string AppKey,
+        string OwnerAdminId,
+        string JobId,
+        string? Model,
+        string? OfferingId,
+        DateTime ExpiresAt);
 
     /// <summary>
     /// 创建视频生成任务（仅保存输入，Worker 自动开始分镜生成）
@@ -229,7 +589,7 @@ public class VideoAgentController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
     public async Task<IActionResult> ListRuns([FromQuery] int limit = 20, [FromQuery] int skip = 0, CancellationToken ct = default)
     {
-        var (total, items) = await _videoGenService.ListRunsAsync(GetAdminId(), appKey: null, limit, skip, ct);
+        var (total, items) = await _videoGenService.ListRunsAsync(GetAdminId(), AppKey, limit, skip, ct);
 
         var lite = items.Select(r => new
         {
@@ -244,8 +604,12 @@ public class VideoAgentController : ControllerBase
             r.CreatedAt,
             r.StartedAt,
             r.EndedAt,
-            r.ErrorMessage,
-            r.ExportErrorMessage,
+            ErrorMessage = string.IsNullOrWhiteSpace(r.ErrorMessage)
+                ? r.ErrorMessage
+                : VideoGenerationUserError.ForPersistence(r.ErrorCode, r.ErrorMessage),
+            ExportErrorMessage = string.IsNullOrWhiteSpace(r.ExportErrorMessage)
+                ? r.ExportErrorMessage
+                : VideoGenerationUserError.ForPersistence("EXPORT_FAILED", r.ExportErrorMessage),
             ScenesCount = r.Scenes.Count,
             ScenesReady = r.Scenes.Count(scene => scene.Status == SceneItemStatus.Done && !string.IsNullOrWhiteSpace(scene.VideoUrl)),
             HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Submitting or SceneItemStatus.SubmittingClaimed or SceneItemStatus.Polling or SceneItemStatus.PollingClaimed or SceneItemStatus.Rendering),
@@ -262,11 +626,166 @@ public class VideoAgentController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetRun(string runId, CancellationToken ct)
     {
-        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), ct: ct);
+        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), AppKey, ct);
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
-        return Ok(ApiResponse<VideoGenRun>.Ok(run));
+        return Ok(ApiResponse<VideoGenRun>.Ok(VideoGenerationUserError.SanitizeForResponse(run)));
+    }
+
+    /// <summary>
+    /// 下载当前用户已完成的视频产物。
+    /// 通过受鉴权的业务端点返回稳定文件名，避免前端直接打开对象存储链接。
+    /// </summary>
+    [HttpGet("runs/{runId}/download")]
+    [Produces("video/mp4")]
+    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DownloadRun(string runId, CancellationToken ct)
+    {
+        var run = await _videoGenService.GetRunAsync(runId, GetAdminId(), AppKey, ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+
+        if (run.Status != VideoGenRunStatus.Completed)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "视频尚未生成完成，请等待完成后再下载"));
+        }
+
+        if (!await EnsureVideoAssetShaAsync(run, ct))
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请重新生成后再下载"));
+        }
+
+        var localAsset = await _assetStorage.TryOpenReadByShaAsync(
+            run.VideoAssetSha256!,
+            ct,
+            domain: AppDomainPaths.DomainVideoAgent,
+            type: AppDomainPaths.TypeVideo);
+        if (localAsset != null)
+        {
+            return File(
+                localAsset.Content,
+                "video/mp4",
+                $"video-{run.Id}.mp4",
+                enableRangeProcessing: true);
+        }
+
+        var assetUrl = _assetStorage.TryBuildUrlBySha(
+            run.VideoAssetSha256!,
+            "video/mp4",
+            domain: AppDomainPaths.DomainVideoAgent,
+            type: AppDomainPaths.TypeVideo);
+        if (!Uri.TryCreate(assetUrl, UriKind.Absolute, out var assetUri)
+            || (assetUri.Scheme != Uri.UriSchemeHttps && assetUri.Scheme != Uri.UriSchemeHttp))
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请重新生成后再下载"));
+        }
+
+        using var upstream = await _httpClientFactory
+            .CreateClient("AssetStorageStream")
+            .GetAsync(assetUri, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!upstream.IsSuccessStatusCode)
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请重新生成后再下载"));
+        }
+
+        Response.ContentType = "video/mp4";
+        Response.ContentLength = upstream.Content.Headers.ContentLength;
+        Response.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment")
+        {
+            FileName = $"video-{run.Id}.mp4",
+            FileNameStar = $"video-{run.Id}.mp4",
+        }.ToString();
+        await using var stream = await upstream.Content.ReadAsStreamAsync(ct);
+        await stream.CopyToAsync(Response.Body, 128 * 1024, ct);
+        return new EmptyResult();
+    }
+
+    /// <summary>
+    /// 为浏览器原生下载签发短时、只绑定当前用户和当前视频的凭据。
+    /// 避免前端先把完整 MP4 读入内存后再模拟点击，导致大文件下载被浏览器拦截。
+    /// </summary>
+    [HttpPost("runs/{runId}/download-ticket")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> CreateRunDownloadTicket(string runId, CancellationToken ct)
+    {
+        var ownerAdminId = GetAdminId();
+        var run = await _videoGenService.GetRunAsync(runId, ownerAdminId, AppKey, ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+
+        if (run.Status != VideoGenRunStatus.Completed)
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "视频尚未生成完成，请等待完成后再下载"));
+        }
+
+        if (!await EnsureVideoAssetShaAsync(run, ct))
+        {
+            return NotFound(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                "视频文件暂时不可用，请重新生成后再下载"));
+        }
+
+        var payload = new VideoDownloadTicket(
+            run.Id,
+            ownerAdminId,
+            AppKey,
+            DateTime.UtcNow.Add(VideoDownloadTicket.Lifetime));
+        var ticket = _videoDownloadTicketProtector.Protect(
+            JsonSerializer.Serialize(payload, JsonOptions));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            ticket,
+            fileName = $"video-{run.Id}.mp4",
+        }));
+    }
+
+    private async Task<bool> EnsureVideoAssetShaAsync(VideoGenRun run, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(run.VideoAssetSha256)) return true;
+        if (string.IsNullOrWhiteSpace(run.VideoAssetUrl)) return false;
+
+        var registry = await _db.AssetRegistry
+            .Find(item => item.Operation == "write"
+                          && item.Url == run.VideoAssetUrl
+                          && item.Domain == AppDomainPaths.DomainVideoAgent
+                          && item.Type == AppDomainPaths.TypeVideo
+                          && item.Sha256 != null)
+            .SortByDescending(item => item.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        var sha256 = registry?.Sha256?.Trim();
+        if (string.IsNullOrWhiteSpace(sha256)
+            || sha256.Length != 64
+            || sha256.Any(character => !Uri.IsHexDigit(character)))
+        {
+            return false;
+        }
+
+        await _db.VideoGenRuns.UpdateOneAsync(
+            item => item.Id == run.Id
+                    && item.OwnerAdminId == run.OwnerAdminId
+                    && item.VideoAssetUrl == run.VideoAssetUrl
+                    && item.VideoAssetSha256 == null,
+            Builders<VideoGenRun>.Update.Set(item => item.VideoAssetSha256, sha256),
+            cancellationToken: CancellationToken.None);
+        run.VideoAssetSha256 = sha256;
+        _logger.LogInformation("已从资产登记簿回填视频摘要: runId={RunId}", run.Id);
+        return true;
     }
 
 
@@ -278,7 +797,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            await _videoGenService.UpdateSceneAsync(runId, GetAdminId(), sceneIndex, request, ct: ct);
+            await _videoGenService.UpdateSceneAsync(runId, GetAdminId(), sceneIndex, request, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -292,7 +811,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            await _videoGenService.RegenerateSceneAsync(runId, GetAdminId(), sceneIndex, ct: ct);
+            await _videoGenService.RegenerateSceneAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -306,7 +825,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            await _videoGenService.RenderSceneAsync(runId, GetAdminId(), sceneIndex, ct: ct);
+            await _videoGenService.RenderSceneAsync(runId, GetAdminId(), sceneIndex, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -324,7 +843,7 @@ public class VideoAgentController : ControllerBase
         try
         {
             var count = await _videoGenService.RenderScenesAsync(
-                runId, GetAdminId(), request?.SceneIndexes, ct: ct);
+                runId, GetAdminId(), request?.SceneIndexes, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(new { count }));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -340,7 +859,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            await _videoGenService.ReorderScenesAsync(runId, GetAdminId(), request.SceneIndexes, ct: ct);
+            await _videoGenService.ReorderScenesAsync(runId, GetAdminId(), request.SceneIndexes, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message)); }
@@ -359,7 +878,7 @@ public class VideoAgentController : ControllerBase
         try
         {
             await _videoGenService.ActivateSceneVersionAsync(
-                runId, GetAdminId(), sceneIndex, versionId, ct: ct);
+                runId, GetAdminId(), sceneIndex, versionId, AppKey, ct);
             return Ok(ApiResponse<object>.Ok(true));
         }
         catch (KeyNotFoundException ex) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message)); }
@@ -373,7 +892,7 @@ public class VideoAgentController : ControllerBase
     {
         try
         {
-            var task = await _videoGenService.RequestExportAsync(runId, GetAdminId(), ct: ct);
+            var task = await _videoGenService.RequestExportAsync(runId, GetAdminId(), AppKey, ct);
             return Ok(ApiResponse<VideoExportTask>.Ok(task));
         }
         catch (KeyNotFoundException) { return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在")); }
@@ -400,7 +919,7 @@ public class VideoAgentController : ControllerBase
         var adminId = GetAdminId();
         runId = (runId ?? string.Empty).Trim();
 
-        var run = await _videoGenService.GetRunAsync(runId, adminId, ct: cancellationToken);
+        var run = await _videoGenService.GetRunAsync(runId, adminId, AppKey, cancellationToken);
         if (run == null)
         {
             await WriteEventAsync(null, "error",
@@ -427,13 +946,17 @@ public class VideoAgentController : ControllerBase
             {
                 foreach (var ev in events)
                 {
-                    await WriteEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
+                    await WriteEventAsync(
+                        ev.Seq.ToString(),
+                        ev.EventName,
+                        VideoGenerationUserError.SanitizeEventPayload(ev.EventName, ev.PayloadJson),
+                        cancellationToken);
                     lastSeq = ev.Seq;
                 }
             }
             else
             {
-                run = await _videoGenService.GetRunAsync(runId, adminId, ct: cancellationToken);
+                run = await _videoGenService.GetRunAsync(runId, adminId, AppKey, cancellationToken);
                 if (run == null) break;
                 if ((DateTime.UtcNow - lastHeartbeatAt).TotalSeconds >= 2)
                 {
@@ -464,11 +987,45 @@ public class VideoAgentController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> CancelRun(string runId, CancellationToken ct)
     {
-        var found = await _videoGenService.CancelRunAsync(runId, GetAdminId(), ct: ct);
+        var found = await _videoGenService.CancelRunAsync(runId, GetAdminId(), AppKey, ct);
         if (!found)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
         return Ok(ApiResponse<object>.Ok(true));
+    }
+
+    /// <summary>删除当前用户的终态视频任务及其独占生成产物。</summary>
+    [HttpDelete("runs/{runId}")]
+    public async Task<IActionResult> DeleteRun(
+        string runId,
+        [FromQuery] bool deleteEmptyProject = false,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await _videoGenService.DeleteRunAsync(
+                runId,
+                GetAdminId(),
+                deleteEmptyProject,
+                AppKey,
+                ct);
+            return result == null
+                ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"))
+                : Ok(ApiResponse<DeleteVideoGenRunResult>.Ok(result));
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("任务仍在生成", StringComparison.Ordinal))
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "视频任务清理失败: runId={RunId}", runId);
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(
+                    "VIDEO_CLEANUP_FAILED",
+                    "视频任务暂时未能全部清理，请稍后重试；系统会按当前任务记录继续补齐清理"));
+        }
     }
 
     // 注：原 srt / narration / script 下载端点已移除——这些都是分镜流程产物。

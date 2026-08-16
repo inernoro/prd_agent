@@ -21,6 +21,7 @@ import { AccessSnippetBar } from '@/components/AccessSnippetBar';
 import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { DetailsBlock, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { invalidateOnboardingCache, markRequestCompleted } from '@/lib/onboarding';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP } from '@/lib/surface';
@@ -102,6 +103,7 @@ const TEST_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQ
 export function QuickstartPage() {
   const { tenant } = useAuth();
   const canCreateAccess = canUseCapability(tenant?.role, 'appCallerWrite') && canUseCapability(tenant?.role, 'serviceKeyWrite');
+  const { confirm } = useDialogs();
   const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
   const [clientPreset, setClientPreset] = useState<ClientPresetId>('api');
   const [protocol, setProtocol] = useState<Protocol>('openai');
@@ -190,7 +192,7 @@ export function QuickstartPage() {
       setActionError(`请确认团队、Gateway 地址和 clientCode 有效，并让 appCallerCode 以 ::${requestType} 结尾。`);
       return;
     }
-    if (bundle && !window.confirm('将签发一把新密钥，现有密钥不会自动撤销。确认继续？')) return;
+    if (bundle && !await confirm({ title: '将签发一把新密钥', description: '现有密钥不会自动撤销。', confirmLabel: '继续签发' })) return;
 
     setActionError(null);
     setTestResult(null);
@@ -370,9 +372,9 @@ export function QuickstartPage() {
     }
   };
 
-  const editIdentity = () => {
+  const editIdentity = async () => {
     if (!bundle) return;
-    if (!window.confirm('当前一次性密钥明文将从页面清除；已签发密钥仍然有效，可到“接入密钥”页撤销。确认修改身份？')) return;
+    if (!await confirm({ title: '确认修改身份？', description: '当前一次性密钥明文将从页面清除；已签发密钥仍然有效，可到“接入密钥”页撤销。', tone: 'danger', confirmLabel: '修改身份' })) return;
     setBundle(null);
     setTestResult(null);
     setRoutePreview(null);

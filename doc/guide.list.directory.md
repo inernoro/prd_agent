@@ -106,6 +106,7 @@
 - [开放平台功能概要 · 设计](./design.open-platform.md) `design.open-platform`
 - [Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计](./design.page-agent.bridge.md) `design.page-agent.bridge`
 - [账户数据共享 · 设计](./design.platform.account-data-sharing.md) `design.platform.account-data-sharing`
+- [MAP 核心业务稳定基线 · 设计](./design.platform.core-business-stability.md) `design.platform.core-business-stability`
 - [通用对话智能体 · 设计](./design.platform.chat-agent.md) `design.platform.chat-agent`
 - [模型中继虚拟平台设计 · 设计](./design.platform.exchange-virtual-platform.md) `design.platform.exchange-virtual-platform`
 - [CDS 部署架构与冲突分析 · 设计](./design.platform.exec-bt-deployment.md) `design.platform.exec-bt-deployment`
@@ -119,7 +120,7 @@
 - [LLM 网关与模型池统一 · 设计](./design.platform.llm-gateway.unification.md) `design.platform.llm-gateway.unification`
 - [LLM Gateway 统一调用 · 设计](./design.platform.llm-gateway.md) `design.platform.llm-gateway`
 - [MAP MCP 连接器 · 设计](./design.platform.map-mcp-connector.md) `design.platform.map-mcp-connector`
-- [逻辑模型、上游 Offering 与默认模型池设计](./design.platform.model-pool.md) `design.platform.model-pool`
+- [AppCaller 模型池选择与池内调度 · 设计](./design.platform.model-pool.md) `design.platform.model-pool`
 - [网络诊断功能 · 设计](./design.platform.network-diagnostics.md) `design.platform.network-diagnostics`
 - [桌面端更新与分布式登录/会话审计说明 · 设计](./design.platform.ops-auth.md) `design.platform.ops-auth`
 - [系统级跨节点互传（Peer Sync） · 设计](./design.platform.peer-sync.md) `design.platform.peer-sync`
@@ -128,6 +129,7 @@
 - [平台存储切换与资产登记设计 · 设计](./design.platform.storage-migration.md) `design.platform.storage-migration`
 - [CLI Agent 工作空间 · 设计](./design.platform.workspace.md) `design.platform.workspace`
 - [PR Review V2 设计（OAuth 最小可审查工作台） · 设计](./design.pr-review.v2.md) `design.pr-review.v2`
+- [头像沉浸式编辑器 · 设计](./design.prd-agent.avatar-editor.md) `design.prd-agent.avatar-editor`
 - [文档再加工智能体调用路由 · 设计](./design.prd-agent.reprocess-chat-routing.md) `design.prd-agent.reprocess-chat-routing`
 - [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
@@ -199,6 +201,7 @@
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
 - [LLM 网关验收面包屑清单 · 指南](./guide.platform.llm-gateway.acceptance-breadcrumbs.md) `guide.platform.llm-gateway.acceptance-breadcrumbs`
+- [LLM Gateway 故障止血与恢复 · 指南](./guide.platform.llm-gateway.incident-recovery.md) `guide.platform.llm-gateway.incident-recovery`
 - [MAP MCP 连接器接入 · 指南](./guide.platform.mcp-connector.md) `guide.platform.mcp-connector`
 - [MongoDB 索引维护 · 指南](./guide.platform.mongodb-indexes.md) `guide.platform.mongodb-indexes`
 - [PRD Agent 系统原则速查（命名原则索引） · 指南](./guide.platform.principles.md) `guide.platform.principles`
@@ -243,7 +246,7 @@
 - [应用身份定义 · 规则](./rule.platform.app-identity.md) `rule.platform.app-identity`
 - [数据字典（数据库 / 缓存 Key / 所有持久化清单） · 规则](./rule.platform.data-dictionary.md) `rule.platform.data-dictionary`
 - [LLM Gateway 控制台风格调性 · 规则](./rule.platform.llm-gateway.console-design-tonality.md) `rule.platform.llm-gateway.console-design-tonality`
-- [LLM Gateway 流式调用与 Reasoning · 规则](./rule.platform.llm-gateway.md) `rule.platform.llm-gateway`
+- [LLM Gateway 职责边界与调用 · 规则](./rule.platform.llm-gateway.md) `rule.platform.llm-gateway`
 - [生产发布表面健康与可追溯性 · 规则](./rule.platform.production-release-safety.md) `rule.platform.production-release-safety`
 - [测试组织 · 规则](./rule.platform.test-organization.md) `rule.platform.test-organization`
 - [技能头部规范 · 规则](./rule.skill.header.md) `rule.skill.header`
@@ -262,15 +265,18 @@
 - [CDS 高可用运行验证 · 计划](./plan.cds.resilience-rollout.md) `plan.cds.resilience-rollout`
 - [CDS 当前工作看板 · 计划](./plan.cds.status.md) `plan.cds.status`
 - [CDS Legacy 前端退场 · 计划](./plan.cds.web-migration.md) `plan.cds.web-migration`
+- [网页托管 · 预览修复与向我提问 · 三 PR 拆分看板](./plan.web-hosting.preview-and-ask.md) `plan.web-hosting.preview-and-ask`
 - [每日小贴士场景统一与过时检测 · 计划](./plan.daily-tips.scenarios-and-staleness.md) `plan.daily-tips.scenarios-and-staleness`
 - [Desktop 资产中心 · 计划](./plan.desktop.asset-features.md) `plan.desktop.asset-features`
 - [抖音与 TikTok 真订阅闭环 · 计划](./plan.emergence.tiktok-douyin-poster.md) `plan.emergence.tiktok-douyin-poster`
 - [前端 Apple 设计系统迁移 · 计划](./plan.frontend.apple-design-migration.md) `plan.frontend.apple-design-migration`
 - [前端移动端适配 · 计划](./plan.frontend.mobile-adaptation.md) `plan.frontend.mobile-adaptation`
 - [MD 转 PPT 对话工作台收尾 · 计划](./plan.md-to-ppt.chat-redesign.md) `plan.md-to-ppt.chat-redesign`
+- [MAP 核心业务稳定基线落地 · 计划](./plan.platform.core-business-stability.md) `plan.platform.core-business-stability`
 - [LLM Gateway 模型网关权威教程 · 计划](./plan.platform.llm-gateway.authoritative-tutorial.md) `plan.platform.llm-gateway.authoritative-tutorial`
 - [LLM Gateway 外部平台化与控制台体验收口 · 计划](./plan.platform.llm-gateway.external-platform.md) `plan.platform.llm-gateway.external-platform`
 - [LLM 网关旧路径物理退场 · 计划](./plan.platform.llm-gateway.full-cutover.md) `plan.platform.llm-gateway.full-cutover`
+- [LLM Gateway 故障隔离与恢复 · 计划](./plan.platform.llm-gateway.resilience.md) `plan.platform.llm-gateway.resilience`
 - [PA Agent 可执行任务升级 · 计划](./plan.product-agent.pa.competitive-improvements.md) `plan.product-agent.pa.competitive-improvements`
 - [产品管理智能体版本流程收尾 · 计划](./plan.product-agent.version-workflow.md) `plan.product-agent.version-workflow`
 - [Report Agent 模型质量治理 · 计划](./plan.report-agent.model-governance.md) `plan.report-agent.model-governance`
@@ -301,6 +307,7 @@
 - [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
 - [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
+- [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
 - [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
 - [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`
 - [平台基础设施杂项 · 债务台账](./debt.platform.md) `debt.platform`
@@ -308,6 +315,7 @@
 - [LLM 网关物理剥离 · 债务台账](./debt.platform.llm-gateway.isolation.md) `debt.platform.llm-gateway.isolation`
 - [LLM Gateway 协议保真 · 债务台账](./debt.platform.llm-gateway.protocol-fidelity.md) `debt.platform.llm-gateway.protocol-fidelity`
 - [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
+- [prd-agent 平台杂项 · 债务台账](./debt.prd-agent.md) `debt.prd-agent`
 - [产品与项目管理智能体 · 债务台账](./debt.product-agent.md) `debt.product-agent`
 - [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
@@ -316,6 +324,7 @@
 - [团队动态 · 债务台账](./debt.team-activity.md) `debt.team-activity`
 - [视频生成 Agent · 债务台账](./debt.video-agent.md) `debt.video-agent`
 - [视觉创作 · 债务台账](./debt.visual-agent.md) `debt.visual-agent`
+- [视觉创作 · AI 分层 · 验收债务台账](./debt.visual-agent.layering.md) `debt.visual-agent.layering`
 - [网页托管 · 债务台账](./debt.web-hosting.md) `debt.web-hosting`
 - [工作流 · 债务台账](./debt.workflow-agent.md) `debt.workflow-agent`
 
@@ -361,3 +370,4 @@
 - [CDS Forwarder 替代蓝绿部署收尾（grandfather 保留） · 报告](./report.cds.forwarder-success.md) `report.cds.forwarder-success`
 - [CDS Self-Update 时间体系审视（grandfather 保留） · 报告](./report.cds.self-update-timing-audit.md) `report.cds.self-update-timing-audit`
 - [网关测试矩阵全量报告（grandfather 保留） · 报告](./report.gw-test-matrix.md) `report.gw-test-matrix`
+- [LLM Gateway 故障隔离与恢复 · 测试环境验收报告](./report.platform.llm-gateway.resilience-acceptance.md) `report.platform.llm-gateway.resilience-acceptance`

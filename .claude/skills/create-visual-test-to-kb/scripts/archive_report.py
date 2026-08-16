@@ -4,14 +4,13 @@
 职责分离（2026-06-25）：验收能力归 CDS 验收中心，技能不再分流到 MAP 知识库。
 报告永远按项目入库 CDS；MAP 等系统通过知识库开放协议（peer-sync）从 CDS 拉取展示。
 
-三种输出模式（由 acceptance.config.json 的 report.mode 决定，缺省 = cds）：
+正式验收输出模式（由 acceptance.config.json 的 report.mode 决定，缺省 = cds）：
   - cds（默认主路）：截图先进入 CDS 内容寻址资产库，Markdown 写作源引用不可变图片地址
     → 交互 HTML → POST /api/reports，
     按项目 + 文件夹归类，带 verdict / tier / 部署上下文元数据 → 出 /reports 直达深链。
     依赖 env：CDS_HOST + (CDS_PROJECT_KEY 或 AI_ACCESS_KEY)。
-  - local：把报告写成本地 html/md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
-    适合没有 CDS / 离线兜底。
-  - doc-store（向后兼容，不推荐）：旧 MAP 知识库路径，仅当 config 显式保留 mode=doc-store 才走。
+  - local / doc-store：正式归档入口会明确拒绝。离线文件只能显式传
+    --local-diagnostic 生成诊断草稿，以免调用方把本地草稿误记为已完成验收。
 
 用法：
   python3 archive_report.py \
@@ -42,6 +41,28 @@ REPORT_KINDS = (
     "发布验收",
     "规范演练",
 )
+
+
+def require_cds_report_mode(mode):
+    """Reject delivery paths that cannot produce an immutable online report."""
+    if mode != "cds":
+        raise ValueError(
+            "[归档拒绝] 正式验收报告只允许 report.mode=cds，并且必须完成线上 verify-open；"
+            f"当前 mode={mode!r}。本地文件只能作为独立诊断草稿，不能由正式归档入口交付。"
+        )
+
+
+def resolve_report_execution_mode(mode, local_diagnostic=False):
+    """Select an explicit delivery or diagnostic path without implicit fallback."""
+    if local_diagnostic:
+        if mode != "local":
+            raise ValueError(
+                "[诊断拒绝] --local-diagnostic 只接受 report.mode=local；"
+                f"当前 mode={mode!r}。正式 CDS 归档请移除该参数。"
+            )
+        return "local"
+    require_cds_report_mode(mode)
+    return "cds"
 
 DAILY_REQUIRED_SECTIONS = (
     "结论分层",
@@ -249,6 +270,66 @@ def _figure_key(name):
     return re.sub(r"[^a-z0-9-]+", "-", raw).strip("-")
 
 
+_EVIDENCE_OWNER_BY_MODULE = {
+    "登录、权限与头像": "身份与权限负责人",
+    "录音和音频上传": "录音与转写负责人",
+    "文件上传与解析": "文件解析负责人",
+    "短视频上传与链接解析": "短视频解析负责人",
+    "文学创作": "文学创作负责人",
+    "单图视觉创作": "视觉创作负责人",
+    "多图视觉创作": "视觉创作与模型网关负责人",
+    "视频创作": "视频创作与模型网关负责人",
+    "图片模型路由与切换": "模型网关负责人",
+    "错误、进度与响应式": "质量与前端负责人",
+}
+_EVIDENCE_STATE_TRANSLATIONS = {
+    "Offering": "可用模型通道",
+}
+
+
+def _evidence_action(shot):
+    """Turn a vague evidence gap into an owned, executable close-out action."""
+    status = str(shot.get("status") or shot.get("finalStatus") or "").strip()
+    caption = str(shot.get("caption") or "").strip()
+    if status not in {"需干预", "需补证", "未执行"} and "尚未形成通过证据" not in caption:
+        return None
+    module = str(shot.get("module") or caption.split("：", 1)[0] or "未归属模块").strip()
+    raw_state = str(shot.get("primaryState") or "目标状态").strip()
+    state = _EVIDENCE_STATE_TRANSLATIONS.get(raw_state, raw_state)
+    owner = _EVIDENCE_OWNER_BY_MODULE.get(module, "对应业务与质量负责人")
+    if re.search(r"上传|参考图|文件选择|视频上传|音频上传", state):
+        action = f"{owner}使用合同规定的真实文件，完成选择、上传、预览和保存，并刷新页面回读结果"
+    elif re.search(r"权限允许|权限拒绝", state):
+        action = f"{owner}分别在允许和拒绝权限的浏览器状态下执行一次，并记录页面给出的可理解反馈"
+    elif re.search(r"加载|准备|进度|生成中|流式|阶段|动态反馈", state):
+        action = f"{owner}启动真实任务，连续记录从开始、处理中到完成或可恢复失败的状态变化"
+    elif re.search(r"结果|预览|完成|保存|持久化|刷新", state):
+        action = f"{owner}完成上游业务动作，确认结果出现、保存成功，并在刷新后再次回读"
+    elif re.search(r"失败恢复|重试|无效|错误", state):
+        action = f"{owner}制造一次可恢复失败，再执行重试，核对用户可读错误、恢复结果和最终状态"
+    elif re.search(r"输入|描述|脚本|链接", state):
+        action = f"{owner}填写真实输入并提交，确认输入被识别且流程进入下一业务阶段"
+    else:
+        action = f"{owner}沿报告记录的业务面包屑重新执行“{state}”，并保存操作结果和状态回读"
+    close = f'“{state}”出现预期业务结果，刷新后仍可回读；如产生测试数据，清理后再次确认不存在'
+    return {
+        "module": module,
+        "state": state,
+        "owner": owner,
+        "current": f'本图只证明页面已到达，尚未证明“{state}”后的真实业务结果',
+        "action": action,
+        "close": close,
+        "caption": f"{module}：{state}待{owner}补证；报告查看者无需操作",
+    }
+
+
+def _evidence_caption(shot, fallback="截图"):
+    action = _evidence_action(shot)
+    if action:
+        return action["caption"]
+    return shot.get("caption") or shot.get("name") or fallback
+
+
 def _figure_number(name):
     m = re.match(r"^([0-9]{1,3}[A-Za-z]?)", (name or "").strip())
     return m.group(1).lower() if m else ""
@@ -405,6 +486,22 @@ METHOD_DOCS = [
     ("验收报告与证据交互规范", METHOD_DOC_EVIDENCE),
 ]
 METHOD_SECTION_DOCS = {
+    "模块验收总览": (
+        "模块总览测试：先把每个模块的冒烟、功能、视觉、问题和处理状态分开，避免技术细节遮住发布判断。",
+        METHOD_DOC_EVIDENCE,
+    ),
+    "主管验收总览": (
+        "主管决策测试：先把每个模块的冒烟、功能、视觉、问题和干预状态分开，避免技术细节遮住发布判断。",
+        METHOD_DOC_EVIDENCE,
+    ),
+    "视觉证据预算": (
+        "证据预算测试：按模块核对计划截图、实际截图和关键状态，数量或状态不足时不得标记视觉通过。",
+        METHOD_DOC_EVIDENCE,
+    ),
+    "业务功能线与面包屑": (
+        "真实路径测试：用稳定面包屑记录从登录或首页到结果的完整点击链，便于复测和定位断点。",
+        METHOD_DOC_ENTERPRISE,
+    ),
     "改动规模与深度预算": (
         "范围预算测试：先量化 commit、模块、高风险和证据预算，避免把大范围日报包装成深度通过。",
         METHOD_DOC_DAILY,
@@ -604,6 +701,314 @@ def _section_text(markdown, heading):
         re.M | re.S,
     )
     return section.group(1) if section else ""
+
+
+REVIEWER_REQUIRED_HEADERS = (
+    "模块",
+    "真实面包屑",
+    "冒烟",
+    "功能",
+    "视觉",
+    "最高问题",
+    "是否需干预",
+    "查看步骤",
+    "查看截图",
+    "查看缺陷",
+    "关联测试方法",
+)
+EVIDENCE_BUDGET_REQUIRED_HEADERS = (
+    "模块",
+    "计划截图",
+    "实际截图",
+    "入口",
+    "输入或动作",
+    "加载",
+    "结果",
+    "失败或恢复",
+    "移动端",
+    "结论",
+    "证据",
+)
+VISUAL_COVERAGE_REQUIRED_HEADERS = (
+    "模块",
+    "视觉结论",
+    "真实面包屑",
+    "采集文件",
+    "关键状态",
+    "缺口",
+    "查看全部截图",
+    "测试方法",
+)
+VISUAL_EVIDENCE_REQUIRED_FIELDS = (
+    "primaryState",
+    "coverageStates",
+    "testType",
+    "status",
+    "theme",
+    "viewportClass",
+    "methodAnchor",
+    "breadcrumb",
+)
+REVIEWER_STATUSES = {"通过", "不通过", "部分通过", "未执行", "需干预"}
+
+
+def _plain_cell(value):
+    """Remove Markdown decoration while preserving the reviewer-facing wording."""
+    value = re.sub(r"!?(?:\[([^\]]*)\])\([^)]+\)", r"\1", value or "")
+    return re.sub(r"[`*_\s]", "", value).strip()
+
+
+def _table_records(markdown, heading):
+    headers, rows = _section_table(markdown, heading)
+    normalized = [_plain_cell(cell) for cell in headers]
+    return normalized, [
+        {normalized[index]: cell.strip() for index, cell in enumerate(row) if index < len(normalized)}
+        for row in rows
+    ]
+
+
+def _reviewer_summary(markdown):
+    """Return counts and rows for the non-technical supervisor first screen."""
+    headers, rows = _table_records(markdown, "模块验收总览")
+    if not rows:
+        headers, rows = _table_records(markdown, "主管验收总览")
+    if not rows:
+        return None
+    counts = {"pass": 0, "partial": 0, "fail": 0, "not_run": 0, "intervention": 0}
+    for row in rows:
+        axes = [_plain_cell(row.get(axis, "")) for axis in ("冒烟", "功能", "视觉")]
+        intervention = _plain_cell(row.get("是否需干预", ""))
+        if all(status == "通过" for status in axes):
+            counts["pass"] += 1
+        elif "不通过" in axes:
+            counts["fail"] += 1
+        elif "未执行" in axes:
+            counts["not_run"] += 1
+        else:
+            counts["partial"] += 1
+        if intervention in {"是", "需干预"}:
+            counts["intervention"] += 1
+    return {"headers": headers, "rows": rows, "counts": counts}
+
+
+def _business_decision_summary(markdown):
+    """Extract the stable-smoke use-case SSOT and visual evidence semantics.
+
+    The supervisor module matrix is useful for ownership, but it cannot answer
+    how many contract cases ran. Prefer the explicit boss-facing table when it
+    exists and fail closed if its arithmetic is inconsistent.
+    """
+    headers, rows = _table_records(markdown, "结论与处理顺序")
+    if not rows:
+        headers, rows = _table_records(markdown, "老板一页结论")
+    if not rows:
+        return None
+    values = {
+        _plain_cell(row.get("指标", "")): _plain_cell(row.get("数量", ""))
+        for row in rows
+    }
+    if "未执行" not in values and "功能未执行" in values:
+        values["未执行"] = values["功能未执行"]
+    required = ("计划测试", "已完成", "通过", "失败", "未执行")
+    if any(not re.fullmatch(r"\d+", values.get(field, "")) for field in required):
+        return None
+    counts = {field: int(values[field]) for field in required}
+    if counts["通过"] + counts["失败"] + counts["未执行"] != counts["计划测试"]:
+        raise RuntimeError("结论与处理顺序统计不守恒：通过 + 失败 + 未执行必须等于计划测试")
+    if counts["通过"] + counts["失败"] != counts["已完成"]:
+        raise RuntimeError("结论与处理顺序统计不守恒：通过 + 失败必须等于已完成")
+    visual_headers, visual_rows = _table_records(markdown, "截图证据怎么读")
+    visual_values = {
+        _plain_cell(row.get("视觉指标", "")): _plain_cell(row.get("数量", ""))
+        for row in visual_rows
+    }
+    visual = {
+        field: int(visual_values[field])
+        for field in ("计划截图槽位", "已采集且可审核", "能直接证明通过", "明确不通过", "不能证明业务结果")
+        if re.fullmatch(r"\d+", visual_values.get(field, ""))
+    }
+    failure_headers, failure_rows = _table_records(markdown, "不通过问题与复现")
+    environment_headers, environment_rows = _table_records(markdown, "双环境覆盖差异")
+    return {
+        "counts": counts,
+        "visual": visual,
+        "failures": failure_rows,
+        "environment": environment_rows,
+        "headers": headers,
+        "visual_headers": visual_headers,
+        "failure_headers": failure_headers,
+        "environment_headers": environment_headers,
+    }
+
+
+def _declares_supervisor_acceptance(target, body):
+    scope = _scope_declaration_text(target, body)
+    return bool(
+        _section_text(body, "模块验收总览")
+        or _section_text(body, "主管验收总览")
+        or re.search(r"(全面|全量|十模块|多模块).{0,8}(视觉|验收|回归)|主管验收", scope, re.I)
+    )
+
+
+def _has_report_link(value):
+    return bool(re.search(r"\[[^\]]+\]\((?:https?://|#)[^)]+\)", value or ""))
+
+
+def _is_qualified_visual_evidence(shot):
+    for field in VISUAL_EVIDENCE_REQUIRED_FIELDS:
+        value = shot.get(field)
+        if value is None or value == "" or (isinstance(value, list) and not value):
+            return False
+    return True
+
+
+def _supervisor_report_errors(target, body, manifest):
+    """Reject broad visual reports that hide status, paths or thin evidence budgets."""
+    if not _declares_supervisor_acceptance(target, body):
+        return []
+
+    errors = []
+    headers, rows = _table_records(body, "模块验收总览")
+    if not rows:
+        headers, rows = _table_records(body, "主管验收总览")
+    missing_headers = [field for field in REVIEWER_REQUIRED_HEADERS if field not in headers]
+    if missing_headers:
+        errors.append("[模块总览] 缺字段：" + "、".join(missing_headers))
+    if not rows:
+        errors.append("[模块总览] 没有模块数据，无法判断哪些通过、失败、未执行或需处理")
+    for index, row in enumerate(rows, start=1):
+        module = _plain_cell(row.get("模块", "")) or f"第{index}行"
+        breadcrumb = _plain_cell(row.get("真实面包屑", ""))
+        if "→" not in breadcrumb or len([part for part in breadcrumb.split("→") if part.strip()]) < 3:
+            errors.append(f"[模块总览] {module} 缺至少三级真实面包屑")
+        for axis in ("冒烟", "功能", "视觉"):
+            status = _plain_cell(row.get(axis, ""))
+            if status not in REVIEWER_STATUSES - {"需干预"}:
+                errors.append(f"[模块总览] {module} 的{axis}状态非法：{status or '空'}")
+        intervention = _plain_cell(row.get("是否需干预", ""))
+        if intervention not in {"是", "否", "需干预"}:
+            errors.append(f"[模块总览] {module} 的处理状态只能是是、否或需干预")
+        for link_field in ("查看步骤", "查看截图", "查看缺陷", "关联测试方法"):
+            if not _has_report_link(row.get(link_field, "")):
+                errors.append(f"[模块总览] {module} 的「{link_field}」不是可点击链接")
+
+    coverage_headers, coverage_rows = _table_records(body, "模块覆盖")
+    if coverage_rows:
+        missing_coverage_headers = [field for field in VISUAL_COVERAGE_REQUIRED_HEADERS if field not in coverage_headers]
+        if "可审核证据" not in coverage_headers and "合格证据" not in coverage_headers:
+            missing_coverage_headers.append("可审核证据")
+        if missing_coverage_headers:
+            errors.append("[视觉覆盖] 缺字段：" + "、".join(missing_coverage_headers))
+
+        manifest_counts = {}
+        qualified_counts = {}
+        for shot in manifest or []:
+            module = _plain_cell(str(shot.get("module") or ""))
+            if not module:
+                errors.append(f"[视觉覆盖] 截图 {shot.get('name', '未命名')} 缺 module，无法归属业务模块")
+                continue
+            manifest_counts[module] = manifest_counts.get(module, 0) + 1
+            if _is_qualified_visual_evidence(shot):
+                qualified_counts[module] = qualified_counts.get(module, 0) + 1
+
+        coverage_modules = set()
+        for index, row in enumerate(coverage_rows, start=1):
+            module = _plain_cell(row.get("模块", "")) or f"第{index}行"
+            coverage_modules.add(module)
+            breadcrumb = _plain_cell(row.get("真实面包屑", ""))
+            if "→" not in breadcrumb or len([part for part in breadcrumb.split("→") if part.strip()]) < 3:
+                errors.append(f"[视觉覆盖] {module} 缺至少三级真实面包屑")
+            try:
+                collected = int(_plain_cell(row.get("采集文件", "")))
+            except ValueError:
+                errors.append(f"[视觉覆盖] {module} 的采集文件不是整数")
+                continue
+            qualified_value = row.get("可审核证据", "") or row.get("合格证据", "")
+            qualified_match = re.fullmatch(r"(\d+)/(\d+)", _plain_cell(qualified_value))
+            if not qualified_match:
+                errors.append(f"[视觉覆盖] {module} 的可审核证据必须为 已完成/计划 格式")
+                continue
+            qualified, planned = map(int, qualified_match.groups())
+            if collected != manifest_counts.get(module, 0):
+                errors.append(f"[视觉覆盖] {module} 报告采集 {collected}，manifest 归属 {manifest_counts.get(module, 0)}，数量不一致")
+            if qualified != qualified_counts.get(module, 0):
+                errors.append(f"[视觉覆盖] {module} 报告可审核 {qualified}，manifest 可审核 {qualified_counts.get(module, 0)}，数量不一致")
+            if qualified > collected or qualified > planned:
+                errors.append(f"[视觉覆盖] {module} 的可审核证据数量越界")
+            conclusion = _plain_cell(row.get("视觉结论", ""))
+            if conclusion not in REVIEWER_STATUSES:
+                errors.append(f"[视觉覆盖] {module} 的视觉结论非法：{conclusion or '空'}")
+            if conclusion == "通过" and qualified < planned:
+                errors.append(f"[视觉覆盖] {module} 可审核 {qualified} < 计划 {planned}，不得标记通过")
+            for link_field in ("查看全部截图", "测试方法"):
+                if not _has_report_link(row.get(link_field, "")):
+                    errors.append(f"[视觉覆盖] {module} 的「{link_field}」不是可点击链接")
+        extra_modules = sorted(set(manifest_counts) - coverage_modules)
+        if extra_modules:
+            errors.append("[视觉覆盖] manifest 存在未列入模块覆盖的模块：" + "、".join(extra_modules))
+        return errors
+
+    budget_headers, budget_rows = _table_records(body, "视觉证据预算")
+    missing_budget_headers = [field for field in EVIDENCE_BUDGET_REQUIRED_HEADERS if field not in budget_headers]
+    if missing_budget_headers:
+        errors.append("[视觉预算] 缺字段：" + "、".join(missing_budget_headers))
+    if not budget_rows:
+        errors.append("[视觉预算] 没有模块预算，少量入口图不得声称全面视觉通过")
+
+    manifest_counts = {}
+    for shot in manifest or []:
+        module = _plain_cell(str(shot.get("module") or ""))
+        if not module:
+            errors.append(f"[视觉预算] 截图 {shot.get('name', '未命名')} 缺 module，无法归属业务模块")
+            continue
+        manifest_counts[module] = manifest_counts.get(module, 0) + 1
+
+    budget_modules = set()
+    for index, row in enumerate(budget_rows, start=1):
+        module = _plain_cell(row.get("模块", "")) or f"第{index}行"
+        budget_modules.add(module)
+        try:
+            planned = int(_plain_cell(row.get("计划截图", "")))
+            actual = int(_plain_cell(row.get("实际截图", "")))
+        except ValueError:
+            errors.append(f"[视觉预算] {module} 的计划截图或实际截图不是整数")
+            continue
+        counted = manifest_counts.get(module, 0)
+        if actual != counted:
+            errors.append(f"[视觉预算] {module} 报告实际截图 {actual}，manifest 归属 {counted}，数量不一致")
+        conclusion = _plain_cell(row.get("结论", ""))
+        if conclusion not in REVIEWER_STATUSES - {"需干预"}:
+            errors.append(f"[视觉预算] {module} 的结论非法：{conclusion or '空'}")
+        if conclusion == "通过" and actual < planned:
+            errors.append(f"[视觉预算] {module} 实际 {actual} < 计划 {planned}，不得标记通过")
+        if conclusion == "通过":
+            for stage in ("入口", "输入或动作", "加载", "结果", "失败或恢复", "移动端"):
+                stage_status = _plain_cell(row.get(stage, ""))
+                if stage_status not in {"通过", "不适用"}:
+                    errors.append(f"[视觉预算] {module} 标记通过，但「{stage}」为{stage_status or '空'}")
+            if not _has_report_link(row.get("证据", "")):
+                errors.append(f"[视觉预算] {module} 标记通过，但证据不是可点击链接")
+    extra_modules = sorted(set(manifest_counts) - budget_modules)
+    if extra_modules:
+        errors.append("[视觉预算] manifest 存在未列入预算的模块：" + "、".join(extra_modules))
+    return errors
+
+
+def _warning_evidence_errors(verdict, shot):
+    """Allow runtime-warning screenshots only when they explicitly prove a failed report."""
+    warnings = shot.get("warnings") or []
+    if not warnings:
+        return []
+    name = shot.get("name", shot.get("path", "未命名"))
+    failure_evidence = shot.get("failureEvidence") is True
+    failure_reason = str(shot.get("failureReason") or "").strip()
+    if failure_evidence and verdict == "pass":
+        return [f"[证据] pass 报告不能包含失败证据：{name}"]
+    if failure_evidence and len(failure_reason) < 8:
+        return [f"[证据] 失败证据缺具体 failureReason：{name}"]
+    if failure_evidence:
+        return []
+    return [f"[证据] 截图未就绪/有问题：{name} → {' | '.join(warnings)}"]
 
 
 ZERO_COVERAGE_GAP_PAT = re.compile(
@@ -1642,7 +2047,7 @@ def _collect_problem_items(markdown, manifest):
         anchor = _figure_anchor(key)
         num = _figure_number(shot.get("name")) or key
         label = f"图{num.upper()}" if num else (shot.get("name") or "截图")
-        cap = shot.get("caption") or shot.get("name") or label
+        cap = _evidence_caption(shot, label)
         for warning in shot.get("warnings") or []:
             add(_severity_from_text(warning), f"{label} · {cap}", warning, anchor)
 
@@ -1742,6 +2147,13 @@ def markdown_to_html(markdown):
             continue
         if re.fullmatch(r'<span id="fig-[a-z0-9-]+" class="figure-anchor"></span>', stripped):
             out.append(stripped)
+            i += 1
+            continue
+        explicit_anchor = re.fullmatch(r'<a id="([a-z0-9-]+)"></a>', stripped)
+        if explicit_anchor:
+            # 报告表格会通过这些显式锚点跳到关联测试方法。仅接受严格的
+            # 小写字母、数字和连字符，并转换为无交互 span，避免放行任意 HTML。
+            out.append(f'<span id="{explicit_anchor.group(1)}"></span>')
             i += 1
             continue
         if stripped.startswith("|") and i + 1 < len(lines) and lines[i + 1].strip().startswith("|"):
@@ -1856,7 +2268,19 @@ def _wrap_body_figures(body_html, manifest, figure_srcs=None):
         para_end += len("</p>")
         plate = body_html[para_start + len("<p>"):para_end - len("</p>")]
         num = (_figure_number(shot.get("name")) or key).upper()
-        caption = html.escape(shot.get("caption") or shot.get("name") or f"图{num}")
+        caption = html.escape(_evidence_caption(shot, f"图{num}"))
+        action = _evidence_action(shot)
+        action_html = ""
+        if action:
+            action_html = (
+                '<div class="evidence-action" aria-label="证据缺口处理动作">'
+                '<strong>这张图还不能判通过</strong>'
+                f'<span><b>当前只证明：</b>{html.escape(action["current"])}</span>'
+                f'<span><b>谁来处理：</b>{html.escape(action["owner"])}</span>'
+                f'<span><b>处理动作：</b>{html.escape(action["action"])}</span>'
+                f'<span><b>完成标准：</b>{html.escape(action["close"])}</span>'
+                '</div>'
+            )
         src = html.escape(figure_srcs.get(anchor, ""), quote=True)
         status = ""
         if 'is-fail' in banner:
@@ -1877,6 +2301,7 @@ def _wrap_body_figures(body_html, manifest, figure_srcs=None):
             f'<span class="shot-cap">{caption}</span>'
             f'{banner}{zoom}</figcaption>'
             f'<div class="shot-frame">{plate}</div>'
+            f'{action_html}'
             f'<div class="shot-foot">'
             f'<a class="figure-back-link" data-return-evidence="true" '
             f'href="#evidence-gallery" aria-label="图{html.escape(num, quote=True)}返回证据列表">'
@@ -1938,15 +2363,31 @@ def build_interactive_html(
     if manifest_errors:
         raise RuntimeError("交互报告证据关系门禁未通过：\n- " + "\n- ".join(manifest_errors))
     figure_srcs = dict(figure_srcs or _figure_src_map(markdown_content))
-    problem_items = _collect_problem_items(markdown_content, manifest)
+    render_markdown = markdown_content
+    for shot in manifest:
+        original_caption = str(shot.get("caption") or "").strip()
+        display_caption = _evidence_caption(shot, original_caption)
+        if original_caption and display_caption != original_caption:
+            render_markdown = render_markdown.replace(original_caption, display_caption)
+        action = _evidence_action(shot)
+        if action:
+            translated_gap = re.compile(
+                rf'{re.escape(action["module"])}：\s*{re.escape(action["state"])}'
+                r'尚未形成通过证据，需要干预或补跑'
+            )
+            render_markdown = translated_gap.sub(action["caption"], render_markdown)
+    render_markdown = render_markdown.replace("代码不干扰主管", "技术信息不干扰结论阅读")
+    for technical_state, readable_state in _EVIDENCE_STATE_TRANSLATIONS.items():
+        render_markdown = render_markdown.replace(technical_state, readable_state)
+    problem_items = _collect_problem_items(render_markdown, manifest)
     problem_anchors = {
         it["anchor"]: it["severity"]
         for it in problem_items
         if it.get("anchor")
     }
-    body_html = _decorate_problem_figures(markdown_to_html(markdown_content), problem_anchors)
+    body_html = _decorate_problem_figures(markdown_to_html(render_markdown), problem_anchors)
     body_html = _wrap_body_figures(body_html, manifest, figure_srcs)
-    section_navigation = _collect_section_navigation(markdown_content, problem_items)
+    section_navigation = _collect_section_navigation(render_markdown, problem_items)
 
     def section_anchor(pattern):
         section = next(
@@ -1971,6 +2412,8 @@ def build_interactive_html(
     row_fail_count = sum(1 for it in problem_items if it.get("severity") == "P0")
     row_risk_count = sum(1 for it in problem_items if it.get("severity") in {"P1", "P2"})
     row_gap_count = _coverage_gap_count(markdown_content)
+    reviewer_summary = _reviewer_summary(markdown_content)
+    business_summary = _business_decision_summary(markdown_content)
     report_time = _extract_report_time(markdown_content)
     report_time_html = (
         f'<time class="dl-item">报告时间 · {html.escape(report_time)}</time>' if report_time else ""
@@ -1985,7 +2428,7 @@ def build_interactive_html(
             continue
         num = _figure_number(shot.get("name")) or key
         label = f"图{num.upper()}"
-        cap = html.escape(shot.get("caption") or shot.get("name") or label)
+        cap = html.escape(_evidence_caption(shot, label))
         raw_src = figure_srcs.get(anchor, "")
         if not raw_src:
             raise RuntimeError(f"交互报告证据关系门禁未通过：{anchor} 缺少最终图片地址")
@@ -2031,22 +2474,211 @@ def build_interactive_html(
             f'<span><small>{index:02d}</small>{html.escape(section["title"])}</span>{marker}</a>'
         )
     directory_html = "".join(directory_items) or '<p class="section-nav-empty">正文没有二级目录</p>'
+    section_ids = {section["id"] for section in section_navigation}
+
+    def metric_target(*candidates):
+        for candidate in candidates:
+            if candidate in section_ids or candidate in {"evidence-gallery", "reportBody"}:
+                return f"#{candidate}"
+        return "#reportBody"
+
     # 指标条按语义上色：0 个阻断项是好消息（绿），有阻断项必须红，缺口用墨色弱化。
-    summary_cards = [
-        ("证据图", str(len(manifest)), "可点击跳转", "accent" if manifest else "gap"),
-        ("P0 定位项", str(row_fail_count), "阻断证据", "fail" if row_fail_count else "pass"),
-        ("P1-P2 风险", str(row_risk_count), "风险定位", "risk" if row_risk_count else "pass"),
-        ("缺口", str(row_gap_count), "未覆盖与弱相关", "gap" if row_gap_count else "pass"),
-        ("表格行", str(table_count), "原始审计数据", ""),
-    ]
-    summary_html = "".join(
-        f'<div class="metric{(" is-" + tone) if tone else ""}">'
-        f'<span>{html.escape(label)}</span><strong>{html.escape(value)}</strong>'
-        f'<small>{html.escape(note)}</small></div>'
-        for label, value, note, tone in summary_cards
-    )
+    if business_summary:
+        counts = business_summary["counts"]
+        summary_cards = [
+            ("计划测试", str(counts["计划测试"]), "本轮合同项", "accent", metric_target("逐项验收账本"), "all"),
+            ("已完成", str(counts["已完成"]), "通过 + 失败", "accent", metric_target("逐项验收账本"), "completed"),
+            ("通过", str(counts["通过"]), "业务断言成立", "pass", metric_target("逐项验收账本"), "pass"),
+            ("失败", str(counts["失败"]), "需要处理和复测", "fail" if counts["失败"] else "pass", metric_target("逐项验收账本"), "fail"),
+            ("功能未执行", str(counts["未执行"]), "不能按通过计算", "gap" if counts["未执行"] else "pass", metric_target("逐项验收账本"), "not-run"),
+        ]
+    elif reviewer_summary:
+        counts = reviewer_summary["counts"]
+        summary_cards = [
+            ("全部通过", str(counts["pass"]), "模块", "pass", metric_target("模块验收总览", "主管验收总览")),
+            ("部分通过", str(counts["partial"]), "模块", "risk" if counts["partial"] else "pass", metric_target("模块验收总览", "主管验收总览")),
+            ("不通过", str(counts["fail"]), "模块", "fail" if counts["fail"] else "pass", metric_target("缺陷清单", "模块验收总览", "主管验收总览")),
+            ("未执行", str(counts["not_run"]), "模块", "gap" if counts["not_run"] else "pass", metric_target("执行覆盖账本", "模块验收总览", "主管验收总览")),
+            ("待团队处理", str(counts["intervention"]), "模块", "risk" if counts["intervention"] else "pass", metric_target("需处理事项", "模块验收总览", "主管验收总览")),
+            ("已采集截图", str(len(manifest)), "可审核不等于通过", "accent" if manifest else "gap", metric_target("evidence-gallery")),
+        ]
+    else:
+        summary_cards = [
+            ("已采集截图", str(len(manifest)), "可审核不等于通过", "accent" if manifest else "gap", metric_target("evidence-gallery")),
+            ("P0 定位项", str(row_fail_count), "阻断证据", "fail" if row_fail_count else "pass", metric_target(defect_section_anchor or "reportBody")),
+            ("P1-P2 风险", str(row_risk_count), "风险定位", "risk" if row_risk_count else "pass", metric_target(defect_section_anchor or "reportBody")),
+            ("缺口", str(row_gap_count), "未覆盖与弱相关", "gap" if row_gap_count else "pass", metric_target(gap_section_anchor or "reportBody")),
+            ("表格行", str(table_count), "原始审计数据", "", metric_target("reportBody")),
+        ]
+    summary_fragments = []
+    for card in summary_cards:
+        label, value, note, tone, href, *report_filter = card
+        filter_attr = (
+            f'data-report-filter="{html.escape(report_filter[0], quote=True)}" '
+            if report_filter else ""
+        )
+        summary_fragments.append(
+            f'<a class="metric{(" is-" + tone) if tone else ""}" href="{html.escape(href, quote=True)}" '
+            f'{filter_attr}aria-label="查看{html.escape(label, quote=True)}明细">'
+            f'<span>{html.escape(label)}</span><strong>{html.escape(value)}</strong>'
+            f'<small>{html.escape(note)}</small><em>查看明细</em></a>'
+        )
+    summary_html = "".join(summary_fragments)
+    reviewer_focus_html = ""
+    if business_summary:
+        counts = business_summary["counts"]
+        visual = business_summary["visual"]
+        environment = business_summary.get("environment") or []
+        completion_rate = counts["已完成"] / counts["计划测试"] * 100 if counts["计划测试"] else 0
+        executed_pass_rate = counts["通过"] / counts["已完成"] * 100 if counts["已完成"] else 0
+        failure_cards = []
+        for row in business_summary["failures"][:8]:
+            raw_count = _plain_cell(row.get("影响项数", "")).strip()
+            if re.fullmatch(r"0+(?:\.0+)?", raw_count):
+                continue
+            reason = html.escape(_plain_cell(row.get("根因", "")) or "未说明失败原因")
+            count = html.escape(raw_count or "0")
+            modules = html.escape(_plain_cell(row.get("影响模块", "")) or "未标注模块")
+            case_ids = html.escape(_plain_cell(row.get("验收项编号", "")) or "未标注编号")
+            actual = html.escape(_plain_cell(row.get("实际结果", "")) or "未记录实际结果")
+            expected = html.escape(_plain_cell(row.get("期望结果", "")) or "未记录期望结果")
+            reproduction = html.escape(_plain_cell(row.get("复现方式", "")) or "未记录复现方式")
+            recovery = html.escape(_plain_cell(row.get("恢复动作", "")) or "未记录恢复动作")
+            owner = html.escape(_plain_cell(row.get("当前责任角色", "")) or "待认领")
+            due = html.escape(_plain_cell(row.get("完成时限", "")) or "未约定")
+            evidence_link = _render_inline(row.get("本次直接证据", "")) if row.get("本次直接证据") else ""
+            method_link = _render_inline(row.get("复测方法", "")) if row.get("复测方法") else ""
+            failure_cards.append(
+                '<article class="business-failure-card">'
+                f'<header><strong>{reason}</strong><span>{count} 项失败</span></header>'
+                f'<p><b>编号：</b>{case_ids}</p><p><b>影响：</b>{modules}</p>'
+                f'<p><b>实际：</b>{actual}</p><p><b>期望：</b>{expected}</p>'
+                f'<p><b>复现：</b>{reproduction}</p><p><b>恢复：</b>{recovery}</p>'
+                f'<p><b>责任：</b>{owner}；<b>时限：</b>{due}</p>'
+                f'<nav>{evidence_link}{(" · " if evidence_link and method_link else "")}{method_link}</nav>'
+                '</article>'
+            )
+        failure_html = "".join(failure_cards) or '<p class="executive-clear">本轮没有业务失败项。</p>'
+        environment_cards = []
+        for row in environment:
+            name = html.escape(_plain_cell(row.get("环境", "")) or "未标注环境")
+            planned = html.escape(_plain_cell(row.get("计划", "")) or "0")
+            completed = html.escape(_plain_cell(row.get("已完成", "")) or "0")
+            passed = html.escape(_plain_cell(row.get("通过", "")) or "0")
+            failed = html.escape(_plain_cell(row.get("失败", "")) or "0")
+            not_run = html.escape(_plain_cell(row.get("未执行", "")) or "0")
+            conclusion = html.escape(_plain_cell(row.get("业务结论", "")))
+            environment_cards.append(
+                '<article class="environment-coverage-card">'
+                f'<strong>{name}：完成 {completed}/{planned}</strong>'
+                f'<span>通过 {passed}，失败 {failed}，未执行 {not_run}</span>'
+                f'<small>{conclusion}</small>'
+                '</article>'
+            )
+        environment_html = (
+            '<div class="environment-coverage">' + "".join(environment_cards) + '</div>'
+            if environment_cards else ""
+        )
+        visual_html = ""
+        if visual:
+            inconclusive_visual_count = visual.get("不能证明业务结果", 0)
+            equal_count_note = (
+                "；数字相同纯属巧合，不能一一对应"
+                if counts["未执行"] == inconclusive_visual_count
+                else "；两者不能一一对应"
+            )
+            visual_html = (
+                '<div class="evidence-meaning">'
+                f'<strong>截图：采集 {visual.get("已采集且可审核", 0)} / 计划 {visual.get("计划截图槽位", 0)}</strong>'
+                f'<span>直接证明通过 {visual.get("能直接证明通过", 0)}，明确不通过 {visual.get("明确不通过", 0)}，不能证明业务结果 {inconclusive_visual_count}</span>'
+                '<small>“已采集”只代表图、路径、时间和方法齐全，不代表业务已经通过。</small>'
+                f'<small class="coincidence-warning">功能未执行 {counts["未执行"]} 项与不能证明业务结果 {inconclusive_visual_count} 张是两个独立维度{equal_count_note}。</small>'
+                '</div>'
+            )
+        release_failed = (
+            verdict == "fail"
+            or counts["失败"] > 0
+            or visual.get("明确不通过", 0) > 0
+        )
+        release_conditional = (
+            verdict == "conditional"
+            or counts["未执行"] > 0
+            or visual.get("不能证明业务结果", 0) > 0
+        )
+        release_text = (
+            "当前不能放行"
+            if release_failed
+            else "当前只能有条件放行"
+            if release_conditional
+            else "当前可以放行"
+        )
+        decision_steps_html = (
+            '<nav class="decision-steps" aria-label="报告处理步骤">'
+            f'<a href="{metric_target("双环境覆盖差异", "结论与处理顺序")}"><b>1</b><span>确认结论<small>核对双环境是否允许放行</small></span></a>'
+            f'<a href="{metric_target("执行覆盖账本")}"><b>2</b><span>定位缺口<small>点数字查看具体项目</small></span></a>'
+            f'<a href="{metric_target("不通过问题与复现", "未通过与未执行逐项清单")}"><b>3</b><span>执行处理<small>按责任和完成标准关闭</small></span></a>'
+            f'<a href="{metric_target("关联测试方法")}"><b>4</b><span>原项复测<small>沿相同路径回读结果</small></span></a>'
+            '</nav>'
+        )
+        reviewer_focus_html = (
+            '<section class="business-decision" aria-label="结论与处理顺序">'
+            '<div class="focus-kicker">第一步：确认结论</div>'
+            f'<h2>{release_text}</h2>'
+            f'<p class="decision-lead">计划 {counts["计划测试"]} 项，完成 {counts["已完成"]} 项；'
+            f'通过 {counts["通过"]} 项、失败 {counts["失败"]} 项、未执行 {counts["未执行"]} 项。'
+            f'完成率 {completion_rate:.1f}%，已执行通过率 {executed_pass_rate:.1f}%。</p>'
+            f'{decision_steps_html}'
+            f'{environment_html}'
+            f'{visual_html}'
+            '<h3>第三步：按失败类型处理，再按原项复测</h3>'
+            f'<div class="business-failure-grid">{failure_html}</div>'
+            '<nav class="business-detail-links" aria-label="结论明细入口">'
+            f'<a href="{metric_target("执行覆盖账本")}">查看执行覆盖</a>'
+            f'<a href="{metric_target("不通过问题与复现", "未通过与未执行逐项清单")}">查看失败结果</a>'
+            f'<a href="{metric_target("关联测试方法")}">查看复测方法</a>'
+            '</nav>'
+            '</section>'
+        )
+    elif reviewer_summary:
+        attention_rows = []
+        for row in reviewer_summary["rows"]:
+            axes = [_plain_cell(row.get(axis, "")) for axis in ("冒烟", "功能", "视觉")]
+            intervention = _plain_cell(row.get("是否需干预", ""))
+            if all(status == "通过" for status in axes) and intervention == "否":
+                continue
+            module = html.escape(_plain_cell(row.get("模块", "")) or "未命名模块")
+            breadcrumb = html.escape(_plain_cell(row.get("真实面包屑", "")))
+            status_text = " / ".join(axes)
+            links = " · ".join(
+                _render_inline(row.get(field, ""))
+                for field in ("查看步骤", "查看截图", "查看缺陷", "关联测试方法")
+                if row.get(field)
+            )
+            attention_rows.append(
+                '<div class="executive-item">'
+                f'<strong>{module}</strong><span>冒烟 / 功能 / 视觉：{html.escape(status_text)}</span>'
+                f'<p>{breadcrumb}</p><nav>{links}</nav></div>'
+            )
+        counts = reviewer_summary["counts"]
+        if attention_rows:
+            attention_content = "".join(attention_rows)
+            attention_title = "需要先处理的模块"
+        else:
+            attention_content = '<p class="executive-clear">所有模块的冒烟、功能和视觉均通过，无需人工干预。</p>'
+            attention_title = "处理结论"
+        reviewer_focus_html = (
+            '<section class="executive-focus" aria-label="处理摘要">'
+            '<div class="focus-kicker">第一步：查看需处理项</div>'
+            f'<h2>{attention_title}</h2>'
+            f'<p class="executive-summary">共 {len(reviewer_summary["rows"])} 个模块；'
+            f'全部通过 {counts["pass"]}，部分通过 {counts["partial"]}，不通过 {counts["fail"]}，'
+            f'未执行 {counts["not_run"]}，需干预 {counts["intervention"]}。</p>'
+            f'<div class="executive-grid">{attention_content}</div>'
+            f'<a class="executive-matrix-link" href="{metric_target("模块验收总览", "主管验收总览")}">查看完整模块验收矩阵</a>'
+            '</section>'
+        )
     problem_html = ""
-    if problem_items or verdict in {"conditional", "fail"}:
+    if not business_summary and (problem_items or verdict in {"conditional", "fail"}):
         if problem_items:
             cards = []
             for item in problem_items[:8]:
@@ -2223,11 +2855,14 @@ main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px
 .badge i{{font-style:normal;font-family:var(--mono);font-size:8px;letter-spacing:.3em;opacity:.75;font-weight:700}}
 .badge.pass{{color:var(--pass)}}.badge.conditional{{color:var(--warn)}}.badge.fail{{color:var(--fail)}}
 .metric-grid{{display:flex;flex-wrap:wrap;margin:22px 0 0;border:1.5px solid var(--ink);border-radius:3px;background:var(--paper-2);overflow:hidden;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
-.metric{{flex:1 1 118px;padding:13px 8px 12px;text-align:center;border-right:1px solid var(--line);position:relative}}
+.metric{{flex:1 1 118px;padding:13px 8px 12px;text-align:center;border-right:1px solid var(--line);position:relative;color:inherit;text-decoration:none;cursor:pointer;transition:background-color .18s ease,box-shadow .18s ease}}
 .metric:last-child{{border-right:none}}
+.metric:hover{{background:rgba(9,124,111,.065);box-shadow:inset 0 -3px 0 var(--accent)}}
+.metric:focus-visible{{z-index:2;outline:3px solid var(--accent);outline-offset:-4px}}
 .metric span{{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink-3)}}
 .metric strong{{display:block;font-family:var(--serif);font-size:30px;line-height:1.1;margin:5px 0 3px;color:var(--ink)}}
 .metric small{{display:block;font-size:10.5px;color:var(--ink-3)}}
+.metric em{{display:inline-block;margin-top:6px;font:700 9.5px var(--mono);font-style:normal;color:var(--accent);border-bottom:1px solid currentColor}}
 .metric.is-accent strong{{color:var(--accent)}}
 .metric.is-pass strong{{color:var(--pass)}}
 .metric.is-risk strong{{color:var(--warn)}}
@@ -2235,6 +2870,54 @@ main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px
 .metric.is-fail::before,.metric.is-risk::before{{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--fail)}}
 .metric.is-risk::before{{background:var(--warn)}}
 .failure-focus{{margin:24px 0 18px;border:1.5px solid var(--fail);border-radius:3px;background:var(--paper-2);box-shadow:6px 6px 0 rgba(180,35,24,.14);padding:16px 18px}}
+.executive-focus{{margin:24px 0 18px;border:2px solid var(--ink);border-radius:3px;background:var(--paper-2);box-shadow:7px 7px 0 rgba(33,29,24,.13);padding:17px 18px}}
+.executive-focus h2{{margin:6px 0 8px;font-family:var(--serif);font-size:22px}}
+.executive-summary{{max-width:none;margin-bottom:12px;color:var(--ink-2)}}
+.executive-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:11px}}
+.executive-item{{border:1px solid var(--line-2);border-left:5px solid var(--warn);padding:11px 12px;background:rgba(154,103,0,.045)}}
+.executive-item strong,.executive-item span{{display:block}}
+.executive-item span{{margin-top:3px;color:var(--warn);font-family:var(--mono);font-size:11px;font-weight:700}}
+.executive-item p{{margin:7px 0 6px;font-size:12.5px;line-height:1.55}}
+.executive-item nav{{display:flex;flex-wrap:wrap;gap:5px 10px;font-size:11.5px}}
+.executive-item nav a,.executive-matrix-link{{font-weight:700;text-decoration:none;border-bottom:1px solid currentColor}}
+.executive-clear{{grid-column:1/-1;margin:0;padding:11px 12px;border-left:5px solid var(--pass);background:rgba(26,127,55,.05);color:var(--pass)}}
+.executive-matrix-link{{display:inline-block;margin-top:13px}}
+.business-detail-links{{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}}
+.business-detail-links a{{min-height:40px;padding:9px 12px;border:1px solid var(--accent);background:var(--paper-1);color:var(--accent);font-weight:700;text-decoration:none;cursor:pointer;transition:background-color .18s ease,color .18s ease}}
+.business-detail-links a:hover{{background:var(--accent);color:#fff}}
+.business-detail-links a:focus-visible{{outline:3px solid var(--accent);outline-offset:2px}}
+.business-decision{{margin:24px 0 18px;border:2px solid var(--ink);border-radius:3px;background:var(--paper-2);box-shadow:7px 7px 0 rgba(33,29,24,.12);padding:18px}}
+.business-decision h2{{margin:5px 0 8px;font-family:var(--serif);font-size:27px;line-height:1.35}}
+.business-decision h3{{margin:18px 0 10px;font-family:var(--serif);font-size:18px}}
+.decision-lead{{max-width:none;margin:0;padding:11px 13px;border-left:5px solid var(--fail);background:rgba(180,35,24,.055);font-size:15.5px;line-height:1.75;color:var(--ink)}}
+.decision-steps{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0 0}}
+.decision-steps a{{display:flex;gap:9px;align-items:flex-start;min-height:58px;padding:9px 10px;border:1px solid var(--line-2);background:var(--paper-1);color:inherit;text-decoration:none;cursor:pointer;transition:border-color .18s ease,background-color .18s ease}}
+.decision-steps a:hover{{border-color:var(--accent);background:var(--accent-soft)}}
+.decision-steps a:focus-visible{{outline:3px solid var(--accent);outline-offset:2px}}
+.decision-steps b{{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;font:700 11px var(--mono)}}
+.decision-steps span{{font-size:12.5px;font-weight:700}}
+.decision-steps small{{display:block;margin-top:3px;color:var(--ink-3);font-size:10.5px;font-weight:400;line-height:1.4}}
+.environment-coverage{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin:12px 0 0}}
+.environment-coverage-card{{display:grid;gap:4px;padding:10px 12px;border:1px solid var(--line-2);background:var(--paper-1)}}
+.environment-coverage-card strong{{font-size:14px}}
+.environment-coverage-card span{{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}}
+.environment-coverage-card small{{font-size:11.5px;color:var(--fail)}}
+.evidence-meaning{{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;align-items:baseline;margin:14px 0 0;padding:11px 13px;border:1px solid var(--line-2);background:var(--accent-soft)}}
+.evidence-meaning strong{{font-size:14px}}
+.evidence-meaning span{{color:var(--ink-2)}}
+.evidence-meaning small{{grid-column:1/-1;color:var(--ink-3);font-size:12px}}
+.evidence-meaning .coincidence-warning{{color:var(--fail);font-weight:700}}
+.business-failure-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px}}
+.business-failure-card{{border:1px solid var(--line-2);border-left:5px solid var(--fail);background:rgba(180,35,24,.035);padding:12px 13px}}
+.business-failure-card header{{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:8px}}
+.business-failure-card header strong{{font-size:14px;line-height:1.5}}
+.business-failure-card header span{{flex:none;padding:2px 7px;background:var(--fail);color:#fff;border-radius:2px;font:700 11px var(--mono)}}
+.business-failure-card p{{max-width:none;margin:4px 0;padding:0;font-size:12.5px;line-height:1.65}}
+.business-failure-card nav{{margin-top:8px;font-size:12px;font-weight:700}}
+.evidence-action{{display:grid;gap:6px;margin:10px 0 0;padding:11px 13px;border-left:5px solid var(--warn);background:rgba(154,103,0,.065);font-size:12.5px;line-height:1.6}}
+.evidence-action strong{{font-family:var(--serif);font-size:16px}}
+.evidence-action span{{display:block;color:var(--ink-2)}}
+.evidence-action b{{color:var(--ink)}}
 .failure-focus.is-conditional{{border-color:var(--warn);background:rgba(154,103,0,.045);box-shadow:6px 6px 0 rgba(154,103,0,.16)}}
 .focus-kicker{{font-family:var(--mono);font-size:10.5px;letter-spacing:.22em;color:var(--fail);font-weight:600}}
 .failure-focus.is-conditional .focus-kicker{{color:var(--warn)}}
@@ -2417,6 +3100,9 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 .badge{{font-size:14px;padding:8px 13px}}
 .metric{{flex:1 1 48%}}
 .metric strong{{font-size:25px}}
+.business-failure-grid{{grid-template-columns:1fr}}
+.evidence-meaning{{grid-template-columns:1fr}}
+.evidence-meaning small{{grid-column:auto}}
 .evidence-gallery{{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}}
 .shot-frame{{padding:9px}}
 .shot-frame img{{max-height:none}}
@@ -2425,6 +3111,8 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 .lightbox{{padding:8px}}
 .lb-frame{{width:100%}}
 }}
+@media(max-width:900px){{.decision-steps{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@media(max-width:520px){{.decision-steps{{grid-template-columns:1fr}}}}
 </style>
 </head>
 <body data-view="{default_view}">
@@ -2463,6 +3151,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     <div class="metric-grid">{summary_html}</div>
     {view_switch_html}
   </header>
+  {reviewer_focus_html}
   {problem_html}
   <div class="toolbar">
     <input id="reportFilter" placeholder="筛选表格、缺陷、模块或图号"/>
@@ -2586,6 +3275,19 @@ aside.mobile-nav-open .side-drawer{{display:block}}
   var filterInput=document.getElementById('reportFilter');
   var filterCount=document.getElementById('filterCount');
   var mode='all';
+  var metricFilter='';
+  function matchesMetricFilter(row){{
+    if(!metricFilter||metricFilter==='all') return true;
+    var cells=Array.prototype.map.call(row.querySelectorAll('td'),function(cell){{return (cell.textContent||'').trim();}});
+    var isPass=cells.some(function(value){{return value==='通过'||value.indexOf('通过（')===0;}});
+    var isFail=cells.some(function(value){{return value==='不通过'||value.indexOf('不通过（')===0;}});
+    var isNotRun=cells.some(function(value){{return value==='未执行'||value.indexOf('未执行（')===0;}});
+    if(metricFilter==='pass') return isPass&&!isFail;
+    if(metricFilter==='fail') return isFail;
+    if(metricFilter==='not-run') return isNotRun;
+    if(metricFilter==='completed') return isPass||isFail;
+    return true;
+  }}
   function applyFilter(){{
     var q=(filterInput.value||'').toLowerCase();
     var totalRows=0,visibleRows=0;
@@ -2595,7 +3297,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
       var text=row.textContent.toLowerCase();
       var modeOk=mode==='all'||(mode==='fail'&&/\\bp0\\b|未通过|\\bfail\\b|阻断/i.test(text))||(mode==='risk'&&/p1|有缺陷|conditional|风险/i.test(text))||(mode==='gap'&&/未覆盖|not-run|未深测|弱相关|无关/i.test(text));
       var queryOk=!q||text.indexOf(q)>=0;
-      var show=modeOk&&queryOk;
+      var show=modeOk&&queryOk&&matchesMetricFilter(row);
       if(show) visibleRows+=1;
       row.classList.toggle('is-hidden', !show);
     }});
@@ -2635,15 +3337,16 @@ aside.mobile-nav-open .side-drawer{{display:block}}
       card.classList.toggle('is-hidden', !(severityOk&&(!q||text.indexOf(q)>=0)));
     }});
     if(filterCount){{
-      filterCount.textContent=(mode==='all'&&!q)
+      filterCount.textContent=(mode==='all'&&!q&&!metricFilter)
         ?('共 '+totalRows+' 行 · 证据 '+totalCards+' 张')
-        :('命中 '+visibleRows+'/'+totalRows+' 行 · 证据 '+visibleCards+'/'+totalCards+' 张');
+        :('命中 '+visibleRows+'/'+totalRows+' 行 · 证据 '+visibleCards+'/'+totalCards+' 张'+(metricFilter?' · 数字卡片筛选已生效':''));
     }}
   }}
-  filterInput.addEventListener('input', applyFilter);
+  filterInput.addEventListener('input', function(){{metricFilter='';applyFilter();}});
   document.querySelectorAll('button[data-filter]').forEach(function(btn){{
     btn.addEventListener('click', function(){{
       mode=btn.getAttribute('data-filter');
+      metricFilter='';
       document.querySelectorAll('button[data-filter]').forEach(function(b){{b.classList.remove('active')}});
       btn.classList.add('active');
       applyFilter();
@@ -2707,6 +3410,21 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     var t=targetForHash(hash);
     if(!t) return;
     ev.preventDefault();
+    if(a.hasAttribute('data-report-filter')){{
+      metricFilter=a.getAttribute('data-report-filter')||'';
+      filterInput.value='';
+      mode='all';
+      document.querySelectorAll('button[data-filter]').forEach(function(btn){{
+        btn.classList.toggle('active',btn.getAttribute('data-filter')==='all');
+      }});
+      applyFilter();
+    }}else if(metricFilter){{
+      metricFilter='';
+      document.querySelectorAll('button[data-filter]').forEach(function(btn){{
+        btn.classList.toggle('active',btn.getAttribute('data-filter')==='all');
+      }});
+      applyFilter();
+    }}
     if(a.hasAttribute('data-return-evidence')) setSideTab('evidence');
     jumpToTarget(hash);
   }});
@@ -2969,7 +3687,7 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
     print("说明：报告已入 CDS（验收能力的唯一归属）；MAP 等系统通过知识库开放协议从 CDS 拉取展示，无需另建验收知识库。")
 
 
-def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
+def run_local(cfg, a, title, report_id, body, manifest, now, tags=None):
     out_dir = cfg["report"].get("localOutDir") or LOCAL_DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     shot_dir = os.path.join(out_dir, report_id)
@@ -2983,6 +3701,7 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
         img_md[m["name"]] = f"![{m['caption']}]({rel})"
         figure_srcs[_figure_anchor(_figure_key(m["name"]))] = rel
         print(f"  拷贝截图 {m['name']} -> {dst}")
+    meta = build_meta(report_id, now, "local-diagnostic", a, "")
     content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
     fmt = report_format(cfg, "local")
     content = build_interactive_html(
@@ -3662,6 +4381,27 @@ def _cds_agent_substitution_hits(body):
     return hits
 
 
+def _coverage_ledger_errors(body):
+    has_not_run = bool(
+        re.search(r"\bnot-run\b", body, re.I)
+        or re.search(r"未执行\s*(?:[:：为共计]?\s*)[1-9]\d*", body)
+        or re.search(r"判定性质\s*\|\s*覆盖不足", body)
+    )
+    if not has_not_run:
+        return []
+    ledger = _section_text(body, "执行覆盖账本")
+    if not ledger:
+        return [
+            "[覆盖透明度] 报告存在未执行项或判定为覆盖不足，但缺「执行覆盖账本」；"
+            "必须逐环境列计划/已执行/通过/失败/未执行，并给每项补跑路径"
+        ]
+    errors = []
+    for field in ("计划", "已执行", "通过", "失败", "未执行", "阻塞类别", "直接执行路径", "关闭条件"):
+        if field not in ledger:
+            errors.append(f"[覆盖透明度] 「执行覆盖账本」缺「{field}」字段")
+    return errors
+
+
 def validate_inputs(a, body, manifest, cfg=None):
     """返回拒收原因列表（空 = 通过准入）。结构层校验，语义层(Verdict 一致性)由人/工具把关。"""
     errs = []
@@ -3706,9 +4446,7 @@ def validate_inputs(a, body, manifest, cfg=None):
             errs.append(f"[证据] caption 太弱（只写名字/过短，需写清验证点）：{m.get('name', p)} -> {cap!r}")
         # v2.2: harness 在截图前后做了就绪等待 + 内容校验，把 warning 写进 manifest；
         # 这里把 warning 提升为拒收硬条件，让"页面没加载完就拍"无法蒙混过关。
-        ws = m.get("warnings") or []
-        if ws:
-            errs.append(f"[证据] 截图未就绪/有问题：{m.get('name', p)} → {' | '.join(ws)}")
+        errs.extend(_warning_evidence_errors(a.verdict, m))
         # §B2 标注硬门禁(2026-06-05)：指向性证据图截图瞬间必须有 box/circle 标记。
         # harness.shot() 自动探测页面上的 .__acc_box → 落进 manifest 的 annotated 字段。
         # `is False` 而非 falsy：老 manifest 无此字段(None)→不追溯拒收；只有新 harness 明确记为
@@ -3738,6 +4476,8 @@ def validate_inputs(a, body, manifest, cfg=None):
         for section in ("改动断言表", "影响面矩阵", "融合测试设计", "证明力矩阵", "覆盖缺口"):
             if section not in body:
                 errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
+    errs.extend(_coverage_ledger_errors(body))
+    errs.extend(_supervisor_report_errors(a.target, body, manifest))
     if daily_acceptance_claim:
         errs.extend(_daily_conclusion_contract_errors(a.verdict, body))
         for section in DAILY_REQUIRED_SECTIONS:
@@ -3888,12 +4628,21 @@ def main():
         help="验收档案版本号；默认 v0.9。只接受显式人工改版，不根据 Verdict 自动升级",
     )
     ap.add_argument("--force", action="store_true", help="越过准入校验（仅在确知合理时用，会打印告警）")
+    ap.add_argument(
+        "--local-diagnostic",
+        action="store_true",
+        help="显式生成仓库外本地诊断草稿；要求 report.mode=local，产物不得交付或标记验收完成",
+    )
     a = ap.parse_args()
 
     cfg = json.load(open(a.config))
-    # 职责分离（2026-06-25）：验收报告默认归 CDS 验收中心，技能不再分流到 MAP 知识库。
-    # local 仍作离线兜底；旧 doc-store 仅在 config 显式保留时走（向后兼容，不推荐）。
+    # 验收完成态只有 CDS 在线报告。local / doc-store 不能通过正式归档入口，
+    # 否则调用方可能把本地草稿或旧知识库条目误记为已完成验收。
     mode = cfg.get("report", {}).get("mode", "cds")
+    try:
+        execution_mode = resolve_report_execution_mode(mode, a.local_diagnostic)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     now = datetime.datetime.now().astimezone()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M:%S %Z%z"))
     verdict_cn = {"pass": "通过", "conditional": "有条件通过", "fail": "不通过"}.get(a.verdict, a.verdict)
@@ -3915,18 +4664,12 @@ def main():
             import sys as _sys; _sys.exit(2)
 
     preview = (cfg.get("previewUrlOverride") or "").strip()
-    if not preview and mode == "doc-store":
-        preview = preview_from_cmd(cfg["previewUrlCmd"])
 
     try:
-        if mode == "local":
-            run_local(cfg, a, title, report_id, body, manifest, build_meta(report_id, now, "local", a, preview), tags)
-        elif mode == "doc-store":
-            # 向后兼容：仅当 config 显式 mode=doc-store 才走旧 MAP 知识库路径。
-            run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags)
-        else:
-            # 默认主路：CDS 验收中心。
-            run_cds(cfg, a, title, report_id, body, manifest, now, tags)
+        if execution_mode == "local":
+            run_local(cfg, a, title, report_id, body, manifest, now, tags)
+            return
+        run_cds(cfg, a, title, report_id, body, manifest, now, tags)
     except Exception as e:
         import sys as _sys
         print("\n[归档失败] 写库未完成（常见原因：预览环境 524 / 容器重启 / API 不可达）。")

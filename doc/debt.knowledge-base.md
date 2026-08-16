@@ -32,7 +32,7 @@
 | ID | 说明 | 优先级 | 触发条件 | 状态 |
 |---|---|---|---|---|
 | K-1 | **两套"知识库"并存**：AI Toolbox 绑定的是附件集合（每条附件自带抽取好的正文，拼 prompt 时整篇拼接），而独立的「文档空间」走 `document_stores` + `document_entries` 集合，有更完整的多类型、订阅源、版本、view event 等能力。两套数据流不通，AI Toolbox 选不到文档空间里已经管理好的文档。建议规划"统一知识库"模型：AI Toolbox 改为引用 `documentEntryId`（或一个虚拟 store 包一组 attachment），并写一次迁移把存量 attachment 落入 document_stores。 | **P2** | 用户开始把同一份文档既上传到智能体又导到文档空间，或要求"我已经在文档空间里有这堆 PDF，直接关联给智能体" | open |
-| K-2 | **无 RAG / Embedding / 语义检索**：所有绑定文档的正文被全量拼进 system prompt。文档稍微多 / 稍微大就会把 prompt 撑爆 token。[design.knowledge-base.multi-doc.md](./design.knowledge-base.multi-doc.md) 在“风险与边界”中把这件事列为后续方向，但没有项目计划承接。借用法则（`no-rootless-tree.md`）建议借外部 Embedding 服务而不是自建，但需要：(a) LLM Gateway 增加 `embedding` ModelType 调度路径；(b) chunk 切分策略（按段落 / 按 token 数 / 按文档类型）；(c) 向量存储（MongoDB Atlas Vector Search vs 自建索引）；(d) 检索召回 + 重排 + 注入。 | **P1**（中型功能立项） | 出现"上传了 10+ 文档导致对话被截断 / 慢 / 上下文超限"的反馈 | open |
+| K-2 | **语义检索：底座已落地，缺一个 embedding 供应商凭据**（2026-08-10 更新）。已完成：网关 embedding 通路（compute-then-send 单次解析、响应按 index 归位）、embedding 进入专属池不可用时的失败关闭名单、`document_embeddings` 向量存储（float32 二进制 + 盖 Model/Dimension，跨模型判为不兼容）、切块与增量索引哈希（哈希拌入模型标识）、Stub 平台的 OpenAI 兼容 `/v1/embeddings` 自测通道。**卡在哪**：本部署已配置的两个平台里没有任何 embedding 模型——OpenRouter 的 399 个模型零 embedding，需要新接一个供应商并提供 key（属外部输入，工程侧造不出来）。**注意**：原条目建议的 MongoDB Atlas Vector Search 在本部署上不成立，跑的是自建 `mongo:8.0` Community + `redis:7-alpine`，两者都没有向量检索能力；现方案是向量存 Mongo + 作用域先过滤 + 进程内余弦，按真实规模（最大的 MAP 库 330 篇 4.24MB ≈ 5 千余块）够用。剩余未做：建索引 Worker、检索服务、回答引用注入、前端挂库与引用渲染。选型与「绑定多个」的结论见 [debt.platform.embedding-provider.md](./debt.platform.embedding-provider.md)。 | **P1**（等 key 到位即可续做） | 拿到任一 OpenAI 兼容 embedding 供应商的 key | partial |
 | K-3 | **AI Toolbox 占位符里曾误导用户**：替换前的快速创建向导写"即将上线"，让用户以为功能即将就绪，但底层数据通路（DTO、Model、Controller 注入）早已 ready。这种"前端 UI 写 wip 标签 vs 后端早已 ready"的不一致没有自动巡检手段，未来类似情况可能继续出现。建议在 `navCoverage.test.ts` 类似的 CI 守卫里加一条："禁止 UI 出现「即将上线」/「敬请期待」字样的 disabled 按钮 —— 要么标 TODO 接通，要么去掉。" | P3 | 下次新 PR 又留下"即将上线"占位符 | open |
 | K-4 | **`uploadAttachment` 与 `documentstore/entries/upload` API 不互通**：AI Toolbox 走 `POST /api/ai-toolbox/upload-attachment`（返回 `attachmentId`），文档空间走 `POST /api/document-store/stores/{id}/entries/upload`（返回 `entryId`）。两个端点各有 mime 解析、文本抽取、缓存逻辑，未来文档解析能力升级（如新增 Excel 智能化抽取）需双改。建议合并到一个上传 service。 | P3 | 升级 PDF/Word 抽取库 / 新增 Excel 表格化抽取时双向同步 | open |
 | K-5 | **不存"原始 KB 选择来源"**：AI Toolbox 智能体的 `KnowledgeBaseIds` 只存 `attachmentId`，不区分"用户当时是直接上传文件" vs"从文档空间选了一个 entry"。一旦 K-1 落地后会丢失这层语义，难以反向追溯。建议增加 `KnowledgeBaseSources: List<{type: "attachment"\|"document-entry", id}>` 结构存原始引用。 | P3 | K-1 立项后 | blocked-on-K-1 |
@@ -134,6 +134,12 @@
 - 已确认根因：Cloudflare R2 上传持续返回签名不匹配错误，属于对象存储凭据或签名配置问题，不是录音时长、ASR 性能或浏览器刷新导致。
 - 本轮缓解：本机保险音频、服务端分片和原文继续可用；页面读取会话错误状态后明确显示“已排队重试”，并允许用户播放、编辑或离开页面，同一条录音的状态变化只做后台局部刷新。
 - 关闭条件：部署负责人校正 R2 凭据与端点配置后，使用真实 5 秒录音验证首次归档成功，确认日志不再出现签名不匹配，页面自动从待重试切换为正式音频。
+- **已关闭（2026-08-03，changelog 碎片已归档进 `CHANGELOG.md`）**：修复真实录音大小上传 Cloudflare R2 时的签名不一致，并将代表性音频写读删纳入就绪门禁；同步阻止用小文本探针或仅检查请求参数替代真实录音对象存储验收，避免同类回归被弱验收放过。
+- **已落地（2026-08-04，changelog 碎片已随 #1344 发版归档进 `CHANGELOG.md`）**：
+  1. 实时转写断线自动重连（避免录音中途停止出字）；归档退避缩短至十五分钟并支持手动立即重试；允许用户接管长期停滞的归档租约立即重新排队；超十分钟未完成自动显示可恢复状态与手动重试入口。
+  2. 语音识别保留原生说话人信息并写入带时间轴的转录原文；结果页新增说话人改名、整场词云、原文关键词定位与录音问答入口。
+  3. 说话人分段链路多轮加固：先确认完整原文再独立增强角色分段（避免假静音或角色识别失败丢失有效录音）；优先走专属转录模型池，原生识别失败自动回退通用音频转写；上游未返回角色时按本地声纹与发言间隔保守区分并补齐时间轴；本地分离改用声学距离聚类支持三角色，压缩未分配文字的角色编号避免跳号。
+  4. 修复 Safari 录音 MIME 参数导致 R2 签名失败，存储健康检查覆盖真实浏览器格式；会议纪要兼容方案评审结果与评审意见格式，未明确时不擅自判定通过。
 
 ## 知识库划词评论
 
@@ -516,6 +522,58 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 
 ---
 
+## 录音词云的分词质量 — 已偿还（2026-08-11 换 Intl.Segmenter）
+
+**原欠账**：中文没有空格，词云曾用 2 字滑窗切词。滑窗必然产出骑在词缝上的半截词
+（交付+质量→付质、参考+图→考图、看+一下→看一）。
+
+**三次失败的补救**（记下来，免得后来人再走一遍）：按词形猜锚点 → 把真词「质量」顶掉；
+按位置抢座 → 平局时相位错开，抢到座的全是半截词；按上下文多样性 → 拦不住「看一」，
+因为它在真实语料里两侧都有变化（你看一下 / 我看一下、看一下 / 看一眼），
+统计上和真词无法区分。**这是方法的天花板，不是参数没调好。**
+
+**现在的做法**：V8 自带的 `Intl.Segmenter`（词典分词，零依赖零网络）。
+它查词典，直接不产生这类切分；单字一律不进词云。
+
+**换来的新代价（有意选的）**：ICU 词典不认识的词会整个丢掉。验收判据是
+「无法确定边界时不收录」，所以精度优先于召回。守卫用例把这条损失钉成已知项，
+它变红说明分词器换了，需要重新评估召回。
+
+实测丢掉的三类，按要紧程度排：
+
+| 类别 | 实例 | 影响 |
+|---|---|---|
+| 人名 | 「泽坤」——换分词器前在词云里，之后没了 | **最要紧**。会上被反复叫到的人名恰恰是高价值信息，丢了比多一个半截词更伤 |
+| 业务术语 | 待收集 | 团队黑话不在通用词典里，是同一类问题 |
+| 普通双字词 | 「下单」「排期」 | ICU 词典覆盖不全，影响相对小 |
+
+**召回怎么补回来（2026-08-12 已落地）**：叠加词典，**不退回双字滑窗**——
+滑窗的半截词问题已经证明治不好（见上面三次失败的补救）。词典分三层合并：
+
+| 层 | 谁维护 | 说明 |
+|---|---|---|
+| 说话人名 | 无人维护 | 笔记本身带 `[说话人]` 标签，直接进词典。人名这条最要紧的损失零配置就补上了 |
+| 系统级 | 有设置写权限的人 | 全局表，所有人默认引用。产品名、团队黑话放这里 |
+| 个人级 | 每个用户自己 | 只影响自己；还能单独屏蔽系统表里对自己是噪音的词 |
+
+关键约束：**词典只做「加」不做「猜」**。命中的整词先被切走，剩下的才交给分词器，
+所以不会引入新的边界猜测，也就不会把已经治好的半截词问题带回来（有守卫用例钉住）。
+入口放在词云正下方——发现「某个词该在却不在」正是在看这一屏的时候，
+逼用户跑去设置页再回来是绕路。
+
+**还欠什么**：系统级词典目前只能一条一条加，没有批量导入/导出；
+个人屏蔽表有后端字段和 API，但界面上还只能加不能屏蔽。
+
+**两条已核实、本 PR 未修的缺陷（Review 九轮提出，范围熔断后按 B 类记账）**：
+
+| 缺陷 | 判据（已在源码核实） | 为什么没在本 PR 修 |
+|---|---|---|
+| 两个管理员并发加词会互相覆盖 | 写端点是 `.Set(x => x.TranscriptLexicon, terms)` 无条件整表替换。两人从同一份快照各加一个词，后提交的那次把前一次的词抹掉——系统级抹的是所有人共用的表。组件里的保存锁只串行化单个实例，跨客户端不管用 | 要修得上「原子增量端点」或「版本/CAS 校验」，两者都是这条资源上没有过的新语义（乐观并发）。属规则 5.5 的 B 类 |
+| 超过 24 字的词条被静默丢掉 | 端点 `.Where(x => x.Length is >= 2 and <= 24)` 过滤后仍返回 `Ok`；前端输入框没有 `maxLength`、按钮只拦 `< 2`，所以能提交。提交后输入框被清空、刷新回来词没了——界面表现是「存成功了又不见了」。个人词典路径同样如此 | 修法很小（输入框加 `maxLength={24}` + 一句提示，约两行，不引入新语义），但熔断已在第 8 个 Review 修复提交命中，且 PR 未合并、缺陷不会流到用户手上。等所有者说继续就修 |
+
+**剩余风险**：极旧浏览器没有 `Intl.Segmenter` 时中文词云会退化为空（英文词仍统计）。
+本系统是内部工具、目标浏览器均已支持，暂不做兼容层。
+
 ---
 
 ## 实现来源
@@ -530,3 +588,4 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 | 划词编辑单测 | `prd-admin/src/components/doc-browser/__tests__/selectionEdit.test.ts` |
 | 双链自动补全 | `prd-admin/src/components/doc-browser/WikilinkAutocomplete.tsx` |
 | 星系与宇宙图 | `prd-admin/src/pages/document-store/DocumentGalaxyView.tsx`、`prd-admin/src/pages/document-store/UniverseGraphPage.tsx`、`prd-admin/src/pages/document-store/DocumentStorePage.tsx` |
+| 录音词云 | `prd-admin/src/components/doc-browser/transcriptSegments.ts`（`buildTranscriptWordCloud` / `FUNCTION_CHARS` / `STOP_WORDS`）、`prd-admin/src/components/doc-browser/__tests__/transcriptSegments.test.ts`、`prd-admin/src/components/doc-browser/TranscriptKaraoke.tsx` |

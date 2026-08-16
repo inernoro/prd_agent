@@ -513,7 +513,10 @@ internal static class LocalSpeakerDiarizer
                 turn.StartSample / (double)sampleRate,
                 turn.EndSample / (double)sampleRate,
                 clause,
-                $"说话人{labels[turnIndex] + 1}"));
+                $"说话人{labels[turnIndex] + 1}",
+                // 分簇是真实声学结果，但这一句归到哪个簇是按字数比例摊出来的——
+                // 盖戳就盖在唯一产出这种归属的地方，让 UI 有据可依。
+                SpeakerSources.Local));
         }
 
         var merged = new List<SubtitleSegment>();

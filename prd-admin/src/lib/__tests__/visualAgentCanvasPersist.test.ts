@@ -88,6 +88,99 @@ describe('VisualAgent Canvas 持久化测试', () => {
       });
     });
 
+    it('【关键】图层的排版尺寸标记必须往返，否则刷新后 Frame 会塌', () => {
+      // 实测缺陷（2026-08-10 用户截图）：刷新后同一个 Frame 里等大对齐的图层
+      // 塌成大小不一的碎块。根因是 userResized 没落盘，恢复后 img.onLoad
+      // 拿 natural 尺寸把排版算好的 w/h 覆盖掉了。
+      const items: CanvasImageItem[] = [{
+        key: 'layer-1',
+        createdAt: Date.now(),
+        prompt: '图层 01',
+        src: 'https://example.com/layer-1.png',
+        status: 'done',
+        kind: 'image',
+        assetId: 'asset-layer-1',
+        x: 10, y: 20, w: 300, h: 300,
+        naturalW: 640, naturalH: 640,
+        userResized: true,
+        layerGroupId: 'group-1',
+        layerRole: 'layer',
+        layerHidden: true,
+        layerOpacity: 0.5,
+        layerZ: 3,
+        layerContentKind: 'flat',
+        layerCoverage: 0.9876,
+      }];
+
+      const restored = persistedV1ToCanvas(canvasToPersistedV1(items).state, [{
+        id: 'asset-layer-1',
+        url: 'https://example.com/layer-1.png',
+        width: 640,
+        height: 640,
+      }]);
+
+      expect(restored.canvas[0]).toMatchObject({
+        w: 300,
+        h: 300,
+        userResized: true,
+        layerHidden: true,
+        layerOpacity: 0.5,
+        layerZ: 3,
+        layerContentKind: 'flat',
+        layerCoverage: 0.9876,
+      });
+    });
+
+    it('【关键】用户手动拉过尺寸的普通图片，刷新后不许被 natural 尺寸打回原形', () => {
+      // 这一条才真正盯住「userResized 有没有落盘」：分层图层那条有 layerRole 兜底，
+      // 就算不落盘也能恢复，测不出写入端漏字段。普通图片没有兜底，漏了立刻现形。
+      const items: CanvasImageItem[] = [{
+        key: 'img-1',
+        createdAt: Date.now(),
+        prompt: '一张被拉小的图',
+        src: 'https://example.com/a.png',
+        status: 'done',
+        kind: 'image',
+        assetId: 'asset-a',
+        w: 200, h: 200,
+        naturalW: 1024, naturalH: 1024,
+        userResized: true,
+      }];
+      const restored = persistedV1ToCanvas(canvasToPersistedV1(items).state, [{
+        id: 'asset-a', url: 'https://example.com/a.png', width: 1024, height: 1024,
+      }]);
+      expect(restored.canvas[0]).toMatchObject({ w: 200, h: 200, userResized: true });
+    });
+
+    it('存量分层数据没有 userResized，但只要存过尺寸就照样锁住排版', () => {
+      const legacy = {
+        schemaVersion: 1 as const,
+        elements: [{
+          id: 'layer-1',
+          kind: 'image' as const,
+          x: 0, y: 0, w: 300, h: 300,
+          assetId: 'asset-layer-1',
+          ext: { layerGroupId: 'g', layerRole: 'layer' },
+        }],
+      };
+      const restored = persistedV1ToCanvas(legacy, [{ id: 'asset-layer-1', url: 'u', width: 640, height: 640 }]);
+      expect(restored.canvas[0]).toMatchObject({ w: 300, h: 300, userResized: true });
+    });
+
+    it('没存过尺寸的分层元素不许锁住排版，否则卡片会渲染成 0', () => {
+      const legacy = {
+        schemaVersion: 1 as const,
+        elements: [{
+          id: 'layer-1',
+          kind: 'image' as const,
+          assetId: 'asset-layer-1',
+          ext: { layerGroupId: 'g', layerRole: 'layer' },
+        }],
+      };
+      const restored = persistedV1ToCanvas(legacy, [{ id: 'asset-layer-1', url: 'u' }]);
+      expect(restored.canvas[0]!.userResized).toBe(false);
+    });
+
     it('应保存完成状态的图片（有远程 src 无 assetId）', () => {
       const items: CanvasImageItem[] = [{
         key: 'img-2',
@@ -681,5 +774,42 @@ describe('VisualAgent Canvas 持久化测试', () => {
       expect(result.canvas[1].key).toBe('z-mid');
       expect(result.canvas[2].key).toBe('z-high');
     });
+  });
+});
+
+describe('编组的落盘与读回（Cmd+G / Cmd+Shift+G）', () => {
+  const item = (over: Record<string, unknown> = {}) => ({
+    key: 'k1', createdAt: 1, prompt: 'p', src: '/api/x.png', status: 'done' as const,
+    kind: 'image' as const, assetId: 'a1', x: 0, y: 0, w: 10, h: 10, ...over,
+  });
+
+  it('编组写得进也读得回', () => {
+    const saved = canvasToPersistedV1([item({ frameId: 'f1' })]);
+    const { canvas } = persistedV1ToCanvas(saved.state, []);
+    expect(canvas[0]!.frameId).toBe('f1');
+  });
+
+  it('【关键】解组之后刷新，Frame 不许复活', () => {
+    // 真实缺陷（2026-08-11 冒烟抓到）：读回时无条件用 layerGroupId 补 frameId，
+    // 于是「解组」在下一次刷新后被撤销——用户会以为快捷键坏了。
+    // 新版本写出的记录带迁移标记，此时 frameId 缺失 = 真的解过组。
+    const saved = canvasToPersistedV1([item({ frameId: undefined, layerGroupId: 'g1', layerRole: 'layer' as const })]);
+    const { canvas } = persistedV1ToCanvas(saved.state, []);
+    expect(canvas[0]!.frameId).toBeUndefined();
+    // 产物血缘不受影响：解组不该让它忘记自己出自哪一次分层。
+    expect(canvas[0]!.layerGroupId).toBe('g1');
+  });
+
+  it('旧数据（没有迁移标记）仍然靠 layerGroupId 补出 Frame', () => {
+    // 升级前存下来的画布没有 frameId 字段；不补的话既有分层组的 Frame 会整个消失。
+    const legacy = {
+      schemaVersion: 1 as const,
+      elements: [{
+        id: 'k1', kind: 'image' as const, x: 0, y: 0, w: 10, h: 10, assetId: 'a1', src: '/api/x.png',
+        ext: { layerGroupId: 'g1', layerRole: 'layer' },
+      }],
+    };
+    const { canvas } = persistedV1ToCanvas(legacy, []);
+    expect(canvas[0]!.frameId).toBe('g1');
   });
 });

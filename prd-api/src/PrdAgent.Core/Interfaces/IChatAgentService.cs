@@ -48,7 +48,44 @@ public interface IChatAgentService
     /// <summary>按序号读事件，用于 SSE 续订。</summary>
     Task<ChatAgentEventPage> ReadEventsAsync(
         string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
+
+    /// <summary>
+    /// 运行时到底能不能用。**必须是运行时探测，不是常量**：对话运行时是外部 sidecar，
+    /// 没配就是真的没有。调用方据此如实告诉用户「运行时未配置」，
+    /// 而不是让人对着一个点了没反应的入口猜（no-rootless-tree）。
+    /// </summary>
+    ChatAgentRuntimeStatus GetRuntimeStatus();
+
+    /// <summary>
+    /// 一次性转派：不建会话、不落库，把一轮直接交给运行时并把事件流回。
+    ///
+    /// 给的是「已经有自己一套上下文与持久化的宿主」用的（如知识库再加工抽屉）——
+    /// 它们只想借通用体的脑子和工具，不需要再多一份会话账本。
+    /// 事件类型与会话流**共用同一套** <see cref="ChatAgentEventTypes"/>，
+    /// 免得两条路各说各话、前端要认两种协议。
+    ///
+    /// 已知边界：这条路没有 Run/Worker，也就没有断线续订——客户端断开就看不到后续了
+    /// （服务端这一轮仍会跑完，不会被掐）。需要续订的场景请用会话路径。
+    /// </summary>
+    IAsyncEnumerable<ChatAgentOneOffEvent> StreamOneOffAsync(
+        ChatAgentOneOffRequest request, CancellationToken ct);
 }
+
+/// <summary>运行时可用性。不可用时 Reason 是给用户看的一句人话。</summary>
+public sealed record ChatAgentRuntimeStatus(bool Available, string? Reason);
+
+/// <summary>一次性转派的入参。</summary>
+public sealed record ChatAgentOneOffRequest(
+    string UserId,
+    string UserMessage,
+    IReadOnlyList<ChatAgentOneOffMessage>? History = null,
+    string? ExtraSystemPrompt = null);
+
+/// <summary>历史消息（只有角色与文本，宿主自己的富信息不往运行时塞）。</summary>
+public sealed record ChatAgentOneOffMessage(string Role, string Content);
+
+/// <summary>一次性转派的事件。Type 取值同 <see cref="ChatAgentEventTypes"/>。</summary>
+public sealed record ChatAgentOneOffEvent(string Type, string PayloadJson);
 
 public sealed record ChatAgentSessionView(
     string Id,

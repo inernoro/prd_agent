@@ -103,7 +103,7 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
   const statusIcon = (status: string) => {
     switch (status) {
       case 'completed': return <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />;
-      case 'processing': case 'pending': return <MapSpinner size={12} className="shrink-0" />;
+      case 'scoped_queued': case 'queued': case 'processing': case 'pending': return <MapSpinner size={12} className="shrink-0" />;
       case 'failed': return <AlertCircle className="w-3 h-3 text-destructive shrink-0" />;
       default: return null;
     }
@@ -111,7 +111,7 @@ export function TranscriptSidebar({ selectedItemId, selectedRunId, onSelectItem,
 
   const getItemCopywriteRuns = (itemId: string) =>
     runs.filter(r => r.itemId === itemId && r.type === 'copywrite' &&
-      (r.status === 'completed' || r.status === 'processing' || r.status === 'queued'));
+      (r.status === 'completed' || r.status === 'processing' || r.status === 'scoped_queued' || r.status === 'queued'));
 
   return (
     <div className="flex flex-col h-full">

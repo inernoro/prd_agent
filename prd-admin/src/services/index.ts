@@ -4,6 +4,7 @@ import type {
   GetSsoOptionsContract,
   LoginContract,
   MiduoPlanetLoginContract,
+  SyntheticLoginContract,
   ResetPasswordContract,
 } from '@/services/contracts/auth';
 import type {
@@ -298,7 +299,13 @@ import type {
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
 
-import { getSsoOptionsReal, loginReal, loginWithMiduoPlanetTokenReal, resetPasswordReal } from '@/services/real/auth';
+import {
+  getSsoOptionsReal,
+  loginReal,
+  loginWithMiduoPlanetTokenReal,
+  loginWithSyntheticTicketReal,
+  resetPasswordReal,
+} from '@/services/real/auth';
 import { createLlmGatewaySsoTicketReal } from '@/services/real/llmGatewaySso';
 import type { CreateLlmGatewaySsoTicketContract } from '@/services/contracts/llmGatewaySso';
 import {
@@ -465,7 +472,15 @@ import {
 } from '@/services/real/desktopAssets';
 import { uploadNoHeadAvatar as uploadNoHeadAvatarReal } from '@/services/real/avatarAssets';
 import { uploadUserAvatar as uploadUserAvatarReal } from '@/services/real/userAvatarUpload';
-import { uploadMyAvatar as uploadMyAvatarReal, updateMyAvatar as updateMyAvatarReal } from '@/services/real/profile';
+import {
+  applyGeneratedMyAvatar as applyGeneratedMyAvatarReal,
+  generateMyAvatarPreview as generateMyAvatarPreviewReal,
+  getPendingMyAvatarGenerationRunId as getPendingMyAvatarGenerationRunIdReal,
+  hasRecoverableMyAvatarGeneration as hasRecoverableMyAvatarGenerationReal,
+  resumeMyAvatarPreview as resumeMyAvatarPreviewReal,
+  uploadMyAvatar as uploadMyAvatarReal,
+  updateMyAvatar as updateMyAvatarReal,
+} from '@/services/real/profile';
 import { getDesktopBrandingSettings as getDesktopBrandingSettingsReal, updateDesktopBrandingSettings as updateDesktopBrandingSettingsReal } from '@/services/real/desktopBranding';
 import {
   listHomepageAssets as listHomepageAssetsReal,
@@ -826,6 +841,7 @@ function withAuth<TArgs extends unknown[], TResult>(
 export const login: LoginContract = loginReal;
 export const getSsoOptions: GetSsoOptionsContract = getSsoOptionsReal;
 export const loginWithMiduoPlanetToken: MiduoPlanetLoginContract = loginWithMiduoPlanetTokenReal;
+export const loginWithSyntheticTicket: SyntheticLoginContract = loginWithSyntheticTicketReal;
 export const resetPassword: ResetPasswordContract = resetPasswordReal;
 export const createLlmGatewaySsoTicket: CreateLlmGatewaySsoTicketContract = withAuth(createLlmGatewaySsoTicketReal);
 
@@ -1011,6 +1027,11 @@ export const uploadNoHeadAvatar: UploadNoHeadAvatarContract = withAuth(uploadNoH
 export const uploadUserAvatar: UploadUserAvatarContract = withAuth(uploadUserAvatarReal);
 export const uploadMyAvatar = withAuth(uploadMyAvatarReal);
 export const updateMyAvatar = withAuth(updateMyAvatarReal);
+export const generateMyAvatarPreview = withAuth(generateMyAvatarPreviewReal);
+export const resumeMyAvatarPreview = withAuth(resumeMyAvatarPreviewReal);
+export const getPendingMyAvatarGenerationRunId = getPendingMyAvatarGenerationRunIdReal;
+export const hasRecoverableMyAvatarGeneration = hasRecoverableMyAvatarGenerationReal;
+export const applyGeneratedMyAvatar = withAuth(applyGeneratedMyAvatarReal);
 
 export const getDesktopBrandingSettings: GetDesktopBrandingSettingsContract = withAuth(getDesktopBrandingSettingsReal);
 export const updateDesktopBrandingSettings: UpdateDesktopBrandingSettingsContract = withAuth(updateDesktopBrandingSettingsReal);

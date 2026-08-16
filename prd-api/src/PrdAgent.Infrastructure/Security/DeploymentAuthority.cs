@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using System.Globalization;
 
 namespace PrdAgent.Infrastructure.Security;
 
@@ -18,6 +19,17 @@ namespace PrdAgent.Infrastructure.Security;
 /// </summary>
 public static class DeploymentAuthority
 {
+    public const string AdoptLegacyTranscriptRunsKey = "Transcript:AdoptLegacyUnownedRuns";
+    public const string AdoptLegacyBranchOwnersKey = "Deployment:AdoptLegacyBranchOwners";
+    public const string RetiredLegacyBranchOwnerIdsKey = "Deployment:RetiredLegacyBranchOwnerIds";
+    public const string LegacyOwnerCreatedBeforeUtcKey = "Deployment:LegacyOwnerCreatedBeforeUtc";
+    private const string GitHubBranchKey = "Changelog:GitHubBranch";
+
+    // scoped_queued 在该时刻前已完成全链路上线。这个固定截止线只用于接管旧版
+    // queued 记录，不能随容器启动时间向后滑动，否则仍在线旧版本可以持续投递。
+    public static readonly DateTime LegacyTranscriptRolloutCreatedBeforeUtc =
+        new(2026, 8, 12, 19, 20, 0, DateTimeKind.Utc);
+
     /// <summary>
     /// 显式开关。设为 "true"/"false" 时优先于自动判定：
     /// 生产强制权威可写 true；某个分支想临时接管全局告警可写 true；反之写 false 彻底静默。
@@ -52,6 +64,97 @@ public static class DeploymentAuthority
     /// </summary>
     public static bool IsCdsBranchPreview(IConfiguration configuration)
         => string.IsNullOrWhiteSpace(ReadFirst(configuration, "CDS_PROJECT_ID")) is false;
+
+    /// <summary>
+    /// 历史无归属转写队列由每个环境唯一的迁移权威接管：正式环境本身，或 CDS 的 main。
+    /// 未显式配置时只迁移固定发布截止线之前的记录；显式 true 必须另配截止线，
+    /// 显式 false 可关闭迁移。CDS 功能分支永不参与，避免多分支争抢共享库任务。
+    /// </summary>
+    public static bool CanAdoptLegacyTranscriptRuns(IConfiguration configuration)
+        => GetLegacyTranscriptCreatedBeforeUtc(configuration) != null;
+
+    public static DateTime? GetLegacyTranscriptCreatedBeforeUtc(IConfiguration configuration)
+    {
+        if (!IsLegacyTranscriptMigrationAuthority(configuration)) return null;
+
+        var configured = configuration[AdoptLegacyTranscriptRunsKey];
+        if (bool.TryParse(configured, out var enabled))
+            return enabled ? GetLegacyOwnerCreatedBeforeUtcAllowingCdsMain(configuration) : null;
+
+        return LegacyTranscriptRolloutCreatedBeforeUtc;
+    }
+
+    private static bool IsLegacyTranscriptMigrationAuthority(IConfiguration configuration)
+    {
+        if (!IsCdsBranchPreview(configuration)) return true;
+        return string.Equals(
+            ReadFirst(configuration, GitHubBranchKey),
+            "main",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DateTime? GetLegacyOwnerCreatedBeforeUtcAllowingCdsMain(IConfiguration configuration)
+    {
+        var raw = configuration[LegacyOwnerCreatedBeforeUtcKey];
+        if (!DateTimeOffset.TryParse(
+                raw,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return null;
+        }
+
+        return parsed.UtcDateTime <= DateTime.UtcNow ? parsed.UtcDateTime : null;
+    }
+
+    /// <summary>
+    /// 部署域上线前的“仅分支名” owner 必须由一个显式获权的正式部署迁移，
+    /// 且只允许接管明确登记为已退役的 owner。不能用“没有部署域分隔符”推断分支已停止。
+    /// </summary>
+    public static bool CanAdoptLegacyBranchOwners(IConfiguration configuration)
+        => GetRetiredLegacyBranchOwnerIds(configuration).Count > 0
+           && GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration) != null;
+
+    public static IReadOnlyList<string> GetRetiredLegacyBranchOwnerIds(IConfiguration configuration)
+    {
+        if (!bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
+            || !enabled
+            || IsCdsBranchPreview(configuration)
+            || GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration) == null)
+            return [];
+        return (configuration[RetiredLegacyBranchOwnerIdsKey] ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(owner => !owner.Contains("::", StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// 旧 owner 接管只允许覆盖上线前已经存在的记录。缺少或无法解析 UTC 截止时间时，
+    /// 所有旧 owner 接管均关闭，避免仍在线的旧预览容器持续向生产投递新任务。
+    /// </summary>
+    public static DateTime? GetLegacyOwnerCreatedBeforeUtc(IConfiguration configuration)
+    {
+        if (IsCdsBranchPreview(configuration)) return null;
+        var raw = configuration[LegacyOwnerCreatedBeforeUtcKey];
+        if (!DateTimeOffset.TryParse(
+                raw,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed))
+        {
+            return null;
+        }
+        return parsed.UtcDateTime <= DateTime.UtcNow ? parsed.UtcDateTime : null;
+    }
+
+    public static DateTime? GetRetiredLegacyBranchOwnerCreatedBeforeUtc(IConfiguration configuration)
+        => bool.TryParse(configuration[AdoptLegacyBranchOwnersKey], out var enabled)
+           && enabled
+           && !IsCdsBranchPreview(configuration)
+            ? GetLegacyOwnerCreatedBeforeUtc(configuration)
+            : null;
 
     /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。

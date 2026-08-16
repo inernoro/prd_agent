@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Services;
@@ -120,11 +121,30 @@ public class SubtitleGenerationProcessor
             subtitleMd = SubtitleFormatter.FormatImageText(entry.Title, text);
         }
 
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            db,
+            run.SourceEntryId,
+            run.Kind,
+            CancellationToken.None);
+        await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+            db.DocumentStoreAgentRuns,
+            run,
+            CancellationToken.None);
         await UpdateProgressAsync(db, runStore, run, 85, "写入中");
+
+        async Task EnsurePublicationOwnershipAsync(CancellationToken cancellationToken)
+        {
+            await outputLease.EnsureHeldAsync(cancellationToken);
+            await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+                db.DocumentStoreAgentRuns,
+                run,
+                cancellationToken);
+        }
 
         // 4) 落库：创建新 entry 承载字幕
         var parsed = await _documentService.ParseAsync(subtitleMd);
         parsed.Title = BuildSubtitleTitle(entry.Title);
+        await EnsurePublicationOwnershipAsync(CancellationToken.None);
         await _documentService.SaveAsync(parsed);
 
         var newEntry = new DocumentEntry
@@ -147,6 +167,7 @@ public class SubtitleGenerationProcessor
                 ["source_entry_id"] = entry.Id,
             },
         };
+        await EnsurePublicationOwnershipAsync(CancellationToken.None);
         await db.DocumentEntries.InsertOneAsync(newEntry);
 
         // 更新知识库文档计数
@@ -168,12 +189,14 @@ public class SubtitleGenerationProcessor
             cancellationToken: CancellationToken.None);
 
         // 写回 Run 的 OutputEntryId
-        await db.DocumentStoreAgentRuns.UpdateOneAsync(
-            r => r.Id == run.Id,
+        var runWrite = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            DocumentStoreAgentWorker.CurrentExecutionFilter(run),
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.OutputEntryId, newEntry.Id)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
+        if (runWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
 
         _logger.LogInformation("[doc-store-agent] Subtitle generated for {EntryId} → {NewEntryId}, {Len} chars",
             entry.Id, newEntry.Id, subtitleMd.Length);
@@ -281,13 +304,37 @@ public class SubtitleGenerationProcessor
             }
         }
 
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            db,
+            DocumentStoreRunGenerationPublisher.ResolveGenerationEntryId(run),
+            run.Kind,
+            CancellationToken.None);
+        await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+            db.DocumentStoreAgentRuns,
+            run,
+            CancellationToken.None);
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
+
+        async Task EnsurePublicationOwnershipAsync(CancellationToken cancellationToken)
+        {
+            await outputLease.EnsureHeldAsync(cancellationToken);
+            await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+                db.DocumentStoreAgentRuns,
+                run,
+                cancellationToken);
+        }
 
         // 3) 落库：转录全文原地写回源音频 entry；整理结果存在时才附加。
         // DocumentEntry 允许 AttachmentId + DocumentId 并存：前者继续负责播放，后者承载正文。
         var noteMd = SubtitleFormatter.FormatTranscriptNote(entry.Title, summary, segments);
         await _applyService.SaveContentAsync(
-            entry, noteMd, run.UserId, db, preserveFileIdentity: true);
+            entry,
+            noteMd,
+            run.UserId,
+            db,
+            preserveFileIdentity: true,
+            expectedOutputGeneration: run.OutputGeneration,
+            beforeEntryWrite: EnsurePublicationOwnershipAsync);
 
         // 源音频 entry 标记「转录已写入本页」；值就是自身 Id，兼容旧前端读取同一 metadata key。
         // 定点 $set 单个键而非整字典回写：字幕/转录两个处理器可能并行更新同一 entry 的
@@ -308,18 +355,25 @@ public class SubtitleGenerationProcessor
                 selectedStyleKey == null
                     ? Builders<DocumentEntry>.Update.Unset(e => e.Metadata["transcribe_style_key"])
                     : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_style_key"], selectedStyleKey));
-        await db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entry.Id,
+        await EnsurePublicationOwnershipAsync(CancellationToken.None);
+        var metadataWrite = await db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entry.Id && e.AgentOutputGeneration == run.OutputGeneration,
             metaUpdate,
             cancellationToken: CancellationToken.None);
+        if (metadataWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
 
         await db.DocumentStores.UpdateOneAsync(
             s => s.Id == entry.StoreId,
             Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 
-        await db.DocumentStoreAgentRuns.UpdateOneAsync(
-            r => r.Id == run.Id,
+        var runWrite = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                DocumentStoreAgentWorker.CurrentExecutionFilter(run),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    candidate => candidate.OutputGeneration,
+                    run.OutputGeneration)),
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.OutputEntryId, entry.Id)
                 .Set(r => r.GeneratedText, summary)
@@ -327,6 +381,8 @@ public class SubtitleGenerationProcessor
                 .Set(r => r.TranscriptText, transcriptPlain.Length > 60000 ? transcriptPlain[..60000] : transcriptPlain)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
+        if (runWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
 
         // 若对象归档先完成，转录就是最后一个分片读取者，应立即释放 Mongo 音频。
         // 若归档仍在进行则保留；归档端完成后会回读本 run 的 OutputEntryId 并清理。
@@ -393,8 +449,9 @@ public class SubtitleGenerationProcessor
 
         // 笔记正文是用户可编辑的权威原文：优先读取当前「转录全文」，run 快照只做老数据兜底。
         // 否则用户刚校对的内容会在下一次一键整理时被旧 ASR 快照悄悄覆盖语义。
-        var transcript = TranscribeNoteText.ExtractTranscriptFromNote(noteMd);
-        if (string.IsNullOrWhiteSpace(transcript)) transcript = prior.TranscriptText;
+        var usedLegacyTranscriptFallback = string.IsNullOrWhiteSpace(
+            TranscribeNoteText.ExtractTranscriptFromNote(noteMd));
+        var transcript = TranscribeNoteText.ResolveTranscriptForRestyle(noteMd, prior.TranscriptText);
         if (string.IsNullOrWhiteSpace(transcript))
             throw new InvalidOperationException("找不到原转录文本（笔记可能被改动过），请对源音频重新发起转录");
 
@@ -403,14 +460,47 @@ public class SubtitleGenerationProcessor
         if (string.IsNullOrWhiteSpace(summary))
             throw new InvalidOperationException("整理结果为空，请换个方式重试");
 
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            db,
+            DocumentStoreRunGenerationPublisher.ResolveGenerationEntryId(run),
+            run.Kind,
+            CancellationToken.None);
+        await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+            db.DocumentStoreAgentRuns,
+            run,
+            CancellationToken.None);
+        async Task EnsurePublicationOwnershipAsync(CancellationToken cancellationToken)
+        {
+            await outputLease.EnsureHeldAsync(cancellationToken);
+            await DocumentStoreAgentWorker.EnsureCurrentExecutionAsync(
+                db.DocumentStoreAgentRuns,
+                run,
+                cancellationToken);
+        }
+        var latestNoteEntry = await db.DocumentEntries
+            .Find(e => e.Id == noteEntry.Id)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (latestNoteEntry == null)
+            throw new InvalidOperationException("转录笔记已被删除，无法重新整理");
+        var latestNoteMd = await _applyService.LoadContentAsync(latestNoteEntry);
+        var latestTranscript = TranscribeNoteText.ResolveTranscriptForRestylePublication(
+            latestNoteMd,
+            prior.TranscriptText,
+            usedLegacyTranscriptFallback);
+        if (!string.Equals(latestTranscript?.Trim(), transcript.Trim(), StringComparison.Ordinal))
+        {
+            throw new DocumentStoreRunLeaseLostException(run.Id);
+        }
         await UpdateProgressAsync(db, runStore, run, 90, "写入中");
-        var newNoteMd = TranscribeNoteText.ReplaceSummarySection(noteMd, summary);
+        var newNoteMd = TranscribeNoteText.ReplaceSummarySection(latestNoteMd, summary);
         await _applyService.SaveContentAsync(
-            noteEntry,
+            latestNoteEntry,
             newNoteMd,
             run.UserId,
             db,
-            preserveFileIdentity: !string.IsNullOrEmpty(noteEntry.AttachmentId));
+            preserveFileIdentity: !string.IsNullOrEmpty(latestNoteEntry.AttachmentId),
+            expectedOutputGeneration: run.OutputGeneration,
+            beforeEntryWrite: EnsurePublicationOwnershipAsync);
 
         // 播放器页签必须展示这份摘要真实使用的后端整理方式，不能在前端猜测。
         // 旧条目 Metadata 可能为 null，沿用转录写入时的兼容策略。
@@ -421,24 +511,33 @@ public class SubtitleGenerationProcessor
                 ["transcribe_style_key"] = styleKey,
             })
             : Builders<DocumentEntry>.Update.Set(e => e.Metadata["transcribe_style_key"], styleKey);
-        await db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == noteEntry.Id,
+        await EnsurePublicationOwnershipAsync(CancellationToken.None);
+        var metadataWrite = await db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == latestNoteEntry.Id && e.AgentOutputGeneration == run.OutputGeneration,
             styleMetaUpdate,
             cancellationToken: CancellationToken.None);
+        if (metadataWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
 
-        await db.DocumentStoreAgentRuns.UpdateOneAsync(
-            r => r.Id == run.Id,
+        var runWrite = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            Builders<DocumentStoreAgentRun>.Filter.And(
+                DocumentStoreAgentWorker.CurrentExecutionFilter(run),
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    candidate => candidate.OutputGeneration,
+                    run.OutputGeneration)),
             Builders<DocumentStoreAgentRun>.Update
-                .Set(r => r.OutputEntryId, noteEntry.Id)
+                .Set(r => r.OutputEntryId, latestNoteEntry.Id)
                 .Set(r => r.GeneratedText, summary)
                 // 链式重整理：把转录文本继续带在新 run 上，下一次 restyle 不必回溯最初 run
                 .Set(r => r.TranscriptText, transcript)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
+        if (runWrite.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
 
         _logger.LogInformation(
             "[doc-store-agent] Transcript restyled: run={RunId} prior={PriorId} entry={EntryId} style={Style}",
-            run.Id, prior.Id, noteEntry.Id, run.TemplateKey ?? "general");
+            run.Id, prior.Id, latestNoteEntry.Id, run.TemplateKey ?? "general");
     }
 
     // 摘要节替换 / 转录全文反解 / 静音判定 / 风格提示词组装：纯函数下沉到
@@ -535,6 +634,16 @@ public class SubtitleGenerationProcessor
         _logger.LogInformation(
             "[doc-store-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes} isVideo={IsVideo}",
             sourceBytes, bytes.Length, isVideo);
+        if (AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(bytes))
+        {
+            throw new SubtitleAsrException(
+                "没有识别到有效语音：完整音频经信号检测确认为静音或音量过低。",
+                new Dictionary<string, object?>
+                {
+                    ["stage"] = "audio-signal-gate",
+                    ["reason"] = "no-speech",
+                });
+        }
 
         // 解析 ASR 模型 —— 每个受治理调用标识只解析一次完整候选计划，发送阶段复用已解析结果。
         //
@@ -664,6 +773,19 @@ public class SubtitleGenerationProcessor
 
             try
             {
+                if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                        candidate.ActualModel,
+                        candidate.Protocol,
+                        candidate.PlatformType,
+                        candidate.OfferingEndpointPath,
+                        candidate.IsExchange,
+                        out var routeError))
+                {
+                    throw new SubtitleAsrException(
+                        routeError ?? "ASR Offering 端点与模型协议不兼容",
+                        BuildResolverDiagnostic(candidate, AsrRequestContractPolicy.InvalidRouteErrorCode));
+                }
+
                 var segments = await TranscribeWithResolutionAsync(
                     run,
                     audioBytes,
@@ -734,6 +856,9 @@ public class SubtitleGenerationProcessor
             }
             catch (SubtitleAsrException ex)
             {
+                ex.Diagnostic.TryGetValue("reason", out var failureStage);
+                if (failureStage is not string)
+                    ex.Diagnostic.TryGetValue("stage", out failureStage);
                 failures.Add(new Dictionary<string, object?>
                 {
                     ["attempt"] = index + 1,
@@ -742,20 +867,29 @@ public class SubtitleGenerationProcessor
                     ["platformId"] = candidate.ActualPlatformId,
                     ["platformName"] = candidate.ActualPlatformName,
                     ["exchangeTransformerType"] = candidate.ExchangeTransformerType,
+                    ["stage"] = failureStage,
                     ["error"] = ex.Message,
                 });
 
                 if (index == candidates.Count - 1)
                 {
-                    if (candidates.Count == 1)
-                        throw;
-
                     var diagnostic = new Dictionary<string, object?>(ex.Diagnostic)
                     {
                         ["fallbackAttempts"] = failures,
                     };
+                    var allCandidatesReturnedNoSpeech = failures.Count == candidates.Count
+                        && failures.All(failure =>
+                            failure.GetValueOrDefault("stage") is string stage
+                            && (string.Equals(stage, "empty-content", StringComparison.Ordinal)
+                                || string.Equals(stage, "no-speech-content", StringComparison.Ordinal)
+                                || string.Equals(stage, "no-speech", StringComparison.Ordinal)));
+                    var message = allCandidatesReturnedNoSpeech
+                        ? $"{AudioTranscriptionUserError.AllCandidatesNoSpeech}: 所有 ASR 候选均成功响应但没有识别出有效语音"
+                        : candidates.Count == 1
+                            ? ex.Message
+                            : $"自动尝试 {candidates.Count} 个 ASR 方案仍失败：{ex.Message}";
                     throw new SubtitleAsrException(
-                        $"自动尝试 {candidates.Count} 个 ASR 方案仍失败：{ex.Message}",
+                        message,
                         diagnostic);
                 }
 
@@ -802,12 +936,8 @@ public class SubtitleGenerationProcessor
                 case "doubao-asr-stream":
                     // WebSocket 协议由 LlmGateway/llmgw-serve 执行；本处理器仍只提交 GatewayRawRequest。
                     return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode,
-                        new Dictionary<string, object>
-                        {
-                            ["model"] = resolution.ActualModel ?? "doubao-asr-stream",
-                            ["response_format"] = "verbose_json",
-                            ["timestamp_granularities[]"] = "segment",
-                        });
+                        AsrRequestContractPolicy.BuildTranscriptionFields(
+                            resolution.ActualModel ?? "doubao-asr-stream"));
 
                 case "doubao-asr":
                     // doubao-asr 异步模式 ≠ Whisper multipart：DoubaoAsrTransformer.TransformRequest
@@ -847,13 +977,7 @@ public class SubtitleGenerationProcessor
             "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
             resolution.ActualModel, resolution.ActualPlatformName);
         return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(), appCallerCode,
-            new Dictionary<string, object>
-            {
-                ["model"] = resolution.ActualModel ?? "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = ""
-            });
+            AsrRequestContractPolicy.BuildTranscriptionFields(resolution.ActualModel));
     }
 
     // ──────────────────────────────────────────────────────
@@ -878,9 +1002,12 @@ public class SubtitleGenerationProcessor
         // 平台依赖 magic bytes 解码（你传 m4a 字节 + audio/wav 标签也能转录），mime 字段等同身份证不等同实际内容。
         var rawRequest = new GatewayRawRequest
         {
+            RequiredOfferingId = gwResolution.OfferingId,
+            PinnedPlatformId = gwResolution.ActualPlatformId,
+            PinnedModelId = gwResolution.ActualModel,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/audio/transcriptions",
+            EndpointPath = AsrRequestContractPolicy.TranscriptionsEndpoint,
             IsMultipart = true,
             MultipartFields = multipartFields,
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
@@ -938,7 +1065,9 @@ public class SubtitleGenerationProcessor
                             : speakerNode.GetRawText()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            start, end, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             // 没有 segments 数组就用 text 兜底
@@ -980,7 +1109,7 @@ public class SubtitleGenerationProcessor
                 appCallerCode,
                 BuildChatAudioPrompt(attempt));
             lastResponse = result.Response;
-            if (!result.Text.Trim().Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase))
+            if (!TranscribeNoteText.IsNoSpeechSentinel(result.Text))
             {
                 transcript = result.Text.Trim();
                 break;
@@ -1015,8 +1144,14 @@ public class SubtitleGenerationProcessor
             if (ContainsExplicitSpeakerLabel(diarized.Text))
             {
                 var parsed = ParseChatAudioSpeakerSegments(diarized.Text);
-                if (CountSpeakers(parsed) > 1)
+                if (CountSpeakers(parsed) > 1 && !HasHallucinatedSpeakerSplit(parsed))
                     return parsed;
+
+                if (CountSpeakers(parsed) > 1)
+                    _logger.LogWarning(
+                        "[doc-store-agent] chat 音频角色增强给出的切分不含信息（不同说话人内容完全相同），"
+                        + "按未切分处理 run={RunId}",
+                        run.Id);
             }
 
             _logger.LogWarning(
@@ -1032,6 +1167,50 @@ public class SubtitleGenerationProcessor
         }
 
         return new List<SubtitleSegment> { new(0, 0, transcript, "说话人1") };
+    }
+
+    /// <summary>
+    /// 这份「切分」是不是模型编出来的。
+    ///
+    /// 真实发生过：一段单人录音，模型返回 说话人1 说了 A、B，说话人2 也说了 A、B——
+    /// 同一批句子原样复制给两个人。这种切分不含任何信息，却会让界面言之凿凿地
+    /// 显示「两位说话人」，正是「说话人推断是真的吗」要防的那种编造。
+    ///
+    /// 判据要求**整份切分**都是同一批内容的复制（每个说话人的内容集合彼此完全相同），
+    /// 而不是「任意两个人撞上就算」。
+    ///
+    /// 为什么不能按「任意一对相同」判：三人及以上的真实录音里，完全可能有两位只应了同样的
+    /// 一声「嗯」「对」，而第三位讲了实质内容。此时那两位撞车恰恰不是复读式幻觉——第三组
+    /// 内容正好证明模型没在整份复制。而调用方拿到 true 会把**整份**多人切分丢掉、退回单说话人，
+    /// 于是一份真实的三人切分因为两句附和就被判死。（形状 1：判据比它该管的范围宽。）
+    /// </summary>
+    internal static bool HasHallucinatedSpeakerSplit(IReadOnlyList<SubtitleSegment> segments)
+    {
+        static string Normalize(string? text) =>
+            new string((text ?? string.Empty).Where(ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch)).ToArray());
+
+        var bySpeaker = segments
+            .Where(s => !string.IsNullOrWhiteSpace(s.SpeakerId))
+            .GroupBy(s => s.SpeakerId!, StringComparer.Ordinal)
+            .Select(g => new
+            {
+                Speaker = g.Key,
+                Content = g.Select(s => Normalize(s.Text)).Where(t => t.Length > 0).OrderBy(t => t, StringComparer.Ordinal).ToList(),
+            })
+            .Where(x => x.Content.Count > 0)
+            .ToList();
+
+        // 少于两组说不上「复制」；这条不该由本判据拦（多人判定由调用方的 CountSpeakers 负责）
+        if (bySpeaker.Count < 2) return false;
+
+        // 整份都是同一批内容才算编造：只要有任意一组与第一组不同，就说明模型确实区分了内容，
+        // 那份切分即便有两个人撞车也不该整份丢掉。
+        var first = bySpeaker[0].Content;
+        for (var i = 1; i < bySpeaker.Count; i++)
+        {
+            if (!bySpeaker[i].Content.SequenceEqual(first, StringComparer.Ordinal)) return false;
+        }
+        return true;
     }
 
     private static int CountSpeakers(IEnumerable<SubtitleSegment> segments)
@@ -1161,9 +1340,12 @@ public class SubtitleGenerationProcessor
         };
         var rawRequest = new GatewayRawRequest
         {
+            RequiredOfferingId = gwResolution.OfferingId,
+            PinnedPlatformId = gwResolution.ActualPlatformId,
+            PinnedModelId = gwResolution.ActualModel,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/chat/completions",
+            EndpointPath = AsrRequestContractPolicy.ChatCompletionsEndpoint,
             IsMultipart = false,
             RequestBody = requestBody,
             TimeoutSeconds = 600,
@@ -1209,13 +1391,20 @@ public class SubtitleGenerationProcessor
         var segments = new List<SubtitleSegment>();
         string? activeSpeaker = null;
         var activeText = new StringBuilder();
+        // 见过第一条说话人标签之前，攒下的都是模型的开场白（「好的，我会根据不同声音…」），
+        // 不是录音内容。此前它会被当成一个无说话人的段落 flush 进产物，
+        // 直接出现在用户看到的转录全文里。
+        var sawSpeaker = false;
 
         void Flush()
         {
             var content = activeText.ToString().Trim();
-            if (!string.IsNullOrWhiteSpace(content))
-                segments.Add(new SubtitleSegment(0, 0, content, activeSpeaker));
             activeText.Clear();
+            if (string.IsNullOrWhiteSpace(content)) return;
+            if (string.IsNullOrWhiteSpace(activeSpeaker) && sawSpeaker) return;
+            segments.Add(new SubtitleSegment(
+                0, 0, content, activeSpeaker,
+                string.IsNullOrWhiteSpace(activeSpeaker) ? null : SpeakerSources.Model));
         }
 
         foreach (var rawLine in text.Replace("\r", string.Empty, StringComparison.Ordinal).Split('\n'))
@@ -1226,6 +1415,10 @@ public class SubtitleGenerationProcessor
             var parsed = TryParseSpeakerLine(line);
             if (parsed != null)
             {
+                // 顺序要紧：先立起 sawSpeaker 再 Flush。
+                // 反过来写的话，第一次 Flush（冲的正是开场白）看到的 sawSpeaker 还是 false，
+                // 开场白照样被放行——这条顺序错误就是被本文件配套用例抓出来的。
+                sawSpeaker = true;
                 Flush();
                 activeSpeaker = parsed.Value.Speaker;
                 activeText.Append(parsed.Value.Text);
@@ -1314,6 +1507,9 @@ public class SubtitleGenerationProcessor
 
         var rawRequest = new GatewayRawRequest
         {
+            RequiredOfferingId = gwResolution.OfferingId,
+            PinnedPlatformId = gwResolution.ActualPlatformId,
+            PinnedModelId = gwResolution.ActualModel,
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Asr,
             RequestBody = requestBody,
@@ -1370,7 +1566,9 @@ public class SubtitleGenerationProcessor
                         ? speakerNode.GetString()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(start, end, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            start, end, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             if (segments.Count == 0 && root.TryGetProperty("text", out var normalizedText))
@@ -1392,7 +1590,9 @@ public class SubtitleGenerationProcessor
                         ? speakerNode.ToString()
                         : null;
                     if (!string.IsNullOrWhiteSpace(text))
-                        segments.Add(new SubtitleSegment(startMs / 1000.0, endMs / 1000.0, text.Trim(), speaker));
+                        segments.Add(new SubtitleSegment(
+                            startMs / 1000.0, endMs / 1000.0, text.Trim(), speaker,
+                            string.IsNullOrWhiteSpace(speaker) ? null : SpeakerSources.Native));
                 }
             }
             // 兜底：从 result.text 取整段文本（无时间戳）
@@ -1478,7 +1678,7 @@ public class SubtitleGenerationProcessor
     private static Dictionary<string, object?> BuildHttpDiagnostic(
         GatewayModelResolution gwResolution, GatewayRawResponse? rawResp, Dictionary<string, object> fields)
     {
-        return new Dictionary<string, object?>
+        var diagnostic = new Dictionary<string, object?>
         {
             ["stage"] = "whisper-http",
             ["model"] = gwResolution?.ActualModel,
@@ -1494,6 +1694,9 @@ public class SubtitleGenerationProcessor
             // 排查提示：当响应体含"暂不支持该接口/不支持/not supported"等字样时，多半是平台路由问题
             ["hint"] = "如错误为「暂不支持该接口」，请检查模型池的平台 baseUrl 是否指向真支持 /v1/audio/transcriptions 的服务（如 https://api.gpt.ge / api.openai.com / api.groq.com/openai）",
         };
+        if (fields.TryGetValue("reason", out var reason))
+            diagnostic["reason"] = reason;
+        return diagnostic;
     }
 
     /// <summary>
@@ -1615,12 +1818,15 @@ public class SubtitleGenerationProcessor
         MongoDbContext db, IRunEventStore runStore, DocumentStoreAgentRun run,
         int progress, string phase)
     {
-        await db.DocumentStoreAgentRuns.UpdateOneAsync(
-            r => r.Id == run.Id,
+        var result = await db.DocumentStoreAgentRuns.UpdateOneAsync(
+            DocumentStoreAgentWorker.CurrentExecutionFilter(run),
             Builders<DocumentStoreAgentRun>.Update
                 .Set(r => r.Progress, progress)
-                .Set(r => r.Phase, phase),
+                .Set(r => r.Phase, phase)
+                .Set(r => r.HeartbeatAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (result.MatchedCount == 0)
+            throw new DocumentStoreRunLeaseLostException(run.Id);
         try
         {
             // 事件 kind 按 run.Kind 路由（subtitle 与 transcribe 共用本处理器的 ASR 内部方法）
@@ -1632,11 +1838,44 @@ public class SubtitleGenerationProcessor
     }
 }
 
-public record SubtitleSegment(double StartSec, double EndSec, string Text, string? SpeakerId = null);
+public record SubtitleSegment(
+    double StartSec,
+    double EndSec,
+    string Text,
+    string? SpeakerId = null,
+    string? SpeakerSource = null);
+
+/// <summary>
+/// 说话人标签是怎么来的。三条路径的可信度差一个量级，UI 必须能分辨——
+/// 否则「上游原生识别」和「本地按语速比例推算」在界面上长得一模一样，
+/// 用户没有任何线索判断该不该信（no-rootless-tree / expectation-management）。
+///
+/// 判据只有一条：**谁产出这批 segment，谁在产出处盖戳**。禁止事后从别处猜来源。
+/// </summary>
+public static class SpeakerSources
+{
+    /// <summary>上游 ASR 直接返回的说话人字段（豆包 speaker / speaker_id、Whisper 兼容 speaker）。</summary>
+    public const string Native = "native";
+
+    /// <summary>多模态音频模型重听整段音频后按声音切分的结果——真听了，但仍是模型判断。</summary>
+    public const string Model = "model";
+
+    /// <summary>本地声纹兜底：分簇来自真实声学特征，每句归属按字数比例摊到语音段上。</summary>
+    public const string Local = "local";
+
+    /// <summary>供 Markdown 笔记展示的人话说明。产出端只盖 key，说明文案在这里统一维护。</summary>
+    public static string? Describe(string? source) => source switch
+    {
+        Native => "原生识别 · 由语音识别服务直接返回，逐句归属可信",
+        Model => "模型重听 · 音频模型重新听完整段后按声音切分，属模型判断",
+        Local => "声纹估算 · 本地按声纹分出几种声音是真实声学结果，但每句归谁是按语速比例推算的，可能与实际不符",
+        _ => null,
+    };
+}
 
 /// <summary>
 /// 字幕生成 ASR 阶段失败时抛出的异常，携带可观测的 diagnostic 数据，
-/// 由 DocumentStoreAgentWorker.cs 的 catch 透传到 SSE error / run.errorMessage。
+/// 仅供服务端排障使用；DocumentStoreAgentWorker 不得把它写入 SSE 或普通用户可读任务字段。
 /// </summary>
 public class SubtitleAsrException : Exception
 {

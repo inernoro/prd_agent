@@ -80,6 +80,15 @@ public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeIn
         return await _inner.TryReadByShaAsync(sha256, ct, domain, type);
     }
 
+    public Task<AssetReadHandle?> TryOpenReadByShaAsync(
+        string sha256,
+        CancellationToken ct,
+        string? domain = null,
+        string? type = null)
+    {
+        return _inner.TryOpenReadByShaAsync(sha256, ct, domain, type);
+    }
+
     public async Task DeleteByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         await _inner.DeleteByShaAsync(sha256, ct, domain, type);

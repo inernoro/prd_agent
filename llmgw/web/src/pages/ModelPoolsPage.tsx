@@ -14,11 +14,12 @@
 //     卡片内边距只允许 CARD_PADDING(14) 与嵌套块 INSET_PADDING(10) 两种。
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
+import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, deletePool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, recoverPoolModel, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
 import type { ExchangeItem, ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo, PoolTypesData } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { healthChip } from '@/components/poolsHelpers';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { BODY_TEXT, FIELD_INPUT, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
@@ -65,6 +66,7 @@ export function ModelPoolsPage() {
   const { tenant } = useAuth();
   const navigate = useNavigate();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { confirm, promptText } = useDialogs();
   const [pools, setPools] = useState<ModelPool[] | null>(null);
   const [poolTypes, setPoolTypes] = useState<PoolTypesData | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
@@ -96,7 +98,10 @@ export function ModelPoolsPage() {
       if (typeRes.success) setPoolTypes(typeRes.data);
       const exchangeCandidates = exchangeRes.success ? toExchangeModelCandidates(exchangeRes.data.items) : [];
       setModels([...(modelRes.success ? modelRes.data.items : []), ...exchangeCandidates]);
-      if (parameterRes.success) setParameterMeta(parameterRes.data.items);
+      if (parameterRes.success) {
+        setParameterMeta(parameterRes.data.items.filter((item) =>
+          !isImageSizeControlParameter(`parameter:${item.name}`)));
+      }
     });
     return () => {
       alive = false;
@@ -131,6 +136,30 @@ export function ModelPoolsPage() {
     } else {
       setToast(res.error?.message || '操作失败');
     }
+  }
+
+  // 删除模型池。后端把「它是某类型的当前默认池」和「还有 appCaller 绑着它」分开报，
+  // 因为前者要先改默认、后者要先解绑，补救动作不一样，合并成一句会让运维不知道先做哪个。
+  async function removePool(pool: ModelPool) {
+    const label = pool.name || pool.code || pool.id;
+    const typed = await promptText({
+      title: `删除模型池「${label}」`,
+      description: `它的 ${pool.models.length} 个成员配置一并消失，无法撤销。`,
+      inputLabel: '确认请输入模型池名称',
+      requireExact: label,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== label) { setToast('输入的名称不一致，已取消删除'); return; }
+    setBusyId(pool.id);
+    setToast(null);
+    const res = await deletePool(pool.id);
+    setBusyId(null);
+    if (!res.success) { setToast(res.error?.message || '删除失败'); return; }
+    setDrawer(null);
+    setPools((prev) => (prev ? prev.filter((x) => x.id !== pool.id) : prev));
+    setToast(`已删除模型池「${label}」`);
   }
 
   async function claimPool(pool: ModelPool) {
@@ -315,6 +344,10 @@ export function ModelPoolsPage() {
       setToast('优先级必须是正整数');
       return;
     }
+    if (containsImageSizeControlParameter(draft.parameterCapabilities)) {
+      setToast('图片尺寸能力请在模型高级配置中维护，不能写入模型池成员');
+      return;
+    }
     setBusyId(pool.id);
     setToast(null);
     const res = await upsertPoolModel(pool.id, {
@@ -343,7 +376,7 @@ export function ModelPoolsPage() {
       setToast('最大数量必须是正整数');
       return;
     }
-    if (!window.confirm(`批量导入「${pool.name}」的模型池成员？`)) return;
+    if (!await confirm({ title: `批量导入「${pool.name}」的模型池成员？`, description: '按当前筛选把匹配的模型追加进这个池。', confirmLabel: '批量导入' })) return;
     setBusyId(`pool-bulk-import:${pool.id}`);
     setToast(null);
     const res = await bulkImportPoolModels(pool.id, {
@@ -371,9 +404,13 @@ export function ModelPoolsPage() {
       setToast('优先级必须是正整数');
       return;
     }
+    const parameterCapabilities = memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities);
+    if (containsImageSizeControlParameter(parameterCapabilities)) {
+      setToast('图片尺寸能力请在模型高级配置中维护，不能写入模型池成员');
+      return;
+    }
     setBusyId(key);
     setToast(null);
-    const parameterCapabilities = memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities);
     const res = await upsertPoolModel(pool.id, {
       modelId: member.modelId,
       platformId: member.platformId,
@@ -428,6 +465,20 @@ export function ModelPoolsPage() {
       setToast(`已从「${res.data.name}」移除「${member.modelId}」`);
     } else {
       setToast(res.error?.message || '操作失败');
+    }
+  }
+
+  async function recoverUnavailablePoolModel(pool: ModelPool, member: PoolModelInfo) {
+    const key = memberKey(pool.id, member);
+    setBusyId(key);
+    setToast(null);
+    const res = await recoverPoolModel(pool.id, member.modelId, member.platformId);
+    setBusyId(null);
+    if (res.success) {
+      setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? mergePoolMutation(x, res.data) : x)) : prev));
+      setToast(`已将「${member.modelId}」恢复为候选，真实请求验证健康状态`);
+    } else {
+      setToast(res.error?.message || '恢复失败');
     }
   }
 
@@ -549,6 +600,7 @@ export function ModelPoolsPage() {
                 <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap', margin: `${GAP.section}px 0` }}>
                   {canWrite ? (selectedPool.authority === 'llm_gateway' ? <Button size="sm" variant="secondary" onClick={() => (editDrafts[selectedPool.id] ? cancelEditPool(selectedPool.id) : startEditPool(selectedPool))}>{editDrafts[selectedPool.id] ? '取消编辑' : '编辑属性'}</Button> : <Button size="sm" variant="secondary" disabled={busyId === selectedPool.id} onClick={() => void claimPool(selectedPool)}>导入为可维护配置</Button>) : null}
                   {canWrite && !selectedPool.isDefaultForType ? <Button size="sm" variant="ghost" disabled={busyId === selectedPool.id} onClick={() => void makeDefault(selectedPool)}>设为默认池</Button> : null}
+                  {canWrite && selectedPool.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" disabled={busyId === selectedPool.id} onClick={() => void removePool(selectedPool)}>删除</Button> : null}
                   <Link to={`/app-callers?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-secondary)', textDecoration: 'none' }}>查看 appCaller</Link>
                   <Link to={`/logs?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-secondary)', textDecoration: 'none' }}>查看请求记录</Link>
                 </div>
@@ -563,7 +615,7 @@ export function ModelPoolsPage() {
                   </DetailsBlock>
                 ) : null}
                 <h3 style={{ ...SECTION_TITLE, margin: `${GAP.page}px 0 ${GAP.normal}px` }}>模型成员</h3>
-                <PoolMembers pool={selectedPool} busyId={busyId} canWrite={canWrite} memberPriorities={memberPriorities} memberParameterCaps={memberParameterCaps} onPriorityChange={(key, value) => setMemberPriorities((prev) => ({ ...prev, [key]: value }))} onParameterChange={(key, value) => setMemberParameterCaps((prev) => ({ ...prev, [key]: value }))} onCurrencyChange={updateMemberPriceCurrency} onSave={savePoolModelPriority} onDelete={deletePoolModel} />
+                <PoolMembers pool={selectedPool} busyId={busyId} canWrite={canWrite} memberPriorities={memberPriorities} memberParameterCaps={memberParameterCaps} onPriorityChange={(key, value) => setMemberPriorities((prev) => ({ ...prev, [key]: value }))} onParameterChange={(key, value) => setMemberParameterCaps((prev) => ({ ...prev, [key]: value }))} onCurrencyChange={updateMemberPriceCurrency} onSave={savePoolModelPriority} onRecover={recoverUnavailablePoolModel} onDelete={deletePoolModel} />
                 {canWrite && selectedPool.authority === 'llm_gateway' ? <details style={{ marginTop: GAP.page, borderTop: '1px solid var(--border-subtle)', paddingTop: INSET_PADDING }}><summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)' }}>高级成员维护</summary><div style={{ marginTop: INSET_PADDING }}><PoolBulkImportBar pool={selectedPool} platformIds={platformIds} draft={bulkImportDrafts[selectedPool.id] || emptyBulkImportDraft()} busyId={busyId} onDraftChange={(next) => setBulkImportDrafts((prev) => ({ ...prev, [selectedPool.id]: next }))} onImport={() => void bulkImportModels(selectedPool)} /></div></details> : null}
               </>
             ) : <Empty text="模型池不存在或已被移除" />}
@@ -607,12 +659,12 @@ function CardStat({ label, value }: { label: string; value: string }) {
 
 function PoolDetailSummary({ pool }: { pool: ModelPool }) {
   const status = poolHealthChip(pool);
-  return <section style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal, padding: CARD_PADDING, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)' }}><div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}><Chip label={status.label} color={status.color} bg={status.bg} /><Chip label={STRATEGY_LABEL[pool.strategyType] || `策略 ${pool.strategyType}`} color="var(--text-secondary)" bg="var(--bg-surface)" />{/* 只读角色看不到编辑栏，策略说明在这里也要够得着。 */}<StrategyHelp />{pool.isDefaultForType ? <Chip label={`${pool.modelType} 默认池`} color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-surface)" /> : null}</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: GAP.normal }}><CardStat label="绑定 appCaller" value={`${pool.boundAppCallerCount} 个`} /><CardStat label="近 7 天请求" value={`${pool.recentRequests} 次`} /><CardStat label="成功率" value={pool.recentSuccessRatePercent == null ? '暂无数据' : `${pool.recentSuccessRatePercent}%`} /><CardStat label="成员健康" value={`${pool.healthyMembers} 健康 / ${pool.unavailableMembers} 不可用`} /></div>{pool.boundAppCallers.length ? <div style={BODY_TEXT}>服务对象：{pool.boundAppCallers.map((caller) => caller.title || caller.appCallerCode).join('、')}{pool.boundAppCallerCount > pool.boundAppCallers.length ? ` 等 ${pool.boundAppCallerCount} 个` : ''}</div> : <div style={{ ...BODY_TEXT, color: '#d29922' }}>尚无绑定的 appCaller。若为默认池，仍可能承接同类型自动路由。</div>}</section>;
+  return <section style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal, padding: CARD_PADDING, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)' }}><div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}><Chip label={status.label} color={status.color} bg={status.bg} /><Chip label={STRATEGY_LABEL[pool.strategyType] || `策略 ${pool.strategyType}`} color="var(--text-secondary)" bg="var(--bg-surface)" />{/* 只读角色看不到编辑栏，策略说明在这里也要够得着。 */}<StrategyHelp />{pool.isDefaultForType ? <Chip label={`${pool.modelType} 默认池`} color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-surface)" /> : null}</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: GAP.normal }}><CardStat label="绑定 appCaller" value={`${pool.boundAppCallerCount} 个`} /><CardStat label="近 7 天请求" value={`${pool.recentRequests} 次`} /><CardStat label="近 10 次成功率" value={pool.recentTenSuccessRatePercent == null ? '暂无数据' : `${pool.recentTenSuccessRatePercent}%`} /><CardStat label="耗时" value={pool.averageDurationMs == null ? '暂无数据' : `${(pool.averageDurationMs / 1000).toFixed(1)} 秒`} /><CardStat label="成员健康" value={`${pool.healthyMembers} 健康 / ${pool.unavailableMembers} 不可用`} /></div>{pool.boundAppCallers.length ? <div style={BODY_TEXT}>服务对象：{pool.boundAppCallers.map((caller) => caller.title || caller.appCallerCode).join('、')}{pool.boundAppCallerCount > pool.boundAppCallers.length ? ` 等 ${pool.boundAppCallerCount} 个` : ''}</div> : <div style={{ ...BODY_TEXT, color: '#d29922' }}>尚无绑定的 appCaller。若为默认池，仍可能承接同类型自动路由。</div>}</section>;
 }
 
-function PoolMembers({ pool, busyId, canWrite, memberPriorities, memberParameterCaps, onPriorityChange, onParameterChange, onCurrencyChange, onSave, onDelete }: { pool: ModelPool; busyId: string | null; canWrite: boolean; memberPriorities: Record<string, string>; memberParameterCaps: Record<string, string>; onPriorityChange: (key: string, value: string) => void; onParameterChange: (key: string, value: string) => void; onCurrencyChange: (poolId: string, member: PoolModelInfo, value: string) => void; onSave: (pool: ModelPool, member: PoolModelInfo) => Promise<void>; onDelete: (pool: ModelPool, member: PoolModelInfo) => Promise<void> }) {
+function PoolMembers({ pool, busyId, canWrite, memberPriorities, memberParameterCaps, onPriorityChange, onParameterChange, onCurrencyChange, onSave, onRecover, onDelete }: { pool: ModelPool; busyId: string | null; canWrite: boolean; memberPriorities: Record<string, string>; memberParameterCaps: Record<string, string>; onPriorityChange: (key: string, value: string) => void; onParameterChange: (key: string, value: string) => void; onCurrencyChange: (poolId: string, member: PoolModelInfo, value: string) => void; onSave: (pool: ModelPool, member: PoolModelInfo) => Promise<void>; onRecover: (pool: ModelPool, member: PoolModelInfo) => Promise<void>; onDelete: (pool: ModelPool, member: PoolModelInfo) => Promise<void> }) {
   if (!pool.models.length) return <div style={{ padding: CARD_PADDING, border: '1px dashed var(--border-subtle)', borderRadius: 'var(--radius-sm)', ...BODY_TEXT }}>暂无模型成员。添加健康模型后才能承接请求。</div>;
-  return <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight }}>{pool.models.slice().sort((a, b) => a.priority - b.priority).map((member) => { const chip = healthChip(member.healthStatus); const key = memberKey(pool.id, member); return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', ...INSET_BLOCK, fontSize: 'var(--fs-secondary)' }}><Chip label={chip.label} color={chip.color} bg={chip.bg} /><span style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}>{member.modelId}</span>{member.protocol ? <span style={{ color: 'var(--text-muted)' }}>{member.protocol}</span> : null}<CapabilityTags labels={capabilityLabelsForMember(member)} />{canWrite && pool.authority === 'llm_gateway' && !pool.appendOnly ? <><label style={inlineCheckStyle}>优先级<input value={memberPriorities[key] ?? String(member.priority)} onChange={(event) => onPriorityChange(key, event.target.value)} style={smallInputStyle(58)} inputMode="numeric" /></label><select value={(member.priceCurrency || 'CNY').toUpperCase()} onChange={(event) => onCurrencyChange(pool.id, member, event.target.value)} style={smallSelectStyle(74)} aria-label="价格币种"><option value="CNY">CNY</option><option value="USD">USD</option></select><input value={memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities)} onChange={(event) => onParameterChange(key, event.target.value)} placeholder="字段能力，例如 seed" list="gw-parameter-capability-options" style={{ ...inputStyle, flex: '1 1 170px' }} aria-label="字段级参数能力" /><span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.tight }}><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSave(pool, member)}>保存</Button><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDelete(pool, member)}>移除</Button></span></> : <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>优先级 {member.priority}</span>}</div>; })}</div>;
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight }}>{pool.models.slice().sort((a, b) => a.priority - b.priority).map((member) => { const chip = healthChip(member.healthStatus); const key = memberKey(pool.id, member); return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', ...INSET_BLOCK, fontSize: 'var(--fs-secondary)' }}><Chip label={chip.label} color={chip.color} bg={chip.bg} /><span style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}>{member.modelId}</span>{member.protocol ? <span style={{ color: 'var(--text-muted)' }}>{member.protocol}</span> : null}<CapabilityTags labels={capabilityLabelsForMember(member)} />{canWrite && pool.authority === 'llm_gateway' && !pool.appendOnly ? <><label style={inlineCheckStyle}>优先级<input value={memberPriorities[key] ?? String(member.priority)} onChange={(event) => onPriorityChange(key, event.target.value)} style={smallInputStyle(58)} inputMode="numeric" /></label><select value={(member.priceCurrency || 'CNY').toUpperCase()} onChange={(event) => onCurrencyChange(pool.id, member, event.target.value)} style={smallSelectStyle(74)} aria-label="价格币种"><option value="CNY">CNY</option><option value="USD">USD</option></select><input value={memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities)} onChange={(event) => onParameterChange(key, event.target.value)} placeholder="字段能力，例如 seed" list="gw-parameter-capability-options" style={{ ...inputStyle, flex: '1 1 170px' }} aria-label="字段级参数能力" /><span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.tight }}>{member.healthStatus === 2 ? <Button size="sm" variant="secondary" disabled={busyId === key} onClick={() => void onRecover(pool, member)}>候选</Button> : null}<Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSave(pool, member)}>保存</Button><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDelete(pool, member)}>移除</Button></span></> : <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>优先级 {member.priority}</span>}</div>; })}</div>;
 }
 
 function poolPurpose(pool: ModelPool | null) {
@@ -1286,12 +1338,15 @@ function emptyBulkImportDraft(): PoolBulkImportDraft {
 }
 
 function mergeParameterCapabilities(base: ModelCapability[], text: string): ModelCapability[] {
-  const parsed = parseParameterCapabilities(text);
+  const parsed = parseParameterCapabilities(text).filter((capability) =>
+    !isImageSizeControlParameter(capability.type));
   const next = base.filter((cap) => parameterCapabilityName(cap.type) === null);
   const byName = new Map<string, ModelCapability>();
   for (const capability of base) {
     const name = parameterCapabilityName(capability.type);
-    if (name) byName.set(name.toLowerCase(), capability);
+    if (name && !isImageSizeControlParameter(capability.type)) {
+      byName.set(name.toLowerCase(), capability);
+    }
   }
   for (const capability of parsed) {
     const name = parameterCapabilityName(capability.type);
@@ -1322,7 +1377,7 @@ function parameterCapabilityText(capabilities: ModelCapability[]) {
   return capabilities
     .map((capability) => {
       const name = parameterCapabilityName(capability.type);
-      if (!name) return null;
+      if (!name || isImageSizeControlParameter(capability.type)) return null;
       return capability.value ? name : `${name}=false`;
     })
     .filter((x): x is string => x !== null)
@@ -1338,6 +1393,15 @@ function parameterCapabilityName(type: string) {
     }
   }
   return null;
+}
+
+function isImageSizeControlParameter(type: string) {
+  return parameterCapabilityName(type)?.toLowerCase().startsWith('image_size.') === true;
+}
+
+function containsImageSizeControlParameter(text: string) {
+  return parseParameterCapabilities(text).some((capability) =>
+    isImageSizeControlParameter(capability.type));
 }
 
 function normalizeParameterName(value: string) {

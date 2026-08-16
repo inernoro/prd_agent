@@ -144,6 +144,7 @@ builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.LlmGatewayIncidentWatchdog>();
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
@@ -163,6 +164,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncSchedul
 // 双链 + 反向链接（详见 doc/design.knowledge-base.mention-network.md）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.IDocumentVersionSnapshotWriter>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>());
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
@@ -314,6 +317,12 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+// 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
+
+// 网页托管「向我提问」：站点正文快照（喂给模型的上下文）+ 配额闸（保护 owner 的 token 预算）
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteContentSnapshotService, PrdAgent.Infrastructure.Services.SiteContentSnapshotService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAskQuotaService, PrdAgent.Infrastructure.Services.AskQuotaService>();
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
@@ -352,6 +361,10 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.Toolbox.ToolboxRunWorker
 
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>());
+builder.Services.AddSingleton<PrdAgent.Api.Services.DocumentAssetCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.DocumentAssetCleanupService>());
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
@@ -664,6 +677,13 @@ builder.Services.AddHttpClient("AssetStorageReadiness", client =>
     client.DefaultRequestHeaders.CacheControl =
         new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
 });
+builder.Services.AddHttpClient("AssetStorageStream", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+});
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
@@ -863,6 +883,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options => { })
     .AddScheme<PrdAgent.Api.Authentication.AiAccessKeyAuthenticationOptions, PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler>(
         PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        options => { })
+    .AddScheme<PrdAgent.Api.Authentication.StableSmokeAuthenticationOptions, PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler>(
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName,
         options => { });
 
 builder.Services.AddAuthorization(options =>
@@ -871,7 +894,8 @@ builder.Services.AddAuthorization(options =>
     options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
         JwtBearerDefaults.AuthenticationScheme,
         "ApiKey",
-        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName)
+        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
         .Build();
 });
@@ -1296,6 +1320,10 @@ builder.Services.Configure<PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentO
         PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOptions.SectionName));
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentTurnQueue,
     PrdAgent.Infrastructure.Services.ChatAgent.InMemoryChatAgentTurnQueue>();
+// 一次性转派的 runId → 发起人台账。必须是 Singleton：工具回调是另一条 HTTP 请求进来的，
+// Scoped 的话回调那一侧永远拿到一个空台账，工具会全部因「没有用户身份」而拒绝执行。
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IChatAgentOneOffRunRegistry,
+    PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentOneOffRunRegistry>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IChatAgentService,
     PrdAgent.Infrastructure.Services.ChatAgent.ChatAgentService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatAgentTurnWorker>();
@@ -1333,6 +1361,20 @@ builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarHealthChecker>();
 builder.Services.AddHostedService<
     PrdAgent.Infrastructure.Services.ClaudeSidecar.CdsSidecarSyncService>();
+
+// 把已登记 ToolName 的专业智能体各包成一把工具，交给通用对话智能体自己转派
+// （用户不必先挑智能体）。名单来自 AgentCapabilityRegistry.Delegatable，这里不另抄一份——
+// 契约里新增一个可转派智能体，工具自动就位，不会出现「登记了但没人接线」。
+// 必须在 AgentToolRegistry 之前注册：它构造时会把这些 IAgentTool 一并收进去。
+foreach (var delegatable in PrdAgent.Core.Models.AgentUniverse.AgentCapabilityRegistry.Delegatable)
+{
+    var capability = delegatable;
+    builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.AgentTools.IAgentTool>(sp =>
+        new PrdAgent.Api.Services.Toolbox.AgentDelegateTool(
+            capability,
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ILogger<PrdAgent.Api.Services.Toolbox.AgentDelegateTool>>()));
+}
 
 // Agent Tools 注册表 + 反向调用入口（sidecar 收到 tool_use 后回调主服务）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,

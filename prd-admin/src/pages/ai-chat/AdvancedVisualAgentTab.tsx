@@ -68,16 +68,56 @@ import {
 } from '@/lib/visualAgentPromptUtils';
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { glassToolbar } from '@/lib/glassStyles';
+import { canvasSaveCooldownRemaining, CANVAS_SAVE_DEBOUNCE_MS } from '@/lib/canvasSaveSchedule';
 import {
+  checkLayerSourcesReadable,
+  createCompositePngBlob,
+  createFramePsdBlob,
   createLayeredPsdBlob,
   decomposeImageToLayers,
+  downloadBlob,
   downloadLayeredPsd,
+  type LayerSourceInput,
 } from '@/lib/layeredPsd';
-import { collectSemanticLayerFrames, computeHorizontalClampShift, planSemanticLayerFrame, selectExportableLayers } from '@/lib/semanticLayerFrame';
+import { SemanticLayerPanel, type SemanticLayerPanelLayer } from './components/SemanticLayerPanel';
+import {
+  aiLayerDisplayName,
+  aiLayerExportName,
+  aiLayerSubtitle,
+  clampLayerCount,
+  LAYER_COUNT_DEFAULT,
+  SOURCE_REFERENCE_LAYER_NAME,
+} from '@/lib/aiLayerNaming';
+import {
+  buildLayerContentVerdicts,
+  describeLayerContent,
+  sampleLayerRgba,
+  trimLayerToContent,
+  type LayerContentKind,
+} from '@/lib/layerContentAnalysis';
+import { boundsToCanvasRect } from '@/lib/layerTrim';
+import {
+  collectSemanticLayerFrames,
+  computeHorizontalClampShift,
+  computeVerticalClampShift,
+  createLiveGroupOrigin,
+  planLayeredCopyRect,
+  planSemanticLayerFrame,
+  selectExportableLayers,
+} from '@/lib/semanticLayerFrame';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
-import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
+import {
+  assignMissingRefIds,
+  canvasToPersistedV1,
+  getMaxRefId,
+  persistedV1ToCanvas,
+  PERSIST_SCHEMA_VERSION,
+  type PersistedCanvasStateV1,
+} from '@/lib/visualAgentCanvasPersist';
 import type { ImageAsset, ReconcileCanvasItem, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
+import type { ImageGenRunStreamPayload } from '@/services/contracts/imageGen';
 import type { Model } from '@/types/admin';
 import {
   ArrowUpToLine,
@@ -102,6 +142,7 @@ import {
   MousePointer2,
   Palette,
   Plus,
+  RefreshCw,
   Send,
   Settings,
   Share,
@@ -135,6 +176,7 @@ import { ChatMessageItem } from './components/ChatMessageItem';
 import { LlmLogsPanel } from '@/pages/LlmLogsPage';
 import { getVisualAgentLogsReal, getVisualAgentLogsMetaReal, getVisualAgentLogDetailReal } from '@/services/real/visualAgent';
 import { autoSubmitImages } from '@/services/real/submissions';
+import { downloadGeneratedImage } from '@/lib/generatedImageDownload';
 
 type CanvasImageItem = {
   key: string;
@@ -188,10 +230,62 @@ type CanvasImageItem = {
   textColor?: string;
 
   // AI 语义分层 Frame。图层仍是普通图片，可单独选择、编辑、移动和复用。
+  /** 通用编组标识（Cmd+G 编组 / Cmd+Shift+G 解组）。AI 分层落地时与 layerGroupId 同值。 */
+  frameId?: string;
   layerGroupId?: string;
   layerSourceKey?: string;
   layerIndex?: number;
   layerRole?: 'source' | 'layer';
+  /** 图层面板里被关掉了眼睛：合成预览、合成 PNG、PSD 都跳过它。 */
+  layerHidden?: boolean;
+  /** 图层不透明度 0–1，缺省视为 1。 */
+  layerOpacity?: number;
+  /** 叠放次序（小的在下）。缺省回落到 layerIndex，保证旧数据仍有确定顺序。 */
+  layerZ?: number;
+  /** 内容判定：普通图层 / 近乎空层 / 近乎纯色 / 整张原图。判定可见且可由用户改回。 */
+  layerContentKind?: LayerContentKind;
+  /** 不透明像素占比 0–1，面板每行显示它——这是把各层区分开的最直接事实。 */
+  layerCoverage?: number;
+  /** 本次向模型请求的层数。层数是期望值，实到几层由模型决定。 */
+  layerRequestedCount?: number;
+  /**
+   * 这一块的「原位」——即它在可拆解副本里的最小非透明外接矩形。
+   *
+   * 用户把它拖走之后，x/y 就不再是原位了；从「平铺展开」切回「原位叠放」时必须靠这组
+   * 数字把它放回去。存四个数而不是重新量一遍，是因为量像素是异步的，
+   * 切换视图不能卡在读图上。
+   */
+  layerHomeX?: number;
+  layerHomeY?: number;
+  layerHomeW?: number;
+  layerHomeH?: number;
+  /** 本次分层实际落到的模型（网关解析结果）。用户有权知道这一层是谁拆的。 */
+  layerModel?: string;
+  /** 用户这次用自然语言说的拆法；空表示没指定，由模型自行判断。 */
+  layerIntent?: string;
+  /** 这一组当前的摆法。必须按组存，不能靠几何反推——见 spreadLayerGroupIds 处的说明。 */
+  layerLayout?: 'stacked' | 'spread';
+};
+
+/**
+ * 分层层数的**默认**值。真实层数由用户在图层面板选（2-8），这里只是没选过时的起点。
+ * 早先它是写死的常量：一张只拆得出两三层的图硬凑 4 层，就会多出近乎全暗的空层白占位置。
+ */
+const AI_LAYER_COUNT = LAYER_COUNT_DEFAULT;
+
+/** 图层面板占掉的右侧宽度（面板 300 + 右边距 16）。视角适配要把它让出来，不能把产物摆到面板底下。 */
+const LAYER_PANEL_RESERVED_WIDTH = 316;
+
+/** 透明底纹：与图层面板同一套，保证画布和面板里的「透明」长得一样。 */
+const CANVAS_CHECKERBOARD: React.CSSProperties = {
+  backgroundImage:
+    'linear-gradient(45deg, rgba(128,128,128,0.28) 25%, transparent 25%),'
+    + 'linear-gradient(-45deg, rgba(128,128,128,0.28) 25%, transparent 25%),'
+    + 'linear-gradient(45deg, transparent 75%, rgba(128,128,128,0.28) 75%),'
+    + 'linear-gradient(-45deg, transparent 75%, rgba(128,128,128,0.28) 75%)',
+  backgroundSize: '16px 16px',
+  backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px',
+  backgroundColor: 'var(--bg-tertiary)',
 };
 
 function computeObjectFitContainRect(containerW: number, containerH: number, contentW: number, contentH: number) {
@@ -231,90 +325,6 @@ function shrinkDirForCorner(corner: 'nw' | 'ne' | 'sw' | 'se') {
   return { x: 1, y: -1 }; // sw
 }
 
-type PersistedCanvasStateV1 = {
-  schemaVersion: 1;
-  meta?: Record<string, unknown>;
-  elements: PersistedCanvasElementV1[];
-};
-
-type PersistedCanvasElementV1 =
-  | {
-      id: string;
-      kind: 'image';
-      x?: number;
-      y?: number;
-      w?: number;
-      h?: number;
-      z?: number;
-      name?: string;
-      assetId?: string;
-      src?: string;
-      sha256?: string;
-      naturalW?: number;
-      naturalH?: number;
-      locked?: boolean;
-      hidden?: boolean;
-      /** 占位状态：running 表示生成中，后端会回填 */
-      status?: 'running' | 'error';
-      /** 占位元素关联的后端生图 runId，持久化以便刷新后快速对账（SSOT 仍是后端 run.TargetCanvasKey） */
-      runId?: string;
-      /** 图片引用 ID，用于消息中的 @imgN 引用，持久化保存 */
-      refId?: number;
-      ext?: Record<string, unknown>;
-    }
-  | {
-      id: string;
-      kind: 'generator';
-      x?: number;
-      y?: number;
-      w?: number;
-      h?: number;
-      z?: number;
-      name?: string;
-      prompt?: string;
-      requestedSize?: string | null;
-      effectiveSize?: string | null;
-      sizeAdjusted?: boolean;
-      ratioAdjusted?: boolean;
-      locked?: boolean;
-      hidden?: boolean;
-      ext?: Record<string, unknown>;
-    }
-  | {
-      id: string;
-      kind: 'shape';
-      x?: number;
-      y?: number;
-      w?: number;
-      h?: number;
-      z?: number;
-      shapeType?: 'rect' | 'circle' | 'triangle' | 'star';
-      fill?: string;
-      stroke?: string;
-      locked?: boolean;
-      hidden?: boolean;
-      ext?: Record<string, unknown>;
-    }
-  | {
-      id: string;
-      kind: 'text';
-      x?: number;
-      y?: number;
-      w?: number;
-      h?: number;
-      z?: number;
-      text?: string;
-      fontSize?: number;
-      textColor?: string;
-      fill?: string;
-      stroke?: string;
-      locked?: boolean;
-      hidden?: boolean;
-      ext?: Record<string, unknown>;
-    };
-
-const PERSIST_SCHEMA_VERSION = 1 as const;
-const MAX_PERSIST_ELEMENTS = 200;
 
 function safeJsonParse<T>(s: string): T | null {
   const raw = String(s ?? '').trim();
@@ -324,203 +334,6 @@ function safeJsonParse<T>(s: string): T | null {
   } catch {
     return null;
   }
-}
-
-function isRemoteImageSrc(src: string): boolean {
-  const s = String(src ?? '').trim();
-  if (!s) return false;
-  if (s.startsWith('data:')) return false;
-  if (s.startsWith('/api/')) return true;
-  return /^https?:\/\//i.test(s);
-}
-
-function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvasStateV1; skippedLocalOnlyImages: number } {
-  const els: PersistedCanvasElementV1[] = [];
-  let skippedLocalOnlyImages = 0;
-  const src = Array.isArray(items) ? items : [];
-  for (let i = 0; i < src.length && els.length < MAX_PERSIST_ELEMENTS; i++) {
-    const it = src[i]!;
-    const kind = (it.kind ?? 'image') as PersistedCanvasElementV1['kind'];
-    const base = {
-      id: String(it.key ?? '').trim() || `el_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      kind,
-      x: it.x,
-      y: it.y,
-      w: it.w,
-      h: it.h,
-      z: i,
-      name: String(it.prompt ?? '').trim() || undefined,
-    };
-    if (kind === 'image') {
-      const assetId = String(it.assetId ?? '').trim();
-      const srcOk = isRemoteImageSrc(it.src);
-      const isPlaceholder = it.status === 'running' || it.status === 'error';
-      if (!assetId && !srcOk && !isPlaceholder) {
-        // 仅把"真正的本地临时内容"计入 skipped：
-        // - data: / blob: 属于本地内容，刷新后无法从服务器恢复 => 计数并提示
-        // - 空 src（例如生图占位 running/error）不应被误判为"本地临时内容"
-        const rawSrc = String(it.src ?? '').trim();
-        if (rawSrc && (rawSrc.startsWith('data:') || rawSrc.startsWith('blob:'))) {
-          skippedLocalOnlyImages += 1;
-        }
-        continue;
-      }
-      els.push({
-        ...base,
-        kind: 'image',
-        assetId: assetId || undefined,
-        src: srcOk ? it.src : undefined,
-        sha256: String(it.sha256 ?? '').trim() || undefined,
-        naturalW: it.naturalW,
-        naturalH: it.naturalH,
-        // 保存占位状态，以便后端回填时能找到目标元素
-        status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
-        // 持久化 runId（仅占位元素）：避免关页/刷新后丢失，导致占位无法被对账/看门狗恢复
-        runId: isPlaceholder && it.runId ? String(it.runId).trim() || undefined : undefined,
-        // 持久化 refId
-        refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
-        ext: {},
-      });
-    } else if (kind === 'generator') {
-      els.push({
-        ...base,
-        kind: 'generator',
-        prompt: String(it.prompt ?? '').trim() || undefined,
-        requestedSize: it.requestedSize ?? null,
-        effectiveSize: it.effectiveSize ?? null,
-        sizeAdjusted: Boolean(it.sizeAdjusted),
-        ratioAdjusted: Boolean(it.ratioAdjusted),
-        ext: {},
-      });
-    } else if (kind === 'shape') {
-      els.push({
-        ...base,
-        kind: 'shape',
-        shapeType: it.shapeType,
-        fill: it.fill,
-        stroke: it.stroke,
-        ext: {},
-      });
-    } else if (kind === 'text') {
-      els.push({
-        ...base,
-        kind: 'text',
-        text: it.text,
-        fontSize: it.fontSize,
-        textColor: it.textColor,
-        fill: it.fill,
-        stroke: it.stroke,
-        ext: {},
-      });
-    }
-  }
-  return { state: { schemaVersion: 1, meta: { skippedLocalOnlyImages }, elements: els }, skippedLocalOnlyImages };
-}
-
-function persistedV1ToCanvas(
-  state: PersistedCanvasStateV1,
-  assets: ImageAsset[]
-): { canvas: CanvasImageItem[]; missingAssets: number; localOnlyImages: number } {
-  const byId = new Map<string, ImageAsset>();
-  for (const a of assets ?? []) {
-    if (a?.id) byId.set(String(a.id), a);
-  }
-  const out: CanvasImageItem[] = [];
-  let missingAssets = 0;
-  let localOnlyImages = 0;
-  const sorted = [...(state.elements ?? [])].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
-  for (const el of sorted) {
-    const id = String(el.id ?? '').trim();
-    if (!id) continue;
-    if (el.kind === 'image') {
-      const aid = String(el.assetId ?? '').trim();
-      const a = aid ? byId.get(aid) : undefined;
-      const src = a?.url || (isRemoteImageSrc(String(el.src ?? '')) ? String(el.src) : '');
-      const isPlaceholder = el.status === 'running' || el.status === 'error';
-      if (!src && !isPlaceholder) {
-        if (!aid && !el.src) localOnlyImages += 1;
-        else missingAssets += 1;
-        continue;
-      }
-      const prompt = String(el.name ?? a?.prompt ?? '').trim();
-      out.push({
-        key: id,
-        assetId: aid || a?.id,
-        sha256: String(el.sha256 ?? a?.sha256 ?? '').trim() || undefined,
-        createdAt: Date.now(),
-        prompt,
-        src,
-        // 恢复占位状态：running 表示后端仍在生成中
-        status: isPlaceholder ? el.status! : 'done',
-        // 恢复持久化的 runId（占位元素），供 in-session 看门狗/刷新走快速路径
-        runId: isPlaceholder && el.runId ? String(el.runId).trim() || undefined : undefined,
-        kind: 'image',
-        syncStatus: src.startsWith('/api/visual-agent/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
-        syncError: null,
-        x: el.x,
-        y: el.y,
-        w: typeof el.w === 'number' && el.w > 0 ? el.w : a?.width || undefined,
-        h: typeof el.h === 'number' && el.h > 0 ? el.h : a?.height || undefined,
-        naturalW: typeof el.naturalW === 'number' && el.naturalW > 0 ? el.naturalW : a?.width || undefined,
-        naturalH: typeof el.naturalH === 'number' && el.naturalH > 0 ? el.naturalH : a?.height || undefined,
-        // 恢复持久化的 refId
-        refId: typeof el.refId === 'number' && el.refId > 0 ? el.refId : undefined,
-      });
-    } else if (el.kind === 'generator') {
-      out.push({
-        key: id,
-        createdAt: Date.now(),
-        prompt: String(el.prompt ?? el.name ?? 'Image Generator'),
-        src: '',
-        status: 'done',
-        kind: 'generator',
-        x: el.x,
-        y: el.y,
-        w: el.w,
-        h: el.h,
-        requestedSize: el.requestedSize ?? null,
-        effectiveSize: el.effectiveSize ?? null,
-        sizeAdjusted: Boolean(el.sizeAdjusted),
-        ratioAdjusted: Boolean(el.ratioAdjusted),
-      });
-    } else if (el.kind === 'shape') {
-      out.push({
-        key: id,
-        createdAt: Date.now(),
-        prompt: '',
-        src: '',
-        status: 'done',
-        kind: 'shape',
-        x: el.x,
-        y: el.y,
-        w: el.w,
-        h: el.h,
-        shapeType: el.shapeType,
-        fill: el.fill,
-        stroke: el.stroke,
-      });
-    } else if (el.kind === 'text') {
-      out.push({
-        key: id,
-        createdAt: Date.now(),
-        prompt: '',
-        src: '',
-        status: 'done',
-        kind: 'text',
-        x: el.x,
-        y: el.y,
-        w: el.w,
-        h: el.h,
-        text: el.text,
-        fontSize: el.fontSize,
-        textColor: el.textColor,
-        fill: el.fill,
-        stroke: el.stroke,
-      });
-    }
-  }
-  // 还原时不应无故少一张；用与持久化一致的上限（MAX_PERSIST_ELEMENTS）
-  return { canvas: out.slice(0, MAX_PERSIST_ELEMENTS), missingAssets, localOnlyImages };
 }
 
 /**
@@ -752,52 +565,6 @@ async function copyToClipboard(text: string) {
   }
 }
 
-async function downloadImage(src: string, filename: string) {
-  const safe = String(filename || 'image')
-    .trim()
-    .replaceAll('/', '-')
-    .replaceAll('\\', '-')
-    .replaceAll(':', '-')
-    .replaceAll('*', '-')
-    .replaceAll('?', '-')
-    .replaceAll('"', '-')
-    .replaceAll('<', '-')
-    .replaceAll('>', '-')
-    .replaceAll('|', '-')
-    .slice(0, 80);
-
-  const finalName = safe ? `${safe}.png` : 'image.png';
-
-  try {
-    // 使用 fetch + blob 方式下载，解决跨域图片无法直接下载的问题
-    const response = await fetch(src, { mode: 'cors' });
-    if (!response.ok) throw new Error('Fetch failed');
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = finalName;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    // 延迟释放 blob URL
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-  } catch {
-    // 如果 fetch 失败（如 CORS 问题），回退到直接下载方式
-    const a = document.createElement('a');
-    a.href = src;
-    a.download = finalName;
-    a.rel = 'noopener';
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-}
-
 async function copyImageToClipboard(src: string) {
   if (!src) return;
   try {
@@ -877,7 +644,7 @@ async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png
       setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
     } catch {
       // fallback
-      void downloadImage(src, safe);
+      void downloadGeneratedImage(src, safe);
     }
     return;
   }
@@ -919,7 +686,7 @@ async function exportImageAs(src: string, filename: string, format: 'jpg' | 'png
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   } catch {
-    void downloadImage(src, safe);
+    void downloadGeneratedImage(src, safe);
   }
 }
 
@@ -1131,28 +898,6 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-type ImageGenRunStreamPayload = {
-  type?: unknown;
-  errorMessage?: unknown;
-  asset?: { id?: unknown; sha256?: unknown; url?: unknown; originalUrl?: unknown; originalSha256?: unknown } | null;
-  url?: unknown;
-  originalUrl?: unknown;
-  originalSha256?: unknown;
-  // 后端 runStart / imageDone 推送的模型身份；逻辑模型用于主展示，上游模型仅用于诊断。
-  modelId?: unknown;
-  logicalModelPublicId?: unknown;
-  modelGroupName?: unknown;
-  platformId?: unknown;
-  isAdaptive?: unknown;
-  adapterDisplayName?: unknown;
-  resolutionType?: unknown;
-  // 后端 imageDone 携带的尺寸真值（请求尺寸 vs 实际返回尺寸）
-  requestedSize?: unknown;
-  effectiveSize?: unknown;
-  sizeAdjusted?: unknown;
-  ratioAdjusted?: unknown;
-};
-
 function buildTemplate(name: string) {
   if (name === 'wine') {
     return `为一家精品红酒商店设计一张海报：\n- 风格：高级、克制、现代\n- 主色：深酒红 + 金色点缀\n- 文案：Wine List / 2026 Spring Collection\n- 版式：留白，中心主视觉\n请输出：设计要点 + 生图提示词`;
@@ -1181,6 +926,7 @@ function StageClampedQuickActionBar({
 }) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const [shiftWorldX, setShiftWorldX] = useState(0);
+  const [shiftWorldY, setShiftWorldY] = useState(0);
 
   useLayoutEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -1202,9 +948,19 @@ function StageClampedQuickActionBar({
       });
       const nextShiftWorld = nextShiftScreen / Math.max(zoom, 0.01);
       setShiftWorldX((current) => Math.abs(current - nextShiftWorld) < 0.25 ? current : nextShiftWorld);
+      const currentShiftY = shiftWorldY * Math.max(zoom, 0.01);
+      const nextShiftYScreen = computeVerticalClampShift({
+        stageTop: stageRect.top,
+        stageBottom: stageRect.bottom,
+        elementTop: barRect.top,
+        elementBottom: barRect.bottom,
+        currentShift: currentShiftY,
+      });
+      const nextShiftWorldY = nextShiftYScreen / Math.max(zoom, 0.01);
+      setShiftWorldY((current) => Math.abs(current - nextShiftWorldY) < 0.25 ? current : nextShiftWorldY);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [obstacleRef, positionKey, shiftWorldX, stageRef, zoom]);
+  }, [obstacleRef, positionKey, shiftWorldX, shiftWorldY, stageRef, zoom]);
 
   return (
     <div
@@ -1212,7 +968,7 @@ function StageClampedQuickActionBar({
       style={{
         position: 'absolute',
         left: `calc(50% + ${shiftWorldX}px)`,
-        top: 0,
+        top: shiftWorldY,
         transform: 'translate(-50%, calc(-100% - 104px)) scale(var(--invZoom))',
         transformOrigin: 'center bottom',
         pointerEvents: 'auto',
@@ -1237,6 +993,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const DEFAULT_ZOOM = 0.5;
 
   const [modelsLoading, setModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState<{ message: string; requestId?: string | null } | null>(null);
   // 统一模型目录。新配置返回逻辑模型；没有逻辑目录时兼容返回旧模型池投影。
   const [imageGenPools, setImageGenPools] = useState<ModelGroupForApp[]>([]);
 
@@ -1258,8 +1015,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [poolModels]);
 
   const serverDefaultModel = useMemo(() => {
-    // 后端已按 priority + createdAt 排序，直接取第一个启用的模型
-    return allImageGenModels.find((m) => m.enabled) ?? null;
+    // 严格 AppCaller 的默认池由后端显式标记；不能用排序后的第一个池覆盖默认配置。
+    return allImageGenModels.find((m) => m.enabled && m.isDefault)
+      ?? allImageGenModels.find((m) => m.enabled)
+      ?? null;
   }, [allImageGenModels]);
 
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -1346,10 +1105,64 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [quickActionDialogOpen, setQuickActionDialogOpen] = useState(false);
   const [layeringProgress, setLayeringProgress] = useState<{
     sourceKey: string;
+    /** 进度要显示在右侧那个 Frame 的头部，所以必须能对上是哪一组。 */
+    groupId: string;
     phase: string;
     completed?: number;
     total?: number;
   } | null>(null);
+  // 分层的并发闸门用 ref 而不是 state：导出 PSD 会在同一个 tick 里接着调分层，
+  // 读 state 会读到上一轮渲染的旧值。
+  const layeringRunningRef = useRef(false);
+  /** 图层面板当前挂在哪个分层组上；null = 面板收起。 */
+  const [layerPanelGroupId, setLayerPanelGroupId] = useState<string | null>(null);
+  // 拆几层由用户定。纯 UI 偏好、发版后用旧值无害，按 no-localstorage 的例外清单可用 localStorage。
+  // 摆放方式是纯 UI 偏好（发版后用旧值无害），按 no-localstorage 规则可以进 localStorage。
+  const [layerLayoutMode, setLayerLayoutMode] = useState<'stacked' | 'spread'>(() => {
+    try { return localStorage.getItem('prdAdmin.visualAgent.layerLayout') === 'spread' ? 'spread' : 'stacked'; }
+    catch { return 'stacked'; }
+  });
+  const [layerCountPref, setLayerCountPref] = useState<number>(() => {
+    try { return clampLayerCount(localStorage.getItem('prdAdmin.visualAgent.layerCount')); }
+    catch { return AI_LAYER_COUNT; }
+  });
+  const updateLayerCountPref = useCallback((value: number) => {
+    const next = clampLayerCount(value);
+    setLayerCountPref(next);
+    try { localStorage.setItem('prdAdmin.visualAgent.layerCount', String(next)); } catch { /* 存不下不影响本次使用 */ }
+  }, []);
+  /**
+   * 用自己的话说想怎么拆（「把人物和风景分开」）。
+   *
+   * 层数不该是唯一入口——「我就想把人物和冰淇淋分开」用数字根本表达不了，
+   * 选 2 层很可能拆出人物和冰淇淋而不是人物和风景（2026-08-10 用户原话）。
+   * 所以自然语言是主入口，层数退居可选提示。
+   *
+   * 存 sessionStorage，**不能**跟层数/摆法一样进 localStorage。我原来把它一并归成
+   * 「纯 UI 偏好」是自己给自己开脱：层数是个数字、摆法是个枚举，旧值无害；而这行字是
+   * **用户写的、会被当成模型输入去跑一次要花钱的调用**。落 localStorage 就会跨登出留存，
+   * 共用浏览器时下一个账号打开面板，默认拆法是上一个人写的内容，还会静默改变他那次
+   * 付费调用的结果——内容跨账号泄漏 + 结果被悄悄改（Codex PR #1363 P1）。
+   * no-localstorage 的默认档就是 sessionStorage，这里回到默认档。
+   */
+  const [layerIntentPref, setLayerIntentPref] = useState<string>(() => {
+    try { return sessionStorage.getItem('prdAdmin.visualAgent.layerIntent') ?? ''; }
+    catch { return ''; }
+  });
+  const updateLayerIntentPref = useCallback((value: string) => {
+    const next = String(value ?? '').slice(0, 200);
+    setLayerIntentPref(next);
+    try { sessionStorage.setItem('prdAdmin.visualAgent.layerIntent', next); } catch { /* 存不下不影响本次使用 */ }
+  }, []);
+  // 一次性清掉旧版留在 localStorage 里的那份，否则老用户的浏览器里它会一直躺着。
+  useEffect(() => {
+    try { localStorage.removeItem('prdAdmin.visualAgent.layerIntent'); } catch { /* 清不掉就算了 */ }
+  }, []);
+  const [layerExportBusy, setLayerExportBusy] = useState<string | null>(null);
+  // 分层完成后要把 Frame 收进视野，但视角函数定义在下面，用 ref 打通前后引用顺序。
+  const animateCameraToFitRectRef = useRef<
+    ((rect: { x: number; y: number; w: number; h: number }, opts?: { maxZoom?: number; rightInset?: number }) => void) | null
+  >(null);
   // 局部重绘（Inpainting）状态
   const [inpaintTarget, setInpaintTarget] = useState<CanvasImageItem | null>(null);
   // 提示词模式：按账号持久化（不写 DB）
@@ -1360,10 +1173,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [directPrompt, setDirectPrompt] = useState(false);
   const [directPromptReady, setDirectPromptReady] = useState(false);
   const effectiveModel = useMemo(() => {
-    const byId = modelPrefModelId ? enabledImageModels.find((m) => m.id === modelPrefModelId) ?? null : null;
+    const byId = modelPrefModelId ? allImageGenModels.find((m) => m.id === modelPrefModelId) ?? null : null;
     if (modelPrefAuto) return serverDefaultModel;
     return byId ?? serverDefaultModel;
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
+  }, [allImageGenModels, modelPrefAuto, modelPrefModelId, serverDefaultModel]);
 
   // 尺寸选项（后端按分辨率分组返回，前端直接使用，无需转换）
   type SizeOption = { size: string; aspectRatio: string };
@@ -1373,8 +1186,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
 
   useEffect(() => {
-    // 使用模型池 code（对于 visual-agent 就是 modelName）获取尺寸配置
-    const modelCode = effectiveModel?.modelName;
+    // 生成请求仍使用模型池 ID；尺寸适配查询必须使用池内实际上游模型 ID，
+    // 否则 adapter-info 无法命中 Provider 适配器，尺寸/比例选项会被错误清空。
+    const modelCode = effectiveModel?.actualModelId || effectiveModel?.modelName;
     if (!modelCode) {
       setSizesByResolution({ '1k': [], '2k': [], '4k': [] });
       setCurrentModelSizesNotApplicable(false);
@@ -1859,7 +1673,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     startClientX: number;
     startClientY: number;
     keys: string[];
-    base: Record<string, { x: number; y: number }>;
+    /**
+     * 拖拽起点。除了当前位置，还要记住「原位」(layerHome*)——
+     * 那是切回原位叠放 / 平铺展开时的锚点，拖动必须让它跟着走。
+     */
+    base: Record<string, { x: number; y: number; homeX?: number; homeY?: number }>;
   }>({ active: false, confirmed: false, pointerId: -1, startClientX: 0, startClientY: 0, keys: [], base: {} });
   // 双指捏合进行中标志：捏合期间 React 侧 pointerdown 处理器（框选/元素拖拽/resize）必须让位，
   // 否则第二根手指的同一事件会在原生监听清理后又被委托处理器重新武装（Codex review P2）
@@ -2292,7 +2110,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, []);
 
   const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
-  const [, setBooting] = useState(false);
+  const [booting, setBooting] = useState(true);
+  const workspaceReady = !booting && workspace?.id === workspaceId;
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
 
   // 触发缺陷提交按钮闪烁（生图失败时调用，持续闪烁直到用户点击）
@@ -2427,149 +2246,404 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     key: string; // 右键点击的元素 key，用于图层操作
   }>({ open: false, x: 0, y: 0, src: '', prompt: '', key: '' });
 
+  /**
+   * 语义分层：提交那一刻就在原图右侧铺出 Frame + 占位卡，模型每吐一层点亮一张。
+   *
+   * 分层不是「只在后台跑的任务」——它和生图一样要在画布上看得见：占位卡复用生图那套
+   * 流光动效，用户看着图层一张张长出来，而不是盯着一条 toast 猜进度（产物即体验）。
+   *
+   * 返回落到画布上的图层（失败或被占用返回 null）。PSD 导出复用这批结果，
+   * 不再自己重跑一遍分层——两个入口共用同一条链路，也就不会「导出时又偷偷拆一次」。
+   */
   const decomposeImageIntoFrame = useCallback(async (input: {
     key: string;
     src: string;
     prompt: string;
-  }) => {
-    if (layeringProgress) return;
+    /** 重拆标记：同样的层数再拆一次要落到新的 run 上，否则命中幂等键原样返回上次结果。 */
+    attempt?: string | number;
+    /** 用自己的话说的拆法；不传就用面板里当前那句。 */
+    intent?: string;
+  }): Promise<Array<{ name: string; source: string }> | null> => {
+    if (layeringRunningRef.current) {
+      toast.info('分层进行中', '已经有一张图片在拆分图层，等它完成再试。');
+      return null;
+    }
     if (!workspaceId) {
       toast.error('AI 分层失败', '当前画布尚未创建工作区');
-      return;
+      return null;
     }
 
     const sourceItem = canvasRef.current.find((candidate) => candidate.key === input.key);
     if (!sourceItem) {
       toast.error('AI 分层失败', '画布中找不到当前图片');
-      return;
+      return null;
     }
 
-    const existingGroupId = String(sourceItem.layerGroupId ?? '').trim();
-    const existingLayers = existingGroupId
-      ? canvasRef.current.filter((candidate) => candidate.layerGroupId === existingGroupId && candidate.layerRole === 'layer')
-      : [];
-    if (existingLayers.length > 0) {
-      setSelectionWithoutChip([existingLayers[0]!.key]);
-      toast.info('分层结果已在画布中', `已复用 ${existingLayers.length} 个可编辑图层，无需再次调用模型。`);
-      return;
-    }
-
+    // 同一张图可以反复拆——拆几次都行。
+    // 早先这里有个「已有图层就直接复用、不再调模型」的短路，本意是省一次调用，
+    // 实际把重拆整个堵死了：用户想换个拆法（换层数、换意图）点下去只会看到
+    // 「已复用 N 个可编辑图层」，模型根本没跑（2026-08-10 用户反馈：「不应该绑定，
+    // 我想拆多次」）。省调用不该以「不让用户重来」为代价——它本来也不是用户要的。
     const source = String(sourceItem.originalSrc || input.src || '').trim();
     if (!source) {
       toast.error('AI 分层失败', '当前图片没有可读取的原图');
-      return;
+      return null;
     }
 
-    const loadingId = toast.loading(
-      '正在创建可编辑图层',
-      '模型拆分、资产保存和画布排列会分阶段进行，预计需要 15–30 秒。',
+    layeringRunningRef.current = true;
+    const groupId = `layer_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const createdAt = Date.now();
+    const waitForSourceSha = async (): Promise<string | null> => {
+      // 刚拖进来的图还在同步，此时既没 sha 也不是 https 外链，后端读不到原图。
+      // 旧行为是直接弹「请先等待图片同步完成再分层」——把系统的时序问题甩给用户。
+      // 现在改成排队：意图先记下，同步一完成自动开跑（预期管理 / 少绕路）。
+      const readSha = () => {
+        const latest = canvasRef.current.find((candidate) => candidate.key === sourceItem.key);
+        return String(latest?.originalSha256 || latest?.sha256 || '').trim() || null;
+      };
+      const existing = readSha();
+      // 只有「已经有 sha」才提前返回。
+      // 这里原来还放行 https 外链——那是「有直链就能拆」还成立时的写法；分层现在一律
+      // 要求原图已落盘（Worker 读参考图只认 sha），再放行等于让还在同步的 https 图
+      // 一秒都不等就报错，而不是像文案承诺的那样等它同步完（Codex PR #1363 P2）。
+      // 这一条是我上一版「要求 sha」改动带出来的回归，一并修掉。
+      if (existing) return existing;
+
+      setLayeringProgress({
+        sourceKey: sourceItem.key,
+        groupId,
+        phase: '正在等待原图同步完成',
+        completed: 0,
+        total: AI_LAYER_COUNT,
+      });
+      // 上传通常几秒内完成；给 60 秒上限，超时如实报错而不是无限等。
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const sha = readSha();
+        if (sha) return sha;
+      }
+      return null;
+    };
+    const maxRefId = canvasRef.current.reduce(
+      (max, candidate) => typeof candidate.refId === 'number' ? Math.max(max, candidate.refId) : max,
+      0,
     );
-    setLayeringProgress({ sourceKey: sourceItem.key, phase: '正在提交语义分层模型' });
+    const requestedLayerCount = clampLayerCount(layerCountPref);
+    const layerIntent = String(input.intent ?? layerIntentPref ?? '').trim();
+    // 副本落在原图右侧的第一块空地上。原图不动、也不藏——用户要的是「原图还在，
+    // 右边多出一个看起来一模一样、但可以拆的副本」（西瓜切了很多刀，外观分毫不变）。
+    const copyRect = planLayeredCopyRect({ source: sourceItem, occupied: canvasRef.current });
+    // 这一组**此刻**落在哪。copyRect 只在开跑那一刻成立，用户可能中途把 Frame 拖走；
+    // 后到的图层必须跟着走，判据与理由见 createLiveGroupOrigin。
+    const readLiveRect = createLiveGroupOrigin(groupId, copyRect);
+    const currentRect = () => readLiveRect(canvasRef.current);
+    const layerKeyAt = (index: number) => `${groupId}_layer_${index + 1}`;
+    // 图层的 prompt 只保留来源信息；显示名由序号决定，不再把序号拼进这串文字
+    // ——拼进去会被显示层的 60 字截断切掉，四层退化成同一串（2026-08-07 实测）。
+    const layerPromptAt = () => String(input.prompt || '图片');
+    const buildPlaceholders = (count: number): CanvasImageItem[] => {
+      const layout = planSemanticLayerFrame(sourceItem, count, layerLayoutMode, currentRect());
+      return Array.from({ length: count }, (_, index) => ({
+        key: layerKeyAt(index),
+        createdAt: createdAt + index,
+        prompt: layerPromptAt(),
+        src: '',
+        status: 'running' as const,
+        kind: 'image' as const,
+        // 卡片尺寸由 Frame 排版决定，不能等图片 onLoad 用 natural 尺寸覆盖掉。
+        userResized: true,
+        refId: maxRefId + index + 1,
+        ...layout.placements[index]!,
+        frameId: groupId,
+        layerGroupId: groupId,
+        // 摆法按组存：几何反推不出来（叠放态每层各在自己的最小矩形上）。
+        layerLayout: layerLayoutMode,
+        layerSourceKey: sourceItem.key,
+        layerIndex: index + 1,
+        layerRole: 'layer' as const,
+        // 请求层数与拆法意图挂在图层身上，不挂原图——一张图可以被拆很多次，
+        // 挂在原图上只记得住最后一次，前面几组的面板就会显示别人的参数。
+        layerRequestedCount: requestedLayerCount,
+        layerIntent: layerIntent || undefined,
+      }));
+    };
+
+    // 先落占位：右侧当场出现一个和原图等大的「图层分离中」框。
+    // 一上来就铺 N 张空卡是错的——层数要等模型回话才知道，先铺 4 个空盒子既是猜、
+    // 又让用户以为已经拆好了（2026-08-07 反馈）。等图层真的回来再按实际张数展开。
+    const ensureSlots = (count: number) => {
+      const wanted = Math.max(1, Math.min(10, count));
+      const seats = buildPlaceholders(wanted);
+      const seatByKey = new Map(seats.map((seat) => [seat.key, seat]));
+      setCanvas((previous) => {
+        const survivors = previous.filter((candidate) => candidate.layerGroupId !== groupId
+          || candidate.layerRole !== 'layer'
+          || seatByKey.has(candidate.key));
+        const existing = new Set(survivors.map((candidate) => candidate.key));
+        // 叠放模式下所有座位本来就是同一个点，**不要**去吸附已有卡片——
+        // 那一步会把用户中途拖走的整组硬拉回最初那块地（用户实测到的现象）。
+        // 平铺模式的座位随层数变化，才需要重排。
+        const repositioned = layerLayoutMode !== 'spread' ? survivors : survivors.map((candidate) => {
+          const seat = seatByKey.get(candidate.key);
+          return seat && candidate.layerRole === 'layer'
+            ? { ...candidate, x: seat.x, y: seat.y, w: seat.w, h: seat.h }
+            : candidate;
+        });
+        return [...repositioned, ...seats.filter((seat) => !existing.has(seat.key))];
+      });
+    };
+
+    // 原图**一个字段都不动**：不打组号、不改角色、更不隐藏。
+    // 它就是那颗没被切过的西瓜，永远留在原地当参照；每次分层只是在右边多长出一个副本。
+    // （2026-08-11 反馈：「我重新生成新的图层时候，他居然将原来的清理掉了？这是bug吗」
+    //  ——是。旧实现把原图打上最新的组号、把上一组图层整组删掉，两者都是这次一并撤掉的。）
+    ensureSlots(1);
+    setNextRefId(maxRefId + requestedLayerCount + 1);
+    // 组装台跟着一起开：拆分的下一步就是排图层，别让用户拆完还要自己找面板在哪。
+    setLayerPanelGroupId(groupId);
+    setLayeringProgress({
+      sourceKey: sourceItem.key,
+      groupId,
+      phase: '正在提交分层任务',
+      completed: 0,
+      total: requestedLayerCount,
+    });
 
     try {
+      const readySha = await waitForSourceSha();
+      if (!readySha && !/^https:\/\//i.test(source)) {
+        throw new Error('原图同步超时，还没能保存到服务器。稍后重试，或先确认网络是否正常。');
+      }
       const result = await decomposeImageToLayers({
+        workspaceId,
+        targetKey: sourceItem.key,
         source,
-        sourceSha256: sourceItem.originalSrc ? null : (sourceItem.sha256 ?? null),
-        layerCount: 4,
+        sourceSha256: readySha,
+        layerCount: requestedLayerCount,
+        intent: layerIntent,
+        // 每次点击都是一次真实重拆：不带变化的标记会命中上一轮的幂等键，原样返回旧结果。
+        attempt: input.attempt ?? `${createdAt}`,
+        // 分层要跑几十秒，等待期必须一直有东西在动（禁止静止的「加载中」）。
+        onProgress: ({ phase, completed, total }) =>
+          setLayeringProgress({ sourceKey: sourceItem.key, groupId, phase, completed, total }),
+        // 谁拆的这一组要落到图层身上：换了模型再拆一次，两组各自记着自己的模型，
+        // 用户才比较得出「哪个模型拆得更合心意」（这也是「兼容多个分层模型」的可见面）。
+        onModel: (model) => setCanvas((previous) => previous.map((candidate) => candidate.layerGroupId === groupId
+          && candidate.layerRole === 'layer'
+          ? { ...candidate, layerModel: model }
+          : candidate)),
+        // 出一层点亮一张占位卡。此时用的是模型直出地址，落资产后再换成资产地址。
+        onLayer: ({ index, url }) => {
+          if (!url || index < 0 || index >= 10) return;
+          // 层数以模型实际吐出来的为准：先把座位补够，再点亮这一张。
+          ensureSlots(index + 1);
+          setCanvas((previous) => previous.map((candidate) => candidate.key === layerKeyAt(index)
+            ? { ...candidate, src: url, status: 'done' as const, syncStatus: 'pending' as const, syncError: null }
+            : candidate));
+        },
       });
       if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
 
       const remoteLayers = (result.data?.images ?? [])
-        .map((image, index) => ({
-          index,
-          name: `AI 图层 ${String(index + 1).padStart(2, '0')}`,
-          source: String(image.originalUrl || image.url || '').trim(),
-        }))
-        .filter((layer) => !!layer.source);
+        .map((image) => String(image.originalUrl || image.url || '').trim())
+        .filter((url) => !!url);
       if (remoteLayers.length === 0) throw new Error('分层模型未返回可用图层');
 
-      const persistedLayers: Array<{
-        index: number;
-        name: string;
-        asset: ImageAsset;
-      }> = [];
+      // 以模型实际返回的张数为准收口：多的座位撤掉，少的补上。
+      ensureSlots(remoteLayers.length);
+
+      // 带上 sha：导出前的可读性自检与读图都优先走同源资产地址绕开对象存储的 CORS，
+      // 只给 url 会让「现拆现导」这条分支退回裸 fetch 模型直链。
+      const layerSources: LayerSourceInput[] = [];
+      // 判定用的样本清单：地址与 sha 都取自上传返回值，不再回头去画布上捞（会读到未刷新的旧值）。
+      const layerSamples: Array<{ key: string; src: string; sha256?: string | null }> = [];
       for (let index = 0; index < remoteLayers.length; index += 1) {
-        const layer = remoteLayers[index]!;
+        const name = aiLayerExportName(index);
         setLayeringProgress({
           sourceKey: sourceItem.key,
+          groupId,
           phase: `正在保存图层 ${index + 1}/${remoteLayers.length}`,
           completed: index,
           total: remoteLayers.length,
         });
+        // 兜底点亮：流早断、走查询补回来的那几层，这里才第一次拿到地址。
+        setCanvas((previous) => previous.map((candidate) => candidate.key === layerKeyAt(index) && !candidate.src
+          ? { ...candidate, src: remoteLayers[index]!, status: 'done' as const, syncStatus: 'pending' as const }
+          : candidate));
         const upload = await uploadVisualAgentWorkspaceAsset({
           id: workspaceId,
-          sourceUrl: layer.source,
-          prompt: `${input.prompt || '图片'} · ${layer.name}`,
-          idempotencyKey: `semantic_layer_${sourceItem.key}_${layer.index}_${Date.now()}`,
+          sourceUrl: remoteLayers[index]!,
+          prompt: layerPromptAt(),
+          idempotencyKey: `semantic_layer_${sourceItem.key}_${index}_${createdAt}`,
         });
-        if (!upload.success) throw new Error(upload.error?.message || `${layer.name} 保存失败`);
-        persistedLayers.push({ index: layer.index, name: layer.name, asset: upload.data.asset });
-      }
-
-      setLayeringProgress({
-        sourceKey: sourceItem.key,
-        phase: '正在排列分层 Frame',
-        completed: persistedLayers.length,
-        total: persistedLayers.length,
-      });
-      const groupId = `layer_group_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const layout = planSemanticLayerFrame(sourceItem, persistedLayers.length);
-      const now = Date.now();
-      const maxRefId = canvasRef.current.reduce(
-        (max, candidate) => typeof candidate.refId === 'number' ? Math.max(max, candidate.refId) : max,
-        0,
-      );
-      const layerItems: CanvasImageItem[] = persistedLayers.map((layer, index) => {
-        const placement = layout.placements[index]!;
-        return {
-          key: `${groupId}_layer_${index + 1}`,
-          createdAt: now + index,
-          prompt: `${input.prompt || '图片'} · ${layer.name}`,
-          src: layer.asset.url,
-          status: 'done',
-          kind: 'image',
-          assetId: layer.asset.id,
-          sha256: layer.asset.sha256,
-          syncStatus: 'synced',
-          syncError: null,
-          naturalW: layer.asset.width,
-          naturalH: layer.asset.height,
-          userResized: true,
-          refId: maxRefId + index + 1,
-          ...placement,
-          layerGroupId: groupId,
-          layerSourceKey: sourceItem.key,
-          layerIndex: index + 1,
-          layerRole: 'layer',
-        };
-      });
-
-      setCanvas((previous) => {
-        const next = previous.map((candidate) => candidate.key === sourceItem.key
+        if (!upload.success) throw new Error(upload.error?.message || `${name} 保存失败`);
+        const asset = upload.data.asset;
+        setCanvas((previous) => previous.map((candidate) => candidate.key === layerKeyAt(index)
           ? {
               ...candidate,
-              layerGroupId: groupId,
-              layerSourceKey: sourceItem.key,
-              layerIndex: 0,
-              layerRole: 'source' as const,
+              src: asset.url,
+              status: 'done' as const,
+              assetId: asset.id,
+              sha256: asset.sha256,
+              naturalW: asset.width,
+              naturalH: asset.height,
+              syncStatus: 'synced' as const,
+              syncError: null,
             }
-          : candidate);
-        return [...next, ...layerItems];
-      });
-      setNextRefId(maxRefId + layerItems.length + 1);
-      setSelectionWithoutChip(layerItems.length > 0 ? [layerItems[0]!.key] : []);
+          : candidate));
+        // ---- 透明裁剪：把满幅图层裁成最小非透明外接矩形，并让**产物本身**变成那个矩形。
+        // 只算包围盒不裁产物是不够的（那正是上一版的漏）：画布上框住的仍是一整张满是
+        // 空气的方图，想拖 logo 却按到一大片透明（2026-08-11 用户圈图指出）。
+        // 裁不动 / 读不到都如实回落成满幅，绝不猜。
+        let trimmedAsset: { url: string; id: string; sha256?: string; width?: number; height?: number } | null = null;
+        let emptyLayer = false;
+        const trimmed = await trimLayerToContent(asset.url, asset.sha256);
+        if (trimmed?.empty) {
+          // 模型返回了一层，但里面一个不透明像素都没有。这种层不该出现在画布上，
+          // 但也不能静默吞掉——标成空层、默认隐藏，面板照样列出来让用户看见。
+          emptyLayer = true;
+        } else if (trimmed?.bounds && trimmed.dataUrl) {
+          const cropUpload = await uploadVisualAgentWorkspaceAsset({
+            id: workspaceId,
+            data: trimmed.dataUrl,
+            prompt: layerPromptAt(),
+            idempotencyKey: `semantic_layer_trim_${sourceItem.key}_${index}_${createdAt}`,
+          });
+          if (cropUpload.success) {
+            const cropped = cropUpload.data.asset;
+            trimmedAsset = {
+              url: cropped.url ?? '',
+              id: cropped.id,
+              sha256: cropped.sha256,
+              width: cropped.width,
+              height: cropped.height,
+            };
+          }
+        }
+        // 位置在**所有 await 之后**才读。裁剪要解码整张图、裁完还要上传，这两拍加起来
+        // 是肉眼可见的一段时间，用户完全可能正好在这期间把 Frame 拖走。
+        // 早先这一句在裁剪之前，于是这一层会按拖走**之前**的坐标落位——
+        // 和用户报的「拖走了图层还回原位渲染」是同一个症状，只是窗口更窄
+        // （Codex PR #1363 P2）。读得越晚越准，没有理由提前读。
+        const anchorRect = currentRect();
+        let placed = { x: anchorRect.x, y: anchorRect.y, w: anchorRect.w, h: anchorRect.h };
+        if (trimmedAsset && trimmed?.bounds) {
+          placed = boundsToCanvasRect({
+            bounds: trimmed.bounds,
+            layerWidth: trimmed.scanWidth,
+            layerHeight: trimmed.scanHeight,
+            canvasX: anchorRect.x,
+            canvasY: anchorRect.y,
+            canvasW: anchorRect.w,
+            canvasH: anchorRect.h,
+          });
+        }
+
+        setCanvas((previous) => previous.map((candidate) => candidate.key === layerKeyAt(index)
+          ? {
+              ...candidate,
+              ...(trimmedAsset?.url
+                ? {
+                    src: trimmedAsset.url,
+                    assetId: trimmedAsset.id,
+                    sha256: trimmedAsset.sha256,
+                    naturalW: trimmedAsset.width,
+                    naturalH: trimmedAsset.height,
+                    // 满幅原件留一份：画布上要的是裁好的小块（好抓、好拖），
+                    // 但导出要的是满幅——PSD 与合成 PNG 把每层按原图尺寸对齐叠放，
+                    // 喂裁剪版进去会被拉伸铺满整张画布（Codex PR #1363 P1，实测
+                    // 覆盖 14% 的那层在 PSD 里占到 1021x1024）。
+                    // buildLayeredPsdDocument 本来就会按 alpha 包围盒把每层裁紧，
+                    // 所以喂满幅既位置正确、每层又仍是紧包围盒，两头都不亏。
+                    originalSrc: asset.url,
+                    originalSha256: asset.sha256,
+                  }
+                : {}),
+              x: placed.x,
+              y: placed.y,
+              w: placed.w,
+              h: placed.h,
+              // 原位记在身上：拖走之后要放得回来，切换摆法也靠它。
+              layerHomeX: placed.x,
+              layerHomeY: placed.y,
+              layerHomeW: placed.w,
+              layerHomeH: placed.h,
+              ...(emptyLayer ? { layerContentKind: 'empty' as const, layerHidden: true } : {}),
+            }
+          : candidate));
+
+        // 这个数组只有一个去处：右键「导出分层 PSD」时画布上还没有图层，先拆再导，
+        // 拿的就是它（见 decomposeImageIntoFrame 的返回值）。导出链路按原图尺寸对齐叠放，
+        // 必须给**满幅**那一版——裁剪版是给画布用的，喂进去会被拉伸铺满、位置也错。
+        // 同一个毛病的第三个出口：图层面板导出、右键菜单的缓存分支都已改过，
+        // 这条「现拆现导」的分支漏了（Codex PR #1363 P1 第二次指同一件事）。
+        layerSources.push({ name, source: asset.url, sha256: asset.sha256 ?? null });
+        // 判定要用的地址与 sha 在这里就是确定的，当场记下来。
+        // 早先是等循环跑完再去 canvasRef 里捞——而 setCanvas 还没刷进 ref，
+        // 最后一层捞到的仍是模型直出的跨域直链且没有 sha；对象存储不给 CORS 头，
+        // 读像素必然被浏览器拦掉，那一行就永远停在「正在识别内容…」（用户截图实测）。
+        layerSamples.push({ key: layerKeyAt(index), src: asset.url, sha256: asset.sha256 });
+      }
+
+      // 内容判定：每一层到底装了什么（覆盖率 + 是否近乎纯色 / 空层 / 整张原图）。
+      // 每层都要回写——面板每行都要显示覆盖率，只回写异常层会让普通层那行没有事实可显示。
+      // 判定失败不影响主流程（拿不到样本就保持普通层），用户始终能自己开关。
+      void (async () => {
+        const verdicts = await buildLayerContentVerdicts({
+          layers: layerSamples,
+          source: { src: source, sha256: readySha },
+          sampler: sampleLayerRgba,
+        });
+        if (verdicts.length === 0) return;
+        const byKey = new Map(verdicts.map((verdict) => [verdict.key, verdict]));
+        setCanvas((previous) => previous.map((candidate) => {
+          const verdict = byKey.get(candidate.key);
+          if (!verdict) return candidate;
+          return {
+            ...candidate,
+            layerContentKind: verdict.kind,
+            layerCoverage: verdict.stats ? verdict.stats.coverage : undefined,
+            layerHidden: verdict.hidden ? true : candidate.layerHidden,
+          };
+        }));
+      })();
+
+      setSelectionWithoutChip([layerKeyAt(0)]);
+      // 拆完把「原图 + 副本」一起收进视野（避开右侧面板）：用户要做的第一件事就是
+      // 两边对照——副本表观上和原图一模一样，区别只在它可以被拆开。
+      const finalRect = currentRect();
+      const left = Math.min(Number(sourceItem.x ?? 0), finalRect.x);
+      const right = Math.max(Number(sourceItem.x ?? 0) + Number(sourceItem.w ?? finalRect.w), finalRect.x + finalRect.w);
+      animateCameraToFitRectRef.current?.(
+        { x: left - 40, y: finalRect.y - 80, w: right - left + 80, h: finalRect.h + 160 },
+        { maxZoom: 1, rightInset: LAYER_PANEL_RESERVED_WIDTH },
+      );
+      const emptyCount = canvasRef.current.filter((candidate) => candidate.layerGroupId === groupId
+        && candidate.layerContentKind === 'empty').length;
       toast.success(
-        'AI 分层已加入画布',
-        `${layerItems.length} 个透明图层已保存在原图附近。可逐个选择、编辑和复用，也可从 Frame 直接导出 PSD。`,
+        'AI 分层完成',
+        `原图右侧多了一个可拆解副本：表观上和原图一致，但每一块都能单独选中、拖动。`
+        + (emptyCount > 0 ? `模型这次多给了 ${emptyCount} 个空层，已标注并隐藏。` : ''),
         7000,
       );
+      return layerSources;
     } catch (error) {
-      toast.error('AI 分层失败', error instanceof Error ? error.message : '图片分层或资产保存失败', 7000);
+      const message = error instanceof Error ? error.message : '图片分层或资产保存失败';
+      // 没填上的占位卡转成错误态：失败也要留在画布上说清楚，不能凭空消失。
+      setCanvas((previous) => previous.map((candidate) => candidate.layerGroupId === groupId
+        && candidate.layerRole === 'layer'
+        && candidate.status === 'running'
+        ? { ...candidate, status: 'error' as const, errorMessage: message }
+        : candidate));
+      toast.error('AI 分层失败', message, 7000);
+      return null;
     } finally {
-      toast.dismiss(loadingId);
+      layeringRunningRef.current = false;
       setLayeringProgress(null);
     }
-  }, [layeringProgress, setSelectionWithoutChip, workspaceId]);
+    // layerIntentPref 必须进依赖：函数体内用它兜底（input.intent ?? layerIntentPref），
+    // 漏掉就会把上一次的拆法带进这次调用。调用方另有显式传参，这里是第二道保险。
+  }, [layerCountPref, layerIntentPref, layerLayoutMode, setSelectionWithoutChip, workspaceId]);
 
   const exportAiLayeredPsd = useCallback(async (input: {
     key: string;
@@ -2580,8 +2654,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const groupId = String(item?.layerGroupId ?? '').trim();
     // 同一 layerIndex 可能并存「原始图层」和「快捷编辑后的新版本」，只导出最新那版。
     const cachedLayers = selectExportableLayers(canvasRef.current, groupId);
-    const cachedSource = groupId
-      ? canvasRef.current.find((candidate) => candidate.layerGroupId === groupId && candidate.layerRole === 'source')
+    // 原图按 layerSourceKey 反查（一张图能被拆多次，原图身上只记得住最后一个组号）。
+    const cachedSourceKey = String(cachedLayers[0]?.layerSourceKey ?? '').trim();
+    const cachedSource = cachedSourceKey
+      ? canvasRef.current.find((candidate) => candidate.key === cachedSourceKey)
       : item;
     const source = String(cachedSource?.originalSrc || cachedSource?.src || input.src || '').trim();
     if (!source) {
@@ -2589,35 +2665,39 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       return;
     }
 
+    // 导出必须复刻图层面板此刻的样子（顺序 / 显隐 / 不透明度），
+    // 否则「面板上看到的」和「下载下来的」是两个东西。
+    let layerSources: LayerSourceInput[] = cachedLayers.map((layer, index) => ({
+      name: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
+      // 和图层面板那条导出口径**必须一致**：取满幅那一版。裁剪版是给画布用的，
+      // 导出链路按原图尺寸对齐叠放，喂裁剪版会被拉伸铺满、位置也错。
+      // 我上一轮只改了面板那个入口，右键菜单这个入口漏了——同一个毛病、第二个入口
+      // （Codex PR #1363 P1）。没裁过的层两者是同一个值。
+      source: layer.originalSrc || layer.src,
+      sha256: layer.originalSha256 || layer.sha256 || null,
+      opacity: layer.layerOpacity,
+      hidden: layer.layerHidden === true,
+    }));
+
+    if (layerSources.length === 0) {
+      // 画布上还没有图层：走和右键「AI 分层」完全相同的那条路——先把图层铺到原图右侧
+      // 让用户看着它长出来，再拿这批结果组装 PSD。拆分不再是藏在一条 toast 后面的后台任务。
+      const produced = await decomposeImageIntoFrame({
+        key: String(cachedSource?.key || item?.key || input.key || '').trim(),
+        src: source,
+        prompt: input.prompt,
+      });
+      // 失败原因已经由分层链路 toast 过，这里不再重复报一次。
+      if (!produced || produced.length === 0) return;
+      layerSources = produced;
+    }
+
     const loadingId = toast.loading(
-      cachedLayers.length > 0 ? '正在组装 PSD' : '正在拆分图片图层',
-      cachedLayers.length > 0
-        ? `正在复用画布中的 ${cachedLayers.length} 个图层，不会再次调用模型。`
-        : '预计需要 15–30 秒。完成后会在本机生成 PSD，期间可以继续使用画布。',
+      '正在组装 PSD',
+      `正在用画布中的 ${layerSources.length} 个图层写 PSD，不会再次调用模型。`,
     );
 
     try {
-      let layerSources = cachedLayers.map((layer, index) => ({
-        name: cleanDisplayTitle(layer.prompt) || `AI 图层 ${String(index + 1).padStart(2, '0')}`,
-        source: layer.src,
-      }));
-
-      if (layerSources.length === 0) {
-        const result = await decomposeImageToLayers({
-          source,
-          sourceSha256: cachedSource?.originalSrc ? null : (cachedSource?.sha256 ?? null),
-          layerCount: 4,
-        });
-        if (!result.success) throw new Error(result.error?.message || '图片分层请求失败');
-        layerSources = (result.data?.images ?? [])
-          .map((image, index) => ({
-            name: `AI 图层 ${String(index + 1).padStart(2, '0')}`,
-            source: String(image.originalUrl || image.url || '').trim(),
-          }))
-          .filter((layer) => !!layer.source);
-      }
-      if (layerSources.length === 0) throw new Error('分层模型未返回可用图层');
-
       const blob = await createLayeredPsdBlob({ source, layerSources });
       downloadLayeredPsd(blob, input.prompt || 'visual-agent-layered');
       toast.success(
@@ -2634,7 +2714,435 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } finally {
       toast.dismiss(loadingId);
     }
+  }, [decomposeImageIntoFrame]);
+
+  // ── 图层面板（组装台）─────────────────────────────────────────────
+  // 面板、画布合成、PSD、合成 PNG、ZIP 全都读这一份排好序的图层视图，
+  // 谁也不许自己再排一遍——否则「预览是这样、导出是那样」。
+  const layerPanelLayers = useMemo(
+    () => (layerPanelGroupId ? selectExportableLayers(canvas, layerPanelGroupId, { includeEmpty: true }) : []),
+    [canvas, layerPanelGroupId],
+  );
+
+  /**
+   * 切到哪一组，输入框就显示哪一组当初用的拆法。
+   *
+   * 拆法本来就按组存在图层身上（layerIntent，也落盘），但面板一直绑的是那个
+   * 会话级的全局值。画布上有多次分层时，打开旧的那个 Frame，输入框显示的是**另一组**
+   * 的文字，点「重新拆分」就把别人的拆法当成这一组的送进一次要花钱的调用
+   * （Codex PR #1363 P1）。
+   *
+   * 这和上一轮修的是同一个病的另一半：上一轮把跨**账号**的留存收进 sessionStorage，
+   * 这一轮收的是跨**组**的串味——存对了地方还不够，读的时候也得认组。
+   * 只在组切换时重新播种，不干扰用户正在敲的字。
+   */
+  const seededIntentGroupRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!layerPanelGroupId) { seededIntentGroupRef.current = null; return; }
+    if (seededIntentGroupRef.current === layerPanelGroupId) return;
+    seededIntentGroupRef.current = layerPanelGroupId;
+    const groupIntent = layerPanelLayers.find((layer) => typeof layer.layerIntent === 'string' && layer.layerIntent)?.layerIntent;
+    setLayerIntentPref(String(groupIntent ?? ''));
+  }, [layerPanelGroupId, layerPanelLayers]);
+
+  // 原图靠图层身上的 layerSourceKey 反查，**不**靠「原图身上打了哪个组号」——
+  // 一张图能被拆很多次，原图身上只记得住最后一个组号，早先那几组就全指到别人身上了。
+  const layerPanelSource = useMemo(() => {
+    if (!layerPanelGroupId) return undefined;
+    const sourceKey = String(layerPanelLayers[0]?.layerSourceKey ?? '').trim();
+    return sourceKey ? canvas.find((candidate) => candidate.key === sourceKey) : undefined;
+  }, [canvas, layerPanelGroupId, layerPanelLayers]);
+
+  const layerPanelModel = useMemo<SemanticLayerPanelLayer[]>(
+    () => layerPanelLayers.map((layer, index) => ({
+      key: layer.key,
+      // 名字只由序号决定：源提示词再长也不影响分辨。
+      name: layer.layerContentKind === 'source-reference'
+        ? SOURCE_REFERENCE_LAYER_NAME
+        : aiLayerDisplayName(index),
+      // 副标题写「这一层装了什么」而不是来源——来源只有一个，写在这里会让每行显示同一串
+      // 文字，白占一行（2026-08-10 实测：三行副标题全是同一个文件名）。面板标题已经带来源。
+      subtitle: layer.layerContentKind || typeof layer.layerCoverage === 'number'
+        ? describeLayerContent(layer.layerContentKind ?? 'layer', layer.layerCoverage)
+        : '正在识别内容…',
+      note: undefined,
+      src: layer.src,
+      // 合成预览要满幅那一版，理由见 SemanticLayerPanelLayer.compositeSrc。
+      // 和两个导出入口取的是同一个值——这条不变量到此有四个出口，全部走满幅。
+      compositeSrc: layer.originalSrc || layer.src,
+      pending: layer.status === 'running',
+      failed: layer.status === 'error',
+      hidden: layer.layerHidden === true,
+      opacity: typeof layer.layerOpacity === 'number' && Number.isFinite(layer.layerOpacity)
+        ? Math.min(1, Math.max(0, layer.layerOpacity))
+        : 1,
+    })),
+    [layerPanelLayers],
+  );
+
+  /**
+   * 把一组画布元素导成分层 PSD。
+   *
+   * 两个入口共用它：Frame 头部的「导出 PSD」（成员 = 该 Frame 的元素），
+   * 以及多选之后的导出（成员 = 选中的元素）。用户要的是「自由一些」——
+   * 有 Frame 就在 Frame 上导，没 Frame 就框几个直接导，不必先编组。
+   */
+  const exportElementsAsPsd = useCallback(async (keys: string[], label: string) => {
+    const wanted = new Set(keys);
+    const members = (canvasRef.current ?? []).filter((item) => wanted.has(item.key)
+      && (item.kind ?? 'image') === 'image'
+      && !!item.src
+      && item.status === 'done');
+    if (members.length === 0) {
+      toast.error('导出失败', '这一组里没有可导出的图片元素（生成中或失败的不算）。');
+      return;
+    }
+    const originX = Math.min(...members.map((item) => Number(item.x ?? 0)));
+    const originY = Math.min(...members.map((item) => Number(item.y ?? 0)));
+    const right = Math.max(...members.map((item) => Number(item.x ?? 0) + Number(item.w ?? 0)));
+    const bottom = Math.max(...members.map((item) => Number(item.y ?? 0) + Number(item.h ?? 0)));
+
+    const loadingId = toast.loading('正在组装 PSD', `正在把 ${members.length} 个元素写成分层 PSD。`);
+    try {
+      const blob = await createFramePsdBlob({
+        width: Math.round(right - originX),
+        height: Math.round(bottom - originY),
+        originX,
+        originY,
+        // 画布上层级越靠后越在上面；PSD 图层组内同样是后写的在上，顺序天然一致。
+        elements: members.map((item, index) => ({
+          name: `${String(index + 1).padStart(2, '0')} · ${cleanDisplayTitle(item.prompt || '') || '元素'}`.slice(0, 60),
+          source: item.src,
+          sha256: item.sha256 || item.originalSha256 || null,
+          x: Number(item.x ?? 0),
+          y: Number(item.y ?? 0),
+          w: Number(item.w ?? 0),
+          h: Number(item.h ?? 0),
+          opacity: item.layerOpacity,
+          hidden: item.layerHidden === true,
+        })),
+      });
+      downloadLayeredPsd(blob, label || 'frame');
+      toast.success('PSD 已生成', `包含 ${members.length} 个可编辑图层，每层各自带包围盒。`, 6000);
+    } catch (error) {
+      toast.error('PSD 导出失败', error instanceof Error ? error.message : 'PSD 写入失败', 6000);
+    } finally {
+      toast.dismiss(loadingId);
+    }
   }, []);
+
+  /** 多选打包 ZIP：每个元素一张 PNG，文件名带序号，解压后顺序一眼可读。 */
+  const exportSelectionAsZip = useCallback(async () => {
+    const wanted = new Set(selectedKeysRef.current ?? []);
+    const members = (canvasRef.current ?? []).filter((item) => wanted.has(item.key)
+      && (item.kind ?? 'image') === 'image' && !!item.src && item.status === 'done');
+    if (members.length === 0) {
+      toast.error('打包失败', '选中的元素里没有可打包的图片。');
+      return;
+    }
+    try {
+      await exportAllAsZip(
+        members.map((item, index) => ({
+          src: item.src,
+          filename: `${String(index + 1).padStart(2, '0')}-${cleanDisplayTitle(item.prompt || '') || '元素'}`.slice(0, 60),
+        })),
+        '选中元素',
+        'png',
+      );
+    } catch (error) {
+      toast.error('打包失败', error instanceof Error ? error.message : 'ZIP 打包失败', 6000);
+    }
+  }, []);
+
+  const exportFrameAsPsd = useCallback((frameId: string, label: string) => {
+    const members = (canvasRef.current ?? []).filter((item) => item.frameId === frameId).map((item) => item.key);
+    return exportElementsAsPsd(members, label);
+  }, [exportElementsAsPsd]);
+
+  /** Cmd/Ctrl+A：全选画布元素。没有它，「多选几个一起编组 / 导出」就无从谈起。 */
+  const selectAllOnCanvas = useCallback(() => {
+    const keys = (canvasRef.current ?? []).map((item) => item.key);
+    if (keys.length === 0) return;
+    setSelectionWithoutChip(keys);
+  }, [setSelectionWithoutChip]);
+
+  /**
+   * Cmd+G 编组 / Cmd+Shift+G 解组（对齐 Figma 的肌肉记忆）。
+   *
+   * 编组只写 frameId 这一个字段，不动坐标、不动层级、不动任何产物血缘：
+   * 「框在一起」是组织意图，随时可以撤，撤了之后各元素还是它自己。
+   * 解组同理只抹 frameId——AI 分层产物的 layerGroupId 保留，
+   * 所以解完组再重新编组，它还认得出自己是同一次分层的产物。
+   */
+  const groupSelection = useCallback(() => {
+    const keys = selectedKeysRef.current ?? [];
+    if (keys.length < 2) {
+      toast.info('选中至少两个元素再编组', '选中多个元素后按 Cmd/Ctrl+G 把它们框成一个 Frame。');
+      return;
+    }
+    const frameId = `frame_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const inGroup = new Set(keys);
+    setCanvas((previous) => previous.map((item) => inGroup.has(item.key) ? { ...item, frameId } : item));
+    toast.success('已编组', `${keys.length} 个元素已框成一个 Frame，Cmd/Ctrl+Shift+G 可解组。`, 4000);
+  }, []);
+
+  const ungroupSelection = useCallback(() => {
+    const keys = new Set(selectedKeysRef.current ?? []);
+    if (keys.size === 0) return;
+    const items = canvasRef.current ?? [];
+    // 选中任意一个成员就解散它所在的整个 Frame——Figma 就是这个行为，
+    // 不需要用户先把一组元素全选中。
+    const frameIds = new Set(items
+      .filter((item) => keys.has(item.key) && String(item.frameId ?? '').trim())
+      .map((item) => String(item.frameId)));
+    if (frameIds.size === 0) {
+      toast.info('选中的元素不在任何 Frame 里', '先用 Cmd/Ctrl+G 编组，再用 Cmd/Ctrl+Shift+G 解组。');
+      return;
+    }
+    setCanvas((previous) => previous.map((item) => item.frameId && frameIds.has(item.frameId)
+      ? { ...item, frameId: undefined }
+      : item));
+    setLayerPanelGroupId((current) => (current && frameIds.has(current) ? null : current));
+    toast.success('已解组', `${frameIds.size} 个 Frame 已拆开，元素本身没有任何变化。`, 4000);
+  }, []);
+
+  /** 切换摆放方式：就地把这一组图层重新摆一遍，不重新生成。 */
+  const applyLayerLayout = useCallback((groupId: string, mode: 'stacked' | 'spread') => {
+    setLayerLayoutMode(mode);
+    try { localStorage.setItem('prdAdmin.visualAgent.layerLayout', mode); } catch { /* 偏好写不进去不影响功能 */ }
+    const items = canvasRef.current;
+    const layers = selectExportableLayers(items, groupId, { includeEmpty: true });
+    if (layers.length === 0) return;
+
+    if (mode === 'stacked') {
+      // 回原位 = 各自回到自己的最小外接矩形，**不是**都摊平成同一个大方块。
+      // 用 layerHome*（分层时量好的）而不是现场重量：量像素是异步的，切视图不能卡在读图上。
+      setCanvas((previous) => previous.map((candidate) => {
+        if (candidate.layerGroupId !== groupId || candidate.layerRole !== 'layer') return candidate;
+        if (![candidate.layerHomeX, candidate.layerHomeY, candidate.layerHomeW, candidate.layerHomeH]
+          .every((value) => typeof value === 'number' && Number.isFinite(value))) return candidate;
+        return {
+          ...candidate,
+          layerLayout: 'stacked' as const,
+          x: candidate.layerHomeX,
+          y: candidate.layerHomeY,
+          w: candidate.layerHomeW,
+          h: candidate.layerHomeH,
+          userResized: true,
+        };
+      }));
+      return;
+    }
+
+    // 摊开：按副本那块地为起点排一排。副本的位置由本组图层的原位并集决定。
+    const homes = layers
+      .map((layer) => ({ x: layer.layerHomeX, y: layer.layerHomeY, w: layer.layerHomeW, h: layer.layerHomeH }))
+      .filter((home) => [home.x, home.y, home.w, home.h].every((v) => typeof v === 'number' && Number.isFinite(v)));
+    const anchor = homes.length > 0
+      ? {
+          x: Math.min(...homes.map((home) => home.x!)),
+          y: Math.min(...homes.map((home) => home.y!)),
+          w: Math.max(...homes.map((home) => home.x! + home.w!)) - Math.min(...homes.map((home) => home.x!)),
+          h: Math.max(...homes.map((home) => home.y! + home.h!)) - Math.min(...homes.map((home) => home.y!)),
+        }
+      : null;
+    if (!anchor) return;
+    const { placements } = planSemanticLayerFrame(anchor, layers.length, mode, anchor);
+    const placementByKey = new Map(layers.map((layer, index) => [layer.key, placements[index]!]));
+    setCanvas((previous) => previous.map((candidate) => {
+      const placement = placementByKey.get(candidate.key);
+      return placement ? { ...candidate, ...placement, layerLayout: 'spread' as const, userResized: true } : candidate;
+    }));
+  }, []);
+
+  /**
+   * 画布绘制顺序。
+   *
+   * 原位叠放后，谁压着谁**看得见**了，所以必须按图层面板的叠放次序（layerZ）绘制；
+   * 摊开摆放时各块不重叠，这一步没有可见效果，但保持一致省得两套心智。
+   * 只在同一分层组内部重排，其它元素的相对位置一律不动。
+   */
+  const canvasInPaintOrder = useMemo(() => {
+    const groups = new Map<string, CanvasImageItem[]>();
+    for (const item of canvas) {
+      if (item.layerRole !== 'layer' || !item.layerGroupId) continue;
+      const bucket = groups.get(item.layerGroupId) ?? [];
+      bucket.push(item);
+      groups.set(item.layerGroupId, bucket);
+    }
+    if (groups.size === 0) return canvas;
+    const zOf = (item: CanvasImageItem) => (typeof item.layerZ === 'number' && Number.isFinite(item.layerZ)
+      ? item.layerZ
+      : (typeof item.layerIndex === 'number' ? item.layerIndex : 0));
+    for (const bucket of groups.values()) bucket.sort((a, b) => zOf(a) - zOf(b));
+    const cursor = new Map<string, number>();
+    return canvas.map((item) => {
+      if (item.layerRole !== 'layer' || !item.layerGroupId) return item;
+      const bucket = groups.get(item.layerGroupId)!;
+      const at = cursor.get(item.layerGroupId) ?? 0;
+      cursor.set(item.layerGroupId, at + 1);
+      return bucket[at] ?? item;
+    });
+  }, [canvas]);
+
+  /**
+   * 叠放时只让最底下那块铺透明棋盘格。
+   * 棋盘底纹带的是不透明底色，每块都铺的话上面那张会把下面全盖住——
+   * 摊开时各块不重叠所以看不出来，一叠起来整幅就只剩最上层 + 一片棋盘。
+   */
+  /**
+   * 哪些组是摊开的——读**按组存下来的摆法**，不靠几何反推。
+   *
+   * 我上一版用「图层坐标是否散开」来推，那是错的：原位叠放的组在裁剪之后，每一层本来
+   * 就各自回到自己的最小外接矩形（applyLayerLayout 的 stacked 分支写得很清楚——
+   * 「各自回到自己的最小外接矩形，不是都摊平成同一个大方块」），坐标天然互不相同。
+   * 于是几乎每个拆完的组都会被判成「平铺」，每层都铺上不透明棋盘格盖住下面的层，
+   * 面板还显示「平铺展开」——比我当初要修的那个 bug 影响面更大（Codex PR #1363 P1）。
+   *
+   * 当初选几何推断是想躲开「标志位和真实状态漂移」，但前提没验：我没确认过叠放态的
+   * 几何长什么样。写的时候只有 applyLayerLayout 一个地方改摆法，按组存就够稳。
+   */
+  const spreadLayerGroupIds = useMemo(() => {
+    const spread = new Set<string>();
+    for (const item of canvas) {
+      if (item.layerRole !== 'layer' || !item.layerGroupId) continue;
+      if (item.layerLayout === 'spread') spread.add(item.layerGroupId);
+    }
+    return spread;
+  }, [canvas]);
+
+  const bottomStackedLayerKeys = useMemo(() => {
+    const bottom = new Map<string, { key: string; z: number }>();
+    for (const item of canvas) {
+      if (item.layerRole !== 'layer' || !item.layerGroupId) continue;
+      const z = typeof item.layerZ === 'number' && Number.isFinite(item.layerZ)
+        ? item.layerZ
+        : (typeof item.layerIndex === 'number' ? item.layerIndex : 0);
+      const current = bottom.get(item.layerGroupId);
+      if (!current || z < current.z) bottom.set(item.layerGroupId, { key: item.key, z });
+    }
+    return new Set([...bottom.values()].map((entry) => entry.key));
+  }, [canvas]);
+
+  const patchLayer = useCallback((key: string, patch: Partial<CanvasImageItem>) => {
+    setCanvas((previous) => previous.map((candidate) => candidate.key === key ? { ...candidate, ...patch } : candidate));
+  }, []);
+
+  const moveLayerInStack = useCallback((key: string, direction: 'up' | 'down') => {
+    const ordered = layerPanelLayers.map((layer) => layer.key);
+    const index = ordered.indexOf(key);
+    if (index < 0) return;
+    const target = direction === 'up' ? index + 1 : index - 1;
+    if (target < 0 || target >= ordered.length) return;
+    const reordered = [...ordered];
+    reordered[index] = ordered[target]!;
+    reordered[target] = ordered[index]!;
+    // 交换后整组重排一遍 layerZ：只改被点的那两个会让旧数据（layerZ 为空、
+    // 按 layerIndex 回落）和新值混着比，顺序变得不可预测。
+    const zByKey = new Map(reordered.map((layerKey, position) => [layerKey, position + 1]));
+    setCanvas((previous) => previous.map((candidate) => zByKey.has(candidate.key)
+      ? { ...candidate, layerZ: zByKey.get(candidate.key) }
+      : candidate));
+  }, [layerPanelLayers]);
+
+  /** 面板底部三个下载出口共用：拿到原图 + 当前这份图层视图，拿不齐就明确报错。 */
+  const readLayerExportInput = useCallback(() => {
+    const source = String(layerPanelSource?.originalSrc || layerPanelSource?.src || '').trim();
+    if (!source) throw new Error('缺少原图，无法按原始尺寸对齐导出');
+    // sha 一起带上：导出要把图读成像素，带 sha 才能走同源资产地址，
+    // 否则对象存储部署上会撞 CORS，用户只会看到一句没头没尾的 Failed to fetch。
+    const sourceSha256 = layerPanelSource?.originalSha256 || layerPanelSource?.sha256 || null;
+    const layerSources: LayerSourceInput[] = layerPanelLayers
+      .filter((layer) => !!layer.src)
+      .map((layer, index) => ({
+        name: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
+        // 导出取**满幅**那一版：裁剪版是给画布用的，导出链路按原图尺寸对齐叠放，
+        // 喂裁剪版会被拉伸铺满（Codex PR #1363 P1）。没裁过的层两者是同一个值。
+        source: layer.originalSrc || layer.src,
+        sha256: layer.originalSha256 || layer.sha256 || null,
+        opacity: layer.layerOpacity,
+        hidden: layer.layerHidden === true,
+      }));
+    if (layerSources.length === 0) throw new Error('还没有出图的图层可以导出');
+    const pending = layerPanelLayers.filter((layer) => layer.status === 'running');
+    if (pending.length > 0) throw new Error(`还有 ${pending.length} 个图层在生成中，等它们出图再导出`);
+    return { source, sourceSha256, layerSources };
+  }, [layerPanelLayers, layerPanelSource]);
+
+  const exportName = useMemo(
+    () => cleanDisplayTitle(layerPanelSource?.prompt || '') || 'visual-agent-layered',
+    [layerPanelSource],
+  );
+
+  const handleLayerPanelExportPsd = useCallback(async () => {
+    setLayerExportBusy('正在写 PSD');
+    try {
+      const { source, sourceSha256, layerSources } = readLayerExportInput();
+      const blob = await createLayeredPsdBlob({ source, sourceSha256, layerSources });
+      downloadLayeredPsd(blob, exportName);
+      const visible = layerSources.filter((layer) => !layer.hidden).length;
+      toast.success('PSD 已生成', `${layerSources.length} 个图层（${visible} 个可见）+ 1 个隐藏原图参考层。`, 6000);
+    } catch (error) {
+      toast.error('PSD 导出失败', error instanceof Error ? error.message : 'PSD 写入失败', 6000);
+    } finally {
+      setLayerExportBusy(null);
+    }
+  }, [exportName, readLayerExportInput]);
+
+  const handleLayerPanelExportComposite = useCallback(async () => {
+    setLayerExportBusy('正在拍平合成图');
+    try {
+      const { source, sourceSha256, layerSources } = readLayerExportInput();
+      const blob = await createCompositePngBlob({ source, sourceSha256, layerSources });
+      downloadBlob(blob, `${exportName}-合成`, 'png');
+      toast.success('合成 PNG 已生成', '与面板预览一致：只包含当前可见图层，并带上不透明度。', 5000);
+    } catch (error) {
+      toast.error('合成图导出失败', error instanceof Error ? error.message : '合成失败', 6000);
+    } finally {
+      setLayerExportBusy(null);
+    }
+  }, [exportName, readLayerExportInput]);
+
+  const handleLayerPanelExportZip = useCallback(async () => {
+    setLayerExportBusy('正在打包 ZIP');
+    try {
+      const items = layerPanelLayers
+        .filter((layer) => !!layer.src)
+        .map((layer, index) => ({
+          src: layer.src,
+          // 带序号，解压后顺序一眼可读（01 在最下层）。
+          filename: aiLayerExportName(index, aiLayerSubtitle(cleanDisplayTitle(layer.prompt))),
+        }));
+      if (items.length === 0) throw new Error('还没有出图的图层可以打包');
+      await exportAllAsZip(items, `${exportName}-图层`, 'png');
+    } catch (error) {
+      toast.error('打包失败', error instanceof Error ? error.message : 'ZIP 打包失败', 6000);
+    } finally {
+      setLayerExportBusy(null);
+    }
+  }, [exportName, layerPanelLayers]);
+
+  const handleLayerPanelSelfCheck = useCallback(async () => {
+    setLayerExportBusy('正在自检图层可读性');
+    try {
+      const { source, sourceSha256, layerSources } = readLayerExportInput();
+      const rows = await checkLayerSourcesReadable({ source, sourceSha256, layerSources });
+      const bad = rows.filter((row) => !row.ok);
+      if (bad.length === 0) {
+        toast.success('自检通过', `原图与 ${layerSources.length} 个图层都读得到，可以导出。`, 5000);
+        return;
+      }
+      toast.error(
+        `自检未通过（${bad.length}/${rows.length} 项读不到）`,
+        bad.map((row) => `${row.name}：${row.detail}`).join('；'),
+        9000,
+      );
+    } catch (error) {
+      toast.error('自检未通过', error instanceof Error ? error.message : '无法读取图层', 8000);
+    } finally {
+      setLayerExportBusy(null);
+    }
+  }, [readLayerExportInput]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const msgContentRef = useRef<HTMLDivElement | null>(null);
@@ -2728,31 +3236,75 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         )
       );
 
-      // 先乐观删除 UI
-      setCanvas((prev) => prev.filter((it) => !set.has(it.key)));
+      // 同步更新 state 与 ref。自动保存、生成回调和删除确认都读取 canvasRef；若只更新
+      // React state，删除后的首个保存可能仍把旧元素写回服务端，刷新后图片会复活。
+      const nextCanvas = (canvasRef.current ?? []).filter((it) => !set.has(it.key));
+      canvasRef.current = nextCanvas;
+      setCanvas(nextCanvas);
       clearSelectionWithChips();
 
-      if (assetIds.length === 0) return;
-      const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
-      // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
-      const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
-      if (realFailed) {
-        toast.error(realFailed.error?.message || '删除失败');
-        await reloadWorkspace();
+      if (assetIds.length > 0) {
+        const results = await Promise.all(assetIds.map((id) => deleteVisualAgentWorkspaceAsset({ id: workspaceId, assetId: id })));
+        // 只关注真正的失败，忽略"资产不存在"（ASSET_NOT_FOUND）因为目标已达成
+        const realFailed = results.find((r) => !r.success && r.error?.code !== 'ASSET_NOT_FOUND') ?? null;
+        if (realFailed) {
+          toast.error(realFailed.error?.message || '删除失败');
+          await reloadWorkspace();
+          return;
+        }
       }
+
+      // 资产删除成功后立即持久化同一份删除后快照，不依赖 debounce 的时序。这样接口成功、
+      // 画布保存与刷新恢复三者形成一个可等待的完成点。
+      if (canvasSaveTimerRef.current != null) {
+        window.clearTimeout(canvasSaveTimerRef.current);
+        canvasSaveTimerRef.current = null;
+      }
+      const built = canvasToPersistedV1(nextCanvas);
+      const json = JSON.stringify(built.state);
+      const saved = await saveVisualAgentWorkspaceCanvas({
+        id: workspaceId,
+        schemaVersion: PERSIST_SCHEMA_VERSION,
+        payloadJson: json,
+        idempotencyKey: `delete_${Date.now()}`,
+      });
+      if (!saved.success) {
+        toast.error(saved.error?.message || '图片已删除，但画布同步失败，正在重新加载');
+        await reloadWorkspace();
+        return;
+      }
+      lastSavedJsonRef.current = json;
+      lastSaveAtRef.current = Date.now();
     },
     [reloadWorkspace, workspaceId, clearSelectionWithChips]
   );
 
-  useEffect(() => {
+  // 只刷新模型目录，不触发上游探活或生成请求。失败时保留旧目录，避免一次网关抖动把当前页面锁死。
+  const reloadImageGenModels = useCallback(async () => {
     setModelsLoading(true);
-    // 通过视觉创作专属端点获取逻辑模型目录；旧环境由后端提供模型池兼容投影。
-    getVisualAgentImageGenModels()
-      .then((poolsRes) => {
-        if (poolsRes.success) setImageGenPools(poolsRes.data ?? []);
-      })
-      .finally(() => setModelsLoading(false));
+    setModelsError(null);
+    try {
+      const poolsRes = await getVisualAgentImageGenModels();
+      if (poolsRes.success) {
+        setImageGenPools(poolsRes.data ?? []);
+        return;
+      }
+      setModelsError({
+        message: poolsRes.error?.message || '模型网关暂时不可用，请稍后重试。',
+        requestId: poolsRes.error?.requestId,
+      });
+    } catch (error) {
+      setModelsError({
+        message: error instanceof Error && error.message ? error.message : '模型目录加载失败，请稍后重试。',
+      });
+    } finally {
+      setModelsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void reloadImageGenModels();
+  }, [reloadImageGenModels]);
 
   // 读取模型偏好（从后端）
   useEffect(() => {
@@ -2837,19 +3389,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
   }, [directPrompt, directPromptKey, directPromptReady]);
 
-  // 如果手动选中的模型被后端删除（模型池中不存在），自动回退到”自动”
+  // 只有模型池从目录中删除时才回到自动；健康异常只做建议，不剥夺用户选择。
   // 重要：必须等模型池加载完成后再判断，否则空数组会误判用户选择
   useEffect(() => {
     if (modelsLoading) return;
     if (modelPrefAuto) return;
     if (!modelPrefModelId) return;
-    if (enabledImageModels.length === 0) return;
-    const ok = enabledImageModels.some((m) => m.id === modelPrefModelId);
+    if (allImageGenModels.length === 0) return;
+    const ok = allImageGenModels.some((m) => m.id === modelPrefModelId);
     if (!ok) {
       setModelPrefAuto(true);
       setModelPrefModelId('');
     }
-  }, [enabledImageModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
+  }, [allImageGenModels, modelPrefAuto, modelPrefModelId, modelsLoading]);
 
   // 启动时：加载 workspace 并回放历史消息+画布（workspaceId 为稳定主键）
   useEffect(() => {
@@ -3178,14 +3730,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       canvasSaveTimerRef.current = null;
     }
 
-    canvasSaveTimerRef.current = window.setTimeout(() => {
+    const runSave = () => {
       canvasSaveTimerRef.current = null;
       const built = canvasToPersistedV1(canvasRef.current ?? []);
       const json = JSON.stringify(built.state);
       if (json === lastSavedJsonRef.current) return;
 
       const now = Date.now();
-      if (now - lastSaveAtRef.current < 800) return;
+      // 距上次落盘不足冷却时间就**改期**，绝不直接放弃。
+      // 早先这里是 `return`：这次改动就此消失，而后面若没有新的画布变化，
+      // 再也没有人来救它。时序判断抽在 canvasSaveSchedule 里，那边有单测钉着。
+      const cooldown = canvasSaveCooldownRemaining({ now, lastSavedAt: lastSaveAtRef.current });
+      if (cooldown > 0) {
+        canvasSaveTimerRef.current = window.setTimeout(runSave, cooldown);
+        return;
+      }
       lastSaveAtRef.current = now;
       lastSavedJsonRef.current = json;
 
@@ -3208,7 +3767,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         payloadJson: json,
         idempotencyKey: `autosave_${Math.floor(now / 1000)}`,
       });
-    }, 1200);
+    };
+
+    canvasSaveTimerRef.current = window.setTimeout(runSave, CANVAS_SAVE_DEBOUNCE_MS);
 
     return () => {
       if (canvasSaveTimerRef.current != null) {
@@ -3748,10 +4309,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   /** 动画移动视角并适配尺寸，使指定矩形区域完整显示在视口中 */
   const animateCameraToFitRect = useCallback(
-    (rect: { x: number; y: number; w: number; h: number }, opts?: { maxZoom?: number }) => {
+    (rect: { x: number; y: number; w: number; h: number }, opts?: { maxZoom?: number; rightInset?: number }) => {
       if (!stageSize.w || !stageSize.h) return;
       const pad = 60; // 留边距
-      const viewW = Math.max(1, stageSize.w - pad * 2);
+      // 右侧被图层面板这类常驻浮层占掉的宽度：可视区要相应收窄，
+      // 否则「适配到视口」会把产物摆到面板底下——看着像居中，其实被盖住了。
+      const rightInset = Math.max(0, Math.min(opts?.rightInset ?? 0, stageSize.w * 0.5));
+      const usableW = Math.max(1, stageSize.w - rightInset);
+      const viewW = Math.max(1, usableW - pad * 2);
       const viewH = Math.max(1, stageSize.h - pad * 2);
       const rectW = Math.max(1, rect.w);
       const rectH = Math.max(1, rect.h);
@@ -3764,7 +4329,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const fromCam = { ...cameraRef.current };
       const toZoom = targetZoom;
       const toCam = {
-        x: stageSize.w / 2 - worldCx * toZoom,
+        x: usableW / 2 - worldCx * toZoom,
         y: stageSize.h / 2 - worldCy * toZoom,
       };
       if (cameraAnimRef.current != null) cancelAnimationFrame(cameraAnimRef.current);
@@ -3784,6 +4349,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     },
     [setViewport, stageSize.h, stageSize.w]
   );
+
+  useEffect(() => {
+    animateCameraToFitRectRef.current = animateCameraToFitRect;
+  }, [animateCameraToFitRect]);
 
   const pickNearestGeneratorKey = useCallback(
     (items: CanvasImageItem[], nearWorld: { x: number; y: number }) => {
@@ -4744,6 +5313,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           // 这样生成还在跑或失败时（src 为空）导出会自动回落到原图层。
           ...(sourceItem.layerRole === 'layer' && sourceItem.layerGroupId
             ? {
+                // frameId 也要继承：编组身份现在只认 frameId（layerGroupId 的兜底已被去掉，
+                // 否则解组后刷新 Frame 会复活）。少带这一个字段，编辑产物就不算 Frame 成员——
+                // 画布上看得见，Frame 导出与包围盒却仍按原图层算，编辑结果静默丢失；
+                // 而且新记录带着 frameMigrated 落盘，读回时会被当成「用户主动解过组」
+                // 而不是「漏了」（Codex PR #1363 P1）。
+                frameId: sourceItem.frameId,
                 layerGroupId: sourceItem.layerGroupId,
                 layerSourceKey: sourceItem.layerSourceKey,
                 layerIndex: sourceItem.layerIndex,
@@ -5235,11 +5810,19 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   const onUploadImages = async (files: File[], opts?: { mode?: 'auto' | 'add' }) => {
+    // 工作区初始画布仍在回放时接收上传，会被稍后返回的服务器快照覆盖：界面提示
+    // “已加入”但图片随即消失。入口和处理函数双重门禁，覆盖文件选择、拖放与粘贴路径。
+    if (!workspaceReady) {
+      showUploadToast('画板正在恢复，请稍后再上传图片');
+      return;
+    }
+    const imageFiles = (files ?? []).filter((f) => f && f.type && f.type.startsWith('image/'));
+    if (imageFiles.length > 20) {
+      showUploadToast('一次最多上传 20 张，已保留前 20 张；其余图片未上传，请分批添加');
+    }
     // 先按「新增路径」的上限（下方 list.slice(0, 20)）截断，再压缩——否则一次拖入 50 张时
     // 会把 30 张注定被丢弃的图也解码 + 画到 canvas，反而在上传前先卡死/爆内存。
-    const rawList = (files ?? [])
-      .filter((f) => f && f.type && f.type.startsWith('image/'))
-      .slice(0, 20);
+    const rawList = imageFiles.slice(0, 20);
     if (rawList.length === 0) return;
 
     // 关键：上传/放置必须串行化，否则两次快速上传会并发读文件，导致“空位算法看不到对方”=> 100% 覆盖
@@ -5843,6 +6426,29 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const is2 = e.key === '2' || e.code === 'Digit2';
       const isBracketRight = e.key === ']' || e.code === 'BracketRight';
       const isBracketLeft = e.key === '[' || e.code === 'BracketLeft';
+      const isG = e.key === 'g' || e.key === 'G' || e.code === 'KeyG';
+      const isA = e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
+
+      // Cmd/Ctrl+A: 全选画布元素（Figma 同款；没有它就没法「选几个一起编组/导出」）
+      if (isMod && !e.shiftKey && !e.altKey && isA) {
+        e.preventDefault();
+        selectAllOnCanvas();
+        return;
+      }
+
+      // Cmd/Ctrl+Shift+G: 解组（Figma 同款）
+      if (isMod && e.shiftKey && !e.altKey && isG) {
+        e.preventDefault();
+        ungroupSelection();
+        return;
+      }
+
+      // Cmd/Ctrl+G: 编组
+      if (isMod && !e.shiftKey && !e.altKey && isG) {
+        e.preventDefault();
+        groupSelection();
+        return;
+      }
 
       // Cmd/Ctrl+Shift+]: 置于顶层
       if (isMod && e.shiftKey && !e.altKey && isBracketRight) {
@@ -5896,7 +6502,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const opts = { capture: true } as const;
     window.addEventListener('keydown', onDown, opts);
     return () => window.removeEventListener('keydown', onDown, opts);
-  }, [fitToAll, fitToSelection, zoomTo100, layerMoveUp, layerMoveDown, layerBringToFront, layerSendToBack]);
+  }, [fitToAll, fitToSelection, zoomTo100, layerMoveUp, layerMoveDown, layerBringToFront, layerSendToBack,
+    groupSelection, ungroupSelection, selectAllOnCanvas]);
 
   const focusKeyRef = useRef<{
     key: string;
@@ -6094,7 +6701,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   prev.map((it) => {
                     if (!set.has(it.key)) return it;
                     const b = drag.base[it.key] ?? { x: it.x ?? 0, y: it.y ?? 0 };
-                    return { ...it, x: b.x + dx, y: b.y + dy };
+                    const moved = { ...it, x: b.x + dx, y: b.y + dy };
+                    // 原位要跟着一起走。它是「原位叠放 / 平铺展开」互切时的锚点，
+                    // 只挪 x/y 不挪原位的话，拖完再切一次摆法整组就弹回拖之前那块地；
+                    // 若这个 Frame 是在生成途中被拖走的，先到的图层记的是旧原位、
+                    // 后到的记的是新原位，切摆法还会把一组图层撕到两个地方去
+                    // （Codex PR #1363 P1）。这正是用户报的「图层回到最初 Frame 位置」
+                    // 换一条路径重现——落位那条我已经修了，这条是同一个病的另一半。
+                    if (Number.isFinite(b.homeX as number) && Number.isFinite(b.homeY as number)) {
+                      moved.layerHomeX = (b.homeX as number) + dx;
+                      moved.layerHomeY = (b.homeY as number) + dy;
+                    }
+                    return moved;
                   })
                 );
                 e.preventDefault();
@@ -6281,7 +6899,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               className="absolute inset-0"
               style={{ transformOrigin: '0 0' }}
             >
-              {canvas.map((it) => {
+              {canvasInPaintOrder.map((it) => {
                 const kind = it.kind ?? 'image';
                 // 错误态：仍需要渲染占位框（否则用户不知道尺寸，也无法直接选中/删除）
                 if (kind === 'image' && !it.src && it.status !== 'running' && it.status !== 'error') return null;
@@ -6328,6 +6946,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <div
                     key={it.key}
                     className="absolute rounded-[16px] group/citem"
+                    // 结构标记：让端到端冒烟能直接判「哪个分层组、第几层、是不是原图」，
+                    // 而不是靠图片尺寸倒猜。倒猜过一次，猜错了整整两轮
+                    //（2026-08-11：把「多出一组幽灵图层」误读成「排版没落盘」）。
+                    data-canvas-key={it.key}
+                    data-frame-id={it.frameId || undefined}
+                    data-layer-group={it.layerGroupId || undefined}
+                    data-layer-index={typeof it.layerIndex === 'number' ? it.layerIndex : undefined}
+                    data-layer-role={it.layerRole || undefined}
+                    data-layer-status={it.status || undefined}
                     style={{
                       left: Math.round(x) - (isMobile ? 12 : 0),
                       top: Math.round(y) - (isMobile ? 12 : 0),
@@ -6430,10 +7057,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         }
                       }
                       // 开始拖拽（多选整体移动）
-                      const base: Record<string, { x: number; y: number }> = {};
+                      const base: Record<string, { x: number; y: number; homeX?: number; homeY?: number }> = {};
                       for (const k of nextKeys) {
                         const found = canvas.find((x) => x.key === k);
-                        base[k] = { x: found?.x ?? 0, y: found?.y ?? 0 };
+                        base[k] = {
+                          x: found?.x ?? 0,
+                          y: found?.y ?? 0,
+                          homeX: found?.layerHomeX,
+                          homeY: found?.layerHomeY,
+                        };
                       }
                       dragItemsRef.current = {
                         active: true,
@@ -6552,6 +7184,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         ) : it.src ? (
                           <div className="absolute inset-0 flex items-center justify-center">
                             <img
+                              data-testid="canvas-image"
                               src={it.src}
                               alt={it.prompt}
                               className="w-full h-full block"
@@ -6585,21 +7218,41 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           boxShadow: 'none',
                         }}
                       >
-                        <div
-                          className="absolute right-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
-                          style={{
-                            background: 'rgba(0,0,0,0.28)',
-                            border: '1px solid rgba(255,255,255,0.10)',
-                            color: 'rgba(255,255,255,0.78)',
-                            // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
-                            transform: 'scale(var(--invZoom))',
-                            transformOrigin: 'right top',
-                          }}
-                          title="预计生成尺寸（画布占位）"
-                        >
-                          预计 {Math.round(w)} × {Math.round(h)}
-                        </div>
-                        <GenSweepLoader createdAt={it.createdAt} />
+                        {/* 贴**左上角**：右上角是 Frame 的「图层面板」按钮、正上方是 Frame 头部、
+                            正下方是计时条，四者都用 scale(1/zoom) 保持屏幕尺寸恒定，
+                            凑一起必然互相压（2026-08-11 用户截图：徽章正压在进度条上）。
+                            左上角是这张卡里唯一没人占的角。卡片在屏幕上太小时直接不显示——
+                            那个尺寸下它只会盖住产物本身。 */}
+                        {h * zoom >= 90 && (
+                          <div
+                            className="absolute left-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
+                            style={{
+                              background: 'rgba(0,0,0,0.28)',
+                              border: '1px solid rgba(255,255,255,0.10)',
+                              color: 'rgba(255,255,255,0.78)',
+                              // 关键：文字大小不随画布 zoom 缩放（保持清晰可读）
+                              // 再让开 Frame 头部：Frame 给头部留的是 FRAME_HEADER=46 个**世界**像素，
+                              // 而头部标签自己是 scale(1/zoom) 的**屏幕**常量。缩得越小，
+                              // 那 46px 在屏幕上越薄（21% 时只剩 ~10px），头部就压到卡片上来了
+                              // ——冒烟实测 21%/19% 两档「Frame 头部 × 图层分离中」重叠。
+                              // 这里按同一套换算把徽章往下推：scale 之后的 translateY 正好是屏幕像素，
+                              // 需要让开的量 = 头部屏幕高度 − 头部预留的屏幕高度，高倍下自然归零。
+                              transform: `scale(var(--invZoom)) translateY(${
+                                it.layerRole === 'layer'
+                                  ? Math.max(0, Math.round(30 - 41 * zoom))
+                                  : 0
+                              }px)`,
+                              transformOrigin: 'left top',
+                            }}
+                            title={it.layerRole === 'layer' ? '正在把原图拆成可编辑图层' : '预计生成尺寸（画布占位）'}
+                            // 低倍下这些标签的文字会按档收起，冒烟不能靠文字找它们
+                            // （靠文字找 = 一收起就找不到 = 那一档静默没测）。
+                            data-testid={it.layerRole === 'layer' ? 'frame-layering-badge' : undefined}
+                          >
+                            {it.layerRole === 'layer' ? '图层分离中' : `预计 ${Math.round(w)} × ${Math.round(h)}`}
+                          </div>
+                        )}
+                        <GenSweepLoader createdAt={it.createdAt} screenW={w * zoom} screenH={h * zoom} />
                       </div>
                     ) : kind === 'shape' ? (
                       <div className="w-full h-full flex items-center justify-center">
@@ -6671,7 +7324,18 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </div>
                           </div>
                         ) : (
-                          <div className={`w-full h-full relative ${it.syncStatus === 'pending' ? 'prd-upload-wave' : ''}`}>
+                          <div
+                            className={`w-full h-full relative ${it.syncStatus === 'pending' ? 'prd-upload-wave' : ''}`}
+                            // 分层产物是 RGBA：直接摆在深色画布上看着就是一张黑图，
+                            // 铺棋盘格才看得出「这一层是透明的」。
+                            // 用「这一组实际是不是摊开的」判，不用全局偏好——
+                            // 全局值会让另一个仍在叠放的组整组铺上不透明棋盘格。
+                            style={it.layerRole === 'layer'
+                              && ((it.layerGroupId ? spreadLayerGroupIds.has(it.layerGroupId) : false)
+                                || bottomStackedLayerKeys.has(it.key))
+                              ? { ...CANVAS_CHECKERBOARD, borderRadius: 14 }
+                              : undefined}
+                          >
                             {it.syncStatus && it.syncStatus !== 'synced' ? (
                               <div
                                 className="absolute right-3 top-3 text-[12px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center pointer-events-none"
@@ -6692,12 +7356,25 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </div>
                             ) : null}
                             <img
+                              data-testid="canvas-image"
                               src={it.src}
                               alt={it.prompt}
                               className="w-full h-full block"
                               style={{
                                 objectFit: 'contain',
                                 borderRadius: 14,
+                                // 图层面板改的显隐/不透明度在画布上也要看得见，
+                                // 否则面板和画布是两套真相。
+                                //
+                                // 隐藏层的**像素必须真的不画**（0 而不是 0.18）：导出的合成 PNG 和
+                                // PSD 都把隐藏层完全排除，画布再留 18% 就成了「所见 ≠ 所得」；
+                                // 而空层/实色层是默认隐藏的，那 18% 会给「表观和原图一致」的副本
+                                // 蒙上一层底色，正好毁掉本功能的核心承诺（Codex PR #1363 P1）。
+                                // 「卡片不能凭空消失」的顾虑由外层卡片承担——边框、选中框、
+                                // 图层面板那一行都还在，元素照样选得中、拖得动。
+                                opacity: it.layerRole === 'layer'
+                                  ? (it.layerHidden ? 0 : (typeof it.layerOpacity === 'number' ? it.layerOpacity : 1))
+                                  : 1,
                                 // 选中态由“蓝色描边+角点”统一表达（避免光晕不明显）
                                 filter: 'none',
                               }}
@@ -6930,7 +7607,33 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div ref={worldUiRef} className="absolute inset-0 z-30 pointer-events-none" style={{ transformOrigin: '0 0' }}>
               {/* 展示层：永远可读且压在图片上方 */}
               <div className="absolute inset-0 pointer-events-none">
-                {semanticLayerFrames.map((frame) => (
+                {semanticLayerFrames.map((frame) => {
+                  // 拆分进度就写在这个 Frame 的头部：产物在哪长，进度就在哪显示。
+                  const layering = layeringProgress?.groupId === frame.id ? layeringProgress : null;
+                  // 头部的文字与按钮都用 scale(1/zoom) 反向放大以保持屏幕尺寸恒定，
+                  // 所以缩得越小、它们占 Frame 的比例越大。低倍下三者会互相压住
+                  // （冒烟实测：35% 起头部撞按钮，23% 起连「图层分离中」也一起撞）。
+                  // 按 Frame 在屏幕上的实际宽度分档收起：先收文字、再收按钮标签。
+                  const frameScreenW = frame.w * zoom;
+                  const compactHeadline = frameScreenW < 420;
+                  const iconOnlyButton = frameScreenW < 260;
+                  const isAiFrame = frame.kind === 'ai-layers';
+                  const fullHeadline = layering
+                    ? (layering.total
+                        ? `Frame · ${layering.phase} · ${layering.completed ?? 0}/${layering.total}`
+                        : `Frame · ${layering.phase}`)
+                    : isAiFrame
+                      ? `Frame · AI 分层 · ${frame.layerKeys.length} 个图层`
+                      : `Frame · ${frame.layerKeys.length} 个元素`;
+                  const headline = compactHeadline
+                    ? (layering
+                        ? (layering.total ? `分层中 ${layering.completed ?? 0}/${layering.total}` : '分层中')
+                        : isAiFrame ? `${frame.layerKeys.length} 层` : `${frame.layerKeys.length} 个`)
+                    : fullHeadline;
+                  // 文字区留出按钮的位置，超出就截断——绝不允许压到按钮底下。
+                  const buttonReserveScreen = iconOnlyButton ? 34 : 92;
+                  const headlineMaxWidth = Math.max(0, frameScreenW - buttonReserveScreen - 28) / Math.max(0.0001, zoom);
+                  return (
                   <div
                     key={`semantic_frame_${frame.id}`}
                     className="absolute rounded-[18px]"
@@ -6944,79 +7647,100 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       boxShadow: '0 0 0 1px rgba(var(--accent-primary-rgb), 0.06) inset',
                     }}
                   >
+                    {/* 抓头部就能整组拖走（Figma 心智：拖 Frame = 拖它的全部子元素）。
+                        叠放之后各部件精确重合，想「一起挪」靠逐个 shift 点选很别扭，
+                        Frame 头部才是那个自然的抓手（2026-08-11 用户标注：「图层要能选中一起拖拽」）。 */}
                     <div
-                      className="absolute left-3 top-2 min-w-0 flex items-center gap-2"
+                      role={layering ? 'status' : undefined}
+                      aria-live={layering ? 'polite' : undefined}
+                      className="absolute left-3 top-2 min-w-0 flex items-center gap-2 overflow-hidden"
+                      data-frame-handle={frame.id}
                       style={{
                         color: 'var(--text-primary)',
                         transform: 'scale(var(--invZoom))',
                         transformOrigin: 'left top',
+                        maxWidth: headlineMaxWidth,
+                        pointerEvents: 'auto',
+                        cursor: 'move',
+                      }}
+                      title="拖这里可以整组移动"
+                      onPointerDown={(event) => {
+                        event.stopPropagation();
+                        const keys = frame.layerKeys;
+                        if (keys.length === 0) return;
+                        setSelectionWithoutChip(keys);
+                        const base: Record<string, { x: number; y: number; homeX?: number; homeY?: number }> = {};
+                        for (const key of keys) {
+                          const found = canvasRef.current.find((candidate) => candidate.key === key);
+                          base[key] = {
+                            x: found?.x ?? 0,
+                            y: found?.y ?? 0,
+                            homeX: found?.layerHomeX,
+                            homeY: found?.layerHomeY,
+                          };
+                        }
+                        dragItemsRef.current = {
+                          active: true,
+                          confirmed: false,
+                          pointerId: event.pointerId,
+                          startClientX: event.clientX,
+                          startClientY: event.clientY,
+                          keys,
+                          base,
+                        };
+                        (stageRef.current as HTMLDivElement | null)?.setPointerCapture(event.pointerId);
+                        event.preventDefault();
                       }}
                     >
-                      <Layers size={15} className="shrink-0" />
-                      <span className="whitespace-nowrap text-[12px] font-semibold" title={frame.name}>
-                        Frame · AI 分层 · {frame.layerKeys.length} 个图层
+                      <Layers size={15} className={`shrink-0 ${layering ? 'animate-pulse' : ''}`} />
+                      <span
+                        className="truncate text-[12px] font-semibold"
+                        title={`${frame.name}｜${fullHeadline}`}
+                      >
+                        {headline}
                       </span>
                     </div>
                     <button
                       type="button"
-                      className="absolute right-3 top-2 pointer-events-auto h-7 px-2.5 rounded-[8px] inline-flex items-center gap-1.5 text-[11px] font-semibold transition-colors hover-bg-soft"
+                      className={`absolute right-3 top-2 pointer-events-auto h-7 rounded-[8px] inline-flex items-center gap-1.5 text-[11px] font-semibold transition-colors hover-bg-soft ${iconOnlyButton ? 'w-7 justify-center px-0' : 'px-2.5'}`}
                       style={{
                         color: 'var(--text-primary)',
-                        background: 'var(--panel-solid)',
+                        // 高亮判据与上面的 panelKey 同源，否则面板开着按钮却不高亮。
+                        background: layerPanelGroupId === (frame.layerGroupId || frame.id)
+                          ? 'rgba(var(--accent-primary-rgb), 0.20)'
+                          : 'var(--panel-solid)',
                         border: '1px solid rgba(var(--accent-primary-rgb), 0.28)',
                         transform: 'scale(var(--invZoom))',
                         transformOrigin: 'right top',
                       }}
+                      // AI 分层框的导出入口收进图层面板：那里能先看清叠放和显隐，再决定导什么。
+                      // 普通编组没有图层语义，直接给「导出 PSD」——每个成员一层，
+                      // 这正是用户要的「有 frame 就能直接下 PSD」。
+                      title={isAiFrame
+                        ? '打开图层面板：排顺序、开关图层、导出 PSD / 合成 PNG / ZIP'
+                        : '把这个 Frame 里的元素导出成一个分层 PSD'}
                       onPointerDown={(event) => event.stopPropagation()}
+                      // 同上：iconOnlyButton 会把文字整个去掉，冒烟必须按钩子找。
+                      data-testid="frame-panel-button"
                       onClick={() => {
-                        const sourceItem = canvasRef.current.find((candidate) => candidate.key === frame.sourceKey);
-                        void exportAiLayeredPsd({
-                          key: sourceItem?.key || frame.layerKeys[0] || '',
-                          src: sourceItem?.src || '',
-                          prompt: sourceItem?.prompt || frame.name,
-                        });
+                        if (isAiFrame) {
+                          // 面板按 layerGroupId 选图层（那是产物血统，解组不丢），
+                          // 而 frame.id 是编组意图——用户解组再编组之后它变成新的 frame_*，
+                          // 拿它去选会选出 0 层，面板的 length > 0 渲染门就让面板打不开
+                          // （Codex PR #1363 P1）。这正是我把两个 id 拆开时留下的口子。
+                          const panelKey = frame.layerGroupId || frame.id;
+                          setLayerPanelGroupId((current) => current === panelKey ? null : panelKey);
+                          return;
+                        }
+                        void exportFrameAsPsd(frame.id, frame.name);
                       }}
                     >
-                      <Download size={13} />
-                      导出 PSD
+                      {isAiFrame ? <Layers size={13} /> : <Download size={13} />}
+                      {iconOnlyButton ? null : (isAiFrame ? '图层面板' : '导出 PSD')}
                     </button>
                   </div>
-                ))}
-
-                {layeringProgress ? (() => {
-                  const source = canvas.find((candidate) => candidate.key === layeringProgress.sourceKey);
-                  if (!source) return null;
-                  const progressText = layeringProgress.total
-                    ? `${layeringProgress.phase} · ${layeringProgress.completed ?? 0}/${layeringProgress.total}`
-                    : layeringProgress.phase;
-                  return (
-                    <div
-                      className="absolute"
-                      style={{
-                        left: Math.round(source.x ?? 0),
-                        top: Math.round((source.y ?? 0) + (source.h ?? 220)),
-                        width: Math.max(180, Math.round(source.w ?? 320)),
-                      }}
-                    >
-                      <div
-                        role="status"
-                        aria-live="polite"
-                        className="mt-3 mx-auto w-fit max-w-full rounded-[10px] px-3 h-8 flex items-center gap-2 text-[11px] font-semibold"
-                        style={{
-                          transform: 'scale(var(--invZoom))',
-                          transformOrigin: 'center top',
-                          color: 'var(--text-primary)',
-                          background: 'var(--panel-solid)',
-                          border: '1px solid rgba(var(--accent-primary-rgb), 0.42)',
-                          boxShadow: 'var(--shadow-glass-toast)',
-                        }}
-                      >
-                        <Layers size={14} className="animate-pulse shrink-0" />
-                        <span className="truncate">{progressText}</span>
-                      </div>
-                    </div>
                   );
-                })() : null}
+                })}
 
                 {canvas
                   .filter((x) => (x.kind ?? 'image') === 'generator')
@@ -7233,18 +7957,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               stageRef={stageRef}
                               obstacleRef={chatPanelRef}
                               zoom={zoom}
-                              positionKey={`${it.key}:${ix}:${iy}:${sW}:${camera.x}:${stageSize.w}`}
+                              positionKey={`${it.key}:${ix}:${iy}:${sW}:${camera.x}:${camera.y}:${stageSize.w}:${stageSize.h}`}
                             >
                               <ImageQuickActionBar
                                 actions={mergedQuickActions}
                                 onAction={handleQuickAction}
-                                onLayer={() => void decomposeImageIntoFrame({
-                                  key: it.key,
-                                  src: it.src,
-                                  prompt: it.prompt || '图片',
-                                })}
+                                onLayer={(intent) => {
+                                  // 记住这次的拆法：面板里「重新拆分」默认沿用它，不用再打一遍。
+                                  updateLayerIntentPref(intent);
+                                  void decomposeImageIntoFrame({
+                                    key: it.key,
+                                    src: it.src,
+                                    prompt: it.prompt || '图片',
+                                    intent,
+                                  });
+                                }}
+                                defaultLayerIntent={layerIntentPref}
                                 layering={layeringProgress?.sourceKey === it.key}
-                                onDownload={() => void downloadImage(it.src, it.prompt || 'image')}
+                                onDownload={() => void downloadGeneratedImage(it.src, it.prompt || 'image')}
                                 onOpenConfig={() => setQuickActionDialogOpen(true)}
                                 onInpaint={() => {
                                   if (it.status !== 'done' || !it.src) {
@@ -7279,6 +8009,125 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   : null}
               </div>
             </div>
+
+            {/* 图层面板（组装台）：画布 Frame 管单层编辑，这里管叠放、显隐与导出 */}
+            {layerPanelGroupId && layerPanelModel.length > 0 ? (
+              <SemanticLayerPanel
+                layers={layerPanelModel}
+                sourceSrc={String(layerPanelSource?.originalSrc || layerPanelSource?.src || '')}
+                title={cleanDisplayTitle(layerPanelSource?.prompt || '') || 'AI 分层'}
+                aspectRatio={(() => {
+                  const w = layerPanelSource?.naturalW || layerPanelSource?.w || 0;
+                  const h = layerPanelSource?.naturalH || layerPanelSource?.h || 0;
+                  return w > 0 && h > 0 ? w / h : 1;
+                })()}
+                busy={!!layerExportBusy}
+                busyText={layerExportBusy || undefined}
+                layerCount={layerCountPref}
+                // 请求层数 / 拆法 / 模型都挂在图层身上，不挂原图——一张图能被拆多次，
+                // 挂原图上只记得住最后一次，面板会显示别组的参数。
+                requestedLayerCount={layerPanelLayers[0]?.layerRequestedCount}
+                usedModel={layerPanelLayers.find((layer) => !!layer.layerModel)?.layerModel}
+                // 面板显示这一组**实际**的摆法，不显示全局偏好：两个 Frame 时全局值
+                // 只对最后操作的那一组成立，另一组会显示成错的。
+                layoutMode={layerPanelGroupId && spreadLayerGroupIds.has(layerPanelGroupId) ? 'spread' : 'stacked'}
+                onLayoutModeChange={(mode) => { if (layerPanelGroupId) applyLayerLayout(layerPanelGroupId, mode); }}
+                onLayerCountChange={updateLayerCountPref}
+                intent={layerIntentPref}
+                onIntentChange={updateLayerIntentPref}
+                onResplit={() => {
+                  const sourceItem = layerPanelSource;
+                  if (!sourceItem) return;
+                  void decomposeImageIntoFrame({
+                    key: sourceItem.key,
+                    src: sourceItem.originalSrc || sourceItem.src,
+                    prompt: sourceItem.prompt || '图片',
+                    // 「重新拆分」必须真的再跑一次：不带这个标记会命中上一次的幂等键，
+                    // 原样返回旧图层，用户看到的是「点了没反应」。
+                    attempt: Date.now(),
+                    // 拆法要显式传当前值，不能靠 decomposeImageIntoFrame 的闭包去读。
+                    // 那个回调按 [layerCountPref, layerLayoutMode, ...] 记忆化，用户只改了
+                    // 输入框里的拆法、没动层数时回调不会重建，闭包里还是上一次的文字——
+                    // 于是这次**花钱的**模型调用拿到的是旧拆法，而屏幕上明明写着新的
+                    // （Codex PR #1363 P1）。
+                    intent: layerIntentPref,
+                  });
+                }}
+                selectedKey={selectedKeys.length === 1 ? selectedKeys[0] : undefined}
+                onSelect={(key) => setSelectionWithoutChip([key])}
+                onToggleHidden={(key) => {
+                  const current = layerPanelLayers.find((layer) => layer.key === key);
+                  patchLayer(key, { layerHidden: !(current?.layerHidden === true) });
+                }}
+                onOpacityChange={(key, opacity) => patchLayer(key, { layerOpacity: opacity })}
+                onMove={moveLayerInStack}
+                onDownloadLayer={(key) => {
+                  const layer = layerPanelLayers.find((candidate) => candidate.key === key);
+                  if (!layer?.src) return;
+                  void downloadGeneratedImage(layer.src, cleanDisplayTitle(layer.prompt) || 'ai-layer');
+                }}
+                onExportPsd={() => void handleLayerPanelExportPsd()}
+                onExportComposite={() => void handleLayerPanelExportComposite()}
+                onExportZip={() => void handleLayerPanelExportZip()}
+                onSelfCheck={() => void handleLayerPanelSelfCheck()}
+                onClose={() => setLayerPanelGroupId(null)}
+              />
+            ) : null}
+
+            {/* 多选浮条：编组与导出必须**看得见**，不能只藏在快捷键里。
+                快捷键给熟手省事，浮条让第一次用的人知道「原来可以这么做」
+                （guided-exploration：陌生页面 3 秒内知道下一步点哪）。 */}
+            {selectedKeys.length >= 2 ? (
+              <div
+                className="absolute left-1/2 -translate-x-1/2 bottom-6 z-40 pointer-events-auto flex items-center gap-1 rounded-[12px] px-1.5 h-[38px]"
+                style={{ ...glassToolbar }}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <span className="px-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {`已选 ${selectedKeys.length} 个`}
+                </span>
+                <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                <button
+                  type="button"
+                  className="h-[28px] px-2 rounded-[7px] text-[12px] font-medium inline-flex items-center gap-1.5 hover-bg-soft"
+                  style={{ color: 'var(--text-primary)' }}
+                  title="把选中的元素框成一个 Frame（⌘/Ctrl+G）"
+                  onClick={groupSelection}
+                >
+                  <Layers size={14} />
+                  编组
+                </button>
+                <button
+                  type="button"
+                  className="h-[28px] px-2 rounded-[7px] text-[12px] font-medium inline-flex items-center gap-1.5 hover-bg-soft"
+                  style={{ color: 'var(--text-primary)' }}
+                  title="解散选中元素所在的 Frame（⌘/Ctrl+Shift+G）"
+                  onClick={ungroupSelection}
+                >
+                  解组
+                </button>
+                <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
+                <button
+                  type="button"
+                  className="h-[28px] px-2 rounded-[7px] text-[12px] font-medium inline-flex items-center gap-1.5 hover-bg-soft"
+                  style={{ color: 'var(--text-primary)' }}
+                  title="把选中的元素导成一个分层 PSD，每个元素一层"
+                  onClick={() => void exportElementsAsPsd(selectedKeys, '选中元素')}
+                >
+                  <Download size={14} />
+                  PSD
+                </button>
+                <button
+                  type="button"
+                  className="h-[28px] px-2 rounded-[7px] text-[12px] font-medium inline-flex items-center gap-1.5 hover-bg-soft"
+                  style={{ color: 'var(--text-primary)' }}
+                  title="把选中的元素逐个打包成 PNG"
+                  onClick={() => void exportSelectionAsZip()}
+                >
+                  ZIP
+                </button>
+              </div>
+            ) : null}
 
             {/* 交互层：选中生成器时显示快捷输入（可输入/可删除/可发送）
                 注意：不能用“全屏覆盖层”接收事件，否则会挡住画布工具栏/缩放条。
@@ -7597,7 +8446,26 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             </button>
                           </div>
                           <div className="max-h-[320px] overflow-auto p-1">
-                            {allImageGenModels
+                              {allImageGenModels.length === 0 ? (
+                                <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
+                                  {modelsError ? (
+                                    <>
+                                      <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
+                                      <div className="mt-1">{modelsError.message}</div>
+                                      {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
+                                    </>
+                                  ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                                  <button
+                                    type="button"
+                                    className="mt-3 inline-flex h-7 items-center gap-1.5 rounded-full border border-token-subtle px-2.5 text-[10px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
+                                    onClick={() => void reloadImageGenModels()}
+                                    disabled={modelsLoading}
+                                  >
+                                    <RefreshCw size={11} className={modelsLoading ? 'animate-spin' : ''} />
+                                    {modelsLoading ? '正在加载目录' : '重新加载模型目录'}
+                                  </button>
+                                </div>
+                              ) : allImageGenModels
                               .slice()
                               .sort(
                                 (a, b) =>
@@ -7628,7 +8496,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
                                       background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
                                     }}
-                                    disabled={disabled}
                                     onClick={() => {
                                       setModelPrefAuto(false);
                                       setModelPrefModelId(m.id);
@@ -7658,7 +8525,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                           )}
                                         </div>
                                         <div className="mt-0.5 truncate text-[11px] text-token-muted">
-                                          {isPool ? m.modelName : (disabled ? '已禁用（模型管理可启用）' : sourceLabel)}
+                                          {m.subtitle || (disabled ? '当前不建议使用，可继续选择' : sourceLabel)}
                                         </div>
                                       </div>
                                       <div className="ml-auto shrink-0">
@@ -7897,9 +8764,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   移除未开发的"上传视频/智能画板"禁用占位，见 .claude/rules/chief-designer-usability.md 奥卡姆原则）*/}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
-                title="上传图片"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft disabled:cursor-wait disabled:opacity-50"
+                title={workspaceReady ? '上传图片' : '画板正在恢复'}
                 aria-label="上传图片"
+                disabled={!workspaceReady}
                 onClick={() => openImageFilePicker()}
               >
                 <ImagePlus size={18} />
@@ -8135,6 +9003,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             className="hidden"
             accept="image/*"
             multiple
+            disabled={!workspaceReady}
             onChange={(e) => {
               const fs = Array.from(e.currentTarget.files ?? []);
               e.currentTarget.value = '';
@@ -8738,13 +9607,28 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         </div>
 
                         <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
-                          {enabledImageModels.length === 0 ? (
-                            <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
-                              暂无启用的生图模型（可在“模型管理”中开启）
+                          {allImageGenModels.length === 0 ? (
+                            <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed var(--border-subtle)' }}>
+                              {modelsError ? (
+                                <>
+                                  <div className="font-semibold" style={{ color: 'var(--color-danger, #f87171)' }}>模型网关连接异常</div>
+                                  <div className="mt-1 leading-relaxed">{modelsError.message}</div>
+                                  {modelsError.requestId ? <div className="mt-1 font-mono">请求编号：{modelsError.requestId}</div> : null}
+                                </>
+                              ) : '当前没有可用的生图模型，请联系管理员检查 LLM Gateway 模型池。'}
+                              <button
+                                type="button"
+                                className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-full border border-token-subtle px-3 text-[11px] font-medium text-token-secondary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => void reloadImageGenModels()}
+                                disabled={modelsLoading}
+                              >
+                                <RefreshCw size={12} className={modelsLoading ? 'animate-spin' : ''} />
+                                {modelsLoading ? '正在加载目录' : '重新加载模型目录'}
+                              </button>
                             </div>
                           ) : (
                             <div className="space-y-1.5">
-                              {enabledImageModels.map((m) => {
+                              {allImageGenModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
                                   const meta = getImageModelMeta(m);
                                   return (
@@ -8753,9 +9637,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       type="button"
                                       className="group w-full text-left rounded-[14px] px-3 py-2.5 transition-all"
                                       style={{
-                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid rgba(255,255,255,0.08)',
-                                        background: picked ? 'rgba(250,204,21,0.07)' : 'rgba(255,255,255,0.02)',
+                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid var(--border-subtle)',
+                                        background: picked ? 'rgba(250,204,21,0.07)' : 'var(--nested-block-bg)',
                                         boxShadow: picked ? '0 0 0 3px rgba(250,204,21,0.08)' : 'none',
+                                        opacity: m.enabled ? 1 : 0.72,
                                       }}
                                       onClick={() => {
                                         setModelPrefAuto(false);
@@ -8769,7 +9654,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                           className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full transition-colors"
                                           style={{
                                             background: picked ? 'rgba(250,204,21,0.95)' : 'transparent',
-                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid rgba(255,255,255,0.22)',
+                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid var(--border-subtle)',
                                             color: picked ? '#1a1a1a' : 'transparent',
                                           }}
                                           aria-label={picked ? '已选择' : '未选择'}
@@ -9025,7 +9910,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     .map((it, idx) => ({ src: it.src, filename: it.prompt || `image_${idx + 1}` }));
                   void downloadAllAsZip(items, `visual-agent_${Date.now()}`);
                 } else {
-                  void downloadImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
+                  void downloadGeneratedImage(imgContextMenu.src, imgContextMenu.prompt || 'image');
                 }
                 setImgContextMenu((p) => ({ ...p, open: false }));
               }}
@@ -9294,7 +10179,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         content={
           <div className="h-full min-h-0 flex flex-col">
             <div className="flex items-center justify-end gap-2 pb-2">
-              <Button variant="secondary" size="sm" onClick={() => void downloadImage(preview.src, preview.prompt || 'image')} disabled={!preview.src}>
+              <Button variant="secondary" size="sm" onClick={() => void downloadGeneratedImage(preview.src, preview.prompt || 'image')} disabled={!preview.src}>
                 <Download size={16} />
                 下载
               </Button>

@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   createLogicalModel,
   createModelOffering,
+  deleteLogicalModel,
   getExchanges,
   getLogicalModels,
   getModels,
@@ -37,6 +38,7 @@ import type {
 } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
@@ -46,10 +48,16 @@ const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
 };
 const labelStyle: React.CSSProperties = FIELD_LABEL;
+const DEFAULT_IMAGE_GENERATION_CAPABILITIES = ['image_generation', 'text2img', 'img2img', 'vision_generation'];
+
+function defaultImageGenerationCapabilities() {
+  return [...DEFAULT_IMAGE_GENERATION_CAPABILITIES];
+}
 
 export function LogicalModelsPage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  const { promptText } = useDialogs();
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
@@ -64,7 +72,7 @@ export function LogicalModelsPage() {
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState<CreateLogicalModelRequest>({
-    publicId: '', name: '', modelType: 'generation', capabilities: ['image_generation'],
+    publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(),
     allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100,
   });
   const [offeringDraft, setOfferingDraft] = useState<CreateModelOfferingRequest>({
@@ -107,7 +115,7 @@ export function LogicalModelsPage() {
     setBusy(null);
     if (!res.success) { failNotice(res.error?.message || '创建失败'); return; }
     setItems((prev) => [...(prev || []), res.data]);
-    setDraft({ publicId: '', name: '', modelType: 'generation', capabilities: ['image_generation'], allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100 });
+    setDraft({ publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(), allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100 });
     setCreateOpen(false);
     okNotice(`逻辑模型「${res.data.name}」已创建，请继续添加至少一个上游 Offering`);
   }
@@ -172,6 +180,28 @@ export function LogicalModelsPage() {
     setBusy(null);
     if (!res.success) { failNotice(res.error?.message || '操作失败'); return; }
     setItems((prev) => prev?.map((x) => x.id === item.id ? { ...x, enabled: res.data.enabled } : x) || null);
+  }
+
+  // Offering 是逻辑模型自己的下挂路由，没有别处引用，所以删除是连带删而不是阻挡。
+  // 但连带删对运维是「一次点击删掉 N 条」，必须先把 N 报出来再让他确认。
+  async function removeLogical(item: LogicalModelItem) {
+    const typed = await promptText({
+      title: `删除逻辑模型「${item.name}」`,
+      description: `${item.publicId}\n它名下 ${item.offerings.length} 条 Offering 会一并删除，无法撤销。`,
+      inputLabel: '确认请输入 publicId',
+      requireExact: item.publicId,
+      tone: 'danger',
+      confirmLabel: '删除',
+    });
+    if (typed === null) return;
+    if (typed.trim() !== item.publicId) { failNotice('输入的 publicId 不一致，已取消删除'); return; }
+    setBusy(item.id);
+    setNotice(null);
+    const res = await deleteLogicalModel(item.id);
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '删除失败'); return; }
+    setItems((prev) => prev?.filter((x) => x.id !== item.id) || null);
+    okNotice(`已删除「${item.name}」，连带 ${res.data.offeringsDeleted} 条 Offering`);
   }
 
   async function toggleOffering(logical: LogicalModelItem, offeringId: string, enabled: boolean) {
@@ -243,7 +273,12 @@ export function LogicalModelsPage() {
                   </select>
                 </label>
                 <label style={labelStyle}>
-                  <span>能力，逗号分隔</span>
+                  <span>
+                    能力，逗号分隔
+                    <HelpPopover label="图片生成场景能力">
+                      图片生成默认覆盖文生图、图生图和视觉参考生成；删除某个细分能力即可限制对应场景。
+                    </HelpPopover>
+                  </span>
                   <input value={draft.capabilities.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, capabilities: e.target.value.split(',') }))} style={inputStyle} />
                 </label>
                 <label style={labelStyle}>
@@ -286,7 +321,7 @@ export function LogicalModelsPage() {
               </div>
               {canWrite ? <div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}>
                 <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}><option value="priority">优先级与故障切换</option><option value="weighted">权重负载均衡</option></select>
-                <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
+                <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
               </div> : null}
             </div>
 
@@ -383,7 +418,7 @@ export function LogicalModelsPage() {
             模型池是另一件事：它只负责请求没有指定模型时的默认选择与兜底，指定了模型标识的请求一律走这里的
             Offering 列表。一个逻辑模型没有可用 Offering 时不会承接请求，也不会被模型池顶上。
           </Prose>
-          <TutorialLink chapter="chapter-18">查看教程：第 18 章 逻辑模型与 Offering</TutorialLink>
+          <TutorialLink chapter="practical-image-01">查看教程：如何给视觉创作增加图片模型</TutorialLink>
         </DetailsBlock>
       </PageBody>
     </PageShell>

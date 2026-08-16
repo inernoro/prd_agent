@@ -17,8 +17,11 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
+import { formatVideoGenerationError } from '@/lib/videoGenerationError';
+import { resolveApiUrl } from '@/services/real/apiClient';
 import {
   createVideoGenRunReal,
+  createVideoGenDownloadTicketReal,
   getVideoGenRunReal,
 } from '@/services/real/videoAgent';
 import {
@@ -63,6 +66,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
   const [currentRun, setCurrentRun] = useState<VideoGenRun | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 清理轮询
@@ -78,6 +82,35 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
   const isActive = currentRun && ['Queued', 'Rendering'].includes(currentRun.status);
   const isCompleted = currentRun?.status === 'Completed' && !!currentRun.videoAssetUrl;
   const isFailed = currentRun?.status === 'Failed' || currentRun?.status === 'Cancelled';
+
+  const handleDownload = useCallback(async () => {
+    if (!currentRun?.id || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const response = await createVideoGenDownloadTicketReal(currentRun.id);
+      if (!response.success || !response.data?.ticket) {
+        throw new Error(response.error?.message || '视频下载失败，请稍后重试');
+      }
+
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = resolveApiUrl('/api/video-download');
+      form.style.display = 'none';
+      const ticketInput = document.createElement('input');
+      ticketInput.type = 'hidden';
+      ticketInput.name = 'ticket';
+      ticketInput.value = response.data.ticket;
+      form.appendChild(ticketInput);
+      document.body.appendChild(form);
+      form.submit();
+      // Chromium 会把刚提交就移除的表单视为已取消导航；等待下载请求启动后再清理。
+      window.setTimeout(() => form.remove(), 60_000);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '视频下载失败，请稍后重试');
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [currentRun?.id, isDownloading]);
 
   const startPolling = useCallback((runId: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -208,7 +241,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
           ) : isActive ? (
             <div className="flex flex-col items-center gap-4 text-token-primary px-6 text-center">
               <MapSpinner size={32} />
-              <div className="text-base font-medium">{progressText}</div>
+              <div className="text-base font-medium" data-testid="video-generation-stage">{progressText}</div>
               <div className="w-64 h-1.5 rounded-full overflow-hidden bg-token-nested" >
                 <div
                   className="h-full transition-all duration-500"
@@ -218,9 +251,11 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                   }}
                 />
               </div>
+              <div className="text-xs text-token-muted" data-testid="video-generation-progress">
+                {Math.max(0, Math.min(100, currentRun?.phaseProgress ?? 0))}%
+              </div>
               <div className="text-xs text-token-muted">
-                任务 ID：{currentRun?.id.slice(0, 12)}…
-                {currentRun?.directVideoJobId && <> · 上游任务：{currentRun.directVideoJobId.slice(0, 10)}…</>}
+                任务编号：{currentRun?.id.slice(0, 12)}…
               </div>
             </div>
           ) : isFailed ? (
@@ -228,13 +263,8 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               <AlertCircle size={32} className="text-rose-400" />
               <div className="text-base font-medium">生成失败</div>
               <div className="text-xs text-token-secondary whitespace-pre-wrap">
-                {currentRun?.errorMessage || '未知错误'}
+                {formatVideoGenerationError(currentRun?.errorMessage)}
               </div>
-              {currentRun?.errorCode === 'OPENROUTER_NOT_CONFIGURED' && (
-                <div className="mt-2 text-[11px] text-[color:var(--accent-fg-amber)] bg-amber-500/10 rounded-lg px-3 py-2 border border-amber-500/30">
-                  提示：管理员需在容器环境变量中注入 <code className="font-mono">OPENROUTER_API_KEY</code>
-                </div>
-              )}
             </div>
           ) : (
             <div className="flex flex-col items-center gap-3 text-token-secondary px-6 text-center">
@@ -429,15 +459,14 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               </Button>
             )}
             {isCompleted && currentRun?.videoAssetUrl && (
-              <a
-                href={currentRun.videoAssetUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg"
-                style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDownload}
+                disabled={isDownloading}
               >
-                <Download size={12} /> 下载 MP4
-              </a>
+                <Download size={12} /> {isDownloading ? '下载中…' : '下载 MP4'}
+              </Button>
             )}
 
             {/* 主按钮 */}
@@ -486,15 +515,14 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               </Button>
             )}
             {isCompleted && currentRun?.videoAssetUrl && (
-              <a
-                href={currentRun.videoAssetUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs inline-flex items-center gap-1 px-3 py-1.5 rounded-lg"
-                style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDownload}
+                disabled={isDownloading}
               >
-                <Download size={12} /> 下载 MP4
-              </a>
+                <Download size={12} /> {isDownloading ? '下载中…' : '下载 MP4'}
+              </Button>
             )}
           </div>
         )}

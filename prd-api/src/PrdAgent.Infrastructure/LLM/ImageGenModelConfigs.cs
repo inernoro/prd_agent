@@ -28,6 +28,7 @@ public static class ImageGenModelConfigs
             "gpt-image-2-all（自适应）",
             "OpenAI 兼容（apiyi）"),
         BuildOpenRouterGptImage2Config(),
+        BuildOpenAiGptImage2Config(),
 
         // ===== gpt-image-1.5（标准 size 参数）=====
         // 与传统 OpenAI 兼容：通过 size 字段控制尺寸
@@ -729,6 +730,43 @@ public static class ImageGenModelConfigs
             },
             SupportsImageToImage = true,
             SupportsInpainting = false,
+            SupportsResponseFormat = false,
+        };
+
+    private static ImageGenModelAdapterConfig BuildOpenAiGptImage2Config()
+        => new()
+        {
+            ModelIdPattern = "gpt-image-2*",
+            DisplayName = "GPT Image 2",
+            Provider = "OpenAI",
+            PlatformType = "openai",
+            OfficialDocUrl = "https://platform.openai.com/docs/api-reference/images/create",
+            LastUpdated = "2026-08-14",
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "通过 size 参数控制尺寸（OpenAI GPT Image 白名单）",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("1024x1024", "1:1"),
+                    new("1024x1536", "2:3"),
+                    new("1536x1024", "3:2"),
+                },
+                ["2k"] = new(),
+                ["4k"] = new(),
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxWidth = 1536,
+            MaxHeight = 1536,
+            MinWidth = 1024,
+            MinHeight = 1024,
+            Notes = new List<string>
+            {
+                "通过标准 size 参数控制尺寸",
+                "响应为 base64 图片数据，不发送旧版 response_format 参数",
+            },
+            SupportsImageToImage = true,
+            SupportsInpainting = true,
             SupportsResponseFormat = false,
         };
 }

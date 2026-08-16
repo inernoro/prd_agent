@@ -221,5 +221,8 @@ public class DoubaoAsrTransformerTests
 
         public Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
             => Task.CompletedTask;
+
+        public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+            => Task.CompletedTask;
     }
 }

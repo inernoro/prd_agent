@@ -10,6 +10,7 @@ using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 
@@ -36,8 +37,17 @@ public class ImageGenRunWorker : BackgroundService
         return def != null && def.ModelTypes.Contains(ModelTypes.ImageGen);
     }
 
-    private static string? ResolveImageGenAppCallerCode(ImageGenRun run, bool isVisionMode, int imageRefCount, bool hasInitImage)
+    internal static string? ResolveImageGenAppCallerCode(ImageGenRun run, bool isVisionMode, int imageRefCount, bool hasInitImage)
     {
+        // 分层是一种动作，不是「带参考图的生图」。
+        //
+        // 这一支不存在时，下面那句 `hasInitImage → Img2Img` 会把分层 run 的 appCaller
+        // 覆盖成图生图（还会回写进库），于是那句英文指令
+        // 「Decompose this image into ... RGBA layers」被当成创作提示词，模型照着它
+        // 重画了一张图——用户看到的「4 张暗色、雷同、不透明的图」就是这么来的
+        // （2026-08-07 实测，容器日志里 layering→img2img 两行紧挨着）。
+        if (IsLayeringRun(run)) return AppCallerRegistry.VisualAgent.Image.Layering;
+
         if (string.Equals(run.AppKey, "visual-agent", StringComparison.OrdinalIgnoreCase))
         {
             if (isVisionMode && imageRefCount > 1) return AppCallerRegistry.VisualAgent.Image.VisionGen;
@@ -172,15 +182,62 @@ public class ImageGenRunWorker : BackgroundService
         // 生产作用域为 null——Mongo 的 Eq null 同时匹配「字段为 null」与「字段缺失」，
         // 天然兼容本字段上线前的存量 run（仍由生产 worker 消化，行为不变）。
         // 第一层 fencing 是 ScopedQueued：旧 Worker 只认识 Queued，永远不会看见新任务。
-        // 第二层 fencing 是 DeploymentSlug：即使两个新 Worker 共用 Mongo，也只有同 revision 能认领。
+        // 第二层 fencing 是 DeploymentSlug：正常只允许同 revision 认领；仅头像任务允许当前
+        // revision 在精确队列为空后接管同分支旧 revision，且原子 claim 仍防止重复执行。
         var scoped = await ClaimNextRunByStatusAsync(ImageGenRunStatus.ScopedQueued, ct);
         if (scoped != null) return scoped;
+
+        // 头像编辑任务由浏览器持有 runId 并跨页面恢复；CDS 在入队后滚动到新 commit 时，
+        // 新 Worker 必须接管同项目同分支旧 revision 的排队任务，否则会永久停在 queued。
+        // 只为 profile-avatar 放宽到稳定分支作用域；其他任务仍保留精确 revision fencing。
+        var retiredAvatarRun = await ClaimRetiredAvatarRunAsync(ct);
+        if (retiredAvatarRun != null) return retiredAvatarRun;
 
         // 仅生产作用域继续消化升级前遗留的 Queued。预览环境禁止碰 legacy Queued，
         // 否则仍可能与尚未升级的兄弟分支 Worker 竞争。
         return DeploymentScope.Current == null
             ? await ClaimNextRunByStatusAsync(ImageGenRunStatus.Queued, ct)
             : null;
+    }
+
+    private async Task<ImageGenRun?> ClaimRetiredAvatarRunAsync(CancellationToken ct)
+    {
+        var durableScope = DeploymentScope.CurrentDurable;
+        var currentScope = DeploymentScope.Current;
+        if (string.IsNullOrWhiteSpace(durableScope)
+            || string.IsNullOrWhiteSpace(currentScope))
+        {
+            return null;
+        }
+
+        var scopePattern = new MongoDB.Bson.BsonRegularExpression(
+            $"^{System.Text.RegularExpressions.Regex.Escape(durableScope)}(?:::revision::.+)?$");
+        var filter = BuildRetiredAvatarRunFilter(
+            currentScope,
+            scopePattern);
+        var update = Builders<ImageGenRun>.Update
+            .Set(x => x.Status, ImageGenRunStatus.Running)
+            .Set(x => x.StartedAt, DateTime.UtcNow)
+            .Set(x => x.DeploymentSlug, currentScope);
+        var options = new FindOneAndUpdateOptions<ImageGenRun, ImageGenRun>
+        {
+            Sort = Builders<ImageGenRun>.Sort.Ascending(x => x.CreatedAt),
+            ReturnDocument = ReturnDocument.After
+        };
+        return await _db.ImageGenRuns.FindOneAndUpdateAsync(filter, update, options, ct);
+    }
+
+    internal static FilterDefinition<ImageGenRun> BuildRetiredAvatarRunFilter(
+        string currentScope,
+        MongoDB.Bson.BsonRegularExpression durableScopePattern)
+    {
+        // 旧 revision 的排队任务从未调用上游，可以安全接管；Running 可能仍在执行最长一小时的
+        // 付费生成，没有可续期租约就不能证明原 Worker 已停止，因此绝不按 StartedAt 猜测并重跑。
+        return Builders<ImageGenRun>.Filter.Eq(x => x.Status, ImageGenRunStatus.ScopedQueued)
+               & Builders<ImageGenRun>.Filter.Ne(x => x.CancelRequested, true)
+               & Builders<ImageGenRun>.Filter.Eq(x => x.AppKey, ProfileAvatarGenerationCleanupService.AppKey)
+               & Builders<ImageGenRun>.Filter.Ne(x => x.DeploymentSlug, currentScope)
+               & Builders<ImageGenRun>.Filter.Regex(x => x.DeploymentSlug, durableScopePattern);
     }
 
     private async Task<ImageGenRun?> ClaimNextRunByStatusAsync(ImageGenRunStatus pendingStatus, CancellationToken ct)
@@ -247,11 +304,17 @@ public class ImageGenRunWorker : BackgroundService
         }
 
         // 统一限制：最多 20 张
+        // 分层是例外：它的 Count 是「拆几层」而不是「生成几张」，上限与网关一致是 10。
+        // 按普通生图的 5 夹一刀，请求 6-10 层时 run.Total 会被改写成 5，而每落一层
+        // Done 就 +1，最终出现 Total=5 / Done=8 这种自相矛盾的记录，runStart.total
+        // 推给前端的分母也是错的（Codex PR #1363 P2）。
+        var isLayering = IsLayeringRun(run);
         var total = 0;
         for (var i = 0; i < items.Count; i++)
         {
-            var c = items[i].Count <= 0 ? 1 : items[i].Count;
-            if (c > 5) c = 5;
+            var c = isLayering
+                ? ResolveLayerCount(items[i])
+                : (items[i].Count <= 0 ? 1 : Math.Min(5, items[i].Count));
             total += c;
         }
         if (total > 20)
@@ -270,6 +333,7 @@ public class ImageGenRunWorker : BackgroundService
 
         // 推送实际使用的模型信息（前端用此覆盖原本"前端选中的模型"展示）
         var startAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
+        var startIsAdaptive = await ResolveRunIsAdaptiveAsync(run, preAppCallerCode!, ct);
         await AppendEventAsync(run, "run", new
         {
             type = "runStart",
@@ -281,7 +345,7 @@ public class ImageGenRunWorker : BackgroundService
             modelGroupName = run.ModelGroupName,
             modelGroupId = run.ModelGroupId,
             resolutionType = run.ModelResolutionType?.ToString(),
-            isAdaptive = startAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
+            isAdaptive = startIsAdaptive,
             adapterDisplayName = startAdapter?.DisplayName,
             size = run.Size,
             responseFormat = run.ResponseFormat
@@ -312,7 +376,14 @@ public class ImageGenRunWorker : BackgroundService
                 continue;
             }
 
-            var count = Math.Clamp(items[itemIndex].Count <= 0 ? 1 : items[itemIndex].Count, 1, 5);
+            // 分层是「一次调用返回 N 个图层」，不是「调 N 次、每次要一张」。
+            // 拆成 N 次的话，每次都在跟上游说「把这张图拆成 1 层」——拆成一层就是整张图，
+            // 于是拿回 N 张几乎一样的整图（2026-08-07 用户实测现象）。
+            var isLayeringRun = IsLayeringRun(run);
+            var layerCount = isLayeringRun ? ResolveLayerCount(items[itemIndex]) : 1;
+            var count = isLayeringRun
+                ? 1
+                : Math.Clamp(items[itemIndex].Count <= 0 ? 1 : items[itemIndex].Count, 1, 5);
             // 用户可见的 prompt（不含系统前缀/风格提示词），用于消息记录和重试
             var displayPrompt = items[itemIndex].DisplayPrompt?.Trim();
             for (var k = 0; k < count; k++)
@@ -521,7 +592,7 @@ public class ImageGenRunWorker : BackgroundService
                             var guardGenType = "unresolved";
                             var guardPayload = JsonSerializer.Serialize(new { msg = guardMsg, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = guardGenType }, JsonOptions);
                             var errMsgContent = $"[GEN_ERROR]{guardPayload}";
-                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+                            var errMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", errMsgContent, ct);
 
                             await AppendEventAsync(run, "image", new
                             {
@@ -545,7 +616,22 @@ public class ImageGenRunWorker : BackgroundService
                             var loadedRefs = loadedImageRefs.Count == 0
                                 ? "(none)"
                                 : string.Join(", ", loadedImageRefs.Select(r => $"@img{r.RefId}:{r.Sha256}"));
-                            var missingMsg = $"参考图加载不完整：期望 {expectedReferenceCount} 张，实际 {loadedImageRefs.Count} 张。请重新选择图片后再试";
+                            var loadedRefIds = loadedImageRefs.Select(r => r.RefId).ToHashSet();
+                            var mentionedRefIds = Regex.Matches(curPrompt, @"@img(?<id>\d+)")
+                                .Select(match => int.TryParse(match.Groups["id"].Value, out var refId) ? refId : 0)
+                                .Where(refId => refId > 0)
+                                .ToHashSet();
+                            var expectedRefs = (run.ImageRefs ?? new List<ImageRefInput>())
+                                .Where(imageRef => mentionedRefIds.Count == 0 || mentionedRefIds.Contains(imageRef.RefId));
+                            var missingTags = expectedRefs
+                                .Where(imageRef => !loadedRefIds.Contains(imageRef.RefId))
+                                .Select(imageRef => $"@img{imageRef.RefId}")
+                                .Distinct()
+                                .ToList();
+                            var missingSummary = missingTags.Count > 0
+                                ? string.Join("、", missingTags)
+                                : "所选参考图";
+                            var missingMsg = $"参考图 {missingSummary} 无法使用：图片数据缺失或已过期。其他输入已保留，请重新选择{(missingTags.Count == 1 ? "这张图片" : "这些图片")}后再试";
                             _logger.LogWarning(
                                 "[ImageGenRunWorker] 参考图加载不完整。RunId={RunId}, Expected={Expected}, Loaded={Loaded}, LoadedRefs={LoadedRefs}",
                                 run.Id,
@@ -561,7 +647,7 @@ public class ImageGenRunWorker : BackgroundService
                                 .Where(s => !string.IsNullOrWhiteSpace(s))
                                 .ToList();
                             var errMsgContent = $"[GEN_ERROR]{JsonSerializer.Serialize(new { msg = missingMsg, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = "image-ref-unavailable", imageRefShas = refShas }, JsonOptions)}";
-                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+                            var errMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", errMsgContent, ct);
 
                             await AppendEventAsync(run, "image", new
                             {
@@ -667,7 +753,8 @@ public class ImageGenRunWorker : BackgroundService
 
                         var res = await imageClient.GenerateUnifiedAsync(
                             finalPrompt,
-                            n: 1,
+                            // 分层把层数经 n 传下去，网关的 fal 转换器据此填 num_layers。
+                            n: layerCount,
                             size: reqSize,
                             responseFormat: run.ResponseFormat,
                             ct,
@@ -675,7 +762,9 @@ public class ImageGenRunWorker : BackgroundService
                             images: allImages.Count > 0 ? allImages : null,
                             modelId: requestedModelId,
                             platformId: run.PlatformId,
-                            modelName: run.LogicalModelPublicId ?? run.ModelId,
+                            // 逻辑模型身份优先；模型池场景由 ResolveImageGenerationModelReference 保留池身份。
+                            // 审计契约：modelName: run.LogicalModelPublicId ?? run.ModelId
+                            modelName: ResolveImageGenerationModelReference(run),
                             maskBase64: run.MaskBase64,
                             requiredLogicalModelPublicId: run.LogicalModelPublicId
                                 ?? (string.Equals(run.PlatformId, "logical-model", StringComparison.OrdinalIgnoreCase)
@@ -697,7 +786,7 @@ public class ImageGenRunWorker : BackgroundService
 
                             // 失败时也记录 input images（方便日志排查参考图问题）
                             await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, null, ct);
-                            var errMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", errMsgContent, ct);
+                            var errMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", errMsgContent, ct);
 
                             await AppendEventAsync(run, "image", new
                             {
@@ -719,6 +808,16 @@ public class ImageGenRunWorker : BackgroundService
                             return;
                         }
 
+                        // 分层这一次调用会返回 N 张图层，必须逐张落库并逐张推事件。
+                        // 走下面的单图路径只会 FirstOrDefault() 取第一张，另外 N-1 层直接丢掉。
+                        if (isLayeringRun && res.Data.Images.Count > 0)
+                        {
+                            await PersistLayeringImagesAsync(
+                                run, curItemIndex, curPrompt, reqSize, res.Data,
+                                loadedImageRefs, assetStorage, ct);
+                            return;
+                        }
+
                         var first = res.Data.Images.FirstOrDefault();
                         var meta = res.Data.Meta;
                         var effSize = string.IsNullOrWhiteSpace(meta?.EffectiveSize) ? null : meta!.EffectiveSize!.Trim();
@@ -731,34 +830,43 @@ public class ImageGenRunWorker : BackgroundService
                         // 从生成结果中提取原图信息（无水印版）
                         var originalUrl = first?.OriginalUrl;
                         var originalSha256 = first?.OriginalSha256;
+                        var displaySha256 = first?.DisplaySha256;
 
                         // ImageMaster：若绑定 workspace，则把结果落到资产（COS）并回填画布元素（避免断线/关闭导致丢失）
                         ImageAsset? persisted = null;
                         if (!string.IsNullOrWhiteSpace(run.WorkspaceId))
                         {
-                            persisted = await TryPersistToImageMasterAsync(run, curPrompt, reqSize, effSize, base64, url, originalUrl, originalSha256, assetStorage, ct);
+                            persisted = await TryPersistToImageMasterAsync(
+                                run, curPrompt, reqSize, effSize, base64, url,
+                                originalUrl, originalSha256, displaySha256, assetStorage, ct);
                             if (persisted != null)
                             {
                                 url = persisted.Url;
                                 originalUrl = persisted.OriginalUrl;
                                 originalSha256 = persisted.OriginalSha256;
+                                displaySha256 = persisted.DisplaySha256;
                                 base64 = null;
                             }
                         }
 
-                        await UpsertRunItemAsync(run, curItemIndex, imageIndex, curPrompt, reqSize, ImageGenRunItemStatus.Done, base64, url, revisedPrompt, null, null, ct, effSize, sizeAdjusted, ratioAdjusted);
+                        await UpsertRunItemAsync(
+                            run, curItemIndex, imageIndex, curPrompt, reqSize,
+                            ImageGenRunItemStatus.Done, base64, url, revisedPrompt,
+                            null, null, ct, effSize, sizeAdjusted, ratioAdjusted,
+                            displaySha256);
                         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, Builders<ImageGenRun>.Update.Inc(x => x.Done, 1), cancellationToken: ct);
                         // 服务器权威性：后端自动保存 Assistant 消息到 image_master_messages
                         var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
                         var doneImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
                         var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
                         var doneAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
-                        var doneIsAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive;
+                        var doneIsAdaptive = meta?.IsAdaptive
+                            ?? (doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive);
                         var doneDisplayModel = run.LogicalModelPublicId ?? run.ModelGroupName;
                         // 持久化的 GEN_DONE 必须带上实际模型 / 真实出图尺寸 / 自适应标记，
                         // 否则刷新后从 DB 重放时这些字段丢失，徽标会回退到"请求尺寸 + 池名"而显示错误。
                         var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = doneDisplayModel, logicalModelPublicId = run.LogicalModelPublicId, actualModel = run.ModelId, actualModelPool = run.ModelGroupName, effectiveSize = effSize, isAdaptive = doneIsAdaptive, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
-                        var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
+                        var doneMsgId = await SaveWorkspaceMessageAsync(run, "Assistant", doneMsgContent, ct);
 
                         // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
                         await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, res.Data.Images, ct);
@@ -777,18 +885,20 @@ public class ImageGenRunWorker : BackgroundService
                             modelId = run.ModelId,
                             logicalModelPublicId = run.LogicalModelPublicId,
                             modelGroupName = run.ModelGroupName,
-                            isAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive,
+                            isAdaptive = doneIsAdaptive,
                             platformId = run.PlatformId,
                             base64,
                             url,
                             originalUrl,
                             originalSha256,
+                            displaySha256,
                             revisedPrompt,
                             asset = persisted == null ? null : new
                             {
                                 id = persisted.Id,
                                 sha256 = persisted.Sha256,
                                 url = persisted.Url,
+                                displaySha256 = persisted.DisplaySha256,
                                 originalUrl = persisted.OriginalUrl,
                                 originalSha256 = persisted.OriginalSha256
                             },
@@ -842,7 +952,11 @@ public class ImageGenRunWorker : BackgroundService
 
         // 兜底：失败/取消时把对应画布占位从 running 翻成 error（成功路径已由 TryPatchWorkspaceCanvasAsync 回填）。
         // 否则后端失败但画布元素永远停在 running，前端"预计 1024×1024"占位永久转圈，且看门狗/对账之外没有第二道闸。
+        // 分层同样排除：它的 TargetCanvasKey 是原图，失败时把原图翻成 error 比不翻更糟
+        // （用户会看到那颗完好的西瓜变成一个红色失败卡）。分层自己的占位由前端按
+        // {groupId}_layer_N 翻错，见 decomposeImageIntoFrame 的失败分支。
         if (nextStatus is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled
+            && !IsLayeringRun(run)
             && !string.IsNullOrWhiteSpace(run.WorkspaceId)
             && !string.IsNullOrWhiteSpace(run.TargetCanvasKey))
         {
@@ -964,10 +1078,119 @@ public class ImageGenRunWorker : BackgroundService
     }
 
     /// <summary>
+    /// 分层的落库：一次上游调用返回 N 个图层，逐张存资产、逐张推 imageDone。
+    ///
+    /// 单图路径用 <c>FirstOrDefault()</c> 只认第一张，分层走那条会静默丢掉 N-1 层——
+    /// 表面看「出了一张图」，其实分层已经废了。所以这里单独走一条。
+    /// </summary>
+    private async Task PersistLayeringImagesAsync(
+        ImageGenRun run,
+        int itemIndex,
+        string prompt,
+        string requestedSize,
+        ImageGenResult result,
+        List<ImageRefData> loadedImageRefs,
+        IAssetStorage assetStorage,
+        CancellationToken ct)
+    {
+        var meta = result.Meta;
+        var effSize = string.IsNullOrWhiteSpace(meta?.EffectiveSize) ? null : meta!.EffectiveSize!.Trim();
+        var images = result.Images;
+
+        for (var i = 0; i < images.Count; i++)
+        {
+            var image = images[i];
+            var url = image.Url;
+            var originalUrl = image.OriginalUrl;
+            var originalSha256 = image.OriginalSha256;
+            var displaySha256 = image.DisplaySha256;
+            var base64 = image.Base64;
+
+            ImageAsset? persisted = null;
+            if (!string.IsNullOrWhiteSpace(run.WorkspaceId))
+            {
+                persisted = await TryPersistToImageMasterAsync(
+                    run, prompt, requestedSize, effSize, base64, url, originalUrl, originalSha256,
+                    displaySha256, assetStorage, ct);
+                if (persisted != null)
+                {
+                    url = persisted.Url;
+                    originalUrl = persisted.OriginalUrl;
+                    originalSha256 = persisted.OriginalSha256;
+                    displaySha256 = persisted.DisplaySha256;
+                    base64 = null;
+                }
+            }
+
+            await UpsertRunItemAsync(
+                run, itemIndex, i, prompt, requestedSize, ImageGenRunItemStatus.Done,
+                base64, url, image.RevisedPrompt, null, null, ct, effSize,
+                meta?.SizeAdjusted ?? false, meta?.RatioAdjusted ?? false, displaySha256);
+            await _db.ImageGenRuns.UpdateOneAsync(
+                x => x.Id == run.Id,
+                Builders<ImageGenRun>.Update.Inc(x => x.Done, 1),
+                cancellationToken: ct);
+
+            await AppendEventAsync(run, "image", new
+            {
+                type = "imageDone",
+                runId = run.Id,
+                itemIndex,
+                imageIndex = i,
+                prompt,
+                requestedSize,
+                effectiveSize = effSize,
+                modelId = run.ModelId,
+                logicalModelPublicId = run.LogicalModelPublicId,
+                platformId = run.PlatformId,
+                base64 = (string?)null,
+                url,
+                originalUrl,
+                originalSha256,
+                displaySha256,
+                asset = persisted == null ? null : new
+                {
+                    id = persisted.Id,
+                    sha256 = persisted.Sha256,
+                    url = persisted.Url,
+                    displaySha256 = persisted.DisplaySha256,
+                    originalUrl = persisted.OriginalUrl,
+                    originalSha256 = persisted.OriginalSha256
+                },
+                // 分层不写对话消息（见 SaveWorkspaceMessageAsync 的说明）
+                savedMessageId = (string?)null
+            }, ct);
+        }
+
+        await PatchLogImagesAsync(run, itemIndex, 0, loadedImageRefs, images, ct);
+    }
+
+    /// <summary>
+    /// 语义分层不是对话，产物直接落在画布的分层 Frame 上。
+    /// 它的 prompt 是一句内部英文指令（Decompose this image into...），
+    /// 每层再写一条聊天消息就会把对话刷满看不懂的英文卡片，还带一个没意义的「重试」。
+    /// </summary>
+    internal static bool IsLayeringRun(ImageGenRun run)
+        // 两个信号都认：appCaller 会在执行途中被改写，逻辑模型标识不会。
+        // 只认前者的话，改写之后这条 run 就「不再是分层」了。
+        => string.Equals(run.AppCallerCode, AppCallerRegistry.VisualAgent.Image.Layering, StringComparison.Ordinal)
+        || string.Equals(
+            (run.LogicalModelPublicId ?? string.Empty).Trim(),
+            GatewayCapabilityIds.ImageLayering,
+            StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>分层要拆几层：来自计划项的 Count，兜底 4，上限与网关一致（1-10）。</summary>
+    internal static int ResolveLayerCount(ImageGenRunPlanItem item)
+        => Math.Clamp(item.Count <= 0 ? 4 : item.Count, 1, 10);
+
+    /// <summary>
     /// 在 image_master_messages 中保存一条消息（服务器权威性：消息由后端保存，不依赖前端补存）
     /// </summary>
-    private async Task<string?> SaveWorkspaceMessageAsync(string workspaceId, string ownerUserId, string role, string content, CancellationToken ct)
+    private async Task<string?> SaveWorkspaceMessageAsync(ImageGenRun run, string role, string content, CancellationToken ct)
     {
+        if (IsLayeringRun(run)) return null;
+        var workspaceId = run.WorkspaceId ?? string.Empty;
+        var ownerUserId = run.OwnerAdminId;
         if (string.IsNullOrWhiteSpace(workspaceId)) return null;
         try
         {
@@ -1009,7 +1232,8 @@ public class ImageGenRunWorker : BackgroundService
         CancellationToken ct,
         string? effectiveSize = null,
         bool? sizeAdjusted = null,
-        bool? ratioAdjusted = null)
+        bool? ratioAdjusted = null,
+        string? displaySha256 = null)
     {
         var now = DateTime.UtcNow;
         // 不依赖 unique 索引：以确定性 Id 防并发重复插入（仅依赖 _id 唯一）
@@ -1042,6 +1266,7 @@ public class ImageGenRunWorker : BackgroundService
 
         if (base64 != null) update = update.Set(x => x.Base64, base64);
         if (url != null) update = update.Set(x => x.Url, url);
+        if (displaySha256 != null) update = update.Set(x => x.DisplaySha256, displaySha256);
         if (revisedPrompt != null) update = update.Set(x => x.RevisedPrompt, revisedPrompt);
 
         if (errorCode != null) update = update.Set(x => x.ErrorCode, errorCode);
@@ -1111,6 +1336,7 @@ public class ImageGenRunWorker : BackgroundService
         string? url,
         string? originalUrl,
         string? originalSha256,
+        string? displaySha256,
         IAssetStorage assetStorage,
         CancellationToken ct)
     {
@@ -1132,29 +1358,82 @@ public class ImageGenRunWorker : BackgroundService
             // 已有原图信息，直接使用
             assetUrl = originalUrl.Trim();
             assetSha256 = originalSha256.Trim();
+            return await PersistImageAssetRecordAsync(
+                run,
+                prompt,
+                requestedSize,
+                effectiveSize,
+                url,
+                assetUrl,
+                assetSha256,
+                displaySha256,
+                assetMime,
+                assetSizeBytes,
+                ct);
         }
-        else
-        {
-            // 回退：下载展示图保存（兼容旧逻辑）
-            byte[]? bytes = null;
-            if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u))
-            {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-                using var resp = await http.GetAsync(u, ct).ConfigureAwait(false);
-                if (!resp.IsSuccessStatusCode) return null;
-                assetMime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
-                bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-            }
-            if (bytes == null || bytes.Length == 0) return null;
-            if (bytes.LongLength > 15 * 1024 * 1024) return null;
-            if (!assetMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) assetMime = "image/png";
 
-            RegistryAssetStorage.OverrideNextScope("generated");
-            var stored = await assetStorage.SaveAsync(bytes, assetMime, ct, domain: AppDomainPaths.DomainVisualAgent, type: AppDomainPaths.TypeImg);
-            assetUrl = stored.Url;
-            assetSha256 = stored.Sha256;
-            assetSizeBytes = stored.SizeBytes;
+        // 回退：下载展示图保存（兼容旧逻辑）。保存前按内容预计算 SHA，
+        // 与所有生成图删除路径共用一把租约，并持有到 ImageAsset 引用写入完成。
+        byte[]? bytes = null;
+        if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.Trim(), UriKind.Absolute, out var u))
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            using var resp = await http.GetAsync(u, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return null;
+            assetMime = resp.Content.Headers.ContentType?.MediaType ?? "image/png";
+            bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
         }
+        if (bytes == null || bytes.Length == 0) return null;
+        if (bytes.LongLength > 15 * 1024 * 1024) return null;
+        if (!assetMime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)) assetMime = "image/png";
+
+        assetSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{assetSha256}",
+            ct);
+        RegistryAssetStorage.OverrideNextScope("generated");
+        var stored = await assetStorage.SaveAsync(
+            bytes,
+            assetMime,
+            ct,
+            domain: AppDomainPaths.DomainVisualAgent,
+            type: AppDomainPaths.TypeImg);
+        assetUrl = stored.Url;
+        displaySha256 = stored.Sha256;
+        assetSizeBytes = stored.SizeBytes;
+        if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("生成图片存储摘要校验失败");
+
+        return await PersistImageAssetRecordAsync(
+            run,
+            prompt,
+            requestedSize,
+            effectiveSize,
+            url,
+            assetUrl,
+            assetSha256,
+            displaySha256,
+            assetMime,
+            assetSizeBytes,
+            ct);
+    }
+
+    private async Task<ImageAsset> PersistImageAssetRecordAsync(
+        ImageGenRun run,
+        string prompt,
+        string requestedSize,
+        string? effectiveSize,
+        string? url,
+        string assetUrl,
+        string assetSha256,
+        string? displaySha256,
+        string assetMime,
+        long assetSizeBytes,
+        CancellationToken ct)
+    {
+        var wid = (run.WorkspaceId ?? string.Empty).Trim();
+        var adminId = (run.OwnerAdminId ?? string.Empty).Trim();
 
         // 创建 ImageAsset 记录
         // Sha256 = 原图 SHA256（用于参考图查找）
@@ -1165,6 +1444,7 @@ public class ImageGenRunWorker : BackgroundService
             OwnerUserId = adminId,
             WorkspaceId = wid,
             Sha256 = assetSha256,
+            DisplaySha256 = string.IsNullOrWhiteSpace(displaySha256) ? assetSha256 : displaySha256,
             Mime = assetMime,
             SizeBytes = assetSizeBytes,
             Url = url ?? assetUrl,  // 展示用（有水印时是 watermark URL，无水印时是 imagemaster URL）
@@ -1195,6 +1475,14 @@ public class ImageGenRunWorker : BackgroundService
 
     private async Task TryPatchWorkspaceCanvasAsync(ImageGenRun run, ImageAsset asset, CancellationToken ct)
     {
+        // 分层没有「一个目标元素等着被回填」这回事。
+        // 它的 TargetCanvasKey 指的是**原图**（幂等键与对账都要认它），而产物是 N 个新图层，
+        // 由前端按 {groupId}_layer_N 自己落位。若照常回填，第一层就会把画布上持久化的原图
+        // 替换成那一层——前端靠随后的整画布保存把它盖回去，所以界面上看不出来；但只要标签页
+        // 在防抖保存之前关掉，重新打开就会发现「那颗没被切过的西瓜」不见了。
+        // 这正违反本功能的核心不变量：原图必须原封不动（Codex PR #1363 P1）。
+        if (IsLayeringRun(run)) return;
+
         var wid = (run.WorkspaceId ?? string.Empty).Trim();
         var key = (run.TargetCanvasKey ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(wid) || string.IsNullOrWhiteSpace(key)) return;
@@ -1665,6 +1953,12 @@ public class ImageGenRunWorker : BackgroundService
             var expectedModelCode = frontendExpectedModelId;
             var resolved = await gateway.ResolveModelAsync(appCallerCode, "generation", expectedModelCode, ct: ct);
 
+            if (resolved is null || !resolved.Success)
+            {
+                throw new InvalidOperationException(
+                    resolved?.ErrorMessage ?? $"模型池调度未返回结果: {expectedModelCode ?? "(未指定)"}");
+            }
+
             if (resolved != null)
             {
                 var parsedType = ModelResolutionTypeMapper.Parse(resolved.ResolutionType);
@@ -1681,6 +1975,12 @@ public class ImageGenRunWorker : BackgroundService
         }
         catch (Exception ex)
         {
+            if (string.Equals(frontendExpectedPlatformId, "model-pool", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"用户选择的模型池调度失败，未执行跨池外直连: {frontendExpectedModelId ?? "(未指定)"}",
+                    ex);
+            }
             _logger.LogWarning(ex, "[视觉创作-专属模型匹配] 通过 AppCaller 获取模型池失败: appCallerCode={AppCallerCode}，将使用前端指定的模型", appCallerCode);
         }
 
@@ -1740,5 +2040,65 @@ public class ImageGenRunWorker : BackgroundService
         run.LogicalModelPublicId = logicalModelPublicId;
 
         await _db.ImageGenRuns.UpdateOneAsync(x => x.Id == run.Id, updateDef, cancellationToken: ct);
+    }
+
+    private async Task<bool> ResolveRunIsAdaptiveAsync(
+        ImageGenRun run,
+        string appCallerCode,
+        CancellationToken ct)
+    {
+        var fallback = ImageGenModelAdapterRegistry.TryMatch(run.ModelId)?.SizeConstraintType
+            == SizeConstraintTypes.Adaptive;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
+            var requiredLogicalModel = ResolveExplicitLogicalModelPublicId(run);
+            var resolution = !string.IsNullOrWhiteSpace(requiredLogicalModel)
+                ? await gateway.ResolveRequiredLogicalModelAsync(
+                    appCallerCode,
+                    "generation",
+                    requiredLogicalModel,
+                    ct)
+                : await gateway.ResolveModelAsync(
+                    appCallerCode,
+                    "generation",
+                    ResolveImageGenerationModelReference(run),
+                    ct: ct);
+            if (!resolution.Success) return fallback;
+
+            var resolvedFallback = ImageGenModelAdapterRegistry.TryMatch(
+                    resolution.ActualModel ?? run.ModelId)?.SizeConstraintType
+                == SizeConstraintTypes.Adaptive;
+            var sizeControl = ImageSizeControlCapabilities.Parse(resolution.ParameterCapabilities);
+            return sizeControl.IsConfigured ? sizeControl.UsePrompt : resolvedFallback;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "[生图尺寸能力] 解析运行事件尺寸模式失败，回退静态适配器: runId={RunId}",
+                run.Id);
+            return fallback;
+        }
+    }
+
+    /// <summary>
+    /// 模型池解析完成后，后续 Gateway resolve 必须继续使用池身份。
+    /// 池解析得到的 ModelId 是实际 Provider 模型名，不能再次作为 appCaller 的
+    /// expectedModel，否则严格模型池会把它当成新的池选择并拒绝请求。
+    /// </summary>
+    private static string? ResolveImageGenerationModelReference(ImageGenRun run)
+    {
+        if (!string.IsNullOrWhiteSpace(run.LogicalModelPublicId))
+            return run.LogicalModelPublicId;
+
+        if (run.ModelResolutionType is ModelResolutionType.DedicatedPool or ModelResolutionType.DefaultPool
+            && !string.IsNullOrWhiteSpace(run.ModelGroupId))
+        {
+            return run.ModelGroupId;
+        }
+
+        return run.ModelId;
     }
 }

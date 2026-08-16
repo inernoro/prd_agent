@@ -28,13 +28,19 @@ export default defineConfig({
   // rest of the suite, creating a dangerous false-green.
   forbidOnly: !!process.env.CI,
   // Retry once on CI; locally fail fast so the developer sees flake.
-  retries: process.env.CI ? 1 : 0,
+  retries: process.env.CI || process.env.STABLE_SMOKE_RUN ? 1 : 0,
   // Workers: default to 1 locally (debuggable) and use reported
   // capacity in CI. Keep deterministic ordering for CI log grok.
-  workers: process.env.CI ? 2 : 1,
+  workers: process.env.STABLE_SMOKE_RUN ? 1 : process.env.CI ? 2 : 1,
   // Generate HTML report AND JSON so CI can upload both; dot reporter
   // keeps stdout readable for human tails.
-  reporter: process.env.CI
+  reporter: process.env.STABLE_SMOKE_JSON_OUTPUT
+    ? [
+        ['list'],
+        ['json', { outputFile: process.env.STABLE_SMOKE_JSON_OUTPUT }],
+        ['html', { open: 'never', outputFolder: process.env.STABLE_SMOKE_HTML_OUTPUT }],
+      ]
+    : process.env.CI
     ? [['dot'], ['html', { open: 'never' }], ['json', { outputFile: 'results.json' }]]
     : [['list'], ['html', { open: 'on-failure' }]],
   use: {
@@ -54,6 +60,7 @@ export default defineConfig({
     actionTimeout: 10_000,
     navigationTimeout: 30_000,
   },
+  outputDir: process.env.STABLE_SMOKE_TEST_OUTPUT || 'test-results',
   // Per-test timeout (all assertions+actions combined).
   timeout: 60_000,
   expect: {
@@ -62,7 +69,17 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: process.env.STABLE_SMOKE_RUN
+          ? {
+              args: [
+                '--use-fake-device-for-media-stream',
+                '--use-fake-ui-for-media-stream',
+              ],
+            }
+          : undefined,
+      },
     },
     // Add firefox / webkit projects later when core chromium paths
     // are stable. Cross-browser coverage isn't worth the 3x CI time

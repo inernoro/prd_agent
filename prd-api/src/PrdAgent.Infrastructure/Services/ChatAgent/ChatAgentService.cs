@@ -24,6 +24,7 @@ public sealed class ChatAgentService : IChatAgentService
     private readonly IClaudeSidecarRouter _runtime;
     private readonly IAgentToolRegistry _tools;
     private readonly IChatAgentTurnQueue _queue;
+    private readonly IChatAgentOneOffRunRegistry _oneOffRuns;
     private readonly IOptionsMonitor<ChatAgentOptions> _options;
     private readonly ILogger<ChatAgentService> _logger;
 
@@ -32,6 +33,7 @@ public sealed class ChatAgentService : IChatAgentService
         IClaudeSidecarRouter runtime,
         IAgentToolRegistry tools,
         IChatAgentTurnQueue queue,
+        IChatAgentOneOffRunRegistry oneOffRuns,
         IOptionsMonitor<ChatAgentOptions> options,
         ILogger<ChatAgentService> logger)
     {
@@ -39,6 +41,7 @@ public sealed class ChatAgentService : IChatAgentService
         _runtime = runtime;
         _tools = tools;
         _queue = queue;
+        _oneOffRuns = oneOffRuns;
         _options = options;
         _logger = logger;
     }
@@ -426,6 +429,132 @@ public sealed class ChatAgentService : IChatAgentService
         _db.ChatAgentSessions
             .Find(OwnedByFilter(userId) & Builders<ChatAgentSession>.Filter.Eq(s => s.Id, sessionId))
             .FirstOrDefaultAsync(ct)!;
+
+    // ──────────────────────────────────────────────────────────────
+    // 一次性转派：给「自己已经有上下文与持久化」的宿主借脑子用
+    // ──────────────────────────────────────────────────────────────
+
+    public ChatAgentRuntimeStatus GetRuntimeStatus()
+    {
+        // 真探测，不是常量：对话运行时是外部 sidecar，没配就是真的没有。
+        if (!_runtime.IsConfigured)
+            return new ChatAgentRuntimeStatus(false, "对话运行时还没配置，管理员启用后才能用通用智能体。");
+        if (_runtime.HealthyCount == 0)
+            return new ChatAgentRuntimeStatus(false, "对话运行时暂时不可用（没有健康实例），稍后再试。");
+        return new ChatAgentRuntimeStatus(true, null);
+    }
+
+    public async IAsyncEnumerable<ChatAgentOneOffEvent> StreamOneOffAsync(
+        ChatAgentOneOffRequest request,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        var status = GetRuntimeStatus();
+        if (!status.Available)
+        {
+            yield return Event(ChatAgentEventTypes.Error,
+                new { code = "runtime_unavailable", message = status.Reason });
+            yield break;
+        }
+
+        var opts = _options.CurrentValue;
+        var runId = Guid.NewGuid().ToString("N");
+
+        var messages = new List<SidecarChatMessage>();
+        foreach (var item in request.History ?? Array.Empty<ChatAgentOneOffMessage>())
+        {
+            if (string.IsNullOrWhiteSpace(item.Content)) continue;
+            messages.Add(new SidecarChatMessage
+            {
+                Role = item.Role == ChatAgentRoles.Assistant ? ChatAgentRoles.Assistant : ChatAgentRoles.User,
+                Content = item.Content,
+            });
+        }
+        // 历史同样受条数上限约束：宿主可能攒了很长一串，别把上下文撑爆
+        if (messages.Count > opts.HistoryLimit)
+            messages.RemoveRange(0, messages.Count - opts.HistoryLimit);
+        messages.Add(new SidecarChatMessage { Role = ChatAgentRoles.User, Content = request.UserMessage });
+
+        var systemPrompt = string.IsNullOrWhiteSpace(request.ExtraSystemPrompt)
+            ? opts.SystemPrompt
+            : opts.SystemPrompt + "\n\n" + request.ExtraSystemPrompt!.Trim();
+
+        var sidecarRequest = new SidecarRunRequest
+        {
+            RunId = runId,
+            Model = opts.Model,
+            SystemPrompt = systemPrompt,
+            Messages = messages,
+            Tools = BuildTools(opts),
+            BuiltinTools = Array.Empty<string>(),
+            MaxTokens = opts.MaxTokens,
+            MaxTurns = opts.MaxTurns,
+            TimeoutSeconds = opts.TimeoutSeconds,
+            TraceId = runId,
+            AppCallerCode = AppCallerRegistry.ChatAgent.Conversation,
+        };
+
+        // 工具回调只带 runId 回来。不登记这一笔，工具全都会因为「没有用户身份」而拒绝执行，
+        // 表现成「说调了工具但什么也没发生」。
+        _oneOffRuns.Register(runId, request.UserId);
+        try
+        {
+            await foreach (var evt in _runtime.RunStreamAsync(sidecarRequest, ct))
+            {
+                var translated = TranslateOneOff(evt);
+                if (translated != null) yield return translated;
+                if (evt.Type is SidecarEventType.Done or SidecarEventType.Error) yield break;
+            }
+
+            // 运行时把流断了却没给终态：这本身是异常，不能让宿主一直等下去
+            yield return Event(ChatAgentEventTypes.Error, new
+            {
+                code = "runtime_stream_closed",
+                message = "运行时提前断开了，没有给出结束标记。可以重新发一次。",
+            });
+        }
+        finally
+        {
+            _oneOffRuns.Release(runId);
+        }
+    }
+
+    /// <summary>
+    /// 运行时事件 → 对外事件。**刻意与会话路径共用同一套事件类型与载荷形状**，
+    /// 否则前端要认两种协议，工具卡的判据也会分裂成两份各自漂移。
+    /// </summary>
+    private static ChatAgentOneOffEvent? TranslateOneOff(SidecarEvent evt) => evt.Type switch
+    {
+        SidecarEventType.TextDelta when !string.IsNullOrEmpty(evt.Text) =>
+            Event(ChatAgentEventTypes.TextDelta, new { text = evt.Text }),
+
+        SidecarEventType.Thinking when !string.IsNullOrEmpty(evt.Text) =>
+            Event(ChatAgentEventTypes.Thinking, new { text = evt.Text }),
+
+        SidecarEventType.ToolUse => Event(ChatAgentEventTypes.ToolStarted, new
+        {
+            toolUseId = evt.ToolUseId,
+            tool = ChatAgentToolPresentation.NormalizeToolName(evt.ToolName),
+            label = ChatAgentToolPresentation.ToolLabel(evt.ToolName),
+            steps = ChatAgentToolPresentation.ToolSteps(evt.ToolName),
+        }),
+
+        SidecarEventType.ToolResult => Event(ChatAgentEventTypes.ToolFinished,
+            ChatAgentToolPresentation.BuildToolCardPayload(
+                evt.ToolName, evt.ToolUseId, evt.Content, evt.IsError)),
+
+        SidecarEventType.Done => Event(ChatAgentEventTypes.Done, new { text = evt.FinalText }),
+
+        SidecarEventType.Error => Event(ChatAgentEventTypes.Error, new
+        {
+            code = evt.ErrorCode ?? "runtime_error",
+            message = HumanizeError(evt.ErrorCode, evt.Message),
+        }),
+
+        _ => null,
+    };
+
+    private static ChatAgentOneOffEvent Event(string type, object payload) =>
+        new(type, JsonSerializer.Serialize(payload, JsonOpts));
 
     private async Task<List<SidecarChatMessage>> BuildHistoryAsync(
         string sessionId, string turnId, int limit, CancellationToken ct)

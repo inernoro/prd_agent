@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Net.WebSockets;
@@ -9,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -43,6 +45,7 @@ public class DocumentStoreController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IRunEventStore _runEventStore;
     private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
     private readonly DocStoreServices.MentionService _mentions;
@@ -53,6 +56,7 @@ public class DocumentStoreController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly DocumentStoreLiveTranscriptionRelay _liveTranscriptionRelay;
+    private readonly DocumentAssetCleanupService _documentAssetCleanup;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -67,6 +71,32 @@ public class DocumentStoreController : ControllerBase
     private static readonly TimeSpan RecordingCleanupStaleLease = TimeSpan.FromMinutes(10);
     private const int RecordingOrphanChunkScanLimit = 500;
     private const int RecordingExpiredCleanupBatchSize = 500;
+
+    private sealed record StoredUploadAsset(StoredAsset Asset, string? StorageKey);
+
+    private static string? TryGetLocalAssetStorageKey(string? url)
+    {
+        var value = (url ?? string.Empty).Trim();
+        const string prefix = "/local-assets/";
+        if (!value.StartsWith(prefix, StringComparison.Ordinal)) return null;
+
+        var encodedKey = value[prefix.Length..];
+        var suffixIndex = encodedKey.IndexOfAny(['?', '#']);
+        if (suffixIndex >= 0) encodedKey = encodedKey[..suffixIndex];
+        try
+        {
+            var segments = encodedKey
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(Uri.UnescapeDataString)
+                .ToArray();
+            if (segments.Length == 0 || segments.Any(segment => segment is "." or "..")) return null;
+            return string.Join('/', segments);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
     private const int ViewDedupWindowMinutes = 30;
@@ -83,6 +113,7 @@ public class DocumentStoreController : ControllerBase
         IDocumentService documentService,
         IRunEventStore runEventStore,
         ISafeOutboundUrlValidator urlValidator,
+        IHttpClientFactory httpClientFactory,
         ITeamService teams,
         ITeamActivityService teamActivity,
         DocStoreServices.MentionService mentions,
@@ -95,6 +126,7 @@ public class DocumentStoreController : ControllerBase
         IConfiguration config,
         DocumentStoreAssetNormalizer assetNormalizer,
         DocumentStoreLiveTranscriptionRelay liveTranscriptionRelay,
+        DocumentAssetCleanupService documentAssetCleanup,
         EntryContentWriteService entryContentWriter,
         ILogger<DocumentStoreController> logger)
     {
@@ -104,6 +136,7 @@ public class DocumentStoreController : ControllerBase
         _documentService = documentService;
         _runEventStore = runEventStore;
         _urlValidator = urlValidator;
+        _httpClientFactory = httpClientFactory;
         _teams = teams;
         _teamActivity = teamActivity;
         _mentions = mentions;
@@ -116,6 +149,7 @@ public class DocumentStoreController : ControllerBase
         _config = config;
         _assetNormalizer = assetNormalizer;
         _liveTranscriptionRelay = liveTranscriptionRelay;
+        _documentAssetCleanup = documentAssetCleanup;
         _entryContentWriter = entryContentWriter;
         _logger = logger;
     }
@@ -622,6 +656,24 @@ public class DocumentStoreController : ControllerBase
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId).ToListAsync();
         var documentIds = entries.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
         var attachmentIds = entries.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
+        var attachments = attachmentIds.Count == 0
+            ? new List<Attachment>()
+            : await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync();
+
+        // 合成验收上传写入受控 _it Key。先持久化对象清理意图，再执行数据库级联；
+        // Worker 只有在 Attachment 引用全部解除后才删除对象。数据库任一步失败时，
+        // 仍存活的 Attachment 会阻止对象删除，不会产生指向已删除文件的断链记录。
+        try
+        {
+            await _documentAssetCleanup.TrackPendingAsync(attachments, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[document-store] Store asset cleanup intent failed before cascade: store={StoreId}", storeId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.Fail(
+                "DOCUMENT_ASSET_CLEANUP_FAILED",
+                "文件清理暂时未完成，请稍后重试删除"));
+        }
 
         // 2) 级联清理关联数据（顺序不敏感，失败任何一步都不回滚——MongoDB 无事务）
         var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => e.StoreId == storeId);
@@ -656,6 +708,19 @@ public class DocumentStoreController : ControllerBase
         {
             var res = await _db.Attachments.DeleteManyAsync(a => attachmentIds.Contains(a.AttachmentId));
             attachmentsDeleted = res.DeletedCount;
+        }
+
+        // TrackPendingAsync 可能先唤醒 Worker，而附件当时仍存在，任务会被租约推迟两分钟。
+        // 引用解除后把同一批任务重新设为立即到期并再次唤醒，确保删除接口返回后对象及时消失。
+        try
+        {
+            await _documentAssetCleanup.TrackPendingAsync(attachments, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 首次登记的持久化任务仍会在租约到期后兜底执行；数据库级联已经完成，不能把
+            // 实际成功的删除伪装成失败，也不能要求用户重复删除一个已不存在的空间。
+            _logger.LogWarning(ex, "[document-store] Store asset cleanup wake deferred after unlink: store={StoreId}", storeId);
         }
 
         // 3) 最后删 store 自身
@@ -1057,6 +1122,21 @@ public class DocumentStoreController : ControllerBase
         var targets = await _db.DocumentEntries.Find(e => idsToDelete.Contains(e.Id)).ToListAsync();
         var documentIds = targets.Where(e => !string.IsNullOrEmpty(e.DocumentId)).Select(e => e.DocumentId!).ToList();
         var attachmentIds = targets.Where(e => !string.IsNullOrEmpty(e.AttachmentId)).Select(e => e.AttachmentId!).ToList();
+        var attachments = attachmentIds.Count == 0
+            ? new List<Attachment>()
+            : await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync();
+
+        try
+        {
+            await _documentAssetCleanup.TrackPendingAsync(attachments, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[document-store] Entry asset cleanup intent failed before cascade: entry={EntryId}", entryId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiResponse<object>.Fail(
+                "DOCUMENT_ASSET_CLEANUP_FAILED",
+                "文件清理暂时未完成，请稍后重试删除"));
+        }
 
         // 级联清理
         var entriesResult = await _db.DocumentEntries.DeleteManyAsync(e => idsToDelete.Contains(e.Id));
@@ -1605,6 +1685,15 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
+        if (!FileContentExtractor.IsStructurallyValid(bytes, mime))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "文件无法解析，请确认文件未损坏并重新选择"));
+        }
+
+        // 可解析格式也可能是合法的纯图片 PDF 或无文本 Office 文件。
+        // 正文为空时仍按附件保存，不能把“没有可提取文本”误判为文件损坏。
         var stored = await CreateUploadedDocumentEntryAsync(
             store, userId, userName, avatarFileName, file.FileName, mime, bytes, parentId, ct);
 
@@ -2352,11 +2441,13 @@ public class DocumentStoreController : ControllerBase
                     audioBytes,
                     parentId: null,
                     CancellationToken.None,
-                    storedAsset: new StoredAsset(
-                        string.Empty,
-                        interruptedAttachment.Url,
-                        interruptedAttachment.Size,
-                        interruptedAttachment.MimeType),
+                    storedAsset: new StoredUploadAsset(
+                        new StoredAsset(
+                            string.Empty,
+                            interruptedAttachment.Url,
+                            interruptedAttachment.Size,
+                            interruptedAttachment.MimeType),
+                        interruptedAttachment.StorageKey),
                     recordingSessionId: sessionId);
                 interruptedCompletedEntry = rebuilt.Entry;
             }
@@ -2457,7 +2548,7 @@ public class DocumentStoreController : ControllerBase
                         sessionId),
             }));
         }
-        StoredAsset recordingAsset;
+        StoredUploadAsset recordingAsset;
         try
         {
             // 降级判定只包住对象存储调用。附件、条目、计数或活动日志在存储成功后
@@ -3525,15 +3616,16 @@ public class DocumentStoreController : ControllerBase
             string? parentId,
             CancellationToken cancellationToken,
             int assetSaveAttempts = 1,
-            StoredAsset? storedAsset = null,
+            StoredUploadAsset? storedAsset = null,
             string? recordingSessionId = null)
     {
-        var stored = storedAsset ?? await SaveUploadedAssetAsync(
+        var storedUpload = storedAsset ?? await SaveUploadedAssetAsync(
             fileName,
             mime,
             bytes,
             cancellationToken,
             assetSaveAttempts);
+        var stored = storedUpload.Asset;
 
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))
@@ -3551,6 +3643,7 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = bytes.LongLength,
             Url = stored.Url,
+            StorageKey = storedUpload.StorageKey,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
@@ -3637,10 +3730,22 @@ public class DocumentStoreController : ControllerBase
         if (entryCreated)
             await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
 
+        try
+        {
+            await _documentAssetCleanup.MarkUploadCommittedAsync(
+                storedUpload.StorageKey,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 条目已经建立有效引用；后台会据此识别上传已提交并移除待回滚任务。
+            _logger.LogWarning(ex, "[document-store] 上传提交后清理意图撤销延迟 entry={EntryId}", entry.Id);
+        }
+
         return (entry, attachment, documentId, stored.Url);
     }
 
-    private async Task<StoredAsset> SaveUploadedAssetAsync(
+    private async Task<StoredUploadAsset> SaveUploadedAssetAsync(
         string fileName,
         string mime,
         byte[] bytes,
@@ -3653,9 +3758,25 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
-                return await _assetStorage.SaveAsync(
-                    bytes, mime, cancellationToken,
-                    domain: "prd-agent", type: "doc", fileName: fileName);
+                if (FederatedConsoleSessionPolicy.IsSynthetic(User))
+                {
+                    var extension = Regex.IsMatch(Path.GetExtension(fileName), @"^\.[a-zA-Z0-9]{1,10}$")
+                        ? Path.GetExtension(fileName).ToLowerInvariant()
+                        : ".bin";
+                    var key = $"_it/stable-smoke-document/{Guid.NewGuid():N}{extension}";
+                    await _documentAssetCleanup.TrackPendingUploadAsync(key, cancellationToken);
+                    await _assetStorage.UploadToKeyAsync(key, bytes, mime, cancellationToken);
+                    var sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                    return new StoredUploadAsset(
+                        new StoredAsset(sha256, _assetStorage.BuildUrlForKey(key), bytes.LongLength, mime),
+                        key);
+                }
+
+                return new StoredUploadAsset(
+                    await _assetStorage.SaveAsync(
+                        bytes, mime, cancellationToken,
+                        domain: "prd-agent", type: "doc", fileName: fileName),
+                    null);
             }
             catch (Exception ex) when (attempt < attempts && IsAssetStorageFailure(ex))
             {
@@ -3706,6 +3827,9 @@ public class DocumentStoreController : ControllerBase
         // 否则每次替换都把上一版正文 + Attachment 记录变成永久孤儿（删条目时只按新 id 清理，清不到历史版本）
         var oldAttachmentId = entry.AttachmentId;
         var oldDocumentId = entry.DocumentId;
+        var oldAttachment = string.IsNullOrWhiteSpace(oldAttachmentId)
+            ? null
+            : await _db.Attachments.Find(a => a.AttachmentId == oldAttachmentId).FirstOrDefaultAsync(ct);
 
         var mime = InferMime(file.ContentType, file.FileName);
 
@@ -3716,7 +3840,8 @@ public class DocumentStoreController : ControllerBase
             bytes = ms.ToArray();
         }
 
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct, domain: "prd-agent", type: "doc", fileName: file.FileName);
+        var storedUpload = await SaveUploadedAssetAsync(file.FileName, mime, bytes, ct, assetSaveAttempts: 1);
+        var stored = storedUpload.Asset;
 
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))
@@ -3731,6 +3856,7 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = file.Length,
             Url = stored.Url,
+            StorageKey = storedUpload.StorageKey,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
@@ -3820,6 +3946,12 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
+                if (oldAttachment != null)
+                {
+                    await _documentAssetCleanup.TrackPendingAsync(
+                        new[] { oldAttachment },
+                        CancellationToken.None);
+                }
                 await _db.Attachments.DeleteOneAsync(a => a.AttachmentId == oldAttachmentId, CancellationToken.None);
             }
             catch (Exception ex)
@@ -3900,6 +4032,68 @@ public class DocumentStoreController : ControllerBase
             fileUrl,
             hasContent = !string.IsNullOrEmpty(content),
         }));
+    }
+
+    /// <summary>下载条目原始附件，并以原始文件名返回。</summary>
+    [HttpGet("entries/{entryId}/download")]
+    public async Task<IActionResult> DownloadEntryAttachment(string entryId, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null || string.IsNullOrWhiteSpace(entry.AttachmentId))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档没有可下载的原始文件"));
+
+        var attachment = await _db.Attachments
+            .Find(item => item.AttachmentId == entry.AttachmentId)
+            .FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档没有可下载的原始文件"));
+
+        byte[]? bytes = null;
+        if (!string.IsNullOrWhiteSpace(attachment.StorageKey))
+        {
+            bytes = await _assetStorage.TryDownloadBytesAsync(attachment.StorageKey, ct);
+        }
+        else if (!string.IsNullOrWhiteSpace(attachment.Url))
+        {
+            try
+            {
+                var localStorageKey = TryGetLocalAssetStorageKey(attachment.Url);
+                if (!string.IsNullOrWhiteSpace(localStorageKey))
+                {
+                    bytes = await _assetStorage.TryDownloadBytesAsync(localStorageKey, ct);
+                }
+                else
+                {
+                    var safeUri = await _urlValidator.EnsureSafeHttpUrlAsync(attachment.Url, "文档附件地址", ct);
+                    var client = _httpClientFactory.CreateClient("SafeOutbound");
+                    using var response = await client.GetAsync(safeUri, HttpCompletionOption.ResponseHeadersRead, ct);
+                    if (response.IsSuccessStatusCode)
+                        bytes = await response.Content.ReadAsByteArrayAsync(ct);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[document-store] Attachment download failed: entry={EntryId}", entryId);
+            }
+        }
+
+        if (bytes == null || bytes.Length == 0)
+            return NotFound(ApiResponse<object>.Fail(
+                "ASSET_NOT_FOUND",
+                "原始文件已不可用，请重新上传该文件后再下载"));
+
+        var fileName = Path.GetFileName(attachment.FileName);
+        if (string.IsNullOrWhiteSpace(fileName)) fileName = "document.bin";
+        var mime = string.IsNullOrWhiteSpace(attachment.MimeType)
+            ? "application/octet-stream"
+            : attachment.MimeType;
+        return File(bytes, mime, fileName);
     }
 
     /// <summary>把知识库条目一键生成海报/教程/文案 HTML，并发布到网页托管。</summary>
@@ -5260,9 +5454,16 @@ public class DocumentStoreController : ControllerBase
         if (styleErr != null) return styleErr;
 
         // 笔记 entry 的写权限（协作者也可整理，与转录发起对称）
-        var (_, _, err) = await LoadWritableEntryAsync(prior.OutputEntryId, userId);
+        var (noteEntry, _, err) = await LoadWritableEntryAsync(prior.OutputEntryId, userId);
         if (err != null) return err;
 
+        // restyle 与完整转录会写同一篇录音笔记。排队时先取得同一输出锁并分配
+        // 新代次，使较早启动但较晚返回的任务无法覆盖用户刚得到的新原文。
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            _db,
+            noteEntry!.Id,
+            DocumentStoreAgentRunKind.Transcribe,
+            CancellationToken.None);
         var run = new DocumentStoreAgentRun
         {
             Kind = DocumentStoreAgentRunKind.Transcribe,
@@ -5278,7 +5479,14 @@ public class DocumentStoreController : ControllerBase
             StyleContext = string.IsNullOrWhiteSpace(request.StyleContext) ? null : request.StyleContext.Trim(),
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
-        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        var generationEntry = await DocumentStoreRunGenerationPublisher.PublishAsync(
+            _db,
+            noteEntry!.Id,
+            run,
+            outputLease,
+            CancellationToken.None);
+        if (generationEntry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "转录笔记不存在"));
 
         _logger.LogInformation(
             "[doc-store-agent] transcribe restyle queued: {RunId} prior={PriorId} style={Style}",
@@ -5310,12 +5518,33 @@ public class DocumentStoreController : ControllerBase
     {
         var entryId = entry.Id;
         var userId = GetUserId();
+        // 与 Worker 最终发布正文共用跨实例互斥锁。失联任务回收、新任务创建和旧任务
+        // 最后写回不能并发，否则旧 Worker 可能在重试已经创建后覆盖新结果。
+        await using var outputLease = await DocumentStoreRunOutputLease.AcquireAsync(
+            _db,
+            entryId,
+            kind,
+            CancellationToken.None);
+        // entry 在取得跨实例输出锁前加载，等待锁期间可能已被另一任务推进代次。
+        // 转录去重必须以锁内重读的代次为准，否则会复用一个注定 superseded 的旧 run。
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var refreshedEntry = await ReloadMediaGenerationEntryAsync(
+                _db.DocumentEntries,
+                entry,
+                kind,
+                CancellationToken.None);
+            if (refreshedEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));
+            entry = refreshedEntry;
+        }
         // 去重：同一 entry 已有 queued 或 running 的同 kind run → 直接返回。
         // 定向消费：只复用【本实例】的在途 run。共享 Mongo 下复用别的分支/主干拥有的 run，
         // 本实例 Worker 会因 owner 不匹配而忽略它 → 返回的 runId 没人处理、永卡。
         // 按 UserId 过滤：GetAgentRun / StreamAgentRun 都要求 run.UserId == 调用者，
         // 团队库里复用别人创建的 run 会让调用者立刻 404 丢失状态/SSE（Codex P2）。
         var selfInstanceId = InstanceIdentity.Get(_config);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(_config);
 
         // 归一化本次请求的整理方式：仅当在途 run 的风格与本次完全一致才复用，否则新建。
         // 否则「后台跑默认转录时点会议纪要快捷键」会复用默认 run，笔记出错风格（Codex P2）。
@@ -5327,6 +5556,35 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.TemplateKey, reqTemplateKey),
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.CustomPrompt, reqCustomPrompt),
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.StyleContext, reqStyleContext));
+        var generationMatch = BuildReusableMediaRunGenerationFilter(
+            kind,
+            entryId,
+            entry.AgentOutputGeneration);
+
+        // 转录任务由 Worker 每 15 秒续一次 HeartbeatAt。用户重试时先原子终结超过一小时
+        // 没有心跳的同用户在途任务，否则下面的去重会把旧 runId 原样返回，界面永远只能
+        // “重试同一个坏任务”。旧文档没有 HeartbeatAt 时回退 StartedAt / CreatedAt。
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var stalledEndedAt = DateTime.UtcNow;
+            var stalledCount = await StalledTranscriptionRunRecovery.ReapAsync(
+                _db.DocumentStoreAgentRuns,
+                entryId,
+                userId,
+                reqTemplateKey,
+                reqCustomPrompt,
+                reqStyleContext,
+                compatibleOwnerIds,
+                stalledEndedAt,
+                CancellationToken.None);
+            if (stalledCount > 0)
+            {
+                _logger.LogWarning(
+                    "[doc-store-agent] Reaped {Count} stalled transcription run(s) before retry entry={EntryId}",
+                    stalledCount,
+                    entryId);
+            }
+        }
 
         // (1) 优先「原子认领」一个历史无主（OwnerInstanceId 空）的 queued run：把归属一次性钉给
         // 本实例。用 FindOneAndUpdate 杜绝 TOCTOU——若先 Find 再 UpdateOne，期间别的实例
@@ -5341,6 +5599,7 @@ public class DocumentStoreController : ControllerBase
                 // restyle run 是「换个整理方式」专用任务，不能被普通转录请求认领/复用
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
                 styleMatch,
+                generationMatch,
                 Builders<DocumentStoreAgentRun>.Filter.Or(
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, ""))),
@@ -5361,7 +5620,8 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.RestyleOfRunId, null),
                 styleMatch,
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+                generationMatch,
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
             return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
@@ -5380,16 +5640,62 @@ public class DocumentStoreController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config), // 定向消费：只让本实例 Worker 处理
             Status = DocumentStoreRunStatus.Queued,
             Phase = "排队中",
+            OutputGeneration = entry.AgentOutputGeneration,
             TemplateKey = reqTemplateKey,
             CustomPrompt = reqCustomPrompt,
             StyleContext = reqStyleContext,
             ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
-        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        if (kind == DocumentStoreAgentRunKind.Transcribe)
+        {
+            var generationEntry = await DocumentStoreRunGenerationPublisher.PublishAsync(
+                _db,
+                entryId,
+                run,
+                outputLease,
+                CancellationToken.None);
+            if (generationEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "条目不存在"));
+        }
+        else
+        {
+            await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        }
 
         _logger.LogInformation("[doc-store-agent] {Kind} run queued: {RunId} entry={EntryId}", kind, run.Id, entryId);
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
     }
+
+    internal static FilterDefinition<DocumentStoreAgentRun> BuildReusableMediaRunGenerationFilter(
+        string kind,
+        string generationEntryId,
+        long currentOutputGeneration)
+    {
+        var filter = Builders<DocumentStoreAgentRun>.Filter;
+        if (kind != DocumentStoreAgentRunKind.Transcribe)
+            return filter.Empty;
+
+        return filter.And(
+            filter.Eq(run => run.OutputGeneration, currentOutputGeneration),
+            filter.Or(
+                filter.Eq(run => run.GenerationEntryId, generationEntryId),
+                filter.And(
+                    filter.Or(
+                        filter.Eq(run => run.GenerationEntryId, string.Empty),
+                        filter.Eq(run => run.GenerationEntryId, null!),
+                        filter.Exists(run => run.GenerationEntryId, false)),
+                    filter.Eq(run => run.SourceEntryId, generationEntryId))));
+    }
+
+    internal static async Task<DocumentEntry?> ReloadMediaGenerationEntryAsync(
+        IMongoCollection<DocumentEntry> entries,
+        DocumentEntry entry,
+        string kind,
+        CancellationToken cancellationToken)
+        => kind == DocumentStoreAgentRunKind.Transcribe
+            ? await entries.Find(candidate => candidate.Id == entry.Id)
+                .FirstOrDefaultAsync(cancellationToken)
+            : entry;
 
     /// <summary>发起文档再加工任务（保留旧接口，等价于一次性发送首条 chat 消息）</summary>
     [HttpPost("entries/{entryId}/reprocess")]
@@ -5543,6 +5849,7 @@ public class DocumentStoreController : ControllerBase
                     .Set(r => r.GeneratedText, null)
                     .Set(r => r.EndedAt, (DateTime?)null)
                     .Set(r => r.ErrorMessage, null)
+                    .Set(r => r.FailureCode, null)
                     .Set(r => r.ForceFullShadowSample, _llmRequestContext.Current?.ForceFullShadowSample == true),
                 cancellationToken: CancellationToken.None);
             if (updateResult.ModifiedCount == 0)
@@ -5885,6 +6192,7 @@ public class DocumentStoreController : ControllerBase
         // 团队库另一成员若复用到别人的 runId 会立刻 404 无法跟进度（Codex P2）；
         // 任务幂等，两个成员同时发起各跑一遍无害（第二遍 linksAdded=0）。
         var selfInstanceId = InstanceIdentity.Get(_config);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(_config);
 
         // (1) 原子认领历史无主的 queued run（仅认领自己发起的）
         var claimed = await _db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
@@ -5909,7 +6217,7 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Kind, DocumentStoreAgentRunKind.AutoLink),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, userId),
                 Builders<DocumentStoreAgentRun>.Filter.In(r => r.Status, new[] { DocumentStoreRunStatus.Queued, DocumentStoreRunStatus.Running }),
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, selfInstanceId))
+                Builders<DocumentStoreAgentRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds))
         ).FirstOrDefaultAsync();
         if (selfRun != null)
             return Ok(ApiResponse<object>.Ok(new { runId = selfRun.Id, status = selfRun.Status, reused = true }));
@@ -5948,7 +6256,8 @@ public class DocumentStoreController : ControllerBase
         string entryId,
         [FromQuery] string kind,
         [FromQuery] string? status = null,
-        [FromQuery] bool requireOutput = false)
+        [FromQuery] bool requireOutput = false,
+        [FromQuery] bool ownUserOnly = false)
     {
         // writable 而非 owner-only：团队库协作者能转录/编辑笔记，也必须能查最近 run
         // 来发起「换个整理方式」（Codex P2：restyle 协作者被 404）
@@ -5967,6 +6276,8 @@ public class DocumentStoreController : ControllerBase
         };
         if (!string.IsNullOrWhiteSpace(status))
             filters.Add(Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, status.Trim().ToLowerInvariant()));
+        if (ownUserOnly)
+            filters.Add(Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.UserId, GetUserId()));
         if (requireOutput)
         {
             filters.Add(Builders<DocumentStoreAgentRun>.Filter.And(

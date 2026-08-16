@@ -4,3 +4,12 @@
 @import './legacy.css';
 @import './media-card.css';
 @import './home-launcher.css';
+
+/* CDS preview compatibility: the injected branch badge starts at the lower-left
+   corner. Reserve its compact height so account and avatar controls remain usable
+   before the platform-side collision-safe badge position reaches every CDS host. */
+@media (min-width: 641px) {
+  body:has(> [data-cds-widget-root]) [data-app-sidebar-account] {
+    padding-bottom: 52px;
+  }
+}

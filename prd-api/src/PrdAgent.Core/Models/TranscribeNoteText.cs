@@ -12,6 +12,25 @@ public static class TranscribeNoteText
     private const string SummaryMarker = "## 摘要";
 
     /// <summary>
+    /// 说话人来源说明行的前缀（SubtitleFormatter.FormatSpeakerSourceNote 产出，唯一字面量在这里）。
+    /// 它是**元信息不是转录内容**：反解原文时要剔掉，替换原文时要留住——
+    /// 用户只是把某句话改对了字，说话人标签的来源并没有因此变化。
+    /// </summary>
+    public const string SpeakerSourcePrefix = "> 说话人来源：";
+
+    /// <summary>取出笔记里的说话人来源行（含前缀），没有返回 null。</summary>
+    public static string? ExtractSpeakerSourceLine(string noteMd)
+    {
+        if (string.IsNullOrEmpty(noteMd)) return null;
+        foreach (var raw in noteMd.Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith(SpeakerSourcePrefix, StringComparison.Ordinal)) return line;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// 静音/拒答判定：极短转录文本且命中「转写模型把指令当聊天回答」「明确表示没听到内容」的模式。
     /// 只在极短文本上启用，避免误伤真实的一句话录音。
     /// 历史事故（2026-07-12）：静音录音产出"好的，请播放音频，我会逐字转写"并被存成笔记。
@@ -19,7 +38,16 @@ public static class TranscribeNoteText
     public static bool LooksLikeNoSpeech(string transcript)
     {
         var t = transcript.Trim();
-        if (t.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase)) return true;
+        if (IsNoSpeechSentinel(t)) return true;
+        // CDS 实机复现：纯静音被上游作为聊天请求处理后返回这句独立拒答。
+        // 只接受完整等值，不用 Contains，避免误伤会议里引用该原话的真实发言。
+        if (t.Equals("I'm sorry, I can't.", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I'm sorry, I can't", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I’m sorry, I can’t.", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("I’m sorry, I can’t", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
         if (t.Length > 40) return false;
         string[] patterns =
         {
@@ -28,6 +56,41 @@ public static class TranscribeNoteText
         };
         return patterns.Any(p => t.Contains(p, StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// 判断模型是否只返回受控的无人声哨兵。必须整句匹配，禁止用 Contains，
+    /// 否则真实发言“接口返回 NO_SPEECH”会在进入正文守卫前被丢弃。
+    /// </summary>
+    public static bool IsNoSpeechSentinel(string? transcript)
+    {
+        var t = NormalizeNoSpeechSentinel(transcript);
+        return t != null
+            && (t.Equals("NO_SPEECH", StringComparison.OrdinalIgnoreCase)
+                || t.Equals("好的，NO_SPEECH", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? NormalizeNoSpeechSentinel(string? transcript)
+    {
+        if (transcript == null) return null;
+        var normalized = transcript.Trim();
+        while (normalized.Length > 0)
+        {
+            var previous = normalized;
+            normalized = normalized.TrimEnd('.', '。', '!', '！', '?', '？').Trim();
+            if (normalized.Length >= 2 && IsMatchingOuterQuote(normalized[0], normalized[^1]))
+            {
+                normalized = normalized[1..^1].Trim();
+            }
+            if (normalized.Equals(previous, StringComparison.Ordinal)) break;
+        }
+        return normalized;
+    }
+
+    private static bool IsMatchingOuterQuote(char first, char last)
+        => (first == '"' && last == '"')
+            || (first == '\'' && last == '\'')
+            || (first == '“' && last == '”')
+            || (first == '‘' && last == '’');
 
     /// <summary>把笔记 markdown 的「## 摘要」小节替换为新摘要；「## 转录全文」及其后内容原样保留。</summary>
     public static string ReplaceSummarySection(string noteMd, string newSummary)
@@ -52,8 +115,37 @@ public static class TranscribeNoteText
         var idx = noteMd.IndexOf(TranscriptMarker, StringComparison.Ordinal);
         if (idx < 0) return null;
         var body = noteMd[(idx + TranscriptMarker.Length)..].Trim();
+        // 来源行是元信息，不是转录内容：留在这里会被当成原文送进编辑框、再被当成用户输入存回去。
+        if (body.StartsWith(SpeakerSourcePrefix, StringComparison.Ordinal))
+        {
+            var lineEnd = body.IndexOf('\n');
+            body = lineEnd < 0 ? string.Empty : body[(lineEnd + 1)..].Trim();
+        }
         return string.IsNullOrWhiteSpace(body) ? null : body;
     }
+
+    /// <summary>
+    /// 一键整理读取原文时优先使用当前笔记里的固定小节；旧版笔记缺少小节标记时，
+    /// 使用原转录任务保存的纯文本快照。初次读取与发布前复核必须共用此规则。
+    /// </summary>
+    public static string? ResolveTranscriptForRestyle(string noteMd, string? runTranscriptText)
+    {
+        var current = ExtractTranscriptFromNote(noteMd);
+        if (!string.IsNullOrWhiteSpace(current)) return current.Trim();
+        return string.IsNullOrWhiteSpace(runTranscriptText) ? null : runTranscriptText.Trim();
+    }
+
+    /// <summary>
+    /// 整理结果发布前复核原文。只有初次读取确实使用旧任务快照时才允许继续回退，
+    /// 现代笔记在整理期间被删除全文小节时必须返回 null，由调用方拒绝迟到写入。
+    /// </summary>
+    public static string? ResolveTranscriptForRestylePublication(
+        string noteMd,
+        string? runTranscriptText,
+        bool usedLegacyFallback)
+        => ResolveTranscriptForRestyle(
+            noteMd,
+            usedLegacyFallback ? runTranscriptText : null);
 
     /// <summary>
     /// 替换笔记中的「转录全文」正文。摘要和用户在其前方补充的内容保持不动；
@@ -62,17 +154,22 @@ public static class TranscribeNoteText
     public static string ReplaceTranscriptSection(string noteMd, string newTranscript)
     {
         var transcript = newTranscript.Trim();
+        // 来源行跟着说话人标签走，不跟着正文走：用户改的是字，不是「这些角色是怎么分出来的」。
+        // 不带过来的话，手动编辑一次原文就把估算提示悄悄抹掉了，界面重新变成看不出真假。
+        var sourceLine = ExtractSpeakerSourceLine(noteMd);
+        var body = sourceLine == null ? transcript : sourceLine + "\n\n" + transcript;
+
         var idx = noteMd.IndexOf(TranscriptMarker, StringComparison.Ordinal);
         if (idx < 0)
         {
             var prefix = noteMd.TrimEnd();
             var glue = prefix.Length > 0 ? "\n\n" : "";
-            return prefix + glue + TranscriptMarker + "\n\n" + transcript + "\n";
+            return prefix + glue + TranscriptMarker + "\n\n" + body + "\n";
         }
 
         var head = noteMd[..idx].TrimEnd();
         var headGlue = head.Length > 0 ? "\n\n" : "";
-        return head + headGlue + TranscriptMarker + "\n\n" + transcript + "\n";
+        return head + headGlue + TranscriptMarker + "\n\n" + body + "\n";
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Hosting;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
@@ -63,15 +64,21 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var storage = scope.ServiceProvider.GetRequiredService<IAssetStorage>();
-        var instanceId = InstanceIdentity.Get(
-            scope.ServiceProvider.GetRequiredService<IConfiguration>());
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var instanceId = InstanceIdentity.Get(configuration);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+        var retiredLegacyOwnerIds = DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration);
+        var legacyOwnerCreatedBeforeUtc = DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration);
         var now = DateTime.UtcNow;
 
         await ReleaseStaleOwnedArchiveLeasesAsync(
             db.DocumentRecordingUploadSessions,
             instanceId,
             now,
-            CancellationToken.None);
+            CancellationToken.None,
+            compatibleOwnerIds,
+            retiredLegacyOwnerIds,
+            legacyOwnerCreatedBeforeUtc);
         if (now >= _nextExpiredCleanupAt)
         {
             // 清理失败不能阻断归档主队列，也不能每 15 秒无索引扫一次集合。先推进
@@ -105,7 +112,10 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             db.DocumentEntries,
             db.DocumentStoreAgentRuns,
             instanceId,
-            CancellationToken.None);
+            CancellationToken.None,
+            compatibleOwnerIds: compatibleOwnerIds,
+            retiredLegacyOwnerIds: retiredLegacyOwnerIds,
+            legacyOwnerCreatedBeforeUtc: legacyOwnerCreatedBeforeUtc);
         if (recoveredRuns > 0)
         {
             _logger.LogInformation(
@@ -119,7 +129,10 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             instanceId,
             archiveLeaseId,
             now,
-            CancellationToken.None);
+            CancellationToken.None,
+            compatibleOwnerIds,
+            retiredLegacyOwnerIds,
+            legacyOwnerCreatedBeforeUtc);
         if (session == null)
             return;
 
@@ -318,13 +331,28 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         IMongoCollection<DocumentRecordingUploadSession> sessions,
         string instanceId,
         DateTime now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<string>? compatibleOwnerIds = null,
+        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null,
+        DateTime? legacyOwnerCreatedBeforeUtc = null)
     {
+        var ownerScope = LegacyOwnerScope.Build<DocumentRecordingUploadSession>(
+            nameof(DocumentRecordingUploadSession.OwnerInstanceId),
+            compatibleOwnerIds ?? [instanceId],
+            includeUnowned: false,
+            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? [],
+            legacyOwnerCreatedBeforeUtc: legacyOwnerCreatedBeforeUtc);
         var released = await sessions.UpdateManyAsync(
-            s => s.OwnerInstanceId == instanceId
-                 && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
-                 && s.UpdatedAt <= now.Subtract(StaleLease),
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                ownerScope,
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                    s => s.ArchiveStatus,
+                    DocumentRecordingArchiveStatus.Archiving),
+                Builders<DocumentRecordingUploadSession>.Filter.Lte(
+                    s => s.UpdatedAt,
+                    now.Subtract(StaleLease))),
             Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.OwnerInstanceId, instanceId)
                 .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
                 .Unset(s => s.ArchiveLeaseId)
                 .Set(s => s.ArchiveNextAttemptAt, now),
@@ -337,10 +365,19 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         string instanceId,
         string archiveLeaseId,
         DateTime now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyCollection<string>? compatibleOwnerIds = null,
+        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null,
+        DateTime? legacyOwnerCreatedBeforeUtc = null)
     {
+        var ownerScope = LegacyOwnerScope.Build<DocumentRecordingUploadSession>(
+            nameof(DocumentRecordingUploadSession.OwnerInstanceId),
+            compatibleOwnerIds ?? [instanceId],
+            includeUnowned: false,
+            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? [],
+            legacyOwnerCreatedBeforeUtc: legacyOwnerCreatedBeforeUtc);
         var dueFilter = Builders<DocumentRecordingUploadSession>.Filter.And(
-            Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.OwnerInstanceId, instanceId),
+            ownerScope,
             Builders<DocumentRecordingUploadSession>.Filter.Eq(
                 s => s.ArchiveStatus,
                 DocumentRecordingArchiveStatus.Pending),
@@ -350,6 +387,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         return await sessions.FindOneAndUpdateAsync(
             dueFilter,
             Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.OwnerInstanceId, instanceId)
                 .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Archiving)
                 .Set(s => s.ArchiveLeaseId, archiveLeaseId)
                 .Set(s => s.UpdatedAt, now),
@@ -503,8 +541,10 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 .Set(candidate => candidate.Phase, "等待完整录音转录")
                 .Set(candidate => candidate.Progress, 0)
                 .Set(candidate => candidate.ErrorMessage, null)
+                .Set(candidate => candidate.FailureCode, null)
                 .Set(candidate => candidate.StartedAt, null)
                 .Set(candidate => candidate.EndedAt, null)
+                .Set(candidate => candidate.ExecutionId, string.Empty)
                 .Set(candidate => candidate.OwnerInstanceId, ownerInstanceId)
                 .Set(candidate => candidate.AutomaticRetryNextAt, null)
                 .Inc(candidate => candidate.AutomaticRetryCount, 1),
@@ -656,20 +696,57 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         IMongoCollection<DocumentStoreAgentRun> runs,
         string ownerInstanceId,
         CancellationToken cancellationToken,
-        int limit = 25)
+        int limit = 25,
+        IReadOnlyCollection<string>? compatibleOwnerIds = null,
+        IReadOnlyCollection<string>? retiredLegacyOwnerIds = null,
+        DateTime? legacyOwnerCreatedBeforeUtc = null)
     {
+        var acceptedOwnerIds = compatibleOwnerIds ?? [ownerInstanceId];
+        var ownerScope = LegacyOwnerScope.Build<DocumentRecordingUploadSession>(
+            nameof(DocumentRecordingUploadSession.OwnerInstanceId),
+            acceptedOwnerIds,
+            includeUnowned: false,
+            retiredLegacyOwnerIds: retiredLegacyOwnerIds ?? [],
+            legacyOwnerCreatedBeforeUtc: legacyOwnerCreatedBeforeUtc);
         var candidates = await sessions
-            .Find(session => session.OwnerInstanceId == ownerInstanceId
-                             && session.Status == DocumentRecordingUploadStatus.Completed
-                             && session.DeferredTranscriptionRunPending
-                             && session.EntryId != null
-                             && session.EntryId != string.Empty)
+            .Find(Builders<DocumentRecordingUploadSession>.Filter.And(
+                ownerScope,
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                    session => session.Status,
+                    DocumentRecordingUploadStatus.Completed),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                    session => session.DeferredTranscriptionRunPending,
+                    true),
+                Builders<DocumentRecordingUploadSession>.Filter.Ne(
+                    session => session.EntryId,
+                    null),
+                Builders<DocumentRecordingUploadSession>.Filter.Ne(
+                    session => session.EntryId,
+                    string.Empty)))
             .SortBy(session => session.UpdatedAt)
             .Limit(Math.Clamp(limit, 1, 100))
             .ToListAsync(cancellationToken);
         var recovered = 0;
         foreach (var session in candidates)
         {
+            if (!string.Equals(session.OwnerInstanceId, ownerInstanceId, StringComparison.Ordinal))
+            {
+                var migrated = await sessions.UpdateOneAsync(
+                    Builders<DocumentRecordingUploadSession>.Filter.And(
+                        Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                            candidate => candidate.Id,
+                            session.Id),
+                        Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                            candidate => candidate.OwnerInstanceId,
+                            session.OwnerInstanceId)),
+                    Builders<DocumentRecordingUploadSession>.Update.Set(
+                        candidate => candidate.OwnerInstanceId,
+                        ownerInstanceId),
+                    cancellationToken: cancellationToken);
+                if (migrated.MatchedCount == 0)
+                    continue;
+                session.OwnerInstanceId = ownerInstanceId;
+            }
             var entryId = session.EntryId!;
             var entryExists = await entries
                 .Find(entry => entry.Id == entryId && entry.StoreId == session.StoreId)

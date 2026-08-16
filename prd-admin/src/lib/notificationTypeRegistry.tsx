@@ -72,6 +72,9 @@ export const NOTIFICATION_TYPE_REGISTRY: Record<string, NotificationTypeConfig> 
   'server-expiry': { key: 'server-expiry', label: '服务器', icon: Server, accent: '#fdba74', fg: 'var(--accent-fg-warning)', popupStyle: 'alert' },
   'user-voice': { key: 'user-voice', label: '用户之声', icon: MessageSquareHeart, accent: '#f9a8d4', fg: 'var(--accent-fg-danger)', popupStyle: 'default' },
   'api-request-alert': { key: 'api-request-alert', label: 'API 告警', icon: Activity, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' },
+  // 下面两条来自 main：新增时本分支的 fg 字段还不存在，按同族 accent 补齐（#fca5a5 → danger 档）
+  'gateway-alert': { key: 'gateway-alert', label: '模型网关', icon: Activity, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' },
+  'stable-smoke': { key: 'stable-smoke', label: '稳定冒烟', icon: ClipboardCheck, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' },
 };
 
 /**

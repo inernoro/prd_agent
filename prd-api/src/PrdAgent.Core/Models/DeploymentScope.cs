@@ -31,8 +31,10 @@ namespace PrdAgent.Core.Models;
 /// Worker 会抢走新 commit 入队的任务并用旧代码执行。把 revision 写进原有等值
 /// 过滤字段后，旧 Worker 无需理解新字段也无法匹配新任务。
 ///
-/// run 入队时盖上本部署作用域，worker 只认领同作用域的 run（生产认 null，
-/// 天然兼容没有该字段的存量文档——Mongo 的 Eq null 匹配字段缺失）。
+/// run 入队时盖上本部署作用域，worker 默认只认领同作用域的 run（生产认 null，
+/// 天然兼容没有该字段的存量文档——Mongo 的 Eq null 匹配字段缺失）。头像生成是
+/// 唯一例外：同项目同分支的新 revision 可原子接管旧 revision 尚未开始的头像任务，
+/// 避免 CDS 滚动发布后浏览器持有的 runId 永久停在 queued。
 /// </summary>
 public static class DeploymentScope
 {
@@ -64,6 +66,23 @@ public static class DeploymentScope
         }
     }
 
+    /// <summary>
+    /// 当前部署的稳定分支作用域，不含 commit revision。
+    /// 仅用于新版本接管同项目同分支上一个 revision 遗留的持久任务；不能代替
+    /// <see cref="Current"/> 的入队 fencing，否则滚动发布期间旧 Worker 会抢新任务。
+    /// </summary>
+    public static string? CurrentDurable
+    {
+        get
+        {
+            var projectId = Read("CDS_PROJECT_ID");
+            if (projectId is null) return null;
+            var branch = Read("VITE_GIT_BRANCH")
+                         ?? Read("BULLMQ_PREFIX");
+            return Compose(projectId, branch, revision: null);
+        }
+    }
+
     internal static string? Compose(string? projectId, string? branch, string? revision)
     {
         projectId = Normalize(projectId);
@@ -88,8 +107,22 @@ public static class DeploymentScope
     /// </summary>
     public static string ScopeIdempotencyKey(string key)
     {
+        return BuildScopedIdempotencyKey(key, Current);
+    }
+
+    /// <summary>
+    /// 把幂等键限制在稳定的项目与分支作用域，不包含 commit revision。
+    /// 只用于明确支持新 revision 接管旧 revision 持久任务的调用链；普通任务仍应使用
+    /// <see cref="ScopeIdempotencyKey(string)"/>，避免滚动发布期间复用旧版本任务。
+    /// </summary>
+    public static string ScopeDurableIdempotencyKey(string key)
+    {
+        return BuildScopedIdempotencyKey(key, CurrentDurable);
+    }
+
+    internal static string BuildScopedIdempotencyKey(string key, string? scope)
+    {
         if (string.IsNullOrWhiteSpace(key)) return key;
-        var scope = Current;
         return scope is null ? key : $"{scope}::{key}";
     }
 

@@ -7,6 +7,7 @@ import { getHealth } from '@/lib/api';
 import { ConsoleLayout } from '@/components/ConsoleLayout';
 // 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
 import { BugReportDialog } from '@/components/BugReportDialog';
+import { DialogProvider } from '@/components/ConfirmDialog';
 import { LoginPage } from '@/pages/LoginPage';
 import { MapSsoPage } from '@/pages/MapSsoPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
@@ -27,6 +28,7 @@ import { QuickstartPage } from '@/pages/QuickstartPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
 import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { AccountSecurityPage } from '@/pages/AccountSecurityPage';
 import { UsagePage } from '@/pages/UsagePage';
 import { LearningCenterPage } from '@/pages/LearningCenterPage';
 import { AppCallerDetailsPage, ModelDetailsPage, ProviderDetailsPage } from '@/pages/EntityDetailsPages';
@@ -90,6 +92,8 @@ export function App() {
   useEffect(() => { void getHealth(); }, []);
   return (
     <AuthProvider>
+      {/* 确认弹窗挂在路由外层：换页时不会被卸载，Promise 也就不会悬着不 resolve */}
+      <DialogProvider>
       <BrowserRouter basename={getRouterBasename()}>
         <BugReportDialog />
         <Routes>
@@ -131,11 +135,14 @@ export function App() {
             <Route path="/shadow" element={<RequirePageAccess page="shadow"><ShadowPage /></RequirePageAccess>} />
             <Route path="/governance" element={<RequirePageAccess page="governance"><GovernancePage /></RequirePageAccess>} />
             <Route path="/settings" element={<RequirePageAccess page="settings"><SettingsPage /></RequirePageAccess>} />
+            {/* 管自己的登录名与口令不是租户能力，任何角色都必须能进，故不套 RequirePageAccess。 */}
+            <Route path="/account" element={<AccountSecurityPage />} />
             <Route path="/usage" element={<RequirePageAccess page="usage"><UsagePage /></RequirePageAccess>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      </DialogProvider>
     </AuthProvider>
   );
 }

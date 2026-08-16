@@ -605,6 +605,12 @@
     "darkRgbaBg": 0,
     "lightFg": 5
   },
+  "/components/web-hosting/ask/AskConfigDrawer.tsx": {
+    "whiteAlpha": 0,
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0
+  },
   "/components/web-hosting/FolderManager.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
@@ -696,10 +702,10 @@
     "lightFg": 0
   },
   "/pages/ai-chat/AdvancedVisualAgentTab.tsx": {
-    "whiteAlpha": 76,
+    "whiteAlpha": 73,
     "darkHex": 2,
     "darkRgbaBg": 10,
-    "lightFg": 46
+    "lightFg": 48
   },
   "/pages/ai-chat/components/ChatMessageItem.tsx": {
     "whiteAlpha": 1,
@@ -1029,7 +1035,7 @@
     "whiteAlpha": 4,
     "darkHex": 0,
     "darkRgbaBg": 7,
-    "lightFg": 8
+    "lightFg": 9
   },
   "/pages/document-store/ShortVideoMaterialDialog.tsx": {
     "whiteAlpha": 0,
@@ -2130,10 +2136,10 @@
     "lightFg": 1
   },
   "/pages/ShareViewPage.tsx": {
-    "whiteAlpha": 17,
+    "whiteAlpha": 18,
     "darkHex": 4,
-    "darkRgbaBg": 5,
-    "lightFg": 23
+    "darkRgbaBg": 6,
+    "lightFg": 24
   },
   "/pages/shitu-agent/ShituHelpDrawer.tsx": {
     "whiteAlpha": 0,
@@ -2265,7 +2271,7 @@
     "whiteAlpha": 1,
     "darkHex": 4,
     "darkRgbaBg": 1,
-    "lightFg": 5
+    "lightFg": 3
   },
   "/pages/video-agent/VideoStoryboardEditor.tsx": {
     "whiteAlpha": 0,

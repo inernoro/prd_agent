@@ -68,6 +68,43 @@ public class FileContentExtractor : IFileContentExtractor
 
     public bool IsSupported(string mimeType) => SupportedMimeTypes.Contains(mimeType);
 
+    /// <summary>
+    /// 区分“合法但没有可提取文字”的 Office 文件与伪装成 Office 文件的损坏输入。
+    /// 文本为空不能作为损坏判据，因此这里只验证 Open XML 容器及对应主文档部件。
+    /// </summary>
+    public static bool IsStructurallyValid(byte[] bytes, string mimeType)
+    {
+        if (bytes.Length == 0) return false;
+
+        try
+        {
+            switch (mimeType.ToLowerInvariant())
+            {
+                case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                    using (var stream = new MemoryStream(bytes))
+                    using (var document = WordprocessingDocument.Open(stream, false))
+                        return document.MainDocumentPart?.Document != null;
+                case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                    using (var stream = new MemoryStream(bytes))
+                    using (var document = SpreadsheetDocument.Open(stream, false))
+                        return document.WorkbookPart?.Workbook != null;
+                case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+                    using (var stream = new MemoryStream(bytes))
+                    using (var document = PresentationDocument.Open(stream, false))
+                        return document.PresentationPart?.Presentation != null;
+                default:
+                    return true;
+            }
+        }
+        catch (Exception exception) when (exception is OpenXmlPackageException
+                                          or FileFormatException
+                                          or IOException
+                                          or InvalidDataException)
+        {
+            return false;
+        }
+    }
+
     public string? Extract(byte[] bytes, string mimeType, string? fileName = null)
     {
         try
