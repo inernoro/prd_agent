@@ -1,1 +1,0 @@
-| chore | doc | 熵清理：D1/D2/D3/D4/D7 均干净，D6 处理 4 条 changelog（web-hosting-acceptance-p1、两条 entropy-cleanup 自身流程记录、stable-smoke-report-readability，均已由现有 plan/rule 文档覆盖，无需新增章节）；巨型聚合 changelog（2026-08-11_stable-smoke-runtime-equivalence.md）仍按 debt.prd-agent.md 已登记的已知边界保持未处理 |

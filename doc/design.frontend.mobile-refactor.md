@@ -161,7 +161,7 @@
 - `.claude/rules/mobile-first-density.md` — 手机端密度纪律（本次改造的执行标准）
 - `.claude/rules/content-fills-canvas.md` — 内容填满画布（主从折叠依据）
 - `.claude/rules/chief-designer-usability.md` — 好用四原则（收纳/不杜撰长链）
-- [changelogs/2026-08-09_更新中心移动端周报阅读改进.md](../changelogs/2026-08-09_更新中心移动端周报阅读改进.md)（移动端字号调节、全屏/沉浸阅读、顶栏合并与横向溢出修复）
+- 2026-08-09 更新记录（碎片 `2026-08-09_更新中心移动端周报阅读改进.md` 已归档进 `CHANGELOG.md`）：移动端字号调节、全屏/沉浸阅读、顶栏合并与横向溢出修复
 
 ---
 
