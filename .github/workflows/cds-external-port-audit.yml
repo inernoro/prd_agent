@@ -1,0 +1,64 @@
+name: CDS External Port Audit
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cds-external-port-audit.yml'
+      - 'cds/scripts/validate-external-port-report.mjs'
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cds-external-port-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Verify public TCP surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CDS_ALLOWED_PUBLIC_PORTS: '22,80,443'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require off-host targets
+        env:
+          IPV4_TARGET: ${{ secrets.CDS_EDGE_AUDIT_HOST }}
+          IPV6_TARGET: ${{ secrets.CDS_EDGE_AUDIT_IPV6 }}
+        run: |
+          test -n "$IPV4_TARGET" || { echo 'IPv4 audit target is not configured'; exit 1; }
+          test -n "$IPV6_TARGET" || { echo 'IPv6 audit target is not configured'; exit 1; }
+
+      - name: Install scanner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nmap
+
+      - name: Scan IPv4 from GitHub runner
+        env:
+          TARGET: ${{ secrets.CDS_EDGE_AUDIT_HOST }}
+        run: |
+          sudo nmap -4 -sS -Pn -n -p- --min-rate 5000 --max-retries 1 --host-timeout 10m -oX /tmp/cds-ipv4.xml "$TARGET" >/dev/null
+          node cds/scripts/validate-external-port-report.mjs --xml /tmp/cds-ipv4.xml --family ipv4 --out cds-ipv4-report.json
+
+      - name: Scan IPv6 from GitHub runner
+        env:
+          TARGET: ${{ secrets.CDS_EDGE_AUDIT_IPV6 }}
+        run: |
+          sudo nmap -6 -sS -Pn -n -p- --min-rate 5000 --max-retries 1 --host-timeout 10m -oX /tmp/cds-ipv6.xml "$TARGET" >/dev/null
+          node cds/scripts/validate-external-port-report.mjs --xml /tmp/cds-ipv6.xml --family ipv6 --out cds-ipv6-report.json
+
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-external-port-audit
+          path: cds-*-report.json
+          if-no-files-found: error
+          retention-days: 30
