@@ -35,6 +35,7 @@ import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/release
 import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress';
 import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
 import { buildConsoleStance, sameCommit } from '@/lib/releaseConsoleState';
+import { PROJECT_TAG_TONE_CLASS, projectTags } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { Chip, formatClock, formatDateTime, formatDuration } from './release-center/shared';
@@ -125,6 +126,27 @@ function Sheet({ title, subtitle, onClose, foot, children }: {
  */
 function SectionLabel({ children }: { children: ReactNode }): JSX.Element {
   return <span className="cds-ident text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{children}</span>;
+}
+
+/**
+ * 项目卡上那排标签。没有可说的就整行不出——空着一行占位比不画更糟。
+ */
+function ProjectTagRow({ project }: { project: ProjectLite }): JSX.Element | null {
+  const tags = projectTags(project);
+  if (tags.length === 0) return null;
+  return (
+    <span className="mt-0.5 flex flex-wrap items-center gap-1">
+      {tags.map((tag) => (
+        <span
+          key={tag.key}
+          title={tag.title}
+          className={`rounded-[5px] border px-1.5 py-px text-[10px] leading-[15px] ${PROJECT_TAG_TONE_CLASS[tag.tone]}`}
+        >
+          {tag.label}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 /**
@@ -622,6 +644,10 @@ export function ReleaseConsolePage(): JSX.Element {
                   <span className="truncate cds-ident text-xs text-muted-foreground">
                     {item.githubRepoFullName || item.id}
                   </span>
+                  {/* 标签全部从真实字段推出来（见 lib/projectTags.ts），零维护。
+                      作用是让这一栏一眼读成「这是一个项目，它现在什么状态」，
+                      而不是一串看不出是什么的名字。 */}
+                  <ProjectTagRow project={item} />
                 </button>
               ))}
             </div>

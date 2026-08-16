@@ -206,10 +206,25 @@ export interface TargetsResponse {
   remoteHosts: RemoteHostOption[];
 }
 
+/**
+ * 项目下拉 / 项目栏用的精简形。
+ *
+ * 后端 `/api/projects` 的 toSummary 是 `{...project, ...stats}`，字段远不止这些；
+ * 这里只声明**页面真的会读**的那几个，多写一个就多一处与后端漂移的风险。
+ * 下面这批是项目卡标签的输入（见 lib/projectTags.ts），全是后端已有字段。
+ */
 export interface ProjectLite {
   id: string;
   name: string;
   slug?: string;
+  kind?: 'git' | 'manual' | 'shared-service';
+  githubRepoFullName?: string;
+  githubAutoDeploy?: boolean;
+  paused?: boolean;
+  cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
+  legacyFlag?: boolean;
+  runningServiceCount?: number;
+  branchCount?: number;
 }
 
 export type WizardStep = 'server' | 'site' | 'scripts' | 'health';
