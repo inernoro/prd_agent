@@ -1,0 +1,214 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, it, expect } from 'vitest';
+import {
+  auditInfraExposure,
+  detectInfraAuth,
+  detectInfraKind,
+  parsePublishedHosts,
+  renderExposureReport,
+  type InfraExposureInput,
+} from '../../src/services/infra-exposure-audit.js';
+
+/**
+ * 基础设施暴露面自检。
+ *
+ * 这一层存在的理由：`infra-publish` 那套单测只管「新建容器时怎么拼发布参数」，
+ * 管不到已经在跑的容器（绑定地址创建时就固化了），也管不到不经 CDS 起的容器。
+ * 所以判据取 `docker ps` 的运行态真值，下面每个用例的端口串都用 docker 的**真实
+ * 输出格式**，不是编的。
+ */
+
+const svc = (o: Partial<InfraExposureInput> & { id: string }): InfraExposureInput => ({
+  projectId: 'proj-a',
+  containerName: `cds-infra-${o.id}`,
+  dockerImage: 'mongo:8.0',
+  running: true,
+  ...o,
+});
+
+describe('端口串解析（docker 的真实输出格式）', () => {
+  it('抠出绑定地址，IPv4 与 IPv6 两条算同一个发布', () => {
+    expect(parsePublishedHosts('0.0.0.0:10001->27017/tcp, [::]:10001->27017/tcp'))
+      .toEqual(['0.0.0.0', '::']);
+  });
+
+  it('收窄之后的双绑读得出来', () => {
+    expect(parsePublishedHosts('172.17.0.1:10001->27017/tcp, 127.0.0.1:10001->27017/tcp'))
+      .toEqual(['172.17.0.1', '127.0.0.1']);
+  });
+
+  /** 只 EXPOSE 没 publish 不算暴露面——它压根没占宿主端口。 */
+  it('没有 -> 的裸端口不算发布', () => {
+    expect(parsePublishedHosts('27017/tcp')).toEqual([]);
+    expect(parsePublishedHosts('')).toEqual([]);
+    expect(parsePublishedHosts(null)).toEqual([]);
+  });
+
+  /** 老 docker 省略地址的写法，语义就是全部网卡，不能当成「没绑」。 */
+  it('省略地址的写法按全部网卡处理', () => {
+    expect(parsePublishedHosts(':10001->27017/tcp')).toEqual(['0.0.0.0']);
+  });
+});
+
+describe('认证判定', () => {
+  it('认得出四类库的凭据 env', () => {
+    expect(detectInfraAuth('mongo', { MONGO_INITDB_ROOT_USERNAME: 'app' })).toBe(true);
+    expect(detectInfraAuth('mysql', { MYSQL_ROOT_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('postgres', { POSTGRES_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('redis', { REDIS_PASSWORD: 'x' })).toBe(true);
+  });
+
+  it('空 env 判为无认证', () => {
+    expect(detectInfraAuth('mongo', {})).toBe(false);
+    expect(detectInfraAuth('redis', undefined)).toBe(false);
+  });
+
+  /**
+   * 「我不知道」和「我确认没有」必须是两个值。混成一个，报表上就分不清
+   * 该去查还是该去修。
+   */
+  it('认不出类型时返回 null 而不是 false', () => {
+    expect(detectInfraAuth('other', {})).toBeNull();
+    expect(detectInfraKind('some/unknown-image:1')).toBe('other');
+  });
+});
+
+describe('危险度判定', () => {
+  /** 对外 + 无认证 = 任何人扫到端口就能读能删。只有这一种是 critical。 */
+  it('对外且无认证判 critical', () => {
+    const r = auditInfraExposure([svc({
+      id: 'mongodb', runtimePorts: '0.0.0.0:10001->27017/tcp', env: {},
+    })]);
+    expect(r.criticalCount).toBe(1);
+    expect(r.findings[0].severity).toBe('critical');
+    expect(r.findings[0].reason).toContain('没有配置认证');
+  });
+
+  it('对外但有认证降为 warn（不是 ok）', () => {
+    const r = auditInfraExposure([svc({
+      id: 'mysql', dockerImage: 'mysql:8', runtimePorts: '0.0.0.0:10442->3306/tcp',
+      env: { MYSQL_ROOT_PASSWORD: 'x' },
+    })]);
+    expect(r.criticalCount).toBe(0);
+    expect(r.warnCount).toBe(1);
+  });
+
+  it('收窄到网桥 + 回环判 ok', () => {
+    const r = auditInfraExposure([svc({
+      id: 'mongodb', runtimePorts: '172.17.0.1:10001->27017/tcp, 127.0.0.1:10001->27017/tcp', env: {},
+    })]);
+    expect(r.criticalCount).toBe(0);
+    expect(r.warnCount).toBe(0);
+    expect(r.findings[0].severity).toBe('ok');
+  });
+
+  /** 读不到映射时不许判成安全——那正是这类自检最常见的失效方式。 */
+  it('读不到端口映射按对外处理', () => {
+    const r = auditInfraExposure([svc({ id: 'mongodb', runtimePorts: undefined, env: {} })]);
+    expect(r.findings[0].publiclyPublished).toBe(true);
+    expect(r.criticalCount).toBe(1);
+  });
+
+  /** 明确读到「没发布任何端口」与「读不到」是两回事，前者直接不成立。 */
+  it('明确没有发布端口的容器不进报告', () => {
+    expect(auditInfraExposure([svc({ id: 'mongodb', runtimePorts: '27017/tcp', env: {} })]).findings)
+      .toHaveLength(0);
+  });
+
+  it('停掉的容器不构成暴露面', () => {
+    const r = auditInfraExposure([svc({
+      id: 'mongodb', running: false, runtimePorts: '0.0.0.0:10001->27017/tcp', env: {},
+    })]);
+    expect(r.findings).toHaveLength(0);
+  });
+
+  it('IPv6 全网卡与 IPv4 一样算对外', () => {
+    const r = auditInfraExposure([svc({ id: 'redis', dockerImage: 'redis:7-alpine', runtimePorts: '[::]:10002->6379/tcp', env: {} })]);
+    expect(r.criticalCount).toBe(1);
+  });
+});
+
+describe('报告可读性', () => {
+  const report = auditInfraExposure([
+    svc({ id: 'mongodb', runtimePorts: '0.0.0.0:10001->27017/tcp', env: {} }),
+    svc({ id: 'redis', dockerImage: 'redis:7-alpine', runtimePorts: '0.0.0.0:10002->6379/tcp', env: {} }),
+    svc({ id: 'safe', runtimePorts: '127.0.0.1:10003->27017/tcp', env: {} }),
+  ]);
+
+  it('结论点名到具体服务，不给「有若干问题」这种查不下去的话', () => {
+    expect(report.summary).toContain('mongodb');
+    expect(report.summary).toContain('redis');
+    const body = renderExposureReport(report);
+    expect(body).toContain('cds-infra-mongodb');
+    // 干净的那个不该出现在告警正文里，避免淹掉真问题
+    expect(body).not.toContain('cds-infra-safe');
+  });
+
+  it('正文写明存量容器要重建才生效，以及重建前先确认备份', () => {
+    const body = renderExposureReport(report);
+    expect(body).toContain('重建');
+    expect(body).toContain('备份');
+  });
+
+  /** 签名只含有问题的项：ok 项变动不该把同一条告警重复推一遍。 */
+  it('签名对 ok 项的变化不敏感，对危险项的变化敏感', () => {
+    const a = auditInfraExposure([
+      svc({ id: 'mongodb', runtimePorts: '0.0.0.0:10001->27017/tcp', env: {} }),
+      svc({ id: 'safe', runtimePorts: '127.0.0.1:1->2/tcp', env: {} }),
+    ]);
+    const b = auditInfraExposure([
+      svc({ id: 'mongodb', runtimePorts: '0.0.0.0:10001->27017/tcp', env: {} }),
+    ]);
+    expect(a.signature).toBe(b.signature);
+
+    const c = auditInfraExposure([
+      svc({ id: 'mongodb', runtimePorts: '172.17.0.1:10001->27017/tcp', env: {} }),
+    ]);
+    expect(c.signature).not.toBe(b.signature);
+  });
+
+  it('全部干净时给出正面结论而不是空字符串', () => {
+    const clean = auditInfraExposure([svc({ id: 'mongodb', runtimePorts: '127.0.0.1:10001->27017/tcp', env: {} })]);
+    expect(clean.summary).toContain('没有对外暴露');
+    expect(renderExposureReport(clean)).toBe(clean.summary);
+  });
+});
+
+/**
+ * 接线守卫。判据写好没人调用，是本仓库反复栽的形状——尤其这种「不报警就等于没事」
+ * 的后台自检，没接上线时的表现和一切正常一模一样。
+ */
+describe('自检真的被启动了', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+  /**
+   * 按**行**剥注释，不用 `/\*[\s\S]*?\*\/` 这种跨行正则。
+   *
+   * 后者会被源码里带 `/*` 或 `*​/` 的字符串与正则字面量带偏，一旦错位就会连真代码
+   * 一起吞掉——判据于是读着一份残缺的源码做断言，报出来的红是假的、绿也是假的。
+   * 按行只丢「整行都是注释」的行，永远不会误删代码行。
+   */
+  const CODE = SRC.split('\n')
+    .filter((l) => {
+      const t = l.trim();
+      return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+    })
+    .join('\n');
+
+  it('index.ts 启动了周期自检', () => {
+    expect(CODE).toContain('startInfraExposureAudit(');
+    expect(CODE).toMatch(/const\s+infraExposureAudit\s*=\s*startInfraExposureAudit\(/);
+  });
+
+  it('判据取 docker ps 的运行态真值，不是读台账里的 hostPort', () => {
+    expect(CODE).toMatch(/docker ps -a --format/);
+    expect(CODE).toContain('auditInfraExposure(');
+    // 台账只用来补 env（判认证），不能拿它当端口来源
+    expect(CODE).not.toMatch(/runtimePorts:\s*String\(svc\.hostPort\)/);
+  });
+
+  it('发现问题时按 error 级记事件，不是只 console 一下', () => {
+    expect(CODE).toContain("action: 'infra.exposure.detected'");
+    expect(CODE).toContain('renderExposureReport(');
+  });
+});

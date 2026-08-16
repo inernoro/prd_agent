@@ -17,6 +17,13 @@ import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
 import { describeListenDecision, resolveListenHost } from './services/listen-host.js';
+import {
+  auditInfraExposure, detectInfraKind, renderExposureReport, type InfraExposureInput,
+} from './services/infra-exposure-audit.js';
+import {
+  parseDfAvailableBytes, planInfraBackups, selectExpiredBackups, shouldSkipForDiskPressure,
+  summarizeBackupRound, type BackupOutcome,
+} from './services/infra-backup-schedule.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
@@ -85,6 +92,7 @@ import {
 import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
 import type { BranchEntry } from './types.js';
+import { combinedOutput } from './types.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -233,6 +241,21 @@ const ENTRYPOINT_SELF_CHECK_INTERVAL_MS = 30 * 60_000;
 // 启动后延迟首检：等 CDS 自己起来并且 nginx reload 完，否则首检必然误报。
 const ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS = 90_000;
 
+// 基础设施自动备份间隔。手工备份的实际含义是「出事那天正好没人点」。
+// 6 小时一轮：mongodump 有成本，但一天四份 + 保留策略的磁盘占用是可控的。
+const INFRA_BACKUP_INTERVAL_MS = 6 * 60 * 60_000;
+// 启动后延迟首备：等 infra 起齐，也避开自更新重启时的资源尖峰。
+const INFRA_BACKUP_STARTUP_DELAY_MS = 10 * 60_000;
+// 单个库的导出超时。大库慢，但卡住不放会拖住后面所有目标。
+const INFRA_BACKUP_TIMEOUT_MS = 20 * 60_000;
+
+// 基础设施暴露面自检间隔。判据取 `docker ps` 的运行态真值，不读台账——
+// 台账里的 hostPort 只是个数字，说明不了绑在哪个地址上。存量容器的绑定地址
+// 在创建时就固化了，代码改动追不上它们，只能靠这一层持续盯。
+const INFRA_EXPOSURE_AUDIT_INTERVAL_MS = 60 * 60_000;
+// 启动后延迟首检：等 infra 容器都拉起来，否则首检看到的是半截状态。
+const INFRA_EXPOSURE_AUDIT_STARTUP_DELAY_MS = 120_000;
+
 const BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS = 10 * 60_000;
 
 /**
@@ -286,6 +309,217 @@ function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): 
 
   setTimeout(() => { void run(); }, ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS).unref?.();
   const timer = setInterval(() => { void run(); }, ENTRYPOINT_SELF_CHECK_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+/**
+ * 基础设施暴露面自检。
+ *
+ * 回答的问题是：**我这台机器上，有没有哪个数据库正对着公网、还不要密码？**
+ *
+ * 判据只认 `docker ps` 的运行态真值。不读 CDS 自己的台账有两个原因：台账里的
+ * hostPort 只是个数字（说明不了绑在哪个地址上），而且手工起的、别的来路起的容器
+ * 根本不在台账里——恰恰是这些最容易被忘掉。
+ */
+function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor') return null;
+  if (isPreviewInstance()) return null;
+
+  let lastSignature = '';
+  const run = async () => {
+    try {
+      // 一次 docker ps 拿到全部容器的名字、镜像、端口与状态；再按容器名去台账里
+      // 补 env（台账有 env 的才判得了认证，没有的按「未知」从严报）。
+      const ps = await shell.exec(
+        `docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.State}}'`,
+        { timeout: 30_000 },
+      );
+      if (ps.exitCode !== 0) {
+        console.warn('[infra-exposure] 读不到容器列表，跳过本轮');
+        return;
+      }
+      const byContainer = new Map<string, { id: string; projectId: string; env: Record<string, string> }>();
+      for (const svc of stateService.getInfraServices() || []) {
+        byContainer.set(svc.containerName, { id: svc.id, projectId: svc.projectId, env: svc.env || {} });
+      }
+
+      const inputs: InfraExposureInput[] = [];
+      for (const line of (ps.stdout || '').split('\n')) {
+        const [name, image, ports, state] = line.split('\t');
+        if (!name || !image) continue;
+        const kind = detectInfraKind(image);
+        // 只看数据面容器。应用容器对外发布是它们的本职（nginx 在前面挡着），
+        // 混进来只会把告警淹掉。
+        if (kind === 'other') continue;
+        const known = byContainer.get(name);
+        inputs.push({
+          id: known?.id || name,
+          projectId: known?.projectId || '(未登记)',
+          containerName: name,
+          dockerImage: image,
+          env: known?.env,
+          runtimePorts: ports ?? '',
+          running: (state || '').toLowerCase() === 'running',
+        });
+      }
+
+      const report = auditInfraExposure(inputs);
+      if (report.signature === lastSignature) return;   // 状态没变就不刷屏
+      lastSignature = report.signature;
+
+      if (report.criticalCount === 0 && report.warnCount === 0) {
+        console.log(`[infra-exposure] ${report.summary}`);
+        store?.record({
+          category: 'system', severity: 'info', source: 'infra-exposure',
+          action: 'infra.exposure.clean', message: report.summary, status: 'info',
+          details: { checked: report.findings.length },
+        });
+        return;
+      }
+      const body = renderExposureReport(report);
+      const severity: ServerEventSeverity = report.criticalCount > 0 ? 'error' : 'warn';
+      console.warn(`[infra-exposure] ${report.summary}`);
+      store?.record({
+        category: 'system', severity, source: 'infra-exposure',
+        action: 'infra.exposure.detected', message: body,
+        status: report.criticalCount > 0 ? 'error' : 'warn',
+        details: {
+          criticalCount: report.criticalCount,
+          warnCount: report.warnCount,
+          findings: report.findings.filter((f) => f.severity !== 'ok'),
+        },
+      });
+    } catch (err) {
+      console.warn(`[infra-exposure] 自检失败: ${(err as Error).message}`);
+    }
+  };
+
+  setTimeout(() => { void run(); }, INFRA_EXPOSURE_AUDIT_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_EXPOSURE_AUDIT_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+/**
+ * 基础设施自动备份。
+ *
+ * 落盘目录沿用手工备份那一份（`/data/cds/<slug>/backups`），所以「备份历史」
+ * 接口不用改就能看到自动备份。文件名带 `-auto-` 段，与 restore 前的
+ * `pre-restore` 快照区分开——后者是救命用的，不参与周期清理。
+ *
+ * 磁盘闸在最前面：宿主根盘写满会同时打死所有预览、构建和 CDS 自己，那比这一轮
+ * 没有新备份糟得多。读不到可用空间也按「不够」处理。
+ */
+function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor') return null;
+  if (isPreviewInstance()) return null;
+
+  const shq = (s: string): string => `'${String(s).replace(/'/g, `'"'"'`)}'`;
+
+  const run = async () => {
+    try {
+      const dir = `/data/cds/${stateService.projectSlug}/backups`;
+      await shell.exec(`mkdir -p ${shq(dir)}`, { timeout: 15_000 });
+
+      const df = await shell.exec(`df -Pk ${shq(dir)}`, { timeout: 15_000 });
+      const free = parseDfAvailableBytes(df.stdout || '');
+      if (shouldSkipForDiskPressure(free)) {
+        const msg = free == null
+          ? '读不到备份目录的可用空间，本轮自动备份跳过（不确定就不写盘）'
+          : `备份目录可用空间不足（${(free / 1024 / 1024 / 1024).toFixed(1)} GiB），本轮自动备份跳过`;
+        console.warn(`[infra-backup] ${msg}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.skipped.disk', message: msg, status: 'warn',
+          details: { freeBytes: free ?? null, directory: dir },
+        });
+        return;
+      }
+
+      const plan = planInfraBackups(stateService.getInfraServices() || [], { now: new Date() });
+      if (plan.targets.length === 0) return;
+
+      const outcomes: BackupOutcome[] = [];
+      for (const t of plan.targets) {
+        const out = `${dir}/${t.fileName}`;
+        try {
+          let cmd: string;
+          if (t.kind === 'mongo') {
+            const env = t.env || {};
+            const user = env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME;
+            const pw = env.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_PASSWORD || env.MONGODB_PASSWORD;
+            // 凭据经 docker exec 的参数传入；不回显、不进日志。
+            const auth = user && pw
+              ? `-u ${shq(user)} -p ${shq(pw)} --authenticationDatabase admin`
+              : '';
+            cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip ${auth} > ${shq(out)}`;
+          } else {
+            // redis：BGSAVE 落盘后拷 dump.rdb。BGSAVE 是异步的，这里让它先写完再拷；
+            // 拷到半截的 rdb 是坏文件，而坏备份比没有备份更危险（以为有、其实没有）。
+            await shell.exec(
+              `docker exec ${shq(t.containerName)} sh -lc 'redis-cli BGSAVE >/dev/null; `
+              + `for i in $(seq 1 60); do [ "$(redis-cli rdb_bgsave_in_progress 2>/dev/null)" = "0" ] && break; `
+              + `redis-cli info persistence 2>/dev/null | grep -q "rdb_bgsave_in_progress:0" && break; sleep 1; done'`,
+              { timeout: 90_000 },
+            );
+            cmd = `docker cp ${shq(`${t.containerName}:/data/dump.rdb`)} ${shq(out)}`;
+          }
+          const r = await shell.exec(cmd, { timeout: INFRA_BACKUP_TIMEOUT_MS });
+          if (r.exitCode !== 0) throw new Error(combinedOutput(r).slice(0, 400));
+
+          const stat = await shell.exec(`stat -c %s ${shq(out)} 2>/dev/null || echo 0`, { timeout: 10_000 });
+          const bytes = Number((stat.stdout || '0').trim()) || 0;
+          // 零字节文件是失败伪装成成功的经典形态：文件在、内容没有。
+          if (bytes <= 0) {
+            await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 });
+            throw new Error('导出产物为空，已删除');
+          }
+
+          // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
+          const ls = await shell.exec(
+            `ls -l --time-style=+%s ${shq(dir)} 2>/dev/null | awk '{print $6"\\t"$7}'`,
+            { timeout: 15_000 },
+          );
+          const existing = (ls.stdout || '').split('\n')
+            .map((l) => l.split('\t'))
+            .filter((p) => p.length === 2 && p[1])
+            .map(([ts, name]) => ({ name: name.trim(), mtimeMs: Number(ts) * 1000 }))
+            .filter((f) => Number.isFinite(f.mtimeMs));
+          const doomed = selectExpiredBackups(existing, { id: t.id, now: new Date() });
+          for (const name of doomed) {
+            await shell.exec(`rm -f ${shq(`${dir}/${name}`)}`, { timeout: 10_000 });
+          }
+          outcomes.push({ id: t.id, ok: true, fileName: t.fileName, bytes, pruned: doomed });
+        } catch (err) {
+          outcomes.push({ id: t.id, ok: false, error: (err as Error).message });
+        }
+      }
+
+      const summary = summarizeBackupRound(outcomes, plan.skipped.length);
+      const failed = outcomes.filter((o) => !o.ok);
+      if (failed.length > 0) {
+        console.warn(`[infra-backup] ${summary}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.partial-failure', message: summary, status: 'warn',
+          details: { outcomes, skipped: plan.skipped, directory: dir },
+        });
+      } else {
+        console.log(`[infra-backup] ${summary}`);
+        store?.record({
+          category: 'system', severity: 'info', source: 'infra-backup',
+          action: 'infra.backup.completed', message: summary, status: 'info',
+          details: { outcomes, skipped: plan.skipped, directory: dir },
+        });
+      }
+    } catch (err) {
+      console.warn(`[infra-backup] 本轮失败: ${(err as Error).message}`);
+    }
+  };
+
+  setTimeout(() => { void run(); }, INFRA_BACKUP_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_BACKUP_INTERVAL_MS);
   timer.unref?.();
   return timer;
 }
@@ -941,6 +1175,12 @@ const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEv
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const entrypointReachabilityWatchdog = startEntrypointReachabilityWatchdog(activeServerEventLogStore);
+// 存量暴露面看门狗：单测只管得住「新建时怎么拼参数」，管不了已经在跑的容器，
+// 也管不了不经 CDS 起的容器。这一层按运行态真值持续盯。
+const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
+// 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
+// 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
+const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {

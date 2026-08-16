@@ -97,8 +97,18 @@ describe('暴露判据', () => {
  */
 describe('index.ts 真的把地址传给了 listen', () => {
   const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
-  /** 去掉注释再断言，避免判据读到自己写的说明文字。 */
-  const CODE = SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  /**
+   * 去掉注释再断言，避免判据读到自己写的说明文字。
+   *
+   * 按**行**剥，不用跨行正则：后者会被源码里带 `/*` 的字符串与正则字面量带偏，
+   * 错位之后会连真代码一起吞掉，判据于是对着一份残缺源码做断言。
+   */
+  const CODE = SRC.split('\n')
+    .filter((l) => {
+      const t = l.trim();
+      return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+    })
+    .join('\n');
 
   it('listen 调用带 host 参数', () => {
     expect(CODE).toMatch(/server\.listen\(\s*port\s*,\s*bind\.host\s*,/);
