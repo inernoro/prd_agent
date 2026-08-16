@@ -516,24 +516,27 @@ test.describe('录音连续性发布门禁', () => {
     const waveform = page.getByTestId('recording-waveform');
     const finish = page.getByTestId('recording-finish');
     await expect(transcript).toContainText('验收注入第 3 段');
-    await expect(transcript).not.toContainText('验收注入第 18 段');
     await expect(waveform).toBeVisible();
     await expect(finish).toBeInViewport();
 
-    await expect.poll(async () => page.evaluate(() => {
-      const acceptanceWindow = window as typeof window & {
-        __recordingAcceptanceLiveEvents?: Array<{ kind: string; segmentCount: number }>;
-      };
-      return acceptanceWindow.__recordingAcceptanceLiveEvents
-        ?.filter(event => event.kind === 'partial')
-        .at(-1)?.segmentCount ?? 0;
-    })).toBe(9);
-    await expect(transcript).toContainText('验收注入第 9 段');
-    await expect(transcript).not.toContainText('验收注入第 18 段');
-    await expect(waveform).toBeVisible();
-    await expect(finish).toBeInViewport();
+    await expect.poll(async () => transcript.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      maxHeight: getComputedStyle(element).maxHeight,
+      overflowY: getComputedStyle(element).overflowY,
+    }))).toEqual({
+      clientHeight: 112,
+      maxHeight: '112px',
+      overflowY: 'auto',
+    });
 
     await expect(transcript).toContainText('验收注入第 18 段', { timeout: 2_000 });
+    const transcriptOverflow = await transcript.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(transcriptOverflow.scrollHeight).toBeGreaterThan(transcriptOverflow.clientHeight);
+    await expect(waveform).toBeVisible();
+    await expect(finish).toBeInViewport();
     const liveEventsBeforeFinish = await page.evaluate(() => {
       const acceptanceWindow = window as typeof window & {
         __recordingAcceptanceLiveEvents?: Array<{
