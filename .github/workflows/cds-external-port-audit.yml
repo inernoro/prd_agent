@@ -13,25 +13,30 @@ permissions:
   contents: read
 
 concurrency:
-  group: cds-external-port-audit
+  group: cds-external-port-audit-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   audit:
-    name: Verify public TCP surface
+    name: Verify ${{ matrix.environment }} public TCP surface
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - cds
+          - production
     env:
       CDS_ALLOWED_PUBLIC_PORTS: '22,80,443'
+      AUDIT_TARGET: ${{ matrix.environment == 'cds' && secrets.CDS_EDGE_AUDIT_HOST || secrets.PRODUCTION_EDGE_AUDIT_HOST }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Require off-host IPv4 target
-        env:
-          IPV4_TARGET: ${{ secrets.CDS_EDGE_AUDIT_HOST }}
         run: |
-          test -n "$IPV4_TARGET" || { echo 'IPv4 audit target is not configured'; exit 1; }
+          test -n "$AUDIT_TARGET" || { echo "${{ matrix.environment }} IPv4 audit target is not configured"; exit 1; }
 
       - name: Install scanner
         run: |
@@ -39,17 +44,15 @@ jobs:
           sudo apt-get install -y -qq nmap
 
       - name: Scan IPv4 from GitHub runner
-        env:
-          TARGET: ${{ secrets.CDS_EDGE_AUDIT_HOST }}
         run: |
-          sudo nmap -4 -sS -Pn -n -p- --min-rate 5000 --max-retries 1 --host-timeout 10m -oX /tmp/cds-ipv4.xml "$TARGET" >/dev/null
-          node cds/scripts/validate-external-port-report.mjs --xml /tmp/cds-ipv4.xml --family ipv4 --out cds-ipv4-report.json
+          sudo nmap -4 -sS -Pn -n -p- --min-rate 5000 --max-retries 1 --host-timeout 10m -oX /tmp/public-ipv4.xml "$AUDIT_TARGET" >/dev/null
+          node cds/scripts/validate-external-port-report.mjs --xml /tmp/public-ipv4.xml --family ipv4 --out "${{ matrix.environment }}-ipv4-report.json"
 
       - name: Upload sanitized evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cds-external-port-audit
-          path: cds-*-report.json
+          name: external-port-audit-${{ matrix.environment }}
+          path: ${{ matrix.environment }}-*-report.json
           if-no-files-found: error
           retention-days: 30
