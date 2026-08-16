@@ -149,8 +149,24 @@ for (const theme of ['light', 'dark']) {
       }
       // 落地在哪就是扫了哪，判据与远端版同（含 pathname 对 pathname，route 可能带 query）
       const routePath = route.split(/[?#]/)[0];
+      /*
+       * 带 query 的路由要连 query 一起核对。只比 pathname 时，应用若丢弃/重写/忽略
+       * query 而渲染默认 tab，pathname 照样相等 —— 于是扫的是默认那一屏，却把
+       * 「/open-platform?tab=open-api」记成已覆盖（Codex 在 PR #1374 第三十轮抓到）。
+       * 只核对请求里写明的那几个参数，应用自己追加的参数不管。
+       */
+      const routeQuery = new URLSearchParams((route.split('#')[0].split('?')[1]) || '');
       const landed = await page.evaluate(() => location.pathname);
-      if (landed !== routePath) {
+      const landedQuery = await page.evaluate(() => location.search);
+      const landedParams = new URLSearchParams(landedQuery);
+      const queryMismatch = [...routeQuery.entries()].filter(([k, v]) => landedParams.get(k) !== v);
+      if (landed !== routePath || queryMismatch.length) {
+        if (landed === routePath && queryMismatch.length) {
+          const detail = queryMismatch.map(([k, v]) => `${k}=${v}→${landedParams.get(k) ?? '(无)'}`).join(', ');
+          coverage.skipped.push(`${vpName}/${theme}${route}（query 未生效：${detail}）`);
+          console.log(`  [跳过] ${route} query 未生效（${detail}），扫的会是默认那一屏`);
+          continue;
+        }
         coverage.redirected.push(`${vpName}/${theme}${route} → ${landed}`);
         console.log(`  [重定向] ${route} → ${landed}，不计入覆盖`);
         continue;

@@ -119,3 +119,6 @@
 | fix | e2e | 修 Codex 第二十七轮 P2：SVG 双通道让两条候选落在同一节点，隐前景时按 id 遍历会把它记两遍，第二遍记下的是已改成 transparent 的值；还原时先写原值再写 transparent，该形状永久隐形、后续候选采错底色。改为按元素去重，原样式只记一次 |
 | fix | prd-admin | 修 Codex 第二十八轮 P2：PA 工具条激活态的字色我按浅底档改成深蓝 #1d4ed8（默认/gemini 实测 5.11:1），但那条是共享规则、同样命中深底的 mountain 主题——深蓝压 14% 蓝调深底只剩 2.16:1，改之前的浅蓝有 8.03:1。给 mountain 补回浅蓝 #93c5fd（8.03:1） |
 | chore | prd-admin | 双皮肤棘轮基线 paAgent.css 浅色前景 9→10：新增值锁死在 [data-pa-theme="mountain"] 这一钉死深色主题下，属规则允许的暗色专用例外 |
+| fix | e2e | 修 Codex 第三十轮 P1：聚合键是 `theme:route`，加了视口维度后同一处缺陷在 desktop 与 mobile 各命中一次却被折成一个，routeCount 系统性偏低——而我给用户的缺陷优先级排序正是按这个数排的。键补上视口 |
+| fix | e2e | 修 Codex 第三十轮 P1：needsEye 候选在像素采样**之前**就按「前景色+底色+标签」去重，而这类候选的底色恰恰是推不出来的 fallback 值，一列同构卡片压在不同渐变上时第一张达标就把后面全吞掉。这类候选改为掺 auditId 逐个留到采样后再定夺 |
+| fix | e2e | 修 Codex 第三十轮 P2：路由核对只比 pathname，应用若忽略/重写 query 而渲染默认 tab，`/open-platform?tab=open-api` 照样判为已覆盖。改为连请求里写明的 query 一并核对，不符记 skipped |

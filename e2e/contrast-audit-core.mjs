@@ -204,7 +204,17 @@ export const AUDIT_FN = () => {
      * 全部留到重采样之后，由调用方按 ratio < need 过滤（两个审计脚本都已这么做）。
      */
     if (c >= need && !needsEye) continue;
-    const key = `${cs.color}|${bg}|${label(el)}`;
+    /*
+     * 需要像素采样的候选（needsEye）不许在采样前去重。
+     * 一列卡片各压在不同渐变/封面图上时，effectiveBg 推不出真底色，返回的
+     * fallback bg 与 label 完全相同 —— 于是第一张达标就把后面所有张吞掉，
+     * 后面那张真正看不清的永远进不了报告，还能让整轮报绿
+     * （Codex 在 PR #1374 第三十轮抓到）。
+     * 这类候选把 auditId 掺进键，逐个留到重采样之后由真实像素定夺。
+     */
+    const key = needsEye
+      ? `${cs.color}|${bg}|${label(el)}|#${auditId + 1}`
+      : `${cs.color}|${bg}|${label(el)}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const r = el.getBoundingClientRect();
@@ -381,7 +391,14 @@ export function aggregate(report) {
       const k = `${f.kind}|${f.fg}|${f.bg}`;
       if (!byColor.has(k)) byColor.set(k, { ...f, routes: new Set(), samples: [] });
       const g = byColor.get(k);
-      g.routes.add(`${r.theme}:${r.route}`);
+      /*
+       * 键必须带视口。加了视口矩阵之后，同一处缺陷在 desktop 与 mobile 各命中一次，
+       * 而 `theme:route` 把两次折成一个 —— routeCount 系统性偏低，而我恰恰是用
+       * routeCount 给缺陷排优先级的，等于按一份偏低的数排序
+       * （Codex 在 PR #1374 第三十轮抓到；又是「加维度没回头改按旧维度建的键」，
+       * 这个形状第四次出现了）。
+       */
+      g.routes.add(`${r.viewport || 'desktop'}:${r.theme}:${r.route}`);
       if (g.samples.length < 3 && !g.samples.includes(f.sel)) g.samples.push(f.sel);
     }
   }
