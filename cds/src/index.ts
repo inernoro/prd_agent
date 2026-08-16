@@ -492,6 +492,15 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         return;
       }
 
+      // 临时目录：所有导出先写这里，校验通过才改名进正式目录。
+      // 好处不只是「失败时清理」——**正式文件名从头到尾只属于校验过的产物**，
+      // 进程被杀、超时、容器消失都不会在正式目录留下半截文件。
+      // 半截文件的危害是具体的：保留策略按 `<key>-auto-` 前缀认它是一份备份，
+      // 可能把真正可用的旧副本挤掉；备份历史也会把它列出来供人恢复。
+      // 放子目录而不是加后缀，这样上层 ls 既看不到它，也不会把它算进份数。
+      const tmpDir = `${dir}/.tmp`;
+      await shell.exec(`rm -rf ${shq(tmpDir)} && mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
+
       const df = await shell.exec(`df -Pk ${shq(dir)}`, { timeout: 15_000 });
       const free = parseDfAvailableBytes(df.stdout || '');
       if (shouldSkipForDiskPressure(free)) {
@@ -525,7 +534,8 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
       const outcomes: BackupOutcome[] = [];
       for (const t of plan.targets) {
-        const out = `${dir}/${t.fileName}`;
+        const out = `${tmpDir}/${t.fileName}`;
+        const finalOut = `${dir}/${t.fileName}`;
         try {
           let cmd: string;
           if (t.kind === 'mongo') {
@@ -587,9 +597,12 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           const bytes = Number((stat.stdout || '0').trim()) || 0;
           // 零字节文件是失败伪装成成功的经典形态：文件在、内容没有。
           if (bytes <= 0) {
-            await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 });
-            throw new Error('导出产物为空，已删除');
+            throw new Error('导出产物为空');
           }
+
+          // 只有走到这里的产物才配拿到正式文件名。
+          const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
+          if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
 
           // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
           const ls = await shell.exec(
@@ -607,9 +620,13 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           }
           outcomes.push({ id: t.id, ok: true, fileName: t.fileName, bytes, pruned: doomed });
         } catch (err) {
+          // 任何失败路径都不留残骸：临时文件删掉，正式目录本来就没被碰过。
+          await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
           outcomes.push({ id: t.id, ok: false, error: (err as Error).message });
         }
       }
+
+      await shell.exec(`rm -rf ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);

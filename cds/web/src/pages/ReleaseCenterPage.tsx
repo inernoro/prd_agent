@@ -441,6 +441,25 @@ export function ReleaseCenterPage(): JSX.Element {
     setRollbackState({ row, sourceRun: run });
   };
 
+  /**
+   * 从一条发布记录打开回滚对话框。
+   *
+   * 证据表和日志弹窗列的是**全部环境**的记录，不是当前侧栏选中的那个。原来这两处
+   * 各自决定传哪个 row：日志弹窗按 `run.targetId` 找回归属环境，证据表却直接把
+   * selectedRow 递进去——选中 A、回滚 B 的记录时，对话框标题写 A、候选版本列 A 的，
+   * 而 sourceRun 属于 B，后端只会以「版本不属于该环境」拒掉。
+   *
+   * 归属解析只留这一份，调用方不许再自己找 row（找第二遍就会漂移出第二种答案）。
+   */
+  const openRollbackForRun = (run: ReleaseRun): void => {
+    const owner = rows.find((item) => item.target.id === run.targetId);
+    if (!owner) {
+      setToast('没有找到这条记录对应的环境');
+      return;
+    }
+    openRollback(owner, run);
+  };
+
   const rollback = async (sourceRun: ReleaseRun, targetReleaseId: string): Promise<void> => {
     setToast('');
     try {
@@ -804,7 +823,7 @@ export function ReleaseCenterPage(): JSX.Element {
                               onPromote={() => void startPromotion(selectedRow)}
                               onOpenLogs={setLogRun}
                               onRetry={(run) => void retryRelease(run)}
-                              onRollback={(run) => openRollback(selectedRow, run)}
+                              onRollback={(run) => openRollbackForRun(run)}
                               onSeeAll={() => setSection('evidence')}
                               onOpenConfig={() => configCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
                             />
@@ -844,7 +863,7 @@ export function ReleaseCenterPage(): JSX.Element {
                             onFilter={setHistoryFilter}
                             retryingRunId={retryingRunId}
                             onRetry={(run) => void retryRelease(run)}
-                            onRollback={(run) => openRollback(selectedRow, run)}
+                            onRollback={(run) => openRollbackForRun(run)}
                           />
                         ) : null}
                       </div>
@@ -896,14 +915,7 @@ export function ReleaseCenterPage(): JSX.Element {
         canRollback={Boolean(logRun && rows.some((row) => row.target.id === logRun.targetId && (row.successfulRuns || []).length > 0))}
         onClose={() => setLogRun(null)}
         onRetry={(run) => void retryRelease(run)}
-        onRollback={(run) => {
-          const row = rows.find((item) => item.target.id === run.targetId);
-          if (!row) {
-            setToast('没有找到这条记录对应的环境');
-            return;
-          }
-          openRollback(row, run);
-        }}
+        onRollback={(run) => openRollbackForRun(run)}
       />
       <ArchiveTargetDialog
         state={archiveState}

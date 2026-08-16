@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { FailureDiagnosis } from './FailureDiagnosis';
-import { formatDateTime } from './shared';
+import { formatDateTime, runTone, statusLabel } from './shared';
 import type { CenterRow, ReleaseRun, ReleaseTargetChange } from './types';
 import { RELEASE_CHANGE_KIND_LABELS, isReleaseFailed } from './types';
 
@@ -57,6 +57,14 @@ function durationOf(run: ReleaseRun): string {
 }
 
 const COLUMNS = '150px 130px 92px 104px 88px minmax(0,1fr) auto';
+
+/** 状态点与状态文字的色调。与 shared 的 Tone 一一对应，避免这里自造第二套语义。 */
+const DOT_TONE: Record<string, string> = {
+  ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-bad', live: 'bg-info', muted: 'bg-muted-foreground',
+};
+const TEXT_TONE: Record<string, string> = {
+  ok: 'text-ok', warn: 'text-warn', bad: 'text-bad', live: 'text-info', muted: 'text-muted-foreground',
+};
 
 export function EvidenceSection({
   row, rows, runs, commitMeta, filter, onFilter, onRollback, onRetry, retryingRunId,
@@ -129,6 +137,13 @@ export function EvidenceSection({
           <div>
             {visible.slice(0, 40).map((run) => {
               const failed = isReleaseFailed(run.status);
+              // 「不是失败」不等于「成功」：queued / running / healthchecking /
+              // rollback_running 都会落进这一档。原来整行按 failed 二分，于是一条
+              // 还在跑的发布显示绿点 +「成功」，还会给出「回滚到此版本」——回滚到
+              // 一个尚未发完的版本。状态判定复用 shared 里那份唯一的映射，
+              // 不在这里再写第二套（写第二套就一定会漂移）。
+              const tone = runTone(run.status);
+              const succeeded = run.status === 'success' || run.status === 'rollback_success';
               const subject = commitMeta[run.commitSha]?.subject;
               const diagnosed = diagnosedId === run.releaseId;
               // 这条 run 属于哪个环境。归档里会有已停用/已归档目标的历史记录，
@@ -147,10 +162,8 @@ export function EvidenceSection({
                     <span className="truncate font-semibold" title={ownerName}>{ownerName}</span>
                     <span className="cds-ident">{run.commitSha.slice(0, 7)}</span>
                     <span className="flex items-center gap-1.5">
-                      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${failed ? 'bg-bad' : 'bg-ok'}`} />
-                      <span className={failed ? 'text-bad' : 'text-ok'}>
-                        {failed ? '失败' : '成功'}
-                      </span>
+                      <span className={`h-[7px] w-[7px] shrink-0 rounded-full ${DOT_TONE[tone]}`} />
+                      <span className={TEXT_TONE[tone]}>{statusLabel(run.status)}</span>
                     </span>
                     <span className="cds-ident text-muted-foreground">{durationOf(run)}</span>
                     {/* 稿子这一格只有操作人。提交说明是既有页面上真有的信息，
@@ -175,7 +188,7 @@ export function EvidenceSection({
                         <ScrollText />
                         日志
                       </Button>
-                      {owner?.canRollback && !failed ? (
+                      {owner?.canRollback && succeeded ? (
                         <Button variant="outline" size="sm" onClick={() => onRollback(run)}>
                           <RotateCcw />
                           回滚到此版本

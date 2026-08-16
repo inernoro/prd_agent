@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { resolvePreviewUrl } from '../../web/src/lib/previewUrl';
 import { canonicalEnvironments, defaultIsCanonical } from '../../web/src/lib/releaseEnvironments';
 import { describeDryRunResult } from '../../web/src/lib/releaseDiagnosis';
+import { runTone, statusLabel } from '../../web/src/pages/release-center/shared';
 import { absoluteNoticeActionUrl, normalizeNoticeOrigin } from '../../src/services/notice-outbound-map.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -137,5 +138,53 @@ describe('外发到 MAP 的链接必须是 CDS 自己的绝对地址', () => {
   it('非相对路径一律不外发', () => {
     expect(absoluteNoticeActionUrl('https://evil.example/x', 'cds.miduo.org')).toBe('');
     expect(absoluteNoticeActionUrl('', 'cds.miduo.org')).toBe('');
+  });
+});
+
+/**
+ * 以下两段对应第四轮 review。两条都属于「证据表列的是全部环境的记录」这一个
+ * 前提没有被下游遵守：一条把非终态当成功，一条把别的环境的记录挂到当前环境上。
+ */
+
+describe('证据表的状态判定不做 failed / success 二分', () => {
+  it('在途状态既不是成功也不是失败', () => {
+    // 原来整行按 isReleaseFailed 二分，于是 queued / running / healthchecking /
+    // rollback_running 全落进「成功」那一档：绿点 + 文案「成功」。
+    for (const status of ['queued', 'running', 'healthchecking', 'rollback_running']) {
+      expect(runTone(status)).toBe('warn');
+      expect(statusLabel(status)).not.toBe('发布成功');
+    }
+    expect(runTone('success')).toBe('ok');
+    expect(runTone('rollback_success')).toBe('ok');
+    expect(runTone('failed')).toBe('bad');
+  });
+
+  it('EvidenceSection 复用 shared 的映射，且回滚只给真正成功的版本（接线守卫）', () => {
+    const source = read('pages/release-center/EvidenceSection.tsx');
+    expect(source).toMatch(/import \{[^}]*runTone[^}]*\} from '\.\/shared'/);
+    expect(source).toContain("run.status === 'success' || run.status === 'rollback_success'");
+    // 「不是失败」不足以给出回滚入口——回滚到一个还没发完的版本是没有意义的。
+    expect(source).not.toMatch(/!failed\s*\?[^]*回滚到此版本/);
+  });
+});
+
+describe('回滚对话框挂在记录自己的环境上', () => {
+  const page = read('pages/ReleaseCenterPage.tsx');
+
+  it('归属解析只有一份，按 run.targetId 找回环境', () => {
+    expect(page).toContain('const openRollbackForRun = (run: ReleaseRun): void => {');
+    expect(page).toMatch(/openRollbackForRun[^]*rows\.find\(\(item\) => item\.target\.id === run\.targetId\)/);
+    expect(page).toMatch(/openRollbackForRun[^]*没有找到这条记录对应的环境/);
+  });
+
+  it('没有任何 onRollback 回调把当前选中的环境和一条 run 一起递出去', () => {
+    // 证据表列的是全部环境的记录。选中 A、点 B 的那条回滚时，对话框会标着 A、
+    // 列 A 的候选版本，而 sourceRun 属于 B，后端按「版本不属于该环境」拒掉。
+    const callbacks = page.match(/onRollback=\{[^}]*\}/g) || [];
+    expect(callbacks.length).toBeGreaterThan(0);
+    for (const cb of callbacks) {
+      expect(cb).toContain('openRollbackForRun(run)');
+      expect(cb).not.toContain('selectedRow');
+    }
   });
 });
