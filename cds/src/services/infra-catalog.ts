@@ -292,9 +292,14 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     dockerImage: 'redis:7-alpine',
     containerPort: 6379,
     volumePaths: ['/data'],
-    build: () => ({
+    secretKeys: ['password'],
+    command: ['sh', '-c', 'exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"'],
+    build: (s) => ({
+      env: {
+        REDIS_PASSWORD: s.password,
+      },
       envVars: {
-        REDIS_URL: 'redis://redis:6379',
+        REDIS_URL: `redis://:${s.password}@redis:6379`,
       },
     }),
   },

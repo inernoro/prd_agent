@@ -1,6 +1,7 @@
 import http from 'node:http';
 import os from 'node:os';
 import * as v8 from 'node:v8';
+import tls from 'node:tls';
 import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -18,12 +19,15 @@ import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
 import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
 import {
-  auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport, type InfraExposureInput,
+  auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport,
+  type InfraExposureInput, type InfraExposureReport,
 } from './services/infra-exposure-audit.js';
 import {
   backupDirCandidates, buildRedisBackupProbeScript, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
+import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
+import { evaluateInfrastructureHealth } from './services/infrastructure-health.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
@@ -65,6 +69,7 @@ import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } f
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
+import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
@@ -248,6 +253,11 @@ const INFRA_BACKUP_INTERVAL_MS = 6 * 60 * 60_000;
 const INFRA_BACKUP_STARTUP_DELAY_MS = 10 * 60_000;
 // 单个库的导出超时。大库慢，但卡住不放会拖住后面所有目标。
 const INFRA_BACKUP_TIMEOUT_MS = 20 * 60_000;
+const INFRA_HEALTH_INTERVAL_MS = 15 * 60_000;
+const INFRA_HEALTH_STARTUP_DELAY_MS = 2 * 60_000;
+const INFRA_BACKUP_HEALTH_FILE = '.cds-backup-health.json';
+
+let lastInfraExposureReport: InfraExposureReport | null = null;
 
 // 基础设施暴露面自检间隔。判据取 `docker ps` 的运行态真值，不读台账——
 // 台账里的 hostPort 只是个数字，说明不了绑在哪个地址上。存量容器的绑定地址
@@ -409,6 +419,7 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
         : null;
 
       const report = auditInfraExposure(inputs, { firewall });
+      lastInfraExposureReport = report;
       if (report.signature === lastSignature) return;   // 状态没变就不刷屏
       lastSignature = report.signature;
 
@@ -461,7 +472,16 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
   const shq = (s: string): string => `'${String(s).replace(/'/g, `'"'"'`)}'`;
 
+  let roundInFlight = false;
   const run = async () => {
+    if (roundInFlight) {
+      store?.record({
+        category: 'system', severity: 'warn', source: 'infra-backup',
+        action: 'infra.backup.skipped.overlap', message: '上一轮基础设施备份仍在运行，本轮跳过', status: 'warn',
+      });
+      return;
+    }
+    roundInFlight = true;
     try {
       // 逐个候选试写，用第一个真能写的。写死单一路径的代价已经付过：那个路径在
       // 这台宿主上不存在，而手工备份的 ls 带着 2>/dev/null，把「目录不存在」显示
@@ -617,6 +637,14 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
           if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
 
+          const r2 = r2BackupConfigFromEnv();
+          if (!r2) throw new Error('缺少完整 R2 配置，拒绝把仅有同机副本的备份记为成功');
+          const remote = await uploadAndVerifyR2Backup({
+            config: r2,
+            filePath: finalOut,
+            fileName: t.fileName,
+          });
+
           // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
           const ls = await shell.exec(
             `ls -l --time-style=+%s ${shq(dir)} 2>/dev/null | awk '{print $6"\\t"$7}'`,
@@ -631,7 +659,15 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           for (const name of doomed) {
             await shell.exec(`rm -f ${shq(`${dir}/${name}`)}`, { timeout: 10_000 });
           }
-          outcomes.push({ id: t.id, ok: true, fileName: t.fileName, bytes, pruned: doomed });
+          outcomes.push({
+            id: t.id,
+            ok: true,
+            fileName: t.fileName,
+            bytes,
+            pruned: doomed,
+            remoteObjectKey: remote.objectKey,
+            sha256: remote.sha256,
+          });
         } catch (err) {
           // 任何失败路径都不留残骸：临时文件删掉，正式目录本来就没被碰过。
           await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
@@ -643,6 +679,24 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);
+      if (failed.length === 0 && outcomes.length > 0) {
+        const completedAt = new Date().toISOString();
+        const health = {
+          completedAt,
+          remoteVerifiedAt: completedAt,
+          objects: outcomes.map((outcome) => ({
+            id: outcome.id,
+            fileName: outcome.fileName,
+            remoteObjectKey: outcome.remoteObjectKey,
+            sha256: outcome.sha256,
+            bytes: outcome.bytes,
+          })),
+        };
+        const target = `${dir}/${INFRA_BACKUP_HEALTH_FILE}`;
+        const tmp = `${target}.tmp`;
+        fs.writeFileSync(tmp, `${JSON.stringify(health)}\n`, { mode: 0o600 });
+        fs.renameSync(tmp, target);
+      }
       if (failed.length > 0) {
         console.warn(`[infra-backup] ${summary}`);
         store?.record({
@@ -660,11 +714,82 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       }
     } catch (err) {
       console.warn(`[infra-backup] 本轮失败: ${(err as Error).message}`);
+    } finally {
+      roundInFlight = false;
     }
   };
 
   setTimeout(() => { void run(); }, INFRA_BACKUP_STARTUP_DELAY_MS).unref?.();
   const timer = setInterval(() => { void run(); }, INFRA_BACKUP_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+async function certificateStatus(host: string): Promise<{ host: string; expiresAt?: Date | null; error?: string }> {
+  return new Promise((resolve) => {
+    const socket = tls.connect({ host, port: 443, servername: host, timeout: 10_000, rejectUnauthorized: true });
+    const finish = (value: { host: string; expiresAt?: Date | null; error?: string }): void => {
+      socket.destroy();
+      resolve(value);
+    };
+    socket.once('secureConnect', () => {
+      const cert = socket.getPeerCertificate();
+      const expiresAt = cert.valid_to ? new Date(cert.valid_to) : null;
+      finish({ host, expiresAt });
+    });
+    socket.once('timeout', () => finish({ host, expiresAt: null, error: '连接超时' }));
+    socket.once('error', (err) => finish({ host, expiresAt: null, error: err.message }));
+  });
+}
+
+function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Date | null } {
+  const candidates = backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot });
+  for (const dir of candidates) {
+    try {
+      const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
+        completedAt?: string; remoteVerifiedAt?: string;
+      };
+      return {
+        completedAt: value.completedAt ? new Date(value.completedAt) : null,
+        remoteVerifiedAt: value.remoteVerifiedAt ? new Date(value.remoteVerifiedAt) : null,
+      };
+    } catch { /* 继续检查下一个实际落盘目录 */ }
+  }
+  return { completedAt: null, remoteVerifiedAt: null };
+}
+
+function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+  let lastSignature = '';
+  const run = async (): Promise<void> => {
+    const backup = readBackupHealth();
+    const certificates = await Promise.all((config.rootDomains || []).map((host) => certificateStatus(host)));
+    const report = evaluateInfrastructureHealth({
+      now: new Date(),
+      backupCompletedAt: backup.completedAt,
+      remoteBackupVerifiedAt: backup.remoteVerifiedAt,
+      disk: defaultDiskUsage(config.repoRoot),
+      certificates,
+      containers: stateService.getInfraServices()
+        .filter((service) => service.status === 'running' || service.status === 'error')
+        .map((service) => ({ name: service.containerName, running: service.status === 'running' })),
+      exposureCriticalCount: lastInfraExposureReport?.criticalCount ?? null,
+      exposureWarnCount: lastInfraExposureReport?.warnCount ?? null,
+    });
+    if (report.signature === lastSignature) return;
+    lastSignature = report.signature;
+    store?.record({
+      category: 'system',
+      severity: report.level === 'critical' ? 'error' : report.level === 'warn' ? 'warn' : 'info',
+      source: 'infrastructure-health',
+      action: 'infrastructure.health.checked',
+      message: report.summary,
+      status: report.level,
+      details: { items: report.items },
+    });
+  };
+  setTimeout(() => { void run(); }, INFRA_HEALTH_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_HEALTH_INTERVAL_MS);
   timer.unref?.();
   return timer;
 }
@@ -1307,15 +1432,19 @@ if (activeHttpLogStore) {
     console.warn(`  [http-log] init failed, persistent request logging disabled: ${(err as Error).message}`);
   }
 }
-const activeServerEventLogStore = serverEventLogStoreFromEnv();
-if (activeServerEventLogStore) {
+const localServerEventLogStore = serverEventLogStoreFromEnv();
+if (localServerEventLogStore) {
   try {
-    await activeServerEventLogStore.init();
+    await localServerEventLogStore.init();
     console.log('  [server-event-log] persistent diagnostics enabled (collection=cds_server_events)');
   } catch (err) {
     console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
   }
 }
+const offHostAuditConfig = offHostAuditConfigFromEnv();
+const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
+  ? new OffHostAuditLogSink({ primary: localServerEventLogStore, ...offHostAuditConfig })
+  : localServerEventLogStore;
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
@@ -1326,6 +1455,7 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
+const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
@@ -3739,7 +3869,8 @@ async function shutdown(signal: string): Promise<void> {
   }
   if (activeServerEventLogStore) {
     try {
-      await activeServerEventLogStore.close();
+      await activeServerEventLogStore.flush?.();
+      await localServerEventLogStore?.close();
       console.log('[shutdown] server event log store flushed + closed');
     } catch (err) {
       console.warn(`[shutdown] server event log store teardown failed: ${(err as Error).message}`);

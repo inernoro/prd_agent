@@ -46,7 +46,7 @@ const makeInfraService = (overrides?: Partial<InfraService>): InfraService => ({
   containerName: 'cds-infra-mongodb',
   status: 'stopped',
   volumes: [],
-  env: {},
+  env: { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'secret' },
   createdAt: '2026-08-16T00:00:00Z',
   ...overrides,
 });
@@ -93,10 +93,13 @@ describe('发布地址解析', () => {
     expect(hosts).toEqual(['127.0.0.1']);
   });
 
-  it('逃生阀能恢复全网卡，且这是唯一一条通往全网卡的路', () => {
-    expect(isPubliclyPublished(resolveInfraPublishHosts({
+  it('旧全网卡覆盖值会被硬拒绝，不能退回不安全绑定', () => {
+    expect(() => resolveInfraPublishHosts({
       processEnv: { [INFRA_PUBLISH_HOST_ENV]: '0.0.0.0' },
-    }))).toBe(true);
+    })).toThrow('禁止绑定全部网卡');
+    expect(() => resolveInfraPublishHosts({
+      processEnv: { [INFRA_PUBLISH_HOST_ENV]: '::' },
+    })).toThrow('禁止绑定全部网卡');
     // 任何其它取值都不该判成对外
     for (const v of ['', '   ', '172.17.0.1', '10.0.0.1,127.0.0.1']) {
       expect(isPubliclyPublished(resolveInfraPublishHosts({ processEnv: { [INFRA_PUBLISH_HOST_ENV]: v } })))
@@ -117,8 +120,11 @@ describe('docker 参数拼装', () => {
     for (const f of flags) expect(f).not.toMatch(BARE_PUBLISH);
   });
 
-  it('显式要全网卡时退化成不带地址的写法（守卫只需认一种形状）', () => {
-    expect(buildInfraPublishFlags(10001, 27017, ['0.0.0.0'])).toEqual(['-p 10001:27017']);
+  it('调用方直接传全网卡也会被拒绝', () => {
+    expect(() => buildInfraPublishFlags(10001, 27017, ['0.0.0.0']))
+      .toThrow('禁止绑定全部网卡');
+    expect(() => buildInfraPublishFlags(10001, 27017, []))
+      .toThrow('禁止绑定全部网卡');
   });
 });
 
@@ -129,7 +135,7 @@ describe('绑定失败的归因提示', () => {
       ['172.17.0.1', '127.0.0.1'],
     );
     expect(hint).toContain('CDS_DOCKER_HOST');
-    expect(hint).toContain(INFRA_PUBLISH_HOST_ENV);
+    expect(hint).toContain('不会退回全网卡绑定');
   });
 
   it('与绑定无关的失败不加噪音', () => {
@@ -206,9 +212,9 @@ describe('ContainerService 真的用上了收窄后的发布地址', () => {
     expect(cmd).not.toMatch(BARE_PUBLISH);
   });
 
-  it('逃生阀显式打开时才回到全网卡', async () => {
+  it('旧全网卡环境变量不能绕过容器启动门禁', async () => {
     process.env[INFRA_PUBLISH_HOST_ENV] = '0.0.0.0';
-    const cmd = await runInfra();
-    expect(cmd).toMatch(BARE_PUBLISH);
+    await expect(runInfra()).rejects.toThrow('禁止绑定全部网卡');
+    expect(mock.commands.some((cmd) => cmd.includes('docker run -d'))).toBe(false);
   });
 });

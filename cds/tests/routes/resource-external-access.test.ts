@@ -161,28 +161,9 @@ describe('resource external TCP access', () => {
       { 'x-test-cookie-auth': '1' },
     );
 
-    expect(res.status).toBe(200);
-    expect(res.body.policy.enabled).toBe(true);
-    expect(res.body.policy.kind).toBe('tcp');
-    expect(res.body.policy.address).toMatch(/^tcp:\/\/miduo\.org:/);
-    expect(res.body.policy.connectionString).toMatch(/^mysql:\/\/cds:\*\*\*\*\*\*@miduo\.org:/);
-    expect(res.body.policy.proxyContainerName).toMatch(/^cds-ext-/);
-    expect(res.body.policy.targetHost).toBe('cds-mysql-main');
-    expect(res.body.policy.targetPort).toBe(3306);
-    expect(res.body.policy.allowlist).toEqual(['203.0.113.10/32']);
-    expect(res.body.policy.allowlistEnforced).toBe(true);
-    expect(res.body.resource.externalAccess.allowlistEnforced).toBe(true);
-    expect(res.body.resource.connectionString).toBe(res.body.policy.connectionString);
-
-    const joined = shell.commands.join('\n');
-    expect(joined).toContain('docker run -d');
-    expect(joined).toContain('cds.type=resource-external-access');
-    expect(joined).toContain('-p 0.0.0.0:');
-    expect(joined).toContain('iptables -N CDS_EXT_');
-    expect(joined).toContain('iptables -A CDS_EXT_');
-    expect(joined).toContain('-s 203.0.113.10/32 -j ACCEPT');
-    expect(joined).toContain('-j DROP');
-    expect(joined).toContain('iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdstport');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('禁止直接发布到公网');
+    expect(shell.commands.some((cmd) => cmd.startsWith('docker run -d'))).toBe(false);
   });
 
   it('reuses the resource own external port when updating an already-enabled policy (#805)', async () => {
@@ -290,15 +271,9 @@ describe('resource external TCP access', () => {
       { 'x-test-cookie-auth': '1' },
     );
 
-    expect(res.status).toBe(200);
-    // #805：更新一个已启用资源的策略时，监听中的 43111 是该资源自己的旧 proxy，
-    // 必须稳定复用同一端口，而非分配新端口丢弃既有连接。旧 proxy 在分配之后、
-    // 启动新 proxy 之前被 disableTcpResourceExternalAccess 拆除，不存在双重绑定。
-    expect(res.body.policy.port).toBe(43111);
-    expect(res.body.policy.connectionString).toContain(`miduo.org:${res.body.policy.port}`);
-    const dockerRun = shell.commands.find((cmd) => cmd.startsWith('docker run -d'));
-    expect(dockerRun).toBeTruthy();
-    expect(dockerRun).toContain('-p 0.0.0.0:43111:15432');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('禁止直接发布到公网');
+    expect(shell.commands.some((cmd) => cmd.startsWith('docker run -d'))).toBe(false);
   });
 
   it('rejects enabling public TCP access without an allowlist', async () => {
@@ -379,8 +354,8 @@ describe('resource external TCP access', () => {
       { 'x-test-cookie-auth': '1' },
     );
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain('allowlist');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('禁止直接发布到公网');
     expect(shell.commands.some((cmd) => cmd.startsWith('docker run -d'))).toBe(false);
   });
 });

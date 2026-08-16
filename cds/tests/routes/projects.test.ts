@@ -1177,7 +1177,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
 
       const env = stateService.getCustomEnv(pid);
       expect(env.DATABASE_URL).toMatch(/^mysql:\/\/app:/);
-      expect(env.REDIS_URL).toBe('redis://redis:6379');
+      expect(env.REDIS_URL).toMatch(/^redis:\/\/:.+@redis:6379$/);
       expect(env.RABBITMQ_URL).toMatch(/^amqp:\/\/app:/);
       expect(stateService.getEnvMeta(pid).DATABASE_URL?.kind).toBe('infra-derived');
       expect(stateService.getEnvMeta(pid).RABBITMQ_URL?.kind).toBe('infra-derived');

@@ -64,7 +64,10 @@ const makeInfraService = (projectId: string, overrides?: Partial<InfraService>):
   containerName: 'cds-mongo',
   status: 'stopped',
   volumes: [],
-  env: {},
+  env: {
+    MONGO_INITDB_ROOT_USERNAME: 'root',
+    MONGO_INITDB_ROOT_PASSWORD: 'test-password',
+  },
   createdAt: '2026-04-30T00:00:00Z',
   ...overrides,
 });
