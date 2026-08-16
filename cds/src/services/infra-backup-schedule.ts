@@ -15,7 +15,7 @@
  * 这样能拿真实数值写回归。执行侧在 index.ts。
  */
 
-export type BackupKind = 'mongo' | 'redis';
+export type BackupKind = 'mongo' | 'redis' | 'mysql';
 
 export interface BackupCandidate {
   id: string;
@@ -83,11 +83,12 @@ export function backupDirCandidates(opts: {
   return [...new Set(out)];
 }
 
-/** 只有这两类有成熟的一致性导出手段；其余类型不假装能备。 */
+/** 只有这几类有成熟的一致性导出手段；其余类型不假装能备。 */
 export function backupKindOf(dockerImage: string): BackupKind | null {
   const l = (dockerImage || '').toLowerCase();
   if (l.includes('mongo')) return 'mongo';
   if (l.includes('redis')) return 'redis';
+  if (l.includes('mysql') || l.includes('mariadb')) return 'mysql';
   return null;
 }
 
@@ -98,10 +99,15 @@ export function backupKindOf(dockerImage: string): BackupKind | null {
  * 名字排不出顺序就会删错。`auto` 段把周期备份和 restore 前的 `pre-restore`
  * 快照区分开：后者是救命用的，不该被周期清理顺手删掉。
  */
+const BACKUP_EXT: Record<BackupKind, string> = {
+  mongo: 'archive.gz',
+  redis: 'rdb',
+  mysql: 'sql.gz',
+};
+
 export function backupFileName(id: string, kind: BackupKind, iso: string): string {
   const stamp = iso.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  const ext = kind === 'mongo' ? 'archive.gz' : 'rdb';
-  return `${id}-auto-${stamp}.${ext}`;
+  return `${id}-auto-${stamp}.${BACKUP_EXT[kind]}`;
 }
 
 /** 是不是本模块产出的周期备份。保留策略只处理自己产的，不碰别人的文件。 */

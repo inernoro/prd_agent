@@ -513,7 +513,14 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         return;
       }
 
-      const plan = planInfraBackups(stateService.getInfraServices() || [], { now: new Date() });
+      // 台账里表示存活的字段是 `status`，不是 `running`。直接把台账对象丢进来，
+      // `running === false` 这一档永远不成立——首轮实跑就撞上了：一个已停止的
+      // mongo 被当成目标，`docker exec` 报 No such container。字段名对不上是
+      // 编译器发现不了的那种错（可选字段缺省即 undefined），只能靠真跑一轮。
+      const plan = planInfraBackups(
+        (stateService.getInfraServices() || []).map((s) => ({ ...s, running: s.status === 'running' })),
+        { now: new Date() },
+      );
       if (plan.targets.length === 0) return;
 
       const outcomes: BackupOutcome[] = [];
@@ -522,14 +529,21 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         try {
           let cmd: string;
           if (t.kind === 'mongo') {
-            const env = t.env || {};
-            const user = env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME;
-            const pw = env.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_PASSWORD || env.MONGODB_PASSWORD;
-            // 凭据经 docker exec 的参数传入；不回显、不进日志。
-            const auth = user && pw
-              ? `-u ${shq(user)} -p ${shq(pw)} --authenticationDatabase admin`
-              : '';
-            cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip ${auth} > ${shq(out)}`;
+            // 凭据在**容器内部**展开：既不进宿主命令行（因而不进 CDS 日志、不进
+            // 宿主 ps），也不依赖 CDS 台账里那份 env——台账看不到 compose 导入或
+            // 手工起的容器的真实凭据，照台账取会在有认证的库上静默失败。
+            cmd = `docker exec ${shq(t.containerName)} sh -lc `
+              + `'U="${'$'}{MONGO_INITDB_ROOT_USERNAME:-${'$'}{MONGO_USERNAME:-${'$'}MONGODB_USERNAME}}"; `
+              + `P="${'$'}{MONGO_INITDB_ROOT_PASSWORD:-${'$'}{MONGO_PASSWORD:-${'$'}MONGODB_PASSWORD}}"; `
+              + `if [ -n "${'$'}U" ]; then mongodump --archive --gzip -u "${'$'}U" -p "${'$'}P" --authenticationDatabase admin; `
+              + `else mongodump --archive --gzip; fi' > ${shq(out)}`;
+          } else if (t.kind === 'mysql') {
+            // 同理，密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器
+            // 自己的进程列表里。--single-transaction 保证 InnoDB 一致性快照。
+            cmd = `docker exec ${shq(t.containerName)} sh -lc `
+              + `'MYSQL_PWD="${'$'}{MYSQL_ROOT_PASSWORD:-${'$'}MARIADB_ROOT_PASSWORD}" `
+              + `mysqldump -uroot --all-databases --single-transaction --quick --routines --events 2>/dev/null `
+              + `| gzip' > ${shq(out)}`;
           } else {
             // redis：BGSAVE 落盘后拷 dump.rdb。BGSAVE 是异步的，这里让它先写完再拷；
             // 拷到半截的 rdb 是坏文件，而坏备份比没有备份更危险（以为有、其实没有）。

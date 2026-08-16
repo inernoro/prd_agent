@@ -37,15 +37,18 @@ const NOW = new Date('2026-08-16T12:00:00.000Z');
 const daysAgo = (n: number): number => NOW.getTime() - n * 24 * 60 * 60_000;
 
 describe('选谁备份', () => {
-  it('只备 mongo 与 redis，其余明说不支持而不是静默跳过', () => {
+  it('只备有一致性导出手段的类型，其余明说不支持而不是静默跳过', () => {
     const plan = planInfraBackups([
       cand({ id: 'mongodb' }),
       cand({ id: 'redis', dockerImage: 'redis:7-alpine' }),
+      cand({ id: 'mysql', dockerImage: 'mysql:8' }),
       cand({ id: 'kafka', dockerImage: 'apache/kafka:3.7' }),
+      cand({ id: 'minio', dockerImage: 'minio/minio:latest' }),
     ], { now: NOW });
-    expect(plan.targets.map((t) => t.id)).toEqual(['mongodb', 'redis']);
-    expect(plan.skipped).toHaveLength(1);
-    expect(plan.skipped[0].reason).toContain('不支持');
+    expect(plan.targets.map((t) => t.id)).toEqual(['mongodb', 'redis', 'mysql']);
+    expect(plan.skipped.map((s) => s.id)).toEqual(['kafka', 'minio']);
+    // 跳过的必须写明为什么，否则「没备份」和「不需要备份」分不开
+    for (const s of plan.skipped) expect(s.reason).toContain('不支持');
   });
 
   it('没在跑的容器跳过并说明原因', () => {
@@ -54,12 +57,14 @@ describe('选谁备份', () => {
     expect(plan.skipped[0].reason).toContain('未运行');
   });
 
-  it('两类库各用各的扩展名', () => {
+  it('每类库各用各的扩展名', () => {
     expect(backupKindOf('mongo:8.0')).toBe('mongo');
     expect(backupKindOf('redis:7-alpine')).toBe('redis');
-    expect(backupKindOf('mysql:8')).toBeNull();
+    expect(backupKindOf('mysql:8')).toBe('mysql');
+    expect(backupKindOf('apache/kafka:3.7')).toBeNull();
     expect(backupFileName('mongodb', 'mongo', NOW.toISOString())).toMatch(/\.archive\.gz$/);
     expect(backupFileName('redis', 'redis', NOW.toISOString())).toMatch(/\.rdb$/);
+    expect(backupFileName('mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
   });
 
   /** 保留策略靠排序选旧的，名字排不出时间序就会删错。 */
@@ -264,5 +269,59 @@ describe('目录与磁盘失败必须说清原因', () => {
   it('没有可写目录时列出试过哪些、并指出逃生阀', () => {
     expect(CODE).toContain("action: 'infra.backup.skipped.nodir'");
     expect(CODE).toContain('CDS_BACKUP_DIR');
+  });
+});
+
+/**
+ * 首轮实跑抓出来的两件事。单测当时全绿——这两个都是只有真跑才会暴露的形状。
+ */
+describe('首轮实跑暴露的缺陷', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+  const CODE = SRC.split('\n')
+    .filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')); })
+    .join('\n');
+
+  /**
+   * 台账里表示存活的字段叫 `status`，不是 `running`。直接把台账对象丢进
+   * `planInfraBackups`，`running === false` 这一档永远不成立——一个已停止的 mongo
+   * 因此被当成目标，`docker exec` 报 No such container。
+   *
+   * 可选字段缺省即 undefined，编译器发现不了这种字段名对不上。
+   */
+  it('调用点把台账的 status 映射成 running', () => {
+    expect(CODE).toMatch(/running:\s*s\.status === 'running'/);
+  });
+
+  it('已停止的目标确实会被判定层剔除（映射之后这一档才生效）', () => {
+    const ledgerLike = [{ id: 'm', projectId: 'p', containerName: 'c', dockerImage: 'mongo:8', status: 'stopped' }];
+    const mapped = ledgerLike.map((s) => ({ ...s, running: s.status === 'running' }));
+    expect(planInfraBackups(mapped, { now: NOW }).targets).toHaveLength(0);
+    // 不映射就会漏进去——这正是首轮的失败原因
+    expect(planInfraBackups(ledgerLike as never, { now: NOW }).targets).toHaveLength(1);
+  });
+
+  it('MySQL 纳入备份范围（四个项目的库此前完全没有自动备份）', () => {
+    expect(backupKindOf('mysql:8')).toBe('mysql');
+    expect(backupKindOf('mariadb:11')).toBe('mysql');
+    expect(backupFileName('mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
+    expect(CODE).toContain('mysqldump');
+    expect(CODE).toContain('--single-transaction');
+  });
+
+  /**
+   * 凭据必须在**容器内部**展开：不进宿主命令行（因而不进 CDS 日志与宿主 ps），
+   * 也不依赖 CDS 台账里那份 env——台账看不到 compose 导入 / 手工起的容器的真实
+   * 凭据，照台账取会在有认证的库上静默失败。
+   */
+  it('备份命令不把凭据插进宿主命令行', () => {
+    // 判据要盯「从台账取凭据」这个动作本身，别用 `-p ${shq(` 这种形状去猜——
+    // 它会把 `mkdir -p ${shq(dir)}` 一起匹配上（判据太宽，今天已经栽过同款）。
+    expect(CODE).not.toMatch(/const pw = env\./);
+    expect(CODE).not.toMatch(/MONGO_INITDB_ROOT_PASSWORD \|\| env\./);
+    // TS 源码里 `$` 写成 `${'$'}` 转义。断言必须针对**渲染出来的 shell 文本**，
+    // 不是源码字面量——直接扫源码就是在读一个和运行时不同的值（今天栽过同款）。
+    const SHELL = CODE.replace(/\$\{'\$'\}/g, '$');
+    expect(SHELL).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD');
+    expect(SHELL).toMatch(/\$\{MONGO_INITDB_ROOT_PASSWORD:-/);
   });
 });
