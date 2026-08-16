@@ -6,6 +6,7 @@ import {
   BIND_HOST_ENV,
   DEFAULT_BIND_HOST,
   describeListenDecision,
+  detectContainerRuntime,
   isExposedHost,
   resolveListenHost,
 } from '../../src/services/listen-host.js';
@@ -123,5 +124,62 @@ describe('index.ts 真的把地址传给了 listen', () => {
 
   it('启动日志打出了实际监听地址', () => {
     expect(CODE).toContain('describeListenDecision(');
+  });
+});
+
+/**
+ * 容器里的回环是**容器自己的**回环。`docker -p 9900:9900` 转发到容器的网络接口，
+ * 不是它的 lo——绑回环等于把发布出去的端口全打死，而容器内的 healthcheck
+ * （curl localhost:9900/healthz）照样通过：健康与可达彻底脱钩。
+ */
+describe('容器内必须绑全网卡', () => {
+  it('检测到容器就放开，并说清原因', () => {
+    const d = resolveListenHost({ mode: 'standalone', containerized: true, processEnv: {} });
+    expect(d.host).toBe(ALL_INTERFACES_HOST);
+    expect(d.exposed).toBe(true);
+    expect(d.reason).toContain('容器');
+  });
+
+  it('容器判定排在集群角色之前——它是必然坏，集群只是可能需要', () => {
+    // standalone + 零集群成员，唯一能救它的就是容器判定。
+    const d = resolveListenHost({
+      mode: 'standalone', remoteExecutorCount: 0, peerCount: 0,
+      containerized: true, processEnv: {},
+    });
+    expect(d.host).toBe(ALL_INTERFACES_HOST);
+  });
+
+  it('显式 CDS_BIND_HOST 仍然压过容器判定', () => {
+    const d = resolveListenHost({ containerized: true, processEnv: { CDS_BIND_HOST: '127.0.0.1' } });
+    expect(d.host).toBe('127.0.0.1');
+    expect(d.exposed).toBe(false);
+  });
+
+  it('不在容器里时维持回环默认', () => {
+    expect(resolveListenHost({ mode: 'standalone', containerized: false, processEnv: {} }).host)
+      .toBe(DEFAULT_BIND_HOST);
+  });
+
+  it('探测失败按「不在容器里」处理——宁可本机连不上，也不要端口意外敞开', () => {
+    const boom = {
+      existsSync: () => { throw new Error('EACCES'); },
+      readFileSync: () => { throw new Error('EACCES'); },
+    };
+    expect(detectContainerRuntime(boom)).toBe(false);
+  });
+
+  it('/.dockerenv 与 cgroup 两条判据各自都算数', () => {
+    expect(detectContainerRuntime({
+      existsSync: (p) => p === '/.dockerenv',
+      readFileSync: () => '',
+    })).toBe(true);
+    expect(detectContainerRuntime({
+      existsSync: () => false,
+      readFileSync: () => '0::/kubepods/burstable/podabc/xyz',
+    })).toBe(true);
+    expect(detectContainerRuntime({
+      existsSync: () => false,
+      readFileSync: () => '0::/init.scope',
+    })).toBe(false);
   });
 });

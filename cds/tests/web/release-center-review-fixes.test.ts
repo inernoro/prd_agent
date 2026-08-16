@@ -257,3 +257,39 @@ describe('自动发布规则丢弃切项目前的旧响应', () => {
     expect(source).toMatch(/setJobs\(\[\]\);\s*\n\s*void load\(\);/);
   });
 });
+
+/**
+ * 第六轮。前两条与第五轮的 EvidenceSection / AutoRulesSection 是**同一个形状**在
+ * 控制台页的另一处——修一处不横扫同类，下一轮照样被指出来。所以这次连带把
+ * 控制台的历史轨与项目切换一起收了。
+ */
+describe('发布控制台：切项目后丢弃旧响应', () => {
+  const page = read('pages/ReleaseConsolePage.tsx');
+
+  it('center 请求带代次，过期响应既不写数据也不写错误', () => {
+    // 挂在 B 名下却列着 A 的环境时，重试/回滚/取消/发布都按 A 的 id 发出去。
+    expect(page).toContain('const centerSeq = useRef(0);');
+    expect(page).toContain('const seq = ++centerSeq.current;');
+    expect(page.match(/if \(seq !== centerSeq\.current\) return;/g) || []).toHaveLength(2);
+  });
+
+  it('切项目时先清空 center', () => {
+    expect(page).toMatch(/setProjectId\(item\.id\);\s*setCenter\(null\);/);
+  });
+});
+
+describe('发布控制台历史轨不把在途当成功', () => {
+  const page = read('pages/ReleaseConsolePage.tsx');
+
+  it('状态走 shared 映射，不再是「非失败非线上即成功」', () => {
+    expect(page).toMatch(/import \{[^}]*runTone[^}]*\} from '\.\/release-center\/shared'/);
+    expect(page).not.toContain("{itemFailed ? '失败' : live ? '线上' : '成功'}");
+    expect(page).toContain("live ? '线上' : statusLabel(item.status)");
+  });
+
+  it('回滚只给真正发完的版本', () => {
+    expect(page).toContain("const itemDone = item.status === 'success' || item.status === 'rollback_success';");
+    expect(page).toContain('{itemDone && itemRow?.canRollback && !live ? (');
+    expect(page).not.toContain('{!itemFailed && itemRow?.canRollback');
+  });
+});

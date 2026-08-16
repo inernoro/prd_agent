@@ -42,7 +42,7 @@ import { buildConsoleStance, sameCommit } from '@/lib/releaseConsoleState';
 import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
-import { Chip, formatClock, formatDateTime, formatDuration } from './release-center/shared';
+import { Chip, formatClock, formatDateTime, formatDuration, runTone, statusLabel } from './release-center/shared';
 // BranchOption 复用发布中心那一份：分支的展示名是 `branch` 不是 `name`，
 // 自己再声明一个接口只会让 TS 对着一个不存在的字段点头（真实数据里下拉全是空的）。
 import type { BranchOption, CenterResponse, ReleaseCommitMeta, ReleaseLogEntry, ReleaseRun } from './release-center/types';
@@ -261,16 +261,28 @@ export function ReleaseConsolePage(): JSX.Element {
       .catch((err) => setError(err instanceof ApiError ? err.message : String(err)));
   }, []);
 
+  /**
+   * 请求代次。切项目时自增，晚到的旧项目响应一律丢弃。
+   *
+   * 没有这道闸：从 A 切到 B 时 A 的响应晚一步回来照样 setCenter，控制台挂在 B
+   * 名下、列的却是 A 的环境。之后的重试、回滚、取消、发布都按那份 A 的 id 发出去
+   * ——不是显示错位，是对着另一个项目动手。
+   */
+  const centerSeq = useRef(0);
+
   const loadCenter = useCallback(async (): Promise<void> => {
     if (!projectId) return;
+    const seq = ++centerSeq.current;
     try {
       const res = await apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`);
+      if (seq !== centerSeq.current) return;
       setCenter(res);
       setError('');
       // 只在当前选中项消失时清空，让 resolveSelectedTargetId 去挑；这里别自己挑 rows[0]。
       // 从发布中心带过来的 target 也走这条：它在就保留，不在（换了项目）就让默认逻辑接管。
       setTargetId((current) => (res.rows.some((item) => item.target.id === current) ? current : ''));
     } catch (err) {
+      if (seq !== centerSeq.current) return;
       setError(err instanceof ApiError ? err.message : String(err));
     }
   }, [projectId]);
@@ -677,7 +689,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   key={item.id}
                   type="button"
                   aria-pressed={item.id === projectId}
-                  onClick={() => { setProjectId(item.id); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); }}
+                  onClick={() => { setProjectId(item.id); setCenter(null); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); }}
                   className={`mb-1 flex w-full flex-col gap-1 rounded-[9px] border px-3 py-2.5 text-left transition-colors ${
                     item.id === projectId
                       ? 'border-primary/40 bg-primary/[0.08]'
@@ -1182,6 +1194,12 @@ export function ReleaseConsolePage(): JSX.Element {
                       const itemRow = rows.find((r) => r.target.id === item.targetId);
                       const itemFailed = isReleaseFailed(item.status);
                       const live = itemRow?.currentVersion === item.releaseId;
+                      // 「不是失败、也不是线上」不等于「成功」：queued / running /
+                      // healthchecking / rollback_running 都落在这一档，原来一律绿点
+                      // 加「成功」，还给出回滚入口——回滚到一个还没发完的版本。
+                      // 状态判定复用 release-center/shared 那份唯一映射。
+                      const itemTone = runTone(item.status);
+                      const itemDone = item.status === 'success' || item.status === 'rollback_success';
                       const itemBusy = rowBusy === item.releaseId;
                       return (
                         <div
@@ -1196,7 +1214,7 @@ export function ReleaseConsolePage(): JSX.Element {
                             <span className="flex min-w-0 items-center gap-2">
                               <span
                                 className={`h-[7px] w-[7px] shrink-0 rounded-full ${
-                                  itemFailed ? 'bg-bad' : live ? 'bg-primary' : 'bg-ok'
+                                  itemFailed ? 'bg-bad' : live ? 'bg-primary' : itemTone === 'warn' ? 'bg-warn' : itemDone ? 'bg-ok' : 'bg-muted-foreground'
                                 }`}
                               />
                               <span className="shrink-0 cds-ident text-xs font-medium">{item.commitSha.slice(0, 7)}</span>
@@ -1204,8 +1222,8 @@ export function ReleaseConsolePage(): JSX.Element {
                                 {itemRow?.target.name || item.targetId}
                               </span>
                             </span>
-                            <span className={`shrink-0 cds-ident text-[10.5px] ${itemFailed ? 'text-bad' : live ? 'text-primary' : 'text-ok'}`}>
-                              {itemFailed ? '失败' : live ? '线上' : '成功'}
+                            <span className={`shrink-0 cds-ident text-[10.5px] ${itemFailed ? 'text-bad' : live ? 'text-primary' : itemTone === 'warn' ? 'text-warn' : itemDone ? 'text-ok' : 'text-muted-foreground'}`}>
+                              {itemFailed ? '失败' : live ? '线上' : statusLabel(item.status)}
                             </span>
                           </div>
                           {/* 第二行：左元信息右操作（参考稿同一行）。元信息不 truncate——
@@ -1252,7 +1270,7 @@ export function ReleaseConsolePage(): JSX.Element {
                             >
                               {itemBusy ? '提交中' : '重发这一版'}
                             </button>
-                            {!itemFailed && itemRow?.canRollback && !live ? (
+                            {itemDone && itemRow?.canRollback && !live ? (
                               <button
                                 type="button"
                                 disabled={itemBusy || inFlight}

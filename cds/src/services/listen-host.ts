@@ -23,11 +23,23 @@
  * 原因。把「配置写了但在这套部署里根本不成立」当成保护，是最容易骗过自己的一种
  * 假安全。
  *
- * ## 逃生阀
+ * ## 为什么容器里必须绑全网卡
+
+容器里的回环是**容器自己的**回环。`docker -p 9900:9900` 转发的目标是容器的网络
+接口，不是它的 lo——绑回环等于把发布出去的端口全部打死，而容器内的 healthcheck
+（`curl localhost:9900/healthz`）照样通过，于是「健康」和「可达」彻底脱钩，
+故障表现成外面连不上、里面一切正常。
+
+容器里也不需要靠绑回环来隔离：隔离由 network namespace 提供，暴露与否完全取决于
+运维有没有 `-p`。所以检测到容器就绑全网卡，并在启动日志里说清是因为这个。
+
+## 逃生阀
  *
  * `CDS_BIND_HOST` 显式覆盖，优先级最高。直接用 IP:端口 访问面板（前面没有 nginx）
  * 的部署，把它设成 `0.0.0.0` 即可。
  */
+
+import nodeFs from 'node:fs';
 
 /** 单机部署的默认监听地址。 */
 export const DEFAULT_BIND_HOST = '127.0.0.1';
@@ -45,6 +57,8 @@ export interface ListenHostInputs {
   remoteExecutorCount?: number;
   /** 已配置的 CDS 对等节点数量。 */
   peerCount?: number;
+  /** 是否跑在容器里。缺省时由 detectContainerRuntime() 现探。 */
+  containerized?: boolean;
   /** 供测试注入。 */
   processEnv?: Record<string, string | undefined>;
 }
@@ -57,6 +71,27 @@ export interface ListenHostDecision {
   exposed: boolean;
 }
 
+/**
+ * 是不是跑在容器里。
+ *
+ * `/.dockerenv` 是 docker 建容器时放的标记文件；cgroup 里出现 docker / containerd /
+ * kubepods 覆盖其余运行时。两个判据都读不到时返回 false——探测失败按「不在容器里」
+ * 处理，那是更安全的那一档（最坏是本机连不上，不是端口意外敞开）。
+ */
+export function detectContainerRuntime(fsLike?: {
+  existsSync: (p: string) => boolean;
+  readFileSync: (p: string, enc: string) => string;
+}): boolean {
+  try {
+    const fs = fsLike ?? nodeFs;
+    if (fs.existsSync('/.dockerenv')) return true;
+    const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf8');
+    return /docker|containerd|kubepods|libpod/.test(String(cgroup));
+  } catch {
+    return false;
+  }
+}
+
 /** 判定一个监听地址是不是「全部网卡」。空值按对外处理——未知不当安全。 */
 export function isExposedHost(host: string | undefined | null): boolean {
   const h = (host || '').trim();
@@ -67,7 +102,7 @@ export function isExposedHost(host: string | undefined | null): boolean {
 /**
  * 算出 CDS 自身该监听在哪个地址上。
  *
- * 优先级：显式 `CDS_BIND_HOST` > 集群角色自动放开 > 默认回环。
+ * 优先级：显式 `CDS_BIND_HOST` > 容器内放开 > 集群角色自动放开 > 默认回环。
  */
 export function resolveListenHost(inputs: ListenHostInputs = {}): ListenHostDecision {
   const env = inputs.processEnv ?? process.env;
@@ -77,6 +112,17 @@ export function resolveListenHost(inputs: ListenHostInputs = {}): ListenHostDeci
       host: explicit,
       reason: `${BIND_HOST_ENV} 显式指定`,
       exposed: isExposedHost(explicit),
+    };
+  }
+
+  // 容器判定排在集群角色之前：容器里绑回环是**必然坏**（发布端口全部打死），
+  // 而集群角色只是「可能需要放开」。必然坏的那一档要先兜住。
+  const containerized = inputs.containerized ?? detectContainerRuntime();
+  if (containerized) {
+    return {
+      host: ALL_INTERFACES_HOST,
+      reason: `容器内运行：绑回环会让 docker 发布的端口全部不可达，隔离由容器网络与 -p 决定（如需强制回环请设 ${BIND_HOST_ENV}=127.0.0.1）`,
+      exposed: true,
     };
   }
 
