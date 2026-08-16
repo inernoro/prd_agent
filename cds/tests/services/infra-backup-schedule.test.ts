@@ -7,6 +7,7 @@ import {
   DEFAULT_MIN_FREE_BYTES,
   backupDirCandidates,
   backupFileName,
+  buildMysqlDumpScript,
   buildRedisBackupProbeScript,
   backupKindOf,
   isAutoBackupFile,
@@ -307,8 +308,10 @@ describe('首轮实跑暴露的缺陷', () => {
     expect(backupKindOf('mysql:8')).toBe('mysql');
     expect(backupKindOf('mariadb:11')).toBe('mysql');
     expect(backupFileName('proj-a', 'mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
-    expect(CODE).toContain('mysqldump');
-    expect(CODE).toContain('--single-transaction');
+    // 命令本体搬进 buildMysqlDumpScript()（那边有真 shell 的行为判据），
+    // 这里断言真正会执行的那段文本，不是 index.ts 的源码字面量。
+    expect(buildMysqlDumpScript()).toContain('mysqldump');
+    expect(buildMysqlDumpScript()).toContain('--single-transaction');
   });
 
   /**
@@ -324,7 +327,7 @@ describe('首轮实跑暴露的缺陷', () => {
     // TS 源码里 `$` 写成 `${'$'}` 转义。断言必须针对**渲染出来的 shell 文本**，
     // 不是源码字面量——直接扫源码就是在读一个和运行时不同的值（今天栽过同款）。
     const SHELL = CODE.replace(/\$\{'\$'\}/g, '$');
-    expect(SHELL).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD');
+    expect(buildMysqlDumpScript()).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD');
     expect(SHELL).toMatch(/\$\{MONGO_INITDB_ROOT_PASSWORD:-/);
   });
 });
@@ -387,25 +390,41 @@ describe('备份不许静默成功', () => {
     .join('\n');
 
   /**
-   * 两个坑叠在一起，只躲开一个还是坏的：
-   *
-   * 1. `mysqldump | gzip` 的退出码默认是 **gzip 的**。dump 因凭据错误中断时 gzip
-   *    照样成功、产出几十字节的合法 gzip 头，非空检查放行。
-   * 2. 想用 `set -o pipefail` 补救的话——`set` 是特殊内建，dash 不认 `-o pipefail`
-   *    会**直接终止 shell**，`|| true` 拦不住（实测退出码 2，dump 一次都没跑）。
-   *    Debian 系 mariadb 镜像的 /bin/sh 正是 dash，于是「静默成功」变成「必然失败」。
-   *
-   * 所以容器里不许出现管道，也不许出现 pipefail：只跑 mysqldump，压缩交给宿主，
-   * 两步用 && 串起来各判各的退出码。
+   * 三个坑轮着踩过一遍，行为判据在下面「MySQL 导出脚本」那一组（真 shell 跑）。
+   * 这里只管接线：index.ts 必须用那个共享脚本，且不许再出现中转 .sql 的两步落盘
+   * ——那一版退出码是对的，代价是把未压缩的全量 dump 落在盘上，单个大库就能把
+   * 宿主根盘写满。
    */
-  it('MySQL 不在容器里摆管道，也不依赖 pipefail', () => {
+  it('MySQL 走共享脚本流式压缩，不再中转未压缩 dump', () => {
     expect(CODE).not.toContain('set -o pipefail');
-    // 容器里只有一条 mysqldump（exec 掉，退出码原样带回宿主），没有任何管道。
-    expect(CODE).toContain('exec mysqldump -uroot');
-    expect(CODE).not.toMatch(/mysqldump[^\n]*\|/);
-    // 压缩与清理都在宿主侧，靠 && 串联：任一环失败整条失败。
-    expect(CODE).toMatch(/&& gzip -n -c \$\{shq\(raw\)\} > \$\{shq\(out\)\}/);
-    expect(CODE).not.toMatch(/mysqldump[^\n]*2>\/dev\/null/);
+    expect(CODE).toContain('buildMysqlDumpScript()');
+    // 中转文件的两处特征都不许留：`${out}.sql` 与宿主侧 gzip。
+    expect(CODE).not.toMatch(/const raw = `\$\{out\}\.sql`/);
+    expect(CODE).not.toMatch(/gzip -n -c \$\{shq\(raw\)\}/);
+  });
+
+  /**
+   * 磁盘闸必须**每个目标之前**都查一次。只在轮次开头查一次的话，前面那个大库
+   * 写完之后，后面每一个目标的前提都已经不成立了——而写满宿主根盘会同时打死
+   * 所有预览、构建和 CDS 自己。
+   */
+  it('磁盘闸在目标循环内复查，不足就停掉剩余目标', () => {
+    expect(CODE).toMatch(/const diskGate = async \(\)/);
+    const loopAt = CODE.indexOf('for (const t of plan.targets)');
+    expect(loopAt).toBeGreaterThan(0);
+    expect(CODE.slice(loopAt, loopAt + 500)).toContain('await diskGate()');
+    // 剩余目标要被记成「未执行」，不能悄悄少备几个还报全绿。
+    expect(CODE).toContain('磁盘不足，未执行');
+  });
+
+  /**
+   * 单飞闸。一轮跑过六小时的间隔时，setInterval 会把下一轮叠上来，两轮共用同一个
+   * `.tmp`：后进门的先 rm -rf 再重建，把前一轮正在写的文件删掉，双双记失败。
+   */
+  it('自动备份有单飞闸，且在 finally 里放闸', () => {
+    expect(CODE).toContain('let inFlight = false');
+    expect(CODE).toMatch(/if \(inFlight\) \{/);
+    expect(CODE).toMatch(/\} finally \{\s*\n[^}]*inFlight = false;/);
   });
 
   /**
@@ -519,7 +538,8 @@ describe('Redis 备份探测脚本', () => {
   it('完成之后还要证明 dump.rdb 确实被这次写过', () => {
     // 完成不等于写的是这个文件：路径不对、save 被禁用都会留下一个旧文件，
     // 而 docker cp 会把它当成新备份拷走。
-    expect(SCRIPT).toContain('stat -c %Y /data/dump.rdb');
+    // 路径不再写死：stat 的是 CONFIG GET 解析出来的那个（判据见「Redis 快照路径取运行时真值」）。
+    expect(SCRIPT).toContain('mt=$(stat -c %Y "$RDB"');
     expect(SCRIPT).toMatch(/\[ "\$mt" -ge "\$start" \]/);
   });
 
@@ -529,5 +549,157 @@ describe('Redis 备份探测脚本', () => {
     const codes = [...SCRIPT.matchAll(/exit (\d+)/g)].map((m) => m[1]).filter((c) => c !== '0');
     expect(new Set(codes).size).toBe(codes.length);
     expect(codes.length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+/**
+ * MySQL 导出脚本：拿**真 shell** 跑，不扫源码。
+ *
+ * 这段脚本的全部价值在于「dump 失败时整条要失败」，而那恰恰是扫源码证明不了的
+ * ——三个版本的源码看着都对：直接管道（退出码取了 gzip 的）、pipefail（dash 直接
+ * 终止 shell）、两步落盘（对，但把未压缩全量 dump 落在盘上）。所以这里用一个假的
+ * mysqldump 顶上去，成功一遍失败一遍，看脚本到底给出什么退出码、写出什么字节。
+ */
+describe('MySQL 导出脚本', () => {
+  const SCRIPT = buildMysqlDumpScript();
+
+  /** 造一个假 mysqldump 放进 PATH：按 want 决定输出与退出码。 */
+  const withFakeDump = (opts: { stdout: string; exit: number }): { dir: string; run: () => { status: number; stdout: Buffer } } => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-mysqldump-'));
+    fs.writeFileSync(
+      path.join(dir, 'mysqldump'),
+      `#!/bin/sh\nprintf '%s' ${JSON.stringify(opts.stdout)}\nexit ${opts.exit}\n`,
+      { mode: 0o755 },
+    );
+    return {
+      dir,
+      run: () => {
+        const res = execFileSync('/bin/sh', ['-c', SCRIPT], {
+          cwd: dir,
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+          encoding: 'buffer',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        return { status: 0, stdout: res as unknown as Buffer };
+      },
+    };
+  };
+
+  it('是合法的 POSIX sh（拿真 shell 过一遍 -n）', () => {
+    execFileSync('/bin/sh', ['-n'], { input: SCRIPT, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  });
+
+  it('dump 成功：stdout 是 gzip 流，解开还是原文', () => {
+    const { dir, run } = withFakeDump({ stdout: 'CREATE TABLE t;', exit: 0 });
+    const { stdout } = run();
+    // gzip 魔数，证明压缩发生在这条路径上而不是留了个明文
+    expect(stdout[0]).toBe(0x1f);
+    expect(stdout[1]).toBe(0x8b);
+    const out = path.join(dir, 'out.gz');
+    fs.writeFileSync(out, stdout);
+    expect(execFileSync('gzip', ['-dc', out], { encoding: 'utf8' })).toBe('CREATE TABLE t;');
+  });
+
+  it('dump 失败：整条按失败退出，不被 gzip 的成功盖掉', () => {
+    // 关键判据。老写法在这里会拿到 0——一份几十字节的合法 gzip 头被记成成功备份，
+    // 还可能按保留策略把真正可用的旧副本删掉。
+    const { run } = withFakeDump({ stdout: '-- partial', exit: 3 });
+    let status = 0;
+    try { run(); } catch (err) { status = (err as { status: number }).status; }
+    expect(status).toBe(3);
+  });
+
+  it('全程零中转文件：跑完目录里除了假 mysqldump 什么都没多出来', () => {
+    const { dir, run } = withFakeDump({ stdout: 'x'.repeat(4096), exit: 0 });
+    run();
+    expect(fs.readdirSync(dir).sort()).toEqual(['mysqldump']);
+  });
+
+  it('凭据在容器内展开，不出现在宿主命令行里', () => {
+    expect(SCRIPT).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"');
+    expect(SCRIPT).not.toContain('set -o pipefail');
+  });
+});
+
+/**
+ * Redis 快照路径必须问 redis 自己（Codex 第十二轮 P1）。
+ *
+ * `/data/dump.rdb` 只是官方镜像的默认值。配了 `dir` 或 `dbfilename` 的实例
+ * （compose 里很常见）把快照写在别处，按默认路径 stat 到的是一个不存在或很旧的
+ * 文件——判据于是把每一次**正常**的 BGSAVE 都判成失败，那种配置下自动备份永远
+ * 不会成功一次。这里用假的 redis-cli 真跑一遍脚本尾段，看它到底解析出什么路径。
+ */
+describe('Redis 快照路径取运行时真值', () => {
+  const SCRIPT = buildRedisBackupProbeScript();
+
+  /** 只跑「解析路径 + 校验 mtime + 回传」那一段，前面的 BGSAVE 等待要连真 redis。 */
+  const resolvePath = (opts: { dir: string; dbfilename: string; touch?: boolean; start?: number }): { status: number; stdout: string } => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-path-'));
+    const dataDir = path.join(box, 'data');
+    fs.mkdirSync(dataDir, { recursive: true });
+    const realDir = opts.dir === 'DATA' ? dataDir : opts.dir;
+    fs.writeFileSync(
+      path.join(box, 'redis-cli'),
+      `#!/bin/sh\ncase "$*" in\n  'CONFIG GET dir') printf 'dir\\n%s\\n' ${JSON.stringify(realDir)} ;;\n`
+      + `  'CONFIG GET dbfilename') printf 'dbfilename\\n%s\\n' ${JSON.stringify(opts.dbfilename)} ;;\nesac\n`,
+      { mode: 0o755 },
+    );
+    if (opts.touch !== false) fs.writeFileSync(path.join(realDir, opts.dbfilename), 'RDB');
+    // start 是 mtime 下界：0 等于只考察「解析到哪个路径」，1 用来验「文件不在就判失败」
+    // （文件缺失时 stat 失败 → mt=0，0 >= 1 不成立）。
+    const tail = SCRIPT.split('\n');
+    const cut = tail.findIndex((l) => l.startsWith('D=$(redis-cli CONFIG GET dir'));
+    expect(cut).toBeGreaterThan(0);
+    const script = `start=${opts.start ?? 0}\n${tail.slice(cut).join('\n')}`;
+    try {
+      const stdout = execFileSync('/bin/sh', ['-s'], {
+        input: script,
+        encoding: 'utf8',
+        env: { PATH: `${box}:${process.env.PATH}` },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      return { status: 0, stdout };
+    } catch (err) {
+      const e = err as { status: number; stdout: Buffer };
+      return { status: e.status, stdout: String(e.stdout || '') };
+    }
+  };
+
+  it('自定义 dir + dbfilename 时回传的是真实路径', () => {
+    const r = resolvePath({ dir: 'DATA', dbfilename: 'snapshot.rdb' });
+    expect(r.status).toBe(0);
+    expect(r.stdout.endsWith('/snapshot.rdb')).toBe(true);
+  });
+
+  it('CONFIG GET 取不到时退回官方默认，不留空路径', () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-empty-'));
+    fs.writeFileSync(path.join(box, 'redis-cli'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const tail = SCRIPT.split('\n');
+    const cut = tail.findIndex((l) => l.startsWith('D=$(redis-cli CONFIG GET dir'));
+    // 只取到 RDB 赋值为止，绕开 stat 判据——这里只看兜底值本身。
+    const upto = tail.slice(cut).findIndex((l) => l.startsWith('RDB='));
+    const script = `${tail.slice(cut, cut + upto + 1).join('\n')}\nprintf '%s' "$RDB"`;
+    const out = execFileSync('/bin/sh', ['-s'], {
+      input: script, encoding: 'utf8', env: { PATH: `${box}:${process.env.PATH}` },
+    });
+    expect(out).toBe('/data/dump.rdb');
+  });
+
+  it('路径上没有文件时判失败，不让宿主去拷一个不存在的东西', () => {
+    const r = resolvePath({ dir: 'DATA', dbfilename: 'missing.rdb', touch: false, start: 1 });
+    expect(r.status).toBe(26);
+  });
+});
+
+/** 接线守卫：脚本解析出来的路径必须真的被 docker cp 用上。 */
+describe('宿主按探测回传的路径拷贝', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+
+  it('docker cp 用 rdbPath，且不再拼默认路径', () => {
+    expect(SRC).toContain('const rdbPath = (redisProbe.stdout');
+    expect(SRC).toContain('docker cp ${shq(`${t.containerName}:${rdbPath}`)}');
+    expect(SRC).not.toContain('${t.containerName}:/data/dump.rdb');
+    // 回传缺失时宁可失败，也不许悄悄猜一个默认路径。
+    expect(SRC).toContain('拒绝按默认路径猜');
   });
 });

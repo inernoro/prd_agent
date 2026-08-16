@@ -319,8 +319,56 @@ export function buildRedisBackupProbeScript(): string {
   '  i=$((i+1)); sleep 1',
   'done',
   '[ "$ip" = "0" ] || { echo "BGSAVE 超时未完成" >&2; exit 25; }',
+  // 快照落在哪，要问 redis 自己。`/data/dump.rdb` 只是官方镜像的默认值：
+  // 配了 `dir` 或 `dbfilename` 的实例（compose 里很常见）会写到别处，
+  // 那时按默认路径 stat 到的是一个**根本不存在或很旧**的文件——
+  // 判据会把每一次正常的 BGSAVE 都判失败，而 docker cp 也会拷错东西。
+  `D=$(redis-cli CONFIG GET dir 2>/dev/null | sed -n '2p' | tr -d '\\r')`,
+  `F=$(redis-cli CONFIG GET dbfilename 2>/dev/null | sed -n '2p' | tr -d '\\r')`,
+  '[ -n "$D" ] || D=/data',
+  '[ -n "$F" ] || F=dump.rdb',
+  'RDB="$D/$F"',
   // 完成了不等于这个文件被写过：路径不对、save 被禁用都会留下旧文件。
-  'mt=$(stat -c %Y /data/dump.rdb 2>/dev/null || echo 0)',
-  '[ "$mt" -ge "$start" ] || { echo "dump.rdb 未被本次 BGSAVE 更新（mtime=$mt start=$start）" >&2; exit 26; }',
+  'mt=$(stat -c %Y "$RDB" 2>/dev/null || echo 0)',
+  '[ "$mt" -ge "$start" ] || { echo "$RDB 未被本次 BGSAVE 更新（mtime=$mt start=$start）" >&2; exit 26; }',
+  // 最后一行是**给宿主用的**：docker cp 要拷的就是这个路径。
+  // 这条链路只有一个真值来源，宿主不许自己再拼一次默认路径。
+  'printf "%s" "$RDB"',
+  ].join('\n');
+}
+
+/**
+ * MySQL / MariaDB 的导出脚本：**流式压缩，不落任何中转文件**，同时保住 mysqldump
+ * 自己的退出码。
+ *
+ * 这一处栽过两次，两次的形状正好相反：
+ *
+ * 1. `mysqldump | gzip` 直接串管道 —— 管道的退出码是**最后一环**的。dump 因凭据
+ *    错误中断时 gzip 照样成功，产出一个几十字节的合法 gzip 头，「非空」检查放行，
+ *    一份不可用的备份被记成成功，还可能顺手把真正可用的旧副本按保留策略删掉。
+ * 2. 改用 `set -o pipefail` —— `set` 是特殊内建，dash 遇到不认识的 `-o pipefail`
+ *    会**直接终止 shell**，`|| true` 拦不住。Debian 系 mariadb 镜像的 /bin/sh 正是
+ *    dash，于是这一档从「静默成功」变成了「必然失败」。
+ * 3. 再改成两步落盘（先写完整 .sql 再压缩）—— 退出码对了，代价是中转一份**未压缩**
+ *    的全量 dump。而磁盘闸是每轮开头查一次的固定阈值，单个大库就能把宿主根盘写满，
+ *    那会同时打死所有预览、构建和 CDS 自己。
+ *
+ * 现在用 POSIX 的文件描述符腾挪拿 pipeline 里**上游**的退出码：`exec 3>&1` 先把真正
+ * 的 stdout（docker exec 会把它接到宿主的目标文件）存到 fd3，dump 的退出码经 fd4
+ * 被命令替换捕获，gzip 的输出直接写回 fd3。全程零中转文件，dash / busybox sh 都吃。
+ *
+ * gzip 自己的失败不在这条路径上报（它的退出码被上游盖掉），由调用方的「产物非空」
+ * 与 `gzip -t` 完整性校验兜住。
+ */
+export function buildMysqlDumpScript(): string {
+  return [
+    // 凭据在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
+    'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
+    // fd3 = 真正的 stdout（宿主那个文件）；fd4 = 回传上游退出码的通道。
+    'exec 3>&1',
+    'st=$( { { mysqldump -uroot --all-databases --single-transaction --quick --routines --events; echo $? >&4; }'
+      + ' | gzip -n -c >&3; } 4>&1 )',
+    // 读不到退出码按失败处理：宁可重跑一轮，也不要认一份来路不明的产物。
+    'exit "${st:-1}"',
   ].join('\n');
 }

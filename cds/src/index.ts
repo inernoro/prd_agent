@@ -21,7 +21,7 @@ import {
   auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport, type InfraExposureInput,
 } from './services/infra-exposure-audit.js';
 import {
-  backupDirCandidates, buildRedisBackupProbeScript, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { ProxyService } from './services/proxy.js';
@@ -461,7 +461,19 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
   const shq = (s: string): string => `'${String(s).replace(/'/g, `'"'"'`)}'`;
 
+  /**
+   * 单飞闸。一轮里每个库串行导出、单库超时 20 分钟，目标一多就可能跑过六小时的
+   * 间隔——那时 setInterval 会把下一轮叠上来，两轮共用同一个 `.tmp`：后进门的
+   * 那轮先 `rm -rf` 再重建，把前一轮正在写的文件删掉，双双记失败。
+   */
+  let inFlight = false;
+
   const run = async () => {
+    if (inFlight) {
+      console.warn('[infra-backup] 上一轮还没跑完，跳过本次触发（单飞）');
+      return;
+    }
+    inFlight = true;
     try {
       // 逐个候选试写，用第一个真能写的。写死单一路径的代价已经付过：那个路径在
       // 这台宿主上不存在，而手工备份的 ls 带着 2>/dev/null，把「目录不存在」显示
@@ -501,26 +513,34 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       const tmpDir = `${dir}/.tmp`;
       await shell.exec(`rm -rf ${shq(tmpDir)} && mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
 
-      const df = await shell.exec(`df -Pk ${shq(dir)}`, { timeout: 15_000 });
-      const free = parseDfAvailableBytes(df.stdout || '');
-      if (shouldSkipForDiskPressure(free)) {
+      /**
+       * 磁盘闸。**每个目标之前都要重跑一次**，不是每轮开头查一次就完事——
+       * 一轮里的每一份导出都在消耗同一块盘，前面那个大库写完之后，后面那个的
+       * 前提早就不成立了。宿主根盘写满会同时打死所有预览、构建和 CDS 自己，
+       * 那比这一轮少几份备份糟得多。读不到可用空间同样按「不够」处理。
+       */
+      const diskGate = async (): Promise<string | null> => {
+        const df = await shell.exec(`df -Pk ${shq(dir)}`, { timeout: 15_000 });
+        const free = parseDfAvailableBytes(df.stdout || '');
+        if (!shouldSkipForDiskPressure(free)) return null;
         // 「读不到」必须说清读不到什么、命令怎么失败的。只说一句「读不到」，
         // 下一个人除了重跑一遍没有别的办法。
         const msg = free == null
-          ? `读不到备份目录 ${dir} 的可用空间，本轮跳过（不确定就不写盘）。`
+          ? `读不到备份目录 ${dir} 的可用空间（不确定就不写盘）。`
             + `df exit=${df.exitCode}${df.stderr ? ` stderr=${df.stderr.trim().slice(0, 200)}` : ''}`
-          : `备份目录 ${dir} 可用空间不足（${(free / 1024 / 1024 / 1024).toFixed(1)} GiB），本轮跳过`;
+          : `备份目录 ${dir} 可用空间不足（${(free / 1024 / 1024 / 1024).toFixed(1)} GiB）`;
         console.warn(`[infra-backup] ${msg}`);
         store?.record({
           category: 'system', severity: 'warn', source: 'infra-backup',
-          action: 'infra.backup.skipped.disk', message: msg, status: 'warn',
+          action: 'infra.backup.skipped.disk', message: `${msg}，跳过剩余目标`, status: 'warn',
           details: {
             freeBytes: free ?? null, directory: dir,
             dfExitCode: df.exitCode, dfStdout: (df.stdout || '').slice(0, 400), dfStderr: (df.stderr || '').slice(0, 400),
           },
         });
-        return;
-      }
+        return msg;
+      };
+      if (await diskGate()) return;
 
       // 台账里表示存活的字段是 `status`，不是 `running`。直接把台账对象丢进来，
       // `running === false` 这一档永远不成立——首轮实跑就撞上了：一个已停止的
@@ -534,6 +554,13 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
       const outcomes: BackupOutcome[] = [];
       for (const t of plan.targets) {
+        // 前一个目标可能刚写掉几个 GiB，这个目标的前提要重新确认一次。
+        const pressure = await diskGate();
+        if (pressure) {
+          const remaining = plan.targets.slice(plan.targets.indexOf(t)).map((r) => r.id);
+          for (const id of remaining) outcomes.push({ id, ok: false, error: `磁盘不足，未执行：${pressure}` });
+          break;
+        }
         const out = `${tmpDir}/${t.fileName}`;
         const finalOut = `${dir}/${t.fileName}`;
         try {
@@ -552,24 +579,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 进程列表里。--single-transaction 保证 InnoDB 一致性快照。
             //
             // 容器里**不摆管道**。`mysqldump | gzip` 的退出码默认是 gzip 的：
-            // dump 因凭据错误或连接失败中断时 gzip 照样成功，产出一个几十字节的
-            // 合法 gzip 头，「非空」检查放行，一份不可用的备份被记成成功，还可能
-            // 顺手把真正可用的旧副本按保留策略删掉。
-            //
-            // 上一版靠 `set -o pipefail 2>/dev/null || true` 取失败那一环的退出码，
-            // 那是错的：`set` 是特殊内建，dash 遇到不认识的 `-o pipefail` 会**直接
-            // 终止 shell**，`|| true` 拦不住（实测 dash 退出码 2，mysqldump 一次都
-            // 没跑）。Debian 系的 mariadb 镜像 /bin/sh 正是 dash，于是这一档从
-            // 「静默成功」变成了「必然失败」。
-            //
-            // 现在两步各自判退出码：容器里只跑 mysqldump（docker exec 会把它的
-            // 退出码原样带回来），压缩交给宿主，`&&` 串起来一环失败就整条失败。
-            // 代价是中转一份未压缩的 dump，磁盘闸已经在前面拦过了。
-            const raw = `${out}.sql`;
-            cmd = `docker exec ${shq(t.containerName)} sh -c `
-              + `'MYSQL_PWD="${'$'}{MYSQL_ROOT_PASSWORD:-${'$'}MARIADB_ROOT_PASSWORD}" `
-              + `exec mysqldump -uroot --all-databases --single-transaction --quick --routines --events' `
-              + `> ${shq(raw)} && gzip -n -c ${shq(raw)} > ${shq(out)} && rm -f ${shq(raw)}`;
+            // 判据与脚本都在 buildMysqlDumpScript()：容器内流式压缩、零中转文件，
+            // 同时用 fd 腾挪保住 mysqldump 自己的退出码（管道默认只给最后一环的，
+            // 而 dash 没有 pipefail）。三次踩坑的经过写在那个函数的注释里。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildMysqlDumpScript())} > ${shq(out)}`;
           } else {
             // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
             //
@@ -601,7 +614,14 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             if (redisProbe.exitCode !== 0) {
               throw new Error(`BGSAVE 未确认完成，拒绝拷贝可能过期的 dump.rdb：${combinedOutput(redisProbe).trim().slice(0, 300)}`);
             }
-            cmd = `docker cp ${shq(`${t.containerName}:/data/dump.rdb`)} ${shq(out)}`;
+            // 拷哪个文件由**容器里的 redis 自己**说了算（探测脚本最后一行就是它
+            // CONFIG GET 出来的绝对路径）。宿主这边不许再拼一次 /data/dump.rdb：
+            // 配了 dir / dbfilename 的实例会写到别处，拼默认路径就是拷错文件。
+            const rdbPath = (redisProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
+            if (!rdbPath.startsWith('/')) {
+              throw new Error(`探测脚本没有回传快照路径（拿到 ${JSON.stringify(rdbPath.slice(0, 80))}），拒绝按默认路径猜`);
+            }
+            cmd = `docker cp ${shq(`${t.containerName}:${rdbPath}`)} ${shq(out)}`;
           }
           const r = await shell.exec(cmd, { timeout: INFRA_BACKUP_TIMEOUT_MS });
           if (r.exitCode !== 0) throw new Error(combinedOutput(r).slice(0, 400));
@@ -660,6 +680,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       }
     } catch (err) {
       console.warn(`[infra-backup] 本轮失败: ${(err as Error).message}`);
+    } finally {
+      // 必须在 finally 里放闸：任何一条 return / throw 忘了放，往后每一轮都被
+      // 自己挡在门外，而日志只会说「上一轮还没跑完」——一个永远不会自愈的静默停摆。
+      inFlight = false;
     }
   };
 
