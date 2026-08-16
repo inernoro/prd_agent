@@ -119,3 +119,14 @@ cds/nginx/www/
 
 # 验收报告/截图本地退化产物——归档走知识库，不入库（2026-06-12 清理）
 doc/acceptance/
+
+# 对比度审计的扫描产物（截图 + 报告），跑一次 e2e/theme-contrast-audit-local.mjs 就能重生成，不入库
+.audit-contrast-local/
+
+# 对比度审计每轮产出的截图与报告，属临时产物：跑一次脚本即重生成，不入库
+.audit-*/
+
+# 对比度审计产物（截图 + report.json/md）：跑一次脚本即重生成，不该进仓库。
+# 之前只忽略了具体几个目录名，换个 AUDIT_OUT 就漏，于是 116 个文件 23MB 被提交进来
+# （Codex 在 PR #1374 抓到）。改成前缀通配，堵住所有 .audit-* 变体。
+.audit-*/

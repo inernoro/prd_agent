@@ -58,7 +58,7 @@ function DescTemplatePicker({ onApply }: { onApply: (content: string) => void })
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-6 z-20 w-56 max-h-72 overflow-y-auto rounded-lg border border-token-subtle bg-[#1b1d22] shadow-xl p-1" style={{ overscrollBehavior: 'contain' }}>
+          <div className="surface-tone-dark absolute right-0 top-6 z-20 w-56 max-h-72 overflow-y-auto rounded-lg border border-token-subtle bg-[#1b1d22] shadow-xl p-1" style={{ overscrollBehavior: 'contain' }}>
             {templates.map((t) => (
               <button key={t.id} type="button" onClick={() => { onApply(t.content); setOpen(false); }} className="w-full text-left px-2.5 py-1.5 rounded text-sm text-token-primary hover-bg-soft truncate" title={t.name}>{t.name}</button>
             ))}
@@ -118,7 +118,7 @@ function AiFillBar({ productId, templateId, onFill }: { productId: string; templ
           {isStreaming ? (
             <button type="button" onClick={abort} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-token-subtle text-token-secondary text-xs"><MapSpinner size={13} /> 停止</button>
           ) : (
-            <button type="button" onClick={runFill} disabled={!text.trim()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-xs disabled:opacity-40">
+            <button type="button" onClick={runFill} disabled={!text.trim()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-xs disabled:opacity-40">
               <Sparkles size={13} /> 智能填充
             </button>
           )}
@@ -321,10 +321,10 @@ export function RequirementCreateForm({
   const cancel = useSmartBack('/product-agent');
 
   return (
-    <div className="flex flex-col gap-0 w-full rounded-lg border border-token-subtle bg-[#0f1014] overflow-hidden">
+    <div className="surface-tone-dark flex flex-col gap-0 w-full rounded-lg border border-token-subtle bg-[#0f1014] overflow-hidden">
       {/* TAPD 顶栏：类型 + 操作 */}
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-token-subtle bg-[#13151a]">
-        <span className="text-[12px] px-2 py-0.5 rounded text-amber-200 bg-amber-500/15 border border-amber-500/25">需求</span>
+      <div className="surface-tone-dark flex items-center gap-3 px-4 py-2.5 border-b border-token-subtle bg-[#13151a]">
+        <span className="text-[12px] px-2 py-0.5 rounded text-[color:var(--accent-fg-amber)] bg-amber-500/15 border border-amber-500/25">需求</span>
         <span className="text-[12px] text-token-muted">新建</span>
         {initialStateLabel && (
           <span className="text-[11px] px-2 py-0.5 rounded bg-token-nested text-token-secondary border border-token-subtle">
@@ -347,7 +347,7 @@ export function RequirementCreateForm({
       </div>
 
       {/* 标题行（TAPD：全宽单行输入） */}
-      <div className="px-4 py-3 border-b border-token-subtle bg-[#111318]">
+      <div className="surface-tone-dark px-4 py-3 border-b border-token-subtle bg-[#111318]">
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -360,7 +360,7 @@ export function RequirementCreateForm({
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] gap-0 items-stretch">
         <div className="flex flex-col gap-4 p-5 xl:p-6 border-b xl:border-b-0 xl:border-r border-token-subtle min-h-[560px]">
           <AiFillBar productId={productId} templateId={template?.id} onFill={onAiFill} />
-          <div className="flex-1 flex flex-col rounded-lg border border-token-subtle bg-[#13151a] overflow-hidden min-h-[460px]">
+          <div className="surface-tone-dark flex-1 flex flex-col rounded-lg border border-token-subtle bg-[#13151a] overflow-hidden min-h-[460px]">
             <div className="flex items-center justify-between px-3 py-2 border-b border-token-subtle shrink-0">
               <span className="text-[12px] text-token-secondary">详情描述</span>
               <DescTemplatePicker onApply={(c) => setDescription((p) => mergeDesc(p, c))} />
@@ -369,10 +369,10 @@ export function RequirementCreateForm({
               <RichTextField value={description} onChange={setDescription} minHeight={440} placeholder="补充背景、目标、验收标准…" />
             </div>
           </div>
-          {message && <div className="rounded-md border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
+          {message && <div className="rounded-md border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
         </div>
 
-        <div className="p-5 xl:p-6 bg-[#0f1014] flex flex-col gap-4">
+        <div className="surface-tone-dark p-5 xl:p-6 bg-[#0f1014] flex flex-col gap-4">
           <TapdPropertyPanel title="基本信息">
             <TapdPropertyRow label="需求来源">
               <RequirementOriginSelect value={requirementOrigin} onChange={onOriginChange} />

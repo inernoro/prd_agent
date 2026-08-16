@@ -19,6 +19,7 @@ export function Dialog({
   titleAction,
   titleCenter,
   zIndex,
+  closePlacement = 'right',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -37,6 +38,8 @@ export function Dialog({
   titleCenter?: React.ReactNode;
   /** 覆盖 Overlay 的 z-index 层级（默认 z-100）；需要在更高层弹窗上方时使用 */
   zIndex?: number;
+  /** 关闭按钮位置；沉浸式编辑器可放在左侧。 */
+  closePlacement?: 'left' | 'right';
 }) {
   const dataTheme = useDataTheme();
   const isLight = dataTheme === 'light';
@@ -90,6 +93,15 @@ export function Dialog({
           }}
         >
           <div className="flex items-center justify-between gap-4 relative">
+            {closePlacement === 'left' && (
+              <DialogPrimitive.Close
+                className={`h-9 w-9 shrink-0 inline-flex items-center justify-center rounded-[12px] ${closeHoverCls}`}
+                style={{ color: 'var(--text-secondary)' }}
+                aria-label="关闭"
+              >
+                <X size={18} />
+              </DialogPrimitive.Close>
+            )}
             <div className="min-w-0 flex-shrink-0">
               <DialogPrimitive.Title className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {title}
@@ -107,13 +119,15 @@ export function Dialog({
             )}
             <div className="flex items-center gap-2 flex-shrink-0">
               {titleAction}
-              <DialogPrimitive.Close
-                className={`h-9 w-9 inline-flex items-center justify-center rounded-[12px] ${closeHoverCls}`}
-                style={{ color: 'var(--text-secondary)' }}
-                aria-label="关闭"
-              >
-                <X size={18} />
-              </DialogPrimitive.Close>
+              {closePlacement === 'right' && (
+                <DialogPrimitive.Close
+                  className={`h-9 w-9 inline-flex items-center justify-center rounded-[12px] ${closeHoverCls}`}
+                  style={{ color: 'var(--text-secondary)' }}
+                  aria-label="关闭"
+                >
+                  <X size={18} />
+                </DialogPrimitive.Close>
+              )}
             </div>
           </div>
 

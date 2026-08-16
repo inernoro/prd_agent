@@ -648,10 +648,10 @@ function StatsPanel({
       <div className="flex-1 overflow-auto px-4 py-4 space-y-5">
         {/* Summary cards */}
         <div className="grid grid-cols-2 gap-2.5">
-          <StatCard icon={<FolderOpen size={14} />} label="总数" value={String(allTotal)} color="#818CF8" />
-          <StatCard icon={<Database size={14} />} label="总存储" value={formatBytes(totalSizeBytes)} color="#22c55e" />
-          <StatCard icon={<Image size={14} />} label="图片" value={String(categoryCounts['image'] ?? 0)} color="#FB923C" />
-          <StatCard icon={<FileText size={14} />} label="文档" value={String(categoryCounts['document'] ?? 0)} color="#818CF8" />
+          <StatCard icon={<FolderOpen size={14} />} label="总数" value={String(allTotal)} color="var(--accent-fg-violet)" />
+          <StatCard icon={<Database size={14} />} label="总存储" value={formatBytes(totalSizeBytes)} color="var(--accent-fg-success)" />
+          <StatCard icon={<Image size={14} />} label="图片" value={String(categoryCounts['image'] ?? 0)} color="var(--accent-fg-warning)" />
+          <StatCard icon={<FileText size={14} />} label="文档" value={String(categoryCounts['document'] ?? 0)} color="var(--accent-fg-violet)" />
         </div>
 
         {/* Latest activity */}
@@ -715,7 +715,7 @@ function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label:
       style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
     >
       <div className="flex items-center gap-1.5">
-        <span style={{ color, opacity: 0.8 }}>{icon}</span>
+        <span style={{ color }}>{icon}</span>
         <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
       </div>
       <div className="text-[16px] font-bold" style={{ color: 'var(--text-primary)' }}>

@@ -199,12 +199,146 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 ## 规则与技能
 
-- **架构规则** `.claude/rules/`：52 条，全体 Agent 共用。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
+- **架构规则** `.claude/rules/`：54 条，全体 Agent 共用。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
 - **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制，所以在此点名——
   - `local-debugging.md`：本地连调、视觉修复、接口排查、CDS 部署验证的工作方式。
   - `production-release-safety.md`：碰发布链路（`exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow）前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`。公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数。
 - **技能**：57 个在 `.claude/skills/`，另有 3 个在 `.agents/skills/`。多数宿主会自动注入名称与描述，**但只注入它自己那个技能根**——只认 `.agents/skills` 的宿主看不到另外 57 个。**注入不全时自己选**：`ls .claude/skills/`，每个目录的 `SKILL.md` frontmatter 里 `name` 与 `description` 就是选取依据（description 写明了触发场景）。frontmatter 字段的完整性由 CI 棘轮盯着（只降不升），但「目录里整个没有 SKILL.md」CI 现在拦不住——扫到这种目录按缺陷报出来，别当它不存在；此处同样不维护会漂移的第二份清单。
+<!--
+历史显式索引仅供旧宿主查阅，不作为规则或技能 SSOT，也不注入 Agent 上下文。
 
+| 规则文件 | 触发范围 | 核心要点 |
+|----------|----------|----------|
+| `app-identity.md` | `prd-api/src/**/*.cs` | Controller 硬编码 appKey，6 个应用标识 |
+| `data-audit.md` | `Models/**/*.cs`, `Controllers/**/*.cs` | 新增实体引用时审计所有消费端点 |
+| `llm-gateway.md` | `prd-api/src/**/*.cs` | 所有 LLM 调用必须通过 ILlmGateway |
+| `frontend-architecture.md` | `**/*.{ts,tsx}` | 前端无业务状态 + SSOT + 组件复用 + 默认可编辑 |
+| `frontend-modal.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx` | 模态框 3 硬约束：inline style 高度 + createPortal + min-h:0 |
+| `full-height-layout.md` | `prd-admin/src/pages/**/*.tsx`, `prd-desktop/src/pages/**/*.tsx` | 宽屏页面必须撑满视口：根 `h-full min-h-0 flex flex-col`，禁止 `calc(100vh - Npx)` 魔数，滚动发生在最近内容层 |
+| `server-authority.md` | `prd-api/src/**/*.cs` | CancellationToken.None + Run/Worker + SSE 心跳 |
+| `doc-types.md` | `doc/**/*.md` | 7 种文档前缀（spec/design/plan/rule/guide/report/debt） |
+| `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |
+| `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | 快照反规范化必须有等价覆盖的兜底查询路径 |
+| `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
+| `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、118 个 MongoDB 集合 |
+| `zero-friction-input.md` | `**/*.{ts,tsx}` | 能上传不手输，不确定就两个都给，禁止空白发呆 |
+| `guided-exploration.md` | `**/*.{ts,tsx}` | 陌生页面 3 秒内知道做什么，空状态必须有引导 |
+| `chief-designer-usability.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx` | 好用四原则（首席设计师视角）：快启动无等待 / 奥卡姆剃刀剃掉不需人类处 / 不遮挡可视化够明显 / 短途减步不杜撰长链；交付前四条自审，两条不及格即返工 |
+| `no-rootless-tree.md` | `**/*.{cs,ts,tsx}` | 无根之木禁令 + 借用法则：不假定不存在的能力，缺什么借什么 |
+| `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
+| `navigation-registry.md` | 新 Agent / 新功能入口 | SSOT 模型：路由信息写到 launcherCatalog/agentSwitcherStore/toolboxStore，「设置→导航顺序」+ Cmd+K 自动同步；CI 跑 `navCoverage` 测试，未登记或 phantom 路由直接 fail |
+| `quickstart-zero-friction.md` | 入口脚本 (`*init*`, `*quick*`, `*setup*`, `Dockerfile`) | 快启动大包大揽：假设用户是小白，自动检测+安装依赖，不能自动的给复制粘贴命令 |
+| `cds-first-verification.md` | 任何可执行代码改动 (`.cs`, `.ts`, `.tsx`, `.rs`, Dockerfile) | 本地无 SDK ≠ 无法验证：必须用 `/cds-deploy` 兜底，禁止把验证负担转嫁给用户 |
+| `cds-auto-deploy.md` | 已 link GitHub 的项目交付收尾 | push 即部署 — 不再提示用户手动跑 `/cds-deploy-pipeline`；CDS 通过 webhook 自动建分支 + 构建 + 部署；UI 开着时必须有"分支出现 + 构建中"动画 |
+| `gesture-unification.md` | 任何可平移/缩放的 2D 画布（ReactFlow / 自定义 DOM canvas / Konva 等） | 手势统一：两指拖动=平移、双指捏合或 ⌘/Ctrl+滚轮=缩放、禁止双击缩放；提供 ReactFlow + 自定义 canvas 两套标准配置 |
+| `compute-then-send.md` | `prd-api/src/**/*.cs` 里 LLM / 外部 API 调用类（ILlmGateway / OpenAIImageClient 等） | 外部调用必须分"算/发"两阶段：发送阶段接收已解析结果不得再 resolve；禁止用 DI 装饰器 / AsyncLocal / 实例字段 在兄弟调用间传递 state |
+| `user-readable-errors.md` | `**/*.{cs,ts,tsx}` | 用户错误必须说明结果与恢复动作；原始异常、HTTP、token、Provider、模型和协议细节只能进入脱敏日志或管理员诊断详情 |
+| `blocked-state-circuit-breaker.md` | 长任务 / 多轮自动执行 Agent | 撞上自己无法提供的外部输入时必须熔断：≥8 提交或≥2h 无功能净进展即停止进度剧场、发一条合并升级、切纯代码或挂起；禁止 plan thrashing 和不眠 grinding |
+| `production-release-safety.md` | `exec_dep.sh`、`fast.sh`、`deploy/nginx/**`、`docker-compose*.yml`、生产发布 workflow | 公网 HTML 与入口资源才是完成门；静态站原子切换；旧命令兼容；发布证据可追溯 |
+
+---
+
+## 质量保障技能链
+
+```
+需求 → /validate → 方案 → /plan-first → /risk → /trace → 实现 → /verify → /scope-check → /cds-deploy → /smoke → /preview → /uat → /handoff → /weekly
+```
+
+### 主流程技能（按开发生命周期排列）
+
+| 技能 | 触发词 | 输入 → 输出 |
+|------|--------|-------------|
+| **skill-validation** | `/validate` | 输入需求描述 → 检测模糊/不完整/不可测试等 8 种气味，排查与已有功能重复，输出七维度评分报告 |
+| **plan-first** | `/plan-first` | 输入任务描述 → 输出实施方案和影响分析，等用户确认后才执行代码变更 |
+| **risk-matrix** | `/risk` | 输入功能变更范围 → 按 MECE 原则评估六维度风险（正确性/兼容/性能/安全/运维/体验），输出风险矩阵表 |
+| **flow-trace** | `/trace` | 输入功能名 → 追踪从前端到数据库的完整数据流和控制流，输出端到端路径图（大白话版 + 技术版） |
+| **human-verify** | `/verify` | 输入代码变更 → 从魔鬼辩护、反向验证、边界测试、用户场景四个角度模拟人工审查，输出问题清单 |
+| **scope-check** | `/scope-check` | 输入当前分支 → 逐文件分类为 owned/shared/foreign，检测越界修改和 append-only 违规，输出边界审计报告 |
+| **cds-deploy-pipeline** | `/cds-deploy` | 输入代码提交 → 自动推送到 CDS 灰度环境、等待容器就绪、执行冒烟测试，失败自动定位原因 |
+| **smoke-test** | `/smoke` | 输入模块名 → 扫描 Controller 端点，自动生成链式 curl 脚本（前一步输出 ID 传给后续请求） |
+| **stable-smoke** | `/稳测` | 每 48 小时对测试与正式环境执行关键用户旅程合成监控，按模块出报告；首次逃逸问题必须固化为永久回归用例 |
+| **preview-url** | `/preview` | 输入当前分支 → 读取 CDS API 实际返回的 `previewUrl` / `previewUrls`，多入口全部列出，禁止本地推算 |
+| **acceptance-checklist** | `/uat` | 输入功能场景 → 生成真人逐步打勾的 UAT 清单（Phase 0-7：前置 → 冷启 → 执行 → 验证 → 回归 → 回滚 → 负面），每步含预期结果 + 失败排查手册。CLI/Web 双通道支持 |
+| **acceptance-scenario-orchestrator** | `/验收场景` | 输入每日/PR/commit/未发布分支/缺陷复测等复杂验收目标 → 先做场景识别、PR/commit 到结果映射、指差法开测清单、证据链契约，再交给 `/验收` 取证归档 |
+| **task-handoff-checklist** | `/handoff` | 输入当前变更 → 扫描导航/文档/规则/工作流/测试/风险/质量/后续 8 个维度，输出交接清单 |
+| **auto-fix-issues** | `/audit` | Agent 间 issue 反馈/修复/复测协议。三档标签 (`待解决` / `已解决待验收` / `已验收`)、issue + tracker + PR 收尾 + 复测报告四套模板，PR 合并必须改 label 的强制清单，杜绝"修了忘改 label" |
+| **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.skill.issues-system.md` §3） |
+| **issues-visual-create** | `/issues-visual-create` | 创建一条视觉验收子 issue。输入"测什么"(PR#/commit/页面)，按 #605 模板 v0.x 生成 `[visual-test]` issue，挂 `visual-test:pending` 等执行者接单 |
+| **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。完全不开新 issue |
+| **create-visual-test-to-kb** | `/验收` | 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）。三段不可分：标准/模板 → 模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）→ 报告归档进知识库出分享链。归档前强制准入校验（目标/档位/Verdict/截图数/证据完整性不达标直接拒收）。项目无关，改 `acceptance.config.json` 跨仓库复用 |
+| **weekly-update-summary** | `/weekly` | 输入时间范围 → 四源聚合（git 提交与 PR + 日报知识库 + CDS 验收中心 + 缺陷台账/发布版本）→ 输出**面向老板/产品经理**的业务周报：质量闸（验收通过率 + 未通过清单）→ 业务价值看板（谁能多做什么）→ 逐日脉络挂日报深链 → 落地对照 → 下周优先级 → 术语表，技术细节降到附录 |
+| **daily-report-summary** | `/daily` | 输入目标日期 → 从 git 历史按单日提交收集改动，按「新增多讲 → 优化/修复次之 → 计划/遗留垫底」分层写日报，find-or-create「日报知识库」发布并出分享链 |
+
+### 辅助技能（按需使用）
+
+| 技能 | 触发词 | 输入 → 输出 |
+|------|--------|-------------|
+| **conflict-resolution** | `/resolve` | 输入当前分支 → 将 main 合并进来，AI 自动解决冲突，避免 PR 时冲突 |
+| **doc-writer** | `/doc` | 输入文档类型 → 校验 `doc/` 下的命名和表头格式，自动套用 7 种标准模板（spec/design/plan/rule/guide/report/debt） |
+| **doc-sync** | `/doc-sync` | 无需输入 → 扫描 `doc/` 目录，自动对齐 `index.yml` 和 `guide.list.directory.md` |
+| **code-hygiene** | `/hygiene` | 输入代码变更 → 检测死代码/兼容垫片/命名残留/冗余参数等 10 类技术债，输出清理建议 |
+| **deep-trace** | `/deep-trace` | 输入代码变更 → 跨层（C#→JSON→Rust→React）验证字段名、类型、序列化、空值处理的正确性 |
+| **llm-visibility** | `/visibility` | 输入代码变更 → 扫描所有 LLM 调用点，检查是否符合「禁止空白等待」原则，输出合规报告 |
+| **llm-call-trace** | `/llm-trace` | 前端选 A 后端跑 B / LLM 日志 model 不对时 → 按"前端 body → DB run → resolve 调用次数审计 → LLM 日志 Model"的顺序定位，避免凭直觉打补丁（本仓库血泪技能） |
+| **feature-emerge** | `/emerge` | 输入任意模块/痛点 → 扫描该模块能力 + 全局横向能力（Gateway / Bridge / Run-Worker / Attachment）→ 四层发散（基线/差异化/智力/疯狂）→ 收敛推荐波次。通用涌现，不限文档 |
+| **dev-completion-report** | `/dev-report` | 开发完成后 → 输出三段式报告：200 字总结 + 总结清单（改动/风险/测试/验收）+ 行业对比分析 |
+| **create-skill-file** | `/create-skill` | 输入技能需求 → 生成符合规范的 SKILL.md 文件并评分 |
+| **production-hotfix-release** | `/hotfix-prod` | 输入生产环境 + 指定分支/提交 → 基于线上当前 revision 最小 cherry-pick，走 CI 产物 + 生产脚本热发布，严禁保存或输出敏感信息 |
+| **cds-project-scan** | `/cds-scan` | 输入项目目录 → 自动检测技术栈和基础设施，生成 CDS docker-compose YAML |
+| **cds** | `/cds` | 输入项目/分支 → CDS 全生命周期管理：扫描生成 compose YAML + Agent 鉴权 + 推送部署 + 等待就绪 + 分层冒烟 + 故障诊断自动排查，内置 cdscli Python 封装所有 CDS REST API |
+| **cds-release** | `/cds-release` | 输入项目、生产域名与服务器 → 强制项目级 Key 和项目身份校验，自动检测现有脚本/无脚本 Compose/无脚本静态站，配置正式发布目标并完成预检、最终入口验收、回滚与错误目标归档 |
+| **theme-transition** | `/theme-transition` | 输入项目 → 添加 View Transition API 圆形水波纹主题切换动效（含降级方案） |
+| **agent-guide** | `/help` | 无需输入 → 读取 `.agent-workspace/` 进度文件，告知当前阶段和下一步操作 |
+| **create-executor** | `/create-executor` | 输入执行器名称和用途 → 自动读取代码、生成执行器、注册、自测，全自动接入 CLI Agent 执行器 |
+| **createzzdemo** | `/createzzdemo` | 输入教程名 → 枚举 A-F 6 类步骤让用户选组合，生成 DailyTipUpsert JSON 入库，含大全套 showcase 回归模板 |
+| **tutorial-daily-maintain** | `/tutorial-daily-maintain` | 定时(建议每日) → 扫 git 增量映射受影响页面教程 → 锚点漂移检测(P0-P2) → 起草「本周有更新」提醒(advanced/`*-update-*`) → 教程健康报告发布到独立验收知识库。首版只产草稿+告警，不自动改 seed |
+| **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot 五维一致性，输出欠款清单并自动补齐 |
+| **laowang** | `老王`、`/laowang` | 用户卡住/任务太难/争执不下时触发 → 用米多解决问题五步法（直面问题 → 抓主要矛盾 → 责任到人 → 备齐资源 → 做好才算做）强制拆解。风格直率，副作用：50% 概率追加一项延伸任务 |
+
+### 专项修复技能
+
+| 技能 | 触发词 | 输入 → 输出 |
+|------|--------|-------------|
+| **fix-surface-styles** | `/fix-surface` | 输入页面路径 → 扫描并修复 CSS 样式偏差，统一到 Surface System |
+| **add-agent-permission** | `加权限` | 输入权限名 → 自动判断分类并同步修改后端枚举 + 前端类型 + 角色分配 |
+| **add-image-gen-model** | `添加生图模型` | 输入模型信息 → 在后端 Config + 前端 Adapter 中注册新的图片生成模型 |
+| **update-model-size** | `更新模型尺寸` | 输入模型名 → 对比官方 API 文档，更新模型尺寸配置 |
+| **release-version** | `/release` | 输入版本类型 → 自动检测当前版本，分析变更，执行 patch/minor/major 发版 |
+| **ai-defect-resolve** | `修复缺陷` | 输入缺陷链接 → 按标准工作流（列清单→评论→修复→验收）自动化修复 |
+| **remotion-scene-codegen** | `优化场景` | 输入场景需求 → 提供 Remotion API 上下文，生成高质量视频场景代码 |
+
+### 文档写作与设计技能
+
+| 技能 | 触发词 | 输入 → 输出 |
+|------|--------|-------------|
+| **ui-ux-pro-max** | — | 输入设计需求 → 67 种风格 + 96 种配色 + 57 种字体搭配，支持 13 种技术栈 |
+| **product-document-generator** | — | 输入产品需求 → 按工程版 1+N 主-子文档模板或敏捷版模板生成/补全符合 AI 开发要求的产品文档（Part A 价值层 + Part B 功能层两阶段） |
+
+### 元技能
+
+| 技能 | 触发词 | 输入 → 输出 |
+|------|--------|-------------|
+| **findmapskills** | `海鲜市场` | 输入能力需求 → 通过长效 API Key 在 PrdAgent 海鲜市场搜索、下载、上传、订阅技能包 |
+| **find-skills** | `找技能` | 输入能力需求 → 从技能生态搜索并推荐可安装的第三方技能 |
+| **api-debug** | — | 输入 API 端点 → 查询真实 API 数据辅助调试 |
+| **dev-setup** | `装环境` | 无需输入 → 自动检测并安装 .NET/Node/Rust/pnpm SDK，执行 API 测试 |
+| **qa-ledger** | `/ledger` | 无需输入 → 在回复开头追加「对话台账」表格，逐条登记本轮问题/处理状态/结论，让交付有迹可循 |
+
+### 使用指引
+
+0. **首次开发 Agent** → `/help` 进入新手引导，全程阶段式陪伴（详见 `doc/guide.platform.agent-onboarding.md`）
+1. **新需求提出时** → `/validate` 验证需求质量和价值（中大型功能必跑）
+2. **方案设计时** → `/plan-first` 先出方案再动手，用户确认后执行
+3. **方案评审时** → 先 `/risk` 评估风险，再 `/trace` 追踪关键链路
+4. **开发完成后** → 先 `/verify` 交叉验证，再 `/scope-check` 边界检查
+5. **部署测试时** → `/cds-deploy` 一键部署灰度环境，再 `/smoke` 冒烟测试
+6. **需人工验收时** → `/preview` 生成预览地址 → `/uat` 生成逐步打勾的验收清单；复杂验收先走 `/验收场景` 做范围和证据链编排，再走 `/验收`（create-visual-test-to-kb）以真人路径复验并归档证据
+7. **提 PR 前** → `/resolve` 预合并主分支，AI 代替人类解决冲突
+8. **准备上线时** → `/handoff` 生成交接清单（涉及 3+ 文件时自动触发）
+9. **周五收尾时** → `/weekly` 生成本周总结（完成后自动触发 `/doc-sync`）
+10. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
+11. **迁移/重构后** → `/hygiene`
+-->
 生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。
 
 常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解。首次开发 Agent 走 `/help`。

@@ -14,6 +14,7 @@
 // 列表数据形状与 /gw 控制台 API 对齐；密钥字段只返回 hasKey，不返回明文或密文。
 
 import type {
+  AccountProfile,
   ApiResponse,
   ChangePasswordRequest,
   ChangePasswordResult,
@@ -112,6 +113,11 @@ import type {
   PromptPolicyPreview,
   PromptPolicyVersion,
   AvailableTenant,
+  ProviderPresetsData,
+  PlatformTestResult,
+  UpstreamModelsData,
+  ImportUpstreamModelEntry,
+  ImportUpstreamModelsResult,
 } from './types';
 import { getDefaultApiBase } from './runtimeBase';
 import { setPlatformMapHome } from './mapNavigation';
@@ -514,6 +520,10 @@ export function changePassword(req: ChangePasswordRequest): Promise<ApiResponse<
   return apiRequest<ChangePasswordResult>('/auth/change-password', { method: 'POST', body: req });
 }
 
+export function getAccountProfile(): Promise<ApiResponse<AccountProfile>> {
+  return apiRequest<AccountProfile>('/auth/account');
+}
+
 // ── 日志 ──
 export function getLogs(params: LogsListParams): Promise<ApiResponse<LogsListData>> {
   return apiRequest<LogsListData>('/logs', { query: { ...params } });
@@ -575,6 +585,18 @@ export function getPlatforms(): Promise<ApiResponse<PlatformsData>> {
 }
 export function createPlatform(req: CreatePlatformRequest): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>('/platforms', { method: 'POST', body: req });
+}
+export function getProviderPresets(): Promise<ApiResponse<ProviderPresetsData>> {
+  return apiRequest<ProviderPresetsData>('/provider-presets');
+}
+export function testPlatformConnection(id: string): Promise<ApiResponse<PlatformTestResult>> {
+  return apiRequest<PlatformTestResult>(`/platforms/${id}/test`, { method: 'POST' });
+}
+export function getUpstreamModels(id: string): Promise<ApiResponse<UpstreamModelsData>> {
+  return apiRequest<UpstreamModelsData>(`/platforms/${id}/upstream-models`);
+}
+export function importUpstreamModels(id: string, models: ImportUpstreamModelEntry[]): Promise<ApiResponse<ImportUpstreamModelsResult>> {
+  return apiRequest<ImportUpstreamModelsResult>(`/platforms/${id}/models/import`, { method: 'POST', body: { models } });
 }
 export function getModels(params?: { platformId?: string; enabled?: boolean }): Promise<ApiResponse<ModelsData>> {
   return apiRequest<ModelsData>('/models', {
@@ -912,6 +934,12 @@ export function bulkImportPoolModels(id: string, req: BulkImportPoolModelsReques
 }
 export function upsertPoolModel(id: string, req: UpsertPoolModelRequest): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, { method: 'PUT', body: req });
+}
+export function recoverPoolModel(id: string, modelId: string, platformId: string): Promise<ApiResponse<ModelPool>> {
+  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models/recover`, {
+    method: 'POST',
+    body: { modelId, platformId },
+  });
 }
 export function removePoolModel(id: string, modelId: string, platformId?: string): Promise<ApiResponse<ModelPool>> {
   return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, {

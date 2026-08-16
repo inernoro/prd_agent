@@ -658,7 +658,7 @@ export default function VisualStoryboardPage() {
                             ) : null}
                             {s.vidStatus === 'error' ? (
                               <div
-                                className="absolute inset-x-0 bottom-0 px-2 py-1 text-[11px] text-center"
+                                className="surface-tone-dark absolute inset-x-0 bottom-0 px-2 py-1 text-[11px] text-center"
                                 style={{ background: 'rgba(127,29,29,0.85)', color: '#fff' }}
                               >
                                 {s.vidError || '视频生成失败'}

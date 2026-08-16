@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSurfaceTone } from '@/hooks/useSurfaceTone';
 import { ChevronDown, ChevronUp, Copy, Loader2 } from 'lucide-react';
 
 /**
@@ -6,37 +7,83 @@ import { ChevronDown, ChevronUp, Copy, Loader2 } from 'lucide-react';
  * 渲染失败时降级为可折叠的源码块。
  */
 let mermaidPromise: Promise<typeof import('mermaid').default> | null = null;
+
+/**
+ * mermaid 的配色是渲染时一次性烘进 SVG 的，拿不到 CSS 变量，所以只能按当前
+ * data-theme 显式给两套。此前写死 theme:'dark' + 近白文字，浅色主题下整张图
+ * 是浅字压浅底，几乎看不见。
+ */
+const MERMAID_THEME = {
+  dark: {
+    theme: 'dark' as const,
+    themeVariables: {
+      primaryColor: '#a855f7',
+      primaryTextColor: '#f3e8ff',
+      primaryBorderColor: '#7e22ce',
+      lineColor: '#a78bfa',
+      textColor: '#e5e7eb',
+      background: 'transparent',
+    },
+  },
+  light: {
+    theme: 'base' as const,
+    themeVariables: {
+      primaryColor: '#ede9fe',
+      primaryTextColor: '#3b0764',
+      primaryBorderColor: '#6d28d9',
+      lineColor: '#6d28d9',
+      textColor: '#1f2937',
+      background: 'transparent',
+    },
+  },
+};
+
 function loadMermaid() {
   if (!mermaidPromise) {
-    mermaidPromise = import('mermaid').then(mod => {
-      const m = mod.default;
-      m.initialize({
-        startOnLoad: false,
-        theme: 'dark',
-        securityLevel: 'strict',
-        fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
-        themeVariables: {
-          primaryColor: '#a855f7',
-          primaryTextColor: '#f3e8ff',
-          primaryBorderColor: '#7e22ce',
-          lineColor: '#a78bfa',
-          textColor: '#e5e7eb',
-          background: 'transparent',
-        },
-      });
-      return m;
-    });
+    mermaidPromise = import('mermaid').then(mod => mod.default);
   }
   return mermaidPromise;
 }
 
 let seq = 0;
 
+/*
+ * initialize + render 必须成对串行执行。
+ *
+ * mermaid 是全局单例：`initialize` 改的是那一份全局配置，而 `render` 内部又有
+ * 自己的队列。一页上有多张图、且分处明暗不同的表面时（比如 CDS Agent 回答区是
+ * 深岛、外面是浅色主题），后一张图的 initialize 完全可能在前一张图真正开始
+ * render 之前就把配置改掉 —— 前一张于是用错调色板画出来，深底配浅色档，
+ * 又变回那个 1.1:1 的老毛病（Codex 在 PR #1374 第二十七轮抓到）。
+ *
+ * 用一条 promise 链把「配置 + 渲染」锁成一个原子操作。失败不打断后续。
+ */
+let mermaidChain: Promise<unknown> = Promise.resolve();
+function renderSerialized(
+  mermaid: { initialize: (c: Record<string, unknown>) => void; render: (id: string, code: string) => Promise<{ svg: string }> },
+  config: Record<string, unknown>,
+  id: string,
+  code: string,
+): Promise<{ svg: string }> {
+  const task = mermaidChain.then(() => {
+    mermaid.initialize(config);
+    return mermaid.render(id, code);
+  });
+  mermaidChain = task.catch(() => undefined);
+  return task;
+}
+
 export function MermaidDiagram({ code }: { code: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ok' | 'error'>('loading');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [showSource, setShowSource] = useState(false);
+  /*
+   * 取**所处表面**的明暗，不是全局主题。图画在哪块底上就跟哪块走 ——
+   * CDS Agent 的回答区钉死深底（surface-tone-dark），全局却可能是浅色主题，
+   * 只读全局就会拿浅色调色板去画深底：字约 1.1:1、连线约 2.3:1（Codex 在 PR #1374 抓到）。
+   */
+  const theme = useSurfaceTone(containerRef);
 
   useEffect(() => {
     let cancelled = false;
@@ -44,9 +91,17 @@ export function MermaidDiagram({ code }: { code: string }) {
     loadMermaid()
       .then(async mermaid => {
         if (cancelled) return;
+        // 每次渲染前按当前主题重新 initialize：mermaid 是全局单例，
+        // 主题切换后必须重烘一遍，否则沿用上一套配色。
         const id = `mermaid-${Date.now().toString(36)}-${++seq}`;
         try {
-          const { svg } = await mermaid.render(id, code);
+          // 配置与渲染成对串行，别让后一张图的 initialize 抢在前一张 render 之前
+          const { svg } = await renderSerialized(mermaid, {
+            startOnLoad: false,
+            securityLevel: 'strict',
+            fontFamily: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
+            ...MERMAID_THEME[theme],
+          }, id, code);
           if (cancelled) return;
           if (containerRef.current) containerRef.current.innerHTML = svg;
           setStatus('ok');
@@ -62,7 +117,7 @@ export function MermaidDiagram({ code }: { code: string }) {
         setStatus('error');
       });
     return () => { cancelled = true; };
-  }, [code]);
+  }, [code, theme]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(code).catch(() => {});
@@ -72,7 +127,7 @@ export function MermaidDiagram({ code }: { code: string }) {
     <div
       className="my-3 rounded-lg overflow-hidden group/mermaid"
       style={{
-        background: 'rgba(15, 17, 23, 0.6)',
+        background: 'var(--nested-block-bg)',
         border: '1px solid rgba(168, 85, 247, 0.18)',
       }}
     >
@@ -81,7 +136,7 @@ export function MermaidDiagram({ code }: { code: string }) {
         style={{
           background: 'rgba(168, 85, 247, 0.08)',
           borderBottom: '1px solid rgba(168, 85, 247, 0.14)',
-          color: '#d8b4fe',
+          color: 'var(--accent-fg-violet)',
         }}
       >
         <span className="font-mono font-semibold">◆ MERMAID</span>
@@ -121,7 +176,7 @@ export function MermaidDiagram({ code }: { code: string }) {
       {status === 'error' && (
         <div
           className="px-4 py-3 text-[12px]"
-          style={{ background: 'rgba(248,113,113,0.06)', color: '#fca5a5' }}
+          style={{ background: 'rgba(248,113,113,0.06)', color: 'var(--accent-fg-danger)' }}
         >
           图表渲染失败：{errorMsg}
         </div>
@@ -141,7 +196,7 @@ export function MermaidDiagram({ code }: { code: string }) {
       {(showSource || status === 'error') && (
         <pre
           className="text-[11.5px] overflow-x-auto border-t border-t-token-subtle"
-          style={{ margin: 0, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', whiteSpace: 'pre' }}
+          style={{ margin: 0, padding: '10px 14px', background: 'var(--nested-block-bg)', color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', whiteSpace: 'pre' }}
         >
           {code}
         </pre>

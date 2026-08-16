@@ -38,6 +38,14 @@ public class ModelPoolForAppResult
     public bool IsDefault { get; set; }
     /// <summary>是否为传统配置模型</summary>
     public bool IsLegacy { get; set; }
+    public long? AverageDurationMs { get; set; }
+    public int RecentTenRequests { get; set; }
+    public decimal? RecentTenSuccessRatePercent { get; set; }
+    /// <summary>
+    /// 网关声明的能力标签。前端据此二次确认「这条能不能拿来生图」——
+    /// 后端已经过滤过一遍，这个字段是给旧后端 + 新前端那种组合兜底的。
+    /// </summary>
+    public List<string> Capabilities { get; set; } = new();
 }
 
 /// <summary>

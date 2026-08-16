@@ -9,26 +9,36 @@ import { useAuthStore } from '@/stores/authStore';
 import type { PersonalTrendItem, TeamTrendItem } from '@/services/contracts/reportAgent';
 import { useDataTheme } from '../hooks/useDataTheme';
 
-function buildStatusLabels(isLight: boolean): Record<string, { label: string; color: string }> {
+/**
+ * 状态 chip 的字色与底色分开给。
+ *
+ * 原来只有一个 color，底靠 `${status.color}15` 拼 —— 而 color 是 `rgba(...)` 串，
+ * 后面缀两位十六进制拼出来的是 `rgba(71, 85, 105, 1)15`，**不是合法 CSS**，
+ * 浏览器整条丢弃，chip 从来就没有底色，字直接压在卡片底上。
+ * 顺着这条查下去，暗色档四个状态实测 2.82~3.15:1、浅色档草稿 3.28:1，都不够 4.5
+ * （10px 正文）。所以这里同时做两件事：底改成合法的同色调低透明度值，
+ * 字按主题各自提到够对比度的档位。（Codex 在 PR #1374 第三十一轮抓到）
+ */
+function buildStatusLabels(isLight: boolean): Record<string, { label: string; color: string; tint: string }> {
   if (isLight) {
     return {
-      'not-started': { label: '未开始', color: 'rgba(71, 85, 105, 1)' },     // slate-600
-      draft:         { label: '草稿',   color: 'rgba(180, 83, 9, 1)' },      // amber-700
-      submitted:     { label: '已提交', color: 'rgba(29, 78, 216, 1)' },     // blue-700
-      reviewed:      { label: '已审阅', color: 'rgba(21, 128, 61, 1)' },     // green-700
-      returned:      { label: '已退回', color: 'rgba(185, 28, 28, 1)' },     // red-700
-      overdue:       { label: '逾期',   color: 'rgba(185, 28, 28, 1)' },
-      vacation:      { label: '请假',   color: 'rgba(109, 40, 217, 1)' },    // violet-700
+      'not-started': { label: '未开始', color: 'rgba(71, 85, 105, 1)',  tint: 'rgba(71, 85, 105, 0.12)' },   // slate-600  5.73:1
+      draft:         { label: '草稿',   color: 'rgba(146, 64, 14, 1)',  tint: 'rgba(146, 64, 14, 0.12)' },   // amber-800  4.52:1（700 只有 3.28）
+      submitted:     { label: '已提交', color: 'rgba(29, 78, 216, 1)',  tint: 'rgba(29, 78, 216, 0.12)' },   // blue-700   5.07:1
+      reviewed:      { label: '已审阅', color: 'rgba(22, 101, 52, 1)',  tint: 'rgba(22, 101, 52, 0.12)' },   // green-800  5.39:1
+      returned:      { label: '已退回', color: 'rgba(185, 28, 28, 1)',  tint: 'rgba(185, 28, 28, 0.12)' },   // red-700    4.89:1
+      overdue:       { label: '逾期',   color: 'rgba(185, 28, 28, 1)',  tint: 'rgba(185, 28, 28, 0.12)' },
+      vacation:      { label: '请假',   color: 'rgba(109, 40, 217, 1)', tint: 'rgba(109, 40, 217, 0.12)' },  // violet-700 5.37:1
     };
   }
   return {
-    'not-started': { label: '未开始', color: 'rgba(156, 163, 175, 0.7)' },
-    draft:         { label: '草稿',   color: 'rgba(251, 191, 36, 0.9)' },
-    submitted:     { label: '已提交', color: 'rgba(59, 130, 246, 0.9)' },
-    reviewed:      { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)' },
-    returned:      { label: '已退回', color: 'rgba(239, 68, 68, 0.9)' },
-    overdue:       { label: '逾期',   color: 'rgba(239, 68, 68, 0.9)' },
-    vacation:      { label: '请假',   color: 'rgba(139, 92, 246, 0.9)' },
+    'not-started': { label: '未开始', color: 'rgba(209, 213, 219, 1)', tint: 'rgba(209, 213, 219, 0.14)' }, // gray-300   7.56:1（400@.7 只有 2.97）
+    draft:         { label: '草稿',   color: 'rgba(251, 191, 36, 0.9)', tint: 'rgba(251, 191, 36, 0.14)' }, // amber-400  7.94:1
+    submitted:     { label: '已提交', color: 'rgba(96, 165, 250, 1)',  tint: 'rgba(96, 165, 250, 0.14)' },  // blue-400   4.91:1（500@.9 只有 3.15）
+    reviewed:      { label: '已审阅', color: 'rgba(34, 197, 94, 0.9)', tint: 'rgba(34, 197, 94, 0.14)' },   // green-500  5.88:1
+    returned:      { label: '已退回', color: 'rgba(248, 113, 113, 1)', tint: 'rgba(248, 113, 113, 0.14)' }, // red-400    4.63:1（500@.9 只有 3.15）
+    overdue:       { label: '逾期',   color: 'rgba(248, 113, 113, 1)', tint: 'rgba(248, 113, 113, 0.14)' },
+    vacation:      { label: '请假',   color: 'rgba(167, 139, 250, 1)', tint: 'rgba(167, 139, 250, 0.14)' }, // violet-400 4.63:1（500@.9 只有 2.82）
   };
 }
 
@@ -259,7 +269,7 @@ export function HistoryTrendsPanel() {
                     <div className="w-[56px] shrink-0">
                       <span
                         className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px]"
-                        style={{ background: `${status.color}15`, color: status.color }}
+                        style={{ background: status.tint, color: status.color }}
                       >
                         {status.label}
                       </span>
@@ -359,7 +369,7 @@ export function HistoryTrendsPanel() {
                             style={{
                               width: `${rateWidth}%`,
                               background: isLight
-                                ? `linear-gradient(90deg, rgba(21,128,61,0.80), rgba(21,128,61,0.35))`
+                                ? `linear-gradient(90deg, rgba(22,101,52,0.80), rgba(22,101,52,0.35))`
                                 : `linear-gradient(90deg, rgba(34,197,94,0.65), rgba(34,197,94,0.25))`,
                             }}
                           />
@@ -405,7 +415,7 @@ export function HistoryTrendsPanel() {
             {teamData.length > 0 && (
               <div className="flex items-center gap-5 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-primary)' }}>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-3 h-2.5 rounded-sm" style={{ background: isLight ? 'rgba(21,128,61,0.75)' : 'rgba(34,197,94,0.5)' }} />
+                  <div className="w-3 h-2.5 rounded-sm" style={{ background: isLight ? 'rgba(22,101,52,0.75)' : 'rgba(34,197,94,0.5)' }} />
                   <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>提交率</span>
                 </div>
                 <div className="flex items-center gap-1.5">

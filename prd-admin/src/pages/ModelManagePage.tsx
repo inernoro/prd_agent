@@ -1331,7 +1331,7 @@ export default function ModelManagePage() {
                       className="shrink-0 inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide transition-colors hover:brightness-[1.06] disabled:opacity-60 disabled:cursor-not-allowed"
                       style={
                         p.enabled
-                          ? { background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'rgba(34,197,94,0.95)' }
+                          ? { background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.28)', color: 'var(--accent-fg-success)' }
                           : { background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }
                       }
                       disabled={loading || platformTogglingId === p.id}
@@ -1389,7 +1389,7 @@ export default function ModelManagePage() {
             }}
           >
             <div
-              className="fixed z-61 w-[220px] rounded-[14px] p-1.5"
+              className="surface-tone-dark fixed z-61 w-[220px] rounded-[14px] p-1.5"
               style={{
                 left: platformCtxMenu.x,
                 top: platformCtxMenu.y,
@@ -1745,7 +1745,7 @@ export default function ModelManagePage() {
                                             className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded"
                                             style={{
                                               background: 'rgba(59, 130, 246, 0.10)',
-                                              color: 'rgba(59, 130, 246, 0.95)',
+                                              color: 'var(--accent-fg-blue)',
                                             }}
                                           >
                                             <Sparkles size={10} />
@@ -1901,8 +1901,8 @@ export default function ModelManagePage() {
                                       style={
                                         testResult?.modelId === m.id
                                           ? testResult.ok
-                                            ? { background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.35)', color: 'rgba(34,197,94,0.95)' }
-                                            : { background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }
+                                            ? { background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.35)', color: 'var(--accent-fg-success)' }
+                                            : { background: 'rgba(239,68,68,0.14)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }
                                           : { border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }
                                       }
                                       title={testResult?.modelId === m.id && !testResult.ok ? testResult.msg : `测试：${m.name}`}
@@ -1992,7 +1992,7 @@ export default function ModelManagePage() {
                                           style={{
                                             background: 'rgba(168, 85, 247, 0.10)',
                                             border: '1px solid rgba(168, 85, 247, 0.22)',
-                                            color: 'rgba(168, 85, 247, 0.95)',
+                                            color: 'var(--accent-fg-violet)',
                                           }}
                                         />
                                       );

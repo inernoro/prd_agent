@@ -268,7 +268,7 @@ export function AudioWavePlayer({
           className="min-h-11 min-w-11 cursor-pointer rounded-[8px] px-2 py-1 text-[11px] transition-all motion-reduce:transition-none"
           style={{
             background: 'rgba(168,85,247,0.1)',
-            color: 'rgba(216,180,254,0.95)',
+            color: 'var(--accent-fg-violet)',
             border: '1px solid rgba(168,85,247,0.2)',
             fontFamily: 'ui-monospace, monospace',
           }}

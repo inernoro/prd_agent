@@ -278,7 +278,7 @@ function MyTodos({ product }: { product: Product }) {
       <div className="shrink-0 flex items-center gap-2 mb-1">
         <ListChecks size={15} className="text-cyan-400" />
         <span className="text-sm font-semibold text-token-primary">我的待办</span>
-        <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">{total}</span>
+        <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30">{total}</span>
       </div>
       <div className="shrink-0 text-[11px] text-token-muted mb-3">只显示当前需要我处理的需求 / 功能 / 缺陷，已处理或流转走的自动消失</div>
       {loading ? (
@@ -701,7 +701,7 @@ function DefectsTab({ productId }: { productId: string }) {
       <div className="flex items-center gap-2">
         <button
           onClick={() => navigate(`/product-agent/p/${productId}/defect/new`)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
         >
           <Plus size={15} /> 新建缺陷
         </button>
@@ -771,7 +771,7 @@ function NewButton({ label, onClick, disabled }: { label: string; onClick: () =>
     <button
       onClick={onClick}
       disabled={disabled}
-      className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+      className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
     >
       <Plus size={15} /> {label}
     </button>
@@ -824,7 +824,7 @@ function QuickAdd({
       <button
         onClick={onAdd}
         disabled={!value.trim() || saving}
-        className="flex items-center gap-1 px-3 py-2 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-sm disabled:opacity-50"
+        className="flex items-center gap-1 px-3 py-2 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 text-sm disabled:opacity-50"
       >
         {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 新建
       </button>

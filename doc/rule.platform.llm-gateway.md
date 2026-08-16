@@ -1,16 +1,37 @@
-# LLM Gateway 流式调用与 Reasoning · 规则
+# LLM Gateway 职责边界与调用 · 规则
 
-> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
+> **版本**：v2.0 | **日期**：2026-08-12 | **状态**：已落地
 
-**一句话**：所有大模型调用必须走统一入口，并沉淀了流式场景里最容易踩的五个坑及其判据。
-**谁该读**：写大模型调用代码的工程师；排查流式卡顿或思考内容不显示的人。
-**读完能做什么**：按清单发起一次合规的流式调用，并对照五个陷阱自查。
+**一句话**：所有大模型调用走统一入口，但 LLMGW 只在授权池内调度，跨池代选默认禁止，局部上游故障不得扩散成 MAP 整体不可用。
+**谁该读**：写大模型调用代码、配置 AppCaller 或处理模型故障的人。
+**读完能做什么**：判断模型选择、调度、熔断、恢复和业务提示分别由谁负责，并按清单发起合规调用。
 
 ---
 
-所有大模型调用必须通过 `ILlmGateway`，禁止直接调用底层 LLM 客户端。本文档除了约束调用方式，还沉淀了流式场景下的 5 个关键陷阱——每一条都对应过线上级故障。
+所有大模型调用必须通过统一网关，禁止业务代码直接调用底层模型客户端。统一入口不改变职责边界：MAP 负责业务选择，LLMGW 负责获准模型池内的执行。
 
-## 一、基础规则
+## 一、职责单一硬规则
+
+1. MAP 的用户可选模型来自 AppCallerCode 获准的模型池；池的稳定标识是选择契约，Provider 模型名和 Offering 不是业务选择值。
+2. LLMGW 可以在用户所选池内更换成员，但不得默认切到另一个模型池。
+3. 跨池代选必须由 AppCaller 显式授权，缺失配置等同关闭；目标池必须属于该 AppCaller 的获准集合。
+4. 显式选择未知池、越权池或类型不符的池必须直接失败，不得静默落到全局默认或 legacy 配置。
+5. 池成员故障只修改该成员的健康状态；不得删除 AppCaller 配置、清空模型目录或关闭 MAP 页面。
+6. MAP 负责推荐、排序、风险提示和用户坚持选择；LLMGW 不以健康状态替 MAP 做业务禁用决定。
+7. 自动恢复不得依赖通知中心，也不得默认创建消耗供应商额度的合成探测请求。
+8. 所有池不可用时，目录、错误详情、通知、隔离、恢复和回滚入口仍须可用。
+9. 隔离、进入半开、跨池授权、默认池切换和回滚必须记录操作者、原因、前后值和关联审计。
+
+## 二、失败与恢复规则
+
+- 连接失败、超时、429 和 5xx 可以影响健康；输入错误、权限拒绝、内容政策拒绝和主动取消不得影响健康。
+- 同池重试只在请求可安全重放时执行，并且必须有次数与时间上限。
+- Open 成员冷却后进入 HalfOpen，只放行受限的真实业务请求；成功恢复，失败重新 Open 并延长冷却。
+- 非幂等请求结果未知时不得自动重放，也不得借跨池代选重复提交。
+- 通知中心消费故障和恢复事件，但通知投递失败不能阻断数据面、自愈或人工恢复。
+- MAP 可以建议用户换池，但用户坚持时必须把原选择提交给 LLMGW，由严格路由返回成功或结构化失败。
+
+## 三、基础调用规则
 
 ### 调用方式
 
@@ -18,11 +39,12 @@
 - `AppCallerCode`：格式 `{app-key}.{feature}::{model-type}`
 - `ModelType`：`chat` / `intent` / `vision` / `generation` / `embedding` 等
 
-### 模型调度优先级
+### 模型解析优先级
 
-1. 专属模型池（`AppCallerCode` 绑定的 `ModelGroupIds`）
-2. 默认模型池（`ModelType` 对应的 `IsDefaultForType` 池）
-3. 传统配置（`IsMain` / `IsIntent` / `IsVision` / `IsImageGen` 标记）
+1. 用户显式选择且属于 AppCaller 获准集合的模型池；
+2. 用户未选择时使用 AppCaller 的默认池；
+3. 所选池耗尽时，只有 AppCaller 显式允许跨池代选才读取其候选顺序；
+4. 全局默认与传统配置只作迁移兼容，不能越过显式选择或 AppCaller 权限。
 
 ### 日志字段
 
@@ -30,7 +52,7 @@ Gateway 自动记录到 `llmrequestlogs`：`RequestPurpose`、`ModelResolutionTy
 
 ---
 
-## 二、流式场景 5 个关键陷阱
+## 四、流式场景 5 个关键陷阱
 
 ### 陷阱 1：`FirstByteAt` 指标不等于"文本首字"
 
@@ -118,7 +140,7 @@ Gateway 自动记录到 `llmrequestlogs`：`RequestPurpose`、`ModelResolutionTy
 
 ---
 
-## 三、核心文件索引
+## 五、核心文件索引
 
 | 文件 | 用途 |
 |------|------|
@@ -129,10 +151,15 @@ Gateway 自动记录到 `llmrequestlogs`：`RequestPurpose`、`ModelResolutionTy
 | `Adapters/OpenAIGatewayAdapter.cs` | OpenAI 兼容协议解析（兼容 `reasoning` 和 `reasoning_content`） |
 | `Adapters/ClaudeGatewayAdapter.cs` | Anthropic 原生协议解析 |
 
-## 四、新增流式 LLM 调用前的 Checklist
+## 六、新增 LLM 调用前的 Checklist
 
 - [ ] 用 `ILlmGateway`，**不**直接调底层 LLM 客户端
 - [ ] `AppCallerCode` 遵循 `{app-key}.{feature}::{model-type}` 格式
+- [ ] 用户选择值来自该 AppCaller 的获准模型池，不是 Provider 模型名
+- [ ] 跨池代选缺省关闭；如开启，候选范围、原因、失效时间和审计已明确
+- [ ] 未知池、越权池、池耗尽和网关不可用分别返回结构化错误
+- [ ] 健康反馈只统计受认可的上游执行失败
+- [ ] 没有新增默认付费探活或无限重试
 - [ ] 如果可能走推理模型，`IncludeThinking = true`
 - [ ] 如果走 OpenRouter，`RequestBody["include_reasoning"] = true` + `RequestBody["reasoning"] = {"exclude": false}`
 - [ ] 服务层用 `IAsyncEnumerable<LlmStreamDelta>` 或类似结构区分 Thinking / Text

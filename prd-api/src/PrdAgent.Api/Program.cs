@@ -144,6 +144,7 @@ builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.LlmGatewayIncidentWatchdog>();
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
@@ -163,6 +164,8 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncSchedul
 // 双链 + 反向链接（详见 doc/design.knowledge-base.mention-network.md）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.IDocumentVersionSnapshotWriter>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>());
 
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
@@ -358,6 +361,10 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.Toolbox.ToolboxRunWorker
 
 // 生图后台任务执行器（可断线继续）
 builder.Services.AddHostedService<ImageGenRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.ProfileAvatarGenerationCleanupService>());
+builder.Services.AddSingleton<PrdAgent.Api.Services.DocumentAssetCleanupService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.DocumentAssetCleanupService>());
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
@@ -670,6 +677,13 @@ builder.Services.AddHttpClient("AssetStorageReadiness", client =>
     client.DefaultRequestHeaders.CacheControl =
         new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
 });
+builder.Services.AddHttpClient("AssetStorageStream", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(30);
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AllowAutoRedirect = false,
+});
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
@@ -869,6 +883,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options => { })
     .AddScheme<PrdAgent.Api.Authentication.AiAccessKeyAuthenticationOptions, PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler>(
         PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        options => { })
+    .AddScheme<PrdAgent.Api.Authentication.StableSmokeAuthenticationOptions, PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler>(
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName,
         options => { });
 
 builder.Services.AddAuthorization(options =>
@@ -877,7 +894,8 @@ builder.Services.AddAuthorization(options =>
     options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder(
         JwtBearerDefaults.AuthenticationScheme,
         "ApiKey",
-        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName)
+        PrdAgent.Api.Authentication.AiAccessKeyAuthenticationHandler.SchemeName,
+        PrdAgent.Api.Authentication.StableSmokeAuthenticationHandler.SchemeName)
         .RequireAuthenticatedUser()
         .Build();
 });

@@ -153,7 +153,7 @@ export function InitiationWorkflowDetail({
           <button
             type="button"
             onClick={() => setRetryOpen(true)}
-            className="rounded-lg border border-amber-400/35 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-400/20"
+            className="rounded-lg border border-amber-400/35 bg-amber-400/10 px-3 py-1.5 text-xs text-[color:var(--accent-fg-amber)] hover:bg-amber-400/20"
           >
             重新发起立项
           </button>
@@ -162,7 +162,7 @@ export function InitiationWorkflowDetail({
           <button
             type="button"
             onClick={() => setRetryOpen(true)}
-            className="rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-400/20"
+            className="rounded-lg border border-cyan-400/35 bg-cyan-400/10 px-3 py-1.5 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-400/20"
           >
             继续立项决策
           </button>
@@ -174,19 +174,19 @@ export function InitiationWorkflowDetail({
         <TabButton active={tab === 'requirements'} onClick={() => setTab('requirements')}>
           需求
           {linkedRequirements.length > 0 && (
-            <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">{linkedRequirements.length}</span>
+            <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-[color:var(--accent-fg-blue)]">{linkedRequirements.length}</span>
           )}
         </TabButton>
         <TabButton active={tab === 'features'} onClick={() => setTab('features')}>
           功能
           {linkedFeatures.length > 0 && (
-            <span className="ml-1.5 rounded-full bg-violet-400/20 px-1.5 text-[10px] text-violet-200">{linkedFeatures.length}</span>
+            <span className="ml-1.5 rounded-full bg-violet-400/20 px-1.5 text-[10px] text-[color:var(--accent-fg-violet)]">{linkedFeatures.length}</span>
           )}
         </TabButton>
         <TabButton active={tab === 'defects'} onClick={() => setTab('defects')}>
           缺陷
           {linkedDefects.length > 0 && (
-            <span className="ml-1.5 rounded-full bg-red-400/20 px-1.5 text-[10px] text-red-200">{linkedDefects.length}</span>
+            <span className="ml-1.5 rounded-full bg-red-400/20 px-1.5 text-[10px] text-[color:var(--accent-fg-danger)]">{linkedDefects.length}</span>
           )}
         </TabButton>
         <TabButton active={tab === 'workflow'} onClick={() => setTab('workflow')}>立项详情</TabButton>

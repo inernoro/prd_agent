@@ -496,7 +496,7 @@ export function PlatformAvailableModelsDialog({
                                           className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded mt-1"
                                           style={{
                                             background: 'rgba(59, 130, 246, 0.10)',
-                                            color: 'rgba(59, 130, 246, 0.95)',
+                                            color: 'var(--accent-fg-blue)',
                                           }}
                                         >
                                           <Settings size={10} />

@@ -25,10 +25,28 @@ public class DocumentStoreAgentRun
     public string UserId { get; set; } = string.Empty;
 
     /// <summary>
-    /// 归属实例（创建该 run 的部署实例 = git 分支，见 InstanceIdentity）。
+    /// 归属实例（创建该 run 的稳定部署域 + git 分支，见 InstanceIdentity）。
     /// 后台 Worker 只领取属于自己实例（或历史无主 null/空）的 run，避免共享 Mongo 下多容器互抢。
     /// </summary>
     public string? OwnerInstanceId { get; set; }
+
+    /// <summary>
+    /// 当前执行尝试的唯一身份。每次 queued -> running 认领都会换新；
+    /// 心跳、进度、正文发布和终态写入必须同时匹配它，防止失联旧 Worker 恢复后继续写入。
+    /// </summary>
+    public string ExecutionId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 最近一次中断恢复操作的唯一身份。恢复流程先推进正文代次、再重排同一 run；
+    /// 客户端收到未知写入结果时据此回读确认，避免误回滚已成功落库的恢复。
+    /// </summary>
+    public string RecoveryAttemptId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 中断恢复已经预留、但尚未完成 run 重排的正文代次。非空时 reconciliation
+    /// 必须继续同一恢复操作，不能把 entry/run 的暂时代次差异误判为 superseded。
+    /// </summary>
+    public long? PendingRecoveryOutputGeneration { get; set; }
 
     /// <summary>任务状态</summary>
     public string Status { get; set; } = DocumentStoreRunStatus.Queued;
@@ -42,6 +60,9 @@ public class DocumentStoreAgentRun
     /// <summary>失败时的错误信息</summary>
     public string? ErrorMessage { get; set; }
 
+    /// <summary>机器可判定的失败类别；前端不得从自然语言错误中猜测状态。</summary>
+    public string? FailureCode { get; set; }
+
     /// <summary>后台自动恢复已实际重新排队的次数；用于限制确定性录音转录的重放。</summary>
     public int AutomaticRetryCount { get; set; }
 
@@ -53,6 +74,15 @@ public class DocumentStoreAgentRun
 
     /// <summary>生成成功后对应的新 entry ID（字幕/再加工产物）</summary>
     public string? OutputEntryId { get; set; }
+
+    /// <summary>创建任务时取得的条目产物代次；终态写入必须与条目当前代次一致。</summary>
+    public long OutputGeneration { get; set; }
+
+    /// <summary>
+    /// OutputGeneration 所属的目标条目。SourceEntryId 始终表示输入来源；旧版独立转录
+    /// 笔记的 restyle 会写 OutputEntryId，因此两者不能混用。
+    /// </summary>
+    public string GenerationEntryId { get; set; } = string.Empty;
 
     /// <summary>再加工模板 key（summary/minutes/blog/custom）；转录任务复用为整理方式 key（general/meeting/interview/todo/custom）</summary>
     public string? TemplateKey { get; set; }
@@ -83,6 +113,8 @@ public class DocumentStoreAgentRun
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
+    /// <summary>Worker 存活心跳；用于区分仍在处理与已失联的 running 任务。</summary>
+    public DateTime? HeartbeatAt { get; set; }
     public DateTime? EndedAt { get; set; }
 
     /// <summary>
@@ -124,6 +156,8 @@ public static class DocumentStoreAgentRunKind
 
 public static class DocumentStoreRunStatus
 {
+    /// <summary>首次发布协议的持久 marker；尚未推进正文代次，普通 Worker 不得领取。</summary>
+    public const string Publishing = "publishing";
     public const string Queued = "queued";
     public const string Running = "running";
     public const string Done = "done";

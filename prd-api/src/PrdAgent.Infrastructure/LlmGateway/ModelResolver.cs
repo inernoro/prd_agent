@@ -86,10 +86,11 @@ public class ModelResolver : IModelResolver
                 .FirstOrDefaultAsync(ct);
         }
 
-        // 显式模型选择以逻辑模型为第一解析层。逻辑模型命中后，其多个 Offering 才是
-        // Provider/Endpoint/协议/凭据的候选；appCaller 的模型池不再限制用户选中的模型。
-        // 未命中逻辑模型时继续走旧池解析，作为无迁移、可回滚的兼容路径。
-        if (string.IsNullOrWhiteSpace(pinnedPlatformId) && string.IsNullOrWhiteSpace(pinnedModelId))
+        // 旧 AppCaller 在迁移完成前保留逻辑模型目录兼容路径。新 AppCaller 一旦写入
+        // AllowedModelPoolIds 就启用严格模型池契约，逻辑模型不得越过该边界。
+        if (!gatewayRegistry.StrictPoolContract
+            && string.IsNullOrWhiteSpace(pinnedPlatformId)
+            && string.IsNullOrWhiteSpace(pinnedModelId))
         {
             var logical = await TryResolveLogicalModelAsync(appCallerCode, modelType, expectedModel, ct);
             if (logical is not null)
@@ -107,25 +108,61 @@ public class ModelResolver : IModelResolver
         }
 
         // pinned 是精确模型语义，但不能越过 appCaller 的专用池治理边界。
-        var pinnedWithinGatewayPool = false;
+        // model_policy=pool 会把用户选中的池写入 ExpectedModel；保留这份池身份，
+        // 因为下面为了精确 Provider 匹配会把 ExpectedModel 改成 PinnedModelId。
+        var requestedPoolIdentity = expectedModel?.Trim();
         if (gatewayRegistry.Groups.Count > 0
             && (!string.IsNullOrWhiteSpace(pinnedPlatformId) || !string.IsNullOrWhiteSpace(pinnedModelId)))
         {
-            var pinnedAllowed = !string.IsNullOrWhiteSpace(pinnedPlatformId)
-                                && !string.IsNullOrWhiteSpace(pinnedModelId)
-                                && gatewayRegistry.Groups.Any(group => group.Models.Any(model =>
-                                    string.Equals(model.PlatformId, pinnedPlatformId.Trim(), StringComparison.Ordinal)
-                                    && string.Equals(model.ModelId, pinnedModelId.Trim(), StringComparison.Ordinal)));
-            if (!pinnedAllowed)
+            var requestedPool = gatewayRegistry.StrictPoolContract && !string.IsNullOrWhiteSpace(requestedPoolIdentity)
+                ? gatewayRegistry.Groups.FirstOrDefault(group =>
+                    string.Equals(group.Id, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(group.Code, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(group.Name, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            // GatewayIngressRequest 在 model_policy=pool 时把池身份写入 ExpectedModel；
+            // 精确 Provider 路由则通常把 ExpectedModel 设为同一个 PinnedModelId。
+            // 严格契约下，带 pin 的未知池身份不能降级成“任意允许池”，否则会绕过用户的池选择。
+            var looksLikeExplicitPoolSelection = !string.IsNullOrWhiteSpace(requestedPoolIdentity)
+                && !string.Equals(requestedPoolIdentity, pinnedModelId?.Trim(), StringComparison.OrdinalIgnoreCase);
+            if (gatewayRegistry.StrictPoolContract
+                && looksLikeExplicitPoolSelection
+                && requestedPool is null)
+            {
+                return ModelResolutionResult.NotFound(
+                    requestedPoolIdentity,
+                    $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPoolIdentity}");
+            }
+
+            var pinnedScope = requestedPool is null ? gatewayRegistry.Groups : [requestedPool];
+            var pinnedTarget = !string.IsNullOrWhiteSpace(pinnedPlatformId)
+                               && !string.IsNullOrWhiteSpace(pinnedModelId)
+                ? pinnedScope
+                    .SelectMany(group => group.Models.Select(model => (Group: group, Model: model)))
+                    .FirstOrDefault(candidate =>
+                        string.Equals(candidate.Model.PlatformId, pinnedPlatformId.Trim(), StringComparison.Ordinal)
+                        && string.Equals(candidate.Model.ModelId, pinnedModelId.Trim(), StringComparison.Ordinal))
+                : default;
+            if (pinnedTarget.Model is null)
             {
                 return ModelResolutionResult.NotFound(
                     expectedModel ?? pinnedModelId,
                     $"PinnedModel 不在 appCaller 专用模型池内: AppCallerCode={appCallerCode}, ModelType={modelType}");
             }
-            pinnedWithinGatewayPool = true;
-            expectedModel = pinnedModelId!.Trim();
+            // compute-then-send 的第二次解析必须真正锁定第一次选中的物理模型。
+            // 过去这里只把 expectedModel 改成模型名，随后仍进入模型池健康调度；当 MAP 与
+            // serving 的健康快照不一致时，serving 会把已锁定的 gpt-audio 重新选成
+            // gpt-4o-transcribe，却继续沿用前者构造的 chat-audio 请求，最终把转写模型发到
+            // /v1/chat/completions。治理边界已由上面的池成员匹配完成，此处应直接
+            // 解析该平台与模型，找不到就失败关闭，绝不能静默换成池内另一个成员。
+            return await ResolvePinnedGatewayPoolMemberAsync(
+                pinnedTarget.Group,
+                pinnedTarget.Model,
+                pinnedModelId,
+                ct);
         }
-        if (!pinnedWithinGatewayPool)
+        if (!string.IsNullOrWhiteSpace(pinnedPlatformId) || !string.IsNullOrWhiteSpace(pinnedModelId))
         {
             var pinned = await TryResolvePinnedModelAsync(
                 expectedModel,
@@ -142,6 +179,24 @@ public class ModelResolver : IModelResolver
         if (gatewayRegistry.Groups.Count > 0)
         {
             candidateGroups = gatewayRegistry.Groups;
+            if (gatewayRegistry.StrictPoolContract)
+            {
+                var requestedPool = string.IsNullOrWhiteSpace(expectedModel)
+                    ? gatewayRegistry.DefaultModelPoolId
+                    : expectedModel.Trim();
+                var strictCandidates = SelectStrictPoolCandidates(
+                    candidateGroups,
+                    requestedPool,
+                    gatewayRegistry.AllowCrossPoolFallback);
+                if (strictCandidates.Count == 0)
+                {
+                    return ModelResolutionResult.NotFound(expectedModel,
+                        $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPool ?? "(未指定)"}");
+                }
+
+                candidateGroups = strictCandidates;
+                expectedModel = null;
+            }
             resolutionType = "GatewayRegistryPool";
             hasDedicatedBinding = true;
             _logger.LogInformation(
@@ -164,6 +219,7 @@ public class ModelResolver : IModelResolver
         {
             var requirement = appCaller.ModelRequirements
                 .FirstOrDefault(r => r.ModelType == modelType);
+            var modelGroupIds = requirement?.ModelGroupIds;
 
             if (HasDedicatedBinding(requirement?.ModelGroupIds))
             {
@@ -172,7 +228,7 @@ public class ModelResolver : IModelResolver
 
                 // ========== 第二步：查找专属模型池 ==========
                 candidateGroups = await _db.ModelGroups
-                    .Find(g => requirement.ModelGroupIds.Contains(g.Id))
+                    .Find(g => modelGroupIds!.Contains(g.Id))
                     .SortBy(g => g.Priority)
                     .ToListAsync(ct);
 
@@ -201,7 +257,26 @@ public class ModelResolver : IModelResolver
                 _logger.LogDebug(
                     "[ModelResolver] 使用默认模型池: ModelType={Type}, PoolCount={Count}, PoolNames={Names}",
                     modelType, candidateGroups.Count,
-                    string.Join(", ", candidateGroups.Select(g => g.Name)));
+                string.Join(", ", candidateGroups.Select(g => g.Name)));
+            }
+        }
+
+        // 池解析完成后的重试会携带 ModelGroupId 作为 expectedModel。即使是旧的
+        // MAP 兼容路径，也必须把池 ID 解释为“锁定该池”，不能退回按优先级重新选池，
+        // 否则同一个 Run 的第二次 resolve 可能漂移到另一个池。
+        if (!string.IsNullOrWhiteSpace(expectedModel)
+            && !string.Equals(resolutionType, "GatewayRegistryPool", StringComparison.Ordinal)
+            && candidateGroups is { Count: > 0 })
+        {
+            var poolCandidates = candidateGroups;
+            var requestedPool = poolCandidates.FirstOrDefault(group =>
+                string.Equals(group.Id, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(group.Code, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase)
+                || string.Equals(group.Name, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (requestedPool is not null)
+            {
+                candidateGroups = [requestedPool];
+                expectedModel = null;
             }
         }
 
@@ -241,7 +316,7 @@ public class ModelResolver : IModelResolver
                 $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}");
         }
 
-        // ========== 第 5.5 步：若调用方指定了 expectedModel，优先尊重 ==========
+        // ========== 第 5.5 步：旧契约若调用方指定了 expectedModel，优先尊重 ==========
         // 搜索顺序（广度递增）：
         //   1. 候选池（AppCaller 绑定的池）
         //   2. 该 ModelType 下的所有池（AppCaller 未绑定但平台有配置的池）
@@ -360,7 +435,11 @@ public class ModelResolver : IModelResolver
             // 用户明确 expectedModel/pinned 时不得换模型，避免“选 A 发 B”。
             var selectedModels = (preferredGroup != null && group.Id == preferredGroup.Id)
                 ? (preferredItem is null ? [] : new List<ModelGroupItem> { preferredItem })
-                : SelectProviderRetryCandidates(group, allowProviderRetryCandidates);
+                : await SelectProviderRetryCandidatesAsync(
+                    group,
+                    allowProviderRetryCandidates,
+                    gatewayOwned: string.Equals(resolutionType, "GatewayRegistryPool", StringComparison.Ordinal),
+                    ct);
             if (selectedModels.Count == 0)
             {
                 _logger.LogWarning(
@@ -562,6 +641,61 @@ public class ModelResolver : IModelResolver
     }
 
     /// <inheritdoc />
+    public async Task<ModelResolutionResult> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        var requiredOfferingId = (offeringId ?? string.Empty).Trim();
+        if (_gatewayDb is null || string.IsNullOrWhiteSpace(requiredOfferingId))
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "缺少可恢复的 Offering 路由");
+        }
+
+        var offerings = _gatewayDb.Context.Database
+            .GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        var offering = await offerings.Find(Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                // Enabled 和健康状态只控制新任务调度。已经被上游受理的任务仍必须
+                // 回到持久化的原 Offering 查询状态和下载结果。
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, requiredOfferingId)))
+            .FirstOrDefaultAsync(ct);
+        if (offering is null)
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "视频任务原上游当前不可用，请稍后重试或重新生成");
+        }
+
+        var logicalModels = _gatewayDb.Context.Database
+            .GetCollection<GatewayLogicalModel>("llmgw_logical_models");
+        var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Id, offering.LogicalModelId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType)))
+            .FirstOrDefaultAsync(ct);
+        if (logical is null || !SupportsAppCallerScenario(logical, appCallerCode))
+        {
+            return ModelResolutionResult.NotFound(
+                requiredOfferingId,
+                "视频任务原模型路由已失效，请重新生成");
+        }
+
+        var resolved = await TryBuildLogicalOfferingResolutionAsync(
+            logical,
+            offering,
+            logical.PublicId,
+            ct,
+            requireEnabled: false);
+        return resolved ?? ModelResolutionResult.NotFound(
+            requiredOfferingId,
+            "视频任务原上游配置已失效，请重新生成");
+    }
+
+    /// <inheritdoc />
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,
         string modelType,
@@ -572,8 +706,22 @@ public class ModelResolver : IModelResolver
         if (gatewayRegistry.TrafficRejected)
             return result;
 
+        if (gatewayRegistry.StrictPoolContract)
+        {
+            foreach (var group in gatewayRegistry.Groups)
+            {
+                result.Add(await MapToAvailablePoolAsync(
+                    group,
+                    "GatewayRegistryPool",
+                    true,
+                    string.Equals(group.Id, gatewayRegistry.DefaultModelPoolId, StringComparison.Ordinal),
+                    ct));
+            }
+            return result;
+        }
+
         // 有逻辑模型目录时，它就是应用侧模型列表的权威来源。每个逻辑模型只暴露一个稳定 PublicId，
-        // Provider/Endpoint/Offering 不泄漏到应用选择器；没有目录数据才回退旧模型池列表。
+        // Provider/Endpoint/Offering 不泄漏到应用选择器；仅旧 AppCaller 继续使用此兼容目录。
         var logicalModels = await GetAvailableLogicalModelsAsPoolsAsync(appCallerCode, modelType, ct);
         if (logicalModels.Count > 0)
             return logicalModels;
@@ -665,7 +813,9 @@ public class ModelResolver : IModelResolver
                 .Inc("Models.$.ConsecutiveSuccesses", 1)
                 .Set("Models.$.ConsecutiveFailures", 0)
                 .Set("Models.$.HealthStatus", ModelHealthStatus.Healthy)
-                .Set("Models.$.LastSuccessAt", DateTime.UtcNow);
+                .Set("Models.$.LastSuccessAt", DateTime.UtcNow)
+                .Unset("Models.$.HalfOpenLeaseUntil")
+                .Unset("Models.$.ManualRecoveryAt");
 
             await GetHealthModelGroups(resolution).UpdateOneAsync(filter, update, cancellationToken: ct);
 
@@ -736,7 +886,9 @@ public class ModelResolver : IModelResolver
                 .Inc("Models.$.ConsecutiveFailures", 1)
                 .Set("Models.$.ConsecutiveSuccesses", 0)
                 .Set("Models.$.HealthStatus", newStatus)
-                .Set("Models.$.LastFailedAt", DateTime.UtcNow);
+                .Set("Models.$.LastFailedAt", DateTime.UtcNow)
+                .Unset("Models.$.HalfOpenLeaseUntil")
+                .Unset("Models.$.ManualRecoveryAt");
 
             await modelGroups.UpdateOneAsync(filter, update, cancellationToken: ct);
 
@@ -748,6 +900,42 @@ public class ModelResolver : IModelResolver
         {
             _logger.LogWarning(ex, "[ModelResolver] 记录失败状态失败");
         }
+    }
+
+    /// <inheritdoc />
+    public async Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+        {
+            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            var offeringFilter = Builders<GatewayModelOffering>.Filter.And(
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+            var offeringUpdate = Builders<GatewayModelOffering>.Update
+                .Inc(x => x.ConsecutiveFailures, 1)
+                .Set(x => x.ConsecutiveSuccesses, 0)
+                .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+            await offerings.UpdateOneAsync(offeringFilter, offeringUpdate, cancellationToken: ct);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
+            string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
+            string.IsNullOrWhiteSpace(resolution.ActualModel))
+            return;
+
+        var groupFilter = Builders<ModelGroup>.Filter.And(
+            Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
+            Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
+                m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
+        var groupUpdate = Builders<ModelGroup>.Update
+            .Inc("Models.$.ConsecutiveFailures", 1)
+            .Set("Models.$.ConsecutiveSuccesses", 0)
+            .Set("Models.$.HealthStatus", ModelHealthStatus.Unavailable)
+            .Set("Models.$.LastFailedAt", DateTime.UtcNow);
+        await GetHealthModelGroups(resolution).UpdateOneAsync(groupFilter, groupUpdate, cancellationToken: ct);
     }
 
     #region Private Methods
@@ -777,24 +965,48 @@ public class ModelResolver : IModelResolver
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
                 Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
             .ToListAsync(ct);
-        var availableIds = offerings.Select(x => x.LogicalModelId).ToHashSet(StringComparer.Ordinal);
-        return logicalModels
-            .Where(x => availableIds.Contains(x.Id)
-                && (x.AllowedAppCallerCodes.Count == 0 || x.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase)))
-            .Select(x => new AvailableModelPool
+        var offeringsByLogicalModel = offerings
+            .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
+        var result = new List<AvailableModelPool>();
+        foreach (var logical in logicalModels)
+        {
+            if (!SupportsAppCallerScenario(logical, appCallerCode))
+                continue;
+
+            if (!offeringsByLogicalModel.TryGetValue(logical.Id, out var logicalOfferings))
+                continue;
+
+            // “启用且健康”只是控制面状态，不代表 Offering 指向的 Exchange、模型和平台仍然存在。
+            // 选择器只能展示在当前租户与 appCaller 下至少能完整解析一个上游的逻辑模型，避免用户
+            // 选中后才得到“模型不可用”。这里复用实际解析构建器，保证目录与执行链路采用同一规则。
+            var hasResolvableOffering = false;
+            foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
             {
-                Id = x.Id,
-                Name = x.Name,
-                Code = x.PublicId,
-                Priority = x.DisplayOrder,
+                if (await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct) is not null)
+                {
+                    hasResolvableOffering = true;
+                    break;
+                }
+            }
+            if (!hasResolvableOffering)
+                continue;
+
+            result.Add(new AvailableModelPool
+            {
+                Id = logical.Id,
+                Name = logical.Name,
+                Code = logical.PublicId,
+                Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",
-                IsDedicated = x.AllowedAppCallerCodes.Count > 0,
+                IsDedicated = logical.AllowedAppCallerCodes.Count > 0,
                 IsDefault = false,
+                Capabilities = logical.Capabilities?.ToList() ?? [],
                 Models =
                 [
                     new PoolModelInfo
                     {
-                        ModelId = x.PublicId,
+                        ModelId = logical.PublicId,
                         PlatformId = "logical-model",
                         PlatformName = "LLM Gateway",
                         Priority = 1,
@@ -802,7 +1014,10 @@ public class ModelResolver : IModelResolver
                         HealthScore = 100,
                     }
                 ],
-            }).ToList();
+            });
+        }
+
+        return result;
     }
 
     private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync(
@@ -828,11 +1043,10 @@ public class ModelResolver : IModelResolver
         if (logical is null)
             return null;
 
-        if (logical.AllowedAppCallerCodes.Count > 0
-            && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
+        if (!SupportsAppCallerScenario(logical, appCallerCode))
         {
             return ModelResolutionResult.NotFound(expectedModel,
-                $"逻辑模型未授权给当前 appCaller: model={logical.PublicId}, appCaller={appCallerCode}");
+                $"逻辑模型不支持当前 appCaller 场景: model={logical.PublicId}, appCaller={appCallerCode}");
         }
 
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
@@ -862,6 +1076,52 @@ public class ModelResolver : IModelResolver
         if (resolved.Count > 1)
             selected.RetryCandidates = resolved.Skip(1).ToList();
         return selected;
+    }
+
+    internal static bool SupportsAppCallerScenario(GatewayLogicalModel logical, string appCallerCode)
+    {
+        if (logical.AllowedAppCallerCodes.Count > 0
+            && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        // 图片分层不是普通的文生图、图生图或多图生成。即使历史配置曾误加这些能力，
+        // 也只能由专用 appCaller 调用，避免它进入通用模型选择器后把普通生图请求发给
+        // 必须携带输入图片的分层协议。
+        if (logical.Capabilities.Contains("image_layering", StringComparer.OrdinalIgnoreCase))
+        {
+            return string.Equals(
+                appCallerCode,
+                AppCallerRegistry.VisualAgent.Image.Layering,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        var requiredCapability = RequiredCapabilityForAppCaller(appCallerCode);
+        if (requiredCapability is null
+            || logical.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var hasScenarioCapabilities = logical.Capabilities.Any(x =>
+            x.Equals("text2img", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("img2img", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("vision_generation", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("image_layering", StringComparison.OrdinalIgnoreCase));
+        return !hasScenarioCapabilities
+               && logical.Capabilities.Contains("image_generation", StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? RequiredCapabilityForAppCaller(string appCallerCode)
+    {
+        if (appCallerCode.EndsWith(".text2img::generation", StringComparison.OrdinalIgnoreCase))
+            return "text2img";
+        if (appCallerCode.EndsWith(".img2img::generation", StringComparison.OrdinalIgnoreCase))
+            return "img2img";
+        if (appCallerCode.EndsWith(".vision::generation", StringComparison.OrdinalIgnoreCase))
+            return "vision_generation";
+        return null;
     }
 
     private List<GatewayModelOffering> OrderLogicalOfferings(
@@ -898,7 +1158,8 @@ public class ModelResolver : IModelResolver
         GatewayLogicalModel logical,
         GatewayModelOffering offering,
         string expectedModel,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool requireEnabled = true)
     {
         var capabilities = logical.Capabilities.Select(type => new LLMModelCapability
         {
@@ -928,10 +1189,12 @@ public class ModelResolver : IModelResolver
 
         if (string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
         {
+            var exchangeFilter = Builders<ModelExchange>.Filter.Eq(x => x.Id, offering.TargetId);
+            if (requireEnabled)
+                exchangeFilter &= Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true);
             var exchange = await FindGatewayOwnedExchangeAsync(
-                Builders<ModelExchange>.Filter.And(
-                    Builders<ModelExchange>.Filter.Eq(x => x.Id, offering.TargetId),
-                    Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true)), ct);
+                exchangeFilter,
+                ct);
             if (exchange is null) return null;
             item.PlatformId = exchange.Id;
             if (string.IsNullOrWhiteSpace(item.ModelId))
@@ -944,13 +1207,19 @@ public class ModelResolver : IModelResolver
         }
 
         var modelCollection = _gatewayDb!.Context.Database.GetCollection<LLMModel>("llmgw_models");
-        var model = await modelCollection.Find(Builders<LLMModel>.Filter.And(
-                Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
-                Builders<LLMModel>.Filter.Eq(x => x.Id, offering.TargetId),
-                Builders<LLMModel>.Filter.Eq(x => x.Enabled, true)))
+        var modelFilter = Builders<LLMModel>.Filter.And(
+            Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
+            Builders<LLMModel>.Filter.Eq(x => x.Id, offering.TargetId));
+        if (requireEnabled)
+            modelFilter &= Builders<LLMModel>.Filter.Eq(x => x.Enabled, true);
+        var model = await modelCollection.Find(modelFilter)
             .FirstOrDefaultAsync(ct);
         if (model is null || string.IsNullOrWhiteSpace(model.PlatformId)) return null;
-        var platform = await FindGatewayOwnedOrMapPlatformAsync(model.PlatformId, true, ct, allowMapFallback: false);
+        var platform = await FindGatewayOwnedOrMapPlatformAsync(
+            model.PlatformId,
+            requireEnabled,
+            ct,
+            allowMapFallback: false);
         if (platform is null) return null;
 
         item.PlatformId = platform.Id;
@@ -1202,6 +1471,129 @@ public class ModelResolver : IModelResolver
         return ModelResolutionResult.FromPinned(expectedModel ?? model.ModelName, model, platform, apiKey);
     }
 
+    private async Task<ModelResolutionResult> ResolvePinnedGatewayPoolMemberAsync(
+        ModelGroup group,
+        ModelGroupItem member,
+        string? expectedModel,
+        CancellationToken ct)
+    {
+        var exchange = await FindExchangeForPoolItemAsync(
+            member,
+            allowMapFallback: false,
+            ct);
+        if (exchange is not null)
+        {
+            var exchangeApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(
+                exchange.TargetApiKeyEncrypted,
+                _config);
+            if (string.IsNullOrWhiteSpace(exchange.TargetUrl))
+            {
+                return ModelResolutionResult.NotFound(
+                    expectedModel,
+                    $"PinnedModel Exchange API URL 配置不完整: exchange={exchange.Id}, model={member.ModelId}");
+            }
+
+            if (string.IsNullOrWhiteSpace(exchangeApiKey))
+            {
+                return ModelResolutionResult.NotFound(
+                    expectedModel,
+                    $"PinnedModel Exchange API Key 配置不完整: exchange={exchange.Id}, model={member.ModelId}");
+            }
+
+            return ModelResolutionResult.FromExchangePool(
+                "GatewayRegistryPool",
+                expectedModel,
+                member,
+                group,
+                exchange,
+                exchangeApiKey);
+        }
+
+        if (string.Equals(
+                member.PlatformId,
+                ModelResolverConstants.ExchangePlatformId,
+                StringComparison.Ordinal))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel Exchange 配置不存在或未启用: model={member.ModelId}");
+        }
+
+        var platform = await FindGatewayOwnedOrMapPlatformAsync(
+            member.PlatformId,
+            enabledOnly: true,
+            ct,
+            allowMapFallback: false);
+        if (platform is null)
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel 平台不存在或未启用: {member.PlatformId}");
+        }
+
+        var model = await FindGatewayOwnedOrMapModelAsync(
+            member.PlatformId,
+            member.ModelId,
+            ct,
+            allowMapFallback: false);
+        if (model is null)
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel 模型不存在或未启用: platform={member.PlatformId}, model={member.ModelId}");
+        }
+
+        var encryptedKey = string.IsNullOrWhiteSpace(model.ApiKeyEncrypted)
+            ? platform.ApiKeyEncrypted
+            : model.ApiKeyEncrypted;
+        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(encryptedKey, _config);
+        var effectiveApiUrl = string.IsNullOrWhiteSpace(model.ApiUrl)
+            ? platform.ApiUrl
+            : model.ApiUrl;
+        if (string.IsNullOrWhiteSpace(effectiveApiUrl))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel API URL 配置不完整: platform={member.PlatformId}, model={member.ModelId}");
+        }
+
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return ModelResolutionResult.NotFound(
+                expectedModel,
+                $"PinnedModel API Key 配置不完整: platform={member.PlatformId}, model={member.ModelId}");
+        }
+
+        var endpointPlatform = new LLMPlatform
+        {
+            Id = platform.Id,
+            Name = platform.Name,
+            PlatformType = platform.PlatformType,
+            ProviderId = platform.ProviderId,
+            ApiUrl = effectiveApiUrl,
+            ApiKeyEncrypted = platform.ApiKeyEncrypted,
+            Enabled = platform.Enabled,
+            MaxConcurrency = platform.MaxConcurrency,
+            Remark = platform.Remark,
+            CreatedAt = platform.CreatedAt,
+            UpdatedAt = platform.UpdatedAt
+        };
+        _logger.LogInformation(
+            "[ModelResolver] GW 模型池物理锁定完成: Pool={Pool}, Platform={Platform}, Model={Model}, Health={Health}",
+            group.Id,
+            member.PlatformId,
+            member.ModelId,
+            member.HealthStatus);
+        return ModelResolutionResult.FromPool(
+            "GatewayRegistryPool",
+            expectedModel,
+            member,
+            group,
+            endpointPlatform,
+            apiKey,
+            model);
+    }
+
     private async Task<ModelResolutionResult?> TryResolveLegacyConfigFallbackAsync(string modelType, string? expectedModel, CancellationToken ct)
     {
         if (!string.Equals(modelType, ModelTypes.Chat, StringComparison.OrdinalIgnoreCase)
@@ -1283,7 +1675,11 @@ public class ModelResolver : IModelResolver
             .FirstOrDefault();
     }
 
-    private List<ModelGroupItem> SelectProviderRetryCandidates(ModelGroup group, bool includeAllAvailable)
+    private async Task<List<ModelGroupItem>> SelectProviderRetryCandidatesAsync(
+        ModelGroup group,
+        bool includeAllAvailable,
+        bool gatewayOwned,
+        CancellationToken ct)
     {
         if (group.Models == null || group.Models.Count == 0)
             return [];
@@ -1295,10 +1691,99 @@ public class ModelResolver : IModelResolver
             .ToList();
 
         if (includeAllAvailable)
+        {
+            var halfOpen = await TryClaimHalfOpenCandidateAsync(group, gatewayOwned, ct);
+            if (halfOpen is not null)
+                // 半开成员是本轮恢复探测的优先候选，必须真正占据发送队列首位，
+                // 否则先发送健康成员会让半开租约白占位而无法完成验证。
+                candidates.Insert(0, halfOpen);
             return candidates;
+        }
 
         return candidates.Count == 0 ? [] : [candidates[0]];
     }
+
+    private async Task<ModelGroupItem?> TryClaimHalfOpenCandidateAsync(
+        ModelGroup group,
+        bool gatewayOwned,
+        CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var cooldownSeconds = Math.Clamp(
+            _config.GetValue<int?>("LlmGateway:CircuitBreaker:HalfOpenAfterSeconds") ?? 120,
+            10,
+            3600);
+        var leaseSeconds = Math.Clamp(
+            _config.GetValue<int?>("LlmGateway:CircuitBreaker:HalfOpenLeaseSeconds") ?? 30,
+            5,
+            300);
+        var cutoff = now.AddSeconds(-cooldownSeconds);
+        var candidate = group.Models
+            .Where(member => IsHalfOpenEligible(member, now, cutoff))
+            .OrderBy(member => member.Priority)
+            .FirstOrDefault();
+        if (candidate is null)
+            return null;
+
+        var filters = new List<FilterDefinition<ModelGroup>>
+        {
+            Builders<ModelGroup>.Filter.Eq(item => item.Id, group.Id),
+            new BsonDocumentFilterDefinition<ModelGroup>(new BsonDocument("Models", new BsonDocument("$elemMatch", new BsonDocument
+            {
+                { "ModelId", candidate.ModelId },
+                { "PlatformId", candidate.PlatformId },
+                { "HealthStatus", (int)ModelHealthStatus.Unavailable },
+                { "$or", new BsonArray
+                    {
+                        new BsonDocument("HalfOpenLeaseUntil", new BsonDocument("$exists", false)),
+                        new BsonDocument("HalfOpenLeaseUntil", BsonNull.Value),
+                        new BsonDocument("HalfOpenLeaseUntil", new BsonDocument("$lte", now)),
+                    }
+                },
+                { "$and", new BsonArray
+                    {
+                        new BsonDocument("$or", new BsonArray
+                        {
+                            new BsonDocument("ManualRecoveryAt", new BsonDocument("$lte", now)),
+                            new BsonDocument("LastFailedAt", new BsonDocument("$exists", false)),
+                            new BsonDocument("LastFailedAt", BsonNull.Value),
+                            new BsonDocument("LastFailedAt", new BsonDocument("$lte", cutoff)),
+                        }),
+                    }
+                },
+            })))
+        };
+        IMongoCollection<ModelGroup> collection;
+        if (gatewayOwned && _gatewayDb is not null)
+        {
+            filters.Add(new BsonDocumentFilterDefinition<ModelGroup>(new BsonDocument("TenantId", CurrentTenantId)));
+            collection = _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
+        }
+        else
+        {
+            collection = _db.ModelGroups;
+        }
+
+        var result = await collection.UpdateOneAsync(
+            Builders<ModelGroup>.Filter.And(filters),
+            Builders<ModelGroup>.Update.Set("Models.$.HalfOpenLeaseUntil", now.AddSeconds(leaseSeconds)),
+            cancellationToken: ct);
+        if (result.ModifiedCount != 1)
+            return null;
+
+        candidate.HalfOpenLeaseUntil = now.AddSeconds(leaseSeconds);
+        _logger.LogInformation(
+            "[ModelResolver] 不可用成员进入自动半开验证: Pool={PoolId}, Model={ModelId}, LeaseSeconds={LeaseSeconds}",
+            group.Id, candidate.ModelId, leaseSeconds);
+        return candidate;
+    }
+
+    internal static bool IsHalfOpenEligible(ModelGroupItem member, DateTime now, DateTime cutoff)
+        => member.HealthStatus == ModelHealthStatus.Unavailable
+           && (!member.HalfOpenLeaseUntil.HasValue || member.HalfOpenLeaseUntil <= now)
+           && ((member.ManualRecoveryAt.HasValue && member.ManualRecoveryAt <= now)
+               || !member.LastFailedAt.HasValue
+               || member.LastFailedAt <= cutoff);
 
     /// <summary>
     /// 这些模型类型在专属池不可用时必须**失败关闭**，不许降级到 legacy 直连兜底。
@@ -1356,6 +1841,50 @@ public class ModelResolver : IModelResolver
             var status = GatewayAppCallerPolicy.NormalizeStatus(record.Status);
             if (!GatewayAppCallerPolicy.AllowsTraffic(status))
                 return GatewayRegistryLookup.Rejected(record.ModelPoolId, $"appcaller-status-{status}", status);
+
+            var allowedPoolIds = (record.AllowedModelPoolIds ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (allowedPoolIds.Count > 0)
+            {
+                var defaultPoolId = record.DefaultModelPoolId?.Trim();
+                if (string.IsNullOrWhiteSpace(defaultPoolId) || !allowedPoolIds.Contains(defaultPoolId, StringComparer.Ordinal))
+                {
+                    return GatewayRegistryLookup.BlockedStrict(
+                        defaultPoolId,
+                        "appcaller-default-pool-missing-or-outside-allowed-set",
+                        status);
+                }
+
+                var groups = new List<ModelGroup>(allowedPoolIds.Count);
+                foreach (var poolId in allowedPoolIds)
+                {
+                    var group = await FindGatewayOwnedOrMapModelPoolAsync(
+                        poolId,
+                        modelType,
+                        ct,
+                        allowMapFallback: false);
+                    if (group is null)
+                    {
+                        _logger.LogWarning(
+                            "[ModelResolver] GW appCaller 允许的模型池不存在或类型不匹配: AppCallerCode={Code}, ModelType={Type}, ModelPoolId={PoolId}",
+                            appCallerCode, modelType, poolId);
+                        return GatewayRegistryLookup.BlockedStrict(
+                            defaultPoolId,
+                            "appcaller-allowed-model-pool-not-found-in-gateway",
+                            status);
+                    }
+                    groups.Add(group);
+                }
+
+                return GatewayRegistryLookup.FoundStrict(
+                    defaultPoolId,
+                    groups,
+                    status,
+                    record.AllowCrossPoolFallback);
+            }
 
             if (!string.IsNullOrWhiteSpace(record.ModelPoolId))
             {
@@ -1569,15 +2098,46 @@ public class ModelResolver : IModelResolver
         string? ModelPoolId,
         string? BlockReason,
         string? Status,
-        bool TrafficRejected)
+        bool TrafficRejected,
+        bool StrictPoolContract,
+        string? DefaultModelPoolId,
+        bool AllowCrossPoolFallback)
     {
-        public static GatewayRegistryLookup Empty() => new([], null, null, null, false);
+        public static GatewayRegistryLookup Empty() => new([], null, null, null, false, false, null, false);
         public static GatewayRegistryLookup Found(string? modelPoolId, List<ModelGroup> groups, string status)
-            => new(groups, modelPoolId, null, status, false);
+            => new(groups, modelPoolId, null, status, false, false, modelPoolId, false);
+        public static GatewayRegistryLookup FoundStrict(
+            string defaultModelPoolId,
+            List<ModelGroup> groups,
+            string status,
+            bool allowCrossPoolFallback)
+            => new(groups, defaultModelPoolId, null, status, false, true, defaultModelPoolId, allowCrossPoolFallback);
         public static GatewayRegistryLookup Blocked(string? modelPoolId, string reason, string? status)
-            => new([], modelPoolId, reason, status, false);
+            => new([], modelPoolId, reason, status, false, false, modelPoolId, false);
+        public static GatewayRegistryLookup BlockedStrict(string? modelPoolId, string reason, string? status)
+            => new([], modelPoolId, reason, status, false, true, modelPoolId, false);
         public static GatewayRegistryLookup Rejected(string? modelPoolId, string reason, string status)
-            => new([], modelPoolId, reason, status, true);
+            => new([], modelPoolId, reason, status, true, false, modelPoolId, false);
+    }
+
+    internal static List<ModelGroup> SelectStrictPoolCandidates(
+        IEnumerable<ModelGroup> groups,
+        string? requestedPool,
+        bool allowCrossPoolFallback)
+    {
+        if (string.IsNullOrWhiteSpace(requestedPool))
+            return [];
+        var orderedGroups = groups.ToList();
+        var key = requestedPool.Trim();
+        var selected = orderedGroups.FirstOrDefault(group =>
+            string.Equals(group.Id, key, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(group.Code, key, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(group.Name, key, StringComparison.OrdinalIgnoreCase));
+        if (selected is null)
+            return [];
+        return allowCrossPoolFallback
+            ? new[] { selected }.Concat(orderedGroups.Where(group => group.Id != selected.Id)).ToList()
+            : [selected];
     }
 
     private async Task<ModelExchange?> FindGatewayOwnedExchangeAsync(
@@ -1611,6 +2171,9 @@ public class ModelResolver : IModelResolver
         CancellationToken ct)
     {
         var models = new List<PoolModelInfo>();
+        long? averageDurationMs = null;
+        var recentTenRequests = 0;
+        decimal? recentTenSuccessRatePercent = null;
 
         foreach (var model in group.Models ?? new List<ModelGroupItem>())
         {
@@ -1627,6 +2190,70 @@ public class ModelResolver : IModelResolver
             });
         }
 
+        if (_gatewayDb is not null)
+        {
+            try
+            {
+                var logs = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmrequestlogs");
+                var fb = Builders<BsonDocument>.Filter;
+                var since = DateTime.UtcNow.AddDays(-7);
+                var filter = fb.And(
+                    fb.Eq("TenantId", CurrentTenantId),
+                    fb.Eq("ModelPoolId", group.Id),
+                    fb.Gte("StartedAt", since),
+                    fb.In("Status", new[] { "succeeded", "failed" }));
+                var stats = await logs.Aggregate()
+                    .Match(filter)
+                    .Group(new BsonDocument
+                    {
+                        { "_id", BsonNull.Value },
+                        { "AverageDurationMs", new BsonDocument("$avg", "$DurationMs") },
+                    })
+                    .FirstOrDefaultAsync(ct);
+                if (stats is not null
+                    && stats.TryGetValue("AverageDurationMs", out var duration)
+                    && !duration.IsBsonNull)
+                {
+                    averageDurationMs = duration.BsonType switch
+                    {
+                        BsonType.Int32 => duration.AsInt32,
+                        BsonType.Int64 => duration.AsInt64,
+                        BsonType.Double => (long)Math.Round(duration.AsDouble),
+                        BsonType.Decimal128 => (long)Math.Round(Decimal128.ToDecimal(duration.AsDecimal128)),
+                        _ => null,
+                    };
+                }
+                var recentTen = await logs.Find(filter)
+                    .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
+                    .Project(Builders<BsonDocument>.Projection.Include("Status"))
+                    .Limit(10)
+                    .ToListAsync(ct);
+                recentTenRequests = recentTen.Count;
+                if (recentTenRequests > 0)
+                {
+                    recentTenSuccessRatePercent = Math.Round(
+                        recentTen.Count(log => string.Equals(
+                            log.TryGetValue("Status", out var status) && status.IsString ? status.AsString : null,
+                            "succeeded",
+                            StringComparison.Ordinal)) * 100m / recentTenRequests,
+                        1,
+                        MidpointRounding.AwayFromZero);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // 日志统计是目录的可选增强信息；统计库故障不能阻断模型池发现与恢复操作。
+                _logger.LogWarning(
+                    ex,
+                    "[ModelResolver] 模型池统计不可用，返回无统计指标的模型池: PoolId={PoolId}",
+                    group.Id);
+            }
+        }
+
         return new AvailableModelPool
         {
             Id = group.Id,
@@ -1636,7 +2263,10 @@ public class ModelResolver : IModelResolver
             ResolutionType = resolutionType,
             IsDedicated = isDedicated,
             IsDefault = isDefault,
-            Models = models
+            Models = models,
+            AverageDurationMs = averageDurationMs,
+            RecentTenRequests = recentTenRequests,
+            RecentTenSuccessRatePercent = recentTenSuccessRatePercent,
         };
     }
 
@@ -1669,6 +2299,10 @@ public class InMemoryModelResolver : IModelResolver
     private readonly List<ModelGroup> _modelGroups = new();
     private readonly List<LLMPlatform> _platforms = new();
     private readonly Dictionary<string, string> _apiKeys = new();
+
+    // InMemory 与生产 ModelResolver 共用同一个专属绑定判据，避免测试路径重新定义语义。
+    private static bool HasDedicatedBinding(IReadOnlyCollection<string>? boundGroupIds)
+        => ModelResolver.HasDedicatedBinding(boundGroupIds);
 
     /// <summary>
     /// 添加 AppCaller 配置
@@ -1766,7 +2400,7 @@ public class InMemoryModelResolver : IModelResolver
             var requirement = appCaller.ModelRequirements
                 .FirstOrDefault(r => r.ModelType == modelType);
 
-            if (ModelResolver.HasDedicatedBinding(requirement?.ModelGroupIds))
+            if (HasDedicatedBinding(requirement?.ModelGroupIds))
             {
                 // 与生产 ModelResolver 共用同一个判据函数，不再各判一次。
                 hasDedicatedBinding = true;
@@ -2033,6 +2667,26 @@ public class InMemoryModelResolver : IModelResolver
             model.HealthStatus = model.ConsecutiveFailures >= 5 ? ModelHealthStatus.Unavailable :
                                  model.ConsecutiveFailures >= 3 ? ModelHealthStatus.Degraded :
                                  ModelHealthStatus.Healthy;
+            model.LastFailedAt = DateTime.UtcNow;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(resolution.ModelGroupId))
+            return Task.CompletedTask;
+
+        var group = _modelGroups.FirstOrDefault(g => g.Id == resolution.ModelGroupId);
+        var model = group?.Models?.FirstOrDefault(m =>
+            m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel);
+
+        if (model != null)
+        {
+            model.ConsecutiveFailures++;
+            model.ConsecutiveSuccesses = 0;
+            model.HealthStatus = ModelHealthStatus.Unavailable;
             model.LastFailedAt = DateTime.UtcNow;
         }
 

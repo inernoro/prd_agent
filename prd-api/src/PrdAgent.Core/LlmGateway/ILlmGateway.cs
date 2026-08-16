@@ -82,6 +82,22 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         CancellationToken ct = default);
 
     /// <summary>
+    /// 按异步任务提交阶段记录的 Offering ID 恢复精确路由。
+    /// </summary>
+    Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+        => Task.FromResult(new GatewayModelResolution
+        {
+            Success = false,
+            ResolutionType = "NotFound",
+            ExpectedModel = offeringId,
+            ErrorMessage = "当前网关实现不支持按 Offering 恢复路由",
+        });
+
+    /// <summary>
     /// 解析调用方已经声明的逻辑模型。该契约不能退回同名旧模型池：返回结果必须携带
     /// 相同的 LogicalModelPublicId，否则按解析失败处理。
     /// </summary>
@@ -182,6 +198,23 @@ public class AvailableModelPool
     /// 池内模型列表
     /// </summary>
     public List<PoolModelInfo> Models { get; init; } = new();
+
+    /// <summary>近七天有耗时记录的请求平均耗时。</summary>
+    public long? AverageDurationMs { get; init; }
+
+    /// <summary>最近最多十次请求的样本数。</summary>
+    public int RecentTenRequests { get; init; }
+
+    /// <summary>最近最多十次请求成功率；没有样本时为空。</summary>
+    public decimal? RecentTenSuccessRatePercent { get; init; }
+    /// <summary>
+    /// 网关声明的能力标签（如 image_generation / image_layering）。
+    ///
+    /// 应用侧靠它区分「可以挑来生图的模型」与「只能被动作调用的能力」。
+    /// 丢掉这个字段就是「图片分层」曾经混进模型选择器的根因——目录只说了
+    /// 「是什么模型」，没说「能拿来干什么」，前端只好来什么摆什么。
+    /// </summary>
+    public List<string> Capabilities { get; init; } = new();
 }
 
 /// <summary>

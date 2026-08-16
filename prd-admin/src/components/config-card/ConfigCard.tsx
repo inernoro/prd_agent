@@ -204,7 +204,7 @@ export function ConfigCard<T extends IConfigCardItem>({
                           style={{
                             background: 'rgba(34, 197, 94, 0.15)',
                             border: '1px solid rgba(34, 197, 94, 0.3)',
-                            color: 'rgba(34, 197, 94, 0.95)',
+                            color: 'var(--accent-fg-success)',
                           }}
                           onClick={() => onSelect(item)}
                           disabled={saving}
@@ -265,7 +265,7 @@ export const ActiveBadge: React.FC = () => (
     className="text-[10px] px-1.5 py-0.5 rounded"
     style={{
       background: 'rgba(74, 222, 128, 0.15)',
-      color: 'rgba(74, 222, 128, 0.95)',
+      color: 'var(--accent-fg-success)',
       border: '1px solid rgba(74, 222, 128, 0.25)',
     }}
   >
@@ -281,7 +281,7 @@ export const PublicBadge: React.FC = () => (
     className="text-[10px] px-1.5 py-0.5 rounded"
     style={{
       background: 'rgba(96, 165, 250, 0.15)',
-      color: 'rgba(96, 165, 250, 0.95)',
+      color: 'var(--accent-fg-blue)',
       border: '1px solid rgba(96, 165, 250, 0.25)',
     }}
   >
@@ -299,22 +299,22 @@ export const TagBadge: React.FC<{
   const colorMap = {
     purple: {
       bg: 'rgba(168, 85, 247, 0.15)',
-      text: 'rgba(168, 85, 247, 0.95)',
+      text: 'var(--accent-fg-violet)',
       border: 'rgba(168, 85, 247, 0.25)',
     },
     green: {
       bg: 'rgba(74, 222, 128, 0.15)',
-      text: 'rgba(74, 222, 128, 0.95)',
+      text: 'var(--accent-fg-success)',
       border: 'rgba(74, 222, 128, 0.25)',
     },
     blue: {
       bg: 'rgba(96, 165, 250, 0.15)',
-      text: 'rgba(96, 165, 250, 0.95)',
+      text: 'var(--accent-fg-blue)',
       border: 'rgba(96, 165, 250, 0.25)',
     },
     orange: {
       bg: 'rgba(251, 146, 60, 0.15)',
-      text: 'rgba(251, 146, 60, 0.95)',
+      text: 'var(--accent-fg-warning)',
       border: 'rgba(251, 146, 60, 0.25)',
     },
   };

@@ -119,7 +119,7 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
         <div
           className="w-full max-w-lg rounded-2xl p-5"
           style={{
-            background: 'rgba(24, 24, 30, 0.9)',
+            background: 'var(--overlay-panel-solid)',
             border: '1px solid rgba(255, 80, 80, 0.25)',
             color: 'var(--text-primary, #f7f7fb)',
           }}
@@ -129,7 +129,7 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
               className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
               style={{ background: 'rgba(248, 113, 113, 0.18)' }}
             >
-              <span style={{ color: '#f87171', fontSize: 20 }}>!</span>
+              <span style={{ color: 'var(--accent-fg-danger)', fontSize: 20 }}>!</span>
             </div>
             <div className="min-w-0 flex-1">
               <div className="text-base font-semibold mb-1">页面渲染出错</div>
@@ -144,7 +144,7 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
               type="button"
               onClick={this.reset}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] transition-all active:scale-95"
-              style={{ background: 'rgba(129, 140, 248, 0.18)', color: '#c7d2fe' }}
+              style={{ background: 'rgba(129, 140, 248, 0.18)', color: 'var(--accent-fg-blue)' }}
             >
               <RefreshCw size={14} /> 重试
             </button>

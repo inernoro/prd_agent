@@ -56,6 +56,23 @@ public sealed record NormalizedExchangeDraft(
 
 public static class GatewayConfigurationProvisioning
 {
+    /// <summary>
+    /// 模型用途白名单的唯一判定源。批量导入端点不走 TryNormalizeModel（它是给单模型表单用的），
+    /// 但**校验口径必须是同一份**，否则两条入库路径会各自漂移：
+    /// 直连调用或旧版前端能把任意用途名塞进来，再被池同步当成合法类型参与路由。
+    /// </summary>
+    public static bool IsSupportedModelType(string? modelType)
+        => !string.IsNullOrWhiteSpace(modelType) && SupportedModelTypes.Contains(modelType.Trim().ToLowerInvariant());
+
+    /// <summary>价格与币种的校验口径，同样对两条入库路径共用（负价格进不了成本核算）。</summary>
+    public static bool IsValidPrice(decimal? price) => price is null or >= 0;
+
+    public static bool IsSupportedCurrency(string? currency)
+        => string.IsNullOrWhiteSpace(currency) || currency.Trim().ToUpperInvariant() is "CNY" or "USD";
+
+    /// <summary>模型名长度上限，与 TryNormalizeModel 同源。</summary>
+    public const int MaxModelNameLength = 240;
+
     private const string ImageSizeParameterPrefix = "image_size.";
     private static readonly string[] ParameterCapabilityPrefixes =
         ["parameter:", "parameter.", "param:", "param."];
@@ -176,7 +193,7 @@ public static class GatewayConfigurationProvisioning
 
         var modelName = request.ModelName?.Trim() ?? string.Empty;
         if (modelName.Length == 0) return Fail("上游模型标识不能为空", out error);
-        if (modelName.Length > 240) return Fail("上游模型标识不能超过 240 个字符", out error);
+        if (modelName.Length > MaxModelNameLength) return Fail($"上游模型标识不能超过 {MaxModelNameLength} 个字符", out error);
         var name = request.Name?.Trim() ?? modelName;
         if (name.Length > 160) return Fail("模型显示名称不能超过 160 个字符", out error);
 
@@ -436,9 +453,17 @@ public static class GatewayConfigurationProvisioning
         return document;
     }
 
-    private static BsonDocument ToCapabilityDocument(string modelType)
-    {
-        var capability = modelType switch
+    /// <summary>
+    /// 模型用途名 -> **存储层能力名** 的唯一映射。
+    ///
+    /// 这两套词汇本来就不同：表单/池类型说 `generation`，落库的 Capabilities[].Type 写
+    /// `image_generation`（GatewayModelPoolTypeRegistry 也按后者匹配）。抽成公开方法是因为
+    /// 批量导入那条路径直接产出**存储层**能力名，需要用同一份映射来判断合法性——
+    /// 之前拿用途白名单去校验存储名，image_generation / video_generation 被整批静默丢掉，
+    /// 生图与视频模型带着空用途入库，还照样默认勾选（形状 1：判据比它该管的范围窄）。
+    /// </summary>
+    public static string ToCapabilityCode(string modelType)
+        => modelType switch
         {
             "generation" => "image_generation",
             "long-context" => "long_context",
@@ -446,8 +471,17 @@ public static class GatewayConfigurationProvisioning
             "audio-gen" => "audio_generation",
             _ => modelType,
         };
-        return new BsonDocument { ["Type"] = capability, ["Source"] = "user", ["Value"] = true };
+
+    /// <summary>存储层能力名的白名单，由用途白名单经同一份映射推导，不另立一份。</summary>
+    public static bool IsSupportedCapabilityCode(string? capability)
+    {
+        if (string.IsNullOrWhiteSpace(capability)) return false;
+        var code = capability.Trim().ToLowerInvariant();
+        return SupportedModelTypes.Select(ToCapabilityCode).Contains(code);
     }
+
+    private static BsonDocument ToCapabilityDocument(string modelType)
+        => new() { ["Type"] = ToCapabilityCode(modelType), ["Source"] = "user", ["Value"] = true };
 
     public static bool IsImageSizeControlCapability(string? type)
         => NormalizeParameterCapabilityName(type)?

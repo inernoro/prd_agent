@@ -84,9 +84,9 @@ function StatCard({
   const accentColors = {
     default: { bg: 'var(--bg-input)', border: 'var(--nested-block-border)', icon: 'rgba(255,255,255,0.5)', text: 'var(--text-primary)' },
     gold: { bg: 'rgba(99,102,241,0.06)', border: 'rgba(99,102,241,0.12)', icon: 'var(--accent-gold)', text: 'var(--accent-gold)' },
-    blue: { bg: 'rgba(59,130,246,0.06)', border: 'rgba(59,130,246,0.12)', icon: 'rgba(59,130,246,0.9)', text: 'rgba(59,130,246,0.95)' },
-    green: { bg: 'rgba(34,197,94,0.06)', border: 'rgba(34,197,94,0.12)', icon: 'rgba(34,197,94,0.9)', text: 'rgba(34,197,94,0.95)' },
-    purple: { bg: 'rgba(168,85,247,0.06)', border: 'rgba(168,85,247,0.12)', icon: 'rgba(168,85,247,0.9)', text: 'rgba(168,85,247,0.95)' },
+    blue: { bg: 'rgba(59,130,246,0.06)', border: 'rgba(59,130,246,0.12)', icon: 'rgba(59,130,246,0.9)', text: 'var(--accent-fg-blue)' },
+    green: { bg: 'rgba(34,197,94,0.06)', border: 'rgba(34,197,94,0.12)', icon: 'rgba(34,197,94,0.9)', text: 'var(--accent-fg-success)' },
+    purple: { bg: 'rgba(168,85,247,0.06)', border: 'rgba(168,85,247,0.12)', icon: 'rgba(168,85,247,0.9)', text: 'var(--accent-fg-violet)' },
   };
   const colors = accentColors[accent];
 
@@ -117,7 +117,7 @@ function DangerActionCard({ title, description, buttonText, onAction, loading, c
     <div className="rounded-[12px] p-3 transition-all duration-200" style={{ background: 'rgba(239,68,68,0.04)', border: '1px solid rgba(239,68,68,0.12)' }}>
       <div className="flex items-start gap-2.5">
         <div className="shrink-0 w-7 h-7 rounded-[8px] flex items-center justify-center mt-0.5" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.15)' }}>
-          <AlertTriangle size={14} style={{ color: 'rgba(239,68,68,0.8)' }} />
+          <AlertTriangle size={14} style={{ color: 'var(--accent-fg-danger)' }} />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-semibold text-token-primary">{title}</div>
@@ -255,15 +255,15 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
           </div>
           <div className="rounded-[10px] p-3" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
             <div className="text-xs text-token-muted">有效文档</div>
-            <div className="text-lg font-bold mt-1" style={{ color: 'rgba(34,197,94,0.95)' }}>{fmtNum(data?.validDocuments ?? 0)}</div>
+            <div className="text-lg font-bold mt-1" style={{ color: 'var(--accent-fg-success)' }}>{fmtNum(data?.validDocuments ?? 0)}</div>
           </div>
           <div className="rounded-[10px] p-3" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
             <div className="text-xs text-token-muted">问题文档</div>
-            <div className="text-lg font-bold mt-1" style={{ color: 'rgba(239,68,68,0.95)' }}>{fmtNum(data?.invalidDocuments ?? 0)}</div>
+            <div className="text-lg font-bold mt-1" style={{ color: 'var(--accent-fg-danger)' }}>{fmtNum(data?.invalidDocuments ?? 0)}</div>
           </div>
           <div className="rounded-[10px] p-3" style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
             <div className="text-xs text-token-muted">实体字段数</div>
-            <div className="text-lg font-bold mt-1" style={{ color: 'rgba(59,130,246,0.95)' }}>{data?.entityFields.length ?? 0}</div>
+            <div className="text-lg font-bold mt-1" style={{ color: 'var(--accent-fg-blue)' }}>{data?.entityFields.length ?? 0}</div>
           </div>
         </div>
         <div className="flex-1 overflow-auto rounded-[12px] bg-token-nested border border-token-nested">

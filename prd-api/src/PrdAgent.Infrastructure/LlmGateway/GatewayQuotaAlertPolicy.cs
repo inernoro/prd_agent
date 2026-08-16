@@ -10,6 +10,8 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 internal static class GatewayQuotaAlertPolicy
 {
     internal const string QuotaErrorCode = "LLM_QUOTA_EXCEEDED";
+    internal const string UserReadableQuotaMessage =
+        "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。";
 
     internal static bool IsQuotaFailure(string? errorCode, string? errorMessage)
     {
@@ -34,17 +36,11 @@ internal static class GatewayQuotaAlertPolicy
         if (notifier == null || !IsQuotaFailure(errorCode, errorMessage))
             return;
 
-        var message = string.IsNullOrWhiteSpace(errorMessage)
-            ? "独立大模型网关报告平台额度已用尽或被限额，请充值或更换 API Key。"
-            : errorMessage.Trim();
-        if (message.Length > 500)
-            message = message[..500] + "…";
-
         try
         {
             await notifier.NotifyQuotaExceededAsync(
                 string.IsNullOrWhiteSpace(platformName) ? "独立 LLM 网关" : platformName,
-                message,
+                UserReadableQuotaMessage,
                 CancellationToken.None);
         }
         catch (Exception ex)

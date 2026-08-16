@@ -39,13 +39,21 @@ export interface NotificationTypeConfig {
   accent: string;
   /** 弹窗气质：庆祝（成功完成）/ 告警（需注意）/ 默认 */
   popupStyle: NotificationPopupStyle;
+  /*
+   * 当颜色用作**文字/图标色**时走这个，不要用 accent。
+   * accent 是 300/400 档亮彩，被 `${accent}22` 这类字面量拼接用作底色/描边/辉光 ——
+   * 那个用法在两个主题下都成立，所以必须保持 hex，不能换成 var()。
+   * 但同一个值直接当字色就翻车：浅色主题下 teal-300 压在 12% 同色淡底上只有 1.29:1，
+   * 而通知抽屉挂在 AppShell 上、**全部 36 条路由都有**，一处错就是 144 处糊。
+   */
+  fg: string;
 }
 
 const DEFAULT_TYPE: NotificationTypeConfig = {
   key: 'system',
   label: '通知',
   icon: Bell,
-  accent: '#93c5fd',
+  accent: '#93c5fd', fg: 'var(--accent-fg-blue)',
   popupStyle: 'default',
 };
 
@@ -53,17 +61,20 @@ const DEFAULT_TYPE: NotificationTypeConfig = {
  * source → 类型配置。source 取值对齐后端 AdminNotificationSourceCatalog。
  */
 export const NOTIFICATION_TYPE_REGISTRY: Record<string, NotificationTypeConfig> = {
-  'defect-agent': { key: 'defect-agent', label: '缺陷协作', icon: Bug, accent: '#c084fc', popupStyle: 'default' },
-  'report-agent': { key: 'report-agent', label: '周报月报', icon: CalendarClock, accent: '#5eead4', popupStyle: 'default' },
-  'pm-agent': { key: 'pm-agent', label: '项目待办', icon: ListTodo, accent: '#7dd3fc', popupStyle: 'default' },
-  'review-agent': { key: 'review-agent', label: '产品评审', icon: ClipboardCheck, accent: '#a5b4fc', popupStyle: 'default' },
-  'workflow-agent': { key: 'workflow-agent', label: '工作流', icon: Workflow, accent: '#93c5fd', popupStyle: 'default' },
-  'admin-notice': { key: 'admin-notice', label: '管理员通知', icon: Megaphone, accent: '#fcd34d', popupStyle: 'default' },
-  'system': { key: 'system', label: '系统通知', icon: Bell, accent: '#93c5fd', popupStyle: 'default' },
-  'system-alert': { key: 'system-alert', label: '系统告警', icon: AlertTriangle, accent: '#fca5a5', popupStyle: 'alert' },
-  'server-expiry': { key: 'server-expiry', label: '服务器', icon: Server, accent: '#fdba74', popupStyle: 'alert' },
-  'user-voice': { key: 'user-voice', label: '用户之声', icon: MessageSquareHeart, accent: '#f9a8d4', popupStyle: 'default' },
-  'api-request-alert': { key: 'api-request-alert', label: 'API 告警', icon: Activity, accent: '#fca5a5', popupStyle: 'alert' },
+  'defect-agent': { key: 'defect-agent', label: '缺陷协作', icon: Bug, accent: '#c084fc', fg: 'var(--accent-fg-violet)', popupStyle: 'default' },
+  'report-agent': { key: 'report-agent', label: '周报月报', icon: CalendarClock, accent: '#5eead4', fg: 'var(--accent-fg-success)', popupStyle: 'default' },
+  'pm-agent': { key: 'pm-agent', label: '项目待办', icon: ListTodo, accent: '#7dd3fc', fg: 'var(--accent-fg-blue)', popupStyle: 'default' },
+  'review-agent': { key: 'review-agent', label: '产品评审', icon: ClipboardCheck, accent: '#a5b4fc', fg: 'var(--accent-fg-violet)', popupStyle: 'default' },
+  'workflow-agent': { key: 'workflow-agent', label: '工作流', icon: Workflow, accent: '#93c5fd', fg: 'var(--accent-fg-blue)', popupStyle: 'default' },
+  'admin-notice': { key: 'admin-notice', label: '管理员通知', icon: Megaphone, accent: '#fcd34d', fg: 'var(--accent-fg-amber)', popupStyle: 'default' },
+  'system': { key: 'system', label: '系统通知', icon: Bell, accent: '#93c5fd', fg: 'var(--accent-fg-blue)', popupStyle: 'default' },
+  'system-alert': { key: 'system-alert', label: '系统告警', icon: AlertTriangle, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' },
+  'server-expiry': { key: 'server-expiry', label: '服务器', icon: Server, accent: '#fdba74', fg: 'var(--accent-fg-warning)', popupStyle: 'alert' },
+  'user-voice': { key: 'user-voice', label: '用户之声', icon: MessageSquareHeart, accent: '#f9a8d4', fg: 'var(--accent-fg-danger)', popupStyle: 'default' },
+  'api-request-alert': { key: 'api-request-alert', label: 'API 告警', icon: Activity, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' },
+  // 下面两条来自 main：新增时本分支的 fg 字段还不存在，按同族 accent 补齐（#fca5a5 → danger 档）
+  'gateway-alert': { key: 'gateway-alert', label: '模型网关', icon: Activity, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' },
+  'stable-smoke': { key: 'stable-smoke', label: '稳定冒烟', icon: ClipboardCheck, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' },
 };
 
 /**
@@ -107,17 +118,19 @@ export function getNotificationType(
   if (base) {
     // 缺陷协作 + 成功语义 → 庆祝气质（缺陷已解决 / 已修复）
     if (base.key === 'defect-agent' && level === 'success') {
-      return { ...base, icon: CheckCircle2, accent: '#86efac', popupStyle: 'celebrate' };
+      // accent 与 fg 必须成对改：只改 accent 会让底变绿、字仍继承 base 的紫
+      return { ...base, icon: CheckCircle2, accent: '#86efac', fg: 'var(--accent-fg-success)', popupStyle: 'celebrate' };
     }
     return base;
   }
 
   // 未注册来源：按 level 兜底
   if (level === 'warning' || level === 'error') {
-    return { ...DEFAULT_TYPE, key: 'alert', label: '系统告警', icon: AlertTriangle, accent: '#fca5a5', popupStyle: 'alert' };
+    return { ...DEFAULT_TYPE, key: 'alert', label: '系统告警', icon: AlertTriangle, accent: '#fca5a5', fg: 'var(--accent-fg-danger)', popupStyle: 'alert' };
   }
   if (level === 'success') {
-    return { ...DEFAULT_TYPE, key: 'success', icon: CheckCircle2, accent: '#86efac', popupStyle: 'celebrate' };
+    // 同上：不带 fg 就会继承 DEFAULT_TYPE 的蓝
+    return { ...DEFAULT_TYPE, key: 'success', icon: CheckCircle2, accent: '#86efac', fg: 'var(--accent-fg-success)', popupStyle: 'celebrate' };
   }
   return DEFAULT_TYPE;
 }

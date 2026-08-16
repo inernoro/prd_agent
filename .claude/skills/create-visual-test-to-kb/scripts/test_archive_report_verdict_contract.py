@@ -1,9 +1,14 @@
 import importlib.util
+import json
 import pathlib
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
 SCRIPT = pathlib.Path(__file__).with_name("archive_report.py")
+CONFIG = SCRIPT.parent.parent / "acceptance.config.json"
 TEMPLATES = SCRIPT.parent.parent / "templates"
 STANDARD = SCRIPT.parent.parent / "reference" / "standard-v2.md"
 REPO_ROOT = SCRIPT.parents[4]
@@ -91,6 +96,62 @@ def report_body(nature: str, counts=(0, 0, 0, 0)) -> str:
 
 
 class DailyVerdictContractTests(unittest.TestCase):
+    def test_local_diagnostic_requires_explicit_flag_and_local_mode(self):
+        with self.assertRaisesRegex(ValueError, "正式验收报告只允许"):
+            archive_report.resolve_report_execution_mode("local")
+        with self.assertRaisesRegex(ValueError, "只接受 report.mode=local"):
+            archive_report.resolve_report_execution_mode("cds", local_diagnostic=True)
+        self.assertEqual(
+            "local",
+            archive_report.resolve_report_execution_mode("local", local_diagnostic=True),
+        )
+        self.assertEqual("cds", archive_report.resolve_report_execution_mode("cds"))
+
+    def test_local_diagnostic_cli_generates_non_delivery_draft(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
+            cfg["report"]["mode"] = "local"
+            cfg["report"]["localOutDir"] = str(temp / "drafts")
+            config_path = temp / "acceptance.config.json"
+            report_path = temp / "report.md"
+            manifest_path = temp / "manifest.json"
+            config_path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+            report_path.write_text("# 本地诊断草稿\n\n仅用于验证离线诊断链路。", encoding="utf-8")
+            manifest_path.write_text("[]", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--local-diagnostic",
+                    "--force",
+                    "--config",
+                    str(config_path),
+                    "--target",
+                    "离线诊断链路",
+                    "--report-date",
+                    "2026-08-14",
+                    "--verdict",
+                    "conditional",
+                    "--tier",
+                    "L0",
+                    "--report-md",
+                    str(report_path),
+                    "--manifest",
+                    str(manifest_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(0, result.returncode, result.stderr or result.stdout)
+            output = json.loads(result.stdout.splitlines()[-1])
+            self.assertEqual("local", output["mode"])
+            self.assertTrue(pathlib.Path(output["reportPath"]).is_file())
+            self.assertTrue(pathlib.Path(output["reportPath"]).is_relative_to(temp))
+
     def test_shipped_templates_have_one_exact_conclusion_section(self):
         for template_name in ("zz-report.md", "report-template.md"):
             with self.subTest(template=template_name):
@@ -545,6 +606,211 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("表头必须严格为" in error for error in errors))
 
+    def test_not_run_report_requires_execution_coverage_ledger(self):
+        errors = archive_report._coverage_ledger_errors("未执行：12\nVerdict: conditional")
+        self.assertTrue(any("执行覆盖账本" in error for error in errors))
+
+    def test_execution_coverage_ledger_requires_actionable_fields(self):
+        body = """
+未执行：1
+
+## 执行覆盖账本
+
+| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |
+|---|---:|---:|---:|---:|---:|---|---|
+| CDS 环境 | 2 | 1 | 1 | 0 | 1 | 自动化缺口 | run command |
+
+| caseId | 为什么未执行 | 关闭条件 |
+|---|---|---|
+| REC-001 | 缺真实步骤 | 出现执行证据 |
+"""
+        self.assertEqual([], archive_report._coverage_ledger_errors(body))
+
+    def test_execution_coverage_ledger_rejects_missing_close_condition(self):
+        body = """
+not-run
+
+## 执行覆盖账本
+
+| 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 |
+|---|---|---|---|---|---|---|
+| 2 | 1 | 1 | 0 | 1 | 自动化缺口 | run command |
+"""
+        errors = archive_report._coverage_ledger_errors(body)
+        self.assertTrue(any("关闭条件" in error for error in errors))
+
+    def test_reviewer_summary_separates_pass_fail_not_run_and_intervention(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+| 多图 | 首页 → 视觉创作 → 结果 | 通过 | 不通过 | 不通过 | P1 | 是 | [步骤](#e) | [截图](#f) | [缺陷](#g) | [方法](#h) |
+| 视频 | 首页 → 视频创作 → 成片 | 通过 | 未执行 | 未执行 | 无 | 需干预 | [步骤](#i) | [截图](#j) | [缺陷](#k) | [方法](#l) |
+"""
+        summary = archive_report._reviewer_summary(body)
+        self.assertIsNotNone(summary)
+        self.assertEqual(
+            {"pass": 1, "partial": 0, "fail": 1, "not_run": 1, "intervention": 2},
+            summary["counts"],
+        )
+
+    def test_supervisor_gate_rejects_pass_when_module_budget_is_short(self):
+        body = """
+验收场景：全面视觉回归
+
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 多图视觉创作 | 首页 → 视觉创作 → 生成结果 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 多图视觉创作 | 3 | 2 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        manifest = [
+            {"name": "01-a", "module": "多图视觉创作"},
+            {"name": "02-b", "module": "多图视觉创作"},
+        ]
+        errors = archive_report._supervisor_report_errors("全面视觉回归", body, manifest)
+        self.assertTrue(any("实际 2 < 计划 3" in error for error in errors))
+
+    def test_supervisor_gate_requires_clickable_reviewer_links(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | 见正文 | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 登录 | 1 | 1 | 通过 | 通过 | 不适用 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertTrue(any("查看步骤" in error and "可点击" in error for error in errors))
+
+    def test_supervisor_gate_accepts_complete_budget_and_manifest(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 视觉证据预算
+
+| 模块 | 计划截图 | 实际截图 | 入口 | 输入或动作 | 加载 | 结果 | 失败或恢复 | 移动端 | 结论 | 证据 |
+|---|---:|---:|---|---|---|---|---|---|---|---|
+| 登录 | 1 | 1 | 通过 | 通过 | 不适用 | 通过 | 通过 | 通过 | 通过 | [证据](#b) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertEqual([], errors)
+
+    def test_supervisor_gate_accepts_new_collected_and_qualified_coverage(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 未执行 | P2 | 是 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 合格证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 登录 | 未执行 | 登录 → 首页 → 头像 | 1 | 0/2 | 0/2 | 缺逐项元数据 | [查看](#visual-ledger-login) | [查看](#visual-method-login) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertEqual([], errors)
+
+    def test_supervisor_gate_accepts_auditable_evidence_header(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 可审核证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 登录 | 通过 | 登录 → 首页 → 头像 | 1 | 1/1 | 1/1 | 无 | [查看](#visual-ledger-login) | [查看](#visual-method-login) |
+"""
+        manifest = [{
+            "name": "01-login",
+            "module": "登录",
+            "primaryState": "登录",
+            "coverageStates": ["登录"],
+            "testType": "视觉",
+            "status": "通过",
+            "theme": "dark",
+            "viewportClass": "desktop",
+            "methodAnchor": "#visual-method-login",
+            "breadcrumb": "登录 → 首页 → 头像",
+        }]
+        errors = archive_report._supervisor_report_errors("主管验收", body, manifest)
+        self.assertEqual([], errors)
+
+    def test_supervisor_gate_rejects_false_qualified_count(self):
+        body = """
+## 主管验收总览
+
+| 模块 | 真实面包屑 | 冒烟 | 功能 | 视觉 | 最高问题 | 是否需干预 | 查看步骤 | 查看截图 | 查看缺陷 | 关联测试方法 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 登录 | 登录 → 首页 → 头像 | 通过 | 通过 | 通过 | 无 | 否 | [步骤](#a) | [截图](#b) | [缺陷](#c) | [方法](#d) |
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 合格证据 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---:|---|---|---|
+| 登录 | 通过 | 登录 → 首页 → 头像 | 1 | 1/1 | 1/1 | 无 | [查看](#visual-ledger-login) | [查看](#visual-method-login) |
+"""
+        errors = archive_report._supervisor_report_errors(
+            "主管验收", body, [{"name": "01-login", "module": "登录"}]
+        )
+        self.assertTrue(any("报告可审核 1，manifest 可审核 0" in error for error in errors))
+
+    def test_failure_report_can_archive_explicit_runtime_failure_evidence(self):
+        errors = archive_report._warning_evidence_errors("fail", {
+            "name": "01-real-failure",
+            "warnings": ["自动捕获(P0,network): HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "保存动作真实返回 500，页面显示失败恢复提示",
+        })
+        self.assertEqual([], errors)
+
+    def test_pass_report_cannot_hide_runtime_failure_as_evidence(self):
+        errors = archive_report._warning_evidence_errors("pass", {
+            "name": "01-real-failure",
+            "warnings": ["自动捕获(P0,network): HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "保存动作真实返回 500，页面显示失败恢复提示",
+        })
+        self.assertTrue(any("pass 报告不能包含失败证据" in error for error in errors))
+
+    def test_failure_evidence_requires_a_specific_reason(self):
+        errors = archive_report._warning_evidence_errors("fail", {
+            "name": "01-real-failure",
+            "warnings": ["HTTP 500"],
+            "failureEvidence": True,
+            "failureReason": "失败",
+        })
+        self.assertTrue(any("failureReason" in error for error in errors))
+
 
 class InteractiveReportLinkContractTests(unittest.TestCase):
     manifest = [{
@@ -553,6 +819,78 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         "warnings": [],
     }]
     figure_srcs = {"fig-01-proof": "https://assets.example.test/01-proof.png"}
+
+    @staticmethod
+    def business_decision_body(not_run: int, inconclusive: int) -> str:
+        passed = 1
+        return f"""
+## 结论与处理顺序
+
+| 指标 | 数量 |
+|---|---:|
+| 计划测试 | {passed + not_run} |
+| 已完成 | {passed} |
+| 通过 | {passed} |
+| 失败 | 0 |
+| 未执行 | {not_run} |
+
+## 截图证据怎么读
+
+| 视觉指标 | 数量 |
+|---|---:|
+| 计划截图槽位 | {inconclusive + 1} |
+| 已采集且可审核 | {inconclusive + 1} |
+| 能直接证明通过 | 1 |
+| 明确不通过 | 0 |
+| 不能证明业务结果 | {inconclusive} |
+"""
+
+    def test_visual_and_functional_counts_only_claim_equality_when_equal(self):
+        unequal = archive_report.build_interactive_html(
+            "稳定冒烟 · 不同缺口数",
+            "conditional",
+            self.business_decision_body(0, 5),
+            [],
+            figure_srcs={},
+        )
+        equal = archive_report.build_interactive_html(
+            "稳定冒烟 · 相同缺口数",
+            "conditional",
+            self.business_decision_body(5, 5),
+            [],
+            figure_srcs={},
+        )
+
+        self.assertIn("功能未执行 0 项与不能证明业务结果 5 张是两个独立维度；两者不能一一对应", unequal)
+        self.assertNotIn("数字相同纯属巧合", unequal)
+        self.assertIn("数字相同纯属巧合", equal)
+
+    def test_zero_failure_sentinel_renders_empty_state_instead_of_failure_card(self):
+        content = archive_report.build_interactive_html(
+            "稳定冒烟 · 零失败报告",
+            "pass",
+            """
+## 结论与处理顺序
+
+| 指标 | 数量 |
+|---|---:|
+| 计划测试 | 1 |
+| 已完成 | 1 |
+| 通过 | 1 |
+| 失败 | 0 |
+| 未执行 | 0 |
+
+## 不通过问题与复现
+
+| 根因 | 影响项数 | 影响模块 | 验收项编号 |
+|---|---:|---|---|
+| 无 | 0 | 无 | 无 |
+""",
+            [],
+            figure_srcs={},
+        )
+        self.assertIn("本轮没有业务失败项。", content)
+        self.assertNotIn('<article class="business-failure-card">', content)
 
     @staticmethod
     def body(gap_heading: str) -> str:
@@ -619,6 +957,26 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         )
         errors = archive_report._interactive_evidence_errors(content, self.manifest)
         self.assertTrue(any("无法唯一解析的内部链接" in error for error in errors))
+
+    def test_explicit_method_anchor_survives_markdown_rendering(self):
+        body = (
+            self.body("覆盖缺口")
+            + "\n\n| 测试方法 |\n"
+              "|---|\n"
+              "| [查看](#method-core-001) |\n\n"
+              '<a id="method-core-001"></a>\n'
+              "### 首页与静态资源\n"
+        )
+        rendered = archive_report.build_interactive_html(
+            "Commit验收 · 测试方法锚点",
+            "conditional",
+            body,
+            self.manifest,
+            figure_srcs=self.figure_srcs,
+        )
+        self.assertIn('href="#method-core-001"', rendered)
+        self.assertIn('<span id="method-core-001"></span>', rendered)
+        self.assertEqual([], archive_report._interactive_evidence_errors(rendered, self.manifest))
 
 
 if __name__ == "__main__":

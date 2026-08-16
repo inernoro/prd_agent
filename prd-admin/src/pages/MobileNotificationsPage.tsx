@@ -6,12 +6,14 @@ import {
   Download,
   Paperclip,
 } from 'lucide-react';
-import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications } from '@/services';
+import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { AS_COLOR, AS_FONT_FAMILY } from '@/lib/appStoreTokens';
 import { useAppStoreColors } from '@/hooks/useAppStoreColors';
+import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
+import { toast } from '@/lib/toast';
 
 /* ── 通知色调背景（iOS 语义色轻底，双主题通用；卡片边框/徽章走 registry 的 accent） ── */
 const TONE_BG: Record<string, string> = {
@@ -81,18 +83,40 @@ export default function MobileNotificationsPage() {
   const openNotification = useCallback(async (item: AdminNotificationItem) => {
     const url = item.actionUrl;
     if (!url) return;
+    const isLlmGatewayAction = item.actionKind === 'llm-gateway';
     // 外部链接（actionKind=external 或绝对 URL）必须在用户点击的同步栈内打开，
     // 否则 await 之后丢失用户手势激活，会被移动端浏览器拦截弹窗。
-    const isExternal = item.actionKind === 'external' || /^https?:\/\//i.test(url);
+    const isExternal = !isLlmGatewayAction && (item.actionKind === 'external' || /^https?:\/\//i.test(url));
     if (isExternal) window.open(url, '_blank', 'noopener,noreferrer');
     setHandlingIds((s) => new Set(s).add(item.id));
-    const res = await handleAdminNotification(item.id);
-    setHandlingIds((s) => { const next = new Set(s); next.delete(item.id); return next; });
-    if (res.success) {
+    try {
+      // 先签发并校验网关深链，再持久化“已处理”。票据或入口解析失败时保留原通知，用户可以重试。
+      let gatewayHref: string | null = null;
+      if (isLlmGatewayAction) {
+        const ticket = await createLlmGatewaySsoTicket();
+        if (!ticket.success) {
+          toast.error('模型网关暂时无法打开', ticket.error?.message);
+          return;
+        }
+        const resolution = resolveLlmGatewaySso(ticket.data.code, ticket.data.console, url);
+        if (!resolution.ok) {
+          toast.error('模型网关暂时无法打开', resolution.message);
+          return;
+        }
+        gatewayHref = resolution.href;
+      }
+      const res = await handleAdminNotification(item.id);
+      if (!res.success) return;
       setNotifications((prev) =>
         prev.map((n) => (n.id === item.id ? { ...n, status: 'handled' as const, handledAt: new Date().toISOString() } : n)),
       );
-      if (!isExternal) navigate(url);
+      if (gatewayHref) {
+        window.location.assign(gatewayHref);
+      } else if (!isExternal) {
+        navigate(url);
+      }
+    } finally {
+      setHandlingIds((s) => { const next = new Set(s); next.delete(item.id); return next; });
     }
   }, [navigate]);
 
@@ -151,7 +175,7 @@ export default function MobileNotificationsPage() {
                       <div className="mb-1 flex flex-wrap items-center gap-2">
                         <span
                           className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                          style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                          style={{ background: `${variant.accent}1f`, color: variant.fg }}
                         >
                           <ItemTypeIcon size={11} />
                           {variant.label}

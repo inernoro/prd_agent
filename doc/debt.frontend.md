@@ -176,6 +176,161 @@
 - 已清偿：海鲜市场半高/迷你密度卡（用户截图病灶）、底部 TabBar、快速创建抽屉、
   百宝箱移动版（AS_COLOR_LIGHT + useAppStoreColors）、我的/通知页
 
+### 浮层/提示层浅色审计（2026-08-11，60 agent 编排 + 逐条对抗性验证）
+
+起因：用户报浅色主题下 Toast「替换成功」深底深字不可读（实测对比度 1.11:1）。根因是
+`glassStyles.ts` 的 `glassToast()` 把底层写死成深色 rgba，而正文走 `--text-primary`
+（浅色下是深色字）——**面写死、字跟主题走**的混搭。举一反三扫全仓，扫出 54 条、
+对抗性验证存活 44 条（10 条判假阳性驳回，含 1 条 `InlineCommentOverlay` 死代码路径）。
+
+**本轮已清偿**：Toast 底层与语义前景（新增 `--toast-bg-base` / `--toast-accent-*`）；
+浮层面板族统一到新增的 `--overlay-panel-bg` / `--overlay-panel-solid`
+（TipsDrawer、TipCard bubble、ChangelogBell popover、划词 AI/批注/配图三浮层、
+InlineCommentMargin sheet、WikilinkHoverCard、WikilinkAutocomplete、DocBrowser 移动抽屉、
+MobileSafeBoundary 兜底卡、AutomationRulesPage 手动触发弹层）；PageHeader tab 凹槽
+（`--tab-container-bg`）；Tooltip 箭头；代码块/Mermaid 源码统一到 `--nested-block-bg`；
+原生 `select` 的浅色 `color-scheme`。
+
+**三轮验收后的收口状态（2026-08-12）**：
+
+| 对象 | 视觉证据 | 结论 |
+|---|---|---|
+| Toast 成功态、教程抽屉、Mermaid 图与源码、原生 select、批注栏（桌面+移动）、Wikilink 悬浮卡（fallback 分支） | 双主题真人截图，页脚 sha 入镜 | 已验收 |
+| 划词 AI 改写浮层、划词批注输入浮层、Wikilink 联想面板 | **无**。三轮均未触发 | 见下 |
+
+后三者连续三轮拿不到视觉证据，卡点是**触发方式**而非产品：划词依赖真实指针拖选
+（`useContentSelection` 要 `window.getSelection()` 有非零 rect + mouseup/selectionchange
++ 防抖），`[[` 联想依赖真实按键序列写进 textarea；同一批里唯一 hover 触发的
+Wikilink 悬浮卡三轮里成了。用 `createRange()` 或 `fill()` 这类程序化方式设选区不会
+走到那条路径。下次要拿这三项的截图，必须用真实指针事件（Playwright `mouse.down/move/up`）
+或真人手动，不要再用程序化选区重试。
+
+它们当前的证据强度：`themeHardcodeRatchet` 的零容忍守卫保证这 10 个浮层面板
+写死浅色前景与写死深色背景**恒为 0**（配色 100% 走 token），且 token 族本身经
+Playwright 逐像素实测双主题全部 ≥4.5:1。**残余风险**：token 之外的机制（如某个
+第三方子组件自带配色）导致的浅色问题，源码守卫看不见。判定为可接受，不再开新一轮验收。
+
+**未清偿（本轮显式不做，避免一个 PR 无限扩范围）**：
+
+| 优先级 | 位置 | 浅色下的表现 | 不在本轮的原因 |
+|---|---|---|---|
+| P1 | `styles/motion.css:555` `.model-map-chip` 族 | 模型地图弹窗六个能力位的模型名是 86% 白字压象牙白底，整张图只剩连线 | CSS 层，需连带核对该弹窗整体配色 |
+| P1 | `styles/motion.css:926` `.sa-cancelHint` | 取消图标 55% 白压浅底几乎隐形，用户不知道长任务可取消 | 同上 |
+| P1 | `styles/surface.css:3216 / 3316` `.mkt-qc-*-primary` | 海鲜市场「创建 Key」「复制」按钮淡蓝字压近白底，糊成空白色块 | 依赖 `--surface-action-primary-*` 两个 token 的浅色定义缺失，要先补 token |
+| P1 | `pages/video-agent/videoConsole.css:478` | 分镜生成信息值仍是硬编码淡灰 `#c6cdd4`，面已随 token 变亮 | 半迁移残留，需整文件回填 |
+| P1 | `prd-desktop` `SystemNoticeOverlay:11` / `UpdateNotification:73` | `bg-black/40` 等分支方向反了（浅色拿黑底），层内白字无 `dark:` 分支 | **prd-desktop 全仓无 `data-theme` 机制**，要先定「桌面端要不要浅色」再动，属产品决策 |
+| P1 | `llmgw/web` `logsHelpers.ts:270` `deriveLifecycle()` | 生命周期 chip 前景写死暗色主题亮色，浅色下对比 1.5–1.7:1 | 网关观测台独立配色体系，需单独定 token 层 |
+| P2 | `styles/base.css:106` `.prd-field` | 输入框白 7% 填充 + 白 18% 边框在浅底全部隐形，控件「消失」 | 150+ 处消费方，改动面过大，需单独 PR + 全量视觉回归 |
+| P2 | `styles/surface.css:628 / 686` 百宝箱筛选条与分段控件 | 白 6%/19% 面与边隐形，选中态几乎分不出来 | 同上，成组改 |
+| P2 | `llmgw/web` `logsHelpers.ts:235`、`GenerationDetailsDrawer.tsx:350` | 协议/保真度 chip 同型 | 同 llmgw 条 |
+| P2/P3 | `prd-desktop` `PostUpdateSummaryModal:171`、`DefectListPage:465/482` | 深卡浮在浅页 / 白 2% 面不可见 | 同 prd-desktop 条 |
+
+**守卫判据的已知缺口**（`themeHardcodeRatchet.test.ts`，本轮已补两条，其余待办）：
+
+- 已补：扫描范围加 `.ts`（此前只扫 `.tsx`，配色 SSOT `glassStyles.ts` 从未被扫过）；
+  新增「深色 rgba 当背景」计数，且判据按**声明的值**取而不是按行取（按行判会被 Prettier
+  折行绕过，`TipCard.tsx` 的深色气泡底正是这样漏网的）。
+- 待补：3 位 hex（`#111`）、`hsl()` / `oklch()` / `color-mix()` 等价写法不认；
+  深色阈值卡死在感知亮度 0.15，`#292929`(0.161)、`#1f2937`(0.156) 这类中深灰整段落在判据外；
+  **CSS 文件完全不在扫描范围**（基线 289 条无一个 `.css`），上表 P1 里的 motion/surface/
+  videoConsole 三条正是因此从未被拦住。
+
+### 全站程序化对比度审计（2026-08-13 收口）
+
+源码守卫只看得见「写死的颜色字面量」，看不见**组合出来的**低对比（token 正确但叠在
+错的底上、幽灵 token 让底色根本没画、动画让底色亮度来回摆）。用户当时的判词是
+「我实在是找一个页面出现一个页面的错误」——逐屏人工验收接不住这一类。
+
+因此把验收换成程序化全站扫描：`e2e/theme-contrast-audit-local.mjs` 把 `prd-admin/dist`
+挂本地静态服务 + `/api/*` 空数据桩，48 条路由 × 双主题逐个跑，对**实际渲染**的文本与
+图标算真实对比度（颜色一律交浏览器色彩引擎解析合成，渐变/背景图上的元素从截图里
+取元素框内众数色当底）。
+
+结果：522 → 115 → 82 → **0**。清偿的根因型缺陷（一处修好、几十屏受益）：
+
+| 根因 | 影响面 | 修法 |
+|---|---|---|
+| `BranchBadge` 半透明彩底 + 浅灰字 2.93:1 | 每一屏，364 处命中 | 不透明 800 档 + 白字 7.09:1 |
+| 共享 `Badge` 的 success/danger/warning 字色写死 500 档，压同色 12% 淡底 | 所有用语义徽章的页 | 改走双写 `--accent-fg-*` |
+| 品牌色 `--accent-primary` 暗色档配白字只有 3.12:1 | 所有「实心填充 + 白字」按钮 | 新增 `--accent-primary-solid` + `--accent-on-solid` 配对 token |
+| `var(--accent)` 幽灵 token（全仓从未定义） | 快捷指令三个主按钮无底色，白字压米白 1.2:1 | 改指真实 token |
+| 页面钉死暗色画布但文字走全局 token | 前端智能体 / 竞技场 / PR 审查三页整屏反色 | 挂 `surface-tone-dark` 让内部 token 整体切暗 |
+| 文字直接压在会动的呼吸渐变上 | pa-agent 顶栏，对比度随动画在 2.0~5.5 之间摆 | 顶栏铺不带呼吸层的底并抬到渐变之上 |
+
+**覆盖边界（老实写清楚，别当成 100%）**：
+
+- 空数据桩下扫的是**外壳、导航、页头、按钮、分段控件、图标、空状态**；列表被真实数据
+  填满之后的行（卡片、表格行、头像、封面图上的文字）**没扫到**，要用远端版
+  `e2e/theme-contrast-audit.mjs` 对着真站点跑才算数。
+- 48 条路由里有 4 条（`/library` `/pm-agent` `/product-agent` `/visual-agent`）在浅色轮被
+  跳过——这些页自己钉死 `data-theme`，浅色轮本就不成立，它们由暗色轮覆盖，不是扫描漏洞。
+- 参数化路由（`/:id` 编辑器等）不在 `navRegistry` 的静态清单里，未覆盖。
+- 失效控件（`disabled` / `aria-disabled`）按 WCAG 1.4.3 Incidental 例外**不计**——
+  `/arena` 空阵容时的「发送」按钮 1.78:1 就属于这类，是有意不修。
+- 扫描产物（截图 + 报告）不入库，跑一次脚本即重生成。
+
+### 浏览器审计看不见的那一类：同色调淡底浅字（2026-08-14）
+
+上一轮扫到 0 之后，用户随手翻两页就翻出海鲜市场与学习中心两屏糊的。原因不是漏扫，
+是**结构性看不见**：这两屏的缺陷都在「列表被真实数据填满之后才渲染」的行里，
+而本地审计跑的是空数据桩。
+
+试过喂通用 fixture 让列表渲染 —— 失败，且失败得有价值：一份字段名的超集喂不满
+带类型契约的接口，页面被喂成脏数据（`Lv.warning`、`已掌握 false`、`NaN 万次访问`），
+扫出来的 0 比没扫更危险。远端版对着真站点跑本可以解决，但本沙箱的 chromium 没有出网
+（curl 通、chromium `ERR_CONNECTION_RESET`，重启容器后复测仍然如此）。
+
+所以这一类改为在**源码层**判：`sameHueTintRatchet.test.ts`。判据是
+「同一色相，既当低透明度背景（≤0.3）、又当高不透明前景（≥0.7），且把淡底合成到暖纸页底后
+前景对它够不到 4.5:1」。全仓扫出 **553 处 / 158 个文件** —— 这才是「翻一页坏一页」的实际规模。
+
+判据本身返工了四轮，每一轮都是「太窄」（`predicate-and-wiring-discipline` 形状 1）：
+
+| 轮次 | 漏在哪 | 补法 |
+|---|---|---|
+| 1 | 只认 `color:`/`fg:`/`stroke:` | 补 `text:`/`iconColor:` —— 注册表普遍写 `{ bg, text, border, iconColor }`，海鲜市场正栽在这 |
+| 2 | 只认**完全相同**的 rgb 三元组 | 改按色相族 —— 底 400 档 + 字 300 档一眼同色，三元组却不同 |
+| 3 | 把白/灰也算进来 | 无彩色（通道极差 < 40）划归 `themeHardcodeRatchet`，两条棘轮不互相打架 |
+| 4 | 用「亮度 < 0.25 视为深字」拍了个魔数 | purple-500 与 pink-500 的亮度落在 0.21~0.25，卡任何魔数都漏；改成直接算真账：淡底合成到页底再算对比度 |
+
+**结果 553 → 10**，剩下的两处都是有意保留：
+
+- `lib/platformColors.ts` 9 处 —— 平台品牌色注册表，色值即身份，换语义 token 等于抹掉品牌；
+- `pages/public-profile/RetractButton.tsx` 1 处 —— 只在 `:hover` 分支生效，按形状 8「带状态限定不能当证据」不判。
+
+### 对比度审计：未解边界（2026-08-15）
+
+只留**尚未解决、会影响结论可信度**的边界。已修项、修法机制、轮次过程与计数都不进本文档
+（AGENTS.md §10：实现细节读源码，评测产出归验收知识库）。
+
+| 未解边界 | 对结论的影响 |
+|---|---|
+| 浮层与交互态一概没扫 | 审计只做「打开路由 → 扫当前 DOM」，不点不 hover 不触发。Toast / Tooltip / 抽屉 / Popover / 悬浮卡 / 下拉 / hover 态全部在覆盖之外——而浅色主题缺陷恰恰高发于浮层。要真覆盖需给每类浮层写触发夹具，属独立工程 |
+| 参数化详情页没扫 | 28 条含 `:id` 的路由要真实 id 才打得开，默认清单直接过滤掉；`AUDIT_ROUTES` 可传具体路径，但得先有真实 id |
+| `background-clip: text` 的渐变文字量不出来 | 这类文字的颜色是被裁切的背景渐变本身，`color` 是 transparent，任何按 `color` 取值的判据都够不着。现按「没量成」如实计入，不猜数 |
+| 滚动揭示（Reveal）内容没扫到 | 首屏以下靠 IntersectionObserver 揭示的内容，扫描时仍是 opacity:0，按「不可见」跳过。落地页 `/home` 的统计大数就是这样——它同时也是 `background-clip:text`，两条边界叠在同一处 |
+| 具名 style 对象里的暗底 | 「给暗岛补 surface-tone-dark」的自动扫描按「同一开标签」判定，够不着这种写法，只能手工 grep |
+| opacity 嵌套取乘积 | 多层 opacity 嵌套时按各层乘积算，与浏览器「逐层成组再混」在「半透明背景叠半透明组」的极端组合下有小数级偏差。本仓库未见两层以上嵌套 |
+| 钉死主题作用域一律豁免 | 同色调棘轮扫 CSS 时，把淡底合成到暖纸页底上算真账，这个前提对钉死某一档主题的覆盖不成立，故这类声明整条豁免。目前仓库里钉死档全是深色；若将来出现按浅色档命名的钉死作用域，会被一并放过 |
+| 大批实测缺陷尚未清偿 | 最后一次可信全量扫描留下约 1330 处实测不达标、312 处没量成，本轮只清掉影响面最大的几组。按路由排队：`/video-agent` 82、`/agent-launcher` 68、`/labs/liquid-glass` 61、`/pa-agent` 59、`/weekly-poster` 53 |
+| 复扫通道当前不通 | 2026-08-16 起审计账号在预览域名登录被拒（接口返 `INVALID_CREDENTIALS`，非部署问题），最后几处判据修正（视口聚合键、needsEye 去重、query 核对、opacity 组合成）只在合成页验证过，未对真站点复跑。恢复复扫需要一组能登录预览域名的凭据 |
+| 合并 main 时随入的硬编码 | 2026-08-16 合入 main（197 个提交）时，双皮肤棘轮与同色调棘轮各拦下一批：`ShareViewPage`、`AskConfigDrawer`（main 新建）、`AdvancedVisualAgentTab`、`ReprocessChatDrawer`。全部经 merge-base 比对确认是 main 并行期新写、且写于守卫落地之前，非本分支引入。已录进基线锁住不再增长，清偿留给触碰这些文件的下一次改动 |
+| 样式表 452 处存量硬编码 | 双皮肤棘轮刚把 `.css` 纳入并录基线，新增会红；存量按「走到哪清到哪」偿还 |
+
+**结论怎么用**：同一把尺子前后对比是可靠的；用它宣称「全站零缺陷」不可靠——上表每一行都是少报的来源。
+
+沙箱内跑远端审计需要 chromium 走 node fetch 桥（chromium 自身穿不过出口代理），
+穿透层与两个入口见本节末「实现来源」。
+
+#### 实现来源
+
+| 角色 | 文件 |
+|---|---|
+| 代理穿透层（chromium → node fetch） | `.claude/skills/cds/cli/acceptance/proxyroute.mjs` |
+| 远端审计入口 | `e2e/theme-contrast-audit.mjs` |
+| 本地审计入口 | `e2e/theme-contrast-audit-local.mjs` |
+| 判据与采样内核 | `e2e/contrast-audit-core.mjs` |
+
 ### 已完成（本轮）
 
 - `mobileThemeStore`（localStorage 持久化，浅色默认）+ 首页右上角明暗切换按钮

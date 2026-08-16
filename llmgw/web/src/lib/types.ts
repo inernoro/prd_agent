@@ -29,7 +29,13 @@ export type LoginResult = {
 export type TenantSession = { id: string; name: string; isInternal: boolean; role: string; teamIds: string[] };
 
 // ── 改密 ──
-export type ChangePasswordRequest = { oldPassword: string; newPassword: string };
+export type ChangePasswordRequest = {
+  /** 联邦账号首次设置本地口令时留空——它的旧口令是建号时随机生成的，没人知道。 */
+  oldPassword?: string;
+  newPassword: string;
+  /** 可选的新登录名；留空表示保持现有用户名。 */
+  username?: string;
+};
 export type ChangePasswordResult = {
   /** 改密后重新签发的 token（不再带 mcp 标记）。 */
   token: string;
@@ -37,6 +43,30 @@ export type ChangePasswordResult = {
   displayName?: string | null;
   expiresAt?: string | null;
   identityProvider?: string | null;
+  tenant?: TenantSession | null;
+  /**
+   * 口令确实改成功了，但会话在这中间到期了，服务端签不出新 token。
+   * 这种情况后端回的是 success（不是失败）——报失败会让用户拿着已经作废的旧口令反复重试。
+   * 前端要做的是：告诉他改成功了，然后请他重新登录。
+   */
+  requiresRelogin?: boolean;
+};
+
+/** 「账号与安全」页的数据源：我的登录名是什么、有没有可用的本地口令、改密要不要填旧口令。 */
+export type AccountProfile = {
+  username: string;
+  displayName?: string | null;
+  /** map 表示由 MAP 一键登录自动建号，空表示独立口令账号。 */
+  identityProvider?: string | null;
+  hasLocalPassword: boolean;
+  requiresOldPassword: boolean;
+  /** 当前用户名是否为自动生成（map-xxxx），据此提示用户改成记得住的名字。 */
+  usernameIsGenerated: boolean;
+  /** 建议的登录名（MAP 用户名），用于预填输入框；为空表示没有可用建议。 */
+  suggestedUsername?: string | null;
+  /** 建议登录名已被别人占用——必须明说，否则用户会照着填再撞一次。 */
+  suggestedUsernameTaken?: boolean;
+  minPasswordLength: number;
   tenant?: TenantSession | null;
 };
 
@@ -471,6 +501,7 @@ export type ModelPool = {
   boundAppCallers: Array<{ id: string; appCallerCode: string; title?: string | null; status: string }>;
   recentRequests: number; recentSucceeded: number; recentFailed: number;
   recentSuccessRatePercent?: number | null; lastRequestAt?: string | null; trafficWindowHours: number;
+  averageDurationMs?: number | null; recentTenRequests: number; recentTenSuccessRatePercent?: number | null;
   health: 'healthy' | 'degraded' | 'unavailable' | 'empty';
   healthyMembers: number; degradedMembers: number; unavailableMembers: number;
   managedByRegistry: boolean; appendOnly: boolean; poolRole?: string | null;
@@ -646,6 +677,79 @@ export type CreatePlatformRequest = {
   apiKey: string;
   maxConcurrency?: number;
   remark?: string;
+};
+
+// ── 内置上游预设 / 连通性自测 / 模型发现（minimal-user-input.md）──
+// 这些类型的唯一数据源是后端 /gw/provider-presets，前端不另维护一份上游清单。
+export type ProviderPresetItem = {
+  key: string;
+  name: string;
+  platformType: 'openai' | 'claude';
+  apiUrl: string;
+  providerId?: string | null;
+  maxConcurrency: number;
+  keyConsoleUrl: string;
+  keyPrefixHint: string;
+  supportsModelDiscovery: boolean;
+  supportsUpstreamPricing: boolean;
+  summary: string;
+  searchTerms: string[];
+  /** 非空 = 该上游不校验密钥，前端替用户预填这个占位值 */
+  keylessPlaceholder?: string;
+};
+export type ProviderPresetsData = { items: ProviderPresetItem[] };
+
+export type PlatformTestResult = {
+  reachable: boolean;
+  httpStatus?: number | null;
+  elapsedMs: number;
+  probedUrl: string;
+  modelCount?: number | null;
+  failureKind?: string | null;
+  message: string;
+  nextStep?: string | null;
+};
+
+export type UpstreamModelItem = {
+  modelId: string;
+  displayName?: string | null;
+  inferredCapabilities: string[];
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+  priceSource?: string | null;
+  alreadyImported: boolean;
+};
+export type UpstreamModelsData = {
+  probedUrl: string;
+  total: number;
+  alreadyImportedCount: number;
+  pricingProvided: boolean;
+  /** 上游实际返回了多少个——仅在被截断时非空，必须显示出来 */
+  truncatedFromTotal?: number | null;
+  /** 这份清单与价格的拉取时间（服务端 UTC）。面板可能开着不动，用户要能分辨新鲜度 */
+  fetchedAt: string;
+  items: UpstreamModelItem[];
+};
+
+export type ImportUpstreamModelEntry = {
+  modelId: string;
+  capabilities?: string[];
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: string | null;
+};
+export type ImportUpstreamModelsResult = {
+  requested: number;
+  created: number;
+  skipped: number;
+  skippedModelIds: string[];
+  createdModelIds: string[];
+  /** 模型已入库但没进默认池：池路由选不到它们，必须如实告知 */
+  poolSyncFailed?: boolean;
+  message?: string;
 };
 
 // ── 模型（无密钥，仅 hasKey）──
@@ -946,6 +1050,9 @@ export type GatewayAppCaller = {
   title?: string | null;
   status: string;
   modelPoolId?: string | null;
+  allowedModelPoolIds?: string[];
+  defaultModelPoolId?: string | null;
+  allowCrossPoolFallback?: boolean;
   modelPolicy?: string | null;
   parameterPolicy?: string | null;
   lastObservedModelPoolId?: string | null;
@@ -980,6 +1087,9 @@ export type CreateGatewayAppCallerRequest = {
 export type UpdateGatewayAppCallerRequest = {
   status?: string;
   modelPoolId?: string;
+  allowedModelPoolIds?: string[];
+  defaultModelPoolId?: string;
+  allowCrossPoolFallback?: boolean;
   modelPolicy?: string;
   parameterPolicy?: string;
   owner?: string;

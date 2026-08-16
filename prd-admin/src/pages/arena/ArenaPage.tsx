@@ -1254,9 +1254,11 @@ export function ArenaPage() {
   const totalCount = panels.length;
   const hasActiveProgress = hasBattle && totalCount > 0 && (isStreaming || completedCount > 0);
 
+  // surface-tone-dark：本页是钉死的暗色画布，但内部文字走全局 token，
+  // 浅色主题下变成深字压深底（实测 1.01:1）。
   return (
     <div
-      className="relative flex h-full text-white"
+      className="relative flex h-full text-token-primary surface-tone-dark"
       style={{ minHeight: 0, fontFamily: 'var(--font-body)' }}
     >
       {/* Layer 0 · StaticBackdrop（absolute 模式，局限在 AppShell 主内容区） */}
@@ -1355,12 +1357,12 @@ export function ArenaPage() {
                         <div className="text-[11px] mt-0.5 flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                           <span>{item.responseCount} 个模型</span>
                           {item.hasAttachments && (
-                            <ImageIcon className="w-3 h-3 ml-0.5" style={{ color: 'rgba(99,102,241,0.7)' }} />
+                            <ImageIcon className="w-3 h-3 ml-0.5" style={{ color: 'var(--accent-fg-violet)' }} />
                           )}
                           {item.revealed && (
                             <span
                               className="ml-1 text-[10px] px-1 py-0.5 rounded"
-                              style={{ background: 'rgba(99,102,241,0.15)', color: 'rgba(99,102,241,0.9)' }}
+                              style={{ background: 'rgba(99,102,241,0.15)', color: 'var(--accent-fg-violet)' }}
                             >
                               已揭晓
                             </span>
@@ -1393,7 +1395,7 @@ export function ArenaPage() {
               className="lg:hidden p-1.5 rounded-lg hover-bg-soft"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             >
-              <Swords className="w-4 h-4 text-white/85" />
+              <Swords className="w-4 h-4 text-token-secondary" />
             </button>
             <div className="flex items-center gap-3">
               {/* Gradient icon badge */}
@@ -1405,10 +1407,12 @@ export function ArenaPage() {
                     '0 0 24px rgba(124, 58, 237, 0.28), 0 0 48px rgba(0, 240, 255, 0.12)',
                 }}
               >
-                <Swords className="w-4 h-4 text-white drop-shadow" />
+                {/* 压在 HERO_GRADIENT 上必须用它配套的前景色：这条渐变对白字只有 2.23~3.62:1
+                    （越往右越亮越糟），用 --text-primary 实测 2.82:1，图标线要求 3:1。 */}
+                <Swords className="w-4 h-4 drop-shadow" style={{ color: HERO_GRADIENT_FG }} />
               </div>
               <h1
-                className="text-[17px] font-medium text-white"
+                className="text-[17px] font-medium text-token-primary"
                 style={{
                   fontFamily: 'var(--font-display)',
                   letterSpacing: '-0.015em',
@@ -1479,11 +1483,11 @@ export function ArenaPage() {
                       {lineupError ? '加载失败，点击重试' : '暂无可用阵容'}
                       <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
                         {lineupError ? (
-                          <button className="underline hover:text-white/80" onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}>
+                          <button className="underline hover:text-token-secondary" onClick={() => { setGroupDropdownOpen(false); loadLineup(); }}>
                             重新加载
                           </button>
                         ) : (
-                          <button className="underline hover:text-white/80" onClick={enterManageMode}>
+                          <button className="underline hover:text-token-secondary" onClick={enterManageMode}>
                             点击配置阵容
                           </button>
                         )}
@@ -1647,7 +1651,7 @@ export function ArenaPage() {
                       className="w-full h-9 rounded-lg text-[13px] font-medium transition-colors"
                       style={{
                         background: 'rgba(99,102,241,0.15)',
-                        color: 'rgba(99,102,241,0.95)',
+                        color: 'var(--accent-fg-violet)',
                         border: '1px solid rgba(99,102,241,0.2)',
                       }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.25)'; }}
@@ -1680,9 +1684,9 @@ export function ArenaPage() {
                         '0 0 20px rgba(148, 163, 184, 0.18), inset 0 0 10px rgba(148, 163, 184, 0.04)',
                     }}
                   >
-                    <Swords className="w-3.5 h-3.5 text-slate-200" />
+                    <Swords className="w-3.5 h-3.5 text-token-secondary" />
                     <span
-                      className="text-[12px] text-slate-200 uppercase"
+                      className="text-[12px] text-token-secondary uppercase"
                       style={{
                         letterSpacing: '0.22em',
                         textShadow: '0 0 10px rgba(203, 213, 225, 0.45)',
@@ -1696,7 +1700,7 @@ export function ArenaPage() {
                 <Reveal delay={80}>
                   <h2
                     data-arena-pulse
-                    className="text-white font-medium"
+                    className="text-token-primary font-medium"
                     style={{
                       fontFamily: 'var(--font-display)',
                       fontSize: 'clamp(1.875rem, 3.6vw, 2.75rem)',
@@ -1727,7 +1731,7 @@ export function ArenaPage() {
                 <div className="text-center mb-4">
                   <div
                     className="text-[13px] mb-2 px-3 py-2 rounded-lg inline-block"
-                    style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+                    style={{ background: 'rgba(239,68,68,0.08)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.15)' }}
                   >
                     加载阵容失败: {lineupError}
                   </div>
@@ -1800,7 +1804,7 @@ export function ArenaPage() {
                               <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" />
                             ) : (
                               <div className="w-full h-full flex items-center justify-center">
-                                <FileText className="w-5 h-5 text-white/50" />
+                                <FileText className="w-5 h-5 text-token-muted" />
                               </div>
                             )}
                             <button
@@ -1808,7 +1812,7 @@ export function ArenaPage() {
                               className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                               style={{ background: 'rgba(0,0,0,0.7)' }}
                             >
-                              <X className="w-2.5 h-2.5 text-white" />
+                              <X className="w-2.5 h-2.5 text-token-primary" />
                             </button>
                             <div
                               className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate"
@@ -1852,8 +1856,8 @@ export function ArenaPage() {
                       rows={3}
                       className={cn(
                         'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14.5px] leading-relaxed',
-                        'placeholder:text-white/30 disabled:opacity-50 disabled:cursor-not-allowed',
-                        'px-2 py-1 no-focus-ring text-white'
+                        'placeholder:text-token-primary/30 disabled:opacity-50 disabled:cursor-not-allowed',
+                        'px-2 py-1 no-focus-ring text-token-primary'
                       )}
                       style={{ minHeight: '72px', maxHeight: '200px', border: 'none', boxShadow: 'none', fontFamily: 'var(--font-body)' }}
                     />
@@ -1865,9 +1869,9 @@ export function ArenaPage() {
                           onClick={handleAttachmentClick}
                           disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
                           className={cn(
-                            'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-white/55',
+                            'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-token-muted',
                             'disabled:opacity-30 disabled:cursor-not-allowed',
-                            'hover-bg-soft hover:text-white/85'
+                            'hover-bg-soft hover:text-token-secondary'
                           )}
                           title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                         >
@@ -1876,7 +1880,7 @@ export function ArenaPage() {
                       </div>
                       <div className="flex items-center gap-3">
                         <span
-                          className="text-[11px] text-white/50"
+                          className="text-[11px] text-token-muted"
                           style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.08em' }}
                         >
                           {slots.length > 0
@@ -1909,7 +1913,7 @@ export function ArenaPage() {
               <Reveal delay={320}>
                 <div className="text-center mt-3">
                   <span
-                    className="text-[11px] text-white/45"
+                    className="text-[11px] text-token-muted"
                     style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
                   >
                     DRAG · PASTE · FILES · ENTER 发送 · SHIFT+ENTER 换行
@@ -1939,16 +1943,16 @@ export function ArenaPage() {
                     boxShadow: '0 0 12px rgba(124, 58, 237, 0.35)',
                   }}
                 >
-                  <MessageSquare className="w-3 h-3 text-white" />
+                  <MessageSquare className="w-3 h-3 text-token-primary" />
                 </div>
                 <p
-                  className="text-[13px] truncate flex-1 text-white/92"
+                  className="text-[13px] truncate flex-1 text-token-primary/92"
                   title={currentPrompt}
                 >
                   {currentPrompt}
                 </p>
                 <span
-                  className="hidden sm:inline-flex items-center px-2 h-5 rounded-full text-[10px] flex-shrink-0 text-white/55"
+                  className="hidden sm:inline-flex items-center px-2 h-5 rounded-full text-[10px] flex-shrink-0 text-token-muted"
                   style={{
                     border: '1px solid rgba(255, 255, 255, 0.14)',
                     fontFamily: 'var(--font-terminal)',
@@ -1961,7 +1965,7 @@ export function ArenaPage() {
                 {allDone && !isStreaming && (
                   <button
                     onClick={handleRetry}
-                    className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover-bg-soft flex-shrink-0 text-white/65"
+                    className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover-bg-soft flex-shrink-0 text-token-secondary"
                     style={{
                       border: '1px solid rgba(255, 255, 255, 0.16)',
                       fontFamily: 'var(--font-terminal)',
@@ -2075,7 +2079,7 @@ export function ArenaPage() {
                           )}
                           <div className="min-w-0">
                             <div
-                              className="text-[13px] font-medium truncate text-white"
+                              className="text-[13px] font-medium truncate text-token-primary"
                               style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em' }}
                             >
                               {revealed && info ? info.displayName : panel.label}
@@ -2126,7 +2130,7 @@ export function ArenaPage() {
                             )}
                             <div
                               className="text-[13px] px-3 py-2 rounded-lg break-all"
-                              style={{ background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.9)', border: '1px solid rgba(239,68,68,0.15)' }}
+                              style={{ background: 'rgba(239,68,68,0.08)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.15)' }}
                             >
                               {panel.errorMessage ?? '响应异常'}
                             </div>
@@ -2334,8 +2338,8 @@ export function ArenaPage() {
                   disabled={isStreaming || slots.length === 0}
                   rows={1}
                   className={cn(
-                    'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14.5px] leading-relaxed text-white',
-                    'placeholder:text-white/30 disabled:opacity-50 disabled:cursor-not-allowed',
+                    'w-full bg-transparent border-none outline-none ring-0 focus:ring-0 focus:outline-none resize-none text-[14.5px] leading-relaxed text-token-primary',
+                    'placeholder:text-token-primary/30 disabled:opacity-50 disabled:cursor-not-allowed',
                     'px-2 py-1 no-focus-ring'
                   )}
                   style={{ minHeight: '40px', maxHeight: '200px', border: 'none', boxShadow: 'none', fontFamily: 'var(--font-body)' }}
@@ -2348,9 +2352,9 @@ export function ArenaPage() {
                       onClick={handleAttachmentClick}
                       disabled={isStreaming || slots.length === 0 || attachments.length >= MAX_ATTACHMENTS}
                       className={cn(
-                        'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-white/55',
+                        'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-token-muted',
                         'disabled:opacity-30 disabled:cursor-not-allowed',
-                        'hover-bg-soft hover:text-white/85'
+                        'hover-bg-soft hover:text-token-secondary'
                       )}
                       title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                     >
@@ -2377,7 +2381,7 @@ export function ArenaPage() {
                         type="button"
                         onClick={handleReveal}
                         disabled={revealLoading}
-                        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-[12.5px] font-medium text-white/90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full text-[12.5px] font-medium text-token-primary/90 transition-all duration-200 hover:scale-[1.02] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{
                           background: 'rgba(10, 14, 22, 0.90)',
                           border: '1px solid rgba(255, 255, 255, 0.24)',

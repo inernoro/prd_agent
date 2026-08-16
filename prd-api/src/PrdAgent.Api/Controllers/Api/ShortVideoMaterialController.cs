@@ -53,6 +53,10 @@ public class ShortVideoMaterialController : ControllerBase
         var videoUrl = ShortVideoMaterialProcessor.ExtractUrl(req.VideoUrl);
         if (string.IsNullOrWhiteSpace(videoUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写短视频链接"));
+        if (!ShortVideoMaterialProcessor.IsHttpUrl(videoUrl))
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "未识别到可解析的短视频链接。请粘贴完整的公开视频链接后重试"));
 
         var platform = ShortVideoMaterialProcessor.DetectPlatform(videoUrl);
         var title = CleanTitle(req.Title) ?? $"短视频素材 {DateTime.UtcNow:yyyyMMdd-HHmm}";

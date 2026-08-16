@@ -171,8 +171,8 @@ const PRD_MD_STYLE = `
   .prd-md ul,.prd-md ol { margin: 10px 0; padding-left: 18px; }
   .prd-md li { margin: 6px 0; }
   .prd-md hr { border: 0; border-top: 1px solid var(--border-default); margin: 14px 0; }
-  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
-  .prd-md a { color: rgba(147, 197, 253, 0.95); text-decoration: underline; }
+  .prd-md blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: var(--accent-fg-violet); border-radius: 10px; }
+  .prd-md a { color: var(--accent-fg-blue); text-decoration: underline; }
   .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: var(--bg-input-hover); border: 1px solid var(--border-default); padding: 0 6px; border-radius: 8px; }
   .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; overflow: auto; }
   .prd-md pre code { background: transparent; border: 0; padding: 0; }
@@ -1418,6 +1418,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       };
 
       for await (const chunk of stream) {
+        // 服务端在模型首 token 前推送阶段消息，立即替换静止等待态。
+        if (chunk.type === 'progress' && chunk.message) {
+          setRawMarkerOutput(chunk.message);
+          continue;
+        }
+
         // ====== 思考过程：实时追加显示 ======
         if (chunk.type === 'thinking' && chunk.text) {
           setThinkingContent((prev) => prev + chunk.text);
@@ -2522,27 +2528,30 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       <div className={cn("flex-1 min-w-0 flex flex-col gap-4", isMobile && mobileTab !== 'article' && "hidden")}>
         <GlassCard animated glow className="flex-1 min-h-0 flex flex-col">
           {/* 精简头部：标题 + 模型信息 */}
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                data-tour-id="literary-editor-back"
-                onClick={goBack}
-                className="p-1.5 rounded-lg hover-bg-soft transition-colors"
-                style={{ color: 'var(--text-muted)' }}
-                title="返回"
-              >
-                <ArrowLeft size={16} />
-              </button>
-              <div className="flex items-center gap-2">
-                <FileText size={16} style={{ color: 'var(--text-primary)' }} />
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <div className={cn("mb-2 flex", isMobile ? "flex-col items-stretch gap-2" : "items-center justify-between")}>
+            <div className={cn("min-w-0 flex", isMobile ? "flex-col gap-2" : "items-center gap-3")}>
+              <div className="flex min-w-0 items-center gap-2">
+                <button
+                  type="button"
+                  data-tour-id="literary-editor-back"
+                  onClick={goBack}
+                  className="shrink-0 p-1.5 rounded-lg hover-bg-soft transition-colors"
+                  style={{ color: 'var(--text-muted)' }}
+                  title="返回"
+                >
+                  <ArrowLeft size={16} />
+                </button>
+                <FileText size={16} className="shrink-0" style={{ color: 'var(--text-primary)' }} />
+                <div className="min-w-0 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                   {uploadedFileName || '文章内容'}
                 </div>
               </div>
 
               {/* 模型切换器：提示词模型 + 生图模型 */}
-              <div className="flex items-center gap-1.5">
+              <div
+                className={cn("flex min-w-0 items-center gap-1.5", isMobile && "overflow-x-auto pb-1")}
+                style={isMobile ? { overscrollBehaviorX: 'contain' } : undefined}
+              >
                 {/* 提示词/标记生成模型切换器 */}
                 {effectiveChatModel?.isAutoResolved ? (
                   <span
@@ -2550,7 +2559,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     style={{
                       background: 'rgba(99, 102, 241, 0.08)',
                       border: '1px solid rgba(99, 102, 241, 0.25)',
-                      color: 'rgba(129, 140, 248, 0.75)',
+                      color: 'var(--accent-fg-blue)',
                     }}
                     title={`自动调度: ${effectiveChatModel.name}`}
                   >
@@ -2631,7 +2640,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     style={{
                       background: 'rgba(34, 197, 94, 0.08)',
                       border: '1px solid rgba(34, 197, 94, 0.25)',
-                      color: 'rgba(74, 222, 128, 0.8)',
+                      color: 'var(--accent-fg-success)',
                     }}
                     title={`自动调度: ${effectiveModel.name}（无专属模型池时 Gateway 自动选择）`}
                   >
@@ -2713,7 +2722,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div
+              className={cn("flex items-center gap-2", isMobile && "min-w-0 overflow-x-auto pb-1")}
+              style={isMobile ? { overscrollBehaviorX: 'contain' } : undefined}
+            >
               {phase === 0 && uploadedFileName && (
                 <Button size="sm" variant="primary" onClick={handleEnterPreview}>
                   <Edit2 size={14} />
@@ -2741,7 +2753,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   disabled={manualSubmitting}
                   className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
                   style={{
-                    color: 'rgba(59, 130, 246, 0.8)',
+                    color: 'var(--accent-fg-blue)',
                     background: 'rgba(59, 130, 246, 0.08)',
                     border: '1px solid rgba(59, 130, 246, 0.15)',
                     opacity: manualSubmitting ? 0.5 : 1,
@@ -2778,8 +2790,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 }}
               >
                 <div className="text-center">
-                  <Upload size={64} style={{ color: 'rgba(147, 197, 253, 0.95)' }} className="mx-auto mb-4" />
-                  <div className="text-lg font-semibold mb-2" style={{ color: 'rgba(147, 197, 253, 0.95)' }}>
+                  <Upload size={64} style={{ color: 'var(--accent-fg-blue)' }} className="mx-auto mb-4" />
+                  <div className="text-lg font-semibold mb-2" style={{ color: 'var(--accent-fg-blue)' }}>
                     释放以上传文件
                   </div>
                   <div className="text-sm" style={{ color: 'rgba(147, 197, 253, 0.75)' }}>
@@ -2879,7 +2891,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       border: '1px solid rgba(147,197,253,0.2)',
                     }}
                   >
-                    <ImageIcon size={13} style={{ color: 'rgba(147,197,253,0.95)', flexShrink: 0 }} />
+                    <ImageIcon size={13} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />
                     <div className="text-[12px]" style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                       已切到「{POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label}」。
                       下面预览中每个灰色占位框就是生成后配图会插入的位置。
@@ -2919,7 +2931,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               className="flex items-center justify-between px-3 py-1.5"
                               style={{ borderBottom: '1px dashed rgba(52,211,153,0.35)', background: 'rgba(52,211,153,0.08)' }}
                             >
-                              <div className="flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'rgba(52,211,153,0.95)' }}>
+                              <div className="flex items-center gap-1.5 text-[11px] font-medium" style={{ color: 'var(--accent-fg-success)' }}>
                                 <MapPin size={11} />
                                 <span>此处将插入配图（1:1）</span>
                               </div>
@@ -2928,7 +2940,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 onClick={() => removeAnchorParagraph(pIdx)}
                                 className="opacity-70 hover:opacity-100 transition-opacity flex items-center gap-1 text-[11px]"
                                 title="移除此锚点"
-                                style={{ color: 'rgba(52, 211, 153, 0.95)' }}
+                                style={{ color: 'var(--accent-fg-success)' }}
                               >
                                 <Trash2 size={11} />
                                 移除
@@ -2983,7 +2995,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 className="inline-flex items-center justify-center rounded-full w-4 h-4 text-[10px]"
                                 style={{
                                   background: 'rgba(52, 211, 153, 0.15)',
-                                  color: 'rgba(52, 211, 153, 0.95)',
+                                  color: 'var(--accent-fg-success)',
                                   border: '1px solid rgba(52, 211, 153, 0.4)',
                                 }}
                               >
@@ -3029,7 +3041,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div
                                 className="px-3 py-1.5 flex items-center gap-1.5 text-[11px] font-medium"
                                 style={{
-                                  color: 'rgba(147,197,253,0.95)',
+                                  color: 'var(--accent-fg-blue)',
                                   borderBottom: '1px dashed rgba(147,197,253,0.3)',
                                   background: 'rgba(147,197,253,0.06)',
                                 }}
@@ -3604,7 +3616,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   style={{
                     background: 'rgba(245, 158, 11, 0.08)',
                     border: '1px solid rgba(245, 158, 11, 0.2)',
-                    color: 'rgba(245, 158, 11, 0.95)',
+                    color: 'var(--accent-fg-amber)',
                     animation: 'pulse 2s ease-in-out infinite',
                   }}
                 >
@@ -4263,7 +4275,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               ) : (
                 <div className="flex-1 min-h-0 overflow-auto pr-1">
                   {!selectedPrompt && (
-                    <div className="text-[11px] mb-2 px-2 py-1.5 rounded-md" style={{ background: 'rgba(34, 197, 94, 0.06)', border: '1px solid rgba(34, 197, 94, 0.15)', color: 'rgba(34, 197, 94, 0.85)' }}>
+                    <div className="text-[11px] mb-2 px-2 py-1.5 rounded-md" style={{ background: 'rgba(34, 197, 94, 0.06)', border: '1px solid rgba(34, 197, 94, 0.15)', color: 'var(--accent-fg-success)' }}>
                       当前使用系统推断风格，可点击下方卡片选择自定义风格
                     </div>
                   )}
@@ -4301,7 +4313,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   {prompt.title}
                                 </div>
                                 {prompt.isSystem && (
-                                  <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251, 191, 36, 0.12)', color: 'rgba(251, 191, 36, 0.85)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+                                  <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(251, 191, 36, 0.12)', color: 'var(--accent-fg-amber)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
                                     系统
                                   </span>
                                 )}
@@ -5014,7 +5026,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               setParagraphCtxMenu(m => ({ ...m, visible: false }));
             }}
           >
-            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            <MapPin size={12} style={{ color: 'var(--accent-fg-success)' }} />
             在此段上方插入配图
           </button>
           <button
@@ -5026,7 +5038,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               setParagraphCtxMenu(m => ({ ...m, visible: false }));
             }}
           >
-            <MapPin size={12} style={{ color: 'rgba(52, 211, 153, 0.95)' }} />
+            <MapPin size={12} style={{ color: 'var(--accent-fg-success)' }} />
             在此段下方插入配图
           </button>
         </div>
@@ -5034,7 +5046,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
       {/* Phase 1: 首次进入的锚点教程气泡 —— 复用全局 TipCard 组件,跟右下角「教程小书」
           抽屉卡片视觉统一(MapPin + 绿色 accent + 知道啦) */}
-      {anchorTutorialSeen === false && phase !== 0 && (
+      {!isMobile && anchorTutorialSeen === false && phase !== 0 && (
         <div
           className="fixed z-[1000]"
           style={{ right: 24, bottom: 24, maxWidth: 340 }}
@@ -5045,14 +5057,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             title="新功能:手动指定配图位置"
             body={
               <div>
-                <div style={{ marginBottom: 6 }}>· 右上角「📍 位置策略」可切换 4 种生成策略</div>
+                <div style={{ marginBottom: 6 }}>右上角「位置策略」可切换 4 种生成策略</div>
                 <div style={{ marginBottom: 6 }}>
-                  · 鼠标悬停段落左侧 → 点{' '}
-                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>+</span> 在上方打锚点
+                  鼠标悬停段落左侧后，点{' '}
+                  <span style={{ color: 'var(--accent-fg-success)' }}>+</span> 在上方打锚点
                 </div>
                 <div>
-                  · 段落上
-                  <span style={{ color: 'rgba(52, 211, 153, 0.95)' }}>右键</span> →
+                  段落上
+                  <span style={{ color: 'var(--accent-fg-success)' }}>右键</span> →
                   选择"在上方/下方插入配图"
                 </div>
               </div>

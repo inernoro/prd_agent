@@ -401,6 +401,84 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task ArchiveClaim_ShouldMigrateCompatibleLegacyOwnerToCurrentDeployment()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        const string legacyOwner = "codex/example";
+        const string currentOwner = "prd-agent:production::codex/example";
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            Session("legacy-owner-session", legacyOwner, DocumentRecordingArchiveStatus.Pending));
+
+        var claimed = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            currentOwner,
+            "current-lease",
+            DateTime.UtcNow,
+            CancellationToken.None,
+            [currentOwner, legacyOwner]);
+
+        claimed.ShouldNotBeNull();
+        claimed!.OwnerInstanceId.ShouldBe(currentOwner);
+        claimed.ArchiveLeaseId.ShouldBe("current-lease");
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(session => session.Id == claimed.Id)
+                .SingleAsync())
+            .OwnerInstanceId.ShouldBe(currentOwner);
+    }
+
+    [Fact]
+    public async Task ArchiveClaim_AuthorizedProductionShouldAtomicallyAdoptHistoricalBranchOwner()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        const string historicalOwner = "codex/retired-preview";
+        const string activeOwner = "codex/active-preview";
+        const string currentOwner = "prd-agent:production::main";
+        var historicalCreatedAt = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+        var adoptionCutoff = historicalCreatedAt.AddDays(1);
+        var historicalSession = Session(
+            "historical-owner-session",
+            historicalOwner,
+            DocumentRecordingArchiveStatus.Pending);
+        historicalSession.CreatedAt = historicalCreatedAt;
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            historicalSession);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            Session("active-owner-session", activeOwner, DocumentRecordingArchiveStatus.Pending));
+
+        var cdsClaim = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            "prd-agent:cds::main",
+            "cds-lease",
+            DateTime.UtcNow,
+            CancellationToken.None,
+            ["prd-agent:cds::main"],
+            retiredLegacyOwnerIds: []);
+        cdsClaim.ShouldBeNull();
+
+        var productionClaim = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            currentOwner,
+            "production-lease",
+            DateTime.UtcNow,
+            CancellationToken.None,
+            [currentOwner, "main"],
+            retiredLegacyOwnerIds: [historicalOwner],
+            legacyOwnerCreatedBeforeUtc: adoptionCutoff);
+
+        productionClaim.ShouldNotBeNull();
+        productionClaim!.OwnerInstanceId.ShouldBe(currentOwner);
+        productionClaim.ArchiveLeaseId.ShouldBe("production-lease");
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(session => session.Id == productionClaim.Id)
+                .SingleAsync())
+            .OwnerInstanceId.ShouldBe(currentOwner);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(session => session.Id == "active-owner-session")
+                .SingleAsync())
+            .OwnerInstanceId.ShouldBe(activeOwner);
+    }
+
+    [Fact]
     public async Task LegacyUnownedArchive_ShouldBeAdoptedByOnlyOneExplicitRequester()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();

@@ -86,6 +86,49 @@ public class LocalAssetStorage : IAssetStorage
         return null;
     }
 
+    public Task<AssetReadHandle?> TryOpenReadByShaAsync(
+        string sha256,
+        CancellationToken ct,
+        string? domain = null,
+        string? type = null)
+    {
+        var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
+        if (sha.Length < 16 || !IsHex(sha)) return Task.FromResult<AssetReadHandle?>(null);
+
+        var dirs = new List<string>();
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(domain) && !string.IsNullOrWhiteSpace(type))
+                dirs.Add(ResolveDir(domain, type));
+        }
+        catch
+        {
+            // ignore
+        }
+        dirs.Add(_baseDir);
+
+        foreach (var dir in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!Directory.Exists(dir)) continue;
+            string? filePath;
+            try { filePath = Directory.GetFiles(dir, $"{sha}.*").FirstOrDefault(); }
+            catch { continue; }
+            if (filePath == null) continue;
+
+            var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                128 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var mime = ExtToMime(Path.GetExtension(filePath).TrimStart('.'));
+            return Task.FromResult<AssetReadHandle?>(new AssetReadHandle(stream, mime, stream.Length));
+        }
+        return Task.FromResult<AssetReadHandle?>(null);
+    }
+
     public Task DeleteByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();

@@ -396,7 +396,7 @@ export function PaAgentPage() {
           <button
             onClick={() => void handleNewSession()}
             className="p-1.5 rounded-lg transition-all hover:scale-105"
-            style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }}
+            style={{ background: 'linear-gradient(135deg,#4338ca,#5b21b6)', color: '#fff' }}
             title="新建对话"
           >
             <Plus size={13} />
@@ -409,7 +409,7 @@ export function PaAgentPage() {
             <SessionSkeleton />
           ) : sessions.length === 0 ? (
             <div className="text-xs text-center pt-6 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              点击 <span style={{ color: '#a5b4fc', fontWeight: 600 }}>+</span> 开始新对话<br/>
+              点击 <span style={{ color: 'var(--accent-fg-violet)', fontWeight: 600 }}>+</span> 开始新对话<br/>
               <span className="text-[10px] opacity-70">把混乱丢给秘书</span>
             </div>
           ) : (
@@ -429,7 +429,7 @@ export function PaAgentPage() {
       <div className="pa-agent-main flex-1 flex flex-col min-w-0 min-h-0">
         {/* Top bar */}
         <div
-          className="shrink-0 flex items-center gap-2 px-3 py-2"
+          className="pa-agent-topbar shrink-0 flex items-center gap-2 px-3 py-2"
           style={{ borderBottom: '1px solid var(--border-default)' }}
         >
           {/* Sidebar toggle */}
@@ -468,7 +468,7 @@ export function PaAgentPage() {
                 className="pa-tab-button flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-[10px] whitespace-nowrap font-medium"
                 style={
                   tab === t.key
-                    ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }
+                    ? { background: 'linear-gradient(135deg,#4338ca,#5b21b6)', color: '#fff' }
                     : { color: 'var(--text-muted)' }
                 }
               >
@@ -536,7 +536,7 @@ export function PaAgentPage() {
             <button
               onClick={() => void handleNewSession()}
               className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl transition-all whitespace-nowrap"
-              style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }}
+              style={{ background: 'linear-gradient(135deg,#4338ca,#5b21b6)', color: '#fff' }}
             >
               <Plus size={13} />
               新对话
@@ -568,7 +568,7 @@ export function PaAgentPage() {
                 <button
                   onClick={() => void handleNewSession()}
                   className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium"
-                  style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }}
+                  style={{ background: 'linear-gradient(135deg,#4338ca,#5b21b6)', color: '#fff' }}
                 >
                   <Plus size={15} />
                   新建对话

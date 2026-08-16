@@ -5,6 +5,8 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
+using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.LlmGateway;
 
@@ -81,15 +83,35 @@ public class TranscriptRunWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var gateway = scope.ServiceProvider.GetRequiredService<ILlmGateway>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
+        var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var instanceId = InstanceIdentity.Get(configuration);
+        var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
 
-        // 原子认领一个 queued 任务
-        var filter = Builders<TranscriptRun>.Filter.Eq(r => r.Status, "queued");
+        // CDS 的所有预览分支共用 MongoDB。只领取当前部署创建的任务，禁止其他分支
+        // 或主干旧版本抢走后按不同模型协议执行。
+        var scopedForCurrentInstance = Builders<TranscriptRun>.Filter.And(
+            Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.ScopedQueued),
+            Builders<TranscriptRun>.Filter.In(r => r.OwnerInstanceId, compatibleOwnerIds));
+        var legacyOwnerScope = LegacyOwnerScope.Build<TranscriptRun>(
+            nameof(TranscriptRun.OwnerInstanceId),
+            compatibleOwnerIds,
+            includeUnowned: true,
+            retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
+            legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetLegacyTranscriptCreatedBeforeUtc(configuration));
+        var adoptableLegacyRun = Builders<TranscriptRun>.Filter.And(
+            Builders<TranscriptRun>.Filter.Eq(r => r.Status, TranscriptRunStatuses.LegacyQueued),
+            legacyOwnerScope);
+        var filter = DeploymentAuthority.CanAdoptLegacyTranscriptRuns(configuration)
+            ? Builders<TranscriptRun>.Filter.Or(scopedForCurrentInstance, adoptableLegacyRun)
+            : scopedForCurrentInstance;
         var update = Builders<TranscriptRun>.Update
             .Set(r => r.Status, "processing")
+            .Set(r => r.OwnerInstanceId, instanceId)
             .Set(r => r.UpdatedAt, DateTime.UtcNow);
         var options = new FindOneAndUpdateOptions<TranscriptRun, TranscriptRun>
         {
-            ReturnDocument = ReturnDocument.After
+            ReturnDocument = ReturnDocument.After,
+            Sort = Builders<TranscriptRun>.Sort.Ascending(r => r.CreatedAt)
         };
         var run = await db.TranscriptRuns.FindOneAndUpdateAsync(filter, update, options);
 
@@ -117,40 +139,49 @@ public class TranscriptRunWorker : BackgroundService
                 ForceFullShadowSample: run.ForceFullShadowSample));
 
             if (run.Type == "asr")
-                await ProcessAsrAsync(db, gateway, run);
+                await ProcessAsrAsync(db, gateway, run, configuration);
             else if (run.Type == "copywrite")
                 await ProcessCopywriteAsync(db, gateway, run);
 
-            await db.TranscriptRuns.UpdateOneAsync(
-                Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
+            var completion = await db.TranscriptRuns.UpdateOneAsync(
+                OwnedProcessingRun(run),
                 Builders<TranscriptRun>.Update
                     .Set(r => r.Status, "completed")
                     .Set(r => r.Progress, 100)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow));
 
             _currentRunId = null;
-            _logger.LogInformation("[transcript-agent] Run {RunId} completed", run.Id);
+            if (completion.ModifiedCount == 1)
+                _logger.LogInformation("[transcript-agent] Run {RunId} completed", run.Id);
+            else
+                _logger.LogWarning(
+                    "[transcript-agent] Run {RunId} completion ignored because processing ownership was lost",
+                    run.Id);
         }
         catch (Exception ex)
         {
             _currentRunId = null;
             _logger.LogError(ex, "[transcript-agent] Run {RunId} failed", run.Id);
+            var userError = run.Type == "asr"
+                ? AudioTranscriptionUserError.FromException(ex)
+                : "文案生成暂时失败，请稍后重试；已完成的转写内容不会丢失。";
 
-            await db.TranscriptRuns.UpdateOneAsync(
-                Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
+            var failed = await db.TranscriptRuns.UpdateOneAsync(
+                OwnedProcessingRun(run),
                 Builders<TranscriptRun>.Update
                     .Set(r => r.Status, "failed")
-                    .Set(r => r.Error, ex.Message)
+                    .Set(r => r.Error, userError)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow));
 
             // ASR 失败时同步更新 Item 状态
-            if (run.Type == "asr")
+            if (run.Type == "asr" && failed.ModifiedCount == 1)
             {
                 await db.TranscriptItems.UpdateOneAsync(
-                    Builders<TranscriptItem>.Filter.Eq(i => i.Id, run.ItemId),
+                    Builders<TranscriptItem>.Filter.Eq(i => i.Id, run.ItemId) &
+                    Builders<TranscriptItem>.Filter.Ne(i => i.TranscribeStatus, "completed"),
                     Builders<TranscriptItem>.Update
                         .Set(i => i.TranscribeStatus, "failed")
-                        .Set(i => i.TranscribeError, ex.Message));
+                        .Set(i => i.TranscribeError, userError));
             }
         }
     }
@@ -159,8 +190,15 @@ public class TranscriptRunWorker : BackgroundService
     // ASR 转写（复用 VideoToDocRunWorker 的 Whisper 调用模式）
     // ═══════════════════════════════════════════════════════════
 
-    private async Task ProcessAsrAsync(MongoDbContext db, ILlmGateway gateway, TranscriptRun run)
+    private async Task ProcessAsrAsync(
+        MongoDbContext db,
+        ILlmGateway gateway,
+        TranscriptRun run,
+        IConfiguration configuration)
     {
+        using var processingDeadline = new CancellationTokenSource(
+            TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration));
+        var processingToken = processingDeadline.Token;
         using var scope2 = _scopeFactory.CreateScope();
         var modelResolver = scope2.ServiceProvider.GetRequiredService<IModelResolver>();
 
@@ -169,7 +207,7 @@ public class TranscriptRunWorker : BackgroundService
         if (item == null) throw new InvalidOperationException($"Item {run.ItemId} not found");
 
         // 更新进度：开始处理
-        await UpdateProgress(db, run.Id, 10);
+        await UpdateProgress(db, run, 10);
         await db.TranscriptItems.UpdateOneAsync(
             Builders<TranscriptItem>.Filter.Eq(i => i.Id, item.Id),
             Builders<TranscriptItem>.Update.Set(i => i.TranscribeStatus, "processing"));
@@ -188,13 +226,13 @@ public class TranscriptRunWorker : BackgroundService
             {
                 // WebSocket 协议已迁入 LlmGateway raw 发送路径；MAP 仍只经 ILlmGateway 调用。
                 _logger.LogInformation("[transcript-agent] 使用豆包 WebSocket ASR 网关路径: Exchange={ExchangeName}", resolution.ExchangeName);
-                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution, processingToken);
             }
             else if (resolution.ExchangeTransformerType == "doubao-asr")
             {
                 // 异步 submit+query ASR：Gateway 的 SendRawWithResolutionAsync 支持 IAsyncExchangeTransformer 轮询
                 _logger.LogInformation("[transcript-agent] 使用异步 ASR 路径: Exchange={ExchangeName}", resolution.ExchangeName);
-                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
+                await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution, processingToken);
             }
             else
             {
@@ -207,7 +245,7 @@ public class TranscriptRunWorker : BackgroundService
         else
         {
             // 非 Exchange 模型（Whisper 等）：走 Gateway HTTP 路径
-            await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution.ToGatewayResolution());
+            await ProcessAsrViaGatewayAsync(db, gateway, run, item, resolution, processingToken);
         }
     }
 
@@ -216,39 +254,225 @@ public class TranscriptRunWorker : BackgroundService
     /// </summary>
     private async Task ProcessAsrViaGatewayAsync(
         MongoDbContext db, ILlmGateway gateway, TranscriptRun run, TranscriptItem item,
-        GatewayModelResolution resolution)
+        ModelResolutionResult resolution, CancellationToken processingToken)
     {
         // 下载音频文件
         using var httpClient = new HttpClient();
-        var audioBytes = await httpClient.GetByteArrayAsync(item.FileUrl);
+        var sourceBytes = await httpClient.GetByteArrayAsync(item.FileUrl, processingToken);
+        var sourceByteCount = sourceBytes.Length;
+        var audioBytes = await NormalizeAudioAsync(sourceBytes, processingToken);
+        sourceBytes = Array.Empty<byte>();
+        _logger.LogInformation(
+            "[transcript-agent] ASR 音频已规范化: sourceBytes={SourceBytes} normalizedBytes={NormalizedBytes}",
+            sourceByteCount,
+            audioBytes.Length);
+        if (AsrAudioNormalizationPolicy.IsDefinitelySilentNormalizedWave(audioBytes))
+            throw new InvalidOperationException("ASR 没有识别到有效语音：完整音频经信号检测确认为静音或音量过低。");
 
-        await UpdateProgress(db, run.Id, 30);
+        await UpdateProgress(db, run, 30);
 
-        // 调用 ASR 模型池（使用已解析的 resolution，遵循 compute-then-send 原则）
-        var rawRequest = new GatewayRawRequest
+        // 请求形状必须随模型协议构建：豆包异步只接受 JSON base64，多模态音频走
+        // chat input_audio，Whisper 与豆包流式走标准 WAV multipart。
+        GatewayRawRequest BuildRawRequest(
+            ModelResolutionResult candidate,
+            int validationAttempt,
+            bool isChatAudio)
         {
-            AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
-            ModelType = ModelTypes.Asr,
-            EndpointPath = "/v1/audio/transcriptions",
-            IsMultipart = true,
-            MultipartFields = new Dictionary<string, object>
+            if (candidate.IsExchange
+                && string.Equals(candidate.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
             {
-                ["model"] = "whisper-1",
-                ["response_format"] = "verbose_json",
-                ["timestamp_granularities[]"] = "segment",
-                ["language"] = ""
-            },
-            MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                return new GatewayRawRequest
+                {
+                    RequiredOfferingId = candidate.OfferingId,
+                    PinnedPlatformId = candidate.ActualPlatformId,
+                    PinnedModelId = candidate.ActualModel,
+                    AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+                    ModelType = ModelTypes.Asr,
+                    RequestBody = new JsonObject { ["audio_data"] = Convert.ToBase64String(audioBytes) },
+                    IsMultipart = false,
+                    TimeoutSeconds = 600,
+                    Context = new GatewayRequestContext { UserId = run.OwnerUserId }
+                };
+            }
+
+            if (isChatAudio)
             {
-                ["file"] = (item.FileName, audioBytes, item.MimeType)
-            },
-            TimeoutSeconds = 600,
-            Context = new GatewayRequestContext { UserId = run.OwnerUserId }
-        };
+                var prompt = validationAttempt == 1
+                    ? "音频已附在本消息的 input_audio 中。请逐字转写，只输出音频里真实说出的话，不要解释、确认或要求播放音频；没有人声时只输出 NO_SPEECH。"
+                    : $"这是第 {validationAttempt - 1} 次结果校验。必须读取本消息 input_audio 里的 WAV 音频，只输出真实人声原文；禁止要求用户再次提供、上传或播放音频。没有人声时只输出 NO_SPEECH。";
+                return new GatewayRawRequest
+                {
+                    RequiredOfferingId = candidate.OfferingId,
+                    PinnedPlatformId = candidate.ActualPlatformId,
+                    PinnedModelId = candidate.ActualModel,
+                    AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+                    ModelType = ModelTypes.Asr,
+                    EndpointPath = "/v1/chat/completions",
+                    RequestBody = new JsonObject
+                    {
+                        ["model"] = candidate.ActualModel,
+                        ["modalities"] = new JsonArray("text"),
+                        ["temperature"] = 0,
+                        ["messages"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["role"] = "user",
+                                ["content"] = new JsonArray
+                                {
+                                    new JsonObject { ["type"] = "text", ["text"] = prompt },
+                                    new JsonObject
+                                    {
+                                        ["type"] = "input_audio",
+                                        ["input_audio"] = new JsonObject
+                                        {
+                                            ["data"] = Convert.ToBase64String(audioBytes),
+                                            ["format"] = "wav"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    TimeoutSeconds = 600,
+                    Context = new GatewayRequestContext { UserId = run.OwnerUserId }
+                };
+            }
 
-        await UpdateProgress(db, run.Id, 50);
+            return new GatewayRawRequest
+            {
+                RequiredOfferingId = candidate.OfferingId,
+                PinnedPlatformId = candidate.ActualPlatformId,
+                PinnedModelId = candidate.ActualModel,
+                AppCallerCode = AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
+                ModelType = ModelTypes.Asr,
+                EndpointPath = AsrRequestContractPolicy.TranscriptionsEndpoint,
+                IsMultipart = true,
+                MultipartFields = AsrRequestContractPolicy.BuildTranscriptionFields(candidate.ActualModel),
+                MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                {
+                    ["file"] = ("audio.wav", audioBytes, "audio/wav")
+                },
+                TimeoutSeconds = 600,
+                Context = new GatewayRequestContext { UserId = run.OwnerUserId }
+            };
+        }
 
-        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        GatewayRawResponse? rawResp = null;
+        string? validatedChatText = null;
+        List<TranscriptSegment>? validatedNonChatSegments = null;
+        var selectedIsChatAudio = false;
+        var candidates = TranscriptAsrCandidatePolicy.SelectCandidates(resolution);
+        for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
+        {
+            var candidate = candidates[candidateIndex];
+            if (!AsrRequestContractPolicy.TryValidateOfferingEndpoint(
+                    candidate.ActualModel,
+                    candidate.Protocol,
+                    candidate.PlatformType,
+                    candidate.OfferingEndpointPath,
+                    candidate.IsExchange,
+                    out var routeError))
+            {
+                rawResp = GatewayRawResponse.Fail(
+                    AsrRequestContractPolicy.InvalidRouteErrorCode,
+                    routeError ?? "ASR Offering 端点与模型协议不兼容",
+                    409);
+                _logger.LogError(
+                    "[transcript-agent] 拒绝不兼容的 ASR Offering: RunId={RunId}, Offering={Offering}, Model={Model}, Endpoint={Endpoint}",
+                    run.Id,
+                    candidate.OfferingId,
+                    candidate.ActualModel,
+                    candidate.OfferingEndpointPath);
+                continue;
+            }
+            var candidateIsChatAudio = AsrAudioRoutePolicy.ShouldUseChatAudio(
+                candidate.ActualModel,
+                candidate.Protocol,
+                candidate.PlatformType);
+            selectedIsChatAudio = candidateIsChatAudio;
+            var maxValidationAttempts = candidateIsChatAudio
+                ? TranscriptAsrCandidatePolicy.ChatValidationAttemptsPerCandidate
+                : 1;
+
+            // 语义降级必须按候选协议重新构建请求。单次发送不携带后续候选，
+            // 避免 Gateway 用 chat-audio 请求体重试 Whisper 或 Exchange。
+            candidate.RetryCandidates = null;
+            for (var validationAttempt = 1; validationAttempt <= maxValidationAttempts; validationAttempt++)
+            {
+                // 同一进度值也会刷新 UpdatedAt，证明 Worker 仍在推进；总截止时间仍独立限制
+                // 整段 ASR 必须早于 watchdog 结束，不能靠心跳无限延长串行队列占用。
+                await UpdateProgress(db, run, 30);
+                var rawRequest = BuildRawRequest(candidate, validationAttempt, candidateIsChatAudio);
+                rawResp = await gateway.SendRawWithResolutionAsync(
+                    rawRequest,
+                    candidate.ToGatewayResolution(),
+                    processingToken);
+
+                if (rawResp?.Success != true || rawResp.Content == null)
+                    break;
+
+                if (!candidateIsChatAudio)
+                {
+                    var candidateSegments = ParseWhisperSegments(rawResp.Content);
+                    if (candidateSegments.Count == 0)
+                    {
+                        var nonChatText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
+                        if (!string.IsNullOrWhiteSpace(nonChatText)
+                            && !TranscribeNoteText.IsNoSpeechSentinel(nonChatText))
+                        {
+                            candidateSegments.Add(new TranscriptSegment { Start = 0, End = 0, Text = nonChatText.Trim() });
+                        }
+                    }
+                    if (candidateSegments.Count > 0)
+                    {
+                        validatedNonChatSegments = candidateSegments;
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "[transcript-agent] 非对话音频模型返回空或无效转写，自动尝试下一候选: RunId={RunId}, Candidate={Candidate}, CandidateIndex={CandidateIndex}",
+                            run.Id,
+                            candidate.ActualModel,
+                            candidateIndex + 1);
+                    }
+                    break;
+                }
+
+                var candidateText = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
+                var isNoSpeech = TranscribeNoteText.IsNoSpeechSentinel(candidateText);
+                var isAssistantReply = !string.IsNullOrWhiteSpace(candidateText)
+                    && PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.LooksLikeAssistantReply(candidateText);
+                if (!string.IsNullOrWhiteSpace(candidateText) && !isNoSpeech && !isAssistantReply)
+                {
+                    validatedChatText = candidateText.Trim();
+                    break;
+                }
+
+                _logger.LogWarning(
+                    "[transcript-agent] 音频模型返回无效文本，已拒绝写入并继续校验: RunId={RunId}, Candidate={Candidate}, CandidateIndex={CandidateIndex}, Attempt={Attempt}, IsNoSpeech={IsNoSpeech}, IsAssistantReply={IsAssistantReply}",
+                    run.Id,
+                    candidate.ActualModel,
+                    candidateIndex + 1,
+                    validationAttempt,
+                    isNoSpeech,
+                    isAssistantReply);
+            }
+
+            if (validatedChatText != null || validatedNonChatSegments != null)
+                break;
+
+            if (candidateIndex < candidates.Count - 1)
+            {
+                _logger.LogWarning(
+                    "[transcript-agent] ASR 候选未产生有效转写，自动切换: RunId={RunId}, Candidate={Candidate}, NextCandidate={NextCandidate}",
+                    run.Id,
+                    candidate.ActualModel,
+                    candidates[candidateIndex + 1].ActualModel);
+            }
+        }
+
+        await UpdateProgress(db, run, 50);
 
         if (rawResp?.Success != true || rawResp.Content == null)
         {
@@ -258,18 +482,37 @@ public class TranscriptRunWorker : BackgroundService
             throw new InvalidOperationException($"ASR 转写失败: {detail}");
         }
 
-        await UpdateProgress(db, run.Id, 80);
+        await UpdateProgress(db, run, 80);
 
-        // 解析 Whisper 响应
-        var segments = ParseWhisperSegments(rawResp.Content);
+        var segments = validatedNonChatSegments ?? ParseWhisperSegments(rawResp.Content);
+        if (!string.IsNullOrWhiteSpace(validatedChatText))
+        {
+            segments.Clear();
+            segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = validatedChatText });
+        }
+        else if (segments.Count == 0 && !selectedIsChatAudio)
+        {
+            var text = PrdAgent.Infrastructure.LlmGateway.Asr.LiveAsrBatchFallbackService.ExtractText(rawResp.Content);
+            if (!string.IsNullOrWhiteSpace(text)
+                && !TranscribeNoteText.IsNoSpeechSentinel(text))
+            {
+                segments.Add(new TranscriptSegment { Start = 0, End = 0, Text = text.Trim() });
+            }
+        }
+        if (segments.Count == 0)
+            throw new InvalidOperationException("ASR 没有识别到有效语音");
 
         // 保存转写结果到 Item
-        await db.TranscriptItems.UpdateOneAsync(
-            Builders<TranscriptItem>.Filter.Eq(i => i.Id, item.Id),
+        processingToken.ThrowIfCancellationRequested();
+        var itemCompletion = await db.TranscriptItems.UpdateOneAsync(
+            Builders<TranscriptItem>.Filter.Eq(i => i.Id, item.Id) &
+            Builders<TranscriptItem>.Filter.Eq(i => i.TranscribeStatus, "processing"),
             Builders<TranscriptItem>.Update
                 .Set(i => i.Segments, segments)
                 .Set(i => i.TranscribeStatus, "completed")
                 .Set(i => i.UpdatedAt, DateTime.UtcNow));
+        if (itemCompletion.ModifiedCount != 1)
+            throw new InvalidOperationException("转写任务状态已变化，当前结果不再写入");
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -297,7 +540,7 @@ public class TranscriptRunWorker : BackgroundService
         var systemPrompt = template?.Prompt ??
             "你是一个专业的内容编辑。请将以下带时间戳的转写文本整理成结构清晰的文案。保留关键信息，去除口语化表达和重复内容。";
 
-        await UpdateProgress(db, run.Id, 30);
+        await UpdateProgress(db, run, 30);
 
         // 构建 OpenAI 格式的 chat 请求体
         var requestBody = new JsonObject
@@ -320,18 +563,20 @@ public class TranscriptRunWorker : BackgroundService
             Context = new GatewayRequestContext { UserId = run.OwnerUserId }
         };
 
-        await UpdateProgress(db, run.Id, 50);
+        await UpdateProgress(db, run, 50);
 
         var resp = await gateway.SendAsync(request, CancellationToken.None);
 
         if (resp?.Success != true)
             throw new InvalidOperationException($"文案生成失败: {resp?.ErrorMessage ?? "无响应"}");
 
-        await UpdateProgress(db, run.Id, 90);
+        await UpdateProgress(db, run, 90);
 
-        await db.TranscriptRuns.UpdateOneAsync(
-            Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id),
+        var resultUpdate = await db.TranscriptRuns.UpdateOneAsync(
+            OwnedProcessingRun(run),
             Builders<TranscriptRun>.Update.Set(r => r.Result, resp.Content));
+        if (resultUpdate.MatchedCount != 1)
+            throw new InvalidOperationException("文案任务状态已变化，当前结果不再写入");
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -368,12 +613,150 @@ public class TranscriptRunWorker : BackgroundService
         }
     }
 
-    private static async Task UpdateProgress(MongoDbContext db, string runId, int progress)
+    private static FilterDefinition<TranscriptRun> OwnedProcessingRun(TranscriptRun run) =>
+        Builders<TranscriptRun>.Filter.Eq(r => r.Id, run.Id) &
+        Builders<TranscriptRun>.Filter.Eq(r => r.Status, "processing") &
+        Builders<TranscriptRun>.Filter.Eq(r => r.OwnerInstanceId, run.OwnerInstanceId);
+
+    private static async Task UpdateProgress(MongoDbContext db, TranscriptRun run, int progress)
     {
-        await db.TranscriptRuns.UpdateOneAsync(
-            Builders<TranscriptRun>.Filter.Eq(r => r.Id, runId),
+        var result = await db.TranscriptRuns.UpdateOneAsync(
+            OwnedProcessingRun(run),
             Builders<TranscriptRun>.Update
                 .Set(r => r.Progress, progress)
                 .Set(r => r.UpdatedAt, DateTime.UtcNow));
+        if (result.MatchedCount != 1)
+            throw new InvalidOperationException("任务处理权已变化，当前 Worker 停止写入");
+    }
+
+    private static async Task<byte[]> NormalizeAudioAsync(
+        byte[] sourceBytes,
+        CancellationToken processingToken)
+    {
+        var inputPath = Path.Combine(Path.GetTempPath(), $"transcript-in-{Guid.NewGuid():N}");
+        var outputPath = Path.Combine(Path.GetTempPath(), $"transcript-out-{Guid.NewGuid():N}.wav");
+        await File.WriteAllBytesAsync(inputPath, sourceBytes, processingToken);
+        try
+        {
+            var durationSeconds = await ProbeAudioDurationSecondsAsync(inputPath, processingToken);
+            if (durationSeconds is > 0
+                && durationSeconds > AsrAudioNormalizationPolicy.MaxNormalizedDurationSeconds)
+            {
+                throw new InvalidOperationException(
+                    $"音频规范化后超过 {AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes} 字节限制");
+            }
+
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            AsrAudioNormalizationPolicy.ConfigureFfmpegArguments(
+                startInfo.ArgumentList,
+                inputPath,
+                outputPath);
+            using var process = System.Diagnostics.Process.Start(startInfo)
+                ?? throw new InvalidOperationException("音频处理服务启动失败");
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            try
+            {
+                await WaitForBoundedOutputAsync(process, outputPath, processingToken);
+            }
+            catch (OperationCanceledException) when (processingToken.IsCancellationRequested)
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+                throw;
+            }
+            var stderr = await stderrTask;
+            await stdoutTask;
+            if (process.ExitCode != 0)
+                throw new InvalidOperationException($"音频格式转换失败，退出码 {process.ExitCode}: {stderr}");
+            var normalizedLength = new FileInfo(outputPath).Length;
+            if (!AsrAudioNormalizationPolicy.IsNormalizedAudioWithinLimit(normalizedLength))
+            {
+                throw new InvalidOperationException(
+                    $"音频规范化后超过 {AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes} 字节限制");
+            }
+            return await File.ReadAllBytesAsync(outputPath, processingToken);
+        }
+        finally
+        {
+            try { if (File.Exists(inputPath)) File.Delete(inputPath); } catch { }
+            try { if (File.Exists(outputPath)) File.Delete(outputPath); } catch { }
+        }
+    }
+
+    private static async Task WaitForBoundedOutputAsync(
+        System.Diagnostics.Process process,
+        string outputPath,
+        CancellationToken processingToken)
+    {
+        var exitTask = process.WaitForExitAsync(processingToken);
+        while (!exitTask.IsCompleted)
+        {
+            if (File.Exists(outputPath)
+                && !AsrAudioNormalizationPolicy.IsNormalizedAudioWithinLimit(new FileInfo(outputPath).Length))
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+                throw new InvalidOperationException(
+                    $"音频规范化后超过 {AsrAudioNormalizationPolicy.MaxNormalizedAudioBytes} 字节限制");
+            }
+            await Task.WhenAny(exitTask, Task.Delay(25, processingToken));
+        }
+        await exitTask;
+    }
+
+    private static async Task<double?> ProbeAudioDurationSecondsAsync(
+        string inputPath,
+        CancellationToken processingToken)
+    {
+        var startInfo = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "ffprobe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        foreach (var argument in new[]
+        {
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            inputPath
+        })
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = System.Diagnostics.Process.Start(startInfo);
+        if (process == null) return null;
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        try
+        {
+            await process.WaitForExitAsync(processingToken);
+        }
+        catch (OperationCanceledException) when (processingToken.IsCancellationRequested)
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None);
+            throw;
+        }
+        var stdout = await stdoutTask;
+        await stderrTask;
+        if (process.ExitCode != 0) return null;
+        return double.TryParse(
+            stdout.Trim(),
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var duration)
+            ? duration
+            : null;
     }
 }

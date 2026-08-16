@@ -6,7 +6,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserAvatar, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
 import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap, Link2 } from 'lucide-react';
 import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
@@ -1162,7 +1162,7 @@ export default function UsersPage() {
                                   {displayName}
                                 </span>
                                 {isBot && (
-                                  <span className="shrink-0 text-[9px] font-medium px-1 py-0 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.9)' }}>
+                                  <span className="shrink-0 text-[9px] font-medium px-1 py-0 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)' }}>
                                     BOT
                                   </span>
                                 )}
@@ -1622,7 +1622,7 @@ export default function UsersPage() {
 
             {/* 错误提示 */}
             {!createUsernameOk && createUsername.trim().length > 0 && (
-              <div className="text-sm" style={{ color: 'rgba(239,68,68,0.95)' }}>
+              <div className="text-sm" style={{ color: 'var(--accent-fg-danger)' }}>
                 用户名不合法：4-32 位，仅字母/数字/下划线
               </div>
             )}
@@ -1630,7 +1630,7 @@ export default function UsersPage() {
             {createError && (
               <div
                 className="rounded-[10px] px-3 py-2 text-sm"
-                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}
               >
                 {createError}
               </div>
@@ -1765,7 +1765,7 @@ export default function UsersPage() {
                   />
                 </div>
                 {miduoConfigError && (
-                  <div className="rounded-[10px] px-3 py-2 text-sm" style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}>
+                  <div className="rounded-[10px] px-3 py-2 text-sm" style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}>
                     {miduoConfigError}
                   </div>
                 )}
@@ -1828,11 +1828,8 @@ export default function UsersPage() {
         username={avatarTargetUser?.username}
         userType={avatarTargetUser?.userType ?? null}
         avatarFileName={avatarTargetUser?.avatarFileName ?? null}
-        onSave={async (avatarFileName) => {
-          if (!avatarTargetUser) return;
-          const res = await updateUserAvatar(avatarTargetUser.userId, avatarFileName);
-          if (!res.success) throw new Error(res.error?.message || '保存失败');
-          await load();
+        onPersisted={() => {
+          void load();
         }}
       />
 
@@ -1868,7 +1865,7 @@ export default function UsersPage() {
             {nameError && (
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}
               >
                 {nameError}
               </div>
@@ -1923,7 +1920,7 @@ export default function UsersPage() {
             {pwdSubmitError && (
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'rgba(239,68,68,0.95)' }}
+                style={{ background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.28)', color: 'var(--accent-fg-danger)' }}
               >
                 {pwdSubmitError}
               </div>
@@ -1987,7 +1984,7 @@ export default function UsersPage() {
             {forceExpireError && (
               <div
                 className="rounded-[14px] px-4 py-3 text-sm"
-                style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'rgba(239,68,68,0.95)' }}
+                style={{ border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)', color: 'var(--accent-fg-danger)' }}
               >
                 {forceExpireError}
               </div>

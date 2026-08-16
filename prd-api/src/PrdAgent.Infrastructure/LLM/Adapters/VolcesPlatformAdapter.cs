@@ -163,8 +163,9 @@ public class VolcesPlatformAdapter : IImageGenPlatformAdapter
         if (string.IsNullOrWhiteSpace(errorMessage)) return null;
 
         // 检测是否是尺寸太小的错误
-        if (errorMessage.Contains("size", StringComparison.OrdinalIgnoreCase) &&
-            errorMessage.Contains("at least", StringComparison.OrdinalIgnoreCase))
+        var isTooSmall = errorMessage.Contains("at least", StringComparison.OrdinalIgnoreCase)
+                         || errorMessage.Contains("too small", StringComparison.OrdinalIgnoreCase);
+        if (errorMessage.Contains("size", StringComparison.OrdinalIgnoreCase) && isTooSmall)
         {
             // 如果当前尺寸不是 1920x1920，则建议升级
             if (!string.Equals(currentSize, "1920x1920", StringComparison.OrdinalIgnoreCase))

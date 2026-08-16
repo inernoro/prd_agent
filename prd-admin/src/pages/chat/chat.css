@@ -41,8 +41,9 @@
   cursor: pointer;
   font: inherit;
   font-size: 12.5px;
-  background: var(--accent-primary);
-  color: #fff;
+  /* 实心填充 + 白字必须走 solid 档：--accent-primary 暗色档白字只有 3.12:1 */
+  background: var(--accent-primary-solid);
+  color: var(--accent-on-solid);
 }
 .chat-new:hover { filter: brightness(1.08); }
 

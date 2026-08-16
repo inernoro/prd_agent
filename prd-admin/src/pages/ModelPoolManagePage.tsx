@@ -50,7 +50,7 @@ const STRATEGY_OPTIONS = [
   { value: PoolStrategyType.FailFast, label: '快速', desc: '选最优，失败即止', icon: Zap, color: 'rgba(251,146,60,0.95)' },
   { value: PoolStrategyType.Race, label: '竞速', desc: '并行发送，取最快', icon: GitBranch, color: 'rgba(168,85,247,0.95)' },
   { value: PoolStrategyType.Sequential, label: '顺序容灾', desc: '逐个尝试，失败切换', icon: ArrowRight, color: 'rgba(56,189,248,0.95)' },
-  { value: PoolStrategyType.RoundRobin, label: '轮询', desc: '均匀分配', icon: RotateCw, color: 'rgba(34,197,94,0.95)' },
+  { value: PoolStrategyType.RoundRobin, label: '轮询', desc: '均匀分配', icon: RotateCw, color: 'var(--accent-fg-success)' },
 ];
 
 // MODEL_TYPES 已迁移到 appCallerUtils.ts 的 MODEL_TYPE_DEFINITIONS
@@ -598,7 +598,7 @@ export function ModelPoolManagePage() {
                                     {pool.name}
                                   </span>
                                   {pool.isDefaultForType && (
-                                    <span className="shrink-0 px-1 py-px rounded text-[9px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
+                                    <span className="shrink-0 px-1 py-px rounded text-[9px]" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)' }}>
                                       备用
                                     </span>
                                   )}
@@ -660,7 +660,7 @@ export function ModelPoolManagePage() {
                     {selectedPool.name}
                   </h3>
                   {selectedPool.isDefaultForType && (
-                    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}>
+                    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium" style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)' }}>
                       备用
                     </span>
                   )}
@@ -715,7 +715,7 @@ export function ModelPoolManagePage() {
                   <div className="text-[10px] text-token-muted">模型</div>
                 </div>
                 <div className="rounded-lg px-3 py-2 text-center" style={{ background: 'rgba(34,197,94,0.06)' }}>
-                  <div className="text-[18px] font-semibold tabular-nums" style={{ color: 'rgba(34,197,94,0.95)' }}>{healthyCnt}</div>
+                  <div className="text-[18px] font-semibold tabular-nums" style={{ color: 'var(--accent-fg-success)' }}>{healthyCnt}</div>
                   <div className="text-[10px] text-token-muted">健康</div>
                 </div>
                 <div className="rounded-lg px-3 py-2 text-center" style={{ background: degradedCnt > 0 ? 'rgba(251,191,36,0.06)' : 'var(--bg-input)' }}>
@@ -992,7 +992,7 @@ export function ModelPoolManagePage() {
                 className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-[12px]"
                 style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.28)', color: 'var(--text-secondary)' }}
               >
-                <AlertTriangle size={15} className="shrink-0 mt-px" style={{ color: 'rgba(251,191,36,0.95)' }} />
+                <AlertTriangle size={15} className="shrink-0 mt-px" style={{ color: 'var(--accent-fg-amber)' }} />
                 <span>
                   模型池「{usageDialog.pool.name}」正被下列 {usageDialog.apps.length} 个应用引用，需先解绑才能删除。解绑后这些应用将回落到该类型的默认分组。
                 </span>

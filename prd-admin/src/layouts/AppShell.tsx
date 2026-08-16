@@ -46,6 +46,7 @@ import {
   GraduationCap,
   Droplets,
   ExternalLink,
+  MoreHorizontal,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -76,7 +77,7 @@ import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
-import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
+import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
@@ -175,11 +176,16 @@ const iconMap: Record<string, LucideIcon> = {
   [PA_SECRETARY_ICON]: PaSecretary,
 };
 
+/*
+ * 底与描边保持淡色调（两个主题都成立），字必须走双写 token。
+ * 原来 text 写死同色 300 档，浅色档下与 8% 淡底一起被暖纸稀释 —— 实测 1.51:1。
+ * 通知条挂在 AppShell 上，36 条路由全渲染，一处错就是 36 处糊。
+ */
 const notificationTone = {
-  info: { border: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.08)', text: '#93c5fd' },
-  warning: { border: 'rgba(251, 146, 60, 0.45)', bg: 'rgba(251, 146, 60, 0.1)', text: '#fdba74' },
-  error: { border: 'rgba(248, 113, 113, 0.45)', bg: 'rgba(248, 113, 113, 0.08)', text: '#fca5a5' },
-  success: { border: 'rgba(34, 197, 94, 0.45)', bg: 'rgba(34, 197, 94, 0.08)', text: '#86efac' },
+  info: { border: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.08)', text: 'var(--accent-fg-blue)' },
+  warning: { border: 'rgba(251, 146, 60, 0.45)', bg: 'rgba(251, 146, 60, 0.1)', text: 'var(--accent-fg-warning)' },
+  error: { border: 'rgba(248, 113, 113, 0.45)', bg: 'rgba(248, 113, 113, 0.08)', text: 'var(--accent-fg-danger)' },
+  success: { border: 'rgba(34, 197, 94, 0.45)', bg: 'rgba(34, 197, 94, 0.08)', text: 'var(--accent-fg-success)' },
 };
 
 function getNotificationTone(level?: string) {
@@ -198,6 +204,7 @@ export default function AppShell() {
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const permissions = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
+  const canAiEditAvatar = isRoot || permissions.includes('super') || permissions.includes('visual-agent.use');
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
   const mobileDrawerOpen = useLayoutStore((s) => s.mobileDrawerOpen);
@@ -608,25 +615,29 @@ export default function AppShell() {
     [adminNotifications, personalNotifications]
   );
 
-  const openLlmGateway = useCallback(async () => {
-    if (gatewayOpening || user?.role !== 'ADMIN') return;
+  const resolveLlmGatewayHref = useCallback(async (returnTo?: string) => {
+    if (gatewayOpening || user?.role !== 'ADMIN') return null;
     setGatewayOpening(true);
-    const result = await createLlmGatewaySsoTicket();
-    if (result.success) {
-      // 票据签发成功后仍可能没有可去的入口（例如预览分支名过长时，平台不会发布网关子域）。
-      // 那与凭据无关，必须报出服务端给的真实原因，否则会把人引向「是不是被封号了」的错误方向。
-      const resolution = resolveLlmGatewaySso(result.data.code, result.data.console);
-      if (resolution.ok) {
-        window.location.assign(resolution.href);
-        return;
+    try {
+      const result = await createLlmGatewaySsoTicket();
+      if (result.success) {
+        // 票据签发成功后仍可能没有可去的入口（例如预览分支名过长时，平台不会发布网关子域）。
+        // 那与凭据无关，必须报出服务端给的真实原因，否则会把人引向「是不是被封号了」的错误方向。
+        const resolution = resolveLlmGatewaySso(result.data.code, result.data.console, returnTo);
+        if (resolution.ok) return resolution.href;
+        toast.error('模型网关暂时无法打开', resolution.message);
+        return null;
       }
+      toast.error('模型网关暂时无法打开', result.error?.message);
+      return null;
+    } finally {
       setGatewayOpening(false);
-      toast.error('模型网关暂时无法打开', resolution.message);
-      return;
     }
-    setGatewayOpening(false);
-    toast.error('模型网关暂时无法打开', result.error?.message);
   }, [gatewayOpening, user?.role]);
+  const openLlmGateway = useCallback(async (returnTo?: string) => {
+    const href = await resolveLlmGatewayHref(returnTo);
+    if (href) window.location.assign(href);
+  }, [resolveLlmGatewayHref]);
   const toastNotification = useMemo(
     () => activeNotifications.find((n) => !dismissedToastIds.has(n.id)),
     [activeNotifications, dismissedToastIds]
@@ -644,28 +655,38 @@ export default function AppShell() {
     }
   }, []);
 
-  const handleNotification = useCallback(async (id: string, actionUrl?: string | null) => {
+  const handleNotification = useCallback(async (id: string, actionUrl?: string | null, actionKind?: string | null) => {
+    const isLlmGatewayAction = actionKind === 'llm-gateway';
     // 外部链接（绝对 URL）必须在用户点击的同步栈内打开，避免 await 之后丢失手势激活被浏览器拦截弹窗
-    const isExternal = !!actionUrl && /^https?:\/\//i.test(actionUrl);
+    const isExternal = !isLlmGatewayAction && !!actionUrl && /^https?:\/\//i.test(actionUrl);
     if (isExternal) window.open(actionUrl!, '_blank', 'noopener,noreferrer');
-    // 乐观更新：立即从本地状态移除，同时加入 dismiss 黑名单，count 即时 -1
     setHandlingId(id);
-    setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, status: 'closed' as const } : n));
-    setDismissedToastIds((prev) => {
-      const next = new Set(prev);
-      next.add(id);
-      try { sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next))); } catch { /* noop */ }
-      return next;
-    });
     try {
+      // 先签发并校验网关深链，再持久化“已处理”。票据或入口解析失败时保留原通知，用户可以重试。
+      const gatewayHref = isLlmGatewayAction && actionUrl
+        ? await resolveLlmGatewayHref(actionUrl)
+        : null;
+      if (isLlmGatewayAction && actionUrl && !gatewayHref) return;
       const res = await handleAdminNotification(id);
+      if (!res.success) return;
+      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, status: 'closed' as const } : n));
+      setDismissedToastIds((prev) => {
+        const next = new Set(prev);
+        next.add(id);
+        try { sessionStorage.setItem('dismissedToastIds', JSON.stringify(Array.from(next))); } catch { /* noop */ }
+        return next;
+      });
       // 站内路由跳转在 handle 成功后进行（SPA navigate 不受手势激活限制）
-      if (res.success && actionUrl && !isExternal) navigate(actionUrl);
+      if (gatewayHref) {
+        window.location.assign(gatewayHref);
+      } else if (actionUrl && !isExternal) {
+        navigate(actionUrl);
+      }
     } finally {
       setHandlingId(null);
       await loadNotifications({ silent: true });
     }
-  }, [loadNotifications, navigate]);
+  }, [loadNotifications, navigate, resolveLlmGatewayHref]);
 
   const handleAllNotifications = useCallback(async () => {
     setHandlingAll(true);
@@ -796,11 +817,11 @@ export default function AppShell() {
           >
             {isSnoozed
               ? <BellOff size={18} style={{ color: 'var(--text-muted)' }} />
-              : <TypeIcon size={18} style={{ color: variant.accent }} />}
+              : <TypeIcon size={18} style={{ color: variant.fg }} />}
             {/* 未读数徽章 */}
             <span
               className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-bold"
-              style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+              style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
             >
               {activeNotifications.length > 999 ? '999+' : activeNotifications.length}
             </span>
@@ -835,13 +856,13 @@ export default function AppShell() {
                 className="mt-0.5 h-7 w-7 shrink-0 rounded-[9px] flex items-center justify-center"
                 style={{ background: `${variant.accent}22`, border: `1px solid ${variant.accent}55` }}
               >
-                <TypeIcon size={15} style={{ color: variant.accent }} />
+                <TypeIcon size={15} style={{ color: variant.fg }} />
               </div>
               <div className="flex-1 min-w-0 pt-0.5">
                 <div className="flex items-center gap-2">
                   <span
                     className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full leading-none"
-                    style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                    style={{ background: `${variant.accent}1f`, color: variant.fg }}
                   >
                     {variant.label}
                   </span>
@@ -1018,7 +1039,7 @@ export default function AppShell() {
                     disabled={handlingId === toastNotification.id}
                     className="px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover-bg-soft active:scale-[0.97] disabled:opacity-60"
                     style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
-                    onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
+                    onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl, toastNotification.actionKind)}
                   >
                     {toastNotification.actionLabel || '查看详情'}
                   </button>
@@ -1027,10 +1048,10 @@ export default function AppShell() {
                   type="button"
                   disabled={handlingId === toastNotification.id}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-[9px] transition-all duration-100 hover:brightness-110 active:scale-[0.97] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
-                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                  style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                   onClick={() => handleNotification(toastNotification.id)}
                 >
-                  {handlingId === toastNotification.id ? <MapSpinner size={12} color="#1a1a1a" /> : null}
+                  {handlingId === toastNotification.id ? <MapSpinner size={12} color="var(--accent-on-gold)" /> : null}
                   标记已处理
                 </button>
               </div>
@@ -1090,7 +1111,7 @@ export default function AppShell() {
               {notificationCount > 0 && (
                 <span
                   className="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 rounded-full flex items-center justify-center text-[9px] font-bold"
-                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                  style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                 >
                   {notificationCount > 99 ? '99+' : notificationCount}
                 </span>
@@ -1105,7 +1126,13 @@ export default function AppShell() {
         <MobileDrawer open={mobileDrawerOpen} onOpenChange={setMobileDrawerOpen}>
           {/* 用户信息 */}
           <div className="px-4 py-3 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10">
+            <button
+              type="button"
+              onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
+              className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full ring-1 ring-white/10 transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+              aria-label="修改我的头像"
+              title="修改我的头像"
+            >
               <UserAvatar
                 src={resolveAvatarUrl({
                   username: user?.username,
@@ -1117,7 +1144,7 @@ export default function AppShell() {
                 alt="avatar"
                 className="h-full w-full object-cover"
               />
-            </div>
+            </button>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                 {user?.displayName || 'Admin'}
@@ -1183,15 +1210,6 @@ export default function AppShell() {
                 {gatewayOpening ? <MapSpinner size={16} className="ml-auto" /> : <ExternalLink size={16} className="ml-auto" />}
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => { setAvatarOpen(true); setMobileDrawerOpen(false); }}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl min-h-[44px]"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              <Settings size={18} />
-              <span className="text-sm">修改头像</span>
-            </button>
             <button
               type="button"
               onClick={() => {
@@ -1405,6 +1423,7 @@ export default function AppShell() {
 
           {/* ── 底部用户区域 ── */}
           <div
+            data-app-sidebar-account
             className={cn(
               'shrink-0',
               collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'
@@ -1435,13 +1454,16 @@ export default function AppShell() {
                 style={{ background: 'var(--nested-block-bg)' }}
               />
 
-              <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
-                {/* 头像+用户名（触发下拉菜单） */}
+              <div className={cn('relative flex items-center', collapsed ? 'flex-col justify-center gap-1' : 'gap-3')}>
+                {/* 头像直接打开编辑器，用户名保留用户菜单入口。 */}
                 <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <div
-                      className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
-                      title="用户菜单"
+                  <div className={cn('flex items-center', collapsed ? 'flex-col gap-1' : 'gap-3 flex-1 min-w-0')}>
+                    <button
+                      type="button"
+                      onClick={() => setAvatarOpen(true)}
+                      className="shrink-0 cursor-pointer rounded-full transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                      aria-label="修改我的头像"
+                      title="修改我的头像"
                     >
                       {/* 头像外圈 = 教程掌握度进度环(诉求 12):已学会本页教程占比,满环加毕业角标 */}
                       <AvatarProgressRing size={30} stroke={2.5}>
@@ -1457,17 +1479,38 @@ export default function AppShell() {
                           className="h-full w-full object-cover"
                         />
                       </AvatarProgressRing>
+                    </button>
 
-                      {/* 用户信息（仅展开时显示） */}
-                      {!collapsed && (
+                    {collapsed && (
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className="flex h-7 w-8 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          aria-label="打开用户菜单"
+                          title="用户菜单"
+                        >
+                          <MoreHorizontal size={16} />
+                        </button>
+                      </DropdownMenu.Trigger>
+                    )}
+
+                    {/* 用户信息（仅展开时显示，点击后打开用户菜单） */}
+                    {!collapsed && (
+                      <DropdownMenu.Trigger asChild>
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 cursor-pointer rounded-[8px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          title="用户菜单"
+                        >
                         <div className="min-w-0 flex-1">
                           <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
                             {user?.displayName || 'Admin'}
                           </div>
                         </div>
-                      )}
-                    </div>
-                  </DropdownMenu.Trigger>
+                        </button>
+                      </DropdownMenu.Trigger>
+                    )}
+                  </div>
 
             <DropdownMenu.Portal>
               <DropdownMenu.Content
@@ -1480,22 +1523,30 @@ export default function AppShell() {
                 {/* 用户信息区 */}
                 <div className="px-2 py-3">
                   <div className="flex items-center gap-3">
-                    <div
-                      className="h-10 w-10 rounded-full overflow-hidden shrink-0"
-                      style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                    <DropdownMenu.Item
+                      asChild
+                      onSelect={() => setAvatarOpen(true)}
                     >
-                      <UserAvatar
-                        src={resolveAvatarUrl({
-                          username: user?.username,
-                          userType: user?.userType,
-                          botKind: user?.botKind,
-                          avatarFileName: user?.avatarFileName ?? null,
-                          avatarUrl: user?.avatarUrl,
-                        })}
-                        alt="avatar"
-                        className="h-full w-full object-cover"
-                      />
-                    </div>
+                      <button
+                        type="button"
+                        className="h-10 w-10 shrink-0 cursor-pointer overflow-hidden rounded-full outline-none transition-opacity hover:opacity-85 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                        style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                        aria-label="修改我的头像"
+                        title="修改我的头像"
+                      >
+                        <UserAvatar
+                          src={resolveAvatarUrl({
+                            username: user?.username,
+                            userType: user?.userType,
+                            botKind: user?.botKind,
+                            avatarFileName: user?.avatarFileName ?? null,
+                            avatarUrl: user?.avatarUrl,
+                          })}
+                          alt="avatar"
+                          className="h-full w-full object-cover"
+                        />
+                      </button>
+                    </DropdownMenu.Item>
                     <div className="min-w-0 flex-1">
                       <div className="text-[14px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
                         {user?.displayName || 'Admin'}
@@ -1512,7 +1563,7 @@ export default function AppShell() {
                   style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
 
-                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account，不再出现在此菜单 */}
+                {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account。 */}
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
@@ -1730,15 +1781,19 @@ export default function AppShell() {
             username={user?.username}
             userType={user?.userType ?? null}
             avatarFileName={user?.avatarFileName ?? null}
+            currentAvatarUrl={resolveAvatarUrl({
+              username: user?.username,
+              userType: user?.userType,
+              botKind: user?.botKind,
+              avatarFileName: user?.avatarFileName ?? null,
+              avatarUrl: user?.avatarUrl,
+            })}
+            enableAiEdit={canAiEditAvatar}
             onUpload={async (file) => uploadMyAvatar({ file })}
-            onSave={async (avatarFileName) => {
-              if (!user?.userId) return;
-              const res = await updateMyAvatar(avatarFileName);
-              if (!res.success) throw new Error(res.error?.message || '保存失败');
-              // 同时更新 avatarFileName 和 avatarUrl，确保左下角头像立即更新
+            onPersisted={(avatar) => {
               patchUser({
-                avatarFileName: avatarFileName ?? null,
-                avatarUrl: res.data?.avatarUrl ?? null
+                avatarFileName: avatar.avatarFileName ?? null,
+                avatarUrl: avatar.avatarUrl ?? null,
               });
             }}
           />
@@ -1766,7 +1821,7 @@ export default function AppShell() {
                       className="rounded-[9px] px-3 py-1.5 text-[12px] transition-all"
                       style={
                         notificationDialogTab === tab.key
-                          ? { background: 'var(--accent-gold)', color: '#1a1a1a' }
+                          ? { background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }
                           : { color: 'var(--text-muted)' }
                       }
                       onClick={() => setNotificationDialogTab(tab.key)}
@@ -1835,7 +1890,7 @@ export default function AppShell() {
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span
                                     className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                                    style={{ background: `${variant.accent}1f`, color: variant.accent }}
+                                    style={{ background: `${variant.accent}1f`, color: variant.fg }}
                                   >
                                     <ItemTypeIcon size={11} />
                                     {variant.label}
@@ -1915,7 +1970,7 @@ export default function AppShell() {
                                     type="button"
                                     className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover-bg-soft active:scale-[0.97]"
                                     style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
-                                    onClick={() => handleNotification(item.id, item.actionUrl)}
+                                    onClick={() => handleNotification(item.id, item.actionUrl, item.actionKind)}
                                   >
                                     {item.actionLabel || '去处理'}
                                   </button>
@@ -1923,7 +1978,7 @@ export default function AppShell() {
                                 <button
                                   type="button"
                                   className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:brightness-110 active:scale-[0.97]"
-                                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                                  style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                                   onClick={() => handleNotification(item.id)}
                                 >
                                   标记已处理

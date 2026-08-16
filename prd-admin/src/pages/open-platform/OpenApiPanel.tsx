@@ -186,7 +186,7 @@ function KeyCard({ r, onManage }: { r: BindingRow; onManage: () => void }) {
           <span className="truncate max-w-[150px]">{defaultModel}</span>
         </span>
         {extra > 0 && <span className="px-1.5 py-0.5 rounded bg-token-nested text-token-muted text-[11px]">+{extra}</span>}
-        {r.chatIsFallback && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[11px]">降级</span>}
+        {r.chatIsFallback && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[color:var(--accent-fg-amber)] text-[11px]">降级</span>}
       </div>
 
       <div className="flex flex-col gap-1">
@@ -273,7 +273,7 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
       style={{ background: shown ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0)', transition: 'background 200ms' }}
       onClick={onClose}>
       <div
-        className="h-full bg-[#161618] border-l border-token-subtle flex flex-col"
+        className="surface-tone-dark h-full bg-[#161618] border-l border-token-subtle flex flex-col"
         style={{ width: 'min(560px, 100vw)', boxShadow: '-24px 0 60px rgba(0,0,0,0.45)', transform: shown ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 220ms cubic-bezier(0.22,1,0.36,1)' }}
         onClick={(e) => e.stopPropagation()}>
 
@@ -434,8 +434,8 @@ function WhitelistPicker({ options, value, onChange }: { options: WLOption[]; va
       {remaining.length > 0 && (
         <select value="" onChange={(e) => { if (e.target.value) onChange([...value, e.target.value]); }}
           className="bg-token-nested border border-token-subtle rounded-md px-2 py-1.5 text-token-secondary text-xs w-full focus:outline-none focus:border-[var(--border-hover)]">
-          <option value="" className="bg-[#1E1F20]">+ 添加模型 / 模型池…</option>
-          {remaining.map((o) => <option key={o.value} value={o.value} className="bg-[#1E1F20]">{o.label}</option>)}
+          <option value="" className="surface-tone-dark bg-[#1E1F20]">+ 添加模型 / 模型池…</option>
+          {remaining.map((o) => <option key={o.value} value={o.value} className="surface-tone-dark bg-[#1E1F20]">{o.label}</option>)}
         </select>
       )}
     </div>

@@ -62,7 +62,7 @@ export function VersionKnowledgeCard({ productId, versionId }: { productId: stri
               >
                 <Icon size={13} className="shrink-0" style={{ color: kind.color }} />
                 <span className="text-sm text-token-primary truncate flex-1">{e.title}</span>
-                {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/80 shrink-0">{e.category}</span>}
+                {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-[color:var(--accent-fg-blue)] shrink-0">{e.category}</span>}
                 <span className="text-[10px] text-token-muted shrink-0">{fmtTime(e.updatedAt)}</span>
               </button>
             );
@@ -144,7 +144,7 @@ function KnowledgePickerDialog({ storeId, versionId, onClose, onSaved }: {
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
+        className="surface-tone-dark rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ width: 520, maxWidth: '92vw', height: '70vh', maxHeight: '70vh' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -189,7 +189,7 @@ function KnowledgePickerDialog({ storeId, versionId, onClose, onSaved }: {
           <button
             onClick={() => void save()}
             disabled={saving || loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-50"
           >
             {saving && <MapSpinner size={13} />} 保存（已选 {selected.size}）
           </button>

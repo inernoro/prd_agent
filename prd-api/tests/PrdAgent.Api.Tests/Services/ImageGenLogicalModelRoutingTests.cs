@@ -68,6 +68,69 @@ public sealed class ImageGenLogicalModelRoutingTests
     }
 
     [Fact]
+    public void OpenRouterImageRequest_RoutesAllReferencesThroughDedicatedImagesProtocol()
+    {
+        var request = OpenAIImageClient.BuildOpenRouterImageRequest(
+            "google/gemini-image",
+            "参考两张图片生成",
+            1,
+            "1024x1024",
+            ["data:image/png;base64,first", "data:image/jpeg;base64,second"],
+            isAdaptiveModel: false);
+
+        Assert.Equal("images", request.EndpointPath);
+        Assert.Equal(1, request.Body["n"]?.GetValue<int>());
+        Assert.Equal("1024x1024", request.Body["size"]?.GetValue<string>());
+        Assert.Equal(2, request.Body["input_references"]?.AsArray().Count);
+    }
+
+    [Fact]
+    public void OpenRouterImageRequest_OmitsCountAndSizeForAdaptiveModels()
+    {
+        var request = OpenAIImageClient.BuildOpenRouterImageRequest(
+            "gpt-image-2-all",
+            "生成自适应图片",
+            3,
+            "1536x1024",
+            ["raw-base64"],
+            isAdaptiveModel: true);
+
+        Assert.False(request.Body.ContainsKey("n"));
+        Assert.False(request.Body.ContainsKey("size"));
+        Assert.Equal(1, request.Body["input_references"]?.AsArray().Count);
+        Assert.Equal(
+            "data:image/png;base64,raw-base64",
+            request.Body["input_references"]?[0]?["image_url"]?["url"]?.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("openai", "gpt-image-1.5", true)]
+    [InlineData("openai-compatible", "gpt-image-2", true)]
+    [InlineData("openrouter-image", "openai/gpt-image-2", false)]
+    [InlineData("openai", "gemini-2.5-flash-image", false)]
+    public void MultiImageRouting_UsesDedicatedEditApiOnlyForDeclaredOpenAIImageModels(
+        string protocol,
+        string model,
+        bool expected)
+    {
+        Assert.Equal(expected, OpenAIImageClient.ShouldUseOpenAIImagesEditApi(protocol, model));
+    }
+
+    [Theory]
+    [InlineData(null, 600)]
+    [InlineData(30, 60)]
+    [InlineData(900, 900)]
+    [InlineData(5000, 3600)]
+    public void ImageGenerationTimeout_UsesConfiguredValueWithinSharedBounds(
+        int? configuredTimeoutSeconds,
+        int expected)
+    {
+        Assert.Equal(
+            expected,
+            OpenAIImageClient.ResolveImageGenerationTimeoutSeconds(configuredTimeoutSeconds));
+    }
+
+    [Fact]
     public void ResolveEffectiveIsAdaptive_PrefersConfiguredPromptCapability()
     {
         var resolution = new GatewayModelResolution

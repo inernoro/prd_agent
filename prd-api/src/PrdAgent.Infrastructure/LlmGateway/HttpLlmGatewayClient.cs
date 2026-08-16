@@ -285,18 +285,29 @@ public sealed class HttpLlmGatewayClient
 
         // S2 观测：把 Context.GatewayTransport 打成 "http"（跨进程 raw），serving 端据此标注日志传输通道。
         // 无论是否锁定 ExpectedModel 都重建一份副本以打标记；ActualModel 非空时同时锁定 ExpectedModel。
+        // 严格模型池契约的第一次解析会把 ExpectedModel 清空，并把命中的池保存在
+        // ModelGroupId。这里不能把实际 Provider 模型名再次作为 ExpectedModel 发送，
+        // 否则 serving 会把 Provider 名当成池 ID 二次解析，导致图片等 raw 请求被误判为
+        // “所选模型池不在 appCaller 允许范围内”。跨进程重解析必须保留池身份。
+        var outboundExpectedModel = !string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
+            ? resolution.LogicalModelPublicId
+            : string.Equals(resolution.ResolutionType, "GatewayRegistryPool", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(resolution.ModelGroupId)
+                ? resolution.ModelGroupId
+                : string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel;
         var httpTaggedContext = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http);
         // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本。
         var outboundRequest = new GatewayRawRequest
         {
             CanonicalImageRequest = request.CanonicalImageRequest,
             RequiredLogicalModelPublicId = resolution.LogicalModelPublicId,
+            // 首次提交保持为空，让 Serving 在同一逻辑模型内执行故障切换；
+            // 只有异步轮询/下载显式携带时才锁定提交成功的 Offering。
+            RequiredOfferingId = request.RequiredOfferingId,
             AppCallerCode = request.AppCallerCode,
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
-            ExpectedModel = !string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
-                ? resolution.LogicalModelPublicId
-                : string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel,
+            ExpectedModel = outboundExpectedModel,
             PinnedPlatformId = request.PinnedPlatformId,
             PinnedModelId = request.PinnedModelId,
             RequestBody = request.RequestBody,
@@ -573,6 +584,44 @@ public sealed class HttpLlmGatewayClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "[HttpLlmGatewayClient] ResolveModelAsync 失败 base={Base}", _baseUrl);
+            return new GatewayModelResolution { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
+    public async Task<GatewayModelResolution> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            using var http = CreateHttp(infiniteTimeout: false);
+            var dto = new
+            {
+                AppCallerCode = appCallerCode,
+                ModelType = modelType,
+                OfferingId = offeringId,
+            };
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/resolve") { Content = JsonBody(dto) };
+            ApplyRoutingHeaders(req, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
+            using var resp = await http.SendAsync(req, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                return new GatewayModelResolution
+                {
+                    Success = false,
+                    ErrorMessage = $"serving 返回 {(int)resp.StatusCode}: {Truncate(body)}",
+                };
+            }
+
+            return JsonSerializer.Deserialize<GatewayModelResolution>(body, JsonOpts)
+                   ?? new GatewayModelResolution { Success = false, ErrorMessage = "serving 响应反序列化为空" };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[HttpLlmGatewayClient] ResolveOfferingAsync 失败 base={Base}", _baseUrl);
             return new GatewayModelResolution { Success = false, ErrorMessage = ex.Message };
         }
     }

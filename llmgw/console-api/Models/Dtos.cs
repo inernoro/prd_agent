@@ -69,8 +69,18 @@ public sealed class SwitchTenantRequestDto
 // ── 改密 ──
 public sealed class ChangePasswordRequestDto
 {
+    /// <summary>
+    /// 旧口令。联邦账号首次设置本地口令时可以为空——它的旧口令是建号时随机生成的，
+    /// 判定见 <see cref="Auth.LocalPasswordPolicy.RequiresOldPassword"/>。
+    /// </summary>
     public string? OldPassword { get; set; }
     public string? NewPassword { get; set; }
+
+    /// <summary>
+    /// 可选的新登录名。联邦账号的自动用户名（map-{hash}）没人记得住，
+    /// 不让改名的话即使设了口令也登不进来。留空表示保持现有用户名。
+    /// </summary>
+    public string? Username { get; set; }
 }
 
 public sealed class ChangePasswordResultDto
@@ -81,6 +91,49 @@ public sealed class ChangePasswordResultDto
     public string? DisplayName { get; init; }
     public string? ExpiresAt { get; init; }
     public string? IdentityProvider { get; init; }
+    public TenantSessionDto? Tenant { get; init; }
+
+    /// <summary>
+    /// 口令确实改成功了，但会话在这中间到期了，签不出新 token——前端应提示重新登录。
+    /// 这种情形不能报失败：报失败会让用户拿着**已经作废的旧口令**反复重试。
+    /// </summary>
+    public bool RequiresRelogin { get; init; }
+}
+
+/// <summary>
+/// 「账号与安全」页要渲染的自身账号事实。它回答三个此前无处可查的问题：
+/// 我的登录名是什么、我有没有可用的本地口令、设置口令要不要填旧口令。
+/// </summary>
+public sealed class AccountProfileDto
+{
+    public string Username { get; init; } = string.Empty;
+    public string? DisplayName { get; init; }
+
+    /// <summary>身份来源：map 表示由 MAP 一键登录自动建号，空表示独立口令账号。</summary>
+    public string? IdentityProvider { get; init; }
+
+    /// <summary>当前是否存在有人知道的本地口令。false 表示这个账号还从未被真人认领。</summary>
+    public bool HasLocalPassword { get; init; }
+
+    /// <summary>设置新口令时是否必须填写旧口令。</summary>
+    public bool RequiresOldPassword { get; init; }
+
+    /// <summary>当前用户名是否为自动生成（据此提示用户改成记得住的名字）。</summary>
+    public bool UsernameIsGenerated { get; init; }
+
+    /// <summary>
+    /// 建议的登录名，即外部身份那边的登录名（MAP 用户名）。
+    /// 前端拿它预填输入框——SSO 进来的人不该被迫记住第二个名字。为空表示没有可用建议。
+    /// </summary>
+    public string? SuggestedUsername { get; init; }
+
+    /// <summary>
+    /// 建议登录名已被别人占用。为 true 时前端必须明说「你的 MAP 登录名已被占用，请另取一个」，
+    /// 否则用户会照着填、撞一次冲突、再自己猜原因。
+    /// </summary>
+    public bool SuggestedUsernameTaken { get; init; }
+
+    public int MinPasswordLength { get; init; }
     public TenantSessionDto? Tenant { get; init; }
 }
 
@@ -723,10 +776,18 @@ public sealed class UpsertPoolModelRequest
     public string? PriceCurrency { get; set; }
     public List<ModelCapabilityItem>? Capabilities { get; set; }
 }
+public sealed class RecoverPoolModelRequest
+{
+    public string? ModelId { get; set; }
+    public string? PlatformId { get; set; }
+}
 public sealed class UpdateGatewayAppCallerRequest
 {
     public string? Status { get; set; }
     public string? ModelPoolId { get; set; }
+    public List<string>? AllowedModelPoolIds { get; set; }
+    public string? DefaultModelPoolId { get; set; }
+    public bool? AllowCrossPoolFallback { get; set; }
     public string? ModelPolicy { get; set; }
     public string? ParameterPolicy { get; set; }
     public string? Owner { get; set; }
@@ -873,6 +934,9 @@ public sealed class PoolItem
     public long RecentSucceeded { get; set; }
     public long RecentFailed { get; set; }
     public decimal? RecentSuccessRatePercent { get; set; }
+    public long? AverageDurationMs { get; set; }
+    public int RecentTenRequests { get; set; }
+    public decimal? RecentTenSuccessRatePercent { get; set; }
     public string? LastRequestAt { get; set; }
     public int TrafficWindowHours { get; set; } = 168;
     public string Health { get; set; } = "empty";
@@ -1403,6 +1467,9 @@ public sealed class GatewayAppCallerItem
     public string? Title { get; set; }
     public string Status { get; set; } = "";
     public string? ModelPoolId { get; set; }
+    public List<string> AllowedModelPoolIds { get; set; } = new();
+    public string? DefaultModelPoolId { get; set; }
+    public bool AllowCrossPoolFallback { get; set; }
     public string? ModelPolicy { get; set; }
     public string? ParameterPolicy { get; set; }
     public string? LastObservedModelPoolId { get; set; }
@@ -1608,4 +1675,121 @@ public sealed class BugReportListData
 {
     public List<BugReportItem> Items { get; set; } = new();
     public bool ForwardConfigured { get; set; }
+}
+
+// ---------------------------------------------------------------------------
+// 上游预设 / 连通性自测 / 模型发现（minimal-user-input.md）
+// ---------------------------------------------------------------------------
+
+/// <summary>一条内置上游预设。用户选它 = 一次性拿到地址、协议、并发的正确默认值。</summary>
+public sealed class ProviderPresetItem
+{
+    public string Key { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string PlatformType { get; set; } = string.Empty;
+    public string ApiUrl { get; set; } = string.Empty;
+    public string? ProviderId { get; set; }
+    public int MaxConcurrency { get; set; }
+    /// <summary>去哪里领密钥。空字符串表示这个上游不需要密钥（本地部署）。</summary>
+    public string KeyConsoleUrl { get; set; } = string.Empty;
+    /// <summary>密钥常见前缀，用于填错时给一句「看起来不像这个平台的密钥」。</summary>
+    public string KeyPrefixHint { get; set; } = string.Empty;
+    public bool SupportsModelDiscovery { get; set; }
+    public bool SupportsUpstreamPricing { get; set; }
+    public string Summary { get; set; } = string.Empty;
+    /// <summary>搜索用的别名（中英文、拼音），前端只做过滤不做翻译。</summary>
+    public List<string> SearchTerms { get; set; } = new();
+
+    /// <summary>不校验密钥的本地/自建上游给的占位密钥；需要真密钥的上游为空串。</summary>
+    public string KeylessPlaceholder { get; set; } = string.Empty;
+}
+
+public sealed class ProviderPresetsData
+{
+    public List<ProviderPresetItem> Items { get; set; } = new();
+}
+
+/// <summary>连通性自测结果。失败时 nextStep 必须给出可执行的下一步，不许只说「失败」。</summary>
+public sealed class PlatformTestResult
+{
+    public bool Reachable { get; set; }
+    public int? HttpStatus { get; set; }
+    public long ElapsedMs { get; set; }
+    /// <summary>探测实际打的地址，让用户能核对是不是自己想的那个。</summary>
+    public string ProbedUrl { get; set; } = string.Empty;
+    public int? ModelCount { get; set; }
+    public string? FailureKind { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string? NextStep { get; set; }
+}
+
+/// <summary>上游返回的一个模型，外加系统替用户推断出来的用途与价格。</summary>
+public sealed class UpstreamModelItem
+{
+    public string ModelId { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    /// <summary>系统按模型标识推断的用途；推断不出来就是空数组，由用户勾选。</summary>
+    public List<string> InferredCapabilities { get; set; } = new();
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    /// <summary>价格来源：upstream = 上游给的；null = 上游没给，界面要如实说「未提供」。</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>该模型标识是否已经在本租户登记过，避免重复导入。</summary>
+    public bool AlreadyImported { get; set; }
+}
+
+public sealed class UpstreamModelsData
+{
+    public string ProbedUrl { get; set; } = string.Empty;
+    public int Total { get; set; }
+    public int AlreadyImportedCount { get; set; }
+    public bool PricingProvided { get; set; }
+
+    /// <summary>
+    /// 上游实际返回了多少个模型——**仅在被截断时非空**。
+    /// 截断必须让用户看见，否则他会以为面板里这些就是全部（no silent caps）。
+    /// </summary>
+    public int? TruncatedFromTotal { get; set; }
+
+    /// <summary>
+    /// 这份清单与价格是什么时候从上游拉回来的（服务端时间）。
+    /// minimal-user-input 第 2 条要求拉回来的值必须标「来源与时间」——面板可能开着不动，
+    /// 用户得能分辨手上这份报价是刚拉的还是半小时前的，否则会照着过期价格做导入决定。
+    /// </summary>
+    public DateTime FetchedAt { get; set; }
+
+    public List<UpstreamModelItem> Items { get; set; } = new();
+}
+
+/// <summary>批量导入：只带模型标识，用途与价格由服务端按发现结果补齐，前端可覆盖。</summary>
+public sealed class ImportUpstreamModelsRequest
+{
+    public List<ImportUpstreamModelEntry>? Models { get; set; }
+}
+
+public sealed class ImportUpstreamModelEntry
+{
+    public string? ModelId { get; set; }
+    public List<string>? Capabilities { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+}
+
+public sealed class ImportUpstreamModelsResult
+{
+    public int Requested { get; set; }
+    public int Created { get; set; }
+    public int Skipped { get; set; }
+    public List<string> SkippedModelIds { get; set; } = new();
+    public List<string> CreatedModelIds { get; set; } = new();
+
+    /// <summary>默认模型池同步是否失败。true 时模型已入库但不会被池路由选中，前端必须如实告知而不是报全绿。</summary>
+    public bool PoolSyncFailed { get; set; }
+
+    /// <summary>需要额外告诉用户的话（目前只有池同步失败时非空）。</summary>
+    public string? Message { get; set; }
 }

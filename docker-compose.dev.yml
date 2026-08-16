@@ -99,6 +99,9 @@ services:
       - Redis__ConnectionString=redis:6379
       - Jwt__Secret=${JWT_SECRET:-YourSuperSecretKeyForJwtTokenGeneration2024!}
       - Jwt__Issuer=prdagent
+      - AI_ACCESS_KEY=${AI_ACCESS_KEY:-}
+      - SYNTHETIC_LOGIN_ENABLED=${SYNTHETIC_LOGIN_ENABLED:-false}
+      - SYNTHETIC_LOGIN_ALLOWED_USERS=${SYNTHETIC_LOGIN_ALLOWED_USERS:-}
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-YourApiKeyCryptoSecretForLocalDev2026!}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - Session__TimeoutMinutes=30

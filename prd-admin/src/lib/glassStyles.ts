@@ -64,8 +64,8 @@ export const glassSidebar: React.CSSProperties = {
  * Tooltip — 紧凑、高不透明度、小模糊
  */
 export const glassTooltip: React.CSSProperties = {
-  background: 'var(--glass-bg-end, rgba(20, 20, 24, 0.95))',
-  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'var(--tooltip-bg)',
+  border: '1px solid var(--tooltip-border)',
   boxShadow: 'var(--shadow-glass-tooltip)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
@@ -115,7 +115,7 @@ export const glassOverlay: React.CSSProperties = {
  * Tab 内嵌容器（PageHeader 中的 tab 按钮组）
  */
 export const glassTabContainer: React.CSSProperties = {
-  background: 'rgba(0, 0, 0, 0.32)',
+  background: 'var(--tab-container-bg)',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
   boxShadow: 'var(--shadow-glass-tab)',
   backdropFilter: 'blur(8px)',
@@ -123,10 +123,14 @@ export const glassTabContainer: React.CSSProperties = {
 };
 
 /**
- * Toast 通知（深色底层 + 语义色叠加，确保任意背景下文字可读）
+ * Toast 通知（主题底层 + 语义色叠加，确保任意背景下文字可读）
+ *
+ * 底层走 --toast-bg-base（tokens.css 里暗/浅/素色三处双写），不能写死深色：
+ * 正文用的是 --text-primary（浅色主题下是深色字），底层若恒为深色，
+ * 浅色主题下就是「深底 + 深字」不可读，且低不透明度会让下层工具栏透上来。
  */
 export const glassToast = (bg: string, borderColor: string): React.CSSProperties => ({
-  background: `linear-gradient(${bg}, ${bg}), linear-gradient(rgba(8, 10, 16, 0.82), rgba(8, 10, 16, 0.82))`,
+  background: `linear-gradient(${bg}, ${bg}), linear-gradient(var(--toast-bg-base), var(--toast-bg-base))`,
   border: `1px solid ${borderColor}`,
   backdropFilter: 'blur(16px)',
   WebkitBackdropFilter: 'blur(16px)',

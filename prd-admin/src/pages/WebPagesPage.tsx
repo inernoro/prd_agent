@@ -3302,9 +3302,9 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
             </div>
             {result.password && (
               <div className="flex items-center gap-2 p-3 rounded-lg" style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
-                <Lock size={16} style={{ color: 'rgba(59, 130, 246, 0.9)', flexShrink: 0 }} />
+                <Lock size={16} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />
                 <div className="flex-1">
-                  <div className="text-xs mb-1" style={{ color: 'rgba(59, 130, 246, 0.8)' }}>访问密码</div>
+                  <div className="text-xs mb-1" style={{ color: 'var(--accent-fg-blue)' }}>访问密码</div>
                   <code className="text-sm font-mono font-bold tracking-wider text-token-primary">{result.password}</code>
                 </div>
                 <Button size="sm" variant="ghost" onClick={() => {

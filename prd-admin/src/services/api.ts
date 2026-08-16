@@ -14,6 +14,7 @@ export const api = {
     login: () => '/api/v1/auth/login',
     ssoOptions: () => '/api/v1/auth/miduo-planet/options',
     miduoPlanetLogin: () => '/api/v1/auth/miduo-planet/login',
+    syntheticLoginExchange: () => '/api/v1/auth/synthetic/exchange',
     register: () => '/api/v1/auth/register',
     refresh: () => '/api/v1/auth/refresh',
     validatePassword: () => '/api/v1/auth/validate-password',
@@ -334,6 +335,10 @@ export const api = {
   profile: {
     avatarUpload: () => '/api/profile/avatar/upload',
     avatar: () => '/api/profile/avatar',
+    avatarApplyGenerated: () => '/api/profile/avatar/apply-generated',
+    avatarGenerationRuns: () => '/api/profile/avatar/generation-runs',
+    avatarGenerationRun: (runId: string) => `/api/profile/avatar/generation-runs/${runId}`,
+    avatarGenerationRunStream: (runId: string) => `/api/profile/avatar/generation-runs/${runId}/stream`,
     publicPage: () => '/api/profile/public-page',
   },
 
@@ -1152,6 +1157,8 @@ export const api = {
       list: () => '/api/video-agent/runs',
       create: () => '/api/video-agent/runs',
       byId: (runId: string) => `/api/video-agent/runs/${runId}`,
+      download: (runId: string) => `/api/video-agent/runs/${runId}/download`,
+      downloadTicket: (runId: string) => `/api/video-agent/runs/${runId}/download-ticket`,
       cancel: (runId: string) => `/api/video-agent/runs/${runId}/cancel`,
       stream: (runId: string) => `/api/video-agent/runs/${runId}/stream`,
       export: (runId: string) => `/api/video-agent/runs/${runId}/export`,
