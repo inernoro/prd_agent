@@ -3572,7 +3572,7 @@ export default function LlmLabTab() {
                               style={{
                                 border: '1px solid rgba(250, 204, 21, 0.22)',
                                 background: 'rgba(250, 204, 21, 0.06)',
-                                color: 'rgba(250, 204, 21, 0.92)',
+                                color: 'var(--accent-fg-amber)',
                               }}
                               title={title}
                             >
@@ -3595,7 +3595,7 @@ export default function LlmLabTab() {
                           return {
                             background: 'rgba(250, 204, 21, 0.06)',
                             border: '1px solid rgba(250, 204, 21, 0.22)',
-                            color: 'rgba(250, 204, 21, 0.92)',
+                            color: 'var(--accent-fg-amber)',
                           };
                         }
                         if (st === 'bad') return chipStyle(false);

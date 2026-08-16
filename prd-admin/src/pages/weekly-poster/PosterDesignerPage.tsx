@@ -765,7 +765,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         title="服务端后台生成所有缺失的海报背景图，关闭浏览器后仍会继续回填"
                         className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                         style={{
-                          color: 'rgba(157,220,255,0.95)',
+                          color: 'var(--accent-fg-blue)',
                           background: 'rgba(56,189,248,0.12)',
                           border: '1px solid rgba(125,211,252,0.28)',
                         }}
@@ -783,7 +783,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         title="选择工作流 + 填变量 + 选版式 → 立即/定时/循环 触发，发布到首页"
                         className="h-9 rounded-xl px-4 inline-flex items-center gap-1.5 text-[12px] font-medium transition-colors"
                         style={{
-                          color: 'rgba(255,77,140,0.95)',
+                          color: 'var(--accent-fg-danger)',
                           background: 'rgba(255,0,80,0.12)',
                           border: '1px solid rgba(255,77,140,0.32)',
                         }}

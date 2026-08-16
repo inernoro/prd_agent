@@ -82,7 +82,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                       background: 'var(--nested-block-bg)',
                       color: 'var(--text-muted)',
                       borderBottom: '1px solid var(--border-subtle)',
-                    } : { background: 'rgba(0,0,0,0.5)', color: 'var(--text-muted)' }}
+                    } : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                   >
                     <span style={isReading ? { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', letterSpacing: '0.02em' } : undefined}>
                       {match[1]}
@@ -127,7 +127,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                   padding: '12px 14px',
                   fontSize: '0.75rem',
                   lineHeight: 1.6,
-                  background: 'rgba(0,0,0,0.3)',
+                  background: 'var(--nested-block-bg)',
                   color: 'var(--text-primary)',
                   fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
                   whiteSpace: 'pre',

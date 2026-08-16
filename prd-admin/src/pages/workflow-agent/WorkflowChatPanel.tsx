@@ -258,7 +258,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
 
   return (
     <div
-      className="border-l border-l-token-subtle" style={{ width: 420, height: '100%', display: 'flex', flexDirection: 'column', background: 'rgba(18, 18, 24, 0.94)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+      className="surface-tone-dark border-l border-l-token-subtle" style={{ width: 420, height: '100%', display: 'flex', flexDirection: 'column', background: 'rgba(18, 18, 24, 0.94)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
     >
       {/* Header */}
       <div
@@ -415,7 +415,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
                 borderRadius: 8,
                 padding: '6px 8px',
                 cursor: 'pointer',
-                color: 'rgba(239,68,68,0.9)',
+                color: 'var(--accent-fg-danger)',
                 flexShrink: 0,
               }}
             >
@@ -507,7 +507,7 @@ function ChatMessage({
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
             {message.generatedWorkflowId ? (
-              <CheckCircle2 size={14} style={{ color: 'rgba(34,197,94,0.9)' }} />
+              <CheckCircle2 size={14} style={{ color: 'var(--accent-fg-success)' }} />
             ) : (
               <AlertTriangle size={14} style={{ color: 'rgba(234,179,8,0.9)' }} />
             )}
@@ -532,7 +532,7 @@ function ChatMessage({
               style={{
                 background: 'rgba(34,197,94,0.2)',
                 border: '1px solid rgba(34,197,94,0.3)',
-                color: 'rgba(34,197,94,0.9)',
+                color: 'var(--accent-fg-success)',
               }}
             >
               应用到编辑器

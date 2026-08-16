@@ -805,12 +805,12 @@ export function ExchangeTestPanel({
               <div className="flex items-center gap-3 text-xs">
                 {sseResult.success ? (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)', border: '1px solid rgba(34,197,94,0.28)' }}>
+                    style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34,197,94,0.28)' }}>
                     <Check size={11} /> 转录成功
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(239,68,68,0.95)', border: '1px solid rgba(239,68,68,0.28)' }}>
+                    style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.28)' }}>
                     <X size={11} /> 失败
                   </span>
                 )}
@@ -850,7 +850,7 @@ export function ExchangeTestPanel({
           <div className="flex items-center gap-3 text-xs">
             {result.isDryRun && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
-                style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(59,130,246,0.95)', border: '1px solid rgba(59,130,246,0.28)' }}>
+                style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(59,130,246,0.28)' }}>
                 <Eye size={11} /> 预览模式
               </span>
             )}
@@ -859,8 +859,8 @@ export function ExchangeTestPanel({
                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full"
                 style={
                   result.httpStatus >= 200 && result.httpStatus < 300
-                    ? { background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)', border: '1px solid rgba(34,197,94,0.28)' }
-                    : { background: 'rgba(239,68,68,0.12)', color: 'rgba(239,68,68,0.95)', border: '1px solid rgba(239,68,68,0.28)' }
+                    ? { background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34,197,94,0.28)' }
+                    : { background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.28)' }
                 }
               >
                 {result.httpStatus >= 200 && result.httpStatus < 300 ? <Check size={11} /> : <X size={11} />}

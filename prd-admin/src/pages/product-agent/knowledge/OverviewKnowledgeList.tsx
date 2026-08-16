@@ -81,7 +81,7 @@ export function OverviewKnowledgeList() {
         <select
           value={productFilter}
           onChange={(e) => { setProductFilter(e.target.value); setPage(1); }}
-          className="px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-secondary outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]"
+          className="surface-tone-dark px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-secondary outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]"
         >
           <option value="">全部产品</option>
           {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -130,7 +130,7 @@ export function OverviewKnowledgeList() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-sm text-token-primary truncate">{r.entry.title}</span>
-                    {r.entry.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/90 border border-cyan-500/20 shrink-0">{r.entry.category}</span>}
+                    {r.entry.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-[color:var(--accent-fg-blue)] border border-cyan-500/20 shrink-0">{r.entry.category}</span>}
                     {(r.entry.tags ?? []).slice(0, 2).map((t) => (
                       <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary shrink-0">{t}</span>
                     ))}

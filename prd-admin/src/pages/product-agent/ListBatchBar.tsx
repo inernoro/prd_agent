@@ -139,7 +139,7 @@ function GenericListBatchBar({
         type="button"
         disabled={busy}
         onClick={() => void runDelete()}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-red-300/80 border border-red-500/30 hover:bg-red-500/10 disabled:opacity-50"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-[color:var(--accent-fg-danger)] border border-red-500/30 hover:bg-red-500/10 disabled:opacity-50"
       >
         <Trash2 size={12} /> {DELETE_LABEL[entityType]}
       </button>
@@ -187,7 +187,7 @@ export function ExportOnlyBatchBar({
           <button
             type="button"
             onClick={() => void onDelete()}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-red-300/80 border border-red-500/30 hover:bg-red-500/10"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-[color:var(--accent-fg-danger)] border border-red-500/30 hover:bg-red-500/10"
           >
             <Trash2 size={12} /> {deleteLabel}
           </button>

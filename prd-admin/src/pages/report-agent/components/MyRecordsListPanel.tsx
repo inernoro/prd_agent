@@ -89,20 +89,20 @@ function buildCategoryConfig(isLight: boolean): Record<string, { label: string; 
     return {
       development:   { label: '开发', color: 'rgba(29, 78, 216, 1)',   bg: 'rgba(29, 78, 216, 0.10)',   icon: Code2 },
       meeting:       { label: '会议', color: 'rgba(126, 34, 206, 1)',  bg: 'rgba(126, 34, 206, 0.10)',  icon: Users },
-      communication: { label: '沟通', color: 'rgba(194, 65, 12, 1)',   bg: 'rgba(194, 65, 12, 0.10)',   icon: MessageCircle },
-      documentation: { label: '文档', color: 'rgba(21, 128, 61, 1)',   bg: 'rgba(21, 128, 61, 0.10)',   icon: FileText },
+      communication: { label: '沟通', color: 'rgba(154, 52, 18, 1)',   bg: 'rgba(154, 52, 18, 0.10)',   icon: MessageCircle },
+      documentation: { label: '文档', color: 'rgba(22, 101, 52, 1)',   bg: 'rgba(22, 101, 52, 0.10)',   icon: FileText },
       testing:       { label: '测试', color: 'rgba(190, 24, 93, 1)',   bg: 'rgba(190, 24, 93, 0.10)',   icon: TestTube },
-      todo:          { label: 'Todo', color: 'rgba(4, 120, 87, 1)',    bg: 'rgba(4, 120, 87, 0.10)',    icon: Check },
+      todo:          { label: 'Todo', color: 'rgba(6, 95, 70, 1)',    bg: 'rgba(6, 95, 70, 0.10)',    icon: Check },
       other:         { label: '其他', color: 'rgba(71, 85, 105, 1)',   bg: 'rgba(71, 85, 105, 0.10)',   icon: MoreHorizontal },
     };
   }
   return {
-    development:   { label: '开发', color: 'rgba(59, 130, 246, 0.95)',  bg: 'rgba(59, 130, 246, 0.12)',  icon: Code2 },
-    meeting:       { label: '会议', color: 'rgba(168, 85, 247, 0.95)',  bg: 'rgba(168, 85, 247, 0.12)',  icon: Users },
-    communication: { label: '沟通', color: 'rgba(249, 115, 22, 0.95)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
-    documentation: { label: '文档', color: 'rgba(34, 197, 94, 0.95)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
-    testing:       { label: '测试', color: 'rgba(236, 72, 153, 0.95)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
-    todo:          { label: 'Todo', color: 'rgba(16, 185, 129, 0.95)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
+    development:   { label: '开发', color: 'var(--accent-fg-blue)',  bg: 'rgba(59, 130, 246, 0.12)',  icon: Code2 },
+    meeting:       { label: '会议', color: 'var(--accent-fg-violet)',  bg: 'rgba(168, 85, 247, 0.12)',  icon: Users },
+    communication: { label: '沟通', color: 'var(--accent-fg-warning)',  bg: 'rgba(249, 115, 22, 0.12)',  icon: MessageCircle },
+    documentation: { label: '文档', color: 'var(--accent-fg-success)',   bg: 'rgba(34, 197, 94, 0.12)',   icon: FileText },
+    testing:       { label: '测试', color: 'var(--accent-fg-danger)',  bg: 'rgba(236, 72, 153, 0.12)',  icon: TestTube },
+    todo:          { label: 'Todo', color: 'var(--accent-fg-success)',  bg: 'rgba(16, 185, 129, 0.12)',  icon: Check },
     other:         { label: '其他', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.12)', icon: MoreHorizontal },
   };
 }

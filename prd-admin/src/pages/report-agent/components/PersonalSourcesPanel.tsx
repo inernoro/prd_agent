@@ -23,7 +23,7 @@ const SOURCE_TYPES = [
     value: 'github',
     label: 'GitHub',
     icon: Github,
-    color: 'rgba(96, 165, 250, 0.95)',
+    color: 'var(--accent-fg-blue)',
     bg: 'rgba(59, 130, 246, 0.14)',
     placeholder: 'https://github.com/user/repo',
   },
@@ -31,15 +31,15 @@ const SOURCE_TYPES = [
     value: 'yuque',
     label: '语雀',
     icon: BookOpen,
-    color: 'rgba(74, 222, 128, 0.95)',
+    color: 'var(--accent-fg-success)',
     bg: 'rgba(34, 197, 94, 0.14)',
     placeholder: '如：123456 / your-space / https://www.yuque.com/xxx/yyy',
   },
 ] as const;
 
 const statusStyles: Record<string, { label: string; color: string; bg: string }> = {
-  success: { label: '已连接', color: 'rgba(34, 197, 94, 0.9)', bg: 'rgba(34, 197, 94, 0.08)' },
-  failed:  { label: '连接失败', color: 'rgba(239, 68, 68, 0.9)', bg: 'rgba(239, 68, 68, 0.08)' },
+  success: { label: '已连接', color: 'var(--accent-fg-success)', bg: 'rgba(34, 197, 94, 0.08)' },
+  failed:  { label: '连接失败', color: 'var(--accent-fg-danger)', bg: 'rgba(239, 68, 68, 0.08)' },
   never:   { label: '未同步', color: 'rgba(156, 163, 175, 0.7)', bg: 'rgba(156, 163, 175, 0.08)' },
 };
 
@@ -156,7 +156,7 @@ export function PersonalSourcesPanel() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'rgba(59, 130, 246, 0.06)' }}>
-              <Link2 size={16} style={{ color: 'rgba(59, 130, 246, 0.8)' }} />
+              <Link2 size={16} style={{ color: 'var(--accent-fg-blue)' }} />
             </div>
             <div>
               <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>我的数据源</h3>

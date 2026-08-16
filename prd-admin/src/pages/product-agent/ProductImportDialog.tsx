@@ -101,7 +101,7 @@ export function ProductImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
-        className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
+        className="surface-tone-dark flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
@@ -122,7 +122,7 @@ export function ProductImportDialog({
               type="button"
               onClick={() => void loadBundledTemplate()}
               disabled={parsing || busy}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-100 hover:bg-cyan-500/25 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25 disabled:opacity-50"
             >
               {parsing ? <MapSpinner size={14} /> : <Sparkles size={14} />} 一键加载初始模板（19 个应用）
             </button>
@@ -186,7 +186,7 @@ export function ProductImportDialog({
           {rows.length > 0 && (
             <div className="mt-4 overflow-auto rounded-lg border border-token-subtle">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-token-muted">
+                <thead className="surface-tone-dark bg-[#1a1c22] text-token-muted">
                   <tr>
                     <th className="px-3 py-2">产品名称</th>
                     <th className="px-3 py-2">产品类型</th>
@@ -223,7 +223,7 @@ export function ProductImportDialog({
             <button
               onClick={() => void commit()}
               disabled={busy || parsing || rows.length === 0}
-              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/30 disabled:opacity-40"
             >
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />} 确认导入 {rows.length} 条
             </button>

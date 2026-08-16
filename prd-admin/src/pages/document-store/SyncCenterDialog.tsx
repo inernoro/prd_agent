@@ -340,7 +340,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
   const status = statusLine(tone, { latestRun, problemRuns, progressRun });
 
   const modal = (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+    <div className="surface-tone-dark fixed inset-0 z-[100] flex items-center justify-center p-4"
       style={{ background: 'rgba(5,7,12,0.70)' }} onClick={onClose}>
       <div className="flex w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border shadow-2xl"
         style={{ maxHeight: '88vh', background: 'linear-gradient(150deg,rgba(18,24,33,0.99),rgba(26,30,40,0.99))', borderColor: 'rgba(148,163,184,0.24)', color: 'var(--text-primary)' }}
@@ -361,7 +361,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
         {/* header：标题 + 关系语句（当前这个库和谁保持什么关系） */}
         <div className="flex shrink-0 items-center gap-3 border-b px-5 py-4" style={{ borderColor: 'rgba(148,163,184,0.14)' }}>
           <div className="flex h-9 w-9 items-center justify-center rounded-xl border" style={{ background: 'rgba(20,184,166,0.10)', borderColor: 'rgba(45,212,191,0.28)' }}>
-            {anyRunning ? <MapSpinner size={16} /> : <ArrowLeftRight size={16} style={{ color: 'rgb(94,234,212)' }} />}
+            {anyRunning ? <MapSpinner size={16} /> : <ArrowLeftRight size={16} style={{ color: 'var(--accent-fg-blue)' }} />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[15px] font-semibold leading-tight">同步</div>
@@ -556,7 +556,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
               {showAdvanced && (
                 <section className="mt-3">
                   <div className="rounded-lg border px-3 py-2 text-[11px] leading-5" style={{ borderColor: 'rgba(45,212,191,0.18)', background: 'rgba(20,184,166,0.05)', color: 'var(--text-muted)' }}>
-                    <span style={{ color: 'rgb(94,234,212)', fontWeight: 600 }}>默认策略，无需设置：</span>
+                    <span style={{ color: 'var(--accent-fg-blue)', fontWeight: 600 }}>默认策略，无需设置：</span>
                     保留原时间、覆盖同名条目、图片自动重传到目标域名，完成后回读校验。
                   </div>
                   <div className="mt-2.5 grid gap-2 sm:grid-cols-3">
@@ -568,8 +568,8 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
                         <div className="flex items-center gap-1.5 text-[12.5px] font-semibold">{o.icon}{o.label}</div>
                         <div className="mt-1 text-[10.5px] leading-4" style={{ color: 'var(--text-muted)' }}>{o.desc}</div>
                         {o.danger
-                          ? <div className="mt-1.5 rounded px-1.5 py-0.5 text-[10px]" style={{ color: 'rgb(252,165,165)', background: 'rgba(127,29,29,0.18)', border: '1px solid rgba(248,113,113,0.34)' }}>会删除条目，需确认</div>
-                          : <div className="mt-1.5 rounded px-1.5 py-0.5 text-[10px]" style={{ color: 'rgb(94,234,212)', background: 'rgba(20,184,166,0.10)', border: '1px solid rgba(45,212,191,0.34)' }}>不删除，最安全</div>}
+                          ? <div className="mt-1.5 rounded px-1.5 py-0.5 text-[10px]" style={{ color: 'var(--accent-fg-danger)', background: 'rgba(127,29,29,0.18)', border: '1px solid rgba(248,113,113,0.34)' }}>会删除条目，需确认</div>
+                          : <div className="mt-1.5 rounded px-1.5 py-0.5 text-[10px]" style={{ color: 'var(--accent-fg-blue)', background: 'rgba(20,184,166,0.10)', border: '1px solid rgba(45,212,191,0.34)' }}>不删除，最安全</div>}
                       </button>
                     ))}
                   </div>
@@ -694,7 +694,7 @@ function ProgressStrip({ run, onCancel }: { run: PeerSyncRun | null; onCancel?: 
               onClick={() => !cancelling && onCancel(run)}
               disabled={cancelling}
               className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10.5px] font-semibold transition disabled:opacity-50"
-              style={{ color: 'rgb(252,165,165)', background: 'rgba(127,29,29,0.16)', border: '1px solid rgba(248,113,113,0.34)' }}
+              style={{ color: 'var(--accent-fg-danger)', background: 'rgba(127,29,29,0.16)', border: '1px solid rgba(248,113,113,0.34)' }}
               title="停止这次同步"
             >
               <Square size={10} /> {cancelling ? '停止中' : '停止'}
@@ -749,7 +749,7 @@ export function RunCard({ run, forceExpanded = false, onCancel }: { run: PeerSyn
               onClick={() => !run.cancelRequested && onCancel(run)}
               disabled={!!run.cancelRequested}
               className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10.5px] font-semibold transition disabled:opacity-50"
-              style={{ color: 'rgb(252,165,165)', background: 'rgba(127,29,29,0.16)', border: '1px solid rgba(248,113,113,0.34)' }}
+              style={{ color: 'var(--accent-fg-danger)', background: 'rgba(127,29,29,0.16)', border: '1px solid rgba(248,113,113,0.34)' }}
               title="停止这次同步"
             >
               <Square size={10} /> {run.cancelRequested ? '停止中' : '停止'}
@@ -906,9 +906,9 @@ export function directionLabel(d: string): string {
 }
 
 function statusMeta(s: string): { label: string; color: string; bg: string; border: string; icon: ReactNode } {
-  if (s === 'synced') return { label: '完成', color: 'rgb(134,239,172)', bg: 'rgba(22,101,52,0.18)', border: 'rgba(34,197,94,0.3)', icon: <CheckCircle2 size={12} /> };
+  if (s === 'synced') return { label: '完成', color: 'var(--accent-fg-success)', bg: 'rgba(22,101,52,0.18)', border: 'rgba(34,197,94,0.3)', icon: <CheckCircle2 size={12} /> };
   if (s === 'skipped') return { label: '已同步', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <CheckCircle2 size={12} /> };
-  if (s === 'error') return { label: '失败', color: 'rgb(252,165,165)', bg: 'rgba(127,29,29,0.18)', border: 'rgba(248,113,113,0.34)', icon: <AlertTriangle size={12} /> };
+  if (s === 'error') return { label: '失败', color: 'var(--accent-fg-danger)', bg: 'rgba(127,29,29,0.18)', border: 'rgba(248,113,113,0.34)', icon: <AlertTriangle size={12} /> };
   // 已取消：用户主动中止，中性灰（区别于失败的红），禁行图标。
   if (s === 'cancelled') return { label: '已取消', color: 'rgb(148,163,184)', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.28)', icon: <Ban size={12} /> };
   // 陈旧：标记 syncing 但超 30min 未收尾（多为进程中断），按中性「未完成」展示，不再金色脉冲。

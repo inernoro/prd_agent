@@ -30,7 +30,7 @@ export default function VisualAgentFullscreenPage() {
 
   return (
     <div
-      className="h-full w-full relative"
+      className="surface-tone-dark h-full w-full relative"
       style={{
         background: '#0a0a0c',
       }}

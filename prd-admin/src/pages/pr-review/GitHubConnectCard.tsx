@@ -41,7 +41,7 @@ export function GitHubConnectCard() {
 
   if (!authStatus.oauthConfigured) {
     return (
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-5 flex items-start gap-3 text-sm text-amber-200">
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-5 flex items-start gap-3 text-sm text-[color:var(--accent-fg-amber)]">
         <AlertTriangle size={18} className="mt-0.5 shrink-0" />
         <div>
           <div className="font-semibold mb-1">尚未配置 GitHub OAuth App</div>
@@ -237,17 +237,17 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
 
       {/* 终态错误 */}
       {!isPolling && deviceFlow.status === 'expired' && (
-        <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+        <div className="text-xs text-[color:var(--accent-fg-amber)] bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
           授权已超时，请点击取消后重新发起。
         </div>
       )}
       {!isPolling && deviceFlow.status === 'denied' && (
-        <div className="text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+        <div className="text-xs text-[color:var(--accent-fg-danger)] bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
           你在 GitHub 页面拒绝了授权。
         </div>
       )}
       {!isPolling && deviceFlow.status === 'failed' && (
-        <div className="text-xs text-red-200 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+        <div className="text-xs text-[color:var(--accent-fg-danger)] bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
           授权轮询失败：{deviceFlow.errorDetail ?? '未知错误'}
         </div>
       )}

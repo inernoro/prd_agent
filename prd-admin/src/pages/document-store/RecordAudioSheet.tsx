@@ -850,7 +850,7 @@ export function RecordAudioSheet({
       {destinationPicker}
       <span
         className="flex h-14 w-14 items-center justify-center rounded-full"
-        style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)' }}>
+        style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)' }}>
         <MicOff size={24} />
       </span>
       <p className="max-w-[300px] text-[13px] leading-relaxed text-token-secondary">{unavailableReason}</p>

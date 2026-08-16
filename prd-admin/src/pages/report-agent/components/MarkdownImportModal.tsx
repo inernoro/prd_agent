@@ -349,7 +349,7 @@ export function MarkdownImportModal({
                   style={{
                     borderColor: 'rgba(239,68,68,0.3)',
                     background: 'rgba(239,68,68,0.1)',
-                    color: 'rgb(252,165,165)',
+                    color: 'var(--accent-fg-danger)',
                   }}
                 >
                   <AlertCircle size={14} className="shrink-0 mt-0.5" />

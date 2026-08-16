@@ -803,7 +803,7 @@ function ContentArea({
             rel="noopener noreferrer"
             className="inline-block px-6 py-3 rounded-2xl text-[13px] font-bold transition-all active:translate-y-1"
             style={{
-              background: '#F97316',
+              background: '#C2410C',
               border: '3px solid #1E1B4B',
               boxShadow: '0 4px 0 #1E1B4B',
               color: '#FFFFFF',
@@ -970,7 +970,7 @@ function ClayMarkdown({
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-bold underline decoration-[2px] underline-offset-4"
-                  style={{ color: '#F97316' }}
+                  style={{ color: '#C2410C' }}
                 >
                   {children}
                 </a>
@@ -1002,7 +1002,7 @@ function ClayMarkdown({
               <a
                 href={href}
                 className="font-bold underline decoration-[2px] underline-offset-4"
-                style={{ color: '#F97316' }}
+                style={{ color: '#C2410C' }}
                 onClick={(e) => {
                   e.preventDefault();
                   if (resolved.kind === 'anchor') {

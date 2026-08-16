@@ -224,7 +224,7 @@ export function ApplicationAdminManager() {
         <div className="mt-1 text-xs leading-5 text-token-muted">只有名单内管理员可看到并执行历史数据导入：产品、需求、缺陷、版本请在产品管理总览对应菜单导入；功能目录仅在单产品「功能」页导入。可重复导入，带外部 ID 的数据按原记录更新。</div>
         <div className="mt-4 flex items-center gap-2">
           <div className="min-w-0 flex-1"><UserSearchSelect value={selectedUserId} onChange={setSelectedUserId} placeholder="搜索 MAP 用户" showAllOption={false} /></div>
-          <button onClick={() => void add()} disabled={!selectedUserId || busy} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-3 py-2 text-sm text-cyan-100 disabled:opacity-40">
+          <button onClick={() => void add()} disabled={!selectedUserId || busy} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-3 py-2 text-sm text-[color:var(--accent-fg-blue)] disabled:opacity-40">
             {busy ? <MapSpinner size={14} /> : <Plus size={14} />} 添加管理员
           </button>
         </div>
@@ -312,7 +312,7 @@ export function DebugDataResetPanel() {
         <button
           onClick={() => void reset()}
           disabled={busy || confirmPhrase.trim() !== DEBUG_RESET_CONFIRM}
-          className="mt-4 flex items-center gap-1.5 rounded-lg border border-red-500/35 bg-red-500/15 px-4 py-2 text-sm text-red-100 hover:bg-red-500/25 disabled:opacity-40"
+          className="mt-4 flex items-center gap-1.5 rounded-lg border border-red-500/35 bg-red-500/15 px-4 py-2 text-sm text-[color:var(--accent-fg-danger)] hover:bg-red-500/25 disabled:opacity-40"
         >
           {busy ? <MapSpinner size={14} /> : <Trash2 size={14} />}
           清空全部业务数据
@@ -384,7 +384,7 @@ export function DescTemplateManager({ entityType }: { entityType: ProductEntityT
         </div>
         <button
           onClick={() => setEditing('new')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm shrink-0"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm shrink-0"
         >
           <Plus size={14} /> 新增模板
         </button>
@@ -404,7 +404,7 @@ export function DescTemplateManager({ entityType }: { entityType: ProductEntityT
               <button onClick={() => setEditing(t)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-token-secondary hover-text-primary hover-bg-soft">
                 <Save size={12} /> 编辑
               </button>
-              <button onClick={() => remove(t.id)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-300/60 hover:text-red-300 hover:bg-red-500/10">
+              <button onClick={() => remove(t.id)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10">
                 <Trash2 size={12} />
               </button>
             </div>
@@ -457,7 +457,7 @@ function DescTemplateEditModal({
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-2xl rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
+        className="surface-tone-dark w-full max-w-2xl rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ maxHeight: '88vh' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -487,7 +487,7 @@ function DescTemplateEditModal({
           <button
             onClick={save}
             disabled={!name.trim() || saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
           >
             {saving ? <MapSpinner size={14} /> : <Save size={14} />} {isNew ? '创建' : '保存'}
           </button>
@@ -560,7 +560,7 @@ export function CategoryManager() {
         <button
           onClick={add}
           disabled={!draftName.trim() || saving}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
         >
           {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 新增
         </button>
@@ -618,7 +618,7 @@ function CategoryRow({ category, onChanged }: { category: ProductCategory; onCha
       <button
         onClick={save}
         disabled={!dirty || !name.trim() || busy}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-cyan-200/80 hover:text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
       >
         {busy ? <MapSpinner size={12} /> : <Save size={12} />} 保存
       </button>
@@ -626,7 +626,7 @@ function CategoryRow({ category, onChanged }: { category: ProductCategory; onCha
         onClick={remove}
         disabled={category.isBuiltin || busy}
         title={category.isBuiltin ? '内置类型不可删除' : '删除'}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-300/60 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30 shrink-0"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 disabled:opacity-30 shrink-0"
       >
         <Trash2 size={12} />
       </button>
@@ -694,7 +694,7 @@ export function RequirementTypeManager() {
         <button
           onClick={add}
           disabled={!draftName.trim() || saving}
-          className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+          className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50"
         >
           {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 新增类型
         </button>
@@ -758,7 +758,7 @@ function RequirementTypeRow({ item, onChanged }: { item: RequirementType; onChan
         <button
           onClick={save}
           disabled={!dirty || !name.trim() || busy}
-          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-cyan-200/80 hover:text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
         >
           {busy ? <MapSpinner size={12} /> : <Save size={12} />} 保存
         </button>
@@ -766,7 +766,7 @@ function RequirementTypeRow({ item, onChanged }: { item: RequirementType; onChan
           onClick={remove}
           disabled={item.isBuiltin || busy}
           title={item.isBuiltin ? '内置类型不可删除' : '删除'}
-          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-300/60 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30 shrink-0"
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[color:var(--accent-fg-danger)] hover:text-[color:var(--accent-fg-danger)] hover:bg-red-500/10 disabled:opacity-30 shrink-0"
         >
           <Trash2 size={12} />
         </button>
@@ -854,7 +854,7 @@ export function FormTemplateEditor({ entityType, productId }: { entityType: Prod
     <div className="rounded-xl border border-token-subtle bg-token-nested p-4 flex flex-col gap-3">
       <div className="flex items-center gap-3">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="模板名称" className="flex-1 px-3 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40" />
-        <button onClick={save} disabled={saving} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50">
+        <button onClick={save} disabled={saving} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm disabled:opacity-50">
           {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
         </button>
         {msg && <span className="text-xs text-token-secondary">{msg}</span>}

@@ -21,12 +21,12 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
 
   // 权限分类颜色
   const categoryColors: Record<string, { bg: string; text: string }> = {
-    access: { bg: 'rgba(59, 130, 246, 0.15)', text: 'rgba(147, 197, 253, 0.9)' },
-    read: { bg: 'rgba(34, 197, 94, 0.15)', text: 'rgba(134, 239, 172, 0.9)' },
-    write: { bg: 'rgba(249, 115, 22, 0.15)', text: 'rgba(253, 186, 116, 0.9)' },
-    manage: { bg: 'rgba(168, 85, 247, 0.15)', text: 'rgba(216, 180, 254, 0.9)' },
-    use: { bg: 'rgba(99, 102, 241, 0.15)', text: 'rgba(99, 102, 241, 0.9)' },
-    super: { bg: 'rgba(239, 68, 68, 0.15)', text: 'rgba(252, 165, 165, 0.9)' },
+    access: { bg: 'rgba(59, 130, 246, 0.15)', text: 'var(--accent-fg-blue)' },
+    read: { bg: 'rgba(34, 197, 94, 0.15)', text: 'var(--accent-fg-success)' },
+    write: { bg: 'rgba(249, 115, 22, 0.15)', text: 'var(--accent-fg-warning)' },
+    manage: { bg: 'rgba(168, 85, 247, 0.15)', text: 'var(--accent-fg-violet)' },
+    use: { bg: 'rgba(99, 102, 241, 0.15)', text: 'var(--accent-fg-blue)' },
+    super: { bg: 'rgba(239, 68, 68, 0.15)', text: 'var(--accent-fg-danger)' },
   };
 
   const categoryLabels: Record<string, string> = {

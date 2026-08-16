@@ -65,7 +65,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-4xl mx-4 rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
+        className="surface-tone-dark relative w-full max-w-4xl mx-4 rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
         style={{ height: '90vh', maxHeight: '90vh' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -110,7 +110,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
           {loading && <MapSectionLoader text="加载中..." />}
 
           {error && !loading && (
-            <div className="flex items-start gap-2 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-200">
+            <div className="flex items-start gap-2 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-[color:var(--accent-fg-danger)]">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
               <div>
                 <div className="font-semibold">加载失败</div>

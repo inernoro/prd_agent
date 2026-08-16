@@ -411,7 +411,7 @@ export function WeekNavRail({
                               {week.isCurrent && (
                                 <span
                                   className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full"
-                                  style={{ color: isLight ? 'rgba(21,128,61,1)' : 'rgba(34,197,94,.95)', background: isLight ? 'rgba(21,128,61,.14)' : 'rgba(34,197,94,.12)' }}
+                                  style={{ color: isLight ? 'rgba(22,101,52,1)' : 'rgba(34,197,94,.95)', background: isLight ? 'rgba(22,101,52,.14)' : 'rgba(34,197,94,.12)' }}
                                 >
                                   本周
                                 </span>

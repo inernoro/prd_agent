@@ -171,9 +171,9 @@ function requestTypeToBadge(t: string | null | undefined): { label: string; titl
 }
 
 function requestTypeChipStyle(tone: RequestTypeTone): React.CSSProperties {
-  if (tone === 'green') return { background: 'rgba(34, 197, 94, 0.12)', border: '1px solid rgba(34, 197, 94, 0.28)', color: 'rgba(34, 197, 94, 0.95)' };
-  if (tone === 'blue') return { background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.28)', color: 'rgba(59, 130, 246, 0.95)' };
-  if (tone === 'purple') return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'rgba(168, 85, 247, 0.95)' };
+  if (tone === 'green') return { background: 'rgba(34, 197, 94, 0.12)', border: '1px solid rgba(34, 197, 94, 0.28)', color: 'var(--accent-fg-success)' };
+  if (tone === 'blue') return { background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.28)', color: 'var(--accent-fg-blue)' };
+  if (tone === 'purple') return { background: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.28)', color: 'var(--accent-fg-violet)' };
   if (tone === 'gold') return { background: 'rgba(99, 102, 241, 0.18)', border: '1px solid rgba(99, 102, 241, 0.35)', color: 'var(--accent-gold-2)' };
   return { background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-muted)' };
 }
@@ -1241,19 +1241,19 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
     if (v === 'failed') {
       return {
         container: { border: '1px solid rgba(239, 68, 68, 0.38)', background: 'rgba(239, 68, 68, 0.08)' },
-        value: { color: 'rgba(239, 68, 68, 0.95)' },
+        value: { color: 'var(--accent-fg-danger)' },
       };
     }
     if (v === 'succeeded') {
       return {
         container: { border: '1px solid rgba(34, 197, 94, 0.38)', background: 'rgba(34, 197, 94, 0.08)' },
-        value: { color: 'rgba(34, 197, 94, 0.95)' },
+        value: { color: 'var(--accent-fg-success)' },
       };
     }
     if (v === 'running') {
       return {
         container: { border: '1px solid rgba(59, 130, 246, 0.38)', background: 'rgba(59, 130, 246, 0.08)' },
-        value: { color: 'rgba(147, 197, 253, 0.98)' },
+        value: { color: 'var(--accent-fg-blue)' },
       };
     }
     if (v === 'cancelled') {
@@ -1526,7 +1526,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                 style={{
                                   background: 'rgba(99, 102, 241, 0.12)',
                                   border: '1px solid rgba(99, 102, 241, 0.30)',
-                                  color: 'rgba(129, 140, 248, 0.98)'
+                                  color: 'var(--accent-fg-blue)'
                                 }}
                                 onClick={(e) => e.stopPropagation()}
                               >
@@ -1582,7 +1582,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                 style={{
                                   background: 'rgba(59, 130, 246, 0.12)',
                                   border: '1px solid rgba(59, 130, 246, 0.28)',
-                                  color: 'rgba(59, 130, 246, 0.95)'
+                                  color: 'var(--accent-fg-blue)'
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1617,7 +1617,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           <label
                             className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
                             title={it.expectedModel ? `期望模型 ${it.expectedModel}，实际使用 ${it.model}` : '模型池回退'}
-                            style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.30)', color: 'rgba(245, 158, 11, 0.95)' }}
+                            style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.30)', color: 'var(--accent-fg-amber)' }}
                           >
                             <RefreshCw size={10} />
                             已降级
@@ -1632,7 +1632,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                             <label
                               className="inline-flex items-center gap-1 rounded-full px-2.5 h-5 text-[11px] font-semibold tracking-wide shrink-0"
                               title={title}
-                              style={{ background: 'rgba(168, 85, 247, 0.10)', border: '1px solid rgba(168, 85, 247, 0.22)', color: 'rgba(168, 85, 247, 0.95)' }}
+                              style={{ background: 'rgba(168, 85, 247, 0.10)', border: '1px solid rgba(168, 85, 247, 0.22)', color: 'var(--accent-fg-violet)' }}
                             >
                               <ImagePlus size={12} />
                               {text}
@@ -1799,7 +1799,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       style={{
                         background: 'rgba(239,68,68,0.06)',
                         border: '1px solid rgba(239,68,68,0.18)',
-                        color: 'rgba(239,68,68,0.95)',
+                        color: 'var(--accent-fg-danger)',
                       }}
                     >
                       <XCircle size={14} className="shrink-0 mt-[1px]" />
@@ -1958,8 +1958,8 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 </div>
                 {detail.isFallback ? (
                   <div className="mt-2 rounded-[10px] px-3 py-2" style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
-                    <div className="text-[12px] font-semibold" style={{ color: 'rgba(245, 158, 11, 0.95)' }}>模型已降级</div>
-                    <div className="text-[11px] mt-0.5" style={{ color: 'rgba(245, 158, 11, 0.75)' }}>
+                    <div className="text-[12px] font-semibold" style={{ color: 'var(--accent-fg-amber)' }}>模型已降级</div>
+                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--accent-fg-amber)' }}>
                       {detail.expectedModel ? `期望: ${detail.expectedModel} → 实际: ${detail.model}` : ''}
                       {detail.fallbackReason ? ` · ${detail.fallbackReason}` : ''}
                     </div>
@@ -2004,7 +2004,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 })()}
                 {detail.responseToolCalls ? (
                   <div className="mt-2 rounded-[10px] px-3 py-2" style={{ background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.22)' }}>
-                    <div className="text-[12px] font-semibold mb-1" style={{ color: 'rgba(56,189,248,0.95)' }}>
+                    <div className="text-[12px] font-semibold mb-1" style={{ color: 'var(--accent-fg-blue)' }}>
                       函数调用 tool_calls{typeof detail.toolCallCount === 'number' ? ` ×${detail.toolCallCount}` : ''}
                     </div>
                     <pre className="text-[11px] whitespace-pre-wrap break-all" style={{ color: 'var(--text-secondary)', maxHeight: 240, overflow: 'auto', margin: 0 }}>
@@ -2526,7 +2526,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           .prd-md ul,.prd-md ol { margin: 8px 0; padding-left: 18px; }
                           .prd-md li { margin: 4px 0; }
                           .prd-md hr { border: 0; border-top: 1px solid rgba(255,255,255,0.10); margin: 12px 0; }
-                          .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
+                          .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: var(--accent-fg-violet); border-radius: 10px; }
                           .prd-md a { color: #E7CE97; text-decoration: underline; }
                           .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
                           .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 12px; overflow: auto; }

@@ -133,25 +133,25 @@ select:focus-visible {
   cursor: not-allowed;
 }
 
-/* 原生下拉框可读性（Windows/Edge 常见：暗色页面 + 白底下拉导致白字看不清） */
+/* 原生下拉框可读性（Windows/Edge 常见：暗色页面 + 白底下拉导致白字看不清）。
+   元素级 color-scheme 会压过 tokens.css 在 [data-theme="light"] 上声明的 light，
+   所以浅色主题必须显式翻回来，否则米白页面里插一块黑底白字的原生 option 弹层。 */
 select {
   color-scheme: dark;
 }
 
-/* 让 option/optgroup 尽量随 color-scheme 自适应（Canvas/CanvasText 会随暗色方案变化） */
-select option,
-select optgroup {
-  color: CanvasText;
-  background-color: Canvas;
+[data-theme="light"] select {
+  color-scheme: light;
 }
 
-/* 兼容：极少数不支持 Canvas/CanvasText 的环境 */
-@supports not (color: CanvasText) {
-  select option,
-  select optgroup {
-    color: #111;
-    background-color: #fff;
-  }
+/* option/optgroup 直接用主题 token 上色。
+   原先用 Canvas/CanvasText 系统色，指望它跟随 color-scheme——但弹层是 UA 画的，
+   Canvas 在弹层里解析成什么由浏览器决定，实测暗色主题下会解析成白，
+   于是米白 option 列表浮在暗色页面上。token 是我们自己的双写值，两个主题都确定。 */
+select option,
+select optgroup {
+  color: var(--text-primary);
+  background-color: var(--bg-elevated);
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }

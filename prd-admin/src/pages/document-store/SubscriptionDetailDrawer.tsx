@@ -77,7 +77,7 @@ function StatusBadge({ status, paused }: { status?: string; paused: boolean }) {
   if (status === 'syncing') {
     return (
       <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-        style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.95)', border: '1px solid rgba(59,130,246,0.25)' }}>
+        style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--accent-fg-blue)', border: '1px solid rgba(59,130,246,0.25)' }}>
         <MapSpinner size={10} /> 同步中
       </span>
     );
@@ -85,14 +85,14 @@ function StatusBadge({ status, paused }: { status?: string; paused: boolean }) {
   if (status === 'error') {
     return (
       <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-        style={{ background: 'rgba(239,68,68,0.12)', color: 'rgba(248,113,113,0.95)', border: '1px solid rgba(239,68,68,0.25)' }}>
+        style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)', border: '1px solid rgba(239,68,68,0.25)' }}>
         <AlertCircle size={10} /> 出错
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
-      style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(74,222,128,0.95)', border: '1px solid rgba(34,197,94,0.25)' }}>
+      style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34,197,94,0.25)' }}>
       <CheckCircle2 size={10} /> 正常
     </span>
   );
@@ -333,7 +333,7 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
                   style={{
                     background: 'rgba(239,68,68,0.08)',
                     border: '1px solid rgba(239,68,68,0.2)',
-                    color: 'rgba(248,113,113,0.95)',
+                    color: 'var(--accent-fg-danger)',
                   }}>
                   {data.entry.syncError}
                 </div>

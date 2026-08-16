@@ -393,7 +393,7 @@ const SEVERITY_BADGE = (label: string) => (
 );
 function AdminImportButton({ onClick }: { onClick: () => void }) {
   return (
-    <button onClick={onClick} className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-cyan-200 hover:bg-cyan-500/20">
+    <button onClick={onClick} className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/20">
       <Upload size={13} /> 导入历史数据
     </button>
   );
