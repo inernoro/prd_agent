@@ -235,7 +235,7 @@
 | [design.visual-agent.multi-image-compose.md](./design.visual-agent.multi-image-compose.md) | 多图组合生成 | 两阶段架构：预提取描述 + 实时组合 |
 | [design.visual-agent.multi-image-vision-api.md](./design.visual-agent.multi-image-vision-api.md) | Vision API 多图支持 | 解决 img2img 端点只支持单张参考图的限制 |
 | [design.video-agent.remotion-gap.md](./design.video-agent.remotion-gap.md) | Remotion 质量分析 | 视频场景生成中的视觉质量差距分析（与 VideoAgent 交叉） |
-| [changelogs/2026-08-11_上游生图尺寸能力.md](../changelogs/2026-08-11_上游生图尺寸能力.md) | 上游生图尺寸能力 | 高级配置声明尺寸字段与提示词传输能力，统一请求阶段尺寸能力并按上游元数据自适应分辨率档位 |
+| 2026-08-11（碎片 `2026-08-11_上游生图尺寸能力.md` 已归档进 `CHANGELOG.md`） | 上游生图尺寸能力 | 高级配置声明尺寸字段与提示词传输能力，统一请求阶段尺寸能力并按上游元数据自适应分辨率档位 |
 
 ## 十、影响范围与风险
 
