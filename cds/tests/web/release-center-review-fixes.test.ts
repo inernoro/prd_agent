@@ -5,6 +5,8 @@
  * 外发链接必须绝对化。都是纯函数，配一条接线守卫证明页面真的在用。
  */
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,9 +14,10 @@ import { describe, expect, it } from 'vitest';
 
 import { resolvePreviewUrl } from '../../web/src/lib/previewUrl';
 import { canonicalEnvironments, defaultIsCanonical } from '../../web/src/lib/releaseEnvironments';
-import { isShownRunCurrent } from '../../web/src/lib/releaseConsoleState';
+import { isShownRunCurrent, planRollbackToVersion, resolveFleetRowAction } from '../../web/src/lib/releaseConsoleState';
 import { describeDryRunResult } from '../../web/src/lib/releaseDiagnosis';
 import { runTone, statusLabel } from '../../web/src/pages/release-center/shared';
+import { FleetMatrix } from '../../web/src/pages/release-center/FleetMatrix';
 import { absoluteNoticeActionUrl, normalizeNoticeOrigin } from '../../src/services/notice-outbound-map.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -237,9 +240,20 @@ describe('发布控制台把「翻旧记录」和「本次发布」分开', () =
     expect(page).toContain('latestRun: historyRun ?? row?.latestRun ?? null,');
   });
 
-  it('真正发起发布时清掉历史选择', () => {
-    const starts = page.match(/setHistoryRun\(null\);\n\s*setRun\(res\.run\);/g) || [];
-    expect(starts.length).toBe(3);
+  /**
+   * 判据是「每一条都清」，不是「一共有几条」。
+   *
+   * 原来断言的是恰好 3 条——加一条新的发起路径（回滚到指定版本）就会误红，
+   * 而行为完全正确。数量不是不变量，「接管主屏之前先清掉历史选择」才是。
+   */
+  it('每一条发起路径都在接管主屏前清掉历史选择', () => {
+    const takeovers = [...page.matchAll(/setRun\(res\.run\);/g)];
+    expect(takeovers.length).toBeGreaterThanOrEqual(3);
+    for (const match of takeovers) {
+      const before = page.slice(Math.max(0, match.index! - 120), match.index!);
+      expect(before, `第 ${page.slice(0, match.index).split('\n').length} 行的 setRun(res.run) 之前没有清 historyRun`)
+        .toContain('setHistoryRun(null);');
+    }
   });
 });
 
@@ -388,5 +402,150 @@ describe('发布控制台的「已切到」必须挂在当前那一版上（接�
 
   it('回滚按钮同样只出现在当前那一版上', () => {
     expect(page).toContain('{!failed && shownIsCurrent && row?.canRollback ? (');
+  });
+});
+
+/**
+ * 「回滚到此版本」必须真的回滚到那一版（Codex review P1，2026-08-16）。
+ *
+ * 回滚接口有两个 id：路径上的 `:id` 是「从哪一版退下来」，body 的 `targetReleaseId`
+ * 是「退到哪一版」。历史列表原来把被点的那条当成 `:id` 且不传 targetReleaseId，
+ * 后端于是按那条的 previousReleaseId 选落点——点 B 发的是 B 之前那一版 A。
+ */
+describe('planRollbackToVersion 分清「从哪退」与「退到哪」', () => {
+  it('从当前线上那一版退到被点的那一版', () => {
+    expect(planRollbackToVersion({ targetReleaseId: 'rel_b', currentReleaseId: 'rel_live' }))
+      .toEqual({ from: 'rel_live', targetReleaseId: 'rel_b' });
+  });
+
+  it('当前版本取不到时退回该环境最新那条', () => {
+    expect(planRollbackToVersion({ targetReleaseId: 'rel_b', latestReleaseId: 'rel_latest' }))
+      .toEqual({ from: 'rel_latest', targetReleaseId: 'rel_b' });
+  });
+
+  /** 省略 targetReleaseId 等于把落点交给后端猜，而猜错就是往生产发错版本。 */
+  it('两个 id 缺任何一个都报错，不省略参数硬发', () => {
+    expect(planRollbackToVersion({ targetReleaseId: 'rel_b' })).toHaveProperty('error');
+    expect(planRollbackToVersion({ currentReleaseId: 'rel_live' })).toHaveProperty('error');
+  });
+
+  it('点的就是当前版本时不发请求', () => {
+    expect(planRollbackToVersion({ targetReleaseId: 'rel_live', currentReleaseId: 'rel_live' }))
+      .toHaveProperty('error');
+  });
+});
+
+describe('发布控制台回滚请求走 plan（接线守卫）', () => {
+  const page = read('pages/ReleaseConsolePage.tsx');
+
+  it('历史列表的按钮调 rollbackToVersion，不复用「撤销当前版本」', () => {
+    expect(page).toContain('void rollbackToVersion(item, itemRow)');
+    expect(page).not.toContain('onClick={() => void rollbackRun(item)}');
+  });
+
+  it('请求路径与 body 都取自 plan，不在页面里手搓 id', () => {
+    expect(page).toContain('planRollbackToVersion({');
+    expect(page).toContain('encodeURIComponent(plan.from)');
+    expect(page).toContain('body: { targetReleaseId: plan.targetReleaseId }');
+  });
+});
+
+/**
+ * 「提升版本」必须走本页那套带 expectedCommitSha 的确认弹窗（Codex review P1，2026-08-16）。
+ *
+ * 原来三个动作一律 navigate 到控制台，intent=promote 在路上被丢掉：控制台收不到
+ * 候选 sha，只会按它自己默认选中的分支发一版——按钮写着「提升版本」，发的是别的东西。
+ */
+describe('resolveFleetRowAction 把提升留在本页', () => {
+  it('有候选时留本页走提升', () => {
+    expect(resolveFleetRowAction('promote', true)).toEqual({ kind: 'promote' });
+  });
+
+  it('候选没了就退回普通发布，不假装能提升', () => {
+    expect(resolveFleetRowAction('promote', false)).toEqual({ kind: 'navigate' });
+  });
+
+  it('发布与回滚照常跳控制台，回滚带上 intent', () => {
+    expect(resolveFleetRowAction('deploy', false)).toEqual({ kind: 'navigate' });
+    expect(resolveFleetRowAction('rollback', false)).toEqual({ kind: 'navigate', intent: 'rollback' });
+    // 有候选也不影响回滚——两个动作各走各的
+    expect(resolveFleetRowAction('rollback', true)).toEqual({ kind: 'navigate', intent: 'rollback' });
+  });
+});
+
+describe('发布中心矩阵的提升动作（接线守卫）', () => {
+  const page = read('pages/ReleaseCenterPage.tsx');
+  const matrix = read('pages/release-center/FleetMatrix.tsx');
+
+  it('提升走 startPromotion，不再 navigate 到控制台', () => {
+    expect(page).toContain('resolveFleetRowAction(intent,');
+    expect(page).toContain('void startPromotion(promoteRow)');
+    // 原来的写法：三个动作一律 navigate，intent 只用来决定要不要带 rollback
+    expect(page).not.toContain("navigate(consoleHref(envId, intent === 'rollback' ? 'rollback' : undefined))");
+  });
+
+  it('startPromotion 钉死候选 commit——提升的全部意义就在这一行', () => {
+    expect(page).toContain('expectedCommitSha: row.promotion.commitSha');
+  });
+
+  it('矩阵不再声称「所有动作都跳控制台」——提升是例外', () => {
+    expect(matrix).not.toContain('所有动作都跳发布控制台');
+  });
+});
+
+/**
+ * 候选已经不是分支 tip 时后端必然拒发，按钮不能还亮着让人点一次才知道。
+ * 这一段真渲染一遍矩阵，断言的是 DOM 上的 disabled 与 title，不是源码里出现过某个变量名。
+ */
+describe('矩阵对不可执行的提升候选给出禁用与原因（渲染）', () => {
+  const baseEnv = {
+    id: 'rt_prod',
+    name: '生产站点',
+    host: '10.0.0.1',
+    type: 'production' as const,
+    isPrimary: true,
+    enabled: true,
+    liveSha: 'aaaaaaa',
+    behindMain: 2,
+    health: 'healthy' as const,
+    availability24h: 99.9,
+    lastRelease: null,
+    canRollback: true,
+    promotableSha: 'bbbbbbbbbb',
+    promotableExecutable: true,
+    promotableBlockedReason: null as string | null,
+    dora: null,
+  };
+  const renderMatrix = (env: typeof baseEnv): string => renderToStaticMarkup(createElement(FleetMatrix, {
+    envs: [env],
+    sort: 'severity' as const,
+    onSort: () => {},
+    nowMs: Date.parse('2026-08-16T20:00:00Z'),
+    wide: true,
+    onInspect: () => {},
+    onExecute: () => {},
+  }));
+
+  it('可执行时按钮是亮的', () => {
+    const html = renderMatrix(baseEnv);
+    expect(html).toContain('提升版本');
+    // 只有停用/不可执行才会带 disabled；这一档不该有
+    expect(html).not.toContain('disabled=""');
+  });
+
+  it('不可执行时按钮禁用，并把原因挂到 title 上', () => {
+    const html = renderMatrix({
+      ...baseEnv,
+      promotableExecutable: false,
+      promotableBlockedReason: '源环境那一版已不是分支 tip',
+    });
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('源环境那一版已不是分支 tip');
+  });
+
+  it('没有原因文案时也不能让按钮亮着', () => {
+    const html = renderMatrix({ ...baseEnv, promotableExecutable: false });
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('这个候选版本现在提升不了');
   });
 });

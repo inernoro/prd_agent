@@ -38,14 +38,14 @@ import { detectStall, resolveStepDetails, type ConsolePlanLike } from '@/lib/rel
 import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/releaseEnvironments';
 import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress';
 import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
-import { buildConsoleStance, isShownRunCurrent, sameCommit } from '@/lib/releaseConsoleState';
+import { buildConsoleStance, isShownRunCurrent, planRollbackToVersion, sameCommit } from '@/lib/releaseConsoleState';
 import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { Chip, formatClock, formatDateTime, formatDuration, runTone, statusLabel } from './release-center/shared';
 // BranchOption 复用发布中心那一份：分支的展示名是 `branch` 不是 `name`，
 // 自己再声明一个接口只会让 TS 对着一个不存在的字段点头（真实数据里下拉全是空的）。
-import type { BranchOption, CenterResponse, ReleaseCommitMeta, ReleaseLogEntry, ReleaseRun } from './release-center/types';
+import type { BranchOption, CenterResponse, CenterRow, ReleaseCommitMeta, ReleaseLogEntry, ReleaseRun } from './release-center/types';
 import { isReleaseFailed, isReleaseTerminal } from './release-center/types';
 
 interface ProjectLite { id: string; name?: string; githubRepoFullName?: string }
@@ -547,9 +547,11 @@ export function ReleaseConsolePage(): JSX.Element {
   };
 
   /**
-   * 回滚：不传 targetReleaseId，由后端选该目标上一个成功版本。
-   * 这一页刻意不提供「回滚到任意一版」——那需要选版对话框与影响面说明，
-   * 属于发布中心的职责，两处各做一半只会让人不知道该信哪个。
+   * 撤销**当前这一版**：不传 targetReleaseId，由后端选该目标上一个成功版本。
+   *
+   * 只给结论条上那个「回滚」用，而那里已经收敛到当前版本（shownIsCurrent），
+   * 所以「撤销这一版、退回上一版」这句话是成立的。历史列表里的
+   * 「回滚到此版本」是另一种语义，走 rollbackToVersion，别复用这个。
    */
   const rollbackRun = async (item: ReleaseRun): Promise<void> => {
     setRowBusy(item.releaseId);
@@ -557,6 +559,47 @@ export function ReleaseConsolePage(): JSX.Element {
       const res = await apiRequest<{ run: ReleaseRun }>(
         `/api/releases/runs/${encodeURIComponent(item.releaseId)}/rollback`,
         { method: 'POST' },
+      );
+      setHistoryRun(null);
+      setRun(res.run);
+      setLogs(dedupeLogs(res.run.logs || []));
+      setTargetId(res.run.targetId);
+      setFollowing(true);
+      void loadCenter();
+    } catch (err) {
+      say(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setRowBusy('');
+    }
+  };
+
+  /**
+   * 回滚**到**某个历史版本：历史列表里那个「回滚到此版本」。
+   *
+   * 与上面那个「撤销当前这一版」是两种语义，此前共用同一个请求，于是按钮写着
+   * 「回滚到此版本」，后端却按被点那条的 `previousReleaseId` 选目标——点 B 发的是
+   * B **之前**那一版 A（Codex review P1，2026-08-16）。
+   *
+   * 正确的调用形状是：对**当前跑着的那一版**发起回滚，把被点的版本作为
+   * `targetReleaseId` 指定为落点。两个 id 各司其职，缺一个就会错位：
+   * `:id` 决定「从哪一版退下来」（记进 rollbackOf），body 决定「退到哪一版」。
+   */
+  const rollbackToVersion = async (item: ReleaseRun, itemRow?: CenterRow): Promise<void> => {
+    // 两个 id 谁是谁由 planRollbackToVersion 定，页面不在这儿手搓。
+    const plan = planRollbackToVersion({
+      targetReleaseId: item.releaseId,
+      currentReleaseId: itemRow?.currentVersion,
+      latestReleaseId: itemRow?.latestRun?.releaseId,
+    });
+    if ('error' in plan) {
+      say(plan.error);
+      return;
+    }
+    setRowBusy(item.releaseId);
+    try {
+      const res = await apiRequest<{ run: ReleaseRun }>(
+        `/api/releases/runs/${encodeURIComponent(plan.from)}/rollback`,
+        { method: 'POST', body: { targetReleaseId: plan.targetReleaseId } },
       );
       setHistoryRun(null);
       setRun(res.run);
@@ -1291,7 +1334,7 @@ export function ReleaseConsolePage(): JSX.Element {
                                 type="button"
                                 disabled={itemBusy || inFlight}
                                 className="text-muted-foreground hover:text-primary disabled:opacity-40 disabled:hover:text-muted-foreground"
-                                onClick={() => void rollbackRun(item)}
+                                onClick={() => void rollbackToVersion(item, itemRow)}
                               >
                                 回滚到此版本
                               </button>

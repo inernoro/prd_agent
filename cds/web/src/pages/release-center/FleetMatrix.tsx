@@ -9,7 +9,8 @@
  * 三条纪律来自设计稿「硬性约束」，判据都在 lib/releaseFleet.ts 里（可单测）：
  *   - 缺数据明说缺什么，绝不渲染成 0 或 100%
  *   - 极端值换量纲
- *   - 发布中心不执行发布，所有动作都跳发布控制台
+ *   - 发布中心不执行**普通**发布，发布/回滚都跳发布控制台；提升是例外，
+ *     它带着钉死的 commit，必须留在本页走 StartReleaseDialog（见 RowActions）
  */
 
 import { ArrowUpCircle, ListChecks, RotateCcw, Rocket } from 'lucide-react';
@@ -39,7 +40,7 @@ export interface FleetMatrixProps {
   wide: boolean;
   /** 下钻到「环境与配置」。 */
   onInspect: (envId: string) => void;
-  /** 跳发布控制台执行。intent 让控制台知道是发布还是回滚。 */
+  /** 行内动作。deploy/rollback 跳发布控制台，promote 留在发布中心本页。 */
   onExecute: (envId: string, intent: 'deploy' | 'promote' | 'rollback') => void;
 }
 
@@ -122,7 +123,14 @@ function CapabilityCell({ env }: { env: FleetEnv }): JSX.Element {
   );
 }
 
-/** 行内三个动作。全部跳发布控制台——发布中心自己不执行发布。 */
+/**
+ * 行内三个动作。
+ *
+ * 发布 / 回滚跳发布控制台（发布中心自己不执行普通发布）；**提升是例外**——它带着
+ * 一个钉死的 commit，必须走本页那套会传 `expectedCommitSha` 的确认弹窗。
+ * 原来三个动作一律 navigate 到控制台，intent=promote 在路上就被丢掉了：控制台
+ * 收不到候选 sha，只会按它自己默认选中的分支发一版（Codex review P1，2026-08-16）。
+ */
 function RowActions({ env, onInspect, onExecute, tall }: {
   env: FleetEnv;
   onInspect: FleetMatrixProps['onInspect'];
@@ -133,14 +141,23 @@ function RowActions({ env, onInspect, onExecute, tall }: {
   // 之前 gap-1.5 + 默认内边距一共 200+，第三个按钮被挤到第二行。
   const size = tall ? 'h-11' : 'h-[30px]';
   const promote = Boolean(env.promotableSha);
+  // 候选已经不是分支 tip 时后端必然拒发。概览卡一直是「灰按钮 + 原因」，
+  // 矩阵这里原来照样亮着——让人点一次才知道发不出去。
+  const promoteBlocked = promote && env.promotableExecutable === false;
+  const actionDisabled = !env.enabled || promoteBlocked;
+  const actionTitle = !env.enabled
+    ? '该环境已停用，启用后才能发布'
+    : promoteBlocked
+      ? (env.promotableBlockedReason || '这个候选版本现在提升不了')
+      : undefined;
   return (
     <span className={`flex flex-nowrap items-center justify-end gap-1 [&_button]:${size} [&_button]:rounded-lg [&_button]:px-2.5 ${tall ? 'flex-wrap' : ''}`}>
       <Button
         size="sm"
-        disabled={!env.enabled}
-        title={env.enabled ? undefined : '该环境已停用，启用后才能发布'}
+        disabled={actionDisabled}
+        title={actionTitle}
         onClick={(event) => { event.stopPropagation(); onExecute(env.id, promote ? 'promote' : 'deploy'); }}
-        className={env.enabled ? undefined : 'opacity-45'}
+        className={actionDisabled ? 'opacity-45' : undefined}
       >
         {promote ? <ArrowUpCircle /> : <Rocket />}
         {promote ? '提升版本' : '发布'}

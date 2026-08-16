@@ -248,7 +248,9 @@ describe('发布控制台 · 对齐设计稿的组件', () => {
     expect(rail).toContain('重发这一版');
     expect(rail).toContain('回滚到此版本');
     expect(rail).toContain('retryRun(item)');
-    expect(rail).toContain('rollbackRun(item)');
+    // 判据是「回滚按的是这一条」，不是某个函数名——原来逐字要求 rollbackRun(item)，
+    // 而修掉「点 B 发 A」正需要换成 rollbackToVersion(item, itemRow)，行为更对却会误红。
+    expect(rail).toMatch(/rollback\w*\(item[,)]/);
   });
 });
 

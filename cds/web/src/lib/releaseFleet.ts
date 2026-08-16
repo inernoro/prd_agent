@@ -70,6 +70,17 @@ export interface FleetEnv {
   canRollback: boolean;
   /** 可提升到这个环境的候选版本 sha。 */
   promotableSha: string | null;
+  /**
+   * 这个候选**现在**能不能真发出去。false = 源环境那一版已经不是分支 tip，
+   * 点下去必然吃一句「分支已前进…已拒绝发布」。
+   *
+   * 后端早就算好了（`row.promotion.executable`），概览卡也一直在用；矩阵这一层
+   * 原来只取了 sha，于是同一个候选在概览里是「灰按钮 + 原因」，在矩阵里是
+   * 「亮按钮 + 点了必失败」。没有候选时为 null。
+   */
+  promotableExecutable: boolean | null;
+  /** executable=false 时的人话原因，直接给按钮当 title。 */
+  promotableBlockedReason: string | null;
   dora: FleetDora | null;
 }
 
@@ -175,6 +186,8 @@ export function toFleetEnv(row: CenterRow): FleetEnv {
     lastRelease,
     canRollback: Boolean(row.canRollback),
     promotableSha: row.promotion?.commitSha || null,
+    promotableExecutable: row.promotion ? row.promotion.executable !== false : null,
+    promotableBlockedReason: row.promotion?.blockedReason || null,
     dora,
   };
 }

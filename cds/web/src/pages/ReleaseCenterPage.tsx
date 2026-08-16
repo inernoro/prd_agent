@@ -57,6 +57,7 @@ import { EnvConfigSection } from '@/pages/release-center/EnvConfigSection';
 import { HealthSection } from '@/pages/release-center/HealthSection';
 import { EvidenceSection } from '@/pages/release-center/EvidenceSection';
 import { buildFleetMetrics, buildFleetVerdict, toFleetEnv, type FleetSortKey } from '@/lib/releaseFleet';
+import { resolveFleetRowAction } from '@/lib/releaseConsoleState';
 import type { TimelineFilter } from '@/pages/release-center/ReleaseTimeline';
 import { formatDateTime } from '@/pages/release-center/shared';
 import {
@@ -559,9 +560,12 @@ export function ReleaseCenterPage(): JSX.Element {
    * 发布中心「看」，发布控制台「做」。三条规则：
    *
    * 1. 顶栏主按钮进控制台，只带项目 —— 用户还没决定发哪个环境。
-   * 2. 矩阵行上的发布 / 提升 / 回滚**带上目标**，控制台落地即选中，不用重选；
+   * 2. 矩阵行上的发布 / 回滚**带上目标**，控制台落地即选中，不用重选；
    *    回滚再带 intent，让控制台知道用户是来退版本的，由它承接二次确认。
-   * 3. 下钻（点行、点判断句里的环境名）**不跳页**，只切到本页的「环境与配置」——
+   * 3. **提升不跳页**：它带着一个钉死的 commit，只有本页的 StartReleaseDialog
+   *    会把它作为 expectedCommitSha 发出去。跳控制台等于把候选版本丢在半路，
+   *    控制台按自己默认选中的分支发一版——UI 上写着「提升版本」，发的却是别的东西。
+   * 4. 下钻（点行、点判断句里的环境名）**不跳页**，只切到本页的「环境与配置」——
    *    看配置不该把人甩到另一个页面去。
    *
    * 参数一律走 query，不进路径：控制台是一个页面，不是每个环境一个路由。
@@ -580,8 +584,12 @@ export function ReleaseCenterPage(): JSX.Element {
     setSection('config');
   };
 
-  const executeInConsole = (envId: string, intent: 'deploy' | 'promote' | 'rollback'): void => {
-    navigate(consoleHref(envId, intent === 'rollback' ? 'rollback' : undefined));
+  const executeRowAction = (envId: string, intent: 'deploy' | 'promote' | 'rollback'): void => {
+    const promoteRow = rows.find((item) => item.target.id === envId);
+    // 留本页还是跳控制台，判据在 lib/releaseConsoleState，页面只负责执行。
+    const action = resolveFleetRowAction(intent, Boolean(promoteRow?.promotion));
+    if (action.kind === 'promote' && promoteRow) { void startPromotion(promoteRow); return; }
+    navigate(consoleHref(envId, action.kind === 'navigate' ? action.intent : undefined));
   };
 
   return (
@@ -769,7 +777,7 @@ export function ReleaseCenterPage(): JSX.Element {
                     nowMs={nowMs}
                     wide={wide}
                     onInspect={inspectEnv}
-                    onExecute={executeInConsole}
+                    onExecute={executeRowAction}
                   />
                 ) : null}
 

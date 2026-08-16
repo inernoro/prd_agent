@@ -99,6 +99,52 @@ export function isShownRunCurrent(input: {
     || shown === (input.latestReleaseId || '').trim();
 }
 
+/**
+ * 「回滚到此版本」这一次请求该打给谁。
+ *
+ * 回滚接口有两个 id，各管一件事，混起来就会发错版本：
+ * - 路径上的 `:id` = **从哪一版退下来**（记进 rollbackOf，只用来定位环境与当前态）
+ * - body 的 `targetReleaseId` = **退到哪一版**
+ *
+ * 此前历史列表把被点的那条当成了 `:id`、且不传 `targetReleaseId`，于是后端按那条的
+ * `previousReleaseId` 选落点——点 B，发的是 B 之前那一版 A，而按钮上写着「回滚到此版本」
+ * （Codex review P1，2026-08-16）。
+ *
+ * 取不到当前版本时返回 error 而不是省略参数：省略等于把落点交给后端猜，
+ * 而猜错的代价是往生产发错版本。
+ */
+export function planRollbackToVersion(input: {
+  /** 被点的那条历史记录（想退到的版本）。 */
+  targetReleaseId?: string;
+  /** 该环境当前线上那一版。 */
+  currentReleaseId?: string;
+  /** 兜底：该环境最新一条 run（当前版本取不到时用）。 */
+  latestReleaseId?: string;
+}): { from: string; targetReleaseId: string } | { error: string } {
+  const target = (input.targetReleaseId || '').trim();
+  if (!target) return { error: '没有选中要回滚到的版本' };
+  const from = (input.currentReleaseId || '').trim() || (input.latestReleaseId || '').trim();
+  if (!from) return { error: '这个环境还没有当前版本，无法回滚' };
+  if (from === target) return { error: '这一版就是当前线上版本，不需要回滚' };
+  return { from, targetReleaseId: target };
+}
+
+/**
+ * 矩阵行上点了动作之后，是留在本页还是跳控制台。
+ *
+ * 提升必须留在本页：它带着一个钉死的 commit，只有本页的 StartReleaseDialog 会把它
+ * 作为 `expectedCommitSha` 发出去。跳控制台等于把候选丢在路上，控制台按自己默认
+ * 选中的分支发一版——按钮写着「提升版本」，发的却是别的东西（Codex review P1，2026-08-16）。
+ */
+export function resolveFleetRowAction(
+  intent: 'deploy' | 'promote' | 'rollback',
+  hasPromotionCandidate: boolean,
+): { kind: 'promote' } | { kind: 'navigate'; intent?: 'rollback' } {
+  // 候选没了（数据刚刷新过）就别假装能提升，退回普通发布那条路。
+  if (intent === 'promote' && hasPromotionCandidate) return { kind: 'promote' };
+  return intent === 'rollback' ? { kind: 'navigate', intent: 'rollback' } : { kind: 'navigate' };
+}
+
 export function buildConsoleStance(input: ConsoleStanceInput): ConsoleStance {
   const { sessionRun, latestRun, liveCommit, selectedCommit, running, failed } = input;
   const selectedIsLive = sameCommit(selectedCommit, liveCommit);
