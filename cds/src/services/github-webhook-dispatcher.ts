@@ -1230,7 +1230,21 @@ export class GitHubWebhookDispatcher {
     // 不 await：规则执行会真的跑一次发布，可能几分钟；webhook 必须尽快回 200，
     // 否则 GitHub 会判超时重投，同一个 push 被处理多次。失败只记日志，绝不
     // 影响下面的建分支 / 部署链路。
-    if (!dryRun && this.deps.runPushRules) {
+    //
+    // 2026-08-16 修正时序（Codex P1）：原来在这里**直接触发**。但触发点在分支
+    // 创建与 `githubCommitSha` 落库之前，而 `runPushRules` 立刻按分支名去 state
+    // 里找记录、并按记录上的 commit 发布。后果两条，都静默：
+    //   - 首次推送一条新分支：记录还不存在 → 规则被跳过，只留一行 warn
+    //   - 后续推送：记录在，但 `githubCommitSha` 还是**上一个** commit → 发旧版本
+    // 所以改成先包成闭包，等分支状态落定后再点火；下面每条出口各点一次，
+    // `fired` 保证只点一次。位置约束不变：docs-only 出口也必须点，
+    // 因为 `docs/** → docs-site` 这类规则要的正好是 docs-only 那种 push。
+    let pushRulesFired = false;
+    const firePushRules = (): void => {
+      if (pushRulesFired || dryRun || !this.deps.runPushRules) return;
+      pushRulesFired = true;
+      // 不 await：规则执行会真的跑一次发布，可能几分钟；webhook 必须尽快回 200，
+      // 否则 GitHub 判超时重投，同一个 push 被处理多次。失败只记日志。
       void this.deps.runPushRules({
         projectId: project.id,
         branch: branchName,
@@ -1239,7 +1253,7 @@ export class GitHubWebhookDispatcher {
       }).catch((err) => {
         console.error('[webhook] 自动发布规则执行失败:', project.id, branchName, (err as Error).message);
       });
-    }
+    };
 
     // Ensure branch exists — auto-create a worktree when the push hits a
     // branch CDS hasn't tracked yet. Uses the same id convention as the
@@ -1320,6 +1334,9 @@ export class GitHubWebhookDispatcher {
             },
           });
         }
+        // docs-only 也要点火：`docs/** → docs-site` 这类规则要的正好是这种 push。
+        // 放在元数据刷新之后，规则拿到的才是本次的 commit。
+        firePushRules();
       }
       return {
         action: 'ignored-doc-only',
@@ -1418,6 +1435,9 @@ export class GitHubWebhookDispatcher {
       githubSenderAvatarUrl: event.sender?.avatar_url,
       githubInstallationId: project.githubInstallationId ?? event.installation?.id,
     });
+
+    // 分支记录与 commit 都已落定，这时候规则才能找到分支、并按**本次**的 commit 发布。
+    firePushRules();
     this.deps.stateService.save();
 
     // Live UI stream: notify any subscribed Dashboard about this change

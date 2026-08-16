@@ -538,21 +538,46 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               + `if [ -n "${'$'}U" ]; then mongodump --archive --gzip -u "${'$'}U" -p "${'$'}P" --authenticationDatabase admin; `
               + `else mongodump --archive --gzip; fi' > ${shq(out)}`;
           } else if (t.kind === 'mysql') {
-            // 同理，密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器
-            // 自己的进程列表里。--single-transaction 保证 InnoDB 一致性快照。
-            cmd = `docker exec ${shq(t.containerName)} sh -lc `
-              + `'MYSQL_PWD="${'$'}{MYSQL_ROOT_PASSWORD:-${'$'}MARIADB_ROOT_PASSWORD}" `
-              + `mysqldump -uroot --all-databases --single-transaction --quick --routines --events 2>/dev/null `
+            // 密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器自己的
+            // 进程列表里。--single-transaction 保证 InnoDB 一致性快照。
+            //
+            // `mysqldump | gzip` 的退出码默认是 **gzip 的**：dump 因凭据错误或
+            // 连接失败而中断时，gzip 照样成功、产出一个几十字节的合法 gzip 头，
+            // 于是「非空」检查放行，一份不可用的备份被记成成功，还可能顺手把
+            // 真正可用的旧副本按保留策略删掉。所以显式开 pipefail 取管道里
+            // **失败那一环**的退出码；stderr 也不再丢弃，失败时要能说出原因。
+            cmd = `docker exec ${shq(t.containerName)} sh -c `
+              + `'set -o pipefail 2>/dev/null || true; `
+              + `MYSQL_PWD="${'$'}{MYSQL_ROOT_PASSWORD:-${'$'}MARIADB_ROOT_PASSWORD}" `
+              + `mysqldump -uroot --all-databases --single-transaction --quick --routines --events `
               + `| gzip' > ${shq(out)}`;
           } else {
-            // redis：BGSAVE 落盘后拷 dump.rdb。BGSAVE 是异步的，这里让它先写完再拷；
-            // 拷到半截的 rdb 是坏文件，而坏备份比没有备份更危险（以为有、其实没有）。
-            await shell.exec(
-              `docker exec ${shq(t.containerName)} sh -lc 'redis-cli BGSAVE >/dev/null; `
-              + `for i in $(seq 1 60); do [ "$(redis-cli rdb_bgsave_in_progress 2>/dev/null)" = "0" ] && break; `
-              + `redis-cli info persistence 2>/dev/null | grep -q "rdb_bgsave_in_progress:0" && break; sleep 1; done'`,
-              { timeout: 90_000 },
+            // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
+            //
+            // 1. **要能连上**。配了 requirepass 的实例（密码常写在 --requirepass
+            //    启动参数里，env 里看不到）会让裸 redis-cli 返回 NOAUTH。原来忽略
+            //    返回值，于是 docker cp 拷走一个**旧的** dump.rdb，还报成功——
+            //    「以为有、其实是几天前的」，比没有备份更危险。
+            // 2. **BGSAVE 要真的完成**。异步落盘，拷到半截就是坏文件。
+            // 3. **要能证明是新的**。用 LASTSAVE 前后变化positively 确认，
+            //    而不是「等了 60 秒大概好了吧」。
+            //
+            // 凭据在容器内展开：REDISCLI_AUTH 是 redis-cli 官方认的环境变量，
+            // 不进命令行。取不到密码而实例又要求认证时，下面第一步就会失败退出。
+            const redisProbe = await shell.exec(
+              `docker exec ${shq(t.containerName)} sh -c `
+              + `'export REDISCLI_AUTH="${'$'}{REDIS_PASSWORD:-${'$'}{REDIS_PASS:-${'$'}REDISCLI_AUTH}}"; `
+              + `before=$(redis-cli LASTSAVE 2>&1) || { echo "LASTSAVE 失败: $before" >&2; exit 21; }; `
+              + `case "$before" in *NOAUTH*|*ERR*|"") echo "redis 不可用或需要认证: $before" >&2; exit 22;; esac; `
+              + `redis-cli BGSAVE >/dev/null 2>&1 || { echo "BGSAVE 调用失败" >&2; exit 23; }; `
+              + `i=0; while [ "$i" -lt 90 ]; do now=$(redis-cli LASTSAVE 2>/dev/null); `
+              + `[ -n "$now" ] && [ "$now" != "$before" ] && exit 0; i=$((i+1)); sleep 1; done; `
+              + `echo "BGSAVE 超时未完成（LASTSAVE 未推进）" >&2; exit 24'`,
+              { timeout: 120_000 },
             );
+            if (redisProbe.exitCode !== 0) {
+              throw new Error(`BGSAVE 未确认完成，拒绝拷贝可能过期的 dump.rdb：${combinedOutput(redisProbe).trim().slice(0, 300)}`);
+            }
             cmd = `docker cp ${shq(`${t.containerName}:/data/dump.rdb`)} ${shq(out)}`;
           }
           const r = await shell.exec(cmd, { timeout: INFRA_BACKUP_TIMEOUT_MS });
@@ -576,7 +601,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             .filter((p) => p.length === 2 && p[1])
             .map(([ts, name]) => ({ name: name.trim(), mtimeMs: Number(ts) * 1000 }))
             .filter((f) => Number.isFinite(f.mtimeMs));
-          const doomed = selectExpiredBackups(existing, { id: t.id, now: new Date() });
+          const doomed = selectExpiredBackups(existing, { projectId: t.projectId, id: t.id, now: new Date() });
           for (const name of doomed) {
             await shell.exec(`rm -f ${shq(`${dir}/${name}`)}`, { timeout: 10_000 });
           }

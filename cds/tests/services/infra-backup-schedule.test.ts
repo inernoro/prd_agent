@@ -62,15 +62,15 @@ describe('选谁备份', () => {
     expect(backupKindOf('redis:7-alpine')).toBe('redis');
     expect(backupKindOf('mysql:8')).toBe('mysql');
     expect(backupKindOf('apache/kafka:3.7')).toBeNull();
-    expect(backupFileName('mongodb', 'mongo', NOW.toISOString())).toMatch(/\.archive\.gz$/);
-    expect(backupFileName('redis', 'redis', NOW.toISOString())).toMatch(/\.rdb$/);
-    expect(backupFileName('mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
+    expect(backupFileName('proj-a', 'mongodb', 'mongo', NOW.toISOString())).toMatch(/\.archive\.gz$/);
+    expect(backupFileName('proj-a', 'redis', 'redis', NOW.toISOString())).toMatch(/\.rdb$/);
+    expect(backupFileName('proj-a', 'mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
   });
 
   /** 保留策略靠排序选旧的，名字排不出时间序就会删错。 */
   it('文件名的字典序等于时间序', () => {
-    const early = backupFileName('x', 'mongo', '2026-08-16T09:00:00.000Z');
-    const late = backupFileName('x', 'mongo', '2026-08-16T12:00:00.000Z');
+    const early = backupFileName('p', 'x', 'mongo', '2026-08-16T09:00:00.000Z');
+    const late = backupFileName('p', 'x', 'mongo', '2026-08-16T12:00:00.000Z');
     expect([late, early].sort()).toEqual([early, late]);
   });
 });
@@ -78,19 +78,19 @@ describe('选谁备份', () => {
 describe('保留策略', () => {
   const files = (count: number): ExistingBackup[] =>
     Array.from({ length: count }, (_, i) => ({
-      name: `mongodb-auto-2026081${i}T000000Z.archive.gz`,
+      name: `proj-a--mongodb-auto-2026081${i}T000000Z.archive.gz`,
       mtimeMs: daysAgo(i),
     }));
 
   it('超出份数的删掉', () => {
-    const doomed = selectExpiredBackups(files(10), { id: 'mongodb', now: NOW, keepCount: 3, keepDays: 999 });
+    const doomed = selectExpiredBackups(files(10), { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 3, keepDays: 999 });
     expect(doomed).toHaveLength(7);
     // 删的是最旧的那批
-    expect(doomed).toContain('mongodb-auto-20260819T000000Z.archive.gz');
+    expect(doomed).toContain('proj-a--mongodb-auto-20260819T000000Z.archive.gz');
   });
 
   it('超期的删掉', () => {
-    const doomed = selectExpiredBackups(files(5), { id: 'mongodb', now: NOW, keepCount: 99, keepDays: 3 });
+    const doomed = selectExpiredBackups(files(5), { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 99, keepDays: 3 });
     expect(doomed.length).toBeGreaterThan(0);
   });
 
@@ -100,27 +100,27 @@ describe('保留策略', () => {
    */
   it('全部超期时仍然保留最新一份', () => {
     const old = files(4).map((f) => ({ ...f, mtimeMs: daysAgo(400) }));
-    const doomed = selectExpiredBackups(old, { id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 });
+    const doomed = selectExpiredBackups(old, { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 });
     expect(doomed).toHaveLength(3);
     expect(doomed.length).toBeLessThan(old.length);
   });
 
   it('只有一份时什么都不删', () => {
-    expect(selectExpiredBackups(files(1), { id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 })).toEqual([]);
+    expect(selectExpiredBackups(files(1), { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 })).toEqual([]);
   });
 
   /** restore 前的救命快照与别人的文件都不归周期清理管。 */
   it('不碰非本模块产出的文件', () => {
     const mixed: ExistingBackup[] = [
-      { name: 'mongodb-auto-20260810T000000Z.archive.gz', mtimeMs: daysAgo(1) },
-      { name: 'mongodb-pre-restore-20260101', mtimeMs: daysAgo(300) },
-      { name: 'redis-auto-20260101T000000Z.rdb', mtimeMs: daysAgo(300) },
+      { name: 'proj-a--mongodb-auto-20260810T000000Z.archive.gz', mtimeMs: daysAgo(1) },
+      { name: 'proj-a--mongodb-pre-restore-20260101', mtimeMs: daysAgo(300) },
+      { name: 'proj-a--redis-auto-20260101T000000Z.rdb', mtimeMs: daysAgo(300) },
       { name: '别人的备份.tar', mtimeMs: daysAgo(300) },
     ];
-    const doomed = selectExpiredBackups(mixed, { id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 });
+    const doomed = selectExpiredBackups(mixed, { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 });
     expect(doomed).toEqual([]);   // 自己只有一份，其余都不属于 mongodb 的自动备份
-    expect(isAutoBackupFile('mongodb-pre-restore-20260101', 'mongodb')).toBe(false);
-    expect(isAutoBackupFile('redis-auto-x.rdb', 'mongodb')).toBe(false);
+    expect(isAutoBackupFile('proj-a--mongodb-pre-restore-20260101', 'proj-a', 'mongodb')).toBe(false);
+    expect(isAutoBackupFile('proj-a--redis-auto-x.rdb', 'proj-a', 'mongodb')).toBe(false);
   });
 });
 
@@ -303,7 +303,7 @@ describe('首轮实跑暴露的缺陷', () => {
   it('MySQL 纳入备份范围（四个项目的库此前完全没有自动备份）', () => {
     expect(backupKindOf('mysql:8')).toBe('mysql');
     expect(backupKindOf('mariadb:11')).toBe('mysql');
-    expect(backupFileName('mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
+    expect(backupFileName('proj-a', 'mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
     expect(CODE).toContain('mysqldump');
     expect(CODE).toContain('--single-transaction');
   });
@@ -323,5 +323,88 @@ describe('首轮实跑暴露的缺陷', () => {
     const SHELL = CODE.replace(/\$\{'\$'\}/g, '$');
     expect(SHELL).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD');
     expect(SHELL).toMatch(/\$\{MONGO_INITDB_ROOT_PASSWORD:-/);
+  });
+});
+
+/**
+ * Review 抓出来的跨项目串台（P1）。
+ *
+ * infra id 只在项目内唯一：这台机器上六个项目各有一个叫 `redis` 的服务。
+ * 只用 id 命名，一轮备份里它们算出完全相同的文件名（同一轮共用一个时间戳），
+ * 后写的覆盖先写的，保留策略还把它们当同一组算份数。
+ * 表现是日志「成功 6 个」、磁盘上只有 1 个——首轮实跑的输出里就有四条同名 `redis`。
+ */
+describe('跨项目同名服务不许串台', () => {
+  it('同名服务在不同项目下算出不同文件名', () => {
+    const iso = NOW.toISOString();
+    const a = backupFileName('prd-agent', 'redis', 'redis', iso);
+    const b = backupFileName('983785a57efd', 'redis', 'redis', iso);
+    expect(a).not.toBe(b);
+    expect(new Set([a, b]).size).toBe(2);
+  });
+
+  it('一轮里六个同名 redis 产出六个互不相同的文件名', () => {
+    const projects = ['prd-agent', '983785a57efd', '88007650cd3c', 'defd4695ab5f', '747f2fa4f6bc', 'f9e8b956d3dd'];
+    const plan = planInfraBackups(
+      projects.map((projectId) => cand({ id: 'redis', projectId, dockerImage: 'redis:7-alpine' })),
+      { now: NOW },
+    );
+    const names = plan.targets.map((t) => t.fileName);
+    expect(names).toHaveLength(6);
+    expect(new Set(names).size).toBe(6);
+  });
+
+  it('A 项目的保留策略不碰 B 项目同名服务的备份', () => {
+    const files: ExistingBackup[] = [
+      { name: 'proj-a--redis-auto-20260816T000000Z.rdb', mtimeMs: daysAgo(1) },
+      { name: 'proj-b--redis-auto-20260801T000000Z.rdb', mtimeMs: daysAgo(300) },
+      { name: 'proj-b--redis-auto-20260802T000000Z.rdb', mtimeMs: daysAgo(299) },
+    ];
+    // A 只有一份，什么都不该删；B 的两份更不该被 A 算进份数
+    expect(selectExpiredBackups(files, { projectId: 'proj-a', id: 'redis', now: NOW, keepCount: 1, keepDays: 1 }))
+      .toEqual([]);
+  });
+
+  it('项目 id 里的特殊字符不会撕坏文件名', () => {
+    const name = backupFileName('proj/a b', 'redis', 'redis', NOW.toISOString());
+    expect(name).not.toMatch(/[/\s]/);
+    expect(isAutoBackupFile(name, 'proj/a b', 'redis')).toBe(true);
+  });
+});
+
+/**
+ * Review 抓出来的两处「静默成功」（P1）。都属于同一族：
+ * 命令实际失败或产出过期内容，但退出码是 0，于是一份不可用的备份被记成成功，
+ * 还可能按保留策略把真正可用的旧副本删掉。
+ */
+describe('备份不许静默成功', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+  const CODE = SRC.split('\n')
+    .filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')); })
+    .join('\n');
+
+  /**
+   * `mysqldump | gzip` 的退出码默认是 gzip 的。dump 因凭据错误中断时 gzip 照样
+   * 成功、产出几十字节的合法 gzip 头，非空检查放行。
+   */
+  it('MySQL 取管道里失败那一环的退出码，且不吞 stderr', () => {
+    expect(CODE).toContain('set -o pipefail');
+    expect(CODE).not.toMatch(/mysqldump[^\n]*2>\/dev\/null/);
+  });
+
+  /**
+   * 配了 requirepass 的 redis 会让裸 redis-cli 返回 NOAUTH。原来忽略返回值，
+   * 于是 docker cp 拷走一个**旧的** dump.rdb 并报成功。
+   */
+  it('Redis 先确认 BGSAVE 真的完成才拷贝，NOAUTH 要失败退出', () => {
+    expect(CODE).toContain('REDISCLI_AUTH');
+    expect(CODE).toContain('LASTSAVE');
+    expect(CODE).toContain('NOAUTH');
+    expect(CODE).toContain('拒绝拷贝可能过期的 dump.rdb');
+    // 拷贝必须在探针成功之后，不能无条件执行
+    const probe = CODE.indexOf('redisProbe');
+    const cp = CODE.indexOf('docker cp');
+    expect(probe).toBeGreaterThan(0);
+    expect(cp).toBeGreaterThan(probe);
   });
 });

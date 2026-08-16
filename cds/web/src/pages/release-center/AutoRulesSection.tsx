@@ -205,16 +205,14 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
                 {rows.map((row) => <option key={row.target.id} value={row.target.id}>{row.target.name}</option>)}
               </select>
             </label>
+            {/* 触发事件目前只有 push 一种真能触发。
+                「开 PR 时」在类型与后端规则模型里都存在，但 pull_request webhook
+                侧没有接线（handlePullRequest 从不调规则服务），选了它规则会一直
+                「已启用」却永远不触发——UI 提供一个永远不会生效的选项，比没有这个
+                选项更糟。等 PR webhook 接上再放出来。 */}
             <label className="flex min-w-0 flex-col gap-1.5">
               <span className="text-[11.5px] text-muted-foreground">触发事件</span>
-              <select
-                value={draft.event}
-                onChange={(event) => setDraft({ ...draft, event: event.target.value as 'push' | 'pr-open' })}
-                className={FIELD}
-              >
-                <option value="push">每次 push（含 PR 合并进该分支）</option>
-                <option value="pr-open">开 PR 时</option>
-              </select>
+              <input value="每次 push（含 PR 合并进该分支）" readOnly className={FIELD} />
             </label>
             <label className="flex min-w-0 flex-col gap-1.5">
               <span className="text-[11.5px] text-muted-foreground">仅当这些路径变更（留空 = 任何改动）</span>

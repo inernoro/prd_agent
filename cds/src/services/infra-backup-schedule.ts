@@ -105,14 +105,34 @@ const BACKUP_EXT: Record<BackupKind, string> = {
   mysql: 'sql.gz',
 };
 
-export function backupFileName(id: string, kind: BackupKind, iso: string): string {
-  const stamp = iso.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  return `${id}-auto-${stamp}.${BACKUP_EXT[kind]}`;
+/**
+ * 备份文件的项目内唯一前缀。
+ *
+ * **infra id 只在项目内唯一，不是全局唯一**——这台机器上六个项目各有一个叫
+ * `redis` 的服务。只用 id 命名，一轮备份里它们算出的文件名完全相同（同一轮共用
+ * 一个时间戳），后写的直接覆盖先写的，而保留策略还把它们当同一组算份数。
+ * 结果是日志显示「成功 6 个」、磁盘上只有 1 个，另外五个项目实际零备份。
+ *
+ * 首轮实跑的输出里就有这个形状（四条同名 `redis`），当时没看出来。
+ */
+export function backupKey(projectId: string, id: string): string {
+  const safe = (v: string): string => String(v || '').replace(/[^a-zA-Z0-9._-]/g, '-');
+  return `${safe(projectId)}--${safe(id)}`;
 }
 
-/** 是不是本模块产出的周期备份。保留策略只处理自己产的，不碰别人的文件。 */
-export function isAutoBackupFile(name: string, id: string): boolean {
-  return name.startsWith(`${id}-auto-`);
+export function backupFileName(projectId: string, id: string, kind: BackupKind, iso: string): string {
+  const stamp = iso.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  return `${backupKey(projectId, id)}-auto-${stamp}.${BACKUP_EXT[kind]}`;
+}
+
+/**
+ * 是不是**这个项目的这个服务**产出的周期备份。
+ *
+ * 只认自己那一组：既不碰别人的文件，也不碰别的项目同名服务的文件——后者会让
+ * A 项目的清理把 B 项目的备份算进份数一起删掉。
+ */
+export function isAutoBackupFile(name: string, projectId: string, id: string): boolean {
+  return name.startsWith(`${backupKey(projectId, id)}-auto-`);
 }
 
 export function planInfraBackups(
@@ -132,7 +152,7 @@ export function planInfraBackups(
       skipped.push({ id: c.id, reason: `暂不支持自动备份的类型（${c.dockerImage}）` });
       continue;
     }
-    targets.push({ ...c, kind, fileName: backupFileName(c.id, kind, iso) });
+    targets.push({ ...c, kind, fileName: backupFileName(c.projectId, c.id, kind, iso) });
   }
   return { targets, skipped };
 }
@@ -150,12 +170,12 @@ export interface ExistingBackup {
  */
 export function selectExpiredBackups(
   files: readonly ExistingBackup[],
-  opts: { id: string; now: Date; keepCount?: number; keepDays?: number },
+  opts: { projectId: string; id: string; now: Date; keepCount?: number; keepDays?: number },
 ): string[] {
   const keepCount = Math.max(1, opts.keepCount ?? DEFAULT_KEEP_COUNT);
   const keepDays = Math.max(1, opts.keepDays ?? DEFAULT_KEEP_DAYS);
   const mine = files
-    .filter((f) => isAutoBackupFile(f.name, opts.id))
+    .filter((f) => isAutoBackupFile(f.name, opts.projectId, opts.id))
     .sort((a, b) => b.mtimeMs - a.mtimeMs);   // 新 → 旧
   if (mine.length === 0) return [];
 
