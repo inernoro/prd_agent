@@ -58,13 +58,19 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
    * 两边落在不同目录的话，「备份历史」看不见自动备份，又是一次「以为有、其实没有」。
    * 逐个试写，用第一个真能写的；都不行就回退到首选，让失败暴露在写盘那一步。
    */
-  async function resolveBackupDir(): Promise<string> {
+  async function resolveBackupDir(opts?: { create?: boolean }): Promise<string> {
+    const create = opts?.create !== false;
     const candidates = backupDirCandidates({
       slug: stateService.projectSlug,
       repoRoot: deps.repoRoot,
     });
     for (const c of candidates) {
-      const probe = await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`);
+      // 只读路径（备份历史）**不许建目录**。建了之后紧跟着的 `test -d` 必然为真，
+      // 「一份备份都没有过」就被报成「目录在、只是没有匹配项」——刚加的那个区分
+      // 当场作废，而它要防的正是零备份长期不被发现。写盘路径才允许创建。
+      const probe = create
+        ? await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`)
+        : await shell.exec(`test -d ${shq(c)} && test -w ${shq(c)} && echo ok`);
       if (probe.exitCode === 0 && (probe.stdout || '').includes('ok')) return c;
     }
     return candidates[0];
@@ -295,7 +301,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
   router.get('/infra/:id/backup-history', async (req, res) => {
     const svc = resolveScoped(req, res);
     if (!svc) return;
-    const backupDir = await resolveBackupDir();
+    const backupDir = await resolveBackupDir({ create: false });
     // 目录不存在时 `ls` 的错误此前被 2>/dev/null 吞掉，返回的空列表与「备份过但
     // 没有匹配项」长得一模一样——零备份可以就这么一直不被发现。这里显式区分。
     const probe = await shell.exec(`test -d ${shq(backupDir)} && echo yes || echo no`);

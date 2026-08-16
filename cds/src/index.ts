@@ -551,16 +551,25 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器自己的
             // 进程列表里。--single-transaction 保证 InnoDB 一致性快照。
             //
-            // `mysqldump | gzip` 的退出码默认是 **gzip 的**：dump 因凭据错误或
-            // 连接失败而中断时，gzip 照样成功、产出一个几十字节的合法 gzip 头，
-            // 于是「非空」检查放行，一份不可用的备份被记成成功，还可能顺手把
-            // 真正可用的旧副本按保留策略删掉。所以显式开 pipefail 取管道里
-            // **失败那一环**的退出码；stderr 也不再丢弃，失败时要能说出原因。
+            // 容器里**不摆管道**。`mysqldump | gzip` 的退出码默认是 gzip 的：
+            // dump 因凭据错误或连接失败中断时 gzip 照样成功，产出一个几十字节的
+            // 合法 gzip 头，「非空」检查放行，一份不可用的备份被记成成功，还可能
+            // 顺手把真正可用的旧副本按保留策略删掉。
+            //
+            // 上一版靠 `set -o pipefail 2>/dev/null || true` 取失败那一环的退出码，
+            // 那是错的：`set` 是特殊内建，dash 遇到不认识的 `-o pipefail` 会**直接
+            // 终止 shell**，`|| true` 拦不住（实测 dash 退出码 2，mysqldump 一次都
+            // 没跑）。Debian 系的 mariadb 镜像 /bin/sh 正是 dash，于是这一档从
+            // 「静默成功」变成了「必然失败」。
+            //
+            // 现在两步各自判退出码：容器里只跑 mysqldump（docker exec 会把它的
+            // 退出码原样带回来），压缩交给宿主，`&&` 串起来一环失败就整条失败。
+            // 代价是中转一份未压缩的 dump，磁盘闸已经在前面拦过了。
+            const raw = `${out}.sql`;
             cmd = `docker exec ${shq(t.containerName)} sh -c `
-              + `'set -o pipefail 2>/dev/null || true; `
-              + `MYSQL_PWD="${'$'}{MYSQL_ROOT_PASSWORD:-${'$'}MARIADB_ROOT_PASSWORD}" `
-              + `mysqldump -uroot --all-databases --single-transaction --quick --routines --events `
-              + `| gzip' > ${shq(out)}`;
+              + `'MYSQL_PWD="${'$'}{MYSQL_ROOT_PASSWORD:-${'$'}MARIADB_ROOT_PASSWORD}" `
+              + `exec mysqldump -uroot --all-databases --single-transaction --quick --routines --events' `
+              + `> ${shq(raw)} && gzip -n -c ${shq(raw)} > ${shq(out)} && rm -f ${shq(raw)}`;
           } else {
             // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
             //

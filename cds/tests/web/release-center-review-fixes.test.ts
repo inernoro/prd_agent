@@ -188,3 +188,72 @@ describe('回滚对话框挂在记录自己的环境上', () => {
     }
   });
 });
+
+/**
+ * 第五轮 review。三条 P1/P2 归到同一类：**把「不是 X」当成「是 Y」**。
+ * 一条把在途发布判成失败，一条把翻旧记录判成本次操作，一条把晚到的旧响应
+ * 判成当前项目的数据。
+ */
+
+describe('全环境矩阵不把在途发布画成失败', () => {
+  const fleet = fs.readFileSync(path.resolve(here, '../../web/src/lib/releaseFleet.ts'), 'utf8');
+  const matrix = read('pages/release-center/FleetMatrix.tsx');
+
+  it('lastRelease 带原始状态，而不是一个成功/失败的布尔', () => {
+    // `ok: boolean` 的含义是「不是 success 就算失败」，于是每次正常发布的过程中
+    // 生产那一行都在报红字「失败」。
+    expect(fleet).toContain('status: string;');
+    expect(fleet).not.toMatch(/^\s*ok: boolean;/m);
+    expect(fleet).not.toMatch(/ok:\s*run\s*\?/);
+  });
+
+  it('没有 run 记录时不替它宣布成功', () => {
+    // 原来那一档硬写 ok: true——只有一个历史时间戳、根本不知道成没成。
+    expect(fleet).toContain("status: run?.status || ''");
+  });
+
+  it('单元格与结论句都走共享判定，不各写一套状态表', () => {
+    expect(matrix).toMatch(/import \{[^}]*runTone[^}]*\} from '\.\/shared'/);
+    expect(matrix).not.toContain("lastRelease.ok");
+    expect(fleet).toMatch(/import \{[^}]*isReleaseTerminal[^}]*\}/);
+    expect(fleet).toContain('!isReleaseTerminal(st)');
+  });
+});
+
+describe('发布控制台把「翻旧记录」和「本次发布」分开', () => {
+  const page = read('pages/ReleaseConsolePage.tsx');
+
+  it('历史条目进 historyRun，不进 run', () => {
+    // run 会作为 sessionRun 递给 buildConsoleStance。历史条目混进去的话，标题从
+    // 「上次发布成功」变成现在时的「发布成功」，「这不是本次操作」的提醒消失。
+    expect(page).toContain('const [historyRun, setHistoryRun] = useState<ReleaseRun | null>(null);');
+    expect(page).toContain('setHistoryRun(item);');
+    expect(page).not.toContain('setRun(item);');
+  });
+
+  it('站位判定只把本次会话发起的 run 当 sessionRun', () => {
+    expect(page).toContain('sessionRun: run,');
+    expect(page).toContain('latestRun: historyRun ?? row?.latestRun ?? null,');
+  });
+
+  it('真正发起发布时清掉历史选择', () => {
+    const starts = page.match(/setHistoryRun\(null\);\n\s*setRun\(res\.run\);/g) || [];
+    expect(starts.length).toBe(3);
+  });
+});
+
+describe('自动发布规则丢弃切项目前的旧响应', () => {
+  const source = read('pages/release-center/AutoRulesSection.tsx');
+
+  it('按请求代次比对，过期响应既不写列表也不写错误', () => {
+    // 晚到的 A 响应覆盖 B 的列表后，删除只带 jobId 过去——页面显示 B，删掉的是 A。
+    expect(source).toContain('const reqSeq = useRef(0);');
+    expect(source).toContain('const seq = ++reqSeq.current;');
+    expect(source.match(/if \(seq !== reqSeq\.current\) return;/g) || []).toHaveLength(2);
+    expect(source).toContain('if (seq === reqSeq.current) setLoading(false);');
+  });
+
+  it('切项目先清空列表，宁可空一瞬也不挂别人的规则', () => {
+    expect(source).toMatch(/setJobs\(\[\]\);\s*\n\s*void load\(\);/);
+  });
+});

@@ -80,7 +80,7 @@ describe('缺数据必须明说缺什么，绝不渲染成 0 或 100%', () => {
 describe('判断句：算不出就不出，禁止放到任何团队都成立的空话', () => {
   it('有失败环境时点名是谁、多久之前、可用率多少', () => {
     const verdict = buildFleetVerdict([
-      env({ id: 'a', name: 'prod-main', health: 'failed', availability24h: 96.2, lastRelease: { atMs: NOW - 2 * 3600_000, by: '陈越', durationSec: 252, ok: false } }),
+      env({ id: 'a', name: 'prod-main', health: 'failed', availability24h: 96.2, lastRelease: { atMs: NOW - 2 * 3600_000, by: '陈越', durationSec: 252, status: 'failed' } }),
       env({ id: 'b', name: 'staging' }),
     ], NOW);
     const text = verdict.segments.map((s) => s.text).join('');
@@ -212,5 +212,38 @@ describe('落后最多：全都追平时不出这一块', () => {
   it('最大值是 0 时整块不渲染', () => {
     const metrics = buildFleetMetrics([env({ behindMain: 0 }), env({ id: 'b', behindMain: 0 })]);
     expect(metrics.find((m) => m.key === 'behind')).toBeUndefined();
+  });
+});
+
+/**
+ * 在途发布不是失败。原来 lastRelease 只带一个 ok 布尔，等价于「不是 success 就算
+ * 失败」，于是每次正常发布的过程中，矩阵里那一行都在报红字「失败」。
+ */
+describe('矩阵结论句区分在途与终态', () => {
+  const failing = (status: string) => buildFleetVerdict([
+    env({ id: 'a', name: 'prod-main', health: 'failed', availability24h: 96.2, lastRelease: { atMs: NOW - 2 * 3600_000, by: '陈越', durationSec: 252, status } }),
+    env({ id: 'b', name: 'staging' }),
+  ], NOW).segments.map((s) => s.text).join('');
+
+  it('终态照旧说成功/失败', () => {
+    expect(failing('failed')).toContain('2 小时前发布失败（陈越）');
+    expect(failing('success')).toContain('2 小时前发布成功（陈越）');
+    expect(failing('rollback_failed')).toContain('发布失败');
+  });
+
+  it('在途状态说「发布进行中」，既不说成功也不说失败', () => {
+    for (const st of ['queued', 'running', 'healthchecking', 'rollback_running']) {
+      const text = failing(st);
+      expect(text).toContain('2 小时前发布进行中（陈越）');
+      expect(text).not.toContain('发布失败');
+      expect(text).not.toContain('发布成功');
+    }
+  });
+
+  it('没有状态时只说「发布」，不替它宣布成败', () => {
+    const text = failing('');
+    expect(text).toContain('2 小时前发布（陈越）');
+    expect(text).not.toContain('发布成功');
+    expect(text).not.toContain('发布失败');
   });
 });

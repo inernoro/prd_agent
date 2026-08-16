@@ -227,6 +227,16 @@ export function ReleaseConsolePage(): JSX.Element {
   const [confirmTargetId, setConfirmTargetId] = useState<string | null>(null);
   const [rowBusy, setRowBusy] = useState('');
   const [run, setRun] = useState<ReleaseRun | null>(null);
+  /**
+   * 正在查看的**历史记录**，与 `run` 严格分开。
+   *
+   * 两者都会占据主屏，但语义相反：`run` 是「本次会话真的发起过的发布」，历史条目
+   * 只是「翻出来看看的旧记录」。原来点历史条目的「看日志」直接 setRun(item)，于是
+   * 它被当成 sessionRun 递给 buildConsoleStance——标题从「上次发布成功」变成现在时
+   * 的「发布成功」，「这不是本次操作」那句提醒消失，成功的旧记录还会说成「已切到
+   * 这一版」，而线上跑的其实是另一版。
+   */
+  const [historyRun, setHistoryRun] = useState<ReleaseRun | null>(null);
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [busy, setBusy] = useState('');
@@ -366,8 +376,8 @@ export function ReleaseConsolePage(): JSX.Element {
   const inFlight = Boolean(liveRun);
   const nowMs = useNowTick(inFlight);
 
-  const shown = run || row?.latestRun;
-  const shownLogs = run ? logs : (shown?.logs || []);
+  const shown = run || historyRun || row?.latestRun;
+  const shownLogs = (run || historyRun) ? logs : (shown?.logs || []);
   const progress = resolveReleaseSteps(shown);
   const failed = shown ? isReleaseFailed(shown.status) : false;
   const running = Boolean(shown && !isReleaseTerminal(shown.status));
@@ -464,6 +474,7 @@ export function ReleaseConsolePage(): JSX.Element {
         `/api/releases/branches/${encodeURIComponent(branchId)}/runs`,
         { method: 'POST', body: { targetId: row.target.id, previewUrl } },
       );
+      setHistoryRun(null);
       setRun(res.run);
       setLogs(dedupeLogs(res.run.logs || []));
       setFollowing(true);
@@ -496,6 +507,7 @@ export function ReleaseConsolePage(): JSX.Element {
         `/api/releases/runs/${encodeURIComponent(item.releaseId)}/retry`,
         { method: 'POST' },
       );
+      setHistoryRun(null);
       setRun(res.run);
       setLogs(dedupeLogs(res.run.logs || []));
       setTargetId(res.run.targetId);
@@ -520,6 +532,7 @@ export function ReleaseConsolePage(): JSX.Element {
         `/api/releases/runs/${encodeURIComponent(item.releaseId)}/rollback`,
         { method: 'POST' },
       );
+      setHistoryRun(null);
       setRun(res.run);
       setLogs(dedupeLogs(res.run.logs || []));
       setTargetId(res.run.targetId);
@@ -582,7 +595,7 @@ export function ReleaseConsolePage(): JSX.Element {
    */
   const stance = buildConsoleStance({
     sessionRun: run,
-    latestRun: row?.latestRun ?? null,
+    latestRun: historyRun ?? row?.latestRun ?? null,
     liveCommit: row?.currentCommit || '',
     selectedCommit: commitSha,
     running,
@@ -664,7 +677,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   key={item.id}
                   type="button"
                   aria-pressed={item.id === projectId}
-                  onClick={() => { setProjectId(item.id); setRun(null); setLogs([]); setPreflight(null); }}
+                  onClick={() => { setProjectId(item.id); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); }}
                   className={`mb-1 flex w-full flex-col gap-1 rounded-[9px] border px-3 py-2.5 text-left transition-colors ${
                     item.id === projectId
                       ? 'border-primary/40 bg-primary/[0.08]'
@@ -716,7 +729,7 @@ export function ReleaseConsolePage(): JSX.Element {
                             aria-pressed={selected}
                             onClick={() => {
                               setTargetId(item.target.id);
-                              setRun(null); setLogs([]); setPreflight(null); setConfirmTargetId(null);
+                              setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setConfirmTargetId(null);
                             }}
                             className={`flex items-center gap-2.5 rounded-[9px] border px-2.5 py-2 text-left transition-colors duration-150 ${
                               selected
@@ -1207,7 +1220,8 @@ export function ReleaseConsolePage(): JSX.Element {
                               type="button"
                               className="text-muted-foreground hover:text-primary"
                               onClick={() => {
-                                setRun(item);
+                                setRun(null);
+                                setHistoryRun(item);
                                 setLogs(dedupeLogs(item.logs || []));
                                 setTargetId(item.targetId);
                                 setFollowing(false);
@@ -1220,7 +1234,8 @@ export function ReleaseConsolePage(): JSX.Element {
                                 type="button"
                                 className="text-muted-foreground hover:text-primary"
                                 onClick={() => {
-                                  setRun(item);
+                                  setRun(null);
+                                  setHistoryRun(item);
                                   setLogs(dedupeLogs(item.logs || []));
                                   setTargetId(item.targetId);
                                   setSheet('agent');

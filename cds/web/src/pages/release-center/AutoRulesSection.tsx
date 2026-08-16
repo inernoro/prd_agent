@@ -15,7 +15,7 @@
  * 两者明确分开，不混成一张表（混在一起「触发条件」那一列就没法读了）。
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
@@ -69,22 +69,41 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
   const [draft, setDraft] = useState<RuleDraft | null>(null);
   const [saving, setSaving] = useState(false);
 
+  /**
+   * 请求代次。切项目时自增，晚到的旧项目响应一律丢弃。
+   *
+   * 没有这道闸的话：从 A 切到 B，A 的请求晚一步回来照样 setJobs，列表被换成 A 的
+   * 规则，而整个页面显示的是 B。此时点删除只带一个 jobId 过去，管理员就在「看着 B」
+   * 的情况下删掉了 A 的规则——这不是显示错位，是真的删错东西。
+   */
+  const reqSeq = useRef(0);
+
   const load = async (): Promise<void> => {
+    const seq = ++reqSeq.current;
+    const forProject = projectId;
     setLoading(true);
     setError('');
     try {
       const res = await apiRequest<{ jobs: ScheduledJobSummary[] }>(
-        `/api/scheduled-jobs?project=${encodeURIComponent(projectId)}`,
+        `/api/scheduled-jobs?project=${encodeURIComponent(forProject)}`,
       );
+      if (seq !== reqSeq.current) return;
       setJobs(res.jobs || []);
     } catch (err) {
+      if (seq !== reqSeq.current) return;
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setLoading(false);
+      // loading 也只由最后一次请求收尾，否则旧响应会把新请求的骨架提前撤掉。
+      if (seq === reqSeq.current) setLoading(false);
     }
   };
 
-  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [projectId]);
+  useEffect(() => {
+    // 切项目时先把上一项目的列表清空：宁可空一瞬，也不要让 B 的页面挂着 A 的规则。
+    setJobs([]);
+    void load();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [projectId]);
 
   const pushRules = jobs.filter((job) => job.schedule.type === 'push');
   const rowOf = (targetId: string | undefined): CenterRow | undefined =>

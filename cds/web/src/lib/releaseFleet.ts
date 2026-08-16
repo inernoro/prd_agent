@@ -16,7 +16,7 @@
  * 这里一律**从真实数据推**，推不出来就不给这一块——照抄示例文案等于对着用户编。
  */
 
-import type { CenterRow } from '@/pages/release-center/types';
+import { isReleaseFailed, isReleaseTerminal, type CenterRow } from '@/pages/release-center/types';
 
 export type FleetHealth = 'healthy' | 'failed' | 'unmonitored';
 export type FleetType = 'production' | 'staging' | 'other';
@@ -25,7 +25,17 @@ export interface FleetLastRelease {
   atMs: number;
   by: string;
   durationSec: number | null;
-  ok: boolean;
+  /**
+   * 这条记录的**原始状态**，不做二分。
+   *
+   * 原来这里是 `ok: boolean`，等价于「不是 success 就算失败」——于是发布进行中
+   * （queued / running / healthchecking / rollback_running）的环境在矩阵里全都
+   * 显示成红色「失败」。每一次正常发布的过程中，生产那一行都在报假故障。
+   *
+   * 没有 run 记录、只有一个历史时间戳时给空串：那种情况下我们**不知道**它成没成，
+   * 不许替它宣布成功（原来那一档硬写 `ok: true`）。
+   */
+  status: string;
 }
 
 export interface FleetDora {
@@ -137,7 +147,7 @@ export function toFleetEnv(row: CenterRow): FleetEnv {
       durationSec: Number.isFinite(startedMs) && Number.isFinite(finishedMs)
         ? Math.max(0, Math.round((finishedMs - startedMs) / 1000))
         : null,
-      ok: run ? run.status === 'success' || run.status === 'rollback_success' : true,
+      status: run?.status || '',
     }
     : null;
 
@@ -212,7 +222,13 @@ export function buildFleetVerdict(envs: FleetEnv[], nowMs: number): FleetVerdict
     const bits: string[] = [];
     if (first.lastRelease) {
       const when = formatFleetAgo(first.lastRelease.atMs, nowMs);
-      bits.push(first.lastRelease.ok ? `${when}发布成功（${first.lastRelease.by}）` : `${when}发布失败（${first.lastRelease.by}）`);
+      // 同样不做二分：在途状态既不是成功也不是失败，复用既有的两个共享谓词
+      // 组合出三档，不在这里再抄一份状态表。
+      const st = first.lastRelease.status;
+      const phase = !st
+        ? '发布'
+        : !isReleaseTerminal(st) ? '发布进行中' : isReleaseFailed(st) ? '发布失败' : '发布成功';
+      bits.push(`${when}${phase}（${first.lastRelease.by}）`);
     }
     const avail = formatFleetPercent(first.availability24h);
     if (avail) bits.push(`24 小时可用率 ${avail}`);

@@ -14,6 +14,7 @@
 
 import { ArrowUpCircle, ListChecks, RotateCcw, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { runTone, statusLabel } from './shared';
 import {
   FLEET_SORTS,
   fleetAvailabilityText,
@@ -66,14 +67,20 @@ const COLUMNS = 'minmax(200px,1fr) 76px 104px 92px 92px 116px 170px 170px 110px 
 function LastReleaseCell({ env, nowMs }: { env: FleetEnv; nowMs: number }): JSX.Element {
   if (!env.lastRelease) return <span className="text-muted-foreground">从未发布</span>;
   const duration = formatFleetDuration(env.lastRelease.durationSec);
+  // 状态走 shared 那份唯一映射。原来这里按布尔二分，发布进行中的环境一律红字
+  // 「失败」——每次正常发布途中矩阵都在报假故障。状态为空（只有历史时间戳、没有
+  // run 记录）时只显示耗时，不替它宣布成败。
+  const status = env.lastRelease.status;
+  const tone = status ? runTone(status) : 'muted';
+  const label = status ? statusLabel(status) : '';
+  const toneClass = tone === 'bad' ? 'text-bad' : tone === 'warn' ? 'text-warn' : 'text-muted-foreground';
+  const tail = [duration, label].filter(Boolean).join(' · ');
   return (
     <span className="block min-w-0">
       <span className="block truncate text-xs">
         {formatFleetAgo(env.lastRelease.atMs, nowMs)} · {env.lastRelease.by}
       </span>
-      <span className={`block truncate cds-ident text-[10.5px] ${env.lastRelease.ok ? 'text-muted-foreground' : 'text-bad'}`}>
-        {duration ? `${duration} · ` : ''}{env.lastRelease.ok ? '成功' : '失败'}
-      </span>
+      <span className={`block truncate cds-ident text-[10.5px] ${toneClass}`}>{tail}</span>
     </span>
   );
 }

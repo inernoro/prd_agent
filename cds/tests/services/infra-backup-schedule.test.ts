@@ -384,11 +384,24 @@ describe('备份不许静默成功', () => {
     .join('\n');
 
   /**
-   * `mysqldump | gzip` 的退出码默认是 gzip 的。dump 因凭据错误中断时 gzip 照样
-   * 成功、产出几十字节的合法 gzip 头，非空检查放行。
+   * 两个坑叠在一起，只躲开一个还是坏的：
+   *
+   * 1. `mysqldump | gzip` 的退出码默认是 **gzip 的**。dump 因凭据错误中断时 gzip
+   *    照样成功、产出几十字节的合法 gzip 头，非空检查放行。
+   * 2. 想用 `set -o pipefail` 补救的话——`set` 是特殊内建，dash 不认 `-o pipefail`
+   *    会**直接终止 shell**，`|| true` 拦不住（实测退出码 2，dump 一次都没跑）。
+   *    Debian 系 mariadb 镜像的 /bin/sh 正是 dash，于是「静默成功」变成「必然失败」。
+   *
+   * 所以容器里不许出现管道，也不许出现 pipefail：只跑 mysqldump，压缩交给宿主，
+   * 两步用 && 串起来各判各的退出码。
    */
-  it('MySQL 取管道里失败那一环的退出码，且不吞 stderr', () => {
-    expect(CODE).toContain('set -o pipefail');
+  it('MySQL 不在容器里摆管道，也不依赖 pipefail', () => {
+    expect(CODE).not.toContain('set -o pipefail');
+    // 容器里只有一条 mysqldump（exec 掉，退出码原样带回宿主），没有任何管道。
+    expect(CODE).toContain('exec mysqldump -uroot');
+    expect(CODE).not.toMatch(/mysqldump[^\n]*\|/);
+    // 压缩与清理都在宿主侧，靠 && 串联：任一环失败整条失败。
+    expect(CODE).toMatch(/&& gzip -n -c \$\{shq\(raw\)\} > \$\{shq\(out\)\}/);
     expect(CODE).not.toMatch(/mysqldump[^\n]*2>\/dev\/null/);
   });
 
@@ -406,5 +419,27 @@ describe('备份不许静默成功', () => {
     const cp = CODE.indexOf('docker cp');
     expect(probe).toBeGreaterThan(0);
     expect(cp).toBeGreaterThan(probe);
+  });
+});
+
+/**
+ * 备份历史是**只读**路径。它去解析目录只是为了回答「有没有备份过」，
+ * 不该顺手把目录建出来——建了之后紧跟着的 test -d 必然为真，
+ * 「一份都没有过」就被报成「目录在、只是没有匹配项」。
+ */
+describe('查历史不许创建备份目录', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8');
+
+  it('解析器分读写两档，只有写盘那档 mkdir', () => {
+    expect(SRC).toContain('async function resolveBackupDir(opts?: { create?: boolean })');
+    // 只读档探测的是「目录已存在且可写」，一个 mkdir 都不许有。
+    expect(SRC).toMatch(/: await shell\.exec\(`test -d \$\{shq\(c\)\} && test -w \$\{shq\(c\)\} && echo ok`\)/);
+  });
+
+  it('backup-history 走只读档，备份/恢复仍可创建', () => {
+    expect(SRC).toContain('resolveBackupDir({ create: false })');
+    // 只有一处只读调用（历史），其余保持默认可创建。
+    expect(SRC.match(/resolveBackupDir\(\{ create: false \}\)/g) || []).toHaveLength(1);
+    expect(SRC.match(/await resolveBackupDir\(\)/g) || []).toHaveLength(1);
   });
 });
