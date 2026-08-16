@@ -70,6 +70,35 @@ export function sameCommit(a: string | undefined, b: string | undefined): boolea
   return x.slice(0, 7) === y.slice(0, 7);
 }
 
+/**
+ * 屏幕上这条 run，是不是这个环境**当前**那一版。
+ *
+ * 「看日志」翻出一条历史记录时，页面的 `shown` 会指向它，但结论条和回滚按钮说的
+ * 都是「当前环境」——于是翻一条三天前的成功记录，屏幕上写着「已切到 abc1234」，
+ * 而线上跑的其实是后来那一版；「回滚」也变成撤销一条早已不是当前版本的发布
+ * （Codex review P2，2026-08-16）。
+ *
+ * 判据只认身份不认 commit：
+ * - 本次会话自己发起的那条永远算当前——刚发完时 center 还没刷回来，
+ *   按 latestRun 判会把自己刚发的那版说成历史。
+ * - 否则要等于这个目标最新的那条。翻看的历史记录若正好就是最新那条，
+ *   它本来就是当前，照样算。
+ *
+ * 拿 commit 比（`shown.commitSha === row.currentCommit`）看着更直接，但那是另一个
+ * 问题的答案：同一个 commit 可以发过好几次，回滚回旧版又会让 currentCommit 与一条
+ * 老 run 相等——都会把历史记录判成当前。
+ */
+export function isShownRunCurrent(input: {
+  shownReleaseId?: string;
+  sessionReleaseId?: string;
+  latestReleaseId?: string;
+}): boolean {
+  const shown = (input.shownReleaseId || '').trim();
+  if (!shown) return false;
+  return shown === (input.sessionReleaseId || '').trim()
+    || shown === (input.latestReleaseId || '').trim();
+}
+
 export function buildConsoleStance(input: ConsoleStanceInput): ConsoleStance {
   const { sessionRun, latestRun, liveCommit, selectedCommit, running, failed } = input;
   const selectedIsLive = sameCommit(selectedCommit, liveCommit);

@@ -38,7 +38,7 @@ import { detectStall, resolveStepDetails, type ConsolePlanLike } from '@/lib/rel
 import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/releaseEnvironments';
 import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress';
 import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
-import { buildConsoleStance, sameCommit } from '@/lib/releaseConsoleState';
+import { buildConsoleStance, isShownRunCurrent, sameCommit } from '@/lib/releaseConsoleState';
 import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
@@ -401,6 +401,12 @@ export function ReleaseConsolePage(): JSX.Element {
   const progress = resolveReleaseSteps(shown);
   const failed = shown ? isReleaseFailed(shown.status) : false;
   const running = Boolean(shown && !isReleaseTerminal(shown.status));
+  // 现在看的这条是不是环境当前那一版。判据在 lib/releaseConsoleState，页面只负责渲染。
+  const shownIsCurrent = isShownRunCurrent({
+    shownReleaseId: shown?.releaseId,
+    sessionReleaseId: run?.releaseId,
+    latestReleaseId: row?.latestRun?.releaseId,
+  });
   const diagnosis = failed ? diagnoseReleaseFailure(shownLogs) : null;
   const branch = branches.find((item) => item.id === branchId);
   const commitSha = branch?.commitSha || branch?.githubCommitSha || '';
@@ -1005,7 +1011,9 @@ export function ReleaseConsolePage(): JSX.Element {
                 <span className="min-w-0 flex-1 basis-full break-words sm:basis-0">
                   {failed
                     ? (diagnosis?.headline || '本次发布失败，日志里没能提取出结构化判据')
-                    : `${row?.target.name || '目标'}已切到 ${shown.commitSha.slice(0, 7)}${
+                    : `${shownIsCurrent
+                      ? `${row?.target.name || '目标'}已切到 ${shown.commitSha.slice(0, 7)}`
+                      : `这是一条历史记录：${shown.commitSha.slice(0, 7)} 曾发布成功，${row?.target.name || '该环境'}当前跑的不是这一版`}${
                       formatDuration(shown.startedAt, shown.finishedAt) ? `，用时 ${formatDuration(shown.startedAt, shown.finishedAt)}` : ''}`}
                 </span>
                 {failed ? (
@@ -1020,7 +1028,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     </Button>
                   </>
                 ) : null}
-                {!failed && row?.canRollback ? (
+                {!failed && shownIsCurrent && row?.canRollback ? (
                   <Button variant="outline" size="sm" onClick={() => void rollbackRun(shown)} disabled={rowBusy === shown.releaseId}>
                     {rowBusy === shown.releaseId ? <Loader2 className="animate-spin" /> : <RotateCcw />}
                     回滚

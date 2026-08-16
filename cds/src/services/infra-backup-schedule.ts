@@ -135,6 +135,43 @@ export function isAutoBackupFile(name: string, projectId: string, id: string): b
   return name.startsWith(`${backupKey(projectId, id)}-auto-`);
 }
 
+/**
+ * 文件名里 key 之后的那一段，标明这份备份是怎么来的。
+ *
+ * 必须是一份**闭合的枚举**，不能拿 `${key}-` 当前缀了事：id 之间会互相撞前缀，
+ * `proj-a--redis-` 正好是 `proj-a--redis-cache-auto-…` 的前缀，于是 `redis` 的
+ * 备份历史里会混进邻居服务 `redis-cache` 的文件。新增备份种类时加在这里，
+ * 让写入端和读取端只有这一处需要同步。
+ */
+const BACKUP_KIND_SEGMENTS = ['auto', 'pre-restore'] as const;
+
+/**
+ * 备份目录里，哪些文件是**这个项目的这个服务**的（周期的、恢复前快照的，都算）。
+ *
+ * 写入端已经按项目限定了文件名，读取端却还在用 `grep <id>` 扫共享目录——两个项目
+ * 各有一个 `redis` 时，A 的备份历史里会混进 B 的文件名、大小和时间；`grep` 还是
+ * 子串匹配，`redis` 会连 `redis-cache` 一起捞出来。写入端修了、读取端没跟上，
+ * 这是同一处漏洞的另一半（Codex review P2，2026-08-16）。
+ *
+ * 判据只有这一份，读写共用，避免下一次只改一边。
+ */
+export function isProjectBackupFile(name: string, projectId: string, id: string): boolean {
+  const key = backupKey(projectId, id);
+  return BACKUP_KIND_SEGMENTS.some((seg) => name.startsWith(`${key}-${seg}-`));
+}
+
+/**
+ * 项目限定命名之前留下的旧文件（`<id>-pre-restore-<时间戳>`）。
+ *
+ * 这些名字里没有项目段，**没法判断到底属于谁**。既不能装作不存在（那是操作员
+ * 恢复前留的救命快照，正需要的时候消失最糟），也不能不打招呼就混进列表冒充自己的。
+ * 所以照列但标出来，让调用方能把它们和已归属的文件区分开。
+ */
+export function isLegacyUnscopedBackupFile(name: string, id: string): boolean {
+  const safe = String(id || '').replace(/[^a-zA-Z0-9._-]/g, '-');
+  return name.startsWith(`${safe}-pre-restore-`);
+}
+
 export function planInfraBackups(
   candidates: readonly BackupCandidate[],
   opts: { now: Date },

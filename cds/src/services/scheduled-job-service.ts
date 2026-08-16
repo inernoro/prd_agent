@@ -84,6 +84,15 @@ interface ScheduledJobExecutionContext {
    * 而且日志里看着一切正常。
    */
   overrideBranchId?: string;
+  /**
+   * 事件驱动规则本次要发的那个 commit（push payload 的 `after`）。
+   *
+   * 规则的路径过滤是按这个 commit 的改动清单判的，所以它必须一路传到
+   * `expectedCommitSha` 去做 fail-closed 钳制。不钉住的话，发布会去读分支的
+   * **当前** commit：两次 push 挨得近时，第一个事件把第二个 commit 发出去，
+   * 而后者的路径过滤从没被评估过——日志里一切正常，发的却是没被授权的版本。
+   */
+  overrideCommitSha?: string;
 }
 
 export interface NormalizeScheduledJobOptions {
@@ -155,10 +164,31 @@ export class ScheduledJobService {
       );
       return 0;
     }
+    // 事件已经过期：分支在 webhook 处理期间又被推了一次。
+    //
+    // 这时候本次事件不该再发——它的路径过滤评估的是 `ctx.commitSha` 那份改动清单，
+    // 而分支上现在是另一个 commit。后来那次 push 会带着自己的事件进来，按自己的
+    // 改动清单重新判一遍，该发它会发。
+    //
+    // 这里提前退出只是为了不制造噪声失败（下面还会把 commit 钉进 expectedCommitSha
+    // 做 fail-closed 钳制，真正的兜底在那）：钳制失败会记一次 failed，而连续两次
+    // failed 会自动停用这条规则——用一次正常的连推把好规则关掉，不划算。
+    const branchCommit = (branch.pinnedCommit || branch.githubCommitSha || '').trim();
+    const eventCommit = (ctx.commitSha || '').trim();
+    if (eventCommit && branchCommit && eventCommit !== branchCommit) {
+      console.warn(
+        `[scheduled-jobs] ${matched.length} 条规则命中 ${ctx.branch}，但分支已前进到 ${branchCommit}`
+        + `（本次事件是 ${eventCommit}），本次不发，交给新 commit 的事件处理`,
+      );
+      return 0;
+    }
     let started = 0;
     for (const job of matched) {
       try {
-        await this.runJob(job.id, 'push', { overrideBranchId: branch.id });
+        await this.runJob(job.id, 'push', {
+          overrideBranchId: branch.id,
+          ...(eventCommit ? { overrideCommitSha: eventCommit } : {}),
+        });
         started += 1;
       } catch (err) {
         console.error('[scheduled-jobs] push 规则执行失败:', job.id, (err as Error).message);
@@ -184,7 +214,7 @@ export class ScheduledJobService {
   async runJob(
     jobId: string,
     trigger: ScheduledJobRun['trigger'],
-    options: { overrideBranchId?: string } = {},
+    options: { overrideBranchId?: string; overrideCommitSha?: string } = {},
   ): Promise<ScheduledJobRun> {
     const job = this.deps.stateService.getScheduledJob(jobId);
     if (!job) throw new Error('任务不存在');
@@ -219,6 +249,7 @@ export class ScheduledJobService {
         Date.now() + timeoutMs,
         Math.max(0, Math.floor(job.retryCount || 0)),
         options.overrideBranchId,
+        options.overrideCommitSha,
       );
       run.exitCode = result.exitCode;
       run.httpStatus = result.httpStatus;
@@ -425,6 +456,7 @@ export class ScheduledJobService {
     deadlineMs: number,
     retryCount: number,
     overrideBranchId?: string,
+    overrideCommitSha?: string,
   ): Promise<ScheduledJobTargetCheckResult> {
     const actions = normalizeActions(job.actions, job.target);
     if (actions.length === 0) {
@@ -443,7 +475,12 @@ export class ScheduledJobService {
       const sandboxKey = actions.length === 1 ? job.id : `${job.id}-${index + 1}-${action.id}`;
       const result = await this.executeTargetWithRetry(
         action, deadlineMs, sandboxKey, retryCount,
-        { mode: 'run', jobId: job.id, ...(overrideBranchId ? { overrideBranchId } : {}) },
+        {
+          mode: 'run',
+          jobId: job.id,
+          ...(overrideBranchId ? { overrideBranchId } : {}),
+          ...(overrideCommitSha ? { overrideCommitSha } : {}),
+        },
       );
       lastExitCode = result.exitCode;
       lastHttpStatus = result.httpStatus;
@@ -605,7 +642,7 @@ export class ScheduledJobService {
     const releaseTarget = this.deps.stateService.getReleaseTarget(target.targetId);
     if (!releaseTarget) return fail(`发布目标不存在：${target.targetId}`);
 
-    const source = this.resolveReleaseSource(target, context.overrideBranchId);
+    const source = this.resolveReleaseSource(target, context.overrideBranchId, context.overrideCommitSha);
     if ('error' in source) return fail(source.error);
     logs.push(source.summary);
 
@@ -738,6 +775,7 @@ export class ScheduledJobService {
   private resolveReleaseSource(
     target: Extract<ScheduledJobTarget, { type: 'release' }>,
     overrideBranchId?: string,
+    overrideCommitSha?: string,
   ): { branchId: string; previewUrl: string; expectedCommitSha?: string; candidateCommitSha: string; summary: string } | { error: string } {
     // 事件驱动规则：发的是本次被推的那个分支，不是建规则时存下来的占位值。
     // promote 来源不受影响——它的语义是「把某环境正在跑的那一版原样搬过来」，
@@ -765,8 +803,15 @@ export class ScheduledJobService {
 
     const branch = this.deps.stateService.getBranch(target.source.branchId);
     if (!branch) return { error: `来源分支不存在：${target.source.branchId}` };
-    // 分支来源刻意**不**传 expectedCommitSha：它的语义就是「发这个分支的最新版」。
+    // 定时驱动的分支来源刻意**不**传 expectedCommitSha：它的语义就是「发这个分支的最新版」。
+    //
+    // 事件驱动是另一回事：这条规则之所以被叫醒，是因为**某一个 commit** 的改动
+    // 命中了路径过滤。发布必须钉在那个 commit 上——不钉的话，紧挨着的第二次 push
+    // 会被第一个事件发出去，而它的改动清单从没被这条规则评估过。钳制是 fail-closed 的：
+    // 分支在这中间前进了就拒发，交给新 commit 自己的事件（runPushRules 里已先做过
+    // 一次过期检查，这里是竞态兜底）。
     const candidateCommitSha = branch.pinnedCommit || branch.githubCommitSha || '';
+    const pinnedByEvent = (overrideCommitSha || '').trim();
     const historyPreviewUrl = this.deps.stateService
       .getReleaseRuns({ branchId: branch.id })
       .map((run) => run.artifact?.previewUrl || '')
@@ -781,8 +826,10 @@ export class ScheduledJobService {
     return {
       branchId: branch.id,
       previewUrl,
-      candidateCommitSha,
-      summary: `发布来源：分支 ${branch.branch}${candidateCommitSha ? `（commit ${candidateCommitSha}）` : ''}。${previewHint}`,
+      ...(pinnedByEvent ? { expectedCommitSha: pinnedByEvent } : {}),
+      candidateCommitSha: pinnedByEvent || candidateCommitSha,
+      summary: `发布来源：分支 ${branch.branch}${candidateCommitSha ? `（commit ${candidateCommitSha}）` : ''}。`
+        + `${pinnedByEvent ? ` 本次由 push 事件触发，已钉在 ${pinnedByEvent}。` : ''}${previewHint}`,
     };
   }
 

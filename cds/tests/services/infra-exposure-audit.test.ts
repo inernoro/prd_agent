@@ -320,3 +320,40 @@ describe('防火墙纳入判据', () => {
     expect(CODE).toMatch(/auditInfraExposure\(inputs,\s*\{\s*firewall\s*\}\)/);
   });
 });
+
+/**
+ * 假阴性方向的判据（Codex review P1，2026-08-16）。
+ *
+ * 上一轮补的是假阳性：密码写在启动参数里，被判成裸奔。补的时候顺手把
+ * `REDIS_ARGS` 当成了「有这个 key 就等于配了认证」——而它只是 redis-stack 用来塞
+ * 启动参数的口子，里面完全可能只有 `--appendonly yes`。于是方向反过来的假消息出现了：
+ * 一个真裸奔的公网库被从 critical 降级，报表上还写着「已配置认证」。
+ */
+describe('认证判定：有这个 key 不等于配了认证', () => {
+  it('REDIS_ARGS 里没有认证参数时，判为无认证', () => {
+    expect(detectInfraAuth('redis', { REDIS_ARGS: '--appendonly yes' })).toBe(false);
+    expect(detectInfraAuth('redis', { REDIS_ARGS: '' })).toBe(false);
+  });
+
+  it('REDIS_ARGS 里真有 --requirepass 时，判为已认证', () => {
+    expect(detectInfraAuth('redis', { REDIS_ARGS: '--appendonly yes --requirepass s3cret' })).toBe(true);
+    expect(detectInfraAuth('redis', { REDIS_ARGS: '--requirepass=s3cret' })).toBe(true);
+    expect(detectInfraAuth('redis', { REDIS_ARGS: '--aclfile /etc/redis/users.acl' })).toBe(true);
+  });
+
+  /** `--requirepass ""` 在 redis 里等于没有密码，不能把它算成认证。 */
+  it('取值型参数的值为空时不算认证', () => {
+    expect(detectInfraAuth('redis', {}, ['redis-server', '--requirepass'])).toBe(false);
+    expect(detectInfraAuth('redis', {}, ['redis-server', '--requirepass', ''])).toBe(false);
+    expect(detectInfraAuth('redis', {}, ['redis-server', '--requirepass', '--appendonly'])).toBe(false);
+    expect(detectInfraAuth('redis', {}, ['redis-server', '--requirepass', 'x'])).toBe(true);
+  });
+
+  /** 子串匹配会让 `--authenticationDatabase` 冒充 `--auth`。整 token 比对才不会。 */
+  it('mongo 的 --auth 按整个 token 比，不吃子串', () => {
+    expect(detectInfraAuth('mongo', {}, ['mongosh', '--authenticationDatabase', 'admin'])).toBe(false);
+    expect(detectInfraAuth('mongo', {}, ['mongod', '--auth'])).toBe(true);
+    expect(detectInfraAuth('mongo', {}, ['mongod', '--keyfile', '/etc/key'])).toBe(true);
+    expect(detectInfraAuth('mongo', {}, ['mongod', '--keyfile'])).toBe(false);
+  });
+});

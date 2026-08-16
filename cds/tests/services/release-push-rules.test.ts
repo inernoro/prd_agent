@@ -218,12 +218,18 @@ describe('事件规则的来源分支由事件决定，不是建规则时钉死�
     expect(route).toContain("return { error: '来源分支必填' };");
   });
 
-  it('执行：runPushRules 把事件里的真实分支带下去覆盖占位值', () => {
+  /**
+   * 这里只留「覆盖不越界到 promote」这一条结构判据。
+   *
+   * 原本还逐字要求 `this.runJob(job.id, 'push', { overrideBranchId: branch.id })` 存在——
+   * 那是在锁实现的写法而不是行为：给这次调用多传一个参数（钉住 commit）就会让它变红，
+   * 而行为完全没退化。「发的是被推的那个分支」现在由
+   * tests/services/scheduled-job-push-commit-pin.test.ts 真跑一遍来证明。
+   */
+  it('执行：分支覆盖只作用于 branch 来源，不碰 promote', () => {
     const service = read('src/services/scheduled-job-service.ts');
     expect(service).toContain('findBranchByProjectAndName(ctx.projectId, ctx.branch)');
-    expect(service).toContain("this.runJob(job.id, 'push', { overrideBranchId: branch.id })");
-    expect(service).toContain('overrideBranchId?: string;');
-    // 覆盖只作用于 branch 来源；promote 的语义与哪个分支被推无关
+    // promote 的语义是「把某环境正在跑的那一版原样搬过来」，与哪个分支被推无关
     expect(service).toContain("overrideBranchId && target.source.kind === 'branch'");
   });
 

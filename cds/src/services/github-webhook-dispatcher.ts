@@ -369,6 +369,8 @@ export interface WebhookDispatcherDeps {
     branch: string;
     event: 'push' | 'pr-open';
     changedPaths: string[];
+    /** 本次 push 的 commit。路径过滤按它判，发布也必须钉在它上面。 */
+    commitSha?: string;
   }) => Promise<number>;
 }
 
@@ -1250,6 +1252,9 @@ export class GitHubWebhookDispatcher {
         branch: branchName,
         event: 'push',
         changedPaths: this.changedPathsFromPush(event),
+        // 路径过滤读的是这个 commit 的改动清单，发布就必须发这个 commit——
+        // 否则紧挨着的第二次 push 会被第一个事件的授权发出去。
+        ...(event.after ? { commitSha: event.after } : {}),
       }).catch((err) => {
         console.error('[webhook] 自动发布规则执行失败:', project.id, branchName, (err as Error).message);
       });

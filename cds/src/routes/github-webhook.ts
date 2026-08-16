@@ -70,6 +70,8 @@ export interface GitHubWebhookRouterDeps {
     branch: string;
     event: 'push' | 'pr-open';
     changedPaths: string[];
+    /** 本次 push 的 commit。路径过滤按它判，发布也必须钉在它上面。 */
+    commitSha?: string;
   }) => Promise<number>;
   worktreeService: WorktreeService;
   shell: IShellExecutor;

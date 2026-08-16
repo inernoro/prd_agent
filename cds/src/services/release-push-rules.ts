@@ -26,6 +26,16 @@ export interface PushRuleContext {
   branch: string;
   event: PushRuleEvent;
   changedPaths: string[];
+  /**
+   * 本次事件推的那个 commit（push payload 的 `after`）。
+   *
+   * 路径过滤是**按这个 commit 的改动清单**判的，所以最终发布的也必须是它。
+   * 不带下来的话，发布只能去读分支的当前状态——两次 push 挨得近时，第一个事件
+   * 会把第二个 commit 发出去，而它的路径过滤从没被评估过（Codex review P1，2026-08-16）。
+   *
+   * 可选：非 push 来源（pr-open）与老调用方没有这个值，此时退回原来的「发分支最新版」。
+   */
+  commitSha?: string;
 }
 
 /**

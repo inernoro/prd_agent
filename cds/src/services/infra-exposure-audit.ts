@@ -181,6 +181,16 @@ export function parsePublishedHosts(ports: string | null | undefined): string[] 
  *
  * 所以这里同时看两处：容器的 `.Config.Env` 与 `.Config.Cmd`。
  *
+ * ## 「有这个 key」不等于「配了认证」
+ *
+ * 反过来的假阴性同样要防：`REDIS_ARGS` 是 redis-stack 用来塞启动参数的口子，
+ * 里面完全可能只有 `--appendonly yes`。把「这个 env 存在」当成认证证据，
+ * 一个真裸奔的公网库就会被从 critical 降级，还配上一句「已配置认证」——
+ * 比不报警更糟的那种假消息，方向只是反过来（Codex review P1，2026-08-16）。
+ *
+ * 所以 arg 型 env 只贡献**内容**（并进有效命令行一起扫），不贡献**存在性**；
+ * 认证判据一律落到「真的出现了某个生效的认证参数」上。
+ *
  * ## 未知不等于没有
  *
  * 认不出镜像类型时返回 null（未知），**不返回 false**——把「我不知道」和
@@ -194,17 +204,43 @@ export function detectInfraAuth(
 ): boolean | null {
   const e = env || {};
   const has = (...keys: string[]): boolean => keys.some((k) => !!(e[k] || '').trim());
-  const argLine = (args || []).join(' ').toLowerCase();
-  const argHas = (...flags: string[]): boolean => flags.some((f) => argLine.includes(f));
+  // 有效命令行 = 容器启动参数 + 那些「本身就是一串启动参数」的 env 的值。
+  // 后者只当参数看，不当布尔看。
+  const argCarryingEnv = ['REDIS_ARGS', 'REDIS_EXTRA_FLAGS', 'MONGO_EXTRA_FLAGS'];
+  const tokens = [
+    ...(args || []),
+    ...argCarryingEnv.flatMap((k) => (e[k] || '').split(/\s+/)),
+  ]
+    .map((t) => String(t || '').trim().toLowerCase())
+    .filter(Boolean);
+  /** 开关型参数：出现即生效（`--auth`）。整 token 比对，避免 `--authenticationdatabase` 撞上。 */
+  const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.includes(f));
+  /**
+   * 取值型参数：`--requirepass x` / `--requirepass=x`，**值为空就不算数**。
+   * `--requirepass ""` 在 redis 里等于没有密码，它不该把库判成已认证。
+   */
+  const hasFlagValue = (...flags: string[]): boolean => flags.some((flag) => {
+    for (let i = 0; i < tokens.length; i += 1) {
+      const t = tokens[i];
+      if (t === flag) {
+        const next = tokens[i + 1];
+        if (next && !next.startsWith('--')) return true;
+        continue;
+      }
+      if (t.startsWith(`${flag}=`) && t.slice(flag.length + 1).length > 0) return true;
+    }
+    return false;
+  });
   switch (kind) {
     case 'mongo':
       return has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME')
-        || argHas('--auth', '--keyfile');
+        || hasFlag('--auth')
+        || hasFlagValue('--keyfile');
     case 'redis':
       // redis 默认不设密码。`--requirepass` 写在启动命令里是最常见的配法，
       // 只看 env 会把它误判成裸奔。
-      return has('REDIS_PASSWORD', 'REDIS_PASS', 'REDISCLI_AUTH', 'REDIS_ARGS')
-        || argHas('--requirepass', '--user ', 'aclfile');
+      return has('REDIS_PASSWORD', 'REDIS_PASS', 'REDISCLI_AUTH')
+        || hasFlagValue('--requirepass', '--user', '--aclfile');
     case 'mysql':
       return has('MYSQL_ROOT_PASSWORD', 'MYSQL_PASSWORD', 'MARIADB_ROOT_PASSWORD');
     case 'postgres':

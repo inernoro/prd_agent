@@ -19,7 +19,12 @@ import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { isPreviewInstance } from '../services/preview-instance.js';
-import { backupDirCandidates } from '../services/infra-backup-schedule.js';
+import {
+  backupDirCandidates,
+  backupKey,
+  isLegacyUnscopedBackupFile,
+  isProjectBackupFile,
+} from '../services/infra-backup-schedule.js';
 
 export interface InfraBackupRouterDeps {
   stateService: StateService;
@@ -206,8 +211,13 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
    * POST /api/infra/:id/restore
    * 上传一份之前导出的 dump 文件恢复。body 是原始字节流。
    *
-   * 破坏性操作：恢复前自动 dump 一份当前数据库到 /data/cds/<slug>/backups/<id>-pre-restore-<timestamp>，
+   * 破坏性操作：恢复前自动 dump 一份当前数据库到
+   * /data/cds/<slug>/backups/<项目>--<id>-pre-restore-<timestamp>，
    * 并记 DestructiveOperationLog，这样用户还能还原回恢复前的状态。
+   *
+   * 文件名带项目段的理由与周期备份同源（见 backupKey）：infra id 只在项目内唯一，
+   * 六个项目各有一个 `redis`，同一秒里两个项目各恢复一次，后写的会盖掉先写的那份
+   * 救命快照。周期备份这一轮修了，恢复前快照是同一个形状的另一处，一起修。
    */
   router.post('/infra/:id/restore', async (req, res) => {
     const svc = resolveScoped(req, res);
@@ -224,7 +234,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     const backupDir = await resolveBackupDir();
     await shell.exec(`mkdir -p ${shq(backupDir)}`);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const preBackupPath = `${backupDir}/${svc.id}-pre-restore-${stamp}.${kind === 'mongo' ? 'archive.gz' : 'bin'}`;
+    const preBackupPath = `${backupDir}/${backupKey(svc.projectId, svc.id)}-pre-restore-${stamp}.${kind === 'mongo' ? 'archive.gz' : 'bin'}`;
 
     try {
       if (kind === 'mongo') {
@@ -306,15 +316,27 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     // 没有匹配项」长得一模一样——零备份可以就这么一直不被发现。这里显式区分。
     const probe = await shell.exec(`test -d ${shq(backupDir)} && echo yes || echo no`);
     const dirExists = (probe.stdout || '').includes('yes');
-    const result = await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null | grep ${shq(svc.id)} || true`);
+    // 筛选**不能**交给 `grep <id>`：备份目录是所有项目共用的，而 infra id 只在项目内
+    // 唯一，子串匹配还会把 `redis-cache` 一起捞给 `redis`。判据走 isProjectBackupFile
+    // （与写入端同一份），旧命名的恢复前快照单独标记后照列。
+    const result = await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null || true`);
     const lines = (result.stdout || '').split('\n').filter(Boolean);
     const entries = lines.map(l => {
       const parts = l.trim().split(/\s+/);
       if (parts.length < 9) return null;
+      const name = parts.slice(8).join(' ');
+      const mine = isProjectBackupFile(name, svc.projectId, svc.id);
+      const legacy = !mine && isLegacyUnscopedBackupFile(name, svc.id);
+      if (!mine && !legacy) return null;
       return {
         size: parseInt(parts[4], 10) || 0,
         mtime: parts.slice(5, 8).join(' '),
-        name: parts[8],
+        name,
+        /**
+         * true = 文件名里没有项目段，是项目限定命名之前留下的，无法确认属于哪个项目。
+         * 照列是因为它多半就是本项目的救命快照；标出来是因为「多半」不等于「确认」。
+         */
+        unscoped: legacy,
       };
     }).filter(Boolean);
     res.json({

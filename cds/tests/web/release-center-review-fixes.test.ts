@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 
 import { resolvePreviewUrl } from '../../web/src/lib/previewUrl';
 import { canonicalEnvironments, defaultIsCanonical } from '../../web/src/lib/releaseEnvironments';
+import { isShownRunCurrent } from '../../web/src/lib/releaseConsoleState';
 import { describeDryRunResult } from '../../web/src/lib/releaseDiagnosis';
 import { runTone, statusLabel } from '../../web/src/pages/release-center/shared';
 import { absoluteNoticeActionUrl, normalizeNoticeOrigin } from '../../src/services/notice-outbound-map.js';
@@ -315,5 +316,77 @@ describe('发布控制台历史轨不把在途当成功', () => {
     expect(page).toContain("const itemDone = item.status === 'success' || item.status === 'rollback_success';");
     expect(page).toContain('{itemDone && itemRow?.canRollback && !live ? (');
     expect(page).not.toContain('{!itemFailed && itemRow?.canRollback');
+  });
+});
+
+/**
+ * 翻看历史记录时，页面不许把它说成「环境当前那一版」（Codex review P2，2026-08-16）。
+ *
+ * 「看日志」会把 `shown` 指到一条历史 run 上，而终态结论条和回滚按钮说的都是
+ * 当前环境——于是翻一条三天前的成功记录，屏幕上写着「已切到 abc1234」，
+ * 线上跑的其实是后来那一版；「回滚」也变成撤销一条早已不是当前版本的发布。
+ */
+describe('isShownRunCurrent 区分「当前那一版」与「翻出来看的历史」', () => {
+  it('本次会话自己发起的那条永远算当前', () => {
+    // 刚发完时 center 还没刷回来，只按 latestRun 判会把自己刚发的那版说成历史。
+    expect(isShownRunCurrent({
+      shownReleaseId: 'rel_new', sessionReleaseId: 'rel_new', latestReleaseId: 'rel_old',
+    })).toBe(true);
+  });
+
+  it('等于目标最新那条时算当前', () => {
+    expect(isShownRunCurrent({ shownReleaseId: 'rel_latest', latestReleaseId: 'rel_latest' })).toBe(true);
+  });
+
+  it('翻出来的旧记录不算当前', () => {
+    expect(isShownRunCurrent({ shownReleaseId: 'rel_old', latestReleaseId: 'rel_latest' })).toBe(false);
+  });
+
+  it('什么都没选时不算当前，别把空当成成功', () => {
+    expect(isShownRunCurrent({ latestReleaseId: 'rel_latest' })).toBe(false);
+    expect(isShownRunCurrent({ shownReleaseId: '   ', latestReleaseId: 'rel_latest' })).toBe(false);
+  });
+
+  /**
+   * 空 id 之间不许相等：三个字段都缺时 `'' === ''` 会把「什么都没有」判成当前，
+   * 于是空状态也能挂上一句「已切到」。
+   */
+  it('两边都空不算相等', () => {
+    expect(isShownRunCurrent({ shownReleaseId: '', sessionReleaseId: '', latestReleaseId: '' })).toBe(false);
+  });
+});
+
+describe('发布控制台的「已切到」必须挂在当前那一版上（接线守卫）', () => {
+  const page = read('pages/ReleaseConsolePage.tsx');
+
+  it('判据取自 lib，不在页面里另写一份', () => {
+    expect(page).toContain('isShownRunCurrent({');
+    // 页面自己拿 releaseId 手搓一遍比较 = 判据分裂，下次只会改一边
+    expect(page).not.toMatch(/shown\.releaseId === (run|row)\?\./);
+  });
+
+  /**
+   * 不点名某一处，而是扫出每一句宣称「已切到」的文案，逐个要求它被
+   * shownIsCurrent 分流过——只补当前这一处，下一处照样会漏。
+   */
+  it('每一句「已切到」都被 shownIsCurrent 分流', () => {
+    const lines = page.split('\n');
+    const isComment = (l: string): boolean => {
+      const t = l.trim();
+      return t.startsWith('//') || t.startsWith('*') || t.startsWith('/*');
+    };
+    const claims = lines
+      .map((line, idx) => ({ line, idx }))
+      .filter(({ line }) => line.includes('已切到') && !isComment(line));
+    expect(claims.length).toBeGreaterThanOrEqual(1);
+    for (const { line, idx } of claims) {
+      const window = lines.slice(Math.max(0, idx - 6), idx + 1).join('\n');
+      expect(window, `第 ${idx + 1} 行：${line.trim()} —— 没有被 shownIsCurrent 分流`)
+        .toContain('shownIsCurrent');
+    }
+  });
+
+  it('回滚按钮同样只出现在当前那一版上', () => {
+    expect(page).toContain('{!failed && shownIsCurrent && row?.canRollback ? (');
   });
 });
