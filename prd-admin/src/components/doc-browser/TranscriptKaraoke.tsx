@@ -282,95 +282,151 @@ export function TranscriptKaraoke({
 
   return (
     <div className="flex w-full flex-col items-center gap-4">
-      {documentMode && (
-        <div className="flex w-full max-w-[760px] flex-wrap items-center justify-between gap-2">
-          <p className="text-[12px] font-semibold text-token-muted">录音</p>
-          <p className="text-[11px] text-token-muted" aria-live="polite">
-            {playing && followEnabled
-              ? `正在跟随第 ${activeIdx + 1}/${timelineSegments.length} 句`
-              : synced
-                ? '精准时间轴，播放时逐句高亮'
-                : estimated
-                  ? documentMode && onSaveNote
-                    ? '智能估算逐句跟随，点击可校对'
-                    : '智能估算跟随，可点句跳播'
-                  : '正在读取音频时长，随后开启原文跟随'}
-          </p>
-        </div>
-      )}
-      <AudioWavePlayer
-        src={src}
-        onTimeUpdate={onTimeUpdate}
-        onDurationChange={setDuration}
-        onPlaybackChange={setPlaying}
-        registerSeek={(seek) => { seekRef.current = seek; }}
-      />
-
-      {documentMode && followEnabled && activeSegment && (
-        <section
-          data-testid="recording-karaoke-now-playing"
-          className="w-full max-w-[760px] overflow-hidden rounded-[14px] p-4"
-          style={{
-            background: 'linear-gradient(135deg, rgba(168,85,247,0.13), rgba(59,130,246,0.08))',
-            border: '1px solid rgba(168,85,247,0.24)',
-          }}
-          aria-label="播放台词"
-        >
-          <style>{`
-            @keyframes recording-karaoke-cue-enter {
-              from { opacity: 0.35; transform: translateY(6px); }
-              to { opacity: 1; transform: translateY(0); }
-            }
-            @media (prefers-reduced-motion: reduce) {
-              .recording-karaoke-cue { animation: none !important; }
-            }
-          `}</style>
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[12px] font-semibold text-token-secondary">播放台词</p>
-            <p className="text-[11px] tabular-nums text-token-muted">
-              {playing ? '正在跟随' : '播放后逐句跟随'} · {displayActiveIdx + 1}/{timelineSegments.length}
+      <div
+        data-testid={documentMode ? 'recording-sticky-playback' : undefined}
+        className={documentMode
+          ? 'sticky top-0 z-20 flex w-full max-w-[760px] flex-col gap-3 rounded-[18px] p-3 backdrop-blur-xl'
+          : 'contents'}
+        style={documentMode ? {
+          background: 'color-mix(in srgb, var(--bg-primary) 92%, transparent)',
+          border: '1px solid var(--border-faint)',
+          boxShadow: '0 10px 28px rgba(15,23,42,0.10)',
+        } : undefined}
+      >
+        {documentMode && (
+          <div className="flex w-full flex-wrap items-center justify-between gap-2 px-1">
+            <p className="text-[12px] font-semibold text-token-muted">录音</p>
+            <p className="text-[11px] text-token-muted" aria-live="polite">
+              {playing && followEnabled
+                ? `正在跟随第 ${activeIdx + 1}/${timelineSegments.length} 句`
+                : synced
+                  ? '精准时间轴，播放时逐句高亮'
+                  : estimated
+                    ? documentMode && onSaveNote
+                      ? '智能估算逐句跟随，点击可校对'
+                      : '智能估算跟随，可点句跳播'
+                    : '正在读取音频时长，随后开启原文跟随'}
             </p>
           </div>
-          <button
-            key={`active-${displayActiveIdx}`}
-            type="button"
-            data-testid="recording-karaoke-active-cue"
-            onClick={() => activeSegment.start >= 0 && seekRef.current?.(activeSegment.start)}
-            className="recording-karaoke-cue mt-3 min-h-11 w-full text-left text-[16px] font-semibold leading-[1.75] text-token-primary"
-            style={{ animation: playing ? 'recording-karaoke-cue-enter 260ms ease-out' : undefined }}
-            aria-live="polite"
-            aria-atomic="true"
-            title="从当前句开头播放"
+        )}
+        <AudioWavePlayer
+          src={src}
+          onTimeUpdate={onTimeUpdate}
+          onDurationChange={setDuration}
+          onPlaybackChange={setPlaying}
+          registerSeek={(seek) => { seekRef.current = seek; }}
+        />
+
+        {documentMode && followEnabled && activeSegment && (
+          <section
+            data-testid="recording-karaoke-now-playing"
+            className="w-full overflow-hidden rounded-[14px] px-4 py-3"
+            style={{
+              minHeight: 112,
+              background: 'var(--selection-bg)',
+              border: '1px solid var(--selection-border)',
+            }}
+            aria-label="播放台词"
           >
-            {activeSegment.speaker && (
-              <span className="mr-2 inline-block rounded-full px-2 py-0.5 align-middle text-[10px] font-semibold" style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--text-secondary)' }}>
-                {activeSegment.speaker}
-              </span>
-            )}
-            {activeSegment.text}
-          </button>
-          {nextSegment && (
+            <style>{`
+              @keyframes recording-karaoke-cue-enter {
+                from { opacity: 0.35; transform: translateY(6px); }
+                to { opacity: 1; transform: translateY(0); }
+              }
+              @media (prefers-reduced-motion: reduce) {
+                .recording-karaoke-cue { animation: none !important; }
+              }
+            `}</style>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[12px] font-semibold text-token-secondary">当前台词</p>
+              <p className="text-[11px] tabular-nums text-token-muted">
+                {playing ? '正在跟随' : '播放后逐句跟随'} · {displayActiveIdx + 1}/{timelineSegments.length}
+              </p>
+            </div>
             <button
+              key={`active-${displayActiveIdx}`}
               type="button"
-              data-testid="recording-karaoke-next-cue"
-              onClick={() => nextSegment.start >= 0 && seekRef.current?.(nextSegment.start)}
-              className="mt-2 min-h-11 w-full border-t pt-2 text-left text-[12px] leading-relaxed text-token-muted"
-              style={{ borderColor: 'var(--border-faint)' }}
-              title="跳到下一句"
+              data-testid="recording-karaoke-active-cue"
+              onClick={() => activeSegment.start >= 0 && seekRef.current?.(activeSegment.start)}
+              className="recording-karaoke-cue mt-2 min-h-11 w-full text-left text-[18px] font-semibold leading-[1.65] text-token-primary"
+              style={{ animation: playing ? 'recording-karaoke-cue-enter 260ms ease-out' : undefined }}
+              aria-live="polite"
+              aria-atomic="true"
+              title="从当前句开头播放"
             >
-              <span className="mr-2 text-[10px] font-semibold">下一句</span>
-              {nextSegment.text}
+              {activeSegment.start >= 0 && (
+                <span className="mr-2 font-mono text-[11px] font-normal tabular-nums text-token-muted">
+                  {formatQuestionTime(activeSegment.start)}
+                </span>
+              )}
+              {activeSegment.speaker && (
+                <span className="mr-2 inline-block rounded-full px-2 py-0.5 align-middle text-[10px] font-semibold" style={{ background: 'rgba(59,130,246,0.12)', color: 'var(--text-secondary)' }}>
+                  {activeSegment.speaker}
+                </span>
+              )}
+              {activeSegment.text}
             </button>
+            {nextSegment && (
+              <button
+                type="button"
+                data-testid="recording-karaoke-next-cue"
+                onClick={() => nextSegment.start >= 0 && seekRef.current?.(nextSegment.start)}
+                className="mt-1 min-h-10 w-full border-t pt-2 text-left text-[13px] leading-relaxed text-token-muted"
+                style={{ borderColor: 'var(--border-faint)' }}
+                title="跳到下一句"
+              >
+                <span className="mr-2 text-[10px] font-semibold">下一句</span>
+                {nextSegment.text}
+              </button>
+            )}
+          </section>
+        )}
+      </div>
+
+      {documentMode && (
+        <section
+          className="order-1 w-full max-w-[760px] rounded-[16px] p-3"
+          style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
+          aria-label="搜索转录原文"
+        >
+          <label className="flex min-h-11 items-center gap-2 rounded-[10px] px-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+            <Search size={15} className="shrink-0 text-token-muted" />
+            <input
+              value={keyword}
+              onChange={event => setKeyword(event.target.value)}
+              placeholder="搜索录音里的关键词"
+              className="min-w-0 flex-1 bg-transparent text-[16px] text-token-primary outline-none placeholder:text-token-muted"
+              aria-label="搜索录音里的关键词"
+            />
+            {keyword && <span className="text-[11px] tabular-nums text-token-muted">{searchMatches.length} 处</span>}
+          </label>
+
+          {keyword && searchMatches.length > 0 && (
+            <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+              {searchMatches.map(({ segment, index }) => (
+                <button
+                  key={`${index}-${segment.start}`}
+                  type="button"
+                  onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
+                  className="min-h-11 rounded-[9px] px-3 py-2 text-left text-[13px] leading-relaxed text-token-secondary"
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+                  <span className="mr-2 font-mono text-[10px] text-token-muted">{segment.start >= 0 ? formatQuestionTime(segment.start) : '原文'}</span>
+                  {segment.speaker && <span className="mr-2 font-semibold text-token-primary">{segment.speaker}</span>}
+                  {segment.text}
+                </button>
+              ))}
+            </div>
           )}
+          {keyword && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
         </section>
       )}
 
       {documentMode && (
-        <section className="w-full max-w-[760px] rounded-[14px] p-4" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
+        <section className="order-4 w-full max-w-[760px] rounded-[16px] p-4" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-[13px] font-semibold text-token-primary">录音理解</p>
-              <p className="mt-1 text-[11px] text-token-muted">检索整场原文、管理说话人，并从命中位置继续播放</p>
+              <p className="mt-1 text-[11px] text-token-muted">分析主题、管理说话人，并根据原文回答问题</p>
             </div>
             <button type="button" onClick={() => setQaOpen(value => !value)} className="flex min-h-11 items-center gap-1.5 rounded-[9px] px-3 text-[12px] font-semibold" style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)', border: '1px solid var(--selection-border)' }}>
                 <MessageSquareText size={14} /> 问这场录音
@@ -395,7 +451,7 @@ export function TranscriptKaraoke({
                 </div>
               </div>
               {asking && !answer && <p className="mt-3 animate-pulse text-[12px] text-token-muted motion-reduce:animate-none">正在读取原文并核对时间轴</p>}
-              {qaError && <p className="mt-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
+              {qaError && <p className="mt-3 text-[12px]" style={{ color: 'var(--semantic-danger-text)' }}>{qaError}</p>}
               {answer && (
                 <div className="mt-3 whitespace-pre-wrap rounded-[9px] p-3 text-[12px] leading-relaxed text-token-secondary" style={{ background: 'var(--bg-nested)' }} aria-live="polite">
                   {parseRecordingAnswerParts(answer).map((part, index) => part.kind === 'text' ? (
@@ -407,36 +463,6 @@ export function TranscriptKaraoke({
               )}
             </div>
           )}
-
-          <label className="mt-3 flex min-h-11 items-center gap-2 rounded-[10px] px-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
-            <Search size={14} className="shrink-0 text-token-muted" />
-            <input
-              value={keyword}
-              onChange={event => setKeyword(event.target.value)}
-              placeholder="搜索录音里的关键词"
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-token-primary outline-none"
-              aria-label="搜索录音里的关键词"
-            />
-            {keyword && <span className="text-[11px] tabular-nums text-token-muted">{searchMatches.length} 处</span>}
-          </label>
-
-          {keyword && searchMatches.length > 0 && (
-            <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto">
-              {searchMatches.map(({ segment, index }) => (
-                <button
-                  key={`${index}-${segment.start}`}
-                  type="button"
-                  onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
-                  className="min-h-11 rounded-[8px] px-3 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
-                  style={{ background: 'var(--bg-elevated)' }}>
-                  <span className="mr-2 font-mono text-[10px] text-token-muted">{segment.start >= 0 ? `${Math.floor(segment.start / 60)}:${String(Math.floor(segment.start % 60)).padStart(2, '0')}` : '原文'}</span>
-                  {segment.speaker && <span className="mr-2 font-semibold text-token-primary">{segment.speaker}</span>}
-                  {segment.text}
-                </button>
-              ))}
-            </div>
-          )}
-          {keyword && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
 
           {speakers.length > 0 && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -500,9 +526,9 @@ export function TranscriptKaraoke({
                       style={{
                         fontSize: `${Math.round((12 + weight * 7) * 2) / 2}px`,
                         fontWeight: weight >= 0.6 ? 600 : 400,
-                        background: `rgba(168,85,247,${(0.06 + weight * 0.16).toFixed(3)})`,
+                        background: `rgba(59,130,246,${(0.06 + weight * 0.16).toFixed(3)})`,
                         color: weight >= 0.45 ? 'var(--text-primary)' : 'var(--text-secondary)',
-                        border: `1px solid rgba(168,85,247,${(0.12 + weight * 0.26).toFixed(3)})`,
+                        border: `1px solid rgba(59,130,246,${(0.12 + weight * 0.26).toFixed(3)})`,
                       }}
                       title={`出现 ${count} 次，点击检索`}
                     >
@@ -571,8 +597,12 @@ export function TranscriptKaraoke({
       )}
 
       {documentMode && (
-        <div className="mt-2 w-full max-w-[760px]">
-          <p className="text-[12px] font-semibold text-token-muted">转录原文</p>
+        <div className="order-2 mt-1 flex w-full max-w-[760px] items-end justify-between gap-3 px-1">
+          <div>
+            <p className="text-[14px] font-semibold text-token-primary">转录原文</p>
+            <p className="mt-1 text-[11px] text-token-muted">播放时当前句同步高亮，点击任意句可直接校对</p>
+          </div>
+          <span className="shrink-0 text-[11px] tabular-nums text-token-muted">{timelineSegments.length} 句</span>
         </div>
       )}
       {/* 歌词滚轮：普通模式为上下渐隐滚轮；同一文档模式随外层页面自然展开。 */}
@@ -580,7 +610,7 @@ export function TranscriptKaraoke({
         ref={listRef}
         onWheel={markManualScroll}
         onTouchMove={markManualScroll}
-        className={documentMode ? 'w-full max-w-[760px]' : 'w-[480px] max-w-[92%] overflow-y-auto'}
+        className={documentMode ? 'order-3 w-full max-w-[760px]' : 'order-3 w-[480px] max-w-[92%] overflow-y-auto'}
         style={{
           height: !documentMode && followEnabled ? 240 : 'auto',
           maxHeight: documentMode ? undefined : followEnabled ? 240 : 320,
@@ -595,11 +625,10 @@ export function TranscriptKaraoke({
       >
         {/* 首末句也能滚到中心：上下各留半屏 padding */}
         <div
-          className="flex flex-col items-center gap-1"
+          className="flex flex-col items-center gap-1.5"
           style={!documentMode && followEnabled ? { padding: '104px 8px' } : { padding: '4px 0' }}>
           {timelineSegments.map((s, i) => {
             const active = followEnabled && i === displayActiveIdx;
-            const dist = Math.abs(i - displayActiveIdx);
             if (documentMode && editingIndex === i && onSaveNote) {
               return (
                 <div key={i} className="w-full rounded-[10px] p-2" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
@@ -647,17 +676,17 @@ export function TranscriptKaraoke({
                   }
                   if (followEnabled && s.start >= 0) seekRef.current?.(s.start);
                 }}
-                className={`min-h-11 w-full overflow-hidden rounded-[10px] px-3 py-2 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
+                className={`min-h-11 w-full overflow-hidden rounded-[11px] px-3 py-2.5 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
                 style={{
-                  fontSize: active ? 15 : 13,
+                  fontSize: documentMode ? 16 : active ? 15 : 13,
                   fontWeight: active ? 600 : 400,
                   color: active
                     ? 'var(--text-primary)'
                     : followEnabled
-                      ? `rgba(148,163,184,${Math.max(0.35, 0.8 - dist * 0.15)})`
+                      ? 'var(--text-secondary)'
                       : 'var(--text-secondary)',
-                  background: active ? 'rgba(168,85,247,0.10)' : 'transparent',
-                  border: active ? '1px solid rgba(168,85,247,0.18)' : '1px solid transparent',
+                  background: active ? 'var(--selection-bg)' : 'transparent',
+                  border: active ? '1px solid var(--selection-border)' : '1px solid transparent',
                 }}
                 title={documentMode && onSaveNote ? '点击修改这句原文' : followEnabled && s.start >= 0 ? '点击跳到这一句' : undefined}
               >
@@ -670,7 +699,7 @@ export function TranscriptKaraoke({
       </div>
 
       {estimated && (
-        <p className="text-[11px] text-token-muted">
+        <p className="order-5 text-[11px] text-token-muted">
           当前跟随位置按语速智能估算，不会重复转录；
           {documentMode && onSaveNote ? '可直接播放或点击句子校对' : '可直接播放或点句跳转'}
         </p>

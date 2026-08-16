@@ -930,9 +930,11 @@ export function RecordAudioSheet({
   ) : (
     <div
       aria-live="polite"
-      className="mx-auto flex min-h-full w-full max-w-[560px] flex-col items-center justify-center gap-5 py-8 text-center">
+      className="mx-auto flex min-h-full w-full max-w-[390px] flex-col items-center justify-start gap-4 py-4 text-center">
+      {destinationPicker}
+
       {/* 状态行：录音中红点脉冲 / 已暂停 */}
-      <div className="flex items-center gap-2 text-[12px] font-semibold">
+      <div className="flex min-h-8 items-center gap-2 rounded-full px-3 text-[12px] font-semibold" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
         {state === 'requesting' ? (
           <><MapSpinner size={12} /><span className="text-token-muted">正在请求麦克风权限…</span></>
         ) : state === 'paused' ? (
@@ -950,10 +952,8 @@ export function RecordAudioSheet({
         )}
       </div>
 
-      {destinationPicker}
-
       {/* 计时大字 */}
-      <p className="text-[40px] font-semibold tabular-nums leading-none text-token-primary">
+      <p className="text-[56px] font-semibold tabular-nums leading-none tracking-[-0.04em] text-token-primary" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
         {formatElapsed(elapsed)}
       </p>
 
@@ -980,7 +980,7 @@ export function RecordAudioSheet({
       </div>
 
       <div
-        className="w-full rounded-[14px] px-4 py-3 text-left"
+        className="w-full rounded-[16px] px-4 py-3 text-left"
         style={{
           background: liveTranscriptState === 'degraded'
             ? 'rgba(245,158,11,0.08)'
@@ -1010,9 +1010,9 @@ export function RecordAudioSheet({
           id="recording-live-transcript"
           data-testid="recording-live-transcript"
           ref={liveTranscriptScrollRef}
-          className="mt-2 min-h-10 whitespace-pre-wrap break-words pr-1 text-[13px] leading-6 text-token-secondary"
+          className="mt-2 min-h-10 whitespace-pre-wrap break-words pr-1 text-[16px] leading-7 text-token-secondary"
           style={{
-            maxHeight: liveTranscriptExpanded ? 'min(34dvh, 280px)' : 120,
+            maxHeight: liveTranscriptExpanded ? 'min(28dvh, 220px)' : 112,
             overflowY: 'auto',
             overscrollBehavior: 'contain',
           }}>
@@ -1027,9 +1027,9 @@ export function RecordAudioSheet({
       {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}
       <div
         data-testid="recording-waveform"
-        className="w-full rounded-[16px] px-3 py-4"
+        className="w-full rounded-[16px] px-3 py-3"
         style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-        <canvas ref={canvasRef} width={560} height={64} className="w-full" style={{ height: 64 }} />
+        <canvas ref={canvasRef} width={560} height={56} className="w-full" style={{ height: 56 }} />
       </div>
 
       {/* 静音确认：整段峰值电平过低 → 上传前拦一道 */}
@@ -1051,29 +1051,36 @@ export function RecordAudioSheet({
       )}
 
       {/* 控制区：暂停/继续 + 完成 */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={togglePause}
-          disabled={state === 'requesting'}
-          aria-label={state === 'paused' ? '继续录音' : '暂停录音'}
-          className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full transition-colors disabled:opacity-40"
-          style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
-          {state === 'paused' ? <Play size={18} /> : <Pause size={18} />}
-        </button>
-        <button
-          onClick={requestComplete}
-          data-testid="recording-finish"
-          disabled={state === 'requesting'}
-          aria-label="结束录音并转成文字"
-          className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
-          style={{
-            background: 'rgba(34,197,94,0.95)',
-            color: '#fff',
-            border: '1px solid rgba(134,239,172,0.45)',
-          }}>
-          <Square size={20} fill="currentColor" />
-        </button>
-        <span className="w-12" />
+      <div
+        className="sticky bottom-0 z-10 flex w-full items-start justify-center gap-8 rounded-[18px] py-2 backdrop-blur-xl"
+        style={{ background: 'color-mix(in srgb, var(--bg-primary) 92%, transparent)' }}>
+        <div className="flex w-16 flex-col items-center gap-1.5">
+          <button
+            onClick={togglePause}
+            disabled={state === 'requesting'}
+            aria-label={state === 'paused' ? '继续录音' : '暂停录音'}
+            className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full transition-colors disabled:opacity-40"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border-faint)' }}>
+            {state === 'paused' ? <Play size={18} /> : <Pause size={18} />}
+          </button>
+          <span className="text-[11px] text-token-muted">{state === 'paused' ? '继续' : '暂停'}</span>
+        </div>
+        <div className="flex w-20 flex-col items-center gap-1.5">
+          <button
+            onClick={requestComplete}
+            data-testid="recording-finish"
+            disabled={state === 'requesting'}
+            aria-label="结束录音并转成文字"
+            className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
+            style={{
+              background: 'var(--semantic-danger-text)',
+              color: 'var(--bg-primary)',
+              border: '4px solid var(--semantic-danger-soft)',
+            }}>
+            <Square size={20} fill="currentColor" />
+          </button>
+          <span className="text-[11px] font-semibold text-token-secondary">结束录音</span>
+        </div>
       </div>
       <p className="text-[11px] text-token-muted">
         结束后先生成可编辑原文，是否整理由你决定
@@ -1096,7 +1103,11 @@ export function RecordAudioSheet({
           maxHeight: '100dvh',
           paddingBottom: 'env(safe-area-inset-bottom)',
           background: 'var(--bg-primary)',
-        } : undefined}
+        } : {
+          height: '100dvh',
+          maxHeight: '100dvh',
+          background: 'var(--bg-primary)',
+        }}
         initial={isMobile ? { y: '100%' } : { x: '100%' }}
         animate={isMobile ? { y: 0 } : { x: 0 }}
         exit={isMobile ? { y: '100%' } : { x: '100%' }}
@@ -1109,8 +1120,8 @@ export function RecordAudioSheet({
                 <Mic size={15} />
               </div>
               <div>
-                <p className="text-[14px] font-semibold text-token-primary">快捷录音</p>
-                <p className="text-[11px] text-token-muted">录完先生成可编辑原文</p>
+                <p className="text-[14px] font-semibold text-token-primary">录音转笔记</p>
+                <p className="text-[11px] text-token-muted">录音、保存与转写都在当前页面完成</p>
               </div>
             </div>
             <button

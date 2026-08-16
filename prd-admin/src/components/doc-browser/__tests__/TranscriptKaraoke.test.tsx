@@ -24,8 +24,12 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(html).toContain('精准时间轴，播放时逐句高亮');
     expect(html).toContain('播放台词');
     expect(html).toContain('播放后逐句跟随');
+    expect(html).toContain('data-testid="recording-sticky-playback"');
     expect(html).toContain('data-testid="recording-karaoke-active-cue"');
     expect(html.indexOf('播放台词')).toBeLessThan(html.indexOf('录音理解'));
+    expect(html).toContain('class="order-1 w-full max-w-[760px]');
+    expect(html).toContain('class="order-2 mt-1 flex w-full max-w-[760px]');
+    expect(html).toContain('class="order-4 w-full max-w-[760px]');
     expect(html).not.toContain('普通播放');
     expect(html).not.toContain('交互式播放');
     expect(html.match(/title="播放"/g)).toHaveLength(1);
