@@ -674,8 +674,11 @@ export function ReleaseConsolePage(): JSX.Element {
                   {/* 名字那一行右边挂标记：标记全部从真实字段推出来（见 lib/projectTags.ts），
                       零维护。作用是让这一栏一眼读成「这是一个项目，它现在什么状态」，
                       而不是一串看不出是什么的名字。 */}
+                  {/* 标记紧跟名字，不靠右对齐：贴着名字才读得出「这是这个项目的标签」，
+                      甩到卡片最右边就变成另一列状态了。名字 min-w-0 truncate 负责让长名字
+                      自己截断，标记 shrink-0 永远贴在它后面。 */}
                   <span className="flex w-full min-w-0 items-center gap-1.5">
-                    <span className={`min-w-0 flex-1 truncate text-[13px] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
+                    <span className={`min-w-0 truncate text-[13px] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
                       {item.name || item.id}
                     </span>
                     <ProjectTagMarks project={item} />

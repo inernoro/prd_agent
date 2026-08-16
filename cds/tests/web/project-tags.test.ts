@@ -141,8 +141,10 @@ describe('接线与配色', () => {
     // 承载它俩的那层是横向 flex（竖排就又变成「下面一行」了）
     const wrapperStart = PAGE.lastIndexOf('<span className="flex w-full min-w-0 items-center gap-1.5">', PAGE.indexOf('{item.name || item.id}'));
     expect(wrapperStart).toBeGreaterThan(0);
-    // 名字可截断、标记不参与压缩，长名字不会把标记挤没
-    expect(PAGE).toContain('min-w-0 flex-1 truncate text-[13px] font-medium');
+    // 名字可截断、标记不参与压缩，长名字不会把标记挤没；
+    // 名字**不带 flex-1**——带了就会把标记顶到卡片最右边，那是另一列状态，不是名字的标签
+    expect(PAGE).toContain('min-w-0 truncate text-[13px] font-medium');
+    expect(PAGE).not.toContain('min-w-0 flex-1 truncate text-[13px] font-medium');
     expect(PAGE).toContain('flex shrink-0 items-center gap-1');
   });
 
