@@ -86,8 +86,16 @@
     0 6px 20px -8px rgba(99, 102, 241, 0.5),
     0 0 0 1px rgba(99, 102, 241, 0.15) inset;
 }
+/*
+ * 与 .pa-toolbar-btn[data-active] 同一形状（共享规则里浅色前景压同色调淡底）：
+ * #c7d2fe 压 22% 靛底，默认/gemini 是浅底档 → 1.04:1。基础规则给深靛，山蓝那档留浅靛。
+ * 基础规则带 !important，覆盖也必须带，否则选择器再具体也压不过。
+ */
 .pa-quick-cmd:hover > span:first-child {
   background: rgba(99, 102, 241, 0.22) !important;
+  color: #4338ca !important;
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-quick-cmd:hover > span:first-child {
   color: #c7d2fe !important;
 }
 .pa-quick-cmd:active {
@@ -124,10 +132,14 @@
 .pa-task-action-danger {
   transition: transform 180ms var(--pa-ease-spring), background-color 180ms var(--pa-ease-emphasized), color 180ms;
 }
+/* 同上：#f87171 压 13% 红底，浅底档 2.13:1 → 深红 5.00:1，山蓝留 400 档 */
 .pa-task-action-danger:hover {
   background-color: rgba(239, 68, 68, 0.13) !important;
-  color: #f87171 !important;
+  color: #b91c1c !important;
   transform: scale(1.1);
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-task-action-danger:hover {
+  color: #f87171 !important;
 }
 
 /* =======================================================================
@@ -1028,8 +1040,12 @@
 }
 
 /* 快捷指令图标底色 */
+/* 同上：#67e8f9 压 12% 蓝底，浅底档 1.12:1 → 深青 5.62:1，山蓝留 300 档 */
 .pa-quick-cmd-icon {
   background: rgba(37, 99, 235, 0.12);
+  color: #155e75;
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-quick-cmd-icon {
   color: #67e8f9;
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-quick-cmd-icon {
@@ -1046,11 +1062,19 @@
     border-color 200ms var(--pa-ease-emphasized),
     transform 180ms var(--pa-ease-spring);
 }
+/*
+ * 与上面 .pa-toolbar-btn[data-active] 完全同一个形状：共享规则里浅蓝压 10% 蓝调淡底，
+ * 默认/gemini 是浅底档 → 约 1.5:1。修法照抄：基础规则给深蓝，山蓝那档单独留浅蓝。
+ * 上一轮只修了工具条那一处，同文件二十行外的这处原样留着 —— 同形状要一次扫干净。
+ */
 .pa-learn-more:hover {
   background: rgba(37, 99, 235, 0.1);
-  color: #93c5fd;
+  color: #1d4ed8;
   border-color: rgba(56, 189, 248, 0.5);
   transform: translateY(-1px);
+}
+.pa-agent-root[data-pa-theme="mountain"] .pa-learn-more:hover {
+  color: #93c5fd;
 }
 .pa-agent-root[data-pa-theme="parchment"] .pa-learn-more {
   border-color: rgba(74, 124, 111, 0.28);

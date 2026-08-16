@@ -33,19 +33,68 @@ export const AUDIT_FN = () => {
     return onBlack.join() === '0,0,0' && onWhite.join() === '255,255,255';
   };
 
-  /** 自底向上收集背景层，再由下往上依次合成 —— 半透明叠半透明也算得准。 */
+  /**
+   * 自底向上收集背景层，再由下往上依次合成 —— 半透明叠半透明也算得准。
+   *
+   * **opacity 作用在整组上，不只作用在字上。**
+   * 原来的写法把每层背景都当成不透明的照合，只在最后拿累计 opacity 去衰减前景。
+   * 但 CSS 的 opacity 是把「这个元素连同它的背景和后代」整组画到一个缓冲区，
+   * 再整组按 o 混到它背后的画面上 —— 背景同样会被冲淡。
+   * 于是「半透明的深色卡 + 浅色字」会被算高：
+   *   白页上 opacity:.5 的黑底白字，真实是 白字 255 压 灰底 127 → 4.0:1，
+   *   而旧算法给的是 灰字 127 压 黑底 0 → 5.25:1，一处真缺陷就此判达标
+   *   （Codex 在 PR #1374 第三十一轮抓到）。
+   *
+   * 现在按「组」算：找到最外层那个带 opacity 的祖先，它之外的背景合成为 backdrop
+   * （不打折），它之内的背景照常合成为 groupBg，最后整组按 o 混回 backdrop。
+   * 前景走同一条链（`paint`），保证字和底用的是同一套口径。
+   *
+   * 已知边界：多层 opacity 嵌套时取各层乘积，与浏览器「逐层成组再混」在
+   * 半透明背景叠半透明组的极端组合下有小数级偏差；本仓库未见两层以上嵌套。
+   */
   const effectiveBg = (el) => {
-    const layers = [];
+    const chain = [];
     let node = el, needsEye = false;
     while (node && node.nodeType === 1) {
       const cs = getComputedStyle(node);
       if (cs.backgroundImage && cs.backgroundImage !== 'none') needsEye = true;
-      if (!isTransparent(cs.backgroundColor)) layers.push(cs.backgroundColor);
+      const o = parseFloat(cs.opacity);
+      chain.push({
+        bg: isTransparent(cs.backgroundColor) ? null : cs.backgroundColor,
+        o: Number.isNaN(o) ? 1 : o,
+      });
       node = node.parentElement;
     }
-    let bg = [255, 255, 255];
-    for (let i = layers.length - 1; i >= 0; i -= 1) bg = compose(layers[i], bg) || bg;
-    return { bg, needsEye };
+    const fade = (color, o, backdrop) =>
+      [0, 1, 2].map((i) => Math.round(color[i] * o + backdrop[i] * (1 - o)));
+
+    // 最外层那个带 opacity 的祖先：从它开始往里，背景与字属于同一个组，一起被冲淡
+    let outermost = -1;
+    for (let i = chain.length - 1; i >= 0; i -= 1) if (chain[i].o < 0.999) { outermost = i; break; }
+
+    // 组外的底：只合成该祖先**之外**的背景层，这部分不受组 opacity 影响
+    let backdrop = [255, 255, 255];
+    for (let i = chain.length - 1; i > outermost; i -= 1) {
+      if (chain[i].bg) backdrop = compose(chain[i].bg, backdrop) || backdrop;
+    }
+    // 组内的底：组内背景层照常合成（组内互相之间不打折）
+    let groupBg = backdrop;
+    for (let i = outermost; i >= 0; i -= 1) {
+      if (chain[i].bg) groupBg = compose(chain[i].bg, groupBg) || groupBg;
+    }
+    // 组的整体不透明度 = 链上各层 opacity 之积
+    let o = 1;
+    for (let i = 0; i <= outermost; i += 1) o *= chain[i].o;
+
+    const bg = outermost < 0 ? groupBg : fade(groupBg, o, backdrop);
+
+    /** 把前景色按同一条链画出来，得到浏览器实际画在屏幕上的那个颜色。 */
+    const paint = (color) => {
+      const c = compose(color, groupBg);
+      if (!c) return null;
+      return outermost < 0 ? c : fade(c, o, backdrop);
+    };
+    return { bg, needsEye, paint, node: el };
   };
 
   /*
@@ -99,14 +148,21 @@ export const AUDIT_FN = () => {
     return o;
   };
 
-  /** 把前景色按累计 opacity 衰减后再合成到底色上，得到浏览器**实际画出来**的那个颜色。 */
-  const composeFg = (color, bg, el) => {
-    const o = cumulativeOpacity(el);
-    if (o >= 0.999) return compose(color, bg);
-    const solid = compose(color, bg);
-    if (!solid) return null;
-    // 整个元素带 opacity 时，等价于把「已合成的前景」再按 o 混回底色
-    return [0, 1, 2].map((i) => Math.round(solid[i] * o + bg[i] * (1 - o)));
+  /**
+   * 把前景色画成浏览器实际画出来的那个颜色。
+   *
+   * 主体交给 `info.paint` —— 它与底色 `info.bg` 走的是**同一条** opacity 链，
+   * 保证字和底一个口径（见 effectiveBg 的说明）。
+   * 只有一种情况要补：SVG 子形状拿父元素的底色算，而子形状自己可能另有 opacity；
+   * 这时按「子相对父」多出来的那一截再衰减一次。
+   */
+  const composeFg = (color, info, el) => {
+    const base = info.paint(color);
+    if (!base) return null;
+    if (!el || el === info.node) return base;
+    const extra = cumulativeOpacity(el) / Math.max(cumulativeOpacity(info.node), 1e-6);
+    if (extra >= 0.999) return base;
+    return [0, 1, 2].map((i) => Math.round(base[i] * extra + info.bg[i] * (1 - extra)));
   };
 
   /*
@@ -183,8 +239,9 @@ export const AUDIT_FN = () => {
       continue;
     }
     if (isTransparent(cs.color)) continue;
-    const { bg, needsEye } = effectiveBg(el);
-    const composed = composeFg(cs.color, bg, el);
+    const info = effectiveBg(el);
+    const { bg, needsEye } = info;
+    const composed = composeFg(cs.color, info, el);
     if (!composed) continue;
     const c = contrast(composed, bg);
     /*
@@ -255,8 +312,9 @@ export const AUDIT_FN = () => {
     const isPh = !hasValue;
     const fg = isPh ? getComputedStyle(el, '::placeholder').color : cs.color;
     if (!fg || isTransparent(fg)) continue;
-    const { bg, needsEye } = effectiveBg(el);
-    const composed = composeFg(fg, bg, el);
+    const info = effectiveBg(el);
+    const { bg, needsEye } = info;
+    const composed = composeFg(fg, info, el);
     if (!composed) continue;
     const c = contrast(composed, bg);
     const size = parseFloat(cs.fontSize);
@@ -292,7 +350,8 @@ export const AUDIT_FN = () => {
       && (cs.fill === 'rgb(0, 0, 0)' || cs.fill === 'none')
       && el.querySelector('[fill],[stroke],stop');
     if (rootPaintUseless) {
-      const { bg: sbg, needsEye: sEye } = effectiveBg(el.parentElement || el);
+      const sInfo = effectiveBg(el.parentElement || el);
+      const { bg: sbg, needsEye: sEye } = sInfo;
       for (const kid of el.querySelectorAll('path,circle,rect,polygon,polyline,ellipse,line')) {
         const ks = getComputedStyle(kid);
         /*
@@ -338,7 +397,7 @@ export const AUDIT_FN = () => {
          */
         const kAlphaOnly = kRaw.match(/^rgba?\([^)]*,\s*([\d.]+)\s*\)$/);
         if (kAlphaOnly && parseFloat(kAlphaOnly[1]) < 0.25) continue;
-        const kComposed = composeFg(kRaw, sbg, kid);
+        const kComposed = composeFg(kRaw, sInfo, kid);
         if (!kComposed) continue;
         const kc = contrast(kComposed, sbg);
         if (kc >= 3 && !sEye) continue;
@@ -357,8 +416,9 @@ export const AUDIT_FN = () => {
       continue;
     }
     if (isTransparent(raw) || isPlatformOverlay(el)) continue;
-    const { bg, needsEye } = effectiveBg(el.parentElement || el);
-    const composed = composeFg(raw, bg, el);
+    const pInfo = effectiveBg(el.parentElement || el);
+    const { bg, needsEye } = pInfo;
+    const composed = composeFg(raw, pInfo, el);
     if (!composed) continue;
     const c = contrast(composed, bg);
     if (c >= 3 && !needsEye) continue;   // 同文字分支：渐变底上的「达标」是近似值，留给重采样定夺

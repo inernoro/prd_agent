@@ -122,3 +122,11 @@
 | fix | e2e | 修 Codex 第三十轮 P1：聚合键是 `theme:route`，加了视口维度后同一处缺陷在 desktop 与 mobile 各命中一次却被折成一个，routeCount 系统性偏低——而我给用户的缺陷优先级排序正是按这个数排的。键补上视口 |
 | fix | e2e | 修 Codex 第三十轮 P1：needsEye 候选在像素采样**之前**就按「前景色+底色+标签」去重，而这类候选的底色恰恰是推不出来的 fallback 值，一列同构卡片压在不同渐变上时第一张达标就把后面全吞掉。这类候选改为掺 auditId 逐个留到采样后再定夺 |
 | fix | e2e | 修 Codex 第三十轮 P2：路由核对只比 pathname，应用若忽略/重写 query 而渲染默认 tab，`/open-platform?tab=open-api` 照样判为已覆盖。改为连请求里写明的 query 一并核对，不符记 skipped |
+| test | prd-admin | 修 Codex 第三十一轮 P2：同色调棘轮的「主题分支豁免」把判据 C（一值两用）整条放走，而一值两用与主题无关——淡底由同一个值拼出来，两层永远同色调。判据 C 取消豁免；三条判据改扫剥注释后的源码（否则「修好并写清原因」的复盘注释自己会把 CI 弄红） |
+| fix | prd-admin | 上条当场挖出的真缺陷一：StatsCardPanel 五张统计卡的 24px 大数字直接用装饰色 card.color（同时被拼成 `${card.color}20` 当边框），浅色档实测 1.62~2.56:1（大字需 3:1）。拆成 color（装饰）+ fgLight/fgDark（前景），九张卡浅色档提到 4.56~5.97:1 |
+| fix | prd-admin | 真缺陷二：HistoryTrendsPanel 状态 chip 的底靠 `${status.color}15` 拼，而 color 是 rgba() 串，拼出来不是合法 CSS，浏览器整条丢弃——chip 从来没有底色。补 tint 字段的同时把两个主题的字色各自提档（浅色草稿 3.28→4.52，暗色四档 2.82~3.15→4.63~7.56） |
+| fix | prd-admin | 真缺陷三：ReportDetailPanel 段落序号徽章白字压 500 档实底，浅色 2.13~3.70、暗色约 3.5（11px 粗体需 4.5）。底统一取 alpha 1，字改走两档同值的 --fg-on-bright-fill，六色 5.00~8.68:1；同段 `${accentColor}30` 的左边框同属非法拼接，一并修 |
+| fix | prd-admin | 真缺陷四：pa-agent 三条共享规则的浅色前景压同色调淡底（quick-cmd hover 1.04、task-action-danger 2.13、quick-cmd-icon 1.12），照第二十八轮的修法——基础规则给深档，山蓝那档单独留浅档 |
+| test | prd-admin | 同色调棘轮给 CSS 文件加「钉死主题作用域」豁免：判据把淡底合成到暖纸页底上算真账，这个前提对 `[data-pa-theme="mountain"]` 这类钉死深色的覆盖不成立。豁免只落到该条声明，基础规则照判。paAgent.css 基线 4 → 0（红绿闭环验过） |
+| chore | prd-admin | 双皮肤棘轮基线 HistoryTrendsPanel 浅色前景 3→7：新增值全在 buildStatusLabels 的暗色分支里，属规则允许的暗色专用例外 |
+| fix | e2e | 修 Codex 第三十一轮 P1：opacity 作用在整组上，而判据只拿它衰减前景、背景仍按不透明合成。白页上 opacity:.5 的黑底白字，真实是白字压 rgb(128) 的 3.95:1，旧算法给 5.32:1 判达标。改为按「组」算：组外底不打折、组内底照常合成、整组再按 opacity 混回去，前景走同一条链（合成页验过，审计输出的底色与屏幕像素一致） |

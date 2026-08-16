@@ -23,7 +23,15 @@ interface CardDef {
   key: string;
   label: string;
   icon: React.ElementType;
+  /**
+   * 装饰色：顶部色条与边框用。两个主题同值，因为它压根不承担可读性。
+   * **不要拿它当字色** —— 它同时被拼成 `${color}20` 当边框，一值两用时
+   * 淡底与字必然同色调，浅色档实测只有 1.62~2.56:1（Codex 在第三十一轮抓到）。
+   */
   color: string;
+  /** 大数字的前景，按主题分档：浅色走 700/800，暗色沿用 500 档 */
+  fgLight: string;
+  fgDark: string;
   getValue: (a: CollectedActivity) => number;
   getDetail?: (a: CollectedActivity) => string | null;
   /** true = 始终显示（系统内数据）; false = 有数据时才显示 */
@@ -37,6 +45,8 @@ const CARD_DEFS: CardDef[] = [
     label: '代码提交',
     icon: GitCommitHorizontal,
     color: 'rgba(59, 130, 246, 0.85)',
+    fgLight: 'rgba(29, 78, 216, 1)',
+    fgDark: 'rgba(59, 130, 246, 0.85)',
     getValue: (a) => a.commits?.length ?? 0,
     getDetail: (a) => {
       if (!a.commits?.length) return null;
@@ -52,6 +62,8 @@ const CARD_DEFS: CardDef[] = [
     label: '缺陷处理',
     icon: Bug,
     color: 'rgba(239, 68, 68, 0.85)',
+    fgLight: 'rgba(185, 28, 28, 1)',
+    fgDark: 'rgba(239, 68, 68, 0.85)',
     getValue: (a) => a.defectsSubmitted ?? 0,
     getDetail: (a) => {
       if (!a.defectDetails) return null;
@@ -68,6 +80,8 @@ const CARD_DEFS: CardDef[] = [
     label: '协作交流',
     icon: MessageSquare,
     color: 'rgba(34, 197, 94, 0.85)',
+    fgLight: 'rgba(22, 101, 52, 1)',
+    fgDark: 'rgba(34, 197, 94, 0.85)',
     getValue: (a) => (a.prdSessions ?? 0) + (a.prdMessageCount ?? 0),
     getDetail: (a) => {
       const parts: string[] = [];
@@ -83,6 +97,8 @@ const CARD_DEFS: CardDef[] = [
     label: '文档协作',
     icon: FileText,
     color: 'rgba(168, 85, 247, 0.85)',
+    fgLight: 'rgba(126, 34, 206, 1)',
+    fgDark: 'rgba(168, 85, 247, 0.85)',
     getValue: (a) => (a.documentEditCount ?? 0) + (a.attachmentUploadCount ?? 0),
     getDetail: (a) => {
       const parts: string[] = [];
@@ -98,6 +114,8 @@ const CARD_DEFS: CardDef[] = [
     label: 'AI 工具',
     icon: Brain,
     color: 'rgba(249, 115, 22, 0.85)',
+    fgLight: 'rgba(154, 52, 18, 1)',
+    fgDark: 'rgba(249, 115, 22, 0.85)',
     getValue: (a) => (a.llmCalls ?? 0) + (a.toolboxRunCount ?? 0),
     getDetail: (a) => {
       const parts: string[] = [];
@@ -113,6 +131,8 @@ const CARD_DEFS: CardDef[] = [
     label: '视觉创作',
     icon: Image,
     color: 'rgba(236, 72, 153, 0.85)',
+    fgLight: 'rgba(190, 24, 93, 1)',
+    fgDark: 'rgba(236, 72, 153, 0.85)',
     getValue: (a) => (a.visualSessions ?? 0) + (a.imageGenCompletedCount ?? 0),
     getDetail: (a) => {
       const parts: string[] = [];
@@ -128,6 +148,8 @@ const CARD_DEFS: CardDef[] = [
     label: '视频生成',
     icon: Video,
     color: 'rgba(20, 184, 166, 0.85)',
+    fgLight: 'rgba(17, 94, 89, 1)',
+    fgDark: 'rgba(20, 184, 166, 0.85)',
     getValue: (a) => a.videoGenCompletedCount ?? 0,
     alwaysShow: false,
     group: 'creative',
@@ -137,6 +159,8 @@ const CARD_DEFS: CardDef[] = [
     label: '自动化',
     icon: Workflow,
     color: 'rgba(99, 102, 241, 0.85)',
+    fgLight: 'rgba(67, 56, 202, 1)',
+    fgDark: 'rgba(99, 102, 241, 0.85)',
     getValue: (a) => a.workflowExecutionCount ?? 0,
     alwaysShow: false,
     group: 'ai',
@@ -146,6 +170,8 @@ const CARD_DEFS: CardDef[] = [
     label: '网页发布',
     icon: Globe,
     color: 'rgba(14, 165, 233, 0.85)',
+    fgLight: 'rgba(7, 89, 133, 1)',
+    fgDark: 'rgba(14, 165, 233, 0.85)',
     getValue: (a) => a.webPagePublishCount ?? 0,
     alwaysShow: false,
     group: 'collab',
@@ -262,7 +288,7 @@ export function StatsCardPanel({ weekYear, weekNumber, showEnhanceGuide, onGuide
                   <div
                     className="text-[24px] font-bold leading-tight"
                     style={{
-                      color: card.color,
+                      color: isLight ? card.fgLight : card.fgDark,
                       fontFamily: isLight ? 'var(--font-serif)' : undefined,
                       letterSpacing: isLight ? '-0.02em' : undefined,
                     }}
@@ -275,7 +301,7 @@ export function StatsCardPanel({ weekYear, weekNumber, showEnhanceGuide, onGuide
                     </div>
                   )}
                 </div>
-                <Icon size={16} style={{ color: card.color, opacity: 0.5 }} />
+                <Icon size={16} style={{ color: isLight ? card.fgLight : card.fgDark, opacity: 0.5 }} />
               </div>
             </div>
           );

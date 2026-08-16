@@ -46,7 +46,6 @@
   "/pages/pa-agent/PaProfilePanel.tsx": 4,
   "/pages/pa-agent/PaReviewDrawer.tsx": 4,
   "/pages/pa-agent/PaTaskBoard.tsx": 1,
-  "/pages/pa-agent/paAgent.css": 4,
   "/pages/pm-agent/CreateProjectDialog.tsx": 1,
   "/pages/pm-agent/DashboardView.tsx": 6,
   "/pages/pm-agent/DecisionsPanel.tsx": 1,
@@ -84,7 +83,6 @@
   "/pages/shortcuts-agent/ShortcutsPage.tsx": 2,
   "/pages/task-tree/taskTree.css": 5,
   "/pages/team-activity/ExperienceBoard.tsx": 2,
-  "/pages/weekly-poster/PosterDesignerPage.tsx": 1,
   "/pages/workflow-agent/committeeMonthlyHtmlTemplate.ts": 7,
   "/pages/workflow-agent/tapdHtmlTemplate.ts": 18,
   "/stores/agentSwitcherStore.ts": 4

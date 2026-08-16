@@ -1971,7 +1971,7 @@
     "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 7
   },
   "/pages/report-agent/components/MarkdownImportModal.tsx": {
     "whiteAlpha": 0,

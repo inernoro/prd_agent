@@ -143,12 +143,42 @@ function contrastOnTint(fg: number[], tint: number[] | null): number | null {
   return tint ? ratio(fg, tint) : null;
 }
 
+/**
+ * 取 CSS 里某个声明所在规则的选择器（从该位置往回找最近的 `{`，再往回找上一条规则的边界）。
+ *
+ * 用途见下面的 `pinnedThemeScope`：判据把淡底合成到**暖纸页底**上算真账，
+ * 而这个前提只对「跟随全局主题」的规则成立。写在 `[data-pa-theme="mountain"]`
+ * 这类**钉死某一档主题**的选择器下的声明，底根本不是暖纸，合出来的比值是假的。
+ */
+function selectorAt(text: string, index: number): string {
+  const open = text.lastIndexOf('{', index);
+  if (open < 0) return '';
+  const prev = Math.max(text.lastIndexOf('}', open), text.lastIndexOf(';', open), text.lastIndexOf('*/', open));
+  return text.slice(prev + 1, open);
+}
+
+/**
+ * 该声明是否写在「钉死主题」的作用域里。
+ *
+ * 只认属性选择器形态的主题钉死（`[data-theme=` / `[data-pa-theme=` / 任何
+ * `[data-*-theme=`）与暗岛类 `.surface-tone-dark`。**基础规则一律照判**，
+ * 豁免只落到这一条覆盖声明上 —— 这正是「豁免要窄到具体声明、不能整份文件放过」
+ * 的要求（Codex 在 PR #1374 第七/二十二/三十一轮反复指同一件事）。
+ *
+ * 已知边界：按浅色档命名的覆盖（若将来出现）也会被一并豁免。目前仓库里
+ * 钉死档全是深色（pa-agent 的 mountain、纸面页的 surface-tone-dark），暂不区分。
+ */
+function pinnedThemeScope(sel: string): boolean {
+  return /\[data-(?:[a-z-]+-)?theme\s*=|\.surface-tone-dark/.test(sel);
+}
+
 /** 判据 A：同一色相，既当高不透明前景、又当低不透明背景，且在浅色档下够不到 4.5:1。 */
-function findInlineViolations(text: string): { rgb: string; fgA: number; bgA: number; near: number }[] {
+function findInlineViolations(text: string, isCss = false): { rgb: string; fgA: number; bgA: number; near: number }[] {
   const { fg, bg } = collect(text);
   const hits: { rgb: string; fgA: number; bgA: number; near: number }[] = [];
   for (const f of fg) {
     if (f.alpha < 0.7) continue;
+    if (isCss && pinnedThemeScope(selectorAt(text, f.index))) continue;
     const ch = f.rgb.split(',').map(Number);
     // 无彩色（白/灰/slate，通道极差 < 40）不属于本判据：那是「白透明前景」另一类，
     // 归 themeHardcodeRatchet 管。混进来会让两条棘轮互相打架、数字也不再有意义。
@@ -270,10 +300,27 @@ describe('同色调浅底浅字棘轮（浅色主题最高频缺陷）', () => {
         const [r, g, b] = rgb.split(',').map(Number);
         return relLum([r, g, b]) >= 0.30;
       };
-      const a = findInlineViolations(text)
+      /*
+       * 三条判据一律扫 codeOnly（剥掉注释的源码），不扫 text。
+       * 注释里写「原来这里是 `${x}15`」这种复盘说明会被判据当成真代码判红，
+       * 于是「修好缺陷并写清为什么」反而让 CI 红 —— 那会逼后来人删掉说明
+       * 而不是删掉缺陷。branchesOnTheme 早就这么做了，判据本身漏了。
+       */
+      const a = findInlineViolations(codeOnly, rel.endsWith('.css'))
         .filter((h) => !branchesOnTheme || !isLightShadeFg(h.rgb));
-      const b = branchesOnTheme ? [] : findClassViolations(text);
-      const c = branchesOnTheme ? [] : findDualUseViolations(text);
+      // 判据 B 只匹配 50~300 档前景，那正是「暗色档的合法写法」本身，
+      // 与判据 A 的亮度豁免是同一件事，分支文件继续放行。
+      const b = branchesOnTheme ? [] : findClassViolations(codeOnly);
+      /*
+       * 判据 C 不吃主题豁免：一值两用是**与主题无关**的错。
+       * 淡底由同一个值拼出来，两层永远同色调，无论哪个主题都糊 ——
+       * 文件里恰好还有一处 isLight 分支，跟这个值成不成立没有半点关系。
+       * 实测代价：StatsCardPanel 的五张统计卡因此藏了整整一轮 ——
+       * card.color 既拼成 `${card.color}20` 当边框、又直接当 24px 大数字色，
+       * 浅色档实测 1.62~2.56:1（大字需 3:1），而文件里的 isLight 分支
+       * 管的是字体与引导条样式（Codex 在 PR #1374 第三十一轮抓到）。
+       */
+      const c = findDualUseViolations(codeOnly);
       const n = a.length + b.length + c.length;
       if (!n) continue;
       found[rel] = n;
