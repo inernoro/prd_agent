@@ -12,7 +12,7 @@
  *   - 同域音频：播放 OK，有波形（wavesurfer 自动 decode）
  *   - 失败：自动 fallback 浏览器原生 <audio controls>
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Play, Pause } from 'lucide-react';
 
 interface AudioWavePlayerProps {
@@ -86,6 +86,17 @@ export function AudioWavePlayer({
   const [rateIdx, setRateIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  const commitSeek = useCallback((audio: HTMLAudioElement, requestedSec: number) => {
+    if (!Number.isFinite(requestedSec)) return;
+    const maxSec = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : requestedSec;
+    const nextSec = Math.max(0, Math.min(requestedSec, maxSec));
+    audio.currentTime = nextSec;
+    // 浏览器对脚本 seek 的 timeupdate 触发时机并不一致。这里同步播放器与台词状态，
+    // 避免用户点「下一句」后音频已跳转、当前台词仍停在旧句。
+    setCurrentTime(nextSec);
+    onTimeUpdateRef.current?.(nextSec);
+  }, []);
+
   // useEffect 仅依赖 src — 避免回调引用变化导致播放器反复销毁重建
   useEffect(() => {
     setReady(false);
@@ -151,7 +162,7 @@ export function AudioWavePlayer({
 
     // 点歌词跳播：seek 到目标秒；暂停态下自动继续播（音乐 App 心智）
     registerSeekRef.current?.((sec) => {
-      audio.currentTime = sec;
+      commitSeek(audio, sec);
       if (audio.paused) void audio.play().catch(() => setError('当前浏览器无法播放这段录音'));
     });
     audio.load();
@@ -162,7 +173,7 @@ export function AudioWavePlayer({
       audio.load();
       audioRef.current = null;
     };
-  }, [src]);
+  }, [commitSeek, src]);
 
   // 切换倍速时同步到原生播放器
   useEffect(() => {
@@ -212,7 +223,7 @@ export function AudioWavePlayer({
             if (!ready || duration <= 0 || !audioRef.current) return;
             const rect = e.currentTarget.getBoundingClientRect();
             const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-            audioRef.current.currentTime = ratio * duration;
+            commitSeek(audioRef.current, ratio * duration);
           }}
           title={ready && duration > 0 ? '点击跳到对应位置' : undefined}
           role="slider"
