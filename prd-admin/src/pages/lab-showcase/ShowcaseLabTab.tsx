@@ -84,10 +84,10 @@ const CATEGORY_LABELS: Record<EffectCategory, string> = {
 };
 
 const CATEGORY_COLORS: Record<EffectCategory, { bg: string; text: string; border: string }> = {
-  loading: { bg: 'rgba(139, 92, 246, 0.15)', text: 'rgba(139, 92, 246, 0.9)', border: 'rgba(139, 92, 246, 0.25)' },
-  background: { bg: 'rgba(34, 197, 94, 0.15)', text: 'rgba(34, 197, 94, 0.9)', border: 'rgba(34, 197, 94, 0.25)' },
-  button: { bg: 'rgba(251, 146, 60, 0.15)', text: 'rgba(251, 146, 60, 0.9)', border: 'rgba(251, 146, 60, 0.25)' },
-  card: { bg: 'rgba(59, 130, 246, 0.15)', text: 'rgba(59, 130, 246, 0.9)', border: 'rgba(59, 130, 246, 0.25)' },
+  loading: { bg: 'rgba(139, 92, 246, 0.15)', text: 'var(--accent-fg-blue)', border: 'rgba(139, 92, 246, 0.25)' },
+  background: { bg: 'rgba(34, 197, 94, 0.15)', text: 'var(--accent-fg-success)', border: 'rgba(34, 197, 94, 0.25)' },
+  button: { bg: 'rgba(251, 146, 60, 0.15)', text: 'var(--accent-fg-warning)', border: 'rgba(251, 146, 60, 0.25)' },
+  card: { bg: 'rgba(59, 130, 246, 0.15)', text: 'var(--accent-fg-blue)', border: 'rgba(59, 130, 246, 0.25)' },
   other: { bg: 'rgba(156, 163, 175, 0.15)', text: 'rgba(156, 163, 175, 0.9)', border: 'rgba(156, 163, 175, 0.25)' },
 };
 
@@ -187,7 +187,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { frameRate: '60fps (RAF)', renderer: 'Three.js' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#11111f' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#11111f' }}>
         <RainBackground opacity={0.5} rainCount={8000} cloudCount={15} />
       </div>
     ),
@@ -206,7 +206,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '0.5-1s', renderer: 'CSS' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#11111f' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#11111f' }}>
         <CssRainBackground opacity={0.6} rainCount={80} />
       </div>
     ),
@@ -227,7 +227,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { frameRate: '60fps (RAF)', renderer: 'Canvas' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#0d0d11' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#0d0d11' }}>
         <RecursiveGridBackdrop depth={60} speedDegPerSec={1.5} stroke="rgba(255, 105, 180, 0.6)" />
       </div>
     ),
@@ -244,7 +244,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '3-4s', renderer: 'CSS' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#0d0d11' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#0d0d11' }}>
         <ConvergingBeamsBackdrop durationMs={4000} stopAt={0.6} />
       </div>
     ),
@@ -279,7 +279,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { frameRate: '60fps (RAF)', renderer: 'Canvas' },
     render: () => (
-      <div className="relative w-full h-full" style={{ background: '#0a0a0c' }}>
+      <div className="surface-tone-dark relative w-full h-full" style={{ background: '#0a0a0c' }}>
         <ParticleVortex particleCount={300} mouseFollow />
       </div>
     ),
@@ -301,7 +301,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '0.5s', renderer: 'CSS' },
     render: () => (
-      <div className="flex items-center justify-center h-full" style={{ background: '#1a1a2e' }}>
+      <div className="surface-tone-dark flex items-center justify-center h-full" style={{ background: '#1a1a2e' }}>
         <HeartLikeButton size={80} />
       </div>
     ),
@@ -377,7 +377,7 @@ const EFFECT_CONFIGS: EffectConfig[] = [
     ],
     performance: { animationDuration: '1.4s', delay: '50ms × 圆环', renderer: 'CSS' },
     render: (size) => (
-      <div className="flex items-center justify-center h-full p-4" style={{ background: '#0a0a12' }}>
+      <div className="surface-tone-dark flex items-center justify-center h-full p-4" style={{ background: '#0a0a12' }}>
         <SliceFlipTransition
           imageA={DEMO_IMAGES[0]}
           imageB={DEMO_IMAGES[1]}
@@ -689,7 +689,7 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
                       {config.params.map((param) => (
                         <div key={param.name} className="p-2 rounded-lg bg-token-nested" >
                           <div className="flex items-center gap-2">
-                            <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(139, 92, 246, 0.2)', color: 'rgba(139, 92, 246, 0.9)' }}>
+                            <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(139, 92, 246, 0.2)', color: 'var(--accent-fg-violet)' }}>
                               {param.name}
                             </code>
                             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{param.type}</span>
@@ -749,7 +749,7 @@ function EffectCard({ config, onClick }: { config: EffectConfig; onClick: () => 
         <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}>
           {CATEGORY_LABELS[config.category]}
         </span>
-        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'rgba(34, 197, 94, 0.9)', border: '1px solid rgba(34, 197, 94, 0.25)' }}>
+        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34, 197, 94, 0.25)' }}>
           <Check size={10} />
           已改造
         </span>

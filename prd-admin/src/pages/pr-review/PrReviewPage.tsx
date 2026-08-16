@@ -115,8 +115,9 @@ export function PrReviewPage() {
     });
   }, [authStatus?.connected, itemsLoadedOnce, searchParams, setSearchParams, items, addItem]);
 
+  // surface-tone-dark：钉死暗底 + token 文字，浅色主题下会深字压深底（1.06:1）
   return (
-    <div className="min-h-full bg-[#0d0b16] text-token-primary">
+    <div className="min-h-full bg-[#0d0b16] text-token-primary surface-tone-dark">
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Header */}
         <div data-tour-id="pr-review-page-title" className="flex items-center gap-4 mb-6">
@@ -146,7 +147,7 @@ export function PrReviewPage() {
 
         {/* 深链自动发起审查提示 */}
         {autoStartNotice && (
-          <div className="mb-4 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-3 flex items-center gap-3 text-sm text-violet-100">
+          <div className="mb-4 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-3 flex items-center gap-3 text-sm text-[color:var(--accent-fg-violet)]">
             <GitPullRequest size={14} className="shrink-0" />
             <div className="flex-1 break-all">{autoStartNotice}</div>
             <button
@@ -162,7 +163,7 @@ export function PrReviewPage() {
 
         {/* Error banner */}
         {errorMessage && (
-          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-center gap-3 text-sm text-red-200">
+          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 flex items-center gap-3 text-sm text-[color:var(--accent-fg-danger)]">
             <div className="flex-1">{errorMessage}</div>
             <button
               type="button"

@@ -213,9 +213,9 @@ export function ReleaseLogDialog({
         <div className="grid gap-2">
           {progress.steps.map((step, index) => (
             <div key={step.id} className="flex items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-sm">
-              {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                : step.state === 'failed' ? <XCircle className="h-4 w-4 text-red-500" />
-                  : step.state === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-sky-500" />
+              {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 text-ok" />
+                : step.state === 'failed' ? <XCircle className="h-4 w-4 text-bad" />
+                  : step.state === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-info" />
                     : <Circle className="h-4 w-4 text-muted-foreground" />}
               <span className="shrink-0 font-mono text-xs text-muted-foreground">{index + 1}/{progress.total}</span>
               <span className="min-w-0 truncate font-medium">{step.label}</span>

@@ -154,7 +154,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                         {wh.isEnabled ? '已启用' : '已禁用'}
                       </span>
                       {wh.channel === 'wecom' && wh.mentionAll && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/15 text-amber-400/80">@所有人</span>
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/15 text-[color:var(--accent-fg-amber)]">@所有人</span>
                       )}
                     </div>
                     <div className="flex items-center gap-0.5">
@@ -175,7 +175,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                   <div className="text-[10px] text-token-muted truncate">{wh.webhookUrl}</div>
                   <div className="flex gap-1 mt-1">
                     {wh.triggerEvents.map((evt) => (
-                      <span key={evt} className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400/70">
+                      <span key={evt} className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-[color:var(--accent-fg-blue)]">
                         {ReviewEventLabels[evt] || evt}
                       </span>
                     ))}

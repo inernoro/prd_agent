@@ -258,11 +258,11 @@ export default function SpeechAgentEditorPage() {
   if (!deck) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center px-6">
-        <AlertTriangle size={32} className="text-amber-300 mb-3" />
+        <AlertTriangle size={32} className="text-[color:var(--accent-fg-amber)] mb-3" />
         <p className="text-token-primary">演讲不存在或已被删除</p>
         <button
           onClick={() => navigate('/speech-agent')}
-          className="mt-4 px-4 py-2 rounded-lg bg-violet-500/90 hover:bg-violet-400 text-white text-sm"
+          className="mt-4 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm"
         >
           返回列表
         </button>
@@ -302,7 +302,7 @@ export default function SpeechAgentEditorPage() {
           type="button"
           onClick={handleStart}
           disabled={isGenerating}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/90 hover:bg-violet-400 disabled:opacity-40 text-white text-xs font-medium"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-xs font-medium"
         >
           {isGenerating ? (
             <Loader2 size={13} className="animate-spin" />
@@ -342,7 +342,7 @@ export default function SpeechAgentEditorPage() {
           role="status"
         >
           <div className="flex items-center gap-2">
-            <Check size={16} className="text-emerald-300" />
+            <Check size={16} className="text-[color:var(--accent-fg-emerald)]" />
             <span className="text-sm font-medium text-emerald-100">发布成功</span>
             <button
               type="button"
@@ -356,7 +356,7 @@ export default function SpeechAgentEditorPage() {
             演讲已渲染为静态 HTML 并发布到网页托管。任何人凭分享链可直接观看。
           </div>
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-token-nested border border-token-subtle">
-            <code className="flex-1 text-xs text-emerald-200 truncate font-mono">{shareInfo.url}</code>
+            <code className="flex-1 text-xs text-[color:var(--accent-fg-emerald)] truncate font-mono">{shareInfo.url}</code>
             <button
               type="button"
               onClick={() => {
@@ -367,7 +367,7 @@ export default function SpeechAgentEditorPage() {
               className="shrink-0 p-1.5 rounded-md hover-bg-soft text-token-primary"
               aria-label="复制分享链"
             >
-              {shareCopied ? <Check size={13} className="text-emerald-300" /> : <Copy size={13} />}
+              {shareCopied ? <Check size={13} className="text-[color:var(--accent-fg-emerald)]" /> : <Copy size={13} />}
             </button>
             <a
               href={shareInfo.url}
@@ -383,8 +383,8 @@ export default function SpeechAgentEditorPage() {
 
       {isGenerating && (
         <div className="shrink-0 px-5 py-2 border-b border-token-subtle bg-violet-500/[0.06] flex items-center gap-2">
-          <Loader2 size={12} className="animate-spin text-violet-300" />
-          <span className="text-xs text-violet-100/85">
+          <Loader2 size={12} className="animate-spin text-[color:var(--accent-fg-violet)]" />
+          <span className="text-xs text-[color:var(--accent-fg-violet)]">
             {stream.phaseMessage || 'AI 正在拆解演讲结构…'}
           </span>
           <span className="ml-auto text-[10px] text-token-muted font-mono">
@@ -415,8 +415,8 @@ export default function SpeechAgentEditorPage() {
               <div className="w-full max-w-3xl flex flex-col gap-4">
                 {thinking && (
                   <div className="rounded-xl border border-violet-400/30 bg-violet-500/[0.05] p-5">
-                    <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-wider text-violet-300/80">
-                      <Brain size={13} className="text-violet-300" />
+                    <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-wider text-[color:var(--accent-fg-violet)]">
+                      <Brain size={13} className="text-[color:var(--accent-fg-violet)]" />
                       模型思考过程
                       <span className="ml-auto font-mono text-token-muted">{thinking.length} 字</span>
                     </div>
@@ -432,8 +432,8 @@ export default function SpeechAgentEditorPage() {
                 )}
                 {typing && (
                   <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.05] p-5">
-                    <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-wider text-emerald-300/80">
-                      <Sparkles size={13} className="text-emerald-300" />
+                    <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-wider text-[color:var(--accent-fg-emerald)]">
+                      <Sparkles size={13} className="text-[color:var(--accent-fg-emerald)]" />
                       正在生成大纲 JSON
                       <span className="ml-auto font-mono text-token-muted">{typing.length} 字</span>
                     </div>
@@ -479,7 +479,7 @@ export default function SpeechAgentEditorPage() {
                       className="inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-token-nested hover-bg-soft disabled:opacity-40 text-token-primary text-[10px]"
                       title="生成 AI 配图"
                     >
-                      {aiNodeBusy?.action === 'image' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} className="text-amber-300" />}
+                      {aiNodeBusy?.action === 'image' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} className="text-[color:var(--accent-fg-amber)]" />}
                       AI 配图
                     </button>
                     <button
@@ -489,7 +489,7 @@ export default function SpeechAgentEditorPage() {
                       className="inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-token-nested hover-bg-soft disabled:opacity-40 text-token-primary text-[10px]"
                       title="生成口播稿"
                     >
-                      {aiNodeBusy?.action === 'notes' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <ScrollText size={14} className="text-emerald-300" />}
+                      {aiNodeBusy?.action === 'notes' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <ScrollText size={14} className="text-[color:var(--accent-fg-emerald)]" />}
                       AI 备注
                     </button>
                     <div className="relative">
@@ -500,7 +500,7 @@ export default function SpeechAgentEditorPage() {
                         className="w-full inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-token-nested hover-bg-soft disabled:opacity-40 text-token-primary text-[10px]"
                         title="按风格 AI 重写"
                       >
-                        {aiNodeBusy?.action === 'rewrite' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} className="text-violet-300" />}
+                        {aiNodeBusy?.action === 'rewrite' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} className="text-[color:var(--accent-fg-violet)]" />}
                         AI 重写
                       </button>
                       {rewriteStyleOpen && (
@@ -571,7 +571,7 @@ export default function SpeechAgentEditorPage() {
                 <button
                   onClick={handleSaveNode}
                   disabled={saving}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-violet-500/90 hover:bg-violet-400 disabled:opacity-50 text-white text-xs font-medium"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-medium"
                 >
                   {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
                   保存

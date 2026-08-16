@@ -353,7 +353,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <span
                       className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
-                      style={{ background: 'rgba(99, 102, 241, 0.15)', color: 'rgba(99, 102, 241, 0.9)' }}
+                      style={{ background: 'rgba(99, 102, 241, 0.15)', color: 'var(--accent-fg-violet)' }}
                     >
                       {i + 1}
                     </span>
@@ -400,7 +400,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
                     className="shrink-0 w-7 h-7 rounded-[7px] flex items-center justify-center mt-0.5"
                     style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.15)' }}
                   >
-                    <Icon size={13} style={{ color: 'rgba(99, 102, 241, 0.7)' }} />
+                    <Icon size={13} style={{ color: 'var(--accent-fg-violet)' }} />
                   </div>
                   <div>
                     <div className="text-[13px] font-medium text-token-primary">{f.title}</div>
@@ -700,7 +700,7 @@ function TransferDetail({
           >
             <div className="text-[11px] font-semibold uppercase tracking-wider text-token-muted">执行结果</div>
             <div className="flex items-center gap-3">
-              <span className="text-[12px] font-medium" style={{ color: 'rgba(34, 197, 94, 0.9)' }}>成功 {t.result.successCount}</span>
+              <span className="text-[12px] font-medium" style={{ color: 'var(--accent-fg-success)' }}>成功 {t.result.successCount}</span>
               {t.result.failedCount > 0 && <span className="text-[12px] font-medium" style={{ color: 'rgba(239, 68, 68, 0.9)' }}>失败 {t.result.failedCount}</span>}
               {t.result.skippedCount > 0 && <span className="text-[12px] font-medium" style={{ color: 'rgba(245, 158, 11, 0.9)' }}>跳过 {t.result.skippedCount}</span>}
               {t.result.totalAssetsCopied > 0 && <span className="text-[12px] text-token-muted">图片 {t.result.totalAssetsCopied}</span>}

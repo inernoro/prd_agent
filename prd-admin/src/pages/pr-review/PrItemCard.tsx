@@ -136,7 +136,7 @@ export function PrItemCard({ item }: Props) {
             setHistoryOpen(true);
           }}
           title="查看 GitHub 审查历史（commits / reviews / comments / CI）"
-          className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-500/15 text-violet-200 text-xs hover:bg-violet-500/25 transition border border-violet-400/20"
+          className="absolute top-3 right-3 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-500/15 text-[color:var(--accent-fg-violet)] text-xs hover:bg-violet-500/25 transition border border-violet-400/20"
         >
           <History size={13} />
           历史
@@ -176,7 +176,7 @@ export function PrItemCard({ item }: Props) {
 
           {/* 错误提示 */}
           {hasError && (
-            <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+            <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-[color:var(--accent-fg-danger)]">
               <div className="font-semibold mb-1">最近刷新错误</div>
               <div className="text-red-200/80">{item.lastRefreshError}</div>
             </div>
@@ -219,7 +219,7 @@ export function PrItemCard({ item }: Props) {
               type="button"
               onClick={() => setRawOpen(true)}
               disabled={!snapshot}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-sky-500/15 text-sky-200 text-xs hover:bg-sky-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-sky-500/15 text-[color:var(--accent-fg-blue)] text-xs hover:bg-sky-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition"
               title={snapshot ? '查看 PR 描述和变更文件' : '尚未拉取到 PR 内容'}
             >
               <FileText size={14} />
@@ -251,7 +251,7 @@ export function PrItemCard({ item }: Props) {
                   void deleteItem(item.id);
                 }
               }}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-red-300 text-xs hover:bg-red-500/10 transition"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-[color:var(--accent-fg-danger)] text-xs hover:bg-red-500/10 transition"
             >
               <Trash2 size={14} />
               删除

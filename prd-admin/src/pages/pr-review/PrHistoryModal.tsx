@@ -327,7 +327,7 @@ function TabWrapper<T>({
 
   if (state.error) {
     return (
-      <div className="flex items-start gap-2 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-red-200">
+      <div className="flex items-start gap-2 p-4 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-[color:var(--accent-fg-danger)]">
         <AlertTriangle size={16} className="shrink-0 mt-0.5" />
         <div>
           <div className="font-semibold">加载失败</div>

@@ -29,8 +29,8 @@ export interface HistoryRowProps {
 }
 
 function dotClass(status: BranchDeploymentItem['status']): string {
-  if (status === 'running') return 'bg-sky-500';
-  if (status === 'success') return 'bg-emerald-500';
+  if (status === 'running') return 'bg-info';
+  if (status === 'success') return 'bg-ok';
   return 'bg-destructive';
 }
 
@@ -130,7 +130,7 @@ export function HistoryRow({ deployment, onOpenLogs, defaultExpanded = false }: 
           <span className="shrink-0 font-mono text-muted-foreground">{deployment.commitSha.slice(0, 7)}</span>
         ) : null}
         {duration.stuck ? (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-300">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 text-[10px] font-semibold text-warn">
             <AlertTriangle className="h-3 w-3" />
             疑似卡住 ≥{formatDurationMs(duration.cappedMs)}
           </span>

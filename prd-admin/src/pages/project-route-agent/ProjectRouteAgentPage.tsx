@@ -357,7 +357,7 @@ function AnalyzeView() {
                 公共站点说明：<span className="text-token-secondary">{siteSpec.title}</span>（{(siteSpec.markdownContent?.length ?? 0).toLocaleString()} 字符）
               </p>
             ) : (
-              <p className="text-[11px] text-amber-300/80">公共站点说明尚未配置，需管理员先上传一份 markdown。</p>
+              <p className="text-[11px] text-[color:var(--accent-fg-amber)]">公共站点说明尚未配置，需管理员先上传一份 markdown。</p>
             )}
 
             {/* GitHub 授权状态 —— 内联 Device Flow，不跳转其他智能体 */}
@@ -498,7 +498,7 @@ function AnalyzeView() {
         <div className="bg-token-nested border border-token-subtle rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-token-primary flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-amber-300" />
+              <Sparkles className="w-4 h-4 text-[color:var(--accent-fg-amber)]" />
               当前分析 {plan ? `· ${plan.title}` : ''}
             </h2>
             {model && (
@@ -509,15 +509,15 @@ function AnalyzeView() {
 
           {plan && plan.status === 'Done' && sse.phase === 'idle' && (
             <div className="flex items-center gap-2 bg-amber-500/8 border border-amber-500/20 rounded-md px-3 py-1.5 mb-2">
-              <History className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-              <p className="text-[11px] text-amber-200/90 flex-1">
+              <History className="w-3.5 h-3.5 text-[color:var(--accent-fg-amber)] shrink-0" />
+              <p className="text-[11px] text-[color:var(--accent-fg-amber)] flex-1">
                 正在查看历史记录 · 提交于 {new Date(plan.submittedAt).toLocaleString()}
                 {plan.completedAt && ` · 完成于 ${new Date(plan.completedAt).toLocaleString()}`}
               </p>
               <button
                 onClick={() => startAnalysis(plan.id)}
                 disabled={isBusy}
-                className="inline-flex items-center gap-1 text-[10px] text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 disabled:opacity-50 border border-amber-500/30 px-2 py-0.5 rounded-md transition-colors shrink-0"
+                className="inline-flex items-center gap-1 text-[10px] text-[color:var(--accent-fg-amber)] bg-amber-500/15 hover:bg-amber-500/25 disabled:opacity-50 border border-amber-500/30 px-2 py-0.5 rounded-md transition-colors shrink-0"
               >
                 <RefreshCw className="w-3 h-3" /> 重新分析
               </button>
@@ -657,15 +657,15 @@ function GitHubStatusCard({
   }
   return (
     <div className="flex items-center gap-2 bg-amber-500/8 border border-amber-500/20 rounded-md px-3 py-2">
-      <Github className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+      <Github className="w-3.5 h-3.5 text-[color:var(--accent-fg-amber)] shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-[11px] text-amber-200">
+        <p className="text-[11px] text-[color:var(--accent-fg-amber)]">
           尚未授权 GitHub。匿名访问只能拉公共仓库；私有 / 组织仓库会克隆失败。
         </p>
       </div>
       <button
         onClick={onOpenAuth}
-        className="inline-flex items-center gap-1 text-[11px] text-amber-200 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2 py-0.5 rounded-md shrink-0 transition-colors"
+        className="inline-flex items-center gap-1 text-[11px] text-[color:var(--accent-fg-amber)] bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-2 py-0.5 rounded-md shrink-0 transition-colors"
       >
         授权 GitHub
       </button>
@@ -840,8 +840,8 @@ function GitHubAuthModal({ onClose, onSuccess }: { onClose: () => void; onSucces
 
           {phase === 'expired' && (
             <div className="text-center py-6 space-y-3">
-              <AlertCircle className="w-8 h-8 text-amber-300 mx-auto" />
-              <p className="text-sm text-amber-200">验证码已过期</p>
+              <AlertCircle className="w-8 h-8 text-[color:var(--accent-fg-amber)] mx-auto" />
+              <p className="text-sm text-[color:var(--accent-fg-amber)]">验证码已过期</p>
               <button
                 onClick={start}
                 className="text-xs text-semantic-info hover-text-primary underline-offset-2 hover:underline"
@@ -919,7 +919,7 @@ function RepoBadge({ status }: { status: RepoLiveStatus['status'] }) {
   const m: Record<string, { label: string; cls: string }> = {
     cloning: { label: '克隆中', cls: 'bg-sky-500/15 text-semantic-info border-sky-500/30' },
     ok: { label: '已就绪', cls: 'bg-emerald-500/15 text-semantic-success border-emerald-500/30' },
-    missing: { label: '无 routemap', cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' },
+    missing: { label: '无 routemap', cls: 'bg-amber-500/15 text-[color:var(--accent-fg-amber)] border-amber-500/30' },
     error: { label: '失败', cls: 'bg-red-500/15 text-semantic-danger border-red-500/30' },
   };
   const info = m[status] ?? m.cloning;
@@ -961,7 +961,7 @@ function RepoCard({ r }: {
         <p className="text-[10px] text-semantic-info mt-1 line-clamp-2">AI: {r.reasoning}</p>
       )}
       {r.message && (
-        <p className="text-[10px] text-amber-200/70 mt-1 break-all">{r.message}</p>
+        <p className="text-[10px] text-[color:var(--accent-fg-amber)] mt-1 break-all">{r.message}</p>
       )}
       {!open && r.foundLocations && r.foundLocations.length > 0 && (
         <p className="text-[10px] text-semantic-success mt-1">{r.foundLocations.length} 个 routemap 子目录</p>
@@ -1047,7 +1047,7 @@ function ResolutionCard({ r, ghConnected, onOpenAuth }: { r: ProjectRouteResolut
       {r.status === 'CloneFailed' && !ghConnected && onOpenAuth && (
         <button
           onClick={onOpenAuth}
-          className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-amber-200 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 px-1.5 py-0.5 rounded-md transition-colors"
+          className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-[color:var(--accent-fg-amber)] bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 px-1.5 py-0.5 rounded-md transition-colors"
         >
           <Github className="w-3 h-3" /> 授权 GitHub 后重试
         </button>
@@ -1102,9 +1102,9 @@ function ResolutionBadge({ status }: { status: ProjectRouteResolution['status'] 
   const m: Record<string, { label: string; cls: string }> = {
     Hit: { label: '命中', cls: 'bg-emerald-500/15 text-semantic-success border-emerald-500/30' },
     NotFound: { label: '无路径', cls: 'bg-token-nested text-token-secondary border-token-subtle' },
-    Ambiguous: { label: '多候选', cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' },
+    Ambiguous: { label: '多候选', cls: 'bg-amber-500/15 text-[color:var(--accent-fg-amber)] border-amber-500/30' },
     CloneFailed: { label: '克隆失败', cls: 'bg-red-500/15 text-semantic-danger border-red-500/30' },
-    NoRoutemap: { label: '无 routemap', cls: 'bg-amber-500/15 text-amber-200 border-amber-500/30' },
+    NoRoutemap: { label: '无 routemap', cls: 'bg-amber-500/15 text-[color:var(--accent-fg-amber)] border-amber-500/30' },
   };
   const info = m[status] ?? m.NotFound;
   return <span className={`px-1.5 py-0.5 rounded-md text-[10px] border ${info.cls}`}>{info.label}</span>;
@@ -1270,7 +1270,7 @@ function AdminView() {
             </div>
           )}
         </div>
-        <p className="text-[11px] text-amber-300/60 mb-3 leading-relaxed">
+        <p className="text-[11px] text-[color:var(--accent-fg-amber)] mb-3 leading-relaxed">
           注意：所有有项目路由智能体权限的用户都可编辑此文档，提交后会立即对全部用户生效。开始编辑前建议先点「重新加载」获取最新版本，避免提交时撞到他人改动（系统会在冲突时提示，不会静默覆盖）。
         </p>
         <div className="space-y-3">

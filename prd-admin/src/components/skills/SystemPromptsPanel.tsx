@@ -381,7 +381,7 @@ export function SystemPromptsPanel() {
               <div className="mt-2 text-sm" style={{ color: 'rgba(255,120,120,0.95)' }}>{validation.message}</div>
             )}
             {isDirty && (
-              <div className="mt-2 text-xs px-2 py-1 rounded-lg inline-block" style={{ background: 'rgba(245, 158, 11, 0.12)', color: 'rgba(245, 158, 11, 0.95)', border: '1px solid rgba(245, 158, 11, 0.28)' }}>
+              <div className="mt-2 text-xs px-2 py-1 rounded-lg inline-block" style={{ background: 'rgba(245, 158, 11, 0.12)', color: 'var(--accent-fg-amber)', border: '1px solid rgba(245, 158, 11, 0.28)' }}>
                 未保存
               </div>
             )}

@@ -785,7 +785,7 @@ export function ProjectListPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide className="cds-workspace-project-list">
+      <Workspace fluid>
         {legacy?.legacyInUse ? (
           <div className="mb-6">
             <LegacyBanner
@@ -812,7 +812,7 @@ export function ProjectListPage(): JSX.Element {
             <EmptyProjects onCreate={() => setCreateOpen(true)} />
           ) : null}
           {state.status === 'ok' && projects.length > 0 ? (
-            <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="cds-card-grid">
               {projects.map((project) => (
                 <ProjectCard
                   key={project.id}
@@ -1123,7 +1123,7 @@ function PendingImportDialog({
             </div>
           </div>
           {item.status === 'approved' ? (
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
+            <CheckCircle2 className="h-5 w-5 shrink-0 text-ok" />
           ) : item.status === 'rejected' ? (
             <XCircle className="h-5 w-5 shrink-0 text-destructive" />
           ) : (
@@ -1340,9 +1340,9 @@ function LegacyBanner({
   const countText = `${counts.branches || 0} 分支 / ${counts.buildProfiles || 0} profile / ${counts.infraServices || 0} infra`;
 
   return (
-    <div className="mb-5 flex flex-col gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm lg:flex-row lg:items-center lg:justify-between">
+    <div className="mb-5 flex flex-col gap-3 rounded-md border border-warn/40 bg-warn-soft px-4 py-3 text-sm lg:flex-row lg:items-center lg:justify-between">
       <div className="flex gap-3">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
         <div>
           <div className="font-semibold text-foreground">
             {status.needsMigration ? '检测到遗留 default 数据' : '检测到 default 残留'}
@@ -1379,7 +1379,7 @@ function ProjectListSkeleton(): JSX.Element {
           className="text-[13px] font-medium text-muted-foreground"
         />
       </div>
-      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="cds-card-grid">
         {SKELETON_CARD_WIDTHS.map((width, index) => (
           <article
             key={index}
@@ -1553,14 +1553,14 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
   if (raw.includes('mongo')) {
     return {
       label: 'MongoDB',
-      tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-400',
+      tileClassName: 'border-ok/45 bg-ok-soft text-ok dark:border-ok/35 dark:bg-ok-soft ',
       icon: <MongoIcon />,
     };
   }
   if (raw.includes('redis')) {
     return {
       label: 'Redis',
-      tileClassName: 'border-red-600/45 bg-red-500/15 text-red-600 dark:border-red-500/35 dark:bg-red-500/10 dark:text-red-400',
+      tileClassName: 'border-bad/45 bg-bad-soft text-bad dark:border-bad/35 dark:bg-bad-soft ',
       icon: <RedisIcon />,
     };
   }
@@ -1574,7 +1574,7 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
   if (raw.includes('postgres') || raw.includes('postgresql') || raw.includes('postgis') || raw.includes('pgvector') || /\bpg[-_0-9]/.test(raw)) {
     return {
       label: 'PostgreSQL',
-      tileClassName: 'border-sky-700/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
+      tileClassName: 'border-info/45 bg-info-soft text-info dark:border-info/35 dark:bg-info-soft ',
       icon: <PostgresIcon />,
     };
   }
@@ -1595,14 +1595,14 @@ function infraIconFor(service: NonNullable<ProjectSummary['infraServices']>[numb
   if (raw.includes('rabbit')) {
     return {
       label: 'RabbitMQ',
-      tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-400',
+      tileClassName: 'border-warn/45 bg-warn-soft text-warn dark:border-warn/35 dark:bg-warn-soft ',
       icon: <RabbitIcon />,
     };
   }
   if (raw.includes('nacos')) {
     return {
       label: 'Nacos',
-      tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
+      tileClassName: 'border-info/45 bg-info-soft text-info dark:border-info/35 dark:bg-info-soft ',
       icon: <NacosIcon />,
     };
   }
@@ -1652,7 +1652,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'node',
       label: 'Node.js',
-      tileClassName: 'border-emerald-600/45 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-500/10 dark:text-emerald-300',
+      tileClassName: 'border-ok/45 bg-ok-soft text-ok dark:border-ok/35 dark:bg-ok-soft ',
       icon: <NodeIcon />,
       score: 800 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1662,7 +1662,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'python',
       label: 'Python',
-      tileClassName: 'border-blue-600/45 bg-blue-500/15 text-blue-700 dark:border-blue-500/35 dark:bg-blue-500/10 dark:text-blue-300',
+      tileClassName: 'border-info/45 bg-info-soft text-info dark:border-info/35 dark:bg-info-soft ',
       icon: <PythonIcon />,
       score: 700 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1672,7 +1672,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'java',
       label: 'Java',
-      tileClassName: 'border-orange-600/45 bg-orange-500/15 text-orange-700 dark:border-orange-500/35 dark:bg-orange-500/10 dark:text-orange-300',
+      tileClassName: 'border-warn/45 bg-warn-soft text-warn dark:border-warn/35 dark:bg-warn-soft ',
       icon: <JavaIcon />,
       score: 650 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1692,7 +1692,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'rust',
       label: 'Rust',
-      tileClassName: 'border-amber-700/45 bg-amber-500/15 text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-300',
+      tileClassName: 'border-warn/45 bg-warn-soft text-warn dark:border-warn/35 dark:bg-warn-soft ',
       icon: <RustIcon />,
       score: 630 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1722,7 +1722,7 @@ function appIconFor(service: NonNullable<ProjectSummary['appServices']>[number])
     return {
       key: 'api',
       label: 'API Service',
-      tileClassName: 'border-sky-600/45 bg-sky-500/15 text-sky-700 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300',
+      tileClassName: 'border-info/45 bg-info-soft text-info dark:border-info/35 dark:bg-info-soft ',
       icon: <Code2 className="cds-project-node-icon" />,
       score: 100 + (service.runningCount || 0),
       source: service.dockerImage || service.command || service.id,
@@ -1877,9 +1877,9 @@ function ProjectCard({
   const cpu = usage?.cpuPercent ?? 0;
   const recentBuilds1h = usage?.recentBuilds1h ?? 0;
   const cpuToneClass = cpu >= 100
-    ? 'text-red-600 dark:text-red-400'
+    ? 'text-bad'
     : cpu >= 50
-      ? 'text-amber-600 dark:text-amber-400'
+      ? 'text-warn'
       : 'text-muted-foreground';
   const isReady = !project.cloneStatus || project.cloneStatus === 'ready';
   const cloneLabel =
@@ -1907,9 +1907,9 @@ function ProjectCard({
     : project.cloneStatus === 'error'
       ? 'bg-destructive'
       : project.cloneStatus === 'pending' || project.cloneStatus === 'cloning'
-        ? 'bg-amber-500'
+        ? 'bg-warn'
         : running > 0
-          ? 'bg-emerald-500'
+          ? 'bg-ok'
           : 'bg-muted-foreground/40';
 
   return (
@@ -1922,11 +1922,16 @@ function ProjectCard({
         }}
         className={`flex flex-1 flex-col rounded-lg transition-[filter,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${paused ? 'opacity-60 grayscale' : ''}`}
       >
-        {/* Header */}
-        <header className="flex items-start justify-between gap-3 px-5 pt-5">
+        {/*
+         * Header。右侧那排操作按钮是 absolute 浮在卡片右上角的，hover 才显形——
+         * 唯独 paused 时它常驻（opacity-100），会直接压在标题上（「Claude SDK
+         * Sidecar Pool」被「已暂停」徽章和六个图标盖掉半截）。所以 paused 时
+         * 给标题行留出让位的右内边距，其余状态维持原样不浪费横向空间。
+         */}
+        <header className={`flex items-start justify-between gap-3 px-5 pt-5 ${paused ? 'pr-[13.5rem]' : ''}`}>
           <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-tight">{title}</h2>
           {!isReady && cloneLabel ? (
-            <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600">
+            <span className="shrink-0 rounded border border-warn/30 bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn">
               {cloneLabel}
             </span>
           ) : null}
@@ -1987,7 +1992,7 @@ function ProjectCard({
               {/* On phones the meta row is width-constrained — hide the static
                   "production" prefix so live status / online count / CPU don't
                   get clipped (mobile-layout-fallback.md). Desktop keeps it. */}
-              <span className="hidden h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 sm:block" aria-hidden />
+              <span className="hidden h-1.5 w-1.5 shrink-0 rounded-full bg-ok sm:block" aria-hidden />
               <span className="hidden shrink-0 sm:inline">production</span>
               <span className="hidden text-muted-foreground/60 sm:inline">·</span>
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotTone}`} aria-hidden />
@@ -2033,7 +2038,7 @@ function ProjectCard({
         }`}
       >
         {paused ? (
-          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-600 shadow-sm backdrop-blur">
+          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[11px] font-semibold text-warn shadow-sm backdrop-blur">
             <Pause className="h-3 w-3" aria-hidden />
             已暂停
           </span>
@@ -2300,7 +2305,7 @@ function CloneProgressDialog({
                   entry.tone === 'error'
                     ? 'whitespace-pre-wrap break-words text-destructive'
                     : entry.tone === 'success'
-                      ? 'whitespace-pre-wrap break-words text-emerald-500'
+                      ? 'whitespace-pre-wrap break-words text-ok'
                       : 'whitespace-pre-wrap break-words text-muted-foreground'
                 }
               >
@@ -2844,7 +2849,7 @@ function AgentKeySignDialog({
                 placeholder="例如 Codex 本地调试"
               />
             </label>
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
               签发后请只交给需要操作此项目的 Agent。用完可在管理列表吊销。
             </div>
             {error ? (
@@ -4019,7 +4024,7 @@ function PauseProjectDialog({
               : ''}
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+        <div className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">
           适用于长期不用却被反复构建的项目：暂停即止血，随时可一键恢复。
         </div>
         <DialogFooter>
@@ -4198,15 +4203,15 @@ function ResourceUsageDialog({
                 {rows.map((row) => {
                   const cpuTone =
                     row.cpuPercent >= 100
-                      ? 'text-red-600 dark:text-red-400'
+                      ? 'text-bad'
                       : row.cpuPercent >= 50
-                        ? 'text-amber-600 dark:text-amber-400'
+                        ? 'text-warn'
                         : 'text-foreground';
                   const buildsTone =
                     row.recentBuilds1h >= 10
-                      ? 'text-red-600 dark:text-red-400'
+                      ? 'text-bad'
                       : row.recentBuilds1h >= 4
-                        ? 'text-amber-600 dark:text-amber-400'
+                        ? 'text-warn'
                         : 'text-foreground';
                   return (
                     <tr key={row.projectId} className="border-b border-[hsl(var(--hairline))] last:border-0">
@@ -4214,7 +4219,7 @@ function ResourceUsageDialog({
                         <div className="flex items-center gap-2">
                           <span className="truncate font-medium">{row.name}</span>
                           {row.paused ? (
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[10px] font-medium text-warn">
                               <Pause className="h-2.5 w-2.5" aria-hidden /> 已暂停
                             </span>
                           ) : null}

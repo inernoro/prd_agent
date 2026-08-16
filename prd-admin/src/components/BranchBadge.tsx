@@ -88,9 +88,11 @@ export function BranchBadge() {
   if (!branch || HIDDEN_BRANCHES.includes(branch) || dismissed || !visible || isMobile) return null;
 
   // Normal badge — sole trusted identity source via __GIT_BRANCH__
-  const modeColor = deployMode
-    ? 'rgba(35, 134, 54, 0.85)'  // green for deploy
-    : 'rgba(218, 139, 69, 0.85)'; // orange for run
+  // 实底 + 白字：原先是 0.85 半透明彩底配 #e2e8f0，白字与底只有 1.97:1，
+  // 而这枚徽章出现在**每一屏**（对比度审计里 91 个「路由×主题」全中）。
+  // 改成不透明的 800 档色后固定 7.1:1，且不再受背后内容影响。
+  // 彩色实底上的白字属 admin-dual-theme 明列的合法例外（两个主题都成立）。
+  const modeColor = deployMode ? '#166534' : '#92400e';
 
   return (
     <div
@@ -111,11 +113,11 @@ export function BranchBadge() {
         fontSize: 12,
         lineHeight: 1,
         fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
-        color: '#e2e8f0',
+        color: '#fff',
         background: modeColor,
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
-        border: `1px solid ${deployMode ? 'rgba(63, 185, 80, 0.3)' : 'rgba(218, 139, 69, 0.3)'}`,
+        border: `1px solid ${deployMode ? 'rgba(74, 222, 128, 0.45)' : 'rgba(251, 191, 36, 0.45)'}`,
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
         userSelect: 'none',
         cursor: isMobile ? 'default' : 'grab',

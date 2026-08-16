@@ -276,7 +276,7 @@ export default function MySharesPage() {
                 ) : (
                   <div
                     className="flex items-center gap-2 px-3 py-2 rounded text-xs"
-                    style={{ background: 'rgba(245, 158, 11, 0.1)', color: 'rgba(245, 158, 11, 0.95)' }}
+                    style={{ background: 'rgba(245, 158, 11, 0.1)', color: 'var(--accent-fg-amber)' }}
                   >
                     <AlertCircle size={14} />
                     该类型分享的对外展示页尚在开发中，链接暂时无法打开（不影响已记录的分享数据）。

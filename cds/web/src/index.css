@@ -1,3 +1,19 @@
+/*
+ * 两款自托管字体（都是可变字重，各一个 woff2）。
+ *
+ * 必须自托管、不能只在 font-family 里写名字：仓库此前点名 Inter / JetBrains Mono
+ * 却从没加载过任何一个，于是每台机器各凭系统兜底，英文字形是「看运气」——
+ * 用户看到的像素点就是他那台机器的兜底字体。
+ *
+ * 分工：Inter 管正文（比例字，中英混排的默认），JetBrains Mono 只管标识符
+ * （分支名 / sha / 域名 / 时间戳）。上一轮把等宽当成全站默认，导致整页横向
+ * 撑大约 10%、中文观感也被带坏，已回退成这个分工。
+ *
+ * 两款字体都没有汉字字形，中文一律落到 --cds-font-cjk，不受影响。
+ */
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -65,6 +81,29 @@
       0 1px 2px rgb(0 0 0 / 0.32),
       0 12px 28px -12px rgb(0 0 0 / 0.5),
       0 40px 80px -32px rgb(0 0 0 / 0.6);
+
+    /* ── 语义状态色 ────────────────────────────────────────────────
+       组件侧已统一用 ok / warn / bad / info（1291 处，见 palette-contrast-guard），
+       这一层只决定它们**长什么颜色**。这里的值刻意对齐改配色之前的观感：
+       暗色取 Tailwind 的 -400（原来 `dark:text-x-400` 的实际取值），
+       soft 对应原来 `bg-x-500/[0.06]` 那层淡底。
+       换句话说：token 化保留了，颜色回到你熟悉的那套。 */
+    --ok: 158 64% 52%;
+    --ok-soft: 160 40% 10%;
+    --warn: 43 96% 56%;
+    --warn-soft: 38 45% 10%;
+    --bad: 0 91% 71%;
+    --bad-soft: 0 45% 12%;
+    --info: 199 95% 74%;
+    --info-soft: 199 45% 11%;
+
+    /* 主色的两个补充档。暗色下 ink 与 primary 同值（橙字在深底上够清楚）；
+       白天必须分开，见 light 块的说明。 */
+    --primary-soft: 24 60% 12%;
+    --primary-ink: 24 100% 60%;
+    --foreground-muted: 240 5% 74%;
+    --code-bg: 222 16% 4%;
+    --code-fg: 240 6% 86%;
   }
 
   [data-theme='light'] {
@@ -110,6 +149,25 @@
       0 1px 2px hsl(24 30% 20% / 0.05),
       0 8px 24px -12px hsl(24 30% 20% / 0.12),
       0 32px 64px -32px hsl(24 30% 20% / 0.15);
+
+    /* 白天取 Tailwind 的 -600（原来 `text-x-600` 的实际取值），soft 是极淡同色底。 */
+    --ok: 161 94% 30%;
+    --ok-soft: 160 60% 95%;
+    --warn: 32 95% 44%;
+    --warn-soft: 38 90% 95%;
+    --bad: 0 74% 42%;
+    --bad-soft: 0 85% 96%;
+    --info: 201 98% 39%;
+    --info-soft: 199 85% 95%;
+
+    /* 白天的橙色主色（24 90% 50%）当文字落在浅底上对比度约 3:1，偏弱，
+       所以 ink 压深两档专供文字用；填充仍用 primary 那一档。
+       这一层是上一轮唯一值得留下的东西——它治的是「按钮看不清」。 */
+    --primary-soft: 30 80% 94%;
+    --primary-ink: 24 85% 38%;
+    --foreground-muted: 24 12% 32%;
+    --code-bg: 30 24% 93%;
+    --code-fg: 24 20% 20%;
   }
 
   :root {
@@ -118,6 +176,29 @@
        或 fluid(去上限),禁止再写第四种 max-width。 */
     --workspace-standard: 1240px;
     --workspace-wide: 1440px;
+
+    /*
+     * 全站英文字形的**唯一来源**。
+     *
+     * 2026-08-15 用户：「把分支列表中分支名字的字体作为 CDS 的默认英文字体，
+     * 现在的字体很别扭，有像素点，整个站都是像素点。」
+     *
+     * 根因不是审美偏好，是一个真实缺陷：body 此前首选 `Inter`，而这个仓库
+     * **从来没有加载过 Inter**——没有 @font-face、没有 CDN link、没有
+     * @fontsource 依赖。于是每台机器都掉进各自的兜底字体（Windows 落
+     * Segoe UI、Linux 落随机 DejaVu 一类），站点的英文字形一直是「看运气」。
+     * 用户看到的像素点就是他那台机器的兜底字体。
+     *
+     * 现在统一成**自托管**的 JetBrains Mono（见文件顶部的 @import）：字体文件
+     * 打进包里，每台机器渲染完全一致，不再有「声明了却没加载」这种事。
+     * 后面的系统等宽栈只作字体还没下载完时的兜底（font-display: swap）。
+     *
+     * CJK 不受影响：等宽栈里没有汉字字形，中文会自然落到后面的中文栈。
+     * 这正是「英文换字形、中文照旧」的实现方式，不需要 unicode-range。
+     */
+    --cds-font-sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --cds-font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --cds-font-cjk: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   }
 
   html,
@@ -158,10 +239,13 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    /* CJK 栈显式声明(否则中文落到系统随机字体,与 Inter 混排粗细不齐);
-       cv11/ss01 开 Inter 变体字形,数字 1 与小写 l 区分。 */
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-    font-feature-settings: 'cv11' 1, 'ss01' 1;
+    /* 英文走 --cds-font-sans（自托管 Inter），中文走 CJK 栈。
+       Inter 没有汉字字形，中文自然掉到后面，不需要 unicode-range。
+       等宽只留给标识符（.cds-ident），不做全站默认——那样会把页面横向撑大约 10%。 */
+    font-family: var(--cds-font-sans), var(--cds-font-cjk);
+    /* 正文**不设** letter-spacing。上一轮为了收紧等宽英文加了 -0.015em，
+       它对中文同样生效——汉字本来就不需要负字距，被收紧后整段中文发挤，
+       这是「中文完全不能看」的直接原因。负字距只留给 .cds-ident 那一档。 */
     text-rendering: optimizeLegibility;
     background-color: hsl(var(--surface-base));
   }
@@ -263,8 +347,18 @@
      auto-fill 自适应列,超宽屏应继续加列;若折叠到 wide(1440) 会在
      4K 屏右侧再造"大片留白"——正是 audit-cds-ui-regressions 守卫
      诞生时要防的回归(2026-07-05 三档归一时曾误折叠,CI 抓回)。 */
-  .cds-workspace.cds-branch-list-workspace {
-    max-width: none;
+  /*
+   * 卡片网格的唯一契约。列数由可用宽度算出来，不写死 `xl:grid-cols-3`——
+   * 写死列数的页面在宽屏上只会把卡片撑得越来越胖，或者干脆在中间留一条，
+   * 两侧空着（用户 2026-08-13 指着项目列表说的就是这个）。
+   *
+   * `min(100%, Npx)` 是窄屏兜底：容器比 N 还窄时列宽退成 100%，不会横向溢出。
+   */
+  .cds-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cds-card-min, 380px)), 1fr));
+    align-items: start;
+    gap: 1.25rem;
   }
 
   .cds-branch-card-grid {
@@ -606,7 +700,7 @@
 
   .cds-site-notice-trigger--active {
     border-color: hsl(var(--primary) / 0.58);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.18),
       0 0 20px -10px hsl(var(--primary) / 0.88);
@@ -865,12 +959,21 @@
     100% { opacity: 0; transform: scale(1.5); }
   }
 
-  /* 分支名走等宽：与 llmgw 日志同一套英文字形（llmgw/web/src/theme.css --font-mono）。
-     分支名是标识符不是散文，等宽下 claude/ai-animation-demos-u7uvyr 这类串的
-     断字和数字对齐都更稳。 */
+  /* 标识符字形（分支名、commit sha、主机名、releaseId…）。
+     与 llmgw 日志同一套英文字形（llmgw/web/src/theme.css --font-mono）。
+     标识符不是散文，等宽下 claude/ai-animation-demos-u7uvyr 这类串的
+     断字和数字对齐都更稳；-0.015em 把等宽天然偏松的字距收回来。
+
+     刻意**不走** Tailwind 的 `font-mono`：那个栈把 `JetBrains Mono` 排在第一位，
+     而本仓库从没打包过它——装了它的机器和没装的机器会看到两种英文字形。
+     所有标识符统一用这个类，页面之间的英文字形才是同一套。
+
+     `.cds-branch-name` 是历史名字，保留给分支卡；新代码用 `.cds-ident`。 */
+  .cds-ident,
   .cds-branch-name {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     letter-spacing: -0.015em;
+    font-variant-numeric: tabular-nums;
   }
 
   /* 徽章环形巡光：只转渐变角度，不转元素。徽章是 52x27 的扁矩形，
@@ -1489,7 +1592,7 @@
     border: 1px solid hsl(var(--primary) / 0.28) !important;
     background:
       linear-gradient(135deg, hsl(var(--primary) / 0.12), hsl(var(--primary) / 0.04)) !important;
-    color: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-ink)) !important;
     box-shadow: inset 0 1px 0 hsl(var(--primary) / 0.12);
   }
 
@@ -1514,7 +1617,7 @@
   .cds-bug-report-entry:hover {
     border-color: hsl(var(--primary) / 0.38) !important;
     background-color: hsl(var(--surface-raised)) !important;
-    color: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-ink)) !important;
   }
 
   .cds-bug-report-entry:focus-visible {
@@ -1566,7 +1669,7 @@
     border: 1px solid hsl(var(--primary) / 0.24);
     border-radius: 0.65rem;
     background: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-route-trigger-icon svg {
@@ -1585,7 +1688,7 @@
   }
 
   .cds-agent-route-trigger-kicker {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -1627,7 +1730,7 @@
     border-radius: 999px;
     background: hsl(var(--surface-raised) / 0.72);
     padding: 0.24rem 0.55rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 650;
   }
@@ -1674,7 +1777,7 @@
     border: 1px solid hsl(var(--primary) / 0.28);
     border-radius: 0.75rem;
     background: hsl(var(--primary) / 0.1);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-world-title-icon svg {
@@ -1702,7 +1805,7 @@
     place-items: center;
     border-radius: 999px;
     background: hsl(var(--primary) / 0.11);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.6875rem;
     font-weight: 750;
   }
@@ -1805,7 +1908,7 @@
 
   .cds-agent-continent[data-selected='true'] .cds-agent-continent-marker {
     background: hsl(var(--primary) / 0.14);
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     box-shadow: 0 0 0 4px hsl(var(--primary) / 0.07);
   }
 
@@ -1846,7 +1949,7 @@
   }
 
   .cds-agent-world-current-continent small {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.5625rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -1969,7 +2072,7 @@
 
   .cds-agent-world-hud text {
     fill: hsl(var(--map-cyan) / 0.42);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 8px;
     letter-spacing: 0.08em;
   }
@@ -2097,7 +2200,7 @@
   }
 
   .cds-agent-world-region[data-selected='true'] .cds-agent-world-data-node {
-    color: hsl(var(--primary) / 0.78);
+    color: hsl(var(--primary-ink) / 0.78);
   }
 
   .cds-agent-world-region-feature {
@@ -2333,7 +2436,7 @@
     border-radius: 0.6rem;
     background: hsl(var(--primary) / 0.1);
     padding: 0.55rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-world-route-summary small,
@@ -2343,7 +2446,7 @@
   }
 
   .cds-agent-world-route-summary small {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-size: 0.5625rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -2671,7 +2774,7 @@
     right: 0.25rem;
     width: 0.75rem;
     height: 0.75rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   /*
@@ -2712,7 +2815,7 @@
   .cds-agent-access-floating svg {
     width: 1.125rem;
     height: 1.125rem;
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
   }
 
   .cds-agent-access-floating:hover {
@@ -3006,7 +3109,15 @@
   }
 
   .cds-main {
-    @apply min-w-0 px-8 pb-12 pt-6;
+    /* 横向留白按视口分档：窄屏 16 / 常规 32 / 超宽 48。满铺不等于顶到边，
+       2000px 以上还贴着 32px 边会显得局促。
+       写成变量是为了让 .cds-workspace--bleed 能精确抵消，而不是再抄一份数值
+       ——抄一份就是下一次「改了一处忘了另一处」。 */
+    --cds-main-px: 2rem;
+    --cds-main-pt: 1.5rem;
+    --cds-main-pb: 3rem;
+    @apply min-w-0;
+    padding: var(--cds-main-pt) var(--cds-main-px) var(--cds-main-pb);
     /*
      * flex-grow + min-height:0 让 main 填满 topbar 之下的列高。2026-06-23 起壳改为
      * h-screen 固定高,本列(grid item)被 stretch 成视口高,main = flex:1 拿到确定高度,
@@ -3020,11 +3131,19 @@
     scrollbar-gutter: stable;
   }
 
-  @media (max-width: 767px) {
+  @media (min-width: 1536px) {
     .cds-main {
-      @apply px-4 pt-4;
+      --cds-main-px: 3rem;
     }
   }
+
+  @media (max-width: 767px) {
+    .cds-main {
+      --cds-main-px: 1rem;
+      --cds-main-pt: 1rem;
+    }
+  }
+
 
   /*
    * Workspace 宽度秩序(2026-07-02 布局归一) —— 全站只允许三档:
@@ -3059,6 +3178,119 @@
     flex-direction: column;
   }
 
+  /*
+   * 满铺到边：参考稿的左右两栏是**贴边的整块面板**，用一条 1px 边框分隔，
+   * 不是浮在底色上、四周留缝的圆角卡。这里抵消 .cds-main 的内边距，
+   * 值取自同一组 --cds-main-* 变量，不另抄一份。
+   *
+   * 两个坑，都是实测撞出来的：
+   * 1. 必须排在 .cds-workspace 之后。同为 (0,1,0) 特异性，写在前面时
+   *    `.cds-workspace { margin-left:auto; margin-right:auto }` 后写的赢，
+   *    横向抵消会被静默吃掉——上下缩了、左右没动，看着像「只生效了一半」。
+   * 2. 高度要加回内边距。负 margin 不改变元素自身高度，配 --fill 的
+   *    height:100%（解析的是 .cds-main 的**内容盒**）时，底部仍会短一截 pb。
+   */
+  .cds-workspace--bleed {
+    margin: calc(var(--cds-main-pt) * -1) calc(var(--cds-main-px) * -1) calc(var(--cds-main-pb) * -1);
+    width: auto;
+    max-width: none;
+  }
+
+  .cds-workspace--bleed.cds-workspace--fill {
+    height: calc(100% + var(--cds-main-pt) + var(--cds-main-pb));
+  }
+
+  /*
+   * 满铺页不需要给滚动条留位：它自己不滚（--fill 是固定外壳 + 各栏内滚）。
+   * 留着 scrollbar-gutter 会让右栏离视口右边差 10px，贴边就贴不到底。
+   */
+  .cds-main:has(> .cds-workspace--bleed) {
+    scrollbar-gutter: auto;
+  }
+
+  /* ══ 发布控制台的节奏 ══════════════════════════════════════════════
+   *
+   * 参考稿 f8d4af4b 跑起来的时候是有节拍的：进度条在流、状态图标在呼吸、
+   * 日志一行行落下来。首版只搬了静态版式，一根实心条 + 一个转圈图标，
+   * 于是「在动」变成了「卡着」——用户原话「节奏性差很多」。
+   *
+   * 三条都只在进行中出现，终态一律静止：动效是用来表达「还在跑」的，
+   * 跑完了还在动就是噪音。全部走 prefers-reduced-motion 兜底。
+   */
+
+  /* 进度条：跑动时是流动的斜纹（参考稿 background-size:40px + barFlow）。
+     斜纹用白色低透明度叠在已经有颜色的填充条上，两个主题都成立，
+     所以不需要一对 token —— 它叠的是明度，不是自己定一个底色。 */
+  .cds-progress-fill {
+    transition: width 400ms ease;
+  }
+
+  .cds-progress-fill--running {
+    background-image: linear-gradient(
+      45deg,
+      hsl(0 0% 100% / 0.20) 25%,
+      transparent 25%,
+      transparent 50%,
+      hsl(0 0% 100% / 0.20) 50%,
+      hsl(0 0% 100% / 0.20) 75%,
+      transparent 75%,
+      transparent
+    );
+    background-size: 40px 40px;
+    animation: cds-progress-flow 1s linear infinite;
+  }
+
+  @keyframes cds-progress-flow {
+    from { background-position: 0 0; }
+    to { background-position: 40px 0; }
+  }
+
+  /* 状态图标：进行中时向外扩一圈光晕（参考稿 pulseRing）。
+     只有进行中会用到，所以颜色直接锁 primary，不做多态。 */
+  .cds-status-pulse {
+    animation: cds-status-pulse 2s ease-out infinite;
+  }
+
+  @keyframes cds-status-pulse {
+    0% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45); }
+    70% { box-shadow: 0 0 0 12px hsl(var(--primary) / 0); }
+    100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+  }
+
+  /* 日志：新的一行落下来，不是整块突然变长。
+     key 是 seq，已有行不会重挂，所以只有真正的新行会播这 180ms。 */
+  .cds-log-line {
+    animation: cds-log-line-in 180ms ease-out both;
+  }
+
+  @keyframes cds-log-line-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* 发布中心监控条的状态点：有事要处理时透明度呼吸一下（设计稿 softPulse）。
+     全绿时不动——一直在闪就变成背景噪音，看久了反而没人注意。 */
+  .cds-verdict-pulse {
+    animation: cds-verdict-pulse 2.2s ease-in-out infinite;
+  }
+
+  @keyframes cds-verdict-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-progress-fill,
+    .cds-progress-fill--running,
+    .cds-status-pulse,
+    .cds-log-line,
+    .cds-verdict-pulse {
+      animation: none;
+      transition: none;
+    }
+  }
+
+
   .cds-workspace-wide {
     max-width: var(--workspace-wide, 1440px);
   }
@@ -3075,10 +3307,6 @@
   /* 历史别名 → 三档映射(页面零改动),禁止再新增专属宽度。 */
   .cds-workspace-settings {
     max-width: var(--workspace-wide, 1440px);
-  }
-
-  .cds-workspace-project-list {
-    max-width: var(--workspace-standard, 1240px);
   }
 
   .cds-project-card {
@@ -3461,7 +3689,7 @@
 
   /* 故事从用户自己的动作开始:一行命令。 */
   .cds-auth-cmd {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.8125rem;
     color: hsl(var(--muted-foreground));
   }
@@ -3596,7 +3824,7 @@
 
   .cds-auth-line-m-station b {
     min-width: 2.9rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -3606,7 +3834,7 @@
   .cds-auth-line-m-station em {
     min-width: 2rem;
     font-style: normal;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     color: hsl(var(--muted-foreground) / 0.75);
     font-variant-numeric: tabular-nums;
@@ -3713,7 +3941,7 @@
 
   .cds-auth-station b {
     margin-top: 0.75rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -3723,7 +3951,7 @@
   .cds-auth-station em {
     margin-top: 0.125rem;
     font-style: normal;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     color: hsl(var(--muted-foreground) / 0.7);
     font-variant-numeric: tabular-nums;
@@ -3868,7 +4096,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.6875rem;
     letter-spacing: 0.02em;
     color: hsl(var(--muted-foreground));
@@ -4126,13 +4354,13 @@
     align-items: baseline;
     gap: 0.5rem;
     min-width: 0;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-family: var(--cds-font-mono);
     font-size: 0.75rem;
     color: hsl(var(--muted-foreground));
   }
 
   .cds-auth-ticker-k {
-    color: hsl(var(--primary));
+    color: hsl(var(--primary-ink));
     font-weight: 700;
   }
 
@@ -4554,8 +4782,8 @@
 }
 
 .cds-agent-territory-legend-heading strong {
-  color: hsl(var(--primary));
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: hsl(var(--primary-ink));
+  font-family: var(--cds-font-mono);
   font-size: 0.6875rem;
 }
 
@@ -4631,7 +4859,7 @@
 .cds-agent-territory-option > svg:last-child {
   width: 0.875rem;
   height: 0.875rem;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-territory-option strong,
@@ -5172,7 +5400,7 @@
   width: 1rem;
   height: 1rem;
   flex: 0 0 auto;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-mission-categories {
@@ -5332,7 +5560,7 @@
 .cds-agent-mission-card[data-selected='true'] .cds-agent-mission-card-icon {
   border-color: hsl(var(--primary) / 0.3);
   background: hsl(var(--primary) / 0.1);
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
 }
 
 .cds-agent-mission-card-copy {
@@ -5366,7 +5594,7 @@
 .cds-agent-mission-card-check {
   width: 0.95rem;
   height: 0.95rem;
-  color: hsl(var(--primary));
+  color: hsl(var(--primary-ink));
   opacity: 0;
 }
 

@@ -190,7 +190,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
       <div className="border-b border-stone-200 bg-white px-7 py-5">
         <div className="flex items-start justify-between gap-6">
           <div>
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-orange-700">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-warn">
               <Sparkles className="h-4 w-4" /> Agent Starter
             </div>
             <h3 className="mt-1 text-xl font-semibold tracking-tight">一句话改项目，一个地址看效果</h3>
@@ -198,7 +198,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
           <div className="hidden items-center gap-1 sm:flex">
             {STEPS.map((label, index) => (
               <div key={label} className="flex items-center gap-1">
-                <div className={`h-2.5 rounded-full transition-all duration-300 ${index === step ? 'w-9 bg-orange-600' : index < step ? 'w-2.5 bg-stone-800' : 'w-2.5 bg-stone-200'}`} />
+                <div className={`h-2.5 rounded-full transition-all duration-300 ${index === step ? 'w-9 bg-warn' : index < step ? 'w-2.5 bg-stone-800' : 'w-2.5 bg-stone-200'}`} />
                 {index === step && <span className="ml-1 text-xs font-semibold text-stone-700">{label}</span>}
               </div>
             ))}
@@ -287,11 +287,11 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                         key={skill.key}
                         type="button"
                         onClick={() => setSelectedSkills((current) => selected ? current.filter((key) => key !== skill.key) : [...current, skill.key])}
-                        className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-orange-500 bg-orange-50 text-stone-950 shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-stone-300 bg-white text-stone-800 hover:border-stone-500'}`}
+                        className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-stone-950 shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-stone-300 bg-white text-stone-800 hover:border-stone-500'}`}
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <PackageCheck className={`h-5 w-5 ${selected ? 'text-orange-700' : 'text-stone-500'}`} />
-                          <span className={`grid h-5 w-5 place-items-center rounded-full border ${selected ? 'border-orange-600 bg-orange-600 text-white' : 'border-stone-400 bg-white'}`}>
+                          <PackageCheck className={`h-5 w-5 ${selected ? 'text-warn' : 'text-stone-500'}`} />
+                          <span className={`grid h-5 w-5 place-items-center rounded-full border ${selected ? 'border-warn bg-warn text-white' : 'border-stone-400 bg-white'}`}>
                             {selected && <Check className="h-3.5 w-3.5" />}
                           </span>
                         </div>
@@ -330,16 +330,16 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                     type="button"
                     aria-pressed={includeCds}
                     onClick={() => setIncludeCds((value) => !value)}
-                    className={`w-full max-w-2xl rounded-2xl border-2 p-7 text-left transition-all ${includeCds ? 'border-orange-600 bg-orange-50 shadow-[0_18px_50px_rgba(194,91,33,0.15)]' : 'border-stone-300 bg-white'}`}
+                    className={`w-full max-w-2xl rounded-2xl border-2 p-7 text-left transition-all ${includeCds ? 'border-warn bg-warn-soft shadow-[0_18px_50px_rgba(194,91,33,0.15)]' : 'border-stone-300 bg-white'}`}
                   >
                     <div className="flex items-start gap-5">
-                      <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl ${includeCds ? 'bg-orange-600 text-white' : 'bg-stone-200 text-stone-600'}`}>
+                      <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl ${includeCds ? 'bg-warn text-white' : 'bg-stone-200 text-stone-600'}`}>
                         <WandSparkles className="h-6 w-6" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-4">
                           <h4 className="text-lg font-bold">接入 CDS，自动给预览地址</h4>
-                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${includeCds ? 'bg-orange-600 text-white' : 'bg-stone-200 text-stone-700'}`}>{includeCds ? '已开启' : '未开启'}</span>
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${includeCds ? 'bg-warn text-white' : 'bg-stone-200 text-stone-700'}`}>{includeCds ? '已开启' : '未开启'}</span>
                         </div>
                         <p className="mt-2 text-sm leading-6 text-stone-700">自动处理项目扫描、分支部署、真实预览地址和登录验收。需要账号时，Agent 会验证后再交付安全的临时账号。</p>
                       </div>
@@ -376,7 +376,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                     boxShadow: ['0 16px 45px rgba(194,91,33,0.22)', '0 22px 60px rgba(194,91,33,0.38)', '0 16px 45px rgba(194,91,33,0.22)'],
                   }}
                   transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                  className={`mt-7 flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 py-4 text-base font-bold text-white transition-colors ${copied ? 'bg-emerald-700' : 'agent-starter-copy bg-orange-700 hover:bg-orange-800'}`}
+                  className={`mt-7 flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 py-4 text-base font-bold text-white transition-colors ${copied ? 'bg-ok' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
                 >
                   {copied ? <Check className="h-5 w-5" /> : <ClipboardCopy className="h-5 w-5" />}
                   {copied ? '已复制，现在交给 Agent' : '复制启动提示词'}
@@ -411,7 +411,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
 function StepHeading({ number, title, description }: { number: string; title: string; description: string }) {
   return (
     <div className="flex items-start gap-4">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-orange-100 text-sm font-black text-orange-800">{number}</span>
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-warn-soft text-sm font-black text-warn">{number}</span>
       <div>
         <h4 className="text-xl font-bold tracking-tight text-stone-950">{title}</h4>
         <p className="mt-1 text-sm leading-6 text-stone-600">{description}</p>
@@ -433,15 +433,15 @@ function ChoiceCard({ selected, title, eyebrow, description, icon, compact = fal
     <button
       type="button"
       onClick={onClick}
-      className={`group relative flex min-h-0 flex-col justify-between rounded-2xl border-2 text-left transition-all duration-200 ${compact ? 'p-4' : 'p-6'} ${selected ? 'border-orange-600 bg-orange-50 shadow-[0_14px_40px_rgba(194,91,33,0.13)]' : 'border-stone-300 bg-white hover:-translate-y-0.5 hover:border-stone-600 hover:shadow-lg'}`}
+      className={`group relative flex min-h-0 flex-col justify-between rounded-2xl border-2 text-left transition-all duration-200 ${compact ? 'p-4' : 'p-6'} ${selected ? 'border-warn bg-warn-soft shadow-[0_14px_40px_rgba(194,91,33,0.13)]' : 'border-stone-300 bg-white hover:-translate-y-0.5 hover:border-stone-600 hover:shadow-lg'}`}
     >
       <div>
         <div className="flex items-start justify-between gap-4">
-          <div className={`grid h-9 w-9 place-items-center rounded-xl ${selected ? 'bg-orange-600 text-white' : 'bg-stone-100 text-stone-700'}`}>{icon ?? <UserRound className="h-5 w-5" />}</div>
-          <span className={`grid h-6 w-6 place-items-center rounded-full border ${selected ? 'border-orange-600 bg-orange-600 text-white' : 'border-stone-400 bg-white'}`}>{selected && <Check className="h-4 w-4" />}</span>
+          <div className={`grid h-9 w-9 place-items-center rounded-xl ${selected ? 'bg-warn text-white' : 'bg-stone-100 text-stone-700'}`}>{icon ?? <UserRound className="h-5 w-5" />}</div>
+          <span className={`grid h-6 w-6 place-items-center rounded-full border ${selected ? 'border-warn bg-warn text-white' : 'border-stone-400 bg-white'}`}>{selected && <Check className="h-4 w-4" />}</span>
         </div>
         <h5 className={`${compact ? 'mt-3 text-base' : 'mt-5 text-xl'} font-bold text-stone-950`}>{title}</h5>
-        {eyebrow && <div className="mt-1 text-xs font-bold uppercase tracking-wide text-orange-800">{eyebrow}</div>}
+        {eyebrow && <div className="mt-1 text-xs font-bold uppercase tracking-wide text-warn">{eyebrow}</div>}
         <p className={`${compact ? 'mt-2 text-xs leading-5' : 'mt-3 text-sm leading-6'} text-stone-650 text-stone-700`}>{description}</p>
       </div>
       <div className="mt-3 flex items-center gap-1 text-xs font-bold text-stone-800 opacity-0 transition-opacity group-hover:opacity-100">选择并继续 <ArrowRight className="h-3.5 w-3.5" /></div>

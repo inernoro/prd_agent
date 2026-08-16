@@ -660,7 +660,7 @@ export function DrawingBoardDialog({
                         type="button"
                         className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all hover-bg-soft"
                         style={{
-                          color: 'rgba(34,197,94,0.9)',
+                          color: 'var(--accent-fg-success)',
                           border: '1px solid rgba(34,197,94,0.25)',
                           background: 'rgba(34,197,94,0.08)',
                         }}

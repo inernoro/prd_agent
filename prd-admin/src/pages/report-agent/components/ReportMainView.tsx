@@ -1111,7 +1111,7 @@ function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTempla
       <div className="flex flex-col items-center text-center mb-6">
         <FileText
           size={32}
-          style={{ color: isLight ? 'var(--accent-claude)' : 'rgba(59, 130, 246, 0.6)' }}
+          style={{ color: 'var(--accent-fg-blue)' }}
           className="mb-3"
         />
         <div

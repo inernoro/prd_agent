@@ -736,7 +736,7 @@ export function ModelPoolPickerDialog({
                         {g.isDefaultForType && (
                           <span
                             className="px-1.5 py-0.5 rounded text-[10px]"
-                            style={{ background: 'rgba(251,191,36,0.12)', color: 'rgba(251,191,36,0.95)' }}
+                            style={{ background: 'rgba(251,191,36,0.12)', color: 'var(--accent-fg-amber)' }}
                           >
                             默认
                           </span>
@@ -744,7 +744,7 @@ export function ModelPoolPickerDialog({
                         {isMatching && (
                           <span
                             className="px-1.5 py-0.5 rounded text-[10px]"
-                            style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }}
+                            style={{ background: 'rgba(34,197,94,0.12)', color: 'var(--accent-fg-success)' }}
                           >
                             最佳适配
                           </span>

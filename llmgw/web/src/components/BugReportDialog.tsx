@@ -1,18 +1,23 @@
 /**
  * 网关控制台的全局快捷提 bug（Ctrl+B / Command+B）。
  *
- * 三个入口：快捷键、右下角常驻按钮（带文字标签 + 快捷键提示）、
- * window 事件 OPEN_BUG_REPORT_EVENT（可携预填描述）。
+ * 两个入口：快捷键，以及 window 事件 OPEN_BUG_REPORT_EVENT（可携预填描述）——
+ * 可见入口由 ConsoleLayout 的侧栏页脚渲染并派发该事件。
+ *
+ * **本组件不得再渲染 position:fixed 的右下角浮标。** 历史上它是个 FAB，
+ * 会盖住页面最底部那一行按钮，于是 `.lg-console-content` 给它留了 72px 净空——
+ * 一个「浮」在内容之上的东西，反而在每一页永久占掉一条横带，请求记录页的表格
+ * 因此被顶起一整行。全局动作属于全局导航壳，不属于内容画布之上。
+ * CDS 早于本处做过同一次修正（cds/tests/web/bottom-right-overlay-offsets.test.ts）。
+ * 守卫：llmgw/web/scripts/check-overlay-space.mjs（已接进 pnpm build）。
  *
  * 模态三硬约束：createPortal 到 document.body、尺寸走 inline style、
  * 滚动区 minHeight:0 + overflowY:auto + overscrollBehavior:contain。
- * z-index：遮罩 1500（高于实体抽屉 1200 与 theme.css 现有最高层 1400），
- * 常驻入口 1100（低于抽屉，不遮挡业务浮层）。
+ * z-index：遮罩 1500（高于实体抽屉 1200 与 theme.css 现有最高层 1400）。
  * 颜色全部走 theme.css 的 var() token，暗/浅双主题自动翻转。
  */
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation } from 'react-router-dom';
 import { Bug, ImagePlus, Paperclip, X } from 'lucide-react';
 
 import { API_BASE, applyRenewedToken, getToken } from '@/lib/api';
@@ -35,9 +40,6 @@ import {
 /** 其它组件可派发该事件打开面板（可携带预填描述）。 */
 export const OPEN_BUG_REPORT_EVENT = 'llmgw:open-bug-report';
 
-/** 未登录 / 过渡类页面不显示常驻入口（提交需要登录态）。 */
-const HIDDEN_ENTRY_PATHS = new Set(['/login', '/auth/map', '/change-password']);
-
 interface PendingAttachment extends BugReportAttachment {
   previewUrl?: string;
 }
@@ -55,7 +57,6 @@ function readAsBase64(file: File): Promise<string> {
 }
 
 export function BugReportDialog() {
-  const location = useLocation();
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [severity, setSeverity] = useState<BugSeverity>('major');
@@ -258,46 +259,6 @@ export function BugReportDialog() {
       setSubmitting(false);
     }
   }, [attachments, description, severity]);
-
-  const launcher = HIDDEN_ENTRY_PATHS.has(location.pathname) ? null : (
-    <button
-      type="button"
-      onClick={() => setOpen(true)}
-      title={`提交缺陷（${hint}）`}
-      aria-label={`提交缺陷，快捷键 ${hint}`}
-      style={{
-        position: 'fixed',
-        right: 16,
-        bottom: 16,
-        zIndex: 1100,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 8,
-        height: 36,
-        padding: '0 12px',
-        borderRadius: 999,
-        border: '1px solid var(--border-subtle)',
-        background: 'var(--bg-surface)',
-        color: 'var(--text-secondary)',
-        fontSize: 'var(--fs-caption)',
-      }}
-    >
-      <Bug size={16} />
-      <span>提交缺陷</span>
-      <span
-        style={{
-          padding: '1px 6px',
-          borderRadius: 4,
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border-subtle)',
-          color: 'var(--text-muted)',
-          fontSize: 'var(--fs-micro)',
-        }}
-      >
-        {hint}
-      </span>
-    </button>
-  );
 
   const dialog = open ? (
     <div
@@ -612,12 +573,6 @@ export function BugReportDialog() {
     </div>
   ) : null;
 
-  if (typeof document === 'undefined') return null;
-  return createPortal(
-    <>
-      {launcher}
-      {dialog}
-    </>,
-    document.body,
-  );
+  if (typeof document === 'undefined' || !dialog) return null;
+  return createPortal(dialog, document.body);
 }

@@ -652,14 +652,14 @@ export function ExecutionDetailPanel() {
                 className="w-full flex items-center justify-between px-4 py-2 hover-bg-soft transition-colors"
               >
                 <div className="flex items-center gap-2">
-                  <Brain className="w-3.5 h-3.5" style={{ color: 'rgba(139,92,246,0.9)' }} />
-                  <span className="text-xs font-medium" style={{ color: 'rgba(139,92,246,0.9)' }}>
+                  <Brain className="w-3.5 h-3.5" style={{ color: 'var(--accent-fg-violet)' }} />
+                  <span className="text-xs font-medium" style={{ color: 'var(--accent-fg-violet)' }}>
                     {llmStreamNodeName || 'AI 分析'}
                   </span>
                   {llmStreamModel && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded" style={{
                       background: 'rgba(139,92,246,0.1)',
-                      color: 'rgba(139,92,246,0.7)',
+                      color: 'var(--accent-fg-violet)',
                     }}>
                       {llmStreamModel}
                     </span>

@@ -638,7 +638,9 @@
 .lg-exchange-key-editor span { color: var(--text-muted); font-size: var(--fs-micro); }
 
 @media (max-width: 760px) {
-  .lg-exchange-page { padding-bottom: 82px; }
+  /* 原本这里还有一条 `.lg-exchange-page { padding-bottom: 82px }`——同样是为
+     右下角浮标让位的窄断点补丁，而 .lg-exchange-page 这个类早已没有任何 TSX
+     在用（只剩注释提到），是双重死代码。随浮标一并删除。 */
   .lg-exchange-hero,
   .lg-exchange-form-head,
   .lg-exchange-card-footer,
@@ -1220,13 +1222,67 @@ a:focus-visible {
   display: flex;
 }
 
+/* 侧栏自身**不滚动**，滚动交给里面的 <nav>。
+   这一点是硬要求，不是风格选择：早先写成侧栏整体 overflow-y:auto + 页脚
+   margin-top:auto，导航项一多（当前 6 组 16 项，内容高 889px）就把页脚顶到
+   844px 的可视框以外——1440x900 下页脚底边落在 y=933，用户必须滚动侧栏才能
+   找到「提交缺陷」，等于入口消失。margin-top:auto 只在有富余空间时才推得动。 */
 .lg-console-sidebar {
   width: 224px;
   flex: 0 0 224px;
-  overflow-y: auto;
-  padding: 14px 10px 24px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px 10px 12px;
   border-right: 1px solid var(--border-subtle);
   background: color-mix(in srgb, var(--bg-surface) 70%, var(--bg-page));
+}
+
+.lg-console-sidebar > nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 侧栏页脚：全局动作（提交缺陷）的常驻位置，永远贴在可视区底部。 */
+.lg-sidebar-footer {
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.lg-sidebar-footer button {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.lg-sidebar-footer button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.lg-sidebar-footer kbd {
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
 }
 
 .lg-nav-group + .lg-nav-group {
@@ -1272,12 +1328,13 @@ a:focus-visible {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* 底部多留一条 72px 的净空，专门让开右下角固定的「提交缺陷」浮标
-     （BugReportDialog 的 launcher：right/bottom 16px、z-index 1100、约 40px 高）。
-     不留的话，页面最底部那一行的按钮会被它盖住——验收时的原话是「反馈浮层遮挡底部按钮」，
-     和 chief-designer-usability 第三原则点名过的「发送按钮被 FAB 遮住」是同一种。
-     浮标是全局固定的，页面各自去躲它躲不干净，只能在这里一次性把它的落点让出来。 */
-  padding: 22px 24px 72px;
+  /* 四边内边距一致。**不要**为任何固定浮层在这里预留净空：
+     曾经为右下角的「提交缺陷」FAB 留过 72px，结果是一个本该「浮」在内容之上的
+     东西，在全部 19 个页面永久占掉一条横带——请求记录页的表格因此被顶起一整行，
+     而移动端断点又把这条 padding 覆盖成 12/16px，浮标照样遮挡，两头不讨好。
+     正解是把全局动作放进导航壳（见 ConsoleLayout 的 .lg-sidebar-footer），
+     内容画布之上不放常驻浮标。守卫：scripts/check-overlay-space.mjs。 */
+  padding: 22px 24px;
   overflow: hidden;
 }
 
@@ -3988,13 +4045,92 @@ a:focus-visible {
   color: var(--warn);
 }
 
-/* 只有异常行才需要视觉噪音：整行左侧一道色条，成功行保持干净（替代原来每行都有的状态圆点）。 */
-.lg-log-table-row.is-error > div:first-child {
-  box-shadow: inset 3px 0 0 var(--err);
+/* 瀑布加载的表尾：加载进度 + 常驻的「加载更多」。
+   沿用原分页器的盒子尺寸（7px 12px / --fs-secondary / 顶部一条细线），
+   这样换掉分页器不会把请求记录页的间距与控件高度基准挪动——
+   那个基准是 e2e/llmgw-layout-drift.mjs 拿来量其余 8 条路由的尺子。 */
+.lg-log-table-footer {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
 }
 
-.lg-log-table-row.is-running > div:first-child {
-  box-shadow: inset 3px 0 0 var(--info);
+/* 触底加载提示：三条骨架 + 一句文字。
+   禁止只给一个静止的「加载中…」——等待期屏幕必须有持续变化的内容。 */
+.lg-log-loading-more {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px 14px;
+}
+
+.lg-log-skeleton-row {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-elevated) 0%,
+    color-mix(in srgb, var(--bg-elevated) 55%, var(--text-muted)) 50%,
+    var(--bg-elevated) 100%
+  );
+  background-size: 220% 100%;
+  animation: lg-log-skeleton-sweep 1.15s ease-in-out infinite;
+}
+
+.lg-log-skeleton-row:nth-child(2) { width: 82%; animation-delay: .12s; }
+.lg-log-skeleton-row:nth-child(3) { width: 64%; animation-delay: .24s; }
+
+.lg-log-loading-more-text {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+@keyframes lg-log-skeleton-sweep {
+  from { background-position: 140% 0; }
+  to { background-position: -40% 0; }
+}
+
+/* 关掉动效时保留骨架的形状，只是不再扫光——仍看得出「这里正在长出内容」。 */
+@media (prefers-reduced-motion: reduce) {
+  .lg-log-skeleton-row {
+    animation: none;
+    background: var(--bg-elevated);
+  }
+}
+
+/* 只有异常行才需要视觉噪音：整行左侧一道色条，成功行保持干净（替代原来每行都有的状态圆点）。
+   色条必须落在**行**上而不是第一个单元格上：行是 align-items:center 的 grid，
+   单元格高度只有一行文字那么高，把 inset box-shadow 打在单元格上，画出来是一段
+   悬在半空、还内缩了 16px 行内边距的短竖线——用户看到的原话是「左侧这是什么」，
+   它读起来像渲染残缺的字符，而不像状态标记。改成 ::before 贴着行的左缘、撑满行高。 */
+.lg-log-table-row {
+  position: relative;
+}
+
+.lg-log-table-row.is-error::before,
+.lg-log-table-row.is-running::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.lg-log-table-row.is-error::before {
+  background: var(--err);
+}
+
+.lg-log-table-row.is-running::before {
+  background: var(--info);
 }
 
 .lg-log-insights {
@@ -4028,7 +4164,9 @@ a:focus-visible {
   display: flex;
   min-width: 0;
   align-items: stretch;
-  gap: 3px;
+  /* 柱宽/间隙比：间隙从 3px 收到 2px、柱宽上限从 24px 放到 30px。
+     窄柱配宽缝会把一排柱子读成一把梳子，高低差反而看不出来。 */
+  gap: 2px;
   padding: 4px 2px 18px;
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -4048,12 +4186,21 @@ a:focus-visible {
 
 .lg-mini-bar-value {
   width: 100%;
-  max-width: 24px;
+  max-width: 30px;
   min-height: 2px;
   border-radius: 3px 3px 0 0;
   background: var(--ok);
   opacity: 0.88;
   transition: opacity 120ms ease;
+}
+
+/* 零值：基线上一段 2px 灰刻度。既不冒充柱子，也不假装这天不存在。 */
+.lg-mini-bar-value.is-zero {
+  height: 2px;
+  min-height: 2px;
+  border-radius: 0;
+  background: var(--border-strong);
+  opacity: 1;
 }
 
 .lg-mini-bar-item:hover .lg-mini-bar-value {
@@ -6946,4 +7093,10 @@ a:focus-visible {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* 续取失败的表尾提示。用 --err 而不是灰字：这是需要用户动作的状态，
+   和「已全部加载」那种终态不是一回事。 */
+.lg-log-footer-error {
+  color: var(--err);
 }

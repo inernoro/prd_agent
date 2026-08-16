@@ -501,7 +501,7 @@ export default function GroupsPage() {
                       {g.prdTitle ? (
                         <div
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] truncate"
-                          style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'rgba(147, 197, 253, 0.85)' }}
+                          style={{ background: 'rgba(147, 197, 253, 0.1)', color: 'var(--accent-fg-blue)' }}
                         >
                           <FileText size={9} className="shrink-0" />
                           <span className="truncate max-w-[80px]">{g.prdTitle}</span>
@@ -519,7 +519,7 @@ export default function GroupsPage() {
                       <div className="flex items-center gap-1">
                         <button
                           className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
-                          style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'rgba(96, 165, 250, 0.95)' }}
+                          style={{ background: 'rgba(59, 130, 246, 0.15)', color: 'var(--accent-fg-blue)' }}
                           onClick={(e) => { e.stopPropagation(); openDetail(g, 'members'); }}
                           title="查看成员"
                         >
@@ -527,7 +527,7 @@ export default function GroupsPage() {
                         </button>
                         <button
                           className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
-                          style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'rgba(251, 191, 36, 0.95)' }}
+                          style={{ background: 'rgba(245, 158, 11, 0.15)', color: 'var(--accent-fg-warning)' }}
                           onClick={(e) => { e.stopPropagation(); openDetail(g, 'gaps'); }}
                           title="查看缺失"
                         >
@@ -535,7 +535,7 @@ export default function GroupsPage() {
                         </button>
                         <button
                           className="px-1.5 py-0.5 rounded text-[9px] font-medium transition-colors hover:brightness-110"
-                          style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'rgba(74, 222, 128, 0.95)' }}
+                          style={{ background: 'rgba(34, 197, 94, 0.15)', color: 'var(--accent-fg-success)' }}
                           onClick={(e) => { e.stopPropagation(); openDetail(g, 'messages'); }}
                           title="查看消息"
                         >
@@ -1055,7 +1055,7 @@ export default function GroupsPage() {
                                 type="button"
                                 className="text-[11px] font-semibold rounded-full px-2.5 h-6 inline-flex items-center"
                                 style={{
-                                  color: 'rgba(147, 197, 253, 0.95)',
+                                  color: 'var(--accent-fg-blue)',
                                   border: '1px solid rgba(59,130,246,0.28)',
                                   background: 'rgba(59,130,246,0.10)',
                                 }}

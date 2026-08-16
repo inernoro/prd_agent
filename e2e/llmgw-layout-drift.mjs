@@ -37,11 +37,25 @@ const PLATFORMS = [
 const MODELS = [
   row({ id: 'm1', name: 'demo-chat', modelName: 'demo/chat-1', protocol: 'openai', platformId: 'p1', platformName: '教程假上游', group: 'chat', timeout: 60, maxRetries: 2, maxConcurrency: 10, maxTokens: 8192, priority: 10, isMain: true, hasKey: true, capabilities: [] }),
 ];
-const LOGS = [{
-  id: 'l1', requestId: 'req-demo-0001', provider: 'demo', model: 'demo/chat-1', status: 'succeeded',
-  startedAt: nowIso, durationMs: 1234, inputTokens: 100, outputTokens: 200, totalTokens: 300,
-  appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
-}];
+/* 必须同时有成功行与异常行。
+   成功状态从 2026-08-14 起渲染成普通小字而不是 chip（只有异常才配拥有视觉噪音），
+   桩里若只剩成功行，基准页就一个 chip 都不出——`chip规格种类` 的上限被人为收窄到 0，
+   其余 8 条路由会集体"漂移"，而真实页面上从来都有失败行。
+   同一个道理已经在上面的 timeseries 注释里写过一次：桩不代表真实版面，基准就是假的。 */
+/* 行数要够撑出纵向滚动：下面的「滚动位置不丢」断言必须真的滚得动，
+   两行的表体 scrollHeight == clientHeight，怎么滚都是 0，那条断言会变成永远绿的空跑。 */
+const LOGS = Array.from({ length: 40 }, (_, i) => (i === 1
+  ? {
+      id: 'l2', requestId: 'req-demo-0002', provider: 'demo', model: 'demo/chat-1', status: 'failed',
+      statusCode: 502, startedAt: nowIso, durationMs: 880, inputTokens: 100, outputTokens: null,
+      totalTokens: 100, appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
+    }
+  : {
+      id: `l${i + 1}`, requestId: `req-demo-${String(i + 1).padStart(4, '0')}`, provider: 'demo',
+      model: 'demo/chat-1', status: 'succeeded', startedAt: nowIso, durationMs: 1234,
+      inputTokens: 100, outputTokens: 200, totalTokens: 300,
+      appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
+    }));
 /* 模型池的卡片、成员行、操作区才是这个检测器要盯的规格来源；
    空列表只会渲染空状态，改坏了内边距/间距也照样"与基准一致"。 */
 const poolMember = (over) => ({
@@ -134,9 +148,11 @@ const STUBS = {
   '/auth/tenants': [],
   '/platforms': { ...LIST, items: PLATFORMS, platforms: PLATFORMS },
   '/models': { ...LIST, items: MODELS, models: MODELS },
-  '/logs': { ...LIST, total: 1, items: LOGS },
+  // total 刻意大于返回条数：只有 hasMore 为真时瀑布加载才会挂出哨兵，
+  // 下面「空闲时只发一次列表请求」的断言才有东西可测；相等的话它是空跑的绿灯。
+  '/logs': { ...LIST, total: 200, items: LOGS },
   '/logs/meta': { models: [], providers: [], statuses: [], appCallerCodes: [], sessions: [], teams: [], serviceKeys: [], clientCodes: [], environments: [] },
-  '/logs/summary': { total: 1, succeeded: 1, failed: 0, totalTokens: 300, estimatedCostUsd: 0.01 },
+  '/logs/summary': { total: LOGS.length, succeeded: LOGS.length - 1, failed: 1, totalTokens: 400, estimatedCostUsd: 0.01 },
   // 趋势图是基准页自身的一部分，空 points 会让它整块不渲染 —— 基准就不再代表真实版面。
   '/logs/timeseries': { items: Array.from({ length: 14 }, (_, i) => ({ date: `2026-07-${String(i + 1).padStart(2, '0')}`, count: 3 + ((i * 7) % 11) })) },
   '/service-keys': [row({ id: 'k1', name: 'runtime-key', keyPrefix: 'gwk_demo', teamId: null, createdByUsername: 'demo', sourceSystem: 'map', clientCode: 'demo', environment: 'production', purpose: 'runtime', appCallerCodes: ['demo.chat::chat'], ingressProtocols: ['openai'], scopes: ['chat'], allowedCidrs: [] })],
@@ -318,6 +334,7 @@ await page.waitForURL('**/llmgw/logs');
 
 const ROUTES = ['/logs', '/platforms', '/models', '/service-keys', '/audits', '/app-callers', '/pools', '/logical-models', '/exchanges'];
 const data = {};
+const idleFetches = {};
 for (const route of ROUTES) {
   await page.goto(`${base}${route}`);
   await page.waitForTimeout(800);
@@ -336,6 +353,127 @@ const exchangeLayout = await page.evaluate(() => {
     equalWidths: new Set(cards.map((rect) => Math.round(rect.width))).size <= 1,
   };
 });
+// 侧栏页脚（「提交缺陷」的唯一可见入口）必须不滚动就在视口内。
+// 这是运行时判据，源码扫描替代不了：CSS 写法看着对，导航项一多照样把页脚顶出去。
+// 2026-08-14 就是这么翻的车——页脚底边落在 y=933、视口 900，入口等于消失。
+const sidebarFooter = await page.evaluate(() => {
+  const aside = document.querySelector('.lg-console-sidebar');
+  const foot = document.querySelector('.lg-sidebar-footer');
+  if (!aside || !foot) return { 存在: false };
+  const a = aside.getBoundingClientRect();
+  const f = foot.getBoundingClientRect();
+  return {
+    存在: true,
+    需要滚动: aside.scrollHeight > Math.ceil(a.height) + 1,
+    在视口内: f.top >= 0 && f.bottom <= window.innerHeight + 1,
+    页脚底部y: Math.round(f.bottom),
+    视口高: window.innerHeight,
+  };
+});
+
+// 空闲时不许自动续取。
+// 这条针对的是同一族反复出现的缺陷：哨兵一旦落在「不裁剪的 root」里，或者列表被清空
+// 而 total 没跟着清零，它就会一直触发。已经踩过三个变体：
+//   1) ≤680px 断点把表体改成 overflow:visible，哨兵永远在 root 盒子里 —— 开页 6 秒 23 个请求
+//   2) 切筛选只清 rows 不清 total，空表挂着哨兵且首页失败不 pause —— 6 秒 312 个请求
+//   3) 触底失败后页码照常前进，哨兵继续推进 —— 跳过失败那一页
+// 判据统一成一句话：**打开页面什么都不做，列表请求只能发一次**（桌面与移动各测一次）。
+for (const [label, size] of [['桌面', { width: 1440, height: 900 }], ['移动', { width: 390, height: 844 }]]) {
+  await page.setViewportSize(size);
+  let listCalls = 0;
+  const count = (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith('/gw/logs')) listCalls += 1;
+  };
+  page.on('request', count);
+  await page.goto(`${base}/logs`);
+  await page.waitForSelector('.lg-log-table-body');
+  await page.waitForTimeout(2500); // 不滚动、不点击，纯等
+  idleFetches[label] = listCalls;
+
+  // 再切一次筛选。首屏后什么都不做只能测到「root 是否在裁剪」那一族；
+  // 「清空列表却没清 total」要等到列表被清空、而新首页还没回来的那一瞬间才暴露，
+  // 所以必须真的切一次。切完同样只许再发一次请求。
+  listCalls = 0;
+  await page.evaluate(() => {
+    const select = [...document.querySelectorAll('select')]
+      .find((el) => [...el.options].some((option) => option.textContent.includes('近 7 天')));
+    if (!select) return;
+    const option = [...select.options].find((item) => item.value !== select.value);
+    if (!option) return;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    setter.call(select, option.value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(2500);
+  page.off('request', count);
+  idleFetches[`${label}·切筛选后`] = listCalls;
+}
+await page.setViewportSize({ width: 1440, height: 900 });
+
+// 上面那组用的是「永远成功」的桩，只能测出「root 不裁剪」那一族：
+// 列表清空后哨兵虽然会多打一两次，但首页一旦成功、行填回来，它自己就停了。
+// 「清空列表却没清 total」的真正杀伤力要在**首页持续失败**时才显形——
+// 空表 + hasMore 恒真 + 首页失败不进 paused，哨兵就对着 page=1 无限重打
+// （实测 6 秒 312 个请求，等于自己 DoS 自己）。这里强制让列表接口全失败来测它。
+let failingCalls = 0;
+await page.route('**/gw/logs?*', async (route) => {
+  failingCalls += 1;
+  await route.fulfill({
+    status: 500,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: false, error: { message: '注入失败（守卫用）' }, data: null }),
+  });
+});
+await page.evaluate(() => {
+  const select = [...document.querySelectorAll('select')]
+    .find((el) => [...el.options].some((option) => option.textContent.includes('近 30 天')));
+  if (!select) return;
+  const option = [...select.options].find((item) => item.value !== select.value);
+  if (!option) return;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+  setter.call(select, option.value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+});
+await page.waitForTimeout(2500);
+await page.unroute('**/gw/logs?*');
+const failStormCalls = failingCalls;
+
+// 1440 视口下请求记录页不得出现横向滚动条。
+// 列宽下限是推算出来的，而推算模型很容易和网格实际对不上（末尾的列设置齿轮是
+// sticky-right，被钉在右缘、不撑开滚动范围，所以它和它前面那个间隙都不该计入下限）。
+// 与其在注释里论证，不如让浏览器直接回答：这是「列宽调整不许把横向滚动条调回来」的
+// 唯一判据。
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.goto(`${base}/logs`);
+await page.waitForSelector('.lg-log-table-scroll');
+await page.waitForTimeout(900);
+const horizontalScroll = await page.evaluate(() => {
+  const scroll = document.querySelector('.lg-log-table-scroll');
+  if (!scroll) return { 有: false, 原因: '找不到滚动容器' };
+  return { 有: scroll.scrollWidth > scroll.clientWidth + 1, 容器: scroll.clientWidth, 内容: scroll.scrollWidth };
+});
+
+// 表体的滚动位置必须能扛住一次重渲染。
+// 这条判据针对的是真实踩过的形状：LogTable 若定义在 LogsView 函数体里，
+// 组件类型每次渲染都变，React 整棵卸载重挂，.lg-log-table-body 的 DOM 节点被换掉、
+// scrollTop 归零。分页时代这只是「偶尔跳回顶部」，改成瀑布加载后会变成
+// 「越滚越弹回 + 反复触底重取」。源码扫描测不出来，只能真滚一次。
+await page.goto(`${base}/logs`);
+await page.waitForSelector('.lg-log-table-body');
+await page.waitForTimeout(900);
+const scrollKeep = await page.evaluate(async () => {
+  const body = document.querySelector('.lg-log-table-body');
+  if (!body) return { 可滚动: false, 原因: '找不到表体' };
+  if (body.scrollHeight <= body.clientHeight + 1) return { 可滚动: false, 原因: '桩数据撑不出滚动条' };
+  body.scrollTop = 120;
+  const before = body.scrollTop;
+  document.querySelector('.lg-log-trend-toggle')?.click();
+  await new Promise((r) => setTimeout(r, 350));
+  const after = document.querySelector('.lg-log-table-body');
+  return { 可滚动: true, 滚动前: before, 重渲染后: after ? after.scrollTop : -1 };
+});
+
 if (process.env.LLMGW_SCREENSHOT_PATH) {
   await page.screenshot({ path: process.env.LLMGW_SCREENSHOT_PATH, fullPage: true });
 }
@@ -379,11 +517,69 @@ for (const [route, m] of Object.entries(data)) {
   console.log(`${route.padEnd(17)} ${diffs.length ? '漂移: ' + diffs.join('；') : '与基准一致'}`);
   drift += diffs.length;
 }
-console.log(`\n合计漂移项: ${drift}`);
+console.log('1440 横向滚动:', JSON.stringify(horizontalScroll));
+if (horizontalScroll.有) {
+  console.error(
+    `1440 视口下请求记录页出现了横向滚动条（容器 ${horizontalScroll.容器} / 内容 ${horizontalScroll.内容}）。`
+    + '\n  列宽下限之和超了容器宽：要么某列下限调太大，要么把 sticky 的列设置齿轮也算进了下限。',
+  );
+  drift += 1;
+}
+
+console.log('空闲时列表请求次数:', JSON.stringify(idleFetches));
+for (const [label, calls] of Object.entries(idleFetches)) {
+  if (calls !== 1) {
+    console.error(
+      `${label}视口下打开 Logs 什么都不做，列表请求发了 ${calls} 次（应为 1 次）。`
+      + '\n  哨兵在自动续取：检查 IntersectionObserver 的 root 是不是真的在裁剪，'
+      + '以及清空列表时 total 有没有跟着清零。',
+    );
+    drift += 1;
+  }
+}
+
+console.log('首页持续失败时 2.5s 内的列表请求次数:', failStormCalls);
+if (failStormCalls > 3) {
+  console.error(
+    `首页失败时列表接口被打了 ${failStormCalls} 次（上限 3）。`
+    + '\n  清空累加结果时 total 必须一并清零，否则空表仍然 hasMore 恒真、哨兵不停重打；'
+    + '\n  首页失败走的是 listError 而不是 moreError，不会进 paused，挡不住这个循环。',
+  );
+  drift += 1;
+}
+
+console.log('表体滚动保持:', JSON.stringify(scrollKeep));
+if (!scrollKeep.可滚动) {
+  console.error(`无法验证滚动保持：${scrollKeep.原因}——这条断言正在空跑，请修桩数据。`);
+  drift += 1;
+} else if (scrollKeep.重渲染后 !== scrollKeep.滚动前) {
+  console.error(
+    `一次重渲染就把表体滚动位置冲掉了（${scrollKeep.滚动前} → ${scrollKeep.重渲染后}）。`
+    + '\n  多半是 LogTable 又被挪回 LogsView 函数体内：组件类型每次渲染都变，React 会整棵重挂。',
+  );
+  drift += 1;
+}
+
+console.log('侧栏页脚:', JSON.stringify(sidebarFooter));
+if (!sidebarFooter.存在) {
+  console.error('侧栏页脚 .lg-sidebar-footer 不存在——「提交缺陷」失去唯一可见入口。');
+  drift += 1;
+} else if (!sidebarFooter.在视口内 || sidebarFooter.需要滚动) {
+  console.error(
+    `侧栏页脚不滚动就够不着（页脚底边 y=${sidebarFooter.页脚底部y}，视口高 ${sidebarFooter.视口高}）。`
+    + '\n  滚动要归 .lg-console-sidebar > nav，侧栏自身 overflow:hidden，页脚 flex:0 0 auto。',
+  );
+  drift += 1;
+}
+
 console.log('Exchange 布局:', JSON.stringify(exchangeLayout));
 if (exchangeLayout.cardCount > 1 && (exchangeLayout.columns !== 1 || !exchangeLayout.equalWidths)) {
   console.error('Exchange 列表必须保持单列且卡片等宽。');
   drift += 1;
 }
+// 总数必须打在**所有**断言之后：先打总数再跑断言，日志上会出现「合计漂移项: 0」
+// 紧跟着失败详情，读日志的人被那个 0 骗过去。
+console.log(`\n合计漂移项: ${drift}`);
+
 // 有漂移必须非零退出，否则任何按退出码判定的 CI / 本地校验都会把回归当通过。
 if (drift > 0) process.exitCode = 1;

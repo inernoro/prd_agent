@@ -1,0 +1,1 @@
+| chore | doc | 熵清理：D1-D5 全绿无欠账，D6 处理 3 条历史 changelog（浅色主题 Toast 已由 debt.frontend.md 覆盖、熵减技能自身修复无需另立设计文档、llmgw 请求记录版面修正的两处待办已入 debt.platform.llm-gateway.md），故意跳过 2 条：stable-smoke 运行时等价性（此前已因五类安全内容未核实被主动撤回登记，本轮不重新登记）、录音 ASR 路由契约（缺对应设计文档，超出本轮自动追加范围，留待后续按 /doc 补文档） |

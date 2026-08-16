@@ -421,7 +421,7 @@ function CreateTab() {
                   style={msg.role === 'user'
                     ? { background: 'rgba(59,130,246,0.12)', color: 'var(--text-primary)', border: '1px solid rgba(59,130,246,0.15)', borderBottomRightRadius: 6 }
                     : msg.role === 'system'
-                      ? { background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.9)', border: '1px solid rgba(34,197,94,0.12)' }
+                      ? { background: 'rgba(34,197,94,0.08)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34,197,94,0.12)' }
                       : { background: 'var(--nested-block-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderBottomLeftRadius: 6 }
                   }>
                   {msg.role === 'assistant' ? (

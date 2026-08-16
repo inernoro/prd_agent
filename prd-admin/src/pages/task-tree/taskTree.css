@@ -31,7 +31,7 @@
   display: inline-flex; align-items: center; gap: 5px;
 }
 .tt-btn:hover { background: rgba(127, 127, 127, 0.16); }
-.tt-btn.tt-primary { background: #7c5cff; border-color: #7c5cff; color: #fff; }
+.tt-btn.tt-primary { background: #6d3fe8; border-color: #6d3fe8; color: #fff; }
 .tt-btn.tt-primary:disabled { opacity: .55; cursor: default; }
 
 .tt-stage {

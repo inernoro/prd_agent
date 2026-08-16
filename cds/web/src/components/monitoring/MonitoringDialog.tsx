@@ -296,20 +296,20 @@ function HealthSection({ health }: { health: PerfHealth }): JSX.Element {
   return (
     <div className="space-y-3">
       {warnings.length === 0 ? (
-        <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-600 dark:text-emerald-300">
+        <div className="flex items-center gap-2 rounded-md border border-ok/30 bg-ok-soft px-4 py-3 text-sm text-ok">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
           运维健康：未发现影响性能的系统性问题。
         </div>
       ) : (
-        <div className={`rounded-md border px-4 py-3 ${hasCritical ? 'border-destructive/40 bg-destructive/10' : 'border-amber-500/40 bg-amber-500/10'}`}>
-          <div className={`mb-2 flex items-center gap-2 text-sm font-semibold ${hasCritical ? 'text-destructive' : 'text-amber-600 dark:text-amber-300'}`}>
+        <div className={`rounded-md border px-4 py-3 ${hasCritical ? 'border-destructive/40 bg-destructive/10' : 'border-warn/40 bg-warn-soft'}`}>
+          <div className={`mb-2 flex items-center gap-2 text-sm font-semibold ${hasCritical ? 'text-destructive' : 'text-warn'}`}>
             <AlertTriangle className="h-4 w-4 shrink-0" />
             运维健康告警（{warnings.length}）
           </div>
           <ul className="space-y-1.5">
             {warnings.map((w) => (
               <li key={w.code} className="flex items-start gap-2 text-xs leading-5">
-                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${w.level === 'critical' ? 'bg-destructive/20 text-destructive' : 'bg-amber-500/20 text-amber-600 dark:text-amber-300'}`}>
+                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${w.level === 'critical' ? 'bg-destructive/20 text-destructive' : 'bg-warn-soft text-warn'}`}>
                   {w.level === 'critical' ? '严重' : '警告'}
                 </span>
                 <span className="text-foreground">{w.message}</span>
@@ -321,7 +321,7 @@ function HealthSection({ health }: { health: PerfHealth }): JSX.Element {
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-muted-foreground">预览调度器</span>
-        <span className={`rounded border px-1.5 py-0.5 font-medium ${scheduler.enabled ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>
+        <span className={`rounded border px-1.5 py-0.5 font-medium ${scheduler.enabled ? 'border-ok/40 bg-ok-soft text-ok' : 'border-destructive/40 bg-destructive/10 text-destructive'}`}>
           {scheduler.enabled ? '已启用' : scheduler.wired ? '已禁用' : '未接入'}
         </span>
         {scheduler.enabled ? (
@@ -428,9 +428,9 @@ function ExecutorRow({ node }: { node: ExecutorNode }): JSX.Element {
   const memPercent = executorMemPercent(node);
   const statusClass =
     node.status === 'online'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+      ? 'border-ok/30 bg-ok-soft text-ok'
       : node.status === 'draining'
-        ? 'border-amber-500/30 bg-amber-500/10 text-amber-600'
+        ? 'border-warn/30 bg-warn-soft text-warn'
         : 'border-destructive/30 bg-destructive/10 text-destructive';
   return (
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4">
@@ -508,8 +508,8 @@ function ActivityRow({ log }: { log: MonitoringActivityLog }): JSX.Element {
     log.result === 'failed'
       ? 'border-destructive/30 bg-destructive/10 text-destructive'
       : log.result === 'pending'
-        ? 'border-amber-500/30 bg-amber-500/10 text-amber-600'
-        : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+        ? 'border-warn/30 bg-warn-soft text-warn'
+        : 'border-ok/30 bg-ok-soft text-ok';
   return (
     <li className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -594,7 +594,7 @@ function LogCenterTab({ projectId }: { projectId?: string }): JSX.Element {
       {state.status === 'loading' ? <LoadingBlock label="加载系统事件日志" /> : null}
       {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
       {state.status === 'disabled' ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+        <div className="rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-warn">
           {state.message}
         </div>
       ) : null}
@@ -617,7 +617,7 @@ function LogRow({ ev }: { ev: ServerEvent }): JSX.Element {
   const sevClass = ev.severity === 'error'
     ? 'border-destructive/30 bg-destructive/10 text-destructive'
     : ev.severity === 'warn'
-      ? 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+      ? 'border-warn/30 bg-warn-soft text-warn'
       : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
   const sevLabel = ev.severity === 'error' ? '错误' : ev.severity === 'warn' ? '警告' : '信息';
   return (

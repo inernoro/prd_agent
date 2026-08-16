@@ -302,7 +302,7 @@ export function SiteWizardDialog({
                     项目提供独立回滚脚本
                   </label>
                 ) : (
-                  <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+                  <div className="rounded-md border border-ok/30 bg-ok-soft p-3 text-sm text-ok">
                     动态发布会保留上一成功版本；最终入口探测失败时自动恢复，也可从发布记录手动回滚。
                   </div>
                 )}

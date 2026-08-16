@@ -99,24 +99,24 @@ export function AccessRequestInbox({
 
   const primaryCard = (
     <section
-      className="relative w-full overflow-hidden rounded-xl border border-amber-500/45
+      className="relative w-full overflow-hidden rounded-xl border border-warn/45
                  bg-[hsl(var(--surface-raised))] shadow-2xl"
       role={placement === 'floating' ? 'alert' : 'region'}
       aria-live={placement === 'floating' ? 'assertive' : 'off'}
       aria-label={`${count} 个授权申请需要处理`}
     >
-      <div className="absolute inset-y-0 left-0 w-1 bg-amber-500" aria-hidden />
+      <div className="absolute inset-y-0 left-0 w-1 bg-warn" aria-hidden />
       <div className="p-4 pl-5">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                          bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                          bg-warn-soft text-warn">
             <ShieldAlert className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold text-foreground">需要你的授权</h2>
               <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full
-                               bg-amber-500 px-2 text-xs font-bold text-black">
+                               bg-warn px-2 text-xs font-bold text-black">
                 {count}
               </span>
             </div>

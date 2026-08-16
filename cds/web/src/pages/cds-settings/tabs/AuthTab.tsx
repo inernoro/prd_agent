@@ -115,16 +115,16 @@ export function AuthTab(): JSX.Element {
         <div
           className={
             enabled
-              ? 'rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-4'
-              : 'rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-4'
+              ? 'rounded-md border border-ok/30 bg-ok-soft px-4 py-4'
+              : 'rounded-md border border-warn/40 bg-warn-soft px-4 py-4'
           }
         >
           <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
               {enabled ? (
-                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+                <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-ok" />
               ) : (
-                <ShieldOff className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+                <ShieldOff className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
               )}
               <div className="min-w-0">
                 <div className="font-medium">{enabled ? '认证已启用' : '本地开发模式：认证未启用'}</div>
@@ -226,7 +226,7 @@ export function AuthTab(): JSX.Element {
           {sso ? (
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               {sso.managedByEnvironment ? (
-                <div className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm leading-6 text-foreground md:col-span-2">
+                <div className="rounded-md border border-warn/35 bg-warn-soft px-3 py-2 text-sm leading-6 text-foreground md:col-span-2">
                   当前配置由 CDS_SSO_* 环境变量托管。页面仅展示生效值，请在部署环境中修改后重启 CDS。
                 </div>
               ) : null}
@@ -269,7 +269,7 @@ export function AuthTab(): JSX.Element {
                 >
                   {ssoSaveState === 'running' ? '保存中' : '保存 SSO 配置'}
                 </Button>
-                {ssoSaveState === 'saved' ? <span className="text-sm text-emerald-500">配置已保存并立即生效</span> : null}
+                {ssoSaveState === 'saved' ? <span className="text-sm text-ok">配置已保存并立即生效</span> : null}
                 {ssoSaveState === 'error' ? <span className="text-sm text-destructive">{ssoSaveError || '保存失败'}</span> : null}
               </div>
             </div>

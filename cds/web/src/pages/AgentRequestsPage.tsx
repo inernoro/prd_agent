@@ -51,12 +51,12 @@ interface AgentEvent {
 }
 
 const STATUS_STYLE: Record<string, { label: string; cls: string; pulse?: boolean }> = {
-  running: { label: '运行中', cls: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-500/30', pulse: true },
-  creating: { label: '创建中', cls: 'bg-sky-500/15 text-sky-600 dark:text-sky-300 border-sky-500/30', pulse: true },
-  idle: { label: '已完成', cls: 'bg-sky-500/12 text-sky-600 dark:text-sky-300 border-sky-500/25' },
-  stopping: { label: '停止中', cls: 'bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-500/30' },
+  running: { label: '运行中', cls: 'bg-ok-soft text-ok border-ok/30', pulse: true },
+  creating: { label: '创建中', cls: 'bg-info-soft text-info border-info/30', pulse: true },
+  idle: { label: '已完成', cls: 'bg-info-soft text-info border-info/25' },
+  stopping: { label: '停止中', cls: 'bg-warn-soft text-warn border-warn/30' },
   stopped: { label: '已停止', cls: 'bg-foreground/8 text-muted-foreground border-border' },
-  failed: { label: '失败', cls: 'bg-red-500/15 text-red-600 dark:text-red-300 border-red-500/30' },
+  failed: { label: '失败', cls: 'bg-bad-soft text-bad border-bad/30' },
 };
 
 function fmtTime(iso: string | null): string {
@@ -195,7 +195,7 @@ export function AgentRequestsPage(): JSX.Element {
           }
           right={
             <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="live-indicator">
-              <span className={['inline-block w-2 h-2 rounded-full', sseLive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'].join(' ')} />
+              <span className={['inline-block w-2 h-2 rounded-full', sseLive ? 'bg-ok animate-pulse' : 'bg-warn'].join(' ')} />
               {sseLive ? '实时已连接（SSE）' : '实时降级（5s 轮询）'}
             </span>
           }
@@ -255,7 +255,7 @@ export function AgentRequestsPage(): JSX.Element {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/8 px-3 py-2 text-sm text-red-600 dark:text-red-300">{error}</div>
+        <div className="rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">{error}</div>
       )}
 
       {/* 请求列表：一条 = 一次 agent 会话（title/label + 收发预览 + 状态/耗时） */}
@@ -272,7 +272,7 @@ export function AgentRequestsPage(): JSX.Element {
           return (
             <div
               key={item.sessionId}
-              className={['rounded-lg border bg-card transition-colors', open ? 'border-emerald-500/40' : 'border-border'].join(' ')}
+              className={['rounded-lg border bg-card transition-colors', open ? 'border-ok/40' : 'border-border'].join(' ')}
               data-testid={'request-row-' + item.sessionId}
             >
               <button
@@ -288,7 +288,7 @@ export function AgentRequestsPage(): JSX.Element {
                   </span>
                   <span className="text-sm font-medium truncate max-w-[280px]">{item.title || item.sessionId.slice(0, 18)}</span>
                   {item.clientApp && (
-                    <span className="rounded bg-sky-500/12 border border-sky-500/25 px-1.5 py-0.5 text-[10px] text-sky-600 dark:text-sky-300">{item.clientApp}</span>
+                    <span className="rounded bg-info-soft border border-info/25 px-1.5 py-0.5 text-[10px] text-info">{item.clientApp}</span>
                   )}
                   {item.clientUser && (
                     <span className="rounded bg-foreground/6 border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground" title={item.clientUser}>
@@ -296,18 +296,18 @@ export function AgentRequestsPage(): JSX.Element {
                     </span>
                   )}
                   {item.model && <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[170px]">{item.model}</span>}
-                  {item.live && <span className="text-[9px] text-emerald-500 font-semibold">LIVE</span>}
+                  {item.live && <span className="text-[9px] text-ok font-semibold">LIVE</span>}
                   <span className="ml-auto shrink-0 text-[10px] text-muted-foreground tabular-nums">
                     {fmtTime(item.createdAt)} · {fmtDuration(item.durationMs)} · {item.eventCount} 事件
                   </span>
                 </div>
                 <div className="mt-1.5 grid gap-1 md:grid-cols-2 text-[11px]">
                   <div className="truncate text-muted-foreground">
-                    <span className="text-sky-600 dark:text-sky-400 font-medium">发 </span>
+                    <span className="text-info font-medium">发 </span>
                     {item.requestPreview ?? '（无请求消息）'}
                   </div>
                   <div className="truncate text-muted-foreground">
-                    <span className="text-emerald-600 dark:text-emerald-400 font-medium">收 </span>
+                    <span className="text-ok font-medium">收 </span>
                     {item.responsePreview ?? '（尚无返回）'}
                   </div>
                 </div>
@@ -317,13 +317,13 @@ export function AgentRequestsPage(): JSX.Element {
                 <div className="border-t border-border px-3 py-2.5 flex flex-col gap-2.5" data-testid="request-detail">
                   <div className="grid gap-2.5 md:grid-cols-2">
                     <div>
-                      <div className="text-[10px] font-semibold text-sky-600 dark:text-sky-400 mb-1">请求内容（messages[0]）</div>
+                      <div className="text-[10px] font-semibold text-info mb-1">请求内容（messages[0]）</div>
                       <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-relaxed">
                         {item.requestPreview ?? '（无）'}
                       </pre>
                     </div>
                     <div>
-                      <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 mb-1">返回内容（finalText 截断 2000 字）</div>
+                      <div className="text-[10px] font-semibold text-ok mb-1">返回内容（finalText 截断 2000 字）</div>
                       <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background px-2.5 py-2 text-[11px] leading-relaxed">
                         {item.responsePreview ?? '（尚无返回）'}
                       </pre>
@@ -335,7 +335,7 @@ export function AgentRequestsPage(): JSX.Element {
                     </div>
                     {events === 'loading' && <div className="text-[11px] text-muted-foreground">事件流加载中...</div>}
                     {events === 'error' && (
-                      <div className="text-[11px] text-amber-600 dark:text-amber-400">
+                      <div className="text-[11px] text-warn">
                         事件流不可用（会话可能已随 CDS 重启清理，收发摘要见上）
                       </div>
                     )}

@@ -8,6 +8,701 @@
 
 ## [未发布]
 
+### 2026-08-16
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-admin | 修复请求日志分页按钮被桌面通知浮标遮挡的问题 |
+
+### 2026-08-15
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理：D1/D2/D3/D4/D7 均干净，D6 处理 4 条 changelog（web-hosting-acceptance-p1、两条 entropy-cleanup 自身流程记录、stable-smoke-report-readability，均已由现有 plan/rule 文档覆盖，无需新增章节）；巨型聚合 changelog（2026-08-11_stable-smoke-runtime-equivalence.md）仍按 debt.prd-agent.md 已登记的已知边界保持未处理 |
+
+### 2026-08-14
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理 D6：新建头像编辑器设计文档，补齐网关 Provider 接入体验、网页托管「向我提问」、视觉创作 AI 分层与模型池可见性四处设计章节，处理 4 条历史 changelog 内容覆盖 |
+| chore | doc | 撤回 stable-smoke-runtime-equivalence.md 巨型 changelog 的过早结清声明：头像编辑器部分已补齐文档，但该聚合里还有五处安全机制（重定向公网校验、跨应用视频授权、破窗认证、防重放、通知定向投递）未核对，已从 manifest 撤回登记并在 debt.prd-agent.md 如实记录 |
+| fix | claude-md | 熵减技能新增评审轮次熔断：第 3 轮起只修 A 类真缺陷，B/C 类记 debt 不再陪改，处理完即合并 |
+| fix | claude-md | 熵减技能钉死合并条件为四条「CI 绿 + 内容核查通过 + 未命中 D4 硬闸 + 无未解决 A 类缺陷」，明确「机器评审意见清空」不是合并条件（对齐共用规则 §5.5） |
+| fix | claude-md | 熵减技能对历史未合并熵减 PR 改为审计通过即合并、已被覆盖即关闭，并写明该自动合并是 §5.5 的具名例外、仅限本技能自产的文档级 PR |
+| fix | claude-md | 熵减技能新增分支冗余审计，判据改为 fail-closed：先补全浅克隆、校验 merge-base 成功、按分支动过的文件比 main 端点，并排除 main 自身 |
+| fix | claude-md | 熵减技能要求本轮 PR 当轮落地（合并或关闭），禁止留无人认领的沉默 PR 过夜；唯一例外是 CI 或评审未出终态时按兜底保持 open 并写明卡点与续接点 |
+| fix | llmgw | 请求记录等全部页面不再被「提交缺陷」浮标顶起：删除右下角 position:fixed 浮标，内容区取消为它预留的 72px 净空 |
+| feat | llmgw | 「提交缺陷」改为侧栏页脚常驻入口（带快捷键提示），侧栏改由 nav 滚动使页脚常驻可视区底部 |
+| chore | llmgw | 删除已无 TSX 引用的 `.lg-exchange-page` 窄断点 padding-bottom 补丁（双重死代码） |
+| fix | llmgw | 请求记录异常行左侧色条改挂在行上并撑满行高，不再是一段悬空内缩的短竖线 |
+| polish | llmgw | 趋势图零值不再画绿柱，改为基线上 2px 灰刻度；柱宽上限 24→30px、间隙 3→2px |
+| polish | llmgw | 成功状态渲染为普通小字，chip 只留给失败与进行中（只有异常才配拥有视觉噪音） |
+| polish | llmgw | 汇总条过滤掉取不到值的项，不再渲染「上游调用 —」这类破折号占位 |
+| polish | llmgw | 模型列去掉厂商命名空间前缀（deepseek-ai/Dee… → DeepSeek-V4-Fast），完整标识进 title 与 hover 卡 |
+| polish | llmgw | App 名去掉纯展示层的 `G-` 前缀，6 处重复实现收敛到 logsHelpers 的 appDisplayName |
+| polish | llmgw | 请求记录列宽按实测占用率重排：App 列下限 190→288px，占用率从 47%~154% 收到 78%~103% |
+| fix | llmgw | App 详情页按原样精确匹配 appCallerCode，削 `G-` 前缀降为兜底，真的以 G- 开头的 App 不再报找不到 |
+| feat | llmgw | 请求记录三个视图改为瀑布加载：触底自动续取 + 常驻「加载更多」按钮，替换上一页/下一页分页器 |
+| fix | llmgw | 表格组件提到模块作用域，修复重渲染时整棵重挂导致滚动位置归零（滚到一半任何状态变化都会弹回顶部） |
+| fix | llmgw | 刷新一律回第 1 页做替换，不再把当前页重复追加（实测 60 行刷成 90 行） |
+| fix | llmgw | 页码只在取数成功后前进，续取失败给出错误提示 + 重试并暂停哨兵，失败的那一页不再被永久跳过 |
+| fix | llmgw | 瀑布加载的 observer root 改取真正在裁剪的容器，移动端（表体 overflow:visible）退回视口，不再一进 Logs 就把整个结果集拉下来 |
+| fix | llmgw | `/gw/logs` 排序补 `_id` 唯一 tiebreaker：只按 StartedAt 排时并列文档跨页边界会重复一批、漏掉一批 |
+| fix | llmgw | 瀑布追加按 key 去重（日志用 id、会话用 sessionId），重复行不再把 rows.length 顶高导致提前判「已全部加载」 |
+| polish | llmgw | 触底加载给三行扫光骨架而非静止的「加载中」，表尾常驻「已加载 M / 共 N 条」进度 |
+| fix | llmgw | 会话视图关闭触底自动续取（端点是全扫描后内存聚合，自动续取会把翻页放大成连续全扫描），保留手动「加载更多」 |
+| docs | llmgw | 债务台账补两条：app-callers 搜索无锚定 + 会话端点全扫描 |
+| test | llmgw | 新增 `check-overlay-space.mjs` 浮层占位守卫（浮标复活 / 净空复活 / 入口断线 / 侧栏滚动归属），接入 pnpm build 与 check:design |
+| fix | llmgw | 清空累加结果时 total 一并清零，避免空表 hasMore 恒真 + 首页失败不 pause 导致对 page=1 无限重打 |
+| fix | llmgw | appCaller 治理页的 focus 参数改为精确优先、削 `G-` 前缀兜底，与详情页同一口径 |
+| fix | llmgw | 表格最小宽度改为只累计非 sticky 的数据列（末尾列设置齿轮被钉在右缘、不撑开滚动范围），公式与网格实际对齐 |
+| test | llmgw | 漂移检测器新增五条运行时断言（含 1440 视口不得出现横向滚动条）：侧栏页脚可达性、表体滚动位置、空闲时列表只取一次（桌面/移动 × 切筛选前后）、首页持续失败时不得风暴重打；日志桩补失败行与行数；漂移总数改为在全部断言之后打印 |
+| test | prd-api | GatewayDataDomainGuardTests 的 App 显示名断言改钉唯一实现 + 两个消费方接线，并新增禁止 `G-` 前缀复活的断言 |
+| fix | prd-api | 锁定录音转写物理 Offering 并按最终模型生成兼容请求契约 |
+| fix | prd-api | 区分可自动重试与需手动重试的转录失败终态 |
+| fix | prd-api | 为后台转录维护 Worker 心跳并在手动重试前终结失联旧任务 |
+| fix | prd-api | 以跨实例输出锁和代次栅栏阻止旧转录或旧整理覆盖新原文 |
+| fix | prd-api | 隔离启动回收异常，避免知识库级任务拖停录音任务队列 |
+| fix | prd-admin | 转录失败使用服务端终态时间并收敛后台任务看护 |
+| fix | llmgw | 拒绝模型、协议与端点不兼容的 ASR Offering 配置及重新启用 |
+| test | prd-api | 补齐 ASR 路由矩阵、Offering 锁定、参数兼容与失败分类回归 |
+| test | prd-api | 补齐失联回收、并发输出、旧任务拒写与整理竞态的 Mongo 回归 |
+| fix | prd-api | 修复跨进程固定 ASR 模型被网关按健康度重新选成其他协议模型 |
+| test | prd-api | 补齐异构 ASR 池在前后端健康快照不一致时仍保持物理模型锁定的 Mongo 回归 |
+| fix | prd-api | 修正备用实时转写首屏状态并将确认无人声归为不可自动重试终态 |
+| test | prd-api | 补齐实时转写首屏状态与空转录停止重试的回归验证 |
+| fix | prd-api | 拒绝将静音上游返回的独立助手拒答保存为录音原文 |
+| test | prd-api | 补齐静音英文拒答、受控哨兵与真实引用句的正反回归 |
+| fix | prd-api | 统一完整转录、实时回退与响应解析的无人声整句哨兵契约 |
+| test | prd-api | 补齐 chat-audio 真实发言包含无人声关键词时仍保留正文的链路回归 |
+| fix | prd-api | 在完整音频进入 ASR 前增加 PCM 信号门禁，阻止纯静音被模型幻觉成正文 |
+| test | prd-api | 补齐规范化 WAV 对纯静音、长静音夹短人声、补白短句、音量边界与异常格式的确定性回归 |
+| fix | prd-api | 录音任务代次发布在 run 插入失败时条件回滚，并对未知写入结果按 runId 幂等确认 |
+| fix | prd-api | 正文发布后的版本快照失败不再把已成功的录音转录任务误标失败 |
+| fix | prd-api | 为录音任务每次认领分配独立执行身份，阻止失联旧 Worker 写入新执行的心跳、进度、正文和终态 |
+| test | prd-api | 补齐同 runId 重排后的旧执行身份栅栏 Mongo 并发回归 |
+| fix | prd-api | 输出租约失效后立即熔断旧执行，并为中断恢复分配新正文代次防止迟到覆盖 |
+| test | prd-api | 补齐租约过期接管与同 runId 新代次发布的真实 Mongo 并发回归 |
+| fix | prd-api | 中断恢复在任务重排结果未知时按恢复身份幂等确认并安全回滚正文代次 |
+| test | prd-api | 补齐输出租约过期接管后旧恢复者不得回滚、新恢复者幂等收敛的真实 Mongo 回归 |
+| fix | prd-api | 中断恢复 marker 独立于心跳和旧终态持续收敛，并禁止普通执行改写协议中间态 |
+| test | prd-api | 补齐旧心跳恢复和旧执行已终态时 pending marker 仍能重排的真实 Mongo 回归 |
+| fix | prd-api | 首次转录任务改为 marker-first 两阶段发布，并由周期协调收敛未知 Mongo 写入结果 |
+| test | prd-api | 补齐任务 marker 写入与回读双失败、重启续跑和唯一代次发布的真实 Mongo 回归 |
+| fix | prd-api | 相同录音整理请求在 marker 后台收敛后复用原任务，避免 HTTP 重试重复推进代次 |
+| fix | prd-api | 转录任务 marker 持久化独立代次目标，兼容源音频与旧版输出笔记分离的整理恢复 |
+| test | prd-api | 补齐旧版独立转录笔记恢复只推进输出笔记且复用同一任务的真实 Mongo 回归 |
+| fix | prd-api | 录音重试只复用仍持有当前输出代次的在途转录任务 |
+| test | prd-api | 增加无主认领、当前实例复用与锁内代次重读的真实 Mongo 回归 |
+| fix | llmgw | 标准 ASR 端点统一忽略尾斜杠和查询参数后再执行模型协议门禁 |
+| fix | prd-api | 旧版转录笔记在整理发布复核时继续使用原任务保存的转录文本 |
+| test | prd-api | 补齐 ASR 端点规范化与旧版整理原文回退的正反回归 |
+| fix | prd-api | 仅剥离外围引号和终止标点后识别无人声整句哨兵，避免伪正文入库 |
+| fix | prd-admin | 替代转录任务失联时保留可重试停滞错误而非静默撤销后台提示 |
+| test | prd-api | 补齐无人声哨兵外围标点与真实句子包含标记的精确正反例 |
+| test | prd-admin | 补齐旧转录被失联替代任务取代时的后台看护收敛回归 |
+| fix | prd-admin | 将转录首次发布 marker 视为可恢复在途状态并纳入失联判定 |
+| test | prd-admin | 补齐 publishing 状态刷新接管、停滞收敛与失败提示互斥回归 |
+| fix | prd-api | 拒绝视频 chat-audio 的无人声哨兵和助手回复并回退关键帧分析 |
+| test | prd-api | 补齐视频音频拒答、无人声与真实短句的解析回归 |
+
+### 2026-08-13
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理：D1/D2/D3/D4/D7 均干净，D6 处理 2 条 changelog（1 条为技能自身流程记录无需设计文档，1 条补齐 llmgw 账号自助与联邦会话设计小节） |
+| fix | doc | 修正联邦会话（fed_session）设计描述：滑动会话是默认行为，硬截止收紧仅在管理员显式配置更短 SSO 时长时生效（Codex review 发现） |
+| chore | doc | 3 条 changelog（巨型 stable-smoke 聚合、llmgw 上游接入最小输入、网页托管向我提问）不再整体标记 D6 已处理，改在 debt.prd-agent.md / debt.platform.llm-gateway.md / debt.web-hosting.md 登记对应设计文档缺口，避免真实缺口被永久隐藏（Codex review 发现） |
+| fix | prd-agent | 稳定冒烟验收报告统一执行统计口径并补齐流程首屏、失败复现和未执行补跑账本 |
+| polish | prd-agent | 数字卡片与处理步骤改为可点击入口，证据缺口补齐责任人、处理动作和关闭标准 |
+| test | prd-agent | 增加报告统计守恒、链接目标、失败日志归组和非技术阅读层回归校验 |
+| rule | acceptance | 固化验收报告仅允许归档到 CDS 并通过线上打开校验，本地文件只作为不可交付的诊断草稿 |
+| fix | prd-api | 对齐 GPT Image 2 尺寸与响应参数契约，避免生图请求因旧参数失败 |
+| fix | scripts | 稳定冒烟跳过已废弃通知凭据，确保使用当前签名身份 |
+| fix | prd-agent | 报告放行结论同时依据视觉门禁、正式环境安全门和北京时间 |
+| fix | prd-api | 同步视觉验收技能目录测试到 1.0.1 版本 |
+| fix | e2e | 网关路由验收只匹配带逻辑模型身份的上游日志，避免重复请求审计造成误报 |
+| fix | stable-smoke | 登录视觉验收位绑定真实登录路径，避免正确登录页被路径门禁误判 |
+| fix | prd-admin | 修复快捷录音永久准备态并补齐头像空描述的原因与恢复提示 |
+| fix | prd-admin | 修复 StrictMode 下快捷录音成功响应无人消费并永久转圈的问题 |
+| fix | e2e | CDS 静态资源验收兼容 Vite TypeScript 入口并继续拦截真实资源失败 |
+| fix | prd-api | 多图生图切换到 OpenAI 图片备用供给时保留全部参考图并走编辑协议 |
+| test | stable-smoke | 多图验收按参考图语义保真放行供应商切换，并审计备用路由全部文件摘要 |
+| fix | stable-smoke | 报告失败详情转义表格分隔符，并恢复首页应用样式存在性检查 |
+| fix | prd-admin | 图片贴近画布顶部时自动下移快捷操作栏，确保下载等操作始终可见 |
+| fix | prd-admin | 工作区画布回放完成前禁用图片上传，避免初始快照覆盖新加入的多图 |
+| fix | prd-api | OpenAI 多图备用线路显式保留未构建 wire 状态，确保网关必走 multipart 编辑协议 |
+| fix | acceptance | 按真实安全门原因解释正式环境受限执行，并在零失败时展示空状态而非失败卡片 |
+| fix | prd-api | 多图 multipart 审计日志保留请求图片顺序，避免十张以上参考图错位归因 |
+| fix | acceptance | 报告仅在功能未执行数与视觉缺口数相等时说明数字巧合 |
+| fix | acceptance | 恢复显式本地诊断草稿命令，同时保持正式验收只能归档 CDS |
+| fix | stable-smoke | 正式环境只读报告按安全门实际用例统计，并统一最终归档缺口数量说明 |
+| fix | stable-smoke | 区分正式环境只读探针缺证与被安全门阻止的写入用例 |
+| fix | prd-api | 多图 OpenAI 编辑备用线路统一使用可配置的生图超时 |
+| fix | stable-smoke | 双环境受限运行保留正式环境被阻止的写入用例，并接受 OpenAI 兼容多图协议证据 |
+
+### 2026-08-12
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理：D1/D2/D3/D4 均干净（0 变更），D6 合计处理 6 条 changelog（原始任务 5 条 + 历史 PR 积压核对补 1 条）并补齐设计文档关联引用 |
+| chore | doc | 熵减计划：合并 4 个滞留数日的历史「每日熵减计划」PR（#1329/#1335/#1342/#1360）未落地内容 |
+| fix | claude-md | entropy-cleanup 技能不再无限期跳过历史未合并 PR：改为在其 head 上跑审计并上报审计结论，合并仍需用户明确指示 |
+| fix | llmgw | 修复网关账号断头：一键登录建的号既登不进也改不了口令，现在可在「账号与安全」设置登录名与口令 |
+| feat | llmgw | 新增账号与安全页（用户菜单常驻入口），展示登录名、口令是否可用，并提供设置/修改口令 |
+| feat | llmgw | 新增 GET /gw/auth/account；一键登录换来的会话设置口令时免旧口令，并可改登录名 |
+| fix | llmgw | 修复忘记口令会二次锁死：豁免判据改挂会话来源，从 MAP 一键登录回来即可重设 |
+| feat | llmgw | 网关登录名默认跟随 MAP 用户名（建号即用，存量自愈），冲突时明确告知并请用户另取 |
+| fix | llmgw | 账号与安全页补登记进教程维护映射，修掉 tutorial drift |
+| fix | llmgw | 切换租户时保留 fed_session，一键登录用户切租户后仍能靠 SSO 自救口令 |
+| fix | llmgw | MAP 改过名的联邦账号能看到登录名输入框，可以改成新的 MAP 名 |
+| security | llmgw | 收紧过的 SSO 会话续签时按剩余时效签，不再换成多天 token 把免旧口令特权一起延长 |
+| fix | llmgw | MAP 改过名的老账号，登录名输入框预填新建议而不是旧名字 |
+| security | llmgw | 硬截止的联邦会话续签改传绝对到期时刻，绕开 5 分钟下限，堵掉「每 2 分钟续一次无限续命」 |
+| fix | llmgw | 联邦会话到期或到期时间不可读时，在任何写入之前就拒绝，不再改完口令才失败 |
+| fix | llmgw | 改密提交后会话才到期时，如实回「改成功了，请重新登录」，不再报成失败 |
+| fix | llmgw | SSO 时长配得不比常规时长短时不再自称硬截止，避免中间件滑动续期把特权延长 |
+| fix | prd-api | 新增 LLM Gateway 上游故障与恢复通知，按平台和模型去重并提供日志深链 |
+| fix | prd-admin | 模型目录加载失败时展示网关错误与请求编号，不再误报为空模型配置 |
+| feat | llmgw | AppCaller 支持允许模型池集合、默认模型池与默认关闭的跨池回退开关 |
+| feat | llmgw | 增加真实流量原子半开恢复、人工恢复候选入口与池级近期指标 |
+| fix | prd-api | 严格模型池契约阻止逻辑模型越权并将跨池候选限制在显式授权范围 |
+| feat | prd-admin | 视觉创作按模型池展示业务模型身份、近期成功率与平均耗时，并允许用户坚持选择不健康池 |
+| fix | prd-admin | 补齐移动端故障站内信到 LLMGW 日志的安全深链 |
+| fix | prd-admin | 模型目录加载失败时提供手动重载入口并保留已有模型目录 |
+| docs | platform | 沉淀 MAP 与 LLMGW 职责边界、故障恢复计划、操作手册和验收矩阵 |
+| fix | prd-api | 跨进程严格模型池请求保留已选池身份，避免图片生成二次解析失败 |
+| fix | prd-api | 生图任务二次解析继续使用模型池身份，避免 Provider 模型名被误当作池选择 |
+| fix | prd-api | 模型池近期成功率只统计已结束请求，避免运行中请求拉低指标 |
+| fix | llmgw | 删除模型池前同时阻挡默认池和允许池集合引用 |
+| fix | prd-admin | LLM Gateway 站内信跳转成功后才标记已处理，失败可重试 |
+| fix | prd-api | 管理员网关告警仅对管理员可见可处理，并修正日志 requestId 深链 |
+| fix | llmgw | 严格 AppCaller 模型池只允许已认领的 LLMGW 池，避免保存后运行时失效 |
+| fix | prd-api | 显式模型池保持池内 Provider 重试，不再误把池选择当成单模型钉死 |
+| fix | llmgw | 运行态与权威配置门禁要求所有允许模型池引用都存在，避免任一缺失项误报可发布 |
+| fix | prd-api | 跨池回退为重试序列预留尝试位，并优先发送半开恢复候选 |
+| fix | prd-admin | 模型池尺寸适配查询改用实际上游模型，恢复尺寸与比例选项 |
+| fix | prd-api | 严格模型池请求校验 Provider pin 不得越过用户选定的模型池 |
+| fix | prd-api | 故障通知只扫描 MAP 内部租户，避免跨租户泄露上游请求标识 |
+| fix | llmgw | 发布门禁按默认池可用性判断，跨池回退关闭时不误报可用 |
+| fix | prd-api | 非流式与原始生图请求遇到上游网络或超时异常时按候选模型池执行有限重试并回写健康状态 |
+| fix | prd-api | 严格池请求拒绝未知池身份，半开恢复失败时优先尝试同池健康候选 |
+| fix | prd-api | 日志统计查询失败时仍返回模型池目录，近期成功率与耗时降级为空指标 |
+| fix | prd-admin | 视觉创作自动模式遵循后端默认模型池标记 |
+| fix | prd-api | 网关故障站内信仅对具备管理员角色且拥有管理权限的用户可见可处理 |
+| fix | prd-api | 分层支持走异步任务：同步端点撞边缘网关 30 秒超时导致用户永远拿不到结果，任务创建接口新增 operation/layerCount，复用既有生图任务与工作者机制 |
+| refactor | prd-api | 网关能力标识提取到 Core 单一来源，同步端点与异步任务创建两处引用同一份，不再各持私有常量 |
+| fix | prd-api | 修复语义分层异步任务被模型必填校验挡下：分层判定提前到校验之前 |
+| feat | prd-admin | 语义分层改走异步任务并展示实时进度，不再撞边缘网关 30 秒超时 |
+| feat | prd-admin | toast 支持就地更新文案，长任务推进度不再刷屏 |
+| docs | prd-admin | 分层 PSD 台账由「未验证」更新为「已验证为失败」：真实产品路径调用稳定 30 秒超时，记录对照实验、修复方向与仍缺的外部输入 |
+| fix | prd-api | 「图片分层」不再混进视觉创作的选择模型列表：模型目录透出网关能力标签，四个 models 端点统一过滤掉只能被动作调用的能力 |
+| fix | prd-admin | PSD / 合成图导出改走同源资产地址读图，修复对象存储部署上必现的「PSD 导出失败 Failed to fetch」；读不到时明确指出是哪一层、什么地址、下一步做什么 |
+| feat | prd-admin | 图层面板新增「导出前自检」：一键逐项确认原图与每个图层可读，冒烟测试不再靠点导出碰运气 |
+| fix | prd-admin | 刚拖进画布、还在同步的图片点分层不再直接报错，改为排队等同步完成自动开跑（60 秒上限，超时如实报错） |
+| fix | prd-admin | 分层完成后自动把 Frame 收进视野并避开右侧图层面板，产物不再被面板挡住 |
+| feat | prd-admin | 分层导出入口收进图层面板，Frame 头部按钮改为开关面板；导出仍按面板当前顺序与显隐 |
+| rule | platform | 新增规则「上游能力不等于用户可选模型」，配后端 + 前端双侧守卫测试 |
+| fix | prd-api | 分层任务不再被当成普通图生图执行：Worker 的「带参考图→img2img」规则会覆盖分层 run 的 appCaller，导致那句英文分层指令被当创作提示词，模型重画了一张图 |
+| fix | prd-api | 分层改为一次调用返回 N 层（层数经 n 传成 num_layers），不再拆成 N 次、每次只要 1 层——要 1 层的结果就是整张图，这正是 4 张雷同整图的来源 |
+| fix | prd-api | 分层的多张返回逐张落库并逐张推事件，不再走单图路径只取第一张而静默丢掉其余图层 |
+| fix | prd-admin | 分层图层按原图尺寸横排在原图右侧，不再缩成 2×2 卡片墙——缩小后图层与原图不同坐标系，既对不上位也看不清 |
+| fix | prd-admin | 等待期只出一个与原图等大的「图层分离中」占位，层数以模型实际返回为准展开，不再一上来铺 4 个空盒子 |
+| feat | prd-admin | 视觉创作图片分层改成画布上可见的过程：提交即在原图右侧铺出 Frame 与占位卡，模型每出一层点亮一张，不再是只有一条 toast 的后台任务 |
+| feat | prd-admin | 新增 AI 图层面板（组装台）：实时合成预览 + 显隐 / 不透明度 / 叠放次序，改完预览立刻变，导出与预览同一个状态 |
+| feat | prd-admin | 分层下载出口补齐：分层 PSD、合成 PNG、全部图层 ZIP、单层透明 PNG，全部按图层面板当前状态导出 |
+| fix | prd-api | 语义分层不再往对话里写消息：拆分的内部英文提示词曾以「Decompose this image into...」卡片刷屏聊天，还带一个无意义的重试按钮 |
+| fix | prd-admin | 分层归属（组 / 序号 / 显隐 / 不透明度 / 次序）落盘持久化，修复刷新后 Frame 散架、导出 PSD 又重新调一次模型 |
+| fix | prd-admin | 导出 PSD 不再自己重跑一遍分层，与右键「AI 分层」共用同一条链路；拆分进行中禁用导出，避免导出半张 PSD |
+| fix | prd-admin | RGBA 图层在画布与面板一律铺棋盘格底纹，透明区不再看起来像一张黑图 |
+| fix | prd-admin | 分层面板每行改显示本层事实（覆盖率+内容归类），不再三行都是同一串来源文本 |
+| fix | prd-admin | 内容判定补「近乎纯色」一类并只标注不隐藏，判据阈值改由真实分层产物像素标定 |
+| fix | prd-admin | 图层排版尺寸标记落盘，刷新后分层 Frame 不再塌成大小不一的碎块 |
+| fix | prd-admin | 面板说明本次请求层数与模型实到层数的差异，重新拆分带重拆标记不再命中旧幂等键 |
+| refactor | prd-admin | 画布持久化合并为一份实现（页面与 lib 的两份拷贝已漂移，分层字段从未被测过） |
+| test | prd-admin | 新增真实产物像素 fixture、判定链编排测试与分层接线守卫 |
+| fix | prd-admin | 读同源资产改带登录凭据，分层判定与 PSD 导出不再因 401 静默失败 |
+| fix | prd-admin | 层数偏好缺省不再被夹成下限，新用户默认恢复为 4 层 |
+| fix | prd-admin | 判定样本改取上传返回值，最后一层不再因读到未刷新的跨域地址而卡在「正在识别内容」 |
+| fix | prd-admin | 采样失败的图层如实标「内容未识别」，不再停在不会结束的进行时 |
+| fix | prd-admin | 低缩放下 Frame 头部/图层面板按钮/分层中标记不再互相遮挡，按屏幕宽度分档收起 |
+| fix | prd-admin | 覆盖率保留一位小数，相近的两层不再显示成同一串字 |
+| test | scripts | 新增视觉创作分层端到端冒烟，14 条机械判据含跨缩放档位的遮挡检测 |
+| fix | prd-admin | 分层生成中不再提前宣布「模型实际给出 N 层」，等真出完再下结论 |
+| feat | prd-admin | 分层结果默认叠回原位，画面与原图一致，每块可单独选中拖动；平铺展开降为可选视图 |
+| feat | prd-admin | PSD 每层只写「有内容的最小矩形」，不再层层铺满整张画布 |
+| fix | prd-admin | 叠放后按图层次序绘制，且只有最底层铺透明棋盘格，避免上层底纹盖住下层 |
+| test | prd-admin | 新增透明裁剪模块与真实产物裁剪效果测试，PSD 每层包围盒进回归 |
+| test | scripts | 冒烟补「各部件叠在原位」与 PSD 反读校验（层数/画布尺寸/每层包围盒） |
+| fix | prd-admin | 图层名与源提示词解耦：主标题固定为「图层 01/02…」，源提示词降为可截断副标题，修复四层名字被 60 字截断后全都一样、无法分辨 |
+| feat | prd-admin | 识别整张原图那一层，单独标为「原图参考层」默认隐藏、不参与合成预览与合成 PNG，PSD 里仍写入但 hidden；判定靠与原图逐像素比对，不会误杀满覆盖的背景层 |
+| feat | prd-admin | 识别近乎全透明的空层并默认隐藏（覆盖率低于 0.1%，对合成的贡献本就可忽略），线稿等稀疏图层不受影响 |
+| feat | prd-admin | 分层层数不再写死 4：图层面板底部可调 2-8 并记住偏好，另有「重新拆分」按当前层数重跑 |
+| fix | prd-admin | 修复分层回调漏掉 layerCountPref 依赖导致改完层数再拆仍用旧值 |
+| test | prd-agent | 补上欠了两轮的单层 PNG 裁剪断言，并修掉第一版恒成立的判据（挑覆盖率最低那层、按面积比判） |
+| docs | prd-agent | 新增 doc/debt.visual-agent.layering.md：AI 分层的验收债务台账，八条未守/弱守逐条写清为什么证不了、要什么才证得了 |
+| feat | prd-agent | 新增 acceptance-debt-loop 技能：盘点声明 → 判据分档 → 落账 → 挑一条机械化 → 红绿闭环，循环持续优化 |
+| fix | prd-admin | 解组后刷新 Frame 会复活：读回时无条件拿 layerGroupId 补 frameId，把「解组」静默撤销；改为按迁移标记区分「旧数据」与「真的解过组」 |
+| refactor | prd-admin | 画布落盘时序抽成 canvasSaveSchedule 纯函数，「撞频控改期而非丢弃」从此可单测 |
+| chore | prd-admin | 画布元素补 data-frame-id 结构标记，供冒烟判编组存活 |
+| test | prd-admin | 新增落盘时序单测与编组持久化回归（含旧数据兼容），均做红绿闭环 |
+| test | prd-agent | 冒烟扩到 43 条：多选 PSD 反读、多选 ZIP 条目数、编组/解组刷新存活、浅色主题对比度 |
+| docs | prd-agent | 验收债务台账更新：8 条中 5 条转「已守」，剩 3 条明确为「等外部输入」或「刻意不做」 |
+| feat | prd-admin | 点「AI 分层」先弹拆法输入（自动聚焦、回车即开拆），不再点完就闷头开拆 |
+| feat | prd-admin | Cmd/Ctrl+G 编组、Cmd/Ctrl+Shift+G 解组、Cmd/Ctrl+A 全选，对齐 Figma 快捷键 |
+| feat | prd-admin | Frame 头部可直接导出分层 PSD；多选浮条提供编组/解组/PSD/ZIP，不必先编组 |
+| fix | prd-admin | 模型为凑层数补的纯黑/纯白实色层判成 solid 并默认隐藏（真实背景层不受影响，有回归用例守着） |
+| chore | prd-admin | 画布元素新增 frameId（编组意图）与 layerGroupId（产物血缘）分离，旧数据读回时自动补 frameId |
+| test | prd-admin | 补守卫：编组/解组接了键盘、Frame 与多选都能导 PSD、拆法气泡自动聚焦且意图真的传到调用上 |
+| test | prd-agent | 冒烟扩到 34 条，覆盖拆法输入、全选、编组/解组、多选浮条 |
+| fix | prd-admin | AI 分层改为「原图右侧生成可拆解副本」：原图原封不动，副本表观与原图一致但每块可单独拖动 |
+| fix | prd-admin | 重新分层不再删除上一轮结果，每次拆分各占一块空地，两份并排可比较 |
+| fix | prd-admin | 部件真正裁成最小非透明外接矩形：裁剪后的像素作为新资产落盘，画布选中框贴着内容而不是满幅方块 |
+| fix | prd-admin | 模型返回的全透明层如实标注为空层并隐藏，不再当普通图层占位 |
+| fix | prd-admin | 等待态计时条不再被卡片裁掉（宽度按 invZoom 归一），「图层分离中」徽章移到左上角避开计时条 |
+| feat | prd-admin | 图层面板新增自然语言拆法输入（「把人物和风景分开」），层数降级为可选上限提示 |
+| feat | prd-admin | 图层面板显示本组实际由哪个模型拆分（来自网关解析结果，拿不到就不显示） |
+| fix | prd-api | 分层任务不再拼接工作区风格提示词——分层的 prompt 是拆法指令，拼画风等于让模型重画 |
+| test | prd-admin | 补接线守卫：透明裁剪必须接到画布、重拆不许删旧结果、原图按 layerSourceKey 反查 |
+| fix | prd-admin | 画布自动落盘撞到 800ms 频控时改期重试，不再直接丢弃（丢了就再没人来救，最后一次改动可能永远不落盘） |
+| chore | prd-admin | 画布元素补 data-canvas-key/layer-group/layer-index 结构标记，供端到端冒烟直接判结构 |
+| test | prd-agent | 冒烟判据改为按画布元素统计（此前用 img 会把图层面板缩略图算成画布元素，误判出「幽灵图层组」） |
+| fix | prd-admin | 图层面板不再把能力标识 image-layering 当模型名显示，改为如实说「走了哪条能力路由，具体模型由网关决定」 |
+| fix | prd-admin | 层数文案「最多拆 N 层」改为「期望拆 N 层」——模型可能给得更多，「最多」是做不到的承诺 |
+| polish | prd-admin | 等待动效流光重做：92% 宽五段柔光、周期 2.8s，取代原本 60% 宽峰值 0.20 的硬边亮带 |
+| test | prd-admin | 补守卫：不许把能力标识当模型名、不许承诺做不到的层数上限 |
+| fix | prd-admin | 包围盒改按「实墨」（alpha ≥ 64）求：几乎看不见的雾不再把部件的框撑到整幅，文字层的框终于贴着字 |
+| fix | prd-admin | 整幅淡雾的图层判成空层并默认隐藏：老口径只看 alpha>8，这类层覆盖率不低却一处墨都没有，在画布上变成占满画布的空盒子 |
+| fix | prd-admin | 等待动效的流光改用 transform 平移：旧写法动 background-position 百分比，一圈走的距离和平铺周期对不上，每圈结尾都抽搐一下 |
+| feat | prd-admin | Frame 头部成为拖拽抓手，拖它整组一起走；并尊重 prefers-reduced-motion |
+| test | prd-admin | 补实墨包围盒与淡雾空层的单测（含红绿闭环）、Frame 抓手与动效写法的接线守卫 |
+| test | prd-agent | 冒烟扩到 44 条，新增「拖 Frame 头部能带着整组一起走」（动了 4 个，位移完全一致） |
+| fix | prd-admin | 同一张图可反复 AI 分层：删掉「已有图层就复用、不再调模型」的短路，每次点击都真跑一次，并先清掉上一轮图层 |
+| test | prd-admin | 补接线守卫：短路一旦复活即 CI 红（已做红绿闭环验证） |
+| test | prd-agent | 冒烟脚本的图层面板改为幂等打开，修掉「面板本来就开着、再点一下反而关掉」导致三条重拆判据被静默跳过 |
+| fix | prd-admin | 修复拆分途中拖走 Frame 后，后到的图层仍落在开跑时那块空地的问题 |
+| test | prd-admin | 新增实时组原点纯函数单测与接线守卫，覆盖拖走后落位、锚点消失后保位 |
+| test | prd-admin | 分层冒烟新增「拆分途中拖走 Frame，图层跟着落到新位置」端到端判据 |
+| fix | prd-api | 分层不再回填画布单目标，原图不会被第一层顶掉；失败时也不再把原图翻成 error |
+| fix | prd-api | 分层层数不再被按普通生图夹到 5，请求 6-10 层时 Total 与 Done 不再自相矛盾 |
+| fix | prd-admin | 分层导出改取满幅原件，裁剪版不再被拉伸铺满整张 PSD 画布 |
+| fix | prd-admin | 导出前自检补上登录凭据，不再把每一层都误报成不可读 |
+| fix | prd-admin | 快捷编辑产物继承 frameId，编辑结果不再被 Frame 导出忽略 |
+| fix | prd-admin | 分层只在 run 跑到终态才认部分结果，避免后到的图层永远到不了画布 |
+| fix | prd-admin | 分层要求原图已落盘，不再放行 Worker 根本读不了的 URL-only 引用 |
+| test | prd-api | 口令下限守卫改判 LocalPasswordPolicy 单点权威，不再钉死一行内联字面量 |
+| test | prd-admin | 冒烟「满幅」判据留 2% 容差，修掉让拉伸缺陷判绿的窄判据；新增导出取满幅与三条读图路的守卫 |
+| fix | prd-admin | 冒烟中断改为记一条失败，不再在「整条链路没跑」时以 0 退出 |
+| fix | prd-api | 分层不再往可见对话里写那句内部英文指令 |
+| fix | prd-admin | 补上持久化模块自己那份类型里缺的满幅原件字段，修掉构建红 |
+| fix | prd-admin | 分层改为轮询到终态，SSE 断了也不再丢下还在跑的 run（修掉自己上一版的过度修正） |
+| fix | prd-admin | https 原图也要等同步出 sha，不再一秒不等就报错 |
+| fix | prd-admin | 解组再编组的 AI 分层 Frame 能正常打开图层面板 |
+| fix | prd-admin | 改完拆法直接点「重新拆分」，模型拿到的是当前输入而不是上一次的文字 |
+| docs | prd-agent | 验收债务台账新增第 11 条：图层面板顶部展示模型与平台（本轮刻意不做） |
+| fix | prd-admin | 低倍缩放下「图层分离中」徽章让开 Frame 头部（头部预留是世界像素、标签是屏幕常量，21% 时压到一起） |
+| fix | prd-admin | 拆分途中拽大占位卡后，后到的图层按新尺寸摊开（此前只跟位置不跟尺寸） |
+| fix | test | 冒烟「刷新后尺寸一致」判据改量世界坐标，不再因刷新重新 fit 视口而误报 |
+| docs | doc | 分层台账补 19/20/21：裁剪落位落盘存疑、老组摆法字段缺失、拆分途中删占位卡静默落空 |
+| fix | prd-admin | 现拆现导那条分支也喂满幅原件给 PSD（第三个出口，前两个已改） |
+| fix | prd-admin | 裁剪落位改在裁剪与上传之后再读组原点，拆分途中拖走 Frame 不再按旧坐标落位 |
+| test | prd-admin | 守卫从「列举已知导出入口」改成守不变量，并加源码顺序判据钉住读原点的时机 |
+| merge | prd-admin | 合并 main：等待期计时条改用 #1350 的「按宿主宽度收缩」口径，撤下与画布缩放耦合的反缩放算式 |
+| fix | prd-admin | 图层单张下载跟上 main 的 downloadGeneratedImage 改名，跨域对象存储链接也能存盘 |
+| docs | doc | 分层台账补第 27、28、29 条（轮询期单次请求失败被当成 run 失败；层数存成设备级偏好；导出 PSD 静默丢掉非图片成员） |
+| fix | prd-admin | 站点卡「更多设置」补上提问设置入口，此前只有大预览顶栏齿轮一处，列表里找不到 |
+| fix | prd-admin | PDF 包装站大预览改走后端已算好的 pdfAssetUrl 直连原生阅读器，不再空白 |
+| fix | prd-api | PDF 壳子加载 PDF.js 增加超时兜底，CDN 挂起时降级为下载链而不是永久转圈 |
+| test | prd-admin | 新增 sitePreviewSource 判定源 + 两条接线守卫（PDF 直连、提问设置入口） |
+| fix | prd-api | 站内列表下发 pdfAssetUrl，此前只有分享视图有，站内大预览的绕壳分支永远走不到 |
+| fix | prd-admin | 原生 PDF 阅读器可用性改接响应式信号，移动端仍走壳子 |
+| fix | prd-api | PDF 壳子的超时闹钟改罩整条初始化链，worker 挂起时也能降级 |
+| fix | prd-api | 全部 14 条交付 HostedSite 的路径统一挂派生字段，发布/取消公开后不再退回壳子 |
+| fix | prd-admin | PDF 原生阅读器改用 navigator.pdfViewerEnabled 能力探测，不再按 768px 断点猜 |
+| fix | prd-api | 派生字段守卫改按真实成员边界切片，此前吞进辅助函数定义导致守卫不会红 |
+| docs | prd-api | 网页托管教程第 12 步补上「更多 → 提问设置」的指路 |
+
+### 2026-08-11
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 修复自适应生图模型丢失用户所选尺寸的问题 |
+| fix | llmgw | 按协议区分 OpenRouter 专用 Images API 与多模态 Chat API |
+| fix | prd-admin | 修复浅色主题下 Toast 深底深字不可读：底层改走新增的 --toast-bg-base 主题 token（暗/浅/素色三处双写），不再写死 rgba(8,10,16,0.82) |
+| fix | prd-admin | 提高 Toast 底层不透明度（0.82 → 0.94/0.97），修复下层工具栏文字透过提示条的穿透问题 |
+| fix | prd-admin | 修复浅色主题下 Toast 语义色图标与动作按钮对比度不足（1.88:1 → 4.10:1）：新增 --toast-accent-* 四色 token，浅色档压到 700 档 |
+| fix | prd-admin | 举一反三修同族浮层：TipsDrawer / TipCard 气泡 / ChangelogBell 弹层 / 划词 AI 与批注与配图三浮层 / 批注 sheet / Wikilink 悬浮卡与联想下拉 / DocBrowser 移动抽屉 / 崩溃兜底卡 / 手动触发弹层 统一到新增的 --overlay-panel-bg 与 --overlay-panel-solid |
+| fix | prd-admin | 修复 PageHeader tab 凹槽（--tab-container-bg）、Tooltip 箭头、代码块与 Mermaid 源码底色在浅色主题下写死深色 |
+| fix | prd-admin | 修复浅色主题下原生 select 仍按暗色方案绘制（米白页面里弹出黑底白字 option 列表） |
+| docs | prd-admin | debt.frontend.md 补「浮层/提示层浅色审计」台账：本轮清偿清单 + 17 条显式不做的条目与原因 + 守卫判据剩余缺口 |
+| test | prd-admin | 双皮肤硬编码棘轮补三处判据缺口：扫描范围加 .ts（此前只扫 .tsx，导致配色 SSOT glassStyles.ts 从未被扫过）、新增「深色 rgba 当背景」计数、新增 Toast 底层双写接线守卫 |
+| fix | prd-admin | 修复 Tooltip 气泡与箭头不同源：新增双写 --tooltip-bg/--tooltip-border，气泡不再复用暗色下仅 3% 白的 --glass-bg-end（该值靠 backdrop blur 成形，SVG 箭头吃不到 blur 会消失） |
+| fix | prd-admin | 修复验收 fail 的镜像缺陷：底翻成浅色后，浮层内为深底调的浅紫/浅蓝/白系文字消失。45 处写死浅色前景统一到新增的 --accent-fg-* 双写族（原 --toast-accent-* 并入，避免两套名字指同一件事） |
+| fix | prd-admin | 修复 Mermaid 图在浅色主题下浅字压浅底：mermaid 主题改为按 data-theme 双套配置并在主题切换时重烘；容器底改走 --nested-block-bg |
+| fix | prd-admin | 修复暗色主题下原生 option 弹出白色列表：option 由 Canvas/CanvasText 系统色改为主题 token（弹层由 UA 绘制，Canvas 的解析结果不可控） |
+| test | prd-admin | 棘轮补第 4 条判据「写死的浅色前景」（color: 里感知亮度 > 0.5 的字面色）——前三条只盯背景，本次 45 处镜像缺陷一处都没拦住 |
+| fix | prd-admin | 清掉三元分支里残留的写死浅色前景（AI 改写 diff 的增删行文字、教程置顶态、评论孤儿态），此前正则只匹配单值 color 漏掉了三元 |
+| test | prd-admin | 新增零容忍守卫：10 个翻过底的浮层面板四类硬编码恒为 0（这批浮层验收连续两轮够不到，只能由源码守卫兜底） |
+| test | prd-admin | 修守卫三处判据缺陷：declValue 不认 `}` 导致 JSX style 取值越界误报（全仓 lightFg 1851→1611）、var() 兜底色误判（仅当变量在浅色块有定义才豁免）、hex 只认 6 位漏掉 `#fff` |
+| docs | prd-admin | debt.frontend.md 收口三轮验收状态：已验收项与三项拿不到视觉证据的浮层分列，写明卡点是程序化选区触发不了指针事件、下次取证必须用真实指针事件，并声明残余风险可接受 |
+| test | e2e | 新增全站双主题对比度审计脚本 `e2e/theme-contrast-audit.mjs`（pnpm audit:contrast）：登录后遍历 48 条路由 × 双主题，对实际渲染的文本/图标算真实对比度，按配色聚合出「影响多少条路由」，把浅色缺陷的验收从人工逐屏改为一次扫全站 |
+| fix | prd-admin | 修复分支徽章 BranchBadge 对比度不足：0.85 半透明彩底 + #e2e8f0 只有 2.93:1，改为不透明 800 档色 + 白字 7.09:1。该徽章出现在每一屏，全站对比度审计里 364 处命中归零 |
+| fix | prd-admin | 修复前端智能体页浅色主题下深字压深底（1.08:1）：页面钉死暗色画布但文字走全局 token，挂 tokens.css 的 surface-tone-dark 让内部 token 整体切暗，该页命中 24 → 10 |
+| test | e2e | 对比度审计新增渐变底像素重采样：祖先链取不到 background-color 时（层叠 linear-gradient / 背景图）改从本屏截图真实采样底色重算，此前这类元素一路穿到页面底色，144 处假阳性（含被误测的 Toast 自身） |
+| fix | prd-admin | 清空全站对比度审计剩余命中（82 → 0）：本轮覆盖 arena / pr-review / pa-agent / library / visual-agent / speech-agent / tapd-bug / shortcuts / my-assets 等 24 条路由 |
+| fix | prd-admin | 新增 --accent-primary-solid 与配套 --accent-on-solid：品牌色 --accent-primary 暗色档 #D97757 配白字只有 3.12:1，凡「实心填充 + 白字」改走 solid 档（暗 #B0523A / 浅 #A64B35，5.0~5.7:1）。已接 chat 新建会话、SpaceBar 空间切换、快捷指令三处按钮 |
+| fix | prd-admin | 修复 ShortcutsPage 引用了从未定义过的幽灵 token var(--accent)：三个实心按钮实际没有底色，白字直接压米白页面 1.2:1。全部改指 --accent-primary(-solid) |
+| fix | prd-admin | 修复共享 Badge 的 success/danger/warning 三档字色写死 500 档，落在同色 12% 淡底上（浅色主题 1.74:1）：统一改走双写的 --accent-fg-*，同一枚徽章出现在多少页就修好多少页 |
+| fix | prd-admin | 修复 pa-agent 顶栏文字直接压在 7s/9s 呼吸渐变上：底色亮度随动画在 (153,192,253)~(129,127,166) 之间摆，对比度不确定。顶栏改铺不带呼吸层的 --pa-bg-base 并抬到渐变之上 |
+| fix | prd-admin | 修复 library 落地页（固定浅色画布）三处品牌色对比不足：#16A34A→#15803D、#F97316→#C2410C、#64748B→#475569，四个 library 页面同步保持配色一致 |
+| fix | prd-admin | 修复 visual-agent 低 alpha 前景（rgba(199,210,254,.42~.55) / rgba(255,255,255,.35~.45)）与 SizePickerPanel 尺寸按钮，统一走 --text-muted 与 --accent-fg-violet |
+| fix | prd-admin | 修复 speech-agent 白字压 violet-500/90 按钮（3.67:1）：主按钮提到 violet-600；同页 violet-100/emerald-300 等为暗底设计的浅色前景改走 token |
+| fix | prd-admin | 剥掉 30 处 text-[color:var(--accent-fg-*)]/NN 的 alpha 后缀：浅色档已是 700/800 实色，再叠 70~80% 会把对比度拉回阈值以下 |
+| fix | prd-admin | 修复知识库宇宙图左下操作提示裸 #555 压在星云画布上（1.0:1）：改为 --overlay-panel-solid 不透明浮层 + --text-secondary（半透明档不行，canvas 上 backdrop-filter 救不回来） |
+| fix | prd-admin | 其余单点修复：automations 新建按钮、email-agent 分类 chip 与图标、infra-services / learning-center / report-agent / tech-doc-format-agent / project-route-agent 的浅色前景、task-tree 主按钮 #7c5cff→#6d3fe8、marketplace 分隔点用边框 token 当字色、DesktopAssetsPage 四枚统计图标、tapd-bug 必填红与告警琥珀 |
+| test | e2e | 对比度审计补 WCAG 1.4.3 Incidental 例外：失效控件（disabled / aria-disabled，含祖先）不计入。此前空数据页上 disabled:opacity-40 的按钮被反复报成缺陷（/arena 发送 1.78:1，但它本来就点不动） |
+| test | e2e | 对比度审计重采样改取元素框内众数色，不再单点采正中：隐前景那步偶尔被 React 重渲染抹掉，正中恰好压着字形就采到文字色本身，报出 fg===bg、比值 1.00 的假阳性（/pa-agent 的 A- 按钮） |
+| test | prd-admin | 新增「同色调淡底 + 同色调浅字」源码棘轮 sameHueTintRatchet：底铺 rgba(某色,0.1~0.2)、字却写死同色 300/400/500 档，暗色成立、浅色下两层一起被暖纸底稀释 → 1.4~2.1:1。全仓扫出 553 处 / 158 个文件，正是用户「翻一页坏一页」的病根 |
+| fix | prd-admin | 按上述判据清扫 553 → 10：底一律不动，前景统一改走双写的 --accent-fg-*。覆盖 marketplaceTypes 的 CONFIG_TYPE_REGISTRY、theme.ts 的 ACCENT_STYLES、difficultyMeta、defect/report/product/pr-review 等 130+ 文件 |
+| fix | prd-admin | 修复 difficultyMeta 三档（学习中心与教程抽屉共用）：初级 1.56:1 / 中级 1.42:1 / 高级 2.06:1 → 5.5~5.9:1；同页「已学会」chip 与进度环底槽（白 10% 描边在暖纸上完全隐形）一并修 |
+| fix | prd-admin | 补 .surface-tone-dark 的 --accent-fg-* 全族：钉死暗画布的页面此前拿不到暗色档语义前景，把浅色前景 token 化会反向变成深字压深底 |
+| fix | prd-admin | 修复浅色档液态玻璃「发虚」：--glass-bg-end 相对亮度 0.8263 与页面底 #EEEAE3 的 0.8257 只差 0.0006，卡片下半截等于溶进背景、没有边界。整条渐变抬到页面底之上（收尾留 ΔL≈0.072），边框 14% → 18% |
+| test | prd-admin | 修 themeSystem 一条反向锁死 bug 的断言：原来逐字要求 ACCENT_STYLES.text 必须是 rgba 字面量——而那正是「淡底压浅字」的错误实现，谁修 bug 谁 CI 红。改为断言必须走 var(--accent-fg-*) |
+| test | e2e | 对比度审计判据补两处：失效控件按 WCAG 1.4.3 Incidental 例外不计；渐变底重采样改取元素框内众数色，不再单点采正中（隐前景偶被 React 重渲染抹掉，正中压着字形就采到文字色，报 fg===bg 的 1.00 假阳性） |
+| fix | prd-admin | 修复知识库分享页「皮肤完全反过来」：星图/双链图是钉死暗底的区域，但区域内的正文走 var(--text-*)，浅色主题下该 token 解析成深藏青 → 深字压近黑面板，实测 1.05:1（标题因为写死浅色所以可见，正文全糊）。给 DocumentGalaxyView / UniverseGraphPage / ReaderPanel 三处根容器标 surface-tone-dark，token 翻回暗色档后正文 17.46:1 |
+| fix | prd-admin | 同型镜像缺陷全仓清扫：容器钉死暗底、子树却用 token 取字色的还有 20 个文件 34 处（视觉创作工作台、PA 档案面板、涌现画布、同步中心、模型管理等），逐个标 surface-tone-dark |
+| fix | e2e | 远端对比度审计改走 node fetch 代理穿透（复用 CDS 验收技能的 proxyroute），沙箱里终于能对真站点+真实数据跑审计。此前误判「chromium 没有出网」，导致两轮只能靠源码推算 |
+| docs | doc | debt.frontend 记下沙箱出网解法与教训：报「做不到」之前先扫仓库现成技能；远端真实数据审计与本地空桩差一个数量级（空桩报 0，真实数据每屏 5~20 处） |
+| test | prd-admin | sameHueTintRatchet 判据补三个缺口：认 #hex 字面量（此前只扫 rgba）、认 accent 键（注册表惯用）、新增判据 C 认「一值两用」——同一个变量既被拼成 `${x}22` 淡底又直接当字色。判据 C 是真实规模最大那次事故（144 处）的形状，A/B 对它完全瞎 |
+| fix | prd-admin | 修 AppShell notificationTone 与 ChangelogBell TYPE_COLOR_MAP 两处一值两用（36 条路由各一处）：底保持淡色调、字改走双写 token |
+| fix | prd-admin | ArenaPage 空态 27 处写死白字改走 token —— 该屏外层无深底，浅色档下就是白字压暖纸（实测 1.01~1.2:1） |
+| fix | e2e | 远端审计补渐变重采样（本地版一直有、远端漏了）：元素坐在 radial-gradient 上时 backgroundColor 透明，祖先链会一路取到页面底，把「深色渐变页上的浅字」误报成缺陷。task-tree 整页栽在这上面，照误报改会造新 bug |
+| fix | prd-admin | 教程中心承接卡落地方案 A（用户选）：七级帽子拆双皮肤——暗色档保持石墨→暖银的提亮递进，浅色档另配石墨→暖青铜的加深递进（5.3~6.6:1，原来 Lv.3 只有 1.86:1 且越高阶越看不见）；卡片补实底与描边；进度环底槽改走 --nested-block-bg |
+| fix | prd-admin | 修 Codex P1：surface-tone-dark 只覆盖半套 token，暗岛内用 var(--bg-elevated) 等 14 个表面 token 时会「近白字压浅暖底」（arena 两个下拉实例，全仓 6 个文件受影响）。补齐 14 个并加守卫，红绿闭环验过 |
+| chore | repo | 修 Codex P2：116 个审计截图共 23MB 被误提交入库，git rm --cached 移除；.gitignore 从枚举目录名改成 .audit-*/ 前缀通配，换 AUDIT_OUT 也堵得住 |
+| fix | prd-admin | 修 Codex 第二轮 P2：surface-tone-dark 按「真实消费」补齐 41 个 token（上一轮按族名清单只补 14 个，--overlay-panel-solid 以 overlay 开头就漏了）；守卫判据同步从族名清单换成消费关系 |
+| feat | prd-admin | 新增 useSurfaceTone：解析元素**所处表面**的明暗而非全局主题。Mermaid 图接上后不再在深色岛里用浅色调色板（原约 1.1:1） |
+| fix | e2e | 两个审计脚本补覆盖账本：跳过/报错不再静默吞掉，收尾打印实际覆盖对数、写 coverage.json，未全覆盖以非零码退出 |
+| fix | e2e | 修 Codex 第三轮 P1：页内 slice(0,60) 发生在渐变重采样**之前**，候选超 60 的页面尾部真实缺陷被永久丢弃、且前 60 条被重采样纠正后报告会显示 0。改为全量返回，展示上限挪到渲染层并自报省略了多少组 |
+| fix | e2e | 修 Codex 第三轮 P2：两个审计脚本改为每主题独立 context。此前在同一 page 上反复 addInitScript，light 那份跑到 dark 时仍常驻、两份都写主题 key 而执行顺序未定义，dark 轮可能整轮被判「主题未生效」跳过 |
+| fix | prd-admin | 修 Codex 第四轮 P2：拆 accent/fg 时漏了两个 success 分支——只改 accent 没改 fg，「缺陷已解决」通知底绿字紫。补上并加成对守卫（红绿闭环验过） |
+| fix | e2e | 修 Codex 第四轮 P1：渐变底候选在「近似达标」时被提前丢弃，重采样再也看不到它。改为 needsEye 一律留到重采样后再判 —— 这个修复当场挖出一处此前被藏住的真实缺陷 |
+| fix | prd-admin | arena 主视觉徽章里的剑图标压在 HERO_GRADIENT 上用了 --text-primary，实测 2.82:1（图标线需 3:1）。改用该渐变配套的 HERO_GRADIENT_FG，复扫归零 |
+| fix | e2e | 修 Codex 第五轮三条测量失真：WCAG 大字阈值是磅被当成 CSS 像素用（18.66/14 → 24/18.67），18.66~24px 正文与 14~18.67px 粗体被错误放宽到 3:1；前景未计元素与祖先累计 opacity，opacity-50 的字按全强度算；重采样用视口截图配视口坐标，屏下渐变元素一律采空。三条都导致少报 |
+| chore | e2e | 审计排除 CDS 注入的分支徽章（#bt-branch-badge）：平台浮层不在仓库源码里、本 PR 改不了，不排除会让每条路由稳定多报一处、淹没真实回归 |
+| fix | e2e | 修 Codex 第六轮 P1（最实质的一条）：路由清单只从 navRegistry 取，漏掉 App.tsx 里的嵌套写法。实测 48 → 80 条，漏的 32 条里就有本 PR 改过的 /skills /weekly-poster /data-transfers /notifications —— 审计一边跳过我改的屏、一边报「覆盖完整」 |
+| fix | e2e | 修 Codex 第六轮 P1：pageerror 被静默吞掉，页面崩成错误边界仍算「已覆盖且干净」。改为记账并在跑 AUDIT_FN **之前**判掉（否则错误边界自己的配色会污染报告） |
+| chore | doc | 移除 doc/assets 下两张无人引用的对照截图（810 KiB），与本 PR 刚写进 debt 的「扫描产物不入库」自相矛盾 |
+| fix | prd-admin | 修 Codex 第七轮 P2：sameHueTintRatchet 的「按主题分支跳过」判据太宽，命中注释与 DOM 属性字符串就跳过整个文件——AppShell 因此被整体排除，而它正是这条守卫为之而建的文件。收紧为「剥注释后仅认 useDataTheme( / isLight 标识符 / [data-theme= 选择器」，11 个文件重回检查范围 |
+| fix | prd-admin | 修 Codex 第七轮 P1：我的 token 改造把 --accent-fg-* 放进了钉死暗底的容器，浅色档下深字压深底（ProductGraphCanvas 抽屉实测约 1.9:1）。同型全仓 33 个文件 49 处，逐处补 surface-tone-dark |
+| fix | e2e | 修 Codex 第七轮 P1：重采样失败的候选留着不可信的近似比值，被调用方按「达标」丢弃。改为标 unresolved 并把比值压 0，报告里与「实测不达标」分开计数 |
+| fix | prd-admin | 修 Codex 第八轮实证的产品缺陷：DailyLogPanel 五处无条件写死的 emerald-500/95 压同色 12% 淡底，浅色档实测 2.0:1（需 4.5），改走 --accent-fg-success 后 5.83:1 |
+| docs | doc | PR #1374 触发 AGENTS.md §5.5 熔断（Review 修复提交达 8 个 + 同一判据二次收窄），审计工具剩余三项精度记入 debt.frontend 并说明为何不在本 PR 展开 |
+| fix | prd-admin | 修 Codex 第九轮：VisualCreationMiniPanel 面板钉死深底却未标暗岛，错误文案约 2.6:1。底色写在具名 style 对象里，自动扫描按「同一开标签」判定够不着，手工补；同轮 rgba 写法的暗底再扫出 DefectCard 2 处、ReviewAgentDimensionsModal 1 处 |
+| fix | prd-admin | 修 Codex 第十轮：--nested-block-bg 此前只在 [data-material="solid"] 与浅色档有值，暗色 + 玻璃材质下整个未定义（学习中心进度环底槽直接消失）。补进 :root 与 .surface-tone-dark 两处兜底 |
+| fix | e2e | 修 Codex 第十轮：上一轮的累计 opacity 只接了一半——渐变重采样路径既没记录 fgOpacity 也没参与合成，半透明字在渐变底上仍按全强度算。两端补齐 |
+| fix | e2e | 两个审计脚本改为「扫出真实缺陷即非零码退出」，此前只有覆盖不全才失败，带缺陷的扫描会报绿 |
+| docs | doc | debt.frontend 的对比度审计段按 AGENTS.md §10 精简为四条未解边界，过程与计数归验收知识库；源码路径收进文末「实现来源」小节 |
+| fix | prd-admin | 修 Codex 第十一轮：--accent-fg-* 叠 alpha 后缀的漏网 46 处全部剥掉（此前只剥了 30 处）。这族 token 的两档都是按「实色恰好压过 4.5:1」调的，实测最差档 alpha 0.85 是 4.53、0.8 掉到 4.07、0.7 只有 3.35 |
+| test | prd-admin | 新增零容忍守卫：全仓 text-[color:var(--accent-fg-*)]/NN 恒为 0。这个形状被抓两次，靠「记得手动剥干净」不成立（红绿闭环验过） |
+| fix | e2e | 修 Codex 第十二轮 P1：审计按「请求的路由」记覆盖，不看落地地址。/login /stats /prd-agent 三条都重定向到首页，于是同一份首页命中被计了三次（同轮各 61 处），凭空给总数灌进约 180 条。改为落地路径与目标不符即记 redirected、不计覆盖、不进报告 |
+| fix | e2e | 上条的另一半：`/` 原本被 `p !== '/'` 过滤掉、只靠那三条重定向顺带扫到。只排除重定向会把重复计数换成「全站最重要的一屏零覆盖」，因此同一次把 `/` 显式加回路由清单 |
+| fix | e2e | 修 Codex 第十二轮 P1：参数化路由（28 条，含 /review-agent/submissions/:id 等详情页）从来没扫过，而 expected 又是从过滤后的清单算的，「132/160」看着像满覆盖。收尾显式打印未覆盖的参数化路由条数并写进 coverage.json |
+| fix | prd-admin | 修 Codex 第十三轮 P2：TipCard 与 TipsDrawer 的 accent 一值两用——底翻成 --overlay-panel-bg（浅色档暖纸）后，为暗底调的 pastel 当图标前景只剩 1.4~1.7:1。拆成装饰色（边框/渐变保留原值）与前景色（走双写 token） |
+| fix | prd-admin | 顺带清掉文学配图页 5 处写死的 rgba(52,211,153,0.95) 前景（教程气泡正文、锚点移除按钮、右键菜单两项） |
+| fix | e2e | 修 Codex 第十三轮 P1：redirected 上一轮只记账没接进不合格判定。判据不是「有重定向就红」——故意的别名落地页本身在清单里会被独立扫，覆盖没丢；只有「跳到谁也不扫的页面」才是真漏洞，那种才红 |
+| fix | e2e | 审计跑到一半掉登录：一轮十几分钟，light 从第 55 条、dark 从第 63 条起全部被弹回 /login，27 对（占 162 的 17%）从没量过。检测到落地 /login 就地重登再重试该路由。实测 /users 上一轮报「2 处」（其实扫的是登录页），修好后是 64 处 |
+| fix | e2e | 修上一轮自己的判据漏洞：「落地页在 ROUTES 里就算覆盖没丢」把掉登录也放行了（/login 恰好在清单里）。别名跳转与掉登录是两回事，后者永远算失败 |
+| fix | prd-admin | 修 Codex 第十三轮 P2：批注线程计数徽章底是 8 色亮色调色板（两个主题同色），前景却走会翻的 --text-primary，暗色档白字压亮底 1.55~3.98:1。新增 --fg-on-bright-fill（两档同值的深字），8 个色全部 4.07~10.48:1 |
+| fix | e2e | 修 Codex 第十五轮 P2：重定向判据拿 location.pathname 跟原始 route 串比，而 AUDIT_ROUTES（覆盖参数化/带 tab 页面的唯一入口）传进来的路径基本都带 query，于是那批页面会被自己的判据全判成重定向跳过。改为 pathname 对 pathname，导航仍用完整串 |
+| chore | e2e | 删掉误提交的一次性调试脚本 _probe-local.mjs（写死 /home/user/prd_agent 绝对路径，功能与 theme-contrast-audit-local.mjs 重复，无人引用） |
+| fix | e2e | 修 Codex 第十六轮 P1：可见性只看元素自身 opacity，而 opacity 不继承——祖先 opacity-0 的 hover 控件子元素自报 1，被当成可见元素测量，再被 cumulativeOpacity 合成成 fg===bg，稳定产出 1:1 假阳性。单 /document-store 一页就 12 条（红绿闭环验过，修复后 0 条，命中 21/15 → 15/9） |
+| fix | e2e | 修 Codex 第十六轮 P1：input/textarea 的值与 placeholder 都不是 DOM 文本节点，hasText 恒 false，整类表单控件从没被量过。补测两者（placeholder 走 ::placeholder 伪元素色），当场扫出知识库搜索框 placeholder 浅色 3.35:1 |
+| fix | e2e | 修 Codex 第十六轮 P1：重登重试这条路径绕过了渲染异常门禁，重试渲染出的错误边界会被当成干净路由计进覆盖 |
+| fix | prd-admin | 修 Codex 第十七轮 P2：--fg-on-bright-fill 第一版取 #1a1a1f，最难的 #a855f7 压暗底只有 4.07:1，而那里是 9px 计数文字要 4.5。按最差色定值改 #0a0a0c（最差档 4.65:1，#0f0f12 恰好 4.5 属擦线不取） |
+| fix | e2e | 修 Codex 第十七轮 P1：unresolved（渐变重采样失败、真实比值未知）被显式排除在 realFindings 之外，于是「其余全达标 + 一堆没量成」会 exit 0。改为单独计数并同样触发非零退出 |
+| fix | e2e | 修 Codex 第十八轮 P1：select 收起态的显示值同样量不到（无文本节点、option 无布局盒），而本 PR 恰好两次改动原生 select/option 主题。补测选中项文案 |
+| fix | e2e | 修 Codex 第十八轮 P1：两个入口写死 1440x900，靠 useBreakpoint 分流的移动端分支一屏都没渲染过，而本 PR 改了 4 个移动端组件。视口升为第三个维度（默认 desktop+mobile，AUDIT_VIEWPORTS 可收窄），账本与截图名都带视口 |
+| fix | e2e | 渐变重采样从「整页截图 + 文档坐标」改为「按屏滚动 + 视口坐标」：本应用遵守 full-height-layout（滚动在内层容器），document.scrollHeight 恒等于视口高，fullPage 截出来就是视口那一张，首屏以下的候选一律落在图外。单是首页就有 84 个候选从没被真实测量过，修好后 unresolved 84 → 0、真实缺陷 12 → 39 |
+| fix | e2e | 重采样失败带原因码（element-gone / box-too-small / no-pixels / compose-failed / not-reached），此前只回 null，没法判是几何问题还是元素没了 |
+| fix | prd-admin | 修 Codex 第十九轮两条 P1（同一形状）：SpotlightOverlay 教程气泡（深色渐变底，「我已学会」约 2.2:1）与 ReprocessChatDrawer 智能体下拉（rgba(20,18,26,0.98) 底，约 2.8:1）钉死深底却未标暗岛。按此形状全仓复扫确认只此两处 |
+| fix | e2e | 修 Codex 第十九轮 P2：AUDIT_VIEWPORTS 拼错会静默变成零视口，两层循环各跑 0 次、expected 也是 0，于是一次什么都没扫的运行 exit 0。改为校验名字、无效即非零退出 |
+| fix | e2e | 修 Codex 第二十轮 P2：AUDIT_ONLY 打错字同样会静默变成空清单（上一轮只给 AUDIT_VIEWPORTS 加了兜底，没看隔壁同形状的入参）。改为逐条报出哪个名字没匹配上，空清单一律非零退出 |
+| fix | e2e | 修 Codex 第二十轮 P2：截图名只替换了斜杠，带 query 的自定义路由留着 `?` 在 Windows 上是非法文件名，会让该路由被记成 errored——而带 query 正是 AUDIT_ROUTES 的用法 |
+| docs | e2e | 修 Codex 第二十轮 P1：审计只扫「打开即渲染」的静态 DOM，Toast/Tooltip/抽屉/Popover/悬浮卡/下拉/hover 一个都没触发过，而本 PR 改的大半正是这些浮层。收尾显式声明未覆盖，并记入 debt.frontend（写触发夹具属独立工程） |
+| refactor | e2e | 修 Codex 第二十一轮两条 P1/P2（同一成因）：路由清单与视口两处判据在远端版/本地版各抄一份，于是视口矩阵、空清单兜底都只加在远端、本地漏掉。抽进 contrast-audit-core（resolveRoutes / resolveViewports / parameterizedRoutes / VIEWPORTS），两个入口共用一份，本地版同步补上双视口 |
+| fix | prd-admin | 修 Codex 第二十二轮 P2 揭出的真缺陷：棘轮的「按主题分支跳过」是文件级，连深色前景一起放走，藏住了 report-agent 三档（沟通 orange-700 4.09 / 文档 green-700 4.00 / Todo emerald-700 4.36）与海鲜市场接入 AI 按钮 hover（cyan-700 4.38）。全部提到 800 档（5.6~5.7），涉及 5 个 report-agent 文件 18 处 + surface.css |
+| test | prd-admin | 棘轮豁免按前景亮度收窄：分支文件不再整份跳过，亮度 < 0.30 的前景仍判（浅色档 700 在 0.14~0.16、暗色档 300 在 0.52~0.58，两类分得很开）|
+| fix | e2e | 修 Codex 第二十二轮 P1：多色 SVG 只判根节点，根 fill 为黑/none 时整个跳过——本 PR 刚改的 LevelHat 正是这种（颜色全在 path 上）。改为遍历上色子形状；paint server 标 unresolved 不硬算成假 1:1，低透明度装饰描边不按 3:1 判 |
+| docs | doc | 更正 debt.frontend 里「实测敞口为 0」那句错误结论 |
+| fix | e2e | 平台徽章排除选择器补全：徽章 DOM 换过外壳（现为 #cds-widget > .cds-badge），只钉旧的 #bt-branch-badge 会漏——全量扫描里它稳定贡献 412 条，占总数 24%，把仓库自己的缺陷淹在噪音里 |
+| fix | prd-admin | 修全量扫描里影响面最大的一组（121 个「路由×主题×视口」组合）：头像等级角标底与字各自独立取值互不知情，底显示成绿色时字仍是未满环的深紫 #1a1033，9px 数字实测 4.07:1。改「深底 + 白字」（满环 #047857 5.48:1，未满环 #7c3aed→#4f46e5 5.7~6.29:1），字走 --accent-on-solid |
+| fix | e2e | 修 Codex 第二十三轮 P1：#bt-branch-badge 其实是仓库自己的 BranchBadge.tsx（App.tsx 直接挂载，本 PR 还改过它的配色），我当初当平台注入物排掉，等于让审计对自己刚改的组件永久失明。排除范围收敛为真正外部注入的 #cds-widget / .cds-badge |
+| fix | e2e | 修 Codex 第二十三轮 P1：SVG 子形状同时有 fill 和 stroke 时只量了 stroke（LevelHat 帽冠正是 fill={t.tassel} stroke={t.board}，流苏色从没被量过）。两个通道各判一次 |
+| fix | e2e | 修 Codex 第二十三轮 P1：渐变底取众数色只代表框内占地最多的那段，一行字横跨渐变时少数几个字失败会被判达标。改取「占比 ≥12% 且非前景色的显著色块里最差的那块」，并把采样区向内缩 20% 避开元素自身描边 |
+| test | prd-admin | 修 Codex 第二十四轮 P1：双皮肤硬编码棘轮只扫 .ts/.tsx，19 个样式表从来不在覆盖内（而 surface.css 里刚查出过真缺陷）。纳入 .css 并录基线，暴露 452 处存量硬编码，从此只减不增（tokens.css 除外，那是双写定义处） |
+| fix | e2e | 修 Codex 第二十四轮 P2：上一轮加的 SVG 双通道会用同一个元素承载两条候选，第二次 setAttribute 覆盖第一次，重采样时先那条被判 element-gone、计成没量成，一个达标图标也能让整轮非零退出。句柄改空格累加 + 查询用 ~= |
+| fix | e2e | 修 Codex 第二十五轮 P1：上一轮的「色桶占比 ≥12% 才算数」对平滑渐变失效——渐变把像素摊到几十个桶、每桶都不到 12%，全被丢掉后退回众数，等于修了个寂寞。改成空间网格采样（5×3 格，每格取去掉近前景色像素后的均值，格间取最差），实测 task-tree 由 8 处涨到 10 处、全仓假 1:1 仍为 0 |
+| fix | e2e | 修 Codex 第二十六轮 P1：background-clip:text 的渐变文字 color 是 transparent，按 color 取值的判据整类够不着（StatsStrip 的渐变大数即是）。改为识别出来如实计入「没量成」，不猜数；合成页验证判据确实触发 |
+| docs | doc | 按 Codex 第二十六轮 P1 精简 debt.frontend 对比度段：已修项、修法机制、轮次过程一律移出，只留尚未解决的边界；补记「滚动揭示内容没扫到」这条新边界 |
+| fix | prd-admin | 修 Codex 第二十七轮 P2：mermaid 是全局单例，initialize 改全局配置而 render 内部有自己的队列。一页多张图分处明暗不同表面时，后一张的 initialize 可能抢在前一张 render 之前，前一张就用错调色板——深底配浅色档，正是本 PR 要修的那个 1.1:1 老毛病。用 promise 链把「配置 + 渲染」锁成原子操作 |
+| fix | e2e | 修 Codex 第二十七轮 P2：SVG 双通道让两条候选落在同一节点，隐前景时按 id 遍历会把它记两遍，第二遍记下的是已改成 transparent 的值；还原时先写原值再写 transparent，该形状永久隐形、后续候选采错底色。改为按元素去重，原样式只记一次 |
+| fix | prd-admin | 修 Codex 第二十八轮 P2：PA 工具条激活态的字色我按浅底档改成深蓝 #1d4ed8（默认/gemini 实测 5.11:1），但那条是共享规则、同样命中深底的 mountain 主题——深蓝压 14% 蓝调深底只剩 2.16:1，改之前的浅蓝有 8.03:1。给 mountain 补回浅蓝 #93c5fd（8.03:1） |
+| chore | prd-admin | 双皮肤棘轮基线 paAgent.css 浅色前景 9→10：新增值锁死在 [data-pa-theme="mountain"] 这一钉死深色主题下，属规则允许的暗色专用例外 |
+| fix | e2e | 修 Codex 第三十轮 P1：聚合键是 `theme:route`，加了视口维度后同一处缺陷在 desktop 与 mobile 各命中一次却被折成一个，routeCount 系统性偏低——而我给用户的缺陷优先级排序正是按这个数排的。键补上视口 |
+| fix | e2e | 修 Codex 第三十轮 P1：needsEye 候选在像素采样**之前**就按「前景色+底色+标签」去重，而这类候选的底色恰恰是推不出来的 fallback 值，一列同构卡片压在不同渐变上时第一张达标就把后面全吞掉。这类候选改为掺 auditId 逐个留到采样后再定夺 |
+| fix | e2e | 修 Codex 第三十轮 P2：路由核对只比 pathname，应用若忽略/重写 query 而渲染默认 tab，`/open-platform?tab=open-api` 照样判为已覆盖。改为连请求里写明的 query 一并核对，不符记 skipped |
+| test | prd-admin | 修 Codex 第三十一轮 P2：同色调棘轮的「主题分支豁免」把判据 C（一值两用）整条放走，而一值两用与主题无关——淡底由同一个值拼出来，两层永远同色调。判据 C 取消豁免；三条判据改扫剥注释后的源码（否则「修好并写清原因」的复盘注释自己会把 CI 弄红） |
+| fix | prd-admin | 上条当场挖出的真缺陷一：StatsCardPanel 五张统计卡的 24px 大数字直接用装饰色 card.color（同时被拼成 `${card.color}20` 当边框），浅色档实测 1.62~2.56:1（大字需 3:1）。拆成 color（装饰）+ fgLight/fgDark（前景），九张卡浅色档提到 4.56~5.97:1 |
+| fix | prd-admin | 真缺陷二：HistoryTrendsPanel 状态 chip 的底靠 `${status.color}15` 拼，而 color 是 rgba() 串，拼出来不是合法 CSS，浏览器整条丢弃——chip 从来没有底色。补 tint 字段的同时把两个主题的字色各自提档（浅色草稿 3.28→4.52，暗色四档 2.82~3.15→4.63~7.56） |
+| fix | prd-admin | 真缺陷三：ReportDetailPanel 段落序号徽章白字压 500 档实底，浅色 2.13~3.70、暗色约 3.5（11px 粗体需 4.5）。底统一取 alpha 1，字改走两档同值的 --fg-on-bright-fill，六色 5.00~8.68:1；同段 `${accentColor}30` 的左边框同属非法拼接，一并修 |
+| fix | prd-admin | 真缺陷四：pa-agent 三条共享规则的浅色前景压同色调淡底（quick-cmd hover 1.04、task-action-danger 2.13、quick-cmd-icon 1.12），照第二十八轮的修法——基础规则给深档，山蓝那档单独留浅档 |
+| test | prd-admin | 同色调棘轮给 CSS 文件加「钉死主题作用域」豁免：判据把淡底合成到暖纸页底上算真账，这个前提对 `[data-pa-theme="mountain"]` 这类钉死深色的覆盖不成立。豁免只落到该条声明，基础规则照判。paAgent.css 基线 4 → 0（红绿闭环验过） |
+| chore | prd-admin | 双皮肤棘轮基线 HistoryTrendsPanel 浅色前景 3→7：新增值全在 buildStatusLabels 的暗色分支里，属规则允许的暗色专用例外 |
+| fix | e2e | 修 Codex 第三十一轮 P1：opacity 作用在整组上，而判据只拿它衰减前景、背景仍按不透明合成。白页上 opacity:.5 的黑底白字，真实是白字压 rgb(128) 的 3.95:1，旧算法给 5.32:1 判达标。改为按「组」算：组外底不打折、组内底照常合成、整组再按 opacity 混回去，前景走同一条链（合成页验过，审计输出的底色与屏幕像素一致） |
+| docs | doc | debt.frontend 对比度审计边界更新：删掉已修的「去重早于采样」，补 opacity 嵌套取乘积、钉死主题作用域整条豁免、剩余约 1330 处实测缺陷的路由排队、以及复扫通道当前因审计账号登录被拒而不通 |
+| feat | llmgw | 上游平台支持删除，删前查引用并列出占用清单，拒绝留下解析不到的池成员 |
+| feat | llmgw | 平台列表展示头尾打码的密钥指纹，同名同 URL 的两条上游终于分得清是哪一把 |
+| feat | llmgw | 密文解不开时状态如实显示「解不开」，不再伪装成已配置 |
+| feat | llmgw | 日志支持按上游平台 ID 精确过滤，平台行新增「查看日志」深链 |
+| test | prd-api | 补上游治理三件套的跨模块守卫（删除引用闸、指纹不泄漏明文、日志按平台过滤） |
+| feat | llmgw | 上游支持编辑名称、类型、地址、并发与备注，地址当场校验必须是 http/https 绝对地址 |
+| feat | llmgw | 模型支持删除，删前查池引用；补上平台删除链路缺的那一环 |
+| fix | llmgw | 默认池成员全掉线后不再被自己的守卫锁死，显式重新声明会重置健康位 |
+| polish | llmgw | 上游编辑表单改为整行展开，密钥指纹不再被窄列压成多行 |
+| feat | prd-api | 转录笔记标注说话人来源，本地声纹兜底如实写明逐句归属为估算 |
+| feat | prd-admin | 录音结果页在说话人旁展示来源说明，估算来源用警示色区分 |
+| feat | prd-api | 文学/缺陷/PRD 三个专业智能体封装成通用对话智能体可自主转派的技能 |
+| feat | prd-api | 通用智能体支持一次性转派，供已有上下文的宿主直接借用并透出工具卡 |
+| feat | prd-admin | 知识库再加工抽屉默认走通用智能体，不再强制先选智能体 |
+| feat | prd-admin | 抽屉新增专家头像条与 @ 指派，悬浮可看各智能体作用 |
+| fix | prd-api | 工具回调补一次性转派的发起人回查，避免工具因无用户身份静默拒绝 |
+| fix | prd-admin | 录音转写等待自动重试时如实展示原因、已重试次数与下次时刻，不再只转圈 |
+| test | prd-admin | 补说话人来源渲染、专家头像条、收件人决策、重试文案四组守卫用例 |
+| test | prd-api | 补通用体信封载荷字段与事件类型常量守卫 |
+| refactor | prd-admin | 收件人决策与专家头像条抽成可测的纯函数与展示组件 |
+| fix | prd-admin | 再加工抽屉支持 Esc 逐层关闭，蒙版不再一直盖住侧栏导航与主题切换 |
+| test | prd-admin | 补 Esc 收哪一层的分层判据用例 |
+| fix | prd-admin | 转录失败后结果区如实写明原因并把按钮改成重试，不再退回「没跑过」的样子 |
+| test | prd-admin | 补转录失败说明的判据用例（含与在途看护互斥） |
+| fix | prd-api | 模型重听的开场白不再被当成正文写进转录全文 |
+| fix | prd-api | 不同说话人内容一字不差时判为模型编造，不再当成真实切分展示 |
+| test | prd-api | 用线上真实返回锁死开场白剔除与编造切分判定 |
+| feat | llmgw | 团队/成员/租户补齐删除能力，各带独立归属校验（引用占用、不能删自己、不能删最后一个 owner、租户非空不许删） |
+| feat | llmgw | 组织页团队 chip 旁加删除、成员行加移出、页头加删除租户，删租户后走正规登出 |
+| test | prd-api | 新增组织三件删除的归属校验守卫 |
+| fix | llmgw | 团队删除的阻挡清单把成员 userId 解成账号名，原先一串 hex 看不出该找谁解绑 |
+| feat | llmgw | 模型池/逻辑模型/appCaller/交换所/模型新增删除端点，删除前查引用并分类报阻挡原因 |
+| feat | llmgw | 控制台补齐五处删除入口，团队 chip 补上重命名入口（后端端点一直在，前端此前无入口） |
+| fix | llmgw | 逻辑模型删除的审计动作名从 logical_model.delete 对齐为 logical-model.delete |
+| test | prd-api | 新增删除链路四段接线守卫与 api.ts 反断头守卫，后者当场抓出 deleteModel 无调用点 |
+| fix | prd-admin | 录音词云权重改按频次映射（原按排名，18 个词跨 3.6px 肉眼无差），字号/色深/字重随频次变化，次数直接写在词上 |
+| feat | prd-admin | 词云上方补一句结论：这场反复提到的是 X（N 次）；没有任何词重复时整块不出现 |
+| fix | prd-admin | 词云分词改「按位置抢座」：高频先占字、被占过的组合判为滑窗碎片，真实转写里半截词从 9 个降到 0 |
+| docs | prd-agent | 词云分词质量的偿还进度与剩余欠账记入 debt.knowledge-base |
+| fix | prd-admin | 词云改按上下文多样性判词：只在一个固定长串里出现过的组合不收录，修复「规优/看一/下常」半截词 |
+| fix | prd-admin | 后台归档等待时长补小时与天的进位，卡住超过一小时改为报开始时刻，修复 07-24 记录显示「已等待 26573:16」 |
+| fix | prd-admin | 多轮对话浮层栈改状态机：从选择器进新建面板后 Esc 能退回选择器，不再直接掉回抽屉 |
+| test | prd-admin | Esc 层级用例改为驱动真实转移序列，不再手工拼组件产生不了的中间状态 |
+| fix | prd-admin | 词云分词换 Intl.Segmenter 词典分词，彻底消除「看一/规优/考图」这类骑在词缝上的半截词 |
+| fix | prd-admin | 修复移动端 [[标题]] 提示叠字：行内 code 直接做 flex item 被 blockify 压到 48px 折行 |
+| fix | prd-admin | 宇宙图空状态的 [[标题]] 去掉写死的 #2a2a2a，改走主题 token |
+| test | prd-admin | 新增行内代码不做 flex item 的源码守卫；词云用例改为钉验收点名的六个半截词 |
+| docs | prd-agent | 词云分词欠账标记为已偿还，记下三次失败补救与新代价 |
+| fix | llmgw | 删模型、删交换所的占用判据补上 offering：逻辑模型按 _id 单键指过来，只查池会留下指向已删对象的静默残留 |
+| fix | llmgw | 改上游名同步 NameNormalized，并按重名 409 拒绝；原先只改 Name，唯一索引与重名判定仍按旧名走 |
+| fix | llmgw | 租户删除排掉系统自动铺的空托管默认池，池与池类型指针跟着租户一起收；原先 Pools==0 永远不成立，成功分支走不到 |
+| fix | prd-api | 通用智能体信封补收终态定稿全文：运行时只在 Done 给全文、不发增量时，原先用户看到的是空回答 |
+| fix | prd-admin | 词云词典通道排到英文通道之前并按小写归一，英文词典项不再被数两遍、大小写不同不再裂成两个词条 |
+| test | prd-api | 新增 offering 孤儿守卫（删模型/删交换所走同一判定源）与改名归一守卫 |
+| test | prd-admin | 词云补三条英文词典用例：次数不翻倍、大小写并成一格、按词边界不从更长的词中间挖走一块 |
+| feat | llmgw | 新增站内确认弹窗（createPortal + ESC + 点蒙版 + 主题 token + 要求逐字输入才放行），替换全部 28 处原生 window.confirm/prompt |
+| fix | llmgw | 破坏性操作的确认框不再依赖原生弹窗：自动化能覆盖、受主题控制、移动端不截断 |
+| chore | llmgw | 文字预算守卫认识确认弹窗这个出口，弹窗文案不再被当成常驻正文误报 |
+| feat | prd-admin | 词云补词典三层：说话人名零配置自动进、系统级全局表、个人补充，合并在后端做 |
+| feat | prd-api | UserPreferences/AppSettings 新增转录词典字段，配套合并读端点与个人/系统两个写端点 |
+| feat | prd-admin | 词云正下方给补词入口，管理员多一个「加入系统词典」（无权限不显示，不给点了会 403 的入口） |
+| test | prd-admin | 词典用例钉住「能捞回人名」「只做加不做猜不冒半截词」「长词优先」 |
+| docs | prd-agent | 词云召回欠账记为已落地，列出剩余的批量导入与屏蔽入口 |
+| fix | llmgw | 删 appCaller 连带删掉它名下的提示词策略版本：运行时按 code 选策略、完全不看注册文档，只删注册行会让老提示词在 appCaller 被动重建后回来 |
+| test | prd-api | 补 appCaller 提示词策略连带删除守卫、池成员 ModelId 改指守卫 |
+| test | prd-api | 守卫改成切到端点自己的收尾取窗口，不再用固定字符数（端点一变长尾部断言就落到窗口外） |
+| fix | prd-admin | 没选收件人且通用体可用时直接发给通用体，原先返回空目标被调用方当失败、弹回手动选择器，「可选」在默认收件人副作用跑完前退化回「必选」 |
+| fix | prd-admin | 空文档不再挡住通用智能体：文档正文缺失走的也是 docLoadError，那道闸原先排在识别通用体之前，写好的豁免根本到不了 |
+| feat | prd-api | 通用智能体信封透出思考过程事件，长推理阶段屏幕上有真实内容而不只是一个秒数 |
+| feat | prd-admin | 再加工抽屉展示模型思考过程，正文开始出字后自动收起 |
+| fix | prd-admin | 在途轮询发现转录失败时同步写入失败卡，原先只弹一条会消失的 toast，消失后页面又变回「跑过却装作没跑过」 |
+| test | prd-admin | 收件人决策用例补断言 target，原先只测 blocked，让「目标仍为空」这个洞在全绿下活了下来 |
+| fix | prd-api | 编造切分判据收紧为「整份都是同一批内容」，原先任意两人撞车就把整份多人切分丢掉，三人里两位应了同样一声就误杀 |
+| fix | prd-admin | 词云为空时补词入口不再一起消失——那正是最需要补词典的时刻，藏起来等于没有任何办法让词云长出来 |
+| test | prd-api | 补三人两位应声不算编造、三人全同仍算编造两条用例 |
+| fix | prd-admin | 词典未读回来前禁止提交：写端点是整表替换，此时提交会把已存的个人词与屏蔽词整表抹掉，系统级更是所有人共用的那张表 |
+| fix | llmgw | 改上游名接住唯一索引的重名冲突：并发改名双方都能过预检，最后一个原先落成 500，与对外承诺的 409 不是同一件事 |
+| fix | prd-admin | 词典写成功后先把本地表推进到刚提交的那一版再解锁，原先刷新回来之前解锁，此时再加一个词会拿旧表整表覆盖，刚存的词被静默抹掉 |
+| refactor | prd-admin | 词典下一版状态抽成纯函数，提交入参与本地推进走同一条判据 |
+| test | prd-api | 补改名端点接住重名冲突的守卫 |
+| test | prd-admin | 补词典连加两次不丢词的行为用例，以及推进与解锁顺序的接线守卫 |
+| docs | prd-agent | 记账 root 破窗账户走通用体转派会被拒（授权信号跨进程传播需先定防伪口径，不在本 PR 修） |
+| docs | prd-agent | 记账词典两条已核实未修的缺陷：管理员并发加词互相覆盖、超 24 字词条静默丢弃（Review 九轮，熔断后按 B 类处理） |
+| test | prd-api | 补改类型守卫：判据要认三种空协议写法、只在类型真变时挡、报的条数取全量计数而非截断后的名字数 |
+| fix | llmgw | 改类型守卫补上 MAP 侧模型：认领自 MAP 的平台名下模型可能只存在于旧 models 集合，池成员端点对内部租户会回退过去，只数 gwModels 会漏掉这批继承协议的模型 |
+| test | prd-api | 改类型守卫补断言：判据取的模型集合要与路由能解析到的一致，且 MAP 侧要排掉被 GW 同 _id 遮住的 |
+| docs | prd-agent | 记账删除的查-删时间窗（并发新建引用会留下残留）与通用体那一轮不显示模型名（外部 sidecar 无模型字段） |
+| fix | prd-api | 通用智能体的可用性并入调用权限：只看运行时健康时，没有 chat-agent.use 的账号会被抽屉默认选中通用体、放开无文档输入，然后每次发送都被打回 |
+| test | prd-api | 补通用体可用性三条用例：缺权限报权限而非运行时、有权限时如实报运行时原因、两个条件都就绪才算可用 |
+| docs | prd-agent | 删逻辑模型级联删 offering 的查-删时间窗并入既有条目（与删模型同形状，修法相同） |
+| fix | llmgw | 会话日志端点补收 platformId：与请求页共用同一份筛选参数，只有一边收会让平台筛选亮着却列出所有平台的会话 |
+| test | prd-api | 守卫改为断言「名字命中与源平台判据取合取」本身，不再按距离判——旧版里那个变量就声明在上一行，按距离判会在出问题的版本上照样绿 |
+| fix | llmgw | 删租户改为先删租户本身再清成员关系：反过来一旦中途失败，租户还在而最后一个 owner 已经进不来，连重试删除都做不到，只能上数据库手工救 |
+| test | prd-api | 补删租户的收尾顺序守卫（毁掉重试能力的那一步必须最后做） |
+| test | prd-api | 补去重归一守卫，并钉住归一只对落在目标平台的成员做（跨平台同名是两个模型） |
+| fix | prd-admin | 显式加进词典的词不再被「猜词」护栏丢掉：产品名「个推」带虚词字「个」、人名「那英」带「那」，加了词却在词云里看不见，L0 说话人层零配置捞人名也在这里断掉 |
+| test | prd-admin | 补三条词典豁免用例：豁免生效、豁免只给词典词（没加的虚词组合仍被挡）、词典词仍要反复提到才进云 |
+| fix | llmgw | 上游编辑不再强制回传接口类型：认领自 MAP 的存量类型（openrouter/google 等）原样回传会被 INVALID_INPUT 挡下，用户只想改个名字却被要求先重新分类；类型未改就省掉该字段，存量类型在选择器里如实列出 |
+| fix | llmgw | 归一去重的别名表收全目标平台的 ModelName 与 Name 两种写法：只索引 ModelName 时，用 Name 别名建的目标成员算出的键仍与幸存者 _id 不同，重复成员照样并存 |
+| test | prd-api | 补编辑/模型删除的接线守卫，以及默认池不得自锁死的判据 |
+| fix | llmgw | 名下有模型「继承协议」时不许改上游接口类型（409 并列出是哪几个）：模型 Protocol 为空表示继承所属上游，改类型等于把那批模型的报文协议悄悄换掉，判据覆盖 GW 与 MAP 两侧模型 |
+| test | prd-api | 补改类型守卫；以及吃这份筛选的每个日志端点都要把 platformId 传进同一个 BuildFilter |
+| chore | llmgw | 上游合并功能从本 PR 拆出到 claude/llmgw-platform-merge-followup 分支，删除/编辑/改类型闸/确认弹窗均不依赖它 |
+| docs | prd-agent | 记账合并拆出的原因与续做边界；并把「删掉认领自 MAP 的资源」的语义拍板为「撤销认领、退回只读」 |
+| fix | llmgw | 删交换所把内部租户的 MAP 池一起算进占用清单：/gw/pools 本就端出未影子化的 MAP 池，运行时解析 __exchange__ 成员又优先认 GW 自有交换所，只扫 GW 池会让这类池在交换所被删后静默解析不到上游（删模型/删平台早已这么兜，这里对齐） |
+| test | prd-api | 补三个删除闸门的 MAP 池口径一致守卫，并加 MethodBody 取静态方法体的辅助 |
+| feat | llmgw | 在上游生图模型高级配置中声明尺寸字段与提示词传输能力 |
+| fix | llmgw | 阻止尺寸能力从通用参数和模型池成员绕过专用配置、统一能力别名与冲突顺序，并仅允许已启用的生图模型配置尺寸 |
+| fix | prd-api | 保留适配器契约与候选上游多图遮罩语义、隔离普通池和 Exchange 的旧尺寸快照、统一请求阶段尺寸能力，并在所有获授权的生图调用方中暴露上游尺寸元数据 |
+| fix | prd-admin | 文学配图按上游尺寸能力隐藏不适用的批量与单图尺寸选择器 |
+| fix | prd-api | 生图运行事件与持久化结果使用实际解析模型的尺寸自适应能力，并保留比例字段配套的分辨率档位 |
+| feat | prd-api | 接入 LLM 网关的 embedding 通路，遵循 compute-then-send 单次解析 |
+| fix | prd-api | embedding 加入专属池不可用时的失败关闭名单，防止拿 chat 模型算出垃圾向量 |
+| feat | prd-api | 新增 document_embeddings 向量存储，float32 二进制存储并盖上模型与维度 |
+| feat | prd-api | 新增文档切块器与增量索引哈希，哈希拌入模型标识以便换模型时整批重算 |
+| feat | prd-api | Stub 平台新增 OpenAI 兼容的 /v1/embeddings 与 stub-embedding 模型登记 |
+| test | prd-api | 新增跨模型向量污染守卫：同维度不同模型必须判为不兼容 |
+| test | prd-api | 新增切块守卫：边界、重叠、空白输入整批拒绝 |
+| docs | doc | 新增向量模型供应商债务台账：OpenAI 可用性实测、绑定多个的安全边界、选型建议 |
+| docs | doc | 更新知识库 K-2 债务：底座已落地，剩余卡在缺 embedding 供应商凭据 |
+| fix | prd-api | 专属池绑定判据改为只看配置：绑定的池被删后仍算有绑定，失败关闭不再被绕过 |
+| fix | prd-api | 向量应答解析先判 JsonObject 再取键，根不是对象或 data 混入标量时整批拒绝而不是抛异常 |
+| test | prd-api | 补两族回归：绑定判据与应答形状容错；并加守卫断言两条解析路径共用同一个绑定判据 |
+| docs | doc | 修正向量供应商台账里「同名多平台即有故障切换」的过度声明，改记为遗留项 |
+| docs | doc | 记两条向量侧欠账：专属绑定是优先而非排他、悬空绑定不可见 |
+| feat | llmgw | 内置 18 个上游平台预设，选平台+填密钥即可接入，地址与并发收进高级区 |
+| feat | llmgw | Provider 新增「测试连接」：回报可达性、耗时、探测地址与失败后的下一步 |
+| feat | llmgw | Provider 新增「查看模型」：从上游拉模型清单，勾选批量导入，用途自动推断 |
+| feat | llmgw | 导入模型时自动带入上游提供的价格（OpenRouter 等），上游没给就如实留空不编 |
+| feat | llmgw | 保存 Provider 后自动测一次连接并直接列出上游模型，不再停在「已保存」 |
+| test | prd-api | 新增守卫：控制台探测地址与网关调用地址必须共用同一条版本号判据；禁止内置价目表 |
+| ci | ci | server 任务 path filter 登记 llmgw/console-api，防守卫对只改一边的 PR 不设防 |
+| rule | rule | 新增「用户输入最小原则」规则，含可观测性连带义务 |
+| fix | llmgw | Ollama / vLLM 预设自带占位密钥，不再出现「文案说无需密钥、保存却被拒」 |
+| test | prd-api | 新增预设密钥路径守卫：文案声称免密钥必须有占位值兑现 |
+| fix | llmgw | 控制台底部留出净空，页面最后一行按钮不再被右下角「提交缺陷」浮标遮住 |
+| security | llmgw | 外部租户的上游探测过内网地址校验，探针不再跟随重定向 |
+| fix | llmgw | 删除 Provider 的池引用检查改查真实的 Models 字段，此前查了个不存在的字段等于没保护 |
+| fix | llmgw | 导入的模型补 ModelNameNormalized 参与唯一索引，并发导入不再产生重名 |
+| fix | llmgw | 停用的 Provider 拒绝批量导入，避免模型建出来却对池路由不可见还报成功 |
+| fix | llmgw | 上游模型清单标出拉取时间，不再只标来源 |
+| fix | llmgw | 切换上游预设时清空密钥，Ollama 的占位值不会被带进 OpenAI |
+| security | llmgw | 探测在建立连接那一刻校验对端 IP，堵住 DNS rebinding 绕过 |
+| fix | llmgw | 探测的 15 秒预算覆盖到读完 body，上游挂住 body 不再拖死控制台请求 |
+| fix | llmgw | 批量导入与单模型端点共用同一份用途/价格/长度校验口径 |
+| fix | llmgw | 池同步按「点名的模型是否都在库」触发，导入失败后重试真的能补回池成员 |
+| fix | llmgw | 导入端按存储层能力名校验用途，生图与视频模型不再被静默丢掉用途 |
+| fix | llmgw | Claude 上游测完不再自动去拉模型列表，成功路径不以报错收尾 |
+| fix | llmgw | 上游响应体边流边数、超 8MB 中止，超时只管时长管不住字节数 |
+| security | llmgw | 密钥解不开时拒绝探测，不再裸奔发请求换来一个「密钥被接受」的假绿灯 |
+| fix | llmgw | 上游 pricing 非对象时不再抛异常把整条「查看模型」变成 500 |
+| fix | llmgw | 发现的模型条目上限 2000，被截断时如实告知上游原本有多少 |
+| fix | llmgw | 上游清单根节点不是对象时按「形状不对」回 502，不再抛异常变成 500 |
+| fix | llmgw | 换 Provider 时重挂上游模型选择器，上一个平台的勾选不再被带进下一个 |
+| fix | llmgw | 连接测试改口只说「读到 N 个模型」，不再替上游宣布「密钥被接受」——列表接口常常不校验密钥 |
+| feat | prd-api | 网页托管新增「向我提问」：访客对着托管页面提问，回答只依据该页正文 |
+| feat | prd-api | 新增站点正文快照服务，按 CosKey 直读对象存储，覆盖单文件/多文件站/PDF 包装三种形状 |
+| feat | prd-api | 新增提问配额闸（来访者频次 + 站点日上限），保护站点创建者的模型额度 |
+| feat | prd-api | 分享链接支持自选开场问题，null/空数组三态区分「继承站点题库」与「本链接不显示」 |
+| feat | prd-admin | 分享页右下角新增提问入口，电脑端右侧抽屉、手机端全屏 sheet |
+| feat | prd-admin | 站内预览弹窗顶栏新增「提问」与提问设置入口，与评论互斥共用右侧面板 |
+| feat | prd-admin | 分享面板新增开场问题选择器，可勾选站点题库或为本条链接单独添加 |
+| polish | prd-admin | 手机端分享页顶栏四个按钮改为仅图标，消除挤压 |
+| fix | prd-api | 修复 SSE 写入信号量未释放导致的提问全流程卡死 |
+| fix | prd-api | SSE 写入吞掉 IOException 等断线异常，客户端断开不再中断生成与落库 |
+| fix | prd-api | 等首字期间补 SSE 心跳，避免反代空闲超时掐断健康连接 |
+| fix | prd-api | 提问补齐网关请求上下文，http 网关模式下不再因缺 UserId 被拒 |
+| fix | prd-api | 提问超长改为拒绝而非静默截断，避免答案漏掉问题结尾却无任何提示 |
+| fix | prd-api | 合集分享不再返回提问信息，去掉「后端算了、前端不渲染」的半截接线 |
+| fix | prd-api | 视频包装站禁止开启提问，且只挡「开启」不挡「关闭」，站点变形态后 owner 仍能关掉 |
+| fix | prd-api | 重传成视频等不支持形态时自动关闭提问，已发分享不再挂必失败的入口 |
+| fix | prd-api | 站点正文超过文件数或体积上限时如实标记截断，不再让提示词声称「这是页面全部内容」 |
+| fix | prd-api | 对象读取失败不再说成「这个页面没有文字内容」，也不再被缓存半小时 |
+| fix | prd-api | 取不到正文时退回已占用的配额，存储抖动不再把额度白白烧光 |
+| fix | prd-api | 提问配额 key 加部署作用域，分支预览不再吃掉生产站点的当日额度 |
+| fix | prd-api | 站点题库存储上限与面板展示上限分开，题库存第 5 条起不再静默消失 |
+| security | prd-api | 提问历史新增字符预算闸（单条 2000 / 总量 6000 / 条数 8），匿名分享路径不再能靠超大历史绕过配额 |
+| security | prd-api | 站点正文快照按文件体积上限拦在下载之前（含 PDF 包装站），杜绝匿名请求触发数百 MB 读取 |
+| security | prd-api | 提问失败不再把网关原始错误回给访客，改为稳定文案 + 错误码，详情只进日志 |
+| fix | prd-admin | 提问设置抽屉层级提到预览弹窗之上，修复唯一开启入口被完全遮挡 |
+| fix | prd-admin | 提问面板收起改为隐藏而非卸载，重开保留对话、流式中途收起不再丢答案 |
+| fix | prd-admin | 流式回答未收到 done 就断流时如实标为中断，不再把半截答案当成功呈现 |
+| fix | prd-admin | 提问 SSE 请求补上 API base 前缀，前后端分开部署时不再打到前端自己身上 |
+| fix | prd-admin | 分享开场问题的条数上限收敛到唯一判定源，四条修改路径不再各管各的 |
+| fix | prd-admin | 提问开关保存后回传父组件，关掉预览再打开不再退回旧状态 |
+| fix | prd-admin | 提问面板主操作按钮改走 button-primary token，修复对比度不足 |
+| polish | prd-admin | 提问输入框同步后端长度上限，接近上限时显示字数；题库与分享选择到达上限时当场挡住并说明 |
+| test | prd-api | 新增 SSE 写入器守卫（连写不卡、断线容忍、并发不撕帧）、历史预算守卫、配额 key 作用域守卫、正文快照诚实性守卫、开场问题三态守卫 |
+| test | prd-admin | 新增分享选择判定守卫与开场问题选择上限守卫 |
+| fix | prd-admin | 修复网页托管预览：缩略图不再因外链字体挂起而永久停在地球占位符 |
+| fix | prd-admin | 修复大预览弹窗把「加载慢」误报成「加载超时或失败」并遮住已渲染页面 |
+| fix | prd-admin | 分享页取回网页原文改走服务端同源代理，修复 srcDoc 兜底因跨域被拦而从未生效 |
+| fix | prd-admin | 打包型 SPA 入口不再走 srcDoc 预览，避免不透明源下外链 module 脚本被拦成白屏 |
+| fix | prd-admin | 取回原文的加载遮罩改为限时让位，不再把已渲染的直链页面白屏盖住整个超时 |
+| fix | prd-admin | 遮罩让位后才回来的原文不再替换直链 iframe，避免当面重载丢掉滚动与输入 |
+| fix | prd-admin | 页面自带的相对 base 按站点地址重解析，修复 srcDoc 下资源被解析到 MAP 自己身上 |
+| fix | prd-admin | 预览弹窗改用统一加载组件，不再直接使用 lucide 转圈图标 |
+| feat | prd-api | 新增分享 token 域的站点正文读取端点，复用既有分享门禁 |
+| fix | prd-api | 分享过期判定统一走 visit 链接豁免，历史链接不再「页面打得开但正文代理说已过期」 |
+| security | prd-api | 匿名正文代理改为边读边卡上限并给读取加截止时间，杜绝拿分享 token 强制大额分配 |
+| test | prd-admin | 新增预览接线守卫，防止跨域 fetch、超时判失败、迟到原文替换三类回归 |
+| test | prd-api | 新增分享过期判据守卫，锁住 visit 链接豁免语义 |
+| docs | doc | 新增三 PR 拆分看板：拆分理由、各线范围基线、两轮 review 收敛规则 |
+
+### 2026-08-10
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 修复简单预览与完整详情页的 Web 入口地址和展示契约 |
+| fix | cds-skill | Web 服务名改为结构化角色识别并升级核心技能至 0.13.2 |
+| chore | doc | 熵清理：D1-D4/D7 全绿，D6 核对 4 条（3 条纯 bug fix 无需追加设计文档；1 条同步 design.platform.model-pool.md 的 image2 OpenRouter Offering 协议分流），已登记 manifest |
+| fix | prd-admin | 修复网页托管上传失败后无错误反馈并持续停留在处理中状态的问题 |
+| fix | prd-api | 为不接受尺寸字段的生图模型注入用户所选画幅提示词 |
+| fix | prd-admin | 自适应模型保留可用尺寸选择，仅对尺寸不适用模型隐藏选择器 |
+
+### 2026-08-09
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理：D1-D4 全绿，D6 核对 1 条（2026-08-09_weekly-w32.md，无匹配设计文档需追加，已登记 manifest） |
+| docs | doc | 新增 2026-W32 周报（md 底稿 + 周刊版发布到周报知识库），并归档 32 个 changelog 碎片到 CHANGELOG.md [未发布] |
+| docs | doc | 周报索引同步：index.yml 与 guide.list.directory.md 登记 report.2026-W32 |
+| fix | prd-admin | 周报用量口径 route token 守卫的路由来源补上 NAV_REGISTRY：此前只认 App.tsx 字面量 Route，把 /chat、/visual-agent 这类注册表自动生成的路由误判成不存在 |
+| fix | doc | 周报首页能力条目的技术出处只保留 #1321，去掉与首页无关的 #1319 #1320（两者仅含周报技能与验收文档改动） |
+| fix | doc | CHANGELOG [未发布] 段 2026-07-31 起的日期节按日期合并去重并降序重排，消除本次归档引入的重复标题（零行丢失） |
+| test | prd-admin | 补 NAV_REGISTRY 到 Route 的挂载接线守卫：挂载块存在、真的渲染 Route path={e.path}、覆盖注册表用到的每种 placement，防止「登记过」被当成「挂载了」 |
+| feat | prd-admin | 知识库/更新中心的 HTML 报告预览在移动端新增字号调节（100%-160%，CSS zoom 真实重排，localStorage 记忆档位） |
+| feat | prd-admin | 文档阅读器「全屏阅读」按钮向移动端开放，周报可脱离 TabBar 与底部导航铺满整个视口阅读 |
+| polish | prd-admin | 移动端 HTML 报告纸面满铺：负 margin 抵消内容区水平 padding、去左右描边圆角，全屏覆盖层高度改 100dvh 适配移动浏览器动态工具栏 |
+| polish | prd-admin | 字号控件并入阅读工具栏不再单独占行；移动端工具栏图标统一尺寸，划词评论与编辑折进「更多」菜单 |
+| polish | prd-admin | 全屏阅读改为整页独占：工具栏整条隐藏，退出走右上角半透明浮动按钮（ESC 仍可退出） |
+| fix | prd-admin | 整页禁止横向滚动与横向橡皮筋（html/body overflow-x clip + overscroll-behavior-x none），修复移动端「总是可以左右滑动、竖滑很别扭」 |
+| feat | prd-admin | 移动端沉浸阅读：文档标题接管 AppShell 顶栏（替代「知识库」等应用名，返回一步恢复），知识库店头行/更新中心 TabBar 行/分享页三条头部行在阅读态整行让位 |
+| feat | prd-admin | 阅读区「更多」菜单新增信息区与页面插槽：验收结论/README/置顶/new/标签徽标折入菜单，知识库空间信息与分享收进菜单（readerMenuExtra） |
+| polish | prd-admin | 桌面端阅读头重构：文档标题行替代面包屑（父文件夹作浅色前缀保层级，右侧保留更新于/更新者），主操作图标独立成行，「更多」置尾靠右 |
+| polish | prd-admin | 移动端沉浸阅读两行合一行：返回/标题/字号/全屏/更多同一条顶栏，阅读工具栏行取消（编辑态除外），目录入口收进「更多」 |
+| polish | prd-admin | 沉浸阅读满铺：AppShell 主区零内边距、DocBrowser 外层卡片 p-3 与圆角在移动阅读态去除，正文从顶栏下边缘直接开始 |
+| fix | prd-admin | 字号控件仅对 srcDoc 型 HTML 显示（fileUrl 上传附件 sandbox 注入不进去，不再展示假开关）；阅读区「更多」菜单限高 70vh 内部滚动，标签多时不超屏 |
+| fix | prd-admin | 字号档位仅移动端生效（桌面恒 100%，避免移动端调大的档位带到无调节控件的桌面）；「更多」菜单内点分享等页面动作先收起菜单，不再盖住弹窗 |
+| fix | prd-admin | 沉浸阅读改为调用方显式开启（immersiveOnMobile）：pm-agent 知识面板等嵌入式消费方在移动端保持原工具栏，不再被 fixed 沉浸顶栏覆盖宿主头部；字号控件抽成共享节点供顶栏与工具栏两处复用 |
+
+
 ### 2026-08-08
 
 | 类型 | 模块 | 描述 |

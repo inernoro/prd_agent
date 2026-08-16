@@ -123,7 +123,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
           <button
             onClick={onAdd}
             disabled={!pickUserId || adding}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 disabled:opacity-40 text-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 disabled:opacity-40 text-sm"
           >
             {adding ? <MapSpinner size={14} /> : <UserPlus size={15} />} 添加成员
           </button>
@@ -157,7 +157,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
                     <button
                       onClick={() => onSetRole(m.userId, 'admin')}
                       disabled={busy}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-purple-300 hover:bg-purple-500/15 disabled:opacity-40"
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-[color:var(--accent-fg-violet)] hover:bg-purple-500/15 disabled:opacity-40"
                       title="指派为产品管理员"
                     >
                       <ShieldCheck size={13} /> 设为管理员
@@ -177,7 +177,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
                     <button
                       onClick={() => onRemove(m.userId)}
                       disabled={busy}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-red-300/70 hover:bg-red-500/15 disabled:opacity-40"
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-[color:var(--accent-fg-danger)] hover:bg-red-500/15 disabled:opacity-40"
                       title="移除成员"
                     >
                       <Trash2 size={13} /> 移除

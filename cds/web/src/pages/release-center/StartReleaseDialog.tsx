@@ -302,9 +302,9 @@ export function StartReleaseDialog({
                 <div className="grid shrink-0 gap-2 sm:grid-cols-2">
                   {progress.steps.map((step, index) => (
                     <div key={step.id} className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[13px]">
-                      {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-                        : step.state === 'failed' ? <XCircle className="h-4 w-4 shrink-0 text-red-500" />
-                          : step.state === 'running' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-sky-500" />
+                      {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" />
+                        : step.state === 'failed' ? <XCircle className="h-4 w-4 shrink-0 text-bad" />
+                          : step.state === 'running' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-info" />
                             : <span className="h-4 w-4 shrink-0 rounded-full border border-[hsl(var(--hairline-strong))]" />}
                       <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{index + 1}/{progress.total}</span>
                       <span className="min-w-0 truncate">{step.label}</span>
@@ -385,15 +385,15 @@ function PreflightCheckItem({ check }: { check: ReleasePreflightResult['checks']
     <li
       className={`flex min-w-0 items-start gap-2.5 rounded-md border px-3 py-2 text-[13px] ${
         check.status === 'fail'
-          ? 'border-red-500/35 bg-red-500/10'
+          ? 'border-bad/35 bg-bad-soft'
           : check.status === 'warn'
-            ? 'border-amber-500/35 bg-amber-500/10'
+            ? 'border-warn/35 bg-warn-soft'
             : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'
       }`}
     >
       {check.status === 'pass'
-        ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-        : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${check.status === 'fail' ? 'text-red-500' : 'text-amber-500'}`} />}
+        ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" />
+        : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${check.status === 'fail' ? 'text-bad' : 'text-warn'}`} />}
       <span className="min-w-0 flex-1">
         <span className="font-medium">{check.label}</span>
         <span className="mt-0.5 block break-words text-[12px] text-muted-foreground">{collapsed.summary}</span>

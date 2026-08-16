@@ -29,7 +29,7 @@ export function VersionLinkDialog({
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
+        className="surface-tone-dark rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ width: 440, maxWidth: '92vw', maxHeight: '76vh' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -57,7 +57,7 @@ export function VersionLinkDialog({
           <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft">取消</button>
           <button
             onClick={() => onSave(Array.from(selected))}
-            className="px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30"
+            className="px-3 py-1.5 rounded-lg bg-cyan-500/20 text-[color:var(--accent-fg-blue)] border border-cyan-500/40 text-sm hover:bg-cyan-500/30"
           >
             保存（{selected.size} 个版本）
           </button>

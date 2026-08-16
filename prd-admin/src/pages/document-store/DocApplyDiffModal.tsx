@@ -143,7 +143,7 @@ export function DocApplyDiffModal({
               style={{
                 background: 'rgba(248,113,113,0.10)',
                 border: '1px solid rgba(248,113,113,0.22)',
-                color: 'rgba(252,165,165,0.95)',
+                color: 'var(--accent-fg-danger)',
               }}
             >
               <AlertTriangle size={11} className="shrink-0 mt-0.5" />

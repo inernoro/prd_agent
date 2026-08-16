@@ -387,7 +387,7 @@ export function ReleaseWorkflowDetail({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {!isNew && release?.status === 'announcement_pending' && (
-            <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-amber-200">
+            <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-amber)]">
               待填写上线公告
             </span>
           )}
@@ -410,7 +410,7 @@ export function ReleaseWorkflowDetail({
           {(isNew
             ? (temporary ? extraIds.length : inheritedRequirementIds.length + extraIds.length)
             : releaseRequirements.length) > 0 && (
-            <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">
+            <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-[color:var(--accent-fg-blue)]">
               {isNew
                 ? (temporary ? extraIds.length : inheritedRequirementIds.length + extraIds.length)
                 : releaseRequirements.length}
@@ -422,7 +422,7 @@ export function ReleaseWorkflowDetail({
           {(isNew
             ? changeStats.added + changeStats.modified + changeStats.deprecated
             : releaseLinkedFeatures.length) > 0 && (
-            <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-cyan-200">
+            <span className="ml-1.5 rounded-full bg-cyan-400/20 px-1.5 text-[10px] text-[color:var(--accent-fg-blue)]">
               {isNew
                 ? changeStats.added + changeStats.modified + changeStats.deprecated
                 : releaseLinkedFeatures.length}
@@ -433,7 +433,7 @@ export function ReleaseWorkflowDetail({
           <TabButton active={tab === 'defects'} onClick={() => setTab('defects')}>
             缺陷
             {releaseDefects.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-red-400/20 px-1.5 text-[10px] text-red-200">{releaseDefects.length}</span>
+              <span className="ml-1.5 rounded-full bg-red-400/20 px-1.5 text-[10px] text-[color:var(--accent-fg-danger)]">{releaseDefects.length}</span>
             )}
           </TabButton>
         )}
@@ -580,7 +580,7 @@ export function ReleaseWorkflowDetail({
                   </div>
                   {selectedAdditionalRequirements.length > 0
                     ? <div className="mb-2 flex flex-wrap gap-2">{selectedAdditionalRequirements.map((r) =>
-                        <span key={r.id} className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-100">
+                        <span key={r.id} className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-blue)]">
                           {r.requirementNo} {r.title}
                           <button type="button" onClick={() => setExtraIds((ids) => ids.filter((id) => id !== r.id))} className="text-cyan-100/55 hover:text-cyan-100"><X size={12} /></button>
                         </span>)}
@@ -611,7 +611,7 @@ export function ReleaseWorkflowDetail({
         />
       )}
 
-      {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
+      {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
 
       <div className="flex justify-end gap-2 border-t border-token-subtle pt-4">
         {isRecordDetail ? (
@@ -951,7 +951,7 @@ export function ReleaseDetailShell({
         <button onClick={() => navigate(-1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-token-subtle text-token-secondary hover-bg-soft hover-text-primary" title="返回">
           <ArrowLeft size={16} />
         </button>
-        <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">正式版本</span>
+        <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-[color:var(--accent-fg-success)]">正式版本</span>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
         <div className="w-full px-5 xl:px-8 py-5">

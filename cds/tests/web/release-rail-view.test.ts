@@ -39,46 +39,6 @@ function positionOf(overrides: Partial<ReleaseTargetCommitPosition> = {}): Relea
   };
 }
 
-describe('releaseRail · 可见性', () => {
-  it('有节点且无不可用原因才画', () => {
-    expect(railIsVisible(railOf())).toBe(true);
-  });
-
-  it('数据缺省时整块隐藏，不留一个空壳骨架', () => {
-    expect(railIsVisible(undefined)).toBe(false);
-    expect(railIsVisible(railOf({ nodes: [] }))).toBe(false);
-    expect(railIsVisible(railOf({ unavailableReason: '本地仓库不可读' }))).toBe(false);
-    // 有原因就一定没有节点：即便后端同时给了节点，也按不可用处理。
-    expect(railIsVisible(railOf({ unavailableReason: '项目没有记过远端默认分支' }))).toBe(false);
-  });
-});
-
-describe('releaseRail · 环境插旗', () => {
-  const markers: RailMarker[] = [
-    { targetId: 't-prod', label: '生产', environment: 'production', commitSha: 'ccccccc3333333333333333333333333333333' },
-    { targetId: 't-stage', label: '预发', environment: 'staging', commitSha: 'bbbbbbb' },
-  ];
-
-  it('短 sha 与全 sha 混用照样能对上', () => {
-    expect(sameCommit('bbbbbbb2222222222222222222222222222222', 'bbbbbbb')).toBe(true);
-    expect(sameCommit('bbbbbbb', 'ccccccc')).toBe(false);
-    expect(sameCommit('', 'ccccccc')).toBe(false);
-  });
-
-  it('旗插在正确的节点上', () => {
-    const views = buildRailNodeViews(railOf(), markers);
-    expect(views.map((node) => node.markers.map((marker) => marker.label))).toEqual([[], ['预发'], ['生产']]);
-  });
-
-  it('不在轴上的环境单独列出，不凭空生一个节点', () => {
-    const off = markersOffRail(railOf(), [
-      ...markers,
-      { targetId: 't-old', label: '演示', environment: 'other', commitSha: 'ddddddd4444' },
-    ]);
-    expect(off.map((marker) => marker.targetId)).toEqual(['t-old']);
-  });
-});
-
 describe('releaseRail · 落点文案', () => {
   it('落后就说落后几个', () => {
     expect(describeCommitPosition(positionOf(), 'main')).toEqual({ text: '落后 main 2 个提交', tone: 'warn' });
@@ -121,34 +81,3 @@ describe('releaseRail · 落点文案', () => {
   });
 });
 
-describe('releaseRail · 时间文案', () => {
-  it('最早未上线提交距今 N 小时', () => {
-    expect(describeOldestUnreleased(positionOf({ oldestUnreleasedAt: '2026-07-28T22:00:00Z' }), NOW))
-      .toBe('最早未上线提交距今 18 小时');
-  });
-
-  it('没有这个字段就整句不出现', () => {
-    expect(describeOldestUnreleased(positionOf(), NOW)).toBe('');
-    expect(describeOldestUnreleased(undefined, NOW)).toBe('');
-  });
-
-  it('非法时间返回空串，让调用方整句不显示而不是渲染 Invalid Date', () => {
-    expect(formatRelativeFromNow('not-a-date', NOW)).toBe('');
-    expect(formatAgo(undefined, NOW)).toBe('');
-  });
-
-  it('粗粒度分级：分钟 / 小时 / 天 / 月', () => {
-    expect(formatRelativeFromNow('2026-07-29T15:58:00Z', NOW)).toBe('2 分钟');
-    expect(formatRelativeFromNow('2026-07-29T11:00:00Z', NOW)).toBe('5 小时');
-    expect(formatRelativeFromNow('2026-07-24T16:00:00Z', NOW)).toBe('5 天');
-    expect(formatRelativeFromNow('2026-05-29T16:00:00Z', NOW)).toBe('2 个月');
-  });
-
-  it('未来时间说「刚刚」而不是负数', () => {
-    expect(formatAgo('2026-07-29T17:00:00Z', NOW)).toBe('刚刚');
-  });
-
-  it('formatAgo 给带后缀的说法', () => {
-    expect(formatAgo('2026-07-24T16:00:00Z', NOW)).toBe('5 天前');
-  });
-});

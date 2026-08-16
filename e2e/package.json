@@ -10,7 +10,8 @@
     "test:headed": "playwright test --headed",
     "test:ui": "playwright test --ui",
     "install-browsers": "playwright install --with-deps chromium",
-    "codegen": "playwright codegen"
+    "codegen": "playwright codegen",
+    "audit:contrast": "node theme-contrast-audit.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",

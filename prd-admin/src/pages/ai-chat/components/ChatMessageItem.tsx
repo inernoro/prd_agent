@@ -163,7 +163,7 @@ function MessageMetadataInline({
             maxWidth: '70%',
             border: '1px solid rgba(139,92,246,0.20)',
             background: 'rgba(139,92,246,0.08)',
-            color: 'rgba(139,92,246,0.85)',
+            color: 'var(--accent-fg-violet)',
             fontSize: 10,
             fontWeight: 600,
           }}
@@ -284,7 +284,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     return (
       <div className="flex flex-col items-start gap-0.5">
         <div
-          className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
+          className="surface-tone-dark group relative max-w-[85%] rounded-[10px] overflow-hidden"
           style={{ border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(55, 35, 35, 0.80)' }}
         >
           {genError.prompt ? (
@@ -382,7 +382,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     return (
       <div className="flex flex-col items-start gap-0.5">
         <div
-          className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
+          className="surface-tone-dark group relative max-w-[85%] rounded-[10px] overflow-hidden"
           style={{ border: '1px solid var(--border-subtle)', background: 'rgba(44, 44, 50, 0.78)' }}
         >
           {(genDone.prompt || genDone.refSrc) ? (
@@ -445,7 +445,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     return (
       <div className="flex flex-col items-start gap-0.5">
         <div
-          className="group relative max-w-[85%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-2"
+          className="surface-tone-dark group relative max-w-[85%] rounded-[10px] overflow-hidden px-2.5 pt-2 pb-2"
           style={{ border: '1px solid rgba(239,68,68,0.30)', background: 'rgba(55, 35, 35, 0.80)' }}
         >
           <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
@@ -518,7 +518,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
               fontWeight: 600,
               border: '1px solid rgba(129,140,248,0.25)',
               background: 'rgba(99,102,241,0.08)',
-              color: 'rgba(165,180,252,0.85)',
+              color: 'var(--accent-fg-blue)',
             }}
           >
             <span style={{ opacity: 0.7 }}>用户期望</span>

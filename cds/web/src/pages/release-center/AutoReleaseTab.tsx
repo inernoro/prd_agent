@@ -1,5 +1,9 @@
 /**
- * 自动发布页签：满足条件时由 CDS 自己发，不需要人在场。
+ * 定时发布规则：到点由 CDS 自己发，不需要人在场。
+ *
+ * 与「自动发布规则」（AutoRulesSection，事件驱动，分支被推时发）是两种触发面，
+ * 同屏上下并列。标题必须叫「定时发布规则」——两块都叫「自动发布规则」时，
+ * 屏幕上会出现两个同名标题和两个「新建规则」按钮，用户分不清点哪个。
  *
  * 底座复用 scheduled-job（interval / daily / manual 调度、超时、运行记录都是现成的），
  * 这里只负责「发布到某环境」这一种动作的配置面：不另起调度器，不另起一张任务表。
@@ -94,7 +98,11 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
 
   useEffect(() => { void load(); }, [load]);
 
-  const releaseJobs = jobs.filter((job) => releaseActionOf(job, row.target.id) !== undefined);
+  // 事件驱动的 push 规则归 AutoRulesSection（设计稿 §4）。不排掉的话同一条规则
+  // 会在两块里各出现一次，而且在这里被当成定时规则编辑。
+  const releaseJobs = jobs.filter(
+    (job) => job.schedule.type !== 'push' && releaseActionOf(job, row.target.id) !== undefined,
+  );
 
   const submit = async (): Promise<void> => {
     if (!draft) return;
@@ -117,10 +125,10 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
       };
       if (draft.id) {
         await apiRequest(`/api/scheduled-jobs/${encodeURIComponent(draft.id)}`, { method: 'PATCH', body });
-        onToast('自动发布规则已更新');
+        onToast('定时发布规则已更新');
       } else {
         await apiRequest('/api/scheduled-jobs', { method: 'POST', body });
-        onToast('自动发布规则已创建');
+        onToast('定时发布规则已创建');
       }
       setDraft(null);
       await load();
@@ -167,7 +175,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
     setBusyJobId(job.id);
     try {
       await apiRequest(`/api/scheduled-jobs/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
-      onToast('自动发布规则已删除');
+      onToast('定时发布规则已删除');
       await load();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
@@ -180,9 +188,9 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
     <div className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">自动发布规则</h3>
+          <h3 className="text-sm font-semibold">定时发布规则</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            满足条件时由 CDS 自己发。需人工确认的规则永不自动发布，只会到点跑一次预检并通知你。
+            按时间触发，与上面的事件规则各走各的。需人工确认的规则永不自动发布，只会到点跑一次预检并通知你。
           </p>
         </div>
         <Button
@@ -193,7 +201,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
           }))}
         >
           <Plus />
-          新建规则
+          新建定时规则
         </Button>
       </div>
 
@@ -213,7 +221,7 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
       {loading ? (
         <div className="cds-surface-raised cds-hairline flex items-center gap-2 rounded-lg px-4 py-8 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          正在读取自动发布规则
+          正在读取定时发布规则
         </div>
       ) : error ? (
         <div className="cds-surface-raised cds-hairline rounded-lg px-4 py-8 text-sm text-muted-foreground">
@@ -221,9 +229,9 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
         </div>
       ) : releaseJobs.length === 0 ? (
         <div className="cds-surface-raised cds-hairline rounded-lg px-4 py-10 text-center">
-          <p className="text-sm font-medium">这个环境还没有自动发布规则</p>
+          <p className="text-sm font-medium">这个环境还没有定时发布规则</p>
           <p className="mx-auto mt-1.5 max-w-lg text-xs text-muted-foreground">
-            典型用法：预发环境「main 有新提交就发」，生产环境「每天固定时间把预发这一版发上来，但需要人点头」。
+            典型用法：生产环境「每天固定时间把预发这一版发上来，但需要人点头」。分支一有提交就发那种，用上面的事件规则。
           </p>
         </div>
       ) : (
@@ -304,7 +312,7 @@ function RuleRow({
             : ''}
         </div>
         {job.autoDisabledReason ? (
-          <div className="mt-1.5 rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 text-[11.5px] text-amber-700 dark:text-amber-300">
+          <div className="mt-1.5 rounded-md border border-warn/35 bg-warn-soft px-2.5 py-1.5 text-[11.5px] text-warn">
             已被系统自动停用：{job.autoDisabledReason}
           </div>
         ) : null}
@@ -385,7 +393,7 @@ function RuleForm({
   const set = (patch: Partial<RuleDraft>): void => onChange({ ...draft, ...patch });
   return (
     <section className="cds-surface-raised cds-hairline rounded-lg p-4">
-      <h4 className="text-sm font-semibold">{draft.id ? '编辑自动发布规则' : '新建自动发布规则'}</h4>
+      <h4 className="text-sm font-semibold">{draft.id ? '编辑定时发布规则' : '新建定时发布规则'}</h4>
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         <label className="grid gap-1 text-sm">
           <span className="text-muted-foreground">规则名称</span>
@@ -573,7 +581,9 @@ function draftFromJob(
   return {
     id: job.id,
     name: job.name,
-    scheduleType: job.schedule.type,
+    // 这个编辑器只管定时调度；push 规则归 AutoRulesSection，本页不列它们。
+    // 真被喂进来（列表过滤漏了）时退回 manual，不把一条事件规则改写成定时规则。
+    scheduleType: job.schedule.type === 'push' ? 'manual' : job.schedule.type,
     timeOfDay: job.schedule.timeOfDay || '03:00',
     intervalMinutes: String(job.schedule.intervalMinutes || 60),
     timezone: job.schedule.timezone || 'Asia/Shanghai',

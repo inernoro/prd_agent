@@ -357,6 +357,21 @@ export interface WebhookDispatcherDeps {
   shell: IShellExecutor;
   config: CdsConfig;
   githubApp?: GitHubAppClient;
+  /**
+   * 发布中心「自动发布规则」的触发钩子（ScheduledJobService.runPushRules）。
+   *
+   * 用回调而不是直接注入 ScheduledJobService：dispatcher 只负责「发生了什么事件」，
+   * 「谁该被这个事件叫醒」是发布侧的判据，两边不该互相 import。
+   * 缺省不注入时整条规则链路静默不启用——所以 server 的接线有守卫盯着。
+   */
+  runPushRules?: (ctx: {
+    projectId: string;
+    branch: string;
+    event: 'push' | 'pr-open';
+    changedPaths: string[];
+    /** 本次 push 的 commit。路径过滤按它判，发布也必须钉在它上面。 */
+    commitSha?: string;
+  }) => Promise<number>;
 }
 
 export class GitHubWebhookDispatcher {
@@ -1208,6 +1223,43 @@ export class GitHubWebhookDispatcher {
       };
     }
 
+    // 发布中心「自动发布规则」（design_handoff_release_center §4）。
+    //
+    // 位置刻意放在这里：机器人过滤之后（机器人 push 不该自动发生产），但在
+    // docs-only 提前 return **之前**——`docs/** → docs-site` 这类规则要的正好是
+    // docs-only 那种 push，放在 return 之后它永远不会被触发。
+    //
+    // 不 await：规则执行会真的跑一次发布，可能几分钟；webhook 必须尽快回 200，
+    // 否则 GitHub 会判超时重投，同一个 push 被处理多次。失败只记日志，绝不
+    // 影响下面的建分支 / 部署链路。
+    //
+    // 2026-08-16 修正时序（Codex P1）：原来在这里**直接触发**。但触发点在分支
+    // 创建与 `githubCommitSha` 落库之前，而 `runPushRules` 立刻按分支名去 state
+    // 里找记录、并按记录上的 commit 发布。后果两条，都静默：
+    //   - 首次推送一条新分支：记录还不存在 → 规则被跳过，只留一行 warn
+    //   - 后续推送：记录在，但 `githubCommitSha` 还是**上一个** commit → 发旧版本
+    // 所以改成先包成闭包，等分支状态落定后再点火；下面每条出口各点一次，
+    // `fired` 保证只点一次。位置约束不变：docs-only 出口也必须点，
+    // 因为 `docs/** → docs-site` 这类规则要的正好是 docs-only 那种 push。
+    let pushRulesFired = false;
+    const firePushRules = (): void => {
+      if (pushRulesFired || dryRun || !this.deps.runPushRules) return;
+      pushRulesFired = true;
+      // 不 await：规则执行会真的跑一次发布，可能几分钟；webhook 必须尽快回 200，
+      // 否则 GitHub 判超时重投，同一个 push 被处理多次。失败只记日志。
+      void this.deps.runPushRules({
+        projectId: project.id,
+        branch: branchName,
+        event: 'push',
+        changedPaths: this.changedPathsFromPush(event),
+        // 路径过滤读的是这个 commit 的改动清单，发布就必须发这个 commit——
+        // 否则紧挨着的第二次 push 会被第一个事件的授权发出去。
+        ...(event.after ? { commitSha: event.after } : {}),
+      }).catch((err) => {
+        console.error('[webhook] 自动发布规则执行失败:', project.id, branchName, (err as Error).message);
+      });
+    };
+
     // Ensure branch exists — auto-create a worktree when the push hits a
     // branch CDS hasn't tracked yet. Uses the same id convention as the
     // `POST /branches` route (legacy projects use the bare slug, named
@@ -1287,6 +1339,9 @@ export class GitHubWebhookDispatcher {
             },
           });
         }
+        // docs-only 也要点火：`docs/** → docs-site` 这类规则要的正好是这种 push。
+        // 放在元数据刷新之后，规则拿到的才是本次的 commit。
+        firePushRules();
       }
       return {
         action: 'ignored-doc-only',
@@ -1385,6 +1440,9 @@ export class GitHubWebhookDispatcher {
       githubSenderAvatarUrl: event.sender?.avatar_url,
       githubInstallationId: project.githubInstallationId ?? event.installation?.id,
     });
+
+    // 分支记录与 commit 都已落定，这时候规则才能找到分支、并按**本次**的 commit 发布。
+    firePushRules();
     this.deps.stateService.save();
 
     // Live UI stream: notify any subscribed Dashboard about this change

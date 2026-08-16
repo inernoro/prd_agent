@@ -1,0 +1,533 @@
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect } from 'vitest';
+import {
+  DEFAULT_MIN_FREE_BYTES,
+  backupDirCandidates,
+  backupFileName,
+  buildRedisBackupProbeScript,
+  backupKindOf,
+  isAutoBackupFile,
+  parseDfAvailableBytes,
+  planInfraBackups,
+  selectExpiredBackups,
+  shouldSkipForDiskPressure,
+  summarizeBackupRound,
+  type BackupCandidate,
+  type ExistingBackup,
+} from '../../src/services/infra-backup-schedule.js';
+
+/**
+ * 基础设施周期备份的判定层。
+ *
+ * 守两条不变量：
+ * 1. **不能把盘写满**——根盘满会同时打死所有预览、构建和 CDS 自己，比没有备份更糟。
+ * 2. **不能删到一份不剩**——保留策略把最后一份也清掉，等于回到零备份，
+ *    而且这种退化悄无声息。
+ */
+
+const cand = (o: Partial<BackupCandidate> & { id: string }): BackupCandidate => ({
+  projectId: 'proj-a',
+  containerName: `cds-infra-${o.id}`,
+  dockerImage: 'mongo:8.0',
+  running: true,
+  ...o,
+});
+
+const NOW = new Date('2026-08-16T12:00:00.000Z');
+const daysAgo = (n: number): number => NOW.getTime() - n * 24 * 60 * 60_000;
+
+describe('选谁备份', () => {
+  it('只备有一致性导出手段的类型，其余明说不支持而不是静默跳过', () => {
+    const plan = planInfraBackups([
+      cand({ id: 'mongodb' }),
+      cand({ id: 'redis', dockerImage: 'redis:7-alpine' }),
+      cand({ id: 'mysql', dockerImage: 'mysql:8' }),
+      cand({ id: 'kafka', dockerImage: 'apache/kafka:3.7' }),
+      cand({ id: 'minio', dockerImage: 'minio/minio:latest' }),
+    ], { now: NOW });
+    expect(plan.targets.map((t) => t.id)).toEqual(['mongodb', 'redis', 'mysql']);
+    expect(plan.skipped.map((s) => s.id)).toEqual(['kafka', 'minio']);
+    // 跳过的必须写明为什么，否则「没备份」和「不需要备份」分不开
+    for (const s of plan.skipped) expect(s.reason).toContain('不支持');
+  });
+
+  it('没在跑的容器跳过并说明原因', () => {
+    const plan = planInfraBackups([cand({ id: 'mongodb', running: false })], { now: NOW });
+    expect(plan.targets).toHaveLength(0);
+    expect(plan.skipped[0].reason).toContain('未运行');
+  });
+
+  it('每类库各用各的扩展名', () => {
+    expect(backupKindOf('mongo:8.0')).toBe('mongo');
+    expect(backupKindOf('redis:7-alpine')).toBe('redis');
+    expect(backupKindOf('mysql:8')).toBe('mysql');
+    expect(backupKindOf('apache/kafka:3.7')).toBeNull();
+    expect(backupFileName('proj-a', 'mongodb', 'mongo', NOW.toISOString())).toMatch(/\.archive\.gz$/);
+    expect(backupFileName('proj-a', 'redis', 'redis', NOW.toISOString())).toMatch(/\.rdb$/);
+    expect(backupFileName('proj-a', 'mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
+  });
+
+  /** 保留策略靠排序选旧的，名字排不出时间序就会删错。 */
+  it('文件名的字典序等于时间序', () => {
+    const early = backupFileName('p', 'x', 'mongo', '2026-08-16T09:00:00.000Z');
+    const late = backupFileName('p', 'x', 'mongo', '2026-08-16T12:00:00.000Z');
+    expect([late, early].sort()).toEqual([early, late]);
+  });
+});
+
+describe('保留策略', () => {
+  const files = (count: number): ExistingBackup[] =>
+    Array.from({ length: count }, (_, i) => ({
+      name: `proj-a--mongodb-auto-2026081${i}T000000Z.archive.gz`,
+      mtimeMs: daysAgo(i),
+    }));
+
+  it('超出份数的删掉', () => {
+    const doomed = selectExpiredBackups(files(10), { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 3, keepDays: 999 });
+    expect(doomed).toHaveLength(7);
+    // 删的是最旧的那批
+    expect(doomed).toContain('proj-a--mongodb-auto-20260819T000000Z.archive.gz');
+  });
+
+  it('超期的删掉', () => {
+    const doomed = selectExpiredBackups(files(5), { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 99, keepDays: 3 });
+    expect(doomed.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * 闲置很久的实例，所有备份都会超期。按天数规则会被清空——那等于回到零备份，
+   * 而且没有任何人会注意到。最新一份必须永远留着。
+   */
+  it('全部超期时仍然保留最新一份', () => {
+    const old = files(4).map((f) => ({ ...f, mtimeMs: daysAgo(400) }));
+    const doomed = selectExpiredBackups(old, { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 });
+    expect(doomed).toHaveLength(3);
+    expect(doomed.length).toBeLessThan(old.length);
+  });
+
+  it('只有一份时什么都不删', () => {
+    expect(selectExpiredBackups(files(1), { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 })).toEqual([]);
+  });
+
+  /** restore 前的救命快照与别人的文件都不归周期清理管。 */
+  it('不碰非本模块产出的文件', () => {
+    const mixed: ExistingBackup[] = [
+      { name: 'proj-a--mongodb-auto-20260810T000000Z.archive.gz', mtimeMs: daysAgo(1) },
+      { name: 'proj-a--mongodb-pre-restore-20260101', mtimeMs: daysAgo(300) },
+      { name: 'proj-a--redis-auto-20260101T000000Z.rdb', mtimeMs: daysAgo(300) },
+      { name: '别人的备份.tar', mtimeMs: daysAgo(300) },
+    ];
+    const doomed = selectExpiredBackups(mixed, { projectId: 'proj-a', id: 'mongodb', now: NOW, keepCount: 1, keepDays: 1 });
+    expect(doomed).toEqual([]);   // 自己只有一份，其余都不属于 mongodb 的自动备份
+    expect(isAutoBackupFile('proj-a--mongodb-pre-restore-20260101', 'proj-a', 'mongodb')).toBe(false);
+    expect(isAutoBackupFile('proj-a--redis-auto-x.rdb', 'proj-a', 'mongodb')).toBe(false);
+  });
+});
+
+describe('磁盘闸', () => {
+  it('空间充足才放行', () => {
+    expect(shouldSkipForDiskPressure(50 * 1024 ** 3)).toBe(false);
+    expect(shouldSkipForDiskPressure(DEFAULT_MIN_FREE_BYTES + 1)).toBe(false);
+  });
+
+  it('空间不足时跳过本轮', () => {
+    expect(shouldSkipForDiskPressure(100 * 1024 * 1024)).toBe(true);
+    expect(shouldSkipForDiskPressure(0)).toBe(true);
+  });
+
+  /** 读不到可用空间时不许当作充足——不确定就不写盘。 */
+  it('读不到可用空间按不足处理', () => {
+    expect(shouldSkipForDiskPressure(null)).toBe(true);
+    expect(shouldSkipForDiskPressure(undefined)).toBe(true);
+    expect(shouldSkipForDiskPressure(Number.NaN)).toBe(true);
+  });
+
+  it('解析 df 的真实输出', () => {
+    const out = [
+      'Filesystem     1024-blocks      Used Available Capacity Mounted on',
+      '/dev/vda1        103080204  61234567  36600000      63% /',
+    ].join('\n');
+    expect(parseDfAvailableBytes(out)).toBe(36600000 * 1024);
+    expect(parseDfAvailableBytes('')).toBeNull();
+    expect(parseDfAvailableBytes('只有一行表头')).toBeNull();
+  });
+});
+
+describe('结论可读', () => {
+  it('全成功也说清备了几个，不静默', () => {
+    const s = summarizeBackupRound([{ id: 'a', ok: true }, { id: 'b', ok: true }], 1);
+    expect(s).toContain('成功 2 个');
+    expect(s).toContain('跳过 1 个');
+  });
+
+  it('失败要点名到具体服务', () => {
+    const s = summarizeBackupRound([{ id: 'a', ok: true }, { id: 'mongodb', ok: false, error: 'x' }], 0);
+    expect(s).toContain('mongodb');
+    expect(s).toContain('失败');
+  });
+
+  it('没有目标时如实说，不装作成功', () => {
+    expect(summarizeBackupRound([], 0)).toContain('没有可备份的目标');
+  });
+});
+
+/** 接线守卫：判定写好没人调用，表现和「一切正常」一模一样。 */
+describe('自动备份真的被启动了', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+  const CODE = SRC.split('\n')
+    .filter((l) => {
+      const t = l.trim();
+      return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+    })
+    .join('\n');
+
+  it('index.ts 启动了周期备份', () => {
+    expect(CODE).toMatch(/const\s+infraAutoBackup\s*=\s*startInfraAutoBackup\(/);
+  });
+
+  it('磁盘闸排在写盘之前', () => {
+    const gate = CODE.indexOf('shouldSkipForDiskPressure(');
+    const dump = CODE.indexOf('mongodump');
+    expect(gate).toBeGreaterThan(0);
+    expect(dump).toBeGreaterThan(gate);
+  });
+
+  /**
+   * 断言的是「两边走同一份候选」这个不变量，不是某段路径字面量——
+   * 路径搬家是合理重构，不该让守卫变红；两边分叉才该变红。
+   */
+  it('自动备份与手工备份解析同一份目录候选', () => {
+    const manual = fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8');
+    expect(CODE).toContain('backupDirCandidates(');
+    expect(manual).toContain('backupDirCandidates(');
+    // 两边都不许再写死历史路径
+    for (const src of [CODE, manual]) {
+      expect(src).not.toMatch(/`\/data\/cds\/\$\{stateService\.projectSlug\}\/backups`/);
+    }
+  });
+
+  it('产物为空要当失败处理，不留零字节文件冒充成功', () => {
+    expect(CODE).toContain('导出产物为空');
+  });
+});
+
+/**
+ * 备份目录候选。
+ *
+ * 真实事故（2026-08-16）：目录写死 `/data/cds/<slug>/backups`，那个路径在宿主上
+ * 不存在，而手工备份的 `ls` 带着 `2>/dev/null` —— 目录不存在时返回的空列表，与
+ * 「备份过但没有匹配项」长得一模一样。于是「一份备份都没有」可以一直不被发现。
+ */
+describe('备份目录候选', () => {
+  it('显式指定优先级最高', () => {
+    const c = backupDirCandidates({ slug: 'x', repoRoot: '/root/app', env: { CDS_BACKUP_DIR: '/mnt/bak' } });
+    expect(c[0]).toBe('/mnt/bak');
+  });
+
+  it('历史路径仍在候选里，存量部署不受影响', () => {
+    expect(backupDirCandidates({ slug: 'prd-agent', env: {} })).toContain('/data/cds/prd-agent/backups');
+  });
+
+  /** 兜底放在 repoRoot **旁边**而不是里面：里面会被 git 操作与自更新波及。 */
+  it('给出可写兜底，且不落在 repoRoot 内部', () => {
+    const c = backupDirCandidates({ slug: 'x', repoRoot: '/root/inernoro/prd_agent', env: {} });
+    const fallback = c[c.length - 1];
+    expect(fallback).toBe('/root/inernoro/cds-backups/x');
+    expect(fallback.startsWith('/root/inernoro/prd_agent/')).toBe(false);
+  });
+
+  it('候选不重复（显式指定恰好等于历史路径时）', () => {
+    const c = backupDirCandidates({ slug: 'x', env: { CDS_BACKUP_DIR: '/data/cds/x/backups' } });
+    expect(new Set(c).size).toBe(c.length);
+  });
+
+  it('尾部斜杠不会拼出双斜杠', () => {
+    expect(backupDirCandidates({ slug: 'x', env: { CDS_BACKUP_DIR: '/mnt/bak/' } })[0]).toBe('/mnt/bak');
+  });
+});
+
+describe('目录与磁盘失败必须说清原因', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+  const CODE = SRC.split('\n')
+    .filter((l) => {
+      const t = l.trim();
+      return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+    })
+    .join('\n');
+
+  it('逐个候选试写，而不是写死单一路径', () => {
+    expect(CODE).toContain('backupDirCandidates(');
+    expect(CODE).not.toMatch(/const dir = `\/data\/cds\/\$\{stateService\.projectSlug\}/);
+  });
+
+  /** 只说「读不到」，下一个人除了重跑一遍没有别的办法。 */
+  it('df 失败时带上退出码与 stderr', () => {
+    expect(CODE).toContain('dfExitCode');
+    expect(CODE).toContain('dfStderr');
+  });
+
+  it('没有可写目录时列出试过哪些、并指出逃生阀', () => {
+    expect(CODE).toContain("action: 'infra.backup.skipped.nodir'");
+    expect(CODE).toContain('CDS_BACKUP_DIR');
+  });
+});
+
+/**
+ * 首轮实跑抓出来的两件事。单测当时全绿——这两个都是只有真跑才会暴露的形状。
+ */
+describe('首轮实跑暴露的缺陷', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+  const CODE = SRC.split('\n')
+    .filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')); })
+    .join('\n');
+
+  /**
+   * 台账里表示存活的字段叫 `status`，不是 `running`。直接把台账对象丢进
+   * `planInfraBackups`，`running === false` 这一档永远不成立——一个已停止的 mongo
+   * 因此被当成目标，`docker exec` 报 No such container。
+   *
+   * 可选字段缺省即 undefined，编译器发现不了这种字段名对不上。
+   */
+  it('调用点把台账的 status 映射成 running', () => {
+    expect(CODE).toMatch(/running:\s*s\.status === 'running'/);
+  });
+
+  it('已停止的目标确实会被判定层剔除（映射之后这一档才生效）', () => {
+    const ledgerLike = [{ id: 'm', projectId: 'p', containerName: 'c', dockerImage: 'mongo:8', status: 'stopped' }];
+    const mapped = ledgerLike.map((s) => ({ ...s, running: s.status === 'running' }));
+    expect(planInfraBackups(mapped, { now: NOW }).targets).toHaveLength(0);
+    // 不映射就会漏进去——这正是首轮的失败原因
+    expect(planInfraBackups(ledgerLike as never, { now: NOW }).targets).toHaveLength(1);
+  });
+
+  it('MySQL 纳入备份范围（四个项目的库此前完全没有自动备份）', () => {
+    expect(backupKindOf('mysql:8')).toBe('mysql');
+    expect(backupKindOf('mariadb:11')).toBe('mysql');
+    expect(backupFileName('proj-a', 'mysql', 'mysql', NOW.toISOString())).toMatch(/\.sql\.gz$/);
+    expect(CODE).toContain('mysqldump');
+    expect(CODE).toContain('--single-transaction');
+  });
+
+  /**
+   * 凭据必须在**容器内部**展开：不进宿主命令行（因而不进 CDS 日志与宿主 ps），
+   * 也不依赖 CDS 台账里那份 env——台账看不到 compose 导入 / 手工起的容器的真实
+   * 凭据，照台账取会在有认证的库上静默失败。
+   */
+  it('备份命令不把凭据插进宿主命令行', () => {
+    // 判据要盯「从台账取凭据」这个动作本身，别用 `-p ${shq(` 这种形状去猜——
+    // 它会把 `mkdir -p ${shq(dir)}` 一起匹配上（判据太宽，今天已经栽过同款）。
+    expect(CODE).not.toMatch(/const pw = env\./);
+    expect(CODE).not.toMatch(/MONGO_INITDB_ROOT_PASSWORD \|\| env\./);
+    // TS 源码里 `$` 写成 `${'$'}` 转义。断言必须针对**渲染出来的 shell 文本**，
+    // 不是源码字面量——直接扫源码就是在读一个和运行时不同的值（今天栽过同款）。
+    const SHELL = CODE.replace(/\$\{'\$'\}/g, '$');
+    expect(SHELL).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD');
+    expect(SHELL).toMatch(/\$\{MONGO_INITDB_ROOT_PASSWORD:-/);
+  });
+});
+
+/**
+ * Review 抓出来的跨项目串台（P1）。
+ *
+ * infra id 只在项目内唯一：这台机器上六个项目各有一个叫 `redis` 的服务。
+ * 只用 id 命名，一轮备份里它们算出完全相同的文件名（同一轮共用一个时间戳），
+ * 后写的覆盖先写的，保留策略还把它们当同一组算份数。
+ * 表现是日志「成功 6 个」、磁盘上只有 1 个——首轮实跑的输出里就有四条同名 `redis`。
+ */
+describe('跨项目同名服务不许串台', () => {
+  it('同名服务在不同项目下算出不同文件名', () => {
+    const iso = NOW.toISOString();
+    const a = backupFileName('prd-agent', 'redis', 'redis', iso);
+    const b = backupFileName('983785a57efd', 'redis', 'redis', iso);
+    expect(a).not.toBe(b);
+    expect(new Set([a, b]).size).toBe(2);
+  });
+
+  it('一轮里六个同名 redis 产出六个互不相同的文件名', () => {
+    const projects = ['prd-agent', '983785a57efd', '88007650cd3c', 'defd4695ab5f', '747f2fa4f6bc', 'f9e8b956d3dd'];
+    const plan = planInfraBackups(
+      projects.map((projectId) => cand({ id: 'redis', projectId, dockerImage: 'redis:7-alpine' })),
+      { now: NOW },
+    );
+    const names = plan.targets.map((t) => t.fileName);
+    expect(names).toHaveLength(6);
+    expect(new Set(names).size).toBe(6);
+  });
+
+  it('A 项目的保留策略不碰 B 项目同名服务的备份', () => {
+    const files: ExistingBackup[] = [
+      { name: 'proj-a--redis-auto-20260816T000000Z.rdb', mtimeMs: daysAgo(1) },
+      { name: 'proj-b--redis-auto-20260801T000000Z.rdb', mtimeMs: daysAgo(300) },
+      { name: 'proj-b--redis-auto-20260802T000000Z.rdb', mtimeMs: daysAgo(299) },
+    ];
+    // A 只有一份，什么都不该删；B 的两份更不该被 A 算进份数
+    expect(selectExpiredBackups(files, { projectId: 'proj-a', id: 'redis', now: NOW, keepCount: 1, keepDays: 1 }))
+      .toEqual([]);
+  });
+
+  it('项目 id 里的特殊字符不会撕坏文件名', () => {
+    const name = backupFileName('proj/a b', 'redis', 'redis', NOW.toISOString());
+    expect(name).not.toMatch(/[/\s]/);
+    expect(isAutoBackupFile(name, 'proj/a b', 'redis')).toBe(true);
+  });
+});
+
+/**
+ * Review 抓出来的两处「静默成功」（P1）。都属于同一族：
+ * 命令实际失败或产出过期内容，但退出码是 0，于是一份不可用的备份被记成成功，
+ * 还可能按保留策略把真正可用的旧副本删掉。
+ */
+describe('备份不许静默成功', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+  const CODE = SRC.split('\n')
+    .filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')); })
+    .join('\n');
+
+  /**
+   * 两个坑叠在一起，只躲开一个还是坏的：
+   *
+   * 1. `mysqldump | gzip` 的退出码默认是 **gzip 的**。dump 因凭据错误中断时 gzip
+   *    照样成功、产出几十字节的合法 gzip 头，非空检查放行。
+   * 2. 想用 `set -o pipefail` 补救的话——`set` 是特殊内建，dash 不认 `-o pipefail`
+   *    会**直接终止 shell**，`|| true` 拦不住（实测退出码 2，dump 一次都没跑）。
+   *    Debian 系 mariadb 镜像的 /bin/sh 正是 dash，于是「静默成功」变成「必然失败」。
+   *
+   * 所以容器里不许出现管道，也不许出现 pipefail：只跑 mysqldump，压缩交给宿主，
+   * 两步用 && 串起来各判各的退出码。
+   */
+  it('MySQL 不在容器里摆管道，也不依赖 pipefail', () => {
+    expect(CODE).not.toContain('set -o pipefail');
+    // 容器里只有一条 mysqldump（exec 掉，退出码原样带回宿主），没有任何管道。
+    expect(CODE).toContain('exec mysqldump -uroot');
+    expect(CODE).not.toMatch(/mysqldump[^\n]*\|/);
+    // 压缩与清理都在宿主侧，靠 && 串联：任一环失败整条失败。
+    expect(CODE).toMatch(/&& gzip -n -c \$\{shq\(raw\)\} > \$\{shq\(out\)\}/);
+    expect(CODE).not.toMatch(/mysqldump[^\n]*2>\/dev\/null/);
+  });
+
+  /**
+   * 探测脚本本身的判据在下面「Redis 备份探测脚本」那一组里，对着**真正会执行的
+   * 字符串**断言。这里只管接线：探测必须在拷贝之前，且失败要中止整条。
+   */
+  it('Redis 探测在拷贝之前，失败即中止', () => {
+    expect(CODE).toContain('buildRedisBackupProbeScript()');
+    expect(CODE).toContain('拒绝拷贝可能过期的 dump.rdb');
+    const probe = CODE.indexOf('redisProbe');
+    const cp = CODE.indexOf('docker cp');
+    expect(probe).toBeGreaterThan(0);
+    expect(cp).toBeGreaterThan(probe);
+    // 「探测失败」必须真的抛出去，而不是记一笔继续拷。
+    expect(CODE).toMatch(/if \(redisProbe\.exitCode !== 0\) \{\s*\n\s*throw new Error/);
+  });
+});
+
+/**
+ * 备份历史是**只读**路径。它去解析目录只是为了回答「有没有备份过」，
+ * 不该顺手把目录建出来——建了之后紧跟着的 test -d 必然为真，
+ * 「一份都没有过」就被报成「目录在、只是没有匹配项」。
+ */
+describe('查历史不许创建备份目录', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8');
+
+  it('解析器分读写两档，只有写盘那档 mkdir', () => {
+    expect(SRC).toContain('async function resolveBackupDir(opts?: { create?: boolean })');
+    // 只读档探测的是「目录已存在且可写」，一个 mkdir 都不许有。
+    expect(SRC).toMatch(/: await shell\.exec\(`test -d \$\{shq\(c\)\} && test -w \$\{shq\(c\)\} && echo ok`\)/);
+  });
+
+  it('backup-history 走只读档，备份/恢复仍可创建', () => {
+    expect(SRC).toContain('resolveBackupDir({ create: false })');
+    // 只有一处只读调用（历史），其余保持默认可创建。
+    expect(SRC.match(/resolveBackupDir\(\{ create: false \}\)/g) || []).toHaveLength(1);
+    expect(SRC.match(/await resolveBackupDir\(\)/g) || []).toHaveLength(1);
+  });
+});
+
+/**
+ * Redis 探测脚本。断言的是**真正会执行的那段脚本**（调函数拿到的字符串），
+ * 不是源码里的字面量——拼出来能不能跑，扫源码证明不了。
+ */
+describe('Redis 备份探测脚本', () => {
+  const SCRIPT = buildRedisBackupProbeScript();
+
+  it('是合法的 POSIX sh（拿真 shell 过一遍 -n）', () => {
+    // 这段脚本要在各种 redis 镜像里跑，那些镜像的 /bin/sh 多半是 dash 或 busybox。
+    // 不做这一步的话，「bash 里能跑」会被当成「能跑」——上一轮 pipefail 就是这么栽的。
+    const out = execFileSync('/bin/sh', ['-n'], { input: SCRIPT, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    expect(out).toBe('');
+  });
+
+  /**
+   * 凭据解析**真的跑一遍**，不是断言源码里有那几行。
+   *
+   * 只做字面量断言的话，把这段变成死分支（`if false`）照样全绿——那正是
+   * predicate-and-wiring-discipline 里的形状 8：一份不成立的证据。
+   * 这里造真的 NUL 分隔 cmdline，用真 shell 跑脚本的凭据段，看它到底抽出了什么。
+   */
+  const resolveCred = (cmdline: string, env: Record<string, string> = {}): string => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-proc-'));
+    fs.mkdirSync(path.join(dir, '17'));
+    fs.writeFileSync(path.join(dir, '17', 'cmdline'), cmdline);
+    // 只取到 export 那一行为止：后面要连真的 redis，这里只验凭据怎么解析出来的。
+    const head = SCRIPT.split('\n');
+    const cut = head.findIndex((l) => l.startsWith('export REDISCLI_AUTH'));
+    expect(cut).toBeGreaterThan(0);
+    const prefix = `${head.slice(0, cut + 1).join('\n')}\nprintf '%s' "$REDISCLI_AUTH"`;
+    return execFileSync('/bin/sh', ['-s'], {
+      input: prefix,
+      encoding: 'utf8',
+      // PATH 必须带上：脚本要用 tr / awk，环境清空的话它们找不到，
+      // 抽取会「静默返回空」——那正是这条用例要防的假象。
+      env: { PATH: process.env.PATH || '/usr/bin:/bin', ...env, CDS_BACKUP_PROC_DIR: dir },
+    });
+  };
+
+  it('env 拿不到密码时，从进程命令行里真的抽得出 --requirepass', () => {
+    // `redis-server --requirepass secret` 且 env 里一个字都没有，是 compose 导入
+    // 最常见的配法。只读 env 会拿到空密码 → NOAUTH → 每一轮备份都失败。
+    expect(resolveCred('redis-server\0--requirepass\0s3cr3t\0')).toBe('s3cr3t');
+  });
+
+  it('`--requirepass=v` 连写也认', () => {
+    expect(resolveCred('redis-server\0--requirepass=eqform\0')).toBe('eqform');
+  });
+
+  it('没配密码就是空，不瞎猜一个', () => {
+    expect(resolveCred('redis-server\0--appendonly\0yes\0')).toBe('');
+  });
+
+  it('env 优先于命令行扫描', () => {
+    expect(resolveCred('redis-server\0--requirepass\0fromcmd\0', { REDIS_PASSWORD: 'fromenv' }))
+      .toBe('fromenv');
+  });
+
+  it('密码只在容器内展开，不进宿主命令行', () => {
+    expect(SCRIPT).toContain('export REDISCLI_AUTH="$A"');
+  });
+
+  it('完成判据用 INFO persistence，不比 LASTSAVE', () => {
+    // LASTSAVE 的粒度是秒。小库的 BGSAVE 常在同一秒内跑完，时间戳不动，于是
+    // 一份完全有效的备份会被白等到超时再判成失败。
+    expect(SCRIPT).toContain('rdb_bgsave_in_progress');
+    expect(SCRIPT).toContain('rdb_last_bgsave_status');
+    expect(SCRIPT).not.toContain('LASTSAVE');
+  });
+
+  it('完成之后还要证明 dump.rdb 确实被这次写过', () => {
+    // 完成不等于写的是这个文件：路径不对、save 被禁用都会留下一个旧文件，
+    // 而 docker cp 会把它当成新备份拷走。
+    expect(SCRIPT).toContain('stat -c %Y /data/dump.rdb');
+    expect(SCRIPT).toMatch(/\[ "\$mt" -ge "\$start" \]/);
+  });
+
+  it('每一种失败都有自己的退出码，不共用一个「失败了」', () => {
+    // 共用一个退出码等于把「连不上」「认证失败」「超时」「拷到旧文件」揉成一句话，
+    // 排障时只能重跑一遍看运气。
+    const codes = [...SCRIPT.matchAll(/exit (\d+)/g)].map((m) => m[1]).filter((c) => c !== '0');
+    expect(new Set(codes).size).toBe(codes.length);
+    expect(codes.length).toBeGreaterThanOrEqual(5);
+  });
+});

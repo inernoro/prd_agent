@@ -11,6 +11,7 @@ import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-d
 import { sanitizeProfileOverride } from './container.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 import { buildCacheMounts } from './cache-catalog.js';
+import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
 import { isGenericPreviewProjectSlug, repoNameFromGitRef } from './preview-slug.js';
 import {
@@ -4201,13 +4202,24 @@ export class StateService {
 
   /**
    * Resolve the Docker host IP for infra services.
-   * Priority: customEnv.CDS_DOCKER_HOST > process.env.CDS_DOCKER_HOST > default 172.17.0.1
+   * Priority: customEnv.CDS_DOCKER_HOST > process.env.CDS_DOCKER_HOST > default.
+   *
+   * 判定本体在 services/infra-publish.ts —— 它同时是**端口绑定地址**的来源。
+   * 两者必须是同一个值：注入给应用的连接串写的是这个地址，容器就得能在这个
+   * 地址上连到库。此前这份判定在本文件与 ReplicaSetService 各写一份，分裂
+   * 一旦漂移就是「连接串指向 A、端口绑在 B」——编译过、测试绿，只有真连库时才炸。
    */
   private resolveDockerHost(): string {
     // Docker host is a cross-project concern, read from the global scope.
-    return (this.state.customEnv?.[GLOBAL_ENV_SCOPE] || {})['CDS_DOCKER_HOST']
-      || process.env.CDS_DOCKER_HOST
-      || '172.17.0.1';
+    return resolveDockerBridgeHost({ globalEnv: this.state.customEnv?.[GLOBAL_ENV_SCOPE] });
+  }
+
+  /**
+   * infra 宿主端口该绑在哪几个地址上。ContainerService 通过适配器取这个值，
+   * 保证「绑定地址」与上面 `resolveDockerHost()` 注入的连接串同源。
+   */
+  getInfraPublishHosts(): string[] {
+    return resolveInfraPublishHosts({ bridgeHost: this.resolveDockerHost() });
   }
 
   /**

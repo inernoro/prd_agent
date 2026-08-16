@@ -63,8 +63,8 @@ function resolveScope(tpl: ReportTemplate, currentUserId: string | undefined): S
 
 const scopeMeta: Record<Scope, { label: string; color: string; bg: string; Icon: typeof Shield }> = {
   system: { label: '系统', color: 'rgba(148, 163, 184, 0.95)', bg: 'rgba(148, 163, 184, 0.1)', Icon: Shield },
-  mine: { label: '我创建', color: 'rgba(34, 197, 94, 0.95)', bg: 'rgba(34, 197, 94, 0.1)', Icon: Pencil },
-  team: { label: '团队', color: 'rgba(168, 85, 247, 0.95)', bg: 'rgba(168, 85, 247, 0.1)', Icon: UsersIcon },
+  mine: { label: '我创建', color: 'var(--accent-fg-success)', bg: 'rgba(34, 197, 94, 0.1)', Icon: Pencil },
+  team: { label: '团队', color: 'var(--accent-fg-violet)', bg: 'rgba(168, 85, 247, 0.1)', Icon: UsersIcon },
   other: { label: '其他成员', color: 'rgba(148, 163, 184, 0.8)', bg: 'rgba(148, 163, 184, 0.08)', Icon: UsersIcon },
 };
 
@@ -508,7 +508,7 @@ export function TemplateManager() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'rgba(168, 85, 247, 0.06)' }}>
-              <FileBarChart size={16} style={{ color: 'rgba(168, 85, 247, 0.8)' }} />
+              <FileBarChart size={16} style={{ color: 'var(--accent-fg-violet)' }} />
             </div>
             <div>
               <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -603,7 +603,7 @@ export function TemplateManager() {
                         {isMyDefault && (
                           <span
                             className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0"
-                            style={{ color: 'rgba(59, 130, 246, 0.95)', background: 'rgba(59, 130, 246, 0.12)' }}
+                            style={{ color: 'var(--accent-fg-blue)', background: 'rgba(59, 130, 246, 0.12)' }}
                           >
                             <Star size={9} />
                             我的默认
@@ -624,8 +624,8 @@ export function TemplateManager() {
                                 className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px]"
                                 style={
                                   isTeamDefault
-                                    ? { color: 'rgba(59, 130, 246, 0.95)', background: 'rgba(59, 130, 246, 0.12)' }
-                                    : { color: 'rgba(168, 85, 247, 0.9)', background: 'rgba(168, 85, 247, 0.08)' }
+                                    ? { color: 'var(--accent-fg-blue)', background: 'rgba(59, 130, 246, 0.12)' }
+                                    : { color: 'var(--accent-fg-violet)', background: 'rgba(168, 85, 247, 0.08)' }
                                 }
                               >
                                 {isTeamDefault && <Star size={8} />}
@@ -681,11 +681,11 @@ export function TemplateManager() {
                   <div className="flex flex-wrap gap-1.5">
                     {tpl.sections.map((s, i) => {
                       const tagColors = [
-                        { color: 'rgba(59, 130, 246, 0.85)', bg: 'rgba(59, 130, 246, 0.08)' },
-                        { color: 'rgba(34, 197, 94, 0.85)', bg: 'rgba(34, 197, 94, 0.08)' },
-                        { color: 'rgba(168, 85, 247, 0.85)', bg: 'rgba(168, 85, 247, 0.08)' },
-                        { color: 'rgba(249, 115, 22, 0.85)', bg: 'rgba(249, 115, 22, 0.08)' },
-                        { color: 'rgba(236, 72, 153, 0.85)', bg: 'rgba(236, 72, 153, 0.08)' },
+                        { color: 'var(--accent-fg-blue)', bg: 'rgba(59, 130, 246, 0.08)' },
+                        { color: 'var(--accent-fg-success)', bg: 'rgba(34, 197, 94, 0.08)' },
+                        { color: 'var(--accent-fg-violet)', bg: 'rgba(168, 85, 247, 0.08)' },
+                        { color: 'var(--accent-fg-warning)', bg: 'rgba(249, 115, 22, 0.08)' },
+                        { color: 'var(--accent-fg-danger)', bg: 'rgba(236, 72, 153, 0.08)' },
                       ];
                       const tc = tagColors[i % tagColors.length];
                       return (
@@ -769,7 +769,7 @@ export function TemplateManager() {
                         className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px]"
                         style={
                           isDefault
-                            ? { color: 'rgba(59, 130, 246, 0.95)', background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59,130,246,0.25)' }
+                            ? { color: 'var(--accent-fg-blue)', background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59,130,246,0.25)' }
                             : { color: 'var(--text-secondary)', background: 'var(--bg-tertiary)', border: '1px solid var(--border-primary)' }
                         }
                       >
@@ -813,7 +813,7 @@ export function TemplateManager() {
                             className="px-2 py-1 rounded-full text-[11px] transition-colors"
                             style={
                               selected
-                                ? { color: 'rgba(34, 197, 94, 0.95)', background: 'rgba(34, 197, 94, 0.12)' }
+                                ? { color: 'var(--accent-fg-success)', background: 'rgba(34, 197, 94, 0.12)' }
                                 : { color: 'var(--text-secondary)', background: 'var(--bg-secondary)' }
                             }
                             onClick={() => toggleSelectedTeam(t.id)}

@@ -163,12 +163,12 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
 
       {/* 刚签出的 plaintext — 醒目展示 */}
       {freshKey ? (
-        <div className="rounded-md border-2 border-amber-500/60 bg-amber-500/10 px-4 py-3">
-          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber-300">
+        <div className="rounded-md border-2 border-warn/60 bg-warn-soft px-4 py-3">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-warn">
             <KeyRound className="h-4 w-4" />
             新 Key 已生成 — 立刻复制(只显示一次!)
           </div>
-          <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-background px-3 py-2 font-mono text-xs">
+          <div className="flex items-center gap-2 rounded-md border border-warn/40 bg-background px-3 py-2 font-mono text-xs">
             <span className="min-w-0 flex-1 truncate">{freshKey.plaintext}</span>
             <Button
               type="button"
@@ -180,11 +180,11 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
               复制
             </Button>
           </div>
-          {copyHint ? <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">{copyHint}</div> : null}
-          <div className="mt-2 text-xs text-amber-700/90 dark:text-amber-300/90">
+          {copyHint ? <div className="mt-1 text-xs text-warn">{copyHint}</div> : null}
+          <div className="mt-2 text-xs text-warn/90 /90">
             授权范围：<span className="font-medium">{describeAgentKeyScope(freshKey.access)}</span>
           </div>
-          <div className="mt-1 text-xs text-amber-700/80 dark:text-amber-300/80">
+          <div className="mt-1 text-xs text-warn/80 /80">
             签发后该明文不再保存。关闭本提示后无法再次显示,请确认已复制。
           </div>
           <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => setFreshKey(null)}>
@@ -254,7 +254,7 @@ export function AccessKeysTab({ onToast }: Props): JSX.Element {
                           className={`rounded-md border px-1.5 py-0.5 text-[11px] ${
                             isRevoked
                               ? 'border-border bg-muted/40 text-muted-foreground opacity-70'
-                              : 'border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-semibold'
+                              : 'border-ok/50 bg-ok-soft text-ok font-semibold'
                           }`}
                         >
                           {isRevoked ? '已吊销' : '有效'}

@@ -1,0 +1,1332 @@
+<title>发布失败诊断改版</title>
+
+<style>
+/* ─────────────────────────────────────────────────────────────
+   页面 token：浅色为基准，三态（bare :root / prefers / [data-theme]）
+   mock 面板另有一套 .cds 作用域 token，与阅读者主题解耦，
+   以便就地演示 CDS 的双主题契约。
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --bg: #f4efe9;
+  --panel: #fffdfb;
+  --sunken: #ebe4db;
+  --ink: #221f1a;
+  --ink-2: #6a6459;
+  --ink-3: #97907f;
+  --rule: #e0d8cc;
+  --accent: #c85f12;
+  --accent-soft: rgba(200, 95, 18, 0.1);
+  --bad: #bd3a2e;
+  --good: #0d7f57;
+  --lift: 0 1px 2px rgba(50, 38, 24, 0.05), 0 18px 44px -26px rgba(50, 38, 24, 0.28);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121417;
+    --panel: #1a1d21;
+    --sunken: #0d0f12;
+    --ink: #e8e5e0;
+    --ink-2: #9c9993;
+    --ink-3: #6f6c66;
+    --rule: #2a2e34;
+    --accent: #ff8a3d;
+    --accent-soft: rgba(255, 138, 61, 0.13);
+    --bad: #ef6a5f;
+    --good: #3fcb9c;
+    --lift: 0 1px 2px rgba(0, 0, 0, 0.4), 0 20px 48px -28px rgba(0, 0, 0, 0.8);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121417;
+  --panel: #1a1d21;
+  --sunken: #0d0f12;
+  --ink: #e8e5e0;
+  --ink-2: #9c9993;
+  --ink-3: #6f6c66;
+  --rule: #2a2e34;
+  --accent: #ff8a3d;
+  --accent-soft: rgba(255, 138, 61, 0.13);
+  --bad: #ef6a5f;
+  --good: #3fcb9c;
+  --lift: 0 1px 2px rgba(0, 0, 0, 0.4), 0 20px 48px -28px rgba(0, 0, 0, 0.8);
+}
+
+* { box-sizing: border-box; }
+
+/* ─────────────────────────────────────────────────────────────
+   动效：只在「有信息要传达」时出现——进场按信息优先级编排、
+   展开顺着来源方向生长、复制给一次确认。曲线只有三条，
+   全部包在 prefers-reduction 之外，关掉动效页面照常可用。
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.32, 0.72, 0.24, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+@keyframes enter { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+@keyframes enter-soft { from { opacity: 0; } to { opacity: 1; } }
+@keyframes flash {
+  0% { background: hsl(var(--bad) / 0); }
+  38% { background: hsl(var(--bad) / 0.26); }
+  100% { background: hsl(var(--bad) / 0.09); }
+}
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes sheet-out { to { opacity: 0; transform: translateY(8px) scale(0.99); } }
+@keyframes veil-out { to { opacity: 0; } }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro SC", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono, code, kbd {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.shell {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 72px 24px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+}
+
+/* ── 页眉：一句话，不解释 ───────────────────────────────── */
+.masthead { display: flex; flex-direction: column; gap: 12px; }
+.eyebrow {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+h1 {
+  margin: 0;
+  font-size: clamp(30px, 4.4vw, 44px);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  font-weight: 600;
+  text-wrap: balance;
+}
+.lede {
+  margin: 0;
+  max-width: 33em;
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* ── 控制条 ─────────────────────────────────────────────── */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.segmented {
+  position: relative;
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--sunken);
+}
+.segmented .thumb {
+  position: absolute;
+  top: 3px; bottom: 3px; left: 3px;
+  width: calc(50% - 3px);
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+  transform: translateX(100%);
+}
+.segmented[data-active="before"] .thumb { transform: translateX(0); }
+.segmented button {
+  position: relative; z-index: 1;
+  appearance: none; border: 0; cursor: pointer;
+  min-width: 84px;
+  padding: 7px 20px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit; font-size: 13.5px; font-weight: 500;
+  transition: color 220ms var(--ease);
+}
+.segmented button[aria-pressed="true"] { color: var(--ink); }
+.quiet {
+  appearance: none; cursor: pointer;
+  border: 0; background: none;
+  padding: 7px 4px;
+  color: var(--ink-3);
+  font: inherit; font-size: 13px;
+  transition: color 160ms ease;
+}
+.quiet:hover { color: var(--ink); }
+.control-right { display: inline-flex; align-items: center; gap: 18px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+/* ── mock 外框 ──────────────────────────────────────────── */
+.device {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: var(--lift);
+  border: 1px solid var(--rule);
+}
+.stage > [hidden] { display: none; }
+/* 面板高度随内容变化时平滑过渡，避免详情展开/切换视图时页面跳一下 */
+.device { transition: none; }
+
+/* ─────────────────────────────────────────────────────────────
+   CDS mock 作用域，取值对齐 cds/web/src/index.css
+   ───────────────────────────────────────────────────────────── */
+.cds {
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 20px;
+  background: hsl(var(--surface-base));
+  color: hsl(var(--fg));
+}
+.cds[data-cds-theme="dark"] {
+  --surface-base: 222 14% 6%;
+  --surface-raised: 222 12% 13%;
+  --surface-sunken: 222 16% 4%;
+  --hairline: 222 10% 18%;
+  --hairline-strong: 222 10% 26%;
+  --fg: 240 6% 90%;
+  --fg-muted: 240 4% 60%;
+  --primary: 24 100% 60%;
+  --primary-fg: 0 0% 100%;
+  --bad: 0 70% 58%;
+  --good: 158 64% 45%;
+  --warn: 38 92% 55%;
+}
+.cds[data-cds-theme="light"] {
+  --surface-base: 30 28% 96%;
+  --surface-raised: 0 0% 100%;
+  --surface-sunken: 30 24% 91%;
+  --hairline: 30 15% 84%;
+  --hairline-strong: 30 12% 70%;
+  --fg: 24 20% 15%;
+  --fg-muted: 24 10% 40%;
+  --primary: 24 90% 50%;
+  --primary-fg: 0 0% 100%;
+  --bad: 0 65% 46%;
+  --good: 158 70% 30%;
+  --warn: 32 80% 38%;
+}
+
+.cds-card {
+  border: 1px solid hsl(var(--hairline));
+  border-radius: 12px;
+  background: hsl(var(--surface-raised));
+  overflow: hidden;
+}
+.cds-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 11px 16px;
+  border-bottom: 1px solid hsl(var(--hairline));
+}
+.cds-card-head h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.cds-link {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; font-size: 12px; color: hsl(var(--primary));
+}
+
+.cds-run {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 13px 16px;
+  background: hsl(var(--bad) / 0.06);
+}
+.led {
+  margin-top: 5px; width: 8px; height: 8px; border-radius: 50%;
+  background: hsl(var(--bad));
+  box-shadow: 0 0 0 3px hsl(var(--bad) / 0.2);
+}
+.cds-run-title { font-size: 13px; font-weight: 500; }
+.cds-run-meta {
+  display: flex; flex-wrap: wrap; gap: 3px 10px;
+  margin-top: 4px; font-size: 11.5px; color: hsl(var(--fg-muted));
+}
+
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11.5px; font-weight: 500; white-space: nowrap;
+}
+.chip[data-tone="bad"] { background: hsl(var(--bad) / 0.14); color: hsl(var(--bad)); }
+.chip[data-tone="good"] { background: hsl(var(--good) / 0.13); color: hsl(var(--good)); }
+.chip[data-tone="warn"] { background: hsl(var(--warn) / 0.16); color: hsl(var(--warn)); }
+.chip[data-tone="muted"] {
+  background: hsl(var(--surface-sunken)); border-color: hsl(var(--hairline)); color: hsl(var(--fg-muted));
+}
+
+.btn {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 13px; border-radius: 9px;
+  border: 1px solid transparent;
+  font: inherit; font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+.btn:active { transform: scale(0.98); }
+.btn[data-kind="primary"] { background: hsl(var(--primary)); color: hsl(var(--primary-fg)); }
+.btn[data-kind="outline"] {
+  background: hsl(var(--surface-raised));
+  border-color: hsl(var(--hairline-strong));
+  color: hsl(var(--fg));
+}
+.btn[data-kind="plain"] { background: none; color: hsl(var(--fg-muted)); padding-left: 8px; padding-right: 8px; }
+.btn[data-kind="plain"]:hover { color: hsl(var(--fg)); }
+.btn svg { width: 14px; height: 14px; flex: none; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.cds-detail {
+  padding: 18px 16px;
+  border-top: 1px solid hsl(var(--hairline));
+  background: hsl(var(--surface-sunken) / 0.45);
+  display: flex; flex-direction: column; gap: 16px;
+}
+
+/* ── 现状复刻 ───────────────────────────────────────────── */
+.verdict-old {
+  position: relative;
+  border: 1px solid hsl(var(--hairline));
+  border-left: 3px solid hsl(var(--bad));
+  border-radius: 10px;
+  background: hsl(var(--surface-raised));
+  padding: 16px;
+}
+.verdict-old .blob { margin: 10px 0 0; font-size: 17px; font-weight: 600; line-height: 1.45; }
+.verdict-old .tail { margin: 8px 0 0; font-size: 11.5px; color: hsl(var(--fg-muted)); }
+.old-grid { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
+@media (max-width: 900px) { .old-grid { grid-template-columns: minmax(0, 1fr); } }
+.old-block {
+  border: 1px solid hsl(var(--hairline)); border-radius: 10px;
+  background: hsl(var(--surface-raised)); padding: 14px;
+}
+.old-block h5 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.old-block p { margin: 0; font-size: 12.5px; color: hsl(var(--fg-muted)); }
+.marker {
+  position: absolute; z-index: 2;
+  display: inline-grid; place-items: center;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: hsl(var(--bad)); color: #fff;
+  font-size: 11px; font-weight: 700;
+  box-shadow: 0 0 0 3px hsl(var(--surface-raised));
+}
+.marked { outline: 1.5px dashed hsl(var(--bad) / 0.6); outline-offset: 3px; border-radius: 6px; }
+
+/* ── 改版：第一层 ───────────────────────────────────────── */
+.verdict {
+  border: 1px solid hsl(var(--hairline));
+  border-left: 3px solid hsl(var(--bad));
+  border-radius: 12px;
+  background: hsl(var(--surface-raised));
+  padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.verdict-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.verdict-id { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 11.5px; color: hsl(var(--fg-muted)); }
+.verdict-line {
+  margin: 8px 0 0;
+  font-size: 19px; font-weight: 600; line-height: 1.35; letter-spacing: -0.01em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.verdict-meta { margin: 6px 0 0; font-size: 11.5px; color: hsl(var(--fg-muted)); }
+.impact {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px;
+}
+.impact b { color: hsl(var(--good)); font-weight: 600; }
+.impact span { color: hsl(var(--fg-muted)); }
+
+/* 步骤轨 */
+.steps {
+  display: flex;
+  border: 1px solid hsl(var(--hairline));
+  border-radius: 12px;
+  background: hsl(var(--surface-raised));
+  overflow: hidden;
+}
+.step {
+  flex: 1 1 0; min-width: 0;
+  padding: 11px 14px;
+  border-right: 1px solid hsl(var(--hairline));
+  display: flex; flex-direction: column; gap: 2px;
+}
+.step:last-child { border-right: 0; }
+.step-name { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; }
+.step-name svg { width: 13px; height: 13px; flex: none; }
+.step-note { font-size: 11px; color: hsl(var(--fg-muted)); }
+.step[data-state="done"] .step-name { color: hsl(var(--good)); }
+.step[data-state="failed"] { background: hsl(var(--bad) / 0.09); }
+.step[data-state="failed"] .step-name { color: hsl(var(--bad)); }
+.step[data-state="skipped"] .step-name { color: hsl(var(--fg-muted)); }
+@media (max-width: 760px) {
+  .steps { flex-direction: column; }
+  .step { border-right: 0; border-bottom: 1px solid hsl(var(--hairline)); }
+  .step:last-child { border-bottom: 0; }
+}
+
+/* ── 改版：第二层（详情） ───────────────────────────────── */
+/* 抽屉用 grid 行高做展开：0fr → 1fr，不需要量高度，也不会跳 */
+.drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: -16px;
+  opacity: 0;
+  pointer-events: none;
+}
+.drawer[data-open="true"] { grid-template-rows: 1fr; margin-top: 0; opacity: 1; pointer-events: auto; }
+.drawer-inner { min-height: 0; overflow: hidden; }
+.drawer-grid { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
+@media (max-width: 900px) { .drawer-grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.facts { display: flex; flex-direction: column; }
+.fact {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid hsl(var(--hairline));
+  align-items: baseline;
+}
+.fact:last-child { border-bottom: 0; }
+.fact-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: hsl(var(--fg-muted));
+}
+.fact-val { font-size: 12.5px; min-width: 0; }
+.url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px; word-break: break-all; line-height: 1.7;
+}
+.url mark {
+  background: hsl(var(--bad) / 0.18); color: hsl(var(--bad));
+  border-radius: 3px; padding: 1px 2px; font-weight: 600;
+}
+
+/* 行内渐进披露 */
+details.inline { margin-top: 3px; }
+details.inline > summary {
+  cursor: pointer; list-style: none;
+  font-size: 11.5px; color: hsl(var(--fg-muted));
+  display: inline-flex; align-items: center; gap: 4px;
+}
+details.inline > summary::-webkit-details-marker { display: none; }
+details.inline > summary::after { content: "展开"; text-decoration: underline; text-underline-offset: 2px; }
+details.inline[open] > summary::after { content: "收起"; }
+details.inline > p { margin: 5px 0 0; font-size: 11.5px; line-height: 1.65; color: hsl(var(--fg-muted)); }
+details.inline ol { margin: 5px 0 0; padding-left: 17px; font-size: 11.5px; line-height: 1.7; color: hsl(var(--fg-muted)); }
+
+.guess {
+  border: 1px solid hsl(var(--warn) / 0.32);
+  background: hsl(var(--warn) / 0.07);
+  border-radius: 12px; padding: 13px 16px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.guess-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.guess code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; background: hsl(var(--surface-sunken)); padding: 1px 5px; border-radius: 4px; word-break: break-all;
+}
+
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile {
+  border: 1px solid hsl(var(--hairline)); border-radius: 10px;
+  background: hsl(var(--surface-raised)); padding: 11px 13px; min-width: 0;
+}
+.tile-k {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: hsl(var(--fg-muted));
+}
+.tile-v { margin-top: 2px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile-v small { font-size: 11.5px; font-weight: 400; color: hsl(var(--fg-muted)); }
+
+details.logs {
+  border: 1px solid hsl(var(--hairline)); border-radius: 12px;
+  background: hsl(var(--surface-raised)); overflow: hidden;
+}
+details.logs > summary {
+  cursor: pointer; list-style: none;
+  padding: 11px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 12.5px; font-weight: 600;
+}
+details.logs > summary::-webkit-details-marker { display: none; }
+.log-pane {
+  border-top: 1px solid hsl(var(--hairline));
+  background: hsl(var(--surface-sunken));
+  padding: 10px 0; max-height: 240px; overflow: auto; overscroll-behavior: contain;
+}
+.log-row {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px;
+  padding: 1px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; line-height: 1.75; white-space: pre-wrap; word-break: break-all;
+}
+.log-n { color: hsl(var(--fg-muted) / 0.65); text-align: right; user-select: none; }
+.log-row[data-lv="err"] .log-t { color: hsl(var(--bad)); }
+.log-row[data-lv="warn"] .log-t { color: hsl(var(--warn)); }
+.log-row[data-lv="dim"] .log-t { color: hsl(var(--fg-muted)); }
+.log-fold {
+  margin: 5px 14px; padding: 4px 10px;
+  border: 1px dashed hsl(var(--hairline-strong)); border-radius: 7px;
+  font-size: 11px; color: hsl(var(--fg-muted));
+}
+
+/* ── 交给智能体：浮层 ───────────────────────────────────── */
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(10, 10, 12, 0.45);
+  backdrop-filter: blur(6px);
+  display: grid; place-items: center;
+  padding: 24px;
+}
+.sheet-backdrop[hidden] { display: none; }
+.sheet-backdrop[data-closing="true"] { pointer-events: none; }
+.sheet {
+  width: min(720px, 100%);
+  max-height: min(78vh, 720px);
+  display: flex; flex-direction: column;
+  border-radius: 16px;
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sheet { animation: sheet-in 220ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  @keyframes sheet-in { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
+}
+.sheet-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 16px 20px; border-bottom: 1px solid var(--rule);
+}
+.sheet-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.sheet-head p { margin: 2px 0 0; font-size: 12px; color: var(--ink-3); }
+.sheet-body { overflow: auto; padding: 0; background: var(--sunken); }
+.sheet-body pre {
+  margin: 0; padding: 18px 20px;
+  font-size: 12px; line-height: 1.75; white-space: pre-wrap; word-break: break-word;
+  color: var(--ink);
+}
+.sheet-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 20px; border-top: 1px solid var(--rule);
+  font-size: 12px; color: var(--ink-3);
+}
+.page-btn {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 15px; border-radius: 10px;
+  border: 1px solid transparent;
+  font: inherit; font-size: 13px; font-weight: 500;
+  transition: transform 120ms ease;
+}
+.page-btn:active { transform: scale(0.98); }
+.page-btn[data-kind="primary"] { background: var(--accent); color: #fff; }
+.page-btn[data-kind="outline"] { background: var(--panel); border-color: var(--rule); color: var(--ink); }
+.page-btn svg { width: 14px; height: 14px; }
+
+/* ── 细节区：默认收起 ───────────────────────────────────── */
+.details-stack { display: flex; flex-direction: column; }
+.disclosure { border-top: 1px solid var(--rule); }
+.disclosure:last-child { border-bottom: 1px solid var(--rule); }
+.disclosure > summary {
+  cursor: pointer; list-style: none;
+  padding: 18px 2px;
+  display: flex; align-items: baseline; gap: 12px;
+  font-size: 16px; font-weight: 500;
+}
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure > summary .aside { margin-left: auto; font-size: 12.5px; color: var(--ink-3); font-weight: 400; }
+.disclosure > summary .caret {
+  width: 9px; height: 9px; flex: none;
+  border-right: 1.6px solid var(--ink-3); border-bottom: 1.6px solid var(--ink-3);
+  transform: rotate(-45deg); transition: transform 180ms ease;
+  align-self: center;
+}
+.disclosure[open] > summary .caret { transform: rotate(45deg); }
+.disclosure-body { padding: 0 2px 26px; display: flex; flex-direction: column; gap: 14px; }
+
+.reasons { display: flex; flex-direction: column; gap: 0; }
+.reason {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr);
+  gap: 14px; padding: 13px 0;
+  border-bottom: 1px dashed var(--rule);
+}
+.reason:last-child { border-bottom: 0; }
+.reason-n {
+  margin-top: 2px;
+  display: inline-grid; place-items: center;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--bad); color: #fff; font-size: 11px; font-weight: 700;
+}
+.reason h4 { margin: 0; font-size: 14.5px; font-weight: 550; }
+.reason p { margin: 4px 0 0; font-size: 13px; color: var(--ink-2); }
+.reason code { font-size: 11.5px; background: var(--sunken); padding: 1px 5px; border-radius: 4px; color: var(--ink-2); }
+
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 660px; }
+th, td { text-align: left; padding: 11px 14px 11px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 400;
+}
+tbody tr:last-child td { border-bottom: 0; }
+td { font-size: 13.5px; }
+td.what { width: 34%; font-weight: 500; }
+td.where { width: 30%; }
+td.where code { font-size: 11.5px; color: var(--ink-2); word-break: break-all; }
+.pill {
+  display: inline-block; margin-right: 6px;
+  padding: 1px 7px; border-radius: 5px;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 11px; font-weight: 600;
+}
+.bounds { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.bound h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 550; }
+.bound p { margin: 0; font-size: 13px; color: var(--ink-2); }
+
+footer { font-size: 12.5px; color: var(--ink-3); }
+footer p { margin: 0 0 4px; }
+
+.toast {
+  position: fixed; z-index: 60;
+  left: 50%; bottom: 32px; transform: translateX(-50%);
+  padding: 9px 18px; border-radius: 999px;
+  background: var(--ink); color: var(--bg);
+  font-size: 13px; font-weight: 500;
+  box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.5);
+}
+.toast[hidden] { display: none; }
+.page-btn .swap { display: inline-flex; align-items: center; gap: 7px; }
+
+/* ── 动效总闸：关掉动画偏好时，下面这一整块都不生效 ────────── */
+@media (prefers-reduced-motion: no-preference) {
+  /* 进场：按信息优先级依次浮现，让视线走一遍「结论 → 影响 → 死在哪」 */
+  .cds [data-enter],
+  .cds .step {
+    animation: enter 460ms var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 55ms);
+  }
+  /* 失败那一格在轨道点亮之后闪一下，用动作说明「死在这里」，只闪一次 */
+  .cds .step[data-state="failed"] {
+    animation: enter 460ms var(--ease) both, flash 1100ms var(--ease-soft) both;
+    animation-delay: calc(var(--i, 0) * 55ms), calc(var(--i, 0) * 55ms + 260ms);
+  }
+  .device { transition: height 340ms var(--ease); }
+  .segmented .thumb { transition: transform 340ms var(--ease); }
+  .drawer {
+    transition: grid-template-rows 340ms var(--ease), margin-top 340ms var(--ease), opacity 200ms linear;
+  }
+  .drawer[data-open="true"] .drawer-grid > .col > * {
+    animation: enter 420ms var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 60ms + 90ms);
+  }
+  /* 展开类内容顺着来源方向长出来，不做位移，避免密集处晃眼 */
+  details.logs[open] .log-pane,
+  details.inline[open] > p,
+  details.inline[open] > ol { animation: enter-soft 240ms var(--ease) both; }
+  .disclosure[open] .disclosure-body { animation: enter 320ms var(--ease) both; }
+  .disclosure[open] .reason { animation: enter 340ms var(--ease) both; animation-delay: calc(var(--i, 0) * 50ms); }
+  .sheet { animation: sheet-in 260ms var(--ease-spring) both; }
+  .sheet-backdrop { animation: enter-soft 180ms linear both; }
+  .sheet-backdrop[data-closing="true"] { animation: veil-out 160ms linear both; }
+  .sheet-backdrop[data-closing="true"] .sheet { animation: sheet-out 160ms var(--ease-soft) both; }
+  .toast { animation: toast-in 240ms var(--ease-spring) both; }
+  /* 主题切换时颜色渐变而不是闪断；只在切换那 300ms 内挂上 */
+  .cds[data-theming="true"], .cds[data-theming="true"] * {
+    transition: background-color 280ms var(--ease-soft), border-color 280ms var(--ease-soft), color 280ms var(--ease-soft);
+  }
+  .btn, .page-btn, .quiet, .cds-link { transition: transform 140ms var(--ease), color 180ms var(--ease), background-color 180ms var(--ease); }
+  .disclosure > summary { transition: color 180ms var(--ease); }
+  .disclosure > summary:hover { color: var(--accent); }
+}
+@keyframes sheet-in { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <div class="eyebrow">CDS 发布中心</div>
+    <h1>发布失败诊断改版</h1>
+    <p class="lede">一屏只回答三件事：怎么了、要紧吗、下一步。其余全部收起。</p>
+  </header>
+
+  <section class="section">
+    <div class="controls">
+      <div class="segmented" id="segmented" data-active="after" role="group" aria-label="切换现状与改版">
+        <span class="thumb" aria-hidden="true"></span>
+        <button type="button" id="btn-before" aria-pressed="false">现状</button>
+        <button type="button" id="btn-after" aria-pressed="true">改版</button>
+      </div>
+      <div class="control-right">
+        <button type="button" class="quiet" id="btn-annotate" hidden>隐藏标记</button>
+        <button type="button" class="quiet" id="btn-theme">白天主题</button>
+      </div>
+    </div>
+
+    <div class="device" style="margin-top:16px">
+      <div class="stage" id="stage">
+
+        <!-- ══════════ 现状 ══════════ -->
+        <div class="cds" data-cds-theme="dark" id="panel-before" hidden>
+          <div class="cds-card">
+            <div class="cds-card-head">
+              <h4>最近发布</h4>
+              <button type="button" class="cds-link">查看全部 37 次</button>
+            </div>
+            <div class="cds-run">
+              <span class="led"></span>
+              <div>
+                <div class="cds-run-title">Merge pull request #1346 from inernoro/codex/fix-def-2026-0190-web-upload-feedback</div>
+                <div class="cds-run-meta">
+                  <span class="mono">53dcf3c</span><span>main</span><span>user</span>
+                  <span>2026/8/10 15:07:07</span><span>耗时 38s</span>
+                  <span class="chip" data-tone="bad">发布失败</span>
+                </div>
+              </div>
+              <div class="btn-row">
+                <button type="button" class="btn" data-kind="outline">收起诊断</button>
+                <button type="button" class="btn" data-kind="outline">日志</button>
+              </div>
+            </div>
+            <div class="cds-detail">
+              <div class="verdict-old" id="old-block">
+                <span class="marker" style="top:-10px;left:-10px;">1</span>
+                <span class="marker" style="top:64px;right:-10px;">2</span>
+                <span class="marker" style="top:196px;left:-10px;">4</span>
+                <div class="cds-run-meta" style="margin-top:0">
+                  <span class="chip" data-tone="bad">发布失败</span>
+                  <span class="chip" data-tone="muted">MAP 正式环境受管发布</span>
+                  <span class="mono">rel_9759ead9be9405e3</span>
+                </div>
+                <p class="blob marked">执行项目发布命令失败: ssh exec exit=22 --- stderr(tail) --- ... [truncated, kept last 19 lines / 1418 chars] Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 4 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 3 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 2 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 --- stdout(tail) --- AppCaller governance: already configured Downloading immutable admin artifact with resume: https://git.miduo.org/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</p>
+                <p class="tail">
+                  <span class="marked" style="display:inline-block">2026/8/10 15:07:07 由 user 触发 · commit 53dcf3c · 耗时 38s · 目标仍在 06efeb6，未切换到本次版本</span>
+                  <span class="marker" style="position:relative;top:5px;left:6px;display:inline-grid;box-shadow:none;">3</span>
+                </p>
+                <div class="btn-row" style="margin-top:12px">
+                  <button type="button" class="btn" data-kind="primary">修好后重试</button>
+                  <button type="button" class="btn" data-kind="outline">回滚到历史版本</button>
+                </div>
+              </div>
+              <div class="old-grid">
+                <div class="old-block">
+                  <h5>失败判据</h5>
+                  <p>这次发布的日志里没有结构化的门禁报告，只能给出 error 级日志原文。</p>
+                </div>
+                <div class="old-block">
+                  <h5>步骤</h5>
+                  <p>历史记录，仅按日志还原大致阶段。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══════════ 改版 ══════════ -->
+        <div class="cds" data-cds-theme="dark" id="panel-after">
+          <div class="cds-card">
+            <div class="cds-card-head">
+              <h4>最近发布</h4>
+              <button type="button" class="cds-link">查看全部 37 次</button>
+            </div>
+
+            <div class="cds-run" data-enter style="--i:0">
+              <span class="led"></span>
+              <div>
+                <div class="cds-run-title">Merge pull request #1346 from inernoro/codex/fix-def-2026-0190-web-upload-feedback</div>
+                <div class="cds-run-meta">
+                  <span class="mono">53dcf3c</span><span>main</span><span>user</span>
+                  <span>2026/8/10 15:07:07</span><span>耗时 38s</span>
+                  <span class="chip" data-tone="bad">发布失败</span>
+                </div>
+              </div>
+              <div class="btn-row">
+                <button type="button" class="btn" data-kind="outline">收起诊断</button>
+                <button type="button" class="btn" data-kind="outline">日志</button>
+              </div>
+            </div>
+
+            <div class="cds-detail">
+
+              <!-- 第一层：结论 · 影响 · 下一步 -->
+              <div class="verdict" data-enter style="--i:1">
+                <div class="verdict-top">
+                  <div style="min-width:0">
+                    <div class="verdict-id">
+                      <span class="chip" data-tone="bad">发布失败</span>
+                      <span class="chip" data-tone="muted">MAP 正式环境</span>
+                      <span class="mono">rel_9759ead9be9405e3</span>
+                    </div>
+                    <h3 class="verdict-line">拉取产物失败：下载地址返回 404</h3>
+                    <p class="verdict-meta">15:07 · user · 53dcf3c · 38s</p>
+                  </div>
+                  <div class="btn-row">
+                    <button type="button" class="btn" data-kind="primary">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+                      重试
+                    </button>
+                    <button type="button" class="btn" data-kind="outline" id="btn-agent">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                      交给智能体
+                    </button>
+                    <button type="button" class="btn" data-kind="plain" id="btn-drawer" aria-expanded="false">详情</button>
+                  </div>
+                </div>
+
+                <div class="impact">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:hsl(var(--good));flex:none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                  <b>生产未受影响</b>
+                  <span>仍在 06efeb6</span>
+                </div>
+              </div>
+
+              <!-- 步骤轨：五个词说清死在哪 -->
+              <div class="steps">
+                <div class="step" data-state="done" style="--i:2">
+                  <span class="step-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    发布前检查
+                  </span>
+                  <span class="step-note">通过</span>
+                </div>
+                <div class="step" data-state="failed" style="--i:3">
+                  <span class="step-name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    拉取产物
+                  </span>
+                  <span class="step-note">404 × 5</span>
+                </div>
+                <div class="step" data-state="skipped" style="--i:4"><span class="step-name">部署容器</span><span class="step-note">未执行</span></div>
+                <div class="step" data-state="skipped" style="--i:5"><span class="step-name">切换版本</span><span class="step-note">未执行</span></div>
+                <div class="step" data-state="skipped" style="--i:6"><span class="step-name">健康检查</span><span class="step-note">未执行</span></div>
+              </div>
+
+              <!-- 第二层：详情，默认收起 -->
+              <div class="drawer" id="drawer" data-open="false">
+               <div class="drawer-inner">
+                <div class="drawer-grid">
+                  <div class="col">
+                    <div class="cds-card" style="--i:0">
+                      <div class="cds-card-head">
+                        <h4>判据</h4>
+                        <span class="chip" data-tone="muted">取自日志</span>
+                      </div>
+                      <div class="facts">
+                        <div class="fact">
+                          <span class="fact-key">地址</span>
+                          <span class="fact-val">
+                            <span class="url"><mark>https://git.miduo.org/</mark>https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce…d6.zip</span>
+                            <details class="inline"><summary>同一地址出现两次 https:// &nbsp;</summary>
+                              <p>高亮段之后紧跟一个完整 URL，形如「镜像前缀 + 绝对地址」。sha 与本次 commit 一致，取的是对的那一版。</p>
+                            </details>
+                          </span>
+                        </div>
+                        <div class="fact">
+                          <span class="fact-key">HTTP</span>
+                          <span class="fact-val">404 × 5
+                            <details class="inline"><summary>不是超时，重试无用 &nbsp;</summary>
+                              <p>五次请求间隔 2s，全部 404。既非超时也非 5xx，重试不会变好。</p>
+                            </details>
+                          </span>
+                        </div>
+                        <div class="fact">
+                          <span class="fact-key">退出码</span>
+                          <span class="fact-val">22
+                            <details class="inline"><summary>curl 语义 &nbsp;</summary>
+                              <p>curl 的 22 = 服务端返回 &gt;= 400；ssh exec 把它原样带回来。</p>
+                            </details>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  <div class="col">
+                    <div class="tiles" style="--i:0">
+                      <div class="tile"><div class="tile-k">死在</div><div class="tile-v">第 2 步</div></div>
+                      <div class="tile"><div class="tile-k">退出码</div><div class="tile-v">22</div></div>
+                      <div class="tile"><div class="tile-k">重试</div><div class="tile-v">5 <small>次</small></div></div>
+                      <div class="tile"><div class="tile-k">耗时</div><div class="tile-v">38 <small>s</small></div></div>
+                    </div>
+
+                    <div class="guess" style="--i:1">
+                      <div class="guess-head">
+                        <span class="chip" data-tone="warn">推断</span>
+                        镜像前缀被拼到了绝对地址前面
+                      </div>
+                      <details class="inline"><summary>两条证实路径 &nbsp;</summary>
+                        <ol>
+                          <li>目标机上 <code>curl -I</code> 去掉前缀后的地址，看是否 200。</li>
+                          <li>查发布脚本拼这条 URL 的那一行，确认前缀是否只应参与相对路径拼接。</li>
+                        </ol>
+                      </details>
+                    </div>
+
+                    <details class="logs" style="--i:2">
+                      <summary>
+                        <span>原始日志</span>
+                        <span class="chip" data-tone="muted">19 行 · 折叠 8 行重复</span>
+                      </summary>
+                      <div class="log-pane">
+                        <div class="log-row" data-lv="dim"><span class="log-n">01</span><span class="log-t">[15:06:29] INFO  connect: ssh user@prod-map</span></div>
+                        <div class="log-row" data-lv="dim"><span class="log-n">02</span><span class="log-t">[15:06:31] INFO  AppCaller governance: already configured</span></div>
+                        <div class="log-row" data-lv="dim"><span class="log-n">03</span><span class="log-t">[15:06:31] INFO  Downloading immutable admin artifact with resume:</span></div>
+                        <div class="log-row" data-lv="dim"><span class="log-n">04</span><span class="log-t">           https://git.miduo.org/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</span></div>
+                        <div class="log-row" data-lv="warn"><span class="log-n">05</span><span class="log-t">[15:06:33] WARN  curl: (22) The requested URL returned error: 404</span></div>
+                        <div class="log-row" data-lv="warn"><span class="log-n">06</span><span class="log-t">[15:06:33] WARN  Problem (retrying all errors). Will retry in 2 seconds. 4 retries left.</span></div>
+                        <div class="log-fold">同样两行重复 4 轮（3 / 2 / 1 / 0 retries left）· 展开</div>
+                        <div class="log-row" data-lv="err"><span class="log-n">15</span><span class="log-t">[15:07:05] ERROR curl: (22) The requested URL returned error: 404</span></div>
+                        <div class="log-row" data-lv="err"><span class="log-n">16</span><span class="log-t">[15:07:07] ERROR 执行项目发布命令失败: ssh exec exit=22</span></div>
+                        <div class="log-row" data-lv="dim"><span class="log-n">17</span><span class="log-t">[15:07:07] INFO  未执行版本切换，目标保持 06efeb6</span></div>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+               </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── 细节区：默认全部收起 ─────────────────────────────── -->
+  <section class="details-stack">
+    <details class="disclosure">
+      <summary>为什么现状那一屏难看<span class="aside">四条根因</span><span class="caret"></span></summary>
+      <div class="disclosure-body">
+        <div class="reasons">
+          <div class="reason" style="--i:0">
+            <span class="reason-n">1</span>
+            <div>
+              <h4>结论位承载了整段原始日志</h4>
+              <p>没有门禁 JSON 时 headline 取 <code>errorLines[0]</code>，而这条 error 自带 19 行 stderr 尾巴。一句话的位置装了 1418 个字符。</p>
+            </div>
+          </div>
+          <div class="reason" style="--i:1">
+            <span class="reason-n">2</span>
+            <div>
+              <h4>日志被当成散文排版</h4>
+              <p>日志靠换行传达结构，<code>&lt;h3&gt;</code> 里换行全被折叠成空格，17px 粗体让每个字都在喊。</p>
+            </div>
+          </div>
+          <div class="reason" style="--i:2">
+            <span class="reason-n">3</span>
+            <div>
+              <h4>最该看的那句被压成灰字</h4>
+              <p>「目标仍在 06efeb6」等于生产没受影响，却挂在文字墙下面 11px 的尾巴里。</p>
+            </div>
+          </div>
+          <div class="reason" style="--i:3">
+            <span class="reason-n">4</span>
+            <div>
+              <h4>五条重复告警各占一行</h4>
+              <p><code>dedupeKeepOrder</code> 只去重完全相同的行，curl 的重试告警因「N retries left」数字不同而全部逃逸。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="disclosure">
+      <summary>要动手改哪里<span class="aside">八条，前三条止血</span><span class="caret"></span></summary>
+      <div class="disclosure-body">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>改什么</th><th>为什么</th><th>落在哪</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="what"><span class="pill">止血</span>headline 强制单行化</td>
+                <td>剥掉 stderr 尾巴，配 <code>line-clamp-2</code> 兜底。</td>
+                <td class="where"><code>releaseDiagnosis.ts</code></td>
+              </tr>
+              <tr>
+                <td class="what"><span class="pill">止血</span>影响面提到结论卡</td>
+                <td>生产有没有被动过，是失败后第一个要确认的事实。</td>
+                <td class="where"><code>FailureDiagnosis.tsx:61</code></td>
+              </tr>
+              <tr>
+                <td class="what"><span class="pill">止血</span>重复日志行折叠</td>
+                <td>按模式归并并显示计数，不再逐条铺开。</td>
+                <td class="where"><code>releaseDiagnosis.ts</code></td>
+              </tr>
+              <tr>
+                <td class="what">新增失败形状识别器</td>
+                <td>照 <code>parseDiskGuardShortfall</code> 的写法认「产物下载失败」。</td>
+                <td class="where"><code>releaseDiagnosis.ts</code></td>
+              </tr>
+              <tr>
+                <td class="what">判据卡支持无门禁的情形</td>
+                <td>识别器给出的事实同样填进这张表，用户不必区分有没有门禁。</td>
+                <td class="where"><code>FailureDiagnosis.tsx:116</code></td>
+              </tr>
+              <tr>
+                <td class="what">推断与事实分开表述</td>
+                <td>推断必须带标记和证实路径，不能写成结论。</td>
+                <td class="where"><code>releaseDiagnosis.ts</code></td>
+              </tr>
+              <tr>
+                <td class="what">步骤条改横向、标出死点</td>
+                <td>一行说清死在第几步、后面有没有执行。</td>
+                <td class="where"><code>FailureDiagnosis.tsx:137</code></td>
+              </tr>
+              <tr>
+                <td class="what">详情整体收进抽屉</td>
+                <td>判据、推断、日志默认不占首屏，点「详情」才展开。</td>
+                <td class="where"><code>FailureDiagnosis.tsx</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <details class="disclosure">
+      <summary>刻意不做的事<span class="aside">三条边界</span><span class="caret"></span></summary>
+      <div class="disclosure-body">
+        <div class="bounds">
+          <div class="bound">
+            <h4>不改后端接口</h4>
+            <p>信息全部从 <code>run.logs</code> 现有行提取。识别不出就如实说「未能提取判据」，退回原文。</p>
+          </div>
+          <div class="bound">
+            <h4>不做通用日志解析器</h4>
+            <p>只加「产物下载失败」一种形状。不把 WARN 全当噪音，那等于关掉一整类真实告警。</p>
+          </div>
+          <div class="bound">
+            <h4>不碰颜色系统</h4>
+            <p>颜色全取自现有 token。红色只用于状态标识，正文一律常规前景色。</p>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="disclosure">
+      <summary>把这次改造交给智能体<span class="aside">复制工单</span><span class="caret"></span></summary>
+      <div class="disclosure-body">
+        <p style="margin:0;font-size:13.5px;color:var(--ink-2);max-width:52ch">
+          工单包含目标、八条改动、验收口径与边界，粘给任意编码智能体即可开工。
+        </p>
+        <div>
+          <button type="button" class="page-btn" data-kind="outline" id="btn-order">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            查看并复制改造工单
+          </button>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <footer>
+    <p>数据取自 rel_9759ead9be9405e3 的真实失败记录，日志按 stderr / stdout 尾部还原。</p>
+    <p>「推断」尚未在目标机上证实，按未证实处理。</p>
+  </footer>
+</div>
+
+<!-- ── 复制浮层 ─────────────────────────────────────────── -->
+<div class="sheet-backdrop" id="sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="sheet-head">
+      <div>
+        <h3 id="sheet-title">交给智能体</h3>
+        <p id="sheet-sub">诊断已整理成可直接执行的任务</p>
+      </div>
+      <button type="button" class="page-btn" data-kind="outline" id="sheet-close">关闭</button>
+    </div>
+    <div class="sheet-body"><pre id="sheet-text" class="mono"></pre></div>
+    <div class="sheet-foot">
+      <span id="sheet-count"></span>
+      <button type="button" class="page-btn" data-kind="primary" id="sheet-copy">
+        <span class="swap" id="sheet-copy-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          复制
+        </span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function () {
+  var AGENT_TASK = [
+    'CDS 发布失败，请定位并修复。',
+    '',
+    '目标  MAP 正式环境受管发布 · rel_9759ead9be9405e3',
+    '提交  53dcf3c（main）· 2026/8/10 15:07 · 耗时 38s',
+    '结论  拉取 admin 产物失败：下载地址返回 404，重试 5 次后放弃',
+    '影响  生产未切换，仍在 06efeb6',
+    '步骤  1 发布前检查 通过 / 2 拉取产物 失败 / 3-5 未执行',
+    '',
+    '判据（取自日志，非推测）',
+    '- 下载地址 https://git.miduo.org/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip',
+    '- 同一地址出现两次 https://，形如「镜像前缀 + 绝对地址」',
+    '- HTTP 404 共 5 次，间隔 2s；退出码 22（curl：服务端返回 >= 400）',
+    '- 产物 sha 与本次 commit 一致，取的是对的那一版',
+    '',
+    '待证实（不要当成结论）',
+    '- 目标机上 curl -I 去掉前缀后的地址，确认是否 200',
+    '- 查发布脚本拼这条 URL 的那一行，确认前缀是否只应参与相对路径拼接',
+    '',
+    '要求',
+    '- 先证实再改，证实不了就把结论收回，不要凭地址形状下判断',
+    '- 修完在本分支重跑发布，附 404 消失的日志',
+    '- 只动拼接这条 URL 的逻辑，不顺手改发布流程其他部分'
+  ].join('\n');
+
+  var REDESIGN_ORDER = [
+    '优化 CDS 发布中心的失败诊断这一屏（cds/web/src/pages/release-center/）。',
+    '',
+    '问题',
+    'FailureDiagnosis 的 headline 设计为一句话结论，但日志里没有结构化门禁报告时',
+    '它退化成 errorLines[0]——一条内嵌 19 行 stderr 尾巴的复合错误串，被 17px 粗体、',
+    '换行折叠地铺成八行文字墙，把影响面、判据、操作按钮全挤到下方。',
+    '',
+    '目标结构（一屏只回答三件事）',
+    '1 结论：一句话 + 时间 / 操作人 / commit / 耗时',
+    '2 影响：生产有没有被动过',
+    '3 下一步：重试 / 交给智能体 / 详情',
+    '判据、推断、原始日志全部收进「详情」抽屉，默认不占首屏。',
+    '',
+    '改动清单',
+    '1 [止血] headline 强制单行化：剥掉 --- stderr(tail) --- 之后的整段尾巴，配 line-clamp-2 兜底（releaseDiagnosis.ts）',
+    '2 [止血] 影响面提到结论卡：目标当前 commit ≠ 本次 commit 时明确「生产未受影响」（FailureDiagnosis.tsx:61）',
+    '3 [止血] 重复日志行按模式归并并显示计数，替换只认完全相同行的 dedupeKeepOrder（releaseDiagnosis.ts）',
+    '4 新增「产物下载失败」识别器，写法对齐 parseDiskGuardShortfall：认出 curl 退出码、HTTP 状态、下载地址（releaseDiagnosis.ts）',
+    '5 判据卡支持无门禁报告的情形，识别器给出的事实填进同一张表（FailureDiagnosis.tsx:116）',
+    '6 推断与事实分开：推断必须带标记与证实路径，沿用 explainGateCheck 的沉默纪律（releaseDiagnosis.ts）',
+    '7 步骤条改横向并标出死点与未执行段（FailureDiagnosis.tsx:137）',
+    '8 详情整体收进抽屉，默认收起（FailureDiagnosis.tsx）',
+    '',
+    '边界',
+    '- 不改后端接口，信息全部从 run.logs 现有行提取',
+    '- 识别不出结构化判据时如实说明并退回原文列表，不编造原因',
+    '- 只加这一种失败形状，不做通用日志解析器，不把 WARN 全当噪音',
+    '- 颜色全部走 cds/web/src/index.css 现有 token，双主题都要成立',
+    '',
+    '验收',
+    '- 补 releaseDiagnosis 的单测：给一条内嵌 stderr 尾巴的 error，headline 必须是单行短句',
+    '- 用同一条日志跑一遍 UI，首屏不出现整段日志，详情收起时高度不超过结论 + 步骤条'
+  ].join('\n');
+
+  var stage = document.getElementById('stage');
+  var before = document.getElementById('panel-before');
+  var after = document.getElementById('panel-after');
+  var btnBefore = document.getElementById('btn-before');
+  var btnAfter = document.getElementById('btn-after');
+  var btnTheme = document.getElementById('btn-theme');
+  var btnAnnotate = document.getElementById('btn-annotate');
+  var btnDrawer = document.getElementById('btn-drawer');
+  var drawer = document.getElementById('drawer');
+  var oldBlock = document.getElementById('old-block');
+
+  var sheet = document.getElementById('sheet');
+  var sheetText = document.getElementById('sheet-text');
+  var sheetTitle = document.getElementById('sheet-title');
+  var sheetSub = document.getElementById('sheet-sub');
+  var sheetCount = document.getElementById('sheet-count');
+  var toast = document.getElementById('toast');
+
+  var segmented = document.getElementById('segmented');
+  var device = document.querySelector('.device');
+  var copyLabel = document.getElementById('sheet-copy-label');
+  var COPY_IDLE = copyLabel.innerHTML;
+  var COPY_DONE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>已复制';
+
+  var view = 'after';
+  var cdsTheme = 'dark';
+  var annotate = true;
+  var toastTimer = 0;
+  var themeTimer = 0;
+  var copyTimer = 0;
+  var closeTimer = 0;
+  var lastFocus = null;
+
+  var stillMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  /**
+   * 高度接力：先量旧高，改完再量新高，然后从旧高过渡到新高。
+   * 少了这一步，切视图和展开详情时整页会跳一下——动效的意义正是
+   * 让用户看见「什么变了」，而不是眼前忽然换了一屏。
+   */
+  function morph(mutate) {
+    if (stillMotion.matches) { mutate(); return; }
+    var from = device.getBoundingClientRect().height;
+    mutate();
+    device.style.height = 'auto';
+    var to = device.getBoundingClientRect().height;
+    if (Math.abs(to - from) < 2) { device.style.height = ''; return; }
+    device.style.height = from + 'px';
+    void device.offsetHeight;
+    device.style.height = to + 'px';
+    window.clearTimeout(morph.timer);
+    morph.timer = window.setTimeout(function () { device.style.height = ''; }, 380);
+  }
+
+  function render() {
+    var isBefore = view === 'before';
+    before.hidden = !isBefore;
+    after.hidden = isBefore;
+    btnBefore.setAttribute('aria-pressed', String(isBefore));
+    btnAfter.setAttribute('aria-pressed', String(!isBefore));
+    before.setAttribute('data-cds-theme', cdsTheme);
+    after.setAttribute('data-cds-theme', cdsTheme);
+    segmented.setAttribute('data-active', isBefore ? 'before' : 'after');
+    btnAnnotate.hidden = !isBefore;
+    btnAnnotate.textContent = annotate ? '隐藏标记' : '显示标记';
+    btnTheme.textContent = cdsTheme === 'dark' ? '白天主题' : '深色主题';
+    oldBlock.querySelectorAll('.marker').forEach(function (el) {
+      el.style.visibility = annotate ? 'visible' : 'hidden';
+    });
+    oldBlock.querySelectorAll('.marked').forEach(function (el) {
+      el.style.outline = annotate ? '' : 'none';
+    });
+  }
+
+  function showToast(message) {
+    toast.hidden = true;
+    void toast.offsetWidth;
+    toast.textContent = message;
+    toast.hidden = false;
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(function () { toast.hidden = true; }, 1800);
+  }
+
+  function openSheet(title, sub, text) {
+    lastFocus = document.activeElement;
+    sheetTitle.textContent = title;
+    sheetSub.textContent = sub;
+    sheetText.textContent = text;
+    sheetCount.textContent = text.split('\n').length + ' 行 · ' + text.length + ' 字符';
+    sheet.hidden = false;
+    document.getElementById('sheet-copy').focus();
+  }
+
+  function closeSheet() {
+    if (stillMotion.matches) {
+      sheet.hidden = true;
+    } else {
+      sheet.setAttribute('data-closing', 'true');
+      window.clearTimeout(closeTimer);
+      closeTimer = window.setTimeout(function () {
+        sheet.hidden = true;
+        sheet.removeAttribute('data-closing');
+      }, 160);
+    }
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+
+  /** 复制后按钮自己确认一次，用户不必去别处找反馈。 */
+  function markCopied() {
+    copyLabel.innerHTML = COPY_DONE;
+    window.clearTimeout(copyTimer);
+    copyTimer = window.setTimeout(function () { copyLabel.innerHTML = COPY_IDLE; }, 1800);
+  }
+
+  /**
+   * 复制。剪贴板 API 在部分环境下既不 resolve 也不 reject（无用户激活、
+   * 非安全上下文），所以加一道 500ms 兜底：迟迟不回就走 execCommand，
+   * 再不行就明说「请手动选中」——不允许点了按钮什么反馈都没有。
+   */
+  function copyText(text) {
+    var settled = false;
+    function succeed() {
+      if (settled) return;
+      settled = true;
+      markCopied();
+      showToast('已复制，粘给智能体即可');
+    }
+    function fallThrough() {
+      if (settled) return;
+      settled = true;
+      fallbackCopy(text);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(succeed, fallThrough);
+      window.setTimeout(fallThrough, 500);
+      return;
+    }
+    fallThrough();
+  }
+
+  function fallbackCopy(text) {
+    var area = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', 'readonly');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    document.body.removeChild(area);
+    if (ok) markCopied();
+    showToast(ok ? '已复制，粘给智能体即可' : '浏览器拦截了复制，请手动选中上方文本');
+  }
+
+  btnBefore.addEventListener('click', function () { morph(function () { view = 'before'; render(); }); });
+  btnAfter.addEventListener('click', function () { morph(function () { view = 'after'; render(); }); });
+  btnAnnotate.addEventListener('click', function () { annotate = !annotate; render(); });
+
+  // 主题切换只在这 300ms 内挂过渡，平时不给全树留 transition
+  btnTheme.addEventListener('click', function () {
+    cdsTheme = cdsTheme === 'dark' ? 'light' : 'dark';
+    [before, after].forEach(function (panel) { panel.setAttribute('data-theming', 'true'); });
+    render();
+    window.clearTimeout(themeTimer);
+    themeTimer = window.setTimeout(function () {
+      [before, after].forEach(function (panel) { panel.removeAttribute('data-theming'); });
+    }, 320);
+  });
+
+  btnDrawer.addEventListener('click', function () {
+    var open = drawer.getAttribute('data-open') === 'true';
+    morph(function () {
+      drawer.setAttribute('data-open', String(!open));
+      btnDrawer.setAttribute('aria-expanded', String(!open));
+      btnDrawer.textContent = open ? '详情' : '收起详情';
+    });
+  });
+
+  document.getElementById('btn-agent').addEventListener('click', function () {
+    openSheet('交给智能体', '这次失败的诊断，已整理成可直接执行的任务', AGENT_TASK);
+  });
+  document.getElementById('btn-order').addEventListener('click', function () {
+    openSheet('改造工单', '这一屏的重构需求，含改动清单、边界与验收', REDESIGN_ORDER);
+  });
+  document.getElementById('sheet-copy').addEventListener('click', function () { copyText(sheetText.textContent); });
+  document.getElementById('sheet-close').addEventListener('click', closeSheet);
+  sheet.addEventListener('click', function (event) { if (event.target === sheet) closeSheet(); });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && !sheet.hidden) { closeSheet(); return; }
+    if (event.metaKey || event.ctrlKey || event.altKey || !sheet.hidden) return;
+    var tag = (event.target && event.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (event.key === '1') morph(function () { view = 'before'; render(); });
+    if (event.key === '2') morph(function () { view = 'after'; render(); });
+  });
+
+  render();
+})();
+</script>

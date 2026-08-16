@@ -11,6 +11,7 @@ import { collectReuseCandidates, targetShaOf, normalizeBuildScope, type ReuseCan
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
+import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -59,6 +60,15 @@ export interface ProjectNetworkResolver {
    * 可选方法:测试与旧适配器不实现时不注入该表(等同「未声明入口」)。
    */
   getPublishedEntrypointsEnv?(entry: BranchEntry): PublishedEntrypointsEnv | undefined;
+  /**
+   * 返回 infra 宿主端口该绑在哪几个地址上（见 services/infra-publish.ts）。
+   *
+   * 单独走适配器而不是在容器层直接读 env：网桥地址的**权威来源**是全局
+   * customEnv 的 `CDS_DOCKER_HOST`，那份状态只有 StateService 拿得到，而容器层
+   * 刻意不依赖 StateService（避免循环导入）。不实现时容器层退到只读
+   * process.env 的同一份判定——退化后仍然是安全默认，不会退回裸绑全网卡。
+   */
+  getInfraPublishHosts?(): string[];
 }
 
 export interface ContainerRemoveContext {
@@ -664,6 +674,16 @@ export class ContainerService {
     private readonly networkResolver?: ProjectNetworkResolver,
     private readonly serverEventLogStore?: ServerEventLogSink | null,
   ) {}
+
+  /**
+   * infra 端口的绑定地址。适配器给不出时退到 process.env 的同一份判定——
+   * 两条路径都走 infra-publish.ts，不存在「适配器一套、兜底另一套」的分裂。
+   */
+  private infraPublishHosts(): string[] {
+    const fromResolver = this.networkResolver?.getInfraPublishHosts?.();
+    if (fromResolver && fromResolver.length > 0) return fromResolver;
+    return resolveInfraPublishHosts();
+  }
 
   private recordContainerEvent(record: {
     severity: ServerEventSeverity;
@@ -2797,7 +2817,11 @@ export class ContainerService {
       `--name ${service.containerName}`,
       `--network ${network}`,
       ...aliasFlags,
-      `-p ${service.hostPort}:${service.containerPort}`,
+      // 端口发布地址（见 services/infra-publish.ts）：默认只绑 docker 网桥地址
+      // + 回环，不再 `-p <port>:<port>` 裸绑全部网卡。裸绑等于把 Mongo / Redis /
+      // MySQL 数据面直接挂公网，而且宿主防火墙挡不住——DNAT 之后走 FORWARD，
+      // 不经 INPUT 链。
+      ...buildInfraPublishFlags(service.hostPort, service.containerPort, this.infraPublishHosts()),
       ...volumeFlags,
       ...envFlags,
       ...healthFlags,
@@ -2823,7 +2847,10 @@ export class ContainerService {
         command: { name: 'docker run', exitCode: result.exitCode, stdoutPreview: result.stdout, stderrPreview: result.stderr },
         details: { image: service.dockerImage, hostPort: service.hostPort, containerPort: service.containerPort, network },
       });
-      throw new Error(`启动基础设施服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
+      throw new Error(
+        `启动基础设施服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`
+        + infraPublishBindHint(combinedOutput(result), this.infraPublishHosts()),
+      );
     }
     this.recordContainerEvent({
       severity: 'info',

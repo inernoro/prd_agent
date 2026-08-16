@@ -157,14 +157,14 @@ export function FrontEndPdaRailCard({ onOpen }: { onOpen: () => void }) {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold text-token-primary">PDA 项目手册</h3>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-indigo-300/30 bg-indigo-400/15 text-indigo-100/90">
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-indigo-300/30 bg-indigo-400/15 text-[color:var(--accent-fg-violet)]">
                 重点
               </span>
             </div>
-            <p className="text-[11px] text-indigo-100/55 mt-0.5">uniapp-pda · 真机调试 · 发布排障</p>
+            <p className="text-[11px] text-indigo-100/75 mt-0.5">uniapp-pda · 真机调试 · 发布排障</p>
           </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-indigo-200/50 shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-indigo-200/75 shrink-0 mt-1" />
       </div>
       <div className="relative mt-3 grid grid-cols-2 gap-1.5">
         {PDA_LINKS.slice(0, 2).map((link) => (
@@ -173,7 +173,7 @@ export function FrontEndPdaRailCard({ onOpen }: { onOpen: () => void }) {
           </span>
         ))}
       </div>
-      <p className="relative mt-2 text-[10px] text-indigo-200/50">点击打开完整手册、快捷链接与 AI 排障模板</p>
+      <p className="relative mt-2 text-[10px] text-indigo-200/75">点击打开完整手册、快捷链接与 AI 排障模板</p>
     </button>
   );
 }
@@ -217,7 +217,7 @@ export function FrontEndPdaGuideModal({ open, onClose }: { open: boolean; onClos
         role="dialog"
         aria-modal="true"
         aria-label="PDA 项目手册"
-        className="fea-modal-panel w-full max-w-5xl rounded-2xl border border-token-subtle bg-[#0b0d12] shadow-2xl flex flex-col"
+        className="surface-tone-dark fea-modal-panel w-full max-w-5xl rounded-2xl border border-token-subtle bg-[#0b0d12] shadow-2xl flex flex-col"
         style={{ height: '90vh', maxHeight: '90vh' }}
         onClick={(e) => e.stopPropagation()}
       >

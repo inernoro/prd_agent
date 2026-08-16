@@ -66,9 +66,9 @@ export function OverviewTab({
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {row.promotion ? (
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/12 px-4 py-3">
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-warn-soft px-4 py-3">
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-amber-700 dark:text-amber-300">
+            <div className="text-[13px] font-semibold text-warn">
               {row.promotion.fromTargetName} 上跑着更新的一版
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
@@ -82,7 +82,7 @@ export function OverviewTab({
             </div>
             {/* 已知发不出去时先说清楚，别等用户点了才吃一句「已拒绝发布」。 */}
             {row.promotion.executable === false && row.promotion.blockedReason ? (
-              <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+              <div className="mt-1 text-xs text-warn">
                 {row.promotion.blockedReason}
               </div>
             ) : null}
@@ -111,7 +111,7 @@ export function OverviewTab({
             {formatDateTime(row.lastReleasedAt)}
             {row.lastOperator ? ` · ${row.lastOperator}` : ''}
           </p>
-          <p className={`text-[12px] ${position.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+          <p className={`text-[12px] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
             {position.text}
           </p>
         </StatCard>
@@ -155,7 +155,7 @@ export function OverviewTab({
                 {row.dora.leadTime.p50Ms === null ? '样本不足' : formatDoraDuration(row.dora.leadTime.p50Ms)}
               </p>
               {row.dora.recovery.ongoingCount > 0 ? (
-                <p className="text-[12px] text-amber-600 dark:text-amber-400">
+                <p className="text-[12px] text-warn">
                   有 {row.dora.recovery.ongoingCount} 次失败尚未恢复
                 </p>
               ) : null}

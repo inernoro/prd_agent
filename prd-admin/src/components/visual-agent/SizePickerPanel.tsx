@@ -21,7 +21,7 @@ export function SizePickerPanel({ size, onSizeChange, width = 260 }: SizePickerP
 
   return (
     <div
-      className="rounded-[14px] p-3"
+      className="surface-tone-dark rounded-[14px] p-3"
       style={{
         width,
         background: 'rgba(32, 32, 36, 0.96)',
@@ -138,7 +138,7 @@ export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeC
         className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover-bg-soft"
         style={{
           background: open ? 'rgba(99, 102, 241, 0.18)' : 'rgba(99, 102, 241, 0.1)',
-          color: open ? 'rgba(199, 210, 254, 0.85)' : 'rgba(199, 210, 254, 0.55)',
+          color: open ? 'var(--accent-fg-violet-strong)' : 'var(--accent-fg-violet)',
           border: open ? '1px solid rgba(99, 102, 241, 0.35)' : '1px solid rgba(99, 102, 241, 0.15)',
         }}
         title="选择分辨率和尺寸比例"
@@ -148,7 +148,7 @@ export function SizePickerButton({ size, onSizeChange }: { size: string; onSizeC
         }}
       >
         <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{tierLabel} · {aspect}</span>
-        <span className="text-[9px]" style={{ color: 'rgba(255,255,255,0.45)' }}>▾</span>
+        <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>▾</span>
       </button>
       {open && createPortal(
         <div

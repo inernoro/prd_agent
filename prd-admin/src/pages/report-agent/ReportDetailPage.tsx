@@ -844,7 +844,7 @@ function CommentItem({
           </span>
           <span
             className="text-[10px] px-1.5 py-0.5 rounded-md"
-            style={{ background: 'rgba(99, 102, 241, 0.08)', color: 'rgba(99, 102, 241, 0.82)' }}
+            style={{ background: 'rgba(99, 102, 241, 0.08)', color: 'var(--accent-fg-violet)' }}
           >
             评论
           </span>

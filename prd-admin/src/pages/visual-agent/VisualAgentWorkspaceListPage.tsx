@@ -169,7 +169,7 @@ function ToolbarButton(props: {
       {/* Tooltip */}
       {showTooltip && (
         <div
-          className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap pointer-events-none"
+          className="surface-tone-dark absolute left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap pointer-events-none"
           style={{
             background: 'rgba(30, 30, 35, 0.95)',
             color: '#fff',
@@ -430,7 +430,7 @@ function QuickInputBox(props: {
   return (
     <div className="max-w-full sm:max-w-[680px] w-full mx-auto px-3 sm:px-6 mt-8">
       <div
-        className="rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
+        className="surface-tone-dark rounded-[20px] overflow-hidden cursor-text transition-all duration-300"
         style={{
           ...glassInputArea,
           // 暖褐色调磨砂玻璃，与金色主题协调
@@ -454,7 +454,7 @@ function QuickInputBox(props: {
           {/* 拖拽图片时的提示蒙层 */}
           {isDragging && (
             <div
-              className="absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-[16px] pointer-events-none"
+              className="surface-tone-dark absolute inset-0 z-40 flex items-center justify-center gap-2 rounded-[16px] pointer-events-none"
               style={{
                 background: 'rgba(28, 24, 20, 0.92)',
                 border: '1px dashed rgba(99, 102, 241, 0.6)',
@@ -495,7 +495,7 @@ function QuickInputBox(props: {
                     justifyContent: 'center',
                     fontSize: 9,
                     fontWeight: 700,
-                    color: 'rgba(99, 102, 241, 1)',
+                    color: 'var(--accent-fg-violet)',
                     flexShrink: 0,
                   }}
                 >
@@ -538,7 +538,7 @@ function QuickInputBox(props: {
                       borderRadius: 2,
                       border: 'none',
                       background: 'rgba(239,68,68,0.2)',
-                      color: 'rgba(239,68,68,0.9)',
+                      color: 'var(--accent-fg-danger)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -578,7 +578,7 @@ function QuickInputBox(props: {
           {!value && !selectedImage && (
             <div
               className="absolute top-4 left-5 right-5 pointer-events-none text-[15px] leading-relaxed"
-              style={{ color: 'rgba(199,210,254,0.42)' }}
+              style={{ color: 'var(--text-muted)' }}
             >
               {typingPlaceholder}
               <span className="animate-pulse">|</span>
@@ -605,7 +605,7 @@ function QuickInputBox(props: {
               className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
                 background: 'rgba(99, 102, 241, 0.1)',
-                color: 'rgba(199, 210, 254, 0.55)',
+                color: 'var(--accent-fg-violet)',
                 border: '1px solid rgba(99, 102, 241, 0.15)',
               }}
               title="添加图片参考（也可直接粘贴 Ctrl/Cmd+V 或拖入图片）"
@@ -647,7 +647,7 @@ function QuickInputBox(props: {
                 background: canSubmit
                   ? 'linear-gradient(135deg, rgba(99,102,241,0.95) 0%, rgba(79,82,221,0.95) 100%)'
                   : 'var(--border-subtle)',
-                color: canSubmit ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.35)',
+                color: canSubmit ? 'rgba(255,255,255,0.95)' : 'var(--text-muted)',
                 cursor: canSubmit ? 'pointer' : 'not-allowed',
                 boxShadow: canSubmit ? '0 4px 20px rgba(99,102,241,0.3)' : 'none',
               }}
@@ -711,7 +711,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             style={{
               background: isActive ? 'rgba(99,102,241,0.1)' : 'transparent',
               border: isActive ? '1px solid rgba(99,102,241,0.22)' : '1px solid var(--border-subtle)',
-              color: isActive ? 'var(--text-primary)' : 'rgba(199,210,254,0.55)',
+              color: isActive ? 'var(--text-primary)' : 'var(--accent-fg-violet)',
             }}
           >
             <Icon size={14} style={{ opacity: isActive ? 1 : 0.65 }} />
@@ -1289,7 +1289,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
 
   return (
     <div
-      className="h-full min-h-0 flex flex-col overflow-auto relative"
+      className="surface-tone-dark h-full min-h-0 flex flex-col overflow-auto relative"
       style={{ background: '#0a0a0c' }}
     >
       {/* 夜景背景 */}
