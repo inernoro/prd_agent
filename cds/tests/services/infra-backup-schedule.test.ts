@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_MIN_FREE_BYTES,
+  backupDirCandidates,
   backupFileName,
   backupKindOf,
   isAutoBackupFile,
@@ -186,12 +187,82 @@ describe('自动备份真的被启动了', () => {
     expect(dump).toBeGreaterThan(gate);
   });
 
-  it('落盘目录与手工备份同一处，备份历史接口不用改就能看到', () => {
-    expect(CODE).toContain('/backups');
-    expect(CODE).toContain('projectSlug');
+  /**
+   * 断言的是「两边走同一份候选」这个不变量，不是某段路径字面量——
+   * 路径搬家是合理重构，不该让守卫变红；两边分叉才该变红。
+   */
+  it('自动备份与手工备份解析同一份目录候选', () => {
+    const manual = fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8');
+    expect(CODE).toContain('backupDirCandidates(');
+    expect(manual).toContain('backupDirCandidates(');
+    // 两边都不许再写死历史路径
+    for (const src of [CODE, manual]) {
+      expect(src).not.toMatch(/`\/data\/cds\/\$\{stateService\.projectSlug\}\/backups`/);
+    }
   });
 
   it('产物为空要当失败处理，不留零字节文件冒充成功', () => {
     expect(CODE).toContain('导出产物为空');
+  });
+});
+
+/**
+ * 备份目录候选。
+ *
+ * 真实事故（2026-08-16）：目录写死 `/data/cds/<slug>/backups`，那个路径在宿主上
+ * 不存在，而手工备份的 `ls` 带着 `2>/dev/null` —— 目录不存在时返回的空列表，与
+ * 「备份过但没有匹配项」长得一模一样。于是「一份备份都没有」可以一直不被发现。
+ */
+describe('备份目录候选', () => {
+  it('显式指定优先级最高', () => {
+    const c = backupDirCandidates({ slug: 'x', repoRoot: '/root/app', env: { CDS_BACKUP_DIR: '/mnt/bak' } });
+    expect(c[0]).toBe('/mnt/bak');
+  });
+
+  it('历史路径仍在候选里，存量部署不受影响', () => {
+    expect(backupDirCandidates({ slug: 'prd-agent', env: {} })).toContain('/data/cds/prd-agent/backups');
+  });
+
+  /** 兜底放在 repoRoot **旁边**而不是里面：里面会被 git 操作与自更新波及。 */
+  it('给出可写兜底，且不落在 repoRoot 内部', () => {
+    const c = backupDirCandidates({ slug: 'x', repoRoot: '/root/inernoro/prd_agent', env: {} });
+    const fallback = c[c.length - 1];
+    expect(fallback).toBe('/root/inernoro/cds-backups/x');
+    expect(fallback.startsWith('/root/inernoro/prd_agent/')).toBe(false);
+  });
+
+  it('候选不重复（显式指定恰好等于历史路径时）', () => {
+    const c = backupDirCandidates({ slug: 'x', env: { CDS_BACKUP_DIR: '/data/cds/x/backups' } });
+    expect(new Set(c).size).toBe(c.length);
+  });
+
+  it('尾部斜杠不会拼出双斜杠', () => {
+    expect(backupDirCandidates({ slug: 'x', env: { CDS_BACKUP_DIR: '/mnt/bak/' } })[0]).toBe('/mnt/bak');
+  });
+});
+
+describe('目录与磁盘失败必须说清原因', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+  const CODE = SRC.split('\n')
+    .filter((l) => {
+      const t = l.trim();
+      return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*'));
+    })
+    .join('\n');
+
+  it('逐个候选试写，而不是写死单一路径', () => {
+    expect(CODE).toContain('backupDirCandidates(');
+    expect(CODE).not.toMatch(/const dir = `\/data\/cds\/\$\{stateService\.projectSlug\}/);
+  });
+
+  /** 只说「读不到」，下一个人除了重跑一遍没有别的办法。 */
+  it('df 失败时带上退出码与 stderr', () => {
+    expect(CODE).toContain('dfExitCode');
+    expect(CODE).toContain('dfStderr');
+  });
+
+  it('没有可写目录时列出试过哪些、并指出逃生阀', () => {
+    expect(CODE).toContain("action: 'infra.backup.skipped.nodir'");
+    expect(CODE).toContain('CDS_BACKUP_DIR');
   });
 });

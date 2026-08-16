@@ -21,8 +21,8 @@ import {
   auditInfraExposure, detectInfraKind, renderExposureReport, type InfraExposureInput,
 } from './services/infra-exposure-audit.js';
 import {
-  parseDfAvailableBytes, planInfraBackups, selectExpiredBackups, shouldSkipForDiskPressure,
-  summarizeBackupRound, type BackupOutcome,
+  backupDirCandidates, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
@@ -451,20 +451,52 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
   const run = async () => {
     try {
-      const dir = `/data/cds/${stateService.projectSlug}/backups`;
-      await shell.exec(`mkdir -p ${shq(dir)}`, { timeout: 15_000 });
+      // 逐个候选试写，用第一个真能写的。写死单一路径的代价已经付过：那个路径在
+      // 这台宿主上不存在，而手工备份的 ls 带着 2>/dev/null，把「目录不存在」显示
+      // 成「没有备份」——于是零备份这件事可以一直不被发现。
+      const candidates = backupDirCandidates({
+        slug: stateService.projectSlug,
+        repoRoot: config.repoRoot,
+      });
+      let dir = '';
+      const dirErrors: string[] = [];
+      for (const c of candidates) {
+        const probe = await shell.exec(
+          `mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`,
+          { timeout: 15_000 },
+        );
+        if (probe.exitCode === 0 && (probe.stdout || '').includes('ok')) { dir = c; break; }
+        dirErrors.push(`${c}: ${(combinedOutput(probe) || `exit=${probe.exitCode}`).trim().slice(0, 160)}`);
+      }
+      if (!dir) {
+        const msg = `没有可写的备份目录，本轮跳过。试过：\n${dirErrors.join('\n')}\n`
+          + '可用 CDS_BACKUP_DIR 显式指定一个可写目录。';
+        console.warn(`[infra-backup] ${msg}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.skipped.nodir', message: msg, status: 'warn',
+          details: { candidates, errors: dirErrors },
+        });
+        return;
+      }
 
       const df = await shell.exec(`df -Pk ${shq(dir)}`, { timeout: 15_000 });
       const free = parseDfAvailableBytes(df.stdout || '');
       if (shouldSkipForDiskPressure(free)) {
+        // 「读不到」必须说清读不到什么、命令怎么失败的。只说一句「读不到」，
+        // 下一个人除了重跑一遍没有别的办法。
         const msg = free == null
-          ? '读不到备份目录的可用空间，本轮自动备份跳过（不确定就不写盘）'
-          : `备份目录可用空间不足（${(free / 1024 / 1024 / 1024).toFixed(1)} GiB），本轮自动备份跳过`;
+          ? `读不到备份目录 ${dir} 的可用空间，本轮跳过（不确定就不写盘）。`
+            + `df exit=${df.exitCode}${df.stderr ? ` stderr=${df.stderr.trim().slice(0, 200)}` : ''}`
+          : `备份目录 ${dir} 可用空间不足（${(free / 1024 / 1024 / 1024).toFixed(1)} GiB），本轮跳过`;
         console.warn(`[infra-backup] ${msg}`);
         store?.record({
           category: 'system', severity: 'warn', source: 'infra-backup',
           action: 'infra.backup.skipped.disk', message: msg, status: 'warn',
-          details: { freeBytes: free ?? null, directory: dir },
+          details: {
+            freeBytes: free ?? null, directory: dir,
+            dfExitCode: df.exitCode, dfStdout: (df.stdout || '').slice(0, 400), dfStderr: (df.stderr || '').slice(0, 400),
+          },
         });
         return;
       }

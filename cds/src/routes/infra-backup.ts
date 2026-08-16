@@ -19,12 +19,15 @@ import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { isPreviewInstance } from '../services/preview-instance.js';
+import { backupDirCandidates } from '../services/infra-backup-schedule.js';
 
 export interface InfraBackupRouterDeps {
   stateService: StateService;
   shell: IShellExecutor;
   /** Inline project-scope guard. No-op for admin/cookie auth; 403 for a project-scoped key reaching another project. */
   assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
+  /** 备份目录兜底候选要用到（放在 repoRoot 旁边）。缺省时只试前两个候选。 */
+  repoRoot?: string;
 }
 
 function detectKind(dockerImage: string): 'mongo' | 'redis' | 'generic' {
@@ -49,6 +52,23 @@ function extractMongoAuth(env: Record<string, string>): { user?: string; passwor
 export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
   const { stateService, shell, assertProjectAccess } = deps;
   const router = Router();
+
+  /**
+   * 备份目录。与自动备份走**同一份候选**（services/infra-backup-schedule.ts）：
+   * 两边落在不同目录的话，「备份历史」看不见自动备份，又是一次「以为有、其实没有」。
+   * 逐个试写，用第一个真能写的；都不行就回退到首选，让失败暴露在写盘那一步。
+   */
+  async function resolveBackupDir(): Promise<string> {
+    const candidates = backupDirCandidates({
+      slug: stateService.projectSlug,
+      repoRoot: deps.repoRoot,
+    });
+    for (const c of candidates) {
+      const probe = await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`);
+      if (probe.exitCode === 0 && (probe.stdout || '').includes('ok')) return c;
+    }
+    return candidates[0];
+  }
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：备份/恢复直接 spawn docker，
   // 绕过 PreviewInstanceShellExecutor。预览实例没有真实 infra 容器，路由器级
@@ -195,7 +215,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     const { spawn } = await import('node:child_process');
 
     // 1) 先自动备份当前状态（便于"撤销恢复"）
-    const backupDir = `/data/cds/${stateService.projectSlug}/backups`;
+    const backupDir = await resolveBackupDir();
     await shell.exec(`mkdir -p ${shq(backupDir)}`);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const preBackupPath = `${backupDir}/${svc.id}-pre-restore-${stamp}.${kind === 'mongo' ? 'archive.gz' : 'bin'}`;
@@ -275,7 +295,11 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
   router.get('/infra/:id/backup-history', async (req, res) => {
     const svc = resolveScoped(req, res);
     if (!svc) return;
-    const backupDir = `/data/cds/${stateService.projectSlug}/backups`;
+    const backupDir = await resolveBackupDir();
+    // 目录不存在时 `ls` 的错误此前被 2>/dev/null 吞掉，返回的空列表与「备份过但
+    // 没有匹配项」长得一模一样——零备份可以就这么一直不被发现。这里显式区分。
+    const probe = await shell.exec(`test -d ${shq(backupDir)} && echo yes || echo no`);
+    const dirExists = (probe.stdout || '').includes('yes');
     const result = await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null | grep ${shq(svc.id)} || true`);
     const lines = (result.stdout || '').split('\n').filter(Boolean);
     const entries = lines.map(l => {
@@ -287,7 +311,12 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         name: parts[8],
       };
     }).filter(Boolean);
-    res.json({ backups: entries, directory: backupDir });
+    res.json({
+      backups: entries,
+      directory: backupDir,
+      /** false = 目录都还不存在，也就是一份备份都没有过；别把它读成「暂无匹配」。 */
+      directoryExists: dirExists,
+    });
   });
 
   return router;

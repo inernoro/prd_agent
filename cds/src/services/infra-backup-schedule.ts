@@ -48,6 +48,41 @@ export const DEFAULT_KEEP_DAYS = 14;
  */
 export const DEFAULT_MIN_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 
+/**
+ * 备份落盘目录的候选，按优先级排列。
+ *
+ * 原来写死 `/data/cds/<slug>/backups`。那个路径在部分宿主上**根本不存在**，
+ * 而手工备份那条路径的 `ls` 带着 `2>/dev/null`，目录不存在时返回的是「没有备份」
+ * ——和「备份过但列表为空」长得一模一样。于是「一份备份都没有」这件事可以一直
+ * 不被发现，直到真的需要恢复。
+ *
+ * 现在给一串候选让调用方逐个试写，并把**实际选中的那个**报出来：
+ *
+ * 1. `CDS_BACKUP_DIR` —— 运维显式指定，优先级最高
+ * 2. `/data/cds/<slug>/backups` —— 历史路径，存量部署继续用它
+ * 3. `<repoRoot>/../cds-backups` —— 兜底。repoRoot 是 CDS 必然可写的地方，
+ *    放在它旁边而不是里面，避免被 git 操作和自更新波及
+ *
+ * 自动备份与手工备份必须走同一份候选，否则两边落在不同目录，
+ * 「备份历史」会看不见自动备份——那又是一次「以为有、其实没有」。
+ */
+export function backupDirCandidates(opts: {
+  slug: string;
+  repoRoot?: string;
+  env?: Record<string, string | undefined>;
+}): string[] {
+  const env = opts.env ?? process.env;
+  const out: string[] = [];
+  const explicit = (env.CDS_BACKUP_DIR || '').trim();
+  if (explicit) out.push(explicit.replace(/\/+$/, ''));
+  out.push(`/data/cds/${opts.slug}/backups`);
+  if (opts.repoRoot) {
+    const parent = opts.repoRoot.replace(/\/+$/, '').replace(/\/[^/]*$/, '');
+    if (parent) out.push(`${parent}/cds-backups/${opts.slug}`);
+  }
+  return [...new Set(out)];
+}
+
 /** 只有这两类有成熟的一致性导出手段；其余类型不假装能备。 */
 export function backupKindOf(dockerImage: string): BackupKind | null {
   const l = (dockerImage || '').toLowerCase();

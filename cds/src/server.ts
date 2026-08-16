@@ -4213,7 +4213,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
   app.use('/api', createDockerNetworkHealthRouter({ shell: deps.shell }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
-  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
+  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot }));
   app.use('/api', createInfraDataRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
   app.use('/api', createLegacyCleanupRouter({
