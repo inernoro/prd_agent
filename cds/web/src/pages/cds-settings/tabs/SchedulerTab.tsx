@@ -152,7 +152,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded-md border border-border bg-card px-4 py-4">
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <Flame className="h-4 w-4 text-amber-500" />
+              <Flame className="h-4 w-4 text-warn" />
               当前热分支
             </div>
             <div className="mt-2 text-2xl font-semibold">{hotList.length}</div>
@@ -162,7 +162,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
           </div>
           <div className="rounded-md border border-border bg-card px-4 py-4">
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <Snowflake className="h-4 w-4 text-sky-500" />
+              <Snowflake className="h-4 w-4 text-info" />
               当前冷分支
             </div>
             <div className="mt-2 text-2xl font-semibold">{coldList.length}</div>
@@ -173,7 +173,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded-md border border-border bg-card px-4 py-4">
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <Trash2 className="h-4 w-4 text-rose-500" />
+              <Trash2 className="h-4 w-4 text-bad" />
               即将过期删除
             </div>
             <div className="mt-2 text-2xl font-semibold">{dryRun.wouldRemove.length}</div>
@@ -183,7 +183,7 @@ export function SchedulerTab({ onToast }: { onToast: (message: string) => void }
           </div>
           <div className="rounded-md border border-border bg-card px-4 py-4">
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <HardDrive className="h-4 w-4 text-emerald-500" />
+              <HardDrive className="h-4 w-4 text-ok" />
               工作区磁盘
             </div>
             <div className="mt-2 text-2xl font-semibold">{disk ? `${disk.usedPercent}%` : '-'}</div>

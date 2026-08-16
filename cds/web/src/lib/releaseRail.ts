@@ -35,19 +35,6 @@ export interface ReleaseTargetCommitPosition {
   reason?: string;
 }
 
-/** 轴上的一面旗：某个环境停在这个提交。 */
-export interface RailMarker {
-  targetId: string;
-  /** 中文环境标签，如「生产」。后端 environments[].label 给的就是它。 */
-  label: string;
-  environment: string;
-  commitSha: string;
-}
-
-export interface RailNodeView extends ReleaseCommitRailNode {
-  markers: RailMarker[];
-}
-
 export type PositionTone = 'ok' | 'warn' | 'unknown';
 
 export interface PositionDescription {
@@ -55,12 +42,6 @@ export interface PositionDescription {
   tone: PositionTone;
 }
 
-/** 整条轴是否该渲染。不可用时隐藏整块，不留一个空壳骨架。 */
-export function railIsVisible(rail?: ReleaseCommitRail | null): rail is ReleaseCommitRail {
-  return Boolean(rail && !rail.unavailableReason && Array.isArray(rail.nodes) && rail.nodes.length > 0);
-}
-
-/** 短 sha 与全 sha 混用是常态（后端给全的，run 里可能是短的），前缀比对即可。 */
 export function sameCommit(a?: string, b?: string): boolean {
   if (!a || !b) return false;
   const x = a.toLowerCase();
@@ -68,32 +49,6 @@ export function sameCommit(a?: string, b?: string): boolean {
   return x.startsWith(y) || y.startsWith(x);
 }
 
-/**
- * 给每个轴节点挂上停在它上面的环境旗。
- * 不在轴上的环境不会凭空生出一个节点——它由左栏那一行如实说明「不在最近这几个提交里」。
- */
-export function buildRailNodeViews(
-  rail: ReleaseCommitRail,
-  markers: ReadonlyArray<RailMarker>,
-): RailNodeView[] {
-  return rail.nodes.map((node) => ({
-    ...node,
-    markers: markers.filter((marker) => sameCommit(node.sha, marker.commitSha)),
-  }));
-}
-
-/** 有旗但没落在轴上的环境（跑着一个太老或已分叉的版本）。 */
-export function markersOffRail(
-  rail: ReleaseCommitRail,
-  markers: ReadonlyArray<RailMarker>,
-): RailMarker[] {
-  return markers.filter((marker) => !rail.nodes.some((node) => sameCommit(node.sha, marker.commitSha)));
-}
-
-/**
- * 「落后 main 4 个提交」这句话。
- * 分叉时 behind / ahead 同时非零是合法状态，必须两个都说，不能只报一个。
- */
 export function describeCommitPosition(
   position: ReleaseTargetCommitPosition | undefined,
   branch: string,
@@ -116,21 +71,6 @@ export function describeCommitPosition(
   return { text: `与 ${branchLabel} 齐平`, tone: 'ok' };
 }
 
-/** 「最早未上线提交距今 18 小时」。没有这个字段就整句不出现。 */
-export function describeOldestUnreleased(
-  position: ReleaseTargetCommitPosition | undefined,
-  nowMs: number,
-): string {
-  const at = position?.oldestUnreleasedAt;
-  if (!at) return '';
-  const relative = formatRelativeFromNow(at, nowMs);
-  return relative ? `最早未上线提交距今 ${relative}` : '';
-}
-
-/**
- * 相对时间（中文，粗粒度）。取不到有效时间返回空串——
- * 让调用方决定「整句不显示」，而不是显示一个 "Invalid Date"。
- */
 export function formatRelativeFromNow(value: string | undefined, nowMs: number): string {
   if (!value) return '';
   const ts = Date.parse(value);

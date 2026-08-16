@@ -126,7 +126,7 @@ export function CapacityFullDialog({
           </ul>
         )}
 
-        <div className={`text-sm ${enough ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-300'}`}>
+        <div className={`text-sm ${enough ? 'text-ok' : 'text-warn'}`}>
           已选 {selected.size} 项,腾出 {willFreeSlots} 个容器 / 需要 {needSlots} 个
           {enough ? ' — 够用' : ' — 还差 ' + (needSlots - willFreeSlots) + ' 个'}
         </div>

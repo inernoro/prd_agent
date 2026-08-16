@@ -132,20 +132,20 @@ interface BuildBranchResourcesInput {
 }
 
 const RUNTIME_TONE: Record<string, string> = {
-  'Node.js': 'text-emerald-500',
+  'Node.js': 'text-ok',
   '.NET': 'text-violet-500',
-  Python: 'text-blue-500',
-  Java: 'text-orange-500',
+  Python: 'text-info',
+  Java: 'text-warn',
   Go: 'text-cyan-500',
-  Rust: 'text-amber-600',
+  Rust: 'text-warn',
   PHP: 'text-indigo-500',
   Static: 'text-lime-500',
   MySQL: 'text-cyan-600',
-  PostgreSQL: 'text-sky-600',
-  'SQL Server': 'text-red-500',
-  MongoDB: 'text-emerald-600',
-  Redis: 'text-red-500',
-  RabbitMQ: 'text-orange-500',
+  PostgreSQL: 'text-info',
+  'SQL Server': 'text-bad',
+  MongoDB: 'text-ok',
+  Redis: 'text-bad',
+  RabbitMQ: 'text-warn',
   MinIO: 'text-zinc-500',
 };
 

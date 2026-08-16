@@ -107,7 +107,7 @@ function Probe({ label, ok, hint }: { label: string; ok: boolean; hint: string }
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-base">{label}</CardTitle>
         {ok ? (
-          <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+          <CheckCircle2 className="h-5 w-5 text-ok" />
         ) : (
           <XCircle className="h-5 w-5 text-destructive" />
         )}
@@ -124,7 +124,7 @@ function ApiProbe({ probe }: { probe: Probe }): JSX.Element {
     icon = <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />;
     hint = '正在调用 GET /api/cli-version …';
   } else if (probe.status === 'ok') {
-    icon = <CheckCircle2 className="h-5 w-5 text-emerald-500" />;
+    icon = <CheckCircle2 className="h-5 w-5 text-ok" />;
     hint = `成功：${JSON.stringify(probe.data)}`;
   } else if (probe.status === 'error') {
     icon = <XCircle className="h-5 w-5 text-destructive" />;
@@ -149,7 +149,7 @@ function DialogProbe(): JSX.Element {
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-base">④ shadcn Dialog</CardTitle>
-        <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+        <CheckCircle2 className="h-5 w-5 text-ok" />
       </CardHeader>
       <CardContent className="text-sm text-muted-foreground">
         <Dialog>

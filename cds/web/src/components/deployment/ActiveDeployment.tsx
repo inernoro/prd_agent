@@ -16,16 +16,16 @@ function lastLines(text: string, n: number): string {
 
 function logLineClass(line: string): string {
   if (/\b(error|failed|fatal|exception|panic|denied)\b|错误|失败|异常|拒绝/i.test(line)) {
-    return 'text-red-300';
+    return 'text-bad';
   }
   if (/\b(warn|warning|deprecated)\b|警告/i.test(line)) {
-    return 'text-amber-300';
+    return 'text-warn';
   }
   if (/\b(success|succeeded|done|ready|listening|started|completed)\b|成功|完成|就绪|启动/i.test(line)) {
-    return 'text-emerald-300';
+    return 'text-ok';
   }
   if (/https?:\/\/|file:\/\/|\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+/.test(line)) {
-    return 'text-sky-300';
+    return 'text-info';
   }
   if (/^\s*(at |\+|>|npm |pnpm |yarn |dotnet |node )/.test(line)) {
     return 'text-slate-300';
@@ -127,7 +127,7 @@ function PrimaryContainerLogPanel({
           {containerLogControls!.services.map((svc) => {
             const active = svc.profileId === containerLogControls!.selected;
             const dot = svc.status === 'running'
-              ? 'bg-emerald-500'
+              ? 'bg-ok'
               : svc.status === 'error'
                 ? 'bg-destructive'
                 : 'bg-muted-foreground/40';
@@ -212,7 +212,7 @@ function PrimaryContainerLogPanel({
                 {containerLogControls!.services.map((svc) => {
                   const active = svc.profileId === containerLogControls!.selected;
                   const dot = svc.status === 'running'
-                    ? 'bg-emerald-500'
+                    ? 'bg-ok'
                     : svc.status === 'error'
                       ? 'bg-destructive'
                       : 'bg-muted-foreground/40';
@@ -283,8 +283,8 @@ export interface ActiveDeploymentProps {
 }
 
 function statusBadgeClass(status: BranchDeploymentItem['status']): string {
-  if (status === 'running') return 'border-sky-500/30 bg-sky-500/10 text-sky-600';
-  if (status === 'success') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+  if (status === 'running') return 'border-info/30 bg-info-soft text-info';
+  if (status === 'success') return 'border-ok/30 bg-ok-soft text-ok';
   return 'border-destructive/30 bg-destructive/10 text-destructive';
 }
 
@@ -384,9 +384,9 @@ export function ActiveDeployment({
           <span
             className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 font-mono text-xs font-semibold ${
               durationDisplay.stuck
-                ? 'border-amber-500/45 bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                ? 'border-warn/45 bg-warn-soft text-warn'
                 : displayStatus === 'running'
-                  ? 'border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-300'
+                  ? 'border-warn/35 bg-warn-soft text-warn'
                   : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
             }`}
             title={

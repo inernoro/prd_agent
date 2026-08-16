@@ -31,6 +31,8 @@ interface TokenResponse {
   masterUrl?: string;
   expiresAt?: string;
   ttlSeconds?: number;
+  /** 主节点绑回环 + 连接码指向裸端口时的可达性告警（后端 describeBootstrapReachability）。 */
+  reachabilityWarning?: string | null;
 }
 
 interface JoinResponse {
@@ -294,7 +296,7 @@ export function ClusterTab(): JSX.Element {
           <aside className="space-y-4">
             <div className="rounded-md border border-border bg-card p-4">
               <div className="mb-4 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <CheckCircle2 className="h-4 w-4 text-ok" />
                 <h3 className="text-sm font-semibold">本机健康</h3>
               </div>
               <div className="grid grid-cols-3 gap-2">
@@ -321,6 +323,13 @@ export function ClusterTab(): JSX.Element {
               </div>
               {token ? (
                 <div className="space-y-3">
+                  {/* 拿着一个注定连不上的码去另一台机器试，那边只会看到 connection refused。
+                      所以可达性问题必须贴在码旁边，不能只落在服务端日志里。 */}
+                  {token.reachabilityWarning ? (
+                    <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+                      {token.reachabilityWarning}
+                    </p>
+                  ) : null}
                   <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/20 p-3 font-mono text-xs">
                     {token.connectionCode}
                   </pre>
@@ -372,7 +381,7 @@ export function ClusterTab(): JSX.Element {
                 />
               </div>
               {joinResult?.executorId ? (
-                <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600">
+                <div className="mt-3 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-xs text-ok">
                   已注册：{joinResult.executorId}
                 </div>
               ) : null}
@@ -405,9 +414,9 @@ function ExecutorCard({
   const memPercent = executorMemPercent(node);
   const statusClass =
     node.status === 'online'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+      ? 'border-ok/30 bg-ok-soft text-ok'
       : node.status === 'draining'
-        ? 'border-amber-500/30 bg-amber-500/10 text-amber-600'
+        ? 'border-warn/30 bg-warn-soft text-warn'
         : 'border-destructive/30 bg-destructive/10 text-destructive';
 
   return (

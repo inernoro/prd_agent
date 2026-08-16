@@ -39,15 +39,15 @@ export function StorageTab(): JSX.Element {
         <div
           className={
             isTargetMode && storage.mongoHealthy !== false
-              ? 'rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-4'
-              : 'rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-4'
+              ? 'rounded-md border border-ok/30 bg-ok-soft px-4 py-4'
+              : 'rounded-md border border-warn/40 bg-warn-soft px-4 py-4'
           }
         >
           <div className="flex items-start gap-3">
             {isTargetMode && storage.mongoHealthy !== false ? (
-              <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-500" />
+              <CheckCircle2 className="mt-0.5 h-5 w-5 text-ok" />
             ) : (
-              <AlertTriangle className="mt-0.5 h-5 w-5 text-amber-500" />
+              <AlertTriangle className="mt-0.5 h-5 w-5 text-warn" />
             )}
             <div className="min-w-0">
               <div className="font-medium">

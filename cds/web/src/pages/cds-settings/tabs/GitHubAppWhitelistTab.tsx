@@ -107,7 +107,7 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
               <StatusTile label="日志候选" value={pendingSuggestions.length} />
             </div>
 
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-800 dark:text-amber-200">
+            <div className="rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm leading-6 text-warn ">
               白名单为空时不启用 owner 门禁,现有项目和 prd_agent 自身 webhook 会继续放行。需要限制公开 GitHub App 安装时,先从下方日志候选加入你的组织再保存。
             </div>
 
@@ -118,7 +118,7 @@ export function GitHubAppWhitelistTab({ onToast }: { onToast: (message: string) 
                   <span className="px-2 text-sm text-muted-foreground">尚未允许任何组织</span>
                 ) : owners.map((owner) => (
                   <span key={owner} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-sm">
-                    <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                    <ShieldCheck className="h-4 w-4 text-ok" />
                     <span className="font-mono">{owner}</span>
                     <button
                       type="button"
@@ -229,7 +229,7 @@ function OwnerSuggestionRow({
       <td className="px-3 py-2 font-mono">{item.owner}</td>
       <td className="px-3 py-2 tabular-nums">{item.count}</td>
       <td className="px-3 py-2 tabular-nums">
-        <span className={item.blockedCount > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}>
+        <span className={item.blockedCount > 0 ? 'text-warn' : 'text-muted-foreground'}>
           {item.blockedCount}
         </span>
       </td>

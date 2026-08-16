@@ -226,7 +226,7 @@ export function PendingImportInbox({
                         {item.summary ? (
                           <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
                             {(item.summary.addedProfiles || []).map((p) => (
-                              <span key={`p-${p}`} className="rounded bg-blue-500/10 text-blue-700 dark:text-blue-300 px-1.5 py-0.5">
+                              <span key={`p-${p}`} className="rounded bg-info-soft text-info px-1.5 py-0.5">
                                 profile: {p}
                               </span>
                             ))}
@@ -236,7 +236,7 @@ export function PendingImportInbox({
                               </span>
                             ))}
                             {(item.summary.addedEnvKeys || []).length > 0 ? (
-                              <span className="rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 px-1.5 py-0.5">
+                              <span className="rounded bg-warn-soft text-warn px-1.5 py-0.5">
                                 env: {item.summary.addedEnvKeys.length}
                               </span>
                             ) : null}

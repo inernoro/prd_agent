@@ -83,8 +83,8 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
 
   const projects = projectsState.status === 'ok' ? projectsState.data.projects || [] : [];
   const organizePanel = (
-    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-4">
-      <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+    <div className="rounded-md border border-warn/30 bg-warn-soft p-4">
+      <div className="text-sm font-semibold text-warn">
         一键整理：把项目级变量迁到具体项目
       </div>
       <div className="mt-1 text-sm leading-6 text-muted-foreground">

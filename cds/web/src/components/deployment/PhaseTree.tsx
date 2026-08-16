@@ -63,10 +63,10 @@ function tailLines(text: string, n: number | null | undefined): string {
 
 function PhaseIcon({ status }: { status: PhaseState['status'] }): JSX.Element {
   if (status === 'running') {
-    return <Loader2 className="h-4 w-4 animate-spin text-sky-500" aria-label="进行中" />;
+    return <Loader2 className="h-4 w-4 animate-spin text-info" aria-label="进行中" />;
   }
   if (status === 'success') {
-    return <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-label="已完成" />;
+    return <CheckCircle2 className="h-4 w-4 text-ok" aria-label="已完成" />;
   }
   if (status === 'error') {
     return <XCircle className="h-4 w-4 text-destructive" aria-label="失败" />;
@@ -167,7 +167,7 @@ function PhaseLogDetails({
           {controls!.services.map((svc) => {
             const active = svc.profileId === controls!.selected;
             const dot = svc.status === 'running'
-              ? 'bg-emerald-500'
+              ? 'bg-ok'
               : svc.status === 'error'
                 ? 'bg-destructive'
                 : 'bg-muted-foreground/40';

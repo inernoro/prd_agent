@@ -19,12 +19,20 @@ import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { isPreviewInstance } from '../services/preview-instance.js';
+import {
+  backupDirCandidates,
+  backupKey,
+  isLegacyUnscopedBackupFile,
+  isProjectBackupFile,
+} from '../services/infra-backup-schedule.js';
 
 export interface InfraBackupRouterDeps {
   stateService: StateService;
   shell: IShellExecutor;
   /** Inline project-scope guard. No-op for admin/cookie auth; 403 for a project-scoped key reaching another project. */
   assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
+  /** 备份目录兜底候选要用到（放在 repoRoot 旁边）。缺省时只试前两个候选。 */
+  repoRoot?: string;
 }
 
 function detectKind(dockerImage: string): 'mongo' | 'redis' | 'generic' {
@@ -49,6 +57,29 @@ function extractMongoAuth(env: Record<string, string>): { user?: string; passwor
 export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
   const { stateService, shell, assertProjectAccess } = deps;
   const router = Router();
+
+  /**
+   * 备份目录。与自动备份走**同一份候选**（services/infra-backup-schedule.ts）：
+   * 两边落在不同目录的话，「备份历史」看不见自动备份，又是一次「以为有、其实没有」。
+   * 逐个试写，用第一个真能写的；都不行就回退到首选，让失败暴露在写盘那一步。
+   */
+  async function resolveBackupDir(opts?: { create?: boolean }): Promise<string> {
+    const create = opts?.create !== false;
+    const candidates = backupDirCandidates({
+      slug: stateService.projectSlug,
+      repoRoot: deps.repoRoot,
+    });
+    for (const c of candidates) {
+      // 只读路径（备份历史）**不许建目录**。建了之后紧跟着的 `test -d` 必然为真，
+      // 「一份备份都没有过」就被报成「目录在、只是没有匹配项」——刚加的那个区分
+      // 当场作废，而它要防的正是零备份长期不被发现。写盘路径才允许创建。
+      const probe = create
+        ? await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`)
+        : await shell.exec(`test -d ${shq(c)} && test -w ${shq(c)} && echo ok`);
+      if (probe.exitCode === 0 && (probe.stdout || '').includes('ok')) return c;
+    }
+    return candidates[0];
+  }
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：备份/恢复直接 spawn docker，
   // 绕过 PreviewInstanceShellExecutor。预览实例没有真实 infra 容器，路由器级
@@ -180,8 +211,13 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
    * POST /api/infra/:id/restore
    * 上传一份之前导出的 dump 文件恢复。body 是原始字节流。
    *
-   * 破坏性操作：恢复前自动 dump 一份当前数据库到 /data/cds/<slug>/backups/<id>-pre-restore-<timestamp>，
+   * 破坏性操作：恢复前自动 dump 一份当前数据库到
+   * /data/cds/<slug>/backups/<项目>--<id>-pre-restore-<timestamp>，
    * 并记 DestructiveOperationLog，这样用户还能还原回恢复前的状态。
+   *
+   * 文件名带项目段的理由与周期备份同源（见 backupKey）：infra id 只在项目内唯一，
+   * 六个项目各有一个 `redis`，同一秒里两个项目各恢复一次，后写的会盖掉先写的那份
+   * 救命快照。周期备份这一轮修了，恢复前快照是同一个形状的另一处，一起修。
    */
   router.post('/infra/:id/restore', async (req, res) => {
     const svc = resolveScoped(req, res);
@@ -195,10 +231,10 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     const { spawn } = await import('node:child_process');
 
     // 1) 先自动备份当前状态（便于"撤销恢复"）
-    const backupDir = `/data/cds/${stateService.projectSlug}/backups`;
+    const backupDir = await resolveBackupDir();
     await shell.exec(`mkdir -p ${shq(backupDir)}`);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const preBackupPath = `${backupDir}/${svc.id}-pre-restore-${stamp}.${kind === 'mongo' ? 'archive.gz' : 'bin'}`;
+    const preBackupPath = `${backupDir}/${backupKey(svc.projectId, svc.id)}-pre-restore-${stamp}.${kind === 'mongo' ? 'archive.gz' : 'bin'}`;
 
     try {
       if (kind === 'mongo') {
@@ -275,19 +311,40 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
   router.get('/infra/:id/backup-history', async (req, res) => {
     const svc = resolveScoped(req, res);
     if (!svc) return;
-    const backupDir = `/data/cds/${stateService.projectSlug}/backups`;
-    const result = await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null | grep ${shq(svc.id)} || true`);
+    const backupDir = await resolveBackupDir({ create: false });
+    // 目录不存在时 `ls` 的错误此前被 2>/dev/null 吞掉，返回的空列表与「备份过但
+    // 没有匹配项」长得一模一样——零备份可以就这么一直不被发现。这里显式区分。
+    const probe = await shell.exec(`test -d ${shq(backupDir)} && echo yes || echo no`);
+    const dirExists = (probe.stdout || '').includes('yes');
+    // 筛选**不能**交给 `grep <id>`：备份目录是所有项目共用的，而 infra id 只在项目内
+    // 唯一，子串匹配还会把 `redis-cache` 一起捞给 `redis`。判据走 isProjectBackupFile
+    // （与写入端同一份），旧命名的恢复前快照单独标记后照列。
+    const result = await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null || true`);
     const lines = (result.stdout || '').split('\n').filter(Boolean);
     const entries = lines.map(l => {
       const parts = l.trim().split(/\s+/);
       if (parts.length < 9) return null;
+      const name = parts.slice(8).join(' ');
+      const mine = isProjectBackupFile(name, svc.projectId, svc.id);
+      const legacy = !mine && isLegacyUnscopedBackupFile(name, svc.id);
+      if (!mine && !legacy) return null;
       return {
         size: parseInt(parts[4], 10) || 0,
         mtime: parts.slice(5, 8).join(' '),
-        name: parts[8],
+        name,
+        /**
+         * true = 文件名里没有项目段，是项目限定命名之前留下的，无法确认属于哪个项目。
+         * 照列是因为它多半就是本项目的救命快照；标出来是因为「多半」不等于「确认」。
+         */
+        unscoped: legacy,
       };
     }).filter(Boolean);
-    res.json({ backups: entries, directory: backupDir });
+    res.json({
+      backups: entries,
+      directory: backupDir,
+      /** false = 目录都还不存在，也就是一份备份都没有过；别把它读成「暂无匹配」。 */
+      directoryExists: dirExists,
+    });
   });
 
   return router;

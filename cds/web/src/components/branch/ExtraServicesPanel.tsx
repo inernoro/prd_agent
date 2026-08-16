@@ -168,7 +168,7 @@ export function ExtraServicesPanel({
 
       {notice ? (
         <div className={`mb-3 rounded-md border px-3 py-2 text-sm ${notice.kind === 'warn'
-          ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+          ? 'border-warn/30 bg-warn-soft text-warn'
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'}`}
         >
           {notice.text}
@@ -211,12 +211,12 @@ export function ExtraServicesPanel({
                   <span className="max-w-[220px] truncate font-mono" title={profile.dockerImage}>{profile.dockerImage}</span>
                   <span className="font-mono">:{profile.containerPort}</span>
                   {profile.subdomain ? (
-                    <span className="rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-blue-700 dark:text-blue-300">
+                    <span className="rounded border border-info/30 bg-info-soft px-1.5 py-0.5 text-info">
                       子域 {profile.subdomain}
                     </span>
                   ) : null}
                   {profile.dbScope === 'per-branch' ? (
-                    <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
+                    <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-ok">
                       分支独立库
                     </span>
                   ) : null}

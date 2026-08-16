@@ -78,8 +78,8 @@ interface NoticesResponse {
 function levelClass(level: NoticeLevel = 'info'): string {
   // 语义色走 token，暗/亮双主题各自成立（禁暗色字面量 fallback）。
   if (level === 'danger') return 'border-[hsl(var(--destructive))]/35 bg-[hsl(var(--destructive))]/10 text-[hsl(var(--destructive))]';
-  if (level === 'warning') return 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300';
-  return 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+  if (level === 'warning') return 'border-warn/35 bg-warn-soft text-warn';
+  return 'border-info/35 bg-info-soft text-info';
 }
 
 function NoticeIcon({ source }: { source?: string }): JSX.Element {
@@ -373,7 +373,7 @@ export function SiteNoticeInbox(): JSX.Element {
           </div>
 
           {!outbound.configured ? (
-            <div className="border-b border-[hsl(var(--hairline))] bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+            <div className="border-b border-[hsl(var(--hairline))] bg-warn-soft px-3 py-2 text-[11px] leading-4 text-warn">
               {outbound.reason || '未配置外发凭据，通知仅记录在 CDS 本地'}
             </div>
           ) : null}

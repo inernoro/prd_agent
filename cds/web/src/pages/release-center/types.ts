@@ -162,9 +162,28 @@ export interface CenterRow {
   dora?: ReleaseDoraMetrics;
 }
 
+/** 发布计划：步骤的标题与真实命令。后端 /releases/center 与 /releases/targets 都下发。 */
+export interface ReleasePlanStepLite {
+  id: string;
+  title: string;
+  kind: string;
+  command?: string;
+}
+
+export interface ReleasePlanLite {
+  id: string;
+  projectId: string;
+  name: string;
+  template: string;
+  targetType: string;
+  steps: ReleasePlanStepLite[];
+}
+
 export interface CenterResponse {
   rows: CenterRow[];
   runs: ReleaseRun[];
+  /** 步骤条要显示「这一步跑了什么」时用；按 run.progress.planId 对上。 */
+  plans?: ReleasePlanLite[];
   dora?: ReleaseDoraMetrics;
   commitMeta?: Record<string, ReleaseCommitMeta>;
   commitRail?: ReleaseCommitRail;
@@ -187,10 +206,25 @@ export interface TargetsResponse {
   remoteHosts: RemoteHostOption[];
 }
 
+/**
+ * 项目下拉 / 项目栏用的精简形。
+ *
+ * 后端 `/api/projects` 的 toSummary 是 `{...project, ...stats}`，字段远不止这些；
+ * 这里只声明**页面真的会读**的那几个，多写一个就多一处与后端漂移的风险。
+ * 下面这批是项目卡标签的输入（见 lib/projectTags.ts），全是后端已有字段。
+ */
 export interface ProjectLite {
   id: string;
   name: string;
   slug?: string;
+  kind?: 'git' | 'manual' | 'shared-service';
+  githubRepoFullName?: string;
+  githubAutoDeploy?: boolean;
+  paused?: boolean;
+  cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
+  legacyFlag?: boolean;
+  runningServiceCount?: number;
+  branchCount?: number;
 }
 
 export type WizardStep = 'server' | 'site' | 'scripts' | 'health';
@@ -256,9 +290,16 @@ export interface ScheduledJobSummary {
   description?: string;
   enabled: boolean;
   schedule: {
-    type: 'manual' | 'interval' | 'daily';
+    /** push = 事件驱动的「自动发布规则」（设计稿 §4）；其余三种是定时调度。 */
+    type: 'manual' | 'interval' | 'daily' | 'push';
     intervalMinutes?: number;
     timeOfDay?: string;
+    /** push 专用：分支 glob，如 `main` / `release/*`。 */
+    branchPattern?: string;
+    /** push 专用：push = 每次推送；pr-open = 开 PR 时。 */
+    event?: 'push' | 'pr-open';
+    /** push 专用：只有命中这个路径 glob 的改动才触发，如 `docs/**`。 */
+    pathPattern?: string;
     timezone?: string;
   };
   actions?: Array<ScheduledJobActionSummary>;

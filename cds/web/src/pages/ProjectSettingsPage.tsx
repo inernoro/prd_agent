@@ -1224,8 +1224,8 @@ function GeneralTab({
           <div className="max-w-3xl space-y-3 cds-surface-raised cds-hairline px-3 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm font-medium">分支资源标签</div>
-              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 text-xs text-emerald-700 dark:text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-ok/30 bg-ok-soft px-2 text-xs text-ok">
+                <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden />
                 {resourceChipDisplay.icon ? <Plug className="h-3.5 w-3.5" aria-hidden /> : null}
                 {resourceChipDisplay.name ? <span className="font-semibold">Node.js</span> : null}
                 {resourceChipDisplay.port ? <span className="font-mono text-muted-foreground">:3000</span> : null}
@@ -1292,12 +1292,12 @@ function GeneralTab({
                     <span
                       className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${
                         autoDeployEnabled
-                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          ? 'border-ok/30 bg-ok-soft text-ok'
                           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
                       }`}
                     >
                       <span
-                        className={`h-1.5 w-1.5 rounded-full ${autoDeployEnabled ? 'bg-emerald-500' : 'bg-muted-foreground'}`}
+                        className={`h-1.5 w-1.5 rounded-full ${autoDeployEnabled ? 'bg-ok' : 'bg-muted-foreground'}`}
                         aria-hidden
                       />
                       {autoDeployEnabled ? '自动部署开启' : '自动部署关闭'}
@@ -1401,7 +1401,7 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
             </div>
             <span
               className={`rounded border px-1.5 py-0.5 text-[10px] ${
-                it.status === 'running' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                it.status === 'running' ? 'border-ok/40 bg-ok-soft text-ok'
                 : it.status === 'error' ? 'border-destructive/40 bg-destructive/10 text-destructive'
                 : 'border-[hsl(var(--hairline))] text-muted-foreground'
               }`}
@@ -1733,7 +1733,7 @@ function GithubProjectTab({
 function GithubAppCard({ app }: { app: GithubAppStatus }): JSX.Element {
   if (!app.configured) {
     return (
-      <div className="max-w-3xl rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-4">
+      <div className="max-w-3xl rounded-md border border-warn/40 bg-warn-soft px-4 py-4">
         <div className="font-medium">GitHub App 尚未配置</div>
         <div className="mt-2 text-sm leading-6 text-muted-foreground">
           需要在 CDS 启动环境里配置 GitHub App ID、Private Key、Webhook Secret 和公开访问地址。
@@ -2248,8 +2248,8 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
           </div>
 
           {data.warnings?.length ? (
-            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-amber-600 dark:text-amber-400">
+            <div className="rounded-md border border-warn/40 bg-warn-soft px-4 py-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium text-warn">
                 <AlertTriangle className="h-4 w-4" />
                 发现 {data.warnings.length} 条告警
               </div>
@@ -2438,9 +2438,9 @@ function CacheRow({
 function getCacheStatus(cache: CacheDirInfo): { label: string; className: string } {
   if (!cache.exists) return { label: '目录不存在', className: 'bg-destructive' };
   if ((cache.sizeBytes || 0) === 0 && (cache.fileCount || 0) === 0) {
-    return { label: '目录为空', className: 'bg-amber-500' };
+    return { label: '目录为空', className: 'bg-warn' };
   }
-  return { label: '已有缓存', className: 'bg-emerald-500' };
+  return { label: '已有缓存', className: 'bg-ok' };
 }
 
 function StatsTab({ project, projectId }: { project: ProjectSummary; projectId: string }): JSX.Element {
@@ -2634,10 +2634,10 @@ function ActivityTab({ projectId }: { projectId: string }): JSX.Element {
 function classifyActor(raw: string | undefined): { label: string; tone: string } {
   if (!raw) return { label: '系统', tone: 'border-muted bg-muted/20 text-muted-foreground' };
   if (raw === 'system:webhook') {
-    return { label: 'GitHub Webhook', tone: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+    return { label: 'GitHub Webhook', tone: 'border-info/40 bg-info-soft text-info' };
   }
   if (raw === 'system:slash-command') {
-    return { label: 'PR 指令', tone: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+    return { label: 'PR 指令', tone: 'border-info/40 bg-info-soft text-info' };
   }
   if (raw.startsWith('system:')) {
     return { label: raw.slice('system:'.length) || '系统', tone: 'border-muted bg-muted/30 text-muted-foreground' };
@@ -2649,10 +2649,10 @@ function classifyActor(raw: string | undefined): { label: string; tone: string }
     return { label: 'AI', tone: 'border-purple-500/40 bg-purple-500/10 text-purple-700 dark:text-purple-300' };
   }
   if (raw === 'user') {
-    return { label: '用户', tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+    return { label: '用户', tone: 'border-ok/40 bg-ok-soft text-ok' };
   }
   // 兜底:可能是真实用户名
-  return { label: raw, tone: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+  return { label: raw, tone: 'border-ok/40 bg-ok-soft text-ok' };
 }
 
 function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
@@ -2667,7 +2667,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
   const rowTone = isError
     ? 'border border-destructive/40 bg-destructive/5'
     : isAborted
-      ? 'border border-amber-500/40 bg-amber-500/5'
+      ? 'border border-warn/40 bg-warn-soft'
       : 'cds-surface-raised cds-hairline';
 
   return (
@@ -2680,7 +2680,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
       >
         {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
         <div className="font-mono text-xs text-muted-foreground">{formatDate(entry.at)}</div>
-        <div className={`font-medium ${isError ? 'text-destructive' : isAborted ? 'text-amber-700 dark:text-amber-300' : ''}`}>
+        <div className={`font-medium ${isError ? 'text-destructive' : isAborted ? 'text-warn' : ''}`}>
           {typeLabel}
         </div>
         <div className="min-w-0 truncate text-muted-foreground">
@@ -3034,9 +3034,9 @@ interface ProjectComposeResponse {
 }
 
 const AUTHORITY_META: Record<'repo' | 'platform' | 'user', { label: string; desc: string; cls: string }> = {
-  repo: { label: 'repo 权威', desc: '构建/启动方式，由仓库结构决定，可改但应回写 repo', cls: 'bg-blue-500/10 text-blue-700 dark:text-blue-300' },
-  platform: { label: 'platform 权威', desc: '端口/网络/域名，由 CDS 分配，只读', cls: 'bg-amber-500/10 text-amber-700 dark:text-amber-300' },
-  user: { label: 'user 权威', desc: '环境变量等运营参数，用户可覆盖', cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' },
+  repo: { label: 'repo 权威', desc: '构建/启动方式，由仓库结构决定，可改但应回写 repo', cls: 'bg-info-soft text-info' },
+  platform: { label: 'platform 权威', desc: '端口/网络/域名，由 CDS 分配，只读', cls: 'bg-warn-soft text-warn' },
+  user: { label: 'user 权威', desc: '环境变量等运营参数，用户可覆盖', cls: 'bg-ok-soft text-ok' },
 };
 
 function ProjectComposeTab({
@@ -3451,7 +3451,7 @@ function ProjectMigrationTab({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     {p.name}
-                    {p.remoteLabel ? <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-300">{p.remoteLabel}</span> : null}
+                    {p.remoteLabel ? <span className="rounded bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">{p.remoteLabel}</span> : null}
                   </div>
                   <div className="truncate font-mono text-xs text-muted-foreground">
                     {p.baseUrl} · key {p.keyMasked || '本机回退'}{p.lastVerifiedAt ? ` · 验证于 ${new Date(p.lastVerifiedAt).toLocaleString()}` : ''}
@@ -3512,7 +3512,7 @@ function ProjectMigrationTab({
         </p>
 
         {replicateResult ? (
-          <div className={`mt-3 rounded-md border p-3 ${replicateResult.ok ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-destructive/40 bg-destructive/5'}`}>
+          <div className={`mt-3 rounded-md border p-3 ${replicateResult.ok ? 'border-ok/40 bg-ok-soft' : 'border-destructive/40 bg-destructive/5'}`}>
             <div className="text-sm font-medium">
               {replicateResult.ok ? (replicateResult.dryRun ? '预演成功' : '已推送复刻') : '推送失败'}
               <span className="ml-2 text-xs text-muted-foreground">远端 HTTP {replicateResult.remoteStatus} · 发送 {replicateResult.sentBytes} 字节 · {replicateResult.cleanMode}</span>
@@ -3671,7 +3671,7 @@ function ProjectStorageTab({
       </div>
 
       {data.note ? (
-        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+        <div className="flex items-start gap-2 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span>{data.note}</span>
         </div>
@@ -3917,9 +3917,9 @@ function ProjectInfraTab({
                       <span className={
                         `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ` +
                         (svc.status === 'running'
-                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          ? 'bg-ok-soft text-ok'
                           : svc.status === 'error'
-                            ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                            ? 'bg-bad-soft text-bad'
                             : 'bg-muted text-muted-foreground')
                       }>
                         {svc.status === 'running' ? '运行中' : svc.status === 'error' ? '错误' : '已停止'}
@@ -3936,7 +3936,7 @@ function ProjectInfraTab({
                       </div>
                     ) : null}
                     {svc.errorMessage ? (
-                      <div className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">
+                      <div className="mt-1.5 text-[11px] text-bad">
                         {svc.errorMessage}
                       </div>
                     ) : null}
@@ -4197,7 +4197,7 @@ function InfraResyncDialog({
           </div>
 
           {previewError ? (
-            <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
+            <div className="rounded-md border border-bad/30 bg-bad-soft p-3 text-sm text-bad">
               <div className="font-semibold">预览失败</div>
               <div>{previewError}</div>
               {cmdError ? <div className="mt-2 font-mono text-xs">{cmdError}</div> : null}
@@ -4215,11 +4215,11 @@ function InfraResyncDialog({
             <div className="space-y-3 max-h-[40vh] overflow-y-auto" style={{ overscrollBehavior: 'contain', minHeight: 0 }}>
               {diff.adds.length > 0 ? (
                 <div>
-                  <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                  <div className="text-xs font-semibold text-ok">
                     新增 {diff.adds.length}
                   </div>
                   {diff.adds.map((a) => (
-                    <div key={`add-${a.id}`} className="mt-1 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-xs">
+                    <div key={`add-${a.id}`} className="mt-1 rounded border border-ok/30 bg-ok-soft px-2 py-1 text-xs">
                       <code className="font-mono">{a.id}</code> · {a.dockerImage}:{a.containerPort}
                     </div>
                   ))}
@@ -4227,11 +4227,11 @@ function InfraResyncDialog({
               ) : null}
               {diff.updates.length > 0 ? (
                 <div>
-                  <div className="text-xs font-semibold text-sky-700 dark:text-sky-300">
+                  <div className="text-xs font-semibold text-info">
                     更新 {diff.updates.length}(image/cmd/env/volumes/ports 任一变化即重建)
                   </div>
                   {diff.updates.map((u) => (
-                    <div key={`upd-${u.id}`} className="mt-1 rounded border border-sky-500/30 bg-sky-500/5 px-2 py-1 text-xs">
+                    <div key={`upd-${u.id}`} className="mt-1 rounded border border-info/30 bg-info-soft px-2 py-1 text-xs">
                       <code className="font-mono">{u.id}</code>
                       <ul className="mt-0.5 list-disc pl-4 text-[11px] text-foreground/80">
                         {u.reasons.map((r, i) => <li key={i}>{r}</li>)}
@@ -4242,11 +4242,11 @@ function InfraResyncDialog({
               ) : null}
               {diff.removes.length > 0 ? (
                 <div>
-                  <div className="text-xs font-semibold text-red-700 dark:text-red-300">
+                  <div className="text-xs font-semibold text-bad">
                     删除 {diff.removes.length}(yaml 中已不存在 · 默认仅删容器,数据卷保留)
                   </div>
                   {diff.removes.map((r) => (
-                    <div key={`rm-${r.id}`} className="mt-1 rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-xs">
+                    <div key={`rm-${r.id}`} className="mt-1 rounded border border-bad/30 bg-bad-soft px-2 py-1 text-xs">
                       <code className="font-mono">{r.id}</code> · {r.containerName} · {r.status}
                     </div>
                   ))}
@@ -4259,7 +4259,7 @@ function InfraResyncDialog({
                       className="mt-0.5"
                     />
                     <span>
-                      <span className="font-semibold text-red-700 dark:text-red-300">同时删除数据卷(不可恢复)</span>
+                      <span className="font-semibold text-bad">同时删除数据卷(不可恢复)</span>
                       <br />
                       <span className="text-muted-foreground">
                         默认不勾:只删容器,docker named volume 保留,数据安全。

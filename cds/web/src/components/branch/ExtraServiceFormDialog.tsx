@@ -312,7 +312,7 @@ export function ExtraServiceFormDialog({
                 disabled={isEdit}
               />
               {idCollision ? (
-                <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">该 id 已存在，保存将覆盖同名服务</div>
+                <div className="mt-1 text-xs text-warn">该 id 已存在，保存将覆盖同名服务</div>
               ) : null}
             </div>
             <div>

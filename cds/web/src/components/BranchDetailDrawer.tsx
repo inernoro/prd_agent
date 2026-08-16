@@ -562,8 +562,8 @@ function statusLabel(s: string): string {
 // `cds/web/src/lib/statusStyle.ts` 共享模块,见顶部 import。
 
 function deploymentStatusClass(status: BranchDeploymentItem['status']): string {
-  if (status === 'running') return 'border-sky-500/30 bg-sky-500/10 text-sky-500';
-  if (status === 'success') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600';
+  if (status === 'running') return 'border-info/30 bg-info-soft text-info';
+  if (status === 'success') return 'border-ok/30 bg-ok-soft text-ok';
   return 'border-destructive/30 bg-destructive/10 text-destructive';
 }
 
@@ -1994,7 +1994,7 @@ export function BranchDetailDrawer({
                 asChild
                 variant="ghost"
                 size="icon"
-                className="text-sky-600 hover:bg-sky-500/10 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+                className="text-info hover:bg-info-soft hover:text-info dark:hover:text-info"
                 title="打开 GitHub 分支"
                 aria-label="打开 GitHub 分支"
               >
@@ -2045,8 +2045,8 @@ export function BranchDetailDrawer({
               {/* 2026-07-26 用户拍板：入口卡不再常驻抽屉头部占每个页签 ~180px——
                   只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
               {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && primaryEntryUrl ? (
-                <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
-                  <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                <div className="mx-5 mt-4 rounded-xl border border-ok/40 bg-ok-soft p-3">
+                  <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-ok">
                     <Rocket className="h-4 w-4" />
                     应用已上线
                   </div>
@@ -2058,16 +2058,16 @@ export function BranchDetailDrawer({
                       target="_blank"
                       rel="noreferrer"
                       title={`打开 ${primaryEntry?.name || '主应用入口'}`}
-                      className="group flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 transition hover:border-emerald-500/60 hover:bg-emerald-500/[0.18]"
+                      className="group flex items-center gap-3 rounded-lg border border-ok/30 bg-ok-soft px-3 py-2 transition hover:border-ok/60 hover:bg-ok-soft"
                     >
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-ok text-white">
                         <Rocket className="h-4 w-4" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-xs font-semibold text-emerald-700 dark:text-emerald-300">{primaryEntry?.name || '主应用入口'}</span>
-                        <span className="block min-w-0 truncate font-mono text-[11px] text-emerald-700/70 dark:text-emerald-300/70">{primaryEntryUrl}</span>
+                        <span className="block text-xs font-semibold text-ok">{primaryEntry?.name || '主应用入口'}</span>
+                        <span className="block min-w-0 truncate font-mono text-[11px] text-ok/70 /70">{primaryEntryUrl}</span>
                       </span>
-                      <ExternalLink className="h-4 w-4 shrink-0 text-emerald-600/60 transition group-hover:text-emerald-600 dark:text-emerald-400/60 dark:group-hover:text-emerald-300" />
+                      <ExternalLink className="h-4 w-4 shrink-0 text-ok/60 transition group-hover:text-ok/60 dark:group-hover:text-ok" />
                     </a>
                     {[...webEntries]
                       .sort((a, b) => a.name.localeCompare(b.name))
@@ -2078,7 +2078,7 @@ export function BranchDetailDrawer({
                             target="_blank"
                             rel="noreferrer"
                             title={`打开 ${entry.name}`}
-                            className="group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-emerald-500/40 hover:bg-emerald-500/[0.08]"
+                            className="group flex items-center gap-3 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-3 py-2 transition hover:border-ok/40 hover:bg-ok-soft"
                           >
                             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--surface-raised))] text-muted-foreground">
                               <Server className="h-4 w-4" />
@@ -2090,7 +2090,7 @@ export function BranchDetailDrawer({
                               </span>
                               <span className="block min-w-0 truncate font-mono text-[11px] text-muted-foreground">{entry.url}</span>
                             </span>
-                            <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-emerald-600" />
+                            <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground/60 transition group-hover:text-ok" />
                           </a>
                       ))}
                   </div>
@@ -2120,12 +2120,12 @@ export function BranchDetailDrawer({
                       */}
                       {branch.lastStoppedAt &&
                       !['running', 'building', 'starting', 'restarting'].includes(branch.status) ? (
-                        <div className="mt-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-5 text-amber-800 dark:text-amber-200">
+                        <div className="mt-2 rounded border border-warn/30 bg-warn-soft px-2.5 py-1.5 text-[11px] leading-5 text-warn ">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-medium">上次停止</span>
                             <span className="opacity-90">{formatDeployTimestamp(branch.lastStoppedAt)}</span>
                             {branch.lastStopSource ? (
-                              <span className="rounded border border-amber-500/40 px-1.5 py-0.5">
+                              <span className="rounded border border-warn/40 px-1.5 py-0.5">
                                 {branch.lastStopSource === 'user' ? '用户'
                                   : branch.lastStopSource === 'scheduler' ? '调度器'
                                   : branch.lastStopSource === 'executor' ? '执行器'
@@ -2181,9 +2181,9 @@ export function BranchDetailDrawer({
                               {/* 主题感知的责任方徽章：白天用深色文字保证对比度（旧写法硬编码
                                   亮系 #f59e0b/#9ca3af 落在 0.15 透明底上，白天对比度约 2:1 看不清） */}
                               <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                                diag.responsibilitySide === 'cds' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
-                                  : diag.responsibilitySide === 'code' ? 'bg-red-500/15 text-red-700 dark:text-red-400'
-                                  : diag.responsibilitySide === 'config' ? 'bg-blue-500/15 text-blue-700 dark:text-blue-400'
+                                diag.responsibilitySide === 'cds' ? 'bg-warn-soft text-warn'
+                                  : diag.responsibilitySide === 'code' ? 'bg-bad-soft text-bad'
+                                  : diag.responsibilitySide === 'config' ? 'bg-info-soft text-info'
                                   : 'bg-gray-500/15 text-gray-600 dark:text-gray-400'
                               }`}>
                                 {diag.responsibilitySide === 'cds' ? 'CDS 侧'
@@ -2416,7 +2416,7 @@ export function BranchDetailDrawer({
                                   }`}
                                   onClick={() => openContainerLogs(svc.profileId)}
                                 >
-                                  <span className={`h-1.5 w-1.5 rounded-full ${svc.status === 'running' ? 'bg-emerald-500' : svc.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+                                  <span className={`h-1.5 w-1.5 rounded-full ${svc.status === 'running' ? 'bg-ok' : svc.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
                                   {svc.profileId}
                                   <span className="font-mono">:{svc.hostPort || '?'}</span>
                                 </button>
@@ -2440,7 +2440,7 @@ export function BranchDetailDrawer({
                                     title={`复制集副本容器 ${pid} · ${m.id}`}
                                     onClick={() => openContainerLogs(key)}
                                   >
-                                    <span className={`h-1.5 w-1.5 rounded-full ${m.status === 'running' ? 'bg-emerald-500' : m.status === 'error' ? 'bg-destructive' : 'bg-amber-500'}`} />
+                                    <span className={`h-1.5 w-1.5 rounded-full ${m.status === 'running' ? 'bg-ok' : m.status === 'error' ? 'bg-destructive' : 'bg-warn'}`} />
                                     {pid} · {m.id}
                                     <span className="font-mono">:{m.hostPort || '?'}</span>
                                   </button>
@@ -2811,7 +2811,7 @@ function DeploymentVersionLedger({
                 <span className="font-mono text-xs text-foreground" title={version.id}>{version.id.slice(0, 15)}</span>
                 <span className="font-mono text-xs text-muted-foreground">{version.commitSha.slice(0, 7)}</span>
                 {isCurrent ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary">当前版本</span> : null}
-                <span className={`rounded border px-1.5 py-0.5 text-[11px] ${reusable ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+                <span className={`rounded border px-1.5 py-0.5 text-[11px] ${reusable ? 'border-ok/30 bg-ok-soft text-ok' : 'border-warn/30 bg-warn-soft text-warn'}`}>
                   {reusable ? '产物可复用' : '仅记录'}
                 </span>
               </div>
@@ -2820,7 +2820,7 @@ function DeploymentVersionLedger({
                 <span>{new Date(version.createdAt).toLocaleString()}</span>
               </div>
               {!reusable && blockedReason ? (
-                <p className="mt-2 break-words text-xs leading-5 text-amber-700 dark:text-amber-300">{blockedReason}</p>
+                <p className="mt-2 break-words text-xs leading-5 text-warn">{blockedReason}</p>
               ) : null}
               {reusable ? (
                 <Button
@@ -2885,7 +2885,7 @@ function DeploymentRunLedger({
                 {message}
               </p>
               {run.failure?.suggestedAction ? (
-                <p className="mt-1 break-words text-xs leading-5 text-amber-700 dark:text-amber-300">
+                <p className="mt-1 break-words text-xs leading-5 text-warn">
                   建议: {run.failure.suggestedAction}
                 </p>
               ) : null}
@@ -2981,7 +2981,7 @@ function DeploymentRunDiagnosis({ runId }: { runId: string }): JSX.Element {
           {aiState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Braces />}
           {aiState.status === 'loading' ? aiState.message || 'AI 正在解释' : 'AI 解释'}
         </Button>
-        {aiState.status === 'error' ? <span className="text-xs text-amber-700 dark:text-amber-300">{aiState.message}</span> : null}
+        {aiState.status === 'error' ? <span className="text-xs text-warn">{aiState.message}</span> : null}
       </div>
     </div>
   );
@@ -2992,7 +2992,7 @@ function deploymentFailureOwnerLabel(owner: NonNullable<DeploymentRunSummary['fa
 }
 
 function deploymentRunStatusMeta(status: DeploymentRunStatus): { label: string; className: string } {
-  if (status === 'running') return { label: '部署成功', className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' };
+  if (status === 'running') return { label: '部署成功', className: 'border-ok/30 bg-ok-soft text-ok' };
   if (status === 'failed') return { label: '部署失败', className: 'border-destructive/30 bg-destructive/10 text-destructive' };
   if (status === 'cancelled') return { label: '已取消', className: 'border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-300' };
   const labels: Record<Exclude<DeploymentRunStatus, 'running' | 'failed' | 'cancelled'>, string> = {
@@ -3003,7 +3003,7 @@ function deploymentRunStatusMeta(status: DeploymentRunStatus): { label: string; 
     starting: '启动中',
     verifying: '验证中',
   };
-  return { label: labels[status], className: 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300' };
+  return { label: labels[status], className: 'border-info/30 bg-info-soft text-info' };
 }
 
 function deploymentRunTriggerLabel(trigger: DeploymentRunSummary['trigger']): string {
@@ -3073,7 +3073,7 @@ export function DeploymentCard({
           <span className="shrink-0 text-xs text-primary">查看日志</span>
         </div>
         {deployment.suggestion ? (
-          <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+          <div className="mt-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
             {deployment.suggestion}
           </div>
         ) : null}
@@ -3099,14 +3099,14 @@ function filterServiceLogs(state: ServiceLogsState, query: string): ServiceLogsS
 // 崩溃 / 调度器降温 / janitor 回收 / 用户手动停止 / auto-restart 都会留痕。
 function systemLogTypeMeta(type: string): { label: string; cls: string } {
   switch (type) {
-    case 'deploy': return { label: '部署', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' };
+    case 'deploy': return { label: '部署', cls: 'border-ok/30 bg-ok-soft text-ok' };
     case 'deploy-failed': return { label: '部署失败', cls: 'border-destructive/30 bg-destructive/10 text-destructive' };
-    case 'pull': return { label: '拉取', cls: 'border-sky-500/30 bg-sky-500/10 text-sky-600' };
-    case 'stop': return { label: '停止', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600' };
-    case 'restart': return { label: '重启', cls: 'border-sky-500/30 bg-sky-500/10 text-sky-600' };
+    case 'pull': return { label: '拉取', cls: 'border-info/30 bg-info-soft text-info' };
+    case 'stop': return { label: '停止', cls: 'border-warn/30 bg-warn-soft text-warn' };
+    case 'restart': return { label: '重启', cls: 'border-info/30 bg-info-soft text-info' };
     case 'crash': return { label: '崩溃', cls: 'border-destructive/30 bg-destructive/10 text-destructive' };
-    case 'branch-created': return { label: '新建', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' };
-    case 'branch-deleted': return { label: '回收', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-600' };
+    case 'branch-created': return { label: '新建', cls: 'border-ok/30 bg-ok-soft text-ok' };
+    case 'branch-deleted': return { label: '回收', cls: 'border-warn/30 bg-warn-soft text-warn' };
     default: return { label: type, cls: 'border-border bg-muted text-muted-foreground' };
   }
 }
@@ -3165,7 +3165,7 @@ function dispatchActionClass(action: GithubWebhookDelivery['dispatchAction']): s
   switch (action) {
     case 'deploy':
     case 'branch-created':
-      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+      return 'border-ok/30 bg-ok-soft text-ok';
     case 'error':
       return 'border-destructive/35 bg-destructive/10 text-destructive';
     case 'ignored':
@@ -3209,7 +3209,7 @@ function branchOriginInsight(branch: BranchDetailData): { label: string; summary
       summary: branch.githubRepoFullName
         ? `最近由 ${branch.githubRepoFullName} 的 GitHub 事件或关联提交驱动`
         : '该分支带有 GitHub 提交元数据，可在 Webhook 日志中追溯触发记录',
-      className: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+      className: 'border-info/35 bg-info-soft text-info',
     };
   }
   if ((branch.deployCount || 0) > 0 || (branch.pullCount || 0) > 0 || (branch.stopCount || 0) > 0) {
@@ -3222,7 +3222,7 @@ function branchOriginInsight(branch: BranchDetailData): { label: string; summary
   return {
     label: '待配置',
     summary: '还没有部署/拉取记录，也没有 webhook 关联。建议先检查项目设置，再执行首次部署',
-    className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    className: 'border-warn/35 bg-warn-soft text-warn',
   };
 }
 
@@ -3318,20 +3318,20 @@ function TriggerLogsPanel({
                 </div>
 
                 <div className="flex min-w-0 flex-wrap gap-1.5">
-                  <span className={`rounded border px-1.5 py-0.5 ${item.signatureValid ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-destructive/35 bg-destructive/10 text-destructive'}`}>
+                  <span className={`rounded border px-1.5 py-0.5 ${item.signatureValid ? 'border-ok/30 bg-ok-soft text-ok' : 'border-destructive/35 bg-destructive/10 text-destructive'}`}>
                     验签{item.signatureValid ? '通过' : '失败'}
                   </span>
                   {item.deployDispatched ? (
-                    <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">已派发部署</span>
+                    <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-ok">已派发部署</span>
                   ) : null}
                   {item.deployDispatchError ? (
                     <span className="rounded border border-destructive/35 bg-destructive/10 px-1.5 py-0.5 text-destructive">派发失败</span>
                   ) : null}
                   {item.deployDedupSkipped ? (
-                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">重复触发已去重</span>
+                    <span className="rounded border border-warn/30 bg-warn-soft px-1.5 py-0.5 text-warn">重复触发已去重</span>
                   ) : null}
                   {item.selfStatusBroadcast ? (
-                    <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">左下角更新提示已刷新</span>
+                    <span className="rounded border border-info/30 bg-info-soft px-1.5 py-0.5 text-info">左下角更新提示已刷新</span>
                   ) : null}
                   {item.branchId ? <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-muted-foreground">{item.branchId}</span> : null}
                 </div>
@@ -3682,10 +3682,10 @@ function ResourceConsole({
                         active
                           ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
                           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
-                      } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''} ${
+                      } ${resource.access === 'external' ? 'ring-1 ring-info/30' : ''} ${
                         isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
                       } ${chipInfo?.provisioning ? 'animate-pulse ring-2 ring-indigo-400/60' : ''} ${
-                        guarding ? 'animate-pulse ring-2 ring-emerald-400/70' : ''
+                        guarding ? 'animate-pulse ring-2 ring-ok/70' : ''
                       } ${canQuickReplica || canGuard ? 'pr-7' : ''}`}
                       onClick={() => onSelect(resource)}
                       title={`${resource.displayName}\n${resource.serviceName}${isReplicaSet ? `\n复制集：${(chipInfo?.members ?? 0) + 1} 个实例并排运行` : ''}`}
@@ -3724,7 +3724,7 @@ function ResourceConsole({
                       <button
                         type="button"
                         disabled={guarding}
-                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-emerald-500/50 bg-emerald-500/15 text-emerald-600 transition-colors hover:bg-emerald-500 hover:text-white disabled:opacity-60"
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-ok/50 bg-ok-soft text-ok transition-colors hover:bg-ok hover:text-white disabled:opacity-60"
                         title={guarding ? '正在整库克隆隔离副本…' : '保护罩：一键把当前库克隆成隔离副本（保留在数据快照列表，可随时删除）'}
                         onClick={(e) => { e.stopPropagation(); void onDbGuard?.(infraId); }}
                       >
@@ -3905,12 +3905,12 @@ function ResourceOverview({ resource, branchName }: { resource: BranchResource; 
         ))}
       </div>
       {(resource.dependsOn || []).length > 0 ? (
-        <div className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-300">
+        <div className="rounded-md border border-info/25 bg-info-soft px-3 py-2 text-xs leading-5 text-info">
           依赖关系：{resource.displayName} 依赖 {resource.dependsOn.join(', ')}。连接变化后应提示重新部署依赖应用。
         </div>
       ) : null}
       {(resource.consumers || []).length > 0 ? (
-        <div className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-300">
+        <div className="rounded-md border border-info/25 bg-info-soft px-3 py-2 text-xs leading-5 text-info">
           被依赖：{resource.consumers.join(', ')} 使用 {resource.displayName}。连接变量变更后建议重新部署这些应用。
         </div>
       ) : null}
@@ -4042,7 +4042,7 @@ function ResourceConnection({
         </div>
       ))}
       {connectionMessage ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground">{connectionMessage}</div> : null}
-      <div className="grid gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+      <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="font-semibold">外部访问控制</div>
@@ -4085,21 +4085,21 @@ function ResourceConnection({
         </div>
         <div className="grid gap-2 md:grid-cols-[140px_minmax(0,1fr)]">
           <label className="grid gap-1">
-            <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">有效期（分钟）</span>
+            <span className="text-[11px] text-warn/80 /80">有效期（分钟）</span>
             <input
               value={ttlDraft}
               onChange={(event) => setTtlDraft(event.target.value)}
-              className="h-8 rounded-md border border-amber-500/30 bg-background px-2 font-mono text-xs outline-none focus:border-amber-500"
+              className="h-8 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
               inputMode="numeric"
               placeholder="120"
             />
           </label>
           <label className="grid gap-1">
-            <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
+            <span className="text-[11px] text-warn/80 /80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
             <textarea
               value={allowlistDraft}
               onChange={(event) => setAllowlistDraft(event.target.value)}
-              className="min-h-[64px] resize-y rounded-md border border-amber-500/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-amber-500"
+              className="min-h-[64px] resize-y rounded-md border border-warn/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-warn"
               placeholder="203.0.113.10/32"
               spellCheck={false}
             />
@@ -4317,7 +4317,7 @@ function PlannedResourceWorkbenchPanel({ resource, adapter }: { resource: Branch
               {resource.displayName} · :{resource.port || resource.containerPort || '?'}
             </div>
           </div>
-          <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-700 dark:text-amber-300">
+          <span className="rounded-md border border-warn/30 bg-warn-soft px-2.5 py-1 text-xs text-warn">
             执行器待接入
           </span>
         </div>
@@ -4374,27 +4374,27 @@ function highlightedCode(value: string, language: 'sql' | 'json' | 'mongo'): Rea
     const text = match[0];
     const className = language === 'sql'
       ? match[1]
-        ? 'text-sky-600 dark:text-sky-300'
+        ? 'text-info'
         : match[2]
-          ? 'text-emerald-700 dark:text-emerald-300'
+          ? 'text-ok'
           : match[3]
             ? 'text-muted-foreground'
-            : 'text-amber-700 dark:text-amber-300'
+            : 'text-warn'
       : language === 'mongo'
         ? match[1]
-          ? 'text-sky-600 dark:text-sky-300'
+          ? 'text-info'
           : match[2]
-            ? 'text-emerald-700 dark:text-emerald-300'
+            ? 'text-ok'
             : match[3]
               ? 'text-violet-600 dark:text-violet-300'
-              : 'text-amber-700 dark:text-amber-300'
+              : 'text-warn'
       : match[1]
-        ? 'text-sky-600 dark:text-sky-300'
+        ? 'text-info'
         : match[2]
-          ? 'text-emerald-700 dark:text-emerald-300'
+          ? 'text-ok'
           : match[3]
             ? 'text-violet-600 dark:text-violet-300'
-            : 'text-amber-700 dark:text-amber-300';
+            : 'text-warn';
     nodes.push(<span key={`${match.index}-${text}`} className={className}>{text}</span>);
     lastIndex = pattern.lastIndex;
   }
@@ -4729,7 +4729,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                           }}
                         >
                           <span className="text-muted-foreground">{activeDatabase ? '▾' : '▸'}</span>
-                          <Database className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                          <Database className="h-3.5 w-3.5 shrink-0 text-ok" />
                           <span className="min-w-0 flex-1 truncate font-mono">{db.name}</span>
                           {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">默认</span> : null}
                           {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">系统</span> : null}
@@ -4854,8 +4854,8 @@ function MongoStructuredWritePanel({
   const jsonCls = `${inputCls} min-h-[64px] font-mono leading-5`;
   const canSubmit = !disabled && state.status !== 'loading' && (form.collection || selectedCollection).trim().length > 0 && form.confirm.trim().length > 0;
   return (
-    <details className="mt-3 rounded-md border border-amber-400/35 bg-amber-400/5">
-      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+    <details className="mt-3 rounded-md border border-warn/35 bg-warn/5">
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-warn">
         结构化写入（insertOne / updateMany / deleteMany）
       </summary>
       <div className="space-y-2 border-t border-[hsl(var(--hairline))] p-3">
@@ -5879,7 +5879,7 @@ function ResourceBackupsPanel({
                   <div className="font-medium">{task.mode} · {task.strategy}</div>
                   <div className="truncate text-muted-foreground">{task.progressMessage || task.status}</div>
                 </div>
-                <span className={`rounded border px-2 py-0.5 ${task.status === 'completed' ? 'border-emerald-500/30 text-emerald-600' : task.status === 'failed' ? 'border-destructive/30 text-destructive' : 'border-amber-500/30 text-amber-600'}`}>
+                <span className={`rounded border px-2 py-0.5 ${task.status === 'completed' ? 'border-ok/30 text-ok' : task.status === 'failed' ? 'border-destructive/30 text-destructive' : 'border-warn/30 text-warn'}`}>
                   {task.progress}%
                 </span>
               </div>
@@ -6152,7 +6152,7 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
 
   return (
     <div className="space-y-3 text-sm">
-      <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${permissions ? 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+      <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${permissions ? 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground' : 'border-warn/30 bg-warn-soft text-warn'}`}>
         当前权限：{permissions ? permissions.role : '加载中'}。生产相关资源：{permissions?.productionLike ? '是' : '否'}。
         {permissions?.role === 'member' ? '普通成员只能查看连接信息，写入类按钮会被禁用。' : null}
       </div>
@@ -6358,7 +6358,7 @@ function HttpLogsPanel({ events, query }: { events: DrawerActivityEvent[]; query
           return (
             <div key={`${event.id || index}-${event.ts || ''}`} className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs">
               <span className="font-mono text-muted-foreground">{event.method || '-'}</span>
-              <span className={`rounded border px-1.5 py-0.5 ${ok ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
+              <span className={`rounded border px-1.5 py-0.5 ${ok ? 'border-ok/30 bg-ok-soft text-ok' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
                 {event.status || '-'}
               </span>
               <span className="min-w-0 truncate font-mono text-muted-foreground" title={event.path || event.label || ''}>
@@ -6506,7 +6506,7 @@ function VariablesPanel({
         </Button>
       </header>
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-4 py-2 text-[11px] leading-5 text-muted-foreground">
-        当前编辑范围:<span className="mx-1 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-medium text-amber-700 dark:text-amber-300">仅本分支</span>
+        当前编辑范围:<span className="mx-1 rounded border border-warn/35 bg-warn-soft px-1.5 py-0.5 font-medium text-warn">仅本分支</span>
         。分支覆盖优先级最高，左侧出现橙色“分支覆盖”即表示该 key 被当前分支改写。
         项目级默认值仍在 <a className="text-primary underline-offset-2 hover:underline" href={`/settings/${encodeURIComponent(projectId)}?tab=env`}>项目环境变量</a> 中维护。
       </div>
@@ -6520,7 +6520,7 @@ function VariablesPanel({
             onToast={onToast}
             onChanged={onEnvChanged}
             topContent={(
-              <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+              <div className="rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
                 保存目标是分支 scope <code className="font-mono">{branchId}</code>，不会写入项目环境变量。
               </div>
             )}
@@ -6656,13 +6656,13 @@ function envSourceLabel(s: EnvSource): string {
 function envSourceClass(s: EnvSource): string {
   switch (s) {
     case 'branch':
-      return 'border-amber-500/45 bg-amber-500/15 text-amber-700 dark:text-amber-300';
+      return 'border-warn/45 bg-warn-soft text-warn';
     case 'project':
-      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+      return 'border-ok/30 bg-ok-soft text-ok';
     case 'global':
-      return 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300';
+      return 'border-info/30 bg-info-soft text-info';
     case 'mirror':
-      return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+      return 'border-warn/30 bg-warn-soft text-warn';
     case 'cds-derived':
     case 'cds-builtin':
       return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
@@ -6690,7 +6690,7 @@ function hasProfileOverrideFields(override: BuildProfileOverride): boolean {
 }
 
 function runtimeClass(kind?: 'source' | 'release' | 'mixed'): string {
-  if (kind === 'release') return 'border-emerald-400/35 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300';
+  if (kind === 'release') return 'border-ok/35 bg-ok/10 text-ok';
   if (kind === 'mixed') return 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300';
   return 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
 }
@@ -6795,11 +6795,11 @@ function SettingsPanel({
                     <div className="truncate text-sm font-medium">{profile.profileName || profile.profileId}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span className="font-mono">{profile.profileId}</span>
-                      <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-[hsl(var(--hairline))]'}`}>
+                      <span className={`rounded border px-1.5 py-0.5 ${hasBranchModeOverride ? 'border-warn/40 bg-warn-soft text-warn' : 'border-[hsl(var(--hairline))]'}`}>
                         {hasBranchModeOverride ? '本分支覆盖' : '继承默认'}
                       </span>
                       {(dbScopeOverride ?? inheritedDbScope) === 'per-branch' ? (
-                        <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
+                        <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-ok">
                           分支独立库
                         </span>
                       ) : null}
@@ -6876,8 +6876,8 @@ function SettingsPanel({
 
       {/* 异常恢复 */}
       {isError ? (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <div className="mb-2 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+        <div className="rounded-md border border-warn/30 bg-warn-soft px-4 py-3">
+          <div className="mb-2 flex items-center gap-2 text-sm text-warn">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span>分支处于异常状态。修代码后重新部署,或先重置异常清空错误标记。</span>
           </div>
@@ -7190,8 +7190,8 @@ function MetricBar({
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
   const colorClass =
     pct > 85 ? 'bg-destructive'
-      : pct > 65 ? 'bg-amber-500'
-        : 'bg-emerald-500';
+      : pct > 65 ? 'bg-warn'
+        : 'bg-ok';
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between text-xs">

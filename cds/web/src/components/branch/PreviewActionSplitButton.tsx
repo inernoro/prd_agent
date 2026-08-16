@@ -41,20 +41,20 @@ export function PreviewActionSplitButton({
   fill = false,
 }: PreviewActionSplitButtonProps): JSX.Element {
   const mainClassName = [
-    'inline-flex h-9 items-center justify-center rounded-l-md border border-emerald-500/35 bg-emerald-500/10 text-emerald-500 transition-colors',
+    'inline-flex h-9 items-center justify-center rounded-l-md border border-ok/35 bg-ok-soft text-ok transition-colors',
     fill ? 'min-w-0 flex-1 gap-2 px-3 text-sm font-medium' : 'w-10',
-    'hover:border-emerald-500/50 hover:bg-emerald-500/15 hover:text-emerald-400',
-    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/35',
+    'hover:border-ok/50 hover:bg-ok-soft hover:text-ok',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/35',
     disabled ? 'pointer-events-none opacity-50' : '',
   ].join(' ');
   const menuTrigger = (
     <button
       type="button"
       className={[
-        'inline-flex h-9 items-center justify-center rounded-r-md border border-l-0 border-emerald-500/35 bg-emerald-500/10 text-emerald-500 transition-colors',
+        'inline-flex h-9 items-center justify-center rounded-r-md border border-l-0 border-ok/35 bg-ok-soft text-ok transition-colors',
         fill ? 'w-10' : 'w-7',
-        'hover:border-emerald-500/50 hover:bg-emerald-500/15 hover:text-emerald-400',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/35',
+        'hover:border-ok/50 hover:bg-ok-soft hover:text-ok',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ok/35',
         disabled ? 'pointer-events-none opacity-50' : '',
       ].join(' ')}
       disabled={disabled}

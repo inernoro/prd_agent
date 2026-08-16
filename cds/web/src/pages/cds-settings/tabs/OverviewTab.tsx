@@ -48,8 +48,8 @@ export function OverviewTab(): JSX.Element {
         <div
           className={
             storageReady
-              ? 'rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-4'
-              : 'rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-4'
+              ? 'rounded-md border border-ok/30 bg-ok-soft px-4 py-4'
+              : 'rounded-md border border-warn/40 bg-warn-soft px-4 py-4'
           }
         >
           <div className="grid gap-4 md:grid-cols-3">

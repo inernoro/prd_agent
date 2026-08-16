@@ -183,7 +183,13 @@ function parseJobInput(body: any, stateService: StateService): {
 
   const schedule = parseSchedule(body?.schedule);
   if ('error' in schedule) return schedule;
-  const actions = parseActions(body?.actions, body?.target, { projectId, stateService });
+  const actions = parseActions(body?.actions, body?.target, {
+    projectId,
+    stateService,
+    // 只有事件驱动规则才允许留空来源分支——定时规则仍然必须绑定一个具体分支，
+    // 否则到点了没人知道要发什么。
+    allowDeferredBranch: schedule.type === 'push',
+  });
   if ('error' in actions) return actions;
 
   const hasRelease = actions.some((action) => action.type === 'release');
@@ -203,12 +209,23 @@ function parseJobInput(body: any, stateService: StateService): {
   };
 }
 
+const SCHEDULE_TYPES = ['manual', 'interval', 'daily', 'push'] as const;
+
 function parseSchedule(raw: any): ScheduledJobSchedule | { error: string } {
-  const type = raw?.type === 'manual' || raw?.type === 'interval' || raw?.type === 'daily' ? raw.type : '';
+  const type = SCHEDULE_TYPES.includes(raw?.type) ? (raw.type as typeof SCHEDULE_TYPES[number]) : '';
   const timezone = cleanText(raw?.timezone, 80) || 'Asia/Shanghai';
   if (!type) return { error: '调度类型无效' };
   if (!isValidTimeZone(timezone)) return { error: '时区无效' };
   if (type === 'manual') return { type, timezone };
+  if (type === 'push') {
+    // 分支 glob 必须给：留空会匹配不到任何分支，规则建了却永远不触发，
+    // 而且没有任何地方会报错——这种「静默不生效」比直接拒绝糟得多。
+    const branchPattern = cleanText(raw?.branchPattern, 200);
+    if (!branchPattern) return { error: '分支匹配不能为空（例如 main 或 release/*）' };
+    const event = raw?.event === 'pr-open' ? 'pr-open' : 'push';
+    const pathPattern = cleanText(raw?.pathPattern, 200);
+    return { type, branchPattern, event, ...(pathPattern ? { pathPattern } : {}), timezone };
+  }
   if (type === 'interval') {
     return { type, intervalMinutes: clampInt(raw?.intervalMinutes, 60, 1, 60 * 24 * 30), timezone };
   }
@@ -221,6 +238,8 @@ function parseSchedule(raw: any): ScheduledJobSchedule | { error: string } {
 interface ParseTargetContext {
   projectId: string;
   stateService: StateService;
+  /** push 规则专用：来源分支由事件决定，建规则时允许留空。 */
+  allowDeferredBranch?: boolean;
 }
 
 function parseActions(rawActions: any, legacyTarget: any, ctx: ParseTargetContext): ScheduledJobAction[] | { error: string } {
@@ -308,7 +327,13 @@ function parseReleaseSource(raw: any, ctx: ParseTargetContext): ReleaseJobSource
   }
   if (raw?.kind === 'branch') {
     const branchId = cleanText(raw.branchId, 120);
-    if (!branchId) return { error: '来源分支必填' };
+    // 事件驱动规则（schedule.type = 'push'）存的是分支 **glob**，发哪个分支要等事件
+    // 发生才知道，由 runPushRules 现场覆盖。所以这里允许留空——若照定时规则那样
+    // 要求填一个固定分支，`release/*` 这条规则就只能绑死其中一个 release 分支。
+    if (!branchId) {
+      if (ctx.allowDeferredBranch) return { kind: 'branch', branchId: '' };
+      return { error: '来源分支必填' };
+    }
     const branch = ctx.stateService.getBranch(branchId);
     if (!branch) return { error: `来源分支不存在: ${branchId}` };
     if (branch.projectId !== ctx.projectId) {
@@ -355,6 +380,12 @@ function normalizeScheduleForCompare(schedule: ScheduledJobSchedule): string {
     type: schedule.type,
     intervalMinutes: schedule.type === 'interval' ? schedule.intervalMinutes : undefined,
     timeOfDay: schedule.type === 'daily' ? schedule.timeOfDay : undefined,
+    // push 规则的三个字段也要参与比较：漏掉的话改了分支 glob 却被判成
+    // 「调度没变」，nextRunAt 被原样保留（push 规则恒为 null 倒是无害），
+    // 但更要命的是 UI 的「有未保存更改」判据也会跟着失灵。
+    branchPattern: schedule.type === 'push' ? schedule.branchPattern : undefined,
+    event: schedule.type === 'push' ? schedule.event : undefined,
+    pathPattern: schedule.type === 'push' ? schedule.pathPattern || '' : undefined,
     timezone: schedule.timezone || 'Asia/Shanghai',
   });
 }
