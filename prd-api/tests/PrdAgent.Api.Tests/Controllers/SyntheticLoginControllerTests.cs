@@ -173,9 +173,17 @@ public sealed class SyntheticLoginControllerTests
             "prd-api/src/PrdAgent.Api/appsettings.json"));
 
         Assert.Contains("prod-rsa-2026-08", settings);
-        Assert.Contains("map.ebcone.net", settings);
+        Assert.Contains("\"AllowedHost\": \"\"", settings);
         Assert.DoesNotContain("PRIVATE KEY", settings, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("SigningPrivateKey", settings, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("https://preview.example.test/path", "preview.example.test")]
+    [InlineData("preview.example.test", "preview.example.test")]
+    public void StableSmokeAllowedHost_ShouldAcceptDeploymentUrlOrHost(string configured, string expected)
+    {
+        Assert.Equal(expected, StableSmokeAuthenticationHandler.ResolveAllowedHost(configured));
     }
 
     [Fact]

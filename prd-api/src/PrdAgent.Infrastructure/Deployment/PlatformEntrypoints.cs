@@ -7,7 +7,7 @@ namespace PrdAgent.Infrastructure.Deployment;
 /// 读取平台（CDS）注入的「本部署已发布入口表」。
 ///
 /// 背景（2026-07-29）：MAP 前端此前自己在浏览器里按 hostname 拼兄弟服务的公网域名
-/// （`<预览 slug>` + `-llmgw-web` + `.miduo.org`）来跳模型网关控制台。那是 CDS 之外的
+/// 来跳模型网关控制台。那是 CDS 之外的
 /// 第二份域名推算实现，违反根 CLAUDE.md 规则 #11（禁止自己 slugify / 拼域名），并且会
 /// 在分支名长时拼出一个 CDS 根本没发布的 host —— 命名子域的第一 DNS 标签超过 63 octet
 /// 时 CDS 直接跳过不发布，前端却照拼，用户点开只看到「域名不存在」。

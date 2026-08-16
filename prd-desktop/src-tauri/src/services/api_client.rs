@@ -6,8 +6,11 @@ use tokio_util::sync::CancellationToken;
 
 use crate::models::{ApiError, ApiResponse, LoginResponse};
 
-/// 默认 API 地址（非开发者），可通过环境变量 API_BASE_URL 覆盖
-const DEFAULT_API_URL: &str = "https://map.ebcone.net";
+/// 默认 API 地址由构建环境注入，运行时仍可由 API_BASE_URL 或本机配置覆盖。
+const DEFAULT_API_URL: &str = match option_env!("PRD_AGENT_API_BASE_URL") {
+    Some(value) => value,
+    None => "",
+};
 
 lazy_static::lazy_static! {
     static ref API_BASE_URL: RwLock<String> = RwLock::new(

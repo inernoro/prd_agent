@@ -63,7 +63,7 @@ export interface DedupResult {
 /**
  * 按行去重。
  *
- * 算法严格对照源页 `https://bd.t.miduonet.com/easy-bug/sql` 去重 tab 的实现：
+ * 算法严格对照历史 SQL 工具去重 tab 的实现：
  * 1. split('\n')
  * 2. 如选 trimSpaces，先 trim
  * 3. 过滤空行

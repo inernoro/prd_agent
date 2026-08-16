@@ -1379,7 +1379,7 @@ public class CreateShortcutRequest
     /// <summary>工作流变量默认值（绑定 workflow 时使用）</summary>
     public Dictionary<string, string>? BindingVariables { get; set; }
 
-    /// <summary>前端传入的基础 URL（如 https://miduo.org），用于生成正确的二维码地址</summary>
+    /// <summary>前端传入的部署基础 URL，用于生成正确的二维码地址</summary>
     public string? ClientBaseUrl { get; set; }
 }
 

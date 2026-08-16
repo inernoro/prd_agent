@@ -554,7 +554,7 @@ public class InfraAgentSessionsControllerTests
             applyRunbook.Safety.ShouldContain("destructive");
             applyRunbook.ApplyManifest.ShouldNotBeNull().Safety.ShouldBe("destructive_remote_delete_build_profile");
             applyRunbook.ApplyManifest.Method.ShouldBe("DELETE");
-            applyRunbook.ApplyManifest.Endpoint.ShouldBe("https://cds.miduo.org/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent");
+            applyRunbook.ApplyManifest.Endpoint.ShouldBe("<configured-CDS_HOST>/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent");
             applyRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "unique_candidate_profile").Passed.ShouldBeFalse();
             applyRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-branch-isolation.sh");
             var managedRuntimeRunbook = executionPanel.Runbook.Single(x => x.CommandCode == "managed-runtime-capacity");
@@ -689,7 +689,7 @@ public class InfraAgentSessionsControllerTests
             executionPanel.CurrentBlockingGate.ShouldBe("R1");
             executionPanel.BlockingReason.ShouldContain("Anthropic-compatible Messages endpoint");
             executionPanel.DeploymentAdvice.ShouldContain("不要靠重新部署解决 R1");
-            executionPanel.NextCommand.ShouldBe("CDS_HOST=https://cds.miduo.org bash scripts/smoke-cds-agent-r1-profile-repair.sh");
+            executionPanel.NextCommand.ShouldBe("CDS_HOST=<configured-CDS_HOST> bash scripts/smoke-cds-agent-r1-profile-repair.sh");
             executionPanel.NextCommandCode.ShouldBe("r1-dry-run");
             executionPanel.NextCommandSafety.ShouldContain("read-only");
             executionPanel.Runbook.Single(x => x.Code == "R1-profile").Status.ShouldBe("active");

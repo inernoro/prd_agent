@@ -74,7 +74,7 @@ public sealed class StableSmokeAuthenticationHandler
         var key = matchingKeys.Count == 1 ? matchingKeys[0] : null;
         if (key is null || !key.IsComplete)
             return Fail("key_not_configured");
-        if (!string.Equals(Request.Host.Host, key.AllowedHost, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(Request.Host.Host, ResolveAllowedHost(key.AllowedHost), StringComparison.OrdinalIgnoreCase))
             return Fail("host_mismatch");
 
         if (!TryReadSignatureHeaders(Request, out var timestamp, out var nonce, out var signature))
@@ -147,6 +147,14 @@ public sealed class StableSmokeAuthenticationHandler
     internal static IReadOnlyList<StableSmokePublicKeyOptions> ReadKeys(IConfiguration configuration) =>
         configuration.GetSection("StableSmokeAuthentication:Keys")
             .Get<List<StableSmokePublicKeyOptions>>() ?? new List<StableSmokePublicKeyOptions>();
+
+    internal static string ResolveAllowedHost(string configuredValue)
+    {
+        var value = configuredValue.Trim();
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri)
+            ? uri.Host
+            : value.TrimEnd('/');
+    }
 
     internal static bool IsAllowedRequest(string method, string path) =>
         AllowedRequests.Contains((method, path));

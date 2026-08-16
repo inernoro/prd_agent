@@ -13,9 +13,10 @@ import {
 import { StreamingText } from '@/components/streaming';
 import { ChatMarkdown } from './ChatMarkdown';
 import { PaSecretaryHeroArt } from '@/pages/ai-toolbox/components/PaSecretaryHeroArt';
+import { readPublicDeploymentConfig } from '@/lib/runtimeConfig';
 
-/** 「进一步了解我」外链 — 米多内部 wp 链接，承载毒舌秘书完整产品介绍 */
-const LEARN_MORE_URL = 'https://map.ebcone.net/s/wp/0q1-vbQ9HehA';
+/** 「进一步了解我」由部署环境注入；未配置时不渲染外链。 */
+const LEARN_MORE_URL = readPublicDeploymentConfig('VITE_PA_LEARN_MORE_URL');
 
 // ── Quick commands（毒舌秘书风格，零 emoji） ──────────────────────────────
 
@@ -508,24 +509,22 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
               ))}
             </div>
 
-            {/* 二级 CTA：进一步了解我（ghost 按钮，外链新窗口） */}
-            <a
-              href={LEARN_MORE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="pa-learn-more group inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-medium border"
-              style={{
-                background: 'transparent',
-                color: 'var(--text-muted)',
-              }}
-              title="打开毒舌秘书完整介绍（外链 · 新窗口）"
-            >
-              <span>进一步了解我</span>
-              <ExternalLink
-                size={10}
-                className="opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
-              />
-            </a>
+            {LEARN_MORE_URL && (
+              <a
+                href={LEARN_MORE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="pa-learn-more group inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-medium border"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--text-muted)',
+                }}
+                title="打开毒舌秘书完整介绍（外链 · 新窗口）"
+              >
+                <span>进一步了解我</span>
+                <ExternalLink size={10} />
+              </a>
+            )}
 
             <div className="flex items-center gap-2 text-[10.5px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
               <kbd

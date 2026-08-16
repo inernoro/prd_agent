@@ -280,6 +280,7 @@ services:
       Deployment__LegacyOwnerCreatedBeforeUtc: ""
       # CDS 自动验收永久入口：仍需通过仓库登记的 RSA 公钥签名，显式开关可独立熔断。
       SYNTHETIC_LOGIN_ENABLED: "true"
+      StableSmokeAuthentication__Keys__0__AllowedHost: "${CDS_PREVIEW_URL}"
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
@@ -290,6 +291,7 @@ services:
       # 避免依赖代码缺省值。单个业务调用方通过项目级白名单渐进切到 HTTP 权威，
       # 不需要把整个 CDS 环境一次性切成 http/shadow。
       LlmGateway__Mode: "inproc"
+      OpenRouter__HttpReferer: "${CDS_PREVIEW_URL}"
       # CDS 将 profile env 原样写入容器，不展开 Docker Compose 的 `${KEY:-default}` 语法。
       # 录音转写调用方固定走独立 serving 权威；如需扩展灰度范围，必须通过受审 compose 导入修改。
       LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr"
@@ -299,7 +301,7 @@ services:
       # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
       # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
       # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
-      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
+      LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"
       LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
@@ -346,6 +348,13 @@ services:
       pnpm config set store-dir /pnpm/store &&
       pnpm install --frozen-lockfile &&
       pnpm exec vite --host 0.0.0.0 --port 8000
+    environment:
+      # 仅公开展示配置可进入 VITE_*；敏感值禁止放入浏览器构建或运行环境。
+      VITE_CONTACT_EMAIL: "${VITE_CONTACT_EMAIL:-}"
+      VITE_FRONT_END_PDA_LINKS_JSON: "${VITE_FRONT_END_PDA_LINKS_JSON:-}"
+      VITE_FRONT_END_PROJECT_REGISTRY_JSON: "${VITE_FRONT_END_PROJECT_REGISTRY_JSON:-}"
+      VITE_PA_LEARN_MORE_URL: "${VITE_PA_LEARN_MORE_URL:-}"
+      VITE_PUBLIC_DOCS_URL: "${VITE_PUBLIC_DOCS_URL:-}"
     labels:
       cds.path-prefix: "/"
       # 用户入口由 CDS 直接从本文件维护。path-prefix=/ 会自动将本服务识别为
@@ -433,6 +442,7 @@ services:
       LlmGateway__Retention__WorkerEnabled: "true"
       LlmGateway__Retention__ApplyChanges: "false"
       LlmGateway__Retention__EnableTtlIndexes: "false"
+      OpenRouter__HttpReferer: "${CDS_PREVIEW_URL}"
       # M2M 密钥门：**bare `${LLMGW_SERVE_API_KEY}` 不带 fallback**（Codex P1）。本 serving 只在 CDS
       # 容器网络内供 api 调用，但仍禁止仓库可见 fallback；未注入时由 serving 生产守卫 fail-closed。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"

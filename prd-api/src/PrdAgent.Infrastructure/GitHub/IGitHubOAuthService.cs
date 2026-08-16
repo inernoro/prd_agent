@@ -9,7 +9,7 @@ namespace PrdAgent.Infrastructure.GitHub;
 ///   GitHub 账号做事的应用（PR 审查、日报、其他检测等）都能直接注入使用。
 ///
 /// 为什么用 Device Flow 而不是 Web Flow：
-///   本项目部署在 CDS 动态域名（每分支一个 <c>&lt;branch&gt;.miduo.org</c>）。
+///   本项目部署在 CDS 每分支动态入口。
 ///   Web Flow 要求 Callback URL 预先注册且不支持通配符，CDS 上根本不可用；
 ///   Device Flow 完全不需要 Callback URL，本地/CDS/生产共用一套代码，
 ///   是 <c>gh auth login</c> 同款机制。

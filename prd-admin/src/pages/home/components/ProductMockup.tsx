@@ -28,6 +28,7 @@ import { HERO_GRADIENT, HERO_GRADIENT_FG } from '../sections/HeroSection';
 export function ProductMockup() {
   const { t } = useLanguage();
   const mock = t.productMockup;
+  const productHost = typeof window === 'undefined' ? 'current-host' : window.location.host;
   return (
     <div className="relative mx-auto w-full max-w-5xl">
       {/* 下方柔和光晕（作为"产品从暗处浮起来"的基座） */}
@@ -60,7 +61,7 @@ export function ProductMockup() {
             className="ml-4 px-3 py-1 rounded-md bg-white/[0.04] text-[11px] text-white/40 font-mono"
             style={{ letterSpacing: '0.02em' }}
           >
-            map.miduo.org / visual-agent
+            {productHost} / visual-agent
           </div>
           <div className="ml-auto text-[10px] text-white/30 uppercase" style={{ letterSpacing: '0.15em' }}>
             MAP

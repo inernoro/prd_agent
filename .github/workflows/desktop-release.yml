@@ -526,7 +526,15 @@ jobs:
           # Tauri updater 签名
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 部署入口只存在于仓库变量，不写入源码。Vite 与 Rust 必须消费同一值。
+          VITE_DESKTOP_API_BASE_URL: ${{ vars.PRD_AGENT_API_BASE_URL }}
+          VITE_DESKTOP_PRESET_SERVERS_JSON: ${{ vars.PRD_AGENT_DESKTOP_PRESET_SERVERS_JSON }}
+          PRD_AGENT_API_BASE_URL: ${{ vars.PRD_AGENT_API_BASE_URL }}
         run: |
+          if [[ -z "${PRD_AGENT_API_BASE_URL:-}" ]]; then
+            echo "Error: repository variable PRD_AGENT_API_BASE_URL is required"
+            exit 1
+          fi
           echo "[INFO] Building Tauri app for target: ${{ matrix.target }}"
           if [[ "${MACOS_NOTARIZE:-false}" != "true" ]]; then
             echo "[INFO] macOS notarization disabled; signed artifacts will still be produced"

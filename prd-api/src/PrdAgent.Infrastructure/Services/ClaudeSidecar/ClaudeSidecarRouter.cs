@@ -831,9 +831,6 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
 
         var domain = FirstConfigValue("MAP_PREVIEW_DOMAIN", "CDS_PREVIEW_DOMAIN", "PREVIEW_DOMAIN", "PreviewDomain");
-        if (string.IsNullOrWhiteSpace(domain))
-            domain = "miduo.org";
-
         var slug = ComputePreviewSlug(branch, project);
         if (string.IsNullOrWhiteSpace(slug) || string.IsNullOrWhiteSpace(domain))
             return null;
@@ -861,7 +858,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     /// 用本函数从 GIT_BRANCH + GITHUB_REPOSITORY 自己推算。两边任一改公式都必须同步，
     /// 由 `prd-api/tests/PrdAgent.Tests/PreviewSlugParityTests.cs` 校验对齐。
     ///
-    /// 历史踩坑：曾用 v1 公式 `${branchSlug}.miduo.org`，CDS 多项目改造后失效。
+    /// 历史踩坑：曾用仅含分支名的 v1 公式，CDS 多项目改造后失效。
     /// </summary>
     public static string? ComputePreviewSlug(string? branch, string? project)
     {

@@ -70,7 +70,7 @@ public class StorageSyncController : ControllerBase
 
     /// <summary>
     /// 从源域名同步系统资产到当前 Provider。
-    /// sourceBaseUrl 示例：https://i.miduo.org（旧 COS 域名）
+    /// sourceBaseUrl 由管理员在部署或迁移时显式提供。
     /// </summary>
     [HttpPost("sync-system-assets")]
     public async Task<IActionResult> SyncSystemAssets(
@@ -266,7 +266,7 @@ public class StorageSyncController : ControllerBase
 
     public class SyncSystemAssetsRequest
     {
-        /// <summary>源域名（如 https://i.miduo.org）</summary>
+        /// <summary>源服务基础地址</summary>
         public string SourceBaseUrl { get; set; } = string.Empty;
 
         /// <summary>仅预览不执行</summary>

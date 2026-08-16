@@ -17,6 +17,7 @@ import { MinimalFooter } from './sections/MinimalFooter';
 import { StaticBackdrop } from './components/StaticBackdrop';
 import { LanguageToggle } from './components/LanguageToggle';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
+import { readPublicDeploymentConfig } from '@/lib/runtimeConfig';
 
 /**
  * LandingPage — 米多 Agent 平台 /home
@@ -85,13 +86,15 @@ function LandingInner() {
   const navigate = useNavigate();
   const { t, lang } = useLanguage();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const contactEmail = readPublicDeploymentConfig('VITE_CONTACT_EMAIL');
+  const docsUrl = readPublicDeploymentConfig('VITE_PUBLIC_DOCS_URL');
 
   const handleGetStarted = () => navigate('/login');
   const handleWatchDemo = () => {
     document.getElementById('cinema')?.scrollIntoView({ behavior: 'smooth' });
   };
   const handleContact = () => {
-    window.open('mailto:contact@miduo.org', '_blank');
+    if (contactEmail) window.open(`mailto:${encodeURIComponent(contactEmail)}`, '_blank');
   };
 
   const navLinks = [
@@ -100,8 +103,8 @@ function LandingInner() {
     { label: t.nav.cinema, href: '#cinema' },
     { label: t.nav.community, href: '#pulse' },
     { label: t.nav.download, href: '#download' },
-    { label: t.nav.docs, href: 'https://github.com/inernoro/prd_agent', external: true },
-  ];
+    docsUrl ? { label: t.nav.docs, href: docsUrl, external: true } : null,
+  ].filter((item): item is { label: string; href: string; external?: boolean } => item !== null);
 
   return (
     <div
@@ -296,7 +299,7 @@ function LandingInner() {
       </div>
 
       <div id="cta" style={BELOW_FOLD_SECTION}>
-        <FinalCta onGetStarted={handleGetStarted} onContact={handleContact} />
+        <FinalCta onGetStarted={handleGetStarted} onContact={contactEmail ? handleContact : undefined} />
       </div>
 
       <MinimalFooter />

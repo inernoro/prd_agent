@@ -1088,7 +1088,11 @@ public class UsersController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
         }
 
-        _logger.LogInformation("Admin updated user {UserId} password, mustResetPassword set to true", userId);
+        var actorId = this.GetRequiredUserId();
+        _logger.LogInformation(
+            "Admin {ActorId} updated user {UserId} password, mustResetPassword set to true",
+            actorId,
+            userId);
 
         var response = new UserPasswordUpdateResponse
         {

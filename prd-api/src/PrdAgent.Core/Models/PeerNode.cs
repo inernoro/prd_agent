@@ -18,7 +18,7 @@ public class PeerNode
     /// <summary>对端展示名（如「正式环境」），配对时由对端 handshake 返回 / 本端可改</summary>
     public string DisplayName { get; set; } = string.Empty;
 
-    /// <summary>对端 baseUrl（含可能的子路径前缀，如 https://xxx.miduo.org/prod）</summary>
+    /// <summary>对端 baseUrl（可含子路径前缀）</summary>
     public string BaseUrl { get; set; } = string.Empty;
 
     /// <summary>双方共享密钥（base64，仅后端可见，永不出现在 URL / 日志 / 前端）。HMAC 签名用。</summary>

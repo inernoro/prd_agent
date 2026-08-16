@@ -12,6 +12,7 @@ import { useDesktopBrandingStore } from '../../stores/desktopBrandingStore';
 import { useClientConfigStore } from '../../stores/clientConfigStore';
 import { useUpdateStore } from '../../stores/updateStore';
 import NetworkDiagnosticsModal from '../NetworkDiagnosticsModal';
+import { DESKTOP_DEFAULT_API_URL, DESKTOP_PRESET_SERVERS } from '../../lib/deploymentConfig';
 
 interface ApiTestResult {
   success: boolean;
@@ -20,18 +21,10 @@ interface ApiTestResult {
   serverStatus: string | null;
 }
 
-const DEFAULT_API_URL_NON_DEV = 'https://map.ebcone.net';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
 
-/** 预设服务器列表（用户可直接选择，无需手动输入） */
-const PRESET_SERVERS = [
-  { label: 'map.ebcone.net', url: 'https://map.ebcone.net' },
-  { label: 'miduo.org', url: 'https://miduo.org' },
-  { label: 'sassagent.com', url: 'https://sassagent.com' },
-];
-
 function getDefaultApiUrl(isDeveloper: boolean, effectiveDefault?: string) {
-  return isDeveloper ? DEFAULT_API_URL_DEV : (effectiveDefault ?? DEFAULT_API_URL_NON_DEV);
+  return isDeveloper ? DEFAULT_API_URL_DEV : (effectiveDefault ?? DESKTOP_DEFAULT_API_URL);
 }
 
 function byteLen(s: string): number {
@@ -79,9 +72,9 @@ export default function SettingsModal() {
   const remotePresetServers = useClientConfigStore((s) => s.presetServers);
   const remoteDefaultApiUrl = useClientConfigStore((s) => s.defaultApiUrl);
 
-  // 动态配置：远程优先，硬编码兜底
-  const effectivePresets = remotePresetServers ?? PRESET_SERVERS;
-  const effectiveDefaultUrl = remoteDefaultApiUrl ?? DEFAULT_API_URL_NON_DEV;
+  // 动态配置：登录后的远程配置优先，部署配置作为冷启动兜底。
+  const effectivePresets = remotePresetServers ?? DESKTOP_PRESET_SERVERS;
+  const effectiveDefaultUrl = remoteDefaultApiUrl ?? DESKTOP_DEFAULT_API_URL;
 
   const [apiUrl, setApiUrl] = useState('');
   const [error, setError] = useState('');
@@ -178,10 +171,9 @@ export default function SettingsModal() {
       const url = cfgApi || getDefaultApiUrl(dev);
       setApiUrl(url);
       // 判断当前地址是否在预设列表中
-      const presets = remotePresetServers ?? PRESET_SERVERS;
-      setIsCustomServer(!presets.some((s) => s.url === url));
+      setIsCustomServer(!effectivePresets.some((server) => server.url === url));
     }
-  }, [config, remotePresetServers]);
+  }, [config, effectivePresets]);
 
   const handleSave = async () => {
     setError('');
@@ -1001,4 +993,3 @@ export default function SettingsModal() {
     </div>
   );
 }
-

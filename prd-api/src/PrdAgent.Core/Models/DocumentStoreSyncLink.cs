@@ -28,7 +28,7 @@ public class DocumentStoreSyncLink
     /// <summary>对端知识库名称（冗余，列表展示用）</summary>
     public string? RemoteStoreName { get; set; }
 
-    /// <summary>远端环境基础地址（remote 时必填，如 https://xxx.miduo.org；local 时为空）</summary>
+    /// <summary>远端环境基础地址（remote 时必填；local 时为空）</summary>
     public string? RemoteBaseUrl { get; set; }
 
     /// <summary>远端同步令牌（remote 时必填，永久有效；用于调用远端 sync 端点鉴权）</summary>

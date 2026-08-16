@@ -308,7 +308,7 @@ pub fn init_config(app: &tauri::AppHandle) {
     // 规则（避免“我明明改了配置但请求没打到目标服务器”）：
     // 1) 优先使用环境变量 API_BASE_URL（在 api_client.rs 中已读取并初始化）
     // 2) 若有 config.json，则使用其中的 apiBaseUrl 覆盖
-    // 3) 否则保持默认值（DEFAULT_API_URL）
+    // 3) 否则保持构建时注入的默认值；未注入时由设置页要求用户填写
     //
     // 注意：debug 模式不再强制写死 localhost:*，允许你本地/容器映射到其他端口。
     if let Ok(config) = load_config_from_file(app) {

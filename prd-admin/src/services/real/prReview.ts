@@ -8,7 +8,7 @@
  * - 禁止 localStorage：所有状态由服务端决定
  *
  * 授权模式：GitHub Device Flow (RFC 8628)
- * - 原因：CDS 动态域名（<branch>.miduo.org）与 Web Flow Callback URL 不兼容
+ * - 原因：CDS 每分支动态入口与 Web Flow 固定 Callback URL 不兼容
  * - 前端调 deviceStart 拿到 userCode + verificationUri + flowToken
  * - 前端打开 verificationUri 让用户授权，同时轮询 devicePoll
  * - 轮询直到 status === 'done' / 'expired' / 'denied'

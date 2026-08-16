@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Net.Http.Headers;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -21,6 +22,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
     private readonly ILogger<OpenRouterVideoClient> _logger;
     private readonly ILLMRequestContextAccessor? _contextAccessor;
     private readonly ILlmRequestLogWriter? _logWriter;
+    private readonly string? _openRouterHttpReferer;
     // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
     private GatewayModelResolution? _submitResolution;
     private string? _submitAppCallerCode;
@@ -31,7 +33,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         ISafeOutboundUrlValidator urlValidator,
         ILogger<OpenRouterVideoClient> logger,
         ILLMRequestContextAccessor? contextAccessor = null,
-        ILlmRequestLogWriter? logWriter = null)
+        ILlmRequestLogWriter? logWriter = null,
+        IConfiguration? configuration = null)
     {
         _gateway = gateway;
         _httpClientFactory = httpClientFactory;
@@ -39,6 +42,9 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         _logger = logger;
         _contextAccessor = contextAccessor;
         _logWriter = logWriter;
+        _openRouterHttpReferer = NormalizePublicHttpUrl(
+            configuration?["OpenRouter:HttpReferer"]
+            ?? Environment.GetEnvironmentVariable("OPENROUTER_HTTP_REFERER"));
     }
 
     public async Task<OpenRouterVideoSubmitResult> SubmitAsync(OpenRouterVideoSubmitRequest request, CancellationToken ct = default)
@@ -525,7 +531,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                     request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                 if (current.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase))
                 {
-                    request.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
+                    if (!string.IsNullOrWhiteSpace(_openRouterHttpReferer))
+                        request.Headers.TryAddWithoutValidation("HTTP-Referer", _openRouterHttpReferer);
                     request.Headers.TryAddWithoutValidation("X-OpenRouter-Title", $"G-{appCallerCode}");
                 }
 
@@ -560,6 +567,15 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
 
         http.Dispose();
         throw new InvalidOperationException("视频下载地址重定向次数过多");
+    }
+
+    private static string? NormalizePublicHttpUrl(string? value)
+    {
+        if (!Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+            return null;
+
+        return uri.GetLeftPart(UriPartial.Authority);
     }
 
     private static bool IsRedirect(System.Net.HttpStatusCode statusCode)

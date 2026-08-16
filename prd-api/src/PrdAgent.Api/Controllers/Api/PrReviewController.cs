@@ -66,7 +66,7 @@ public sealed class PrReviewController : ControllerBase
     // Section 1 — OAuth Device Flow (status / start / poll / disconnect)
     //
     // 设计：使用 GitHub Device Flow (RFC 8628) 而非 Web Flow。
-    //   原因：本项目部署在 CDS 动态域名（<branch>.miduo.org），每条分支一个域名，
+    //   原因：本项目部署在 CDS 每分支动态入口，
     //   而 GitHub OAuth Web Flow 要求 Callback URL 预先注册，不支持通配符。
     //   Device Flow 完全不需要 Callback，本地/CDS/生产共用一套代码。
     //   同一套 UX：用户点按钮 → 打开 GitHub 授权页 → 后端轮询拿 token。

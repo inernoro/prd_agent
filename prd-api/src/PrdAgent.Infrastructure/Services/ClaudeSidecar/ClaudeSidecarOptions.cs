@@ -102,7 +102,7 @@ public sealed class CdsDiscoveryConfig
     /// </summary>
     public bool EnablePairedInfraConnections { get; set; } = false;
 
-    /// <summary>CDS 主服务的公网或内网 base URL，例 `https://cds.miduo.org`。</summary>
+    /// <summary>CDS 主服务的公网或内网 base URL，由部署配置提供。</summary>
     public string BaseUrl { get; set; } = "";
 
     /// <summary>实例发现刷新间隔（秒）。</summary>

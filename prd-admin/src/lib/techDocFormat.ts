@@ -187,9 +187,9 @@ export const PM2502_TECH_DOC_TEMPLATE = `# 一、项目简介
 ## 参考资料
 + 方案地址：
 + UI设计图：
-+ 前后端对接之编程约定：[https://miduo1031.yuque.com/xbe40z/vut4hx/mo1cb3w9ggmr5zcg](https://miduo1031.yuque.com/xbe40z/vut4hx/mo1cb3w9ggmr5zcg?singleDoc#)
-+ 前端项目优化记录：[https://miduo1031.yuque.com/xbe40z/manual/ubtr3btv7lqglvqz](https://miduo1031.yuque.com/xbe40z/manual/ubtr3btv7lqglvqz)
-+ showdoc地址：[http://showdoc.miduonet.com/web/#/item/index](http://showdoc.miduonet.com/web/#/item/index)
++ 前后端对接之编程约定：待补充
++ 前端项目优化记录：待补充
++ showdoc地址：待补充
 + 测试用例：
 
 # 二、项目内容
@@ -295,8 +295,7 @@ export const PM2502_TECH_DOC_TEMPLATE = `# 一、项目简介
 >
 
 1. 项目地址及开发分支
-+ 互动营销后台：[http://192.168.5.254/svn/ui/activity/admin/](http://192.168.5.254/svn/ui/activity/admin/tap-branch)trunk
-+ 会员小程序：[https://e.coding.net/miduoyanfa/bigdataengine/md-user-mp.git](https://e.coding.net/miduoyanfa/bigdataengine/md-user-mp.git)，develop分支
++ 示例应用：待补充仓库地址与分支
 2. 升级礼包弹窗  
 升级为会员，进入小程序自动弹窗，展示对应会员礼包。弹窗封装成组件，动态传参\`info\`显示升级礼包数据，其中升级图标有动画效果，可以用\`CSS3 animation\`实现，代码xxx；
 3. xx
@@ -304,7 +303,7 @@ export const PM2502_TECH_DOC_TEMPLATE = `# 一、项目简介
 
 
 ## 组件化分析
-（基于当前项目分析，哪些模板本应该组件化的内容，在这一期进行了组件化；哪些模块本应该组件化的内容，在这一期项目没有进行组件化，或已经组件化未能支撑这期项目需求。更多参考 [前端项目优化记录](https://miduo1031.yuque.com/xbe40z/manual/ubtr3btv7lqglvqz)）
+（基于当前项目分析，哪些模板本应该组件化的内容，在这一期进行了组件化；哪些模块本应该组件化的内容，在这一期项目没有进行组件化，或已经组件化未能支撑这期项目需求。）
 
 ### 1、这期组件化内容
 
@@ -328,7 +327,7 @@ export const PM2502_TECH_DOC_TEMPLATE = `# 一、项目简介
 | <font style="color:rgb(38, 38, 38);">业务资产接口请求超时</font> | P1-严重 | <font style="color:rgb(38, 38, 38);">APPLOG日志：站点"10.66.199.20:2025"30分钟内出现100个超过7s的请求</font> | 李四 | 同时通知张三 |
 
 
-[https://miduo1031.yuque.com/xbe40z/plh143/hl5zimpuyzqkoniu?singleDoc#cG9L](https://miduo1031.yuque.com/xbe40z/plh143/hl5zimpuyzqkoniu?singleDoc#cG9L) 《监控告警需求设置文档》
+《监控告警需求设置文档》：待补充
 
 # 四、影响范围
 （项目修改所影响的范围点，用于测试覆盖以及产品发上线预告）
@@ -654,7 +653,7 @@ export function buildPm2502Draft(input: TechDocDraftInput): string {
   const requirementText = withFallback(input.requirementText, '见方案');
   const projectLinks = withFallback(input.projectLinks, '待补充');
   const uiLink = withFallback(input.uiLink, '待补充');
-  const showdocLink = withFallback(input.showdocLink, 'http://showdoc.miduonet.com/web/#/item/index');
+  const showdocLink = withFallback(input.showdocLink, '待补充');
   const testCaseLink = withFallback(input.testCaseLink, '待补充');
 
   return PM2502_TECH_DOC_TEMPLATE
@@ -662,12 +661,12 @@ export function buildPm2502Draft(input: TechDocDraftInput): string {
     .replace('见方案\n\n## 参考资料', `输出一份严格按 PM2502 模板排版的技术分析文档。\n\n## 参考资料`)
     .replace('+ 方案地址：', `+ 方案地址：${projectLinks}`)
     .replace('+ UI设计图：', `+ UI设计图：${uiLink}`)
-    .replace('+ showdoc地址：[http://showdoc.miduonet.com/web/#/item/index](http://showdoc.miduonet.com/web/#/item/index)', `+ showdoc地址：${showdocLink}`)
+    .replace('+ showdoc地址：待补充', `+ showdoc地址：${showdocLink}`)
     .replace('+ 测试用例：', `+ 测试用例：${testCaseLink}`)
     .replace('| 会员小程序 | 首页 | 每日任务装修 | 新增 | |', `| ${appName} | ${moduleName} | ${featureName} | 新增 | 待细化 |`)
     .replace('| | | 升级礼包弹窗 | 修改 | |', '| | | 待补充 | 修改 | 可按实际删除 |')
     .replace('| 会员小程序 | 首页 | 1. 每日任务装修<br/>2. 升级礼包弹窗 |  |', `| ${appName} | ${moduleName} | 1. ${featureName}<br/>2. 待补充 |  |`)
-    .replace('1. 项目地址及开发分支\n+ 互动营销后台：[http://192.168.5.254/svn/ui/activity/admin/](http://192.168.5.254/svn/ui/activity/admin/tap-branch)trunk\n+ 会员小程序：[https://e.coding.net/miduoyanfa/bigdataengine/md-user-mp.git](https://e.coding.net/miduoyanfa/bigdataengine/md-user-mp.git)，develop分支', `1. 项目地址及开发分支\n+ ${appName}：${projectLinks}`)
+    .replace('1. 项目地址及开发分支\n+ 示例应用：待补充仓库地址与分支', `1. 项目地址及开发分支\n+ ${appName}：${projectLinks}`)
     .replace('2. 升级礼包弹窗  \n升级为会员，进入小程序自动弹窗，展示对应会员礼包。弹窗封装成组件，动态传参`info`显示升级礼包数据，其中升级图标有动画效果，可以用`CSS3 animation`实现，代码xxx；', `2. ${featureName}  \n${requirementText}`)
     .replace('开发周期：待排期', '开发周期：待排期');
 }

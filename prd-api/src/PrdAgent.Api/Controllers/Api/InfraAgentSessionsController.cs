@@ -18,7 +18,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class InfraAgentSessionsController : ControllerBase
 {
-    private const string DefaultRemoteSmokeHost = "https://cds.miduo.org";
+    private const string RequiredRemoteSmokeHost = "<configured-CDS_HOST>";
     private const string ControllerSource = "infra-agent-sessions-controller";
 
     private readonly IInfraAgentSessionService _service;
@@ -90,7 +90,11 @@ public class InfraAgentSessionsController : ControllerBase
             desiredRuntimeAdapter,
             profile,
             BuildRemoteSmokePrefix(_configuration));
-        var executionPanel = BuildExecutionPanel(commercialReadiness, nextCyclePlan, debugCommands);
+        var executionPanel = BuildExecutionPanel(
+            commercialReadiness,
+            nextCyclePlan,
+            debugCommands,
+            ResolveRemoteSmokeHost(_configuration));
         var diagnostics = baseDiagnostics with
         {
             DesiredRuntimeAdapter = desiredRuntimeAdapter,
@@ -112,7 +116,8 @@ public class InfraAgentSessionsController : ControllerBase
     private static SidecarExecutionPanel BuildExecutionPanel(
         SidecarCommercialReadinessDiagnostics readiness,
         SidecarNextCyclePlan nextCyclePlan,
-        IReadOnlyList<SidecarDebugCommand> debugCommands)
+        IReadOnlyList<SidecarDebugCommand> debugCommands,
+        string remoteSmokeHost)
     {
         var commercialComplete = readiness.Gates.All(x =>
             string.Equals(x.Status, "pass", StringComparison.OrdinalIgnoreCase));
@@ -123,7 +128,7 @@ public class InfraAgentSessionsController : ControllerBase
         var blockingCode = blockingGate?.Code ?? blockedCycleItem?.BlockedBy ?? blockedCycleItem?.Code ?? string.Empty;
         var command = SelectExecutionCommand(blockingCode, debugCommands);
         var deploymentAdvice = BuildDeploymentAdvice(readiness.Overall, blockingCode, commercialComplete);
-        var runbook = BuildExecutionRunbook(blockingCode, debugCommands);
+        var runbook = BuildExecutionRunbook(blockingCode, debugCommands, remoteSmokeHost);
         var gateCounts = readiness.Gates
             .GroupBy(x => x.Status, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.Count(), StringComparer.OrdinalIgnoreCase);
@@ -332,7 +337,8 @@ public class InfraAgentSessionsController : ControllerBase
 
     private static IReadOnlyList<SidecarExecutionRunbookStep> BuildExecutionRunbook(
         string blockingCode,
-        IReadOnlyList<SidecarDebugCommand> debugCommands)
+        IReadOnlyList<SidecarDebugCommand> debugCommands,
+        string remoteSmokeHost)
     {
         var r0Active = string.Equals(blockingCode, "R0", StringComparison.OrdinalIgnoreCase);
         var r1Active = string.Equals(blockingCode, "R1", StringComparison.OrdinalIgnoreCase);
@@ -347,7 +353,8 @@ public class InfraAgentSessionsController : ControllerBase
                 "runtime-pool-evidence",
                 r0Active ? "active" : "pass",
                 null,
-                debugCommands),
+                debugCommands,
+                remoteSmokeHost),
             BuildRunbookStep(
                 2,
                 "R0-branch-clean-dry-run",
@@ -355,7 +362,8 @@ public class InfraAgentSessionsController : ControllerBase
                 "branch-isolation-dry-run",
                 r0Active ? "next" : "pass",
                 r0Active ? "runtime pool evidence" : null,
-                debugCommands),
+                debugCommands,
+                remoteSmokeHost),
             BuildRunbookStep(
                 3,
                 "R0-branch-clean-apply",
@@ -363,7 +371,8 @@ public class InfraAgentSessionsController : ControllerBase
                 "branch-isolation-apply-confirmed",
                 r0Active ? "blocked" : "pass",
                 r0Active ? "explicit profile deletion approval" : null,
-                debugCommands),
+                debugCommands,
+                remoteSmokeHost),
             BuildRunbookStep(
                 4,
                 "R0-shared-runtime-pool",
@@ -371,7 +380,8 @@ public class InfraAgentSessionsController : ControllerBase
                 "managed-runtime-capacity",
                 r0Active ? "next" : "pass",
                 r0Active ? "branch isolation clean" : null,
-                debugCommands),
+                debugCommands,
+                remoteSmokeHost),
             BuildRunbookStep(
                 5,
                 "R1-profile",
@@ -379,7 +389,8 @@ public class InfraAgentSessionsController : ControllerBase
                 "r1-dry-run",
                 r1Active ? "active" : r0Active ? "blocked" : "pass",
                 r0Active ? "R0" : null,
-                debugCommands),
+                debugCommands,
+                remoteSmokeHost),
             BuildRunbookStep(
                 6,
                 "S1-S3-provider-cycle",
@@ -387,7 +398,8 @@ public class InfraAgentSessionsController : ControllerBase
                 "provider-cycle",
                 providerActive ? "active" : (r0Active || r1Active) ? "blocked" : "ready",
                 r0Active ? "R0" : r1Active ? "R1" : null,
-                debugCommands)
+                debugCommands,
+                remoteSmokeHost)
         };
     }
 
@@ -398,7 +410,8 @@ public class InfraAgentSessionsController : ControllerBase
         string commandCode,
         string status,
         string? blockedBy,
-        IReadOnlyList<SidecarDebugCommand> debugCommands)
+        IReadOnlyList<SidecarDebugCommand> debugCommands,
+        string remoteSmokeHost)
     {
         var command = debugCommands.FirstOrDefault(x => string.Equals(x.Code, commandCode, StringComparison.OrdinalIgnoreCase));
         return new SidecarExecutionRunbookStep(
@@ -409,17 +422,17 @@ public class InfraAgentSessionsController : ControllerBase
             BuildCommandSafety(commandCode),
             status,
             blockedBy ?? command?.BlockedBy,
-            BuildCommandApplyManifest(commandCode));
+            BuildCommandApplyManifest(commandCode, remoteSmokeHost));
     }
 
-    private static SidecarCommandApplyManifest? BuildCommandApplyManifest(string? commandCode)
+    private static SidecarCommandApplyManifest? BuildCommandApplyManifest(string? commandCode, string remoteSmokeHost)
     {
         if (string.Equals(commandCode, "remote-host-prepare", StringComparison.OrdinalIgnoreCase))
         {
             return new SidecarCommandApplyManifest(
                 "remote_host_create_then_shared_runtime_deploy",
                 "POST",
-                $"{DefaultRemoteSmokeHost}/api/cds-system/remote-hosts then /api/cds-system/remote-hosts/<hostId>/deploy-sidecar",
+                $"{remoteSmokeHost}/api/cds-system/remote-hosts then /api/cds-system/remote-hosts/<hostId>/deploy-sidecar",
                 new[]
                 {
                     "CDS_HOST",
@@ -456,7 +469,7 @@ public class InfraAgentSessionsController : ControllerBase
                         false)
                 },
                 "SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash scripts/smoke-cds-agent-shared-service-pool.sh",
-                "CDS_HOST=https://cds.miduo.org CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-preflight bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
+                $"CDS_HOST={remoteSmokeHost} CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-preflight bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
                 new[]
                 {
                     "prepare.preflightReady",
@@ -484,7 +497,7 @@ public class InfraAgentSessionsController : ControllerBase
         return new SidecarCommandApplyManifest(
             "destructive_remote_delete_build_profile",
             "DELETE",
-            $"{DefaultRemoteSmokeHost}/api/build-profiles/{candidateProfileId}",
+            $"{remoteSmokeHost}/api/build-profiles/{candidateProfileId}",
             new[]
             {
                 "CDS_HOST",
@@ -511,7 +524,7 @@ public class InfraAgentSessionsController : ControllerBase
                     false)
             },
             "SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 bash scripts/smoke-cds-agent-branch-isolation.sh",
-            "CDS_HOST=https://cds.miduo.org bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh",
+            $"CDS_HOST={remoteSmokeHost} bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh",
             new[]
             {
                 "verdict",
@@ -720,17 +733,21 @@ public class InfraAgentSessionsController : ControllerBase
 
     private static string BuildRemoteSmokePrefix(IConfiguration? configuration)
     {
+        var host = ResolveRemoteSmokeHost(configuration);
+        return $"CDS_HOST={host} ";
+    }
+
+    private static string ResolveRemoteSmokeHost(IConfiguration? configuration)
+    {
         var host = configuration?["CdsAgent:SmokeCdsHost"]
             ?? configuration?["CDS_AGENT_SMOKE_CDS_HOST"]
             ?? Environment.GetEnvironmentVariable("CDS_AGENT_SMOKE_CDS_HOST")
-            ?? DefaultRemoteSmokeHost;
+            ?? string.Empty;
         host = host.Trim();
         if (string.IsNullOrWhiteSpace(host))
-        {
-            host = DefaultRemoteSmokeHost;
-        }
+            return RequiredRemoteSmokeHost;
 
-        return $"CDS_HOST={host.TrimEnd('/')} ";
+        return host.TrimEnd('/');
     }
 
     private static SidecarRuntimeProfileRepairPlan BuildRuntimeProfileRepairPlan(

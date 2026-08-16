@@ -1485,7 +1485,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     private async Task<InfraConnection?> FindActiveReplacementConnectionAsync(InfraConnection revokedConnection, CancellationToken ct)
     {
-        // 不约束 PartnerBaseUrl：重新授权后 base 可能从 cds.miduo.org 变 miduo.org，
+        // 不约束 PartnerBaseUrl：重新授权后 base 可能改变，
         // 旧会话绑定的 revoked 连接会因 base 不一致而 remap 失败，报 connection_not_active。
         // 一个 active 授权覆盖同 partner+project 的所有旧会话 = 授权一次即可。
         return await _db.InfraConnections

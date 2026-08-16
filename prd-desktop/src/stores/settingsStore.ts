@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '../lib/tauri';
+import { DESKTOP_DEFAULT_API_URL } from '../lib/deploymentConfig';
 
 interface AppConfig {
   apiBaseUrl: string;
@@ -32,7 +33,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       console.error('Failed to load config:', err);
       // 使用默认配置
       set({
-        config: { apiBaseUrl: 'https://map.ebcone.net', isDeveloper: false },
+        config: { apiBaseUrl: DESKTOP_DEFAULT_API_URL, isDeveloper: false },
       });
     } finally {
       set({ isLoading: false });
@@ -58,4 +59,3 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   openModal: () => set({ isModalOpen: true }),
   closeModal: () => set({ isModalOpen: false }),
 }));
-

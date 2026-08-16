@@ -96,19 +96,21 @@ export function FinalCta({ onGetStarted, onContact }: FinalCtaProps) {
               <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
             </button>
 
-            <button
-              onClick={onContact}
-              className="inline-flex items-center gap-2 h-14 px-8 rounded-full text-[14.5px] font-medium text-white/80 hover:text-white transition-colors"
-              style={{
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.14)',
-                fontFamily: 'var(--font-display)',
-                letterSpacing: '0.01em',
-              }}
-            >
-              {t.cta.secondary}
-              <ArrowRight className="w-4 h-4 opacity-60" />
-            </button>
+            {onContact && (
+              <button
+                onClick={onContact}
+                className="inline-flex items-center gap-2 h-14 px-8 rounded-full text-[14.5px] font-medium text-white/80 hover:text-white transition-colors"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid rgba(255, 255, 255, 0.14)',
+                  fontFamily: 'var(--font-display)',
+                  letterSpacing: '0.01em',
+                }}
+              >
+                {t.cta.secondary}
+                <ArrowRight className="w-4 h-4 opacity-60" />
+              </button>
+            )}
           </div>
         </Reveal>
       </div>

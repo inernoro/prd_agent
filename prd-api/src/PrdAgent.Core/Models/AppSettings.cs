@@ -87,7 +87,7 @@ public class AppSettings
     /// <summary>是否启用米多星球 SSO</summary>
     public bool? MiduoSsoEnabled { get; set; }
 
-    /// <summary>米多星球开放接口 Base URL，如 https://admin.ebcone.cn</summary>
+    /// <summary>外部 SSO 开放接口 Base URL，由部署配置提供</summary>
     public string? MiduoSsoBaseUrl { get; set; }
 
     /// <summary>米多星球 SSO appCode</summary>
@@ -96,7 +96,7 @@ public class AppSettings
     /// <summary>米多星球 SSO appSecret，仅后端使用，不返回前端</summary>
     public string? MiduoSsoAppSecret { get; set; }
 
-    /// <summary>本系统 SSO 回调地址，如 https://map.ebcone.net/login</summary>
+    /// <summary>本系统 SSO 回调地址，由部署配置提供</summary>
     public string? MiduoSsoRedirectUri { get; set; }
 
     /// <summary>登录页展示名称</summary>

@@ -76,9 +76,6 @@ export function usePlatformMapHome(): string | null {
 
 export function resolveMapHomeHref(location: ConsoleLocation = window.location): string {
   if (platformMapHome) return platformMapHome;
-  if (location.hostname.endsWith('.ebcone.net') && location.hostname !== 'map.ebcone.net') {
-    return `${location.protocol}//map.ebcone.net/`;
-  }
 
   const firstDot = location.hostname.indexOf('.');
   if (firstDot < 0) return '/';

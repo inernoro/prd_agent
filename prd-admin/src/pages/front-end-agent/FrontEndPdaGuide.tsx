@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, ChevronRight, Clipboard, ExternalLink, PackageCheck, Search, Smartphone, Terminal, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { readPublicDeploymentConfig } from '@/lib/runtimeConfig';
 
 interface PdaGuideSection {
   key: string;
@@ -10,12 +11,26 @@ interface PdaGuideSection {
   items: string[];
 }
 
-const PDA_LINKS = [
-  { label: 'GitHub 仓库', url: 'https://github.com/MiDouTech/uniapp-pda.git' },
-  { label: 'Jenkins 构建', url: 'http://192.168.5.140/job/uniapp-pda/' },
-  { label: 'Coding 构建', url: 'https://miduoyanfa.coding.net/p/bigdataengine/ci/job?id=6517671' },
-  { label: 'APK 产物仓库', url: 'https://e.coding.net/miduoyanfa/bigdataengine/pda-build.git' },
-];
+interface PdaLink { label: string; url: string }
+
+function parsePdaLinks(raw: string | undefined): PdaLink[] {
+  if (!raw?.trim()) return [];
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+      const entry = item as Record<string, unknown>;
+      const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+      const url = typeof entry.url === 'string' ? entry.url.trim() : '';
+      return label && /^https?:\/\//i.test(url) ? [{ label, url }] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
+const PDA_LINKS = parsePdaLinks(readPublicDeploymentConfig('VITE_FRONT_END_PDA_LINKS_JSON'));
 
 const PDA_GUIDE_SECTIONS: PdaGuideSection[] = [
   {
@@ -60,7 +75,7 @@ const PDA_GUIDE_SECTIONS: PdaGuideSection[] = [
     title: '构建与发布',
     summary: 'WGT 热更新优先走 Jenkins；APK 完整包走本地云打包后覆盖 pda-build 仓库，再触发 Coding 构建。',
     items: [
-      '默认仓库：https://github.com/MiDouTech/uniapp-pda.git，默认构建分支 master。',
+      '仓库地址与构建入口由部署配置提供，默认构建分支以项目配置为准。',
       'Jenkins：打开 uniapp-pda 任务，点击 Build with Parameters。',
       '参数 is_prod_env：不勾选为测试环境，勾选为线上环境。',
       '参数 version_name：展示版本号，每次发布一般递增。',
@@ -90,7 +105,7 @@ const RELEASE_CHECKLIST = `PDA 发布检查清单
 2. 确认发布环境：测试环境 is_prod_env 不勾选；线上环境 is_prod_env 勾选。
 3. 填写 version_name，确保高于设备当前版本。
 4. 填写 update_desc，说明本次变更且不使用 HTML 标签。
-5. 触发 Jenkins： http://192.168.5.140/job/uniapp-pda/
+5. 从页面顶部部署配置入口触发构建
 6. 构建成功后，在目标环境 PDA 真机检查是否收到更新提示。
 7. 回归登录、扫码、同步、出货、退货、在线/离线关键链路。
 8. 若为 APK，确认产物命名 pda.apk 并同步到 pda-build 仓库 app 目录。`;

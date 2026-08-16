@@ -4,7 +4,7 @@ const MAP_SSO_CODE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
  * 网关控制台的落点，由**服务端**下发（`POST /api/llm-gateway/sso/ticket` 的 `console` 字段）。
  *
  * 这里刻意不再有任何域名推算。2026-07-29 之前本文件按 `location.hostname` 拼
- * `<预览 slug>-llmgw-web.miduo.org`，那是 CDS 之外的第二份域名实现（违反根 CLAUDE.md
+ * 兄弟服务预览入口，那是 CDS 之外的第二份域名实现（违反根 CLAUDE.md
  * 规则 #11），并且在分支名长时会拼出一个 CDS 根本没发布的 host：命名子域第一 DNS 标签
  * 超过 63 octet 时平台直接跳过不发布，前端却照拼，用户点开只看到「域名不存在」，
  * 而提示写的却是「登录凭据未通过安全校验」。

@@ -104,6 +104,9 @@ public static class ActivityActionRegistry
             ["WebPages.CreateFromContent"] = new("web-pages", "网页托管", "发布了站点", TitleArgs: new[] { "req.Title" }),
             ["WebPages.Update"] = new("web-pages", "网页托管", "更新了站点", "id", TitleDb: HostedSiteTitle),
             ["WebPages.Delete"] = new("web-pages", "网页托管", "删除了站点", "id", TitleDb: HostedSiteTitle),
+
+            // 管理员改密必须持久化操作者与目标用户；过滤器只记录路由目标，不读取或保存密码正文。
+            ["Users.UpdatePassword"] = new("account-security", "账号安全", "重置了用户密码", "userId"),
         };
 
     /// <summary>导出去重后的模块清单（前端筛选下拉用，避免前后端模块清单漂移）</summary>
