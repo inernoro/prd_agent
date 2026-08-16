@@ -35,7 +35,10 @@ export interface InfraExposureInput {
   projectId: string;
   containerName: string;
   dockerImage: string;
+  /** 容器自己的环境变量（`.Config.Env`），不是 CDS 台账里那份。 */
   env?: Record<string, string> | null;
+  /** 容器启动参数（`.Config.Cmd`）。redis 的 `--requirepass` 常在这里。 */
+  args?: readonly string[] | null;
   /**
    * `docker ps --format '{{.Ports}}'` 的原文。读不到时给 undefined——
    * 那会被判成「对外」，因为无从证明它不是。
@@ -106,18 +109,42 @@ export function parsePublishedHosts(ports: string | null | undefined): string[] 
 /**
  * 这个库现在有没有认证。
  *
+ * ## 判据必须取容器自己的配置，不能取 CDS 台账
+ *
+ * 台账里的 env 是「CDS 建这个容器时用了什么」，不是「这个容器现在跑成什么样」。
+ * 两者会分叉：compose 导入的、手工起的、密码写在**启动参数**里的（redis 的
+ * `--requirepass` 就是最常见的一种），台账里都看不到。
+ *
+ * 真实踩过：某个 redis 台账 env 为空、被判成「无认证 critical」，实际连上去
+ * 是 `NOAUTH Authentication required`——它有密码。**一条说「这个库没密码」
+ * 的假警报，比不报警更糟**：它会让人开始怀疑整张表，然后连真的那几条也一起忽略。
+ *
+ * 所以这里同时看两处：容器的 `.Config.Env` 与 `.Config.Cmd`。
+ *
+ * ## 未知不等于没有
+ *
  * 认不出镜像类型时返回 null（未知），**不返回 false**——把「我不知道」和
  * 「我确认没有」混成一个值，报表上就分不清该去查还是该去修。
  */
-export function detectInfraAuth(kind: InfraKind, env?: Record<string, string> | null): boolean | null {
+export function detectInfraAuth(
+  kind: InfraKind,
+  env?: Record<string, string> | null,
+  /** 容器启动参数（`.Config.Cmd`）。密码经常藏在这里而不是 env 里。 */
+  args?: readonly string[] | null,
+): boolean | null {
   const e = env || {};
   const has = (...keys: string[]): boolean => keys.some((k) => !!(e[k] || '').trim());
+  const argLine = (args || []).join(' ').toLowerCase();
+  const argHas = (...flags: string[]): boolean => flags.some((f) => argLine.includes(f));
   switch (kind) {
     case 'mongo':
-      return has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME');
+      return has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME')
+        || argHas('--auth', '--keyfile');
     case 'redis':
-      // redis 默认不设密码；requirepass 既可能走 env 也可能写在启动命令里
-      return has('REDIS_PASSWORD', 'REDIS_PASS', 'REDISCLI_AUTH', 'REDIS_ARGS');
+      // redis 默认不设密码。`--requirepass` 写在启动命令里是最常见的配法，
+      // 只看 env 会把它误判成裸奔。
+      return has('REDIS_PASSWORD', 'REDIS_PASS', 'REDISCLI_AUTH', 'REDIS_ARGS')
+        || argHas('--requirepass', '--user ', 'aclfile');
     case 'mysql':
       return has('MYSQL_ROOT_PASSWORD', 'MYSQL_PASSWORD', 'MARIADB_ROOT_PASSWORD');
     case 'postgres':
@@ -170,7 +197,7 @@ export function auditInfraExposure(inputs: readonly InfraExposureInput[]): Infra
       kind,
       // 读不到映射时 boundHosts 为空 → isPubliclyPublished 判真，从严
       publiclyPublished: isPubliclyPublished(boundHosts),
-      authenticated: detectInfraAuth(kind, svc.env),
+      authenticated: detectInfraAuth(kind, svc.env, svc.args),
       boundHosts,
     };
     findings.push({ ...base, ...describe(base) });

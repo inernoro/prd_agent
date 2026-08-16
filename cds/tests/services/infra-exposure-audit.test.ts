@@ -72,6 +72,18 @@ describe('认证判定', () => {
     expect(detectInfraAuth('other', {})).toBeNull();
     expect(detectInfraKind('some/unknown-image:1')).toBe('other');
   });
+
+  /**
+   * 真实假阳性（2026-08-16）：某 redis 台账 env 为空、被判成「无认证 critical」，
+   * 实际连上去是 `NOAUTH Authentication required`——密码写在启动参数里。
+   * 一条说「这个库没密码」的假警报比不报警更糟：它让人开始怀疑整张表。
+   */
+  it('密码写在启动参数里也要认出来（曾经的假阳性）', () => {
+    expect(detectInfraAuth('redis', {}, ['redis-server', '--requirepass', 'xxx'])).toBe(true);
+    expect(detectInfraAuth('redis', {}, ['redis-server', '--appendonly', 'yes'])).toBe(false);
+    expect(detectInfraAuth('mongo', {}, ['mongod', '--auth'])).toBe(true);
+    expect(detectInfraAuth('mongo', {}, ['mongod'])).toBe(false);
+  });
 });
 
 describe('危险度判定', () => {
@@ -203,8 +215,20 @@ describe('自检真的被启动了', () => {
   it('判据取 docker ps 的运行态真值，不是读台账里的 hostPort', () => {
     expect(CODE).toMatch(/docker ps -a --format/);
     expect(CODE).toContain('auditInfraExposure(');
-    // 台账只用来补 env（判认证），不能拿它当端口来源
+    // 台账不能拿来当端口来源
     expect(CODE).not.toMatch(/runtimePorts:\s*String\(svc\.hostPort\)/);
+  });
+
+  /**
+   * 认证判据同样必须取容器自己的配置。照台账判会把密码写在启动参数里的库
+   * 误报成裸奔——这条守卫钉住「台账只用来补 id/projectId，不用来判认证」。
+   */
+  it('认证判据取容器自己的 env 与启动参数，不取台账', () => {
+    expect(CODE).toMatch(/docker inspect --format[\s\S]{0,120}Config\.Env/);
+    expect(CODE).toMatch(/Config\.Cmd/);
+    // 台账那张表只留 id 与 projectId，不再带 env
+    expect(CODE).toMatch(/byContainer\.set\(svc\.containerName,\s*\{\s*id:[^}]*projectId:[^}]*\}\)/);
+    expect(CODE).not.toMatch(/byContainer\.set\([^)]*env:\s*svc\.env/);
   });
 
   it('发现问题时按 error 级记事件，不是只 console 一下', () => {

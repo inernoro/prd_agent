@@ -339,30 +339,62 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
         console.warn('[infra-exposure] 读不到容器列表，跳过本轮');
         return;
       }
-      const byContainer = new Map<string, { id: string; projectId: string; env: Record<string, string> }>();
+      const byContainer = new Map<string, { id: string; projectId: string }>();
       for (const svc of stateService.getInfraServices() || []) {
-        byContainer.set(svc.containerName, { id: svc.id, projectId: svc.projectId, env: svc.env || {} });
+        byContainer.set(svc.containerName, { id: svc.id, projectId: svc.projectId });
       }
 
-      const inputs: InfraExposureInput[] = [];
+      // 先挑出数据面容器。应用容器对外发布是它们的本职（nginx 在前面挡着），
+      // 混进来只会把告警淹掉。
+      const rows: Array<{ name: string; image: string; ports: string; running: boolean }> = [];
       for (const line of (ps.stdout || '').split('\n')) {
         const [name, image, ports, state] = line.split('\t');
         if (!name || !image) continue;
-        const kind = detectInfraKind(image);
-        // 只看数据面容器。应用容器对外发布是它们的本职（nginx 在前面挡着），
-        // 混进来只会把告警淹掉。
-        if (kind === 'other') continue;
-        const known = byContainer.get(name);
-        inputs.push({
-          id: known?.id || name,
-          projectId: known?.projectId || '(未登记)',
-          containerName: name,
-          dockerImage: image,
-          env: known?.env,
-          runtimePorts: ports ?? '',
-          running: (state || '').toLowerCase() === 'running',
-        });
+        if (detectInfraKind(image) === 'other') continue;
+        rows.push({ name, image, ports: ports ?? '', running: (state || '').toLowerCase() === 'running' });
       }
+      if (rows.length === 0) return;
+
+      // 认证判据必须取**容器自己的**配置，不是 CDS 台账里那份：台账记的是
+      // 「建它时用了什么」，compose 导入的、手工起的、密码写在启动参数里的
+      // （redis 的 --requirepass）台账里都看不到，照台账判会把有密码的库
+      // 误报成裸奔——一条假警报会让人开始怀疑整张表。
+      const authByContainer = new Map<string, { env: Record<string, string>; args: string[] }>();
+      const inspect = await shell.exec(
+        `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}' `
+        + rows.map((r) => `'${r.name.replace(/'/g, `'"'"'`)}'`).join(' '),
+        { timeout: 30_000 },
+      );
+      for (const line of (inspect.stdout || '').split('\n')) {
+        const [rawName, envJson, cmdJson] = line.split('\t');
+        if (!rawName) continue;
+        const name = rawName.replace(/^\//, '').trim();
+        const env: Record<string, string> = {};
+        try {
+          for (const kv of (JSON.parse(envJson || '[]') as string[]) || []) {
+            const i = kv.indexOf('=');
+            if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
+          }
+        } catch { /* 解析不了就当没有，下游按未知从严 */ }
+        let args: string[] = [];
+        try { args = (JSON.parse(cmdJson || '[]') as string[]) || []; } catch { args = []; }
+        authByContainer.set(name, { env, args });
+      }
+
+      const inputs: InfraExposureInput[] = rows.map((r) => {
+        const known = byContainer.get(r.name);
+        const conf = authByContainer.get(r.name);
+        return {
+          id: known?.id || r.name,
+          projectId: known?.projectId || '(未登记)',
+          containerName: r.name,
+          dockerImage: r.image,
+          env: conf?.env,
+          args: conf?.args,
+          runtimePorts: r.ports,
+          running: r.running,
+        };
+      });
 
       const report = auditInfraExposure(inputs);
       if (report.signature === lastSignature) return;   // 状态没变就不刷屏
