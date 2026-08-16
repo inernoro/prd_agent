@@ -21,7 +21,7 @@ import {
   auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport, type InfraExposureInput,
 } from './services/infra-exposure-audit.js';
 import {
-  backupDirCandidates, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  backupDirCandidates, buildRedisBackupProbeScript, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { ProxyService } from './services/proxy.js';
@@ -578,20 +578,24 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             //    返回值，于是 docker cp 拷走一个**旧的** dump.rdb，还报成功——
             //    「以为有、其实是几天前的」，比没有备份更危险。
             // 2. **BGSAVE 要真的完成**。异步落盘，拷到半截就是坏文件。
-            // 3. **要能证明是新的**。用 LASTSAVE 前后变化positively 确认，
-            //    而不是「等了 60 秒大概好了吧」。
+            // 3. **要能证明是新的**。用 INFO persistence 的官方判据确认这次
+            //    BGSAVE 真的完成，再用 dump.rdb 的 mtime 证明文件确实被它写过。
             //
-            // 凭据在容器内展开：REDISCLI_AUTH 是 redis-cli 官方认的环境变量，
-            // 不进命令行。取不到密码而实例又要求认证时，下面第一步就会失败退出。
+            // 两个判据都换过一轮：
+            //
+            // - 凭据原来只读 env。`redis-server --requirepass secret` 这种把密码
+            //   写在启动参数里、env 里一个字都没有的配法（compose 导入最常见）
+            //   会拿到空密码 → NOAUTH → 每一轮备份都失败。现在 env 取不到就从
+            //   容器内进程的命令行里取，**全程在容器里展开**，不进宿主命令行、
+            //   不进 CDS 日志。（暴露面自检读的是宿主侧 inspect 的 Config.Cmd，
+            //   只判「有没有密码」；这里要的是密码本身，所以走容器内 /proc。）
+            // - 完成判据原来比 LASTSAVE 前后是否变化。LASTSAVE 的粒度是**秒**，
+            //   小库的 BGSAVE 常在同一秒内跑完，时间戳不动——于是白等 90 秒再把
+            //   一份完全有效的备份判成失败。改用 rdb_bgsave_in_progress +
+            //   rdb_last_bgsave_status，那才是 redis 文档给的完成判据。
+            const redisScript = buildRedisBackupProbeScript();
             const redisProbe = await shell.exec(
-              `docker exec ${shq(t.containerName)} sh -c `
-              + `'export REDISCLI_AUTH="${'$'}{REDIS_PASSWORD:-${'$'}{REDIS_PASS:-${'$'}REDISCLI_AUTH}}"; `
-              + `before=$(redis-cli LASTSAVE 2>&1) || { echo "LASTSAVE 失败: $before" >&2; exit 21; }; `
-              + `case "$before" in *NOAUTH*|*ERR*|"") echo "redis 不可用或需要认证: $before" >&2; exit 22;; esac; `
-              + `redis-cli BGSAVE >/dev/null 2>&1 || { echo "BGSAVE 调用失败" >&2; exit 23; }; `
-              + `i=0; while [ "$i" -lt 90 ]; do now=$(redis-cli LASTSAVE 2>/dev/null); `
-              + `[ -n "$now" ] && [ "$now" != "$before" ] && exit 0; i=$((i+1)); sleep 1; done; `
-              + `echo "BGSAVE 超时未完成（LASTSAVE 未推进）" >&2; exit 24'`,
+              `docker exec ${shq(t.containerName)} sh -c ${shq(redisScript)}`,
               { timeout: 120_000 },
             );
             if (redisProbe.exitCode !== 0) {

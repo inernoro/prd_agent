@@ -227,3 +227,63 @@ export function summarizeBackupRound(outcomes: readonly BackupOutcome[], skipped
   if (skipped) parts.push(`跳过 ${skipped} 个`);
   return parts.length ? `基础设施自动备份：${parts.join('，')}` : '基础设施自动备份：没有可备份的目标';
 }
+
+/**
+ * Redis 备份前的探测脚本（在容器内跑）。
+ *
+ * 做成一个可导出的值，是为了让回归**拿到真正会执行的那段脚本**去做语法检查和判据
+ * 断言——扫源码只能证明字面量还在，证明不了拼出来的东西能跑。
+ *
+ * 三件事必须都成立才敢认这份备份：
+ *
+ * 1. **连得上且认证通过**。配了 requirepass 的实例会让裸 redis-cli 返回 NOAUTH。
+ *    忽略返回值的话，`docker cp` 会拷走一个**旧的** dump.rdb 还报成功——
+ *    「以为有、其实是几天前的」，比没有备份更危险。密码优先取 env，取不到就从
+ *    容器内进程的命令行里扫 `--requirepass`（compose 导入最常见的配法，env 里
+ *    一个字都没有）。全程在容器内展开，不进宿主命令行、不进日志。
+ * 2. **BGSAVE 真的完成**。判据是 `rdb_bgsave_in_progress` + `rdb_last_bgsave_status`
+ *    ——redis 文档给的那两个。**不能比 LASTSAVE 前后是否变化**：它的粒度是秒，
+ *    小库的 BGSAVE 常在同一秒内跑完，时间戳不动，于是白等到超时再把一份完全
+ *    有效的备份判成失败。
+ * 3. **文件确实被这次写过**。完成了不等于写的是这个文件：路径不对、save 被禁用
+ *    都会留下一个旧文件。用 mtime 与探测开始时间比一下，取容器自己的时钟。
+ */
+export function buildRedisBackupProbeScript(): string {
+  return [
+  // 凭据：env 优先，其次扫容器内进程命令行里的 --requirepass。
+  'A="${REDIS_PASSWORD:-${REDIS_PASS:-$REDISCLI_AUTH}}"',
+  'if [ -z "$A" ]; then',
+  // PROCDIR 只是给回归留的注入点（容器里没人会设它）。抽取这段 awk 是最容易写错
+  // 的地方，必须能拿真 shell 对着真的 NUL 分隔 cmdline 跑一遍，而不是断言「源码里
+  // 有这行」——那种断言在这段代码变成死分支时照样是绿的。
+  '  PROCDIR="${CDS_BACKUP_PROC_DIR:-/proc}"',
+  '  for c in "$PROCDIR"/[0-9]*/cmdline; do',
+  '    [ -r "$c" ] || continue',
+  `    A=$(tr '\\0' '\\n' < "$c" | awk '/^--requirepass=/{sub(/^--requirepass=/,"");print;exit} /^--requirepass$/{getline;print;exit}')`,
+  '    [ -n "$A" ] && break',
+  '  done',
+  'fi',
+  'export REDISCLI_AUTH="$A"',
+  // 落盘时间的下界。容器自己的时钟，避免宿主与容器时钟不一致。
+  'start=$(date +%s)',
+  // 连得上且认证通过，才谈得上后面的事。
+  'ping=$(redis-cli PING 2>&1) || { echo "redis-cli 调用失败: $ping" >&2; exit 21; }',
+  'case "$ping" in PONG) ;; *) echo "redis 不可用或认证失败: $ping" >&2; exit 22;; esac',
+  'redis-cli BGSAVE >/dev/null 2>&1 || { echo "BGSAVE 调用失败" >&2; exit 23; }',
+  'i=0; ip=""',
+  'while [ "$i" -lt 90 ]; do',
+  `  info=$(redis-cli INFO persistence 2>/dev/null | tr -d '\\r')`,
+  `  ip=$(echo "$info" | awk -F: '/^rdb_bgsave_in_progress:/{print $2}')`,
+  `  st=$(echo "$info" | awk -F: '/^rdb_last_bgsave_status:/{print $2}')`,
+  '  if [ "$ip" = "0" ]; then',
+  '    [ "$st" = "ok" ] || { echo "BGSAVE 报告失败: $st" >&2; exit 24; }',
+  '    break',
+  '  fi',
+  '  i=$((i+1)); sleep 1',
+  'done',
+  '[ "$ip" = "0" ] || { echo "BGSAVE 超时未完成" >&2; exit 25; }',
+  // 完成了不等于这个文件被写过：路径不对、save 被禁用都会留下旧文件。
+  'mt=$(stat -c %Y /data/dump.rdb 2>/dev/null || echo 0)',
+  '[ "$mt" -ge "$start" ] || { echo "dump.rdb 未被本次 BGSAVE 更新（mtime=$mt start=$start）" >&2; exit 26; }',
+  ].join('\n');
+}

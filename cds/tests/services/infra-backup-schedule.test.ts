@@ -1,10 +1,13 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_MIN_FREE_BYTES,
   backupDirCandidates,
   backupFileName,
+  buildRedisBackupProbeScript,
   backupKindOf,
   isAutoBackupFile,
   parseDfAvailableBytes,
@@ -406,19 +409,18 @@ describe('备份不许静默成功', () => {
   });
 
   /**
-   * 配了 requirepass 的 redis 会让裸 redis-cli 返回 NOAUTH。原来忽略返回值，
-   * 于是 docker cp 拷走一个**旧的** dump.rdb 并报成功。
+   * 探测脚本本身的判据在下面「Redis 备份探测脚本」那一组里，对着**真正会执行的
+   * 字符串**断言。这里只管接线：探测必须在拷贝之前，且失败要中止整条。
    */
-  it('Redis 先确认 BGSAVE 真的完成才拷贝，NOAUTH 要失败退出', () => {
-    expect(CODE).toContain('REDISCLI_AUTH');
-    expect(CODE).toContain('LASTSAVE');
-    expect(CODE).toContain('NOAUTH');
+  it('Redis 探测在拷贝之前，失败即中止', () => {
+    expect(CODE).toContain('buildRedisBackupProbeScript()');
     expect(CODE).toContain('拒绝拷贝可能过期的 dump.rdb');
-    // 拷贝必须在探针成功之后，不能无条件执行
     const probe = CODE.indexOf('redisProbe');
     const cp = CODE.indexOf('docker cp');
     expect(probe).toBeGreaterThan(0);
     expect(cp).toBeGreaterThan(probe);
+    // 「探测失败」必须真的抛出去，而不是记一笔继续拷。
+    expect(CODE).toMatch(/if \(redisProbe\.exitCode !== 0\) \{\s*\n\s*throw new Error/);
   });
 });
 
@@ -441,5 +443,91 @@ describe('查历史不许创建备份目录', () => {
     // 只有一处只读调用（历史），其余保持默认可创建。
     expect(SRC.match(/resolveBackupDir\(\{ create: false \}\)/g) || []).toHaveLength(1);
     expect(SRC.match(/await resolveBackupDir\(\)/g) || []).toHaveLength(1);
+  });
+});
+
+/**
+ * Redis 探测脚本。断言的是**真正会执行的那段脚本**（调函数拿到的字符串），
+ * 不是源码里的字面量——拼出来能不能跑，扫源码证明不了。
+ */
+describe('Redis 备份探测脚本', () => {
+  const SCRIPT = buildRedisBackupProbeScript();
+
+  it('是合法的 POSIX sh（拿真 shell 过一遍 -n）', () => {
+    // 这段脚本要在各种 redis 镜像里跑，那些镜像的 /bin/sh 多半是 dash 或 busybox。
+    // 不做这一步的话，「bash 里能跑」会被当成「能跑」——上一轮 pipefail 就是这么栽的。
+    const out = execFileSync('/bin/sh', ['-n'], { input: SCRIPT, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+    expect(out).toBe('');
+  });
+
+  /**
+   * 凭据解析**真的跑一遍**，不是断言源码里有那几行。
+   *
+   * 只做字面量断言的话，把这段变成死分支（`if false`）照样全绿——那正是
+   * predicate-and-wiring-discipline 里的形状 8：一份不成立的证据。
+   * 这里造真的 NUL 分隔 cmdline，用真 shell 跑脚本的凭据段，看它到底抽出了什么。
+   */
+  const resolveCred = (cmdline: string, env: Record<string, string> = {}): string => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-proc-'));
+    fs.mkdirSync(path.join(dir, '17'));
+    fs.writeFileSync(path.join(dir, '17', 'cmdline'), cmdline);
+    // 只取到 export 那一行为止：后面要连真的 redis，这里只验凭据怎么解析出来的。
+    const head = SCRIPT.split('\n');
+    const cut = head.findIndex((l) => l.startsWith('export REDISCLI_AUTH'));
+    expect(cut).toBeGreaterThan(0);
+    const prefix = `${head.slice(0, cut + 1).join('\n')}\nprintf '%s' "$REDISCLI_AUTH"`;
+    return execFileSync('/bin/sh', ['-s'], {
+      input: prefix,
+      encoding: 'utf8',
+      // PATH 必须带上：脚本要用 tr / awk，环境清空的话它们找不到，
+      // 抽取会「静默返回空」——那正是这条用例要防的假象。
+      env: { PATH: process.env.PATH || '/usr/bin:/bin', ...env, CDS_BACKUP_PROC_DIR: dir },
+    });
+  };
+
+  it('env 拿不到密码时，从进程命令行里真的抽得出 --requirepass', () => {
+    // `redis-server --requirepass secret` 且 env 里一个字都没有，是 compose 导入
+    // 最常见的配法。只读 env 会拿到空密码 → NOAUTH → 每一轮备份都失败。
+    expect(resolveCred('redis-server\0--requirepass\0s3cr3t\0')).toBe('s3cr3t');
+  });
+
+  it('`--requirepass=v` 连写也认', () => {
+    expect(resolveCred('redis-server\0--requirepass=eqform\0')).toBe('eqform');
+  });
+
+  it('没配密码就是空，不瞎猜一个', () => {
+    expect(resolveCred('redis-server\0--appendonly\0yes\0')).toBe('');
+  });
+
+  it('env 优先于命令行扫描', () => {
+    expect(resolveCred('redis-server\0--requirepass\0fromcmd\0', { REDIS_PASSWORD: 'fromenv' }))
+      .toBe('fromenv');
+  });
+
+  it('密码只在容器内展开，不进宿主命令行', () => {
+    expect(SCRIPT).toContain('export REDISCLI_AUTH="$A"');
+  });
+
+  it('完成判据用 INFO persistence，不比 LASTSAVE', () => {
+    // LASTSAVE 的粒度是秒。小库的 BGSAVE 常在同一秒内跑完，时间戳不动，于是
+    // 一份完全有效的备份会被白等到超时再判成失败。
+    expect(SCRIPT).toContain('rdb_bgsave_in_progress');
+    expect(SCRIPT).toContain('rdb_last_bgsave_status');
+    expect(SCRIPT).not.toContain('LASTSAVE');
+  });
+
+  it('完成之后还要证明 dump.rdb 确实被这次写过', () => {
+    // 完成不等于写的是这个文件：路径不对、save 被禁用都会留下一个旧文件，
+    // 而 docker cp 会把它当成新备份拷走。
+    expect(SCRIPT).toContain('stat -c %Y /data/dump.rdb');
+    expect(SCRIPT).toMatch(/\[ "\$mt" -ge "\$start" \]/);
+  });
+
+  it('每一种失败都有自己的退出码，不共用一个「失败了」', () => {
+    // 共用一个退出码等于把「连不上」「认证失败」「超时」「拷到旧文件」揉成一句话，
+    // 排障时只能重跑一遍看运气。
+    const codes = [...SCRIPT.matchAll(/exit (\d+)/g)].map((m) => m[1]).filter((c) => c !== '0');
+    expect(new Set(codes).size).toBe(codes.length);
+    expect(codes.length).toBeGreaterThanOrEqual(5);
   });
 });

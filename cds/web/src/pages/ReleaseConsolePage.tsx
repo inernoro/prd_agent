@@ -262,30 +262,36 @@ export function ReleaseConsolePage(): JSX.Element {
   }, []);
 
   /**
-   * 请求代次。切项目时自增，晚到的旧项目响应一律丢弃。
+   * 「这份响应还属于当前项目吗」——**所有**带 project 的请求都必须过这一关。
    *
-   * 没有这道闸：从 A 切到 B 时 A 的响应晚一步回来照样 setCenter，控制台挂在 B
-   * 名下、列的却是 A 的环境。之后的重试、回滚、取消、发布都按那份 A 的 id 发出去
-   * ——不是显示错位，是对着另一个项目动手。
+   * 从 A 切到 B 时，A 的响应晚一步回来照样会写进 state：控制台挂在 B 名下、列的
+   * 却是 A 的环境或 A 的分支。之后的重试、回滚、取消、发布都按那份 A 的 id 发出去
+   * ——不是显示错位，是对着另一个项目动手；分支列表错配还会被后端的项目一致性
+   * 预检直接拒掉，发布卡死到手动刷新为止。
+   *
+   * 判据只留这一份、放在这里，是因为前两轮 review 各抓到一处漏网的项目级请求：
+   * 一处一处补必然还会漏第三处。新增任何 `?project=` 请求都从这里取判据。
    */
-  const centerSeq = useRef(0);
+  const currentProject = useRef(projectId);
+  useEffect(() => { currentProject.current = projectId; }, [projectId]);
+  const isStaleProject = useCallback((p: string): boolean => currentProject.current !== p, []);
 
   const loadCenter = useCallback(async (): Promise<void> => {
     if (!projectId) return;
-    const seq = ++centerSeq.current;
+    const forProject = projectId;
     try {
       const res = await apiRequest<CenterResponse>(`/api/releases/center?project=${encodeURIComponent(projectId)}`);
-      if (seq !== centerSeq.current) return;
+      if (isStaleProject(forProject)) return;
       setCenter(res);
       setError('');
       // 只在当前选中项消失时清空，让 resolveSelectedTargetId 去挑；这里别自己挑 rows[0]。
       // 从发布中心带过来的 target 也走这条：它在就保留，不在（换了项目）就让默认逻辑接管。
       setTargetId((current) => (res.rows.some((item) => item.target.id === current) ? current : ''));
     } catch (err) {
-      if (seq !== centerSeq.current) return;
+      if (isStaleProject(forProject)) return;
       setError(err instanceof ApiError ? err.message : String(err));
     }
-  }, [projectId]);
+  }, [projectId, isStaleProject]);
 
   useEffect(() => { void loadCenter(); }, [loadCenter]);
 
@@ -296,14 +302,16 @@ export function ReleaseConsolePage(): JSX.Element {
       next.set('project', projectId);
       return next;
     }, { replace: true });
+    const forProject = projectId;
     apiRequest<{ branches: BranchOption[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`)
       .then((res) => {
+        if (isStaleProject(forProject)) return;
         const list = res.branches || [];
         setBranches(list);
         setBranchId((current) => (list.some((b) => b.id === current) ? current : list[0]?.id || ''));
       })
-      .catch(() => setBranches([]));
-  }, [projectId, setParams]);
+      .catch(() => { if (!isStaleProject(forProject)) setBranches([]); });
+  }, [projectId, setParams, isStaleProject]);
 
   /**
    * 选中的目标同步进 URL。发布中心跳过来带的是 `?target=`，这里把用户之后手动切换的
@@ -689,7 +697,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   key={item.id}
                   type="button"
                   aria-pressed={item.id === projectId}
-                  onClick={() => { setProjectId(item.id); setCenter(null); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); }}
+                  onClick={() => { setProjectId(item.id); setCenter(null); setBranches([]); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); }}
                   className={`mb-1 flex w-full flex-col gap-1 rounded-[9px] border px-3 py-2.5 text-left transition-colors ${
                     item.id === projectId
                       ? 'border-primary/40 bg-primary/[0.08]'

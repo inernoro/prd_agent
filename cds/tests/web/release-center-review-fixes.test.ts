@@ -266,15 +266,39 @@ describe('自动发布规则丢弃切项目前的旧响应', () => {
 describe('发布控制台：切项目后丢弃旧响应', () => {
   const page = read('pages/ReleaseConsolePage.tsx');
 
-  it('center 请求带代次，过期响应既不写数据也不写错误', () => {
-    // 挂在 B 名下却列着 A 的环境时，重试/回滚/取消/发布都按 A 的 id 发出去。
-    expect(page).toContain('const centerSeq = useRef(0);');
-    expect(page).toContain('const seq = ++centerSeq.current;');
-    expect(page.match(/if \(seq !== centerSeq\.current\) return;/g) || []).toHaveLength(2);
+  it('判据只有一份，所有项目级请求共用', () => {
+    // 挂在 B 名下却列着 A 的环境时，重试/回滚/取消/发布都按 A 的 id 发出去；
+    // 分支列表错配还会被后端的项目一致性预检拒掉，发布卡死到手动刷新。
+    expect(page).toContain('const isStaleProject = useCallback((p: string): boolean => currentProject.current !== p, []);');
   });
 
-  it('切项目时先清空 center', () => {
-    expect(page).toMatch(/setProjectId\(item\.id\);\s*setCenter\(null\);/);
+  /**
+   * 这一条是**清单式**的：前两轮 review 各抓到一处漏网的项目级请求（先是 center，
+   * 再是 branches），一处一处补必然还会漏第三处。所以这里不点名某一处，而是扫出
+   * 文件里全部带 `?project=` 的请求，逐个要求它有 staleness 判据。
+   */
+  it('每一个带 project 的请求都过闸——不许有漏网的', () => {
+    const lines = page.split('\n');
+    const requests = lines
+      .map((line, idx) => ({ line, idx }))
+      .filter(({ line }) => /apiRequest</.test(line) && /project=\$\{encodeURIComponent/.test(line));
+    expect(requests.length).toBeGreaterThanOrEqual(2);
+    for (const { line, idx } of requests) {
+      // 「附近有一句 isStaleProject」不够——写在 catch 里、写在 setXxx 之后都算
+      // 「有」，而成功路径照样会把旧项目的数据写进去。判据必须**先于**这条请求
+      // 之后的第一次状态写入。
+      const window = lines.slice(idx, idx + 12);
+      const guardAt = window.findIndex((l) => l.includes('isStaleProject('));
+      const writeAt = window.findIndex((l) => /\bset[A-Z]\w*\(/.test(l));
+      const where = `第 ${idx + 1} 行：${line.trim()}`;
+      expect(guardAt, `${where} —— 请求之后没有过期判据`).toBeGreaterThanOrEqual(0);
+      expect(writeAt, `${where} —— 没找到状态写入，用例的窗口可能失效了`).toBeGreaterThanOrEqual(0);
+      expect(guardAt, `${where} —— 过期判据排在状态写入之后，等于没有`).toBeLessThan(writeAt);
+    }
+  });
+
+  it('切项目时把上一个项目的数据清空，宁可空一瞬', () => {
+    expect(page).toMatch(/setProjectId\(item\.id\);\s*setCenter\(null\);\s*setBranches\(\[\]\);/);
   });
 });
 
