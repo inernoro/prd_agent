@@ -451,7 +451,7 @@ async function attachViewport(page: Page, testInfo: TestInfo, name: string) {
   });
 }
 
-test.describe('录音连续性发布门禁', () => {
+test.describe('录音连续性受控数据回归', () => {
   test.use({
     viewport: { width: 390, height: 844 },
     isMobile: true,
