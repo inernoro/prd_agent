@@ -57,11 +57,15 @@ export interface InfraExposureFinding {
   publiclyPublished: boolean;
   /** 这个库当前是否配了认证；认不出类型时为 null（未知）。 */
   authenticated: boolean | null;
+  /** 端口虽然绑在全网卡，但宿主防火墙挡住了。 */
+  firewallBlocked: boolean;
   severity: ExposureSeverity;
   /** 人话结论，直接进告警正文。 */
   reason: string;
   /** 实际读到的绑定地址，便于核对。 */
   boundHosts: string[];
+  /** 实际读到的宿主端口。 */
+  hostPorts: number[];
 }
 
 export interface InfraExposureReport {
@@ -82,6 +86,62 @@ export function detectInfraKind(dockerImage: string): InfraKind {
   if (l.includes('mysql') || l.includes('mariadb')) return 'mysql';
   if (l.includes('postgres') || l.includes('timescale')) return 'postgres';
   return 'other';
+}
+
+/**
+ * 宿主防火墙对 docker 发布端口的拦截情况。
+ *
+ * 为什么自检必须看这一层：端口绑在全网卡、但被防火墙挡住，和端口绑在全网卡、
+ * 完全裸奔，是**两种危险度**。只看绑定会把前者也报成 critical，报多了就没人看了。
+ *
+ * 更要紧的是反过来那一半：iptables 规则重启会丢。**规则丢了而绑定没变，
+ * 这台机器会在无人知晓的情况下重新变成裸奔**——只看绑定的自检对此完全无感。
+ * 把防火墙纳入判据之后，这条自检同时成了「规则还在不在」的哨兵。
+ */
+export interface FirewallGuard {
+  /** 是否存在「公网网卡进来的一律拒绝」的兜底规则。 */
+  blanket: boolean;
+  /** 被逐个点名拦掉的宿主端口。 */
+  ports: Set<number>;
+}
+
+/**
+ * 解析 `iptables -S DOCKER-USER` 的输出。
+ *
+ * 只认真正生效的形状：入接口是公网网卡且动作是 DROP/REJECT。
+ * `-j RETURN`（放行已建立连接那条）不算拦截，混进来会把「没防护」读成「有防护」。
+ */
+export function parseFirewallGuard(rules: string, publicIface: string): FirewallGuard {
+  const guard: FirewallGuard = { blanket: false, ports: new Set() };
+  const iface = (publicIface || '').trim();
+  if (!iface) return guard;
+  for (const line of (rules || '').split('\n')) {
+    const l = line.trim();
+    if (!l.startsWith('-A DOCKER-USER')) continue;
+    if (!new RegExp(`-i\\s+${iface}(\\s|$)`).test(l)) continue;
+    if (!/-j\s+(DROP|REJECT)(\s|$)/.test(l)) continue;
+    const m = l.match(/--ctorigdstport\s+(\d+)/);
+    if (m) guard.ports.add(Number(m[1]));
+    else if (!/--ctorigdstport|--dport/.test(l)) guard.blanket = true;
+  }
+  return guard;
+}
+
+/** 这些宿主端口是不是都被防火墙挡住了。端口读不出来时按「没挡住」处理。 */
+export function isFirewallBlocked(hostPorts: readonly number[], guard?: FirewallGuard | null): boolean {
+  if (!guard) return false;
+  if (guard.blanket) return true;
+  if (hostPorts.length === 0) return false;
+  return hostPorts.every((p) => guard.ports.has(p));
+}
+
+/** 从 `docker ps` 的端口串里抠出**宿主端口号**（防火墙判据要按端口对） */
+export function parsePublishedPorts(ports: string | null | undefined): number[] {
+  const out: number[] = [];
+  const re = /(?:\[[^\]]*\]|[0-9a-fA-F.:]*):(\d+)->/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(ports || '')) !== null) out.push(Number(m[1]));
+  return [...new Set(out)];
 }
 
 /**
@@ -159,6 +219,17 @@ function describe(f: Omit<InfraExposureFinding, 'reason' | 'severity'>): { sever
   if (!f.publiclyPublished) {
     return { severity: 'ok', reason: `端口只绑在 ${where}，宿主之外够不着` };
   }
+  // 绑在全网卡但防火墙挡住了：真实可达性等于零，但这份保护是**易失的**——
+  // iptables 规则重启就丢，丢了立刻回到裸奔。所以降级到 warn 而不是 ok，
+  // 让它一直留在视野里，直到绑定本身被改掉（重建容器）为止。
+  if (f.firewallBlocked) {
+    const authNote = f.authenticated === false ? '且该库无认证' : '';
+    return {
+      severity: 'warn',
+      reason: `端口绑在 ${where}（全网卡）${authNote}，当前由宿主防火墙挡着。`
+        + '防火墙规则重启会丢，丢了立刻恢复暴露；根治要重建容器让绑定地址收窄',
+    };
+  }
   if (f.authenticated === false) {
     return {
       severity: 'critical',
@@ -181,7 +252,10 @@ function describe(f: Omit<InfraExposureFinding, 'reason' | 'severity'>): { sever
  * 跑一遍判定。纯函数——输入是快照，输出是结论，不碰 docker 也不碰网络，
  * 方便用真实事故值写回归。
  */
-export function auditInfraExposure(inputs: readonly InfraExposureInput[]): InfraExposureReport {
+export function auditInfraExposure(
+  inputs: readonly InfraExposureInput[],
+  opts: { firewall?: FirewallGuard | null } = {},
+): InfraExposureReport {
   const findings: InfraExposureFinding[] = [];
   for (const svc of inputs) {
     // 停掉的容器不占端口，不构成暴露面
@@ -190,6 +264,7 @@ export function auditInfraExposure(inputs: readonly InfraExposureInput[]): Infra
     const boundHosts = parsePublishedHosts(svc.runtimePorts);
     // 没发布任何端口 = 完全不对外，直接跳过（区别于「读不到」）
     if (svc.runtimePorts != null && boundHosts.length === 0) continue;
+    const hostPorts = parsePublishedPorts(svc.runtimePorts);
     const base = {
       id: svc.id,
       projectId: svc.projectId,
@@ -198,18 +273,24 @@ export function auditInfraExposure(inputs: readonly InfraExposureInput[]): Infra
       // 读不到映射时 boundHosts 为空 → isPubliclyPublished 判真，从严
       publiclyPublished: isPubliclyPublished(boundHosts),
       authenticated: detectInfraAuth(kind, svc.env, svc.args),
+      firewallBlocked: isFirewallBlocked(hostPorts, opts.firewall),
       boundHosts,
+      hostPorts,
     };
     findings.push({ ...base, ...describe(base) });
   }
 
   const critical = findings.filter((f) => f.severity === 'critical');
   const warn = findings.filter((f) => f.severity === 'warn');
+  const shielded = warn.filter((f) => f.firewallBlocked).length;
   const summary = critical.length > 0
     ? `${critical.length} 个数据库对外可达且无认证：${critical.map((f) => f.id).join('、')}`
-    : warn.length > 0
-      ? `${warn.length} 个数据库端口对外可达（已配认证或类型未知）`
-      : `全部 ${findings.length} 个基础设施端口都没有对外暴露`;
+    : shielded > 0 && shielded === warn.length
+      // 说清「靠防火墙挡着」而不是「安全了」：这份保护重启就没，不该读成已解决
+      ? `${shielded} 个数据库端口仍绑在全网卡，当前由宿主防火墙挡着（易失，重建容器才根治）`
+      : warn.length > 0
+        ? `${warn.length} 个数据库端口对外可达（其中 ${shielded} 个有防火墙挡着）`
+        : `全部 ${findings.length} 个基础设施端口都没有对外暴露`;
 
   return {
     findings,

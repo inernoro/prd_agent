@@ -18,7 +18,7 @@ import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
 import { describeListenDecision, resolveListenHost } from './services/listen-host.js';
 import {
-  auditInfraExposure, detectInfraKind, renderExposureReport, type InfraExposureInput,
+  auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport, type InfraExposureInput,
 } from './services/infra-exposure-audit.js';
 import {
   backupDirCandidates, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
@@ -396,7 +396,19 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
         };
       });
 
-      const report = auditInfraExposure(inputs);
+      // 把宿主防火墙纳入判据。两个方向都要：绑在全网卡但被挡住的不该报成 critical
+      // （报多了没人看），而**规则一旦丢失（重启即丢）就要立刻升回 critical**——
+      // 只看容器绑定的自检对「防火墙没了」这件事完全无感。
+      const pubIf = (await shell.exec(
+        `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
+        { timeout: 15_000 },
+      )).stdout.trim();
+      const fwRules = await shell.exec('iptables -S DOCKER-USER 2>/dev/null', { timeout: 15_000 });
+      const firewall = pubIf && fwRules.exitCode === 0
+        ? parseFirewallGuard(fwRules.stdout || '', pubIf)
+        : null;
+
+      const report = auditInfraExposure(inputs, { firewall });
       if (report.signature === lastSignature) return;   // 状态没变就不刷屏
       lastSignature = report.signature;
 

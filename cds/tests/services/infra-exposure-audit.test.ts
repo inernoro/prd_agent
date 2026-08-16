@@ -5,6 +5,8 @@ import {
   auditInfraExposure,
   detectInfraAuth,
   detectInfraKind,
+  isFirewallBlocked,
+  parseFirewallGuard,
   parsePublishedHosts,
   renderExposureReport,
   type InfraExposureInput,
@@ -234,5 +236,87 @@ describe('自检真的被启动了', () => {
   it('发现问题时按 error 级记事件，不是只 console 一下', () => {
     expect(CODE).toContain("action: 'infra.exposure.detected'");
     expect(CODE).toContain('renderExposureReport(');
+  });
+});
+
+/**
+ * 宿主防火墙纳入判据。
+ *
+ * 两个方向都要守：
+ * 1. 绑在全网卡但被防火墙挡住的，不该报成 critical——报多了就没人看了。
+ * 2. **规则一旦丢失（iptables 重启即丢）必须立刻升回 critical**。只看容器绑定的
+ *    自检对「防火墙没了」完全无感，那正是这台机器最现实的退化路径。
+ */
+describe('防火墙纳入判据', () => {
+  const RULES_BLANKET = [
+    '-N DOCKER-USER',
+    '-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN',
+    '-A DOCKER-USER -i eth0 -j DROP',
+  ].join('\n');
+  const RULES_PERPORT = [
+    '-N DOCKER-USER',
+    '-A DOCKER-USER -i eth0 -p tcp -m conntrack --ctorigdstport 10001 -j DROP',
+    '-A DOCKER-USER -i eth0 -p tcp -m conntrack --ctorigdstport 10002 -j DROP',
+  ].join('\n');
+
+  it('认得出兜底拦截与逐端口拦截', () => {
+    expect(parseFirewallGuard(RULES_BLANKET, 'eth0').blanket).toBe(true);
+    const g = parseFirewallGuard(RULES_PERPORT, 'eth0');
+    expect(g.blanket).toBe(false);
+    expect([...g.ports].sort()).toEqual([10001, 10002]);
+  });
+
+  /** RETURN 是放行已建立连接，不是拦截。混进来会把「没防护」读成「有防护」。 */
+  it('RETURN 不算拦截', () => {
+    expect(parseFirewallGuard('-A DOCKER-USER -i eth0 -j RETURN', 'eth0').blanket).toBe(false);
+  });
+
+  it('网卡对不上的规则不算数', () => {
+    expect(parseFirewallGuard(RULES_BLANKET, 'ens3').blanket).toBe(false);
+  });
+
+  it('端口读不出来时不敢认作已挡住', () => {
+    expect(isFirewallBlocked([], parseFirewallGuard(RULES_PERPORT, 'eth0'))).toBe(false);
+    expect(isFirewallBlocked([10001], null)).toBe(false);
+  });
+
+  it('挡住了就从 critical 降到 warn，但绝不降到 ok', () => {
+    const input = [svc({ id: 'mongodb', runtimePorts: '0.0.0.0:10001->27017/tcp', env: {} })];
+    const guarded = auditInfraExposure(input, { firewall: parseFirewallGuard(RULES_PERPORT, 'eth0') });
+    expect(guarded.criticalCount).toBe(0);
+    expect(guarded.findings[0].severity).toBe('warn');
+    expect(guarded.findings[0].firewallBlocked).toBe(true);
+    expect(guarded.summary).toContain('防火墙');
+    // 结论不能读成「已解决」：这份保护是易失的
+    expect(guarded.summary).toContain('易失');
+  });
+
+  /** 这条是本次事故最现实的退化路径：服务器重启 → 规则没了 → 无声回到裸奔。 */
+  it('规则消失后立刻升回 critical，且签名变化会触发新告警', () => {
+    const input = [svc({ id: 'mongodb', runtimePorts: '0.0.0.0:10001->27017/tcp', env: {} })];
+    const guarded = auditInfraExposure(input, { firewall: parseFirewallGuard(RULES_PERPORT, 'eth0') });
+    const lost = auditInfraExposure(input, { firewall: parseFirewallGuard('-N DOCKER-USER', 'eth0') });
+    expect(lost.criticalCount).toBe(1);
+    expect(lost.signature).not.toBe(guarded.signature);
+  });
+
+  it('兜底拦截覆盖所有端口', () => {
+    const input = [
+      svc({ id: 'mongodb', runtimePorts: '0.0.0.0:10001->27017/tcp', env: {} }),
+      svc({ id: 'redis', dockerImage: 'redis:7-alpine', runtimePorts: '0.0.0.0:59999->6379/tcp', env: {} }),
+    ];
+    const r = auditInfraExposure(input, { firewall: parseFirewallGuard(RULES_BLANKET, 'eth0') });
+    expect(r.criticalCount).toBe(0);
+    expect(r.findings.every((f) => f.firewallBlocked)).toBe(true);
+  });
+
+  it('自检真的去读了防火墙，不是只看容器绑定', () => {
+    const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+    const CODE = SRC.split('\n')
+      .filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')); })
+      .join('\n');
+    expect(CODE).toContain('iptables -S DOCKER-USER');
+    expect(CODE).toContain('parseFirewallGuard(');
+    expect(CODE).toMatch(/auditInfraExposure\(inputs,\s*\{\s*firewall\s*\}\)/);
   });
 });
