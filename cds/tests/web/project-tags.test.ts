@@ -119,10 +119,64 @@ describe('接线与配色', () => {
   );
 
   /** 判据写好却没渲染到卡上，是本仓库反复栽的「链路只建到一半」。 */
-  it('项目卡真的渲染了标签行', () => {
-    expect(PAGE).toContain('<ProjectTagRow project={item} />');
+  it('项目卡真的渲染了标记', () => {
+    expect(PAGE).toContain('<ProjectTagMarks project={item} />');
     expect(PAGE).toContain('projectTags(project)');
     expect(PAGE).toContain('PROJECT_TAG_TONE_CLASS[tag.tone]');
+  });
+
+  /**
+   * 用户 2026-08-16 纠偏：「我的意思是项目名字旁边加一个 label tag 比如 icon 什么的。」
+   * 位置是**名字那一行**——上一版把它放在仓库名下面另起一行，不是用户要的。
+   * 这里断言标记与名字在同一个横向容器里，且排在名字之后。
+   */
+  it('标记挂在项目名同一行，不是名字下面另起一行', () => {
+    const nameLine = PAGE.slice(
+      PAGE.indexOf('{item.name || item.id}'),
+      PAGE.indexOf('<ProjectTagMarks project={item} />'),
+    );
+    // 名字与标记之间只隔着闭合标签，中间没有插入仓库名那一行
+    expect(nameLine).not.toContain('githubRepoFullName');
+    expect(nameLine.length).toBeLessThan(120);
+    // 承载它俩的那层是横向 flex（竖排就又变成「下面一行」了）
+    const wrapperStart = PAGE.lastIndexOf('<span className="flex w-full min-w-0 items-center gap-1.5">', PAGE.indexOf('{item.name || item.id}'));
+    expect(wrapperStart).toBeGreaterThan(0);
+    // 名字可截断、标记不参与压缩，长名字不会把标记挤没
+    expect(PAGE).toContain('min-w-0 flex-1 truncate text-[13px] font-medium');
+    expect(PAGE).toContain('flex shrink-0 items-center gap-1');
+  });
+
+  /** 图标表漏配一枚 → 页面上是个空框，看不出来。所以让 TS + 这条一起兜。 */
+  it('每一枚标签都配了图标，一枚不漏', () => {
+    const table = PAGE.slice(
+      PAGE.indexOf('const PROJECT_TAG_ICON'),
+      PAGE.indexOf('function ProjectTagMarks'),
+    );
+    expect(table).toContain('Record<ProjectTagKey, LucideIcon>');
+    const everyKey = new Set<string>();
+    for (const input of [
+      { kind: 'git', paused: true, cloneStatus: 'error', githubRepoFullName: 'a/b', runningServiceCount: 1 },
+      { kind: 'git', cloneStatus: 'cloning', githubRepoFullName: 'a/b', githubAutoDeploy: false },
+      { kind: 'git', githubRepoFullName: 'a/b', githubAutoDeploy: true, branchCount: 1 },
+      { kind: 'shared-service' }, { kind: 'manual', runningServiceCount: 4 },
+      { kind: 'git', branchCount: 2, runningServiceCount: 0 },
+    ] as const) {
+      for (const tag of projectTags(input)) everyKey.add(tag.key);
+    }
+    expect(everyKey.size).toBe(9); // 标签全集
+    for (const key of everyKey) {
+      const quoted = /^[a-z]+$/.test(key) ? key : `'${key}'`;
+      expect(table, `标签 ${key} 没配图标`).toMatch(new RegExp(`${quoted}:\\s*[A-Z]`));
+    }
+  });
+
+  /** 图标不能把信息藏掉：带数字的那枚必须把数字显示出来，其余靠 title + aria-label。 */
+  it('数字不被图标吃掉，且每枚标记都能被读屏念出来', () => {
+    expect(projectTags({ kind: 'git', runningServiceCount: 35 })[0].short).toBe('35');
+    expect(projectTags({ kind: 'git', branchCount: 1, runningServiceCount: 0 })[0].short).toBeUndefined();
+    expect(PAGE).toContain('{tag.short ?');
+    expect(PAGE).toContain('aria-label={tag.label}');
+    expect(PAGE).toContain('title={tag.title}');
   });
 
   it('五种色调都有定义，且全部走语义 token（两个主题自动翻）', () => {

@@ -1,10 +1,12 @@
 /**
- * 项目卡上的标签。
+ * 项目卡上的标签——渲染成**紧挨着项目名的一排图标标记**。
  *
  * 用户 2026-08-15：「这里给一些 label tag 让用户觉得这里是项目，我们的项目还没有
- * 专属的 tag 吧，我们得降低用户心智。」
+ * 专属的 tag 吧，我们得降低用户心智。」随后纠偏：「我的意思是项目名字旁边加一个
+ * label tag 比如 icon 什么的。」——所以位置是**名字那一行**，形态是**图标**，
+ * 不是名字下面再堆一行文字标签（那会让卡片更长、更难扫，与「降低心智」相反）。
  *
- * 两个刻意的决定：
+ * 三个刻意的决定：
  *
  * 1. **标签全部从真实字段推出来，不新建一套要人维护的自定义 tag。**
  *    `/api/projects` 返回的是整个 Project 加统计（`toSummary` 直接 spread），
@@ -15,18 +17,42 @@
  * 2. **只出「此刻为真且值得一说」的标签。** 一张卡最多 3 枚，多了就成噪音，
  *    反而更难扫。优先级按「异常 > 身份 > 活跃度」排：暂停/出错这类必须先看见。
  *
+ * 3. **图标不是把文字藏起来。** 每枚标记都带 title 悬停解释，带数字的（几个在跑）
+ *    数字照常显示——图标只替掉「推送即部署」这种一看图就懂的定语，不替掉信息。
+ *
  * 想要用户自定义的 tag 是另一件事（需要 Project 加字段 + 编辑入口 + 存储），
  * 不在这一层做。
  */
 
 export type ProjectTagTone = 'neutral' | 'ok' | 'warn' | 'bad' | 'brand';
 
+/**
+ * 标签的全集。列成联合类型是为了让「每枚标签配哪个图标」那张表
+ * 由 TypeScript 兜底穷尽——这里加一枚标签而那边忘了配图标，编译就红。
+ * 换成 `string` 的话漏配只会在运行时渲染成空白，看不出来。
+ */
+export type ProjectTagKey =
+  | 'paused'
+  | 'clone-error'
+  | 'cloning'
+  | 'shared-service'
+  | 'manual'
+  | 'github'
+  | 'auto-deploy'
+  | 'running'
+  | 'idle';
+
 export interface ProjectTag {
-  /** 稳定 key，用于 React list 与测试断言。 */
-  key: string;
+  /** 稳定 key，用于 React list、图标查表与测试断言。 */
+  key: ProjectTagKey;
   label: string;
   tone: ProjectTagTone;
-  /** 悬停解释。标签只有两三个字，为什么这么标要说清楚。 */
+  /**
+   * 挨着项目名的那枚标记里显示的文字。绝大多数标签是**纯图标**（留空），
+   * 只有「几个在跑」这种带数字的才给一个极短的形式——数字丢了图标就没意义了。
+   */
+  short?: string;
+  /** 悬停解释。标记本身只有一个图标，为什么这么标必须能问出来。 */
   title: string;
 }
 
@@ -107,6 +133,8 @@ export function projectTags(project: ProjectTagInput): ProjectTag[] {
     tags.push({
       key: 'running',
       label: `${running} 个在跑`,
+      // 这一枚必须保留数字：「在跑」和「跑了 35 个」不是同一条信息。
+      short: String(running),
       tone: 'ok',
       title: `当前有 ${running} 个服务容器正在运行`,
     });
@@ -122,7 +150,7 @@ export function projectTags(project: ProjectTagInput): ProjectTag[] {
   return tags.slice(0, MAX_TAGS);
 }
 
-/** 标签配色。走语义 token，两个主题自动翻。 */
+/** 标记配色。走语义 token，两个主题自动翻。 */
 export const PROJECT_TAG_TONE_CLASS: Record<ProjectTagTone, string> = {
   neutral: 'border-[hsl(var(--hairline-strong))] text-muted-foreground',
   ok: 'border-ok/35 bg-ok-soft text-ok',

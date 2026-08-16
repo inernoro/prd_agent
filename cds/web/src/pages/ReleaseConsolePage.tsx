@@ -24,7 +24,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Ban, CheckCircle2, Clipboard, Clock, History, Loader2, RefreshCw, Rocket, RotateCcw, Search, X, XCircle } from 'lucide-react';
+import {
+  AlertTriangle, Ban, Boxes, CheckCircle2, CircleDashed, Clipboard, Clock, Github, History, Loader2,
+  PauseCircle, Play, Plug, RefreshCw, Rocket, RotateCcw, Search, X, XCircle, Zap,
+  type LucideIcon,
+} from 'lucide-react';
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { useNowTick } from '@/hooks/useNowTick';
@@ -35,7 +39,7 @@ import { buildEnvironmentSections, resolveSelectedTargetId } from '@/lib/release
 import { resolveReleaseSourceUrls } from '@/lib/releaseDialogAddress';
 import { diagnoseReleaseFailure } from '@/lib/releaseDiagnosis';
 import { buildConsoleStance, sameCommit } from '@/lib/releaseConsoleState';
-import { PROJECT_TAG_TONE_CLASS, projectTags } from '@/lib/projectTags';
+import { PROJECT_TAG_TONE_CLASS, projectTags, type ProjectTagKey } from '@/lib/projectTags';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { Chip, formatClock, formatDateTime, formatDuration } from './release-center/shared';
@@ -129,22 +133,51 @@ function SectionLabel({ children }: { children: ReactNode }): JSX.Element {
 }
 
 /**
- * 项目卡上那排标签。没有可说的就整行不出——空着一行占位比不画更糟。
+ * 每枚标签配一个图标。写成 Record<ProjectTagKey, …> 而不是 Record<string, …>：
+ * lib 里新增一枚标签、这里忘了配图标，`pnpm tsc` 当场红——否则只会在页面上
+ * 静默渲染成一个空框，没人发现。
  */
-function ProjectTagRow({ project }: { project: ProjectLite }): JSX.Element | null {
+const PROJECT_TAG_ICON: Record<ProjectTagKey, LucideIcon> = {
+  paused: PauseCircle,
+  'clone-error': AlertTriangle,
+  cloning: Loader2,
+  'shared-service': Boxes,
+  manual: Plug,
+  github: Github,
+  'auto-deploy': Zap,
+  running: Play,
+  idle: CircleDashed,
+};
+
+/**
+ * 紧挨着项目名的那排标记。
+ *
+ * 用户要的是「名字旁边一个 icon」，所以这里是**同一行**的图标条，不是名字底下
+ * 另起一行文字标签。名字 truncate、标记 shrink-0：名字再长也不会把标记挤没，
+ * 标记也不会把名字撑出卡片。
+ *
+ * 没有可说的就什么都不出——空占位比不画更糟。
+ */
+function ProjectTagMarks({ project }: { project: ProjectLite }): JSX.Element | null {
   const tags = projectTags(project);
   if (tags.length === 0) return null;
   return (
-    <span className="mt-0.5 flex flex-wrap items-center gap-1">
-      {tags.map((tag) => (
-        <span
-          key={tag.key}
-          title={tag.title}
-          className={`rounded-[5px] border px-1.5 py-px text-[10px] leading-[15px] ${PROJECT_TAG_TONE_CLASS[tag.tone]}`}
-        >
-          {tag.label}
-        </span>
-      ))}
+    <span className="flex shrink-0 items-center gap-1">
+      {tags.map((tag) => {
+        const Icon = PROJECT_TAG_ICON[tag.key];
+        return (
+          <span
+            key={tag.key}
+            title={tag.title}
+            // aria-label 而不是只靠 title：读屏用户拿不到 title，图标对他们就是空的
+            aria-label={tag.label}
+            className={`inline-flex h-[17px] items-center gap-[3px] rounded-[5px] border px-[3px] ${PROJECT_TAG_TONE_CLASS[tag.tone]}`}
+          >
+            <Icon className={`h-[11px] w-[11px] ${tag.key === 'cloning' ? 'animate-spin' : ''}`} />
+            {tag.short ? <span className="cds-ident text-[10px] leading-none">{tag.short}</span> : null}
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -638,16 +671,18 @@ export function ReleaseConsolePage(): JSX.Element {
                       : 'border-transparent hover:border-[hsl(var(--hairline-strong))] hover:bg-[hsl(var(--surface-sunken))]/60'
                   }`}
                 >
-                  <span className={`truncate text-[13px] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
-                    {item.name || item.id}
+                  {/* 名字那一行右边挂标记：标记全部从真实字段推出来（见 lib/projectTags.ts），
+                      零维护。作用是让这一栏一眼读成「这是一个项目，它现在什么状态」，
+                      而不是一串看不出是什么的名字。 */}
+                  <span className="flex w-full min-w-0 items-center gap-1.5">
+                    <span className={`min-w-0 flex-1 truncate text-[13px] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
+                      {item.name || item.id}
+                    </span>
+                    <ProjectTagMarks project={item} />
                   </span>
                   <span className="truncate cds-ident text-xs text-muted-foreground">
                     {item.githubRepoFullName || item.id}
                   </span>
-                  {/* 标签全部从真实字段推出来（见 lib/projectTags.ts），零维护。
-                      作用是让这一栏一眼读成「这是一个项目，它现在什么状态」，
-                      而不是一串看不出是什么的名字。 */}
-                  <ProjectTagRow project={item} />
                 </button>
               ))}
             </div>
