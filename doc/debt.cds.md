@@ -774,6 +774,31 @@ loopback——只绑回环等于全线断库。所以绑的是「消费方实际
 | E3 | 中 | 2026-08-16 | 服务目录里的 redis 默认不设访问密码 | 新建 redis | open | 补密码会连带改下发给应用的连接串，而各项目的 compose 契约存在 CDS 自己的状态库里、不在本仓库，改动前需要逐项目核对消费姿势 |
 | E4 | 中 | 2026-08-16 | infra 没有周期备份，只能手工触发 | 需要回滚或恢复时 | open | 无备份状态下不得重建任何有状态容器（见 E1）。可挂到既有的定时任务设施上做周期导出 + 保留策略 + 离机副本 |
 | E5 | 中 | 2026-08-16 | 「无认证 + 对外端口」这个组合没有**存量**扫描守卫，只有新增路径的单测 | 已有 infra 被改回裸绑，或建库时跳过认证 | open | 单测覆盖的是「新建时怎么拼参数」；存量真值只能读运行态的容器端口映射，CI 访问不到宿主。可做成 CDS 自身的周期自检 + 站内告警 |
+| E6 | 高 | 2026-08-16 | CDS 控制面自身的监听地址此前是全部网卡：`listen(port, cb)` 不给 host，Node 就绑全网卡，控制面裸端口绕过前置 nginx 直接可达 | 单机 + nginx 在前的默认部署 | 代码已修，**存量实例未切换** | 已改成单机绑回环、集群角色自动放开。但切换前必须确认 nginx 的**运行时** upstream 确实指向回环——那份配置是可写的，转发器可能在运行时改指到别的地址。改错就是控制面自锁，且没有第二条进入路径 |
+
+### 两层暴露面的区别（别混为一谈）
+
+| | infra 容器端口 | CDS 控制面自身 |
+|---|---|---|
+| 谁在监听 | docker 发布的容器端口 | 宿主上的 Node 进程 |
+| 走哪条链 | DNAT 之后走 `FORWARD` | 走 `INPUT` |
+| 宿主防火墙管不管得着 | **管不着**，这是最反直觉的一点 | 管得着 |
+| 默认收窄成什么 | 网桥地址 + 回环 | 回环（集群角色自动放开） |
+| 逃生阀 | `CDS_INFRA_PUBLISH_HOST` | `CDS_BIND_HOST` |
+
+两层都要收，但优先级不同：infra 那层**必须**在发布这一步解决，因为防火墙那一步根本
+拦不到；控制面这层防火墙能兜底，收窄只是不该依赖运维记得配。
+
+### 后续波次（按先后）
+
+1. **存量容器重建**（对应 E1）。代码改动只对新建生效，存量要逐个重建才落地。前置条件
+   是先有备份（E4），否则重建有状态服务是在没有安全网的情况下动数据。
+2. **周期备份**（E4）。这是让一次数据丢失变成不可恢复的根因。挂到既有定时任务设施上，
+   配保留策略与离机副本。**这一条应排在重建之前**。
+3. **默认认证补齐**（E2 / E3）。需要先把各项目的连接姿势捞出来核对——它们的 compose
+   契约存在 CDS 自己的状态库里、不在本仓库，看不全就动会打断别人的项目。
+4. **存量自检**（E5）。CDS 周期扫自己的 infra，发现「无认证 + 对外端口」就发站内告警。
+   这是唯一能覆盖存量、且能防住日后悄悄退回去的手段——单测只管得住新增路径。
 
 ### 不在范围内
 
@@ -827,4 +852,6 @@ loopback——只绑回环等于全线断库。所以绑的是「消费方实际
 | 通知账本 | `cds/src/services/notice-ledger.ts`、`cds/src/services/notice-outbound-map.ts`、`cds/src/routes/notices.ts` |
 | 基础设施端口绑定 | `cds/src/services/infra-publish.ts`（唯一判定）、`cds/src/services/container.ts`（`startInfraService` 调用点）、`cds/src/services/state.ts`（网桥地址与注入同源）、`cds/src/index.ts`（适配器接线） |
 | 端口绑定回归 | `cds/tests/services/infra-publish-host.test.ts` |
+| CDS 自身监听地址 | `cds/src/services/listen-host.ts`（唯一判定）、`cds/src/index.ts`（`listenWithRetry` 调用点） |
+| 监听地址回归 | `cds/tests/services/listen-host.test.ts` |
 | 有意的对外暴露（不受收窄影响） | `cds/src/routes/branches.ts`（`applyResourceExternalFirewall`，allowlist + 防火墙兜底） |

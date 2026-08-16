@@ -16,6 +16,7 @@ import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entr
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
+import { describeListenDecision, resolveListenHost } from './services/listen-host.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
@@ -4047,6 +4048,29 @@ function tryKillOnPort(port: number, force: boolean): boolean {
   }
 }
 
+/**
+ * 已注册的**远端** executor 数量。本机自己那条不算——它不构成「别的机器要连过来」
+ * 的理由，把它算进去会让单机部署永远退不回回环。
+ */
+function countRemoteExecutors(): number {
+  try {
+    return Object.values(stateService.getExecutors() || {})
+      .filter((e) => e && e.host && e.host !== 'localhost' && e.host !== '127.0.0.1')
+      .length;
+  } catch {
+    // 状态库还没就绪时按 0 处理：此时集群成员也连不上来，绑回环不会误伤。
+    return 0;
+  }
+}
+
+function countCdsPeers(): number {
+  try {
+    return (stateService.getCdsPeers() || []).length;
+  } catch {
+    return 0;
+  }
+}
+
 // force: force-kill any process on the port (for masterPort)
 // optional: if true, port conflict is non-fatal (for workerPort shared with other services)
 function listenWithRetry(
@@ -4086,13 +4110,23 @@ function listenWithRetry(
   // conditions produced multiple concurrent retries while the first one
   // eventually succeeded.
   let listening = false;
+  // 监听地址（见 services/listen-host.ts）：单机部署只绑回环，对外走前置 nginx；
+  // 集群角色（executor / 已注册远端成员）自动放开——那种部署里别的机器确实要连过来。
+  // 不给 host 参数时 Node 绑全部网卡，等于把控制面裸端口挂公网、绕过 nginx。
+  const bind = resolveListenHost({
+    mode: config.mode,
+    remoteExecutorCount: countRemoteExecutors(),
+    peerCount: countCdsPeers(),
+  });
   const doListen = (attempt: number) => {
     if (listening) return; // retry scheduled before success became visible
-    const s = server.listen(port, () => {
+    const s = server.listen(port, bind.host, () => {
       listening = true;
       // 2026-05-07 timing 审视:盖戳 daemon ready,让 recordSelfUpdate 能算
       // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds.self-update-timing-audit.md
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
+      // 监听地址永远不该靠猜：直连裸端口失败时，这一行就是答案。
+      console.log(`  ${label}: ${describeListenDecision(bind)}`);
       onSuccess();
     });
     // 2026-05-28: 给所有 listenWithRetry 的 server 统一应用 keepalive 超时,
