@@ -16,7 +16,7 @@ import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entr
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
-import { describeListenDecision, resolveListenHost } from './services/listen-host.js';
+import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
 import {
   auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport, type InfraExposureInput,
 } from './services/infra-exposure-audit.js';
@@ -4456,6 +4456,19 @@ function countCdsPeers(): number {
   }
 }
 
+/**
+ * 本机监听决策的**唯一**求值口径。listenWithRetry 与 cluster 路由都从这里取——
+ * 各自再调一次 resolveListenHost 就会出现两份判据，改一处忘一处（判据分裂）。
+ * 每次现算而不是缓存：集群成员数会在运行中变化。
+ */
+function currentListenDecision(): ListenHostDecision {
+  return resolveListenHost({
+    mode: config.mode,
+    remoteExecutorCount: countRemoteExecutors(),
+    peerCount: countCdsPeers(),
+  });
+}
+
 // force: force-kill any process on the port (for masterPort)
 // optional: if true, port conflict is non-fatal (for workerPort shared with other services)
 function listenWithRetry(
@@ -4498,11 +4511,7 @@ function listenWithRetry(
   // 监听地址（见 services/listen-host.ts）：单机部署只绑回环，对外走前置 nginx；
   // 集群角色（executor / 已注册远端成员）自动放开——那种部署里别的机器确实要连过来。
   // 不给 host 参数时 Node 绑全部网卡，等于把控制面裸端口挂公网、绕过 nginx。
-  const bind = resolveListenHost({
-    mode: config.mode,
-    remoteExecutorCount: countRemoteExecutors(),
-    peerCount: countCdsPeers(),
-  });
+  const bind = currentListenDecision();
   const doListen = (attempt: number) => {
     if (listening) return; // retry scheduled before success became visible
     const s = server.listen(port, bind.host, () => {
@@ -4856,6 +4865,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     // so both the branch router and the cluster router see the same value.
     getStrategy: () => clusterStrategy,
     setStrategy: (s) => { clusterStrategy = s; },
+    getListenDecision: currentListenDecision,
   }));
   console.log(`  Cluster: one-click bootstrap API mounted at /api/cluster`);
 
@@ -4863,6 +4873,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     console.log(`  Scheduler: dispatcher enabled, cluster-aware routing active`);
   } else {
     console.log(`  Scheduler: standby, will auto-upgrade on first executor bootstrap`);
+    // 绑回环时首个 executor 只能经前置 nginx 打进来。这句写在这里，是因为
+    // 「注册端口连不上」的排障总是从这一行开始找。
+    const listen = currentListenDecision();
+    if (!listen.exposed) {
+      console.log(`  Scheduler: 主节点监听 ${listen.host}，首个 executor 需经前置 nginx 注册（直连裸端口请设 CDS_BIND_HOST=0.0.0.0）`);
+    }
   }
 
   // ── 自建存活监控（Uptime Kuma 风格状态页的数据源） ──

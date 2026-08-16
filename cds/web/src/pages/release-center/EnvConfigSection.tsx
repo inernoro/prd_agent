@@ -6,10 +6,18 @@
  * （发布模式 / 站点目录 / 部署命令跨两列 / 健康检查地址 / 回滚命令）、两个开关卡片
  * （设为主目标 / 启用该环境）、底部生效序列预览。
  *
- * 与稿子的一处出入：发布模式的三个选项。稿子写「静态站点 / 命令部署 / 静态站点 + 命令」，
- * 后端 `ReleaseExecutionMode` 的枚举是 existing-script / generated-compose / generated-static。
- * 控件形态照稿子（一个三选 select），**选项名用后端真值**——编三个后端不认的模式，
- * 保存时会被 400 打回来，那不是复刻是坏功能。
+ * 与稿子的一处出入：发布模式在这里是**只读**的，不是可切换的三选 select。
+ *
+ * 稿子画的是一个下拉。但后端三种模式各有自己的必填字段：generated-compose 要
+ * composeFile + composeProject，generated-static 要 buildCommand + artifactDirectory
+ * + publicDirectory（`validateReleaseStrategy`），而这张表单一个都没有——它编辑的是
+ * 站点目录 / 部署命令 / 健康检查 / 回滚这四项。把下拉切到任一 generated 模式再保存，
+ * PATCH 带过去的策略缺必填字段，后端 400，三个选项里有两个是必然失败的。
+ * 一个点了就报错的下拉不是复刻稿子，是坏功能。
+ *
+ * 所以这里只显示当前模式，切换走「改用其他模式」按钮打开站点向导——那边本来就有
+ * 这些字段的完整表单（SiteWizardDialog，`draftFromTarget` 会带着现值进去）。
+ * 「唯一写入口」说的是发布策略只有发布中心能写，不是这一张表单要写下所有字段。
  */
 
 import { useEffect, useState } from 'react';
@@ -22,10 +30,11 @@ export interface EnvConfigSectionProps {
   row: CenterRow;
   onSaved: (message: string) => void;
   onReload: () => void;
+  /** 打开站点向导（改发布模式唯一能改全必填字段的地方）。 */
+  onConfigure: () => void;
 }
 
 interface StrategyDraft {
-  mode: ReleaseExecutionMode;
   appPath: string;
   deployCommand: string;
   healthcheckUrl: string;
@@ -34,15 +43,19 @@ interface StrategyDraft {
   isEnabled: boolean;
 }
 
-const MODES: Array<{ value: ReleaseExecutionMode; label: string }> = [
-  { value: 'existing-script', label: '项目现有脚本' },
-  { value: 'generated-compose', label: '生成的 Compose' },
-  { value: 'generated-static', label: '生成的静态站点' },
-];
+const MODE_LABELS: Record<ReleaseExecutionMode, string> = {
+  'existing-script': '项目现有脚本',
+  'generated-compose': '生成的 Compose',
+  'generated-static': '生成的静态站点',
+};
+
+/** 当前生效的发布模式。没存过策略的老目标按 existing-script 读，与后端 `effectiveReleaseStrategy` 同口径。 */
+function modeOf(row: CenterRow): ReleaseExecutionMode {
+  return row.target.strategy?.mode || 'existing-script';
+}
 
 function draftOf(row: CenterRow): StrategyDraft {
   return {
-    mode: row.target.strategy?.mode || 'existing-script',
     appPath: row.target.ssh?.appPath || '',
     deployCommand: row.target.strategy?.command || row.target.ssh?.deployCommand || '',
     healthcheckUrl: row.target.ssh?.healthcheckUrl || '',
@@ -100,7 +113,8 @@ const CODE_CONTROL = `${CONTROL} cds-ident bg-[hsl(var(--surface-base))]`;
  */
 const CODE_AREA = 'min-h-[76px] w-full resize-y rounded-[9px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] px-3 py-2 cds-ident text-[12.5px] leading-[1.7] outline-none focus:border-primary/60';
 
-export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionProps): JSX.Element {
+export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvConfigSectionProps): JSX.Element {
+  const mode = modeOf(row);
   const [draft, setDraft] = useState<StrategyDraft>(() => draftOf(row));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -125,7 +139,11 @@ export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionPro
           rollbackCommand: draft.rollbackCommand,
           isCanonical: draft.isCanonical,
           isEnabled: draft.isEnabled,
-          strategy: { ...(row.target.strategy || {}), mode: draft.mode, command: draft.deployCommand },
+          // 模式原样带回：这张表单不改它，改了就会缺 generated 模式的必填字段被 400 打回。
+          // command 只在 existing-script 下有意义（另两种模式后端会丢弃它）。
+          strategy: mode === 'existing-script'
+            ? { ...(row.target.strategy || {}), mode, command: draft.deployCommand }
+            : { ...(row.target.strategy || {}), mode },
         },
       });
       onSaved('发布策略已保存');
@@ -166,13 +184,18 @@ export function EnvConfigSection({ row, onSaved, onReload }: EnvConfigSectionPro
 
       <div className="grid gap-x-[18px] gap-y-3.5 p-[18px] sm:grid-cols-2">
         <Field label="发布模式">
-          <select
-            value={draft.mode}
-            onChange={(event) => setDraft((current) => ({ ...current, mode: event.target.value as ReleaseExecutionMode }))}
-            className={CONTROL}
-          >
-            {MODES.map((mode) => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
-          </select>
+          {/* 只读 + 一个去向导的出口。理由见文件头：这张表单没有 generated 模式的必填字段，
+              就地切换的结果一定是 400，不如把人送到真能填全的那张表单去。 */}
+          <div className={`${CONTROL} flex items-center justify-between gap-2`}>
+            <span className="truncate">{MODE_LABELS[mode]}</span>
+            <button
+              type="button"
+              onClick={onConfigure}
+              className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-[11px] text-primary underline-offset-2 hover:underline"
+            >
+              改用其他模式
+            </button>
+          </div>
         </Field>
         <Field label="站点目录">
           <input

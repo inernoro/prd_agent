@@ -40,6 +40,7 @@ import { ExecutorAgent } from '../executor/agent.js';
 import { updateEnvFile, defaultEnvFilePath } from '../services/env-file.js';
 import { buildGateStatus, pumpWaiters } from '../services/build-gate.js';
 import { evaluateBuildGateHealth } from '../services/build-gate-health.js';
+import { describeBootstrapReachability, type ListenHostDecision } from '../services/listen-host.js';
 
 /**
  * Shape of a cluster connection code after base64+JSON decoding. The UI
@@ -71,6 +72,12 @@ export interface ClusterRouterDeps {
    */
   getStrategy: () => 'least-branches' | 'least-load' | 'round-robin';
   setStrategy: (s: 'least-branches' | 'least-load' | 'round-robin') => void;
+  /**
+   * 本机当前的监听决策（services/listen-host.ts）。签发连接码时用它判断远端
+   * executor 到底能不能连回来——绑回环 + 裸端口地址的组合是注册永远不到达。
+   * 由 index.ts 的同一个判定源提供，不在这里第二次算。
+   */
+  getListenDecision: () => ListenHostDecision;
 }
 
 /**
@@ -80,7 +87,7 @@ export interface ClusterRouterDeps {
 const BOOTSTRAP_TTL_SECONDS = 900; // 15 minutes
 
 export function createClusterRouter(deps: ClusterRouterDeps): Router {
-  const { config, stateService, registry, getExecutorAgent, setExecutorAgent, getStrategy, setStrategy } = deps;
+  const { config, stateService, registry, getExecutorAgent, setExecutorAgent, getStrategy, setStrategy, getListenDecision } = deps;
   const router = Router();
 
   // ── POST /api/cluster/issue-token — master-side token generation ──
@@ -155,11 +162,17 @@ export function createClusterRouter(deps: ClusterRouterDeps): Router {
 
     console.log(`  [cluster] Bootstrap token issued via UI (expires ${expiresAt})`);
 
+    // 连接码可能指向一个本机根本没在监听的地址。这话必须在签发这一刻说，
+    // 不能等对面 connect 超时——那边只会看到一个没有下文的 connection refused。
+    const reachabilityWarning = describeBootstrapReachability(getListenDecision(), masterUrl);
+    if (reachabilityWarning) console.warn(`  [cluster] ${reachabilityWarning}`);
+
     res.json({
       connectionCode,
       masterUrl,
       expiresAt,
       ttlSeconds: BOOTSTRAP_TTL_SECONDS,
+      reachabilityWarning,
     });
   });
 

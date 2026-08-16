@@ -152,6 +152,40 @@ export function resolveListenHost(inputs: ListenHostInputs = {}): ListenHostDeci
   };
 }
 
+/**
+ * 绑回环的主节点，能不能被远端 executor 连上来注册。
+ *
+ * 首个 executor 的 bootstrap 走 `POST /api/executors/register`，注册地址是连接码里
+ * 那个 `master` URL（`routes/cluster.ts` 按 rootDomains 生成，标准装法是前置 nginx 的
+ * https 域名——那条路走 nginx→127.0.0.1，绑回环照样通）。
+ *
+ * 真正会断的是另一种：连接码里给的是**带显式端口的裸地址**（没配 rootDomains 时按
+ * Host 头兜底出来的 `http://1.2.3.4:9900`），而本机只监听回环——对面连不上，注册永远
+ * 不会到达，standalone 也就永远升不成 scheduler。这时候不能闷着，要在签发连接码的
+ * 那一刻就说清楚，而不是让人拿着一个注定失败的码去另一台机器上试。
+ *
+ * 返回 null 表示这条路可达（或无法判定为不可达）；非 null 是给人看的原因 + 下一步。
+ */
+export function describeBootstrapReachability(
+  decision: ListenHostDecision,
+  masterUrl: string | undefined | null,
+): string | null {
+  if (decision.exposed) return null;
+  const raw = (masterUrl || '').trim();
+  if (!raw) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  // 没有显式端口 = 走 443/80，也就是前面有 nginx/反代，回环监听不挡它。
+  if (!parsed.port) return null;
+  return `本机只监听 ${decision.host}，但连接码里的主节点地址是 ${raw}（带显式端口的裸地址）。`
+    + `远端 executor 连不到这个端口，注册不会到达。`
+    + `请让主节点走前置 nginx（配 CDS_ROOT_DOMAINS），或设 ${BIND_HOST_ENV}=${ALL_INTERFACES_HOST} 后重启。`;
+}
+
 /** 启动日志用的一行说明。监听地址永远不该靠猜。 */
 export function describeListenDecision(d: ListenHostDecision): string {
   return `监听地址 ${d.host}（${d.reason}）`;

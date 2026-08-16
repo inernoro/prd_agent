@@ -811,6 +811,7 @@ export function ReleaseCenterPage(): JSX.Element {
                               row={selectedRow}
                               onSaved={setToast}
                               onReload={() => void load()}
+                              onConfigure={() => openConfigureWizard(selectedRow.target)}
                             />
                             {/* 只读的接入信息与归档入口留在下面：策略表单管「怎么发」，
                                 这一块管「这台机器是什么、不要了怎么归档」，两件事。 */}

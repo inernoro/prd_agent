@@ -5,6 +5,7 @@ import {
   ALL_INTERFACES_HOST,
   BIND_HOST_ENV,
   DEFAULT_BIND_HOST,
+  describeBootstrapReachability,
   describeListenDecision,
   detectContainerRuntime,
   isExposedHost,
@@ -181,5 +182,65 @@ describe('容器内必须绑全网卡', () => {
       existsSync: () => false,
       readFileSync: () => '0::/init.scope',
     })).toBe(false);
+  });
+});
+
+/**
+ * 首个 executor 的 bootstrap 可达性（Codex 第十轮 P1）。
+ *
+ * 评审说「绑回环 = 集群 bootstrap 死锁」。标准装法下不成立：连接码里的 master
+ * 是 `https://<rootDomain>`，走 nginx→127.0.0.1，注册照样到得了。真正会断的是
+ * 连接码指向**带显式端口的裸地址**那一种，那时必须当场说破，而不是让人拿着一个
+ * 注定 connection refused 的码去另一台机器上试。
+ */
+describe('bootstrap 可达性判据', () => {
+  const loopback = { host: '127.0.0.1', reason: '单机部署', exposed: false };
+  const open = { host: ALL_INTERFACES_HOST, reason: '集群', exposed: true };
+
+  it('放开监听时不告警——谁都连得上', () => {
+    expect(describeBootstrapReachability(open, 'http://10.0.0.5:9900')).toBeNull();
+  });
+
+  it('回环 + nginx 前置的域名不告警：那条路是通的', () => {
+    expect(describeBootstrapReachability(loopback, 'https://cds.miduo.org')).toBeNull();
+  });
+
+  it('回环 + 裸端口地址要告警，并给出两条出路', () => {
+    const warning = describeBootstrapReachability(loopback, 'http://10.0.0.5:9900');
+    expect(warning).toContain('10.0.0.5:9900');
+    expect(warning).toContain('CDS_ROOT_DOMAINS');
+    expect(warning).toContain(`${BIND_HOST_ENV}=${ALL_INTERFACES_HOST}`);
+  });
+
+  it('地址缺失或不可解析时不瞎猜', () => {
+    expect(describeBootstrapReachability(loopback, '')).toBeNull();
+    expect(describeBootstrapReachability(loopback, undefined)).toBeNull();
+    expect(describeBootstrapReachability(loopback, 'not a url')).toBeNull();
+  });
+});
+
+/**
+ * 接线守卫。上面三条判据全是纯函数——没人调用它们也一样全绿，
+ * 所以这里证明签发连接码那条路真的在用，且结论真的到得了用户眼前。
+ */
+describe('可达性判据接线', () => {
+  const read = (rel: string): string => fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8');
+
+  it('签发连接码时调判据，并把结论放进响应', () => {
+    const source = read('src/routes/cluster.ts');
+    expect(source).toContain('describeBootstrapReachability(getListenDecision(), masterUrl)');
+    expect(source).toContain('reachabilityWarning,');
+  });
+
+  it('监听决策只有一个求值口径，cluster 路由从 index.ts 拿', () => {
+    const source = read('src/index.ts');
+    expect(source).toContain('getListenDecision: currentListenDecision');
+    // resolveListenHost 只该在这一个函数里被调用；多一处就是判据分裂的开始。
+    expect(source.match(/resolveListenHost\(/g)?.length).toBe(1);
+  });
+
+  it('集群面板把告警渲染在连接码旁边，不是只落服务端日志', () => {
+    const source = read('web/src/pages/cds-settings/tabs/ClusterTab.tsx');
+    expect(source).toContain('token.reachabilityWarning');
   });
 });

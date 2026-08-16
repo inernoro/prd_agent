@@ -18,6 +18,7 @@ import { isShownRunCurrent, planRollbackToVersion, resolveFleetRowAction } from 
 import { describeDryRunResult } from '../../web/src/lib/releaseDiagnosis';
 import { runTone, statusLabel } from '../../web/src/pages/release-center/shared';
 import { FleetMatrix } from '../../web/src/pages/release-center/FleetMatrix';
+import { EnvConfigSection } from '../../web/src/pages/release-center/EnvConfigSection';
 import { absoluteNoticeActionUrl, normalizeNoticeOrigin } from '../../src/services/notice-outbound-map.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -547,5 +548,59 @@ describe('矩阵对不可执行的提升候选给出禁用与原因（渲染）'
     const html = renderMatrix({ ...baseEnv, promotableExecutable: false });
     expect(html).toContain('disabled=""');
     expect(html).toContain('这个候选版本现在提升不了');
+  });
+});
+
+/**
+ * 发布模式在环境配置卡里是只读的（Codex 第十轮 P1）。
+ *
+ * 后端 `validateReleaseStrategy` 对两种 generated 模式各有必填字段，而这张表单
+ * 一个都没有。之前那个三选下拉里有两个选项点了必然 400——三分之二的选项是坏的。
+ * 现在只显示当前模式 + 一个去站点向导的出口（向导有完整字段）。
+ */
+describe('EnvConfigSection 不提供必然失败的模式切换', () => {
+  const rowWith = (strategy: { mode: 'existing-script' | 'generated-compose' | 'generated-static'; command?: string }) => ({
+    target: {
+      id: 'tgt_1',
+      projectId: 'prd-agent',
+      name: '生产',
+      type: 'ssh',
+      isEnabled: true,
+      strategy,
+      ssh: {
+        host: '10.0.0.5', port: 22, user: 'root', privateKeyRef: 'key_1',
+        appPath: '/opt/prd-agent', deployCommand: './fast.sh', healthcheckUrl: 'https://app.miduo.org/healthz',
+      },
+    },
+    currentVersion: 'v1', currentCommit: 'abc1234', healthStatus: 'ok', canRollback: true,
+  });
+
+  const render = (strategy: Parameters<typeof rowWith>[0]): string => renderToStaticMarkup(createElement(EnvConfigSection, {
+    row: rowWith(strategy) as never,
+    onSaved: () => {},
+    onReload: () => {},
+    onConfigure: () => {},
+  }));
+
+  it('generated 模式的目标显示模式名，但没有可切换的下拉', () => {
+    const html = render({ mode: 'generated-compose' });
+    expect(html).toContain('生成的 Compose');
+    // 这才是要害：下拉一旦存在，另外两个选项保存时必然被后端 400 打回。
+    expect(html).not.toContain('<select');
+  });
+
+  it('existing-script 目标同样只读，并给出去向导的出口', () => {
+    const html = render({ mode: 'existing-script', command: './fast.sh' });
+    expect(html).toContain('项目现有脚本');
+    expect(html).not.toContain('<select');
+    expect(html).toContain('改用其他模式');
+  });
+});
+
+describe('发布中心把向导入口接给了环境配置卡（接线守卫）', () => {
+  const source = read('pages/ReleaseCenterPage.tsx');
+
+  it('EnvConfigSection 拿到 onConfigure，否则那个出口是死的', () => {
+    expect(source).toMatch(/onConfigure=\{\(\) => openConfigureWizard\(selectedRow\.target\)\}/);
   });
 });

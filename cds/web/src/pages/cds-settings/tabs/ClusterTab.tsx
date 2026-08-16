@@ -31,6 +31,8 @@ interface TokenResponse {
   masterUrl?: string;
   expiresAt?: string;
   ttlSeconds?: number;
+  /** 主节点绑回环 + 连接码指向裸端口时的可达性告警（后端 describeBootstrapReachability）。 */
+  reachabilityWarning?: string | null;
 }
 
 interface JoinResponse {
@@ -321,6 +323,13 @@ export function ClusterTab(): JSX.Element {
               </div>
               {token ? (
                 <div className="space-y-3">
+                  {/* 拿着一个注定连不上的码去另一台机器试，那边只会看到 connection refused。
+                      所以可达性问题必须贴在码旁边，不能只落在服务端日志里。 */}
+                  {token.reachabilityWarning ? (
+                    <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+                      {token.reachabilityWarning}
+                    </p>
+                  ) : null}
                   <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/20 p-3 font-mono text-xs">
                     {token.connectionCode}
                   </pre>
