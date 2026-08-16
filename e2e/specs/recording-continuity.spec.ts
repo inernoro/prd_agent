@@ -490,7 +490,7 @@ test.describe('录音连续性发布门禁', () => {
     await attachViewport(page, testInfo, '00-quick-create-recording-entry');
     await quickRecordAction.click();
 
-    const recordingTitle = page.getByText('快捷录音').first();
+    const recordingTitle = page.getByText('录音转笔记').first();
     try {
       await expect(recordingTitle).toBeVisible();
     } catch (error) {
