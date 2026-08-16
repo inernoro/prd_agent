@@ -5,6 +5,7 @@
 // 本路由提供 CDS Dashboard 一键自助修复运维问题的能力,替代外部 SSH。
 
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor } from '../types.js';
@@ -25,6 +26,7 @@ export function createOperatorConsoleRouter(deps: {
     stateService: deps.stateService,
     repoRoot: deps.repoRoot,
     serverEventLogStore: deps.serverEventLogStore,
+    storagePath: path.join(path.dirname(deps.stateService.getCacheBase()), 'operator-approvals.json'),
   });
 
   const router = Router();

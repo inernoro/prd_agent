@@ -60,10 +60,13 @@ describe('infra-catalog SSOT', () => {
     expect(recommendedVolumePathsFromCatalog('rabbitmq:3-management-alpine')).toEqual(['/var/lib/rabbitmq']);
   });
 
-  it('redis preset stays password-free (legacy behaviour)', () => {
-    const redis = getInfraCatalogEntry('redis')!.build({});
-    expect(redis.envVars).toEqual({ REDIS_URL: 'redis://redis:6379' });
-    expect(redis.env).toBeUndefined();
+  it('redis preset always configures authentication', () => {
+    const entry = getInfraCatalogEntry('redis')!;
+    const redis = entry.build({ password: 'redis-secret' });
+    expect(entry.secretKeys).toEqual(['password']);
+    expect(entry.command).toEqual(['sh', '-c', 'exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"']);
+    expect(redis.env).toEqual({ REDIS_PASSWORD: 'redis-secret' });
+    expect(redis.envVars).toEqual({ REDIS_URL: 'redis://:redis-secret@redis:6379' });
   });
 
   it('kafka uses KRaft (no zookeeper) and advertises itself as kafka:9092', () => {

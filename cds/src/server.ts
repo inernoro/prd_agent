@@ -4025,14 +4025,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({
     skillProxy: new SkillProxy({
-      mapBase: process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
+      mapBase: process.env.CDS_MAP_BASE?.trim() || '',
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
       localSkillRoots: [
         path.join(deps.config.repoRoot, '.claude', 'skills'),
         path.join(deps.config.repoRoot, '..', '.claude', 'skills'),
       ],
     }),
-    cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
+    cdsUpstream: process.env.CDS_UPSTREAM?.trim() || process.env.CDS_PUBLIC_BASE_URL?.trim() || '',
     repoRoot: deps.config.repoRoot,
   }));
   app.use('/api', createScheduledJobsRouter({
@@ -4308,7 +4308,7 @@ export function createServer(deps: ServerDeps): express.Express {
     clearStoredForwardConfig: () => deps.stateService.clearBugReportForwardingConfig(),
     getSuggestedMapBaseUrl: () => deps.stateService.getActiveCdsConnections()
       .find((connection) => connection.partnerKind === 'map' && connection.partnerBaseUrl)
-      ?.partnerBaseUrl || process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
+      ?.partnerBaseUrl || process.env.CDS_MAP_BASE?.trim() || '',
     authenticateMapConnectionToken: (rawToken) => {
       if (!rawToken) return null;
       return deps.stateService.findActiveCdsConnectionByLongTokenHash(sha256Hex(rawToken)) ?? null;

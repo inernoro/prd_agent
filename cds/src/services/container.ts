@@ -12,6 +12,7 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
+import { assertInfraAuthenticationConfigured } from './infra-auth-policy.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -1533,7 +1534,7 @@ export class ContainerService {
         `--name ${service.containerName}`,
         `--network ${netPlan.runNetwork}`,
         ...profileAliasFlags,
-        `-p ${service.hostPort}:${profile.containerPort}`,
+        `-p 127.0.0.1:${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
         ...resourceFlags,
         // 容器日志限额（2026-07-27 宕机复盘 P1）：此前所有托管容器都用 docker 默认的
@@ -2788,6 +2789,12 @@ export class ContainerService {
     // 也过一遍同一份 customEnv 模板替换,根治。
     const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
     const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
+    assertInfraAuthenticationConfigured({
+      dockerImage: service.dockerImage,
+      env: resolvedEnv,
+      command: resolvedCommand,
+      entrypoint: resolvedEntrypoint,
+    });
     const explicitCmdParts = resolvedCommand === undefined
       ? []
       : Array.isArray(resolvedCommand)

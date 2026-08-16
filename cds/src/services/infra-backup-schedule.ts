@@ -252,6 +252,8 @@ export interface BackupOutcome {
   bytes?: number;
   error?: string;
   pruned?: string[];
+  remoteObjectKey?: string;
+  sha256?: string;
 }
 
 /** 一轮结果的一句话结论。全成功也要说清备了几个——静默成功等于没有反馈。 */

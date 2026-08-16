@@ -335,7 +335,7 @@ export function auditInfraExposure(
     summary,
     // 只把有问题的进签名：ok 项变动不该触发重复告警
     signature: [...critical, ...warn]
-      .map((f) => `${f.severity}:${f.projectId}/${f.id}:${f.boundHosts.join(',')}`)
+      .map((f) => `${f.severity}:${f.projectId}/${f.id}:${f.boundHosts.join(',')}:${f.hostPorts.join(',')}:firewall=${f.firewallBlocked}`)
       .sort()
       .join('|'),
   };

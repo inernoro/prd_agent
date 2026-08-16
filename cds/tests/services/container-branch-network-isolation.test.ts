@@ -63,7 +63,7 @@ const makeInfra = (projectId: string, overrides?: Partial<InfraService>): InfraS
   containerName: 'cds-mysql',
   status: 'stopped',
   volumes: [],
-  env: {},
+  env: { MYSQL_ROOT_PASSWORD: 'test-password' },
   createdAt: '2026-06-29T00:00:00Z',
 });
 

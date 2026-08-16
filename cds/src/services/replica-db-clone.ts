@@ -542,10 +542,10 @@ export async function cloneReplicaDb(opts: {
   instanceId?: string;
   /**
    * 专用隔离实例的发布地址（Codex 第三十八轮 P1）。传入 `CDS_HOST`（docker 网桥
-   * 地址，即容器实际连过来的那个 IP），端口就只发布在这一个地址上，而不是
-   * `-p 27017` 的全网卡。见下方 runIso 处的详细说明。缺省时退回全网卡（旧行为）。
+   * 地址，即容器实际连过来的那个 IP），端口只发布在这一个地址上。
+   * 该值为必填，禁止缺省时退回全网卡。
    */
-  publishHost?: string;
+  publishHost: string;
   now?: () => Date;
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
@@ -674,7 +674,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
   dbName: string;
   instanceId?: string;
   /** 专用实例端口的发布地址（见 cloneReplicaDb 同名参数与下方 runIso 说明）。 */
-  publishHost?: string;
+  publishHost: string;
   now?: () => Date;
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
@@ -771,7 +771,11 @@ async function cloneMongoViaDedicatedInstance(opts: {
     //
     // 不用 Codex 建议的 127.0.0.1：容器访问不到宿主的 loopback，绑上去等于把隔离
     // 功能整个打死。绑在「消费方实际使用的那个地址」才是既收紧又不破坏的解。
-    const publishSpec = opts.publishHost ? `${opts.publishHost}::27017` : '27017';
+    const publishHost = opts.publishHost.trim();
+    if (!publishHost || ['0.0.0.0', '*', '::'].includes(publishHost)) {
+      throw new Error('专用隔离实例必须绑定私网地址，禁止发布到全部网卡');
+    }
+    const publishSpec = `${publishHost}::27017`;
     const runIso = await runDockerExec([
       'run', '-d', '--name', isoName,
       '--label', 'cds.type=rsdb',

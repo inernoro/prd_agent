@@ -8568,7 +8568,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       'docker run -d',
       `--name ${routeShellQuote(proxyContainerName)}`,
       `--network ${routeShellQuote(network)}`,
-      `-p 0.0.0.0:${port}:${listenPort}`,
+      // 纵深防御：即使上层路由门禁将来被误删，这个代理也只能绑定回环，
+      // 不能重新形成公网数据端口。
+      `-p 127.0.0.1:${port}:${listenPort}`,
       ...labels.map((label) => `--label ${routeShellQuote(label)}`),
       `-e ${routeShellQuote(`TARGET_HOST=${targetContainer}`)}`,
       `-e ${routeShellQuote(`TARGET_PORT=${targetPort}`)}`,
@@ -8729,6 +8731,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const enabled = Boolean(req.body?.enabled);
+    if (enabled && resource.source === 'infra') {
+      res.status(409).json({
+        error: '基础设施数据端口禁止直接发布到公网。请通过 CDS 数据面板或 HTTPS 管理入口访问。',
+      });
+      return;
+    }
     let allowlist: string[];
     try {
       allowlist = normalizeIpv4Allowlist(req.body?.allowlist);
