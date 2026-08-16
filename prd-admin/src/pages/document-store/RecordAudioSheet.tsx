@@ -871,13 +871,13 @@ export function RecordAudioSheet({
         <MapSpinner size={28} />
       </motion.div>
       <div>
-        <p className="text-[18px] font-semibold text-token-primary">正在创建录音结果</p>
+        <p className="text-[18px] font-semibold text-token-primary">正在准备录音结果</p>
         <p className="mt-2 text-[12px] leading-relaxed text-token-muted">
           {finalizationStage === 1
             ? '正在锁定最后一段声音，避免结束瞬间漏字。'
             : finalizationStage === 2
               ? '正在核对并补传最后的录音分片。'
-              : '录音已经安全保存，正在创建可立即播放的结果页。'}
+              : '录音已经安全保存，结果页打开后可以立即播放。'}
         </p>
         <p className="mt-2 text-[11px] tabular-nums text-token-muted">
           已等待 {formatElapsed(finalizingSeconds)} · 通常几秒，弱网时最多前台等待 45 秒
@@ -934,7 +934,7 @@ export function RecordAudioSheet({
       {destinationPicker}
 
       {/* 状态行：录音中红点脉冲 / 已暂停 */}
-      <div className="flex min-h-8 items-center gap-2 rounded-full px-3 text-[12px] font-semibold" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+      <div className="flex min-h-8 items-center gap-2 rounded-[8px] px-3 text-[12px] font-semibold" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
         {state === 'requesting' ? (
           <><MapSpinner size={12} /><span className="text-token-muted">正在请求麦克风权限…</span></>
         ) : state === 'paused' ? (
@@ -977,6 +977,14 @@ export function RecordAudioSheet({
             {(protectedBytes / 1024).toFixed(0)} KB
           </span>
         )}
+      </div>
+
+      {/* 波形优先于不断增长的原文，用户无需滚动就能确认仍在采集声音。 */}
+      <div
+        data-testid="recording-waveform"
+        className="w-full rounded-[16px] px-3 py-3"
+        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+        <canvas ref={canvasRef} width={560} height={56} className="w-full" style={{ height: 56 }} />
       </div>
 
       <div
@@ -1024,14 +1032,6 @@ export function RecordAudioSheet({
         </p>
       </div>
 
-      {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}
-      <div
-        data-testid="recording-waveform"
-        className="w-full rounded-[16px] px-3 py-3"
-        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-        <canvas ref={canvasRef} width={560} height={56} className="w-full" style={{ height: 56 }} />
-      </div>
-
       {/* 静音确认：整段峰值电平过低 → 上传前拦一道 */}
       {confirmSilent && (
         <div
@@ -1052,35 +1052,34 @@ export function RecordAudioSheet({
 
       {/* 控制区：暂停/继续 + 完成 */}
       <div
-        className="sticky bottom-0 z-10 flex w-full items-start justify-center gap-8 rounded-[18px] py-2 backdrop-blur-xl"
+        className="sticky bottom-0 z-10 flex w-full items-center gap-3 rounded-[18px] py-2 backdrop-blur-xl"
         style={{ background: 'color-mix(in srgb, var(--bg-primary) 92%, transparent)' }}>
-        <div className="flex w-16 flex-col items-center gap-1.5">
-          <button
-            onClick={togglePause}
-            disabled={state === 'requesting'}
-            aria-label={state === 'paused' ? '继续录音' : '暂停录音'}
-            className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full transition-colors disabled:opacity-40"
-            style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border-faint)' }}>
-            {state === 'paused' ? <Play size={18} /> : <Pause size={18} />}
-          </button>
-          <span className="text-[11px] text-token-muted">{state === 'paused' ? '继续' : '暂停'}</span>
-        </div>
-        <div className="flex w-20 flex-col items-center gap-1.5">
-          <button
-            onClick={requestComplete}
-            data-testid="recording-finish"
-            disabled={state === 'requesting'}
-            aria-label="结束录音并转成文字"
-            className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
-            style={{
-              background: 'var(--semantic-danger-text)',
-              color: 'var(--bg-primary)',
-              border: '4px solid var(--semantic-danger-soft)',
-            }}>
-            <Square size={20} fill="currentColor" />
-          </button>
-          <span className="text-[11px] font-semibold text-token-secondary">结束录音</span>
-        </div>
+        <button
+          onClick={togglePause}
+          disabled={state === 'requesting'}
+          aria-label={state === 'paused' ? '继续录音' : '暂停录音'}
+          className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center rounded-[16px] transition-colors disabled:opacity-40"
+          style={{
+            background: state === 'paused' ? 'var(--selection-bg)' : 'var(--bg-elevated)',
+            color: 'var(--text-primary)',
+            border: '1px solid var(--border-faint)',
+          }}>
+          {state === 'paused' ? <Play size={18} fill="currentColor" /> : <Pause size={18} />}
+        </button>
+        <button
+          onClick={requestComplete}
+          data-testid="recording-finish"
+          disabled={state === 'requesting'}
+          aria-label="结束录音并转成文字"
+          className="flex h-14 min-w-0 flex-1 cursor-pointer items-center justify-center gap-2 rounded-[16px] px-4 text-[15px] font-semibold transition-transform active:scale-[0.99] disabled:opacity-40"
+          style={{
+            background: 'var(--text-primary)',
+            color: 'var(--bg-primary)',
+            border: '1px solid var(--border-strong, var(--border-faint))',
+          }}>
+          <Square size={16} fill="var(--semantic-danger-text)" color="var(--semantic-danger-text)" />
+          结束录音
+        </button>
       </div>
       <p className="text-[11px] text-token-muted">
         结束后先生成可编辑原文，是否整理由你决定

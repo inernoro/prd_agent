@@ -30,6 +30,8 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(html).toContain('class="order-1 w-full max-w-[760px]');
     expect(html).toContain('class="order-2 mt-1 flex w-full max-w-[760px]');
     expect(html).toContain('class="order-4 w-full max-w-[760px]');
+    expect(html).toContain('lg:grid-cols-[minmax(0,1fr)_340px]');
+    expect(html).toContain('lg:col-start-2 lg:row-start-1 lg:row-span-5');
     expect(html).not.toContain('普通播放');
     expect(html).not.toContain('交互式播放');
     expect(html.match(/title="播放"/g)).toHaveLength(1);
@@ -76,6 +78,10 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(cloudHtml).toMatch(/报价<span[^>]*>\d+<\/span>/);
     expect(html).toContain('说话人1');
     expect(html).toContain('问这场录音');
+    expect(html).toContain('title="从这一句开始播放"');
+    expect(html).toContain('aria-label="编辑第 1 句原文"');
+    expect(html).toContain('00:00');
+    expect(html).not.toContain('点击修改这句原文');
   });
 
   it('没有任何词被重复提到时不出词云——「反复提到的是 X（1 次）」是句假话', () => {

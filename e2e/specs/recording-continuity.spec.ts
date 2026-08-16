@@ -515,9 +515,28 @@ test.describe('录音连续性发布门禁', () => {
     const transcript = page.getByTestId('recording-live-transcript');
     const waveform = page.getByTestId('recording-waveform');
     const finish = page.getByTestId('recording-finish');
+    const pause = page.getByRole('button', { name: '暂停录音' });
     await expect(transcript).toContainText('验收注入第 3 段');
     await expect(waveform).toBeVisible();
     await expect(finish).toBeInViewport();
+    const controlLayout = await page.evaluate(() => {
+      const wave = document.querySelector<HTMLElement>('[data-testid="recording-waveform"]');
+      const transcriptBox = document.querySelector<HTMLElement>('[data-testid="recording-live-transcript"]');
+      const pauseButton = document.querySelector<HTMLElement>('button[aria-label="暂停录音"]');
+      const finishButton = document.querySelector<HTMLElement>('[data-testid="recording-finish"]');
+      if (!wave || !transcriptBox || !pauseButton || !finishButton) return null;
+      return {
+        waveBeforeTranscript: wave.getBoundingClientRect().top < transcriptBox.getBoundingClientRect().top,
+        pauseWidth: pauseButton.getBoundingClientRect().width,
+        finishWidth: finishButton.getBoundingClientRect().width,
+        finishHeight: finishButton.getBoundingClientRect().height,
+      };
+    });
+    expect(controlLayout).not.toBeNull();
+    expect(controlLayout!.waveBeforeTranscript).toBe(true);
+    expect(controlLayout!.finishWidth).toBeGreaterThan(controlLayout!.pauseWidth * 2);
+    expect(controlLayout!.finishHeight).toBe(56);
+    await expect(pause).toBeVisible();
 
     await expect.poll(async () => transcript.evaluate(element => ({
       clientHeight: element.clientHeight,
@@ -569,7 +588,7 @@ test.describe('录音连续性发布门禁', () => {
     await expect(finalizingPanel).toBeVisible();
     const firstFeedbackMs = Date.now() - finalizingStartedAt;
     expect(firstFeedbackMs).toBeLessThan(2_000);
-    await expect(finalizingPanel).toContainText('正在创建录音结果');
+    await expect(finalizingPanel).toContainText('正在准备录音结果');
     await expect(finalizingPanel).toContainText('最多前台等待 45 秒');
     await attachViewport(page, testInfo, '02-finalizing-progress');
 
@@ -606,7 +625,7 @@ test.describe('录音连续性发布门禁', () => {
     await expect(activeCue).toContainText('验收注入第 2 段');
     await expect(nextCue).toContainText('验收注入第 3 段');
     await armContinuityProbe(page);
-    const transcriptLines = page.locator('button[title="点击跳到这一句"]');
+    const transcriptLines = page.locator('button[title="从这一句开始播放"]');
     await expect(transcriptLines).toHaveCount(18);
     const lastTranscriptLine = transcriptLines.nth(17);
     const backlinksHint = page.getByText('还没有文档引用这篇', { exact: false });

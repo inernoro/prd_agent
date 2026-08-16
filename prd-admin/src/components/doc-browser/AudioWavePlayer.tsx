@@ -217,7 +217,7 @@ export function AudioWavePlayer({
       {/* 语音消息式声纹条：不读取跨域 PCM，播放与进度只依赖原生 audio。 */}
       <div className="relative mb-3">
         <div
-          className="flex h-[56px] w-full items-end gap-[2px]"
+          className="flex h-10 w-full items-end gap-[2px]"
           style={{ cursor: ready && duration > 0 ? 'pointer' : 'default', alignItems: 'center' }}
           onClick={(e) => {
             if (!ready || duration <= 0 || !audioRef.current) return;
@@ -240,7 +240,7 @@ export function AudioWavePlayer({
                 className="min-w-0 flex-1 rounded-full transition-colors duration-150"
                 style={{
                   height: `${Math.round(h * 100)}%`,
-                  background: played ? 'var(--text-primary)' : 'var(--border-strong, var(--border-faint))',
+                  background: played ? 'var(--semantic-info-text)' : 'var(--border-strong, var(--border-faint))',
                   ...(ready ? {} : { animation: `wave-pulse 1.2s ease-in-out ${(i % 8) * 0.12}s infinite` }),
                 }}
               />

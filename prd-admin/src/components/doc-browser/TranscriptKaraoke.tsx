@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Info, MessageSquareText, Search, UserRound, X } from 'lucide-react';
+import { Check, Info, MessageSquareText, Pencil, Search, UserRound, X } from 'lucide-react';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import {
   parseTranscriptSegments,
@@ -136,6 +136,8 @@ export function TranscriptKaraoke({
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
   // 用户手动滚动 → 3s 内不自动跟随（不抢滚动条）
   const manualUntilRef = useRef(0);
+  const followResumeTimerRef = useRef<number | null>(null);
+  const [followPaused, setFollowPaused] = useState(false);
   const estimatedSegments = useMemo(
     () => synced ? [] : estimateTranscriptSegments(segments, duration),
     [duration, segments, synced],
@@ -250,14 +252,14 @@ export function TranscriptKaraoke({
     setActiveIdx(0);
   }, [noteMd, src]);
 
-  // 当前句滚到滚轮中心
+  // 当前句滚到可视区中部。结果页播放器吸顶，正文跟随不会把播放器带走；
+  // 用户主动滚动后暂停跟随，避免页面与用户抢控制权。
   useEffect(() => {
-    // 文档页把完整原文放在下方供校对，播放器旁另有始终可见的当前台词。
-    // 在这里滚动会拖走整个页面，让播放器和当前台词一起离开视野。
-    if (!followEnabled || documentMode) return;
+    if (!followEnabled || followPaused) return;
+    if (documentMode && !playing) return;
     if (Date.now() < manualUntilRef.current) return;
     lineRefs.current[activeIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [activeIdx, documentMode, followEnabled]);
+  }, [activeIdx, documentMode, followEnabled, followPaused, playing]);
 
   useEffect(() => () => cancelQaRef.current?.(), []);
 
@@ -276,16 +278,40 @@ export function TranscriptKaraoke({
     });
   };
 
-  const markManualScroll = () => { manualUntilRef.current = Date.now() + 3000; };
+  const markManualScroll = () => {
+    if (!documentMode || !playing) return;
+    manualUntilRef.current = Date.now() + 3000;
+    setFollowPaused(true);
+    if (followResumeTimerRef.current !== null) window.clearTimeout(followResumeTimerRef.current);
+    followResumeTimerRef.current = window.setTimeout(() => {
+      manualUntilRef.current = 0;
+      setFollowPaused(false);
+      followResumeTimerRef.current = null;
+    }, 3000);
+  };
+
+  const resumeFollowing = () => {
+    manualUntilRef.current = 0;
+    setFollowPaused(false);
+    if (followResumeTimerRef.current !== null) window.clearTimeout(followResumeTimerRef.current);
+    followResumeTimerRef.current = null;
+    lineRefs.current[displayActiveIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+
+  useEffect(() => () => {
+    if (followResumeTimerRef.current !== null) window.clearTimeout(followResumeTimerRef.current);
+  }, []);
 
   if (segments.length === 0) return <AudioWavePlayer src={src} />;
 
   return (
-    <div className="flex w-full flex-col items-center gap-4">
+    <div className={documentMode
+      ? 'grid w-full max-w-[1180px] grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start'
+      : 'flex w-full flex-col items-center gap-4'}>
       <div
         data-testid={documentMode ? 'recording-sticky-playback' : undefined}
         className={documentMode
-          ? 'sticky top-0 z-20 flex w-full max-w-[760px] flex-col gap-3 rounded-[18px] p-3 backdrop-blur-xl'
+          ? 'sticky top-0 z-20 flex w-full max-w-[760px] flex-col gap-3 rounded-[18px] p-3 backdrop-blur-xl lg:col-start-1 lg:row-start-1 lg:max-w-none'
           : 'contents'}
         style={documentMode ? {
           background: 'color-mix(in srgb, var(--bg-primary) 92%, transparent)',
@@ -323,8 +349,8 @@ export function TranscriptKaraoke({
             className="w-full overflow-hidden rounded-[14px] px-4 py-3"
             style={{
               minHeight: 112,
-              background: 'var(--selection-bg)',
-              border: '1px solid var(--selection-border)',
+              background: 'var(--semantic-info-soft)',
+              border: '1px solid var(--semantic-info-border)',
             }}
             aria-label="播放台词"
           >
@@ -385,7 +411,7 @@ export function TranscriptKaraoke({
 
       {documentMode && (
         <section
-          className="order-1 w-full max-w-[760px] rounded-[16px] p-3"
+          className="order-1 w-full max-w-[760px] rounded-[16px] p-3 lg:col-start-1 lg:row-start-2 lg:max-w-none"
           style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
           aria-label="搜索转录原文"
         >
@@ -402,8 +428,8 @@ export function TranscriptKaraoke({
           </label>
 
           {keyword && searchMatches.length > 0 && (
-            <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-              {searchMatches.map(({ segment, index }) => (
+            <div className="mt-2 flex flex-col gap-1">
+              {searchMatches.slice(0, 6).map(({ segment, index }) => (
                 <button
                   key={`${index}-${segment.start}`}
                   type="button"
@@ -415,6 +441,11 @@ export function TranscriptKaraoke({
                   {segment.text}
                 </button>
               ))}
+              {searchMatches.length > 6 && (
+                <p className="px-3 py-1 text-[11px] text-token-muted">
+                  还有 {searchMatches.length - 6} 处命中，继续输入可以缩小范围
+                </p>
+              )}
             </div>
           )}
           {keyword && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
@@ -422,13 +453,13 @@ export function TranscriptKaraoke({
       )}
 
       {documentMode && (
-        <section className="order-4 w-full max-w-[760px] rounded-[16px] p-4" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
+        <section className="order-4 w-full max-w-[760px] rounded-[16px] p-4 lg:sticky lg:top-3 lg:col-start-2 lg:row-start-1 lg:row-span-5 lg:max-w-none" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-[13px] font-semibold text-token-primary">录音理解</p>
               <p className="mt-1 text-[11px] text-token-muted">分析主题、管理说话人，并根据原文回答问题</p>
             </div>
-            <button type="button" onClick={() => setQaOpen(value => !value)} className="flex min-h-11 items-center gap-1.5 rounded-[9px] px-3 text-[12px] font-semibold" style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)', border: '1px solid var(--selection-border)' }}>
+            <button type="button" onClick={() => setQaOpen(value => !value)} className="flex min-h-11 items-center gap-1.5 rounded-[9px] px-3 text-[12px] font-semibold" style={{ background: 'var(--semantic-info-soft)', color: 'var(--text-primary)', border: '1px solid var(--semantic-info-border)' }}>
                 <MessageSquareText size={14} /> 问这场录音
             </button>
           </div>
@@ -457,7 +488,7 @@ export function TranscriptKaraoke({
                   {parseRecordingAnswerParts(answer).map((part, index) => part.kind === 'text' ? (
                     <span key={index}>{part.text}</span>
                   ) : recordingCitationMatchesTimeline(part.start, timelineSegments) ? (
-                    <button key={index} type="button" onClick={() => seekRef.current?.(part.start)} className="mx-0.5 inline-flex min-h-8 items-center rounded-full px-2 font-mono text-[11px] font-semibold" style={{ background: 'rgba(59,130,246,0.14)', color: 'rgba(147,197,253,0.98)' }} title="从引用位置播放">{part.label}</button>
+                    <button key={index} type="button" onClick={() => seekRef.current?.(part.start)} className="mx-0.5 inline-flex min-h-8 items-center rounded-full px-2 font-mono text-[11px] font-semibold" style={{ background: 'var(--semantic-info-soft)', color: 'var(--semantic-info-text)' }} title="从引用位置播放">{part.label}</button>
                   ) : <span key={index} className="mx-0.5 font-mono text-[11px] text-token-muted" title="原文时间轴中没有这个位置">{part.label}</span>)}
                 </div>
               )}
@@ -563,7 +594,7 @@ export function TranscriptKaraoke({
                         disabled={!lexicon || savingLexicon || lexiconDraft.trim().length < 2}
                         onClick={() => void addLexiconTerm('mine')}
                         className="min-h-9 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
-                        style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)' }}
+                        style={{ background: 'var(--semantic-info-soft)', color: 'var(--text-primary)' }}
                       >
                         {savingLexicon ? '保存中' : '加入我的词典'}
                       </button>
@@ -597,12 +628,24 @@ export function TranscriptKaraoke({
       )}
 
       {documentMode && (
-        <div className="order-2 mt-1 flex w-full max-w-[760px] items-end justify-between gap-3 px-1">
+        <div className="order-2 mt-1 flex w-full max-w-[760px] items-end justify-between gap-3 px-1 lg:col-start-1 lg:row-start-3 lg:max-w-none">
           <div>
             <p className="text-[14px] font-semibold text-token-primary">转录原文</p>
-            <p className="mt-1 text-[11px] text-token-muted">播放时当前句同步高亮，点击任意句可直接校对</p>
+            <p className="mt-1 text-[11px] text-token-muted">播放时当前句同步高亮；点台词跳播，点编辑按钮校对</p>
           </div>
-          <span className="shrink-0 text-[11px] tabular-nums text-token-muted">{timelineSegments.length} 句</span>
+          <div className="flex shrink-0 items-center gap-2">
+            {followPaused && playing && (
+              <button
+                type="button"
+                onClick={resumeFollowing}
+                className="min-h-11 rounded-[9px] px-3 text-[11px] font-semibold"
+                style={{ background: 'var(--semantic-info-soft)', color: 'var(--text-primary)', border: '1px solid var(--semantic-info-border)' }}
+              >
+                继续跟随
+              </button>
+            )}
+            <span className="text-[11px] tabular-nums text-token-muted">{timelineSegments.length} 句</span>
+          </div>
         </div>
       )}
       {/* 歌词滚轮：普通模式为上下渐隐滚轮；同一文档模式随外层页面自然展开。 */}
@@ -610,7 +653,7 @@ export function TranscriptKaraoke({
         ref={listRef}
         onWheel={markManualScroll}
         onTouchMove={markManualScroll}
-        className={documentMode ? 'order-3 w-full max-w-[760px]' : 'order-3 w-[480px] max-w-[92%] overflow-y-auto'}
+        className={documentMode ? 'order-3 w-full max-w-[760px] lg:col-start-1 lg:row-start-4 lg:max-w-none' : 'order-3 w-[480px] max-w-[92%] overflow-y-auto'}
         style={{
           height: !documentMode && followEnabled ? 240 : 'auto',
           maxHeight: documentMode ? undefined : followEnabled ? 240 : 320,
@@ -657,10 +700,58 @@ export function TranscriptKaraoke({
                           .finally(() => setSavingEdit(false));
                       }}
                       className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
-                      style={{ background: 'rgba(59,130,246,0.16)', color: 'rgba(147,197,253,0.98)' }}>
+                      style={{ background: 'var(--semantic-info-soft)', color: 'var(--semantic-info-text)' }}>
                       <Check size={12} /> 保存
                     </button>
                   </div>
+                </div>
+              );
+            }
+            const lineContent = (
+              <>
+                {documentMode && s.start >= 0 && (
+                  <span className="mr-2 inline-block font-mono text-[11px] font-normal tabular-nums text-token-muted">
+                    {formatQuestionTime(s.start)}
+                  </span>
+                )}
+                {s.speaker && <span className="mr-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: 'rgba(59,130,246,0.10)', color: 'var(--text-secondary)' }}>{s.speaker}</span>}
+                <span className="min-w-0 break-words">{s.text}</span>
+              </>
+            );
+            const lineStyle = {
+              fontSize: documentMode ? 16 : active ? 15 : 13,
+              fontWeight: active ? 600 : 400,
+              color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+              background: active ? 'var(--semantic-info-soft)' : 'transparent',
+              border: active ? '1px solid var(--semantic-info-border)' : '1px solid transparent',
+            };
+            if (documentMode) {
+              return (
+                <div key={i} className="group flex w-full items-start gap-1">
+                  <button
+                    ref={(el) => { lineRefs.current[i] = el; }}
+                    type="button"
+                    onClick={() => followEnabled && s.start >= 0 && seekRef.current?.(s.start)}
+                    className={`min-h-11 min-w-0 flex-1 overflow-hidden rounded-[11px] px-3 py-2.5 text-left leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${followEnabled && s.start >= 0 ? 'cursor-pointer' : 'cursor-default'}`}
+                    style={lineStyle}
+                    title={followEnabled && s.start >= 0 ? '从这一句开始播放' : undefined}
+                  >
+                    {lineContent}
+                  </button>
+                  {onSaveNote && (
+                    <button
+                      type="button"
+                      aria-label={`编辑第 ${i + 1} 句原文`}
+                      onClick={() => {
+                        setEditingIndex(i);
+                        setEditDraft(s.text);
+                      }}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] text-token-muted opacity-70 transition-opacity hover:opacity-100 focus:opacity-100"
+                      title="编辑这句原文"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  )}
                 </div>
               );
             }
@@ -668,30 +759,12 @@ export function TranscriptKaraoke({
               <button
                 key={i}
                 ref={(el) => { lineRefs.current[i] = el; }}
-                onClick={() => {
-                  if (documentMode && onSaveNote) {
-                    setEditingIndex(i);
-                    setEditDraft(s.text);
-                    return;
-                  }
-                  if (followEnabled && s.start >= 0) seekRef.current?.(s.start);
-                }}
-                className={`min-h-11 w-full overflow-hidden rounded-[11px] px-3 py-2.5 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
-                style={{
-                  fontSize: documentMode ? 16 : active ? 15 : 13,
-                  fontWeight: active ? 600 : 400,
-                  color: active
-                    ? 'var(--text-primary)'
-                    : followEnabled
-                      ? 'var(--text-secondary)'
-                      : 'var(--text-secondary)',
-                  background: active ? 'var(--selection-bg)' : 'transparent',
-                  border: active ? '1px solid var(--selection-border)' : '1px solid transparent',
-                }}
-                title={documentMode && onSaveNote ? '点击修改这句原文' : followEnabled && s.start >= 0 ? '点击跳到这一句' : undefined}
+                onClick={() => followEnabled && s.start >= 0 && seekRef.current?.(s.start)}
+                className={`min-h-11 w-full overflow-hidden rounded-[11px] px-3 py-2.5 text-center leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
+                style={lineStyle}
+                title={followEnabled && s.start >= 0 ? '点击跳到这一句' : undefined}
               >
-                {s.speaker && <span className="mr-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: 'rgba(59,130,246,0.10)', color: 'var(--text-secondary)' }}>{s.speaker}</span>}
-                <span className="min-w-0 break-words">{s.text}</span>
+                {lineContent}
               </button>
             );
           })}
@@ -699,9 +772,9 @@ export function TranscriptKaraoke({
       </div>
 
       {estimated && (
-        <p className="order-5 text-[11px] text-token-muted">
+        <p className="order-5 text-[11px] text-token-muted lg:col-start-1 lg:row-start-5">
           当前跟随位置按语速智能估算，不会重复转录；
-          {documentMode && onSaveNote ? '可直接播放或点击句子校对' : '可直接播放或点句跳转'}
+          {documentMode && onSaveNote ? '可直接播放、点句跳转或单独编辑原文' : '可直接播放或点句跳转'}
         </p>
       )}
     </div>
