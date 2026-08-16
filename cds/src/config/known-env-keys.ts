@@ -81,6 +81,9 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_REPOS_BASE', description: '多项目 git clone 根目录（每项目一个子目录）', isSecret: false, group: 'storage' },
   { key: 'CDS_DOCKER_HOST', description: 'Docker daemon 主机地址（默认本地 socket）', isSecret: false, group: 'storage' },
   { key: 'CDS_INFRA_PUBLISH_HOST', description: '基础设施端口的私网或回环绑定地址（逗号分隔；全网卡地址会被拒绝）', isSecret: false, group: 'storage' },
+  { key: 'CDS_BACKUP_DIR', description: '基础设施备份落盘目录', isSecret: false, group: 'storage' },
+  { key: 'CDS_EXTERNAL_PORT_AUDIT_BASE_URL', description: '宿主公网端口外部扫描服务基址', isSecret: false, group: 'misc' },
+  { key: 'CDS_EXTERNAL_PORT_AUDIT_INTERVAL_HOURS', description: '宿主公网端口双栈扫描间隔小时数', isSecret: false, group: 'misc' },
 
   // ── domain / routing ──
   { key: 'CDS_ROOT_DOMAINS', legacyAliases: ['ROOT_DOMAINS'], description: '根域名列表（逗号分隔）', isSecret: false, group: 'domain' },

@@ -16,6 +16,14 @@ export interface InfrastructureHealthInput {
   containers: Array<{ name: string; running?: boolean | null }>;
   exposureCriticalCount?: number | null;
   exposureWarnCount?: number | null;
+  externalPortAudits?: Array<{
+    family: 'ipv4' | 'ipv6';
+    checkedAt?: Date | null;
+    passed?: boolean | null;
+    unexpectedOpenPorts?: number[];
+    missingRequiredPorts?: number[];
+    error?: string;
+  }>;
 }
 
 export interface InfrastructureHealthReport {
@@ -91,6 +99,32 @@ export function evaluateInfrastructureHealth(input: InfrastructureHealthInput): 
     items.push({ id: 'exposure', level: 'warn', message: `${input.exposureWarnCount} 个数据端口仍依赖外围防护` });
   } else {
     items.push({ id: 'exposure', level: 'ok', message: '数据端口运行态检查正常' });
+  }
+
+  const externalByFamily = new Map((input.externalPortAudits || []).map((item) => [item.family, item]));
+  for (const family of ['ipv4', 'ipv6'] as const) {
+    const audit = externalByFamily.get(family);
+    const id = `external-port-audit:${family}`;
+    if (!audit || !audit.checkedAt || !Number.isFinite(audit.checkedAt.getTime())) {
+      items.push({ id, level: 'warn', message: `${family.toUpperCase()} 公网端口扫描结果未知` });
+      continue;
+    }
+    const ageMs = Math.max(0, input.now.getTime() - audit.checkedAt.getTime());
+    if (ageMs > 30 * 60 * 60_000) {
+      items.push({ id, level: 'critical', message: `${family.toUpperCase()} 公网端口扫描已超过 ${Math.floor(ageMs / 3_600_000)} 小时未更新` });
+      continue;
+    }
+    if (audit.passed !== true) {
+      const unexpected = audit.unexpectedOpenPorts?.join(',') || '无';
+      const missing = audit.missingRequiredPorts?.join(',') || '无';
+      items.push({
+        id,
+        level: 'critical',
+        message: `${family.toUpperCase()} 公网端口扫描未通过：额外开放 ${unexpected}；必需端口缺失 ${missing}${audit.error ? `；${audit.error}` : ''}`,
+      });
+      continue;
+    }
+    items.push({ id, level: 'ok', message: `${family.toUpperCase()} 公网端口仅开放 22、80、443` });
   }
 
   const level: InfrastructureHealthLevel = items.some((item) => item.level === 'critical')

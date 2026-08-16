@@ -11,7 +11,10 @@ describe('统一基础设施健康检查', () => {
     });
     expect(report.ok).toBe(false);
     expect(report.items.filter((item) => item.level === 'warn').map((item) => item.id))
-      .toEqual(expect.arrayContaining(['backup-local', 'backup-remote', 'disk', 'certificate:none', 'container:db', 'exposure']));
+      .toEqual(expect.arrayContaining([
+        'backup-local', 'backup-remote', 'disk', 'certificate:none', 'container:db', 'exposure',
+        'external-port-audit:ipv4', 'external-port-audit:ipv6',
+      ]));
   });
 
   it('备份陈旧、磁盘不足、证书临期和容器停止会明确点名', () => {
@@ -24,6 +27,10 @@ describe('统一基础设施健康检查', () => {
       containers: [{ name: 'database-a', running: false }],
       exposureCriticalCount: 1,
       exposureWarnCount: 0,
+      externalPortAudits: [
+        { family: 'ipv4', checkedAt: now, passed: false, unexpectedOpenPorts: [12345], missingRequiredPorts: [] },
+        { family: 'ipv6', checkedAt: new Date('2026-08-15T00:00:00Z'), passed: true },
+      ],
     });
     expect(report.level).toBe('critical');
     expect(report.summary).toContain('backup-local');
@@ -40,6 +47,10 @@ describe('统一基础设施健康检查', () => {
       containers: [{ name: 'database-a', running: true }],
       exposureCriticalCount: 0,
       exposureWarnCount: 0,
+      externalPortAudits: [
+        { family: 'ipv4', checkedAt: now, passed: true },
+        { family: 'ipv6', checkedAt: now, passed: true },
+      ],
     });
     expect(report.ok).toBe(true);
   });

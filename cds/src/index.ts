@@ -28,6 +28,11 @@ import {
 } from './services/infra-backup-schedule.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
 import { evaluateInfrastructureHealth } from './services/infrastructure-health.js';
+import {
+  externalPortAuditConfigFromEnv,
+  runExternalPortAudit,
+  type ExternalPortAuditFamily,
+} from './services/external-port-audit.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
@@ -256,6 +261,7 @@ const INFRA_BACKUP_TIMEOUT_MS = 20 * 60_000;
 const INFRA_HEALTH_INTERVAL_MS = 15 * 60_000;
 const INFRA_HEALTH_STARTUP_DELAY_MS = 2 * 60_000;
 const INFRA_BACKUP_HEALTH_FILE = '.cds-backup-health.json';
+const EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS = 30_000;
 
 let lastInfraExposureReport: InfraExposureReport | null = null;
 
@@ -742,6 +748,72 @@ async function certificateStatus(host: string): Promise<{ host: string; expiresA
   });
 }
 
+const lastExternalPortAudits = new Map<ExternalPortAuditFamily, {
+  family: ExternalPortAuditFamily;
+  checkedAt: Date;
+  passed: boolean;
+  unexpectedOpenPorts: number[];
+  missingRequiredPorts: number[];
+  error?: string;
+}>();
+
+function startExternalPortAuditWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+  const auditConfig = externalPortAuditConfigFromEnv();
+  if (!auditConfig) {
+    store?.record({
+      category: 'system', severity: 'warn', source: 'external-port-audit',
+      action: 'external.port.audit.disabled', message: '公网端口外部扫描未配置', status: 'warn',
+    });
+    return null;
+  }
+  let running = false;
+  const run = async (): Promise<void> => {
+    if (running) return;
+    running = true;
+    try {
+      for (const family of ['ipv4', 'ipv6'] as const) {
+        try {
+          const result = await runExternalPortAudit({ config: auditConfig, family });
+          lastExternalPortAudits.set(family, { ...result, checkedAt: new Date(result.checkedAt) });
+          store?.record({
+            category: 'system', severity: result.passed ? 'info' : 'error', source: 'external-port-audit',
+            action: result.passed ? 'external.port.audit.passed' : 'external.port.audit.failed',
+            message: result.passed
+              ? `${family.toUpperCase()} 公网端口仅开放 22、80、443`
+              : `${family.toUpperCase()} 公网端口不符合固定白名单`,
+            status: result.passed ? 'info' : 'error',
+            details: {
+              family, checkedAt: result.checkedAt, openPorts: result.openPorts,
+              unexpectedOpenPorts: result.unexpectedOpenPorts,
+              missingRequiredPorts: result.missingRequiredPorts,
+              durationMs: result.durationMs,
+            },
+          });
+        } catch (err) {
+          const message = (err as Error).message;
+          lastExternalPortAudits.set(family, {
+            family, checkedAt: new Date(), passed: false,
+            unexpectedOpenPorts: [], missingRequiredPorts: [], error: message,
+          });
+          store?.record({
+            category: 'system', severity: 'error', source: 'external-port-audit',
+            action: 'external.port.audit.error',
+            message: `${family.toUpperCase()} 公网端口外部扫描失败`, status: 'error',
+            error: { message }, details: { family },
+          });
+        }
+      }
+    } finally {
+      running = false;
+    }
+  };
+  setTimeout(() => { void run(); }, EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, auditConfig.intervalMs);
+  timer.unref?.();
+  return timer;
+}
+
 function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Date | null } {
   const candidates = backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot });
   for (const dir of candidates) {
@@ -775,6 +847,7 @@ function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): No
         .map((service) => ({ name: service.containerName, running: service.status === 'running' })),
       exposureCriticalCount: lastInfraExposureReport?.criticalCount ?? null,
       exposureWarnCount: lastInfraExposureReport?.warnCount ?? null,
+      externalPortAudits: [...lastExternalPortAudits.values()],
     });
     if (report.signature === lastSignature) return;
     lastSignature = report.signature;
@@ -1455,6 +1528,7 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
+const externalPortAuditWatchdog = startExternalPortAuditWatchdog(activeServerEventLogStore);
 const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
@@ -3798,6 +3872,10 @@ async function shutdown(signal: string): Promise<void> {
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
+  if (infraExposureAudit) clearInterval(infraExposureAudit);
+  if (infraAutoBackup) clearInterval(infraAutoBackup);
+  if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
+  if (infrastructureHealthWatchdog) clearInterval(infrastructureHealthWatchdog);
   dockerEventMonitor.stop();
   systemLogMonitor.stop();
   schedulerService.stop();
