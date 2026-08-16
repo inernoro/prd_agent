@@ -80,6 +80,7 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_MONGO_CONTAINER', description: 'MongoDB 容器名（exec_cds.sh 启动前置使用）', isSecret: false, group: 'storage' },
   { key: 'CDS_REPOS_BASE', description: '多项目 git clone 根目录（每项目一个子目录）', isSecret: false, group: 'storage' },
   { key: 'CDS_DOCKER_HOST', description: 'Docker daemon 主机地址（默认本地 socket）', isSecret: false, group: 'storage' },
+  { key: 'CDS_INFRA_PUBLISH_HOST', description: '基础设施端口的绑定地址（逗号分隔；默认网桥+回环，填 0.0.0.0 会暴露到全部网卡）', isSecret: false, group: 'storage' },
 
   // ── domain / routing ──
   { key: 'CDS_ROOT_DOMAINS', legacyAliases: ['ROOT_DOMAINS'], description: '根域名列表（逗号分隔）', isSecret: false, group: 'domain' },

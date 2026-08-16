@@ -1293,6 +1293,9 @@ const containerService = new ContainerService(shell, config, {
     entry,
     branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
   ),
+  // infra 端口的绑定地址必须与注入给应用的 CDS_HOST 同源（都来自
+  // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
+  getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
 }, activeServerEventLogStore);
 
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次

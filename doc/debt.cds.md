@@ -739,6 +739,50 @@ grep -c LooksBinary prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs
 
 ---
 
+## 基础设施暴露面 · 端口绑定与默认认证
+
+CDS 给每个 infra 服务分配一个宿主端口，本意只是让容器之间能经网桥地址互访。但
+`docker run -p <hostPort>:<containerPort>` 省略绑定地址等于绑 `0.0.0.0`——数据面
+被顺带挂到宿主的每一张网卡上，**包括公网网卡**。
+
+这一层**宿主防火墙挡不住**：Docker 发布的端口经 nat PREROUTING 的 DNAT 改写后走
+`FORWARD` 链，不经过 `INPUT`。宿主上配了默认拒绝的 iptables / ufw 规则，运维看着
+「防火墙已开」，实际一个数据库都没挡住。这是 Docker + iptables 的经典坑，不是配置
+失误——**不配置就是这个结果**，所以必须在发布这一步而不是防火墙那一步解决。
+
+### 已经做了的
+
+绑定地址收敛成唯一一份判定：默认只绑 docker 网桥地址与回环，两者都不是对外地址。
+
+不选「只绑回环」是因为应用容器拿到的连接串里写的是网桥地址，而容器访问不到宿主的
+loopback——只绑回环等于全线断库。所以绑的是「消费方实际使用的那个地址」，这既收紧了
+暴露面又不破坏任何现有连接。逃生阀 `CDS_INFRA_PUBLISH_HOST` 可覆盖，填 `0.0.0.0`
+恢复旧行为。
+
+这份判定同时是「注入给应用的宿主地址」的来源，两者必须同源：否则连接串指向一个地址、
+端口绑在另一个地址，编译过、测试绿，只有真连库时才炸。
+
+回归覆盖 15 条，其中三条跑真实的 infra 启动流程、从录下来的 docker 命令里读实际绑定
+参数——把绑定改回裸绑，这三条立刻变红。
+
+### 已知边界
+
+| ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
+|---|---|---|---|---|---|---|
+| E1 | 高 | 2026-08-16 | 绑定地址在容器创建那一刻就固化了，改代码对**存量**容器一个都不生效 | 升级后不重建 infra 容器 | open | 启动流程对已在跑的容器直接返回、对停止的容器走唤醒，两条路径都不重拼发布参数。要生效必须逐个删掉重建；有状态服务重建前必须先有备份 |
+| E2 | 高 | 2026-08-16 | infra 的**默认认证**仍不一致：走服务目录建的 mongo 带 root 凭据，走其它路径（快速启动 / compose 导入 / 手工）建出来的没有认证 | 走非服务目录路径新建 mongo | open | 收窄绑定地址只把攻击面从「全互联网」缩到「同宿主全部容器」。宿主上跑着大量分支预览容器，任一被投毒的构建都能横向访问。需要把默认认证补齐到所有创建路径 |
+| E3 | 中 | 2026-08-16 | 服务目录里的 redis 默认不设访问密码 | 新建 redis | open | 补密码会连带改下发给应用的连接串，而各项目的 compose 契约存在 CDS 自己的状态库里、不在本仓库，改动前需要逐项目核对消费姿势 |
+| E4 | 中 | 2026-08-16 | infra 没有周期备份，只能手工触发 | 需要回滚或恢复时 | open | 无备份状态下不得重建任何有状态容器（见 E1）。可挂到既有的定时任务设施上做周期导出 + 保留策略 + 离机副本 |
+| E5 | 中 | 2026-08-16 | 「无认证 + 对外端口」这个组合没有**存量**扫描守卫，只有新增路径的单测 | 已有 infra 被改回裸绑，或建库时跳过认证 | open | 单测覆盖的是「新建时怎么拼参数」；存量真值只能读运行态的容器端口映射，CI 访问不到宿主。可做成 CDS 自身的周期自检 + 站内告警 |
+
+### 不在范围内
+
+「资源公网 TCP 访问」是**有意**的对外暴露，且已强制要求非空 IP allowlist + 防火墙
+兜底——它自己拼发布参数，不走上面这条收窄路径，也不该被收窄。那是本仓库唯一做对了的
+暴露路径，改它只会破坏功能而不提升安全。
+
+---
+
 ## 已结清（供回溯）
 
 下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
@@ -781,3 +825,6 @@ grep -c LooksBinary prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs
 | 过期分支预览页 | `cds/src/index.ts`（墓碑页渲染与分流）、`cds/src/services/state.ts`（墓碑记录）、`cds/src/routes/github-webhook.ts`（触发） |
 | 存活监控回归 | `cds/tests/services/uptime-monitor-cycle.test.ts`、`cds/tests/services/uptime-metrics.test.ts` |
 | 通知账本 | `cds/src/services/notice-ledger.ts`、`cds/src/services/notice-outbound-map.ts`、`cds/src/routes/notices.ts` |
+| 基础设施端口绑定 | `cds/src/services/infra-publish.ts`（唯一判定）、`cds/src/services/container.ts`（`startInfraService` 调用点）、`cds/src/services/state.ts`（网桥地址与注入同源）、`cds/src/index.ts`（适配器接线） |
+| 端口绑定回归 | `cds/tests/services/infra-publish-host.test.ts` |
+| 有意的对外暴露（不受收窄影响） | `cds/src/routes/branches.ts`（`applyResourceExternalFirewall`，allowlist + 防火墙兜底） |
