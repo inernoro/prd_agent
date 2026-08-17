@@ -41,14 +41,20 @@ public class ModelResolverScenarioCapabilityTests
     }
 
     [Theory]
-    [InlineData("visual-agent.image.text2img::generation")]
-    [InlineData("visual-agent.image.img2img::generation")]
-    [InlineData("visual-agent.image.vision::generation")]
-    public void LegacyGenericImageCapability_RemainsCompatibleUntilBackfill(string appCallerCode)
+    [InlineData("image_generation", "visual-agent.image.text2img::generation")]
+    [InlineData("image_generation", "visual-agent.image.img2img::generation")]
+    [InlineData("image_generation", "visual-agent.image.vision::generation")]
+    [InlineData("image-gen", "visual-agent.image.text2img::generation")]
+    [InlineData("image-gen", "literary-agent.illustration.text2img::generation")]
+    [InlineData("image-gen", "visual-agent.image.img2img::generation")]
+    [InlineData("image-gen", "visual-agent.image.vision::generation")]
+    public void LegacyGenericImageCapability_RemainsCompatibleUntilBackfill(
+        string capability,
+        string appCallerCode)
     {
         var logical = new GatewayLogicalModel
         {
-            Capabilities = ["image_generation"],
+            Capabilities = [capability],
         };
 
         Assert.True(ModelResolver.SupportsAppCallerScenario(logical, appCallerCode));
