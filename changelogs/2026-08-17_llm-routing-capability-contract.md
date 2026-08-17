@@ -8,3 +8,4 @@
 | test | prd-api | 补齐能力兼容、迁移幂等、路由场景、故障隔离、错误分类、正式数据形态回放与接线守卫测试 |
 | fix | ci | llmgw-serve 镜像构建输入补齐 prd-api，避免只改 Core 时 serving 继续跑旧路由判据 |
 | docs | platform | 新增能力契约与故障域隔离设计文档 |
+| docs | platform | 新增能力契约治理状态看板与三条债务台账，并同步文档索引与目录 |

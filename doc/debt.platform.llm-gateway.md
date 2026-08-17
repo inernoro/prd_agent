@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 28 / in-progress: 8 / paid: 25 / 总计: 61
+当前 open: 31 / in-progress: 8 / paid: 25 / 总计: 64
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -20,6 +20,9 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-17-capability-contract-mirror-not-hard-reference | medium | 2026-08-17 | 能力契约的权威定义在后端 Core 层的能力契约类里，但网关控制台按既定隔离架构不引用主站项目（生产编排文件注释写明：剥离失败不波及主站；控制台镜像的构建上下文也只有它自己那个目录），因此写入侧保留的是一份**镜像**而非硬项目引用 | 任何一侧新增规范能力或历史别名时 | open | 当前由 `GatewayCapabilityContractMirrorGuardTests` 逐条比对两侧的规范表、别名表、契约版本、场景表，并对九组输入比对归一化**行为**，任一侧漂移 CI 立刻红（守卫可红：改任一侧的表一个字即失败）。要升级成硬引用，得把控制台的镜像构建上下文改成仓库根，并同步生产编排、开发编排、CDS 编排与分支镜像流水线四处，与「控制台不依赖 MAP」的隔离目标直接冲突——按范围熔断规则记账，不在本 PR 展开。补法：先决定隔离目标是否让位，再一次性改上下文并删掉镜像 |
+| 2026-08-17-last-known-good-route-snapshot-not-implemented | medium | 2026-08-17 | 「最后一次已验证路由」（不可变 last-known-good 快照，配置面短暂不可读时按同 appCaller / 同 requestType / 同能力 / 同协议恢复）本次只做设计评估，未实现 | 网关配置面（Mongo）短暂不可读，而业务希望继续服务时 | open | 评估结论：它是新的一层权威，收益面窄（只覆盖 `GATEWAY_CONFIG_UNAVAILABLE` 这一类失败），风险面宽——快照要带版本、过期时间、来源与回滚审计，还要保证绝不跨模型类型恢复（拿 chat 顶 ASR / embedding / 生图 / 视频比失败更糟）。本 PR 的目标是消除「配置判据分裂导致的静默不可用」，加一层缓存权威属于新语义类别，按范围熔断规则记账。当前替代：配置面不可读已与「配置配错」拆成两个失败原因（`GATEWAY_CONFIG_UNAVAILABLE` vs `APPCALLER_POOL_UNBOUND`），至少不会再被误判成配置报废。补法：先补配置面可用性的真实数据（多久失败一次、失败多长），再决定值不值得引入第二权威 |
+| 2026-08-17-legacy-image-gen-alias-not-retired | medium | 2026-08-17 | 历史别名 `image-gen` 仍留在契约的别名表里；正式环境存量逻辑模型的能力值尚未完成迁移，也尚未演练回滚 | 正式环境跑完能力迁移、`/gw/logical-models/capability-audit` 报 clean 且回滚方案就绪之后 | open | 现在**不得**撤销：撤销即复现 2026-08-13 的全站生图静默不可用。已有守卫 `GatewayRoutingWiringGuardTests.历史别名兼容不得被静默撤销` 钉住这一行。退场顺序：① 正式环境跑迁移（幂等，迁移后回读残留别名数必须为 0）② 审计端点 clean ③ 观察一个发布周期 ④ 才允许从别名表移除并同步守卫 |
 | 2026-08-14-appcallers-search-not-anchored | low | 2026-08-14 | `GET /gw/app-callers` 的 `search` 是无锚定 Mongo regex，且 Skip/Limit 发生在按 `LastSeenAt` 排序**之后**；前端 App 详情页只能在这 50 行截断结果里做精确匹配。真实以 `G-` 开头的 appCallerCode，若比 50 个匹配其去前缀形式的记录更旧，就会被判成「未注册、仅观测到」 | 同时满足：存在真实以 `G-` 开头的 appCallerCode；且匹配其去前缀形式的记录超过一页 | open | PR #1371 Review 抓到。前端连打两次请求只是绕过，正解是端点支持按 code 精确查（锚定 regex 或独立的 by-code 端点）。触发面窄，按 §5.5 判 B 类不在该 PR 展开 |
 | 2026-08-14-sessions-endpoint-full-scan | medium | 2026-08-14 | `GET /gw/logs/sessions` 先把时间窗内全部日志物化再在内存按 SessionId 分组，最后才 Skip/Take；每翻一页都要重跑一次全扫描 | 大租户在会话视图连续翻页 | open | PR #1371 因此把会话视图的触底自动续取关掉（`autoLoad={false}`），只保留手动「加载更多」，避免把偶发翻页放大成连续全扫描。端点改成聚合层分页后可以打开自动续取 |
 | 2026-08-12-unavailable-pool-no-passive-half-open | critical | 2026-08-12 | 模型成员连续失败后会进入 `Unavailable`，Resolver 随即永久排除该成员；但健康恢复只发生在一次成功请求之后，导致成员没有机会通过真实流量恢复。控制台也没有恢复或切换入口。生产不能用 CDS 或定时生图探测兜底，因为主动调用会消耗供应商额度 | 任一 generation 上游连续失败并被熔断时 | in-progress | 已实现冷却后由真实请求原子领取半开租约，人工恢复也只授予半开资格，不直接改成健康；成功和失败会清理租约，默认探测服务保持关闭。单元与全量非集成回归通过。尚欠指数退避、多实例并发故障演练和生产证据，完成前不得标为 paid。 |
