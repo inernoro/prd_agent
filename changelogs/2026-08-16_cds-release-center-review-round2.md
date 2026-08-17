@@ -42,3 +42,5 @@
 | docs | cds | 轮换 runbook 的 MySQL 段改为逐 host 执行，补 SQL Server 口令复杂度要求 |
 | fix | cds | redis 预设启动改回经镜像 entrypoint，恢复降权到 redis 用户，不再以 root 运行 |
 | test | cds | 新增 redis 预设真容器判据（降权 + 认证 + /data 属主），补上命令字符串扫不出的运行时差别 |
+| fix | cds | 备份单飞闸带持有者身份，跳过写入事件流并在疑似卡死时升级为 error |
+| docs | cds | 轮换 runbook 的 MySQL 段改为单会话改完所有 host，验证拆本地与网络两条 |
