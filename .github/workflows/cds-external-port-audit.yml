@@ -54,12 +54,14 @@ jobs:
           sudo nmap -4 -sS -Pn -n -p- --min-rate 5000 --max-retries 1 --host-timeout 10m -oX /tmp/public-ipv4.xml "$AUDIT_TARGET" >/dev/null
           node cds/scripts/validate-external-port-report.mjs --xml /tmp/public-ipv4.xml --family ipv4 --out "${{ matrix.environment }}-ipv4-report.json"
 
+      # 扫过才有证据可传。目标缺失时这一步会以「找不到文件」再报一次错，
+      # 把真正的原因（没配目标）埋在第二条噪音下面。
       - name: Upload sanitized evidence
-        if: always()
+        if: ${{ always() && env.AUDIT_TARGET != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: external-port-audit-${{ matrix.environment }}-ipv4
-          path: ${{ matrix.environment }}-*-report.json
+          path: ${{ matrix.environment }}-ipv4-report.json
           if-no-files-found: error
           retention-days: 30
 
@@ -105,7 +107,7 @@ jobs:
           node cds/scripts/validate-external-port-report.mjs --xml /tmp/public-ipv6.xml --family ipv6 --out "${{ matrix.environment }}-ipv6-report.json"
 
       - name: Upload sanitized evidence
-        if: always()
+        if: ${{ always() && env.AUDIT_TARGET != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: external-port-audit-${{ matrix.environment }}-ipv6
