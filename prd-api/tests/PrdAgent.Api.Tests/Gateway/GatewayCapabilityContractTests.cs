@@ -103,6 +103,21 @@ public sealed class GatewayCapabilityContractTests
             .ShouldBeTrue();
     }
 
+    /// <summary>
+    /// A5 的数据侧：分层模型不得被「补齐」成看起来能文生图。
+    /// 路由上它已被短路隔离，但数据里留下相反的记录会误导下一个读它的人。
+    /// </summary>
+    [Fact]
+    public void ImageLayering_DoesNotGetGeneralScenariosBackfilled()
+    {
+        var result = GatewayCapabilityContract.Normalize(
+            "generation",
+            ["image_generation", "image_layering"]);
+
+        result.Persisted.ShouldBe(["image_generation", "image_layering"]);
+        result.ScenarioBackfilled.ShouldBeFalse();
+    }
+
     /// <summary>A6：未知能力不被静默丢弃。</summary>
     [Fact]
     public void UnknownCapability_IsSurfacedNotSwallowed()

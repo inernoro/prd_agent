@@ -35,7 +35,11 @@ public interface IModelResolver
         CancellationToken ct = default)
         => Task.FromResult(ModelResolutionResult.NotFound(
             offeringId,
-            "当前模型调度器不支持按 Offering 恢复路由"));
+            "当前模型调度器不支持按 Offering 恢复路由",
+            GatewayRouteFailure.OfferingUnresolvable,
+            "resolver-capability",
+            appCallerCode,
+            offeringId: offeringId));
 
     /// <summary>
     /// 获取指定 AppCallerCode 的可用模型池列表
@@ -404,15 +408,16 @@ public class ModelResolutionResult
     /// <summary>
     /// 构造一条失败解析。
     ///
-    /// <paramref name="failureCode"/> 必须给（<see cref="GatewayRouteFailure"/> 常量之一）：
-    /// 参数保留可选只是为了让 <c>IModelResolver</c> 默认实现这种非路由场景能省略；
-    /// ModelResolver 内部的每一处调用都由源码守卫测试强制带上错误码，
-    /// 新增一处忘了带就会红（否则又会退回「所有失败长一个样」）。
+    /// <paramref name="failureCode"/> **没有默认值，编译期必填**（<see cref="GatewayRouteFailure"/> 常量之一）。
+    /// 之前它是可选参数 + 一条源码守卫；但源码守卫只能按字面量匹配，
+    /// 一旦调用方改成传变量（例如「空池 vs 全熔断」那处按情况算出来的码）守卫就误报，
+    /// 而放宽守卫又会让「真的忘了带」重新溜过去。把它变成必填参数，
+    /// 由编译器兜底：漏一处直接编译不过，比任何源码扫描都硬。
     /// </summary>
     public static ModelResolutionResult NotFound(
         string? expectedModel,
         string message,
-        string? failureCode = null,
+        string failureCode,
         string? stage = null,
         string? appCallerCode = null,
         string? logicalModelPublicId = null,

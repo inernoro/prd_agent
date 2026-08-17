@@ -100,8 +100,10 @@ public static class LogicalModelCapabilityPolicy
         }
 
         var isGeneration = string.Equals(modelType?.Trim(), "generation", StringComparison.OrdinalIgnoreCase);
+        // 与运行时契约同款：分层是动作能力，不补普通生图场景。
         if (isGeneration
             && seen.Contains(ImageGeneration)
+            && !seen.Contains(ImageLayering)
             && !ImageScenarioCapabilities.Any(seen.Contains))
         {
             foreach (var scenario in ImageScenarioCapabilities)

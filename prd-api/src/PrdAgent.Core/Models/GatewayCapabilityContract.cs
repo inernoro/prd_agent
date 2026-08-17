@@ -174,8 +174,12 @@ public static class GatewayCapabilityContract
 
         var isGeneration = string.Equals(modelType?.Trim(), "generation", StringComparison.OrdinalIgnoreCase);
         var backfilled = false;
+        // 分层是动作能力：它永远不会服务普通生图场景（见 SupportsAppCallerScenario 的短路），
+        // 给它补三个场景能力只会在数据里留下与真实语义相反的记录，
+        // 下一个读这条数据的人会以为它能文生图。
         if (isGeneration
             && seen.Contains(ImageGeneration)
+            && !seen.Contains(ImageLayering)
             && !ImageScenarioCapabilities.Any(seen.Contains))
         {
             foreach (var scenario in ImageScenarioCapabilities)

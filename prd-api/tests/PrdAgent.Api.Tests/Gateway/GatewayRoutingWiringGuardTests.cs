@@ -35,29 +35,37 @@ public sealed class GatewayRoutingWiringGuardTests
     private static string ReadinessSource() => File.ReadAllText(Path.Combine(
         RepoRoot(), "llmgw", "serving", "GatewayServingReadinessProbe.cs"));
 
-    /// <summary>取从 <paramref name="start"/> 起、括号配平的完整调用文本。</summary>
-    private static string CallText(string source, int start)
+    /// <summary>
+    /// 「每一处路由失败都必须带结构化错误码」由**编译器**保证：
+    /// <c>ModelResolutionResult.NotFound</c> 的 failureCode 是必填参数，漏一处直接编译不过。
+    ///
+    /// 这里守的是「有人把它改回可选」——那一刻编译器就不再兜底，
+    /// 而漏带错误码是静默退化（编译过、测试绿、只是所有失败又长成一个样）。
+    ///
+    /// 为什么不用源码扫描逐个调用点找 <c>GatewayRouteFailure.</c> 字面量：
+    /// 「空池 vs 全熔断」那处的错误码是按情况算出来的变量，字面量判据会误报；
+    /// 放宽成「认识几个变量名」又会让真正忘带的溜过去——两头都不成立（形状 1）。
+    /// 必填参数是唯一不靠拼写的判据。
+    /// </summary>
+    [Fact]
+    public void 路由失败的错误码是编译期必填参数()
     {
-        var open = source.IndexOf('(', start);
-        var depth = 0;
-        for (var i = open; i < source.Length; i++)
-        {
-            if (source[i] == '(') depth++;
-            else if (source[i] == ')')
-            {
-                depth--;
-                if (depth == 0) return source[start..(i + 1)];
-            }
-        }
-        throw new InvalidOperationException("括号不配平，无法截取调用文本");
+        var contract = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Core", "LlmGateway", "IModelResolver.cs"));
+
+        contract.ShouldContain(
+            "string failureCode,",
+            customMessage: "NotFound 的 failureCode 必须是必填参数；一旦带上默认值，漏带错误码就变成静默退化");
+        contract.ShouldNotContain(
+            "string? failureCode = null",
+            customMessage: "failureCode 不得回退成可选参数");
     }
 
     [Fact]
-    public void 每一处路由失败都必须带结构化错误码()
+    public void Resolver_的失败返回点仍然存在且数量正常()
     {
         var source = ResolverSource();
         const string marker = "ModelResolutionResult.NotFound";
-        var offending = new List<string>();
         var total = 0;
 
         for (var index = source.IndexOf(marker, StringComparison.Ordinal);
@@ -65,15 +73,10 @@ public sealed class GatewayRoutingWiringGuardTests
              index = source.IndexOf(marker, index + marker.Length, StringComparison.Ordinal))
         {
             total++;
-            var call = CallText(source, index);
-            if (!call.Contains("GatewayRouteFailure.", StringComparison.Ordinal))
-                offending.Add(call.Length > 200 ? call[..200] : call);
         }
 
+        // 判据不是恒真：扫错文件或 Resolver 被掏空时这里会红。
         total.ShouldBeGreaterThan(20, "Resolver 里的失败返回点数量异常，守卫可能没扫到真实文件");
-        offending.ShouldBeEmpty(
-            "以下失败返回没有带 GatewayRouteFailure 错误码，会退回「所有失败包装成同一个不可用」："
-            + string.Join(" | ", offending));
     }
 
     [Fact]
