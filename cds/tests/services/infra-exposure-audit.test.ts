@@ -9,6 +9,7 @@ import {
   parseFirewallGuard,
   parsePublishedHosts,
   renderExposureReport,
+  resolveRuntimeFirewallGuard,
   type InfraExposureInput,
 } from '../../src/services/infra-exposure-audit.js';
 
@@ -266,6 +267,40 @@ describe('防火墙纳入判据', () => {
     expect([...g.ports].sort()).toEqual([10001, 10002]);
   });
 
+  it('认得出 INPUT/FORWARD 按公网接口挂载的自有保护链', () => {
+    const legacyRules = [
+      '-A INPUT -i eth0 -j CDS-PUBLIC-INPUT',
+      '-A CDS-PUBLIC-INPUT -p tcp -m conntrack --ctstate NEW -j DROP',
+      '-A FORWARD -i eth0 -j CDS-PUBLIC-FORWARD',
+      '-A CDS-PUBLIC-FORWARD -p tcp -m conntrack --ctstate NEW -j DROP',
+    ].join('\n');
+    expect(parseFirewallGuard(legacyRules, 'eth0').blanket).toBe(true);
+  });
+
+  it('Docker 活跃后端有一个未保护时从严，不被另一套后端的绿灯掩盖', () => {
+    const firewall = resolveRuntimeFirewallGuard([
+      { name: 'iptables-nft', available: true, dockerNatActive: true, rulesReadable: true, rules: RULES_BLANKET },
+      { name: 'iptables-legacy', available: true, dockerNatActive: true, rulesReadable: true, rules: '-P INPUT ACCEPT' },
+    ], 'eth0');
+    expect(isFirewallBlocked([10001], firewall)).toBe(false);
+  });
+
+  it('所有活跃 Docker 后端都保护时才认定端口已拦截', () => {
+    const firewall = resolveRuntimeFirewallGuard([
+      { name: 'iptables-nft', available: true, dockerNatActive: true, rulesReadable: true, rules: RULES_BLANKET },
+      { name: 'iptables-legacy', available: true, dockerNatActive: true, rulesReadable: true, rules: RULES_PERPORT },
+    ], 'eth0');
+    expect(isFirewallBlocked([10001], firewall)).toBe(true);
+    expect(isFirewallBlocked([10002], firewall)).toBe(true);
+    expect(isFirewallBlocked([10003], firewall)).toBe(false);
+  });
+
+  it('活跃后端读取失败时返回未知，不把未知当安全', () => {
+    expect(resolveRuntimeFirewallGuard([
+      { name: 'iptables-legacy', available: true, dockerNatActive: true, rulesReadable: false, rules: '' },
+    ], 'eth0')).toBeNull();
+  });
+
   /** RETURN 是放行已建立连接，不是拦截。混进来会把「没防护」读成「有防护」。 */
   it('RETURN 不算拦截', () => {
     expect(parseFirewallGuard('-A DOCKER-USER -i eth0 -j RETURN', 'eth0').blanket).toBe(false);
@@ -315,8 +350,8 @@ describe('防火墙纳入判据', () => {
     const CODE = SRC.split('\n')
       .filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')); })
       .join('\n');
-    expect(CODE).toContain('iptables -S DOCKER-USER');
-    expect(CODE).toContain('parseFirewallGuard(');
+    expect(CODE).toContain("['iptables-nft', 'iptables-legacy']");
+    expect(CODE).toContain('resolveRuntimeFirewallGuard(');
     expect(CODE).toMatch(/auditInfraExposure\(inputs,\s*\{\s*firewall\s*\}\)/);
   });
 });

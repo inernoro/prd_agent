@@ -19,8 +19,8 @@ import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
 import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
 import {
-  auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport,
-  type InfraExposureInput, type InfraExposureReport,
+  auditInfraExposure, detectInfraKind, renderExposureReport, resolveRuntimeFirewallGuard,
+  type FirewallBackendSnapshot, type InfraExposureInput, type InfraExposureReport,
 } from './services/infra-exposure-audit.js';
 import {
   backupDirCandidates, buildRedisBackupProbeScript, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
@@ -419,10 +419,28 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
         `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
         { timeout: 15_000 },
       )).stdout.trim();
-      const fwRules = await shell.exec('iptables -S DOCKER-USER 2>/dev/null', { timeout: 15_000 });
-      const firewall = pubIf && fwRules.exitCode === 0
-        ? parseFirewallGuard(fwRules.stdout || '', pubIf)
-        : null;
+      const firewallBackends: FirewallBackendSnapshot[] = [];
+      for (const tool of ['iptables-nft', 'iptables-legacy'] as const) {
+        const present = await shell.exec(`command -v ${tool} >/dev/null 2>&1`, { timeout: 15_000 });
+        if (present.exitCode !== 0) {
+          firewallBackends.push({
+            name: tool, available: false, dockerNatActive: false, rulesReadable: false, rules: '',
+          });
+          continue;
+        }
+        const [nat, filter] = await Promise.all([
+          shell.exec(`${tool} -t nat -S 2>/dev/null`, { timeout: 15_000 }),
+          shell.exec(`${tool} -S 2>/dev/null`, { timeout: 15_000 }),
+        ]);
+        firewallBackends.push({
+          name: tool,
+          available: true,
+          dockerNatActive: nat.exitCode === 0 ? /(?:^-N DOCKER$|^-A DOCKER\s)/m.test(nat.stdout || '') : null,
+          rulesReadable: filter.exitCode === 0,
+          rules: filter.stdout || '',
+        });
+      }
+      const firewall = pubIf ? resolveRuntimeFirewallGuard(firewallBackends, pubIf) : null;
 
       const report = auditInfraExposure(inputs, { firewall });
       lastInfraExposureReport = report;

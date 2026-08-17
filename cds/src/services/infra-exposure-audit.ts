@@ -105,6 +105,17 @@ export interface FirewallGuard {
   ports: Set<number>;
 }
 
+export interface FirewallBackendSnapshot {
+  name: string;
+  /** 该后端工具是否存在。不存在不等于读取失败。 */
+  available: boolean;
+  /** null 表示连 NAT 运行态都读不到，必须从严。 */
+  dockerNatActive: boolean | null;
+  /** filter 表是否读取成功。 */
+  rulesReadable: boolean;
+  rules: string;
+}
+
 /**
  * 解析 `iptables -S DOCKER-USER` 的输出。
  *
@@ -115,16 +126,64 @@ export function parseFirewallGuard(rules: string, publicIface: string): Firewall
   const guard: FirewallGuard = { blanket: false, ports: new Set() };
   const iface = (publicIface || '').trim();
   if (!iface) return guard;
-  for (const line of (rules || '').split('\n')) {
-    const l = line.trim();
-    if (!l.startsWith('-A DOCKER-USER')) continue;
-    if (!new RegExp(`-i\\s+${iface}(\\s|$)`).test(l)) continue;
+  const lines = (rules || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const ifacePattern = new RegExp(`-i\\s+${iface}(\\s|$)`);
+  const attachedChains = new Set<string>();
+
+  // INPUT/FORWARD 直接按公网接口挂自有链时，链内规则可以不重复写 -i。
+  // 迭代展开有限跳转，兼容 DOCKER-USER -> 自有链和多层自有链。
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const line of lines) {
+      const source = line.match(/^-A\s+(\S+)/)?.[1];
+      const target = line.match(/-j\s+(\S+)(?:\s|$)/)?.[1];
+      if (!source || !target || ['ACCEPT', 'DROP', 'REJECT', 'RETURN'].includes(target)) continue;
+      const sourceScoped = ['INPUT', 'FORWARD', 'DOCKER-USER'].includes(source)
+        ? ifacePattern.test(line)
+        : attachedChains.has(source);
+      if (sourceScoped && !attachedChains.has(target)) {
+        attachedChains.add(target);
+        changed = true;
+      }
+    }
+  }
+
+  for (const l of lines) {
+    const chain = l.match(/^-A\s+(\S+)/)?.[1];
+    if (!chain) continue;
+    const scoped = ifacePattern.test(l) || attachedChains.has(chain);
+    if (!scoped) continue;
     if (!/-j\s+(DROP|REJECT)(\s|$)/.test(l)) continue;
-    const m = l.match(/--ctorigdstport\s+(\d+)/);
+    // 数据服务是 TCP。仅有 UDP 的拒绝规则不能冒充数据库端口保护。
+    if (/-p\s+udp(?:\s|$)/.test(l)) continue;
+    const m = l.match(/--(?:ctorigdstport|dport)\s+(\d+)/);
     if (m) guard.ports.add(Number(m[1]));
     else if (!/--ctorigdstport|--dport/.test(l)) guard.blanket = true;
   }
   return guard;
+}
+
+/**
+ * 从宿主实际存在的 iptables 后端中选择防护结论。
+ * Docker NAT 可能由 nft 或 legacy 承载；任何活跃后端缺少防护都不能判为已拦截。
+ */
+export function resolveRuntimeFirewallGuard(
+  snapshots: readonly FirewallBackendSnapshot[],
+  publicIface: string,
+): FirewallGuard | null {
+  const available = snapshots.filter((snapshot) => snapshot.available);
+  if (available.some((snapshot) => snapshot.dockerNatActive === null || !snapshot.rulesReadable)) return null;
+  const active = available.filter((snapshot) => snapshot.dockerNatActive === true);
+  if (active.length === 0) return null;
+
+  const guards = active.map((snapshot) => parseFirewallGuard(snapshot.rules, publicIface));
+  const blanket = guards.every((guard) => guard.blanket);
+  const candidates = new Set(guards.flatMap((guard) => [...guard.ports]));
+  const ports = new Set([...candidates].filter((port) => (
+    guards.every((guard) => guard.blanket || guard.ports.has(port))
+  )));
+  return { blanket, ports };
 }
 
 /** 这些宿主端口是不是都被防火墙挡住了。端口读不出来时按「没挡住」处理。 */

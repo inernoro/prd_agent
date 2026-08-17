@@ -11,3 +11,4 @@
 | security | prd-admin | 移除默认管理员口令提示并展示实际初始化账号 |
 | security | prd-api | 用户整库重新初始化默认关闭并移除管理端常规入口 |
 | security | prd-api | 用户改密、角色状态变更与重新初始化持久记录操作者身份 |
+| security | cds | 防火墙自检同时核验 nft 与 legacy 运行后端并对未知状态从严告警 |
