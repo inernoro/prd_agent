@@ -18,6 +18,14 @@ export interface VerifiedRemoteBackup {
   sha256: string;
 }
 
+async function r2HttpFailure(action: string, response: Response): Promise<Error> {
+  const body = await response.text().catch(() => '');
+  const code = body.match(/<Code>([^<]+)<\/Code>/i)?.[1]?.trim();
+  const message = body.match(/<Message>([^<]+)<\/Message>/i)?.[1]?.trim();
+  const detail = [code, message].filter(Boolean).join(': ');
+  return new Error(`${action}（HTTP ${response.status}${detail ? `，${detail}` : ''}）`);
+}
+
 /**
  * 从 R2 取回一份备份，并在正式文件名出现前完成大小与 sha256 双校验。
  *
@@ -45,7 +53,7 @@ export async function downloadAndVerifyR2Backup(opts: {
       now,
     }),
   });
-  if (!head.ok) throw new Error(`离机备份下载前校验失败（HTTP ${head.status}）`);
+  if (!head.ok) throw await r2HttpFailure('离机备份下载前校验失败', head);
   const expectedBytes = Number(head.headers.get('content-length') || '0');
   const expectedSha256 = String(head.headers.get('x-amz-meta-sha256') || '').trim().toLowerCase();
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
@@ -62,7 +70,8 @@ export async function downloadAndVerifyR2Backup(opts: {
       now: new Date(now.getTime() + 1),
     }),
   });
-  if (!get.ok || !get.body) throw new Error(`离机备份下载失败（HTTP ${get.status}）`);
+  if (!get.ok) throw await r2HttpFailure('离机备份下载失败', get);
+  if (!get.body) throw new Error('离机备份下载失败（响应没有内容）');
 
   await fs.promises.mkdir(path.dirname(opts.filePath), { recursive: true, mode: 0o700 });
   const tmp = `${opts.filePath}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
@@ -122,7 +131,7 @@ export async function uploadAndVerifyR2Object(opts: {
     }),
     body: opts.body as unknown as BodyInit,
   });
-  if (!put.ok) throw new Error(`离机对象上传失败（HTTP ${put.status}）`);
+  if (!put.ok) throw await r2HttpFailure('离机对象上传失败', put);
   const head = await fetchImpl(url, {
     method: 'HEAD',
     headers: signedHeaders({
@@ -133,7 +142,7 @@ export async function uploadAndVerifyR2Object(opts: {
       now: new Date(now.getTime() + 1),
     }),
   });
-  if (!head.ok) throw new Error(`离机对象回读校验失败（HTTP ${head.status}）`);
+  if (!head.ok) throw await r2HttpFailure('离机对象回读校验失败', head);
   const bytes = Number(head.headers.get('content-length') || '0');
   const remoteSha256 = String(head.headers.get('x-amz-meta-sha256') || '').trim().toLowerCase();
   if (bytes !== opts.body.byteLength || remoteSha256 !== sha256) {
@@ -256,7 +265,7 @@ export async function uploadAndVerifyR2Backup(opts: {
     body: fs.createReadStream(opts.filePath) as unknown as BodyInit,
     duplex: 'half',
   } as RequestInit & { duplex: 'half' });
-  if (!put.ok) throw new Error(`离机备份上传失败（HTTP ${put.status}）`);
+  if (!put.ok) throw await r2HttpFailure('离机备份上传失败', put);
 
   const head = await fetchImpl(url, {
     method: 'HEAD',
@@ -268,7 +277,7 @@ export async function uploadAndVerifyR2Backup(opts: {
       now: new Date(now.getTime() + 1),
     }),
   });
-  if (!head.ok) throw new Error(`离机备份回读校验失败（HTTP ${head.status}）`);
+  if (!head.ok) throw await r2HttpFailure('离机备份回读校验失败', head);
   const remoteBytes = Number(head.headers.get('content-length') || '0');
   const remoteSha256 = String(head.headers.get('x-amz-meta-sha256') || '').trim().toLowerCase();
   if (remoteBytes !== digest.bytes || remoteSha256 !== digest.sha256) {

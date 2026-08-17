@@ -18,6 +18,24 @@ describe('R2 离机备份', () => {
     expect(r2BackupConfigFromEnv({ R2_ENDPOINT: 'https://storage.invalid' })).toBeNull();
   });
 
+  it('远端拒绝时保留结构化错误码以区分权限与签名问题', async () => {
+    const file = path.join(os.tmpdir(), `cds-r2-download-denied-${process.pid}.bin`);
+    created.push(file);
+    const fetchImpl = async (): Promise<Response> => new Response(
+      '<Error><Code>AccessDenied</Code><Message>source address is not allowed</Message></Error>',
+      { status: 403 },
+    );
+    await expect(downloadAndVerifyR2Backup({
+      config: {
+        endpoint: 'https://storage.invalid', bucket: 'backup', prefix: 'cds',
+        accessKeyId: 'access-id', secretAccessKey: 'secret-key',
+      },
+      objectKey: 'cds/snapshot.bin',
+      filePath: file,
+      fetchImpl: fetchImpl as typeof fetch,
+    })).rejects.toThrow('AccessDenied: source address is not allowed');
+  });
+
   it('上传后必须按大小和 sha256 回读校验', async () => {
     const file = path.join(os.tmpdir(), `cds-r2-test-${process.pid}.bin`);
     created.push(file);
