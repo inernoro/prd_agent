@@ -3,7 +3,41 @@ import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-const FORBIDDEN_RUNTIME_HOSTS = ['miduo.org', 'ebcone.net', '62.146.168.225'];
+const EXTERNAL_PROVIDER_HOSTS = new Set([
+  'api.github.com',
+  'github.com',
+  'registry.npmmirror.com',
+  'www.w3.org',
+]);
+
+function hardcodedDeploymentHost(value: string): string | null {
+  for (const match of value.matchAll(/https?:\/\/([^/\s"'`]+)/gi)) {
+    const authority = match[1];
+    if (!authority || authority.includes('${') || authority.includes('<') || authority === '...') {
+      continue;
+    }
+
+    const host = authority
+      .replace(/^.*@/, '')
+      .split(':', 1)[0]
+      .replace(/\.$/, '')
+      .toLowerCase();
+    if (
+      EXTERNAL_PROVIDER_HOSTS.has(host)
+      || !host.includes('.')
+      || host === 'localhost'
+      || host === '127.0.0.1'
+      || host === '0.0.0.0'
+      || host.endsWith('.invalid')
+      || host.endsWith('.internal')
+      || host.endsWith('.local')
+    ) {
+      continue;
+    }
+    return host;
+  }
+  return null;
+}
 
 function sourceFiles(root: string): string[] {
   const out: string[] = [];
@@ -24,7 +58,7 @@ describe('运行时域名配置', () => {
       const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
       const visit = (node: ts.Node): void => {
         if (ts.isStringLiteralLike(node)) {
-          const matched = FORBIDDEN_RUNTIME_HOSTS.find((host) => node.text.includes(host));
+          const matched = hardcodedDeploymentHost(node.text);
           if (matched) {
             const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1;
             hits.push(`${path.relative(process.cwd(), file)}:${line}:${matched}`);

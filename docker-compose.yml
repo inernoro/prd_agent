@@ -92,6 +92,9 @@ services:
       # Root 破窗账户（可选，生产环境建议不配置或只临时使用）
       - ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}
       - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
+      # 首次建库与显式用户初始化凭据；未单独配置时后端会使用上面的破窗凭据。
+      - MAP_INITIAL_ADMIN_USERNAME=${MAP_INITIAL_ADMIN_USERNAME:-}
+      - MAP_INITIAL_ADMIN_PASSWORD=${MAP_INITIAL_ADMIN_PASSWORD:-}
       # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
       # GitHub OAuth Device Flow（PR Review Agent 使用）

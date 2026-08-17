@@ -127,14 +127,6 @@ export const generateInviteCodesReal: GenerateInviteCodesContract = async (count
   return ok({ codes: res.data.codes ?? [] });
 };
 
-export const initializeUsersReal = async (): Promise<ApiResponse<{ deletedCount: number; adminUserId: string; botUserIds: string[] }>> => {
-  const res = await apiRequest<{ deletedCount: number; adminUserId: string; botUserIds: string[] }>(api.users.initialize(), {
-    method: 'POST',
-  });
-  if (!res.success) return res;
-  return ok({ deletedCount: res.data.deletedCount ?? 0, adminUserId: res.data.adminUserId ?? '', botUserIds: res.data.botUserIds ?? [] });
-};
-
 export const forceExpireUserReal: ForceExpireUserContract = async (
   userId: string,
   targets: ForceExpireTargets
