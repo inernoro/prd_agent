@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
   evaluatePublicSurface,
@@ -32,5 +33,19 @@ describe('external port audit report', () => {
       unexpectedOpenPorts: [12_345],
       missingRequiredPorts: [80, 443],
     });
+  });
+
+  it('runs the CDS public audit from an off-host runner over both IP families', () => {
+    const workflow = readFileSync(
+      new URL('../../../.github/workflows/cds-external-port-audit.yml', import.meta.url),
+      'utf8',
+    );
+
+    expect(workflow).toContain('secrets.CDS_EDGE_AUDIT_HOST');
+    expect(workflow).toContain('secrets.CDS_EDGE_AUDIT_IPV6');
+    expect(workflow).toContain('nmap -4');
+    expect(workflow).toContain('nmap -6');
+    expect(workflow).toContain('--family ipv4');
+    expect(workflow).toContain('--family ipv6');
   });
 });

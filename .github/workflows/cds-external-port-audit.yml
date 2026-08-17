@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  audit:
-    name: Verify ${{ matrix.environment }} public TCP surface
+  audit-ipv4:
+    name: Verify ${{ matrix.environment }} public IPv4 TCP surface
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -52,7 +52,41 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: external-port-audit-${{ matrix.environment }}
+          name: external-port-audit-${{ matrix.environment }}-ipv4
           path: ${{ matrix.environment }}-*-report.json
+          if-no-files-found: error
+          retention-days: 30
+
+  audit-cds-ipv6:
+    name: Verify CDS public IPv6 TCP surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CDS_ALLOWED_PUBLIC_PORTS: '22,80,443'
+      AUDIT_TARGET: ${{ secrets.CDS_EDGE_AUDIT_IPV6 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require off-host IPv6 target
+        run: |
+          test -n "$AUDIT_TARGET" || { echo "CDS IPv6 audit target is not configured"; exit 1; }
+
+      - name: Install scanner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nmap
+
+      - name: Scan IPv6 from GitHub runner
+        run: |
+          sudo nmap -6 -sT -Pn -n -p- --min-rate 5000 --max-retries 1 --host-timeout 10m -oX /tmp/public-ipv6.xml "$AUDIT_TARGET" >/dev/null
+          node cds/scripts/validate-external-port-report.mjs --xml /tmp/public-ipv6.xml --family ipv6 --out cds-ipv6-report.json
+
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-port-audit-cds-ipv6
+          path: cds-ipv6-report.json
           if-no-files-found: error
           retention-days: 30
