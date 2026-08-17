@@ -142,6 +142,7 @@ describe('认证判定', () => {
    */
   it('密码写在启动参数里也要认出来（曾经的假阳性）', () => {
     expect(detectInfraAuth('redis', {}, ['redis-server', '--requirepass', 'xxx'])).toBe(true);
+    expect(detectInfraAuth('redis', {}, ['sh', '-c', 'redis-server --requirepass xxx'])).toBe(true);
     expect(detectInfraAuth('redis', {}, ['redis-server', '--appendonly', 'yes'])).toBe(false);
     expect(detectInfraAuth('mongo', {}, ['mongod', '--auth'])).toBe(true);
     expect(detectInfraAuth('mongo', {}, ['mongod'])).toBe(false);

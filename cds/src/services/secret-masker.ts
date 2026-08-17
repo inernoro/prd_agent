@@ -236,6 +236,47 @@ export function maskSecretsInObject<T>(obj: T, opts: { mask?: boolean } = {}): T
   }
 }
 
+const SENSITIVE_COMMAND_FLAGS = [
+  '--requirepass',
+  '--masterauth',
+  '--password',
+  '--pass',
+  '--auth-token',
+  '--token',
+] as const;
+
+function maskCommandString(command: string, marker: string): string {
+  let masked = command;
+  for (const flag of SENSITIVE_COMMAND_FLAGS) {
+    const escaped = flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    masked = masked.replace(
+      new RegExp(`(${escaped})(=|\\s+)("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^\\s]+)`, 'gi'),
+      (_match, name: string, separator: string) => `${name}${separator}${marker}`,
+    );
+  }
+  return masked;
+}
+
+/**
+ * 脱敏基础设施启动命令中的凭据参数，同时保持 string / string[] 形状供前端展示。
+ * 环境变量由 maskEnvRecord 处理；本函数只处理不带 KEY=VALUE 外壳的 CLI flag。
+ */
+export function maskCommandSecrets<T extends string | string[] | undefined>(
+  command: T,
+  marker = '***',
+): T {
+  if (typeof command === 'string') return maskCommandString(command, marker) as T;
+  if (!Array.isArray(command)) return command;
+  const result = command.map((part) => maskCommandString(String(part), marker));
+  for (let i = 0; i < result.length - 1; i += 1) {
+    if (SENSITIVE_COMMAND_FLAGS.some((flag) => result[i].toLowerCase() === flag)) {
+      result[i + 1] = marker;
+      i += 1;
+    }
+  }
+  return result as T;
+}
+
 /**
  * Env-record masking for response serialization (branch extraProfiles, build-profile
  * overrides, trace dumps). Distinct from the line-oriented `maskSecrets()` above: this

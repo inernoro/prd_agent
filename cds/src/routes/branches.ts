@@ -82,7 +82,7 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
-import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeSecretBearingValue, shouldMask } from '../services/secret-masker.js';
+import { maskSecrets as maskSecretsText, maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeSecretBearingValue, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -18970,6 +18970,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Infrastructure services CRUD ──
 
+  function infraServiceView(service: InfraService | null | undefined): InfraService | null | undefined {
+    if (!service) return service;
+    return {
+      ...service,
+      env: maskEnvRecord(service.env || {}),
+      command: maskCommandSecrets(service.command),
+      entrypoint: maskCommandSecrets(service.entrypoint),
+    };
+  }
+
   router.get('/infra', async (req, res) => {
     // P4 Part 3b: optional ?project=<id> filter.
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
@@ -18991,7 +19001,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
     }
 
-    res.json({ services });
+    res.json({ services: services.map((service) => infraServiceView(service)) });
   });
 
   // Infra catalog (SSOT: services/infra-catalog.ts) — secret-free preset list for the
@@ -19185,7 +19195,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.addInfraService(service);
       stateService.save();
 
-      res.status(201).json(volumeWarning ? { service, warning: volumeWarning } : { service });
+      const view = infraServiceView(service);
+      res.status(201).json(volumeWarning ? { service: view, warning: volumeWarning } : { service: view });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -19250,7 +19261,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const started = await startInfraWithPortRetry(service, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
+      res.json({
+        message: `基础设施服务 "${id}" 已启动`,
+        service: infraServiceView(stateService.getInfraServiceForProjectAndId(resolved.projectId, id)),
+      });
     } catch (err) {
       stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();
@@ -19297,7 +19311,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const started = await startInfraWithPortRetry(service, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
+      res.json({
+        message: `基础设施服务 "${id}" 已重启`,
+        service: infraServiceView(stateService.getInfraServiceForProjectAndId(resolved.projectId, id)),
+      });
     } catch (err) {
       stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();

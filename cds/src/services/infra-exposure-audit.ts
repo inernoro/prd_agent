@@ -325,9 +325,13 @@ export function detectInfraAuth(
   const argCarryingEnv = ['REDIS_ARGS', 'REDIS_EXTRA_FLAGS', 'MONGO_EXTRA_FLAGS'];
   const tokens = [
     ...(args || []),
-    ...argCarryingEnv.flatMap((k) => (e[k] || '').split(/\s+/)),
+    ...argCarryingEnv.map((k) => e[k] || ''),
   ]
-    .map((t) => String(t || '').trim().toLowerCase())
+    // Docker inspect 的 Config.Cmd 既可能是逐 token 数组，也可能把完整 shell 命令
+    // 放在一个元素里。必须拆解每个元素，否则 `sh -c "redis-server --requirepass x"`
+    // 会被误判成无认证。这里只需要识别有限的认证 flag，不执行 shell。
+    .flatMap((raw) => String(raw || '').match(/"[^"]*"|'[^']*'|[^\s]+/g) || [])
+    .map((t) => String(t || '').trim().replace(/^(["'])([\s\S]*)\1$/, '$2').toLowerCase())
     .filter(Boolean);
   /** 开关型参数：出现即生效（`--auth`）。整 token 比对，避免 `--authenticationdatabase` 撞上。 */
   const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.includes(f));
