@@ -24,7 +24,7 @@ import {
 } from './services/infra-exposure-audit.js';
 import {
   backupDirCandidates, buildRedisBackupProbeScript, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
-  shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
+  backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
 import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
@@ -574,7 +574,8 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         (stateService.getInfraServices() || []).map((s) => ({ ...s, running: s.status === 'running' })),
         { now: new Date() },
       );
-      if (plan.targets.length === 0) return;
+      const coverageGaps = backupCoverageGaps(plan);
+      if (plan.targets.length === 0 && coverageGaps.length === 0) return;
 
       const outcomes: BackupOutcome[] = [];
       for (const t of plan.targets) {
@@ -704,11 +705,14 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);
-      if (failed.length === 0 && outcomes.length > 0) {
+      const coverageComplete = isBackupRoundHealthy(plan, outcomes);
+      if (outcomes.length > 0 || coverageGaps.length > 0) {
         const completedAt = new Date().toISOString();
         const health = {
-          completedAt,
-          remoteVerifiedAt: completedAt,
+          coverageComplete,
+          completedAt: coverageComplete ? completedAt : null,
+          remoteVerifiedAt: coverageComplete ? completedAt : null,
+          coverageGaps,
           objects: outcomes.map((outcome) => ({
             id: outcome.id,
             fileName: outcome.fileName,
@@ -722,12 +726,12 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         fs.writeFileSync(tmp, `${JSON.stringify(health)}\n`, { mode: 0o600 });
         fs.renameSync(tmp, target);
       }
-      if (failed.length > 0) {
+      if (failed.length > 0 || coverageGaps.length > 0) {
         console.warn(`[infra-backup] ${summary}`);
         store?.record({
           category: 'system', severity: 'warn', source: 'infra-backup',
           action: 'infra.backup.partial-failure', message: summary, status: 'warn',
-          details: { outcomes, skipped: plan.skipped, directory: dir },
+          details: { outcomes, skipped: plan.skipped, coverageGaps, directory: dir },
         });
       } else {
         console.log(`[infra-backup] ${summary}`);
@@ -838,8 +842,11 @@ function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Dat
   for (const dir of candidates) {
     try {
       const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
-        completedAt?: string; remoteVerifiedAt?: string;
+        coverageComplete?: boolean; completedAt?: string; remoteVerifiedAt?: string;
       };
+      if (value.coverageComplete === false) {
+        return { completedAt: null, remoteVerifiedAt: null };
+      }
       return {
         completedAt: value.completedAt ? new Date(value.completedAt) : null,
         remoteVerifiedAt: value.remoteVerifiedAt ? new Date(value.remoteVerifiedAt) : null,

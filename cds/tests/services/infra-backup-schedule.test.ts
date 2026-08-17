@@ -7,9 +7,11 @@ import {
   DEFAULT_MIN_FREE_BYTES,
   backupDirCandidates,
   backupFileName,
+  backupCoverageGaps,
   buildRedisBackupProbeScript,
   backupKindOf,
   isAutoBackupFile,
+  isBackupRoundHealthy,
   parseDfAvailableBytes,
   planInfraBackups,
   selectExpiredBackups,
@@ -50,6 +52,7 @@ describe('选谁备份', () => {
     ], { now: NOW });
     expect(plan.targets.map((t) => t.id)).toEqual(['mongodb', 'redis', 'mysql']);
     expect(plan.skipped.map((s) => s.id)).toEqual(['kafka', 'minio']);
+    expect(backupCoverageGaps(plan).map((s) => s.id)).toEqual(['kafka', 'minio']);
     // 跳过的必须写明为什么，否则「没备份」和「不需要备份」分不开
     for (const s of plan.skipped) expect(s.reason).toContain('不支持');
   });
@@ -58,6 +61,7 @@ describe('选谁备份', () => {
     const plan = planInfraBackups([cand({ id: 'mongodb', running: false })], { now: NOW });
     expect(plan.targets).toHaveLength(0);
     expect(plan.skipped[0].reason).toContain('未运行');
+    expect(backupCoverageGaps(plan)).toEqual([]);
   });
 
   it('每类库各用各的扩展名', () => {
@@ -171,6 +175,22 @@ describe('结论可读', () => {
 
   it('没有目标时如实说，不装作成功', () => {
     expect(summarizeBackupRound([], 0)).toContain('没有可备份的目标');
+  });
+
+  it('运行中的不支持类型会阻断健康状态，停止的服务不会', () => {
+    const plan = planInfraBackups([
+      cand({ id: 'postgres', dockerImage: 'postgres:16', running: true }),
+      cand({ id: 'stopped-mongo', running: false }),
+    ], { now: NOW });
+    expect(backupCoverageGaps(plan).map((item) => item.id)).toEqual(['postgres']);
+    expect(isBackupRoundHealthy(plan, [{ id: 'mongo', ok: true, bytes: 128 }])).toBe(false);
+  });
+
+  it('只有全部目标成功且没有覆盖缺口才允许刷新健康时间', () => {
+    const complete = planInfraBackups([cand({ id: 'mongo', running: true })], { now: NOW });
+    expect(isBackupRoundHealthy(complete, [{ id: 'mongo', ok: true, bytes: 128 }])).toBe(true);
+    expect(isBackupRoundHealthy(complete, [{ id: 'mongo', ok: false, error: 'failed' }])).toBe(false);
+    expect(isBackupRoundHealthy(complete, [])).toBe(false);
   });
 });
 

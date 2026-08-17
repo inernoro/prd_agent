@@ -17,14 +17,6 @@ describe('基础设施认证硬门禁', () => {
       dockerImage: 'mysql:8', env: { MYSQL_ROOT_PASSWORD: 'secret' },
     })).not.toThrow();
     expect(() => assertInfraAuthenticationConfigured({
-      dockerImage: 'mysql:8',
-      env: {
-        MYSQL_RANDOM_ROOT_PASSWORD: 'yes',
-        MYSQL_USER: 'app',
-        MYSQL_PASSWORD: 'secret',
-      },
-    })).not.toThrow();
-    expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'redis:7',
       env: { REDIS_PASSWORD: 'secret' },
       command: ['sh', '-c', 'exec redis-server --requirepass "$REDIS_PASSWORD"'],
@@ -60,7 +52,6 @@ describe('基础设施认证硬门禁', () => {
     for (const dockerImage of [
       'mongo:7',
       'postgres:16',
-      'mysql:8',
       'redis:7',
       'mcr.microsoft.com/mssql/server:2022-latest',
       'clickhouse/clickhouse-server:24',
@@ -71,21 +62,27 @@ describe('基础设施认证硬门禁', () => {
       expect(() => assertInfraAuthenticationConfigured({ dockerImage }))
         .toThrow('拒绝创建无认证');
     }
+    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'mysql:8' }))
+      .toThrow('缺少可复用备份凭据');
   });
 
   it('拒绝只有随机 root 开关或孤立应用密码的 MySQL', () => {
     expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'mysql:8', env: { MYSQL_RANDOM_ROOT_PASSWORD: 'yes' },
-    })).toThrow('拒绝创建无认证');
+    })).toThrow('缺少可复用备份凭据');
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'mysql:8',
+      env: { MYSQL_RANDOM_ROOT_PASSWORD: 'yes', MYSQL_USER: 'app', MYSQL_PASSWORD: 'secret' },
+    })).toThrow('缺少可复用备份凭据');
     expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'mysql:8', env: { MYSQL_PASSWORD: 'secret' },
-    })).toThrow('拒绝创建无认证');
+    })).toThrow('缺少可复用备份凭据');
     expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'mysql:8', env: { MYSQL_USER: 'app', MYSQL_PASSWORD: 'secret' },
-    })).toThrow('拒绝创建无认证');
+    })).toThrow('缺少可复用备份凭据');
     expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'mariadb:11', env: { MARIADB_USER: 'app', MARIADB_PASSWORD: 'secret' },
-    })).toThrow('拒绝创建无认证');
+    })).toThrow('缺少可复用备份凭据');
   });
 
   it('不透明镜像仍按服务元数据与容器端口执行认证门禁', () => {
@@ -94,7 +91,7 @@ describe('基础设施认证硬门禁', () => {
     })).toThrow('拒绝创建无认证的 mongo');
     expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'private/image@sha256:opaque', name: '业务 MySQL', containerPort: 8080,
-    })).toThrow('拒绝创建无认证的 mysql');
+    })).toThrow('缺少可复用备份凭据');
     expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'private/image@sha256:opaque', basePresetId: 'redis', containerPort: 8080,
       command: ['redis-server', '--requirepass', 'secret'],

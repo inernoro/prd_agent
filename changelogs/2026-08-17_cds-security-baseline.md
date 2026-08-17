@@ -35,3 +35,5 @@
 | fix | cds | 防止技能包回源递归并由运行时连接下发 MAP 地址 |
 | fix | prd-desktop | 统一桌面发布入口的 API 地址门禁 |
 | fix | platform | 正式发布入口与网关返回地址统一改为部署时动态注入 |
+| security | cds | 备份健康状态要求覆盖全部运行中数据服务且 MySQL 使用可复用备份凭据 |
+| security | cds | 正式环境与 CDS 均执行每日 IPv6 公网端口扫描 |

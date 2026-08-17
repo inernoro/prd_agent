@@ -43,6 +43,8 @@ describe('external port audit report', () => {
 
     expect(workflow).toContain('secrets.CDS_EDGE_AUDIT_HOST');
     expect(workflow).toContain('secrets.CDS_EDGE_AUDIT_IPV6');
+    expect(workflow).toContain('secrets.PRODUCTION_EDGE_AUDIT_IPV6');
+    expect(workflow).toContain("matrix.environment == 'cds'");
     expect(workflow).toContain('nmap -4');
     expect(workflow).toContain('nmap -6');
     expect(workflow).toContain('--family ipv4');

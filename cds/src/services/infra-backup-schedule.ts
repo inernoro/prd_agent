@@ -35,7 +35,7 @@ export interface BackupTarget extends BackupCandidate {
 export interface BackupPlan {
   targets: BackupTarget[];
   /** 跳过的原因，逐条可解释——「这次没备份什么」和「备份了什么」同样重要。 */
-  skipped: Array<{ id: string; reason: string }>;
+  skipped: Array<{ id: string; reason: string; blocksHealthy: boolean }>;
 }
 
 /** 默认保留：每个服务最近 7 份，且不超过 14 天。 */
@@ -181,17 +181,33 @@ export function planInfraBackups(
   const iso = opts.now.toISOString();
   for (const c of candidates) {
     if (c.running === false) {
-      skipped.push({ id: c.id, reason: '容器未运行' });
+      skipped.push({ id: c.id, reason: '容器未运行', blocksHealthy: false });
       continue;
     }
     const kind = backupKindOf(c.dockerImage);
     if (!kind) {
-      skipped.push({ id: c.id, reason: `暂不支持自动备份的类型（${c.dockerImage}）` });
+      skipped.push({
+        id: c.id,
+        reason: `暂不支持自动备份的类型（${c.dockerImage}）`,
+        blocksHealthy: true,
+      });
       continue;
     }
     targets.push({ ...c, kind, fileName: backupFileName(c.projectId, c.id, kind, iso) });
   }
   return { targets, skipped };
+}
+
+/** 正在运行却没有进入备份目标的服务，必须让整轮健康状态失败。 */
+export function backupCoverageGaps(plan: BackupPlan): BackupPlan['skipped'] {
+  return plan.skipped.filter((item) => item.blocksHealthy);
+}
+
+/** 只有每个运行中目标都得到可校验副本时，整轮才允许刷新健康时间。 */
+export function isBackupRoundHealthy(plan: BackupPlan, outcomes: readonly BackupOutcome[]): boolean {
+  return outcomes.length > 0
+    && outcomes.every((outcome) => outcome.ok)
+    && backupCoverageGaps(plan).length === 0;
 }
 
 export interface ExistingBackup {

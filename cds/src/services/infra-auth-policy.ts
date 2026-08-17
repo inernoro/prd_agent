@@ -43,13 +43,12 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
     configured = hasValue(env, 'POSTGRES_PASSWORD', 'PGPASSWORD');
   } else if (kind === 'mysql') {
     const hasExplicitRootPassword = hasValue(env, 'MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD');
-    const hasRandomRootPassword = hasValue(env, 'MYSQL_RANDOM_ROOT_PASSWORD', 'MARIADB_RANDOM_ROOT_PASSWORD');
-    const hasApplicationUser = (hasValue(env, 'MYSQL_USER') && hasValue(env, 'MYSQL_PASSWORD'))
-      || (hasValue(env, 'MARIADB_USER') && hasValue(env, 'MARIADB_PASSWORD'));
-    // The official image refuses a first boot that only provides an
-    // application user. Require an explicit root password, or a generated
-    // root password together with a usable application account.
-    configured = hasExplicitRootPassword || (hasRandomRootPassword && hasApplicationUser);
+    // 周期备份固定使用 root 执行全库导出。随机 root 密码不会回写到环境变量，
+    // 因而无法被备份任务复用；这里只接受可持续读取的显式 root 凭据。
+    if (!hasExplicitRootPassword) {
+      throw new Error('拒绝创建缺少可复用备份凭据的 mysql 基础设施；请配置 CDS 生成的显式 root 凭据后重试');
+    }
+    configured = true;
   } else if (kind === 'redis') {
     const effective = `${command} ${env.REDIS_ARGS || ''} ${env.REDIS_EXTRA_FLAGS || ''}`;
     configured = /(?:^|\s)--requirepass(?:=|\s+)\S+/.test(effective)
