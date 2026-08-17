@@ -184,6 +184,7 @@ docs:
   guide.cds.multi-branch-db: "CDS 多分支数据库隔离指南(Phase 5) · 指南"
   guide.cds.one-click-deploy: "CDS 一键可视化部署 · 指南"
   guide.cds.orm-support: "CDS ORM 接入 · 指南"
+  guide.cds.infra-credential-rotation: "CDS 基建凭据轮换 Runbook（操作智能体执行本）"
   guide.cds.tutorial: "从零开始使用 CDS · 指南"
   guide.cds.view-parity: "CDS 列表视图  拓扑视图 功能对齐 · 指南"
   guide.cds.web-entry: "CDS 多 Web 入口配置与验收 · 指南"

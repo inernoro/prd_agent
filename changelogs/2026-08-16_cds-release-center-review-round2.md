@@ -26,3 +26,5 @@
 | fix | cds | 备份磁盘闸改为每个目标之前复查，空间不足时剩余目标记为「未执行」而非静默少备 |
 | fix | cds | 周期备份加单飞闸，上一轮未跑完不再叠加下一轮互删临时文件 |
 | fix | cds | Redis 备份按 CONFIG GET 的 dir/dbfilename 取快照路径，不再写死 /data/dump.rdb |
+| docs | cds | 新增基建凭据轮换 runbook，含 Mongo/MySQL 假轮换陷阱与 JWT 一值两用的安全顺序 |
+| docs | cds | 债务台账记入 E16 四个预设无认证 / E17 无轮换路径 / E18 无轮换审计 |
