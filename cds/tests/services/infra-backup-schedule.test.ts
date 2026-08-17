@@ -610,6 +610,38 @@ describe('MySQL 导出脚本', () => {
     expect(status).toBe(3);
   });
 
+  /**
+   * gzip 那一端失败也必须整条失败（Codex #1382 第二轮 P1）。
+   *
+   * 只捕获 dump 的退出码时：dump 成功、gzip 写到一半因磁盘满退出 → 脚本返回 0，
+   * 产物是一份非空但解不开的截断 gzip。调用方看「退出码 0 + 文件非空」就转正，
+   * 保留策略再删掉一份真正可用的旧备份——用坏的换掉好的。
+   */
+  it('dump 成功但 gzip 失败：整条按 gzip 的退出码失败', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-gzipfail-'));
+    fs.writeFileSync(path.join(dir, 'mysqldump'), "#!/bin/sh\nprintf 'DATA'\nexit 0\n", { mode: 0o755 });
+    // 吐一半再挂，模拟写盘中断：产物非空，但不是一份完整的 gzip
+    fs.writeFileSync(path.join(dir, 'gzip'), "#!/bin/sh\nprintf 'PARTIAL'\nexit 7\n", { mode: 0o755 });
+    let status = 0;
+    try {
+      execFileSync('/bin/sh', ['-c', buildMysqlDumpScript()], {
+        cwd: dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+        encoding: 'buffer', stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (err) { status = (err as { status: number }).status; }
+    expect(status).toBe(7);
+  });
+
+  /** 宿主侧第二道：非空不等于完整，转正前必须过 gzip -t。 */
+  it('转正前有 gzip 完整性校验，不是只看非空', () => {
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+    expect(src).toContain('gzip -t ${shq(out)}');
+    const check = src.indexOf('gzip -t ${shq(out)}');
+    const promote = src.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
+    expect(check).toBeGreaterThan(0);
+    expect(promote).toBeGreaterThan(check);   // 校验必须排在转正之前
+  });
+
   it('全程零中转文件：跑完目录里除了假 mysqldump 什么都没多出来', () => {
     const { dir, run } = withFakeDump({ stdout: 'x'.repeat(4096), exit: 0 });
     run();
@@ -649,7 +681,7 @@ describe('Redis 快照路径取运行时真值', () => {
     // start 是 mtime 下界：0 等于只考察「解析到哪个路径」，1 用来验「文件不在就判失败」
     // （文件缺失时 stat 失败 → mt=0，0 >= 1 不成立）。
     const tail = SCRIPT.split('\n');
-    const cut = tail.findIndex((l) => l.startsWith('D=$(redis-cli CONFIG GET dir'));
+    const cut = tail.findIndex((l) => l.startsWith('dirOut=$(redis-cli CONFIG GET dir'));
     expect(cut).toBeGreaterThan(0);
     const script = `start=${opts.start ?? 0}\n${tail.slice(cut).join('\n')}`;
     try {
@@ -672,18 +704,48 @@ describe('Redis 快照路径取运行时真值', () => {
     expect(r.stdout.endsWith('/snapshot.rdb')).toBe(true);
   });
 
-  it('CONFIG GET 取不到时退回官方默认，不留空路径', () => {
+  /**
+   * 这条原来断言「CONFIG GET 取不到就退回 /data/dump.rdb」——那是把一个危险的
+   * 猜测锁进 CI。CONFIG 被 rename-command 改名或被 ACL 拒绝时，恢复流程会照着
+   * 猜出来的路径写文件、重启、然后报「已恢复」，而 redis 加载的还是旧数据。
+   * 现在要求：问不出来就报错。
+   */
+  it('CONFIG GET 失败时报错退出，不猜默认路径', () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-denied-'));
+    // 模拟 CONFIG 被 ACL 拒绝：redis-cli 非零退出并在 stderr 说明原因
+    fs.writeFileSync(
+      path.join(box, 'redis-cli'),
+      '#!/bin/sh\necho "NOPERM this user has no permissions to run the config command" >&2\nexit 1\n',
+      { mode: 0o755 },
+    );
+    let status = 0; let stderr = '';
+    try {
+      execFileSync('/bin/sh', ['-s'], {
+        input: buildRedisRdbPathScript(), encoding: 'utf8',
+        env: { PATH: `${box}:${process.env.PATH}`, CDS_BACKUP_PROC_DIR: box },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      const e = err as { status: number; stderr: Buffer };
+      status = e.status; stderr = String(e.stderr || '');
+    }
+    expect(status).toBe(27);
+    expect(stderr).toContain('CONFIG GET dir');
+  });
+
+  it('CONFIG GET 返回空值同样报错', () => {
     const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-empty-'));
-    fs.writeFileSync(path.join(box, 'redis-cli'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-    const tail = SCRIPT.split('\n');
-    const cut = tail.findIndex((l) => l.startsWith('D=$(redis-cli CONFIG GET dir'));
-    // 只取到 RDB 赋值为止，绕开 stat 判据——这里只看兜底值本身。
-    const upto = tail.slice(cut).findIndex((l) => l.startsWith('RDB='));
-    const script = `${tail.slice(cut, cut + upto + 1).join('\n')}\nprintf '%s' "$RDB"`;
-    const out = execFileSync('/bin/sh', ['-s'], {
-      input: script, encoding: 'utf8', env: { PATH: `${box}:${process.env.PATH}` },
-    });
-    expect(out).toBe('/data/dump.rdb');
+    // 调用成功但第二行是空的：同样不足以定位快照，不许当作「就是默认值」
+    fs.writeFileSync(path.join(box, 'redis-cli'), "#!/bin/sh\nprintf 'dir\\n\\n'\n", { mode: 0o755 });
+    let status = 0;
+    try {
+      execFileSync('/bin/sh', ['-s'], {
+        input: buildRedisRdbPathScript(), encoding: 'utf8',
+        env: { PATH: `${box}:${process.env.PATH}`, CDS_BACKUP_PROC_DIR: box },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (err) { status = (err as { status: number }).status; }
+    expect(status).toBe(28);
   });
 
   it('路径上没有文件时判失败，不让宿主去拷一个不存在的东西', () => {

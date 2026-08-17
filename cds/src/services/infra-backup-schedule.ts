@@ -296,10 +296,18 @@ export function summarizeBackupRound(outcomes: readonly BackupOutcome[], skipped
  * 约定：执行后 `$RDB` 就是快照的绝对路径（`$D` 目录、`$F` 文件名）。
  */
 export const REDIS_RDB_PATH_LINES: readonly string[] = [
-  `D=$(redis-cli CONFIG GET dir 2>/dev/null | sed -n '2p' | tr -d '\\r')`,
-  `F=$(redis-cli CONFIG GET dbfilename 2>/dev/null | sed -n '2p' | tr -d '\\r')`,
-  '[ -n "$D" ] || D=/data',
-  '[ -n "$F" ] || F=dump.rdb',
+  // 问不出来就**报错**，不许退回 `/data/dump.rdb`。
+  //
+  // CONFIG 可能被 rename-command 改名、被 ACL 拒绝、或者实例压根连不上；这些情况下
+  // 「猜一个默认路径」正好在最危险的场景里给出最坏结果：恢复流程会把上传的快照写到
+  // 一个 redis 不读的文件，重启，然后报「已恢复」——用户以为数据回来了，其实没有。
+  // 默认值只在「问到了、但值确实是默认」时才出现，那由 redis 自己回答，不由我们假设。
+  'dirOut=$(redis-cli CONFIG GET dir 2>&1) || { echo "CONFIG GET dir 调用失败: $dirOut" >&2; exit 27; }',
+  `D=$(printf '%s\\n' "$dirOut" | sed -n '2p' | tr -d '\\r')`,
+  '[ -n "$D" ] || { echo "CONFIG GET dir 返回空，拒绝猜默认路径" >&2; exit 28; }',
+  'fileOut=$(redis-cli CONFIG GET dbfilename 2>&1) || { echo "CONFIG GET dbfilename 调用失败: $fileOut" >&2; exit 29; }',
+  `F=$(printf '%s\\n' "$fileOut" | sed -n '2p' | tr -d '\\r')`,
+  '[ -n "$F" ] || { echo "CONFIG GET dbfilename 返回空，拒绝猜默认路径" >&2; exit 30; }',
   'RDB="$D/$F"',
 ];
 
@@ -381,18 +389,24 @@ export function buildRedisBackupProbeScript(): string {
  * 的 stdout（docker exec 会把它接到宿主的目标文件）存到 fd3，dump 的退出码经 fd4
  * 被命令替换捕获，gzip 的输出直接写回 fd3。全程零中转文件，dash / busybox sh 都吃。
  *
- * gzip 自己的失败不在这条路径上报（它的退出码被上游盖掉），由调用方的「产物非空」
- * 与 `gzip -t` 完整性校验兜住。
+ * **两端的退出码都要拿**。只捕获 dump 那一端是第四个坑：dump 成功、gzip 中途因写盘
+ * 失败退出（磁盘满、I/O 错误）时，脚本会返回 0，而产物是一份被截断的 gzip——调用方
+ * 看到「退出码 0 + 文件非空」就把它转正，还按保留策略删掉一份真正可用的旧备份。
+ * 这一版把 dump 与 gzip 的退出码分别经 fd4 回传，任一非零整条失败。
+ * 宿主侧另有 `gzip -t` 完整性校验作第二道（见 index.ts 的转正前校验）。
  */
 export function buildMysqlDumpScript(): string {
   return [
     // 凭据在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
     'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
-    // fd3 = 真正的 stdout（宿主那个文件）；fd4 = 回传上游退出码的通道。
+    // fd3 = 真正的 stdout（宿主那个文件）；fd4 = 回传两端退出码的通道。
     'exec 3>&1',
-    'st=$( { { mysqldump -uroot --all-databases --single-transaction --quick --routines --events; echo $? >&4; }'
-      + ' | gzip -n -c >&3; } 4>&1 )',
+    'codes=$( { { mysqldump -uroot --all-databases --single-transaction --quick --routines --events; echo "dump=$?" >&4; }'
+      + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
     // 读不到退出码按失败处理：宁可重跑一轮，也不要认一份来路不明的产物。
-    'exit "${st:-1}"',
+    `d=$(printf '%s\\n' "$codes" | sed -n 's/^dump=//p')`,
+    `g=$(printf '%s\\n' "$codes" | sed -n 's/^gzip=//p')`,
+    '[ "${d:-1}" = 0 ] || exit "${d:-1}"',
+    '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
   ].join('\n');
 }

@@ -34,3 +34,5 @@
 | fix | cds | 手工下载 redis 备份改用带认证与完成确认的探测脚本，不再忽略 BGSAVE 失败给出陈旧快照 |
 | fix | cds | redis 恢复按运行时解析的快照路径写入，不再写死 /data/dump.rdb 导致「恢复成功却加载旧数据」 |
 | docs | cds | 轮换 runbook 补 MySQL app 账号与服务 env 同步、容器重建两步，修正「没有轮换路径」的表述 |
+| fix | cds | MySQL 导出捕获 gzip 端退出码，并在转正前加 gzip -t 完整性校验，杜绝截断档案顶掉可用旧备份 |
+| fix | cds | redis 快照路径解析在 CONFIG GET 失败时报错退出，不再猜 /data/dump.rdb |

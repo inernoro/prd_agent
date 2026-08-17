@@ -633,6 +633,18 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             throw new Error('导出产物为空');
           }
 
+          // 非空不等于完整。gzip 在写到一半时因磁盘满 / I/O 错误退出，留下的就是一份
+          // 「非空但解不开」的截断档案；转正之后保留策略还会按份数删掉一份真正可用的
+          // 旧备份——用一份坏的换掉一份好的，比这一轮没备份糟得多。
+          // `gzip -t` 是唯一能证明「这份压缩档能解开」的判据，它对 mongodump --gzip
+          // 产出的 .archive.gz 同样成立。
+          if (t.fileName.endsWith('.gz')) {
+            const integrity = await shell.exec(`gzip -t ${shq(out)}`, { timeout: 300_000 });
+            if (integrity.exitCode !== 0) {
+              throw new Error(`产物未通过 gzip 完整性校验（${bytes} 字节，可能被截断）：${combinedOutput(integrity).trim().slice(0, 200)}`);
+            }
+          }
+
           // 只有走到这里的产物才配拿到正式文件名。
           const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
           if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
