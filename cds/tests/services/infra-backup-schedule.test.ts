@@ -9,6 +9,7 @@ import {
   backupFileName,
   buildMysqlDumpScript,
   buildRedisBackupProbeScript,
+  buildRedisRdbPathScript,
   backupKindOf,
   isAutoBackupFile,
   parseDfAvailableBytes,
@@ -701,5 +702,60 @@ describe('宿主按探测回传的路径拷贝', () => {
     expect(SRC).not.toContain('${t.containerName}:/data/dump.rdb');
     // 回传缺失时宁可失败，也不许悄悄猜一个默认路径。
     expect(SRC).toContain('拒绝按默认路径猜');
+  });
+});
+
+/**
+ * 手工下载 / 恢复也必须走同一份路径判据（Codex #1382 第一轮 P1）。
+ *
+ * 周期备份改好了、手工那条没改，是最典型的「修一半」：用户点下载拿到的是**旧快照**，
+ * 而项目迁移正是从这个端点取数。恢复更险——写到一个 redis 不读的路径，重启后加载
+ * 的还是旧数据，接口却回「已恢复」。
+ */
+describe('redis 快照路径判据只有一份', () => {
+  it('路径脚本不触发 BGSAVE，只解析并打印路径', () => {
+    const script = buildRedisRdbPathScript();
+    expect(script).not.toContain('BGSAVE');
+    expect(script).toContain('CONFIG GET dir');
+    expect(script).toContain('printf "%s" "$RDB"');
+    // 凭据段要带着——配了 requirepass 的实例，裸 redis-cli 连 CONFIG GET 都做不了
+    expect(script).toContain('export REDISCLI_AUTH');
+    execFileSync('/bin/sh', ['-n'], { input: script, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  });
+
+  it('拿真 shell 跑：自定义 dbfilename 时打印的是那个路径', () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rdbpath-'));
+    fs.writeFileSync(
+      path.join(box, 'redis-cli'),
+      "#!/bin/sh\ncase \"$*\" in\n  'CONFIG GET dir') printf 'dir\\n/var/lib/redis\\n' ;;\n"
+      + "  'CONFIG GET dbfilename') printf 'dbfilename\\nsnap.rdb\\n' ;;\nesac\n",
+      { mode: 0o755 },
+    );
+    const out = execFileSync('/bin/sh', ['-s'], {
+      input: buildRedisRdbPathScript(),
+      encoding: 'utf8',
+      env: { PATH: `${box}:${process.env.PATH}`, CDS_BACKUP_PROC_DIR: box },
+    });
+    expect(out).toBe('/var/lib/redis/snap.rdb');
+  });
+
+  /** 接线守卫：三处消费方都不许再出现写死的 /data/dump.rdb。 */
+  it('下载与恢复都用解析出来的路径，不再写死 /data/dump.rdb', () => {
+    // 先剥注释：解释「上一版为什么错」的那几行里就写着这个路径，
+    // 连注释一起扫会把「讲清楚事故」判成「犯了事故」。
+    const stripComments = (src: string): string => src.split('\n')
+      .filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')); })
+      .join('\n');
+    const route = stripComments(fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8'));
+    const index = stripComments(fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8'));
+    for (const [name, src] of [['infra-backup.ts', route], ['index.ts', index]] as const) {
+      expect(src, `${name} 的代码里仍写死了 /data/dump.rdb`).not.toContain('/data/dump.rdb');
+    }
+    // 下载：走带 BGSAVE 确认的完整探测；恢复：只解析路径，不顺手替人存盘
+    expect(route).toContain('buildRedisBackupProbeScript()');
+    expect(route).toContain('buildRedisRdbPathScript()');
+    // 探测失败必须拒绝出流，而不是继续 cat 一个可能过期的文件
+    expect(route).toContain('拒绝下载可能过期的快照');
+    expect(route).toContain('拒绝按默认路径写入');
   });
 });

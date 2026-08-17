@@ -2,9 +2,9 @@
 
 > **版本**：v1.0 | **日期**：2026-08-16 | **状态**：可执行
 
-**一句话**：CDS 里的库口令只在建服务时生成过一次、之后没有任何轮换路径，所以轮换必须手工三步走——先在库里改、再改 CDS env、最后重部署消费方；改 env 重建容器那种做法对已有数据卷是假轮换。
+**一句话**：CDS 没有「轮换」这个动作，只有五个必须按顺序手工做完的零件；漏掉任何一个，系统就停在「库是新口令、别处还是旧的」这种不一致态。
 **谁该读**：执行本次凭据轮换的操作智能体；事后复核轮换是否真的生效的人。
-**读完能做什么**：按类型逐个把库口令换掉，并且每一步都有一条能证伪的验证命令；也能立刻判断哪些服务现在根本没有口令可换。
+**读完能做什么**：按类型逐个把库口令换掉，每一步都有一条能证伪的验证命令；也能立刻判断哪些服务现在根本没有口令可换。
 
 ---
 
@@ -46,11 +46,23 @@ docker exec <C> mongosh -u app -p '<OLD>' --authenticationDatabase admin --quiet
 
 ### MySQL / MariaDB
 
+**先看清要换的是哪个账号**。CDS 建出来的 MySQL 有**两个**：`root`（管理，`MYSQL_ROOT_PASSWORD`）和 `app`（**应用真正连的那个**，`MYSQL_PASSWORD`，连接串 `mysql://app:...`）。只换 root 是这一步最容易犯的错——换完 root、再把 `DATABASE_URL` 里的密码改成新值，结果是**所有消费方立刻连不上**（app 的口令根本没动），而旧的 app 口令还在到处能用，等于没轮换。
+
 ```bash
-docker exec <C> sh -c 'MYSQL_PWD="<OLD>" mysql -uroot -e "ALTER USER \"root\"@\"%\" IDENTIFIED BY \"<NEW>\"; FLUSH PRIVILEGES;"'
-docker exec <C> sh -c 'MYSQL_PWD="<NEW>" mysql -uroot -e "SELECT 1"'
+# 0) 先列全：root 和 app 各自可能有 'localhost' 与 '%' 两条记录，
+#    只改一条会出现「容器内能连、跨容器连不上」。
+docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -N -e "SELECT user,host FROM mysql.user WHERE user IN (\"root\",\"app\")"'
+
+# 1) 换 app（应用凭据，连接串里的那个）——逐条 host 改
+docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "ALTER USER \"app\"@\"%\" IDENTIFIED BY \"<NEW_APP>\"; FLUSH PRIVILEGES;"'
+docker exec <C> sh -c 'MYSQL_PWD="<NEW_APP>" mysql -uapp -e "SELECT 1"'
+
+# 2) 换 root（管理凭据，备份走的也是它）——需要时才换，与 app 分开进行
+docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "ALTER USER \"root\"@\"%\" IDENTIFIED BY \"<NEW_ROOT>\"; FLUSH PRIVILEGES;"'
+docker exec <C> sh -c 'MYSQL_PWD="<NEW_ROOT>" mysql -uroot -e "SELECT 1"'
 ```
-注意 mysql 镜像里 root 可能同时存在 `'root'@'localhost'` 与 `'root'@'%'` 两条记录，只改一条会出现「容器内能连、跨容器连不上」。先 `SELECT user,host FROM mysql.user WHERE user='root'` 列全，逐条改。
+
+两个账号对应下一步要改的两处：`MYSQL_PASSWORD` + 连接串跟着 `app` 走，`MYSQL_ROOT_PASSWORD` 跟着 `root` 走。漏掉任一处，要么应用连不上，要么周期备份连不上。
 
 ### PostgreSQL
 
@@ -63,15 +75,30 @@ docker exec -e PGPASSWORD='<NEW>' <C> psql -U postgres -c 'SELECT 1'
 
 各自有专用命令（`rabbitmqctl change_password` / `elasticsearch-users passwd` / `mc admin user svcacct`），照官方文档执行，验证同样是「用新口令做一次真实调用」。
 
-### 三步走的后两步（所有类型通用）
+### 后三步（所有类型通用，**一步都不能少**）
+
+库里改完只是第一步。口令在系统里还有**两份**拷贝，漏掉任一份就会出现「一半新一半旧」：
 
 ```bash
-# 3) 改 CDS 里的连接串（envVars），让下次部署注入新值
-python3 .claude/skills/cds/cli/cdscli.py env set --scope <projectId> --key MONGODB_URL --value 'mongodb://app:<NEW>@mongodb:27017/<db>?authSource=admin'
-# 4) 重部署消费方；不重部署的容器会一直用旧口令直到下次部署
+# 2) 改基建服务自己的 env（周期备份、数据面板、容器重建都读这一份）
+#    不改的话：下一轮自动备份仍用旧口令认证 → 每轮失败；
+#    对 redis 更糟——容器一旦重建，启动命令会把**旧的** REDIS_PASSWORD 重新设回去，
+#    把你刚换的新口令顶掉，而且悄无声息。
+curl -X PUT "$CDS/api/infra/<infraId>?project=<projectId>" -H 'Content-Type: application/json' \
+  -d '{"env":{"MYSQL_ROOT_PASSWORD":"<NEW_ROOT>","MYSQL_PASSWORD":"<NEW_APP>","MYSQL_USER":"app","MYSQL_DATABASE":"<db>"}}'
+#    env 是整体覆盖，PUT 之前先 GET 一份当前值改在上面，别把别的键删了。
+
+# 3) 让容器带新 env 重建（restart 走的是 docker stop && rm 再 run，会读上一步的新值；
+#    直接 `docker restart` 不行——那只是重启进程，env 还是旧的）
+curl -X POST "$CDS/api/infra/<infraId>/restart?project=<projectId>"
+
+# 4) 改项目环境变量里的连接串（消费方真正读的是这一份），再重部署消费方
+python3 .claude/skills/cds/cli/cdscli.py env set --scope <projectId> --key DATABASE_URL --value 'mysql://app:<NEW_APP>@mysql:3306/<db>'
 ```
 
-**收尾必须回答**：这个库有哪些消费方、是否都重部署了、有没有哪个分支预览还揣着旧口令在跑。答不上来就是没做完。
+顺序不能换：先改库、再改服务 env、然后重建容器、最后改连接串并重部署。中间任何一步停下，系统就处在「库是新口令、某一层还是旧口令」的不一致态——那正是故障窗口。
+
+**收尾必须回答**：库里改了吗、服务 env 改了吗、容器重建过吗、连接串改了吗、消费方都重部署了吗、有没有哪个分支预览还揣着旧口令在跑。六个问题答不全就是没做完。
 
 ---
 
@@ -109,9 +136,9 @@ python3 .claude/skills/cds/cli/cdscli.py env set --scope <projectId> --key MONGO
 
 ## 5. 已知的系统性缺口（这次轮换暴露出来的）
 
-- **没有轮换路径**：口令只在建服务那一刻生成一次，之后 CDS 没有任何端点能改它。整个 §2 都是手工动作。
+- **没有「轮换」这个动作**：零件都在（改服务 env 的 `PUT`、重建容器的 `restart`、改连接串的 cdscli），但没有任何一处把它们串成一条带校验和回滚的流程。于是 §2 全靠人按顺序手动执行，漏一步就是故障窗口——这正是 E17 要补的。
 - **没有轮换审计**：谁在什么时候换过哪个库的口令，系统里没有记录。
-- **四个预设无认证**：见 §4。
+- **三个预设无认证 + 存量 redis 仍裸奔**：见 §4。
 
 这三条已记入 [doc/debt.cds.md](./debt.cds.md)，代码侧修复另行推进——本 runbook 描述的是**在那之前**如何安全地手工轮换。
 

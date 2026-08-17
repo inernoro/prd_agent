@@ -31,3 +31,6 @@
 | security | cds | redis 预设改为默认带口令（requirepass 经 env 展开，不进命令行），连接串同步带凭据 |
 | fix | cds | 暴露审计拆开 sh -c 整条命令再比对，有口令的库不再被误报「无认证 critical」 |
 | test | cds | 改写两条把「redis 无口令」锁死的测试，补 catalog 认证与暴露审计的跨模块接线守卫 |
+| fix | cds | 手工下载 redis 备份改用带认证与完成确认的探测脚本，不再忽略 BGSAVE 失败给出陈旧快照 |
+| fix | cds | redis 恢复按运行时解析的快照路径写入，不再写死 /data/dump.rdb 导致「恢复成功却加载旧数据」 |
+| docs | cds | 轮换 runbook 补 MySQL app 账号与服务 env 同步、容器重建两步，修正「没有轮换路径」的表述 |

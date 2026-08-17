@@ -285,6 +285,34 @@ export function summarizeBackupRound(outcomes: readonly BackupOutcome[], skipped
  * 3. **文件确实被这次写过**。完成了不等于写的是这个文件：路径不对、save 被禁用
  *    都会留下一个旧文件。用 mtime 与探测开始时间比一下，取容器自己的时钟。
  */
+/**
+ * 「这个 redis 的快照文件在哪」——**唯一**判定源。
+ *
+ * 三处要用：周期备份的探测、手工下载、手工恢复。写死 `/data/dump.rdb` 的话，
+ * 配了非默认 `dir` / `dbfilename` 的实例会各错各的：备份判每次失败、下载给出
+ * 陈旧文件、恢复写到一个 redis 根本不读的路径却报「已恢复」。抄三份的下场是
+ * 改一处漏两处，所以这里只留一份，谁要用谁拼进自己的脚本。
+ *
+ * 约定：执行后 `$RDB` 就是快照的绝对路径（`$D` 目录、`$F` 文件名）。
+ */
+export const REDIS_RDB_PATH_LINES: readonly string[] = [
+  `D=$(redis-cli CONFIG GET dir 2>/dev/null | sed -n '2p' | tr -d '\\r')`,
+  `F=$(redis-cli CONFIG GET dbfilename 2>/dev/null | sed -n '2p' | tr -d '\\r')`,
+  '[ -n "$D" ] || D=/data',
+  '[ -n "$F" ] || F=dump.rdb',
+  'RDB="$D/$F"',
+];
+
+/**
+ * 只解析路径并打印出来（不触发 BGSAVE）。恢复流程要知道「该往哪写」，
+ * 但不该顺手给人家存一次盘。凭据解析沿用探测脚本那一段。
+ */
+export function buildRedisRdbPathScript(): string {
+  const probe = buildRedisBackupProbeScript().split('\n');
+  const credEnd = probe.findIndex((l) => l.startsWith('export REDISCLI_AUTH'));
+  return [...probe.slice(0, credEnd + 1), ...REDIS_RDB_PATH_LINES, 'printf "%s" "$RDB"'].join('\n');
+}
+
 export function buildRedisBackupProbeScript(): string {
   return [
   // 凭据：env 优先，其次扫容器内进程命令行里的 --requirepass。
@@ -323,11 +351,7 @@ export function buildRedisBackupProbeScript(): string {
   // 配了 `dir` 或 `dbfilename` 的实例（compose 里很常见）会写到别处，
   // 那时按默认路径 stat 到的是一个**根本不存在或很旧**的文件——
   // 判据会把每一次正常的 BGSAVE 都判失败，而 docker cp 也会拷错东西。
-  `D=$(redis-cli CONFIG GET dir 2>/dev/null | sed -n '2p' | tr -d '\\r')`,
-  `F=$(redis-cli CONFIG GET dbfilename 2>/dev/null | sed -n '2p' | tr -d '\\r')`,
-  '[ -n "$D" ] || D=/data',
-  '[ -n "$F" ] || F=dump.rdb',
-  'RDB="$D/$F"',
+  ...REDIS_RDB_PATH_LINES,
   // 完成了不等于这个文件被写过：路径不对、save 被禁用都会留下旧文件。
   'mt=$(stat -c %Y "$RDB" 2>/dev/null || echo 0)',
   '[ "$mt" -ge "$start" ] || { echo "$RDB 未被本次 BGSAVE 更新（mtime=$mt start=$start）" >&2; exit 26; }',
