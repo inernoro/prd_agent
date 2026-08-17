@@ -82,6 +82,12 @@ describe('infra-catalog SSOT', () => {
     expect(Array.isArray(cmd)).toBe(true);
     expect(cmd.join(' ')).toContain('--requirepass "$REDIS_PASSWORD"');
     expect(cmd.join(' ')).not.toContain('p4ssw0rd');
+    // 必须经过镜像自己的 entrypoint：它只在第一个参数是 redis-server 时才修
+    // /data 属主并降权到 redis 用户。直接 `sh -c 'exec redis-server …'` 会让
+    // entrypoint 走兜底分支，redis 以 root 起（Codex P1，2026-08-17）。
+    // 注意这里只能证明「命令写对了」——**进程真以谁的身份跑**由
+    // redis-preset-privilege.docker.test.ts 用真容器判。
+    expect(cmd.join(' ')).toContain('docker-entrypoint.sh redis-server');
     // `${VAR}` 会被 CDS 的模板替换吃掉（宿主侧没有这个变量 → 展开成空 →
     // redis 拿到空口令 FATAL 无限重启，2026-05-29 真出过）。必须是不带花括号的 $VAR。
     expect(cmd.join(' ')).not.toContain('${REDIS_PASSWORD}');

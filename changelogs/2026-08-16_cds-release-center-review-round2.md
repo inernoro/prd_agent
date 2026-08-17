@@ -40,3 +40,5 @@
 | docs | cds | 轮换 runbook 修正 PostgreSQL 账号（app 非 postgres），并补九个预设的账号真值表 |
 | fix | cds | 暴露审计改结构化判据：无法解析的 shell 展开一律不算已认证，杜绝尾随分隔符导致的漏报 |
 | docs | cds | 轮换 runbook 的 MySQL 段改为逐 host 执行，补 SQL Server 口令复杂度要求 |
+| fix | cds | redis 预设启动改回经镜像 entrypoint，恢复降权到 redis 用户，不再以 root 运行 |
+| test | cds | 新增 redis 预设真容器判据（降权 + 认证 + /data 属主），补上命令字符串扫不出的运行时差别 |
