@@ -621,8 +621,13 @@ describe('MySQL 导出脚本', () => {
   it('dump 成功但 gzip 失败：整条按 gzip 的退出码失败', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-gzipfail-'));
     fs.writeFileSync(path.join(dir, 'mysqldump'), "#!/bin/sh\nprintf 'DATA'\nexit 0\n", { mode: 0o755 });
-    // 吐一半再挂，模拟写盘中断：产物非空，但不是一份完整的 gzip
-    fs.writeFileSync(path.join(dir, 'gzip'), "#!/bin/sh\nprintf 'PARTIAL'\nexit 7\n", { mode: 0o755 });
+    // 假 gzip 必须**先把 stdin 读完**再失败，模拟「dump 已经跑完、压缩写盘时挂掉」。
+    //
+    // 不读完就退出的话，上游 dump 写管道会吃 SIGPIPE 被打死，回传的变成
+    // dump=141，测的就不再是「gzip 失败」这条路径了——而且它是否触发取决于两个
+    // 进程的调度先后：本地 4 字节先写完就绿，CI 上就红（141 != 7）。
+    // 时序决定结果的用例等于没有判据，这里把它钉死成确定性的。
+    fs.writeFileSync(path.join(dir, 'gzip'), "#!/bin/sh\ncat > /dev/null\nprintf 'PARTIAL'\nexit 7\n", { mode: 0o755 });
     let status = 0;
     try {
       execFileSync('/bin/sh', ['-c', buildMysqlDumpScript()], {
