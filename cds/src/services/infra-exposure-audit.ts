@@ -323,31 +323,74 @@ export function detectInfraAuth(
   // 有效命令行 = 容器启动参数 + 那些「本身就是一串启动参数」的 env 的值。
   // 后者只当参数看，不当布尔看。
   const argCarryingEnv = ['REDIS_ARGS', 'REDIS_EXTRA_FLAGS', 'MONGO_EXTRA_FLAGS'];
+  // 每个 arg 自己还要再按空白拆一层：`sh -c "redis-server --requirepass xxx"` 里
+  // 整条 shell 语句是**一个** Cmd 元素，不拆就永远比不中 `--requirepass`——
+  // 一个真有口令的库会被判成「无认证 critical」。compose 用 `sh -c` 包一层是常态，
+  // 本仓库自己的 redis 预设也是这个形状，所以这不是边角情况。
   const tokens = [
-    ...(args || []),
-    ...argCarryingEnv.map((k) => e[k] || ''),
+    ...(args || []).flatMap((a) => String(a || '').split(/\s+/)),
+    ...argCarryingEnv.flatMap((k) => (e[k] || '').split(/\s+/)),
   ]
     // Docker inspect 的 Config.Cmd 既可能是逐 token 数组，也可能把完整 shell 命令
     // 放在一个元素里。必须拆解每个元素，否则 `sh -c "redis-server --requirepass x"`
     // 会被误判成无认证。这里只需要识别有限的认证 flag，不执行 shell。
+    //
+    // **引号必须留到这一步之后再剥**。引号本身携带语义：单引号里 shell 不做展开，
+    // 所以 `'p$ss'` 是货真价实的密码，而 `"$X"` 要看变量有没有值。在切词时就把引号
+    // 抹掉，下游的 effectiveValue 只看到 `p$ss`，无从分辨它是字面量还是解析不掉的
+    // 展开，于是把一个有口令的库判成裸奔——「说库没密码」的假警报比不报警更糟。
+    // 需要比对 flag 名时用 unquote()，值的判定交给 effectiveValue。
     .flatMap((raw) => String(raw || '').match(/"[^"]*"|'[^']*'|[^\s]+/g) || [])
-    .map((t) => String(t || '').trim().replace(/^(["'])([\s\S]*)\1$/, '$2').toLowerCase())
+    .map((t) => String(t || '').trim().toLowerCase())
     .filter(Boolean);
+  /** 只在「比对 flag 名」时用；判定值的时候必须保留引号。 */
+  const unquote = (t: string): string => t.replace(/^(["'])([\s\S]*)\1$/, '$2');
+  /**
+   * 这个参数值到底有没有「真值」。
+   *
+   * 拆开 `sh -c` 之后拿到的是 shell 片段，形态五花八门：`""`（空口令）、
+   * `"$REDIS_PASSWORD"`（要看变量）、`"$REDIS_PASSWORD";`（尾巴粘着分隔符）、
+   * `'p$ss'`（单引号里的字面量，`$` 不展开）。上一轮是遇到一种加一种，
+   * 这一轮改成两条**结构化**判据，一次覆盖整类，不再追着语法形态打补丁：
+   *
+   * 1. **单引号包起来的一律当字面量**——shell 在单引号里不做任何展开，
+   *    所以 `'p$ss'` 就是密码 `p$ss`，不该因为含 `$` 被误判成没配。
+   * 2. **其余只要还带 `$`，就必须能整体解析成一个有值的变量**，否则按「没有值」处理。
+   *    覆盖 `"$X";`、`"$X" &&`、`${X:-}`、`pre$X` 这些全部形态——它们的共同点是
+   *    **我们无法证明这里有口令**，而在暴露面自检里「证明不了」只能算没有。
+   *
+   * 方向性说明：这里宁可偏向「报成未认证」。漏报（裸奔库被标成已认证）会让一个
+   * 公网无认证数据库从 critical 名单里消失，那是这张表最不能出的错。
+   */
+  const effectiveValue = (raw: string): string => {
+    const t = raw.trim();
+    // 单引号字面量：内容原样，`$` 不展开
+    if (/^'.*'$/.test(t)) return t.slice(1, -1).trim();
+    // 去掉外层双引号 + 粘在尾巴上的 shell 分隔符 / 运算符（`;` `&` `|` `)`）
+    const cleaned = t.replace(/[;&|)]+$/, '').replace(/^["']|["']$/g, '').replace(/[;&|)]+$/, '').trim();
+    if (!cleaned.includes('$')) return cleaned;
+    const ref = /^\$\{?(\w+)\}?$/.exec(cleaned);
+    if (ref) return (e[ref[1].toUpperCase()] || e[ref[1]] || '').trim();
+    // 解析不掉的展开：证明不了有口令，按没有算。
+    return '';
+  };
   /** 开关型参数：出现即生效（`--auth`）。整 token 比对，避免 `--authenticationdatabase` 撞上。 */
-  const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.includes(f));
+  const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.some((t) => unquote(t) === f));
   /**
    * 取值型参数：`--requirepass x` / `--requirepass=x`，**值为空就不算数**。
    * `--requirepass ""` 在 redis 里等于没有密码，它不该把库判成已认证。
    */
   const hasFlagValue = (...flags: string[]): boolean => flags.some((flag) => {
     for (let i = 0; i < tokens.length; i += 1) {
-      const t = tokens[i];
-      if (t === flag) {
+      const bare = unquote(tokens[i]);
+      if (bare === flag) {
+        // 下一个 token 保留原引号交给 effectiveValue；这里只用去引号形态判断
+        // 「它是不是又一个 flag」，避免把 `--requirepass --appendonly` 读成有值。
         const next = tokens[i + 1];
-        if (next && !next.startsWith('--')) return true;
+        if (next && !unquote(next).startsWith('--') && effectiveValue(next).length > 0) return true;
         continue;
       }
-      if (t.startsWith(`${flag}=`) && t.slice(flag.length + 1).length > 0) return true;
+      if (bare.startsWith(`${flag}=`) && effectiveValue(bare.slice(flag.length + 1)).length > 0) return true;
     }
     return false;
   });

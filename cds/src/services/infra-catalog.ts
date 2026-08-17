@@ -288,14 +288,38 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     id: 'redis',
     name: 'Redis',
     category: 'cache',
-    description: '内存键值缓存，自动注入 REDIS_URL。',
+    description: '内存键值缓存，自动注入带口令的 REDIS_URL。',
     dockerImage: 'redis:7-alpine',
     containerPort: 6379,
     volumePaths: ['/data'],
     secretKeys: ['password'],
-    command: ['sh', '-c', 'exec redis-server --appendonly yes --requirepass "$REDIS_PASSWORD"'],
+    /**
+     * 口令经 **env** 交给容器内的 sh 展开，不写进 `docker run` 的命令行；
+     * 展开之后**必须再经过镜像自己的 entrypoint**。
+     *
+     * 两件事缺一不可：
+     *
+     * 1. 值不进命令行。写成 `--requirepass <明文>` 的话，这串密钥会进宿主的 `ps`、
+     *    进 CDS 记录的 docker run 字符串、进容器事件日志。用 `$REDIS_PASSWORD`
+     *    （**不带花括号**）能原样活到容器里再展开——CDS 的模板替换只认 `${VAR}`
+     *    形态。数组形态保证每个 token 单独 shell-quote，值里有特殊字符也不破坏结构
+     *    （2026-05-29 栽过：command 没过模板替换，`--requirepass` 拿到空值让 redis
+     *    FATAL 无限重启）。
+     * 2. **不能把 entrypoint 顶掉**。官方镜像的 `docker-entrypoint.sh` 只在第一个
+     *    参数是 `redis-server` 时才走那条分支：把 `/data` 的属主修成 `redis`、
+     *    然后降权到 `redis` 用户再启动。直接 `sh -c 'exec redis-server …'` 会让
+     *    entrypoint 看到 `$1 = sh`，走兜底的 `exec "$@"`——**redis 以 root 运行**，
+     *    持久化文件也变成 root 属主。所以这里在 sh 里显式再调一次 entrypoint，
+     *    让它拿到 `redis-server` 这个第一参数，降权逻辑照常生效。
+     *
+     * 这一条的判据只能靠真容器（见 `redis-preset-privilege.docker.test.ts`）：
+     * 扫命令字符串证明不了进程最终以谁的身份在跑。
+     */
+    command: ['sh', '-c', 'exec docker-entrypoint.sh redis-server --requirepass "$REDIS_PASSWORD"'],
     build: (s) => ({
       env: {
+        // 键名跟着既有消费方走：数据面板、备份探测、连接串脱敏都已经在读这三个
+        // 名字里的 REDIS_PASSWORD，另起一个新名字等于让它们全部漏认。
         REDIS_PASSWORD: s.password,
       },
       envVars: {

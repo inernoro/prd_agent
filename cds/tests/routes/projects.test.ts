@@ -1177,7 +1177,13 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
 
       const env = stateService.getCustomEnv(pid);
       expect(env.DATABASE_URL).toMatch(/^mysql:\/\/app:/);
-      expect(env.REDIS_URL).toMatch(/^redis:\/\/:.+@redis:6379$/);
+      // redis 建出来必须带口令：连接串里的密码要和服务 env 里的 REDIS_PASSWORD 是
+      // 同一个值。这条原来断言 `redis://redis:6379`（无口令），把「新建的 redis 一律
+      // 裸奔」锁成了契约——端口一旦公开就是无认证数据库。
+      const redisSvc = infra.find((service) => service.id === 'redis');
+      const redisPw = redisSvc?.env?.REDIS_PASSWORD;
+      expect(redisPw).toMatch(/^[0-9a-f]{8,}$/);
+      expect(env.REDIS_URL).toBe(`redis://:${redisPw}@redis:6379`);
       expect(env.RABBITMQ_URL).toMatch(/^amqp:\/\/app:/);
       expect(stateService.getEnvMeta(pid).DATABASE_URL?.kind).toBe('infra-derived');
       expect(stateService.getEnvMeta(pid).RABBITMQ_URL?.kind).toBe('infra-derived');

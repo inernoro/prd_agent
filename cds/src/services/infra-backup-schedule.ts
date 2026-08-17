@@ -261,6 +261,35 @@ export function parseDfAvailableBytes(dfOutput: string): number | null {
   return availKb * 1024;
 }
 
+/**
+ * 给单次导出套一个**写入上限**，超限即失败。
+ *
+ * 只在导出前查一次可用空间是不够的：闸放行只证明「此刻还有 2 GiB」，而接下来那次
+ * 写入是**无界**的——一个 50 GiB 的库照样能把最后一个字节吃掉。等 `docker exec` 或
+ * `gzip` 报错时，宿主根盘已经满了，而根盘满会同时打死所有预览、构建和 CDS 自己；
+ * 事后删残骸也来不及。逐目标复查保护的是**后面**的目标，救不了正在写的这一个。
+ *
+ * `ulimit -f` 是 POSIX shell 自带的硬上限：超过就给写进程 SIGXFSZ，写失败、命令
+ * 非零退出，我们既有的失败路径顺手把残骸删掉。单位是 512 字节块，所以要换算。
+ *
+ * 留出 `reserveBytes` 不用满：压缩临时缓冲、日志、别的进程都还要写盘，把可用空间
+ * 掐到零和写满没有区别。
+ *
+ * 设不上限（某些精简 shell 不支持 `ulimit -f`）时**不阻断导出**——那会让备份从
+ * 「可能撑爆」退化成「必然不跑」。此时退回只有前置闸的旧行为，由调用方记一条警告。
+ */
+export function buildSizeCappedCommand(
+  cmd: string,
+  freeBytes: number,
+  reserveBytes: number = DEFAULT_MIN_FREE_BYTES,
+): { command: string; capBytes: number } | null {
+  const capBytes = Math.floor(freeBytes - reserveBytes);
+  if (!Number.isFinite(capBytes) || capBytes <= 0) return null;
+  const blocks = Math.max(1, Math.floor(capBytes / 512));
+  // `ulimit` 失败不能连累导出：分号而不是 &&，配 2>/dev/null 吞掉不支持时的噪音。
+  return { command: `ulimit -f ${blocks} 2>/dev/null; ${cmd}`, capBytes };
+}
+
 export interface BackupOutcome {
   id: string;
   ok: boolean;
@@ -303,6 +332,42 @@ export function summarizeBackupRound(outcomes: readonly BackupOutcome[], skipped
  * 3. **文件确实被这次写过**。完成了不等于写的是这个文件：路径不对、save 被禁用
  *    都会留下一个旧文件。用 mtime 与探测开始时间比一下，取容器自己的时钟。
  */
+/**
+ * 「这个 redis 的快照文件在哪」——**唯一**判定源。
+ *
+ * 三处要用：周期备份的探测、手工下载、手工恢复。写死 `/data/dump.rdb` 的话，
+ * 配了非默认 `dir` / `dbfilename` 的实例会各错各的：备份判每次失败、下载给出
+ * 陈旧文件、恢复写到一个 redis 根本不读的路径却报「已恢复」。抄三份的下场是
+ * 改一处漏两处，所以这里只留一份，谁要用谁拼进自己的脚本。
+ *
+ * 约定：执行后 `$RDB` 就是快照的绝对路径（`$D` 目录、`$F` 文件名）。
+ */
+export const REDIS_RDB_PATH_LINES: readonly string[] = [
+  // 问不出来就**报错**，不许退回 `/data/dump.rdb`。
+  //
+  // CONFIG 可能被 rename-command 改名、被 ACL 拒绝、或者实例压根连不上；这些情况下
+  // 「猜一个默认路径」正好在最危险的场景里给出最坏结果：恢复流程会把上传的快照写到
+  // 一个 redis 不读的文件，重启，然后报「已恢复」——用户以为数据回来了，其实没有。
+  // 默认值只在「问到了、但值确实是默认」时才出现，那由 redis 自己回答，不由我们假设。
+  'dirOut=$(redis-cli CONFIG GET dir 2>&1) || { echo "CONFIG GET dir 调用失败: $dirOut" >&2; exit 27; }',
+  `D=$(printf '%s\\n' "$dirOut" | sed -n '2p' | tr -d '\\r')`,
+  '[ -n "$D" ] || { echo "CONFIG GET dir 返回空，拒绝猜默认路径" >&2; exit 28; }',
+  'fileOut=$(redis-cli CONFIG GET dbfilename 2>&1) || { echo "CONFIG GET dbfilename 调用失败: $fileOut" >&2; exit 29; }',
+  `F=$(printf '%s\\n' "$fileOut" | sed -n '2p' | tr -d '\\r')`,
+  '[ -n "$F" ] || { echo "CONFIG GET dbfilename 返回空，拒绝猜默认路径" >&2; exit 30; }',
+  'RDB="$D/$F"',
+];
+
+/**
+ * 只解析路径并打印出来（不触发 BGSAVE）。恢复流程要知道「该往哪写」，
+ * 但不该顺手给人家存一次盘。凭据解析沿用探测脚本那一段。
+ */
+export function buildRedisRdbPathScript(): string {
+  const probe = buildRedisBackupProbeScript().split('\n');
+  const credEnd = probe.findIndex((l) => l.startsWith('export REDISCLI_AUTH'));
+  return [...probe.slice(0, credEnd + 1), ...REDIS_RDB_PATH_LINES, 'printf "%s" "$RDB"'].join('\n');
+}
+
 export function buildRedisBackupProbeScript(): string {
   return [
   // 凭据：env 优先，其次扫容器内进程命令行里的 --requirepass。
@@ -337,8 +402,58 @@ export function buildRedisBackupProbeScript(): string {
   '  i=$((i+1)); sleep 1',
   'done',
   '[ "$ip" = "0" ] || { echo "BGSAVE 超时未完成" >&2; exit 25; }',
+  // 快照落在哪，要问 redis 自己。`/data/dump.rdb` 只是官方镜像的默认值：
+  // 配了 `dir` 或 `dbfilename` 的实例（compose 里很常见）会写到别处，
+  // 那时按默认路径 stat 到的是一个**根本不存在或很旧**的文件——
+  // 判据会把每一次正常的 BGSAVE 都判失败，而 docker cp 也会拷错东西。
+  ...REDIS_RDB_PATH_LINES,
   // 完成了不等于这个文件被写过：路径不对、save 被禁用都会留下旧文件。
-  'mt=$(stat -c %Y /data/dump.rdb 2>/dev/null || echo 0)',
-  '[ "$mt" -ge "$start" ] || { echo "dump.rdb 未被本次 BGSAVE 更新（mtime=$mt start=$start）" >&2; exit 26; }',
+  'mt=$(stat -c %Y "$RDB" 2>/dev/null || echo 0)',
+  '[ "$mt" -ge "$start" ] || { echo "$RDB 未被本次 BGSAVE 更新（mtime=$mt start=$start）" >&2; exit 26; }',
+  // 最后一行是**给宿主用的**：docker cp 要拷的就是这个路径。
+  // 这条链路只有一个真值来源，宿主不许自己再拼一次默认路径。
+  'printf "%s" "$RDB"',
+  ].join('\n');
+}
+
+/**
+ * MySQL / MariaDB 的导出脚本：**流式压缩，不落任何中转文件**，同时保住 mysqldump
+ * 自己的退出码。
+ *
+ * 这一处栽过两次，两次的形状正好相反：
+ *
+ * 1. `mysqldump | gzip` 直接串管道 —— 管道的退出码是**最后一环**的。dump 因凭据
+ *    错误中断时 gzip 照样成功，产出一个几十字节的合法 gzip 头，「非空」检查放行，
+ *    一份不可用的备份被记成成功，还可能顺手把真正可用的旧副本按保留策略删掉。
+ * 2. 改用 `set -o pipefail` —— `set` 是特殊内建，dash 遇到不认识的 `-o pipefail`
+ *    会**直接终止 shell**，`|| true` 拦不住。Debian 系 mariadb 镜像的 /bin/sh 正是
+ *    dash，于是这一档从「静默成功」变成了「必然失败」。
+ * 3. 再改成两步落盘（先写完整 .sql 再压缩）—— 退出码对了，代价是中转一份**未压缩**
+ *    的全量 dump。而磁盘闸是每轮开头查一次的固定阈值，单个大库就能把宿主根盘写满，
+ *    那会同时打死所有预览、构建和 CDS 自己。
+ *
+ * 现在用 POSIX 的文件描述符腾挪拿 pipeline 里**上游**的退出码：`exec 3>&1` 先把真正
+ * 的 stdout（docker exec 会把它接到宿主的目标文件）存到 fd3，dump 的退出码经 fd4
+ * 被命令替换捕获，gzip 的输出直接写回 fd3。全程零中转文件，dash / busybox sh 都吃。
+ *
+ * **两端的退出码都要拿**。只捕获 dump 那一端是第四个坑：dump 成功、gzip 中途因写盘
+ * 失败退出（磁盘满、I/O 错误）时，脚本会返回 0，而产物是一份被截断的 gzip——调用方
+ * 看到「退出码 0 + 文件非空」就把它转正，还按保留策略删掉一份真正可用的旧备份。
+ * 这一版把 dump 与 gzip 的退出码分别经 fd4 回传，任一非零整条失败。
+ * 宿主侧另有 `gzip -t` 完整性校验作第二道（见 index.ts 的转正前校验）。
+ */
+export function buildMysqlDumpScript(): string {
+  return [
+    // 凭据在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
+    'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
+    // fd3 = 真正的 stdout（宿主那个文件）；fd4 = 回传两端退出码的通道。
+    'exec 3>&1',
+    'codes=$( { { mysqldump -uroot --all-databases --single-transaction --quick --routines --events; echo "dump=$?" >&4; }'
+      + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
+    // 读不到退出码按失败处理：宁可重跑一轮，也不要认一份来路不明的产物。
+    `d=$(printf '%s\\n' "$codes" | sed -n 's/^dump=//p')`,
+    `g=$(printf '%s\\n' "$codes" | sed -n 's/^gzip=//p')`,
+    '[ "${d:-1}" = 0 ] || exit "${d:-1}"',
+    '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
   ].join('\n');
 }
