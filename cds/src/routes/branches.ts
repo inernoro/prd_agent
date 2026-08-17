@@ -50,7 +50,7 @@ import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance } from '../types.js';
-import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
+import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveCommandTemplate, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
@@ -73,6 +73,7 @@ import { detectStack, type DatabaseInitRecommendation, type StackDetection } fro
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { dropReplicaDb } from '../services/replica-db-clone.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
+import { assertInfraAuthenticationConfigured } from '../services/infra-auth-policy.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
@@ -19191,6 +19192,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
           : {}),
         createdAt: new Date().toISOString(),
       };
+
+      // 手工创建也必须在持久化前验证真实展开后的启动配置。否则 legacy UI 会先写入
+      // 一条永远无法启动的无认证数据库，再把 start 失败吞掉，形成“已创建”的假成功。
+      const customEnv = stateService.getCustomEnv(projectId);
+      try {
+        assertInfraAuthenticationConfigured({
+          ...service,
+          env: resolveEnvTemplates(service.env, customEnv),
+          command: resolveCommandTemplate(service.command, customEnv),
+          entrypoint: resolveCommandTemplate(service.entrypoint, customEnv),
+        });
+      } catch (authError) {
+        res.status(400).json({ error: (authError as Error).message });
+        return;
+      }
 
       stateService.addInfraService(service);
       stateService.save();

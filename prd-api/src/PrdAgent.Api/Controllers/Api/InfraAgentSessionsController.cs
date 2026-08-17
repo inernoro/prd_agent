@@ -456,7 +456,7 @@ public class InfraAgentSessionsController : ControllerBase
                         false)
                 },
                 "SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash scripts/smoke-cds-agent-shared-service-pool.sh",
-                "CDS_HOST=$CDS_AGENT_SMOKE_CDS_HOST CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-preflight bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
+                "CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-preflight bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
                 new[]
                 {
                     "prepare.preflightReady",
@@ -511,7 +511,7 @@ public class InfraAgentSessionsController : ControllerBase
                     false)
             },
             "SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 bash scripts/smoke-cds-agent-branch-isolation.sh",
-            "CDS_HOST=$CDS_AGENT_SMOKE_CDS_HOST bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh",
+            "bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh",
             new[]
             {
                 "verdict",

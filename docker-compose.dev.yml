@@ -97,6 +97,11 @@ services:
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379
+      # 首次管理员凭据只从宿主环境注入；专用 MAP pair 与 ROOT_ACCESS fallback 二选一。
+      - MAP_INITIAL_ADMIN_USERNAME=${MAP_INITIAL_ADMIN_USERNAME:-}
+      - MAP_INITIAL_ADMIN_PASSWORD=${MAP_INITIAL_ADMIN_PASSWORD:-}
+      - ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}
+      - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
       - Jwt__Secret=${JWT_SECRET:-YourSuperSecretKeyForJwtTokenGeneration2024!}
       - Jwt__Issuer=prdagent
       - AI_ACCESS_KEY=${AI_ACCESS_KEY:-}

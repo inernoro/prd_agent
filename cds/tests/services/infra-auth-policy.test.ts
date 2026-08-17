@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { assertInfraAuthenticationConfigured } from '../../src/services/infra-auth-policy.js';
 import { INFRA_CATALOG } from '../../src/services/infra-catalog.js';
 
@@ -122,5 +124,23 @@ describe('基础设施认证硬门禁', () => {
         command: entry.command,
       }), `目录服务 ${entry.id} 的认证配置没有通过启动门禁`).not.toThrow();
     }
+  });
+
+  it('legacy 数据库入口走凭据目录且不会吞掉启动失败', () => {
+    const legacy = fs.readFileSync(path.resolve(process.cwd(), 'web-legacy/app.js'), 'utf8');
+    const presetFlow = legacy.slice(
+      legacy.indexOf('const INFRA_PRESET_LABELS'),
+      legacy.indexOf('window._topologyShowDatabaseSubmenu'),
+    );
+    const customFlow = legacy.slice(
+      legacy.indexOf('async function saveCustomInfra'),
+      legacy.indexOf('// ── Routing modal'),
+    );
+    expect(presetFlow).toContain("'/infra-presets'");
+    expect(presetFlow).toContain("await api('POST', '/infra/' + encodeURIComponent(service.id) + '/start?project=' + encodeURIComponent(CURRENT_PROJECT_ID))");
+    expect(presetFlow).not.toContain('INFRA_TEMPLATES');
+    expect(presetFlow).not.toContain('change-me-please');
+    expect(customFlow).toContain("`/infra?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`");
+    expect(customFlow).not.toContain("catch { /* ok */ }");
   });
 });

@@ -2417,8 +2417,16 @@ export class ContainerService {
    * `isRunning` would converge to after each per-name probe failed).
    */
   async getRunningContainerNames(): Promise<Set<string>> {
+    return (await this.getRunningContainerNamesSnapshot()) ?? new Set<string>();
+  }
+
+  /**
+   * 与 getRunningContainerNames 相同的单次运行态采样，但保留 Docker 不可读的 unknown。
+   * 健康检查必须区分“确认没有运行”和“根本没读到”，不能把探测失败伪装成空集合。
+   */
+  async getRunningContainerNamesSnapshot(): Promise<Set<string> | null> {
     const result = await this.shell.exec(`docker ps --format "{{.Names}}"`);
-    if (result.exitCode !== 0) return new Set<string>();
+    if (result.exitCode !== 0) return null;
     return new Set(
       result.stdout
         .split('\n')

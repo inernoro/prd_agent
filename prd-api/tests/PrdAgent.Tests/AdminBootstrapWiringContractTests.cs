@@ -26,6 +26,19 @@ public sealed class AdminBootstrapWiringContractTests
     }
 
     [Fact]
+    public void DevelopmentCompose_ShouldForwardBothSupportedBootstrapCredentialPairs()
+    {
+        var compose = ReadRepoFile("docker-compose.dev.yml");
+
+        Assert.Contains("MAP_INITIAL_ADMIN_USERNAME=${MAP_INITIAL_ADMIN_USERNAME:-}", compose);
+        Assert.Contains("MAP_INITIAL_ADMIN_PASSWORD=${MAP_INITIAL_ADMIN_PASSWORD:-}", compose);
+        Assert.Contains("ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}", compose);
+        Assert.Contains("ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}", compose);
+        Assert.DoesNotContain("MAP_INITIAL_ADMIN_PASSWORD=admin", compose, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ROOT_ACCESS_PASSWORD=admin", compose, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void PublicLoginAndResetViews_ShouldNotAdvertiseAStaticCredential()
     {
         var login = ReadRepoFile("prd-admin/src/pages/LoginPage.tsx");

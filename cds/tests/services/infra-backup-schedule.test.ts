@@ -212,6 +212,16 @@ describe('自动备份真的被启动了', () => {
   it('产物为空要当失败处理，不留零字节文件冒充成功', () => {
     expect(CODE).toContain('导出产物为空');
   });
+
+  it('离机校验成功后才把临时备份提升到正式保留集', () => {
+    const upload = CODE.indexOf('await uploadAndVerifyR2Backup({');
+    const promote = CODE.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
+    const cleanup = CODE.indexOf('rm -f ${shq(out)}', promote);
+
+    expect(upload).toBeGreaterThan(0);
+    expect(promote).toBeGreaterThan(upload);
+    expect(cleanup).toBeGreaterThan(promote);
+  });
 });
 
 /**

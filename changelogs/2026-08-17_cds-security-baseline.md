@@ -27,3 +27,7 @@
 | security | cds | 项目级与受限全局 Agent Key 的读写路由统一执行项目作用域校验 |
 | fix | cds | MySQL 新建门禁要求有效 root 初始化凭据，禁止仅应用账号的不可启动配置 |
 | fix | prd-desktop | 动态 API 地址读取兼容稳定版 Rust 编译器 |
+| fix | prd-api | 开发启动透传管理员凭据并统一 CDS 修复命令的地址变量合同 |
+| fix | cds | 管理员凭据支持二选一必填组并由部署环境动态注入稳定冒烟允许地址 |
+| fix | cds | 离机校验成功后才保留正式备份并按 Docker 运行态判断基础设施健康 |
+| fix | cds | Legacy 数据库创建统一走随机凭据目录且启动失败不再伪装成功 |

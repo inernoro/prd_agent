@@ -88,6 +88,21 @@ describe('Phase 8 — StateService.envMeta', () => {
     expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['SMTP_PASSWORD']);
   });
 
+  it('getMissingRequiredEnvKeys: 同组凭据任一完整方案即可放行', () => {
+    svc.setEnvMeta('projA', {
+      MAP_USER: { kind: 'required', requiredGroup: 'admin', requiredOption: 'map' },
+      MAP_PASSWORD: { kind: 'required', requiredGroup: 'admin', requiredOption: 'map' },
+      ROOT_USER: { kind: 'required', requiredGroup: 'admin', requiredOption: 'root' },
+      ROOT_PASSWORD: { kind: 'required', requiredGroup: 'admin', requiredOption: 'root' },
+    });
+
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['MAP_USER', 'MAP_PASSWORD']);
+    svc.setCustomEnvVar('ROOT_USER', 'operator', 'projA');
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual(['ROOT_PASSWORD']);
+    svc.setCustomEnvVar('ROOT_PASSWORD', 'secret', 'projA');
+    expect(svc.getMissingRequiredEnvKeys('projA')).toEqual([]);
+  });
+
   it('getMissingRequiredEnvKeys: 项目无 envMeta(老项目)→ 不 block', () => {
     expect(svc.getMissingRequiredEnvKeys('projA')).toEqual([]);
   });

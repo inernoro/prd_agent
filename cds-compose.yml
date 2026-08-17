@@ -36,15 +36,23 @@ x-cds-env-meta:
   MAP_INITIAL_ADMIN_USERNAME:
     kind: required
     hint: "首次管理员用户名，由 CDS 项目 env scope 托管"
+    requiredGroup: initial-admin
+    requiredOption: map-initial-admin
   MAP_INITIAL_ADMIN_PASSWORD:
     kind: required
     hint: "首次管理员强密码，由 CDS 项目 env scope 托管"
+    requiredGroup: initial-admin
+    requiredOption: map-initial-admin
   ROOT_ACCESS_USERNAME:
     kind: required
     hint: "紧急访问用户名，由 CDS 项目 env scope 托管"
+    requiredGroup: initial-admin
+    requiredOption: root-access
   ROOT_ACCESS_PASSWORD:
     kind: required
     hint: "紧急访问强密码，由 CDS 项目 env scope 托管"
+    requiredGroup: initial-admin
+    requiredOption: root-access
   LLMGW_JWT_SECRET:
     kind: required
     hint: "LLM 网关控制台 JWT 签名密钥，由 CDS 项目 env scope 托管"

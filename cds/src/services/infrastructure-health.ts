@@ -34,6 +34,16 @@ export interface InfrastructureHealthReport {
   signature: string;
 }
 
+export function infrastructureContainerHealth(
+  containers: Array<{ name: string }>,
+  runningNames: Set<string> | null,
+): Array<{ name: string; running: boolean | null }> {
+  return containers.map((container) => ({
+    name: container.name,
+    running: runningNames ? runningNames.has(container.name) : null,
+  }));
+}
+
 const GIB = 1024 * 1024 * 1024;
 
 export function evaluateInfrastructureHealth(input: InfrastructureHealthInput): InfrastructureHealthReport {

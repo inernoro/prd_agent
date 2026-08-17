@@ -801,6 +801,23 @@ test('凭据登记表不会重新注入已废弃凭据', () => {
   assert.deepEqual(calls, []);
 });
 
+test('正式环境允许地址由独立凭据绑定注入', () => {
+  const registry = JSON.parse(readFileSync(
+    resolve(process.cwd(), '.claude/skills/stable-smoke/reference/credential-registry.json'),
+    'utf8',
+  ));
+  const binding = registry.localBindings.find(
+    (item) => item.envKey === 'STABLE_SMOKE_PROD_ALLOWED_BASE_URL',
+  );
+  assert.equal(binding.value, undefined);
+  assert.equal(binding.keychainService, 'prd-agent.stable-smoke.prod.allowed-base-url');
+
+  const values = applyCredentialRegistry({}, registry, (service) => (
+    service === binding.keychainService ? 'https://production.example.test' : ''
+  ));
+  assert.equal(values.STABLE_SMOKE_PROD_ALLOWED_BASE_URL, 'https://production.example.test');
+});
+
 test('CDS 地址始终来自 preview-url 并拒绝过期缓存', () => {
   const authoritative = () => ({
     status: 0,

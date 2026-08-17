@@ -557,6 +557,9 @@ public class InfraAgentSessionsControllerTests
             applyRunbook.ApplyManifest.Endpoint.ShouldBe("<configure-CDS_AGENT_SMOKE_CDS_HOST>/api/build-profiles/claude-agent-sdk-runtime-v2-prd-agent");
             applyRunbook.ApplyManifest.Preconditions.Single(x => x.Code == "unique_candidate_profile").Passed.ShouldBeFalse();
             applyRunbook.ApplyManifest.ExpectedPostCheck.ShouldContain("smoke-cds-agent-branch-isolation.sh");
+            applyRunbook.ApplyManifest.RequiredEnv.ShouldContain("CDS_HOST");
+            applyRunbook.ApplyManifest.LocalPreflightCommand.ShouldNotBeNull()
+                .ShouldNotContain("CDS_AGENT_SMOKE_CDS_HOST");
             var managedRuntimeRunbook = executionPanel.Runbook.Single(x => x.CommandCode == "managed-runtime-capacity");
             managedRuntimeRunbook.ApplyManifest.ShouldBeNull();
             managedRuntimeRunbook.Safety.ShouldContain("no SSH");

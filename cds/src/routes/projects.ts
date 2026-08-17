@@ -627,12 +627,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     } catch {
       targetProjectId = m[1];
     }
+    // 对外路径允许使用项目 slug，但 Agent Key 保存的是规范 project id。
+    // 鉴权必须先做同一套解析，否则“自己的项目用 slug 访问”会被误判成跨项目。
+    const canonicalProjectId = stateService.getProject(targetProjectId)?.id ?? targetProjectId;
     const mismatch = assertProjectAccess(
       req as unknown as {
         cdsProjectKey?: { projectId: string; keyId: string };
         cdsAccess?: { keyId: string; access: AgentKeyAccess };
       },
-      targetProjectId,
+      canonicalProjectId,
     );
     if (mismatch) {
       res.status(mismatch.status).json(mismatch.body);

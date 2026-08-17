@@ -27,7 +27,7 @@ import {
   shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
-import { evaluateInfrastructureHealth } from './services/infrastructure-health.js';
+import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
 import {
   externalPortAuditConfigFromEnv,
   runExternalPortAudit,
@@ -657,17 +657,18 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             throw new Error('导出产物为空');
           }
 
-          // 只有走到这里的产物才配拿到正式文件名。
-          const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
-          if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
-
           const r2 = r2BackupConfigFromEnv();
           if (!r2) throw new Error('缺少完整 R2 配置，拒绝把仅有同机副本的备份记为成功');
           const remote = await uploadAndVerifyR2Backup({
             config: r2,
-            filePath: finalOut,
+            filePath: out,
             fileName: t.fileName,
           });
+
+          // 只有离机副本已通过 checksum 校验的产物才配进入正式保留集。
+          // R2 失败时 catch 会删掉临时文件，避免每轮重试堆积数据库大小的伪成功备份。
+          const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
+          if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
 
           // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
           const ls = await shell.exec(
@@ -854,15 +855,17 @@ function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): No
   const run = async (): Promise<void> => {
     const backup = readBackupHealth();
     const certificates = await Promise.all((config.rootDomains || []).map((host) => certificateStatus(host)));
+    const runningNames = await containerService.getRunningContainerNamesSnapshot();
+    const expectedContainers = stateService.getInfraServices()
+      .filter((service) => service.status === 'running' || service.status === 'error')
+      .map((service) => ({ name: service.containerName }));
     const report = evaluateInfrastructureHealth({
       now: new Date(),
       backupCompletedAt: backup.completedAt,
       remoteBackupVerifiedAt: backup.remoteVerifiedAt,
       disk: defaultDiskUsage(config.repoRoot),
       certificates,
-      containers: stateService.getInfraServices()
-        .filter((service) => service.status === 'running' || service.status === 'error')
-        .map((service) => ({ name: service.containerName, running: service.status === 'running' })),
+      containers: infrastructureContainerHealth(expectedContainers, runningNames),
       exposureCriticalCount: lastInfraExposureReport?.criticalCount ?? null,
       exposureWarnCount: lastInfraExposureReport?.warnCount ?? null,
       externalPortAudits: [...lastExternalPortAudits.values()],

@@ -1,9 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateInfrastructureHealth } from '../../src/services/infrastructure-health.js';
+import { evaluateInfrastructureHealth, infrastructureContainerHealth } from '../../src/services/infrastructure-health.js';
 
 const now = new Date('2026-08-17T12:00:00Z');
 
 describe('统一基础设施健康检查', () => {
+  it('容器健康读取 Docker 运行态而不是持久台账', () => {
+    const expected = [{ name: 'database-a' }, { name: 'cache-b' }];
+    expect(infrastructureContainerHealth(expected, new Set(['cache-b']))).toEqual([
+      { name: 'database-a', running: false },
+      { name: 'cache-b', running: true },
+    ]);
+    expect(infrastructureContainerHealth(expected, null)).toEqual([
+      { name: 'database-a', running: null },
+      { name: 'cache-b', running: null },
+    ]);
+  });
+
   it('未知状态从严，不会被当成正常', () => {
     const report = evaluateInfrastructureHealth({
       now, disk: null, certificates: [], containers: [{ name: 'db', running: null }],

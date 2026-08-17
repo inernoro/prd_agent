@@ -264,6 +264,10 @@ export interface EnvMeta {
   kind: 'auto' | 'required' | 'infra-derived';
   /** 给用户的提示语,UI 弹窗里显示在 input 上方(如"请填写你的 SMTP 邮箱密码") */
   hint?: string;
+  /** 同组必填项允许按 option 二选一；未设置时仍是普通逐项必填。 */
+  requiredGroup?: string;
+  /** requiredGroup 内的一套完整方案，同 option 下所有 key 必须同时填写。 */
+  requiredOption?: string;
 }
 
 /**
