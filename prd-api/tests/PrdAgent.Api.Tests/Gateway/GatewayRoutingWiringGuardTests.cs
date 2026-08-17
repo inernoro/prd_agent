@@ -97,7 +97,7 @@ public sealed class GatewayRoutingWiringGuardTests
 
         source.ShouldContain(
             "GatewayCapabilityContract.SupportsAppCallerScenario",
-            "readiness 必须跑 MAP 运行时真正用的判据；只看池在不在，就是 2026-08-13 那次「全绿但功能死了」");
+            customMessage: "readiness 必须跑 MAP 运行时真正用的判据；只看池在不在，就是 2026-08-13 那次「全绿但功能死了」");
         source.ShouldContain("GatewayCapabilityContract.RequiredScenarioCapability");
         source.ShouldContain("scenario-capability");
     }
@@ -110,6 +110,6 @@ public sealed class GatewayRoutingWiringGuardTests
 
         contract.ShouldContain(
             "[\"image-gen\"] = ImageGeneration",
-            "正式数据迁移完成并有回滚方案前，image-gen 兼容不得撤销（CLAUDE 任务书一.8 明确禁止）");
+            customMessage: "正式数据迁移完成并有回滚方案前，image-gen 兼容不得撤销（任务书明确禁止）");
     }
 }
