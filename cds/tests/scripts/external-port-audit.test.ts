@@ -50,4 +50,33 @@ describe('external port audit report', () => {
     expect(workflow).toContain('--family ipv4');
     expect(workflow).toContain('--family ipv6');
   });
+
+  // 「一个端口都没扫到」既可能是暴露面干净，也可能是根本没扫成，两者在报告里都是
+  // openPorts: []。观测点发不出 IPv6 报文时必须在扫描之前就判失败，否则一次没发生的
+  // 扫描会被当成结论读。这条守卫盯的就是那步自检别被顺手删掉。
+  it('proves the IPv6 runner can originate IPv6 before it trusts an empty scan', () => {
+    const workflow = readFileSync(
+      new URL('../../../.github/workflows/cds-external-port-audit.yml', import.meta.url),
+      'utf8',
+    );
+
+    const capabilityCheck = workflow.indexOf('ip -6 addr show scope global 2>/dev/null');
+    const ipv6Scan = workflow.indexOf('nmap -6');
+    expect(capabilityCheck).toBeGreaterThan(-1);
+    expect(ipv6Scan).toBeGreaterThan(-1);
+    // 自检必须排在扫描之前——排在后面等于扫完才发现扫不了，那份空报告已经产出了。
+    expect(capabilityCheck).toBeLessThan(ipv6Scan);
+  });
+
+  // 扫描没跑到的时候不该再抛一条「找不到产物」，那会把真正的失败原因埋在噪音下面。
+  it('uploads evidence only when the scan step actually ran', () => {
+    const workflow = readFileSync(
+      new URL('../../../.github/workflows/cds-external-port-audit.yml', import.meta.url),
+      'utf8',
+    );
+
+    const uploadGates = workflow.match(/if: \$\{\{ always\(\) && steps\.scan\.outcome != 'skipped' \}\}/g);
+    expect(uploadGates).toHaveLength(2);
+    expect(workflow).not.toContain('if: always()');
+  });
 });
