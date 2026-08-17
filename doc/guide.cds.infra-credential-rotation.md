@@ -10,12 +10,14 @@
 
 ## 0. 先看清现状（决定你今天能做什么）
 
-| 预设 | 有没有口令 | 本次能不能轮换 |
+| 预设 | 有没有口令 | 本文有没有**核对过的步骤** |
 |---|---|---|
-| mongodb / postgres / mysql / mariadb / sqlserver / clickhouse | 有 | 能，按 §2 |
-| rabbitmq / elasticsearch / minio | 有 | 能，按 §2 |
-| **memcached / kafka / nats** | **没有** | **不能**——它们从创建那天起就是无认证。见 §4 |
-| redis | **新建的有**（口令走 `REDIS_PASSWORD`），**存量的没有** | 新建的按 §2；存量的要先有口令才谈得上换，见 §4 |
+| mongodb / mysql / mariadb / postgres | 有 | 有（§2.1，按预设目录真值写的） |
+| sqlserver / clickhouse / rabbitmq / elasticsearch / minio | 有 | **没有**——按 §2.0 的通则自己组装并自己验证 |
+| redis | 新建的有，**存量的没有** | 新建的按通则；存量的先得有口令，见 §4 |
+| memcached / kafka / nats | **没有** | 不适用——它们从创建那天起就是无认证，见 §4 |
+
+第三列是这份文档的诚实边界：**只有前一行的步骤是逐条对着预设目录核过的**。其余预设的改口令命令我没有在真实镜像上核对过，与其写一份看着像样、跑起来报错的命令让人照抄，不如明说没有——照抄一条错命令的代价是把 env 改成新口令而库里还是旧的，那时所有消费方一起断。
 
 判据来源是基建预设目录里的「要生成哪些密钥」字段（见文末实现来源）。没有声明这个字段的预设，建服务时不会生成任何口令，容器起来就是裸的。
 
@@ -31,22 +33,30 @@
 
 ## 2. 逐类型轮换步骤
 
-下面 `<C>` 是容器名（`cdscli` 或 CDS 面板可查），`<OLD>` / `<NEW>` 是旧新口令。**新口令先自己生成好**（16 字节 hex 即可），不要复用其它环境的值。**例外是 SQL Server**：它默认强制口令复杂度（大写 / 小写 / 数字 / 符号里占三类），纯 hex 会被拒绝——给它生成的口令要另外拼上一段，例如在 hex 后面接 `Aa1_`（预设建库时就是这么做的）。
+### 2.0 先看这张表，再动手
 
-**先对表：每个预设建出来的账号叫什么**。这一步踩过两次（MySQL 只换 root、PostgreSQL 对着不存在的 `postgres` 敲），所以把真值列在这里——凭据 env 与连接串都跟着这个账号走：
+每个预设建出来的账号名、口令 env、**以及它注入了哪几个连接串变量**都在这里。第三列是最容易漏的：`mysql` 注入的是**两个**变量，`minio` 是**四个**，只改其中一个，用另一个变量的消费方会带着旧口令重启、连不上。
 
-| 预设 | 应用账号 | 口令所在 env | 备注 |
+| 预设 | 账号 | 口令 env | 注入的连接串变量（**都要改**） |
 |---|---|---|---|
-| mongodb | `app` | `MONGO_INITDB_ROOT_PASSWORD` | 认证库是 `admin` |
-| postgres | `app` | `POSTGRES_PASSWORD` | **没有 `postgres` 角色** |
-| mysql / mariadb | `app`（应用）+ `root`（管理） | `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | 两个都要管，周期备份用 root |
-| sqlserver | `sa` | `MSSQL_SA_PASSWORD` | 口令有复杂度策略，纯 hex 会被拒 |
-| clickhouse | `app` | `CLICKHOUSE_PASSWORD` | |
-| rabbitmq | `app` | `RABBITMQ_DEFAULT_PASS` | |
-| elasticsearch | `elastic` | `ELASTIC_PASSWORD` | 唯一不叫 app 的 |
-| minio | `app` | `MINIO_ROOT_PASSWORD` | 同时是 S3 access key |
+| mongodb | `app`（认证库 `admin`） | `MONGO_INITDB_ROOT_PASSWORD` | `MONGODB_URL` |
+| postgres | `app`（**没有 `postgres` 角色**） | `POSTGRES_PASSWORD` | `DATABASE_URL`、`POSTGRES_URL` |
+| mysql / mariadb | `app` + `root` | `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | `DATABASE_URL`、`MYSQL_URL` |
+| sqlserver | `sa` | `MSSQL_SA_PASSWORD` | `SQLSERVER_URL` |
+| clickhouse | `app` | `CLICKHOUSE_PASSWORD` | `CLICKHOUSE_URL` |
+| rabbitmq | `app` | `RABBITMQ_DEFAULT_PASS` | `RABBITMQ_URL` |
+| elasticsearch | `elastic` | `ELASTIC_PASSWORD` | `ELASTICSEARCH_URL` |
+| minio | `app` | `MINIO_ROOT_PASSWORD` | `S3_ENDPOINT`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`、`MINIO_URL` |
+| redis | 无账号，只有口令 | `REDIS_PASSWORD` | `REDIS_URL` |
 
-表的来源是基建预设目录（见文末实现来源）。**动手前先核一遍这一行**，别照着别的库的账号名敲。
+**四条通则**，任何预设都适用，比下面的具体命令更重要：
+
+1. **在库里改，不在 env 里改。** 那些 `*_PASSWORD` 环境变量只在空数据卷首次初始化时生效；对已有数据的卷改 env 再重建容器，旧口令照样能登、新口令登不上。
+2. **一个账号的多条 host 记录要在同一次会话里改完**（MySQL 尤其：`localhost` 与 `%` 是两条独立记录）。分开改必然撞死结——改了本地那条，后续命令用的旧口令立刻失效；先改远程那条，紧接着走本地的验证又认的是没改的记录。
+3. **验证要走消费方真正用的那条路径，也就是 TCP，不要用容器内的本地 socket。** 好几个官方镜像对本地连接是 `trust`：用 socket 连根本不检查口令，**你拿错口令也会看到 `SELECT 1` 成功**，然后把错的值存进 env，全线断连。同时要反向验一次：**旧口令必须已经连不上**。
+4. **该预设注入的每一个连接串变量都要改**（见上表第四列），一个不漏。
+
+### 2.1 按上面通则写好的具体步骤（这三类核对过预设目录）
 
 ### MongoDB
 
@@ -61,16 +71,19 @@ docker exec <C> mongosh -u app -p '<OLD>' --authenticationDatabase admin --quiet
 
 ### MySQL / MariaDB
 
-**先看清要换的是哪个账号**。CDS 建出来的 MySQL 有**两个**：`root`（管理，`MYSQL_ROOT_PASSWORD`）和 `app`（**应用真正连的那个**，`MYSQL_PASSWORD`，连接串 `mysql://app:...`）。只换 root 是这一步最容易犯的错——换完 root、再把 `DATABASE_URL` 里的密码改成新值，结果是**所有消费方立刻连不上**（app 的口令根本没动），而旧的 app 口令还在到处能用，等于没轮换。
+两个账号都要换：`app` 是应用连的，`root` 是周期备份用的。只换 root 的后果是所有消费方立刻断（app 口令没动、连接串却换了新值）。
 
 **一次会话改完所有 host**，不要逐条分开执行。逐条执行会撞上一个绕不开的顺序死结：先改 `root@localhost`，后续命令用的 `<OLD_ROOT>` 立刻失效；先改 `root@%`，紧接着那条走 socket（即 `localhost`）的验证又会用还没改的旧账号去认证。两种顺序都跑不完。
 
-```bash
-# 0) 先列全有哪些 host（root 与 app 各自可能有 localhost / % 两条）
-docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -N -e "SELECT user,host FROM mysql.user WHERE user IN (\"root\",\"app\")"'
+先列全有哪些 host（root 与 app 各自可能有 `localhost` / `%` 两条）：
 
-# 1) 用旧口令开**一个**会话，把上一步列出的每一条都改掉（示例是 root/app 各两条，
-#    按实际输出增删；语句之间用分号，全部在同一次 mysql 调用里）
+```bash
+docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -N -e "SELECT user,host FROM mysql.user WHERE user IN (\"root\",\"app\")"'
+```
+
+再用旧口令开**一个**会话，把上一步列出的每一条都改掉（下面是 root/app 各两条的样子，按实际输出增删；全部在同一次调用里）：
+
+```bash
 docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "
   ALTER USER \"app\"@\"%\"         IDENTIFIED BY \"<NEW_APP>\";
   ALTER USER \"app\"@\"localhost\" IDENTIFIED BY \"<NEW_APP>\";
@@ -89,46 +102,59 @@ docker exec <C> sh -c 'MYSQL_PWD="<NEW_APP>" mysql -h127.0.0.1 -uapp -e "SELECT 
 # 再跑一次第 0 步，确认没有漏掉的 host 记录
 ```
 
-两个账号对应下一步要改的两处：`MYSQL_PASSWORD` + 连接串跟着 `app` 走，`MYSQL_ROOT_PASSWORD` 跟着 `root` 走。漏掉任一处，要么应用连不上，要么周期备份连不上。
+下一步改 env 时：`MYSQL_PASSWORD` 与两个连接串（`DATABASE_URL`、`MYSQL_URL`）跟着 `app` 走，`MYSQL_ROOT_PASSWORD` 跟着 `root` 走。漏掉任一处，要么应用连不上，要么周期备份连不上。
 
 ### PostgreSQL
 
 **账号是 `app` 不是 `postgres`**。CDS 建库时把 `POSTGRES_USER` 设成了 `app`，官方镜像据此创建超级用户 `app`，**不会**再有 `postgres` 角色——对着 `-U postgres` 敲会直接报「role does not exist」。
 
 ```bash
+# 改（这一步走 socket 没问题：本地 trust 让你不用旧口令就能改）
 docker exec <C> psql -U app -d app -c "ALTER USER app PASSWORD '<NEW>'"
-docker exec -e PGPASSWORD='<NEW>' <C> psql -U app -d app -c 'SELECT 1'
+
+# 验证必须走 TCP。官方镜像的默认配置对本地 socket 是 trust——用 socket 验，
+# PGPASSWORD 根本不参与判断，**你拿一个错口令也会看到 SELECT 1 成功**，
+# 然后把错值存进 env，全线断连。
+docker exec -e PGPASSWORD='<NEW>' <C> psql -h 127.0.0.1 -U app -d app -c 'SELECT 1'
+# 反向验一次：旧口令必须已经被拒（这条要失败才算对）
+docker exec -e PGPASSWORD='<OLD>' <C> psql -h 127.0.0.1 -U app -d app -c 'SELECT 1' \
+  && echo "旧口令仍可用，轮换未生效" && exit 1
 ```
-改完对应 `POSTGRES_PASSWORD` 与 `DATABASE_URL` / `POSTGRES_URL` 两个连接串。
+改完对应 `POSTGRES_PASSWORD`，以及 `DATABASE_URL` 与 `POSTGRES_URL` **两个**连接串。
 
-### RabbitMQ / Elasticsearch / MinIO
+### 其余预设（sqlserver / clickhouse / rabbitmq / elasticsearch / minio）
 
-各自有专用命令（`rabbitmqctl change_password` / `elasticsearch-users passwd` / `mc admin user svcacct`），照官方文档执行，验证同样是「用新口令做一次真实调用」。
+**本文不提供命令**。它们各有专用改口令方式，我没有在真实镜像上核对过，写一份看着像样的命令让人照抄，风险大于价值——照抄一条错命令的典型下场是 env 改了、库里没改，全线断连。
+
+按 §2.0 的四条通则自己组装：查官方文档找改口令的命令 → 在库里改 → **走 TCP 用新口令验一次、再用旧口令反向验一次必须被拒** → 按上表把该预设注入的每一个连接串变量都改掉 → 走下面的后三步。
 
 ### 后三步（所有类型通用，**一步都不能少**）
 
-库里改完只是第一步。口令在系统里还有**两份**拷贝，漏掉任一份就会出现「一半新一半旧」：
+库里改完只是第一步。口令在系统里还有**两份**拷贝，漏掉任一份就会出现「一半新一半旧」。
+
+**第 2 步：改基建服务自己的 env。** 周期备份、数据面板、容器重建读的都是这一份。不改的话下一轮自动备份仍用旧口令认证、每轮失败；对 redis 更糟——容器一旦重建，启动命令会把存着的旧口令重新设回去，把你刚换的新值悄无声息地顶掉。注意 env 是**整体覆盖**，PUT 之前先 GET 一份当前值改在上面，别把别的键删了。
 
 ```bash
-# 2) 改基建服务自己的 env（周期备份、数据面板、容器重建都读这一份）
-#    不改的话：下一轮自动备份仍用旧口令认证 → 每轮失败；
-#    对 redis 更糟——容器一旦重建，启动命令会把**旧的** REDIS_PASSWORD 重新设回去，
-#    把你刚换的新口令顶掉，而且悄无声息。
 curl -X PUT "$CDS/api/infra/<infraId>?project=<projectId>" -H 'Content-Type: application/json' \
   -d '{"env":{"MYSQL_ROOT_PASSWORD":"<NEW_ROOT>","MYSQL_PASSWORD":"<NEW_APP>","MYSQL_USER":"app","MYSQL_DATABASE":"<db>"}}'
-#    env 是整体覆盖，PUT 之前先 GET 一份当前值改在上面，别把别的键删了。
+```
 
-# 3) 让容器带新 env 重建（restart 走的是 docker stop && rm 再 run，会读上一步的新值；
-#    直接 `docker restart` 不行——那只是重启进程，env 还是旧的）
+**第 3 步：让容器带新 env 重建。** CDS 的 restart 走的是停止、删除、再按新配置起，会读上一步的新值；直接 `docker restart` 不行——那只重启进程，env 还是旧的。
+
+```bash
 curl -X POST "$CDS/api/infra/<infraId>/restart?project=<projectId>"
+```
 
-# 4) 改项目环境变量里的连接串（消费方真正读的是这一份），再重部署消费方
+**第 4 步：改项目环境变量里的连接串，再重部署消费方。** 消费方真正读的是这一份。**该预设注入的每一个变量都要改**（见 §2.0 表格第四列）——mysql 是两个，minio 是四个；只改一个的话，用另一个变量的消费方会带着旧口令重启、连不上。
+
+```bash
 python3 .claude/skills/cds/cli/cdscli.py env set --scope <projectId> --key DATABASE_URL --value 'mysql://app:<NEW_APP>@mysql:3306/<db>'
+python3 .claude/skills/cds/cli/cdscli.py env set --scope <projectId> --key MYSQL_URL    --value 'mysql://app:<NEW_APP>@mysql:3306/<db>'
 ```
 
 顺序不能换：先改库、再改服务 env、然后重建容器、最后改连接串并重部署。中间任何一步停下，系统就处在「库是新口令、某一层还是旧口令」的不一致态——那正是故障窗口。
 
-**收尾必须回答**：库里改了吗、服务 env 改了吗、容器重建过吗、连接串改了吗、消费方都重部署了吗、有没有哪个分支预览还揣着旧口令在跑。六个问题答不全就是没做完。
+**收尾必须回答**：库里改了吗、服务 env 改了吗、容器重建过吗、该预设注入的**每一个**连接串变量都改了吗、消费方都重部署了吗、旧口令确认连不上了吗、有没有哪个分支预览还揣着旧口令在跑。七个问题答不全就是没做完。
 
 ---
 
