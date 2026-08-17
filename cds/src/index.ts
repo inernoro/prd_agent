@@ -465,15 +465,40 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
    * 单飞闸。一轮里每个库串行导出、单库超时 20 分钟，目标一多就可能跑过六小时的
    * 间隔——那时 setInterval 会把下一轮叠上来，两轮共用同一个 `.tmp`：后进门的
    * 那轮先 `rm -rf` 再重建，把前一轮正在写的文件删掉，双双记失败。
+   *
+   * 闸上带**持有者身份**，不只是一个布尔。只有布尔的话，堵住时能看到的全部信息
+   * 就是一行「上一轮还没跑完」——分不清「这轮库大、正常慢」和「卡死了永远不放」，
+   * 也没人知道已经错过几次。所以记下这一轮的 id 与起始时间，跳过时把「持有者是谁、
+   * 占了多久、连续跳过第几次」写进事件流（不是只 console.warn，那在面板上看不见），
+   * 并在明显超时的情况下升级成 error，让「定时备份实际上停摆」这件事有人看得见。
    */
-  let inFlight = false;
+  let holder: { roundId: string; startedAt: number } | null = null;
+  let consecutiveSkips = 0;
+  /** 超过这个时长仍未放闸，基本可以认定不是「跑得慢」而是「卡住了」。 */
+  const STUCK_AFTER_MS = INFRA_BACKUP_INTERVAL_MS;
 
   const run = async () => {
-    if (inFlight) {
-      console.warn('[infra-backup] 上一轮还没跑完，跳过本次触发（单飞）');
+    if (holder) {
+      consecutiveSkips += 1;
+      const ageMs = Date.now() - holder.startedAt;
+      const ageMin = Math.round(ageMs / 60_000);
+      const stuck = ageMs > STUCK_AFTER_MS;
+      const msg = `上一轮 ${holder.roundId} 已跑 ${ageMin} 分钟仍未结束，跳过本次触发`
+        + `（连续第 ${consecutiveSkips} 次）${stuck ? '；已超过一个完整间隔，疑似卡死' : ''}`;
+      console.warn(`[infra-backup] ${msg}`);
+      store?.record({
+        category: 'system',
+        severity: stuck ? 'error' : 'warn',
+        source: 'infra-backup',
+        action: 'infra.backup.skipped.inflight',
+        message: msg,
+        status: stuck ? 'error' : 'warn',
+        details: { roundId: holder.roundId, ageMs, consecutiveSkips, stuck },
+      });
       return;
     }
-    inFlight = true;
+    consecutiveSkips = 0;
+    holder = { roundId: `bk-${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}`, startedAt: Date.now() };
     try {
       // 逐个候选试写，用第一个真能写的。写死单一路径的代价已经付过：那个路径在
       // 这台宿主上不存在，而手工备份的 ls 带着 2>/dev/null，把「目录不存在」显示
@@ -709,7 +734,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
     } finally {
       // 必须在 finally 里放闸：任何一条 return / throw 忘了放，往后每一轮都被
       // 自己挡在门外，而日志只会说「上一轮还没跑完」——一个永远不会自愈的静默停摆。
-      inFlight = false;
+      holder = null;
     }
   };
 

@@ -424,9 +424,23 @@ describe('备份不许静默成功', () => {
    * `.tmp`：后进门的先 rm -rf 再重建，把前一轮正在写的文件删掉，双双记失败。
    */
   it('自动备份有单飞闸，且在 finally 里放闸', () => {
-    expect(CODE).toContain('let inFlight = false');
-    expect(CODE).toMatch(/if \(inFlight\) \{/);
-    expect(CODE).toMatch(/\} finally \{\s*\n[^}]*inFlight = false;/);
+    expect(CODE).toContain('let holder: { roundId: string; startedAt: number } | null = null');
+    expect(CODE).toMatch(/if \(holder\) \{/);
+    expect(CODE).toMatch(/\} finally \{\s*\n[^}]*holder = null;/);
+  });
+
+  /**
+   * 闸要能回答「谁占着、占了多久」。只有布尔的话，堵住时唯一的信息是一行
+   * console.warn——分不清「库大跑得慢」和「卡死了」，也没人知道错过几次；
+   * 而 console 在面板上根本看不见，定时备份停摆可以一直没人发现。
+   */
+  it('跳过时把持有者身份与年龄写进事件流，超过一个间隔升级为 error', () => {
+    expect(CODE).toContain("action: 'infra.backup.skipped.inflight'");
+    expect(CODE).toContain('consecutiveSkips');
+    expect(CODE).toContain('roundId: holder.roundId');
+    // 卡死判据要用间隔本身，不是另拍一个数
+    expect(CODE).toContain('const STUCK_AFTER_MS = INFRA_BACKUP_INTERVAL_MS');
+    expect(CODE).toMatch(/severity: stuck \? 'error' : 'warn'/);
   });
 
   /**

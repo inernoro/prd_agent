@@ -63,24 +63,31 @@ docker exec <C> mongosh -u app -p '<OLD>' --authenticationDatabase admin --quiet
 
 **先看清要换的是哪个账号**。CDS 建出来的 MySQL 有**两个**：`root`（管理，`MYSQL_ROOT_PASSWORD`）和 `app`（**应用真正连的那个**，`MYSQL_PASSWORD`，连接串 `mysql://app:...`）。只换 root 是这一步最容易犯的错——换完 root、再把 `DATABASE_URL` 里的密码改成新值，结果是**所有消费方立刻连不上**（app 的口令根本没动），而旧的 app 口令还在到处能用，等于没轮换。
 
+**一次会话改完所有 host**，不要逐条分开执行。逐条执行会撞上一个绕不开的顺序死结：先改 `root@localhost`，后续命令用的 `<OLD_ROOT>` 立刻失效；先改 `root@%`，紧接着那条走 socket（即 `localhost`）的验证又会用还没改的旧账号去认证。两种顺序都跑不完。
+
 ```bash
-# 0) 先列全：root 和 app 各自可能有 'localhost' 与 '%' 两条记录，
-#    只改一条会出现「容器内能连、跨容器连不上」。
+# 0) 先列全有哪些 host（root 与 app 各自可能有 localhost / % 两条）
 docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -N -e "SELECT user,host FROM mysql.user WHERE user IN (\"root\",\"app\")"'
 
-# 1) 换 app（应用凭据，连接串里的那个）——**对第 0 步查出来的每个 host 都改一遍**
-#    预设没有设 MYSQL_ROOT_HOST，不同镜像/版本建出来的 host 组合不一样
-#    （常见是 root@localhost，可能还有 root@%）。照抄 `%` 会撞上「不存在的用户」
-#    而 ALTER 失败，然后你把 env 改成了新口令 —— 库里还是旧的，备份当场全挂。
-docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "ALTER USER \"app\"@\"<HOST>\" IDENTIFIED BY \"<NEW_APP>\"; FLUSH PRIVILEGES;"'
-docker exec <C> sh -c 'MYSQL_PWD="<NEW_APP>" mysql -uapp -e "SELECT 1"'
-
-# 2) 换 root（管理凭据，备份走的也是它）——同样逐个 host，别漏掉 localhost
-docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "ALTER USER \"root\"@\"<HOST>\" IDENTIFIED BY \"<NEW_ROOT>\"; FLUSH PRIVILEGES;"'
-docker exec <C> sh -c 'MYSQL_PWD="<NEW_ROOT>" mysql -uroot -e "SELECT 1"'
+# 1) 用旧口令开**一个**会话，把上一步列出的每一条都改掉（示例是 root/app 各两条，
+#    按实际输出增删；语句之间用分号，全部在同一次 mysql 调用里）
+docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "
+  ALTER USER \"app\"@\"%\"         IDENTIFIED BY \"<NEW_APP>\";
+  ALTER USER \"app\"@\"localhost\" IDENTIFIED BY \"<NEW_APP>\";
+  ALTER USER \"root\"@\"%\"        IDENTIFIED BY \"<NEW_ROOT>\";
+  ALTER USER \"root\"@\"localhost\" IDENTIFIED BY \"<NEW_ROOT>\";
+  FLUSH PRIVILEGES;"'
 ```
 
-`<HOST>` 逐个取自第 0 步的输出，**一个都不能漏**：漏掉的那条记录还留着旧口令，既是没换干净，也可能让某条链路继续用旧凭据连上。改完再跑一次第 0 步的查询确认覆盖齐了。
+改完**分两条路验证**，因为它们认的是不同的 host 记录，只验一条会漏：
+
+```bash
+# 本地路径（socket，命中 @localhost 那条）
+docker exec <C> sh -c 'MYSQL_PWD="<NEW_ROOT>" mysql -uroot -e "SELECT 1"'
+# 网络路径（TCP，命中 @% 那条）——应用连的就是这条
+docker exec <C> sh -c 'MYSQL_PWD="<NEW_APP>" mysql -h127.0.0.1 -uapp -e "SELECT 1"'
+# 再跑一次第 0 步，确认没有漏掉的 host 记录
+```
 
 两个账号对应下一步要改的两处：`MYSQL_PASSWORD` + 连接串跟着 `app` 走，`MYSQL_ROOT_PASSWORD` 跟着 `root` 走。漏掉任一处，要么应用连不上，要么周期备份连不上。
 
