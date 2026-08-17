@@ -82,9 +82,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 观测点自己发不出 IPv6 报文时，「扫了但一个端口都没开」与「根本没扫成」在报告里
+      # 长得一模一样（openPorts: []）。前者是暴露面结论，后者什么都不能证明——混在一起读，
+      # 就会把一次没发生的扫描当成「IPv6 很干净」。所以这条排在缺目标判定之前：
+      # 观测点不成立的时候，目标配得对不对根本不影响结论。
+      - name: Verify this runner can originate IPv6
+        run: |
+          if ! ip -6 addr show scope global 2>/dev/null | grep -q 'inet6 '; then
+            echo "::error::本次未扫描：运行器自身没有全局 IPv6 地址，发不出 IPv6 报文。"
+            echo "这条失败与目标主机无关，**不能**读作「目标的 IPv6 没有开放端口」——扫描根本没发生。"
+            echo "换一个有 IPv6 出网的观测点才能真正巡检（自托管运行器接双栈网络，或外部扫描服务）。"
+            echo "只配 Secret 不换观测点，这个 job 仍然过不了。处置见 doc/debt.cds.md 的 E34。"
+            exit 1
+          fi
+          echo "运行器具备全局 IPv6，继续扫描。"
+
       # 与 IPv4 同一条纪律：证明不了就不算安全，缺目标判失败。
-      # IPv6 侧额外说清「主机压根没有 IPv6」这条岔路怎么走——否则这个 job 会永远红，
-      # 而一条永远红的检查最终的结局是所有人一起忽略整块看板。
       - name: Require off-host IPv6 target
         run: |
           if [ -z "$AUDIT_TARGET" ]; then
@@ -92,7 +105,7 @@ jobs:
             echo "需要在仓库 Secrets 配置 ${{ matrix.environment == 'cds' && 'CDS_EDGE_AUDIT_IPV6' || 'PRODUCTION_EDGE_AUDIT_IPV6' }}，值为该环境的**源站**全局 IPv6 地址。"
             echo "在主机上用 'ip -6 addr show scope global' 取；只取全局地址，fe80:: 开头的链路本地地址不对外、填了扫不到。"
             echo "若确认该主机没有全局 IPv6：这条不能靠留空变绿（留空与「忘了配」无法区分）。"
-            echo "处置见 doc/debt.cds.md 的 2026-08-17-ipv6-edge-audit-target-missing 一行。"
+            echo "处置见 doc/debt.cds.md 的 E34。"
             exit 1
           fi
 
