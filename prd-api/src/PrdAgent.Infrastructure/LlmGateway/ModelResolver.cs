@@ -1109,8 +1109,10 @@ public class ModelResolver : IModelResolver
             || x.Equals("img2img", StringComparison.OrdinalIgnoreCase)
             || x.Equals("vision_generation", StringComparison.OrdinalIgnoreCase)
             || x.Equals("image_layering", StringComparison.OrdinalIgnoreCase));
-        return !hasScenarioCapabilities
-               && logical.Capabilities.Contains("image_generation", StringComparer.OrdinalIgnoreCase);
+        var hasGenericImageCapability = logical.Capabilities.Any(x =>
+            x.Equals("image_generation", StringComparison.OrdinalIgnoreCase)
+            || x.Equals("image-gen", StringComparison.OrdinalIgnoreCase));
+        return !hasScenarioCapabilities && hasGenericImageCapability;
     }
 
     private static string? RequiredCapabilityForAppCaller(string appCallerCode)
