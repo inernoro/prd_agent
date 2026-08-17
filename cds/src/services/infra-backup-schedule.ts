@@ -341,36 +341,77 @@ export const REDIS_RDB_PATH_LINES: readonly string[] = [
 ];
 
 /**
+ * 「连上这个 redis 并把认证配好」——**唯一**判定源，探测与路径解析都从这里进。
+ *
+ * 顺序是这条规则的全部内容：**先裸连，只有服务器真的要求认证才去找凭据**。
+ *
+ * 反过来写（先从 env 取一个密码、export 了再连）在线上炸过一次，2026-08-17：
+ * 容器 env 里的 `REDIS_PASSWORD` 往往是 **CDS 注入给应用用的连接串变量**，
+ * 它的存在只说明「有人打算用这个口令连」，**不说明这个 redis 真开了 requirepass**。
+ * 拿它去 AUTH，无口令的服务器会明确拒绝（`ERR AUTH <password> called without any
+ * password configured`），而 PING 本身其实是通的——于是判据把一台健康的 redis
+ * 判成「连不上」，全站 redis 备份一轮全红。
+ *
+ * 另外两处形状同样是那次的教训：
+ *
+ * - **判据不能要求输出恰好等于 `PONG`**。redis-cli 会把 AUTH 的抱怨和 PONG 一起吐出来，
+ *   多一行就整体判死。这里改成「输出里有任意一行是 PONG」。
+ * - **候选凭据要拿服务器验，不能拿「env 里有没有」当验**。env 里那个可能是错的
+ *   （线上就有一台是 WRONGPASS），而进程命令行里躺着对的。所以逐个候选真连一次，
+ *   谁能换回 PONG 就用谁。
+ */
+export const REDIS_CONNECT_LINES: readonly string[] = [
+  // 先把继承来的 REDISCLI_AUTH 收起来：它也只是个候选，不该在裸连那一步生效。
+  'CDS_ORIG_AUTH="${REDISCLI_AUTH:-}"',
+  'unset REDISCLI_AUTH',
+  "cds_is_pong() { printf '%s\\n' \"$1\" | grep -qx PONG; }",
+  'cds_try_auth() { [ -n "$1" ] || return 1; REDISCLI_AUTH="$1" redis-cli PING 2>&1 | grep -qx PONG; }',
+  // PROCDIR 只是给回归留的注入点（容器里没人会设它）。这段 awk 是最容易写错的地方，
+  // 必须能拿真 shell 对着真的 NUL 分隔 cmdline 跑一遍，而不是断言「源码里有这行」——
+  // 那种断言在这段代码变成死分支时照样是绿的。
+  'cds_scan_requirepass() {',
+  '  PROCDIR="${CDS_BACKUP_PROC_DIR:-/proc}"',
+  '  for c in "$PROCDIR"/[0-9]*/cmdline; do',
+  '    [ -r "$c" ] || continue',
+  `    v=$(tr '\\0' '\\n' < "$c" | awk '/^--requirepass=/{sub(/^--requirepass=/,"");print;exit} /^--requirepass$/{getline;print;exit}')`,
+  '    [ -n "$v" ] && { printf %s "$v"; return 0; }',
+  '  done',
+  '  return 1',
+  '}',
+  'cds_hello=$(redis-cli PING 2>&1)',
+  'if ! cds_is_pong "$cds_hello"; then',
+  // 只有服务器明说「要认证」才去翻凭据；连不上就是连不上，别拿密码去治网络问题。
+  '  case "$cds_hello" in',
+  '    *NOAUTH*|*WRONGPASS*|*"Authentication required"*) ;;',
+  '    *) echo "redis 连不上: $cds_hello" >&2; exit 21;;',
+  '  esac',
+  '  CDS_AUTH=""',
+  '  if cds_try_auth "${REDIS_PASSWORD:-}"; then CDS_AUTH="$REDIS_PASSWORD"',
+  '  elif cds_try_auth "${REDIS_PASS:-}"; then CDS_AUTH="$REDIS_PASS"',
+  '  elif cds_try_auth "$CDS_ORIG_AUTH"; then CDS_AUTH="$CDS_ORIG_AUTH"',
+  '  else',
+  '    CDS_SCANNED=$(cds_scan_requirepass || true)',
+  '    cds_try_auth "$CDS_SCANNED" && CDS_AUTH="$CDS_SCANNED"',
+  '  fi',
+  '  [ -n "$CDS_AUTH" ] || { echo "redis 要求认证，但没有找到能通过认证的凭据" >&2; exit 22; }',
+  // 密码只在容器内展开，不进宿主命令行、不进日志。
+  '  export REDISCLI_AUTH="$CDS_AUTH"',
+  'fi',
+];
+
+/**
  * 只解析路径并打印出来（不触发 BGSAVE）。恢复流程要知道「该往哪写」，
- * 但不该顺手给人家存一次盘。凭据解析沿用探测脚本那一段。
+ * 但不该顺手给人家存一次盘。连接与认证沿用同一份判定源。
  */
 export function buildRedisRdbPathScript(): string {
-  const probe = buildRedisBackupProbeScript().split('\n');
-  const credEnd = probe.findIndex((l) => l.startsWith('export REDISCLI_AUTH'));
-  return [...probe.slice(0, credEnd + 1), ...REDIS_RDB_PATH_LINES, 'printf "%s" "$RDB"'].join('\n');
+  return [...REDIS_CONNECT_LINES, ...REDIS_RDB_PATH_LINES, 'printf "%s" "$RDB"'].join('\n');
 }
 
 export function buildRedisBackupProbeScript(): string {
   return [
-  // 凭据：env 优先，其次扫容器内进程命令行里的 --requirepass。
-  'A="${REDIS_PASSWORD:-${REDIS_PASS:-$REDISCLI_AUTH}}"',
-  'if [ -z "$A" ]; then',
-  // PROCDIR 只是给回归留的注入点（容器里没人会设它）。抽取这段 awk 是最容易写错
-  // 的地方，必须能拿真 shell 对着真的 NUL 分隔 cmdline 跑一遍，而不是断言「源码里
-  // 有这行」——那种断言在这段代码变成死分支时照样是绿的。
-  '  PROCDIR="${CDS_BACKUP_PROC_DIR:-/proc}"',
-  '  for c in "$PROCDIR"/[0-9]*/cmdline; do',
-  '    [ -r "$c" ] || continue',
-  `    A=$(tr '\\0' '\\n' < "$c" | awk '/^--requirepass=/{sub(/^--requirepass=/,"");print;exit} /^--requirepass$/{getline;print;exit}')`,
-  '    [ -n "$A" ] && break',
-  '  done',
-  'fi',
-  'export REDISCLI_AUTH="$A"',
+  ...REDIS_CONNECT_LINES,
   // 落盘时间的下界。容器自己的时钟，避免宿主与容器时钟不一致。
   'start=$(date +%s)',
-  // 连得上且认证通过，才谈得上后面的事。
-  'ping=$(redis-cli PING 2>&1) || { echo "redis-cli 调用失败: $ping" >&2; exit 21; }',
-  'case "$ping" in PONG) ;; *) echo "redis 不可用或认证失败: $ping" >&2; exit 22;; esac',
   'redis-cli BGSAVE >/dev/null 2>&1 || { echo "BGSAVE 调用失败" >&2; exit 23; }',
   'i=0; ip=""',
   'while [ "$i" -lt 90 ]; do',
