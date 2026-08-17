@@ -2603,6 +2603,11 @@ export class ContainerService {
     const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
     assertInfraAuthenticationConfigured({
       dockerImage: service.dockerImage,
+      id: service.id,
+      name: service.name,
+      basePresetId: service.basePresetId,
+      containerName: service.containerName,
+      containerPort: service.containerPort,
       env: resolvedEnv,
       command: resolvedCommand,
       entrypoint: resolvedEntrypoint,

@@ -76,6 +76,24 @@ describe('认证判定', () => {
     expect(detectInfraKind('some/unknown-image:1')).toBe('other');
   });
 
+  it('不透明镜像按运行态容器名与目标端口识别数据库', () => {
+    expect(detectInfraKind('sha256:opaque', { containerName: 'cds-infra-orders-mysql' }))
+      .toBe('mysql');
+    expect(detectInfraKind('private/image@sha256:opaque', {
+      runtimePorts: '0.0.0.0:10001->27017/tcp',
+    })).toBe('mongo');
+
+    const report = auditInfraExposure([svc({
+      id: 'opaque-db',
+      containerName: 'custom-service',
+      dockerImage: 'sha256:opaque',
+      runtimePorts: '0.0.0.0:10442->3306/tcp',
+      env: {},
+    })]);
+    expect(report.findings[0].kind).toBe('mysql');
+    expect(report.findings[0].severity).toBe('critical');
+  });
+
   /**
    * 真实假阳性（2026-08-16）：某 redis 台账 env 为空、被判成「无认证 critical」，
    * 实际连上去是 `NOAUTH Authentication required`——密码写在启动参数里。

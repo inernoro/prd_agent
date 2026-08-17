@@ -2,6 +2,11 @@ import { detectInfraKind } from './infra-exposure-audit.js';
 
 export interface InfraAuthInput {
   dockerImage: string;
+  id?: string;
+  name?: string;
+  basePresetId?: string;
+  containerName?: string;
+  containerPort?: number;
   env?: Record<string, string> | null;
   command?: string | string[];
   entrypoint?: string | string[];
@@ -26,7 +31,7 @@ function commandText(input: InfraAuthInput): string {
  * 无认证实例，避免在没有恢复副本时擅自重建现有数据容器。
  */
 export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void {
-  const kind = detectInfraKind(input.dockerImage);
+  const kind = detectInfraKind(input.dockerImage, input);
   const env = input.env || {};
   const command = commandText(input);
   let configured = true;

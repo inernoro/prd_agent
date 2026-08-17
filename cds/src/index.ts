@@ -366,7 +366,7 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
       for (const line of (ps.stdout || '').split('\n')) {
         const [name, image, ports, state] = line.split('\t');
         if (!name || !image) continue;
-        if (detectInfraKind(image) === 'other') continue;
+        if (detectInfraKind(image, { containerName: name, runtimePorts: ports }) === 'other') continue;
         rows.push({ name, image, ports: ports ?? '', running: (state || '').toLowerCase() === 'running' });
       }
       if (rows.length === 0) return;

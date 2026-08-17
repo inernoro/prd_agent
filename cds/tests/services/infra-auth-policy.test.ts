@@ -33,6 +33,19 @@ describe('基础设施认证硬门禁', () => {
     }
   });
 
+  it('不透明镜像仍按服务元数据与容器端口执行认证门禁', () => {
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'sha256:opaque', id: 'primary-db', containerPort: 27017,
+    })).toThrow('拒绝创建无认证的 mongo');
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'private/image@sha256:opaque', name: '业务 MySQL', containerPort: 8080,
+    })).toThrow('拒绝创建无认证的 mysql');
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'private/image@sha256:opaque', basePresetId: 'redis', containerPort: 8080,
+      command: ['redis-server', '--requirepass', 'secret'],
+    })).not.toThrow();
+  });
+
   it('不干预非数据基础设施', () => {
     expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'minio/minio:latest' }))
       .not.toThrow();

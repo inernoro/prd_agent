@@ -28,6 +28,15 @@ import { isPubliclyPublished } from './infra-publish.js';
 
 export type InfraKind = 'mongo' | 'redis' | 'mysql' | 'postgres' | 'other';
 
+export interface InfraKindHints {
+  id?: string;
+  name?: string;
+  basePresetId?: string;
+  containerName?: string;
+  containerPort?: number;
+  runtimePorts?: string | null;
+}
+
 export type ExposureSeverity = 'critical' | 'warn' | 'ok';
 
 export interface InfraExposureInput {
@@ -78,13 +87,30 @@ export interface InfraExposureReport {
   signature: string;
 }
 
-/** 按镜像名判类型。判不出给 other——不猜。 */
-export function detectInfraKind(dockerImage: string): InfraKind {
-  const l = (dockerImage || '').toLowerCase();
-  if (l.includes('mongo')) return 'mongo';
-  if (l.includes('redis')) return 'redis';
-  if (l.includes('mysql') || l.includes('mariadb')) return 'mysql';
-  if (l.includes('postgres') || l.includes('timescale')) return 'postgres';
+/**
+ * 按实际服务元数据识别数据服务。
+ *
+ * 私有仓库与摘要镜像的名字可能完全不含产品名，不能只看 image。端口和 CDS 服务
+ * 元数据同样是容器创建时真正生效的配置，因此作为有限、可解释的后备判据。
+ */
+export function detectInfraKind(dockerImage: string, hints: InfraKindHints = {}): InfraKind {
+  const labels = [dockerImage, hints.id, hints.name, hints.basePresetId, hints.containerName]
+    .map((value) => String(value || '').toLowerCase());
+  const includes = (...needles: string[]): boolean => labels.some((label) => (
+    needles.some((needle) => label.includes(needle))
+  ));
+  if (includes('mongo')) return 'mongo';
+  if (includes('redis')) return 'redis';
+  if (includes('mysql', 'mariadb')) return 'mysql';
+  if (includes('postgres', 'timescale')) return 'postgres';
+
+  const publishedContainerPorts = [...String(hints.runtimePorts || '').matchAll(/->(\d+)\//g)]
+    .map((match) => Number(match[1]));
+  const ports = new Set([hints.containerPort, ...publishedContainerPorts].filter(Number.isFinite));
+  if (ports.has(27017)) return 'mongo';
+  if (ports.has(6379)) return 'redis';
+  if (ports.has(3306)) return 'mysql';
+  if (ports.has(5432)) return 'postgres';
   return 'other';
 }
 
@@ -355,7 +381,11 @@ export function auditInfraExposure(
   for (const svc of inputs) {
     // 停掉的容器不占端口，不构成暴露面
     if (svc.running === false) continue;
-    const kind = detectInfraKind(svc.dockerImage);
+    const kind = detectInfraKind(svc.dockerImage, {
+      id: svc.id,
+      containerName: svc.containerName,
+      runtimePorts: svc.runtimePorts,
+    });
     const boundHosts = parsePublishedHosts(svc.runtimePorts);
     // 没发布任何端口 = 完全不对外，直接跳过（区别于「读不到」）
     if (svc.runtimePorts != null && boundHosts.length === 0) continue;
