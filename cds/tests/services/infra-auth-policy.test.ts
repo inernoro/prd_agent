@@ -78,6 +78,12 @@ describe('基础设施认证硬门禁', () => {
     expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'mysql:8', env: { MYSQL_PASSWORD: 'secret' },
     })).toThrow('拒绝创建无认证');
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'mysql:8', env: { MYSQL_USER: 'app', MYSQL_PASSWORD: 'secret' },
+    })).toThrow('拒绝创建无认证');
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'mariadb:11', env: { MARIADB_USER: 'app', MARIADB_PASSWORD: 'secret' },
+    })).toThrow('拒绝创建无认证');
   });
 
   it('不透明镜像仍按服务元数据与容器端口执行认证门禁', () => {

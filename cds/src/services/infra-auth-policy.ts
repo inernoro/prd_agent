@@ -42,9 +42,14 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
   } else if (kind === 'postgres') {
     configured = hasValue(env, 'POSTGRES_PASSWORD', 'PGPASSWORD');
   } else if (kind === 'mysql') {
-    configured = hasValue(env, 'MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD')
-      || (hasValue(env, 'MYSQL_USER') && hasValue(env, 'MYSQL_PASSWORD'))
+    const hasExplicitRootPassword = hasValue(env, 'MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD');
+    const hasRandomRootPassword = hasValue(env, 'MYSQL_RANDOM_ROOT_PASSWORD', 'MARIADB_RANDOM_ROOT_PASSWORD');
+    const hasApplicationUser = (hasValue(env, 'MYSQL_USER') && hasValue(env, 'MYSQL_PASSWORD'))
       || (hasValue(env, 'MARIADB_USER') && hasValue(env, 'MARIADB_PASSWORD'));
+    // The official image refuses a first boot that only provides an
+    // application user. Require an explicit root password, or a generated
+    // root password together with a usable application account.
+    configured = hasExplicitRootPassword || (hasRandomRootPassword && hasApplicationUser);
   } else if (kind === 'redis') {
     const effective = `${command} ${env.REDIS_ARGS || ''} ${env.REDIS_EXTRA_FLAGS || ''}`;
     configured = /(?:^|\s)--requirepass(?:=|\s+)\S+/.test(effective)

@@ -471,6 +471,16 @@ describe('Global Agent Keys — 统一授权作用域', () => {
     const other = await request(server, 'PUT', '/api/projects/other-proj/preview-mode', { mode: 'port' }, { 'X-AI-Access-Key': key });
     expect(other.status).toBe(403);
     expect(other.body.error).toBe('project_mismatch');
+    const otherDetail = await request(
+      server, 'GET', '/api/projects/other-proj', undefined, { 'X-AI-Access-Key': key },
+    );
+    expect(otherDetail.status).toBe(403);
+    expect(otherDetail.body.error).toBe('project_mismatch');
+    const otherKeys = await request(
+      server, 'GET', '/api/projects/other-proj/agent-keys', undefined, { 'X-AI-Access-Key': key },
+    );
+    expect(otherKeys.status).toBe(403);
+    expect(otherKeys.body.error).toBe('project_mismatch');
     // 仍可建项目(POST /projects 先看 cdsAccess.canCreateProjects,不被别名 cdsProjectKey 挡)
     const create = await request(server, 'POST', '/api/projects', { name: 'From Single Scoped' }, { 'X-AI-Access-Key': key });
     expect(create.status).toBe(201);

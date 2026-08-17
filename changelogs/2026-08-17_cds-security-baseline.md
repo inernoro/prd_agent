@@ -24,3 +24,5 @@
 | security | cds | 基础设施列表脱敏启动参数凭据并按 Docker 真实命令识别认证 |
 | fix | cds | 按 MySQL 实际 root 或应用账号组合判断认证状态，避免随机 root 配置被误报 |
 | security | cds | 移除交付源码、脚本、文档和演示中的固定部署域名并增加仓库守卫 |
+| security | cds | 项目级与受限全局 Agent Key 的读写路由统一执行项目作用域校验 |
+| fix | cds | MySQL 新建门禁要求有效 root 初始化凭据，禁止仅应用账号的不可启动配置 |
