@@ -31,7 +31,7 @@
 #   cds.D      → Dashboard (别名)
 #   *.D        → Preview   (任意子域名 = 分支预览)
 #
-# 示例: CDS_ROOT_DOMAINS="miduo.org,mycds.net"
+# 示例: CDS_ROOT_DOMAINS="example.com,example.net"
 # ──────────────────────────────────────────────────────────────
 
 # Users often run `sh ./exec_cds.sh ...`, which bypasses the shebang. This
@@ -2020,7 +2020,7 @@ init_cmd() {
 
   new_doms="$(read_default CDS_ROOT_DOMAINS "${cur_doms:-}")"
   if [ -z "$new_doms" ]; then
-    err "CDS_ROOT_DOMAINS 不能为空 (示例: miduo.org,mycds.net)"
+    err "CDS_ROOT_DOMAINS 不能为空 (示例: example.com,example.net)"
     exit 1
   fi
 
@@ -2633,7 +2633,7 @@ connect_cmd() {
     echo "  或: ./exec_cds.sh connect <base64-连接码>   (从 Dashboard 复制)"
     echo
     echo "  示例:"
-    echo "    ./exec_cds.sh connect https://cds.miduo.org abc123..."
+    echo "    ./exec_cds.sh connect https://cds.example.com abc123..."
     echo "    ./exec_cds.sh connect eyJtYXN0ZXIiOiJodHRwc..."
     echo
     echo "  获取 token: 在主节点执行 ./exec_cds.sh issue-token"
@@ -3254,7 +3254,7 @@ help_cmd() {
                                          - Dashboard 用户名 (默认 admin)
                                          - Dashboard 密码
                                          - JWT 密钥 (自动生成)
-                                         - 根域名 (例: miduo.org)
+                                         - 根域名 (例: example.com)
                                       3) 写入 .cds.env + 生成 nginx 配置
                                     是幂等的: 跑两次、跑到一半 Ctrl+C 再跑都 OK
 
@@ -3320,7 +3320,7 @@ help_cmd() {
   │                                                                 │
   │   ./exec_cds.sh connect <主节点 URL> <token>                    │
   │                                                                 │
-  │   例: ./exec_cds.sh connect https://cds.miduo.org abc123...     │
+  │   例: ./exec_cds.sh connect https://cds.example.com abc123...   │
   │                                                                 │
   │   → 自动: 验证主可达 → 写 .cds.env → 重启进 executor 模式 →     │
   │           注册到主 → 启动心跳                                    │
@@ -3400,8 +3400,8 @@ help_cmd() {
     cds.D                    → CDS Dashboard (别名)
     *.D                      → 任意子域名 = 一个分支预览页面
 
-  例: CDS_ROOT_DOMAINS="miduo.org,mycds.net"
-  → 同时支持: miduo.org, cds.miduo.org, *.miduo.org,
+  例: CDS_ROOT_DOMAINS="example.com,example.net"
+  → 同时支持: example.com, cds.example.com, *.example.com,
               mycds.net, cds.mycds.net, *.mycds.net
 
 ──────────────────────────────────────────────────────────────────
@@ -3741,7 +3741,7 @@ case "$CMD" in
     info "[uninstall-forwarder] (可选)sudo systemctl restart cds-master"
 
     info "[uninstall-forwarder] 卸载完成。仓库内 .cds/forwarder-routes.json 留着无害,删可选。"
-    info "[uninstall-forwarder] 验收:curl https://main-prd-agent.miduo.org/ 应仍 200(走回 master 5500)"
+    info "[uninstall-forwarder] 验收：访问动态预览地址应仍返回 200（走回 master 5500）"
     ;;
   migrate-env|migrate)
     # 2026-04-27: 把杂乱的环境源（.cds.env、./.env、~/.bashrc、当前 shell）

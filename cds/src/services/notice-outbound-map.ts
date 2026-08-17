@@ -30,7 +30,7 @@ export interface NoticeOutboundConfig {
   /** 定向投递给某个 MAP 用户；不填则按 MAP 的默认受众规则。 */
   targetUserId?: string;
   /**
-   * CDS 自己的公网入口（如 `https://cds.miduo.org`）。
+   * CDS 自己的公网入口（如 `https://cds.example.com`）。
    *
    * 站内信的 href 是同源相对路径（`/release-center?...`），那是**给 CDS 看的**。
    * 原样发给 MAP，MAP 会按自己的 origin 展开——点开落到 MAP 的 /release-center，

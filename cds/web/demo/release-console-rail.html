@@ -694,8 +694,8 @@ main { display: flex; flex-direction: column; min-height: 0; min-width: 0; backg
         { sha: 'v3.14.0', subject: '修正周报聚合口径 · 2f04c18' }
       ],
       envs: [
-        { id: 'prod', name: '正式环境', group: '常规', url: 'map.miduo.org', current: 'v3.14.0', health: 'ok', ahead: 3, confirm: true },
-        { id: 'stage', name: '预发环境', group: '常规', url: 'stage.miduo.org', current: 'v3.14.2', health: 'ok', ahead: 0, confirm: false },
+        { id: 'prod', name: '正式环境', group: '常规', url: 'map.example.com', current: 'v3.14.0', health: 'ok', ahead: 3, confirm: true },
+        { id: 'stage', name: '预发环境', group: '常规', url: 'stage.example.com', current: 'v3.14.2', health: 'ok', ahead: 0, confirm: false },
         { id: 'c-miduo', name: '客户 · 米多内网', group: '客户', url: 'map.miduo.local', current: 'v3.13.7', health: 'idle', ahead: 7, confirm: true },
         { id: 'c-hd', name: '客户 · 华东制造', group: '客户', url: 'map.hd-mfg.cn', current: 'v3.12.4', health: 'bad', ahead: 12, confirm: true }
       ]
@@ -706,7 +706,7 @@ main { display: flex; flex-direction: column; min-height: 0; min-width: 0; backg
         { sha: 'v1.8.0', subject: '影子比对补采样率 · c40aa19' },
         { sha: 'v1.7.3', subject: '修正 401 重试 · 81bd5e4' }
       ],
-      envs: [{ id: 'prod', name: '正式环境', group: '常规', url: 'gw.miduo.org', current: 'v1.8.0', health: 'ok', ahead: 0, confirm: true }]
+      envs: [{ id: 'prod', name: '正式环境', group: '常规', url: 'gw.example.com', current: 'v1.8.0', health: 'ok', ahead: 0, confirm: true }]
     },
     'cds': {
       name: 'cds', repo: 'inernoro/cds', badge: '平台', branch: 'main',
@@ -715,8 +715,8 @@ main { display: flex; flex-direction: column; min-height: 0; min-width: 0; backg
         { sha: 'v2026.08.09', subject: '修正分支预览路由 · 77c0a55' }
       ],
       envs: [
-        { id: 'prod', name: '正式环境', group: '常规', url: 'cds.miduo.org', current: 'v2026.08.09', health: 'ok', ahead: 1, confirm: true },
-        { id: 'canary', name: '灰度环境', group: '常规', url: 'cds-canary.miduo.org', current: 'v2026.08.12', health: 'ok', ahead: 0, confirm: false }
+        { id: 'prod', name: '正式环境', group: '常规', url: 'cds.example.com', current: 'v2026.08.09', health: 'ok', ahead: 1, confirm: true },
+        { id: 'canary', name: '灰度环境', group: '常规', url: 'cds-canary.example.com', current: 'v2026.08.12', health: 'ok', ahead: 0, confirm: false }
       ]
     }
   };
@@ -1271,7 +1271,7 @@ main { display: flex; flex-direction: column; min-height: 0; min-width: 0; backg
         '命令  ' + STEPS[run.stepIndex].cmd,
         '',
         '判据（取自日志，非推测）',
-        '- 下载地址 https://git.miduo.org/https://inernoro.github.io/prd_agent/dist-' + run.sha + '.zip',
+        '- 下载地址 https://proxy.example.com/https://inernoro.github.io/prd_agent/dist-' + run.sha + '.zip',
         '- 同一地址出现两次 https://，形如「镜像前缀 + 绝对地址」',
         '- HTTP 404 共 5 次，间隔 2s；退出码 22（curl：服务端返回 >= 400）',
         '',
@@ -1307,7 +1307,7 @@ main { display: flex; flex-direction: column; min-height: 0; min-width: 0; backg
       '结论  拉取产物失败：下载地址返回 404，重试 5 次后放弃',
       '',
       '判据（取自日志，非推测）',
-      '- 下载地址 https://git.miduo.org/https://inernoro.github.io/prd_agent/dist-' + item.sha + '.zip',
+      '- 下载地址 https://proxy.example.com/https://inernoro.github.io/prd_agent/dist-' + item.sha + '.zip',
       '- 同一地址出现两次 https://，形如「镜像前缀 + 绝对地址」',
       '',
       '要求',

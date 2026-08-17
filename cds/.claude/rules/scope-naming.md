@@ -55,7 +55,7 @@ CDS 所有 UI 文案、API label、文档、commit message **只允许**用下�
 
 | 路径 | 作用域 | 必须参数 | 例 |
 |---|---|---|---|
-| `/cds-settings.html` | 系统级 | 无 | `https://cds.miduo.org/cds-settings.html` |
+| `/cds-settings.html` | 系统级 | 无 | `https://cds.example.com/cds-settings.html` |
 | `/settings.html` | **项目级** | `?project=<id>`，否则跳 `/project-list` | `/settings.html?project=prd-agent` |
 | `/index.html`（分支列表） | 项目级 | `?project=<id>` | `/index.html?project=prd-agent` |
 | `/project-list.html` | 系统级（项目入口） | 无 | `/project-list` |

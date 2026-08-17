@@ -206,11 +206,11 @@ export class ProxyService {
    *      v3 是 generator 唯一产出格式，所有新链接走这条。
    *
    *   ② v1 兼容：state.branches[slug] 直查。覆盖 legacy 项目（entry id
-   *      就是裸 slug）+ 用户外发的 v1 老链接（如 `claude-fix-foo.miduo.org`）。
+   *      就是裸 slug）+ 用户外发的 v1 老链接（如 `claude-fix-foo.example.com`）。
    *
    *   ③ v2 兼容：state.branches[`${project.slug}-${slug}`] 拼接尝试。
    *      覆盖 ceb2c01～本次改造之间外发的 v2 链接
-   *      （如 `prd-agent-claude-fix-foo.miduo.org`）。
+   *      （如 `prd-agent-claude-fix-foo.example.com`）。
    *
    * 三档都 miss 才返回 undefined（→ proxy 走 auto-build）。优先 v3 是
    * 关键：避免 v3 应该命中的请求被 v1/v2 旧规则误抢。
@@ -2210,10 +2210,10 @@ ${shouldAutoRefresh ? `;(function(){
   }
 
   /**
-   * Absolute base URL of the CDS dashboard host (e.g. "https://cds.miduo.org").
+   * Absolute base URL of the CDS dashboard host (e.g. "https://cds.example.com").
    *
    * These diagnostic pages are served on the *preview* subdomain
-   * (`<slug>.miduo.org`), so a relative href like `/project-list` would resolve
+   * (`<slug>.<root-domain>`), so a relative href like `/project-list` would resolve
    * against the preview host and land nowhere. The dashboard lives on a
    * different host (dashboardDomain / mainDomain), so the "返回 CDS 控制台" /
    * "查看加载页预览" links must be absolute. Same source of truth as

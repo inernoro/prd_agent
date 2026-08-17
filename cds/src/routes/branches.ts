@@ -1770,7 +1770,7 @@ export interface SmokeRunResult {
 
 export interface SmokeRunOptions {
   branch: BranchEntry;
-  previewHost: string;        // e.g. "https://my-branch.miduo.org"
+  previewHost: string;        // e.g. "https://my-branch.example.com"
   accessKey: string;           // resolved AI_ACCESS_KEY
   impersonateUser?: string;    // default 'admin'
   skip?: string;               // comma-separated smoke keys to skip
@@ -5745,7 +5745,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // projects auto-prefix with the project slug so two projects can
       // each register "main" without colliding — this matches the
       // already-scoped worktree layout below. The preview domain still
-      // resolves via `<branchId>.miduo.org`, no extra subdomain config.
+      // resolves via `<branchId>.<root-domain>`, no extra subdomain config.
       const slugified = StateService.slugify(branch);
       const id = targetProject.legacyFlag
         ? slugified
@@ -19058,7 +19058,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Bug I (LOW, 2026-05-10): when ?project= is missing AND the id exists
     // in multiple projects, try to disambiguate from the Referer header so
     // that POST /api/infra/mysql/restart issued from
-    //   https://cds.miduo.org/projects/<projId>/...
+    //   https://cds.example.com/projects/<projId>/...
     // resolves to the project the user is currently viewing instead of
     // unconditionally erroring with "exists in multiple projects".
     const referer = (req.headers.referer || (req.headers as any).referrer) as string | undefined;

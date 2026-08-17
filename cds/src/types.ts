@@ -799,8 +799,8 @@ export interface BranchEntry {
    *
    * Use cases:
    *  - Stable URLs for third-party webhook receivers that can't be reconfigured
-   *  - Memorable demo links ("demo.miduo.org" vs ugly branch slugs)
-   *  - Front-end config pointing at hardcoded `api.miduo.org`
+   *  - Memorable demo links ("demo.example.com" vs ugly branch slugs)
+   *  - Front-end config pointing at a fixed API host
    *
    * Validation (enforced by routes/branches.ts PUT handler):
    *  - Each alias matches /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/ (DNS-safe)
@@ -3704,14 +3704,14 @@ export interface GlobalAgentKey {
  * streaming endpoints (see /api/data-migrations/local-dump / local-restore).
  *
  * Auth = the remote CDS's AI_ACCESS_KEY (same key used by the AI bridge).
- * Transport = HTTPS (preview.miduo.org terminates TLS), so the stream is
+ * Transport = HTTPS (the configured preview host terminates TLS), so the stream is
  * encrypted end-to-end without any manual SSH/tunnel setup.
  */
 export interface CdsPeer {
   id: string;
   /** Human-readable name, e.g. "生产 CDS" */
   name: string;
-  /** Base URL of the remote CDS API, e.g. "https://main.miduo.org" */
+  /** Base URL of the remote CDS API, e.g. "https://main.example.com" */
   baseUrl: string;
   /** AI_ACCESS_KEY of the remote CDS (sent as X-AI-Access-Key header) */
   accessKey: string;
@@ -4080,7 +4080,7 @@ export interface CdsConfig {
    */
   githubApp?: GitHubAppConfig;
   /**
-   * Public base URL of this CDS install (e.g. "https://cds.miduo.org").
+   * Public base URL of this CDS install (e.g. "https://cds.example.com").
    * Used as the `details_url` in GitHub check runs and for the
    * GitHub App install-callback redirect. Falls back to the
    * CDS_PUBLIC_BASE_URL env var consumed by auth.ts.

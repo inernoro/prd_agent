@@ -60,6 +60,9 @@ describe('认证判定', () => {
       MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'x',
     })).toBe(true);
     expect(detectInfraAuth('mysql', { MYSQL_ROOT_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('mysql', {
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes', MYSQL_USER: 'app', MYSQL_PASSWORD: 'x',
+    })).toBe(true);
     expect(detectInfraAuth('postgres', { POSTGRES_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('redis', { REDIS_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('sqlserver', { MSSQL_SA_PASSWORD: 'x' })).toBe(true);
@@ -78,6 +81,8 @@ describe('认证判定', () => {
   it('空 env 判为无认证', () => {
     expect(detectInfraAuth('mongo', {})).toBe(false);
     expect(detectInfraAuth('redis', undefined)).toBe(false);
+    expect(detectInfraAuth('mysql', { MYSQL_RANDOM_ROOT_PASSWORD: 'yes' })).toBe(false);
+    expect(detectInfraAuth('mysql', { MYSQL_PASSWORD: 'x' })).toBe(false);
     expect(detectInfraAuth('sqlserver', {})).toBe(false);
     expect(detectInfraAuth('clickhouse', {})).toBe(false);
     expect(detectInfraAuth('rabbitmq', {})).toBe(false);

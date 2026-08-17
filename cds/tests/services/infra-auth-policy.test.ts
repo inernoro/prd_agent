@@ -15,6 +15,14 @@ describe('基础设施认证硬门禁', () => {
       dockerImage: 'mysql:8', env: { MYSQL_ROOT_PASSWORD: 'secret' },
     })).not.toThrow();
     expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'mysql:8',
+      env: {
+        MYSQL_RANDOM_ROOT_PASSWORD: 'yes',
+        MYSQL_USER: 'app',
+        MYSQL_PASSWORD: 'secret',
+      },
+    })).not.toThrow();
+    expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'redis:7',
       env: { REDIS_PASSWORD: 'secret' },
       command: ['sh', '-c', 'exec redis-server --requirepass "$REDIS_PASSWORD"'],
@@ -61,6 +69,15 @@ describe('基础设施认证硬门禁', () => {
       expect(() => assertInfraAuthenticationConfigured({ dockerImage }))
         .toThrow('拒绝创建无认证');
     }
+  });
+
+  it('拒绝只有随机 root 开关或孤立应用密码的 MySQL', () => {
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'mysql:8', env: { MYSQL_RANDOM_ROOT_PASSWORD: 'yes' },
+    })).toThrow('拒绝创建无认证');
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'mysql:8', env: { MYSQL_PASSWORD: 'secret' },
+    })).toThrow('拒绝创建无认证');
   });
 
   it('不透明镜像仍按服务元数据与容器端口执行认证门禁', () => {

@@ -42,7 +42,9 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
   } else if (kind === 'postgres') {
     configured = hasValue(env, 'POSTGRES_PASSWORD', 'PGPASSWORD');
   } else if (kind === 'mysql') {
-    configured = hasValue(env, 'MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD');
+    configured = hasValue(env, 'MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD')
+      || (hasValue(env, 'MYSQL_USER') && hasValue(env, 'MYSQL_PASSWORD'))
+      || (hasValue(env, 'MARIADB_USER') && hasValue(env, 'MARIADB_PASSWORD'));
   } else if (kind === 'redis') {
     const effective = `${command} ${env.REDIS_ARGS || ''} ${env.REDIS_EXTRA_FLAGS || ''}`;
     configured = /(?:^|\s)--requirepass(?:=|\s+)\S+/.test(effective)

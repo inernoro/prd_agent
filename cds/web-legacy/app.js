@@ -7676,7 +7676,7 @@ function openAddPeerForm(prefill) {
         <input id="peerName" class="form-input mc-input" placeholder="名称 (如: 生产 CDS)" value="${esc(prefill?.name || '')}">
       </div>
       <div class="form-row mc-row">
-        <input id="peerBaseUrl" class="form-input mc-input" placeholder="https://main.miduo.org" value="${esc(prefill?.baseUrl || '')}">
+        <input id="peerBaseUrl" class="form-input mc-input" placeholder="https://main.example.com" value="${esc(prefill?.baseUrl || '')}">
       </div>
       <div class="form-row mc-row">
         <input id="peerAccessKey" class="form-input mc-input" placeholder="${editingId ? '留空则保留现有密钥' : 'AI 访问密钥 (remote AI_ACCESS_KEY)'}" style="font-family:monospace">

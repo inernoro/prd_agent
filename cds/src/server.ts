@@ -2425,7 +2425,7 @@ export function createServer(deps: ServerDeps): express.Express {
         // ── SECURITY U/V (2026-05-10): resolve source project from preview host ──
         //
         // The /_cds proxy injects `x-cds-source-host` carrying the original
-        // preview host (e.g. `main-prd-agent.miduo.org`). We strip the
+        // preview host (e.g. `main-prd-agent.example.com`). We strip the
         // configured root domain and find the project whose `slug` is the
         // longest suffix of the remaining label. The result is stashed on
         // `req._cdsSourceProject` for downstream:
@@ -2462,7 +2462,7 @@ export function createServer(deps: ServerDeps): express.Express {
           // Strip any of the configured root domains. We don't have direct
           // access to proxy.config.rootDomains here, but the host always ends
           // in a known suffix that the proxy already validated upstream — we
-          // just need the label portion before `.miduo.org` / `.example.com`.
+          // just need the label portion before the configured root domain.
           // Strategy: try every project's slug; pick the one that is either
           // exactly `hostNoPort` after stripping `.<something>`, or appears
           // as `-<slug>.<root>` suffix. We match by trying the longest slug
@@ -2733,7 +2733,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
           // Accept both project id and slug as valid identifiers for the
           // current source project — a widget loaded from
-          // main-mdimp.miduo.org resolves sourceProjectId=<hash> + slug=mdimp,
+          // main-mdimp.example.com resolves sourceProjectId=<hash> + slug=mdimp,
           // but the widget script may request /api/projects/<slug>.
           // Without slug acceptance the bypass filter would 403 the widget's
           // own project (Bug AD: GET /api/projects/<slug> rejected).

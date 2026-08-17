@@ -363,7 +363,9 @@ export function detectInfraAuth(
       return has('REDIS_PASSWORD', 'REDIS_PASS', 'REDISCLI_AUTH')
         || hasFlagValue('--requirepass', '--user', '--aclfile');
     case 'mysql':
-      return has('MYSQL_ROOT_PASSWORD', 'MYSQL_PASSWORD', 'MARIADB_ROOT_PASSWORD');
+      return has('MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD')
+        || (has('MYSQL_USER') && has('MYSQL_PASSWORD'))
+        || (has('MARIADB_USER') && has('MARIADB_PASSWORD'));
     case 'postgres':
       return has('POSTGRES_PASSWORD', 'PGPASSWORD');
     case 'sqlserver':

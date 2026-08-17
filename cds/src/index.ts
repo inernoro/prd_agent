@@ -4260,7 +4260,7 @@ function buildBranchAbandonedPageHtml(opts: {
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.
-// Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
+// Derive the preview host ("foo.example.com" → "example.com") so links work
 // under any configured root domain without hardcoding.
 function derivePreviewHost(host: string): string | null {
   const rootDomains = config.rootDomains || (config.previewDomain ? [config.previewDomain] : []);

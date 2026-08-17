@@ -34,6 +34,20 @@ function sourceFiles(root: string): string[] {
   return out;
 }
 
+function shippedTextFiles(root: string): string[] {
+  const out: string[] = [];
+  if (!fs.existsSync(root)) return out;
+  const stat = fs.statSync(root);
+  if (stat.isFile()) return [root];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'tests') continue;
+    const absolute = path.join(root, entry.name);
+    if (entry.isDirectory()) out.push(...shippedTextFiles(absolute));
+    else if (entry.isFile() && /\.(?:ts|tsx|js|html|md|sh|service)$/.test(entry.name)) out.push(absolute);
+  }
+  return out;
+}
+
 describe('运行时域名配置', () => {
   it('生产源码字符串不携带部署域名或宿主地址', () => {
     const srcRoots = [
@@ -60,5 +74,28 @@ describe('运行时域名配置', () => {
       visit(tree);
     }
     expect(hits, '部署域名必须由环境变量、连接台账或请求 Host 动态提供').toEqual([]);
+  });
+
+  it('交付源码、脚本、文档和演示不携带真实部署域名', () => {
+    const roots = [
+      path.resolve(process.cwd(), 'src'),
+      path.resolve(process.cwd(), 'web/src'),
+      path.resolve(process.cwd(), 'web/demo'),
+      path.resolve(process.cwd(), 'web-legacy'),
+      path.resolve(process.cwd(), 'scripts'),
+      path.resolve(process.cwd(), 'systemd'),
+      path.resolve(process.cwd(), 'tutorial'),
+      path.resolve(process.cwd(), 'README.md'),
+      path.resolve(process.cwd(), 'exec_cds.sh'),
+    ];
+    const hits: string[] = [];
+    const ownedDomain = new RegExp(`(?:${OWNED_DEPLOYMENT_SUFFIXES.map((value) => value.replace('.', '\\.')).join('|')})`, 'i');
+    for (const file of roots.flatMap(shippedTextFiles)) {
+      const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+      for (let i = 0; i < lines.length; i += 1) {
+        if (ownedDomain.test(lines[i])) hits.push(`${path.relative(process.cwd(), file)}:${i + 1}`);
+      }
+    }
+    expect(hits, '真实部署域名不得出现在交付内容中；示例统一使用 example.com').toEqual([]);
   });
 });

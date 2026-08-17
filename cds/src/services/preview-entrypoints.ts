@@ -2,7 +2,7 @@
  * preview-entrypoints — 「这个分支在公网上到底发布了哪几个入口」的唯一判据。
  *
  * 背景(2026-07-29):MAP 前端此前自己在浏览器里拼网关子域 ——
- *   `${location.hostname 去掉 .miduo.org}` + `-llmgw-web` + `.miduo.org`
+ *   `${location.hostname 去掉部署根域}` + `-llmgw-web` + 部署根域
  * 这是 CDS 之外的第二份域名推算实现,违反根 CLAUDE.md 规则 #11(禁止自己 slugify /
  * 拼域名)。它拼出来的 host 有两种偏差:
  *   ① 分支名长时 `<previewSlug>-<sub>` 超过 63 octet,CDS 根本没发布这条路由,
@@ -241,7 +241,7 @@ export function buildPublishedEntrypoints(opts: {
 /**
  * 已被占用的**完整 host** → 拥有者分支 id：子域别名（按每个根域展开）+ 完整自定义域名。
  *
- * 为什么不能只按 label 判：自定义域名存的是整条 host（`foo.miduo.org`），不是标签。
+ * 为什么不能只按 label 判：自定义域名存的是整条 host（`foo.example.com`），不是标签。
  * 一条恰好等于 `<slug>-llmgw.<root>` 的自定义域名在 buildRoutes 里**先**被发出去，
  * 之后命名服务再发同一个 host、指向不同上游，resolver 按路由 id 静默选一条 ——
  * 与别名撞车完全同源，只是占位者换成了自定义域名（Codex P1）。
