@@ -10,6 +10,7 @@ import {
   buildMysqlDumpScript,
   buildRedisBackupProbeScript,
   buildRedisRdbPathScript,
+  buildSizeCappedCommand,
   backupKindOf,
   isAutoBackupFile,
   parseDfAvailableBytes,
@@ -819,5 +820,64 @@ describe('redis 快照路径判据只有一份', () => {
     // 探测失败必须拒绝出流，而不是继续 cat 一个可能过期的文件
     expect(route).toContain('拒绝下载可能过期的快照');
     expect(route).toContain('拒绝按默认路径写入');
+  });
+});
+
+/**
+ * 单次导出的写入上限（Codex #1382 第三轮 P1）。
+ *
+ * 前置闸只证明「此刻还有 2 GiB」，而那次写入是无界的：一个 50 GiB 的库照样能把最后
+ * 一个字节吃掉，等命令报错时宿主根盘已经满了。逐目标复查保护的是**后面**的目标，
+ * 救不了正在写的这一个。
+ */
+describe('单次导出有写入上限', () => {
+  it('上限 = 可用空间减去保留余量，换算成 512 字节块', () => {
+    const free = 10 * 1024 ** 3;                 // 10 GiB 可用
+    const capped = buildSizeCappedCommand('echo hi', free, 2 * 1024 ** 3);
+    expect(capped).not.toBeNull();
+    expect(capped!.capBytes).toBe(8 * 1024 ** 3); // 留 2 GiB
+    expect(capped!.command).toContain(`ulimit -f ${(8 * 1024 ** 3) / 512}`);
+    expect(capped!.command).toContain('echo hi');
+  });
+
+  it('余量都不够时返回 null，让调用方跳过而不是硬写', () => {
+    expect(buildSizeCappedCommand('x', 1024 ** 3, 2 * 1024 ** 3)).toBeNull();
+    expect(buildSizeCappedCommand('x', 0)).toBeNull();
+  });
+
+  /** ulimit 设不上（精简 shell）不能连累导出：用 `;` 不用 `&&`。 */
+  it('ulimit 失败不阻断导出命令', () => {
+    const c = buildSizeCappedCommand('echo still-runs', 10 * 1024 ** 3)!;
+    expect(c.command).not.toContain('&&');
+    expect(c.command).toContain('2>/dev/null;');
+    const out = execFileSync('/bin/sh', ['-c', c.command], { encoding: 'utf8' });
+    expect(out.trim()).toBe('still-runs');
+  });
+
+  /**
+   * 真 shell 验上限确实生效：给 1 KiB 的上限写 200 KiB，必须失败而不是写完。
+   * 这条是整个机制的判据——只断言命令串里有 `ulimit` 证明不了内核会拦。
+   */
+  it('拿真 shell 跑：超过上限的写入被中断，不会写出完整文件', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-ulimit-'));
+    const out = path.join(dir, 'big.bin');
+    // cap 传 1 KiB + reserve 0 → ulimit -f 2 块（1024 字节）
+    const c = buildSizeCappedCommand(`yes ABCDEFGH | head -c 204800 > ${out}`, 1024, 0)!;
+    let failed = false;
+    try {
+      execFileSync('/bin/sh', ['-c', c.command], { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch { failed = true; }
+    expect(failed).toBe(true);
+    // 写出来的部分不超过上限（内核在 1 KiB 处就把它砍了）
+    expect(fs.statSync(out).size).toBeLessThanOrEqual(1024);
+  });
+
+  /** 接线守卫：算出来的上限要真的套在导出命令上，不是算完扔掉。 */
+  it('备份循环真的用了带上限的命令', () => {
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+    expect(src).toContain('const capped = buildSizeCappedCommand(cmd, lastFreeBytes)');
+    expect(src).toContain('await shell.exec(capped.command');
+    // 失败信息要能把「库太大撞上限」和「备份坏了」分开
+    expect(src).toContain('本次写入上限');
   });
 });

@@ -36,3 +36,5 @@
 | docs | cds | 轮换 runbook 补 MySQL app 账号与服务 env 同步、容器重建两步，修正「没有轮换路径」的表述 |
 | fix | cds | MySQL 导出捕获 gzip 端退出码，并在转正前加 gzip -t 完整性校验，杜绝截断档案顶掉可用旧备份 |
 | fix | cds | redis 快照路径解析在 CONFIG GET 失败时报错退出，不再猜 /data/dump.rdb |
+| fix | cds | 每次备份导出套 ulimit 写入上限，单个大库不再能把宿主根盘写满 |
+| docs | cds | 轮换 runbook 修正 PostgreSQL 账号（app 非 postgres），并补九个预设的账号真值表 |

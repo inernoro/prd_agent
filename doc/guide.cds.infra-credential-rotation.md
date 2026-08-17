@@ -33,6 +33,21 @@
 
 下面 `<C>` 是容器名（`cdscli` 或 CDS 面板可查），`<OLD>` / `<NEW>` 是旧新口令。**新口令先自己生成好**（16 字节 hex 即可），不要复用其它环境的值。
 
+**先对表：每个预设建出来的账号叫什么**。这一步踩过两次（MySQL 只换 root、PostgreSQL 对着不存在的 `postgres` 敲），所以把真值列在这里——凭据 env 与连接串都跟着这个账号走：
+
+| 预设 | 应用账号 | 口令所在 env | 备注 |
+|---|---|---|---|
+| mongodb | `app` | `MONGO_INITDB_ROOT_PASSWORD` | 认证库是 `admin` |
+| postgres | `app` | `POSTGRES_PASSWORD` | **没有 `postgres` 角色** |
+| mysql / mariadb | `app`（应用）+ `root`（管理） | `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | 两个都要管，周期备份用 root |
+| sqlserver | `sa` | `MSSQL_SA_PASSWORD` | 口令有复杂度策略 |
+| clickhouse | `app` | `CLICKHOUSE_PASSWORD` | |
+| rabbitmq | `app` | `RABBITMQ_DEFAULT_PASS` | |
+| elasticsearch | `elastic` | `ELASTIC_PASSWORD` | 唯一不叫 app 的 |
+| minio | `app` | `MINIO_ROOT_PASSWORD` | 同时是 S3 access key |
+
+表的来源是基建预设目录（见文末实现来源）。**动手前先核一遍这一行**，别照着别的库的账号名敲。
+
 ### MongoDB
 
 ```bash
@@ -66,10 +81,13 @@ docker exec <C> sh -c 'MYSQL_PWD="<NEW_ROOT>" mysql -uroot -e "SELECT 1"'
 
 ### PostgreSQL
 
+**账号是 `app` 不是 `postgres`**。CDS 建库时把 `POSTGRES_USER` 设成了 `app`，官方镜像据此创建超级用户 `app`，**不会**再有 `postgres` 角色——对着 `-U postgres` 敲会直接报「role does not exist」。
+
 ```bash
-docker exec <C> psql -U postgres -c "ALTER USER postgres PASSWORD '<NEW>'"
-docker exec -e PGPASSWORD='<NEW>' <C> psql -U postgres -c 'SELECT 1'
+docker exec <C> psql -U app -d app -c "ALTER USER app PASSWORD '<NEW>'"
+docker exec -e PGPASSWORD='<NEW>' <C> psql -U app -d app -c 'SELECT 1'
 ```
+改完对应 `POSTGRES_PASSWORD` 与 `DATABASE_URL` / `POSTGRES_URL` 两个连接串。
 
 ### RabbitMQ / Elasticsearch / MinIO
 

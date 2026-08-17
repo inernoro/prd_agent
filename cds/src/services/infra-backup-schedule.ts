@@ -245,6 +245,35 @@ export function parseDfAvailableBytes(dfOutput: string): number | null {
   return availKb * 1024;
 }
 
+/**
+ * 给单次导出套一个**写入上限**，超限即失败。
+ *
+ * 只在导出前查一次可用空间是不够的：闸放行只证明「此刻还有 2 GiB」，而接下来那次
+ * 写入是**无界**的——一个 50 GiB 的库照样能把最后一个字节吃掉。等 `docker exec` 或
+ * `gzip` 报错时，宿主根盘已经满了，而根盘满会同时打死所有预览、构建和 CDS 自己；
+ * 事后删残骸也来不及。逐目标复查保护的是**后面**的目标，救不了正在写的这一个。
+ *
+ * `ulimit -f` 是 POSIX shell 自带的硬上限：超过就给写进程 SIGXFSZ，写失败、命令
+ * 非零退出，我们既有的失败路径顺手把残骸删掉。单位是 512 字节块，所以要换算。
+ *
+ * 留出 `reserveBytes` 不用满：压缩临时缓冲、日志、别的进程都还要写盘，把可用空间
+ * 掐到零和写满没有区别。
+ *
+ * 设不上限（某些精简 shell 不支持 `ulimit -f`）时**不阻断导出**——那会让备份从
+ * 「可能撑爆」退化成「必然不跑」。此时退回只有前置闸的旧行为，由调用方记一条警告。
+ */
+export function buildSizeCappedCommand(
+  cmd: string,
+  freeBytes: number,
+  reserveBytes: number = DEFAULT_MIN_FREE_BYTES,
+): { command: string; capBytes: number } | null {
+  const capBytes = Math.floor(freeBytes - reserveBytes);
+  if (!Number.isFinite(capBytes) || capBytes <= 0) return null;
+  const blocks = Math.max(1, Math.floor(capBytes / 512));
+  // `ulimit` 失败不能连累导出：分号而不是 &&，配 2>/dev/null 吞掉不支持时的噪音。
+  return { command: `ulimit -f ${blocks} 2>/dev/null; ${cmd}`, capBytes };
+}
+
 export interface BackupOutcome {
   id: string;
   ok: boolean;

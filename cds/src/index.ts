@@ -21,7 +21,7 @@ import {
   auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport, type InfraExposureInput,
 } from './services/infra-exposure-audit.js';
 import {
-  backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { ProxyService } from './services/proxy.js';
@@ -519,9 +519,11 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
        * 前提早就不成立了。宿主根盘写满会同时打死所有预览、构建和 CDS 自己，
        * 那比这一轮少几份备份糟得多。读不到可用空间同样按「不够」处理。
        */
+      let lastFreeBytes = 0;
       const diskGate = async (): Promise<string | null> => {
         const df = await shell.exec(`df -Pk ${shq(dir)}`, { timeout: 15_000 });
         const free = parseDfAvailableBytes(df.stdout || '');
+        lastFreeBytes = free ?? 0;
         if (!shouldSkipForDiskPressure(free)) return null;
         // 「读不到」必须说清读不到什么、命令怎么失败的。只说一句「读不到」，
         // 下一个人除了重跑一遍没有别的办法。
@@ -623,8 +625,20 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             }
             cmd = `docker cp ${shq(`${t.containerName}:${rdbPath}`)} ${shq(out)}`;
           }
-          const r = await shell.exec(cmd, { timeout: INFRA_BACKUP_TIMEOUT_MS });
-          if (r.exitCode !== 0) throw new Error(combinedOutput(r).slice(0, 400));
+          // 前置闸只证明「此刻还有空间」，这次写入本身是无界的——一个大库照样能把
+          // 最后一个字节吃掉，而根盘写满会同时打死所有预览、构建和 CDS 自己。给这次
+          // 导出套一个硬上限（见 buildSizeCappedCommand），超限即失败，残骸走既有的
+          // 失败路径删掉。
+          const capped = buildSizeCappedCommand(cmd, lastFreeBytes);
+          if (!capped) {
+            throw new Error(`可用空间 ${(lastFreeBytes / 1024 / 1024 / 1024).toFixed(1)} GiB 不足以在保留安全余量后写入，跳过`);
+          }
+          const r = await shell.exec(capped.command, { timeout: INFRA_BACKUP_TIMEOUT_MS });
+          if (r.exitCode !== 0) {
+            const capGiB = (capped.capBytes / 1024 / 1024 / 1024).toFixed(1);
+            // 撞上限和别的失败要能分开：前者是「这个库太大」，后者才是「备份坏了」。
+            throw new Error(`${combinedOutput(r).slice(0, 400)}（本次写入上限 ${capGiB} GiB，超限会被内核中断）`);
+          }
 
           const stat = await shell.exec(`stat -c %s ${shq(out)} 2>/dev/null || echo 0`, { timeout: 10_000 });
           const bytes = Number((stat.stdout || '0').trim()) || 0;
