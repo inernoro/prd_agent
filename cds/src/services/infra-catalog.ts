@@ -288,13 +288,31 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     id: 'redis',
     name: 'Redis',
     category: 'cache',
-    description: '内存键值缓存，自动注入 REDIS_URL。',
+    description: '内存键值缓存，自动注入带口令的 REDIS_URL。',
     dockerImage: 'redis:7-alpine',
     containerPort: 6379,
     volumePaths: ['/data'],
-    build: () => ({
+    secretKeys: ['password'],
+    /**
+     * 口令经 **env** 交给容器内的 sh 展开，不写进 `docker run` 的命令行。
+     *
+     * 写成 `--requirepass <明文>` 的话，这串值会进宿主的 `ps`、进 CDS 记录的
+     * docker run 命令字符串、进容器事件日志——一个本该只在 env 里的密钥就这么
+     * 散到三个地方。这里用 `$REDIS_PASSWORD`（**不带花括号**）：CDS 的模板替换
+     * 只认 `${VAR}` 形态，所以这个 `$` 原样活到容器里，由 redis 镜像自带的 sh
+     * 展开。数组形态还能保证每个 token 被单独 shell-quote，值里有特殊字符也不会
+     * 破坏命令结构（2026-05-29 就栽过一次：command 没过模板替换，`--requirepass`
+     * 拿到空值让 redis FATAL 无限重启）。
+     */
+    command: ['sh', '-c', 'exec redis-server --requirepass "$REDIS_PASSWORD"'],
+    build: (s) => ({
+      env: {
+        // 键名跟着既有消费方走：数据面板、备份探测、连接串脱敏都已经在读这三个
+        // 名字里的 REDIS_PASSWORD，另起一个新名字等于让它们全部漏认。
+        REDIS_PASSWORD: s.password,
+      },
       envVars: {
-        REDIS_URL: 'redis://redis:6379',
+        REDIS_URL: `redis://:${s.password}@redis:6379`,
       },
     }),
   },

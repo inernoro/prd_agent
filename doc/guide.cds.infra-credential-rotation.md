@@ -14,7 +14,8 @@
 |---|---|---|
 | mongodb / postgres / mysql / mariadb / sqlserver / clickhouse | 有 | 能，按 §2 |
 | rabbitmq / elasticsearch / minio | 有 | 能，按 §2 |
-| **redis / memcached / kafka / nats** | **没有** | **不能**——它们从创建那天起就是无认证。见 §4 |
+| **memcached / kafka / nats** | **没有** | **不能**——它们从创建那天起就是无认证。见 §4 |
+| redis | **新建的有**（口令走 `REDIS_PASSWORD`），**存量的没有** | 新建的按 §2；存量的要先有口令才谈得上换，见 §4 |
 
 判据来源是基建预设目录里的「要生成哪些密钥」字段（见文末实现来源）。没有声明这个字段的预设，建服务时不会生成任何口令，容器起来就是裸的。
 
@@ -80,12 +81,12 @@ python3 .claude/skills/cds/cli/cdscli.py env set --scope <projectId> --key MONGO
 
 ---
 
-## 4. redis / memcached / kafka / nats：现在没有口令可换
+## 4. memcached / kafka / nats（以及**存量** redis）：现在没有口令可换
 
-这四个预设在目录里没有声明任何密钥，容器起来就没有认证，连接串也是裸的（如 `redis://redis:6379`）。对它们做「轮换」无从谈起。当下只有两个动作有意义：
+这三个预设在目录里没有声明任何密钥，容器起来就没有认证，连接串也是裸的。redis 的预设已经补上口令，但**只对补上之后新建的服务生效**——存量 redis 的 env 与连接串早就存在 state 里，不会被追溯改写，所以线上那些老的仍然是裸的。对它们做「轮换」都无从谈起，当下只有两个动作有意义：
 
 1. **先把公网暴露关掉**（端口只绑回环 / 内网 bridge），这是真正的止血；
-2. 等代码侧给这几个预设补上认证（redis `requirepass`、kafka SASL、nats token/nkey），补完之后它们才进入本 runbook 的 §2 流程。
+2. 等代码侧给这几个预设补上认证（kafka SASL、nats token/nkey；redis 已补），以及给**存量**服务补一条「加口令 / 换口令」的路径（台账 E17），补完之后它们才进入本 runbook 的 §2 流程。
 
 在认证补上之前，**不要**手工给运行中的 redis `CONFIG SET requirepass`：CDS 注入给消费方的连接串里没有密码字段，你一加密码，所有分支预览立刻全连不上，而 CDS 这边没有任何地方能配这个密码。
 

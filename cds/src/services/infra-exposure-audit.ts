@@ -207,12 +207,30 @@ export function detectInfraAuth(
   // 有效命令行 = 容器启动参数 + 那些「本身就是一串启动参数」的 env 的值。
   // 后者只当参数看，不当布尔看。
   const argCarryingEnv = ['REDIS_ARGS', 'REDIS_EXTRA_FLAGS', 'MONGO_EXTRA_FLAGS'];
+  // 每个 arg 自己还要再按空白拆一层：`sh -c "redis-server --requirepass xxx"` 里
+  // 整条 shell 语句是**一个** Cmd 元素，不拆就永远比不中 `--requirepass`——
+  // 一个真有口令的库会被判成「无认证 critical」。compose 用 `sh -c` 包一层是常态，
+  // 本仓库自己的 redis 预设也是这个形状，所以这不是边角情况。
   const tokens = [
-    ...(args || []),
+    ...(args || []).flatMap((a) => String(a || '').split(/\s+/)),
     ...argCarryingEnv.flatMap((k) => (e[k] || '').split(/\s+/)),
   ]
     .map((t) => String(t || '').trim().toLowerCase())
     .filter(Boolean);
+  /**
+   * 参数值去掉外层引号后还剩什么。
+   *
+   * 拆 `sh -c` 之后，值常常自带引号：`--requirepass ""` 拆出来的 `""` 字面上非空、
+   * 实际是空口令；`--requirepass "$redis_password"` 则要看那个变量到底有没有值——
+   * 引用一个空变量的效果等同于没设口令（redis 会直接 FATAL，不是静默裸奔，但也
+   * 谈不上「已认证」）。两种都必须还原成「有没有真值」再判。
+   */
+  const effectiveValue = (raw: string): string => {
+    const unquoted = raw.replace(/^["']|["']$/g, '');
+    const ref = /^\$\{?(\w+)\}?$/.exec(unquoted);
+    if (ref) return (e[ref[1].toUpperCase()] || e[ref[1]] || '').trim();
+    return unquoted.trim();
+  };
   /** 开关型参数：出现即生效（`--auth`）。整 token 比对，避免 `--authenticationdatabase` 撞上。 */
   const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.includes(f));
   /**
@@ -224,10 +242,10 @@ export function detectInfraAuth(
       const t = tokens[i];
       if (t === flag) {
         const next = tokens[i + 1];
-        if (next && !next.startsWith('--')) return true;
+        if (next && !next.startsWith('--') && effectiveValue(next).length > 0) return true;
         continue;
       }
-      if (t.startsWith(`${flag}=`) && t.slice(flag.length + 1).length > 0) return true;
+      if (t.startsWith(`${flag}=`) && effectiveValue(t.slice(flag.length + 1)).length > 0) return true;
     }
     return false;
   });

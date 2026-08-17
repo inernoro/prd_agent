@@ -28,3 +28,6 @@
 | fix | cds | Redis 备份按 CONFIG GET 的 dir/dbfilename 取快照路径，不再写死 /data/dump.rdb |
 | docs | cds | 新增基建凭据轮换 runbook，含 Mongo/MySQL 假轮换陷阱与 JWT 一值两用的安全顺序 |
 | docs | cds | 债务台账记入 E16 四个预设无认证 / E17 无轮换路径 / E18 无轮换审计 |
+| security | cds | redis 预设改为默认带口令（requirepass 经 env 展开，不进命令行），连接串同步带凭据 |
+| fix | cds | 暴露审计拆开 sh -c 整条命令再比对，有口令的库不再被误报「无认证 critical」 |
+| test | cds | 改写两条把「redis 无口令」锁死的测试，补 catalog 认证与暴露审计的跨模块接线守卫 |
