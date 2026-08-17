@@ -7,17 +7,20 @@ use tokio_util::sync::CancellationToken;
 use crate::models::{ApiError, ApiResponse, LoginResponse};
 
 /// 正式 API 地址由打包环境注入；本地调试仍默认连接本机 API。
-const COMPILED_DEFAULT_API_URL: &str = option_env!("PRD_DESKTOP_DEFAULT_API_URL").unwrap_or("");
+fn compiled_default_api_url() -> &'static str {
+    option_env!("PRD_DESKTOP_DEFAULT_API_URL").unwrap_or("")
+}
 
 fn configured_default_api_url() -> String {
     std::env::var("API_BASE_URL")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| {
-            if cfg!(debug_assertions) && COMPILED_DEFAULT_API_URL.trim().is_empty() {
+            let compiled_default = compiled_default_api_url().trim();
+            if cfg!(debug_assertions) && compiled_default.is_empty() {
                 "http://localhost:5000".to_string()
             } else {
-                COMPILED_DEFAULT_API_URL.trim().to_string()
+                compiled_default.to_string()
             }
         })
 }

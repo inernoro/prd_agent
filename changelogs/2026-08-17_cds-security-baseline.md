@@ -26,3 +26,4 @@
 | security | cds | 移除交付源码、脚本、文档和演示中的固定部署域名并增加仓库守卫 |
 | security | cds | 项目级与受限全局 Agent Key 的读写路由统一执行项目作用域校验 |
 | fix | cds | MySQL 新建门禁要求有效 root 初始化凭据，禁止仅应用账号的不可启动配置 |
+| fix | prd-desktop | 动态 API 地址读取兼容稳定版 Rust 编译器 |
