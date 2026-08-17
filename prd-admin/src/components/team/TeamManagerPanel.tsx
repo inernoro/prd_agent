@@ -374,7 +374,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                     onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
                   />
                   <div className="flex gap-1.5">
-                    <button type="button" className="flex-1 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }} onClick={handleCreate}>
+                    <button type="button" className="flex-1 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--accent-gold, #d4af37)', color: 'var(--accent-on-gold)' }} onClick={handleCreate}>
                       创建
                     </button>
                     <button type="button" className="px-2 h-8 rounded-[8px] text-[12px] text-token-muted" onClick={() => setCreating(false)}>
@@ -650,7 +650,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                             disabled={pendingIds.size === 0 || inviting}
                             className="flex items-center gap-1.5 h-9 px-4 rounded-[8px] text-[13px]"
                             style={pendingIds.size > 0
-                              ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a', cursor: 'pointer' }
+                              ? { background: 'var(--accent-gold, #d4af37)', color: 'var(--accent-on-gold)', cursor: 'pointer' }
                               : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
                             onClick={handleConfirmInvite}
                           >

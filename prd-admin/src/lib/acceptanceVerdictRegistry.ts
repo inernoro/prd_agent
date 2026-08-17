@@ -25,19 +25,19 @@ export const ACCEPTANCE_VERDICT_REGISTRY: Record<AcceptanceVerdict, VerdictBadge
   pass: {
     label: '通过',
     background: 'rgba(34,197,94,0.14)',
-    color: 'rgba(74,222,128,0.95)',
+    color: 'var(--accent-fg-success)',
     border: '1px solid rgba(34,197,94,0.3)',
   },
   conditional: {
     label: '有条件',
     background: 'rgba(234,179,8,0.14)',
-    color: 'rgba(234,179,8,0.95)',
+    color: 'var(--accent-fg-amber)',
     border: '1px solid rgba(234,179,8,0.32)',
   },
   fail: {
     label: '不通过',
     background: 'rgba(239,68,68,0.14)',
-    color: 'rgba(248,113,113,0.95)',
+    color: 'var(--accent-fg-danger)',
     border: '1px solid rgba(239,68,68,0.32)',
   },
 };

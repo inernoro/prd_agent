@@ -2152,7 +2152,25 @@ export interface CdsSsoConfig {
 export type ScheduledJobSchedule =
   | { type: 'manual'; timezone?: string }
   | { type: 'interval'; intervalMinutes: number; timezone?: string }
-  | { type: 'daily'; timeOfDay: string; timezone?: string };
+  | { type: 'daily'; timeOfDay: string; timezone?: string }
+  /**
+   * 事件驱动：分支满足条件时触发（发布中心「自动发布规则」那一屏）。
+   *
+   * 它**不参与定时轮询**——没有下一次运行时刻，`nextRunAt` 恒为 null，
+   * 由 GitHub webhook 命中后现场触发。新增这个类型时必须走
+   * `isTimerDrivenSchedule()` 这个唯一判据，别再写 `type !== 'manual'`：
+   * 那个写法散在四处，漏改任何一处都会让 push 规则被定时器当成到期任务反复执行。
+   */
+  | {
+      type: 'push';
+      /** 分支名 glob：`main` / `release/*` / `feature/**`。 */
+      branchPattern: string;
+      /** push = 每次推送（PR 合并进目标分支也是一次 push）；pr-open = 开 PR / PR 有新提交。 */
+      event: 'push' | 'pr-open';
+      /** 只有命中这个路径 glob 的改动才触发，例如 `docs/**`。留空表示任何改动都触发。 */
+      pathPattern?: string;
+      timezone?: string;
+    };
 
 /**
  * 定时发布动作的版本来源。
@@ -2246,7 +2264,7 @@ export interface ScheduledJobRun {
   id: string;
   jobId: string;
   projectId: string;
-  trigger: 'schedule' | 'manual';
+  trigger: 'schedule' | 'manual' | 'push';
   status: ScheduledJobRunStatus;
   queuedAt: string;
   startedAt?: string;

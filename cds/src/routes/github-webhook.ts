@@ -61,6 +61,18 @@ import { CheckRunRunner } from '../services/check-run-runner.js';
 
 export interface GitHubWebhookRouterDeps {
   stateService: StateService;
+  /**
+   * 发布中心「自动发布规则」的触发钩子，由 server 接 ScheduledJobService.runPushRules。
+   * 不接就等于整条规则链路静默失效，所以 tests/services 有一条接线守卫盯着。
+   */
+  runPushRules?: (ctx: {
+    projectId: string;
+    branch: string;
+    event: 'push' | 'pr-open';
+    changedPaths: string[];
+    /** 本次 push 的 commit。路径过滤按它判，发布也必须钉在它上面。 */
+    commitSha?: string;
+  }) => Promise<number>;
   worktreeService: WorktreeService;
   shell: IShellExecutor;
   config: CdsConfig;
@@ -184,6 +196,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     githubApp,
     dispatchDeploy,
     serverEventLogStore,
+    runPushRules,
   } = deps;
 
   const dispatcher = new GitHubWebhookDispatcher({
@@ -192,6 +205,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     shell,
     config,
     githubApp: githubApp || undefined,
+    runPushRules,
   });
 
   // 2026-07-23: 部署派发失败时向 GitHub 写一个已完结的 failure check run。

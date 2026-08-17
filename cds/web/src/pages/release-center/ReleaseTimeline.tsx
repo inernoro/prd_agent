@@ -87,7 +87,7 @@ export function ReleaseTimeline({
             const expanded = expandedId === run.releaseId;
             const duration = formatDuration(run.startedAt, run.finishedAt);
             return (
-              <div key={run.releaseId} className={failed ? 'bg-red-500/[0.07]' : live ? 'bg-primary/[0.07]' : ''}>
+              <div key={run.releaseId} className={failed ? 'bg-bad-soft' : live ? 'bg-primary/[0.07]' : ''}>
                 <div className="grid grid-cols-[16px_minmax(0,1fr)] items-start gap-3 px-4 py-3 md:grid-cols-[16px_minmax(0,1fr)_auto]">
                   <span className="mt-1.5"><Led tone={runTone(run.status)} /></span>
                   <div className="min-w-0">

@@ -35,8 +35,8 @@ interface PendingRequest {
 }
 
 const DANGER_META: Record<string, { label: string; tone: string; icon: React.ReactNode }> = {
-  safe: { label: '安全/只读', tone: 'text-emerald-700 dark:text-emerald-300', icon: <ShieldCheck className="h-4 w-4" /> },
-  sensitive: { label: '会改运行时', tone: 'text-amber-700 dark:text-amber-300', icon: <AlertTriangle className="h-4 w-4" /> },
+  safe: { label: '安全/只读', tone: 'text-ok', icon: <ShieldCheck className="h-4 w-4" /> },
+  sensitive: { label: '会改运行时', tone: 'text-warn', icon: <AlertTriangle className="h-4 w-4" /> },
   destructive: { label: '高危', tone: 'text-destructive', icon: <ShieldX className="h-4 w-4" /> },
 };
 
@@ -108,7 +108,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-amber-600 dark:text-amber-300" />
+            <ShieldCheck className="h-5 w-5 text-warn" />
             需要你的明确授权
           </DialogTitle>
           <DialogDescription>
@@ -116,10 +116,10 @@ export function OperatorApprovalModal(): JSX.Element | null {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-4">
+        <div className="rounded-lg border border-warn/35 bg-warn-soft p-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
-              <Bot className="h-5 w-5 text-amber-700 dark:text-amber-300" />
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-warn-soft">
+              <Bot className="h-5 w-5 text-warn" />
             </div>
             <div className="min-w-0 text-sm">
               <div className="font-semibold text-foreground">

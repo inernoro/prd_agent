@@ -125,7 +125,7 @@ export function WorkflowBar({
             type="button"
             onClick={() => onClickTransition(t)}
             disabled={!!busy}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/10 disabled:opacity-50"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/10 disabled:opacity-50"
           >
             {busy === t.key ? <MapSpinner size={12} /> : null}
             {isRequirement ? requirementTransitionButtonLabel(t, workflow) : (t.label || t.key)}

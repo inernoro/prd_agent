@@ -411,7 +411,7 @@ function RunView({ run }: { run: LoadTestRunView }): JSX.Element {
         </span>
         <div className="ml-auto h-1.5 w-40 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]">
           <div
-            className={`h-full rounded-full transition-[width] duration-700 ${running ? 'bg-primary' : run.status === 'done' ? 'bg-emerald-500' : 'bg-muted-foreground'}`}
+            className={`h-full rounded-full transition-[width] duration-700 ${running ? 'bg-primary' : run.status === 'done' ? 'bg-ok' : 'bg-muted-foreground'}`}
             style={{ width: `${run.progressPct}%` }}
           />
         </div>
@@ -432,7 +432,7 @@ function RunView({ run }: { run: LoadTestRunView }): JSX.Element {
 
 function StatusDot({ status }: { status: LoadTestRunView['status'] }): JSX.Element {
   if (status === 'running') return <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />;
-  const cls = status === 'done' ? 'bg-emerald-500' : status === 'error' ? 'bg-destructive' : 'bg-muted-foreground';
+  const cls = status === 'done' ? 'bg-ok' : status === 'error' ? 'bg-destructive' : 'bg-muted-foreground';
   return <span className={`h-2 w-2 rounded-full ${cls}`} />;
 }
 

@@ -1,0 +1,113 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+/**
+ * Workspace 宽度秩序守卫。
+ *
+ * 2026-08-13 用户并排指着项目列表与分支列表说「我喜欢图2，不喜欢图1」。
+ * 查下来不是审美分歧，是个 bug：**两个页面都写了 `wide`，两个都没拿到 wide**——
+ * `.cds-workspace-project-list` 把它压回 1240、`.cds-branch-list-workspace`
+ * 把它放开成无上限。TSX 上看不出任何异常，这正是 predicate-and-wiring-discipline
+ * 「形状 6：判据读的值不是真正生效的那个值」。
+ *
+ * 所以这里钉两件事：档位只能由 Workspace 的 props 决定；档位只有三档。
+ */
+
+const WEB = path.resolve(process.cwd(), '../cds/web/src');
+const read = (rel: string): string => fs.readFileSync(path.join(WEB, rel), 'utf8');
+
+const CSS = read('index.css');
+const SHELL = read('components/layout/AppShell.tsx');
+
+/** 网格 / 台面类页面：内容是卡片阵列或多栏面板，必须吃满整列宽度。 */
+const FLUID_PAGES = [
+  'pages/ProjectListPage.tsx',
+  'pages/BranchListPage.tsx',
+  'pages/ReleaseCenterPage.tsx',
+  'pages/ReleaseConsolePage.tsx',
+  'pages/StatusPage.tsx',
+  'pages/ReportsPage.tsx',
+];
+
+describe('Workspace 宽度秩序', () => {
+  it('Workspace 支持三档，fluid 优先于 wide', () => {
+    expect(SHELL).toContain('fluid?: boolean');
+    expect(SHELL).toContain("fluid ? 'cds-workspace--fluid' : wide ? 'cds-workspace-wide' : null");
+  });
+
+  it('网格类页面一律 fluid，宽屏不再把内容压在中间一条', () => {
+    for (const rel of FLUID_PAGES) {
+      expect(read(rel), `${rel} 应当用 <Workspace fluid>`).toMatch(/<Workspace\s+fluid[\s>]/);
+    }
+  });
+
+  /**
+   * 最要紧的一条：CSS 不许再出现「按页面名覆盖 workspace 宽度」的类。
+   * 那种类会让页面的声明失效，而且失效得完全没有痕迹。
+   */
+  it('CSS 里没有按页面名覆写 workspace 宽度的类', () => {
+    expect(CSS).not.toContain('.cds-workspace-project-list');
+    expect(CSS).not.toContain('.cds-branch-list-workspace');
+    const overrides = [...CSS.matchAll(/\.cds-workspace[.\w-]*\s*\{[^}]*max-width[^}]*\}/g)]
+      .map((m) => m[0].split('{')[0].trim())
+      // 三档本体 + --fill（它只管高度）允许出现
+      // 三档本体 + --fill（只管高度）+ --bleed（只管抵消 .cds-main 内边距，
+      // max-width:none 是「不设上限」而不是「另设一档」）允许出现
+      .filter((sel) => !['.cds-workspace', '.cds-workspace-wide', '.cds-workspace--fluid', '.cds-workspace-settings', '.cds-workspace--bleed'].includes(sel));
+    expect(overrides, `这些选择器在覆写 workspace 宽度: ${overrides.join(', ')}`).toEqual([]);
+  });
+
+  it('宽度只有三档，没有第四个魔数', () => {
+    expect(CSS).toContain('--workspace-standard: 1240px');
+    expect(CSS).toContain('--workspace-wide: 1440px');
+    // 三档之外的硬编码上限（历史上出现过 1280 / 1360 / 1650 / 3000）
+    const magic = [...CSS.matchAll(/max-width:\s*(\d{4})px/g)]
+      .map((m) => Number(m[1]))
+      .filter((n) => n !== 1240 && n !== 1440);
+    expect(magic, `发现三档之外的宽度魔数: ${magic.join(', ')}`).toEqual([]);
+  });
+
+  it('卡片网格由可用宽度算列数，不写死列数', () => {
+    expect(CSS).toContain('.cds-card-grid');
+    expect(CSS).toContain('repeat(auto-fill, minmax(min(100%, var(--cds-card-min, 380px)), 1fr))');
+    // 项目卡曾写死 xl:grid-cols-3，宽屏下永远只有三列
+    expect(read('pages/ProjectListPage.tsx')).not.toContain('xl:grid-cols-3');
+  });
+
+  /**
+   * 满铺不等于顶到边：窄屏 16 / 常规 32 / 超宽 48，两侧始终留呼吸位。
+   *
+   * 这组值写成变量而不是 Tailwind 类，是为了让 .cds-workspace--bleed 能精确抵消
+   * （满铺到边的三栏台面需要）。抄一份数值出去就会漂移，所以这里连带守「只有
+   * 一组定义」：三档 padding 只许在 --cds-main-* 上出现。
+   */
+  it('横向留白按视口分档，超宽屏更宽松', () => {
+    expect(CSS).toContain('--cds-main-px: 2rem');
+    expect(CSS).toMatch(/@media \(min-width: 1536px\)[\s\S]{0,120}--cds-main-px: 3rem/);
+    expect(CSS).toMatch(/@media \(max-width: 767px\)[\s\S]{0,160}--cds-main-px: 1rem/);
+    expect(CSS).toContain('padding: var(--cds-main-pt) var(--cds-main-px) var(--cds-main-pb)');
+    // bleed 必须用同一组变量抵消，不许自己抄一份数值
+    expect(CSS).toMatch(/\.cds-workspace--bleed \{[\s\S]{0,200}calc\(var\(--cds-main-px\) \* -1\)/);
+  });
+});
+
+/**
+ * 满铺到边（`--bleed`）的两条硬性顺序/尺寸约束。两条都是实测撞出来的，
+ * 且都**不会报错、只会看起来「只生效了一半」**——正是需要守卫的形状。
+ */
+describe('Workspace 满铺到边', () => {
+  it('--bleed 必须排在 .cds-workspace 之后，否则横向抵消被 margin:auto 吃掉', () => {
+    const base = CSS.indexOf('.cds-workspace {');
+    const bleed = CSS.indexOf('.cds-workspace--bleed {');
+    expect(base, '.cds-workspace 基础规则应当存在').toBeGreaterThan(-1);
+    expect(bleed, '.cds-workspace--bleed 应当存在').toBeGreaterThan(-1);
+    expect(bleed, '同特异性后写的赢：--bleed 写在 .cds-workspace 之前时，横向抵消会被静默吃掉')
+      .toBeGreaterThan(base);
+  });
+
+  it('--bleed 配 --fill 时把内边距加回高度，否则底部短一截', () => {
+    expect(CSS).toContain('.cds-workspace--bleed.cds-workspace--fill');
+    expect(CSS).toMatch(/height: calc\(100% \+ var\(--cds-main-pt\) \+ var\(--cds-main-pb\)\)/);
+  });
+});

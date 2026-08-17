@@ -368,7 +368,7 @@ export function SkillContentBrowser({
               style={{
                 background: 'rgba(59,130,246,0.1)',
                 border: '1px solid rgba(59,130,246,0.2)',
-                color: 'rgba(59,130,246,0.9)',
+                color: 'var(--accent-fg-blue)',
               }}
             >
               <ExternalLink size={13} />

@@ -80,19 +80,19 @@ export function WikilinkHoverCard() {
           left,
           top,
           width: cardW,
-          background: 'rgba(28,28,44,0.96)',
+          background: 'var(--overlay-panel-solid)',
           backdropFilter: 'blur(10px)',
           border: '1px solid rgba(255,156,77,0.4)',
           borderRadius: 10,
           padding: '12px 14px',
-          color: '#fff',
+          color: 'var(--text-primary)',
           fontSize: 13,
           zIndex: 9000,
           pointerEvents: 'none',
           boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
         }}
       >
-        <div style={{ color: 'rgba(255,156,77,0.95)', fontSize: 11, marginBottom: 6 }}>文档不存在</div>
+        <div style={{ color: 'var(--accent-fg-amber)', fontSize: 11, marginBottom: 6 }}>文档不存在</div>
         <div style={{ fontWeight: 600, marginBottom: 4 }}>「{hover.title}」</div>
         <div style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
           这个标题在当前知识库找不到对应文档。点击不会跳转。
@@ -108,12 +108,12 @@ export function WikilinkHoverCard() {
         left,
         top,
         width: cardW,
-        background: 'rgba(28,28,44,0.96)',
+        background: 'var(--overlay-panel-solid)',
         backdropFilter: 'blur(10px)',
         border: '1px solid rgba(124,156,255,0.35)',
         borderRadius: 10,
         padding: '12px 14px',
-        color: '#fff',
+        color: 'var(--text-primary)',
         fontSize: 13,
         zIndex: 9000,
         pointerEvents: 'none',
@@ -123,7 +123,7 @@ export function WikilinkHoverCard() {
       <div
         style={{
           fontSize: 10,
-          color: 'rgba(124,156,255,0.95)',
+          color: 'var(--accent-fg-blue)',
           background: 'rgba(124,156,255,0.12)',
           padding: '2px 8px',
           borderRadius: 8,

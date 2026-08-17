@@ -23,6 +23,7 @@ const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').t
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
+const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then((m) => ({ default: m.ReleaseConsolePage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
 const StatusPage = lazy(() => import('@/pages/StatusPage').then((m) => ({ default: m.StatusPage })));
 const TaskSchedulePage = lazy(() => import('@/pages/TaskSchedulePage').then((m) => ({ default: m.TaskSchedulePage })));
@@ -242,6 +243,7 @@ function shouldAutoReloadAfterChunkFailure(): boolean {
  *   /branch-panel/:branchId Branch detail + logs + single-service actions
  *   /branch-topology        Project service topology
  *   /release-center         Release targets, runs, logs and rollback
+ *   /release-console        发布控制台三栏版：左项目环境 / 中发布实况 / 右历史与 Agent
  *   /reports                CDS self-hosted acceptance reports (HTML / Markdown)
  *   /status                 自建存活监控状态页（探测 / 可用率柱条 / 故障时间线）
  *   /task-schedule          Project scheduled jobs
@@ -274,6 +276,7 @@ export function App(): JSX.Element {
               <Route path="/branch-panel/:branchId" element={<BranchDetailPage />} />
               <Route path="/branch-topology" element={<BranchTopologyPage />} />
               <Route path="/release-center" element={<ReleaseCenterPage />} />
+              <Route path="/release-console" element={<ReleaseConsolePage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/status" element={<StatusPage />} />
               <Route path="/task-schedule" element={<TaskSchedulePage />} />

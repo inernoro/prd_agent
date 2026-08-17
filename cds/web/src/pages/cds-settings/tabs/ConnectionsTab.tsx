@@ -153,7 +153,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <div className="flex items-center gap-2 text-base font-semibold">
-                <ShieldCheck className={fullyAuthorized ? 'h-5 w-5 text-emerald-600' : 'h-5 w-5 text-primary'} />
+                <ShieldCheck className={fullyAuthorized ? 'h-5 w-5 text-ok' : 'h-5 w-5 text-primary'} />
                 {fullyAuthorized ? 'MAP 长期授权已生效' : '授权 MAP 平台'}
               </div>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
@@ -206,7 +206,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 className="flex items-center gap-2 text-sm font-semibold">
-                  <LockKeyhole className="h-4 w-4 text-emerald-600" />
+                  <LockKeyhole className="h-4 w-4 text-ok" />
                   服务端凭据状态
                 </h3>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -235,7 +235,7 @@ export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }):
             </div>
             {testResult ? (
               <div role="status" className={testResult.ok
-                ? 'rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300'
+                ? 'rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-sm text-ok'
                 : 'rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive'}
               >
                 {testResult.message}
@@ -327,12 +327,12 @@ function StatusCard({ icon, title, ready, detail }: { icon: JSX.Element; title: 
     <div className="rounded-lg border border-border bg-muted/20 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 font-medium">
-          <span className={ready ? 'text-emerald-600' : 'text-muted-foreground'}>{icon}</span>
+          <span className={ready ? 'text-ok' : 'text-muted-foreground'}>{icon}</span>
           {title}
         </div>
         <span className={ready
-          ? 'rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400'
-          : 'rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-400'}
+          ? 'rounded-full bg-ok-soft px-2.5 py-1 text-xs font-medium text-ok'
+          : 'rounded-full bg-warn-soft px-2.5 py-1 text-xs font-medium text-warn'}
         >
           {ready ? '已授权' : '待授权'}
         </span>
@@ -344,13 +344,13 @@ function StatusCard({ icon, title, ready, detail }: { icon: JSX.Element; title: 
 
 function StatusBadge({ connection }: { connection: CdsConnectionView }): JSX.Element {
   if (connection.status === 'active') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="h-3 w-3" />长期有效</span>;
+    return <span className="inline-flex items-center gap-1 rounded-full bg-ok-soft px-2 py-0.5 text-xs font-medium text-ok"><CheckCircle2 className="h-3 w-3" />长期有效</span>;
   }
   if (connection.status === 'pending-pairing') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600"><Clock className="h-3 w-3" />旧版待配对</span>;
+    return <span className="inline-flex items-center gap-1 rounded-full bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn"><Clock className="h-3 w-3" />旧版待配对</span>;
   }
   if (connection.status === 'revoked') {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2 py-0.5 text-xs font-medium text-rose-600"><XCircle className="h-3 w-3" />已撤销</span>;
+    return <span className="inline-flex items-center gap-1 rounded-full bg-bad-soft px-2 py-0.5 text-xs font-medium text-bad"><XCircle className="h-3 w-3" />已撤销</span>;
   }
   return <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"><X className="h-3 w-3" />未知</span>;
 }

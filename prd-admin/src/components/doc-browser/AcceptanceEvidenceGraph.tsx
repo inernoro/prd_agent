@@ -143,7 +143,7 @@ function ClaimNode({ data }: NodeProps) {
     >
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} isConnectable={false} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 6, background: 'rgba(99,102,241,0.18)', color: 'rgba(165,180,252,0.95)' }}>
+        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 6, background: 'rgba(99,102,241,0.18)', color: 'var(--accent-fg-blue)' }}>
           {d.kind} {d.idx}
         </span>
         <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
@@ -170,7 +170,7 @@ function EvidenceNode({ data }: NodeProps) {
     }}>
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} isConnectable={false} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px' }}>
-        <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 7, fontSize: 12, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(99,102,241,0.22)', color: 'rgba(165,180,252,0.98)' }}>
+        <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 7, fontSize: 12, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(99,102,241,0.22)', color: 'var(--accent-fg-blue)' }}>
           {d.step}
         </span>
         <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{d.title}</span>

@@ -16,9 +16,9 @@ function getStatusDisplay(run: RequirementAssessmentRun): { label: string; color
     case 'Running':
       return { label: '评估中', color: 'text-blue-400/80', icon: <MapSpinner size={14} /> };
     case 'Queued':
-      return { label: '等待评估', color: 'text-amber-400/80', icon: <Clock className="w-3.5 h-3.5" /> };
+      return { label: '等待评估', color: 'text-[color:var(--accent-fg-amber)]', icon: <Clock className="w-3.5 h-3.5" /> };
     default:
-      return { label: '待评估', color: 'text-indigo-400/80', icon: <FileSpreadsheet className="w-3.5 h-3.5" /> };
+      return { label: '待评估', color: 'text-[color:var(--accent-fg-blue)]', icon: <FileSpreadsheet className="w-3.5 h-3.5" /> };
   }
 }
 
@@ -87,7 +87,7 @@ export function ReviewAssessmentListPage() {
             <ArrowLeft className="w-4 h-4 text-token-secondary" />
           </button>
           <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
-            <ListOrdered className="w-5 h-5 text-indigo-400" />
+            <ListOrdered className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
           </div>
           <div>
             <h1 className="text-xl font-semibold text-token-primary">需求评估</h1>
@@ -129,7 +129,7 @@ export function ReviewAssessmentListPage() {
           }`}
         >
           <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 flex items-center justify-center mx-auto mb-4">
-            <FileSpreadsheet className="w-7 h-7 text-indigo-400" />
+            <FileSpreadsheet className="w-7 h-7 text-[color:var(--accent-fg-blue)]" />
           </div>
           <p className="text-sm text-token-primary font-medium">点击或拖拽上传需求表（.xls / .xlsx）</p>
           <p className="text-xs text-token-muted mt-2 max-w-md mx-auto">
@@ -153,7 +153,7 @@ export function ReviewAssessmentListPage() {
                 className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-xl px-5 py-4 text-left transition-colors group"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-token-primary truncate group-hover:text-indigo-200 transition-colors">
+                  <p className="text-sm font-medium text-token-primary truncate group-hover:text-[color:var(--accent-fg-blue)] transition-colors">
                     {run.title}
                   </p>
                   <div className="flex items-center gap-3 text-xs text-token-muted mt-1">

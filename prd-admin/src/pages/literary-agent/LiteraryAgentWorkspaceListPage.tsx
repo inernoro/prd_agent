@@ -673,7 +673,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         )}
         style={{
           background: viewMode === 'time' ? 'rgba(99,102,241,0.15)' : 'transparent',
-          color: viewMode === 'time' ? 'var(--accent-primary, #818CF8)' : 'var(--text-muted)',
+          color: viewMode === 'time' ? 'var(--text-primary)' : 'var(--text-muted)',
         }}
         onClick={() => { setViewMode('time'); sessionStorage.setItem('literary-view-mode', 'time'); }}
       >
@@ -688,7 +688,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         )}
         style={{
           background: viewMode === 'folder' ? 'rgba(99,102,241,0.15)' : 'transparent',
-          color: viewMode === 'folder' ? 'var(--accent-primary, #818CF8)' : 'var(--text-muted)',
+          color: viewMode === 'folder' ? 'var(--text-primary)' : 'var(--text-muted)',
         }}
         onClick={() => { setViewMode('folder'); sessionStorage.setItem('literary-view-mode', 'folder'); }}
       >

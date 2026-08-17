@@ -1085,6 +1085,46 @@ describe('GitHubWebhookDispatcher', () => {
     });
   });
 
+  /**
+   * 自动发布规则拿到的必须是**这次 push 的 commit**（payload 的 `after`）。
+   *
+   * 规则的路径过滤按这个 commit 的改动清单判；不把它带下去，发布只能去读分支的
+   * 当前状态——两次 push 挨得近时，第一个事件会把第二个 commit 发出去，
+   * 而后者的路径过滤从没被评估过（Codex review P1，2026-08-16）。
+   */
+  describe('push 规则钩子', () => {
+    const SHA = 'abc123def456789012345678901234567890aaaa';
+
+    function linkProject(): void {
+      stateService.addProject({
+        id: 'p1', slug: 'proj', name: 'Proj', kind: 'git',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo', githubInstallationId: 42,
+      });
+    }
+
+    it('把 payload 的 after 作为 commitSha 传给规则钩子', async () => {
+      linkProject();
+      const seen: Array<Record<string, unknown>> = [];
+      const d = new GitHubWebhookDispatcher({
+        stateService, worktreeService: worktree, shell, config: buildConfig(),
+        runPushRules: async (ctx) => { seen.push(ctx as unknown as Record<string, unknown>); return 1; },
+      });
+
+      await d.handle('push', {
+        ref: 'refs/heads/main',
+        after: SHA,
+        repository: { id: 1, full_name: 'octocat/repo' },
+        commits: [{ added: [], removed: [], modified: ['src/index.ts'] }],
+      });
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0].commitSha).toBe(SHA);
+      expect(seen[0].branch).toBe('main');
+      expect(seen[0].changedPaths).toEqual(['src/index.ts']);
+    });
+  });
+
   describe('release event', () => {
     it('acknowledges release events for future implementation', async () => {
       const d = buildDispatcher();

@@ -198,8 +198,8 @@ echo '${created.publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/author
         {testResult ? (
           <div className={`mt-2 rounded-md px-2.5 py-1.5 text-xs ${
             testResult.ok
-              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-              : 'bg-red-500/10 text-red-600 dark:text-red-300'
+              ? 'bg-ok-soft text-ok'
+              : 'bg-bad-soft text-bad'
           }`}
           >
             {testResult.message}
@@ -313,7 +313,7 @@ echo '${created.publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/author
       ) : null}
 
       {error ? (
-        <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">{error}</div>
+        <div className="rounded-md bg-bad-soft px-3 py-2 text-xs text-bad">{error}</div>
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">

@@ -146,7 +146,7 @@ export function ReplyBox({
         onClick={submit}
         disabled={sending || !text.trim()}
         className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex-none"
-        style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.32)', color: 'rgba(216,180,254,0.97)' }}
+        style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.32)', color: 'var(--accent-fg-violet)' }}
         title="发送回复"
       >
         {sending ? <MapSpinner size={12} /> : <Send size={12} />}

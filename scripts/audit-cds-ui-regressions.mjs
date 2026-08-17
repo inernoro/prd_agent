@@ -54,19 +54,28 @@ function requireRegex(key, regex, name) {
 }
 
 // Branch list wide-screen layout: this prevents regression to a fixed 3-column
-// grid or to the generic 1360px workspace cap that caused the large empty area.
-requireContains('branchList', '<Workspace wide className="cds-branch-list-workspace">', 'branch list uses page-scoped workspace');
+// grid or to any workspace cap that would bring back the large empty right side.
+//
+// 2026-08-16 重锚：原来钉的是 `<Workspace wide className="cds-branch-list-workspace">`
+// 加一条同名的 CSS 覆盖。那套机制本身就是 bug —— 页面声明 `wide`、CSS 再偷偷把它
+// 改写成无上限，TSX 上看不出任何异常（predicate-and-wiring-discipline 形状 6：
+// 判据读的值不是真正生效的那个值）。档位收敛进 Workspace 的 props 之后，
+// 页面直接声明 fluid，那条 className 覆盖被删掉是**修复**，不是回归。
+//
+// 所以断言改成盯**行为**：页面拿到 fluid 档、fluid 档真的无上限、且不许有任何
+// 页面级宽度覆盖把它改回去。守的还是同一件事：超宽屏上 auto-fill 网格必须能继续
+// 加列，右侧不许出现大留白。
+requireContains('branchList', '<Workspace fluid>', 'branch list declares the fluid workspace tier');
 requireContains('branchList', 'className="cds-branch-card-grid"', 'branch list uses adaptive grid class');
 requireNotContains('branchList', 'grid gap-4 sm:grid-cols-2 2xl:grid-cols-3', 'branch list does not use fixed 3-column Tailwind grid');
-requireContains('css', '.cds-workspace.cds-branch-list-workspace', 'branch list workspace overrides generic cap with higher specificity');
-// 2026-07-05 workspace 三档归一(standard 1240 / wide 1440 / fluid 无上限)后,
-// 分支列表从专属 3000px 上限折叠为 fluid 档(max-width: none)。意图不变:
-// auto-fill 网格在超宽屏必须能继续加列,不许退回任何会造成右侧大留白的窄上限。
 requireRegex(
   'css',
-  /\.cds-workspace\.cds-branch-list-workspace\s*\{[^}]*max-width:\s*none/,
-  'branch list workspace is fluid (no cap regression)',
+  /\.cds-workspace--fluid\s*\{[^}]*max-width:\s*none/,
+  'fluid workspace tier really has no cap',
 );
+// 防回流：不许再用页面级 className 在 CSS 里改写档位（那正是被修掉的旧机制）。
+requireNotContains('css', '.cds-workspace.cds-branch-list-workspace', 'branch list has no page-scoped width override');
+requireNotContains('branchList', 'cds-branch-list-workspace', 'branch list does not reintroduce the page-scoped workspace class');
 requireContains('css', 'grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));', 'branch grid keeps empty tracks so a single card does not stretch full-width');
 requireNotContains('css', 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));', 'branch grid avoids auto-fit single-card stretch regression');
 
@@ -87,7 +96,18 @@ requireNotContains('branchList', 'window.confirm', 'branch card keeps CDS confir
 // 「行首 const chipToneClass = chipStatus ===」放宽为「仍按 chipStatus 显式分态映射」，
 // 意图不变（line 80 仍钉运行态色值，防 helper 化 / 过亮 / 看着停了的回归）。
 requireContains('branchList', "chipStatus === 'running'", 'resource chips use explicit per-status tone mapping');
-requireContains('branchList', 'border-emerald-500/25 bg-emerald-500/[0.055]', 'running resource chip has live but subdued tone');
+// 2026-08-16 重锚：原来钉死 `border-emerald-500/25 bg-emerald-500/[0.055]`。
+// 硬编码调色板不跟主题走（浅色主题下那个 5.5% 的 emerald 几乎看不见），已收敛成
+// 语义 token。边框透明度仍是 /25，底色换成 bg-ok-soft（双主题各自定义的低饱和底）。
+// 断言改成盯意图：运行态用 ok 语义色 + **soft 底**，不许用实色底（过亮回归），
+// 也不许退回硬编码调色板（不跟主题走）。
+requireRegex(
+  'branchList',
+  /chipStatus === 'running'\s*\?\s*'border-ok\/\d+ bg-ok-soft/,
+  'running resource chip is live but subdued (ok token, soft fill)',
+);
+requireNotContains('branchList', "? 'border-ok bg-ok ", 'running resource chip does not use a solid over-bright fill');
+requireNotContains('branchList', 'bg-emerald-500/[0.055]', 'resource chip tone does not regress to hardcoded palette');
 
 // Database workbench: these are the product-level invariants from the database
 // panel redesign. The exact implementation can evolve, but removing these

@@ -16,6 +16,14 @@ import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entr
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
+import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
+import {
+  auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport, type InfraExposureInput,
+} from './services/infra-exposure-audit.js';
+import {
+  backupDirCandidates, buildRedisBackupProbeScript, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
+} from './services/infra-backup-schedule.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
@@ -84,6 +92,7 @@ import {
 import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
 import type { BranchEntry } from './types.js';
+import { combinedOutput } from './types.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -232,6 +241,21 @@ const ENTRYPOINT_SELF_CHECK_INTERVAL_MS = 30 * 60_000;
 // 启动后延迟首检：等 CDS 自己起来并且 nginx reload 完，否则首检必然误报。
 const ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS = 90_000;
 
+// 基础设施自动备份间隔。手工备份的实际含义是「出事那天正好没人点」。
+// 6 小时一轮：mongodump 有成本，但一天四份 + 保留策略的磁盘占用是可控的。
+const INFRA_BACKUP_INTERVAL_MS = 6 * 60 * 60_000;
+// 启动后延迟首备：等 infra 起齐，也避开自更新重启时的资源尖峰。
+const INFRA_BACKUP_STARTUP_DELAY_MS = 10 * 60_000;
+// 单个库的导出超时。大库慢，但卡住不放会拖住后面所有目标。
+const INFRA_BACKUP_TIMEOUT_MS = 20 * 60_000;
+
+// 基础设施暴露面自检间隔。判据取 `docker ps` 的运行态真值，不读台账——
+// 台账里的 hostPort 只是个数字，说明不了绑在哪个地址上。存量容器的绑定地址
+// 在创建时就固化了，代码改动追不上它们，只能靠这一层持续盯。
+const INFRA_EXPOSURE_AUDIT_INTERVAL_MS = 60 * 60_000;
+// 启动后延迟首检：等 infra 容器都拉起来，否则首检看到的是半截状态。
+const INFRA_EXPOSURE_AUDIT_STARTUP_DELAY_MS = 120_000;
+
 const BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS = 10 * 60_000;
 
 /**
@@ -285,6 +309,362 @@ function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): 
 
   setTimeout(() => { void run(); }, ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS).unref?.();
   const timer = setInterval(() => { void run(); }, ENTRYPOINT_SELF_CHECK_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+/**
+ * 基础设施暴露面自检。
+ *
+ * 回答的问题是：**我这台机器上，有没有哪个数据库正对着公网、还不要密码？**
+ *
+ * 判据只认 `docker ps` 的运行态真值。不读 CDS 自己的台账有两个原因：台账里的
+ * hostPort 只是个数字（说明不了绑在哪个地址上），而且手工起的、别的来路起的容器
+ * 根本不在台账里——恰恰是这些最容易被忘掉。
+ */
+function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor') return null;
+  if (isPreviewInstance()) return null;
+
+  let lastSignature = '';
+  const run = async () => {
+    try {
+      // 一次 docker ps 拿到全部容器的名字、镜像、端口与状态；再按容器名去台账里
+      // 补 env（台账有 env 的才判得了认证，没有的按「未知」从严报）。
+      const ps = await shell.exec(
+        `docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.State}}'`,
+        { timeout: 30_000 },
+      );
+      if (ps.exitCode !== 0) {
+        console.warn('[infra-exposure] 读不到容器列表，跳过本轮');
+        return;
+      }
+      const byContainer = new Map<string, { id: string; projectId: string }>();
+      for (const svc of stateService.getInfraServices() || []) {
+        byContainer.set(svc.containerName, { id: svc.id, projectId: svc.projectId });
+      }
+
+      // 先挑出数据面容器。应用容器对外发布是它们的本职（nginx 在前面挡着），
+      // 混进来只会把告警淹掉。
+      const rows: Array<{ name: string; image: string; ports: string; running: boolean }> = [];
+      for (const line of (ps.stdout || '').split('\n')) {
+        const [name, image, ports, state] = line.split('\t');
+        if (!name || !image) continue;
+        if (detectInfraKind(image) === 'other') continue;
+        rows.push({ name, image, ports: ports ?? '', running: (state || '').toLowerCase() === 'running' });
+      }
+      if (rows.length === 0) return;
+
+      // 认证判据必须取**容器自己的**配置，不是 CDS 台账里那份：台账记的是
+      // 「建它时用了什么」，compose 导入的、手工起的、密码写在启动参数里的
+      // （redis 的 --requirepass）台账里都看不到，照台账判会把有密码的库
+      // 误报成裸奔——一条假警报会让人开始怀疑整张表。
+      const authByContainer = new Map<string, { env: Record<string, string>; args: string[] }>();
+      const inspect = await shell.exec(
+        `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}' `
+        + rows.map((r) => `'${r.name.replace(/'/g, `'"'"'`)}'`).join(' '),
+        { timeout: 30_000 },
+      );
+      for (const line of (inspect.stdout || '').split('\n')) {
+        const [rawName, envJson, cmdJson] = line.split('\t');
+        if (!rawName) continue;
+        const name = rawName.replace(/^\//, '').trim();
+        const env: Record<string, string> = {};
+        try {
+          for (const kv of (JSON.parse(envJson || '[]') as string[]) || []) {
+            const i = kv.indexOf('=');
+            if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
+          }
+        } catch { /* 解析不了就当没有，下游按未知从严 */ }
+        let args: string[] = [];
+        try { args = (JSON.parse(cmdJson || '[]') as string[]) || []; } catch { args = []; }
+        authByContainer.set(name, { env, args });
+      }
+
+      const inputs: InfraExposureInput[] = rows.map((r) => {
+        const known = byContainer.get(r.name);
+        const conf = authByContainer.get(r.name);
+        return {
+          id: known?.id || r.name,
+          projectId: known?.projectId || '(未登记)',
+          containerName: r.name,
+          dockerImage: r.image,
+          env: conf?.env,
+          args: conf?.args,
+          runtimePorts: r.ports,
+          running: r.running,
+        };
+      });
+
+      // 把宿主防火墙纳入判据。两个方向都要：绑在全网卡但被挡住的不该报成 critical
+      // （报多了没人看），而**规则一旦丢失（重启即丢）就要立刻升回 critical**——
+      // 只看容器绑定的自检对「防火墙没了」这件事完全无感。
+      const pubIf = (await shell.exec(
+        `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
+        { timeout: 15_000 },
+      )).stdout.trim();
+      const fwRules = await shell.exec('iptables -S DOCKER-USER 2>/dev/null', { timeout: 15_000 });
+      const firewall = pubIf && fwRules.exitCode === 0
+        ? parseFirewallGuard(fwRules.stdout || '', pubIf)
+        : null;
+
+      const report = auditInfraExposure(inputs, { firewall });
+      if (report.signature === lastSignature) return;   // 状态没变就不刷屏
+      lastSignature = report.signature;
+
+      if (report.criticalCount === 0 && report.warnCount === 0) {
+        console.log(`[infra-exposure] ${report.summary}`);
+        store?.record({
+          category: 'system', severity: 'info', source: 'infra-exposure',
+          action: 'infra.exposure.clean', message: report.summary, status: 'info',
+          details: { checked: report.findings.length },
+        });
+        return;
+      }
+      const body = renderExposureReport(report);
+      const severity: ServerEventSeverity = report.criticalCount > 0 ? 'error' : 'warn';
+      console.warn(`[infra-exposure] ${report.summary}`);
+      store?.record({
+        category: 'system', severity, source: 'infra-exposure',
+        action: 'infra.exposure.detected', message: body,
+        status: report.criticalCount > 0 ? 'error' : 'warn',
+        details: {
+          criticalCount: report.criticalCount,
+          warnCount: report.warnCount,
+          findings: report.findings.filter((f) => f.severity !== 'ok'),
+        },
+      });
+    } catch (err) {
+      console.warn(`[infra-exposure] 自检失败: ${(err as Error).message}`);
+    }
+  };
+
+  setTimeout(() => { void run(); }, INFRA_EXPOSURE_AUDIT_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_EXPOSURE_AUDIT_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+/**
+ * 基础设施自动备份。
+ *
+ * 落盘目录沿用手工备份那一份（`/data/cds/<slug>/backups`），所以「备份历史」
+ * 接口不用改就能看到自动备份。文件名带 `-auto-` 段，与 restore 前的
+ * `pre-restore` 快照区分开——后者是救命用的，不参与周期清理。
+ *
+ * 磁盘闸在最前面：宿主根盘写满会同时打死所有预览、构建和 CDS 自己，那比这一轮
+ * 没有新备份糟得多。读不到可用空间也按「不够」处理。
+ */
+function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor') return null;
+  if (isPreviewInstance()) return null;
+
+  const shq = (s: string): string => `'${String(s).replace(/'/g, `'"'"'`)}'`;
+
+  const run = async () => {
+    try {
+      // 逐个候选试写，用第一个真能写的。写死单一路径的代价已经付过：那个路径在
+      // 这台宿主上不存在，而手工备份的 ls 带着 2>/dev/null，把「目录不存在」显示
+      // 成「没有备份」——于是零备份这件事可以一直不被发现。
+      const candidates = backupDirCandidates({
+        slug: stateService.projectSlug,
+        repoRoot: config.repoRoot,
+      });
+      let dir = '';
+      const dirErrors: string[] = [];
+      for (const c of candidates) {
+        const probe = await shell.exec(
+          `mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`,
+          { timeout: 15_000 },
+        );
+        if (probe.exitCode === 0 && (probe.stdout || '').includes('ok')) { dir = c; break; }
+        dirErrors.push(`${c}: ${(combinedOutput(probe) || `exit=${probe.exitCode}`).trim().slice(0, 160)}`);
+      }
+      if (!dir) {
+        const msg = `没有可写的备份目录，本轮跳过。试过：\n${dirErrors.join('\n')}\n`
+          + '可用 CDS_BACKUP_DIR 显式指定一个可写目录。';
+        console.warn(`[infra-backup] ${msg}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.skipped.nodir', message: msg, status: 'warn',
+          details: { candidates, errors: dirErrors },
+        });
+        return;
+      }
+
+      // 临时目录：所有导出先写这里，校验通过才改名进正式目录。
+      // 好处不只是「失败时清理」——**正式文件名从头到尾只属于校验过的产物**，
+      // 进程被杀、超时、容器消失都不会在正式目录留下半截文件。
+      // 半截文件的危害是具体的：保留策略按 `<key>-auto-` 前缀认它是一份备份，
+      // 可能把真正可用的旧副本挤掉；备份历史也会把它列出来供人恢复。
+      // 放子目录而不是加后缀，这样上层 ls 既看不到它，也不会把它算进份数。
+      const tmpDir = `${dir}/.tmp`;
+      await shell.exec(`rm -rf ${shq(tmpDir)} && mkdir -p ${shq(tmpDir)}`, { timeout: 15_000 });
+
+      const df = await shell.exec(`df -Pk ${shq(dir)}`, { timeout: 15_000 });
+      const free = parseDfAvailableBytes(df.stdout || '');
+      if (shouldSkipForDiskPressure(free)) {
+        // 「读不到」必须说清读不到什么、命令怎么失败的。只说一句「读不到」，
+        // 下一个人除了重跑一遍没有别的办法。
+        const msg = free == null
+          ? `读不到备份目录 ${dir} 的可用空间，本轮跳过（不确定就不写盘）。`
+            + `df exit=${df.exitCode}${df.stderr ? ` stderr=${df.stderr.trim().slice(0, 200)}` : ''}`
+          : `备份目录 ${dir} 可用空间不足（${(free / 1024 / 1024 / 1024).toFixed(1)} GiB），本轮跳过`;
+        console.warn(`[infra-backup] ${msg}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.skipped.disk', message: msg, status: 'warn',
+          details: {
+            freeBytes: free ?? null, directory: dir,
+            dfExitCode: df.exitCode, dfStdout: (df.stdout || '').slice(0, 400), dfStderr: (df.stderr || '').slice(0, 400),
+          },
+        });
+        return;
+      }
+
+      // 台账里表示存活的字段是 `status`，不是 `running`。直接把台账对象丢进来，
+      // `running === false` 这一档永远不成立——首轮实跑就撞上了：一个已停止的
+      // mongo 被当成目标，`docker exec` 报 No such container。字段名对不上是
+      // 编译器发现不了的那种错（可选字段缺省即 undefined），只能靠真跑一轮。
+      const plan = planInfraBackups(
+        (stateService.getInfraServices() || []).map((s) => ({ ...s, running: s.status === 'running' })),
+        { now: new Date() },
+      );
+      if (plan.targets.length === 0) return;
+
+      const outcomes: BackupOutcome[] = [];
+      for (const t of plan.targets) {
+        const out = `${tmpDir}/${t.fileName}`;
+        const finalOut = `${dir}/${t.fileName}`;
+        try {
+          let cmd: string;
+          if (t.kind === 'mongo') {
+            // 凭据在**容器内部**展开：既不进宿主命令行（因而不进 CDS 日志、不进
+            // 宿主 ps），也不依赖 CDS 台账里那份 env——台账看不到 compose 导入或
+            // 手工起的容器的真实凭据，照台账取会在有认证的库上静默失败。
+            cmd = `docker exec ${shq(t.containerName)} sh -lc `
+              + `'U="${'$'}{MONGO_INITDB_ROOT_USERNAME:-${'$'}{MONGO_USERNAME:-${'$'}MONGODB_USERNAME}}"; `
+              + `P="${'$'}{MONGO_INITDB_ROOT_PASSWORD:-${'$'}{MONGO_PASSWORD:-${'$'}MONGODB_PASSWORD}}"; `
+              + `if [ -n "${'$'}U" ]; then mongodump --archive --gzip -u "${'$'}U" -p "${'$'}P" --authenticationDatabase admin; `
+              + `else mongodump --archive --gzip; fi' > ${shq(out)}`;
+          } else if (t.kind === 'mysql') {
+            // 密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器自己的
+            // 进程列表里。--single-transaction 保证 InnoDB 一致性快照。
+            //
+            // 容器里**不摆管道**。`mysqldump | gzip` 的退出码默认是 gzip 的：
+            // dump 因凭据错误或连接失败中断时 gzip 照样成功，产出一个几十字节的
+            // 合法 gzip 头，「非空」检查放行，一份不可用的备份被记成成功，还可能
+            // 顺手把真正可用的旧副本按保留策略删掉。
+            //
+            // 上一版靠 `set -o pipefail 2>/dev/null || true` 取失败那一环的退出码，
+            // 那是错的：`set` 是特殊内建，dash 遇到不认识的 `-o pipefail` 会**直接
+            // 终止 shell**，`|| true` 拦不住（实测 dash 退出码 2，mysqldump 一次都
+            // 没跑）。Debian 系的 mariadb 镜像 /bin/sh 正是 dash，于是这一档从
+            // 「静默成功」变成了「必然失败」。
+            //
+            // 现在两步各自判退出码：容器里只跑 mysqldump（docker exec 会把它的
+            // 退出码原样带回来），压缩交给宿主，`&&` 串起来一环失败就整条失败。
+            // 代价是中转一份未压缩的 dump，磁盘闸已经在前面拦过了。
+            const raw = `${out}.sql`;
+            cmd = `docker exec ${shq(t.containerName)} sh -c `
+              + `'MYSQL_PWD="${'$'}{MYSQL_ROOT_PASSWORD:-${'$'}MARIADB_ROOT_PASSWORD}" `
+              + `exec mysqldump -uroot --all-databases --single-transaction --quick --routines --events' `
+              + `> ${shq(raw)} && gzip -n -c ${shq(raw)} > ${shq(out)} && rm -f ${shq(raw)}`;
+          } else {
+            // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
+            //
+            // 1. **要能连上**。配了 requirepass 的实例（密码常写在 --requirepass
+            //    启动参数里，env 里看不到）会让裸 redis-cli 返回 NOAUTH。原来忽略
+            //    返回值，于是 docker cp 拷走一个**旧的** dump.rdb，还报成功——
+            //    「以为有、其实是几天前的」，比没有备份更危险。
+            // 2. **BGSAVE 要真的完成**。异步落盘，拷到半截就是坏文件。
+            // 3. **要能证明是新的**。用 INFO persistence 的官方判据确认这次
+            //    BGSAVE 真的完成，再用 dump.rdb 的 mtime 证明文件确实被它写过。
+            //
+            // 两个判据都换过一轮：
+            //
+            // - 凭据原来只读 env。`redis-server --requirepass secret` 这种把密码
+            //   写在启动参数里、env 里一个字都没有的配法（compose 导入最常见）
+            //   会拿到空密码 → NOAUTH → 每一轮备份都失败。现在 env 取不到就从
+            //   容器内进程的命令行里取，**全程在容器里展开**，不进宿主命令行、
+            //   不进 CDS 日志。（暴露面自检读的是宿主侧 inspect 的 Config.Cmd，
+            //   只判「有没有密码」；这里要的是密码本身，所以走容器内 /proc。）
+            // - 完成判据原来比 LASTSAVE 前后是否变化。LASTSAVE 的粒度是**秒**，
+            //   小库的 BGSAVE 常在同一秒内跑完，时间戳不动——于是白等 90 秒再把
+            //   一份完全有效的备份判成失败。改用 rdb_bgsave_in_progress +
+            //   rdb_last_bgsave_status，那才是 redis 文档给的完成判据。
+            const redisScript = buildRedisBackupProbeScript();
+            const redisProbe = await shell.exec(
+              `docker exec ${shq(t.containerName)} sh -c ${shq(redisScript)}`,
+              { timeout: 120_000 },
+            );
+            if (redisProbe.exitCode !== 0) {
+              throw new Error(`BGSAVE 未确认完成，拒绝拷贝可能过期的 dump.rdb：${combinedOutput(redisProbe).trim().slice(0, 300)}`);
+            }
+            cmd = `docker cp ${shq(`${t.containerName}:/data/dump.rdb`)} ${shq(out)}`;
+          }
+          const r = await shell.exec(cmd, { timeout: INFRA_BACKUP_TIMEOUT_MS });
+          if (r.exitCode !== 0) throw new Error(combinedOutput(r).slice(0, 400));
+
+          const stat = await shell.exec(`stat -c %s ${shq(out)} 2>/dev/null || echo 0`, { timeout: 10_000 });
+          const bytes = Number((stat.stdout || '0').trim()) || 0;
+          // 零字节文件是失败伪装成成功的经典形态：文件在、内容没有。
+          if (bytes <= 0) {
+            throw new Error('导出产物为空');
+          }
+
+          // 只有走到这里的产物才配拿到正式文件名。
+          const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
+          if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
+
+          // 保留策略：读目录里自己产的旧备份，超份数或超期的删掉，最新一份永不删。
+          const ls = await shell.exec(
+            `ls -l --time-style=+%s ${shq(dir)} 2>/dev/null | awk '{print $6"\\t"$7}'`,
+            { timeout: 15_000 },
+          );
+          const existing = (ls.stdout || '').split('\n')
+            .map((l) => l.split('\t'))
+            .filter((p) => p.length === 2 && p[1])
+            .map(([ts, name]) => ({ name: name.trim(), mtimeMs: Number(ts) * 1000 }))
+            .filter((f) => Number.isFinite(f.mtimeMs));
+          const doomed = selectExpiredBackups(existing, { projectId: t.projectId, id: t.id, now: new Date() });
+          for (const name of doomed) {
+            await shell.exec(`rm -f ${shq(`${dir}/${name}`)}`, { timeout: 10_000 });
+          }
+          outcomes.push({ id: t.id, ok: true, fileName: t.fileName, bytes, pruned: doomed });
+        } catch (err) {
+          // 任何失败路径都不留残骸：临时文件删掉，正式目录本来就没被碰过。
+          await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
+          outcomes.push({ id: t.id, ok: false, error: (err as Error).message });
+        }
+      }
+
+      await shell.exec(`rm -rf ${shq(tmpDir)}`, { timeout: 15_000 }).catch(() => undefined);
+
+      const summary = summarizeBackupRound(outcomes, plan.skipped.length);
+      const failed = outcomes.filter((o) => !o.ok);
+      if (failed.length > 0) {
+        console.warn(`[infra-backup] ${summary}`);
+        store?.record({
+          category: 'system', severity: 'warn', source: 'infra-backup',
+          action: 'infra.backup.partial-failure', message: summary, status: 'warn',
+          details: { outcomes, skipped: plan.skipped, directory: dir },
+        });
+      } else {
+        console.log(`[infra-backup] ${summary}`);
+        store?.record({
+          category: 'system', severity: 'info', source: 'infra-backup',
+          action: 'infra.backup.completed', message: summary, status: 'info',
+          details: { outcomes, skipped: plan.skipped, directory: dir },
+        });
+      }
+    } catch (err) {
+      console.warn(`[infra-backup] 本轮失败: ${(err as Error).message}`);
+    }
+  };
+
+  setTimeout(() => { void run(); }, INFRA_BACKUP_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_BACKUP_INTERVAL_MS);
   timer.unref?.();
   return timer;
 }
@@ -940,6 +1320,12 @@ const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEv
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
 const entrypointReachabilityWatchdog = startEntrypointReachabilityWatchdog(activeServerEventLogStore);
+// 存量暴露面看门狗：单测只管得住「新建时怎么拼参数」，管不了已经在跑的容器，
+// 也管不了不经 CDS 起的容器。这一层按运行态真值持续盯。
+const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
+// 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
+// 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
+const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
@@ -1293,6 +1679,9 @@ const containerService = new ContainerService(shell, config, {
     entry,
     branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
   ),
+  // infra 端口的绑定地址必须与注入给应用的 CDS_HOST 同源（都来自
+  // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
+  getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
 }, activeServerEventLogStore);
 
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次
@@ -4044,6 +4433,42 @@ function tryKillOnPort(port: number, force: boolean): boolean {
   }
 }
 
+/**
+ * 已注册的**远端** executor 数量。本机自己那条不算——它不构成「别的机器要连过来」
+ * 的理由，把它算进去会让单机部署永远退不回回环。
+ */
+function countRemoteExecutors(): number {
+  try {
+    return Object.values(stateService.getExecutors() || {})
+      .filter((e) => e && e.host && e.host !== 'localhost' && e.host !== '127.0.0.1')
+      .length;
+  } catch {
+    // 状态库还没就绪时按 0 处理：此时集群成员也连不上来，绑回环不会误伤。
+    return 0;
+  }
+}
+
+function countCdsPeers(): number {
+  try {
+    return (stateService.getCdsPeers() || []).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * 本机监听决策的**唯一**求值口径。listenWithRetry 与 cluster 路由都从这里取——
+ * 各自再调一次 resolveListenHost 就会出现两份判据，改一处忘一处（判据分裂）。
+ * 每次现算而不是缓存：集群成员数会在运行中变化。
+ */
+function currentListenDecision(): ListenHostDecision {
+  return resolveListenHost({
+    mode: config.mode,
+    remoteExecutorCount: countRemoteExecutors(),
+    peerCount: countCdsPeers(),
+  });
+}
+
 // force: force-kill any process on the port (for masterPort)
 // optional: if true, port conflict is non-fatal (for workerPort shared with other services)
 function listenWithRetry(
@@ -4083,13 +4508,19 @@ function listenWithRetry(
   // conditions produced multiple concurrent retries while the first one
   // eventually succeeded.
   let listening = false;
+  // 监听地址（见 services/listen-host.ts）：单机部署只绑回环，对外走前置 nginx；
+  // 集群角色（executor / 已注册远端成员）自动放开——那种部署里别的机器确实要连过来。
+  // 不给 host 参数时 Node 绑全部网卡，等于把控制面裸端口挂公网、绕过 nginx。
+  const bind = currentListenDecision();
   const doListen = (attempt: number) => {
     if (listening) return; // retry scheduled before success became visible
-    const s = server.listen(port, () => {
+    const s = server.listen(port, bind.host, () => {
       listening = true;
       // 2026-05-07 timing 审视:盖戳 daemon ready,让 recordSelfUpdate 能算
       // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds.self-update-timing-audit.md
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
+      // 监听地址永远不该靠猜：直连裸端口失败时，这一行就是答案。
+      console.log(`  ${label}: ${describeListenDecision(bind)}`);
       onSuccess();
     });
     // 2026-05-28: 给所有 listenWithRetry 的 server 统一应用 keepalive 超时,
@@ -4434,6 +4865,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     // so both the branch router and the cluster router see the same value.
     getStrategy: () => clusterStrategy,
     setStrategy: (s) => { clusterStrategy = s; },
+    getListenDecision: currentListenDecision,
   }));
   console.log(`  Cluster: one-click bootstrap API mounted at /api/cluster`);
 
@@ -4441,6 +4873,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     console.log(`  Scheduler: dispatcher enabled, cluster-aware routing active`);
   } else {
     console.log(`  Scheduler: standby, will auto-upgrade on first executor bootstrap`);
+    // 绑回环时首个 executor 只能经前置 nginx 打进来。这句写在这里，是因为
+    // 「注册端口连不上」的排障总是从这一行开始找。
+    const listen = currentListenDecision();
+    if (!listen.exposed) {
+      console.log(`  Scheduler: 主节点监听 ${listen.host}，首个 executor 需经前置 nginx 注册（直连裸端口请设 CDS_BIND_HOST=0.0.0.0）`);
+    }
   }
 
   // ── 自建存活监控（Uptime Kuma 风格状态页的数据源） ──

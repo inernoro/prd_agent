@@ -36,6 +36,22 @@ export interface ReleaseGateCheck {
   fields: ReleaseGateCheckField[];
 }
 
+/**
+ * 一组归并后的日志行。
+ *
+ * 归并只按「数字不同」这一种差异（`4 retries left` 与 `3 retries left`），
+ * 因为这正是刷屏的来源；并且**不丢信息**——组内出现过的不同原文都留在
+ * variants 里，UI 照样能展示，用户不必去翻原始日志才知道有过差异。
+ */
+export interface ReleaseLogGroup {
+  /** 代表行：组内第一条原文，保序。 */
+  text: string;
+  /** 这一组归并了几条原始日志行。 */
+  count: number;
+  /** 组内出现过的不同原文（含 text 自身），最多留 MAX_VARIANTS 条。 */
+  variants: string[];
+}
+
 export interface ReleaseGateReport {
   verdict: string;
   checks: ReleaseGateCheck[];
@@ -45,16 +61,16 @@ export interface ReleaseGateReport {
 }
 
 export interface ReleaseFailureDiagnosis {
-  /** 一句话结论，直接摆在首屏。 */
+  /** 一句话结论，直接摆在首屏。恒为单行且有长度上限，见 condenseHeadline。 */
   headline: string;
   /** 结构化门禁报告。提不出来时缺省，UI 退化成 error 行列表。 */
   report?: ReleaseGateReport;
   /** 未通过的检查项（report 存在时才有内容）。 */
   failedChecks: ReleaseGateCheck[];
-  /** error 级日志（去重、保序、限量）。 */
-  errorLines: string[];
+  /** error 级日志（归并、保序、限量）。 */
+  errorGroups: ReleaseLogGroup[];
   /** 已知噪音行：会把真错误挤出摘要，但它本身不是失败原因。 */
-  noiseLines: string[];
+  noiseGroups: ReleaseLogGroup[];
   /** 对首个未通过检查项的人话解释。没有明确信号时缺省。 */
   humanHint?: string;
 }
@@ -64,6 +80,10 @@ const MAX_JSON_SCAN = 400_000;
 const MAX_JSON_CANDIDATES = 400;
 const MAX_ERROR_LINES = 8;
 const MAX_NOISE_LINES = 6;
+/** 一句话结论的长度上限。超出的部分不会丢——完整原文就在下方的 error 行里。 */
+const MAX_HEADLINE_CHARS = 96;
+/** 一组里最多展示几种不同原文，其余靠 count 计数，完整的仍在原始日志。 */
+const MAX_VARIANTS = 3;
 
 /**
  * 已知噪音。刻意写成「精确到现象」的正则而不是通配 WARN：
@@ -73,6 +93,10 @@ const NOISE_PATTERNS: ReadonlyArray<RegExp> = [
   /\bcontext canceled\b/i,
   /warmup skipped or timed out/i,
   /image warmup/i,
+  // curl 的重试播报：它只说「还要再试几次」，不说为什么失败。真正的失败行
+  // （`curl: (22) ... error: 404`）不含这两种措辞，不会被误判进噪音。
+  /problem \(retrying all errors\)/i,
+  /\b\d+ retr(?:y|ies) left\b/i,
 ];
 
 /**
@@ -206,20 +230,75 @@ export function pickGateReport(reports: ReadonlyArray<ReleaseGateReport>): Relea
   return reports[reports.length - 1];
 }
 
-function dedupeKeepOrder(values: ReadonlyArray<string>, limit: number): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
+/**
+ * 归并键：把数字串换成 `#`。
+ *
+ * 只掩数字，不做同义词或模糊匹配——归并多认一点，就等于替用户丢掉一条信息。
+ * 数字差异恰好覆盖了刷屏的两种来源：倒计时（`4 retries left`）与时间戳。
+ */
+export function repeatKey(message: string): string {
+  return message.trim().replace(/\d+/g, '#');
+}
+
+/**
+ * 按「只有数字不同」归并重复行，保序、限组数。
+ *
+ * 与旧的完全相等去重相比，这一版能收掉 curl 那种带倒计时的刷屏；代价是可能
+ * 把 `error: 404` 与 `error: 500` 归进同一组，所以组内不同的原文都留在
+ * variants 里照常展示——归并只压缩重复，不压缩差异。
+ */
+export function collapseRepeats(values: ReadonlyArray<string>, limit: number): ReleaseLogGroup[] {
+  const byKey = new Map<string, ReleaseLogGroup>();
+  const out: ReleaseLogGroup[] = [];
   for (const value of values) {
     const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    out.push(trimmed);
-    if (out.length >= limit) break;
+    if (!trimmed) continue;
+    const key = repeatKey(trimmed);
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (!existing.variants.includes(trimmed) && existing.variants.length < MAX_VARIANTS) {
+        existing.variants.push(trimmed);
+      }
+      continue;
+    }
+    if (out.length >= limit) continue;
+    const group: ReleaseLogGroup = { text: trimmed, count: 1, variants: [trimmed] };
+    byKey.set(key, group);
+    out.push(group);
   }
   return out;
 }
 
+/**
+ * 把一条 error 压成一句话结论。
+ *
+ * 远端执行器失败时给的是复合串：一句人话，后面挂着 `--- stderr(tail) ---`
+ * 加几十行原文。这段原文进标题位就成了一堵墙（换行被 HTML 折叠成空格、
+ * 17px 粗体铺满八行），所以在判据层就切掉：结论只留标记之前的第一行。
+ *
+ * 切掉的部分一个字没丢——完整原文照旧出现在下方的 error 行区块里。
+ */
+export function condenseHeadline(message: string, limit: number = MAX_HEADLINE_CHARS): string {
+  const raw = (message || '').trim();
+  if (!raw) return '';
+  // stderr/stdout 尾巴之后全是原文，结论不要它
+  const cut = raw.replace(/\s*-{2,}\s*std(?:err|out)\s*\((?:tail|head)\)\s*-{2,}[\s\S]*$/i, '');
+  const firstLine = (cut || raw).split(/\r?\n/)[0].replace(/\s+/g, ' ').trim();
+  const line = firstLine || raw.replace(/\s+/g, ' ').trim();
+  return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
+}
+
+/**
+ * 是不是一条已知噪音**行**。
+ *
+ * 「行」是字面意思：多行的复合消息不算。远端执行器失败时会把一句人话加整段
+ * stderr 拼成一条消息，里面顺带含着 curl 的重试播报——按子串判定就会把这条
+ * **真正的失败原因**整条标成「不是失败原因」（2026-08-12 自测截图里真的发生了）。
+ * 噪音判定只对单行成立，复合消息交给 error 区块原样展示。
+ */
 export function isNoiseLine(message: string): boolean {
+  if (/[\r\n]/.test(message)) return false;
   return NOISE_PATTERNS.some((pattern) => pattern.test(message));
 }
 
@@ -256,17 +335,21 @@ export function diagnoseReleaseFailure(
   const text = messages.join('\n');
   const report = pickGateReport(extractGateReports(text));
   const failedChecks = report ? report.checks.filter((check) => !check.ok) : [];
-  const errorLines = dedupeKeepOrder(
+  const errorGroups = collapseRepeats(
     logs.filter((log) => log.level === 'error').map((log) => log.message || ''),
     MAX_ERROR_LINES,
   );
-  const noiseLines = dedupeKeepOrder(messages.filter(isNoiseLine), MAX_NOISE_LINES);
+  // error 级永远不进噪音栏：那一栏写着「它不是失败原因」，而 error 恰恰可能是
+  const noiseGroups = collapseRepeats(
+    logs.filter((log) => log.level !== 'error' && isNoiseLine(log.message || '')).map((log) => log.message || ''),
+    MAX_NOISE_LINES,
+  );
 
   let headline: string;
   if (report && failedChecks.length > 0) {
     headline = `发布门禁 ${report.totalCount} 项检查，未通过 ${failedChecks.length} 项：${failedChecks.map((check) => check.name).join('、')}`;
-  } else if (errorLines.length > 0) {
-    headline = errorLines[0];
+  } else if (errorGroups.length > 0) {
+    headline = errorGroups[0].text;
   } else if (report) {
     headline = `发布门禁 ${report.totalCount} 项检查全部通过，失败发生在门禁之外的步骤`;
   } else {
@@ -276,11 +359,12 @@ export function diagnoseReleaseFailure(
   const humanHint = failedChecks.length > 0 ? explainGateCheck(failedChecks[0]) : undefined;
 
   return {
-    headline,
+    // 无论走上面哪个分支，结论位都过一遍单行化：解析成功与否都不许整段日志上首屏
+    headline: condenseHeadline(headline),
     ...(report ? { report } : {}),
     failedChecks,
-    errorLines,
-    noiseLines,
+    errorGroups,
+    noiseGroups,
     ...(humanHint ? { humanHint } : {}),
   };
 }

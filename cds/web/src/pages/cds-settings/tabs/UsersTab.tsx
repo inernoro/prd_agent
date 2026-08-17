@@ -273,8 +273,8 @@ export function UsersTab({ onToast }: { onToast: (msg: string) => void }): JSX.E
                           <span
                             className={
                               u.status === 'active'
-                                ? 'inline-flex rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-500'
-                                : 'inline-flex rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-amber-500'
+                                ? 'inline-flex rounded bg-ok-soft px-1.5 py-0.5 text-[11px] font-semibold text-ok'
+                                : 'inline-flex rounded bg-warn-soft px-1.5 py-0.5 text-[11px] font-semibold text-warn'
                             }
                           >
                             {u.status === 'active' ? '正常' : '已禁用'}

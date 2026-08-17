@@ -281,7 +281,7 @@ function AlignmentResult({ report, onRerun, error }: ResultProps) {
       </div>
 
       {error && (
-        <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+        <div className="text-xs text-[color:var(--accent-fg-amber)] bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
           上次重跑出现问题：{error}。展示的是之前缓存的结果。
         </div>
       )}
@@ -401,7 +401,7 @@ function ThinkingBlock({ text, done }: ThinkingBlockProps) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-amber-200 hover:bg-amber-500/5 transition"
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-[color:var(--accent-fg-amber)] hover:bg-amber-500/5 transition"
       >
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         <Brain size={12} />

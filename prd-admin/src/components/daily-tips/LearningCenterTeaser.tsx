@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
+import { useDataTheme } from '@/hooks/useDataTheme';
 
 /**
  * 首页顶部「教程中心」承接卡（徽章环样式）。「只是承接」—— 卡内只展示等级 + 累计经验 +
@@ -13,9 +14,21 @@ import { useDailyTipsStore } from '@/stores/dailyTipsStore';
  * 禁止 emoji）：统一石墨与暖银色相，高阶（大师/宗师）加皇冠，嵌进环形进度圈。
  */
 
-// ── 等级帽子分级表（index 0 = 1 级，对齐后端 LevelTable）──
+/*
+ * ── 等级帽子分级表（index 0 = 1 级，对齐后端 LevelTable）──
+ *
+ * 两套皮肤，不是一套加滤镜。原来只有暗色档一套：石墨 → 暖银的**明度递进**，
+ * 越高阶越亮，衬在深画布上才成立。浅色档照搬这一套就糊了 ——
+ * Lv.3 的 #888b8f 压在暖纸底 #EEEAE3 上只有 1.86:1，图标线要求 3:1，
+ * 而且越高阶越浅、越看不见，递进方向整个反了。
+ *
+ * 浅色档另配一套**镜像递进**：石墨 → 暖青铜，越高阶越深越暖（5.3~6.6:1 全部达标）。
+ * 「越高阶越贵气」的语义两边都保住，只是一边靠提亮、一边靠加深。
+ * 走 useDataTheme() 分支是本仓库既定做法（见 .claude/rules/admin-dual-theme.md）。
+ */
 type HatTier = { name: string; board: string; cap: string; tassel: string; glow: string; crown: boolean };
-const HAT_TIERS: HatTier[] = [
+
+const HAT_TIERS_DARK: HatTier[] = [
   { name: '新手', board: '#70747a', cap: '#50545a', tassel: '#c8cbd0', glow: 'rgba(200,203,208,0.12)', crown: false },
   { name: '入门', board: '#7b7f84', cap: '#595d62', tassel: '#ced0d3', glow: 'rgba(206,208,211,0.13)', crown: false },
   { name: '进阶', board: '#888b8f', cap: '#64676b', tassel: '#d3d4d5', glow: 'rgba(211,212,213,0.14)', crown: false },
@@ -25,13 +38,24 @@ const HAT_TIERS: HatTier[] = [
   { name: '宗师', board: '#c6beb2', cap: '#969087', tassel: '#eee8de', glow: 'rgba(238,232,222,0.18)', crown: true },
 ];
 
-function hatTier(level: number): HatTier {
-  return HAT_TIERS[Math.min(Math.max(level - 1, 0), HAT_TIERS.length - 1)];
+const HAT_TIERS_LIGHT: HatTier[] = [
+  { name: '新手', board: '#5a6068', cap: '#3f444b', tassel: '#7d848e', glow: 'rgba(90,96,104,0.14)', crown: false },
+  { name: '入门', board: '#545b65', cap: '#3a4048', tassel: '#767e8a', glow: 'rgba(84,91,101,0.15)', crown: false },
+  { name: '进阶', board: '#4d5560', cap: '#343a44', tassel: '#6f7886', glow: 'rgba(77,85,96,0.16)', crown: false },
+  { name: '熟手', board: '#4a5260', cap: '#313743', tassel: '#6b7585', glow: 'rgba(74,82,96,0.17)', crown: false },
+  { name: '高手', board: '#57503f', cap: '#3c372a', tassel: '#7d7462', glow: 'rgba(87,80,63,0.18)', crown: false },
+  { name: '大师', board: '#63543a', cap: '#453a26', tassel: '#8c7a58', glow: 'rgba(99,84,58,0.19)', crown: true },
+  { name: '宗师', board: '#6d5a31', cap: '#4c3f1f', tassel: '#99854c', glow: 'rgba(109,90,49,0.20)', crown: true },
+];
+
+function hatTier(level: number, isLight: boolean): HatTier {
+  const table = isLight ? HAT_TIERS_LIGHT : HAT_TIERS_DARK;
+  return table[Math.min(Math.max(level - 1, 0), table.length - 1)];
 }
 
 /** 等级学士帽（内联 SVG）。每级配色递进，大师/宗师戴皇冠。 */
-function LevelHat({ level, size = 26 }: { level: number; size?: number }) {
-  const t = hatTier(level);
+function LevelHat({ level, size = 26, isLight }: { level: number; size?: number; isLight: boolean }) {
+  const t = hatTier(level, isLight);
   return (
     <svg width={size} height={size} viewBox="0 0 48 44" fill="none" style={{ filter: `drop-shadow(0 2px 6px ${t.glow})` }}>
       {t.crown && <path d="M16 9 L19 3.5 L24 8 L29 3.5 L32 9 Z" fill={t.tassel} stroke={t.board} strokeWidth="0.8" strokeLinejoin="round" />}
@@ -50,6 +74,7 @@ function LevelHat({ level, size = 26 }: { level: number; size?: number }) {
 
 export function LearningCenterTeaser({ tourAnchor = true }: { tourAnchor?: boolean } = {}) {
   const navigate = useNavigate();
+  const isLight = useDataTheme() === 'light';
   const progress = useDailyTipsStore((s) => s.progress);
   const loadProgress = useDailyTipsStore((s) => s.loadProgress);
 
@@ -63,7 +88,7 @@ export function LearningCenterTeaser({ tourAnchor = true }: { tourAnchor?: boole
   const total = progress?.total ?? 0;
   const learned = progress?.learned ?? 0;
   const pct = total > 0 ? Math.round((learned / total) * 100) : 0;
-  const tier = hatTier(level);
+  const tier = hatTier(level, isLight);
 
   // 同页若并列多张承接卡时只让其中一张承载页面教程锚点（document.querySelector 只会命中第一张）。
   const anchorId = tourAnchor ? 'home-learning-center' : undefined;
@@ -81,16 +106,19 @@ export function LearningCenterTeaser({ tourAnchor = true }: { tourAnchor?: boole
       className="home-learning-center w-full cursor-pointer text-left rounded-xl flex items-center gap-3 transition-colors duration-200"
       style={{
         padding: '11px 13px',
+        // 原来只有 blur、没有底色与描边，浅色档下整块贴在页面上没有边界
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-subtle)',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
       }}
     >
       <div className="relative shrink-0" style={{ width: 46, height: 46 }}>
         <svg width={46} height={46} viewBox="0 0 46 46" style={{ transform: 'rotate(-90deg)' }}>
-          <circle cx={23} cy={23} r={R} fill="none" stroke="var(--border-subtle)" strokeWidth={3} />
+          <circle cx={23} cy={23} r={R} fill="none" stroke="var(--nested-block-bg)" strokeWidth={3} />
           <circle cx={23} cy={23} r={R} fill="none" stroke={tier.board} strokeWidth={3} strokeLinecap="round" strokeDasharray={`${dash} ${C}`} style={{ transition: 'stroke-dasharray 600ms cubic-bezier(.4,0,.2,1)' }} />
         </svg>
-        <span className="absolute inset-0 flex items-center justify-center"><LevelHat level={level} size={26} /></span>
+        <span className="absolute inset-0 flex items-center justify-center"><LevelHat level={level} size={26} isLight={isLight} /></span>
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">

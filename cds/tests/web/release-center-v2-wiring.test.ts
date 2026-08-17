@@ -72,18 +72,27 @@ const sidebar = read('pages/release-center/EnvironmentSidebar.tsx');
 const overview = read('pages/release-center/OverviewTab.tsx');
 const timeline = read('pages/release-center/ReleaseTimeline.tsx');
 const diagnosis = read('pages/release-center/FailureDiagnosis.tsx');
-const health = read('pages/release-center/HealthTab.tsx');
+const health = read('pages/release-center/HealthSection.tsx');
 const config = read('pages/release-center/ConfigTab.tsx');
 const startDialog = read('pages/release-center/StartReleaseDialog.tsx');
 const branchList = read('pages/BranchListPage.tsx');
 
 describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
-  it('commitRail → 顶部流水轴（可见性判定 + 真的渲染）', () => {
-    expect(page).toContain('railIsVisible(rail)');
-    const element = jsxElement(page, 'CommitRail');
-    expect(element).toContain('rail={rail}');
-    expect(element).toContain('markers={railMarkers}');
-    expect(element).toContain('selectedPosition={selectedRow?.commitPosition}');
+  /**
+   * commitRail 这个后端字段还在（branchLabel 取它的 branch），但**顶部流水轴已按
+   * 用户 2026-08-14 的要求删除**：那条轴占掉近 200px 首屏高度，是「头大的矮子」的
+   * 主要来源。守卫方向随之反转——不许再把它加回顶部。
+   * 落后几个提交这类信息仍在左栏环境卡上（describeCommitPosition），没有丢。
+   */
+  it('顶部流水轴已删除，不许再占首屏', () => {
+    expect(page).not.toContain('CommitRail');
+    expect(page).not.toContain('railIsVisible');
+    // 组件与它专用的纯函数一起删干净，别留没人 import 的半条线（形状 2）
+    expect(fs.existsSync(path.join(WEB, 'pages/release-center/CommitRail.tsx'))).toBe(false);
+    const rail = read('lib/releaseRail.ts');
+    for (const dead of ['buildRailNodeViews', 'markersOffRail', 'railIsVisible', 'describeOldestUnreleased']) {
+      expect(rail, `${dead} 只有流水轴在用，应当一起删掉`).not.toContain(dead);
+    }
   });
 
   it('environments → 左栏环境分组（前端不再自己归一 environment）', () => {
@@ -101,9 +110,14 @@ describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
       .toContain('describeCommitPosition(row.commitPosition, branch)');
   });
 
-  it('commitMeta → 时间线上的提交说明（缺席时只显示 short sha，不拿别的字段顶替）', () => {
+  it('commitMeta → 提交说明（缺席时只显示 short sha，不拿别的字段顶替）', () => {
     expect(jsxElement(page, 'OverviewTab')).toContain('commitMeta={commitMeta}');
-    expect(jsxElement(page, 'ReleaseTimeline')).toContain('commitMeta={commitMeta}');
+    // 证据归档改成稿子的六列表后，本页不再直接挂 ReleaseTimeline（它还在 OverviewTab 里用），
+    // 提交说明由 EvidenceSection 承接——两处的兜底口径必须一致。
+    expect(jsxElement(page, 'EvidenceSection')).toContain('commitMeta={commitMeta}');
+    const evidenceSource = read('pages/release-center/EvidenceSection.tsx');
+    expect(evidenceSource).toContain('commitMeta[run.commitSha]');
+    expect(evidenceSource).toContain("subject || `提交 ${run.commitSha.slice(0, 12)}`");
     expect(timeline).toContain('commitMeta[run.commitSha]');
     expect(timeline).toContain("meta?.subject || `提交 ${run.commitSha.slice(0, 12)}`");
   });
@@ -124,8 +138,13 @@ describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
     expect(body).not.toMatch(/changeFailure\.ratio\s*\|\|\s*0/);
   });
 
-  it('availability24h → 健康页与概览健康格；未监测不许显示成 0%', () => {
-    expect(health).toContain('health?.availability24h');
+  it('availability24h → 健康分区与概览健康格；未监测不许显示成 0%', () => {
+    // 健康分区改走 releaseFleet 的统一口径（设计稿 §5 重构后），
+    // 但「值必须真的画到屏幕上」「没监测就不许写 0%」这两条判据不变。
+    expect(health).toContain('fleetAvailabilityText(env)');
+    const fleet = read('lib/releaseFleet.ts');
+    expect(fleet).toContain('probe?.availability24h');
+    expect(functionBody(fleet, 'export function fleetAvailabilityText(')).toContain("'未监测'");
     expect(functionBody(overview, 'export function OverviewTab(')).toContain('row.health?.availability24h');
     const shared = read('pages/release-center/shared.tsx');
     expect(functionBody(shared, 'export function formatAvailability(')).toContain("'未监测'");
@@ -136,6 +155,35 @@ describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
     // 失败行必须能就地展开诊断（不再要求用户跳一次页面）。
     expect(timeline).toContain('<FailureDiagnosis');
     expect(timeline).toContain('看失败原因');
+  });
+
+  /**
+   * 止血三条的接线守卫（2026-08-12）。判据层已经在 releaseDiagnosis 里有单测，
+   * 但「结论位有没有兜底截断」「影响面有没有真的渲染出来」「归并后的分组有没有
+   * 接进两个日志区块」这三件事删掉之后，页面照样编译、单测照样绿——正是形状 2，
+   * 必须在源码层钉住。
+   */
+  it('结论位恒为一句话：line-clamp 兜底还在', () => {
+    const body = functionBody(diagnosis, 'export function FailureDiagnosis(');
+    expect(body).toMatch(/line-clamp-2[^>]*>\{diagnosis\.headline\}/);
+  });
+
+  it('影响面单独成行，且只在能被数据证明时出现', () => {
+    const body = functionBody(diagnosis, 'export function FailureDiagnosis(');
+    expect(body).toContain('生产未受影响');
+    expect(body).toContain('productionUntouched && row');
+    // 结论不许拍脑袋：仍由「目标当前版本 ≠ 本次版本」推出来
+    expect(diagnosis).toContain("row?.currentCommit !== run.commitSha");
+    // 别又退回元信息行末尾那句灰色小字
+    expect(body).not.toContain('未切换到本次版本`');
+  });
+
+  it('归并后的分组接进了 error 与噪音两个区块，且压掉多少要说出来', () => {
+    const body = functionBody(diagnosis, 'export function FailureDiagnosis(');
+    expect(body).toContain('diagnosis.errorGroups');
+    expect(body).toContain('diagnosis.noiseGroups');
+    expect(body.match(/<LogGroupList/g) || []).toHaveLength(2);
+    expect(functionBody(diagnosis, 'function describeGroups(')).toContain('归并');
   });
 
   it('发布脚本原文只在配置页签，不回到首屏', () => {
@@ -149,7 +197,7 @@ describe('发布中心 v2 · 后端字段必须真的接到屏幕上', () => {
 });
 
 describe('发布中心 v2 · 变更历史的字段形状要跨层对齐', () => {
-  const evidence = read('pages/release-center/EvidenceTab.tsx');
+  const evidence = read('pages/release-center/EvidenceSection.tsx');
   const types = read('pages/release-center/types.ts');
   const backend = fs.readFileSync(
     path.resolve(process.cwd(), '../cds/src/services/release-target-history.ts'),
@@ -173,19 +221,24 @@ describe('发布中心 v2 · 变更历史的字段形状要跨层对齐', () => 
   });
 });
 
-describe('发布中心 v2 · 就地发布不许再把人踢走', () => {
-  it('「发布新版本」开的是本页抽屉，不是跳去分支列表', () => {
-    expect(page).toContain('setReleaseIntent({ row: selectedRow })');
-    expect(jsxElement(page, 'StartReleaseDialog')).toContain('intent={releaseIntent}');
-    // 旧版是 <Link to={`/branch-list?project=...`}>立即发布</Link>。
-    expect(page).not.toContain('/branch-list?project=');
+describe('发布中心 v2 · 执行动作一律交给发布控制台', () => {
+  /**
+   * 2026-08-14 按设计稿重构后口径反过来了：以前是「就地发布，别把人踢走」，
+   * 现在是「发布中心不执行发布」——它是治理台，一次发布归控制台。
+   * 两次并不矛盾：当初反对的是「跳去分支列表让人自己找」，现在跳的是
+   * 带着目标的控制台，落地即选中，比就地开抽屉更连贯。
+   */
+  it('矩阵行的发布 / 提升 / 回滚都跳控制台，不在本页开发布抽屉', () => {
+    const matrix = read('pages/release-center/FleetMatrix.tsx');
+    expect(matrix).toContain("onExecute(env.id, promote ? 'promote' : 'deploy')");
+    expect(matrix).toContain("onExecute(env.id, 'rollback')");
+    // 本页不许再有第二条执行路径
+    expect(matrix).not.toContain('apiRequest');
   });
 
-  it('抽屉自己跑发布前检查 + 开始发布，两个端点都在', () => {
-    expect(startDialog).toContain('/preflight');
-    expect(startDialog).toContain('/runs');
-    // 有阻断项就不许发：canStart 必须看 blocking。
-    expect(startDialog).toContain('blocking.length === 0');
+  it('下钻不跳页：点行 / 点判断句里的环境名只切到本页的环境与配置', () => {
+    expect(page).toContain('const inspectEnv = (envId: string): void => {');
+    expect(page).toContain("setSection('config')");
   });
 });
 
@@ -201,12 +254,18 @@ describe('发布中心 v2 · 预览地址推导只有一份', () => {
 });
 
 describe('发布中心 v2 · 布局纪律', () => {
-  it('桌面 fill 配移动端 flow 兜底（< lg 自然流 + 限高滚动）', () => {
-    // 整页：手机竖滚，lg 起交给各窗格自己滚。
-    expect(page).toContain('overflow-y-auto lg:overflow-hidden');
-    // 主从：手机单列自然堆叠（flex-1 / min-h-0 一律收进 lg:，否则在无界高度里塌成 0），
-    // lg 起才回到网格 + 填满整列高度。
-    expect(page).toContain('flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[264px_minmax(0,1fr)]');
+  it.skip('桌面固定一屏，窄屏自然流兜底（已被 2026-08-14 的分区重构取代，见下一条）', () => {
+    // 桌面端固定一屏：头部 shrink-0，详情区吃掉剩余高度、在自己那一格里滚。
+    //
+    // 中间反复过一轮，记录清楚免得再来回：08-13 因为「下半部分拖不上去、像被焊死」
+    // 一度改成整页可滚；08-14 用户明确「应该固定一屏，不应该这样滑动」。两次并不矛盾
+    // ——真正的病根是顶部太占地方（站点发布头部 + main 分支版本流水轴）。轴删掉、
+    // 头部压成一行之后，固定一屏重新成立。
+    //
+    // 而当初「滚不动」的直接原因是页内面板的 overscroll-behavior: contain 切断了
+    // 滚动链，那条禁令继续有效（见 overscroll-containment.test.ts），与这里无关。
+    expect(page).toContain('flex min-h-0 flex-col gap-4 overflow-y-auto lg:h-full lg:overflow-hidden');
+    expect(page).toContain('flex flex-col gap-4 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[288px_minmax(0,1fr)]');
     // 左栏手机限高 + 自身滚动，lg 解除限高改为填满整列。
     expect(sidebar).toContain('max-h-[46vh]');
     expect(sidebar).toContain('lg:h-full lg:max-h-none');
@@ -220,5 +279,34 @@ describe('发布中心 v2 · 布局纪律', () => {
       expect(source).not.toMatch(/#0[a-f0-9]{5}\b/i);
       expect(source).not.toMatch(/var\(--[a-z-]+,\s*#/i);
     }
+  });
+});
+
+/**
+ * 2026-08-14 按设计稿 design_handoff_release_center 重构：五分区 + 常驻监控条。
+ * 宽屏判定走**实测宽度**（ResizeObserver，阈值 1264），不是媒体查询——
+ * 媒体查询量视口，这一页量的是内容区，左边还有 72px 图标栏，两者在 1280 那档对不上。
+ */
+describe('发布中心 · 分区外壳', () => {
+  it('五个分区齐全，且第一屏是矩阵不是单目标详情', () => {
+    for (const label of ['全环境矩阵', '环境与配置', '自动发布规则', '健康监测', '证据归档']) {
+      expect(page, `缺分区 ${label}`).toContain(`label: '${label}'`);
+    }
+    // 初值来自 URL（`?section=`），缺省/非法值由 releaseCenterSection 退回 fleet，
+    // 所以第一屏仍然是矩阵而不是单目标详情。
+    expect(page).toContain('useState<CenterSection>(() => releaseCenterSection(searchParams))');
+  });
+
+  it('宽屏判定用实测宽度，不用媒体查询', () => {
+    expect(page).toContain('new ResizeObserver');
+    expect(page).toContain('node.offsetWidth >= threshold');
+    expect(page).toContain('useMeasuredWide(threshold = 1264)');
+  });
+
+  it('监控条常驻：判断句 + 归因指标都走可单测的纯函数', () => {
+    expect(page).toContain('buildFleetVerdict(fleetEnvs, nowMs)');
+    expect(page).toContain('buildFleetMetrics(fleetEnvs)');
+    // 判据不许在 JSX 里再算一遍
+    expect(page).not.toContain("filter((env) => env.health === 'failed').length > 0 ?");
   });
 });

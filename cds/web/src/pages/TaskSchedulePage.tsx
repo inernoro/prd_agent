@@ -404,7 +404,7 @@ export function TaskSchedulePage(): JSX.Element {
 
         {error ? <ErrorBlock message={error} /> : null}
         {toast ? (
-          <div className="mb-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+          <div className="mb-4 rounded-md border border-ok/30 bg-ok-soft px-3 py-2 text-sm text-ok">
             {toast}
           </div>
         ) : null}
@@ -717,7 +717,7 @@ export function TaskSchedulePage(): JSX.Element {
               ) : null}
 
               {checkResult ? (
-                <div className={`rounded-md border px-3 py-2 text-sm ${checkResult.ok ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
+                <div className={`rounded-md border px-3 py-2 text-sm ${checkResult.ok ? 'border-ok/30 bg-ok-soft text-ok' : 'border-destructive/30 bg-destructive/10 text-destructive'}`}>
                   <div className="font-medium">
                     {checkResult.ok ? '检测通过' : '检测失败'}
                     {checkResult.httpStatus ? ` · HTTP ${checkResult.httpStatus}` : ''}
@@ -883,7 +883,7 @@ function Field({ label, children, className = '' }: { label: string; children: R
 function StatusBadge({ status, enabled }: { status?: RunStatus; enabled: boolean }): JSX.Element {
   if (!enabled) return <span className="rounded border border-muted px-2 py-0.5 text-xs text-muted-foreground">已停用</span>;
   const cls = status === 'success'
-    ? 'border-emerald-500/35 text-emerald-700 dark:text-emerald-300'
+    ? 'border-ok/35 text-ok'
     : status === 'failed'
       ? 'border-destructive/35 text-destructive'
       : 'border-[hsl(var(--hairline))] text-muted-foreground';

@@ -74,16 +74,16 @@ type PanelState =
 const SOURCE_META: Record<EnvSource, { label: string; cls: string }> = {
   'cds-builtin': { label: 'CDS 注入', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
   'cds-derived': { label: '项目身份', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
-  mirror: { label: '镜像加速', cls: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300' },
-  global: { label: '全局', cls: 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300' },
-  project: { label: '项目', cls: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' },
-  branch: { label: '分支', cls: 'border-amber-500/45 bg-amber-500/15 text-amber-700 dark:text-amber-300' },
+  mirror: { label: '镜像加速', cls: 'border-warn/30 bg-warn-soft text-warn' },
+  global: { label: '全局', cls: 'border-info/30 bg-info-soft text-info' },
+  project: { label: '项目', cls: 'border-ok/30 bg-ok-soft text-ok' },
+  branch: { label: '分支', cls: 'border-warn/45 bg-warn-soft text-warn' },
   profile: { label: '服务底座', cls: 'border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300' },
   'extra-service': { label: '临时服务', cls: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300' },
-  'branch-override': { label: '分支覆盖', cls: 'border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-300' },
+  'branch-override': { label: '分支覆盖', cls: 'border-warn/40 bg-warn-soft text-warn' },
   'deploy-mode': { label: '部署模式', cls: 'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300' },
   'platform-injected': { label: '平台注入', cls: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
-  'per-branch-db': { label: '分支库改写', cls: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' },
+  'per-branch-db': { label: '分支库改写', cls: 'border-ok/40 bg-ok-soft text-ok' },
 };
 
 function SourceBadge({ source }: { source: EnvSource }): JSX.Element {
@@ -110,7 +110,7 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
           {profile.isExtra ? <SourceBadge source="extra-service" /> : null}
           {profile.hasOverride ? <SourceBadge source="branch-override" /> : null}
           {profile.dbScope === 'per-branch' ? (
-            <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+            <span className="rounded border border-ok/30 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">
               分支独立库{profile.dbScopeSource === 'branch-override' ? '(本分支覆盖)' : ''}
             </span>
           ) : null}
@@ -125,7 +125,7 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
             镜像 {profile.dockerImage}{profile.prebuilt ? '(预构建)' : ''}
           </div>
           {profile.envError ? (
-            <div className="mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <div className="mb-2 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">
               该服务 env 解析失败(部署时也会以同样原因被拦):{profile.envError}
             </div>
           ) : null}
@@ -146,7 +146,7 @@ function ProfileConfigCard({ profile }: { profile: EffectiveConfigProfile }): JS
                       <td className="max-w-[180px] truncate py-1.5 pr-3 font-mono" title={p.key}>{p.key}</td>
                       <td className="max-w-[220px] truncate py-1.5 pr-3 font-mono text-muted-foreground" title={p.value}>
                         {p.value}
-                        {p.templated ? <span className="ml-1 rounded border border-blue-500/30 bg-blue-500/10 px-1 text-[10px] text-blue-700 dark:text-blue-300">模板展开</span> : null}
+                        {p.templated ? <span className="ml-1 rounded border border-info/30 bg-info-soft px-1 text-[10px] text-info">模板展开</span> : null}
                       </td>
                       <td className="py-1.5 pr-3">
                         <SourceBadge source={p.source} />

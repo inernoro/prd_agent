@@ -25,6 +25,7 @@ import {
 } from './llmLogsView.helpers';
 
 const PAGE_SIZE = 30;
+const DESKTOP_NOTIFICATION_SAFE_INSET = 80;
 
 function Chip({ label, color, bg, title }: { label: string; color: string; bg: string; title?: string }) {
   return <span title={title} className="inline-flex items-center rounded-full px-1.5 h-[18px] text-[10px] font-semibold shrink-0" style={{ color, background: bg }}>{label}</span>;
@@ -265,11 +266,18 @@ export function LlmGenerationsView() {
   const Pager = ({ p, setP, tot, busy }: { p: number; setP: (n: number) => void; tot: number; busy: boolean }) => {
     const pages = Math.max(1, Math.ceil(tot / PAGE_SIZE));
     return (
-      <div className="shrink-0 flex items-center justify-between px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}>
+      <div
+        className="shrink-0 flex items-center justify-between py-2 pl-3 text-[11px]"
+        style={{
+          color: 'var(--text-muted)',
+          borderTop: '1px solid var(--border-subtle)',
+          paddingRight: isMobile ? 12 : DESKTOP_NOTIFICATION_SAFE_INSET,
+        }}
+      >
         <span>共 {tot} 条 · 第 {p}/{pages} 页</span>
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" disabled={busy || p <= 1} onClick={() => setP(p - 1)}><ChevronLeft size={14} /></Button>
-          <Button variant="ghost" size="sm" disabled={busy || p >= pages} onClick={() => setP(p + 1)}><ChevronRight size={14} /></Button>
+          <Button aria-label="上一页" variant="ghost" size="sm" disabled={busy || p <= 1} onClick={() => setP(p - 1)}><ChevronLeft size={14} /></Button>
+          <Button aria-label="下一页" variant="ghost" size="sm" disabled={busy || p >= pages} onClick={() => setP(p + 1)}><ChevronRight size={14} /></Button>
         </div>
       </div>
     );

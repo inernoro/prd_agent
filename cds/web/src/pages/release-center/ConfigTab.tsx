@@ -78,7 +78,6 @@ export function ConfigTab({ row, publicUrl, onConfigure, onArchive }: ConfigTabP
         <p className="mt-1.5 text-xs text-muted-foreground">{strategyDescription(row)}</p>
         <pre
           className="mt-3 max-h-[46vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
-          style={{ overscrollBehavior: 'contain' }}
         >
           {scripts.join('\n')}
         </pre>

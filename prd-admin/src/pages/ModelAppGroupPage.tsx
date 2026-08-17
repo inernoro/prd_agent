@@ -1258,7 +1258,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                     border: '1px dashed rgba(251, 191, 36, 0.3)',
                                                   }}
                                                 >
-                                                  <AlertTriangle size={12} className="shrink-0 mt-0.5" style={{ color: 'rgba(251, 191, 36, 0.9)' }} />
+                                                  <AlertTriangle size={12} className="shrink-0 mt-0.5" style={{ color: 'var(--accent-fg-amber)' }} />
                                                   <div className="min-w-0 flex-1">
                                                     <div className="flex items-center gap-2 flex-wrap">
                                                       <span style={{ color: 'rgba(251, 191, 36, 0.9)' }}>
@@ -1395,7 +1395,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                           style={{ background: 'rgba(251, 191, 36, 0.08)' }}
                                           title="未配置默认模型"
                                         >
-                                          <span className="text-[12px]" style={{ color: 'rgba(251, 191, 36, 0.95)' }}>
+                                          <span className="text-[12px]" style={{ color: 'var(--accent-fg-amber)' }}>
                                             (未配置默认{modelTypeLabel})
                                           </span>
                                         </div>
@@ -1535,7 +1535,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                           {poolModels.length > 1 && (
                                             <span
                                               className="inline-flex items-center justify-center min-w-[18px] h-[16px] px-1 rounded text-[10px] font-semibold shrink-0"
-                                              style={{ background: 'rgba(59, 130, 246, 0.18)', color: 'rgba(59, 130, 246, 0.95)' }}
+                                              style={{ background: 'rgba(59, 130, 246, 0.18)', color: 'var(--accent-fg-blue)' }}
                                               title={`${poolModels.length} 个模型`}
                                             >
                                               {poolModels.length}
@@ -2053,13 +2053,13 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
               <div className="grid grid-cols-2 gap-2">
                 {initResult.created.length > 0 && (
                   <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(34,197,94,0.08)' }}>
-                    <div className="text-[18px] font-semibold" style={{ color: 'rgba(34,197,94,0.9)' }}>{initResult.created.length}</div>
+                    <div className="text-[18px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>{initResult.created.length}</div>
                     <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>新增应用</div>
                   </div>
                 )}
                 {initResult.updated.length > 0 && (
                   <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(59,130,246,0.08)' }}>
-                    <div className="text-[18px] font-semibold" style={{ color: 'rgba(59,130,246,0.9)' }}>{initResult.updated.length}</div>
+                    <div className="text-[18px] font-semibold" style={{ color: 'var(--accent-fg-blue)' }}>{initResult.updated.length}</div>
                     <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>更新应用</div>
                   </div>
                 )}
@@ -2071,7 +2071,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                 )}
                 {initResult.orphanDeleted.length > 0 && (
                   <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(251,191,36,0.08)' }}>
-                    <div className="text-[18px] font-semibold" style={{ color: 'rgba(251,191,36,0.9)' }}>{initResult.orphanDeleted.length}</div>
+                    <div className="text-[18px] font-semibold" style={{ color: 'var(--accent-fg-amber)' }}>{initResult.orphanDeleted.length}</div>
                     <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>清理孤儿</div>
                   </div>
                 )}
@@ -2079,7 +2079,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
               {/* 专属绑定保留提示 */}
               {initResult.preservedBindingsCount > 0 && (
-                <div className="rounded-lg px-3 py-2 flex items-center gap-2 text-[12px]" style={{ background: 'rgba(34,197,94,0.06)', color: 'rgba(34,197,94,0.9)' }}>
+                <div className="rounded-lg px-3 py-2 flex items-center gap-2 text-[12px]" style={{ background: 'rgba(34,197,94,0.06)', color: 'var(--accent-fg-success)' }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                   已保留 {initResult.preservedBindingsCount} 个专属模型池绑定
                 </div>

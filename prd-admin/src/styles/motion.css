@@ -311,7 +311,7 @@
 .sa-btn.llm-json-sa-failed .sa-message,
 .sa-btn.llm-json-sa-failed .sa-button-text span,
 .sa-btn.llm-json-sa-failed .sa-icon {
-  color: rgba(239, 68, 68, 0.95) !important;
+  color: var(--accent-fg-danger) !important;
 }
 
 .sa-btn.llm-json-sa-passed::before {
@@ -328,7 +328,7 @@
 .sa-btn.llm-json-sa-passed .sa-message,
 .sa-btn.llm-json-sa-passed .sa-button-text span,
 .sa-btn.llm-json-sa-passed .sa-icon {
-  color: rgba(34, 197, 94, 0.95) !important;
+  color: var(--accent-fg-success) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

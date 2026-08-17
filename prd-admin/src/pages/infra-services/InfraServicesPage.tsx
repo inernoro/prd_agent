@@ -1179,7 +1179,7 @@ export default function InfraServicesPage() {
       >
         <div className="flex items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-2">
-            <MessageSquare size={16} style={{ color: 'rgba(167,243,208,0.9)' }} />
+            <MessageSquare size={16} style={{ color: 'var(--accent-fg-emerald)' }} />
             <h3 className="text-sm font-semibold text-token-primary">CDS Agent 测试台</h3>
             {activeSession && (
               <span className="text-xs text-token-muted">

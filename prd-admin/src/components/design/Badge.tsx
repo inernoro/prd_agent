@@ -33,23 +33,26 @@ export function Badge({
               border: '1px solid rgba(99, 102, 241, 0.35)',
               color: 'var(--accent-gold-2)',
             }
+          // 三个语义档：底走 12% 同色调（两个主题都成立），字必须走双写的 --accent-fg-*。
+          // 原来字也写死 500 档，浅色下等于「浅琥珀字压浅琥珀底」——全站审计在 tapd-bug-agent
+          // 抓到「需确认 / 待补充」1.74:1，同一枚 Badge 出现在多少页就错多少页。
           : variant === 'success'
             ? {
                 background: 'rgba(34,197,94,0.12)',
                 border: '1px solid rgba(34,197,94,0.28)',
-                color: 'rgba(34,197,94,0.95)',
+                color: 'var(--accent-fg-success)',
               }
             : variant === 'danger'
               ? {
                   background: 'rgba(239,68,68,0.12)',
                   border: '1px solid rgba(239,68,68,0.28)',
-                  color: 'rgba(239,68,68,0.95)',
+                  color: 'var(--accent-fg-danger)',
                 }
               : variant === 'warning'
                 ? {
                     background: 'rgba(245,158,11,0.12)',
                     border: '1px solid rgba(245,158,11,0.28)',
-                    color: 'rgba(245,158,11,0.95)',
+                    color: 'var(--accent-fg-amber)',
                   }
                 : {
                     background: 'var(--nested-block-bg)',

@@ -322,7 +322,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
               {/* tool_calls */}
               {detail.responseToolCalls ? (
                 <div className="rounded-[10px] px-3 py-2" style={{ background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.22)' }}>
-                  <div className="text-[12px] font-semibold mb-1" style={{ color: 'rgba(56,189,248,0.95)' }}>
+                  <div className="text-[12px] font-semibold mb-1" style={{ color: 'var(--accent-fg-blue)' }}>
                     函数调用 tool_calls{typeof detail.toolCallCount === 'number' ? ` ×${detail.toolCallCount}` : ''}
                   </div>
                   <pre className="text-[11px] whitespace-pre-wrap break-all" style={{ color: 'var(--text-secondary)', maxHeight: 240, overflow: 'auto', margin: 0 }}>

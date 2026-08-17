@@ -144,12 +144,12 @@ const KIND_LABEL: Record<PlanStepKind, string> = {
 };
 const STEP_STATUS_META: Record<PlanStep['status'], { text: string; cls: string }> = {
   pending: { text: '待执行', cls: 'text-muted-foreground' },
-  running: { text: '执行中', cls: 'text-amber-600 dark:text-amber-400' },
-  done: { text: '完成', cls: 'text-emerald-600 dark:text-emerald-400' },
+  running: { text: '执行中', cls: 'text-warn' },
+  done: { text: '完成', cls: 'text-ok' },
   error: { text: '失败', cls: 'text-destructive' },
   skipped: { text: '已跳过', cls: 'text-muted-foreground' },
   cancelled: { text: '已取消', cls: 'text-muted-foreground' },
-  'rolled-back': { text: '已回滚', cls: 'text-sky-600 dark:text-sky-400' },
+  'rolled-back': { text: '已回滚', cls: 'text-info' },
 };
 const PLAN_STATUS_LABEL: Record<Plan['status'], string> = {
   running: '执行中', done: '全部完成', error: '有失败(已停止)', cancelled: '已取消', 'rolled-back': '失败并已回滚',
@@ -439,7 +439,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
         </>
       ) : null}
       {activePlan ? (
-        <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-warn/50 bg-warn-soft px-3 py-1.5 text-xs font-semibold text-warn">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           执行中 {activePlan.steps.filter((s) => s.status === 'done').length}/{activePlan.steps.length}
         </span>
@@ -589,7 +589,7 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
       {activePlan ? (
         <div className="mt-3 grid gap-1.5">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-warn" />
             <b>执行中</b>
             <span className="text-muted-foreground">失败策略：{activePlan.onFailure === 'rollback' ? '停止并回滚' : '仅停止'}</span>
             <ConfirmAction title="取消剩余步骤" description="当前执行中的步骤会跑完，其余待执行步骤取消。确认？" confirmLabel="取消剩余"
@@ -613,9 +613,9 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
       ) : draft.length > 0 ? (
         <div className="mt-3 grid gap-1.5">
           {draft.map((a, i) => (
-            <div key={a.key} className="flex items-center gap-2 rounded-md border border-dashed border-amber-500/50 bg-amber-500/[.06] px-2.5 py-1.5 text-xs">
+            <div key={a.key} className="flex items-center gap-2 rounded-md border border-dashed border-warn/50 bg-warn/[.06] px-2.5 py-1.5 text-xs">
               <span className="w-5 text-right font-mono text-[11px] text-muted-foreground">{i + 1}.</span>
-              <span className="rounded border border-amber-500/50 px-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">{actionKinds(a)}</span>
+              <span className="rounded border border-warn/50 px-1.5 text-[10px] font-semibold text-warn">{actionKinds(a)}</span>
               <span className="min-w-0 flex-1 truncate">{a.label}</span>
               <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{a.steps.length} 步</span>
               <button type="button" className="rounded p-0.5 text-muted-foreground hover:text-primary" title="上移" onClick={() => move(i, -1)}><ArrowUp className="h-3.5 w-3.5" /></button>
@@ -662,8 +662,8 @@ function StepLine({ step, controls }: { step: PlanStep; controls?: JSX.Element }
   return (
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-2.5 py-1.5 text-xs">
       <div className="flex items-center gap-2">
-        {step.status === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-500" /> : (
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${step.status === 'done' ? 'bg-emerald-500' : step.status === 'error' ? 'bg-destructive' : step.status === 'rolled-back' ? 'bg-sky-500' : 'bg-[hsl(var(--muted-foreground))]/50'}`} />
+        {step.status === 'running' ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-warn" /> : (
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${step.status === 'done' ? 'bg-ok' : step.status === 'error' ? 'bg-destructive' : step.status === 'rolled-back' ? 'bg-info' : 'bg-[hsl(var(--muted-foreground))]/50'}`} />
         )}
         <span className="rounded border border-[hsl(var(--hairline))] px-1.5 text-[10px] font-semibold">{KIND_LABEL[step.kind]}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{step.profileId}{step.params?.memberId ? ` · ${step.params.memberId}` : ''}{typeof step.params?.weight === 'number' ? ` · 权重 ${step.params.weight}` : ''}</span>
@@ -682,7 +682,7 @@ function PlanRecord({ plan }: { plan: Plan }): JSX.Element {
     <div className={`rounded-md border px-3 py-2 text-xs ${bad ? 'border-destructive/40 bg-destructive/[.04]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35'}`}>
       <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => setOpen(!open)}>
         {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
-        <b className={bad ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400'}>{PLAN_STATUS_LABEL[plan.status]}</b>
+        <b className={bad ? 'text-destructive' : 'text-ok'}>{PLAN_STATUS_LABEL[plan.status]}</b>
         <span className="text-muted-foreground">{plan.steps.length} 步 · {new Date(plan.createdAt).toLocaleString()}</span>
         {bad ? <span className="min-w-0 flex-1 truncate text-destructive">{plan.steps.find((s) => s.error)?.error}</span> : null}
       </button>
@@ -690,8 +690,8 @@ function PlanRecord({ plan }: { plan: Plan }): JSX.Element {
         <div className="mt-2 grid gap-1">
           {plan.steps.map((s) => <StepLine key={s.id} step={s} />)}
           {plan.rollbackLog?.length ? (
-            <div className="mt-1 rounded-md border border-sky-500/30 bg-sky-500/[.05] px-2.5 py-1.5 text-[11px]">
-              <b className="text-sky-600 dark:text-sky-400">回滚日志</b>
+            <div className="mt-1 rounded-md border border-info/30 bg-info/[.05] px-2.5 py-1.5 text-[11px]">
+              <b className="text-info">回滚日志</b>
               {plan.rollbackLog.map((line, i) => <p key={i} className="mt-0.5 text-muted-foreground">{line}</p>)}
             </div>
           ) : null}
@@ -803,7 +803,7 @@ function ProbeModal({ probe }: { probe: ReturnType<typeof useProbe> }): JSX.Elem
     <CanvasModal wide title={`分流实测 · ${probe.probeFor}`} onClose={probe.close}>
       <div className="max-h-52 overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] text-muted-foreground" style={{ overscrollBehavior: 'contain' }}>
         {probe.log.map((line, i) => <div key={i}>{line}</div>)}
-        {probe.probing.current ? <div className="mt-1 flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin text-amber-500" />请求进行中…</div> : null}
+        {probe.probing.current ? <div className="mt-1 flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin text-warn" />请求进行中…</div> : null}
       </div>
       {probe.probeRes ? <div className="mt-3"><ProbeDashboard result={probe.probeRes} /></div> : null}
       {probe.probeRes ? (
@@ -848,11 +848,11 @@ function useIsolationAudit(branchId: string, onToast?: (m: string) => void) {
 }
 
 const AUDIT_VERDICT_STYLE: Record<string, string> = {
-  pass: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  fail: 'border-red-500/60 bg-red-500/10 text-red-600 dark:text-red-400',
-  boundary: 'border-amber-500/60 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  pass: 'border-ok/50 bg-ok-soft text-ok',
+  fail: 'border-bad/60 bg-bad-soft text-bad',
+  boundary: 'border-warn/60 bg-warn-soft text-warn',
   skip: 'border-[hsl(var(--hairline))] bg-muted/40 text-muted-foreground',
-  info: 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  info: 'border-info/40 bg-info-soft text-info',
 };
 const AUDIT_VERDICT_LABEL: Record<string, string> = { pass: '通过', fail: '失效', boundary: '已知边界', skip: '不适用', info: '观测' };
 
@@ -864,7 +864,7 @@ function IsolationAuditModal({ audit }: { audit: ReturnType<typeof useIsolationA
     <CanvasModal wide title={`隔离审计（MECE 实测）· ${audit.auditFor}`} onClose={audit.close}>
       {!r ? (
         <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+          <Loader2 className="h-4 w-4 animate-spin text-warn" />
           正在实测：逐容器 docker inspect 真实连接 + 专用实例活性 + 双向金丝雀写入验证…
         </div>
       ) : (
@@ -981,7 +981,7 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
                 status={i === mainDbIdx && !isRedis ? `隔离副本库 · 待保存（${draftIsoCount} 服务切换）` : '隔离副本 · 待保存'}
                 foot={`${s.id}-isolated`}
                 extra={(
-                  <button type="button" className="absolute right-1.5 top-1.5 rounded border border-amber-500/60 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
+                  <button type="button" className="absolute right-1.5 top-1.5 rounded border border-warn/60 bg-background p-0.5 text-warn hover:text-destructive "
                     title="撤销复制隔离草稿" onClick={onRemoveIsoDrafts}>
                     <X className="h-3 w-3" />
                   </button>
@@ -991,7 +991,7 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
         </>
       ) : iso.state === 'idle' ? (
         <button type="button"
-          className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-500/15 dark:text-emerald-400"
+          className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-ok/50 bg-ok/[.06] text-xs font-semibold text-ok transition-colors hover:border-ok hover:bg-ok-soft "
           style={{ left: geo.rightX + (geo.rightFrameW - geo.dbCW) / 2, top: dbY, width: geo.dbCW, height: 92 }}
           title={`统一战线（分支级）：把主库整库克隆进专用隔离实例，${isolateTargets.length || '所有有副本的'} 个服务的副本改连隔离库（可回切）。先进变更清单，保存后执行`}
           onClick={onIsolateAll}>
@@ -1009,15 +1009,15 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
           extra={(
             <span className="absolute bottom-1.5 right-1.5 flex gap-1">
               {(iso.state === 'done' || iso.state === 'partial') && onAudit ? (
-                <button type="button" className="rounded border border-sky-500/50 bg-background px-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+                <button type="button" className="rounded border border-info/50 bg-background px-1.5 text-[10px] text-info"
                   title="隔离审计（MECE 实测）：逐容器 docker inspect 真实连接 + 专用实例活性 + 双向金丝雀写入验证，弹窗显示五面矩阵" onClick={onAudit}>隔离审计</button>
               ) : null}
               {iso.state === 'partial' && isolateTargets.length > 0 ? (
-                <button type="button" className="rounded border border-amber-500/60 bg-background px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+                <button type="button" className="rounded border border-warn/60 bg-background px-1.5 text-[10px] text-warn"
                   title="把尚未隔离的服务也加入隔离草稿，对齐统一战线" onClick={onIsolateAll}>补齐隔离</button>
               ) : null}
               {(iso.state === 'done' || iso.state === 'partial') && revertTargets.length > 0 ? (
-                <button type="button" className="rounded border border-emerald-500/50 bg-background px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
+                <button type="button" className="rounded border border-ok/50 bg-background px-1.5 text-[10px] text-ok"
                   title="全部已隔离服务回切主库（隔离库转快照保留）" onClick={onRevertAll}>回切主库</button>
               ) : null}
             </span>
@@ -1130,9 +1130,9 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
       <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-2.5">
         {headerLeft}
         <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 边=环境变量引用</span>
-        {branchIso.state === 'done' ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · 统一战线</span> : null}
-        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length} · 建议补齐</span> : null}
-        {draftActions.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draftActions.length} 项变更待保存</span> : null}
+        {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">已隔离 · 统一战线</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length} · 建议补齐</span> : null}
+        {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">{draftActions.length} 项变更待保存</span> : null}
         {headerRight}
       </div>
 
@@ -1279,7 +1279,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   {draftAdds.map((d, i) => (
                     <ChipRow key={`${d.actionKey}-${i}`} color="#f59e0b" mono={`副本(草稿${i + 1})`} sub={d.params?.versionId ? '历史版本 · 待保存' : '当前版本 · 待保存'} ghost
                       actions={(
-                        <button type="button" className="rounded border border-amber-500/50 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
+                        <button type="button" className="rounded border border-warn/50 bg-background p-0.5 text-warn hover:text-destructive "
                           title="撤销这条草稿（不影响其他草稿）" onClick={() => onRemoveAction(d.actionKey)}>
                           <X className="h-3 w-3" />
                         </button>
@@ -1367,8 +1367,8 @@ function ChipRow({ color, mono, sub, weight, onWeightClick, weightInput, actions
   actions?: JSX.Element; danger?: boolean; boot?: boolean; ghost?: boolean; dim?: boolean;
 }): JSX.Element {
   return (
-    <div className={`flex h-[22px] items-center gap-1.5 border-t border-[hsl(var(--hairline))]/70 px-2.5 text-[10px] ${danger ? 'bg-destructive/[.06] text-destructive' : ghost ? 'bg-amber-500/[.06] text-amber-600 dark:text-amber-400' : ''} ${dim ? 'opacity-50' : ''}`}>
-      {boot ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-amber-500" /> : (
+    <div className={`flex h-[22px] items-center gap-1.5 border-t border-[hsl(var(--hairline))]/70 px-2.5 text-[10px] ${danger ? 'bg-destructive/[.06] text-destructive' : ghost ? 'bg-warn/[.06] text-warn' : ''} ${dim ? 'opacity-50' : ''}`}>
+      {boot ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-warn" /> : (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : ghost ? '#f59e0b' : color }} />
       )}
       <span className={`min-w-0 flex-1 truncate font-mono ${danger ? 'text-destructive' : ''}`} title={sub ? `${mono} · ${sub}` : mono}>
@@ -1550,10 +1550,10 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
         {headerLeft}
         <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />入口 → 项目 → 基础设施</span>
         {groupCount > 0 ? <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] text-indigo-500">整组副本 x{groupCount}</span> : null}
-        {uneven ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">各容器副本数不齐</span> : null}
-        {branchIso.state === 'done' ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · 统一战线</span> : null}
-        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length}</span> : null}
-        {draftActions.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draftActions.length} 项变更待保存</span> : null}
+        {uneven ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">各容器副本数不齐</span> : null}
+        {branchIso.state === 'done' ? <span className="rounded-md border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">已隔离 · 统一战线</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length}</span> : null}
+        {draftActions.length > 0 ? <span className="rounded-md border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">{draftActions.length} 项变更待保存</span> : null}
         {headerRight}
       </div>
 
@@ -1604,7 +1604,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                     <span className="min-w-0 flex-1 truncate">项目</span>
                   </div>
                   <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-muted-foreground">
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" />
                     {profileIds.length} 容器 · 主实例组
                   </div>
                   {/* 容器 chips：与分支卡左上角的 chip 同一视觉语言（2026-07-25 用户拍板，样式不另造） */}
@@ -1636,7 +1636,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                     </button>
                   </div>
                   <div className={`flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
-                    {st.boot > 0 ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-amber-500" /> : <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />}
+                    {st.boot > 0 ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-warn" /> : <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />}
                     <span className="min-w-0 flex-1 truncate">{st.boot > 0 ? '创建中…' : danger ? `${st.bad} 个容器副本异常` : st.missing > 0 ? `覆盖 ${profileIds.length - st.missing}/${profileIds.length} 容器` : '复制集成员 · 已负载'}</span>
                     {weightFor === k ? (
                       <WeightInput value={weightDraft} onChange={setWeightDraft} onCommit={() => commitGroupWeight(k)} onCancel={() => setWeightFor(null)} />
@@ -1670,25 +1670,25 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
               // 预期管理：幽灵节点 = 项目节点的同样式黄色拷贝——保存后长成什么样，现在就画什么样
               const num = groupCount + (n.node.gi ?? 0) + 1;
               return (
-                <div key={`ghost-${n.node.actionKey}`} className="absolute rounded-xl border-[1.5px] border-dashed border-amber-500/60 bg-amber-500/[.04] text-xs shadow-md"
+                <div key={`ghost-${n.node.actionKey}`} className="absolute rounded-xl border-[1.5px] border-dashed border-warn/60 bg-warn/[.04] text-xs shadow-md"
                   style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}>
-                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold text-amber-600 dark:text-amber-400">
-                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-amber-500 text-[10px] font-extrabold text-white">PRJ</span>
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold text-warn">
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-warn text-[10px] font-extrabold text-white">PRJ</span>
                     <span className="min-w-0 flex-1 truncate">项目-复制集-{num}</span>
-                    <button type="button" className="rounded border border-amber-500/50 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
+                    <button type="button" className="rounded border border-warn/50 bg-background p-0.5 text-warn hover:text-destructive "
                       title="撤销这条整组副本草稿" onClick={() => onRemoveAction(n.node.actionKey!)}>
                       <X className="h-3 w-3" />
                     </button>
                   </div>
-                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-amber-600/90 dark:text-amber-400/90">
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-warn/90 /90">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
                     <span className="truncate">待保存 · 保存后每容器各创建 1 个副本</span>
                   </div>
                   <div className="flex flex-col gap-1 px-2.5 pb-2 pt-1.5">
                     {profileIds.map((pid) => (
-                      <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/[.06] px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+                      <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-warn/40 bg-warn/[.06] px-1.5 text-[10px] text-warn"
                         title={`${pid}：保存后创建副本实例`}>
-                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/80" />
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn/80" />
                         <span className="min-w-0 flex-1 truncate font-mono">{pid}</span>
                         <span className="shrink-0 font-mono opacity-70">待建</span>
                       </span>
@@ -1796,7 +1796,7 @@ function EntryLinks({ x, y, entries }: { x: number; y: number; entries: Array<{ 
         <a key={e.url} href={e.url} target="_blank" rel="noreferrer"
           onClick={(ev) => ev.stopPropagation()}
           title={'打开 ' + e.name + '：' + e.url}
-          className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/[.08] px-2 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-500/20 dark:text-emerald-400">
+          className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-md border border-ok/40 bg-ok/[.08] px-2 text-[11px] font-medium text-ok transition-colors hover:bg-ok-soft ">
           <span className="truncate">{e.name}</span>
           <ExternalLink className="h-3 w-3 shrink-0" />
         </a>
@@ -1814,18 +1814,18 @@ function StageCard({ x, y, w = 180, name, ico, color, ok, danger, ghost, locked,
 }): JSX.Element {
   return (
     <>
-      <div className={`absolute rounded-xl border bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : draftStyle ? 'border-[1.5px] border-dashed border-amber-500/60 bg-amber-500/[.04]' : ghost ? 'border-dashed border-[hsl(var(--muted-foreground))]/50 opacity-70' : hero ? 'border-indigo-500/45' : 'border-[hsl(var(--hairline))]'}`}
+      <div className={`absolute rounded-xl border bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : draftStyle ? 'border-[1.5px] border-dashed border-warn/60 bg-warn/[.04]' : ghost ? 'border-dashed border-[hsl(var(--muted-foreground))]/50 opacity-70' : hero ? 'border-indigo-500/45' : 'border-[hsl(var(--hairline))]'}`}
         style={{ left: x, top: y, width: w, ...(boot ? { animation: 'rscolorin 2.4s forwards' } : {}), ...(locked ? { filter: 'grayscale(0.9)', opacity: 0.65 } : {}) }}>
         {locked ? (
           <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-[hsl(var(--hairline))] bg-background text-muted-foreground" title="副本请求已（或保存后将）转移到隔离区，回切主库可解锁">
             <Lock className="h-3 w-3" />
           </span>
         ) : null}
-        <div className={`flex items-center gap-2 overflow-hidden rounded-t-xl px-3 py-2 text-[13px] font-bold ${draftStyle ? 'text-amber-600 dark:text-amber-400' : ''}`}>
+        <div className={`flex items-center gap-2 overflow-hidden rounded-t-xl px-3 py-2 text-[13px] font-bold ${draftStyle ? 'text-warn' : ''}`}>
           <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[10px] font-extrabold text-white" style={{ background: color }}>{ico}</span>
           <span className="truncate">{name}</span>
         </div>
-        <div className={`flex items-center gap-1.5 px-3 pb-2 text-[11px] ${danger ? 'font-semibold text-destructive' : draftStyle ? 'text-amber-600/90 dark:text-amber-400/90' : 'text-muted-foreground'}`}>
+        <div className={`flex items-center gap-1.5 px-3 pb-2 text-[11px] ${danger ? 'font-semibold text-destructive' : draftStyle ? 'text-warn/90 /90' : 'text-muted-foreground'}`}>
           <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : draftStyle ? '#f59e0b' : ok ? '#10b981' : 'hsl(var(--muted-foreground))' }} />
           <span className="truncate" title={status}>{status}</span>
         </div>

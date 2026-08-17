@@ -926,7 +926,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                 </div>
 
                 {branchState.data.detached ? (
-                  <div className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs leading-5 text-amber-800 dark:text-amber-200">
+                  <div className="mt-4 flex items-start gap-2 rounded-md border border-warn/40 bg-warn-soft px-3 py-2.5 text-xs leading-5 text-warn ">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                     <span>
                       当前 CDS 运行在游离提交上，不存在名为 HEAD 的目标分支。系统已推荐{' '}
@@ -1029,18 +1029,18 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                                     {branch.name}
                                   </span>
                                   {isCurrent ? (
-                                    <span className="shrink-0 rounded border border-emerald-500/50 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                    <span className="shrink-0 rounded border border-ok/50 bg-ok-soft px-1.5 py-0.5 text-[10px] font-semibold text-ok">
                                       当前
                                     </span>
                                   ) : null}
                                   {!isCurrent && isRecommended ? (
-                                    <span className="shrink-0 rounded border border-sky-500/50 bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
+                                    <span className="shrink-0 rounded border border-info/50 bg-info-soft px-1.5 py-0.5 text-[10px] font-semibold text-info">
                                       推荐
                                     </span>
                                   ) : null}
                                   {branch.cdsTouched ? (
                                     <span
-                                      className="shrink-0 rounded border border-amber-500/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300"
+                                      className="shrink-0 rounded border border-warn/50 bg-warn-soft px-1.5 py-0.5 text-[10px] font-semibold text-warn"
                                       title="该分支相对当前 HEAD 改动过 cds/ 目录"
                                     >
                                       <GitBranch className="mr-0.5 inline h-2.5 w-2.5" />
@@ -1319,8 +1319,8 @@ function DockerNetworkHealthPanel({
   }
   if (state.status === 'error') {
     return (
-      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-        <div className="flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-300">
+      <div className="rounded-md border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-warn">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1">读取 Docker 网络状态失败:{state.message}</span>
           <Button type="button" size="sm" variant="outline" onClick={() => void onRefresh()}>
@@ -1345,8 +1345,8 @@ function DockerNetworkHealthPanel({
   const riskClass = risk?.level === 'critical'
     ? 'border-destructive/40 bg-destructive/10 text-destructive'
     : risk?.level === 'warn'
-      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+      ? 'border-warn/40 bg-warn-soft text-warn'
+      : 'border-ok/30 bg-ok-soft text-ok';
 
   return (
     <div className="space-y-4 rounded-md border border-border bg-card px-4 py-4">
@@ -1420,7 +1420,7 @@ function DockerNetworkHealthPanel({
             </div>
           )}
           {(data.unknownNetworks?.length ?? 0) > 0 ? (
-            <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            <div className="mt-3 rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">
               有 {data.unknownNetworks?.length} 个网络无法确认容器状态，清理前需要先人工核对 Docker inspect 输出。
             </div>
           ) : null}
@@ -1460,7 +1460,7 @@ function DockerNetworkMetric({
   tone?: 'default' | 'warn';
 }): JSX.Element {
   return (
-    <div className={`rounded-md border px-3 py-2 ${tone === 'warn' ? 'border-amber-500/30 bg-amber-500/10' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]'}`}>
+    <div className={`rounded-md border px-3 py-2 ${tone === 'warn' ? 'border-warn/30 bg-warn-soft' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]'}`}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 font-mono text-xl font-semibold">{value}</div>
       <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
@@ -1488,8 +1488,8 @@ function SelfUpdateStatusPanel({
   }
   if (state.status === 'error') {
     return (
-      <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm">
-        <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
+      <div className="rounded-md border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
+        <div className="flex items-center gap-2 text-warn">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <span>读取自更新状态失败:{state.message}</span>
           <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={onRefresh}>
@@ -1517,8 +1517,8 @@ function SelfUpdateStatusPanel({
   const trackingBranch = data.currentBranch || data.recommendedBranch || 'main';
   const aheadColor =
     !data.detachedHead && remoteAheadCount === 0
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-      : 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+      ? 'border-ok/30 bg-ok-soft text-ok'
+      : 'border-warn/40 bg-warn-soft text-warn';
 
   return (
     <div className="rounded-md border border-border bg-card px-4 py-3">
@@ -1543,7 +1543,7 @@ function SelfUpdateStatusPanel({
               : 'fetch 失败 / 远端不可达'}
         </span>
         {localAheadCount > 0 ? (
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 py-0.5 text-xs text-warn">
             本地领先 {localAheadCount} 个 commit
           </span>
         ) : null}
@@ -1562,10 +1562,10 @@ function SelfUpdateStatusPanel({
           <span
             className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${
               data.restartStatus === 'completed'
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                ? 'border-ok/30 bg-ok-soft text-ok'
                 : data.restartStatus === 'pending'
-                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                  : 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
+                  ? 'border-warn/40 bg-warn-soft text-warn'
+                  : 'border-bad/40 bg-bad-soft text-bad'
             }`}
             title={`PID ${data.runningPid || '-'} · 启动于 ${data.pidStartedAt ? formatAbsoluteTime(data.pidStartedAt) : '-'}`}
           >
@@ -1579,7 +1579,7 @@ function SelfUpdateStatusPanel({
             2026-07-30 真实发生：强制同步换完产物没重启，生产半吊子跑了几分钟。
             所以这里给整条横幅 + 一键重启，而不是让人自己去猜下一步。 */}
         {data.restartStatus === 'incomplete' ? (
-          <div className="mt-2 flex w-full flex-wrap items-center gap-3 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+          <div className="mt-2 flex w-full flex-wrap items-center gap-3 rounded-md border border-bad/40 bg-bad-soft px-3 py-2 text-xs text-bad">
             <span className="min-w-0 flex-1">
               代码与前端产物已切到 {data.headSha || '新版本'}，但进程仍是更新前那个
               （PID {data.runningPid || '-'}，启动于 {data.pidStartedAt ? formatAbsoluteTime(data.pidStartedAt) : '-'}）。
@@ -1647,8 +1647,8 @@ function SelfUpdateStatusPanel({
           重构后 unit 文件极少改,但确实改时 operator 不知道 → 默默用旧 unit。
           这里 backend 检测到漂移,UI 一行命令告诉怎么修。 */}
       {data.systemdUnitDrift ? (
-        <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs">
-          <div className="mb-1 flex items-center gap-2 text-amber-700 dark:text-amber-300">
+        <div className="mt-3 rounded-md border border-warn/40 bg-warn-soft px-3 py-2.5 text-xs">
+          <div className="mb-1 flex items-center gap-2 text-warn">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
             <span className="font-medium">systemd unit 文件已更新但未重装</span>
           </div>
@@ -1674,7 +1674,7 @@ function SelfUpdateStatusPanel({
 function StepLevelPrefix({ level }: { level: 'info' | 'warning' | 'error' }): JSX.Element {
   // 用纯文本 prefix 避免 emoji(规则 #0),颜色靠 className 表达级别。
   if (level === 'error') return <span className="text-destructive">[ERR] </span>;
-  if (level === 'warning') return <span className="text-amber-600 dark:text-amber-400">[WARN] </span>;
+  if (level === 'warning') return <span className="text-warn">[WARN] </span>;
   return <span className="text-muted-foreground">· </span>;
 }
 
@@ -1836,7 +1836,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                 {selectedSteps.length > 0 ? selectedSteps.map((step, sIdx) => {
                   const normalized = normalizeSelfUpdateStep(step);
                   return (
-                    <div key={sIdx} className={normalized.level === 'error' ? 'text-destructive' : normalized.level === 'warning' ? 'text-amber-700 dark:text-amber-300' : ''}>
+                    <div key={sIdx} className={normalized.level === 'error' ? 'text-destructive' : normalized.level === 'warning' ? 'text-warn' : ''}>
                       <span className="text-muted-foreground/60">{normalized.timeText} </span>
                       <StepLevelPrefix level={normalized.level} />
                       {normalized.text}
@@ -1924,11 +1924,11 @@ function normalizeSelfUpdateStep(step: SelfUpdateStep): { timeText: string; leve
 function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
   switch (status) {
     case 'success':
-      return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+      return 'border-ok/30 bg-ok-soft text-ok';
     case 'aborted':
-      return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+      return 'border-warn/40 bg-warn-soft text-warn';
     case 'deferred':
-      return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+      return 'border-info/40 bg-info-soft text-info';
     case 'failed':
       return 'border-destructive/40 bg-destructive/10 text-destructive';
   }
@@ -1957,7 +1957,7 @@ type SelfUpdateMode = NonNullable<SelfUpdateRecord['updateMode']> | 'noOp';
 function selfUpdateModeClass(mode: SelfUpdateMode): string {
   switch (mode) {
     case 'prebuilt':
-      return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
+      return 'border-ok/40 bg-ok-soft text-ok';
     case 'hot-reload':
       return 'border-lime-500/40 bg-lime-500/10 text-lime-700 dark:text-lime-300';
     case 'web-only':
@@ -1965,9 +1965,9 @@ function selfUpdateModeClass(mode: SelfUpdateMode): string {
     case 'doc-only':
       return 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300';
     case 'noOp':
-      return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
+      return 'border-info/40 bg-info-soft text-info';
     case 'restart':
-      return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+      return 'border-warn/40 bg-warn-soft text-warn';
   }
 }
 
@@ -2061,21 +2061,21 @@ function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }
     <div className="sticky top-0 z-10 mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
       <div className="flex flex-wrap items-center gap-3 text-xs">
         <span className="font-semibold">最近 {stats.total} 次:</span>
-        <span className="rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2 py-0.5">
+        <span className="rounded bg-ok-soft text-ok px-2 py-0.5">
           成功 {stats.success}
         </span>
         {stats.failed > 0 ? (
-          <span className="rounded bg-red-500/10 text-red-700 dark:text-red-300 px-2 py-0.5">
+          <span className="rounded bg-bad-soft text-bad px-2 py-0.5">
             失败 {stats.failed}
           </span>
         ) : null}
         {stats.deferred > 0 ? (
-          <span className="rounded bg-sky-500/10 text-sky-700 dark:text-sky-300 px-2 py-0.5">
+          <span className="rounded bg-info-soft text-info px-2 py-0.5">
             延后 {stats.deferred}
           </span>
         ) : null}
         {stats.aborted > 0 ? (
-          <span className="rounded bg-amber-500/10 text-amber-700 dark:text-amber-300 px-2 py-0.5">
+          <span className="rounded bg-warn-soft text-warn px-2 py-0.5">
             中止 {stats.aborted}
           </span>
         ) : null}
@@ -2161,12 +2161,12 @@ interface LiveStageDef {
 }
 // 顺序必须与后端自更新流程一致(fetch → checkout → 依赖/类型校验 → 编译 → 重启)。
 const LIVE_STAGE_DEFS: LiveStageDef[] = [
-  { key: 'fetch',    label: '拉取',      color: 'bg-sky-500',     fields: ['fetchMs', 'pullMs'] },
+  { key: 'fetch', label: '拉取', color: 'bg-info', fields: ['fetchMs', 'pullMs'] },
   { key: 'checkout', label: '切分支',    color: 'bg-cyan-500',    fields: ['checkoutMs', 'resetMs'] },
   { key: 'install',  label: '依赖校验',  color: 'bg-indigo-500',  fields: ['validateInstallMs'] },
-  { key: 'tsc',      label: '类型校验',  color: 'bg-amber-500',   fields: ['validateTscMs'] },
-  { key: 'backend',  label: '后端编译',  color: 'bg-emerald-500', fields: ['buildBackendMs'] },
-  { key: 'web',      label: 'web 重建',  color: 'bg-rose-500',    fields: ['webBuildMs', 'webOnlyMs'] },
+  { key: 'tsc', label: '类型校验', color: 'bg-warn', fields: ['validateTscMs'] },
+  { key: 'backend', label: '后端编译', color: 'bg-ok', fields: ['buildBackendMs'] },
+  { key: 'web', label: 'web 重建', color: 'bg-bad', fields: ['webBuildMs', 'webOnlyMs'] },
   { key: 'restart',  label: '排空+重启', color: 'bg-fuchsia-500', fields: ['drainMs', 'restartMs'] },
 ];
 // 后端 send(step,...) 的原始 step key → 展示段 key 的精确映射(Bugbot #716)。
@@ -2272,7 +2272,7 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep, records }: { elapsedMs
             ? `基于近 ${successSamples.length} 次成功更新的中位数`
             : '暂无历史 · 粗略估算'}
         </span>
-        <span className={overEta ? 'font-medium text-amber-600 dark:text-amber-400' : 'font-medium text-foreground/80'}>
+        <span className={overEta ? 'font-medium text-warn' : 'font-medium text-foreground/80'}>
           已用 {fmtMs(elapsedMs)} · {overEta ? '预计已到点,收尾中' : `预计还需 ~${fmtMs(remainMs)}`}
           <span className="ml-1 font-normal text-muted-foreground">/ 预计约 {fmtMs(etaMs)}</span>
         </span>
@@ -2320,14 +2320,14 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
   const push = (key: string, label: string, ms: number | undefined, color: string): void => {
     if (typeof ms === 'number' && ms > 0) segments.push({ key, label, ms, color });
   };
-  push('fetch', '拉取', (timings.fetchMs ?? 0) + (timings.pullMs ?? 0), 'bg-sky-500/70');
+  push('fetch', '拉取', (timings.fetchMs ?? 0) + (timings.pullMs ?? 0), 'bg-info/70');
   push('checkout', '切分支', (timings.checkoutMs ?? 0) + (timings.resetMs ?? 0), 'bg-cyan-500/70');
   push('nginx', 'nginx 渲染', timings.nginxRenderMs, 'bg-violet-500/70');
   push('install', 'pnpm install', timings.validateInstallMs, 'bg-indigo-500/70');
-  push('tsc', '类型校验', timings.validateTscMs, 'bg-amber-500/70');
+  push('tsc', '类型校验', timings.validateTscMs, 'bg-warn/70');
   push('cache', '清缓存', timings.cacheMs, 'bg-stone-500/70');
-  push('backend', '后端 esbuild', timings.buildBackendMs, 'bg-emerald-500/70');
-  push('web', 'web 重建', timings.webBuildMs, 'bg-rose-500/70');
+  push('backend', '后端 esbuild', timings.buildBackendMs, 'bg-ok/70');
+  push('web', 'web 重建', timings.webBuildMs, 'bg-bad/70');
   push('drain', '等待排空', timings.drainMs, 'bg-fuchsia-600/70');
   push('restart', '重启', timings.restartMs, 'bg-fuchsia-500/70');
 
@@ -2373,7 +2373,7 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
           总计 {fmtMs(total)}
         </span>
         {timings.webBuildSkipped ? (
-          <span className="text-emerald-700 dark:text-emerald-300">
+          <span className="text-ok">
             (web 命中缓存 · {timings.webBuildReason})
           </span>
         ) : null}

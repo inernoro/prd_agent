@@ -51,9 +51,9 @@ function triggerLabel(t: ConfigSnapshot['trigger']): string {
 
 function triggerTone(t: ConfigSnapshot['trigger']): string {
   switch (t) {
-    case 'manual':           return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300';
-    case 'pre-import':       return 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300';
-    case 'pre-destructive':  return 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+    case 'manual': return 'border-ok/40 bg-ok-soft text-ok';
+    case 'pre-import': return 'border-info/40 bg-info-soft text-info';
+    case 'pre-destructive': return 'border-warn/40 bg-warn-soft text-warn';
     case 'scheduled':        return 'border-muted bg-muted/30 text-muted-foreground';
   }
 }

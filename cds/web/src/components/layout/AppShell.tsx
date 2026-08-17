@@ -129,7 +129,7 @@ type ShellUser = {
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
-const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
+const preloadReleaseConsolePage = (): void => { void import('@/pages/ReleaseConsolePage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
 const preloadStatusPage = (): void => { void import('@/pages/StatusPage'); };
@@ -152,7 +152,8 @@ const ShellFrameContext = createContext(false);
 /** Map a pathname to the rail item that should light up. */
 function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/cds-settings')) return 'cds-settings';
-  if (pathname.startsWith('/release-center')) return 'release-center';
+  // 发布控制台与发布中心是同一件事的两个视图，共用一个导航高亮项。
+  if (pathname.startsWith('/release-center') || pathname.startsWith('/release-console')) return 'release-center';
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
   if (pathname.startsWith('/status')) return 'status';
@@ -368,7 +369,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {previewInstance && (
         <div className="pointer-events-none fixed bottom-3 left-1/2 z-[120] w-max max-w-[calc(100vw-7rem)] -translate-x-1/2">
           <div className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-1 shadow-sm">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+            <span className="h-2 w-2 shrink-0 rounded-full bg-warn" aria-hidden />
             <span className="truncate text-xs text-muted-foreground">
               CDS 预览实例 — 仅用于验收 CDS 自身改动，部署 / docker 操作已禁用
             </span>
@@ -453,15 +454,20 @@ function RailNav({
           <LayoutGrid />
           <span>Projects</span>
         </Link>
+        {/*
+         * 落地页是发布控制台（发布这件事本身）；发布中心退居为低频的管理面
+         * （建站向导 / 配置 / 自动发布 / 健康监测 / 证据），由控制台里的链接进入。
+         * 两页共用一个高亮项，见 activeNavKeyFor。
+         */}
         <Link
-          to="/release-center"
+          to="/release-console"
           className="cds-rail-item"
           data-active={active === 'release-center' ? 'true' : 'false'}
-          aria-label="发布中心"
-          title="发布中心（目标 / 版本 / 日志 / 回滚）"
+          aria-label="发布控制台"
+          title="发布控制台（选版本 / 发布 / 实时输出 / 历史）"
           onClick={onNavigate}
-          onMouseEnter={preloadReleaseCenterPage}
-          onFocus={preloadReleaseCenterPage}
+          onMouseEnter={preloadReleaseConsolePage}
+          onFocus={preloadReleaseConsolePage}
         >
           <Rocket />
           <span>Releases</span>
@@ -1008,20 +1014,42 @@ export function Crumb({ items }: CrumbProps): JSX.Element {
 }
 
 export interface WorkspaceProps {
-  /** Use the wider 1360px cap for pages with right-side operations rail. */
+  /** 1440px 上限：高密度运营台面。 */
   wide?: boolean;
+  /**
+   * 去掉上限，吃满整列宽度。**网格/台面类页面用这个**（项目列表、分支列表、
+   * 发布中心、发布控制台）——卡片网格在宽屏被压在中间一条 1240 里，右侧留出
+   * 两条死白，是用户反复指出的「又窄又有空白」。
+   *
+   * 阅读/表单类页面**不要**用：2500px 宽的一行表单读起来很痛苦，它们保持
+   * standard/wide 的行宽上限。
+   *
+   * fluid 优先于 wide（两个都传时以 fluid 为准）。
+   */
+  fluid?: boolean;
   className?: string;
   children: ReactNode;
 }
 
 /*
  * Workspace — centered column inside <main>. Pages should render their content
- * inside this so that all pages share the same horizontal cap. Avoid
- * applying `max-w-*` directly on page content.
+ * inside this so that all pages share the same horizontal cap.
+ *
+ * **档位由这里的 props 决定，不许再用 className 在 CSS 里偷偷改写。**
+ * 历史上 `.cds-workspace-project-list` 把页面声明的 wide 压回 1240、
+ * `.cds-branch-list-workspace` 把 wide 放开成无上限——两个页面都写了 `wide`，
+ * 两个都没拿到 wide，而 TSX 上看不出任何异常（predicate-and-wiring-discipline
+ * 形状 6：判据读的值不是真正生效的那个值）。
  */
-export function Workspace({ wide = false, className, children }: WorkspaceProps): JSX.Element {
+export function Workspace({ wide = false, fluid = false, className, children }: WorkspaceProps): JSX.Element {
   return (
-    <div className={cn('cds-workspace', wide ? 'cds-workspace-wide' : null, className)}>
+    <div
+      className={cn(
+        'cds-workspace',
+        fluid ? 'cds-workspace--fluid' : wide ? 'cds-workspace-wide' : null,
+        className,
+      )}
+    >
       {children}
     </div>
   );

@@ -155,10 +155,10 @@ export function FrontEndProjectRailCard({ onOpen }: { onOpen: () => void }) {
           </div>
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-token-primary">前端项目表</h3>
-            <p className="text-[11px] text-violet-100/55 mt-0.5">{FRONT_END_PROJECTS.length} 个仓库地址</p>
+            <p className="text-[11px] text-violet-100/75 mt-0.5">{FRONT_END_PROJECTS.length} 个仓库地址</p>
           </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-violet-200/50 shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-violet-200/75 shrink-0 mt-1" />
       </div>
       <div className="mt-3 space-y-1.5">
         {preview.map((p) => (
@@ -168,7 +168,7 @@ export function FrontEndProjectRailCard({ onOpen }: { onOpen: () => void }) {
             <span>{FRONT_END_PROJECT_KIND_LABEL[p.kind]}</span>
           </div>
         ))}
-        <p className="text-[10px] text-violet-200/45 pt-0.5">点击查看完整列表与搜索</p>
+        <p className="text-[10px] text-violet-200/75 pt-0.5">点击查看完整列表与搜索</p>
       </div>
     </button>
   );
