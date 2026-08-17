@@ -8,7 +8,7 @@
 
 ---
 
-**最后更新**：2026-08-17 19:05 | **更新人/轨道**：Claude（能力契约轨道）
+**最后更新**：2026-08-17 19:20 | **更新人/轨道**：Claude（能力契约轨道）
 **距离可发布**：代码与 CI 判据已就绪；**缺真人视觉验收与正式配置迁移演练**，因此现在不可发布。
 
 ## 阶段看板
@@ -16,11 +16,11 @@
 | 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
 |---|---|---|---|---|---|
 | W1 能力契约唯一化 | 100 | 已验收 | 无 | — | `GatewayCapabilityContractTests`、`GatewayCapabilityContractMirrorGuardTests`（表 + 行为双向比对，可红） |
-| W2 结构化失败原因 | 100 | 已验收 | 无 | — | `GatewayRouteFailureTaxonomyTests`、`GatewayRoutingWiringGuardTests.每一处路由失败都必须带结构化错误码` |
+| W2 结构化失败原因 | 100 | 已验收 | 无 | — | `GatewayRouteFailureTaxonomyTests`；错误码由必填参数在编译期兜底，`GatewayRoutingWiringGuardTests.路由失败的错误码是编译期必填参数` 守住它不被改回可选 |
 | W3 readiness 用生产判据 | 100 | 已验收 | 无 | — | `GatewayScenarioCapabilityReadinessTests`（含正式数据形态回放）、`GatewayRoutingWiringGuardTests.Readiness_使用生产同款场景判据` |
-| W4 能力迁移与契约版本 | 100 | 已部署 | 无 | 正式环境跑一次迁移并核对审计端点 | `LogicalModelCapabilityPolicyTests`（幂等、未知不丢弃、无残留别名）；只读审计端点 `/gw/logical-models/capability-audit` |
+| W4 能力迁移与契约版本 | 100 | 已部署 | 无 | 正式环境跑一次迁移并核对审计端点 | `LogicalModelCapabilityPolicyTests`（幂等、未知不丢弃、无残留别名）；预览容器启动日志实测 `[capability-contract] migrate scanned=0 rewritten=0 residualAliases=0 unversioned=0 unknownObjects=0`（预览库为空，只证明代码路径跑通，不代表正式数据已迁移）；只读审计端点 `/gw/logical-models/capability-audit` |
 | W5 故障域隔离 | 100 | 已验收 | 无 | — | `GatewayFaultDomainIsolationTests`（生图挂不影响对话/ASR，反向亦然，单成员失败不判死整池） |
-| W6 CI/CDS 接线修正 | 100 | 已部署 | 无 | — | `branch-image.yml` 的 `llmgw_serve` 过滤补 `prd-api/**`；CDS 五服务同 commit |
+| W6 CI/CDS 接线修正 | 100 | 已部署 | 无 | — | `branch-image.yml` 的 `llmgw_serve` 过滤补 `prd-api/**`；CDS 五服务均运行 `sha-5893b602`；serving 容器内实测新判定类型已在产物中 |
 | W7 真人视觉验收 | 0 | 阻塞 | 需要能登录预览环境的真人（或可用的浏览器取证通道）走生图 / ASR / 对话三条链路并做故障注入 | 由用户执行 `/验收`，或授权本会话使用浏览器取证 | 无 |
 | W8 正式配置迁移与回滚演练 | 0 | 未开始 | 需要用户批准在正式环境执行能力迁移 | 先在预览环境跑迁移拿到迁移前后对象统计，再申请正式执行 | 无 |
 
@@ -29,7 +29,7 @@
 | # | 判据 | 当前 |
 |---|---|---|
 | 1 | 五服务运行同一 commit | 已满足（CDS 五个容器均为同一 sha 镜像） |
-| 2 | CI 全绿（含 `dotnet test`） | 见下方「测试证据」 |
+| 2 | CI 全绿（含 `dotnet test`） | 已满足（CI run 32058122683，commit 5893b602：Detect Changes / Server Build & Test / Docs Readability Ratchet / Admin Dashboard Build 全绿） |
 | 3 | 能力契约两侧无漂移 | 已满足（镜像守卫） |
 | 4 | 每处路由失败都带结构化原因 | 已满足（源码守卫） |
 | 5 | 正式数据形态回放可路由 | 已满足（回放用例） |
@@ -37,6 +37,15 @@
 | 7 | 正式配置迁移计划 + 回滚方案 | **未满足** |
 
 任一未满足即为「不可发布」，不接受「先发再补」。
+
+## 测试证据
+
+| 命令 | 范围 | 结果 |
+|---|---|---|
+| CI 后端测试 job（Server Build & Test，`dotnet test` Release、排除集成与手工用例） | 后端全量非集成用例 | 绿（run 32058122683） |
+| CI `pnpm tsc --noEmit` + `pnpm test`（Admin Dashboard Build） | 前端类型与单测 | 绿 |
+| 本地 `pnpm vitest run`（三个相关文件） | 91 例 | 绿；并做过红绿闭环（删掉一条文案映射后守卫变红，恢复后转绿） |
+| 本轮新增 xUnit 用例 | 98 例（含 Theory 展开） | 随 CI 全量执行 |
 
 ## 术语（给不看代码的人）
 
