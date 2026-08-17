@@ -31,7 +31,7 @@
 
 ## 2. 逐类型轮换步骤
 
-下面 `<C>` 是容器名（`cdscli` 或 CDS 面板可查），`<OLD>` / `<NEW>` 是旧新口令。**新口令先自己生成好**（16 字节 hex 即可），不要复用其它环境的值。
+下面 `<C>` 是容器名（`cdscli` 或 CDS 面板可查），`<OLD>` / `<NEW>` 是旧新口令。**新口令先自己生成好**（16 字节 hex 即可），不要复用其它环境的值。**例外是 SQL Server**：它默认强制口令复杂度（大写 / 小写 / 数字 / 符号里占三类），纯 hex 会被拒绝——给它生成的口令要另外拼上一段，例如在 hex 后面接 `Aa1_`（预设建库时就是这么做的）。
 
 **先对表：每个预设建出来的账号叫什么**。这一步踩过两次（MySQL 只换 root、PostgreSQL 对着不存在的 `postgres` 敲），所以把真值列在这里——凭据 env 与连接串都跟着这个账号走：
 
@@ -40,7 +40,7 @@
 | mongodb | `app` | `MONGO_INITDB_ROOT_PASSWORD` | 认证库是 `admin` |
 | postgres | `app` | `POSTGRES_PASSWORD` | **没有 `postgres` 角色** |
 | mysql / mariadb | `app`（应用）+ `root`（管理） | `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` | 两个都要管，周期备份用 root |
-| sqlserver | `sa` | `MSSQL_SA_PASSWORD` | 口令有复杂度策略 |
+| sqlserver | `sa` | `MSSQL_SA_PASSWORD` | 口令有复杂度策略，纯 hex 会被拒 |
 | clickhouse | `app` | `CLICKHOUSE_PASSWORD` | |
 | rabbitmq | `app` | `RABBITMQ_DEFAULT_PASS` | |
 | elasticsearch | `elastic` | `ELASTIC_PASSWORD` | 唯一不叫 app 的 |
@@ -68,14 +68,19 @@ docker exec <C> mongosh -u app -p '<OLD>' --authenticationDatabase admin --quiet
 #    只改一条会出现「容器内能连、跨容器连不上」。
 docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -N -e "SELECT user,host FROM mysql.user WHERE user IN (\"root\",\"app\")"'
 
-# 1) 换 app（应用凭据，连接串里的那个）——逐条 host 改
-docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "ALTER USER \"app\"@\"%\" IDENTIFIED BY \"<NEW_APP>\"; FLUSH PRIVILEGES;"'
+# 1) 换 app（应用凭据，连接串里的那个）——**对第 0 步查出来的每个 host 都改一遍**
+#    预设没有设 MYSQL_ROOT_HOST，不同镜像/版本建出来的 host 组合不一样
+#    （常见是 root@localhost，可能还有 root@%）。照抄 `%` 会撞上「不存在的用户」
+#    而 ALTER 失败，然后你把 env 改成了新口令 —— 库里还是旧的，备份当场全挂。
+docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "ALTER USER \"app\"@\"<HOST>\" IDENTIFIED BY \"<NEW_APP>\"; FLUSH PRIVILEGES;"'
 docker exec <C> sh -c 'MYSQL_PWD="<NEW_APP>" mysql -uapp -e "SELECT 1"'
 
-# 2) 换 root（管理凭据，备份走的也是它）——需要时才换，与 app 分开进行
-docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "ALTER USER \"root\"@\"%\" IDENTIFIED BY \"<NEW_ROOT>\"; FLUSH PRIVILEGES;"'
+# 2) 换 root（管理凭据，备份走的也是它）——同样逐个 host，别漏掉 localhost
+docker exec <C> sh -c 'MYSQL_PWD="<OLD_ROOT>" mysql -uroot -e "ALTER USER \"root\"@\"<HOST>\" IDENTIFIED BY \"<NEW_ROOT>\"; FLUSH PRIVILEGES;"'
 docker exec <C> sh -c 'MYSQL_PWD="<NEW_ROOT>" mysql -uroot -e "SELECT 1"'
 ```
+
+`<HOST>` 逐个取自第 0 步的输出，**一个都不能漏**：漏掉的那条记录还留着旧口令，既是没换干净，也可能让某条链路继续用旧凭据连上。改完再跑一次第 0 步的查询确认覆盖齐了。
 
 两个账号对应下一步要改的两处：`MYSQL_PASSWORD` + 连接串跟着 `app` 走，`MYSQL_ROOT_PASSWORD` 跟着 `root` 走。漏掉任一处，要么应用连不上，要么周期备份连不上。
 

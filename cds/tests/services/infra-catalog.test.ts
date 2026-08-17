@@ -162,3 +162,42 @@ describe('catalog 的认证能被暴露审计认出来', () => {
     }
   });
 });
+
+/**
+ * 认证判据的**结构化**收口（Codex #1382 第四轮 P1）。
+ *
+ * 上一轮是「遇到一种语法加一种」——先拆 `sh -c`，再补引号。第三次又来
+ * `"$X";`（尾巴粘分隔符）时就该停手换判据了：与其穷举 shell 语法，不如认一条
+ * 结构性规则——**证明不了这里有口令，就不算有**。这一组用例钉的是那条规则，
+ * 不是某几种写法。
+ */
+describe('认证判据：证明不了就不算有', () => {
+  const cmd = (s: string): string[] => ['sh', '-c', s];
+
+  it('带 $ 的展开必须能解析出真值，否则一律判未认证', () => {
+    // 尾巴粘着 shell 分隔符 / 运算符
+    expect(detectInfraAuth('redis', {}, cmd('exec redis-server --requirepass "$REDIS_PASSWORD";'))).toBe(false);
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass "$REDIS_PASSWORD" && true'))).toBe(false);
+    // 花括号形态、拼接形态：同样证明不了
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass "${REDIS_PASSWORD}"'))).toBe(false);
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass pre$SUFFIX'))).toBe(false);
+  });
+
+  it('变量真有值时才算已认证', () => {
+    expect(detectInfraAuth('redis', { REDIS_PASSWORD: 'x' }, cmd('exec redis-server --requirepass "$REDIS_PASSWORD";'))).toBe(true);
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass hunter2'))).toBe(true);
+  });
+
+  /**
+   * 反方向也不能误伤：单引号里 shell 不做展开，`'p$ss'` 是货真价实的密码。
+   * 把它判成「没配」就是那种「说库没密码」的假警报，比不报警更糟。
+   */
+  it('单引号字面量含 $ 不算展开，仍判为已认证', () => {
+    expect(detectInfraAuth('redis', {}, cmd("redis-server --requirepass 'p$ss'"))).toBe(true);
+  });
+
+  it('空口令与完全没配都判未认证', () => {
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass ""'))).toBe(false);
+    expect(detectInfraAuth('redis', {}, cmd('redis-server'))).toBe(false);
+  });
+});

@@ -218,18 +218,33 @@ export function detectInfraAuth(
     .map((t) => String(t || '').trim().toLowerCase())
     .filter(Boolean);
   /**
-   * 参数值去掉外层引号后还剩什么。
+   * 这个参数值到底有没有「真值」。
    *
-   * 拆 `sh -c` 之后，值常常自带引号：`--requirepass ""` 拆出来的 `""` 字面上非空、
-   * 实际是空口令；`--requirepass "$redis_password"` 则要看那个变量到底有没有值——
-   * 引用一个空变量的效果等同于没设口令（redis 会直接 FATAL，不是静默裸奔，但也
-   * 谈不上「已认证」）。两种都必须还原成「有没有真值」再判。
+   * 拆开 `sh -c` 之后拿到的是 shell 片段，形态五花八门：`""`（空口令）、
+   * `"$REDIS_PASSWORD"`（要看变量）、`"$REDIS_PASSWORD";`（尾巴粘着分隔符）、
+   * `'p$ss'`（单引号里的字面量，`$` 不展开）。上一轮是遇到一种加一种，
+   * 这一轮改成两条**结构化**判据，一次覆盖整类，不再追着语法形态打补丁：
+   *
+   * 1. **单引号包起来的一律当字面量**——shell 在单引号里不做任何展开，
+   *    所以 `'p$ss'` 就是密码 `p$ss`，不该因为含 `$` 被误判成没配。
+   * 2. **其余只要还带 `$`，就必须能整体解析成一个有值的变量**，否则按「没有值」处理。
+   *    覆盖 `"$X";`、`"$X" &&`、`${X:-}`、`pre$X` 这些全部形态——它们的共同点是
+   *    **我们无法证明这里有口令**，而在暴露面自检里「证明不了」只能算没有。
+   *
+   * 方向性说明：这里宁可偏向「报成未认证」。漏报（裸奔库被标成已认证）会让一个
+   * 公网无认证数据库从 critical 名单里消失，那是这张表最不能出的错。
    */
   const effectiveValue = (raw: string): string => {
-    const unquoted = raw.replace(/^["']|["']$/g, '');
-    const ref = /^\$\{?(\w+)\}?$/.exec(unquoted);
+    const t = raw.trim();
+    // 单引号字面量：内容原样，`$` 不展开
+    if (/^'.*'$/.test(t)) return t.slice(1, -1).trim();
+    // 去掉外层双引号 + 粘在尾巴上的 shell 分隔符 / 运算符（`;` `&` `|` `)`）
+    const cleaned = t.replace(/[;&|)]+$/, '').replace(/^["']|["']$/g, '').replace(/[;&|)]+$/, '').trim();
+    if (!cleaned.includes('$')) return cleaned;
+    const ref = /^\$\{?(\w+)\}?$/.exec(cleaned);
     if (ref) return (e[ref[1].toUpperCase()] || e[ref[1]] || '').trim();
-    return unquoted.trim();
+    // 解析不掉的展开：证明不了有口令，按没有算。
+    return '';
   };
   /** 开关型参数：出现即生效（`--auth`）。整 token 比对，避免 `--authenticationdatabase` 撞上。 */
   const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.includes(f));

@@ -38,3 +38,5 @@
 | fix | cds | redis 快照路径解析在 CONFIG GET 失败时报错退出，不再猜 /data/dump.rdb |
 | fix | cds | 每次备份导出套 ulimit 写入上限，单个大库不再能把宿主根盘写满 |
 | docs | cds | 轮换 runbook 修正 PostgreSQL 账号（app 非 postgres），并补九个预设的账号真值表 |
+| fix | cds | 暴露审计改结构化判据：无法解析的 shell 展开一律不算已认证，杜绝尾随分隔符导致的漏报 |
+| docs | cds | 轮换 runbook 的 MySQL 段改为逐 host 执行，补 SQL Server 口令复杂度要求 |
