@@ -49,6 +49,23 @@ function shippedTextFiles(root: string): string[] {
 }
 
 describe('运行时域名配置', () => {
+  it('正式网关回跳地址由 compose 显式注入', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), '../docker-compose.yml'), 'utf8');
+    expect(source).toContain('LLMGW_MAP_HOME_URL=${LLMGW_MAP_HOME_URL:?');
+  });
+
+  it('CDS 技能回源不把本实例公网地址当上游', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'src/server.ts'), 'utf8');
+    expect(source).toContain("cdsUpstream: process.env.CDS_UPSTREAM?.trim() || ''");
+    expect(source).not.toContain("process.env.CDS_UPSTREAM?.trim() || process.env.CDS_PUBLIC_BASE_URL");
+  });
+
+  it('Agent 上手助手从运行时配置读取 MAP 地址', () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), 'web/src/components/AgentStarterTab.tsx'), 'utf8');
+    expect(source).toContain("apiRequest<{ prdAgentBaseUrl?: string }>('/api/config')");
+    expect(source).toContain('setPrdAgentOrigin(runtimeOrigin)');
+  });
+
   it('生产源码字符串不携带部署域名或宿主地址', () => {
     const srcRoots = [
       path.resolve(process.cwd(), 'src'),

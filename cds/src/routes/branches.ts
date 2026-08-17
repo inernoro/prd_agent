@@ -18024,6 +18024,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/config', async (_req, res) => {
     const customEnv = stateService.getCustomEnv();
+    const prdAgentBaseUrl = stateService.getActiveCdsConnections()
+      .find((connection) => connection.partnerKind === 'map' && connection.partnerBaseUrl)
+      ?.partnerBaseUrl?.trim()
+      || customEnv.CDS_MAP_BASE?.trim()
+      || process.env.CDS_MAP_BASE?.trim()
+      || '';
 
     // GitHub repo URL: prefer explicit config from UI env vars, fallback to git remote auto-detection
     let githubRepoUrl = customEnv.GITHUB_REPO_URL || '';
@@ -18053,6 +18059,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...config,
       githubRepoUrl,
       cdsCommitHash,
+      prdAgentBaseUrl,
       jwt: { ...config.jwt, secret: '***' },
       executorToken: config.executorToken ? '***' : undefined,
       sharedEnv: Object.fromEntries(

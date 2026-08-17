@@ -302,6 +302,8 @@ services:
       - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}
       - LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}
       - LLMGW_ADMIN_ENV_AUTHORITY=${LLMGW_ADMIN_ENV_AUTHORITY:-}
+      # 正式环境的 MAP 返回入口必须由部署环境注入，不能由前端按域名格式猜测。
+      - LLMGW_MAP_HOME_URL=${LLMGW_MAP_HOME_URL:?must set LLMGW_MAP_HOME_URL in production (authoritative MAP home URL)}
     read_only: true
     tmpfs:
       - /tmp

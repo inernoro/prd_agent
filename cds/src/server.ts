@@ -4032,7 +4032,9 @@ export function createServer(deps: ServerDeps): express.Express {
         path.join(deps.config.repoRoot, '..', '.claude', 'skills'),
       ],
     }),
-    cdsUpstream: process.env.CDS_UPSTREAM?.trim() || process.env.CDS_PUBLIC_BASE_URL?.trim() || '',
+    // 上游必须显式指向另一个 CDS。CDS_PUBLIC_BASE_URL 是本实例自己的公网入口，
+    // 不能拿来兜底，否则本地技能缺失时会递归请求自己。
+    cdsUpstream: process.env.CDS_UPSTREAM?.trim() || '',
     repoRoot: deps.config.repoRoot,
   }));
   app.use('/api', createScheduledJobsRouter({

@@ -33,7 +33,7 @@ set -eu
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
 #   - DIST_SHA256 / DIST_SHA256_URL：DIST_URL 对应的审计哈希或哈希文件；不可变发布必须提供其一
 #   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认优先走 get.miduo.org 代理）
-#   - PRD_AGENT_PUBLIC_BASE_URL：发布后公网表面验收根地址，默认 https://map.ebcone.net
+#   - PRD_AGENT_PUBLIC_BASE_URL：发布后公网表面验收与网关返回 MAP 的权威根地址，必须显式配置
 #   - PRD_AGENT_API_SERVICE：正式 Compose 中的 API service 名，默认 api
 #   - PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL：API 容器内强制存储探针地址
 #   - PRD_AGENT_ASSET_STORAGE_READINESS_ATTEMPTS / INTERVAL_SECONDS / TIMEOUT_SECONDS：存储发布门禁重试参数
@@ -653,6 +653,13 @@ if ! printf '%s' "$compose_project_name" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9_.-]*
   exit 1
 fi
 export COMPOSE_PROJECT_NAME="$compose_project_name"
+
+if [ -z "$(printf '%s' "${PRD_AGENT_PUBLIC_BASE_URL:-}" | xargs || true)" ]; then
+  echo "ERROR: PRD_AGENT_PUBLIC_BASE_URL is required for production deployment" >&2
+  exit 1
+fi
+# 同一份部署输入同时驱动公网验收和 LLM Gateway 返回入口，避免两个地址各自漂移。
+export LLMGW_MAP_HOME_URL="${LLMGW_MAP_HOME_URL:-$PRD_AGENT_PUBLIC_BASE_URL}"
 echo "Compose project: $COMPOSE_PROJECT_NAME"
 
 if [ ! -x scripts/llmgw-prod-topology-preflight.sh ]; then
@@ -774,7 +781,7 @@ write_release_evidence() {
 run_public_surface_smoke() {
   smoke_output="$1"
   smoke_attempts="${2:-${PRD_AGENT_PUBLIC_SMOKE_ATTEMPTS:-12}}"
-  public_base="${PRD_AGENT_PUBLIC_BASE_URL:-https://map.ebcone.net}"
+  public_base="$PRD_AGENT_PUBLIC_BASE_URL"
   public_smoke_commit_args=""
   case "$TAG" in
     sha-*) public_smoke_commit_args="--expect-commit ${TAG#sha-}" ;;
