@@ -32,6 +32,11 @@ def main() -> int:
     mark.add_argument("--item", required=True)
     mark.add_argument("--stage", choices=STAGES, required=True)
     mark.add_argument("--fingerprint")
+    exempt = sub.add_parser("exempt")
+    exempt.add_argument("--file", required=True)
+    exempt.add_argument("--item", required=True)
+    exempt.add_argument("--reason", required=True)
+    exempt.add_argument("--evidence", required=True)
     verify = sub.add_parser("verify")
     verify.add_argument("--file", required=True)
     args = parser.parse_args()
@@ -48,6 +53,8 @@ def main() -> int:
         item = data.get("items", {}).get(args.item)
         if item is None:
             raise SystemExit(f"unknown item: {args.item}")
+        if item.get("exempt"):
+            raise SystemExit(f"cannot mark an exempt item: {args.item}")
         target = STAGES.index(args.stage)
         missing = [stage for stage in STAGES[:target] if not item.get(stage)]
         if missing:
@@ -60,9 +67,31 @@ def main() -> int:
         print(json.dumps({"item": args.item, "stage": args.stage}))
         return 0
 
-    incomplete = [name for name, item in data.get("items", {}).items() if not all(item.get(stage) for stage in STAGES)]
+    if args.command == "exempt":
+        item = data.get("items", {}).get(args.item)
+        if item is None:
+            raise SystemExit(f"unknown item: {args.item}")
+        reason = args.reason.strip()
+        evidence = args.evidence.strip()
+        if not reason or not evidence:
+            raise SystemExit("exempt requires non-empty reason and evidence")
+        if any(item.get(stage) for stage in STAGES):
+            raise SystemExit(f"cannot exempt an item after rotation started: {args.item}")
+        item["exempt"] = True
+        item["exemptReason"] = reason
+        item["exemptEvidence"] = evidence
+        item["updatedAt"] = now()
+        save(path, data)
+        print(json.dumps({"item": args.item, "exempt": True}))
+        return 0
+
+    incomplete = [
+        name for name, item in data.get("items", {}).items()
+        if not item.get("exempt") and not all(item.get(stage) for stage in STAGES)
+    ]
+    exempt_items = [name for name, item in data.get("items", {}).items() if item.get("exempt")]
     ready = not incomplete and bool(data.get("items"))
-    print(json.dumps({"ready": ready, "incomplete": incomplete}))
+    print(json.dumps({"ready": ready, "incomplete": incomplete, "exempt": exempt_items}))
     return 0 if ready else 2
 
 
