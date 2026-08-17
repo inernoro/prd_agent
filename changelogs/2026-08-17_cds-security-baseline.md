@@ -16,3 +16,5 @@
 | security | cds | 基础设施认证门禁前置到复用与唤醒之前，避免既有容器绕过启动协议 |
 | security | platform | MAP、CDS、模型网关与桌面端的自有入口改为部署时注入 |
 | test | platform | 动态域名守卫扩展到前端、桌面端与网关运行时源码 |
+| security | cds | 离机备份下载增加流式大小与 sha256 双校验并原子落盘 |
+| test | cds | 增加无端口临时 Mongo 的 R2 备份真实恢复演练入口 |

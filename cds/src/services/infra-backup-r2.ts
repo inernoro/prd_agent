@@ -1,5 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 export interface R2BackupConfig {
   endpoint: string;
@@ -13,6 +16,81 @@ export interface VerifiedRemoteBackup {
   objectKey: string;
   bytes: number;
   sha256: string;
+}
+
+/**
+ * 从 R2 取回一份备份，并在正式文件名出现前完成大小与 sha256 双校验。
+ *
+ * 下载必须走流式管道：基础设施备份可能远大于 Node 可用堆，不能先读进 Buffer。
+ * 临时文件只在校验通过后原子改名，网络中断或进程退出不会留下看似可恢复的半截文件。
+ */
+export async function downloadAndVerifyR2Backup(opts: {
+  config: R2BackupConfig;
+  objectKey: string;
+  filePath: string;
+  now?: Date;
+  fetchImpl?: typeof fetch;
+}): Promise<VerifiedRemoteBackup> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const url = objectUrl(opts.config, opts.objectKey);
+  const now = opts.now ?? new Date();
+  const emptyHash = crypto.createHash('sha256').update('').digest('hex');
+  const head = await fetchImpl(url, {
+    method: 'HEAD',
+    headers: signedHeaders({
+      config: opts.config,
+      method: 'HEAD',
+      url,
+      payloadHash: emptyHash,
+      now,
+    }),
+  });
+  if (!head.ok) throw new Error(`离机备份下载前校验失败（HTTP ${head.status}）`);
+  const expectedBytes = Number(head.headers.get('content-length') || '0');
+  const expectedSha256 = String(head.headers.get('x-amz-meta-sha256') || '').trim().toLowerCase();
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || !/^[a-f0-9]{64}$/.test(expectedSha256)) {
+    throw new Error('离机备份缺少可信的大小或 sha256 元数据');
+  }
+
+  const get = await fetchImpl(url, {
+    method: 'GET',
+    headers: signedHeaders({
+      config: opts.config,
+      method: 'GET',
+      url,
+      payloadHash: emptyHash,
+      now: new Date(now.getTime() + 1),
+    }),
+  });
+  if (!get.ok || !get.body) throw new Error(`离机备份下载失败（HTTP ${get.status}）`);
+
+  await fs.promises.mkdir(path.dirname(opts.filePath), { recursive: true, mode: 0o700 });
+  const tmp = `${opts.filePath}.tmp-${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+  const hash = crypto.createHash('sha256');
+  let bytes = 0;
+  const digest = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.byteLength;
+      hash.update(chunk);
+      callback(null, chunk);
+    },
+  });
+  try {
+    await pipeline(
+      Readable.fromWeb(get.body as never),
+      digest,
+      fs.createWriteStream(tmp, { flags: 'wx', mode: 0o600 }),
+    );
+    const actualSha256 = hash.digest('hex');
+    if (bytes !== expectedBytes || actualSha256 !== expectedSha256) {
+      throw new Error('离机备份下载后的大小或 checksum 与远端元数据不一致');
+    }
+    await fs.promises.rename(tmp, opts.filePath);
+    return { objectKey: opts.objectKey, bytes, sha256: actualSha256 };
+  } catch (error) {
+    await fs.promises.rm(tmp, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function uploadAndVerifyR2Object(opts: {
