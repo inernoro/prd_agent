@@ -181,6 +181,16 @@ describe('ContainerService 多项目网络隔离', () => {
   });
 
   describe('startInfraService 用 project.dockerNetwork', () => {
+    it('复用既有容器也不能绕过认证门禁', async () => {
+      const service = new ContainerService(mock, makeConfig());
+      okDockerStubs(mock);
+
+      await expect(service.startInfraService(makeInfraService('proj-a', { env: {} })))
+        .rejects.toThrow('拒绝创建无认证');
+      expect(mock.commands.some((command) => command.includes('docker inspect'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker start'))).toBe(false);
+    });
+
     it('infra 容器跟随 service.projectId 选 network', async () => {
       const resolver: ProjectNetworkResolver = {
         getDockerNetwork: (id) => (id === 'proj-a' ? 'cds-proj-a' : undefined),

@@ -308,7 +308,7 @@ public class AiNewsService : IAiNewsService
         var client = _httpFactory.CreateClient("AiNews");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("User-Agent",
-            "Mozilla/5.0 (compatible; PrdAgentNewsBot/1.0; +https://miduo.org)");
+            "Mozilla/5.0 (compatible; PrdAgentNewsBot/1.0)");
         req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml");
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);

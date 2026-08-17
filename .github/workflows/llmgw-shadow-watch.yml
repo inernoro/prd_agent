@@ -41,7 +41,7 @@ jobs:
   public-surface:
     runs-on: ubuntu-latest
     env:
-      PUBLIC_BASE: ${{ vars.PRD_AGENT_PUBLIC_BASE_URL || 'https://map.ebcone.net' }}
+      PUBLIC_BASE: ${{ vars.PRD_AGENT_PUBLIC_BASE_URL || '' }}
       STANDALONE_BASE: ${{ vars.LLMGW_STANDALONE_PUBLIC_BASE_URL || '' }}
       EXPECT_COMMIT: ${{ vars.LLMGW_PROD_EXPECT_COMMIT || '' }}
     steps:
@@ -51,6 +51,7 @@ jobs:
       - name: Verify public product surface
         run: |
           set -euo pipefail
+          test -n "$PUBLIC_BASE" || { echo "PRD_AGENT_PUBLIC_BASE_URL is required"; exit 1; }
           mkdir -p artifacts/public-surface
           cmd=(python3 scripts/prd-agent-public-surface-smoke.py \
             --base "$PUBLIC_BASE" \

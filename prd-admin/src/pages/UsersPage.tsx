@@ -111,7 +111,7 @@ export default function UsersPage() {
   const [miduoConfigLoading, setMiduoConfigLoading] = useState(false);
   const [miduoConfigSaving, setMiduoConfigSaving] = useState(false);
   const [miduoEnabled, setMiduoEnabled] = useState(false);
-  const [miduoBaseUrl, setMiduoBaseUrl] = useState('https://admin.ebcone.cn');
+  const [miduoBaseUrl, setMiduoBaseUrl] = useState('');
   const [miduoAppCode, setMiduoAppCode] = useState('');
   const [miduoAppSecret, setMiduoAppSecret] = useState('');
   const [miduoHasSecret, setMiduoHasSecret] = useState(false);
@@ -239,7 +239,7 @@ export default function UsersPage() {
         return;
       }
       setMiduoEnabled(res.data.enabled);
-      setMiduoBaseUrl(res.data.baseUrl || 'https://admin.ebcone.cn');
+      setMiduoBaseUrl(res.data.baseUrl || '');
       setMiduoAppCode(res.data.appCode || '');
       setMiduoHasSecret(res.data.hasAppSecret);
       setMiduoRedirectUri(res.data.redirectUri || '');
@@ -299,8 +299,8 @@ export default function UsersPage() {
     if (appCode) setMiduoAppCode(appCode);
     if (appSecret) setMiduoAppSecret(appSecret);
     if (appName) setMiduoLabel(appName);
-    setMiduoBaseUrl(normalizeUrl(baseUrl, 'https://admin.ebcone.cn'));
-    setMiduoRedirectUri(normalizeUrl(callbackUrl, 'https://map.ebcone.net/login', '/login'));
+    setMiduoBaseUrl(normalizeUrl(baseUrl, ''));
+    setMiduoRedirectUri(normalizeUrl(callbackUrl, `${window.location.origin}/login`, '/login'));
     setMiduoEnabled(true);
     toast.success('已识别交接信息', '请确认后保存配置');
   };
@@ -1680,7 +1680,7 @@ export default function UsersPage() {
                       value={miduoBaseUrl}
                       onChange={(e) => setMiduoBaseUrl(e.target.value)}
                       className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
-                      placeholder="https://admin.ebcone.cn"
+                      placeholder="https://admin.example.com"
                     />
                   </div>
                   <div>
@@ -1712,7 +1712,7 @@ export default function UsersPage() {
                     value={miduoRedirectUri}
                     onChange={(e) => setMiduoRedirectUri(e.target.value)}
                     className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
-                    placeholder="https://map.ebcone.net/login"
+                    placeholder={`${window.location.origin}/login`}
                   />
                 </div>
                 <div>

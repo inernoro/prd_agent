@@ -6,12 +6,25 @@ use tokio_util::sync::CancellationToken;
 
 use crate::models::{ApiError, ApiResponse, LoginResponse};
 
-/// 默认 API 地址（非开发者），可通过环境变量 API_BASE_URL 覆盖
-const DEFAULT_API_URL: &str = "https://map.ebcone.net";
+/// 正式 API 地址由打包环境注入；本地调试仍默认连接本机 API。
+const COMPILED_DEFAULT_API_URL: &str = option_env!("PRD_DESKTOP_DEFAULT_API_URL").unwrap_or("");
+
+fn configured_default_api_url() -> String {
+    std::env::var("API_BASE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| {
+            if cfg!(debug_assertions) && COMPILED_DEFAULT_API_URL.trim().is_empty() {
+                "http://localhost:5000".to_string()
+            } else {
+                COMPILED_DEFAULT_API_URL.trim().to_string()
+            }
+        })
+}
 
 lazy_static::lazy_static! {
     static ref API_BASE_URL: RwLock<String> = RwLock::new(
-        std::env::var("API_BASE_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string())
+        configured_default_api_url()
     );
     static ref AUTH_TOKEN: RwLock<Option<String>> = RwLock::new(None);
     static ref AUTH_USER_ID: RwLock<Option<String>> = RwLock::new(None);
@@ -55,7 +68,7 @@ pub fn get_client_id_pub() -> Option<String> {
 
 /// 获取默认 API 地址
 pub fn get_default_api_url() -> String {
-    DEFAULT_API_URL.to_string()
+    configured_default_api_url()
 }
 
 pub struct ApiClient {

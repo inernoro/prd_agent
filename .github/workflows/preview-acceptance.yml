@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       smoke_host:
-        description: '冒烟测试目标 URL, 例如 https://my-branch.miduo.org; 留空则跳过 smoke'
+        description: '冒烟测试目标 URL；留空则跳过 smoke'
         required: false
         default: ''
       smoke_skip:
@@ -12,7 +12,7 @@ on:
         required: false
         default: ''
       e2e_base_url:
-        description: 'Playwright E2E 目标 URL, 例如 https://my-branch.miduo.org; 留空则跳过 e2e'
+        description: 'Playwright E2E 目标 URL；留空则跳过 e2e'
         required: false
         default: ''
 

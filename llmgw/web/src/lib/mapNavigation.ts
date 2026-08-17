@@ -22,7 +22,7 @@ const CONSOLE_SUBDOMAIN_SUFFIXES = ['-llmgw-web', '-llmgw'] as const;
  * 平台下发的 MAP 主入口（`/gw/healthz` 的 mapHomeUrl，源头是 CDS 注入的 CDS_PREVIEW_URL）。
  *
  * 这才是权威值：谁部署的谁最清楚 MAP 在哪，不需要任何一方按 hostname 反推。
- * 拿到之前（首帧）与拿不到时（正式环境 / 非 CDS 托管）才走下面的后缀推算兜底。
+ * 拿到之前（首帧）才走下面的同一部署后缀推算兜底。
  */
 let platformMapHome: string | null = null;
 
@@ -76,9 +76,6 @@ export function usePlatformMapHome(): string | null {
 
 export function resolveMapHomeHref(location: ConsoleLocation = window.location): string {
   if (platformMapHome) return platformMapHome;
-  if (location.hostname.endsWith('.ebcone.net') && location.hostname !== 'map.ebcone.net') {
-    return `${location.protocol}//map.ebcone.net/`;
-  }
 
   const firstDot = location.hostname.indexOf('.');
   if (firstDot < 0) return '/';

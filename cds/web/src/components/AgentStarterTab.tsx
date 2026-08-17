@@ -156,8 +156,9 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
 
   const selectedSkillItems = skills.filter((skill) => selectedSkills.includes(skill.key))
   const serviceOrigin = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
-    ? 'https://cds.miduo.org'
+    ? String(import.meta.env.VITE_CDS_PUBLIC_BASE_URL || window.location.origin).trim()
     : window.location.origin
+  const prdAgentOrigin = String(import.meta.env.VITE_PRD_AGENT_BASE_URL || '').trim()
 
   const prompt = buildAgentStarterPrompt({
     experienceId,
@@ -173,6 +174,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
     selectedSkillKeys: selectedSkillItems.map((skill) => skill.key),
     includeCds,
     cdsOrigin: serviceOrigin,
+    prdAgentOrigin,
   })
 
   const advance = (nextStep: number) => {

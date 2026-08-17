@@ -831,9 +831,6 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
         }
 
         var domain = FirstConfigValue("MAP_PREVIEW_DOMAIN", "CDS_PREVIEW_DOMAIN", "PREVIEW_DOMAIN", "PreviewDomain");
-        if (string.IsNullOrWhiteSpace(domain))
-            domain = "miduo.org";
-
         var slug = ComputePreviewSlug(branch, project);
         if (string.IsNullOrWhiteSpace(slug) || string.IsNullOrWhiteSpace(domain))
             return null;

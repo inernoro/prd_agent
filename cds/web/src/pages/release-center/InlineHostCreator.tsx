@@ -234,7 +234,7 @@ echo '${created.publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/author
         <input
           value={quickInput}
           onChange={(event) => applyQuickInput(event.target.value)}
-          placeholder="ssh root@map.ebcone.net -p 22   或   root@1.2.3.4:22"
+          placeholder="ssh root@host.example.com -p 22   或   root@1.2.3.4:22"
           className={INPUT_CLASS}
         />
       </label>
@@ -242,7 +242,7 @@ echo '${created.publicKey}' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/author
       <div className="grid gap-2 md:grid-cols-4">
         <label className="grid gap-1 text-sm md:col-span-2">
           <span className="text-muted-foreground">主机</span>
-          <input value={host} onChange={(event) => setHost(event.target.value)} placeholder="map.ebcone.net" className={INPUT_CLASS} />
+          <input value={host} onChange={(event) => setHost(event.target.value)} placeholder="host.example.com" className={INPUT_CLASS} />
         </label>
         <label className="grid gap-1 text-sm">
           <span className="text-muted-foreground">端口</span>

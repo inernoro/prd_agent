@@ -10,7 +10,7 @@ set -euo pipefail
 # so budget and concurrency checks never call a paid provider.
 
 execute="${LLMGW_GOVERNANCE_ACCEPTANCE_EXECUTE:-0}"
-root="${LLMGW_GOVERNANCE_ACCEPTANCE_ROOT:-https://map.ebcone.net}"
+root="${LLMGW_GOVERNANCE_ACCEPTANCE_ROOT:-}"
 console_base="${LLMGW_CONSOLE_API_BASE:-$root/gw}"
 env_file="${LLMGW_ENV_FILE:-.env}"
 mongo_container="${LLMGW_MONGO_CONTAINER:-prdagent-mongodb}"
@@ -21,6 +21,11 @@ temp_platform="llmgw-acceptance-platform"
 temp_model_id="llmgw-acceptance-model"
 temp_model_name="llmgw-acceptance-fake"
 temp_pool="llmgw-acceptance-pool"
+
+[[ -n "$root" ]] || {
+  echo "LLMGW_GOVERNANCE_ACCEPTANCE_ROOT is required" >&2
+  exit 1
+}
 
 if [[ "$execute" != "1" ]]; then
   cat <<EOF

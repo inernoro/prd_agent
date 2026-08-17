@@ -13,3 +13,6 @@
 | security | prd-api | 用户改密、角色状态变更与重新初始化持久记录操作者身份 |
 | security | cds | 防火墙自检同时核验 nft 与 legacy 运行后端并对未知状态从严告警 |
 | security | skill | 密钥轮换台账区分已完成与有证据的风险边界豁免，阻止无关凭据盲目轮换 |
+| security | cds | 基础设施认证门禁前置到复用与唤醒之前，避免既有容器绕过启动协议 |
+| security | platform | MAP、CDS、模型网关与桌面端的自有入口改为部署时注入 |
+| test | platform | 动态域名守卫扩展到前端、桌面端与网关运行时源码 |

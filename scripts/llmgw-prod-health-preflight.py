@@ -21,7 +21,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BASE = "https://map.ebcone.net"
+DEFAULT_BASE = os.environ.get("LLMGW_PROD_BASE_URL", "").strip()
 
 
 def _normalize_commit(value: object) -> str:

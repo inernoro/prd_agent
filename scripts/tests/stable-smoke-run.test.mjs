@@ -473,11 +473,13 @@ test('CDS 失败后正式环境只能执行只读健康检查', () => {
   assert.match(filteredGate.reasons.join('；'), /仅执行了筛选用例/);
   assert.equal(evaluateProductionSafetyGate({ status: 'blocked' }, []).restricted, true);
   assert.deepEqual(validateProductionReadOnlyConfig({
-    STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net/',
+    STABLE_SMOKE_PROD_BASE_URL: 'https://production.example.test/',
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://production.example.test',
   }), []);
   assert.deepEqual(validateProductionReadOnlyConfig({
     STABLE_SMOKE_PROD_BASE_URL: 'https://wrong.example',
-  }), ['正式环境只读健康检查地址必须固定为 https://map.ebcone.net']);
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://production.example.test',
+  }), ['正式环境只读健康检查地址与部署注入的允许地址不一致']);
 });
 
 test('正式环境单独运行时默认禁止业务写入', () => {
@@ -497,10 +499,12 @@ test('正式环境单独运行时默认禁止业务写入', () => {
 
 test('正式环境单独 dry-run 只校验只读健康检查地址', () => {
   assert.deepEqual(validateSelectedEnvironmentConfig('production', ['production'], {
-    STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net',
+    STABLE_SMOKE_PROD_BASE_URL: 'https://production.example.test',
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://production.example.test',
   }), []);
   assert.deepEqual(validateSelectedEnvironmentConfig('production', ['cds', 'production'], {
-    STABLE_SMOKE_PROD_BASE_URL: 'https://map.ebcone.net',
+    STABLE_SMOKE_PROD_BASE_URL: 'https://production.example.test',
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://production.example.test',
   }), [
     'STABLE_SMOKE_PROD_AI_ACCESS_KEY 或 STABLE_SMOKE_PROD_SIGNING_KEY_ID + STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY',
     'STABLE_SMOKE_PROD_USER',
@@ -730,12 +734,13 @@ test('双环境凭据缺失时前置检查明确阻断', () => {
   ]);
   assert.deepEqual(validateEnvironmentConfig('production', {
     STABLE_SMOKE_PROD_BASE_URL: 'https://wrong.example',
+    STABLE_SMOKE_PROD_ALLOWED_BASE_URL: 'https://production.example.test',
     STABLE_SMOKE_PROD_AI_ACCESS_KEY: 'secret',
     STABLE_SMOKE_PROD_USER: 'stsmk',
     STABLE_SMOKE_PROD_GW_BASE_URL: 'https://gateway.example',
     STABLE_SMOKE_PROD_GW_USER: 'gateway-user',
     STABLE_SMOKE_PROD_GW_PASSWORD: 'gateway-password',
-  }), ['正式环境地址必须固定为 https://map.ebcone.net']);
+  }), ['正式环境地址与部署注入的允许地址不一致']);
 });
 
 test('主应用凭据齐全但网关凭据缺失时仍阻断开测', () => {

@@ -105,7 +105,7 @@ export async function sendNotification(options, fetchImpl = fetch) {
 async function main() {
   const argv = process.argv.slice(2);
   const options = {
-    baseUrl: readArg(argv, '--base-url', process.env.STABLE_SMOKE_NOTIFY_BASE_URL || 'https://map.ebcone.net'),
+    baseUrl: readArg(argv, '--base-url', process.env.STABLE_SMOKE_NOTIFY_BASE_URL || ''),
     accessKey: process.env.STABLE_SMOKE_NOTIFY_AI_ACCESS_KEY || '',
     signingKeyId: process.env.STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID || '',
     signingPrivateKey: process.env.STABLE_SMOKE_NOTIFY_SIGNING_PRIVATE_KEY || '',

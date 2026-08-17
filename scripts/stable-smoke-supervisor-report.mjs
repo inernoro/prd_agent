@@ -135,7 +135,7 @@ export function renderSupervisorReport({
   runId,
   technicalUrl = './report.md',
   cdsUrl = '',
-  productionUrl = 'https://map.ebcone.net',
+  productionUrl = '',
   executionFailures = [],
   selectedEnvironments = [],
 }) {

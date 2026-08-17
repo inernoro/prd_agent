@@ -8,7 +8,7 @@
 幂等:按 name+appKey 查重,存在则更新内容,不重复建库。只调既有 REST 端点,不新增后端代码。
 
 环境变量:
-  PRD_API_BASE              prd-api 根地址,默认 https://main-prd-agent.miduo.org
+  PRD_API_BASE              prd-api 根地址,必填
   AI_ACCESS_KEY             X-AI-Access-Key(后端 AI 直连密钥),必填
   CDS_TUTORIAL_IMPERSONATE  以哪个真实用户名义建库(X-AI-Impersonate);未设则回退 MAP_AI_USER
 
@@ -50,9 +50,11 @@ EXAMPLES = [
 
 
 def _cfg():
-    base = os.environ.get("PRD_API_BASE", "https://main-prd-agent.miduo.org").rstrip("/")
+    base = os.environ.get("PRD_API_BASE", "").rstrip("/")
     key = os.environ.get("AI_ACCESS_KEY", "")
     user = os.environ.get("CDS_TUTORIAL_IMPERSONATE", "") or os.environ.get("MAP_AI_USER", "")
+    if not base:
+        sys.exit("缺 PRD_API_BASE 环境变量(prd-api 根地址)")
     if not key:
         sys.exit("缺 AI_ACCESS_KEY 环境变量(后端 AI 直连密钥)")
     if not user:

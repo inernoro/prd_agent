@@ -2594,6 +2594,20 @@ export class ContainerService {
     const network = this.getNetworkForProject(service.projectId);
     await this.ensureNetwork(network);
 
+    // 认证是基础设施启动协议的一部分，必须在任何复用、唤醒或新建分支之前校验。
+    // 若把门禁放在 docker run 前面，已存在容器就能借由 early return 绕过策略。
+    const resolvedEnv = customEnv
+      ? resolveEnvTemplates(service.env, customEnv)
+      : service.env;
+    const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
+    const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
+    assertInfraAuthenticationConfigured({
+      dockerImage: service.dockerImage,
+      env: resolvedEnv,
+      command: resolvedCommand,
+      entrypoint: resolvedEntrypoint,
+    });
+
     // 幂等启动（2026-05-05 修 P0 bug）
     //
     // 历史行为：直接 `docker rm -f ${name}` 然后 `docker run` 重建。这条路径
@@ -2731,10 +2745,6 @@ export class ContainerService {
     // 展开 ${VAR} 引用(2026-05-01 Phase 1):用 customEnv 作 lookup
     // 表先把 service.env 里的 ${MONGO_USER} / ${MONGO_PASSWORD} 等
     // 替换成真实值。customEnv 缺失时跳过(老行为)。
-    const resolvedEnv = customEnv
-      ? resolveEnvTemplates(service.env, customEnv)
-      : service.env;
-
     // Build env flags
     const envFlags = Object.entries(resolvedEnv).map(
       ([k, v]) => `-e "${k}=${v}"`,
@@ -2787,14 +2797,6 @@ export class ContainerService {
     // 级 customEnv,不是 systemd CDS 进程 env)→ 展开成空 → redis 启动看到
     // `--requirepass ` 缺值,FATAL CONFIG ERROR 无限重启。把 command/entrypoint
     // 也过一遍同一份 customEnv 模板替换,根治。
-    const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
-    const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
-    assertInfraAuthenticationConfigured({
-      dockerImage: service.dockerImage,
-      env: resolvedEnv,
-      command: resolvedCommand,
-      entrypoint: resolvedEntrypoint,
-    });
     const explicitCmdParts = resolvedCommand === undefined
       ? []
       : Array.isArray(resolvedCommand)

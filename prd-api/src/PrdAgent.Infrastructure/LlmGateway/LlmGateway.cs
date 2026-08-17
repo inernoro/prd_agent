@@ -31,6 +31,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private readonly IDoubaoStreamAsrExecutor _doubaoStreamAsr;
     private readonly GatewayProviderConcurrencyCoordinator? _concurrencyCoordinator;
     private readonly string _internalTenantId;
+    private readonly string? _openRouterReferer;
     private readonly Dictionary<string, IGatewayAdapter> _adapters = new(StringComparer.OrdinalIgnoreCase);
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
     private static readonly HashSet<string> StrictParameterCapabilityKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -74,6 +75,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         _internalTenantId = configuration?["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
+        _openRouterReferer = OpenRouterAttribution.ResolveReferer(configuration);
         _doubaoStreamAsr = doubaoStreamAsr
             ?? new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance, safeWebSocketConnector);
 
@@ -3425,19 +3427,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// 仅在 ApiUrl 指向 openrouter.ai 时注入，避免污染其他严格校验 header/body 的上游（DeepSeek、通义、
     /// Claude 原生、各类中转站等）。body 不动，彻底规避未知字段导致 400 的风险。
     /// </summary>
-    private static void ApplyOpenRouterAttribution(
+    private void ApplyOpenRouterAttribution(
         HttpRequestMessage httpRequest,
         string? apiUrl,
         string appCallerCode)
     {
-        if (string.IsNullOrWhiteSpace(apiUrl)) return;
-        if (apiUrl.IndexOf("openrouter.ai", StringComparison.OrdinalIgnoreCase) < 0) return;
-
-        httpRequest.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
-        if (!string.IsNullOrWhiteSpace(appCallerCode))
-        {
-            httpRequest.Headers.TryAddWithoutValidation("X-OpenRouter-Title", $"G-{appCallerCode}");
-        }
+        OpenRouterAttribution.Apply(httpRequest, apiUrl, appCallerCode, _openRouterReferer);
     }
 
     /// <summary>
