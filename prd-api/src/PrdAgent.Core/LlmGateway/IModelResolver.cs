@@ -99,6 +99,37 @@ public class ModelResolutionResult
     public string? ErrorMessage { get; init; }
 
     /// <summary>
+    /// 结构化失败原因（<see cref="GatewayRouteFailure"/> 常量之一）。
+    /// 应用层按它选用户文案与告警级别，禁止再对 <see cref="ErrorMessage"/> 做字符串匹配猜原因。
+    /// </summary>
+    public string? FailureCode { get; init; }
+
+    /// <summary>失败发生在解析的哪一阶段（appcaller-registry / logical-model / offering / pool / pinned ...）。</summary>
+    public string? FailureStage { get; init; }
+
+    /// <summary>失败上下文：appCaller。管理员日志据此点名，不进用户文案。</summary>
+    public string? FailureAppCallerCode { get; init; }
+
+    /// <summary>失败上下文：逻辑模型 PublicId。</summary>
+    public string? FailureLogicalModelPublicId { get; init; }
+
+    /// <summary>失败上下文：Offering ID。</summary>
+    public string? FailureOfferingId { get; init; }
+
+    /// <summary>失败上下文：模型池 ID 或用户选择的池身份。</summary>
+    public string? FailureModelPoolId { get; init; }
+
+    /// <summary>面向普通用户的失败文案（结果 + 恢复动作），由结构化原因推导。</summary>
+    public string UserFacingFailureMessage => GatewayRouteFailure.UserMessage(FailureCode);
+
+    /// <summary>管理员定位串：点名 appCaller、逻辑模型、Offering、池与失败阶段。</summary>
+    public string AdminFailureDiagnostic =>
+        $"code={FailureCode ?? "UNCLASSIFIED"}, stage={FailureStage ?? "unknown"}, "
+        + $"appCaller={FailureAppCallerCode ?? "-"}, logicalModel={FailureLogicalModelPublicId ?? "-"}, "
+        + $"offering={FailureOfferingId ?? "-"}, pool={FailureModelPoolId ?? "-"}; "
+        + GatewayRouteFailure.AdminHint(FailureCode);
+
+    /// <summary>
     /// 调度类型
     /// DedicatedPool: 专属模型池
     /// DefaultPool: 默认模型池
@@ -309,6 +340,12 @@ public class ModelResolutionResult
             OfferingEndpointPath = OfferingEndpointPath,
             Success = Success,
             ErrorMessage = ErrorMessage,
+            FailureCode = FailureCode,
+            FailureStage = FailureStage,
+            FailureAppCallerCode = FailureAppCallerCode,
+            FailureLogicalModelPublicId = FailureLogicalModelPublicId,
+            FailureOfferingId = FailureOfferingId,
+            FailureModelPoolId = FailureModelPoolId,
             ResolutionType = ResolutionType,
             ExpectedModel = ExpectedModel,
             ActualModel = ActualModel ?? string.Empty,
@@ -364,14 +401,36 @@ public class ModelResolutionResult
         };
     }
 
-    public static ModelResolutionResult NotFound(string? expectedModel, string message)
+    /// <summary>
+    /// 构造一条失败解析。
+    ///
+    /// <paramref name="failureCode"/> 必须给（<see cref="GatewayRouteFailure"/> 常量之一）：
+    /// 参数保留可选只是为了让 <c>IModelResolver</c> 默认实现这种非路由场景能省略；
+    /// ModelResolver 内部的每一处调用都由源码守卫测试强制带上错误码，
+    /// 新增一处忘了带就会红（否则又会退回「所有失败长一个样」）。
+    /// </summary>
+    public static ModelResolutionResult NotFound(
+        string? expectedModel,
+        string message,
+        string? failureCode = null,
+        string? stage = null,
+        string? appCallerCode = null,
+        string? logicalModelPublicId = null,
+        string? offeringId = null,
+        string? modelPoolId = null)
     {
         return new ModelResolutionResult
         {
             Success = false,
             ResolutionType = "NotFound",
             ExpectedModel = expectedModel,
-            ErrorMessage = message
+            ErrorMessage = message,
+            FailureCode = failureCode,
+            FailureStage = stage,
+            FailureAppCallerCode = appCallerCode,
+            FailureLogicalModelPublicId = logicalModelPublicId,
+            FailureOfferingId = offeringId,
+            FailureModelPoolId = modelPoolId
         };
     }
 
