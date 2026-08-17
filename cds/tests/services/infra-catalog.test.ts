@@ -6,6 +6,7 @@ import {
   recommendedVolumePathsFromCatalog,
   getInfraCatalogPublic,
 } from '../../src/services/infra-catalog.js';
+import { detectInfraAuth } from '../../src/services/infra-exposure-audit.js';
 
 /**
  * Infra catalog SSOT tests.
@@ -60,10 +61,36 @@ describe('infra-catalog SSOT', () => {
     expect(recommendedVolumePathsFromCatalog('rabbitmq:3-management-alpine')).toEqual(['/var/lib/rabbitmq']);
   });
 
-  it('redis preset stays password-free (legacy behaviour)', () => {
-    const redis = getInfraCatalogEntry('redis')!.build({});
-    expect(redis.envVars).toEqual({ REDIS_URL: 'redis://redis:6379' });
-    expect(redis.env).toBeUndefined();
+  /**
+   * 这条原来叫「redis preset stays password-free (legacy behaviour)」，逐字要求
+   * redis 建出来**没有口令**——它把一个真实漏洞锁成了契约：谁给 redis 补认证，
+   * 谁的 CI 先红。而公网暴露一旦发生，一个没有 requirepass 的 redis 就是裸奔。
+   *
+   * 现在反过来断言：redis 必须带口令，且口令**不许出现在启动命令行里**
+   * （那会散进宿主 ps、CDS 记录的 docker run 字符串和容器事件日志）。
+   */
+  it('redis 预设带口令，且口令只走 env 不进命令行', () => {
+    const entry = getInfraCatalogEntry('redis')!;
+    expect(entry.secretKeys).toEqual(['password']);
+
+    const built = entry.build({ password: 'p4ssw0rd' });
+    expect(built.env).toEqual({ REDIS_PASSWORD: 'p4ssw0rd' });
+    expect(built.envVars).toEqual({ REDIS_URL: 'redis://:p4ssw0rd@redis:6379' });
+
+    // 启动命令必须是数组形态（每个 token 单独 shell-quote），且只引用变量名。
+    const cmd = entry.command as string[];
+    expect(Array.isArray(cmd)).toBe(true);
+    expect(cmd.join(' ')).toContain('--requirepass "$REDIS_PASSWORD"');
+    expect(cmd.join(' ')).not.toContain('p4ssw0rd');
+    // 必须经过镜像自己的 entrypoint：它只在第一个参数是 redis-server 时才修
+    // /data 属主并降权到 redis 用户。直接 `sh -c 'exec redis-server …'` 会让
+    // entrypoint 走兜底分支，redis 以 root 起（Codex P1，2026-08-17）。
+    // 注意这里只能证明「命令写对了」——**进程真以谁的身份跑**由
+    // redis-preset-privilege.docker.test.ts 用真容器判。
+    expect(cmd.join(' ')).toContain('docker-entrypoint.sh redis-server');
+    // `${VAR}` 会被 CDS 的模板替换吃掉（宿主侧没有这个变量 → 展开成空 →
+    // redis 拿到空口令 FATAL 无限重启，2026-05-29 真出过）。必须是不带花括号的 $VAR。
+    expect(cmd.join(' ')).not.toContain('${REDIS_PASSWORD}');
   });
 
   it('kafka uses KRaft (no zookeeper) and advertises itself as kafka:9092', () => {
@@ -97,5 +124,86 @@ describe('infra-catalog SSOT', () => {
     const serialized = JSON.stringify(pub);
     expect(serialized).not.toContain('postgresql://'); // no connection-string values
     expect(serialized.toLowerCase()).not.toContain('password');
+  });
+});
+
+/**
+ * 接线守卫：catalog 补的认证，必须真的被**暴露审计**认出来。
+ *
+ * 这两个模块各自看着都对，却可能对不上：catalog 生成 `REDIS_PASSWORD`，而审计
+ * 若只认 `REDIS_PASS`，公网上的库照样被报成「无认证 critical」——补了认证的库
+ * 继续刷红，真裸奔的那些反而淹没在里面。反过来更糟：审计认了、catalog 其实没给，
+ * 一个裸奔库被标成「已配置认证」。所以判据只能是「拿 catalog 真的建出来的东西
+ * 去喂审计」，不能两边各自断言自己那一半。
+ */
+describe('catalog 的认证能被暴露审计认出来', () => {
+  it('redis：建出来的 env + 启动命令都判为已认证', () => {
+    const entry = getInfraCatalogEntry('redis')!;
+    const built = entry.build({ password: 'hex0123456789' });
+    const cmd = entry.command as string[];
+
+    // env 这一路（数据面板、备份探测走的也是它）
+    expect(detectInfraAuth('redis', built.env, [])).toBe(true);
+    // 容器的真实形状：env 有值 + Cmd 里引用它。`sh -c` 把整条语句塞进一个 Cmd
+    // 元素，审计必须自己再拆一层才比得中 --requirepass。
+    expect(detectInfraAuth('redis', built.env, cmd)).toBe(true);
+    // 引用了一个没有值的变量 = redis 拿到空口令（会 FATAL），不许判成已认证
+    expect(detectInfraAuth('redis', {}, cmd)).toBe(false);
+    // 直接写明文的 compose 配法照样认
+    expect(detectInfraAuth('redis', {}, ['sh', '-c', 'redis-server --requirepass hunter2'])).toBe(true);
+    // 空口令不算认证
+    expect(detectInfraAuth('redis', {}, ['sh', '-c', 'redis-server --requirepass ""'])).toBe(false);
+    // 两路都没有才该判裸奔——对照组，防止判据恒真
+    expect(detectInfraAuth('redis', {}, [])).toBe(false);
+  });
+
+  it('仍然没有认证的预设要如实暴露，不许假装已修', () => {
+    // memcached / kafka / nats 这一轮没补（SASL / token 是各自独立的一摊配置）。
+    // 台账 E16 记着它们；这里钉住现状，等哪天补了，这条会红，提醒同步台账与 runbook。
+    for (const id of ['memcached', 'kafka', 'nats']) {
+      const built = getInfraCatalogEntry(id)!.build({});
+      const hasSecret = !!getInfraCatalogEntry(id)!.secretKeys?.length;
+      expect(hasSecret, `${id} 已补密钥，请同步更新 doc/debt.cds.md E16 与轮换 runbook §4`).toBe(false);
+      expect(built.env?.REDIS_PASSWORD).toBeUndefined();
+    }
+  });
+});
+
+/**
+ * 认证判据的**结构化**收口（Codex #1382 第四轮 P1）。
+ *
+ * 上一轮是「遇到一种语法加一种」——先拆 `sh -c`，再补引号。第三次又来
+ * `"$X";`（尾巴粘分隔符）时就该停手换判据了：与其穷举 shell 语法，不如认一条
+ * 结构性规则——**证明不了这里有口令，就不算有**。这一组用例钉的是那条规则，
+ * 不是某几种写法。
+ */
+describe('认证判据：证明不了就不算有', () => {
+  const cmd = (s: string): string[] => ['sh', '-c', s];
+
+  it('带 $ 的展开必须能解析出真值，否则一律判未认证', () => {
+    // 尾巴粘着 shell 分隔符 / 运算符
+    expect(detectInfraAuth('redis', {}, cmd('exec redis-server --requirepass "$REDIS_PASSWORD";'))).toBe(false);
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass "$REDIS_PASSWORD" && true'))).toBe(false);
+    // 花括号形态、拼接形态：同样证明不了
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass "${REDIS_PASSWORD}"'))).toBe(false);
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass pre$SUFFIX'))).toBe(false);
+  });
+
+  it('变量真有值时才算已认证', () => {
+    expect(detectInfraAuth('redis', { REDIS_PASSWORD: 'x' }, cmd('exec redis-server --requirepass "$REDIS_PASSWORD";'))).toBe(true);
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass hunter2'))).toBe(true);
+  });
+
+  /**
+   * 反方向也不能误伤：单引号里 shell 不做展开，`'p$ss'` 是货真价实的密码。
+   * 把它判成「没配」就是那种「说库没密码」的假警报，比不报警更糟。
+   */
+  it('单引号字面量含 $ 不算展开，仍判为已认证', () => {
+    expect(detectInfraAuth('redis', {}, cmd("redis-server --requirepass 'p$ss'"))).toBe(true);
+  });
+
+  it('空口令与完全没配都判未认证', () => {
+    expect(detectInfraAuth('redis', {}, cmd('redis-server --requirepass ""'))).toBe(false);
+    expect(detectInfraAuth('redis', {}, cmd('redis-server'))).toBe(false);
   });
 });

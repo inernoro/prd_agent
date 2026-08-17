@@ -22,3 +22,27 @@
 | fix | cds | 「回滚到此版本」真的回滚到被点的那一版，不再退到它的上一版 |
 | fix | cds | 环境配置卡的发布模式改为只读并给出向导入口，不再提供必然 400 的模式切换 |
 | fix | cds | 签发集群连接码时校验远端可达性，主节点绑回环而码指向裸端口时当场告警 |
+| fix | cds | MySQL 备份改为容器内流式压缩，不再中转未压缩 dump，退出码仍取 mysqldump 自己的 |
+| fix | cds | 备份磁盘闸改为每个目标之前复查，空间不足时剩余目标记为「未执行」而非静默少备 |
+| fix | cds | 周期备份加单飞闸，上一轮未跑完不再叠加下一轮互删临时文件 |
+| fix | cds | Redis 备份按 CONFIG GET 的 dir/dbfilename 取快照路径，不再写死 /data/dump.rdb |
+| docs | cds | 新增基建凭据轮换 runbook，含 Mongo/MySQL 假轮换陷阱与 JWT 一值两用的安全顺序 |
+| docs | cds | 债务台账记入 E16 四个预设无认证 / E17 无轮换路径 / E18 无轮换审计 |
+| security | cds | redis 预设改为默认带口令（requirepass 经 env 展开，不进命令行），连接串同步带凭据 |
+| fix | cds | 暴露审计拆开 sh -c 整条命令再比对，有口令的库不再被误报「无认证 critical」 |
+| test | cds | 改写两条把「redis 无口令」锁死的测试，补 catalog 认证与暴露审计的跨模块接线守卫 |
+| fix | cds | 手工下载 redis 备份改用带认证与完成确认的探测脚本，不再忽略 BGSAVE 失败给出陈旧快照 |
+| fix | cds | redis 恢复按运行时解析的快照路径写入，不再写死 /data/dump.rdb 导致「恢复成功却加载旧数据」 |
+| docs | cds | 轮换 runbook 补 MySQL app 账号与服务 env 同步、容器重建两步，修正「没有轮换路径」的表述 |
+| fix | cds | MySQL 导出捕获 gzip 端退出码，并在转正前加 gzip -t 完整性校验，杜绝截断档案顶掉可用旧备份 |
+| fix | cds | redis 快照路径解析在 CONFIG GET 失败时报错退出，不再猜 /data/dump.rdb |
+| fix | cds | 每次备份导出套 ulimit 写入上限，单个大库不再能把宿主根盘写满 |
+| docs | cds | 轮换 runbook 修正 PostgreSQL 账号（app 非 postgres），并补九个预设的账号真值表 |
+| fix | cds | 暴露审计改结构化判据：无法解析的 shell 展开一律不算已认证，杜绝尾随分隔符导致的漏报 |
+| docs | cds | 轮换 runbook 的 MySQL 段改为逐 host 执行，补 SQL Server 口令复杂度要求 |
+| fix | cds | redis 预设启动改回经镜像 entrypoint，恢复降权到 redis 用户，不再以 root 运行 |
+| test | cds | 新增 redis 预设真容器判据（降权 + 认证 + /data 属主），补上命令字符串扫不出的运行时差别 |
+| fix | cds | 备份单飞闸带持有者身份，跳过写入事件流并在疑似卡死时升级为 error |
+| docs | cds | 轮换 runbook 的 MySQL 段改为单会话改完所有 host，验证拆本地与网络两条 |
+| docs | cds | 轮换 runbook 重构为「真值表 + 四条通则 + 三类核对过的步骤」，不再给未核对的命令 |
+| docs | cds | 补齐每个预设注入的全部连接串变量；PG 验证改走 TCP，避免本地 trust 让错口令验成对的 |

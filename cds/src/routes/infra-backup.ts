@@ -22,6 +22,8 @@ import { isPreviewInstance } from '../services/preview-instance.js';
 import {
   backupDirCandidates,
   backupKey,
+  buildRedisBackupProbeScript,
+  buildRedisRdbPathScript,
   isLegacyUnscopedBackupFile,
   isProjectBackupFile,
 } from '../services/infra-backup-schedule.js';
@@ -181,11 +183,28 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           else res.end();
         });
       } else if (kind === 'redis') {
-        // 1) BGSAVE 触发磁盘写入 2) 等待 lastsave 变化 3) cat /data/dump.rdb
-        await shell.exec(`docker exec ${shq(svc.containerName)} redis-cli BGSAVE`);
-        // 简化：sleep 1s 后 cat dump.rdb（生产环境应轮询 LASTSAVE）
-        await new Promise((r) => setTimeout(r, 1200));
-        const cmd = ['docker', 'exec', svc.containerName, 'cat', '/data/dump.rdb'];
+        // 走**和周期备份同一个**探测脚本：它认证（env 取不到就扫容器内进程命令行里的
+        // --requirepass）、用 INFO persistence 确认 BGSAVE 真的完成、再用 mtime 证明
+        // 文件被这次写过，最后回传快照的真实路径（CONFIG GET dir/dbfilename）。
+        //
+        // 上一版是「BGSAVE 忽略退出码 → sleep 1.2s → cat 写死的 /data/dump.rdb」，
+        // 三处都会静默给出**陈旧快照**：配了 requirepass 的库 BGSAVE 直接 NOAUTH；
+        // 1.2 秒对稍大的库根本不够；改过 dir 的实例那个路径上压根不是它的快照。
+        // 而这个端点还是项目迁移的数据来源——「以为备了、其实是旧的」比没有备份更危险。
+        const probe = await shell.exec(
+          `docker exec ${shq(svc.containerName)} sh -c ${shq(buildRedisBackupProbeScript())}`,
+          { timeout: 120_000 },
+        );
+        if (probe.exitCode !== 0) {
+          return res.status(500).json({
+            error: `BGSAVE 未确认完成，拒绝下载可能过期的快照：${combinedOutput(probe).trim().slice(0, 300)}`,
+          });
+        }
+        const rdbPath = (probe.stdout || '').trim().split('\n').pop()?.trim() || '';
+        if (!rdbPath.startsWith('/')) {
+          return res.status(500).json({ error: '探测脚本没有回传快照路径，拒绝按默认路径猜' });
+        }
+        const cmd = ['docker', 'exec', svc.containerName, 'cat', rdbPath];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
         proc.stdout.pipe(res);
         proc.on('error', (err) => {
@@ -279,8 +298,22 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           res.json({ restored: true, preRestoreBackup: preBackupPath, message: '数据库已恢复' });
         });
       } else if (kind === 'redis') {
-        // Redis restore：写入 /data/dump.rdb 然后重启容器加载
-        const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-c', 'cat > /data/dump.rdb'];
+        // 该往哪写，问 redis 自己（和备份共用 REDIS_RDB_PATH_LINES 那份判据）。
+        // 写死 /data/dump.rdb 的话，改过 dir/dbfilename 的实例会把上传的快照写到
+        // 一个 redis 根本不读的位置，重启后加载的还是**旧数据**，而接口回的是
+        // 「已恢复」——恢复场景里这种谎话的代价是数据真的回不来了。
+        const pathProbe = await shell.exec(
+          `docker exec ${shq(svc.containerName)} sh -c ${shq(buildRedisRdbPathScript())}`,
+          { timeout: 30_000 },
+        );
+        const rdbTarget = (pathProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
+        if (pathProbe.exitCode !== 0 || !rdbTarget.startsWith('/')) {
+          res.status(500).json({
+            error: `解析不出 redis 快照路径，拒绝按默认路径写入：${combinedOutput(pathProbe).trim().slice(0, 200)}`,
+          });
+          return;
+        }
+        const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-c', `cat > ${shq(rdbTarget)}`];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'ignore', 'pipe'] });
         req.pipe(proc.stdin);
         proc.on('close', async (code) => {
