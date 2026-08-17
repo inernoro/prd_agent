@@ -6,3 +6,5 @@
 | feat | llmgw | 逻辑模型能力增加契约版本与幂等迁移，未知能力不丢弃并逐个点名，新增 /gw/logical-models/capability-audit 发布门禁只读端点 |
 | feat | prd-admin | 补齐十类路由失败的用户文案，配置不兼容不再显示成供应商宕机 |
 | test | prd-api | 补齐能力兼容、迁移幂等、路由场景、故障隔离、错误分类、正式数据形态回放与接线守卫测试 |
+| fix | ci | llmgw-serve 镜像构建输入补齐 prd-api，避免只改 Core 时 serving 继续跑旧路由判据 |
+| docs | platform | 新增能力契约与故障域隔离设计文档 |
