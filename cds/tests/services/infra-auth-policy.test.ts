@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { assertInfraAuthenticationConfigured } from '../../src/services/infra-auth-policy.js';
+import { INFRA_CATALOG } from '../../src/services/infra-catalog.js';
 
 describe('基础设施认证硬门禁', () => {
-  it('接受 CDS 生成的四类认证配置', () => {
+  it('接受 CDS 生成的认证配置', () => {
     expect(() => assertInfraAuthenticationConfigured({
       dockerImage: 'mongo:7',
       env: { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'secret' },
@@ -18,6 +19,25 @@ describe('基础设施认证硬门禁', () => {
       env: { REDIS_PASSWORD: 'secret' },
       command: ['sh', '-c', 'exec redis-server --requirepass "$REDIS_PASSWORD"'],
     })).not.toThrow();
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'mcr.microsoft.com/mssql/server:2022-latest',
+      env: { MSSQL_SA_PASSWORD: 'Secret123!' },
+    })).not.toThrow();
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'clickhouse/clickhouse-server:24', env: { CLICKHOUSE_PASSWORD: 'secret' },
+    })).not.toThrow();
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'rabbitmq:3-management',
+      env: { RABBITMQ_DEFAULT_USER: 'app', RABBITMQ_DEFAULT_PASS: 'secret' },
+    })).not.toThrow();
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'elasticsearch:8',
+      env: { 'xpack.security.enabled': 'true', ELASTIC_PASSWORD: 'secret' },
+    })).not.toThrow();
+    expect(() => assertInfraAuthenticationConfigured({
+      dockerImage: 'minio/minio:latest',
+      env: { MINIO_ROOT_USER: 'app', MINIO_ROOT_PASSWORD: 'secret' },
+    })).not.toThrow();
   });
 
   it('拒绝只声明密码变量但启动命令没有启用认证的 Redis', () => {
@@ -26,8 +46,18 @@ describe('基础设施认证硬门禁', () => {
     })).toThrow('拒绝创建无认证');
   });
 
-  it('拒绝四类无认证数据服务', () => {
-    for (const dockerImage of ['mongo:7', 'postgres:16', 'mysql:8', 'redis:7']) {
+  it('拒绝所有支持认证但未配置凭据的数据服务', () => {
+    for (const dockerImage of [
+      'mongo:7',
+      'postgres:16',
+      'mysql:8',
+      'redis:7',
+      'mcr.microsoft.com/mssql/server:2022-latest',
+      'clickhouse/clickhouse-server:24',
+      'rabbitmq:3-management',
+      'elasticsearch:8',
+      'minio/minio:latest',
+    ]) {
       expect(() => assertInfraAuthenticationConfigured({ dockerImage }))
         .toThrow('拒绝创建无认证');
     }
@@ -46,8 +76,28 @@ describe('基础设施认证硬门禁', () => {
     })).not.toThrow();
   });
 
-  it('不干预非数据基础设施', () => {
-    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'minio/minio:latest' }))
+  it('不干预当前只依赖私网隔离的基础设施', () => {
+    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'memcached:1-alpine' }))
       .not.toThrow();
+    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'apache/kafka:3.7' }))
+      .not.toThrow();
+    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'nats:2-alpine' }))
+      .not.toThrow();
+  });
+
+  it('目录中每个声明凭据的服务都能通过同一启动门禁', () => {
+    for (const entry of INFRA_CATALOG.filter((candidate) => candidate.secretKeys?.length)) {
+      const secrets = Object.fromEntries(entry.secretKeys!.map((key) => [key, 'Secret123']));
+      const built = entry.build(secrets);
+      expect(() => assertInfraAuthenticationConfigured({
+        dockerImage: entry.dockerImage,
+        id: entry.id,
+        name: entry.name,
+        basePresetId: entry.id,
+        containerPort: entry.containerPort,
+        env: built.env,
+        command: entry.command,
+      }), `目录服务 ${entry.id} 的认证配置没有通过启动门禁`).not.toThrow();
+    }
   });
 });

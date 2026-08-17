@@ -26,7 +26,20 @@
 
 import { isPubliclyPublished } from './infra-publish.js';
 
-export type InfraKind = 'mongo' | 'redis' | 'mysql' | 'postgres' | 'other';
+export type InfraKind =
+  | 'mongo'
+  | 'redis'
+  | 'mysql'
+  | 'postgres'
+  | 'sqlserver'
+  | 'clickhouse'
+  | 'rabbitmq'
+  | 'elasticsearch'
+  | 'minio'
+  | 'memcached'
+  | 'kafka'
+  | 'nats'
+  | 'other';
 
 export interface InfraKindHints {
   id?: string;
@@ -103,6 +116,14 @@ export function detectInfraKind(dockerImage: string, hints: InfraKindHints = {})
   if (includes('redis')) return 'redis';
   if (includes('mysql', 'mariadb')) return 'mysql';
   if (includes('postgres', 'timescale')) return 'postgres';
+  if (includes('sqlserver', 'mssql')) return 'sqlserver';
+  if (includes('clickhouse')) return 'clickhouse';
+  if (includes('rabbitmq')) return 'rabbitmq';
+  if (includes('elasticsearch', 'opensearch')) return 'elasticsearch';
+  if (includes('minio')) return 'minio';
+  if (includes('memcached')) return 'memcached';
+  if (includes('kafka')) return 'kafka';
+  if (includes('nats')) return 'nats';
 
   const publishedContainerPorts = [...String(hints.runtimePorts || '').matchAll(/->(\d+)\//g)]
     .map((match) => Number(match[1]));
@@ -111,6 +132,16 @@ export function detectInfraKind(dockerImage: string, hints: InfraKindHints = {})
   if (ports.has(6379)) return 'redis';
   if (ports.has(3306)) return 'mysql';
   if (ports.has(5432)) return 'postgres';
+  if (ports.has(1433)) return 'sqlserver';
+  if (ports.has(8123) || ports.has(9009)) return 'clickhouse';
+  if (ports.has(5672) || ports.has(15672)) return 'rabbitmq';
+  if (ports.has(9200)) return 'elasticsearch';
+  // 9000 同时被 ClickHouse 原生协议与 MinIO 使用，不能只凭该端口猜类型。
+  // MinIO 控制台 9001 没有这个歧义；主端口场景由 image/服务元数据识别。
+  if (ports.has(9001)) return 'minio';
+  if (ports.has(11211)) return 'memcached';
+  if (ports.has(9092)) return 'kafka';
+  if (ports.has(4222)) return 'nats';
   return 'other';
 }
 
@@ -318,7 +349,8 @@ export function detectInfraAuth(
   });
   switch (kind) {
     case 'mongo':
-      return has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME')
+      return (has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME')
+          && has('MONGO_INITDB_ROOT_PASSWORD', 'MONGO_PASSWORD', 'MONGODB_PASSWORD'))
         || hasFlag('--auth')
         || hasFlagValue('--keyfile');
     case 'redis':
@@ -330,6 +362,27 @@ export function detectInfraAuth(
       return has('MYSQL_ROOT_PASSWORD', 'MYSQL_PASSWORD', 'MARIADB_ROOT_PASSWORD');
     case 'postgres':
       return has('POSTGRES_PASSWORD', 'PGPASSWORD');
+    case 'sqlserver':
+      return has('MSSQL_SA_PASSWORD', 'SA_PASSWORD');
+    case 'clickhouse':
+      return has('CLICKHOUSE_PASSWORD');
+    case 'rabbitmq':
+      return has('RABBITMQ_DEFAULT_USER') && has('RABBITMQ_DEFAULT_PASS');
+    case 'elasticsearch': {
+      const security = String(e['xpack.security.enabled'] || e.XPACK_SECURITY_ENABLED || '')
+        .trim()
+        .toLowerCase();
+      return security !== 'false' && has('ELASTIC_PASSWORD');
+    }
+    case 'minio':
+      return has('MINIO_ROOT_USER', 'MINIO_ACCESS_KEY')
+        && has('MINIO_ROOT_PASSWORD', 'MINIO_SECRET_KEY');
+    case 'memcached':
+    case 'kafka':
+    case 'nats':
+      // CDS 目录尚未给这三类服务启用认证。运行态必须把它们识别为明确无认证，
+      // 一旦发布到公网就升为最高级别告警，不能落入 unknown 后降级。
+      return false;
     default:
       return null;
   }
@@ -354,7 +407,7 @@ function describe(f: Omit<InfraExposureFinding, 'reason' | 'severity'>): { sever
   if (f.authenticated === false) {
     return {
       severity: 'critical',
-      reason: `端口发布在 ${where}（对外可达）且没有配置认证：任何人扫到这个端口就能直接读写这个库`,
+      reason: `端口发布在 ${where}（对外可达）且没有配置认证：任何人扫到这个端口就能直接读写该服务`,
     };
   }
   if (f.authenticated === null) {
@@ -409,12 +462,12 @@ export function auditInfraExposure(
   const warn = findings.filter((f) => f.severity === 'warn');
   const shielded = warn.filter((f) => f.firewallBlocked).length;
   const summary = critical.length > 0
-    ? `${critical.length} 个数据库对外可达且无认证：${critical.map((f) => f.id).join('、')}`
+    ? `${critical.length} 个基础设施服务对外可达且无认证：${critical.map((f) => f.id).join('、')}`
     : shielded > 0 && shielded === warn.length
       // 说清「靠防火墙挡着」而不是「安全了」：这份保护重启就没，不该读成已解决
-      ? `${shielded} 个数据库端口仍绑在全网卡，当前由宿主防火墙挡着（易失，重建容器才根治）`
+      ? `${shielded} 个基础设施端口仍绑在全网卡，当前由宿主防火墙挡着（易失，重建容器才根治）`
       : warn.length > 0
-        ? `${warn.length} 个数据库端口对外可达（其中 ${shielded} 个有防火墙挡着）`
+        ? `${warn.length} 个基础设施端口对外可达（其中 ${shielded} 个有防火墙挡着）`
         : `全部 ${findings.length} 个基础设施端口都没有对外暴露`;
 
   return {

@@ -47,6 +47,21 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
     const effective = `${command} ${env.REDIS_ARGS || ''} ${env.REDIS_EXTRA_FLAGS || ''}`;
     configured = /(?:^|\s)--requirepass(?:=|\s+)\S+/.test(effective)
       || /(?:^|\s)--aclfile(?:=|\s+)\S+/.test(effective);
+  } else if (kind === 'sqlserver') {
+    configured = hasValue(env, 'MSSQL_SA_PASSWORD', 'SA_PASSWORD');
+  } else if (kind === 'clickhouse') {
+    configured = hasValue(env, 'CLICKHOUSE_PASSWORD');
+  } else if (kind === 'rabbitmq') {
+    configured = hasValue(env, 'RABBITMQ_DEFAULT_USER')
+      && hasValue(env, 'RABBITMQ_DEFAULT_PASS');
+  } else if (kind === 'elasticsearch') {
+    const security = String(env['xpack.security.enabled'] || env.XPACK_SECURITY_ENABLED || '')
+      .trim()
+      .toLowerCase();
+    configured = security !== 'false' && hasValue(env, 'ELASTIC_PASSWORD');
+  } else if (kind === 'minio') {
+    configured = hasValue(env, 'MINIO_ROOT_USER', 'MINIO_ACCESS_KEY')
+      && hasValue(env, 'MINIO_ROOT_PASSWORD', 'MINIO_SECRET_KEY');
   }
 
   if (!configured) {

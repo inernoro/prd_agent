@@ -55,16 +55,37 @@ describe('端口串解析（docker 的真实输出格式）', () => {
 });
 
 describe('认证判定', () => {
-  it('认得出四类库的凭据 env', () => {
-    expect(detectInfraAuth('mongo', { MONGO_INITDB_ROOT_USERNAME: 'app' })).toBe(true);
+  it('认得出 CDS 目录中全部认证型服务的凭据 env', () => {
+    expect(detectInfraAuth('mongo', {
+      MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'x',
+    })).toBe(true);
     expect(detectInfraAuth('mysql', { MYSQL_ROOT_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('postgres', { POSTGRES_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('redis', { REDIS_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('sqlserver', { MSSQL_SA_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('clickhouse', { CLICKHOUSE_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('rabbitmq', {
+      RABBITMQ_DEFAULT_USER: 'app', RABBITMQ_DEFAULT_PASS: 'x',
+    })).toBe(true);
+    expect(detectInfraAuth('elasticsearch', {
+      'xpack.security.enabled': 'true', ELASTIC_PASSWORD: 'x',
+    })).toBe(true);
+    expect(detectInfraAuth('minio', {
+      MINIO_ROOT_USER: 'app', MINIO_ROOT_PASSWORD: 'x',
+    })).toBe(true);
   });
 
   it('空 env 判为无认证', () => {
     expect(detectInfraAuth('mongo', {})).toBe(false);
     expect(detectInfraAuth('redis', undefined)).toBe(false);
+    expect(detectInfraAuth('sqlserver', {})).toBe(false);
+    expect(detectInfraAuth('clickhouse', {})).toBe(false);
+    expect(detectInfraAuth('rabbitmq', {})).toBe(false);
+    expect(detectInfraAuth('elasticsearch', {})).toBe(false);
+    expect(detectInfraAuth('minio', {})).toBe(false);
+    expect(detectInfraAuth('memcached', {})).toBe(false);
+    expect(detectInfraAuth('kafka', {})).toBe(false);
+    expect(detectInfraAuth('nats', {})).toBe(false);
   });
 
   /**
@@ -92,6 +113,26 @@ describe('认证判定', () => {
     })]);
     expect(report.findings[0].kind).toBe('mysql');
     expect(report.findings[0].severity).toBe('critical');
+  });
+
+  it('不透明镜像仍按端口识别其他有状态服务', () => {
+    const matrix = [
+      [1433, 'sqlserver'],
+      [8123, 'clickhouse'],
+      [5672, 'rabbitmq'],
+      [9200, 'elasticsearch'],
+      [9001, 'minio'],
+      [11211, 'memcached'],
+      [9092, 'kafka'],
+      [4222, 'nats'],
+    ] as const;
+    for (const [port, kind] of matrix) {
+      expect(detectInfraKind('sha256:opaque', { containerPort: port })).toBe(kind);
+    }
+    expect(detectInfraKind('sha256:opaque', { containerPort: 9000 })).toBe('other');
+    expect(detectInfraKind('sha256:opaque', {
+      basePresetId: 'minio', containerPort: 9000,
+    })).toBe('minio');
   });
 
   /**
