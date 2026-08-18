@@ -99,7 +99,9 @@ describe('mysql 恢复入口', () => {
  */
 describe('mysql 恢复脚本：管道两端的失败都要报出来', () => {
   /** 造一个只有假 gunzip / mysql 的 PATH，behaviour 由参数决定。 */
-  function runScript(opts: { testExit: number; catExit: number; mysqlExit: number }): number {
+  function runScript(opts: {
+    testExit: number; catExit: number; mysqlExit: number; flushExit?: number;
+  }): { code: number; flushed: boolean } {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-mysql-restore-'));
     try {
       // 假 gunzip：`-t` 走完整性校验分支，`-c` 走解压分支，各自可以单独失败。
@@ -109,43 +111,57 @@ describe('mysql 恢复脚本：管道两端的失败都要报出来', () => {
         'echo "SELECT 1;"',
         `exit ${opts.catExit}`,
       ].join('\n'), { mode: 0o755 });
-      // 假 mysql：把 stdin 吃掉再退出。真 mysql 在收到零字节时也是这样——退 0。
+      // 假 mysql：灌库那次把 stdin 吃掉再退出（真 mysql 收到零字节时也是这样——退 0）；
+      // 带 -e 的那次是收尾的 FLUSH PRIVILEGES，落一个记号文件供断言。
       fs.writeFileSync(path.join(dir, 'mysql'), [
         '#!/bin/sh',
+        'for a in "$@"; do',
+        `  [ "$a" = "-e" ] && { echo "$@" > ${dir}/flushed; exit ${opts.flushExit ?? 0}; }`,
+        'done',
         'cat > /dev/null',
         `exit ${opts.mysqlExit}`,
       ].join('\n'), { mode: 0o755 });
       const script = buildMysqlRestoreScript(`${dir}/dump.sql.gz`);
+      let code = 0;
       try {
         execFileSync('sh', ['-s'], {
           input: script,
           env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
           stdio: ['pipe', 'pipe', 'pipe'],
         });
-        return 0;
       } catch (err) {
-        return Number((err as { status?: number }).status ?? -1);
+        code = Number((err as { status?: number }).status ?? -1);
       }
+      return { code, flushed: fs.existsSync(path.join(dir, 'flushed')) };
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }
 
-  it('两端都成功：退 0', () => {
-    expect(runScript({ testExit: 0, catExit: 0, mysqlExit: 0 })).toBe(0);
+  it('两端都成功：退 0，并且收尾 flush 过权限', () => {
+    const r = runScript({ testExit: 0, catExit: 0, mysqlExit: 0 });
+    expect(r.code).toBe(0);
+    // 不 flush 的话，授权表明明写回去了、应用照样连不上，而恢复看起来是成功的。
+    expect(r.flushed).toBe(true);
   });
 
   it('事故原形——解压失败、mysql 却退 0：整条必须失败', () => {
     // 裸管道版本在这里会返回 0，也就是那句「已恢复」的由来。
-    expect(runScript({ testExit: 0, catExit: 1, mysqlExit: 0 })).not.toBe(0);
+    expect(runScript({ testExit: 0, catExit: 1, mysqlExit: 0 }).code).not.toBe(0);
   });
 
   it('mysql 报错：整条失败', () => {
-    expect(runScript({ testExit: 0, catExit: 0, mysqlExit: 1 })).not.toBe(0);
+    expect(runScript({ testExit: 0, catExit: 0, mysqlExit: 1 }).code).not.toBe(0);
   });
 
-  it('完整性校验不过：一步都不许动库', () => {
+  it('完整性校验不过：一步都不许动库，也不该走到 flush', () => {
     // 空文件 / 传了一半的文件在这里出局，而不是灌进去半截 SQL 才发现。
-    expect(runScript({ testExit: 1, catExit: 0, mysqlExit: 0 })).toBe(65);
+    const r = runScript({ testExit: 1, catExit: 0, mysqlExit: 0 });
+    expect(r.code).toBe(65);
+    expect(r.flushed).toBe(false);
+  });
+
+  it('flush 失败也算恢复失败：不许把「连不上的库」报成已恢复', () => {
+    expect(runScript({ testExit: 0, catExit: 0, mysqlExit: 0, flushExit: 1 }).code).not.toBe(0);
   });
 });

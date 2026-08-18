@@ -658,6 +658,11 @@ export function buildMysqlRestoreScript(inContainerPath: string): string {
     // 读不到退出码按失败处理——「不确定」不能当成「成功」。
     '[ "${u:-1}" = 0 ] || exit "${u:-1}"',
     '[ "${m:-1}" = 0 ] || exit "${m:-1}"',
+    // `--all-databases` 的 dump 会把 `mysql` 库的授权表整个写回去，但**跑着的服务器
+    // 用的是内存里那份**——不 flush 的话，表里明明有这个账号，应用照样连不上，
+    // 而恢复看起来是成功的。dump 自己不带 FLUSH PRIVILEGES，所以在这里补。
+    // 单库 dump 的情况下这一句无副作用。
+    'mysql -uroot -e "FLUSH PRIVILEGES" || exit $?',
   ].join('\n');
 }
 
