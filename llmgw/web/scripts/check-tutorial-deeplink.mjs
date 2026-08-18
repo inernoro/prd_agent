@@ -189,13 +189,41 @@ must(
   'UsagePage: 账单导入失败必须渲染在导入抽屉内（抽屉 z-index 1100，页面 alert 看不见）',
 );
 
-// 判据是 aria-modal 而不是 createPortal：ModelPoolsPage 的抽屉是普通 fixed 覆盖层，
-// 上一轮用 createPortal 扫就漏了它（判据太窄 = 扫了个假全量）。
+// 这一条原来断言「抽屉打开时 toast 必须渲染在抽屉内」，因为池详情是 fixed 覆盖层，
+// 页面级反馈会被它整块盖住。2026-08-18 改版把详情从 680px 抽屉换成整页分栏之后，
+// 覆盖层没有了，危险源本身消失——所以判据改成更强的一条：**这一页不许再出现模态覆盖层**。
+// 这样既保住原意（反馈不会被盖住），又能在有人把抽屉加回来时立刻变红，而不是悄悄放行。
 const pools = strip(read('src/pages/ModelPoolsPage.tsx'));
 must(
-  pools.includes('{toast && !drawer ?') && (pools.match(/role="status"/g) || []).length >= 2,
-  'ModelPoolsPage: 抽屉打开时反馈必须渲染在抽屉内（页面级 toast 被 fixed 覆盖层盖住），'
-  + '且同一时刻只保留一个 live region',
+  !pools.includes('aria-modal') && !/position:\s*'fixed'/.test(pools),
+  'ModelPoolsPage: 池详情不得回到 fixed 模态覆盖层（页面级反馈会被它盖住）；'
+  + '如确需覆盖层，必须同时把 toast 渲染进覆盖层内部',
+);
+must(
+  (pools.match(/role="status"/g) || []).length >= 1,
+  'ModelPoolsPage: 操作反馈必须有 live region',
+);
+
+// 「全部正常」是一句结论，它只能在**真的什么都没筛**时说。带着搜索词或类型筛选时结果为空，
+// 说明的是「没搜到」；把后者显示成前者，就是一次没真正执行的检查报了绿灯——
+// 这正是模型池这一族故障的形状，不能在前端重演一遍。
+must(
+  /allClear\s*=[\s\S]{0,320}?query\.trim\(\)\s*===\s*''[\s\S]{0,120}?typeFilter\s*===\s*'all'/.test(pools),
+  'ModelPoolsPage: 「全部正常」的判据必须同时排除搜索词与类型筛选，否则会把「没搜到」显示成「一切正常」',
+);
+
+// 新成员默认落末位。此前留空会被 toPositiveInt('') 解成 1（抢占第 1 顺位），
+// 而输入框占位符写的是 P{末位}——控件暗示的和实际发生的正好相反，且会改线上流量走向。
+must(
+  /mode\s*===\s*'tail'\s*\?\s*tailPriority/.test(pools) && !/placeholder=\{`P\$\{pool\.models\.length \+ 1\}`\}/.test(pools),
+  'ModelPoolsPage: 添加成员的顺位必须默认末位，且不得再出现「留空即抢占第 1 顺位」的输入框',
+);
+
+// 恢复接单后成员在后端仍是不可用（只拿到进入半开的资格），UI 必须自己记一笔中间态，
+// 否则点完按钮界面纹丝不动，用户只会反复点。
+must(
+  pools.includes('verifying.has(') && pools.includes("MEMBER_STATUS[isVerifying ? 'verify'"),
+  'ModelPoolsPage: 「恢复接单」必须有「验证中」中间态，不能点完之后界面毫无变化',
 );
 
 if (failures.length > 0) {
