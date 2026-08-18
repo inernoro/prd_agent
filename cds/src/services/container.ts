@@ -12,7 +12,7 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
-import { assertInfraAuthenticationConfigured } from './infra-auth-policy.js';
+import { assertInfraAuthenticationConfigured, isInfraAuthenticationConfigured } from './infra-auth-policy.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -2602,14 +2602,22 @@ export class ContainerService {
     const network = this.getNetworkForProject(service.projectId);
     await this.ensureNetwork(network);
 
-    // 认证是基础设施启动协议的一部分，必须在任何复用、唤醒或新建分支之前校验。
-    // 若把门禁放在 docker run 前面，已存在容器就能借由 early return 绕过策略。
+    // 认证门禁在**创建**路径上执行，见下方 docker run 之前的那次调用。
+    //
+    // 这里曾经把门禁提到最前面，理由是「已存在容器可以借 early return 绕过策略」。
+    // 但那样连「复用一个已经在跑的共享容器」也会被拒——而复用并没有创建任何新实例，
+    // 拒了也不会让那个容器变得更安全，只是让所有分支预览连同 main 一起部署不了。
+    // 策略本身的 docstring 写的也是「只阻止继续创建新的无认证实例」，
+    // 存量容器走运行态暴露审计 + 有备份的迁移，不在这条路径上补救。
+    //
+    // 所以：复用 / 唤醒放行但**记一条 warn 事件**（不是静默放行，存量问题继续可见），
+    // 删除重建与首次创建这两条真正产生实例的路径照旧硬拦。
     const resolvedEnv = customEnv
       ? resolveEnvTemplates(service.env, customEnv)
       : service.env;
     const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
     const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
-    assertInfraAuthenticationConfigured({
+    const authInput = {
       dockerImage: service.dockerImage,
       id: service.id,
       name: service.name,
@@ -2619,7 +2627,21 @@ export class ContainerService {
       env: resolvedEnv,
       command: resolvedCommand,
       entrypoint: resolvedEntrypoint,
-    });
+    };
+    const authConfigured = isInfraAuthenticationConfigured(authInput);
+    const noteReuseWithoutAuth = (action: string) => {
+      if (authConfigured) return;
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'cds-container-service',
+        action,
+        message: `复用未配置认证的存量基础设施 ${service.containerName}；创建路径仍被拦截，该实例需按凭据迁移流程重建`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        details: { image: service.dockerImage },
+      });
+    };
 
     // 幂等启动（2026-05-05 修 P0 bug）
     //
@@ -2682,6 +2704,7 @@ export class ContainerService {
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         await this.auditInfraLogLimit(service);
+        noteReuseWithoutAuth('infra.reuse-running.unauthenticated');
         this.recordContainerEvent({
           severity: 'info',
           source: 'cds-container-service',
@@ -2701,6 +2724,7 @@ export class ContainerService {
         // 同样:wake 后保证 network attach
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         await this.auditInfraLogLimit(service);
+        noteReuseWithoutAuth('infra.start-existing.unauthenticated');
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 120);
         this.recordContainerEvent({
           severity: 'info',
@@ -2730,6 +2754,9 @@ export class ContainerService {
         inspect: diagnostics.inspect,
         logs: diagnostics.logs,
       });
+      // 删除重建会产生一个新实例，且会毁掉原容器——这条路径必须硬拦，
+      // 否则「唤醒失败」就成了绕过认证策略的后门。
+      assertInfraAuthenticationConfigured(authInput);
       this.noteLifecycleIntent(service.containerName, 'cds-infra-recreate', 'infra docker start 失败后删除重建');
       const rmResult = await this.shell.exec(`docker rm -f ${service.containerName}`);
       this.recordContainerEvent({
@@ -2743,6 +2770,10 @@ export class ContainerService {
         command: { name: 'docker rm -f', exitCode: rmResult.exitCode, stdoutPreview: rmResult.stdout, stderrPreview: rmResult.stderr },
       });
     }
+
+    // 走到这里只剩两种情况：容器不存在（首次创建），或上面刚被删掉准备重建。
+    // 两种都会**产生一个新实例**，所以认证门禁在这里硬拦——这是策略真正要守的位置。
+    assertInfraAuthenticationConfigured(authInput);
 
     // Build volume flags (named volumes + bind mounts)
     const volumeFlags = service.volumes.map(v => {

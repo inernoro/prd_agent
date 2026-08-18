@@ -181,14 +181,24 @@ describe('ContainerService 多项目网络隔离', () => {
   });
 
   describe('startInfraService 用 project.dockerNetwork', () => {
-    it('复用既有容器也不能绕过认证门禁', async () => {
+    // 这条原来断言「复用既有容器也不能绕过认证门禁」，连 docker inspect 都不许调用。
+    // 2026-08-18 改判：那条不变量把**所有**分支预览连同 main 的部署一起堵死了，
+    // 而且它没有可达的补救路径——存量 mongo 的口令不可能靠重启补上（官方镜像的
+    // initdb 只在空卷首次初始化时生效），要满足它就得先备份再毁掉重建数据卷。
+    // 于是它退化成一道「永远过不去、只能靠改代码绕开」的闸。
+    //
+    // 现在的分界：**创建**新实例照旧硬拦（含唤醒失败后的删除重建），
+    // **复用**已在跑的存量容器放行但记 warn 事件——复用不产生新的无认证实例，
+    // 拒了也不会让那个容器变安全。存量治理归运行态暴露审计 + 有备份的迁移。
+    // 完整分支矩阵见 tests/services/infra-auth-reuse.test.ts。
+    it('创建路径仍被认证门禁硬拦', async () => {
       const service = new ContainerService(mock, makeConfig());
       okDockerStubs(mock);
+      mock.addResponsePatternFirst(/docker inspect --format='\{\{\.State\.Status\}\}'/, () => ({ stdout: '', stderr: 'No such object', exitCode: 1 }));
 
       await expect(service.startInfraService(makeInfraService('proj-a', { env: {} })))
         .rejects.toThrow('拒绝创建无认证');
-      expect(mock.commands.some((command) => command.includes('docker inspect'))).toBe(false);
-      expect(mock.commands.some((command) => command.includes('docker start'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker run'))).toBe(false);
     });
 
     it('infra 容器跟随 service.projectId 选 network', async () => {

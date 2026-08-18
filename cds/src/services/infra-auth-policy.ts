@@ -74,3 +74,18 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
     throw new Error(`拒绝创建无认证的 ${kind} 基础设施；请配置 CDS 生成的凭据后重试`);
   }
 }
+
+/**
+ * 同一判据的非抛出形态，供「复用已有容器」这条路径判断要不要记一条告警。
+ *
+ * 刻意复用 assert 本体而不是把判定条件抄一份：抄一份就会有两个事实源，
+ * 迟早一边收紧一边没跟上（判据分裂）。这里只把异常翻成布尔。
+ */
+export function isInfraAuthenticationConfigured(input: InfraAuthInput): boolean {
+  try {
+    assertInfraAuthenticationConfigured(input);
+    return true;
+  } catch {
+    return false;
+  }
+}
