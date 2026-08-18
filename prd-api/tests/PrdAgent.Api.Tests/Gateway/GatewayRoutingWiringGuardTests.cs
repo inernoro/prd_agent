@@ -1,0 +1,118 @@
+using Shouldly;
+using Xunit;
+
+namespace PrdAgent.Api.Tests.Gateway;
+
+/// <summary>
+/// 接线守卫（predicate-and-wiring-discipline 形状 2 / 形状 3 / 形状 7）。
+///
+/// 这几件事「删掉之后编译照过、全量测试照绿」，所以必须有源码级守卫：
+/// 1. Resolver 的每一处失败返回都带结构化错误码——漏一处就又回到「所有失败长一个样」；
+/// 2. Resolver 不许再自带一份能力字面量清单；
+/// 3. readiness 必须真的调用生产判据，而不是自写一套近似逻辑；
+/// 4. 事故止血的历史别名兼容不许被静默撤销。
+/// </summary>
+public sealed class GatewayRoutingWiringGuardTests
+{
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "CLAUDE.md"))
+                && Directory.Exists(Path.Combine(dir.FullName, "prd-api")))
+            {
+                return dir.FullName;
+            }
+            dir = dir.Parent;
+        }
+        throw new InvalidOperationException("找不到仓库根：向上没有同时含 CLAUDE.md 与 prd-api 的目录");
+    }
+
+    private static string ResolverSource() => File.ReadAllText(Path.Combine(
+        RepoRoot(), "prd-api", "src", "PrdAgent.Infrastructure", "LlmGateway", "ModelResolver.cs"));
+
+    private static string ReadinessSource() => File.ReadAllText(Path.Combine(
+        RepoRoot(), "llmgw", "serving", "GatewayServingReadinessProbe.cs"));
+
+    /// <summary>
+    /// 「每一处路由失败都必须带结构化错误码」由**编译器**保证：
+    /// <c>ModelResolutionResult.NotFound</c> 的 failureCode 是必填参数，漏一处直接编译不过。
+    ///
+    /// 这里守的是「有人把它改回可选」——那一刻编译器就不再兜底，
+    /// 而漏带错误码是静默退化（编译过、测试绿、只是所有失败又长成一个样）。
+    ///
+    /// 为什么不用源码扫描逐个调用点找 <c>GatewayRouteFailure.</c> 字面量：
+    /// 「空池 vs 全熔断」那处的错误码是按情况算出来的变量，字面量判据会误报；
+    /// 放宽成「认识几个变量名」又会让真正忘带的溜过去——两头都不成立（形状 1）。
+    /// 必填参数是唯一不靠拼写的判据。
+    /// </summary>
+    [Fact]
+    public void 路由失败的错误码是编译期必填参数()
+    {
+        var contract = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Core", "LlmGateway", "IModelResolver.cs"));
+
+        contract.ShouldContain(
+            "string failureCode,",
+            customMessage: "NotFound 的 failureCode 必须是必填参数；一旦带上默认值，漏带错误码就变成静默退化");
+        contract.ShouldNotContain(
+            "string? failureCode = null",
+            customMessage: "failureCode 不得回退成可选参数");
+    }
+
+    [Fact]
+    public void Resolver_的失败返回点仍然存在且数量正常()
+    {
+        var source = ResolverSource();
+        const string marker = "ModelResolutionResult.NotFound";
+        var total = 0;
+
+        for (var index = source.IndexOf(marker, StringComparison.Ordinal);
+             index >= 0;
+             index = source.IndexOf(marker, index + marker.Length, StringComparison.Ordinal))
+        {
+            total++;
+        }
+
+        // 判据不是恒真：扫错文件或 Resolver 被掏空时这里会红。
+        total.ShouldBeGreaterThan(20, "Resolver 里的失败返回点数量异常，守卫可能没扫到真实文件");
+    }
+
+    [Fact]
+    public void Resolver_不再自带能力字面量清单()
+    {
+        var source = ResolverSource();
+
+        // 只允许出现在转发给契约的那一行注释里；判定用的字面量一个都不许留。
+        source.ShouldNotContain("\"image_generation\"");
+        source.ShouldNotContain("\"text2img\"");
+        source.ShouldNotContain("\"img2img\"");
+        source.ShouldNotContain("\"vision_generation\"");
+        source.ShouldNotContain(".EndsWith(\".text2img::generation\"");
+        source.ShouldContain("GatewayCapabilityContract.SupportsAppCallerScenario");
+    }
+
+    [Fact]
+    public void Readiness_使用生产同款场景判据()
+    {
+        var source = ReadinessSource();
+
+        source.ShouldContain(
+            "GatewayCapabilityContract.SupportsAppCallerScenario",
+            customMessage: "readiness 必须跑 MAP 运行时真正用的判据；只看池在不在，就是 2026-08-13 那次「全绿但功能死了」");
+        source.ShouldContain("GatewayCapabilityContract.RequiredScenarioCapability");
+        source.ShouldContain("scenario-capability");
+    }
+
+    [Fact]
+    public void 历史别名兼容不得被静默撤销()
+    {
+        var contract = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Core", "Models", "GatewayCapabilityContract.cs"));
+
+        contract.ShouldContain(
+            "[\"image-gen\"] = ImageGeneration",
+            customMessage: "正式数据迁移完成并有回滚方案前，image-gen 兼容不得撤销（任务书明确禁止）");
+    }
+}

@@ -266,8 +266,17 @@ public class OpenAIImageClient : IImageGenerationClient
             : await requestGateway.ResolveModelAsync(appCallerCode, "generation", modelName, ct: ct);
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
         {
-            _logger.LogError("生图模型调度失败: {Error}", resolution.ErrorMessage);
-            return UserFailure(ImageGenerationUserError.ModelUnavailable());
+            // 管理员日志必须点名 appCaller / 逻辑模型 / Offering / 池 / 失败阶段，
+            // 否则又要从零复现才能知道到底是配置不兼容还是上游宕机。
+            _logger.LogError(
+                "生图模型调度失败: appCaller={AppCaller}, diagnostic={Diagnostic}, detail={Error}",
+                appCallerCode,
+                $"code={resolution.FailureCode ?? "UNCLASSIFIED"}, stage={resolution.FailureStage ?? "unknown"}, "
+                + $"logicalModel={resolution.FailureLogicalModelPublicId ?? "-"}, "
+                + $"offering={resolution.FailureOfferingId ?? "-"}, pool={resolution.FailureModelPoolId ?? "-"}; "
+                + GatewayRouteFailure.AdminHint(resolution.FailureCode),
+                resolution.ErrorMessage);
+            return UserFailure(ImageGenerationUserError.FromRouteFailure(resolution.FailureCode));
         }
 
         var apiUrl = resolution.ApiUrl;

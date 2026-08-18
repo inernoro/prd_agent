@@ -72,6 +72,14 @@ jobs:
               - '.github/workflows/branch-image.yml'
             llmgw_serve:
               - 'llmgw/serving/**'
+              # serving 镜像把 PrdAgent.Core / PrdAgent.Infrastructure 一起编进去
+              # （见 llmgw/serving/PrdAgent.LlmGateway.csproj 的 ProjectReference 与 Dockerfile
+              # 以仓库根为构建上下文）。只登记 llmgw/serving/** 的话，一次「只改 Core」的改动
+              # 不会重建 serving 镜像，serving 就会继续跑旧判据——而 readiness 与路由判据正好都在
+              # Core 里，那等于把「readiness 用的是上一版判据」做成常态
+              # （形状 7：守卫/流水线自己没接上线）。与 cds-compose.yml 里 llmgw-serve 的
+              # buildScope 逐条对齐。
+              - 'prd-api/**'
               - '.github/workflows/branch-image.yml'
 
   api-image:
