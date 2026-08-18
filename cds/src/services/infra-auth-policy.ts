@@ -74,3 +74,96 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
     throw new Error(`拒绝创建无认证的 ${kind} 基础设施；请配置 CDS 生成的凭据后重试`);
   }
 }
+
+/**
+ * 门禁在生产生效的时刻。早于这个时间被登记的服务算「存量」。
+ *
+ * 用登记时间而不是「容器在不在」来判存量：后者要现查 docker，把纯判定变成异步，
+ * 而且「容器碰巧还在」本身不构成豁免理由——真正的理由是**这批库在门禁出现之前就
+ * 已经承载着数据在跑，重建它们需要迁移计划，不是启动时能顺手做的事**。
+ */
+export const INFRA_AUTH_GATE_LIVE_AT = '2026-08-18T00:00:00.000Z';
+
+/** 存量豁免的默认到期日。到期后存量库同样启动不了——这是欠条，不是赦免。 */
+export const INFRA_AUTH_GRACE_DEFAULT_UNTIL = '2026-09-17T00:00:00.000Z';
+
+/** 距到期不足这个天数就升级为 error：留出真正来得及做迁移的提前量。 */
+const URGENT_DAYS = 7;
+
+export interface InfraAuthDecision {
+  allowed: boolean;
+  /** 不允许时的原因。 */
+  reason?: string;
+  /** 走了存量豁免才放行时的说明；正常配了认证的服务没有这一项。 */
+  exemption?: {
+    expiresAt: string;
+    daysLeft: number;
+    urgent: boolean;
+    message: string;
+  };
+}
+
+/**
+ * 认证门禁的完整判定：**新建仍然强制，存量限期放行**。
+ *
+ * ## 为什么要有豁免
+ *
+ * 2026-08-18 门禁上线后，平台立刻停摆：它装在「启动基础设施」这一步，而分支部署
+ * 必然要确保依赖的库在跑。于是五个项目十几个无认证的存量库全部启动不了，
+ * 连 prd-agent 主分支预览都部署失败——而那些库本身活得好好的，数据也在。
+ *
+ * 门禁的方向没错，错在**把「不许再造新的」和「立刻停掉已有的」混成了一件事**。
+ * 前者是纪律，后者是停机。
+ *
+ * ## 豁免的三条边界（缺一条就会变成永久赦免）
+ *
+ * 1. **只给存量**：登记时间早于门禁上线时刻的服务。之后新建的一律照拦。
+ * 2. **会到期**：过了期限，存量同样拦。到期日可以由运维显式推迟，但那是一个
+ *    需要动手的决定，不是默默续期。
+ * 3. **看得见**：每次靠豁免放行都要留痕，并在临近到期时升级严重程度。
+ *    一个没人看见的豁免，和把门禁删掉没有区别。
+ */
+export function evaluateInfraAuthentication(
+  input: InfraAuthInput & { createdAt?: string | null },
+  opts: {
+    /** 到期日覆盖，给运维显式延期用。 */
+    graceUntil?: string | null;
+    now?: Date;
+  } = {},
+): InfraAuthDecision {
+  try {
+    assertInfraAuthenticationConfigured(input);
+    return { allowed: true };
+  } catch (err) {
+    const reason = (err as Error).message;
+    const now = opts.now ?? new Date();
+    const until = Date.parse(String(opts.graceUntil || INFRA_AUTH_GRACE_DEFAULT_UNTIL));
+    const created = Date.parse(String(input.createdAt || ''));
+    const gateLive = Date.parse(INFRA_AUTH_GATE_LIVE_AT);
+
+    // 登记时间读不出来的，按新建处理——不确定就不放行。
+    const isLegacy = Number.isFinite(created) && created < gateLive;
+    if (!isLegacy) {
+      return { allowed: false, reason };
+    }
+    if (!Number.isFinite(until) || now.getTime() >= until) {
+      return {
+        allowed: false,
+        reason: `${reason}（存量豁免已于 ${new Date(until).toISOString()} 到期）`,
+      };
+    }
+    const daysLeft = Math.max(0, Math.ceil((until - now.getTime()) / 86_400_000));
+    const urgent = daysLeft <= URGENT_DAYS;
+    return {
+      allowed: true,
+      exemption: {
+        expiresAt: new Date(until).toISOString(),
+        daysLeft,
+        urgent,
+        message: `${input.id || input.containerName || '未命名服务'} 是门禁上线前的存量库，`
+          + `按存量豁免放行；还有 ${daysLeft} 天到期（${new Date(until).toISOString()}），`
+          + `到期后将无法启动。请在此之前完成认证迁移。`,
+      },
+    };
+  }
+}

@@ -181,14 +181,34 @@ describe('ContainerService 多项目网络隔离', () => {
   });
 
   describe('startInfraService 用 project.dockerNetwork', () => {
-    it('复用既有容器也不能绕过认证门禁', async () => {
+    /**
+     * 原意图保留：**容器已经存在，不构成绕过认证门禁的理由**。
+     *
+     * 判定基准在 2026-08-18 改成了「登记时间」而不是「一刀切」——门禁上线后新建的
+     * 一律拦，之前登记的存量库限期放行（见 infra-auth-legacy-exemption.test.ts）。
+     * 所以这里把两层分开断言：夹具默认的 createdAt 是 4 月（存量），要测「新建被拦」
+     * 必须显式把登记时间挪到门禁之后，否则测的其实是豁免路径。
+     */
+    it('门禁上线后新建的无认证实例：容器就算已存在也不放行', async () => {
       const service = new ContainerService(mock, makeConfig());
       okDockerStubs(mock);
 
-      await expect(service.startInfraService(makeInfraService('proj-a', { env: {} })))
-        .rejects.toThrow('拒绝创建无认证');
+      await expect(service.startInfraService(
+        makeInfraService('proj-a', { env: {}, createdAt: '2026-08-19T00:00:00Z' }),
+      )).rejects.toThrow('拒绝创建无认证');
       expect(mock.commands.some((command) => command.includes('docker inspect'))).toBe(false);
       expect(mock.commands.some((command) => command.includes('docker start'))).toBe(false);
+    });
+
+    it('门禁上线前登记的存量库：限期放行，不至于把平台停掉', async () => {
+      // 2026-08-18 的教训：一刀切让五个项目十几个存量库全部起不来，
+      // 连主分支预览都部署失败，而那些库本身活得好好的。
+      const service = new ContainerService(mock, makeConfig());
+      okDockerStubs(mock);
+
+      await expect(service.startInfraService(
+        makeInfraService('proj-a', { env: {}, createdAt: '2026-04-30T00:00:00Z' }),
+      )).resolves.not.toThrow();
     });
 
     it('infra 容器跟随 service.projectId 选 network', async () => {
