@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +10,7 @@ import {
   buildMysqlDumpScript,
   buildRedisBackupProbeScript,
   buildRedisRdbPathScript,
+  REDIS_CONNECT_LINES,
   buildSizeCappedCommand,
   backupKindOf,
   isAutoBackupFile,
@@ -496,51 +497,137 @@ describe('Redis 备份探测脚本', () => {
   });
 
   /**
-   * 凭据解析**真的跑一遍**，不是断言源码里有那几行。
+   * 连接段**真的跑一遍**，对着一个会像真 redis-cli 那样反应的假 redis-cli。
    *
    * 只做字面量断言的话，把这段变成死分支（`if false`）照样全绿——那正是
-   * predicate-and-wiring-discipline 里的形状 8：一份不成立的证据。
-   * 这里造真的 NUL 分隔 cmdline，用真 shell 跑脚本的凭据段，看它到底抽出了什么。
+   * predicate-and-wiring-discipline 里的形状 8：一份不成立的证据。而这一段栽过的
+   * 那次（2026-08-17 线上全站 redis 备份变红）恰恰是**逻辑各行都在、顺序错了**：
+   * 先拿 env 里的连接串口令去 AUTH，无口令的服务器直接拒绝。字面量断言看不出顺序。
+   *
+   * 假 redis-cli 复刻真实行为的三处关键：
+   * - 服务器**无口令**而调用方带了 REDISCLI_AUTH：AUTH 报错走 stderr，PING 照样回 PONG
+   *   （线上那条 `AUTH failed: ERR AUTH <password> called without any password configured`
+   *   后面就跟着一个 PONG，判据要求「恰好等于 PONG」于是全判死）。
+   * - 服务器**有口令**而口令不对：先 WRONGPASS，再 NOAUTH。
+   * - 服务器有口令而没带：NOAUTH。
    */
-  const resolveCred = (cmdline: string, env: Record<string, string> = {}): string => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-proc-'));
-    fs.mkdirSync(path.join(dir, '17'));
-    fs.writeFileSync(path.join(dir, '17', 'cmdline'), cmdline);
-    // 只取到 export 那一行为止：后面要连真的 redis，这里只验凭据怎么解析出来的。
-    const head = SCRIPT.split('\n');
-    const cut = head.findIndex((l) => l.startsWith('export REDISCLI_AUTH'));
-    expect(cut).toBeGreaterThan(0);
-    const prefix = `${head.slice(0, cut + 1).join('\n')}\nprintf '%s' "$REDISCLI_AUTH"`;
-    return execFileSync('/bin/sh', ['-s'], {
-      input: prefix,
+  const fakeRedisCli = (serverPassword: string): string => [
+    '#!/bin/sh',
+    `SRV='${serverPassword}'`,
+    'if [ -z "$SRV" ]; then',
+    '  [ -n "${REDISCLI_AUTH:-}" ] && echo "AUTH failed: ERR AUTH <password> called without any password configured for the default user." >&2',
+    '  echo PONG; exit 0',
+    'fi',
+    'if [ -z "${REDISCLI_AUTH:-}" ]; then echo "NOAUTH Authentication required."; exit 1; fi',
+    'if [ "$REDISCLI_AUTH" != "$SRV" ]; then',
+    '  echo "AUTH failed: WRONGPASS invalid username-password pair" >&2',
+    '  echo "NOAUTH Authentication required."; exit 1',
+    'fi',
+    'echo PONG',
+  ].join('\n');
+
+  /**
+   * 跑连接段并回报「最终用了哪个凭据、退出码是多少」。
+   * 只跑 REDIS_CONNECT_LINES（判定源本身），后面 BGSAVE 那一截要连真 redis。
+   */
+  const connect = (opts: {
+    serverPassword: string;
+    env?: Record<string, string>;
+    cmdline?: string;
+  }): { status: number; auth: string; stderr: string } => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-connect-'));
+    fs.writeFileSync(path.join(box, 'redis-cli'), fakeRedisCli(opts.serverPassword), { mode: 0o755 });
+    const procDir = path.join(box, 'proc');
+    fs.mkdirSync(path.join(procDir, '17'), { recursive: true });
+    fs.writeFileSync(path.join(procDir, '17', 'cmdline'), opts.cmdline ?? 'redis-server\0--appendonly\0yes\0');
+    const script = `${REDIS_CONNECT_LINES.join('\n')}\nprintf '%s' "\${REDISCLI_AUTH:-}"`;
+    const r = spawnSync('/bin/sh', ['-s'], {
+      input: script,
       encoding: 'utf8',
-      // PATH 必须带上：脚本要用 tr / awk，环境清空的话它们找不到，
-      // 抽取会「静默返回空」——那正是这条用例要防的假象。
-      env: { PATH: process.env.PATH || '/usr/bin:/bin', ...env, CDS_BACKUP_PROC_DIR: dir },
+      // PATH 必须带上真实 PATH：脚本要用 tr / awk / grep，环境清空的话它们找不到，
+      // 解析会「静默返回空」——那正是这些用例要防的假象。假 redis-cli 排在最前。
+      env: {
+        PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}`,
+        ...(opts.env || {}),
+        CDS_BACKUP_PROC_DIR: procDir,
+      },
     });
+    return { status: r.status ?? -1, auth: r.stdout, stderr: r.stderr };
   };
 
+  it('服务器没有口令、env 里却有 REDIS_PASSWORD：照样连得上，且不带凭据', () => {
+    // 这是 2026-08-17 线上回归的原形。REDIS_PASSWORD 是 CDS 注入给应用的连接串变量，
+    // 不代表这台 redis 开了 requirepass。上一版拿它去 AUTH，服务器拒绝，判据把
+    // 「多一行报错的 PONG」判成连不上——一轮里 7 个目标失败，其中 5 个是这个。
+    const r = connect({ serverPassword: '', env: { REDIS_PASSWORD: 'from-connstring' } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.auth).toBe('');
+  });
+
+  it('服务器有口令、env 给对了：用 env 那个', () => {
+    const r = connect({ serverPassword: 'right', env: { REDIS_PASSWORD: 'right' } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.auth).toBe('right');
+  });
+
   it('env 拿不到密码时，从进程命令行里真的抽得出 --requirepass', () => {
-    // `redis-server --requirepass secret` 且 env 里一个字都没有，是 compose 导入
-    // 最常见的配法。只读 env 会拿到空密码 → NOAUTH → 每一轮备份都失败。
-    expect(resolveCred('redis-server\0--requirepass\0s3cr3t\0')).toBe('s3cr3t');
+    // 覆盖的是「命令行里确实还留着口令」那一档——实测只有显式 `--set-proc-title no`
+    // 的实例是这样。redis 默认会把 argv 改写成 `redis-server *:6379`，那时这条路扫不到，
+    // 走的是下面「一个凭据都不通 → exit 22」那条。这条用例只证明解析本身没写错，
+    // **不证明线上大多数 redis 能靠它拿到口令**（doc/debt.cds.md E34）。
+    const r = connect({ serverPassword: 's3cr3t', cmdline: 'redis-server\0--requirepass\0s3cr3t\0' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.auth).toBe('s3cr3t');
   });
 
   it('`--requirepass=v` 连写也认', () => {
-    expect(resolveCred('redis-server\0--requirepass=eqform\0')).toBe('eqform');
+    const r = connect({ serverPassword: 'eqform', cmdline: 'redis-server\0--requirepass=eqform\0' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.auth).toBe('eqform');
   });
 
-  it('没配密码就是空，不瞎猜一个', () => {
-    expect(resolveCred('redis-server\0--appendonly\0yes\0')).toBe('');
+  it('env 里的口令是错的、进程命令行里才是对的：换到对的那个', () => {
+    // 候选要拿服务器验，不能拿「env 里有没有」当验——线上就有一台是 WRONGPASS。
+    const r = connect({
+      serverPassword: 'real',
+      env: { REDIS_PASSWORD: 'stale' },
+      cmdline: 'redis-server\0--requirepass\0real\0',
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.auth).toBe('real');
   });
 
-  it('env 优先于命令行扫描', () => {
-    expect(resolveCred('redis-server\0--requirepass\0fromcmd\0', { REDIS_PASSWORD: 'fromenv' }))
-      .toBe('fromenv');
+  it('要认证却一个能用的凭据都找不到：明确失败，不静默拷走旧文件', () => {
+    const r = connect({ serverPassword: 'nobody-knows' });
+    expect(r.status).toBe(22);
+    expect(r.stderr).toContain('没有找到能通过认证的凭据');
+  });
+
+  it('连不上（不是认证问题）：报连不上，别拿密码去治网络问题', () => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-down-'));
+    fs.writeFileSync(
+      path.join(box, 'redis-cli'),
+      '#!/bin/sh\necho "Could not connect to Redis at 127.0.0.1:6379: Connection refused" >&2\nexit 1\n',
+      { mode: 0o755 },
+    );
+    const r = spawnSync('/bin/sh', ['-s'], {
+      input: REDIS_CONNECT_LINES.join('\n'),
+      encoding: 'utf8',
+      env: { PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}`, REDIS_PASSWORD: 'x' },
+    });
+    expect(r.status).toBe(21);
+    expect(r.stderr).toContain('redis 连不上');
   });
 
   it('密码只在容器内展开，不进宿主命令行', () => {
-    expect(SCRIPT).toContain('export REDISCLI_AUTH="$A"');
+    expect(SCRIPT).toContain('export REDISCLI_AUTH="$CDS_AUTH"');
+  });
+
+  it('判据不要求输出恰好等于 PONG（多一行 AUTH 抱怨不算连不上）', () => {
+    // 这条钉死回归的形状本身：`case "$ping" in PONG)` 这类全等判据一旦回来，
+    // 上面那条「服务器没有口令、env 里却有 REDIS_PASSWORD」会立刻变红。
+    expect(SCRIPT).not.toMatch(/case "\$ping" in PONG\)/);
+    expect(SCRIPT).toContain('grep -qx PONG');
   });
 
   it('完成判据用 INFO persistence，不比 LASTSAVE', () => {
@@ -693,7 +780,8 @@ describe('Redis 快照路径取运行时真值', () => {
     const realDir = opts.dir === 'DATA' ? dataDir : opts.dir;
     fs.writeFileSync(
       path.join(box, 'redis-cli'),
-      `#!/bin/sh\ncase "$*" in\n  'CONFIG GET dir') printf 'dir\\n%s\\n' ${JSON.stringify(realDir)} ;;\n`
+      `#!/bin/sh\ncase "$*" in\n  PING) echo PONG ;;\n`
+      + `  'CONFIG GET dir') printf 'dir\\n%s\\n' ${JSON.stringify(realDir)} ;;\n`
       + `  'CONFIG GET dbfilename') printf 'dbfilename\\n%s\\n' ${JSON.stringify(opts.dbfilename)} ;;\nesac\n`,
       { mode: 0o755 },
     );
@@ -735,7 +823,8 @@ describe('Redis 快照路径取运行时真值', () => {
     // 模拟 CONFIG 被 ACL 拒绝：redis-cli 非零退出并在 stderr 说明原因
     fs.writeFileSync(
       path.join(box, 'redis-cli'),
-      '#!/bin/sh\necho "NOPERM this user has no permissions to run the config command" >&2\nexit 1\n',
+      '#!/bin/sh\ncase "$*" in PING) echo PONG; exit 0 ;; esac\n'
+      + 'echo "NOPERM this user has no permissions to run the config command" >&2\nexit 1\n',
       { mode: 0o755 },
     );
     let status = 0; let stderr = '';
@@ -756,7 +845,11 @@ describe('Redis 快照路径取运行时真值', () => {
   it('CONFIG GET 返回空值同样报错', () => {
     const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-empty-'));
     // 调用成功但第二行是空的：同样不足以定位快照，不许当作「就是默认值」
-    fs.writeFileSync(path.join(box, 'redis-cli'), "#!/bin/sh\nprintf 'dir\\n\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(
+      path.join(box, 'redis-cli'),
+      "#!/bin/sh\ncase \"$*\" in PING) echo PONG; exit 0 ;; esac\nprintf 'dir\\n\\n'\n",
+      { mode: 0o755 },
+    );
     let status = 0;
     try {
       execFileSync('/bin/sh', ['-s'], {
@@ -809,7 +902,8 @@ describe('redis 快照路径判据只有一份', () => {
     const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rdbpath-'));
     fs.writeFileSync(
       path.join(box, 'redis-cli'),
-      "#!/bin/sh\ncase \"$*\" in\n  'CONFIG GET dir') printf 'dir\\n/var/lib/redis\\n' ;;\n"
+      "#!/bin/sh\ncase \"$*\" in\n  PING) echo PONG ;;\n"
+      + "  'CONFIG GET dir') printf 'dir\\n/var/lib/redis\\n' ;;\n"
       + "  'CONFIG GET dbfilename') printf 'dbfilename\\nsnap.rdb\\n' ;;\nesac\n",
       { mode: 0o755 },
     );
