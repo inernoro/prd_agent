@@ -11,6 +11,8 @@ import {
   buildRedisBackupProbeScript,
   buildRedisRdbPathScript,
   REDIS_CONNECT_LINES,
+  redisAuthFromServiceDefinition,
+  redisProbeStdin,
   buildSizeCappedCommand,
   backupKindOf,
   isAutoBackupFile,
@@ -513,7 +515,9 @@ describe('Redis 备份探测脚本', () => {
    */
   const fakeRedisCli = (serverPassword: string): string => [
     '#!/bin/sh',
-    `SRV='${serverPassword}'`,
+    // 假件自己也得正确转义，否则带引号的口令会把假件拼坏——那时红的是测试脚手架，
+    // 不是被测代码，最容易被误读成「功能坏了」。
+    `SRV='${serverPassword.replace(/'/g, `'\"'\"'`)}'`,
     'if [ -z "$SRV" ]; then',
     '  [ -n "${REDISCLI_AUTH:-}" ] && echo "AUTH failed: ERR AUTH <password> called without any password configured for the default user." >&2',
     '  echo PONG; exit 0',
@@ -617,6 +621,94 @@ describe('Redis 备份探测脚本', () => {
     });
     expect(r.status).toBe(21);
     expect(r.stderr).toContain('redis 连不上');
+  });
+
+  /**
+   * CDS 自己存的口令（E34）。这一条是线上最后一个失败目标的解法：那台 redis 的口令
+   * 原原本本写在 CDS 存的启动命令里，容器里却哪儿都扫不到（redis 改写了自己的 argv）。
+   */
+  describe('用 CDS 自己存的服务定义供凭据', () => {
+    it('从启动命令里认出 --requirepass 的三种写法', () => {
+      expect(redisAuthFromServiceDefinition({ command: ['redis-server', '--requirepass', 'a1'] })).toBe('a1');
+      expect(redisAuthFromServiceDefinition({ command: ['redis-server', '--requirepass=a2'] })).toBe('a2');
+      // compose 常把整条命令塞进一个 sh -c 元素里，参数没被拆开
+      expect(redisAuthFromServiceDefinition({
+        command: ['sh', '-c', "exec docker-entrypoint.sh redis-server --requirepass 'a3'"],
+      })).toBe('a3');
+      // 字符串形态的 command（线上那台就是这个形状）
+      expect(redisAuthFromServiceDefinition({ command: 'redis-server --requirepass a4' })).toBe('a4');
+    });
+
+    it('没配就是空，不瞎猜', () => {
+      expect(redisAuthFromServiceDefinition({ command: ['redis-server', '--appendonly', 'yes'] })).toBe('');
+      expect(redisAuthFromServiceDefinition({})).toBe('');
+    });
+
+    it('env 优先于启动命令', () => {
+      expect(redisAuthFromServiceDefinition({
+        env: { REDIS_PASSWORD: 'fromenv' }, command: ['redis-server', '--requirepass', 'fromcmd'],
+      })).toBe('fromenv');
+    });
+
+    it('没有口令时 stdin 内容就是脚本本身，不引入新语义', () => {
+      expect(redisProbeStdin('echo hi', '')).toBe('echo hi');
+    });
+
+    it('真跑：服务器口令只有 CDS 知道（env 与进程命令行都没有）也连得上', () => {
+      // 线上那台 metersphere redis 的形状。上一版在这里 exit 22。
+      const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-stdin-'));
+      fs.writeFileSync(path.join(box, 'redis-cli'), fakeRedisCli('only-cds-knows'), { mode: 0o755 });
+      const procDir = path.join(box, 'proc');
+      fs.mkdirSync(path.join(procDir, '17'), { recursive: true });
+      // redis 默认会把 argv 改写掉，扫不到口令——如实模拟
+      fs.writeFileSync(path.join(procDir, '17', 'cmdline'), 'redis-server *:6379\0');
+      const script = `${REDIS_CONNECT_LINES.join('\n')}\nprintf '%s' "\${REDISCLI_AUTH:-}"`;
+      const svc = { command: ['redis-server', '--requirepass', 'only-cds-knows'] };
+      const r = spawnSync('/bin/sh', ['-s'], {
+        input: redisProbeStdin(script, redisAuthFromServiceDefinition(svc)),
+        encoding: 'utf8',
+        env: { PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}`, CDS_BACKUP_PROC_DIR: procDir },
+      });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.auth ?? r.stdout).toBe('only-cds-knows');
+    });
+
+    it('CDS 存的口令是错的时候，仍然会往下试别的候选', () => {
+      const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-stale-'));
+      fs.writeFileSync(path.join(box, 'redis-cli'), fakeRedisCli('env-has-right-one'), { mode: 0o755 });
+      const procDir = path.join(box, 'proc');
+      fs.mkdirSync(path.join(procDir, '17'), { recursive: true });
+      fs.writeFileSync(path.join(procDir, '17', 'cmdline'), 'redis-server *:6379\0');
+      const script = `${REDIS_CONNECT_LINES.join('\n')}\nprintf '%s' "\${REDISCLI_AUTH:-}"`;
+      const r = spawnSync('/bin/sh', ['-s'], {
+        input: redisProbeStdin(script, 'stale-from-cds'),
+        encoding: 'utf8',
+        env: {
+          PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}`,
+          CDS_BACKUP_PROC_DIR: procDir,
+          REDIS_PASSWORD: 'env-has-right-one',
+        },
+      });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toBe('env-has-right-one');
+    });
+
+    it('带引号 / 特殊字符的口令不会把脚本拼坏', () => {
+      const nasty = `p'w"$\`x y`;
+      const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-redis-nasty-'));
+      fs.writeFileSync(path.join(box, 'redis-cli'), fakeRedisCli(nasty), { mode: 0o755 });
+      const procDir = path.join(box, 'proc');
+      fs.mkdirSync(path.join(procDir, '17'), { recursive: true });
+      fs.writeFileSync(path.join(procDir, '17', 'cmdline'), 'redis-server *:6379\0');
+      const script = `${REDIS_CONNECT_LINES.join('\n')}\nprintf '%s' "\${REDISCLI_AUTH:-}"`;
+      const r = spawnSync('/bin/sh', ['-s'], {
+        input: redisProbeStdin(script, nasty),
+        encoding: 'utf8',
+        env: { PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}`, CDS_BACKUP_PROC_DIR: procDir },
+      });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toBe(nasty);
+    });
   });
 
   it('密码只在容器内展开，不进宿主命令行', () => {
@@ -864,6 +956,43 @@ describe('Redis 快照路径取运行时真值', () => {
   it('路径上没有文件时判失败，不让宿主去拷一个不存在的东西', () => {
     const r = resolvePath({ dir: 'DATA', dbfilename: 'missing.rdb', touch: false, start: 1 });
     expect(r.status).toBe(26);
+  });
+});
+
+/**
+ * 接线守卫：凭据只能走 stdin，不许出现在宿主命令行上（E34）。
+ *
+ * 这条守卫防的是最容易复发的那一步：以后有人图省事改回 `docker exec -e PW=...`
+ * 或 `sh -c '<带口令的脚本>'`。两种写法都会把明文摆进 argv，同机 `ps` 一眼看到，
+ * 而功能照常工作——不会有任何测试变红。所以必须有一条专门盯形状的断言。
+ */
+describe('redis 凭据只走 stdin', () => {
+  const files = ['src/index.ts', 'src/routes/infra-backup.ts']
+    .map((f) => [f, fs.readFileSync(path.resolve(process.cwd(), f), 'utf8')] as const);
+
+  it('三个 redis 探测点都用 `docker exec -i ... sh -s` + stdin', () => {
+    const uses = files.flatMap(([, src]) => [...src.matchAll(/stdin: redisProbeStdin\(/g)]);
+    expect(uses.length).toBe(3);
+    for (const [name, src] of files) {
+      // 不许再有 `sh -c <脚本>` 形态的 redis 探测
+      expect(src, `${name} 仍在用 sh -c 送 redis 探测脚本`)
+        .not.toMatch(/sh -c \$\{shq\(buildRedis/);
+    }
+  });
+
+  it('没有任何地方用 docker exec -e 传凭据', () => {
+    for (const [name, src] of files) {
+      expect(src, `${name} 用 docker exec -e 传了变量，口令会进宿主命令行`)
+        .not.toMatch(/docker exec\s+-e\s/);
+    }
+  });
+
+  it('口令不会出现在拼给 shell 的命令字符串里', () => {
+    // 真跑一次：拼出来的命令行必须一个字都不含口令。
+    const cmdLine = `docker exec -i 'cds-infra-x' sh -s`;
+    const payload = redisProbeStdin(buildRedisBackupProbeScript(), 'topsecret123');
+    expect(cmdLine).not.toContain('topsecret123');
+    expect(payload).toContain('topsecret123');   // 它只在 stdin 里
   });
 });
 
