@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 31 / in-progress: 8 / paid: 25 / 总计: 64
+当前 open: 34 / in-progress: 8 / paid: 25 / 总计: 67
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -770,6 +770,9 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-18-pool-create-wizard-member-step | low | 2026-08-18 | 设计稿新建向导第 3 步是「成员顺位」（建池时就能定第 1 顺位），实现仍是「业务说明」，建完必须再去详情页加成员；期间这个池接不了任何调用 | 用户抱怨「建完池还得再跑一趟」时 | open | 属于新增能力不是复刻偏差，未在复刻 PR 内展开。设计稿证据：`create` 画板 |
+| 2026-08-18-pool-detail-member-table | low | 2026-08-18 | 池详情成员区设计稿是表格（顺位/模型成员/状态与证据/成功率·近10次/币种·字段能力/操作六列），实现是堆叠卡片；成员多时纵向拉得很长，跨成员比对要上下扫 | 单池成员数常态超过 4 个时 | open | 并排比对时判为「差异明确但不影响判断」，本轮未改。证据：`detail` 画板 |
+| 2026-08-18-llmgw-console-account-shared-db | medium | 2026-08-18 | 控制台账号落在共享库 `llm_gateway`（无 per-branch 后缀），分支预览与其它部署共用同一批账号；播种/改密/破窗 env 都会穿透到别的部署 | 需要在分支预览上做真人登录验收时 | open | 本轮复刻取证因此改用「真实 bundle + stub API」，未动共享状态。对齐 `cross-project-isolation.md` 通道 4，宜按通道 8 的做法加部署作用域 |
 | 2026-07-12-external-tenant-isolation | critical | 2026-07-12 | 已有 `gwk_*` scoped service key，但没有 tenant/team/user/membership 数据模型和服务端租户上下文；key、appCaller、日志、预算与审计无法形成外部客户隔离边界 | 允许 MAP 之外的团队自助接入或开放公网注册前 | paid | PR #1085、#1086 已落地 tenant/team/user/membership/RBAC、服务端租户解析、租户数据隔离、tenant-scoped key 和自助接入；请求自报 tenantId 不进入权威上下文 |
 | 2026-07-12-console-information-architecture | medium | 2026-07-12 | 控制台全部导航挤在顶部，首页第一屏优先展示 runtime gate、协议覆盖和内部拓扑，普通用户难以找到 Activity、接入教程和日常操作 | 控制台面向开发者和外部团队前 | paid | PR #1088、#1090 至 #1093 已落地六组左侧栏、移动抽屉、明暗主题和任务优先首页；生产 `a48de26c...` 已完成桌面布局验收 |
 | 2026-07-11-maintenance-release-shadow-gate | medium | 2026-07-11 | 已处于 full-http 的维护版本仍默认要求新 commit 自身拥有 24 小时 shadow；新 commit 上线前无法自然产生该证据 | full-http 后进行小版本维护发布时 | paid | PR #1076、#1079、#1080 已完成 `--maintenance-from-commit`、基线审计和部署层证据交接；最终 commit 的 `http-full success` 台账已验证该路径 |
