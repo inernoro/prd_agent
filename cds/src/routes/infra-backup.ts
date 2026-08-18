@@ -25,6 +25,7 @@ import {
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin,
+  buildMysqlDumpScript,
   buildRedisAppendOnlyScript,
   buildRedisRestorePlan,
   buildRedisRdbPathScript,
@@ -41,10 +42,13 @@ export interface InfraBackupRouterDeps {
   repoRoot?: string;
 }
 
-function detectKind(dockerImage: string): 'mongo' | 'redis' | 'generic' {
+function detectKind(dockerImage: string): 'mongo' | 'redis' | 'mysql' | 'generic' {
   const lower = dockerImage.toLowerCase();
   if (lower.includes('mongo')) return 'mongo';
   if (lower.includes('redis')) return 'redis';
+  // mysql/mariadb 此前没有分支，掉进 generic 的 `tar -C /data`——而它们的数据在
+  // /var/lib/mysql，于是下载到一个空壳还回 200（E41）。判定与周期备份的 backupKindOf 对齐。
+  if (lower.includes('mysql') || lower.includes('mariadb')) return 'mysql';
   return 'generic';
 }
 
@@ -153,7 +157,8 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
 
     const kind = detectKind(svc.dockerImage);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const filename = `${svc.id}-${stamp}.${kind === 'mongo' ? 'archive.gz' : kind === 'redis' ? 'rdb' : 'tar.gz'}`;
+    const filename = `${svc.id}-${stamp}.`
+      + (kind === 'mongo' ? 'archive.gz' : kind === 'redis' ? 'rdb' : kind === 'mysql' ? 'sql.gz' : 'tar.gz');
 
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -220,8 +225,34 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           if (!res.headersSent) res.status(500).json({ error: err.message });
           else res.end();
         });
+      } else if (kind === 'mysql') {
+        // mysql 此前掉进下面的兜底 `tar -C /data`，而 mysql 的数据在 /var/lib/mysql，
+        // 于是**下载得到一个 22 字节的空 gzip 壳，HTTP 却是 200**（E41，2026-08-18 实测
+        // 三个 mysql 全是这样）。拿它当迁移数据源或动手前的兜底，等于什么都没有。
+        // 现在走与周期备份同一段导出脚本：流式压缩、两端退出码都保住。
+        const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-s'];
+        const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
+        proc.stdin.end(buildMysqlDumpScript());
+        proc.stdout.pipe(res);
+        let stderr = '';
+        proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
+        proc.on('close', (code) => {
+          if (code !== 0) {
+            // 截断取**尾**不取头：真正说明失败原因的那几行在末尾，取头只会拿到
+            // 一堆无关的启动噪音（house rule 见 ssh-exec-failure 的三宗罪）。
+            const tail = stderr.length > 300 ? `…（前文截断）${stderr.slice(-300)}` : stderr;
+            console.error(`[infra-backup] mysqldump exit ${code}: ${tail}`);
+            if (!res.headersSent) res.status(500).json({ error: `导出失败 exit=${code}`, detail: tail });
+            else res.destroy(new Error(`mysqldump exit ${code}: ${tail}`));
+          }
+        });
+        proc.on('error', (err) => {
+          if (!res.headersSent) res.status(500).json({ error: err.message });
+          else res.end();
+        });
       } else {
-        // generic: tar /data
+        // generic: tar /data。只对「数据确实在 /data」的类型成立；
+        // 新增类型前先确认它的数据目录，否则又是一个「200 但空壳」。
         const cmd = ['docker', 'exec', svc.containerName, 'tar', '-czf', '-', '-C', '/data', '.'];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
         proc.stdout.pipe(res);
@@ -404,6 +435,72 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           restored: true,
           preRestoreBackup: preBackupPath,
           message: 'Redis 已从快照恢复：容器先停止、覆盖快照文件、再启动加载',
+        });
+      } else if (kind === 'mysql') {
+        // mysql 此前**根本没有恢复入口**——能导出却灌不回去，等于没有备份。
+        // 大 dump 不能走 stdin 字符串（170MB 的库很常见），所以先落宿主暂存文件，
+        // 再 docker cp 进容器、在容器内解压灌库，最后清理两边。
+        const uploadPath = `${backupDir}/.upload-${backupKey(svc.projectId, svc.id)}-${stamp}.sql.gz`;
+        const inContainer = `/tmp/cds-restore-${stamp}.sql.gz`;
+        try {
+          const fsp = await import('node:fs');
+          await new Promise<void>((resolve, reject) => {
+            const w = fsp.createWriteStream(uploadPath);
+            req.pipe(w);
+            w.on('finish', () => resolve());
+            w.on('error', reject);
+            req.on('error', reject);
+          });
+        } catch (err) {
+          res.status(500).json({ error: `接收上传失败：${(err as Error).message}` });
+          return;
+        }
+
+        try {
+          // 恢复前先存一份当前状态：mysql 分支此前连撤销快照都没有。
+          const pre = await shell.exec(
+            `docker exec -i ${shq(svc.containerName)} sh -s > ${shq(preBackupPath)}`,
+            { timeout: 600_000, stdin: buildMysqlDumpScript() },
+          );
+          if (pre.exitCode !== 0) {
+            // 存不下当前状态就不许往下走——没有退路的恢复不该开始。
+            throw new Error(`恢复前快照失败，已中止：${combinedOutput(pre).trim().slice(0, 200)}`);
+          }
+          const cp = await shell.exec(
+            `docker cp ${shq(uploadPath)} ${shq(`${svc.containerName}:${inContainer}`)}`,
+            { timeout: 600_000 },
+          );
+          if (cp.exitCode !== 0) throw new Error(`拷入容器失败：${combinedOutput(cp).trim().slice(0, 200)}`);
+          // 灌库：口令走容器内 MYSQL_PWD，不进宿主命令行。
+          const load = await shell.exec(
+            `docker exec -i ${shq(svc.containerName)} sh -s`,
+            {
+              timeout: 1_800_000,
+              stdin: [
+                'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
+                `gunzip -c ${shq(inContainer)} | mysql -uroot`,
+                'code=$?',
+                `rm -f ${shq(inContainer)}`,
+                'exit "$code"',
+              ].join('\n'),
+            },
+          );
+          if (load.exitCode !== 0) throw new Error(`导入失败：${combinedOutput(load).trim().slice(0, 300)}`);
+        } catch (err) {
+          res.status(500).json({ error: `恢复失败：${(err as Error).message}`, preRestoreBackup: preBackupPath });
+          return;
+        } finally {
+          await shell.exec(`rm -f ${shq(uploadPath)}`).catch(() => { /* 暂存清不掉不影响结果 */ });
+        }
+
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          summary: `恢复 ${svc.id} MySQL 全量 dump（恢复前状态已存：${preBackupPath}）`,
+        });
+        res.json({
+          restored: true,
+          preRestoreBackup: preBackupPath,
+          message: 'MySQL 已从 dump 恢复（恢复前状态已另存，可回滚）',
         });
       } else {
         res.status(400).json({ error: '暂不支持该 infra 类型的自动恢复，请手动导入' });

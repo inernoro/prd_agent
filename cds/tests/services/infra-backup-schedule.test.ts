@@ -1006,10 +1006,13 @@ describe('redis 凭据只走 stdin', () => {
     // 断言的是「条数相等」而不是某个魔数：新增一处探测不该让守卫变红，
     // 新增一处**不走 stdin** 的探测才该变红。写死 3 的话，加第 4 处探测的人
     // 会顺手把数字改成 4 了事，守卫就退化成了计数器。
-    const withStdin = files.flatMap(([, src]) => [...src.matchAll(/stdin: redisProbeStdin\(/g)]).length;
-    const shellIn = files.flatMap(([, src]) => [...src.matchAll(/docker exec -i \$\{shq\([^)]*\)\} sh -s/g)]).length;
-    expect(withStdin).toBeGreaterThanOrEqual(3);
-    expect(shellIn, '有 `sh -s` 调用没有配 stdin，脚本会从空输入读进去').toBe(withStdin);
+    // 只管 **redis 探测**这一族：`sh -s` 后来也被 mysql 导出/恢复用上了，
+    // 拿「所有 sh -s 调用数」当分母会让别处新增一个用法就把这条守卫弄红，
+    // 那是计数器不是判据。判定改成：每个 buildRedis* 脚本都必须经 redisProbeStdin 送。
+    const redisScripts = files.flatMap(([, src]) => [...src.matchAll(/buildRedis(?:BackupProbe|RdbPath|AppendOnly)Script\(\)/g)]).length;
+    const viaStdin = files.flatMap(([, src]) => [...src.matchAll(/redisProbeStdin\(/g)]).length;
+    expect(redisScripts).toBeGreaterThanOrEqual(3);
+    expect(viaStdin, '有 redis 探测脚本没走 redisProbeStdin，凭据会漏进命令行').toBe(redisScripts);
     for (const [name, src] of files) {
       // 不许再有 `sh -c <脚本>` 形态的 redis 探测
       expect(src, `${name} 仍在用 sh -c 送 redis 探测脚本`)
