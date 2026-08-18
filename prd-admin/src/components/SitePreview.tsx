@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Globe } from 'lucide-react';
+import {
+  DIRECT_PREVIEW_SANDBOX,
+  SRCDOC_PREVIEW_SANDBOX,
+} from '@/components/web-hosting/previewHtml';
+import { useSitePreviewHtml, type SitePreviewHtmlSite } from '@/components/web-hosting/useSitePreviewHtml';
 
 /**
  * 通过缩放 iframe 生成网页缩略预览图。
@@ -11,11 +16,17 @@ import { Globe } from 'lucide-react';
  * 避免离屏卡片下载整页。原生 loading="lazy" 只延迟离屏加载、却不卸载已加载的，
  * 大列表仍会累积大量已下载页面，故改用 IntersectionObserver 主动控制挂载。
  *
- * 自愈：预览是「实时 iframe」而非缓存截图。刚上传的站点带 ?v={Ticks} 缓存击穿参数、
- * 指向刚写入 COS 的对象，在 CDN 传播完成前 iframe 请求会一直 pending，onLoad 迟迟
- * 不触发 → 卡片永远停在地球占位符（历史缺陷：只监听 onLoad，无超时/onError/重试）。
- * 这里加超时兜底 + onError：到点仍未加载完就带 retry 参数重挂 iframe 触发重新拉取，
- * 最多 MAX_RETRIES 次；对象一旦传播就绪，重试即可成功显示真实预览。
+ * 显示路径有两条，优先级固定：
+ *
+ * 1. **srcDoc（传了 site 才有）**：服务端同源代理取回入口 HTML，注 `<base>` 后塞进 srcDoc。
+ *    这是唯一可靠的一条——直链 iframe 指向托管域名，Chrome 在这条路径上存在「只绘制空白」
+ *    的已知形态，分享页（PR #1356）已经因此改走代理，缩略图当时留在了直链上，于是同一个
+ *    空白在列表页原样复发（用户报「网页托管无法显示内容」）。
+ * 2. **直链**：取不回正文（无权限 / 打包型 SPA / 代理失败）时如实退回，多数站点仍能显示。
+ *
+ * 自愈（只作用于直链路径）：刚上传的站点带 ?v={Ticks} 缓存击穿参数、指向刚写入对象存储的
+ * 对象，在 CDN 传播完成前 iframe 请求会一直 pending。这里加超时兜底 + onError：到点仍未
+ * 加载完就带 retry 参数重挂 iframe 触发重新拉取，最多 MAX_RETRIES 次。
  */
 // 递增退避窗口（毫秒）。刻意取较长的首个窗口：合法但加载慢的页面（大图/大脚本/慢网）
 // 应在被打断前就自己加载完，避免「每 7s 重挂一次 → 每次从零重新下载 → 慢页永远加载不完」
@@ -29,11 +40,25 @@ const MAX_RETRIES = RETRY_DELAYS_MS.length;
 // 为什么不能只等 load：load 要等**所有子资源**结算才触发，而托管的 AI 生成页普遍外链
 // Google Fonts 这类三方域名，它们在部分网络里是「挂起」而不是快速失败——正文早就画完了，
 // load 却永远不来，于是重挂次数用尽后 loaded 恒为 false，卡片**永久停在地球占位符**。
-// 这正是用户报的「这几个网页无法预览」。判据从「load 到了吗」换成「给它一段时间自己画」，
-// 见 .claude/rules/predicate-and-wiring-discipline.md 形状 1。
+// 判据从「load 到了吗」换成「给它一段时间自己画」，见
+// .claude/rules/predicate-and-wiring-discipline.md 形状 1。
 const FIRST_PAINT_MS = 1200;
 
-export function SitePreview({ url, className, style }: { url: string; className?: string; style?: React.CSSProperties }) {
+export function SitePreview({
+  url,
+  site,
+  className,
+  style,
+}: {
+  url: string;
+  /**
+   * 托管站点信息。传了才能走 srcDoc 这条可靠路径；不传（如桌面端/移动端资产列表里
+   * 那些根本不是托管站点的 URL）就只走直链，行为与以前一致。
+   */
+  site?: SitePreviewHtmlSite;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState(false);
   /** 首绘窗口已过：即使 load 还没来也把 iframe 显出来（内容通常早已绘制） */
@@ -44,6 +69,9 @@ export function SitePreview({ url, className, style }: { url: string; className?
   const [attempt, setAttempt] = useState(0);
   const iframeWidth = 1280;
   const iframeHeight = 800;
+
+  // 只有进入视口才去取正文，和 iframe 懒挂同一个开关，列表不会一次性打几十个接口
+  const { srcDoc } = useSitePreviewHtml(site ?? null, inView);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -82,20 +110,16 @@ export function SitePreview({ url, className, style }: { url: string; className?
   // 上一轮 review 指出「已经画出来了还重挂会闪白」，我据此把 revealed 也加进了这个守卫，
   // 那是过度修正：revealed 是**纯时间**的（挂载 1.2s 后无条件置真），它不证明页面画出来了。
   // 于是 CDN 传播中那种「导航一直 pending、既不 load 也不 error」的情形——正是本组件
-  // 当初加重试要救的那一种——会在第一个 12s 窗口到来之前就被这个守卫掐掉，自愈彻底失效，
-  // 用户看到的是一块**空白**瓦片（比地球占位符更糟：它看起来像是内容，其实什么都没有）。
+  // 当初加重试要救的那一种——会在第一个 12s 窗口到来之前就被这个守卫掐掉，自愈彻底失效。
   //
-  // 两条意见在物理上互斥：跨域 iframe 没有任何「画出来了没有」的信号可读，
-  // 我们区分不了「画好了但 load 被吊住」与「一直 pending」。取舍按后果严重度定：
-  //   继续重挂  → 已画出的页面最多闪两次（MAX_RETRIES=2），仍能看
-  //   停止重挂  → pending 的页面永远救不回来，永久空白
-  // 所以恢复只看 loaded。闪烁记为已知边界，见 doc/debt.web-hosting.md 第 21 条。
+  // srcDoc 路径不需要这套：内容已经在手里，不存在「传播中」。
   useEffect(() => {
+    if (srcDoc) return;
     if (!inView || loaded || attempt >= MAX_RETRIES) return;
     const delay = RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
     const timer = setTimeout(() => setAttempt((a) => a + 1), delay);
     return () => clearTimeout(timer);
-  }, [inView, loaded, attempt]);
+  }, [inView, loaded, attempt, srcDoc]);
 
   // 首绘窗口：进入视口后给 iframe 一段时间自己画，到点即淡入，不再等 load 事件。
   // 重挂（attempt 变化）会重开一次窗口，但**不回退 revealed**——已经显示出来的画面不该再被
@@ -114,20 +138,24 @@ export function SitePreview({ url, className, style }: { url: string; className?
 
   return (
     <div ref={containerRef} className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
-      {/* 占位符只在「iframe 还不该显示」时出现：未进入视口，或首绘窗口未到且 load 未触发。
-          离屏后即使有迟到的 onLoad 把 loaded 置真，只要 inView 为 false 占位符仍可见，
-          不会出现空白瓦片 */}
-      {!visible && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-          <Globe size={20} style={{ color: 'var(--accent-primary)', opacity: 0.4 }} />
-        </div>
-      )}
+      {/*
+        占位符**永远铺在最底层**，而不是「iframe 该显示时就把它拿掉」。
+        跨域 iframe 读不到「画出来了没有」的信号（详见 doc/debt.web-hosting.md 第 21 条），
+        原先靠 1.2s 定时器无条件撤掉占位符，等于拿时间冒充证据：页面真没画出来时，
+        用户看到的是一块**纯空白瓦片**——比地球图标更糟，它看起来像内容，其实什么都没有
+        （predicate-and-wiring-discipline 形状 8：不成立的证据不能当证据）。
+        改成分层之后不需要任何判据：iframe 画出了东西就自然盖住占位符，没画出来就露出地球。
+      */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+        <Globe size={20} style={{ color: 'var(--accent-primary)', opacity: 0.4 }} />
+      </div>
       {inView && (
         <iframe
-          key={attempt}
-          src={src}
+          key={srcDoc ? 'srcdoc' : `direct-${attempt}`}
+          src={srcDoc ? undefined : src}
+          srcDoc={srcDoc || undefined}
           title="preview"
-          sandbox="allow-scripts allow-same-origin"
+          sandbox={srcDoc ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX}
           loading="lazy"
           onLoad={() => setLoaded(true)}
           onError={() => setAttempt((a) => (a < MAX_RETRIES ? a + 1 : a))}
@@ -141,7 +169,8 @@ export function SitePreview({ url, className, style }: { url: string; className?
             position: 'absolute',
             top: 0,
             left: 0,
-            opacity: visible ? 1 : 0,
+            // srcDoc 的内容已经在手里，渲染是同步的，不需要等首绘窗口
+            opacity: srcDoc || visible ? 1 : 0,
             transition: 'opacity 0.3s',
           }}
         />

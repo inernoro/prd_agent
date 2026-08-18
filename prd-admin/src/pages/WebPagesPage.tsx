@@ -2402,7 +2402,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
               className="absolute inset-0 h-full w-full"
             />
           ) : (
-            <SitePreview url={site.siteUrl} className="h-full w-full transition-transform duration-700 group-hover:scale-[1.035]" />
+            <SitePreview site={site} url={site.siteUrl} className="h-full w-full transition-transform duration-700 group-hover:scale-[1.035]" />
           )}
 
           <div
@@ -2699,7 +2699,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         <PdfThumbnail className="shrink-0 w-10 h-10 rounded overflow-hidden" compact />
       ) : (
         <div className="shrink-0 w-10 h-10 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
-          <SitePreview url={site.siteUrl} className="w-full h-full" />
+          <SitePreview site={site} url={site.siteUrl} className="w-full h-full" />
         </div>
       )}
 
