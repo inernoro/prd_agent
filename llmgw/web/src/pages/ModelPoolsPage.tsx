@@ -897,7 +897,9 @@ export function ModelPoolsPage() {
                 ) : null}
               </section>
             )}
-            {canWrite ? (
+            {/* 一个池都没有时，「批量认领 / 校准币种」和「4 个全是 0 的全局数字」都无事可做，
+                只是把唯一该做的那件事（建第一个池）挤下去。空态只留引导。 */}
+            {canWrite && pools.length > 0 ? (
               <details style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', ...CARD_BODY }}>
                 <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)', fontWeight: 600 }}>高级维护</summary>
                 <PoolAdvancedBar
@@ -914,6 +916,7 @@ export function ModelPoolsPage() {
             ) : null}
             {/* 页头原来常驻这几个全局数字，但它们不回答「要不要管」，占的正是分诊条要用的位置。
                 它们是观察性数字，收进折叠块；概览页就位后应整体迁走。 */}
+            {pools.length > 0 ? (
             <details style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', ...CARD_BODY }}>
               <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)', fontWeight: 600 }}>全局用量</summary>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: GAP.normal, marginTop: GAP.normal }}>
@@ -923,6 +926,7 @@ export function ModelPoolsPage() {
                 <CardStat label={`请求·${windowText}`} value={`${totalRecentRequests} 次`} />
               </div>
             </details>
+            ) : null}
             <DetailsBlock title="工作原理：一次调用怎么落到某个模型池">
               <Prose>
                 调用方指定模型池时直接用它；没指定时按业务类型落到该类型的默认池，再由调度策略在池内挑一个可用成员承接。
