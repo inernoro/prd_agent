@@ -623,3 +623,60 @@ export function buildMysqlDumpScript(): string {
     '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
   ].join('\n');
 }
+
+/**
+ * MySQL 恢复：把容器内的 `.sql.gz` 灌回库里。
+ *
+ * ## 为什么不是一行 `gunzip -c f | mysql -uroot`
+ *
+ * 2026-08-18 真事：恢复接口返回 `restored: true`，耗时 4 秒，库里一张用户表都没有。
+ * 原因就是那一行——**管道的退出码是最后一环的**。上游 gunzip 因为文件是空的/截断的
+ * 失败了，下游 mysql 收到零字节输入、正常退出 0，调用方读到 0 就报「已恢复」。
+ *
+ * 这个坑在**导出**那侧（`buildMysqlDumpScript`）早就踩过、也早就注释清楚了，恢复这侧
+ * 却又裸写了一遍管道——同一个判据分裂成两份、只修了一份。所以两侧现在用同一套写法：
+ * 各环的退出码经 fd4 回传，任一非零整条失败。
+ *
+ * 另加一道前置 `gunzip -t`：先验完整性再灌库。空文件、传了一半的文件、根本不是 gzip
+ * 的文件，都在动库之前就被拦下，而不是灌进去一半才发现。
+ */
+export function buildMysqlRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    // 凭据在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
+    'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
+    // 先验完整性。空文件/截断文件在这里就出局，不会带着半截 SQL 去动库。
+    // 措辞不替失败下结论：这一步不过既可能是文件损坏/截断/为空，也可能是容器里
+    // 根本没有 gunzip。真正的原因在 stderr 里，由调用方原样带回去，别在这儿猜。
+    `gunzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gunzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    // mysql 的 stdout 是噪音，赶到 stderr，别混进退出码通道。
+    `codes=$( { { gunzip -c ${p}; echo "gunzip=$?" >&4; }`
+      + ' | { mysql -uroot >&2; echo "mysql=$?" >&4; }; } 4>&1 )',
+    `u=$(printf '%s\\n' "$codes" | sed -n 's/^gunzip=//p')`,
+    `m=$(printf '%s\\n' "$codes" | sed -n 's/^mysql=//p')`,
+    // 读不到退出码按失败处理——「不确定」不能当成「成功」。
+    '[ "${u:-1}" = 0 ] || exit "${u:-1}"',
+    '[ "${m:-1}" = 0 ] || exit "${m:-1}"',
+    // `--all-databases` 的 dump 会把 `mysql` 库的授权表整个写回去，但**跑着的服务器
+    // 用的是内存里那份**——不 flush 的话，表里明明有这个账号，应用照样连不上，
+    // 而恢复看起来是成功的。dump 自己不带 FLUSH PRIVILEGES，所以在这里补。
+    // 单库 dump 的情况下这一句无副作用。
+    'mysql -uroot -e "FLUSH PRIVILEGES" || exit $?',
+  ].join('\n');
+}
+
+/**
+ * 数一数库里有多少张表（排除两个纯内存的元数据库）。
+ *
+ * 恢复前后各数一次，把两个数字写进响应——这样「已恢复」这句话是**带证据**的，
+ * 而不是一个自称。今天那次假成功之所以能糊弄过去，正是因为响应里除了
+ * `restored: true` 什么都没有，看的人无从判断。
+ */
+export function buildMysqlTableCountScript(): string {
+  return [
+    'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
+    'mysql -uroot -N -B -e "SELECT COUNT(*) FROM information_schema.tables'
+      + " WHERE table_schema NOT IN ('information_schema','performance_schema')\"",
+  ].join('\n');
+}
