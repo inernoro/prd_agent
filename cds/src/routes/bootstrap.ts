@@ -92,6 +92,21 @@ export interface BootstrapRouterDeps {
   repoRoot: string;
 }
 
+export function isDistinctCdsUpstream(currentOrigin: string, configuredUpstream: string): boolean {
+  const upstream = configuredUpstream.trim();
+  if (!upstream) return false;
+  try {
+    return new URL(currentOrigin).origin !== new URL(upstream).origin;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveCdsSkillPackUpstream(currentOrigin: string, configuredUpstream: string): string | null {
+  if (!isDistinctCdsUpstream(currentOrigin, configuredUpstream)) return null;
+  return `${configuredUpstream.trim().replace(/\/+$/, '')}/api/skills/cds-pack/download`;
+}
+
 /** 定位 CDS 技能源目录；CDS 部署为子目录时回退到父级。 */
 function resolveSkillsRoot(repoRoot: string): string | null {
   for (const candidate of [
@@ -476,7 +491,7 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
    * CDS 技能包（匿名）。本地技能目录缺失时（自托管实例不带 CDS 源码）
    * 回源到上游公共 CDS 的同名端点。
    */
-  router.get('/skills/cds-pack/download', async (_req, res) => {
+  router.get('/skills/cds-pack/download', async (req, res) => {
     const skillsRoot = resolveSkillsRoot(deps.repoRoot);
     if (skillsRoot) {
       try {
@@ -494,7 +509,14 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
       }
     }
 
-    const upstream = `${deps.cdsUpstream.replace(/\/+$/, '')}/api/skills/cds-pack/download`;
+    const upstream = resolveCdsSkillPackUpstream(resolveOrigin(req), deps.cdsUpstream);
+    if (!upstream) {
+      res.status(503).json({
+        error: '本实例没有完整的 CDS 技能包，且未配置独立上游',
+        hint: '请配置指向另一套 CDS 的 CDS_UPSTREAM；不得使用本实例公网地址作为上游。',
+      });
+      return;
+    }
     try {
       const hit = await upstreamSkillPackCache.get(upstream);
       res.setHeader('Cache-Control', 'no-store');

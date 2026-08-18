@@ -5,7 +5,7 @@ set -eu
 # archives to the production root filesystem. This script is intended to be run
 # from a trusted operator workstation.
 
-remote_host="${LLMGW_EXTERNAL_BACKUP_HOST:-root@map.ebcone.net}"
+remote_host="${LLMGW_EXTERNAL_BACKUP_HOST:-}"
 remote_repo="${LLMGW_EXTERNAL_BACKUP_REMOTE_REPO:-/root/inernoro/prd_agent}"
 compose_file="${LLMGW_EXTERNAL_BACKUP_COMPOSE_FILE:-cds-compose.yml}"
 mongo_service="${LLMGW_EXTERNAL_BACKUP_MONGO_SERVICE:-mongodb}"
@@ -20,6 +20,11 @@ dry_run="${LLMGW_EXTERNAL_BACKUP_DRY_RUN:-0}"
 include_secrets="${LLMGW_EXTERNAL_BACKUP_INCLUDE_SECRETS:-0}"
 json_out="${LLMGW_EXTERNAL_BACKUP_JSON_OUT:-}"
 report_md="${LLMGW_EXTERNAL_BACKUP_REPORT_MD:-}"
+
+[ -n "$remote_host" ] || {
+  echo "ERROR: LLMGW_EXTERNAL_BACKUP_HOST is required" >&2
+  exit 1
+}
 
 run_remote() {
   ssh "$remote_host" "$@"

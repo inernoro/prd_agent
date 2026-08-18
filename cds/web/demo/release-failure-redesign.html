@@ -713,7 +713,7 @@ footer p { margin: 0 0 4px; }
                   <span class="chip" data-tone="muted">MAP 正式环境受管发布</span>
                   <span class="mono">rel_9759ead9be9405e3</span>
                 </div>
-                <p class="blob marked">执行项目发布命令失败: ssh exec exit=22 --- stderr(tail) --- ... [truncated, kept last 19 lines / 1418 chars] Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 4 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 3 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 2 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 --- stdout(tail) --- AppCaller governance: already configured Downloading immutable admin artifact with resume: https://git.miduo.org/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</p>
+                <p class="blob marked">执行项目发布命令失败: ssh exec exit=22 --- stderr(tail) --- ... [truncated, kept last 19 lines / 1418 chars] Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 4 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 3 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 Warning: Problem (retrying all errors). Will retry in 2 seconds. 2 retries Warning: left. 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 0 0 0 0 0 0 0 --:--:-- --:--:-- --:--:-- 0 curl: (22) The requested URL returned error: 404 --- stdout(tail) --- AppCaller governance: already configured Downloading immutable admin artifact with resume: https://proxy.example.com/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</p>
                 <p class="tail">
                   <span class="marked" style="display:inline-block">2026/8/10 15:07:07 由 user 触发 · commit 53dcf3c · 耗时 38s · 目标仍在 06efeb6，未切换到本次版本</span>
                   <span class="marker" style="position:relative;top:5px;left:6px;display:inline-grid;box-shadow:none;">3</span>
@@ -830,7 +830,7 @@ footer p { margin: 0 0 4px; }
                         <div class="fact">
                           <span class="fact-key">地址</span>
                           <span class="fact-val">
-                            <span class="url"><mark>https://git.miduo.org/</mark>https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce…d6.zip</span>
+                            <span class="url"><mark>https://proxy.example.com/</mark>https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce…d6.zip</span>
                             <details class="inline"><summary>同一地址出现两次 https:// &nbsp;</summary>
                               <p>高亮段之后紧跟一个完整 URL，形如「镜像前缀 + 绝对地址」。sha 与本次 commit 一致，取的是对的那一版。</p>
                             </details>
@@ -887,7 +887,7 @@ footer p { margin: 0 0 4px; }
                         <div class="log-row" data-lv="dim"><span class="log-n">01</span><span class="log-t">[15:06:29] INFO  connect: ssh user@prod-map</span></div>
                         <div class="log-row" data-lv="dim"><span class="log-n">02</span><span class="log-t">[15:06:31] INFO  AppCaller governance: already configured</span></div>
                         <div class="log-row" data-lv="dim"><span class="log-n">03</span><span class="log-t">[15:06:31] INFO  Downloading immutable admin artifact with resume:</span></div>
-                        <div class="log-row" data-lv="dim"><span class="log-n">04</span><span class="log-t">           https://git.miduo.org/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</span></div>
+                        <div class="log-row" data-lv="dim"><span class="log-n">04</span><span class="log-t">           https://proxy.example.com/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip</span></div>
                         <div class="log-row" data-lv="warn"><span class="log-n">05</span><span class="log-t">[15:06:33] WARN  curl: (22) The requested URL returned error: 404</span></div>
                         <div class="log-row" data-lv="warn"><span class="log-n">06</span><span class="log-t">[15:06:33] WARN  Problem (retrying all errors). Will retry in 2 seconds. 4 retries left.</span></div>
                         <div class="log-fold">同样两行重复 4 轮（3 / 2 / 1 / 0 retries left）· 展开</div>
@@ -1079,7 +1079,7 @@ footer p { margin: 0 0 4px; }
     '步骤  1 发布前检查 通过 / 2 拉取产物 失败 / 3-5 未执行',
     '',
     '判据（取自日志，非推测）',
-    '- 下载地址 https://git.miduo.org/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip',
+    '- 下载地址 https://proxy.example.com/https://inernoro.github.io/prd_agent/prd-admin-dist-sha-53dcf3ce3fdaf770d98c34b4d4e231417b4846d6.zip',
     '- 同一地址出现两次 https://，形如「镜像前缀 + 绝对地址」',
     '- HTTP 404 共 5 次，间隔 2s；退出码 22（curl：服务端返回 >= 400）',
     '- 产物 sha 与本次 commit 一致，取的是对的那一版',

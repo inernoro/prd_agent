@@ -111,6 +111,25 @@ services:
     expect(parsed!.envMeta).toEqual({});
   });
 
+  it('保留 required 的二选一分组元数据', () => {
+    const parsed = parseCdsCompose(`
+x-cds-project:
+  name: grouped-env
+x-cds-env-meta:
+  MAP_USER:
+    kind: required
+    requiredGroup: initial-admin
+    requiredOption: map
+services: {}
+`);
+
+    expect(parsed!.envMeta.MAP_USER).toEqual({
+      kind: 'required',
+      requiredGroup: 'initial-admin',
+      requiredOption: 'map',
+    });
+  });
+
   it('hint 缺失时不报错', () => {
     const yaml = `
 x-cds-project:

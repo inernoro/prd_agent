@@ -812,8 +812,10 @@ def test_branch_create_reads_env_project_id(monkeypatch):
     assert captured["body"]["projectId"] == "proj-from-env"
 
 
-def test_branch_create_missing_project_dies(monkeypatch):
+def test_branch_create_missing_project_dies(monkeypatch, tmp_path):
     """都没给(无 --project + 无 env)→ 立即 die,不打 HTTP。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CDS_PROJECT_ID", raising=False)
     called = {"n": 0}
     monkeypatch.setattr(cdscli, "_call",
                         lambda *a, **kw: called.update(n=called["n"] + 1) or {})

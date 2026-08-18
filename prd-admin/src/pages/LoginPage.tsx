@@ -958,7 +958,7 @@ function LoginCard({
               style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.1em' }}
             >
               <Terminal className="w-3 h-3" />
-              <span>DEFAULT · admin / admin · 首次登录后请修改密码</span>
+              <span>管理员凭据由部署环境安全注入</span>
             </div>
           </Reveal>
         )}

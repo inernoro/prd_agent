@@ -50,7 +50,7 @@ import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
 import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance } from '../types.js';
-import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
+import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveCommandTemplate, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
@@ -73,6 +73,7 @@ import { detectStack, type DatabaseInitRecommendation, type StackDetection } fro
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { dropReplicaDb } from '../services/replica-db-clone.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
+import { assertInfraAuthenticationConfigured } from '../services/infra-auth-policy.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
@@ -82,7 +83,7 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import { ROUTABLE_SERVICE_STATUSES } from '../services/forwarder-route-publisher.js';
-import { maskSecrets as maskSecretsText, maskEnvRecord, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeSecretBearingValue, shouldMask } from '../services/secret-masker.js';
+import { maskSecrets as maskSecretsText, maskEnvRecord, maskCommandSecrets, maskBranchExtraProfilesEnv, isSensitiveKey, looksLikeSecretBearingValue, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -1770,7 +1771,7 @@ export interface SmokeRunResult {
 
 export interface SmokeRunOptions {
   branch: BranchEntry;
-  previewHost: string;        // e.g. "https://my-branch.miduo.org"
+  previewHost: string;        // e.g. "https://my-branch.example.com"
   accessKey: string;           // resolved AI_ACCESS_KEY
   impersonateUser?: string;    // default 'admin'
   skip?: string;               // comma-separated smoke keys to skip
@@ -5745,7 +5746,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // projects auto-prefix with the project slug so two projects can
       // each register "main" without colliding — this matches the
       // already-scoped worktree layout below. The preview domain still
-      // resolves via `<branchId>.miduo.org`, no extra subdomain config.
+      // resolves via `<branchId>.<root-domain>`, no extra subdomain config.
       const slugified = StateService.slugify(branch);
       const id = targetProject.legacyFlag
         ? slugified
@@ -8568,7 +8569,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       'docker run -d',
       `--name ${routeShellQuote(proxyContainerName)}`,
       `--network ${routeShellQuote(network)}`,
-      `-p 0.0.0.0:${port}:${listenPort}`,
+      // 纵深防御：即使上层路由门禁将来被误删，这个代理也只能绑定回环，
+      // 不能重新形成公网数据端口。
+      `-p 127.0.0.1:${port}:${listenPort}`,
       ...labels.map((label) => `--label ${routeShellQuote(label)}`),
       `-e ${routeShellQuote(`TARGET_HOST=${targetContainer}`)}`,
       `-e ${routeShellQuote(`TARGET_PORT=${targetPort}`)}`,
@@ -8729,6 +8732,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const enabled = Boolean(req.body?.enabled);
+    if (enabled && resource.source === 'infra') {
+      res.status(409).json({
+        error: '基础设施数据端口禁止直接发布到公网。请通过 CDS 数据面板或 HTTPS 管理入口访问。',
+      });
+      return;
+    }
     let allowlist: string[];
     try {
       allowlist = normalizeIpv4Allowlist(req.body?.allowlist);
@@ -18015,6 +18024,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/config', async (_req, res) => {
     const customEnv = stateService.getCustomEnv();
+    const prdAgentBaseUrl = stateService.getActiveCdsConnections()
+      .find((connection) => connection.partnerKind === 'map' && connection.partnerBaseUrl)
+      ?.partnerBaseUrl?.trim()
+      || customEnv.CDS_MAP_BASE?.trim()
+      || process.env.CDS_MAP_BASE?.trim()
+      || '';
 
     // GitHub repo URL: prefer explicit config from UI env vars, fallback to git remote auto-detection
     let githubRepoUrl = customEnv.GITHUB_REPO_URL || '';
@@ -18044,6 +18059,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...config,
       githubRepoUrl,
       cdsCommitHash,
+      prdAgentBaseUrl,
       jwt: { ...config.jwt, secret: '***' },
       executorToken: config.executorToken ? '***' : undefined,
       sharedEnv: Object.fromEntries(
@@ -18962,6 +18978,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Infrastructure services CRUD ──
 
+  function infraServiceView(service: InfraService | null | undefined): InfraService | null | undefined {
+    if (!service) return service;
+    return {
+      ...service,
+      env: maskEnvRecord(service.env || {}),
+      command: maskCommandSecrets(service.command),
+      entrypoint: maskCommandSecrets(service.entrypoint),
+    };
+  }
+
   router.get('/infra', async (req, res) => {
     // P4 Part 3b: optional ?project=<id> filter.
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
@@ -18983,7 +19009,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
     }
 
-    res.json({ services });
+    res.json({ services: services.map((service) => infraServiceView(service)) });
   });
 
   // Infra catalog (SSOT: services/infra-catalog.ts) — secret-free preset list for the
@@ -19040,7 +19066,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Bug I (LOW, 2026-05-10): when ?project= is missing AND the id exists
     // in multiple projects, try to disambiguate from the Referer header so
     // that POST /api/infra/mysql/restart issued from
-    //   https://cds.miduo.org/projects/<projId>/...
+    //   https://cds.example.com/projects/<projId>/...
     // resolves to the project the user is currently viewing instead of
     // unconditionally erroring with "exists in multiple projects".
     const referer = (req.headers.referer || (req.headers as any).referrer) as string | undefined;
@@ -19174,10 +19200,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
         createdAt: new Date().toISOString(),
       };
 
+      // 手工创建也必须在持久化前验证真实展开后的启动配置。否则 legacy UI 会先写入
+      // 一条永远无法启动的无认证数据库，再把 start 失败吞掉，形成“已创建”的假成功。
+      const customEnv = stateService.getCustomEnv(projectId);
+      try {
+        assertInfraAuthenticationConfigured({
+          ...service,
+          env: resolveEnvTemplates(service.env, customEnv),
+          command: resolveCommandTemplate(service.command, customEnv),
+          entrypoint: resolveCommandTemplate(service.entrypoint, customEnv),
+        });
+      } catch (authError) {
+        res.status(400).json({ error: (authError as Error).message });
+        return;
+      }
+
       stateService.addInfraService(service);
       stateService.save();
 
-      res.status(201).json(volumeWarning ? { service, warning: volumeWarning } : { service });
+      const view = infraServiceView(service);
+      res.status(201).json(volumeWarning ? { service: view, warning: volumeWarning } : { service: view });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -19242,7 +19284,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const started = await startInfraWithPortRetry(service, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已启动`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
+      res.json({
+        message: `基础设施服务 "${id}" 已启动`,
+        service: infraServiceView(stateService.getInfraServiceForProjectAndId(resolved.projectId, id)),
+      });
     } catch (err) {
       stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();
@@ -19289,7 +19334,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const started = await startInfraWithPortRetry(service, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
-      res.json({ message: `基础设施服务 "${id}" 已重启`, service: stateService.getInfraServiceForProjectAndId(resolved.projectId, id) });
+      res.json({
+        message: `基础设施服务 "${id}" 已重启`,
+        service: infraServiceView(stateService.getInfraServiceForProjectAndId(resolved.projectId, id)),
+      });
     } catch (err) {
       stateService.updateInfraService(id, { status: 'error', errorMessage: (err as Error).message }, resolved.projectId);
       stateService.save();

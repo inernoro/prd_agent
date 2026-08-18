@@ -2,7 +2,7 @@
  * CDS Forwarder — 数据面独立进程入口（B'.2-forwarder MVP, 2026-05-08）
  *
  * 与 cds-master 完全解耦的反向代理。监听 CDS_FORWARDER_PORT（默认 9090），
- * 把 nginx 透传过来的 *.miduo.org 流量路由到对应的分支容器端口。
+ * 把 nginx 透传过来的部署根域流量路由到对应的分支容器端口。
  *
  * 设计要点：
  *   - 路由表 SSOT：`<repo>/cds/.cds/forwarder-routes.json`，由 cds-master
@@ -186,7 +186,7 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
   // 127.0.0.1(nginx)→ 老 isLoopback 检查永远 true → 公网用户能 dump 完整路由
   // 表(branchId/branchName/upstreamPort 全泄露)。新检查:**同时**要求 socket
   // remote 是 loopback **且** Host header 是内部域名(127.0.0.1/localhost),这样
-  // nginx 转过来的 host=*.miduo.org 直接被拒,只允许运维 SSH 后直连 9090 调用。
+  // nginx 转过来的公网 host 直接被拒，只允许运维 SSH 后直连 9090 调用。
   const remoteAddr = (req.socket?.remoteAddress ?? '') as string;
   const remoteIsLoopback = /^(127\.|::1$|::ffff:127\.)/.test(remoteAddr);
   const hostHeader = (req.headers.host ?? '').split(':')[0].toLowerCase();

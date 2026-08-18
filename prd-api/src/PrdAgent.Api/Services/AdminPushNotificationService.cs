@@ -1137,8 +1137,7 @@ public sealed class AdminPushNotificationService
                 project = repo.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
         }
 
-        var domain = FirstConfigValue(configuration, "MAP_PREVIEW_DOMAIN", "CDS_PREVIEW_DOMAIN", "PREVIEW_DOMAIN", "PreviewDomain")
-            ?? "miduo.org";
+        var domain = FirstConfigValue(configuration, "MAP_PREVIEW_DOMAIN", "CDS_PREVIEW_DOMAIN", "PREVIEW_DOMAIN", "PreviewDomain");
         var slug = ClaudeSidecarRouter.ComputePreviewSlug(branch, project);
         if (string.IsNullOrWhiteSpace(slug) || string.IsNullOrWhiteSpace(domain))
             return null;

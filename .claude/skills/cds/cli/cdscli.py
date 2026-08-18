@@ -2516,7 +2516,12 @@ def cmd_env_set(args: argparse.Namespace) -> None:
     v: str | None = None
     if getattr(args, "key", None):
         k = args.key
-        v = args.value if args.value is not None else ""
+        if getattr(args, "value_stdin", False):
+            v = sys.stdin.read()
+            if v.endswith("\n"):
+                v = v[:-1]
+        else:
+            v = args.value if args.value is not None else ""
     elif getattr(args, "kv", None):
         if "=" not in args.kv:
             die("格式应为 KEY=VALUE,或改用 --key/--value", code=1)
@@ -8567,7 +8572,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     es.add_argument("kv", nargs="?", help="KEY=VALUE(经典形式,可选)")
     es.add_argument("--key", help="键名(--value 配合)")
-    es.add_argument("--value", help="键值(--key 配合,允许空字符串)")
+    value_source = es.add_mutually_exclusive_group()
+    value_source.add_argument("--value", help="键值(--key 配合,允许空字符串)")
+    value_source.add_argument("--value-stdin", action="store_true", help="从标准输入读取值，避免密钥出现在命令行与进程列表")
     es.add_argument("--scope")
     es.set_defaults(func=cmd_env_set)
 

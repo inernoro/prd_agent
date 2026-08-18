@@ -1468,7 +1468,10 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
     var idGenerator = scope.ServiceProvider.GetRequiredService<IIdGenerator>();
-    var initializer = new DatabaseInitializer(db, idGenerator);
+    var initializer = new DatabaseInitializer(
+        db,
+        idGenerator,
+        builder.Configuration);
     await initializer.InitializeAsync();
 }
 

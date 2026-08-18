@@ -23,6 +23,8 @@
 //   5. AI 通过 GET /operator/requests/:id 轮询或订阅 cds-events 拿结果
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { cdsEventsBus } from './cds-events-bus.js';
 import { operatorOpRegistry, type OperatorOpContext } from './operator-console.js';
 import type { IShellExecutor } from '../types.js';
@@ -82,8 +84,14 @@ interface SessionApproval {
 }
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 天 — 用户授权后该 (caller, op, args) 组合可用 7 天免重复确认
-const REQUEST_TTL_MS = 5 * 60 * 1000;     // 5 分钟未审批自动 expire
+const REQUEST_TTL_MS = 24 * 60 * 60 * 1000; // 跨自更新保留一天，避免部署窗口把审批通道切断
 const REQUEST_HISTORY_MAX = 200;
+
+interface PersistedOperatorApprovalState {
+  version: 1;
+  requests: PendingRequest[];
+  sessions: SessionApproval[];
+}
 
 export class OperatorApprovalService {
   private requests = new Map<string, PendingRequest>();
@@ -92,17 +100,24 @@ export class OperatorApprovalService {
   private stateService: StateService | null = null;
   private repoRoot: string = '';
   private logStore: ServerEventLogSink | null = null;
+  private storagePath: string | null = null;
 
   init(opts: {
     shell: IShellExecutor;
     stateService: StateService;
     repoRoot: string;
     serverEventLogStore?: ServerEventLogSink | null;
+    storagePath?: string | null;
   }): void {
     this.shell = opts.shell;
     this.stateService = opts.stateService;
     this.repoRoot = opts.repoRoot;
     this.logStore = opts.serverEventLogStore ?? null;
+    const nextStoragePath = opts.storagePath?.trim() || null;
+    if (this.storagePath !== nextStoragePath) {
+      this.storagePath = nextStoragePath;
+      this.restore();
+    }
   }
 
   /**
@@ -257,6 +272,7 @@ export class OperatorApprovalService {
         deleted += 1;
       }
     }
+    if (deleted > 0) this.persistAll();
     return deleted > 0;
   }
 
@@ -334,6 +350,7 @@ export class OperatorApprovalService {
         .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt))[0];
       if (oldest) this.requests.delete(oldest.id);
     }
+    this.persistAll();
   }
 
   private maybeExpire(requestId: string): void {
@@ -348,6 +365,72 @@ export class OperatorApprovalService {
 
   private genId(): string {
     return `req-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
+  }
+
+  private restore(): void {
+    this.requests.clear();
+    this.sessions.clear();
+    if (!this.storagePath || !fs.existsSync(this.storagePath)) return;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(this.storagePath, 'utf8')) as Partial<PersistedOperatorApprovalState>;
+      const now = Date.now();
+      for (const req of Array.isArray(parsed.requests) ? parsed.requests : []) {
+        if (!req || typeof req.id !== 'string' || typeof req.requestedAt !== 'string') continue;
+        if (req.status === 'approved') {
+          req.status = 'failed';
+          req.error = '服务重启后执行状态未知，请重新发起该操作';
+          req.finishedAt = new Date(now).toISOString();
+        }
+        if (req.status === 'pending') {
+          const expiresAt = new Date(req.requestedAt).getTime() + REQUEST_TTL_MS;
+          if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+            req.status = 'expired';
+          } else {
+            setTimeout(() => this.maybeExpire(req.id), expiresAt - now + 500).unref?.();
+          }
+        }
+        this.requests.set(req.id, req);
+      }
+      for (const session of Array.isArray(parsed.sessions) ? parsed.sessions : []) {
+        if (!session || typeof session.callerKey !== 'string' || typeof session.opId !== 'string') continue;
+        if (!Number.isFinite(session.expiresAt) || session.expiresAt <= now) continue;
+        this.sessions.set(`${session.callerKey}::${session.opId}::${session.argsHash}`, session);
+      }
+      this.persistAll();
+    } catch (err) {
+      this.logStore?.record({
+        category: 'system', severity: 'error', source: 'operator-approval',
+        action: 'operator.approval.restore.failed',
+        message: '运维审批状态恢复失败，已从空状态启动',
+        error: { message: (err as Error).message },
+      });
+    }
+  }
+
+  private persistAll(): void {
+    if (!this.storagePath) return;
+    try {
+      fs.mkdirSync(path.dirname(this.storagePath), { recursive: true, mode: 0o700 });
+      const state: PersistedOperatorApprovalState = {
+        version: 1,
+        requests: [...this.requests.values()]
+          .sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))
+          .slice(0, REQUEST_HISTORY_MAX),
+        sessions: [...this.sessions.values()].filter((session) => session.expiresAt > Date.now()),
+      };
+      const tempPath = `${this.storagePath}.tmp`;
+      fs.writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+      fs.chmodSync(tempPath, 0o600);
+      fs.renameSync(tempPath, this.storagePath);
+      fs.chmodSync(this.storagePath, 0o600);
+    } catch (err) {
+      this.logStore?.record({
+        category: 'system', severity: 'error', source: 'operator-approval',
+        action: 'operator.approval.persist.failed',
+        message: '运维审批状态持久化失败',
+        error: { message: (err as Error).message },
+      });
+    }
   }
 
   private logEvent(action: string, req: PendingRequest, message: string): void {

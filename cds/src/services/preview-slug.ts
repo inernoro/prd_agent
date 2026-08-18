@@ -5,16 +5,16 @@ import crypto from 'node:crypto';
  *
  * 历史背景（务必读完再改这个文件）：
  *
- * v1：分支预览 URL 是 `${branchSlug}.miduo.org`
+ * v1：分支预览 URL 是 `${branchSlug}.<root-domain>`
  *     问题：CDS 多项目改造（PR #498，2026-04-24）后，非 legacy 项目的
  *     entry 存到 canonical id `${projectSlug}-${branchSlug}` 下；裸 slug
  *     URL 在 proxy 里查不到 → auto-build 死循环 → 用户看到 HTTP 400。
  *
- * v2（2026-04-26 ceb2c01）：URL 改成 `${projectSlug}-${branchSlug}.miduo.org`
+ * v2（2026-04-26 ceb2c01）：URL 改成 `${projectSlug}-${branchSlug}.<root-domain>`
  *     问题：项目名（`prd-agent`）放在最前面，"我现在在干啥"反而排到后面，
  *     用户体验上重要的信息被埋住。
  *
- * v3（本文件）：URL 改成 `${tail}-${prefix}-${projectSlug}.miduo.org`
+ * v3（本文件）：URL 改成 `${tail}-${prefix}-${projectSlug}.<root-domain>`
  *     - tail 是分支名第一个 `/` 后的部分（"在干啥"）
  *     - prefix 是 `/` 前的 agent/类型前缀（claude / cursor / feat / fix）
  *     - projectSlug 在最后（项目身份信息，最不需要常看）

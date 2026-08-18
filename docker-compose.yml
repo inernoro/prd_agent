@@ -92,8 +92,19 @@ services:
       # Root 破窗账户（可选，生产环境建议不配置或只临时使用）
       - ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}
       - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
+      # 首次建库与显式用户初始化凭据；未单独配置时后端会使用上面的破窗凭据。
+      - MAP_INITIAL_ADMIN_USERNAME=${MAP_INITIAL_ADMIN_USERNAME:-}
+      - MAP_INITIAL_ADMIN_PASSWORD=${MAP_INITIAL_ADMIN_PASSWORD:-}
       # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
+      # 稳定冒烟身份全部由部署环境注入，仓库不携带正式域名或固定公钥。
+      - StableSmokeAuthentication__NotificationTargetUsername=${STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME:-}
+      - StableSmokeAuthentication__Keys__0__KeyId=${STABLE_SMOKE_KEY_ID:-}
+      - StableSmokeAuthentication__Keys__0__Username=${STABLE_SMOKE_USERNAME:-}
+      - StableSmokeAuthentication__Keys__0__DisplayName=${STABLE_SMOKE_DISPLAY_NAME:-}
+      - StableSmokeAuthentication__Keys__0__AllowedHost=${STABLE_SMOKE_ALLOWED_HOST:-}
+      - StableSmokeAuthentication__Keys__0__PublicKey=${STABLE_SMOKE_PUBLIC_KEY:-}
+      - StableSmokeAuthentication__Keys__0__AutoProvision=${STABLE_SMOKE_AUTO_PROVISION:-false}
       # GitHub OAuth Device Flow（PR Review Agent 使用）
       # 管理员需在 GitHub 创建 OAuth App 并勾选 "Enable Device Flow"，
       # 然后在宿主机 export 这两个变量（或写进同目录 .env 文件）。Device Flow 无需 Callback URL。
@@ -105,6 +116,7 @@ services:
       # 未配置时 video-agent 的"直出模式"会返回友好错误；配置后自动启用
       - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - OpenRouter__Referer=${OPENROUTER_REFERER:-}
       # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜路径），无独立渲染容器
       # 跨进程 LLM 网关开关：生产必须显式设置。http 让 MAP 调用经 HttpLlmGatewayClient
       # 打到 llmgw-serve；inproc 只允许破玻璃回滚脚本显式设置，禁止漏配静默回退。
@@ -290,6 +302,8 @@ services:
       - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}
       - LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}
       - LLMGW_ADMIN_ENV_AUTHORITY=${LLMGW_ADMIN_ENV_AUTHORITY:-}
+      # 正式环境的 MAP 返回入口必须由部署环境注入，不能由前端按域名格式猜测。
+      - LLMGW_MAP_HOME_URL=${LLMGW_MAP_HOME_URL:?must set LLMGW_MAP_HOME_URL in production (authoritative MAP home URL)}
     read_only: true
     tmpfs:
       - /tmp

@@ -26,7 +26,29 @@
 
 import { isPubliclyPublished } from './infra-publish.js';
 
-export type InfraKind = 'mongo' | 'redis' | 'mysql' | 'postgres' | 'other';
+export type InfraKind =
+  | 'mongo'
+  | 'redis'
+  | 'mysql'
+  | 'postgres'
+  | 'sqlserver'
+  | 'clickhouse'
+  | 'rabbitmq'
+  | 'elasticsearch'
+  | 'minio'
+  | 'memcached'
+  | 'kafka'
+  | 'nats'
+  | 'other';
+
+export interface InfraKindHints {
+  id?: string;
+  name?: string;
+  basePresetId?: string;
+  containerName?: string;
+  containerPort?: number;
+  runtimePorts?: string | null;
+}
 
 export type ExposureSeverity = 'critical' | 'warn' | 'ok';
 
@@ -78,13 +100,48 @@ export interface InfraExposureReport {
   signature: string;
 }
 
-/** 按镜像名判类型。判不出给 other——不猜。 */
-export function detectInfraKind(dockerImage: string): InfraKind {
-  const l = (dockerImage || '').toLowerCase();
-  if (l.includes('mongo')) return 'mongo';
-  if (l.includes('redis')) return 'redis';
-  if (l.includes('mysql') || l.includes('mariadb')) return 'mysql';
-  if (l.includes('postgres') || l.includes('timescale')) return 'postgres';
+/**
+ * 按实际服务元数据识别数据服务。
+ *
+ * 私有仓库与摘要镜像的名字可能完全不含产品名，不能只看 image。端口和 CDS 服务
+ * 元数据同样是容器创建时真正生效的配置，因此作为有限、可解释的后备判据。
+ */
+export function detectInfraKind(dockerImage: string, hints: InfraKindHints = {}): InfraKind {
+  const labels = [dockerImage, hints.id, hints.name, hints.basePresetId, hints.containerName]
+    .map((value) => String(value || '').toLowerCase());
+  const includes = (...needles: string[]): boolean => labels.some((label) => (
+    needles.some((needle) => label.includes(needle))
+  ));
+  if (includes('mongo')) return 'mongo';
+  if (includes('redis')) return 'redis';
+  if (includes('mysql', 'mariadb')) return 'mysql';
+  if (includes('postgres', 'timescale')) return 'postgres';
+  if (includes('sqlserver', 'mssql')) return 'sqlserver';
+  if (includes('clickhouse')) return 'clickhouse';
+  if (includes('rabbitmq')) return 'rabbitmq';
+  if (includes('elasticsearch', 'opensearch')) return 'elasticsearch';
+  if (includes('minio')) return 'minio';
+  if (includes('memcached')) return 'memcached';
+  if (includes('kafka')) return 'kafka';
+  if (includes('nats')) return 'nats';
+
+  const publishedContainerPorts = [...String(hints.runtimePorts || '').matchAll(/->(\d+)\//g)]
+    .map((match) => Number(match[1]));
+  const ports = new Set([hints.containerPort, ...publishedContainerPorts].filter(Number.isFinite));
+  if (ports.has(27017)) return 'mongo';
+  if (ports.has(6379)) return 'redis';
+  if (ports.has(3306)) return 'mysql';
+  if (ports.has(5432)) return 'postgres';
+  if (ports.has(1433)) return 'sqlserver';
+  if (ports.has(8123) || ports.has(9009)) return 'clickhouse';
+  if (ports.has(5672) || ports.has(15672)) return 'rabbitmq';
+  if (ports.has(9200)) return 'elasticsearch';
+  // 9000 同时被 ClickHouse 原生协议与 MinIO 使用，不能只凭该端口猜类型。
+  // MinIO 控制台 9001 没有这个歧义；主端口场景由 image/服务元数据识别。
+  if (ports.has(9001)) return 'minio';
+  if (ports.has(11211)) return 'memcached';
+  if (ports.has(9092)) return 'kafka';
+  if (ports.has(4222)) return 'nats';
   return 'other';
 }
 
@@ -105,6 +162,17 @@ export interface FirewallGuard {
   ports: Set<number>;
 }
 
+export interface FirewallBackendSnapshot {
+  name: string;
+  /** 该后端工具是否存在。不存在不等于读取失败。 */
+  available: boolean;
+  /** null 表示连 NAT 运行态都读不到，必须从严。 */
+  dockerNatActive: boolean | null;
+  /** filter 表是否读取成功。 */
+  rulesReadable: boolean;
+  rules: string;
+}
+
 /**
  * 解析 `iptables -S DOCKER-USER` 的输出。
  *
@@ -115,16 +183,64 @@ export function parseFirewallGuard(rules: string, publicIface: string): Firewall
   const guard: FirewallGuard = { blanket: false, ports: new Set() };
   const iface = (publicIface || '').trim();
   if (!iface) return guard;
-  for (const line of (rules || '').split('\n')) {
-    const l = line.trim();
-    if (!l.startsWith('-A DOCKER-USER')) continue;
-    if (!new RegExp(`-i\\s+${iface}(\\s|$)`).test(l)) continue;
+  const lines = (rules || '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const ifacePattern = new RegExp(`-i\\s+${iface}(\\s|$)`);
+  const attachedChains = new Set<string>();
+
+  // INPUT/FORWARD 直接按公网接口挂自有链时，链内规则可以不重复写 -i。
+  // 迭代展开有限跳转，兼容 DOCKER-USER -> 自有链和多层自有链。
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const line of lines) {
+      const source = line.match(/^-A\s+(\S+)/)?.[1];
+      const target = line.match(/-j\s+(\S+)(?:\s|$)/)?.[1];
+      if (!source || !target || ['ACCEPT', 'DROP', 'REJECT', 'RETURN'].includes(target)) continue;
+      const sourceScoped = ['INPUT', 'FORWARD', 'DOCKER-USER'].includes(source)
+        ? ifacePattern.test(line)
+        : attachedChains.has(source);
+      if (sourceScoped && !attachedChains.has(target)) {
+        attachedChains.add(target);
+        changed = true;
+      }
+    }
+  }
+
+  for (const l of lines) {
+    const chain = l.match(/^-A\s+(\S+)/)?.[1];
+    if (!chain) continue;
+    const scoped = ifacePattern.test(l) || attachedChains.has(chain);
+    if (!scoped) continue;
     if (!/-j\s+(DROP|REJECT)(\s|$)/.test(l)) continue;
-    const m = l.match(/--ctorigdstport\s+(\d+)/);
+    // 数据服务是 TCP。仅有 UDP 的拒绝规则不能冒充数据库端口保护。
+    if (/-p\s+udp(?:\s|$)/.test(l)) continue;
+    const m = l.match(/--(?:ctorigdstport|dport)\s+(\d+)/);
     if (m) guard.ports.add(Number(m[1]));
     else if (!/--ctorigdstport|--dport/.test(l)) guard.blanket = true;
   }
   return guard;
+}
+
+/**
+ * 从宿主实际存在的 iptables 后端中选择防护结论。
+ * Docker NAT 可能由 nft 或 legacy 承载；任何活跃后端缺少防护都不能判为已拦截。
+ */
+export function resolveRuntimeFirewallGuard(
+  snapshots: readonly FirewallBackendSnapshot[],
+  publicIface: string,
+): FirewallGuard | null {
+  const available = snapshots.filter((snapshot) => snapshot.available);
+  if (available.some((snapshot) => snapshot.dockerNatActive === null || !snapshot.rulesReadable)) return null;
+  const active = available.filter((snapshot) => snapshot.dockerNatActive === true);
+  if (active.length === 0) return null;
+
+  const guards = active.map((snapshot) => parseFirewallGuard(snapshot.rules, publicIface));
+  const blanket = guards.every((guard) => guard.blanket);
+  const candidates = new Set(guards.flatMap((guard) => [...guard.ports]));
+  const ports = new Set([...candidates].filter((port) => (
+    guards.every((guard) => guard.blanket || guard.ports.has(port))
+  )));
+  return { blanket, ports };
 }
 
 /** 这些宿主端口是不是都被防火墙挡住了。端口读不出来时按「没挡住」处理。 */
@@ -215,8 +331,20 @@ export function detectInfraAuth(
     ...(args || []).flatMap((a) => String(a || '').split(/\s+/)),
     ...argCarryingEnv.flatMap((k) => (e[k] || '').split(/\s+/)),
   ]
+    // Docker inspect 的 Config.Cmd 既可能是逐 token 数组，也可能把完整 shell 命令
+    // 放在一个元素里。必须拆解每个元素，否则 `sh -c "redis-server --requirepass x"`
+    // 会被误判成无认证。这里只需要识别有限的认证 flag，不执行 shell。
+    //
+    // **引号必须留到这一步之后再剥**。引号本身携带语义：单引号里 shell 不做展开，
+    // 所以 `'p$ss'` 是货真价实的密码，而 `"$X"` 要看变量有没有值。在切词时就把引号
+    // 抹掉，下游的 effectiveValue 只看到 `p$ss`，无从分辨它是字面量还是解析不掉的
+    // 展开，于是把一个有口令的库判成裸奔——「说库没密码」的假警报比不报警更糟。
+    // 需要比对 flag 名时用 unquote()，值的判定交给 effectiveValue。
+    .flatMap((raw) => String(raw || '').match(/"[^"]*"|'[^']*'|[^\s]+/g) || [])
     .map((t) => String(t || '').trim().toLowerCase())
     .filter(Boolean);
+  /** 只在「比对 flag 名」时用；判定值的时候必须保留引号。 */
+  const unquote = (t: string): string => t.replace(/^(["'])([\s\S]*)\1$/, '$2');
   /**
    * 这个参数值到底有没有「真值」。
    *
@@ -247,26 +375,29 @@ export function detectInfraAuth(
     return '';
   };
   /** 开关型参数：出现即生效（`--auth`）。整 token 比对，避免 `--authenticationdatabase` 撞上。 */
-  const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.includes(f));
+  const hasFlag = (...flags: string[]): boolean => flags.some((f) => tokens.some((t) => unquote(t) === f));
   /**
    * 取值型参数：`--requirepass x` / `--requirepass=x`，**值为空就不算数**。
    * `--requirepass ""` 在 redis 里等于没有密码，它不该把库判成已认证。
    */
   const hasFlagValue = (...flags: string[]): boolean => flags.some((flag) => {
     for (let i = 0; i < tokens.length; i += 1) {
-      const t = tokens[i];
-      if (t === flag) {
+      const bare = unquote(tokens[i]);
+      if (bare === flag) {
+        // 下一个 token 保留原引号交给 effectiveValue；这里只用去引号形态判断
+        // 「它是不是又一个 flag」，避免把 `--requirepass --appendonly` 读成有值。
         const next = tokens[i + 1];
-        if (next && !next.startsWith('--') && effectiveValue(next).length > 0) return true;
+        if (next && !unquote(next).startsWith('--') && effectiveValue(next).length > 0) return true;
         continue;
       }
-      if (t.startsWith(`${flag}=`) && effectiveValue(t.slice(flag.length + 1)).length > 0) return true;
+      if (bare.startsWith(`${flag}=`) && effectiveValue(bare.slice(flag.length + 1)).length > 0) return true;
     }
     return false;
   });
   switch (kind) {
     case 'mongo':
-      return has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME')
+      return (has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME')
+          && has('MONGO_INITDB_ROOT_PASSWORD', 'MONGO_PASSWORD', 'MONGODB_PASSWORD'))
         || hasFlag('--auth')
         || hasFlagValue('--keyfile');
     case 'redis':
@@ -275,9 +406,32 @@ export function detectInfraAuth(
       return has('REDIS_PASSWORD', 'REDIS_PASS', 'REDISCLI_AUTH')
         || hasFlagValue('--requirepass', '--user', '--aclfile');
     case 'mysql':
-      return has('MYSQL_ROOT_PASSWORD', 'MYSQL_PASSWORD', 'MARIADB_ROOT_PASSWORD');
+      return has('MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD')
+        || (has('MYSQL_USER') && has('MYSQL_PASSWORD'))
+        || (has('MARIADB_USER') && has('MARIADB_PASSWORD'));
     case 'postgres':
       return has('POSTGRES_PASSWORD', 'PGPASSWORD');
+    case 'sqlserver':
+      return has('MSSQL_SA_PASSWORD', 'SA_PASSWORD');
+    case 'clickhouse':
+      return has('CLICKHOUSE_PASSWORD');
+    case 'rabbitmq':
+      return has('RABBITMQ_DEFAULT_USER') && has('RABBITMQ_DEFAULT_PASS');
+    case 'elasticsearch': {
+      const security = String(e['xpack.security.enabled'] || e.XPACK_SECURITY_ENABLED || '')
+        .trim()
+        .toLowerCase();
+      return security !== 'false' && has('ELASTIC_PASSWORD');
+    }
+    case 'minio':
+      return has('MINIO_ROOT_USER', 'MINIO_ACCESS_KEY')
+        && has('MINIO_ROOT_PASSWORD', 'MINIO_SECRET_KEY');
+    case 'memcached':
+    case 'kafka':
+    case 'nats':
+      // CDS 目录尚未给这三类服务启用认证。运行态必须把它们识别为明确无认证，
+      // 一旦发布到公网就升为最高级别告警，不能落入 unknown 后降级。
+      return false;
     default:
       return null;
   }
@@ -302,7 +456,7 @@ function describe(f: Omit<InfraExposureFinding, 'reason' | 'severity'>): { sever
   if (f.authenticated === false) {
     return {
       severity: 'critical',
-      reason: `端口发布在 ${where}（对外可达）且没有配置认证：任何人扫到这个端口就能直接读写这个库`,
+      reason: `端口发布在 ${where}（对外可达）且没有配置认证：任何人扫到这个端口就能直接读写该服务`,
     };
   }
   if (f.authenticated === null) {
@@ -329,7 +483,11 @@ export function auditInfraExposure(
   for (const svc of inputs) {
     // 停掉的容器不占端口，不构成暴露面
     if (svc.running === false) continue;
-    const kind = detectInfraKind(svc.dockerImage);
+    const kind = detectInfraKind(svc.dockerImage, {
+      id: svc.id,
+      containerName: svc.containerName,
+      runtimePorts: svc.runtimePorts,
+    });
     const boundHosts = parsePublishedHosts(svc.runtimePorts);
     // 没发布任何端口 = 完全不对外，直接跳过（区别于「读不到」）
     if (svc.runtimePorts != null && boundHosts.length === 0) continue;
@@ -353,12 +511,12 @@ export function auditInfraExposure(
   const warn = findings.filter((f) => f.severity === 'warn');
   const shielded = warn.filter((f) => f.firewallBlocked).length;
   const summary = critical.length > 0
-    ? `${critical.length} 个数据库对外可达且无认证：${critical.map((f) => f.id).join('、')}`
+    ? `${critical.length} 个基础设施服务对外可达且无认证：${critical.map((f) => f.id).join('、')}`
     : shielded > 0 && shielded === warn.length
       // 说清「靠防火墙挡着」而不是「安全了」：这份保护重启就没，不该读成已解决
-      ? `${shielded} 个数据库端口仍绑在全网卡，当前由宿主防火墙挡着（易失，重建容器才根治）`
+      ? `${shielded} 个基础设施端口仍绑在全网卡，当前由宿主防火墙挡着（易失，重建容器才根治）`
       : warn.length > 0
-        ? `${warn.length} 个数据库端口对外可达（其中 ${shielded} 个有防火墙挡着）`
+        ? `${warn.length} 个基础设施端口对外可达（其中 ${shielded} 个有防火墙挡着）`
         : `全部 ${findings.length} 个基础设施端口都没有对外暴露`;
 
   return {
@@ -368,7 +526,7 @@ export function auditInfraExposure(
     summary,
     // 只把有问题的进签名：ok 项变动不该触发重复告警
     signature: [...critical, ...warn]
-      .map((f) => `${f.severity}:${f.projectId}/${f.id}:${f.boundHosts.join(',')}`)
+      .map((f) => `${f.severity}:${f.projectId}/${f.id}:${f.boundHosts.join(',')}:${f.hostPorts.join(',')}:firewall=${f.firewallBlocked}`)
       .sort()
       .join('|'),
   };

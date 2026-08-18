@@ -526,7 +526,9 @@ jobs:
           # Tauri updater 签名
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          PRD_DESKTOP_DEFAULT_API_URL: ${{ vars.PRD_DESKTOP_DEFAULT_API_URL }}
         run: |
+          test -n "$PRD_DESKTOP_DEFAULT_API_URL" || { echo "PRD_DESKTOP_DEFAULT_API_URL is required"; exit 1; }
           echo "[INFO] Building Tauri app for target: ${{ matrix.target }}"
           if [[ "${MACOS_NOTARIZE:-false}" != "true" ]]; then
             echo "[INFO] macOS notarization disabled; signed artifacts will still be produced"
@@ -667,19 +669,14 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_API_URL: ${{ vars.PRD_DESKTOP_DEFAULT_API_URL }}
+          PRESET_SERVERS_JSON: ${{ vars.PRD_DESKTOP_PRESET_SERVERS_JSON || '[]' }}
         run: |
           TAG="${{ github.ref_name }}"
-          cat > client-config.json << 'CCEOF'
-          {
-            "version": 1,
-            "defaultApiUrl": "https://map.ebcone.net",
-            "presetServers": [
-              { "label": "map.ebcone.net", "url": "https://map.ebcone.net" },
-              { "label": "miduo.org", "url": "https://miduo.org" },
-              { "label": "sassagent.com", "url": "https://sassagent.com" }
-            ]
-          }
-          CCEOF
+          test -n "$DEFAULT_API_URL" || { echo "PRD_DESKTOP_DEFAULT_API_URL is required"; exit 1; }
+          printf '%s' "$PRESET_SERVERS_JSON" | jq -e 'type == "array"' >/dev/null
+          jq -n --arg defaultApiUrl "$DEFAULT_API_URL" --argjson presetServers "$PRESET_SERVERS_JSON" \
+            '{version: 1, defaultApiUrl: $defaultApiUrl, presetServers: $presetServers}' > client-config.json
           gh release upload "$TAG" client-config.json --clobber
           echo "[INFO] Uploaded client-config.json to $TAG"
 

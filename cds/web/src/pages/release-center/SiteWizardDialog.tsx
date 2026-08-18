@@ -282,7 +282,7 @@ export function SiteWizardDialog({
               <WizardPanel title="配置上线地址" description="上线地址用于发布后的健康检查，也是左栏那盏健康灯的判据来源。">
                 <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_160px]">
                   {draft.id ? (
-                    <Field label="上线地址" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="https://xxx.miduo.org" />
+                    <Field label="上线地址" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="https://app.example.com" />
                   ) : (
                     <Field label="生产域名" value={draft.publicUrl} onChange={(value) => onDraft((c) => ({ ...c, publicUrl: value }))} placeholder="www.example.com" />
                   )}
@@ -436,4 +436,3 @@ export function isDraftStrategyComplete(draft: SiteDraft): boolean {
   if (draft.strategyMode === 'generated-compose') return Boolean(draft.composeFile.trim() && draft.composeProject.trim());
   return Boolean(draft.buildCommand.trim() && draft.artifactDirectory.trim() && draft.publicDirectory.startsWith('/'));
 }
-

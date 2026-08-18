@@ -39,7 +39,7 @@ const FEED_LINES = [
   'detect stack · .NET 8 + React + mongo + redis',
   'build api :5000 · admin :5500 ......  ok',
   'container.observed · health checks passing',
-  'preview live · auth-flow-prd-agent.miduo.org',
+  'preview live · auth-flow.example.test',
 ];
 
 function redirectTarget(): string {

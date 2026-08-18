@@ -9,6 +9,7 @@ import {
   parseFirewallGuard,
   parsePublishedHosts,
   renderExposureReport,
+  resolveRuntimeFirewallGuard,
   type InfraExposureInput,
 } from '../../src/services/infra-exposure-audit.js';
 
@@ -54,16 +55,42 @@ describe('端口串解析（docker 的真实输出格式）', () => {
 });
 
 describe('认证判定', () => {
-  it('认得出四类库的凭据 env', () => {
-    expect(detectInfraAuth('mongo', { MONGO_INITDB_ROOT_USERNAME: 'app' })).toBe(true);
+  it('认得出 CDS 目录中全部认证型服务的凭据 env', () => {
+    expect(detectInfraAuth('mongo', {
+      MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'x',
+    })).toBe(true);
     expect(detectInfraAuth('mysql', { MYSQL_ROOT_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('mysql', {
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes', MYSQL_USER: 'app', MYSQL_PASSWORD: 'x',
+    })).toBe(true);
     expect(detectInfraAuth('postgres', { POSTGRES_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('redis', { REDIS_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('sqlserver', { MSSQL_SA_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('clickhouse', { CLICKHOUSE_PASSWORD: 'x' })).toBe(true);
+    expect(detectInfraAuth('rabbitmq', {
+      RABBITMQ_DEFAULT_USER: 'app', RABBITMQ_DEFAULT_PASS: 'x',
+    })).toBe(true);
+    expect(detectInfraAuth('elasticsearch', {
+      'xpack.security.enabled': 'true', ELASTIC_PASSWORD: 'x',
+    })).toBe(true);
+    expect(detectInfraAuth('minio', {
+      MINIO_ROOT_USER: 'app', MINIO_ROOT_PASSWORD: 'x',
+    })).toBe(true);
   });
 
   it('空 env 判为无认证', () => {
     expect(detectInfraAuth('mongo', {})).toBe(false);
     expect(detectInfraAuth('redis', undefined)).toBe(false);
+    expect(detectInfraAuth('mysql', { MYSQL_RANDOM_ROOT_PASSWORD: 'yes' })).toBe(false);
+    expect(detectInfraAuth('mysql', { MYSQL_PASSWORD: 'x' })).toBe(false);
+    expect(detectInfraAuth('sqlserver', {})).toBe(false);
+    expect(detectInfraAuth('clickhouse', {})).toBe(false);
+    expect(detectInfraAuth('rabbitmq', {})).toBe(false);
+    expect(detectInfraAuth('elasticsearch', {})).toBe(false);
+    expect(detectInfraAuth('minio', {})).toBe(false);
+    expect(detectInfraAuth('memcached', {})).toBe(false);
+    expect(detectInfraAuth('kafka', {})).toBe(false);
+    expect(detectInfraAuth('nats', {})).toBe(false);
   });
 
   /**
@@ -75,6 +102,44 @@ describe('认证判定', () => {
     expect(detectInfraKind('some/unknown-image:1')).toBe('other');
   });
 
+  it('不透明镜像按运行态容器名与目标端口识别数据库', () => {
+    expect(detectInfraKind('sha256:opaque', { containerName: 'cds-infra-orders-mysql' }))
+      .toBe('mysql');
+    expect(detectInfraKind('private/image@sha256:opaque', {
+      runtimePorts: '0.0.0.0:10001->27017/tcp',
+    })).toBe('mongo');
+
+    const report = auditInfraExposure([svc({
+      id: 'opaque-db',
+      containerName: 'custom-service',
+      dockerImage: 'sha256:opaque',
+      runtimePorts: '0.0.0.0:10442->3306/tcp',
+      env: {},
+    })]);
+    expect(report.findings[0].kind).toBe('mysql');
+    expect(report.findings[0].severity).toBe('critical');
+  });
+
+  it('不透明镜像仍按端口识别其他有状态服务', () => {
+    const matrix = [
+      [1433, 'sqlserver'],
+      [8123, 'clickhouse'],
+      [5672, 'rabbitmq'],
+      [9200, 'elasticsearch'],
+      [9001, 'minio'],
+      [11211, 'memcached'],
+      [9092, 'kafka'],
+      [4222, 'nats'],
+    ] as const;
+    for (const [port, kind] of matrix) {
+      expect(detectInfraKind('sha256:opaque', { containerPort: port })).toBe(kind);
+    }
+    expect(detectInfraKind('sha256:opaque', { containerPort: 9000 })).toBe('other');
+    expect(detectInfraKind('sha256:opaque', {
+      basePresetId: 'minio', containerPort: 9000,
+    })).toBe('minio');
+  });
+
   /**
    * 真实假阳性（2026-08-16）：某 redis 台账 env 为空、被判成「无认证 critical」，
    * 实际连上去是 `NOAUTH Authentication required`——密码写在启动参数里。
@@ -82,6 +147,7 @@ describe('认证判定', () => {
    */
   it('密码写在启动参数里也要认出来（曾经的假阳性）', () => {
     expect(detectInfraAuth('redis', {}, ['redis-server', '--requirepass', 'xxx'])).toBe(true);
+    expect(detectInfraAuth('redis', {}, ['sh', '-c', 'redis-server --requirepass xxx'])).toBe(true);
     expect(detectInfraAuth('redis', {}, ['redis-server', '--appendonly', 'yes'])).toBe(false);
     expect(detectInfraAuth('mongo', {}, ['mongod', '--auth'])).toBe(true);
     expect(detectInfraAuth('mongo', {}, ['mongod'])).toBe(false);
@@ -266,6 +332,40 @@ describe('防火墙纳入判据', () => {
     expect([...g.ports].sort()).toEqual([10001, 10002]);
   });
 
+  it('认得出 INPUT/FORWARD 按公网接口挂载的自有保护链', () => {
+    const legacyRules = [
+      '-A INPUT -i eth0 -j CDS-PUBLIC-INPUT',
+      '-A CDS-PUBLIC-INPUT -p tcp -m conntrack --ctstate NEW -j DROP',
+      '-A FORWARD -i eth0 -j CDS-PUBLIC-FORWARD',
+      '-A CDS-PUBLIC-FORWARD -p tcp -m conntrack --ctstate NEW -j DROP',
+    ].join('\n');
+    expect(parseFirewallGuard(legacyRules, 'eth0').blanket).toBe(true);
+  });
+
+  it('Docker 活跃后端有一个未保护时从严，不被另一套后端的绿灯掩盖', () => {
+    const firewall = resolveRuntimeFirewallGuard([
+      { name: 'iptables-nft', available: true, dockerNatActive: true, rulesReadable: true, rules: RULES_BLANKET },
+      { name: 'iptables-legacy', available: true, dockerNatActive: true, rulesReadable: true, rules: '-P INPUT ACCEPT' },
+    ], 'eth0');
+    expect(isFirewallBlocked([10001], firewall)).toBe(false);
+  });
+
+  it('所有活跃 Docker 后端都保护时才认定端口已拦截', () => {
+    const firewall = resolveRuntimeFirewallGuard([
+      { name: 'iptables-nft', available: true, dockerNatActive: true, rulesReadable: true, rules: RULES_BLANKET },
+      { name: 'iptables-legacy', available: true, dockerNatActive: true, rulesReadable: true, rules: RULES_PERPORT },
+    ], 'eth0');
+    expect(isFirewallBlocked([10001], firewall)).toBe(true);
+    expect(isFirewallBlocked([10002], firewall)).toBe(true);
+    expect(isFirewallBlocked([10003], firewall)).toBe(false);
+  });
+
+  it('活跃后端读取失败时返回未知，不把未知当安全', () => {
+    expect(resolveRuntimeFirewallGuard([
+      { name: 'iptables-legacy', available: true, dockerNatActive: true, rulesReadable: false, rules: '' },
+    ], 'eth0')).toBeNull();
+  });
+
   /** RETURN 是放行已建立连接，不是拦截。混进来会把「没防护」读成「有防护」。 */
   it('RETURN 不算拦截', () => {
     expect(parseFirewallGuard('-A DOCKER-USER -i eth0 -j RETURN', 'eth0').blanket).toBe(false);
@@ -315,8 +415,8 @@ describe('防火墙纳入判据', () => {
     const CODE = SRC.split('\n')
       .filter((l) => { const t = l.trim(); return !(t.startsWith('//') || t.startsWith('/*') || t.startsWith('*')); })
       .join('\n');
-    expect(CODE).toContain('iptables -S DOCKER-USER');
-    expect(CODE).toContain('parseFirewallGuard(');
+    expect(CODE).toContain("['iptables-nft', 'iptables-legacy']");
+    expect(CODE).toContain('resolveRuntimeFirewallGuard(');
     expect(CODE).toMatch(/auditInfraExposure\(inputs,\s*\{\s*firewall\s*\}\)/);
   });
 });

@@ -84,8 +84,11 @@ var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 // 本分支主入口（= MAP 所在地址），由平台在部署时注入（cds/src/services/preview-entrypoints.ts）。
 // 控制台的「返回 MAP」「教程」深链此前靠 location.hostname 剥子域后缀反推，那是 CDS 之外的
 // 又一份域名实现（根 CLAUDE.md 规则 #11 禁止），子域一改名就整片失效。改由服务端如实下发：
-// 有就用，没有（正式环境 / 非 CDS 托管）就为空，前端退回原来的推算兜底。
-var mapHomeUrl = Environment.GetEnvironmentVariable("CDS_PREVIEW_URL")?.Trim();
+// 有就用，没有就为空。正式环境必须显式注入 LLMGW_MAP_HOME_URL；CDS 预览继续消费
+// 平台下发的 CDS_PREVIEW_URL。前端不得根据某个部署域名猜正式入口。
+var mapHomeUrl = (
+    Environment.GetEnvironmentVariable("LLMGW_MAP_HOME_URL")
+    ?? Environment.GetEnvironmentVariable("CDS_PREVIEW_URL"))?.Trim();
 
 // ── Mongo 客户端（单例）──
 var mapMongoClient = new MongoClient(mongoConn);

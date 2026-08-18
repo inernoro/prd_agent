@@ -29,18 +29,8 @@
  * `replica-db-clone.ts` 的专用隔离实例上已经落过一次，这里是把它推广到全部
  * infra 服务，并收敛成唯一一份判定。
  *
- * ## 逃生阀
- *
- * `CDS_INFRA_PUBLISH_HOST` 可覆盖，逗号分隔多个地址；填 `0.0.0.0`（或 `*`）
- * 恢复「发布到全部网卡」的旧行为。**这个值等于把数据面挂上公网，只应在确知
- * 宿主处于受控内网时使用。**
- *
- * ## 不在本模块管辖范围内的东西
- *
- * 「资源公网 TCP 访问」那条路径是**有意**的对外暴露，且已经强制要求非空 IP
- * allowlist + iptables 兜底（见 `routes/branches.ts` 的
- * `applyResourceExternalFirewall`）。它自己拼 `-p 0.0.0.0:<port>`，不走这里，
- * 也不该被这里收窄——那会破坏功能而不提升安全。
+ * `CDS_INFRA_PUBLISH_HOST` 只允许覆盖为私网或回环地址。全网卡绑定在这里硬拒绝，
+ * 不能靠操作手册、技能提示或宿主防火墙来维持不变量。
  */
 
 /** Docker 默认网桥地址。CDS 各处「宿主在容器里长什么样」的兜底值。 */
@@ -99,7 +89,13 @@ export function resolveInfraPublishHosts(opts: InfraPublishHostOptions = {}): st
   const raw = (opts.override ?? env[INFRA_PUBLISH_HOST_ENV] ?? '').trim();
   if (raw) {
     const parsed = raw.split(',').map((h) => h.trim()).filter(Boolean);
-    if (parsed.length > 0) return dedupe(parsed);
+    if (parsed.length > 0) {
+      const hosts = dedupe(parsed);
+      if (isPubliclyPublished(hosts)) {
+        throw new Error(`${INFRA_PUBLISH_HOST_ENV} 只允许私网或回环地址，禁止绑定全部网卡`);
+      }
+      return hosts;
+    }
   }
   const bridge = opts.bridgeHost?.trim() || resolveDockerBridgeHost({ processEnv: env });
   return dedupe([bridge, '127.0.0.1']);
@@ -124,9 +120,8 @@ export function isPubliclyPublished(hosts: readonly string[]): boolean {
  * 塞进命令数组即可。多个地址就是多条 `-p`，Docker 支持同一宿主端口绑在不同
  * 地址上。
  *
- * `hosts` 里出现全网卡地址时退化成不带地址的 `-p <host>:<container>`——保持与
- * 逃生阀语义一致（用户显式要全网卡就给他全网卡），而不是拼出
- * `-p 0.0.0.0:x:y` 这种同义但不同形状的写法，让守卫只需要认一种形状。
+ * `hosts` 里出现全网卡地址或为空时直接拒绝。这里是部署不变量，不提供环境变量、
+ * 技能参数或控制台开关形式的逃生阀。
  */
 export function buildInfraPublishFlags(
   hostPort: number | string,
@@ -134,7 +129,7 @@ export function buildInfraPublishFlags(
   hosts: readonly string[],
 ): string[] {
   if (isPubliclyPublished(hosts)) {
-    return [`-p ${hostPort}:${containerPort}`];
+    throw new Error('基础设施端口禁止绑定全部网卡');
   }
   return hosts.map((h) => `-p ${h}:${hostPort}:${containerPort}`);
 }
@@ -166,6 +161,5 @@ export function infraPublishBindHint(output: string, hosts: readonly string[]): 
 提示：本次把端口绑在 ${hosts.join(' / ')} 上，这台宿主可能没有其中某个地址。
 排查：\`ip -o -4 addr show\` 看 docker 网桥的真实地址；若网桥不是默认的
 ${DEFAULT_DOCKER_BRIDGE_HOST}，把全局变量 CDS_DOCKER_HOST 设成实际地址即可。
-临时放开可设 ${INFRA_PUBLISH_HOST_ENV}=0.0.0.0 恢复绑全部网卡，但那会把数据面
-挂到宿主的每一张网卡上（含公网），只应在确知宿主处于受控内网时使用。`;
+请把全局变量 CDS_DOCKER_HOST 设成实际网桥地址；系统不会退回全网卡绑定。`;
 }

@@ -60,7 +60,7 @@ export function ProductMockup() {
             className="ml-4 px-3 py-1 rounded-md bg-white/[0.04] text-[11px] text-white/40 font-mono"
             style={{ letterSpacing: '0.02em' }}
           >
-            map.miduo.org / visual-agent
+            app.example.test / visual-agent
           </div>
           <div className="ml-auto text-[10px] text-white/30 uppercase" style={{ letterSpacing: '0.15em' }}>
             MAP

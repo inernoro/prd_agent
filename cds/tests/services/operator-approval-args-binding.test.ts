@@ -1,5 +1,10 @@
 import { describe, expect, it, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { OperatorApprovalService } from '../../src/services/operator-approval.js';
+import type { IShellExecutor } from '../../src/types.js';
+import type { StateService } from '../../src/services/state.js';
 
 /**
  * 2026-05-28 SECURITY 回归:Cursor Bugbot High 反馈 — session 授权范围
@@ -157,5 +162,41 @@ describe('OperatorApprovalService — session args binding', () => {
       opId: 'shell.run', args: { command: 'b' }, actor: 'ai', callerKey: 'cK_test',
     });
     expect(r4.status).toBe('pending');
+  });
+
+  it('重启后恢复待审批请求与精确参数授权', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-operator-approval-'));
+    const storagePath = path.join(dir, 'operator-approvals.json');
+    const shell = {
+      exec: async () => ({ exitCode: 0, stdout: 'ok', stderr: '' }),
+    } as unknown as IShellExecutor;
+    const init = (target: OperatorApprovalService): void => target.init({
+      shell,
+      stateService: {} as StateService,
+      repoRoot: dir,
+      storagePath,
+    });
+    try {
+      const first = new OperatorApprovalService();
+      init(first);
+      const pending = await first.submitRequest({
+        opId: 'host.stats', actor: 'ai', callerKey: 'restart-pending',
+      });
+      const approved = await first.submitRequest({
+        opId: 'shell.run', args: { command: 'echo stable' }, actor: 'ai', callerKey: 'restart-session',
+      });
+      first.approve({ requestId: approved.id, scope: 'session', approver: 'admin' });
+
+      const second = new OperatorApprovalService();
+      init(second);
+      expect(second.get(pending.id)?.status).toBe('pending');
+      const reused = await second.submitRequest({
+        opId: 'shell.run', args: { command: 'echo stable' }, actor: 'ai', callerKey: 'restart-session',
+      });
+      expect(reused.approvedScope).toBe('session');
+      expect(fs.statSync(storagePath).mode & 0o777).toBe(0o600);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

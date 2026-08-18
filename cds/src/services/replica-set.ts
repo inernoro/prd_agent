@@ -116,14 +116,18 @@ export class ReplicaSetService {
   /**
    * 专用隔离实例的端口发布地址（Codex 第三十八轮 P1）：取 `CDS_HOST`，也就是副本
    * 容器连接串里实际用的那个 docker 网桥地址。只发布在这一个地址上，宿主之外
-   * 够不着这份生产派生克隆。取不到时返回 undefined，退回旧的全网卡行为（宁可
-   * 保持功能可用，也不猜一个地址把隔离打死）。
+   * 够不着这份生产派生克隆。取不到或拿到全网卡地址时直接拒绝创建，不能以功能
+   * 可用为由把数据端口降级发布到公网。
    */
-  private dockerBridgeHost(): string | undefined {
+  private dockerBridgeHost(): string {
     try {
-      return this.opts.state.getCdsEnvVars()['CDS_HOST'] || undefined;
+      const host = this.opts.state.getCdsEnvVars()['CDS_HOST']?.trim() ?? '';
+      if (!host || ['0.0.0.0', '*', '::'].includes(host)) {
+        throw new Error('CDS_HOST 必须是容器可达的私网地址，禁止缺省或使用全网卡地址');
+      }
+      return host;
     } catch {
-      return undefined;
+      throw new Error('无法取得安全的 CDS_HOST，拒绝创建数据库隔离实例');
     }
   }
 

@@ -17,7 +17,6 @@ import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const defaultOutputRoot = '/tmp/prd-agent-stable-smoke';
-const productionBaseUrl = 'https://map.ebcone.net';
 const credentialRegistryPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/credential-registry.json');
 
 const valueOptions = new Set([
@@ -196,17 +195,21 @@ export function validateEnvironmentConfig(name, values) {
   if (!values[`${prefix}_GW_BASE_URL`]) errors.push(`${prefix}_GW_BASE_URL`);
   if (!values[`${prefix}_GW_USER`]) errors.push(`${prefix}_GW_USER`);
   if (!values[`${prefix}_GW_PASSWORD`]) errors.push(`${prefix}_GW_PASSWORD`);
-  if (name === 'production' && values[`${prefix}_BASE_URL`]?.replace(/\/+$/, '') !== productionBaseUrl) {
-    errors.push('正式环境地址必须固定为 https://map.ebcone.net');
+  if (name === 'production') {
+    const baseUrl = values[`${prefix}_BASE_URL`]?.replace(/\/+$/, '');
+    const allowedBaseUrl = values.STABLE_SMOKE_PROD_ALLOWED_BASE_URL?.replace(/\/+$/, '');
+    if (!allowedBaseUrl) errors.push('STABLE_SMOKE_PROD_ALLOWED_BASE_URL');
+    else if (baseUrl !== allowedBaseUrl) errors.push('正式环境地址与部署注入的允许地址不一致');
   }
   return errors;
 }
 
 export function validateProductionReadOnlyConfig(values) {
   const baseUrl = values.STABLE_SMOKE_PROD_BASE_URL?.replace(/\/+$/, '');
-  return baseUrl === productionBaseUrl
-    ? []
-    : ['正式环境只读健康检查地址必须固定为 https://map.ebcone.net'];
+  const allowedBaseUrl = values.STABLE_SMOKE_PROD_ALLOWED_BASE_URL?.replace(/\/+$/, '');
+  if (!baseUrl) return ['STABLE_SMOKE_PROD_BASE_URL'];
+  if (!allowedBaseUrl) return ['STABLE_SMOKE_PROD_ALLOWED_BASE_URL'];
+  return baseUrl === allowedBaseUrl ? [] : ['正式环境只读健康检查地址与部署注入的允许地址不一致'];
 }
 
 export function validateSelectedEnvironmentConfig(environment, selected, values) {
@@ -1082,7 +1085,6 @@ export async function deliverUnhandledFailure(argv, error) {
       : ['cds', 'production'];
   const reason = error instanceof Error ? error.message : '未知执行异常';
   const providedReportUrl = '';
-  const notificationCenterUrl = `${productionBaseUrl}/?panel=notifications`;
   const summaryDocument = buildUnhandledFailureSummary({
     runId,
     selected,
@@ -1113,6 +1115,9 @@ export async function deliverUnhandledFailure(argv, error) {
       }
       const registry = readJson(credentialRegistryPath) || {};
       const values = applyCredentialRegistry({ ...local.values, ...process.env }, registry, readKeychainSecret);
+      const notificationCenterUrl = values.STABLE_SMOKE_PROD_BASE_URL
+        ? `${values.STABLE_SMOKE_PROD_BASE_URL.replace(/\/+$/, '')}/?panel=notifications`
+        : '';
       const notification = command('node', [
         'scripts/stable-smoke-notify.mjs',
         '--verdict', 'fail',
@@ -1126,7 +1131,7 @@ export async function deliverUnhandledFailure(argv, error) {
         env: {
           ...process.env,
           ...values,
-          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || productionBaseUrl,
+          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
         },
       });
       summaryDocument.notification = notification.status === 0
@@ -1182,7 +1187,6 @@ export async function deliverLockedRun(argv, dependencies = {}) {
       ? ['production']
       : ['cds', 'production'];
   const providedReportUrl = '';
-  const notificationCenterUrl = `${productionBaseUrl}/?panel=notifications`;
   const summaryDocument = buildLockedRunSummary({ runId, selected, reportUrl: providedReportUrl });
   const commandFn = dependencies.commandFn || command;
 
@@ -1201,6 +1205,9 @@ export async function deliverLockedRun(argv, dependencies = {}) {
         registry,
         dependencies.secretReader || readKeychainSecret,
       );
+      const notificationCenterUrl = values.STABLE_SMOKE_PROD_BASE_URL
+        ? `${values.STABLE_SMOKE_PROD_BASE_URL.replace(/\/+$/, '')}/?panel=notifications`
+        : '';
       const actionUrl = providedReportUrl || notificationCenterUrl;
       const notification = commandFn('node', [
         'scripts/stable-smoke-notify.mjs',
@@ -1215,7 +1222,7 @@ export async function deliverLockedRun(argv, dependencies = {}) {
         env: {
           ...process.env,
           ...values,
-          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || productionBaseUrl,
+          STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
         },
       });
       summaryDocument.notification = notification.status === 0
@@ -1351,7 +1358,6 @@ async function main() {
       preflightBlockers.push(...cdsAddressBlockers);
     }
   }
-  values.STABLE_SMOKE_PROD_BASE_URL = values.STABLE_SMOKE_PROD_BASE_URL || productionBaseUrl;
   for (const environment of selected) {
     const missing = validateSelectedEnvironmentConfig(environment, selected, values);
     if (missing.length > 0) preflightBlockers.push(`${environment === 'cds' ? 'CDS 环境' : '正式环境'}缺少：${missing.join('、')}`);
@@ -1475,7 +1481,7 @@ async function main() {
       '--scope', visualScope,
       '--cds-origin', values.STABLE_SMOKE_CDS_BASE_URL || '',
       '--cds-gateway-origin', values.STABLE_SMOKE_CDS_GW_BASE_URL || '',
-      '--production-origin', productionBaseUrl,
+      '--production-origin', values.STABLE_SMOKE_PROD_BASE_URL || '',
       '--production-gateway-origin', values.STABLE_SMOKE_PROD_GW_BASE_URL || '',
     ]);
     if (visualPlanResult.status !== 0) throw new Error('视觉取证计划生成失败，拒绝发布无逐项证据的报告');
@@ -1598,7 +1604,7 @@ async function main() {
               '--commit', values.STABLE_SMOKE_COMMIT,
               '--capture-started-at', unlockedAt,
               '--scope', 'full',
-              '--production-origin', productionBaseUrl,
+              '--production-origin', values.STABLE_SMOKE_PROD_BASE_URL || '',
             ]);
             if (productionVisualPlanResult.status !== 0) {
               throw new Error('正式环境视觉取证计划生成失败');
@@ -1784,7 +1790,7 @@ async function main() {
       '--supervisor-output', functionalSupervisorPath,
       '--technical-url', './technical-appendix.md',
       '--cds-url', values.STABLE_SMOKE_CDS_BASE_URL || '',
-      '--production-url', productionBaseUrl,
+      '--production-url', values.STABLE_SMOKE_PROD_BASE_URL || '',
       '--run-id', runId,
       '--base-url-configured', 'true',
       '--environments', selected.join(','),
@@ -1914,7 +1920,7 @@ async function main() {
           env: {
             ...process.env,
             ...values,
-            STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || productionBaseUrl,
+            STABLE_SMOKE_NOTIFY_BASE_URL: values.STABLE_SMOKE_NOTIFY_BASE_URL || values.STABLE_SMOKE_PROD_BASE_URL,
           },
         });
         return {

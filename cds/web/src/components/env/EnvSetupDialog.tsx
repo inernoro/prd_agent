@@ -68,6 +68,8 @@ export type EnvKind = 'auto' | 'required' | 'infra-derived';
 export interface EnvMetaEntry {
   kind: EnvKind;
   hint?: string;
+  requiredGroup?: string;
+  requiredOption?: string;
 }
 
 interface EnvBundle {
@@ -224,8 +226,23 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
 
   // 是否所有必填项都填了(空字符串和只含空格也算未填)
   const allRequiredFilled = useMemo(() => {
-    return groups.required.every(({ key }) => (draft[key] || '').trim().length > 0);
-  }, [groups.required, draft]);
+    if (state.status !== 'ready') return false;
+    const meta = state.bundle.envMeta || {};
+    const grouped = new Map<string, Map<string, string[]>>();
+    for (const [key, item] of Object.entries(meta)) {
+      if (item.kind !== 'required') continue;
+      if (!item.requiredGroup || !item.requiredOption) {
+        if (!(draft[key] || '').trim()) return false;
+        continue;
+      }
+      const options = grouped.get(item.requiredGroup) ?? new Map<string, string[]>();
+      options.set(item.requiredOption, [...(options.get(item.requiredOption) || []), key]);
+      grouped.set(item.requiredGroup, options);
+    }
+    return [...grouped.values()].every((options) => (
+      [...options.values()].some((keys) => keys.every((key) => (draft[key] || '').trim()))
+    ));
+  }, [state, draft]);
 
   // F12 — 检测项目是否带 schemaful DB(双信号源):
   //   1) env keys 命中 MYSQL_/POSTGRES_/MARIADB_ 前缀(含 cdscli 生成的 `CDS_` 前缀变种)

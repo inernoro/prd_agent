@@ -635,7 +635,7 @@ main { padding: 22px; max-width: 1400px; margin: 0 auto; }
           <div class="kv" style="grid-template-columns:180px minmax(0,1fr);gap:10px 16px">
             <dt>ARTIFACT_BASE</dt><dd class="mono">https://inernoro.github.io/prd_agent</dd>
             <dt>APP_PATH</dt><dd class="mono">/root/app</dd>
-            <dt>HEALTHCHECK_URL</dt><dd class="mono">https://map.miduo.org/api/version</dd>
+            <dt>HEALTHCHECK_URL</dt><dd class="mono">https://map.example.com/api/version</dd>
             <dt>DEPLOY_KEY</dt><dd class="mono">secret://cds/prd-agent/prod-deploy-key（引用）</dd>
           </div>
         </div>
@@ -692,8 +692,8 @@ main { padding: 22px; max-width: 1400px; margin: 0 auto; }
         { sha: '2f04c18', subject: 'fix(prd-api): 修正周报聚合口径' },
       ],
       envs: [
-        { id: 'prod', name: '正式环境', group: '常规', url: 'map.miduo.org', current: '06efeb6', health: 'ok', ahead: 3, last: '2026/8/9 13:54', confirm: true },
-        { id: 'stage', name: '预发环境', group: '常规', url: 'stage.miduo.org', current: '53dcf3c', health: 'ok', ahead: 0, last: '2026/8/10 15:20', confirm: false },
+        { id: 'prod', name: '正式环境', group: '常规', url: 'map.example.com', current: '06efeb6', health: 'ok', ahead: 3, last: '2026/8/9 13:54', confirm: true },
+        { id: 'stage', name: '预发环境', group: '常规', url: 'stage.example.com', current: '53dcf3c', health: 'ok', ahead: 0, last: '2026/8/10 15:20', confirm: false },
         { id: 'cust-miduo', name: '米多内网', group: '客户环境', url: 'map.miduo.local', current: '2f04c18', health: 'idle', ahead: 7, last: '2026/7/28 10:02', confirm: true },
         { id: 'cust-huadong', name: '华东制造', group: '客户环境', url: 'map.hd-mfg.cn', current: 'a71bc02', health: 'bad', ahead: 12, last: '2026/6/30 09:11', confirm: true }
       ]
@@ -706,7 +706,7 @@ main { padding: 22px; max-width: 1400px; margin: 0 auto; }
         { sha: '81bd5e4', subject: 'fix(gw): 修正 401 重试' },
       ],
       envs: [
-        { id: 'prod', name: '正式环境', group: '常规', url: 'gw.miduo.org', current: 'c40aa19', health: 'ok', ahead: 0, last: '2026/8/11 21:03', confirm: true }
+        { id: 'prod', name: '正式环境', group: '常规', url: 'gw.example.com', current: 'c40aa19', health: 'ok', ahead: 0, last: '2026/8/11 21:03', confirm: true }
       ]
     },
     'cds': {
@@ -717,8 +717,8 @@ main { padding: 22px; max-width: 1400px; margin: 0 auto; }
         { sha: '77c0a55', subject: 'fix(cds): 修正分支预览路由' },
       ],
       envs: [
-        { id: 'prod', name: '正式环境', group: '常规', url: 'cds.miduo.org', current: '77c0a55', health: 'ok', ahead: 1, last: '2026/8/12 08:40', confirm: true },
-        { id: 'canary', name: '灰度环境', group: '常规', url: 'cds-canary.miduo.org', current: 'e19f302', health: 'ok', ahead: 0, last: '2026/8/12 09:02', confirm: false }
+        { id: 'prod', name: '正式环境', group: '常规', url: 'cds.example.com', current: '77c0a55', health: 'ok', ahead: 1, last: '2026/8/12 08:40', confirm: true },
+        { id: 'canary', name: '灰度环境', group: '常规', url: 'cds-canary.example.com', current: 'e19f302', health: 'ok', ahead: 0, last: '2026/8/12 09:02', confirm: false }
       ]
     }
   };
@@ -970,7 +970,7 @@ main { padding: 22px; max-width: 1400px; margin: 0 auto; }
       kv.appendChild(el('dt', null, pair[0]));
       var dd = el('dd', 'mono');
       if (pair[1] === null) {
-        var bad = el('mark', null, 'https://git.miduo.org/');
+        var bad = el('mark', null, 'https://proxy.example.com/');
         dd.appendChild(bad);
         dd.appendChild(document.createTextNode('https://inernoro.github.io/prd_agent/dist-53dcf3c.zip'));
       } else {
@@ -1344,7 +1344,7 @@ main { padding: 22px; max-width: 1400px; margin: 0 auto; }
       '命令  ' + STEPS[run.stepIndex].cmd,
       '',
       '判据（取自日志，非推测）',
-      '- 下载地址 https://git.miduo.org/https://inernoro.github.io/prd_agent/dist-' + run.sha + '.zip',
+      '- 下载地址 https://proxy.example.com/https://inernoro.github.io/prd_agent/dist-' + run.sha + '.zip',
       '- 同一地址出现两次 https://，形如「镜像前缀 + 绝对地址」',
       '- HTTP 404 共 5 次，间隔 2s；退出码 22（curl：服务端返回 >= 400）',
       '',
@@ -1369,7 +1369,7 @@ main { padding: 22px; max-width: 1400px; margin: 0 auto; }
       '影响  生产未受影响，仍在 06efeb6',
       '',
       '判据（取自日志，非推测）',
-      '- 下载地址 https://git.miduo.org/https://inernoro.github.io/prd_agent/dist-' + item.sha + '.zip',
+      '- 下载地址 https://proxy.example.com/https://inernoro.github.io/prd_agent/dist-' + item.sha + '.zip',
       '- 同一地址出现两次 https://，形如「镜像前缀 + 绝对地址」',
       '- HTTP 404 共 5 次；退出码 22',
       '',

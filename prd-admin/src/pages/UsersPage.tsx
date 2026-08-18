@@ -6,7 +6,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Select } from '@/components/design/Select';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { Dialog } from '@/components/ui/Dialog';
-import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserDisplayName, initializeUsers, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
+import { getUsers, createUser, updateUserPassword, updateUserRole, updateUserStatus, unlockUser, forceExpireUser, forceExpireAll, updateUserDisplayName, adminImpersonate, getSystemRoles, getUserAuthz, updateUserAuthz, getAdminPermissionCatalog, getUserRateLimit, updateUserRateLimit, bulkDeleteUsers, getMiduoSsoConfig, importMiduoSsoBindings, updateMiduoSsoConfig } from '@/services';
 import { MoreVertical, Pencil, Search, UserCog, Users, Gauge, Trash2, FolderOpen, Image, Bug, Zap, Link2 } from 'lucide-react';
 import { getRoleMeta, ALL_ROLES } from '@/lib/roleConfig';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
@@ -111,7 +111,7 @@ export default function UsersPage() {
   const [miduoConfigLoading, setMiduoConfigLoading] = useState(false);
   const [miduoConfigSaving, setMiduoConfigSaving] = useState(false);
   const [miduoEnabled, setMiduoEnabled] = useState(false);
-  const [miduoBaseUrl, setMiduoBaseUrl] = useState('https://admin.ebcone.cn');
+  const [miduoBaseUrl, setMiduoBaseUrl] = useState('');
   const [miduoAppCode, setMiduoAppCode] = useState('');
   const [miduoAppSecret, setMiduoAppSecret] = useState('');
   const [miduoHasSecret, setMiduoHasSecret] = useState(false);
@@ -239,7 +239,7 @@ export default function UsersPage() {
         return;
       }
       setMiduoEnabled(res.data.enabled);
-      setMiduoBaseUrl(res.data.baseUrl || 'https://admin.ebcone.cn');
+      setMiduoBaseUrl(res.data.baseUrl || '');
       setMiduoAppCode(res.data.appCode || '');
       setMiduoHasSecret(res.data.hasAppSecret);
       setMiduoRedirectUri(res.data.redirectUri || '');
@@ -299,8 +299,8 @@ export default function UsersPage() {
     if (appCode) setMiduoAppCode(appCode);
     if (appSecret) setMiduoAppSecret(appSecret);
     if (appName) setMiduoLabel(appName);
-    setMiduoBaseUrl(normalizeUrl(baseUrl, 'https://admin.ebcone.cn'));
-    setMiduoRedirectUri(normalizeUrl(callbackUrl, 'https://map.ebcone.net/login', '/login'));
+    setMiduoBaseUrl(normalizeUrl(baseUrl, ''));
+    setMiduoRedirectUri(normalizeUrl(callbackUrl, `${window.location.origin}/login`, '/login'));
     setMiduoEnabled(true);
     toast.success('已识别交接信息', '请确认后保存配置');
   };
@@ -801,42 +801,6 @@ export default function UsersPage() {
     }
   };
 
-  const handleInitializeUsers = async () => {
-    const confirmed = await systemDialog.confirm({
-      title: '初始化用户',
-      message: '此操作将删除所有现有用户并创建默认管理员账号（admin/admin）和三个机器人账号。此操作不可撤销，确定继续吗？',
-      confirmText: '确定初始化',
-      cancelText: '取消',
-      tone: 'danger',
-    });
-    if (!confirmed) return;
-
-    const doubleConfirmed = await systemDialog.confirm({
-      title: '二次确认',
-      message: '再次确认：您确定要删除所有用户并重新初始化吗？',
-      confirmText: '确定',
-      cancelText: '取消',
-      tone: 'danger',
-    });
-    if (!doubleConfirmed) return;
-
-    try {
-      const res = await initializeUsers();
-
-      if (!res.success) {
-        toast.error('初始化失败', res.error?.message || '初始化用户失败');
-        return;
-      }
-
-      toast.success('初始化成功', `已删除 ${res.data.deletedCount} 个用户，创建了管理员账号（admin/admin）和 ${res.data.botUserIds.length} 个机器人账号`);
-
-      await load();
-    } catch (error) {
-      console.error('Initialize users error:', error);
-      toast.error('初始化失败', '初始化用户时发生错误');
-    }
-  };
-
   const handleForceExpireAll = async () => {
     const confirmed = await systemDialog.confirm({
       title: '一键过期所有令牌',
@@ -997,10 +961,6 @@ export default function UsersPage() {
             <div className="mx-0.5 h-6 w-px bg-token-nested" aria-hidden />
             <Button variant="danger" size="xs" onClick={handleForceExpireAll}>
               一键过期
-            </Button>
-            <div className="mx-0.5 h-6 w-px bg-token-nested" aria-hidden />
-            <Button variant="danger" size="xs" onClick={handleInitializeUsers}>
-              初始化
             </Button>
           </div>
         </div>
@@ -1720,7 +1680,7 @@ export default function UsersPage() {
                       value={miduoBaseUrl}
                       onChange={(e) => setMiduoBaseUrl(e.target.value)}
                       className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
-                      placeholder="https://admin.ebcone.cn"
+                      placeholder="https://admin.example.com"
                     />
                   </div>
                   <div>
@@ -1752,7 +1712,7 @@ export default function UsersPage() {
                     value={miduoRedirectUri}
                     onChange={(e) => setMiduoRedirectUri(e.target.value)}
                     className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
-                    placeholder="https://map.ebcone.net/login"
+                    placeholder={`${window.location.origin}/login`}
                   />
                 </div>
                 <div>

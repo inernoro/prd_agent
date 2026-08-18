@@ -17,7 +17,7 @@ python3 -m unittest cds/tutorial/test_publisher.py
 
 ```bash
 python3 cds/tutorial/publisher.py plan \
-  --base-url https://map.ebcone.net \
+  --base-url https://map.example.com \
   --store-id <CDS 权威教程知识库 ID>
 ```
 
@@ -27,7 +27,7 @@ python3 cds/tutorial/publisher.py plan \
 
 ```bash
 python3 cds/tutorial/publisher.py apply \
-  --base-url https://map.ebcone.net \
+  --base-url https://map.example.com \
   --store-id <CDS 权威教程知识库 ID>
 ```
 

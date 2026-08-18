@@ -97,6 +97,11 @@ services:
       - MongoDB__ConnectionString=mongodb://mongodb:27017
       - MongoDB__DatabaseName=prdagent
       - Redis__ConnectionString=redis:6379
+      # 首次管理员凭据只从宿主环境注入；专用 MAP pair 与 ROOT_ACCESS fallback 二选一。
+      - MAP_INITIAL_ADMIN_USERNAME=${MAP_INITIAL_ADMIN_USERNAME:-}
+      - MAP_INITIAL_ADMIN_PASSWORD=${MAP_INITIAL_ADMIN_PASSWORD:-}
+      - ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}
+      - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
       - Jwt__Secret=${JWT_SECRET:-YourSuperSecretKeyForJwtTokenGeneration2024!}
       - Jwt__Issuer=prdagent
       - AI_ACCESS_KEY=${AI_ACCESS_KEY:-}
@@ -127,6 +132,13 @@ services:
       - R2_ENDPOINT=${R2_ENDPOINT:-}
       # Webhook 通知中「查看详情」链接的前端基地址
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-http://localhost:5500}
+      - StableSmokeAuthentication__NotificationTargetUsername=${STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME:-}
+      - StableSmokeAuthentication__Keys__0__KeyId=${STABLE_SMOKE_KEY_ID:-}
+      - StableSmokeAuthentication__Keys__0__Username=${STABLE_SMOKE_USERNAME:-}
+      - StableSmokeAuthentication__Keys__0__DisplayName=${STABLE_SMOKE_DISPLAY_NAME:-}
+      - StableSmokeAuthentication__Keys__0__AllowedHost=${STABLE_SMOKE_ALLOWED_HOST:-}
+      - StableSmokeAuthentication__Keys__0__PublicKey=${STABLE_SMOKE_PUBLIC_KEY:-}
+      - StableSmokeAuthentication__Keys__0__AutoProvision=${STABLE_SMOKE_AUTO_PROVISION:-false}
       # GitHub OAuth Device Flow（PR Review Agent 使用）
       # 与生产 docker-compose.yml 保持一致：宿主机 export 或写入同目录 .env 即可。
       - GitHubOAuth__ClientId=${GitHubOAuth__ClientId:-}
@@ -135,6 +147,7 @@ services:
       # OpenRouter 视频生成 API（Seedance / Wan / Veo / Sora 统一入口）
       - OpenRouter__ApiKey=${OPENROUTER_API_KEY:-}
       - OpenRouter__BaseUrl=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - OpenRouter__Referer=${OPENROUTER_REFERER:-}
       # 视频生成：纯 OpenRouter 直出（2026-04-27 砍掉 Remotion 拆分镜）
     read_only: true
     tmpfs:

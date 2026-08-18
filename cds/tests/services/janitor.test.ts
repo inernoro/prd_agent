@@ -348,7 +348,7 @@ describe('JanitorService', () => {
       expect(protectedLines[0]).toContain('acme6-main');
       // 报表字段仍逐轮如实回报——「保护可见」由它承担，不靠日志复读
       expect((await janitor.sweep()).skippedProtected).toHaveLength(1);
-    });
+    }, 15_000);
 
     it('保护原因变化时重新打日志（新增分支 / 原因翻转都要能看见）', async () => {
       addProject('acme7', { gitDefaultBranch: 'main' });

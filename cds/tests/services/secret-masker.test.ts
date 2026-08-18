@@ -4,12 +4,28 @@ import {
   maskLine,
   maskSecrets,
   maskSecretsInObject,
+  maskCommandSecrets,
   maskEnvRecord,
   maskBranchExtraProfilesEnv,
   looksLikeUrlWithCredentials,
   looksLikeSecretBearingValue,
   shouldMask,
 } from '../../src/services/secret-masker.js';
+
+describe('secret-masker.maskCommandSecrets', () => {
+  it('masks sensitive CLI values in a compound shell command', () => {
+    const result = maskCommandSecrets('redis-server --appendonly yes --requirepass test-secret');
+    expect(result).toBe('redis-server --appendonly yes --requirepass ***');
+    expect(result).not.toContain('test-secret');
+  });
+
+  it('masks split-array and equals forms without changing the command shape', () => {
+    expect(maskCommandSecrets(['redis-server', '--requirepass', 'test-secret']))
+      .toEqual(['redis-server', '--requirepass', '***']);
+    expect(maskCommandSecrets(['service', '--token=test-secret']))
+      .toEqual(['service', '--token=***']);
+  });
+});
 
 /**
  * F15 secret-masker tests.

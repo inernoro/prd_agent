@@ -18,7 +18,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class InfraAgentSessionsController : ControllerBase
 {
-    private const string DefaultRemoteSmokeHost = "https://cds.miduo.org";
+    private const string UnconfiguredRemoteSmokeHost = "<configure-CDS_AGENT_SMOKE_CDS_HOST>";
     private const string ControllerSource = "infra-agent-sessions-controller";
 
     private readonly IInfraAgentSessionService _service;
@@ -419,7 +419,7 @@ public class InfraAgentSessionsController : ControllerBase
             return new SidecarCommandApplyManifest(
                 "remote_host_create_then_shared_runtime_deploy",
                 "POST",
-                $"{DefaultRemoteSmokeHost}/api/cds-system/remote-hosts then /api/cds-system/remote-hosts/<hostId>/deploy-sidecar",
+                $"{UnconfiguredRemoteSmokeHost}/api/cds-system/remote-hosts then /api/cds-system/remote-hosts/<hostId>/deploy-sidecar",
                 new[]
                 {
                     "CDS_HOST",
@@ -456,7 +456,7 @@ public class InfraAgentSessionsController : ControllerBase
                         false)
                 },
                 "SMOKE_CDS_AGENT_SHARED_POOL_REMOTE=1 bash scripts/smoke-cds-agent-shared-service-pool.sh",
-                "CDS_HOST=https://cds.miduo.org CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-preflight bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
+                "CDS_AGENT_REMOTE_HOST_POOL_RUN_DIR=/tmp/cds-agent-remote-host-pool-preflight bash scripts/run-cds-agent-remote-host-pool-with-evidence.sh",
                 new[]
                 {
                     "prepare.preflightReady",
@@ -484,7 +484,7 @@ public class InfraAgentSessionsController : ControllerBase
         return new SidecarCommandApplyManifest(
             "destructive_remote_delete_build_profile",
             "DELETE",
-            $"{DefaultRemoteSmokeHost}/api/build-profiles/{candidateProfileId}",
+            $"{UnconfiguredRemoteSmokeHost}/api/build-profiles/{candidateProfileId}",
             new[]
             {
                 "CDS_HOST",
@@ -511,7 +511,7 @@ public class InfraAgentSessionsController : ControllerBase
                     false)
             },
             "SMOKE_CDS_AGENT_BRANCH_ISOLATION_REMOTE=1 bash scripts/smoke-cds-agent-branch-isolation.sh",
-            "CDS_HOST=https://cds.miduo.org bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh",
+            "bash scripts/run-cds-agent-branch-isolation-repair-with-evidence.sh",
             new[]
             {
                 "verdict",
@@ -723,11 +723,11 @@ public class InfraAgentSessionsController : ControllerBase
         var host = configuration?["CdsAgent:SmokeCdsHost"]
             ?? configuration?["CDS_AGENT_SMOKE_CDS_HOST"]
             ?? Environment.GetEnvironmentVariable("CDS_AGENT_SMOKE_CDS_HOST")
-            ?? DefaultRemoteSmokeHost;
+            ?? string.Empty;
         host = host.Trim();
         if (string.IsNullOrWhiteSpace(host))
         {
-            host = DefaultRemoteSmokeHost;
+            host = UnconfiguredRemoteSmokeHost;
         }
 
         return $"CDS_HOST={host.TrimEnd('/')} ";

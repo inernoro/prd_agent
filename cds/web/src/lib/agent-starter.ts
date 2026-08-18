@@ -198,6 +198,7 @@ export function buildAgentStarterPrompt(input: AgentStarterPromptInput): string 
 
 export interface AgentStarterHarnessInput {
   cdsOrigin: string;
+  prdAgentOrigin?: string;
   experienceId: AgentExperienceId;
   roleId: AgentRoleId;
   selectedSkillKeys: string[];
@@ -211,6 +212,7 @@ function shellQuote(value: string): string {
 export function buildAgentStarterHarness(input: AgentStarterHarnessInput): string {
   const safeSkills = [...new Set(input.selectedSkillKeys)].filter((key) => /^[a-z0-9-]+$/.test(key));
   const origin = input.cdsOrigin.replace(/\/+$/, '');
+  const prdAgentOrigin = String(input.prdAgentOrigin || '').trim().replace(/\/+$/, '');
   const skills = safeSkills.join(' ');
   const selectedSkillsJson = JSON.stringify(safeSkills);
   const decisionContract = buildRoleDecisionContract(input.experienceId, input.roleId);
@@ -220,7 +222,7 @@ export function buildAgentStarterHarness(input: AgentStarterHarnessInput): strin
 set -eu
 
 CDS_ORIGIN=${shellQuote(origin)}
-PRD_AGENT_BASE='https://map.ebcone.net'
+PRD_AGENT_BASE=${shellQuote(prdAgentOrigin)}
 EXPERIENCE=${shellQuote(input.experienceId)}
 ROLE=${shellQuote(input.roleId)}
 SKILL_KEYS=${shellQuote(skills)}

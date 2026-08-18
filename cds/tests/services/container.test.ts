@@ -91,7 +91,7 @@ describe('ContainerService', () => {
       expect(runCmd).toBeDefined();
       expect(runCmd).toContain('--name cds-feature-a-api');
       expect(runCmd).toContain('--network cds-network');
-      expect(runCmd).toContain('-p 10001:8080');
+      expect(runCmd).toContain('-p 127.0.0.1:10001:8080');
       expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
       expect(runCmd).toContain('--env-file');
       expect(runCmd).toContain('dotnet restore && dotnet watch run');

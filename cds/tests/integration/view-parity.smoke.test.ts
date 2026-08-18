@@ -168,6 +168,7 @@ describe('View parity smoke test (list + topology)', () => {
       status: 'stopped',
       volumes: [{ name: 'cds-mongo-data', containerPath: '/data/db', type: 'volume' }],
       env: { MONGO_INITDB_ROOT_USERNAME: 'admin', MONGO_INITDB_ROOT_PASSWORD: 'x' },
+      command: ['sh', '-c', 'mongod --password test-secret'],
       createdAt: new Date().toISOString(),
     } as any);
 
@@ -285,6 +286,9 @@ describe('View parity smoke test (list + topology)', () => {
       expect(mongo).toBeTruthy();
       expect(mongo.dockerImage).toBe('mongo:8.0');
       expect(mongo.volumes).toHaveLength(1);
+      expect(mongo.env.MONGO_INITDB_ROOT_PASSWORD).toBe('***');
+      expect(mongo.command).toEqual(['sh', '-c', 'mongod --password ***']);
+      expect(JSON.stringify(mongo)).not.toContain('test-secret');
       expect(dockerProbeCalls.isRunning).toBe(0);
       expectNoLifecycleEvents();
     });

@@ -11,6 +11,7 @@
     "serve": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "drill:r2-mongo": "tsx src/cli/r2-recovery-drill.ts",
     "audit:ui": "node ../scripts/audit-cds-ui-regressions.mjs",
     "smoke:mobile-layout": "node scripts/mobile-layout-smoke.mjs",
     "install:web": "pnpm --dir web install --frozen-lockfile",
