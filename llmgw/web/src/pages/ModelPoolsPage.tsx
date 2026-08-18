@@ -1179,22 +1179,38 @@ function PoolCreateWizard({
   const canNext = step !== 1 || (draft.name.trim() !== '' && draft.modelType.trim() !== '');
   return (
     <section style={{ ...CARD_BODY, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: 'var(--fs-metric)' }}>新建模型池</h2>
-        {steps.map((label, index) => (
-          <span key={label} style={{ padding: '3px 8px', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-caption)', border: `1px solid ${step === index + 1 ? 'var(--accent)' : 'var(--border-subtle)'}`, color: step === index + 1 ? 'var(--accent)' : 'var(--text-muted)' }}>
-            {index + 1} {label}
-          </span>
-        ))}
-      </div>
+      <h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: 'var(--fs-metric)' }}>新建模型池</h2>
+      {/* 步骤是并排的大卡而不是一行小 tab：四步各占一格，当前步用边框和文字色标出，
+          让人一眼看到「一共几步、现在第几步、后面还要填什么」。 */}
+      <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: GAP.tight }}>
+        {steps.map((label, index) => {
+          const active = step === index + 1;
+          return (
+            <li key={label} style={{ padding: INSET_PADDING, borderRadius: 'var(--radius-sm)', border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`, background: active ? 'var(--accent-soft)' : 'var(--bg-elevated)' }}>
+              <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>第 {index + 1} 步</span>
+              <span style={{ display: 'block', marginTop: 2, color: active ? 'var(--accent)' : 'var(--text-secondary)', fontSize: 'var(--fs-secondary)', fontWeight: 600 }}>{label}</span>
+            </li>
+          );
+        })}
+      </ol>
 
       {step === 1 ? (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.normal, alignItems: 'center' }}>
-          <input value={draft.name} onChange={(e) => onDraftChange({ ...draft, name: e.target.value })} placeholder="模型池名称，例如客服对话" style={{ ...inputStyle, flex: '1 1 200px' }} aria-label="新模型池名称" />
-          <input value={draft.code} onChange={(e) => onDraftChange({ ...draft, code: e.target.value })} placeholder="Code 可选" style={{ ...inputStyle, width: 150 }} aria-label="模型池 Code" />
-          <input value={draft.modelType} onChange={(e) => onDraftChange({ ...draft, modelType: e.target.value })} placeholder="chat" style={{ ...inputStyle, width: 120 }} aria-label="模型类型" list="gw-pool-model-types" />
-          <datalist id="gw-pool-model-types">{modelTypes.map((type) => <option key={type} value={type} />)}</datalist>
-          <label style={inlineCheckStyle}>池优先级<input value={draft.priority} onChange={(e) => onDraftChange({ ...draft, priority: e.target.value })} placeholder="50" inputMode="numeric" style={smallInputStyle(64)} aria-label="模型池优先级" /></label>
+        // 竖排带 label 的表单：一行四个裸输入框看不出哪个是必填、哪个改完就锁死。
+        // 「创建后不可改」这种一句话就能避免返工的约束，必须写在字段旁边。
+        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.section, maxWidth: 560 }}>
+          <FormField label="池名">
+            <input value={draft.name} onChange={(e) => onDraftChange({ ...draft, name: e.target.value })} placeholder="客服对话主池" style={{ ...inputStyle, width: '100%' }} aria-label="新模型池名称" />
+          </FormField>
+          <FormField label="业务类型" hint="类型决定这个池能承接哪些调用，创建后不可改。">
+            <input value={draft.modelType} onChange={(e) => onDraftChange({ ...draft, modelType: e.target.value })} placeholder="chat" style={{ ...inputStyle, width: '100%' }} aria-label="模型类型" list="gw-pool-model-types" />
+            <datalist id="gw-pool-model-types">{modelTypes.map((type) => <option key={type} value={type} />)}</datalist>
+          </FormField>
+          <FormField label="标识与优先级">
+            <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap' }}>
+              <input value={draft.code} onChange={(e) => onDraftChange({ ...draft, code: e.target.value })} placeholder="Code 可选" style={{ ...inputStyle, flex: '1 1 160px' }} aria-label="模型池 Code" />
+              <input value={draft.priority} onChange={(e) => onDraftChange({ ...draft, priority: e.target.value })} placeholder="50" inputMode="numeric" style={{ ...inputStyle, width: 96 }} aria-label="模型池优先级" />
+            </div>
+          </FormField>
         </div>
       ) : null}
 
@@ -1231,7 +1247,11 @@ function PoolCreateWizard({
       ) : null}
 
       {step === 3 ? (
-        <input value={draft.description} onChange={(e) => onDraftChange({ ...draft, description: e.target.value })} placeholder="业务说明，会显示在池详情里给同事看" style={{ ...inputStyle, width: '100%' }} aria-label="模型池业务说明" />
+        <div style={{ maxWidth: 560 }}>
+          <FormField label="描述" hint="会显示在池详情标题下和列表悬浮提示里。">
+            <input value={draft.description} onChange={(e) => onDraftChange({ ...draft, description: e.target.value })} placeholder="给同事看的一句话，例如：只服务在线客服，夜间降级到国产模型" style={{ ...inputStyle, width: '100%' }} aria-label="模型池业务说明" />
+          </FormField>
+        </div>
       ) : null}
 
       {step === 4 ? (
@@ -1257,6 +1277,17 @@ function PoolCreateWizard({
         <Button size="sm" variant="ghost" onClick={onCancel}>取消</Button>
       </div>
     </section>
+  );
+}
+
+/** 表单字段：label 在上、控件居中、约束说明在下。三者缺一，用户就得靠猜。 */
+function FormField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+      <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)', fontWeight: 600 }}>{label}</span>
+      {children}
+      {hint ? <span style={{ ...HINT_TEXT }}>{hint}</span> : null}
+    </label>
   );
 }
 
