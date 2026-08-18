@@ -26,6 +26,8 @@ import {
   redisAuthFromServiceDefinition,
   redisProbeStdin,
   buildMysqlDumpScript,
+  buildMysqlRestoreScript,
+  buildMysqlTableCountScript,
   buildRedisAppendOnlyScript,
   buildRedisRestorePlan,
   buildRedisRdbPathScript,
@@ -442,6 +444,17 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         // 再 docker cp 进容器、在容器内解压灌库，最后清理两边。
         const uploadPath = `${backupDir}/.upload-${backupKey(svc.projectId, svc.id)}-${stamp}.sql.gz`;
         const inContainer = `/tmp/cds-restore-${stamp}.sql.gz`;
+        let uploadBytes = 0;
+        // 数不出来就留 null，不要拿 0 顶替——「没数到」和「一张表都没有」是两回事。
+        let tablesBefore: number | null = null;
+        let tablesAfter: number | null = null;
+        const countMysqlTables = async (container: string): Promise<number | null> => {
+          const r = await shell.exec(`docker exec -i ${shq(container)} sh -s`,
+            { timeout: 60_000, stdin: buildMysqlTableCountScript() });
+          if (r.exitCode !== 0) return null;
+          const n = Number((r.stdout || '').trim().split('\n').pop()?.trim());
+          return Number.isFinite(n) ? n : null;
+        };
         try {
           const fsp = await import('node:fs');
           await new Promise<void>((resolve, reject) => {
@@ -451,8 +464,16 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
             w.on('error', reject);
             req.on('error', reject);
           });
+          // 收了多少字节要自己数一遍。前面那次假成功里，「上传」这一步是否真的搬过
+          // 字节从来没人问过——文件空着照样往下走，直到最后回一句「已恢复」。
+          uploadBytes = fsp.statSync(uploadPath).size;
         } catch (err) {
           res.status(500).json({ error: `接收上传失败：${(err as Error).message}` });
+          return;
+        }
+        if (uploadBytes === 0) {
+          await shell.exec(`rm -f ${shq(uploadPath)}`).catch(() => { /* 空文件清不掉不影响结果 */ });
+          res.status(400).json({ error: '上传内容为空（收到 0 字节），未做任何改动。请确认请求体里带上了 .sql.gz 文件。' });
           return;
         }
 
@@ -471,26 +492,22 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
             { timeout: 600_000 },
           );
           if (cp.exitCode !== 0) throw new Error(`拷入容器失败：${combinedOutput(cp).trim().slice(0, 200)}`);
-          // 灌库：口令走容器内 MYSQL_PWD，不进宿主命令行。
+          tablesBefore = await countMysqlTables(svc.containerName);
+          // 灌库：口令走容器内 MYSQL_PWD，不进宿主命令行；管道两端的退出码都要检查
+          // （裸管道只会给出 mysql 那一端的，见 buildMysqlRestoreScript 的注释）。
           const load = await shell.exec(
             `docker exec -i ${shq(svc.containerName)} sh -s`,
-            {
-              timeout: 1_800_000,
-              stdin: [
-                'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
-                `gunzip -c ${shq(inContainer)} | mysql -uroot`,
-                'code=$?',
-                `rm -f ${shq(inContainer)}`,
-                'exit "$code"',
-              ].join('\n'),
-            },
+            { timeout: 1_800_000, stdin: buildMysqlRestoreScript(inContainer) },
           );
           if (load.exitCode !== 0) throw new Error(`导入失败：${combinedOutput(load).trim().slice(0, 300)}`);
+          tablesAfter = await countMysqlTables(svc.containerName);
         } catch (err) {
           res.status(500).json({ error: `恢复失败：${(err as Error).message}`, preRestoreBackup: preBackupPath });
           return;
         } finally {
           await shell.exec(`rm -f ${shq(uploadPath)}`).catch(() => { /* 暂存清不掉不影响结果 */ });
+          await shell.exec(`docker exec -i ${shq(svc.containerName)} rm -f ${shq(inContainer)}`)
+            .catch(() => { /* 容器内暂存清不掉不影响结果 */ });
         }
 
         stateService.recordDestructiveOp({
@@ -500,7 +517,12 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         res.json({
           restored: true,
           preRestoreBackup: preBackupPath,
-          message: 'MySQL 已从 dump 恢复（恢复前状态已另存，可回滚）',
+          uploadBytes,
+          tablesBefore,
+          tablesAfter,
+          // 「已恢复」这句话必须带着能被核对的数字，否则和上一版那句假成功长得一模一样。
+          message: `MySQL 已从 dump 恢复：收到 ${uploadBytes} 字节，表数 ${tablesBefore ?? '未知'} → ${tablesAfter ?? '未知'}`
+            + '（恢复前状态已另存，可回滚）',
         });
       } else {
         res.status(400).json({ error: '暂不支持该 infra 类型的自动恢复，请手动导入' });
