@@ -24,6 +24,12 @@ import { canUseCapability } from '@/lib/access';
 import { BODY_TEXT, FIELD_INPUT, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
 import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK, INSET_PADDING } from '@/lib/surface';
 
+/**
+ * 「补齐」的语义只有一份。此前上下两个 HelpPopover 把同一句话各抄了一遍，
+ * 注释还写着「不抄第二遍」——两份文案迟早一边改一边不改（判据分裂）。
+ */
+const FILL_SEMANTICS = '有则增加，无则不变：只创建缺失类型默认池，只向平台托管默认池追加兼容且未存在的模型，不覆盖、删除或重排已有成员。';
+
 const STRATEGY_LABEL: Record<number, string> = {
   0: '顺位优先', 1: '轮询', 2: '按权重', 3: '最少连接', 4: '随机', 5: '顺位优先 + 熔断',
 };
@@ -641,6 +647,21 @@ export function ModelPoolsPage() {
   const allClear = filtered.length === 0 && pools.length > 0
     && triage === 'attention' && query.trim() === '' && typeFilter === 'all';
 
+  // 类型列给「中文（code）」：用户按业务类型认池，纯 code 只有工程师读得懂。
+  // 中文名的唯一来源是平台规则表，不在前端另维护一份映射（会漂）。
+  const typeNameByCode = new Map((poolTypes?.items ?? []).map((t) => [t.code, t.name]));
+  const typeLabelOf = (pool: ModelPool) => {
+    const code = pool.modelType || 'chat';
+    const name = typeNameByCode.get(code);
+    return name ? `${name}（${code}）` : code;
+  };
+
+  const ruleTotal = poolTypes?.total ?? 0;
+  const ruleWaiting = poolTypes?.waiting ?? 0;
+  const ruleCoverageText = ruleWaiting === 0
+    ? '每类都有池'
+    : ruleWaiting >= ruleTotal ? `${ruleTotal} 类都没有池` : `缺 ${ruleWaiting} 类没有池`;
+
   const detailPool = selectedPool;
   const isCreate = drawer?.kind === 'create';
   const railPools = pools.slice().sort((a, b) => (POOL_STATUS[a.health]?.severity ?? 9) - (POOL_STATUS[b.health]?.severity ?? 9));
@@ -650,7 +671,10 @@ export function ModelPoolsPage() {
       <ParameterCapabilityOptions parameterMeta={parameterMeta} />
       <style>{COLUMN_PRIORITY_CSS}</style>
       {isCreate || detailPool ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 0 }} className="mp-detail-shell">
+        /* 列数只能由 .mp-detail-shell 说了算：内联 grid-template-columns 会盖过
+           下面那条 min-width:960px 的媒体查询，双栏永远出不来、详情被 12 行池列表
+           顶到屏幕外——媒体查询写了但一次都没生效。 */
+        <div style={{ display: 'grid', gap: 0 }} className="mp-detail-shell">
           <aside className="mp-rail" style={{ borderRight: '1px solid var(--border-subtle)', background: 'var(--bg-surface)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, padding: INSET_PADDING, borderBottom: '1px solid var(--border-subtle)' }}>
               <Button size="sm" variant="ghost" onClick={() => { setDrawer(null); setCreateStep(1); }}>返回列表</Button>
@@ -746,6 +770,12 @@ export function ModelPoolsPage() {
             {/* 分诊条：每一段都是筛选器，默认停在「需要处理」。此前页头那句「N 个池需要处理」
                 不可点击，而页面没有筛选也没有排序，需要处理的池可能在第三屏，只能一张张翻。 */}
             <section style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', ...CARD_BODY, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
+              {/* 一个池都没有时，六个全是 0 的分诊段读不出任何东西，只是把「什么都没有」
+                  说了六遍。塌成一句话，把版面让给下面那块引导。 */}
+              {pools.length === 0 ? (
+                <>{/* prose-ok: 空状态文案，只在一个池都没有时出现，是守卫认可的第 2 个出口。它替换掉的是六个全 0 的分诊段，这一屏净效果是字更少。 */}
+                <span style={{ ...BODY_TEXT, color: 'var(--text-muted)' }}>还没有池，所以没有需要处理的池</span></>
+              ) : (
               <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap' }}>
                 {TRIAGE_SEGMENTS.map((segment) => {
                   const count = segmentCount(segment.key);
@@ -764,18 +794,25 @@ export function ModelPoolsPage() {
                   );
                 })}
               </div>
+              )}
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: GAP.normal }}>
                 <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>
                   平台规则覆盖
                   <HelpPopover label="程序池类型规则">
-                    有则增加，无则不变：只创建缺失类型默认池，只向平台托管默认池追加兼容且未存在的模型，不覆盖、删除或重排已有成员。
+                    {FILL_SEMANTICS}
                   </HelpPopover>
                   <br />
-                  <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>{poolTypes?.total ?? 0} 类规则 · {poolTypes?.waiting ?? 0} 类待补模型</span>
+                  {/* 说「缺几类没有池」而不是「几类待补模型」：读者要判断的是路由有没有断，
+                      不是台账里还剩几行没填。一个池都没有时把话说到底。 */}
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
+                    {poolTypes?.total ?? 0} 类规则 · {ruleCoverageText}
+                  </span>
                 </span>
                 {canWrite ? (
                   <Button size="sm" variant="secondary" disabled={busyId === 'ensure-pool-types'} onClick={() => setShowFill((v) => !v)}>
-                    {busyId === 'ensure-pool-types' ? '正在补齐' : '补齐缺失的池与成员…'}
+                    {busyId === 'ensure-pool-types' ? '正在补齐'
+                      : pools.length === 0 ? `按平台规则创建 ${poolTypes?.total ?? 0} 个池…`
+                      : '补齐缺失的池与成员…'}
                   </Button>
                 ) : null}
               </div>
@@ -788,7 +825,7 @@ export function ModelPoolsPage() {
                   按平台规则补齐
                   {/* 补齐的完整语义与「有则增加，无则不变」同源，复用上面那个出口，不抄第二遍。 */}
                   <HelpPopover label="补齐会做什么">
-                    有则增加，无则不变：只创建缺失类型默认池，只向平台托管默认池追加兼容且未存在的模型，不覆盖、删除或重排已有成员。
+                    {FILL_SEMANTICS}
                   </HelpPopover>
                 </strong>
                 <span style={{ color: '#d29922', fontSize: 'var(--fs-caption)' }}>写操作：会建池，也会往已经在承接流量的托管池里追加成员。</span>
@@ -803,10 +840,11 @@ export function ModelPoolsPage() {
             {pools.length === 0 ? (
               <section style={{ ...CARD_BODY, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: GAP.section, paddingTop: 40, paddingBottom: 40 }}>
                 <strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-metric)' }}>还没有模型池，所有 AI 调用现在都会失败</strong>
-                <span style={{ ...BODY_TEXT }}>{canWrite ? '可以按平台规则一次性铺出各类型的默认池，也可以手动建第一个。' : '当前租户暂无模型池，请联系 Owner 或 Admin 配置。'}</span>
+                <span style={{ ...BODY_TEXT }}>{canWrite ? `平台规则已经定义了 ${ruleTotal} 类业务路由，可以按规则一次性铺出对应的池，也可以手动建第一个。` : '当前租户暂无模型池，请联系 Owner 或 Admin 配置。'}</span>
                 {canWrite ? (
                   <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap', justifyContent: 'center' }}>
-                    <Button size="sm" variant="primary" disabled={busyId === 'ensure-pool-types'} onClick={() => void ensureDefaultPools()}>按平台规则创建默认池</Button>
+                    {/* 按钮上带数量：用户点之前就知道这一下会建出几个池，而不是点完才发现。 */}
+                    <Button size="sm" variant="primary" disabled={busyId === 'ensure-pool-types'} onClick={() => void ensureDefaultPools()}>按平台规则创建 {ruleTotal} 个池</Button>
                     <Button size="sm" variant="secondary" onClick={() => { setDrawer({ kind: 'create' }); setCreateStep(1); }}>手动新建一个池</Button>
                   </div>
                 ) : null}
@@ -843,7 +881,7 @@ export function ModelPoolsPage() {
                   <div />
                 </div>
                 {filtered.map((pool) => (
-                  <PoolRow key={pool.id} pool={pool} windowText={windowText} onOpen={() => setDrawer({ kind: 'pool', poolId: pool.id })} />
+                  <PoolRow key={pool.id} pool={pool} typeLabel={typeLabelOf(pool)} onOpen={() => setDrawer({ kind: 'pool', poolId: pool.id })} />
                 ))}
                 {allClear ? (
                   <div style={{ padding: 28, textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: GAP.tight }}>
@@ -921,7 +959,7 @@ const COLUMN_PRIORITY_CSS = `
  * 一行一个池。卡片网格一屏只放得下 8 张，而且每张都在重复标签文字；改成行之后
  * 状态、证据、成功率、第 1 顺位在同一竖列上对齐，可以纵向扫描而不是横向阅读。
  */
-function PoolRow({ pool, windowText, onOpen }: { pool: ModelPool; windowText: string; onOpen: () => void }) {
+function PoolRow({ pool, typeLabel, onOpen }: { pool: ModelPool; typeLabel: string; onOpen: () => void }) {
   const status = POOL_STATUS[pool.health] || POOL_STATUS.healthy;
   const evidence = poolEvidence(pool);
   const lead = pool.models.slice().sort((a, b) => a.priority - b.priority)[0];
@@ -933,7 +971,7 @@ function PoolRow({ pool, windowText, onOpen }: { pool: ModelPool; windowText: st
       <div><Chip label={status.label} color={status.color} bg={status.bg} /></div>
       <div style={{ minWidth: 0 }}>
         <div style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-secondary)', fontWeight: 550, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pool.name}</div>
-        <div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{pool.modelType || 'chat'}</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{typeLabel}</div>
       </div>
       <div style={{ color: evidence.tone, fontSize: 'var(--fs-caption)', minWidth: 0 }}>{evidence.text}</div>
       <div style={{ minWidth: 0 }}>
@@ -952,9 +990,9 @@ function PoolRow({ pool, windowText, onOpen }: { pool: ModelPool; windowText: st
       <div className="mp-c-dur" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>
         {pool.averageDurationMs == null ? '—' : `${(pool.averageDurationMs / 1000).toFixed(1)}s`}
       </div>
-      <div className="mp-c-req" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>{pool.recentRequests}</div>
+      <div className="mp-c-req" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>{compactCount(pool.recentRequests)}</div>
       <div className="mp-c-call" style={{ textAlign: 'right', fontSize: 'var(--fs-caption)', color: pool.recentRequests === 0 ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
-        {pool.lastRequestAt ? relativeTime(pool.lastRequestAt) : `${windowText}内无请求`}
+        {pool.lastRequestAt ? relativeTime(pool.lastRequestAt) : '从未'}
       </div>
       <div className="mp-c-badge" style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap' }}>
         {pool.isDefaultForType ? <Chip label="默认池" color="var(--accent)" bg="var(--accent-soft)" /> : null}
@@ -963,6 +1001,16 @@ function PoolRow({ pool, windowText, onOpen }: { pool: ModelPool; windowText: st
       <div style={{ textAlign: 'right' }}><Button size="sm" variant="secondary" onClick={onOpen}>打开</Button></div>
     </div>
   );
+}
+
+/**
+ * 请求量在列里要能一眼比大小。128400 和 12400 等宽字体下只差一位，扫读会看错量级；
+ * 「12.8 万」和「1.2 万」不会。四位以内保持原样，那时候精确值比缩写有用。
+ */
+function compactCount(n: number): string {
+  if (n < 10000) return String(n);
+  const wan = n / 10000;
+  return `${wan >= 100 ? Math.round(wan) : wan.toFixed(1)} 万`;
 }
 
 /**
