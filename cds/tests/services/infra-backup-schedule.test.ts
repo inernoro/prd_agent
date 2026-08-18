@@ -14,6 +14,8 @@ import {
   REDIS_CONNECT_LINES,
   redisAuthFromServiceDefinition,
   redisProbeStdin,
+  buildRedisAppendOnlyScript,
+  buildRedisRestorePlan,
   buildSizeCappedCommand,
   backupKindOf,
   isAutoBackupFile,
@@ -1000,9 +1002,14 @@ describe('redis 凭据只走 stdin', () => {
   const files = ['src/index.ts', 'src/routes/infra-backup.ts']
     .map((f) => [f, fs.readFileSync(path.resolve(process.cwd(), f), 'utf8')] as const);
 
-  it('三个 redis 探测点都用 `docker exec -i ... sh -s` + stdin', () => {
-    const uses = files.flatMap(([, src]) => [...src.matchAll(/stdin: redisProbeStdin\(/g)]);
-    expect(uses.length).toBe(3);
+  it('每一处 redis 探测都用 `docker exec -i ... sh -s` + stdin', () => {
+    // 断言的是「条数相等」而不是某个魔数：新增一处探测不该让守卫变红，
+    // 新增一处**不走 stdin** 的探测才该变红。写死 3 的话，加第 4 处探测的人
+    // 会顺手把数字改成 4 了事，守卫就退化成了计数器。
+    const withStdin = files.flatMap(([, src]) => [...src.matchAll(/stdin: redisProbeStdin\(/g)]).length;
+    const shellIn = files.flatMap(([, src]) => [...src.matchAll(/docker exec -i \$\{shq\([^)]*\)\} sh -s/g)]).length;
+    expect(withStdin).toBeGreaterThanOrEqual(3);
+    expect(shellIn, '有 `sh -s` 调用没有配 stdin，脚本会从空输入读进去').toBe(withStdin);
     for (const [name, src] of files) {
       // 不许再有 `sh -c <脚本>` 形态的 redis 探测
       expect(src, `${name} 仍在用 sh -c 送 redis 探测脚本`)
@@ -1023,6 +1030,97 @@ describe('redis 凭据只走 stdin', () => {
     const payload = redisProbeStdin(buildRedisBackupProbeScript(), 'topsecret123');
     expect(cmdLine).not.toContain('topsecret123');
     expect(payload).toContain('topsecret123');   // 它只在 stdin 里
+  });
+});
+
+/**
+ * Redis 恢复的动作顺序（E35）。
+ *
+ * 上一版往**运行中**的容器写 RDB 再 `docker restart`：redis 关闭时按 save 点把
+ * 当前数据存一次盘，正好覆盖掉刚上传的快照，而接口回「已恢复」。这类缺陷没法靠
+ * 「跑一遍看看」发现——恰好是空库时结果看起来完全正确（2026-08-18 线上就是这么
+ * 侥幸躲过的）。能钉住它的只有对**顺序**的断言。
+ */
+describe('Redis 恢复顺序', () => {
+  const plan = buildRedisRestorePlan({
+    containerName: 'cds-infra-redis',
+    rdbPath: '/data/dump.rdb',
+    uploadPath: '/tmp/up.rdb',
+    preBackupPath: '/backups/pre.rdb',
+  });
+  const idx = (id: string): number => plan.findIndex((p) => p.id === id);
+
+  it('先停容器，再覆盖文件，最后启动', () => {
+    // 覆盖必须发生在 stop 之后：容器还活着时写进去，关闭时那次 save 会盖掉它。
+    expect(idx('stop')).toBeGreaterThanOrEqual(0);
+    expect(idx('overwrite')).toBeGreaterThan(idx('stop'));
+    expect(idx('start')).toBeGreaterThan(idx('overwrite'));
+  });
+
+  it('撤销快照在停止之后、覆盖之前取，拿到的才是准确的恢复前状态', () => {
+    // 停止时 redis 自己把当前数据落盘——这一步把「关闭时的 save」从对手变成帮手。
+    expect(idx('save-current')).toBeGreaterThan(idx('stop'));
+    expect(idx('save-current')).toBeLessThan(idx('overwrite'));
+  });
+
+  it('全程不碰运行中的容器（没有 docker exec，只有 cp 与生命周期）', () => {
+    for (const step of plan) {
+      expect(step.argv[0]).toBe('docker');
+      expect(['stop', 'start', 'cp']).toContain(step.argv[1]);
+    }
+  });
+
+  it('拷贝方向没写反', () => {
+    const save = plan[idx('save-current')].argv;
+    const over = plan[idx('overwrite')].argv;
+    expect(save.slice(2)).toEqual(['cds-infra-redis:/data/dump.rdb', '/backups/pre.rdb']);   // 容器 → 宿主
+    expect(over.slice(2)).toEqual(['/tmp/up.rdb', 'cds-infra-redis:/data/dump.rdb']);        // 宿主 → 容器
+  });
+
+  it('路由按这份计划执行，且不再往运行中的容器 cat 写入', () => {
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8');
+    expect(src).toContain('buildRedisRestorePlan(');
+    // 事故写法：`docker exec -i <c> sh -c 'cat > <rdb>'` + docker restart
+    expect(src).not.toMatch(/cat > \$\{shq\(rdbTarget\)\}/);
+    expect(src).not.toMatch(/docker restart \$\{shq\(svc\.containerName\)\}/);
+  });
+});
+
+/**
+ * 开着 AOF 的实例启动读 AOF 不读 RDB：写进去也不生效。这一档必须**明确拒绝**，
+ * 不能给出「已恢复」的假象——那比恢复失败更糟，用户会以为数据回来了。
+ */
+describe('AOF 实例拒绝 RDB 恢复', () => {
+  it('探测脚本问的是 appendonly，且复用同一份连接判据', () => {
+    const script = buildRedisAppendOnlyScript();
+    expect(script).toContain('CONFIG GET appendonly');
+    expect(script).toContain('grep -qx PONG');       // 走 REDIS_CONNECT_LINES
+    expect(script).not.toContain('BGSAVE');          // 只问配置，不给人家存盘
+    execFileSync('/bin/sh', ['-n'], { input: script, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  });
+
+  it('真跑：假件回 yes 就打印 yes，回 no 就打印 no', () => {
+    for (const want of ['yes', 'no']) {
+      const box = fs.mkdtempSync(path.join(os.tmpdir(), `cds-redis-aof-${want}-`));
+      fs.writeFileSync(
+        path.join(box, 'redis-cli'),
+        `#!/bin/sh\ncase "$*" in PING) echo PONG ;; 'CONFIG GET appendonly') printf 'appendonly\\n${want}\\n' ;; esac\n`,
+        { mode: 0o755 },
+      );
+      const r = spawnSync('/bin/sh', ['-s'], {
+        input: buildRedisAppendOnlyScript(),
+        encoding: 'utf8',
+        env: { PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}`, CDS_BACKUP_PROC_DIR: box },
+      });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout.trim()).toBe(want);
+    }
+  });
+
+  it('路由在 appendonly=yes 时拒绝，而不是继续写', () => {
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8');
+    expect(src).toContain('buildRedisAppendOnlyScript(');
+    expect(src).toMatch(/aof === 'yes'[\s\S]{0,200}res\.status\(409\)/);
   });
 });
 
