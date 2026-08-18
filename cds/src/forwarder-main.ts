@@ -40,6 +40,13 @@ import {
   parseHttpRequestKindValue,
   type HttpActiveRequestFilter,
 } from './services/http-log-store.js';
+import { installProcessFuse } from './services/process-fuse.js';
+
+// 数据面同样要总保险丝：forwarder 挂了所有预览域名直接 502，而它承载的恰恰是
+// 「cds-master 重启时业务零抖动」这个承诺。2026-08-18 那次事故里它和 master 一起
+// 报了 exit-code——一个后台失败不该把转发也带走。
+// 这里不接事件汇：forwarder 刻意与 master 解耦、不连 mongo，落 console 由 journal 收。
+installProcessFuse({ processName: 'cds-forwarder' });
 
 const FORWARDER_PORT = Number.parseInt(
   process.env.CDS_FORWARDER_PORT ?? '9090',

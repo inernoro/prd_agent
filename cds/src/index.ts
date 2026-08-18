@@ -77,6 +77,7 @@ import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
+import { installProcessFuse } from './services/process-fuse.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
@@ -1619,6 +1620,11 @@ const offHostAuditConfig = offHostAuditConfigFromEnv();
 const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
   ? new OffHostAuditLogSink({ primary: localServerEventLogStore, ...offHostAuditConfig })
   : localServerEventLogStore;
+// 总保险丝：后台小事失败不许弄死整台 CDS（2026-08-18 事故，见 process-fuse.ts）。
+// 装在事件汇建好之后、任何后台任务启动之前——晚一步就兜不住启动期的失败，
+// 而今天崩的恰恰就是启动期。
+installProcessFuse({ store: activeServerEventLogStore, processName: 'cds-master' });
+
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
