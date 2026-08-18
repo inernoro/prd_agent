@@ -283,10 +283,10 @@ describe('Global Agent Keys — 统一授权作用域', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
-  function seedProject(id: string): void {
+  function seedProject(id: string, slug = id): void {
     const now = new Date().toISOString();
     stateService.addProject({
-      id, slug: id, name: id, kind: 'git', legacyFlag: false, createdAt: now, updatedAt: now,
+      id, slug, name: id, kind: 'git', legacyFlag: false, createdAt: now, updatedAt: now,
     });
   }
 
@@ -471,9 +471,38 @@ describe('Global Agent Keys — 统一授权作用域', () => {
     const other = await request(server, 'PUT', '/api/projects/other-proj/preview-mode', { mode: 'port' }, { 'X-AI-Access-Key': key });
     expect(other.status).toBe(403);
     expect(other.body.error).toBe('project_mismatch');
+    const otherDetail = await request(
+      server, 'GET', '/api/projects/other-proj', undefined, { 'X-AI-Access-Key': key },
+    );
+    expect(otherDetail.status).toBe(403);
+    expect(otherDetail.body.error).toBe('project_mismatch');
+    const otherKeys = await request(
+      server, 'GET', '/api/projects/other-proj/agent-keys', undefined, { 'X-AI-Access-Key': key },
+    );
+    expect(otherKeys.status).toBe(403);
+    expect(otherKeys.body.error).toBe('project_mismatch');
     // 仍可建项目(POST /projects 先看 cdsAccess.canCreateProjects,不被别名 cdsProjectKey 挡)
     const create = await request(server, 'POST', '/api/projects', { name: 'From Single Scoped' }, { 'X-AI-Access-Key': key });
     expect(create.status).toBe(201);
+  });
+
+  it('单项目 key 使用项目 slug 访问时先解析为规范 project id', async () => {
+    seedProject('project-id-123', 'project-slug');
+    const sign = await request(server, 'POST', '/api/global-agent-keys', {
+      access: { canCreateProjects: false, projects: ['project-id-123'] },
+    });
+    const key = sign.body.plaintext as string;
+
+    const bySlug = await request(
+      server,
+      'GET',
+      '/api/projects/project-slug',
+      undefined,
+      { 'X-AI-Access-Key': key },
+    );
+
+    expect(bySlug.status).toBe(200);
+    expect(bySlug.body.id).toBe('project-id-123');
   });
 
   it('多项目(≥2)作用域签发被拒绝（Codex P1：暂不支持,防跨 router 越界）', async () => {

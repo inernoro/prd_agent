@@ -27,7 +27,7 @@ export type RouteDataSource = 'mongo' | 'json-fallback';
 export interface RouteRecord {
   /** 主键(mongo _id 字符串化形式) */
   _id: string;
-  /** 精确域名(如 demo.miduo.org)或通配 *.miduo.org */
+  /** 精确域名（如 demo.example.com）或通配根域 */
   host: string;
   /** 可选路径前缀,空串等同 "/"(命中所有路径) */
   pathPrefix?: string;

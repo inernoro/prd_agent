@@ -1,0 +1,131 @@
+name: CDS External Port Audit
+
+on:
+  push:
+    paths:
+      - '.github/workflows/cds-external-port-audit.yml'
+      - 'cds/scripts/validate-external-port-report.mjs'
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cds-external-port-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit-ipv4:
+    name: Verify ${{ matrix.environment }} public IPv4 TCP surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - cds
+          - production
+    env:
+      CDS_ALLOWED_PUBLIC_PORTS: '22,80,443'
+      AUDIT_TARGET: ${{ matrix.environment == 'cds' && secrets.CDS_EDGE_AUDIT_HOST || secrets.PRODUCTION_EDGE_AUDIT_HOST }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 目标缺失一律判失败，不降级成跳过：一条永远不会红的巡检等于没有巡检。
+      # 但失败必须**说清下一步**，否则运维只看到一行「未配置」，不知道该填什么、填哪里。
+      - name: Require off-host IPv4 target
+        run: |
+          if [ -z "$AUDIT_TARGET" ]; then
+            echo "::error::${{ matrix.environment }} 环境的 IPv4 巡检目标未配置，本次未扫描（不代表暴露面安全）。"
+            echo "需要在仓库 Secrets 配置 ${{ matrix.environment == 'cds' && 'CDS_EDGE_AUDIT_HOST' || 'PRODUCTION_EDGE_AUDIT_HOST' }}，值为该环境的**源站**公网 IPv4 地址（不要填经过 CDN 代理的域名，那样扫到的是 CDN 边缘不是主机）。"
+            exit 1
+          fi
+
+      - name: Install scanner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nmap
+
+      - name: Scan IPv4 from GitHub runner
+        id: scan
+        run: |
+          sudo nmap -4 -sS -Pn -n -p- --min-rate 5000 --max-retries 1 --host-timeout 10m -oX /tmp/public-ipv4.xml "$AUDIT_TARGET" >/dev/null
+          node cds/scripts/validate-external-port-report.mjs --xml /tmp/public-ipv4.xml --family ipv4 --out "${{ matrix.environment }}-ipv4-report.json"
+
+      # 扫过才有证据可传。扫描步骤没跑到（前置判定失败）时这一步会以「找不到文件」
+      # 再报一次错，把真正的原因埋在第二条噪音下面——所以按扫描步骤的实际结果决定传不传。
+      - name: Upload sanitized evidence
+        if: ${{ always() && steps.scan.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-port-audit-${{ matrix.environment }}-ipv4
+          path: ${{ matrix.environment }}-ipv4-report.json
+          if-no-files-found: error
+          retention-days: 30
+
+  audit-ipv6:
+    name: Verify ${{ matrix.environment }} public IPv6 TCP surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - cds
+          - production
+    env:
+      CDS_ALLOWED_PUBLIC_PORTS: '22,80,443'
+      AUDIT_TARGET: ${{ matrix.environment == 'cds' && secrets.CDS_EDGE_AUDIT_IPV6 || secrets.PRODUCTION_EDGE_AUDIT_IPV6 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 观测点自己发不出 IPv6 报文时，「扫了但一个端口都没开」与「根本没扫成」在报告里
+      # 长得一模一样（openPorts: []）。前者是暴露面结论，后者什么都不能证明——混在一起读，
+      # 就会把一次没发生的扫描当成「IPv6 很干净」。所以这条排在缺目标判定之前：
+      # 观测点不成立的时候，目标配得对不对根本不影响结论。
+      - name: Verify this runner can originate IPv6
+        run: |
+          if ! ip -6 addr show scope global 2>/dev/null | grep -q 'inet6 '; then
+            echo "::error::本次未扫描：运行器自身没有全局 IPv6 地址，发不出 IPv6 报文。"
+            echo "这条失败与目标主机无关，**不能**读作「目标的 IPv6 没有开放端口」——扫描根本没发生。"
+            echo "换一个有 IPv6 出网的观测点才能真正巡检（自托管运行器接双栈网络，或外部扫描服务）。"
+            echo "只配 Secret 不换观测点，这个 job 仍然过不了。处置见 doc/debt.cds.md 的 E34。"
+            exit 1
+          fi
+          echo "运行器具备全局 IPv6，继续扫描。"
+
+      # 与 IPv4 同一条纪律：证明不了就不算安全，缺目标判失败。
+      - name: Require off-host IPv6 target
+        run: |
+          if [ -z "$AUDIT_TARGET" ]; then
+            echo "::error::${{ matrix.environment }} 环境的 IPv6 巡检目标未配置，本次未扫描（不代表 IPv6 暴露面安全）。"
+            echo "需要在仓库 Secrets 配置 ${{ matrix.environment == 'cds' && 'CDS_EDGE_AUDIT_IPV6' || 'PRODUCTION_EDGE_AUDIT_IPV6' }}，值为该环境的**源站**全局 IPv6 地址。"
+            echo "在主机上用 'ip -6 addr show scope global' 取；只取全局地址，fe80:: 开头的链路本地地址不对外、填了扫不到。"
+            echo "若确认该主机没有全局 IPv6：这条不能靠留空变绿（留空与「忘了配」无法区分）。"
+            echo "处置见 doc/debt.cds.md 的 E34。"
+            exit 1
+          fi
+
+      - name: Install scanner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nmap
+
+      - name: Scan IPv6 from GitHub runner
+        id: scan
+        run: |
+          sudo nmap -6 -sT -Pn -n -p- --min-rate 5000 --max-retries 1 --host-timeout 10m -oX /tmp/public-ipv6.xml "$AUDIT_TARGET" >/dev/null
+          node cds/scripts/validate-external-port-report.mjs --xml /tmp/public-ipv6.xml --family ipv6 --out "${{ matrix.environment }}-ipv6-report.json"
+
+      - name: Upload sanitized evidence
+        if: ${{ always() && steps.scan.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-port-audit-${{ matrix.environment }}-ipv6
+          path: ${{ matrix.environment }}-ipv6-report.json
+          if-no-files-found: error
+          retention-days: 30

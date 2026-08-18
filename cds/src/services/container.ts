@@ -12,6 +12,7 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
+import { assertInfraAuthenticationConfigured } from './infra-auth-policy.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -1533,7 +1534,7 @@ export class ContainerService {
         `--name ${service.containerName}`,
         `--network ${netPlan.runNetwork}`,
         ...profileAliasFlags,
-        `-p ${service.hostPort}:${profile.containerPort}`,
+        `-p 127.0.0.1:${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
         ...resourceFlags,
         // 容器日志限额（2026-07-27 宕机复盘 P1）：此前所有托管容器都用 docker 默认的
@@ -2416,8 +2417,16 @@ export class ContainerService {
    * `isRunning` would converge to after each per-name probe failed).
    */
   async getRunningContainerNames(): Promise<Set<string>> {
+    return (await this.getRunningContainerNamesSnapshot()) ?? new Set<string>();
+  }
+
+  /**
+   * 与 getRunningContainerNames 相同的单次运行态采样，但保留 Docker 不可读的 unknown。
+   * 健康检查必须区分“确认没有运行”和“根本没读到”，不能把探测失败伪装成空集合。
+   */
+  async getRunningContainerNamesSnapshot(): Promise<Set<string> | null> {
     const result = await this.shell.exec(`docker ps --format "{{.Names}}"`);
-    if (result.exitCode !== 0) return new Set<string>();
+    if (result.exitCode !== 0) return null;
     return new Set(
       result.stdout
         .split('\n')
@@ -2593,6 +2602,25 @@ export class ContainerService {
     const network = this.getNetworkForProject(service.projectId);
     await this.ensureNetwork(network);
 
+    // 认证是基础设施启动协议的一部分，必须在任何复用、唤醒或新建分支之前校验。
+    // 若把门禁放在 docker run 前面，已存在容器就能借由 early return 绕过策略。
+    const resolvedEnv = customEnv
+      ? resolveEnvTemplates(service.env, customEnv)
+      : service.env;
+    const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
+    const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
+    assertInfraAuthenticationConfigured({
+      dockerImage: service.dockerImage,
+      id: service.id,
+      name: service.name,
+      basePresetId: service.basePresetId,
+      containerName: service.containerName,
+      containerPort: service.containerPort,
+      env: resolvedEnv,
+      command: resolvedCommand,
+      entrypoint: resolvedEntrypoint,
+    });
+
     // 幂等启动（2026-05-05 修 P0 bug）
     //
     // 历史行为：直接 `docker rm -f ${name}` 然后 `docker run` 重建。这条路径
@@ -2730,10 +2758,6 @@ export class ContainerService {
     // 展开 ${VAR} 引用(2026-05-01 Phase 1):用 customEnv 作 lookup
     // 表先把 service.env 里的 ${MONGO_USER} / ${MONGO_PASSWORD} 等
     // 替换成真实值。customEnv 缺失时跳过(老行为)。
-    const resolvedEnv = customEnv
-      ? resolveEnvTemplates(service.env, customEnv)
-      : service.env;
-
     // Build env flags
     const envFlags = Object.entries(resolvedEnv).map(
       ([k, v]) => `-e "${k}=${v}"`,
@@ -2786,8 +2810,6 @@ export class ContainerService {
     // 级 customEnv,不是 systemd CDS 进程 env)→ 展开成空 → redis 启动看到
     // `--requirepass ` 缺值,FATAL CONFIG ERROR 无限重启。把 command/entrypoint
     // 也过一遍同一份 customEnv 模板替换,根治。
-    const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
-    const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
     const explicitCmdParts = resolvedCommand === undefined
       ? []
       : Array.isArray(resolvedCommand)

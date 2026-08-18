@@ -20,15 +20,11 @@ interface ApiTestResult {
   serverStatus: string | null;
 }
 
-const DEFAULT_API_URL_NON_DEV = 'https://map.ebcone.net';
+const DEFAULT_API_URL_NON_DEV = '';
 const DEFAULT_API_URL_DEV = 'http://localhost:5000';
 
-/** 预设服务器列表（用户可直接选择，无需手动输入） */
-const PRESET_SERVERS = [
-  { label: 'map.ebcone.net', url: 'https://map.ebcone.net' },
-  { label: 'miduo.org', url: 'https://miduo.org' },
-  { label: 'sassagent.com', url: 'https://sassagent.com' },
-];
+/** 正式预设服务器由 release 的 client-config.json 下发。 */
+const PRESET_SERVERS: Array<{ label: string; url: string }> = [];
 
 function getDefaultApiUrl(isDeveloper: boolean, effectiveDefault?: string) {
   return isDeveloper ? DEFAULT_API_URL_DEV : (effectiveDefault ?? DEFAULT_API_URL_NON_DEV);
@@ -79,7 +75,7 @@ export default function SettingsModal() {
   const remotePresetServers = useClientConfigStore((s) => s.presetServers);
   const remoteDefaultApiUrl = useClientConfigStore((s) => s.defaultApiUrl);
 
-  // 动态配置：远程优先，硬编码兜底
+  // 动态配置：远程优先；仓库不携带正式部署域名。
   const effectivePresets = remotePresetServers ?? PRESET_SERVERS;
   const effectiveDefaultUrl = remoteDefaultApiUrl ?? DEFAULT_API_URL_NON_DEV;
 
@@ -1001,4 +997,3 @@ export default function SettingsModal() {
     </div>
   );
 }
-

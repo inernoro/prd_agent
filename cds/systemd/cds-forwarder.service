@@ -5,7 +5,7 @@
 # CDS_FORWARDER_PORT(默认 9090),消费 cds-master 写出的
 # `cds/.cds/forwarder-routes.json`。
 #
-# 核心承诺:cds-master 自更新 / 重启时,本进程不动,*.miduo.org 业务流量
+# 核心承诺：cds-master 自更新或重启时，本进程不动，预览业务流量
 # 永远 200。详见 doc/design.cds.control-data-split.md 4.1 节。
 #
 # 安装(推荐):

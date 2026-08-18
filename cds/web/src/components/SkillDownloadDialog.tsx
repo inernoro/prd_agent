@@ -21,7 +21,7 @@ import {
   type CdsConnectTarget,
 } from '@/lib/agent-onboarding';
 
-const MARKETPLACE_URL = 'https://miduo.org/marketplace?type=skill&keyword=cds';
+const MARKETPLACE_URL = String(import.meta.env.VITE_SKILL_MARKETPLACE_URL || '').trim();
 
 export interface AgentProjectOption {
   id: string;
@@ -309,12 +309,14 @@ function MarketplaceTab(): JSX.Element {
     return (
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>技能来源当前不可达，清单暂时列不出来。「项目初始化」里的安装命令仍可使用（会走本地缓存）。</p>
-        <Button asChild variant="outline">
-          <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
-            <ExternalLink className="h-4 w-4" />
-            在浏览器打开来源站点
-          </a>
-        </Button>
+        {MARKETPLACE_URL ? (
+          <Button asChild variant="outline">
+            <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
+              <ExternalLink className="h-4 w-4" />
+              在浏览器打开来源站点
+            </a>
+          </Button>
+        ) : null}
       </div>
     );
   }

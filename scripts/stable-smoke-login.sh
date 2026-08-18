@@ -79,7 +79,7 @@ if [[ -n "${AI_ACCESS_KEY:-}" ]]; then
 else
   signing_private_key="${STABLE_SMOKE_SIGNING_PRIVATE_KEY:-}"
   signing_key_id="${STABLE_SMOKE_SIGNING_KEY_ID:-}"
-  if [[ -z "$signing_private_key" && "$base_url" == "https://map.ebcone.net" ]] && command -v security >/dev/null 2>&1; then
+  if [[ -z "$signing_private_key" && "${STABLE_SMOKE_KEYCHAIN_SIGNING_ENABLED:-0}" == "1" ]] && command -v security >/dev/null 2>&1; then
     signing_private_key=$(security find-generic-password \
       -s prd-agent.stable-smoke.prod.signing-private-key \
       -a stable-smoke \

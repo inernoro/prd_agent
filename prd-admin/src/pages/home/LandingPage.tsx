@@ -91,7 +91,8 @@ function LandingInner() {
     document.getElementById('cinema')?.scrollIntoView({ behavior: 'smooth' });
   };
   const handleContact = () => {
-    window.open('mailto:contact@miduo.org', '_blank');
+    const contactEmail = String(import.meta.env.VITE_CONTACT_EMAIL || '').trim();
+    if (contactEmail) window.open(`mailto:${contactEmail}`, '_blank');
   };
 
   const navLinks = [

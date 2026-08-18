@@ -23,6 +23,7 @@ import {
   type AgentExperienceId,
   type AgentRoleId,
 } from '../lib/agent-starter'
+import { apiRequest } from '../lib/api'
 
 interface AgentStarterTabProps {
   cdsPrompt: string
@@ -119,6 +120,9 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
   const [activeSkillGroup, setActiveSkillGroup] = useState('foundation')
   const [includeCds, setIncludeCds] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [prdAgentOrigin, setPrdAgentOrigin] = useState(
+    () => String(import.meta.env.VITE_PRD_AGENT_BASE_URL || '').trim(),
+  )
 
   useEffect(() => {
     let active = true
@@ -131,6 +135,17 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
       .catch(() => {
         if (active) setSkills(FALLBACK_SKILLS)
       })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    apiRequest<{ prdAgentBaseUrl?: string }>('/api/config')
+      .then((config) => {
+        const runtimeOrigin = String(config.prdAgentBaseUrl || '').trim()
+        if (active && runtimeOrigin) setPrdAgentOrigin(runtimeOrigin)
+      })
+      .catch(() => {})
     return () => { active = false }
   }, [])
 
@@ -156,9 +171,8 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
 
   const selectedSkillItems = skills.filter((skill) => selectedSkills.includes(skill.key))
   const serviceOrigin = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
-    ? 'https://cds.miduo.org'
+    ? String(import.meta.env.VITE_CDS_PUBLIC_BASE_URL || window.location.origin).trim()
     : window.location.origin
-
   const prompt = buildAgentStarterPrompt({
     experienceId,
     roleId,
@@ -173,6 +187,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
     selectedSkillKeys: selectedSkillItems.map((skill) => skill.key),
     includeCds,
     cdsOrigin: serviceOrigin,
+    prdAgentOrigin,
   })
 
   const advance = (nextStep: number) => {

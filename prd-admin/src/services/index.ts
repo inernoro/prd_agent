@@ -334,7 +334,6 @@ import {
   unlockUserReal,
   forceExpireUserReal,
   forceExpireAllReal,
-  initializeUsersReal,
   bulkDeleteUsersReal,
   getMiduoSsoConfigReal,
   importMiduoSsoBindingsReal,
@@ -877,7 +876,6 @@ export const unlockUser: UnlockUserContract = withAuth(unlockUserReal);
 export const generateInviteCodes: GenerateInviteCodesContract = withAuth(generateInviteCodesReal);
 export const forceExpireUser: ForceExpireUserContract = withAuth(forceExpireUserReal);
 export const forceExpireAll: ForceExpireAllContract = withAuth(forceExpireAllReal);
-export const initializeUsers = withAuth(initializeUsersReal);
 export const getUserProfile: GetUserProfileContract = withAuth(getUserProfileReal);
 export const bulkDeleteUsers: BulkDeleteUsersContract = withAuth(bulkDeleteUsersReal);
 export const getMiduoSsoConfig: GetMiduoSsoConfigContract = withAuth(getMiduoSsoConfigReal);

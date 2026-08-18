@@ -399,7 +399,7 @@ export class WorktreeService {
    * Reverse-map a v1 / v2 / v3 preview-URL slug back to its remote branch name.
    *
    * Use case: subdomain auto-build. Browser hits
-   *   https://audio-upload-asr-tgr1f-claude-prd-agent.miduo.org/
+   *   https://audio-upload-asr-tgr1f-claude-prd-agent.example.com/
    * The host's leftmost label is the slug, but the actual git ref is
    * `claude/audio-upload-asr-TGR1f` (with `/`, mixed case). Without this
    * reverse mapping the user just sees "远程仓库中未找到分支 ..." even though

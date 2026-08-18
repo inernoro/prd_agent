@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Interfaces;
 using CoreGateway = PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
@@ -1760,7 +1761,18 @@ public class LlmGatewayTests
             ApiKey = "sk-test",
         };
         var http = new SequenceHttpClientFactory((200, "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"));
-        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>(), new CapturingLogWriter());
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["OpenRouter:Referer"] = "https://map.example.test/path",
+            })
+            .Build();
+        var gateway = new LlmGateway(
+            new InMemoryModelResolver(),
+            http,
+            new TestLogger<LlmGateway>(),
+            new CapturingLogWriter(),
+            configuration: configuration);
 
         var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
@@ -1777,7 +1789,7 @@ public class LlmGatewayTests
 
         Assert.True(response.Success, response.ErrorMessage);
         var headers = Assert.Single(http.RequestHeaders);
-        Assert.Equal("https://prd-agent.miduo.org", Assert.Single(headers["HTTP-Referer"]));
+        Assert.Equal("https://map.example.test", Assert.Single(headers["HTTP-Referer"]));
         Assert.Equal("G-product-agent.marketing-consult::chat", Assert.Single(headers["X-OpenRouter-Title"]));
         Assert.False(headers.ContainsKey("X-Title"));
     }
@@ -4181,7 +4193,12 @@ internal sealed class TrackingModelResolver : IModelResolver
         string? pinnedPlatformId = null,
         string? pinnedModelId = null,
         CancellationToken ct = default)
-        => Task.FromResult(ModelResolutionResult.NotFound(expectedModel, "测试不执行解析"));
+        => Task.FromResult(ModelResolutionResult.NotFound(
+            expectedModel,
+            "测试不执行解析",
+            GatewayRouteFailure.RouteConfigIncompatible,
+            "test-double",
+            appCallerCode));
 
     public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,

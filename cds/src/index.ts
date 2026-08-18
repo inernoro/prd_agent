@@ -1,6 +1,7 @@
 import http from 'node:http';
 import os from 'node:os';
 import * as v8 from 'node:v8';
+import tls from 'node:tls';
 import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -18,14 +19,22 @@ import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
 import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
 import {
-  auditInfraExposure, detectInfraKind, parseFirewallGuard, renderExposureReport, type InfraExposureInput,
+  auditInfraExposure, detectInfraKind, renderExposureReport, resolveRuntimeFirewallGuard,
+  type FirewallBackendSnapshot, type InfraExposureInput, type InfraExposureReport,
 } from './services/infra-exposure-audit.js';
 import {
   backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
-  shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
+  backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
+import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
+import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
+import {
+  externalPortAuditConfigFromEnv,
+  runExternalPortAudit,
+  type ExternalPortAuditFamily,
+} from './services/external-port-audit.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
@@ -67,6 +76,7 @@ import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } f
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
+import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
@@ -250,6 +260,12 @@ const INFRA_BACKUP_INTERVAL_MS = 6 * 60 * 60_000;
 const INFRA_BACKUP_STARTUP_DELAY_MS = 10 * 60_000;
 // 单个库的导出超时。大库慢，但卡住不放会拖住后面所有目标。
 const INFRA_BACKUP_TIMEOUT_MS = 20 * 60_000;
+const INFRA_HEALTH_INTERVAL_MS = 15 * 60_000;
+const INFRA_HEALTH_STARTUP_DELAY_MS = 2 * 60_000;
+const INFRA_BACKUP_HEALTH_FILE = '.cds-backup-health.json';
+const EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS = 30_000;
+
+let lastInfraExposureReport: InfraExposureReport | null = null;
 
 // 基础设施暴露面自检间隔。判据取 `docker ps` 的运行态真值，不读台账——
 // 台账里的 hostPort 只是个数字，说明不了绑在哪个地址上。存量容器的绑定地址
@@ -352,7 +368,7 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
       for (const line of (ps.stdout || '').split('\n')) {
         const [name, image, ports, state] = line.split('\t');
         if (!name || !image) continue;
-        if (detectInfraKind(image) === 'other') continue;
+        if (detectInfraKind(image, { containerName: name, runtimePorts: ports }) === 'other') continue;
         rows.push({ name, image, ports: ports ?? '', running: (state || '').toLowerCase() === 'running' });
       }
       if (rows.length === 0) return;
@@ -405,12 +421,31 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
         `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
         { timeout: 15_000 },
       )).stdout.trim();
-      const fwRules = await shell.exec('iptables -S DOCKER-USER 2>/dev/null', { timeout: 15_000 });
-      const firewall = pubIf && fwRules.exitCode === 0
-        ? parseFirewallGuard(fwRules.stdout || '', pubIf)
-        : null;
+      const firewallBackends: FirewallBackendSnapshot[] = [];
+      for (const tool of ['iptables-nft', 'iptables-legacy'] as const) {
+        const present = await shell.exec(`command -v ${tool} >/dev/null 2>&1`, { timeout: 15_000 });
+        if (present.exitCode !== 0) {
+          firewallBackends.push({
+            name: tool, available: false, dockerNatActive: false, rulesReadable: false, rules: '',
+          });
+          continue;
+        }
+        const [nat, filter] = await Promise.all([
+          shell.exec(`${tool} -t nat -S 2>/dev/null`, { timeout: 15_000 }),
+          shell.exec(`${tool} -S 2>/dev/null`, { timeout: 15_000 }),
+        ]);
+        firewallBackends.push({
+          name: tool,
+          available: true,
+          dockerNatActive: nat.exitCode === 0 ? /(?:^-N DOCKER$|^-A DOCKER\s)/m.test(nat.stdout || '') : null,
+          rulesReadable: filter.exitCode === 0,
+          rules: filter.stdout || '',
+        });
+      }
+      const firewall = pubIf ? resolveRuntimeFirewallGuard(firewallBackends, pubIf) : null;
 
       const report = auditInfraExposure(inputs, { firewall });
+      lastInfraExposureReport = report;
       if (report.signature === lastSignature) return;   // 状态没变就不刷屏
       lastSignature = report.signature;
 
@@ -579,7 +614,8 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         (stateService.getInfraServices() || []).map((s) => ({ ...s, running: s.status === 'running' })),
         { now: new Date() },
       );
-      if (plan.targets.length === 0) return;
+      const coverageGaps = backupCoverageGaps(plan);
+      if (plan.targets.length === 0 && coverageGaps.length === 0) return;
 
       const outcomes: BackupOutcome[] = [];
       for (const t of plan.targets) {
@@ -691,7 +727,18 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             }
           }
 
-          // 只有走到这里的产物才配拿到正式文件名。
+          // 完整性校验通过之后才上传离机副本：顺序反过来的话，会把一份截断档案
+          // 原样传到 R2，离机端拿到的是一份「校验和对得上、但解不开」的坏备份。
+          const r2 = r2BackupConfigFromEnv();
+          if (!r2) throw new Error('缺少完整 R2 配置，拒绝把仅有同机副本的备份记为成功');
+          const remote = await uploadAndVerifyR2Backup({
+            config: r2,
+            filePath: out,
+            fileName: t.fileName,
+          });
+
+          // 只有「本地解得开 + 离机副本已通过 checksum 校验」的产物才配拿到正式文件名。
+          // 任一步失败时 catch 会删掉临时文件，避免每轮重试堆积数据库大小的伪成功备份。
           const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
           if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
 
@@ -709,7 +756,15 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           for (const name of doomed) {
             await shell.exec(`rm -f ${shq(`${dir}/${name}`)}`, { timeout: 10_000 });
           }
-          outcomes.push({ id: t.id, ok: true, fileName: t.fileName, bytes, pruned: doomed });
+          outcomes.push({
+            id: t.id,
+            ok: true,
+            fileName: t.fileName,
+            bytes,
+            pruned: doomed,
+            remoteObjectKey: remote.objectKey,
+            sha256: remote.sha256,
+          });
         } catch (err) {
           // 任何失败路径都不留残骸：临时文件删掉，正式目录本来就没被碰过。
           await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
@@ -721,12 +776,33 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);
-      if (failed.length > 0) {
+      const coverageComplete = isBackupRoundHealthy(plan, outcomes);
+      if (outcomes.length > 0 || coverageGaps.length > 0) {
+        const completedAt = new Date().toISOString();
+        const health = {
+          coverageComplete,
+          completedAt: coverageComplete ? completedAt : null,
+          remoteVerifiedAt: coverageComplete ? completedAt : null,
+          coverageGaps,
+          objects: outcomes.map((outcome) => ({
+            id: outcome.id,
+            fileName: outcome.fileName,
+            remoteObjectKey: outcome.remoteObjectKey,
+            sha256: outcome.sha256,
+            bytes: outcome.bytes,
+          })),
+        };
+        const target = `${dir}/${INFRA_BACKUP_HEALTH_FILE}`;
+        const tmp = `${target}.tmp`;
+        fs.writeFileSync(tmp, `${JSON.stringify(health)}\n`, { mode: 0o600 });
+        fs.renameSync(tmp, target);
+      }
+      if (failed.length > 0 || coverageGaps.length > 0) {
         console.warn(`[infra-backup] ${summary}`);
         store?.record({
           category: 'system', severity: 'warn', source: 'infra-backup',
           action: 'infra.backup.partial-failure', message: summary, status: 'warn',
-          details: { outcomes, skipped: plan.skipped, directory: dir },
+          details: { outcomes, skipped: plan.skipped, coverageGaps, directory: dir },
         });
       } else {
         console.log(`[infra-backup] ${summary}`);
@@ -747,6 +823,147 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
   setTimeout(() => { void run(); }, INFRA_BACKUP_STARTUP_DELAY_MS).unref?.();
   const timer = setInterval(() => { void run(); }, INFRA_BACKUP_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
+async function certificateStatus(host: string): Promise<{ host: string; expiresAt?: Date | null; error?: string }> {
+  return new Promise((resolve) => {
+    const socket = tls.connect({ host, port: 443, servername: host, timeout: 10_000, rejectUnauthorized: true });
+    const finish = (value: { host: string; expiresAt?: Date | null; error?: string }): void => {
+      socket.destroy();
+      resolve(value);
+    };
+    socket.once('secureConnect', () => {
+      const cert = socket.getPeerCertificate();
+      const expiresAt = cert.valid_to ? new Date(cert.valid_to) : null;
+      finish({ host, expiresAt });
+    });
+    socket.once('timeout', () => finish({ host, expiresAt: null, error: '连接超时' }));
+    socket.once('error', (err) => finish({ host, expiresAt: null, error: err.message }));
+  });
+}
+
+const lastExternalPortAudits = new Map<ExternalPortAuditFamily, {
+  family: ExternalPortAuditFamily;
+  checkedAt: Date;
+  passed: boolean;
+  unexpectedOpenPorts: number[];
+  missingRequiredPorts: number[];
+  error?: string;
+}>();
+
+function startExternalPortAuditWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+  const auditConfig = externalPortAuditConfigFromEnv();
+  if (!auditConfig) {
+    store?.record({
+      category: 'system', severity: 'warn', source: 'external-port-audit',
+      action: 'external.port.audit.disabled', message: '公网端口外部扫描未配置', status: 'warn',
+    });
+    return null;
+  }
+  let running = false;
+  const run = async (): Promise<void> => {
+    if (running) return;
+    running = true;
+    try {
+      for (const family of ['ipv4', 'ipv6'] as const) {
+        try {
+          const result = await runExternalPortAudit({ config: auditConfig, family });
+          lastExternalPortAudits.set(family, { ...result, checkedAt: new Date(result.checkedAt) });
+          store?.record({
+            category: 'system', severity: result.passed ? 'info' : 'error', source: 'external-port-audit',
+            action: result.passed ? 'external.port.audit.passed' : 'external.port.audit.failed',
+            message: result.passed
+              ? `${family.toUpperCase()} 公网端口仅开放 22、80、443`
+              : `${family.toUpperCase()} 公网端口不符合固定白名单`,
+            status: result.passed ? 'info' : 'error',
+            details: {
+              family, checkedAt: result.checkedAt, openPorts: result.openPorts,
+              unexpectedOpenPorts: result.unexpectedOpenPorts,
+              missingRequiredPorts: result.missingRequiredPorts,
+              durationMs: result.durationMs,
+            },
+          });
+        } catch (err) {
+          const message = (err as Error).message;
+          lastExternalPortAudits.set(family, {
+            family, checkedAt: new Date(), passed: false,
+            unexpectedOpenPorts: [], missingRequiredPorts: [], error: message,
+          });
+          store?.record({
+            category: 'system', severity: 'error', source: 'external-port-audit',
+            action: 'external.port.audit.error',
+            message: `${family.toUpperCase()} 公网端口外部扫描失败`, status: 'error',
+            error: { message }, details: { family },
+          });
+        }
+      }
+    } finally {
+      running = false;
+    }
+  };
+  setTimeout(() => { void run(); }, EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, auditConfig.intervalMs);
+  timer.unref?.();
+  return timer;
+}
+
+function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Date | null } {
+  const candidates = backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot });
+  for (const dir of candidates) {
+    try {
+      const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
+        coverageComplete?: boolean; completedAt?: string; remoteVerifiedAt?: string;
+      };
+      if (value.coverageComplete === false) {
+        return { completedAt: null, remoteVerifiedAt: null };
+      }
+      return {
+        completedAt: value.completedAt ? new Date(value.completedAt) : null,
+        remoteVerifiedAt: value.remoteVerifiedAt ? new Date(value.remoteVerifiedAt) : null,
+      };
+    } catch { /* 继续检查下一个实际落盘目录 */ }
+  }
+  return { completedAt: null, remoteVerifiedAt: null };
+}
+
+function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+  let lastSignature = '';
+  const run = async (): Promise<void> => {
+    const backup = readBackupHealth();
+    const certificates = await Promise.all((config.rootDomains || []).map((host) => certificateStatus(host)));
+    const runningNames = await containerService.getRunningContainerNamesSnapshot();
+    const expectedContainers = stateService.getInfraServices()
+      .filter((service) => service.status === 'running' || service.status === 'error')
+      .map((service) => ({ name: service.containerName }));
+    const report = evaluateInfrastructureHealth({
+      now: new Date(),
+      backupCompletedAt: backup.completedAt,
+      remoteBackupVerifiedAt: backup.remoteVerifiedAt,
+      disk: defaultDiskUsage(config.repoRoot),
+      certificates,
+      containers: infrastructureContainerHealth(expectedContainers, runningNames),
+      exposureCriticalCount: lastInfraExposureReport?.criticalCount ?? null,
+      exposureWarnCount: lastInfraExposureReport?.warnCount ?? null,
+      externalPortAudits: [...lastExternalPortAudits.values()],
+    });
+    if (report.signature === lastSignature) return;
+    lastSignature = report.signature;
+    store?.record({
+      category: 'system',
+      severity: report.level === 'critical' ? 'error' : report.level === 'warn' ? 'warn' : 'info',
+      source: 'infrastructure-health',
+      action: 'infrastructure.health.checked',
+      message: report.summary,
+      status: report.level,
+      details: { items: report.items },
+    });
+  };
+  setTimeout(() => { void run(); }, INFRA_HEALTH_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, INFRA_HEALTH_INTERVAL_MS);
   timer.unref?.();
   return timer;
 }
@@ -1389,15 +1606,19 @@ if (activeHttpLogStore) {
     console.warn(`  [http-log] init failed, persistent request logging disabled: ${(err as Error).message}`);
   }
 }
-const activeServerEventLogStore = serverEventLogStoreFromEnv();
-if (activeServerEventLogStore) {
+const localServerEventLogStore = serverEventLogStoreFromEnv();
+if (localServerEventLogStore) {
   try {
-    await activeServerEventLogStore.init();
+    await localServerEventLogStore.init();
     console.log('  [server-event-log] persistent diagnostics enabled (collection=cds_server_events)');
   } catch (err) {
     console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
   }
 }
+const offHostAuditConfig = offHostAuditConfigFromEnv();
+const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
+  ? new OffHostAuditLogSink({ primary: localServerEventLogStore, ...offHostAuditConfig })
+  : localServerEventLogStore;
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
@@ -1408,6 +1629,8 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 自动备份：手工备份的实际含义是「出事那天正好没人点」。带磁盘闸与保留策略，
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
+const externalPortAuditWatchdog = startExternalPortAuditWatchdog(activeServerEventLogStore);
+const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
@@ -3750,6 +3973,10 @@ async function shutdown(signal: string): Promise<void> {
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
+  if (infraExposureAudit) clearInterval(infraExposureAudit);
+  if (infraAutoBackup) clearInterval(infraAutoBackup);
+  if (externalPortAuditWatchdog) clearInterval(externalPortAuditWatchdog);
+  if (infrastructureHealthWatchdog) clearInterval(infrastructureHealthWatchdog);
   dockerEventMonitor.stop();
   systemLogMonitor.stop();
   schedulerService.stop();
@@ -3821,7 +4048,8 @@ async function shutdown(signal: string): Promise<void> {
   }
   if (activeServerEventLogStore) {
     try {
-      await activeServerEventLogStore.close();
+      await activeServerEventLogStore.flush?.();
+      await localServerEventLogStore?.close();
       console.log('[shutdown] server event log store flushed + closed');
     } catch (err) {
       console.warn(`[shutdown] server event log store teardown failed: ${(err as Error).message}`);
@@ -4115,7 +4343,7 @@ function buildBranchAbandonedPageHtml(opts: {
 
 // Helper: collect currently-running preview branches + build their public
 // URLs so the "branch gone" page can offer live alternatives to jump to.
-// Derive the preview host ("foo.miduo.org" → "miduo.org") so links work
+// Derive the preview host ("foo.example.com" → "example.com") so links work
 // under any configured root domain without hardcoding.
 function derivePreviewHost(host: string): string | null {
   const rootDomains = config.rootDomains || (config.previewDomain ? [config.previewDomain] : []);

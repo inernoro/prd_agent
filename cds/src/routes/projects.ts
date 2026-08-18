@@ -608,18 +608,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // PUT /projects/:id/preview-mode、/comment-template、POST /projects/:id/files
   // 等没调的就是漏洞 —— 一把 projects:[] 的 key 仍能改现有项目状态。
   //
-  // 这里加一道**路由级门卫**:任何对 /projects/:id[/...] 的**变更**请求(非
-  // GET/HEAD/OPTIONS)在进入具体 handler 前,统一按 :id 做 assertProjectAccess。
+  // 这里加一道**路由级门卫**:任何对 /projects/:id[/...] 的请求在进入具体
+  // handler 前,统一按 :id 做 assertProjectAccess。只保护写请求会让列表看起来
+  // 已隔离,但机器 key 仍可直达其它项目详情或密钥元数据,形成读侧越权。
   // 只收紧"带作用域的机器 key":未授权/cookie 人类/bootstrap 静态 key 没有
   // cdsProjectKey/cdsAccess stamp → assertProjectAccess 返回 null → 照常放行,
   // 故不影响公开的授权申请路由与人类操作。POST /projects(建项目,无 :id)不匹配
   // 本正则,由其自身的 canCreateProjects 校验把关。
   router.use((req, res, next) => {
-    const method = req.method.toUpperCase();
-    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
-      next();
-      return;
-    }
     const m = /^\/(?:api\/)?projects\/([^/?]+)/.exec(req.path);
     if (!m) {
       next();
@@ -631,12 +627,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     } catch {
       targetProjectId = m[1];
     }
+    // 对外路径允许使用项目 slug，但 Agent Key 保存的是规范 project id。
+    // 鉴权必须先做同一套解析，否则“自己的项目用 slug 访问”会被误判成跨项目。
+    const canonicalProjectId = stateService.getProject(targetProjectId)?.id ?? targetProjectId;
     const mismatch = assertProjectAccess(
       req as unknown as {
         cdsProjectKey?: { projectId: string; keyId: string };
         cdsAccess?: { keyId: string; access: AgentKeyAccess };
       },
-      targetProjectId,
+      canonicalProjectId,
     );
     if (mismatch) {
       res.status(mismatch.status).json(mismatch.body);

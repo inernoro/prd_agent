@@ -84,8 +84,11 @@ var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 // 本分支主入口（= MAP 所在地址），由平台在部署时注入（cds/src/services/preview-entrypoints.ts）。
 // 控制台的「返回 MAP」「教程」深链此前靠 location.hostname 剥子域后缀反推，那是 CDS 之外的
 // 又一份域名实现（根 CLAUDE.md 规则 #11 禁止），子域一改名就整片失效。改由服务端如实下发：
-// 有就用，没有（正式环境 / 非 CDS 托管）就为空，前端退回原来的推算兜底。
-var mapHomeUrl = Environment.GetEnvironmentVariable("CDS_PREVIEW_URL")?.Trim();
+// 有就用，没有就为空。正式环境必须显式注入 LLMGW_MAP_HOME_URL；CDS 预览继续消费
+// 平台下发的 CDS_PREVIEW_URL。前端不得根据某个部署域名猜正式入口。
+var mapHomeUrl = (
+    Environment.GetEnvironmentVariable("LLMGW_MAP_HOME_URL")
+    ?? Environment.GetEnvironmentVariable("CDS_PREVIEW_URL"))?.Trim();
 
 // ── Mongo 客户端（单例）──
 var mapMongoClient = new MongoClient(mongoConn);
@@ -287,9 +290,27 @@ var costReconciliations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cos
 var costImportScopeLocks = gatewayDatabase.GetCollection<BsonDocument>("llmgw_cost_import_scope_locks");
 var legacyKeyCutovers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_cutovers");
 var legacyKeyUsage = gatewayDatabase.GetCollection<BsonDocument>("llmgw_legacy_key_usage");
-await LogicalModelCapabilityPolicy.BackfillLegacyGenerationModelsAsync(
+// 能力契约迁移：把存量逻辑模型的 Capabilities 归一到规范值并盖上契约版本。
+// 幂等——第二次启动 Rewritten=0。未知能力不丢弃，逐个点名进日志，
+// 由发布门禁（/gw/capability-audit）阻断，不允许静默带病上线。
+var capabilityMigration = await LogicalModelCapabilityPolicy.MigrateAsync(
     gwLogicalModels,
     CancellationToken.None);
+Console.WriteLine(
+    "[capability-contract] migrate scanned={0} rewritten={1} residualAliases={2} unversioned={3} unknownObjects={4}",
+    capabilityMigration.Scanned,
+    capabilityMigration.Rewritten,
+    capabilityMigration.ResidualLegacyAliases,
+    capabilityMigration.StillUnversioned,
+    capabilityMigration.UnknownFindings.Count);
+foreach (var finding in capabilityMigration.UnknownFindings)
+{
+    Console.WriteLine(
+        "[capability-contract] UNKNOWN capability on logicalModel publicId={0} modelType={1} tokens={2}",
+        finding.PublicId,
+        finding.ModelType,
+        string.Join(",", finding.UnknownCapabilities));
+}
 await BackfillInternalTenantAsync(gatewayDatabase, internalTenantId, CancellationToken.None);
 await EnsureInternalTenantAsync(
     users,
@@ -2948,6 +2969,64 @@ app.MapGet("/gw/models", async (HttpContext http, string? platformId, bool? enab
     return Json(ApiEnvelope<ModelsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// 能力契约审计：发布门禁与运维据此判断「存量配置是否已经全部归一到规范能力」。
+// 只读，不改数据；返回残留历史别名数、未打契约版本数，以及带未知能力的对象点名清单。
+// 判据与运行时同源（镜像表由 GatewayCapabilityContractMirrorGuardTests 守住），
+// 所以这里绿灯就等于运行时不会再因为能力名不兼容把候选过滤成 0。
+app.MapGet("/gw/logical-models/capability-audit", async (HttpContext http) =>
+{
+    var docs = await gwLogicalModels
+        .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty))
+        .ToListAsync();
+    var findings = new List<CapabilityMigrationFinding>();
+    var residualAliases = 0;
+    var unversioned = 0;
+
+    foreach (var doc in docs)
+    {
+        var id = doc.GetStringOrEmpty("_id");
+        var publicId = doc.GetStringOrEmpty("PublicId");
+        var modelType = doc.GetStringOrEmpty("ModelType");
+        var caps = doc.TryGetValue("Capabilities", out var cv) && cv.IsBsonArray
+            ? cv.AsBsonArray.Where(x => x.IsString).Select(x => x.AsString).ToList()
+            : new List<string>();
+        var version = doc.TryGetValue(LogicalModelCapabilityPolicy.SchemaVersionField, out var sv) && sv.IsInt32
+            ? sv.AsInt32
+            : 0;
+
+        if (caps.Any(c => LogicalModelCapabilityPolicy.LegacyAliases.ContainsKey(
+                (c ?? string.Empty).Trim().ToLowerInvariant())))
+        {
+            residualAliases++;
+        }
+        if (version != LogicalModelCapabilityPolicy.SchemaVersion) unversioned++;
+
+        var unknown = LogicalModelCapabilityPolicy.Unknown(modelType, caps);
+        if (unknown.Count > 0)
+            findings.Add(new CapabilityMigrationFinding(id, publicId.Length > 0 ? publicId : id, modelType, unknown));
+    }
+
+    var report = new CapabilityAuditData
+    {
+        SchemaVersion = LogicalModelCapabilityPolicy.SchemaVersion,
+        Scanned = docs.Count,
+        ResidualLegacyAliases = residualAliases,
+        StillUnversioned = unversioned,
+        UnknownObjects = findings
+            .Select(x => new CapabilityAuditFinding
+            {
+                PublicId = x.PublicId,
+                ModelType = x.ModelType,
+                UnknownCapabilities = x.UnknownCapabilities.ToList(),
+            })
+            .ToList(),
+    };
+    report.Clean = report.ResidualLegacyAliases == 0
+                   && report.StillUnversioned == 0
+                   && report.UnknownObjects.Count == 0;
+    return Json(ApiEnvelope<CapabilityAuditData>.Ok(report), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 // 逻辑模型目录：调用方只看到 PublicId；Offerings 展示实际 Provider/Endpoint 供运维维护。
 app.MapGet("/gw/logical-models", async (HttpContext http, string? modelType, bool? enabled) =>
 {
@@ -3000,12 +3079,15 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
 
     var now = DateTime.UtcNow;
     var id = $"gw-logical-{Guid.NewGuid():N}";
-    var capabilities = LogicalModelCapabilityPolicy.Normalize(modelType, body?.Capabilities);
+    var capabilityNormalization = LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, body?.Capabilities);
+    var capabilities = capabilityNormalization.Persisted;
     var appCallers = (body?.AllowedAppCallerCodes ?? new()).Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     var document = new BsonDocument
     {
         { "_id", id }, { "TenantId", tenantId }, { "PublicId", publicId }, { "PublicIdNormalized", normalized },
         { "Name", name }, { "ModelType", modelType }, { "Capabilities", new BsonArray(capabilities) },
+        // 写入即打契约版本：没有版本的文档一律被迁移当成存量重算，避免新写入的数据也要靠迁移兜底。
+        { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
         { "AllowedAppCallerCodes", new BsonArray(appCallers) }, { "RoutingStrategy", strategy },
         { "Enabled", true }, { "DisplayOrder", Math.Clamp(body?.DisplayOrder ?? 100, 0, 10000) },
         { "Description", string.IsNullOrWhiteSpace(body?.Description) ? BsonNull.Value : body.Description.Trim() },
@@ -3078,6 +3160,9 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
         var existingModelType = existing?.GetStringOrEmpty("ModelType") ?? string.Empty;
         var capabilities = LogicalModelCapabilityPolicy.Normalize(existingModelType, body.Capabilities);
         updates.Add(Builders<BsonDocument>.Update.Set("Capabilities", new BsonArray(capabilities)));
+        updates.Add(Builders<BsonDocument>.Update.Set(
+            LogicalModelCapabilityPolicy.SchemaVersionField,
+            LogicalModelCapabilityPolicy.SchemaVersion));
     }
     if (body.AllowedAppCallerCodes is not null)
     {

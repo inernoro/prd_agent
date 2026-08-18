@@ -35,7 +35,11 @@ public interface IModelResolver
         CancellationToken ct = default)
         => Task.FromResult(ModelResolutionResult.NotFound(
             offeringId,
-            "当前模型调度器不支持按 Offering 恢复路由"));
+            "当前模型调度器不支持按 Offering 恢复路由",
+            GatewayRouteFailure.OfferingUnresolvable,
+            "resolver-capability",
+            appCallerCode,
+            offeringId: offeringId));
 
     /// <summary>
     /// 获取指定 AppCallerCode 的可用模型池列表
@@ -97,6 +101,37 @@ public class ModelResolutionResult
     /// 错误消息（调度失败时）
     /// </summary>
     public string? ErrorMessage { get; init; }
+
+    /// <summary>
+    /// 结构化失败原因（<see cref="GatewayRouteFailure"/> 常量之一）。
+    /// 应用层按它选用户文案与告警级别，禁止再对 <see cref="ErrorMessage"/> 做字符串匹配猜原因。
+    /// </summary>
+    public string? FailureCode { get; init; }
+
+    /// <summary>失败发生在解析的哪一阶段（appcaller-registry / logical-model / offering / pool / pinned ...）。</summary>
+    public string? FailureStage { get; init; }
+
+    /// <summary>失败上下文：appCaller。管理员日志据此点名，不进用户文案。</summary>
+    public string? FailureAppCallerCode { get; init; }
+
+    /// <summary>失败上下文：逻辑模型 PublicId。</summary>
+    public string? FailureLogicalModelPublicId { get; init; }
+
+    /// <summary>失败上下文：Offering ID。</summary>
+    public string? FailureOfferingId { get; init; }
+
+    /// <summary>失败上下文：模型池 ID 或用户选择的池身份。</summary>
+    public string? FailureModelPoolId { get; init; }
+
+    /// <summary>面向普通用户的失败文案（结果 + 恢复动作），由结构化原因推导。</summary>
+    public string UserFacingFailureMessage => GatewayRouteFailure.UserMessage(FailureCode);
+
+    /// <summary>管理员定位串：点名 appCaller、逻辑模型、Offering、池与失败阶段。</summary>
+    public string AdminFailureDiagnostic =>
+        $"code={FailureCode ?? "UNCLASSIFIED"}, stage={FailureStage ?? "unknown"}, "
+        + $"appCaller={FailureAppCallerCode ?? "-"}, logicalModel={FailureLogicalModelPublicId ?? "-"}, "
+        + $"offering={FailureOfferingId ?? "-"}, pool={FailureModelPoolId ?? "-"}; "
+        + GatewayRouteFailure.AdminHint(FailureCode);
 
     /// <summary>
     /// 调度类型
@@ -309,6 +344,12 @@ public class ModelResolutionResult
             OfferingEndpointPath = OfferingEndpointPath,
             Success = Success,
             ErrorMessage = ErrorMessage,
+            FailureCode = FailureCode,
+            FailureStage = FailureStage,
+            FailureAppCallerCode = FailureAppCallerCode,
+            FailureLogicalModelPublicId = FailureLogicalModelPublicId,
+            FailureOfferingId = FailureOfferingId,
+            FailureModelPoolId = FailureModelPoolId,
             ResolutionType = ResolutionType,
             ExpectedModel = ExpectedModel,
             ActualModel = ActualModel ?? string.Empty,
@@ -364,14 +405,37 @@ public class ModelResolutionResult
         };
     }
 
-    public static ModelResolutionResult NotFound(string? expectedModel, string message)
+    /// <summary>
+    /// 构造一条失败解析。
+    ///
+    /// <paramref name="failureCode"/> **没有默认值，编译期必填**（<see cref="GatewayRouteFailure"/> 常量之一）。
+    /// 之前它是可选参数 + 一条源码守卫；但源码守卫只能按字面量匹配，
+    /// 一旦调用方改成传变量（例如「空池 vs 全熔断」那处按情况算出来的码）守卫就误报，
+    /// 而放宽守卫又会让「真的忘了带」重新溜过去。把它变成必填参数，
+    /// 由编译器兜底：漏一处直接编译不过，比任何源码扫描都硬。
+    /// </summary>
+    public static ModelResolutionResult NotFound(
+        string? expectedModel,
+        string message,
+        string failureCode,
+        string? stage = null,
+        string? appCallerCode = null,
+        string? logicalModelPublicId = null,
+        string? offeringId = null,
+        string? modelPoolId = null)
     {
         return new ModelResolutionResult
         {
             Success = false,
             ResolutionType = "NotFound",
             ExpectedModel = expectedModel,
-            ErrorMessage = message
+            ErrorMessage = message,
+            FailureCode = failureCode,
+            FailureStage = stage,
+            FailureAppCallerCode = appCallerCode,
+            FailureLogicalModelPublicId = logicalModelPublicId,
+            FailureOfferingId = offeringId,
+            FailureModelPoolId = modelPoolId
         };
     }
 

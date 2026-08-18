@@ -12,7 +12,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-URL="${SMOKE_CDS_AGENT_WORKBENCH_URL:-https://cds-agent-workbench-ui-codex-prd-agent.miduo.org/cds-agent}"
+URL="${SMOKE_CDS_AGENT_WORKBENCH_URL:-}"
 OUT_DIR="${SMOKE_CDS_AGENT_RUNBOOK_PUBLISH_DIR:-/tmp/cds-agent-runbook-published}"
 EXPLICIT_ASSET="${SMOKE_CDS_AGENT_RUNBOOK_ASSET:-}"
 
@@ -22,6 +22,8 @@ fail() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
+
+[[ -n "$URL" ]] || fail "SMOKE_CDS_AGENT_WORKBENCH_URL is required"
 
 ok() {
   printf 'OK: %s\n' "$*"

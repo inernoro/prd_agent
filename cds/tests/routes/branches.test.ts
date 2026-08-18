@@ -4164,6 +4164,8 @@ describe('Branch Routes', () => {
         name: 'Redis',
         dockerImage: 'redis:7-alpine',
         containerPort: 6379,
+        env: { REDIS_PASSWORD: 'test-secret' },
+        command: ['sh', '-c', 'exec redis-server --requirepass "$REDIS_PASSWORD"'],
         projectId: 'redis-proj',
       });
       expect(res.status).toBe(201);
@@ -4183,6 +4185,10 @@ describe('Branch Routes', () => {
         name: 'MongoDB',
         dockerImage: 'mongo:8.0',
         containerPort: 27017,
+        env: {
+          MONGO_INITDB_ROOT_USERNAME: 'test-admin',
+          MONGO_INITDB_ROOT_PASSWORD: 'test-secret',
+        },
       });
       expect(res.status).toBe(201);
       expect((res.body as any).service.projectId).toBe('default');

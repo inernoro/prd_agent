@@ -1324,25 +1324,47 @@ public class UsersController : ControllerBase
     }
 
     /// <summary>
-    /// 初始化用户（删除所有用户并创建默认管理员和机器人账号）
+    /// 显式重建系统用户（默认关闭，仅供受控运维恢复）
     /// </summary>
     [HttpPost("initialize")]
     [ProducesResponseType(typeof(ApiResponse<InitializeUsersResponse>), StatusCodes.Status200OK)]
     public async Task<IActionResult> InitializeUsers(CancellationToken ct)
     {
         var adminId = GetAdminId();
+        if (!IsTruthy(_cfg["MAP_ALLOW_USER_REINITIALIZATION"]))
+        {
+            _logger.LogWarning("Admin {AdminId} attempted disabled user reinitialization", adminId);
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail(
+                    ErrorCodes.PERMISSION_DENIED,
+                    "用户重新初始化默认关闭。如确需执行，请由运维临时启用破窗开关并在完成后立即关闭。"));
+        }
+
+        InitialAdminCredentials credentials;
+        try
+        {
+            // 必须先验证部署凭据，再进行任何删除，避免缺配置时留下空用户库。
+            credentials = InitialAdminCredentials.Resolve(_cfg);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Admin {AdminId} attempted user initialization without valid bootstrap credentials", adminId);
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+
         _logger.LogWarning("Admin {AdminId} is initializing users (will delete all existing users)", adminId);
 
         // 1. 删除所有用户
         var deleteResult = await _db.Users.DeleteManyAsync(_ => true, ct);
         _logger.LogInformation("Deleted {Count} users", deleteResult.DeletedCount);
 
-        // 2. 创建默认管理员账号 (admin/admin)
+        // 2. 创建部署环境指定的管理员账号
         var adminUser = new User
         {
             UserId = await _idGenerator.GenerateIdAsync("user"),
-            Username = "admin",
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin"),
+            Username = credentials.Username,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(credentials.Password),
             DisplayName = "管理员",
             Role = UserRole.ADMIN,
             Status = UserStatus.Active,
@@ -1404,6 +1426,7 @@ public class UsersController : ControllerBase
         {
             DeletedCount = deleteResult.DeletedCount,
             AdminUserId = adminUser.UserId,
+            AdminUsername = adminUser.Username,
             BotUserIds = botUsers.Select(b => b.UserId).ToList()
         };
 

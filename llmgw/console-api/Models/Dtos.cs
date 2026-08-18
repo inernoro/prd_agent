@@ -1150,6 +1150,24 @@ public sealed class CreateModelResult
 }
 
 // ── 逻辑模型与上游 Offering ──
+// 能力契约审计结果。发布门禁只看 clean 一个布尔；不干净时按 unknownObjects 逐个点名整改。
+public sealed class CapabilityAuditData
+{
+    public int SchemaVersion { get; set; }
+    public int Scanned { get; set; }
+    public int ResidualLegacyAliases { get; set; }
+    public int StillUnversioned { get; set; }
+    public bool Clean { get; set; }
+    public List<CapabilityAuditFinding> UnknownObjects { get; set; } = new();
+}
+
+public sealed class CapabilityAuditFinding
+{
+    public string PublicId { get; set; } = "";
+    public string ModelType { get; set; } = "";
+    public List<string> UnknownCapabilities { get; set; } = new();
+}
+
 public sealed class LogicalModelsData { public List<LogicalModelItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class LogicalModelItem
 {

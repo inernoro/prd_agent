@@ -174,7 +174,17 @@ function avatarGenerationFailure(code?: string | null): ApiResponse<{ previewUrl
       error: { code: normalized, message: '这次头像生成任务或结果已失效，请重新生成头像。' },
     };
   }
-  if (['IMAGE_GEN_REQUEST_REJECTED', 'LLM_QUOTA_EXCEEDED', 'QUOTA_EXCEEDED', 'RATE_LIMITED', 'IMAGE_GEN_TIMEOUT', 'IMAGE_GEN_UNAVAILABLE'].includes(normalized)) {
+  // 后半段是路由解析失败的结构化原因（GatewayRouteFailure）：它们各自的文案在
+  // userReadableError 映射表里，落到这里才不会被兜底成一句「头像生成服务暂时不可用」，
+  // 把「配置不兼容」和「上游宕机」重新混成一团。
+  if ([
+    'IMAGE_GEN_REQUEST_REJECTED', 'LLM_QUOTA_EXCEEDED', 'QUOTA_EXCEEDED', 'RATE_LIMITED',
+    'IMAGE_GEN_TIMEOUT', 'IMAGE_GEN_UNAVAILABLE',
+    'ROUTE_CONFIG_INCOMPATIBLE', 'APPCALLER_POOL_UNBOUND', 'MODEL_POOL_EMPTY',
+    'MODEL_POOL_ALL_UNAVAILABLE', 'LOGICAL_MODEL_CAPABILITY_MISMATCH', 'OFFERING_UNRESOLVABLE',
+    'PLATFORM_DISABLED', 'PROVIDER_UNAVAILABLE', 'PROVIDER_QUOTA_EXCEEDED',
+    'GATEWAY_CONFIG_UNAVAILABLE',
+  ].includes(normalized)) {
     return {
       success: false,
       data: null,

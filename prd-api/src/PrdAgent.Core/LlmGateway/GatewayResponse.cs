@@ -143,6 +143,28 @@ public class GatewayModelResolution
     public string? ErrorMessage { get; init; }
 
     /// <summary>
+    /// 结构化失败原因（<see cref="GatewayRouteFailure"/> 常量之一）。
+    /// 必须跨 serving → MAP 的 HTTP 边界透传，否则 MAP 侧只剩自由文本，
+    /// 又会退回「所有失败都包装成同一个不可用」。
+    /// </summary>
+    public string? FailureCode { get; init; }
+
+    /// <summary>失败阶段（appcaller-registry / logical-model / offering / pool / pinned ...）。</summary>
+    public string? FailureStage { get; init; }
+
+    /// <summary>失败上下文：appCaller。</summary>
+    public string? FailureAppCallerCode { get; init; }
+
+    /// <summary>失败上下文：逻辑模型 PublicId。</summary>
+    public string? FailureLogicalModelPublicId { get; init; }
+
+    /// <summary>失败上下文：Offering ID。</summary>
+    public string? FailureOfferingId { get; init; }
+
+    /// <summary>失败上下文：模型池 ID。</summary>
+    public string? FailureModelPoolId { get; init; }
+
+    /// <summary>
     /// 调度类型
     /// DedicatedPool: 专属模型池
     /// DefaultPool: 默认模型池

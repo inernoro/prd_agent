@@ -23,7 +23,7 @@ const FEED_LINES = [
   'detect stack · .NET 8 + React + mongo + redis',
   'build api :5000 · admin :5500 ......  ok',
   'container.observed · health checks passing',
-  'preview live · auth-flow-prd-agent.miduo.org',
+  'preview live · auth-flow.example.test',
 ];
 
 /* Observability 段的实况部署终端脚本(节选自真实构建输出的形态)。 */
@@ -37,7 +37,7 @@ const OBS_LINES: Array<{ ts: string; text: string; kind?: 'ok' | 'url' }> = [
   { ts: '12:05:08', text: 'containers started · 4/4 running' },
   { ts: '12:05:20', text: 'health checks ............... passing', kind: 'ok' },
   { ts: '12:05:21', text: 'check-run → GitHub PR · CDS Deploy: success', kind: 'ok' },
-  { ts: '12:05:22', text: 'auth-flow-prd-agent.miduo.org', kind: 'url' },
+  { ts: '12:05:22', text: 'auth-flow.example.test', kind: 'url' },
 ];
 
 /* Bento A 格的迷你构建日志。 */
@@ -452,7 +452,7 @@ export function HomePage(): JSX.Element {
                 <span className="cdsh-pv-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18" /></svg></span>
                 <div>
                   <div className="cdsh-lbl">Preview · auto-assigned</div>
-                  <div className="cdsh-url cdsh-mono">auth-flow-prd-agent.miduo.org</div>
+                  <div className="cdsh-url cdsh-mono">auth-flow.example.test</div>
                 </div>
                 <span className="cdsh-live" style={{ marginLeft: 'auto' }}><span className="cdsh-pulse" /></span>
               </div>
@@ -509,7 +509,7 @@ export function HomePage(): JSX.Element {
               <div className="cdsh-flow-visual">
                 <span className="cdsh-flow-url cdsh-mono">
                   <span className="cdsh-pulse" />
-                  auth-flow-prd-agent.miduo.org
+                  auth-flow.example.test
                 </span>
               </div>
             </div>
@@ -561,7 +561,7 @@ export function HomePage(): JSX.Element {
             </div>
             <div className="cdsh-bento-card cdsh-reveal" style={{ transitionDelay: '140ms' }} onPointerMove={trackPointer}>
               <div className="cdsh-bento-url cdsh-mono">
-                <em>{'{tail}'}</em>-<span>{'{prefix}'}</span>-<span className="dim">{'{project}'}</span>.miduo.org
+                <em>{'{tail}'}</em>-<span>{'{prefix}'}</span>-<span className="dim">{'{project}'}</span>.example.test
               </div>
               <h3>Per-branch 预览域名</h3>
               <p>分支名即地址，重要的信息永远排在最前。</p>

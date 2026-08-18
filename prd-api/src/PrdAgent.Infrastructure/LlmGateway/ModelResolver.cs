@@ -73,7 +73,11 @@ public class ModelResolver : IModelResolver
                 gatewayRegistry.Status ?? "missing",
                 gatewayRegistry.BlockReason ?? "appcaller-traffic-rejected");
             return ModelResolutionResult.NotFound(expectedModel,
-                $"GW appCaller 状态不允许真实流量: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}");
+                $"GW appCaller 状态不允许真实流量: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}",
+                GatewayRouteFailure.AppCallerPoolUnbound,
+                "appcaller-registry-status",
+                appCallerCode,
+                modelPoolId: gatewayRegistry.ModelPoolId);
         }
 
         // MAP appCaller 只属于兼容 fallback。配置权威开启后不触碰 MAP 配置集合，
@@ -103,8 +107,16 @@ public class ModelResolver : IModelResolver
                 "[ModelResolver] GW appCaller 禁止 MAP fallback，但未命中有效 GW 模型池: AppCallerCode={Code}, ModelType={Type}, Status={Status}, ModelPoolId={PoolId}, Reason={Reason}",
                 appCallerCode, modelType, gatewayRegistry.Status ?? "missing",
                 gatewayRegistry.ModelPoolId ?? "(未绑定)", gatewayRegistry.BlockReason ?? "missing-gateway-pool");
+            // 配置面「读不到」与配置「配错了」必须分开：前者是基础设施故障（重试可能恢复），
+            // 后者是配置问题（重试无用）。混成一个码会让配置库抖动被误判成全站模型池报废。
             return ModelResolutionResult.NotFound(expectedModel,
-                $"GW appCaller 未绑定有效 GW 模型池，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}");
+                $"GW appCaller 未绑定有效 GW 模型池，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}",
+                gatewayRegistry.ConfigPlaneUnavailable
+                    ? GatewayRouteFailure.GatewayConfigUnavailable
+                    : GatewayRouteFailure.AppCallerPoolUnbound,
+                gatewayRegistry.ConfigPlaneUnavailable ? "gateway-config-plane" : "appcaller-registry-binding",
+                appCallerCode,
+                modelPoolId: gatewayRegistry.ModelPoolId);
         }
 
         // pinned 是精确模型语义，但不能越过 appCaller 的专用池治理边界。
@@ -132,7 +144,11 @@ public class ModelResolver : IModelResolver
             {
                 return ModelResolutionResult.NotFound(
                     requestedPoolIdentity,
-                    $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPoolIdentity}");
+                    $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPoolIdentity}",
+                    GatewayRouteFailure.RouteConfigIncompatible,
+                    "pinned-pool-contract",
+                    appCallerCode,
+                    modelPoolId: requestedPoolIdentity);
             }
 
             var pinnedScope = requestedPool is null ? gatewayRegistry.Groups : [requestedPool];
@@ -148,7 +164,11 @@ public class ModelResolver : IModelResolver
             {
                 return ModelResolutionResult.NotFound(
                     expectedModel ?? pinnedModelId,
-                    $"PinnedModel 不在 appCaller 专用模型池内: AppCallerCode={appCallerCode}, ModelType={modelType}");
+                    $"PinnedModel 不在 appCaller 专用模型池内: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                    GatewayRouteFailure.RouteConfigIncompatible,
+                    "pinned-pool-member",
+                    appCallerCode,
+                    modelPoolId: requestedPoolIdentity);
             }
             // compute-then-send 的第二次解析必须真正锁定第一次选中的物理模型。
             // 过去这里只把 expectedModel 改成模型名，随后仍进入模型池健康调度；当 MAP 与
@@ -157,6 +177,7 @@ public class ModelResolver : IModelResolver
             // /v1/chat/completions。治理边界已由上面的池成员匹配完成，此处应直接
             // 解析该平台与模型，找不到就失败关闭，绝不能静默换成池内另一个成员。
             return await ResolvePinnedGatewayPoolMemberAsync(
+                appCallerCode,
                 pinnedTarget.Group,
                 pinnedTarget.Model,
                 pinnedModelId,
@@ -165,6 +186,7 @@ public class ModelResolver : IModelResolver
         if (!string.IsNullOrWhiteSpace(pinnedPlatformId) || !string.IsNullOrWhiteSpace(pinnedModelId))
         {
             var pinned = await TryResolvePinnedModelAsync(
+                appCallerCode,
                 expectedModel,
                 pinnedPlatformId,
                 pinnedModelId,
@@ -191,7 +213,11 @@ public class ModelResolver : IModelResolver
                 if (strictCandidates.Count == 0)
                 {
                     return ModelResolutionResult.NotFound(expectedModel,
-                        $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPool ?? "(未指定)"}");
+                        $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPool ?? "(未指定)"}",
+                        GatewayRouteFailure.RouteConfigIncompatible,
+                        "strict-pool-contract",
+                        appCallerCode,
+                        modelPoolId: requestedPool);
                 }
 
                 candidateGroups = strictCandidates;
@@ -212,7 +238,10 @@ public class ModelResolver : IModelResolver
                 "[ModelResolver] AppCallerCode 未在 MAP/GW 中配置: {Code}，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
                 appCallerCode);
             return ModelResolutionResult.NotFound(expectedModel,
-                $"AppCallerCode '{appCallerCode}' 未在 MAP/GW 中配置，请在 GW 控制台激活或在 MAP 管理后台初始化应用");
+                $"AppCallerCode '{appCallerCode}' 未在 MAP/GW 中配置，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
+                GatewayRouteFailure.AppCallerPoolUnbound,
+                "appcaller-registry-missing",
+                appCallerCode);
         }
 
         if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller != null)
@@ -313,7 +342,10 @@ public class ModelResolver : IModelResolver
                 appCallerCode, modelType);
 
             return ModelResolutionResult.NotFound(expectedModel,
-                $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}");
+                $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                GatewayRouteFailure.ModelPoolEmpty,
+                "pool-candidates-empty",
+                appCallerCode);
         }
 
         // ========== 第 5.5 步：旧契约若调用方指定了 expectedModel，优先尊重 ==========
@@ -562,6 +594,14 @@ public class ModelResolver : IModelResolver
         // 池存在但池内模型全部 Unavailable 时，未迁移部署仍可降级到 legacy 直连（Codex P1）。
         // 收集原始模型池状态用于诊断 + 降级结果的 OriginalModels 字段。
         var originalPool = candidateGroups.FirstOrDefault();
+        // 「池是空的」和「成员全熔断」是两种处置动作：前者要去补成员，后者要去看上游。
+        // 合成一个错误码，管理员就只能从零复现——这正是本次事故里最贵的部分。
+        var poolFailureCode = candidateGroups.All(g => (g.Models?.Count ?? 0) == 0)
+            ? GatewayRouteFailure.ModelPoolEmpty
+            : GatewayRouteFailure.ModelPoolAllUnavailable;
+        var poolFailureStage = poolFailureCode == GatewayRouteFailure.ModelPoolEmpty
+            ? "pool-membership"
+            : "pool-health";
         var originalModels = originalPool?.Models?.Select(m => new OriginalModelInfo
         {
             ModelId = m.ModelId,
@@ -577,7 +617,11 @@ public class ModelResolver : IModelResolver
                 "[ModelResolver] GW appCaller 模型池全部不可用，拒绝降级 MAP legacy: AppCallerCode={Code}, ModelType={Type}, Pool={Pool}",
                 appCallerCode, modelType, originalPool?.Name);
             return ModelResolutionResult.NotFound(expectedModel,
-                $"GW appCaller 模型池不可用，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}");
+                $"GW appCaller 模型池不可用，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                poolFailureCode,
+                poolFailureStage,
+                appCallerCode,
+                modelPoolId: originalPool?.Id);
         }
 
         if (hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
@@ -586,7 +630,11 @@ public class ModelResolver : IModelResolver
                 "[ModelResolver] {ModelType} 专属模型池全部不可用，拒绝降级 legacy 直连: AppCallerCode={Code}, Pool={Pool}",
                 modelType, appCallerCode, originalPool?.Name);
             return ModelResolutionResult.NotFound(expectedModel,
-                $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}");
+                $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                poolFailureCode,
+                poolFailureStage,
+                appCallerCode,
+                modelPoolId: originalPool?.Id);
         }
 
         var fallbackLegacyModel = await FindLegacyModelAsync(modelType, ct);
@@ -637,7 +685,11 @@ public class ModelResolver : IModelResolver
             string.Join(", ", originalModels?.Select(m => $"{m.ModelId}={m.HealthStatus}") ?? Array.Empty<string>()));
 
         return ModelResolutionResult.NotFound(expectedModel,
-            $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}");
+            $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}",
+            poolFailureCode,
+            poolFailureStage,
+            appCallerCode,
+            modelPoolId: originalPool?.Id);
     }
 
     /// <inheritdoc />
@@ -652,7 +704,11 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 requiredOfferingId,
-                "缺少可恢复的 Offering 路由");
+                "缺少可恢复的 Offering 路由",
+                GatewayRouteFailure.OfferingUnresolvable,
+                "offering-restore-missing",
+                appCallerCode,
+                offeringId: requiredOfferingId);
         }
 
         var offerings = _gatewayDb.Context.Database
@@ -667,7 +723,11 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 requiredOfferingId,
-                "视频任务原上游当前不可用，请稍后重试或重新生成");
+                "视频任务原上游当前不可用，请稍后重试或重新生成",
+                GatewayRouteFailure.ProviderUnavailable,
+                "offering-restore-health",
+                appCallerCode,
+                offeringId: requiredOfferingId);
         }
 
         var logicalModels = _gatewayDb.Context.Database
@@ -681,7 +741,11 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 requiredOfferingId,
-                "视频任务原模型路由已失效，请重新生成");
+                "视频任务原模型路由已失效，请重新生成",
+                GatewayRouteFailure.OfferingUnresolvable,
+                "offering-restore-logical-model",
+                appCallerCode,
+                offeringId: requiredOfferingId);
         }
 
         var resolved = await TryBuildLogicalOfferingResolutionAsync(
@@ -692,7 +756,11 @@ public class ModelResolver : IModelResolver
             requireEnabled: false);
         return resolved ?? ModelResolutionResult.NotFound(
             requiredOfferingId,
-            "视频任务原上游配置已失效，请重新生成");
+            "视频任务原上游配置已失效，请重新生成",
+            GatewayRouteFailure.OfferingUnresolvable,
+            "offering-restore-target",
+            appCallerCode,
+            offeringId: requiredOfferingId);
     }
 
     /// <inheritdoc />
@@ -1046,7 +1114,13 @@ public class ModelResolver : IModelResolver
         if (!SupportsAppCallerScenario(logical, appCallerCode))
         {
             return ModelResolutionResult.NotFound(expectedModel,
-                $"逻辑模型不支持当前 appCaller 场景: model={logical.PublicId}, appCaller={appCallerCode}");
+                $"逻辑模型不支持当前 appCaller 场景: model={logical.PublicId}, appCaller={appCallerCode}, "
+                + $"capabilities=[{string.Join(",", logical.Capabilities)}], "
+                + $"required={GatewayCapabilityContract.RequiredScenarioCapability(appCallerCode) ?? "(无)"}",
+                GatewayRouteFailure.LogicalModelCapabilityMismatch,
+                "logical-model-capability",
+                appCallerCode,
+                logicalModelPublicId: logical.PublicId);
         }
 
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
@@ -1069,7 +1143,11 @@ public class ModelResolver : IModelResolver
         if (resolved.Count == 0)
         {
             return ModelResolutionResult.NotFound(expectedModel,
-                $"逻辑模型没有可用上游 Offering: {logical.PublicId}");
+                $"逻辑模型没有可用上游 Offering: {logical.PublicId}",
+                GatewayRouteFailure.OfferingUnresolvable,
+                "logical-model-offering",
+                appCallerCode,
+                logicalModelPublicId: logical.PublicId);
         }
 
         var selected = resolved[0];
@@ -1078,53 +1156,20 @@ public class ModelResolver : IModelResolver
         return selected;
     }
 
+    /// <summary>
+    /// 逻辑模型能否服务该 appCaller 的场景。
+    ///
+    /// 判据本体在 <see cref="GatewayCapabilityContract.SupportsAppCallerScenario"/>，这里只做转发。
+    /// 曾经这段逻辑在 Resolver 里自带一份能力字面量清单（含事故止血时追加的 "image-gen" 特判），
+    /// 而写入侧、readiness、控制台各有另一份——同一个问题四个答案，
+    /// 结果正式数据用历史值时运行时判 false、readiness 判 true，全站生图静默不可用而所有灯是绿的。
+    /// 现在别名归一与场景判定只此一处；任何调用方都不许再写第二份。
+    /// </summary>
     internal static bool SupportsAppCallerScenario(GatewayLogicalModel logical, string appCallerCode)
-    {
-        if (logical.AllowedAppCallerCodes.Count > 0
-            && !logical.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        // 图片分层不是普通的文生图、图生图或多图生成。即使历史配置曾误加这些能力，
-        // 也只能由专用 appCaller 调用，避免它进入通用模型选择器后把普通生图请求发给
-        // 必须携带输入图片的分层协议。
-        if (logical.Capabilities.Contains("image_layering", StringComparer.OrdinalIgnoreCase))
-        {
-            return string.Equals(
-                appCallerCode,
-                AppCallerRegistry.VisualAgent.Image.Layering,
-                StringComparison.OrdinalIgnoreCase);
-        }
-
-        var requiredCapability = RequiredCapabilityForAppCaller(appCallerCode);
-        if (requiredCapability is null
-            || logical.Capabilities.Contains(requiredCapability, StringComparer.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var hasScenarioCapabilities = logical.Capabilities.Any(x =>
-            x.Equals("text2img", StringComparison.OrdinalIgnoreCase)
-            || x.Equals("img2img", StringComparison.OrdinalIgnoreCase)
-            || x.Equals("vision_generation", StringComparison.OrdinalIgnoreCase)
-            || x.Equals("image_layering", StringComparison.OrdinalIgnoreCase));
-        var hasGenericImageCapability = logical.Capabilities.Any(x =>
-            x.Equals("image_generation", StringComparison.OrdinalIgnoreCase)
-            || x.Equals("image-gen", StringComparison.OrdinalIgnoreCase));
-        return !hasScenarioCapabilities && hasGenericImageCapability;
-    }
-
-    private static string? RequiredCapabilityForAppCaller(string appCallerCode)
-    {
-        if (appCallerCode.EndsWith(".text2img::generation", StringComparison.OrdinalIgnoreCase))
-            return "text2img";
-        if (appCallerCode.EndsWith(".img2img::generation", StringComparison.OrdinalIgnoreCase))
-            return "img2img";
-        if (appCallerCode.EndsWith(".vision::generation", StringComparison.OrdinalIgnoreCase))
-            return "vision_generation";
-        return null;
-    }
+        => GatewayCapabilityContract.SupportsAppCallerScenario(
+            logical.Capabilities,
+            logical.AllowedAppCallerCodes,
+            appCallerCode);
 
     private List<GatewayModelOffering> OrderLogicalOfferings(
         GatewayLogicalModel logical,
@@ -1411,6 +1456,7 @@ public class ModelResolver : IModelResolver
     }
 
     private async Task<ModelResolutionResult?> TryResolvePinnedModelAsync(
+        string appCallerCode,
         string? expectedModel,
         string? pinnedPlatformId,
         string? pinnedModelId,
@@ -1427,7 +1473,10 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 expectedModel ?? modelId,
-                "PinnedModel 调用必须同时提供 pinnedPlatformId 与 pinnedModelId");
+                "PinnedModel 调用必须同时提供 pinnedPlatformId 与 pinnedModelId",
+                GatewayRouteFailure.RouteConfigIncompatible,
+                "pinned-arguments",
+                appCallerCode);
         }
 
         var platform = await FindGatewayOwnedOrMapPlatformAsync(platformId, enabledOnly: true, ct, allowMapFallback);
@@ -1435,7 +1484,10 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 expectedModel ?? modelId,
-                $"PinnedModel 平台不存在或未启用: {platformId}");
+                $"PinnedModel 平台不存在或未启用: {platformId}",
+                GatewayRouteFailure.PlatformDisabled,
+                "pinned-platform",
+                appCallerCode);
         }
 
         var model = await FindGatewayOwnedOrMapModelAsync(platformId, modelId, ct, allowMapFallback);
@@ -1443,7 +1495,10 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 expectedModel ?? modelId,
-                $"PinnedModel 模型不存在或未启用: platform={platformId}, model={modelId}");
+                $"PinnedModel 模型不存在或未启用: platform={platformId}, model={modelId}",
+                GatewayRouteFailure.RouteConfigIncompatible,
+                "pinned-model",
+                appCallerCode);
         }
 
         var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(model.ApiKeyEncrypted, _config);
@@ -1454,14 +1509,20 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 expectedModel ?? modelId,
-                $"PinnedModel API URL 配置不完整: platform={platformId}, model={modelId}");
+                $"PinnedModel API URL 配置不完整: platform={platformId}, model={modelId}",
+                GatewayRouteFailure.RouteConfigIncompatible,
+                "pinned-endpoint",
+                appCallerCode);
         }
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             return ModelResolutionResult.NotFound(
                 expectedModel ?? modelId,
-                $"PinnedModel API Key 配置不完整: platform={platformId}, model={modelId}");
+                $"PinnedModel API Key 配置不完整: platform={platformId}, model={modelId}",
+                GatewayRouteFailure.RouteConfigIncompatible,
+                "pinned-credential",
+                appCallerCode);
         }
 
         _logger.LogInformation(
@@ -1474,6 +1535,7 @@ public class ModelResolver : IModelResolver
     }
 
     private async Task<ModelResolutionResult> ResolvePinnedGatewayPoolMemberAsync(
+        string appCallerCode,
         ModelGroup group,
         ModelGroupItem member,
         string? expectedModel,
@@ -1492,14 +1554,22 @@ public class ModelResolver : IModelResolver
             {
                 return ModelResolutionResult.NotFound(
                     expectedModel,
-                    $"PinnedModel Exchange API URL 配置不完整: exchange={exchange.Id}, model={member.ModelId}");
+                    $"PinnedModel Exchange API URL 配置不完整: exchange={exchange.Id}, model={member.ModelId}",
+                    GatewayRouteFailure.OfferingUnresolvable,
+                    "pinned-exchange-endpoint",
+                    appCallerCode,
+                    modelPoolId: group.Id);
             }
 
             if (string.IsNullOrWhiteSpace(exchangeApiKey))
             {
                 return ModelResolutionResult.NotFound(
                     expectedModel,
-                    $"PinnedModel Exchange API Key 配置不完整: exchange={exchange.Id}, model={member.ModelId}");
+                    $"PinnedModel Exchange API Key 配置不完整: exchange={exchange.Id}, model={member.ModelId}",
+                    GatewayRouteFailure.OfferingUnresolvable,
+                    "pinned-exchange-credential",
+                    appCallerCode,
+                    modelPoolId: group.Id);
             }
 
             return ModelResolutionResult.FromExchangePool(
@@ -1518,7 +1588,11 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 expectedModel,
-                $"PinnedModel Exchange 配置不存在或未启用: model={member.ModelId}");
+                $"PinnedModel Exchange 配置不存在或未启用: model={member.ModelId}",
+                GatewayRouteFailure.OfferingUnresolvable,
+                "pinned-exchange-missing",
+                appCallerCode,
+                modelPoolId: group.Id);
         }
 
         var platform = await FindGatewayOwnedOrMapPlatformAsync(
@@ -1530,7 +1604,11 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 expectedModel,
-                $"PinnedModel 平台不存在或未启用: {member.PlatformId}");
+                $"PinnedModel 平台不存在或未启用: {member.PlatformId}",
+                GatewayRouteFailure.PlatformDisabled,
+                "pinned-pool-platform",
+                appCallerCode,
+                modelPoolId: group.Id);
         }
 
         var model = await FindGatewayOwnedOrMapModelAsync(
@@ -1542,7 +1620,11 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 expectedModel,
-                $"PinnedModel 模型不存在或未启用: platform={member.PlatformId}, model={member.ModelId}");
+                $"PinnedModel 模型不存在或未启用: platform={member.PlatformId}, model={member.ModelId}",
+                GatewayRouteFailure.RouteConfigIncompatible,
+                "pinned-pool-model",
+                appCallerCode,
+                modelPoolId: group.Id);
         }
 
         var encryptedKey = string.IsNullOrWhiteSpace(model.ApiKeyEncrypted)
@@ -1556,14 +1638,22 @@ public class ModelResolver : IModelResolver
         {
             return ModelResolutionResult.NotFound(
                 expectedModel,
-                $"PinnedModel API URL 配置不完整: platform={member.PlatformId}, model={member.ModelId}");
+                $"PinnedModel API URL 配置不完整: platform={member.PlatformId}, model={member.ModelId}",
+                GatewayRouteFailure.RouteConfigIncompatible,
+                "pinned-pool-endpoint",
+                appCallerCode,
+                modelPoolId: group.Id);
         }
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             return ModelResolutionResult.NotFound(
                 expectedModel,
-                $"PinnedModel API Key 配置不完整: platform={member.PlatformId}, model={member.ModelId}");
+                $"PinnedModel API Key 配置不完整: platform={member.PlatformId}, model={member.ModelId}",
+                GatewayRouteFailure.RouteConfigIncompatible,
+                "pinned-pool-credential",
+                appCallerCode,
+                modelPoolId: group.Id);
         }
 
         var endpointPlatform = new LLMPlatform
@@ -1821,7 +1911,7 @@ public class ModelResolver : IModelResolver
     {
         if (_gatewayDb is null || string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType))
         {
-            return GatewayRegistryLookup.Blocked(null, "gateway-registry-unavailable", null);
+            return GatewayRegistryLookup.ConfigPlaneDown("gateway-registry-unavailable");
         }
 
         try
@@ -1925,7 +2015,7 @@ public class ModelResolver : IModelResolver
             _logger.LogWarning(ex,
                 "[ModelResolver] 读取 GW appCaller registry 失败: AppCallerCode={Code}, ModelType={Type}",
                 appCallerCode, modelType);
-            return GatewayRegistryLookup.Blocked(null, "gateway-registry-read-failed", null);
+            return GatewayRegistryLookup.ConfigPlaneDown("gateway-registry-read-failed");
         }
     }
 
@@ -2095,6 +2185,11 @@ public class ModelResolver : IModelResolver
                "true",
                StringComparison.OrdinalIgnoreCase);
 
+    /// <param name="ConfigPlaneUnavailable">
+    /// 配置面本身读不到（网关配置库缺失或读取抛错），区别于「配置读到了但配错了」。
+    /// 两者混成一个失败原因，会让配置库一次抖动被报成「所有 AI 功能的模型池全报废」，
+    /// 管理员按配置错误去排查，方向从一开始就是错的。
+    /// </param>
     private sealed record GatewayRegistryLookup(
         List<ModelGroup> Groups,
         string? ModelPoolId,
@@ -2103,7 +2198,8 @@ public class ModelResolver : IModelResolver
         bool TrafficRejected,
         bool StrictPoolContract,
         string? DefaultModelPoolId,
-        bool AllowCrossPoolFallback)
+        bool AllowCrossPoolFallback,
+        bool ConfigPlaneUnavailable = false)
     {
         public static GatewayRegistryLookup Empty() => new([], null, null, null, false, false, null, false);
         public static GatewayRegistryLookup Found(string? modelPoolId, List<ModelGroup> groups, string status)
@@ -2120,6 +2216,10 @@ public class ModelResolver : IModelResolver
             => new([], modelPoolId, reason, status, false, true, modelPoolId, false);
         public static GatewayRegistryLookup Rejected(string? modelPoolId, string reason, string status)
             => new([], modelPoolId, reason, status, true, false, modelPoolId, false);
+
+        /// <summary>配置面不可读：基础设施故障，不是配置错误。</summary>
+        public static GatewayRegistryLookup ConfigPlaneDown(string reason)
+            => new([], null, reason, null, false, false, null, false, ConfigPlaneUnavailable: true);
     }
 
     internal static List<ModelGroup> SelectStrictPoolCandidates(
@@ -2379,7 +2479,10 @@ public class InMemoryModelResolver : IModelResolver
             if (string.IsNullOrWhiteSpace(platformId) || string.IsNullOrWhiteSpace(modelId))
             {
                 return Task.FromResult(ModelResolutionResult.NotFound(expectedModel ?? modelId,
-                    "PinnedModel 调用必须同时提供 pinnedPlatformId 与 pinnedModelId"));
+                    "PinnedModel 调用必须同时提供 pinnedPlatformId 与 pinnedModelId",
+                    GatewayRouteFailure.RouteConfigIncompatible,
+                    "pinned-arguments",
+                    appCallerCode));
             }
 
             var platform = _platforms.FirstOrDefault(p => p.Id == platformId && p.Enabled);
@@ -2390,7 +2493,10 @@ public class InMemoryModelResolver : IModelResolver
             if (platform == null || model == null)
             {
                 return Task.FromResult(ModelResolutionResult.NotFound(expectedModel ?? modelId,
-                    $"PinnedModel 模型不存在或未启用: platform={platformId}, model={modelId}"));
+                    $"PinnedModel 模型不存在或未启用: platform={platformId}, model={modelId}",
+                    GatewayRouteFailure.RouteConfigIncompatible,
+                    "pinned-model",
+                    appCallerCode));
             }
 
             _apiKeys.TryGetValue(platform.Id, out var apiKey);
@@ -2446,7 +2552,10 @@ public class InMemoryModelResolver : IModelResolver
                 }
             }
             return Task.FromResult(ModelResolutionResult.NotFound(expectedModel,
-                $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}"));
+                $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                GatewayRouteFailure.ModelPoolEmpty,
+                "pool-candidates-empty",
+                appCallerCode));
         }
 
         // Step 6: 从模型池选择
@@ -2494,11 +2603,22 @@ public class InMemoryModelResolver : IModelResolver
             return Task.FromResult(selected);
         }
 
+        // 与生产 ModelResolver 共用同一个「空池 vs 全熔断」判据，测试路径不得另立语义。
+        var poolFailureCode = candidateGroups.All(g => (g.Models?.Count ?? 0) == 0)
+            ? GatewayRouteFailure.ModelPoolEmpty
+            : GatewayRouteFailure.ModelPoolAllUnavailable;
+        var poolFailureStage = poolFailureCode == GatewayRouteFailure.ModelPoolEmpty
+            ? "pool-membership"
+            : "pool-health";
+
         // 池存在但全部不可用 → legacy 直连降级（镜像生产 ModelResolver）。
         if (hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
         {
             return Task.FromResult(ModelResolutionResult.NotFound(expectedModel,
-                $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}"));
+                $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                poolFailureCode,
+                poolFailureStage,
+                appCallerCode));
         }
 
         // 池存在但全部不可用 → legacy 直连降级（镜像生产 ModelResolver）。
@@ -2533,7 +2653,10 @@ public class InMemoryModelResolver : IModelResolver
         }
 
         return Task.FromResult(ModelResolutionResult.NotFound(expectedModel,
-            "模型池内所有模型不可用"));
+            "模型池内所有模型不可用",
+            poolFailureCode,
+            poolFailureStage,
+            appCallerCode));
     }
 
     private static (ModelGroup? group, ModelGroupItem? item) FindPreferredModelForInMemory(

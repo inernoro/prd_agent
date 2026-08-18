@@ -8,7 +8,7 @@
 # 前端 .json() 解析时报 "Unexpected token '<', '<!DOCTYPE'..."。
 #
 # 用法：
-#   bash cds/scripts/smoke-cds-settings.sh https://cds.miduo.org [AI_ACCESS_KEY]
+#   bash cds/scripts/smoke-cds-settings.sh https://cds.example.com [AI_ACCESS_KEY]
 #
 # 没传 AI_ACCESS_KEY 时尝试读 $CDS_AI_ACCESS_KEY、$AI_ACCESS_KEY 或匿名调用
 # （cookie/token 中间件可能放行某些只读端点）。

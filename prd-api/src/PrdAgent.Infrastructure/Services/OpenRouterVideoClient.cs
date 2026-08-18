@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Net.Http.Headers;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -21,6 +22,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
     private readonly ILogger<OpenRouterVideoClient> _logger;
     private readonly ILLMRequestContextAccessor? _contextAccessor;
     private readonly ILlmRequestLogWriter? _logWriter;
+    private readonly string? _openRouterReferer;
     // 缓存 SubmitAsync 阶段的解析结果，供同一 Scoped 实例的轮询调用复用（避免每次 poll 都查一次 DB）
     private GatewayModelResolution? _submitResolution;
     private string? _submitAppCallerCode;
@@ -31,7 +33,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         ISafeOutboundUrlValidator urlValidator,
         ILogger<OpenRouterVideoClient> logger,
         ILLMRequestContextAccessor? contextAccessor = null,
-        ILlmRequestLogWriter? logWriter = null)
+        ILlmRequestLogWriter? logWriter = null,
+        IConfiguration? configuration = null)
     {
         _gateway = gateway;
         _httpClientFactory = httpClientFactory;
@@ -39,6 +42,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         _logger = logger;
         _contextAccessor = contextAccessor;
         _logWriter = logWriter;
+        _openRouterReferer = OpenRouterAttribution.ResolveReferer(configuration);
     }
 
     public async Task<OpenRouterVideoSubmitResult> SubmitAsync(OpenRouterVideoSubmitRequest request, CancellationToken ct = default)
@@ -525,8 +529,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
                     request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                 if (current.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase))
                 {
-                    request.Headers.TryAddWithoutValidation("HTTP-Referer", "https://prd-agent.miduo.org");
-                    request.Headers.TryAddWithoutValidation("X-OpenRouter-Title", $"G-{appCallerCode}");
+                    OpenRouterAttribution.Apply(request, current.ToString(), appCallerCode, _openRouterReferer);
                 }
 
                 var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);

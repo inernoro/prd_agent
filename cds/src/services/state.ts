@@ -3170,12 +3170,30 @@ export class StateService {
     if (!project?.envMeta) return [];
     const mergedEnv = this.getCustomEnv(projectId);
     const missing: string[] = [];
+    const alternativeGroups = new Map<string, Map<string, string[]>>();
+    const hasValue = (key: string): boolean => {
+      const value = mergedEnv[key];
+      return Boolean(value && value.trim() && !isPlaceholderValue(value));
+    };
     for (const [key, meta] of Object.entries(project.envMeta)) {
       if (meta.kind !== 'required') continue;
-      const value = mergedEnv[key];
-      if (!value || !value.trim() || isPlaceholderValue(value)) {
+      if (meta.requiredGroup && meta.requiredOption) {
+        const options = alternativeGroups.get(meta.requiredGroup) ?? new Map<string, string[]>();
+        const keys = options.get(meta.requiredOption) ?? [];
+        keys.push(key);
+        options.set(meta.requiredOption, keys);
+        alternativeGroups.set(meta.requiredGroup, options);
+      } else if (!hasValue(key)) {
         missing.push(key);
       }
+    }
+    for (const options of alternativeGroups.values()) {
+      if ([...options.values()].some((keys) => keys.every(hasValue))) continue;
+      // 优先提示用户已经开始填写的那一套；完全没填时按 compose 声明顺序提示第一套。
+      const preferred = [...options.values()].sort((a, b) => (
+        b.filter(hasValue).length - a.filter(hasValue).length
+      ))[0] ?? [];
+      missing.push(...preferred.filter((key) => !hasValue(key)));
     }
     return missing;
   }

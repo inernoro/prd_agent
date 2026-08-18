@@ -233,6 +233,7 @@ public class InitializeUsersResponse
 {
     public long DeletedCount { get; set; }
     public string AdminUserId { get; set; } = string.Empty;
+    public string AdminUsername { get; set; } = string.Empty;
     public List<string> BotUserIds { get; set; } = new();
 }
 

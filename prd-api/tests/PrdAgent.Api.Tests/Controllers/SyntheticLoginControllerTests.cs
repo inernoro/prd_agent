@@ -167,13 +167,13 @@ public sealed class SyntheticLoginControllerTests
     }
 
     [Fact]
-    public void StableSmokePublicRegistry_ShouldContainNoPrivateKeyMaterial()
+    public void StableSmokePublicRegistry_ShouldNotBeCommittedToAppSettings()
     {
         var settings = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Api/appsettings.json"));
 
-        Assert.Contains("prod-rsa-2026-08", settings);
-        Assert.Contains("map.ebcone.net", settings);
+        Assert.DoesNotContain("StableSmokeAuthentication", settings, StringComparison.Ordinal);
+        Assert.DoesNotContain("PublicKey", settings, StringComparison.Ordinal);
         Assert.DoesNotContain("PRIVATE KEY", settings, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("SigningPrivateKey", settings, StringComparison.OrdinalIgnoreCase);
     }

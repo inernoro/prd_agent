@@ -55,6 +55,9 @@ public static class ActivityActionRegistry
     private static readonly Func<MongoDbContext, string, Task<string?>> HostedSiteTitle =
         async (db, id) => (await db.HostedSites.Find(x => x.Id == id).FirstOrDefaultAsync())?.Title;
 
+    private static readonly Func<MongoDbContext, string, Task<string?>> UserTitle =
+        async (db, id) => (await db.Users.Find(x => x.UserId == id).FirstOrDefaultAsync())?.Username;
+
     /// <summary>白名单字典："Controller.Action" → 条目定义</summary>
     public static readonly IReadOnlyDictionary<string, ActivityActionDef> Actions =
         new Dictionary<string, ActivityActionDef>(StringComparer.Ordinal)
@@ -104,6 +107,12 @@ public static class ActivityActionRegistry
             ["WebPages.CreateFromContent"] = new("web-pages", "网页托管", "发布了站点", TitleArgs: new[] { "req.Title" }),
             ["WebPages.Update"] = new("web-pages", "网页托管", "更新了站点", "id", TitleDb: HostedSiteTitle),
             ["WebPages.Delete"] = new("web-pages", "网页托管", "删除了站点", "id", TitleDb: HostedSiteTitle),
+
+            // ── 系统管理 users ──
+            ["Users.UpdatePassword"] = new("system", "系统管理", "修改了用户密码", "userId", TitleDb: UserTitle),
+            ["Users.UpdateStatus"] = new("system", "系统管理", "修改了用户状态", "userId", TitleDb: UserTitle),
+            ["Users.UpdateRole"] = new("system", "系统管理", "修改了用户角色", "userId", TitleDb: UserTitle),
+            ["Users.InitializeUsers"] = new("system", "系统管理", "重新初始化了用户库"),
         };
 
     /// <summary>导出去重后的模块清单（前端筛选下拉用，避免前后端模块清单漂移）</summary>

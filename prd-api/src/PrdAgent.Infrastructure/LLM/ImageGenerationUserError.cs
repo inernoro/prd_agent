@@ -47,6 +47,20 @@ internal static class ImageGenerationUserError
             ErrorCodes.IMAGE_GEN_UNAVAILABLE,
             "当前没有可用的生图服务，请稍后重试。若持续出现，请联系管理员。");
 
+    /// <summary>
+    /// 路由解析失败 → 用户可见结果。
+    ///
+    /// 过去这里一律返回 IMAGE_GEN_UNAVAILABLE「当前没有可用的生图服务」，
+    /// 于是「能力名不兼容」「appCaller 未绑池」「池空」「全熔断」「平台关闭」
+    /// 「Provider 故障」「Offering 配错」七种完全不同的问题在用户和管理员眼里长得一模一样，
+    /// 管理员据此误判成供应商宕机。现在结构化原因直接作为错误码透出，
+    /// 用户拿到的是「重试有没有用」，管理员在日志里拿到点名定位串。
+    /// </summary>
+    internal static Result FromRouteFailure(string? failureCode)
+        => GatewayRouteFailure.All.Contains(failureCode ?? string.Empty, StringComparer.Ordinal)
+            ? new Result(failureCode!, GatewayRouteFailure.UserMessage(failureCode))
+            : ModelUnavailable();
+
     internal static Result Classify(int? statusCode, string? diagnostic)
     {
         var text = diagnostic ?? string.Empty;

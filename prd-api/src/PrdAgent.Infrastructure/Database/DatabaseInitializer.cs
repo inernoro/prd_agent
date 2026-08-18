@@ -1,6 +1,8 @@
+using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using System.Security.Cryptography;
 
 namespace PrdAgent.Infrastructure.Database;
 
@@ -11,11 +13,16 @@ public class DatabaseInitializer
 {
     private readonly MongoDbContext _db;
     private readonly IIdGenerator _idGenerator;
+    private readonly IConfiguration _configuration;
 
-    public DatabaseInitializer(MongoDbContext db, IIdGenerator idGenerator)
+    public DatabaseInitializer(
+        MongoDbContext db,
+        IIdGenerator idGenerator,
+        IConfiguration configuration)
     {
         _db = db;
         _idGenerator = idGenerator;
+        _configuration = configuration;
     }
 
     /// <summary>
@@ -42,20 +49,21 @@ public class DatabaseInitializer
         if (existingAdmin != null)
             return;
 
-        // 创建默认管理员账号
+        var credentials = InitialAdminCredentials.Resolve(_configuration);
+
+        // 创建部署环境注入的初始管理员账号
         var adminUser = new User
         {
             UserId = await _idGenerator.GenerateIdAsync("user"),
-            Username = "admin",
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword("admin"),
+            Username = credentials.Username,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(credentials.Password),
             DisplayName = "系统管理员",
             Role = UserRole.ADMIN,
             Status = UserStatus.Active
         };
 
         await _db.Users.InsertOneAsync(adminUser);
-        Console.WriteLine("Created default admin user: admin / admin");
-        Console.WriteLine("Please change the password after first login!");
+        Console.WriteLine($"Created initial admin user: {adminUser.Username}");
     }
 
     private async Task EnsureInitialInviteCodeAsync()
@@ -72,14 +80,14 @@ public class DatabaseInitializer
         var inviteCode = new InviteCode
         {
             Id = await _idGenerator.GenerateIdAsync("config"),
-            Code = "PRD-INIT-2024",
+            Code = $"PRD-{Convert.ToHexString(RandomNumberGenerator.GetBytes(12))}",
             CreatorId = "system",
             IsUsed = false,
             ExpiresAt = DateTime.UtcNow.AddDays(30)
         };
 
         await _db.InviteCodes.InsertOneAsync(inviteCode);
-        Console.WriteLine($"Created initial invite code: {inviteCode.Code} (expires in 30 days)");
+        Console.WriteLine("Created a random initial invite code (expires in 30 days)");
     }
 
     private async Task EnsureSystemRolesAsync()

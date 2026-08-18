@@ -52,15 +52,15 @@ export const VARIABLE_DEFS: readonly TemplateVariableDef[] = [
   { key: 'branch', label: '分支名', example: 'feature/login-fix' },
   { key: 'shortSha', label: 'commit SHA 前 7 位', example: 'a1b2c3d' },
   { key: 'commitSha', label: '完整 commit SHA', example: 'a1b2c3d4e5f6...' },
-  { key: 'previewUrl', label: '预览地址', example: 'https://feature-login-fix.miduo.org' },
-  { key: 'dashboardUrl', label: 'CDS 分支面板 URL', example: 'https://cds.miduo.org/branch-panel?id=...' },
+  { key: 'previewUrl', label: '预览地址', example: 'https://preview.example.invalid' },
+  { key: 'dashboardUrl', label: 'CDS 分支面板 URL', example: 'https://control.example.invalid/branch-panel?id=...' },
   { key: 'repoFullName', label: 'owner/repo', example: 'inernoro/prd_agent' },
   { key: 'prNumber', label: 'PR 号', example: '123' },
   { key: 'prUrl', label: 'PR 完整 URL', example: 'https://github.com/inernoro/prd_agent/pull/123' },
   {
     key: 'prReviewUrl',
     label: '一键跳转 PR 审查 Agent（= 本分支预览地址 + /pr-review）',
-    example: 'https://<branch>.miduo.org/pr-review?prUrl=...&autoStart=1',
+    example: 'https://preview.example.invalid/pr-review?prUrl=...&autoStart=1',
   },
 ] as const;
 
