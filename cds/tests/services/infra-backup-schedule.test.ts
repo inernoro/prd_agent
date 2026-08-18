@@ -571,8 +571,10 @@ describe('Redis 备份探测脚本', () => {
   });
 
   it('env 拿不到密码时，从进程命令行里真的抽得出 --requirepass', () => {
-    // `redis-server --requirepass secret` 且 env 里一个字都没有，是 compose 导入
-    // 最常见的配法。只读 env 会拿到空密码 → NOAUTH → 每一轮备份都失败。
+    // 覆盖的是「命令行里确实还留着口令」那一档——实测只有显式 `--set-proc-title no`
+    // 的实例是这样。redis 默认会把 argv 改写成 `redis-server *:6379`，那时这条路扫不到，
+    // 走的是下面「一个凭据都不通 → exit 22」那条。这条用例只证明解析本身没写错，
+    // **不证明线上大多数 redis 能靠它拿到口令**（doc/debt.cds.md E34）。
     const r = connect({ serverPassword: 's3cr3t', cmdline: 'redis-server\0--requirepass\0s3cr3t\0' });
     expect(r.status, r.stderr).toBe(0);
     expect(r.auth).toBe('s3cr3t');

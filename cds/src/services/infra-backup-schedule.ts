@@ -366,6 +366,14 @@ export const REDIS_CONNECT_LINES: readonly string[] = [
   'unset REDISCLI_AUTH',
   "cds_is_pong() { printf '%s\\n' \"$1\" | grep -qx PONG; }",
   'cds_try_auth() { [ -n "$1" ] || return 1; REDISCLI_AUTH="$1" redis-cli PING 2>&1 | grep -qx PONG; }',
+  // 从进程命令行里扫 --requirepass。**这条路只在少数情况下有效，别把它当主力**：
+  // redis 默认 `set-proc-title yes`，启动后会把自己的 argv 整个改写成 `redis-server *:6379`，
+  // 命令行里的口令连同其它参数一起消失（拿真 redis 量过：默认配置扫不到，
+  // 显式 `--set-proc-title no` 才扫得到）。所以它只兜得住关了 proc-title 的实例；
+  // 「密码既不在 env、redis 又开着认证」的一般情形仍会走到下面的 exit 22，
+  // 那是如实报缺凭据，不是静默拷走旧文件。真正的解法是让 CDS 用自己存的那份
+  // 密码（infraServices 的 secrets）经 stdin 喂进来——见 doc/debt.cds.md E34。
+  //
   // PROCDIR 只是给回归留的注入点（容器里没人会设它）。这段 awk 是最容易写错的地方，
   // 必须能拿真 shell 对着真的 NUL 分隔 cmdline 跑一遍，而不是断言「源码里有这行」——
   // 那种断言在这段代码变成死分支时照样是绿的。
