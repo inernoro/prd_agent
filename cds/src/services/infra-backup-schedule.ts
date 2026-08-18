@@ -24,6 +24,13 @@ export interface BackupCandidate {
   dockerImage: string;
   running?: boolean;
   env?: Record<string, string> | null;
+  /**
+   * CDS 当初用来**启动**这个容器的命令。redis 的口令常常只存在于这里
+   * （容器里扫不到——redis 会改写自己的 argv），所以它是凭据的权威来源之一。
+   * 必须显式声明：靠 `{...s}` 展开把它带进来是「碰巧能跑」，
+   * 字段一旦改名，编译器一声不吭，凭据静默变空。
+   */
+  command?: string[] | string | null;
 }
 
 export interface BackupTarget extends BackupCandidate {
@@ -364,6 +371,9 @@ export const REDIS_CONNECT_LINES: readonly string[] = [
   // 先把继承来的 REDISCLI_AUTH 收起来：它也只是个候选，不该在裸连那一步生效。
   'CDS_ORIG_AUTH="${REDISCLI_AUTH:-}"',
   'unset REDISCLI_AUTH',
+  // CDS 自己存的那份口令（见 redisAuthFromServiceDefinition）由调用方经 stdin 送进来，
+  // 在这个位置被赋值。没送就是空，整段照常走。
+  'CDS_STDIN_AUTH="${CDS_STDIN_AUTH:-}"',
   "cds_is_pong() { printf '%s\\n' \"$1\" | grep -qx PONG; }",
   'cds_try_auth() { [ -n "$1" ] || return 1; REDISCLI_AUTH="$1" redis-cli PING 2>&1 | grep -qx PONG; }',
   // 从进程命令行里扫 --requirepass。**这条路只在少数情况下有效，别把它当主力**：
@@ -394,7 +404,10 @@ export const REDIS_CONNECT_LINES: readonly string[] = [
   '    *) echo "redis 连不上: $cds_hello" >&2; exit 21;;',
   '  esac',
   '  CDS_AUTH=""',
-  '  if cds_try_auth "${REDIS_PASSWORD:-}"; then CDS_AUTH="$REDIS_PASSWORD"',
+  // CDS 自己的服务定义排第一：那是它当初用来**启动**这个容器的口令，
+  // 比容器 env 里那个「给应用连的连接串变量」权威。
+  '  if cds_try_auth "$CDS_STDIN_AUTH"; then CDS_AUTH="$CDS_STDIN_AUTH"',
+  '  elif cds_try_auth "${REDIS_PASSWORD:-}"; then CDS_AUTH="$REDIS_PASSWORD"',
   '  elif cds_try_auth "${REDIS_PASS:-}"; then CDS_AUTH="$REDIS_PASS"',
   '  elif cds_try_auth "$CDS_ORIG_AUTH"; then CDS_AUTH="$CDS_ORIG_AUTH"',
   '  else',
@@ -406,6 +419,57 @@ export const REDIS_CONNECT_LINES: readonly string[] = [
   '  export REDISCLI_AUTH="$CDS_AUTH"',
   'fi',
 ];
+
+/**
+ * 从 **CDS 自己的服务定义**里取这个 redis 的口令。
+ *
+ * 为什么这才是权威来源：这些 infra 容器就是 CDS 起的，启动命令与 env 都存在它的
+ * state 里。容器里反而不一定看得到——redis 默认会把自己的 argv 改写掉（见上面
+ * `cds_scan_requirepass` 的注释），env 里那个又可能只是给应用用的连接串变量。
+ * 2026-08-18 实测：线上 6 个 redis 里唯一还失败的那个，口令原原本本写在
+ * CDS 存的 `command` 里，容器里却哪儿都扫不到。
+ *
+ * 只做解析，不决定怎么送进去——送法见 {@link redisProbeStdin}。
+ */
+export function redisAuthFromServiceDefinition(svc: {
+  env?: Record<string, string> | null;
+  command?: string[] | string | null;
+}): string {
+  const env = svc.env || {};
+  // 注意：这里取到的**可能是错的**（env 里放过期口令的情况线上就有一台）。
+  // 所以它只是个候选，最终由容器里那次真实的 PING 说了算。
+  const fromEnv = env.REDIS_PASSWORD || env.REDIS_PASS || '';
+  if (fromEnv) return fromEnv;
+  const parts = Array.isArray(svc.command)
+    ? svc.command
+    : String(svc.command || '').split(/\s+/).filter(Boolean);
+  for (let i = 0; i < parts.length; i += 1) {
+    const p = parts[i];
+    if (p.startsWith('--requirepass=')) return p.slice('--requirepass='.length);
+    if (p === '--requirepass' && i + 1 < parts.length) return parts[i + 1];
+    // compose 常把整条命令塞进一个 `sh -c '...'` 元素里，参数没被拆开。
+    const inline = /--requirepass[= ]+("([^"]*)"|'([^']*)'|(\S+))/.exec(p);
+    if (inline) return inline[2] ?? inline[3] ?? inline[4] ?? '';
+  }
+  return '';
+}
+
+/**
+ * 把脚本和口令一起打包成**送进 stdin** 的内容。
+ *
+ * 关键约束：口令绝不能出现在宿主命令行上。`docker exec -e PW=...` 和
+ * `sh -c '...口令...'` 都会把明文摆进 argv，同机任何人 `ps` 一眼就看到。
+ * 所以调用方一律走 `docker exec -i <容器> sh -s`，argv 里只剩 `sh -s`，
+ * 脚本连同口令都从这里进去。
+ *
+ * 没有口令时返回脚本本身——行为与从前完全一致，不为「统一形状」引入新语义。
+ */
+export function redisProbeStdin(script: string, password: string): string {
+  if (!password) return script;
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 换行）都是字面量。
+  const quoted = `'${password.replace(/'/g, `'"'"'`)}'`;
+  return `CDS_STDIN_AUTH=${quoted}\n${script}`;
+}
 
 /**
  * 只解析路径并打印出来（不触发 BGSAVE）。恢复流程要知道「该往哪写」，

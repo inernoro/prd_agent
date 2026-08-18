@@ -23,6 +23,8 @@ import {
   backupDirCandidates,
   backupKey,
   buildRedisBackupProbeScript,
+  redisAuthFromServiceDefinition,
+  redisProbeStdin,
   buildRedisRdbPathScript,
   isLegacyUnscopedBackupFile,
   isProjectBackupFile,
@@ -191,9 +193,14 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         // 三处都会静默给出**陈旧快照**：配了 requirepass 的库 BGSAVE 直接 NOAUTH；
         // 1.2 秒对稍大的库根本不够；改过 dir 的实例那个路径上压根不是它的快照。
         // 而这个端点还是项目迁移的数据来源——「以为备了、其实是旧的」比没有备份更危险。
+        // 与周期备份同一条送法：脚本走 stdin（`sh -s`），CDS 存的那份口令随之进去，
+        // 宿主命令行上不留明文。
         const probe = await shell.exec(
-          `docker exec ${shq(svc.containerName)} sh -c ${shq(buildRedisBackupProbeScript())}`,
-          { timeout: 120_000 },
+          `docker exec -i ${shq(svc.containerName)} sh -s`,
+          {
+            timeout: 120_000,
+            stdin: redisProbeStdin(buildRedisBackupProbeScript(), redisAuthFromServiceDefinition(svc)),
+          },
         );
         if (probe.exitCode !== 0) {
           return res.status(500).json({
@@ -303,8 +310,11 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         // 一个 redis 根本不读的位置，重启后加载的还是**旧数据**，而接口回的是
         // 「已恢复」——恢复场景里这种谎话的代价是数据真的回不来了。
         const pathProbe = await shell.exec(
-          `docker exec ${shq(svc.containerName)} sh -c ${shq(buildRedisRdbPathScript())}`,
-          { timeout: 30_000 },
+          `docker exec -i ${shq(svc.containerName)} sh -s`,
+          {
+            timeout: 30_000,
+            stdin: redisProbeStdin(buildRedisRdbPathScript(), redisAuthFromServiceDefinition(svc)),
+          },
         );
         const rdbTarget = (pathProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
         if (pathProbe.exitCode !== 0 || !rdbTarget.startsWith('/')) {
