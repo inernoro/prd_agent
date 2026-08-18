@@ -79,6 +79,7 @@ import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js
 import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
 import { installProcessFuse } from './services/process-fuse.js';
 import { AuditLiveness, recordAuditFailure } from './services/audit-liveness.js';
+import { reconcileSelfUpdateOutcome } from './services/self-update-outcome.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
@@ -1671,6 +1672,31 @@ const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
 const externalPortAuditWatchdog = startExternalPortAuditWatchdog(activeServerEventLogStore);
 const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
+
+/**
+ * 重启之后回头看一眼：上一次自更新声称更到的 sha，和现在真实的 HEAD 对得上吗？
+ *
+ * 对不上就说明中途被退回了。这条必须落一条 error 事件——回滚是全站级别的事实，
+ * 却曾经只能靠「我怎么觉得改动没生效」去发现（E37）。
+ */
+async function reconcileSelfUpdateAfterRestart(): Promise<void> {
+  try {
+    const last = stateService.getSelfUpdateHistory(1)[0];
+    if (!last) return;
+    const head = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot, timeout: 15_000 });
+    const outcome = reconcileSelfUpdateOutcome(last, head.exitCode === 0 ? head.stdout.trim() : '');
+    if (!outcome.rolledBack) return;
+    console.error(`[self-update] ${outcome.message}`);
+    activeServerEventLogStore?.record({
+      category: 'system', severity: 'error', source: 'self-update',
+      action: 'self-update.rolled-back',
+      message: outcome.message, status: 'error',
+      details: { claimedSha: outcome.claimedSha, actualSha: outcome.actualSha, recordedAt: last.ts },
+    });
+  } catch (err) {
+    console.warn(`[self-update] 结果对账失败: ${(err as Error).message}`);
+  }
+}
 
 function beginBackgroundBranchOperation(input: {
   branchId: string;
@@ -4868,6 +4894,10 @@ function listenWithRetry(
       // 2026-05-07 timing 审视:盖戳 daemon ready,让 recordSelfUpdate 能算
       // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds.self-update-timing-audit.md
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
+      // 自更新结果对账（E37）：**更新成没成，以重启之后的 HEAD 为准**。
+      // 上一版把「构建成功」当成了「更新成功」——2026-08-18 一次崩溃回滚之后，
+      // 历史里仍然写着 success 与新 sha，而机器上是旧版，回滚在任何地方都查不到。
+      void reconcileSelfUpdateAfterRestart();
       // 监听地址永远不该靠猜：直连裸端口失败时，这一行就是答案。
       console.log(`  ${label}: ${describeListenDecision(bind)}`);
       onSuccess();
