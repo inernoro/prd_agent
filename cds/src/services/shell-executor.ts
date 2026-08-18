@@ -24,6 +24,12 @@ export class ShellExecutor implements IShellExecutor {
         },
       );
 
+      // 只在调用方显式给了 stdin 时才碰它。写完必须 end()，否则子进程里的
+      // `sh -s` 会一直等输入结束，直到 exec 超时才被杀——那种挂起最难查。
+      if (options?.stdin !== undefined) {
+        cp.stdin?.end(options.stdin);
+      }
+
       if (options?.onData) {
         cp.stdout?.on('data', (d: Buffer) => options.onData!(d.toString()));
         cp.stderr?.on('data', (d: Buffer) => options.onData!(d.toString()));
@@ -40,6 +46,9 @@ type PatternHandler = (match: RegExpMatchArray, options?: ExecOptions) => ExecRe
 
 export class MockShellExecutor implements IShellExecutor {
   readonly commands: string[] = [];
+  /** 与 commands 平行：每次 exec 收到的 stdin（没给就是 undefined）。
+   *  凭据走 stdin 之后，回归要能断言「密钥确实没进命令行、而是进了这里」。 */
+  readonly stdins: Array<string | undefined> = [];
   /**
    * Parallel to `commands`: the `cwd` value passed with each exec() call
    * (may be undefined). Added in P4 Part 18 (G1.2) so the concurrent
@@ -74,6 +83,7 @@ export class MockShellExecutor implements IShellExecutor {
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     this.commands.push(command);
     this.cwds.push(options?.cwd);
+    this.stdins.push(options?.stdin);
 
     const exact = this.responses.get(command);
     if (exact) return exact;

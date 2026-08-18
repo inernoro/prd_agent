@@ -23,8 +23,9 @@ import {
   type FirewallBackendSnapshot, type InfraExposureInput, type InfraExposureReport,
 } from './services/infra-exposure-audit.js';
 import {
-  backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript, buildSizeCappedCommand,
-  parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
+  backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript,
+  redisAuthFromServiceDefinition,
+  redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
@@ -670,10 +671,15 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             //   小库的 BGSAVE 常在同一秒内跑完，时间戳不动——于是白等 90 秒再把
             //   一份完全有效的备份判成失败。改用 rdb_bgsave_in_progress +
             //   rdb_last_bgsave_status，那才是 redis 文档给的完成判据。
+            // 脚本走 stdin（`sh -s`）而不是 `sh -c <脚本>`：这样 CDS 自己存的那份
+            // 口令能一起送进去，而宿主命令行上只剩 `sh -s`，`ps` 看不到任何明文。
             const redisScript = buildRedisBackupProbeScript();
             const redisProbe = await shell.exec(
-              `docker exec ${shq(t.containerName)} sh -c ${shq(redisScript)}`,
-              { timeout: 120_000 },
+              `docker exec -i ${shq(t.containerName)} sh -s`,
+              {
+                timeout: 120_000,
+                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t)),
+              },
             );
             if (redisProbe.exitCode !== 0) {
               throw new Error(`BGSAVE 未确认完成，拒绝拷贝可能过期的 dump.rdb：${combinedOutput(redisProbe).trim().slice(0, 300)}`);

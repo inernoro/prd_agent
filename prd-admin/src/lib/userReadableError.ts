@@ -109,6 +109,19 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['WORKSPACE_NOT_FOUND', '当前视觉项目不存在或已被删除，请返回项目列表并刷新后重新打开。'],
   ['IMAGE_GEN_RUN_NOT_FOUND', '图片生成任务不存在或已失效，请重新发起生成。'],
   ['IMAGE_GEN_UNAVAILABLE', '图片生成服务暂时不可用，请稍后重新生成。'],
+  // 路由解析失败的结构化原因（后端 GatewayRouteFailure）。拆开是因为「配置不兼容」与
+  // 「上游宕机」对用户的下一步动作完全相反：前者重试一万次也没用，必须找管理员。
+  // 过去它们都被包装成 IMAGE_GEN_UNAVAILABLE，用户和管理员都被误导成供应商故障。
+  ['ROUTE_CONFIG_INCOMPATIBLE', '该功能的模型配置与本次请求不匹配，重试无法解决，请联系管理员调整。'],
+  ['APPCALLER_POOL_UNBOUND', '该功能还没有绑定可用的模型池，请联系管理员完成配置后重试。'],
+  ['MODEL_POOL_EMPTY', '该功能绑定的模型池里没有任何模型，请联系管理员补充后重试。'],
+  ['MODEL_POOL_ALL_UNAVAILABLE', '当前可用模型都在恢复中，请稍后重试。'],
+  ['LOGICAL_MODEL_CAPABILITY_MISMATCH', '所选模型不支持这个使用场景，请换一个模型，或联系管理员核对模型能力配置。'],
+  ['OFFERING_UNRESOLVABLE', '所选模型的上游线路配置不完整，重试无法解决，请联系管理员处理。'],
+  ['PLATFORM_DISABLED', '该模型所属平台已被停用，请换一个模型或联系管理员启用。'],
+  ['PROVIDER_UNAVAILABLE', '上游模型服务暂时故障，请稍后重试。'],
+  ['PROVIDER_QUOTA_EXCEEDED', '当前模型用量已达上限，请稍后再试或联系管理员调整配额。'],
+  ['GATEWAY_CONFIG_UNAVAILABLE', '模型配置服务暂时不可用，请稍后重试。'],
   ['IMAGE_GEN_REQUEST_REJECTED', '图片生成请求未被接受，请调整描述或素材后重试。'],
   ['IMAGE_GEN_TIMEOUT', '图片生成等待超时，请稍后查看结果或重新生成。'],
   ['ASSET_NOT_FOUND', '这张生成图片已失效，请重新生成预览后再使用。'],

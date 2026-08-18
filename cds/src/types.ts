@@ -4133,6 +4133,17 @@ export interface ExecOptions {
   /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。
    *  2026-05-06 起 self-update / web build 不再下发 NODE_OPTIONS 上限,V8 自适应主机 RAM。 */
   env?: Record<string, string>;
+  /**
+   * 写进子进程 stdin 的内容，写完即关闭。
+   *
+   * 存在的理由只有一个：**把密钥送进容器又不让它出现在宿主命令行上**。
+   * `docker exec -e PW=... ` 和 `sh -c '...密码...'` 都会把明文摆进 argv，
+   * 同机任何人 `ps` 一眼就能看到。改走 `docker exec -i c sh -s` + 本字段，
+   * 脚本连同密钥都从 stdin 进去，argv 里只剩 `sh -s`。
+   *
+   * 只在显式提供时才碰 stdin：不提供就保持原样（否则会改掉所有既有调用方的行为）。
+   */
+  stdin?: string;
 }
 
 export interface IShellExecutor {

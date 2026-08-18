@@ -4193,7 +4193,12 @@ internal sealed class TrackingModelResolver : IModelResolver
         string? pinnedPlatformId = null,
         string? pinnedModelId = null,
         CancellationToken ct = default)
-        => Task.FromResult(ModelResolutionResult.NotFound(expectedModel, "测试不执行解析"));
+        => Task.FromResult(ModelResolutionResult.NotFound(
+            expectedModel,
+            "测试不执行解析",
+            GatewayRouteFailure.RouteConfigIncompatible,
+            "test-double",
+            appCallerCode));
 
     public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,

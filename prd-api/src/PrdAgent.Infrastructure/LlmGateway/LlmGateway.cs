@@ -1318,6 +1318,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             OfferingMaxConcurrency = resolution.OfferingMaxConcurrency,
             OfferingEndpointPath = resolution.OfferingEndpointPath,
             Success = resolution.Success,
+            ErrorMessage = resolution.ErrorMessage,
+            // 结构化失败原因必须一起回灌，否则跨进程回来只剩自由文本，
+            // 应用层又会把所有失败包装成同一个「不可用」。
+            FailureCode = resolution.FailureCode,
+            FailureStage = resolution.FailureStage,
+            FailureAppCallerCode = resolution.FailureAppCallerCode,
+            FailureLogicalModelPublicId = resolution.FailureLogicalModelPublicId,
+            FailureOfferingId = resolution.FailureOfferingId,
+            FailureModelPoolId = resolution.FailureModelPoolId,
             ResolutionType = resolution.ResolutionType,
             ExpectedModel = resolution.ExpectedModel,
             ActualModel = resolution.ActualModel,
