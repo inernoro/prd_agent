@@ -293,6 +293,20 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
    * 救命快照。周期备份这一轮修了，恢复前快照是同一个形状的另一处，一起修。
    */
   router.post('/infra/:id/restore', async (req, res) => {
+    // 进函数第一件事：把请求流按住。**必须在任何 await 之前**。
+    //
+    // master 的 HTTP 日志中间件为了记录请求体挂了 `req.on('data')`，那一下就把
+    // 请求流切进了 flowing 模式。同一个 tick 里挂上的消费者（路由自带的 json
+    // 解析器就是这样）照样收得到数据，所以绝大多数接口毫无异样；但本 handler
+    // 要先 await 好几次（解析服务、探测备份目录）才 `req.pipe()`，等它 pipe 的
+    // 时候 body 早被日志中间件读完了——落到暂存文件里**一个字节都没有**。
+    //
+    // 后果不是报错而是假成功：空文件 docker cp 进容器，`gunzip | mysql` 里
+    // mysql 收到零字节正常退出，接口回一句「已恢复」。E42 就是这么来的，
+    // 上传 7MB 的 dump 全程 4 秒、库里一张表没多。
+    //
+    // pause 之后数据留在内核与流的缓冲里，后面 `req.pipe()` 会自动 resume。
+    req.pause();
     const svc = resolveScoped(req, res);
     if (!svc) return;
     if (svc.status !== 'running') {

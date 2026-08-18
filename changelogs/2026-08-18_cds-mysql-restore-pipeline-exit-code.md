@@ -3,3 +3,4 @@
 | feat | cds | mysql 恢复响应带上收到字节数与恢复前后表数，「已恢复」这句话带可核对的数字 |
 | fix | cds | mysql 恢复收尾补 FLUSH PRIVILEGES，否则授权表写回去了、应用仍连不上 |
 | fix | cds | 备份/恢复路由的七处报错改成截尾不截头，失败原因不再被切掉 |
+| fix | cds | 恢复接口进函数先 req.pause()，避免上传 body 被 HTTP 日志中间件读光后落盘 0 字节（E43） |
