@@ -490,6 +490,59 @@ export function redisProbeStdin(script: string, password: string): string {
 }
 
 /**
+ * 问 redis 有没有开 AOF（只回 `yes` / `no`）。
+ *
+ * 恢复流程必须先问这一句：开着 AOF 的实例**启动时读 AOF、不读 RDB**，
+ * 把快照写进去再重启，加载到的还是原来的数据，而接口会回「已恢复」。
+ * 这种谎话在恢复场景里代价最大，所以宁可明确拒绝也不假装成功。
+ */
+export function buildRedisAppendOnlyScript(): string {
+  return [
+    ...REDIS_CONNECT_LINES,
+    'out=$(redis-cli CONFIG GET appendonly 2>&1) || { echo "CONFIG GET appendonly 调用失败: $out" >&2; exit 31; }',
+    `v=$(printf '%s\\n' "$out" | sed -n '2p' | tr -d '\\r')`,
+    '[ -n "$v" ] || { echo "CONFIG GET appendonly 返回空" >&2; exit 32; }',
+    'printf "%s" "$v"',
+  ].join('\n');
+}
+
+/**
+ * Redis 恢复的动作顺序——**顺序本身就是这个函数存在的全部理由**。
+ *
+ * 上一版是「往**运行中**的容器写 RDB，然后 `docker restart`」，这会静默丢数据：
+ * redis 收到 SIGTERM 时按 save 点把**当前**数据存一次盘，正好覆盖掉刚上传的快照，
+ * 重启加载到的是覆盖后的内容，而接口回「已恢复」。默认配置就带 save 点，所以这
+ * 不是边角情况；只有恰好是空库时才看不出来（2026-08-18 收窄端口时就是这么侥幸
+ * 躲过去的）。
+ *
+ * 正确顺序把关闭时那次 save 变成**帮手**而不是对手：
+ *
+ * 1. `stop` —— 让 redis 自己把当前数据落盘，之后没有任何进程会再碰这个文件
+ * 2. `cp` 出来 —— 这时拷到的才是**准确的**恢复前状态，用作撤销快照
+ *    （上一版 redis 分支压根没有撤销快照，恢复错了就回不去了）
+ * 3. `cp` 进去 —— 覆盖，此刻无人竞争
+ * 4. `start` —— 启动时读到的就是上传的那份
+ *
+ * `docker cp` 对已停止的容器同样有效，这是这套顺序成立的前提。
+ */
+export function buildRedisRestorePlan(opts: {
+  containerName: string;
+  rdbPath: string;
+  /** 宿主上暂存的上传文件 */
+  uploadPath: string;
+  /** 撤销快照要写到哪 */
+  preBackupPath: string;
+}): Array<{ id: 'stop' | 'save-current' | 'overwrite' | 'start'; argv: string[] }> {
+  const c = opts.containerName;
+  return [
+    { id: 'stop', argv: ['docker', 'stop', c] },
+    { id: 'save-current', argv: ['docker', 'cp', `${c}:${opts.rdbPath}`, opts.preBackupPath] },
+    { id: 'overwrite', argv: ['docker', 'cp', opts.uploadPath, `${c}:${opts.rdbPath}`] },
+    { id: 'start', argv: ['docker', 'start', c] },
+  ];
+}
+
+/**
  * 只解析路径并打印出来（不触发 BGSAVE）。恢复流程要知道「该往哪写」，
  * 但不该顺手给人家存一次盘。连接与认证沿用同一份判定源。
  */

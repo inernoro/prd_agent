@@ -25,6 +25,8 @@ import {
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin,
+  buildRedisAppendOnlyScript,
+  buildRedisRestorePlan,
   buildRedisRdbPathScript,
   isLegacyUnscopedBackupFile,
   isProjectBackupFile,
@@ -260,7 +262,10 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     const backupDir = await resolveBackupDir();
     await shell.exec(`mkdir -p ${shq(backupDir)}`);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const preBackupPath = `${backupDir}/${backupKey(svc.projectId, svc.id)}-pre-restore-${stamp}.${kind === 'mongo' ? 'archive.gz' : 'bin'}`;
+    // 扩展名要说明这份撤销快照是什么：redis 存的是 RDB，拿 `.bin` 命名的话，
+    // 真要拿它回滚的人分不清能不能直接喂回去。
+    const preBackupExt = kind === 'mongo' ? 'archive.gz' : kind === 'redis' ? 'rdb' : 'bin';
+    const preBackupPath = `${backupDir}/${backupKey(svc.projectId, svc.id)}-pre-restore-${stamp}.${preBackupExt}`;
 
     try {
       if (kind === 'mongo') {
@@ -309,12 +314,10 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         // 写死 /data/dump.rdb 的话，改过 dir/dbfilename 的实例会把上传的快照写到
         // 一个 redis 根本不读的位置，重启后加载的还是**旧数据**，而接口回的是
         // 「已恢复」——恢复场景里这种谎话的代价是数据真的回不来了。
+        const auth = redisAuthFromServiceDefinition(svc);
         const pathProbe = await shell.exec(
           `docker exec -i ${shq(svc.containerName)} sh -s`,
-          {
-            timeout: 30_000,
-            stdin: redisProbeStdin(buildRedisRdbPathScript(), redisAuthFromServiceDefinition(svc)),
-          },
+          { timeout: 30_000, stdin: redisProbeStdin(buildRedisRdbPathScript(), auth) },
         );
         const rdbTarget = (pathProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
         if (pathProbe.exitCode !== 0 || !rdbTarget.startsWith('/')) {
@@ -323,21 +326,84 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           });
           return;
         }
-        const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-c', `cat > ${shq(rdbTarget)}`];
-        const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'ignore', 'pipe'] });
-        req.pipe(proc.stdin);
-        proc.on('close', async (code) => {
-          if (code !== 0) {
-            res.status(500).json({ error: `写入 dump.rdb 失败 exit=${code}` });
-            return;
-          }
-          // 重启容器让 redis 重新加载
-          await shell.exec(`docker restart ${shq(svc.containerName)}`).catch(() => { /* noop */ });
-          stateService.recordDestructiveOp({
-            type: 'purge-database',
-            summary: `恢复 ${svc.id} Redis dump.rdb 并重启容器`,
+
+        // 开着 AOF 的实例启动读 AOF、不读 RDB：写进去也不会生效，而接口会回
+        // 「已恢复」。这种情况明确拒绝，不假装成功（E35）。
+        const aofProbe = await shell.exec(
+          `docker exec -i ${shq(svc.containerName)} sh -s`,
+          { timeout: 30_000, stdin: redisProbeStdin(buildRedisAppendOnlyScript(), auth) },
+        );
+        const aof = (aofProbe.stdout || '').trim().split('\n').pop()?.trim().toLowerCase() || '';
+        if (aofProbe.exitCode !== 0) {
+          res.status(500).json({
+            error: `问不出 appendonly 配置，拒绝恢复：${combinedOutput(aofProbe).trim().slice(0, 200)}`,
           });
-          res.json({ restored: true, message: 'Redis 已从 dump.rdb 恢复并重启' });
+          return;
+        }
+        if (aof === 'yes') {
+          res.status(409).json({
+            error: '该实例开启了 AOF（appendonly yes）。redis 启动时读 AOF 不读 RDB，'
+              + '写入快照不会生效——拒绝执行以免给出「已恢复」的假象。请先关闭 AOF 或改用 AOF 文件恢复。',
+          });
+          return;
+        }
+
+        // 上传内容先落到宿主暂存文件：后面要在**容器停止**的状态下 docker cp 进去，
+        // 而停止的容器没法 docker exec，必须先把字节拿在手上。
+        const uploadPath = `${backupDir}/.upload-${backupKey(svc.projectId, svc.id)}-${stamp}.rdb`;
+        try {
+          const fsp = await import('node:fs');
+          await new Promise<void>((resolve, reject) => {
+            const w = fsp.createWriteStream(uploadPath);
+            req.pipe(w);
+            w.on('finish', () => resolve());
+            w.on('error', reject);
+            req.on('error', reject);
+          });
+        } catch (err) {
+          res.status(500).json({ error: `接收上传失败：${(err as Error).message}` });
+          return;
+        }
+
+        // 顺序是关键，见 buildRedisRestorePlan 的注释：停 → 存当前 → 覆盖 → 启动。
+        const plan = buildRedisRestorePlan({
+          containerName: svc.containerName,
+          rdbPath: rdbTarget,
+          uploadPath,
+          preBackupPath,
+        });
+        let stopped = false;
+        try {
+          for (const step of plan) {
+            const r = await shell.exec(step.argv.map(shq).join(' '), { timeout: 120_000 });
+            if (step.id === 'stop') stopped = r.exitCode === 0;
+            if (step.id === 'start') stopped = r.exitCode === 0 ? false : stopped;
+            // 存当前快照失败不致命（可能这台从没落过盘），其余每一步都必须成功：
+            // 覆盖失败却继续启动，用户会拿到「已恢复」而数据没变。
+            if (r.exitCode !== 0 && step.id !== 'save-current') {
+              throw new Error(`${step.id} 失败：${combinedOutput(r).trim().slice(0, 200)}`);
+            }
+          }
+        } catch (err) {
+          // 停下了却没起回来，比恢复失败本身更严重——尽力拉起来再如实报错。
+          if (stopped) await shell.exec(`docker start ${shq(svc.containerName)}`).catch(() => { /* 已尽力 */ });
+          res.status(500).json({
+            error: `恢复失败：${(err as Error).message}`,
+            containerRestarted: stopped,
+          });
+          return;
+        } finally {
+          await shell.exec(`rm -f ${shq(uploadPath)}`).catch(() => { /* 暂存文件清不掉不影响结果 */ });
+        }
+
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          summary: `恢复 ${svc.id} Redis 快照（恢复前状态已存：${preBackupPath}）`,
+        });
+        res.json({
+          restored: true,
+          preRestoreBackup: preBackupPath,
+          message: 'Redis 已从快照恢复：容器先停止、覆盖快照文件、再启动加载',
         });
       } else {
         res.status(400).json({ error: '暂不支持该 infra 类型的自动恢复，请手动导入' });
