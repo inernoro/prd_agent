@@ -307,10 +307,14 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     //
     // pause 之后数据留在内核与流的缓冲里，后面 `req.pipe()` 会自动 resume。
     req.pause();
+    // 按住之后，任何提前返回都要把流放开：否则客户端还在发那几十 MB，服务端却
+    // 既不读也不结束，上传方看到的是卡住而不是那条 4xx。
+    const bail = (): void => { req.resume(); };
     const svc = resolveScoped(req, res);
-    if (!svc) return;
+    if (!svc) { bail(); return; }
     if (svc.status !== 'running') {
       res.status(409).json({ error: `服务未运行，无法恢复` });
+      bail();
       return;
     }
 

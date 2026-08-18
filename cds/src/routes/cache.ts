@@ -313,6 +313,8 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
     const name = String(req.query.name || '').trim();
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数' });
+      // 按住之后提前返回要把流放开，否则上传方看到的是卡住而不是这条 400。
+      req.resume();
       return;
     }
 
