@@ -647,7 +647,9 @@ export function buildMysqlRestoreScript(inContainerPath: string): string {
     // 凭据在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
     'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
     // 先验完整性。空文件/截断文件在这里就出局，不会带着半截 SQL 去动库。
-    `gunzip -t ${p} || { echo "cds-restore: gzip 完整性校验失败，未导入任何内容" >&2; exit 65; }`,
+    // 措辞不替失败下结论：这一步不过既可能是文件损坏/截断/为空，也可能是容器里
+    // 根本没有 gunzip。真正的原因在 stderr 里，由调用方原样带回去，别在这儿猜。
+    `gunzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gunzip 的输出），未导入任何内容" >&2; exit 65; }`,
     // mysql 的 stdout 是噪音，赶到 stderr，别混进退出码通道。
     `codes=$( { { gunzip -c ${p}; echo "gunzip=$?" >&4; }`
       + ' | { mysql -uroot >&2; echo "mysql=$?" >&4; }; } 4>&1 )',

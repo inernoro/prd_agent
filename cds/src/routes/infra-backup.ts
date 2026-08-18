@@ -58,6 +58,18 @@ function shq(s: string): string {
   return `'${String(s).replace(/'/g, `'"'"'`)}'`;
 }
 
+/**
+ * 截断命令输出取**尾**不取头。
+ *
+ * 失败原因永远在输出末尾；`slice(0, N)` 会把它整段切掉，只留下一堆启动噪音
+ * （house rule 见 release-ssh-failure-detail 的三宗罪）。本文件原先七处
+ * 报错全是头截断——同一个口径分散七份，所以收敛到这一个函数。
+ */
+function outputTail(s: string, max = 300): string {
+  const t = String(s || '').trim();
+  return t.length > max ? `…（前文截断）${t.slice(-max)}` : t;
+}
+
 /** 从 env 里抠 mongo root 账号密码，同时兼容两种写法。 */
 function extractMongoAuth(env: Record<string, string>): { user?: string; password?: string } {
   return {
@@ -213,7 +225,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         );
         if (probe.exitCode !== 0) {
           return res.status(500).json({
-            error: `BGSAVE 未确认完成，拒绝下载可能过期的快照：${combinedOutput(probe).trim().slice(0, 300)}`,
+            error: `BGSAVE 未确认完成，拒绝下载可能过期的快照：${outputTail(combinedOutput(probe), 300)}`,
           });
         }
         const rdbPath = (probe.stdout || '').trim().split('\n').pop()?.trim() || '';
@@ -355,7 +367,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const rdbTarget = (pathProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
         if (pathProbe.exitCode !== 0 || !rdbTarget.startsWith('/')) {
           res.status(500).json({
-            error: `解析不出 redis 快照路径，拒绝按默认路径写入：${combinedOutput(pathProbe).trim().slice(0, 200)}`,
+            error: `解析不出 redis 快照路径，拒绝按默认路径写入：${outputTail(combinedOutput(pathProbe), 200)}`,
           });
           return;
         }
@@ -369,7 +381,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         const aof = (aofProbe.stdout || '').trim().split('\n').pop()?.trim().toLowerCase() || '';
         if (aofProbe.exitCode !== 0) {
           res.status(500).json({
-            error: `问不出 appendonly 配置，拒绝恢复：${combinedOutput(aofProbe).trim().slice(0, 200)}`,
+            error: `问不出 appendonly 配置，拒绝恢复：${outputTail(combinedOutput(aofProbe), 200)}`,
           });
           return;
         }
@@ -414,7 +426,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
             // 存当前快照失败不致命（可能这台从没落过盘），其余每一步都必须成功：
             // 覆盖失败却继续启动，用户会拿到「已恢复」而数据没变。
             if (r.exitCode !== 0 && step.id !== 'save-current') {
-              throw new Error(`${step.id} 失败：${combinedOutput(r).trim().slice(0, 200)}`);
+              throw new Error(`${step.id} 失败：${outputTail(combinedOutput(r), 200)}`);
             }
           }
         } catch (err) {
@@ -485,13 +497,13 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           );
           if (pre.exitCode !== 0) {
             // 存不下当前状态就不许往下走——没有退路的恢复不该开始。
-            throw new Error(`恢复前快照失败，已中止：${combinedOutput(pre).trim().slice(0, 200)}`);
+            throw new Error(`恢复前快照失败，已中止：${outputTail(combinedOutput(pre), 200)}`);
           }
           const cp = await shell.exec(
             `docker cp ${shq(uploadPath)} ${shq(`${svc.containerName}:${inContainer}`)}`,
             { timeout: 600_000 },
           );
-          if (cp.exitCode !== 0) throw new Error(`拷入容器失败：${combinedOutput(cp).trim().slice(0, 200)}`);
+          if (cp.exitCode !== 0) throw new Error(`拷入容器失败：${outputTail(combinedOutput(cp), 200)}`);
           tablesBefore = await countMysqlTables(svc.containerName);
           // 灌库：口令走容器内 MYSQL_PWD，不进宿主命令行；管道两端的退出码都要检查
           // （裸管道只会给出 mysql 那一端的，见 buildMysqlRestoreScript 的注释）。
@@ -499,7 +511,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
             `docker exec -i ${shq(svc.containerName)} sh -s`,
             { timeout: 1_800_000, stdin: buildMysqlRestoreScript(inContainer) },
           );
-          if (load.exitCode !== 0) throw new Error(`导入失败：${combinedOutput(load).trim().slice(0, 300)}`);
+          if (load.exitCode !== 0) throw new Error(`导入失败：${outputTail(combinedOutput(load), 300)}`);
           tablesAfter = await countMysqlTables(svc.containerName);
         } catch (err) {
           res.status(500).json({ error: `恢复失败：${(err as Error).message}`, preRestoreBackup: preBackupPath });
