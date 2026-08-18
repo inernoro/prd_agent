@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { canUseSrcDocPreview, hasFetchableHtml, shouldMaskDirectPreview, withPreviewBase, PREVIEW_MASK_TIMEOUT_MS } from './ShareViewPage';
+import { shouldMaskDirectPreview, PREVIEW_MASK_TIMEOUT_MS } from './ShareViewPage';
+// 判据本体已抽到 web-hosting/previewHtml.ts，让缩略图、站内大预览、分享页共用同一份
+// （原先只长在分享页里，卡片缩略图另走一套，于是同一个「空白」在列表页复发）。
+import { canUseSrcDocPreview, hasFetchableHtml, withPreviewBase } from '@/components/web-hosting/previewHtml';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHARE_VIEW = path.join(HERE, 'ShareViewPage.tsx');
