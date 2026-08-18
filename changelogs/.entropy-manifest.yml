@@ -552,5 +552,10 @@ processed:
   - 2026-08-11_stable-smoke-runtime-equivalence.md
   - 2026-08-12_cds-release-failure-redesign-demo.md
   - 2026-08-14_auto-rules-naming.md
+  - 2026-08-14_release-center-evidence-cross-env.md
+  - 2026-08-14_release-center-evidence-single-table.md
+  - 2026-08-14_release-center-handoff-parity.md
+  - 2026-08-15_cds-latin-font.md
+  - 2026-08-15_cds-restyle-handoff-palette.md
   - 2026-08-14_push-rule-branch-source.md
   - 2026-08-14_release-center-auto-rules.md
