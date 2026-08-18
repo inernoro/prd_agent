@@ -4,3 +4,4 @@
 | fix | cds | mysql 恢复收尾补 FLUSH PRIVILEGES，否则授权表写回去了、应用仍连不上 |
 | fix | cds | 备份/恢复路由的七处报错改成截尾不截头，失败原因不再被切掉 |
 | fix | cds | 恢复接口进函数先 req.pause()，避免上传 body 被 HTTP 日志中间件读光后落盘 0 字节（E43） |
+| fix | cds | 缓存导入接口同样跨 await 才读 body，补 req.pause()；守卫扩到所有 req.pipe 调用点 |

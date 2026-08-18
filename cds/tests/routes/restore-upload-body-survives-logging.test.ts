@@ -78,23 +78,42 @@ describe('恢复接口的上传 body 不能被日志中间件吃掉', () => {
   });
 });
 
-/** 接线守卫：pause 必须真的写在恢复路由里，且排在第一次 await 之前。 */
-describe('恢复路由确实先按住流', () => {
-  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8');
+/**
+ * 接线守卫：**每一个**自己读原始请求体的路由都要过这一关。
+ *
+ * 判据不是「有没有挂 data 监听」，而是「路由从进函数到 `req.pipe()` 之间跨没跨 await」。
+ * 同 tick 挂上消费者不丢数据（forwarder 的 proxy-handler 就是这样，所以它没事）；
+ * 一旦中间有 await，body 就已经被日志中间件读走了。所以这里扫全部 `req.pipe(` 的
+ * 调用点，逐个判它所在的路由：跨了 await 的，必须先 `req.pause()`。
+ */
+describe('凡是自己读原始 body 的路由，都不许跨 await 才读', () => {
+  const ROUTE_DIR = path.resolve(process.cwd(), 'src/routes');
 
-  it('restore 路由体的第一句就是 req.pause()，在任何 await 之前', () => {
-    const start = SRC.indexOf("router.post('/infra/:id/restore'");
-    expect(start).toBeGreaterThan(0);
-    // 注释里也会出现「await」这个词（就在被守的那段说明里），拿原文搜等于在守自己的
-    // 措辞。先把注释行剔掉，判据才落在真正会执行的代码上。
-    const body = SRC.slice(start, SRC.indexOf("router.get('/infra/:id/backup-history'"))
-      .split('\n')
-      .map((l) => (/^\s*(\/\/|\/?\*)/.test(l) ? '' : l))
-      .join('\n');
-    const pause = body.indexOf('req.pause();');
-    const firstAwait = body.indexOf('await ');
-    expect(pause, '恢复路由必须调用 req.pause()').toBeGreaterThan(0);
-    // 位置就是判据本身：挪到 await 后面等于没修——body 那时已经流完了。
-    expect(pause, 'req.pause() 必须排在第一次 await 之前').toBeLessThan(firstAwait);
+  /** 剔掉注释行——注释里也会出现 await 这个词（就在被守的那几段说明里）。 */
+  const stripComments = (s: string): string => s
+    .split('\n')
+    .map((l) => (/^\s*(\/\/|\/?\*)/.test(l) ? '' : l))
+    .join('\n');
+
+  it('每个 req.pipe( 调用点，要么同 tick、要么先 pause', () => {
+    const files = fs.readdirSync(ROUTE_DIR).filter((f) => f.endsWith('.ts'));
+    const checked: string[] = [];
+    for (const f of files) {
+      const src = stripComments(fs.readFileSync(path.join(ROUTE_DIR, f), 'utf8'));
+      for (let i = src.indexOf('req.pipe('); i >= 0; i = src.indexOf('req.pipe(', i + 1)) {
+        // 往回找这条 pipe 所属的路由起点（最近的一个 router.<verb>( 之前）。
+        const head = src.lastIndexOf('router.', i);
+        expect(head, `${f}: req.pipe 找不到所属路由`).toBeGreaterThan(-1);
+        const body = src.slice(head, i);
+        const firstAwait = body.indexOf('await ');
+        const pause = body.indexOf('req.pause();');
+        checked.push(`${f}@${head}`);
+        if (firstAwait === -1) continue;            // 同 tick，安全
+        expect(pause, `${f}: 该路由跨了 await 才读 body，必须先 req.pause()`).toBeGreaterThan(-1);
+        expect(pause, `${f}: req.pause() 必须排在第一次 await 之前`).toBeLessThan(firstAwait);
+      }
+    }
+    // 扫不到任何调用点时这条会静默全绿——那是「不会红的证据」，比没有证据更糟。
+    expect(checked.length, '一个 req.pipe( 都没扫到，守卫多半失效了').toBeGreaterThanOrEqual(4);
   });
 });
