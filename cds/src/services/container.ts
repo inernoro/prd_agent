@@ -12,7 +12,7 @@ import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js'
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
-import { assertInfraAuthenticationConfigured } from './infra-auth-policy.js';
+import { evaluateInfraAuthentication } from './infra-auth-policy.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -2604,12 +2604,17 @@ export class ContainerService {
 
     // 认证是基础设施启动协议的一部分，必须在任何复用、唤醒或新建分支之前校验。
     // 若把门禁放在 docker run 前面，已存在容器就能借由 early return 绕过策略。
+    //
+    // 判定分两档（2026-08-18）：**新建一律强制，门禁上线前的存量库限期放行**。
+    // 混成一档的代价当天就付过了——门禁上线后平台立刻停摆，五个项目十几个存量库
+    // 全部起不来，连主分支预览都部署失败，而那些库本身活得好好的。
+    // 「不许再造新的」是纪律，「立刻停掉已有的」是停机，不该是同一个判定。
     const resolvedEnv = customEnv
       ? resolveEnvTemplates(service.env, customEnv)
       : service.env;
     const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
     const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
-    assertInfraAuthenticationConfigured({
+    const authDecision = evaluateInfraAuthentication({
       dockerImage: service.dockerImage,
       id: service.id,
       name: service.name,
@@ -2619,7 +2624,25 @@ export class ContainerService {
       env: resolvedEnv,
       command: resolvedCommand,
       entrypoint: resolvedEntrypoint,
-    });
+      createdAt: service.createdAt,
+    }, { graceUntil: process.env.CDS_INFRA_AUTH_GRACE_UNTIL || null });
+    if (!authDecision.allowed) {
+      throw new Error(authDecision.reason || '基础设施认证门禁拒绝启动');
+    }
+    if (authDecision.exemption) {
+      // 靠豁免放行必须留痕：一个没人看见的豁免，和把门禁删掉没有区别。
+      // 临近到期升 error，好让「该做迁移了」这件事从日志里长出来。
+      this.recordContainerEvent({
+        severity: authDecision.exemption.urgent ? 'error' : 'warn',
+        source: 'infra-auth-policy',
+        action: 'infra.auth.legacy-exemption',
+        message: authDecision.exemption.message,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        status: authDecision.exemption.urgent ? 'error' : 'warn',
+      });
+    }
 
     // 幂等启动（2026-05-05 修 P0 bug）
     //

@@ -490,6 +490,59 @@ export function redisProbeStdin(script: string, password: string): string {
 }
 
 /**
+ * 问 redis 有没有开 AOF（只回 `yes` / `no`）。
+ *
+ * 恢复流程必须先问这一句：开着 AOF 的实例**启动时读 AOF、不读 RDB**，
+ * 把快照写进去再重启，加载到的还是原来的数据，而接口会回「已恢复」。
+ * 这种谎话在恢复场景里代价最大，所以宁可明确拒绝也不假装成功。
+ */
+export function buildRedisAppendOnlyScript(): string {
+  return [
+    ...REDIS_CONNECT_LINES,
+    'out=$(redis-cli CONFIG GET appendonly 2>&1) || { echo "CONFIG GET appendonly 调用失败: $out" >&2; exit 31; }',
+    `v=$(printf '%s\\n' "$out" | sed -n '2p' | tr -d '\\r')`,
+    '[ -n "$v" ] || { echo "CONFIG GET appendonly 返回空" >&2; exit 32; }',
+    'printf "%s" "$v"',
+  ].join('\n');
+}
+
+/**
+ * Redis 恢复的动作顺序——**顺序本身就是这个函数存在的全部理由**。
+ *
+ * 上一版是「往**运行中**的容器写 RDB，然后 `docker restart`」，这会静默丢数据：
+ * redis 收到 SIGTERM 时按 save 点把**当前**数据存一次盘，正好覆盖掉刚上传的快照，
+ * 重启加载到的是覆盖后的内容，而接口回「已恢复」。默认配置就带 save 点，所以这
+ * 不是边角情况；只有恰好是空库时才看不出来（2026-08-18 收窄端口时就是这么侥幸
+ * 躲过去的）。
+ *
+ * 正确顺序把关闭时那次 save 变成**帮手**而不是对手：
+ *
+ * 1. `stop` —— 让 redis 自己把当前数据落盘，之后没有任何进程会再碰这个文件
+ * 2. `cp` 出来 —— 这时拷到的才是**准确的**恢复前状态，用作撤销快照
+ *    （上一版 redis 分支压根没有撤销快照，恢复错了就回不去了）
+ * 3. `cp` 进去 —— 覆盖，此刻无人竞争
+ * 4. `start` —— 启动时读到的就是上传的那份
+ *
+ * `docker cp` 对已停止的容器同样有效，这是这套顺序成立的前提。
+ */
+export function buildRedisRestorePlan(opts: {
+  containerName: string;
+  rdbPath: string;
+  /** 宿主上暂存的上传文件 */
+  uploadPath: string;
+  /** 撤销快照要写到哪 */
+  preBackupPath: string;
+}): Array<{ id: 'stop' | 'save-current' | 'overwrite' | 'start'; argv: string[] }> {
+  const c = opts.containerName;
+  return [
+    { id: 'stop', argv: ['docker', 'stop', c] },
+    { id: 'save-current', argv: ['docker', 'cp', `${c}:${opts.rdbPath}`, opts.preBackupPath] },
+    { id: 'overwrite', argv: ['docker', 'cp', opts.uploadPath, `${c}:${opts.rdbPath}`] },
+    { id: 'start', argv: ['docker', 'start', c] },
+  ];
+}
+
+/**
  * 只解析路径并打印出来（不触发 BGSAVE）。恢复流程要知道「该往哪写」，
  * 但不该顺手给人家存一次盘。连接与认证沿用同一份判定源。
  */
@@ -568,5 +621,62 @@ export function buildMysqlDumpScript(): string {
     `g=$(printf '%s\\n' "$codes" | sed -n 's/^gzip=//p')`,
     '[ "${d:-1}" = 0 ] || exit "${d:-1}"',
     '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
+  ].join('\n');
+}
+
+/**
+ * MySQL 恢复：把容器内的 `.sql.gz` 灌回库里。
+ *
+ * ## 为什么不是一行 `gunzip -c f | mysql -uroot`
+ *
+ * 2026-08-18 真事：恢复接口返回 `restored: true`，耗时 4 秒，库里一张用户表都没有。
+ * 原因就是那一行——**管道的退出码是最后一环的**。上游 gunzip 因为文件是空的/截断的
+ * 失败了，下游 mysql 收到零字节输入、正常退出 0，调用方读到 0 就报「已恢复」。
+ *
+ * 这个坑在**导出**那侧（`buildMysqlDumpScript`）早就踩过、也早就注释清楚了，恢复这侧
+ * 却又裸写了一遍管道——同一个判据分裂成两份、只修了一份。所以两侧现在用同一套写法：
+ * 各环的退出码经 fd4 回传，任一非零整条失败。
+ *
+ * 另加一道前置 `gunzip -t`：先验完整性再灌库。空文件、传了一半的文件、根本不是 gzip
+ * 的文件，都在动库之前就被拦下，而不是灌进去一半才发现。
+ */
+export function buildMysqlRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    // 凭据在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
+    'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
+    // 先验完整性。空文件/截断文件在这里就出局，不会带着半截 SQL 去动库。
+    // 措辞不替失败下结论：这一步不过既可能是文件损坏/截断/为空，也可能是容器里
+    // 根本没有 gunzip。真正的原因在 stderr 里，由调用方原样带回去，别在这儿猜。
+    `gunzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gunzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    // mysql 的 stdout 是噪音，赶到 stderr，别混进退出码通道。
+    `codes=$( { { gunzip -c ${p}; echo "gunzip=$?" >&4; }`
+      + ' | { mysql -uroot >&2; echo "mysql=$?" >&4; }; } 4>&1 )',
+    `u=$(printf '%s\\n' "$codes" | sed -n 's/^gunzip=//p')`,
+    `m=$(printf '%s\\n' "$codes" | sed -n 's/^mysql=//p')`,
+    // 读不到退出码按失败处理——「不确定」不能当成「成功」。
+    '[ "${u:-1}" = 0 ] || exit "${u:-1}"',
+    '[ "${m:-1}" = 0 ] || exit "${m:-1}"',
+    // `--all-databases` 的 dump 会把 `mysql` 库的授权表整个写回去，但**跑着的服务器
+    // 用的是内存里那份**——不 flush 的话，表里明明有这个账号，应用照样连不上，
+    // 而恢复看起来是成功的。dump 自己不带 FLUSH PRIVILEGES，所以在这里补。
+    // 单库 dump 的情况下这一句无副作用。
+    'mysql -uroot -e "FLUSH PRIVILEGES" || exit $?',
+  ].join('\n');
+}
+
+/**
+ * 数一数库里有多少张表（排除两个纯内存的元数据库）。
+ *
+ * 恢复前后各数一次，把两个数字写进响应——这样「已恢复」这句话是**带证据**的，
+ * 而不是一个自称。今天那次假成功之所以能糊弄过去，正是因为响应里除了
+ * `restored: true` 什么都没有，看的人无从判断。
+ */
+export function buildMysqlTableCountScript(): string {
+  return [
+    'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
+    'mysql -uroot -N -B -e "SELECT COUNT(*) FROM information_schema.tables'
+      + " WHERE table_schema NOT IN ('information_schema','performance_schema')\"",
   ].join('\n');
 }

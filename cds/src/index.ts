@@ -77,6 +77,9 @@ import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
+import { installProcessFuse } from './services/process-fuse.js';
+import { AuditLiveness, recordAuditFailure } from './services/audit-liveness.js';
+import { reconcileSelfUpdateOutcome } from './services/self-update-outcome.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
@@ -295,6 +298,8 @@ function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): 
     return null;
   }
 
+  // 失败也要落事件，理由同暴露面自检（E36）：不落事件的失败等于没发生过。
+  const entrypointLiveness = new AuditLiveness(ENTRYPOINT_SELF_CHECK_INTERVAL_MS);
   let lastBlockedSignature = '';
   const run = async () => {
     try {
@@ -322,6 +327,10 @@ function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): 
       });
     } catch (err) {
       console.warn(`[entrypoint-check] 自检失败: ${(err as Error).message}`);
+      recordAuditFailure({
+        store, liveness: entrypointLiveness, source: 'entrypoint-check',
+        reason: (err as Error).message, what: '入口可达性自检',
+      });
     }
   };
 
@@ -345,6 +354,15 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
   if (isPreviewInstance()) return null;
 
   let lastSignature = '';
+  // 活性账本：这项自检「多久没成功过」必须能看见。失败只打 console 的话，
+  // 面板上「没跑成」和「跑了没问题」长得一模一样（E36，2026-08-18）。
+  const liveness = new AuditLiveness(INFRA_EXPOSURE_AUDIT_INTERVAL_MS);
+  const fail = (reason: string): void => {
+    recordAuditFailure({
+      store, liveness, source: 'infra-exposure', reason,
+      what: '基础设施暴露面自检',
+    });
+  };
   const run = async () => {
     try {
       // 一次 docker ps 拿到全部容器的名字、镜像、端口与状态；再按容器名去台账里
@@ -355,6 +373,7 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
       );
       if (ps.exitCode !== 0) {
         console.warn('[infra-exposure] 读不到容器列表，跳过本轮');
+        fail(`读不到容器列表：${(ps.stderr || ps.stdout || '').trim().slice(0, 200) || `docker ps 退出码 ${ps.exitCode}`}`);
         return;
       }
       const byContainer = new Map<string, { id: string; projectId: string }>();
@@ -446,6 +465,9 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
 
       const report = auditInfraExposure(inputs, { firewall });
       lastInfraExposureReport = report;
+      // 走到这里就是**真的跑完了一轮**。成功要打点，否则「多久没成功过」永远算不出来
+      // ——去重的 early return 就在下一行，放在它之后会漏掉「状态没变」的那些轮次。
+      liveness.markSuccess();
       if (report.signature === lastSignature) return;   // 状态没变就不刷屏
       lastSignature = report.signature;
 
@@ -473,6 +495,7 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
       });
     } catch (err) {
       console.warn(`[infra-exposure] 自检失败: ${(err as Error).message}`);
+      fail((err as Error).message);
     }
   };
 
@@ -493,6 +516,8 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
  * 没有新备份糟得多。读不到可用空间也按「不够」处理。
  */
 function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  // 「定时备份实际停摆」是这件事最糟的失败方式，整轮炸掉必须留痕（E36 同族）。
+  const backupLiveness = new AuditLiveness(INFRA_BACKUP_INTERVAL_MS);
   if (config.mode === 'executor') return null;
   if (isPreviewInstance()) return null;
 
@@ -797,6 +822,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         fs.writeFileSync(tmp, `${JSON.stringify(health)}\n`, { mode: 0o600 });
         fs.renameSync(tmp, target);
       }
+      // 活性打点在分岔之前：「这一轮跑完了」和「每个目标都成功了」是两件事。
+      // 放进 else 分支的话，像某个库口令不对这种长期部分失败，会被误报成
+      // 「周期备份已经哑了」——那是假警报，比不报还糟。
+      backupLiveness.markSuccess();
       if (failed.length > 0 || coverageGaps.length > 0) {
         console.warn(`[infra-backup] ${summary}`);
         store?.record({
@@ -814,6 +843,12 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       }
     } catch (err) {
       console.warn(`[infra-backup] 本轮失败: ${(err as Error).message}`);
+      // 整轮炸掉必须留痕：只打 console 的话，「定时备份实际停摆」可以一直没人发现，
+      // 而那正是备份这件事最糟的失败方式（E36 同族）。
+      recordAuditFailure({
+        store, liveness: backupLiveness, source: 'infra-backup',
+        reason: (err as Error).message, what: '基础设施周期备份',
+      });
     } finally {
       // 必须在 finally 里放闸：任何一条 return / throw 忘了放，往后每一轮都被
       // 自己挡在门外，而日志只会说「上一轮还没跑完」——一个永远不会自愈的静默停摆。
@@ -1619,6 +1654,11 @@ const offHostAuditConfig = offHostAuditConfigFromEnv();
 const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
   ? new OffHostAuditLogSink({ primary: localServerEventLogStore, ...offHostAuditConfig })
   : localServerEventLogStore;
+// 总保险丝：后台小事失败不许弄死整台 CDS（2026-08-18 事故，见 process-fuse.ts）。
+// 装在事件汇建好之后、任何后台任务启动之前——晚一步就兜不住启动期的失败，
+// 而今天崩的恰恰就是启动期。
+installProcessFuse({ store: activeServerEventLogStore, processName: 'cds-master' });
+
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
@@ -1632,6 +1672,31 @@ const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
 const externalPortAuditWatchdog = startExternalPortAuditWatchdog(activeServerEventLogStore);
 const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
+
+/**
+ * 重启之后回头看一眼：上一次自更新声称更到的 sha，和现在真实的 HEAD 对得上吗？
+ *
+ * 对不上就说明中途被退回了。这条必须落一条 error 事件——回滚是全站级别的事实，
+ * 却曾经只能靠「我怎么觉得改动没生效」去发现（E37）。
+ */
+async function reconcileSelfUpdateAfterRestart(): Promise<void> {
+  try {
+    const last = stateService.getSelfUpdateHistory(1)[0];
+    if (!last) return;
+    const head = await shell.exec('git rev-parse --short HEAD', { cwd: config.repoRoot, timeout: 15_000 });
+    const outcome = reconcileSelfUpdateOutcome(last, head.exitCode === 0 ? head.stdout.trim() : '');
+    if (!outcome.rolledBack) return;
+    console.error(`[self-update] ${outcome.message}`);
+    activeServerEventLogStore?.record({
+      category: 'system', severity: 'error', source: 'self-update',
+      action: 'self-update.rolled-back',
+      message: outcome.message, status: 'error',
+      details: { claimedSha: outcome.claimedSha, actualSha: outcome.actualSha, recordedAt: last.ts },
+    });
+  } catch (err) {
+    console.warn(`[self-update] 结果对账失败: ${(err as Error).message}`);
+  }
+}
 
 function beginBackgroundBranchOperation(input: {
   branchId: string;
@@ -4829,6 +4894,10 @@ function listenWithRetry(
       // 2026-05-07 timing 审视:盖戳 daemon ready,让 recordSelfUpdate 能算
       // 真实"用户感受到的等待" totalElapsedMs。详见 report.cds.self-update-timing-audit.md
       try { stateService.recordDaemonReady(); } catch { /* 不致命 */ }
+      // 自更新结果对账（E37）：**更新成没成，以重启之后的 HEAD 为准**。
+      // 上一版把「构建成功」当成了「更新成功」——2026-08-18 一次崩溃回滚之后，
+      // 历史里仍然写着 success 与新 sha，而机器上是旧版，回滚在任何地方都查不到。
+      void reconcileSelfUpdateAfterRestart();
       // 监听地址永远不该靠猜：直连裸端口失败时，这一行就是答案。
       console.log(`  ${label}: ${describeListenDecision(bind)}`);
       onSuccess();

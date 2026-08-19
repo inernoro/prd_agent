@@ -304,9 +304,17 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
    * body 是原始 tar.gz 字节流（Content-Type: application/gzip）。
    */
   router.post('/cache/import', async (req, res) => {
+    // 先按住请求流，**必须在任何 await 之前**（同 infra 恢复接口，E43）。
+    // HTTP 日志中间件挂了 `req.on('data')`，请求流已经在 flowing 模式；本 handler
+    // 要先 await（建目录、动态 import）才 `req.pipe(tar.stdin)`，等它 pipe 的时候
+    // body 已经流完——tar 收到零字节，解压出一个空目录，接口照样回 200。
+    // pipe 时会自动 resume。
+    req.pause();
     const name = String(req.query.name || '').trim();
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数' });
+      // 按住之后提前返回要把流放开，否则上传方看到的是卡住而不是这条 400。
+      req.resume();
       return;
     }
 

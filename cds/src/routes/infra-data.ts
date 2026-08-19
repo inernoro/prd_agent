@@ -24,6 +24,7 @@ import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from '../services/preview-instance.js';
 import { getActiveInfraLifecycleWatcher } from '../services/infra-lifecycle-watcher.js';
+import { resolveEnvTemplates } from '../services/compose-parser.js';
 
 export interface InfraDataRouterDeps {
   stateService: StateService;
@@ -68,13 +69,41 @@ export interface InfraDataExec {
  * 纯函数：算出对某 infra 执行数据操作的 docker exec 计划。
  * 不支持的类型 / 空 SQL 抛 Error,由调用方转 4xx。
  */
-export function buildInfraDataExec(svc: InfraService, action: InfraDataAction, sql: string): InfraDataExec {
+export function buildInfraDataExec(
+  svc: InfraService,
+  action: InfraDataAction,
+  sql: string,
+  /**
+   * 项目的 CDS 派生变量表，用来把 env 里的 `${...}` 展开成真值。
+   *
+   * 不给的话就拿台账里的原样值——那正是 E40 踩到的坑：compose 导入的服务 env 里
+   * 存的是模板（如 `MYSQL_USER=${CDS_MYSQL_USER}`），容器启动时会解析，而工作台
+   * 直接把占位符当账号发出去，报 `Access denied for user '${CDS...'`。
+   * 容器和数据都没问题，只有这条路把模板当字面量用了。
+   */
+  cdsVars?: Record<string, string>,
+): InfraDataExec {
   const kind = detectInfraDataKind(svc.dockerImage);
   if (!kind) {
     throw new Error(`暂不支持对该类型基础设施执行数据操作（镜像 ${svc.dockerImage}）。支持：PostgreSQL / MySQL / MongoDB / Redis / ClickHouse。`);
   }
   const c = svc.containerName;
-  const env = svc.env || {};
+  // 与容器启动走同一套模板解析：启动时解析、查询时不解析，就会出现
+  // 「库好好的、备份也通，只有工作台连不上」这种自相矛盾的现象。
+  const rawEnv = svc.env || {};
+  const env = cdsVars ? resolveEnvTemplates(rawEnv, cdsVars) : rawEnv;
+  // 解析器对「解不出来」的模板返回**空字符串**，不是留下占位符。所以判据不能看
+  // 「还有没有 ${...}」，得看「原本是模板、解析完却空了」——否则 MYSQL_USER 会悄悄
+  // 变空再回落成 root，等于**静默换了个账号连库**，比报错更难查。
+  const unresolved = Object.entries(rawEnv)
+    .filter(([k, raw]) => /\$\{[^}]+\}/.test(String(raw)) && !String(env[k] ?? '').trim())
+    .map(([k]) => k);
+  if (unresolved.length > 0) {
+    throw new Error(
+      `服务 "${svc.id}" 的环境变量 ${unresolved.join('、')} 里的 \${...} 没有对应的 CDS 派生值，`
+      + '无法拼出连接命令。请在项目环境变量里补上，或改成具体值。',
+    );
+  }
   const body = action === 'schema'
     ? (kind === 'redis' ? 'SCAN 0 COUNT 100' : SCHEMA_QUERY[kind])
     : sql;
@@ -218,7 +247,7 @@ export function createInfraDataRouter(deps: InfraDataRouterDeps): Router {
     }
     let plan: InfraDataExec;
     try {
-      plan = buildInfraDataExec(svc, action, sql);
+      plan = buildInfraDataExec(svc, action, sql, stateService.getCustomEnv(svc.projectId));
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;

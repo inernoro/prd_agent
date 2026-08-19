@@ -70,7 +70,7 @@
 | 2 | 既无任何可识别驱动（reveal/swiper/impress/带 next-prev 的自定义元素/scroll-snap 全不命中）、又忽略 `isTrusted=false` 合成事件的纯 JS deck，用户点「开启」后上下键兜底仍可能不生效 | 长尾 deck（v4 起为邀请式，需用户主动点开启）。此时不破坏原生键，只是开启后上下键无增益 | 评估直接 DOM 滚动或探测 deck 内部 index 字段 |
 | 5（v4 已缓解） | 误判普通网页为幻灯片（主要靠 `.slide≥2` 松散启发） | v4 起一律邀请式，不点「开启」就完全不绑定键盘，误判最多多显示一个可忽略的角落邀请条，**不再劫持任何键** | 可进一步给邀请条加「不是幻灯片?隐藏」 |
 | 12 | 存量回填在服务首启时集中跑，IO 偏重且无批量限流（承接已结清「零重传直接生效」#4 的尾巴） | 站点多时首启那一阵磁盘/网络压力偏高，正常请求可能变慢 | 回填分批 + 限流，或挪成后台低优队列 |
-| 7 | iframe `sandbox` 原缺 `allow-fullscreen`，deck 自带全屏按钮（reveal「F」等）失效 | 已加 `allow-fullscreen`（Bugbot 反馈）。MAP 顶栏「全屏演示」是父页驱动不受影响，本项补的是 deck 内部全屏 | — |
+| 7（已修正 2026-08-18） | ~~iframe `sandbox` 原缺 `allow-fullscreen`~~ —— `allow-fullscreen` **根本不是合法的 sandbox flag**，浏览器报 `invalid sandbox flag` 并整条忽略，所以 deck 自带全屏按钮从加上那天起就没生效过，只在控制台留一行红字（用户 2026-08-18 反馈） | 全屏权限归 `allow="fullscreen"`（Permissions Policy），已改用它。新增守卫扫全仓 sandbox 字面量，非法 flag 直接判红（位置见文末「实现来源」） | — |
 
 ### 测试状态
 
@@ -112,7 +112,8 @@
 
 | 19 | 提问配置抽屉读取配置失败时只清 `loading` 不禁用表单，保存按钮照样可点。此时表单里是一组**初始默认值**（关闭、空欢迎语、空题库、不允许匿名、默认额度），点保存会把站点已有配置整个覆盖掉——一次网络抖动就能让 owner 精心配好的题库消失 | Review 第十一轮（PR #1351）提出，判断成立。属数据丢失，但触发要「读失败 + 用户仍点保存」两个条件叠加 | 读失败时禁用表单与保存按钮，给一条显式重试；或把「未成功加载」与「加载到空配置」在状态上区分开 |
 | 20 | 提问 SSE 只给 `sessionId`，既没有序号也没有「取回已完成消息」的端点。连接中断后服务端仍会把答案生成完并落库（这是 server-authority 要求的），但访客重开面板拿不回来，只能重问一次、再扣一次配额 | Review 第十一轮（PR #1351）提出，判断成立，且 `server-authority` 规则明写要求 `afterSeq` 断线续传。但这是**协议层能力补齐**，不是修一个 bug——要加序号、加取回端点、前端接续传 | 按 `server-authority` 补 `afterSeq` 风格续传，或至少加一个「取回本 session 已完成消息」的端点 |
-| 21 | 缩略图重挂自愈与「已画出来的画面」在物理上冲突：跨域 iframe 没有任何可读的「画出来了没有」信号，`revealed` 只是时间到点、不是渲染证据。所以只要保留 12s/20s 重挂（否则 CDN 传播中的 pending 页面永远救不回来），已经画出来的卡片就可能被换掉、最多闪两次 | PR #1356 第二轮 review 的两条意见互斥，按后果严重度取舍：闪烁可恢复、永久空白不可恢复，故保留重挂 | 要真正解决需要一个「已渲染」信号。可选路径：预览改用服务端截图（缩略图不再是实时 iframe），或托管域名放行一个只读的探测端点让前端能判断对象是否已就绪 |
+| 21（已缓解 2026-08-18） | ~~缩略图重挂自愈与「已画出来的画面」在物理上冲突~~：跨域 iframe 仍然没有可读的「画出来了没有」信号，但两件事都不再需要这个信号了——① 缩略图与站内大预览改走**服务端代理取正文 + srcDoc**（与分享页 PR #1356 同一条路，判据抽成一份共用模块，位置见文末「实现来源」），内容在手里，不存在「传播中 pending」；② 地球占位符改为**常驻最底层**，iframe 画出东西就自然盖住、没画出来就露出占位符，不再用 1.2s 定时器把它撤掉（原先撤掉之后留下的是一块纯空白瓦片，正是用户报的「网页托管无法显示内容」） | 用户 2026-08-18 反馈。原条目的取舍（闪烁 vs 永久空白）现在只作用于**取不回正文的降级路径** | 见下方新条目 35 |
+| 35 | 公开主页 `/u/:username` 的站点卡片仍走直链缩略图：取正文的端点 `GET /api/web-pages/{id}/content` 只对 owner / 共享团队成员开放，匿名访客拿不到，所以那一屏仍可能是「直链画空白」。因占位符已改常驻，最坏结果是显示地球图标而不是空白瓦片 | 本次修复的已知边界。要覆盖匿名访客需要一条公开可读的正文端点（或服务端截图），属新语义类别，按范围熔断规则不在本次展开 | 给公开站点补一条匿名可读的正文代理（可见性 = public 才放行），或改用服务端截图做缩略图 |
 | 22 | 站内预览弹窗的「加载较慢」角标是固定黑底 + `text-token-secondary`，浅色主题下文字与底色对比度不足 | PR #1356 第三轮 review 提出，判断成立；属样式问题，不影响功能，按两轮熔断规则记账不就地改 | 改为主题感知的 surface/text 配对，或给这块固定深色面板套上既有的深色 token 上下文 |
 | 23 | `SetAskConfigAsync` 里没有把「站点形态是否支持提问」写进同一次条件更新：Controller 先读一次形态、再无条件写；若这中间另一个请求把站点重传成视频，写入会把 `AskEnabled=true` 落到一个已不支持的站点上，已发出去的分享挂着必定 422 的入口 | PR #1358 第三轮 review 提出，判断成立；属并发窄窗（要两个请求交错），按两轮熔断规则记账 | 把形态判据下沉进 `SetAskConfigAsync`，与启用动作放进同一个条件更新（filter 里带上 `WrappedAssetType` 约束） |
 | 24 | 追问时面板顶部仍显示上一条回答的模型与平台，直到新的 `model` 事件到达才刷新；若新请求在此之前失败，错误的模型归属会一直留着 | PR #1358 第三轮 review 提出，判断成立；违反 `ai-model-visibility` 的「实时」要求，但不影响功能 | 每次发起提问先清空 model，或把 model 绑到单条消息而不是整个面板 |
@@ -249,4 +250,6 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 | 位置 | 文件 |
 |------|------|
 | 总览 | `prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs`、`prd-admin/src/pages/WebPagesPage.tsx`、`prd-admin/src/pages/ShareViewPage.tsx` |
+| 预览判据与取正文 | `prd-admin/src/components/web-hosting/previewHtml.ts`、`prd-admin/src/components/web-hosting/useSitePreviewHtml.ts`、`prd-admin/src/components/SitePreview.tsx`、`prd-admin/src/components/web-hosting/SitePreviewModal.tsx` |
+| 预览守卫 | `prd-admin/src/lib/__tests__/iframeSandboxTokens.test.ts`、`prd-admin/src/components/web-hosting/sitePreviewWiring.test.ts`、`prd-admin/src/pages/ShareViewPage.preview.test.ts` |
 | 关联 | `prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs` |

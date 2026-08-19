@@ -8,9 +8,17 @@ import CommentsSection from './CommentsSection';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
+import { DIRECT_PREVIEW_SANDBOX, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
+import { useSitePreviewHtml } from './useSitePreviewHtml';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
 const SLOW_HINT_MS = 8000;
+
+/**
+ * 最多等多久服务端代理把入口正文取回来。到点就先挂直链——代理慢不该换成一屏空白。
+ * 与 ShareViewPage 的 PREVIEW_MASK_TIMEOUT_MS 取同一个量级，理由相同。
+ */
+const SRCDOC_WAIT_MS = 1500;
 
 interface Props {
   site: HostedSite;
@@ -53,6 +61,31 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   // 既不是弹窗多大，也不是视口宽度——768px 断点会把 iPad、横屏手机、平板 WebView
   // 一并算成桌面，它们照样白屏。判据见 supportsNativePdfViewer。
   const previewSource = resolveSitePreviewSource(site, { nativePdfViewer: supportsNativePdfViewer() });
+  // 直链 iframe 在 Chrome 里存在「只绘制空白」的已知形态，可靠路径是服务端代理取回正文走 srcDoc
+  // （分享页 PR #1356 已这么修）。取不回就如实退回直链，见 useSitePreviewHtml。
+  // PDF 直连路径不参与：那是交给浏览器原生阅读器的静态资源，没有 HTML 正文可取。
+  const { srcDoc, loading: htmlLoading } = useSitePreviewHtml(
+    previewSource.usingNativePdfViewer ? null : site,
+    true,
+  );
+  /**
+   * 渲染路径**只决定一次**，定了就不再变。
+   *
+   * 等窗口（SRCDOC_WAIT_MS）内拿到正文就走 srcDoc；超时或取不回就挂直链，之后**迟到的正文一律丢弃**。
+   * 换文档 = 整页重载，PPT 翻到第几页、表单里敲的字全部清零——「可能更好的预览」不值一次当面重载
+   * （与 ShareViewPage 的取舍一致）。这里必须是latch，不能写成 `srcDoc && !超时` 这种会翻回去的表达式。
+   */
+  const [renderMode, setRenderMode] = useState<'waiting' | 'srcdoc' | 'direct'>('waiting');
+  useEffect(() => {
+    if (renderMode !== 'waiting') return;
+    if (srcDoc) { setRenderMode('srcdoc'); return; }
+    if (!htmlLoading) setRenderMode('direct');
+  }, [renderMode, srcDoc, htmlLoading]);
+  useEffect(() => {
+    const timer = setTimeout(() => setRenderMode((m) => (m === 'waiting' ? 'direct' : m)), SRCDOC_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const useSrcDoc = renderMode === 'srcdoc';
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
@@ -204,7 +237,9 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             )}
             <iframe
               ref={iframeRef}
-              src={previewSource.src}
+              key={renderMode}
+              src={useSrcDoc ? undefined : previewSource.src}
+              srcDoc={useSrcDoc ? srcDoc! : undefined}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {
@@ -223,7 +258,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               // 跨域这一层隔离仍在（PDF 来自托管域名，拿不到 MAP 的同源能力）。
               sandbox={previewSource.usingNativePdfViewer
                 ? undefined
-                : 'allow-scripts allow-same-origin allow-popups allow-forms allow-modals'}
+                : `${useSrcDoc ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX} allow-modals`}
               title={site.title}
             />
           </div>
