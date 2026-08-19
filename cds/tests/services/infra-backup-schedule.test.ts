@@ -364,7 +364,7 @@ describe('首轮实跑暴露的缺陷', () => {
     // TS 源码里 `$` 写成 `${'$'}` 转义。断言必须针对**渲染出来的 shell 文本**，
     // 不是源码字面量——直接扫源码就是在读一个和运行时不同的值（今天栽过同款）。
     const SHELL = CODE.replace(/\$\{'\$'\}/g, '$');
-    expect(buildMysqlDumpScript()).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD');
+    expect(buildMysqlDumpScript()).toMatch(/export MYSQL_PWD="\$CDS_(ROOT|APP)_PW"/);
     expect(SHELL).toMatch(/\$\{MONGO_INITDB_ROOT_PASSWORD:-/);
   });
 });
@@ -803,7 +803,9 @@ describe('MySQL 导出脚本', () => {
       run: () => {
         const res = execFileSync('/bin/sh', ['-c', SCRIPT], {
           cwd: dir,
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+          // 脚本现在会先在容器 env 里挑一套可用凭据（有 root 用 root，
+          // 没有就回落应用账号），一套都凑不齐直接退 78 —— 所以这里要给。
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, MYSQL_ROOT_PASSWORD: 'rootpw' },
           encoding: 'buffer',
           stdio: ['pipe', 'pipe', 'pipe'],
         });
@@ -856,7 +858,8 @@ describe('MySQL 导出脚本', () => {
     let status = 0;
     try {
       execFileSync('/bin/sh', ['-c', buildMysqlDumpScript()], {
-        cwd: dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+        // 脚本先挑凭据，一套都凑不齐会退 78，测不到这条路径。
+        cwd: dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, MYSQL_ROOT_PASSWORD: 'rootpw' },
         encoding: 'buffer', stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) { status = (err as { status: number }).status; }
@@ -880,7 +883,13 @@ describe('MySQL 导出脚本', () => {
   });
 
   it('凭据在容器内展开，不出现在宿主命令行里', () => {
-    expect(SCRIPT).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"');
+    // 断言的是「口令只以 env 变量名出现、经 MYSQL_PWD 传进去」这个行为，不是某一行
+    // 字面量——脚本后来加了「没有 root 就回落应用账号」的分档，字面量断言会变红，
+    // 而它真正要守的事一点没变。
+    expect(SCRIPT).toMatch(/export MYSQL_PWD="\$CDS_(ROOT|APP)_PW"/);
+    expect(SCRIPT).toContain('MYSQL_ROOT_PASSWORD');
+    // `-p<值>` 会把口令摆进宿主的 ps 和 CDS 日志里。
+    expect(SCRIPT).not.toMatch(/-p\S/);
     expect(SCRIPT).not.toContain('set -o pipefail');
   });
 });

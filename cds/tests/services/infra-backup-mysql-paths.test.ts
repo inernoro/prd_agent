@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildMysqlRestoreScript, buildMysqlTableCountScript } from '../../src/services/infra-backup-schedule.js';
+import { buildMysqlDumpScript, buildMysqlRestoreScript, buildMysqlTableCountScript } from '../../src/services/infra-backup-schedule.js';
 
 /**
  * E41：mysql 的手工下载与恢复。
@@ -64,7 +64,11 @@ describe('mysql 恢复入口', () => {
     // 断言的是「脚本里带着容器内展开的写法」，不是某个文件里有这行字面量——
     // 脚本搬去 builder 之后，字面量断言会变红，而它守的事其实一点没变。
     for (const script of [buildMysqlRestoreScript('/tmp/x.sql.gz'), buildMysqlTableCountScript()]) {
-      expect(script).toContain('export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"');
+      // 口令只以 env 变量名的形式出现，且经 MYSQL_PWD 传给客户端。
+      expect(script).toMatch(/export MYSQL_PWD="\$CDS_(ROOT|APP)_PW"/);
+      expect(script).toContain('MYSQL_ROOT_PASSWORD');
+      // 绝不能出现 `-p<值>`：那会把口令摆进宿主的 ps 和 CDS 日志里。
+      expect(script).not.toMatch(/-p\S/);
     }
   });
 
@@ -98,10 +102,16 @@ describe('mysql 恢复入口', () => {
  * 「上游失败、下游成功」那条会立刻变红。
  */
 describe('mysql 恢复脚本：管道两端的失败都要报出来', () => {
+  /** 有 root 口令的容器（五个 mysql 里的四个）。 */
+  const ROOT_ENV = { MYSQL_ROOT_PASSWORD: 'rootpw', MYSQL_USER: 'webhook', MYSQL_PASSWORD: 'apppw', MYSQL_DATABASE: 'webhook_platform' };
+  /** 随机 root 口令的容器：只有应用账号可用（cloudbridge-db 的真实形态）。 */
+  const APP_ONLY_ENV = { MYSQL_RANDOM_ROOT_PASSWORD: 'yes', MYSQL_USER: 'webhook', MYSQL_PASSWORD: 'apppw', MYSQL_DATABASE: 'webhook_platform' };
+
   /** 造一个只有假 gunzip / mysql 的 PATH，behaviour 由参数决定。 */
   function runScript(opts: {
     testExit: number; catExit: number; mysqlExit: number; flushExit?: number;
-  }): { code: number; flushed: boolean } {
+    env?: Record<string, string>;
+  }): { code: number; flushed: boolean; mysqlUser: string } {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-mysql-restore-'));
     try {
       // 假 gunzip：`-t` 走完整性校验分支，`-c` 走解压分支，各自可以单独失败。
@@ -118,6 +128,9 @@ describe('mysql 恢复脚本：管道两端的失败都要报出来', () => {
         'for a in "$@"; do',
         `  [ "$a" = "-e" ] && { echo "$@" > ${dir}/flushed; exit ${opts.flushExit ?? 0}; }`,
         'done',
+        // 记下灌库这一次实际用的是哪个账号——凭据选错了会静默连上另一个身份。
+        // 真实命令是 `mysql -uwebhook`（-u 与值连在一个 token 里），所以剥前缀而不是取 $2。
+        `printf '%s\\n' "${'${1#-u}'}" > ${dir}/mysqluser`,
         'cat > /dev/null',
         `exit ${opts.mysqlExit}`,
       ].join('\n'), { mode: 0o755 });
@@ -126,17 +139,49 @@ describe('mysql 恢复脚本：管道两端的失败都要报出来', () => {
       try {
         execFileSync('sh', ['-s'], {
           input: script,
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+          // 容器 env 由参数给定；把宿主继承来的同名变量清掉，免得测的是外面的值。
+          env: {
+            PATH: `${dir}:${process.env.PATH}`,
+            ...(opts.env ?? ROOT_ENV),
+          },
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (err) {
         code = Number((err as { status?: number }).status ?? -1);
       }
-      return { code, flushed: fs.existsSync(path.join(dir, 'flushed')) };
+      const userFile = path.join(dir, 'mysqluser');
+      return {
+        code,
+        flushed: fs.existsSync(path.join(dir, 'flushed')),
+        mysqlUser: fs.existsSync(userFile) ? fs.readFileSync(userFile, 'utf8').trim() : '',
+      };
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }
+
+  it('没有 root 口令时用应用账号，且不去 flush（它没有 RELOAD 权限）', () => {
+    // cloudbridge-db 就是这一档：MYSQL_RANDOM_ROOT_PASSWORD 起的容器，root 口令
+    // 只在首次初始化时打进容器日志，谁都拿不到。硬走 root 等于永远备不了。
+    const r = runScript({ testExit: 0, catExit: 0, mysqlExit: 0, env: APP_ONLY_ENV });
+    expect(r.code).toBe(0);
+    expect(r.mysqlUser).toBe('webhook');
+    expect(r.flushed, '应用账号没有 RELOAD 权限，强来只会让恢复整条失败').toBe(false);
+  });
+
+  it('应用账号档必须带 --no-tablespaces，root 档不带', () => {
+    // 应用账号只有 `GRANT ALL ON <db>.*` + `GRANT USAGE ON *.*`，没有全局 PROCESS，
+    // 而 mysqldump 8.0 默认要读 INFORMATION_SCHEMA.FILES 导表空间——少这个开关，
+    // dump 一上来就 Access denied，产出 20 字节空 gzip（实测 cloudbridge-db 就这样）。
+    const dump = buildMysqlDumpScript();
+    expect(dump).toMatch(/CDS_MYSQL_SCOPE="--databases \$CDS_APP_DB --no-tablespaces"/);
+    expect(dump).toMatch(/CDS_MYSQL_SCOPE="--all-databases"/);
+  });
+
+  it('凭据一套都凑不齐：明确退 78，不去连库', () => {
+    const r = runScript({ testExit: 0, catExit: 0, mysqlExit: 0, env: {} });
+    expect(r.code).toBe(78);
+  });
 
   it('两端都成功：退 0，并且收尾 flush 过权限', () => {
     const r = runScript({ testExit: 0, catExit: 0, mysqlExit: 0 });

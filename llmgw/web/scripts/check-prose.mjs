@@ -54,7 +54,7 @@ const BUDGETS = [
   // Exchange 已迁移，常驻 JSX 正文为 0 段；超出的字来自 transformerType 等选项常量，
   // 它们实际渲染在 HelpPopover 里，但守卫看不出常量最终落到哪个出口（已知边界）。
   { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置；2026-08-10 +1 是新增的「删除」按钮文案（与图标同段，只多算一个汉字）' },
-  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 437, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案；模型池详情抽屉同时包含主线新增的「删除」按钮和本分支的「恢复」操作文案' },
+  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 4, maxCjk: 582, reason: '2026-08-18 信息架构改版后重新登记。四段里只有副标题对所有人常驻，其余三段都有条件：补齐面板的写操作警告只在展开确认面板时出现、ReadOnlyNotice 只对只读角色出现、六种策略说明是常量（渲染在 HelpPopover 与新建向导的策略卡里）。汉字数上升的主体是**诊断信息本身**——池状态结论句、第1顺位连续失败与最近失败/成功时间、指标的窗口标签，它们是后端早就返回、此前一个都没显示的字段，正是这次改版要露出来的东西，收进折叠块就等于没改。守卫按 `>文本<` 计数，分不出「常驻说明」与「按数据渲染的结论」，这里如实登记而不是把结论藏起来凑数。2026-08-18 二次上调 558→582：与设计稿并排比对后，新建向导的两条字段说明改为逐字照抄设计稿（「类型决定这个池能承接哪些调用，创建后不可改。」「会显示在池详情标题下和列表悬浮提示里。」）。它们只在新建流程里出现、且正是出口 1「字段旁的说明」所鼓励的形态，但守卫按 hint= 属性计数，识别不出条件渲染。同批还删掉了两个 HelpPopover 里逐字重复的「补齐」语义与一条自己编的提示，净增只有这两句' },
   { file: 'pages/QuickstartPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '四协议接入片段常量属产品内容，且部分渲染在 HelpPopover 内' },
 ];
 
