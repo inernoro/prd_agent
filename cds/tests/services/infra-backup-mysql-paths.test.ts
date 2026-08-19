@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { buildMysqlRestoreScript, buildMysqlTableCountScript } from '../../src/services/infra-backup-schedule.js';
+import { buildMysqlDumpScript, buildMysqlRestoreScript, buildMysqlTableCountScript } from '../../src/services/infra-backup-schedule.js';
 
 /**
  * E41：mysql 的手工下载与恢复。
@@ -167,6 +167,15 @@ describe('mysql 恢复脚本：管道两端的失败都要报出来', () => {
     expect(r.code).toBe(0);
     expect(r.mysqlUser).toBe('webhook');
     expect(r.flushed, '应用账号没有 RELOAD 权限，强来只会让恢复整条失败').toBe(false);
+  });
+
+  it('应用账号档必须带 --no-tablespaces，root 档不带', () => {
+    // 应用账号只有 `GRANT ALL ON <db>.*` + `GRANT USAGE ON *.*`，没有全局 PROCESS，
+    // 而 mysqldump 8.0 默认要读 INFORMATION_SCHEMA.FILES 导表空间——少这个开关，
+    // dump 一上来就 Access denied，产出 20 字节空 gzip（实测 cloudbridge-db 就这样）。
+    const dump = buildMysqlDumpScript();
+    expect(dump).toMatch(/CDS_MYSQL_SCOPE="--databases \$CDS_APP_DB --no-tablespaces"/);
+    expect(dump).toMatch(/CDS_MYSQL_SCOPE="--all-databases"/);
   });
 
   it('凭据一套都凑不齐：明确退 78，不去连库', () => {
