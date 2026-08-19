@@ -72,6 +72,20 @@ public class ReportWebhookMentionPayloadTests
         var payload = ReportWebhookService.BuildPayload(
             channel, Title, Body, "https://example.com/report-agent", new[] { "yangruicong" });
 
-        Assert.DoesNotContain("<@yangruicong>", payload);
+        // 断言 userid 本身而不是 "<@userid>"：System.Text.Json 默认把 < 转义成 \u003C，
+        // 按尖括号原文断言的话，真泄漏了也不会红（转义后的形态匹配不上）。
+        // 字母数字不受转义影响，所以 userid 是这里唯一可靠的判据。
+        Assert.DoesNotContain("yangruicong", payload);
+    }
+
+    [Fact]
+    public void WeCom_MentionSyntaxSurvivesJsonEscaping()
+    {
+        // 同一条守卫的正面：企微渠道下，userid 必须真的进了 payload（不管序列化成 <@id> 还是 \u003C@id\u003E）
+        var payload = ReportWebhookService.BuildPayload(
+            WebhookChannel.WeCom, Title, Body, null, new[] { "yangruicong" });
+
+        Assert.Contains("yangruicong", payload);
+        Assert.Contains("<@yangruicong>", WeComContent(payload));
     }
 }
