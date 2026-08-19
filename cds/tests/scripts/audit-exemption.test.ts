@@ -85,20 +85,57 @@ describe('audit workflow wires the exemption in', () => {
     const ipv6Job = workflow.slice(workflow.indexOf('  audit-ipv6:'));
     const ipv4Job = workflow.slice(workflow.indexOf('  audit-ipv4:'), workflow.indexOf('  audit-ipv6:'));
 
+    // 窗口必须切到**下一个步骤开始处**，不能用固定字符数：定窗会溢出到下一步，
+    // 于是把下一步的 if: 删掉这条断言依旧绿——守卫看着在守四步，实际只守得住前几步。
+    const stepStarts = [...ipv6Job.matchAll(/^      - name: (.+)$/gm)].map((m) => ({ at: m.index ?? 0, name: m[1].trim() }));
     for (const step of ['Verify this runner can originate IPv6', 'Require off-host IPv6 target', 'Install scanner', 'Scan IPv6 from GitHub runner']) {
-      const at = ipv6Job.indexOf(step);
-      expect(at, `找不到步骤 ${step}`).toBeGreaterThan(-1);
-      expect(
-        ipv6Job.slice(at, at + 260),
-        `${step} 没有挂豁免开关`,
-      ).toContain("if: steps.exemption.outputs.exempt != 'true'");
+      const idx = stepStarts.findIndex((s) => s.name === step);
+      expect(idx, `找不到步骤 ${step}`).toBeGreaterThan(-1);
+      const body = ipv6Job.slice(stepStarts[idx].at, stepStarts[idx + 1]?.at ?? ipv6Job.length);
+      expect(body, `${step} 没有挂豁免开关`).toContain("if: steps.exemption.outputs.exempt != 'true'");
     }
     expect(ipv4Job).not.toContain('exemption');
   });
 
   // 守卫自己要被触发：改了登记或解析器却不重跑巡检，等于这套机制没接上线。
+  // 必须只在 on.push.paths 这一段里找——两个路径在步骤的 run: 命令里也各出现一次，
+  // 对整份 workflow 做 toContain，把它们从 paths 删掉这条断言仍然绿。
   it('re-runs the audit when the registry or its resolver changes', () => {
-    expect(workflow).toContain('cds/config/external-audit-exemptions.json');
-    expect(workflow).toContain('cds/scripts/resolve-audit-exemption.mjs');
+    const pushPaths = workflow.slice(workflow.indexOf('  push:'), workflow.indexOf('  workflow_dispatch:'));
+    expect(pushPaths, 'on.push.paths 没解析出来').toContain('paths:');
+    expect(pushPaths).toContain('cds/config/external-audit-exemptions.json');
+    expect(pushPaths).toContain('cds/scripts/resolve-audit-exemption.mjs');
+  });
+
+  // 本文件自己也得跑得到。cds.yml 的 paths filter 只覆盖 cds/**，
+  // 只改 cds-external-port-audit.yml（比如把四个豁免开关全删掉）的 PR 会整个跳过测试 job。
+  it('is actually run by CI when only the audited workflow changes', () => {
+    const ci = readFileSync(new URL('../../../.github/workflows/cds.yml', import.meta.url), 'utf8');
+    expect(ci, 'cds CI 的 paths filter 必须覆盖被守的巡检工作流，否则只改它的 PR 不跑这些守卫')
+      .toContain('.github/workflows/cds-external-port-audit.yml');
+  });
+});
+
+// 债务 ID 撞号在这条链路上已经发生两次：先是 E34 与 redis 备份撞，改成 E35 又和
+// redis 恢复撞——而 workflow 里那两句「处置见 E35」就静默指到了另一条债务上。
+// 靠人眼挑下一个空号挑不准，用守卫钉死。
+describe('debt ledger IDs', () => {
+  it('has no duplicate E-numbers', () => {
+    const ledger = readFileSync(new URL('../../../doc/debt.cds.md', import.meta.url), 'utf8');
+    const ids = [...ledger.matchAll(/^\| (E\d+) \|/gm)].map((m) => m[1]);
+    const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
+    expect([...new Set(dup)], '债务台账出现重号，指向它的引用会落到错的那一条').toEqual([]);
+  });
+
+  it('every debt ID referenced from code or workflows exists in the ledger', () => {
+    const ledger = readFileSync(new URL('../../../doc/debt.cds.md', import.meta.url), 'utf8');
+    const known = new Set([...ledger.matchAll(/^\| (E\d+) \|/gm)].map((m) => m[1]));
+    const workflow2 = readFileSync(
+      new URL('../../../.github/workflows/cds-external-port-audit.yml', import.meta.url),
+      'utf8',
+    );
+    const referenced = [...workflow2.matchAll(/debt\.cds\.md 的 (E\d+)/g)].map((m) => m[1]);
+    expect(referenced.length, '这份 workflow 本来就该指向债务台账').toBeGreaterThan(0);
+    for (const id of referenced) expect(known.has(id), `workflow 指向了不存在的债务 ${id}`).toBe(true);
   });
 });

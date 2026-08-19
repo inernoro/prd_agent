@@ -119,7 +119,7 @@ jobs:
             echo "::error::本次未扫描：运行器自身没有全局 IPv6 地址，发不出 IPv6 报文。"
             echo "这条失败与目标主机无关，**不能**读作「目标的 IPv6 没有开放端口」——扫描根本没发生。"
             echo "换一个有 IPv6 出网的观测点才能真正巡检（自托管运行器接双栈网络，或外部扫描服务）。"
-            echo "只配 Secret 不换观测点，这个 job 仍然过不了。处置见 doc/debt.cds.md 的 E35。"
+            echo "只配 Secret 不换观测点，这个 job 仍然过不了。处置见 doc/debt.cds.md 的 E46。"
             exit 1
           fi
           echo "运行器具备全局 IPv6，继续扫描。"
@@ -133,7 +133,7 @@ jobs:
             echo "需要在仓库 Secrets 配置 ${{ matrix.environment == 'cds' && 'CDS_EDGE_AUDIT_IPV6' || 'PRODUCTION_EDGE_AUDIT_IPV6' }}，值为该环境的**源站**全局 IPv6 地址。"
             echo "在主机上用 'ip -6 addr show scope global' 取；只取全局地址，fe80:: 开头的链路本地地址不对外、填了扫不到。"
             echo "若确认该主机没有全局 IPv6：这条不能靠留空变绿（留空与「忘了配」无法区分）。"
-            echo "处置见 doc/debt.cds.md 的 E35。"
+            echo "处置见 doc/debt.cds.md 的 E46。"
             exit 1
           fi
 

@@ -28,6 +28,10 @@ jobs:
             cds:
               - 'cds/**'
               - '.github/workflows/cds.yml'
+              # cds/tests 里有守卫在断言这份巡检工作流的接线（豁免开关挂没挂满四步、
+              # 触发路径覆没覆盖登记与解析器）。不把被守文件登记进来，只改它的 PR
+              # 会整个跳过测试 job——守卫从落地起就对它要防的场景不设防。
+              - '.github/workflows/cds-external-port-audit.yml'
 
   build-and-test:
     name: Build & Test
