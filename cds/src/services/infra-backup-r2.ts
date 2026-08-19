@@ -285,3 +285,97 @@ export async function uploadAndVerifyR2Backup(opts: {
   }
   return { objectKey, bytes: digest.bytes, sha256: digest.sha256 };
 }
+
+export interface RemoteBackupEntry {
+  /** 完整 object key（含 prefix），可直接喂给 downloadAndVerifyR2Backup */
+  key: string;
+  bytes: number;
+  /** R2 返回的 ISO 时间戳 */
+  lastModified: string;
+}
+
+/**
+ * 列出离机桶里的备份对象。
+ *
+ * 为什么需要它：本地保留策略每产一份新备份就删一份旧的（`index.ts` 的
+ * selectExpiredBackups），而**离机侧一份都不删**——全仓搜不到任何删除 R2 对象的
+ * 代码路径。也就是说被同机保留策略吃掉的历史档案，很可能还完整躺在桶里。
+ * 2026-08-19 排查删库事故时才发现：档案可能在，但没有任何入口能看见它们，
+ * 于是「有没有删库前的备份」这个问题在有答案的情况下答不出来。
+ *
+ * 只读、可分页。桶里对象很多时按 prefix 收窄。
+ */
+export async function listR2Backups(opts: {
+  config: R2BackupConfig;
+  /** 覆盖 config.prefix；传空串列整个桶 */
+  prefix?: string;
+  now?: Date;
+  fetchImpl?: typeof fetch;
+  /** 分页上限，防止桶极大时打满内存；到顶会抛，不静默截断 */
+  maxPages?: number;
+}): Promise<RemoteBackupEntry[]> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const prefix = opts.prefix ?? opts.config.prefix;
+  const emptyHash = crypto.createHash('sha256').update('').digest('hex');
+  const maxPages = Math.max(1, opts.maxPages ?? 50);
+  const out: RemoteBackupEntry[] = [];
+  let token = '';
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const url = new URL(`${opts.config.endpoint}/${encodeURIComponent(opts.config.bucket)}`);
+    url.searchParams.set('list-type', '2');
+    if (prefix) url.searchParams.set('prefix', prefix);
+    if (token) url.searchParams.set('continuation-token', token);
+    // SigV4 要求 canonical query 按参数名排序；signedHeaders 直接取
+    // searchParams.toString()，顺序错了签名就对不上（现有调用方都没带 query，
+    // 所以这条约束此前从未被触发过）。
+    url.searchParams.sort();
+
+    const res = await fetchImpl(url, {
+      method: 'GET',
+      headers: signedHeaders({
+        config: opts.config,
+        method: 'GET',
+        url,
+        payloadHash: emptyHash,
+        now: new Date((opts.now ?? new Date()).getTime() + page),
+      }),
+    });
+    if (!res.ok) throw await r2HttpFailure('离机备份列举失败', res);
+    const xml = await res.text();
+    out.push(...parseListObjectsV2(xml));
+
+    const truncated = /<IsTruncated>\s*true\s*<\/IsTruncated>/i.test(xml);
+    if (!truncated) return out;
+    token = xml.match(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/i)?.[1]?.trim() || '';
+    // 截断了却没给续页令牌 = 拿不到剩下的对象。这时候返回「看起来完整」的部分列表
+    // 最危险：调用方会据此判断「桶里没有更早的备份」。
+    if (!token) throw new Error('离机备份列举被截断，但响应没有给出续页令牌');
+  }
+  throw new Error(`离机备份列举超过 ${maxPages} 页仍未结束，请用更窄的 prefix`);
+}
+
+/** 只取 Contents 项；CommonPrefixes（目录形态）不是备份对象。 */
+export function parseListObjectsV2(xml: string): RemoteBackupEntry[] {
+  const entries: RemoteBackupEntry[] = [];
+  for (const block of xml.match(/<Contents>[\s\S]*?<\/Contents>/gi) || []) {
+    const key = unescapeXml(block.match(/<Key>([\s\S]*?)<\/Key>/i)?.[1] ?? '').trim();
+    if (!key || key.endsWith('/')) continue;
+    entries.push({
+      key,
+      bytes: Number(block.match(/<Size>\s*(\d+)\s*<\/Size>/i)?.[1] ?? '0') || 0,
+      lastModified: (block.match(/<LastModified>([^<]*)<\/LastModified>/i)?.[1] ?? '').trim(),
+    });
+  }
+  return entries;
+}
+
+function unescapeXml(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    // & 必须最后还原，否则 &amp;lt; 会被还原成 < 而不是 &lt;
+    .replace(/&amp;/g, '&');
+}
