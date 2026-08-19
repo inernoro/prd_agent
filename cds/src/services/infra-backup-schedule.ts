@@ -643,7 +643,12 @@ const MYSQL_CREDENTIAL_LINES: readonly string[] = [
   // 随机 root 口令的容器走这一档：只备应用账号那个库，但至少有备份。
   '  export MYSQL_PWD="$CDS_APP_PW"',
   '  CDS_MYSQL_USER="$CDS_APP_USER"',
-  '  CDS_MYSQL_SCOPE="--databases $CDS_APP_DB"',
+  // `--no-tablespaces` 不是可选项：mysqldump 8.0 默认要读 INFORMATION_SCHEMA.FILES
+  // 导出表空间定义，那需要**全局** PROCESS 权限。而这类账号拿到的是
+  // `GRANT ALL ON <db>.*` + `GRANT USAGE ON *.*`（实测 webhook@% 就是这样），
+  // 全局权限一个都没有，于是 dump 一上来就 Access denied、产出一个 20 字节的空 gzip。
+  // root 那一档不加：它有 PROCESS，保持原命令逐字不变，四个在用的容器行为不动。
+  '  CDS_MYSQL_SCOPE="--databases $CDS_APP_DB --no-tablespaces"',
   '  CDS_MYSQL_IS_ROOT=0',
   '  CDS_MYSQL_SCOPE_LABEL="database:$CDS_APP_DB"',
   'else',
