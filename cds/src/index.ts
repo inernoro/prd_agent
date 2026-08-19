@@ -26,7 +26,8 @@ import {
   backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
-  backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound, type BackupOutcome,
+  backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
+  shouldSkipOffsiteThisRound, type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
 import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
@@ -643,6 +644,9 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       if (plan.targets.length === 0 && coverageGaps.length === 0) return;
 
       const outcomes: BackupOutcome[] = [];
+      // 本轮离机连续失败计数。离机整体挂掉时用它止损，别对每个目标都重试一次
+      // 注定失败的大文件上传；成功一次即归零，避免个别超时误伤整轮。
+      let offsiteConsecutiveFailures = 0;
       for (const t of plan.targets) {
         // 前一个目标可能刚写掉几个 GiB，这个目标的前提要重新确认一次。
         const pressure = await diskGate();
@@ -754,16 +758,34 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
 
           // 完整性校验通过之后才上传离机副本：顺序反过来的话，会把一份截断档案
           // 原样传到 R2，离机端拿到的是一份「校验和对得上、但解不开」的坏备份。
+          //
+          // 离机失败**不再连累本地副本**（用户 2026-08-19 决定）。此前的做法是任何失败
+          // 都把临时文件删掉，于是 R2 一挂，本地周期备份跟着整体停摆——实测停了半天，
+          // 而本地那份其实已经过 gzip -t、完全能用。「不记为成功」和「把好东西删掉」
+          // 是两回事，同机副本远胜于没有副本。
+          //
+          // 代价是多出一个风险：离机长期挂掉时，每一轮都会对每个目标重试一次注定失败的
+          // 上传。所以同一轮里连续失败到阈值就判定这条路当前不通，本轮剩下的直接跳过
+          // 上传、只留本地；跨轮不惩罚，下一轮照常再试，离机恢复时能自愈。
+          let remote: Awaited<ReturnType<typeof uploadAndVerifyR2Backup>> | null = null;
+          let offsiteError: string | null = null;
           const r2 = r2BackupConfigFromEnv();
-          if (!r2) throw new Error('缺少完整 R2 配置，拒绝把仅有同机副本的备份记为成功');
-          const remote = await uploadAndVerifyR2Backup({
-            config: r2,
-            filePath: out,
-            fileName: t.fileName,
-          });
+          if (!r2) {
+            offsiteError = '缺少完整 R2 配置';
+          } else if (shouldSkipOffsiteThisRound(offsiteConsecutiveFailures)) {
+            offsiteError = `本轮离机已连续失败 ${offsiteConsecutiveFailures} 次，跳过后续上传（下一轮会重试）`;
+          } else {
+            try {
+              remote = await uploadAndVerifyR2Backup({ config: r2, filePath: out, fileName: t.fileName });
+              offsiteConsecutiveFailures = 0;
+            } catch (err) {
+              offsiteConsecutiveFailures += 1;
+              offsiteError = (err as Error).message;
+            }
+          }
 
-          // 只有「本地解得开 + 离机副本已通过 checksum 校验」的产物才配拿到正式文件名。
-          // 任一步失败时 catch 会删掉临时文件，避免每轮重试堆积数据库大小的伪成功备份。
+          // 本地这份已经过 gzip -t，无论离机成不成都转正并纳入保留策略——
+          // 保留策略是它的上界（份数 + 天数），不会因为离机长期挂掉就无限堆积把盘写满。
           const promote = await shell.exec(`mv -f ${shq(out)} ${shq(finalOut)}`, { timeout: 15_000 });
           if (promote.exitCode !== 0) throw new Error(`改名到正式目录失败：${combinedOutput(promote).slice(0, 200)}`);
 
@@ -783,15 +805,21 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           }
           outcomes.push({
             id: t.id,
-            ok: true,
+            // 离机没上去就不算成功：健康状态、coverageComplete 一概不刷新。
+            ok: offsiteError === null,
+            localOnly: offsiteError !== null,
+            error: offsiteError === null
+              ? undefined
+              : `离机副本缺失：${offsiteError}（本地副本已保留：${t.fileName}）`,
             fileName: t.fileName,
             bytes,
             pruned: doomed,
-            remoteObjectKey: remote.objectKey,
-            sha256: remote.sha256,
+            remoteObjectKey: remote?.objectKey,
+            sha256: remote?.sha256,
           });
         } catch (err) {
-          // 任何失败路径都不留残骸：临时文件删掉，正式目录本来就没被碰过。
+          // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），
+          // 那才是真残骸，删掉；离机失败已经在上面单独处理，不会落到这条路径。
           await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
           outcomes.push({ id: t.id, ok: false, error: (err as Error).message });
         }

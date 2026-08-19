@@ -306,15 +306,56 @@ export interface BackupOutcome {
   pruned?: string[];
   remoteObjectKey?: string;
   sha256?: string;
+  /**
+   * 本地副本已落地并通过校验，只是离机那一程没成。
+   *
+   * 这类**不算成功**（`ok` 仍为 false，健康状态照样不刷新），但和「什么都没备成」
+   * 是两码事：手上有一份能用的同机副本。两者混在一起报，等于把「还有救」和
+   * 「彻底没有」说成同一件事。
+   */
+  localOnly?: boolean;
+}
+
+/**
+ * 离机连续失败到什么程度就别在这一轮里继续试了。
+ *
+ * ## 为什么要有
+ *
+ * 离机失败时保留本地副本（用户 2026-08-19 决定）之后，多出一个新风险：离机一旦
+ * 长期挂掉，每一轮都会对**每一个**目标重试一次上传。一轮二十来个库、单个动辄几十上百
+ * MB，全是注定失败的重传——白烧带宽和时间，还把整轮拖长。
+ *
+ * 判据很简单：**同一轮里连续失败到阈值，就认定离机这条路当前不通**，本轮剩下的目标
+ * 直接跳过上传、只留本地副本。跨轮不做惩罚——下一轮照常再试一次，这样离机恢复时
+ * 能自己好起来，不需要人工干预。
+ *
+ * 注意这里数的是**连续**失败：中间只要成功过一次就归零，避免个别大文件超时误伤整轮。
+ */
+export const OFFSITE_ROUND_FAILURE_THRESHOLD = 2;
+
+export function shouldSkipOffsiteThisRound(
+  consecutiveFailures: number,
+  threshold: number = OFFSITE_ROUND_FAILURE_THRESHOLD,
+): boolean {
+  return consecutiveFailures >= Math.max(1, threshold);
 }
 
 /** 一轮结果的一句话结论。全成功也要说清备了几个——静默成功等于没有反馈。 */
 export function summarizeBackupRound(outcomes: readonly BackupOutcome[], skipped: number): string {
   const ok = outcomes.filter((o) => o.ok);
   const failed = outcomes.filter((o) => !o.ok);
+  // 「只有本地副本」要单独说：它和「彻底没备成」的处置完全不同，
+  // 混成一个数字会让人以为手上什么都没有。
+  const localOnly = failed.filter((o) => o.localOnly);
+  const hardFailed = failed.filter((o) => !o.localOnly);
   const parts: string[] = [];
   if (ok.length) parts.push(`成功 ${ok.length} 个`);
-  if (failed.length) parts.push(`失败 ${failed.length} 个（${failed.map((f) => f.id).join('、')}）`);
+  if (localOnly.length) {
+    parts.push(`仅本地副本 ${localOnly.length} 个（离机未上传：${localOnly.map((f) => f.id).join('、')}）`);
+  }
+  if (hardFailed.length) {
+    parts.push(`失败 ${hardFailed.length} 个（${hardFailed.map((f) => f.id).join('、')}）`);
+  }
   if (skipped) parts.push(`跳过 ${skipped} 个`);
   return parts.length ? `基础设施自动备份：${parts.join('，')}` : '基础设施自动备份：没有可备份的目标';
 }

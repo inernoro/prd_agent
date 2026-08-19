@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_MIN_FREE_BYTES,
+  shouldSkipOffsiteThisRound,
   backupDirCandidates,
   backupFileName,
   backupCoverageGaps,
@@ -27,6 +28,7 @@ import {
   summarizeBackupRound,
   type BackupCandidate,
   type ExistingBackup,
+  shouldSkipOffsiteThisRound,
 } from '../../src/services/infra-backup-schedule.js';
 
 /**
@@ -1261,5 +1263,104 @@ describe('单次导出有写入上限', () => {
     expect(src).toContain('await shell.exec(capped.command');
     // 失败信息要能把「库太大撞上限」和「备份坏了」分开
     expect(src).toContain('本次写入上限');
+  });
+});
+
+/**
+ * 离机失败时保留本地副本（用户 2026-08-19 决定）。
+ *
+ * 此前任何失败都会把临时文件删掉，于是 R2 一挂，本地周期备份跟着整体停摆——实测
+ * 停了半天，而本地那份其实已经过 gzip -t、完全能用。「不记为成功」和「把好东西删掉」
+ * 是两回事。
+ *
+ * 用户同时点明了新风险：不能因为保留就变成「一直失败一直重试」，那会烧带宽、拖长
+ * 整轮，攒下来还可能把盘写满 —— 所以要有止损，且保留必须受保留策略的上界约束。
+ */
+describe('离机失败：留本地，但要止损', () => {
+  it('同一轮里连续失败到阈值就不再试，成功一次归零', () => {
+    expect(shouldSkipOffsiteThisRound(0)).toBe(false);
+    expect(shouldSkipOffsiteThisRound(1)).toBe(false);
+    // 连续两次失败 = 认定离机这条路当前不通，本轮剩下的只留本地。
+    expect(shouldSkipOffsiteThisRound(2)).toBe(true);
+    expect(shouldSkipOffsiteThisRound(7)).toBe(true);
+  });
+
+  it('阈值可调，且下限是 1（传 0 不能变成「永远跳过」）', () => {
+    expect(shouldSkipOffsiteThisRound(1, 3)).toBe(false);
+    expect(shouldSkipOffsiteThisRound(3, 3)).toBe(true);
+    // 阈值传 0 若被直接采信，第一个目标就会被跳过——等于离机功能默认关闭。
+    expect(shouldSkipOffsiteThisRound(0, 0)).toBe(false);
+  });
+
+  it('「仅本地副本」不算成功，健康状态不许因此转绿', () => {
+    const plan = { targets: [], skipped: [] } as never;
+    const outcomes = [{ id: 'redis', ok: false, localOnly: true, fileName: 'x.rdb' }];
+    expect(isBackupRoundHealthy(plan, outcomes)).toBe(false);
+  });
+
+  it('摘要把「仅本地」和「彻底失败」分开报', () => {
+    const msg = summarizeBackupRound([
+      { id: 'mongo', ok: true },
+      { id: 'redis', ok: false, localOnly: true },
+      { id: 'cloudbridge-db', ok: false },
+    ], 0);
+    // 混成一个「失败 2 个」会让人以为手上什么都没有，实际 redis 还有一份能用的。
+    expect(msg).toContain('成功 1 个');
+    expect(msg).toContain('仅本地副本 1 个');
+    expect(msg).toContain('redis');
+    expect(msg).toContain('失败 1 个（cloudbridge-db）');
+    expect(msg).not.toContain('失败 2 个');
+  });
+
+  it('保留策略照常约束「仅本地」那些文件，不会无限堆积', () => {
+    // 这是「保留」不会演变成写满根盘的依据：促正后的文件走同一套份数/天数上界。
+    const files = Array.from({ length: 12 }, (_, i) => ({
+      name: backupFileName('p1', 'redis', 'redis', new Date(Date.UTC(2026, 7, 1 + i)).toISOString()),
+      mtimeMs: Date.UTC(2026, 7, 1 + i),
+    }));
+    const doomed = selectExpiredBackups(files, {
+      projectId: 'p1', id: 'redis', now: new Date(Date.UTC(2026, 7, 13)), keepCount: 7,
+    });
+    expect(doomed.length).toBe(5);
+    expect(files.length - doomed.length).toBe(7);
+  });
+});
+
+/**
+ * 源码守卫：判定层测得再全，执行层要是照旧「失败就 rm」，用户的决定就落不了地。
+ *
+ * 这条盯的是 index.ts 里那一段轮次执行——它删临时文件的时机、以及离机失败后
+ * 还走不走「转正 + 保留策略」。删掉这几处会静默回到「离机一挂、本地全停」。
+ */
+describe('执行层真的保留了本地副本', () => {
+  const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
+
+  it('离机失败不再 throw，而是记 offsiteError 继续往下走', () => {
+    // 旧写法是 `if (!r2) throw` + `await uploadAndVerify(...)` 直接抛，
+    // 一抛就进 catch、就 rm 掉本地那份。
+    expect(SRC).toContain('let offsiteError: string | null = null;');
+    expect(SRC).not.toContain("throw new Error('缺少完整 R2 配置，拒绝把仅有同机副本的备份记为成功')");
+  });
+
+  it('本轮离机连续失败到阈值就跳过后续上传（止损）', () => {
+    expect(SRC).toContain('shouldSkipOffsiteThisRound(offsiteConsecutiveFailures)');
+    // 成功一次要归零，否则个别大文件超时会误伤整轮。
+    expect(SRC).toContain('offsiteConsecutiveFailures = 0;');
+    expect(SRC).toContain('offsiteConsecutiveFailures += 1;');
+  });
+
+  it('离机失败仍然不算成功，且标出 localOnly', () => {
+    expect(SRC).toContain('ok: offsiteError === null,');
+    expect(SRC).toContain('localOnly: offsiteError !== null,');
+  });
+
+  it('转正与保留策略排在离机之后、且不受离机成败影响', () => {
+    // 保留策略是「保留本地」不会把盘写满的唯一上界，必须照常执行。
+    const upload = SRC.indexOf('shouldSkipOffsiteThisRound(offsiteConsecutiveFailures)');
+    const promote = SRC.indexOf('mv -f ${shq(out)} ${shq(finalOut)}');
+    const prune = SRC.indexOf('selectExpiredBackups(existing');
+    expect(upload).toBeGreaterThan(0);
+    expect(promote).toBeGreaterThan(upload);
+    expect(prune).toBeGreaterThan(promote);
   });
 });
