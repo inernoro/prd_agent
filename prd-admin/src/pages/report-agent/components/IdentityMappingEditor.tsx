@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Github, BookOpen, GitBranch, Link2, MessageSquare, Save, X } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -58,7 +59,8 @@ export function IdentityMappingEditor({ teamId, member, onClose, onSaved }: Iden
     });
   };
 
-  return (
+  // 浮层挂到 body，避免团队列表容器的 overflow/transform 影响 fixed 定位
+  return createPortal(
     <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: 'var(--modal-overlay)' }}>
       <GlassCard className="w-[420px] p-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -97,7 +99,8 @@ export function IdentityMappingEditor({ teamId, member, onClose, onSaved }: Iden
         </div>
 
         <div className="text-[11px] p-2 rounded" style={{ background: 'var(--bg-secondary)', color: 'var(--text-tertiary)' }}>
-          提示: 系统通过 assignee 字段匹配，TAPD 通常使用邮箱，GitHub/GitLab 使用用户名
+          提示: 系统通过 assignee 字段匹配，TAPD 通常使用邮箱，GitHub/GitLab 使用用户名。
+          企业微信填 userid（不是昵称），周报评论 @ 到这个人时才能在企微群里真的 @ 亮他；不填则群消息里只出现 @显示名 文本。
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
@@ -107,6 +110,7 @@ export function IdentityMappingEditor({ teamId, member, onClose, onSaved }: Iden
           </Button>
         </div>
       </GlassCard>
-    </div>
+    </div>,
+    document.body
   );
 }
