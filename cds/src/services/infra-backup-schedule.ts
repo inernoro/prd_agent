@@ -608,18 +608,128 @@ export function buildRedisBackupProbeScript(): string {
  * 这一版把 dump 与 gzip 的退出码分别经 fd4 回传，任一非零整条失败。
  * 宿主侧另有 `gzip -t` 完整性校验作第二道（见 index.ts 的转正前校验）。
  */
+/**
+ * 在容器内挑一套能用的 MySQL 凭据，顺带定下这次能备多大范围。
+ *
+ * ## 为什么不能写死 `-uroot`
+ *
+ * 2026-08-18：`cloudbridge-db` 的周期备份长期报
+ * `Access denied for user 'root'@'localhost'`，我一度把它记成「凭据不对，等用户给口令」。
+ * 实际是这个容器用 **`MYSQL_RANDOM_ROOT_PASSWORD`** 起的——mysql 镜像在首次初始化时
+ * 随机生成 root 口令、只往容器日志里打一次。**那个口令不存在于任何地方**：CDS 没有、
+ * 运维没有、用户也没有。于是 `${MYSQL_ROOT_PASSWORD}` 取到空值，root 必然连不上。
+ *
+ * 也就是说这从来不是凭据问题，是判据太窄：把「root 一定有口令」当成了前提
+ * （`predicate-and-wiring-discipline.md` 形状 1）。而这类容器同时带着
+ * `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DATABASE`——那个账号对自己那个库有全部权限，
+ * 完全备得下来。**能备一个库，远胜于一个库都不备。**
+ *
+ * 所以按能力分档，并把档位透出来（`CDS_MYSQL_SCOPE_LABEL`），让调用方知道这份备份
+ * 覆盖的是全库还是单库——「备了」和「备全了」是两件事，不能混着报。
+ */
+const MYSQL_CREDENTIAL_LINES: readonly string[] = [
+  // 凭据在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
+  'CDS_ROOT_PW="${MYSQL_ROOT_PASSWORD:-${MARIADB_ROOT_PASSWORD:-}}"',
+  'CDS_APP_USER="${MYSQL_USER:-${MARIADB_USER:-}}"',
+  'CDS_APP_PW="${MYSQL_PASSWORD:-${MARIADB_PASSWORD:-}}"',
+  'CDS_APP_DB="${MYSQL_DATABASE:-${MARIADB_DATABASE:-}}"',
+  'if [ -n "$CDS_ROOT_PW" ]; then',
+  '  export MYSQL_PWD="$CDS_ROOT_PW"',
+  '  CDS_MYSQL_USER=root',
+  '  CDS_MYSQL_SCOPE="--all-databases"',
+  '  CDS_MYSQL_IS_ROOT=1',
+  '  CDS_MYSQL_SCOPE_LABEL=all-databases',
+  'elif [ -n "$CDS_APP_USER" ] && [ -n "$CDS_APP_PW" ] && [ -n "$CDS_APP_DB" ]; then',
+  // 随机 root 口令的容器走这一档：只备应用账号那个库，但至少有备份。
+  '  export MYSQL_PWD="$CDS_APP_PW"',
+  '  CDS_MYSQL_USER="$CDS_APP_USER"',
+  // `--no-tablespaces` 不是可选项：mysqldump 8.0 默认要读 INFORMATION_SCHEMA.FILES
+  // 导出表空间定义，那需要**全局** PROCESS 权限。而这类账号拿到的是
+  // `GRANT ALL ON <db>.*` + `GRANT USAGE ON *.*`（实测 webhook@% 就是这样），
+  // 全局权限一个都没有，于是 dump 一上来就 Access denied、产出一个 20 字节的空 gzip。
+  // root 那一档不加：它有 PROCESS，保持原命令逐字不变，四个在用的容器行为不动。
+  '  CDS_MYSQL_SCOPE="--databases $CDS_APP_DB --no-tablespaces"',
+  '  CDS_MYSQL_IS_ROOT=0',
+  '  CDS_MYSQL_SCOPE_LABEL="database:$CDS_APP_DB"',
+  'else',
+  // 说清楚缺的是哪几个变量，别让下一个人再去猜是不是「口令不对」。
+  '  echo "cds-backup: 容器里既没有 root 口令（MYSQL_ROOT_PASSWORD / MARIADB_ROOT_PASSWORD），'
+    + '也没有凑齐应用账号三件套（MYSQL_USER + MYSQL_PASSWORD + MYSQL_DATABASE），无法连库" >&2',
+  '  exit 78',
+  'fi',
+];
+
 export function buildMysqlDumpScript(): string {
   return [
-    // 凭据在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
-    'export MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"',
+    ...MYSQL_CREDENTIAL_LINES,
     // fd3 = 真正的 stdout（宿主那个文件）；fd4 = 回传两端退出码的通道。
     'exec 3>&1',
-    'codes=$( { { mysqldump -uroot --all-databases --single-transaction --quick --routines --events; echo "dump=$?" >&4; }'
+    // $CDS_MYSQL_SCOPE 故意不加引号：它是「--all-databases」或「--databases x」两个词。
+    'codes=$( { { mysqldump -u"$CDS_MYSQL_USER" $CDS_MYSQL_SCOPE --single-transaction --quick --routines --events; echo "dump=$?" >&4; }'
       + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
     // 读不到退出码按失败处理：宁可重跑一轮，也不要认一份来路不明的产物。
     `d=$(printf '%s\\n' "$codes" | sed -n 's/^dump=//p')`,
     `g=$(printf '%s\\n' "$codes" | sed -n 's/^gzip=//p')`,
     '[ "${d:-1}" = 0 ] || exit "${d:-1}"',
     '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
+  ].join('\n');
+}
+
+/**
+ * MySQL 恢复：把容器内的 `.sql.gz` 灌回库里。
+ *
+ * ## 为什么不是一行 `gunzip -c f | mysql -uroot`
+ *
+ * 2026-08-18 真事：恢复接口返回 `restored: true`，耗时 4 秒，库里一张用户表都没有。
+ * 原因就是那一行——**管道的退出码是最后一环的**。上游 gunzip 因为文件是空的/截断的
+ * 失败了，下游 mysql 收到零字节输入、正常退出 0，调用方读到 0 就报「已恢复」。
+ *
+ * 这个坑在**导出**那侧（`buildMysqlDumpScript`）早就踩过、也早就注释清楚了，恢复这侧
+ * 却又裸写了一遍管道——同一个判据分裂成两份、只修了一份。所以两侧现在用同一套写法：
+ * 各环的退出码经 fd4 回传，任一非零整条失败。
+ *
+ * 另加一道前置 `gunzip -t`：先验完整性再灌库。空文件、传了一半的文件、根本不是 gzip
+ * 的文件，都在动库之前就被拦下，而不是灌进去一半才发现。
+ */
+export function buildMysqlRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    ...MYSQL_CREDENTIAL_LINES,
+    // 先验完整性。空文件/截断文件在这里就出局，不会带着半截 SQL 去动库。
+    // 措辞不替失败下结论：这一步不过既可能是文件损坏/截断/为空，也可能是容器里
+    // 根本没有 gunzip。真正的原因在 stderr 里，由调用方原样带回去，别在这儿猜。
+    `gunzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gunzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    // mysql 的 stdout 是噪音，赶到 stderr，别混进退出码通道。
+    `codes=$( { { gunzip -c ${p}; echo "gunzip=$?" >&4; }`
+      + ' | { mysql -u"$CDS_MYSQL_USER" >&2; echo "mysql=$?" >&4; }; } 4>&1 )',
+    `u=$(printf '%s\\n' "$codes" | sed -n 's/^gunzip=//p')`,
+    `m=$(printf '%s\\n' "$codes" | sed -n 's/^mysql=//p')`,
+    // 读不到退出码按失败处理——「不确定」不能当成「成功」。
+    '[ "${u:-1}" = 0 ] || exit "${u:-1}"',
+    '[ "${m:-1}" = 0 ] || exit "${m:-1}"',
+    // `--all-databases` 的 dump 会把 `mysql` 库的授权表整个写回去，但**跑着的服务器
+    // 用的是内存里那份**——不 flush 的话，表里明明有这个账号，应用照样连不上，
+    // 而恢复看起来是成功的。dump 自己不带 FLUSH PRIVILEGES，所以在这里补。
+    // 只有 root 这一档需要：应用账号既没有 RELOAD 权限（强来必失败），
+    // 它那份单库 dump 也根本没碰授权表。
+    '[ "$CDS_MYSQL_IS_ROOT" = 1 ] && { mysql -uroot -e "FLUSH PRIVILEGES" || exit $?; }',
+    // 上一行在非 root 档会整体为「假」，别让它成为脚本的退出码。
+    'exit 0',
+  ].join('\n');
+}
+
+/**
+ * 数一数库里有多少张表（排除两个纯内存的元数据库）。
+ *
+ * 恢复前后各数一次，把两个数字写进响应——这样「已恢复」这句话是**带证据**的，
+ * 而不是一个自称。今天那次假成功之所以能糊弄过去，正是因为响应里除了
+ * `restored: true` 什么都没有，看的人无从判断。
+ */
+export function buildMysqlTableCountScript(): string {
+  return [
+    ...MYSQL_CREDENTIAL_LINES,
+    'mysql -u"$CDS_MYSQL_USER" -N -B -e "SELECT COUNT(*) FROM information_schema.tables'
+      + " WHERE table_schema NOT IN ('information_schema','performance_schema')\"",
   ].join('\n');
 }

@@ -364,7 +364,7 @@ describe('首轮实跑暴露的缺陷', () => {
     // TS 源码里 `$` 写成 `${'$'}` 转义。断言必须针对**渲染出来的 shell 文本**，
     // 不是源码字面量——直接扫源码就是在读一个和运行时不同的值（今天栽过同款）。
     const SHELL = CODE.replace(/\$\{'\$'\}/g, '$');
-    expect(buildMysqlDumpScript()).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD');
+    expect(buildMysqlDumpScript()).toMatch(/export MYSQL_PWD="\$CDS_(ROOT|APP)_PW"/);
     expect(SHELL).toMatch(/\$\{MONGO_INITDB_ROOT_PASSWORD:-/);
   });
 });
@@ -803,7 +803,9 @@ describe('MySQL 导出脚本', () => {
       run: () => {
         const res = execFileSync('/bin/sh', ['-c', SCRIPT], {
           cwd: dir,
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+          // 脚本现在会先在容器 env 里挑一套可用凭据（有 root 用 root，
+          // 没有就回落应用账号），一套都凑不齐直接退 78 —— 所以这里要给。
+          env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, MYSQL_ROOT_PASSWORD: 'rootpw' },
           encoding: 'buffer',
           stdio: ['pipe', 'pipe', 'pipe'],
         });
@@ -856,7 +858,8 @@ describe('MySQL 导出脚本', () => {
     let status = 0;
     try {
       execFileSync('/bin/sh', ['-c', buildMysqlDumpScript()], {
-        cwd: dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+        // 脚本先挑凭据，一套都凑不齐会退 78，测不到这条路径。
+        cwd: dir, env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, MYSQL_ROOT_PASSWORD: 'rootpw' },
         encoding: 'buffer', stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (err) { status = (err as { status: number }).status; }
@@ -880,7 +883,13 @@ describe('MySQL 导出脚本', () => {
   });
 
   it('凭据在容器内展开，不出现在宿主命令行里', () => {
-    expect(SCRIPT).toContain('MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"');
+    // 断言的是「口令只以 env 变量名出现、经 MYSQL_PWD 传进去」这个行为，不是某一行
+    // 字面量——脚本后来加了「没有 root 就回落应用账号」的分档，字面量断言会变红，
+    // 而它真正要守的事一点没变。
+    expect(SCRIPT).toMatch(/export MYSQL_PWD="\$CDS_(ROOT|APP)_PW"/);
+    expect(SCRIPT).toContain('MYSQL_ROOT_PASSWORD');
+    // `-p<值>` 会把口令摆进宿主的 ps 和 CDS 日志里。
+    expect(SCRIPT).not.toMatch(/-p\S/);
     expect(SCRIPT).not.toContain('set -o pipefail');
   });
 });
@@ -1006,10 +1015,13 @@ describe('redis 凭据只走 stdin', () => {
     // 断言的是「条数相等」而不是某个魔数：新增一处探测不该让守卫变红，
     // 新增一处**不走 stdin** 的探测才该变红。写死 3 的话，加第 4 处探测的人
     // 会顺手把数字改成 4 了事，守卫就退化成了计数器。
-    const withStdin = files.flatMap(([, src]) => [...src.matchAll(/stdin: redisProbeStdin\(/g)]).length;
-    const shellIn = files.flatMap(([, src]) => [...src.matchAll(/docker exec -i \$\{shq\([^)]*\)\} sh -s/g)]).length;
-    expect(withStdin).toBeGreaterThanOrEqual(3);
-    expect(shellIn, '有 `sh -s` 调用没有配 stdin，脚本会从空输入读进去').toBe(withStdin);
+    // 只管 **redis 探测**这一族：`sh -s` 后来也被 mysql 导出/恢复用上了，
+    // 拿「所有 sh -s 调用数」当分母会让别处新增一个用法就把这条守卫弄红，
+    // 那是计数器不是判据。判定改成：每个 buildRedis* 脚本都必须经 redisProbeStdin 送。
+    const redisScripts = files.flatMap(([, src]) => [...src.matchAll(/buildRedis(?:BackupProbe|RdbPath|AppendOnly)Script\(\)/g)]).length;
+    const viaStdin = files.flatMap(([, src]) => [...src.matchAll(/redisProbeStdin\(/g)]).length;
+    expect(redisScripts).toBeGreaterThanOrEqual(3);
+    expect(viaStdin, '有 redis 探测脚本没走 redisProbeStdin，凭据会漏进命令行').toBe(redisScripts);
     for (const [name, src] of files) {
       // 不许再有 `sh -c <脚本>` 形态的 redis 探测
       expect(src, `${name} 仍在用 sh -c 送 redis 探测脚本`)
