@@ -33,7 +33,8 @@ public class ReportWebhookService
     }
 
     /// <summary>发送周报事件通知到配置的 Webhook</summary>
-    public async Task NotifyAsync(string teamId, string eventType, string title, string body, string? linkPath = null)
+    /// <param name="wecomMentionIds">企微 userid 列表（来自成员身份映射 wecom）。仅企微渠道生效，用于在群里真 @ 到人；为空则消息正文里的 @显示名 保持纯文本</param>
+    public async Task NotifyAsync(string teamId, string eventType, string title, string body, string? linkPath = null, IReadOnlyList<string>? wecomMentionIds = null)
     {
         try
         {
@@ -60,7 +61,7 @@ public class ReportWebhookService
 
             foreach (var config in configs)
             {
-                await SendWebhookAsync(client, config, eventType, title, body, fullLink);
+                await SendWebhookAsync(client, config, eventType, title, body, fullLink, wecomMentionIds);
             }
         }
         catch (Exception ex)
@@ -99,7 +100,8 @@ public class ReportWebhookService
 
     private async Task SendWebhookAsync(
         HttpClient client, ReportWebhookConfig config,
-        string eventType, string title, string body, string? linkPath)
+        string eventType, string title, string body, string? linkPath,
+        IReadOnlyList<string>? wecomMentionIds = null)
     {
         const int maxRetries = 3;
         string? lastError = null;
@@ -111,7 +113,7 @@ public class ReportWebhookService
         {
             try
             {
-                var payload = BuildPayload(config.Channel, title, body, linkPath);
+                var payload = BuildPayload(config.Channel, title, body, linkPath, wecomMentionIds);
                 var content = new StringContent(payload, Encoding.UTF8, "application/json");
                 var response = await client.PostAsync(safeUrl, content);
 
@@ -172,7 +174,24 @@ public class ReportWebhookService
         }
     }
 
-    private static string BuildPayload(string channel, string title, string body, string? linkPath)
+    /// <summary>企微真 @ 后缀：把成员身份映射里的 wecom userid 拼成 &lt;@id&gt;，无映射时返回空串（internal 供守卫测试直接断言）</summary>
+    internal static string BuildWeComMentionSuffix(IReadOnlyList<string>? wecomMentionIds)
+    {
+        if (wecomMentionIds is not { Count: > 0 }) return string.Empty;
+
+        var ids = wecomMentionIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return ids.Count == 0 ? string.Empty : "\n" + string.Join(" ", ids.Select(id => $"<@{id}>"));
+    }
+
+    /// <summary>按渠道构造推送 body（internal 供守卫测试断言企微 @ 语法不外泄到钉钉/飞书）</summary>
+    internal static string BuildPayload(
+        string channel, string title, string body, string? linkPath,
+        IReadOnlyList<string>? wecomMentionIds = null)
     {
         var markdown = $"## {title}\n{body}";
         if (!string.IsNullOrEmpty(linkPath))
@@ -182,10 +201,11 @@ public class ReportWebhookService
 
         return channel switch
         {
+            // 企微群机器人 markdown 用 <@userid> 才能真的 @ 到人；没配映射时只发正文里的 @显示名 文本
             WebhookChannel.WeCom => JsonSerializer.Serialize(new
             {
                 msgtype = "markdown",
-                markdown = new { content = markdown }
+                markdown = new { content = markdown + BuildWeComMentionSuffix(wecomMentionIds) }
             }),
             WebhookChannel.DingTalk => JsonSerializer.Serialize(new
             {

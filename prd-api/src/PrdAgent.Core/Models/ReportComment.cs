@@ -35,6 +35,12 @@ public class ReportComment
     /// <summary>评论图片附件 ID 列表（图文评论：图片统一挂在文字下方，null 表示纯文字评论）</summary>
     public List<string>? AttachmentIds { get; set; }
 
+    /// <summary>
+    /// 被 @ 提醒的成员 UserId 列表（服务端按团队成员解析后落库，null 表示没有 @ 任何人）。
+    /// 用于站内通知去重与企微群推送时的真 @ 映射。
+    /// </summary>
+    public List<string>? MentionedUserIds { get; set; }
+
     /// <summary>附件详情（仅接口返回时按 AttachmentIds 批量解析填充，不落库）</summary>
     [BsonIgnore]
     public List<ReportCommentAttachmentInfo>? Attachments { get; set; }

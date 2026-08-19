@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Github, BookOpen, GitBranch, Link2, Save, X } from 'lucide-react';
+import { Github, BookOpen, GitBranch, Link2, MessageSquare, Save, X } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { updateIdentityMappings } from '@/services';
@@ -17,6 +17,8 @@ const PLATFORMS = [
   { key: 'tapd', label: 'TAPD', icon: Link2, placeholder: 'TAPD 邮箱 (如 zhangsan@company.com)' },
   { key: 'yuque', label: '语雀', icon: BookOpen, placeholder: '语雀 login ID' },
   { key: 'gitlab', label: 'GitLab', icon: GitBranch, placeholder: 'GitLab 用户名' },
+  // 填了才能在企微群里真 @ 到人（评论 @ 提醒推送）；不填只发 @显示名 纯文本
+  { key: 'wecom', label: '企业微信', icon: MessageSquare, placeholder: '企微 userid（评论 @ 提醒时在群里真 @ 到人）' },
 ] as const;
 
 export function IdentityMappingEditor({ teamId, member, onClose, onSaved }: IdentityMappingEditorProps) {

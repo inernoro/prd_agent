@@ -8,6 +8,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -3772,6 +3773,38 @@ public class ReportAgentController : ControllerBase
     /// 按 AttachmentIds 批量解析附件详情，填充到评论的 Attachments（仅接口返回，不落库）。
     /// 附件已被清理时静默跳过该图，评论文字仍正常展示。
     /// </summary>
+    /// <summary>
+    /// 解析评论里被 @ 的成员。判据只有一条：正文里出现 @ + 该成员的某个名字（显示名 / 团队昵称 / 用户名），
+    /// 长名优先。不接受前端传入的 ID —— 前端 @ 下拉只负责把名字写对，谁被 @ 由正文说了算，
+    /// 这样手打 @ 与下拉选择行为一致，也不会因前端子串匹配把「@张三丰」误算成 @了「张三」。
+    /// 候选集合限定为该周报所属团队的成员，并排除评论者自己（自己 @ 自己不发通知）。
+    /// </summary>
+    private async Task<List<string>> ResolveCommentMentionsAsync(
+        string teamId, string content, string authorUserId)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return new List<string>();
+
+        var members = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId).ToListAsync();
+        if (members.Count == 0) return new List<string>();
+
+        var memberIds = members.Select(m => m.UserId).ToList();
+        var users = await _db.Users.Find(u => memberIds.Contains(u.UserId)).ToListAsync();
+
+        var candidates = members.Select(m =>
+        {
+            var user = users.FirstOrDefault(u => u.UserId == m.UserId);
+            var names = new List<string>();
+            if (!string.IsNullOrWhiteSpace(user?.DisplayName)) names.Add(user!.DisplayName!);
+            if (!string.IsNullOrWhiteSpace(m.UserName)) names.Add(m.UserName!);
+            if (!string.IsNullOrWhiteSpace(user?.Username)) names.Add(user!.Username!);
+            return new ReportMentionParser.MentionCandidate { UserId = m.UserId, Names = names };
+        }).ToList();
+
+        var resolved = ReportMentionParser.Extract(content, candidates);
+
+        return resolved.Where(x => !string.Equals(x, authorUserId, StringComparison.Ordinal)).ToList();
+    }
+
     private async Task PopulateCommentAttachmentsAsync(List<ReportComment> comments)
     {
         var allIds = comments
@@ -3867,6 +3900,9 @@ public class ReportAgentController : ControllerBase
         var isReply = !string.IsNullOrEmpty(req.ParentCommentId);
         var selectedText = isReply ? null : Truncate(req.SelectedText, 500);
 
+        var content = (req.Content ?? string.Empty).Trim();
+        var mentionedUserIds = await ResolveCommentMentionsAsync(report.TeamId, content, userId);
+
         var comment = new ReportComment
         {
             ReportId = id,
@@ -3875,8 +3911,9 @@ public class ReportAgentController : ControllerBase
             ParentCommentId = string.IsNullOrEmpty(req.ParentCommentId) ? null : req.ParentCommentId,
             AuthorUserId = userId,
             AuthorDisplayName = authorDisplayName,
-            Content = (req.Content ?? string.Empty).Trim(),
+            Content = content,
             AttachmentIds = attachmentIds.Count > 0 ? attachmentIds : null,
+            MentionedUserIds = mentionedUserIds.Count > 0 ? mentionedUserIds : null,
             SelectedText = selectedText,
             ContextBefore = selectedText == null ? null : Truncate(req.ContextBefore, 100),
             ContextAfter = selectedText == null ? null : Truncate(req.ContextAfter, 100),
@@ -3886,6 +3923,20 @@ public class ReportAgentController : ControllerBase
 
         await _db.ReportComments.InsertOneAsync(comment);
         await PopulateCommentAttachmentsAsync(new List<ReportComment> { comment });
+
+        // @ 提醒：站内通知 + 团队 Webhook 群推送（通知失败不影响评论本身已保存）
+        if (mentionedUserIds.Count > 0)
+        {
+            try
+            {
+                await _notificationService.NotifyCommentMentionAsync(report, comment);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[report-agent] 评论 @ 提醒推送失败: comment={CommentId}", comment.Id);
+            }
+        }
+
         return Ok(ApiResponse<object>.Ok(new { comment }));
     }
 

@@ -7,7 +7,7 @@ import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, GitCompare, CheckCir
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import { getWeeklyReport, listComments, createComment, updateComment, deleteComment, reviewWeeklyReport, returnWeeklyReport, recordReportView, getReportViewsSummary, getTeamReportsView } from '@/services';
+import { getWeeklyReport, listComments, createComment, updateComment, deleteComment, reviewWeeklyReport, returnWeeklyReport, recordReportView, getReportViewsSummary, getTeamReportsView, getReportTeam } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import type { WeeklyReport, ReportComment, ReportViewSummary, TeamReportListItem } from '@/services/contracts/reportAgent';
@@ -18,7 +18,8 @@ import { ReportTableSectionView } from './components/ReportTableSectionView';
 import { RightRailPanel } from './components/RightRailPanel';
 import { ReportSelectionCommentLayer } from './components/ReportSelectionCommentLayer';
 import { underlineStroke, type ReportCommentAnchor } from './components/reportCommentAnchor';
-import { ReportCommentComposer, ReportCommentAttachmentGrid } from './components/ReportCommentComposer';
+import { ReportCommentComposer, ReportCommentAttachmentGrid, toMentionUsers } from './components/ReportCommentComposer';
+import type { MentionUser } from '@/components/MentionTextarea';
 import { useDataTheme } from './hooks/useDataTheme';
 import { useStatusChipConfig } from './hooks/useStatusChipConfig';
 
@@ -67,6 +68,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   /** 后端授权:当前用户对该周报是否有审阅权限(Leader/Deputy 或全局 ReportAgentViewAll) */
   const [canReview, setCanReview] = useState(false);
   const [comments, setComments] = useState<ReportComment[]>([]);
+  /** @ 候选成员：取不到（无权查看团队）时留空，评论仍可正常提交 */
+  const [mentionUsers, setMentionUsers] = useState<MentionUser[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
   const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string; anchor?: ReportCommentAnchor } | null>(null);
   /** 正文容器（划词评论层的定位坐标系） */
@@ -107,6 +110,15 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     const res = await listComments({ reportId });
     if (res.success && res.data) setComments(res.data.items);
   }, [reportId]);
+
+  useEffect(() => {
+    const teamId = report?.teamId;
+    if (!teamId) return;
+    (async () => {
+      const res = await getReportTeam({ id: teamId });
+      setMentionUsers(res.success && res.data ? toMentionUsers(res.data.members ?? []) : []);
+    })();
+  }, [report?.teamId]);
 
   const loadViewSummary = useCallback(async () => {
     if (!reportId) return;
@@ -622,6 +634,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                         key={`${replyTo.sectionIndex}:${replyTo.parentId ?? ''}:${replyTo.anchor?.selectedText ?? ''}`}
                         reportId={reportId ?? ''}
                         submitting={submitting}
+                        members={mentionUsers}
                         onSubmit={handleCreateComment}
                         onCancel={() => setReplyTo(null)}
                       />
