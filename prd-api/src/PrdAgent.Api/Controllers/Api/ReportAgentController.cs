@@ -3770,10 +3770,6 @@ public class ReportAgentController : ControllerBase
     }
 
     /// <summary>
-    /// 按 AttachmentIds 批量解析附件详情，填充到评论的 Attachments（仅接口返回，不落库）。
-    /// 附件已被清理时静默跳过该图，评论文字仍正常展示。
-    /// </summary>
-    /// <summary>
     /// 解析评论里被 @ 的成员。判据只有一条：正文里出现 @ + 该成员的某个名字（显示名 / 团队昵称 / 用户名），
     /// 长名优先。不接受前端传入的 ID —— 前端 @ 下拉只负责把名字写对，谁被 @ 由正文说了算，
     /// 这样手打 @ 与下拉选择行为一致，也不会因前端子串匹配把「@张三丰」误算成 @了「张三」。
@@ -3782,7 +3778,8 @@ public class ReportAgentController : ControllerBase
     private async Task<List<string>> ResolveCommentMentionsAsync(
         string teamId, string content, string authorUserId)
     {
-        if (string.IsNullOrWhiteSpace(content)) return new List<string>();
+        // 没有 @ 字符就不可能 @ 到人，省掉两次集合查询
+        if (string.IsNullOrWhiteSpace(content) || !content.Contains('@')) return new List<string>();
 
         var members = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId).ToListAsync();
         if (members.Count == 0) return new List<string>();
@@ -3805,6 +3802,10 @@ public class ReportAgentController : ControllerBase
         return resolved.Where(x => !string.Equals(x, authorUserId, StringComparison.Ordinal)).ToList();
     }
 
+    /// <summary>
+    /// 按 AttachmentIds 批量解析附件详情，填充到评论的 Attachments（仅接口返回，不落库）。
+    /// 附件已被清理时静默跳过该图，评论文字仍正常展示。
+    /// </summary>
     private async Task PopulateCommentAttachmentsAsync(List<ReportComment> comments)
     {
         var allIds = comments

@@ -251,6 +251,22 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     });
   }, []);
 
+  /** 站内「有人在周报评论中 @ 你」的通知带 ?comment=xxx 进来：评论加载完后滚过去并标亮 */
+  const anchorCommentId = searchParams.get('comment');
+  const anchoredCommentRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!anchorCommentId || comments.length === 0) return;
+    if (anchoredCommentRef.current === anchorCommentId) return;
+    const target = comments.find((c) => c.id === anchorCommentId);
+    if (!target) return;
+    anchoredCommentRef.current = anchorCommentId;
+    // 回复本身没有 DOM 锚点，退到它所属的顶级评论
+    const thread = target.parentCommentId
+      ? comments.find((c) => c.id === target.parentCommentId) ?? target
+      : target;
+    handleActivateThread(thread);
+  }, [anchorCommentId, comments, handleActivateThread]);
+
   const handleReview = async () => {
     if (!reportId) return;
     const res = await reviewWeeklyReport({ id: reportId });
