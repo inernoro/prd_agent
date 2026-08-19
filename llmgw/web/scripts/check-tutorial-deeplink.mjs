@@ -219,11 +219,43 @@ must(
   'ModelPoolsPage: 添加成员的顺位必须默认末位，且不得再出现「留空即抢占第 1 顺位」的输入框',
 );
 
+// 上面那条只验「走没走 tail 分支」，不验 tail 算得对不对——第一版就是形状对、值错：
+// 末位按成员个数推（length + 1），而后端顺位是 10 步长（补齐建的池是 10/20/30），
+// 三个成员算出 4，比 10 还小，「末位·不改现有流量」实际插进第 1 顺位抢走全部流量。
+must(
+  /function nextTailPriority[\s\S]{0,400}?Math\.max\(acc, m\.priority\)[\s\S]{0,120}?\+ 10/.test(pools),
+  'ModelPoolsPage: 末位顺位必须按现有最大顺位 + 10 推算（对齐后端步长），不能按成员个数推',
+);
+must(
+  !/const tailPriority = pool\.models\.length \+ 1/.test(pools)
+    && !/第\{pool\.models\.length \+ 1\}顺位/.test(pools),
+  'ModelPoolsPage: 末位顺位与按钮文案都不得再用「成员个数 + 1」，那在 10 步长的池上会算成抢占第 1 顺位',
+);
+// 二次确认要守**算出来的顺位**，不是用户选的模式。只守 'pick' 的话，末位一旦算错，
+// 抢流量就绕过确认静默发生——守卫和被守的 bug 同源，等于没守。
+must(
+  /if \(lead && priority <= lead\.priority\)/.test(pools) && !/mode === 'pick' && lead && priority <= lead\.priority/.test(pools),
+  'ModelPoolsPage: 抢占第 1 顺位的二次确认必须按算出来的顺位判定，不能只在「指定顺位」模式下生效',
+);
+
 // 恢复接单后成员在后端仍是不可用（只拿到进入半开的资格），UI 必须自己记一笔中间态，
 // 否则点完按钮界面纹丝不动，用户只会反复点。
 must(
   pools.includes('verifying.has(') && pools.includes("MEMBER_STATUS[isVerifying ? 'verify'"),
   'ModelPoolsPage: 「恢复接单」必须有「验证中」中间态，不能点完之后界面毫无变化',
+);
+// 同样只验形状不够：中间态只进不出的话，「验证中」会挂一整个会话——真恢复了仍显示
+// 验证中，再次失败也点不回「恢复接单」，只能刷新页面。必须有退出路径。
+must(
+  /setVerifying\([\s\S]{0,200}?next\)/.test(pools) && /next\.delete\(key\)/.test(pools),
+  'ModelPoolsPage: 「验证中」必须能退出（成员健康快照变化即出结果），不能只进不出',
+);
+
+// 详情/新建这一支不走 PageBody，而 PageShell 与 console-content 都是 overflow:hidden。
+// 不自建滚动容器，成员表下半截与「添加成员」会被裁掉、用户够不到。
+must(
+  /\.mp-detail-main\{[^}]*overflow-y:\s*auto/.test(pools) && /className="mp-detail-main"/.test(pools),
+  'ModelPoolsPage: 池详情/新建的内容列必须自建滚动容器，否则折叠线以下的内容够不到',
 );
 
 if (failures.length > 0) {

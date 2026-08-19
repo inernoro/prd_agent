@@ -85,6 +85,19 @@ const STRATEGY_DETAIL: { value: number; detail: string }[] = [
  * 求和会把几个成员的历史混成一个无法行动的数字；取最差成员则可能落在
  * 从不承接流量的末位后备身上，两种都答非所问。
  */
+/**
+ * 末位顺位 = 现有最大顺位 + 10。
+ *
+ * 不能用「成员个数 + 1」：后端给顺位是 10 步长（`maxPriority += 10`、批量导入
+ * `priorityStep` 默认 10），补齐建出来的池成员是 10/20/30。三个成员时 length+1 = 4，
+ * 比 10 还小——按钮上写着「末位·不改现有流量」，实际插进第 1 顺位抢走全部流量。
+ * 步长跟随后端，插空位由「指定顺位」负责，这里只管追加到最后。
+ */
+function nextTailPriority(members: PoolModelInfo[]): number {
+  const max = members.reduce((acc, m) => Math.max(acc, m.priority), 0);
+  return max + 10;
+}
+
 function poolEvidence(pool: ModelPool): { text: string; tone: string } {
   const lead = pool.models.slice().sort((a, b) => a.priority - b.priority)[0];
   if (pool.health === 'empty') return { text: '没有成员，调用会直接失败', tone: 'var(--text-muted)' };
@@ -95,7 +108,17 @@ function poolEvidence(pool: ModelPool): { text: string; tone: string } {
     return { text: `第1顺位连续失败 ${lead.consecutiveFailures} 次 · 最近失败 ${failed} · 最近成功 ${ok}`, tone: '#f85149' };
   }
   if (pool.health === 'degraded') {
-    return { text: `第1顺位连续失败 ${lead.consecutiveFailures} 次（${failed}起）· 池仍在承接`, tone: '#d29922' };
+    // degraded = 有健康的也有不健康的。归因必须落到**真正坏掉的那一个**：
+    // 健康的第 1 顺位 + 坏掉的后备，按 lead 讲就会印出「第1顺位连续失败 0 次」，
+    // 点错了人，还和详情页的结论句自相矛盾。
+    const worst = pool.models.slice().sort((a, b) => (b.healthStatus - a.healthStatus) || (a.priority - b.priority))[0];
+    if (worst && worst.healthStatus !== 0) {
+      return {
+        text: `第${worst.priority}顺位「${worst.modelId}」连续失败 ${worst.consecutiveFailures} 次（${relativeTime(worst.lastFailedAt)}起）· 池仍在承接`,
+        tone: '#d29922',
+      };
+    }
+    return { text: '有成员不健康 · 池仍在承接', tone: '#d29922' };
   }
   if (pool.recentRequests === 0) {
     return { text: `最近调用 ${relativeTime(pool.lastRequestAt)} · 无窗口内数据`, tone: 'var(--text-muted)' };
@@ -184,7 +207,10 @@ export function ModelPoolsPage() {
   // 「恢复接单」的本地中间态。后端把成员留在不可用、只发一张进入半开的入场券，
   // 等下一条真实业务请求验证；若 UI 不记这一笔，点完按钮红标签纹丝不动、按钮还在原地，
   // 用户只会反复点。这个 Set 让该成员立刻显示「验证中」并收起按钮。
-  const [verifying, setVerifying] = useState<Set<string>>(new Set());
+  // key -> 按下「恢复接单」当时那条成员的健康快照。快照一变就说明真实请求已经来过、
+  // 验证有了结果，这一条就该退出中间态。只 add 不 delete 的话，「验证中」会挂一整个
+  // 会话：真恢复了仍显示验证中，再次失败也点不到「恢复接单」，只能刷新页面。
+  const [verifying, setVerifying] = useState<Map<string, string>>(new Map());
   const [createStep, setCreateStep] = useState(1);
   const [addPositions, setAddPositions] = useState<Record<string, 'tail' | 'pick'>>({});
 
@@ -444,14 +470,16 @@ export function ModelPoolsPage() {
     // 顺位默认落末位。此前留空会被 toPositiveInt('') 解成 1，也就是**抢占第 1 顺位**，
     // 而输入框占位符写的是 P{末位}，明示追加到末尾——一个安静的、会改线上流量走向的误操作。
     const mode = addPositions[pool.id] ?? 'tail';
-    const tailPriority = pool.models.length + 1;
+    const tailPriority = nextTailPriority(pool.models);
     const priority = mode === 'tail' ? tailPriority : toPositiveInt(draft.priority);
     if (priority === null) {
       setToast('顺位必须是正整数');
       return;
     }
     const lead = pool.models.slice().sort((a, b) => a.priority - b.priority)[0];
-    if (mode === 'pick' && lead && priority <= lead.priority) {
+    // 守的是**算出来的顺位**，不是用户选的模式。只守 'pick' 的话，一旦「末位」自己算错
+    // （比如按成员个数推，撞上后端 10 步长的池），抢流量就会绕过确认静默发生。
+    if (lead && priority <= lead.priority) {
       const ok = await confirm({
         title: '插入第 1 顺位会立刻改变线上流量',
         description: `新成员将抢占全部流量，原第 1 顺位「${lead.modelId}」顺延为后备。确认要这样放吗？`,
@@ -584,6 +612,11 @@ export function ModelPoolsPage() {
     }
   }
 
+  // 健康快照：这四个字段任一变化，就意味着这条成员真的被一次业务请求碰过。
+  function memberHealthStamp(member: PoolModelInfo): string {
+    return [member.healthStatus, member.consecutiveFailures, member.lastSuccessAt ?? '', member.lastFailedAt ?? ''].join('|');
+  }
+
   async function recoverUnavailablePoolModel(pool: ModelPool, member: PoolModelInfo) {
     const key = memberKey(pool.id, member);
     setBusyId(key);
@@ -594,12 +627,28 @@ export function ModelPoolsPage() {
       setPools((prev) => (prev ? prev.map((x) => (x.id === res.data.id ? mergePoolMutation(x, res.data) : x)) : prev));
       // 后端刻意让成员留在「不可用」——它只授予进入半开的资格，由下一条真实业务请求验证，
       // 不发额外的付费探测。所以这里必须自己记一笔中间态，否则界面看起来毫无变化。
-      setVerifying((prev) => new Set(prev).add(key));
+      setVerifying((prev) => new Map(prev).set(key, memberHealthStamp(member)));
       setToast(`「${member.modelId}」已恢复接单，等下一条真实业务请求验证（不发探测请求）`);
     } else {
       setToast(res.error?.message || '恢复失败');
     }
   }
+
+  useEffect(() => {
+    if (!pools || verifying.size === 0) return;
+    const live = new Map<string, string>();
+    for (const pool of pools) {
+      for (const member of pool.models) live.set(memberKey(pool.id, member), memberHealthStamp(member));
+    }
+    let changed = false;
+    const next = new Map(verifying);
+    for (const [key, stamp] of verifying) {
+      // 成员没了，或者健康记录动过了 —— 两种都算「验证已经有结果」，退出中间态。
+      const current = live.get(key);
+      if (current === undefined || current !== stamp) { next.delete(key); changed = true; }
+    }
+    if (changed) setVerifying(next);
+  }, [pools, verifying]);
 
   if (error) return <Empty text={error} />;
   if (!pools) return <SectionLoader text="正在加载模型池…" />;
@@ -701,7 +750,7 @@ export function ModelPoolsPage() {
               );
             })}
           </aside>
-          <div style={{ minWidth: 0, padding: CARD_PADDING, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+          <div className="mp-detail-main" style={{ padding: CARD_PADDING, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
             {toast ? <div role="status" style={{ ...INSET_BLOCK, border: '1px solid var(--border-subtle)', ...BODY_TEXT }}>{toast}</div> : null}
             {isCreate && canWrite ? (
               <PoolCreateWizard
@@ -951,11 +1000,15 @@ const COLUMN_PRIORITY_CSS = `
 .mp-row{grid-template-columns:88px minmax(140px,1.3fr) minmax(190px,1.9fr) minmax(150px,1.3fr) 92px 100px 88px 96px 128px 68px}
 .mp-head{white-space:nowrap}
 @media(max-width:1400px){.mp-row{grid-template-columns:88px minmax(140px,1.3fr) minmax(190px,1.9fr) minmax(150px,1.3fr) 92px 100px 88px 96px 68px}.mp-c-badge{display:none}}
-@media(max-width:1280px){.mp-row{grid-template-columns:88px minmax(140px,1.3fr) minmax(190px,1.9fr) minmax(150px,1.3fr) 92px 100px 68px}.mp-c-req{display:none}}
-@media(max-width:1150px){.mp-row{grid-template-columns:88px minmax(140px,1.3fr) minmax(190px,1.9fr) minmax(150px,1.3fr) 92px 68px}.mp-c-dur{display:none}}
+@media(max-width:1280px){.mp-row{grid-template-columns:88px minmax(140px,1.3fr) minmax(190px,1.9fr) minmax(150px,1.3fr) 92px 100px 96px 68px}.mp-c-req{display:none}}
+@media(max-width:1150px){.mp-row{grid-template-columns:88px minmax(140px,1.3fr) minmax(190px,1.9fr) minmax(150px,1.3fr) 92px 96px 68px}.mp-c-dur{display:none}}
 @media(max-width:1020px){.mp-row{grid-template-columns:88px minmax(130px,1.2fr) minmax(170px,1.8fr) minmax(140px,1.2fr) 84px 68px}.mp-c-call{display:none}}
-.mp-detail-shell{grid-template-columns:minmax(0,1fr)}
-.mp-rail{display:none}
+/* PageShell 与外层 console-content 都是 overflow:hidden，全页唯一的滚动容器是
+   .lg-page-body。详情/新建这一支不走 PageBody（它要自己分左右两栏各自滚），
+   所以必须在这里自建滚动，否则成员表下半截、添加成员、批量添加全部被裁掉够不到。 */
+.mp-detail-shell{grid-template-columns:minmax(0,1fr);flex:1;min-height:0}
+.mp-rail{display:none;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.mp-detail-main{min-width:0;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 @media(min-width:960px){.mp-detail-shell{grid-template-columns:264px minmax(0,1fr)}.mp-rail{display:block}}
 `;
 
@@ -1201,7 +1254,7 @@ function PoolCreateWizard({
           <FormField label="池名">
             <input value={draft.name} onChange={(e) => onDraftChange({ ...draft, name: e.target.value })} placeholder="客服对话主池" style={{ ...inputStyle, width: '100%' }} aria-label="新模型池名称" />
           </FormField>
-          <FormField label="业务类型" hint="类型决定这个池能承接哪些调用，创建后不可改。">
+          <FormField label="业务类型" hint="类型决定哪些调用会落到这个池，建完仍可改。">
             <input value={draft.modelType} onChange={(e) => onDraftChange({ ...draft, modelType: e.target.value })} placeholder="chat" style={{ ...inputStyle, width: '100%' }} aria-label="模型类型" list="gw-pool-model-types" />
             <datalist id="gw-pool-model-types">{modelTypes.map((type) => <option key={type} value={type} />)}</datalist>
           </FormField>
@@ -1326,7 +1379,8 @@ function PoolDetail({
   bulkDraft: PoolBulkImportDraft;
   memberPriorities: Record<string, string>;
   memberParameterCaps: Record<string, string>;
-  verifying: Set<string>;
+  /** key -> 恢复时的健康快照。只读用 has()；值的语义见页面组件里的 memberHealthStamp。 */
+  verifying: Map<string, string>;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onEditDraftChange: (draft: PoolEditDraft) => void;
@@ -1467,7 +1521,7 @@ function PoolDetail({
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
             <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)', fontWeight: 600 }}>添加成员</span>
             {/* 顺位默认末位：不改现有流量。要插到前面必须显式选，且提交前二次确认。 */}
-            <button type="button" onClick={() => onAddPositionChange('tail')} style={positionButtonStyle(addPosition === 'tail')}>末位（第{pool.models.length + 1}顺位）· 不改现有流量</button>
+            <button type="button" onClick={() => onAddPositionChange('tail')} style={positionButtonStyle(addPosition === 'tail')}>末位（第{nextTailPriority(pool.models)}顺位）· 不改现有流量</button>
             <button type="button" onClick={() => onAddPositionChange('pick')} style={positionButtonStyle(addPosition === 'pick')}>指定顺位</button>
             {addPosition === 'pick' ? (
               <input value={addDraft.priority} onChange={(e) => onAddDraftChange({ ...addDraft, priority: e.target.value })} placeholder="1" inputMode="numeric" style={smallInputStyle(64)} aria-label="指定顺位" />
