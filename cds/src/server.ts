@@ -43,6 +43,7 @@ import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deplo
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { sha256Hex } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
+import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
@@ -778,6 +779,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/integrations/bug-report/test': '测试缺陷转发接入',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
+    'GET /cds-system/offsite-backup': '查询离机备份配置',
+    'PUT /cds-system/offsite-backup': '保存离机备份配置',
+    'POST /cds-system/offsite-backup/test': '实测离机备份配置',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /cds-system/github/app-whitelist': '获取 GitHub 白名单',
     'PUT /cds-system/github/app-whitelist': '更新 GitHub 白名单',
@@ -4213,6 +4217,8 @@ export function createServer(deps: ServerDeps): express.Express {
     masterPort: deps.config.masterPort,
   });
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
+  // 离机备份（R2）配置入口，系统级。先实测再落盘、落盘后热生效，见 routes/cds-system-offsite-backup.ts。
+  app.use('/api', createCdsSystemOffsiteBackupRouter());
   app.use('/api', createDockerNetworkHealthRouter({ shell: deps.shell }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot }));
