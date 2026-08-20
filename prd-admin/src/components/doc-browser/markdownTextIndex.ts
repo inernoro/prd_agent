@@ -36,6 +36,9 @@ export function collapseWhitespace(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+let lastSource: string | null = null;
+let lastIndex: PlainTextIndex | null = null;
+
 /**
  * 扫描 Markdown 源码，产出近似渲染文本与位置映射。
  *
@@ -44,6 +47,16 @@ export function collapseWhitespace(text: string): string {
  * 保留：代码围栏内部原样（页面上代码就是原样显示的）。
  */
 export function buildPlainTextIndex(source: string): PlainTextIndex {
+  // 单条缓存：同一篇正文会在一次交互里被反复扫（浮层每次渲染都要重算"能不能替换"），
+  // 而正文在会话期间是不变的。纯函数 + 按内容判等，不存在串档风险。
+  if (lastSource === source && lastIndex) return lastIndex;
+  const built = buildPlainTextIndexUncached(source);
+  lastSource = source;
+  lastIndex = built;
+  return built;
+}
+
+function buildPlainTextIndexUncached(source: string): PlainTextIndex {
   const plain: string[] = [];
   const map: number[] = [];
   let pendingSpaceAt = -1; // 有待输出的折叠空白在源码里的起点
