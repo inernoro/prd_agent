@@ -233,6 +233,7 @@ import {
   buildImageMarkdown,
   isReplaceSafe,
   stripOuterFence,
+  stripDuplicatedBlockPrefix,
   type ResolvedRange,
 } from './selectionEdit';
 import { buildInlineDiffBody } from './selectionDiffMarkup';
@@ -2257,7 +2258,16 @@ export function DocBrowser({
   // 替换/插入后拼回 frontmatter 前缀，走既有 onSaveContent（PUT content，服务端自动
   // 重锚定行内评论 + 重算双链账本）。歧义无法消除时拒绝替换，宁缺毋错。
   const applySelectionAiEdit = useCallback(async (
-    target: { entryId: string; sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number } },
+    target: {
+      entryId: string;
+      sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
+      /** 会话开始时已定位好的区间。与 original 一起传，且区间内容仍等于 original 时直接复用——
+       *  预览画的和写回的必须是同一个区间，重新定位一次等于让同一件事有两处判据
+       *  （predicate-and-wiring-discipline.md 形状 3） */
+      range?: ResolvedRange;
+      /** 会话开始时该区间里的原文，用来确认区间还指着同一段文字 */
+      original?: string;
+    },
     mode: 'replace' | 'insert-after',
     newText: string,
   ): Promise<boolean> => {
@@ -2268,7 +2278,12 @@ export function DocBrowser({
     }
     const raw = preview.text;
     const body = selectionRawContent;
-    const range = resolveSelectionRange(body, target.sel);
+    // 复用已知区间前先确认它在当前正文里还指着同一段文字；对不上就老老实实重新定位
+    const known = target.range;
+    const knownStillValid = known != null
+      && target.original != null
+      && body.slice(known.start, known.end) === target.original;
+    const range = knownStillValid ? known : resolveSelectionRange(body, target.sel);
     let newBody: string;
     if (mode === 'replace') {
       if (!range) {
@@ -2352,9 +2367,10 @@ export function DocBrowser({
   // 采纳：把改动写回文档（复用既有替换写回路径，服务端会重锚定评论与双链）
   const acceptRewrite = useCallback(async () => {
     const session = rewriteRef.current;
-    if (!session || session.applying || !session.text.trim()) return;
+    const output = rewriteOutputRef.current.trim();
+    if (!session || session.applying || !output) return;
     setRewrite((s) => (s ? { ...s, applying: true } : s));
-    const ok = await applySelectionAiEditRef.current(session, 'replace', session.text.trim());
+    const ok = await applySelectionAiEditRef.current(session, 'replace', output);
     if (ok) {
       toast.success('已采纳', '改动已保存到文档');
       setRewrite(null);
@@ -2372,15 +2388,24 @@ export function DocBrowser({
   // 就地 diff 正文：会话进入 streaming 之后，正文渲染的就是「带 <ins>/<del> 标记的改动版」。
   // 返回 null 表示这次改动不能安全地画在正文上（切档 / 正文被别的路径改过），
   // 此时不画、并由下面的 effect 取消会话——宁可明说取消，不可把 diff 画到错位置。
+  // 模型输出的规范化只做一次：预览画的、采纳写回的，必须是同一个字符串
+  // （predicate-and-wiring-discipline.md 形状 6：判据读的值要就是真正生效的那个值）
+  const rewriteOutput = useMemo(() => {
+    if (!rewrite || typeof selectionRawContent !== 'string') return '';
+    return stripDuplicatedBlockPrefix(selectionRawContent, rewrite.range, rewrite.text);
+  }, [rewrite, selectionRawContent]);
+  const rewriteOutputRef = useRef(rewriteOutput);
+  rewriteOutputRef.current = rewriteOutput;
+
   const rewriteDiff = useMemo(() => {
     if (!rewrite || rewrite.phase === 'prompt') return null;
     if (rewrite.entryId !== selectedEntryId) return null;
     if (typeof selectionRawContent !== 'string' || !preview?.text) return null;
     if (selectionRawContent.slice(rewrite.range.start, rewrite.range.end) !== rewrite.original) return null;
     // 流式期间在结果末尾点一个光标：让「还在写」这件事发生在文章里，而不是只有状态条在转
-    const text = rewrite.phase === 'streaming' ? `${rewrite.text}▌` : rewrite.text;
+    const text = rewrite.phase === 'streaming' ? `${rewriteOutput}▌` : rewriteOutput;
     return buildInlineDiffBody(selectionRawContent, rewrite.range, text);
-  }, [rewrite, selectionRawContent, preview, selectedEntryId]);
+  }, [rewrite, rewriteOutput, selectionRawContent, preview, selectedEntryId]);
 
   // 采纳落库那一瞬间正文已换成新内容、diff 失效，这属于成功路径，不能报「文档已变化」
   const rewriteDiffBroken = !!rewrite && rewrite.phase !== 'prompt' && !rewrite.applying && !rewriteDiff;
