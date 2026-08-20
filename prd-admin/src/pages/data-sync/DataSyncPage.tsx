@@ -796,11 +796,19 @@ function ProgressCard({
         <Card>
           <div className="flex items-center gap-2">
             <KeyRound size={18} style={{ color: 'var(--accent-primary)' }} />
-            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>待补密钥</h2>
+            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {run.dryRun ? '真跑之后要补的密钥' : '待补密钥'}
+            </h2>
           </div>
+          {/*
+            试跑一条都没写库，这些字段此刻在本站根本不存在。原来这段话不分真跑试跑，
+            一律写「同步过来是空的，需要现在补」——会把人支去翻一批压根没导进来的记录。
+            同「试跑不能把打算写记成写了」是同一条纪律，我上次只改了计数没改这里。
+          */}
           <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
-            下面这些字段在源站出口就被清空了，同步过来是空的，需要在本站手工填一遍才能用。
-            没填之前，相关平台的调用会失败而不是静默降级。
+            {run.dryRun
+              ? '这是一次试跑，没有写库。下面这些字段在源站出口会被清空，等真跑之后需要在本站手工填一遍才能用——现在不用动。'
+              : '下面这些字段在源站出口就被清空了，同步过来是空的，需要在本站手工填一遍才能用。没填之前，相关平台的调用会失败而不是静默降级。'}
           </p>
           <ul className="mt-3 space-y-1 text-xs">
             {pendingSecrets.map(([collection, fields]) => (

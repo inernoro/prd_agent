@@ -131,7 +131,6 @@ public class DataSyncScopeCoverageTests
             ["groups.PrdTokenEstimateSnapshot"] = "token 计数快照",
             ["pr_review_items.LastRefreshError"] = "错误文案，命中的是 refresh 这个词",
             ["pr_review_items.LastRefreshedAt"] = "时间戳，命中的是 refresh 这个词",
-            ["user_shortcuts.TokenPrefix"] = "只是前缀，用于界面辨认；真正的散列 TokenHash 已登记脱敏",
             ["document_store_sync_links.LastLocalSignature"] = "内容指纹，用于判断两侧变没变，拿着它换不到任何权限",
             ["document_store_sync_links.LastRemoteSignature"] = "同上，内容指纹",
             ["document_stores.PeerSyncLastContentSignature"] = "同上，内容指纹",
@@ -485,6 +484,70 @@ public class DataSyncScopeCoverageTests
 
         Assert.True(unguarded.Count == 0,
             "DataSyncProviderController 下列 [Authorize] 端点没有判真人管理员：" + string.Join(", ", unguarded));
+    }
+
+    [Fact]
+    public void 脱敏字段不许落在唯一索引上()
+    {
+        // 脱敏把一个字段清成**同一个**空串。那个字段若带唯一索引，源站有几条就只有
+        // 第一条插得进去，其余撞重复键——而重复键在 worker 里是按「跳过」处理的，
+        // 于是整条同步照样报成功，数据静默少一批（user_shortcuts.TokenHash 就是这么中的）。
+        //
+        // 这不是某一个字段的问题，是「清空」这个手段与唯一约束天然冲突。所以钉的是这条
+        // 通则：任何登记了脱敏的字段，都不许出现在唯一索引的键里。撞上了只有两条路——
+        // 整个集合不导出，或者那个字段本来就不该脱敏。
+        var uniqueIndexes = ReadUniqueIndexFields();
+        Assert.True(uniqueIndexes.Count > 10,
+            $"只解析出 {uniqueIndexes.Count} 个带唯一索引的集合，正则多半失效了");
+
+        var conflicts = new List<string>();
+        foreach (var collection in DataSyncScope.AllExportableCollections.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            if (!DataSyncScope.TryResolve(collection, out var resolved) || resolved is null) continue;
+            if (!uniqueIndexes.TryGetValue(collection, out var uniqueFields)) continue;
+            foreach (var field in resolved.RedactFields)
+            {
+                if (uniqueFields.Contains(field)) conflicts.Add($"{collection}.{field}");
+            }
+        }
+
+        Assert.True(conflicts.Count == 0,
+            "下列字段既登记了脱敏、又落在唯一索引上——清空后多条会撞重复键，被当成「跳过」而同步仍报成功：\n  "
+            + string.Join("\n  ", conflicts)
+            + "\n（把整个集合移出白名单，或确认该字段不需要脱敏）");
+    }
+
+    /// <summary>集合名 -> 该集合唯一索引覆盖到的字段名，解析自 MongoDbContext 的索引定义。</summary>
+    private static IReadOnlyDictionary<string, HashSet<string>> ReadUniqueIndexFields()
+    {
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Infrastructure", "Database", "MongoDbContext.cs");
+        var source = File.ReadAllText(path);
+
+        // 集合属性名 -> mongo 集合名
+        var propToCollection = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (Match m in Regex.Matches(source,
+            @"IMongoCollection<[\w.]+>\s+(\w+)\s*=>\s*_database\.GetCollection<[\w.]+>\(""([a-zA-Z0-9_]+)""\)"))
+        {
+            propToCollection[m.Groups[1].Value] = m.Groups[2].Value;
+        }
+
+        var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (Match m in Regex.Matches(source,
+            @"(\w+)\.Indexes\.CreateOne\(new CreateIndexModel<\w+>\((?<body>.*?)\)\);",
+            RegexOptions.Singleline))
+        {
+            var body = m.Groups["body"].Value;
+            if (!body.Contains("Unique = true", StringComparison.Ordinal)) continue;
+            if (!propToCollection.TryGetValue(m.Groups[1].Value, out var collection)) continue;
+            var bucket = result.TryGetValue(collection, out var existing)
+                ? existing
+                : result[collection] = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Match key in Regex.Matches(body, @"\.(?:Ascending|Descending)\(x => x\.(\w+)\)"))
+            {
+                bucket.Add(key.Groups[1].Value);
+            }
+        }
+        return result;
     }
 
     [Fact]
