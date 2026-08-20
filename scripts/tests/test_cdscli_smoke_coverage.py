@@ -41,6 +41,34 @@ def test_deploy_不把覆盖不全说成全绿() -> None:
         "说「全绿」之前必须先把有缺口的情况分流出去")
 
 
+def test_deploy只输出一份结果() -> None:
+    """内部调用不许自己打印结论。
+
+    覆盖不全的退出码修好之后冒出的第二个问题：cmd_smoke 走的是 die()，它**先打印**
+    一份 ok:false 再退出，cmd_deploy 接住 code=3 之后又打印一份 ok:true。
+    机器读到两个 JSON 文档等于两个都不能信，人看到「失败」后面紧跟「成功」。
+    出口只能有一个，所以内部调用必须走 _nested_call() 把 payload 收走。
+    """
+    src = function_source("cmd_deploy")
+    smoke_call = src[src.index("cmd_smoke(ns)") - 400:src.index("cmd_smoke(ns)") + 600]
+    assert "_nested_call()" in smoke_call, (
+        "cmd_deploy 调 cmd_smoke 必须包在 _nested_call() 里，否则 smoke 会自己打印一份结果")
+    assert "die(\"smoke 失败\", code=2" not in src, (
+        "在 _nested_call() 作用域里调 die 只会被收走、不会打印，"
+        "失败必须留到退出上下文之后再报")
+
+
+def test_die与ok在内部调用时不打印() -> None:
+    for name in ("die", "ok"):
+        src = function_source(name)
+        assert "_SUPPRESS_EMIT" in src, (
+            f"{name}() 必须认 _SUPPRESS_EMIT，否则内部调用照样往 stdout 写，"
+            "上层再写一份就是两份互相矛盾的结果")
+        head = src[:src.index("_HUMAN")]
+        assert "_SUPPRESS_EMIT" in head, (
+            f"{name}() 的抑制判断必须在打印之前，放在后面等于没放")
+
+
 def main() -> int:
     failures = []
     for name, fn in sorted(globals().items()):

@@ -20,6 +20,20 @@ public sealed class DataSyncRunWorker : BackgroundService
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
     private const int PageSize = 200;
 
+    /// <summary>多久扫一次没人认领的 running Run。</summary>
+    private static readonly TimeSpan OrphanSweepInterval = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    /// 多久没有心跳就判定这条 running Run 已经死了。
+    ///
+    /// 活着的 Run 每写完一页就落一次进度（<see cref="SaveProgressAsync"/> 会刷 UpdatedAt），
+    /// 单页耗时受 HttpClient 超时封顶，所以正常情况下心跳间隔远小于这个阈值；
+    /// 反过来它又远小于导出令牌的两小时寿命，不会把「还能救」的 Run 提前判死。
+    /// </summary>
+    private static readonly TimeSpan OrphanHeartbeatTimeout = TimeSpan.FromMinutes(15);
+
+    private DateTime _lastOrphanSweep = DateTime.MinValue;
+
     private readonly IServiceProvider _services;
     private readonly DataSyncTokenVault _vault;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -63,10 +77,17 @@ public sealed class DataSyncRunWorker : BackgroundService
         var held = _vault.HeldRunIds;
         // 先取过期的：HeldRunIds 会把过期条目清掉，取的顺序反了就再也拿不到了。
         var expired = _vault.DrainExpiredRunIds();
-        if (held.Count == 0 && expired.Count == 0) return;
+        var sweepDue = DateTime.UtcNow - _lastOrphanSweep >= OrphanSweepInterval;
+        if (held.Count == 0 && expired.Count == 0 && !sweepDue) return;
 
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+
+        if (sweepDue)
+        {
+            _lastOrphanSweep = DateTime.UtcNow;
+            await SweepOrphanedRunsAsync(db, ct);
+        }
 
         // 令牌在「Start 成功之后、这次轮询之前」过期的 Run：它不在 held 里，永远走不到
         // ExecuteRunAsync 那条「没令牌就判失败」的路，会在库里一直停在 running。
@@ -199,32 +220,24 @@ public sealed class DataSyncRunWorker : BackgroundService
             var documents = DataSyncApply.ParseDocuments(page.Documents);
             progress.Fetched += documents.Count;
 
-            // 待补清单直接用源站报的「我清空了哪些」，不再自己看哪个字段是空的：
-            // 后者会把源站从来没配过的密钥也算成「被清空、待补」（Codex 指出）。
-            if (page.ClearedFields.Count > 0)
-            {
-                var already = run.PendingSecretFields.TryGetValue(collection.Name, out var prior)
-                    ? new List<string>(prior)
-                    : new List<string>();
-                foreach (var field in page.ClearedFields)
-                {
-                    if (!already.Contains(field, StringComparer.Ordinal)) already.Add(field);
-                }
-                run.PendingSecretFields[collection.Name] = already;
-            }
-
             if (documents.Count > 0)
             {
                 var ids = documents.Select(d => d["_id"]).ToList();
                 // 只查这一批的 id，不是整表 —— 整表 id 在几十万条上会把内存吃光。
                 var existing = await target
                     .Find(Builders<BsonDocument>.Filter.In("_id", ids))
-                    .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                    .Project(BuildExistingProjection(collection))
                     .ToListAsync(ct);
                 var existingIds = existing.Select(d => d["_id"]).ToHashSet();
 
                 var decision = DataSyncApply.Decide(documents, existingIds, run.OverwriteExisting);
                 progress.Skipped += decision.SkippedIds.Count;
+
+                // 覆盖写是整份替换，所以「目标站本地执行历史」这类字段必须在替换前接回来，
+                // 否则源站那台机器跑过哪些迁移会变成本站的账：本站没跑过的被当成跑过而跳过，
+                // 或者管理员手工回退过的被当成没跑过而重来一遍。源站出口已经把这些字段删掉了，
+                // 这里补的是本站原有的那份。
+                DataSyncApply.CarryTargetLocalFields(decision.ToReplace, existing, collection);
 
                 if (!run.DryRun)
                 {
@@ -266,6 +279,18 @@ public sealed class DataSyncRunWorker : BackgroundService
                 // 无论真跑还是试跑都记「打算写多少」，但只有真跑才记「写了多少」。
                 progress.PlannedInsert += decision.ToInsert.Count;
                 progress.PlannedUpdate += decision.ToReplace.Count;
+
+                // 待补清单只能从**真的落到本站的那些文档**上取。
+                //
+                // 两层都要卡。第一层用源站报的「我清空了哪些」而不是自己看哪个字段是空的，
+                // 否则源站从来没配过的密钥也会被算成「被清空、待补」。第二层是这里：
+                // 不覆盖模式下同 _id 的文档会被跳过，本站原有的那份凭据**原封不动还在**，
+                // 若照样把该字段记进待补清单，就等于告诉管理员「一个还好好的凭据被同步空了，
+                // 去补一遍」——他照做反而会把本来能用的配置改坏。所以按写入/将写入的文档
+                // 逐条看字段在不在，一条都没落地的页面不产生任何待补项。
+                // 试跑同样记：它要回答的正是「真跑之后我得补哪些」。
+                RecordPendingSecrets(run, collection.Name, page.ClearedFields,
+                    decision.ToInsert.Concat(decision.ToReplace));
             }
 
             progress.Cursor = page.NextCursor;
@@ -275,6 +300,97 @@ public sealed class DataSyncRunWorker : BackgroundService
 
             if (progress.Done) return;
         }
+    }
+
+    /// <summary>
+    /// 查已存在文档时要带上哪些字段。默认只要 _id（整表 id 都拉回来会吃光内存，
+    /// 所以能少拿一列是一列）；有「目标站本地执行历史」的集合额外拿那几个字段，
+    /// 覆盖写之前要把它们接回替换文档上。
+    /// </summary>
+    private static ProjectionDefinition<BsonDocument> BuildExistingProjection(DataSyncCollection collection)
+    {
+        var projection = Builders<BsonDocument>.Projection.Include("_id");
+        foreach (var field in collection.PreserveFields)
+        {
+            projection = projection.Include(field);
+        }
+        return projection;
+    }
+
+    /// <summary>
+    /// 收掉没人认领的 running Run。
+    ///
+    /// 认领条件是「running 且**本进程内存里握着导出令牌**」，这挡住了共享 Mongo 上别的
+    /// 部署来抢单，但也留下一个洞：Start 已经把 Run 落成 running，进程紧接着被硬杀
+    /// （OOM、容器重建、kill -9），令牌随内存一起没了。重启后新进程的 vault 是空的，
+    /// 这条 Run 永远选不中，也就永远停在 running——界面上是一条永不结束的进度。
+    /// 优雅退出那条路已经会落终态，这里补的是不优雅的那种。
+    ///
+    /// 判据只用「有没有心跳」，不用部署身份：活着的 Run 每页都会刷 UpdatedAt，无论它
+    /// 属于哪个部署；死了的谁都刷不动。所以任何一个部署都能安全地替它收尸，不需要在
+    /// Run 上再加一个部署作用域字段，也不会误杀兄弟部署正在跑的 Run
+    /// （对照 cross-project-isolation 通道 8：那里裸 Status 认领会抢活单，这里的谓词
+    /// 多了「15 分钟没动静」，活单不满足）。
+    /// </summary>
+    private async Task SweepOrphanedRunsAsync(MongoDbContext db, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow - OrphanHeartbeatTimeout;
+        var mine = _vault.HeldRunIds;
+        var orphans = await db.DataSyncRuns.Find(Builders<DataSyncRun>.Filter.And(
+            Builders<DataSyncRun>.Filter.Eq(x => x.Status, "running"),
+            Builders<DataSyncRun>.Filter.Lt(x => x.UpdatedAt, deadline))).ToListAsync(ct);
+
+        foreach (var run in orphans)
+        {
+            // 本进程正握着的不碰：它要么在跑（心跳会刷新），要么会走 ExecuteRunAsync
+            // 自己的失败路径，那条路径给得出真实原因，比这里的兜底文案有用。
+            if (mine.Contains(run.Id)) continue;
+
+            // 条件更新：读到现在这段时间里它可能已经被别人收走或自己跑完了。
+            // 只在「仍然 running 且仍然没心跳」时才落终态，谁都不许覆盖已经写好的结局。
+            var terminalized = await db.DataSyncRuns.UpdateOneAsync(
+                Builders<DataSyncRun>.Filter.And(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Status, "running"),
+                    Builders<DataSyncRun>.Filter.Lt(x => x.UpdatedAt, deadline)),
+                Builders<DataSyncRun>.Update
+                    .Set(x => x.Status, "failed")
+                    .Set(x => x.Error, "同步在执行途中被中断（服务异常退出），已写入的部分保留，请重新授权后再跑一次")
+                    .Set(x => x.FinishedAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+
+            if (terminalized.ModifiedCount > 0)
+            {
+                _logger.LogWarning(
+                    "[data-sync] Run {RunId} 自 {UpdatedAt:o} 起没有心跳，判定为进程异常退出遗留，已落终态",
+                    run.Id, run.UpdatedAt);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 把「源站清空了、本站需要手工补」的字段记进 Run。只认真的落地（或试跑里将要落地）
+    /// 的那些文档：被跳过的文档在本站的原值没有被动过，报进待补清单是误报。
+    /// </summary>
+    internal static void RecordPendingSecrets(
+        DataSyncRun run, string collection, IReadOnlyList<string> clearedFields, IEnumerable<BsonDocument> writtenDocs)
+    {
+        if (clearedFields.Count == 0) return;
+        var docs = writtenDocs as IList<BsonDocument> ?? writtenDocs.ToList();
+        if (docs.Count == 0) return;
+
+        var already = run.PendingSecretFields.TryGetValue(collection, out var prior)
+            ? new List<string>(prior)
+            : new List<string>();
+        foreach (var field in clearedFields)
+        {
+            if (already.Contains(field, StringComparer.Ordinal)) continue;
+            // 源站是按集合报的脱敏字段，这一页里未必每条都带它。
+            if (!docs.Any(d => d.Contains(field))) continue;
+            already.Add(field);
+        }
+        if (already.Count > 0) run.PendingSecretFields[collection] = already;
     }
 
     private static async Task SaveProgressAsync(MongoDbContext db, DataSyncRun run, CancellationToken ct)

@@ -28,6 +28,7 @@ cdscli — CDS 管理 CLI (MVP)
 """
 from __future__ import annotations
 import argparse
+import contextlib
 import hashlib
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
@@ -42,6 +43,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from typing import Any, Optional
 
 VERSION = "0.13.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
@@ -463,12 +465,38 @@ def _call(method: str, path: str, body: Any = None, timeout: int = 15,
 # 与其让 deploy 去解析自己子调用的 stdout，不如留一个明确的交接点。
 _LAST_SMOKE_GAPS: str = ""
 
+# 一条命令内部调用另一条命令时，被调那条不许自己往 stdout 写结果。
+# 否则 `cdscli deploy` 会先吐一份 smoke 的 ok:false、再吐一份自己的 ok:true——
+# 机器读到两个 JSON 文档（等于都不能信），人看到「失败」后面紧跟「成功」。
+# 出口只能有一个：被调那条把 payload 交给调用方，由调用方决定最终怎么说。
+_SUPPRESS_EMIT: bool = False
+_NESTED_PAYLOAD: dict[str, Any] | None = None
+
+
+@contextlib.contextmanager
+def _nested_call() -> "Iterator[None]":
+    """把一次内部调用的 ok()/die() 收进 _NESTED_PAYLOAD，不打印、不影响退出码语义。"""
+    global _SUPPRESS_EMIT, _NESTED_PAYLOAD
+    prev_suppress, prev_payload = _SUPPRESS_EMIT, _NESTED_PAYLOAD
+    _SUPPRESS_EMIT, _NESTED_PAYLOAD = True, None
+    try:
+        yield
+    finally:
+        _SUPPRESS_EMIT = prev_suppress
+        # payload 留给调用方读，恢复交给调用方读完之后——这里只还原嵌套层的现场。
+        if prev_suppress:
+            _NESTED_PAYLOAD = prev_payload
+
 
 def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None:
     """Unified error exit. Writes JSON {ok:false, error, trace} to stdout."""
     payload: dict[str, Any] = {"ok": False, "error": msg, "trace": _TRACE_ID}
     if extra:
         payload.update(extra)
+    if _SUPPRESS_EMIT:
+        global _NESTED_PAYLOAD
+        _NESTED_PAYLOAD = payload
+        sys.exit(code)
     if _HUMAN:
         print(f"[FAIL] {msg}", file=sys.stderr)
     else:
@@ -478,6 +506,10 @@ def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None
 
 def ok(data: Any = None, *, note: str | None = None) -> None:
     """Unified success exit."""
+    if _SUPPRESS_EMIT:
+        global _NESTED_PAYLOAD
+        _NESTED_PAYLOAD = {"ok": True, "trace": _TRACE_ID, "note": note, "data": data}
+        sys.exit(0)
     if _HUMAN:
         if note:
             print(f"[OK] {note}")
@@ -7980,19 +8012,26 @@ def cmd_deploy(args: argparse.Namespace) -> None:
 
     # 5. Smoke (skip on --no-smoke)
     smoke_gaps = ""
+    smoke_die = ""
     if not args.no_smoke:
         print(f"[4/4] Smoke test", file=sys.stderr)
         ns = argparse.Namespace(id=branch_id)
-        try:
-            cmd_smoke(ns)
-        except SystemExit as e:
-            # 3 = 跑过的都过了、但有层没跑（缺凭据之类）。不算部署失败，
-            # 但**绝不能**接着说「全绿」——那正是这条链路上出过的假绿。
-            if e.code == 3:
-                smoke_gaps = _LAST_SMOKE_GAPS
-            elif e.code != 0:
-                die("smoke 失败", code=2,
-                    extra={"hint": f"cdscli smoke {branch_id}"})
+        smoke_payload: dict[str, Any] | None = None
+        # 内部调用：smoke 自己不许打印结果，否则 deploy 会吐出两份互相矛盾的 JSON。
+        with _nested_call():
+            try:
+                cmd_smoke(ns)
+            except SystemExit as e:
+                smoke_payload = _NESTED_PAYLOAD
+                # 3 = 跑过的都过了、但有层没跑（缺凭据之类）。不算部署失败，
+                # 但**绝不能**接着说「全绿」——那正是这条链路上出过的假绿。
+                if e.code == 3:
+                    smoke_gaps = _LAST_SMOKE_GAPS
+                elif e.code != 0:
+                    smoke_error = str((smoke_payload or {}).get("error") or "smoke 失败")
+                    smoke_die = f"smoke 失败：{smoke_error}"
+        if not smoke_gaps and smoke_die:
+            die(smoke_die, code=2, extra={"hint": f"cdscli smoke {branch_id}"})
     if smoke_gaps:
         ok({"branch": branch, "branchId": branch_id, "status": final_status,
             "smokeCoverageComplete": False, "smokeGaps": smoke_gaps},

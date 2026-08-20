@@ -519,6 +519,9 @@ public sealed class DataSyncProviderController : ControllerBase
         foreach (var doc in docs)
         {
             foreach (var field in DataSyncRedactor.Redact(doc, effective)) clearedFields.Add(field);
+            // 目标站本地执行历史整个删掉，且**不**计入 clearedFields——它不是待补的凭据，
+            // 目标站会用自己那份。计进去的话同步页会催人去补一个本来就该由本机维护的东西。
+            DataSyncRedactor.StripTargetLocal(doc, effective);
             // 只有口令没跟过去时才标「必须重设」。跟过去了还标，等于让人白改一遍密码。
             // 「要不要标必须重设」直接看散列这次到底清没清，不再另立一个平行条件。
             if (effective.RedactFields.Contains(DataSyncScope.CredentialCarryField, StringComparer.Ordinal))

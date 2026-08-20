@@ -2,6 +2,7 @@ using System.Text.Json;
 using MongoDB.Bson;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.DataSync;
+using PrdAgent.Core.DataSync;
 using PrdAgent.Core.Models;
 using Shouldly;
 using Xunit;
@@ -295,12 +296,261 @@ public class DataSyncProtocolTests
     [Theory]
     [InlineData("https://map.example.com/api/data-sync")] // 带路径：调用方在猜端点位置
     [InlineData("map.example.com")]                        // 缺协议
-    [InlineData("http://map.example.com")]                 // 非本机的 http
+    [InlineData("http://map.example.com")]                 // http
+    [InlineData("http://localhost:5001")]                  // 回环：出站被 SafeOutbound 挡，放过去只会连不上
+    [InlineData("http://127.0.0.1:5001")]
+    [InlineData("https://localhost:5001")]                 // https 也一样，挡的是地址不是协议
     [InlineData("")]
     [InlineData(null)]
     public void 非法源站地址被拒(string? raw)
     {
         DataSyncConsumerController.TryNormalizeOrigin(raw, out _).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// 源站地址（出站，服务器自己去连）和回跳地址（浏览器去开）是两条不同的通道，
+    /// 回环的可达性判据本来就不同：前者必然被 SafeOutbound 挡下，后者在本地联调时完全正常。
+    /// 这条用例把「两处判据不一致是有意的」钉住，免得后来人看着像漂移顺手改齐。
+    /// </summary>
+    [Fact]
+    public void 回环在出站源站地址上禁止但在浏览器回跳地址上允许()
+    {
+        DataSyncConsumerController.TryNormalizeOrigin("http://127.0.0.1:8000", out _).ShouldBeFalse();
+        DataSyncProviderController.TryValidateRedirect(
+            "http://127.0.0.1:8000/data-sync/callback",
+            DataSyncProviderController.ParseOrigins("http://127.0.0.1:8000"),
+            out _).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// 待补清单是给管理员照着补凭据用的，所以它不能包含「本站原值根本没被动过」的字段：
+    /// 不覆盖模式下同 _id 的文档被跳过，本站那份凭据还好好的，报进去等于诱导他去改坏一个能用的配置。
+    /// </summary>
+    [Fact]
+    public void 待补清单只记真的落地了的文档()
+    {
+        var run = new DataSyncRun();
+        var written = new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "" };
+
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" }, new[] { written });
+        run.PendingSecretFields["llmplatforms"].ShouldBe(new[] { "ApiKeyEncrypted" });
+    }
+
+    [Fact]
+    public void 整页都被跳过时不产生待补项()
+    {
+        var run = new DataSyncRun();
+
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" }, Array.Empty<BsonDocument>());
+
+        run.PendingSecretFields.ShouldNotContainKey("llmplatforms");
+    }
+
+    [Fact]
+    public void 落地的文档里没有那个字段就不记它()
+    {
+        var run = new DataSyncRun();
+        // 源站是按集合报脱敏字段的，这一页未必每条都带它。
+        var written = new BsonDocument { ["_id"] = "a", ["Name"] = "x" };
+
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" }, new[] { written });
+
+        run.PendingSecretFields.ShouldNotContainKey("llmplatforms");
+    }
+
+    [Fact]
+    public void 待补清单不重复记同一个字段()
+    {
+        var run = new DataSyncRun();
+        var written = new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "" };
+
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" }, new[] { written });
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" }, new[] { written });
+
+        run.PendingSecretFields["llmplatforms"].Count.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// 接线守卫（形状 2）：上面四条只证明 RecordPendingSecrets 本身对。
+    /// 真正会复发的改法是在 worker 里把它挪回写库之前、或者又传回整页文档——
+    /// 那两种改法删掉之后上面四条仍然全绿。
+    /// </summary>
+    [Fact]
+    public void 待补清单在写库判定之后才记录()
+    {
+        var source = ReadWorkerSource();
+        source.ShouldContain("RecordPendingSecrets(run, collection.Name, page.ClearedFields,");
+        // 传的必须是「决定要写的那些」，不是这一页拉回来的全部。
+        source.ShouldContain("decision.ToInsert.Concat(decision.ToReplace)");
+        source.ShouldNotContain("RecordPendingSecrets(run, collection.Name, page.ClearedFields, documents)");
+    }
+
+    /// <summary>
+    /// 接线守卫（形状 2）：没有这条，把 SweepOrphanedRunsAsync 的调用删掉之后全量测试仍然全绿，
+    /// 而线上的表现是「进程被硬杀过的那条同步永远停在进行中」——一条没人会去看的静默退化。
+    /// </summary>
+    [Fact]
+    public void 无人认领的running会被周期收尸()
+    {
+        var source = ReadWorkerSource();
+        source.ShouldContain("await SweepOrphanedRunsAsync(db, ct);");
+        // 判据必须是「没心跳」而不是别的：活着的 Run 每页都刷 UpdatedAt，
+        // 用它才不会误杀共享库上兄弟部署正在跑的那条。
+        source.ShouldContain("Builders<DataSyncRun>.Filter.Lt(x => x.UpdatedAt, deadline)");
+        // 收尸要跳过本进程正握着的，那些有更准的失败原因可给。
+        source.ShouldContain("if (mine.Contains(run.Id)) continue;");
+    }
+
+    private static string ReadApiSource(params string[] segments)
+    {
+        var parts = new List<string> { "src", "PrdAgent.Api" };
+        parts.AddRange(segments);
+        var path = Path.Combine(new[] { FindApiRoot() }.Concat(parts).ToArray());
+        File.Exists(path).ShouldBeTrue($"守卫要扫的源码不在预期位置：{path}");
+        return File.ReadAllText(path);
+    }
+
+    private static string FindApiRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src", "PrdAgent.Api")))
+        {
+            dir = dir.Parent;
+        }
+        dir.ShouldNotBeNull("找不到 prd-api 根目录，守卫无法读取源码");
+        return dir!.FullName;
+    }
+
+    private static string ReadWorkerSource()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src", "PrdAgent.Api")))
+        {
+            dir = dir.Parent;
+        }
+        dir.ShouldNotBeNull("找不到 prd-api 根目录，守卫无法读取源码");
+        var path = Path.Combine(dir!.FullName, "src", "PrdAgent.Api", "Services", "DataSync", "DataSyncRunWorker.cs");
+        File.Exists(path).ShouldBeTrue($"守卫要扫的源码不在预期位置：{path}");
+        return File.ReadAllText(path);
+    }
+
+    /// <summary>
+    /// 一次性迁移标记记的是「这台机器跑过哪些迁移」，不是配置。覆盖同步是整份替换，
+    /// 照搬源站那份会让目标站要么跳过它还没跑的迁移（权限缺失），要么重跑一个管理员
+    /// 已经手工回退过的迁移（被撤销的权限自己长回来）。清空同样不行——空的等于
+    /// 「什么都没跑过」，下次启动全部重来。所以出口删字段、写入时接回目标站原有那份。
+    /// </summary>
+    [Fact]
+    public void 迁移执行历史属于目标站本地不随同步搬运()
+    {
+        var appsettings = DataSyncScope.Expand(new[] { "llm-config" })
+            .Single(c => c.Name == "appsettings");
+
+        appsettings.PreserveFields.ShouldContain("CompletedOneTimeMigrations");
+        // 不能改用脱敏（清空）来处理：清成空的就是「什么都没跑过」，破坏力和照搬一样。
+        appsettings.RedactFields.ShouldNotContain("CompletedOneTimeMigrations");
+    }
+
+    [Fact]
+    public void 出口把本地执行历史整个删掉而不是清空()
+    {
+        var collection = new DataSyncCollection("appsettings", System.Array.Empty<string>())
+        {
+            PreserveFields = new[] { "CompletedOneTimeMigrations" },
+        };
+        var doc = new BsonDocument
+        {
+            ["_id"] = "global",
+            ["CompletedOneTimeMigrations"] = new BsonArray { "perm-2026-01" },
+        };
+
+        DataSyncRedactor.StripTargetLocal(doc, collection).ShouldBe(new[] { "CompletedOneTimeMigrations" });
+        // 留一个空值会被目标站认成「待补的凭据」，那是另一种错。
+        doc.Contains("CompletedOneTimeMigrations").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 覆盖写之前把目标站自己的执行历史接回来()
+    {
+        var collection = new DataSyncCollection("appsettings", System.Array.Empty<string>())
+        {
+            PreserveFields = new[] { "CompletedOneTimeMigrations" },
+        };
+        // 源站送来的（出口已删该字段），以及本站库里现有的那份。
+        var incoming = new BsonDocument { ["_id"] = "global", ["SomeConfig"] = "from-source" };
+        var localExisting = new BsonDocument
+        {
+            ["_id"] = "global",
+            ["CompletedOneTimeMigrations"] = new BsonArray { "perm-target-only" },
+        };
+
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
+
+        incoming["CompletedOneTimeMigrations"].AsBsonArray
+            .Select(x => x.AsString).ShouldBe(new[] { "perm-target-only" });
+        incoming["SomeConfig"].AsString.ShouldBe("from-source");
+    }
+
+    [Fact]
+    public void 源站硬要送执行历史也以目标站那份为准()
+    {
+        // 判据不能依赖源站有没有做对：旧版本源站可能还在送这个字段。
+        var collection = new DataSyncCollection("appsettings", System.Array.Empty<string>())
+        {
+            PreserveFields = new[] { "CompletedOneTimeMigrations" },
+        };
+        var incoming = new BsonDocument
+        {
+            ["_id"] = "global",
+            ["CompletedOneTimeMigrations"] = new BsonArray { "perm-from-source" },
+        };
+        var localExisting = new BsonDocument
+        {
+            ["_id"] = "global",
+            ["CompletedOneTimeMigrations"] = new BsonArray { "perm-target-only" },
+        };
+
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
+
+        incoming["CompletedOneTimeMigrations"].AsBsonArray
+            .Select(x => x.AsString).ShouldBe(new[] { "perm-target-only" });
+    }
+
+    [Fact]
+    public void 目标站原本没有执行历史时不写入空值()
+    {
+        var collection = new DataSyncCollection("appsettings", System.Array.Empty<string>())
+        {
+            PreserveFields = new[] { "CompletedOneTimeMigrations" },
+        };
+        var incoming = new BsonDocument
+        {
+            ["_id"] = "global",
+            ["CompletedOneTimeMigrations"] = new BsonArray { "perm-from-source" },
+        };
+        var localExisting = new BsonDocument { ["_id"] = "global" };
+
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
+
+        // 「本机什么都没跑过」是字段不存在，不是一个空数组。
+        incoming.Contains("CompletedOneTimeMigrations").ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// 接线守卫（形状 2）：把出口那行 StripTargetLocal 或写入前那行 CarryTargetLocalFields
+    /// 删掉之后，上面几条仍然全绿——它们测的是函数，不是「有没有人调它」。
+    /// </summary>
+    [Fact]
+    public void 本地执行历史的两头都接上了()
+    {
+        ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs")
+            .ShouldContain("DataSyncRedactor.StripTargetLocal(doc, effective)");
+
+        var worker = ReadWorkerSource();
+        worker.ShouldContain("DataSyncApply.CarryTargetLocalFields(decision.ToReplace, existing, collection)");
+        // 接回来的前提是真的把那几个字段查回来了；只投影 _id 的话接回来的永远是空。
+        worker.ShouldContain("BuildExistingProjection(collection)");
+        worker.ShouldNotContain("Builders<BsonDocument>.Projection.Include(\"_id\"))\n                    .ToListAsync");
     }
 
     [Fact]

@@ -91,4 +91,42 @@ public static class DataSyncApply
         }
         return pending.ToList();
     }
+
+    /// <summary>
+    /// 覆盖写之前，把目标站原有的「本地执行历史」字段接回替换文档上。
+    ///
+    /// 覆盖是整份替换，不接回来这些字段就跟着源站那份走了——而它们记的是「本机跑过什么」，
+    /// 换成别人的账会让本站要么跳过还没跑的迁移，要么重跑一个已经被手工回退的迁移。
+    /// 源站出口已经把这类字段删掉，所以这里遇到的替换文档本来就没有它们；
+    /// 万一源站是个还没升级的旧版本、字段照样送过来了，也以目标站这份为准（直接覆盖），
+    /// 判据不依赖源站有没有做对。
+    ///
+    /// 目标站原本就没有这个字段时不写入：那是「本机什么都没跑过」，写个空值反而多一层歧义。
+    /// </summary>
+    public static void CarryTargetLocalFields(
+        IReadOnlyList<BsonDocument> toReplace,
+        IReadOnlyList<BsonDocument> existingDocuments,
+        DataSyncCollection collection)
+    {
+        ArgumentNullException.ThrowIfNull(toReplace);
+        ArgumentNullException.ThrowIfNull(existingDocuments);
+        ArgumentNullException.ThrowIfNull(collection);
+        if (collection.PreserveFields.Count == 0 || toReplace.Count == 0) return;
+
+        var byId = new Dictionary<BsonValue, BsonDocument>();
+        foreach (var existing in existingDocuments)
+        {
+            if (existing.TryGetValue("_id", out var id) && !id.IsBsonNull) byId[id] = existing;
+        }
+
+        foreach (var doc in toReplace)
+        {
+            if (!doc.TryGetValue("_id", out var id) || !byId.TryGetValue(id, out var local)) continue;
+            foreach (var field in collection.PreserveFields)
+            {
+                if (local.TryGetValue(field, out var value)) doc[field] = value;
+                else doc.Remove(field);
+            }
+        }
+    }
 }

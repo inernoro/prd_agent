@@ -562,9 +562,14 @@ public sealed class DataSyncConsumerController : ControllerBase
     {
         origin = "";
         if (!Uri.TryCreate((raw ?? "").Trim().TrimEnd('/'), UriKind.Absolute, out var uri)) return false;
-        var validScheme = uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback);
+        // 只收 https。这里曾经给 http + loopback 开过口子，但出站一律走 SafeOutbound，
+        // 而它按解析出来的地址挡掉回环段——于是 http://localhost:5001 这种地址在这道门
+        // 「通过」、到握手那一步必然连不上，错误信息还完全指不到原因。两处判据必须一致：
+        // 与其让它过了再炸，不如在这里就说「不支持」。
+        if (uri.Scheme != Uri.UriSchemeHttps) return false;
+        if (uri.IsLoopback) return false;
         // 只收站点根地址：带路径的地址意味着调用方在猜端点位置，猜错了错误信息会很难懂。
-        if (!validScheme || uri.AbsolutePath.TrimEnd('/').Length > 0) return false;
+        if (uri.AbsolutePath.TrimEnd('/').Length > 0) return false;
         origin = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
         return true;
     }

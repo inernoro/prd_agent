@@ -43,6 +43,29 @@ public static class DataSyncRedactor
     }
 
     /// <summary>
+    /// 出口处把「目标站本地执行历史」整个字段删掉，返回删掉的字段名。
+    ///
+    /// 和 <see cref="Redact"/> 的区别是删而不是清空，这是有意的：清空会被目标站认成
+    /// 「有这个字段、值被拿掉了、需要补」，而这类字段根本不该由源站提供任何值——
+    /// 它记的是目标站自己跑过什么。字段不存在时目标站按「我自己那份」处理。
+    /// </summary>
+    public static IReadOnlyList<string> StripTargetLocal(BsonDocument document, DataSyncCollection collection)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(collection);
+        if (collection.PreserveFields.Count == 0) return Array.Empty<string>();
+
+        var removed = new List<string>();
+        foreach (var field in collection.PreserveFields)
+        {
+            if (!document.Contains(field)) continue;
+            document.Remove(field);
+            removed.Add(field);
+        }
+        return removed;
+    }
+
+    /// <summary>
     /// 给同步过来的用户打上「必须重设密码」。
     ///
     /// 口令散列已经在出口被清空，所以这些账号**本来就登不进来**（散列为空，校验必然

@@ -13,7 +13,21 @@ namespace PrdAgent.Core.DataSync;
 /// 中间任何一段（网络传输、目标站日志、失败重试的临时文件）都不会碰到密文。
 /// 被清空的字段由操作者在目标站手工补填，同步页会列出「待补」清单。
 /// </summary>
-public sealed record DataSyncCollection(string Name, IReadOnlyList<string> RedactFields);
+public sealed record DataSyncCollection(string Name, IReadOnlyList<string> RedactFields)
+{
+    /// <summary>
+    /// 目标站本地的执行历史，同步不许碰。
+    ///
+    /// 和 RedactFields 是两回事：脱敏是「源站的值不能出门」，这里是「目标站的值不能被替换」。
+    /// 典型是一次性迁移标记——它记的是「这台机器上跑过哪些迁移」，把源站那份搬过来会让
+    /// 目标站要么跳过它其实还没跑的迁移，要么重跑一个管理员已经手工回退过的迁移。
+    ///
+    /// 清空也不行：清成空的等于「什么都没跑过」，下次启动全部重跑，破坏力和照搬一样。
+    /// 所以做法是两头都躲开——出口处**整个字段删掉**（不留空值，免得被误读成待补），
+    /// 覆盖写入时再把目标站原有的那份接回文档上。
+    /// </summary>
+    public IReadOnlyList<string> PreserveFields { get; init; } = System.Array.Empty<string>();
+}
 
 public sealed record DataSyncGroup(string Key, string Label, IReadOnlyList<DataSyncCollection> Collections);
 
@@ -41,7 +55,11 @@ public static class DataSyncScope
         new DataSyncGroup("llm-config", "平台与模型配置", new[]
         {
             new DataSyncCollection("admin_prompt_overrides", System.Array.Empty<string>()),
-            new DataSyncCollection("appsettings", new[] { "MiduoSsoAppSecret", "ConsoleSsoClientSecret", "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "ConsoleSsoAllowedRedirectOrigins", "MiduoSsoRedirectUri", "PasswordLoginDisabled" }),
+            new DataSyncCollection("appsettings", new[] { "MiduoSsoAppSecret", "ConsoleSsoClientSecret", "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "ConsoleSsoAllowedRedirectOrigins", "MiduoSsoRedirectUri", "PasswordLoginDisabled" })
+            {
+                // 权限一次性迁移的执行历史是这台机器自己的账，不是配置。
+                PreserveFields = new[] { "CompletedOneTimeMigrations" },
+            },
             new DataSyncCollection("arena_groups", System.Array.Empty<string>()),
             new DataSyncCollection("arena_slots", System.Array.Empty<string>()),
             new DataSyncCollection("image_gen_size_caps", System.Array.Empty<string>()),
