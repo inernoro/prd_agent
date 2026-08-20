@@ -67,6 +67,45 @@ public sealed class DataSyncProviderController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>本条同步协议的版本。两端不一致时不该硬跑。</summary>
+    private const int ProtocolVersion = 1;
+
+    /// <summary>给同一进程里的消费方侧读，两边比的是同一个常量。</summary>
+    internal const int ProtocolVersionForHandshake = ProtocolVersion;
+
+    /// <summary>
+    /// 握手：跳转之前先问一句「你是谁、跑的什么版本、开着对外同步吗」。
+    ///
+    /// 匿名可读，且**只回这几样**——它是给还没有任何凭据的目标站看的，
+    /// 多回一个字段就是给没授权的人多一分情报。放它在这里的理由：版本对不上时
+    /// 应该在跳转之前当场说清楚，而不是让人跳过去、勾完、回来、跑到一半才炸。
+    /// </summary>
+    [HttpGet("handshake")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Handshake(CancellationToken ct)
+    {
+        var config = await ReadConfigAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            siteLabel = SiteLabel(),
+            protocolVersion = ProtocolVersion,
+            build = VersionStamp(),
+            providerEnabled = config.Enabled,
+        }));
+    }
+
+    /// <summary>构建标识：只回短 sha，用来让人判断两端是不是同一版代码。</summary>
+    private string VersionStamp()
+    {
+        // 与 /api/version 取同一批环境变量，避免两处各报各的
+        foreach (var key in new[] { "GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA" })
+        {
+            var value = (_configuration[key] ?? string.Empty).Trim();
+            if (value.Length > 0) return value.Length >= 8 ? value[..8] : value;
+        }
+        return "";
+    }
+
     // ---------------------------------------------------------------- 同意页数据
 
     /// <summary>
@@ -299,6 +338,9 @@ public sealed class DataSyncProviderController : ControllerBase
             { "CodeChallenge", request.CodeChallenge! },
             { "RedirectUri", callback },
             { "Groups", new BsonArray(approvedGroups) },
+            // 批准的人是否同意把登录口令散列一起给出去。这是一次独立的决定，
+            // 所以单独存一格，而不是藏在分组里。
+            { "IncludeCredentials", request.IncludeCredentials },
             { "ApprovedBy", identity.Value.Subject },
             { "ApprovedByName", identity.Value.DisplayName },
             { "State", "issued" },
@@ -456,11 +498,27 @@ public sealed class DataSyncProviderController : ControllerBase
             .Limit(pageSize)
             .ToListAsync(ct);
 
+        // 批准的人同意连口令散列一起给时，users 的 PasswordHash 不脱敏——
+        // 目标站的人用原账号密码就能直接登进去，这是「同步完直接可用」的前提。
+        // 其余脱敏字段一律照旧，这条豁免只针对这一个字段。
+        var includeCredentials = grant.GetValue("IncludeCredentials", BsonBoolean.False).ToBoolean();
+        var effective = resolved;
+        if (includeCredentials && resolved.Name == "users")
+        {
+            effective = resolved with
+            {
+                RedactFields = resolved.RedactFields
+                    .Where(f => !string.Equals(f, "PasswordHash", StringComparison.Ordinal))
+                    .ToList(),
+            };
+        }
+
         var clearedFields = new HashSet<string>(StringComparer.Ordinal);
         foreach (var doc in docs)
         {
-            foreach (var field in DataSyncRedactor.Redact(doc, resolved)) clearedFields.Add(field);
-            if (resolved.Name == "users") DataSyncRedactor.MarkUserNeedsPasswordReset(doc);
+            foreach (var field in DataSyncRedactor.Redact(doc, effective)) clearedFields.Add(field);
+            // 只有口令没跟过去时才标「必须重设」。跟过去了还标，等于让人白改一遍密码。
+            if (!includeCredentials && resolved.Name == "users") DataSyncRedactor.MarkUserNeedsPasswordReset(doc);
         }
 
         var nextCursor = docs.Count == pageSize && docs.Count > 0 ? SerializeCursor(docs[^1]["_id"]) : null;
@@ -695,6 +753,15 @@ public sealed class DataSyncAuthorizeRequest
     public string? State { get; set; }
     public string? CodeChallenge { get; set; }
     public List<string>? Groups { get; set; }
+
+    /// <summary>
+    /// 是否把用户的登录口令散列一起交出去。
+    ///
+    /// 勾上：目标站的人用原来的账号密码就能登进去，同步完即刻可用。
+    /// 不勾：账号搬过去但登不进来，需要目标站管理员逐个重设——更保守，但多一道人工。
+    /// 默认勾上，因为这个功能的主场景是「把一整套环境搬到另一台自己的机器上」。
+    /// </summary>
+    public bool IncludeCredentials { get; set; } = true;
 
     /// <summary>
     /// 管理员在同意页上额外勾的「我确认这台机器可信」。只有它为 true 时，才允许把

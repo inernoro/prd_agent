@@ -70,6 +70,14 @@ public sealed class DataSyncConsumerController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_SOURCE_INVALID", "源站地址必须是 https 的站点根地址"));
         }
 
+        // 跳转之前先握一次手：版本对不上、或者对方压根没开对外同步，
+        // 在这里当场说清楚，而不是让人跳过去勾一遍、回来才发现跑不了。
+        var probe = await ProbeSourceAsync(origin, ct);
+        if (probe.Error is not null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(probe.Code!, probe.Error));
+        }
+
         var state = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var verifier = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(48));
         _vault.StashVerifier(state, verifier, DateTime.UtcNow.AddMinutes(15));
@@ -82,7 +90,12 @@ public sealed class DataSyncConsumerController : ControllerBase
             ["code_challenge"] = DataSyncProviderController.Sha256Base64Url(verifier),
         });
 
-        return Ok(ApiResponse<object>.Ok(new { authorizeUrl, state, sourceOrigin = origin, callback }));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            authorizeUrl, state, sourceOrigin = origin, callback,
+            sourceLabel = probe.SiteLabel,
+            sourceBuild = probe.Build,
+        }));
     }
 
     /// <summary>浏览器回跳后由前端把 code/state 交给本站服务端，这里去源站换令牌并建 Run。</summary>
@@ -194,6 +207,11 @@ public sealed class DataSyncConsumerController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_MANIFEST_MALFORMED",
                 $"源站清单读不懂，多半是两边版本不一致：{ex.Message}"));
         }
+        // 源站没报告、但在授权清单里的集合，也要出现在对照表上并写明「不会同步」。
+        // 藏起来等于让人以为它同步了。
+        var reported = manifest.Select(x => x.Collection).ToHashSet(StringComparer.Ordinal);
+        var missing = run.Collections.Where(c => !reported.Contains(c)).ToList();
+
         var rows = new List<object>();
         foreach (var item in manifest)
         {
@@ -203,15 +221,39 @@ public sealed class DataSyncConsumerController : ControllerBase
             {
                 collection = item.Collection,
                 group = DataSyncScope.GroupOf(item.Collection),
+                sourceReported = true,
                 sourceTotal = item.Total,
                 localTotal = local,
                 redactFields = item.RedactFields,
             });
         }
 
+        foreach (var name in missing)
+        {
+            rows.Add(new
+            {
+                collection = name,
+                group = DataSyncScope.GroupOf(name),
+                sourceTotal = -1L,
+                localTotal = -1L,
+                redactFields = Array.Empty<string>(),
+                sourceReported = false,
+            });
+        }
+
+        // 把「对照表上真实展示过、且源站确实提供」的这一份落到 Run 上，执行只认它。
+        var planned = manifest.Select(x => x.Collection).ToList();
+        await _db.DataSyncRuns.UpdateOneAsync(
+            Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+            Builders<DataSyncRun>.Update
+                .Set(x => x.PlannedCollections, planned)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
         return Ok(ApiResponse<object>.Ok(new
         {
             runId = run.Id,
+            notReportedBySource = missing,
             run.SourceLabel,
             run.SourceOrigin,
             targetDatabase = _db.Database.DatabaseNamespace.DatabaseName,
@@ -239,6 +281,14 @@ public sealed class DataSyncConsumerController : ControllerBase
         if (_vault.GetExportToken(run.Id) is null)
         {
             return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_EXPIRED", "导出令牌已失效，请重新授权"));
+        }
+        if (run.PlannedCollections.Count == 0)
+        {
+            // 「先看对照表」不是建议而是关口：没看过就没有「屏幕上展示过的清单」，
+            // 也就无从保证「看到的等于会写的」。界面本来就会先拉对照表，
+            // 这里挡的是绕过界面直接打接口的路径。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PLAN_REQUIRED",
+                "开始之前要先读一次对照表（GET runs/{id}/plan），确认要往哪个库写什么"));
         }
 
         // 上面那次 Status 检查和这次写入之间有窗口。只按 _id 更新的话，两个并发的
@@ -374,6 +424,7 @@ public sealed class DataSyncConsumerController : ControllerBase
         sourceOrigin = run.SourceOrigin,
         groups = run.Groups,
         collections = run.Collections,
+        plannedCollections = run.PlannedCollections,
         dryRun = run.DryRun,
         overwriteExisting = run.OverwriteExisting,
         error = run.Error,
@@ -396,6 +447,58 @@ public sealed class DataSyncConsumerController : ControllerBase
 
     /// <summary>SSE payload 的序列化口径。导出给测试，确保断言的就是真发出去的那份。</summary>
     internal static string SerializeRunForStream(DataSyncRun run) => JsonSerializer.Serialize(Describe(run));
+
+    private sealed record SourceProbe(string? Code, string? Error, string? SiteLabel, string? Build);
+
+    /// <summary>
+    /// 跳转前的握手。三件事：对方在不在、协议版本对不对、对外同步开没开。
+    /// 探测失败一律给可执行的下一步，不给「操作失败」。
+    /// </summary>
+    private async Task<SourceProbe> ProbeSourceAsync(string origin, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(15);
+            using var response = await client.GetAsync($"{origin}/api/instance-sync/handshake", ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new SourceProbe("DATA_SYNC_SOURCE_UNREACHABLE",
+                    $"连不上对方的同步接口（HTTP {(int)response.StatusCode}）。确认地址没写错，"
+                    + "并且对方跑的是带「数据同步」功能的版本。", null, null);
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("data", out var data))
+            {
+                return new SourceProbe("DATA_SYNC_SOURCE_UNREADABLE", "对方返回的内容读不懂，多半不是一台 MAP。", null, null);
+            }
+
+            var remoteVersion = data.TryGetProperty("protocolVersion", out var pv) && pv.TryGetInt32(out var v) ? v : -1;
+            if (remoteVersion != DataSyncProviderController.ProtocolVersionForHandshake)
+            {
+                return new SourceProbe("DATA_SYNC_PROTOCOL_MISMATCH",
+                    $"两端的同步协议版本对不上（本站 {DataSyncProviderController.ProtocolVersionForHandshake}，"
+                    + $"对方 {(remoteVersion < 0 ? "未知" : remoteVersion.ToString())}）。先把两边升到同一版再同步。",
+                    null, null);
+            }
+
+            var providerEnabled = data.TryGetProperty("providerEnabled", out var pe) && pe.ValueKind == JsonValueKind.True;
+            var label = data.TryGetProperty("siteLabel", out var sl) ? sl.GetString() : null;
+            var build = data.TryGetProperty("build", out var b) ? b.GetString() : null;
+            if (!providerEnabled)
+            {
+                // 不拦：对方管理员可以在同意页上当场打开。这里只是把话说在前面。
+                _logger.LogInformation("[data-sync] 源站 {Origin} 当前未开启对外同步，仍允许跳转由对方管理员当场决定", origin);
+            }
+            return new SourceProbe(null, null, label, build);
+        }
+        catch (Exception ex)
+        {
+            return new SourceProbe("DATA_SYNC_SOURCE_UNREACHABLE",
+                $"连不上对方：{ex.Message}。确认地址可以在浏览器里打开。", null, null);
+        }
+    }
 
     private Task<DataSyncRun?> FindRunAsync(string id, CancellationToken ct) =>
         _db.DataSyncRuns.Find(x => x.Id == id).FirstOrDefaultAsync(ct)!;

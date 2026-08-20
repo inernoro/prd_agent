@@ -68,6 +68,10 @@ export default function DataSyncAuthorizePage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showExcluded, setShowExcluded] = useState(false);
   const [trustOrigin, setTrustOrigin] = useState(false);
+  // 默认「全都给」，13 个分组收进高级区。用户原话：一看到下拉框就心里打鼓，
+  // 怕又遇到一堆选择然后逐个判断。默认路径应当是一个按钮，不是十三个判断。
+  const [showScope, setShowScope] = useState(false);
+  const [includeCredentials, setIncludeCredentials] = useState(true);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -116,6 +120,7 @@ export default function DataSyncAuthorizePage() {
         codeChallenge: params.codeChallenge,
         groups: Array.from(checked),
         trustThisOrigin: trustOrigin,
+        includeCredentials,
       },
     });
     if (!res.success || !res.data?.redirectUrl) {
@@ -167,7 +172,38 @@ export default function DataSyncAuthorizePage() {
           </div>
         </header>
 
-        <div className="mt-5 space-y-2">
+        <div className="mt-5 rounded-xl px-4 py-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-secondary)' }}>
+          <p className="text-sm leading-6" style={{ color: 'var(--text-primary)' }}>
+            默认把{' '}
+            <span className="font-medium">{catalog.groups.length} 类业务数据全部给出去</span>
+            （共 {totals.collections} 个集合、约 {formatCount(totals.documents)} 条）。
+          </p>
+          <label className="mt-3 flex cursor-pointer items-start gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <input
+              type="checkbox"
+              checked={includeCredentials}
+              onChange={(e) => setIncludeCredentials(e.target.checked)}
+              className="mt-1 h-4 w-4 shrink-0"
+            />
+            <span>
+              连登录口令一起给（对方用原来的账号密码就能登进去）
+              <span className="ml-1" style={{ color: 'var(--text-muted)' }}>
+                不勾的话账号搬过去但登不进来，要对方管理员逐个重设。
+              </span>
+            </span>
+          </label>
+          <button
+            type="button"
+            className="mt-3 flex items-center gap-1.5 text-xs"
+            style={{ color: 'var(--text-muted)' }}
+            onClick={() => setShowScope((v) => !v)}
+          >
+            {showScope ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            想只给一部分？展开逐类勾选
+          </button>
+        </div>
+
+        <div className={showScope ? 'mt-3 space-y-2' : 'hidden'}>
           {catalog.groups.map((group) => {
             const on = checked.has(group.key);
             const open = expanded.has(group.key);

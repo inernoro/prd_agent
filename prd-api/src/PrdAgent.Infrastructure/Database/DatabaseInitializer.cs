@@ -39,6 +39,21 @@ public class DatabaseInitializer
         await EnsureShortcutExpirationsAsync();
     }
 
+    /// <summary>
+    /// 显式要求把管理员口令重置成配置里那一份的开关。
+    ///
+    /// 为什么需要它：播种只在「库里一个管理员都没有」时发生。一旦那个账号存在，
+    /// 之后再改 <c>MAP_INITIAL_ADMIN_PASSWORD</c> 就永远不生效——真实后果是本仓库
+    /// 2026-08 撞上的那种：库里躺着一个 admin，谁也不知道它的口令，配置里那把强口令
+    /// 对不上，只能靠 env 破窗账号 root 进系统。而 root 不在 users 集合里，
+    /// 界面上一切按 userId 查人的地方都显示「未知用户」。
+    ///
+    /// 所以给一条明确的纠正路径：置 1 启动时把管理员口令改成配置里的值。
+    /// 做成开关而不是默认行为，是因为「每次启动都按配置重置口令」会把用户
+    /// 自己在界面上改过的密码悄悄改回去。
+    /// </summary>
+    private const string ForceResetKey = "MAP_ADMIN_FORCE_RESET";
+
     private async Task EnsureAdminUserAsync()
     {
         // 检查是否已存在管理员
@@ -47,7 +62,10 @@ public class DatabaseInitializer
             .FirstOrDefaultAsync();
 
         if (existingAdmin != null)
+        {
+            await MaybeForceResetAdminAsync(existingAdmin);
             return;
+        }
 
         var credentials = InitialAdminCredentials.Resolve(_configuration);
 
@@ -64,6 +82,44 @@ public class DatabaseInitializer
 
         await _db.Users.InsertOneAsync(adminUser);
         Console.WriteLine($"Created initial admin user: {adminUser.Username}");
+    }
+
+    /// <summary>
+    /// 按 <see cref="ForceResetKey"/> 把既有管理员的用户名与口令对齐到配置。
+    /// 只在开关明确为真时动手；改完清掉「必须重设密码」标记，让人能直接登进去，
+    /// 之后在界面上自己改成想要的密码。
+    /// </summary>
+    private async Task MaybeForceResetAdminAsync(User existingAdmin)
+    {
+        var flag = (_configuration[ForceResetKey] ?? string.Empty).Trim();
+        var on = flag is "1" or "true" or "True" or "TRUE" or "yes" or "on";
+        if (!on) return;
+
+        InitialAdminCredentials credentials;
+        try
+        {
+            credentials = InitialAdminCredentials.Resolve(_configuration);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 开了开关却没给合法凭据：说清楚，不要静默跳过——否则用户会以为已经重置了。
+            Console.WriteLine($"[admin-reset] {ForceResetKey} 已开启，但凭据不合法，未执行重置：{ex.Message}");
+            return;
+        }
+
+        await _db.Users.UpdateOneAsync(
+            Builders<User>.Filter.Eq(u => u.UserId, existingAdmin.UserId),
+            Builders<User>.Update
+                .Set(u => u.Username, credentials.Username)
+                .Set(u => u.PasswordHash, BCrypt.Net.BCrypt.HashPassword(credentials.Password))
+                .Set(u => u.Status, UserStatus.Active)
+                .Set(u => u.MustResetPassword, false));
+
+        // 已知边界：这里不吊销既有会话。会话版本由 IAuthSessionService 管，
+        // 而它按 clientType 分桶、不在 Infrastructure 的依赖面上。重置口令的场景是
+        // 「我进不去了」而不是「有人偷了我的会话」，所以先不为它把依赖拉过来；
+        // 真要踢下线，管理员登进去后走「强制下线」即可。已记入债务。
+        Console.WriteLine($"[admin-reset] 已按 {ForceResetKey} 重置管理员 {credentials.Username} 的口令");
     }
 
     private async Task EnsureInitialInviteCodeAsync()

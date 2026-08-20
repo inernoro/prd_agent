@@ -7438,20 +7438,36 @@ def cmd_smoke(args: argparse.Namespace) -> None:
                                  "不一定是被测应用配的那把。请用 MAP_AI_ACCESS_KEY 显式提供应用侧的 key 再判。")
         results.append(l3_result)
 
+    # L3 无论跑没跑都要出现在 layers 里。上一版把它整层拿掉，于是「没测认证路由」被
+    # 报成「冒烟全绿 (2/2)」——一个认证彻底坏掉的部署也能过闸。把假红改成假绿不是修复，
+    # 后者更糟（predicate-and-wiring-discipline 形状 4b：不会红的证据比没有证据更糟）。
     layers = [
         {"layer": "L1", "pass": bool(l1_result["pass"])},
         {"layer": "L2", "pass": any(r["pass"] for r in l2_results)},
+        {"layer": "L3", "pass": bool(l3_result["pass"]) if l3_result is not None else False,
+         "skipped": l3_result is None,
+         **({"reason": l3_skip_reason} if l3_result is None else {})},
     ]
-    if l3_result is not None:
-        layers.append({"layer": "L3", "pass": bool(l3_result["pass"])})
-    passed = sum(1 for layer in layers if layer["pass"])
+    verified = [x for x in layers if not x.get("skipped")]
+    skipped = [x for x in layers if x.get("skipped")]
+    passed = sum(1 for layer in verified if layer["pass"])
+    coverage_complete = not skipped
     summary = {"branchId": branch_id, "preview": preview,
-               "passed": f"{passed}/{len(layers)}", "layers": layers,
-               "probes": results}
-    if passed == len(layers):
+               "passed": f"{passed}/{len(verified)}",
+               "coverageComplete": coverage_complete,
+               "layers": layers, "probes": results}
+
+    if passed < len(verified):
+        die(f"冒烟失败 ({passed}/{len(verified)} 通过)", code=2, extra={"data": summary})
+
+    if coverage_complete:
         ok(summary, note=f"冒烟全绿 ({passed}/{len(layers)})")
         return
-    die(f"冒烟失败 ({passed}/{len(layers)} 通过)", code=2, extra={"data": summary})
+
+    # 跑过的都过了，但覆盖不全。不判失败（缺一个本地变量不等于部署坏了），
+    # 也绝不说「全绿」——把没测过的那层点名说出来，让读的人自己判断够不够。
+    gaps = "；".join(f"{x['layer']} 未测（{x.get('reason', '原因未记录')}）" for x in skipped)
+    ok(summary, note=f"已验证 {passed}/{len(verified)} 层通过，但覆盖不全：{gaps}")
 
 
 def cmd_help_me_check(args: argparse.Namespace) -> None:

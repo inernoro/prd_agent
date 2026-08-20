@@ -477,6 +477,127 @@ public class AuthController : ControllerBase
             ResetAt = DateTime.UtcNow
         }));
     }
+
+    /// <summary>
+    /// 自助改密（任何时候，凭旧密码）
+    /// </summary>
+    /// <remarks>
+    /// 与上面的 reset-password 是两件事：那条是「首次登录被强制改」，不问旧密码，
+    /// 靠 MustResetPassword 这个一次性状态兜着；这条是用户随时能走的自助入口，
+    /// 所以必须验旧密码，否则一个被借走的浏览器就能永久夺号。
+    ///
+    /// 改完把两端的 tokenVersion 都抬一格并清掉 refresh 会话，让别处已经登录的
+    /// 会话立刻失效——密码改了旧会话还活着，等于没改。当前这一端会拿到一副新令牌，
+    /// 不至于自己把自己踢下线。
+    /// </remarks>
+    [HttpPost("change-password")]
+    [Authorize]
+    [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.CurrentPassword))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请先填写当前密码"));
+        }
+
+        if (string.IsNullOrWhiteSpace(request?.NewPassword))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "新密码不能为空"));
+        }
+
+        if (request.NewPassword != request.ConfirmPassword)
+        {
+            return BadRequest(ApiResponse<object>.Fail("PASSWORD_MISMATCH", "两次输入的新密码不一致"));
+        }
+
+        if (string.Equals(request.CurrentPassword, request.NewPassword, StringComparison.Ordinal))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "新密码不能与当前密码相同"));
+        }
+
+        var passwordError = PasswordValidator.Validate(request.NewPassword);
+        if (passwordError != null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("WEAK_PASSWORD", passwordError));
+        }
+
+        var userId = this.GetRequiredUserId();
+
+        // root 是环境变量里的破窗账户，不落库，改不了——说清楚而不是报「用户不存在」。
+        if (string.Equals(userId, "root", StringComparison.Ordinal))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "ROOT_PASSWORD_IMMUTABLE",
+                "ROOT 是环境变量里的应急账户，密码只能改部署配置。请用正式管理员账号登录后再改密。"));
+        }
+
+        var user = await _userService.GetByIdAsync(userId);
+        if (user == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        if (string.IsNullOrWhiteSpace(user.PasswordHash)
+            || !BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_CREDENTIALS", "当前密码不正确"));
+        }
+
+        await _userService.UpdatePasswordAsync(user.UserId, BCrypt.Net.BCrypt.HashPassword(request.NewPassword));
+        await _userService.UpdateMustResetPasswordAsync(user.UserId, false);
+
+        // 两端一起收口。JwtService 只认这两个 clientType，别处传什么它都会归一到 desktop，
+        // 所以这里穷举它们就等于穷举了全部会话。
+        foreach (var clientType in new[] { "admin", "desktop" })
+        {
+            await _authSessionService.RemoveAllRefreshSessionsAsync(user.UserId, clientType);
+            await _authSessionService.BumpTokenVersionAsync(user.UserId, clientType);
+        }
+
+        var currentClientType = (User.FindFirst("clientType")?.Value ?? string.Empty).Trim().ToLowerInvariant();
+        if (currentClientType is not "admin" and not "desktop")
+        {
+            currentClientType = "desktop";
+        }
+
+        var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, currentClientType);
+        var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, currentClientType);
+        var accessToken = _jwtService.GenerateAccessToken(user, currentClientType, sessionKey, tokenVersion);
+
+        _logger.LogInformation("User {UserId} changed password (self-service, clientType={ClientType})",
+            user.UserId, currentClientType);
+
+        return Ok(ApiResponse<LoginResponse>.Ok(new LoginResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = refreshToken,
+            SessionKey = sessionKey,
+            ClientType = currentClientType,
+            ExpiresIn = AccessTokenExpiresInSeconds(),
+            User = new UserInfo
+            {
+                UserId = user.UserId,
+                Username = user.Username,
+                DisplayName = user.DisplayName,
+                Role = user.Role,
+                UserType = user.UserType,
+                BotKind = user.BotKind,
+                AvatarFileName = user.AvatarFileName,
+                AvatarUrl = null
+            }
+        }));
+    }
+}
+
+/// <summary>
+/// 自助改密请求（凭旧密码）
+/// </summary>
+public class ChangePasswordRequest
+{
+    public string CurrentPassword { get; set; } = string.Empty;
+    public string NewPassword { get; set; } = string.Empty;
+    public string ConfirmPassword { get; set; } = string.Empty;
 }
 
 /// <summary>

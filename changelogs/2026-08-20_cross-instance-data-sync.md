@@ -33,3 +33,12 @@
 | fix | prd-api | 源站清单解析失败改为 fail closed：此前退回空列表，对照表显示「0 个集合」而开始按钮照样能按，worker 随后把 Run 里每个集合都同步一遍，等于绕过确认关口 |
 | fix | prd-api | 允许名单被显式清空时不再被环境变量顶回来：null 才落回环境变量，空串是一次明确的撤销 |
 | fix | prd-admin | 登录守卫保留 URL fragment：授权码走 #code=... 回跳，登录一插进来旧实现会把它当 hash 路由，码就丢了、整条授权链要重走 |
+| feat | prd-api | 同步前先握手对版本：新增匿名 GET /api/instance-sync/handshake 报站点名、协议版本与构建号；目标站在跳转前打一次，版本不一致就当场拦下，不再等跑到一半才发现两站字段结构对不上（原 DS7） |
+| feat | prd-admin | 输入源站地址后自动探测：认出对方站点名与版本才让你跳过去授权，探测失败直接说明是打不通还是版本不合 |
+| feat | prd-api | 同步用户账号时可连口令散列一起搬（IncludeCredentials）：搬过去原密码直接能登，不再要求管理员逐个重设（原 DS2）；不勾时维持旧行为，出口清空散列并标记需重设 |
+| feat | prd-admin | 同意页收敛成一个决定：默认全给，13 个分组折进「想只给一部分？展开逐类勾选」；「让对方能直接用原密码登录」作为一个复选项默认勾上 |
+| feat | prd-api | 新增 MAP_ADMIN_FORCE_RESET 开关：置 1 时启动会把已存在的管理员账号按 MAP_INITIAL_ADMIN_* 重置回可登状态；此前 EnsureAdminUserAsync 见到有管理员就直接返回，改了初始账号配置也永远不生效 |
+| feat | prd-api | 新增 POST /api/v1/auth/change-password 自助改密：验旧密码、抬两端 tokenVersion 并清 refresh 会话作废别处登录，当前这一端换发新令牌继续用；此前只有「首次登录被强制改」一条路 |
+| feat | prd-admin | 账户设置新增「登录密码」卡片：随时自助改密，ROOT 应急账户明说改不了并指路正式账号 |
+| fix | prd-api | 执行范围以确认时的清单为准：Run 落 PlannedCollections，开始时清单为空直接回 DATA_SYNC_PLAN_REQUIRED，worker 只跑这份清单 |
+| fix | prd-api | 出口脱敏按原类型清：字符串清成空串、其余清成 null；此前一律写空串会把 bool? 与数组字段变成字符串，目标站反序列化直接炸 |

@@ -27,6 +27,16 @@ public class DataSyncRun
     public List<string> Collections { get; set; } = new();
 
     /// <summary>
+    /// 对照表上真实展示过的集合清单，由 Plan 写入；执行只跑这一份。
+    ///
+    /// 为什么不直接用 <see cref="Collections"/>：对照表是操作者唯一一次看清「要写什么」的
+    /// 机会，所以**屏幕上看到的必须等于实际会写的**。源站与目标站版本错位时，源站清单里
+    /// 可能少了某个已授权的集合；若执行仍按授权清单跑，没出现在屏幕上的集合照样被写进库，
+    /// 那道确认关口就形同虚设。空 = 还没看过对照表，此时不允许开始。
+    /// </summary>
+    public List<string> PlannedCollections { get; set; } = new();
+
+    /// <summary>
     /// 导出令牌的散列。明文只在换取时短暂存在于内存并随请求发出，落库的永远是散列，
     /// 这样即使有人拿到这条 Run 记录也重放不了导出。
     /// </summary>

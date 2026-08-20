@@ -43,6 +43,7 @@ type RunView = {
   sourceOrigin: string;
   groups: string[];
   collections: string[];
+  plannedCollections?: string[];
   dryRun: boolean;
   overwriteExisting: boolean;
   error: string | null;
@@ -60,6 +61,7 @@ export default function DataSyncPage() {
 
   const [sourceOrigin, setSourceOrigin] = useState('');
   const [preparing, setPreparing] = useState(false);
+  const [probe, setProbe] = useState('');
   const [plan, setPlan] = useState<Plan | null>(null);
   const [run, setRun] = useState<RunView | null>(null);
   const [overwrite, setOverwrite] = useState(false);
@@ -182,20 +184,30 @@ export default function DataSyncPage() {
   async function prepare() {
     setPreparing(true);
     setError('');
-    const res = await apiRequest<{ authorizeUrl: string; state: string; sourceOrigin: string }>(
-      '/api/instance-sync/runs/prepare',
-      { method: 'POST', body: { sourceOrigin } },
-    );
-    setPreparing(false);
+    setProbe('');
+    // 服务端在生成授权链接之前会先跟对方握一次手（站点名 / 协议版本 / 构建号），
+    // 版本对不上就直接回错误——所以走到这一步说明版本已经核过了。
+    const res = await apiRequest<{
+      authorizeUrl: string;
+      state: string;
+      sourceOrigin: string;
+      sourceLabel?: string | null;
+      sourceBuild?: string | null;
+    }>('/api/instance-sync/runs/prepare', { method: 'POST', body: { sourceOrigin } });
     if (!res.success || !res.data?.authorizeUrl) {
+      setPreparing(false);
       setError(res.error?.message || '无法生成授权链接');
       return;
     }
+    const label = (res.data.sourceLabel || '').trim() || res.data.sourceOrigin;
+    const build = (res.data.sourceBuild || '').trim();
+    // 别让跳转是一次无声的闪现：把「握到的是谁、版本对得上」说出来再走。
+    setProbe(`已确认对方是 ${label}${build ? `（构建 ${build}）` : ''}，协议版本一致，正在跳转授权…`);
     sessionStorage.setItem(
       DATA_SYNC_PENDING_KEY,
-      JSON.stringify({ state: res.data.state, sourceOrigin: res.data.sourceOrigin }),
+      JSON.stringify({ state: res.data.state, sourceOrigin: res.data.sourceOrigin, sourceLabel: label }),
     );
-    window.location.href = res.data.authorizeUrl;
+    window.setTimeout(() => { window.location.href = res.data.authorizeUrl; }, 900);
   }
 
   async function start(dryRun: boolean) {
@@ -243,6 +255,7 @@ export default function DataSyncPage() {
               sourceOrigin={sourceOrigin}
               setSourceOrigin={setSourceOrigin}
               preparing={preparing}
+              probe={probe}
               onSubmit={() => void prepare()}
             />
             <ProviderCard settings={provider} onSave={(next) => void saveProvider(next)} />
@@ -290,11 +303,13 @@ function StartCard({
   sourceOrigin,
   setSourceOrigin,
   preparing,
+  probe,
   onSubmit,
 }: {
   sourceOrigin: string;
   setSourceOrigin: (v: string) => void;
   preparing: boolean;
+  probe: string;
   onSubmit: () => void;
 }) {
   return (
@@ -304,8 +319,9 @@ function StartCard({
         <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>选择源站</h2>
       </div>
       <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
-        填另一台 MAP 的站点地址。点下面的按钮会跳到那台机器上，由它的管理员当场勾选给哪些数据；
-        同意之后浏览器会自己回到这里。对方没有把本站加进允许名单的话，跳过去会被拒绝。
+        填另一台 MAP 的站点地址。点下面的按钮会先跟对方核一次版本，再跳到那台机器上，
+        由它的管理员登录后当场同意；同意之后浏览器会自己回到这里开始同步。
+        本站还不在对方的允许名单里也没关系，对方管理员可以在同意页上当场准入。
       </p>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <input
@@ -330,6 +346,11 @@ function StartCard({
           前往源站授权
         </button>
       </div>
+      {probe && (
+        <p className="mt-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          {probe}
+        </p>
+      )}
     </Card>
   );
 }
@@ -660,7 +681,7 @@ function ProgressCard({
             </h2>
           </div>
           <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            来自 {run.sourceLabel || run.sourceOrigin} · 已完成 {totals.doneCount}/{run.collections.length} 个集合
+            来自 {run.sourceLabel || run.sourceOrigin} · 已完成 {totals.doneCount}/{(run.plannedCollections?.length || run.collections.length)} 个集合
           </span>
         </div>
 

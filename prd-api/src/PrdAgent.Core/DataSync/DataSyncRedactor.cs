@@ -33,7 +33,10 @@ public static class DataSyncRedactor
             var current = document[field];
             // 本来就是空的不算「被清空」，否则待补清单会把从来没配过的字段也列进去。
             if (current.IsBsonNull || (current.IsString && current.AsString.Length == 0)) continue;
-            document[field] = BsonString.Empty;
+            // 按原类型清：字符串清成空串（目标站据此认出「有这个字段、但要补」），
+            // 其余类型清成 null。统一写空串会把 bool? / 数组字段变成字符串，
+            // 目标站反序列化直接炸——脱敏不该顺手把文档结构改坏。
+            document[field] = current.IsString ? BsonString.Empty : BsonNull.Value;
             cleared.Add(field);
         }
         return cleared;

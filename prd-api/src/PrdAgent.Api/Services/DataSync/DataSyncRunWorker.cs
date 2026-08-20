@@ -87,7 +87,10 @@ public sealed class DataSyncRunWorker : BackgroundService
 
         try
         {
-            foreach (var collectionName in run.Collections)
+            // 只跑对照表上展示过的那一份（Plan 落的 PlannedCollections）。
+            // 用 run.Collections 会把「源站没报告、屏幕上写着不会同步」的集合也写进去。
+            var toRun = run.PlannedCollections.Count > 0 ? run.PlannedCollections : run.Collections;
+            foreach (var collectionName in toRun)
             {
                 if (ct.IsCancellationRequested)
                 {
@@ -158,7 +161,7 @@ public sealed class DataSyncRunWorker : BackgroundService
                     $"拉取 {collection.Name} 失败（HTTP {(int)response.StatusCode}）");
             }
 
-            var page = ReadPage(await response.Content.ReadAsStringAsync(ct));
+            var page = ReadPage(await response.Content.ReadAsStringAsync(ct), collection.Name);
             var documents = DataSyncApply.ParseDocuments(page.Documents);
             progress.Fetched += documents.Count;
 
@@ -294,7 +297,7 @@ public sealed class DataSyncRunWorker : BackgroundService
 /// </param>
 internal sealed record ExportPage(List<string> Documents, string? NextCursor, List<string> ClearedFields);
 
-    internal static ExportPage ReadPage(string json)
+    internal static ExportPage ReadPage(string json, string? expectedCollection = null)
     {
         var documents = new List<string>();
         string? nextCursor = null;
@@ -303,11 +306,29 @@ internal sealed record ExportPage(List<string> Documents, string? NextCursor, Li
         {
             throw new InvalidOperationException("源站返回的内容缺少 data 段");
         }
+        // 校验这一页确实是「我要的那个集合」。缓存或版本错位时，源站/中间层可能返回
+        // 另一个集合的内容——不核对的话，那些文档会被原样写进当前正在处理的集合。
+        if (expectedCollection is not null)
+        {
+            var actual = data.TryGetProperty("collection", out var c) && c.ValueKind == JsonValueKind.String
+                ? c.GetString()
+                : null;
+            if (!string.Equals(actual, expectedCollection, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"源站返回的是 {actual ?? "(未标注)"} 的数据，而这一页要的是 {expectedCollection}");
+            }
+        }
         if (data.TryGetProperty("nextCursor", out var cursor) && cursor.ValueKind == JsonValueKind.String)
         {
             nextCursor = cursor.GetString();
         }
-        if (data.TryGetProperty("documents", out var docs) && docs.ValueKind == JsonValueKind.Array)
+        // documents 缺失或类型不对时不能当成「这一页是空的」：那会让 nextCursor 为空的
+        // 情形被判成正常收尾，整个集合报成功却一条都没同步。
+        if (!data.TryGetProperty("documents", out var docs) || docs.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("源站返回的内容缺少 documents 数组");
+        }
         {
             foreach (var element in docs.EnumerateArray())
             {

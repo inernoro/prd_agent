@@ -242,6 +242,43 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 非字符串字段清成null而不是空串()
+    {
+        // appsettings 里既有字符串密钥，也有 bool? 的开关（本站的对外同步开关、信任名单）。
+        // 一律写空串会把 bool? 变成字符串，目标站反序列化当场炸——脱敏不该顺手改坏文档结构。
+        Assert.True(DataSyncScope.TryResolve("appsettings", out var settings));
+        var doc = new BsonDocument
+        {
+            { "_id", "global" },
+            { "MapInstanceId", "node-abc" },
+            { "DataSyncProviderEnabled", true },
+            { "DataSyncAllowedConsumerOrigins", "https://a.example.com" },
+        };
+
+        var cleared = DataSyncRedactor.Redact(doc, settings);
+
+        Assert.Contains("MapInstanceId", cleared);
+        Assert.Contains("DataSyncProviderEnabled", cleared);
+        Assert.Equal("", doc["MapInstanceId"].AsString);
+        Assert.True(doc["DataSyncProviderEnabled"].IsBsonNull);
+        Assert.Equal("", doc["DataSyncAllowedConsumerOrigins"].AsString);
+    }
+
+    [Fact]
+    public void 本站身份与信任名单必须留在本站()
+    {
+        // MapInstanceId 是本实例的稳定标识（配对协议用它认「你是哪台」）；
+        // 对外同步开关与允许名单是「本站信任谁」。这三样跟着数据搬过去，
+        // 会让两台机器自报同一个身份，并且把源站的信任关系强加给目标站。
+        Assert.True(DataSyncScope.TryResolve("appsettings", out var settings));
+        foreach (var field in new[] { "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins" })
+        {
+            Assert.True(settings.RedactFields.Contains(field, StringComparer.Ordinal),
+                $"appsettings.{field} 是本站自有的，不能跟着同步过去");
+        }
+    }
+
+    [Fact]
     public void 本来就空的字段不算被清空()
     {
         Assert.True(DataSyncScope.TryResolve("llmmodels", out var model));
@@ -369,6 +406,49 @@ public class DataSyncScopeCoverageTests
         var swallowedBy = marked.Where(p => ours.StartsWith(p, StringComparison.Ordinal) && ours != p).ToList();
         Assert.True(swallowedBy.Count == 0,
             $"{ours} 会被这些管理后台前缀吃掉，匿名端点将返回 401：{string.Join(", ", swallowedBy)}");
+    }
+
+    [Fact]
+    public void 搬口令散列这条路只许对users开一个口子()
+    {
+        // 「同步完直接能用」靠的是把 users.PasswordHash 一起搬过去。这是整条链路上
+        // 唯一一处**主动少脱敏**的分支，所以它的边界必须钉死两件事：
+        //   1. 只对 users 生效——别的集合的凭据字段不许被这个开关顺带放行；
+        //   2. 只放行 PasswordHash——users 上其它登记过的脱敏字段照旧清空。
+        // 判据取源码而不是跑一遍导出：这段逻辑在 Controller 里、需要 Mongo 才能跑，
+        // 而它一旦被改宽（比如把 resolved.Name 判断删掉），没有任何现有测试会红。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncProviderController.cs");
+        var source = File.ReadAllText(path);
+
+        var branch = Regex.Match(
+            source,
+            @"if\s*\(includeCredentials\s*&&\s*resolved\.Name\s*==\s*""users""\)",
+            RegexOptions.Singleline);
+        Assert.True(branch.Success,
+            "找不到「带凭据导出」那个分支了。它要么被删了（那这条守卫该跟着删），"
+            + "要么被改写成别的形状——无论哪种，都要重新确认这个口子还只对 users 开。");
+
+        // 取分支后一段窗口而不是配对花括号：里面的 `resolved with { ... }` 是嵌套的，
+        // 用 [^}]* 只会截到内层那个右花括号，看着能过其实没覆盖到全身。
+        var tail = source[branch.Index..];
+        var body = tail[..Math.Min(600, tail.Length)];
+        Assert.Contains("PasswordHash", body, StringComparison.Ordinal);
+
+        // 放行清单必须是逐个字段剔除，而不是把 users 的脱敏整个清空。
+        // 两边都去掉空白再比，否则换个换行位置就永远不命中——那是一条假绿。
+        var compact = Regex.Replace(body, @"\s+", string.Empty);
+        Assert.DoesNotContain("RedactFields=newList<string>()", compact, StringComparison.Ordinal);
+        Assert.Contains(".Where(", compact, StringComparison.Ordinal);
+
+        // users 之外的集合走不到这个分支：源码里不许有第二处 includeCredentials 的放行。
+        // 负向那条（!includeCredentials && ...）是「不勾时补标记」，不是放行，别数进来。
+        var loosenings = Regex.Matches(source, @"(?<![!\w])includeCredentials\s*&&").Count;
+        Assert.True(loosenings == 1,
+            $"源码里有 {loosenings} 处 includeCredentials 放行分支，多出来的那些没有被本守卫覆盖");
+
+        // 不勾时必须仍然打「需要重设密码」的标记，否则同步过去的账号会变成一个
+        // 既登不进、也没人提示要重设的死账号。
+        Assert.Contains("!includeCredentials && resolved.Name == \"users\"", source, StringComparison.Ordinal);
     }
 
     private static IReadOnlyList<string> ReadAdminControllerPrefixes()
