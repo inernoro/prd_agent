@@ -957,27 +957,54 @@ public sealed class DataSyncProviderController : ControllerBase
             .ToList();
 
     /// <summary>
-    /// BSON 类型的**排序**次序（不是 BsonType 的枚举值）。分页要跨类型往前走，就得知道
-    /// 谁排在谁后面。只列 _id 现实中可能出现的那些，其余归到末尾。
+    /// BSON 的排序**段**（bracket），按次序排列。注意是「段」不是「类型」——
+    /// 数值那几种（double / int / long / decimal）在 Mongo 里属于**同一段**，
+    /// 互相按数值大小比较，不按类型分先后。
+    ///
+    /// 上一版我把它们拆成了四段，直接造出一个比原 bug 更糟的循环：
+    /// 假设有 200 条 Int64 的 0..199 和 200 条 Int32 的 200..399，
+    /// 游标停在 Int32 的 399 时，「类型排在 int 之后」这一支把所有 long 都捞回来——
+    /// 又是 0..199；下一页游标变成 Int64 的 199，同段 $gt 再给出 200..399。
+    /// 两页来回翻，直到导出令牌过期，期间**重复写入、进度计数虚高**。
     /// </summary>
-    private static readonly (BsonType Type, string Alias)[] BsonSortOrder =
+    private static readonly string[][] BsonSortBrackets =
     {
-        (BsonType.MinKey, "minKey"),
-        (BsonType.Null, "null"),
-        (BsonType.Double, "double"),
-        (BsonType.Int32, "int"),
-        (BsonType.Int64, "long"),
-        (BsonType.Decimal128, "decimal"),
-        (BsonType.String, "string"),
-        (BsonType.Document, "object"),
-        (BsonType.Array, "array"),
-        (BsonType.Binary, "binData"),
-        (BsonType.ObjectId, "objectId"),
-        (BsonType.Boolean, "bool"),
-        (BsonType.DateTime, "date"),
-        (BsonType.Timestamp, "timestamp"),
-        (BsonType.RegularExpression, "regex"),
-        (BsonType.MaxKey, "maxKey"),
+        new[] { "minKey" },
+        new[] { "null" },
+        new[] { "double", "int", "long", "decimal" },   // 同一段：按数值比，不按类型分
+        new[] { "string", "symbol" },                   // symbol 已废弃，排序上与 string 同段
+        new[] { "object" },
+        new[] { "array" },
+        new[] { "binData" },
+        new[] { "objectId" },
+        new[] { "bool" },
+        new[] { "date" },
+        new[] { "timestamp" },
+        new[] { "regex" },
+        new[] { "maxKey" },
+    };
+
+    /// <summary>BsonType -> 它所在段的别名。认不出的返回 null。</summary>
+    private static string? AliasOf(BsonType type) => type switch
+    {
+        BsonType.MinKey => "minKey",
+        BsonType.Null => "null",
+        BsonType.Double => "double",
+        BsonType.Int32 => "int",
+        BsonType.Int64 => "long",
+        BsonType.Decimal128 => "decimal",
+        BsonType.String => "string",
+        BsonType.Symbol => "symbol",
+        BsonType.Document => "object",
+        BsonType.Array => "array",
+        BsonType.Binary => "binData",
+        BsonType.ObjectId => "objectId",
+        BsonType.Boolean => "bool",
+        BsonType.DateTime => "date",
+        BsonType.Timestamp => "timestamp",
+        BsonType.RegularExpression => "regex",
+        BsonType.MaxKey => "maxKey",
+        _ => null,
     };
 
     /// <summary>
@@ -998,10 +1025,15 @@ public sealed class DataSyncProviderController : ControllerBase
     {
         var sameBracket = Builders<BsonDocument>.Filter.Gt("_id", cursor);
 
-        var rank = Array.FindIndex(BsonSortOrder, x => x.Type == cursor.BsonType);
-        if (rank < 0) return sameBracket;   // 认不出的类型：至少保住同段内的推进
+        var alias = AliasOf(cursor.BsonType);
+        if (alias is null) return sameBracket;   // 认不出的类型：至少保住同段内的推进
 
-        var laterAliases = BsonSortOrder.Skip(rank + 1).Select(x => x.Alias).ToArray();
+        var rank = Array.FindIndex(BsonSortBrackets, b => b.Contains(alias, StringComparer.Ordinal));
+        if (rank < 0) return sameBracket;
+
+        // 只取**排在游标所在段之后**的那些段。同段内的推进交给上面的 $gt——
+        // 把同段其它类型也塞进 $type 分支，就会把本该在游标前面的文档又捞回来。
+        var laterAliases = BsonSortBrackets.Skip(rank + 1).SelectMany(b => b).ToArray();
         if (laterAliases.Length == 0) return sameBracket;
 
         var laterTypes = new BsonDocument("_id", new BsonDocument("$type", new BsonArray(laterAliases)));

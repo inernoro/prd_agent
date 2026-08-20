@@ -629,6 +629,46 @@ public class DataSyncProtocolTests
         json.ShouldNotContain("minKey");
     }
 
+    /// <summary>
+    /// 数值那几种属于**同一个排序段**：Mongo 里 double / int / long / decimal 互相
+    /// 按数值大小比，不按类型分先后。
+    ///
+    /// 上一版我把它们拆成四段，造出一个比原 bug 更糟的循环：200 条 Int64 的 0..199
+    /// 和 200 条 Int32 的 200..399，游标停在 Int32 的 399 时「类型排在 int 之后」
+    /// 这一支会把所有 long 捞回来（又是 0..199），下一页游标变回 Int64 的 199、
+    /// 同段 $gt 再给出 200..399——两页来回翻到令牌过期，期间重复写入、进度虚高。
+    ///
+    /// 所以这条断言的是：数值游标的 $type 分支里，**不许出现任何别的数值类型**。
+    /// </summary>
+    [Theory]
+    [InlineData("int")]
+    [InlineData("long")]
+    [InlineData("double")]
+    public void 数值游标不许把同段的其它数值类型算成在后面(string kind)
+    {
+        BsonValue cursor = kind switch
+        {
+            "int" => BsonValue.Create(399),
+            "long" => BsonValue.Create(399L),
+            _ => BsonValue.Create(399.0),
+        };
+
+        var json = DataSyncProviderController
+            .BuildAfterCursorFilter(cursor)
+            .Render(
+                BsonSerializer.SerializerRegistry.GetSerializer<BsonDocument>(),
+                BsonSerializer.SerializerRegistry)
+            .ToJson();
+
+        foreach (var numeric in new[] { "\"int\"", "\"long\"", "\"double\"", "\"decimal\"" })
+        {
+            json.ShouldNotContain(numeric);
+        }
+        // 但排在数值段之后的类型仍然要能跨过去。
+        json.ShouldContain("string");
+        json.ShouldContain("objectId");
+    }
+
     /// <summary>游标已经是最后一种类型时，退回同段内推进，别造一个空的 $type 数组。</summary>
     [Fact]
     public void 游标是最末类型时不产生空类型集()
