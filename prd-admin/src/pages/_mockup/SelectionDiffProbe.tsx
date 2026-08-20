@@ -56,7 +56,7 @@ export default function SelectionDiffProbe() {
     setStreamedLen(0);
     timerRef.current = window.setInterval(() => {
       setStreamedLen((n) => {
-        const next = n + 14;
+        const next = n + 6;
         if (next >= REWRITTEN.length) {
           if (timerRef.current) window.clearInterval(timerRef.current);
           timerRef.current = null;
@@ -65,7 +65,7 @@ export default function SelectionDiffProbe() {
         }
         return next;
       });
-    }, 60);
+    }, 90);
   }, []);
 
   useEffect(() => {

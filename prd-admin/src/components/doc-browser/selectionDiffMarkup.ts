@@ -38,6 +38,16 @@ const FENCE_RE = /^ {0,3}(?:```|~~~)/;
  */
 const LEAD_MARKER_RE = /^([ \t]*(?:>[ \t]?)*[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[[ xX]\][ \t]+)?(?:#{1,6}[ \t]+)?)([\s\S]*)$/;
 
+/** 列表项行（有序或无序） */
+const LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/;
+
+/**
+ * 删除块与新增块之间的隐形分隔：不插它，被删的 1./2./3. 和新增的条目会被解析成同一个列表，
+ * 新条目从 4. 开始编号，读起来像是「原来有六条」。HTML 注释在 remark 解析期就能截断列表，
+ * 之后被 sanitize 丢掉，渲染结果里看不见。
+ */
+const LIST_SPLIT = '<!-- -->';
+
 /** 分隔线（--- / *** / ___）：没有可标注的文字 */
 const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 
@@ -105,6 +115,22 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
   let removed = 0;
 
   const out: string[] = [];
+  // 上一条真正输出了的行是「删除」还是「新增」，以及它是不是列表项 —— 用来决定要不要插隐形分隔
+  let lastEmitted: { type: 'del' | 'add' | 'eq'; isListItem: boolean } | null = null;
+  const emit = (text: string, type: 'del' | 'add' | 'eq') => {
+    const isListItem = LIST_ITEM_RE.test(text);
+    if (
+      lastEmitted
+      && isListItem && lastEmitted.isListItem
+      && lastEmitted.type !== type
+      && lastEmitted.type !== 'eq' && type !== 'eq'
+    ) {
+      out.push(LIST_SPLIT);
+    }
+    out.push(text);
+    lastEmitted = { type, isListItem };
+  };
+
   for (const l of lines) {
     if (l.type === 'del') {
       removed += 1;
@@ -120,7 +146,7 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
         codeChangeUnmarked = true;
         continue;
       }
-      out.push(markLine(l.text, 'del'));
+      emit(markLine(l.text, 'del'), 'del');
       continue;
     }
 
@@ -129,11 +155,11 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
     if (outFence || isFence) {
       // 围栏行与围栏内部原样输出：保证代码块永远是合法的、能高亮的代码
       if (l.type === 'add') codeChangeUnmarked = true;
-      out.push(l.text);
+      emit(l.text, l.type === 'add' ? 'add' : 'eq');
       if (isFence) outFence = !outFence;
       continue;
     }
-    out.push(l.type === 'add' ? markLine(l.text, 'ins') : l.text);
+    emit(l.type === 'add' ? markLine(l.text, 'ins') : l.text, l.type === 'add' ? 'add' : 'eq');
   }
 
   // 流式期间常常停在「开了围栏还没写完」的半截状态：不补上收尾围栏，

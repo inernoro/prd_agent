@@ -135,6 +135,17 @@ describe('渲染契约：标记必须活到正文渲染器输出的 HTML 里', (
     expect(html).toContain('<ins>新条目</ins>');
   });
 
+  it('删除的列表与新增的列表分成两个 ol，新条目从 1 重新编号', () => {
+    const original = '1. 旧一\n2. 旧二';
+    const body = `前言\n\n${original}\n\n结尾`;
+    const range = { start: body.indexOf(original), end: body.indexOf(original) + original.length };
+    const md = buildInlineDiffBody(body, range, '1. 新一\n2. 新二\n3. 新三').body;
+    const html = render(md);
+    // 不分开的话六条会连成一个列表，新条目从 3. 开始编号，读起来像「原来有五条」
+    expect((html.match(/<ol/g) ?? []).length).toBe(2);
+    expect(html).not.toContain('start="');
+  });
+
   it('表格被标注后仍然渲染成表格', () => {
     const html = render('| <ins>名称</ins> | <del>说明</del> |\n|---|---|\n| a | b |');
     expect(html).toContain('<table>');
