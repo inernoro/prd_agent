@@ -443,6 +443,9 @@ public class DataSyncScopeCoverageTests
     {
         var script = ReadRepoFile("scripts", "mongodb-indexes.js");
         Assert.Contains("db.data_sync_grants.createIndex", script);
+        // 收尸扫描每个部署每分钟跑一次，表只增不删，且分支预览与生产共用同一个库。
+        Assert.Contains("db.data_sync_runs.createIndex", script);
+        Assert.Contains("\"Status\": 1, \"UpdatedAt\": 1", script);
         Assert.Contains("\"CodeHash\": 1", script);
         Assert.Contains("\"ExportTokenHash\": 1", script);
 

@@ -1400,6 +1400,16 @@ db.document_recording_upload_chunks.createIndex(
 )
 // end collection: document_recording_upload_sessions + document_recording_upload_chunks
 
+// collection: data_sync_runs
+// 收尸扫描（DataSyncRunWorker.SweepOrphanedRunsAsync）按 Status + UpdatedAt 查，
+// **每个部署每分钟一次**。这张表只增不删，而分支预览与生产共用同一个库——
+// 没有索引就是「每个部署每分钟全表扫一遍」，随着历史增长一起拖慢共享库。
+db.data_sync_runs.createIndex(
+  { "Status": 1, "UpdatedAt": 1 },
+  { name: "idx_data_sync_runs_status_updated" }
+)
+// end collection: data_sync_runs
+
 // collection: data_sync_grants
 // 跨实例同步的授权票据。三条匿名协议请求全部按散列查这张表：
 //   - 换取导出令牌：CodeHash（一次性授权码）

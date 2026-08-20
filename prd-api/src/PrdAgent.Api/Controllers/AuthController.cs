@@ -538,13 +538,31 @@ public class AuthController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
         }
 
+        // 被停用的账号不许在这里续命。停用之后既有 access token 还在有效期内，
+        // 如果放它改密码，它会拿到一套全新的令牌——然后在每次过期前再改一次，
+        // 永远登着。停用这个动作就形同虚设。
+        if (user.Status != UserStatus.Active)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("USER_DISABLED", "账号已被停用，无法修改密码。请联系管理员。"));
+        }
+
         if (string.IsNullOrWhiteSpace(user.PasswordHash)
             || !BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
         {
             return BadRequest(ApiResponse<object>.Fail("INVALID_CREDENTIALS", "当前密码不正确"));
         }
 
-        await _userService.UpdatePasswordAsync(user.UserId, BCrypt.Net.BCrypt.HashPassword(request.NewPassword));
+        // 条件更新，只许一个赢。校验旧密码和写新密码之间有一段窗口，两个会话可以
+        // 同时通过校验；都无条件写下去的话，两边接着各自清会话、各自签发新会话——
+        // 密码没写赢的那一方仍然登着，而「改密码会把其它设备踢下线」当场落空。
+        var replaced = await _userService.TryReplacePasswordAsync(
+            user.UserId, user.PasswordHash, BCrypt.Net.BCrypt.HashPassword(request.NewPassword));
+        if (!replaced)
+        {
+            return Conflict(ApiResponse<object>.Fail("PASSWORD_CHANGED_ELSEWHERE",
+                "这个账号的密码刚刚在别处改过了，本次修改没有生效。请用新密码重新登录后再试。"));
+        }
         await _userService.UpdateMustResetPasswordAsync(user.UserId, false);
 
         // 两端一起收口。JwtService 只认这两个 clientType，别处传什么它都会归一到 desktop，

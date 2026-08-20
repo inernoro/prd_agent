@@ -60,6 +60,21 @@ public class UserRepository : IUserRepository
             Builders<User>.Update.Set(u => u.PasswordHash, passwordHash));
     }
 
+    public async Task<bool> TryReplacePasswordAsync(string userId, string expectedHash, string passwordHash)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(expectedHash)) return false;
+
+        // 条件更新：校验旧密码和写新密码之间有一段窗口，两个会话可以同时通过校验。
+        // 都无条件写下去的话，两边都会接着清会话、各自签发新会话——于是密码没写赢的
+        // 那一方仍然登着，而「改密码会把其它设备踢下线」这句承诺当场落空。
+        var result = await _users.UpdateOneAsync(
+            Builders<User>.Filter.And(
+                Builders<User>.Filter.Eq(u => u.UserId, userId),
+                Builders<User>.Filter.Eq(u => u.PasswordHash, expectedHash)),
+            Builders<User>.Update.Set(u => u.PasswordHash, passwordHash));
+        return result.ModifiedCount > 0;
+    }
+
     public async Task UpdateMustResetPasswordAsync(string userId, bool mustResetPassword)
     {
         if (string.IsNullOrWhiteSpace(userId)) return;

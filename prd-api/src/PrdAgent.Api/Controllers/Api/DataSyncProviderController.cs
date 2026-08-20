@@ -226,6 +226,17 @@ public sealed class DataSyncProviderController : ControllerBase
             var candidate = (raw ?? string.Empty).Trim().TrimEnd('/');
             if (candidate.Length == 0) continue;
             var isWildcard = candidate.StartsWith("*.", StringComparison.Ordinal);
+            // 通配条目不许带端口。匹配时比的是 uri.Host（不含端口），拿它去对
+            // 「.example.com:8443」这样的后缀永远对不上——名单里明明有它，
+            // 每一次授权却都被拒。要么让匹配也认端口，要么在这里就说清楚不支持；
+            // 选后者：一个带端口的通配本身语义就含混（是所有子域的这个端口，
+            // 还是这个子域的所有端口），与其猜不如不收。
+            if (isWildcard && candidate.LastIndexOf(':') > candidate.IndexOf('.'))
+            {
+                return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_ORIGIN_INVALID",
+                    $"「{candidate}」不支持：子域通配不能带端口。改成不带端口的 *.example.com，"
+                    + "或者把那台机器的完整地址逐条列出来。"));
+            }
             var probe = isWildcard ? $"https://x{candidate[1..]}" : candidate;
             // 必须是**光秃秃的站点根**。带路径 / 查询 / 片段 / 用户名的写法这里放过去，
             // 界面上就显示成「已信任」，而换票时比的是回调地址的 origin

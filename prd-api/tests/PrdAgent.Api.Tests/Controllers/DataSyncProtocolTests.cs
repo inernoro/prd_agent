@@ -447,6 +447,38 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 通配条目不许带端口。
+    ///
+    /// 匹配时比的是 uri.Host（不含端口），拿它去对「.example.com:8443」这样的后缀
+    /// 永远对不上——名单里明明有它，每一次授权却都被拒。这是形状 1 的又一格：
+    /// 校验放行的写法比匹配能表达的范围宽。
+    /// </summary>
+    [Fact]
+    public void 通配来源不许带端口()
+    {
+        var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var update = body[body.IndexOf("public async Task<IActionResult> UpdateProviderSettings", StringComparison.Ordinal)..];
+        update = update[..update.IndexOf("\n    /// <summary>", StringComparison.Ordinal)];
+        update.ShouldContain("子域通配不能带端口");
+
+        // 反向确认匹配确实只看 Host——两边的口径必须是一致的那一个。
+        var matcher = body[body.IndexOf("internal static bool IsOriginAllowed", StringComparison.Ordinal)..];
+        matcher = matcher[..matcher.IndexOf("\n    }", StringComparison.Ordinal)];
+        matcher.ShouldContain("uri.Host");
+    }
+
+    /// <summary>带端口的通配一旦存进去就永远匹配不上，所以判据必须在存之前拦住。</summary>
+    [Theory]
+    [InlineData("*.example.com:8443", false)]
+    [InlineData("*.example.com", true)]
+    public void 通配匹配只认主机名(string pattern, bool shouldMatch)
+    {
+        var allowed = DataSyncProviderController.IsOriginAllowed(
+            "https://a.example.com:8443", new[] { pattern });
+        allowed.ShouldBe(shouldMatch);
+    }
+
+    /// <summary>
     /// 源站管理员在同意页上勾了「连登录凭据一起搬」时，users.PasswordHash 不在这次的
     /// 脱敏范围里，源站送来的是真散列。这时候拿目标站的旧散列盖回去，等于把授权页刚刚
     /// 承诺过的事悄悄取消——那批用户的原密码登不进去，而界面上说的是能登。
