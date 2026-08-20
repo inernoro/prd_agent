@@ -89,3 +89,5 @@
 | fix | cds | deploy 只输出一份结果：cmd_smoke 走 die() 会先打印一份 ok:false，cmd_deploy 接住 code=3 之后又打印一份 ok:true——机器读到两个 JSON 文档等于都不能信。新增 _nested_call() 让内部调用的 ok()/die() 把 payload 交给调用方而不是自己打印 |
 | test | prd-api | 新增守卫：迁移执行历史属于目标站本地（出口删字段 + 写入接回 + 源站硬送也以本站为准 + 本站没有时不写空值 + 两头接线都在），待补清单只记落地文档（四条行为 + 两条接线），回环在出站禁止但在回跳允许 |
 | test | cds | 冒烟守卫补两条：deploy 调 smoke 必须包在 _nested_call() 里，die/ok 的抑制判断必须在打印之前 |
+| fix | prd-api | 批量插入部分失败后按**失败下标**剔除，不再砍末尾 N 条：IsOrdered=false 时冲突可以落在任意位置，砍尾巴数量对、身份错。计数看不出差别，待补清单看得出来——它要拿这批文档逐条看字段在不在，认错人就会漏报一个真需要补的凭据，或替一条根本没写进去的文档报一个假的。判据抽成 DataSyncApply.SurvivingInserts |
+| docs | doc | 台账新增 DS21：worker 串行执行，排队中的 Run 界面显示「进行中」却无进度（票过期时会被既有收口落成终态并给出原因，所以不是静默卡死）。加 queued 态或并发上限都是新语义类别，记入后续 |

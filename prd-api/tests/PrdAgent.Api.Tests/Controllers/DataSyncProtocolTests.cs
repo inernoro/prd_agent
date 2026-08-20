@@ -553,6 +553,66 @@ public class DataSyncProtocolTests
         worker.ShouldNotContain("Builders<BsonDocument>.Projection.Include(\"_id\"))\n                    .ToListAsync");
     }
 
+    /// <summary>
+    /// 部分插入失败后要按**失败下标**剔除，不是砍末尾 N 条。数量一样、身份不一样，
+    /// 而待补清单要拿这批文档逐条看字段在不在——认错人就会漏报真需要补的凭据，
+    /// 或者替一条根本没写进去的文档报一个假的。
+    /// </summary>
+    [Fact]
+    public void 部分插入失败按下标剔除而不是砍末尾()
+    {
+        var attempted = new[]
+        {
+            new BsonDocument { ["_id"] = "a" },
+            new BsonDocument { ["_id"] = "b" },
+            new BsonDocument { ["_id"] = "c" },
+        };
+
+        // 失败的是中间那条。砍末尾会留下 a、b（错），按下标剔除留下 a、c（对）。
+        var survivors = DataSyncApply.SurvivingInserts(attempted, new[] { 1 });
+
+        survivors.Select(d => d["_id"].AsString).ShouldBe(new[] { "a", "c" });
+    }
+
+    [Fact]
+    public void 没有失败下标时原样返回()
+    {
+        var attempted = new[] { new BsonDocument { ["_id"] = "a" } };
+        DataSyncApply.SurvivingInserts(attempted, System.Array.Empty<int>())
+            .Select(d => d["_id"].AsString).ShouldBe(new[] { "a" });
+    }
+
+    [Fact]
+    public void 认错写入文档会让待补清单报错人()
+    {
+        // 把上一条的抽象判据接到它真正的下游，说明为什么值得单独修这一处：
+        // 只有**第一条**带凭据字段，而失败的恰好是它。按下标剔除后剩下的是 b，
+        // 待补清单为空（对）；砍末尾会留下 a，于是替一条根本没写进去的文档
+        // 报一个「去补 ApiKeyEncrypted」的假警告。
+        // 失败下标放在 0 是有意的：放末尾的话两种实现给出同样的结果，这条就白写了。
+        var attempted = new[]
+        {
+            new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "" },
+            new BsonDocument { ["_id"] = "b" },
+        };
+        var survivors = DataSyncApply.SurvivingInserts(attempted, new[] { 0 });
+
+        var run = new DataSyncRun();
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" }, survivors);
+
+        run.PendingSecretFields.ShouldNotContainKey("llmplatforms");
+    }
+
+    [Fact]
+    public void 剔除判据接在worker的批量插入失败路径上()
+    {
+        // 接线守卫（形状 2）：上面三条测的是判据本身，测不到「worker 有没有用它」。
+        var worker = ReadWorkerSource();
+        worker.ShouldContain("DataSyncApply\n                                    .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))");
+        // 砍末尾那种写法不许回来。
+        worker.ShouldNotContain("decision.ToInsert.Count - conflicts).ToList()");
+    }
+
     [Fact]
     public void 导出分页能读出文档与续页游标()
     {

@@ -93,6 +93,24 @@ public static class DataSyncApply
     }
 
     /// <summary>
+    /// 批量插入部分失败后，从这一批里挑出**真的写进去了**的那些。
+    ///
+    /// `IsOrdered = false` 时失败可以落在任意位置，所以判据只能是驱动返回的失败下标，
+    /// 不能是「砍掉末尾 N 条」——后者数量对、身份错。计数看不出差别，下游看得出来：
+    /// 待补清单要拿这批文档逐条看字段在不在，认错了人就会漏报一个真需要补的凭据，
+    /// 或者替一条根本没写进去的文档报一个假的。
+    /// </summary>
+    public static IReadOnlyList<BsonDocument> SurvivingInserts(
+        IReadOnlyList<BsonDocument> attempted, IEnumerable<int> failedIndexes)
+    {
+        ArgumentNullException.ThrowIfNull(attempted);
+        ArgumentNullException.ThrowIfNull(failedIndexes);
+        var failed = failedIndexes.ToHashSet();
+        if (failed.Count == 0) return attempted;
+        return attempted.Where((_, i) => !failed.Contains(i)).ToList();
+    }
+
+    /// <summary>
     /// 覆盖写之前，把目标站原有的「本地执行历史」字段接回替换文档上。
     ///
     /// 覆盖是整份替换，不接回来这些字段就跟着源站那份走了——而它们记的是「本机跑过什么」，

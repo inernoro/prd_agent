@@ -264,8 +264,14 @@ public sealed class DataSyncRunWorker : BackgroundService
                             _logger.LogWarning(
                                 "[data-sync] {Collection} 有 {Count} 条撞唯一索引，已跳过；其余 {Written} 条已写入",
                                 collection.Name, conflicts, decision.ToInsert.Count - conflicts);
-                            // 撞索引的那几条没写进去，计数要扣掉，否则「新增 N 条」对不上账。
-                            decision = decision with { ToInsert = decision.ToInsert.Take(decision.ToInsert.Count - conflicts).ToList() };
+                            // 按**失败的下标**剔除，不是砍掉末尾 N 条：IsOrdered=false 时
+                            // 冲突可以落在任意位置。判据抽在 DataSyncApply.SurvivingInserts。
+                            decision = decision with
+                            {
+                                ToInsert = DataSyncApply
+                                    .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))
+                                    .ToList(),
+                            };
                         }
                     }
                     foreach (var doc in decision.ToReplace)
