@@ -58,6 +58,25 @@ def test_deploy只输出一份结果() -> None:
         "失败必须留到退出上下文之后再报")
 
 
+def test_覆盖不全时deploy必须以非零码退出() -> None:
+    """
+    机器调用方看的是退出状态，不是 note 的措辞。
+
+    这个假绿回潮过四次，每次都死在同一个地方：改了注释、改了 note、改了上层判断，
+    唯独没动**真正被读的那个值**。所以断言直接钉退出码，不钉文案。
+    """
+    src = function_source("cmd_deploy")
+    branch = src[src.index("if smoke_gaps:"):]
+    branch = branch[:branch.index("return") + len("return")]
+    assert "code=3" in branch, (
+        "覆盖不全这条分支必须以非零码退出：ok() 默认退 0，"
+        "于是「部署完成但关键一层没验」照样被上层当成通过")
+
+    ok_src = function_source("ok")
+    assert "code: int = 0" in ok_src, "ok() 要支持非零退出码，否则上面那条钉不住"
+    assert "sys.exit(code)" in ok_src, "ok() 必须真的用这个码退出，不能收下参数却仍然退 0"
+
+
 def test_die与ok在内部调用时不打印() -> None:
     for name in ("die", "ok"):
         src = function_source(name)

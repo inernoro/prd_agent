@@ -154,6 +154,12 @@ public static class DataSyncApply
                 if (!DataSyncCollection.ShouldCarryRedactedValue(doc.Contains(field) ? incoming : null)) continue;
                 if (local.TryGetValue(field, out var value)) doc[field] = value;
                 else doc.Remove(field);
+                // 陪嫁字段：描述的是同一件事的另一面，跟着一起接回。
+                foreach (var companion in DataSyncCollection.CompanionFieldsOf(field))
+                {
+                    if (local.TryGetValue(companion, out var companionValue)) doc[companion] = companionValue;
+                    else doc.Remove(companion);
+                }
             }
         }
     }

@@ -247,14 +247,45 @@ public sealed class DataSyncProviderController : ControllerBase
             if (!origins.Contains(candidate, StringComparer.OrdinalIgnoreCase)) origins.Add(candidate);
         }
 
-        await _db.AppSettings.UpdateOneAsync(
-            Builders<AppSettings>.Filter.Eq(x => x.Id, "global"),
+        // 条件更新。前端把「我看到的那份名单」一起送上来，只有库里仍是那一份才写得进去。
+        // 没有这道门的话：两个管理员各自移走一台机器，后到的那次 PUT 会把先移走的那台
+        // 放回来；TrustOriginAsync 刚加进去的那台也会被一次陈旧的保存抹掉。而票据鉴权
+        // 每次都拿这份活名单重对，所以「撤销被悄悄取消」= 一台已被踢出的机器仍然能取数据。
+        var filter = Builders<AppSettings>.Filter.Eq(x => x.Id, "global");
+        var currentConfig = await ReadConfigAsync(ct);
+        if (request.ExpectedOrigins is not null)
+        {
+            var expected = string.Join(",", ParseOrigins(string.Join(",", request.ExpectedOrigins)));
+            var alternatives = new List<FilterDefinition<AppSettings>>
+            {
+                Builders<AppSettings>.Filter.Eq(x => x.DataSyncAllowedConsumerOrigins, expected),
+            };
+            // 库里还没有这个字段时，生效名单来自环境变量兜底。这一格只有在提交者看到的
+            // 正是那份兜底值时才算「他看的还是当前状态」——所以这个判断在 C# 里算完，
+            // 再决定要不要把「字段缺失」作为一种可接受的当前状态放进条件里。
+            if (string.Equals(expected, string.Join(",", currentConfig.AllowedOrigins), StringComparison.Ordinal))
+            {
+                alternatives.Add(Builders<AppSettings>.Filter.Or(
+                    Builders<AppSettings>.Filter.Exists(x => x.DataSyncAllowedConsumerOrigins, false),
+                    Builders<AppSettings>.Filter.Eq(x => x.DataSyncAllowedConsumerOrigins, (string?)null)));
+            }
+            filter = Builders<AppSettings>.Filter.And(filter, Builders<AppSettings>.Filter.Or(alternatives));
+        }
+
+        var saved = await _db.AppSettings.UpdateOneAsync(
+            filter,
             Builders<AppSettings>.Update
                 .Set(x => x.DataSyncProviderEnabled, request.Enabled)
                 .Set(x => x.DataSyncAllowedConsumerOrigins, string.Join(",", origins))
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            new UpdateOptions { IsUpsert = true },
+            new UpdateOptions { IsUpsert = request.ExpectedOrigins is null },
             ct);
+
+        if (request.ExpectedOrigins is not null && saved.MatchedCount == 0)
+        {
+            return Conflict(ApiResponse<object>.Fail("DATA_SYNC_SETTINGS_STALE",
+                "这份名单在你编辑期间被别人改过了，已经刷新成最新的那份，请确认后再保存一次"));
+        }
 
         _logger.LogInformation("[data-sync] {Admin} 更新对外同步设置：开关={Enabled}，名单 {Count} 条",
             identity.Value.Username, request.Enabled, origins.Count);
@@ -874,6 +905,13 @@ public sealed class DataSyncProviderSettingsRequest
 {
     public bool Enabled { get; set; }
     public List<string>? Origins { get; set; }
+
+    /// <summary>
+    /// 提交者**看到的那一份**名单。整份覆盖写必须带上它做条件更新，否则两个管理员
+    /// 各自移走一台机器时，后到的那次会把先移走的那台放回来——而票据鉴权每次都读
+    /// 这份活名单，等于一次撤销被悄悄取消。null 表示旧版前端，按不带并发保护处理。
+    /// </summary>
+    public List<string>? ExpectedOrigins { get; set; }
 }
 
 public sealed class DataSyncAuthorizeRequest

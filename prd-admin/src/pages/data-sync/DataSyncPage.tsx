@@ -142,11 +142,23 @@ export default function DataSyncPage() {
           setProvider(value);
           providerRef.current = value;
         },
-        persist: async (value) => {
+        persist: async (value, base) => {
+          // 带上「我看到的那份名单」。串行化只挡住了本页两次连点，挡不住另一个
+          // 管理员同时在改——后到的整份覆盖会把对方刚移走的机器放回来，而票据鉴权
+          // 每次都读这份活名单，等于一次撤销被悄悄取消。服务端按它做条件更新，
+          // 对不上就回 409，这里把最新的那份拉回来让人重看一眼。
           const res = await apiRequest<ProviderSettings>('/api/instance-sync/provider-settings', {
             method: 'PUT',
-            body: { enabled: value.enabled, origins: value.origins },
+            body: { enabled: value.enabled, origins: value.origins, expectedOrigins: base.origins },
           });
+          if (!res.success && res.error?.code === 'DATA_SYNC_SETTINGS_STALE') {
+            const latest = await apiRequest<ProviderSettings>('/api/instance-sync/provider-settings');
+            return {
+              ok: false,
+              confirmed: latest.success ? latest.data ?? undefined : undefined,
+              error: res.error?.message,
+            };
+          }
           return { ok: res.success, confirmed: res.data ?? undefined, error: res.error?.message };
         },
         setBusy: (busy) => {

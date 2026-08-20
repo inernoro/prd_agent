@@ -50,7 +50,11 @@ public sealed record DataSyncCollection(string Name, IReadOnlyList<string> Redac
     /// 少做任何一头都会静默改变目标站的状态。
     /// </summary>
     public IReadOnlyList<string> FieldsCarriedFromTarget =>
-        PreserveFields.Concat(RedactFields).Distinct(System.StringComparer.Ordinal).ToArray();
+        PreserveFields
+            .Concat(RedactFields)
+            .Concat(RedactFields.SelectMany(CompanionFieldsOf))
+            .Distinct(System.StringComparer.Ordinal)
+            .ToArray();
 
     /// <summary>
     /// 判一个脱敏字段该不该从目标站接回来。
@@ -72,6 +76,22 @@ public sealed record DataSyncCollection(string Name, IReadOnlyList<string> Redac
     /// （会被判成「别拿空的顶掉」）。取这个方向是因为两种误判的代价不对等：少清一次
     /// 顶多是目标站留着一个旧凭据，多清一次是把一个正在用的集成静默打哑。
     /// </summary>
+    /// <summary>
+    /// 跟着某个脱敏字段一起接回的「陪嫁字段」。
+    ///
+    /// 目前只有一对：接回目标站原有的 <c>PasswordHash</c> 时，必须连同它的
+    /// <c>MustResetPassword</c> 一起接回。源站在不带凭据同步时会给每个导出用户打上
+    /// 「必须重设密码」——那个标志是对**散列被清空**这件事的说明。可覆盖写这一侧
+    /// 已经把目标站原有的可用散列接回来了，标志却还留着源站那份 true，于是一批
+    /// 密码明明还能用的人下次登录被推进首登重设流程，而他们根本没有需要重设的理由。
+    ///
+    /// 两个字段描述的是同一件事的两面，必须同进同出。
+    /// </summary>
+    public static IReadOnlyList<string> CompanionFieldsOf(string field) =>
+        string.Equals(field, "PasswordHash", System.StringComparison.Ordinal)
+            ? new[] { "MustResetPassword" }
+            : System.Array.Empty<string>();
+
     public static bool ShouldCarryRedactedValue(BsonValue? incoming) =>
         incoming is null
         || incoming.IsBsonNull

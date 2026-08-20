@@ -504,12 +504,16 @@ def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None
     sys.exit(code)
 
 
-def ok(data: Any = None, *, note: str | None = None) -> None:
-    """Unified success exit."""
+def ok(data: Any = None, *, note: str | None = None, code: int = 0) -> None:
+    """Unified success exit.
+
+    code 允许非零：用于「这件事做成了，但有一层没验到」这种既不算失败、也绝不能
+    冒充全绿的结局。机器调用方只看退出状态，所以措辞再准确也代替不了一个非零码。
+    """
     if _SUPPRESS_EMIT:
         global _NESTED_PAYLOAD
         _NESTED_PAYLOAD = {"ok": True, "trace": _TRACE_ID, "note": note, "data": data}
-        sys.exit(0)
+        sys.exit(code)
     if _HUMAN:
         if note:
             print(f"[OK] {note}")
@@ -525,7 +529,7 @@ def ok(data: Any = None, *, note: str | None = None) -> None:
         if data is not None:
             payload["data"] = data
         print(json.dumps(payload, ensure_ascii=False))
-    sys.exit(0)
+    sys.exit(code)
 
 
 # ── Commands ───────────────────────────────────────────────────────
@@ -8033,9 +8037,13 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         if not smoke_gaps and smoke_die:
             die(smoke_die, code=2, extra={"hint": f"cdscli smoke {branch_id}"})
     if smoke_gaps:
+        # 退出码必须非零。上一轮我只改了 note 的措辞就以为把假绿治好了，可机器调用方
+        # 看的是退出状态——ok() 退 0，于是「部署完成但关键一层没验」照样被当成通过。
+        # 这是同一个假绿第四次回潮，前三次分别死在：改注释、改 note、改上层判断，
+        # 每次都绕开了真正被读的那个值。所以这次动的是退出码本身。
         ok({"branch": branch, "branchId": branch_id, "status": final_status,
             "smokeCoverageComplete": False, "smokeGaps": smoke_gaps},
-           note=f"deploy 已完成，但冒烟覆盖不全：{smoke_gaps}")
+           note=f"deploy 已完成，但冒烟覆盖不全：{smoke_gaps}", code=3)
         return
     ok({"branch": branch, "branchId": branch_id, "status": final_status},
        note="deploy 流水线全绿")

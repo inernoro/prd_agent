@@ -257,11 +257,20 @@ public sealed class DataSyncRunWorker : BackgroundService
                 // 这里补的是本站原有的那份。
                 // 必须在接回**之前**取：接回会改写甚至删掉这些字段，之后就问不出
                 // 「源站这条记录原本带没带它」了。
-                var sourceFieldOwners = collection.RedactFields.ToDictionary(
-                    f => f,
-                    f => documents.Where(d => d.Contains(f) && d.Contains("_id"))
-                        .Select(d => d["_id"]).ToHashSet(),
-                    StringComparer.Ordinal);
+                // 两条路径问的是**不同的问题**，所以判据不同，这点值得写下来：
+                //   接回问「送来的值是不是空的」——要防的是拿空值顶掉目标站的东西，
+                //     所以不能依赖源站诚实上报，只看事实。
+                //   待补问「脱敏**有没有真的拿走**什么」——那正是 clearedFields 的定义。
+                //     源站从来没配过的空字段不算被拿走，报进清单等于告诉管理员
+                //     「有个密钥被同步清掉了，去补」，而根本没有那回事。
+                var cleared = page.ClearedFields.ToHashSet(StringComparer.Ordinal);
+                var sourceFieldOwners = collection.RedactFields
+                    .Where(cleared.Contains)
+                    .ToDictionary(
+                        f => f,
+                        f => documents.Where(d => d.Contains(f) && d.Contains("_id"))
+                            .Select(d => d["_id"]).ToHashSet(),
+                        StringComparer.Ordinal);
 
                 DataSyncApply.CarryTargetLocalFields(decision.ToReplace, existing, collection);
 

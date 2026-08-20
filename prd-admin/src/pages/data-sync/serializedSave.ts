@@ -16,8 +16,17 @@ export interface SerializedSaveDeps<T> {
   getLatest: () => T | null;
   /** 落到最新一份 + 界面上（乐观更新，紧接着的下一次改动就基于它算）。 */
   commit: (value: T) => void;
-  /** 真正写服务端。ok=false 时回滚。 */
-  persist: (value: T) => Promise<{ ok: boolean; confirmed?: Partial<T>; error?: string }>;
+  /**
+   * 真正写服务端。ok=false 时回滚。
+   *
+   * 第二个参数是「这次改动是基于哪一份算出来的」——整份覆盖写要带着它做条件更新，
+   * 否则另一个管理员同时在改时，后到的那次会把对方刚移走的条目放回来。
+   * 串行化只管本页连点，管不了跨会话。
+   *
+   * 失败时也可以给 confirmed：服务端说「你手上这份过期了」并回了最新的那份时，
+   * 界面该退到**最新**那份，而不是退回提交者原来看到的旧值。
+   */
+  persist: (value: T, base: T) => Promise<{ ok: boolean; confirmed?: Partial<T>; error?: string }>;
   setBusy: (busy: boolean) => void;
   isBusy: () => boolean;
   onError: (message: string) => void;
@@ -35,13 +44,14 @@ export function createSerializedSaver<T extends object>(deps: SerializedSaveDeps
     deps.setBusy(true);
     deps.commit(next);
 
-    const res = await deps.persist(next);
+    const res = await deps.persist(next, previous);
     deps.setBusy(false);
 
     if (!res.ok) {
       deps.onError(res.error || deps.fallbackErrorMessage);
       // 没存上就退回去，否则界面显示的名单比服务端窄，人以为撤销成功了。
-      deps.commit(previous);
+      // 服务端带回了最新那份（并发冲突）就退到它，退回旧值等于让人对着过期数据再试一次。
+      deps.commit(res.confirmed ? { ...previous, ...res.confirmed } : previous);
       return;
     }
 

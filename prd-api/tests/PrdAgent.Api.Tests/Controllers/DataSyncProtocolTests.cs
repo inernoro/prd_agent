@@ -565,6 +565,105 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 不带凭据同步时，源站给每个导出用户打「必须重设密码」——那是对**散列被清空**
+    /// 这件事的说明。可覆盖写这一侧已经把目标站原有的可用散列接回来了，标志却还留着
+    /// 源站那份 true，于是一批密码明明还能用的人下次登录被推进首登重设流程。
+    /// 两个字段是同一件事的两面，必须同进同出。
+    /// </summary>
+    [Fact]
+    public void 接回目标站散列时必须连重设标志一起接回()
+    {
+        var collection = new DataSyncCollection("users", new[] { "PasswordHash" });
+        var incoming = new BsonDocument
+        {
+            ["_id"] = "u1",
+            ["PasswordHash"] = BsonNull.Value,
+            ["MustResetPassword"] = true,
+        };
+        var localExisting = new BsonDocument
+        {
+            ["_id"] = "u1",
+            ["PasswordHash"] = "target-working",
+            ["MustResetPassword"] = false,
+        };
+
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
+
+        incoming["PasswordHash"].AsString.ShouldBe("target-working");
+        incoming["MustResetPassword"].AsBoolean.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// 反过来：散列没被接回（源站带凭据搬过来了），重设标志也不该被目标站的旧值改写。
+    /// </summary>
+    [Fact]
+    public void 源站散列落地时重设标志跟着源站()
+    {
+        var collection = new DataSyncCollection("users", new[] { "PasswordHash" });
+        var incoming = new BsonDocument
+        {
+            ["_id"] = "u1",
+            ["PasswordHash"] = "from-source",
+            ["MustResetPassword"] = false,
+        };
+        var localExisting = new BsonDocument
+        {
+            ["_id"] = "u1",
+            ["PasswordHash"] = "target-old",
+            ["MustResetPassword"] = true,
+        };
+
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
+
+        incoming["PasswordHash"].AsString.ShouldBe("from-source");
+        incoming["MustResetPassword"].AsBoolean.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// 投影必须把陪嫁字段也查回来。少投影一个，接回时会把目标站那份当成「不存在」
+    /// 而删掉——形状 3 的老问题换个位置再来一次。
+    /// </summary>
+    [Fact]
+    public void 陪嫁字段也在投影超集里()
+    {
+        var collection = new DataSyncCollection("users", new[] { "PasswordHash" });
+        collection.FieldsCarriedFromTarget.ShouldContain("MustResetPassword");
+    }
+
+    /// <summary>
+    /// 整份覆盖写必须带条件更新。串行化只挡住本页两次连点，挡不住两个管理员同时改：
+    /// 后到的那次会把先移走的机器放回来，而票据鉴权每次都读这份活名单。
+    /// </summary>
+    [Fact]
+    public void 名单整份覆盖写必须做条件更新()
+    {
+        var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var update = body[body.IndexOf("public async Task<IActionResult> UpdateProviderSettings", StringComparison.Ordinal)..];
+        update = update[..update.IndexOf("\n    /// <summary>", StringComparison.Ordinal)];
+
+        update.ShouldContain("ExpectedOrigins");
+        update.ShouldContain("MatchedCount == 0");
+        update.ShouldContain("DATA_SYNC_SETTINGS_STALE");
+        // upsert 只在没有并发保护时才允许：带条件时 upsert 会绕过条件直接插一条新的。
+        update.ShouldContain("IsUpsert = request.ExpectedOrigins is null");
+    }
+
+    /// <summary>
+    /// 待补清单问的是「脱敏**有没有真的拿走**什么」，那正是 clearedFields 的定义。
+    /// 源站从来没配过的空字段不算被拿走——报进清单等于告诉管理员「有个密钥被同步
+    /// 清掉了，去补」，而根本没有那回事。
+    /// （接回那条路径判据不同：它问「送来的值是不是空的」，不能依赖源站上报。）
+    /// </summary>
+    [Fact]
+    public void 待补清单只认源站真的清空过的字段()
+    {
+        var worker = ReadWorkerSource();
+        var owners = worker[worker.IndexOf("var sourceFieldOwners", StringComparison.Ordinal)..];
+        owners = owners[..owners.IndexOf("DataSyncApply.CarryTargetLocalFields", StringComparison.Ordinal)];
+        owners.ShouldContain("cleared.Contains");
+    }
+
+    /// <summary>
     /// 目标站策略不看源站脸色：PreserveFields 里的字段无论源站报没报清空、
     /// 甚至源站硬送一个值，都以目标站那份为准。口令登录开关是 fail-open，
     /// 顶掉即「放开」，这类事不能取决于源站说了什么。

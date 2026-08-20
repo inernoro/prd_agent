@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import type { SerializedSaveDeps } from '../serializedSave';
 import { createSerializedSaver } from '../serializedSave';
 
 type Settings = { enabled: boolean; origins: string[]; siteLabel: string };
@@ -101,6 +102,59 @@ describe('对外同步名单的连续改动串行化', () => {
  * 或者让 ProviderCard 重新算好整份名单再传进来。这两种改法删掉之后上面四条仍然全绿，
  * 所以必须由源码扫描钉住。
  */
+describe('并发保护：提交要带上「我看到的那份」', () => {
+  function harness(persist: SerializedSaveDeps<{ origins: string[] }>['persist']) {
+    let current: { origins: string[] } | null = { origins: ['a', 'b'] };
+    let busy = false;
+    const errors: string[] = [];
+    const save = createSerializedSaver<{ origins: string[] }>({
+      getLatest: () => current,
+      commit: (v) => { current = v; },
+      persist,
+      setBusy: (b) => { busy = b; },
+      isBusy: () => busy,
+      onError: (m) => errors.push(m),
+      fallbackErrorMessage: 'boom',
+    });
+    return { save, read: () => current, errors };
+  }
+
+  it('persist 拿得到改动之前的那一份', async () => {
+    let seen: { origins: string[] } | null = null;
+    const h = harness(async (_next, base) => {
+      seen = base;
+      return { ok: true };
+    });
+
+    await h.save((prev) => ({ origins: prev.origins.filter((o) => o !== 'a') }));
+
+    // 服务端要拿这一份做条件更新；传成 next 就等于拿自己刚算出来的值跟库里比，永远相等。
+    expect(seen).toEqual({ origins: ['a', 'b'] });
+  });
+
+  it('服务端说过期并回了最新那份时，退到最新而不是退回旧值', async () => {
+    const h = harness(async () => ({
+      ok: false,
+      confirmed: { origins: ['b', 'c'] },
+      error: '这份名单在你编辑期间被别人改过了',
+    }));
+
+    await h.save((prev) => ({ origins: prev.origins.filter((o) => o !== 'a') }));
+
+    // 退回提交者原来看到的那份，等于让他对着过期数据再试一次、再冲突一次。
+    expect(h.read()).toEqual({ origins: ['b', 'c'] });
+    expect(h.errors).toHaveLength(1);
+  });
+
+  it('普通失败仍然退回改动之前那一份', async () => {
+    const h = harness(async () => ({ ok: false, error: '网络炸了' }));
+
+    await h.save((prev) => ({ origins: prev.origins.filter((o) => o !== 'a') }));
+
+    expect(h.read()).toEqual({ origins: ['a', 'b'] });
+  });
+});
+
 describe('串行化在 DataSyncPage 上真的接上了', () => {
   const source = readFileSync(new URL('../DataSyncPage.tsx', import.meta.url), 'utf8');
 
