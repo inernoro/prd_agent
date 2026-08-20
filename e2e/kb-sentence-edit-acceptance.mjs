@@ -1,6 +1,13 @@
 /**
- * 知识库「逐句修改」真视觉验收：真人路径走一遍，产物必须真的出现在截图里。
+ * 知识库「逐句修改」全链路真视觉验收：登录 → 点导航进知识库 → 划词 → 说想怎么改 →
+ * 等正文里真的长出改动 → 采纳 → 校验落库，全程截图。
  * 用一份自建的临时文档做实验（共享 Mongo，跑完删掉），不碰任何真实资料。
+ *
+ * 需要一个能登录目标部署的账号：
+ *   E2E_BASE_URL=<预览域名或本地 relay> MAP_USER=<用户名> MAP_PASSWORD=<密码> \
+ *   OUT_DIR=/tmp/kb-acceptance node kb-sentence-edit-acceptance.mjs
+ *
+ * 沙箱里浏览器打不通外网时先起 sandbox-net 的隧道 + relay，把 E2E_BASE_URL 指向 relay。
  */
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
