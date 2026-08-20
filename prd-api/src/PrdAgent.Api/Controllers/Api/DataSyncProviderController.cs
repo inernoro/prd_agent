@@ -39,7 +39,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// - 导出范围只能从 <see cref="DataSyncScope"/> 白名单里取，敏感字段在**出口**清空
 /// </summary>
 [ApiController]
-[Route("api/data-sync")]
+[Route("api/instance-sync")]
 public sealed class DataSyncProviderController : ControllerBase
 {
     /// <summary>授权码活得极短：它只需要撑过一次浏览器回跳。</summary>

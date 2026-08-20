@@ -29,7 +29,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 看清「要往哪个库写、要写多少条、本地现在有多少」的机会。
 /// </summary>
 [ApiController]
-[Route("api/data-sync")]
+[Route("api/instance-sync")]
 [Authorize]
 public sealed class DataSyncConsumerController : ControllerBase
 {
@@ -72,7 +72,7 @@ public sealed class DataSyncConsumerController : ControllerBase
         _vault.StashVerifier(state, verifier, DateTime.UtcNow.AddMinutes(15));
 
         var callback = $"{SelfOrigin()}/data-sync/callback";
-        var authorizeUrl = QueryHelpers.AddQueryString($"{origin}/api/data-sync/authorize", new Dictionary<string, string?>
+        var authorizeUrl = QueryHelpers.AddQueryString($"{origin}/api/instance-sync/authorize", new Dictionary<string, string?>
         {
             ["redirect_uri"] = callback,
             ["state"] = state,
@@ -107,7 +107,7 @@ public sealed class DataSyncConsumerController : ControllerBase
 
         var client = _httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(30);
-        using var response = await client.PostAsJsonAsync($"{origin}/api/data-sync/token", new
+        using var response = await client.PostAsJsonAsync($"{origin}/api/instance-sync/token", new
         {
             code = request.Code,
             redirectUri = $"{SelfOrigin()}/data-sync/callback",
@@ -167,7 +167,7 @@ public sealed class DataSyncConsumerController : ControllerBase
         var client = _httpClientFactory.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(60);
         client.DefaultRequestHeaders.Add("X-Data-Sync-Token", token);
-        using var response = await client.GetAsync($"{run.SourceOrigin}/api/data-sync/manifest", ct);
+        using var response = await client.GetAsync($"{run.SourceOrigin}/api/instance-sync/manifest", ct);
         if (!response.IsSuccessStatusCode)
         {
             return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_MANIFEST_FAILED",

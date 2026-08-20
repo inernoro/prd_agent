@@ -44,7 +44,7 @@ export default function DataSyncCallbackPage() {
       return;
     }
 
-    void apiRequest<{ runId: string }>('/api/data-sync/runs/callback', {
+    void apiRequest<{ runId: string }>('/api/instance-sync/runs/callback', {
       method: 'POST',
       body: { sourceOrigin: pending.sourceOrigin, code, state },
     }).then((res) => {

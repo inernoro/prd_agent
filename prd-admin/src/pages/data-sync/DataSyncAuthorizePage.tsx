@@ -54,7 +54,7 @@ export default function DataSyncAuthorizePage() {
 
   useEffect(() => {
     let alive = true;
-    void apiRequest<ScopeCatalog>('/api/data-sync/scope-catalog').then((res) => {
+    void apiRequest<ScopeCatalog>('/api/instance-sync/scope-catalog').then((res) => {
       if (!alive) return;
       if (!res.success || !res.data) {
         setError(res.error?.message || '读取可授权范围失败');
@@ -88,7 +88,7 @@ export default function DataSyncAuthorizePage() {
   async function approve() {
     setSubmitting(true);
     setError('');
-    const res = await apiRequest<{ redirectUrl: string }>('/api/data-sync/authorize', {
+    const res = await apiRequest<{ redirectUrl: string }>('/api/instance-sync/authorize', {
       method: 'POST',
       body: {
         redirectUri: params.redirectUri,

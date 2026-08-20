@@ -190,4 +190,34 @@ public class DataSyncScopeCoverageTests
         }
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src"));
     }
+
+    [Fact]
+    public void 同步端点的路由前缀不能被任何管理后台前缀吃掉()
+    {
+        // AdminPermissionMiddleware 用的是**裸前缀匹配**（path.StartsWith(prefix)，没有分段边界）。
+        // 于是 `api/data-sync/...` 会命中 `[AdminController("data")]` 的 `api/data`，
+        // 连 [AllowAnonymous] 的换票、导出端点都被判成「管理后台未登录访问」返回 401——
+        // 这一条在真实部署上发生过，本地单测看不出来，只有打真站才会暴露。
+        // 所以这里钉死：同步用的前缀不许是任何被标记前缀的延长。
+        var marked = ReadAdminControllerPrefixes();
+        Assert.True(marked.Count > 50, $"只解析出 {marked.Count} 个 AdminController 前缀，正则多半失效了");
+
+        const string ours = "api/instance-sync";
+        var swallowedBy = marked.Where(p => ours.StartsWith(p, StringComparison.Ordinal) && ours != p).ToList();
+        Assert.True(swallowedBy.Count == 0,
+            $"{ours} 会被这些管理后台前缀吃掉，匿名端点将返回 401：{string.Join(", ", swallowedBy)}");
+    }
+
+    private static IReadOnlyList<string> ReadAdminControllerPrefixes()
+    {
+        var prefixes = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(LocateSrcRoot(), "*.cs", SearchOption.AllDirectories))
+        {
+            var source = File.ReadAllText(file);
+            if (!source.Contains("[AdminController(", StringComparison.Ordinal)) continue;
+            var route = Regex.Match(source, @"\[Route\(""(api/[^""]+)""\)\]");
+            if (route.Success) prefixes.Add(route.Groups[1].Value);
+        }
+        return prefixes;
+    }
 }

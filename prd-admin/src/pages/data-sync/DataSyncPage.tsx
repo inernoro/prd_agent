@@ -66,7 +66,7 @@ export default function DataSyncPage() {
   }, []);
 
   const sse = useSseStream({
-    url: runId ? `/api/data-sync/runs/${encodeURIComponent(runId)}/stream` : '',
+    url: runId ? `/api/instance-sync/runs/${encodeURIComponent(runId)}/stream` : '',
     onEvent: { progress: applyRun, done: applyRun },
     onError: (message) => setError(message),
   });
@@ -76,7 +76,7 @@ export default function DataSyncPage() {
   useEffect(() => {
     if (!runId) return;
     let alive = true;
-    void apiRequest<RunView>(`/api/data-sync/runs/${encodeURIComponent(runId)}`).then((res) => {
+    void apiRequest<RunView>(`/api/instance-sync/runs/${encodeURIComponent(runId)}`).then((res) => {
       if (!alive) return;
       if (res.success && res.data) setRun(res.data);
       else setError(res.error?.message || '读取同步记录失败');
@@ -90,7 +90,7 @@ export default function DataSyncPage() {
   useEffect(() => {
     if (!runId || !run || run.status !== 'pending' || plan) return;
     let alive = true;
-    void apiRequest<Plan>(`/api/data-sync/runs/${encodeURIComponent(runId)}/plan`).then((res) => {
+    void apiRequest<Plan>(`/api/instance-sync/runs/${encodeURIComponent(runId)}/plan`).then((res) => {
       if (!alive) return;
       if (res.success && res.data) setPlan(res.data);
       else setError(res.error?.message || '读取同步对照表失败');
@@ -126,7 +126,7 @@ export default function DataSyncPage() {
     setPreparing(true);
     setError('');
     const res = await apiRequest<{ authorizeUrl: string; state: string; sourceOrigin: string }>(
-      '/api/data-sync/runs/prepare',
+      '/api/instance-sync/runs/prepare',
       { method: 'POST', body: { sourceOrigin } },
     );
     setPreparing(false);
@@ -145,7 +145,7 @@ export default function DataSyncPage() {
     setBusy(true);
     setError('');
     const res = await apiRequest<{ runId: string }>(
-      `/api/data-sync/runs/${encodeURIComponent(runId)}/start`,
+      `/api/instance-sync/runs/${encodeURIComponent(runId)}/start`,
       { method: 'POST', body: { dryRun, overwrite } },
     );
     setBusy(false);

@@ -137,7 +137,7 @@ public sealed class DataSyncRunWorker : BackgroundService
 
         while (!ct.IsCancellationRequested)
         {
-            var url = $"{run.SourceOrigin}/api/data-sync/export?collection={Uri.EscapeDataString(collection.Name)}&limit={PageSize}";
+            var url = $"{run.SourceOrigin}/api/instance-sync/export?collection={Uri.EscapeDataString(collection.Name)}&limit={PageSize}";
             if (!string.IsNullOrEmpty(progress.Cursor)) url += $"&after={Uri.EscapeDataString(progress.Cursor)}";
 
             using var response = await client.GetAsync(url, ct);
