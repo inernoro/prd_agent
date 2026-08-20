@@ -132,8 +132,6 @@ public class DataSyncScopeCoverageTests
             ["groups.PrdTokenEstimateSnapshot"] = "token 计数快照",
             ["pr_review_items.LastRefreshError"] = "错误文案，命中的是 refresh 这个词",
             ["pr_review_items.LastRefreshedAt"] = "时间戳，命中的是 refresh 这个词",
-            ["workflows.IsSecret"] = "布尔开关，不是密钥本身",
-            ["workflows.WebhookId"] = "标识而非凭据；对应的密钥在 workflow_secrets，那个集合整个不导出",
             ["user_shortcuts.TokenPrefix"] = "只是前缀，用于界面辨认；真正的散列 TokenHash 已登记脱敏",
             ["document_store_sync_links.LastLocalSignature"] = "内容指纹，用于判断两侧变没变，拿着它换不到任何权限",
             ["document_store_sync_links.LastRemoteSignature"] = "同上，内容指纹",
@@ -157,29 +155,111 @@ public class DataSyncScopeCoverageTests
         Assert.True(propsByType.Count > 100, $"只解析出 {propsByType.Count} 个实体的属性，正则多半失效了");
 
         var unexplained = new List<string>();
+        var used = new HashSet<string>(StringComparer.Ordinal);
         var coveredAny = false;
+        var nestedCovered = false;
         foreach (var collection in DataSyncScope.AllExportableCollections.OrderBy(x => x, StringComparer.Ordinal))
         {
             if (!collectionToType.TryGetValue(collection, out var typeName)) continue;
             if (!propsByType.TryGetValue(typeName, out var properties)) continue;
             coveredAny = true;
             DataSyncScope.TryResolve(collection, out var resolved);
-            foreach (var property in properties.OrderBy(x => x, StringComparer.Ordinal))
+
+            void Check(string key, string leafName)
             {
-                if (!suspect.IsMatch(property) || countingSuffix.IsMatch(property)) continue;
-                if (resolved is not null && resolved.RedactFields.Contains(property, StringComparer.Ordinal)) continue;
-                var key = $"{collection}.{property}";
-                if (reviewedNonCredentials.ContainsKey(key)) continue;
+                if (!suspect.IsMatch(leafName) || countingSuffix.IsMatch(leafName)) return;
+                // 脱敏只认顶层字段名，所以只有不带 '.' 的 key 才可能被 RedactFields 覆盖。
+                var top = key[(collection.Length + 1)..];
+                if (!top.Contains('.', StringComparison.Ordinal)
+                    && resolved is not null
+                    && resolved.RedactFields.Contains(top, StringComparer.Ordinal)) return;
+                if (reviewedNonCredentials.ContainsKey(key)) { used.Add(key); return; }
                 unexplained.Add(key);
+            }
+
+            foreach (var property in properties.Keys.OrderBy(x => x, StringComparer.Ordinal))
+            {
+                Check($"{collection}.{property}", property);
+
+                // 再往下一层。凭据不总在顶层：workflow 的密钥藏在 Variables[].DefaultValue，
+                // 顶层扫描一无所获，于是 workflows 带着密钥被原样导出（Codex 三次指出同一形状）。
+                // 深度只走一层——够覆盖本仓库现有的嵌套形态，再深就该换成模型上的显式标注了。
+                var nestedType = StripToModelTypeName(properties[property]);
+                if (nestedType is null || !propsByType.TryGetValue(nestedType, out var nestedProps)) continue;
+                if (string.Equals(nestedType, typeName, StringComparison.Ordinal)) continue; // 自引用，别绕圈
+                nestedCovered = true;
+                foreach (var nested in nestedProps.Keys.OrderBy(x => x, StringComparer.Ordinal))
+                {
+                    Check($"{collection}.{property}.{nested}", nested);
+                }
             }
         }
 
         // 一个都没扫到时上面每条断言都天然成立——先把「确实扫到了东西」本身断言掉。
         Assert.True(coveredAny, "一个可导出集合的实体属性都没解析到，这条守卫在空跑");
+        Assert.True(nestedCovered, "一层嵌套都没走到，嵌套扫描在空跑（多半是类型名解析失效）");
         Assert.True(unexplained.Count == 0,
             "下列字段名长得像凭据，却既没登记脱敏、也没写进「看过了，不是凭据」名单：\n  "
             + string.Join("\n  ", unexplained)
-            + "\n（是凭据 -> 加进 DataSyncScope 的 RedactFields；不是 -> 加进本用例的 reviewedNonCredentials 并写明理由）");
+            + "\n（是凭据 -> 加进 DataSyncScope 的 RedactFields，嵌套字段脱敏器覆盖不到、只能整个集合排除；"
+            + "不是 -> 加进本用例的 reviewedNonCredentials 并写明理由）");
+
+        // 豁免名单会随集合被移出白名单而变成死条目，留着会让人以为某个字段「看过了」，
+        // 实际它早就不在扫描范围里。死条目一律清掉。
+        var stale = reviewedNonCredentials.Keys.Where(k => !used.Contains(k)).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        Assert.True(stale.Count == 0,
+            "reviewedNonCredentials 里下列条目已经扫不到了（集合被移出白名单，或字段被改名），请删除：\n  "
+            + string.Join("\n  ", stale));
+    }
+
+    [Fact]
+    public void 登记的脱敏字段必须在实体顶层真实存在()
+    {
+        // 上一条守卫只会追问「像凭据的字段有没有被交代」，交代的方式之一是登记脱敏——
+        // 但它从不检查登记的那个名字**是否真的存在**。于是 automation_rules 登记了
+        // WebhookUrl / WebhookSecret，看着已经处理过，实际那两个字段在 Actions[] 里，
+        // 顶层根本没有，脱敏是一次空转（predicate-and-wiring-discipline 形状 8：
+        // 拿一份不成立的声明当成证据）。这条把「登记了」和「登记到了实处」分开。
+        var collectionToType = ReadCollectionTypeMap();
+        var propsByType = ReadModelProperties();
+
+        var phantom = new List<string>();
+        var checkedAny = false;
+        foreach (var collection in DataSyncScope.AllExportableCollections.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            if (!DataSyncScope.TryResolve(collection, out var resolved) || resolved is null) continue;
+            if (resolved.RedactFields.Count == 0) continue;
+            if (!collectionToType.TryGetValue(collection, out var typeName)) continue;
+            if (!propsByType.TryGetValue(typeName, out var properties)) continue;
+            checkedAny = true;
+            foreach (var field in resolved.RedactFields)
+            {
+                if (!properties.ContainsKey(field)) phantom.Add($"{collection}.{field}（实体 {typeName}）");
+            }
+        }
+
+        Assert.True(checkedAny, "一个带脱敏字段的集合都没解析到，这条守卫在空跑");
+        Assert.True(phantom.Count == 0,
+            "下列脱敏字段在对应实体的顶层不存在，脱敏是空转：\n  "
+            + string.Join("\n  ", phantom)
+            + "\n（字段改名了 -> 改这里的登记；字段本来就在嵌套结构里 -> 脱敏器覆盖不到，整个集合排除）");
+    }
+
+    /// <summary>
+    /// 从声明类型里剥出可能的模型类型名：`List&lt;WorkflowVariable&gt;` -> WorkflowVariable，
+    /// `WorkflowSettings?` -> WorkflowSettings。剥不出（是 string/int/Dictionary 之类）就返回 null。
+    /// </summary>
+    private static string? StripToModelTypeName(string declaredType)
+    {
+        var t = declaredType.Trim().TrimEnd('?');
+        var generic = Regex.Match(t, @"^(?:List|IList|IReadOnlyList|ICollection|IEnumerable|HashSet)<(.+)>$");
+        if (generic.Success) t = generic.Groups[1].Value.Trim().TrimEnd('?');
+        // Dictionary 的值类型也可能是模型，但键值两段要分开取，这里只取值那一段。
+        var dict = Regex.Match(t, @"^(?:Dictionary|IDictionary)<[^,]+,\s*(.+)>$");
+        if (dict.Success) t = dict.Groups[1].Value.Trim().TrimEnd('?');
+        if (t.Contains('<', StringComparison.Ordinal)) return null;
+        t = t.Split('.').Last();
+        return Regex.IsMatch(t, @"^[A-Z][A-Za-z0-9_]*$") ? t : null;
     }
 
     /// <summary>集合名 -> 实体类型名，解析自 MongoDbContext 的 GetCollection 调用。</summary>
@@ -195,11 +275,11 @@ public class DataSyncScopeCoverageTests
         return map;
     }
 
-    /// <summary>实体类型名 -> 公开属性名。</summary>
-    private static IReadOnlyDictionary<string, HashSet<string>> ReadModelProperties()
+    /// <summary>实体类型名 -> （公开属性名 -> 声明类型）。声明类型用来往下走一层嵌套。</summary>
+    private static IReadOnlyDictionary<string, Dictionary<string, string>> ReadModelProperties()
     {
         var root = Path.Combine(LocateSrcRoot(), "PrdAgent.Core", "Models");
-        var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var result = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
         {
             var source = File.ReadAllText(file);
@@ -211,10 +291,10 @@ public class DataSyncScopeCoverageTests
                 var body = next.Success ? source[start..(start + next.Index)] : source[start..];
                 var bucket = result.TryGetValue(decl.Groups[1].Value, out var existing)
                     ? existing
-                    : result[decl.Groups[1].Value] = new HashSet<string>(StringComparer.Ordinal);
-                foreach (Match prop in Regex.Matches(body, @"public\s+[A-Za-z0-9_<>?\[\],\s]+?\s+([A-Za-z0-9_]+)\s*\{\s*get;"))
+                    : result[decl.Groups[1].Value] = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (Match prop in Regex.Matches(body, @"public\s+([A-Za-z0-9_<>?\[\],\s]+?)\s+([A-Za-z0-9_]+)\s*\{\s*get;"))
                 {
-                    bucket.Add(prop.Groups[1].Value);
+                    bucket[prop.Groups[2].Value] = prop.Groups[1].Value.Trim();
                 }
             }
         }

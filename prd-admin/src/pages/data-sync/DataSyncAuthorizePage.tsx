@@ -253,7 +253,17 @@ export default function DataSyncAuthorizePage() {
                         <span className="truncate font-mono" style={{ color: 'var(--text-secondary)' }}>{c.name}</span>
                         <span className="shrink-0" style={{ color: 'var(--text-muted)' }}>
                           {formatCount(c.estimatedCount)} 条
-                          {c.redactFields.length > 0 ? ` · ${c.redactFields.join(' / ')} 不会带走` : ''}
+                          {(() => {
+                            // 勾了「连登录口令一起给」时，users.PasswordHash 是**会**走的。
+                            // 这一行是管理员按下同意前唯一能看到逐字段承诺的地方，
+                            // 它和实际行为不一致，等于让人在错误信息下做授权决定。
+                            const leaving = includeCredentials && c.name === 'users';
+                            const stays = c.redactFields.filter((f) => !(leaving && f === 'PasswordHash'));
+                            const parts: string[] = [];
+                            if (stays.length > 0) parts.push(`${stays.join(' / ')} 不会带走`);
+                            if (leaving && c.redactFields.includes('PasswordHash')) parts.push('PasswordHash 会带走');
+                            return parts.length > 0 ? ` · ${parts.join('，')}` : '';
+                          })()}
                         </span>
                       </div>
                     ))}
@@ -329,7 +339,9 @@ export default function DataSyncAuthorizePage() {
         <footer className="mt-6 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
             本次将允许对方读取 {totals.collections} 个集合、约 {formatCount(totals.documents)} 条记录。
-            密钥、口令与访问令牌一律留在本站。
+            {includeCredentials
+              ? '各类密钥与访问令牌留在本站；用户的登录口令散列会跟着走——对方将能用这里的账号密码登录。'
+              : '密钥、口令与访问令牌一律留在本站。'}
           </p>
           <button
             type="button"

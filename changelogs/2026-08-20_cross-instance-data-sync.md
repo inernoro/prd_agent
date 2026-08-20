@@ -43,3 +43,8 @@
 | fix | prd-api | 执行范围以确认时的清单为准：Run 落 PlannedCollections，开始时清单为空直接回 DATA_SYNC_PLAN_REQUIRED，worker 只跑这份清单 |
 | fix | prd-api | 出口脱敏按原类型清：字符串清成空串、其余清成 null；此前一律写空串会把 bool? 与数组字段变成字符串，目标站反序列化直接炸 |
 | fix | prd-api | 强制重置管理员时先按用户名找目标：目标用户名已被另一个账号占着时重置它、而不是把手上这个管理员改名撞过去；捞到的若不是管理员则一并对齐角色 |
+| security | prd-api | workflows / workflow_schedules / automation_rules 三个集合改为不导出：它们的凭据藏在嵌套结构里（Variables[].DefaultValue 带 IsSecret、VariableOverrides、Actions[].WebhookSecret），而出口脱敏只认顶层字段名，登记了也是空转 |
+| test | prd-api | 凭据守卫扫描扩到一层嵌套：集合实体的属性若是另一个模型类型，逐个字段一起追问；同时禁止豁免名单留死条目 |
+| test | prd-api | 新增守卫：登记的脱敏字段必须在实体顶层真实存在。当场查出 automation_rules 与 hosted_sites 两处空转的脱敏登记 |
+| fix | prd-api | 批量插入只在「没有写关注错误且全部是重复键」时才按跳过咽下：写关注失败不带任何 WriteError，原判据在 0 == 0 上恒真，一次持久性未知的写入会被计成成功 |
+| fix | prd-admin | 同意页的承诺文案随「连登录口令一起给」联动：勾上时逐字段行显示「PasswordHash 会带走」、页脚明说对方将能用这里的账号密码登录，不再一边导出口令散列一边写「口令一律留在本站」 |

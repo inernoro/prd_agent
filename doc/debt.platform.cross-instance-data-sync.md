@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 10 / in-progress: 0 / paid: 5 / 总计: 15
+当前 open: 11 / in-progress: 0 / paid: 5 / 总计: 16
 
 ## 债务列表
 
@@ -32,6 +32,7 @@
 | DS12 | 低 | 2026-08-20 | 存量：`/learning-center`、`/infra-services`、`/admin-web-pages` 登记为 infra 但不在「全部能力」的基础设施分组里 | 想从「全部能力」页进这三个页面 | open | 与本功能无关的存量漂移，由 DS11 的棘轮固定在 5 条（另两条 `/document-store/universe`、`/document-store/:storeId/universe` 是子路由，本就不该独立成入口）。走到哪个页面补哪个 |
 | DS13 | 低 | 2026-08-20 | 当场准入只能「加」，不能在界面上把某个来源从允许名单里移除 | 想撤销对某台机器的信任 | **已解决**（2026-08-20） | 落地过程中立刻自食其果：真机验证当场准入时写进一条测试来源，发现产品里没有任何路径能把它拿掉。补了 `GET/PUT /api/instance-sync/provider-settings` 与同步页上的「本站对外同步」卡片（开关 + 名单，逐条可移除）。剩余边界：名单不记「谁在什么时候加的」，要追溯只能翻服务端日志 |
 | DS14 | 低 | 2026-08-20 | 交还导出令牌失败时只留日志，不重试 | 终态那一刻源站正好不可达 | open | 票据有两小时硬过期兜底，所以最坏是「本该立刻作废的票多活一会儿」。要根治得让源站侧也能按 Run 主动收口，或加一个轻量重试队列 |
+| DS16 | 中 | 2026-08-20 | 出口脱敏只认**顶层字段名**，凭据藏在嵌套结构里的集合只能整个排除，搬不过去 | 想同步工作流、定时任务、自动化规则 | open | `workflows`（`Variables[].DefaultValue` 上带 `IsSecret`）、`workflow_schedules`（`VariableOverrides`，哪些键是密钥要回查所属 workflow）、`automation_rules`（`Actions[].WebhookSecret`）三个集合因此不导出。要搬得先让脱敏器认识嵌套路径，或者更彻底——把「这个字段是凭据」标注到模型上（一个 `[Sensitive]` 特性），让脱敏与守卫都从标注派生，而不是各自维护一份会漂移的名单 |
 | DS15 | 中 | 2026-08-20 | `MAP_ADMIN_FORCE_RESET` 重置管理员口令时，不会注销该账号已经发出去的登录态 | 用这个开关抢回一个疑似泄露的管理员账号 | open | 抬 tokenVersion 需要 `IAuthSessionService`，而它在 Api 层、不在 Infrastructure 的依赖面上；`DatabaseInitializer` 够不着。当前的补救路径是：用新口令登录后，在「账户设置 → 登录密码」再自助改一次密——那条路径会抬两端 tokenVersion 并清 refresh 会话。真要根治，得把会话作废抽成一个 Core 层接口 |
 
 ## 与其他台账的关系

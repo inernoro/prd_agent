@@ -45,7 +45,6 @@ public static class DataSyncScope
             new DataSyncCollection("appsettings", new[] { "MiduoSsoAppSecret", "ConsoleSsoClientSecret", "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "ConsoleSsoAllowedRedirectOrigins", "MiduoSsoRedirectUri" }),
             new DataSyncCollection("arena_groups", System.Array.Empty<string>()),
             new DataSyncCollection("arena_slots", System.Array.Empty<string>()),
-            new DataSyncCollection("automation_rules", new[] { "WebhookUrl", "WebhookSecret" }),
             new DataSyncCollection("image_gen_size_caps", System.Array.Empty<string>()),
             new DataSyncCollection("llm_app_callers", System.Array.Empty<string>()),
             new DataSyncCollection("llmconfigs", new[] { "ApiKeyEncrypted" }),
@@ -173,7 +172,9 @@ public static class DataSyncScope
         new DataSyncGroup("hosting", "网页托管", new[]
         {
             new DataSyncCollection("hosted_site_comments", new[] { "ShareToken" }),
-            new DataSyncCollection("hosted_sites", new[] { "Token" }),
+            // HostedSite 上没有任何令牌字段——分享令牌在 web_page_share_links，那个集合整个不导出。
+            // 这里原本登记了一个并不存在的 "Token"，是一次空转的脱敏，由「登记的脱敏字段必须真实存在」查出。
+            new DataSyncCollection("hosted_sites", System.Array.Empty<string>()),
             new DataSyncCollection("project_route_plans", System.Array.Empty<string>()),
             new DataSyncCollection("project_route_site_specs", System.Array.Empty<string>()),
             new DataSyncCollection("web_folders", System.Array.Empty<string>()),
@@ -218,8 +219,6 @@ public static class DataSyncScope
             new DataSyncCollection("task_trees", System.Array.Empty<string>()),
             new DataSyncCollection("todo_items", System.Array.Empty<string>()),
             new DataSyncCollection("toolbox_items", System.Array.Empty<string>()),
-            new DataSyncCollection("workflow_schedules", new[] { "Token", "Password" }),
-            new DataSyncCollection("workflows", System.Array.Empty<string>()),
             new DataSyncCollection("workspaces", System.Array.Empty<string>()),
         }),
     };
@@ -341,6 +340,9 @@ public static class DataSyncScope
         ["workflow_chat_messages"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["workflow_executions"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["workflow_secrets"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
+        ["automation_rules"] = "凭据藏在嵌套结构里：webhook 地址与签名密钥在 Actions[] 每个动作上，不在顶层。同 workflows，整个集合不导出",
+        ["workflows"] = "凭据藏在嵌套结构里：变量表 Variables[] 里 IsSecret=true 的那些，值就在 DefaultValue 上；触发器还带一份 VariableOverrides。本功能的脱敏只认顶层字段名，认不到它们，所以整个集合不导出",
+        ["workflow_schedules"] = "凭据藏在嵌套结构里：VariableOverrides 是运行时变量覆盖，哪些键是密钥要回查所属 workflow 的变量表才知道。同上，整个集合不导出",
     };
 
     private static readonly Dictionary<string, DataSyncCollection> ByNameIndex =

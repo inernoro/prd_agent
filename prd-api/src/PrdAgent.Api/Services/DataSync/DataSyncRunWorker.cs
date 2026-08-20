@@ -207,8 +207,12 @@ public sealed class DataSyncRunWorker : BackgroundService
                         }
                         catch (MongoBulkWriteException<BsonDocument> ex)
                         {
+                            // 写关注失败（副本集确认超时之类）不带任何 WriteError，于是
+                            // 「全部错误都是重复键」这句在 0 == 0 上恒真——一次持久性未知
+                            // 的写入会被当成「几条撞索引」咽下去。必须先把它挡在外面。
+                            if (ex.WriteConcernError is not null) throw;
                             var conflicts = ex.WriteErrors.Count(e => e.Category == ServerErrorCategory.DuplicateKey);
-                            if (conflicts != ex.WriteErrors.Count) throw;
+                            if (conflicts == 0 || conflicts != ex.WriteErrors.Count) throw;
                             progress.Skipped += conflicts;
                             _logger.LogWarning(
                                 "[data-sync] {Collection} 有 {Count} 条撞唯一索引，已跳过；其余 {Written} 条已写入",
