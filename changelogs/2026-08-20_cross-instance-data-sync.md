@@ -125,3 +125,8 @@
 | security | prd-admin | 授权码不再随 returnUrl 进 query：上一处修复为了不丢 fragment，把它整个拼进 `?returnUrl=`——而授权码之所以走 fragment，正是因为 fragment 不发给服务器、不进 access log、不随 Referer 外泄，拼进 query 等于亲手把这层保护拆掉（登录页带着它发同源请求，SSO 还会把 returnUrl 拼进外部重定向地址）。改为把 fragment 寄存在 sessionStorage、URL 上只留一个不含语义的引用键，登录后取回；寄存失败宁可丢 fragment 也不塞进 URL |
 | fix | prd-admin | 待回跳的授权按 state 分键存：原来是一个固定键，在两个标签页各发起一次同步时第二次会覆盖第一次，之后无论谁先回来都失败——先回来的读到另一次的 state 判「对不上」并顺手删掉这唯一一条，另一个回来时连记录都没了，两次都白跑，错误文案还说得像被攻击 |
 | test | prd-admin | 原有两条用例把「fragment 拼进 returnUrl」逐字钉成正确行为（形状 4a），已改写成新契约：值不能丢、也不能出现在 URL 上；另加寄存失败的降级、两标签页互不覆盖两条 |
+| security | prd-admin | 还原出来的 fragment 不许离开本地跳转：上一处修复只堵了入口（不让 fragment 进 ?returnUrl=），却在 LoginPage 的 render 期就把它还原成真 fragment，同一个值既喂给本地跳转、又喂给 buildSsoHref——授权码照样被拼进外部 SSO 的 query，一路进第三方。现在默认形态是带 fragRef 的那份（URL 上安全、可以到处传），还原只发生在最后一步 navigate 的那一刻 |
+| fix | prd-admin | 还原不再放在 render 里：takeReturnFragment 是「取走并删除」，而 StrictMode 会故意重复执行 render 与 useMemo，第一次就把它消费掉、留下的那次拿到空值，于是登录后回到回调页却没有授权码 |
+| security | prd-api | SSO 配置整组留在目标站：此前只保留密钥、回调与白名单，而开关与客户端标识跟着源站走，会拼出一份两边都不成立的配置——目标站留着自己的 secret 却收到源站的 clientId，本来能用的登录当场坏掉；反过来源站开着的开关会把这份半拼半凑的配置直接点亮。守卫按 Sso 前缀反射扫 AppSettings，日后新增字段忘了登记会红 |
+| fix | prd-api | 全新部署的第一份对外同步设置存得下去了：没有 global 那一行时条件更新匹配不到任何东西，每次保存都回「你手上这份过期了」，刷新出来还是同一份环境变量兜底值，再试还是过期——这张卡永远建不出第一份设置。「我看到的就是那份兜底值」时允许 upsert，撞唯一索引（有人抢先建了）归到 stale |
+| test | prd-agent | 新增守卫三条：SSO 字段按前缀全覆盖 / 给 SSO 的是 fragRef 那份 / 还原只在 navigate 时发生；条件更新守卫补首次建档与撞键两格 |

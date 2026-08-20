@@ -644,8 +644,13 @@ public class DataSyncProtocolTests
         update.ShouldContain("ExpectedOrigins");
         update.ShouldContain("MatchedCount == 0");
         update.ShouldContain("DATA_SYNC_SETTINGS_STALE");
-        // upsert 只在没有并发保护时才允许：带条件时 upsert 会绕过条件直接插一条新的。
-        update.ShouldContain("IsUpsert = request.ExpectedOrigins is null");
+        // 全新部署根本没有 global 这一行：只认「匹配到才写」的话，条件更新匹配不到
+        // 任何东西，每次保存都回「过期了」，刷新出来还是同一份兜底值，再试还是过期
+        // ——这张卡永远建不出它的第一份设置。所以「我看到的就是那份兜底值」时允许
+        // upsert，并把 upsert 撞唯一索引（有人抢先建了）也归到 stale。
+        update.ShouldContain("expectedMatchesFallback");
+        update.ShouldContain("IsUpsert = request.ExpectedOrigins is null || expectedMatchesFallback");
+        update.ShouldContain("ServerErrorCategory.DuplicateKey");
     }
 
     /// <summary>

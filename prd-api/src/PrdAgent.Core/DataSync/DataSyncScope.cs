@@ -147,8 +147,23 @@ public static class DataSyncScope
                     "PasswordLoginDisabled",
                     "DataSyncProviderEnabled",
                     "DataSyncAllowedConsumerOrigins",
-                    "ConsoleSsoAllowedRedirectOrigins",
+                    // SSO 配置必须**整组**留在目标站，不能只留密钥和回调、
+                    // 而让开关与客户端标识跟着源站走。混着来会拼出一份两边都不成立的
+                    // 配置：目标站留着自己的 secret 和白名单，却收到源站的 clientId
+                    // ——本来能用的登录当场坏掉；反过来源站开着的开关会把目标站一份
+                    // 半拼半凑的配置直接点亮。这一组的每个字段都只描述「本站怎么接 SSO」，
+                    // 没有一个是该跨站搬运的内容。
+                    "MiduoSsoEnabled",
+                    "MiduoSsoBaseUrl",
+                    "MiduoSsoAppCode",
+                    "MiduoSsoAppSecret",
                     "MiduoSsoRedirectUri",
+                    "MiduoSsoLabel",
+                    "MiduoSsoSubjectType",
+                    "ConsoleSsoProviderEnabled",
+                    "ConsoleSsoClientId",
+                    "ConsoleSsoClientSecret",
+                    "ConsoleSsoAllowedRedirectOrigins",
                 },
             },
             new DataSyncCollection("arena_groups", System.Array.Empty<string>()),

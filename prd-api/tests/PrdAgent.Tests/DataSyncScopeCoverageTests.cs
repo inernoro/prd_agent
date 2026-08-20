@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using PrdAgent.Core.DataSync;
+using PrdAgent.Core.Models;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -505,6 +506,35 @@ public class DataSyncScopeCoverageTests
         var path = Path.Combine(parts.ToArray());
         Assert.True(File.Exists(path), $"守卫要扫的文件不在预期位置：{path}");
         return File.ReadAllText(path);
+    }
+
+    /// <summary>
+    /// SSO 配置必须整组留在目标站。
+    ///
+    /// 只留密钥和回调、让开关与客户端标识跟着源站走，会拼出一份两边都不成立的配置：
+    /// 目标站留着自己的 secret 和白名单却收到源站的 clientId，本来能用的登录当场坏掉；
+    /// 反过来源站开着的开关会把这份半拼半凑的配置直接点亮。
+    ///
+    /// 判据按前缀扫，不是手抄一份清单——日后 AppSettings 新增一个 SSO 字段而忘了登记，
+    /// 这条会红（形状 1：判据要覆盖它该管的整个范围，不是我当时想到的那几个）。
+    /// </summary>
+    [Fact]
+    public void SSO配置必须整组留在目标站()
+    {
+        var appsettings = DataSyncScope.Groups.SelectMany(g => g.Collections)
+            .Single(c => c.Name == "appsettings");
+        var carried = appsettings.FieldsCarriedFromTarget;
+
+        var ssoFields = typeof(AppSettings).GetProperties()
+            .Select(p => p.Name)
+            .Where(n => n.Contains("Sso", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.NotEmpty(ssoFields);
+        var missing = ssoFields.Where(f => !carried.Contains(f, StringComparer.Ordinal)).ToList();
+        Assert.True(missing.Count == 0,
+            "这些 SSO 字段会被源站的值顶掉，拼出一份两边都不成立的配置："
+            + string.Join("、", missing));
     }
 
     [Fact]

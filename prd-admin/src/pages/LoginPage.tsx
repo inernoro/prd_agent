@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
@@ -67,11 +67,25 @@ export default function LoginPage() {
   const logout = useAuthStore((s) => s.logout);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [searchParams] = useSearchParams();
-  // returnUrl 里若带着 fragRef，说明进来之前有一段 fragment 被寄存了（见
-  // app/returnFragment.ts：授权码这类东西不许出现在 query 里）。这里把它取回来
-  // 拼回 `#`，并把 fragRef 从地址上抹掉——它不该继续跟着人走。
-  const returnUrl = useMemo(() => {
-    const raw = searchParams.get('returnUrl') || '/';
+  /**
+   * returnUrl 有两种形态，用错地方会把授权码泄出去：
+   *
+   * - **带 fragRef 的那份**（`raw`）：URL 上安全，可以到处传——包括拼进 SSO 的外部
+   *   回跳地址。fragRef 只是一个不含语义的键。
+   * - **还原出 fragment 的那份**：只能用在最后一步本地跳转。它里面可能是
+   *   `#code=...`，一旦进了任何 query 就等于把「授权码只走 fragment」这件事作废。
+   *
+   * 上一版我在 render 期就把它还原成第二种，然后同一个值既喂给本地跳转、又喂给
+   * `buildSsoHref` —— 于是授权码照样进了外部 SSO 的 query，我以为修好的那条路
+   * 其实只堵住了入口、没堵住出口。所以现在默认形态是第一种，还原只发生在跳转那一刻。
+   *
+   * 还原也不能放在 render 里：`takeReturnFragment` 是「取走并删除」，而 StrictMode
+   * 会故意重复执行 render 与 useMemo，第一次就把它消费掉，留下的那次拿到空值。
+   */
+  const returnUrlWithRef = searchParams.get('returnUrl') || '/';
+
+  const resolveReturnUrl = useCallback(() => {
+    const raw = returnUrlWithRef;
     const at = raw.indexOf('?');
     if (at < 0) return raw;
     const params = new URLSearchParams(raw.slice(at + 1));
@@ -81,7 +95,7 @@ export default function LoginPage() {
     const rest = params.toString();
     const fragment = takeReturnFragment(ref);
     return raw.slice(0, at) + (rest ? `?${rest}` : '') + fragment;
-  }, [searchParams]);
+  }, [returnUrlWithRef]);
   const [loading, setLoading] = useState(false);
 
   const [username, setUsername] = useState(() => {
@@ -120,7 +134,7 @@ export default function LoginPage() {
   const canResetSubmit = useMemo(() => Boolean(newPassword.trim() && confirmPassword.trim()), [newPassword, confirmPassword]);
 
   useEffect(() => {
-    if (isAuthed) navigate(returnUrl, { replace: true });
+    if (isAuthed) navigate(resolveReturnUrl(), { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthed, navigate]);
 
@@ -270,7 +284,7 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
-    navigate(returnUrl, { replace: true });
+    navigate(resolveReturnUrl(), { replace: true });
   };
 
   const onResetPassword = async () => {
@@ -353,7 +367,8 @@ export default function LoginPage() {
               ssoOptions={ssoOptions}
               ssoLoading={ssoLoading}
               passwordLoginDisabled={passwordLoginDisabled}
-              returnUrl={returnUrl}
+              // 给 SSO 的必须是带 fragRef 的那份：它会被拼进外部地址。
+              returnUrl={returnUrlWithRef}
               onError={setError}
               onUsernameChange={setUsername}
               onPasswordChange={setPassword}

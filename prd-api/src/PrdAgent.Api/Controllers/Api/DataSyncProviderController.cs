@@ -253,6 +253,11 @@ public sealed class DataSyncProviderController : ControllerBase
         // 每次都拿这份活名单重对，所以「撤销被悄悄取消」= 一台已被踢出的机器仍然能取数据。
         var filter = Builders<AppSettings>.Filter.Eq(x => x.Id, "global");
         var currentConfig = await ReadConfigAsync(ct);
+        // 全新部署根本没有 global 这一行：条件更新匹配不到任何东西，于是每次保存都回
+        // 「你手上这份过期了」，刷新出来的还是同一份环境变量兜底值，再试还是过期——
+        // 这张卡永远建不出它的第一份设置。所以「我看到的就是那份兜底值」时允许 upsert：
+        // 它仍然是原子的（_id 唯一索引兜底），只是把「插入第一份」也算作合法的当前状态。
+        var expectedMatchesFallback = false;
         if (request.ExpectedOrigins is not null)
         {
             var expected = string.Join(",", ParseOrigins(string.Join(",", request.ExpectedOrigins)));
@@ -263,7 +268,9 @@ public sealed class DataSyncProviderController : ControllerBase
             // 库里还没有这个字段时，生效名单来自环境变量兜底。这一格只有在提交者看到的
             // 正是那份兜底值时才算「他看的还是当前状态」——所以这个判断在 C# 里算完，
             // 再决定要不要把「字段缺失」作为一种可接受的当前状态放进条件里。
-            if (string.Equals(expected, string.Join(",", currentConfig.AllowedOrigins), StringComparison.Ordinal))
+            expectedMatchesFallback = string.Equals(
+                expected, string.Join(",", currentConfig.AllowedOrigins), StringComparison.Ordinal);
+            if (expectedMatchesFallback)
             {
                 alternatives.Add(Builders<AppSettings>.Filter.Or(
                     Builders<AppSettings>.Filter.Exists(x => x.DataSyncAllowedConsumerOrigins, false),
@@ -272,16 +279,27 @@ public sealed class DataSyncProviderController : ControllerBase
             filter = Builders<AppSettings>.Filter.And(filter, Builders<AppSettings>.Filter.Or(alternatives));
         }
 
-        var saved = await _db.AppSettings.UpdateOneAsync(
-            filter,
-            Builders<AppSettings>.Update
-                .Set(x => x.DataSyncProviderEnabled, request.Enabled)
-                .Set(x => x.DataSyncAllowedConsumerOrigins, string.Join(",", origins))
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            new UpdateOptions { IsUpsert = request.ExpectedOrigins is null },
-            ct);
+        UpdateResult saved;
+        try
+        {
+            saved = await _db.AppSettings.UpdateOneAsync(
+                filter,
+                Builders<AppSettings>.Update
+                    .Set(x => x.DataSyncProviderEnabled, request.Enabled)
+                    .Set(x => x.DataSyncAllowedConsumerOrigins, string.Join(",", origins))
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                new UpdateOptions { IsUpsert = request.ExpectedOrigins is null || expectedMatchesFallback },
+                ct);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // upsert 想插第一份，但同一瞬间别人已经插进去了。语义上和「你手上那份过期了」
+            // 是同一件事：让他看最新的再决定，不要盲目覆盖。
+            return Conflict(ApiResponse<object>.Fail("DATA_SYNC_SETTINGS_STALE",
+                "这份名单在你编辑期间被别人改过了，已经刷新成最新的那份，请确认后再保存一次"));
+        }
 
-        if (request.ExpectedOrigins is not null && saved.MatchedCount == 0)
+        if (request.ExpectedOrigins is not null && !expectedMatchesFallback && saved.MatchedCount == 0)
         {
             return Conflict(ApiResponse<object>.Fail("DATA_SYNC_SETTINGS_STALE",
                 "这份名单在你编辑期间被别人改过了，已经刷新成最新的那份，请确认后再保存一次"));
