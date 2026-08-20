@@ -4,6 +4,8 @@ import { ShieldAlert } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { apiRequest } from '@/services/real/apiClient';
+import { applyDocumentThemeMode } from '@/lib/themeTransition';
+import { useMobileThemeStore } from '@/stores/mobileThemeStore';
 
 /** 发起跳转时把「这次是去哪台源站」记在这里，回调时凭 state 取回。 */
 export const DATA_SYNC_PENDING_KEY = 'data-sync:pending';
@@ -16,6 +18,12 @@ export const DATA_SYNC_PENDING_KEY = 'data-sync:pending';
  * 里的 fragment 抹掉，免得它留在历史记录里。
  */
 export default function DataSyncCallbackPage() {
+  // 同上：回跳落地页也在 AppShell 之外，主题要自己应用。
+  const themeMode = useMobileThemeStore((s) => s.mode);
+  useEffect(() => {
+    applyDocumentThemeMode(themeMode, window.location.pathname);
+  }, [themeMode]);
+
   const navigate = useNavigate();
   const [error, setError] = useState('');
   // React 18 严格模式下 effect 会跑两次；授权码只能用一次，第二次必然失败并报错。
