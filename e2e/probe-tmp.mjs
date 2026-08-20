@@ -1,0 +1,16 @@
+import { chromium } from '@playwright/test';
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-proxy-server'] });
+const p = await b.newPage();
+const resp = [];
+p.on('response', r => { if (r.url().includes('/api/')) resp.push(`${r.status()} ${r.url().replace('http://127.0.0.1:7801','')}`); });
+await p.goto('http://127.0.0.1:7801/login', { waitUntil: 'domcontentloaded' });
+await p.waitForTimeout(3000);
+const vals = await p.evaluate(() => [...document.querySelectorAll('input')].map(i => ({ type: i.type, name: i.name, id: i.id, value: i.value })));
+console.log('inputs', JSON.stringify(vals));
+await p.locator('button', { hasText: '进入控制台' }).first().click();
+await p.waitForTimeout(6000);
+console.log('url', p.url());
+console.log('api', JSON.stringify(resp.slice(-6)));
+const err = await p.evaluate(() => document.body.innerText.slice(0, 600));
+console.log('page text:', err.replace(/\n+/g, ' | ').slice(0, 500));
+await b.close();
