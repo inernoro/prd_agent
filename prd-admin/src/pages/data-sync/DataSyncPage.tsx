@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2, ShieldCheck, X } from 'lucide-react';
 
 import { PageHeader } from '@/components/design/PageHeader';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -23,6 +23,7 @@ type PlanRow = {
   localTotal: number;
   redactFields: string[];
 };
+type ProviderSettings = { enabled: boolean; origins: string[]; siteLabel: string };
 type Plan = { runId: string; sourceLabel: string; sourceOrigin: string; targetDatabase: string; rows: PlanRow[] };
 type ProgressRow = {
   collection: string;
@@ -66,6 +67,7 @@ export default function DataSyncPage() {
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<RunView[] | null>(null);
   const [denied, setDenied] = useState(false);
+  const [provider, setProvider] = useState<ProviderSettings | null>(null);
 
   const applyRun = useCallback((data: unknown) => {
     setRun(data as RunView);
@@ -98,6 +100,31 @@ export default function DataSyncPage() {
       alive = false;
     };
   }, [runId]);
+
+  // 本站作为「源站」的设置。同意页只会往名单里加，这里是唯一能撤销的地方。
+  useEffect(() => {
+    if (runId) return;
+    let alive = true;
+    void apiRequest<ProviderSettings>('/api/instance-sync/provider-settings').then((res) => {
+      if (!alive) return;
+      if (res.success && res.data) setProvider(res.data);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [runId]);
+
+  async function saveProvider(next: ProviderSettings) {
+    const res = await apiRequest<ProviderSettings>('/api/instance-sync/provider-settings', {
+      method: 'PUT',
+      body: { enabled: next.enabled, origins: next.origins },
+    });
+    if (!res.success) {
+      setError(res.error?.message || '保存对外同步设置失败');
+      return;
+    }
+    setProvider({ ...next, ...(res.data ?? {}) });
+  }
 
   // 进来先把这条 Run 的当前状态取回来：SSE 只推「之后的变化」，
   // 刷新页面时没有这一步会先看到一片空白。
@@ -218,6 +245,7 @@ export default function DataSyncPage() {
               preparing={preparing}
               onSubmit={() => void prepare()}
             />
+            <ProviderCard settings={provider} onSave={(next) => void saveProvider(next)} />
             <HistoryCard
               runs={history}
               onOpen={(id) => setSearchParams({ run: id })}
@@ -318,6 +346,70 @@ function DeniedCard() {
         跨实例同步会把另一台机器上的数据写进本站的数据库，所以只有管理员能发起、也只有管理员能查看同步记录。
         需要同步的话，请找本站管理员操作。
       </p>
+    </Card>
+  );
+}
+
+/**
+ * 本站作为「源站」时对外同步的开关与允许名单。
+ *
+ * 同意页上的「当场准入」只会往名单里加，这里是唯一能把一条拿掉的地方——
+ * 一个只能追加的信任名单不是完整的信任管理，撤销比授予更需要看得见。
+ */
+function ProviderCard({
+  settings,
+  onSave,
+}: {
+  settings: ProviderSettings | null;
+  onSave: (next: ProviderSettings) => void;
+}) {
+  if (!settings) return null;
+  return (
+    <Card>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ShieldCheck size={18} style={{ color: 'var(--accent-primary)' }} />
+          <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>本站对外同步</h2>
+        </div>
+        <label className="flex cursor-pointer items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          <input
+            type="checkbox"
+            checked={settings.enabled}
+            onChange={(e) => onSave({ ...settings, enabled: e.target.checked })}
+            className="h-4 w-4"
+          />
+          允许别的 MAP 来本站取数据
+        </label>
+      </div>
+      <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+        下面是已经允许过的机器。每次取数据仍然要本站管理员在同意页上当场勾选范围并同意，
+        这份名单只决定「谁有资格来问」。
+      </p>
+      {settings.origins.length === 0 ? (
+        <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+          名单是空的，等于对外同步关着。第一台机器跳过来时，在同意页上勾一次「我确认这台机器可信」即可加入。
+        </p>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {settings.origins.map((origin) => (
+            <span
+              key={origin}
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-mono"
+              style={{ background: 'var(--bg-card)', border: '1px solid var(--border-secondary)', color: 'var(--text-secondary)' }}
+            >
+              {origin}
+              <button
+                type="button"
+                aria-label={`移除 ${origin}`}
+                onClick={() => onSave({ ...settings, origins: settings.origins.filter((o) => o !== origin) })}
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }

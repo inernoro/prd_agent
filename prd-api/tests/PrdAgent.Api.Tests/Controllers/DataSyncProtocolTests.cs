@@ -87,6 +87,37 @@ public class DataSyncProtocolTests
     }
 
     [Fact]
+    public void 分页解析要带回源站算好的已清空字段()
+    {
+        // 待补清单必须来自源站的判定，不能由目标站看「哪个字段是空的」自己推。
+        // 源站分得清「我清空了」和「它本来就是空的」，目标站分不清——自己推会把
+        // 源站从来没配过的密钥也列成待补，让管理员照着一份包含空气的清单去编值。
+        const string json = """
+        {
+          "success": true,
+          "data": {
+            "collection": "llmplatforms",
+            "nextCursor": null,
+            "clearedFields": ["ApiKeyEncrypted"],
+            "documents": ["{\"_id\": \"p1\"}"]
+          }
+        }
+        """;
+        var page = DataSyncRunWorker.ReadPage(json);
+        page.ClearedFields.ShouldBe(new[] { "ApiKeyEncrypted" });
+        page.Documents.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public void 源站没报已清空字段时待补清单为空()
+    {
+        const string json = """
+        {"success": true, "data": {"collection": "defect_reports", "documents": ["{\"_id\": \"d1\"}"]}}
+        """;
+        DataSyncRunWorker.ReadPage(json).ClearedFields.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void 白名单为空时任何地址都不通过()
     {
         // 「没配过白名单」必须等于「功能关不通」，不能等于「允许所有」。

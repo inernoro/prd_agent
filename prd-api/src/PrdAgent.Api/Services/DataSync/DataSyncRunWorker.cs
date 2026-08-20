@@ -89,7 +89,14 @@ public sealed class DataSyncRunWorker : BackgroundService
         {
             foreach (var collectionName in run.Collections)
             {
-                if (ct.IsCancellationRequested) return;
+                if (ct.IsCancellationRequested)
+                {
+                    // 直接 return 会把 Run 永久留在 running：重启后内存里的令牌没了，
+                    // 没有任何 worker 能再认领它，历史页上就一直转着（server-authority #5）。
+                    // 用 None 落终态——此刻 ct 已经取消，拿它去写库只会连这一步也被取消。
+                    await FailAsync(db, run, "服务重启中断了这次同步，请重新授权后再跑一次", CancellationToken.None);
+                    return;
+                }
                 if (!DataSyncScope.TryResolve(collectionName, out var collection))
                 {
                     // Run 里固化的集合名不在白名单了：多半是两边版本不一致。跳过并留痕，
@@ -119,9 +126,10 @@ public sealed class DataSyncRunWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "[data-sync] Run {RunId} 执行失败", run.Id);
-            // 失败同样要交还票据：跑挂了不等于对方那张票该继续有效。
-            await ReturnExportTokenAsync(run, token, ct);
-            await FailAsync(db, run, ex.Message, ct);
+            // 收尾一律用 None：走到这里 ct 很可能已经取消，拿它去写库等于连「记下失败」
+            // 这一步也做不成，Run 会卡在 running（server-authority #5）。
+            await ReturnExportTokenAsync(run, token, CancellationToken.None);
+            await FailAsync(db, run, ex.Message, CancellationToken.None);
         }
     }
 
@@ -154,8 +162,19 @@ public sealed class DataSyncRunWorker : BackgroundService
             var documents = DataSyncApply.ParseDocuments(page.Documents);
             progress.Fetched += documents.Count;
 
-            var pending = DataSyncApply.DetectPendingSecretFields(documents, collection);
-            if (pending.Count > 0) run.PendingSecretFields[collection.Name] = pending.ToList();
+            // 待补清单直接用源站报的「我清空了哪些」，不再自己看哪个字段是空的：
+            // 后者会把源站从来没配过的密钥也算成「被清空、待补」（Codex 指出）。
+            if (page.ClearedFields.Count > 0)
+            {
+                var already = run.PendingSecretFields.TryGetValue(collection.Name, out var prior)
+                    ? new List<string>(prior)
+                    : new List<string>();
+                foreach (var field in page.ClearedFields)
+                {
+                    if (!already.Contains(field, StringComparer.Ordinal)) already.Add(field);
+                }
+                run.PendingSecretFields[collection.Name] = already;
+            }
 
             if (documents.Count > 0)
             {
@@ -174,9 +193,26 @@ public sealed class DataSyncRunWorker : BackgroundService
                 {
                     if (decision.ToInsert.Count > 0)
                     {
-                        // IsOrdered=false：中间一条撞唯一索引不该让这一批剩下的全部作废。
-                        await target.InsertManyAsync(decision.ToInsert,
-                            new InsertManyOptions { IsOrdered = false }, ct);
+                        // IsOrdered=false 让这一批剩下的继续写，但**只要有一条失败它仍然抛**。
+                        // 不接住的话：已经写进去的那部分不计数、后面的集合全被放弃、整次同步判失败——
+                        // 而真实原因往往只是几条撞了业务唯一索引（同一条记录在两边各有一个 _id）。
+                        // 这类冲突按「跳过」处理并记进 Skipped，其余错误照旧上抛。
+                        try
+                        {
+                            await target.InsertManyAsync(decision.ToInsert,
+                                new InsertManyOptions { IsOrdered = false }, ct);
+                        }
+                        catch (MongoBulkWriteException<BsonDocument> ex)
+                        {
+                            var conflicts = ex.WriteErrors.Count(e => e.Category == ServerErrorCategory.DuplicateKey);
+                            if (conflicts != ex.WriteErrors.Count) throw;
+                            progress.Skipped += conflicts;
+                            _logger.LogWarning(
+                                "[data-sync] {Collection} 有 {Count} 条撞唯一索引，已跳过；其余 {Written} 条已写入",
+                                collection.Name, conflicts, decision.ToInsert.Count - conflicts);
+                            // 撞索引的那几条没写进去，计数要扣掉，否则「新增 N 条」对不上账。
+                            decision = decision with { ToInsert = decision.ToInsert.Take(decision.ToInsert.Count - conflicts).ToList() };
+                        }
                     }
                     foreach (var doc in decision.ToReplace)
                     {
@@ -251,7 +287,12 @@ public sealed class DataSyncRunWorker : BackgroundService
         _vault.Forget(run.Id);
     }
 
-    internal sealed record ExportPage(List<string> Documents, string? NextCursor);
+    /// <param name="ClearedFields">
+/// 源站在出口**真正清空过**的字段。它与「目标站看到这个字段是空的」不是一回事：
+/// 源站压根没配过的密钥本来就是空的，不该出现在待补清单里——否则会让管理员
+/// 照着一份包含空气的清单去编造值。这个判定只有源站做得准，所以原样带过来。
+/// </param>
+internal sealed record ExportPage(List<string> Documents, string? NextCursor, List<string> ClearedFields);
 
     internal static ExportPage ReadPage(string json)
     {
@@ -275,6 +316,14 @@ public sealed class DataSyncRunWorker : BackgroundService
                 if (element.ValueKind == JsonValueKind.String) documents.Add(element.GetString() ?? "");
             }
         }
-        return new ExportPage(documents, nextCursor);
+        var cleared = new List<string>();
+        if (data.TryGetProperty("clearedFields", out var fields) && fields.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var element in fields.EnumerateArray())
+            {
+                if (element.ValueKind == JsonValueKind.String) cleared.Add(element.GetString() ?? "");
+            }
+        }
+        return new ExportPage(documents, nextCursor, cleared);
     }
 }

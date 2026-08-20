@@ -33,6 +33,9 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public sealed class DataSyncConsumerController : ControllerBase
 {
+    /// <summary>SSE 心跳间隔。10 秒是 server-authority #4 定的下限。</summary>
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(10);
+
     private readonly MongoDbContext _db;
     private readonly DataSyncTokenVault _vault;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -292,6 +295,7 @@ public sealed class DataSyncConsumerController : ControllerBase
         Response.Headers.Append("X-Accel-Buffering", "no");
 
         var lastPayload = "";
+        var lastWriteAt = DateTime.UtcNow;
         var deadline = DateTime.UtcNow.AddHours(2);
         while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
         {
@@ -305,12 +309,22 @@ public sealed class DataSyncConsumerController : ControllerBase
             if (payload != lastPayload)
             {
                 lastPayload = payload;
+                lastWriteAt = DateTime.UtcNow;
                 await WriteEventAsync("progress", payload, ct);
             }
             if (run.Status is "succeeded" or "failed" or "cancelled")
             {
                 await WriteEventAsync("done", payload, ct);
                 return;
+            }
+            // 心跳（server-authority #4）：一次慢导出或一批慢写入期间，进度可能几十秒
+            // 一动不动。中间任何一层 ingress 的空闲超时都会把这条流掐掉，而前端把
+            // 「流结束了」当成正常收尾、不重连——同步还在跑，屏幕却永远停在那一刻。
+            // 所以不管有没有变化，至少每 10 秒写一次。
+            if (DateTime.UtcNow - lastWriteAt >= KeepAliveInterval)
+            {
+                lastWriteAt = DateTime.UtcNow;
+                await WriteEventAsync("keepalive", "{}", ct);
             }
             await Task.Delay(1000, ct);
         }

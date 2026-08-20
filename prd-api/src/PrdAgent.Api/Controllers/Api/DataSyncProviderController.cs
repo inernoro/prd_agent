@@ -141,6 +141,76 @@ public sealed class DataSyncProviderController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 本站对外同步的当前设置：开关 + 允许名单。只有管理员看得到。
+    /// </summary>
+    [HttpGet("provider-settings")]
+    [Authorize]
+    public async Task<IActionResult> GetProviderSettings(CancellationToken ct)
+    {
+        if (await ResolveAdminIdentityAsync(ct) is null)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以查看对外同步设置"));
+        }
+        var config = await ReadConfigAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            enabled = config.Enabled,
+            origins = config.AllowedOrigins,
+            siteLabel = SiteLabel(),
+        }));
+    }
+
+    /// <summary>
+    /// 改本站对外同步的设置。存在的意义是**撤销**：同意页只会往名单里加，
+    /// 没有这一处，一个来源加进去就再也拿不掉，只能去改配置——那正是这个功能
+    /// 一开始想摆脱的东西。
+    /// </summary>
+    [HttpPut("provider-settings")]
+    [Authorize]
+    public async Task<IActionResult> UpdateProviderSettings(
+        [FromBody] DataSyncProviderSettingsRequest request, CancellationToken ct)
+    {
+        var identity = await ResolveAdminIdentityAsync(ct);
+        if (identity is null)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以修改对外同步设置"));
+        }
+
+        // 名单里的每一条都要能过形状校验，否则存进去的是一条永远匹配不上的死规则，
+        // 而界面上看着像已经允许了。
+        var origins = new List<string>();
+        foreach (var raw in request.Origins ?? new List<string>())
+        {
+            var candidate = (raw ?? string.Empty).Trim().TrimEnd('/');
+            if (candidate.Length == 0) continue;
+            var isWildcard = candidate.StartsWith("*.", StringComparison.Ordinal);
+            var probe = isWildcard ? $"https://x{candidate[1..]}" : candidate;
+            if (!Uri.TryCreate(probe, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttps && !(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
+            {
+                return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_ORIGIN_INVALID",
+                    $"「{candidate}」不是合法的来源：必须是 https 的站点根地址，或以 *. 开头的子域通配"));
+            }
+            if (!origins.Contains(candidate, StringComparer.OrdinalIgnoreCase)) origins.Add(candidate);
+        }
+
+        await _db.AppSettings.UpdateOneAsync(
+            Builders<AppSettings>.Filter.Eq(x => x.Id, "global"),
+            Builders<AppSettings>.Update
+                .Set(x => x.DataSyncProviderEnabled, request.Enabled)
+                .Set(x => x.DataSyncAllowedConsumerOrigins, string.Join(",", origins))
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            new UpdateOptions { IsUpsert = true },
+            ct);
+
+        _logger.LogInformation("[data-sync] {Admin} 更新对外同步设置：开关={Enabled}，名单 {Count} 条",
+            identity.Value.Username, request.Enabled, origins.Count);
+        return Ok(ApiResponse<object>.Ok(new { enabled = request.Enabled, origins }));
+    }
+
     // ---------------------------------------------------------------- 授权
 
     /// <summary>目标站把浏览器跳到这里；本站原样转给同意页，由人来点。</summary>
@@ -607,6 +677,12 @@ public sealed class DataSyncProviderController : ControllerBase
             return false;
         }
     }
+}
+
+public sealed class DataSyncProviderSettingsRequest
+{
+    public bool Enabled { get; set; }
+    public List<string>? Origins { get; set; }
 }
 
 public sealed class DataSyncAuthorizeRequest

@@ -22,3 +22,9 @@
 | docs | doc | design 文档 H1 补 `· 设计` 后缀与 index/guide.list 对齐，修复 docs-readability 标题漂移 |
 | docs | doc | 台账补 DS13（当场准入只能加不能删）与 DS14（交还令牌失败不重试）；DS5 真人视觉验收、DS6 源站名单入口标为已解决 |
 | fix | cds | 冒烟 L3 用回退 key（AI_ACCESS_KEY）拿到 401 时给出提示，指明这把可能不是被测应用的 key，而不是让人以为应用坏了 |
+| feat | prd-api | 新增 GET/PUT /api/instance-sync/provider-settings：读写本站对外同步开关与允许名单，名单每条都过形状校验（原 DS13） |
+| feat | prd-admin | 同步页新增「本站对外同步」卡片：看得见已允许的机器、逐条可移除；此前当场准入只能加不能删 |
+| fix | prd-api | 批量插入撞唯一索引不再判整次同步失败：只有全部错误都是重复键才按「跳过」计入 Skipped 并继续，其余错误照旧上抛；此前一条冲突就会让已写入的部分不计数、后面的集合全被放弃 |
+| fix | prd-api | 待补密钥清单改用源站上报的 clearedFields，不再由目标站看「字段是不是空的」自己推——后者会把源站从来没配过的密钥也列成待补 |
+| fix | prd-api | 同步进度 SSE 补 10 秒心跳（server-authority #4）：慢导出期间进度长时间不变会被 ingress 空闲超时掐断，前端当成正常收尾不重连，屏幕永远停住 |
+| fix | prd-api | 服务关停时把认领中的 Run 落到 failed 终态、且收尾一律用 CancellationToken.None（server-authority #5）：此前重启后内存令牌已失、没有 worker 能再认领，历史页上那条 Run 永远转着 |
