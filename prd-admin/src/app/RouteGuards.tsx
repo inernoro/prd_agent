@@ -9,6 +9,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { getAdminAuthzMe } from '@/services';
+import { stashReturnFragment } from './returnFragment';
 
 /**
  * 未登录时该把人送去哪、登录完该回到哪。
@@ -18,6 +19,7 @@ import { getAdminAuthzMe } from '@/services';
  * - `#code=...&state=...` 是**当前路由的 fragment**（跨实例同步授权回跳就长这样），
  *   它不是路径。旧代码把它当路径，登录完会跳到 `code=...` 这种不存在的路由，
  *   而那个 60 秒的一次性授权码就此丢失，整条授权链要重走一遍。
+ *   但它也**不能**被原样搬进 returnUrl —— 见下面 fragRef 那段。
  *
  * 拆成纯函数是为了能直接对这三种输入断言，不必起一个 Router。
  */
@@ -25,6 +27,7 @@ export function decideAuthRedirect(
   pathname: string,
   search: string,
   rawHash: string,
+  stash: (fragment: string) => string = stashReturnFragment,
 ): { kind: 'home' } | { kind: 'login'; returnUrl: string } {
   const hash = (rawHash || '').replace(/^#/, '');
   if (hash.startsWith('/') && hash !== '/') {
@@ -32,8 +35,14 @@ export function decideAuthRedirect(
   }
   // 根路径未登录 → 展示公开首页
   if (pathname === '/') return { kind: 'home' };
+  // fragment **不进 returnUrl**。它里面可能装着授权码这种「特意放在 fragment 里
+  // 免得进服务器日志」的东西，塞进 query 等于亲手拆掉那层保护（登录页会带着这个
+  // query 发同源请求，SSO 还会把它拼进外部重定向地址）。所以只留一个不含语义的
+  // 引用键，值存在 sessionStorage 里。
   const fragment = hash.length > 0 && !hash.startsWith('/') ? `#${hash}` : '';
-  return { kind: 'login', returnUrl: pathname + search + fragment };
+  const ref = fragment ? stash(fragment) : '';
+  const query = ref ? `${search || ''}${search ? '&' : '?'}fragRef=${encodeURIComponent(ref)}` : search;
+  return { kind: 'login', returnUrl: pathname + query };
 }
 
 export function RequireAuth({ children }: { children: React.ReactNode }) {

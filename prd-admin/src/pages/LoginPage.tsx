@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
+import { takeReturnFragment } from '@/app/returnFragment';
 import { useAuthStore } from '@/stores/authStore';
 import { getAdminAuthzMe, getSsoOptions, login, loginWithMiduoPlanetToken, resetPassword } from '@/services';
 import type { SsoLoginOption } from '@/services/contracts/auth';
@@ -66,7 +67,21 @@ export default function LoginPage() {
   const logout = useAuthStore((s) => s.logout);
   const isAuthed = useAuthStore((s) => s.isAuthenticated);
   const [searchParams] = useSearchParams();
-  const returnUrl = searchParams.get('returnUrl') || '/';
+  // returnUrl 里若带着 fragRef，说明进来之前有一段 fragment 被寄存了（见
+  // app/returnFragment.ts：授权码这类东西不许出现在 query 里）。这里把它取回来
+  // 拼回 `#`，并把 fragRef 从地址上抹掉——它不该继续跟着人走。
+  const returnUrl = useMemo(() => {
+    const raw = searchParams.get('returnUrl') || '/';
+    const at = raw.indexOf('?');
+    if (at < 0) return raw;
+    const params = new URLSearchParams(raw.slice(at + 1));
+    const ref = params.get('fragRef');
+    if (!ref) return raw;
+    params.delete('fragRef');
+    const rest = params.toString();
+    const fragment = takeReturnFragment(ref);
+    return raw.slice(0, at) + (rest ? `?${rest}` : '') + fragment;
+  }, [searchParams]);
   const [loading, setLoading] = useState(false);
 
   const [username, setUsername] = useState(() => {

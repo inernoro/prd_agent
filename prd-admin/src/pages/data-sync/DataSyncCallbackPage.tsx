@@ -8,7 +8,38 @@ import { applyDocumentThemeMode } from '@/lib/themeTransition';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
 
 /** 发起跳转时把「这次是去哪台源站」记在这里，回调时凭 state 取回。 */
-export const DATA_SYNC_PENDING_KEY = 'data-sync:pending';
+const DATA_SYNC_PENDING_PREFIX = 'data-sync:pending:';
+
+/**
+ * 待回跳的授权按 **state** 分开存。
+ *
+ * 原来是一个固定键：在两个标签页各发起一次同步，第二次的 prepare 会把第一次那条
+ * 覆盖掉。之后无论谁先回来都失败——先回来的那个读到的是另一次的 state，判定
+ * 「对不上」并顺手把这唯一一条删掉，另一个回来时连记录都没有了。两次都白跑，
+ * 而错误文案说的是「这次回跳与本机发起的授权对不上」，看起来像被攻击。
+ *
+ * 按 state 分键之后，两次授权互不相干，各自认领自己那条。
+ */
+export function stashPendingAuthorization(
+  state: string,
+  value: { state: string; sourceOrigin: string; sourceLabel?: string },
+): void {
+  sessionStorage.setItem(DATA_SYNC_PENDING_PREFIX + state, JSON.stringify(value));
+}
+
+function takePendingAuthorization(state: string): { state: string; sourceOrigin: string } | null {
+  if (!state) return null;
+  const key = DATA_SYNC_PENDING_PREFIX + state;
+  try {
+    const raw = sessionStorage.getItem(key);
+    // 只删自己这一条：别的标签页还在等它那条。
+    sessionStorage.removeItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    sessionStorage.removeItem(key);
+    return null;
+  }
+}
 
 /**
  * 授权回跳落地页。
@@ -38,13 +69,7 @@ export default function DataSyncCallbackPage() {
     const state = hash.get('state') || '';
     window.history.replaceState(null, '', window.location.pathname);
 
-    let pending: { state: string; sourceOrigin: string } | null = null;
-    try {
-      pending = JSON.parse(sessionStorage.getItem(DATA_SYNC_PENDING_KEY) || 'null');
-    } catch {
-      pending = null;
-    }
-    sessionStorage.removeItem(DATA_SYNC_PENDING_KEY);
+    const pending = takePendingAuthorization(state);
 
     if (!code || !state || !pending || pending.state !== state) {
       // state 对不上说明这不是本浏览器发起的那次授权，直接拒绝，不去换票。

@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/design/PageHeader';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { apiRequest } from '@/services/real/apiClient';
 import { useSseStream } from '@/lib/useSseStream';
-import { DATA_SYNC_PENDING_KEY } from './DataSyncCallbackPage';
+import { stashPendingAuthorization } from './DataSyncCallbackPage';
 import { createSerializedSaver } from './serializedSave';
 import { computePlanTotals, describeTotal } from './planTotals';
 
@@ -287,10 +287,11 @@ export default function DataSyncPage() {
     const build = (res.data.sourceBuild || '').trim();
     // 别让跳转是一次无声的闪现：把「握到的是谁、版本对得上」说出来再走。
     setProbe(`已确认对方是 ${label}${build ? `（构建 ${build}）` : ''}，协议版本一致，正在跳转授权…`);
-    sessionStorage.setItem(
-      DATA_SYNC_PENDING_KEY,
-      JSON.stringify({ state: res.data.state, sourceOrigin: res.data.sourceOrigin, sourceLabel: label }),
-    );
+    stashPendingAuthorization(res.data.state, {
+      state: res.data.state,
+      sourceOrigin: res.data.sourceOrigin,
+      sourceLabel: label,
+    });
     window.setTimeout(() => { window.location.href = res.data.authorizeUrl; }, 900);
   }
 
