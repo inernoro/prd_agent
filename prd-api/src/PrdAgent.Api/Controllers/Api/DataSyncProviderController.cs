@@ -227,11 +227,22 @@ public sealed class DataSyncProviderController : ControllerBase
             if (candidate.Length == 0) continue;
             var isWildcard = candidate.StartsWith("*.", StringComparison.Ordinal);
             var probe = isWildcard ? $"https://x{candidate[1..]}" : candidate;
-            if (!Uri.TryCreate(probe, UriKind.Absolute, out var uri)
-                || (uri.Scheme != Uri.UriSchemeHttps && !(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
+            // 必须是**光秃秃的站点根**。带路径 / 查询 / 片段 / 用户名的写法这里放过去，
+            // 界面上就显示成「已信任」，而换票时比的是回调地址的 origin
+            //（https://host[:port]，不含其余部分）——两边永远对不上，于是每一次换票都被
+            // 拒绝，管理员看着名单里明明有它。错误契约本来就写着「站点根地址」，
+            // 校验没照着这句话做，形状 1：判据比它承诺的范围窄。
+            var isBareRoot = Uri.TryCreate(probe, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))
+                && (uri.AbsolutePath.Length == 0 || uri.AbsolutePath == "/")
+                && string.IsNullOrEmpty(uri.Query)
+                && string.IsNullOrEmpty(uri.Fragment)
+                && string.IsNullOrEmpty(uri.UserInfo);
+            if (!isBareRoot)
             {
                 return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_ORIGIN_INVALID",
-                    $"「{candidate}」不是合法的来源：必须是 https 的站点根地址，或以 *. 开头的子域通配"));
+                    $"「{candidate}」不是合法的来源：必须是 https 的站点根地址（不带路径、查询串或用户名），"
+                    + "或以 *. 开头的子域通配"));
             }
             if (!origins.Contains(candidate, StringComparer.OrdinalIgnoreCase)) origins.Add(candidate);
         }

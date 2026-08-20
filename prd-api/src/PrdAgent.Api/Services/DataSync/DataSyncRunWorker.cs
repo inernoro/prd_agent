@@ -244,7 +244,7 @@ public sealed class DataSyncRunWorker : BackgroundService
                 // 否则源站那台机器跑过哪些迁移会变成本站的账：本站没跑过的被当成跑过而跳过，
                 // 或者管理员手工回退过的被当成没跑过而重来一遍。源站出口已经把这些字段删掉了，
                 // 这里补的是本站原有的那份。
-                DataSyncApply.CarryTargetLocalFields(decision.ToReplace, existing, collection);
+                DataSyncApply.CarryTargetLocalFields(decision.ToReplace, existing, collection, page.ClearedFields);
 
                 if (!run.DryRun)
                 {
@@ -313,7 +313,7 @@ public sealed class DataSyncRunWorker : BackgroundService
                 // 逐条看字段在不在，一条都没落地的页面不产生任何待补项。
                 // 试跑同样记：它要回答的正是「真跑之后我得补哪些」。
                 RecordPendingSecrets(run, collection.Name, page.ClearedFields,
-                    decision.ToInsert.Concat(decision.ToReplace));
+                    decision.ToInsert, decision.ToReplace, existing);
             }
 
             progress.Cursor = page.NextCursor;
@@ -425,11 +425,34 @@ public sealed class DataSyncRunWorker : BackgroundService
     /// 的那些文档：被跳过的文档在本站的原值没有被动过，报进待补清单是误报。
     /// </summary>
     internal static void RecordPendingSecrets(
-        DataSyncRun run, string collection, IReadOnlyList<string> clearedFields, IEnumerable<BsonDocument> writtenDocs)
+        DataSyncRun run,
+        string collection,
+        IReadOnlyList<string> clearedFields,
+        IEnumerable<BsonDocument> insertedDocs,
+        IEnumerable<BsonDocument> replacedDocs,
+        IReadOnlyList<BsonDocument> targetBeforeWrite)
     {
         if (clearedFields.Count == 0) return;
-        var docs = writtenDocs as IList<BsonDocument> ?? writtenDocs.ToList();
-        if (docs.Count == 0) return;
+        var inserted = insertedDocs as IList<BsonDocument> ?? insertedDocs.ToList();
+        var replaced = replacedDocs as IList<BsonDocument> ?? replacedDocs.ToList();
+        if (inserted.Count == 0 && replaced.Count == 0) return;
+
+        // 覆盖写的那些文档，判据必须看**接回之前目标站的原值**，不能看接回之后
+        // 文档里字段在不在——接回已经在这之前跑过了，于是两个方向都会判错：
+        //   - 目标站原本有一份能用的凭据 → 接回后字段还在 → 被报成「待补」，
+        //     管理员照着去补，反而把好好的配置改坏；
+        //   - 目标站原本就没有 → 接回时把字段整个删掉 → 反倒一声不吭，
+        //     而这才是真正需要补的那一种。
+        var localById = new Dictionary<BsonValue, BsonDocument>();
+        foreach (var doc in targetBeforeWrite)
+        {
+            if (doc.TryGetValue("_id", out var id) && !id.IsBsonNull) localById[id] = doc;
+        }
+
+        static bool Missing(BsonDocument doc, string field) =>
+            !doc.TryGetValue(field, out var v)
+            || v.IsBsonNull
+            || (v.IsString && v.AsString.Length == 0);
 
         var already = run.PendingSecretFields.TryGetValue(collection, out var prior)
             ? new List<string>(prior)
@@ -437,9 +460,20 @@ public sealed class DataSyncRunWorker : BackgroundService
         foreach (var field in clearedFields)
         {
             if (already.Contains(field, StringComparer.Ordinal)) continue;
-            // 源站是按集合报的脱敏字段，这一页里未必每条都带它。
-            if (!docs.Any(d => d.Contains(field))) continue;
-            already.Add(field);
+
+            // 新插入的：源站清空过这个字段，落到本站就是空的，确实要补。
+            // 源站是按集合报的脱敏字段，这一页里未必每条都带它，所以仍然逐条看。
+            var pending = inserted.Any(d => d.Contains(field));
+
+            // 覆盖写的：只有目标站原来就没有（或为空）才要补。
+            if (!pending)
+            {
+                pending = replaced.Any(d =>
+                    d.TryGetValue("_id", out var id)
+                    && (!localById.TryGetValue(id, out var local) || Missing(local, field)));
+            }
+
+            if (pending) already.Add(field);
         }
         if (already.Count > 0) run.PendingSecretFields[collection] = already;
     }

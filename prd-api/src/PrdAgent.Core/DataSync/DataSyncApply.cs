@@ -124,12 +124,13 @@ public static class DataSyncApply
     public static void CarryTargetLocalFields(
         IReadOnlyList<BsonDocument> toReplace,
         IReadOnlyList<BsonDocument> existingDocuments,
-        DataSyncCollection collection)
+        DataSyncCollection collection,
+        IReadOnlyCollection<string> clearedFields)
     {
         ArgumentNullException.ThrowIfNull(toReplace);
         ArgumentNullException.ThrowIfNull(existingDocuments);
         ArgumentNullException.ThrowIfNull(collection);
-        var carried = collection.FieldsCarriedFromTarget;
+        var carried = collection.FieldsToCarry(clearedFields);
         if (carried.Count == 0 || toReplace.Count == 0) return;
 
         var byId = new Dictionary<BsonValue, BsonDocument>();

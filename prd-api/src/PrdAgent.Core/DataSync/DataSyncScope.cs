@@ -50,6 +50,31 @@ public sealed record DataSyncCollection(string Name, IReadOnlyList<string> Redac
     /// </summary>
     public IReadOnlyList<string> FieldsCarriedFromTarget =>
         PreserveFields.Concat(RedactFields).Distinct(System.StringComparer.Ordinal).ToArray();
+
+    /// <summary>
+    /// 这一页真正要从目标站接回来的字段。
+    ///
+    /// 上面那个并集是**投影的超集**（查目标站原文档时要把可能用到的都取回来），
+    /// 不是接回的判据。判据要分两类，混成一个并集会打坏「带凭据同步」：
+    ///
+    /// - <see cref="PreserveFields"/>：目标站自己的东西，源站说什么都不算数，**永远**接回。
+    ///   本机执行历史、本机身份、本机策略开关都在这一类。它不看源站报了什么，
+    ///   所以一个撒谎的源站（声称"我没清空"并送来 false）也顶不掉目标站的策略。
+    ///
+    /// - 脱敏字段：只有**源站这次确实清空了**才接回。理由是脱敏是可以被授权豁免的——
+    ///   源站管理员在同意页上勾了「连登录凭据一起搬」，users.PasswordHash 就不在这次的
+    ///   脱敏范围里，源站送来的是真散列。这时候再拿目标站的旧散列盖回去，
+    ///   等于把授权页刚刚承诺过的事悄悄取消：那批用户的原密码登不进去。
+    ///   所以判据取源站按页报的 clearedFields，而不是静态名单。
+    /// </summary>
+    public IReadOnlyList<string> FieldsToCarry(IReadOnlyCollection<string> clearedFields)
+    {
+        System.ArgumentNullException.ThrowIfNull(clearedFields);
+        return PreserveFields
+            .Concat(RedactFields.Where(f => clearedFields.Contains(f, System.StringComparer.Ordinal)))
+            .Distinct(System.StringComparer.Ordinal)
+            .ToArray();
+    }
 }
 
 public sealed record DataSyncGroup(string Key, string Label, IReadOnlyList<DataSyncCollection> Collections);
@@ -86,7 +111,19 @@ public static class DataSyncScope
                 //   它必须**保留**而不是清空——清成空的下次启动会重新生成一个新 ID，
                 //   而已经配好对的邻居仍然按旧 ID 找本站，X-Peer-Node 认不出来，配对断掉。
                 //   「源站的值不能出门」由 StripTargetLocal 删字段保证，与清空同样有效。
-                PreserveFields = new[] { "CompletedOneTimeMigrations", "MapInstanceId" },
+                PreserveFields = new[]
+                {
+                    "CompletedOneTimeMigrations", "MapInstanceId",
+                    // 以下是目标站自己的策略，不由源站决定，所以放进「永远接回」而不是
+                    // 只靠脱敏。只靠脱敏的话，判据要看源站报没报清空——而这几项一旦被
+                    // 顶掉，后果是目标站的安全姿态被静默改变，其中口令登录开关是
+                    // fail-open（清空即回到「放开」）。这类事不能取决于源站说了什么。
+                    "PasswordLoginDisabled",
+                    "DataSyncProviderEnabled",
+                    "DataSyncAllowedConsumerOrigins",
+                    "ConsoleSsoAllowedRedirectOrigins",
+                    "MiduoSsoRedirectUri",
+                },
             },
             new DataSyncCollection("arena_groups", System.Array.Empty<string>()),
             new DataSyncCollection("arena_slots", System.Array.Empty<string>()),
