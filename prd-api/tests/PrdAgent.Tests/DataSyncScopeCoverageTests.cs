@@ -492,43 +492,66 @@ public class DataSyncScopeCoverageTests
     public void 搬口令散列这条路只许对users开一个口子()
     {
         // 「同步完直接能用」靠的是把 users.PasswordHash 一起搬过去。这是整条链路上
-        // 唯一一处**主动少脱敏**的分支，所以它的边界必须钉死两件事：
-        //   1. 只对 users 生效——别的集合的凭据字段不许被这个开关顺带放行；
-        //   2. 只放行 PasswordHash——users 上其它登记过的脱敏字段照旧清空。
-        // 判据取源码而不是跑一遍导出：这段逻辑在 Controller 里、需要 Mongo 才能跑，
-        // 而它一旦被改宽（比如把 resolved.Name 判断删掉），没有任何现有测试会红。
-        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncProviderController.cs");
-        var source = File.ReadAllText(path);
+        // 唯一一处**主动少脱敏**的分支，边界要钉死三件事：只对 users 生效、只放行
+        // PasswordHash、不勾时一切照旧。
+        //
+        // 原来这条是扫源码扫出来的——判据读的是「Controller 里那段 if 长什么样」，
+        // 而不是「算出来的结果对不对」。判定抽成 DataSyncScope.ApplyGrant 之后
+        // 直接断言返回值，扫源码那套连同它的脆弱一起扔掉。
+        Assert.True(DataSyncScope.TryResolve("users", out var users));
+        Assert.Contains(DataSyncScope.CredentialCarryField, users.RedactFields);
 
-        var branch = Regex.Match(
-            source,
-            @"if\s*\(includeCredentials\s*&&\s*resolved\.Name\s*==\s*""users""\)",
-            RegexOptions.Singleline);
-        Assert.True(branch.Success,
-            "找不到「带凭据导出」那个分支了。它要么被删了（那这条守卫该跟着删），"
-            + "要么被改写成别的形状——无论哪种，都要重新确认这个口子还只对 users 开。");
+        var carried = DataSyncScope.ApplyGrant(users, includeCredentials: true);
+        Assert.DoesNotContain(DataSyncScope.CredentialCarryField, carried.RedactFields);
+        // users 上其它登记过的脱敏字段一个都不许被顺带放行。
+        foreach (var field in users.RedactFields.Where(f => f != DataSyncScope.CredentialCarryField))
+        {
+            Assert.Contains(field, carried.RedactFields);
+        }
 
-        // 取分支后一段窗口而不是配对花括号：里面的 `resolved with { ... }` 是嵌套的，
-        // 用 [^}]* 只会截到内层那个右花括号，看着能过其实没覆盖到全身。
-        var tail = source[branch.Index..];
-        var body = tail[..Math.Min(600, tail.Length)];
-        Assert.Contains("PasswordHash", body, StringComparison.Ordinal);
+        var strict = DataSyncScope.ApplyGrant(users, includeCredentials: false);
+        Assert.Equal(users.RedactFields, strict.RedactFields);
 
-        // 放行清单必须是逐个字段剔除，而不是把 users 的脱敏整个清空。
-        // 两边都去掉空白再比，否则换个换行位置就永远不命中——那是一条假绿。
-        var compact = Regex.Replace(body, @"\s+", string.Empty);
-        Assert.DoesNotContain("RedactFields=newList<string>()", compact, StringComparison.Ordinal);
-        Assert.Contains(".Where(", compact, StringComparison.Ordinal);
+        // 别的集合无论勾不勾，脱敏清单都不许变。
+        foreach (var name in DataSyncScope.AllExportableCollections.Where(n => n != DataSyncScope.CredentialCarryCollection))
+        {
+            Assert.True(DataSyncScope.TryResolve(name, out var other));
+            Assert.Equal(other.RedactFields, DataSyncScope.ApplyGrant(other, includeCredentials: true).RedactFields);
+        }
 
-        // users 之外的集合走不到这个分支：源码里不许有第二处 includeCredentials 的放行。
-        // 负向那条（!includeCredentials && ...）是「不勾时补标记」，不是放行，别数进来。
-        var loosenings = Regex.Matches(source, @"(?<![!\w])includeCredentials\s*&&").Count;
-        Assert.True(loosenings == 1,
-            $"源码里有 {loosenings} 处 includeCredentials 放行分支，多出来的那些没有被本守卫覆盖");
+        // 上面那圈其实证明不了「只对 users 生效」——今天没有第二个集合登记 PasswordHash，
+        // 所以就算把集合名判断整个删掉，那圈也照样全绿（我把它删掉试过，确实没红）。
+        // 真正钉死这条的是一个合成输入：换个集合名、同样带 PasswordHash，必须原样返回。
+        var impostor = new DataSyncCollection("not_users", new[] { DataSyncScope.CredentialCarryField, "OtherSecret" });
+        Assert.Equal(impostor.RedactFields, DataSyncScope.ApplyGrant(impostor, includeCredentials: true).RedactFields);
+    }
 
-        // 不勾时必须仍然打「需要重设密码」的标记，否则同步过去的账号会变成一个
-        // 既登不进、也没人提示要重设的死账号。
-        Assert.Contains("!includeCredentials && resolved.Name == \"users\"", source, StringComparison.Ordinal);
+    [Fact]
+    public void 对照表报的脱敏字段必须与导出实际清的是同一份()
+    {
+        // 源站有两个出口会说「哪些字段会被清空」：清单端点（目标站的对照表照着渲染）
+        // 与导出端点（真正动手清）。它们各算一次的下场是——导出按批准条件放行了
+        // PasswordHash，清单还在说它已被清空，目标站管理员对着一份与事实相反的
+        // 对照表点了确认（形状 3：判据分裂后各自漂移）。
+        //
+        // 现在两边都调 ApplyGrant。这条守卫钉死这件事：源码里除了 ApplyGrant 自身，
+        // 不许再出现第二处「按 includeCredentials 改写 RedactFields」的写法，
+        // 且两个端点都必须真的调它。
+        var providerPath = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncProviderController.cs");
+        var provider = File.ReadAllText(providerPath);
+
+        var callSites = Regex.Matches(provider, @"DataSyncScope\.ApplyGrant\(").Count;
+        Assert.True(callSites >= 2,
+            $"源站只有 {callSites} 处调用 ApplyGrant，清单与导出必须各调一次——少一处就是又有人自己算了一遍");
+
+        // 自己改写 RedactFields 的写法一律不许出现在 Controller 里。
+        Assert.DoesNotContain("RedactFields =", provider, StringComparison.Ordinal);
+
+        // 清单端点确实把 ApplyGrant 的结果报出去了，而不是算完丢掉（形状 2）。
+        var manifest = Regex.Match(provider, @"HttpGet\(""manifest""\)(?<body>.*?)(?=\[Http)", RegexOptions.Singleline);
+        Assert.True(manifest.Success, "找不到 manifest 端点了，这条守卫的前提已变");
+        Assert.Contains("ApplyGrant", manifest.Groups["body"].Value, StringComparison.Ordinal);
+        Assert.Contains("effectiveScope.RedactFields", manifest.Groups["body"].Value, StringComparison.Ordinal);
     }
 
     private static IReadOnlyList<string> ReadAdminControllerPrefixes()

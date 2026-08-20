@@ -242,9 +242,17 @@ public sealed class DataSyncConsumerController : ControllerBase
         }
 
         // 把「对照表上真实展示过、且源站确实提供」的这一份落到 Run 上，执行只认它。
+        //
+        // 过滤带上 pending：Start 会把状态原子地改成 running，之后这份清单就必须冻住。
+        // 否则另一个标签页（或另一个管理员）在 Start 之后、worker 认领之前再调一次
+        // Plan，就能把清单换掉——人按下开始时看的是一份，worker 执行的是另一份。
+        // 已经 running 的 Run 这里不报错：调用方只是想再看一眼对照表，读到什么给什么，
+        // 只是不再允许它改写执行范围。
         var planned = manifest.Select(x => x.Collection).ToList();
         await _db.DataSyncRuns.UpdateOneAsync(
-            Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
             Builders<DataSyncRun>.Update
                 .Set(x => x.PlannedCollections, planned)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),

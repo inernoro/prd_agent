@@ -97,6 +97,11 @@ public sealed class DataSyncRunWorker : BackgroundService
                     // 直接 return 会把 Run 永久留在 running：重启后内存里的令牌没了，
                     // 没有任何 worker 能再认领它，历史页上就一直转着（server-authority #5）。
                     // 用 None 落终态——此刻 ct 已经取消，拿它去写库只会连这一步也被取消。
+                    //
+                    // 也必须在这里交还导出令牌。这是第三条终态路径，之前只顾了成功与异常
+                    // 两条：本地令牌被 FailAsync 顺手忘掉，源站那边的票却照样能再用近两小时，
+                    // 而且重启后已经没有人记得它、再也不会有人去作废它。
+                    await ReturnExportTokenAsync(run, token, CancellationToken.None);
                     await FailAsync(db, run, "服务重启中断了这次同步，请重新授权后再跑一次", CancellationToken.None);
                     return;
                 }

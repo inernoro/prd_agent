@@ -366,6 +366,33 @@ public static class DataSyncScope
         GroupOfIndex.TryGetValue(collection, out var g) ? g : null;
 
     /// <summary>
+    /// 「连登录口令一起给」这个批准条件下，唯一被放行的字段。整条链路上只有这一处
+    /// 主动少脱敏，所以它必须只有一个定义点。
+    /// </summary>
+    public const string CredentialCarryCollection = "users";
+    public const string CredentialCarryField = "PasswordHash";
+
+    /// <summary>
+    /// 把批准条件落到具体集合上，算出**真正会被清空**的字段。
+    ///
+    /// 为什么必须是一个函数：清单端点要告诉目标站「这些字段会被清空」，导出端点要照着
+    /// 清。两边各算一次的结果是——导出按批准条件放行了 PasswordHash，清单还在照原样
+    /// 说它已被清空，目标站管理员于是对着一份与事实相反的对照表点了确认
+    /// （predicate-and-wiring-discipline 形状 3：判据分裂后各自漂移）。
+    /// </summary>
+    public static DataSyncCollection ApplyGrant(DataSyncCollection collection, bool includeCredentials)
+    {
+        if (!includeCredentials) return collection;
+        if (!string.Equals(collection.Name, CredentialCarryCollection, StringComparison.Ordinal)) return collection;
+        return collection with
+        {
+            RedactFields = collection.RedactFields
+                .Where(f => !string.Equals(f, CredentialCarryField, StringComparison.Ordinal))
+                .ToList(),
+        };
+    }
+
+    /// <summary>
     /// 把请求方勾选的分组展开成集合清单。不认识的分组 key 直接忽略而不是报错：
     /// 授权是人点出来的，一个过期的 key 不该让整次同步失败；而且忽略**只会缩小
     /// 范围**——展开只从 Groups 取，无从扩大。

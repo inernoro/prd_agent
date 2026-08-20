@@ -435,9 +435,13 @@ public sealed class DataSyncProviderController : ControllerBase
         if (grant is null) return Unauthorized(ApiResponse<object>.Fail("DATA_SYNC_EXPORT_UNAUTHORIZED", "导出令牌无效或已过期"));
 
         var groups = grant.GetValue("Groups", new BsonArray()).AsBsonArray.Select(x => x.AsString).ToList();
+        // 对照表报的必须是「按本次批准条件真正会被清空的字段」，不是白名单上的原始登记。
+        // 走和导出同一个出口，不在这里另算一遍。
+        var manifestIncludeCredentials = grant.GetValue("IncludeCredentials", BsonBoolean.False).ToBoolean();
         var items = new List<object>();
         foreach (var collection in DataSyncScope.Expand(groups))
         {
+            var effectiveScope = DataSyncScope.ApplyGrant(collection, manifestIncludeCredentials);
             var count = await _db.Database.GetCollection<BsonDocument>(collection.Name)
                 .CountDocumentsAsync(Builders<BsonDocument>.Filter.Empty, cancellationToken: ct);
             items.Add(new
@@ -445,7 +449,7 @@ public sealed class DataSyncProviderController : ControllerBase
                 collection = collection.Name,
                 group = DataSyncScope.GroupOf(collection.Name),
                 total = count,
-                redactFields = collection.RedactFields,
+                redactFields = effectiveScope.RedactFields,
             });
         }
         return Ok(ApiResponse<object>.Ok(new { siteLabel = SiteLabel(), collections = items }));
@@ -500,25 +504,21 @@ public sealed class DataSyncProviderController : ControllerBase
 
         // 批准的人同意连口令散列一起给时，users 的 PasswordHash 不脱敏——
         // 目标站的人用原账号密码就能直接登进去，这是「同步完直接可用」的前提。
-        // 其余脱敏字段一律照旧，这条豁免只针对这一个字段。
+        // 其余脱敏字段一律照旧，这条豁免只针对这一个字段。判定在 DataSyncScope.ApplyGrant，
+        // 清单端点走的是同一个，两边不会说两套话。
         var includeCredentials = grant.GetValue("IncludeCredentials", BsonBoolean.False).ToBoolean();
-        var effective = resolved;
-        if (includeCredentials && resolved.Name == "users")
-        {
-            effective = resolved with
-            {
-                RedactFields = resolved.RedactFields
-                    .Where(f => !string.Equals(f, "PasswordHash", StringComparison.Ordinal))
-                    .ToList(),
-            };
-        }
+        var effective = DataSyncScope.ApplyGrant(resolved, includeCredentials);
 
         var clearedFields = new HashSet<string>(StringComparer.Ordinal);
         foreach (var doc in docs)
         {
             foreach (var field in DataSyncRedactor.Redact(doc, effective)) clearedFields.Add(field);
             // 只有口令没跟过去时才标「必须重设」。跟过去了还标，等于让人白改一遍密码。
-            if (!includeCredentials && resolved.Name == "users") DataSyncRedactor.MarkUserNeedsPasswordReset(doc);
+            // 「要不要标必须重设」直接看散列这次到底清没清，不再另立一个平行条件。
+            if (effective.RedactFields.Contains(DataSyncScope.CredentialCarryField, StringComparer.Ordinal))
+            {
+                DataSyncRedactor.MarkUserNeedsPasswordReset(doc);
+            }
         }
 
         var nextCursor = docs.Count == pageSize && docs.Count > 0 ? SerializeCursor(docs[^1]["_id"]) : null;
