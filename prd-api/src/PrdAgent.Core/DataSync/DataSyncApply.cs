@@ -44,13 +44,28 @@ public static class DataSyncApply
     /// 默认（overwrite=false）跳过本地已存在的：恢复空库是主场景，这样最安全——
     /// 一次误操作最多是「什么都没变」，不会是「本地改了半天的数据被源站盖掉」。
     /// </summary>
+    /// <summary>
+    /// 把 _id 归一成可比较的字符串。
+    ///
+    /// 本仓库同一个逻辑 id 在库里可能是两种物理形态：历史数据存成 ObjectId，
+    /// 新数据存成 24 位十六进制字符串（StringOrObjectIdSerializer 就是为了让应用层
+    /// 看到的都是同一个字符串）。按 BsonValue 原样比就会把它们当成两条不同的记录。
+    /// </summary>
+    public static string NormalizeId(BsonValue id) =>
+        id.BsonType == BsonType.ObjectId ? id.AsObjectId.ToString() : id.ToString() ?? string.Empty;
+
+    /// <param name="existingIdsByKey">
+    /// 目标站已有文档：归一后的 id -> 它在目标库里**真实的** _id。
+    /// 覆盖写要用真实那个去定位并写回，不能拿源站送来的字符串去替一条 ObjectId 记录
+    /// （匹配不上，于是又插一条，同一条记录在库里变成两份）。
+    /// </param>
     public static DataSyncApplyDecision Decide(
         IReadOnlyList<BsonDocument> incoming,
-        ISet<BsonValue> existingIds,
+        IReadOnlyDictionary<string, BsonValue> existingIdsByKey,
         bool overwrite)
     {
         ArgumentNullException.ThrowIfNull(incoming);
-        ArgumentNullException.ThrowIfNull(existingIds);
+        ArgumentNullException.ThrowIfNull(existingIdsByKey);
 
         var insert = new List<BsonDocument>();
         var replace = new List<BsonDocument>();
@@ -61,9 +76,21 @@ public static class DataSyncApply
             // 再插一遍，变成每同步一次翻一倍。宁可漏一条，不要制造重复。
             if (!doc.TryGetValue("_id", out var id) || id.IsBsonNull) continue;
 
-            if (!existingIds.Contains(id)) insert.Add(doc);
-            else if (overwrite) replace.Add(doc);
-            else skipped.Add(id);
+            if (!existingIdsByKey.TryGetValue(NormalizeId(id), out var actualId))
+            {
+                insert.Add(doc);
+            }
+            else if (overwrite)
+            {
+                // 用目标库里那个真实 _id 覆盖，替换才定位得到；而且 Mongo 不允许
+                // 在 replace 里改 _id，文档自身也必须带的是同一个。
+                doc["_id"] = actualId;
+                replace.Add(doc);
+            }
+            else
+            {
+                skipped.Add(id);
+            }
         }
         return new DataSyncApplyDecision(insert, replace, skipped);
     }

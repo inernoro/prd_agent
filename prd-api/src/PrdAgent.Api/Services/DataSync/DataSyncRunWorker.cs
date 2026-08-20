@@ -230,7 +230,11 @@ public sealed class DataSyncRunWorker : BackgroundService
                     "[data-sync] Run {RunId} 跑完时发现终态已被其它部署写过（多半是被判成无心跳收了尸），保留先落的那个结局",
                     run.Id);
             }
-            await ReturnExportTokenAsync(run, token, ct);
+            // 交还令牌一律用 None，和失败/丢租约那两条路径一致。
+            // 用 ct 的话：宿主正在关停时 ct 已取消，这一句立刻失败并把取消咽掉，
+            // 下一行又把本地唯一那份令牌忘了——界面显示「成功」，而源站那张票在剩下的
+            // 两小时里仍然能导数据。作废是收尾动作，不该跟着请求生命周期一起死。
+            await ReturnExportTokenAsync(run, token, CancellationToken.None);
             _vault.Forget(run.Id);
             _logger.LogInformation("[data-sync] Run {RunId} 完成（dryRun={DryRun}）", run.Id, run.DryRun);
         }
@@ -285,15 +289,35 @@ public sealed class DataSyncRunWorker : BackgroundService
 
             if (documents.Count > 0)
             {
-                var ids = documents.Select(d => d["_id"]).ToList();
+                // 查已有文档时，同一个逻辑 id 的**两种物理形态**都要带上。
+                //
+                // 本仓库历史数据的 _id 存成 ObjectId、新数据存成 24 位十六进制字符串
+                // （StringOrObjectIdSerializer 让应用层看到的都是同一个字符串）。源站送来的
+                // 是字符串，若只拿字符串去 $in，目标库里那条 ObjectId 记录根本匹配不上——
+                // 于是判成「本地没有」，插进去变成同一条记录的第二份；覆盖模式也替不掉原来那条。
+                var ids = new List<BsonValue>();
+                foreach (var doc in documents)
+                {
+                    var id = doc["_id"];
+                    ids.Add(id);
+                    if (id.IsString && ObjectId.TryParse(id.AsString, out var asObjectId))
+                    {
+                        ids.Add(asObjectId);
+                    }
+                }
                 // 只查这一批的 id，不是整表 —— 整表 id 在几十万条上会把内存吃光。
                 var existing = await target
                     .Find(Builders<BsonDocument>.Filter.In("_id", ids))
                     .Project(BuildExistingProjection(collection))
                     .ToListAsync(ct);
-                var existingIds = existing.Select(d => d["_id"]).ToHashSet();
+                // 归一后的 id -> 目标库里真实的那个 _id。覆盖写要用真实那个去定位。
+                var existingIdsByKey = new Dictionary<string, BsonValue>(StringComparer.Ordinal);
+                foreach (var doc in existing)
+                {
+                    existingIdsByKey[DataSyncApply.NormalizeId(doc["_id"])] = doc["_id"];
+                }
 
-                var decision = DataSyncApply.Decide(documents, existingIds, run.OverwriteExisting);
+                var decision = DataSyncApply.Decide(documents, existingIdsByKey, run.OverwriteExisting);
                 progress.Skipped += decision.SkippedIds.Count;
 
                 // 覆盖写是整份替换，所以「目标站本地执行历史」这类字段必须在替换前接回来，

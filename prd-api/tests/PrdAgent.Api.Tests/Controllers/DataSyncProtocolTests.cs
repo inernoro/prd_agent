@@ -701,6 +701,42 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 查已有文档时，同一个逻辑 id 的两种物理形态都要带上。
+    ///
+    /// 只拿源站送来的字符串去 $in，目标库里那条 ObjectId 记录匹配不上——判成
+    /// 「本地没有」就插了同一条记录的第二份，覆盖模式也替不掉原来那条。
+    /// 这和第 31/32 轮的分页是同一族（混合 _id），只是我上两轮只改了分页那一处，
+    /// 没把「_id 还在哪些地方被当成可直接比较的值」列一遍。
+    /// </summary>
+    [Fact]
+    public void 查已有文档要带上两种id形态()
+    {
+        var worker = ReadWorkerSource();
+        var lookup = worker[worker.IndexOf("var ids = new List<BsonValue>();", StringComparison.Ordinal)..];
+        lookup = lookup[..lookup.IndexOf("var existing = await target", StringComparison.Ordinal)];
+        lookup.ShouldContain("ObjectId.TryParse");
+
+        // 归一比较 + 用目标库真实 _id 覆盖写，两件都要接上。
+        worker.ShouldContain("DataSyncApply.NormalizeId(doc[\"_id\"])");
+        worker.ShouldContain("existingIdsByKey");
+    }
+
+    /// <summary>
+    /// 成功路径交还令牌必须用 CancellationToken.None。用 ct 的话：宿主关停时 ct 已取消，
+    /// 这一句立刻失败并把取消咽掉，下一行又把本地唯一那份令牌忘了——界面显示「成功」，
+    /// 而源站那张票在剩下的两小时里仍然能导数据。失败与丢租约两条路径本来就用的 None。
+    /// </summary>
+    [Fact]
+    public void 成功收尾交还令牌不跟着请求一起取消()
+    {
+        var worker = ReadWorkerSource();
+        worker.ShouldNotContain("await ReturnExportTokenAsync(run, token, ct);");
+        // 三条终态路径都用 None。
+        var occurrences = worker.Split("ReturnExportTokenAsync(run, token, CancellationToken.None)").Length - 1;
+        occurrences.ShouldBeGreaterThanOrEqualTo(3);
+    }
+
+    /// <summary>
     /// 源站管理员在同意页上勾了「连登录凭据一起搬」时，users.PasswordHash 不在这次的
     /// 脱敏范围里，源站送来的是真散列。这时候拿目标站的旧散列盖回去，等于把授权页刚刚
     /// 承诺过的事悄悄取消——那批用户的原密码登不进去，而界面上说的是能登。

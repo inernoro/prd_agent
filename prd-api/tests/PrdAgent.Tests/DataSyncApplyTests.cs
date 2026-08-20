@@ -16,6 +16,10 @@ public class DataSyncApplyTests
     private static string Canonical(BsonDocument doc) =>
         doc.ToJson(new JsonWriterSettings { OutputMode = JsonOutputMode.CanonicalExtendedJson });
 
+    /// <summary>「目标站已有这些 id」的便捷构造：归一后的 key -> 真实 _id。</summary>
+    private static Dictionary<string, BsonValue> Existing(params BsonValue[] ids) =>
+        ids.ToDictionary(DataSyncApply.NormalizeId, id => id, StringComparer.Ordinal);
+
     [Fact]
     public void 扩展JSON往返不丢类型()
     {
@@ -65,7 +69,7 @@ public class DataSyncApplyTests
             new() { { "_id", "a" }, { "Title", "源站版本" } },
             new() { { "_id", "b" }, { "Title", "新的" } },
         };
-        var existing = new HashSet<BsonValue> { "a" };
+        var existing = Existing("a");
 
         var decision = DataSyncApply.Decide(incoming, existing, overwrite: false);
 
@@ -78,7 +82,7 @@ public class DataSyncApplyTests
     public void 覆盖模式下已存在的走替换而不是再插一条()
     {
         var incoming = new List<BsonDocument> { new() { { "_id", "a" }, { "Title", "源站版本" } } };
-        var decision = DataSyncApply.Decide(incoming, new HashSet<BsonValue> { "a" }, overwrite: true);
+        var decision = DataSyncApply.Decide(incoming, Existing("a"), overwrite: true);
 
         Assert.Empty(decision.ToInsert);
         Assert.Single(decision.ToReplace);
@@ -96,7 +100,7 @@ public class DataSyncApplyTests
             new() { { "_id", BsonNull.Value }, { "Title", "_id 是 null" } },
             new() { { "_id", "ok" } },
         };
-        var decision = DataSyncApply.Decide(incoming, new HashSet<BsonValue>(), overwrite: false);
+        var decision = DataSyncApply.Decide(incoming, Existing(), overwrite: false);
 
         // 收下它们会得到本地新生成的 id，下次同步再收一遍——每同步一次翻一倍。
         Assert.Equal(new[] { "ok" }, decision.ToInsert.Select(d => d["_id"].AsString));
@@ -112,7 +116,7 @@ public class DataSyncApplyTests
             new() { { "_id", "dup" }, { "V", 1 } },
             new() { { "_id", "dup" }, { "V", 2 } },
         };
-        var decision = DataSyncApply.Decide(incoming, new HashSet<BsonValue>(), overwrite: false);
+        var decision = DataSyncApply.Decide(incoming, Existing(), overwrite: false);
         Assert.Equal(2, decision.ToInsert.Count);
     }
 
@@ -155,5 +159,32 @@ public class DataSyncApplyTests
 
         Assert.Equal(cleared.OrderBy(x => x, StringComparer.Ordinal), pending);
         Assert.Equal("imap.example.com", doc["Host"].AsString);
+    }
+
+    /// <summary>
+    /// 同一个逻辑 id 在库里有两种物理形态：历史数据 ObjectId、新数据 24 位十六进制字符串
+    /// （StringOrObjectIdSerializer 让应用层看到的都是同一个字符串）。按 BsonValue 原样比
+    /// 会把它们当两条不同记录——源站送字符串、目标库存 ObjectId 时判成「本地没有」，
+    /// 插进去就是同一条记录的第二份；覆盖模式也替不掉原来那条。
+    /// </summary>
+    [Fact]
+    public void 目标库里的ObjectId与源站送来的同值字符串是同一条()
+    {
+        var hex = "507f1f77bcf86cd799439011";
+        var incoming = new List<BsonDocument> { new() { { "_id", hex }, { "Title", "源站版本" } } };
+        var existing = Existing(MongoDB.Bson.ObjectId.Parse(hex));
+
+        var skip = DataSyncApply.Decide(incoming, existing, overwrite: false);
+        Assert.Empty(skip.ToInsert);       // 不许再插一条
+        Assert.Single(skip.SkippedIds);
+
+        var overwrite = DataSyncApply.Decide(
+            new List<BsonDocument> { new() { { "_id", hex }, { "Title", "源站版本" } } },
+            existing, overwrite: true);
+        Assert.Single(overwrite.ToReplace);
+        // 覆盖写必须带**目标库里那个真实的 _id**，否则 replace 定位不到、
+        // 而且 Mongo 也不允许在 replace 里改 _id。
+        Assert.Equal(BsonType.ObjectId, overwrite.ToReplace[0]["_id"].BsonType);
+        Assert.Equal(hex, overwrite.ToReplace[0]["_id"].AsObjectId.ToString());
     }
 }
