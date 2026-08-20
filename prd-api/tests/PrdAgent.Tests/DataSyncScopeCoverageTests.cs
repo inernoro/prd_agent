@@ -551,6 +551,30 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 授权范围必须冻结在签发那一刻()
+    {
+        // 票只记分组 key 的话，它的实际范围会跟着白名单一起变：源站在票的两小时
+        // 有效期内上线一个新集合并归进某个已批准的分组，这张老票立刻就能读到
+        // 批准人从没见过、也从没同意过的数据。授权是对「那一屏上列出的那些集合」
+        // 的授权，所以签发时就要把展开结果冻进 grant，之后一律按它判。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncProviderController.cs");
+        var source = File.ReadAllText(path);
+
+        // 签发时冻结。
+        Assert.Contains("{ \"Collections\", new BsonArray(DataSyncScope.Expand(approvedGroups)", source, StringComparison.Ordinal);
+
+        // 清单与导出都按冻结清单判，不再各自重新展开分组。
+        var reads = Regex.Matches(source, @"ReadFrozenCollections\(grant\)").Count;
+        Assert.True(reads >= 3,
+            $"只有 {reads} 处按冻结清单判（换票 / 清单 / 导出各需一处）——少一处那条路就还在跟着白名单变宽");
+
+        // 导出的授权判据不许退回「分组现在展开成什么」。
+        var export = Regex.Match(source, @"HttpGet\(""export""\)(?<body>.*?)(?=\n    /// <summary>|\Z)", RegexOptions.Singleline);
+        Assert.True(export.Success, "找不到 export 端点了，这条守卫的前提已变");
+        Assert.DoesNotContain("DataSyncScope.GroupOf(resolved.Name)", export.Groups["body"].Value, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 票据校验必须拿当前允许名单重对一遍()
     {
         // 「移出名单」要当场生效，靠的是 ResolveExportGrantAsync 每次都用**当前**名单

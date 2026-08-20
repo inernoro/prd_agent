@@ -118,6 +118,33 @@ public class DataSyncProtocolTests
     }
 
     [Fact]
+    public void 待补字段清单形状不对必须失败()
+    {
+        // 这一格 fail open 的后果不是少一行提示：文档照样入库、Run 照样成功，
+        // 而管理员不知道哪些凭据要补，相关集成静默不可用。
+        const string notArray = """
+        {"success": true, "data": {"collection": "llmplatforms", "documents": [], "clearedFields": "ApiKeyEncrypted"}}
+        """;
+        Should.Throw<InvalidOperationException>(() => DataSyncRunWorker.ReadPage(notArray));
+
+        const string badElement = """
+        {"success": true, "data": {"collection": "llmplatforms", "documents": [], "clearedFields": [123]}}
+        """;
+        Should.Throw<InvalidOperationException>(() => DataSyncRunWorker.ReadPage(badElement));
+
+        // 合法：字符串数组、空数组、null、键不存在（上面已有一条覆盖「键不存在」）。
+        const string ok = """
+        {"success": true, "data": {"collection": "llmplatforms", "documents": [], "clearedFields": ["ApiKeyEncrypted"]}}
+        """;
+        DataSyncRunWorker.ReadPage(ok).ClearedFields.ShouldBe(new[] { "ApiKeyEncrypted" });
+
+        const string nullFields = """
+        {"success": true, "data": {"collection": "llmplatforms", "documents": [], "clearedFields": null}}
+        """;
+        DataSyncRunWorker.ReadPage(nullFields).ClearedFields.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void 游标类型不对必须失败而不是当成拉完了()
     {
         // nextCursor 被当成 null 的后果不是少一页：调用方据此判定这个集合拉完了，

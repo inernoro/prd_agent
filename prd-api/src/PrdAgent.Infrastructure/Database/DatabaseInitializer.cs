@@ -54,6 +54,12 @@ public class DatabaseInitializer
     /// </summary>
     private const string ForceResetKey = "MAP_ADMIN_FORCE_RESET";
 
+    /// <summary>
+    /// 「这次救场已经做过了」记在哪。刻意不放 AppSettings——那一行是可导出的，
+    /// 跨实例同步会把别处的标记搬进来，等于把本站的一次性动作重新武装或提前吞掉。
+    /// </summary>
+    private const string ForceResetMarkerId = "admin-force-reset";
+
     private async Task EnsureAdminUserAsync()
     {
         // 检查是否已存在管理员
@@ -92,8 +98,21 @@ public class DatabaseInitializer
     private async Task MaybeForceResetAdminAsync(User existingAdmin)
     {
         var flag = (_configuration[ForceResetKey] ?? string.Empty).Trim();
-        var on = flag is "1" or "true" or "True" or "TRUE" or "yes" or "on";
-        if (!on) return;
+        if (flag.Length == 0) return;
+        var off = flag is "0" or "false" or "False" or "FALSE" or "no" or "off";
+        if (off) return;
+
+        // 一次性。容器环境变量是持久的，这段代码每次进程启动都会跑到——不记「这个值
+        // 已经用过了」的话，运维某天例行重新部署，就会把管理员后来在界面上自己改的
+        // 密码悄悄改回那个写在部署配置里、众所周知的救场口令，而且没有任何提示。
+        //
+        // 记的是**开关的值**，不是口令，库里不落任何口令派生物。要再救一次就把开关
+        // 换个值（1 → 2），语义上也更诚实：那确实是另一次救场。
+        var marker = await _db.DeploymentMarkers.Find(x => x.Id == ForceResetMarkerId).FirstOrDefaultAsync();
+        if (string.Equals(marker?.Value, flag, StringComparison.Ordinal))
+        {
+            return;
+        }
 
         InitialAdminCredentials credentials;
         try
@@ -130,11 +149,23 @@ public class DatabaseInitializer
 
         await _db.Users.UpdateOneAsync(Builders<User>.Filter.Eq(u => u.UserId, target.UserId), update);
 
+        // 记下这个开关值已经用过了。放在重置之后：万一上面那步抛了，这一笔就不落，
+        // 下次启动还会再试一次——宁可重试，也不要「记成用过了但其实没改成」。
+        await _db.DeploymentMarkers.UpdateOneAsync(
+            Builders<DeploymentMarker>.Filter.Eq(x => x.Id, ForceResetMarkerId),
+            Builders<DeploymentMarker>.Update
+                .Set(x => x.Value, flag)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            new UpdateOptions { IsUpsert = true });
+
         // 已知边界：这里不吊销既有会话。会话版本由 IAuthSessionService 管，
         // 而它按 clientType 分桶、不在 Infrastructure 的依赖面上。重置口令的场景是
         // 「我进不去了」而不是「有人偷了我的会话」，所以先不为它把依赖拉过来；
         // 真要踢下线，管理员登进去后走「强制下线」即可。已记入债务。
-        Console.WriteLine($"[admin-reset] 已按 {ForceResetKey} 重置管理员 {credentials.Username} 的口令");
+
+        Console.WriteLine(
+            $"[admin-reset] 已按 {ForceResetKey}={flag} 重置管理员 {credentials.Username} 的口令；"
+            + $"该值已记为用过，重启不会再执行。要再救一次请把 {ForceResetKey} 换成别的值。");
     }
 
     private async Task EnsureInitialInviteCodeAsync()

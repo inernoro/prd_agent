@@ -339,6 +339,7 @@ public static class DataSyncScope
         ["workflow_chat_messages"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["workflow_executions"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["workflow_secrets"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
+        ["deployment_markers"] = "本站自己的运行状态（哪些一次性动作已经做过）。搬过去会把目标站已消费的一次性动作重新武装、或反过来把该做的那次吞掉",
         ["user_shortcuts"] = "TokenHash 上有唯一索引，而脱敏是把它清成同一个空串——多条捷径只有第一条插得进去，其余撞唯一索引被计成「跳过」，整条同步还报成功。何况清掉散列之后这条捷径永远认证不了，搬过去只是一行死数据",
         ["automation_rules"] = "凭据藏在嵌套结构里：webhook 地址与签名密钥在 Actions[] 每个动作上，不在顶层。同 workflows，整个集合不导出",
         ["workflows"] = "凭据藏在嵌套结构里：变量表 Variables[] 里 IsSecret=true 的那些，值就在 DefaultValue 上；触发器还带一份 VariableOverrides。本功能的脱敏只认顶层字段名，认不到它们，所以整个集合不导出",

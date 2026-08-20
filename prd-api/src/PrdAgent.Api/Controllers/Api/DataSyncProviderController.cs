@@ -338,6 +338,11 @@ public sealed class DataSyncProviderController : ControllerBase
             { "CodeChallenge", request.CodeChallenge! },
             { "RedirectUri", callback },
             { "Groups", new BsonArray(approvedGroups) },
+            // 冻结**当时**展开出来的集合清单，而不是只记分组 key。
+            // 只记分组的话，票在两小时有效期内会跟着白名单一起变：源站中途上线一个
+            // 新集合并归进某个已批准的分组，这张老票立刻就能读到批准人从没见过、
+            // 也从没同意过的数据。授权是对「那一屏上列出的那些集合」的授权。
+            { "Collections", new BsonArray(DataSyncScope.Expand(approvedGroups).Select(c => c.Name)) },
             // 批准的人是否同意把登录口令散列一起给出去。这是一次独立的决定，
             // 所以单独存一格，而不是藏在分组里。
             { "IncludeCredentials", request.IncludeCredentials },
@@ -411,7 +416,7 @@ public sealed class DataSyncProviderController : ControllerBase
         }
 
         var groups = grant.GetValue("Groups", new BsonArray()).AsBsonArray.Select(x => x.AsString).ToList();
-        var collections = DataSyncScope.Expand(groups);
+        var frozen = ReadFrozenCollections(grant);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -419,7 +424,7 @@ public sealed class DataSyncProviderController : ControllerBase
             expiresAt = now.Add(ExportTokenLifetime),
             siteLabel = SiteLabel(),
             groups,
-            collections = collections.Select(c => c.Name),
+            collections = frozen,
             approvedBy = grant.GetValue("ApprovedByName", "").AsString,
         }));
     }
@@ -434,13 +439,14 @@ public sealed class DataSyncProviderController : ControllerBase
         var grant = await ResolveExportGrantAsync(ct);
         if (grant is null) return Unauthorized(ApiResponse<object>.Fail("DATA_SYNC_EXPORT_UNAUTHORIZED", "导出令牌无效或已过期"));
 
-        var groups = grant.GetValue("Groups", new BsonArray()).AsBsonArray.Select(x => x.AsString).ToList();
-        // 对照表报的必须是「按本次批准条件真正会被清空的字段」，不是白名单上的原始登记。
-        // 走和导出同一个出口，不在这里另算一遍。
+        // 只报这张票冻结时就批准过的那些集合，不重新展开分组（见 Authorize 里的说明）。
         var manifestIncludeCredentials = grant.GetValue("IncludeCredentials", BsonBoolean.False).ToBoolean();
         var items = new List<object>();
-        foreach (var collection in DataSyncScope.Expand(groups))
+        foreach (var name in ReadFrozenCollections(grant))
         {
+            // 冻结之后本站又把某个集合移出白名单：解析不出来就不报，
+            // 目标站的对照表会把它列成「源站没报告、不会同步」。
+            if (!DataSyncScope.TryResolve(name, out var collection)) continue;
             var effectiveScope = DataSyncScope.ApplyGrant(collection, manifestIncludeCredentials);
             var count = await _db.Database.GetCollection<BsonDocument>(collection.Name)
                 .CountDocumentsAsync(Builders<BsonDocument>.Filter.Empty, cancellationToken: ct);
@@ -477,9 +483,9 @@ public sealed class DataSyncProviderController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_COLLECTION_UNKNOWN", "集合不在可导出白名单里"));
         }
 
-        // 令牌能不能读这个集合，取决于**当初批准的分组**，不是白名单全集。
-        var groups = grant.GetValue("Groups", new BsonArray()).AsBsonArray.Select(x => x.AsString).ToList();
-        if (!groups.Contains(DataSyncScope.GroupOf(resolved.Name) ?? "__none__", StringComparer.Ordinal))
+        // 令牌能不能读这个集合，取决于**签发那一刻冻结下来的集合清单**，
+        // 不是白名单全集，也不是「分组现在展开成什么」——后者会让票跟着白名单变宽。
+        if (!ReadFrozenCollections(grant).Contains(resolved.Name, StringComparer.Ordinal))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail("DATA_SYNC_COLLECTION_NOT_GRANTED", "这个集合不在本次授权范围内"));
@@ -564,6 +570,22 @@ public sealed class DataSyncProviderController : ControllerBase
     }
 
     // ---------------------------------------------------------------- 内部
+
+    /// <summary>
+    /// 这张票签发时冻结下来的集合清单。
+    ///
+    /// 存量 grant（本字段落地之前签发的）没有这一格，退回按分组展开——那是它们签发时
+    /// 的语义，不能事后改判成「什么都不许读」。两小时后它们自然过期，这条兼容也就到期。
+    /// </summary>
+    private static IReadOnlyList<string> ReadFrozenCollections(BsonDocument grant)
+    {
+        if (grant.TryGetValue("Collections", out var frozen) && frozen is BsonArray array && array.Count > 0)
+        {
+            return array.Select(x => x.AsString).ToList();
+        }
+        var groups = grant.GetValue("Groups", new BsonArray()).AsBsonArray.Select(x => x.AsString).ToList();
+        return DataSyncScope.Expand(groups).Select(c => c.Name).ToList();
+    }
 
     private async Task<BsonDocument?> ResolveExportGrantAsync(CancellationToken ct)
     {

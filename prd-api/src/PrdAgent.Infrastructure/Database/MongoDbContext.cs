@@ -55,6 +55,7 @@ public class MongoDbContext
     public IMongoCollection<LLMPlatform> LLMPlatforms => _database.GetCollection<LLMPlatform>("llmplatforms");
     public IMongoCollection<LLMModel> LLMModels => _database.GetCollection<LLMModel>("llmmodels");
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
+    public IMongoCollection<DeploymentMarker> DeploymentMarkers => _database.GetCollection<DeploymentMarker>("deployment_markers");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
     public IMongoCollection<AdminPushProfile> AdminPushProfiles => _database.GetCollection<AdminPushProfile>("admin_push_profiles");
     public IMongoCollection<AdminPushSubscription> AdminPushSubscriptions => _database.GetCollection<AdminPushSubscription>("admin_push_subscriptions");

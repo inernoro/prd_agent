@@ -396,11 +396,26 @@ internal sealed record ExportPage(List<string> Documents, string? NextCursor, Li
             }
         }
         var cleared = new List<string>();
-        if (data.TryGetProperty("clearedFields", out var fields) && fields.ValueKind == JsonValueKind.Array)
+        if (data.TryGetProperty("clearedFields", out var fields) && fields.ValueKind != JsonValueKind.Null)
         {
+            // 这一格决定「待补密钥清单」有哪些条目。它 fail open 的后果不是少一行提示：
+            // 脱敏过的文档照样入库、Run 照样成功，而管理员**不知道**哪些凭据需要补，
+            // 相关集成就那么静默地不能用。所以和这一页别的字段一样，形状不对即失败。
+            if (fields.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidOperationException(
+                    $"源站返回的 clearedFields 是 {fields.ValueKind}，只接受字符串数组或 null——两边版本多半不一致");
+            }
+            var index = 0;
             foreach (var element in fields.EnumerateArray())
             {
-                if (element.ValueKind == JsonValueKind.String) cleared.Add(element.GetString() ?? "");
+                if (element.ValueKind != JsonValueKind.String)
+                {
+                    throw new InvalidOperationException(
+                        $"源站返回的 clearedFields[{index}] 是 {element.ValueKind}，不是字段名字符串");
+                }
+                cleared.Add(element.GetString() ?? string.Empty);
+                index++;
             }
         }
         return new ExportPage(documents, nextCursor, cleared);

@@ -127,6 +127,7 @@ public class AppSettings
     /// </summary>
     public bool? DataSyncProviderEnabled { get; set; }
 
+
     /// <summary>
     /// 允许来要数据的目标站 Origin，逗号分隔；支持以 *. 开头的子域通配。
     /// 为空即视为关闭——「没配」不等于「允许所有」，钓鱼面正在这里。
