@@ -1408,6 +1408,12 @@ db.data_sync_runs.createIndex(
   { "Status": 1, "UpdatedAt": 1 },
   { name: "idx_data_sync_runs_status_updated" }
 )
+// 同步历史列表：无过滤、按 CreatedAt 倒序取 20 条。表只增不删，
+// 没有这条索引时每次打开页面都要扫全表再在内存里排序。
+db.data_sync_runs.createIndex(
+  { "CreatedAt": -1 },
+  { name: "idx_data_sync_runs_created_desc" }
+)
 // end collection: data_sync_runs
 
 // collection: data_sync_grants

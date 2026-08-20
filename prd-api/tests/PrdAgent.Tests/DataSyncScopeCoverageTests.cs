@@ -442,12 +442,30 @@ public class DataSyncScopeCoverageTests
     public void 授权票的散列查询必须登记索引()
     {
         var script = ReadRepoFile("scripts", "mongodb-indexes.js");
-        Assert.Contains("db.data_sync_grants.createIndex", script);
+
+        // 断言必须**限定在这两个集合自己的段落里**。整份脚本里别的集合也有
+        // "CreatedAt": -1 这类索引，不限定的话我的断言会被别人的索引满足——
+        // 判据读到了一个真实存在的值，只是不是我要的那个（形状 6）。
+        static string Section(string script, string collection)
+        {
+            var begin = script.IndexOf($"// collection: {collection}", StringComparison.Ordinal);
+            var end = script.IndexOf($"// end collection: {collection}", StringComparison.Ordinal);
+            Assert.True(begin >= 0 && end > begin,
+                $"{collection} 的索引段落不在脚本里（段落标记也别改名，守卫按它定位）");
+            return script[begin..end];
+        }
+
+        var grants = Section(script, "data_sync_grants");
+        Assert.Contains("db.data_sync_grants.createIndex", grants);
+        Assert.Contains("\"CodeHash\": 1", grants);
+        Assert.Contains("\"ExportTokenHash\": 1", grants);
+
+        var runs = Section(script, "data_sync_runs");
         // 收尸扫描每个部署每分钟跑一次，表只增不删，且分支预览与生产共用同一个库。
-        Assert.Contains("db.data_sync_runs.createIndex", script);
-        Assert.Contains("\"Status\": 1, \"UpdatedAt\": 1", script);
-        Assert.Contains("\"CodeHash\": 1", script);
-        Assert.Contains("\"ExportTokenHash\": 1", script);
+        Assert.Contains("db.data_sync_runs.createIndex", runs);
+        Assert.Contains("\"Status\": 1, \"UpdatedAt\": 1", runs);
+        // 同步历史页无过滤、按 CreatedAt 倒序取 20 条——没索引就是每次打开都全表扫 + 内存排序。
+        Assert.Contains("\"CreatedAt\": -1", runs);
 
         var worker = ReadApiServiceSource("DataSync", "DataSyncRunWorker.cs");
         Assert.Contains("SweepRetiredGrantsAsync", worker);

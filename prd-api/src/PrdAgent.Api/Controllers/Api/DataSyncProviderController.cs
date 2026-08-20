@@ -196,6 +196,9 @@ public sealed class DataSyncProviderController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             enabled = config.Enabled,
+            // 界面显示 enabled（生效值），并发比对送 storedEnabled（库里原样那份）。
+            // 两者只在「名单空了」这一格不同，而那一格恰恰是死锁发生的地方。
+            storedEnabled = config.StoredEnabled,
             origins = config.AllowedOrigins,
             siteLabel = SiteLabel(),
         }));
@@ -298,8 +301,8 @@ public sealed class DataSyncProviderController : ControllerBase
                 {
                     Builders<AppSettings>.Filter.Eq(x => x.DataSyncProviderEnabled, expectedEnabled),
                 };
-                // 库里没有这个字段时，生效值同样来自兜底；口径与名单那半保持一致。
-                if (expectedEnabled == currentConfig.Enabled)
+                // 库里没有这个字段时，值来自环境变量兜底；口径与名单那半保持一致。
+                if (expectedEnabled == currentConfig.StoredEnabled)
                 {
                     enabledAlternatives.Add(Builders<AppSettings>.Filter.Or(
                         Builders<AppSettings>.Filter.Exists(x => x.DataSyncProviderEnabled, false),
@@ -343,6 +346,10 @@ public sealed class DataSyncProviderController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             enabled = IsEffectivelyEnabled(request.Enabled, origins),
+            // 也要回刚刚**存下去**的那个原始开关。前端把这份响应合进本地状态，
+            // 下一次保存的比对令牌就取自它——只回生效值的话，名单一空，本地那份
+            // storedEnabled 会停在保存前的旧值，下次保存立刻被判过期。
+            storedEnabled = request.Enabled,
             origins,
         }));
     }
@@ -751,7 +758,21 @@ public sealed class DataSyncProviderController : ControllerBase
         return ($"admin:{user.UserId}", user.Username, user.DisplayName);
     }
 
-    private sealed record ProviderConfig(bool Enabled, IReadOnlyList<string> AllowedOrigins);
+    /// <param name="Enabled">**生效**值：开关为真且名单非空。鉴权与界面显示都用它。</param>
+    /// <param name="AllowedOrigins">生效名单（库里没配过时来自环境变量兜底）。</param>
+    /// <param name="StoredEnabled">
+    /// 库里**原样**存着的那个开关（没配过时是环境变量那份）。
+    ///
+    /// 它和 Enabled 只在「名单空了」这一格上不同，而并发比对必须用它：拿生效值去比
+    /// 库里的原始字段，管理员撤掉最后一条来源之后就会永远比不上——生效值是 false、
+    /// 库里存的还是 true，于是每次保存都回「你手上这份过期了」，刷新出来还是 false，
+    /// 再试还是过期。这正是我在第 25 轮修过一次的那个死锁（形状 5），第 27 轮给开关
+    /// 加比对时又照原样造了一遍，因为「显示用哪个值」和「比对用哪个值」被当成了同一个。
+    /// </param>
+    private sealed record ProviderConfig(
+        bool Enabled,
+        IReadOnlyList<string> AllowedOrigins,
+        bool StoredEnabled);
 
     private async Task<ProviderConfig> ReadConfigAsync(CancellationToken ct)
     {
@@ -766,7 +787,7 @@ public sealed class DataSyncProviderController : ControllerBase
             : FirstNonEmpty(
                 _configuration["DataSync:AllowedConsumerOrigins"],
                 _configuration["DATA_SYNC_ALLOWED_CONSUMER_ORIGINS"]));
-        return new ProviderConfig(IsEffectivelyEnabled(enabled, origins), origins);
+        return new ProviderConfig(IsEffectivelyEnabled(enabled, origins), origins, enabled);
     }
 
     /// <summary>

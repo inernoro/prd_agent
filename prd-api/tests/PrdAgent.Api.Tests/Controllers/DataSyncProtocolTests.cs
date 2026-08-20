@@ -540,9 +540,21 @@ public class DataSyncProtocolTests
         update.ShouldContain("request.ExpectedEnabled is bool expectedEnabled");
         update.ShouldContain("x.DataSyncProviderEnabled, expectedEnabled");
 
+        // 比对必须拿**库里原样那份**，不能拿生效值。管理员撤掉最后一条来源之后，
+        // 生效值是 false 而库里存的还是 true——用生效值去比，每次保存都回「过期了」，
+        // 刷新出来还是 false，再试还是过期。这正是第 25 轮修过一次的死锁（形状 5），
+        // 第 27 轮给开关加比对时又照原样造了一遍。
+        update.ShouldContain("currentConfig.StoredEnabled");
+        update.ShouldNotContain("expectedEnabled == currentConfig.Enabled");
+
+        // 而 GET 与 PUT 都得把这份原始值交出去，否则前端手上没有可送的东西
+        // ——尤其 PUT：前端把响应合进本地状态，只回生效值的话下一次保存就带着旧值（形状 2）。
+        body.ShouldContain("storedEnabled = config.StoredEnabled");
+        body.ShouldContain("storedEnabled = request.Enabled");
+
         // 前端必须真的送上来，否则这道门形同虚设（形状 2：建了一半）。
         var page = ReadRepoText("prd-admin", "src", "pages", "data-sync", "DataSyncPage.tsx");
-        page.ShouldContain("expectedEnabled: base.enabled");
+        page.ShouldContain("expectedEnabled: base.storedEnabled");
     }
 
     /// <summary>
@@ -1099,7 +1111,9 @@ public class DataSyncProtocolTests
         source.ShouldContain("enabled = IsEffectivelyEnabled(request.Enabled, origins)");
         source.ShouldNotContain("Ok(new { enabled = request.Enabled, origins })");
         // 读取链路也必须走同一个函数，不许再抄一份 `enabled && origins.Count > 0`。
-        source.ShouldContain("new ProviderConfig(IsEffectivelyEnabled(enabled, origins), origins)");
+        source.ShouldContain("new ProviderConfig(IsEffectivelyEnabled(enabled, origins), origins, enabled)");
+        // 第三个参数是**原始**开关：生效值给显示与鉴权，原始值给并发比对。
+        // 两者混用就是第 29 轮那个死锁的来源。
     }
 
     /// <summary>

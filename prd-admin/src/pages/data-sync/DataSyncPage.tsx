@@ -29,7 +29,14 @@ type PlanRow = {
   /** 本站白名单认不认识它。false = 源站有、本站版本还不支持，不会同步。 */
   supportedHere?: boolean;
 };
-type ProviderSettings = { enabled: boolean; origins: string[]; siteLabel: string };
+type ProviderSettings = {
+  /** 生效值（开关为真且名单非空）——界面显示这个。 */
+  enabled: boolean;
+  /** 库里原样存着的开关——并发比对送这个。两者只在「名单空了」那一格不同。 */
+  storedEnabled: boolean;
+  origins: string[];
+  siteLabel: string;
+};
 type Plan = { runId: string; sourceLabel: string; sourceOrigin: string; targetDatabase: string; rows: PlanRow[] };
 type ProgressRow = {
   collection: string;
@@ -153,7 +160,7 @@ export default function DataSyncPage() {
               enabled: value.enabled,
               origins: value.origins,
               expectedOrigins: base.origins,
-              expectedEnabled: base.enabled,
+              expectedEnabled: base.storedEnabled,
             },
           });
           if (!res.success && res.error?.code === 'DATA_SYNC_SETTINGS_STALE') {
