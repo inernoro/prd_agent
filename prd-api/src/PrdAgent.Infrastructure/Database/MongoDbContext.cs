@@ -33,6 +33,12 @@ public class MongoDbContext
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
     public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
         _database.GetCollection<BsonDocument>("console_sso_tickets");
+    /// <summary>本站作为「源站」签发的一次性数据导出授权（含导出令牌散列）</summary>
+    public IMongoCollection<BsonDocument> DataSyncGrants =>
+        _database.GetCollection<BsonDocument>("data_sync_grants");
+    /// <summary>本站作为「目标站」执行的跨实例同步记录</summary>
+    public IMongoCollection<DataSyncRun> DataSyncRuns =>
+        _database.GetCollection<DataSyncRun>("data_sync_runs");
     public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
     public IMongoCollection<GroupMember> GroupMembers => _database.GetCollection<GroupMember>("groupmembers");
     // PRD 文档长期存储（原文 + 解析结构）

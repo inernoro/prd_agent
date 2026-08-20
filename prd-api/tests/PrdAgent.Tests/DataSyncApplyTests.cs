@@ -1,0 +1,148 @@
+using MongoDB.Bson;
+using MongoDB.Bson.IO;
+using PrdAgent.Core.DataSync;
+using Xunit;
+
+namespace PrdAgent.Tests;
+
+/// <summary>
+/// 落库决策与文档解析的回归。
+///
+/// 这两处的错误都不会抛异常，只会让数据悄悄变形：类型掉了、条数翻倍、本地改动被盖。
+/// 所以每条断言都盯着一个具体的坏结果，而不是「函数返回了东西」。
+/// </summary>
+public class DataSyncApplyTests
+{
+    private static string Canonical(BsonDocument doc) =>
+        doc.ToJson(new JsonWriterSettings { OutputMode = JsonOutputMode.CanonicalExtendedJson });
+
+    [Fact]
+    public void 扩展JSON往返不丢类型()
+    {
+        var original = new BsonDocument
+        {
+            { "_id", "d1" },
+            { "CreatedAt", new BsonDateTime(new DateTime(2026, 8, 20, 3, 4, 5, DateTimeKind.Utc)) },
+            { "Size", new BsonInt64(9_007_199_254_740_993L) },
+            { "Score", 1.5 },
+            { "Enabled", true },
+        };
+
+        var parsed = DataSyncApply.ParseDocuments(new[] { Canonical(original) }).Single();
+
+        // 普通 JSON 会把日期变成字符串、把大整数变成 double 丢精度，这两条正是要挡的。
+        Assert.Equal(BsonType.DateTime, parsed["CreatedAt"].BsonType);
+        Assert.Equal(new DateTime(2026, 8, 20, 3, 4, 5, DateTimeKind.Utc), parsed["CreatedAt"].ToUniversalTime());
+        Assert.Equal(BsonType.Int64, parsed["Size"].BsonType);
+        Assert.Equal(9_007_199_254_740_993L, parsed["Size"].AsInt64);
+        Assert.True(parsed["Enabled"].AsBoolean);
+    }
+
+    [Fact]
+    public void 空串与空集合不产生文档()
+    {
+        Assert.Empty(DataSyncApply.ParseDocuments(new[] { "", "   " }));
+        Assert.Empty(DataSyncApply.ParseDocuments(Array.Empty<string>()));
+        Assert.Empty(DataSyncApply.ParseDocuments(null!));
+    }
+
+    [Fact]
+    public void 默认跳过本地已存在的同Id文档()
+    {
+        var incoming = new List<BsonDocument>
+        {
+            new() { { "_id", "a" }, { "Title", "源站版本" } },
+            new() { { "_id", "b" }, { "Title", "新的" } },
+        };
+        var existing = new HashSet<BsonValue> { "a" };
+
+        var decision = DataSyncApply.Decide(incoming, existing, overwrite: false);
+
+        Assert.Equal(new[] { "b" }, decision.ToInsert.Select(d => d["_id"].AsString));
+        Assert.Empty(decision.ToReplace);
+        Assert.Equal(new BsonValue[] { "a" }, decision.SkippedIds);
+    }
+
+    [Fact]
+    public void 覆盖模式下已存在的走替换而不是再插一条()
+    {
+        var incoming = new List<BsonDocument> { new() { { "_id", "a" }, { "Title", "源站版本" } } };
+        var decision = DataSyncApply.Decide(incoming, new HashSet<BsonValue> { "a" }, overwrite: true);
+
+        Assert.Empty(decision.ToInsert);
+        Assert.Single(decision.ToReplace);
+        Assert.Empty(decision.SkippedIds);
+        // 若这里退化成 Insert，本地会出现两条同 _id —— 实际会撞唯一索引，
+        // 于是整批 InsertMany 报错，一次覆盖同步变成一次失败同步。
+    }
+
+    [Fact]
+    public void 没有Id的文档一律丢弃()
+    {
+        var incoming = new List<BsonDocument>
+        {
+            new() { { "Title", "没有 _id" } },
+            new() { { "_id", BsonNull.Value }, { "Title", "_id 是 null" } },
+            new() { { "_id", "ok" } },
+        };
+        var decision = DataSyncApply.Decide(incoming, new HashSet<BsonValue>(), overwrite: false);
+
+        // 收下它们会得到本地新生成的 id，下次同步再收一遍——每同步一次翻一倍。
+        Assert.Equal(new[] { "ok" }, decision.ToInsert.Select(d => d["_id"].AsString));
+    }
+
+    [Fact]
+    public void 同一批里的重复Id不会互相遮蔽()
+    {
+        // 源站按 _id 升序分页，正常不会同页出现重复；但真出现时两条都该被当成新增交给
+        // Mongo，由唯一索引兜底，而不是在这里静默吞掉一条。
+        var incoming = new List<BsonDocument>
+        {
+            new() { { "_id", "dup" }, { "V", 1 } },
+            new() { { "_id", "dup" }, { "V", 2 } },
+        };
+        var decision = DataSyncApply.Decide(incoming, new HashSet<BsonValue>(), overwrite: false);
+        Assert.Equal(2, decision.ToInsert.Count);
+    }
+
+    [Fact]
+    public void 待补清单只列出源站清空过的字段()
+    {
+        Assert.True(DataSyncScope.TryResolve("llmplatforms", out var platform));
+        var documents = new List<BsonDocument>
+        {
+            new() { { "_id", "p1" }, { "Name", "OpenAI" }, { "ApiKeyEncrypted", "" } },
+            new() { { "_id", "p2" }, { "Name", "本地模型" } },   // 压根没这个字段
+        };
+
+        var pending = DataSyncApply.DetectPendingSecretFields(documents, platform);
+
+        Assert.Equal(new[] { "ApiKeyEncrypted" }, pending);
+    }
+
+    [Fact]
+    public void 没有敏感字段的集合待补清单为空()
+    {
+        Assert.True(DataSyncScope.TryResolve("defect_reports", out var defects));
+        var documents = new List<BsonDocument> { new() { { "_id", "d1" }, { "Title", "" } } };
+        // Title 是空的，但它不在 RedactFields 里，不该被当成「等着补密钥」。
+        Assert.Empty(DataSyncApply.DetectPendingSecretFields(documents, defects));
+    }
+
+    [Fact]
+    public void 脱敏与待补清单首尾相接()
+    {
+        // 出口清空 -> 入口识别，两端必须对得上。任何一端改成「删字段」这条就会红。
+        Assert.True(DataSyncScope.TryResolve("channel_settings", out var channel));
+        var doc = new BsonDocument
+        {
+            { "_id", "c1" }, { "ImapPassword", "pw" }, { "SmtpPassword", "pw2" }, { "Host", "imap.example.com" },
+        };
+
+        var cleared = DataSyncRedactor.Redact(doc, channel);
+        var pending = DataSyncApply.DetectPendingSecretFields(new List<BsonDocument> { doc }, channel);
+
+        Assert.Equal(cleared.OrderBy(x => x, StringComparer.Ordinal), pending);
+        Assert.Equal("imap.example.com", doc["Host"].AsString);
+    }
+}

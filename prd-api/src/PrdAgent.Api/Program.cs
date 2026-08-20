@@ -161,6 +161,11 @@ builder.Services.AddScoped<PrdAgent.Api.Services.PeerSync.IPeerSyncTransferServi
 // 知识库后台自动同步 worker（双向同步从「点一次跑一次」变「定期保持一致」；防风暴见 PeerSyncScheduleWorker）。
 builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncScheduleWorker>();
 
+// 跨 MAP 实例数据同步（动态授权，一次授权跑一次；详见 doc/design.platform.cross-instance-data-sync.md）。
+// Vault 必须是单例：导出令牌只活在内存里，换成 Scoped 就等于每个请求一个空保险箱。
+builder.Services.AddSingleton<PrdAgent.Api.Services.DataSync.DataSyncTokenVault>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.DataSync.DataSyncRunWorker>();
+
 // 双链 + 反向链接（详见 doc/design.knowledge-base.mention-network.md）
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.MentionService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();

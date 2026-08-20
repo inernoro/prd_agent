@@ -120,5 +120,18 @@ public class AppSettings
     /// <summary>允许回跳的 HTTPS Origin，逗号分隔；支持以 *. 开头的子域通配</summary>
     public string? ConsoleSsoAllowedRedirectOrigins { get; set; }
 
+    /// <summary>
+    /// 本站是否允许别的 MAP 实例来申请一次性数据导出（本站作为「源站」）。
+    /// 与 ConsoleSso 分开配置：那是「让人登进外部控制台」，这是「让数据离开本站」，
+    /// 一个开关同时管两件事迟早会有人为了开前者顺手开了后者。
+    /// </summary>
+    public bool? DataSyncProviderEnabled { get; set; }
+
+    /// <summary>
+    /// 允许来要数据的目标站 Origin，逗号分隔；支持以 *. 开头的子域通配。
+    /// 为空即视为关闭——「没配」不等于「允许所有」，钓鱼面正在这里。
+    /// </summary>
+    public string? DataSyncAllowedConsumerOrigins { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
