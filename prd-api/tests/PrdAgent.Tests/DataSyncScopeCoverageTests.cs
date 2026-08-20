@@ -114,6 +114,106 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 可导出集合里长得像凭据的字段必须逐个交代()
+    {
+        // 手写「这几个集合要脱敏」只覆盖得到我当时想到的那几个。真实情况是
+        // Codex review 一眼看出 document_stores.SyncToken 与 document_store_sync_links.RemoteToken
+        // 是永久有效、能直接调对方 sync 端点的凭据，而它们被原样导出——判据太窄
+        // （predicate-and-wiring-discipline 形状 1）。
+        //
+        // 所以这里改成机器逐个逼问：可导出集合对应的实体类里，凡是字段名长得像凭据的，
+        // 要么已登记脱敏，要么写进下面的「看过了，不是凭据」名单并说明理由。新加一个
+        // 带 Token / Secret / Password 的字段而没有交代，CI 直接红。
+        var reviewedNonCredentials = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["appsettings.PasswordLoginDisabled"] = "布尔开关，不是口令",
+            ["users.MustResetPassword"] = "布尔标记，正是同步后要让管理员看见的那个",
+            ["documents.TokenEstimate"] = "token 计数，不是访问凭据",
+            ["groups.PrdTokenEstimateSnapshot"] = "token 计数快照",
+            ["pr_review_items.LastRefreshError"] = "错误文案，命中的是 refresh 这个词",
+            ["pr_review_items.LastRefreshedAt"] = "时间戳，命中的是 refresh 这个词",
+            ["workflows.IsSecret"] = "布尔开关，不是密钥本身",
+            ["workflows.WebhookId"] = "标识而非凭据；对应的密钥在 workflow_secrets，那个集合整个不导出",
+            ["user_shortcuts.TokenPrefix"] = "只是前缀，用于界面辨认；真正的散列 TokenHash 已登记脱敏",
+        };
+
+        var suspect = new Regex(
+            "token|secret|password|passwd|apikey|credential|privatekey|accesskey|refresh|webhook",
+            RegexOptions.IgnoreCase);
+        // 这些后缀是「计数」不是「凭据」，先排掉，免得整张表被 token 计数字段淹没。
+        var countingSuffix = new Regex("(TokenCount|Tokens|TokenUsage|TokenLimit|MaxTokens)$", RegexOptions.None);
+
+        var collectionToType = ReadCollectionTypeMap();
+        Assert.True(collectionToType.Count > 200, $"只解析出 {collectionToType.Count} 个集合到实体的映射，正则多半失效了");
+        var propsByType = ReadModelProperties();
+        Assert.True(propsByType.Count > 100, $"只解析出 {propsByType.Count} 个实体的属性，正则多半失效了");
+
+        var unexplained = new List<string>();
+        var coveredAny = false;
+        foreach (var collection in DataSyncScope.AllExportableCollections.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            if (!collectionToType.TryGetValue(collection, out var typeName)) continue;
+            if (!propsByType.TryGetValue(typeName, out var properties)) continue;
+            coveredAny = true;
+            DataSyncScope.TryResolve(collection, out var resolved);
+            foreach (var property in properties.OrderBy(x => x, StringComparer.Ordinal))
+            {
+                if (!suspect.IsMatch(property) || countingSuffix.IsMatch(property)) continue;
+                if (resolved is not null && resolved.RedactFields.Contains(property, StringComparer.Ordinal)) continue;
+                var key = $"{collection}.{property}";
+                if (reviewedNonCredentials.ContainsKey(key)) continue;
+                unexplained.Add(key);
+            }
+        }
+
+        // 一个都没扫到时上面每条断言都天然成立——先把「确实扫到了东西」本身断言掉。
+        Assert.True(coveredAny, "一个可导出集合的实体属性都没解析到，这条守卫在空跑");
+        Assert.True(unexplained.Count == 0,
+            "下列字段名长得像凭据，却既没登记脱敏、也没写进「看过了，不是凭据」名单：\n  "
+            + string.Join("\n  ", unexplained)
+            + "\n（是凭据 -> 加进 DataSyncScope 的 RedactFields；不是 -> 加进本用例的 reviewedNonCredentials 并写明理由）");
+    }
+
+    /// <summary>集合名 -> 实体类型名，解析自 MongoDbContext 的 GetCollection 调用。</summary>
+    private static IReadOnlyDictionary<string, string> ReadCollectionTypeMap()
+    {
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Infrastructure", "Database", "MongoDbContext.cs");
+        var source = File.ReadAllText(path);
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (Match m in Regex.Matches(source, @"GetCollection<([A-Za-z0-9_.]+)>\(""([a-zA-Z0-9_]+)""\)"))
+        {
+            map[m.Groups[2].Value] = m.Groups[1].Value.Split('.').Last();
+        }
+        return map;
+    }
+
+    /// <summary>实体类型名 -> 公开属性名。</summary>
+    private static IReadOnlyDictionary<string, HashSet<string>> ReadModelProperties()
+    {
+        var root = Path.Combine(LocateSrcRoot(), "PrdAgent.Core", "Models");
+        var result = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+        {
+            var source = File.ReadAllText(file);
+            foreach (Match decl in Regex.Matches(source, @"(?:class|record)\s+([A-Za-z0-9_]+)"))
+            {
+                // 类体的粗略切片：从声明处往后取，直到下一个类型声明为止。
+                var start = decl.Index + decl.Length;
+                var next = Regex.Match(source[start..], @"(?:class|record)\s+[A-Za-z0-9_]+");
+                var body = next.Success ? source[start..(start + next.Index)] : source[start..];
+                var bucket = result.TryGetValue(decl.Groups[1].Value, out var existing)
+                    ? existing
+                    : result[decl.Groups[1].Value] = new HashSet<string>(StringComparer.Ordinal);
+                foreach (Match prop in Regex.Matches(body, @"public\s+[A-Za-z0-9_<>?\[\],\s]+?\s+([A-Za-z0-9_]+)\s*\{\s*get;"))
+                {
+                    bucket.Add(prop.Groups[1].Value);
+                }
+            }
+        }
+        return result;
+    }
+
+    [Fact]
     public void 脱敏在出口清空字段并报告清空了哪些()
     {
         Assert.True(DataSyncScope.TryResolve("llmplatforms", out var platform));

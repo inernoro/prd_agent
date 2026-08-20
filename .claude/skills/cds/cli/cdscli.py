@@ -7403,15 +7403,31 @@ def cmd_smoke(args: argparse.Namespace) -> None:
         if r["pass"]:
             break
     # L3 认证 API
-    key = os.environ.get("AI_ACCESS_KEY", "")
-    user = os.environ.get("MAP_AI_USER", "")
+    #
+    # 这一层打的是**被测应用**，不是 CDS。两者的密钥是两把不同的钥匙：
+    # AI_ACCESS_KEY 是 cdscli 自己连 CDS 用的（见 _auth_headers），被测应用有它自己的
+    # AI_ACCESS_KEY 配在项目环境变量里。早先这里直接复用了前者，于是除非两边碰巧同值，
+    # L3 必然 401——报出来像「应用坏了」，实际是拿错了钥匙（一值两用，见
+    # .claude/rules/cross-project-isolation.md §3）。所以优先读专用变量。
+    key = (os.environ.get("MAP_AI_ACCESS_KEY", "")
+           or os.environ.get("SMOKE_AI_ACCESS_KEY", "")
+           or os.environ.get("AI_ACCESS_KEY", "")).strip()
+    # 应用侧的 AiAccessKeyAuthenticationHandler 把 X-AI-Impersonate 列为必填，且要求
+    # 该用户在 users 集合里真实存在（env 引导账号 root 不算）。缺它就是一个永远不可能
+    # 通过的判据——那种失败只会掩盖真实状态，所以判为跳过，并说清缺什么。
+    user = os.environ.get("MAP_AI_USER", "").strip()
     l3_result: dict[str, Any] | None = None
-    if key:
-        hdrs = {"X-AI-Access-Key": key}
-        if user:
-            hdrs["X-AI-Impersonate"] = user
+    l3_skip_reason = ""
+    if not key:
+        l3_skip_reason = "未提供被测应用的 AI key（设 MAP_AI_ACCESS_KEY）"
+    elif not user:
+        l3_skip_reason = "未提供冒充用户（设 MAP_AI_USER 为该部署 users 集合里真实存在的用户名）"
+    if l3_skip_reason:
+        results.append({"layer": "L3-authed", "skipped": True, "reason": l3_skip_reason})
+    else:
         l3_result = probe("L3-authed", f"{preview}/api/users?pageSize=1",
-                          headers=hdrs, expect_status=200)
+                          headers={"X-AI-Access-Key": key, "X-AI-Impersonate": user},
+                          expect_status=200)
         results.append(l3_result)
 
     layers = [

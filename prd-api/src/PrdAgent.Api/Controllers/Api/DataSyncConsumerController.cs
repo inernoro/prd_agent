@@ -352,6 +352,8 @@ public sealed class DataSyncConsumerController : ControllerBase
             inserted = kv.Value.Inserted,
             skipped = kv.Value.Skipped,
             updated = kv.Value.Updated,
+            plannedInsert = kv.Value.PlannedInsert,
+            plannedUpdate = kv.Value.PlannedUpdate,
             done = kv.Value.Done,
         }),
     };

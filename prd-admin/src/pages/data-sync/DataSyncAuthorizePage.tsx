@@ -16,10 +16,18 @@ import { useMobileThemeStore } from '@/stores/mobileThemeStore';
 
 type ScopeCollection = { name: string; estimatedCount: number; redactFields: string[] };
 type ScopeGroup = { key: string; label: string; collections: ScopeCollection[] };
+type Readiness = {
+  providerEnabled: boolean;
+  requestOrigin: string;
+  redirectShapeValid: boolean;
+  originAllowed: boolean;
+  allowedOriginCount: number;
+};
 type ScopeCatalog = {
   siteLabel: string;
   groups: ScopeGroup[];
   excluded: { collection: string; reason: string }[];
+  readiness: Readiness;
 };
 
 function readParams() {
@@ -59,12 +67,14 @@ export default function DataSyncAuthorizePage() {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showExcluded, setShowExcluded] = useState(false);
+  const [trustOrigin, setTrustOrigin] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    void apiRequest<ScopeCatalog>('/api/instance-sync/scope-catalog').then((res) => {
+    const qs = new URLSearchParams({ redirect_uri: readParams().redirectUri }).toString();
+    void apiRequest<ScopeCatalog>(`/api/instance-sync/scope-catalog?${qs}`).then((res) => {
       if (!alive) return;
       if (!res.success || !res.data) {
         setError(res.error?.message || '读取可授权范围失败');
@@ -105,6 +115,7 @@ export default function DataSyncAuthorizePage() {
         state: params.state,
         codeChallenge: params.codeChallenge,
         groups: Array.from(checked),
+        trustThisOrigin: trustOrigin,
       },
     });
     if (!res.success || !res.data?.redirectUrl) {
@@ -242,6 +253,37 @@ export default function DataSyncAuthorizePage() {
           ) : null}
         </div>
 
+        {catalog.readiness && !catalog.readiness.originAllowed ? (
+          <div
+            className="mt-5 rounded-xl px-4 py-3"
+            style={{ background: 'rgba(var(--accent-primary-rgb), 0.08)', border: '1px solid var(--accent-primary)' }}
+          >
+            <div className="flex items-start gap-2">
+              <ShieldAlert size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent-primary)' }} />
+              <div className="min-w-0 text-sm leading-6" style={{ color: 'var(--text-primary)' }}>
+                <p>
+                  本站还没有允许过{' '}
+                  <span className="font-mono">{catalog.readiness.requestOrigin || '这个来源'}</span>
+                  {catalog.readiness.providerEnabled ? '' : '，并且本站的对外同步开关也还没打开'}。
+                </p>
+                <p className="mt-1" style={{ color: 'var(--text-muted)' }}>
+                  确认这台机器确实是你们自己的、你确实打算把上面勾中的数据交给它，再勾下面这项。
+                  勾了就会把它记进允许名单，以后它再来不用重复这一步。
+                </p>
+                <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={trustOrigin}
+                    onChange={(e) => setTrustOrigin(e.target.checked)}
+                    className="h-4 w-4 shrink-0"
+                  />
+                  <span>我确认这台机器可信，允许它今后来取数据</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {error ? (
           <p className="mt-4 flex items-center gap-2 text-sm" style={{ color: 'var(--danger)' }} role="alert">
             <ShieldAlert size={16} /> {error}
@@ -255,7 +297,11 @@ export default function DataSyncAuthorizePage() {
           </p>
           <button
             type="button"
-            disabled={submitting || checked.size === 0}
+            disabled={
+              submitting
+              || checked.size === 0
+              || (!!catalog.readiness && !catalog.readiness.originAllowed && !trustOrigin)
+            }
             onClick={() => void approve()}
             className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"
             style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}

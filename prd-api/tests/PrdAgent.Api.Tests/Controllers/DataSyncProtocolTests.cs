@@ -53,6 +53,39 @@ public class DataSyncProtocolTests
         DataSyncProviderController.TryValidateRedirect(uri, Allowed, out _).ShouldBeFalse();
     }
 
+    [Theory]
+    // 当场准入放宽的**只有**「这个 origin 在不在名单里」。下面这些属于回跳地址的形状，
+    // 管理员在同意页上勾多少次都不该放行——尤其是路径，白名单域名下有个开放重定向页
+    // 就足以把授权码转走，而那正是「勾一下就信任」最容易被利用的地方。
+    [InlineData("https://map.example.com/redirect?to=evil")]
+    [InlineData("https://map.example.com/data-sync/callback/extra")]
+    [InlineData("https://map.example.com/data-sync/callback?next=x")]
+    [InlineData("https://map.example.com/data-sync/callback#x")]
+    [InlineData("http://map.example.com/data-sync/callback")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void 回跳地址的形状不可当场放宽(string? uri)
+    {
+        DataSyncProviderController.TryValidateRedirectShape(uri, out _, out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void 形状合法但不在名单里时只差名单这一项()
+    {
+        // 这一条钉住「当场准入」的作用边界：形状过了、只是名单里没有，
+        // 所以管理员勾一下就能放行；反过来形状不过，勾了也没用（上一条）。
+        const string uri = "https://newsite.example.com/data-sync/callback";
+        DataSyncProviderController.TryValidateRedirectShape(uri, out var callback, out var origin).ShouldBeTrue();
+        origin.ShouldBe("https://newsite.example.com");
+        callback.ShouldBe("https://newsite.example.com/data-sync/callback");
+        DataSyncProviderController.IsOriginAllowed(origin, Allowed).ShouldBeFalse();
+        // 加进名单之后同一个地址就通过——「当场准入」在服务端就是这一步。
+        DataSyncProviderController.IsOriginAllowed(
+            origin,
+            DataSyncProviderController.ParseOrigins("https://newsite.example.com")).ShouldBeTrue();
+    }
+
     [Fact]
     public void 白名单为空时任何地址都不通过()
     {

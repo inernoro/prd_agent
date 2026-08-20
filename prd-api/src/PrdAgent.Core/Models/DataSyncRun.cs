@@ -64,14 +64,23 @@ public class DataSyncCollectionProgress
     /// <summary>已拉取的文档数</summary>
     public long Fetched { get; set; }
 
-    /// <summary>实际写入的新文档数</summary>
+    /// <summary>
+    /// **实际**写入的新文档数。试跑时恒为 0——把「打算写」记成「写了」，
+    /// 会让一次只统计的试跑在界面上显示「写入 N 条」，那是在对操作者说谎。
+    /// </summary>
     public long Inserted { get; set; }
 
     /// <summary>因本地已存在同 Id 而跳过的数量</summary>
     public long Skipped { get; set; }
 
-    /// <summary>覆盖模式下更新的数量</summary>
+    /// <summary>**实际**覆盖更新的数量。试跑时恒为 0，理由同 <see cref="Inserted"/>。</summary>
     public long Updated { get; set; }
+
+    /// <summary>真跑将会新增的条数。试跑靠它给出「预计新增」，真跑时与 Inserted 相等。</summary>
+    public long PlannedInsert { get; set; }
+
+    /// <summary>真跑将会覆盖的条数。试跑靠它给出「预计覆盖」，真跑时与 Updated 相等。</summary>
+    public long PlannedUpdate { get; set; }
 
     /// <summary>断点续传游标：上一批最后一个 _id 的扩展 JSON 表示</summary>
     public string? Cursor { get; set; }

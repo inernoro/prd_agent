@@ -77,7 +77,9 @@ public sealed class DataSyncProviderController : ControllerBase
     /// </summary>
     [HttpGet("scope-catalog")]
     [Authorize]
-    public async Task<IActionResult> ScopeCatalog(CancellationToken ct)
+    public async Task<IActionResult> ScopeCatalog(
+        [FromQuery(Name = "redirect_uri")] string? redirectUri,
+        CancellationToken ct)
     {
         // 这份目录把全站集合名和逐集合条数都摊开了——只有能按「同意」的那个人才该看见。
         // 判据必须和 Authorize 用同一个（真人浏览器会话 + 管理员），否则同意页对普通用户
@@ -88,12 +90,19 @@ public sealed class DataSyncProviderController : ControllerBase
                 ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以查看可授权范围"));
         }
 
+        // 这里**不**因为「本站还没开对外同步」就 503。管理员正站在同意页上，
+        // 他就是那个有权开的人；把门关上让他去改配置再重启，是把系统自己能做的事
+        // 推给人（minimal-user-input）。改为如实把当前状态一起返回，由页面当场处理。
         var config = await ReadConfigAsync(ct);
-        if (!config.Enabled)
+        var shapeOk = TryValidateRedirectShape(redirectUri, out _, out var requestOrigin);
+        var readiness = new
         {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                ApiResponse<object>.Fail("DATA_SYNC_PROVIDER_DISABLED", "本站尚未开启对外数据同步"));
-        }
+            providerEnabled = config.Enabled,
+            requestOrigin,
+            redirectShapeValid = shapeOk,
+            originAllowed = shapeOk && IsOriginAllowed(requestOrigin, config.AllowedOrigins),
+            allowedOriginCount = config.AllowedOrigins.Count,
+        };
 
         var groups = new List<object>();
         foreach (var group in DataSyncScope.Groups)
@@ -128,6 +137,7 @@ public sealed class DataSyncProviderController : ControllerBase
             siteLabel = SiteLabel(),
             groups,
             excluded = DataSyncScope.Excluded.Select(kv => new { collection = kv.Key, reason = kv.Value }),
+            readiness,
         }));
     }
 
@@ -162,13 +172,10 @@ public sealed class DataSyncProviderController : ControllerBase
         }
 
         var config = await ReadConfigAsync(ct);
-        if (!config.Enabled)
-        {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                ApiResponse<object>.Fail("DATA_SYNC_PROVIDER_DISABLED", "本站尚未开启对外数据同步"));
-        }
 
-        if (!TryValidateRedirect(request.RedirectUri, config.AllowedOrigins, out var callback)
+        // 形状先判：https / 路径精确等于 /data-sync/callback / 无 query 无 fragment。
+        // 这几条永远不可当场放宽——放宽固定路径等于允许「白名单域名下的开放重定向页」。
+        if (!TryValidateRedirectShape(request.RedirectUri, out var callback, out var requestOrigin)
             || string.IsNullOrWhiteSpace(request.State) || request.State.Length is < 32 or > 256
             || !IsValidCodeChallenge(request.CodeChallenge))
         {
@@ -191,6 +198,26 @@ public sealed class DataSyncProviderController : ControllerBase
         {
             return StatusCode(StatusCodes.Status403Forbidden,
                 ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以批准数据导出"));
+        }
+
+        // 当场准入：本站还没开对外同步、或这个来源还不在名单里时，管理员可以在同意页上
+        // 勾一个**单独的**确认项一次性解决，不必去改配置再重启（DS6）。
+        // 这不是把门拆了——门还是同一道，只是把「谁能开」从「能改 env 的人」收敛成
+        // 「此刻正在看这一屏、看得见对方是谁、并且额外勾了一次的管理员」。
+        var enabled = config.Enabled;
+        var originAllowed = IsOriginAllowed(requestOrigin, config.AllowedOrigins);
+        if (!enabled || !originAllowed)
+        {
+            if (!request.TrustThisOrigin)
+            {
+                return StatusCode(StatusCodes.Status409Conflict, ApiResponse<object>.Fail(
+                    "DATA_SYNC_ORIGIN_NOT_TRUSTED",
+                    $"本站尚未允许 {requestOrigin} 来取数据。确认这台机器可信后再同意。"));
+            }
+            await TrustOriginAsync(requestOrigin, config, ct);
+            _logger.LogWarning(
+                "[data-sync] {Admin} 在同意页上把 {Origin} 加入允许名单并开启对外同步",
+                identity.Value.Username, requestOrigin);
         }
 
         var now = DateTime.UtcNow;
@@ -382,6 +409,32 @@ public sealed class DataSyncProviderController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 目标站跑完（成功或失败）后主动交还导出令牌，源站当场把这张票作废。
+    ///
+    /// 没有这一步的话：界面上写着「这次一次性同步已经结束」，而那张票在源站眼里
+    /// 还能再用一小时五十分钟——「一次性」就只是文案。用令牌自己鉴权，因为此刻
+    /// 目标站手上除了它没有别的凭据；幂等，重复调用返回同样的结果。
+    /// </summary>
+    [HttpPost("revoke")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Revoke(CancellationToken ct)
+    {
+        var grant = await ResolveExportGrantAsync(ct);
+        // 找不到 = 已经作废或本来就无效。两种都是「现在它不能用了」，如实回 ok，
+        // 免得目标站为了一张已经没用的票反复重试。
+        if (grant is null) return Ok(ApiResponse<object>.Ok(new { revoked = false, reason = "票据已失效或不存在" }));
+
+        await _db.DataSyncGrants.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", grant["_id"]),
+            Builders<BsonDocument>.Update
+                .Set("ExportRevokedAt", DateTime.UtcNow)
+                .Set("State", "completed"),
+            cancellationToken: ct);
+        _logger.LogInformation("[data-sync] 导出令牌已被目标站交还并作废");
+        return Ok(ApiResponse<object>.Ok(new { revoked = true }));
+    }
+
     // ---------------------------------------------------------------- 内部
 
     private async Task<BsonDocument?> ResolveExportGrantAsync(CancellationToken ct)
@@ -430,6 +483,28 @@ public sealed class DataSyncProviderController : ControllerBase
         return new ProviderConfig(enabled && origins.Count > 0, origins);
     }
 
+    /// <summary>
+    /// 把一个 origin 写进允许名单并打开对外同步开关。幂等：已在名单里就不重复追加。
+    /// 只落 AppSettings，不碰环境变量——环境变量是部署时的兜底，运行期以库里的为准
+    /// （<see cref="ReadConfigAsync"/> 的读取顺序也是这样）。
+    /// </summary>
+    private async Task TrustOriginAsync(string origin, ProviderConfig config, CancellationToken ct)
+    {
+        var origins = config.AllowedOrigins.ToList();
+        if (!origins.Any(o => string.Equals(o, origin, StringComparison.OrdinalIgnoreCase)))
+        {
+            origins.Add(origin);
+        }
+        await _db.AppSettings.UpdateOneAsync(
+            Builders<AppSettings>.Filter.Eq(x => x.Id, "global"),
+            Builders<AppSettings>.Update
+                .Set(x => x.DataSyncProviderEnabled, true)
+                .Set(x => x.DataSyncAllowedConsumerOrigins, string.Join(",", origins))
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            new UpdateOptions { IsUpsert = true },
+            ct);
+    }
+
     private string SiteLabel()
     {
         var configured = _configuration["DataSync:SiteLabel"] ?? _configuration["SITE_LABEL"];
@@ -442,8 +517,17 @@ public sealed class DataSyncProviderController : ControllerBase
     /// 固定路径这一条容易被当成多余——它挡的是「白名单域名下有个开放重定向页」这种情况。
     /// </summary>
     internal static bool TryValidateRedirect(string? raw, IReadOnlyList<string> allowedOrigins, out string callback)
+        => TryValidateRedirectShape(raw, out callback, out var origin) && IsOriginAllowed(origin, allowedOrigins);
+
+    /// <summary>
+    /// 回跳地址的**形状**校验：https（本机可 http）、路径精确等于 /data-sync/callback、
+    /// 不许带 query 和 fragment。这几条与「谁被允许」无关，任何人都不能当场放宽——
+    /// 固定路径挡的是「白名单域名下有个开放重定向页」，放宽它等于把整条链交给对方摆布。
+    /// </summary>
+    internal static bool TryValidateRedirectShape(string? raw, out string callback, out string origin)
     {
         callback = "";
+        origin = "";
         if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri)) return false;
         var validScheme = uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback);
         if (!validScheme
@@ -453,8 +537,17 @@ public sealed class DataSyncProviderController : ControllerBase
         {
             return false;
         }
-        var origin = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
-        var allowed = allowedOrigins.Any(pattern =>
+        origin = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+        callback = $"{origin}/data-sync/callback";
+        return true;
+    }
+
+    /// <summary>Origin 是否在允许名单里。这一条**可以**由本站管理员在同意页上当场授予。</summary>
+    internal static bool IsOriginAllowed(string origin, IReadOnlyList<string> allowedOrigins)
+    {
+        if (string.IsNullOrEmpty(origin)) return false;
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+        return allowedOrigins.Any(pattern =>
         {
             if (pattern.StartsWith("*.", StringComparison.Ordinal))
             {
@@ -463,9 +556,6 @@ public sealed class DataSyncProviderController : ControllerBase
             }
             return string.Equals(origin, pattern, StringComparison.OrdinalIgnoreCase);
         });
-        if (!allowed) return false;
-        callback = $"{origin}/data-sync/callback";
-        return true;
     }
 
     private static bool IsValidCodeChallenge(string? challenge) =>
@@ -525,6 +615,13 @@ public sealed class DataSyncAuthorizeRequest
     public string? State { get; set; }
     public string? CodeChallenge { get; set; }
     public List<string>? Groups { get; set; }
+
+    /// <summary>
+    /// 管理员在同意页上额外勾的「我确认这台机器可信」。只有它为 true 时，才允许把
+    /// 尚未在名单里的来源当场加进去——单独一个字段而不是复用 Groups，是为了让
+    /// 「批准这次导出」和「从此信任这台机器」在协议层面就是两个决定。
+    /// </summary>
+    public bool TrustThisOrigin { get; set; }
 }
 
 public sealed class DataSyncTokenRequest

@@ -12,3 +12,12 @@
 | feat | prd-admin | 数据同步起始屏补历史列表：接上一直没人调用的 GET /api/instance-sync/runs，可回看任意一次同步、一键复用上次的源站地址；空态改为讲清四步流程而非留白 |
 | security | prd-api | 同步消费方的 plan/start/get/list/stream 补判管理员：此前只有 prepare/callback 判了，任何登录用户拿到 pending 的 runId 就能带 overwrite=true 把数据写进共享库；新增守卫测试逐个 action 钉死 |
 | security | prd-api | 源站 scope-catalog 补判真人管理员：此前只写了 [Authorize]，任何登录用户都能拿到全站集合清单与逐集合条数；守卫测试扩到源站，带 [Authorize] 的端点必须调 ResolveAdminIdentityAsync |
+| security | prd-api | 横扫可导出集合里所有长得像凭据的字段，补 15 个集合的出口脱敏（知识库跨环境同步令牌、自动化 webhook 密钥、各类分享链令牌、周报数据源令牌、工作流定时口令、llmconfigs 密钥密文等）；并把这次横扫做成守卫，新字段没交代即 CI 红 |
+| security | prd-api | 同步跑到终态时目标站主动交还导出令牌、源站当场作废；此前界面说「一次性同步已结束」而票在源站眼里还能再用近两小时 |
+| fix | prd-api | 试跑不再把「打算写」记成「写了」：新增 PlannedInsert/PlannedUpdate，Inserted/Updated 只在真跑时累加 |
+| fix | prd-admin | 试跑的进度与历史列表改显示「预计新增 / 预计写入」，不再对着一次没写库的试跑显示「写入 N 条」 |
+| feat | prd-api | 源站允许名单支持在同意页上当场准入：来源不在名单时管理员额外勾一次即同时开启对外同步并记入名单，落 AppSettings 无需重启（原 DS6） |
+| feat | prd-admin | 同意页新增当场准入确认块：点名是哪台机器在要数据，没勾确认前「同意」按钮不可点 |
+| fix | cds | 冒烟 L3 改读被测应用自己的 AI key（MAP_AI_ACCESS_KEY），不再复用 cdscli 连 CDS 的那把；缺 key 或缺冒充用户时判为跳过并说明缺什么，而不是报成应用 401 |
+| docs | doc | design 文档 H1 补 `· 设计` 后缀与 index/guide.list 对齐，修复 docs-readability 标题漂移 |
+| docs | doc | 台账补 DS13（当场准入只能加不能删）与 DS14（交还令牌失败不重试）；DS5 真人视觉验收、DS6 源站名单入口标为已解决 |

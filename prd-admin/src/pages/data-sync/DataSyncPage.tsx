@@ -31,6 +31,8 @@ type ProgressRow = {
   inserted: number;
   skipped: number;
   updated: number;
+  plannedInsert: number;
+  plannedUpdate: number;
   done: boolean;
 };
 type RunView = {
@@ -134,17 +136,19 @@ export default function DataSyncPage() {
   }, [runId, run?.status]);
 
   const totals = useMemo(() => {
-    if (!run) return { fetched: 0, inserted: 0, skipped: 0, updated: 0, total: 0, doneCount: 0 };
+    if (!run) return { fetched: 0, inserted: 0, skipped: 0, updated: 0, plannedInsert: 0, plannedUpdate: 0, total: 0, doneCount: 0 };
     return run.progress.reduce(
       (acc, row) => ({
         fetched: acc.fetched + row.fetched,
         inserted: acc.inserted + row.inserted,
+        plannedInsert: acc.plannedInsert + row.plannedInsert,
+        plannedUpdate: acc.plannedUpdate + row.plannedUpdate,
         skipped: acc.skipped + row.skipped,
         updated: acc.updated + row.updated,
         total: acc.total + row.sourceTotal,
         doneCount: acc.doneCount + (row.done ? 1 : 0),
       }),
-      { fetched: 0, inserted: 0, skipped: 0, updated: 0, total: 0, doneCount: 0 },
+      { fetched: 0, inserted: 0, skipped: 0, updated: 0, plannedInsert: 0, plannedUpdate: 0, total: 0, doneCount: 0 },
     );
   }, [run]);
 
@@ -393,7 +397,10 @@ function HistoryCard({
           {runs.map((r) => {
             const rows = r.progress ?? [];
             const fetched = rows.reduce((s, p) => s + p.fetched, 0);
-            const written = rows.reduce((s, p) => s + p.inserted + p.updated, 0);
+            // 试跑一条都没写库，就不能显示「写入 N 条」——那是把「打算写」说成「写了」。
+            const written = r.dryRun
+              ? rows.reduce((s, p) => s + p.plannedInsert + p.plannedUpdate, 0)
+              : rows.reduce((s, p) => s + p.inserted + p.updated, 0);
             return (
               <div
                 key={r.runId}
@@ -412,7 +419,7 @@ function HistoryCard({
                   ) : null}
                 </button>
                 <span className="shrink-0 text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {formatWhen(r.createdAt)} · 拉取 {fetched} 条 · 写入 {written} 条 · {statusLabel(r.status)}
+                  {formatWhen(r.createdAt)} · 拉取 {fetched} 条 · {r.dryRun ? '预计写入' : '写入'} {written} 条 · {statusLabel(r.status)}
                 </span>
                 <button
                   type="button"
@@ -535,7 +542,10 @@ function ProgressCard({
   onBack,
 }: {
   run: RunView;
-  totals: { fetched: number; inserted: number; skipped: number; updated: number; total: number; doneCount: number };
+  totals: {
+    fetched: number; inserted: number; skipped: number; updated: number;
+    plannedInsert: number; plannedUpdate: number; total: number; doneCount: number;
+  };
   onBack: () => void;
 }) {
   const finished = TERMINAL.has(run.status);
@@ -565,7 +575,7 @@ function ProgressCard({
         <p className="mt-2 text-sm" style={{ color: 'var(--text-muted)' }}>
           已拉取 {totals.fetched} 条
           {run.dryRun
-            ? `，其中 ${totals.skipped} 条本地已存在（试跑不写库）`
+            ? `，其中 ${totals.skipped} 条本地已存在；真跑将新增 ${totals.plannedInsert} 条${run.overwriteExisting ? `、覆盖 ${totals.plannedUpdate} 条` : ''}（试跑一条都没写库）`
             : `，新增 ${totals.inserted} 条、跳过 ${totals.skipped} 条${run.overwriteExisting ? `、覆盖 ${totals.updated} 条` : ''}`}
           。
         </p>
@@ -579,7 +589,7 @@ function ProgressCard({
               <tr style={{ color: 'var(--text-muted)' }}>
                 <th className="py-2 font-normal">集合</th>
                 <th className="py-2 text-right font-normal">已拉取</th>
-                <th className="py-2 text-right font-normal">新增</th>
+                <th className="py-2 text-right font-normal">{run.dryRun ? '预计新增' : '新增'}</th>
                 <th className="py-2 text-right font-normal">跳过</th>
                 <th className="py-2 text-right font-normal">状态</th>
               </tr>
@@ -589,7 +599,9 @@ function ProgressCard({
                 <tr key={row.collection} style={{ borderTop: '1px solid var(--border-subtle)' }}>
                   <td className="py-1.5 font-mono" style={{ color: 'var(--text-secondary)' }}>{row.collection}</td>
                   <td className="py-1.5 text-right" style={{ color: 'var(--text-primary)' }}>{row.fetched}</td>
-                  <td className="py-1.5 text-right" style={{ color: 'var(--text-primary)' }}>{row.inserted}</td>
+                  <td className="py-1.5 text-right" style={{ color: 'var(--text-primary)' }}>
+                    {run.dryRun ? row.plannedInsert : row.inserted}
+                  </td>
                   <td className="py-1.5 text-right" style={{ color: 'var(--text-muted)' }}>{row.skipped}</td>
                   <td className="py-1.5 text-right" style={{ color: 'var(--text-muted)' }}>
                     {row.done ? '完成' : '进行中'}

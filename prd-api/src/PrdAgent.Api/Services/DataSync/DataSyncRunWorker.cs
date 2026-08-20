@@ -112,12 +112,15 @@ public sealed class DataSyncRunWorker : BackgroundService
                     .Set(x => x.FinishedAt, DateTime.UtcNow)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: ct);
+            await ReturnExportTokenAsync(run, token, ct);
             _vault.Forget(run.Id);
             _logger.LogInformation("[data-sync] Run {RunId} 完成（dryRun={DryRun}）", run.Id, run.DryRun);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[data-sync] Run {RunId} 执行失败", run.Id);
+            // 失败同样要交还票据：跑挂了不等于对方那张票该继续有效。
+            await ReturnExportTokenAsync(run, token, ct);
             await FailAsync(db, run, ex.Message, ct);
         }
     }
@@ -180,9 +183,12 @@ public sealed class DataSyncRunWorker : BackgroundService
                         await target.ReplaceOneAsync(
                             Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]), doc, cancellationToken: ct);
                     }
+                    progress.Inserted += decision.ToInsert.Count;
+                    progress.Updated += decision.ToReplace.Count;
                 }
-                progress.Inserted += decision.ToInsert.Count;
-                progress.Updated += decision.ToReplace.Count;
+                // 无论真跑还是试跑都记「打算写多少」，但只有真跑才记「写了多少」。
+                progress.PlannedInsert += decision.ToInsert.Count;
+                progress.PlannedUpdate += decision.ToReplace.Count;
             }
 
             progress.Cursor = page.NextCursor;
@@ -203,6 +209,33 @@ public sealed class DataSyncRunWorker : BackgroundService
                 .Set(x => x.PendingSecretFields, run.PendingSecretFields)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// 跑到终态就把导出令牌交还源站作废。只删本地那份（<c>_vault.Forget</c>）不够——
+    /// 源站眼里那张票还能用满两小时，「一次性」就成了空话。
+    /// 交还失败不改变 Run 的结局：票据本来就有硬过期，为它把一次成功的同步判成失败
+    /// 是本末倒置；但要留一条日志，别让它静默。
+    /// </summary>
+    private async Task ReturnExportTokenAsync(DataSyncRun run, string token, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(15);
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{run.SourceOrigin}/api/instance-sync/revoke");
+            request.Headers.TryAddWithoutValidation("X-Data-Sync-Token", token);
+            using var response = await client.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[data-sync] Run {RunId} 交还导出令牌失败 HTTP {Status}，票据将等待自然过期",
+                    run.Id, (int)response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[data-sync] Run {RunId} 交还导出令牌异常，票据将等待自然过期", run.Id);
+        }
     }
 
     private async Task FailAsync(MongoDbContext db, DataSyncRun run, string error, CancellationToken ct)
