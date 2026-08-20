@@ -630,6 +630,21 @@ function PlanCard({
           ——这个库由本项目的所有分支预览共用，写进去同库的其它分支立刻可见。
         </p>
 
+        {plan.rows.some((r) => r.collection === 'users' && r.supportedHere !== false && r.sourceReported !== false) ? (
+          // 账号搬过来时的身份冲突。本仓库 users.Username 上是**非唯一**索引，所以
+          // 不会插入失败，而是留下两行同名用户——按用户名找人的地方一律 FirstOrDefault，
+          // 拿到哪一个是不确定的。这条链路没有身份归并（见 DS18），所以只能在按下去
+          // 之前把它说出来，而不是让人事后撞见。
+          <p
+            className="mt-3 rounded-lg px-3 py-2 text-xs leading-6"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-secondary)', color: 'var(--text-secondary)' }}
+          >
+            这次会同步 <span className="font-mono">users</span>。两边如果各自初始化过同名账号（比如都有 admin），
+            同步后会出现两行同名用户——它们的用户 ID 不同，按用户名登录时拿到哪一个不确定。
+            本站已有的那一行不会被改动；建议同步完先去用户列表确认一遍，把不用的那个改名或停用。
+          </p>
+        ) : null}
+
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[560px] text-left text-xs">
             <thead>

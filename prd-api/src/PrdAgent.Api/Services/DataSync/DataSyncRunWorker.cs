@@ -354,9 +354,21 @@ internal sealed record ExportPage(List<string> Documents, string? NextCursor, Li
                     $"源站返回的是 {actual ?? "(未标注)"} 的数据，而这一页要的是 {expectedCollection}");
             }
         }
-        if (data.TryGetProperty("nextCursor", out var cursor) && cursor.ValueKind == JsonValueKind.String)
+        if (data.TryGetProperty("nextCursor", out var cursor))
         {
-            nextCursor = cursor.GetString();
+            // 只有「字符串」和「null / 不存在」两种是合法的，其余一律失败。
+            // 类型不对时当成 null 的后果不是少一页：PullCollectionAsync 会据此判定
+            // 这个集合拉完了、置 Done=true，后面所有页一条不落地，而 Run 报成功。
+            // 和上面 documents 那两处是同一条纪律——不许把协议故障翻译成正常收尾。
+            if (cursor.ValueKind == JsonValueKind.String)
+            {
+                nextCursor = cursor.GetString();
+            }
+            else if (cursor.ValueKind != JsonValueKind.Null)
+            {
+                throw new InvalidOperationException(
+                    $"源站返回的 nextCursor 是 {cursor.ValueKind}，只接受字符串或 null——两边版本多半不一致");
+            }
         }
         // documents 缺失或类型不对时不能当成「这一页是空的」：那会让 nextCursor 为空的
         // 情形被判成正常收尾，整个集合报成功却一条都没同步。

@@ -118,6 +118,38 @@ public class DataSyncProtocolTests
     }
 
     [Fact]
+    public void 游标类型不对必须失败而不是当成拉完了()
+    {
+        // nextCursor 被当成 null 的后果不是少一页：调用方据此判定这个集合拉完了，
+        // 后面所有页一条不落地，而整条 Run 报成功。
+        const string numberCursor = """
+        {"success": true, "data": {"collection": "defect_reports", "documents": [], "nextCursor": 12345}}
+        """;
+        Should.Throw<InvalidOperationException>(() => DataSyncRunWorker.ReadPage(numberCursor));
+
+        const string objectCursor = """
+        {"success": true, "data": {"collection": "defect_reports", "documents": [], "nextCursor": {"id": "x"}}}
+        """;
+        Should.Throw<InvalidOperationException>(() => DataSyncRunWorker.ReadPage(objectCursor));
+
+        // 合法的两种：字符串、以及 null / 压根没有这个键——后者才是「拉完了」。
+        const string stringCursor = """
+        {"success": true, "data": {"collection": "defect_reports", "documents": [], "nextCursor": "abc"}}
+        """;
+        DataSyncRunWorker.ReadPage(stringCursor).NextCursor.ShouldBe("abc");
+
+        const string nullCursor = """
+        {"success": true, "data": {"collection": "defect_reports", "documents": [], "nextCursor": null}}
+        """;
+        DataSyncRunWorker.ReadPage(nullCursor).NextCursor.ShouldBeNull();
+
+        const string absentCursor = """
+        {"success": true, "data": {"collection": "defect_reports", "documents": []}}
+        """;
+        DataSyncRunWorker.ReadPage(absentCursor).NextCursor.ShouldBeNull();
+    }
+
+    [Fact]
     public void 令牌过期的Run必须留下线索好让worker落终态()
     {
         // Worker 只认领 HeldRunIds 里的 Run，而过期条目在那里会被顺手清掉。
