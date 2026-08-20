@@ -339,6 +339,48 @@ public class DataSyncScopeCoverageTests
         Assert.Equal("", doc["DataSyncAllowedConsumerOrigins"].AsString);
     }
 
+    /// <summary>
+    /// 救场开关只许在权威部署上生效。
+    ///
+    /// CDS 分支预览与生产共用同一个 Mongo 库（cross-project-isolation 通道 4），
+    /// 所以这段代码写的 users 与 deployment_markers 都是全局唯一那一份：
+    /// 任何一个分支预览带着新的开关值启动，就会把所有部署共用的管理员口令改掉，
+    /// 并把一次性标记提前消费掉，让生产真正需要救场时反而不生效。
+    /// 判据必须在读凭据、写库**之前**——放在后面等于已经动过手了。
+    /// </summary>
+    [Fact]
+    public void 救场开关在分支预览上不许动共享库()
+    {
+        var source = ReadInfrastructureSource("Database", "DatabaseInitializer.cs");
+        var body = source[source.IndexOf("private async Task MaybeForceResetAdminAsync", StringComparison.Ordinal)..];
+        body = body[..body.IndexOf("\n    private ", StringComparison.Ordinal)];
+
+        Assert.Contains("DeploymentAuthority.IsCdsBranchPreview(_configuration)", body);
+
+        var gateAt = body.IndexOf("IsCdsBranchPreview", StringComparison.Ordinal);
+        var markerReadAt = body.IndexOf("DeploymentMarkers.Find", StringComparison.Ordinal);
+        var userWriteAt = body.IndexOf("_db.Users.UpdateOneAsync", StringComparison.Ordinal);
+        Assert.True(gateAt >= 0 && markerReadAt > gateAt,
+            "分支预览判定必须排在读一次性标记之前，否则标记会被预览提前消费");
+        Assert.True(userWriteAt > gateAt,
+            "分支预览判定必须排在改用户之前");
+    }
+
+    private static string ReadInfrastructureSource(params string[] segments)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, "src", "PrdAgent.Infrastructure")))
+        {
+            dir = dir.Parent;
+        }
+        Assert.NotNull(dir);
+        var parts = new List<string> { dir!.FullName, "src", "PrdAgent.Infrastructure" };
+        parts.AddRange(segments);
+        var path = Path.Combine(parts.ToArray());
+        Assert.True(File.Exists(path), $"守卫要扫的源码不在预期位置：{path}");
+        return File.ReadAllText(path);
+    }
+
     [Fact]
     public void 本站身份与信任名单必须留在本站()
     {

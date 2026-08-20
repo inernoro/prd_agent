@@ -673,6 +673,39 @@ public class DataSyncProtocolTests
         source.ShouldContain("new ProviderConfig(IsEffectivelyEnabled(enabled, origins), origins)");
     }
 
+    /// <summary>
+    /// 库里还没有这个字段时，生效名单来自环境变量兜底。此时若从空列表起算，
+    /// 第一次「当场准入」写下去的就只有新批准的这一台，而之后所有读取都优先库里的值——
+    /// 环境变量里配的那些来源就此静默消失，它们手上还没过期的票下一次重对名单时全部失效。
+    /// </summary>
+    [Fact]
+    public void 首次写名单要从生效值起算而不是从零()
+    {
+        var source = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var body = source[source.IndexOf("private async Task TrustOriginAsync", StringComparison.Ordinal)..];
+        body = body[..body.IndexOf("\n    private ", StringComparison.Ordinal)];
+
+        body.ShouldContain("raw is null ? config.AllowedOrigins : ParseOrigins(raw)");
+        // 无条件 ParseOrigins(raw) 就是那个 bug：缺字段时得到空列表。
+        body.ShouldNotContain("var origins = ParseOrigins(raw).ToList();");
+    }
+
+    /// <summary>
+    /// 握手失败的异常原文里可能带内网地址、证书主体名、代理主机，
+    /// 而它对操作者也给不出可执行的下一步。原文进日志，界面给固定文案 + 诊断号。
+    /// </summary>
+    [Fact]
+    public void 握手失败不把异常原文回给前端()
+    {
+        var source = ReadApiSource("Controllers", "Api", "DataSyncConsumerController.cs");
+        var body = source[source.IndexOf("private async Task<SourceProbe> ProbeSourceAsync", StringComparison.Ordinal)..];
+        body = body[..body.IndexOf("\n    private ", StringComparison.Ordinal)];
+
+        body.ShouldNotContain("{ex.Message}");
+        body.ShouldContain("_logger.LogWarning(ex,");
+        body.ShouldContain("诊断号");
+    }
+
     [Fact]
     public void 导出分页能读出文档与续页游标()
     {

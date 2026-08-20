@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Security;
 using System.Security.Cryptography;
 
 namespace PrdAgent.Infrastructure.Database;
@@ -101,6 +102,22 @@ public class DatabaseInitializer
         if (flag.Length == 0) return;
         var off = flag is "0" or "false" or "False" or "FALSE" or "no" or "off";
         if (off) return;
+
+        // 只有权威部署能动。CDS 分支预览与生产**共用同一个 Mongo 库**
+        //（dbScope 默认 shared，MongoDB__DatabaseName 恒为 prdagent，见
+        // cross-project-isolation 通道 4），所以这里写的 users 和 deployment_markers
+        // 都是全局唯一的那一份：任何一个分支预览带着新的开关值启动，就会
+        // ① 把**所有部署**共用的那个管理员口令改掉，
+        // ② 把一次性标记提前消费掉，导致生产真正需要救场时反而不生效。
+        // 分支预览没有「自己的」管理员可重置——库是同一个，所以正确行为是根本不做，
+        // 并且把「为什么没做」打出来，避免变成一次静默的无动作。
+        if (DeploymentAuthority.IsCdsBranchPreview(_configuration))
+        {
+            Console.WriteLine(
+                $"[admin-reset] 当前是 CDS 分支预览，与生产共用同一个数据库，已跳过 {ForceResetKey}。" +
+                "要救场请在生产部署上设置这个开关。");
+            return;
+        }
 
         // 一次性。容器环境变量是持久的，这段代码每次进程启动都会跑到——不记「这个值
         // 已经用过了」的话，运维某天例行重新部署，就会把管理员后来在界面上自己改的

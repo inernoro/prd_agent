@@ -534,8 +534,14 @@ public sealed class DataSyncConsumerController : ControllerBase
         }
         catch (Exception ex)
         {
+            // 不把异常原文回给前端。DNS / TLS / 代理 / 连接建立失败的消息里可能带内网地址、
+            // 证书主体名、代理主机这类只有本站该知道的东西，而它对操作者也给不出可执行的
+            // 下一步。原文进日志并带上一个可对照的短 id，界面给固定文案 + 这个 id。
+            var trace = Guid.NewGuid().ToString("N")[..8];
+            _logger.LogWarning(ex, "[data-sync] 握手失败 trace={Trace} origin={Origin}", trace, origin);
             return new SourceProbe("DATA_SYNC_SOURCE_UNREACHABLE",
-                $"连不上对方：{ex.Message}。确认地址可以在浏览器里打开。", null, null);
+                $"连不上对方（诊断号 {trace}）。确认这个地址能在浏览器里直接打开，"
+                + "并且它是一台已经部署好的 MAP。", null, null);
         }
     }
 

@@ -686,7 +686,11 @@ public sealed class DataSyncProviderController : ControllerBase
         {
             var current = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
             var raw = current?.DataSyncAllowedConsumerOrigins;
-            var origins = ParseOrigins(raw).ToList();
+            // 库里没有这个字段时，生效的名单来自环境变量兜底（ReadConfigAsync 的读取顺序）。
+            // 此时若从空列表起算，这次 upsert 会把「只有新批准的这一台」写进库，而之后所有
+            // 读取都优先库里的值——环境变量里配的那些来源就此静默消失，它们手上还没过期的
+            // 票下一次重对名单时全部失效。所以缺字段要从**生效值**起算，不是从零。
+            var origins = (raw is null ? config.AllowedOrigins : ParseOrigins(raw)).ToList();
             var alreadyTrusted = origins.Any(o => string.Equals(o, origin, StringComparison.OrdinalIgnoreCase));
             if (!alreadyTrusted) origins.Add(origin);
 
