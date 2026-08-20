@@ -540,6 +540,39 @@ public class DataSyncScopeCoverageTests
             + string.Join("、", missing));
     }
 
+    /// <summary>
+    /// 「谁有权访问某个东西」的记录不许导出。
+    ///
+    /// 这类表存的不是内容，是**运行时授权态**：一行 `拥有者 + 资源 id`，而消费它的接口
+    /// 只要匹配到一行就放行。跟 users 一起搬过去之后，接同一个上游的目标站拿着这些
+    /// 资源 id 就能读到源站的东西——白名单本来就是为了挡住这一类。
+    ///
+    /// 判据按实体类名后缀扫（`*Ownership`），不是手抄一份集合名清单：手抄的那份只覆盖
+    /// 我当时想到的，日后再加一张同类表照样漏。这条只认名字这一种信号，认不出所有
+    /// 授权态表——「这张表是不是授权凭据」仍然要逐个人判，但至少同名的那类跑不掉。
+    /// </summary>
+    [Fact]
+    public void 授权归属类的表不许导出()
+    {
+        var exportable = DataSyncScope.Groups
+            .SelectMany(g => g.Collections)
+            .Select(c => c.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        // 复用既有的「集合名 -> 实体类型名」解析（同一个来源，避免判据分裂）。
+        var typeMap = ReadCollectionTypeMap();
+        var offenders = typeMap
+            .Where(kv => kv.Value.EndsWith("Ownership", StringComparison.Ordinal))
+            .Where(kv => exportable.Contains(kv.Key))
+            .Select(kv => $"{kv.Key}（{kv.Value}）")
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(offenders.Count == 0,
+            "这些表存的是「谁有权访问什么」，导出等于连访问权一起复制，必须放进 Excluded："
+            + string.Join("、", offenders));
+    }
+
     [Fact]
     public void 本站身份与信任名单必须留在本站()
     {

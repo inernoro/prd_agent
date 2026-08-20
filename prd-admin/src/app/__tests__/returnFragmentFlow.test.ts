@@ -21,6 +21,16 @@ describe('还原出来的 fragment 不许离开本地跳转', () => {
     expect(source).not.toMatch(/returnUrl=\{resolveReturnUrl\(\)\}/);
   });
 
+  it('还原结果要缓存，重复调用给同一个值', () => {
+    // takeReturnFragment 是「取走并删除」，而登录成功后有两条路都会走到跳转：
+    // setAuth 翻了 isAuthed 触发的那个 effect，和密码登录自己的那次 navigate。
+    // 不缓存的话第一次消费掉、第二次拿到空的，两次跳转谁后到谁说了算——
+    // 后到的那个把 code 和 state 抹掉，整条授权链要重走。
+    expect(source).toContain('resolvedReturnUrlRef');
+    expect(source).toContain('if (resolvedReturnUrlRef.current !== null) return resolvedReturnUrlRef.current;');
+    expect(source).toContain('resolvedReturnUrlRef.current = resolved;');
+  });
+
   it('还原只发生在跳转那一刻，不在 render 里', () => {
     // takeReturnFragment 是「取走并删除」：StrictMode 会故意重复执行 render 与
     // useMemo，放在 render 里第一次就把它消费掉，留下的那次拿到空值。

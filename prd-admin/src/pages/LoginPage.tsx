@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Sparkles, Terminal, Lock, User as UserIcon, Eye, EyeOff } from 'lucide-react';
@@ -84,17 +84,29 @@ export default function LoginPage() {
    */
   const returnUrlWithRef = searchParams.get('returnUrl') || '/';
 
+  // 解析结果要缓存：takeReturnFragment 是「取走并删除」，而登录成功后有两条路都会
+  // 走到跳转——setAuth 翻了 isAuthed 触发的那个 effect，和密码登录自己的那次
+  // navigate。第一次把 fragment 消费掉，第二次拿到空的；两次跳转谁后到谁说了算，
+  // 后到的那个把 code 和 state 抹掉，整条授权链要重走。
+  // 一次性资源要么只有一个消费点，要么消费结果本身可复用——这里取后者。
+  const resolvedReturnUrlRef = useRef<string | null>(null);
+
   const resolveReturnUrl = useCallback(() => {
+    if (resolvedReturnUrlRef.current !== null) return resolvedReturnUrlRef.current;
     const raw = returnUrlWithRef;
     const at = raw.indexOf('?');
-    if (at < 0) return raw;
-    const params = new URLSearchParams(raw.slice(at + 1));
-    const ref = params.get('fragRef');
-    if (!ref) return raw;
-    params.delete('fragRef');
-    const rest = params.toString();
-    const fragment = takeReturnFragment(ref);
-    return raw.slice(0, at) + (rest ? `?${rest}` : '') + fragment;
+    const resolved = (() => {
+      if (at < 0) return raw;
+      const params = new URLSearchParams(raw.slice(at + 1));
+      const ref = params.get('fragRef');
+      if (!ref) return raw;
+      params.delete('fragRef');
+      const rest = params.toString();
+      const fragment = takeReturnFragment(ref);
+      return raw.slice(0, at) + (rest ? `?${rest}` : '') + fragment;
+    })();
+    resolvedReturnUrlRef.current = resolved;
+    return resolved;
   }, [returnUrlWithRef]);
   const [loading, setLoading] = useState(false);
 
