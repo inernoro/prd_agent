@@ -7409,9 +7409,12 @@ def cmd_smoke(args: argparse.Namespace) -> None:
     # AI_ACCESS_KEY 配在项目环境变量里。早先这里直接复用了前者，于是除非两边碰巧同值，
     # L3 必然 401——报出来像「应用坏了」，实际是拿错了钥匙（一值两用，见
     # .claude/rules/cross-project-isolation.md §3）。所以优先读专用变量。
-    key = (os.environ.get("MAP_AI_ACCESS_KEY", "")
-           or os.environ.get("SMOKE_AI_ACCESS_KEY", "")
-           or os.environ.get("AI_ACCESS_KEY", "")).strip()
+    app_key = (os.environ.get("MAP_AI_ACCESS_KEY", "")
+               or os.environ.get("SMOKE_AI_ACCESS_KEY", "")).strip()
+    # 兼容旧用法：两把钥匙同值的自托管场景仍然能过。但这条回退正是当初误报的来源，
+    # 所以要记住 key 是不是回退来的，失败时把这个可能性直接写进错误里。
+    key = app_key or os.environ.get("AI_ACCESS_KEY", "").strip()
+    key_from_fallback = not app_key and bool(key)
     # 应用侧的 AiAccessKeyAuthenticationHandler 把 X-AI-Impersonate 列为必填，且要求
     # 该用户在 users 集合里真实存在（env 引导账号 root 不算）。缺它就是一个永远不可能
     # 通过的判据——那种失败只会掩盖真实状态，所以判为跳过，并说清缺什么。
@@ -7428,6 +7431,11 @@ def cmd_smoke(args: argparse.Namespace) -> None:
         l3_result = probe("L3-authed", f"{preview}/api/users?pageSize=1",
                           headers={"X-AI-Access-Key": key, "X-AI-Impersonate": user},
                           expect_status=200)
+        if not l3_result["pass"] and l3_result.get("status") == 401 and key_from_fallback:
+            # 401 有两种可能：应用真的坏了，或者这把 key 压根不是被测应用的。
+            # 后者不该报成前者——那正是这条探针历史上误报的形态。
+            l3_result["hint"] = ("这把 key 来自 AI_ACCESS_KEY（cdscli 连 CDS 用的那把），"
+                                 "不一定是被测应用配的那把。请用 MAP_AI_ACCESS_KEY 显式提供应用侧的 key 再判。")
         results.append(l3_result)
 
     layers = [

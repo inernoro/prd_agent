@@ -21,3 +21,4 @@
 | fix | cds | 冒烟 L3 改读被测应用自己的 AI key（MAP_AI_ACCESS_KEY），不再复用 cdscli 连 CDS 的那把；缺 key 或缺冒充用户时判为跳过并说明缺什么，而不是报成应用 401 |
 | docs | doc | design 文档 H1 补 `· 设计` 后缀与 index/guide.list 对齐，修复 docs-readability 标题漂移 |
 | docs | doc | 台账补 DS13（当场准入只能加不能删）与 DS14（交还令牌失败不重试）；DS5 真人视觉验收、DS6 源站名单入口标为已解决 |
+| fix | cds | 冒烟 L3 用回退 key（AI_ACCESS_KEY）拿到 401 时给出提示，指明这把可能不是被测应用的 key，而不是让人以为应用坏了 |
