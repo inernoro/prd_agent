@@ -107,13 +107,28 @@ public class DatabaseInitializer
             return;
         }
 
-        await _db.Users.UpdateOneAsync(
-            Builders<User>.Filter.Eq(u => u.UserId, existingAdmin.UserId),
-            Builders<User>.Update
-                .Set(u => u.Username, credentials.Username)
-                .Set(u => u.PasswordHash, BCrypt.Net.BCrypt.HashPassword(credentials.Password))
-                .Set(u => u.Status, UserStatus.Active)
-                .Set(u => u.MustResetPassword, false));
+        // 目标用户名可能已经被另一个账号占着（多个 ADMIN 的部署很常见，上面那句
+        // Find 只取到了「某一个」）。这种情况下重命名会撞唯一索引、或者更糟——
+        // 悄悄留下两个同名账号。所以先按用户名找：找得到就重置它，找不到才把
+        // 手上这个管理员改名过去。
+        var target = await _db.Users
+            .Find(u => u.Username == credentials.Username)
+            .FirstOrDefaultAsync() ?? existingAdmin;
+
+        var update = Builders<User>.Update
+            .Set(u => u.Username, credentials.Username)
+            .Set(u => u.PasswordHash, BCrypt.Net.BCrypt.HashPassword(credentials.Password))
+            .Set(u => u.Status, UserStatus.Active)
+            .Set(u => u.MustResetPassword, false);
+
+        // 按用户名捞到的那个不一定是管理员——既然操作者点名要用它登进来救场，
+        // 就把角色一起对齐，否则登进去也是个什么都干不了的账号。
+        if (target.Role != UserRole.ADMIN)
+        {
+            update = update.Set(u => u.Role, UserRole.ADMIN);
+        }
+
+        await _db.Users.UpdateOneAsync(Builders<User>.Filter.Eq(u => u.UserId, target.UserId), update);
 
         // 已知边界：这里不吊销既有会话。会话版本由 IAuthSessionService 管，
         // 而它按 clientType 分桶、不在 Infrastructure 的依赖面上。重置口令的场景是
