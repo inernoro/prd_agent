@@ -381,6 +381,132 @@ public class DataSyncScopeCoverageTests
         return File.ReadAllText(path);
     }
 
+    /// <summary>
+    /// 覆盖写是整份替换，所以每一个脱敏字段都必须从目标站原文档接回来。
+    ///
+    /// 脱敏说的是「源站的值不能出门」，不是「目标站的值该被抹掉」。少接回来一个：
+    /// 凭据类会把目标站本来能用的密钥清空；策略类更糟——清空即回到默认，而默认往往是
+    /// 放开的（PasswordLoginDisabled 清空 = 口令登录重新打开，同一批还带着口令散列）。
+    /// </summary>
+    [Fact]
+    public void 脱敏字段必须逐个从目标站接回来()
+    {
+        foreach (var collection in DataSyncScope.Groups.SelectMany(g => g.Collections))
+        {
+            foreach (var redacted in collection.RedactFields)
+            {
+                Assert.True(
+                    collection.FieldsCarriedFromTarget.Contains(redacted, StringComparer.Ordinal),
+                    $"{collection.Name}.{redacted} 被脱敏却没有从目标站接回来："
+                    + "覆盖写会把目标站自己的值顶成空。");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 口令登录开关是这条规则最贵的那一格，单独钉住：它是 fail-open，
+    /// 清空的后果是目标站特意关掉的口令登录被一次同步悄悄打开。
+    /// </summary>
+    [Fact]
+    public void 口令登录开关不许被同步顶成默认值()
+    {
+        var appsettings = DataSyncScope.Groups.SelectMany(g => g.Collections)
+            .Single(c => c.Name == "appsettings");
+        Assert.Contains("PasswordLoginDisabled", appsettings.RedactFields);
+        Assert.Contains("PasswordLoginDisabled", appsettings.FieldsCarriedFromTarget);
+    }
+
+    /// <summary>
+    /// 接回字段与投影必须取同一个来源。投影少投一个字段，接回时会把目标站那份
+    /// 当成「不存在」而删掉——判据分裂成两处的经典后果（形状 3）。
+    /// </summary>
+    [Fact]
+    public void 接回字段与投影取同一个来源()
+    {
+        var worker = ReadApiServiceSource("DataSync", "DataSyncRunWorker.cs");
+        // 从**定义**切，不是从第一次出现（那是调用点）——形状 6：取错了那个值。
+        var body = worker[worker.IndexOf(
+            "private static ProjectionDefinition<BsonDocument> BuildExistingProjection",
+            StringComparison.Ordinal)..];
+        body = body[..body.IndexOf("\n    }", StringComparison.Ordinal)];
+        Assert.Contains("FieldsCarriedFromTarget", body);
+        Assert.DoesNotContain("collection.PreserveFields", body);
+    }
+
+    /// <summary>
+    /// 票据查询必须有索引，且过期票要能被清掉。两条匿名协议请求都按散列查这张表，
+    /// 而它们发生在鉴权之前——没索引等于谁都能让源站做全表扫描。
+    /// </summary>
+    [Fact]
+    public void 授权票的散列查询必须登记索引()
+    {
+        var script = ReadRepoFile("scripts", "mongodb-indexes.js");
+        Assert.Contains("db.data_sync_grants.createIndex", script);
+        Assert.Contains("\"CodeHash\": 1", script);
+        Assert.Contains("\"ExportTokenHash\": 1", script);
+
+        var worker = ReadApiServiceSource("DataSync", "DataSyncRunWorker.cs");
+        Assert.Contains("SweepRetiredGrantsAsync", worker);
+        // 只定义不调用就是建了一半（形状 2）。
+        Assert.True(
+            worker.Split("SweepRetiredGrantsAsync").Length - 1 >= 2,
+            "SweepRetiredGrantsAsync 定义了却没有人调用");
+    }
+
+    /// <summary>
+    /// 慢库上一页就能跑过收尸判据的 15 分钟，所以心跳必须在页**内**跳；
+    /// 同时本进程对 Run 的写入要带「它还是 running」，否则被收尸之后
+    /// 原 worker 会把已经落好的 failed 顶回 succeeded。
+    /// </summary>
+    [Fact]
+    public void 活着的同步不许被判成没心跳()
+    {
+        var worker = ReadApiServiceSource("DataSync", "DataSyncRunWorker.cs");
+        var loop = worker[worker.IndexOf("foreach (var doc in decision.ToReplace)", StringComparison.Ordinal)..];
+        loop = loop[..loop.IndexOf("progress.Inserted", StringComparison.Ordinal)];
+        Assert.Contains("HeartbeatAsync", loop);
+
+        Assert.Contains("private static FilterDefinition<DataSyncRun> StillRunning", worker);
+        var save = worker[worker.IndexOf("private static async Task SaveProgressAsync", StringComparison.Ordinal)..];
+        save = save[..save.IndexOf("\n    }", StringComparison.Ordinal)];
+        Assert.Contains("StillRunning(run)", save);
+    }
+
+    /// <summary>
+    /// 落进 Run.Error 的文案会原样显示给管理员。自己抛的协议错逐字保留（它写给人看），
+    /// 驱动 / TLS / JSON 异常不落原文——里面有服务器地址、库名、索引名。
+    /// </summary>
+    [Fact]
+    public void 未预期异常不把原文落进同步记录()
+    {
+        var worker = ReadApiServiceSource("DataSync", "DataSyncRunWorker.cs");
+        Assert.DoesNotContain("FailAsync(db, run, ex.Message", worker);
+        Assert.Contains("DescribeFailure(ex, run.Id)", worker);
+        Assert.Contains("诊断号", worker);
+    }
+
+    private static string ReadApiServiceSource(params string[] segments)
+    {
+        var parts = new List<string> { "src", "PrdAgent.Api", "Services" };
+        parts.AddRange(segments);
+        return ReadRepoFile(new[] { "prd-api" }.Concat(parts).ToArray());
+    }
+
+    private static string ReadRepoFile(params string[] segments)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        {
+            dir = dir.Parent;
+        }
+        Assert.NotNull(dir);
+        var parts = new List<string> { dir!.FullName };
+        parts.AddRange(segments);
+        var path = Path.Combine(parts.ToArray());
+        Assert.True(File.Exists(path), $"守卫要扫的文件不在预期位置：{path}");
+        return File.ReadAllText(path);
+    }
+
     [Fact]
     public void 本站身份与信任名单必须留在本站()
     {

@@ -32,6 +32,12 @@ public sealed class DataSyncRunWorker : BackgroundService
     /// </summary>
     private static readonly TimeSpan OrphanHeartbeatTimeout = TimeSpan.FromMinutes(15);
 
+    /// <summary>页内心跳间隔。远小于 OrphanHeartbeatTimeout，慢库上也留足余量。</summary>
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>票过期之后再留多久才删——留痕窗口，也让「票过期了」这句话说得出口。</summary>
+    private static readonly TimeSpan RetiredGrantRetention = TimeSpan.FromHours(24);
+
     private DateTime _lastOrphanSweep = DateTime.MinValue;
 
     private readonly IServiceProvider _services;
@@ -87,6 +93,7 @@ public sealed class DataSyncRunWorker : BackgroundService
         {
             _lastOrphanSweep = DateTime.UtcNow;
             await SweepOrphanedRunsAsync(db, ct);
+        await SweepRetiredGrantsAsync(db, ct);
         }
 
         // 令牌在「Start 成功之后、这次轮询之前」过期的 Run：它不在 held 里，永远走不到
@@ -184,7 +191,7 @@ public sealed class DataSyncRunWorker : BackgroundService
             // 收尾一律用 None：走到这里 ct 很可能已经取消，拿它去写库等于连「记下失败」
             // 这一步也做不成，Run 会卡在 running（server-authority #5）。
             await ReturnExportTokenAsync(run, token, CancellationToken.None);
-            await FailAsync(db, run, ex.Message, CancellationToken.None);
+            await FailAsync(db, run, DescribeFailure(ex, run.Id), CancellationToken.None);
         }
     }
 
@@ -274,10 +281,20 @@ public sealed class DataSyncRunWorker : BackgroundService
                             };
                         }
                     }
+                    // 一页最多 200 条逐条替换。库一慢，这一页本身就能跑过收尸判据的
+                    // 15 分钟——而心跳原来只在整页写完之后才刷，于是**活着的** Run 会被
+                    // 别的部署判成没心跳收走（那个部署握不住本进程内存里的令牌，`mine`
+                    // 挡不住它）。所以心跳必须在页**内**跳，跟着真实进展走。
+                    var beatAt = DateTime.UtcNow;
                     foreach (var doc in decision.ToReplace)
                     {
                         await target.ReplaceOneAsync(
                             Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]), doc, cancellationToken: ct);
+                        if (DateTime.UtcNow - beatAt >= HeartbeatInterval)
+                        {
+                            await HeartbeatAsync(db, run, ct);
+                            beatAt = DateTime.UtcNow;
+                        }
                     }
                     progress.Inserted += decision.ToInsert.Count;
                     progress.Updated += decision.ToReplace.Count;
@@ -316,7 +333,9 @@ public sealed class DataSyncRunWorker : BackgroundService
     private static ProjectionDefinition<BsonDocument> BuildExistingProjection(DataSyncCollection collection)
     {
         var projection = Builders<BsonDocument>.Projection.Include("_id");
-        foreach (var field in collection.PreserveFields)
+        // 和 CarryTargetLocalFields 取同一个来源。少投影一个字段，接回时就会把
+        // 目标站那份当成「不存在」而删掉——判据分裂成两处的经典后果。
+        foreach (var field in collection.FieldsCarriedFromTarget)
         {
             projection = projection.Include(field);
         }
@@ -338,6 +357,32 @@ public sealed class DataSyncRunWorker : BackgroundService
     /// （对照 cross-project-isolation 通道 8：那里裸 Status 认领会抢活单，这里的谓词
     /// 多了「15 分钟没动静」，活单不满足）。
     /// </summary>
+    /// <summary>
+    /// 删掉早就没用的授权票。
+    ///
+    /// 票是只增不减的：一次授权留一行，导出令牌两小时后失效，之后这一行再也匹配不上
+    /// 任何请求，却仍然躺在表里被每一次匿名协议请求扫到。攒下去两件事一起变糟——
+    /// 查询越来越慢，而且慢的是**鉴权之前**那一段，等于谁都能让源站白干活。
+    ///
+    /// 留一段窗口再删，不删刚过期的：过期后紧接着来的请求要能查到这张票，
+    /// 才说得出「票过期了，请重新授权」，而不是含糊的「没这张票」。
+    /// 也因此不用 TTL 索引——TTL 到点即删，给不出这句话，窗口也改不动。
+    /// </summary>
+    private async Task SweepRetiredGrantsAsync(MongoDbContext db, CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow - RetiredGrantRetention;
+        var deleted = await db.DataSyncGrants.DeleteManyAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Exists("ExportTokenExpiresAt"),
+                Builders<BsonDocument>.Filter.Lt("ExportTokenExpiresAt", cutoff)),
+            ct);
+        if (deleted.DeletedCount > 0)
+        {
+            _logger.LogInformation("[data-sync] 清理了 {Count} 张过期超过 {Hours} 小时的授权票",
+                deleted.DeletedCount, RetiredGrantRetention.TotalHours);
+        }
+    }
+
     private async Task SweepOrphanedRunsAsync(MongoDbContext db, CancellationToken ct)
     {
         var deadline = DateTime.UtcNow - OrphanHeartbeatTimeout;
@@ -399,16 +444,52 @@ public sealed class DataSyncRunWorker : BackgroundService
         if (already.Count > 0) run.PendingSecretFields[collection] = already;
     }
 
+    /// <summary>
+    /// 落进 Run.Error 的文案。这一条会通过 Run 接口和 SSE 原样显示给管理员。
+    ///
+    /// 自己抛的协议错（源站返回的内容不合约）是**写给人看**的，逐字保留——它能指出
+    /// 是哪个集合、哪一页、哪个字段不对，管理员照着能去源站查。
+    ///
+    /// 其余异常（Mongo 驱动、TLS、JSON、Socket）一律不落原文：驱动消息里带着服务器
+    /// 地址、库名、索引名、协议细节，而对管理员又给不出任何可执行的下一步。原文进
+    /// 结构化日志，界面上给固定文案 + 一个能对上日志的短诊断号。
+    /// </summary>
+    private static string DescribeFailure(Exception ex, string runId) =>
+        ex is InvalidOperationException
+            ? ex.Message
+            : $"同步中断于一次未预期的错误（诊断号 {runId[..Math.Min(8, runId.Length)]}），"
+              + "详情已记入服务日志。已写入的部分保留，可以重新授权后再跑一次。";
+
     private static async Task SaveProgressAsync(MongoDbContext db, DataSyncRun run, CancellationToken ct)
     {
         await db.DataSyncRuns.UpdateOneAsync(
-            Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+            StillRunning(run),
             Builders<DataSyncRun>.Update
                 .Set(x => x.Progress, run.Progress)
                 .Set(x => x.PendingSecretFields, run.PendingSecretFields)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
     }
+
+    /// <summary>只刷心跳，不动进度——页内用，一页几百条不必每条都回写整个 Progress。</summary>
+    private static Task HeartbeatAsync(MongoDbContext db, DataSyncRun run, CancellationToken ct) =>
+        db.DataSyncRuns.UpdateOneAsync(
+            StillRunning(run),
+            Builders<DataSyncRun>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+    /// <summary>
+    /// 本进程对这条 Run 的所有写入都带上「它还是 running」。
+    ///
+    /// 收尸那条路径已经是条件更新，不会覆盖别人写好的结局；缺的是反过来那一半：
+    /// 一条 Run 被判成无心跳收走之后，原来的 worker 如果还活着（只是慢），
+    /// 它后面的进度回写和终态回写会把已经落好的 failed 顶掉，甚至改写成 succeeded。
+    /// 加上这个谓词，被收尸之后本进程的写入一律匹配 0 条，结局只由先落的那一方决定。
+    /// </summary>
+    private static FilterDefinition<DataSyncRun> StillRunning(DataSyncRun run) =>
+        Builders<DataSyncRun>.Filter.And(
+            Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+            Builders<DataSyncRun>.Filter.Eq(x => x.Status, "running"));
 
     /// <summary>
     /// 跑到终态就把导出令牌交还源站作废。只删本地那份（<c>_vault.Forget</c>）不够——

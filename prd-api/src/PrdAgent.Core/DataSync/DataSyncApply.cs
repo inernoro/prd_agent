@@ -129,7 +129,8 @@ public static class DataSyncApply
         ArgumentNullException.ThrowIfNull(toReplace);
         ArgumentNullException.ThrowIfNull(existingDocuments);
         ArgumentNullException.ThrowIfNull(collection);
-        if (collection.PreserveFields.Count == 0 || toReplace.Count == 0) return;
+        var carried = collection.FieldsCarriedFromTarget;
+        if (carried.Count == 0 || toReplace.Count == 0) return;
 
         var byId = new Dictionary<BsonValue, BsonDocument>();
         foreach (var existing in existingDocuments)
@@ -140,7 +141,7 @@ public static class DataSyncApply
         foreach (var doc in toReplace)
         {
             if (!doc.TryGetValue("_id", out var id) || !byId.TryGetValue(id, out var local)) continue;
-            foreach (var field in collection.PreserveFields)
+            foreach (var field in carried)
             {
                 if (local.TryGetValue(field, out var value)) doc[field] = value;
                 else doc.Remove(field);

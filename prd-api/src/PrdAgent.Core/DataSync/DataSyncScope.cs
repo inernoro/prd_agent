@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace PrdAgent.Core.DataSync;
 
 /// <summary>
@@ -27,6 +29,27 @@ public sealed record DataSyncCollection(string Name, IReadOnlyList<string> Redac
     /// 覆盖写入时再把目标站原有的那份接回文档上。
     /// </summary>
     public IReadOnlyList<string> PreserveFields { get; init; } = System.Array.Empty<string>();
+
+    /// <summary>
+    /// 覆盖写入时要从目标站原文档接回来的字段 = PreserveFields ∪ RedactFields。
+    ///
+    /// 为什么脱敏字段也要接回来：脱敏说的是「**源站的**值不能出门」，它从来不是
+    /// 「把**目标站的**值抹掉」的指令。但覆盖写是整份替换，源站送来的那份在脱敏字段上
+    /// 是空的——照原样写下去，目标站自己原本好好的值就被这个空值顶掉了。
+    ///
+    /// 后果按字段性质分两种，第二种更糟：
+    /// - 凭据类（ApiKeyEncrypted / SyncToken …）：目标站本来能用的密钥被清空，
+    ///   相关集成静默失效，而管理员看到的「待补清单」还会把它列成本来就该补的。
+    /// - 策略类（PasswordLoginDisabled …）：清空等于回到默认值，而默认值往往是**放开**的。
+    ///   目标站特意关掉的口令登录会被一次同步悄悄打开，同一批还带着 users 的口令散列。
+    ///   这一类是 fail-open，不是 fail-safe。
+    ///
+    /// 所以判据统一成：**只要这个字段的值不该由源站决定，覆盖时就用目标站自己的那份**。
+    /// 出口清空（不让源站的值出门）和入口接回（不让目标站的值被清掉）是同一件事的两头，
+    /// 少做任何一头都会静默改变目标站的状态。
+    /// </summary>
+    public IReadOnlyList<string> FieldsCarriedFromTarget =>
+        PreserveFields.Concat(RedactFields).Distinct(System.StringComparer.Ordinal).ToArray();
 }
 
 public sealed record DataSyncGroup(string Key, string Label, IReadOnlyList<DataSyncCollection> Collections);

@@ -1400,6 +1400,31 @@ db.document_recording_upload_chunks.createIndex(
 )
 // end collection: document_recording_upload_sessions + document_recording_upload_chunks
 
+// collection: data_sync_grants
+// 跨实例同步的授权票据。三条匿名协议请求全部按散列查这张表：
+//   - 换取导出令牌：CodeHash（一次性授权码）
+//   - 清单 / 导出 / 交还令牌：ExportTokenHash（两小时有效期内每一页都查一次）
+// 没有索引时，票据越攒越多，这些**未鉴权前**的请求会退化成全表扫描——既慢，
+// 也把「让源站做无用功」变成一件不要钱的事。
+// 两条都带 TTL 语义之外的过期判据（ExpiresAt / ExportTokenExpiresAt），
+// 走复合索引让过期票不参与实际比较。
+db.data_sync_grants.createIndex(
+  { "CodeHash": 1, "ExpiresAt": 1 },
+  { name: "idx_data_sync_grants_code_expires" }
+)
+db.data_sync_grants.createIndex(
+  { "ExportTokenHash": 1, "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_grants_export_token_expires" }
+)
+// 过期票的清理由应用侧 DataSyncRunWorker 定期删（保留一段留痕窗口），
+// 这条索引是那次清理的查询路径；不用 TTL 索引是因为留痕窗口要能改，
+// 且 TTL 到期即删会让「刚过期就来的请求」查不到、给不出「票过期了」这句话。
+db.data_sync_grants.createIndex(
+  { "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_grants_export_expires" }
+)
+// end collection: data_sync_grants
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`
