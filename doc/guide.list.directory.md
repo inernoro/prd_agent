@@ -107,6 +107,7 @@
 - [Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计](./design.page-agent.bridge.md) `design.page-agent.bridge`
 - [账户数据共享 · 设计](./design.platform.account-data-sharing.md) `design.platform.account-data-sharing`
 - [MAP 核心业务稳定基线 · 设计](./design.platform.core-business-stability.md) `design.platform.core-business-stability`
+- [跨 MAP 实例数据同步（动态授权） · 设计](./design.platform.cross-instance-data-sync.md) `design.platform.cross-instance-data-sync`
 - [通用对话智能体 · 设计](./design.platform.chat-agent.md) `design.platform.chat-agent`
 - [模型中继虚拟平台设计 · 设计](./design.platform.exchange-virtual-platform.md) `design.platform.exchange-virtual-platform`
 - [CDS 部署架构与冲突分析 · 设计](./design.platform.exec-bt-deployment.md) `design.platform.exec-bt-deployment`
@@ -311,6 +312,7 @@
 - [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
 - [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
+- [跨 MAP 实例数据同步 · 债务台账](./debt.platform.cross-instance-data-sync.md) `debt.platform.cross-instance-data-sync`
 - [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
 - [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
 - [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`
