@@ -5,17 +5,12 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming';
 import { toast } from '@/lib/toast';
 import { computeLineDiff, type DiffLine } from '@/lib/lineDiff';
-import {
-  listSelectionRewriteActions,
-  streamSelectionRewrite,
-  type SelectionRewriteActionItem,
-} from '@/services/real/documentStore';
+import { streamSelectionRewrite } from '@/services/real/documentStore';
+import { stripOuterFence } from './selectionEdit';
+import { useSelectionRewriteActions } from './useSelectionRewriteActions';
 
 // 划词「AI 改写」就地浮层：选动作 → SSE 流式生成 → diff 预览 → 替换原文 / 插到原文后。
 // 布局遵 frontend-modal.md：createPortal 到 body + inline style 定位/高度 + min-h-0 滚动区。
-
-// 动作清单是后端 SSOT（selection-rewrite/actions），模块级缓存一次拉取
-let cachedActions: SelectionRewriteActionItem[] | null = null;
 
 export interface SelectionAiAnchor {
   selectedText: string;
@@ -51,7 +46,7 @@ export function SelectionAiPopover({
   onApply: (mode: 'replace' | 'insert-after', newText: string) => Promise<boolean>;
   onClose: () => void;
 }) {
-  const [actions, setActions] = useState<SelectionRewriteActionItem[]>(cachedActions ?? []);
+  const actions = useSelectionRewriteActions();
   const [phase, setPhase] = useState<Phase>('pick');
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [customInstruction, setCustomInstruction] = useState('');
@@ -65,17 +60,6 @@ export function SelectionAiPopover({
   const [scrollDy, setScrollDy] = useState(0);
   const abortRef = useRef<(() => void) | null>(null);
   const outputBoxRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (cachedActions) return;
-    (async () => {
-      const res = await listSelectionRewriteActions();
-      if (res.success) {
-        cachedActions = res.data.items;
-        setActions(res.data.items);
-      }
-    })();
-  }, []);
 
   // 跟随正文滚动平移（与 InlineCommentComposer 同一套 scrollDy 逻辑）
   useEffect(() => {
@@ -381,13 +365,6 @@ export function SelectionAiPopover({
   );
 
   return createPortal(node, document.body);
-}
-
-/** 模型偶发把整段输出包进 ``` 围栏；只剥最外层成对围栏，不动内部代码块 */
-function stripOuterFence(text: string): string {
-  const t = text.trim();
-  const m = t.match(/^```[a-zA-Z-]*\r?\n([\s\S]*?)\r?\n```$/);
-  return m ? m[1] : t;
 }
 
 /** 轻量行级 diff 渲染（绿增红删），复用 lib/lineDiff 的纯函数 */

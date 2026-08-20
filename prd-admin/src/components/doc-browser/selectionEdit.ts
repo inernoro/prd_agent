@@ -127,6 +127,16 @@ export function frontmatterPrefixOf(raw: string, body: string): string {
   return '';
 }
 
+/**
+ * 模型偶发把整段输出包进 ``` 围栏；只剥最外层成对围栏，不动内部代码块。
+ * 两个改写入口（就地 diff / 兜底浮层）共用，避免一处剥、一处没剥。
+ */
+export function stripOuterFence(text: string): string {
+  const t = text.trim();
+  const m = t.match(/^```[a-zA-Z-]*\r?\n([\s\S]*?)\r?\n```$/);
+  return m ? m[1] : t;
+}
+
 /** 生成插入文档的图片 markdown */
 export function buildImageMarkdown(url: string, alt?: string): string {
   const safeAlt = (alt ?? '').replace(/[[\]\n]/g, ' ').trim() || '配图';

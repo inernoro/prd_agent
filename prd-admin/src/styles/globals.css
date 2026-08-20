@@ -3,6 +3,7 @@
 @import './surface.css';
 @import './legacy.css';
 @import './media-card.css';
+@import './doc-diff.css';
 @import './home-launcher.css';
 
 /* CDS preview compatibility: the injected branch badge starts at the lower-left

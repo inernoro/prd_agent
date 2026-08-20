@@ -232,11 +232,44 @@ import {
   frontmatterPrefixOf,
   buildImageMarkdown,
   isReplaceSafe,
+  stripOuterFence,
+  type ResolvedRange,
 } from './selectionEdit';
+import { buildInlineDiffBody } from './selectionDiffMarkup';
+import {
+  SelectionRewritePrompt,
+  InlineDiffReviewBar,
+  type InlineRewritePhase,
+} from './SelectionRewriteInline';
+import { streamSelectionRewrite } from '@/services/real/documentStore';
 import { threadColor, groupKey } from './inlineCommentShared';
 import { BulkActionBar } from './BulkActionBar';
 
 // ── 类型 ──
+
+/** 划词选区快照：DOM 序号用于同文多处出现时指认用户选的是第几处 */
+type SelectionSnapshot = PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
+
+/** 逐句修改会话：一次「划词 → 说怎么改 → 就地 diff → 采纳/撤销」的全过程状态 */
+type RewriteSession = {
+  entryId: string;
+  sel: SelectionSnapshot;
+  /** 选区在正文 body 中的位置，会话开始时定位一次 */
+  range: ResolvedRange;
+  /** 选区原文，用于 diff 与「撤销即还原」 */
+  original: string;
+  rect: { top: number; left: number; width: number; height: number };
+  rects: Array<{ top: number; left: number; width: number; height: number }>;
+  /** prompt=还在问想怎么改（正文未变）；其余阶段正文已就地呈现 diff */
+  phase: 'prompt' | InlineRewritePhase;
+  actionKey: string;
+  instruction?: string;
+  text: string;
+  model?: string;
+  errorMsg?: string;
+  startedAt: number;
+  applying: boolean;
+};
 
 export type EntryPreview = {
   /** 文本内容（Markdown/纯文本/提取后的 Office 文本） */
@@ -2005,6 +2038,24 @@ export function DocBrowser({
     sel: PendingSelection & { domOccurrenceIndex?: number; domOccurrenceTotal?: number };
     rects: Array<{ top: number; left: number; width: number; height: number }>;
   } | null>(null);
+  // 逐句修改（就地 diff 改写）会话：划词 → 说想怎么改 → 改动直接长在正文里 → 采纳/撤销。
+  // 与 aiPopover 的区别是「结果在哪」：这里结果就是文章本身的变化，浮层只剩操作条。
+  const [rewrite, setRewrite] = useState<RewriteSession | null>(null);
+  const rewriteAbortRef = useRef<(() => void) | null>(null);
+  // 流式增量先落 ref，再节流刷新 state：每个 chunk 都重渲染整篇 markdown 会把长文档拖垮
+  const rewriteTextRef = useRef('');
+  const rewriteFlushRef = useRef<number | null>(null);
+  const cancelRewriteStream = useCallback(() => {
+    rewriteAbortRef.current?.();
+    rewriteAbortRef.current = null;
+    if (rewriteFlushRef.current != null) {
+      window.clearTimeout(rewriteFlushRef.current);
+      rewriteFlushRef.current = null;
+    }
+  }, []);
+  // 卸载时收掉在途的流，避免组件没了还在往下写
+  useEffect(() => () => cancelRewriteStream(), [cancelRewriteStream]);
+
   // 进入编辑模式 / 切到别的条目时强制收掉 composer 状态，避免 rect 与已经被 textarea
   // 替换 / 已经卸载的正文不同步（Bugbot Medium）。只渲染守卫不够：退出 editMode 时
   // composer 状态还在会让覆盖层"复活"在过时位置。AI 浮层同理。
@@ -2013,13 +2064,17 @@ export function DocBrowser({
       setComposer(null);
       setAiPopover(null);
       setImagePopover(null);
+      cancelRewriteStream();
+      setRewrite(null);
     }
-  }, [editMode]);
+  }, [editMode, cancelRewriteStream]);
   useEffect(() => {
     setComposer(null);
     setAiPopover(null);
     setImagePopover(null);
-  }, [selectedEntryId]);
+    cancelRewriteStream();
+    setRewrite(null);
+  }, [selectedEntryId, cancelRewriteStream]);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -2237,6 +2292,122 @@ export function DocBrowser({
     void refreshComments();
     return true;
   }, [onSaveContent, commitLocalSave, selectedEntryId, preview, selectionRawContent, refreshComments]);
+
+  // 会话与写回函数走 ref 读取：改写流的回调活得比某一次渲染长，闭包捕获会读到旧会话
+  const rewriteRef = useRef<RewriteSession | null>(null);
+  rewriteRef.current = rewrite;
+  const applySelectionAiEditRef = useRef(applySelectionAiEdit);
+  applySelectionAiEditRef.current = applySelectionAiEdit;
+
+  // ── 逐句修改：发起改写流 ──
+  // 结果不进浮层，直接以 <ins>/<del> 标记就地长在正文里；用户看到的等待过程就是文章在变
+  const runRewrite = useCallback((actionKey: string, instruction?: string) => {
+    cancelRewriteStream();
+    rewriteTextRef.current = '';
+    const startedAt = Date.now();
+    setRewrite((s) => (s ? { ...s, phase: 'streaming', actionKey, instruction, text: '', errorMsg: undefined, startedAt } : s));
+
+    // 节流刷新：最多 ~10fps 重渲染正文，长文档也不掉帧
+    const flush = () => {
+      rewriteFlushRef.current = null;
+      const text = rewriteTextRef.current;
+      setRewrite((s) => (s && s.phase === 'streaming' ? { ...s, text } : s));
+    };
+    const scheduleFlush = () => {
+      if (rewriteFlushRef.current == null) rewriteFlushRef.current = window.setTimeout(flush, 100);
+    };
+
+    const session = rewriteRef.current;
+    if (!session) return;
+    rewriteAbortRef.current = streamSelectionRewrite(session.entryId, {
+      selectedText: session.sel.selectedText,
+      contextBefore: session.sel.contextBefore,
+      contextAfter: session.sel.contextAfter,
+      startOffset: session.sel.startOffset,
+      endOffset: session.sel.endOffset,
+      occurrenceIndex: session.sel.domOccurrenceIndex,
+      occurrenceTotal: session.sel.domOccurrenceTotal,
+      actionKey,
+      instruction,
+      onStart: (info) => setRewrite((s) => (s ? { ...s, model: info.model } : s)),
+      onText: (c) => { rewriteTextRef.current += c; scheduleFlush(); },
+      onError: (msg) => {
+        cancelRewriteStream();
+        setRewrite((s) => (s ? { ...s, phase: 'error', errorMsg: msg } : s));
+      },
+      onDone: () => {
+        cancelRewriteStream();
+        // 模型偶发用代码围栏包整段输出，剥掉再进 diff/替换（与兜底浮层同一处理，SSOT）
+        const cleaned = stripOuterFence(rewriteTextRef.current).trim();
+        rewriteTextRef.current = cleaned;
+        setRewrite((s) => (s
+          ? cleaned
+            ? { ...s, phase: 'review', text: cleaned }
+            : { ...s, phase: 'error', errorMsg: '模型没有返回内容，请重试' }
+          : s));
+      },
+    });
+  }, [cancelRewriteStream]);
+
+  // 采纳：把改动写回文档（复用既有替换写回路径，服务端会重锚定评论与双链）
+  const acceptRewrite = useCallback(async () => {
+    const session = rewriteRef.current;
+    if (!session || session.applying || !session.text.trim()) return;
+    setRewrite((s) => (s ? { ...s, applying: true } : s));
+    const ok = await applySelectionAiEditRef.current(session, 'replace', session.text.trim());
+    if (ok) {
+      toast.success('已采纳', '改动已保存到文档');
+      setRewrite(null);
+    } else {
+      setRewrite((s) => (s ? { ...s, applying: false } : s));
+    }
+  }, []);
+
+  // 撤销：丢弃这次改动。正文从未被写过，收掉会话即还原（这也是「撤销」零风险的原因）
+  const discardRewrite = useCallback(() => {
+    cancelRewriteStream();
+    setRewrite(null);
+  }, [cancelRewriteStream]);
+
+  // 就地 diff 正文：会话进入 streaming 之后，正文渲染的就是「带 <ins>/<del> 标记的改动版」。
+  // 返回 null 表示这次改动不能安全地画在正文上（切档 / 正文被别的路径改过），
+  // 此时不画、并由下面的 effect 取消会话——宁可明说取消，不可把 diff 画到错位置。
+  const rewriteDiff = useMemo(() => {
+    if (!rewrite || rewrite.phase === 'prompt') return null;
+    if (rewrite.entryId !== selectedEntryId) return null;
+    if (typeof selectionRawContent !== 'string' || !preview?.text) return null;
+    if (selectionRawContent.slice(rewrite.range.start, rewrite.range.end) !== rewrite.original) return null;
+    // 流式期间在结果末尾点一个光标：让「还在写」这件事发生在文章里，而不是只有状态条在转
+    const text = rewrite.phase === 'streaming' ? `${rewrite.text}▌` : rewrite.text;
+    return buildInlineDiffBody(selectionRawContent, rewrite.range, text);
+  }, [rewrite, selectionRawContent, preview, selectedEntryId]);
+
+  // 采纳落库那一瞬间正文已换成新内容、diff 失效，这属于成功路径，不能报「文档已变化」
+  const rewriteDiffBroken = !!rewrite && rewrite.phase !== 'prompt' && !rewrite.applying && !rewriteDiff;
+  useEffect(() => {
+    if (!rewriteDiffBroken) return;
+    cancelRewriteStream();
+    setRewrite(null);
+    toast.error('改写已取消', '文档内容已变化，请重新划选');
+  }, [rewriteDiffBroken, cancelRewriteStream]);
+
+  // 正文渲染源：会话期间喂「带标记的正文」，其余时间照常。frontmatter 前缀要拼回去，
+  // 否则渲染器会把正文首行当成新的 frontmatter 分隔（selectionRawContent 是剥过的 body）
+  // 采纳保存期间 diff 已失效（正文换成新内容），操作条要继续显示「正在保存」，
+  // 所以统计数留一份最后有效值兜底，不让操作条在保存中途凭空消失
+  const lastDiffStatsRef = useRef({ added: 0, removed: 0, codeChangeUnmarked: false });
+  if (rewriteDiff) {
+    lastDiffStatsRef.current = {
+      added: rewriteDiff.added,
+      removed: rewriteDiff.removed,
+      codeChangeUnmarked: rewriteDiff.codeChangeUnmarked,
+    };
+  }
+
+  const previewForRender = useMemo(() => {
+    if (!preview || !rewriteDiff || typeof selectionRawContent !== 'string') return preview;
+    return { ...preview, text: frontmatterPrefixOf(preview.text ?? '', selectionRawContent) + rewriteDiff.body };
+  }, [preview, rewriteDiff, selectionRawContent]);
 
   // 划词配图：生成的图片以 markdown 形式插入选区所在段落之后
   const handleInsertSelectionImage = useCallback(async (url: string, name?: string) => {
@@ -3789,7 +3960,10 @@ export function DocBrowser({
               })()}
               <div
                 ref={contentAreaRef}
-                className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
+                className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`
+                  // 就地 diff 的着色挂在容器类上：正文里的 <ins>/<del> 会被 sanitize 剥掉 class，
+                  // 只能由容器按标签选择（styles/doc-diff.css）
+                  + (rewriteDiff ? ' doc-inline-diff' : '')}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
                 {/* 生成产物（转录笔记/字幕/再加工）→ 来源文件快速跳转：
@@ -3898,7 +4072,8 @@ export function DocBrowser({
                       || selectedEntryData?.contentType === 'application/x-github-directory') ? (
                   <FilePreview
                     entry={selectedEntryData}
-                    preview={preview}
+                    // 逐句修改会话期间渲染的是「带标记的改动版」正文（未落库，撤销即还原）
+                    preview={previewForRender}
                     // 移动端内容区 px-4（16px）：HTML 报告纸面用负 margin 抵消它满铺卡片宽
                     htmlBleedX={16}
                     // 字号档位只在移动端生效：桌面无调节控件，若把移动端的档位带过去
@@ -3930,7 +4105,7 @@ export function DocBrowser({
                 )}
                 {/* 划词选中时的浮层动作条——评论按钮仅有评论权限时出现（只读访客不弹，
                     避免写了提交才 403，Codex P2）；AI 改写/配图按钮仅可写 + 文本类条目时出现 */}
-                {liveSelection && !composer && !aiPopover && !imagePopover && !editMode
+                {liveSelection && !composer && !aiPopover && !imagePopover && !rewrite && !editMode
                   && (commentsCanCreate || selectionAiAvailable) && (
                   <SelectionActionPopover
                     selection={liveSelection}
@@ -3946,7 +4121,28 @@ export function DocBrowser({
                     onAiRewrite={selectionAiAvailable ? () => {
                       const snap = captureSelectionSnapshot();
                       if (!snap) return;
-                      setAiPopover(snap);
+                      // 能安全整段替换 → 走「逐句修改」：改动就地长在正文里，采纳前不落库。
+                      // 定位不了 / 选区卡在链接标记内部 → 退回老浮层（那里还能插入到原文后 / 复制），
+                      // 不硬把 diff 画到一个指认不了的位置（selectionEdit.ts 的一贯口径）。
+                      const body = selectionRawContent ?? '';
+                      const range = resolveSelectionRange(body, snap.sel);
+                      if (range && isReplaceSafe(body, range)) {
+                        setRewrite({
+                          entryId: snap.entryId,
+                          sel: snap.sel,
+                          range,
+                          original: body.slice(range.start, range.end),
+                          rect: snap.rect,
+                          rects: snap.rects,
+                          phase: 'prompt',
+                          actionKey: '',
+                          text: '',
+                          startedAt: Date.now(),
+                          applying: false,
+                        });
+                      } else {
+                        setAiPopover(snap);
+                      }
                       clearLiveSelection();
                     } : undefined}
                     onAiImage={selectionAiAvailable ? () => {
@@ -3957,9 +4153,51 @@ export function DocBrowser({
                     } : undefined}
                   />
                 )}
+                {/* 逐句修改：划词后原地问「想怎么改」（正文此时还没动） */}
+                {rewrite && rewrite.phase === 'prompt' && !editMode && (
+                  <>
+                    <PendingSelectionHighlight rects={rewrite.rects} scrollRef={contentAreaRef} />
+                    <SelectionRewritePrompt
+                      anchorRect={rewrite.rect}
+                      scrollRef={contentAreaRef}
+                      selectedText={rewrite.sel.selectedText}
+                      onSubmit={runRewrite}
+                      onClose={discardRewrite}
+                    />
+                  </>
+                )}
+                {/* 逐句修改：改动已就地长在正文里 → 只剩操作条（撤销 / 采纳）。
+                    这里不再画选区高亮：正文里的 del/ins 着色本身就是「选了哪段、改了什么」 */}
+                {rewrite && rewrite.phase !== 'prompt' && (rewriteDiff || rewrite.applying) && !editMode && (
+                  <InlineDiffReviewBar
+                    anchorRect={rewrite.rect}
+                    scrollRef={contentAreaRef}
+                    phase={rewrite.phase}
+                    model={rewrite.model}
+                    added={(rewriteDiff ?? lastDiffStatsRef.current).added}
+                    removed={(rewriteDiff ?? lastDiffStatsRef.current).removed}
+                    codeChangeUnmarked={(rewriteDiff ?? lastDiffStatsRef.current).codeChangeUnmarked}
+                    startedAt={rewrite.startedAt}
+                    errorMsg={rewrite.errorMsg}
+                    applying={rewrite.applying}
+                    onAccept={acceptRewrite}
+                    onDiscard={discardRewrite}
+                    onRetry={() => setRewrite((s) => (s ? { ...s, phase: 'prompt', text: '', errorMsg: undefined } : s))}
+                    onStop={() => {
+                      cancelRewriteStream();
+                      const text = stripOuterFence(rewriteTextRef.current).trim();
+                      setRewrite((s) => (s
+                        ? text
+                          ? { ...s, phase: 'review', text }
+                          : { ...s, phase: 'prompt', text: '' }
+                        : s));
+                    }}
+                  />
+                )}
                 {/* 行内评论高亮 + 气泡：把他人评论锚回正文，边读边可见。始终内联呈现；
-                    点击气泡走 onActivate 打开右侧批注栏（mode="margin" → 不就地展开卡片） */}
-                {!editMode && !contentLoading && tocContent && inlineCommentItems.length > 0 && (
+                    点击气泡走 onActivate 打开右侧批注栏（mode="margin" → 不就地展开卡片）。
+                    就地 diff 期间不挂：正文文本已临时改变，按原文搜索的锚点会画到错位置 */}
+                {!editMode && !contentLoading && !rewriteDiff && tocContent && inlineCommentItems.length > 0 && (
                   <InlineCommentOverlay
                     containerRef={contentAreaRef}
                     comments={inlineCommentItems}

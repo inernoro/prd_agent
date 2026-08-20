@@ -105,6 +105,14 @@ const docSanitizeSchema = {
   },
 };
 
+// 正文渲染的插件链是 SSOT：任何「正文里的某种写法能不能活到渲染」的断言都必须走这两个常量，
+// 测试里另抄一条链就会与真实渲染漂移（predicate-and-wiring-discipline.md 形状 3）。
+// 划词就地 diff 的 <ins>/<del> 标记正是靠 rehypeRaw + 这份 sanitize 白名单活下来的。
+export const DOC_REMARK_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['remarkPlugins'] =
+  [remarkGfm, remarkBreaks, remarkMath];
+export const DOC_REHYPE_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['rehypePlugins'] =
+  [rehypeRaw, [rehypeSanitize, docSanitizeSchema], rehypeKatex];
+
 /**
  * 把 wiki 链接语法 [[标题]] / [[标题|别名]] 转成标准 markdown 链接 [文本](wikilink:标题)
  * 这样 ReactMarkdown 视为普通链接渲染，由下方 a 组件的自定义 renderer 拦截 wikilink: href
@@ -215,8 +223,8 @@ function MarkdownViewerBase({ content }: { content: string }) {
       }}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, docSanitizeSchema], rehypeKatex]}
+        remarkPlugins={DOC_REMARK_PLUGINS}
+        rehypePlugins={DOC_REHYPE_PLUGINS}
         components={{
           h1: mkHeading('h1'),
           h2: mkHeading('h2'),
