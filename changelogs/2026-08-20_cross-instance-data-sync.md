@@ -52,3 +52,6 @@
 | fix | prd-api | 服务关停这条终态路径也交还导出令牌：此前只顾了成功与异常两条，关停时本地令牌被忘掉、源站那张票却还能再用近两小时，且重启后没人记得去作废它 |
 | fix | prd-api | Plan 落 PlannedCollections 的更新加 Status=pending 条件：Start 之后清单必须冻住，否则另一个标签页再调一次 Plan 就能换掉执行范围——人按下开始时看的是一份，worker 跑的是另一份 |
 | test | prd-api | 「只对 users 开一个口子」从扫源码改成断言 ApplyGrant 的返回值，并补一个合成输入（换个集合名、同样带 PasswordHash）钉死集合名判断——原来那圈遍历真实集合的断言其实证明不了它，把集合名判断整个删掉也不会红 |
+| security | prd-api | appsettings.PasswordLoginDisabled 补脱敏：源站关了口令登录、而与它配套的 SSO 密钥与回跳地址恰恰被清空，同步完目标站除 ROOT 破窗账户外谁也进不去；守卫加一条自洽断言——SSO 必要字段被清空时这个开关就不许跟着过去 |
+| fix | prd-api | 导出页里非字符串元素改为直接失败：此前静默丢弃、游标照常前进、集合报成功，等于把「documents 不是数组」那个洞往下挪了一层 |
+| fix | prd-admin | 进度流断开后自动重连并补拉快照：此前 effect 只依赖 runId 与 status，代理抖一下把流掐断后 status 恒为 running、effect 再也不重跑，页面永久停在最后一帧而同步还在后台跑；重连带指数退避，每次先 GET 一次以便流始终连不上时仍能拿到终态 |

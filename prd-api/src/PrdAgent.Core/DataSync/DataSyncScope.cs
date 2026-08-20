@@ -42,7 +42,7 @@ public static class DataSyncScope
         new DataSyncGroup("llm-config", "平台与模型配置", new[]
         {
             new DataSyncCollection("admin_prompt_overrides", System.Array.Empty<string>()),
-            new DataSyncCollection("appsettings", new[] { "MiduoSsoAppSecret", "ConsoleSsoClientSecret", "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "ConsoleSsoAllowedRedirectOrigins", "MiduoSsoRedirectUri" }),
+            new DataSyncCollection("appsettings", new[] { "MiduoSsoAppSecret", "ConsoleSsoClientSecret", "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "ConsoleSsoAllowedRedirectOrigins", "MiduoSsoRedirectUri", "PasswordLoginDisabled" }),
             new DataSyncCollection("arena_groups", System.Array.Empty<string>()),
             new DataSyncCollection("arena_slots", System.Array.Empty<string>()),
             new DataSyncCollection("image_gen_size_caps", System.Array.Empty<string>()),

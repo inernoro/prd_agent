@@ -339,11 +339,22 @@ internal sealed record ExportPage(List<string> Documents, string? NextCursor, Li
             throw new InvalidOperationException("源站返回的内容缺少 documents 数组");
         }
         {
+            var index = 0;
             foreach (var element in docs.EnumerateArray())
             {
                 // 源站发的是「一串扩展 JSON 字符串」，不是嵌套对象——保留字符串原样交给
                 // BsonDocument.Parse，中间不经过 System.Text.Json 的类型转换。
-                if (element.ValueKind == JsonValueKind.String) documents.Add(element.GetString() ?? "");
+                //
+                // 类型不对不能跳过。上面刚拦住「documents 整个不是数组」，如果这里再把
+                // 数组里的异类静默丢掉，同一个洞就只是往下挪了一层：`documents: [{}]`
+                // 照样通过校验、游标照样前进、集合照样报成功，而那一页一条都没落地。
+                if (element.ValueKind != JsonValueKind.String)
+                {
+                    throw new InvalidOperationException(
+                        $"源站返回的 documents[{index}] 是 {element.ValueKind}，不是扩展 JSON 字符串——两边版本多半不一致");
+                }
+                documents.Add(element.GetString() ?? string.Empty);
+                index++;
             }
         }
         var cleared = new List<string>();

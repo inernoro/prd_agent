@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2, ShieldCheck, X } from 'lucide-react';
 
@@ -157,12 +157,44 @@ export default function DataSyncPage() {
     };
   }, [runId, run, plan]);
 
+  // 断流重连的退避计数。用 ref 而不是 state：它只影响下一次何时重试，
+  // 不该触发渲染，更不该进依赖数组。
+  const reconnectAttempt = useRef(0);
+
   useEffect(() => {
     if (!runId || !run) return;
-    if (run.status === 'running' && !sse.isStreaming) void sse.start();
-    // 依赖只放状态与 id：把 sse 整个对象放进来会每次渲染都重连。
+    if (run.status !== 'running') {
+      reconnectAttempt.current = 0;
+      return;
+    }
+    if (sse.isStreaming) {
+      reconnectAttempt.current = 0;
+      return;
+    }
+
+    // 走到这里 = 「Run 还在跑，但这条流没了」。原来这个 effect 只依赖 id 与 status，
+    // 于是网络或代理抖一下把流掐断之后，status 一直是 running、effect 再也不会重跑，
+    // 页面就永久停在最后一帧——而同步其实还在后台推进。服务端那 10 秒心跳只解决了
+    // 「不被空闲超时掐断」，掐断之后由谁重连是另一半（server-authority #4）。
+    const attempt = reconnectAttempt.current;
+    reconnectAttempt.current = attempt + 1;
+    const delay = attempt === 0 ? 0 : Math.min(1000 * 2 ** (attempt - 1), 15000);
+
+    const timer = window.setTimeout(() => {
+      // 先补一次快照再重连。理由：终态是靠流推过来的，流要是一直连不上，
+      // 光重连会在一个早已结束的 Run 上无限重试；这一次 GET 能把终态取回来，
+      // 顺带把断流期间攒下的进度补齐。
+      void apiRequest<RunView>(`/api/instance-sync/runs/${encodeURIComponent(runId)}`).then((res) => {
+        if (!res.success || !res.data) return;
+        setRun(res.data);
+        if (res.data.status === 'running') void sse.start();
+      });
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+    // sse 整个对象每次渲染都是新的，不能进依赖；只取真正会变的那两个标志。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, run?.status]);
+  }, [runId, run?.status, sse.isStreaming, sse.phase]);
 
   const totals = useMemo(() => {
     if (!run) return { fetched: 0, inserted: 0, skipped: 0, updated: 0, plannedInsert: 0, plannedUpdate: 0, total: 0, doneCount: 0 };

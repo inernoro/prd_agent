@@ -126,7 +126,6 @@ public class DataSyncScopeCoverageTests
         // 带 Token / Secret / Password 的字段而没有交代，CI 直接红。
         var reviewedNonCredentials = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["appsettings.PasswordLoginDisabled"] = "布尔开关，不是口令",
             ["users.MustResetPassword"] = "布尔标记，正是同步后要让管理员看见的那个",
             ["documents.TokenEstimate"] = "token 计数，不是访问凭据",
             ["groups.PrdTokenEstimateSnapshot"] = "token 计数快照",
@@ -348,13 +347,30 @@ public class DataSyncScopeCoverageTests
     public void 本站身份与信任名单必须留在本站()
     {
         // MapInstanceId 是本实例的稳定标识（配对协议用它认「你是哪台」）；
-        // 对外同步开关与允许名单是「本站信任谁」。这三样跟着数据搬过去，
+        // 对外同步开关与允许名单是「本站信任谁」。这些跟着数据搬过去，
         // 会让两台机器自报同一个身份，并且把源站的信任关系强加给目标站。
+        //
+        // PasswordLoginDisabled 是同一类里最凶的一个：它是「本站怎么登录」的安全开关，
+        // 而与它配套的 SSO 密钥、回跳地址恰恰在上面被清空了。源站关了口令登录、目标站
+        // 又没有可用的 SSO，同步完就是**除了 ROOT 破窗账户谁也进不去**——一个以
+        // 「同步完直接能用」为目标的功能，把目标站锁死了。
         Assert.True(DataSyncScope.TryResolve("appsettings", out var settings));
-        foreach (var field in new[] { "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins" })
+        foreach (var field in new[]
+        {
+            "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "PasswordLoginDisabled",
+        })
         {
             Assert.True(settings.RedactFields.Contains(field, StringComparer.Ordinal),
                 $"appsettings.{field} 是本站自有的，不能跟着同步过去");
+        }
+
+        // 「登录还进不进得来」这件事必须自洽：只要 SSO 的必要字段被清空，
+        // 关闭口令登录的开关就不能跟着过去，否则两条路同时断。
+        var ssoCleared = new[] { "MiduoSsoAppSecret", "MiduoSsoRedirectUri" }
+            .All(f => settings.RedactFields.Contains(f, StringComparer.Ordinal));
+        if (ssoCleared)
+        {
+            Assert.Contains("PasswordLoginDisabled", settings.RedactFields);
         }
     }
 
