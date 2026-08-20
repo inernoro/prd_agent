@@ -117,10 +117,48 @@ public sealed class DataSyncRunWorker : BackgroundService
             Builders<DataSyncRun>.Filter.Eq(x => x.Status, "running"),
             Builders<DataSyncRun>.Filter.In(x => x.Id, held))).ToListAsync(ct);
 
-        foreach (var run in runs)
+        // 排在后面的那些，在前一条**执行期间**就要持续刷心跳。
+        //
+        // 这里是串行执行：第一条跑满 15 分钟，第二条一次心跳都没打过——而收尸判据只看
+        // 「有没有心跳」，别的部署据此把它判成无人认领并落成 failed，尽管本进程手里正握着
+        // 它有效的导出令牌。本进程自己的 `mine` 挡得住自己，挡不住兄弟部署。
+        //
+        // 台账 DS21 里我把排队的后果写成「只是等待，票过期时会给出清楚的原因」——
+        // 那个判断漏了这一格：它不是在等，是被别人当死人收走。
+        //
+        // 修法取最小的那个：把「还在排队的是哪几条」记下来，正在执行的那条每次打心跳时
+        // 顺手把它们也打一遍。不新增状态、不改语义，只是让「活着」这个信号如实反映事实。
+        for (var i = 0; i < runs.Count; i++)
         {
-            await ExecuteRunAsync(db, run, ct);
+            _queuedRunIds = runs.Skip(i + 1).Select(r => r.Id).ToList();
+            try
+            {
+                await ExecuteRunAsync(db, runs[i], ct);
+            }
+            finally
+            {
+                _queuedRunIds = Array.Empty<string>();
+            }
         }
+    }
+
+    /// <summary>
+    /// 本轮里排在正在执行那条后面、还没轮到的 Run。它们同样归本进程所有，
+    /// 心跳必须跟着一起打，否则会被别的部署当成无人认领收走。
+    /// 每个 tick 单线程串行，不存在并发访问。
+    /// </summary>
+    private IReadOnlyList<string> _queuedRunIds = Array.Empty<string>();
+
+    /// <summary>把排队中那几条的心跳一起刷了。</summary>
+    private async Task BeatQueuedRunsAsync(MongoDbContext db, CancellationToken ct)
+    {
+        if (_queuedRunIds.Count == 0) return;
+        await db.DataSyncRuns.UpdateManyAsync(
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.In(x => x.Id, _queuedRunIds),
+                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "running")),
+            Builders<DataSyncRun>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
     }
 
     private async Task ExecuteRunAsync(MongoDbContext db, DataSyncRun run, CancellationToken ct)
@@ -543,12 +581,15 @@ public sealed class DataSyncRunWorker : BackgroundService
     /// 看 MatchedCount 而不是 ModifiedCount：同一毫秒内把 UpdatedAt 设成同一个值时
     /// ModifiedCount 会是 0，那不代表租约没了（形状 6：取错了那个值）。
     /// </summary>
-    private static async Task<bool> HeartbeatAsync(MongoDbContext db, DataSyncRun run, CancellationToken ct)
+    private async Task<bool> HeartbeatAsync(MongoDbContext db, DataSyncRun run, CancellationToken ct)
     {
         var result = await db.DataSyncRuns.UpdateOneAsync(
             StillRunning(run),
             Builders<DataSyncRun>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
+        // 正在跑的这条每打一次心跳，排队等它的那几条也跟着打一次——
+        // 它们同样活着，同样归本进程握着。
+        await BeatQueuedRunsAsync(db, ct);
         return result.MatchedCount > 0;
     }
 

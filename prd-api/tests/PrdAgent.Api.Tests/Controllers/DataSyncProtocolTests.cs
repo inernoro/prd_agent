@@ -558,6 +558,50 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 存进去的名单必须先过读取时那一遍规范化。
+    ///
+    /// `*.EXAMPLE.com` 原样存库、读回来被转小写，比对令牌就永远比不上库里那份原文——
+    /// 这张卡从第一次保存之后再也存不动。和第 29 轮那个开关死锁同族：
+    /// 拿规范化后的值去比未规范化的原始字段。
+    /// </summary>
+    [Fact]
+    public void 通配来源存库前先规范化()
+    {
+        // 判据本身：同一个字符串，规范化两次要等于规范化一次（幂等），
+        // 且大小写不同的通配落到同一个值上。
+        var once = DataSyncProviderController.ParseOrigins("*.EXAMPLE.com");
+        var twice = DataSyncProviderController.ParseOrigins(string.Join(",", once));
+        once.ShouldBe(new[] { "*.example.com" });
+        twice.ShouldBe(once);
+
+        // 接线：写入路径必须真的用它，而不是在那儿另写一遍小写（形状 3）。
+        var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var update = body[body.IndexOf("public async Task<IActionResult> UpdateProviderSettings", StringComparison.Ordinal)..];
+        update = update[..update.IndexOf("\n    /// <summary>", StringComparison.Ordinal)];
+        update.ShouldContain("var canonical = ParseOrigins(candidate)");
+        update.ShouldNotContain("origins.Add(candidate)");
+    }
+
+    /// <summary>
+    /// 排队等前一条的 Run 也要打心跳。串行执行下第一条跑满 15 分钟，第二条一次心跳
+    /// 都没打过，别的部署据此把它判成无人认领并落成 failed——尽管本进程正握着它有效的
+    /// 导出令牌。本进程自己的 mine 挡得住自己，挡不住兄弟部署。
+    /// </summary>
+    [Fact]
+    public void 排队等待的同步不会被判成无人认领()
+    {
+        var worker = ReadWorkerSource();
+        worker.ShouldContain("_queuedRunIds");
+        worker.ShouldContain("BeatQueuedRunsAsync");
+
+        // 关键是**执行期间**就在打，不是等前一条跑完再补——跑 30 分钟的话补也来不及了。
+        // 所以它必须挂在心跳里，而心跳在页内循环和每批写之前都会走到。
+        var heartbeat = worker[worker.IndexOf("private async Task<bool> HeartbeatAsync", StringComparison.Ordinal)..];
+        heartbeat = heartbeat[..heartbeat.IndexOf("\n    }", StringComparison.Ordinal)];
+        heartbeat.ShouldContain("BeatQueuedRunsAsync");
+    }
+
+    /// <summary>
     /// 源站管理员在同意页上勾了「连登录凭据一起搬」时，users.PasswordHash 不在这次的
     /// 脱敏范围里，源站送来的是真散列。这时候拿目标站的旧散列盖回去，等于把授权页刚刚
     /// 承诺过的事悄悄取消——那批用户的原密码登不进去，而界面上说的是能登。

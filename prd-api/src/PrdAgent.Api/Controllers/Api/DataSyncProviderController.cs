@@ -258,7 +258,15 @@ public sealed class DataSyncProviderController : ControllerBase
                     $"「{candidate}」不是合法的来源：必须是 https 的站点根地址（不带路径、查询串或用户名），"
                     + "或以 *. 开头的子域通配"));
             }
-            if (!origins.Contains(candidate, StringComparer.OrdinalIgnoreCase)) origins.Add(candidate);
+            // 存之前先过一遍**读取时用的那个规范化**（ParseOrigins：通配转小写、
+            // 非通配去尾斜杠）。不过这一遍的话，`*.EXAMPLE.com` 会原样存进库，而读回来
+            // 时被转成小写——比对令牌拿规范化后的值去比库里那份大写的原文，永远比不上，
+            // 于是这张卡从第一次保存之后就再也存不动了（又一个「拿规范化值比原始字段」，
+            // 和第 29 轮那个开关死锁同族）。
+            //
+            // 关键是复用同一个函数，不是在这儿再写一遍小写逻辑——两份规范化早晚会漂开。
+            var canonical = ParseOrigins(candidate).FirstOrDefault() ?? candidate;
+            if (!origins.Contains(canonical, StringComparer.OrdinalIgnoreCase)) origins.Add(canonical);
         }
 
         // 条件更新。前端把「我看到的那份名单」一起送上来，只有库里仍是那一份才写得进去。
