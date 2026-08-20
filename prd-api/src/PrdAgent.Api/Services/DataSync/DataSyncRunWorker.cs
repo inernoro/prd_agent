@@ -61,10 +61,29 @@ public sealed class DataSyncRunWorker : BackgroundService
     private async Task TickAsync(CancellationToken ct)
     {
         var held = _vault.HeldRunIds;
-        if (held.Count == 0) return;
+        // 先取过期的：HeldRunIds 会把过期条目清掉，取的顺序反了就再也拿不到了。
+        var expired = _vault.DrainExpiredRunIds();
+        if (held.Count == 0 && expired.Count == 0) return;
 
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+
+        // 令牌在「Start 成功之后、这次轮询之前」过期的 Run：它不在 held 里，永远走不到
+        // ExecuteRunAsync 那条「没令牌就判失败」的路，会在库里一直停在 running。
+        // 这里替它落终态——只处理本进程握过的那些，不去碰别的部署的 Run。
+        if (expired.Count > 0)
+        {
+            var stale = await db.DataSyncRuns.Find(Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "running"),
+                Builders<DataSyncRun>.Filter.In(x => x.Id, expired))).ToListAsync(ct);
+            foreach (var run in stale)
+            {
+                _logger.LogWarning("[data-sync] Run {RunId} 的导出令牌已过期，落终态", run.Id);
+                await FailAsync(db, run, "导出令牌在同步开始前就过期了，请重新授权后再跑一次", CancellationToken.None);
+            }
+        }
+
+        if (held.Count == 0) return;
 
         var runs = await db.DataSyncRuns.Find(Builders<DataSyncRun>.Filter.And(
             Builders<DataSyncRun>.Filter.Eq(x => x.Status, "running"),
@@ -107,10 +126,17 @@ public sealed class DataSyncRunWorker : BackgroundService
                 }
                 if (!DataSyncScope.TryResolve(collectionName, out var collection))
                 {
-                    // Run 里固化的集合名不在白名单了：多半是两边版本不一致。跳过并留痕，
-                    // 不中断整次同步——其它集合还是能拉回来的。
-                    _logger.LogWarning("[data-sync] Run {RunId} 里的集合 {Collection} 不在本站白名单，跳过", run.Id, collectionName);
-                    continue;
+                    // 走到这里说明「人确认过的清单里有它，本站却跑不了」。Plan 已经把
+                    // 本站不认识的集合挡在执行清单之外了，所以这是不该发生的状态。
+                    //
+                    // 原来这里是「跳过 + 留一条日志」，于是整条 Run 照样报成功——
+                    // 对照表上列着它、终态写着成功、数据一条没搬。少搬东西可以接受，
+                    // 「少搬了还说成功」不行。宁可失败，让人看得见。
+                    await ReturnExportTokenAsync(run, token, CancellationToken.None);
+                    await FailAsync(db, run,
+                        $"计划里的集合 {collectionName} 不在本站白名单——两边版本多半不一致，请升级本站后重新授权",
+                        CancellationToken.None);
+                    return;
                 }
                 var progress = run.Progress.TryGetValue(collectionName, out var existing)
                     ? existing

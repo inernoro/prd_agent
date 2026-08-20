@@ -118,6 +118,39 @@ public class DataSyncProtocolTests
     }
 
     [Fact]
+    public void 令牌过期的Run必须留下线索好让worker落终态()
+    {
+        // Worker 只认领 HeldRunIds 里的 Run，而过期条目在那里会被顺手清掉。
+        // 于是「Start 成功了、下一次轮询前令牌刚好过期」这条 Run 既进不了认领列表、
+        // 也走不到 ExecuteRunAsync 里那条「没令牌就判失败」的路，永远停在 running。
+        // 所以过期时必须留一份 id，供 worker 把它落终态。
+        var vault = new DataSyncTokenVault();
+        vault.PutExportToken("run-expired", new string('t', 40), DateTime.UtcNow.AddSeconds(-1));
+        vault.PutExportToken("run-alive", new string('t', 40), DateTime.UtcNow.AddHours(1));
+
+        vault.HeldRunIds.ShouldBe(new[] { "run-alive" });
+
+        var expired = vault.DrainExpiredRunIds();
+        expired.ShouldBe(new[] { "run-expired" });
+
+        // 取过即清，不该被反复判死。
+        vault.DrainExpiredRunIds().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void 正常收尾的Run不会被当成过期()
+    {
+        // Forget 是「进终态了，把票丢掉」，不是过期。它不该在过期名单里留下东西，
+        // 否则 worker 会对一条已经成功的 Run 再判一次失败。
+        var vault = new DataSyncTokenVault();
+        vault.PutExportToken("run-done", new string('t', 40), DateTime.UtcNow.AddHours(1));
+        vault.Forget("run-done");
+
+        vault.HeldRunIds.ShouldBeEmpty();
+        vault.DrainExpiredRunIds().ShouldBeEmpty();
+    }
+
+    [Fact]
     public void 白名单为空时任何地址都不通过()
     {
         // 「没配过白名单」必须等于「功能关不通」，不能等于「允许所有」。

@@ -22,6 +22,10 @@ type PlanRow = {
   sourceTotal: number;
   localTotal: number;
   redactFields: string[];
+  /** 源站有没有报告这个集合。false = 本站批准了，但源站那边没有它。 */
+  sourceReported?: boolean;
+  /** 本站白名单认不认识它。false = 源站有、本站版本还不支持，不会同步。 */
+  supportedHere?: boolean;
 };
 type ProviderSettings = { enabled: boolean; origins: string[]; siteLabel: string };
 type Plan = { runId: string; sourceLabel: string; sourceOrigin: string; targetDatabase: string; rows: PlanRow[] };
@@ -160,6 +164,8 @@ export default function DataSyncPage() {
   // 断流重连的退避计数。用 ref 而不是 state：它只影响下一次何时重试，
   // 不该触发渲染，更不该进依赖数组。
   const reconnectAttempt = useRef(0);
+  // 快照请求也失败时靠它把 effect 再踢一次——ref 不触发重渲染，单靠它排不了下一轮。
+  const [reconnectTick, setReconnectTick] = useState(0);
 
   useEffect(() => {
     if (!runId || !run) return;
@@ -185,16 +191,22 @@ export default function DataSyncPage() {
       // 光重连会在一个早已结束的 Run 上无限重试；这一次 GET 能把终态取回来，
       // 顺带把断流期间攒下的进度补齐。
       void apiRequest<RunView>(`/api/instance-sync/runs/${encodeURIComponent(runId)}`).then((res) => {
-        if (!res.success || !res.data) return;
+        if (!res.success || !res.data) {
+          // 这一枪也打空了（网络还没恢复）。必须显式安排下一次——直接 return 的话
+          // status / phase 都没变，这个 effect 再也不会跑，页面就永久冻在这里了。
+          // 退避计数已经加过，所以下一次会自然拉长间隔。
+          setReconnectTick((t) => t + 1);
+          return;
+        }
         setRun(res.data);
         if (res.data.status === 'running') void sse.start();
       });
     }, delay);
 
     return () => window.clearTimeout(timer);
-    // sse 整个对象每次渲染都是新的，不能进依赖；只取真正会变的那两个标志。
+    // sse 整个对象每次渲染都是新的，不能进依赖；只取真正会变的那几个标志。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId, run?.status, sse.isStreaming, sse.phase]);
+  }, [runId, run?.status, sse.isStreaming, sse.phase, reconnectTick]);
 
   const totals = useMemo(() => {
     if (!run) return { fetched: 0, inserted: 0, skipped: 0, updated: 0, plannedInsert: 0, plannedUpdate: 0, total: 0, doneCount: 0 };
@@ -629,16 +641,32 @@ function PlanCard({
               </tr>
             </thead>
             <tbody>
-              {plan.rows.map((row) => (
-                <tr key={row.collection} style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                  <td className="py-1.5 font-mono" style={{ color: 'var(--text-secondary)' }}>{row.collection}</td>
-                  <td className="py-1.5 text-right" style={{ color: 'var(--text-primary)' }}>{row.sourceTotal}</td>
-                  <td className="py-1.5 text-right" style={{ color: 'var(--text-muted)' }}>{row.localTotal}</td>
-                  <td className="py-1.5 pl-4" style={{ color: 'var(--text-muted)' }}>
-                    {row.redactFields.length > 0 ? row.redactFields.join(' / ') : '无'}
-                  </td>
-                </tr>
-              ))}
+              {plan.rows.map((row) => {
+                // 两种「列在表上但不会同步」的行，必须当场说清楚是哪一种。
+                // 后端早就把这两个标记算出来了，之前没渲染——于是它们和正常行长得
+                // 一模一样，只是两列数字变成 -1，看的人根本分不出来。
+                const skipReason = row.sourceReported === false
+                  ? '源站没有这个集合，不会同步'
+                  : row.supportedHere === false
+                    ? '本站版本还不认识它，不会同步'
+                    : null;
+                return (
+                  <tr key={row.collection} style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                    <td className="py-1.5 font-mono" style={{ color: skipReason ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+                      {row.collection}
+                    </td>
+                    <td className="py-1.5 text-right" style={{ color: 'var(--text-primary)' }}>
+                      {row.sourceTotal < 0 ? '—' : row.sourceTotal}
+                    </td>
+                    <td className="py-1.5 text-right" style={{ color: 'var(--text-muted)' }}>
+                      {row.localTotal < 0 ? '—' : row.localTotal}
+                    </td>
+                    <td className="py-1.5 pl-4" style={{ color: 'var(--text-muted)' }}>
+                      {skipReason ?? (row.redactFields.length > 0 ? row.redactFields.join(' / ') : '无')}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

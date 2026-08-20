@@ -20,6 +20,19 @@ public sealed class DataSyncTokenVault
     private readonly ConcurrentDictionary<string, Entry> _exportTokens = new();
     private readonly ConcurrentDictionary<string, Entry> _verifiers = new();
 
+    /// <summary>
+    /// 本进程曾经握着、但令牌已经过期的 Run。
+    ///
+    /// 为什么要单独记一份：Worker 只认领 <see cref="HeldRunIds"/> 里的 Run，而过期条目
+    /// 在那里会被顺手清掉——于是「Start 成功了、下一次轮询前令牌刚好过期」这条 Run
+    /// 既进不了认领列表、也就永远走不到 ExecuteRunAsync 里那条「没令牌就判失败」的路，
+    /// 在库里永远停在 running。
+    ///
+    /// 只记本进程握过的，不去扫库里所有 running：那些可能属于别的部署，替它们判死
+    /// 正是 cross-project-isolation 台账里反复出事的那种越界。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, byte> _expiredRunIds = new();
+
     /// <summary>暂存跳转前生成的 PKCE verifier，等回调时取用。</summary>
     public void StashVerifier(string state, string verifier, DateTime expiresAt)
         => _verifiers[state] = new Entry(verifier, expiresAt);
@@ -40,13 +53,29 @@ public sealed class DataSyncTokenVault
         if (entry.ExpiresAt <= DateTime.UtcNow)
         {
             _exportTokens.TryRemove(runId, out _);
+            _expiredRunIds[runId] = 0;
             return null;
         }
         return entry.Value;
     }
 
     /// <summary>Run 进终态就把令牌丢掉，不留到过期。</summary>
-    public void Forget(string runId) => _exportTokens.TryRemove(runId, out _);
+    public void Forget(string runId)
+    {
+        _exportTokens.TryRemove(runId, out _);
+        _expiredRunIds.TryRemove(runId, out _);
+    }
+
+    /// <summary>
+    /// 取走「本进程握过、令牌已过期」的 Run id，取过即清。Worker 拿它把这些 Run
+    /// 落成失败终态——否则它们会永远停在 running。
+    /// </summary>
+    public IReadOnlyCollection<string> DrainExpiredRunIds()
+    {
+        var ids = _expiredRunIds.Keys.ToList();
+        foreach (var id in ids) _expiredRunIds.TryRemove(id, out _);
+        return ids;
+    }
 
     /// <summary>当前进程持有令牌的 Run —— Worker 只认领这些。</summary>
     public IReadOnlyCollection<string> HeldRunIds
@@ -56,7 +85,8 @@ public sealed class DataSyncTokenVault
             var now = DateTime.UtcNow;
             foreach (var (key, entry) in _exportTokens)
             {
-                if (entry.ExpiresAt <= now) _exportTokens.TryRemove(key, out _);
+                // 清掉的同时记一笔，让 Worker 有机会把对应的 Run 落终态。
+                if (entry.ExpiresAt <= now && _exportTokens.TryRemove(key, out _)) _expiredRunIds[key] = 0;
             }
             foreach (var (key, entry) in _verifiers)
             {

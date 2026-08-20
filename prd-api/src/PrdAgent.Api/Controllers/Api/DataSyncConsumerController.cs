@@ -213,8 +213,29 @@ public sealed class DataSyncConsumerController : ControllerBase
         var missing = run.Collections.Where(c => !reported.Contains(c)).ToList();
 
         var rows = new List<object>();
+        // 源站报了、但本站白名单不认识的集合（源站升级后新增、而本站还没跟上）：
+        // 必须当场说清楚「不会同步」，并且**不能进执行清单**。
+        // 原来这两件事都没做：它带着真实条数出现在对照表上，看着就是要同步的，
+        // worker 到了跟前 TryResolve 失败、记条日志跳过，整条 Run 照样报成功——
+        // 人确认过的清单里有它，终态却是「成功」，而它一条都没搬。
+        var unsupported = new List<string>();
         foreach (var item in manifest)
         {
+            if (!DataSyncScope.TryResolve(item.Collection, out _))
+            {
+                unsupported.Add(item.Collection);
+                rows.Add(new
+                {
+                    collection = item.Collection,
+                    group = (string?)null,
+                    sourceReported = true,
+                    sourceTotal = item.Total,
+                    localTotal = -1L,
+                    redactFields = Array.Empty<string>(),
+                    supportedHere = false,
+                });
+                continue;
+            }
             var local = await _db.Database.GetCollection<BsonDocument>(item.Collection)
                 .CountDocumentsAsync(Builders<BsonDocument>.Filter.Empty, cancellationToken: ct);
             rows.Add(new
@@ -225,6 +246,7 @@ public sealed class DataSyncConsumerController : ControllerBase
                 sourceTotal = item.Total,
                 localTotal = local,
                 redactFields = item.RedactFields,
+                supportedHere = true,
             });
         }
 
@@ -238,6 +260,7 @@ public sealed class DataSyncConsumerController : ControllerBase
                 localTotal = -1L,
                 redactFields = Array.Empty<string>(),
                 sourceReported = false,
+                supportedHere = true,
             });
         }
 
@@ -248,7 +271,11 @@ public sealed class DataSyncConsumerController : ControllerBase
         // Plan，就能把清单换掉——人按下开始时看的是一份，worker 执行的是另一份。
         // 已经 running 的 Run 这里不报错：调用方只是想再看一眼对照表，读到什么给什么，
         // 只是不再允许它改写执行范围。
-        var planned = manifest.Select(x => x.Collection).ToList();
+        // 执行清单只收「源站报了 + 本站认识」的那些。对照表上照样列出不认识的那几个，
+        // 但它们不会进 PlannedCollections，worker 也就不会遇到「计划里有、却跑不了」。
+        var planned = manifest.Select(x => x.Collection)
+            .Where(name => DataSyncScope.TryResolve(name, out _))
+            .ToList();
         await _db.DataSyncRuns.UpdateOneAsync(
             Builders<DataSyncRun>.Filter.And(
                 Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
@@ -262,6 +289,7 @@ public sealed class DataSyncConsumerController : ControllerBase
         {
             runId = run.Id,
             notReportedBySource = missing,
+            notSupportedHere = unsupported,
             run.SourceLabel,
             run.SourceOrigin,
             targetDatabase = _db.Database.DatabaseNamespace.DatabaseName,
