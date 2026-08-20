@@ -38,15 +38,17 @@ const FENCE_RE = /^ {0,3}(?:```|~~~)/;
  */
 const LEAD_MARKER_RE = /^([ \t]*(?:>[ \t]?)*[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[[ xX]\][ \t]+)?(?:#{1,6}[ \t]+)?)([\s\S]*)$/;
 
-/** 列表项行（有序或无序） */
-const LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S/;
+/** 表格行：分隔用的注释会把一张表切成两张，第二张没有表头就塌成段落，所以表格行两侧不插 */
+const TABLE_ROW_RE = /^[ \t]*\|/;
 
 /**
- * 删除块与新增块之间的隐形分隔：不插它，被删的 1./2./3. 和新增的条目会被解析成同一个列表，
- * 新条目从 4. 开始编号，读起来像是「原来有六条」。HTML 注释在 remark 解析期就能截断列表，
- * 之后被 sanitize 丢掉，渲染结果里看不见。
+ * 删除块与新增块之间的隐形分隔。缺了它有两种可见的坏相：
+ * 1. 被删的 1./2./3. 与新增条目被解析成同一个列表，新条目从 4. 开始编号，像是「原来有六条」；
+ * 2. 紧跟在被删列表项后面的新增段落会被当成该列表项的延续行，缩进跑到列表里面去
+ *    （流式期间尤其明显——新句子边长边挂在上一条的屁股后面）。
+ * HTML 注释在 remark 解析期就截断块，之后被 sanitize 丢掉，渲染结果里看不见。
  */
-const LIST_SPLIT = '<!-- -->';
+const BLOCK_SPLIT = '<!-- -->';
 
 /** 分隔线（--- / *** / ___）：没有可标注的文字 */
 const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
@@ -115,20 +117,21 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
   let removed = 0;
 
   const out: string[] = [];
-  // 上一条真正输出了的行是「删除」还是「新增」，以及它是不是列表项 —— 用来决定要不要插隐形分隔
-  let lastEmitted: { type: 'del' | 'add' | 'eq'; isListItem: boolean } | null = null;
+  // 上一条真正输出了的行是「删除」还是「新增」—— 删/增交界处要插隐形分隔，否则两侧会粘成一个块
+  let lastEmitted: { type: 'del' | 'add' | 'eq'; isTableRow: boolean } | null = null;
   const emit = (text: string, type: 'del' | 'add' | 'eq') => {
-    const isListItem = LIST_ITEM_RE.test(text);
+    const isTableRow = TABLE_ROW_RE.test(text);
     if (
       lastEmitted
-      && isListItem && lastEmitted.isListItem
       && lastEmitted.type !== type
       && lastEmitted.type !== 'eq' && type !== 'eq'
+      && !lastEmitted.isTableRow && !isTableRow
+      && !outFence // 围栏里的一切字符都是代码，注释会原样显示成代码文本
     ) {
-      out.push(LIST_SPLIT);
+      out.push(BLOCK_SPLIT);
     }
     out.push(text);
-    lastEmitted = { type, isListItem };
+    lastEmitted = { type, isTableRow };
   };
 
   for (const l of lines) {

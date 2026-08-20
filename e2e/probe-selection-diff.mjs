@@ -24,11 +24,16 @@ try {
 
   // 流式：正文里必须真的长出新内容（不是 spinner）
   await page.waitForSelector('.doc-inline-diff ins', { timeout: 30_000 });
-  await page.waitForTimeout(1200);
-  result.streamingIns = await page.locator('.doc-inline-diff ins').count();
-  result.caretVisible = (await page.locator('.doc-inline-diff').innerText()).includes('▌');
+  const mid = await page.evaluate(() => ({
+    phase: document.querySelector('[data-testid="probe-phase"]')?.textContent ?? '',
+    ins: document.querySelectorAll('.doc-inline-diff ins').length,
+    caret: (document.querySelector('.doc-inline-diff')?.textContent ?? '').includes('▌'),
+  }));
+  result.streamingPhase = mid.phase.includes('streaming');
+  result.streamingIns = mid.ins;
+  result.caretVisible = mid.caret;
   await page.screenshot({ path: `${OUT}/01-streaming-dark.png` });
-  log('streaming: ins=', result.streamingIns, 'caret=', result.caretVisible);
+  log('streaming:', JSON.stringify(mid));
 
   // 闭环：等到真的写完（phase=review + 出现「采纳」）才截图
   await page.waitForFunction(
@@ -55,6 +60,9 @@ try {
       delCount: document.querySelectorAll('.doc-inline-diff del').length,
       // 块级结构没塌：标记后的列表仍然是 li，标题仍然是 h1
       liCount: document.querySelectorAll('.doc-inline-diff li').length,
+      // 删除的旧列表与新增的新列表必须是两个 ol，否则新条目会接着旧序号编号
+      olCount: document.querySelectorAll('.doc-inline-diff ol').length,
+      olHasStartAttr: !!document.querySelector('.doc-inline-diff ol[start]'),
       hasHeading: !!document.querySelector('.doc-inline-diff h1'),
       // 选区外的正文逐字保留
       tailIntact: document.body.innerText.includes('结尾段落逐字保留，用来确认改写没有越界。'),
@@ -91,6 +99,10 @@ try {
     result.insCount > 0 &&
     result.delCount > 0 &&
     result.liCount > 0 &&
+    result.olCount === 2 &&
+    !result.olHasStartAttr &&
+    result.streamingPhase &&
+    result.caretVisible &&
     result.hasHeading &&
     result.tailIntact &&
     !result.rawTagLeak &&

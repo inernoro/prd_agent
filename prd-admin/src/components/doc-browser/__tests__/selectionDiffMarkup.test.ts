@@ -146,6 +146,29 @@ describe('渲染契约：标记必须活到正文渲染器输出的 HTML 里', (
     expect(html).not.toContain('start="');
   });
 
+  it('流式期间新增段落不会被上一条被删列表项吸进列表里', () => {
+    const original = '1. 旧一\n2. 旧二';
+    const body = `前言\n\n${original}\n\n结尾`;
+    const range = { start: body.indexOf(original), end: body.indexOf(original) + original.length };
+    // 模型刚吐出第一句（还没换行），此时它紧跟在被删的列表项后面
+    const md = buildInlineDiffBody(body, range, '改写后的开头一句').body;
+    const html = render(md);
+    // 任何 li 内部都不该出现新增内容——出现就说明它成了上一条列表项的延续行
+    expect(/<li>(?:(?!<\/li>)[\s\S])*<ins>/.test(html)).toBe(false);
+    expect(html).toContain('<ins>改写后的开头一句</ins>');
+  });
+
+  it('表格逐行改写时不插分隔，表格不被切成两半', () => {
+    const original = '| 名称 | 说明 |\n|---|---|\n| 旧值 | 旧说明 |';
+    const body = `前言\n\n${original}\n\n结尾`;
+    const range = { start: body.indexOf(original), end: body.indexOf(original) + original.length };
+    const md = buildInlineDiffBody(body, range, '| 名称 | 说明 |\n|---|---|\n| 新值 | 新说明 |');
+    const html = render(md.body);
+    expect((html.match(/<table/g) ?? []).length).toBe(1);
+    expect(html).toContain('<ins>新值</ins>');
+    expect(html).toContain('<del>旧值</del>');
+  });
+
   it('表格被标注后仍然渲染成表格', () => {
     const html = render('| <ins>名称</ins> | <del>说明</del> |\n|---|---|\n| a | b |');
     expect(html).toContain('<table>');
