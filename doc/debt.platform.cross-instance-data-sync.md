@@ -28,6 +28,8 @@
 | DS8 | 低 | 2026-08-20 | 执行前对照表只给「源站总数 / 本地总数」，给不出精确的「将新增多少条」 | 每次同步前看对照表 | open | 精确差集要把两边的 id 全拉回来比对，代价与真跑一次相当。当前提供「先试跑」（只统计不写库）作为替代路径 |
 | DS9 | 中 | 2026-08-20 | `AdminPermissionMiddleware` 的路由前缀匹配没有分段边界（裸 `StartsWith`），任何未标记 `[AdminController]` 的路由只要前缀延长了某个已标记前缀，就会静默继承那个控制器的权限 | 新增形如 `api/{已有前缀}-{后缀}` 的路由 | open | 本功能踩中：`api/data-sync` 被 `[AdminController("data")]` 的 `api/data` 吃掉，连 `[AllowAnonymous]` 的换票、导出端点都返回 401，本地单测看不出来、只有打真站才暴露。**当前规避方式是改名**为 `api/instance-sync`，并加了守卫测试钉死这个前缀不被吃掉。根治要给匹配加分段边界，但那会同时**放松**三处目前靠这个 bug 顺带受保护的子路由（`api/document-store/...` 两处、`api/prd-agent/skills`），属于安全语义变更，不在本 PR 展开 |
 | DS10 | 低 | 2026-08-20 | 入口归在「全部能力」的基础设施分组，没有进百宝箱的卡片网格 | 想从百宝箱首页直接看到它 | open | 百宝箱那一格是智能体卡片，`AgentCardArtwork.test.ts` 要求每张卡有独占的主题插画素材（暗/浅两套 webp + CSS token + 任务说明），少一张就红。数据同步是平台运维入口、不是智能体，硬塞进去要么造一张凑数的插画、要么把契约放松，两者都比「先放 infra」更糟。真要进百宝箱，先补插画素材 |
+| DS11 | 中 | 2026-08-20 | 「全部能力」页的基础设施分组读的是 `homeLauncherItems.ts` 里手写的 `buildStaticInfra`，不是 `NAV_REGISTRY`——两份清单已经分家，`navCoverage` 守不到 | 往 `NAV_REGISTRY` 加 `section:'infra'` 的入口 | open | 本功能踩中：登记在 `NAV_REGISTRY`、`navCoverage` 全绿、全量 1461 个测试全过，真人打开「全部能力」一个入口都看不见（`predicate-and-wiring-discipline` 形状 2）。当前修法是两处都加，并立了棘轮 `launcherInfraCoverage.test.ts`：已知没接上的 5 条只许减不许增，新增的必须两处同步。根治要让 infra 组直接派生自 `NAV_REGISTRY`，那会动首页分组与排序，不在本 PR 范围 |
+| DS12 | 低 | 2026-08-20 | 存量：`/learning-center`、`/infra-services`、`/admin-web-pages` 登记为 infra 但不在「全部能力」的基础设施分组里 | 想从「全部能力」页进这三个页面 | open | 与本功能无关的存量漂移，由 DS11 的棘轮固定在 5 条（另两条 `/document-store/universe`、`/document-store/:storeId/universe` 是子路由，本就不该独立成入口）。走到哪个页面补哪个 |
 
 ## 与其他台账的关系
 

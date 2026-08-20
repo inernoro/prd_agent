@@ -155,6 +155,12 @@ public sealed class DataSyncConsumerController : ControllerBase
     [HttpGet("runs/{id}/plan")]
     public async Task<IActionResult> Plan(string id, CancellationToken ct)
     {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
         var run = await FindRunAsync(id, ct);
         if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
 
@@ -204,6 +210,12 @@ public sealed class DataSyncConsumerController : ControllerBase
     [HttpPost("runs/{id}/start")]
     public async Task<IActionResult> Start(string id, [FromBody] DataSyncStartRequest request, CancellationToken ct)
     {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
         var run = await FindRunAsync(id, ct);
         if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
         if (run.Status != "pending")
@@ -231,6 +243,12 @@ public sealed class DataSyncConsumerController : ControllerBase
     [HttpGet("runs/{id}")]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
         var run = await FindRunAsync(id, ct);
         if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
         return Ok(ApiResponse<object>.Ok(Describe(run)));
@@ -239,6 +257,12 @@ public sealed class DataSyncConsumerController : ControllerBase
     [HttpGet("runs")]
     public async Task<IActionResult> List(CancellationToken ct)
     {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
         var runs = await _db.DataSyncRuns
             .Find(Builders<DataSyncRun>.Filter.Empty)
             .SortByDescending(x => x.CreatedAt)
@@ -256,6 +280,13 @@ public sealed class DataSyncConsumerController : ControllerBase
     [HttpGet("runs/{id}/stream")]
     public async Task Stream(string id, CancellationToken ct)
     {
+        // SSE 不能靠返回 IActionResult 表达 403（响应体已经是事件流了），所以在写头之前判。
+        if (!await IsAdminAsync(ct))
+        {
+            Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+
         Response.Headers.Append("Content-Type", "text/event-stream");
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("X-Accel-Buffering", "no");

@@ -45,6 +45,8 @@ type RunView = {
   error: string | null;
   pendingSecretFields: Record<string, string[]>;
   progress: ProgressRow[];
+  createdAt?: string;
+  finishedAt?: string | null;
 };
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
@@ -60,6 +62,8 @@ export default function DataSyncPage() {
   const [overwrite, setOverwrite] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [history, setHistory] = useState<RunView[] | null>(null);
+  const [denied, setDenied] = useState(false);
 
   const applyRun = useCallback((data: unknown) => {
     setRun(data as RunView);
@@ -70,6 +74,28 @@ export default function DataSyncPage() {
     onEvent: { progress: applyRun, done: applyRun },
     onError: (message) => setError(message),
   });
+
+  // 起始屏拉一次历史。两个理由：一是这一屏只有一个输入框，下面整片留白
+  //（content-fills-canvas）；二是「上次从哪台机器同步的」本来就是系统知道的事，
+  // 不该让操作者自己去记地址再手打一遍（minimal-user-input）。
+  useEffect(() => {
+    if (runId) return;
+    let alive = true;
+    void apiRequest<RunView[]>('/api/instance-sync/runs').then((res) => {
+      if (!alive) return;
+      // 非管理员在这一屏什么也做不了。与其让他填完地址、点了按钮才被拒，
+      // 不如进来就说清楚——这一次请求同时充当了权限探针。
+      if (!res.success && res.error?.code === 'DATA_SYNC_ADMIN_REQUIRED') {
+        setDenied(true);
+        setHistory([]);
+        return;
+      }
+      setHistory(res.success && Array.isArray(res.data) ? res.data : []);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [runId]);
 
   // 进来先把这条 Run 的当前状态取回来：SSE 只推「之后的变化」，
   // 刷新页面时没有这一步会先看到一片空白。
@@ -163,7 +189,10 @@ export default function DataSyncPage() {
         subtitle="从另一台 MAP 实例拉一次数据。授权是一次性的：跳过去、对方同意、执行一次。"
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6 sm:px-4" style={{ overscrollBehavior: 'contain' }}>
+      {/* 外层只负责滚动，内层 min-h-full 让起始屏的历史卡撑满剩余空间（content-fills-canvas）。
+          底部留白放在内层：min-h-full 与 padding 同在一个 border-box 里才不会多出 24px 的空滚动。 */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 sm:px-4" style={{ overscrollBehavior: 'contain' }}>
+        <div className="flex min-h-full flex-col gap-4 pb-6">
         {error ? (
           <div
             className="mb-4 flex items-start gap-2 rounded-xl px-4 py-3 text-sm"
@@ -175,13 +204,22 @@ export default function DataSyncPage() {
           </div>
         ) : null}
 
-        {!runId ? (
-          <StartCard
-            sourceOrigin={sourceOrigin}
-            setSourceOrigin={setSourceOrigin}
-            preparing={preparing}
-            onSubmit={() => void prepare()}
-          />
+        {denied ? (
+          <DeniedCard />
+        ) : !runId ? (
+          <>
+            <StartCard
+              sourceOrigin={sourceOrigin}
+              setSourceOrigin={setSourceOrigin}
+              preparing={preparing}
+              onSubmit={() => void prepare()}
+            />
+            <HistoryCard
+              runs={history}
+              onOpen={(id) => setSearchParams({ run: id })}
+              onReuse={setSourceOrigin}
+            />
+          </>
         ) : !run ? (
           <MapSectionLoader text="正在读取同步记录…" />
         ) : run.status === 'pending' ? (
@@ -199,6 +237,7 @@ export default function DataSyncPage() {
         ) : (
           <ProgressCard run={run} totals={totals} onBack={() => setSearchParams({})} />
         )}
+        </div>
       </div>
     </div>
   );
@@ -260,6 +299,135 @@ function StartCard({
         </button>
       </div>
     </Card>
+  );
+}
+
+/** 非管理员进到这一屏时的说明。后端每个端点都会 403，这里只是把原因提前讲出来。 */
+function DeniedCard() {
+  return (
+    <Card>
+      <div className="flex items-center gap-2">
+        <KeyRound size={18} style={{ color: 'var(--accent-primary)' }} />
+        <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>需要管理员权限</h2>
+      </div>
+      <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+        跨实例同步会把另一台机器上的数据写进本站的数据库，所以只有管理员能发起、也只有管理员能查看同步记录。
+        需要同步的话，请找本站管理员操作。
+      </p>
+    </Card>
+  );
+}
+
+/** Run 状态 -> 中文。列表和进度卡共用，避免两处各写一份枚举。 */
+function statusLabel(status: string): string {
+  if (status === 'pending') return '待确认';
+  if (status === 'running') return '进行中';
+  if (status === 'succeeded') return '完成';
+  if (status === 'failed') return '失败';
+  if (status === 'cancelled') return '已取消';
+  return status;
+}
+
+function formatWhen(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * 历史同步。空着的时候不是「暂无数据」四个字，而是把这条链路的四步讲清楚——
+ * 这一屏对第一次来的人是完全陌生的，跳去别人的机器上要授权这件事需要先建立预期。
+ */
+function HistoryCard({
+  runs,
+  onOpen,
+  onReuse,
+}: {
+  runs: RunView[] | null;
+  onOpen: (runId: string) => void;
+  onReuse: (origin: string) => void;
+}) {
+  return (
+    <section
+      className="flex min-h-0 flex-1 flex-col rounded-2xl p-5"
+      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+    >
+      <div className="flex items-center gap-2">
+        <Database size={18} style={{ color: 'var(--accent-primary)' }} />
+        <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>历史同步</h2>
+        {runs && runs.length > 0 ? (
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>最近 {runs.length} 次</span>
+        ) : null}
+      </div>
+
+      {runs === null ? (
+        <div className="mt-4"><MapSectionLoader text="正在读取历史记录…" /></div>
+      ) : runs.length === 0 ? (
+        <div className="mt-4 text-sm leading-7" style={{ color: 'var(--text-muted)' }}>
+          <p>还没有同步过。这条链路一共四步，每一步都停得下来：</p>
+          <ol className="mt-3 space-y-1.5">
+            {[
+              '在上面填源站地址，点「前往源站授权」——浏览器跳到那台机器上。',
+              '源站的管理员看到本站要哪些数据、哪些绝对不会带走，勾选后同意。',
+              '跳回这里，先看对照表：往哪个库写、源站多少条、本地现在多少条。',
+              '确认后执行。可以先「只试跑」，只统计不写库，看清楚了再来真的。',
+            ].map((text, i) => (
+              <li key={text} className="flex gap-2">
+                <span
+                  className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold"
+                  style={{ background: 'rgba(var(--accent-primary-rgb), 0.16)', color: 'var(--accent-primary)' }}
+                >
+                  {i + 1}
+                </span>
+                <span>{text}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-3" style={{ color: 'var(--text-secondary)' }}>
+            密钥、口令、访问令牌一律留在源站——同步过来是空的，需要在本站手动补。
+          </p>
+        </div>
+      ) : (
+        <div className="mt-3 min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+          {runs.map((r) => {
+            const rows = r.progress ?? [];
+            const fetched = rows.reduce((s, p) => s + p.fetched, 0);
+            const written = rows.reduce((s, p) => s + p.inserted + p.updated, 0);
+            return (
+              <div
+                key={r.runId}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b py-2.5 last:border-b-0"
+                style={{ borderColor: 'var(--border-subtle)' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => onOpen(r.runId)}
+                  className="min-w-0 flex-1 text-left text-sm"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  <span className="truncate">{r.sourceLabel || r.sourceOrigin}</span>
+                  {r.dryRun ? (
+                    <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>试跑</span>
+                  ) : null}
+                </button>
+                <span className="shrink-0 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {formatWhen(r.createdAt)} · 拉取 {fetched} 条 · 写入 {written} 条 · {statusLabel(r.status)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onReuse(r.sourceOrigin)}
+                  className="shrink-0 rounded-md px-2 py-1 text-xs"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-secondary)', color: 'var(--text-secondary)' }}
+                >
+                  再同步一次
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -386,7 +554,7 @@ function ProgressCard({
             )}
             <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
               {run.dryRun ? '试跑' : '同步'}
-              {run.status === 'running' ? '进行中' : run.status === 'succeeded' ? '完成' : run.status === 'failed' ? '失败' : run.status}
+              {statusLabel(run.status)}
             </h2>
           </div>
           <span className="text-xs" style={{ color: 'var(--text-muted)' }}>

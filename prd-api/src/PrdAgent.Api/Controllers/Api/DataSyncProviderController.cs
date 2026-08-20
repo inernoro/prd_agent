@@ -79,6 +79,15 @@ public sealed class DataSyncProviderController : ControllerBase
     [Authorize]
     public async Task<IActionResult> ScopeCatalog(CancellationToken ct)
     {
+        // 这份目录把全站集合名和逐集合条数都摊开了——只有能按「同意」的那个人才该看见。
+        // 判据必须和 Authorize 用同一个（真人浏览器会话 + 管理员），否则同意页对普通用户
+        // 是「看得见清单但按不下按钮」，等于白送一份数据分布图。
+        if (await ResolveAdminIdentityAsync(ct) is null)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以查看可授权范围"));
+        }
+
         var config = await ReadConfigAsync(ct);
         if (!config.Enabled)
         {

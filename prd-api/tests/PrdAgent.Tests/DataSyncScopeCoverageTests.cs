@@ -192,6 +192,61 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 消费方每个端点都必须自己判管理员()
+    {
+        // 这个控制器只有类级 [Authorize]——也就是「登录了就行」。发起同步判了管理员，
+        // 但 start 一开始没判：任何登录用户只要拿到一个 pending 的 runId，就能带
+        // overwrite=true 把别人授权来的数据写进共享库。类级特性看着像已经保护了，
+        // 实际上一个都没保护（predicate-and-wiring-discipline 形状 8：不成立的证据）。
+        // 所以这里逐个方法钉死：public 的 action 里必须出现 IsAdminAsync。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var source = File.ReadAllText(path);
+
+        // 按 [Http...] 特性切段，每段一个 action。
+        var chunks = Regex.Split(source, @"(?=\n\s*\[Http(?:Get|Post|Put|Delete)\()")
+            .Where(c => Regex.IsMatch(c, @"^\s*\[Http(?:Get|Post|Put|Delete)\("))
+            .ToList();
+        Assert.True(chunks.Count >= 7, $"只切出 {chunks.Count} 个 action，正则多半失效了");
+
+        var unguarded = chunks
+            .Where(c => !c.Contains("IsAdminAsync", StringComparison.Ordinal))
+            .Select(c => Regex.Match(c, @"public\s+(?:async\s+)?Task[^\s]*\s+(\w+)\(").Groups[1].Value)
+            .Where(name => name.Length > 0)
+            .ToList();
+
+        Assert.True(unguarded.Count == 0,
+            "DataSyncConsumerController 下列端点没有判管理员，登录用户即可调用：" + string.Join(", ", unguarded));
+    }
+
+    [Fact]
+    public void 源站带Authorize的端点都必须判真人管理员()
+    {
+        // 源站控制器混着两类端点：[AllowAnonymous] 的机器对机器（换票 / 清单 / 导出，
+        // 靠一次性码和导出令牌自己鉴权），和 [Authorize] 的人机端点。后者只写 [Authorize]
+        // 等于「登录即可」——scope-catalog 就这么把全站集合名与逐集合条数摊给了任何登录用户。
+        // 这里钉死：带 [Authorize] 的 action 必须调 ResolveAdminIdentityAsync。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncProviderController.cs");
+        var source = File.ReadAllText(path);
+
+        var chunks = Regex.Split(source, @"(?=\n\s*\[Http(?:Get|Post|Put|Delete)\()")
+            .Where(c => Regex.IsMatch(c, @"^\s*\[Http(?:Get|Post|Put|Delete)\("))
+            .ToList();
+        Assert.True(chunks.Count >= 5, $"只切出 {chunks.Count} 个 action，正则多半失效了");
+
+        var authorized = chunks.Where(c => c.Contains("[Authorize]", StringComparison.Ordinal)).ToList();
+        Assert.True(authorized.Count >= 2, "源站一个 [Authorize] 端点都没解析出来，判据前提已变");
+
+        var unguarded = authorized
+            .Where(c => !c.Contains("ResolveAdminIdentityAsync", StringComparison.Ordinal))
+            .Select(c => Regex.Match(c, @"public\s+(?:async\s+)?(?:Task[^\s]*|IActionResult)\s+(\w+)\(").Groups[1].Value)
+            .Where(name => name.Length > 0)
+            .ToList();
+
+        Assert.True(unguarded.Count == 0,
+            "DataSyncProviderController 下列 [Authorize] 端点没有判真人管理员：" + string.Join(", ", unguarded));
+    }
+
+    [Fact]
     public void 同步端点的路由前缀不能被任何管理后台前缀吃掉()
     {
         // AdminPermissionMiddleware 用的是**裸前缀匹配**（path.StartsWith(prefix)，没有分段边界）。
