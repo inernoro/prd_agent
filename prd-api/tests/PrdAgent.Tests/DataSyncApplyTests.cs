@@ -39,11 +39,22 @@ public class DataSyncApplyTests
     }
 
     [Fact]
-    public void 空串与空集合不产生文档()
+    public void 空集合不产生文档而空串是坏数据()
     {
-        Assert.Empty(DataSyncApply.ParseDocuments(new[] { "", "   " }));
+        // 「一条都没有」和「有一条但它是空的」是两件事。
+        //
+        // 这条用例原来叫「空串与空集合不产生文档」，把两者一起断言成空——等于用测试
+        // 把「静默丢掉坏数据」钉死成正确行为。后果不是少一条：调用方拿到的页看着正常，
+        // 游标照常前进，整条同步报成功而那一条从没落地
+        //（predicate-and-wiring-discipline 形状 4a：测试反向锁死 bug）。
         Assert.Empty(DataSyncApply.ParseDocuments(Array.Empty<string>()));
         Assert.Empty(DataSyncApply.ParseDocuments(null!));
+
+        Assert.Throws<InvalidOperationException>(() => DataSyncApply.ParseDocuments(new[] { "" }));
+        Assert.Throws<InvalidOperationException>(() => DataSyncApply.ParseDocuments(new[] { "   " }));
+        // 混在正常文档中间的空串同样要炸，不能因为「大部分是好的」就放过。
+        Assert.Throws<InvalidOperationException>(
+            () => DataSyncApply.ParseDocuments(new[] { "{\"_id\": \"a\"}", " " }));
     }
 
     [Fact]

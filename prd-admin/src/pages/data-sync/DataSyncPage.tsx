@@ -74,6 +74,7 @@ export default function DataSyncPage() {
   const [history, setHistory] = useState<RunView[] | null>(null);
   const [denied, setDenied] = useState(false);
   const [provider, setProvider] = useState<ProviderSettings | null>(null);
+  const [savingProvider, setSavingProvider] = useState(false);
 
   const applyRun = useCallback((data: unknown) => {
     setRun(data as RunView);
@@ -120,16 +121,40 @@ export default function DataSyncPage() {
     };
   }, [runId]);
 
-  async function saveProvider(next: ProviderSettings) {
+  // 这张卡的每次改动都是「整份名单覆盖写」，所以两次连点必须串起来算。
+  // 原来传的是算好的 next，两个回调都基于同一份没变过的 settings：先移除 A 发出
+  // 的清单里还留着 B，再移除 B 发出的清单里又留着 A，后到的那次把已撤销的机器
+  // 放了回去——而票据鉴权每次都读这份名单，等于撤销被悄悄取消了。
+  // 改成传「怎么改」，由这里对着最新的一份算，并在保存期间禁用输入。
+  const providerRef = useRef<ProviderSettings | null>(null);
+  useEffect(() => { providerRef.current = provider; }, [provider]);
+
+  async function saveProvider(mutate: (prev: ProviderSettings) => ProviderSettings) {
+    const current = providerRef.current;
+    if (!current || savingProvider) return;
+    const next = mutate(current);
+
+    setSavingProvider(true);
+    // 乐观更新：紧接着的第二次点击就基于这一份算，不会回到旧清单。
+    setProvider(next);
+    providerRef.current = next;
+
     const res = await apiRequest<ProviderSettings>('/api/instance-sync/provider-settings', {
       method: 'PUT',
       body: { enabled: next.enabled, origins: next.origins },
     });
+    setSavingProvider(false);
+
     if (!res.success) {
       setError(res.error?.message || '保存对外同步设置失败');
+      // 没存上就退回去，否则界面显示的名单比服务端窄，人以为撤销成功了。
+      setProvider(current);
+      providerRef.current = current;
       return;
     }
-    setProvider({ ...next, ...(res.data ?? {}) });
+    const confirmed = { ...next, ...(res.data ?? {}) };
+    setProvider(confirmed);
+    providerRef.current = confirmed;
   }
 
   // 进来先把这条 Run 的当前状态取回来：SSE 只推「之后的变化」，
@@ -302,7 +327,7 @@ export default function DataSyncPage() {
               probe={probe}
               onSubmit={() => void prepare()}
             />
-            <ProviderCard settings={provider} onSave={(next) => void saveProvider(next)} />
+            <ProviderCard settings={provider} busy={savingProvider} onSave={(mutate) => void saveProvider(mutate)} />
             <HistoryCard
               runs={history}
               onOpen={(id) => setSearchParams({ run: id })}
@@ -423,10 +448,13 @@ function DeniedCard() {
  */
 function ProviderCard({
   settings,
+  busy,
   onSave,
 }: {
   settings: ProviderSettings | null;
-  onSave: (next: ProviderSettings) => void;
+  busy: boolean;
+  /** 传「怎么改」而不是「改成什么」——调用方要对着最新的一份算，防连点覆盖。 */
+  onSave: (mutate: (prev: ProviderSettings) => ProviderSettings) => void;
 }) {
   if (!settings) return null;
   return (
@@ -440,7 +468,11 @@ function ProviderCard({
           <input
             type="checkbox"
             checked={settings.enabled}
-            onChange={(e) => onSave({ ...settings, enabled: e.target.checked })}
+            disabled={busy}
+            onChange={(e) => {
+              const enabled = e.target.checked;
+              onSave((prev) => ({ ...prev, enabled }));
+            }}
             className="h-4 w-4"
           />
           允许别的 MAP 来本站取数据
@@ -466,8 +498,9 @@ function ProviderCard({
               <button
                 type="button"
                 aria-label={`移除 ${origin}`}
-                onClick={() => onSave({ ...settings, origins: settings.origins.filter((o) => o !== origin) })}
-                style={{ color: 'var(--text-muted)' }}
+                disabled={busy}
+                onClick={() => onSave((prev) => ({ ...prev, origins: prev.origins.filter((o) => o !== origin) }))}
+                style={{ color: 'var(--text-muted)', opacity: busy ? 0.5 : 1 }}
               >
                 <X size={12} />
               </button>

@@ -175,7 +175,10 @@ public sealed class DataSyncRunWorker : BackgroundService
         string token,
         CancellationToken ct)
     {
-        var client = _httpClientFactory.CreateClient();
+        // 源站地址是管理员填进来的，必须走 SafeOutbound：它禁自动重定向、并在建连时把
+        // 解析出的每个地址过一遍内网/保留段校验。默认客户端会让「https://127.0.0.1」
+        // 或者一个公网地址 302 跳内网，把 API 服务器变成打自己内网的跳板。
+        var client = _httpClientFactory.CreateClient("SafeOutbound");
         client.Timeout = TimeSpan.FromSeconds(120);
         client.DefaultRequestHeaders.Add("X-Data-Sync-Token", token);
         var target = db.Database.GetCollection<BsonDocument>(collection.Name);
@@ -295,7 +298,7 @@ public sealed class DataSyncRunWorker : BackgroundService
     {
         try
         {
-            var client = _httpClientFactory.CreateClient();
+            var client = _httpClientFactory.CreateClient("SafeOutbound");
             client.Timeout = TimeSpan.FromSeconds(15);
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{run.SourceOrigin}/api/instance-sync/revoke");
             request.Headers.TryAddWithoutValidation("X-Data-Sync-Token", token);

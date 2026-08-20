@@ -21,10 +21,19 @@ public static class DataSyncApply
     public static List<BsonDocument> ParseDocuments(IEnumerable<string> extendedJsonDocuments)
     {
         var parsed = new List<BsonDocument>();
+        var index = 0;
         foreach (var json in extendedJsonDocuments ?? Enumerable.Empty<string>())
         {
-            if (string.IsNullOrWhiteSpace(json)) continue;
+            // 空串 / 全空白也是坏数据，不是「这里没有文档」。原来 continue 跳过它，
+            // 于是这一页少一条、游标照样前进、整条 Run 报成功——和这条链路上
+            // 其它几处形状校验同一条纪律：不许把协议故障翻译成正常收尾。
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                throw new InvalidOperationException(
+                    $"源站返回的 documents[{index}] 是空字符串，不是一份文档");
+            }
             parsed.Add(BsonDocument.Parse(json));
+            index++;
         }
         return parsed;
     }

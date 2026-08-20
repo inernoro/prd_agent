@@ -458,6 +458,12 @@ def _call(method: str, path: str, body: Any = None, timeout: int = 15,
 
 # ── I/O ────────────────────────────────────────────────────────────
 
+# cmd_smoke 覆盖不全时把缺口文字放这里，供 cmd_deploy 在最终结论里点名。
+# 用模块全局是因为 cmd_smoke 直接往 stdout 打 JSON 并 sys.exit，调用方拿不到返回值；
+# 与其让 deploy 去解析自己子调用的 stdout，不如留一个明确的交接点。
+_LAST_SMOKE_GAPS: str = ""
+
+
 def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None:
     """Unified error exit. Writes JSON {ok:false, error, trace} to stdout."""
     payload: dict[str, Any] = {"ok": False, "error": msg, "trace": _TRACE_ID}
@@ -7464,10 +7470,18 @@ def cmd_smoke(args: argparse.Namespace) -> None:
         ok(summary, note=f"冒烟全绿 ({passed}/{len(layers)})")
         return
 
-    # 跑过的都过了，但覆盖不全。不判失败（缺一个本地变量不等于部署坏了），
-    # 也绝不说「全绿」——把没测过的那层点名说出来，让读的人自己判断够不够。
+    # 跑过的都过了，但覆盖不全。
+    #
+    # 这里曾经调 ok() —— 退出码 0。上层 cmd_deploy 只认非零，于是照样打印
+    # 「deploy 流水线全绿」，我在 summary 里写的 coverageComplete=false 根本没人看。
+    # 「注释里说清楚了」不等于「调用方拿得到」：判据得让机器读得到才算数。
+    # 所以改成独立退出码 3：区别于 2（真的测挂了），调用方据此既不能当成功、
+    # 也不该当成部署失败。
     gaps = "；".join(f"{x['layer']} 未测（{x.get('reason', '原因未记录')}）" for x in skipped)
-    ok(summary, note=f"已验证 {passed}/{len(verified)} 层通过，但覆盖不全：{gaps}")
+    global _LAST_SMOKE_GAPS
+    _LAST_SMOKE_GAPS = gaps
+    die(f"冒烟覆盖不全：{gaps}（已跑的 {passed}/{len(verified)} 层都通过）",
+        code=3, extra={"data": summary})
 
 
 def cmd_help_me_check(args: argparse.Namespace) -> None:
@@ -7965,15 +7979,25 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         )
 
     # 5. Smoke (skip on --no-smoke)
+    smoke_gaps = ""
     if not args.no_smoke:
         print(f"[4/4] Smoke test", file=sys.stderr)
         ns = argparse.Namespace(id=branch_id)
         try:
             cmd_smoke(ns)
         except SystemExit as e:
-            if e.code != 0:
+            # 3 = 跑过的都过了、但有层没跑（缺凭据之类）。不算部署失败，
+            # 但**绝不能**接着说「全绿」——那正是这条链路上出过的假绿。
+            if e.code == 3:
+                smoke_gaps = _LAST_SMOKE_GAPS
+            elif e.code != 0:
                 die("smoke 失败", code=2,
                     extra={"hint": f"cdscli smoke {branch_id}"})
+    if smoke_gaps:
+        ok({"branch": branch, "branchId": branch_id, "status": final_status,
+            "smokeCoverageComplete": False, "smokeGaps": smoke_gaps},
+           note=f"deploy 已完成，但冒烟覆盖不全：{smoke_gaps}")
+        return
     ok({"branch": branch, "branchId": branch_id, "status": final_status},
        note="deploy 流水线全绿")
 
