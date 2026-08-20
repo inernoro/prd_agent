@@ -70,7 +70,11 @@ public class UserRepository : IUserRepository
         var result = await _users.UpdateOneAsync(
             Builders<User>.Filter.And(
                 Builders<User>.Filter.Eq(u => u.UserId, userId),
-                Builders<User>.Filter.Eq(u => u.PasswordHash, expectedHash)),
+                Builders<User>.Filter.Eq(u => u.PasswordHash, expectedHash),
+                // 状态也要进这个原子谓词。控制器里那道 Active 检查读的是**更早**的快照：
+                // 管理员在「读到还是启用」和「这句更新执行」之间把人停掉的话，更新照样成功，
+                // 端点接着签发一整套新令牌——停用输给了改密。放进来，停用才赢得了这场竞态。
+                Builders<User>.Filter.Eq(u => u.Status, UserStatus.Active)),
             Builders<User>.Update.Set(u => u.PasswordHash, passwordHash));
         return result.ModifiedCount > 0;
     }

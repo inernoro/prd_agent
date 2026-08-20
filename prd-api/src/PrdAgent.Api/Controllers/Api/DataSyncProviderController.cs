@@ -288,6 +288,26 @@ public sealed class DataSyncProviderController : ControllerBase
                     Builders<AppSettings>.Filter.Eq(x => x.DataSyncAllowedConsumerOrigins, (string?)null)));
             }
             filter = Builders<AppSettings>.Filter.And(filter, Builders<AppSettings>.Filter.Or(alternatives));
+
+            // 开关也要进比对令牌。只比名单的话，「另一个人把开关关了」这件事对本次提交
+            // 是隐形的，而本次提交带着的是它打开页面那一刻的旧开关值——一次纯粹的
+            // 「移走一台机器」会把整个对外导出重新打开。
+            if (request.ExpectedEnabled is bool expectedEnabled)
+            {
+                var enabledAlternatives = new List<FilterDefinition<AppSettings>>
+                {
+                    Builders<AppSettings>.Filter.Eq(x => x.DataSyncProviderEnabled, expectedEnabled),
+                };
+                // 库里没有这个字段时，生效值同样来自兜底；口径与名单那半保持一致。
+                if (expectedEnabled == currentConfig.Enabled)
+                {
+                    enabledAlternatives.Add(Builders<AppSettings>.Filter.Or(
+                        Builders<AppSettings>.Filter.Exists(x => x.DataSyncProviderEnabled, false),
+                        Builders<AppSettings>.Filter.Eq(x => x.DataSyncProviderEnabled, (bool?)null)));
+                }
+                filter = Builders<AppSettings>.Filter.And(
+                    filter, Builders<AppSettings>.Filter.Or(enabledAlternatives));
+            }
         }
 
         UpdateResult saved;
@@ -299,7 +319,7 @@ public sealed class DataSyncProviderController : ControllerBase
                     .Set(x => x.DataSyncProviderEnabled, request.Enabled)
                     .Set(x => x.DataSyncAllowedConsumerOrigins, string.Join(",", origins))
                     .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                new UpdateOptions { IsUpsert = request.ExpectedOrigins is null || expectedMatchesFallback },
+                    new UpdateOptions { IsUpsert = request.ExpectedOrigins is null || expectedMatchesFallback },
                 ct);
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
@@ -310,7 +330,7 @@ public sealed class DataSyncProviderController : ControllerBase
                 "这份名单在你编辑期间被别人改过了，已经刷新成最新的那份，请确认后再保存一次"));
         }
 
-        if (request.ExpectedOrigins is not null && !expectedMatchesFallback && saved.MatchedCount == 0)
+        if (request.ExpectedOrigins is not null && saved.MatchedCount == 0 && saved.UpsertedId is null)
         {
             return Conflict(ApiResponse<object>.Fail("DATA_SYNC_SETTINGS_STALE",
                 "这份名单在你编辑期间被别人改过了，已经刷新成最新的那份，请确认后再保存一次"));
@@ -941,6 +961,15 @@ public sealed class DataSyncProviderSettingsRequest
     /// 这份活名单，等于一次撤销被悄悄取消。null 表示旧版前端，按不带并发保护处理。
     /// </summary>
     public List<string>? ExpectedOrigins { get; set; }
+
+    /// <summary>
+    /// 提交者看到的**开关**状态。和 ExpectedOrigins 一起构成比对令牌。
+    ///
+    /// 只比名单不够：两个管理员各自打开同一页，一个把对外同步整个关掉，另一个只移走
+    /// 一台机器——后者的名单比对仍然成立（那一栏确实没被改过），于是它把自己那份陈旧的
+    /// Enabled=true 写了回去，悄悄把刚关掉的对外导出重新打开。
+    /// </summary>
+    public bool? ExpectedEnabled { get; set; }
 }
 
 public sealed class DataSyncAuthorizeRequest

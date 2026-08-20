@@ -196,6 +196,13 @@ public sealed class DataSyncRunWorker : BackgroundService
             _vault.Forget(run.Id);
             _logger.LogInformation("[data-sync] Run {RunId} 完成（dryRun={DryRun}）", run.Id, run.DryRun);
         }
+        catch (RunLeaseLostException ex)
+        {
+            // 结局已经由收尸方写好了，这里只交还令牌、放手，不去覆盖它。
+            _logger.LogWarning("[data-sync] {Message}", ex.Message);
+            await ReturnExportTokenAsync(run, token, CancellationToken.None);
+            _vault.Forget(run.Id);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[data-sync] Run {RunId} 执行失败", run.Id);
@@ -276,6 +283,9 @@ public sealed class DataSyncRunWorker : BackgroundService
 
                 if (!run.DryRun)
                 {
+                    // 写之前先确认这条 Run 还归本进程。它同时充当心跳，所以不额外多一次写。
+                    if (!await HeartbeatAsync(db, run, ct)) throw new RunLeaseLostException(run.Id);
+
                     if (decision.ToInsert.Count > 0)
                     {
                         // IsOrdered=false 让这一批剩下的继续写，但**只要有一条失败它仍然抛**。
@@ -320,7 +330,7 @@ public sealed class DataSyncRunWorker : BackgroundService
                             Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]), doc, cancellationToken: ct);
                         if (DateTime.UtcNow - beatAt >= HeartbeatInterval)
                         {
-                            await HeartbeatAsync(db, run, ct);
+                            if (!await HeartbeatAsync(db, run, ct)) throw new RunLeaseLostException(run.Id);
                             beatAt = DateTime.UtcNow;
                         }
                     }
@@ -527,12 +537,35 @@ public sealed class DataSyncRunWorker : BackgroundService
             cancellationToken: ct);
     }
 
-    /// <summary>只刷心跳，不动进度——页内用，一页几百条不必每条都回写整个 Progress。</summary>
-    private static Task HeartbeatAsync(MongoDbContext db, DataSyncRun run, CancellationToken ct) =>
-        db.DataSyncRuns.UpdateOneAsync(
+    /// <summary>
+    /// 刷心跳，并回答「这条 Run 还归我吗」。
+    ///
+    /// 看 MatchedCount 而不是 ModifiedCount：同一毫秒内把 UpdatedAt 设成同一个值时
+    /// ModifiedCount 会是 0，那不代表租约没了（形状 6：取错了那个值）。
+    /// </summary>
+    private static async Task<bool> HeartbeatAsync(MongoDbContext db, DataSyncRun run, CancellationToken ct)
+    {
+        var result = await db.DataSyncRuns.UpdateOneAsync(
             StillRunning(run),
             Builders<DataSyncRun>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
+        return result.MatchedCount > 0;
+    }
+
+    /// <summary>
+    /// 租约没了就别再往目标库里写。
+    ///
+    /// 心跳和终态已经带了 StillRunning，但那只保护 Run 这一行**自己**的字段；
+    /// 真正往业务集合写的那些 Insert/Replace 一直没看过租约。于是本进程卡够 15 分钟
+    /// 被别的部署收尸之后，它醒来照样继续改目标站的数据——界面上这条 Run 已经是
+    /// failed，人可能已经重跑了一次，两个写手同时改同一批集合。
+    /// 所以每批写之前先确认租约还在，不在就当场停手。
+    /// </summary>
+    private sealed class RunLeaseLostException : Exception
+    {
+        public RunLeaseLostException(string runId)
+            : base($"同步 {runId} 的执行权已被其它部署接管（多半是本进程停顿过久被判成无心跳），已停止写入") { }
+    }
 
     /// <summary>
     /// 本进程对这条 Run 的所有写入都带上「它还是 running」。

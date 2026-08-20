@@ -71,6 +71,10 @@ public class ChangePasswordGuardTests
         body = body[..body.IndexOf("\n    public", StringComparison.Ordinal)];
 
         Assert.Matches(new Regex(@"Eq\(u => u\.PasswordHash, expectedHash\)"), body);
+        // 状态也要在这个原子谓词里。控制器那道 Active 检查读的是更早的快照——
+        // 管理员在「读到还是启用」和「这句更新执行」之间把人停掉，更新照样成功，
+        // 端点接着签发一整套新令牌，停用输给了改密。
+        Assert.Matches(new Regex(@"Eq\(u => u\.Status, UserStatus\.Active\)"), body);
         Assert.Contains("ModifiedCount > 0", body);
     }
 }

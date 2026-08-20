@@ -322,6 +322,18 @@ public class DataSyncProtocolTests
             out _).ShouldBeTrue();
     }
 
+    private static string ReadRepoText(params string[] segments)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        var parts = new List<string> { dir!.FullName };
+        parts.AddRange(segments);
+        var path = Path.Combine(parts.ToArray());
+        Assert.True(File.Exists(path), $"守卫要扫的文件不在预期位置：{path}");
+        return File.ReadAllText(path);
+    }
+
     /// <summary>「这一页里带着该字段的文档 id」——接回之前算出来的那份。</summary>
     private static Dictionary<string, HashSet<BsonValue>> Owners(string field, params string[] ids) =>
         new(StringComparer.Ordinal) { [field] = ids.Select(i => (BsonValue)i).ToHashSet() };
@@ -476,6 +488,61 @@ public class DataSyncProtocolTests
         var allowed = DataSyncProviderController.IsOriginAllowed(
             "https://a.example.com:8443", new[] { pattern });
         allowed.ShouldBe(shouldMatch);
+    }
+
+    /// <summary>
+    /// 租约丢了就不许再往目标库写。
+    ///
+    /// 心跳和终态带 StillRunning 只保护 Run 这一行自己的字段；真正改业务集合的
+    /// Insert/Replace 一直没看过租约。本进程卡够 15 分钟被别的部署收尸后醒来，
+    /// 照样继续改目标站的数据——界面上这条已经 failed，人可能已经重跑了一次，
+    /// 于是两个写手同时改同一批集合。
+    /// </summary>
+    [Fact]
+    public void 丢了执行权就停止写目标库()
+    {
+        var worker = ReadWorkerSource();
+
+        // 心跳要能回答「还归我吗」，且用 MatchedCount——同一毫秒设同一个值时
+        // ModifiedCount 是 0，那不代表租约没了（形状 6）。
+        worker.ShouldContain("Task<bool> HeartbeatAsync");
+        worker.ShouldContain("result.MatchedCount > 0");
+
+        // 每批写**之前**先确认租约——断言位置，不只断言存在。
+        // 页内那次心跳隔 30 秒才跳一回，一整页够短就可能一次都没检查过就写完了；
+        // 只断言「这一段里出现过 RunLeaseLostException」两种实现都能过，等于没测。
+        var writeBlock = worker[worker.IndexOf("if (!run.DryRun)", StringComparison.Ordinal)..];
+        writeBlock = writeBlock[..writeBlock.IndexOf("progress.Inserted", StringComparison.Ordinal)];
+        var firstCheck = writeBlock.IndexOf("throw new RunLeaseLostException", StringComparison.Ordinal);
+        var firstInsert = writeBlock.IndexOf("InsertManyAsync", StringComparison.Ordinal);
+        var firstReplace = writeBlock.IndexOf("ReplaceOneAsync", StringComparison.Ordinal);
+        firstCheck.ShouldBeGreaterThan(-1);
+        firstCheck.ShouldBeLessThan(firstInsert);
+        firstCheck.ShouldBeLessThan(firstReplace);
+
+        // 丢租约不去覆盖收尸方写好的结局。
+        worker.ShouldContain("catch (RunLeaseLostException");
+    }
+
+    /// <summary>
+    /// 比对令牌要同时盖住开关。只比名单的话，「另一个人把开关关了」对本次提交是隐形的，
+    /// 而本次提交带着的是打开页面那一刻的旧开关值——一次纯粹的「移走一台机器」
+    /// 会把整个对外导出重新打开。
+    /// </summary>
+    [Fact]
+    public void 比对令牌必须盖住对外开关()
+    {
+        var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        body.ShouldContain("ExpectedEnabled");
+
+        var update = body[body.IndexOf("public async Task<IActionResult> UpdateProviderSettings", StringComparison.Ordinal)..];
+        update = update[..update.IndexOf("\n    /// <summary>", StringComparison.Ordinal)];
+        update.ShouldContain("request.ExpectedEnabled is bool expectedEnabled");
+        update.ShouldContain("x.DataSyncProviderEnabled, expectedEnabled");
+
+        // 前端必须真的送上来，否则这道门形同虚设（形状 2：建了一半）。
+        var page = ReadRepoText("prd-admin", "src", "pages", "data-sync", "DataSyncPage.tsx");
+        page.ShouldContain("expectedEnabled: base.enabled");
     }
 
     /// <summary>

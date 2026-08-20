@@ -149,7 +149,12 @@ export default function DataSyncPage() {
           // 对不上就回 409，这里把最新的那份拉回来让人重看一眼。
           const res = await apiRequest<ProviderSettings>('/api/instance-sync/provider-settings', {
             method: 'PUT',
-            body: { enabled: value.enabled, origins: value.origins, expectedOrigins: base.origins },
+            body: {
+              enabled: value.enabled,
+              origins: value.origins,
+              expectedOrigins: base.origins,
+              expectedEnabled: base.enabled,
+            },
           });
           if (!res.success && res.error?.code === 'DATA_SYNC_SETTINGS_STALE') {
             const latest = await apiRequest<ProviderSettings>('/api/instance-sync/provider-settings');
