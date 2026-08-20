@@ -28,3 +28,8 @@
 | fix | prd-api | 待补密钥清单改用源站上报的 clearedFields，不再由目标站看「字段是不是空的」自己推——后者会把源站从来没配过的密钥也列成待补 |
 | fix | prd-api | 同步进度 SSE 补 10 秒心跳（server-authority #4）：慢导出期间进度长时间不变会被 ingress 空闲超时掐断，前端当成正常收尾不重连，屏幕永远停住 |
 | fix | prd-api | 服务关停时把认领中的 Run 落到 failed 终态、且收尾一律用 CancellationToken.None（server-authority #5）：此前重启后内存令牌已失、没有 worker 能再认领，历史页上那条 Run 永远转着 |
+| security | prd-api | 邀请码补脱敏（groups.InviteCode / teams.InviteCode）：那是「拿着它就能加入这个私有群/团队」的通行证，只是名字里没有 token；守卫的关键词表同步放宽到 invitecode / otp / signature / salt 等 |
+| fix | prd-api | 启动同步改为原子认领（更新条件带 Status=pending，没改到就回 409）：此前两个并发 Start 都会成功，后到的还能把 DryRun 从 true 改成 false——用户点的是试跑，worker 拿到的却是真写库 |
+| fix | prd-api | 源站清单解析失败改为 fail closed：此前退回空列表，对照表显示「0 个集合」而开始按钮照样能按，worker 随后把 Run 里每个集合都同步一遍，等于绕过确认关口 |
+| fix | prd-api | 允许名单被显式清空时不再被环境变量顶回来：null 才落回环境变量，空串是一次明确的撤销 |
+| fix | prd-admin | 登录守卫保留 URL fragment：授权码走 #code=... 回跳，登录一插进来旧实现会把它当 hash 路由，码就丢了、整条授权链要重走 |

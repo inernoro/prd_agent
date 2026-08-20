@@ -183,7 +183,17 @@ public sealed class DataSyncConsumerController : ControllerBase
                 $"源站清单读取失败（HTTP {(int)response.StatusCode}）"));
         }
 
-        var manifest = ReadManifest(await response.Content.ReadAsStringAsync(ct));
+        List<ManifestItem> manifest;
+        try
+        {
+            manifest = ReadManifest(await response.Content.ReadAsStringAsync(ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 解析不出来就别让人往下走：对照表是操作者唯一一次看清「要写什么」的机会。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_MANIFEST_MALFORMED",
+                $"源站清单读不懂，多半是两边版本不一致：{ex.Message}"));
+        }
         var rows = new List<object>();
         foreach (var item in manifest)
         {
@@ -231,14 +241,26 @@ public sealed class DataSyncConsumerController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_EXPIRED", "导出令牌已失效，请重新授权"));
         }
 
-        await _db.DataSyncRuns.UpdateOneAsync(
-            Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+        // 上面那次 Status 检查和这次写入之间有窗口。只按 _id 更新的话，两个并发的
+        // Start 都会「成功」，后到的那个还能把 DryRun 从 true 改成 false——
+        // 用户点的是「只试跑」，worker 认领到的却是真写库。所以把 pending 放进过滤条件，
+        // 让「认领」由数据库一次原子完成，没改到任何文档就说明别人已经抢先了。
+        var claimed = await _db.DataSyncRuns.UpdateOneAsync(
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
             Builders<DataSyncRun>.Update
                 .Set(x => x.Status, "running")
                 .Set(x => x.DryRun, request.DryRun)
                 .Set(x => x.OverwriteExisting, request.Overwrite)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
+
+        if (claimed.ModifiedCount == 0)
+        {
+            return Conflict(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_PENDING",
+                "这条同步刚刚已经被启动了，请刷新查看当前状态"));
+        }
 
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = "running", dryRun = request.DryRun }));
     }
@@ -435,14 +457,23 @@ public sealed class DataSyncConsumerController : ControllerBase
 
     private sealed record ManifestItem(string Collection, long Total, List<string> RedactFields);
 
+    /// <summary>
+    /// 解析源站清单。解析不出来必须抛，不能退回空列表——空列表会让对照表显示「0 个集合」，
+    /// 而 Start 照样能按，worker 随后按 Run 里固化的集合名把每一个都同步一遍。
+    /// 那等于绕过了对照表这道确认关口：人看到的是「什么都不会写」，实际全写。
+    /// </summary>
     private static List<ManifestItem> ReadManifest(string json)
     {
         var items = new List<ManifestItem>();
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("data", out var data)) return items;
-            if (!data.TryGetProperty("collections", out var collections)) return items;
+            if (!doc.RootElement.TryGetProperty("data", out var data)
+                || !data.TryGetProperty("collections", out var collections)
+                || collections.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidOperationException("源站清单缺少 data.collections");
+            }
             foreach (var element in collections.EnumerateArray())
             {
                 var name = element.GetProperty("collection").GetString();
@@ -455,9 +486,9 @@ public sealed class DataSyncConsumerController : ControllerBase
                         : new List<string>()));
             }
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not InvalidOperationException)
         {
-            return items;
+            throw new InvalidOperationException($"源站清单无法解析：{ex.Message}", ex);
         }
         return items;
     }

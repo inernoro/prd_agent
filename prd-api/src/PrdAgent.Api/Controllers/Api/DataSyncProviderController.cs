@@ -545,10 +545,14 @@ public sealed class DataSyncProviderController : ControllerBase
         var settings = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
         var enabled = settings?.DataSyncProviderEnabled
             ?? IsTruthy(_configuration["DataSync:ProviderEnabled"] ?? _configuration["DATA_SYNC_PROVIDER_ENABLED"]);
-        var origins = ParseOrigins(FirstNonEmpty(
-            settings?.DataSyncAllowedConsumerOrigins,
-            _configuration["DataSync:AllowedConsumerOrigins"],
-            _configuration["DATA_SYNC_ALLOWED_CONSUMER_ORIGINS"]));
+        // null = 从来没在库里配过，落回环境变量；空串 = 管理员刚刚把最后一条删掉了，
+        // 那是一次明确的撤销，不能因为「看起来是空的」就把环境变量那份又捡回来——
+        // 否则界面上删掉的机器过一秒又变回受信任（Codex 指出）。
+        var origins = ParseOrigins(settings?.DataSyncAllowedConsumerOrigins is not null
+            ? settings.DataSyncAllowedConsumerOrigins
+            : FirstNonEmpty(
+                _configuration["DataSync:AllowedConsumerOrigins"],
+                _configuration["DATA_SYNC_ALLOWED_CONSUMER_ORIGINS"]));
         // 白名单为空即关闭：没配过不等于允许所有，这条正是钓鱼面所在。
         return new ProviderConfig(enabled && origins.Count > 0, origins);
     }

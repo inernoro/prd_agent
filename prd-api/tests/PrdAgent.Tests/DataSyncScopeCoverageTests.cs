@@ -135,10 +135,18 @@ public class DataSyncScopeCoverageTests
             ["workflows.IsSecret"] = "布尔开关，不是密钥本身",
             ["workflows.WebhookId"] = "标识而非凭据；对应的密钥在 workflow_secrets，那个集合整个不导出",
             ["user_shortcuts.TokenPrefix"] = "只是前缀，用于界面辨认；真正的散列 TokenHash 已登记脱敏",
+            ["document_store_sync_links.LastLocalSignature"] = "内容指纹，用于判断两侧变没变，拿着它换不到任何权限",
+            ["document_store_sync_links.LastRemoteSignature"] = "同上，内容指纹",
+            ["document_stores.PeerSyncLastContentSignature"] = "同上，内容指纹",
         };
 
+        // 关键词表本身也是判据的一部分，一样会太窄：第一版只有 token/secret/password 这一族，
+        // 于是 groups.InviteCode / teams.InviteCode 溜了过去——邀请码就是一张「拿着它就能
+        // 加入这个私有群/团队」的通行证，只是名字里没有 token 这个词（Codex 二次指出）。
         var suspect = new Regex(
-            "token|secret|password|passwd|apikey|credential|privatekey|accesskey|refresh|webhook",
+            "token|secret|password|passwd|apikey|credential|privatekey|accesskey|refresh|webhook"
+            + "|invitecode|invitation|joincode|sharecode|pairingcode|otp|signature|salt|nonce"
+            + "|licensekey|activationcode",
             RegexOptions.IgnoreCase);
         // 这些后缀是「计数」不是「凭据」，先排掉，免得整张表被 token 计数字段淹没。
         var countingSuffix = new Regex("(TokenCount|Tokens|TokenUsage|TokenLimit|MaxTokens)$", RegexOptions.None);
