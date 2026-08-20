@@ -128,6 +128,27 @@ public class DataSyncProtocolTests
     }
 
     [Fact]
+    public void 把某台机器移出名单后它那张票立刻不再可用()
+    {
+        // 撤销入口写着「移除」，就必须当场生效。原来的票据校验只看全局开关——
+        // 移除的若不是最后一条，开关仍是开着的，那台机器手上没过期的票照样能读数据，
+        // 最长两小时（Codex 第八轮）。现在每次校验都拿**当前**名单重对一遍票上的回跳地址。
+        const string grantRedirect = "https://gone.example.com/data-sync/callback";
+
+        // 还在名单里：通过。
+        DataSyncProviderController.TryValidateRedirect(
+            grantRedirect,
+            DataSyncProviderController.ParseOrigins("https://gone.example.com,https://stay.example.com"),
+            out _).ShouldBeTrue();
+
+        // 被移出去了，但名单没空、开关还开着：这张票必须失效。
+        DataSyncProviderController.TryValidateRedirect(
+            grantRedirect,
+            DataSyncProviderController.ParseOrigins("https://stay.example.com"),
+            out _).ShouldBeFalse();
+    }
+
+    [Fact]
     public void 本机回环允许http仅为本地联调()
     {
         DataSyncProviderController.TryValidateRedirect(

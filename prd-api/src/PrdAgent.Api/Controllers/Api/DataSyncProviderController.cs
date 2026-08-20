@@ -573,11 +573,22 @@ public sealed class DataSyncProviderController : ControllerBase
         var config = await ReadConfigAsync(ct);
         if (!config.Enabled) return null;
 
-        return await _db.DataSyncGrants.Find(Builders<BsonDocument>.Filter.And(
+        var grant = await _db.DataSyncGrants.Find(Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("ExportTokenHash", Hash(token)),
             Builders<BsonDocument>.Filter.Eq("ExportRevokedAt", BsonNull.Value),
             Builders<BsonDocument>.Filter.Gt("ExportTokenExpiresAt", DateTime.UtcNow)))
             .FirstOrDefaultAsync(ct);
+        if (grant is null) return null;
+
+        // 允许名单是活的，票据必须**每次**拿它重新对一遍。
+        //
+        // 只看全局开关不够：管理员把某台机器移出名单时，只要名单里还剩别的机器，
+        // 开关就仍是开着的，那台被移除的机器手上那张没过期的票照样能继续读数据，
+        // 最长两小时。撤销入口写着「移除」，实际却要等票自己过期——那不叫撤销。
+        var storedRedirect = grant.GetValue("RedirectUri", BsonString.Empty).AsString;
+        if (!TryValidateRedirect(storedRedirect, config.AllowedOrigins, out _)) return null;
+
+        return grant;
     }
 
     private async Task<(string Subject, string Username, string DisplayName)?> ResolveAdminIdentityAsync(CancellationToken ct)

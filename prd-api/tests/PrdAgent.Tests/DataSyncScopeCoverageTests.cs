@@ -488,6 +488,30 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 票据校验必须拿当前允许名单重对一遍()
+    {
+        // 「移出名单」要当场生效，靠的是 ResolveExportGrantAsync 每次都用**当前**名单
+        // 重新校验票上的回跳地址。这条接线删掉之后：编译过、全量测试绿、
+        // TryValidateRedirect 自己的用例也照样绿——因为它们测的是那个函数对不对，
+        // 不是「有没有人调它」（predicate-and-wiring-discipline 形状 2）。
+        // 所以只能扫源码钉这一处调用。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncProviderController.cs");
+        var source = File.ReadAllText(path);
+
+        var resolver = Regex.Match(
+            source,
+            @"ResolveExportGrantAsync\(CancellationToken ct\)\s*\{(?<body>.*?)\n    \}",
+            RegexOptions.Singleline);
+        Assert.True(resolver.Success, "找不到 ResolveExportGrantAsync 了，这条守卫的前提已变");
+
+        var body = resolver.Groups["body"].Value;
+        Assert.Contains("TryValidateRedirect(", body, StringComparison.Ordinal);
+        Assert.Contains("config.AllowedOrigins", body, StringComparison.Ordinal);
+        // 只看全局开关是不够的那一半：开关判断也得还在。
+        Assert.Contains("config.Enabled", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 同步端点的路由前缀不能被任何管理后台前缀吃掉()
     {
         // AdminPermissionMiddleware 用的是**裸前缀匹配**（path.StartsWith(prefix)，没有分段边界）。
