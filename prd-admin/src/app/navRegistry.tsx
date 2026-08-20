@@ -734,7 +734,10 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       shortLabel: '数据同步',
       description: '从另一台 MAP 拉一次数据：跳过去让对方管理员当场同意，回来执行一次',
       icon: 'ArrowRightLeft',
-      section: 'toolbox',
+      // 归 infra 而不是 toolbox：百宝箱那一格是智能体卡片，契约要求每张卡有独占的
+      // 主题插画素材（AgentCardArtwork.test.ts 会红）；数据同步是平台运维入口，
+      // 和知识库、学习中心同类。
+      section: 'infra',
       wip: true,
       tags: ['同步', '迁移', '恢复', '跨实例', 'data sync'],
     },
