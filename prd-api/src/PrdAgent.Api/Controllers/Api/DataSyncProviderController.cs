@@ -247,7 +247,13 @@ public sealed class DataSyncProviderController : ControllerBase
 
         _logger.LogInformation("[data-sync] {Admin} 更新对外同步设置：开关={Enabled}，名单 {Count} 条",
             identity.Value.Username, request.Enabled, origins.Count);
-        return Ok(ApiResponse<object>.Ok(new { enabled = request.Enabled, origins }));
+        // 回的是**实际生效**的状态，不是请求里那个原始开关：名单空掉之后鉴权链路
+        // 一律按关闭处理，这里若回 true，前端乐观更新会把「开着」这个假象定格下来。
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            enabled = IsEffectivelyEnabled(request.Enabled, origins),
+            origins,
+        }));
     }
 
     // ---------------------------------------------------------------- 授权
@@ -647,9 +653,20 @@ public sealed class DataSyncProviderController : ControllerBase
             : FirstNonEmpty(
                 _configuration["DataSync:AllowedConsumerOrigins"],
                 _configuration["DATA_SYNC_ALLOWED_CONSUMER_ORIGINS"]));
-        // 白名单为空即关闭：没配过不等于允许所有，这条正是钓鱼面所在。
-        return new ProviderConfig(enabled && origins.Count > 0, origins);
+        return new ProviderConfig(IsEffectivelyEnabled(enabled, origins), origins);
     }
+
+    /// <summary>
+    /// 对外同步「实际上」开没开。
+    ///
+    /// 白名单为空即关闭：没配过不等于允许所有，这条正是钓鱼面所在。
+    ///
+    /// 抽成一处是因为它曾经分裂过：鉴权链路按这个公式算，而设置接口的 PUT 直接把
+    /// 请求里那个原始开关回给前端。管理员撤掉最后一条来源之后，界面上开关还亮着，
+    /// 握手与换票却一律被拒——显示的状态和真正生效的判据说了两套话。
+    /// </summary>
+    internal static bool IsEffectivelyEnabled(bool flag, IReadOnlyList<string> origins)
+        => flag && origins.Count > 0;
 
     /// <summary>
     /// 把一个 origin 写进允许名单并打开对外同步开关。幂等：已在名单里就不重复追加。

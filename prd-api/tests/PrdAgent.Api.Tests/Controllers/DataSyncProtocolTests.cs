@@ -646,6 +646,33 @@ public class DataSyncProtocolTests
         body.ShouldContain("throw new InvalidOperationException");
     }
 
+    /// <summary>
+    /// 「对外同步实际上开没开」只能有一份判据。曾经鉴权链路按「开关 且 名单非空」算，
+    /// 而设置接口的 PUT 把请求里那个原始开关直接回给前端——管理员撤掉最后一条来源后，
+    /// 界面上开关还亮着，握手与换票却一律被拒。
+    /// </summary>
+    [Theory]
+    [InlineData(true, 1, true)]
+    [InlineData(true, 0, false)]   // 名单空掉：开关还立着也不算开
+    [InlineData(false, 1, false)]
+    [InlineData(false, 0, false)]
+    public void 名单为空时对外同步一律算关闭(bool flag, int originCount, bool expected)
+    {
+        var origins = Enumerable.Range(0, originCount).Select(i => $"https://a{i}.example.com").ToList();
+        DataSyncProviderController.IsEffectivelyEnabled(flag, origins).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void 设置接口回的是生效状态而不是请求里的原始开关()
+    {
+        // 接线守卫（形状 2）：上面那条只测判据本身，测不到「PUT 有没有用它」。
+        var source = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        source.ShouldContain("enabled = IsEffectivelyEnabled(request.Enabled, origins)");
+        source.ShouldNotContain("Ok(new { enabled = request.Enabled, origins })");
+        // 读取链路也必须走同一个函数，不许再抄一份 `enabled && origins.Count > 0`。
+        source.ShouldContain("new ProviderConfig(IsEffectivelyEnabled(enabled, origins), origins)");
+    }
+
     [Fact]
     public void 导出分页能读出文档与续页游标()
     {

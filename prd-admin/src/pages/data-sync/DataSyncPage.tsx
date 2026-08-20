@@ -8,6 +8,7 @@ import { apiRequest } from '@/services/real/apiClient';
 import { useSseStream } from '@/lib/useSseStream';
 import { DATA_SYNC_PENDING_KEY } from './DataSyncCallbackPage';
 import { createSerializedSaver } from './serializedSave';
+import { computePlanTotals, describeTotal } from './planTotals';
 
 /**
  * 从另一台 MAP 同步数据（目标站视角）。
@@ -649,8 +650,9 @@ function PlanCard({
   busy: boolean;
   onStart: (dryRun: boolean) => Promise<void>;
 }) {
-  const sourceTotal = plan.rows.reduce((s, r) => s + r.sourceTotal, 0);
-  const localTotal = plan.rows.reduce((s, r) => s + r.localTotal, 0);
+  // 行里用 -1 当「数量未知」，直接求和会把它当成 -1 条真实数据——
+  // 合计要么少算，要么在未知多的时候变成负数。判据抽在 planTotals.ts。
+  const totals = computePlanTotals(plan.rows);
   return (
     <div className="space-y-4">
       <Card>
@@ -660,7 +662,8 @@ function PlanCard({
         </div>
         <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
           源站 <span style={{ color: 'var(--text-primary)' }}>{plan.sourceLabel || plan.sourceOrigin}</span> 共
-          {' '}{sourceTotal} 条，本地对应集合现有 {localTotal} 条。数据会写进数据库
+          {' '}{describeTotal(totals.sourceTotal, totals.sourceUnknown)}，本地对应集合现有
+          {' '}{describeTotal(totals.localTotal, totals.localUnknown)}。数据会写进数据库
           {' '}<span className="font-mono" style={{ color: 'var(--text-primary)' }}>{plan.targetDatabase}</span>
           ——这个库由本项目的所有分支预览共用，写进去同库的其它分支立刻可见。
         </p>
