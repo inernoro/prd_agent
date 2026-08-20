@@ -7,6 +7,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { apiRequest } from '@/services/real/apiClient';
 import { useSseStream } from '@/lib/useSseStream';
 import { DATA_SYNC_PENDING_KEY } from './DataSyncCallbackPage';
+import { createSerializedSaver } from './serializedSave';
 
 /**
  * 从另一台 MAP 同步数据（目标站视角）。
@@ -129,33 +130,34 @@ export default function DataSyncPage() {
   const providerRef = useRef<ProviderSettings | null>(null);
   useEffect(() => { providerRef.current = provider; }, [provider]);
 
-  async function saveProvider(mutate: (prev: ProviderSettings) => ProviderSettings) {
-    const current = providerRef.current;
-    if (!current || savingProvider) return;
-    const next = mutate(current);
-
-    setSavingProvider(true);
-    // 乐观更新：紧接着的第二次点击就基于这一份算，不会回到旧清单。
-    setProvider(next);
-    providerRef.current = next;
-
-    const res = await apiRequest<ProviderSettings>('/api/instance-sync/provider-settings', {
-      method: 'PUT',
-      body: { enabled: next.enabled, origins: next.origins },
-    });
-    setSavingProvider(false);
-
-    if (!res.success) {
-      setError(res.error?.message || '保存对外同步设置失败');
-      // 没存上就退回去，否则界面显示的名单比服务端窄，人以为撤销成功了。
-      setProvider(current);
-      providerRef.current = current;
-      return;
-    }
-    const confirmed = { ...next, ...(res.data ?? {}) };
-    setProvider(confirmed);
-    providerRef.current = confirmed;
-  }
+  // 串行化逻辑抽在 serializedSave.ts，那里有脱开 React 的回归测试钉住
+  // 「第二次改动必须看到第一次的结果」这个不变量。
+  const savingProviderRef = useRef(false);
+  const saveProvider = useMemo(
+    () =>
+      createSerializedSaver<ProviderSettings>({
+        getLatest: () => providerRef.current,
+        commit: (value) => {
+          setProvider(value);
+          providerRef.current = value;
+        },
+        persist: async (value) => {
+          const res = await apiRequest<ProviderSettings>('/api/instance-sync/provider-settings', {
+            method: 'PUT',
+            body: { enabled: value.enabled, origins: value.origins },
+          });
+          return { ok: res.success, confirmed: res.data ?? undefined, error: res.error?.message };
+        },
+        setBusy: (busy) => {
+          savingProviderRef.current = busy;
+          setSavingProvider(busy);
+        },
+        isBusy: () => savingProviderRef.current,
+        onError: setError,
+        fallbackErrorMessage: '保存对外同步设置失败',
+      }),
+    [],
+  );
 
   // 进来先把这条 Run 的当前状态取回来：SSE 只推「之后的变化」，
   // 刷新页面时没有这一步会先看到一片空白。
