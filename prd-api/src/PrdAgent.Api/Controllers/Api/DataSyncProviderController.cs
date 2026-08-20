@@ -611,7 +611,7 @@ public sealed class DataSyncProviderController : ControllerBase
             {
                 return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_CURSOR_INVALID", "游标无法解析"));
             }
-            filter = Builders<BsonDocument>.Filter.Gt("_id", cursorValue);
+            filter = BuildAfterCursorFilter(cursorValue);
         }
 
         var docs = await _db.Database.GetCollection<BsonDocument>(resolved.Name)
@@ -955,6 +955,58 @@ public sealed class DataSyncProviderController : ControllerBase
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(v => v.StartsWith("*.", StringComparison.Ordinal) ? v.ToLowerInvariant() : v.TrimEnd('/'))
             .ToList();
+
+    /// <summary>
+    /// BSON 类型的**排序**次序（不是 BsonType 的枚举值）。分页要跨类型往前走，就得知道
+    /// 谁排在谁后面。只列 _id 现实中可能出现的那些，其余归到末尾。
+    /// </summary>
+    private static readonly (BsonType Type, string Alias)[] BsonSortOrder =
+    {
+        (BsonType.MinKey, "minKey"),
+        (BsonType.Null, "null"),
+        (BsonType.Double, "double"),
+        (BsonType.Int32, "int"),
+        (BsonType.Int64, "long"),
+        (BsonType.Decimal128, "decimal"),
+        (BsonType.String, "string"),
+        (BsonType.Document, "object"),
+        (BsonType.Array, "array"),
+        (BsonType.Binary, "binData"),
+        (BsonType.ObjectId, "objectId"),
+        (BsonType.Boolean, "bool"),
+        (BsonType.DateTime, "date"),
+        (BsonType.Timestamp, "timestamp"),
+        (BsonType.RegularExpression, "regex"),
+        (BsonType.MaxKey, "maxKey"),
+    };
+
+    /// <summary>
+    /// 「_id 排在游标之后」的过滤器。
+    ///
+    /// 为什么不能只写 `$gt`：Mongo 的比较**运算符**只在同一个 BSON 类型段内比较，
+    /// 而排序是跨类型的全序。本仓库有历史数据是 ObjectId、新数据是字符串
+    /// （见 StringOrObjectIdSerializer），一个集合里两种 _id 混着放。
+    ///
+    /// 于是只用 `$gt` 会这样：按 _id 升序先出字符串那一段，游标停在某个字符串上之后，
+    /// `$gt:"..."` 再也匹配不到后面的 ObjectId——下一页直接空了。worker 看到短页
+    /// 就判这个集合拉完了，**报成功，而 ObjectId 那批一条都没同步过去**。
+    /// 静默漏数据，两边条数对不上时也没人知道断在哪。
+    ///
+    /// 所以补上第二个分支：类型排在游标类型之后的，全都算「在后面」。两个分支都能走索引。
+    /// </summary>
+    internal static FilterDefinition<BsonDocument> BuildAfterCursorFilter(BsonValue cursor)
+    {
+        var sameBracket = Builders<BsonDocument>.Filter.Gt("_id", cursor);
+
+        var rank = Array.FindIndex(BsonSortOrder, x => x.Type == cursor.BsonType);
+        if (rank < 0) return sameBracket;   // 认不出的类型：至少保住同段内的推进
+
+        var laterAliases = BsonSortOrder.Skip(rank + 1).Select(x => x.Alias).ToArray();
+        if (laterAliases.Length == 0) return sameBracket;
+
+        var laterTypes = new BsonDocument("_id", new BsonDocument("$type", new BsonArray(laterAliases)));
+        return Builders<BsonDocument>.Filter.Or(sameBracket, laterTypes);
+    }
 
     internal static string SerializeCursor(BsonValue id) =>
         new BsonDocument("v", id).ToJson(new MongoDB.Bson.IO.JsonWriterSettings

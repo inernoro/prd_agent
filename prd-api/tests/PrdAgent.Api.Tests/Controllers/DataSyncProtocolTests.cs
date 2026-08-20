@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.DataSync;
 using PrdAgent.Core.DataSync;
@@ -599,6 +600,64 @@ public class DataSyncProtocolTests
         var heartbeat = worker[worker.IndexOf("private async Task<bool> HeartbeatAsync", StringComparison.Ordinal)..];
         heartbeat = heartbeat[..heartbeat.IndexOf("\n    }", StringComparison.Ordinal)];
         heartbeat.ShouldContain("BeatQueuedRunsAsync");
+    }
+
+    /// <summary>
+    /// 分页要能跨 BSON 类型段往前走。
+    ///
+    /// Mongo 的比较**运算符**只在同一类型段内比较，而排序是跨类型的全序。本仓库有历史
+    /// 数据是 ObjectId、新数据是字符串（StringOrObjectIdSerializer），一个集合里混着放。
+    /// 只用 $gt 的话，游标停在某个字符串上之后再也匹配不到后面的 ObjectId——下一页空了，
+    /// worker 判这个集合拉完、**报成功，而 ObjectId 那批一条都没同步过去**。
+    /// </summary>
+    [Fact]
+    public void 游标要能跨过BSON类型段()
+    {
+        var rendered = DataSyncProviderController
+            .BuildAfterCursorFilter(BsonValue.Create("abc"))
+            .Render(
+                BsonSerializer.SerializerRegistry.GetSerializer<BsonDocument>(),
+                BsonSerializer.SerializerRegistry);
+        var json = rendered.ToJson();
+
+        // 同段内推进仍在。
+        json.ShouldContain("$gt");
+        // 而且要能跳到排在字符串之后的类型上去（objectId 是本仓库真实存在的那一种）。
+        json.ShouldContain("$type");
+        json.ShouldContain("objectId");
+        // 排在字符串**之前**的类型不该被算成「在后面」。
+        json.ShouldNotContain("minKey");
+    }
+
+    /// <summary>游标已经是最后一种类型时，退回同段内推进，别造一个空的 $type 数组。</summary>
+    [Fact]
+    public void 游标是最末类型时不产生空类型集()
+    {
+        var rendered = DataSyncProviderController
+            .BuildAfterCursorFilter(BsonMaxKey.Value)
+            .Render(
+                BsonSerializer.SerializerRegistry.GetSerializer<BsonDocument>(),
+                BsonSerializer.SerializerRegistry);
+        rendered.ToJson().ShouldNotContain("$type");
+    }
+
+    /// <summary>
+    /// 队列心跳不能只挂在 HeartbeatAsync 上——它的调用点全在 `if (!run.DryRun)` 里，
+    /// 于是第一条要是试跑且跑过 15 分钟，排在后面那几条一次都没被刷到，
+    /// 照样被别的部署当无人认领收走。每页收尾处必须无条件打一次。
+    /// </summary>
+    [Fact]
+    public void 试跑期间排队的同步也要保活()
+    {
+        var worker = ReadWorkerSource();
+        var tail = worker[worker.IndexOf("progress.Done = string.IsNullOrEmpty(page.NextCursor);", StringComparison.Ordinal)..];
+        tail = tail[..tail.IndexOf("if (progress.Done) return;", StringComparison.Ordinal)];
+        tail.ShouldContain("BeatQueuedRunsAsync");
+
+        // 这一段必须在 !run.DryRun 之外——在里面就等于只保真跑那条路径。
+        var dryRunBranch = worker[worker.IndexOf("if (!run.DryRun)", StringComparison.Ordinal)..];
+        dryRunBranch = dryRunBranch[..dryRunBranch.IndexOf("progress.PlannedInsert", StringComparison.Ordinal)];
+        dryRunBranch.ShouldNotContain("await BeatQueuedRunsAsync(db, ct);\n            ");
     }
 
     /// <summary>

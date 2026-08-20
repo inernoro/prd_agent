@@ -396,6 +396,14 @@ public sealed class DataSyncRunWorker : BackgroundService
             progress.Done = string.IsNullOrEmpty(page.NextCursor);
             run.Progress[collection.Name] = progress;
             await SaveProgressAsync(db, run, ct);
+            // 排队那几条的心跳要在这里打，不能只挂在 HeartbeatAsync 上。
+            //
+            // 上一轮我把队列心跳挂进了 HeartbeatAsync，而它的调用点全在 `if (!run.DryRun)`
+            // 里面——于是第一条要是**试跑**且跑过 15 分钟，它自己靠 SaveProgressAsync
+            // 活着，排在它后面那几条却一次都没被刷到，照样被别的部署当无人认领收走。
+            // 修一半的典型：我只顺着「真跑」那条路径检查了自己的改动。
+            // 这里在每页收尾处无条件打一次，试跑真跑都走得到。
+            await BeatQueuedRunsAsync(db, ct);
 
             if (progress.Done) return;
         }
