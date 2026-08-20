@@ -322,6 +322,10 @@ public class DataSyncProtocolTests
             out _).ShouldBeTrue();
     }
 
+    /// <summary>「这一页里带着该字段的文档 id」——接回之前算出来的那份。</summary>
+    private static Dictionary<string, HashSet<BsonValue>> Owners(string field, params string[] ids) =>
+        new(StringComparer.Ordinal) { [field] = ids.Select(i => (BsonValue)i).ToHashSet() };
+
     /// <summary>
     /// 待补清单是给管理员照着补凭据用的，所以它不能包含「本站原值根本没被动过」的字段：
     /// 不覆盖模式下同 _id 的文档被跳过，本站那份凭据还好好的，报进去等于诱导他去改坏一个能用的配置。
@@ -332,8 +336,8 @@ public class DataSyncProtocolTests
         var run = new DataSyncRun();
         var written = new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "" };
 
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            new[] { written }, Array.Empty<BsonDocument>(), Array.Empty<BsonDocument>());
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted", "a"), new[] { written });
         run.PendingSecretFields["llmplatforms"].ShouldBe(new[] { "ApiKeyEncrypted" });
     }
 
@@ -342,8 +346,8 @@ public class DataSyncProtocolTests
     {
         var run = new DataSyncRun();
 
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            Array.Empty<BsonDocument>(), Array.Empty<BsonDocument>(), Array.Empty<BsonDocument>());
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted", "a"), Array.Empty<BsonDocument>());
 
         run.PendingSecretFields.ShouldNotContainKey("llmplatforms");
     }
@@ -355,8 +359,8 @@ public class DataSyncProtocolTests
         // 源站是按集合报脱敏字段的，这一页未必每条都带它。
         var written = new BsonDocument { ["_id"] = "a", ["Name"] = "x" };
 
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            new[] { written }, Array.Empty<BsonDocument>(), Array.Empty<BsonDocument>());
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted"), new[] { written });
 
         run.PendingSecretFields.ShouldNotContainKey("llmplatforms");
     }
@@ -367,10 +371,10 @@ public class DataSyncProtocolTests
         var run = new DataSyncRun();
         var written = new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "" };
 
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            new[] { written }, Array.Empty<BsonDocument>(), Array.Empty<BsonDocument>());
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            new[] { written }, Array.Empty<BsonDocument>(), Array.Empty<BsonDocument>());
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted", "a"), new[] { written });
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted", "a"), new[] { written });
 
         run.PendingSecretFields["llmplatforms"].Count.ShouldBe(1);
     }
@@ -386,8 +390,8 @@ public class DataSyncProtocolTests
         var replaced = new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "target-key" };
         var localBefore = new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "target-key" };
 
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            Array.Empty<BsonDocument>(), new[] { replaced }, new[] { localBefore });
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted", "a"), new[] { replaced });
 
         run.PendingSecretFields.ShouldNotContainKey("llmplatforms");
     }
@@ -403,8 +407,8 @@ public class DataSyncProtocolTests
         var replaced = new BsonDocument { ["_id"] = "a" };          // 接回把字段删掉了
         var localBefore = new BsonDocument { ["_id"] = "a" };        // 目标站原本也没有
 
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            Array.Empty<BsonDocument>(), new[] { replaced }, new[] { localBefore });
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted", "a"), new[] { replaced });
 
         run.PendingSecretFields["llmplatforms"].ShouldBe(new[] { "ApiKeyEncrypted" });
     }
@@ -417,8 +421,8 @@ public class DataSyncProtocolTests
         var replaced = new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "" };
         var localBefore = new BsonDocument { ["_id"] = "a", ["ApiKeyEncrypted"] = "" };
 
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            Array.Empty<BsonDocument>(), new[] { replaced }, new[] { localBefore });
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted", "a"), new[] { replaced });
 
         run.PendingSecretFields["llmplatforms"].ShouldBe(new[] { "ApiKeyEncrypted" });
     }
@@ -456,7 +460,7 @@ public class DataSyncProtocolTests
 
         // 这一页源站没有清空 PasswordHash（凭据搬运已获批准）。
         DataSyncApply.CarryTargetLocalFields(
-            new[] { incoming }, new[] { localExisting }, collection, System.Array.Empty<string>());
+            new[] { incoming }, new[] { localExisting }, collection);
 
         incoming["PasswordHash"].AsString.ShouldBe("from-source");
     }
@@ -473,9 +477,91 @@ public class DataSyncProtocolTests
         var localExisting = new BsonDocument { ["_id"] = "u1", ["PasswordHash"] = "target-old" };
 
         DataSyncApply.CarryTargetLocalFields(
-            new[] { incoming }, new[] { localExisting }, collection, new[] { "PasswordHash" });
+            new[] { incoming }, new[] { localExisting }, collection);
 
         incoming["PasswordHash"].AsString.ShouldBe("target-old");
+    }
+
+    /// <summary>
+    /// 源站那份本来就是空的时候，脱敏器没有东西可清、也就不会把它记进 clearedFields。
+    /// 判据要是挂在「源站报没报清空」上，这一格就漏了：目标站一份能用的凭据被这个空值
+    /// 顶掉，而且因为没进 clearedFields，待补清单连提醒都不会给。所以判据看的是
+    /// **送来的值本身**，不是源站的自报。
+    /// </summary>
+    [Fact]
+    public void 源站本来就没配的凭据也不许顶掉目标站那份()
+    {
+        var collection = new DataSyncCollection("llmconfigs", new[] { "ApiKeyEncrypted" });
+        // 源站这条记录的密钥本来就是空的，脱敏器没清过它，clearedFields 里没有它。
+        var incoming = new BsonDocument { ["_id"] = "c1", ["ApiKeyEncrypted"] = BsonNull.Value };
+        var localExisting = new BsonDocument { ["_id"] = "c1", ["ApiKeyEncrypted"] = "target-working-key" };
+
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
+
+        incoming["ApiKeyEncrypted"].AsString.ShouldBe("target-working-key");
+    }
+
+    /// <summary>空串和 null 一样算「送来的是空的」。</summary>
+    [Fact]
+    public void 送来空串同样不许顶掉目标站凭据()
+    {
+        var collection = new DataSyncCollection("llmconfigs", new[] { "ApiKeyEncrypted" });
+        var incoming = new BsonDocument { ["_id"] = "c1", ["ApiKeyEncrypted"] = "" };
+        var localExisting = new BsonDocument { ["_id"] = "c1", ["ApiKeyEncrypted"] = "target-working-key" };
+
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
+
+        incoming["ApiKeyEncrypted"].AsString.ShouldBe("target-working-key");
+    }
+
+    /// <summary>
+    /// 成功终态也要带「它还是 running」。心跳和进度都挡住了，唯独这一处漏了，
+    /// 而它是危害最大的那个方向：本进程暂停够久被别的部署收了尸，醒来后这一句会把
+    /// 已经落好的 failed 改写成 succeeded——一次半截的同步在界面上显示成「成功」。
+    /// </summary>
+    [Fact]
+    public void 成功终态不许覆盖别人写好的结局()
+    {
+        var worker = ReadWorkerSource();
+        var block = worker[worker.IndexOf("\"succeeded\"", StringComparison.Ordinal)..];
+        var head = worker[..worker.IndexOf("\"succeeded\"", StringComparison.Ordinal)];
+        // 这句 UpdateOneAsync 的过滤器必须是 StillRunning，不是裸 Id。
+        head.Substring(head.LastIndexOf("UpdateOneAsync", StringComparison.Ordinal))
+            .ShouldContain("StillRunning(run)");
+        // 而且要处理「一条都没匹配上」。
+        block.ShouldContain("ModifiedCount == 0");
+    }
+
+    /// <summary>
+    /// 同意了却再也没回来换票的授权，ExportTokenExpiresAt 一直是 null，
+    /// 跟任何时间比较都不成立——只按导出令牌收，这一整类永远留在表里。
+    /// </summary>
+    [Fact]
+    public void 没换过票的授权也要被清掉()
+    {
+        var worker = ReadWorkerSource();
+        var sweep = worker[worker.IndexOf("SweepRetiredGrantsAsync(MongoDbContext", StringComparison.Ordinal)..];
+        sweep = sweep[..sweep.IndexOf("\n    }", StringComparison.Ordinal)];
+        sweep.ShouldContain("ExpiresAt");
+        sweep.ShouldContain("Filter.Or");
+    }
+
+    /// <summary>
+    /// 作废不能走鉴权那条路。管理员在同步收尾的当口关了开关或把对方移出名单时，
+    /// ResolveExportGrantAsync 会先被那两道门挡掉、查不到票，于是回「已失效」而
+    /// ExportRevokedAt 从没写上；开关两小时内一开，那张本该一次性的票又能用了。
+    /// </summary>
+    [Fact]
+    public void 作废不受当前对外策略影响()
+    {
+        var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var revoke = body[body.IndexOf("public async Task<IActionResult> Revoke(", StringComparison.Ordinal)..];
+        revoke = revoke[..revoke.IndexOf("\n    /// <summary>", StringComparison.Ordinal)];
+
+        // 断言的是「有没有调它」，不是「有没有提到它」——正文注释里正好写了这个名字。
+        revoke.ShouldNotContain("await ResolveExportGrantAsync(");
+        revoke.ShouldContain("ReadExportToken()");
+        revoke.ShouldContain("ExportTokenHash");
     }
 
     /// <summary>
@@ -495,7 +581,7 @@ public class DataSyncProtocolTests
 
         // 源站声称「我没清空这个字段」，并且硬送了 false。
         DataSyncApply.CarryTargetLocalFields(
-            new[] { incoming }, new[] { localExisting }, collection, System.Array.Empty<string>());
+            new[] { incoming }, new[] { localExisting }, collection);
 
         incoming["PasswordLoginDisabled"].AsBoolean.ShouldBeTrue();
     }
@@ -509,13 +595,18 @@ public class DataSyncProtocolTests
     public void 待补清单在写库判定之后才记录()
     {
         var source = ReadWorkerSource();
-        source.ShouldContain("RecordPendingSecrets(run, collection.Name, page.ClearedFields,");
+        source.ShouldContain("RecordPendingSecrets(run, collection.Name, sourceFieldOwners,");
         // 传的必须是「决定要写的那些」，不是这一页拉回来的全部。
-        source.ShouldContain("decision.ToInsert, decision.ToReplace, existing");
+        source.ShouldContain("decision.ToInsert.Concat(decision.ToReplace)");
         source.ShouldNotContain("RecordPendingSecrets(run, collection.Name, page.ClearedFields, documents)");
-        // 覆盖写那半必须拿**接回之前**目标站的原文档判，不能看接回之后字段还在不在：
-        // 接回已经在这之前跑过，两个方向都会判错（保住的报成待补、真缺的一声不吭）。
-        source.ShouldContain("existing");
+        // 判据不许挂在源站自报的 clearedFields 上：源站那份本来就是空的时候它不上报，
+        // 于是最需要提醒的那一格反而没有提醒。
+        source.ShouldNotContain("RecordPendingSecrets(run, collection.Name, page.ClearedFields");
+        // 「这一页哪些文档带着该字段」必须在接回**之前**算——接回会改写甚至删掉它们。
+        var ownersAt = source.IndexOf("var sourceFieldOwners", StringComparison.Ordinal);
+        var carryAt = source.IndexOf("DataSyncApply.CarryTargetLocalFields", StringComparison.Ordinal);
+        ownersAt.ShouldBeGreaterThan(0);
+        carryAt.ShouldBeGreaterThan(ownersAt);
     }
 
     /// <summary>
@@ -617,7 +708,7 @@ public class DataSyncProtocolTests
             ["CompletedOneTimeMigrations"] = new BsonArray { "perm-target-only" },
         };
 
-        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection, System.Array.Empty<string>());
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
 
         incoming["CompletedOneTimeMigrations"].AsBsonArray
             .Select(x => x.AsString).ShouldBe(new[] { "perm-target-only" });
@@ -643,7 +734,7 @@ public class DataSyncProtocolTests
             ["CompletedOneTimeMigrations"] = new BsonArray { "perm-target-only" },
         };
 
-        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection, System.Array.Empty<string>());
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
 
         incoming["CompletedOneTimeMigrations"].AsBsonArray
             .Select(x => x.AsString).ShouldBe(new[] { "perm-target-only" });
@@ -663,7 +754,7 @@ public class DataSyncProtocolTests
         };
         var localExisting = new BsonDocument { ["_id"] = "global" };
 
-        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection, System.Array.Empty<string>());
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { localExisting }, collection);
 
         // 「本机什么都没跑过」是字段不存在，不是一个空数组。
         incoming.Contains("CompletedOneTimeMigrations").ShouldBeFalse();
@@ -680,7 +771,7 @@ public class DataSyncProtocolTests
             .ShouldContain("DataSyncRedactor.StripTargetLocal(doc, effective)");
 
         var worker = ReadWorkerSource();
-        worker.ShouldContain("DataSyncApply.CarryTargetLocalFields(decision.ToReplace, existing, collection, page.ClearedFields)");
+        worker.ShouldContain("DataSyncApply.CarryTargetLocalFields(decision.ToReplace, existing, collection)");
         // 接回来的前提是真的把那几个字段查回来了；只投影 _id 的话接回来的永远是空。
         worker.ShouldContain("BuildExistingProjection(collection)");
         worker.ShouldNotContain("Builders<BsonDocument>.Projection.Include(\"_id\"))\n                    .ToListAsync");
@@ -731,8 +822,9 @@ public class DataSyncProtocolTests
         var survivors = DataSyncApply.SurvivingInserts(attempted, new[] { 0 });
 
         var run = new DataSyncRun();
-        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms", new[] { "ApiKeyEncrypted" },
-            survivors, Array.Empty<BsonDocument>(), Array.Empty<BsonDocument>());
+        // 带凭据字段的是 a，而 a 恰好插入失败了；b 从来没带过它。
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmplatforms",
+            Owners("ApiKeyEncrypted", "a"), survivors);
 
         run.PendingSecretFields.ShouldNotContainKey("llmplatforms");
     }

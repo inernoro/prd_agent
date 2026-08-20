@@ -124,14 +124,12 @@ public static class DataSyncApply
     public static void CarryTargetLocalFields(
         IReadOnlyList<BsonDocument> toReplace,
         IReadOnlyList<BsonDocument> existingDocuments,
-        DataSyncCollection collection,
-        IReadOnlyCollection<string> clearedFields)
+        DataSyncCollection collection)
     {
         ArgumentNullException.ThrowIfNull(toReplace);
         ArgumentNullException.ThrowIfNull(existingDocuments);
         ArgumentNullException.ThrowIfNull(collection);
-        var carried = collection.FieldsToCarry(clearedFields);
-        if (carried.Count == 0 || toReplace.Count == 0) return;
+        if (collection.FieldsCarriedFromTarget.Count == 0 || toReplace.Count == 0) return;
 
         var byId = new Dictionary<BsonValue, BsonDocument>();
         foreach (var existing in existingDocuments)
@@ -142,8 +140,18 @@ public static class DataSyncApply
         foreach (var doc in toReplace)
         {
             if (!doc.TryGetValue("_id", out var id) || !byId.TryGetValue(id, out var local)) continue;
-            foreach (var field in carried)
+            // 目标站自己的东西：源站说什么都不算数，一律接回。
+            foreach (var field in collection.PreserveFields)
             {
+                if (local.TryGetValue(field, out var value)) doc[field] = value;
+                else doc.Remove(field);
+            }
+            // 脱敏字段：只有**送来的这份是空的**才接回。非空说明源站是被批准搬运的
+            // （比如同意页勾了「连登录凭据一起搬」），那就让它落地，别拿旧值顶掉。
+            foreach (var field in collection.RedactFields)
+            {
+                doc.TryGetValue(field, out var incoming);
+                if (!DataSyncCollection.ShouldCarryRedactedValue(doc.Contains(field) ? incoming : null)) continue;
                 if (local.TryGetValue(field, out var value)) doc[field] = value;
                 else doc.Remove(field);
             }

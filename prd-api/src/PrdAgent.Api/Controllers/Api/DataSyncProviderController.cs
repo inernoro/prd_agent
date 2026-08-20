@@ -574,7 +574,22 @@ public sealed class DataSyncProviderController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Revoke(CancellationToken ct)
     {
-        var grant = await ResolveExportGrantAsync(ct);
+        // 作废这条路**不能**走 ResolveExportGrantAsync：那个函数会先过「对外同步开着吗、
+        // 这台机器还在允许名单里吗」这两道门。而作废恰恰经常发生在门刚关上的时候——
+        // 管理员在同步收尾的当口关了开关或把对方移出名单，于是这里查不到票、直接回
+        // 「已失效」，目标站信了就把手上的令牌忘掉。可源站这边 ExportRevokedAt 从没写上：
+        // 开关一旦在两小时内重新打开，那张本该一次性的票**又能用了**。
+        //
+        // 作废只需要证明「你拿着这张票」，跟本站当前的对外策略无关。所以这里直接按
+        // 令牌散列找一张还没作废、还没过期的票，找到就作废。
+        var presented = ReadExportToken();
+        var grant = string.IsNullOrEmpty(presented)
+            ? null
+            : await _db.DataSyncGrants.Find(Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ExportTokenHash", Hash(presented)),
+                Builders<BsonDocument>.Filter.Eq("ExportRevokedAt", BsonNull.Value),
+                Builders<BsonDocument>.Filter.Gt("ExportTokenExpiresAt", DateTime.UtcNow)))
+                .FirstOrDefaultAsync(ct);
         // 找不到 = 已经作废或本来就无效。两种都是「现在它不能用了」，如实回 ok，
         // 免得目标站为了一张已经没用的票反复重试。
         if (grant is null) return Ok(ApiResponse<object>.Ok(new { revoked = false, reason = "票据已失效或不存在" }));
@@ -607,10 +622,17 @@ public sealed class DataSyncProviderController : ControllerBase
         return DataSyncScope.Expand(groups).Select(c => c.Name).ToList();
     }
 
-    private async Task<BsonDocument?> ResolveExportGrantAsync(CancellationToken ct)
+    /// <summary>取请求上的导出令牌并做形状校验。作废与鉴权两处共用同一个来源。</summary>
+    private string? ReadExportToken()
     {
         var token = Request.Headers["X-Data-Sync-Token"].ToString().Trim();
-        if (string.IsNullOrWhiteSpace(token) || token.Length is < 32 or > 256) return null;
+        return string.IsNullOrWhiteSpace(token) || token.Length is < 32 or > 256 ? null : token;
+    }
+
+    private async Task<BsonDocument?> ResolveExportGrantAsync(CancellationToken ct)
+    {
+        var token = ReadExportToken();
+        if (token is null) return null;
 
         var config = await ReadConfigAsync(ct);
         if (!config.Enabled) return null;

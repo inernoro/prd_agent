@@ -1,4 +1,5 @@
 using System.Linq;
+using MongoDB.Bson;
 
 namespace PrdAgent.Core.DataSync;
 
@@ -52,29 +53,34 @@ public sealed record DataSyncCollection(string Name, IReadOnlyList<string> Redac
         PreserveFields.Concat(RedactFields).Distinct(System.StringComparer.Ordinal).ToArray();
 
     /// <summary>
-    /// 这一页真正要从目标站接回来的字段。
+    /// 判一个脱敏字段该不该从目标站接回来。
     ///
-    /// 上面那个并集是**投影的超集**（查目标站原文档时要把可能用到的都取回来），
-    /// 不是接回的判据。判据要分两类，混成一个并集会打坏「带凭据同步」：
+    /// 这个判据我改了三轮才对，把弯路记在这里省得下一个人再走一遍：
     ///
-    /// - <see cref="PreserveFields"/>：目标站自己的东西，源站说什么都不算数，**永远**接回。
-    ///   本机执行历史、本机身份、本机策略开关都在这一类。它不看源站报了什么，
-    ///   所以一个撒谎的源站（声称"我没清空"并送来 false）也顶不掉目标站的策略。
+    /// 1. 「脱敏 ∪ 保留」全部接回 —— **太宽**。脱敏是可以被授权豁免的：源站管理员勾了
+    ///    「连登录凭据一起搬」，送来的是真散列，照样接回等于把授权页刚承诺的事取消掉。
+    /// 2. 「脱敏 ∩ 源站这页报了清空」才接回 —— **太窄**。源站那份本来就是空的时候，
+    ///    脱敏器没有东西可清，也就不会把它记进 clearedFields；于是目标站一份能用的
+    ///    凭据被这个空值顶掉，而且因为没进 clearedFields，待补清单也不会提醒。
+    /// 3. 现在这条：**看送来的值本身是不是空的**。空就接回，非空就让它落地。
     ///
-    /// - 脱敏字段：只有**源站这次确实清空了**才接回。理由是脱敏是可以被授权豁免的——
-    ///   源站管理员在同意页上勾了「连登录凭据一起搬」，users.PasswordHash 就不在这次的
-    ///   脱敏范围里，源站送来的是真散列。这时候再拿目标站的旧散列盖回去，
-    ///   等于把授权页刚刚承诺过的事悄悄取消：那批用户的原密码登不进去。
-    ///   所以判据取源站按页报的 clearedFields，而不是静态名单。
+    /// 第三条对的原因是它不依赖源站的自报——无论对方是脱敏了、本来就没配、还是
+    /// 版本旧了根本不报 clearedFields，只要送来的是空的，就绝不拿它去顶目标站的值。
+    /// 而真送了值就说明那是被批准搬运的，照收。
+    ///
+    /// 已知边界：源站管理员**故意**清空一个凭据、并希望目标站也跟着清空，这条路走不通
+    /// （会被判成「别拿空的顶掉」）。取这个方向是因为两种误判的代价不对等：少清一次
+    /// 顶多是目标站留着一个旧凭据，多清一次是把一个正在用的集成静默打哑。
     /// </summary>
-    public IReadOnlyList<string> FieldsToCarry(IReadOnlyCollection<string> clearedFields)
-    {
-        System.ArgumentNullException.ThrowIfNull(clearedFields);
-        return PreserveFields
-            .Concat(RedactFields.Where(f => clearedFields.Contains(f, System.StringComparer.Ordinal)))
-            .Distinct(System.StringComparer.Ordinal)
-            .ToArray();
-    }
+    public static bool ShouldCarryRedactedValue(BsonValue? incoming) =>
+        incoming is null
+        || incoming.IsBsonNull
+        || (incoming.IsString && incoming.AsString.Length == 0);
+
+    /// <summary>
+    /// 覆盖写时要从目标站查回来的字段集合（投影用的超集）。
+    /// 具体某一条要不要真的接回，逐字段走 <see cref="ShouldCarryRedactedValue"/>。
+    /// </summary>
 }
 
 public sealed record DataSyncGroup(string Key, string Label, IReadOnlyList<DataSyncCollection> Collections);
