@@ -613,6 +613,39 @@ public class DataSyncProtocolTests
         worker.ShouldNotContain("decision.ToInsert.Count - conflicts).ToList()");
     }
 
+    /// <summary>
+    /// 「什么时候要管理员额外勾一次确认」这条判据在前后端各有一份，两边必须说同一句话。
+    /// 界面那份由 `trustGate.test.ts` 对四种组合逐个断言；这里钉住服务端这一份不漂。
+    /// 曾经界面只看 originAllowed，于是「来源已在名单里、但对外同步开关关着」那一种
+    /// 确认框不显示、按钮却可点，点一次 409 一次，没有任何界面动作能救回来。
+    /// </summary>
+    [Fact]
+    public void 当场准入的服务端判据是两个条件的或()
+    {
+        var source = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        source.ShouldContain("if (!enabled || !originAllowed)");
+        source.ShouldContain("if (!request.TrustThisOrigin)");
+    }
+
+    /// <summary>
+    /// 名单在库里是逗号拼起来的单值，「加一条」实际是整份覆盖写。两个管理员同时批准
+    /// 两台不同的机器时，后写的那份基于旧名单算，先写进去的那台被抹掉——而它此刻已经
+    /// 拿到票，下一次重对名单时突然 401。没有 $addToSet 可用，所以走乐观重试。
+    /// </summary>
+    [Fact]
+    public void 加入允许名单要走乐观重试而不是直接覆盖()
+    {
+        var source = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var body = source[source.IndexOf("private async Task TrustOriginAsync", StringComparison.Ordinal)..];
+        body = body[..body.IndexOf("\n    private ", StringComparison.Ordinal)];
+
+        body.ShouldContain("for (var attempt = 0");
+        // 条件必须是「名单还是我刚读到的那一份」，用原始值而不是解析后的列表。
+        body.ShouldContain("Builders<AppSettings>.Filter.Eq(x => x.DataSyncAllowedConsumerOrigins, raw)");
+        // 重试用尽要抛，不能静默返回——名单没加上而票照发，等于发一张下一秒就被拒的票。
+        body.ShouldContain("throw new InvalidOperationException");
+    }
+
     [Fact]
     public void 导出分页能读出文档与续页游标()
     {

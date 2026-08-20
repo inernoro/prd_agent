@@ -328,16 +328,13 @@ public class DataSyncScopeCoverageTests
         var doc = new BsonDocument
         {
             { "_id", "global" },
-            { "MapInstanceId", "node-abc" },
             { "DataSyncProviderEnabled", true },
             { "DataSyncAllowedConsumerOrigins", "https://a.example.com" },
         };
 
         var cleared = DataSyncRedactor.Redact(doc, settings);
 
-        Assert.Contains("MapInstanceId", cleared);
         Assert.Contains("DataSyncProviderEnabled", cleared);
-        Assert.Equal("", doc["MapInstanceId"].AsString);
         Assert.True(doc["DataSyncProviderEnabled"].IsBsonNull);
         Assert.Equal("", doc["DataSyncAllowedConsumerOrigins"].AsString);
     }
@@ -356,12 +353,18 @@ public class DataSyncScopeCoverageTests
         Assert.True(DataSyncScope.TryResolve("appsettings", out var settings));
         foreach (var field in new[]
         {
-            "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "PasswordLoginDisabled",
+            "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "PasswordLoginDisabled",
         })
         {
             Assert.True(settings.RedactFields.Contains(field, StringComparer.Ordinal),
                 $"appsettings.{field} 是本站自有的，不能跟着同步过去");
         }
+
+        // MapInstanceId 属于同一族，但处置方式必须是**保留**而不是清空。
+        // 清空看起来也拦住了源站的值，代价却是把目标站自己的 ID 一起抹掉：
+        // 下次启动重新生成一个新的，而已经配好对的邻居仍按旧 ID 找本站，配对当场断。
+        Assert.Contains("MapInstanceId", settings.PreserveFields);
+        Assert.DoesNotContain("MapInstanceId", settings.RedactFields);
 
         // 「登录还进不进得来」这件事必须自洽：只要 SSO 的必要字段被清空，
         // 关闭口令登录的开关就不能跟着过去，否则两条路同时断。

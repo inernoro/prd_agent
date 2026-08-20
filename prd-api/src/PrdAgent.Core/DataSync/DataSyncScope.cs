@@ -55,10 +55,15 @@ public static class DataSyncScope
         new DataSyncGroup("llm-config", "平台与模型配置", new[]
         {
             new DataSyncCollection("admin_prompt_overrides", System.Array.Empty<string>()),
-            new DataSyncCollection("appsettings", new[] { "MiduoSsoAppSecret", "ConsoleSsoClientSecret", "MapInstanceId", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "ConsoleSsoAllowedRedirectOrigins", "MiduoSsoRedirectUri", "PasswordLoginDisabled" })
+            new DataSyncCollection("appsettings", new[] { "MiduoSsoAppSecret", "ConsoleSsoClientSecret", "DataSyncProviderEnabled", "DataSyncAllowedConsumerOrigins", "ConsoleSsoAllowedRedirectOrigins", "MiduoSsoRedirectUri", "PasswordLoginDisabled" })
             {
-                // 权限一次性迁移的执行历史是这台机器自己的账，不是配置。
-                PreserveFields = new[] { "CompletedOneTimeMigrations" },
+                // 这台机器自己的账，不是配置：
+                // - CompletedOneTimeMigrations：权限一次性迁移的执行历史。
+                // - MapInstanceId：本实例的稳定标识，配对协议靠它认「你是哪台」。
+                //   它必须**保留**而不是清空——清成空的下次启动会重新生成一个新 ID，
+                //   而已经配好对的邻居仍然按旧 ID 找本站，X-Peer-Node 认不出来，配对断掉。
+                //   「源站的值不能出门」由 StripTargetLocal 删字段保证，与清空同样有效。
+                PreserveFields = new[] { "CompletedOneTimeMigrations", "MapInstanceId" },
             },
             new DataSyncCollection("arena_groups", System.Array.Empty<string>()),
             new DataSyncCollection("arena_slots", System.Array.Empty<string>()),

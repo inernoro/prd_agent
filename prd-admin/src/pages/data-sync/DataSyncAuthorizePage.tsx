@@ -5,6 +5,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { apiRequest } from '@/services/real/apiClient';
 import { applyDocumentThemeMode } from '@/lib/themeTransition';
 import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { shouldRequireTrustConfirm } from './trustGate';
 
 /**
  * 源站同意页：别的 MAP 实例来要数据，由本站管理员当场决定给什么。
@@ -106,6 +107,12 @@ export default function DataSyncAuthorizePage() {
     }
     return { collections, documents };
   }, [catalog, checked]);
+
+  // 必须与服务端那道判据逐字一致：`if (!enabled || !originAllowed)` 就要求勾确认。
+  // 只看 originAllowed 会漏掉「来源已在名单里、但对外同步开关被关掉了」这一种——
+  // 那时确认框不显示、按钮却是可点的，点一次 409 一次，界面上没有任何能救回来的动作。
+  // 判据取自 shouldRequireTrustConfirm，与守卫测试同一个函数。
+  const needsTrustConfirm = shouldRequireTrustConfirm(catalog?.readiness);
 
   const paramsValid = params.redirectUri && params.state && params.codeChallenge;
 
@@ -299,7 +306,7 @@ export default function DataSyncAuthorizePage() {
           ) : null}
         </div>
 
-        {catalog.readiness && !catalog.readiness.originAllowed ? (
+        {needsTrustConfirm ? (
           <div
             className="mt-5 rounded-xl px-4 py-3"
             style={{ background: 'rgba(var(--accent-primary-rgb), 0.08)', border: '1px solid var(--accent-primary)' }}
@@ -308,9 +315,13 @@ export default function DataSyncAuthorizePage() {
               <ShieldAlert size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--accent-primary)' }} />
               <div className="min-w-0 text-sm leading-6" style={{ color: 'var(--text-primary)' }}>
                 <p>
-                  本站还没有允许过{' '}
-                  <span className="font-mono">{catalog.readiness.requestOrigin || '这个来源'}</span>
-                  {catalog.readiness.providerEnabled ? '' : '，并且本站的对外同步开关也还没打开'}。
+                  {catalog.readiness?.originAllowed
+                    ? '本站的对外同步开关是关着的。'
+                    : <>
+                        本站还没有允许过{' '}
+                        <span className="font-mono">{catalog.readiness?.requestOrigin || '这个来源'}</span>
+                        {catalog.readiness?.providerEnabled ? '。' : '，并且本站的对外同步开关也还没打开。'}
+                      </>}
                 </p>
                 <p className="mt-1" style={{ color: 'var(--text-muted)' }}>
                   确认这台机器确实是你们自己的、你确实打算把上面勾中的数据交给它，再勾下面这项。
@@ -348,7 +359,7 @@ export default function DataSyncAuthorizePage() {
             disabled={
               submitting
               || checked.size === 0
-              || (!!catalog.readiness && !catalog.readiness.originAllowed && !trustOrigin)
+              || (needsTrustConfirm && !trustOrigin)
             }
             onClick={() => void approve()}
             className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50"

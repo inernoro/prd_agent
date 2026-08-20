@@ -658,19 +658,58 @@ public sealed class DataSyncProviderController : ControllerBase
     /// </summary>
     private async Task TrustOriginAsync(string origin, ProviderConfig config, CancellationToken ct)
     {
-        var origins = config.AllowedOrigins.ToList();
-        if (!origins.Any(o => string.Equals(o, origin, StringComparison.OrdinalIgnoreCase)))
+        // 名单在库里是一个逗号拼起来的**单值**，所以「加一条」实际是整份覆盖写。
+        // 直接拿手上这份算好再写，两个管理员同时批准两台不同的机器时，后写的那份
+        // 是基于旧名单算的，先写进去的那台就被抹掉了——而它此刻已经拿到票，
+        // 下一次 manifest / export 重对名单时突然 401，看上去像「票莫名其妙失效」。
+        //
+        // 没有 $addToSet 可用（不是数组），所以走乐观重试：每轮重新读当前的原始值，
+        // 用它当更新条件；条件没命中说明这一轮里有人改过，重读再来。
+        for (var attempt = 0; attempt < 5; attempt++)
         {
-            origins.Add(origin);
-        }
-        await _db.AppSettings.UpdateOneAsync(
-            Builders<AppSettings>.Filter.Eq(x => x.Id, "global"),
-            Builders<AppSettings>.Update
+            var current = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
+            var raw = current?.DataSyncAllowedConsumerOrigins;
+            var origins = ParseOrigins(raw).ToList();
+            var alreadyTrusted = origins.Any(o => string.Equals(o, origin, StringComparison.OrdinalIgnoreCase));
+            if (!alreadyTrusted) origins.Add(origin);
+
+            var update = Builders<AppSettings>.Update
                 .Set(x => x.DataSyncProviderEnabled, true)
                 .Set(x => x.DataSyncAllowedConsumerOrigins, string.Join(",", origins))
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            new UpdateOptions { IsUpsert = true },
-            ct);
+                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+            if (current is null)
+            {
+                // 文档还不存在：用 upsert 建，条件是「仍然不存在」。
+                // 撞上并发插入会抛重复键，下一轮就走到下面那条正常路径。
+                try
+                {
+                    await _db.AppSettings.UpdateOneAsync(
+                        Builders<AppSettings>.Filter.Eq(x => x.Id, "global"),
+                        update, new UpdateOptions { IsUpsert = true }, ct);
+                    return;
+                }
+                catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                {
+                    continue;
+                }
+            }
+
+            var result = await _db.AppSettings.UpdateOneAsync(
+                Builders<AppSettings>.Filter.And(
+                    Builders<AppSettings>.Filter.Eq(x => x.Id, "global"),
+                    // 条件是「名单还是我刚读到的那一份」。注意用原始值而不是解析后的列表：
+                    // 解析会做去空白、去重、大小写归一，拿它当条件对不上库里存的字面量。
+                    Builders<AppSettings>.Filter.Eq(x => x.DataSyncAllowedConsumerOrigins, raw)),
+                update, cancellationToken: ct);
+
+            if (result.ModifiedCount > 0 || result.MatchedCount > 0) return;
+        }
+
+        // 五轮都被别人抢先：与其静默返回让调用方以为加成功了，不如让这次授权失败。
+        // 名单没加上而票照发，等于发一张下一秒就会被拒的票。
+        throw new InvalidOperationException(
+            $"把 {origin} 加入允许名单时反复与其它改动冲突，请重试一次。");
     }
 
     private string SiteLabel()
