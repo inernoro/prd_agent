@@ -1,6 +1,8 @@
+using System.Text.Json;
 using MongoDB.Bson;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services.DataSync;
+using PrdAgent.Core.Models;
 using Shouldly;
 using Xunit;
 
@@ -175,5 +177,49 @@ public class DataSyncProtocolTests
         // 共享库里别的部署建的 Run 不在这个集合里，于是不会被本进程抢走执行。
         vault.Forget("mine");
         vault.HeldRunIds.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void SSE推送的字段名与GET一致且是camelCase()
+    {
+        // 这个对象走两条路出去：ApiResponse 经 MVC 的 camelCase 配置，SSE 自己调
+        // JsonSerializer（默认 PascalCase）。用属性简写的话两条路键名不一样，
+        // 前端在同步跑起来的那一刻突然读不到值——而且不报错，只是数字不再更新。
+        var run = new DataSyncRun
+        {
+            Id = "run-1",
+            Status = "running",
+            SourceLabel = "生产 MAP",
+            SourceOrigin = "https://map.example.com",
+            Groups = new List<string> { "defect" },
+            Collections = new List<string> { "defect_reports" },
+            DryRun = true,
+            Progress = new Dictionary<string, DataSyncCollectionProgress>
+            {
+                ["defect_reports"] = new() { SourceTotal = 10, Fetched = 4, Inserted = 3, Skipped = 1, Updated = 0, Done = false },
+            },
+            PendingSecretFields = new Dictionary<string, List<string>> { ["llmplatforms"] = new() { "ApiKeyEncrypted" } },
+        };
+
+        using var doc = JsonDocument.Parse(DataSyncConsumerController.SerializeRunForStream(run));
+        var keys = doc.RootElement.EnumerateObject().Select(p => p.Name).ToHashSet();
+
+        // 前端 DataSyncPage 的 RunView 逐字读这些键。
+        foreach (var expected in new[]
+                 {
+                     "runId", "status", "sourceLabel", "sourceOrigin", "groups", "collections",
+                     "dryRun", "overwriteExisting", "error", "pendingSecretFields", "progress",
+                 })
+        {
+            keys.ShouldContain(expected);
+        }
+        keys.ShouldNotContain("Status");
+
+        var row = doc.RootElement.GetProperty("progress").EnumerateArray().Single();
+        foreach (var expected in new[] { "collection", "sourceTotal", "fetched", "inserted", "skipped", "updated", "done" })
+        {
+            row.TryGetProperty(expected, out _).ShouldBeTrue($"progress 行缺少 {expected}");
+        }
+        row.GetProperty("sourceTotal").GetInt64().ShouldBe(10);
     }
 }

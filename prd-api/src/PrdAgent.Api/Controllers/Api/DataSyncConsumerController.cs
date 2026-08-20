@@ -270,7 +270,7 @@ public sealed class DataSyncConsumerController : ControllerBase
                 await WriteEventAsync("error", "{\"message\":\"同步记录不存在\"}", ct);
                 return;
             }
-            var payload = JsonSerializer.Serialize(Describe(run));
+            var payload = SerializeRunForStream(run);
             if (payload != lastPayload)
             {
                 lastPayload = payload;
@@ -291,31 +291,42 @@ public sealed class DataSyncConsumerController : ControllerBase
         await Response.Body.FlushAsync(ct);
     }
 
+    /// <summary>
+    /// Run 的对外形状。
+    ///
+    /// 每个字段名都显式写成 camelCase，**不要**用 `run.Status` 这种简写。原因：这个对象
+    /// 走两条路出去——`ApiResponse` 那条经 MVC 的 JSON 配置（camelCase），SSE 那条是自己
+    /// 调 JsonSerializer（默认 PascalCase）。用简写的话两条路吐出的键名不一样，前端从
+    /// GET 拿到 `status`、从 SSE 拿到 `Status`，页面在同步跑起来的那一刻突然读不到值。
+    /// </summary>
     private static object Describe(DataSyncRun run) => new
     {
         runId = run.Id,
-        run.Status,
-        run.SourceLabel,
-        run.SourceOrigin,
-        run.Groups,
-        run.Collections,
-        run.DryRun,
-        run.OverwriteExisting,
-        run.Error,
-        run.CreatedAt,
-        run.FinishedAt,
+        status = run.Status,
+        sourceLabel = run.SourceLabel,
+        sourceOrigin = run.SourceOrigin,
+        groups = run.Groups,
+        collections = run.Collections,
+        dryRun = run.DryRun,
+        overwriteExisting = run.OverwriteExisting,
+        error = run.Error,
+        createdAt = run.CreatedAt,
+        finishedAt = run.FinishedAt,
         pendingSecretFields = run.PendingSecretFields,
         progress = run.Progress.Select(kv => new
         {
             collection = kv.Key,
-            kv.Value.SourceTotal,
-            kv.Value.Fetched,
-            kv.Value.Inserted,
-            kv.Value.Skipped,
-            kv.Value.Updated,
-            kv.Value.Done,
+            sourceTotal = kv.Value.SourceTotal,
+            fetched = kv.Value.Fetched,
+            inserted = kv.Value.Inserted,
+            skipped = kv.Value.Skipped,
+            updated = kv.Value.Updated,
+            done = kv.Value.Done,
         }),
     };
+
+    /// <summary>SSE payload 的序列化口径。导出给测试，确保断言的就是真发出去的那份。</summary>
+    internal static string SerializeRunForStream(DataSyncRun run) => JsonSerializer.Serialize(Describe(run));
 
     private Task<DataSyncRun?> FindRunAsync(string id, CancellationToken ct) =>
         _db.DataSyncRuns.Find(x => x.Id == id).FirstOrDefaultAsync(ct)!;
