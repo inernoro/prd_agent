@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, ImagePlus } from 'lucide-react';
 import { VisualCreationMiniPanel } from '@/components/visual-creation/VisualCreationMiniPanel';
+import { SELECTION_OVERLAY_LABEL, SELECTION_OVERLAY_PANEL } from './selectionOverlayStyle';
 
 // 划词「配图」浮层：右侧悬浮卡片内嵌真实视觉创作 mini 面板（appKey=visual-agent），
 // 以选中片段 + 文档上下文为提示词生成配图，插入到选区所在段落之后。
@@ -46,17 +47,13 @@ export function SelectionImagePopover({
         width: 420,
         maxWidth: 'calc(100vw - 32px)',
         height: Math.min(680, window.innerHeight - 96),
-        borderRadius: 14,
-        background: 'var(--overlay-panel-bg)',
-        border: '1px solid rgba(168,85,247,0.4)',
-        boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)',
-        backdropFilter: 'blur(40px)',
+        ...SELECTION_OVERLAY_PANEL,
       }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between px-3 pt-3 pb-2 shrink-0">
-        <span className="text-[11px] font-semibold flex items-center gap-1.5" style={{ color: 'var(--accent-fg-violet)' }}>
+        <span className="text-[11px] font-semibold flex items-center gap-1.5" style={{ color: SELECTION_OVERLAY_LABEL }}>
           <ImagePlus size={12} />
           为选中内容配图
         </span>

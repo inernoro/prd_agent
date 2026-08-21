@@ -242,6 +242,11 @@ import {
   InlineDiffReviewBar,
   type InlineRewritePhase,
 } from './SelectionRewriteInline';
+import {
+  SELECTION_OVERLAY_BAR,
+  SELECTION_OVERLAY_HIGHLIGHT,
+  SELECTION_OVERLAY_LABEL,
+} from './selectionOverlayStyle';
 import { streamSelectionRewrite } from '@/services/real/documentStore';
 import { threadColor, groupKey } from './inlineCommentShared';
 import { BulkActionBar } from './BulkActionBar';
@@ -4622,8 +4627,7 @@ function PendingSelectionHighlight({
               left,
               width: r.width,
               height: r.height,
-              background: 'rgba(168,85,247,0.28)',
-              borderBottom: '2px solid rgba(168,85,247,0.85)',
+              ...SELECTION_OVERLAY_HIGHLIGHT,
               borderRadius: 2,
               clipPath,
             }}
@@ -4664,15 +4668,8 @@ function SelectionActionPopover({
   const left = Math.max(8, Math.min(window.innerWidth - estWidth - 8, selection.rect.left + selection.rect.width / 2 - estWidth / 2));
   return (
     <div
-      className="surface-tone-dark fixed z-40 h-8 px-1.5 rounded-[10px] flex items-center transition-all"
-      style={{
-        top,
-        left,
-        background: 'rgba(20,20,30,0.92)',
-        border: '1px solid rgba(168,85,247,0.4)',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-        backdropFilter: 'blur(12px)',
-      }}
+      className="fixed z-40 h-8 px-1.5 flex items-center transition-all"
+      style={{ top, left, ...SELECTION_OVERLAY_BAR }}
       onMouseDown={(e) => e.preventDefault()}
     >
       {actions.map((a, i) => (
@@ -4681,7 +4678,7 @@ function SelectionActionPopover({
           <button
             onClick={a.onClick}
             className="h-6.5 px-2 rounded-[8px] flex items-center gap-1.5 cursor-pointer hover-bg-soft transition-colors"
-            style={{ color: 'rgba(216,180,254,0.95)' }}
+            style={{ color: SELECTION_OVERLAY_LABEL }}
           >
             {a.icon}
             <span className="text-[11px] font-semibold whitespace-nowrap">{a.label}</span>

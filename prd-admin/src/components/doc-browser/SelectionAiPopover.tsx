@@ -8,6 +8,12 @@ import { computeLineDiff, type DiffLine } from '@/lib/lineDiff';
 import { streamSelectionRewrite } from '@/services/real/documentStore';
 import { stripOuterFence } from './selectionEdit';
 import { useSelectionRewriteActions } from './useSelectionRewriteActions';
+import {
+  SELECTION_OVERLAY_CHIP,
+  SELECTION_OVERLAY_LABEL,
+  SELECTION_OVERLAY_PANEL,
+  SELECTION_OVERLAY_PRIMARY,
+} from './selectionOverlayStyle';
 
 // 划词「AI 改写」就地浮层：选动作 → SSE 流式生成 → diff 预览 → 替换原文 / 插到原文后。
 // 布局遵 frontend-modal.md：createPortal 到 body + inline style 定位/高度 + min-h-0 滚动区。
@@ -153,19 +159,15 @@ export function SelectionAiPopover({
         width,
         maxHeight: Math.min(480, window.innerHeight - 16),
         transform: `translateY(${-scrollDy}px)`,
-        borderRadius: 14,
         padding: 12,
-        background: 'var(--overlay-panel-bg)',
-        border: '1px solid rgba(168,85,247,0.4)',
-        boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)',
-        backdropFilter: 'blur(40px)',
+        ...SELECTION_OVERLAY_PANEL,
       }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       {/* 头部：标题 + 模型可见性（ai-model-visibility）+ 关闭 */}
       <div className="flex items-center justify-between mb-2 shrink-0">
-        <span className="text-[10px] font-semibold flex items-center gap-1.5" style={{ color: 'var(--accent-fg-violet)' }}>
+        <span className="text-[10px] font-semibold flex items-center gap-1.5" style={{ color: SELECTION_OVERLAY_LABEL }}>
           <Sparkles size={11} />
           划词 AI 改写
           {model && (
@@ -184,17 +186,16 @@ export function SelectionAiPopover({
 
       {/* 选中片段引用块 */}
       <div className="flex items-center gap-1 mb-1 shrink-0">
-        <Quote size={9} style={{ color: 'var(--accent-fg-violet)' }} />
-        <span className="text-[10px] font-semibold" style={{ color: 'var(--accent-fg-violet)' }}>你选中的内容</span>
+        <Quote size={9} style={{ color: SELECTION_OVERLAY_LABEL }} />
+        <span className="text-[10px] font-semibold" style={{ color: SELECTION_OVERLAY_LABEL }}>你选中的内容</span>
       </div>
       <div
         className="px-2.5 py-1.5 rounded-[8px] text-[12px] mb-2 overflow-y-auto shrink-0"
         style={{
           maxHeight: 72,
-          background: 'rgba(168,85,247,0.12)',
-          border: '1px solid rgba(168,85,247,0.22)',
-          borderLeft: '3px solid rgba(168,85,247,0.7)',
-          color: 'var(--accent-fg-violet-strong)',
+          ...SELECTION_OVERLAY_CHIP,
+          borderLeft: '3px solid var(--accent-gold)',
+          color: 'var(--text-primary)',
           lineHeight: 1.5,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
@@ -214,11 +215,15 @@ export function SelectionAiPopover({
               onClick={() => run(a.key)}
               title={a.description}
               className="h-6 px-2.5 rounded-full text-[11px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              style={{
-                background: active ? 'rgba(168,85,247,0.28)' : 'var(--nested-block-bg)',
-                border: `1px solid ${active ? 'rgba(168,85,247,0.55)' : 'var(--border-subtle)'}`,
-                color: active ? 'var(--accent-fg-violet-strong)' : 'var(--text-secondary)',
-              }}
+              style={
+                active
+                  ? SELECTION_OVERLAY_CHIP
+                  : {
+                      background: 'var(--nested-block-bg)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-secondary)',
+                    }
+              }
             >
               {a.label}
             </button>
@@ -244,7 +249,7 @@ export function SelectionAiPopover({
           onClick={() => customInstruction.trim() && run('custom', customInstruction.trim())}
           disabled={busy || !customInstruction.trim()}
           className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
+          style={SELECTION_OVERLAY_PRIMARY}
           title="执行自定义指令"
         >
           <Send size={12} />
@@ -298,7 +303,7 @@ export function SelectionAiPopover({
             disabled={!canReplace || !!applying}
             title={canReplace ? '用 AI 结果替换选中片段' : '选区在原文中出现多处且无法唯一定位，为避免替换错位置已禁用；可改用「插入」或复制'}
             className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: 'rgba(168,85,247,0.22)', border: '1px solid rgba(168,85,247,0.45)', color: 'var(--accent-fg-violet-strong)' }}
+            style={SELECTION_OVERLAY_PRIMARY}
           >
             {applying === 'replace' ? <MapSpinner size={11} /> : <Replace size={11} />}
             替换原文
@@ -355,7 +360,7 @@ export function SelectionAiPopover({
           <button
             onClick={() => activeAction && run(activeAction, activeAction === 'custom' ? customInstruction.trim() : undefined)}
             className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-            style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
+            style={SELECTION_OVERLAY_CHIP}
           >
             <RotateCcw size={11} /> 重试
           </button>

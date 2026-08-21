@@ -3,6 +3,12 @@ import { createPortal } from 'react-dom';
 import { Sparkles, ArrowUp, X, Check, Undo2, RotateCcw, Square } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSelectionRewriteActions } from './useSelectionRewriteActions';
+import {
+  SELECTION_OVERLAY_CHIP,
+  SELECTION_OVERLAY_LABEL,
+  SELECTION_OVERLAY_PANEL,
+  SELECTION_OVERLAY_PRIMARY,
+} from './selectionOverlayStyle';
 
 // 知识库「逐句修改」的两个就地条：
 //   1. SelectionRewritePrompt —— 划词后原地问「想怎么改」（图 1/2）
@@ -48,14 +54,6 @@ function placeNearSelection(rect: AnchorRect, width: number, height: number) {
   return { top, left };
 }
 
-const PANEL_STYLE = {
-  borderRadius: 14,
-  background: 'var(--overlay-panel-bg)',
-  border: '1px solid rgba(168,85,247,0.4)',
-  boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)',
-  backdropFilter: 'blur(40px)',
-} as const;
-
 /**
  * 划词后的「想怎么改」输入条。
  * 快捷动作来自后端 SSOT，输入框只是兜底——不给用户一个空白框发呆（zero-friction-input.md）。
@@ -100,12 +98,12 @@ export function SelectionRewritePrompt({
   return createPortal(
     <div
       className="fixed z-[120] flex flex-col"
-      style={{ top, left, width, padding: 10, transform: `translateY(${-scrollDy}px)`, ...PANEL_STYLE }}
+      style={{ top, left, width, padding: 10, transform: `translateY(${-scrollDy}px)`, ...SELECTION_OVERLAY_PANEL }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] font-semibold flex items-center gap-1.5" style={{ color: 'var(--accent-fg-violet)' }}>
+        <span className="text-[10px] font-semibold flex items-center gap-1.5" style={{ color: SELECTION_OVERLAY_LABEL }}>
           <Sparkles size={11} />
           让 AI 修改选中的 {selectedText.length} 个字
         </span>
@@ -138,7 +136,7 @@ export function SelectionRewritePrompt({
           onClick={send}
           disabled={!text.trim()}
           className="h-8 w-8 rounded-full flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          style={{ background: 'rgba(168,85,247,0.3)', border: '1px solid rgba(168,85,247,0.5)', color: 'var(--accent-fg-violet-strong)' }}
+          style={SELECTION_OVERLAY_PRIMARY}
           title="发送（Enter）"
         >
           <ArrowUp size={14} />
@@ -224,13 +222,13 @@ export function InlineDiffReviewBar({
   return createPortal(
     <div
       className="fixed z-[120] flex flex-col gap-1"
-      style={{ top, left, width, padding: 8, transform: `translateY(${-scrollDy}px)`, ...PANEL_STYLE }}
+      style={{ top, left, width, padding: 8, transform: `translateY(${-scrollDy}px)`, ...SELECTION_OVERLAY_PANEL }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       {phase === 'streaming' && (
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-semibold flex items-center gap-1.5 flex-1 min-w-0" style={{ color: 'var(--accent-fg-violet)' }}>
+          <span className="text-[11px] font-semibold flex items-center gap-1.5 flex-1 min-w-0" style={{ color: SELECTION_OVERLAY_LABEL }}>
             <MapSpinner size={11} />
             <span className="truncate">
               正在改写 · 已等待 {waited}s
@@ -256,7 +254,7 @@ export function InlineDiffReviewBar({
           <button
             onClick={onRetry}
             className="h-6.5 px-2 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer shrink-0"
-            style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
+            style={SELECTION_OVERLAY_CHIP}
           >
             <RotateCcw size={10} /> 重试
           </button>
@@ -299,7 +297,7 @@ export function InlineDiffReviewBar({
             onClick={onAccept}
             disabled={applying}
             className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-40"
-            style={{ background: 'rgba(168,85,247,0.28)', border: '1px solid rgba(168,85,247,0.5)', color: 'var(--accent-fg-violet-strong)' }}
+            style={SELECTION_OVERLAY_PRIMARY}
             title="把改动保存进文档"
           >
             {applying ? <MapSpinner size={11} /> : <Check size={11} />}
