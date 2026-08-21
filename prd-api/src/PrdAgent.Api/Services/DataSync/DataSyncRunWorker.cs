@@ -733,10 +733,22 @@ public sealed class DataSyncRunWorker : BackgroundService
                 while (true)
                 {
                     await Task.Delay(HeartbeatInterval, finished.Token);
-                    if (!await HeartbeatAsync(db, run, ct))
+                    try
                     {
-                        leaseLost = true;
-                        return;
+                        if (!await HeartbeatAsync(db, run, ct))
+                        {
+                            // 这一条是**明确的答复**：这条 Run 已经不归我了。停止心跳。
+                            leaseLost = true;
+                            return;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // 一次心跳打不出去只是抖动，不等于租约没了——**继续跳**。
+                        // 上一版在这里退出整个循环：此后整段写入再无心跳，而 leaseLost
+                        // 还是 false，于是别的部署把这条活着的 Run 收走、本进程写完照样
+                        // 被当成成功接受。一次网络抖动就能触发，比它要防的那个场景还常见。
+                        _logger.LogWarning(ex, "[data-sync] Run {RunId} 写入期间的一次心跳失败，继续重试", run.Id);
                     }
                 }
             }
@@ -746,8 +758,9 @@ public sealed class DataSyncRunWorker : BackgroundService
             }
             catch (Exception ex)
             {
-                // 单次心跳打不出去不致命，但绝不能让它冒出去盖掉写入的异常。
-                _logger.LogWarning(ex, "[data-sync] Run {RunId} 写入期间的心跳失败，已停止本段心跳", run.Id);
+                // 兜底：这个任务**绝不能**抛，否则会在下面 finally 的 await 里
+                // 盖掉写入本身的异常，把「写失败」变成「心跳失败」。
+                _logger.LogWarning(ex, "[data-sync] Run {RunId} 的写入期心跳异常退出", run.Id);
             }
         }, CancellationToken.None);
 
@@ -761,7 +774,19 @@ public sealed class DataSyncRunWorker : BackgroundService
             await beating;   // 上面保证它不抛，这里不会掩盖 write 的异常
         }
 
-        if (leaseLost) throw new RunLeaseLostException(run.Id);
+        // 写完**必须**再确认一次租约才认这批写入，不能只看 leaseLost。
+        //
+        // leaseLost 只在心跳拿到「明确的否定答复」时才为真。心跳一路打不出去（库抖、
+        // 连接池耗尽）时它始终是 false，而这恰恰是最危险的一种：没有心跳 → 别的部署
+        // 把这条 Run 收走 → 本进程写完却以为一切正常。所以这里补一次同步确认，
+        // 让「没能确认」和「确认还在」区分开——前者照样停手。
+        //
+        // 用 CancellationToken.None：worker 收摊时这一次确认仍要做完，
+        // 否则关机那一刻的写入永远处于「不知道算不算数」（server-authority #5）。
+        if (leaseLost || !await HeartbeatAsync(db, run, CancellationToken.None))
+        {
+            throw new RunLeaseLostException(run.Id);
+        }
     }
 
     /// <summary>

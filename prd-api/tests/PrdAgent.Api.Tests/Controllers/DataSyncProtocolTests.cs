@@ -900,8 +900,18 @@ public class DataSyncProtocolTests
         scope.ShouldContain("await Task.Delay(HeartbeatInterval, finished.Token)");
         // 3. 心跳任务永不抛——抛了会在 finally 的 await 里盖掉写入本身的异常。
         scope.ShouldContain("catch (Exception ex)");
-        // 4. 租约确实丢了，写完要停手。
-        scope.ShouldContain("if (leaseLost) throw new RunLeaseLostException(run.Id);");
+
+        // 4. 单次心跳失败要**继续跳**，不许退出整个循环。
+        //    退出的话此后整段写入再无心跳，而 leaseLost 还是 false，别的部署把这条
+        //    活着的 Run 收走、本进程写完照样被当成成功接受——一次网络抖动就能触发。
+        scope.ShouldContain("catch (Exception ex) when (ex is not OperationCanceledException)");
+        scope.ShouldContain("继续重试");
+
+        // 5. 写完必须**再确认一次**租约才认这批写入，不能只看 leaseLost。
+        //    leaseLost 只在拿到明确否定答复时为真；心跳一路打不出去时它始终是 false，
+        //    而那正是最危险的一种。「没能确认」要和「确认还在」区分开，前者照样停手。
+        scope.ShouldContain("if (leaseLost || !await HeartbeatAsync(db, run, CancellationToken.None))");
+        scope.ShouldContain("throw new RunLeaseLostException(run.Id);");
 
         // 5. 逐条替换那个循环里不许再留「按 30 秒补跳」的旧节流——它的节奏依赖循环
         //    转到下一圈，单条卡住时一次也跳不出来，留着就是两套判据（形状 3）。
