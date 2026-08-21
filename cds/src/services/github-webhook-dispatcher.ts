@@ -1653,10 +1653,6 @@ export class GitHubWebhookDispatcher {
     if (typeof commitSha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(commitSha)) {
       return { action: 'ignored-event', message: 'check_run has malformed or missing head_sha' };
     }
-    if (!dryRun) {
-      this.deps.stateService.updateBranchGithubMeta(branchId, { githubCommitSha: commitSha });
-      this.deps.stateService.save();
-    }
     // 极速版 CI 闸门（Bugbot: check run skips CI wait / ignores CI target SHA）：
     // check_run re-run 不得绕过「等 CI 镜像」直接部署预构建镜像 —— ghcr 镜像可能还没
     // push,docker pull 必失败。放行条件必须**同时**满足:① 镜像 ready;② ready 的就是
@@ -1671,6 +1667,13 @@ export class GitHubWebhookDispatcher {
         message: `${dryRun ? '[dry-run] ' : ''}极速版分支 '${branchId}' 等待 CI 镜像就绪,check_run 重跑不触发预构建部署（状态:${entry.ciImageStatus || '未构建'}, 目标 SHA:${(entry.ciTargetSha || '-').slice(0, 7)} vs ${commitSha.slice(0, 7)}）`,
         branchId,
       };
+    }
+    // 只有真正放行部署后才把 check_run 的 SHA 记为当前部署 HEAD。
+    // 旧 check run 的重跑可能晚于新镜像部署到达；若在上方 SHA 门禁前写入，
+    // 会把 githubCommitSha 倒退到旧提交，并触发错误的「镜像落后 HEAD」告警。
+    if (!dryRun) {
+      this.deps.stateService.updateBranchGithubMeta(branchId, { githubCommitSha: commitSha });
+      this.deps.stateService.save();
     }
     return {
       action: 'check-run-requeued',
