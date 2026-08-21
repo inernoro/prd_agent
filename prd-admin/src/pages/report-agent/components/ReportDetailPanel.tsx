@@ -4,7 +4,7 @@ import { formatWeekDateRange } from '../utils/weekRange';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
-import { getWeeklyReport, listComments, createComment, deleteComment } from '@/services';
+import { getWeeklyReport, listComments, createComment, deleteComment, getReportTeam } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
 import type { WeeklyReport, ReportComment } from '@/services/contracts/reportAgent';
 import { WeeklyReportStatus, ReportInputType } from '@/services/contracts/reportAgent';
@@ -15,7 +15,8 @@ import { ReportLikeBar } from './ReportLikeBar';
 import { useDataTheme } from '../hooks/useDataTheme';
 import { ReportSelectionCommentLayer } from './ReportSelectionCommentLayer';
 import { underlineStroke, type ReportCommentAnchor } from './reportCommentAnchor';
-import { ReportCommentComposer, ReportCommentAttachmentGrid } from './ReportCommentComposer';
+import { ReportCommentComposer, ReportCommentAttachmentGrid, toMentionUsers } from './ReportCommentComposer';
+import type { MentionUser } from '@/components/MentionTextarea';
 
 interface Props {
   reportId: string;
@@ -41,6 +42,8 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
   const isLight = dataTheme === 'light';
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [comments, setComments] = useState<ReportComment[]>([]);
+  /** @ 候选成员：取不到（无权查看团队）时留空，评论仍可正常提交 */
+  const [mentionUsers, setMentionUsers] = useState<MentionUser[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
   const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string; anchor?: ReportCommentAnchor } | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -63,6 +66,15 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
     const res = await listComments({ reportId });
     if (res.success && res.data) setComments(res.data.items);
   };
+
+  useEffect(() => {
+    const teamId = report?.teamId;
+    if (!teamId) return;
+    (async () => {
+      const res = await getReportTeam({ id: teamId });
+      setMentionUsers(res.success && res.data ? toMentionUsers(res.data.members ?? []) : []);
+    })();
+  }, [report?.teamId]);
 
   const handleCreateComment = async (content: string, attachmentIds: string[]) => {
     if (!replyTo || (!content && attachmentIds.length === 0)) return;
@@ -394,6 +406,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                           key={`${replyTo.sectionIndex}:${replyTo.parentId ?? ''}:${replyTo.anchor?.selectedText ?? ''}`}
                           reportId={reportId}
                           submitting={submitting}
+                          members={mentionUsers}
                           onSubmit={handleCreateComment}
                           onCancel={() => setReplyTo(null)}
                         />
