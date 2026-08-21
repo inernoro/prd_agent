@@ -574,13 +574,47 @@ public class DataSyncProtocolTests
         var twice = DataSyncProviderController.ParseOrigins(string.Join(",", once));
         once.ShouldBe(new[] { "*.example.com" });
         twice.ShouldBe(once);
+        DataSyncProviderController.CanonicalizeConfiguredOrigin("*.EXAMPLE.com").ShouldBe("*.example.com");
 
         // 接线：写入路径必须真的用它，而不是在那儿另写一遍小写（形状 3）。
         var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
         var update = body[body.IndexOf("public async Task<IActionResult> UpdateProviderSettings", StringComparison.Ordinal)..];
         update = update[..update.IndexOf("\n    /// <summary>", StringComparison.Ordinal)];
-        update.ShouldContain("var canonical = ParseOrigins(candidate)");
+        update.ShouldContain("var canonical = CanonicalizeConfiguredOrigin(candidate)");
         update.ShouldNotContain("origins.Add(candidate)");
+    }
+
+    /// <summary>
+    /// 存进去的那份来源，必须**就是**换票时拿来比对的那个形状。
+    ///
+    /// `https://map.example.com:443` 形状合法、原样落库，而换票时 origin 由
+    /// GetLeftPart(UriPartial.Authority) 算出、默认端口被抹掉——两边永远相等不了，
+    /// 管理员看着名单里明明有它，每一次授权照样被拒。所以这条不比字面量，
+    /// 直接把「存的」和「比的」两个函数的输出对起来断言（形状 6）。
+    /// </summary>
+    [Theory]
+    [InlineData("https://map.example.com:443")]   // https 默认端口，必须被抹掉
+    [InlineData("https://MAP.example.com")]       // 主机名大小写
+    [InlineData("https://map.example.com/")]      // 尾斜杠
+    [InlineData("https://map.example.com:8443")]  // 非默认端口，必须留着
+    [InlineData("http://127.0.0.1:8000")]         // 本机回环
+    public void 存库的来源与换票时比对的形状一致(string configured)
+    {
+        var canonical = DataSyncProviderController.CanonicalizeConfiguredOrigin(configured);
+
+        // 1. 存的 = 比的：拿这台机器的真实回跳地址走一遍换票侧的形状校验，
+        //    算出来的 origin 必须和落库的那份逐字相等。
+        var callback = $"{configured.TrimEnd('/')}/data-sync/callback";
+        DataSyncProviderController.TryValidateRedirectShape(callback, out _, out var runtimeOrigin)
+            .ShouldBeTrue();
+        canonical.ShouldBe(runtimeOrigin);
+
+        // 2. 端到端：存这一份，那台机器就换得了票。
+        DataSyncProviderController.TryValidateRedirect(callback, new[] { canonical }, out _).ShouldBeTrue();
+
+        // 3. 落库的值必须是 ParseOrigins 的不动点——比对令牌拿 ParseOrigins 的输出
+        //    去比库里的原始字段，不是不动点这张卡就再也存不动了。
+        DataSyncProviderController.ParseOrigins(canonical).ShouldBe(new[] { canonical });
     }
 
     /// <summary>

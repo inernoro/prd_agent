@@ -258,14 +258,7 @@ public sealed class DataSyncProviderController : ControllerBase
                     $"「{candidate}」不是合法的来源：必须是 https 的站点根地址（不带路径、查询串或用户名），"
                     + "或以 *. 开头的子域通配"));
             }
-            // 存之前先过一遍**读取时用的那个规范化**（ParseOrigins：通配转小写、
-            // 非通配去尾斜杠）。不过这一遍的话，`*.EXAMPLE.com` 会原样存进库，而读回来
-            // 时被转成小写——比对令牌拿规范化后的值去比库里那份大写的原文，永远比不上，
-            // 于是这张卡从第一次保存之后就再也存不动了（又一个「拿规范化值比原始字段」，
-            // 和第 29 轮那个开关死锁同族）。
-            //
-            // 关键是复用同一个函数，不是在这儿再写一遍小写逻辑——两份规范化早晚会漂开。
-            var canonical = ParseOrigins(candidate).FirstOrDefault() ?? candidate;
+            var canonical = CanonicalizeConfiguredOrigin(candidate);
             if (!origins.Contains(canonical, StringComparer.OrdinalIgnoreCase)) origins.Add(canonical);
         }
 
@@ -949,6 +942,34 @@ public sealed class DataSyncProviderController : ControllerBase
 
     private static string? FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+    /// <summary>
+    /// 把管理员填的一条来源，规范成**换票时真正拿来比对的那个形状**再落库。
+    ///
+    /// 上一版只过了一遍 <see cref="ParseOrigins"/>（通配转小写、非通配去尾斜杠），
+    /// 治好了 `*.EXAMPLE.com` 那一档，端口这一档没治：`https://map.example.com:443`
+    /// 形状完全合法、原样存进库，而换票时的 origin 是
+    /// <see cref="TryValidateRedirectShape"/> 用 GetLeftPart(UriPartial.Authority) 算的——
+    /// 默认端口在那里被抹掉，得到 `https://map.example.com`，跟库里那份带 :443 的字符串
+    /// 永远相等不了。名单里明明有它，每一次授权照样被拒。
+    /// 形状 6：存的值和比的值不是同一个形状。
+    ///
+    /// 所以非通配一律走**和回调校验同一个函数**算 origin（顺带小写主机名、抹掉默认端口、
+    /// 保留非默认端口）；通配没有 host 可解析，仍走 ParseOrigins 的小写。
+    ///
+    /// 为什么不把这套收进 ParseOrigins：比对令牌是拿 ParseOrigins 的输出去比库里那份
+    /// **原始字段**的（PUT 的条件更新），读端一收紧，存量里那些不规范的行就再也存不动了
+    /// ——比现在这个「规则不生效」更糟。收紧写端方向相反：存量行被管理员保存一次即自愈。
+    /// 因此这里的输出必须是 ParseOrigins 的不动点，别破坏这条不变量。
+    /// </summary>
+    internal static string CanonicalizeConfiguredOrigin(string candidate)
+    {
+        if (candidate.StartsWith("*.", StringComparison.Ordinal))
+            return ParseOrigins(candidate).FirstOrDefault() ?? candidate;
+        return Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
+            ? uri.GetLeftPart(UriPartial.Authority).TrimEnd('/')
+            : ParseOrigins(candidate).FirstOrDefault() ?? candidate;
+    }
 
     internal static IReadOnlyList<string> ParseOrigins(string? raw) =>
         (raw ?? "")
