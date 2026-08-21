@@ -37,12 +37,30 @@ public sealed class DataSyncTokenVault
     public void StashVerifier(string state, string verifier, DateTime expiresAt)
         => _verifiers[state] = new Entry(verifier, expiresAt);
 
-    /// <summary>取出并删除 verifier：一次授权只该用一次，取过就不该再取到。</summary>
-    public string? TakeVerifier(string state)
+    /// <summary>
+    /// 读 verifier，但**不删**。
+    ///
+    /// 删的时机不能是「开始换票」，只能是「换票有了确定结果」。请求压根没到源站
+    /// （DNS / TLS / 连不上）时授权码一条都没被消费，此时把 verifier 删掉，等于把这次
+    /// 本来还能重试的授权判了死刑——前端那个「重试」按钮会永远拿到「这次授权已失效」。
+    /// 一次性由 <see cref="ForgetVerifier"/> 在确定结果之后落实。
+    /// </summary>
+    public string? PeekVerifier(string state)
     {
-        if (!_verifiers.TryRemove(state, out var entry)) return null;
-        return entry.ExpiresAt > DateTime.UtcNow ? entry.Value : null;
+        if (!_verifiers.TryGetValue(state, out var entry)) return null;
+        if (entry.ExpiresAt <= DateTime.UtcNow)
+        {
+            _verifiers.TryRemove(state, out _);
+            return null;
+        }
+        return entry.Value;
     }
+
+    /// <summary>
+    /// 作废 verifier。只在**源站已经应答**之后调用——那一刻授权码无论成败都已在源站作废，
+    /// 手里这个 verifier 再也换不出任何东西，留着只是一份没用的状态。
+    /// </summary>
+    public void ForgetVerifier(string state) => _verifiers.TryRemove(state, out _);
 
     public void PutExportToken(string runId, string token, DateTime expiresAt)
         => _exportTokens[runId] = new Entry(token, expiresAt);

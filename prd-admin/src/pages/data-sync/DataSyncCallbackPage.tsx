@@ -47,6 +47,15 @@ function peekPendingAuthorization(state: string): { state: string; sourceOrigin:
   }
 }
 
+/**
+ * 哪些失败还值得再点一次。
+ *
+ * 判据是「授权码有没有被源站消费掉」：没走到源站（本站网络异常，或后端明确报
+ * 连不上源站）时码还在，重试有意义；源站已经应答的一律不算——它那边码已作废，
+ * 重试只会换来同一句「这次授权已失效」。
+ */
+const RETRYABLE_CODES = new Set(['DATA_SYNC_SOURCE_UNREACHABLE', 'NETWORK_ERROR', 'DISCONNECTED']);
+
 function dropPendingAuthorization(state: string): void {
   // 只删自己这一条：别的标签页还在等它那条。
   sessionStorage.removeItem(DATA_SYNC_PENDING_PREFIX + state);
@@ -69,6 +78,8 @@ export default function DataSyncCallbackPage() {
   const navigate = useNavigate();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(true);
+  /** 这次失败还能不能再点一次。用 state 而不是读 ref——按钮的显隐要跟着重渲染走。 */
+  const [canRetry, setCanRetry] = useState(false);
   // React 18 严格模式下 effect 会跑两次；授权码只能用一次，第二次必然失败并报错。
   const started = useRef(false);
   /**
@@ -90,7 +101,12 @@ export default function DataSyncCallbackPage() {
       body: { sourceOrigin: held.sourceOrigin, code: held.code, state: held.state },
     });
     if (!res.success || !res.data?.runId) {
-      // 失败时**不**消耗 pending 记录，也不丢掉手上的码：留着这次还能再试一下。
+      // 只有「请求没走到源站」这一档还能重试：授权码没被消费，后端也把 verifier 留着了。
+      // 其余失败源站都已应答、码已作废，再点多少次都是同一个结果——给一个点不动的
+      // 按钮比不给更糟（上一版就是这样：重试永远拿到「这次授权已失效」）。
+      const retryable = RETRYABLE_CODES.has(res.error?.code || '');
+      if (!retryable) oneTime.current = null;
+      setCanRetry(retryable);
       setError(res.error?.message || '换取导出授权失败');
       setBusy(false);
       return;
@@ -149,7 +165,7 @@ export default function DataSyncCallbackPage() {
         {error ? (
           <div className="mt-5 flex items-center justify-center gap-2">
             {/* 手上还握着码才给重试——没有码的失败（state 对不上）重试多少次都是同一个结果。 */}
-            {oneTime.current ? (
+            {canRetry ? (
               <button
                 type="button"
                 disabled={busy}

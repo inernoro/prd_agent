@@ -1789,12 +1789,29 @@ public class DataSyncProtocolTests
     }
 
     [Fact]
-    public void 保险箱里的verifier只能取一次()
+    public void verifier作废的时机是换票有结果之后而不是开始换票()
     {
+        // 一次性仍然成立，只是消耗点后移了。上一版在**发请求之前**就取走并删掉，
+        // 于是请求压根没走到源站（DNS / TLS / 连不上）时授权码一条都没被消费，
+        // verifier 却已经没了——回跳页那个「重试」按钮永远只能拿到「这次授权已失效」。
         var vault = new DataSyncTokenVault();
         vault.StashVerifier("state-1", "verifier-1", DateTime.UtcNow.AddMinutes(5));
-        vault.TakeVerifier("state-1").ShouldBe("verifier-1");
-        vault.TakeVerifier("state-1").ShouldBeNull();
+
+        // 没走到源站 = 还能再读到，重试才有意义。
+        vault.PeekVerifier("state-1").ShouldBe("verifier-1");
+        vault.PeekVerifier("state-1").ShouldBe("verifier-1");
+
+        // 源站应答之后一次性落实，之后再也读不到。
+        vault.ForgetVerifier("state-1");
+        vault.PeekVerifier("state-1").ShouldBeNull();
+    }
+
+    [Fact]
+    public void 过期的verifier读不出来()
+    {
+        var vault = new DataSyncTokenVault();
+        vault.StashVerifier("state-1", "verifier-1", DateTime.UtcNow.AddSeconds(-1));
+        vault.PeekVerifier("state-1").ShouldBeNull();
     }
 
     [Fact]

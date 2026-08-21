@@ -605,9 +605,15 @@ public class AuthController : ControllerBase
             currentClientType = "desktop";
         }
 
+        // 签发用**重读回来的那条记录**，不是进函数时的快照。
+        //
+        // 上面那次重读只拿来判了「还启用吗」，签发却仍拿旧快照——于是管理员在这期间
+        // 把这个账号降级（ADMIN → 普通），新令牌照样带着旧的 ADMIN 角色，而它的
+        // tokenVersion 是刚推上去的最新版，校验一路放行：一次自助改密把并发的降级
+        // 抵消掉了。判据读到了对的记录却没用它（predicate-and-wiring-discipline 形状 6）。
         var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, currentClientType);
         var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, currentClientType);
-        var accessToken = _jwtService.GenerateAccessToken(user, currentClientType, sessionKey, tokenVersion);
+        var accessToken = _jwtService.GenerateAccessToken(stillActive, currentClientType, sessionKey, tokenVersion);
 
         _logger.LogInformation("User {UserId} changed password (self-service, clientType={ClientType})",
             user.UserId, currentClientType);
@@ -619,15 +625,17 @@ public class AuthController : ControllerBase
             SessionKey = sessionKey,
             ClientType = currentClientType,
             ExpiresIn = AccessTokenExpiresInSeconds(),
+            // 同理：回给前端的身份也用重读那份，否则界面按旧角色渲染出一套
+            // 这个账号已经没有的入口，点进去才被后端拒绝。
             User = new UserInfo
             {
-                UserId = user.UserId,
-                Username = user.Username,
-                DisplayName = user.DisplayName,
-                Role = user.Role,
-                UserType = user.UserType,
-                BotKind = user.BotKind,
-                AvatarFileName = user.AvatarFileName,
+                UserId = stillActive.UserId,
+                Username = stillActive.Username,
+                DisplayName = stillActive.DisplayName,
+                Role = stillActive.Role,
+                UserType = stillActive.UserType,
+                BotKind = stillActive.BotKind,
+                AvatarFileName = stillActive.AvatarFileName,
                 AvatarUrl = null
             }
         }));

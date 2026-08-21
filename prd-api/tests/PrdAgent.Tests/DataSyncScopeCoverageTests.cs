@@ -801,6 +801,35 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 只有没走到源站那一档才作废在换票之后()
+    {
+        // 判据是接线而不是行为：把 ForgetVerifier 挪到发请求之前、或者干脆删掉，
+        // 编译过、上面那两条 vault 用例也照样绿——坏的是「在哪一步调它」。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var source = File.ReadAllText(path);
+
+        var callback = Regex.Match(
+            source,
+            @"HttpPost\(""runs/callback""\)(?<body>.*?)(?=\n    /// <summary>)",
+            RegexOptions.Singleline);
+        Assert.True(callback.Success, "找不到 runs/callback 了，这条守卫的前提已变");
+        var body = callback.Groups["body"].Value;
+
+        // 读用 Peek，不用 Take——一次性由下面那句在确定结果之后落实。
+        Assert.Contains("_vault.PeekVerifier(request.State!)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("TakeVerifier", body, StringComparison.Ordinal);
+
+        // 作废必须排在拿到响应**之后**。
+        var forgetAt = body.IndexOf("_vault.ForgetVerifier(", StringComparison.Ordinal);
+        var responseAt = body.IndexOf("ReadAsStringAsync", StringComparison.Ordinal);
+        Assert.True(forgetAt > -1, "换票之后没有任何一处作废 verifier，一次性就没了");
+        Assert.True(forgetAt > responseAt, "ForgetVerifier 排在拿到响应之前，等于又回到「开始换票就消耗」");
+
+        // 连不上源站要给一个可被前端识别成「能重试」的专用错误码。
+        Assert.Contains("DATA_SYNC_SOURCE_UNREACHABLE", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 换票这一步不许挂在浏览器连接上()
     {
         // 换票是双方各自改状态的一步：源站收到请求就把授权码原子标成已消费并签出一张

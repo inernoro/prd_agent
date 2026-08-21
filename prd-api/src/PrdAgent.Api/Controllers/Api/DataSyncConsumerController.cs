@@ -113,7 +113,7 @@ public sealed class DataSyncConsumerController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_CALLBACK_INVALID", "回调参数不完整"));
         }
 
-        var verifier = _vault.TakeVerifier(request.State!);
+        var verifier = _vault.PeekVerifier(request.State!);
         if (verifier is null)
         {
             // 拿不到 verifier 的两种情况都不该继续：state 不是本站发的（可能是别人塞给
@@ -127,22 +127,43 @@ public sealed class DataSyncConsumerController : ControllerBase
         // 从这里开始一律 CancellationToken.None，不再看浏览器还连不连着。
         //
         // 换票是**双方各自改状态**的一步：源站收到请求就把授权码原子地标成已消费，
-        // 并签出一张两小时的导出令牌。而本站这边 verifier 刚刚已经被 TakeVerifier 取走
-        // （一次性），重来一次也换不了。所以只要请求发出去了，这一段就必须跑完——
+        // 并签出一张两小时的导出令牌，本站这边的一次性状态也随之作废。
+        // 所以只要请求发出去了，这一段就必须跑完——
         // 管理员在等待期间关掉标签页而把 ct 取消的话，PostAsJsonAsync 当场抛，
         // 本站既没存下也没作废那张令牌，它在源站眼里照样有效整整两小时，
         // 而任何人都不再持有它、也无从交还。这正是 server-authority 第 1 条
         // 「状态变更不得挂在 RequestAborted 上」要防的。
         var client = _httpClientFactory.CreateClient("SafeOutbound");
         client.Timeout = TimeSpan.FromSeconds(30);
-        using var response = await client.PostAsJsonAsync($"{origin}/api/instance-sync/token", new
-        {
-            code = request.Code,
-            redirectUri = $"{SelfOrigin()}/data-sync/callback",
-            codeVerifier = verifier,
-        }, CancellationToken.None);
 
-        var payload = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        HttpResponseMessage response;
+        string payload;
+        try
+        {
+            response = await client.PostAsJsonAsync($"{origin}/api/instance-sync/token", new
+            {
+                code = request.Code,
+                redirectUri = $"{SelfOrigin()}/data-sync/callback",
+                codeVerifier = verifier,
+            }, CancellationToken.None);
+            payload = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 请求没走到源站（DNS / TLS / 连不上 / 超时）：授权码一条都没被消费，
+            // verifier 也就必须留着——这是**唯一**还能重试的失败，前端那个「重试」
+            // 按钮为它而存在。给一个专门的错误码，让前端只在这一档亮重试。
+            _logger.LogWarning(ex, "[data-sync] 换取导出令牌时没能连上源站 {Origin}", origin);
+            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(
+                "DATA_SYNC_SOURCE_UNREACHABLE",
+                "没能连上源站，这次授权还没被消费，可以直接重试。"));
+        }
+
+        // 源站已经应答——授权码无论成败都在那边作废了，手里的 verifier 再换不出东西。
+        // 从这里往下的每一条返回路径都不该再被重试，所以在这里统一作废。
+        _vault.ForgetVerifier(request.State!);
+
+        using var _ = response;
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning("[data-sync] 换取导出令牌失败 {Status}", (int)response.StatusCode);
