@@ -563,7 +563,10 @@ public class AuthController : ControllerBase
             return Conflict(ApiResponse<object>.Fail("PASSWORD_CHANGED_ELSEWHERE",
                 "这个账号的密码刚刚在别处改过了，本次修改没有生效。请用新密码重新登录后再试。"));
         }
-        await _userService.UpdateMustResetPasswordAsync(user.UserId, false);
+        // 这里**不再**单独清一次 MustResetPassword——那一句已经并进上面那个条件更新。
+        // 拆成两句的话有这么一段窗口：换密成功之后、清标记之前，管理员的重置端点原子地
+        // 写下临时密码 + MustResetPassword=true，紧接着这一句无条件把标记抹回 false，
+        // 于是管理员刚发的临时密码不再强制首登改密，而这一侧还照常签发了新会话。
 
         // 发新令牌之前再确认一次账号还是启用的。
         //

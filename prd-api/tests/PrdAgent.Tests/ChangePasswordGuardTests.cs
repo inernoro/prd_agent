@@ -99,4 +99,31 @@ public class ChangePasswordGuardTests
         Assert.Matches(new Regex(@"Eq\(u => u\.Status, UserStatus\.Active\)"), body);
         Assert.Contains("ModifiedCount > 0", body);
     }
+
+    /// <summary>
+    /// 「必须改密」这个标记要跟密码一起原子写，不许拆成后面单独一句。
+    ///
+    /// 拆开的窗口是这样的：自助改密的条件更新刚写完新密码，管理员的重置端点紧接着
+    /// 原子地写下临时密码 + MustResetPassword=true，然后那句单独的「清标记」再无条件
+    /// 把它抹回 false——管理员刚发的临时密码从此不再强制首登改密，而自助这一侧还照常
+    /// 签发了新会话。谁写赢了密码，谁就同时拥有这个标记。
+    /// </summary>
+    [Fact]
+    public void 必须改密标记要跟密码一起原子写()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+        var repo = Path.Combine(dir!.FullName, "prd-api", "src", "PrdAgent.Infrastructure", "Repositories", "UserRepository.cs");
+        var source = File.ReadAllText(repo);
+        var body = source[source.IndexOf("TryReplacePasswordAsync", StringComparison.Ordinal)..];
+        body = body[..body.IndexOf("\n    public", StringComparison.Ordinal)];
+
+        // 1. 标记在那个条件更新的 $set 里。
+        Assert.Matches(new Regex(@"Set\(u => u\.MustResetPassword, false\)"), body);
+
+        // 2. 自助改密那条路径上不许再有第二句单独的清标记——它正是被并进来的那一句，
+        //    留着就等于窗口还在。
+        var changePassword = ChangePasswordSource();
+        Assert.DoesNotContain("UpdateMustResetPasswordAsync", changePassword);
+    }
 }

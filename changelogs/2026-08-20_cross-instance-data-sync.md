@@ -178,3 +178,6 @@
 | fix | prd-api | 同意页加来源的条件更新带上开关，关停不再被悄悄撤销：这次写入是无条件 Set(Enabled,true) 的，而条件只比名单——另一位管理员在读与写之间关掉对外同步、名单恰好没动的话，条件照样命中，一次「立刻停止对外供数」就被一次同意页点击改回 true 且票照发。设置 PUT 那条已修过，这是同族第二处。条件补上开关（比可空原始读值，写成 false 会匹配不上缺字段的存量文档），并在「开始时开着、现在读到关着」时直接失败不重试——关停必须赢 |
 | fix | prd-admin | 切 Run 时把上一条的 SSE 流一起断掉：useSseStream 只在组件卸载时 abort，而这个页面在列表与详情之间来回切一直挂着，url 变了它不会自己断。A 的流继续活着有两个后果——progress 事件把 A 的进度画到 B 的地址下；phase 恒为 streaming 使 isStreaming 恒真，重连 effect 认为「已经在流了」，B 的流永远起不来、pending 对照表也加载不出来。改用 sse.reset()（abort 只断请求、phase 留在 streaming，isStreaming 照样卡住），并在事件入口按 runId 拦一次迟到帧 |
 | test | prd-agent | 新增守卫三条：同意页加来源的条件更新要带开关且比可空原始值、关停中途要失败 / 切 Run 要 reset 而非 abort / shouldApplyRun 五种输入行为 + 页面确实用了它 |
+| fix | prd-api | 自助改密把「必须改密」标记并进同一个条件更新，不再拆成后面单独一句：拆开的窗口是——换密的条件更新刚成功，管理员的重置端点紧接着原子写下临时密码 + MustResetPassword=true，然后那句单独的清标记再无条件抹回 false，于是管理员刚发的临时密码不再强制首登改密，而自助这一侧还照常签发了新会话。现在谁写赢了密码，谁就同时拥有这个标记 |
+| docs | prd-agent | 台账补 DS24：首登强制改密那条路径（AuthController.ResetPassword）仍是「无条件写密码 + 单独清标记」两步、连 CAS 都没有，是同族的第二处。它不在本 PR 的 diff 里，且首登流程的「旧散列」语义与自助改密不同（用户此刻并不出示旧密码），要另定谓词，按 §5.5 记入后续 |
+| test | prd-api | 新增守卫：MustResetPassword 必须出现在条件更新的 $set 里，且自助改密路径上不许再有第二句单独的清标记 |

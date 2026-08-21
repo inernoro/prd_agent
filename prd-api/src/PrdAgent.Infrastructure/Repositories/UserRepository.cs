@@ -75,7 +75,16 @@ public class UserRepository : IUserRepository
                 // 管理员在「读到还是启用」和「这句更新执行」之间把人停掉的话，更新照样成功，
                 // 端点接着签发一整套新令牌——停用输给了改密。放进来，停用才赢得了这场竞态。
                 Builders<User>.Filter.Eq(u => u.Status, UserStatus.Active)),
-            Builders<User>.Update.Set(u => u.PasswordHash, passwordHash));
+            Builders<User>.Update
+                .Set(u => u.PasswordHash, passwordHash)
+                // 「必须改密」这个标记跟着密码一起写，不能拆成后面单独一句。
+                //
+                // 拆开的话有这么一段窗口：本方法刚写完新密码，管理员的重置端点紧接着
+                // 原子地写下临时密码 + MustResetPassword=true，然后那句单独的
+                // 「清标记」再无条件把它抹回 false——管理员发的临时密码从此不再强制
+                // 首登改密，而自助这一侧还照常签发了新会话。
+                // 谁写赢了密码，谁就同时拥有这个标记的状态。
+                .Set(u => u.MustResetPassword, false));
         return result.ModifiedCount > 0;
     }
 
