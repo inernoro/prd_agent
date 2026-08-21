@@ -589,6 +589,10 @@ public sealed class DataSyncConsumerController : ControllerBase
             updated = kv.Value.Updated,
             plannedInsert = kv.Value.PlannedInsert,
             plannedUpdate = kv.Value.PlannedUpdate,
+            // 资产地址改写的两个数字必须一起出去。只送「改了几条」而不送「还有几条没救」，
+            // 界面上就只剩一句好消息，缺口被藏起来——那正是 DS1 当初的样子。
+            assetUrlsRebased = kv.Value.AssetUrlsRebased,
+            assetUrlsUnresolved = kv.Value.AssetUrlsUnresolved,
             done = kv.Value.Done,
         }),
     };

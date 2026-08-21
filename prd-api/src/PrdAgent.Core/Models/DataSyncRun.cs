@@ -117,6 +117,22 @@ public class DataSyncCollectionProgress
     /// <summary>真跑将会覆盖的条数。试跑靠它给出「预计覆盖」，真跑时与 Updated 相等。</summary>
     public long PlannedUpdate { get; set; }
 
+    /// <summary>
+    /// 已改写成本站地址的资产字段数。
+    ///
+    /// 附件搬的只有元数据，地址是**源站**的绝对地址。不改的话，两站不共用同一个桶
+    /// （或公网前缀不同）时，同步过来的图片、录音、导出文件全部指回源站。
+    /// </summary>
+    public long AssetUrlsRebased { get; set; }
+
+    /// <summary>
+    /// 是绝对地址、却认不出对象 key，只能原样留着的资产字段数。
+    ///
+    /// **这几条就是搬完之后仍然可能打不开的**。单独计数而不是并进上面那个：
+    /// 「改了 N 条」和「还有 M 条没救」是两件事，混成一个数字等于把缺口藏起来。
+    /// </summary>
+    public long AssetUrlsUnresolved { get; set; }
+
     /// <summary>断点续传游标：上一批最后一个 _id 的扩展 JSON 表示</summary>
     public string? Cursor { get; set; }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2, ShieldCheck, X } from 'lucide-react';
+import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2, ImageOff, ShieldCheck, X } from 'lucide-react';
 
 import { PageHeader } from '@/components/design/PageHeader';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -48,6 +48,8 @@ type ProgressRow = {
   updated: number;
   plannedInsert: number;
   plannedUpdate: number;
+  assetUrlsRebased?: number;
+  assetUrlsUnresolved?: number;
   done: boolean;
 };
 type RunView = {
@@ -868,6 +870,9 @@ function ProgressCard({
 }) {
   const finished = TERMINAL.has(run.status);
   const pendingSecrets = Object.entries(run.pendingSecretFields || {});
+  // 资产地址：改写了几条、还有几条认不出。两个数字一起看才说得清「附件能不能打开」。
+  const assetsRebased = run.progress.reduce((n, row) => n + (row.assetUrlsRebased || 0), 0);
+  const assetsUnresolved = run.progress.reduce((n, row) => n + (row.assetUrlsUnresolved || 0), 0);
   return (
     <div className="space-y-4">
       <Card>
@@ -930,6 +935,35 @@ function ProgressCard({
           </table>
         </div>
       </Card>
+
+      {assetsRebased + assetsUnresolved > 0 ? (
+        <Card>
+          <div className="flex items-center gap-2">
+            <ImageOff size={18} style={{ color: 'var(--accent-primary)' }} />
+            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+              附件地址
+            </h2>
+          </div>
+          {/*
+            这一段必须同时说两件事，缺一件就变成误导：
+            地址已经改成本站的（否则图片会指回源站），以及**文件本身没有搬过来**。
+            两站不共用同一个对象存储时，改完地址只是从「指回别人家」变成「指向自己家的空位」。
+          */}
+          <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            已把 {assetsRebased} 条附件地址改写成本站地址
+            {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、保留了源站地址` : ''}
+            。注意：<span style={{ color: 'var(--text-primary)' }}>这次只搬了记录，没有搬文件本身</span>。
+            两站用的是同一个对象存储时，附件现在就能打开；不是同一个的话，需要另外把文件搬过来
+            （或让两站指向同一个桶），否则会看到图片裂开。
+          </p>
+          {assetsUnresolved > 0 ? (
+            <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+              那 {assetsUnresolved} 条多半是更早期、不带对象位置信息的旧附件——它们的地址仍然指向源站，
+              源站一旦下线就打不开。
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
 
       {pendingSecrets.length > 0 ? (
         <Card>

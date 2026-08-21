@@ -5,6 +5,7 @@ using PrdAgent.Api.Services.DataSync;
 using PrdAgent.Core.DataSync;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services.DataSync;
 
@@ -53,18 +54,41 @@ public sealed class DataSyncRunWorker : BackgroundService
     private readonly IServiceProvider _services;
     private readonly DataSyncTokenVault _vault;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IAssetStorage _assetStorage;
     private readonly ILogger<DataSyncRunWorker> _logger;
 
     public DataSyncRunWorker(
         IServiceProvider services,
         DataSyncTokenVault vault,
         IHttpClientFactory httpClientFactory,
+        IAssetStorage assetStorage,
         ILogger<DataSyncRunWorker> logger)
     {
         _services = services;
         _vault = vault;
         _httpClientFactory = httpClientFactory;
+        _assetStorage = assetStorage;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 把 key 拼成**本站**的资产地址。前缀怎么拼是存储实现自己的事，这里不另写一份。
+    ///
+    /// 存储实现抛异常时返回 null 而不是让整条同步炸掉：拼不出地址只是这一条附件
+    /// 打不开，而调用方会把它算进「认不出」如实报出来；为此中断一次几千条的迁移不划算。
+    /// </summary>
+    private string? BuildLocalAssetUrl(string key)
+    {
+        try
+        {
+            var url = _assetStorage.BuildUrlForKey(key);
+            return string.IsNullOrWhiteSpace(url) ? null : url;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[data-sync] 资产地址改写失败，保留源站地址：{Key}", key);
+            return null;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -317,6 +341,14 @@ public sealed class DataSyncRunWorker : BackgroundService
             var page = ReadPage(await response.Content.ReadAsStringAsync(ct), collection.Name);
             var documents = DataSyncApply.ParseDocuments(page.Documents);
             progress.Fetched += documents.Count;
+
+            // 资产地址改写要在**入库之前**做：写进去再回头批量改，中间那一段时间
+            // 界面上的图片全是指回源站的死链，而且一旦崩在中间就没人知道改到哪了。
+            // 只改地址、不搬字节——两站不共用同一个桶时，改完是「指向自己家的空位」，
+            // 所以下面把认不出的条数如实累进 Run 里，由界面照实说。
+            var rebase = DataSyncAssetUrls.RebaseIncoming(documents, collection.Name, BuildLocalAssetUrl);
+            progress.AssetUrlsRebased += rebase.Rebased;
+            progress.AssetUrlsUnresolved += rebase.Unrecognized;
 
             if (documents.Count > 0)
             {
