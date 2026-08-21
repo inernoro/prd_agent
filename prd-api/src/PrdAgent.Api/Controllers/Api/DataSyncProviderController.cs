@@ -53,6 +53,15 @@ public sealed class DataSyncProviderController : ControllerBase
 
     private const int MaxPageSize = 500;
 
+    /// <summary>
+    /// 一页导出响应里所有文档序列化后的字符数上限（约 8 MB 的 UTF-16 字符）。
+    ///
+    /// 条数封顶封不住大小：Mongo 单文档可逼近 16MB，而这条链路会把一页缓冲三次
+    /// （源站的扩展 JSON 串、日志中间件的 MemoryStream、目标站的 ReadAsStringAsync）。
+    /// 取 8M 字符是留够三倍缓冲仍在常规容器内存里的量级；再大不是「慢一点」，是 OOM。
+    /// </summary>
+    private const int MaxPageSerializedChars = 8 * 1024 * 1024;
+
     private readonly MongoDbContext _db;
     private readonly IConfiguration _configuration;
     private readonly ILogger<DataSyncProviderController> _logger;
@@ -620,10 +629,13 @@ public sealed class DataSyncProviderController : ControllerBase
         var includeCredentials = grant.GetValue("IncludeCredentials", BsonBoolean.False).ToBoolean();
         var effective = DataSyncScope.ApplyGrant(resolved, includeCredentials);
 
-        var clearedFields = new HashSet<string>(StringComparer.Ordinal);
+        // 按文档记「这一条清空了哪些字段」，最后只对**真发出去的**那些取并集。
+        // 直接累一个整页的集合会把被字节预算截掉、根本没发出去的文档也算进来——
+        // 目标站据此提示「有个凭据被清空了，去补」，而那条记录压根没到过它那边。
+        var clearedPerDoc = new List<IReadOnlyList<string>>(docs.Count);
         foreach (var doc in docs)
         {
-            foreach (var field in DataSyncRedactor.Redact(doc, effective)) clearedFields.Add(field);
+            clearedPerDoc.Add(DataSyncRedactor.Redact(doc, effective).ToList());
             // 目标站本地执行历史整个删掉，且**不**计入 clearedFields——它不是待补的凭据，
             // 目标站会用自己那份。计进去的话同步页会催人去补一个本来就该由本机维护的东西。
             DataSyncRedactor.StripTargetLocal(doc, effective);
@@ -635,19 +647,54 @@ public sealed class DataSyncProviderController : ControllerBase
             }
         }
 
-        var nextCursor = docs.Count == pageSize && docs.Count > 0 ? SerializeCursor(docs[^1]["_id"]) : null;
+        // 扩展 JSON 而不是普通 JSON：日期、Decimal128、ObjectId 走普通 JSON 会掉类型，
+        // 目标站写回去就变成一堆字符串。
+        var settings = new MongoDB.Bson.IO.JsonWriterSettings
+        {
+            OutputMode = MongoDB.Bson.IO.JsonOutputMode.CanonicalExtendedJson,
+        };
+
+        // 一页除了「最多 200 条」还得有**字节预算**。
+        //
+        // 只按条数封顶封不住响应大小：Mongo 单文档可以逼近 16MB，而
+        // `document_entry_versions.Content` 这类正文字段真能长到那个量级。200 条 x 大文档
+        // 在这条链路上要被缓冲**三次**（这里的扩展 JSON 串、日志中间件的 MemoryStream、
+        // 目标站的 ReadAsStringAsync），一页几百 MB 起，两端都可能 OOM 或超时。
+        //
+        // 所以边序列化边累加，超预算就在这一条**之前**收手，把游标停在最后一条真发出去的
+        // 文档上——分页语义不变，只是这一页短一点。至少发一条：单条自己就超预算时也得
+        // 让它过去，否则这个集合永远卡在同一个游标上推不动（那比大响应更糟）。
+        var serialized = new List<string>(docs.Count);
+        var budgetUsed = 0;
+        foreach (var doc in docs)
+        {
+            var json = doc.ToJson(settings);
+            if (serialized.Count > 0 && budgetUsed + json.Length > MaxPageSerializedChars) break;
+            serialized.Add(json);
+            budgetUsed += json.Length;
+        }
+
+        // 被预算截短的那些没发出去，游标必须停在**实际发出的**最后一条上，
+        // 否则下一页会从没发过的位置往后取，中间那截永远丢了。
+        var emitted = docs.Take(serialized.Count).ToList();
+        var truncatedByBudget = serialized.Count < docs.Count;
+        var nextCursor = (truncatedByBudget || docs.Count == pageSize) && emitted.Count > 0
+            ? SerializeCursor(emitted[^1]["_id"])
+            : null;
+
+        var clearedFields = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < serialized.Count; i++)
+        {
+            foreach (var field in clearedPerDoc[i]) clearedFields.Add(field);
+        }
+
         return Ok(ApiResponse<object>.Ok(new
         {
             collection = resolved.Name,
-            count = docs.Count,
+            count = emitted.Count,
             nextCursor,
             clearedFields = clearedFields.OrderBy(x => x, StringComparer.Ordinal),
-            // 扩展 JSON 而不是普通 JSON：日期、Decimal128、ObjectId 走普通 JSON 会掉类型，
-            // 目标站写回去就变成一堆字符串。
-            documents = docs.Select(d => d.ToJson(new MongoDB.Bson.IO.JsonWriterSettings
-            {
-                OutputMode = MongoDB.Bson.IO.JsonOutputMode.CanonicalExtendedJson,
-            })),
+            documents = serialized,
         }));
     }
 

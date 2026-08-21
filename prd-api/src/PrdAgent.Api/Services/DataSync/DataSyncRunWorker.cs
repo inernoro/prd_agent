@@ -427,6 +427,28 @@ public sealed class DataSyncRunWorker : BackgroundService
                                         + "或者先清空目标站这个集合再同步。");
                                 }
 
+                                // 勾了「以源站为准覆盖」时，撞 `_id` 不能算「跳过」。
+                                //
+                                // ToInsert 里只放了**查目标库时不存在**的那些 id，所以这里撞上
+                                // 只有一个解释：查完到写下去这段时间里，有别的写手插了同一个 id
+                                //（共享 Mongo 上两条同步并行时会遇到）。此时按「跳过」处理，
+                                // 目标库留下的是那个并发写进去的值，而操作者勾的是「源站为准」——
+                                // 一条没被覆盖的记录，却报成功。
+                                //
+                                // 不在这里就地改成替换：那批文档的目标侧本地字段（PreserveFields）
+                                // 从没读过，盲替会把它们抹掉，正是前面几轮专门修过的那个洞。
+                                // 要做得对得回查那几条再走一遍 carry——那是另一件事。
+                                // 所以当场失败：重跑一次即可（下一轮查目标库就能看见它们，
+                                // 正常走替换路径、本地字段照常保留）。
+                                if (run.OverwriteExisting)
+                                {
+                                    throw new InvalidOperationException(
+                                        $"集合 {collection.Name} 有 {conflicts} 条在本次同步进行中被别处写入了同一个 _id。"
+                                        + "这次勾的是「以源站为准覆盖」，把它们按跳过处理会留下没被覆盖的记录、"
+                                        + "却报同步成功，所以这里停下。重新跑一次即可——"
+                                        + "下一轮就能查到它们并正常覆盖。");
+                                }
+
                                 progress.Skipped += conflicts;
                                 _logger.LogWarning(
                                     "[data-sync] {Collection} 有 {Count} 条撞唯一索引，已跳过；其余 {Written} 条已写入",

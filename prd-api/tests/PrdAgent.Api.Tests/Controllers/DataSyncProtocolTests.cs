@@ -876,6 +876,39 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 同步这一族端点的请求体与响应体一律不许进 apirequestlogs。
+    ///
+    /// `/api/instance-sync/token` 的响应体里是**活着的两小时导出令牌**，请求体里是
+    /// PKCE verifier；`/api/instance-sync/export` 的响应体是业务文档本身，勾了
+    /// 「连登录凭据一起搬」时还含口令散列。而 apirequestlogs 与生产共用同一个 Mongo
+    /// （cross-project-isolation 通道 4）——落进去等于把凭据摊给所有部署，以及任何
+    /// 有日志查看权限的人，正好把「落库的永远是散列」这条设计决定作废。
+    ///
+    /// 原来中间件里只有一个写死的 `/api/llm-gateway/sso/ticket` 判等：每加一个发凭据的
+    /// 端点都得有人记得回来改那一行，漏掉不会红（形状 3）。所以这条守卫盯的是
+    /// **判据的形状**——必须是一张具名清单 + 前缀匹配，而不是又一次字符串判等。
+    /// </summary>
+    [Fact]
+    public void 同步端点的请求与响应体不许落进接口日志()
+    {
+        var middleware = ReadApiSource("Middleware", "RequestResponseLoggingMiddleware.cs");
+
+        // 1. instance-sync 整族在清单里（按前缀收，不是逐个端点点名）。
+        middleware.ShouldContain("\"/api/instance-sync/\",");
+        // 2. 原来那个凭据端点没被弄丢。
+        middleware.ShouldContain("\"/api/llm-gateway/sso/ticket\",");
+        // 3. 判据是前缀匹配的具名函数，不是散在调用点的字符串判等。
+        middleware.ShouldContain("private static bool CarriesCredential(string path) =>");
+        middleware.ShouldContain("CredentialBearingPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))");
+        middleware.ShouldNotContain("path.Equals(\n            \"/api/llm-gateway/sso/ticket\"");
+
+        // 4. 请求体和响应体**两边**都挡。只挡响应是半个补丁——PKCE verifier 与授权码
+        //    都在请求里，拿到它们同样能换出导出令牌。
+        middleware.ShouldContain("carriesCredential ? null : await TryCaptureRequestBodyAsync(context)");
+        middleware.ShouldContain("responseBodyText: carriesCredential ? null : responseBody");
+    }
+
+    /// <summary>
     /// 往目标库写的那一段，心跳必须由**独立于写入**的任务来打。
     ///
     /// 「写完一批再跳」的节奏由写入自己决定，而正是写入卡住时最需要心跳：一次
@@ -1007,6 +1040,60 @@ public class DataSyncProtocolTests
         block.ShouldContain("throw new InvalidOperationException");
         // 提示要指向真正的解法，而不是让人干瞪眼。
         block.ShouldContain("DS18");
+    }
+
+    /// <summary>
+    /// 勾了「以源站为准覆盖」时，撞 _id 也不能算「跳过」。
+    ///
+    /// ToInsert 里只放了查目标库时**不存在**的 id，所以撞上只有一个解释：查完到写下去
+    /// 这段时间有别的写手插了同一个 id。按跳过处理的话，目标库留下的是那个并发写进去的
+    /// 值——一条没被覆盖的记录，却报同步成功，与勾选的语义直接相反。
+    ///
+    /// 判定必须排在 `progress.Skipped += conflicts` **之前**，否则先记了跳过再抛，
+    /// 进度数字会留下一笔没发生过的「已跳过」。
+    /// </summary>
+    [Fact]
+    public void 覆盖模式下撞id不许算跳过()
+    {
+        var worker = ReadWorkerSource();
+        var block = worker[worker.IndexOf("catch (MongoBulkWriteException<BsonDocument> ex)", StringComparison.Ordinal)..];
+        block = block[..block.IndexOf("SurvivingInserts", StringComparison.Ordinal)];
+
+        var gateAt = block.IndexOf("if (run.OverwriteExisting)", StringComparison.Ordinal);
+        var skipAt = block.IndexOf("progress.Skipped += conflicts;", StringComparison.Ordinal);
+        gateAt.ShouldBeGreaterThan(-1, "覆盖模式必须单独判一次");
+        skipAt.ShouldBeGreaterThan(gateAt, "覆盖模式的判定要排在记「跳过」之前");
+
+        // 失败信息要说清「重跑即可」——这是可恢复的竞态，不是死路。
+        block[gateAt..skipAt].ShouldContain("重新跑一次即可");
+    }
+
+    /// <summary>
+    /// 一页导出除了条数还要有字节预算，而且游标必须停在**真发出去的**最后一条上。
+    ///
+    /// 只按 200 条封顶封不住响应大小：Mongo 单文档可逼近 16MB，这条链路还要把一页
+    /// 缓冲三次（源站扩展 JSON、日志中间件 MemoryStream、目标站 ReadAsStringAsync）。
+    /// 而截短之后若游标仍按 `docs[^1]` 取，下一页会从没发过的位置往后拿，中间那截永远丢。
+    /// </summary>
+    [Fact]
+    public void 导出分页要有字节预算且游标停在实际发出的那条()
+    {
+        var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var export = body[body.IndexOf("var serialized = new List<string>(docs.Count);", StringComparison.Ordinal)..];
+        export = export[..export.IndexOf("return Ok(", StringComparison.Ordinal)];
+
+        // 1. 边序列化边累加，超预算就收手。
+        export.ShouldContain("budgetUsed + json.Length > MaxPageSerializedChars");
+        // 2. 至少发一条：单条自己就超预算时也得让它过去，否则这个集合永远卡在同一个游标上。
+        export.ShouldContain("serialized.Count > 0 &&");
+        // 3. 游标停在实际发出的最后一条，不是查出来的最后一条。
+        export.ShouldContain("SerializeCursor(emitted[^1][\"_id\"])");
+        export.ShouldNotContain("SerializeCursor(docs[^1]");
+        // 4. 截短了也要给游标，否则剩下的永远取不到。
+        export.ShouldContain("truncatedByBudget || docs.Count == pageSize");
+        // 5. 待补字段只对真发出去的取并集——被截掉的文档没到过目标站，
+        //    报进去就是让人去补一个根本没同步过的凭据。
+        export.ShouldContain("for (var i = 0; i < serialized.Count; i++)");
     }
 
     /// <summary>
