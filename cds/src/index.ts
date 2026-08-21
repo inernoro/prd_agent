@@ -23,7 +23,8 @@ import {
   type FirewallBackendSnapshot, type InfraExposureInput, type InfraExposureReport,
 } from './services/infra-exposure-audit.js';
 import {
-  backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript,
+  backupDirCandidates, buildMysqlDumpScript, buildPostgresDumpScript, extractBackupScopeNote,
+  buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
@@ -677,7 +678,13 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 同时用 fd 腾挪保住 mysqldump 自己的退出码（管道默认只给最后一环的，
             // 而 dash 没有 pipefail）。三次踩坑的经过写在那个函数的注释里。
             cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildMysqlDumpScript())} > ${shq(out)}`;
-          } else {
+          } else if (t.kind === 'postgres') {
+            // postgres 此前完全不在备份范围里——不是失败，是压根没被当成目标（判据只认
+            // mongo/redis/mysql）。它一直被记进覆盖缺口让整轮健康红着，但红着不等于有备份。
+            // 脚本与判据在 buildPostgresDumpScript()：容器内认证 + 流式压缩 + 两端退出码，
+            // 并把「同实例还有哪些库没被带走」写到 stderr（见下面的 scopeNote）。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildPostgresDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'redis') {
             // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
             //
             // 1. **要能连上**。配了 requirepass 的实例（密码常写在 --requirepass
@@ -721,6 +728,18 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               throw new Error(`探测脚本没有回传快照路径（拿到 ${JSON.stringify(rdbPath.slice(0, 80))}），拒绝按默认路径猜`);
             }
             cmd = `docker cp ${shq(`${t.containerName}:${rdbPath}`)} ${shq(out)}`;
+          } else {
+            /**
+             * 这里原来是 redis 的 `else`——**新增一种备份类型而忘了在这里加分支时，
+             * 它会掉进 redis 那一条，对着一台 postgres 跑 BGSAVE**，然后拷一个
+             * 根本不存在的 dump.rdb。判定层认得它、执行层没接线，正是
+             * predicate-and-wiring-discipline 形状 2（建了一半，删掉不会红）。
+             *
+             * 改成穷尽分支之后，`never` 这一行让**编译器**替我们守着：
+             * BackupKind 多一个成员而这里没加分支，`tsc` 当场报错。
+             */
+            const unreachable: never = t.kind;
+            throw new Error(`备份类型 ${String(unreachable)} 没有对应的导出实现`);
           }
           // 前置闸只证明「此刻还有空间」，这次写入本身是无界的——一个大库照样能把
           // 最后一个字节吃掉，而根盘写满会同时打死所有预览、构建和 CDS 自己。给这次
@@ -736,6 +755,11 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 撞上限和别的失败要能分开：前者是「这个库太大」，后者才是「备份坏了」。
             throw new Error(`${combinedOutput(r).slice(0, 400)}（本次写入上限 ${capGiB} GiB，超限会被内核中断）`);
           }
+
+          // 成功路径上的 stderr 也要读。导出脚本用它报「这份备份覆盖到哪」——
+          // 只在失败时看 stderr 的话，一次成功但只覆盖了一个库的备份，
+          // 会以「成功 1 个」的形态被读成全量。
+          const scopeNote = extractBackupScopeNote(r.stderr || '');
 
           const stat = await shell.exec(`stat -c %s ${shq(out)} 2>/dev/null || echo 0`, { timeout: 10_000 });
           const bytes = Number((stat.stdout || '0').trim()) || 0;
@@ -816,6 +840,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             pruned: doomed,
             remoteObjectKey: remote?.objectKey,
             sha256: remote?.sha256,
+            note: scopeNote ?? undefined,
           });
         } catch (err) {
           // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），

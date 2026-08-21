@@ -188,12 +188,24 @@ describe('结论可读', () => {
   });
 
   it('运行中的不支持类型会阻断健康状态，停止的服务不会', () => {
+    // 例子从 postgres 换成 elasticsearch：postgres 已经有导出手段了（见下一条），
+    // 继续拿它当「不支持」的样本，测的就不再是这条规则本身。
     const plan = planInfraBackups([
-      cand({ id: 'postgres', dockerImage: 'postgres:16', running: true }),
+      cand({ id: 'search', dockerImage: 'elasticsearch:8.11.0', running: true }),
       cand({ id: 'stopped-mongo', running: false }),
     ], { now: NOW });
-    expect(backupCoverageGaps(plan).map((item) => item.id)).toEqual(['postgres']);
+    expect(backupCoverageGaps(plan).map((item) => item.id)).toEqual(['search']);
     expect(isBackupRoundHealthy(plan, [{ id: 'mongo', ok: true, bytes: 128 }])).toBe(false);
+  });
+
+  it('postgres 是备份目标，不再算覆盖缺口', () => {
+    // 它此前一直被记成「暂不支持的类型」——整轮健康因此长期红着，
+    // 而磁盘上一份 postgres 备份都没有。红着不等于备着。
+    const plan = planInfraBackups([
+      cand({ id: 'postgres', dockerImage: 'postgres:16-alpine', running: true }),
+    ], { now: NOW });
+    expect(backupCoverageGaps(plan)).toEqual([]);
+    expect(plan.targets.map((t) => [t.kind, t.fileName.endsWith('.sql.gz')])).toEqual([['postgres', true]]);
   });
 
   it('只有全部目标成功且没有覆盖缺口才允许刷新健康时间', () => {

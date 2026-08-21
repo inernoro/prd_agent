@@ -4243,8 +4243,16 @@ _INFRA_TEMPLATES: list[dict] = [
         "image": "nats:2-alpine",
         "container_port": "4222",
         "service_env": {},
+        # NATS 默认任何人都能连、能订阅任何主题。开认证只要 --user/--pass。
+        # 与 redis 同一种写法:口令走 ${CDS_*} 占位,由 CDS 在 docker run 前解析。
+        # (后端预设那条路把口令留在容器内展开、不进 argv;compose 这条路沿用 redis
+        #  已有的取舍,见 doc/debt.cds.md E49。)
+        "service_command": "--user ${CDS_NATS_USER} --pass ${CDS_NATS_PASSWORD}",
         "global_env": [
-            ("CDS_NATS_URL", "nats://nats:4222", False, "NATS 连接串(无密码,CDS 命名空间)"),
+            ("CDS_NATS_USER", "app", False, "NATS 账号(CDS 命名空间)"),
+            ("CDS_NATS_PASSWORD", None, True, "NATS 口令(CDS 自动随机生成)"),
+            ("CDS_NATS_URL", "nats://${CDS_NATS_USER}:${CDS_NATS_PASSWORD}@nats:4222", False,
+             "应用侧连接串(CDS 推导)"),
         ],
     },
     {

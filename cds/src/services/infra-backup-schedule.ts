@@ -15,7 +15,9 @@
  * 这样能拿真实数值写回归。执行侧在 index.ts。
  */
 
-export type BackupKind = 'mongo' | 'redis' | 'mysql';
+import { detectInfraKind, type InfraKindHints } from './infra-exposure-audit.js';
+
+export type BackupKind = 'mongo' | 'redis' | 'mysql' | 'postgres';
 
 export interface BackupCandidate {
   id: string;
@@ -90,13 +92,26 @@ export function backupDirCandidates(opts: {
   return [...new Set(out)];
 }
 
-/** 只有这几类有成熟的一致性导出手段；其余类型不假装能备。 */
-export function backupKindOf(dockerImage: string): BackupKind | null {
-  const l = (dockerImage || '').toLowerCase();
-  if (l.includes('mongo')) return 'mongo';
-  if (l.includes('redis')) return 'redis';
-  if (l.includes('mysql') || l.includes('mariadb')) return 'mysql';
-  return null;
+/** 有成熟一致性导出手段的类型。不在这个集合里的，不假装能备。 */
+const BACKUP_CAPABLE_KINDS = new Set<string>(['mongo', 'redis', 'mysql', 'postgres']);
+
+/**
+ * 这个服务该用哪种方式备份。
+ *
+ * ## 为什么不自己再判一遍镜像名
+ *
+ * 「这是个什么库」这件事，本仓库一度有三份各自演化的判据：本函数、下载端点里的
+ * `detectKind`、以及暴露面自检的 `detectInfraKind`。三份都靠 `image.includes(...)`，
+ * 但覆盖的类型各不相同——postgres 在自检里认得出、在这里认不出，于是同一台库
+ * 「安全面知道它是 postgres」而「备份面把它当不认识的类型跳过」。
+ * 这正是 predicate-and-wiring-discipline 形状 3（判据分裂后各自漂移）。
+ *
+ * 现在只保留一份判据（`detectInfraKind`，它还能用 id / 容器名兜底，认得出私有仓库
+ * 那种名字里不含产品名的镜像），本函数只负责回答「这个类型我们有没有导出手段」。
+ */
+export function backupKindOf(dockerImage: string, hints: InfraKindHints = {}): BackupKind | null {
+  const kind = detectInfraKind(dockerImage, hints);
+  return BACKUP_CAPABLE_KINDS.has(kind) ? (kind as BackupKind) : null;
 }
 
 /**
@@ -110,6 +125,7 @@ const BACKUP_EXT: Record<BackupKind, string> = {
   mongo: 'archive.gz',
   redis: 'rdb',
   mysql: 'sql.gz',
+  postgres: 'sql.gz',
 };
 
 /**
@@ -191,7 +207,9 @@ export function planInfraBackups(
       skipped.push({ id: c.id, reason: '容器未运行', blocksHealthy: false });
       continue;
     }
-    const kind = backupKindOf(c.dockerImage);
+    // id / 容器名一起交给判据：私有仓库或摘要镜像的名字里可能一个产品名都没有，
+    // 只看 image 会把一台真库判成「不认识的类型」并跳过——那是静默零备份。
+    const kind = backupKindOf(c.dockerImage, { id: c.id, containerName: c.containerName });
     if (!kind) {
       skipped.push({
         id: c.id,
@@ -314,6 +332,14 @@ export interface BackupOutcome {
    * 「彻底没有」说成同一件事。
    */
   localOnly?: boolean;
+  /**
+   * 这份备份**覆盖到哪**的说明，由导出脚本自己报（目前只有 postgres 会报：
+   * 同实例还有别的库没被这份 dump 带走）。
+   *
+   * 和 `error` 分开：它不表示失败，它表示「成功了，但别把它当成全量」。
+   * 两者混在一个字段里，要么把一次正常备份报成故障，要么让范围缺口彻底消失。
+   */
+  note?: string;
 }
 
 /**
@@ -357,6 +383,12 @@ export function summarizeBackupRound(outcomes: readonly BackupOutcome[], skipped
     parts.push(`失败 ${hardFailed.length} 个（${hardFailed.map((f) => f.id).join('、')}）`);
   }
   if (skipped) parts.push(`跳过 ${skipped} 个`);
+  // 范围说明必须进这句话。它只活在 outcome 对象里的话，「这份 dump 没带走另外两个库」
+  // 就没有任何一个人会看到——那正是「备了」被读成「备全了」的路径。
+  const noted = outcomes.filter((o) => o.note);
+  if (noted.length) {
+    parts.push(`范围提示 ${noted.length} 条（${noted.map((o) => `${o.id}：${o.note}`).join('；')}）`);
+  }
   return parts.length ? `基础设施自动备份：${parts.join('，')}` : '基础设施自动备份：没有可备份的目标';
 }
 
@@ -773,4 +805,152 @@ export function buildMysqlTableCountScript(): string {
     'mysql -u"$CDS_MYSQL_USER" -N -B -e "SELECT COUNT(*) FROM information_schema.tables'
       + " WHERE table_schema NOT IN ('information_schema','performance_schema')\"",
   ].join('\n');
+}
+
+/**
+ * 在容器内挑一套能用的 PostgreSQL 凭据，并当场证明连得上。
+ *
+ * ## 为什么 postgres 此前一份备份都没有
+ *
+ * 判据太窄（形状 1）：`backupKindOf` 只认 mongo / redis / mysql，postgres 是一等预设
+ * 却整个落在「暂不支持的类型」里。它确实被记进了覆盖缺口（整轮健康因此不刷新），
+ * 但**没有人因为一个长期红着的健康位去补它**——红了三个月和绿了三个月，磁盘上
+ * 同样是零份 postgres 备份。手工下载那条路更糟：postgres 掉进兜底的 `tar -C /data`，
+ * 而它的数据在 `/var/lib/postgresql/data`，于是下载得到一个空壳、HTTP 还是 200
+ * （和 mysql 的 E41 一模一样的形状）。
+ *
+ * ## 凭据从哪来
+ *
+ * 官方镜像的 initdb 把本地 socket 配成 `trust`，所以 `docker exec` 进去用
+ * `-U <POSTGRES_USER>` 走 socket 就能连上，不依赖口令是否被记在 env 里；
+ * PGPASSWORD 仍然导出，兼容把 `POSTGRES_HOST_AUTH_METHOD` 改严过的实例。
+ * 全程在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
+ *
+ * ## 连不上就退出，不猜
+ *
+ * 先真连一次。连不上直接 78 退出并说清用的是哪个用户、哪个库——上一版 mysql 的
+ * 教训就是「Access denied」被读成「口令不对」，实际是判据取错了账号，白等了一周。
+ */
+const POSTGRES_CREDENTIAL_LINES: readonly string[] = [
+  'CDS_PG_USER="${POSTGRES_USER:-${PGUSER:-postgres}}"',
+  'CDS_PG_PW="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"',
+  // 官方镜像里 POSTGRES_DB 缺省就等于 POSTGRES_USER，这里照同一条缺省链走。
+  'CDS_PG_DB="${POSTGRES_DB:-${PGDATABASE:-$CDS_PG_USER}}"',
+  'export PGPASSWORD="$CDS_PG_PW"',
+  'CDS_PG_PROBE=$(psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -tAc "SELECT 1" 2>&1) || {',
+  '  echo "cds-backup: 连不上 postgres（用户=$CDS_PG_USER 库=$CDS_PG_DB）：$CDS_PG_PROBE" >&2',
+  '  exit 78',
+  '}',
+];
+
+/**
+ * 同实例里**没被这份备份覆盖**的其它库，逐个报出来。
+ *
+ * 这一段不是装饰。本函数导出的是**一个库**（`$CDS_PG_DB`），而 postgres 一个实例
+ * 可以有很多库；「备了」和「备全了」是两件事，混着报就是下一次「以为有、其实没有」。
+ * 排除 `postgres` 维护库：它是镜像自带的空库，报出来只会变成每轮都在的噪音。
+ *
+ * 走 stderr 而不是 stdout：stdout 是备份产物本身，往里写一个字都会污染 dump。
+ * 前缀 `cds-backup-scope:` 是给调用方认领用的机器标记（见 index.ts 的 scopeNote）。
+ */
+const POSTGRES_SCOPE_NOTE_LINES: readonly string[] = [
+  'CDS_PG_OTHERS=$(psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -tAc '
+    + `"SELECT string_agg(datname, ',' ORDER BY datname) FROM pg_database`
+    + ` WHERE datallowconn AND NOT datistemplate AND datname <> current_database() AND datname <> 'postgres'"`
+    + ' 2>/dev/null | tr -d " ")',
+  // 空结果时 `[ -n ... ]` 为假，整条复合命令返回 1；后面还有语句，但加 `|| true`
+  // 免得将来有人把它挪到末尾，静默把整个脚本判成失败。
+  '[ -n "$CDS_PG_OTHERS" ] && echo "cds-backup-scope: 本次只导出库 $CDS_PG_DB；'
+    + '同实例另有未纳入备份的库：$CDS_PG_OTHERS" >&2 || true',
+];
+
+/**
+ * PostgreSQL 导出：容器内流式压缩，两端退出码都保住。
+ *
+ * 管道退出码那三个坑（默认只给最后一环、dash 没有 pipefail、gzip 写盘失败留下
+ * 一份截断档案还被当成功）在 `buildMysqlDumpScript` 的注释里写全了，这里用同一套
+ * fd3 / fd4 写法，不再复述。
+ *
+ * ## 为什么是 pg_dump 不是 pg_dumpall
+ *
+ * `pg_dumpall` 能一次带走整个集群和角色，但它的产物**没法灌回一个已经存在的集群**：
+ * 里面的 `CREATE ROLE` 撞上已存在的角色就报错，加 `--clean` 又会尝试 DROP 掉当前
+ * 连接用的那个角色。一份「导得出、灌不回」的备份等于没有备份——mysql 那侧的原话。
+ *
+ * `pg_dump --clean --if-exists` 相反：对同一个库反复灌都成立（先 DROP IF EXISTS
+ * 再建），既能盖回自己，也能搬到另一台空库上。`--no-owner --no-privileges` 是为了
+ * 后者：目标集群没有源集群那些角色时，属主/授权语句会整片失败。
+ *
+ * 代价是**角色、权限、以及同实例其它库不在这份备份里**。这不是悄悄的取舍：
+ * 其它库由 POSTGRES_SCOPE_NOTE_LINES 当场报出来，角色缺失记在 debt.cds.infra-backup.md。
+ */
+export function buildPostgresDumpScript(): string {
+  return [
+    ...POSTGRES_CREDENTIAL_LINES,
+    ...POSTGRES_SCOPE_NOTE_LINES,
+    'exec 3>&1',
+    'codes=$( { { pg_dump -U "$CDS_PG_USER" -d "$CDS_PG_DB" --clean --if-exists --no-owner --no-privileges;'
+      + ' echo "dump=$?" >&4; }'
+      + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
+    `d=$(printf '%s\\n' "$codes" | sed -n 's/^dump=//p')`,
+    `g=$(printf '%s\\n' "$codes" | sed -n 's/^gzip=//p')`,
+    '[ "${d:-1}" = 0 ] || exit "${d:-1}"',
+    '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
+  ].join('\n');
+}
+
+/**
+ * PostgreSQL 恢复：把 `.sql.gz` 灌回目标库。
+ *
+ * ## 这里有一个 mysql 那侧没有的坑
+ *
+ * **psql 默认遇错继续，跑完照样 exit 0。** 一份灌到一半全是错的 dump，psql 会把
+ * 错误打在 stderr 上然后返回 0——调用方读到 0 就报「已恢复」，正是本文件被烧过
+ * 三次的那种假成功，而且这一次连管道退出码都救不了（psql 自己就是撒谎的那个）。
+ * 所以 `-v ON_ERROR_STOP=1` 不是可选项：第一条语句失败即中止并返回非零。
+ *
+ * 其余（先 `gunzip -t` 验完整性、两端退出码经 fd4 回传）与 mysql 侧同一套写法。
+ */
+export function buildPostgresRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    ...POSTGRES_CREDENTIAL_LINES,
+    `gunzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gunzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    // psql 的 stdout 是噪音（一堆 SET / DROP 回显），赶到 stderr，别混进退出码通道。
+    `codes=$( { { gunzip -c ${p}; echo "gunzip=$?" >&4; }`
+      + ' | { psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -v ON_ERROR_STOP=1 --quiet >&2; echo "psql=$?" >&4; }; } 4>&1 )',
+    `u=$(printf '%s\\n' "$codes" | sed -n 's/^gunzip=//p')`,
+    `m=$(printf '%s\\n' "$codes" | sed -n 's/^psql=//p')`,
+    // 读不到退出码按失败处理——「不确定」不能当成「成功」。
+    '[ "${u:-1}" = 0 ] || exit "${u:-1}"',
+    '[ "${m:-1}" = 0 ] || exit "${m:-1}"',
+    'exit 0',
+  ].join('\n');
+}
+
+/**
+ * 数一数目标库里有多少张用户表。
+ *
+ * 和 mysql 侧同样的用途：恢复前后各数一次，让「已恢复」这句话带着能被核对的数字，
+ * 而不是一个自称。
+ */
+export function buildPostgresTableCountScript(): string {
+  return [
+    ...POSTGRES_CREDENTIAL_LINES,
+    'psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -tAc "SELECT count(*) FROM information_schema.tables'
+      + " WHERE table_schema NOT IN ('pg_catalog','information_schema')\"",
+  ].join('\n');
+}
+
+/** 导出脚本写给 stderr 的作用域说明的机器标记。调用方靠它把这一行认出来。 */
+export const POSTGRES_SCOPE_NOTE_MARKER = 'cds-backup-scope:';
+
+/** 从一段 stderr 里捞出作用域说明（没有就返回 null）。 */
+export function extractBackupScopeNote(stderr: string): string | null {
+  const line = String(stderr || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.includes(POSTGRES_SCOPE_NOTE_MARKER));
+  return line ? line.slice(line.indexOf(POSTGRES_SCOPE_NOTE_MARKER) + POSTGRES_SCOPE_NOTE_MARKER.length).trim() : null;
 }

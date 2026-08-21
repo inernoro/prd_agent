@@ -427,11 +427,23 @@ export function detectInfraAuth(
       return has('MINIO_ROOT_USER', 'MINIO_ACCESS_KEY')
         && has('MINIO_ROOT_PASSWORD', 'MINIO_SECRET_KEY');
     case 'memcached':
-    case 'kafka':
+      // 这三类原来一律 `return false`（「目录还没给它们认证」）。目录补上之后
+      // 那个常量就从「保守判定」变成了**谎报**：一台配好认证的库会永远挂在
+      // critical 名单里，而告警报多了就没人看了。现在改成读真实配置。
+      //
+      // `-Y <file>` 是 ASCII 协议认证，`-S` 是 SASL。env 里的 MEMCACHED_PASSWORD
+      // 单独不算数——口令存在不等于服务在校验它，必须命令行上真的启用了某一种。
+      return hasFlagValue('-y', '--auth-file') || hasFlag('-s');
+    case 'kafka': {
+      // 三处同时成立才算：开了 SASL 机制、客户端监听器不是明文、**自我广播地址**
+      // 也不是明文。广播地址是客户端真正拿去连的那一个（形状 8：一份不生效的声明
+      // 不能当成证明）。
+      const advertised = String(e.KAFKA_ADVERTISED_LISTENERS || '');
+      return Boolean(String(e.KAFKA_SASL_ENABLED_MECHANISMS || '').trim())
+        && !/(?:^|,)\s*PLAINTEXT:\/\//i.test(advertised);
+    }
     case 'nats':
-      // CDS 目录尚未给这三类服务启用认证。运行态必须把它们识别为明确无认证，
-      // 一旦发布到公网就升为最高级别告警，不能落入 unknown 后降级。
-      return false;
+      return hasFlagValue('--pass', '--auth');
     default:
       return null;
   }

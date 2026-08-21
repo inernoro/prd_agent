@@ -25,9 +25,14 @@ import {
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin,
+  backupKindOf,
+  type BackupKind,
   buildMysqlDumpScript,
   buildMysqlRestoreScript,
   buildMysqlTableCountScript,
+  buildPostgresDumpScript,
+  buildPostgresRestoreScript,
+  buildPostgresTableCountScript,
   buildRedisAppendOnlyScript,
   buildRedisRestorePlan,
   buildRedisRdbPathScript,
@@ -44,14 +49,16 @@ export interface InfraBackupRouterDeps {
   repoRoot?: string;
 }
 
-function detectKind(dockerImage: string): 'mongo' | 'redis' | 'mysql' | 'generic' {
-  const lower = dockerImage.toLowerCase();
-  if (lower.includes('mongo')) return 'mongo';
-  if (lower.includes('redis')) return 'redis';
-  // mysql/mariadb 此前没有分支，掉进 generic 的 `tar -C /data`——而它们的数据在
-  // /var/lib/mysql，于是下载到一个空壳还回 200（E41）。判定与周期备份的 backupKindOf 对齐。
-  if (lower.includes('mysql') || lower.includes('mariadb')) return 'mysql';
-  return 'generic';
+/**
+ * 这台服务该用哪种方式导出。
+ *
+ * 原来这里是**第三份**镜像判据（周期备份一份、暴露面自检一份、这里一份），
+ * 三份覆盖的类型各不相同，于是同一台 postgres「自检认得出、周期备份跳过、
+ * 下载走 tar 兜底拿到空壳」。现在直接复用周期备份那一份，`null` 才落 generic：
+ * 两条路径必然同进同退，不会再出现「自动备了、手工下载是空的」这种分裂。
+ */
+function detectKind(svc: Pick<InfraService, 'dockerImage' | 'id' | 'containerName'>): BackupKind | 'generic' {
+  return backupKindOf(svc.dockerImage, { id: svc.id, containerName: svc.containerName }) ?? 'generic';
 }
 
 function shq(s: string): string {
@@ -169,10 +176,12 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       return;
     }
 
-    const kind = detectKind(svc.dockerImage);
+    const kind = detectKind(svc);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const filename = `${svc.id}-${stamp}.`
-      + (kind === 'mongo' ? 'archive.gz' : kind === 'redis' ? 'rdb' : kind === 'mysql' ? 'sql.gz' : 'tar.gz');
+      + (kind === 'mongo' ? 'archive.gz'
+        : kind === 'redis' ? 'rdb'
+          : kind === 'mysql' || kind === 'postgres' ? 'sql.gz' : 'tar.gz');
 
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -239,14 +248,15 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           if (!res.headersSent) res.status(500).json({ error: err.message });
           else res.end();
         });
-      } else if (kind === 'mysql') {
-        // mysql 此前掉进下面的兜底 `tar -C /data`，而 mysql 的数据在 /var/lib/mysql，
-        // 于是**下载得到一个 22 字节的空 gzip 壳，HTTP 却是 200**（E41，2026-08-18 实测
-        // 三个 mysql 全是这样）。拿它当迁移数据源或动手前的兜底，等于什么都没有。
-        // 现在走与周期备份同一段导出脚本：流式压缩、两端退出码都保住。
+      } else if (kind === 'mysql' || kind === 'postgres') {
+        // 这两类此前都掉进下面的兜底 `tar -C /data`，而它们的数据分别在
+        // /var/lib/mysql 与 /var/lib/postgresql/data，于是**下载得到一个 22 字节的
+        // 空 gzip 壳，HTTP 却是 200**（E41，2026-08-18 实测三个 mysql 全是这样；
+        // postgres 是同一个形状，这一轮一起修）。拿它当迁移数据源或动手前的兜底，
+        // 等于什么都没有。现在走与周期备份同一段导出脚本：流式压缩、两端退出码都保住。
         const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-s'];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
-        proc.stdin.end(buildMysqlDumpScript());
+        proc.stdin.end(kind === 'mysql' ? buildMysqlDumpScript() : buildPostgresDumpScript());
         proc.stdout.pipe(res);
         let stderr = '';
         proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
@@ -255,9 +265,10 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
             // 截断取**尾**不取头：真正说明失败原因的那几行在末尾，取头只会拿到
             // 一堆无关的启动噪音（house rule 见 ssh-exec-failure 的三宗罪）。
             const tail = stderr.length > 300 ? `…（前文截断）${stderr.slice(-300)}` : stderr;
-            console.error(`[infra-backup] mysqldump exit ${code}: ${tail}`);
+            const tool = kind === 'mysql' ? 'mysqldump' : 'pg_dump';
+            console.error(`[infra-backup] ${tool} exit ${code}: ${tail}`);
             if (!res.headersSent) res.status(500).json({ error: `导出失败 exit=${code}`, detail: tail });
-            else res.destroy(new Error(`mysqldump exit ${code}: ${tail}`));
+            else res.destroy(new Error(`${tool} exit ${code}: ${tail}`));
           }
         });
         proc.on('error', (err) => {
@@ -318,7 +329,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       return;
     }
 
-    const kind = detectKind(svc.dockerImage);
+    const kind = detectKind(svc);
     const { spawn } = await import('node:child_process');
 
     // 1) 先自动备份当前状态（便于"撤销恢复"）
@@ -327,7 +338,9 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     // 扩展名要说明这份撤销快照是什么：redis 存的是 RDB，拿 `.bin` 命名的话，
     // 真要拿它回滚的人分不清能不能直接喂回去。
-    const preBackupExt = kind === 'mongo' ? 'archive.gz' : kind === 'redis' ? 'rdb' : 'bin';
+    const preBackupExt = kind === 'mongo' ? 'archive.gz'
+      : kind === 'redis' ? 'rdb'
+        : kind === 'mysql' || kind === 'postgres' ? 'sql.gz' : 'bin';
     const preBackupPath = `${backupDir}/${backupKey(svc.projectId, svc.id)}-pre-restore-${stamp}.${preBackupExt}`;
 
     try {
@@ -468,19 +481,28 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           preRestoreBackup: preBackupPath,
           message: 'Redis 已从快照恢复：容器先停止、覆盖快照文件、再启动加载',
         });
-      } else if (kind === 'mysql') {
-        // mysql 此前**根本没有恢复入口**——能导出却灌不回去，等于没有备份。
+      } else if (kind === 'mysql' || kind === 'postgres') {
+        // 这两类此前**根本没有恢复入口**——能导出却灌不回去，等于没有备份。
         // 大 dump 不能走 stdin 字符串（170MB 的库很常见），所以先落宿主暂存文件，
         // 再 docker cp 进容器、在容器内解压灌库，最后清理两边。
+        //
+        // 两侧共用同一条流程，只有三段脚本按类型取：导出（恢复前快照）、导入、数表。
+        // 各自的坑写在脚本函数的注释里（mysql 是管道退出码，postgres 是 psql 默认
+        // 遇错继续照样 exit 0），这里不复述。
+        const isPg = kind === 'postgres';
+        const engineLabel = isPg ? 'PostgreSQL' : 'MySQL';
+        const dumpScript = isPg ? buildPostgresDumpScript() : buildMysqlDumpScript();
+        const restoreScript = isPg ? buildPostgresRestoreScript : buildMysqlRestoreScript;
+        const tableCountScript = isPg ? buildPostgresTableCountScript() : buildMysqlTableCountScript();
         const uploadPath = `${backupDir}/.upload-${backupKey(svc.projectId, svc.id)}-${stamp}.sql.gz`;
         const inContainer = `/tmp/cds-restore-${stamp}.sql.gz`;
         let uploadBytes = 0;
         // 数不出来就留 null，不要拿 0 顶替——「没数到」和「一张表都没有」是两回事。
         let tablesBefore: number | null = null;
         let tablesAfter: number | null = null;
-        const countMysqlTables = async (container: string): Promise<number | null> => {
+        const countTables = async (container: string): Promise<number | null> => {
           const r = await shell.exec(`docker exec -i ${shq(container)} sh -s`,
-            { timeout: 60_000, stdin: buildMysqlTableCountScript() });
+            { timeout: 60_000, stdin: tableCountScript });
           if (r.exitCode !== 0) return null;
           const n = Number((r.stdout || '').trim().split('\n').pop()?.trim());
           return Number.isFinite(n) ? n : null;
@@ -508,10 +530,10 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         }
 
         try {
-          // 恢复前先存一份当前状态：mysql 分支此前连撤销快照都没有。
+          // 恢复前先存一份当前状态：这两个分支此前连撤销快照都没有。
           const pre = await shell.exec(
             `docker exec -i ${shq(svc.containerName)} sh -s > ${shq(preBackupPath)}`,
-            { timeout: 600_000, stdin: buildMysqlDumpScript() },
+            { timeout: 600_000, stdin: dumpScript },
           );
           if (pre.exitCode !== 0) {
             // 存不下当前状态就不许往下走——没有退路的恢复不该开始。
@@ -522,15 +544,15 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
             { timeout: 600_000 },
           );
           if (cp.exitCode !== 0) throw new Error(`拷入容器失败：${outputTail(combinedOutput(cp), 200)}`);
-          tablesBefore = await countMysqlTables(svc.containerName);
-          // 灌库：口令走容器内 MYSQL_PWD，不进宿主命令行；管道两端的退出码都要检查
-          // （裸管道只会给出 mysql 那一端的，见 buildMysqlRestoreScript 的注释）。
+          tablesBefore = await countTables(svc.containerName);
+          // 灌库：口令在容器内展开，不进宿主命令行；管道两端的退出码都要检查
+          // （裸管道只会给出最后一环的，见 buildMysqlRestoreScript 的注释）。
           const load = await shell.exec(
             `docker exec -i ${shq(svc.containerName)} sh -s`,
-            { timeout: 1_800_000, stdin: buildMysqlRestoreScript(inContainer) },
+            { timeout: 1_800_000, stdin: restoreScript(inContainer) },
           );
           if (load.exitCode !== 0) throw new Error(`导入失败：${outputTail(combinedOutput(load), 300)}`);
-          tablesAfter = await countMysqlTables(svc.containerName);
+          tablesAfter = await countTables(svc.containerName);
         } catch (err) {
           res.status(500).json({ error: `恢复失败：${(err as Error).message}`, preRestoreBackup: preBackupPath });
           return;
@@ -542,7 +564,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
 
         stateService.recordDestructiveOp({
           type: 'purge-database',
-          summary: `恢复 ${svc.id} MySQL 全量 dump（恢复前状态已存：${preBackupPath}）`,
+          summary: `恢复 ${svc.id} ${engineLabel} dump（恢复前状态已存：${preBackupPath}）`,
         });
         res.json({
           restored: true,
@@ -551,7 +573,8 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           tablesBefore,
           tablesAfter,
           // 「已恢复」这句话必须带着能被核对的数字，否则和上一版那句假成功长得一模一样。
-          message: `MySQL 已从 dump 恢复：收到 ${uploadBytes} 字节，表数 ${tablesBefore ?? '未知'} → ${tablesAfter ?? '未知'}`
+          message: `${engineLabel} 已从 dump 恢复：收到 ${uploadBytes} 字节，`
+            + `表数 ${tablesBefore ?? '未知'} → ${tablesAfter ?? '未知'}`
             + '（恢复前状态已另存，可回滚）',
         });
       } else {

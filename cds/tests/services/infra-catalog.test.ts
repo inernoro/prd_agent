@@ -120,10 +120,23 @@ describe('infra-catalog SSOT', () => {
     expect(pg.connectionEnvKeys).toContain('DATABASE_URL');
     expect(pg.categoryLabel).toBe('数据库');
     expect(pg.hasPersistence).toBe(true);
-    // The serialized public view must not contain any built secret value.
+    // The serialized public view must not contain any built secret VALUE.
     const serialized = JSON.stringify(pub);
     expect(serialized).not.toContain('postgresql://'); // no connection-string values
-    expect(serialized.toLowerCase()).not.toContain('password');
+    // 断言的是「秘密的值不许出现」，不是「字面量 password 不许出现」——
+    // 后者把 `MEMCACHED_PASSWORD` 这种**键名**也一并禁掉了，而键名正是这个视图
+    // 存在的理由（`S3_SECRET_KEY` 一直都在里面）。判据换成哨兵值：拿一个不会
+    // 自然出现的串当密钥去 build 每个预设，它一旦漏进公共视图就红。
+    const SENTINEL = 'zzsentinelsecretzz';
+    for (const entry of INFRA_CATALOG) {
+      const secrets = Object.fromEntries((entry.secretKeys || []).map((k) => [k, SENTINEL]));
+      const built = entry.build(secrets);
+      // 先自证哨兵确实进了 build 的产物，否则下面那条断言可能是恒真的空转。
+      if ((entry.secretKeys || []).length > 0) {
+        expect(JSON.stringify(built), `${entry.id} 的 build 没有用到生成的密钥`).toContain(SENTINEL);
+      }
+    }
+    expect(serialized).not.toContain(SENTINEL);
   });
 });
 
@@ -157,15 +170,38 @@ describe('catalog 的认证能被暴露审计认出来', () => {
     expect(detectInfraAuth('redis', {}, [])).toBe(false);
   });
 
-  it('仍然没有认证的预设要如实暴露，不许假装已修', () => {
-    // memcached / kafka / nats 这一轮没补（SASL / token 是各自独立的一摊配置）。
-    // 台账 E16 记着它们；这里钉住现状，等哪天补了，这条会红，提醒同步台账与 runbook。
+  it('memcached / kafka / nats：建出来的东西也判为已认证', () => {
+    // 这三个原来一个都没有认证（catalog 无 secretKeys，连接串是裸的），
+    // 审计那边则硬编码 `return false`。两侧同批补齐之后，判据必须真的对得上：
+    // 拿 catalog 真建出来的 env + 启动命令去喂审计，不许两边各自断言自己那一半。
     for (const id of ['memcached', 'kafka', 'nats']) {
-      const built = getInfraCatalogEntry(id)!.build({});
-      const hasSecret = !!getInfraCatalogEntry(id)!.secretKeys?.length;
-      expect(hasSecret, `${id} 已补密钥，请同步更新 doc/debt.cds.md E16 与轮换 runbook §4`).toBe(false);
-      expect(built.env?.REDIS_PASSWORD).toBeUndefined();
+      const entry = getInfraCatalogEntry(id)!;
+      expect(entry.secretKeys?.length, `${id} 没有要生成的密钥`).toBeGreaterThan(0);
+      const built = entry.build({ password: 'hex0123456789' });
+      const cmd = [
+        ...(Array.isArray(entry.entrypoint) ? entry.entrypoint : entry.entrypoint ? [entry.entrypoint] : []),
+        ...(Array.isArray(entry.command) ? entry.command : entry.command ? [entry.command] : []),
+      ];
+      expect(detectInfraAuth(id, built.env, cmd), `${id} 建出来却判成无认证`).toBe(true);
     }
+  });
+
+  it('对照组：把认证配置拿掉就必须判成裸奔（防判据恒真）', () => {
+    // 上一条如果判据恒真，它照样全绿。这里逐个把生效的那一处拿掉。
+    expect(detectInfraAuth('memcached', {}, ['sh', '-c', 'exec docker-entrypoint.sh memcached']))
+      .toBe(false);
+    // kafka：SASL 机制开着，但**自我广播地址**还是明文——客户端拿到的重定向
+    // 指向明文协议，等于没开。这一档必须判 false（形状 8）。
+    expect(detectInfraAuth('kafka', {
+      KAFKA_SASL_ENABLED_MECHANISMS: 'PLAIN',
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092',
+    }, [])).toBe(false);
+    expect(detectInfraAuth('kafka', { KAFKA_ADVERTISED_LISTENERS: 'SASL_PLAINTEXT://kafka:9092' }, []))
+      .toBe(false);
+    expect(detectInfraAuth('nats', {}, ['sh', '-c', 'exec /nats-server'])).toBe(false);
+    // 引用了一个没有值的变量 = 空口令，不许判成已认证
+    expect(detectInfraAuth('nats', {}, ['sh', '-c', 'exec /nats-server --user "$NATS_USER" --pass "$NATS_PASSWORD"']))
+      .toBe(false);
   });
 });
 
