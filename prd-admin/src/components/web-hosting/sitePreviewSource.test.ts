@@ -123,10 +123,14 @@ describe('supportsNativePdfViewer', () => {
  */
 describe('提问设置入口', () => {
   const page = stripComments(fs.readFileSync(path.join(HERE, '../../pages/WebPagesPage.tsx'), 'utf8'));
+  // 网格卡已抽成独立组件，列表行仍在页面里。守卫要跟着入口走，不能钉死在某个文件上，
+  // 否则一次正常搬家就让它变红，而真正的漏接（某一形态没有入口）反而看不出来。
+  const gridCard = stripComments(fs.readFileSync(path.join(HERE, 'SiteCard.tsx'), 'utf8'));
 
   it('站点卡「更多设置」菜单能直达提问设置', () => {
     expect(page).toContain('AskConfigDrawer');
-    // 两种卡片形态（网格卡 + 列表行）都要有，漏一种就有一半用户找不到
-    expect(page.match(/label:\s*'提问设置'/g) ?? []).toHaveLength(2);
+    // 网格卡与列表行两种形态各自都要有，漏一种就有一半用户找不到
+    expect(gridCard.match(/label:\s*'提问设置'/g) ?? []).toHaveLength(1);
+    expect(page.match(/label:\s*'提问设置'/g) ?? []).toHaveLength(1);
   });
 });

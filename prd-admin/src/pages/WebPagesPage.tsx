@@ -48,6 +48,14 @@ import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
+import {
+  SiteCard,
+  SITE_CARD_SIZES,
+  WEB_PAGE_MIME,
+  type SiteCaps,
+  type SiteCardSize,
+  type SiteShareStats,
+} from '@/components/web-hosting/SiteCard';
 import AskConfigDrawer from '@/components/web-hosting/ask/AskConfigDrawer';
 import { createPortal } from 'react-dom';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
@@ -56,8 +64,7 @@ import { ShareDock, useDockDrag } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
 
-/** 网页托管页面专用的 ShareDock MIME 类型 */
-const WEB_PAGE_MIME = 'application/x-map-site-id';
+/** ShareDock MIME 由 SiteCard 组件统一定义（卡片与投放槽必须同一个常量） */
 
 // 树导航「未分组」虚拟节点 ID（仅前端过滤用，发往后端前必须还原成 null）
 const UNGROUPED_ID = '__ungrouped__';
@@ -83,13 +90,10 @@ import {
   Link2,
   Link2Off,
   FileCode2,
-  FileArchive,
-  HardDrive,
   UploadCloud,
   QrCode,
   Globe,
   Library,
-  BookOpen,
   Replace,
   AlertTriangle,
   Folder,
@@ -139,6 +143,30 @@ function fmtSize(bytes: number) {
 /** 从分享列表（后端已过滤掉 visit 便捷链 + 已撤销）构建「已分享站点」集合。
  * 仅把"单站点分享"（siteId 或 siteIds 仅含一个）计入，使卡片标记与「只撤单站点」的取消语义一致；
  * 多站点合集分享不标记单卡。 */
+/**
+ * 按站点聚合分享侧的成果数据 —— 卡片大卡的「有效链接 / 最近访问」两格。
+ *
+ * 「有效」的口径与分享档顶栏那个数字必须是同一条：**未过期且未撤销**。
+ * 合集链接（一条链接指向多个站点）对它命中的每个站点都计一次——用户问的是
+ * 「这个站点还有几条对外链接活着」，合集链接对该站点同样活着。
+ */
+function buildSiteShareStats(items: ShareLinkItem[]): Map<string, SiteShareStats> {
+  const map = new Map<string, SiteShareStats>();
+  for (const it of items) {
+    if (it.isRevoked || it.isExpired) continue;
+    const siteIds = it.siteId ? [it.siteId] : (it.siteIds ?? []);
+    for (const sid of siteIds) {
+      const prev = map.get(sid);
+      const lastViewedAt =
+        !prev?.lastViewedAt || (it.lastViewedAt && it.lastViewedAt > prev.lastViewedAt)
+          ? (it.lastViewedAt ?? prev?.lastViewedAt)
+          : prev.lastViewedAt;
+      map.set(sid, { activeLinks: (prev?.activeLinks ?? 0) + 1, lastViewedAt });
+    }
+  }
+  return map;
+}
+
 function buildSharedSiteIds(items: ShareLinkItem[]): Set<string> {
   const set = new Set<string>();
   for (const it of items) {
@@ -177,13 +205,10 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 // ─── 分组方式（参考文学创作 LiteraryAgentWorkspaceListPage） ───
 
 type GroupMode = 'time' | 'folder';
-type WebPageCardSize = 'small' | 'medium' | 'large';
+/** 卡片尺寸档的唯一定义在 SiteCard 组件（宽度与设计稿绑定），这里只消费。 */
+type WebPageCardSize = SiteCardSize;
 
-const CARD_SIZE_OPTIONS: { value: WebPageCardSize; label: string; width: number }[] = [
-  { value: 'small', label: '小', width: 220 },
-  { value: 'medium', label: '中', width: 260 },
-  { value: 'large', label: '大', width: 320 },
-];
+const CARD_SIZE_OPTIONS = SITE_CARD_SIZES;
 
 function normalizeCardSize(v: string): WebPageCardSize {
   return v === 'small' || v === 'large' || v === 'medium' ? v : 'medium';
@@ -336,13 +361,12 @@ function SegmentPills({
 
 // ─── Main Page ───
 
-/** 单站点在当前作用域下的操作能力（团队作用域按角色 + 是否站点创建者解析；个人作用域全开） */
-export interface SiteCaps {
-  canEdit: boolean;
-  canDelete: boolean;
-  canShare: boolean;
-  canSetVisibility: boolean;
-}
+/**
+ * 单站点在当前作用域下的操作能力（团队作用域按角色 + 是否站点创建者解析；个人作用域全开）。
+ * 定义在 SiteCard 组件里，这里只做转出，避免同一判据分裂成两份各自漂移。
+ */
+export { SiteCard };
+export type { SiteCaps };
 
 export default function WebPagesPage() {
   const { isMobile } = useBreakpoint();
@@ -394,6 +418,8 @@ export default function WebPagesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
   const [sharedSiteIds, setSharedSiteIds] = useState<Set<string>>(new Set());
+  // 分享链接原始列表（loadShares 同批取回），用于按站点聚合「有效链接数 / 最近访问」
+  const [shareLinks, setShareLinks] = useState<ShareLinkItem[]>([]);
 
   const [folders, setFolders] = useState<string[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
@@ -485,7 +511,12 @@ export default function WebPagesPage() {
   // 拉真实分享列表（后端已排除 visit 便捷链 + 已撤销），刷新「已分享」标记
   const loadShares = useCallback(async () => {
     const res = await listSiteShares();
-    if (res.success) setSharedSiteIds(buildSharedSiteIds(res.data.items));
+    if (res.success) {
+      setSharedSiteIds(buildSharedSiteIds(res.data.items));
+      // 原始链接也留一份：卡片的「有效链接 N / 最近访问」要按站点聚合，
+      // 只留一个 Set 就只能回答「有没有分享过」，回答不了「还有几条有效、上次谁打开的」
+      setShareLinks(res.data.items);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -669,7 +700,18 @@ export default function WebPagesPage() {
     () => buildSiteGroups(displaySites, groupMode, currentSpace.kind === 'team' ? teamGroups : undefined),
     [displaySites, groupMode, currentSpace.kind, teamGroups],
   );
-  const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 260;
+  const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
+  const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
+
+  /**
+   * 打开站点本体。与卡片/列表两个视图共用同一条路径：先记一次访客痕迹，
+   * 再用 /s/wp/{token} 访问链打开（同步开窗规避弹窗拦截，地址异步解析后填入）。
+   */
+  const handleVisitSite = useCallback((site: HostedSite) => {
+    void recordSiteView(site.id);
+    const w = window.open('', '_blank');
+    void resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
+  }, []);
   const activeSortLabel = SORT_OPTIONS.find(o => o.value === sort)?.label ?? '最新';
   const activeSpaceLabel = currentSpace.kind === 'team'
     ? (teams.find(t => t.team.id === currentSpace.teamId)?.team.name ?? '团队空间')
@@ -765,11 +807,14 @@ export default function WebPagesPage() {
           <SiteCard
             key={site.id}
             site={site}
+            size={cardSize}
             selected={selectedIds.has(site.id)}
             fresh={freshIds.has(site.id)}
             shared={sharedSiteIds.has(site.id)}
+            shareStats={siteShareStats.get(site.id)}
             caps={siteCaps(site)}
             ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
+            onVisit={() => handleVisitSite(site)}
             onSelect={() => toggleSelect(site.id)}
             onTogglePublic={() => handleMakePublic(site)}
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
@@ -2287,302 +2332,6 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments, onAskConfig }: {
-  site: HostedSite;
-  selected: boolean;
-  fresh?: boolean;
-  shared?: boolean;
-  caps?: SiteCaps;
-  ownerCard?: SiteOwnerCard;
-  onViewers?: () => void;
-  onSelect: () => void;
-  onTogglePublic: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-  onShare: () => void;
-  onQrCode: () => void;
-  onTransferToLibrary: () => void;
-  onReplaceFile: (file: File) => void;
-  onMove?: () => void;
-  onComments?: () => void;
-  /** 提问设置抽屉；仅 canEdit 时传入 */
-  onAskConfig?: () => void;
-}) {
-  const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
-  const isPublic = site.visibility === 'public';
-  const [fileDragOver, setFileDragOver] = useState(false);
-  const { onPointerDown } = useDockDrag({
-    mime: WEB_PAGE_MIME,
-    id: site.id,
-    label: site.title,
-    icon: 'WEB',
-  });
-
-  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
-
-  const handleDragOver = (e: React.DragEvent) => {
-    if (!hasFiles(e) || !c.canEdit) return; // 无编辑权（viewer）不接受拖拽替换
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-    if (!fileDragOver) setFileDragOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    // 仅当真正离开卡片时才收起（忽略子元素间冒泡）
-    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-    setFileDragOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    if (!hasFiles(e) || !c.canEdit) return;
-    e.preventDefault();
-    setFileDragOver(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) onReplaceFile(f);
-  };
-
-  // 访问 = 无密码分享链接（≥12 字母 token 形式 /s/wp/{token}），
-  // 与分享的数字短链 /s/{seq} 体系彻底分开。先同步开窗规避拦截，再异步解析。
-  const handleVisit = () => {
-    // 记录一次访客痕迹（fire-and-forget，不阻塞打开）
-    void recordSiteView(site.id);
-    const w = window.open('', '_blank');
-    resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
-  };
-
-  return (
-    <div
-      data-tour-id="webpages-card"
-      className={['group relative w-full cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
-      style={{
-        borderRadius: 24,
-        outline: selected ? '2px solid var(--accent-primary)' : '1px solid transparent',
-        outlineOffset: selected ? 3 : 0,
-      }}
-      onPointerDown={onPointerDown}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
-      <div
-        className="relative overflow-hidden rounded-[18px] border transition-all duration-300 group-hover:-translate-y-0.5 group-hover:shadow-xl group-hover:shadow-black/25"
-        style={{
-          background: 'linear-gradient(180deg, var(--nested-block-bg), var(--nested-block-bg))',
-          borderColor: fileDragOver ? 'var(--accent-primary)' : selected ? 'var(--accent-primary)' : 'var(--border-default)',
-        }}
-      >
-        {/* 拖文件到卡片上时显示"替换网页"提示，松手后弹二次确认 */}
-        {fileDragOver && (
-          <div
-            className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 rounded-[18px] backdrop-blur-sm"
-            style={{
-              background: 'color-mix(in srgb, var(--accent-primary) 26%, rgba(0,0,0,0.55))',
-              border: '2px dashed var(--accent-primary)',
-            }}
-          >
-            <Replace size={30} className="text-token-primary" />
-            <span className="text-[15px] font-semibold text-token-primary">替换此网页</span>
-            <span className="px-3 text-center text-[11px] text-token-primary">松开以替换「{site.title}」的内容</span>
-          </div>
-        )}
-        <div
-          className="relative cursor-pointer overflow-hidden"
-          style={{ aspectRatio: '16 / 9', background: 'var(--bg-sunken)' }}
-          onClick={handleVisit}
-        >
-          {site.coverImageUrl ? (
-            <img
-              src={site.coverImageUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 group-hover:scale-[1.035]"
-            />
-          ) : isPdfSite(site) ? (
-            <PdfThumbnail
-              sizeBytes={site.files.find(f => f.path?.toLowerCase().endsWith('.pdf'))?.size ?? site.totalSize}
-              className="absolute inset-0 h-full w-full"
-            />
-          ) : (
-            <SitePreview site={site} url={site.siteUrl} className="h-full w-full transition-transform duration-700 group-hover:scale-[1.035]" />
-          )}
-
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              background:
-                'linear-gradient(180deg, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.02) 34%, rgba(0,0,0,0.18) 100%)',
-            }}
-          />
-
-          <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
-            {isPublic && (
-              <span className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold shadow-md backdrop-blur-md" style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)' }}>
-                <Globe size={12} /> 公开
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onSelect(); }}
-              className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/30 px-2.5 text-[11px] font-medium text-token-primary opacity-0 shadow-md backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
-              title={selected ? '取消选择' : '选择'}
-            >
-              <input
-                type="checkbox"
-                checked={selected}
-                readOnly
-                className="pointer-events-none"
-                style={{ accentColor: 'var(--accent-primary)' }}
-              />
-              选择
-            </button>
-          </div>
-
-          {/* 来源标签：手动上传是常态，不展示；仅工作流/API/分享保存等非常态来源才标注 */}
-          {site.sourceType !== 'upload' && (
-            <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
-              <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-token-secondary backdrop-blur-md">
-                {sourceTypeLabels[site.sourceType] ?? site.sourceType}
-              </span>
-            </div>
-          )}
-
-          <div className="pointer-events-none absolute bottom-3 left-3 right-3 z-20 flex min-w-0 items-center justify-end gap-1.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
-            {c.canShare && (
-              <IconAction
-                icon={shared ? <Link2 size={12} /> : <Share2 size={12} />}
-                label={shared ? '已分享' : '分享'}
-                color={shared ? '#fcd34d' : undefined}
-                onClick={onShare}
-              />
-            )}
-            {c.canEdit && <IconAction icon={<Edit3 size={12} />} label="编辑" onClick={onEdit} />}
-            <MoreActionsButton
-              actions={[
-                { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
-                c.canSetVisibility
-                  ? isPublic
-                    ? { label: '取消公开', icon: <Lock size={13} />, onClick: onTogglePublic, color: '#fca5a5' }
-                    : { label: '发布到公开页', icon: <Globe size={13} />, onClick: onTogglePublic, color: 'var(--semantic-success-text)' }
-                  : null,
-                isPublic
-                  ? { label: '转存到知识库', icon: <BookOpen size={13} />, onClick: onTransferToLibrary }
-                  : null,
-                onComments
-                  ? { label: '评论管理', icon: <MessageSquare size={13} />, onClick: onComments }
-                  : null,
-                onAskConfig
-                  ? { label: '提问设置', icon: <MessageCircleQuestion size={13} />, onClick: onAskConfig }
-                  : null,
-                onViewers
-                  ? { label: '访客', icon: <Eye size={13} />, onClick: onViewers }
-                  : null,
-                c.canEdit && onMove
-                  ? { label: '移动到空间/文件夹', icon: <FolderInput size={13} />, onClick: onMove }
-                  : null,
-                c.canDelete
-                  ? { label: '删除', icon: <Trash2 size={13} />, onClick: onDelete, danger: true }
-                  : null,
-              ]}
-            />
-          </div>
-        </div>
-
-        <div className="flex min-h-[92px] flex-col gap-1.5 px-3 py-2.5">
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-1">
-              {shared && (
-                <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
-                  <Link2 size={9} /> 已分享
-                </span>
-              )}
-              <h3
-                className="truncate text-[15px] font-semibold leading-tight cursor-pointer hover:underline"
-                style={{ color: shared ? 'var(--semantic-warning-text)' : 'var(--text-primary)' }}
-                onClick={handleVisit}
-                title={site.title}
-              >
-                {site.title}
-              </h3>
-            </div>
-            {/* 描述行始终保留高度，无描述时显示浅色占位，让所有卡片底部对齐 */}
-            <p
-              className="mt-0.5 line-clamp-1 text-[11px] leading-snug"
-              style={{ color: site.description ? 'var(--text-secondary)' : 'var(--text-muted)', fontStyle: site.description ? 'normal' : 'italic', opacity: site.description ? 1 : 0.6 }}
-            >
-              {site.description || '未填写描述'}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-token-muted">
-            <span data-tour-id="webpages-viewcount" className="flex items-center gap-0.5"><Eye size={11} />{site.viewCount}</span>
-            <span className="flex items-center gap-0.5"><Clock size={11} />{relativeTime(site.createdAt)}</span>
-            <span className="flex items-center gap-0.5"><FileArchive size={11} />{site.files.length} 文件</span>
-            <span className="flex items-center gap-0.5"><HardDrive size={11} />{fmtSize(site.totalSize)}</span>
-            {site.folder && <span className="flex items-center gap-0.5"><FolderOpen size={11} />{site.folder}</span>}
-          </div>
-
-          {/* 团队作用域：左下角显示创建者头像 + 昵称 */}
-          {ownerCard && (
-            <div className="flex items-center gap-1.5 text-[11px] text-token-secondary">
-              <UserAvatar
-                src={resolveAvatarUrl({ avatarFileName: ownerCard.avatarFileName })}
-                className="w-4 h-4 rounded-full"
-              />
-              <span className="truncate">{ownerCard.displayName}</span>
-            </div>
-          )}
-
-          {site.tags.length > 0 && (
-            <div className="mt-auto flex max-h-[20px] flex-wrap items-center gap-1 overflow-hidden">
-              {site.tags.slice(0, 3).map(tag => (
-                <span
-                  key={tag}
-                  className="rounded-full px-1.5 py-0.5 text-[10px]"
-                  style={{ background: 'var(--bg-sunken)', color: 'var(--text-muted)' }}
-                >
-                  {tag}
-                </span>
-              ))}
-              {site.tags.length > 3 && (
-                <span className="text-[10px] text-token-muted">
-                  +{site.tags.length - 3}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function IconAction({
-  icon,
-  label,
-  onClick,
-  danger,
-  color,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  danger?: boolean;
-  /** 自定义图标色（优先于 danger） */
-  color?: string;
-}) {
-  const c = color ?? (danger ? '#fecaca' : undefined);
-  return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/38 text-token-primary shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
-      title={label}
-      aria-label={label}
-      style={c ? { color: c } : undefined}
-    >
-      {icon}
-    </button>
-  );
-}
 
 type MoreAction = {
   label: string;
