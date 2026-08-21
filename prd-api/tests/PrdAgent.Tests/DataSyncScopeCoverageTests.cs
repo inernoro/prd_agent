@@ -883,6 +883,35 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 脱敏契约也必须冻结在签发那一刻()
+    {
+        // 冻集合名只冻了契约的一半。同意页上每个集合旁边还列着「这些字段不会离开本站」，
+        // 那份清单同样是批准人看着点下同意的。清单端点和导出端点如果在票的有效期内
+        // 拿**当前**白名单重算脱敏字段，源站中途上线一个把某字段移出 RedactFields 的
+        // 版本，这张老票立刻就能导出同意页明说会留在本地的字段。
+        //
+        // 这条守卫扫源码而不是断言行为：判定函数是私有的，而真正会退化的不是它算得对
+        // 不对，是「有没有人调它」（predicate-and-wiring-discipline 形状 2）。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncProviderController.cs");
+        var source = File.ReadAllText(path);
+
+        // 签发时把生效后的脱敏字段逐集合冻进票里。
+        Assert.Contains("{ \"Redactions\", new BsonDocument(DataSyncScope.Expand(approvedGroups)", source, StringComparison.Ordinal);
+        Assert.Contains("DataSyncScope.ApplyGrant(c, request.IncludeCredentials).RedactFields", source, StringComparison.Ordinal);
+
+        // 清单与导出都按冻结契约判。
+        var reads = Regex.Matches(source, @"ReadFrozenScope\(grant, ").Count;
+        Assert.True(reads >= 2,
+            $"只有 {reads} 处按冻结的脱敏契约判（清单 / 导出各需一处）——少一处那条路就还在跟着白名单变");
+
+        // 除了「签发时冻结」和「存量票的兜底重算」这两处，控制器里不许再有第三处
+        // 现算脱敏字段：多一处就是判据分裂，迟早各自漂移（形状 3）。
+        var recomputes = Regex.Matches(source, @"DataSyncScope\.ApplyGrant\(").Count;
+        Assert.True(recomputes == 2,
+            $"控制器里有 {recomputes} 处 DataSyncScope.ApplyGrant——只允许签发冻结与存量兜底这两处");
+    }
+
+    [Fact]
     public void 票据校验必须拿当前允许名单重对一遍()
     {
         // 「移出名单」要当场生效，靠的是 ResolveExportGrantAsync 每次都用**当前**名单
@@ -969,23 +998,31 @@ public class DataSyncScopeCoverageTests
         // PasswordHash，清单还在说它已被清空，目标站管理员对着一份与事实相反的
         // 对照表点了确认（形状 3：判据分裂后各自漂移）。
         //
-        // 现在两边都调 ApplyGrant。这条守卫钉死这件事：源码里除了 ApplyGrant 自身，
-        // 不许再出现第二处「按 includeCredentials 改写 RedactFields」的写法，
-        // 且两个端点都必须真的调它。
+        // 现在两边都调 ReadFrozenScope（票上冻着的那份，取不到才落回 ApplyGrant）。
+        // 这条守卫钉死这件事：源码里只允许有**一处**「改写 RedactFields」的写法，
+        // 而且必须在那个共用判定函数里；两个端点都必须真的调它。
         var providerPath = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncProviderController.cs");
         var provider = File.ReadAllText(providerPath);
 
-        var callSites = Regex.Matches(provider, @"DataSyncScope\.ApplyGrant\(").Count;
+        var callSites = Regex.Matches(provider, @"ReadFrozenScope\(grant, ").Count;
         Assert.True(callSites >= 2,
-            $"源站只有 {callSites} 处调用 ApplyGrant，清单与导出必须各调一次——少一处就是又有人自己算了一遍");
+            $"源站只有 {callSites} 处调用 ReadFrozenScope，清单与导出必须各调一次——少一处就是又有人自己算了一遍");
 
-        // 自己改写 RedactFields 的写法一律不许出现在 Controller 里。
-        Assert.DoesNotContain("RedactFields =", provider, StringComparison.Ordinal);
+        // 改写 RedactFields 只许出现在共用判定函数里，别处一处都不许有。
+        var helper = Regex.Match(
+            provider,
+            @"private static DataSyncCollection ReadFrozenScope\((?<body>.*?)\n    \}",
+            RegexOptions.Singleline);
+        Assert.True(helper.Success, "找不到 ReadFrozenScope 了，这条守卫的前提已变");
+        var rewrites = Regex.Matches(provider, @"RedactFields = ").Count;
+        Assert.True(rewrites == 1,
+            $"控制器里有 {rewrites} 处改写 RedactFields——只允许 ReadFrozenScope 那一处");
+        Assert.Contains("RedactFields = ", helper.Groups["body"].Value, StringComparison.Ordinal);
 
-        // 清单端点确实把 ApplyGrant 的结果报出去了，而不是算完丢掉（形状 2）。
+        // 清单端点确实把判定结果报出去了，而不是算完丢掉（形状 2）。
         var manifest = Regex.Match(provider, @"HttpGet\(""manifest""\)(?<body>.*?)(?=\[Http)", RegexOptions.Singleline);
         Assert.True(manifest.Success, "找不到 manifest 端点了，这条守卫的前提已变");
-        Assert.Contains("ApplyGrant", manifest.Groups["body"].Value, StringComparison.Ordinal);
+        Assert.Contains("ReadFrozenScope(grant, ", manifest.Groups["body"].Value, StringComparison.Ordinal);
         Assert.Contains("effectiveScope.RedactFields", manifest.Groups["body"].Value, StringComparison.Ordinal);
     }
 

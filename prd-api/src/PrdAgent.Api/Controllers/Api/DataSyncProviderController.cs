@@ -457,6 +457,21 @@ public sealed class DataSyncProviderController : ControllerBase
             // 新集合并归进某个已批准的分组，这张老票立刻就能读到批准人从没见过、
             // 也从没同意过的数据。授权是对「那一屏上列出的那些集合」的授权。
             { "Collections", new BsonArray(DataSyncScope.Expand(approvedGroups).Select(c => c.Name)) },
+            // 连**脱敏契约**一起冻结，不是只冻集合名。
+            //
+            // 同意页上每个集合旁边列着「这些字段不会离开本站」，那份清单和集合名一样
+            // 是批准人看着点下同意的东西。只冻集合名的话，清单端点和导出端点会在票的
+            // 两小时有效期内拿**当时**的白名单重算一遍脱敏字段——源站中途上线一个把
+            // 某字段移出 RedactFields 的版本，这张老票立刻就能导出同意页明说「留在本地」
+            // 的字段。冻了一半的契约不是契约（predicate-and-wiring-discipline 形状 1：
+            // 判据比它自己声明的范围窄）。
+            //
+            // 存的是**生效值**（已按 IncludeCredentials 算过），不是白名单原值：
+            // 下游只需要「照着清」，不必再判一次批准条件，也就不会两边算出两套。
+            { "Redactions", new BsonDocument(DataSyncScope.Expand(approvedGroups).Select(c =>
+                new BsonElement(
+                    c.Name,
+                    new BsonArray(DataSyncScope.ApplyGrant(c, request.IncludeCredentials).RedactFields)))) },
             // 批准的人是否同意把登录口令散列一起给出去。这是一次独立的决定，
             // 所以单独存一格，而不是藏在分组里。
             { "IncludeCredentials", request.IncludeCredentials },
@@ -561,7 +576,7 @@ public sealed class DataSyncProviderController : ControllerBase
             // 冻结之后本站又把某个集合移出白名单：解析不出来就不报，
             // 目标站的对照表会把它列成「源站没报告、不会同步」。
             if (!DataSyncScope.TryResolve(name, out var collection)) continue;
-            var effectiveScope = DataSyncScope.ApplyGrant(collection, manifestIncludeCredentials);
+            var effectiveScope = ReadFrozenScope(grant, collection, manifestIncludeCredentials);
             var count = await _db.Database.GetCollection<BsonDocument>(collection.Name)
                 .CountDocumentsAsync(Builders<BsonDocument>.Filter.Empty, cancellationToken: ct);
             items.Add(new
@@ -618,10 +633,10 @@ public sealed class DataSyncProviderController : ControllerBase
 
         // 批准的人同意连口令散列一起给时，users 的 PasswordHash 不脱敏——
         // 目标站的人用原账号密码就能直接登进去，这是「同步完直接可用」的前提。
-        // 其余脱敏字段一律照旧，这条豁免只针对这一个字段。判定在 DataSyncScope.ApplyGrant，
-        // 清单端点走的是同一个，两边不会说两套话。
+        // 其余脱敏字段一律照旧，这条豁免只针对这一个字段。判定在签发时就冻进票里了，
+        // 清单端点读的是同一格，两边不会说两套话。
         var includeCredentials = grant.GetValue("IncludeCredentials", BsonBoolean.False).ToBoolean();
-        var effective = DataSyncScope.ApplyGrant(resolved, includeCredentials);
+        var effective = ReadFrozenScope(grant, resolved, includeCredentials);
 
         // 扩展 JSON 而不是普通 JSON：日期、Decimal128、ObjectId 走普通 JSON 会掉类型，
         // 目标站写回去就变成一堆字符串。
@@ -761,6 +776,28 @@ public sealed class DataSyncProviderController : ControllerBase
         }
         var groups = grant.GetValue("Groups", new BsonArray()).AsBsonArray.Select(x => x.AsString).ToList();
         return DataSyncScope.Expand(groups).Select(c => c.Name).ToList();
+    }
+
+    /// <summary>
+    /// 这张票签发时冻结下来的脱敏契约，落到一个具体集合上。
+    ///
+    /// 清单与导出都必须走这一处：清单要照着它告诉目标站「哪些字段会被清空」，
+    /// 导出要照着它清。两边各算一次的结果就是漂移（形状 3）。
+    ///
+    /// 存量 grant（本字段落地之前签发的）没有这一格，退回按当前白名单 + 批准条件重算——
+    /// 那是它们签发时的语义。两小时后它们自然过期，这条兼容也就到期。
+    /// </summary>
+    private static DataSyncCollection ReadFrozenScope(
+        BsonDocument grant, DataSyncCollection collection, bool includeCredentials)
+    {
+        if (grant.TryGetValue("Redactions", out var frozen)
+            && frozen is BsonDocument map
+            && map.TryGetValue(collection.Name, out var fields)
+            && fields is BsonArray array)
+        {
+            return collection with { RedactFields = array.Select(x => x.AsString).ToList() };
+        }
+        return DataSyncScope.ApplyGrant(collection, includeCredentials);
     }
 
     /// <summary>取请求上的导出令牌并做形状校验。作废与鉴权两处共用同一个来源。</summary>
