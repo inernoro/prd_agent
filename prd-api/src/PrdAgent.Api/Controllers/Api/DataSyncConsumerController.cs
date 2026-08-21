@@ -408,43 +408,74 @@ public sealed class DataSyncConsumerController : ControllerBase
         var lastPayload = "";
         var lastWriteAt = DateTime.UtcNow;
         var deadline = DateTime.UtcNow.AddHours(2);
-        while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
+        // 关标签页 / 代理掐连接是这条流最常见的结束方式，不是异常。
+        // 断开会把 ct 取消，于是 Mongo 查询和 Task.Delay 都会抛 OperationCanceled；
+        // 不接住的话，一次再普通不过的离开会变成端点异常终止（server-authority #2）。
+        // 只接「确实是本请求被取消」这一种，别的取消照旧抛出去。
+        //
+        // 写入侧另有一套抛法（Kestrel 的 IOException / InvalidOperationException /
+        // ObjectDisposed），交给 TryWriteEventAsync 用共享判据处理——那条判据不能在这里
+        // 重写一遍（形状 3）。这个端点是纯观察者，同步本身跑在 Worker 里，
+        // 所以对端走了就干净收摊，没有「必须继续做完」的服务端任务（server-authority #3）。
+        try
         {
-            var run = await FindRunAsync(id, ct);
-            if (run is null)
+            while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
             {
-                await WriteEventAsync("error", "{\"message\":\"同步记录不存在\"}", ct);
-                return;
+                var run = await FindRunAsync(id, ct);
+                if (run is null)
+                {
+                    await TryWriteEventAsync("error", "{\"message\":\"同步记录不存在\"}", ct);
+                    return;
+                }
+                var payload = SerializeRunForStream(run);
+                if (payload != lastPayload)
+                {
+                    lastPayload = payload;
+                    lastWriteAt = DateTime.UtcNow;
+                    if (!await TryWriteEventAsync("progress", payload, ct)) return;
+                }
+                if (run.Status is "succeeded" or "failed" or "cancelled")
+                {
+                    await TryWriteEventAsync("done", payload, ct);
+                    return;
+                }
+                // 心跳（server-authority #4）：一次慢导出或一批慢写入期间，进度可能几十秒
+                // 一动不动。中间任何一层 ingress 的空闲超时都会把这条流掐掉，而前端把
+                // 「流结束了」当成正常收尾、不重连——同步还在跑，屏幕却永远停在那一刻。
+                // 所以不管有没有变化，至少每 10 秒写一次。
+                if (DateTime.UtcNow - lastWriteAt >= KeepAliveInterval)
+                {
+                    lastWriteAt = DateTime.UtcNow;
+                    if (!await TryWriteEventAsync("keepalive", "{}", ct)) return;
+                }
+                await Task.Delay(1000, ct);
             }
-            var payload = SerializeRunForStream(run);
-            if (payload != lastPayload)
-            {
-                lastPayload = payload;
-                lastWriteAt = DateTime.UtcNow;
-                await WriteEventAsync("progress", payload, ct);
-            }
-            if (run.Status is "succeeded" or "failed" or "cancelled")
-            {
-                await WriteEventAsync("done", payload, ct);
-                return;
-            }
-            // 心跳（server-authority #4）：一次慢导出或一批慢写入期间，进度可能几十秒
-            // 一动不动。中间任何一层 ingress 的空闲超时都会把这条流掐掉，而前端把
-            // 「流结束了」当成正常收尾、不重连——同步还在跑，屏幕却永远停在那一刻。
-            // 所以不管有没有变化，至少每 10 秒写一次。
-            if (DateTime.UtcNow - lastWriteAt >= KeepAliveInterval)
-            {
-                lastWriteAt = DateTime.UtcNow;
-                await WriteEventAsync("keepalive", "{}", ct);
-            }
-            await Task.Delay(1000, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 对端走了，正常收尾。
         }
     }
 
-    private async Task WriteEventAsync(string name, string data, CancellationToken ct)
+    /// <summary>
+    /// 写一个 SSE 事件。返回 false = 对端已经不在了，调用方该收摊。
+    ///
+    /// 连接层的失败一律不往外抛：判据复用 <see cref="SseEventWriter.IsClientDisconnect"/>，
+    /// 因为 Kestrel 对「socket 没了」有好几种抛法（IOException / InvalidOperationException /
+    /// ObjectDisposed / OperationCanceled），在这里另写一份迟早漏掉其中一种。
+    /// </summary>
+    private async Task<bool> TryWriteEventAsync(string name, string data, CancellationToken ct)
     {
-        await Response.WriteAsync($"event: {name}\ndata: {data}\n\n", ct);
-        await Response.Body.FlushAsync(ct);
+        try
+        {
+            await Response.WriteAsync($"event: {name}\ndata: {data}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+            return true;
+        }
+        catch (Exception ex) when (SseEventWriter.IsClientDisconnect(ex))
+        {
+            return false;
+        }
     }
 
     /// <summary>

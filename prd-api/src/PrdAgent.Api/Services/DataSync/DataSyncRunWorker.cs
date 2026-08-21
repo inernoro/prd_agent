@@ -38,6 +38,16 @@ public sealed class DataSyncRunWorker : BackgroundService
     /// <summary>票过期之后再留多久才删——留痕窗口，也让「票过期了」这句话说得出口。</summary>
     private static readonly TimeSpan RetiredGrantRetention = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// 票面过期之后再宽限多久，才允许把一条 pending Run 判死。
+    ///
+    /// 分支预览与生产共享同一个 Mongo（cross-project-isolation 通道 4），各容器的时钟
+    /// 不保证对齐。判据取的是库里那个绝对时间戳，快几分钟的那台会先看到「过期」——
+    /// 留一段宽限，免得它把另一台此刻正要合法启动的 Run 抢先判死。晚扫几分钟没有代价：
+    /// 票一过期这条 Run 本来就跑不动了。
+    /// </summary>
+    private static readonly TimeSpan ExpiredPendingGrace = TimeSpan.FromMinutes(5);
+
     private DateTime _lastOrphanSweep = DateTime.MinValue;
 
     private readonly IServiceProvider _services;
@@ -93,7 +103,8 @@ public sealed class DataSyncRunWorker : BackgroundService
         {
             _lastOrphanSweep = DateTime.UtcNow;
             await SweepOrphanedRunsAsync(db, ct);
-        await SweepRetiredGrantsAsync(db, ct);
+            await SweepExpiredPendingRunsAsync(db, ct);
+            await SweepRetiredGrantsAsync(db, ct);
         }
 
         // 令牌在「Start 成功之后、这次轮询之前」过期的 Run：它不在 held 里，永远走不到
@@ -103,8 +114,12 @@ public sealed class DataSyncRunWorker : BackgroundService
         {
             // pending 也要收。callback 建出 Run 之后，管理员一直没点开始，票就这么过期了——
             // 过期标记在这里被 drain 掉，而查询只认 running 的话，库里那行永远停在 pending：
-            // 再打开它，Plan 每次都报「令牌已失效」，页面卡在加载态；进程重启也一样，
-            // 因为标记早就没了。终态收敛必须把 pending 一起带上。
+            // 再打开它，Plan 每次都报「令牌已失效」，页面卡在加载态。
+            //
+            // 但这条路只覆盖「本进程一直活着」的那一半：候选集来自内存里的过期标记，
+            // 进程一重启标记就没了。另一半（重启后遗留的 pending）由
+            // SweepExpiredPendingRunsAsync 从库里的 ExportTokenExpiresAt 兜——我上一版
+            // 在这里写了「进程重启也一样」，那句话当时不成立，别再照抄。
             var stale = await db.DataSyncRuns.Find(Builders<DataSyncRun>.Filter.And(
                 Builders<DataSyncRun>.Filter.In(x => x.Status, new[] { "running", "pending" }),
                 Builders<DataSyncRun>.Filter.In(x => x.Id, expired))).ToListAsync(ct);
@@ -530,6 +545,51 @@ public sealed class DataSyncRunWorker : BackgroundService
         {
             _logger.LogInformation("[data-sync] 清理了 {Count} 张过期超过 {Hours} 小时的授权票",
                 deleted.DeletedCount, RetiredGrantRetention.TotalHours);
+        }
+    }
+
+    /// <summary>
+    /// 收「票已经过期、却还停在 pending」的 Run —— 判据取库里的 ExportTokenExpiresAt，
+    /// 不看内存。
+    ///
+    /// 为什么单独有这一条：TickAsync 里那段 expired 收敛的**候选集**来自
+    /// <c>_vault.DrainExpiredRunIds()</c>，那是进程内的。callback 建出 pending Run 之后、
+    /// 管理员点开始之前进程重启（发版、崩溃、CDS 重建容器），令牌和这个标记一起蒸发，
+    /// 而孤儿清扫只看 running——于是库里那行 pending 永远留着，历史列表里挂一条永远
+    /// 「进行中」的记录，点进去 Plan 每次都报「令牌已失效」。加 pending 到那段查询的
+    /// 状态过滤是不够的，得换一个不依赖内存的判据。
+    ///
+    /// 不跳过 mine：票面过期是绝对事实，本进程握着的那份同样已经用不了了
+    /// （DataSyncTokenVault 的 HeldRunIds 本来也会把它清掉）。
+    /// 条件更新只在「仍然 pending」时落笔——Start 若已把它翻成 running，这里不许覆盖。
+    /// </summary>
+    private async Task SweepExpiredPendingRunsAsync(MongoDbContext db, CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow - ExpiredPendingGrace;
+        var stale = await db.DataSyncRuns.Find(Builders<DataSyncRun>.Filter.And(
+            Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending"),
+            Builders<DataSyncRun>.Filter.Lt(x => x.ExportTokenExpiresAt, cutoff))).ToListAsync(ct);
+
+        foreach (var run in stale)
+        {
+            var terminalized = await db.DataSyncRuns.UpdateOneAsync(
+                Builders<DataSyncRun>.Filter.And(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending"),
+                    Builders<DataSyncRun>.Filter.Lt(x => x.ExportTokenExpiresAt, cutoff)),
+                Builders<DataSyncRun>.Update
+                    .Set(x => x.Status, "failed")
+                    .Set(x => x.Error, "导出令牌在同步开始前就过期了，请重新授权后再跑一次")
+                    .Set(x => x.FinishedAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+
+            if (terminalized.ModifiedCount > 0)
+            {
+                _logger.LogWarning(
+                    "[data-sync] Run {RunId} 的导出令牌已于 {ExpiresAt:o} 过期而始终没有开始，落终态",
+                    run.Id, run.ExportTokenExpiresAt);
+            }
         }
     }
 

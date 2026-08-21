@@ -1414,6 +1414,14 @@ db.data_sync_runs.createIndex(
   { "CreatedAt": -1 },
   { name: "idx_data_sync_runs_created_desc" }
 )
+// 过期 pending 清扫（DataSyncRunWorker.SweepExpiredPendingRunsAsync）按
+// Status + ExportTokenExpiresAt 查，与收尸扫描同频（每个部署每分钟一次）。
+// 上面那条 Status + UpdatedAt 支撑不了这个范围条件——只能靠它把 Status 收窄，
+// 再逐条比 ExportTokenExpiresAt。同样是共享库上的常态查询，单独给一条。
+db.data_sync_runs.createIndex(
+  { "Status": 1, "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_runs_status_token_expires" }
+)
 // end collection: data_sync_runs
 
 // collection: data_sync_grants

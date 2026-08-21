@@ -825,6 +825,84 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 重启之后遗留的 pending 也要收，而且判据必须来自**库里**的 ExportTokenExpiresAt。
+    ///
+    /// 上一轮只把 "pending" 加进了那段收敛的状态过滤，可**候选集**仍然只有
+    /// `_vault.DrainExpiredRunIds()` —— 那是进程内的。callback 建出 pending Run 之后、
+    /// 管理员点开始之前进程重启，令牌和这个标记一起蒸发，而孤儿清扫只看 running，
+    /// 于是那行 pending 永远留在历史里，点进去 Plan 每次都报「令牌已失效」。
+    /// 所以这条断言盯的是「有没有一条不依赖内存的清扫路径」，而不是状态过滤里有没有
+    /// pending 这个词。
+    /// </summary>
+    [Fact]
+    public void 重启后遗留的过期pending也要收()
+    {
+        var worker = ReadWorkerSource();
+
+        // 1. 存在这条清扫，且接进了周期清扫（形状 2：建了没人调用等于没建）。
+        worker.ShouldContain("private async Task SweepExpiredPendingRunsAsync");
+        var tick = worker[worker.IndexOf("if (sweepDue)", StringComparison.Ordinal)..];
+        tick = tick[..tick.IndexOf("if (expired.Count > 0)", StringComparison.Ordinal)];
+        tick.ShouldContain("await SweepExpiredPendingRunsAsync(db, ct);");
+
+        // 2. 判据取库里的 ExportTokenExpiresAt，不碰内存里的过期标记。
+        var sweep = worker[worker.IndexOf(
+            "private async Task SweepExpiredPendingRunsAsync", StringComparison.Ordinal)..];
+        sweep = sweep[..sweep.IndexOf(
+            "private async Task SweepOrphanedRunsAsync", StringComparison.Ordinal)];
+        sweep.ShouldContain("Filter.Eq(x => x.Status, \"pending\")");
+        sweep.ShouldContain("Filter.Lt(x => x.ExportTokenExpiresAt, cutoff)");
+        sweep.ShouldNotContain("DrainExpiredRunIds");
+        sweep.ShouldNotContain("HeldRunIds");
+
+        // 3. 落终态走条件更新：Start 若已经把它翻成 running，这里不许覆盖。
+        sweep.ShouldContain("UpdateOneAsync");
+        sweep.ShouldContain("CancellationToken.None");
+    }
+
+    /// <summary>
+    /// 那条清扫每个部署每分钟跑一次、查的是共享库里只增不删的表，得有索引。
+    /// 已有的 Status + UpdatedAt 支撑不了 ExportTokenExpiresAt 这个范围条件。
+    /// </summary>
+    [Fact]
+    public void 过期pending清扫要有索引()
+    {
+        var script = ReadRepoText("scripts", "mongodb-indexes.js");
+        var begin = script.IndexOf("// collection: data_sync_runs", StringComparison.Ordinal);
+        var end = script.IndexOf("// end collection: data_sync_runs", StringComparison.Ordinal);
+        var section = script[begin..end];
+        section.ShouldContain("\"Status\": 1, \"ExportTokenExpiresAt\": 1");
+    }
+
+    /// <summary>
+    /// 关标签页 / 代理掐连接是这条 SSE 流最常见的结束方式，不是异常。
+    ///
+    /// 断开会取消 ct，于是 Mongo 查询与 Task.Delay 抛 OperationCanceled；写入侧
+    /// Kestrel 另有 IOException / InvalidOperationException / ObjectDisposed 几种抛法。
+    /// 两侧都不接的话，一次普通的离开会让端点异常终止（server-authority #2）。
+    /// 判据必须复用共享的 IsClientDisconnect，不许在这里另写一份（形状 3）。
+    /// </summary>
+    [Fact]
+    public void SSE断流要当成正常收尾()
+    {
+        var source = ReadApiSource("Controllers", "Api", "DataSyncConsumerController.cs");
+        var stream = source[source.IndexOf(
+            "public async Task Stream(string id", StringComparison.Ordinal)..];
+        stream = stream[..stream.IndexOf(
+            "private async Task<bool> TryWriteEventAsync", StringComparison.Ordinal)];
+
+        // 取消（查询 / 延时）在循环外接住，且只接本请求那一种。
+        stream.ShouldContain("catch (OperationCanceledException) when (ct.IsCancellationRequested)");
+        // 写入一律走会吞连接层异常的那个入口，裸 Response.WriteAsync 不许再出现在循环里。
+        stream.ShouldNotContain("Response.WriteAsync");
+        stream.ShouldContain("TryWriteEventAsync");
+
+        var writer = source[source.IndexOf(
+            "private async Task<bool> TryWriteEventAsync", StringComparison.Ordinal)..];
+        writer.ShouldContain("SseEventWriter.IsClientDisconnect(ex)");
+    }
+
+    /// <summary>
     /// 「同意了却没回来换票」那一类的清理谓词是「ExportTokenExpiresAt 等值 null +
     /// ExpiresAt 范围」，两条散列打头的索引都支撑不了它，于是每个部署的每一轮清理
     /// 都要扫遍所有留存的未换票授权。
