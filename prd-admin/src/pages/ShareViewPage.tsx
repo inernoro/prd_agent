@@ -7,6 +7,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
+import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-hosting/shareFailure';
+import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import { useIsMobile } from '@/hooks/useBreakpoint';
@@ -17,6 +19,56 @@ import {
   hasFetchableHtml,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
+
+/**
+ * 幻灯片邀请条：告诉访客这一页能用键盘翻。
+ *
+ * 为什么要有：deck 的翻页控件通常是右下角两个很淡的箭头，很多人从头到尾用鼠标点，
+ * 甚至以为这就是一张长图。一句「方向键翻页」省掉这整段试错。
+ *
+ * 为什么会自己消失：它是邀请不是控件，说完就该让开——内容才是主角
+ * （content-fills-canvas：产物占主导，chrome 压到最少）。
+ */
+function SlideKeyboardInvite() {
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setGone(true), 6000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const key: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    minWidth: 20, height: 20, padding: '0 5px', borderRadius: 5,
+    background: 'var(--bg-tertiary)', border: '1px solid var(--border-default)',
+    fontSize: 11, fontFamily: 'ui-monospace, monospace', lineHeight: 1,
+  };
+
+  return (
+    // surface-tone-dark：这一条永远浮在托管内容之上，两个主题下都必须是深色药丸，
+    // 走 token 而不是写死颜色（admin-dual-theme 的暗岛机制）
+    <div
+      className="surface-tone-dark"
+      style={{
+        position: 'absolute', left: '50%', bottom: 18, transform: 'translateX(-50%)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '7px 14px', borderRadius: 999,
+        background: 'var(--panel-solid)', color: 'var(--text-primary)',
+        backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+        fontSize: 12.5, whiteSpace: 'nowrap',
+        // 邀请条永远不该拦住底下 deck 的点击
+        pointerEvents: 'none',
+        opacity: gone ? 0 : 1,
+        transition: 'opacity 600ms ease',
+      }}
+    >
+      {/* 只写方向键：四种 deck 框架都绑了它。F 全屏之类各家不一，
+          与其猜一个按下去没反应的快捷键，不如让顶栏那个全屏按钮去负责。 */}
+      <span style={key}>←</span>
+      <span style={key}>→</span>
+      <span>方向键翻页，点一下页面再按</span>
+    </div>
+  );
+}
 
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;
@@ -64,6 +116,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);
   const [password, setPassword] = useState('');
+  /**
+   * 密码试太频繁被 429 挡下时的提示（后端文案自带「请 N 秒后再试」）。
+   * 之前这一档会掉进整屏的「出错了」，把人踢出密码表单——他刚才输的密码没了，
+   * 也看不出来是被限流还是链接坏了。现在留在原地，只在表单上方多一条提示。
+   */
+  const [rateLimitedHint, setRateLimitedHint] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [wrongPassword, setWrongPassword] = useState(false);
@@ -83,6 +141,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const exposedDirectRef = useRef(false);
   /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
   const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
+  /**
+   * 这份托管内容是不是一套幻灯片（决定要不要出键盘邀请条）。
+   * 取回原文时立刻判、单独存：它不能跟着 embeddedHtml 走，那个值在遮罩让位后会被丢弃。
+   */
+  const [isDeck, setIsDeck] = useState(false);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -111,6 +174,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     setLoading(true);
     setError(null);
     setWrongPassword(false);
+    setRateLimitedHint(null);
     const res = await viewSiteShare(token, pwd?.trim());
     setLoading(false);
     if (res.success) {
@@ -118,6 +182,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       setNeedPassword(false);
     } else if (res.error?.code === 'UNAUTHORIZED') {
       setNeedPassword(true);
+      setRateLimitedHint(null);
       // 如果是带密码重试的，说明密码错误
       if (pwd !== undefined) {
         setWrongPassword(true);
@@ -125,6 +190,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         // 选中输入框内容方便重新输入
         setTimeout(() => inputRef.current?.select(), 100);
       }
+    } else if (res.error?.code === 'RATE_LIMITED') {
+      // 留在密码屏：这不是链接坏了，是他自己试太快，等一会儿还能进
+      setNeedPassword(true);
+      setWrongPassword(false);
+      setShakeKey(k => k + 1);
+      setRateLimitedHint(res.error.message || SHARE_FAILURE_REGISTRY['rate-limited'].body);
     } else {
       setError(res.error || { code: 'UNKNOWN', message: '加载失败' });
     }
@@ -179,6 +250,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
 
     let alive = true;
     setEmbeddedHtml(null);
+    setIsDeck(false);
     setEmbeddedHtmlError(null);
     setEmbeddedHtmlLoading(true);
     // 遮罩只挡一小会儿。到点后即便原文还没回来，也把底下的直链 iframe 露出来——
@@ -196,6 +268,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       .then((res) => {
         if (!alive) return;
         if (res.success && res.data?.html) {
+          // 「是不是幻灯片」必须在这里就判掉，不能等 embeddedHtml。
+          // 下面那条早退（遮罩已让位就丢弃原文）会让 embeddedHtml 永远是 null，
+          // 于是 deck 邀请条在「原文回得比 1.5s 慢」的每一次都静默消失——
+          // 判据挂在一个会被丢弃的中间产物上，正是形状 2（链路只建到一半）。
+          setIsDeck(detectSlideDeck(res.data.html));
           // 遮罩已经让位 = 直链 iframe 已经在用户眼前跑起来了。此时再换成 srcDoc，
           // 对浏览器就是换一个文档：滚动位置、表单里敲的字、PPT 翻到第几页全部清零。
           // 代理最慢可以拖到 20s 才回来，那时候用户早就在用这个页面了——
@@ -235,23 +312,15 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
 
   // ── Error: Not Found / Expired / Visibility Denied ──
   if (error) {
-    const isNotFound = error.code === 'NOT_FOUND';
-    const isExpired = error.code === 'EXPIRED';
-    const isVisibilityDenied = error.code === 'visibility_denied' || error.code === 'VISIBILITY_DENIED';
-    const titleText = isNotFound
-      ? '链接不存在'
-      : isExpired
-        ? '链接已过期'
-        : isVisibilityDenied
-          ? '需要权限访问'
-          : '出错了';
-    const detailText = isNotFound
-      ? '该分享链接不存在或已被撤销'
-      : isExpired
-        ? '该分享链接已超过有效期，请联系分享者重新创建或续期'
-        : isVisibilityDenied
-          ? (error.message || '此链接仅限创建者或团队成员访问')
-          : error.message;
+    // 失败态判定收在 resolveShareFailure（有守卫）：后端两层给的可见性拒绝码大小写不同，
+    // 写在这儿的三元一定会漏掉其中一种
+    const failure = resolveShareFailure(error.code);
+    const cfg = SHARE_FAILURE_REGISTRY[failure];
+    const isVisibilityDenied = failure === 'visibility-denied';
+    const titleText = cfg.title;
+    const detailText = cfg.body;
+    // 认不出的码才把后端原文露出来——认得出的那几档，我们自己的话说得更清楚
+    const serverDetail = failure === 'unknown' ? error.message : null;
     const currentPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/';
     return (
       <div style={styles.fullScreen}>
@@ -260,7 +329,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         <div style={{ ...styles.glassCard, textAlign: 'center', padding: '40px 32px' }}>
           <div style={{
             width: 64, height: 64, borderRadius: '50%',
-            background: isVisibilityDenied ? 'rgba(96, 165, 250, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+            background: cfg.tone === 'auth'
+              ? 'rgba(96, 165, 250, 0.15)'
+              : cfg.tone === 'wait'
+                ? 'var(--semantic-warning-soft)'
+                : 'rgba(239, 68, 68, 0.15)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             margin: '0 auto 20px',
           }}>
@@ -271,9 +344,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
             {titleText}
           </h2>
-          <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14, lineHeight: 1.6 }}>
+          <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14, lineHeight: 1.7 }}>
             {detailText}
           </p>
+          {serverDetail && (
+            <p className="surface-tone-dark" style={{ color: 'var(--text-muted)', margin: '8px 0 0', fontSize: 12.5, lineHeight: 1.6 }}>
+              {serverDetail}
+            </p>
+          )}
           {isVisibilityDenied && !isAuthenticated && (
             <button
               type="button"
@@ -365,6 +443,23 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               stepDuration={0.3}
             />
           </div>
+
+          {/* 限流不是「链接坏了」，所以留在这一屏，只多一条提示 + 说清口径 */}
+          {rateLimitedHint && (
+            <div
+              className="surface-tone-dark"
+              style={{
+                margin: '0 0 20px', padding: '10px 14px', borderRadius: 10, textAlign: 'left',
+                background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)',
+                color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.65,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--accent-fg-warning)' }}>{rateLimitedHint}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {SHARE_FAILURE_REGISTRY['rate-limited'].body}
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handlePasswordSubmit} style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
             <div style={{ position: 'relative' }}>
@@ -612,6 +707,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               正在准备预览...
             </div>
           )}
+          {/* 幻灯片邀请条：这是一套 deck，告诉访客键盘能翻页，几秒后自己淡出不挡内容 */}
+          {isDeck && <SlideKeyboardInvite />}
+
           {/* 取回原文失败：不遮住 iframe（页面多半仍能直接加载出来），只在角落把原因说清楚。
               静默吞掉失败正是「明明打不开、却不知道为什么」的来源。 */}
           {embeddedHtmlError && !iframeHtml && !embeddedHtmlLoading && (

@@ -207,10 +207,15 @@ export async function uploadSite(input: {
   description?: string;
   folder?: string;
   tags?: string;
+  /**
+   * 上传字节进度回调。走 XHR 而不是 fetch 只为这一件事：
+   * fetch 不暴露 request body 的发送进度，500MB 的 ZIP 在 fetch 下只能给一个转圈。
+   * 这里回调的是**真实已发送字节数**，不是估的（`expectation-management`：
+   * 给不出的数不许编，给得出的必须给）。
+   */
+  onProgress?: (loaded: number, total: number) => void;
 }): Promise<ApiResponse<HostedSite>> {
   const token = useAuthStore.getState().token;
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
 
   const fd = new FormData();
   fd.append('file', input.file);
@@ -220,13 +225,31 @@ export async function uploadSite(input: {
   if (input.tags) fd.append('tags', input.tags);
 
   const url = joinUrl(getApiBaseUrl(), api.webPages.upload());
-  const res = await fetch(url, { method: 'POST', headers, body: fd });
-  const text = await res.text();
-  try {
-    return JSON.parse(text) as ApiResponse<HostedSite>;
-  } catch {
-    return { success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${res.status}）` } };
-  }
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.setRequestHeader('Accept', 'application/json');
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    if (input.onProgress) {
+      xhr.upload.onprogress = (ev) => {
+        // lengthComputable 为 false 时 total 是 0，报 0 会让进度条假装「一直 0%」，
+        // 不如不报，让调用方走「无进度」分支。
+        if (ev.lengthComputable) input.onProgress!(ev.loaded, ev.total);
+      };
+    }
+    xhr.onload = () => {
+      try {
+        resolve(JSON.parse(xhr.responseText) as ApiResponse<HostedSite>);
+      } catch {
+        resolve({ success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: `响应解析失败（HTTP ${xhr.status}）` } });
+      }
+    };
+    xhr.onerror = () => resolve({
+      success: false, data: null as never,
+      error: { code: 'NETWORK_ERROR', message: '网络异常，上传未完成' },
+    });
+    xhr.send(fd);
+  });
 }
 
 export async function reuploadSite(id: string, file: File): Promise<ApiResponse<HostedSite>> {

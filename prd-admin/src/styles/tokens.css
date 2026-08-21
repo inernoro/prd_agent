@@ -8,6 +8,11 @@
   --bg-card-hover: rgba(255, 255, 255, 0.11);
   --bg-input: rgba(255, 255, 255, 0.07);
   --bg-input-hover: rgba(255, 255, 255, 0.10);
+  /* 凹陷井：输入框、胶囊未选中态等「比卡片更低一层」的表面。
+     全仓 40+ 处早就在写 var(--bg-sunken)，但两个主题档都没定义过它 ——
+     未定义的 var 在 background 上会解析成 transparent，于是那些控件一直是"没有底"的。
+     它与 --bg-input 同语义，这里对齐取值，两档一起补齐。 */
+  --bg-sunken: rgba(255, 255, 255, 0.07);
 
   /* 面板层：用于页面分区容器（比 bg-card 更”实”，避免在动效背景上文字不清） */
   --panel: linear-gradient(180deg, rgba(30, 30, 36, 0.92) 0%, rgba(30, 30, 36, 0.78) 100%);
@@ -522,6 +527,7 @@
   --bg-card-hover: rgba(26, 26, 31, 0.04);
   --bg-input: #FBF8F3;
   --bg-input-hover: #F4F0E9;
+  --bg-sunken: #FBF8F3;
 
   --panel: linear-gradient(180deg, #F8F5EF 0%, #F1ECE4 100%);
   --panel-solid: #F8F5EF;
@@ -861,6 +867,7 @@
   --bg-card-hover: rgba(255, 255, 255, 0.11);
   --bg-input: rgba(255, 255, 255, 0.07);
   --bg-input-hover: rgba(255, 255, 255, 0.10);
+  --bg-sunken: rgba(255, 255, 255, 0.07);
   --bg-nested: rgba(255, 255, 255, 0.025);
   --glass-bg-start: rgb(30, 30, 36);
   --glass-bg-end: rgb(25, 25, 30);

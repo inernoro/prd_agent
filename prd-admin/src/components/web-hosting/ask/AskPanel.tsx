@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { LogIn, Send, Sparkles, X } from 'lucide-react';
+import { Send, Sparkles, X } from 'lucide-react';
+import { ASK_REFUSAL_REGISTRY, AskRefusalCard, resolveAskRefusal } from './askRefusal';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { AskMarkdown } from './AskMarkdown';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
-import { ASK_ERROR_CODES, ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
+import { ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
 import { useAskStream } from './useAskStream';
 
 interface Props {
@@ -46,7 +47,10 @@ export default function AskPanel({
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const needLogin = !isAuthenticated && !allowAnonymous;
+  // 几种「问不了」各有各的下一步，判定收在 resolveAskRefusal 里（有守卫）
+  const refusal = resolveAskRefusal({ isAuthenticated, allowAnonymous, gateErrorCode: gateError?.code });
+  // 被拒时输入区一并禁用：留一个能打字却发不出去的输入框，只会让人白写一段
+  const blocked = refusal !== null;
 
   // 新内容进来时贴住底部；用户正在往上翻看历史时不抢滚动
   useEffect(() => {
@@ -59,21 +63,24 @@ export default function AskPanel({
   const submit = useCallback(
     (text: string) => {
       const q = text.trim();
-      if (!q || isBusy || needLogin) return;
+      if (!q || isBusy || blocked) return;
       setDraft('');
       void ask(q);
     },
-    [ask, isBusy, needLogin],
+    [ask, isBusy, blocked],
   );
 
-  const showOpening = messages.length === 0 && openingQuestions.length > 0 && !needLogin;
+  const showOpening = messages.length === 0 && openingQuestions.length > 0 && !blocked;
 
   return (
     <div
       style={{
         display: hidden ? 'none' : 'flex',
         flexDirection: 'column',
-        background: 'var(--panel-solid, var(--bg-elevated))',
+        // 浮层模式必须**不透明**：--panel-solid 只有 92% 不透明度，抽屉压在访客页顶栏上时，
+        // 「全屏演示 / 评论」那几个按钮会隔着面板幽幽透出来，看着像渲染坏了。
+        // 嵌入模式由父容器给底，保留原来的半透观感。
+        background: embedded ? 'var(--panel-solid, var(--bg-elevated))' : 'var(--bg-elevated)',
         color: 'var(--text-primary)',
         // 嵌入模式由父容器定位；浮层模式自己 fixed（移动端全屏、桌面端右侧抽屉）
         ...(embedded
@@ -169,17 +176,15 @@ export default function AskPanel({
           </div>
         )}
 
-        {needLogin && (
-          <div
-            style={{
-              marginTop: 14, padding: 12, borderRadius: 10,
-              border: '1px solid var(--border-subtle)', background: 'var(--bg-card)',
-              fontSize: 13, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8,
+        {refusal && (
+          <AskRefusalCard
+            refusal={refusal}
+            onLogin={() => {
+              // 带 redirect 回到当前这一页：登录完还得让他自己找回来就白做了
+              const back = encodeURIComponent(window.location.pathname + window.location.search);
+              window.location.href = `/login?redirect=${back}`;
             }}
-          >
-            <LogIn size={15} style={{ flexShrink: 0 }} />
-            这个页面需要登录后才能提问。
-          </div>
+          />
         )}
 
         {messages.map((m) => (
@@ -223,11 +228,6 @@ export default function AskPanel({
           </div>
         )}
 
-        {gateError && gateError.code === ASK_ERROR_CODES.quotaExceeded && (
-          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
-            {gateError.message}
-          </div>
-        )}
       </div>
 
       {/* 输入区。
@@ -252,8 +252,8 @@ export default function AskPanel({
                 submit(draft);
               }
             }}
-            placeholder={needLogin ? '登录后即可提问' : '问点什么…'}
-            disabled={needLogin}
+            placeholder={refusal ? ASK_REFUSAL_REGISTRY[refusal].placeholder : '问点什么…'}
+            disabled={blocked}
             rows={1}
             // 与后端同一个上限。后端超长直接 400（不静默截断），这里把边界前移到打字时，
             // 用户不会写完一大段才被拒。
@@ -270,14 +270,14 @@ export default function AskPanel({
           />
           <button
             onClick={() => submit(draft)}
-            disabled={!draft.trim() || isBusy || needLogin}
+            disabled={!draft.trim() || isBusy || blocked}
             aria-label="发送"
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 38, height: 38, borderRadius: 10, border: 'none', flexShrink: 0,
-              background: !draft.trim() || isBusy || needLogin ? 'var(--bg-tertiary)' : 'var(--button-primary-bg)',
-              color: !draft.trim() || isBusy || needLogin ? 'var(--text-muted)' : 'var(--button-primary-fg)',
-              cursor: !draft.trim() || isBusy || needLogin ? 'default' : 'pointer',
+              background: !draft.trim() || isBusy || blocked ? 'var(--bg-tertiary)' : 'var(--button-primary-bg)',
+              color: !draft.trim() || isBusy || blocked ? 'var(--text-muted)' : 'var(--button-primary-fg)',
+              cursor: !draft.trim() || isBusy || blocked ? 'default' : 'pointer',
             }}
           >
             {isBusy ? <MapSpinner size={14} /> : <Send size={15} />}
@@ -285,7 +285,7 @@ export default function AskPanel({
         </div>
         <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
           <span style={{ flex: 1, minWidth: 0 }}>
-            {status === 'error' && gateError && gateError.code !== ASK_ERROR_CODES.quotaExceeded
+            {status === 'error' && gateError && !blocked
               ? gateError.message
               : '回答由 AI 生成，仅依据本页内容'}
           </span>
