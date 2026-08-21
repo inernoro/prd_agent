@@ -300,9 +300,16 @@ public sealed class DataSyncRunWorker : BackgroundService
                 {
                     var id = doc["_id"];
                     ids.Add(id);
+                    // 两个方向都要展开。上一轮我只写了「字符串 -> ObjectId」，
+                    // 反过来那半（源站是 ObjectId、目标库存成字符串）照样匹配不上，
+                    // 后果一模一样：重复插入 / 覆盖替不掉。修一个方向等于没修。
                     if (id.IsString && ObjectId.TryParse(id.AsString, out var asObjectId))
                     {
                         ids.Add(asObjectId);
+                    }
+                    else if (id.BsonType == BsonType.ObjectId)
+                    {
+                        ids.Add(id.AsObjectId.ToString());
                     }
                 }
                 // 只查这一批的 id，不是整表 —— 整表 id 在几十万条上会把内存吃光。
@@ -333,12 +340,16 @@ public sealed class DataSyncRunWorker : BackgroundService
                 //     源站从来没配过的空字段不算被拿走，报进清单等于告诉管理员
                 //     「有个密钥被同步清掉了，去补」，而根本没有那回事。
                 var cleared = page.ClearedFields.ToHashSet(StringComparer.Ordinal);
+                // 归属也按**归一后**的 id 记。Decide 会把覆盖写的文档 _id 改写成目标库里
+                // 那个真实形态（字符串 -> ObjectId），若这里still按原始 BsonValue 存，
+                // 之后就对不上——一个真被清空的凭据不会出现在待补清单里。
                 var sourceFieldOwners = collection.RedactFields
                     .Where(cleared.Contains)
                     .ToDictionary(
                         f => f,
                         f => documents.Where(d => d.Contains(f) && d.Contains("_id"))
-                            .Select(d => d["_id"]).ToHashSet(),
+                            .Select(d => DataSyncApply.NormalizeId(d["_id"]))
+                            .ToHashSet(StringComparer.Ordinal),
                         StringComparer.Ordinal);
 
                 DataSyncApply.CarryTargetLocalFields(decision.ToReplace, existing, collection);
@@ -546,7 +557,8 @@ public sealed class DataSyncRunWorker : BackgroundService
     /// 也不能只看「字段在不在」——接回会把目标站没有的那个字段整个删掉，于是最需要提醒的
     /// 那一种反而一声不吭。所以两个输入都要：
     ///
-    /// - <paramref name="sourceFieldOwners"/>：**接回之前**，这一页里哪些文档带着这个字段。
+    /// - <paramref name="sourceFieldOwners"/>：**接回之前**，这一页里哪些文档带着这个字段
+    ///   （按归一后的 id 记——覆盖写会把文档的 _id 改写成目标库里那个真实形态）。
     ///   没带的文档不该替它操心（源站那类记录根本没有这个字段）。
     /// - 落地文档的**最终值**：空（缺失 / null / 空串）才要补。目标站原有的能用凭据被接回来了，
     ///   最终值非空，就不该出现在清单里——报了的话管理员照着补，反而把能用的配置改坏。
@@ -554,7 +566,7 @@ public sealed class DataSyncRunWorker : BackgroundService
     internal static void RecordPendingSecrets(
         DataSyncRun run,
         string collection,
-        IReadOnlyDictionary<string, HashSet<BsonValue>> sourceFieldOwners,
+        IReadOnlyDictionary<string, HashSet<string>> sourceFieldOwners,
         IEnumerable<BsonDocument> writtenDocs)
     {
         if (sourceFieldOwners.Count == 0) return;
@@ -574,7 +586,9 @@ public sealed class DataSyncRunWorker : BackgroundService
             if (owners.Count == 0) continue;
             if (already.Contains(field, StringComparer.Ordinal)) continue;
             var pending = docs.Any(d =>
-                d.TryGetValue("_id", out var id) && owners.Contains(id) && Empty(d, field));
+                d.TryGetValue("_id", out var id)
+                && owners.Contains(DataSyncApply.NormalizeId(id))
+                && Empty(d, field));
             if (pending) already.Add(field);
         }
         if (already.Count > 0) run.PendingSecretFields[collection] = already;

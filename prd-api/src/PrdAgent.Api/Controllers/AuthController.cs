@@ -565,6 +565,29 @@ public class AuthController : ControllerBase
         }
         await _userService.UpdateMustResetPasswordAsync(user.UserId, false);
 
+        // 发新令牌之前再确认一次账号还是启用的。
+        //
+        // 换密那句已经是「只有仍然启用才写得进去」的原子更新，但它管不到这之后：
+        // 管理员在换密成功与签发之间把人停掉的话，下面这段会照着**换密时那一刻**的
+        // 快照继续走——先把会话版本推上去（盖过管理员刚做的踢下线），再签一套当前版本的
+        // 新令牌，于是被停用的账号又拿到了完整凭据。
+        //
+        // 这里重读一次并不能把窗口缩到零（真要零得把签发也并进同一个原子操作），
+        // 但它把「管理员的停用被我方随后签发的令牌抵消」这一段堵上了：重读发现已停用就
+        // 只吊销、不签发。已知边界写在这里，不假装它是完全互斥。
+        var stillActive = await _userService.GetByIdAsync(user.UserId);
+        if (stillActive is null || stillActive.Status != UserStatus.Active)
+        {
+            foreach (var clientType in new[] { "admin", "desktop" })
+            {
+                await _authSessionService.RemoveAllRefreshSessionsAsync(user.UserId, clientType);
+                await _authSessionService.BumpTokenVersionAsync(user.UserId, clientType);
+            }
+            _logger.LogWarning("User {UserId} 改密期间被停用，已吊销会话且不签发新令牌", user.UserId);
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("USER_DISABLED", "账号已被停用，无法修改密码。请联系管理员。"));
+        }
+
         // 两端一起收口。JwtService 只认这两个 clientType，别处传什么它都会归一到 desktop，
         // 所以这里穷举它们就等于穷举了全部会话。
         foreach (var clientType in new[] { "admin", "desktop" })

@@ -336,8 +336,8 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>「这一页里带着该字段的文档 id」——接回之前算出来的那份。</summary>
-    private static Dictionary<string, HashSet<BsonValue>> Owners(string field, params string[] ids) =>
-        new(StringComparer.Ordinal) { [field] = ids.Select(i => (BsonValue)i).ToHashSet() };
+    private static Dictionary<string, HashSet<string>> Owners(string field, params string[] ids) =>
+        new(StringComparer.Ordinal) { [field] = ids.ToHashSet(StringComparer.Ordinal) };
 
     /// <summary>
     /// 待补清单是给管理员照着补凭据用的，所以它不能包含「本站原值根本没被动过」的字段：
@@ -734,6 +734,44 @@ public class DataSyncProtocolTests
         // 三条终态路径都用 None。
         var occurrences = worker.Split("ReturnExportTokenAsync(run, token, CancellationToken.None)").Length - 1;
         occurrences.ShouldBeGreaterThanOrEqualTo(3);
+    }
+
+    /// <summary>
+    /// 覆盖写时 Decide 会把文档的 _id 改写成目标库里那个真实形态（字符串 -> ObjectId），
+    /// 所以待补清单的归属必须按**归一后**的 id 记，否则改写之后就对不上——
+    /// 一个真被清空的凭据不会出现在清单里。
+    /// </summary>
+    [Fact]
+    public void 待补归属跟着id归一走()
+    {
+        var hex = "507f1f77bcf86cd799439011";
+        var run = new DataSyncRun();
+        // 源站送的是字符串，落库时被改写成 ObjectId。
+        var written = new BsonDocument
+        {
+            ["_id"] = MongoDB.Bson.ObjectId.Parse(hex),
+            ["ApiKeyEncrypted"] = BsonNull.Value,
+        };
+
+        DataSyncRunWorker.RecordPendingSecrets(run, "llmconfigs", Owners("ApiKeyEncrypted", hex), new[] { written });
+
+        run.PendingSecretFields["llmconfigs"].ShouldBe(new[] { "ApiKeyEncrypted" });
+    }
+
+    /// <summary>
+    /// 两个方向都要展开。上一轮只写了「字符串 -> ObjectId」，反过来那半
+    /// （源站是 ObjectId、目标库存成字符串）照样匹配不上，后果一模一样：
+    /// 重复插入 / 覆盖替不掉。修一个方向等于没修。
+    /// </summary>
+    [Fact]
+    public void 两种id形态要对称展开()
+    {
+        var worker = ReadWorkerSource();
+        var lookup = worker[worker.IndexOf("var ids = new List<BsonValue>();", StringComparison.Ordinal)..];
+        lookup = lookup[..lookup.IndexOf("var existing = await target", StringComparison.Ordinal)];
+
+        lookup.ShouldContain("ObjectId.TryParse");                 // 字符串 -> ObjectId
+        lookup.ShouldContain("id.AsObjectId.ToString()");          // ObjectId -> 字符串
     }
 
     /// <summary>

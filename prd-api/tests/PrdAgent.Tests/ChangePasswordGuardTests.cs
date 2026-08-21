@@ -59,6 +59,28 @@ public class ChangePasswordGuardTests
         Assert.DoesNotContain("_userService.UpdatePasswordAsync(user.UserId", body);
     }
 
+    /// <summary>
+    /// 发新令牌之前要再确认一次账号还是启用的。
+    ///
+    /// 换密那句已经是原子的，但它管不到之后：管理员在换密成功与签发之间把人停掉，
+    /// 后面这段会照着换密那一刻的快照继续走——先推高会话版本（盖过管理员刚做的踢下线），
+    /// 再签一套当前版本的新令牌，被停用的账号又拿到完整凭据。
+    /// </summary>
+    [Fact]
+    public void 签发新令牌前要重新确认账号还启用()
+    {
+        var body = ChangePasswordSource();
+
+        var replaceAt = body.IndexOf("TryReplacePasswordAsync", StringComparison.Ordinal);
+        var recheckAt = body.IndexOf("stillActive", StringComparison.Ordinal);
+        var issueAt = body.IndexOf("CreateRefreshSessionAsync", StringComparison.Ordinal);
+
+        Assert.True(recheckAt > replaceAt, "重新确认要排在换密之后");
+        Assert.True(issueAt > recheckAt, "重新确认要排在签发之前");
+        // 发现已停用时只吊销、不签发。
+        Assert.Contains("USER_DISABLED", body[recheckAt..issueAt]);
+    }
+
     /// <summary>条件更新的谓词必须真的带上旧散列，只改方法名不算。</summary>
     [Fact]
     public void 条件更新必须比对旧散列()
