@@ -50,6 +50,8 @@ import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDra
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
 import { SiteContextPanel } from '@/components/web-hosting/SiteContextPanel';
+import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
+import { buildShareLedger } from '@/components/web-hosting/shareLedger';
 import { SITE_SOURCE_LABELS } from '@/components/web-hosting/siteFormRegistry';
 import {
   SiteCard,
@@ -465,6 +467,12 @@ export default function WebPagesPage() {
   const [showMobileFilters, setShowMobileFilters] = useState(false);
   // 桌面工具条上同时只展开一个气泡（显示 / 筛选），避免两块浮层互相盖住
   const [openToolbarPanel, setOpenToolbarPanel] = useState<'display' | 'filter' | null>(null);
+  /**
+   * 后台的两档语境：资产库（我有什么）/ 分享（谁在看）。
+   * 访客阅读页**不是**第三档 —— 它在独立域名 /s/wp/{token} 上，访客根本不进后台；
+   * 后台只保留一个「以访客身份预览」的动作。
+   */
+  const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares'>('library');
 
   // ─── Load ───
 
@@ -712,6 +720,8 @@ export default function WebPagesPage() {
   );
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
   const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
+  // 顶栏「分享 N」与分享档结论句同一个口径：未过期且未撤销
+  const activeShareCount = useMemo(() => buildShareLedger(shareLinks).active.length, [shareLinks]);
   /**
    * 右栏讲哪个站点：选中恰好一个就讲它；否则讲列表里排在最前的那个（当前排序下最该被看见的）。
    * 不选中就空着会让右栏大部分时间是一块废地。
@@ -1009,25 +1019,42 @@ export default function WebPagesPage() {
           title="网页托管"
           actions={
             <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5">
+              {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
+              <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
+                <button
+                  type="button"
+                  data-tour-id="webpages-tab-library"
+                  onClick={() => setWorkspaceTab('library')}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
+                  style={workspaceTab === 'library'
+                    ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
+                    : { color: 'var(--text-muted)' }}
+                >
+                  <FolderOpen size={13} /> 资产库
+                </button>
+                <button
+                  type="button"
+                  data-tour-id="webpages-tab-shares"
+                  onClick={() => setWorkspaceTab('shares')}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
+                  style={workspaceTab === 'shares'
+                    ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
+                    : { color: 'var(--text-muted)' }}
+                >
+                  <Link2 size={13} /> 分享
+                  <span className="tabular-nums opacity-80">{activeShareCount}</span>
+                </button>
+              </div>
               <button
                 type="button"
-                data-tour-id="webpages-stats-btn"
-                onClick={() => setShowAnalytics(true)}
-                title="分享统计（PV/IP/时间线）"
-                aria-label="分享统计"
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))] text-token-muted"
+                data-tour-id="webpages-guest-preview"
+                onClick={() => { if (contextSite) handleVisitSite(contextSite); }}
+                disabled={!contextSite}
+                title={contextSite ? `以访客身份打开「${contextSite.title}」` : '先选一个站点'}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors disabled:opacity-40"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
               >
-                <BarChart3 size={15} />
-              </button>
-              <button
-                type="button"
-                data-tour-id="webpages-share-mgmt-btn"
-                onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
-                title="分享管理"
-                aria-label="分享管理"
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))] text-token-muted"
-              >
-                <Link2 size={15} />
+                <Eye size={13} /> 以访客身份预览
               </button>
               <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
               {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
@@ -1045,8 +1072,8 @@ export default function WebPagesPage() {
         />
       )}
 
-      {/* Toolbar */}
-      <div className="flex flex-col gap-3">
+      {/* Toolbar（只属于资产库档；分享档有自己的三层切换与搜索） */}
+      <div className="flex flex-col gap-3" style={{ display: workspaceTab === 'library' ? undefined : 'none' }}>
         {/* 搜索 / 筛选：移动端从搜索开始；桌面端默认只保留一条工作台工具区。 */}
         {isMobile ? (
           <div className="px-2 pt-1 flex flex-col gap-2">
@@ -1545,8 +1572,23 @@ export default function WebPagesPage() {
         )}
       </div>
 
+      {workspaceTab === 'shares' && (
+        <div className="flex-1 min-h-0">
+          <SharesWorkspace
+            sites={sites}
+            links={shareLinks}
+            onLinksChange={setShareLinks}
+            onOpenAnalytics={() => setShowAnalytics(true)}
+            onCreateShare={() => setWorkspaceTab('library')}
+          />
+        </div>
+      )}
+
       {/* Content：团队空间左侧挂分组树导航（空间 → 专题 → 分类），个人空间保持原布局 */}
-      <div className={!isMobile ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}>
+      <div
+        className={!isMobile ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}
+        style={{ display: workspaceTab === 'library' ? undefined : 'none' }}
+      >
         {currentSpace.kind === 'team' && !isMobile && (
           <TeamGroupsTree
             groups={teamGroups}

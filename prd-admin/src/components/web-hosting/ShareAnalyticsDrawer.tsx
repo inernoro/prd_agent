@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, BarChart3, Eye, Users, Link2, Clock, Lock, Globe, MessageSquare } from 'lucide-react';
 import type { EChartsOption } from 'echarts';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { buildAnalyticsConclusion } from './analyticsConclusion';
 import {
   getSiteShareAnalytics,
   type ShareAnalyticsCommentEntry,
@@ -291,6 +292,27 @@ export function ShareAnalyticsDrawer({
             </div>
           ) : (
             <>
+              {/* 结论先行：第一行是一句能直接行动的判断，五张数字卡退到它下面当明细 */}
+              <div
+                className="rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed"
+                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+              >
+                {buildAnalyticsConclusion(data, rangeDays).map((seg, i) => (
+                  <span
+                    key={i}
+                    style={
+                      seg.tone === 'strong'
+                        ? { color: 'var(--text-primary)', fontWeight: 600 }
+                        : seg.tone === 'warn'
+                          ? { color: 'var(--semantic-warning-text)', fontWeight: 600 }
+                          : undefined
+                    }
+                  >
+                    {seg.text}
+                  </span>
+                ))}
+              </div>
+
               {/* 聚合卡 — P1-2 修复："共 X"改为更清楚的"总 X 条" */}
               <div className="grid grid-cols-5 gap-3">
                 <StatCard
