@@ -2915,8 +2915,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
             >
               <Share2 size={14} className="mr-1" />立即分享
             </Button>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="ghost" onClick={() => {
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" style={{ justifyContent: 'center' }} onClick={() => window.open(created.siteUrl, '_blank', 'noopener')}>
+                <ExternalLink size={14} className="mr-1" />打开站点
+              </Button>
+              <Button variant="secondary" style={{ justifyContent: 'center' }} onClick={() => {
                 // 再传一个：清空表单回到待选态，省掉「关窗 → 再点上传」两步
                 setCreated(null);
                 setFile(null);
@@ -2930,9 +2933,6 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 setElapsed(0);
               }}>
                 <Upload size={14} className="mr-1" />再传一个
-              </Button>
-              <Button variant="secondary" onClick={() => window.open(created.siteUrl, '_blank', 'noopener')}>
-                <ExternalLink size={14} className="mr-1" />打开站点
               </Button>
             </div>
           </div>
@@ -2998,23 +2998,35 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               可以关掉这个弹窗，上传在后台继续；完成后卡片会带滑入 + 光环出现在列表最前面，你能立刻认出刚传的是哪张。
             </div>
 
-            <div className="flex justify-end gap-2">
+            {/* 等宽两列（设计稿如此）：两者都是「离开这个等待」的出口，分量相当；
+                右对齐的小按钮会让它们看起来像次要动作，而中止是有后果的 */}
+            <div className="grid grid-cols-2 gap-2">
               {/* 转后台：XHR 不随弹窗卸载而中断，完成时由页面 toast + 刷新兜底 */}
-              <Button variant="ghost" onClick={() => { backgroundedRef.current = true; onClose(); }}>
+              <button
+                type="button"
+                onClick={() => { backgroundedRef.current = true; onClose(); }}
+                className="rounded-lg py-2 text-[13px]"
+                style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}
+              >
                 转到后台
-              </Button>
-              <Button
-                variant="ghost"
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   // 中止走 xhr.abort()，服务层把它翻成 ABORTED 而不是「网络异常」——
                   // 这是用户自己按的，不该报成故障
                   xhrRef.current?.abort();
                   setSaving(false);
                 }}
-                style={{ color: 'var(--accent-fg-danger)' }}
+                className="rounded-lg py-2 text-[13px]"
+                style={{
+                  border: '1px solid var(--semantic-danger-border)',
+                  background: 'var(--semantic-danger-soft)',
+                  color: 'var(--accent-fg-danger)',
+                }}
               >
                 中止
-              </Button>
+              </button>
             </div>
           </div>
         ) : (
@@ -3026,8 +3038,9 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               <div
                 className="flex flex-col items-center justify-center gap-2 p-6 rounded-lg cursor-pointer transition-colors"
                 style={{
-                  background: dragOver ? 'rgba(59, 130, 246, 0.1)' : 'var(--bg-sunken)',
-                  border: `2px dashed ${dragOver ? 'var(--accent-primary)' : 'var(--border-default)'}`,
+                  background: dragOver ? 'rgba(var(--accent-primary-rgb), 0.10)' : 'var(--bg-sunken)',
+                  // 虚线走 accent：设计稿这一框是橙虚线，灰虚线读起来像「禁用」
+                  border: `1.5px dashed ${dragOver ? 'var(--accent-primary)' : 'rgba(var(--accent-primary-rgb), 0.45)'}`,
                 }}
                 onClick={() => fileInputRef.current?.click()}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -3427,13 +3440,16 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
     cursor: 'pointer',
     textAlign: 'center',
     transition: 'border-color 120ms, background 120ms',
+    // 选中态走品牌 accent，不是写死的蓝：设计稿整套强调色就是 --accent-primary
+    // （深色档 #D97757 / 浅色档 #A64B35），这里原来那个 #3b82f6 是历史遗留，
+    // 与设计系统对不上，在浅色档下也和周围格格不入。
     border: active
-      ? `1.5px solid ${danger ? '#f97316' : '#3b82f6'}`
+      ? `1.5px solid ${danger ? '#f97316' : 'var(--accent-primary)'}`
       : '1px solid var(--border-default)',
     background: active
       ? danger
         ? 'rgba(249,115,22,0.10)'
-        : 'rgba(59,130,246,0.10)'
+        : 'rgba(var(--accent-primary-rgb), 0.12)'
       : 'var(--bg-sunken)',
   });
 
@@ -3577,7 +3593,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
                   ] as const).map(([key, label]) => {
                     const on = visibility === key;
                     const danger = key === 'public';
-                    const fg = on ? (danger ? '#f97316' : '#3b82f6') : 'var(--text-secondary)';
+                    const fg = on ? (danger ? '#f97316' : 'var(--accent-primary)') : 'var(--text-secondary)';
                     const Icon = key === 'owner-only' ? User : key === 'logged-in' ? Users : Globe;
                     return (
                       <button key={key} type="button" onClick={() => setVisibility(key)} style={segCardStyle(on, danger)}>
@@ -3603,41 +3619,74 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
                 className="flex flex-col gap-1.5 rounded-xl p-2.5"
                 style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
               >
-                <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
-                  <input type="checkbox" checked={usePassword} onChange={e => handleTogglePassword(e.target.checked)} />
+                {/* 开关而不是复选框：设计稿这里是 toggle。复选框读作「勾一个选项」，
+                    开关读作「这道门开着还是关着」——后者才是这个控件真正的语义 */}
+                <div className="flex items-center gap-2" title={isShort ? '短链场景密码不可关闭' : ''}>
                   <Lock size={13} className="text-token-muted" />
-                  <span className="text-token-secondary">访问密码</span>
+                  <span className="text-sm text-token-secondary">访问密码</span>
                   <span
                     className="rounded px-1 py-px text-[10px]"
-                    style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
+                    style={{ background: 'rgba(34,197,94,0.14)', color: 'var(--accent-fg-emerald)' }}
                   >
                     {isShort ? '短链必须' : '建议开启'}
                   </span>
-                </label>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={usePassword}
+                    aria-label="访问密码"
+                    onClick={() => handleTogglePassword(!usePassword)}
+                    className="ml-auto shrink-0 rounded-full"
+                    style={{
+                      width: 36, height: 20, padding: 2, cursor: 'pointer', border: 'none',
+                      background: usePassword ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                      transition: 'background 140ms',
+                    }}
+                  >
+                    <span
+                      className="block rounded-full"
+                      style={{
+                        width: 16, height: 16, background: '#fff',
+                        transform: usePassword ? 'translateX(16px)' : 'translateX(0)',
+                        transition: 'transform 140ms',
+                      }}
+                    />
+                  </button>
+                </div>
                 {usePassword && (
                   <>
                     <div className="flex items-center gap-2">
                       {/* 单个输入框 + 明暗切换：分享密码是要念给对方听的，
-                          默认可见；需要当着别人的面配置时再遮起来。 */}
-                      <input
-                        type={pwdVisible ? 'text' : 'password'}
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        placeholder={isShort ? '≥12 位，含大小写+数字+符号' : '输入密码'}
-                        className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none font-mono"
-                        style={{ ...inputStyle, border: pwdInvalid ? '1px solid #ef4444' : inputStyle.border }}
-                      />
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => setPwdVisible(v => !v)}
-                        title={pwdVisible ? '隐藏密码' : '显示密码'}
+                          默认可见；需要当着别人的面配置时再遮起来。
+                          眼睛压在框内右侧（设计稿如此）：它是这个输入框的附属动作，
+                          摆到框外就和「重新生成」同级了，那是两种不同分量的操作。 */}
+                      <div className="relative flex-1">
+                        <input
+                          type={pwdVisible ? 'text' : 'password'}
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          placeholder={isShort ? '≥12 位，含大小写+数字+符号' : '输入密码'}
+                          className="w-full rounded-lg py-1.5 pl-3 pr-8 text-sm outline-none font-mono"
+                          style={{ ...inputStyle, border: pwdInvalid ? '1px solid #ef4444' : inputStyle.border }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setPwdVisible(v => !v)}
+                          title={pwdVisible ? '隐藏密码' : '显示密码'}
+                          className="absolute right-2 top-1/2 -translate-y-1/2"
+                          style={{ color: 'var(--text-muted)' }}
+                        >
+                          {pwdVisible ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPassword(isShort ? genStrongPassword() : genPassword())}
+                        className="shrink-0 rounded-lg px-2.5 py-1.5 text-xs"
+                        style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card)', color: 'var(--text-secondary)' }}
                       >
-                        {pwdVisible ? <EyeOff size={12} /> : <Eye size={12} />}
-                      </Button>
-                      <Button size="xs" variant="ghost" onClick={() => setPassword(isShort ? genStrongPassword() : genPassword())} title="随机生成密码">
-                        <RefreshCw size={12} />
-                      </Button>
+                        重新生成
+                      </button>
                     </div>
                     <span className="text-[11px] leading-relaxed" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
                       {pwdInvalid
@@ -3671,9 +3720,9 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
                         style={{
                           cursor: 'pointer',
                           transition: 'border-color 120ms, background 120ms',
-                          border: active ? '1.5px solid #3b82f6' : '1px solid var(--border-default)',
-                          background: active ? 'rgba(59,130,246,0.10)' : 'var(--bg-sunken)',
-                          color: active ? '#3b82f6' : 'var(--text-secondary)',
+                          border: active ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-default)',
+                          background: active ? 'rgba(var(--accent-primary-rgb), 0.12)' : 'var(--bg-sunken)',
+                          color: active ? 'var(--accent-primary)' : 'var(--text-secondary)',
                         }}
                       >
                             {opt.label}
@@ -3721,9 +3770,9 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
                             opacity: blocked ? 0.45 : 1,
                             maxWidth: '100%',
                             transition: 'border-color 120ms, background 120ms',
-                            border: active ? '1.5px solid #3b82f6' : '1px solid var(--border-default)',
-                            background: active ? 'rgba(59,130,246,0.10)' : 'var(--bg-sunken)',
-                            color: active ? '#3b82f6' : 'var(--text-secondary)',
+                            border: active ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-default)',
+                            background: active ? 'rgba(var(--accent-primary-rgb), 0.12)' : 'var(--bg-sunken)',
+                            color: active ? 'var(--accent-primary)' : 'var(--text-secondary)',
                           }}
                         >
                           {q}
@@ -3797,8 +3846,8 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
                   <span className="text-xs text-token-muted">链接形式</span>
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setLinkType('long')} style={segCardStyle(linkType === 'long')}>
-                      <Link2 size={20} style={{ color: linkType === 'long' ? '#3b82f6' : 'var(--text-secondary)' }} />
-                      <span className="text-xs" style={{ color: linkType === 'long' ? '#3b82f6' : 'var(--text-secondary)' }}>字母长链 · 推荐</span>
+                      <Link2 size={20} style={{ color: linkType === 'long' ? 'var(--accent-primary)' : 'var(--text-secondary)' }} />
+                      <span className="text-xs" style={{ color: linkType === 'long' ? 'var(--accent-primary)' : 'var(--text-secondary)' }}>字母长链 · 推荐</span>
                     </button>
                     <button type="button" onClick={() => setLinkType('short')} style={segCardStyle(linkType === 'short', true)}>
                       <Link2 size={20} style={{ color: linkType === 'short' ? '#f97316' : 'var(--text-secondary)' }} />

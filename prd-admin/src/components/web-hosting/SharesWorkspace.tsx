@@ -205,7 +205,7 @@ export function SharesWorkspace({
 
       {/* 结论先行：数字可点，点了筛到对应层 */}
       <div
-        className="rounded-xl px-4 py-3 text-[13px] leading-relaxed"
+        className="rounded-xl px-5 py-4 text-[14.5px] leading-relaxed"
         style={{ background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)', color: 'var(--text-secondary)' }}
       >
         {conclusion.map((seg, i) =>
@@ -220,7 +220,13 @@ export function SharesWorkspace({
               {seg.text}
             </button>
           ) : (
-            <span key={i} style={seg.tone === 'strong' ? { color: 'var(--text-primary)', fontWeight: 600 } : undefined}>
+            <span
+              key={i}
+              style={seg.tone === 'strong'
+                // 纯数字段放大一档：这一句的重点就是那几个数
+                ? { color: 'var(--text-primary)', fontWeight: 600, fontSize: /^\d+$/.test(seg.text) ? 22 : undefined }
+                : undefined}
+            >
               {seg.text}
             </span>
           ),
@@ -236,8 +242,15 @@ export function SharesWorkspace({
           {keyword.trim() ? `没有匹配「${keyword.trim()}」的链接` : '这一层是空的'}
         </div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-          <table className="w-full" style={{ borderCollapse: 'collapse' }}>
+        <div
+          className="flex-1 min-h-0 overflow-y-auto rounded-2xl px-4 pb-3"
+          style={{ overscrollBehavior: 'contain', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+        >
+          {/* 每一行是一张独立卡片（设计稿如此），不是传统表格行。
+              分享链接是一个个「东西」——有寿命、有状态、能单独操作，卡片形态才对得上；
+              下划线分隔的表格读起来是一张报表，行与行糊成一片。
+              列对齐仍然靠 table，所以 borderSpacing 撑出行间距而不是 borderCollapse。 */}
+          <table className="w-full" style={{ borderCollapse: 'separate', borderSpacing: '0 8px' }}>
             <thead>
               <tr>
                 {['标题 / 链接', '指向的站点', '可见性', '密码', '浏览', '过期 / 最后访问', '操作'].map((h, i) => (
@@ -247,10 +260,10 @@ export function SharesWorkspace({
                     style={{
                       textAlign: i >= 4 && i <= 5 ? 'right' : i === 6 ? 'right' : 'left',
                       color: 'var(--text-muted)',
-                      borderBottom: '1px solid var(--border-subtle)',
                       position: 'sticky',
                       top: 0,
-                      background: 'var(--bg-base)',
+                      background: 'var(--bg-card)',
+                      paddingTop: 14,
                     }}
                   >
                     {h}
@@ -315,6 +328,9 @@ function TierSection({
 }) {
   const meta = TIER_META[tier];
   const dim = tier !== 'active';
+  // 过期层走虚线边框（设计稿：视觉降一档），撤销层走淡红实线
+  const dashed = tier === 'expired';
+  const borderColor = tier === 'revoked' ? 'var(--semantic-danger-border)' : 'var(--border-subtle)';
 
   return (
     <>
@@ -337,39 +353,66 @@ function TierSection({
       {rows.map((l) => {
         const days = daysUntil(l.expiresAt, Date.now());
         const busy = busyId === l.id;
+        // 行 = 一张卡片。table 布局下不能给 <tr> 加圆角/边框（浏览器不渲染），
+        // 只能逐个 <td> 画上下边框、首末 td 补左右边框与圆角。
+        const cell = (pos: 'first' | 'mid' | 'last'): React.CSSProperties => ({
+          background: tier === 'revoked' ? 'rgba(248,113,113,0.05)' : 'var(--bg-input)',
+          borderTop: `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}`,
+          borderBottom: `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}`,
+          borderLeft: pos === 'first' ? `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}` : undefined,
+          borderRight: pos === 'last' ? `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}` : undefined,
+          borderTopLeftRadius: pos === 'first' ? 10 : undefined,
+          borderBottomLeftRadius: pos === 'first' ? 10 : undefined,
+          borderTopRightRadius: pos === 'last' ? 10 : undefined,
+          borderBottomRightRadius: pos === 'last' ? 10 : undefined,
+        });
         return (
-          <tr key={l.id} style={{ opacity: dim ? 0.62 : 1 }}>
-            <td className="px-3 py-2.5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
-              <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)', maxWidth: 240 }}>
+          <tr key={l.id} style={{ opacity: dim ? 0.72 : 1 }}>
+            <td className="px-3 py-3" style={cell('first')}>
+              <div
+                className="text-[13.5px] font-semibold truncate"
+                style={{
+                  color: 'var(--text-primary)', maxWidth: 240,
+                  // 撤销的标题划掉：这条链接已经不存在了，视觉上要说清楚
+                  textDecoration: tier === 'revoked' ? 'line-through' : undefined,
+                }}
+              >
                 {l.title || '未命名链接'}
               </div>
               <div className="mt-0.5 font-mono text-[11px] truncate" style={{ color: 'var(--text-muted)', maxWidth: 240 }}>
                 {sharePath(l)}
               </div>
             </td>
-            <td className="px-3 py-2.5 text-[12px]" style={{ borderBottom: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}>
+            <td className="px-3 py-3 text-[12px]" style={{ ...cell('mid'), color: 'var(--text-secondary)' }}>
               <span className="truncate inline-block align-bottom" style={{ maxWidth: 180 }}>{siteLabel(l)}</span>
             </td>
-            <td className="px-3 py-2.5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
+            <td className="px-3 py-3" style={cell('mid')}>
               <span
                 className="rounded px-1.5 py-0.5 text-[11px]"
+                // 三档三色：公开=橙（要警觉）、登录可见=蓝（有名单）、仅我可见=灰（最安全）。
+                // 只分两色的话，用户扫这一列分不出「登录可见」和「仅我可见」
                 style={{
-                  background: l.visibility === 'public' ? 'var(--semantic-warning-soft)' : 'var(--bg-tertiary)',
-                  color: l.visibility === 'public' ? 'var(--semantic-warning-text)' : 'var(--text-secondary)',
+                  background: l.visibility === 'public'
+                    ? 'var(--semantic-warning-soft)'
+                    : l.visibility === 'logged-in' ? 'rgba(59,130,246,0.14)' : 'var(--bg-tertiary)',
+                  color: l.visibility === 'public'
+                    ? 'var(--semantic-warning-text)'
+                    : l.visibility === 'logged-in' ? 'var(--accent-fg-blue)' : 'var(--text-secondary)',
                 }}
               >
                 {VISIBILITY_LABELS[l.visibility ?? 'public'] ?? '公开'}
               </span>
             </td>
-            <td className="px-3 py-2.5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
+            <td className="px-3 py-3" style={cell('mid')}>
               {l.accessLevel === 'password'
                 ? <Lock size={13} style={{ color: 'var(--accent-fg-emerald)' }} />
                 : <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>无</span>}
             </td>
-            <td className="px-3 py-2.5 text-right" style={{ borderBottom: '1px solid var(--border-faint)' }}>
-              <span className="text-[15px] font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{l.viewCount ?? 0}</span>
+            <td className="px-3 py-3 text-right" style={cell('mid')}>
+              {/* 浏览数是这一屏最该被扫到的数字，字号给到 20（设计稿如此） */}
+              <span className="text-[20px] font-semibold tabular-nums leading-none" style={{ color: 'var(--text-primary)' }}>{l.viewCount ?? 0}</span>
             </td>
-            <td className="px-3 py-2.5 text-right" style={{ borderBottom: '1px solid var(--border-faint)' }}>
+            <td className="px-3 py-3 text-right" style={cell('mid')}>
               {tier === 'revoked' ? (
                 <>
                   <div className="text-[12px]" style={{ color: 'var(--accent-fg-danger)' }}>
@@ -395,7 +438,7 @@ function TierSection({
                 </>
               )}
             </td>
-            <td className="px-3 py-2.5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
+            <td className="px-3 py-3" style={cell('last')}>
               <div className="flex items-center justify-end gap-1.5">
                 {tier === 'revoked' ? (
                   <RowButton onClick={onReshare}><Share2 size={11} className="mr-1" />重新分享</RowButton>
