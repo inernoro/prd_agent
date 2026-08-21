@@ -703,6 +703,18 @@ function PlanCard({
           ——这个库由本项目的所有分支预览共用，写进去同库的其它分支立刻可见。
         </p>
 
+        {/*
+          这一段不是免责声明，是把实际的一致性口径说出来。同步是逐页读的，源站在这期间
+          仍然可写：中途新增的记录若排在游标前面就永远读不到，中途改过的记录读到的是旧值。
+          做不到「一致快照」是当前实现的真实边界（台账 DS23），既然做不到，就不能让这一屏
+          暗示它是一份完整快照——操作者有权在按下去之前知道这件事。
+        */}
+        <p className="mt-2 text-xs leading-6" style={{ color: 'var(--text-muted)' }}>
+          这次同步是逐页读取，<span style={{ color: 'var(--text-secondary)' }}>不是一致性快照</span>：
+          源站在同步期间仍可写入，中途新增的记录可能读不到、中途改过的记录可能读到旧值。
+          需要精确一致时，请在源站空闲时段执行。
+        </p>
+
         {plan.rows.some((r) => r.collection === 'users' && r.supportedHere !== false && r.sourceReported !== false) ? (
           // 账号搬过来时的身份冲突。本仓库 users.Username 上是**非唯一**索引，所以
           // 不会插入失败，而是留下两行同名用户——按用户名找人的地方一律 FirstOrDefault，

@@ -187,4 +187,23 @@ public class DataSyncApplyTests
         Assert.Equal(BsonType.ObjectId, overwrite.ToReplace[0]["_id"].BsonType);
         Assert.Equal(hex, overwrite.ToReplace[0]["_id"].AsObjectId.ToString());
     }
+
+    /// <summary>
+    /// 只有撞 `_id` 才算「这条已经有了，跳过」。撞业务唯一索引意味着目标站已有同一个
+    /// 业务实体、但 _id 与源站不同——跳过它之后，后面引用它的记录照样带着源站 id 导进去，
+    /// 留下指向不存在对象的引用，而整条同步还报成功。
+    ///
+    /// 认不出来的一律当作不可跳过：错误文案哪天变了，后果应该是响亮地失败，
+    /// 不是悄悄恢复成损坏数据。
+    /// </summary>
+    [Theory]
+    [InlineData("E11000 duplicate key error collection: prdagent.users index: _id_ dup key: { _id: \"a\" }", true)]
+    [InlineData("E11000 duplicate key error collection: prdagent.defect_projects index: Key_1 dup key: { Key: \"P1\" }", false)]
+    [InlineData("E11000 duplicate key error collection: prdagent.users index: Username_1 dup key: { Username: \"bob\" }", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void 只有撞Id才算可跳过的重复(string? message, bool expected)
+    {
+        Assert.Equal(expected, DataSyncApply.IsSkippableIdDuplicate(message));
+    }
 }

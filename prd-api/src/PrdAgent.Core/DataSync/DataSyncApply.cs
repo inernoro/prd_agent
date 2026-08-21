@@ -45,6 +45,28 @@ public static class DataSyncApply
     /// 一次误操作最多是「什么都没变」，不会是「本地改了半天的数据被源站盖掉」。
     /// </summary>
     /// <summary>
+    /// 这条重复键错误是不是撞在 `_id` 上。
+    ///
+    /// 只有撞 `_id` 才允许当成「这条已经有了，跳过」。撞**业务唯一索引**不行：
+    /// 那意味着目标站已经有同一个业务实体、但它的 `_id` 跟源站不同。跳过它之后，
+    /// 后面引用这个实体的记录照样带着**源站的** id 被导进去——
+    /// 比如 defect_projects.Key 撞了索引被跳过，随后 defect_reports.ProjectId
+    /// 指向一个目标库里根本不存在的项目。而整条同步还报成功。
+    ///
+    /// 要真正解决得做跨实例身份归并（把源站 id 映射到目标站已有记录，再重写所有引用），
+    /// 那是 DS18 记着的独立工程。在它落地之前，这里的正确行为是**当场失败**，
+    /// 而不是留下一堆断掉的引用还说「成功」。
+    ///
+    /// 判据取 Mongo 错误里的索引名（`index: _id_`）。认不出来时一律当作**不可跳过**——
+    /// 错误文案哪天变了，后果应该是响亮地失败，不是悄悄恢复成损坏数据。
+    /// </summary>
+    public static bool IsSkippableIdDuplicate(string? writeErrorMessage)
+    {
+        if (string.IsNullOrEmpty(writeErrorMessage)) return false;
+        return writeErrorMessage.Contains("index: _id_", StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// 把 _id 归一成可比较的字符串。
     ///
     /// 本仓库同一个逻辑 id 在库里可能是两种物理形态：历史数据存成 ObjectId，

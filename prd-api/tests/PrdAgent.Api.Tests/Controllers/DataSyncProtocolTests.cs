@@ -806,6 +806,35 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 撞业务唯一索引时必须当场失败，不许跳过后继续。跳过留下的是「引用指向不存在对象」
+    /// 的损坏数据，而整条同步还报成功——比直接失败糟得多。
+    /// </summary>
+    [Fact]
+    public void 撞业务唯一索引要当场失败()
+    {
+        var worker = ReadWorkerSource();
+        var block = worker[worker.IndexOf("catch (MongoBulkWriteException<BsonDocument> ex)", StringComparison.Ordinal)..];
+        block = block[..block.IndexOf("progress.Skipped += conflicts;", StringComparison.Ordinal)];
+
+        block.ShouldContain("IsSkippableIdDuplicate");
+        block.ShouldContain("throw new InvalidOperationException");
+        // 提示要指向真正的解法，而不是让人干瞪眼。
+        block.ShouldContain("DS18");
+    }
+
+    /// <summary>
+    /// 执行前对照表必须说清这不是一致性快照。做不到一致快照是当前实现的真实边界（DS23），
+    /// 既然做不到，就不能让这一屏暗示它是一份完整快照。
+    /// </summary>
+    [Fact]
+    public void 对照表要说清这不是一致性快照()
+    {
+        var page = ReadRepoText("prd-admin", "src", "pages", "data-sync", "DataSyncPage.tsx");
+        page.ShouldContain("不是一致性快照");
+        page.ShouldContain("源站在同步期间仍可写入");
+    }
+
+    /// <summary>
     /// 源站管理员在同意页上勾了「连登录凭据一起搬」时，users.PasswordHash 不在这次的
     /// 脱敏范围里，源站送来的是真散列。这时候拿目标站的旧散列盖回去，等于把授权页刚刚
     /// 承诺过的事悄悄取消——那批用户的原密码登不进去，而界面上说的是能登。

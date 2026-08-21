@@ -382,6 +382,26 @@ public sealed class DataSyncRunWorker : BackgroundService
                             if (ex.WriteConcernError is not null) throw;
                             var conflicts = ex.WriteErrors.Count(e => e.Category == ServerErrorCategory.DuplicateKey);
                             if (conflicts == 0 || conflicts != ex.WriteErrors.Count) throw;
+
+                            // 只有撞 `_id` 才算「这条已经有了，跳过」。撞**业务唯一索引**
+                            // 意味着目标站已有同一个业务实体、但它的 _id 与源站不同——
+                            // 跳过它之后，后面引用这个实体的记录照样带着源站 id 被导进去，
+                            // 留下一堆指向不存在记录的引用，而整条同步还报成功。
+                            // 真正的解法是跨实例身份归并（DS18，独立工程）；在那之前，
+                            // 正确行为是当场失败，不是悄悄产出损坏数据。
+                            var unmergeable = ex.WriteErrors
+                                .Where(e => !DataSyncApply.IsSkippableIdDuplicate(e.Message))
+                                .ToList();
+                            if (unmergeable.Count > 0)
+                            {
+                                throw new InvalidOperationException(
+                                    $"集合 {collection.Name} 有 {unmergeable.Count} 条撞在**业务唯一索引**上："
+                                    + "目标站已经存在同一个业务实体，但它的 _id 与源站不同。"
+                                    + "跳过这些记录会让后面引用它们的数据指向不存在的对象，"
+                                    + "所以这里停下而不是继续。需要先做跨实例身份归并（见台账 DS18），"
+                                    + "或者先清空目标站这个集合再同步。");
+                            }
+
                             progress.Skipped += conflicts;
                             _logger.LogWarning(
                                 "[data-sync] {Collection} 有 {Count} 条撞唯一索引，已跳过；其余 {Written} 条已写入",
