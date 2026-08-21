@@ -214,3 +214,6 @@
 | fix | prd-api | 自助改密签发新令牌与回给前端的身份都改用重读回来的那条用户记录：原来重读只用来判「还启用吗」，签发仍拿进函数时的旧快照，管理员在这期间把账号降级的话，新令牌带着旧的 ADMIN 角色而版本号是最新的，校验一路放行，一次改密把并发的降级抵消掉 |
 | test | prd-api | verifier 用例改写为「读可重复、作废后读不到、过期读不到」，并加接线守卫：callback 里必须 Peek 不许 Take，ForgetVerifier 必须排在拿到响应之后，且要有连不上源站的专用错误码 |
 | fix | prd-admin | 回跳页的重试按钮只在「授权码确实没被消费」那一档出现（连不上源站 / 本机网络异常），其余失败源站已应答、码已作废，直接收起按钮 |
+| fix | prd-api | 救场开关 MAP_ADMIN_FORCE_RESET 不再在 CDS 分支预览上直接跳过：它只有在 CDS 上才用得着，跳过等于把唯一的钥匙锁在门里。按用户口径（CDS 上没有生产，全是测试环境）改为照做并打印影响面——同项目所有分支共用一个 Mongo，改的是全库那一份管理员；一次性仍由 deployment_markers 保证 |
+| fix | prd-api | 回跳地址不再直接用 Request.Scheme：真实部署 TLS 终结在反向代理、进程收到明文 http，而本项目没有 UseForwardedHeaders，于是算出 http://<公网域名>，源站的形状校验只认 https，授权跳转第一步就被拒——本地全绿、一上真站必炸。改为「显式配置 > X-Forwarded-Proto/Host > 请求本身」；刻意不收浏览器传的 X-Client-Base-Url（它会变成「源站该把数据回跳给谁」的一部分，且 prepare 与 callback 两次请求只要有一次没带就会算出不同的回跳地址） |
+| test | prd-api | 守卫两条：救场开关的分支预览判定只许打印不许 return 且要说清共享库影响面；回跳地址必须认转发头且排在裸 Request.Scheme 之前、不许收 X-Client-Base-Url |

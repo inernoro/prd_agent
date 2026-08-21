@@ -837,6 +837,35 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 回跳地址不许直接用请求的scheme()
+    {
+        // 真实部署 TLS 终结在反向代理，进程收到明文 http，而本项目没有 UseForwardedHeaders。
+        // 直接用 Request.Scheme 就会算出 http://<公网域名>，源站的形状校验只认 https，
+        // 授权跳转第一步就被拒——本地全绿、一上真站必炸，是最贵的一类判据错误。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var source = File.ReadAllText(path);
+
+        var body = source[source.IndexOf("private string SelfOrigin()", StringComparison.Ordinal)..];
+        body = body[..body.IndexOf("\n    private ", StringComparison.Ordinal)];
+
+        // 显式配置最优先。
+        Assert.Contains("DataSync:SelfOrigin", body, StringComparison.Ordinal);
+        // 必须认代理写的转发头，否则 https 永远拼不出来。
+        Assert.Contains("X-Forwarded-Proto", body, StringComparison.Ordinal);
+        Assert.Contains("X-Forwarded-Host", body, StringComparison.Ordinal);
+
+        // 转发头必须排在裸 Request.Scheme 之前，否则等于没接。
+        var forwardedAt = body.IndexOf("X-Forwarded-Host", StringComparison.Ordinal);
+        var rawAt = body.IndexOf("Request.Scheme", StringComparison.Ordinal);
+        Assert.True(forwardedAt >= 0 && rawAt > forwardedAt,
+            "裸 Request.Scheme 排在了转发头之前，反代后面永远算成 http");
+
+        // 刻意不收浏览器传的 X-Client-Base-Url：两次请求只要有一次没带，
+        // prepare 与 callback 算出的回跳地址就会不一致，换票以 redirect 不匹配失败。
+        Assert.DoesNotContain("X-Client-Base-Url", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 换票这一步不许挂在浏览器连接上()
     {
         // 换票是双方各自改状态的一步：源站收到请求就把授权码原子标成已消费并签出一张

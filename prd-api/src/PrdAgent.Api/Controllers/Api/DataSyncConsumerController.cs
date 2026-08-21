@@ -666,10 +666,39 @@ public sealed class DataSyncConsumerController : ControllerBase
         return user is not null && user.Status == UserStatus.Active && user.Role == UserRole.ADMIN;
     }
 
+    /// <summary>
+    /// 本站对外的根地址。回跳地址由它拼出来，所以它错了整条链路第一步就断。
+    ///
+    /// 不能直接用 `Request.Scheme`：真实部署里 TLS 终结在反向代理上，进程收到的是明文
+    /// http，而本项目的 `Program.cs` **没有** `UseForwardedHeaders`。于是这里会算出
+    /// `http://<公网域名>`，源站的回跳形状校验只认 https（非回环一律拒），
+    /// 授权跳转在第一步就被拒掉——本地怎么测都好好的，一上真站必炸。
+    ///
+    /// 判据顺序刻意排成「越稳定越靠前」：
+    /// 1. 显式配置——运维说了算，最稳；
+    /// 2. 反向代理的 `X-Forwarded-Proto/Host`——由代理写入，浏览器改不了；
+    /// 3. 兜底才用请求本身。
+    ///
+    /// **刻意不收 `X-Client-Base-Url`**（本仓库另一处的 `ResolveServerUrl` 把它排第一）。
+    /// 两个原因：它是浏览器传上来的，而这个值最终会变成「源站该把数据回跳给谁」的一部分；
+    /// 而且 prepare 与 callback 是两次独立请求，只要有一次没带上，两边算出的回跳地址
+    /// 就会不一致，换票会以 redirect 不匹配失败——一个只在偶发条件下出现的坏。
+    /// </summary>
     private string SelfOrigin()
     {
         var configured = _configuration["DataSync:SelfOrigin"] ?? _configuration["PUBLIC_BASE_URL"];
         if (!string.IsNullOrWhiteSpace(configured)) return configured!.TrimEnd('/');
+
+        var forwardedHost = Request.Headers["X-Forwarded-Host"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedHost))
+        {
+            // 代理链上可能叠了多跳，第一个才是最外层那个面向用户的 host。
+            var host = forwardedHost.Split(',')[0].Trim();
+            var scheme = (Request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? "https")
+                .Split(',')[0].Trim();
+            if (host.Length > 0) return $"{scheme}://{host}";
+        }
+
         return $"{Request.Scheme}://{Request.Host.Value}";
     }
 
