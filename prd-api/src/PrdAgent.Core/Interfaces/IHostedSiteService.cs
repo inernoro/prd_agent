@@ -17,11 +17,16 @@ public interface IHostedSiteService
         CancellationToken ct = default);
 
     /// <summary>从 ZIP 文件字节创建站点；wrappedAssetType 由调用方在生成"壳子+资产"包装 ZIP 时显式传入</summary>
+    /// <param name="uploadId">
+    /// 可选。传了就把解包进度写进 <see cref="IUploadProgressService"/>，
+    /// 供前端另开一路轮询展示「已解包 N / M 个文件」。不传 = 不记录，老调用方零影响。
+    /// </param>
     Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? uploadId = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
     Task<HostedSite> CreateFromContentAsync(
@@ -34,11 +39,13 @@ public interface IHostedSiteService
     // ── 替换内容 ──
 
     /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容；wrappedAssetType 由调用方按原始资产类型显式传入（"pdf"/"video"/"markdown"），普通 HTML/ZIP 传 null 会清空 marker</summary>
+    /// <param name="uploadId">可选，同 <see cref="CreateFromZipAsync"/>。</param>
     Task<HostedSite> ReuploadAsync(
         string siteId, string userId,
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? uploadId = null);
 
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
     Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);
@@ -123,9 +130,20 @@ public interface IHostedSiteService
 
     /// <summary>
     /// 列出分享：默认包含未过期 + 过期 ≤ 7 天（允许续期）的链接。
-    /// 已撤销 / 过期 > 7 天的链接不返回，但保留 DB 行用于审计。
+    /// 过期 > 7 天的链接不返回，但保留 DB 行用于审计。
+    ///
+    /// <paramref name="includeRevoked"/> 默认 false —— 保持既有调用方行为不变。
+    /// 传 true 时把已撤销的链接一并返回（分享管理面板的「已撤销」一层要用：
+    /// 撤销不可逆，但用户仍需要看到「哪条被我撤了、什么时候撤的」并能重新分享，
+    /// 直接从列表里消失等于这段历史无处可查）。
     /// </summary>
-    Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct = default);
+    Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct = default, bool includeRevoked = false);
+
+    /// <summary>
+    /// 批量取站点标题（id → title）。分享列表的「指向的站点」一列要用。
+    /// 查不到的 id（站点已删）不会出现在结果里，调用方自己决定怎么显示。
+    /// </summary>
+    Task<Dictionary<string, string>> GetTitlesByIdsAsync(IEnumerable<string> siteIds, CancellationToken ct = default);
 
     /// <summary>
     /// 续期某条分享链接。仅创建者可调用。
@@ -136,7 +154,10 @@ public interface IHostedSiteService
     /// </summary>
     Task<RenewShareResult> RenewShareAsync(string shareId, string userId, int extendDays, CancellationToken ct = default);
 
-    Task<bool> RevokeShareAsync(string shareId, string userId, CancellationToken ct = default);
+    /// <summary>
+    /// 撤销分享链接（不可逆）。<paramref name="reason"/> 可选，记一句「为什么撤」。
+    /// </summary>
+    Task<bool> RevokeShareAsync(string shareId, string userId, string? reason = null, CancellationToken ct = default);
 
     Task<ShareViewResult?> ViewShareAsync(string token, string? password,
         string? viewerUserId = null, string? viewerName = null,

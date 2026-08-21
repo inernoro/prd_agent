@@ -22,6 +22,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
+    private readonly IUploadProgressService _uploadProgress;
 
     // 500MB —— 视频 / PDF 等媒体文件比 HTML 大几个量级
     private const long MaxSingleFileSize = 500L * 1024 * 1024;
@@ -43,11 +44,13 @@ public class WebPagesController : ControllerBase
 
     public WebPagesController(
         IHostedSiteService siteService,
+        IUploadProgressService uploadProgress,
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
         IHttpClientFactory httpClientFactory)
     {
         _siteService = siteService;
+        _uploadProgress = uploadProgress;
         _db = db;
         _teams = teams;
         _httpClientFactory = httpClientFactory;
@@ -87,7 +90,8 @@ public class WebPagesController : ControllerBase
         [FromForm] string? title,
         [FromForm] string? description,
         [FromForm] string? folder,
-        [FromForm] string? tags)
+        [FromForm] string? tags,
+        [FromForm] string? uploadId)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
@@ -111,7 +115,7 @@ public class WebPagesController : ControllerBase
             HostedSite site;
             if (ext == ".zip")
             {
-                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList);
+                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList, uploadId: uploadId);
             }
             else if (ext is ".html" or ".htm")
             {
@@ -131,7 +135,7 @@ public class WebPagesController : ControllerBase
                     : VideoExtensions.Contains(ext) ? "video"
                     : MarkdownExtensions.Contains(ext) ? "markdown"
                     : null;
-                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType);
+                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType, uploadId: uploadId);
             }
             else
             {
@@ -146,6 +150,37 @@ public class WebPagesController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+        finally
+        {
+            // 成功和失败都要收尾：不收的话前端那一路轮询会一直转到 TTL 到期，
+            // 用户看到的是「解包中」永远不结束——比没有进度还糟
+            await _uploadProgress.CompleteAsync(uploadId);
+        }
+    }
+
+    /// <summary>
+    /// 查一次上传解包进度。
+    ///
+    /// 为什么不是 SSE：上传本身是一次同步 POST，前端在等那个响应，这条只是旁路查询，
+    /// 秒级粒度足够，轮询比再拉一条长连接简单得多。
+    /// uploadId 由前端生成，跟着上传表单一起发过来；查不到就是还没开始或者已过期。
+    /// </summary>
+    [HttpGet("upload-progress/{uploadId}")]
+    public async Task<IActionResult> GetUploadProgress(string uploadId)
+    {
+        var snap = await _uploadProgress.GetAsync(uploadId);
+        if (snap == null)
+            return Ok(ApiResponse<object>.Ok(new { pending = true }));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            snap.DoneFiles,
+            snap.TotalFiles,
+            snap.EntryFile,
+            snap.CurrentPath,
+            snap.CurrentSize,
+            snap.Finished,
+        }));
     }
 
     // ─────────────────────────────────────────────
@@ -1117,12 +1152,26 @@ public class WebPagesController : ControllerBase
         }
     }
 
-    /// <summary>获取当前用户的分享链接列表（含未过期 + 过期 ≤ 7 天宽限期）</summary>
+    /// <summary>
+    /// 获取当前用户的分享链接列表（含未过期 + 过期 ≤ 7 天宽限期）。
+    ///
+    /// includeRevoked=true 时把已撤销的一并返回，供分享管理面板的「已撤销」一层展示。
+    /// 默认 false，既有调用方行为不变。
+    /// </summary>
     [HttpGet("shares")]
-    public async Task<IActionResult> ListShares()
+    public async Task<IActionResult> ListShares([FromQuery] bool includeRevoked = false)
     {
-        var items = await _siteService.ListSharesAsync(GetUserId());
+        var items = await _siteService.ListSharesAsync(GetUserId(), default, includeRevoked);
         var now = DateTime.UtcNow;
+
+        // 「指向的站点」这一列要的是标题，而链接上只有 siteId。一次批量查完，
+        // 不在 Select 里逐条查（100 条链接就是 100 次往返）。
+        var siteIds = items
+            .SelectMany(x => x.SiteIds.Count > 0 ? x.SiteIds : (x.SiteId != null ? new List<string> { x.SiteId } : new List<string>()))
+            .Distinct()
+            .ToList();
+        var titleById = await _siteService.GetTitlesByIdsAsync(siteIds);
+
         var enriched = items.Select(x => new
         {
             x.Id,
@@ -1142,9 +1191,17 @@ public class WebPagesController : ControllerBase
             x.ViewCount,
             x.UniqueIpCount,
             x.LastViewedAt,
+            x.IsRevoked,
+            x.RevokedAt,
+            x.RevokedReason,
             isExpired = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now,
             inGracePeriod = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now && x.ExpiresAt.Value > now.AddDays(-7),
             renewalCount = x.RenewalHistory?.Count ?? 0,
+            // 指向的站点标题；站点已删时该 id 查不到，跳过而不是塞一个占位符
+            siteTitles = (x.SiteIds.Count > 0 ? x.SiteIds : (x.SiteId != null ? new List<string> { x.SiteId } : new List<string>()))
+                .Where(titleById.ContainsKey)
+                .Select(id => titleById[id])
+                .ToList(),
         }).ToList();
         return Ok(ApiResponse<object>.Ok(new { items = enriched }));
     }
@@ -1178,11 +1235,16 @@ public class WebPagesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(result));
     }
 
-    /// <summary>撤销分享链接</summary>
+    /// <summary>
+    /// 撤销分享链接。
+    ///
+    /// reason 可选：撤销不可逆，几周后回头看列表时这句话是唯一能想起当初为什么撤的线索。
+    /// 不传就没有，列表那一行只显示撤销时间。
+    /// </summary>
     [HttpDelete("shares/{shareId}")]
-    public async Task<IActionResult> RevokeShare(string shareId)
+    public async Task<IActionResult> RevokeShare(string shareId, [FromQuery] string? reason = null)
     {
-        var ok = await _siteService.RevokeShareAsync(shareId, GetUserId());
+        var ok = await _siteService.RevokeShareAsync(shareId, GetUserId(), reason);
         if (!ok) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
         return Ok(ApiResponse<object>.Ok(new { revoked = true }));
     }

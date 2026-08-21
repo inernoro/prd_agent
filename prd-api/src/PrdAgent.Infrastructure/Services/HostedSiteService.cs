@@ -18,6 +18,7 @@ public class HostedSiteService : IHostedSiteService
     private readonly ISharePasswordService _sharePwd;
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
+    private readonly IUploadProgressService _uploadProgress;
     private readonly ILogger<HostedSiteService> _logger;
 
     // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
@@ -86,6 +87,7 @@ public class HostedSiteService : IHostedSiteService
         ISharePasswordService sharePwd,
         ITeamService teams,
         ITeamActivityService teamActivity,
+        IUploadProgressService uploadProgress,
         ILogger<HostedSiteService> logger)
     {
         _db = db;
@@ -94,6 +96,7 @@ public class HostedSiteService : IHostedSiteService
         _sharePwd = sharePwd;
         _teams = teams;
         _teamActivity = teamActivity;
+        _uploadProgress = uploadProgress;
         _logger = logger;
     }
 
@@ -219,11 +222,12 @@ public class HostedSiteService : IHostedSiteService
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? uploadId = null)
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var result = await ExtractAndUploadZip(siteId, zipBytes);
+        var result = await ExtractAndUploadZip(siteId, zipBytes, uploadId);
         if (result.Error != null)
             throw new InvalidOperationException(result.Error);
 
@@ -314,7 +318,8 @@ public class HostedSiteService : IHostedSiteService
         string siteId, string userId,
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? uploadId = null)
     {
         // 角色门控：editor / owner / 站点创建者可重传内容；viewer 与非成员一律拒绝
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
@@ -341,7 +346,7 @@ public class HostedSiteService : IHostedSiteService
             if (validationError != null)
                 throw new InvalidOperationException(validationError);
             // 校验已通过，此处仅可能因基础设施异常失败（与改动前行为一致）
-            var result = await ExtractAndUploadZip(siteId, fileBytes);
+            var result = await ExtractAndUploadZip(siteId, fileBytes, uploadId);
             if (result.Error != null)
                 throw new InvalidOperationException(result.Error);
             siteFiles = result.Files;
@@ -1123,18 +1128,25 @@ public class HostedSiteService : IHostedSiteService
         return share.ShortSeq;
     }
 
-    public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct)
+    public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct, bool includeRevoked = false)
     {
         // 排除 visit 便捷链（自动创建，非用户主动分享，不应污染分享管理列表）；
-        // 排除已撤销链接（用户主动取消后立即从列表消失）；
         // 时间过滤：未设过期 / 未过期 / 过期 ≤ 7 天（宽限期，允许续期，避免链接突然失效）；
         // 过期 > 7 天的链接保留 DB 行用于审计 (diagnostics)，但不返回给用户列表。
+        //
+        // 已撤销链接：默认仍然排除（既有调用方行为不变）。includeRevoked=true 时一并返回——
+        // 撤销不可逆，可「哪条被撤了、什么时候撤的」是用户要查的历史，
+        // 从列表里直接消失等于这段历史无处可查。撤销的链接不受 7 天宽限窗约束：
+        // 它的时间锚点是 RevokedAt 不是 ExpiresAt，用过期窗去筛会把刚撤的也筛掉。
         var graceCutoff = DateTime.UtcNow.AddDays(-7);
         var fb = Builders<WebPageShareLink>.Filter;
-        var filter = fb.Eq(x => x.CreatedBy, userId)
-            & fb.Eq(x => x.IsRevoked, false)
-            & fb.Ne(x => x.Purpose, "visit")
+        var liveWindow = fb.Eq(x => x.IsRevoked, false)
             & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, graceCutoff));
+        var filter = fb.Eq(x => x.CreatedBy, userId)
+            & fb.Ne(x => x.Purpose, "visit")
+            & (includeRevoked
+                ? liveWindow | fb.Eq(x => x.IsRevoked, true)
+                : liveWindow);
 
         var items = await _db.WebPageShareLinks
             .Find(filter)
@@ -1184,11 +1196,30 @@ public class HostedSiteService : IHostedSiteService
         }
     }
 
-    public async Task<bool> RevokeShareAsync(string shareId, string userId, CancellationToken ct)
+    public async Task<Dictionary<string, string>> GetTitlesByIdsAsync(IEnumerable<string> siteIds, CancellationToken ct)
     {
+        var ids = siteIds.Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<string, string>();
+
+        // 只投影 Id + Title：分享列表一次可能问 100 个站点，把整份 Files 清单拉回来纯属浪费
+        var docs = await _db.HostedSites
+            .Find(x => ids.Contains(x.Id))
+            .Project(x => new { x.Id, x.Title })
+            .ToListAsync(ct);
+
+        return docs.ToDictionary(x => x.Id, x => x.Title ?? string.Empty);
+    }
+
+    public async Task<bool> RevokeShareAsync(string shareId, string userId, string? reason, CancellationToken ct)
+    {
+        // 盖上撤销时刻：分享管理面板的已撤销一层要显示「8 月 11 日撤销」。
+        // 没有这个字段就只能拿 CreatedAt 顶替，那是创建时间不是撤销时间，会直接误导人。
         var result = await _db.WebPageShareLinks.UpdateOneAsync(
             x => x.Id == shareId && x.CreatedBy == userId,
-            Builders<WebPageShareLink>.Update.Set(x => x.IsRevoked, true),
+            Builders<WebPageShareLink>.Update
+                .Set(x => x.IsRevoked, true)
+                .Set(x => x.RevokedAt, DateTime.UtcNow)
+                .Set(x => x.RevokedReason, string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()),
             cancellationToken: ct);
         return result.MatchedCount > 0;
     }
@@ -2411,7 +2442,7 @@ public class HostedSiteService : IHostedSiteService
         return plan;
     }
 
-    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes)
+    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes, string? uploadId = null)
     {
         try
         {
@@ -2425,8 +2456,27 @@ public class HostedSiteService : IHostedSiteService
             var files = new List<HostedSiteFile>();
             long totalSize = 0;
 
+            // 进度用的：总数一开始就从 ZIP 条目表读得出来，是真实值不是估的。
+            // 入口文件在循环里一边扫一边认（第一个 index.html 就算），
+            // 不等循环跑完——那样前端要等到最后一刻才看到「识别到入口」，等于没提示。
+            var totalCount = plan.Items.Count;
+            var doneCount = 0;
+            string? entrySoFar = null;
+
             foreach (var (entry, relativePath, mimeType) in plan.Items)
             {
+                if (entrySoFar == null && relativePath.Equals("index.html", StringComparison.OrdinalIgnoreCase))
+                    entrySoFar = relativePath;
+
+                await _uploadProgress.ReportAsync(uploadId, new UploadProgressSnapshot
+                {
+                    DoneFiles = doneCount,
+                    TotalFiles = totalCount,
+                    EntryFile = entrySoFar,
+                    CurrentPath = relativePath,
+                    CurrentSize = entry.Length,
+                });
+
                 using var entryStream = entry.Open();
                 using var entryMs = new MemoryStream();
                 await entryStream.CopyToAsync(entryMs);
@@ -2447,6 +2497,7 @@ public class HostedSiteService : IHostedSiteService
                     MimeType = mimeType,
                 });
                 totalSize += entryBytes.Length;
+                doneCount++;
             }
 
             var entryFile = files.FirstOrDefault(f => f.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase))?.Path

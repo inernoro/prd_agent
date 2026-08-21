@@ -260,6 +260,18 @@ public class WebPageShareLink
     public bool IsRevoked { get; set; }
 
     /// <summary>
+    /// 撤销时刻。存量已撤销的链接没有这个字段（为 null），列表会退回「已撤销」四个字不带日期——
+    /// 不拿 CreatedAt 顶替：那是创建时间，冒充成撤销时间会直接误导人。
+    /// </summary>
+    public DateTime? RevokedAt { get; set; }
+
+    /// <summary>
+    /// 撤销原因（可选，用户撤销时自己填的一句话，如「误发已收回」）。
+    /// 撤销不可逆，几周后回头看列表时这句话是唯一能想起当初为什么撤的线索。
+    /// </summary>
+    public string? RevokedReason { get; set; }
+
+    /// <summary>
     /// 链接可见性：
     /// - owner-only：仅创建者或所属站点的 SharedTeamIds 成员可访问（新建分享面板默认勾选）
     /// - logged-in：任何登录用户可访问
