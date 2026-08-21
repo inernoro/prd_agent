@@ -1,0 +1,1 @@
+| chore | doc | 熵清理：D1-D5、D7 全绿无欠账，D6 处理 5 条历史 changelog（cds 端口绑定收窄与暴露面已由 debt.cds.md 覆盖、cds 发布控制台评审已由 plan.cds.release-system.md 十一节覆盖、自托管 JetBrains Mono 字体属实现细节无需另立设计文档、熵清理与周报归档两条为自引用记录无需另立设计文档），manifest 累计 566 条
