@@ -92,6 +92,26 @@ public class DatabaseInitializer
     }
 
     /// <summary>
+    /// 这个值是不是「关掉」。空值也算关。
+    ///
+    /// 判据必须先归一大小写，不能枚举变体。上一版写的是
+    /// `flag is "0" or "false" or "False" or "FALSE" or "no" or "off"`——手抄了三种
+    /// false 的写法，却漏了 `OFF` / `No` / `NO` / `Off`。运维随手写一个
+    /// `MAP_ADMIN_FORCE_RESET=OFF` 想表达「关掉」，这里认不出来，就把它当成一个**新的
+    /// 一次性令牌**：下一次权威部署启动会据此把选中的管理员重新启用、口令换成配置里的
+    /// 初始凭据。判据比它承诺的范围窄（形状 1：语义相同、写法不同却翻转答案），
+    /// 而这一档翻转的后果是生产管理员口令被改。
+    ///
+    /// 抽成函数是为了能拿一张大小写表直接断言行为，而不是去扫源码里那串字面量。
+    /// </summary>
+    internal static bool IsForceResetDisabled(string? raw)
+    {
+        var flag = (raw ?? string.Empty).Trim();
+        if (flag.Length == 0) return true;
+        return flag.ToLowerInvariant() is "0" or "false" or "no" or "off";
+    }
+
+    /// <summary>
     /// 按 <see cref="ForceResetKey"/> 把既有管理员的用户名与口令对齐到配置。
     /// 只在开关明确为真时动手；改完清掉「必须重设密码」标记，让人能直接登进去，
     /// 之后在界面上自己改成想要的密码。
@@ -99,9 +119,7 @@ public class DatabaseInitializer
     private async Task MaybeForceResetAdminAsync(User existingAdmin)
     {
         var flag = (_configuration[ForceResetKey] ?? string.Empty).Trim();
-        if (flag.Length == 0) return;
-        var off = flag is "0" or "false" or "False" or "FALSE" or "no" or "off";
-        if (off) return;
+        if (IsForceResetDisabled(flag)) return;
 
         // 只有权威部署能动。CDS 分支预览与生产**共用同一个 Mongo 库**
         //（dbScope 默认 shared，MongoDB__DatabaseName 恒为 prdagent，见

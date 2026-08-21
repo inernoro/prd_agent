@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using PrdAgent.Core.DataSync;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -367,6 +368,46 @@ public class DataSyncScopeCoverageTests
             "分支预览判定必须排在改用户之前");
     }
 
+    /// <summary>
+    /// 「关掉」的写法不许漏。
+    ///
+    /// 上一版枚举了三种 false 的大小写却漏了 `OFF` / `No`，于是运维写
+    /// `MAP_ADMIN_FORCE_RESET=OFF` 想关掉它，反而被当成一个**新的一次性令牌**：
+    /// 下一次权威部署启动会据此把选中的管理员重新启用、口令换成配置里的初始凭据。
+    /// 判据比它承诺的范围窄（形状 1），而这一档翻转的后果是生产管理员口令被改。
+    /// </summary>
+    [Theory]
+    [InlineData("0")]
+    [InlineData("false")]
+    [InlineData("False")]
+    [InlineData("FALSE")]
+    [InlineData("no")]
+    [InlineData("No")]
+    [InlineData("NO")]
+    [InlineData("off")]
+    [InlineData("Off")]
+    [InlineData("OFF")]
+    [InlineData("  OFF  ")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void 救场开关的关值不分大小写(string? raw)
+    {
+        Assert.True(DatabaseInitializer.IsForceResetDisabled(raw), $"「{raw}」应当被认成关掉");
+    }
+
+    /// <summary>真正的一次性令牌不能被误判成关。</summary>
+    [Theory]
+    [InlineData("1")]
+    [InlineData("true")]
+    [InlineData("TRUE")]
+    [InlineData("2026-08-21-救场")]
+    [InlineData("offline")]     // 前缀撞上 off，但它不是关
+    [InlineData("no-really")]   // 前缀撞上 no，同上
+    public void 救场开关的令牌值不会被误判成关(string raw)
+    {
+        Assert.False(DatabaseInitializer.IsForceResetDisabled(raw), $"「{raw}」是令牌，不是关");
+    }
+
     private static string ReadInfrastructureSource(params string[] segments)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -476,17 +517,29 @@ public class DataSyncScopeCoverageTests
     }
 
     /// <summary>
-    /// 慢库上一页就能跑过收尸判据的 15 分钟，所以心跳必须在页**内**跳；
+    /// 慢库上一页就能跑过收尸判据的 15 分钟，所以整段写入期间必须一直有心跳；
     /// 同时本进程对 Run 的写入要带「它还是 running」，否则被收尸之后
     /// 原 worker 会把已经落好的 failed 顶回 succeeded。
+    ///
+    /// 判据从「替换循环里有 HeartbeatAsync」改成了「整段写入被独立心跳包住」：
+    /// 循环内补跳的节奏依赖循环转到下一圈，而一次 InsertManyAsync 或单条
+    /// ReplaceOneAsync 卡住时它一次也跳不出来——那正是最需要心跳的时刻。
+    /// 保护的不变量没变，换的是能真正覆盖它的机制。
     /// </summary>
     [Fact]
     public void 活着的同步不许被判成没心跳()
     {
         var worker = ReadApiServiceSource("DataSync", "DataSyncRunWorker.cs");
-        var loop = worker[worker.IndexOf("foreach (var doc in decision.ToReplace)", StringComparison.Ordinal)..];
-        loop = loop[..loop.IndexOf("progress.Inserted", StringComparison.Ordinal)];
-        Assert.Contains("HeartbeatAsync", loop);
+        var writes = worker[worker.IndexOf("await WriteWithHeartbeatAsync(db, run, async () =>", StringComparison.Ordinal)..];
+        writes = writes[..writes.IndexOf("progress.Inserted", StringComparison.Ordinal)];
+        // 插入与逐条替换都必须落在这个心跳作用域里面。
+        Assert.Contains("InsertManyAsync", writes);
+        Assert.Contains("foreach (var doc in decision.ToReplace)", writes);
+        // 心跳任务按墙钟自己转，不等写入返回。
+        var scope = worker[worker.IndexOf("private async Task WriteWithHeartbeatAsync", StringComparison.Ordinal)..];
+        scope = scope[..scope.IndexOf("private async Task<bool> HeartbeatAsync", StringComparison.Ordinal)];
+        Assert.Contains("await Task.Delay(HeartbeatInterval, finished.Token)", scope);
+        Assert.Contains("HeartbeatAsync(db, run, ct)", scope);
 
         Assert.Contains("private static FilterDefinition<DataSyncRun> StillRunning", worker);
         var save = worker[worker.IndexOf("private static async Task SaveProgressAsync", StringComparison.Ordinal)..];

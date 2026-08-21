@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using PrdAgent.Api.Controllers.Api;
@@ -875,6 +876,42 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 往目标库写的那一段，心跳必须由**独立于写入**的任务来打。
+    ///
+    /// 「写完一批再跳」的节奏由写入自己决定，而正是写入卡住时最需要心跳：一次
+    /// InsertManyAsync 或一条 ReplaceOneAsync 卡满 15 分钟，收尸判据就把这条活着的 Run
+    /// 判成无人认领落成 failed，本进程随后照样把这批提交进目标库。
+    /// </summary>
+    [Fact]
+    public void 长写入期间要持续打心跳()
+    {
+        var worker = ReadWorkerSource();
+
+        // 1. 有这么一段独立心跳，且真的包住了写入（形状 2：建了没人调用等于没建）。
+        worker.ShouldContain("private async Task WriteWithHeartbeatAsync");
+        worker.ShouldContain("await WriteWithHeartbeatAsync(db, run, async () =>");
+
+        var scope = worker[worker.IndexOf(
+            "private async Task WriteWithHeartbeatAsync", StringComparison.Ordinal)..];
+        scope = scope[..scope.IndexOf(
+            "private async Task<bool> HeartbeatAsync", StringComparison.Ordinal)];
+
+        // 2. 心跳按墙钟自己转，不等写入返回。
+        scope.ShouldContain("await Task.Delay(HeartbeatInterval, finished.Token)");
+        // 3. 心跳任务永不抛——抛了会在 finally 的 await 里盖掉写入本身的异常。
+        scope.ShouldContain("catch (Exception ex)");
+        // 4. 租约确实丢了，写完要停手。
+        scope.ShouldContain("if (leaseLost) throw new RunLeaseLostException(run.Id);");
+
+        // 5. 逐条替换那个循环里不许再留「按 30 秒补跳」的旧节流——它的节奏依赖循环
+        //    转到下一圈，单条卡住时一次也跳不出来，留着就是两套判据（形状 3）。
+        var replaceLoop = worker[worker.IndexOf(
+            "foreach (var doc in decision.ToReplace)", StringComparison.Ordinal)..];
+        replaceLoop = replaceLoop[..replaceLoop.IndexOf("progress.Inserted", StringComparison.Ordinal)];
+        replaceLoop.ShouldNotContain("HeartbeatInterval");
+    }
+
+    /// <summary>
     /// 关标签页 / 代理掐连接是这条 SSE 流最常见的结束方式，不是异常。
     ///
     /// 断开会取消 ct，于是 Mongo 查询与 Task.Delay 抛 OperationCanceled；写入侧
@@ -1465,8 +1502,13 @@ public class DataSyncProtocolTests
     public void 剔除判据接在worker的批量插入失败路径上()
     {
         // 接线守卫（形状 2）：上面三条测的是判据本身，测不到「worker 有没有用它」。
-        var worker = ReadWorkerSource();
-        worker.ShouldContain("DataSyncApply\n                                    .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))");
+        //
+        // 断言里不许写死缩进：原来那一版把换行加一长串空格逐字写进期望串，结果调用点
+        // 被包进一层 lambda、整体缩进变了一次，守卫就红了——它盯的其实是排版，
+        // 不是接线（形状 4：断言实现的字面形状而非行为）。改成先压掉空白再比。
+        var worker = Regex.Replace(ReadWorkerSource(), @"\s+", " ");
+        worker.ShouldContain(
+            "DataSyncApply .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))");
         // 砍末尾那种写法不许回来。
         worker.ShouldNotContain("decision.ToInsert.Count - conflicts).ToList()");
     }

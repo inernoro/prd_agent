@@ -279,11 +279,19 @@ export default function DataSyncPage() {
     reconnectAttempt.current = attempt + 1;
     const delay = attempt === 0 ? 0 : Math.min(1000 * 2 ** (attempt - 1), 15000);
 
+    // 这一枪是替**哪条** Run 打的。请求一旦发出就收不回来（换 Run 时的 reset 只断 SSE，
+    // 断不了这条 GET），所以回来时先认一认还是不是当前那条：
+    //   - 不认的话 A 的快照会无条件盖掉 B 的 state；
+    //   - 更糟的是下面那句 `sse.start()` 是**这次渲染的闭包**，url 里烤的是 A，
+    //     一调就把 hook 拉回去流 A，B 的流从此起不来（和上一轮那个 reset 同一个病根）。
+    const scheduledFor = runId;
     const timer = window.setTimeout(() => {
       // 先补一次快照再重连。理由：终态是靠流推过来的，流要是一直连不上，
       // 光重连会在一个早已结束的 Run 上无限重试；这一次 GET 能把终态取回来，
       // 顺带把断流期间攒下的进度补齐。
       void apiRequest<RunView>(`/api/instance-sync/runs/${encodeURIComponent(runId)}`).then((res) => {
+        // 走掉了就整个丢掉：不 setRun、不排下一轮、更不 start 那条属于 A 的流。
+        if (!shouldApplyRun(scheduledFor, currentRunIdRef.current)) return;
         if (!res.success || !res.data) {
           // 这一枪也打空了（网络还没恢复）。必须显式安排下一次——直接 return 的话
           // status / phase 都没变，这个 effect 再也不会跑，页面就永久冻在这里了。

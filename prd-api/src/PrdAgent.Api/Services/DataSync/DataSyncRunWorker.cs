@@ -378,74 +378,77 @@ public sealed class DataSyncRunWorker : BackgroundService
                     // 写之前先确认这条 Run 还归本进程。它同时充当心跳，所以不额外多一次写。
                     if (!await HeartbeatAsync(db, run, ct)) throw new RunLeaseLostException(run.Id);
 
-                    if (decision.ToInsert.Count > 0)
+                    // 整段写入包在一个**独立的**心跳里。
+                    //
+                    // 原来只在写之前查一次租约、然后在逐条替换的间隙按 30 秒补跳：
+                    // 中间那一句 InsertManyAsync 是不定长的，库一慢它自己就能超过收尸判据的
+                    // 15 分钟，而这期间一次心跳都打不出去——别的部署据此把这条**活着的** Run
+                    // 判成无人认领落成 failed，本进程随后照样把这一批提交进目标库；
+                    // 单条 ReplaceOneAsync 卡住也是同一回事，那个 30 秒节流要等它返回才有机会跳。
+                    // concurrency-gate-discipline 第 4 条的反向义务：活着的长静默阶段必须打心跳。
+                    await WriteWithHeartbeatAsync(db, run, async () =>
                     {
-                        // IsOrdered=false 让这一批剩下的继续写，但**只要有一条失败它仍然抛**。
-                        // 不接住的话：已经写进去的那部分不计数、后面的集合全被放弃、整次同步判失败——
-                        // 而真实原因往往只是几条撞了业务唯一索引（同一条记录在两边各有一个 _id）。
-                        // 这类冲突按「跳过」处理并记进 Skipped，其余错误照旧上抛。
-                        try
+                        if (decision.ToInsert.Count > 0)
                         {
-                            await target.InsertManyAsync(decision.ToInsert,
-                                new InsertManyOptions { IsOrdered = false }, ct);
-                        }
-                        catch (MongoBulkWriteException<BsonDocument> ex)
-                        {
-                            // 写关注失败（副本集确认超时之类）不带任何 WriteError，于是
-                            // 「全部错误都是重复键」这句在 0 == 0 上恒真——一次持久性未知
-                            // 的写入会被当成「几条撞索引」咽下去。必须先把它挡在外面。
-                            if (ex.WriteConcernError is not null) throw;
-                            var conflicts = ex.WriteErrors.Count(e => e.Category == ServerErrorCategory.DuplicateKey);
-                            if (conflicts == 0 || conflicts != ex.WriteErrors.Count) throw;
-
-                            // 只有撞 `_id` 才算「这条已经有了，跳过」。撞**业务唯一索引**
-                            // 意味着目标站已有同一个业务实体、但它的 _id 与源站不同——
-                            // 跳过它之后，后面引用这个实体的记录照样带着源站 id 被导进去，
-                            // 留下一堆指向不存在记录的引用，而整条同步还报成功。
-                            // 真正的解法是跨实例身份归并（DS18，独立工程）；在那之前，
-                            // 正确行为是当场失败，不是悄悄产出损坏数据。
-                            var unmergeable = ex.WriteErrors
-                                .Where(e => !DataSyncApply.IsSkippableIdDuplicate(e.Message))
-                                .ToList();
-                            if (unmergeable.Count > 0)
+                            // IsOrdered=false 让这一批剩下的继续写，但**只要有一条失败它仍然抛**。
+                            // 不接住的话：已经写进去的那部分不计数、后面的集合全被放弃、整次同步判失败——
+                            // 而真实原因往往只是几条撞了业务唯一索引（同一条记录在两边各有一个 _id）。
+                            // 这类冲突按「跳过」处理并记进 Skipped，其余错误照旧上抛。
+                            try
                             {
-                                throw new InvalidOperationException(
-                                    $"集合 {collection.Name} 有 {unmergeable.Count} 条撞在**业务唯一索引**上："
-                                    + "目标站已经存在同一个业务实体，但它的 _id 与源站不同。"
-                                    + "跳过这些记录会让后面引用它们的数据指向不存在的对象，"
-                                    + "所以这里停下而不是继续。需要先做跨实例身份归并（见台账 DS18），"
-                                    + "或者先清空目标站这个集合再同步。");
+                                await target.InsertManyAsync(decision.ToInsert,
+                                    new InsertManyOptions { IsOrdered = false }, ct);
                             }
-
-                            progress.Skipped += conflicts;
-                            _logger.LogWarning(
-                                "[data-sync] {Collection} 有 {Count} 条撞唯一索引，已跳过；其余 {Written} 条已写入",
-                                collection.Name, conflicts, decision.ToInsert.Count - conflicts);
-                            // 按**失败的下标**剔除，不是砍掉末尾 N 条：IsOrdered=false 时
-                            // 冲突可以落在任意位置。判据抽在 DataSyncApply.SurvivingInserts。
-                            decision = decision with
+                            catch (MongoBulkWriteException<BsonDocument> ex)
                             {
-                                ToInsert = DataSyncApply
-                                    .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))
-                                    .ToList(),
-                            };
+                                // 写关注失败（副本集确认超时之类）不带任何 WriteError，于是
+                                // 「全部错误都是重复键」这句在 0 == 0 上恒真——一次持久性未知
+                                // 的写入会被当成「几条撞索引」咽下去。必须先把它挡在外面。
+                                if (ex.WriteConcernError is not null) throw;
+                                var conflicts = ex.WriteErrors.Count(e => e.Category == ServerErrorCategory.DuplicateKey);
+                                if (conflicts == 0 || conflicts != ex.WriteErrors.Count) throw;
+
+                                // 只有撞 `_id` 才算「这条已经有了，跳过」。撞**业务唯一索引**
+                                // 意味着目标站已有同一个业务实体、但它的 _id 与源站不同——
+                                // 跳过它之后，后面引用这个实体的记录照样带着源站 id 被导进去，
+                                // 留下一堆指向不存在记录的引用，而整条同步还报成功。
+                                // 真正的解法是跨实例身份归并（DS18，独立工程）；在那之前，
+                                // 正确行为是当场失败，不是悄悄产出损坏数据。
+                                var unmergeable = ex.WriteErrors
+                                    .Where(e => !DataSyncApply.IsSkippableIdDuplicate(e.Message))
+                                    .ToList();
+                                if (unmergeable.Count > 0)
+                                {
+                                    throw new InvalidOperationException(
+                                        $"集合 {collection.Name} 有 {unmergeable.Count} 条撞在**业务唯一索引**上："
+                                        + "目标站已经存在同一个业务实体，但它的 _id 与源站不同。"
+                                        + "跳过这些记录会让后面引用它们的数据指向不存在的对象，"
+                                        + "所以这里停下而不是继续。需要先做跨实例身份归并（见台账 DS18），"
+                                        + "或者先清空目标站这个集合再同步。");
+                                }
+
+                                progress.Skipped += conflicts;
+                                _logger.LogWarning(
+                                    "[data-sync] {Collection} 有 {Count} 条撞唯一索引，已跳过；其余 {Written} 条已写入",
+                                    collection.Name, conflicts, decision.ToInsert.Count - conflicts);
+                                // 按**失败的下标**剔除，不是砍掉末尾 N 条：IsOrdered=false 时
+                                // 冲突可以落在任意位置。判据抽在 DataSyncApply.SurvivingInserts。
+                                decision = decision with
+                                {
+                                    ToInsert = DataSyncApply
+                                        .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))
+                                        .ToList(),
+                                };
+                            }
                         }
-                    }
-                    // 一页最多 200 条逐条替换。库一慢，这一页本身就能跑过收尸判据的
-                    // 15 分钟——而心跳原来只在整页写完之后才刷，于是**活着的** Run 会被
-                    // 别的部署判成没心跳收走（那个部署握不住本进程内存里的令牌，`mine`
-                    // 挡不住它）。所以心跳必须在页**内**跳，跟着真实进展走。
-                    var beatAt = DateTime.UtcNow;
-                    foreach (var doc in decision.ToReplace)
-                    {
-                        await target.ReplaceOneAsync(
-                            Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]), doc, cancellationToken: ct);
-                        if (DateTime.UtcNow - beatAt >= HeartbeatInterval)
+                        // 一页最多 200 条逐条替换。心跳由外面那个独立的 beater 负责——
+                        // 它按墙钟跳，不依赖这个循环转到下一圈，所以单条替换卡住也照样跳。
+                        foreach (var doc in decision.ToReplace)
                         {
-                            if (!await HeartbeatAsync(db, run, ct)) throw new RunLeaseLostException(run.Id);
-                            beatAt = DateTime.UtcNow;
+                            await target.ReplaceOneAsync(
+                                Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]), doc, cancellationToken: ct);
                         }
-                    }
+                    }, ct);
                     progress.Inserted += decision.ToInsert.Count;
                     progress.Updated += decision.ToReplace.Count;
                 }
@@ -703,6 +706,62 @@ public sealed class DataSyncRunWorker : BackgroundService
                 .Set(x => x.PendingSecretFields, run.PendingSecretFields)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// 在一段可能很久的目标库写入期间，用一个**独立的**任务持续打心跳。
+    ///
+    /// 为什么不能沿用「写完一批再跳」：那种跳法的节奏由写入自己决定，而正是写入卡住的时候
+    /// 最需要心跳。一次 InsertManyAsync 或一条 ReplaceOneAsync 卡满 15 分钟，收尸判据就会
+    /// 把这条活着的 Run 判成无人认领——它握不住本进程内存里的令牌，`mine` 挡不住它。
+    ///
+    /// 心跳任务**永不抛出**：它抛的话会在 finally 的 await 里盖掉写入本身的异常，
+    /// 把「写失败」变成「心跳失败」，排障时看到的就是错的那个原因。心跳失败本身不致命
+    /// （下一拍还会再试），但若它明确回报**租约已经不是我的**，写完之后必须停手——
+    /// 已经提交的那批收不回来，能做的是不再继续写。
+    /// </summary>
+    private async Task WriteWithHeartbeatAsync(
+        MongoDbContext db, DataSyncRun run, Func<Task> write, CancellationToken ct)
+    {
+        using var finished = new CancellationTokenSource();
+        var leaseLost = false;
+
+        var beating = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    await Task.Delay(HeartbeatInterval, finished.Token);
+                    if (!await HeartbeatAsync(db, run, ct))
+                    {
+                        leaseLost = true;
+                        return;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // 写完了（finished）或整个 worker 在收摊（ct），都是正常结束。
+            }
+            catch (Exception ex)
+            {
+                // 单次心跳打不出去不致命，但绝不能让它冒出去盖掉写入的异常。
+                _logger.LogWarning(ex, "[data-sync] Run {RunId} 写入期间的心跳失败，已停止本段心跳", run.Id);
+            }
+        }, CancellationToken.None);
+
+        try
+        {
+            await write();
+        }
+        finally
+        {
+            finished.Cancel();
+            await beating;   // 上面保证它不抛，这里不会掩盖 write 的异常
+        }
+
+        if (leaseLost) throw new RunLeaseLostException(run.Id);
     }
 
     /// <summary>
