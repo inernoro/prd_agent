@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 
@@ -27,18 +27,29 @@ export function stashPendingAuthorization(
   sessionStorage.setItem(DATA_SYNC_PENDING_PREFIX + state, JSON.stringify(value));
 }
 
-function takePendingAuthorization(state: string): { state: string; sourceOrigin: string } | null {
+/**
+ * 读，但**不删**。
+ *
+ * 原来是读完立刻删。删在换票**之前**，于是换票没成的时候这条记录也一起没了：
+ * 网络抖一下、源站 500、本站会话恰好过期，管理员都只能回到源站从头再批准一遍——
+ * 而这些失败里有一部分本来重试一次就好。和源站那边「换票不许挂在浏览器连接上」
+ * 是同一条纪律：一次性的东西，要等这一步真的成了再消耗掉。
+ */
+function peekPendingAuthorization(state: string): { state: string; sourceOrigin: string } | null {
   if (!state) return null;
-  const key = DATA_SYNC_PENDING_PREFIX + state;
   try {
-    const raw = sessionStorage.getItem(key);
-    // 只删自己这一条：别的标签页还在等它那条。
-    sessionStorage.removeItem(key);
+    const raw = sessionStorage.getItem(DATA_SYNC_PENDING_PREFIX + state);
     return raw ? JSON.parse(raw) : null;
   } catch {
-    sessionStorage.removeItem(key);
+    // 解析不出来的坏记录留着也没用，删掉——只删自己这一条，别的标签页还在等它那条。
+    sessionStorage.removeItem(DATA_SYNC_PENDING_PREFIX + state);
     return null;
   }
+}
+
+function dropPendingAuthorization(state: string): void {
+  // 只删自己这一条：别的标签页还在等它那条。
+  sessionStorage.removeItem(DATA_SYNC_PENDING_PREFIX + state);
 }
 
 /**
@@ -57,37 +68,59 @@ export default function DataSyncCallbackPage() {
 
   const navigate = useNavigate();
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(true);
   // React 18 严格模式下 effect 会跑两次；授权码只能用一次，第二次必然失败并报错。
-  const exchanged = useRef(false);
+  const started = useRef(false);
+  /**
+   * 授权码只留在**内存**里，不进 sessionStorage。
+   *
+   * 地址栏那份一进来就抹掉（免得留在历史记录里），但抹掉不等于要立刻扔掉：
+   * 换票失败而人还停在这一页时，手上有它才谈得上「重试」。放内存不放存储，
+   * 是因为它是一枚还没用掉的凭据——页面一关就该跟着消失。
+   */
+  const oneTime = useRef<{ code: string; state: string; sourceOrigin: string } | null>(null);
+
+  const exchange = useCallback(async () => {
+    const held = oneTime.current;
+    if (!held) return;
+    setBusy(true);
+    setError('');
+    const res = await apiRequest<{ runId: string }>('/api/instance-sync/runs/callback', {
+      method: 'POST',
+      body: { sourceOrigin: held.sourceOrigin, code: held.code, state: held.state },
+    });
+    if (!res.success || !res.data?.runId) {
+      // 失败时**不**消耗 pending 记录，也不丢掉手上的码：留着这次还能再试一下。
+      setError(res.error?.message || '换取导出授权失败');
+      setBusy(false);
+      return;
+    }
+    dropPendingAuthorization(held.state);
+    oneTime.current = null;
+    navigate(`/data-sync?run=${encodeURIComponent(res.data.runId)}`, { replace: true });
+  }, [navigate]);
 
   useEffect(() => {
-    if (exchanged.current) return;
-    exchanged.current = true;
+    if (started.current) return;
+    started.current = true;
 
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
     const code = hash.get('code') || '';
     const state = hash.get('state') || '';
     window.history.replaceState(null, '', window.location.pathname);
 
-    const pending = takePendingAuthorization(state);
+    const pending = peekPendingAuthorization(state);
 
     if (!code || !state || !pending || pending.state !== state) {
       // state 对不上说明这不是本浏览器发起的那次授权，直接拒绝，不去换票。
       setError('这次回跳与本机发起的授权对不上，请回到数据同步页重新发起。');
+      setBusy(false);
       return;
     }
 
-    void apiRequest<{ runId: string }>('/api/instance-sync/runs/callback', {
-      method: 'POST',
-      body: { sourceOrigin: pending.sourceOrigin, code, state },
-    }).then((res) => {
-      if (!res.success || !res.data?.runId) {
-        setError(res.error?.message || '换取导出授权失败');
-        return;
-      }
-      navigate(`/data-sync?run=${encodeURIComponent(res.data.runId)}`, { replace: true });
-    });
-  }, [navigate]);
+    oneTime.current = { code, state, sourceOrigin: pending.sourceOrigin };
+    void exchange();
+  }, [exchange]);
 
   return (
     <main className="flex min-h-screen w-full items-center justify-center px-5" style={{ background: 'var(--bg-base)' }}>
@@ -114,14 +147,32 @@ export default function DataSyncCallbackPage() {
           {error || '源站已经同意，正在把授权换成本次同步的凭据，马上带你去确认同步范围。'}
         </p>
         {error ? (
-          <button
-            type="button"
-            className="mt-5 rounded-lg px-4 py-2 text-sm font-medium"
-            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
-            onClick={() => navigate('/data-sync', { replace: true })}
-          >
-            回到数据同步
-          </button>
+          <div className="mt-5 flex items-center justify-center gap-2">
+            {/* 手上还握着码才给重试——没有码的失败（state 对不上）重试多少次都是同一个结果。 */}
+            {oneTime.current ? (
+              <button
+                type="button"
+                disabled={busy}
+                className="rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-60"
+                style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+                onClick={() => void exchange()}
+              >
+                {busy ? '重试中' : '重试'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="rounded-lg px-4 py-2 text-sm font-medium"
+              style={{
+                background: 'var(--bg-subtle)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-default)',
+              }}
+              onClick={() => navigate('/data-sync', { replace: true })}
+            >
+              回到数据同步
+            </button>
+          </div>
         ) : null}
       </section>
     </main>
