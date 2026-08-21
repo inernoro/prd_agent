@@ -22,6 +22,17 @@ def function_source(name: str) -> str:
     raise AssertionError(f"找不到函数 {name}，这条守卫的前提已变")
 
 
+def code_only(src: str) -> str:
+    """去掉整行注释再断言。
+
+    守卫扫的是「代码做了什么」，不是「注释里提到了什么」。解释性注释里往往要引用
+    被废弃的旧写法（「上一版写的是 e.code == 3」），照着原文扫会把那句解释判成违规——
+    断言的对象错了，就会逼着后来人删掉本该留下的说明。
+    """
+    return "\n".join(
+        line for line in src.splitlines() if not line.lstrip().startswith("#"))
+
+
 def test_smoke_覆盖不全时以独立非零码退出() -> None:
     src = function_source("cmd_smoke")
     assert "coverage_complete" in src, "cmd_smoke 不再计算覆盖完整性了？"
@@ -34,11 +45,43 @@ def test_smoke_覆盖不全时以独立非零码退出() -> None:
 
 def test_deploy_不把覆盖不全说成全绿() -> None:
     src = function_source("cmd_deploy")
-    assert "e.code == 3" in src, (
-        "cmd_deploy 必须单独认 3，否则要么误判部署失败、要么继续说「全绿」")
+    assert "smokeCoverageIncomplete" in src, (
+        "cmd_deploy 必须按 payload 里那面自描述的旗分流覆盖缺口")
     before_green = src[:src.index("deploy 流水线全绿")]
     assert "if smoke_gaps:" in before_green, (
         "说「全绿」之前必须先把有缺口的情况分流出去")
+
+
+def test_deploy不许拿退出码3当覆盖缺口的判据() -> None:
+    """第五次假绿：治它的那个补丁自己是新的假绿。
+
+    3 是整个 CLI 通用的「服务端/解析错误」码——cmd_smoke 读不到 /api/branches
+    也退 3。上一版 `if e.code == 3: smoke_gaps = _LAST_SMOKE_GAPS` 于是把真失败
+    认成了覆盖不全；而全新进程里那个模块全局是空串，gaps 分支拿到空、
+    failure 分支被 `elif e.code != 0` 挡住，两头落空，deploy 一路走到
+    「流水线全绿」退 0——一个探针都没跑过。
+
+    所以身份必须自描述地跟着那次退出走，且任何认不出来的非零一律当失败。
+    """
+    src = code_only(function_source("cmd_deploy"))
+    assert "e.code == 3" not in src, (
+        "不许再按退出码 3 判覆盖缺口：那个码 cmd_smoke 的服务端错误路径也在用")
+    assert "_LAST_SMOKE_GAPS" not in src, (
+        "不许再走那条默认为空的模块全局旁路——旗还没升就退出时它会静默给出空缺口")
+
+    handler = src[src.index("except SystemExit as e:"):src.index("if smoke_die:")]
+    assert 'smoke_payload.get("smokeCoverageIncomplete")' in handler, (
+        "覆盖缺口只认 payload 里的显式标记")
+    # default-deny：认不出来的非零一律当失败，不许悄悄落到「全绿」。
+    assert "else:" in handler and "smoke_die" in handler, (
+        "认不出的非零必须落进失败分支，不能两头落空")
+
+    smoke = code_only(function_source("cmd_smoke"))
+    tail = smoke[smoke.index("if coverage_complete:"):]
+    assert '"smokeCoverageIncomplete": True' in tail, (
+        "cmd_smoke 得把这面旗写进 die() 的 payload，调用方才认得出来")
+    assert '"smokeGaps": gaps' in tail, "缺口文字要跟着旗一起走，不靠模块全局交接"
+    assert "_LAST_SMOKE_GAPS" not in smoke, "旁路要真的删掉，不是留着不用"
 
 
 def test_deploy只输出一份结果() -> None:

@@ -460,10 +460,11 @@ def _call(method: str, path: str, body: Any = None, timeout: int = 15,
 
 # ── I/O ────────────────────────────────────────────────────────────
 
-# cmd_smoke 覆盖不全时把缺口文字放这里，供 cmd_deploy 在最终结论里点名。
-# 用模块全局是因为 cmd_smoke 直接往 stdout 打 JSON 并 sys.exit，调用方拿不到返回值；
-# 与其让 deploy 去解析自己子调用的 stdout，不如留一个明确的交接点。
-_LAST_SMOKE_GAPS: str = ""
+# （这里曾有一个 _LAST_SMOKE_GAPS 模块全局，用来把冒烟缺口交给 cmd_deploy。
+#  已删除：那是一条**默认为空**的旁路——只要 cmd_smoke 在设置它之前就因为别的原因
+#  退出，deploy 读到空串却仍以为「只是覆盖不全」，于是既不报错也不报缺口，
+#  一路走到「全绿」。缺口现在写进 die() 的 payload，跟着那次退出一起走，
+#  不存在「旗还没升就退出了」这种状态。）
 
 # 一条命令内部调用另一条命令时，被调那条不许自己往 stdout 写结果。
 # 否则 `cdscli deploy` 会先吐一份 smoke 的 ok:false、再吐一份自己的 ok:true——
@@ -7513,11 +7514,17 @@ def cmd_smoke(args: argparse.Namespace) -> None:
     # 「注释里说清楚了」不等于「调用方拿得到」：判据得让机器读得到才算数。
     # 所以改成独立退出码 3：区别于 2（真的测挂了），调用方据此既不能当成功、
     # 也不该当成部署失败。
+    #
+    # 但**只靠退出码 3 认不出这件事**：cmd_smoke 里读 /api/branches 失败、响应不是
+    # JSON 之类的服务端错误也走 die(code=3)。上层若按退出码分流，那些真失败会被当成
+    # 「只是覆盖不全」，而全新进程里的 gaps 又是空的——两个分支都不进，deploy 一路
+    # 落到「流水线全绿」退 0。同一个假绿的第五次回潮，就长在治它的那个补丁里。
+    #
+    # 所以身份写进 payload：调用方认这面**自描述的旗**，不认那个全 CLI 共用的退出码。
     gaps = "；".join(f"{x['layer']} 未测（{x.get('reason', '原因未记录')}）" for x in skipped)
-    global _LAST_SMOKE_GAPS
-    _LAST_SMOKE_GAPS = gaps
     die(f"冒烟覆盖不全：{gaps}（已跑的 {passed}/{len(verified)} 层都通过）",
-        code=3, extra={"data": summary})
+        code=3,
+        extra={"data": summary, "smokeCoverageIncomplete": True, "smokeGaps": gaps})
 
 
 def cmd_help_me_check(args: argparse.Namespace) -> None:
@@ -8026,15 +8033,24 @@ def cmd_deploy(args: argparse.Namespace) -> None:
             try:
                 cmd_smoke(ns)
             except SystemExit as e:
-                smoke_payload = _NESTED_PAYLOAD
-                # 3 = 跑过的都过了、但有层没跑（缺凭据之类）。不算部署失败，
-                # 但**绝不能**接着说「全绿」——那正是这条链路上出过的假绿。
-                if e.code == 3:
-                    smoke_gaps = _LAST_SMOKE_GAPS
-                elif e.code != 0:
-                    smoke_error = str((smoke_payload or {}).get("error") or "smoke 失败")
-                    smoke_die = f"smoke 失败：{smoke_error}"
-        if not smoke_gaps and smoke_die:
+                smoke_payload = _NESTED_PAYLOAD or {}
+                # 按 payload 里那面**自描述的旗**分流，不按退出码。
+                #
+                # 上一版按退出码判：可 3 是整个 CLI 通用的「服务端/解析错误」码——
+                # cmd_smoke 读不到 /api/branches 也退 3。那种情况下全新进程里的
+                # 模块全局缺口是空串：gaps 分支拿到空、failure 分支又被挡住，
+                # 两头落空，deploy 直接走到「流水线全绿」退 0——一个探针都没跑过。
+                # 治假绿的补丁自己变成了第五次假绿。
+                #
+                # 现在只认 smokeCoverageIncomplete；其余任何非零一律当失败（default-deny）。
+                if e.code != 0:
+                    if smoke_payload.get("smokeCoverageIncomplete"):
+                        smoke_gaps = str(smoke_payload.get("smokeGaps") or "（缺口未记录）")
+                    else:
+                        smoke_error = str(
+                            smoke_payload.get("error") or f"smoke 以退出码 {e.code} 结束")
+                        smoke_die = f"smoke 失败：{smoke_error}"
+        if smoke_die:
             die(smoke_die, code=2, extra={"hint": f"cdscli smoke {branch_id}"})
     if smoke_gaps:
         # 退出码必须非零。上一轮我只改了 note 的措辞就以为把假绿治好了，可机器调用方
