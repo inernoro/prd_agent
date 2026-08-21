@@ -124,6 +124,15 @@ public sealed class DataSyncConsumerController : ControllerBase
         // 源站地址是管理员填进来的，必须走 SafeOutbound：它禁自动重定向、并在建连时把
         // 解析出的每个地址过一遍内网/保留段校验。默认客户端会让「https://127.0.0.1」
         // 或者一个公网地址 302 跳内网，把 API 服务器变成打自己内网的跳板。
+        // 从这里开始一律 CancellationToken.None，不再看浏览器还连不连着。
+        //
+        // 换票是**双方各自改状态**的一步：源站收到请求就把授权码原子地标成已消费，
+        // 并签出一张两小时的导出令牌。而本站这边 verifier 刚刚已经被 TakeVerifier 取走
+        // （一次性），重来一次也换不了。所以只要请求发出去了，这一段就必须跑完——
+        // 管理员在等待期间关掉标签页而把 ct 取消的话，PostAsJsonAsync 当场抛，
+        // 本站既没存下也没作废那张令牌，它在源站眼里照样有效整整两小时，
+        // 而任何人都不再持有它、也无从交还。这正是 server-authority 第 1 条
+        // 「状态变更不得挂在 RequestAborted 上」要防的。
         var client = _httpClientFactory.CreateClient("SafeOutbound");
         client.Timeout = TimeSpan.FromSeconds(30);
         using var response = await client.PostAsJsonAsync($"{origin}/api/instance-sync/token", new
@@ -131,9 +140,9 @@ public sealed class DataSyncConsumerController : ControllerBase
             code = request.Code,
             redirectUri = $"{SelfOrigin()}/data-sync/callback",
             codeVerifier = verifier,
-        }, ct);
+        }, CancellationToken.None);
 
-        var payload = await response.Content.ReadAsStringAsync(ct);
+        var payload = await response.Content.ReadAsStringAsync(CancellationToken.None);
         if (!response.IsSuccessStatusCode)
         {
             _logger.LogWarning("[data-sync] 换取导出令牌失败 {Status}", (int)response.StatusCode);
@@ -158,10 +167,52 @@ public sealed class DataSyncConsumerController : ControllerBase
             ExportTokenExpiresAt = token.ExpiresAt,
             Status = "pending",
         };
-        await _db.DataSyncRuns.InsertOneAsync(run, cancellationToken: ct);
-        _vault.PutExportToken(run.Id, token.ExportToken, token.ExpiresAt);
+        try
+        {
+            await _db.DataSyncRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+            _vault.PutExportToken(run.Id, token.ExportToken, token.ExpiresAt);
+        }
+        catch (Exception ex)
+        {
+            // 票已经在手上、Run 却没建成：这张令牌从此没有任何人会用它，也没有任何人
+            // 会交还它，就这么在源站有效两小时。当场还回去，别留一个谁都不认领的凭据。
+            _logger.LogError(ex, "[data-sync] 已换到导出令牌但建立同步记录失败，正在交还源站作废");
+            await RevokeAtSourceAsync(origin, token.ExportToken);
+            return StatusCode(StatusCodes.Status500InternalServerError, ApiResponse<object>.Fail(
+                "DATA_SYNC_RUN_CREATE_FAILED",
+                "已从源站取得导出令牌，但本站建立同步记录失败；令牌已交还作废，请重新发起授权。"));
+        }
 
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, run.SourceLabel, run.Groups, run.Collections }));
+    }
+
+    /// <summary>
+    /// 把一张还没落到任何 Run 上的导出令牌交还源站作废。
+    ///
+    /// 与 worker 收尾时那次交还是同一个端点、同一套判据（拿票即可作废，与源站当前
+    /// 的对外开关无关）；区别只是这里还没有 Run，所以单独走一份。
+    /// 尽力而为：还不掉就留日志等它自然过期，不为此把已经给出的错误再改一个说法。
+    /// 一律 CancellationToken.None——这本身就是补偿动作，浏览器早就不在了。
+    /// </summary>
+    private async Task RevokeAtSourceAsync(string origin, string exportToken)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("SafeOutbound");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{origin}/api/instance-sync/revoke");
+            request.Headers.TryAddWithoutValidation("X-Data-Sync-Token", exportToken);
+            using var response = await client.SendAsync(request, CancellationToken.None);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[data-sync] 交还未落地的导出令牌失败 HTTP {Status}，票据将等待自然过期",
+                    (int)response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[data-sync] 交还未落地的导出令牌异常，票据将等待自然过期");
+        }
     }
 
     /// <summary>

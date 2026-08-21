@@ -767,6 +767,35 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 换票这一步不许挂在浏览器连接上()
+    {
+        // 换票是双方各自改状态的一步：源站收到请求就把授权码原子标成已消费并签出一张
+        // 两小时的导出令牌，而本站的 verifier 已经被 TakeVerifier 一次性取走。所以只要
+        // 请求发出去了这段就必须跑完——挂在 RequestAborted 上的话，管理员在等待期间
+        // 关掉标签页，本站既没存下也没作废那张令牌，它在源站眼里照样有效两小时，
+        // 而没有任何人再持有它、也无从交还（server-authority 第 1 条）。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var source = File.ReadAllText(path);
+
+        var callback = Regex.Match(
+            source,
+            @"HttpPost\(""runs/callback""\)(?<body>.*?)(?=\n    /// <summary>)",
+            RegexOptions.Singleline);
+        Assert.True(callback.Success, "找不到 runs/callback 了，这条守卫的前提已变");
+        var body = callback.Groups["body"].Value;
+
+        // 换票发出去之后的每一步——读响应体、建 Run——都不许再看 ct。
+        var afterExchange = body[body.IndexOf("PostAsJsonAsync", StringComparison.Ordinal)..];
+        Assert.DoesNotContain(", ct)", afterExchange, StringComparison.Ordinal);
+        Assert.DoesNotContain("cancellationToken: ct", afterExchange, StringComparison.Ordinal);
+        Assert.Contains("}, CancellationToken.None);", afterExchange, StringComparison.Ordinal);
+
+        // 换到票却没建成 Run 时必须当场交还，否则那张票没人认领也没人作废。
+        Assert.Contains("RevokeAtSourceAsync(origin, token.ExportToken)", afterExchange, StringComparison.Ordinal);
+        Assert.Contains("private async Task RevokeAtSourceAsync(", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 源站带Authorize的端点都必须判真人管理员()
     {
         // 源站控制器混着两类端点：[AllowAnonymous] 的机器对机器（换票 / 清单 / 导出，
