@@ -179,10 +179,22 @@ export default function AskPanel({
         {refusal && (
           <AskRefusalCard
             refusal={refusal}
+            // 后端这几档的原话带着真实数字（每小时几次、还剩多久），优先于注册表兜底文案。
+            // 但只在错误码确实对应当前这一档时才用——未登录压过服务端错误码那条优先级里，
+            // gateError 可能是上一次会话的残留，拿它的文案去配「需要登录」的标题就串了。
+            serverMessage={resolveAskRefusal({
+              isAuthenticated, allowAnonymous: true, gateErrorCode: gateError?.code,
+            }) === refusal ? gateError?.message : null}
             onLogin={() => {
               // 带 redirect 回到当前这一页：登录完还得让他自己找回来就白做了
               const back = encodeURIComponent(window.location.pathname + window.location.search);
               window.location.href = `/login?redirect=${back}`;
+            }}
+            onRetry={() => {
+              // 读不到正文时后端会 RefundAsync 把额度退回来，所以重试是安全的、不烧额度。
+              // 重问最后一句用户问过的话；一句都还没问过就什么都不做。
+              const lastAsked = [...messages].reverse().find((m) => m.role === 'user');
+              if (lastAsked) void ask(lastAsked.content);
             }}
           />
         )}

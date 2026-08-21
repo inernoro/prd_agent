@@ -12,15 +12,34 @@ describe('提问被拒时该说哪一句', () => {
     expect(resolveAskRefusal({
       isAuthenticated: false,
       allowAnonymous: false,
-      gateErrorCode: ASK_ERROR_CODES.quotaExceeded,
+      gateErrorCode: ASK_ERROR_CODES.quotaVisitor,
     })).toBe('need-login');
   });
 
-  it('三种拒绝各自映射到自己那一张卡，不混成一句「问不了」', () => {
+  it('每种拒绝各自映射到自己那一张卡，不混成一句「问不了」', () => {
     const base = { isAuthenticated: true, allowAnonymous: true };
-    expect(resolveAskRefusal({ ...base, gateErrorCode: ASK_ERROR_CODES.quotaExceeded })).toBe('quota-exceeded');
     expect(resolveAskRefusal({ ...base, gateErrorCode: ASK_ERROR_CODES.noContent })).toBe('no-content');
     expect(resolveAskRefusal({ ...base, gateErrorCode: ASK_ERROR_CODES.disabled })).toBe('disabled');
+  });
+
+  it('两种额度必须分开——后端算得出维度，压成一张卡就是把信息又丢一次', () => {
+    const base = { isAuthenticated: true, allowAnonymous: true };
+    // 访客维度：等一会儿会自己恢复，登录还能换更宽的额度 → 给得出下一步
+    expect(resolveAskRefusal({ ...base, gateErrorCode: ASK_ERROR_CODES.quotaVisitor })).toBe('quota-visitor');
+    // 站点维度：是别人问光的，你等到明天，登录也没用 → 不该给「去登录」
+    expect(resolveAskRefusal({ ...base, gateErrorCode: ASK_ERROR_CODES.quotaSiteDaily })).toBe('quota-site');
+    expect(ASK_REFUSAL_REGISTRY['quota-visitor'].action).toBe('login');
+    expect(ASK_REFUSAL_REGISTRY['quota-site'].action).toBeUndefined();
+  });
+
+  it('不带维度的旧码只能落到笼统那一档，不许冒充成其中某一种', () => {
+    expect(resolveAskRefusal({
+      isAuthenticated: true, allowAnonymous: true, gateErrorCode: ASK_ERROR_CODES.quotaExceeded,
+    })).toBe('quota-exceeded');
+  });
+
+  it('读不到正文要给重试——后端读不到会退额度，重试不烧钱', () => {
+    expect(ASK_REFUSAL_REGISTRY['no-content'].action).toBe('retry');
   });
 
   it('服务端 401 也归到需登录，用户看到的是「去登录」而不是错误码', () => {
@@ -41,8 +60,12 @@ describe('提问被拒时该说哪一句', () => {
     expect(new Set(entries.map((c) => c.placeholder)).size).toBe(entries.length);
   });
 
-  it('只有用户自己能解决的那一种才给动作按钮', () => {
+  it('给了动作按钮的，动作必须真的能解决它那一档', () => {
     const withAction = Object.entries(ASK_REFUSAL_REGISTRY).filter(([, c]) => c.action);
-    expect(withAction.map(([k]) => k)).toEqual(['need-login']);
+    expect(withAction.map(([k]) => k).sort()).toEqual(['need-login', 'no-content', 'quota-visitor']);
+    // 每个动作按钮都得有自己的字：四档都写「去登录」等于没分档
+    const labels = withAction.map(([, c]) => c.actionLabel);
+    expect(labels.every(Boolean)).toBe(true);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });

@@ -1,25 +1,39 @@
-import { BookX, LogIn, MessageCircleOff, Wallet } from 'lucide-react';
+import { BookX, Clock, LogIn, MessageCircleOff, RotateCw, Wallet } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { ASK_ERROR_CODES } from './askTypes';
 
 /**
- * 提问被拒的几种形态。
+ * 提问被拒的几种形态（设计稿屏 11「失败态 · 主宰与视觉相干河」那一列）。
  *
  * 它们的共同点只有「问不了」，除此之外全都不同：谁能解决、要做什么、还能不能重试。
- * 旧版把它们混成一句灰色小字塞在面板底部，用户只看到「问不了」，不知道是自己没登录、
- * 还是这个站点今天问完了、还是这个站点压根没有可读的正文——三种情况的下一步天差地别。
+ * 两种额度尤其不能合并——
+ *   访客维度 = 你这一小时问得太多，等一会儿、或者登录换更宽的额度；
+ *   站点维度 = 这一页今天的额度（所有访客共用）被别人问光了，你等到明天，或者去评论区找作者。
+ * 压成一张「额度用完」，等于把后端已经算出来的信息又丢了一次。
  */
-export type AskRefusalKey = 'need-login' | 'quota-exceeded' | 'no-content' | 'disabled';
+export type AskRefusalKey =
+  | 'need-login'
+  | 'quota-visitor'
+  | 'quota-site'
+  | 'quota-exceeded'
+  | 'no-content'
+  | 'disabled';
 
 export interface AskRefusalConfig {
   icon: LucideIcon;
   title: string;
-  /** 为什么问不了，一句话，讲人话不讲错误码 */
+  /**
+   * 兜底正文。后端这几档的 message 里带着真实数字（每小时几次、还剩多久、
+   * 本页整体还有几次），有就用后端的——静态文案顶多说个大概，
+   * 把带数字的话换成不带数字的话是净损失。
+   */
   body: string;
-  /** 语气：blocked=用户能自己解决；exhausted=等或找主人；dead=这个站点就是不能问 */
+  /** 语气：blocked=用户能自己解决；exhausted=等或找作者；dead=这个站点就是不能问 */
   tone: 'blocked' | 'exhausted' | 'dead';
-  /** 有没有用户能点的动作；只有 need-login 有 */
-  action?: 'login';
+  /** 用户能点的动作 */
+  action?: 'login' | 'retry';
+  /** 动作按钮上的字——每一档的下一步不同，措辞也不该一样 */
+  actionLabel?: string;
   /** 输入框被禁用时的占位文案——不能都写「暂不可用」，那等于把拒绝理由又藏回去 */
   placeholder: string;
 }
@@ -27,25 +41,44 @@ export interface AskRefusalConfig {
 export const ASK_REFUSAL_REGISTRY: Record<AskRefusalKey, AskRefusalConfig> = {
   'need-login': {
     icon: LogIn,
-    title: '这个页面要登录后才能提问',
-    body: '主人把提问限制为登录访客——登录之后回到这一页，提问面板就能用了。',
+    title: '需要登录才能提问',
+    body: '作者只允许登录后提问。登录后可以问，你的昵称会出现在访客名单里。',
     tone: 'blocked',
     action: 'login',
+    actionLabel: '登录并继续提问',
     placeholder: '登录后即可提问',
+  },
+  'quota-visitor': {
+    icon: Clock,
+    title: '访客维度：你这一小时问得太多',
+    body: '你这一小时的提问次数已用完，等一会儿会自己恢复。匿名访客按 IP 计数，登录后按账号计，额度更宽。',
+    tone: 'exhausted',
+    action: 'login',
+    actionLabel: '登录换更宽的额度',
+    placeholder: '这一小时问得太多了，等一会儿',
+  },
+  'quota-site': {
+    icon: Wallet,
+    title: '站点维度：本页今日额度用完',
+    body: '这一页今天的问答次数（所有访客共用）已经用完，明天恢复。评论区仍然可用，急着要答案可以在那里问作者。',
+    tone: 'exhausted',
+    placeholder: '本页今日额度已用完，明天再来',
   },
   'quota-exceeded': {
     icon: Wallet,
-    title: '这个站点今天的提问额度用完了',
-    body: '额度按站点每天重置，明天再来就能继续问；急着要答案可以直接找页面主人。',
+    title: '提问额度已用完',
+    body: '这一次没能问出去，因为额度用完了。稍后再试，或者去评论区找作者。',
     tone: 'exhausted',
-    placeholder: '今日额度已用完，明天再来',
+    placeholder: '额度已用完，稍后再试',
   },
   'no-content': {
     icon: BookX,
-    title: '读不到这个页面的正文',
-    body: '这个站点是图片、视频或需要脚本渲染的页面，提取不到可供回答的文字，所以问了也答不准。',
+    title: '读不到本页正文',
+    body: '正文取回失败，所以不能回答——我们不猜。可以重试，或直接在评论区问作者。',
     tone: 'dead',
-    placeholder: '这个页面没有可供回答的正文',
+    action: 'retry',
+    actionLabel: '重试读取',
+    placeholder: '读不到本页正文，可以重试',
   },
   disabled: {
     icon: MessageCircleOff,
@@ -72,6 +105,9 @@ export function resolveAskRefusal(args: {
   const { isAuthenticated, allowAnonymous, gateErrorCode } = args;
   if (!isAuthenticated && !allowAnonymous) return 'need-login';
   switch (gateErrorCode) {
+    case ASK_ERROR_CODES.quotaVisitor: return 'quota-visitor';
+    case ASK_ERROR_CODES.quotaSiteDaily: return 'quota-site';
+    // 不带维度的旧码（以及别的通用额度来源）只能给笼统那一档
     case ASK_ERROR_CODES.quotaExceeded: return 'quota-exceeded';
     case ASK_ERROR_CODES.noContent: return 'no-content';
     case ASK_ERROR_CODES.disabled: return 'disabled';
@@ -81,16 +117,25 @@ export function resolveAskRefusal(args: {
 }
 
 const TONE_STYLE: Record<AskRefusalConfig['tone'], { bg: string; border: string; fg: string }> = {
-  blocked: { bg: 'var(--bg-card)', border: 'var(--border-default)', fg: 'var(--accent-primary)' },
+  blocked: { bg: 'var(--bg-card)', border: 'var(--border-default)', fg: 'var(--accent-fg-blue)' },
   exhausted: { bg: 'var(--semantic-warning-soft)', border: 'var(--semantic-warning-border)', fg: 'var(--semantic-warning-text)' },
-  dead: { bg: 'var(--bg-card)', border: 'var(--border-subtle)', fg: 'var(--text-muted)' },
+  dead: { bg: 'var(--semantic-danger-soft)', border: 'var(--semantic-danger-border)', fg: 'var(--accent-fg-danger)' },
 };
 
-/** 拒绝卡：三种形态各有图标、各有语气色、各有下一步，不再是同一句灰字。 */
-export function AskRefusalCard({ refusal, onLogin }: { refusal: AskRefusalKey; onLogin: () => void }) {
+/** 拒绝卡：每一档各有图标、各有语气色、各有下一步，不再是同一句灰字。 */
+export function AskRefusalCard({
+  refusal, serverMessage, onLogin, onRetry,
+}: {
+  refusal: AskRefusalKey;
+  /** 后端这次给的原话；它带真实数字，优先于注册表里的兜底文案 */
+  serverMessage?: string | null;
+  onLogin: () => void;
+  onRetry: () => void;
+}) {
   const cfg = ASK_REFUSAL_REGISTRY[refusal];
   const tone = TONE_STYLE[cfg.tone];
   const Icon = cfg.icon;
+  const body = serverMessage?.trim() || cfg.body;
 
   return (
     <div
@@ -102,22 +147,26 @@ export function AskRefusalCard({ refusal, onLogin }: { refusal: AskRefusalKey; o
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Icon size={16} style={{ color: tone.fg, flexShrink: 0 }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{cfg.title}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: tone.fg }}>{cfg.title}</span>
       </div>
-      <p style={{ fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-secondary)', margin: 0 }}>{cfg.body}</p>
-      {cfg.action === 'login' && (
+      <p style={{ fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-secondary)', margin: 0 }}>{body}</p>
+      {cfg.action && (
         <button
           type="button"
-          onClick={onLogin}
+          onClick={cfg.action === 'login' ? onLogin : onRetry}
           style={{
             alignSelf: 'flex-start', marginTop: 2,
             display: 'flex', alignItems: 'center', gap: 6,
-            padding: '7px 14px', borderRadius: 9, border: 'none', cursor: 'pointer',
-            background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)',
+            padding: '7px 14px', borderRadius: 9, cursor: 'pointer',
+            // 主动作（登录）用实心，重试是次动作用描边——两者不该长得一样重
+            border: cfg.action === 'login' ? 'none' : `1px solid ${tone.border}`,
+            background: cfg.action === 'login' ? 'var(--button-primary-bg)' : 'transparent',
+            color: cfg.action === 'login' ? 'var(--button-primary-fg)' : tone.fg,
             fontSize: 12.5, fontWeight: 500,
           }}
         >
-          <LogIn size={13} /> 去登录
+          {cfg.action === 'login' ? <LogIn size={13} /> : <RotateCw size={13} />}
+          {cfg.actionLabel}
         </button>
       )}
     </div>

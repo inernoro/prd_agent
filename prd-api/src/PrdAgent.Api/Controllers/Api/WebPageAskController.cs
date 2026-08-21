@@ -246,7 +246,18 @@ public class WebPageAskController : ControllerBase
         {
             if (decision.RetryAfterSeconds is { } ra && ra > 0)
                 Response.Headers["Retry-After"] = ra.ToString();
-            await WriteJsonErrorAsync(429, "QUOTA_EXCEEDED", decision.Reason ?? "提问次数已达上限");
+            // 维度必须透出去：撞的是「你问得太频繁」还是「这个站点今天问完了」，
+            // 对访客是两件完全不同的事——前者等一小时或登录换更宽的额度就行，
+            // 后者等到明天、或者去评论区找作者。之前两种都压成 QUOTA_EXCEEDED，
+            // 前端只能给一句笼统的「额度用完了」，把这里算好的信息又丢了一遍。
+            // 不复用 QUOTA_EXCEEDED 承载维度：它是全站通用码（模型额度等也在用）。
+            var quotaCode = decision.Scope switch
+            {
+                "visitor" => "ASK_QUOTA_VISITOR",
+                "site-daily" => "ASK_QUOTA_SITE_DAILY",
+                _ => "QUOTA_EXCEEDED",
+            };
+            await WriteJsonErrorAsync(429, quotaCode, decision.Reason ?? "提问次数已达上限");
             return;
         }
 
