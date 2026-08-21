@@ -199,6 +199,16 @@ export default function DataSyncPage() {
     };
   }, [runId]);
 
+  // 换了一条 Run 就把上一条的对照表丢掉。
+  //
+  // 这个组件在历史列表与详情之间来回切时是**不卸载**的，plan 会留在上一条 Run 上。
+  // 而下面那个 effect 的 `|| plan` 又会因此判定「已经有了，不用拉」——于是屏幕上
+  // 显示的是 A 的源站、条数、集合清单，按下开始却是拿 B 去跑。操作者是照着这一屏
+  // 做决定的，给他看错的那份比不给更糟。
+  useEffect(() => {
+    setPlan(null);
+  }, [runId]);
+
   // pending 阶段拉对照表；已经在跑或跑完就不用了。
   useEffect(() => {
     if (!runId || !run || run.status !== 'pending' || plan) return;

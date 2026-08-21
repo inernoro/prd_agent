@@ -775,6 +775,37 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 票过期时 pending 也要收敛到终态。callback 建出 Run 之后管理员一直没点开始，
+    /// 票就这么过期了——过期标记被 drain 掉，而收敛只认 running 的话，库里那行永远停在
+    /// pending：再打开它，Plan 每次都报「令牌已失效」，页面卡在加载态；进程重启也一样。
+    /// </summary>
+    [Fact]
+    public void 票过期时pending也要落终态()
+    {
+        var worker = ReadWorkerSource();
+        var block = worker[worker.IndexOf("if (expired.Count > 0)", StringComparison.Ordinal)..];
+        block = block[..block.IndexOf("if (held.Count == 0) return;", StringComparison.Ordinal)];
+
+        block.ShouldContain("\"running\", \"pending\"");
+        block.ShouldNotContain("Filter.Eq(x => x.Status, \"running\")");
+    }
+
+    /// <summary>
+    /// 「同意了却没回来换票」那一类的清理谓词是「ExportTokenExpiresAt 等值 null +
+    /// ExpiresAt 范围」，两条散列打头的索引都支撑不了它，于是每个部署的每一轮清理
+    /// 都要扫遍所有留存的未换票授权。
+    /// </summary>
+    [Fact]
+    public void 未换票授权的清理要有索引()
+    {
+        var script = ReadRepoText("scripts", "mongodb-indexes.js");
+        var begin = script.IndexOf("// collection: data_sync_grants", StringComparison.Ordinal);
+        var end = script.IndexOf("// end collection: data_sync_grants", StringComparison.Ordinal);
+        var section = script[begin..end];
+        section.ShouldContain("\"ExportTokenExpiresAt\": 1, \"ExpiresAt\": 1");
+    }
+
+    /// <summary>
     /// 源站管理员在同意页上勾了「连登录凭据一起搬」时，users.PasswordHash 不在这次的
     /// 脱敏范围里，源站送来的是真散列。这时候拿目标站的旧散列盖回去，等于把授权页刚刚
     /// 承诺过的事悄悄取消——那批用户的原密码登不进去，而界面上说的是能登。

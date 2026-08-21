@@ -101,8 +101,12 @@ public sealed class DataSyncRunWorker : BackgroundService
         // 这里替它落终态——只处理本进程握过的那些，不去碰别的部署的 Run。
         if (expired.Count > 0)
         {
+            // pending 也要收。callback 建出 Run 之后，管理员一直没点开始，票就这么过期了——
+            // 过期标记在这里被 drain 掉，而查询只认 running 的话，库里那行永远停在 pending：
+            // 再打开它，Plan 每次都报「令牌已失效」，页面卡在加载态；进程重启也一样，
+            // 因为标记早就没了。终态收敛必须把 pending 一起带上。
             var stale = await db.DataSyncRuns.Find(Builders<DataSyncRun>.Filter.And(
-                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "running"),
+                Builders<DataSyncRun>.Filter.In(x => x.Status, new[] { "running", "pending" }),
                 Builders<DataSyncRun>.Filter.In(x => x.Id, expired))).ToListAsync(ct);
             foreach (var run in stale)
             {

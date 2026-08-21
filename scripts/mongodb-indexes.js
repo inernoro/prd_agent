@@ -1439,6 +1439,13 @@ db.data_sync_grants.createIndex(
   { "ExportTokenExpiresAt": 1 },
   { name: "idx_data_sync_grants_export_expires" }
 )
+// 清理「同意了却没回来换票」那一类：ExportTokenExpiresAt 恒为 null，按 ExpiresAt 判过期。
+// 上面那两条都以散列打头，支撑不了「等值 null + 范围」这个谓词，于是每个部署的每一轮
+// 清理都要扫遍所有留存的未换票授权。
+db.data_sync_grants.createIndex(
+  { "ExportTokenExpiresAt": 1, "ExpiresAt": 1 },
+  { name: "idx_data_sync_grants_unconsumed_cleanup" }
+)
 // end collection: data_sync_grants
 
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
