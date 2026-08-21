@@ -891,6 +891,9 @@ export default function WebPagesPage() {
       {!isMobile && (
         <ShareDock
           mime={WEB_PAGE_MIME}
+          // 右栏「站点上下文」常驻在右侧，投放面板默认展开会正好盖住它；
+          // 折叠态仍在屏幕右缘留一条把手，拖卡片时高亮，用户展开过就记住展开
+          defaultCollapsed
           title="投放面板"
           badgeCount={sites.filter(s => s.visibility === 'public').length}
           footerHref={username ? `/u/${encodeURIComponent(username)}` : undefined}

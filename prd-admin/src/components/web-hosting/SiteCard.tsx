@@ -464,7 +464,8 @@ export function SiteCard({
             {!isSmall && (
               <>
                 <span aria-hidden>·</span>
-                <span>{relativeTime(site.updatedAt)}</span>
+                {/* 与列表的日期分组桶同源（都按创建时间），否则会出现「分组写 8 月 18 日、卡片写 5 天前」 */}
+                <span>{relativeTime(site.createdAt)}</span>
               </>
             )}
           </div>
