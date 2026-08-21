@@ -1219,6 +1219,7 @@ export const api = {
   // ============ Web Hosting 网页托管 ============
   webPages: {
     upload: () => '/api/web-pages/upload',
+    uploadProgress: (uploadId: string) => `/api/web-pages/upload-progress/${uploadId}`,
     fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,

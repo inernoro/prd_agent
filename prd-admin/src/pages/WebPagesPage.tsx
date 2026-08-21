@@ -51,7 +51,9 @@ import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
 import { SiteContextPanel } from '@/components/web-hosting/SiteContextPanel';
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
-import { buildUploadProgress, fmtDuration } from '@/components/web-hosting/uploadProgress';
+import { buildUploadProgress, fmtDuration, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
+import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
+import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { buildShareLedger } from '@/components/web-hosting/shareLedger';
 import { SITE_SOURCE_LABELS } from '@/components/web-hosting/siteFormRegistry';
@@ -114,6 +116,7 @@ import {
   MoreHorizontal,
   MessageCircleQuestion,
   EyeOff,
+  FileArchive,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -1752,6 +1755,8 @@ export default function WebPagesPage() {
       {/* Share Dialog（保留：拖拽快速分享场景等非 SharesPanel 路径仍使用） */}
       {showShareDialog && (
         <ShareDialog
+          site={shareTargetId ? (sites.find(x => x.id === shareTargetId) ?? null) : null}
+          existingShareCount={shareTargetId ? shareLinks.filter(l => !l.isRevoked && !l.isExpired && (l.siteId === shareTargetId || l.siteIds?.includes(shareTargetId))).length : 0}
           siteId={shareTargetId}
           siteIds={shareTargetId ? undefined : [...selectedIds]}
           onClose={() => { setShowShareDialog(false); setShareTargetId(null); loadShares(); }}
@@ -1765,6 +1770,7 @@ export default function WebPagesPage() {
           setShares={setShares}
           scopedSiteId={shareTargetId}
           scopedSiteTitle={shareTargetId ? (sites.find(s => s.id === shareTargetId)?.title ?? null) : null}
+          scopedSite={shareTargetId ? (sites.find(s => s.id === shareTargetId) ?? null) : null}
           onClose={() => {
             setShowSharesPanel(false);
             setShareTargetId(null);
@@ -2685,7 +2691,9 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const isEdit = !!item;
   const [title, setTitle] = useState(item?.title ?? '');
   const [description, setDescription] = useState(item?.description ?? '');
-  const [tagInput, setTagInput] = useState((item?.tags ?? []).join(', '));
+  /** 已确认的标签（chips）；tagInput 只是还没回车的那一个 */
+  const [tags, setTags] = useState<string[]>(item?.tags ?? []);
+  const [tagInput, setTagInput] = useState('');
   const [folder, setFolder] = useState(item?.folder ?? '');
   const [file, setFile] = useState<File | null>(initialFile ?? null);
   // 用户是否亲自编辑过标题；编辑过则不再自动同步文件名
@@ -2709,7 +2717,13 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   // 之前只有一个「处理中...」的按钮文字，屏幕上没有任何东西在动。
   const [sent, setSent] = useState<{ loaded: number; total: number }>({ loaded: 0, total: 0 });
   const [elapsed, setElapsed] = useState(0);
+  /** 服务端解包进度（旁路轮询回来的真实帧）；拿不到就保持 null，前端据此退回诚实说法 */
+  const [unpack, setUnpack] = useState<UnpackFrame | null>(null);
   const startedAtRef = useRef(0);
+  /** 本次上传的标识；随表单发给后端，后端据它记进度 */
+  const uploadIdRef = useRef<string>('');
+  /** 在飞的 XHR，用户点「中止」时 abort 它 */
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
   // 用户点了「转到后台」→ 本窗关掉但 XHR 不中断，完成后由页面 toast + 刷新兜底
   const backgroundedRef = useRef(false);
   const [created, setCreated] = useState<HostedSite | null>(null);
@@ -2720,7 +2734,23 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     return () => clearInterval(t);
   }, [saving]);
 
-  const progress = buildUploadProgress(sent.loaded, sent.total, elapsed);
+  // 解包进度旁路轮询。1s 一次：解包是秒级过程，再密就是白打请求。
+  // 拿不到（Redis 不可用 / 还没开始 / 单文件站没有解包这一步）就一直是 null，
+  // buildUploadProgress 会退回「这一步没有进度可报」，不会编一个数出来。
+  useEffect(() => {
+    if (!saving || !uploadIdRef.current) return;
+    let alive = true;
+    const tick = async () => {
+      const res = await getUploadProgress(uploadIdRef.current);
+      if (!alive) return;
+      if (res.success && !res.data.pending) setUnpack(res.data);
+    };
+    void tick();
+    const t = setInterval(() => { void tick(); }, 1000);
+    return () => { alive = false; clearInterval(t); };
+  }, [saving]);
+
+  const progress = buildUploadProgress(sent.loaded, sent.total, elapsed, unpack);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -2731,9 +2761,15 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
 
   const handleSave = async () => {
     if (!isEdit && !file) return;
+    // 打完字直接点「开始上传」是常态，没回车的那一个也算数，别静默丢掉
+    const pendingTag = tagInput.trim();
+    const effectiveTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
+
     startedAtRef.current = Date.now();
     setElapsed(0);
     setSent({ loaded: 0, total: file?.size ?? 0 });
+    setUnpack(null);
+    uploadIdRef.current = crypto.randomUUID();
     setSaving(true);
 
     try {
@@ -2747,11 +2783,10 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
           }
         }
         // Update metadata
-        const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
         const res = await updateSite(item.id, {
           title: title.trim() || undefined,
           description: description.trim() || undefined,
-          tags,
+          tags: effectiveTags,
           folder: folder.trim() || undefined,
         });
         if (!res.success) {
@@ -2760,17 +2795,19 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
         }
         onSaved(res.data, /*isCreate*/ false);
       } else {
-        const tags = tagInput.split(/[,，]/).map(t => t.trim()).filter(Boolean);
         const res = await uploadSite({
           file: file!,
           title: title.trim() || undefined,
           description: description.trim() || undefined,
           folder: folder.trim() || undefined,
-          tags: tags.length > 0 ? tags.join(',') : undefined,
+          tags: effectiveTags.length > 0 ? effectiveTags.join(',') : undefined,
           onProgress: (loaded, total) => setSent({ loaded, total }),
+          uploadId: uploadIdRef.current,
+          onStart: (xhr) => { xhrRef.current = xhr; },
         });
         if (!res.success) {
-          toast.error('上传失败', res.error?.message || '请稍后重试');
+          // 用户自己点的中止不是错误，不弹红条
+          if (res.error?.code !== 'ABORTED') toast.error('上传失败', res.error?.message || '请稍后重试');
           return;
         }
         if (backgroundedRef.current) {
@@ -2815,13 +2852,32 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                   「{created.title || created.entryFile}」已经可以打开了
                 </div>
                 <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                  入口 {created.entryFile} · {created.files.length} 个文件 · {fmtSize(created.totalSize)}
-                  {' · '}用时 {fmtDuration(elapsed)}
+                  入口 {created.entryFile}{' · '}用时 {fmtDuration(elapsed)}
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            {/* 产物预览：让用户当场确认「传上去的确实是这一份」，
+                而不是只看到一个地址就要相信它 */}
+            <div className="overflow-hidden rounded-xl" style={{ border: '1px solid var(--border-subtle)' }}>
+              <div className="px-3 py-1.5 text-[11px]" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}>
+                构建产物预览
+              </div>
+              <div style={{ height: 132, background: 'var(--bg-card)' }}>
+                <SitePreview site={created} url={created.siteUrl} className="h-full w-full" />
+              </div>
+              <div className="px-3 py-2" style={{ background: 'var(--bg-card)', borderTop: '1px solid var(--border-faint)' }}>
+                <div className="truncate text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {created.title || created.entryFile}
+                </div>
+                <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {resolveSiteForm(created).toUpperCase()} 站 · {created.files.length.toLocaleString()} 文件 · {fmtSize(created.totalSize)}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>可打开的地址</div>
+            <div className="-mt-2 flex items-center gap-2">
               <input
                 type="text"
                 value={`${window.location.origin}${created.siteUrl}`}
@@ -2851,6 +2907,14 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               </span>
             </div>
 
+            {/* 主次分明：立即分享是满宽主按钮，另两个是次操作。
+                三个平级按钮等于没有推荐动作，用户还得自己想先点哪个 */}
+            <Button
+              onClick={() => onShareSite(created.id)}
+              style={{ width: '100%', justifyContent: 'center' }}
+            >
+              <Share2 size={14} className="mr-1" />立即分享
+            </Button>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="ghost" onClick={() => {
                 // 再传一个：清空表单回到待选态，省掉「关窗 → 再点上传」两步
@@ -2858,7 +2922,9 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 setFile(null);
                 setTitle('');
                 setDescription('');
+                setTags([]);
                 setTagInput('');
+                setUnpack(null);
                 titleEditedRef.current = false;
                 setSent({ loaded: 0, total: 0 });
                 setElapsed(0);
@@ -2866,46 +2932,88 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                 <Upload size={14} className="mr-1" />再传一个
               </Button>
               <Button variant="secondary" onClick={() => window.open(created.siteUrl, '_blank', 'noopener')}>
-                <ExternalLink size={14} className="mr-1" />打开看看
-              </Button>
-              <Button onClick={() => onShareSite(created.id)}>
-                <Share2 size={14} className="mr-1" />立即分享
+                <ExternalLink size={14} className="mr-1" />打开站点
               </Button>
             </div>
           </div>
         ) : saving && !isEdit ? (
           /* ── 上传中：屏幕上必须有真实在动的东西，且说得出「还要多久」 ── */
-          <div className="flex flex-col gap-4 py-2">
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{progress.title}</span>
-                <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-                  {fmtSize(sent.loaded)} / {fmtSize(sent.total || (file?.size ?? 0))}
-                </span>
-              </div>
-              <div className="h-1.5 w-full rounded-full overflow-hidden" style={{ background: 'var(--bg-tertiary)' }}>
-                {/* 解包阶段没有进度可推，用呼吸动画表示「还在动」，而不是让满条静止装完成 */}
-                <div
-                  className={progress.phase === 'processing' ? 'h-full rounded-full animate-pulse' : 'h-full rounded-full'}
-                  style={{
-                    width: `${Math.round(progress.ratio * 100)}%`,
-                    background: 'var(--accent-primary)',
-                    transition: 'width 300ms ease-out',
-                  }}
-                />
-              </div>
-              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{progress.detail}</span>
+          <div className="flex flex-col gap-4 py-1">
+            {/* 文件行 */}
+            <div className="flex items-center gap-2">
+              <FileArchive size={15} style={{ color: 'var(--text-muted)' }} />
+              <span className="flex-1 truncate text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{file?.name}</span>
+              <span className="font-mono text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                {fmtSize(sent.total || (file?.size ?? 0))}
+              </span>
             </div>
 
-            <div className="flex flex-col gap-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-              <span>· {file?.name}</span>
-              <span>· 解包完成后会自动识别入口文件（index.html 优先），随后就能打开</span>
+            {/* 大数字进度：这一屏用户只关心一件事——还要多久 */}
+            <div className="flex items-end justify-between gap-3">
+              <div className="flex items-baseline gap-0.5">
+                <span className="text-[34px] font-semibold leading-none tabular-nums" style={{ color: 'var(--text-primary)' }}>
+                  {Math.round(progress.ratio * 100)}
+                </span>
+                <span className="text-[15px]" style={{ color: 'var(--text-muted)' }}>%</span>
+              </div>
+              <span className="pb-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>{progress.detail}</span>
+            </div>
+
+            <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-tertiary)' }}>
+              {/* 服务端报不出解包进度时进度条会停在满格，用呼吸动画表示「还在动」，
+                  而不是让满条静止装完成 */}
+              <div
+                className={progress.phase === 'processing' && progress.steps.length === 0 ? 'h-full rounded-full animate-pulse' : 'h-full rounded-full'}
+                style={{
+                  width: `${Math.round(progress.ratio * 100)}%`,
+                  background: 'var(--accent-primary)',
+                  transition: 'width 300ms ease-out',
+                }}
+              />
+            </div>
+
+            {/* 解包分步清单：全部来自服务端真实计数，拿不到就整块不出现 */}
+            {progress.steps.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                {progress.steps.map((st, i) => (
+                  <div key={i} className="flex items-start gap-2 text-[12px]">
+                    {st.state === 'done'
+                      ? <Check size={13} className="mt-0.5 shrink-0" style={{ color: 'var(--accent-fg-emerald)' }} />
+                      : <span className="mt-1.5 block shrink-0 rounded-full" style={{ width: 6, height: 6, background: 'var(--accent-primary)' }} />}
+                    <div className="min-w-0">
+                      <div style={{ color: st.state === 'done' ? 'var(--text-secondary)' : 'var(--text-primary)' }}>{st.text}</div>
+                      {st.sub && (
+                        <div className="truncate font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{st.sub}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div
+              className="rounded-lg px-3 py-2 text-[11.5px] leading-relaxed"
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+            >
+              可以关掉这个弹窗，上传在后台继续；完成后卡片会带滑入 + 光环出现在列表最前面，你能立刻认出刚传的是哪张。
             </div>
 
             <div className="flex justify-end gap-2">
               {/* 转后台：XHR 不随弹窗卸载而中断，完成时由页面 toast + 刷新兜底 */}
               <Button variant="ghost" onClick={() => { backgroundedRef.current = true; onClose(); }}>
-                转到后台继续
+                转到后台
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  // 中止走 xhr.abort()，服务层把它翻成 ABORTED 而不是「网络异常」——
+                  // 这是用户自己按的，不该报成故障
+                  xhrRef.current?.abort();
+                  setSaving(false);
+                }}
+                style={{ color: 'var(--accent-fg-danger)' }}
+              >
+                中止
               </Button>
             </div>
           </div>
@@ -2933,9 +3041,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                     <p className="text-xs text-token-muted">{fmtSize(file.size)}</p>
                   </div>
                 ) : (
-                  <div className="text-center">
-                    <p className="text-sm text-token-secondary">拖拽文件到此处，或点击选择</p>
-                    <p className="text-xs text-token-muted">支持 .html / .zip / .md / .pdf / 视频（.mp4/.webm/.mov），最大 500MB；ZIP 最多 5000 个文件</p>
+                  <div className="text-center leading-relaxed">
+                    <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
+                    <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤5000 个文件，自动识别入口）</p>
+                    <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
+                    <p className="text-xs text-token-muted">单个文件上限 500 MB</p>
                   </div>
                 )}
                 <input
@@ -2967,12 +3077,14 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
             )}
 
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-token-secondary">站点标题</span>
+              <span className="text-xs font-medium text-token-secondary">
+                标题<span className="ml-1.5 font-normal text-token-muted">留空取文件名</span>
+              </span>
               <input
                 type="text"
                 value={title}
                 onChange={e => { titleEditedRef.current = true; setTitle(e.target.value); }}
-                placeholder="站点标题（留空使用文件名）"
+                placeholder="2026 W34 视觉验收报告"
                 className="px-3 py-2 rounded-lg text-sm outline-none"
                 style={inputStyle}
               />
@@ -2983,47 +3095,93 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder="站点描述..."
+                placeholder="一句话说明这个站点是给谁看的…"
                 rows={2}
                 className="px-3 py-2 rounded-lg text-sm outline-none resize-none"
                 style={inputStyle}
               />
             </label>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-token-secondary">标签（逗号分隔）</span>
-              <input
-                type="text"
-                value={tagInput}
-                onChange={e => setTagInput(e.target.value)}
-                placeholder="前端, React, 教程"
-                className="px-3 py-2 rounded-lg text-sm outline-none"
-                style={inputStyle}
-              />
-            </label>
+            {/* 标签与分组并排：两者都是「这个站点归到哪儿」，各占半行刚好，
+                竖排会把「开始上传」挤到折叠线以下 */}
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,200px)' }}>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-token-secondary">
+                  标签<span className="ml-1.5 font-normal text-token-muted">逗号分隔</span>
+                </span>
+                {/* chips + 回车：逗号分隔的一长串输入框看不出「已经加了几个」，
+                    也没法单独删掉其中一个 */}
+                <div
+                  className="flex flex-wrap items-center gap-1.5 rounded-lg px-2 py-1.5"
+                  style={inputStyle}
+                >
+                  {tags.map((t) => (
+                    <span
+                      key={t}
+                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11.5px]"
+                      style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
+                    >
+                      {t}
+                      <button type="button" onClick={() => setTags(tags.filter((x) => x !== t))} aria-label={`移除标签 ${t}`}>
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={e => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      // 逗号也当确认：用户从别处粘一串「a, b, c」进来时不用再逐个敲回车
+                      if (e.key !== 'Enter' && e.key !== ',' && e.key !== '，') return;
+                      e.preventDefault();
+                      const t = tagInput.trim().replace(/[,，]$/, '');
+                      if (t && !tags.includes(t)) setTags([...tags, t]);
+                      setTagInput('');
+                    }}
+                    placeholder={tags.length ? '' : '输入后回车…'}
+                    className="min-w-[80px] flex-1 bg-transparent text-sm outline-none"
+                    style={{ color: 'var(--text-primary)' }}
+                  />
+                </div>
+              </div>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium text-token-secondary">文件夹</span>
-              <input
-                type="text"
-                value={folder}
-                onChange={e => setFolder(e.target.value)}
-                placeholder="输入文件夹名或留空"
-                list="folder-suggestions"
-                className="px-3 py-2 rounded-lg text-sm outline-none"
-                style={inputStyle}
-              />
-              <datalist id="folder-suggestions">
-                {folders.map(f => <option key={f} value={f} />)}
-              </datalist>
-            </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-medium text-token-secondary">
+                  分组<span className="ml-1.5 font-normal text-token-muted">留空=未分组</span>
+                </span>
+                {/* 下拉而不是自由文本：文件夹是有限集合，让用户手敲等于把「和别人拼错一个字
+                    就分到两个组」的风险交给他。仍保留「新建」入口，不减能力。 */}
+                <select
+                  value={folders.includes(folder) ? folder : (folder ? '__custom__' : '')}
+                  onChange={(e) => {
+                    if (e.target.value === '__custom__') {
+                      const v = prompt('新分组名称', folder);
+                      if (v !== null) setFolder(v.trim());
+                      return;
+                    }
+                    setFolder(e.target.value);
+                  }}
+                  className="rounded-lg px-3 py-2 text-sm outline-none"
+                  style={inputStyle}
+                >
+                  <option value="">未分组</option>
+                  {folders.map(f => <option key={f} value={f}>{f}</option>)}
+                  {folder && !folders.includes(folder) && <option value="__custom__">{folder}</option>}
+                  <option value="__custom__">＋ 新建分组…</option>
+                </select>
+              </label>
+            </div>
           </div>
 
-          <div className="flex justify-end gap-2 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
-            <Button variant="ghost" onClick={onClose}>取消</Button>
-            <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
-              {saving ? '处理中...' : isEdit ? '保存' : '上传并创建'}
-            </Button>
+          <div className="flex items-center justify-between gap-3 mt-4 pt-3" style={{ borderTop: '1px solid var(--border-default)' }}>
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>封面：默认取站点首屏渲染</span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>取消</Button>
+              <Button onClick={handleSave} disabled={saving || (!isEdit && !file)}>
+                {saving ? '处理中...' : isEdit ? '保存' : '开始上传'}
+              </Button>
+            </div>
           </div>
         </>
         )
@@ -3067,13 +3225,18 @@ function genStrongPassword(len = 12) {
 
 const STRONG_PWD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*\-_=+]).{12,}$/;
 
-function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
+function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareCount = 0 }: {
   siteId: string | null;
   siteIds?: string[];
   onClose: () => void;
   /** 创建成功回调（用于 SharesPanel 嵌套场景，触发列表刷新） */
   onCreated?: () => void;
+  /** 这条链接指向的站点，用于顶部身份条。合集分享或调用方拿不到时为空，身份条自隐 */
+  site?: HostedSite | null;
+  /** 这个站点已经有几条分享链接 */
+  existingShareCount?: number;
 }) {
+  const shareSite = site ?? null;
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState<{ shareUrl: string; token: string; password?: string; linkType: 'long' | 'short' } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -3274,15 +3437,24 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
       : 'var(--bg-sunken)',
   });
 
-  // 当前可见性选中项的一句话说明（仅展示选中项，非选中项零文字）
-  const VISIBILITY_DESC: Record<typeof visibility, string> = {
-    'owner-only': '链接被复制也无法被外人访问，最安全',
-    'logged-in': '需登录平台才能查看，未登录拒绝',
-    public: '任何拿到链接的人都可访问，建议同时设置密码',
+  // 三张卡各自的副标题：卡片只有一个词说不清差别，副标题说的是「选了它你会得到什么」
+  const VISIBILITY_SUB: Record<typeof visibility, string> = {
+    'owner-only': '默认',
+    'logged-in': '能拿到访客名单',
+    public: '匿名可看',
   };
+  // 当前选中档的一段解释（仅展示选中项，非选中项零文字）
+  const VISIBILITY_DESC: Record<typeof visibility, string> = {
+    'owner-only': '默认档。链接建出来只有你本人打开有内容，别人看到「无权限」——适合先建链接、自己核一遍再改档发出去。',
+    'logged-in': '任何登录用户都能打开，访客名单里会留下他们的昵称——想知道谁看过就选这档。',
+    public: '任何拿到链接的人都能打开，包括未登录的。配一道密码可以挡住顺手转发。',
+  };
+  // 档位对齐设计稿的 3/7/14/30/90；「1 天」与「永久」是既有能力，删掉等于减功能，保留。
   const EXPIRY_OPTS = [
     { v: 1, label: '1 天' },
+    { v: 3, label: '3 天' },
     { v: 7, label: '7 天' },
+    { v: 14, label: '14 天' },
     { v: 30, label: '30 天' },
     { v: 90, label: '90 天' },
     { v: 0, label: '永久' },
@@ -3292,9 +3464,20 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
     <Dialog
       open={true}
       onOpenChange={v => { if (!v) onClose(); }}
-      title={result ? '分享链接已创建' : '快速分享'}
+      title={
+        result ? '分享链接已创建' : (
+          <span className="flex items-baseline gap-2">
+            建一条分享链接
+            {existingShareCount > 0 && (
+              <span className="text-[11.5px] font-normal" style={{ color: 'var(--text-muted)' }}>
+                这个站点已有 {existingShareCount} 条
+              </span>
+            )}
+          </span>
+        )
+      }
       // 配置态是左配置右预览两栏，需要比默认 520 宽；结果态回到窄弹窗
-      maxWidth={result ? 520 : 760}
+      maxWidth={result ? 520 : 820}
       content={
         result ? (
           <div className="flex flex-col gap-4">
@@ -3351,9 +3534,20 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                 将分享 {siteIds!.length} 个站点的合集
               </p>
             )}
-            <p className="text-sm text-token-secondary">
-              选择访问范围即可一键生成链接，标题自动生成。
-            </p>
+            {/* 站点身份条：这条链接指向哪个站点、多大、什么形态。
+                没有它，弹窗里三个开关是悬空的——用户得回头看自己点的是哪张卡 */}
+            {shareSite && (
+              <div
+                className="flex items-center gap-2 rounded-lg px-3 py-2"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+              >
+                <FileCode2 size={14} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <span className="truncate text-[13px]" style={{ color: 'var(--text-primary)' }}>{shareSite.title}</span>
+                <span className="shrink-0 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {fmtSize(shareSite.totalSize)} · {resolveSiteForm(shareSite).toUpperCase()}
+                </span>
+              </div>
+            )}
 
             {/* 左配置 / 右实时预览：三个开关的组合结果是「访客打开链接时看到什么」，
                 右栏把这个结果画出来，用户不必在脑子里合成 */}
@@ -3366,35 +3560,58 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
               {/* 谁能访问 — 防盗核心控件（PR 2026-05-28）：头像/图标 + 短标题分段卡，
                   说明仅展示选中项一行（公开项走橙色风险色） */}
               <div className="flex flex-col gap-1.5">
-                <span className="text-xs text-token-muted">谁能访问</span>
+                <span className="flex items-center gap-1.5 text-xs text-token-muted">
+                  谁能访问
+                  <span
+                    className="rounded px-1 py-px text-[10px]"
+                    style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
+                  >
+                    必填
+                  </span>
+                </span>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => setVisibility('owner-only')} style={segCardStyle(visibility === 'owner-only')}>
-                    {myAvatar
-                      ? <UserAvatar src={myAvatar} alt="我" className="rounded-full" style={{ width: 26, height: 26 }} />
-                      : <User size={22} style={{ color: visibility === 'owner-only' ? '#3b82f6' : 'var(--text-secondary)' }} />}
-                    <span className="text-xs" style={{ color: visibility === 'owner-only' ? '#3b82f6' : 'var(--text-secondary)' }}>仅我 / 团队</span>
-                  </button>
-                  <button type="button" onClick={() => setVisibility('logged-in')} style={segCardStyle(visibility === 'logged-in')}>
-                    <Users size={22} style={{ color: visibility === 'logged-in' ? '#3b82f6' : 'var(--text-secondary)' }} />
-                    <span className="text-xs" style={{ color: visibility === 'logged-in' ? '#3b82f6' : 'var(--text-secondary)' }}>登录可见</span>
-                  </button>
-                  <button type="button" onClick={() => setVisibility('public')} style={segCardStyle(visibility === 'public', true)}>
-                    <Globe size={22} style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }} />
-                    <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }}>公开</span>
-                  </button>
+                  {([
+                    ['owner-only', SHARE_VISIBILITY_LABEL['owner-only']],
+                    ['logged-in', SHARE_VISIBILITY_LABEL['logged-in']],
+                    ['public', SHARE_VISIBILITY_LABEL.public],
+                  ] as const).map(([key, label]) => {
+                    const on = visibility === key;
+                    const danger = key === 'public';
+                    const fg = on ? (danger ? '#f97316' : '#3b82f6') : 'var(--text-secondary)';
+                    const Icon = key === 'owner-only' ? User : key === 'logged-in' ? Users : Globe;
+                    return (
+                      <button key={key} type="button" onClick={() => setVisibility(key)} style={segCardStyle(on, danger)}>
+                        {key === 'owner-only' && myAvatar
+                          ? <UserAvatar src={myAvatar} alt="我" className="rounded-full" style={{ width: 22, height: 22 }} />
+                          : <Icon size={18} style={{ color: fg }} />}
+                        <span className="text-xs" style={{ color: fg }}>{label}</span>
+                        {/* 副标题：卡片只有一个词说不清差别，这一行说的是「选了它你会得到什么」 */}
+                        <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>{VISIBILITY_SUB[key]}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-muted)' }}>
+                <span className="text-xs leading-relaxed" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-muted)' }}>
                   {VISIBILITY_DESC[visibility]}
                 </span>
               </div>
 
-              {/* 密码保护 */}
-              <div className="flex flex-col gap-1.5">
+              {/* 密码卡 + 有效期卡并排：两者都是「这条链接的寿命与门槛」，
+                  竖着排会把有效期挤到折叠线以下，用户看不见就用不上默认值以外的档 */}
+              <div className="grid gap-3" style={{ gridTemplateColumns: narrowDialog ? 'minmax(0,1fr)' : 'minmax(0,1fr) minmax(0,200px)' }}>
+              <div
+                className="flex flex-col gap-1.5 rounded-xl p-2.5"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+              >
                 <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
                   <input type="checkbox" checked={usePassword} onChange={e => handleTogglePassword(e.target.checked)} />
                   <Lock size={13} className="text-token-muted" />
-                  <span className="text-token-secondary">
-                    密码保护{isShort && <span style={{ color: '#f97316' }}>（短链必须）</span>}
+                  <span className="text-token-secondary">访问密码</span>
+                  <span
+                    className="rounded px-1 py-px text-[10px]"
+                    style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
+                  >
+                    {isShort ? '短链必须' : '建议开启'}
                   </span>
                 </label>
                 {usePassword && (
@@ -3422,21 +3639,25 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                         <RefreshCw size={12} />
                       </Button>
                     </div>
-                    {(pwdInvalid || isShort) && (
-                      <span className="text-xs" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
-                        {pwdInvalid
-                          ? '密码强度不足：需 ≥12 位，含大小写、数字、符号'
-                          : '短链可被遍历枚举，建议用随机生成的强密码'}
-                      </span>
-                    )}
+                    <span className="text-[11px] leading-relaxed" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
+                      {pwdInvalid
+                        ? '密码强度不足：需 ≥12 位，含大小写、数字、符号'
+                        : isShort
+                          ? '短链可被遍历枚举，建议用随机生成的强密码'
+                          : '长链默认 8 位随机。密码是任意字符串，长度不定，可自己改写、可粘贴。'}
+                    </span>
                   </>
                 )}
               </div>
 
               {/* 有效期 — 胶囊代替下拉 */}
-              <div className="flex flex-col gap-1.5">
-                <span className="text-xs text-token-muted">
-                  <Clock size={12} className="inline mr-1" />有效期
+              <div
+                className="flex flex-col gap-1.5 rounded-xl p-2.5"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+              >
+                <span className="flex items-center gap-1.5 text-xs text-token-muted">
+                  <Clock size={12} />有效期
+                  <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>默认 7 天</span>
                 </span>
                 <div className="flex gap-2 flex-wrap">
                   {EXPIRY_OPTS.map(opt => {
@@ -3455,11 +3676,12 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                           color: active ? '#3b82f6' : 'var(--text-secondary)',
                         }}
                       >
-                        {opt.label}
+                            {opt.label}
                       </button>
                     );
                   })}
                 </div>
+              </div>
               </div>
 
               {/* 开场问题 — 这条链接上访客一点即问的引子。
@@ -3566,7 +3788,9 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                 className="text-xs flex items-center gap-1 self-start text-token-muted"
               >
                 <span style={{ display: 'inline-block', transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform 120ms' }}>›</span>
-                高级选项{!showAdvanced && <span> · 链接形式：{linkType === 'long' ? '长链（推荐）' : '数字短链'}</span>}
+                高级{!showAdvanced && (
+                  <span> {linkType === 'long' ? '长链（推荐）' : '数字短链'} · {askTouched ? '开场问题已单独选' : '开场问题继承题库'}</span>
+                )}
               </button>
               {showAdvanced && (
                 <div className="flex flex-col gap-1.5">
@@ -3597,8 +3821,12 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                 hasPassword={usePassword}
                 password={password}
                 expiresInDays={expiresInDays}
-                linkType={linkType}
-                askCount={resolveShareAskSelection(askTouched, askPicked)?.length ?? askLibrary?.length ?? 0}
+                askCount={askPicked.length}
+                askInherited={!askTouched}
+                // 这一分支里链接还没生成，token 不存在。给一条**形状正确**的示意地址，
+                // 而不是拿一个假 token 冒充真地址——用户会照着它去发。
+                shareUrl={`${window.location.host}/s/wp/${isShort ? '{数字短链}' : '{生成后可见}'}`}
+                onCopy={() => toast.info('链接还没生成', '先点右下角「生成链接」，之后这里就能一次复制链接和密码')}
               />
             </div>
             </div>
@@ -3606,15 +3834,15 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
             <div className="flex items-center justify-between gap-3 mt-2 flex-wrap">
               {/* 一句话复述这条链接：按下按钮前最后一次核对，不必回头逐个看开关 */}
               <span className="text-xs min-w-0" style={{ color: 'var(--text-muted)' }}>
-                即将生成：{SHARE_VISIBILITY_LABEL[visibility]}
+                {SHARE_VISIBILITY_LABEL[visibility]}
                 {usePassword ? ' · 有密码' : ' · 无密码'}
-                {expiresInDays === 0 ? ' · 永久有效' : ` · ${expiresInDays} 天后失效`}
+                {expiresInDays === 0 ? ' · 永久有效' : ` · 有效 ${expiresInDays} 天`}
                 {isShort ? ' · 数字短链' : ''}
               </span>
               <div className="flex justify-end gap-2">
                 <Button variant="ghost" onClick={onClose}>取消</Button>
                 <Button onClick={handleCreate} disabled={creating || pwdInvalid}>
-                  {creating ? '生成中...' : '一键分享'}
+                  {creating ? '生成中...' : '生成链接'}
                 </Button>
               </div>
             </div>
@@ -3677,7 +3905,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
 
 // ─── Shares Panel ───
 
-function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle }: {
+function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle, scopedSite }: {
   shares: ShareLinkItem[];
   setShares: (s: ShareLinkItem[]) => void;
   onClose: () => void;
@@ -3685,6 +3913,8 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
   scopedSiteId?: string | null;
   /** scopedSiteId 时用于「本站点统计」标题 */
   scopedSiteTitle?: string | null;
+  /** 站点本体，透传给嵌套 ShareDialog 画顶部身份条 */
+  scopedSite?: HostedSite | null;
 }) {
   const [loading, setLoading] = useState(true);
   const [viewLogsToken, setViewLogsToken] = useState<string | null>(null);
@@ -3982,6 +4212,8 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
           {showCreate && scopedSiteId && (
             <ShareDialog
               siteId={scopedSiteId}
+              site={scopedSite ?? null}
+              existingShareCount={shares.filter(l => !l.isRevoked && !l.isExpired && (l.siteId === scopedSiteId || l.siteIds?.includes(scopedSiteId))).length}
               onClose={() => { setShowCreate(false); }}
               onCreated={refreshShares}
             />

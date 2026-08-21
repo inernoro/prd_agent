@@ -89,6 +89,12 @@ export interface ShareLinkItem {
   inGracePeriod?: boolean;
   /** 续期/修改历史次数 */
   renewalCount?: number;
+  /** 撤销时刻；存量已撤销链接没有这个字段，那一行只显示「已撤销」不带日期 */
+  revokedAt?: string;
+  /** 撤销原因（撤销时用户自己填的一句话），可空 */
+  revokedReason?: string;
+  /** 这条链接指向的站点标题；合集分享有多个。站点已删的 id 不会出现在这里 */
+  siteTitles?: string[];
 }
 
 export interface ShareAnalyticsLinkSummary {
@@ -214,6 +220,13 @@ export async function uploadSite(input: {
    * 给不出的数不许编，给得出的必须给）。
    */
   onProgress?: (loaded: number, total: number) => void;
+  /**
+   * 本次上传的标识，用于旁路查解包进度（见 getUploadProgress）。
+   * 不传 = 服务端不记录进度，行为与改动前完全一致。
+   */
+  uploadId?: string;
+  /** 拿到 XHR 句柄，调用方据此实现「中止」 */
+  onStart?: (xhr: XMLHttpRequest) => void;
 }): Promise<ApiResponse<HostedSite>> {
   const token = useAuthStore.getState().token;
 
@@ -223,6 +236,7 @@ export async function uploadSite(input: {
   if (input.description) fd.append('description', input.description);
   if (input.folder) fd.append('folder', input.folder);
   if (input.tags) fd.append('tags', input.tags);
+  if (input.uploadId) fd.append('uploadId', input.uploadId);
 
   const url = joinUrl(getApiBaseUrl(), api.webPages.upload());
   return new Promise((resolve) => {
@@ -248,6 +262,13 @@ export async function uploadSite(input: {
       success: false, data: null as never,
       error: { code: 'NETWORK_ERROR', message: '网络异常，上传未完成' },
     });
+    // 用户点「中止」时 xhr.abort() 走这里；不能落到 onerror 报「网络异常」，
+    // 那是他自己按的，不是出错了
+    xhr.onabort = () => resolve({
+      success: false, data: null as never,
+      error: { code: 'ABORTED', message: '已中止上传' },
+    });
+    input.onStart?.(xhr);
     xhr.send(fd);
   });
 }
@@ -507,8 +528,32 @@ export async function createShareLink(data: {
   return apiRequest(api.webPages.share(), { method: 'POST', body: data });
 }
 
-export async function listShares(): Promise<ApiResponse<{ items: ShareLinkItem[] }>> {
-  return apiRequest(api.webPages.shares(), { method: 'GET' });
+/**
+ * @param includeRevoked 一并取回已撤销的链接（分享管理面板的「已撤销」一层要用）。
+ *   默认 false —— 后端也默认排除，两边口径一致。
+ */
+export async function listShares(includeRevoked = false): Promise<ApiResponse<{ items: ShareLinkItem[] }>> {
+  const q = includeRevoked ? '?includeRevoked=true' : '';
+  return apiRequest(`${api.webPages.shares()}${q}`, { method: 'GET' });
+}
+
+/**
+ * 服务端解包进度。上传是一次同步 POST，前端在等那个响应，这条是旁路查询。
+ * uploadId 由调用方生成、随上传表单一起发过去。
+ * pending=true 表示还没开始记录（或已过 TTL），不是错误。
+ */
+export interface UploadUnpackProgress {
+  pending?: boolean;
+  doneFiles?: number;
+  totalFiles?: number;
+  entryFile?: string | null;
+  currentPath?: string | null;
+  currentSize?: number;
+  finished?: boolean;
+}
+
+export async function getUploadProgress(uploadId: string): Promise<ApiResponse<UploadUnpackProgress>> {
+  return apiRequest(api.webPages.uploadProgress(encodeURIComponent(uploadId)), { method: 'GET' });
 }
 
 /**
@@ -522,8 +567,13 @@ export async function ensureShareShortLink(shareId: string): Promise<ApiResponse
   return apiRequest(api.webPages.shareShortLink(encodeURIComponent(shareId)), { method: 'POST' });
 }
 
-export async function revokeShare(shareId: string): Promise<ApiResponse<{ revoked: boolean }>> {
-  return apiRequest(api.webPages.revokeShare(encodeURIComponent(shareId)), { method: 'DELETE' });
+/**
+ * 撤销分享链接（不可逆）。
+ * @param reason 可选，「为什么撤」。几周后回头看列表时这句话是唯一的线索。
+ */
+export async function revokeShare(shareId: string, reason?: string): Promise<ApiResponse<{ revoked: boolean }>> {
+  const q = reason?.trim() ? `?reason=${encodeURIComponent(reason.trim())}` : '';
+  return apiRequest(`${api.webPages.revokeShare(encodeURIComponent(shareId))}${q}`, { method: 'DELETE' });
 }
 
 // ─── Public Share View ───

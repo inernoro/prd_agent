@@ -62,10 +62,23 @@ describe('分享档账本', () => {
     expect(text(links)).toContain('续期即可复活');
   });
 
-  it('把条数与累计访问合成一句判断', () => {
-    const links = [link({ viewCount: 98 }), link({ id: 'l2', viewCount: 320 })];
-    expect(text(links)).toContain('你有 2 条有效链接');
-    expect(text(links)).toContain('累计带来 418 次访问');
+  it('把条数、累计访问与访客数合成一句判断', () => {
+    const links = [
+      link({ viewCount: 98, uniqueIpCount: 8 }),
+      link({ id: 'l2', viewCount: 320, uniqueIpCount: 18 }),
+    ];
+    expect(text(links)).toContain('2 条有效链接累计带来 418 次访问');
+    expect(text(links)).toContain('26 位访客');
+  });
+
+  it('不把累计访问说成「近 7 天」—— 这一屏只有累计值，近 7 天要访问日志聚合', () => {
+    const t = text([link({ viewCount: 98, uniqueIpCount: 8 })]);
+    expect(t).toContain('累计');
+    expect(t).not.toContain('近 7 天');
+  });
+
+  it('拿不到访客数时不写「0 位访客」，整句不提这件事', () => {
+    expect(text([link({ viewCount: 12 })])).not.toContain('位访客');
   });
 
   it('七天内到期要出现在结论里，并且点得动（drill 到有效层）', () => {

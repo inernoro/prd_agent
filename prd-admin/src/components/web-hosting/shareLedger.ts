@@ -36,7 +36,9 @@ export function buildShareLedger(links: ShareLinkItem[]): ShareLedger {
     return da - db;
   });
   ledger.expired.sort((a, b) => (b.expiresAt ?? '').localeCompare(a.expiresAt ?? ''));
-  ledger.revoked.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  // 撤销层按撤销时刻排（刚撤的在上面）；存量没有 revokedAt 的退回创建时间
+  ledger.revoked.sort((a, b) =>
+    (b.revokedAt ?? b.createdAt ?? '').localeCompare(a.revokedAt ?? a.createdAt ?? ''));
   return ledger;
 }
 
@@ -77,13 +79,23 @@ export function buildLedgerConclusion(links: ShareLinkItem[], now: number = Date
     .filter((x): x is { link: ShareLinkItem; days: number } => x.days !== null && x.days <= 7);
   const hottest = [...active].sort((a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0))[0];
 
+  // 访客数用 uniqueIpCount 之和。它是 per-link 的 distinct IP，跨链接会重复计数
+  // （同一个人打开两条链接算两位），所以措辞是「次访问、N 位访客」而不是「N 个人」。
+  const visitors = active.reduce((sum, l) => sum + (l.uniqueIpCount ?? 0), 0);
+
   const segs: LedgerSegment[] = [
-    { text: '你有 ' },
     { text: String(active.length), drillTo: 'active', tone: 'strong' },
-    { text: ' 条有效链接，累计带来 ' },
+    // 设计稿这里写的是「近 7 天带来 N 次访问」，但这一屏只有 viewCount（累计值），
+    // 近 7 天要访问日志聚合、分享档主屏拿不到。不把累计冒充成近 7 天，改说「累计」。
+    { text: ' 条有效链接累计带来 ' },
     { text: String(views), tone: 'strong' },
     { text: ' 次访问' },
   ];
+
+  if (visitors > 0) {
+    segs.push({ text: '、' });
+    segs.push({ text: `${visitors} 位访客`, tone: 'strong' });
+  }
 
   if (expiringSoon.length > 0) {
     const soonest = expiringSoon[0];

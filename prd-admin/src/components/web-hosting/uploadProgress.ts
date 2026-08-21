@@ -14,6 +14,19 @@ export type UploadPhase =
   /** 字节发完了，服务端在解包 / 找入口 —— 这一段没有进度通道，只能报已用时 */
   | 'processing';
 
+/**
+ * 服务端解包的一帧（后端 GET /api/web-pages/upload-progress/{id} 的返回）。
+ * 全部来自解包循环里的真实计数，算不出来的就是 null。
+ */
+export interface UnpackFrame {
+  doneFiles?: number;
+  totalFiles?: number;
+  entryFile?: string | null;
+  currentPath?: string | null;
+  currentSize?: number;
+  finished?: boolean;
+}
+
 export interface UploadProgressView {
   phase: UploadPhase;
   /** 0~1；processing 阶段恒为 1 */
@@ -26,6 +39,18 @@ export interface UploadProgressView {
   title: string;
   /** 副文案：还要多久 / 已经等了多久 */
   detail: string;
+  /**
+   * 解包阶段的分步清单（设计稿屏 3 那三行）。
+   * 拿不到服务端进度就是空数组——不编一份假清单出来。
+   */
+  steps: UnpackStep[];
+}
+
+export interface UnpackStep {
+  state: 'done' | 'active';
+  text: string;
+  /** 第二行小字（当前文件的路径与大小） */
+  sub?: string;
 }
 
 /** 低于这个已发字节数不报速率——刚开头那几百毫秒算出来的速率会离谱到没有参考价值 */
@@ -41,6 +66,12 @@ export function fmtDuration(ms: number): string {
   return rest === 0 ? `${m} 分` : `${m} 分 ${rest} 秒`;
 }
 
+export function fmtBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${n} B`;
+}
+
 export function fmtRate(bytesPerSec: number): string {
   if (bytesPerSec >= 1024 * 1024) return `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`;
   return `${Math.max(1, Math.round(bytesPerSec / 1024))} KB/s`;
@@ -51,17 +82,45 @@ export function fmtRate(bytesPerSec: number): string {
  * @param total     文件总字节；lengthComputable 为 false 时传 0
  * @param elapsedMs 从点「上传」到现在的真实毫秒
  */
-export function buildUploadProgress(loaded: number, total: number, elapsedMs: number): UploadProgressView {
+export function buildUploadProgress(
+  loaded: number,
+  total: number,
+  elapsedMs: number,
+  unpack?: UnpackFrame | null,
+): UploadProgressView {
   // 字节已经全部送达（或者压根拿不到进度事件但请求还没回来）→ 服务端在解包。
   // 这一段没有任何进度信号，报百分比就是编，只能如实报已用时。
   if (total > 0 && loaded >= total) {
+    const done = unpack?.doneFiles ?? 0;
+    const all = unpack?.totalFiles ?? 0;
+    // 服务端报得出「第几个 / 共几个」时就用真实比例；报不出来（Redis 不可用、
+    // 单文件站没有解包这一步）才退回「没有进度可报」的诚实说法
+    const hasCount = all > 0;
+    const steps: UnpackStep[] = [];
+    if (hasCount) {
+      steps.push({ state: 'done', text: `已解包 ${done.toLocaleString()} / ${all.toLocaleString()} 个文件` });
+    }
+    if (unpack?.entryFile) {
+      steps.push({ state: 'done', text: `识别到入口文件 ${unpack.entryFile}` });
+    }
+    if (hasCount && unpack?.currentPath && done < all) {
+      steps.push({
+        state: 'active',
+        text: `正在上传第 ${(done + 1).toLocaleString()} 个`,
+        sub: `${unpack.currentPath}${unpack.currentSize ? ` · ${fmtBytes(unpack.currentSize)}` : ''}`,
+      });
+    }
+
     return {
       phase: 'processing',
-      ratio: 1,
+      ratio: hasCount ? Math.min(1, done / all) : 1,
       bytesPerSec: null,
       etaMs: null,
-      title: '文件已送达，服务端正在解包并识别入口',
-      detail: `已用时 ${fmtDuration(elapsedMs)}（这一步没有进度可报，完成即跳转）`,
+      title: hasCount ? `正在解包 ${Math.round((done / all) * 100)}%` : '文件已送达，服务端正在解包并识别入口',
+      detail: hasCount
+        ? `已用时 ${fmtDuration(elapsedMs)}`
+        : `已用时 ${fmtDuration(elapsedMs)}（这一步没有进度可报，完成即跳转）`,
+      steps,
     };
   }
 
@@ -73,6 +132,7 @@ export function buildUploadProgress(loaded: number, total: number, elapsedMs: nu
       etaMs: null,
       title: '正在建立上传连接',
       detail: '马上开始传输',
+      steps: [],
     };
   }
 
@@ -90,5 +150,6 @@ export function buildUploadProgress(loaded: number, total: number, elapsedMs: nu
     detail: etaMs === null
       ? '正在测速…'
       : `约还需 ${fmtDuration(etaMs)}${bytesPerSec ? ` · ${fmtRate(bytesPerSec)}` : ''}`,
+    steps: [],
   };
 }

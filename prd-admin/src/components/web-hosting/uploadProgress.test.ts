@@ -51,3 +51,42 @@ describe('上传等待期的「在做什么 + 还要多久」', () => {
     expect(fmtDuration(45_000)).toBe('45 秒');
   });
 });
+
+describe('服务端解包那一段的分步清单', () => {
+  const sent = (unpack?: Parameters<typeof buildUploadProgress>[3]) =>
+    buildUploadProgress(50 * MB, 50 * MB, 9000, unpack);
+
+  it('服务端报得出「第几个 / 共几个」就用真实比例，不再说「没有进度可报」', () => {
+    const v = sent({ doneFiles: 1842, totalFiles: 2310, currentPath: 'assets/index-4f2a.js', currentSize: 190464 });
+    expect(v.title).toContain('80%'); // 1842/2310 = 79.7%
+    expect(v.detail).not.toContain('没有进度可报');
+    expect(v.ratio).toBeCloseTo(1842 / 2310, 3);
+  });
+
+  it('三行清单逐字对齐设计稿，当前文件带路径与大小', () => {
+    const v = sent({ doneFiles: 1842, totalFiles: 2310, entryFile: 'index.html', currentPath: 'assets/index-4f2a.js', currentSize: 190464 });
+    expect(v.steps.map((s) => s.text)).toEqual([
+      '已解包 1,842 / 2,310 个文件',
+      '识别到入口文件 index.html',
+      '正在上传第 1,843 个',
+    ]);
+    expect(v.steps[2].sub).toBe('assets/index-4f2a.js · 186 KB');
+    expect(v.steps[2].state).toBe('active');
+  });
+
+  it('入口还没扫到就不写那一行——不预设 index.html', () => {
+    const v = sent({ doneFiles: 10, totalFiles: 100, currentPath: 'a.js' });
+    expect(v.steps.some((s) => s.text.includes('入口'))).toBe(false);
+  });
+
+  it('全部处理完之后不再显示「正在上传第 N 个」', () => {
+    const v = sent({ doneFiles: 100, totalFiles: 100, entryFile: 'index.html', currentPath: 'z.js' });
+    expect(v.steps.some((s) => s.state === 'active')).toBe(false);
+  });
+
+  it('拿不到服务端进度时清单为空，并退回诚实说法——不编一份假清单', () => {
+    expect(sent().steps).toEqual([]);
+    expect(sent().detail).toContain('没有进度可报');
+    expect(sent({ doneFiles: 0, totalFiles: 0 }).steps).toEqual([]);
+  });
+});
