@@ -342,30 +342,37 @@ public class DataSyncScopeCoverageTests
     }
 
     /// <summary>
-    /// 救场开关只许在权威部署上生效。
+    /// 救场开关在共享库上照做，但必须把影响面说出来。
     ///
-    /// CDS 分支预览与生产共用同一个 Mongo 库（cross-project-isolation 通道 4），
-    /// 所以这段代码写的 users 与 deployment_markers 都是全局唯一那一份：
-    /// 任何一个分支预览带着新的开关值启动，就会把所有部署共用的管理员口令改掉，
-    /// 并把一次性标记提前消费掉，让生产真正需要救场时反而不生效。
-    /// 判据必须在读凭据、写库**之前**——放在后面等于已经动过手了。
+    /// CDS 同项目所有分支共用一个 Mongo，所以这个开关改的是全库唯一那一份管理员。
+    /// 上一版据此直接跳过分支预览——而救场开关恰恰只在 CDS 上才用得着，跳过等于
+    /// 把唯一的钥匙锁在门里（2026-08-21 用户明确：CDS 上没有生产，全是测试环境）。
+    /// 现在改为照做 + 打印影响面，这条守卫钉住「不许再退回静默跳过」。
     /// </summary>
     [Fact]
-    public void 救场开关在分支预览上不许动共享库()
+    public void 救场开关在分支预览上照做但要说清影响面()
     {
         var source = ReadInfrastructureSource("Database", "DatabaseInitializer.cs");
         var body = source[source.IndexOf("private async Task MaybeForceResetAdminAsync", StringComparison.Ordinal)..];
         body = body[..body.IndexOf("\n    private ", StringComparison.Ordinal)];
 
-        Assert.Contains("DeploymentAuthority.IsCdsBranchPreview(_configuration)", body);
-
         var gateAt = body.IndexOf("IsCdsBranchPreview", StringComparison.Ordinal);
+        Assert.True(gateAt >= 0, "分支预览的判定整个没了——影响面提示也就没了");
+
+        // 判定分支里只许打印，不许 return：一 return 就退回「钥匙锁在门里」。
+        var branch = body[gateAt..];
+        var branchEnd = branch.IndexOf("\n        }", StringComparison.Ordinal);
+        Assert.True(branchEnd > 0, "找不到分支预览判定的花括号了，这条守卫的前提已变");
+        Assert.DoesNotContain("return;", branch[..branchEnd]);
+
+        // 说清影响面：共库的其它部署会跟着变。
+        Assert.Contains("共享库", branch[..branchEnd], StringComparison.Ordinal);
+
+        // 一次性仍由 marker 保证，且必须排在改用户之前。
         var markerReadAt = body.IndexOf("DeploymentMarkers.Find", StringComparison.Ordinal);
         var userWriteAt = body.IndexOf("_db.Users.UpdateOneAsync", StringComparison.Ordinal);
-        Assert.True(gateAt >= 0 && markerReadAt > gateAt,
-            "分支预览判定必须排在读一次性标记之前，否则标记会被预览提前消费");
-        Assert.True(userWriteAt > gateAt,
-            "分支预览判定必须排在改用户之前");
+        Assert.True(markerReadAt > 0 && userWriteAt > markerReadAt,
+            "一次性标记必须在改用户之前读，否则每次重启都会把口令改回去");
     }
 
     /// <summary>

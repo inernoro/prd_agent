@@ -121,20 +121,23 @@ public class DatabaseInitializer
         var flag = (_configuration[ForceResetKey] ?? string.Empty).Trim();
         if (IsForceResetDisabled(flag)) return;
 
-        // 只有权威部署能动。CDS 分支预览与生产**共用同一个 Mongo 库**
-        //（dbScope 默认 shared，MongoDB__DatabaseName 恒为 prdagent，见
-        // cross-project-isolation 通道 4），所以这里写的 users 和 deployment_markers
-        // 都是全局唯一的那一份：任何一个分支预览带着新的开关值启动，就会
-        // ① 把**所有部署**共用的那个管理员口令改掉，
-        // ② 把一次性标记提前消费掉，导致生产真正需要救场时反而不生效。
-        // 分支预览没有「自己的」管理员可重置——库是同一个，所以正确行为是根本不做，
-        // 并且把「为什么没做」打出来，避免变成一次静默的无动作。
+        // 这里写的 users 与 deployment_markers 是**全库唯一那一份**：CDS 同项目的所有
+        // 分支共用同一个 Mongo（dbScope 默认 shared，MongoDB__DatabaseName 恒为
+        // prdagent，见 cross-project-isolation 通道 4）。所以在任何一个分支上开这个开关，
+        // 改掉的是所有共库部署都在用的那个管理员。
+        //
+        // 上一版据此**直接跳过分支预览**，理由是「不能让预览动生产」。2026-08-21 用户
+        // 明确否掉了这个前提：CDS 上没有生产，全是测试环境（见
+        // cross-project-isolation「CDS 上没有「生产」」一节）。而救场开关恰恰只在 CDS 上
+        // 才用得着——跳过等于把唯一的钥匙锁在门里，管理员口令丢了就真的进不去了。
+        //
+        // 所以改为照做，但把影响面**说出来**：共库的每个部署都会跟着换口令。
+        // 一次性由下面的 marker 保证，不会每次重启都改一遍。
         if (DeploymentAuthority.IsCdsBranchPreview(_configuration))
         {
             Console.WriteLine(
-                $"[admin-reset] 当前是 CDS 分支预览，与生产共用同一个数据库，已跳过 {ForceResetKey}。" +
-                "要救场请在生产部署上设置这个开关。");
-            return;
+                $"[admin-reset] 当前是 CDS 分支预览。{ForceResetKey} 改的是共享库里那一份管理员，" +
+                "同项目其它分支会跟着变——CDS 上都是测试环境，这是有意为之。");
         }
 
         // 一次性。容器环境变量是持久的，这段代码每次进程启动都会跑到——不记「这个值
