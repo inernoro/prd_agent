@@ -228,7 +228,19 @@ public sealed class DataSyncRunWorker : BackgroundService
                     : new DataSyncCollectionProgress();
                 if (progress.Done) continue;
 
-                await PullCollectionAsync(db, run, collection, progress, token, ct);
+                // 源站报的总条数补上。这个字段的文档写着「manifest 阶段拿到」，可从来没有
+                // 任何一处给它赋过值——于是每次 GET 和 SSE 快照里 fetched 在涨、sourceTotal
+                // 恒为 0，界面上算不出百分比，历史记录里也看不出这次到底该搬多少
+                // （predicate-and-wiring-discipline 形状 2：字段建了一半，删掉不会红）。
+                // 每轮都赋一次而不是只在新建时赋：续跑的 Run 带着旧的 0 进来，也要补上。
+                if (run.PlannedManifest.TryGetValue(collectionName, out var plannedFacts))
+                {
+                    progress.SourceTotal = plannedFacts.SourceTotal;
+                }
+
+                // 从这里起下游一律拿两边脱敏契约的**并集**，投影 / 待补归属 / 接回三处
+                // 就不会各自用一份（形状 3）。
+                await PullCollectionAsync(db, run, DataSyncApply.MergeSourceRedactions(collection, run.PlannedManifest), progress, token, ct);
             }
 
             // 终态写入同样要带「它还是 running」。心跳和进度已经挡住了，唯独这一处漏了，

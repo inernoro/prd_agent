@@ -327,15 +327,21 @@ public sealed class DataSyncConsumerController : ControllerBase
         // 只是不再允许它改写执行范围。
         // 执行清单只收「源站报了 + 本站认识」的那些。对照表上照样列出不认识的那几个，
         // 但它们不会进 PlannedCollections，worker 也就不会遇到「计划里有、却跑不了」。
-        var planned = manifest.Select(x => x.Collection)
-            .Where(name => DataSyncScope.TryResolve(name, out _))
-            .ToList();
+        var planned = manifest.Where(x => DataSyncScope.TryResolve(x.Collection, out _)).ToList();
+        // 源站报的总条数与脱敏契约一起固化。这两样只有源站知道，对照表上刚显示过，
+        // 渲染完就丢掉的话下游只能瞎猜：进度里的 sourceTotal 永远 0，脱敏处理退回按
+        // 本站白名单算，只被源站列为敏感的字段就此隐身。与执行清单同一次条件更新写入。
+        var plannedManifest = planned.ToDictionary(
+            x => x.Collection,
+            x => new DataSyncPlannedCollection { SourceTotal = x.Total, RedactFields = x.RedactFields },
+            StringComparer.Ordinal);
         await _db.DataSyncRuns.UpdateOneAsync(
             Builders<DataSyncRun>.Filter.And(
                 Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
                 Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
             Builders<DataSyncRun>.Update
-                .Set(x => x.PlannedCollections, planned)
+                .Set(x => x.PlannedCollections, planned.Select(x => x.Collection).ToList())
+                .Set(x => x.PlannedManifest, plannedManifest)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
 

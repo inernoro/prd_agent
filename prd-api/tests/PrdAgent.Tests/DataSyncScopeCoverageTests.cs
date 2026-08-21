@@ -767,6 +767,40 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 源站清单报的事实必须落到Run上并被执行端用起来()
+    {
+        // 总条数与源站脱敏契约是**只有源站知道**的两件事，清单里送过来、对照表上显示过，
+        // 渲染完就丢掉的话下游只能瞎猜。两处都属于「建了一半」——删掉接线不会红：
+        //   sourceTotal 字段文档写着「manifest 阶段拿到」，却没有任何一处赋值；
+        //   脱敏处理全部按目标站白名单算，只被源站列为敏感的字段就此隐身。
+        // 所以这条守卫盯的是接线本身（形状 2），行为对不对由 DataSyncApplyTests 管。
+        var planPath = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var plan = File.ReadAllText(planPath);
+
+        // 固化必须和执行清单在**同一次**条件更新里，否则两者会各自漂移。
+        var update = Regex.Match(
+            plan,
+            @"Builders<DataSyncRun>\.Update\s*\n\s*\.Set\(x => x\.PlannedCollections,(?<body>.*?)cancellationToken: ct\);",
+            RegexOptions.Singleline);
+        Assert.True(update.Success, "找不到 Plan 落执行清单的那次更新了，这条守卫的前提已变");
+        Assert.Contains(".Set(x => x.PlannedManifest,", update.Groups["body"].Value, StringComparison.Ordinal);
+        Assert.Contains("SourceTotal = x.Total", plan, StringComparison.Ordinal);
+        Assert.Contains("RedactFields = x.RedactFields", plan, StringComparison.Ordinal);
+
+        var workerPath = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Services", "DataSync", "DataSyncRunWorker.cs");
+        var worker = File.ReadAllText(workerPath);
+
+        // 执行端真的读了这两样。
+        Assert.Contains("progress.SourceTotal = plannedFacts.SourceTotal;", worker, StringComparison.Ordinal);
+        // 并集必须在**进 PullCollectionAsync 之前**就换掉，下游三处（投影 / 待补归属 /
+        // 接回）才会共用同一份；在里面挑着用就是判据分裂的写法。
+        Assert.Contains(
+            "PullCollectionAsync(db, run, DataSyncApply.MergeSourceRedactions(collection, run.PlannedManifest)",
+            Regex.Replace(worker, @"\s+", " "),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 换票这一步不许挂在浏览器连接上()
     {
         // 换票是双方各自改状态的一步：源站收到请求就把授权码原子标成已消费并签出一张

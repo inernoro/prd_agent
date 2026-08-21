@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
 using PrdAgent.Core.DataSync;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -284,5 +285,84 @@ public class DataSyncApplyTests
     public void 只有撞Id才算可跳过的重复(string? message, bool expected)
     {
         Assert.Equal(expected, DataSyncApply.IsSkippableIdDuplicate(message));
+    }
+
+    /// <summary>
+    /// 只被源站列为敏感的字段，必须并进本站的脱敏判据。
+    ///
+    /// 不并的后果不是「少报一条」，是三处同时失灵且全都无声：投影不带这个字段
+    /// 于是接回时把目标站那份当成不存在而删掉；接回逻辑本来就不认它；待补清单也不报——
+    /// 管理员既没被告知、也无从发现自己一份能用的凭据被源站的空值顶掉了。
+    /// </summary>
+    [Fact]
+    public void 只被源站脱敏的字段也要按脱敏处理()
+    {
+        var local = new DataSyncCollection("llmplatforms", new[] { "ApiKeyEncrypted" });
+        var manifest = new Dictionary<string, DataSyncPlannedCollection>(StringComparer.Ordinal)
+        {
+            ["llmplatforms"] = new() { SourceTotal = 7, RedactFields = new List<string> { "ApiKeyEncrypted", "WebhookSecret" } },
+        };
+
+        var merged = DataSyncApply.MergeSourceRedactions(local, manifest);
+
+        Assert.Contains("WebhookSecret", merged.RedactFields);
+        // 本站原有的那个不能被源站那份顶掉——并集，不是替换。
+        Assert.Contains("ApiKeyEncrypted", merged.RedactFields);
+        // 接回与投影同源，所以源站那个字段必须一路传到这里，否则投影不带它。
+        Assert.Contains("WebhookSecret", merged.FieldsCarriedFromTarget);
+    }
+
+    /// <summary>
+    /// 反过来：只被本站列为敏感的字段不许因为源站没列就消失——那会让本站的凭据
+    /// 被整份替换清掉。并集在两个方向上都只增不减。
+    /// </summary>
+    [Fact]
+    public void 只被本站脱敏的字段不因源站没列而消失()
+    {
+        var local = new DataSyncCollection("llmmodels", new[] { "ApiKeyEncrypted", "LocalOnlySecret" });
+        var manifest = new Dictionary<string, DataSyncPlannedCollection>(StringComparer.Ordinal)
+        {
+            ["llmmodels"] = new() { RedactFields = new List<string> { "ApiKeyEncrypted" } },
+        };
+
+        var merged = DataSyncApply.MergeSourceRedactions(local, manifest);
+
+        Assert.Contains("LocalOnlySecret", merged.RedactFields);
+        Assert.Contains("ApiKeyEncrypted", merged.RedactFields);
+    }
+
+    /// <summary>
+    /// 存量 Run 没有这一格：原样退回本站那份，按它建立时的语义跑，而不是把脱敏清空。
+    /// </summary>
+    [Fact]
+    public void 存量Run没有源站契约时退回本站白名单()
+    {
+        var local = new DataSyncCollection("users", new[] { "PasswordHash" });
+        var merged = DataSyncApply.MergeSourceRedactions(
+            local, new Dictionary<string, DataSyncPlannedCollection>(StringComparer.Ordinal));
+        Assert.Same(local, merged);
+    }
+
+    /// <summary>
+    /// 授权勾了「连登录凭据一起搬」时，源站那份契约里没有 PasswordHash，本站有。
+    /// 并集会把它留在脱敏清单里——这是对的，也不会把送来的真散列顶掉：
+    /// 接回的判据是「送来的值是不是空的」，非空一律落地。
+    /// </summary>
+    [Fact]
+    public void 并集不会取消已批准的凭据搬运()
+    {
+        var local = new DataSyncCollection("users", new[] { "PasswordHash" });
+        var manifest = new Dictionary<string, DataSyncPlannedCollection>(StringComparer.Ordinal)
+        {
+            ["users"] = new() { RedactFields = new List<string>() },
+        };
+
+        var merged = DataSyncApply.MergeSourceRedactions(local, manifest);
+        Assert.Contains("PasswordHash", merged.RedactFields);
+
+        var incoming = new BsonDocument { { "_id", "u1" }, { "PasswordHash", "$2a$real-hash" } };
+        var target = new BsonDocument { { "_id", "u1" }, { "PasswordHash", "$2a$old-local" } };
+        DataSyncApply.CarryTargetLocalFields(new[] { incoming }, new[] { target }, merged);
+        Assert.Equal("$2a$real-hash", incoming["PasswordHash"].AsString);
     }
 }

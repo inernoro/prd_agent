@@ -37,6 +37,21 @@ public class DataSyncRun
     public List<string> PlannedCollections { get; set; } = new();
 
     /// <summary>
+    /// 对照表上源站报的那份契约，逐集合固化：总条数 + 源站会清空哪些字段。key 为集合名。
+    ///
+    /// 这两样都是**只有源站知道**的事实，清单里已经送过来、对照表上也显示过，
+    /// 原来却在渲染完那一屏之后就丢掉了，于是下游各自出问题：
+    /// 进度里的 sourceTotal 永远是 0（字段声明着「manifest 阶段拿到」却从没人赋值），
+    /// 而脱敏处理全部退回按**目标站**的白名单算——两边名单不一致时，只被源站列为敏感的
+    /// 字段送到就是空的，本站认不出它：待补清单不报，覆盖模式下也不接回，
+    /// 于是本站一份能用的凭据被源站的空值顶掉，还没有任何提示。
+    ///
+    /// 与 <see cref="PlannedCollections"/> 同一次条件更新写入，两者不会各自漂移。
+    /// 空 = 存量 Run（本字段落地之前建的），下游按老语义退回目标站白名单。
+    /// </summary>
+    public Dictionary<string, DataSyncPlannedCollection> PlannedManifest { get; set; } = new();
+
+    /// <summary>
     /// 导出令牌的散列。明文只在换取时短暂存在于内存并随请求发出，落库的永远是散列，
     /// 这样即使有人拿到这条 Run 记录也重放不了导出。
     /// </summary>
@@ -64,6 +79,16 @@ public class DataSyncRun
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FinishedAt { get; set; }
+}
+
+/// <summary>源站在清单里报的、关于某个集合的那份事实。只有源站知道，本站算不出来。</summary>
+public class DataSyncPlannedCollection
+{
+    /// <summary>源站上报的总条数</summary>
+    public long SourceTotal { get; set; }
+
+    /// <summary>源站会在出口清空的字段（已按本次授权条件算过生效值）</summary>
+    public List<string> RedactFields { get; set; } = new();
 }
 
 public class DataSyncCollectionProgress

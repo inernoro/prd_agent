@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Core.DataSync;
 
@@ -36,6 +37,38 @@ public static class DataSyncApply
             index++;
         }
         return parsed;
+    }
+
+    /// <summary>
+    /// 把源站那份脱敏契约并进本站的白名单。
+    ///
+    /// 目标站的白名单只说得了「**本站**认为哪些字段不该由源站决定」。两边版本不一致时，
+    /// 只被源站列为敏感的字段送到就是空的，而本站的判据认不出它，于是两处同时失灵：
+    /// 待补清单不报它（管理员根本不知道有东西要补），覆盖模式下 CarryTargetLocalFields
+    /// 也不接回它——本站一份能用的凭据被源站的空值顶掉，静默失效。
+    /// 投影那一处更隐蔽：字段没被投影出来，接回时会把目标站那份当成「不存在」而**删掉**。
+    ///
+    /// 取并集而不是改用源站那份：脱敏说的是「这个值不该由源站决定」，任一边这么认为都算数。
+    /// 并集只会让接回更多、待补报得更全，不会让敏感值多出门——出没出门是源站单方面决定的，
+    /// 本站这边加字段只影响「怎么处理已经收到的东西」。
+    ///
+    /// 存量 Run 没有这一格，原样返回本站那份，退回它建立时的语义。
+    /// </summary>
+    public static DataSyncCollection MergeSourceRedactions(
+        DataSyncCollection collection,
+        IReadOnlyDictionary<string, DataSyncPlannedCollection> plannedManifest)
+    {
+        if (!plannedManifest.TryGetValue(collection.Name, out var planned)
+            || planned.RedactFields.Count == 0)
+        {
+            return collection;
+        }
+        var union = collection.RedactFields
+            .Concat(planned.RedactFields)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        // 并集恒包含本站那份，所以条数相等就说明是同一个集合，没必要造个新对象。
+        return union.Count == collection.RedactFields.Count ? collection : collection with { RedactFields = union };
     }
 
     /// <summary>
