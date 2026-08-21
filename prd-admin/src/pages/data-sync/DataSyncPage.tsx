@@ -9,6 +9,7 @@ import { useSseStream } from '@/lib/useSseStream';
 import { stashPendingAuthorization } from './DataSyncCallbackPage';
 import { createSerializedSaver } from './serializedSave';
 import { computePlanTotals, describeTotal } from './planTotals';
+import { shouldApplyRun } from './staleRunGuard';
 
 /**
  * 从另一台 MAP 同步数据（目标站视角）。
@@ -85,8 +86,18 @@ export default function DataSyncPage() {
   const [provider, setProvider] = useState<ProviderSettings | null>(null);
   const [savingProvider, setSavingProvider] = useState(false);
 
+  // 地址栏里当前那条 Run。用 ref 而不是闭包捕获：applyRun 要保持稳定
+  //（它进了 useSseStream 的依赖），但又必须拿到**此刻**的 runId 来判断该不该收。
+  const currentRunIdRef = useRef(runId);
+  currentRunIdRef.current = runId;
+
   const applyRun = useCallback((data: unknown) => {
-    setRun(data as RunView);
+    const incoming = data as RunView;
+    // 只收当前这条 Run 的事件。上一条流被 reset 断掉之后仍可能有一帧已经在管道里，
+    // 收下它就是把 A 的进度画到 B 的地址下——比不更新更糟。判据在 staleRunGuard.ts，
+    // 那里有脱开 React 的用例。
+    if (!shouldApplyRun(incoming?.runId, currentRunIdRef.current)) return;
+    setRun(incoming);
   }, []);
 
   const sse = useSseStream({
@@ -209,11 +220,24 @@ export default function DataSyncPage() {
   //     一次没人打算做的破坏性写入；
   //   - `error` 没清 → A 的报错挂在 B 头上。
   // 一次清一个是治不完的，因为漏掉哪个都不会红——所以这里按「运行态」整组清。
+  //
+  // 光清 state 还不够，A 那条 SSE 请求本身还连着：useSseStream 只在**组件卸载**时
+  // abort，而这个页面在列表与详情之间来回切时一直挂着，url 变了它不会自己断。
+  // 于是 A 的 progress 事件继续回调（把 A 画到 B 的地址下）、phase 一直是 streaming
+  // （isStreaming 恒真 → 下面那个重连 effect 认为「已经在流了」，B 的流永远起不来）。
+  // 所以这里用 reset() 而不是 abort()：abort 只断请求、phase 留在 streaming，
+  // isStreaming 照样卡住；reset() 断请求**并**把 phase 归 idle。
+  //
+  // 为什么不去改 useSseStream 让它随 url 自动重连：那是七八个页面共用的 hook，
+  // 改它的生命周期语义会波及全部调用方，超出本 PR 的边界。
   useEffect(() => {
+    sse.reset();
     setPlan(null);
     setRun(null);
     setOverwrite(false);
     setError('');
+    // sse 整个对象每次渲染都是新的，进依赖会每帧重置；reset 自身是稳定的 useCallback([])。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId]);
 
   // pending 阶段拉对照表；已经在跑或跑完就不用了。

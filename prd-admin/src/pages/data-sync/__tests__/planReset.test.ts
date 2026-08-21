@@ -47,6 +47,22 @@ describe('切换 Run 时重置运行态', () => {
     expect(resetBody).toContain(call);
   });
 
+  /**
+   * 清 state 不够，上一条的 SSE 请求本身也得断。
+   *
+   * useSseStream 只在**组件卸载**时 abort，而这个页面在列表与详情之间来回切一直挂着，
+   * url 变了它不会自己断。A 的流继续活着有两个后果：progress 事件把 A 画到 B 的地址下；
+   * phase 恒为 streaming 使 isStreaming 恒真，下面那个重连 effect 认为「已经在流了」，
+   * B 的流永远起不来。
+   *
+   * 必须是 reset() 不能是 abort()：abort 只断请求、phase 留在 streaming，
+   * isStreaming 照样卡住。
+   */
+  it('runId 变了要把上一条的 SSE 流一起断掉（reset 而非 abort）', () => {
+    expect(resetBody).toContain('sse.reset()');
+    expect(resetBody).not.toContain('sse.abort()');
+  });
+
   it('拉取对照表的 effect 仍然靠 plan 去重（所以上面那条不能少）', () => {
     expect(source).toContain("run.status !== 'pending' || plan");
   });

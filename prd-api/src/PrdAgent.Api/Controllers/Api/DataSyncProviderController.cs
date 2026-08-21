@@ -817,10 +817,32 @@ public sealed class DataSyncProviderController : ControllerBase
         //
         // 没有 $addToSet 可用（不是数组），所以走乐观重试：每轮重新读当前的原始值，
         // 用它当更新条件；条件没命中说明这一轮里有人改过，重读再来。
+        //
+        // 条件里必须**同时**带上那个开关。这次写入是无条件 `Set(Enabled, true)` 的：
+        // 只比名单的话，另一位管理员在这中间把对外同步关掉、而名单恰好没动，
+        // 条件照样命中——于是一次「立刻停止对外供数」被一次同意页点击悄悄改回 true，
+        // 而且票照发。关停必须赢。
+        var startedEnabled = config.StoredEnabled;
+
         for (var attempt = 0; attempt < 5; attempt++)
         {
             var current = await _db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct);
             var raw = current?.DataSyncAllowedConsumerOrigins;
+            // 保留 null（= 库里从来没写过这个字段）：拿它当条件时 Mongo 的 `{field: null}`
+            // 同时匹配「字段缺失」与「显式 null」，正好是我们读到的那个状态。
+            // 换成 false 会写出 `{field: false}`，缺字段的文档一条都匹配不上，
+            // 这条路径从此再也写不进去——和名单那格用原始值而不是解析值同一个道理。
+            var storedEnabled = current?.DataSyncProviderEnabled;
+
+            // 开始时是开着的，现在读到关着：有人在这中间关停了。不重试、不覆盖，
+            // 直接失败，让点同意的那个人看见发生了什么。
+            // （开始时就关着是另一回事——管理员正站在同意页上，打开它本来就是这次点击的一部分。）
+            if (startedEnabled && storedEnabled == false)
+            {
+                throw new InvalidOperationException(
+                    "另一位管理员刚刚关闭了本站的对外同步，这次授权没有继续。"
+                    + "确认仍要对外供数的话，先在数据同步设置里重新打开，再请对方重新发起一次。");
+            }
             // 库里没有这个字段时，生效的名单来自环境变量兜底（ReadConfigAsync 的读取顺序）。
             // 此时若从空列表起算，这次 upsert 会把「只有新批准的这一台」写进库，而之后所有
             // 读取都优先库里的值——环境变量里配的那些来源就此静默消失，它们手上还没过期的
@@ -856,7 +878,10 @@ public sealed class DataSyncProviderController : ControllerBase
                     Builders<AppSettings>.Filter.Eq(x => x.Id, "global"),
                     // 条件是「名单还是我刚读到的那一份」。注意用原始值而不是解析后的列表：
                     // 解析会做去空白、去重、大小写归一，拿它当条件对不上库里存的字面量。
-                    Builders<AppSettings>.Filter.Eq(x => x.DataSyncAllowedConsumerOrigins, raw)),
+                    Builders<AppSettings>.Filter.Eq(x => x.DataSyncAllowedConsumerOrigins, raw),
+                    // 开关也一起比。少了这一格，「关停」与「加一条来源」这两件事就没在
+                    // 同一个原子操作里排序，后者会静默把前者撤销。
+                    Builders<AppSettings>.Filter.Eq(x => x.DataSyncProviderEnabled, storedEnabled)),
                 update, cancellationToken: ct);
 
             if (result.ModifiedCount > 0 || result.MatchedCount > 0) return;

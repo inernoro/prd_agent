@@ -903,6 +903,34 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>
+    /// 同意页把一条来源加进名单时，条件更新必须**连开关一起比**。
+    ///
+    /// 这次写入是无条件 `Set(Enabled, true)` 的：只比名单的话，另一位管理员在读与写
+    /// 之间把对外同步关掉、而名单恰好没动，条件照样命中——一次「立刻停止对外供数」
+    /// 就被一次同意页点击悄悄改回 true，票还照发。设置 PUT 那条已经修过一次，
+    /// 这是同族的第二处（形状 3：同一个判断抄成多份，改一处漏一处）。
+    /// </summary>
+    [Fact]
+    public void 同意页加来源的条件更新要带上开关()
+    {
+        var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var trust = body[body.IndexOf("private async Task TrustOriginAsync", StringComparison.Ordinal)..];
+        trust = trust[..trust.IndexOf("private string SiteLabel()", StringComparison.Ordinal)];
+
+        // 1. 条件里有开关这一格。
+        trust.ShouldContain("Filter.Eq(x => x.DataSyncProviderEnabled, storedEnabled)");
+
+        // 2. 比的是**可空**的原始读值。写成 false 的话，`{field: false}` 匹配不上
+        //    「字段缺失」的存量文档，这条路径从此再也写不进去（与名单那格同一个道理）。
+        trust.ShouldContain("var storedEnabled = current?.DataSyncProviderEnabled;");
+        trust.ShouldNotContain("storedEnabled ?? false");
+
+        // 3. 开始时开着、现在读到关着 = 有人在这中间关停了：直接失败，不重试也不覆盖。
+        trust.ShouldContain("startedEnabled && storedEnabled == false");
+        trust.ShouldContain("另一位管理员刚刚关闭了本站的对外同步");
+    }
+
+    /// <summary>
     /// 「同意了却没回来换票」那一类的清理谓词是「ExportTokenExpiresAt 等值 null +
     /// ExpiresAt 范围」，两条散列打头的索引都支撑不了它，于是每个部署的每一轮清理
     /// 都要扫遍所有留存的未换票授权。

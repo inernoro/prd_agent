@@ -175,3 +175,6 @@
 | fix | prd-api | 进程重启后遗留的过期 pending Run 也要收，判据取库里的 ExportTokenExpiresAt：上一轮只把 pending 加进了那段收敛的状态过滤，可候选集仍然只有内存里的 DrainExpiredRunIds。callback 建出 pending Run 之后、管理员点开始之前进程重启（发版 / 崩溃 / 容器重建），令牌和这个标记一起蒸发，而孤儿清扫只看 running——那行 pending 就永远留在历史里，点进去 Plan 每次都报「令牌已失效」。新增 SweepExpiredPendingRunsAsync 接进每分钟的周期清扫，条件更新只在仍然 pending 时落笔（Start 已翻成 running 就不许覆盖）。已知边界：共享库上各容器时钟不保证对齐，故留 5 分钟宽限再判死，一条过期 pending 最长会晚约 6 分钟才落终态 |
 | perf | prd-api | data_sync_runs 补 Status + ExportTokenExpiresAt 索引：过期 pending 清扫与收尸扫描同频（每个部署每分钟一次），已有的 Status + UpdatedAt 支撑不了这个范围条件 |
 | test | prd-api | 新增守卫三条：SSE 断流要接住取消且写入走共享断连判据 / 过期 pending 清扫要接进周期清扫且判据来自库而非内存（含 CAS 落终态）/ 该清扫的索引已登记 |
+| fix | prd-api | 同意页加来源的条件更新带上开关，关停不再被悄悄撤销：这次写入是无条件 Set(Enabled,true) 的，而条件只比名单——另一位管理员在读与写之间关掉对外同步、名单恰好没动的话，条件照样命中，一次「立刻停止对外供数」就被一次同意页点击改回 true 且票照发。设置 PUT 那条已修过，这是同族第二处。条件补上开关（比可空原始读值，写成 false 会匹配不上缺字段的存量文档），并在「开始时开着、现在读到关着」时直接失败不重试——关停必须赢 |
+| fix | prd-admin | 切 Run 时把上一条的 SSE 流一起断掉：useSseStream 只在组件卸载时 abort，而这个页面在列表与详情之间来回切一直挂着，url 变了它不会自己断。A 的流继续活着有两个后果——progress 事件把 A 的进度画到 B 的地址下；phase 恒为 streaming 使 isStreaming 恒真，重连 effect 认为「已经在流了」，B 的流永远起不来、pending 对照表也加载不出来。改用 sse.reset()（abort 只断请求、phase 留在 streaming，isStreaming 照样卡住），并在事件入口按 runId 拦一次迟到帧 |
+| test | prd-agent | 新增守卫三条：同意页加来源的条件更新要带开关且比可空原始值、关停中途要失败 / 切 Run 要 reset 而非 abort / shouldApplyRun 五种输入行为 + 页面确实用了它 |
