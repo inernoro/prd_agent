@@ -20,6 +20,85 @@ public class DataSyncApplyTests
     private static Dictionary<string, BsonValue> Existing(params BsonValue[] ids) =>
         ids.ToDictionary(DataSyncApply.NormalizeId, id => id, StringComparer.Ordinal);
 
+    /// <summary>
+    /// ObjectId 与它的 24 位十六进制字符串形态是同一个身份——这是**唯一**有意的等价。
+    /// </summary>
+    [Fact]
+    public void 归一把ObjectId与其字符串形态视为同一条()
+    {
+        var oid = MongoDB.Bson.ObjectId.Parse("507f1f77bcf86cd799439011");
+        Assert.Equal(
+            DataSyncApply.NormalizeId(new BsonObjectId(oid)),
+            DataSyncApply.NormalizeId(new BsonString("507f1f77bcf86cd799439011")));
+    }
+
+    /// <summary>
+    /// 除那一对之外，不同 BSON 类型的 _id 必须归一成**不同**的键。
+    ///
+    /// 上一版直接 `ToString()`，`_id: 42`（数字）与 `_id: "42"`（字符串）撞成同一个键——
+    /// 它们在 Mongo 里是两条不同的文档，而导出这条链路明确支持数字 id。撞在一起之后：
+    /// 默认模式把源站那条数字记录当成「目标站已有」静默跳过；覆盖模式更糟，
+    /// 拿数字那条的内容替换了字符串那条，数字那条从头到尾没被插入。
+    /// </summary>
+    [Theory]
+    [InlineData(42)]          // Int32 42  vs  "42"
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void 归一不把数字id与同形字符串撞在一起(int numeric)
+    {
+        Assert.NotEqual(
+            DataSyncApply.NormalizeId(new BsonInt32(numeric)),
+            DataSyncApply.NormalizeId(new BsonString(numeric.ToString())));
+    }
+
+    /// <summary>布尔、Int64 与同形字符串同理。</summary>
+    [Fact]
+    public void 归一不把其它标量id与同形字符串撞在一起()
+    {
+        Assert.NotEqual(
+            DataSyncApply.NormalizeId(BsonBoolean.True),
+            DataSyncApply.NormalizeId(new BsonString("true")));
+        Assert.NotEqual(
+            DataSyncApply.NormalizeId(new BsonInt64(7L)),
+            DataSyncApply.NormalizeId(new BsonString("7")));
+        // Int32 7 与 Int64 7 在 Mongo 里是**同一条**（数值同段相等），
+        // 但归一键带类型会把它们分开——这是已知边界，见下面那条注释测试。
+    }
+
+    /// <summary>
+    /// 大写十六进制串**不**算 ObjectId 的字符串形态。
+    ///
+    /// Mongo 里 `"507F…"` 与 `"507f…"` 本来就是两条不同的文档，为了「顺手」小写归一
+    /// 会造出一个新的误撞，正是这次要修的那种。所以要求逐字往返才认。
+    /// </summary>
+    [Fact]
+    public void 归一不把大写十六进制串当成ObjectId()
+    {
+        var oid = MongoDB.Bson.ObjectId.Parse("507f1f77bcf86cd799439011");
+        Assert.NotEqual(
+            DataSyncApply.NormalizeId(new BsonObjectId(oid)),
+            DataSyncApply.NormalizeId(new BsonString("507F1F77BCF86CD799439011")));
+    }
+
+    /// <summary>
+    /// 端到端：目标站有一条字符串 `_id: "42"`，源站送来数字 `_id: 42`。
+    /// 它们是两条不同的记录，数字那条必须走**插入**，不能被判成已存在。
+    /// </summary>
+    [Fact]
+    public void 数字id不会被同形字符串记录挡成已存在()
+    {
+        var incoming = new[] { new BsonDocument { { "_id", new BsonInt32(42) }, { "V", "from-source" } } };
+
+        var skipMode = DataSyncApply.Decide(incoming, Existing(new BsonString("42")), overwrite: false);
+        Assert.Single(skipMode.ToInsert);
+        Assert.Empty(skipMode.SkippedIds);
+
+        // 覆盖模式同理：不能拿它去替换那条字符串记录。
+        var overwriteMode = DataSyncApply.Decide(incoming, Existing(new BsonString("42")), overwrite: true);
+        Assert.Single(overwriteMode.ToInsert);
+        Assert.Empty(overwriteMode.ToReplace);
+    }
+
     [Fact]
     public void 扩展JSON往返不丢类型()
     {

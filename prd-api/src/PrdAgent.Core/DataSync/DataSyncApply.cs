@@ -72,9 +72,33 @@ public static class DataSyncApply
     /// 本仓库同一个逻辑 id 在库里可能是两种物理形态：历史数据存成 ObjectId，
     /// 新数据存成 24 位十六进制字符串（StringOrObjectIdSerializer 就是为了让应用层
     /// 看到的都是同一个字符串）。按 BsonValue 原样比就会把它们当成两条不同的记录。
+    ///
+    /// **只有这一对是有意的等价**，其余一律带类型前缀区分开。上一版直接 `ToString()`，
+    /// 于是把 `_id: 42`（数字）和 `_id: "42"`（字符串）也撞成同一个键——它们在 Mongo 里
+    /// 是**两条不同的文档**，而导出这条链路明确支持数字 id。撞在一起的后果：
+    /// 默认模式下源站那条数字记录被当成「目标站已有」静默跳过；覆盖模式下更糟——
+    /// 拿数字那条的内容去替换了字符串那条，而数字那条从头到尾没被插入。
+    /// 判据比它自己文档里承诺的范围宽（形状 1 的反面：过宽同样是窄的孪生问题）。
+    ///
+    /// 字符串形态要求**逐字往返**（`ObjectId.Parse(s).ToString() == s`）才算等价：
+    /// 大写十六进制串不往返，于是仍被当成一条普通字符串 id。这是有意的——
+    /// Mongo 里 `"ABC…"` 和 `"abc…"` 本来就是两条不同的文档，为了「顺手」小写归一
+    /// 会造出一个新的误撞，正是这次要修的那种。
     /// </summary>
-    public static string NormalizeId(BsonValue id) =>
-        id.BsonType == BsonType.ObjectId ? id.AsObjectId.ToString() : id.ToString() ?? string.Empty;
+    public static string NormalizeId(BsonValue id)
+    {
+        if (id.BsonType == BsonType.ObjectId) return ObjectIdKeyPrefix + id.AsObjectId.ToString();
+        if (id.BsonType == BsonType.String
+            && ObjectId.TryParse(id.AsString, out var parsed)
+            && string.Equals(parsed.ToString(), id.AsString, StringComparison.Ordinal))
+        {
+            return ObjectIdKeyPrefix + id.AsString;
+        }
+        return $"{id.BsonType}:{id}";
+    }
+
+    /// <summary>ObjectId 与其字符串形态共用的键前缀；普通字符串 id 走 `String:` 前缀，撞不上。</summary>
+    private const string ObjectIdKeyPrefix = "oid:";
 
     /// <param name="existingIdsByKey">
     /// 目标站已有文档：归一后的 id -> 它在目标库里**真实的** _id。

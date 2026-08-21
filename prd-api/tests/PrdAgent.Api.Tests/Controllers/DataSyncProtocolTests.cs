@@ -337,8 +337,21 @@ public class DataSyncProtocolTests
     }
 
     /// <summary>「这一页里带着该字段的文档 id」——接回之前算出来的那份。</summary>
+    /// <summary>
+    /// 「这个字段是这几条文档的」——归属集合的键必须走 <see cref="DataSyncApply.NormalizeId"/>，
+    /// 生产代码就是这么建的。
+    ///
+    /// 原来这里直接把裸 id 字符串塞进集合，能对上纯粹是因为当时的归一恰好是
+    /// `ToString()`。归一一收紧（带类型前缀区分 `42` 与 `"42"`），这几条就集体红了——
+    /// 红的不是行为，是测试自己抄了一份归一实现（形状 3）。改成调真函数。
+    /// </summary>
     private static Dictionary<string, HashSet<string>> Owners(string field, params string[] ids) =>
-        new(StringComparer.Ordinal) { [field] = ids.ToHashSet(StringComparer.Ordinal) };
+        new(StringComparer.Ordinal)
+        {
+            [field] = ids
+                .Select(id => DataSyncApply.NormalizeId(new BsonString(id)))
+                .ToHashSet(StringComparer.Ordinal),
+        };
 
     /// <summary>
     /// 待补清单是给管理员照着补凭据用的，所以它不能包含「本站原值根本没被动过」的字段：
