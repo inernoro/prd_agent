@@ -616,36 +616,12 @@ public sealed class DataSyncProviderController : ControllerBase
             filter = BuildAfterCursorFilter(cursorValue);
         }
 
-        var docs = await _db.Database.GetCollection<BsonDocument>(resolved.Name)
-            .Find(filter)
-            .Sort(Builders<BsonDocument>.Sort.Ascending("_id"))
-            .Limit(pageSize)
-            .ToListAsync(ct);
-
         // 批准的人同意连口令散列一起给时，users 的 PasswordHash 不脱敏——
         // 目标站的人用原账号密码就能直接登进去，这是「同步完直接可用」的前提。
         // 其余脱敏字段一律照旧，这条豁免只针对这一个字段。判定在 DataSyncScope.ApplyGrant，
         // 清单端点走的是同一个，两边不会说两套话。
         var includeCredentials = grant.GetValue("IncludeCredentials", BsonBoolean.False).ToBoolean();
         var effective = DataSyncScope.ApplyGrant(resolved, includeCredentials);
-
-        // 按文档记「这一条清空了哪些字段」，最后只对**真发出去的**那些取并集。
-        // 直接累一个整页的集合会把被字节预算截掉、根本没发出去的文档也算进来——
-        // 目标站据此提示「有个凭据被清空了，去补」，而那条记录压根没到过它那边。
-        var clearedPerDoc = new List<IReadOnlyList<string>>(docs.Count);
-        foreach (var doc in docs)
-        {
-            clearedPerDoc.Add(DataSyncRedactor.Redact(doc, effective).ToList());
-            // 目标站本地执行历史整个删掉，且**不**计入 clearedFields——它不是待补的凭据，
-            // 目标站会用自己那份。计进去的话同步页会催人去补一个本来就该由本机维护的东西。
-            DataSyncRedactor.StripTargetLocal(doc, effective);
-            // 只有口令没跟过去时才标「必须重设」。跟过去了还标，等于让人白改一遍密码。
-            // 「要不要标必须重设」直接看散列这次到底清没清，不再另立一个平行条件。
-            if (effective.RedactFields.Contains(DataSyncScope.CredentialCarryField, StringComparer.Ordinal))
-            {
-                DataSyncRedactor.MarkUserNeedsPasswordReset(doc);
-            }
-        }
 
         // 扩展 JSON 而不是普通 JSON：日期、Decimal128、ObjectId 走普通 JSON 会掉类型，
         // 目标站写回去就变成一堆字符串。
@@ -654,44 +630,74 @@ public sealed class DataSyncProviderController : ControllerBase
             OutputMode = MongoDB.Bson.IO.JsonOutputMode.CanonicalExtendedJson,
         };
 
-        // 一页除了「最多 200 条」还得有**字节预算**。
+        // 一页除了「最多 N 条」还得有**字节预算**，而且预算要在**取数据的时候**就生效。
         //
-        // 只按条数封顶封不住响应大小：Mongo 单文档可以逼近 16MB，而
-        // `document_entry_versions.Content` 这类正文字段真能长到那个量级。200 条 x 大文档
-        // 在这条链路上要被缓冲**三次**（这里的扩展 JSON 串、日志中间件的 MemoryStream、
-        // 目标站的 ReadAsStringAsync），一页几百 MB 起，两端都可能 OOM 或超时。
+        // 上一版把预算放在序列化循环里，可那时 `ToListAsync` 已经把最多 500 份完整 BSON
+        // 拉进内存了——一个装着几百份接近 16MB 文档的集合，源站在预算生效之前就先 OOM。
+        // 封住响应体没用，得先封住**驻留**。
         //
-        // 所以边序列化边累加，超预算就在这一条**之前**收手，把游标停在最后一条真发出去的
-        // 文档上——分页语义不变，只是这一页短一点。至少发一条：单条自己就超预算时也得
-        // 让它过去，否则这个集合永远卡在同一个游标上推不动（那比大响应更糟）。
-        var serialized = new List<string>(docs.Count);
-        var budgetUsed = 0;
-        foreach (var doc in docs)
-        {
-            var json = doc.ToJson(settings);
-            if (serialized.Count > 0 && budgetUsed + json.Length > MaxPageSerializedChars) break;
-            serialized.Add(json);
-            budgetUsed += json.Length;
-        }
-
-        // 被预算截短的那些没发出去，游标必须停在**实际发出的**最后一条上，
-        // 否则下一页会从没发过的位置往后取，中间那截永远丢了。
-        var emitted = docs.Take(serialized.Count).ToList();
-        var truncatedByBudget = serialized.Count < docs.Count;
-        var nextCursor = (truncatedByBudget || docs.Count == pageSize) && emitted.Count > 0
-            ? SerializeCursor(emitted[^1]["_id"])
-            : null;
-
+        // 所以改成边游标边吃：每读一条就脱敏、序列化、累加，超预算就在这一条**之前**收手，
+        // 后面的根本不拉。峰值内存 ≈ 一个 Mongo 批次（服务端硬性 ≤16MB）+ 已收下的预算量，
+        // 而不是「条数上限 x 单文档上限」。
+        //
+        // 至少收一条：单条自己就超预算时也得让它过去，否则这个集合永远卡在同一个游标上
+        // 推不动（那比一次大响应更糟）。
+        var serialized = new List<string>();
         var clearedFields = new HashSet<string>(StringComparer.Ordinal);
-        for (var i = 0; i < serialized.Count; i++)
+        var budgetUsed = 0;
+        BsonValue? lastEmittedId = null;
+        var truncatedByBudget = false;
+
+        using (var cursor = await _db.Database.GetCollection<BsonDocument>(resolved.Name)
+            .Find(filter)
+            .Sort(Builders<BsonDocument>.Sort.Ascending("_id"))
+            .Limit(pageSize)
+            .ToCursorAsync(ct))
         {
-            foreach (var field in clearedPerDoc[i]) clearedFields.Add(field);
+            while (!truncatedByBudget && await cursor.MoveNextAsync(ct))
+            {
+                foreach (var doc in cursor.Current)
+                {
+                    // 脱敏必须排在序列化之前：算进预算的、发出去的，都得是脱敏后那一份。
+                    var cleared = DataSyncRedactor.Redact(doc, effective);
+                    // 目标站本地执行历史整个删掉，且**不**计入 clearedFields——它不是待补的凭据，
+                    // 目标站会用自己那份。计进去的话同步页会催人去补一个本来就该由本机维护的东西。
+                    DataSyncRedactor.StripTargetLocal(doc, effective);
+                    // 只有口令没跟过去时才标「必须重设」。跟过去了还标，等于让人白改一遍密码。
+                    // 「要不要标必须重设」直接看散列这次到底清没清，不再另立一个平行条件。
+                    if (effective.RedactFields.Contains(DataSyncScope.CredentialCarryField, StringComparer.Ordinal))
+                    {
+                        DataSyncRedactor.MarkUserNeedsPasswordReset(doc);
+                    }
+
+                    var json = doc.ToJson(settings);
+                    if (serialized.Count > 0 && budgetUsed + json.Length > MaxPageSerializedChars)
+                    {
+                        truncatedByBudget = true;
+                        break;
+                    }
+
+                    serialized.Add(json);
+                    budgetUsed += json.Length;
+                    // 待补字段只认**真发出去的**那些：被预算挡在门外的这一条没到过目标站，
+                    // 报进去就是让人去补一个根本没同步过的凭据。
+                    foreach (var field in cleared) clearedFields.Add(field);
+                    lastEmittedId = doc.GetValue("_id", BsonNull.Value);
+                }
+            }
         }
+
+        // 游标必须停在**实际发出的**最后一条上，否则下一页会从没发过的位置往后取，
+        // 中间那截永远丢了。被预算截短、或正好取满一页，都说明后面还有。
+        var nextCursor = (truncatedByBudget || serialized.Count == pageSize)
+            && lastEmittedId is not null && !lastEmittedId.IsBsonNull
+            ? SerializeCursor(lastEmittedId)
+            : null;
 
         return Ok(ApiResponse<object>.Ok(new
         {
             collection = resolved.Name,
-            count = emitted.Count,
+            count = serialized.Count,
             nextCursor,
             clearedFields = clearedFields.OrderBy(x => x, StringComparer.Ordinal),
             documents = serialized,

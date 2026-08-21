@@ -1092,7 +1092,7 @@ public class DataSyncProtocolTests
     public void 导出分页要有字节预算且游标停在实际发出的那条()
     {
         var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
-        var export = body[body.IndexOf("var serialized = new List<string>(docs.Count);", StringComparison.Ordinal)..];
+        var export = body[body.IndexOf("var serialized = new List<string>();", StringComparison.Ordinal)..];
         export = export[..export.IndexOf("return Ok(", StringComparison.Ordinal)];
 
         // 1. 边序列化边累加，超预算就收手。
@@ -1100,13 +1100,59 @@ public class DataSyncProtocolTests
         // 2. 至少发一条：单条自己就超预算时也得让它过去，否则这个集合永远卡在同一个游标上。
         export.ShouldContain("serialized.Count > 0 &&");
         // 3. 游标停在实际发出的最后一条，不是查出来的最后一条。
-        export.ShouldContain("SerializeCursor(emitted[^1][\"_id\"])");
+        export.ShouldContain("SerializeCursor(lastEmittedId)");
         export.ShouldNotContain("SerializeCursor(docs[^1]");
         // 4. 截短了也要给游标，否则剩下的永远取不到。
-        export.ShouldContain("truncatedByBudget || docs.Count == pageSize");
-        // 5. 待补字段只对真发出去的取并集——被截掉的文档没到过目标站，
-        //    报进去就是让人去补一个根本没同步过的凭据。
-        export.ShouldContain("for (var i = 0; i < serialized.Count; i++)");
+        export.ShouldContain("truncatedByBudget || serialized.Count == pageSize");
+    }
+
+    /// <summary>
+    /// 字节预算必须在**取数据的时候**就生效，不能等整页物化完再截。
+    ///
+    /// 上一版把预算放在序列化循环里，可那时 `ToListAsync` 已经把最多 500 份完整 BSON
+    /// 拉进内存了——一个装着几百份接近 16MB 文档的集合，源站在预算生效之前就先 OOM。
+    /// 封住响应体不等于封住驻留。改成边游标边吃之后，峰值 ≈ 一个 Mongo 批次
+    ///（服务端硬性 ≤16MB）+ 已收下的预算量，而不是「条数上限 x 单文档上限」。
+    /// </summary>
+    [Fact]
+    public void 导出不许先把整页物化再截()
+    {
+        var body = ReadApiSource("Controllers", "Api", "DataSyncProviderController.cs");
+        var export = body[body.IndexOf("public async Task<IActionResult> Export", StringComparison.Ordinal)..];
+        export = export[..export.IndexOf("\n    /// <summary>", StringComparison.Ordinal)];
+
+        // 走游标，不是一次性 ToList。
+        export.ShouldContain("ToCursorAsync(ct)");
+        export.ShouldNotContain("ToListAsync(ct)");
+        // 预算命中就别再往下读了。
+        export.ShouldContain("while (!truncatedByBudget && await cursor.MoveNextAsync(ct))");
+        // 脱敏排在序列化之前：算进预算的、发出去的，得是脱敏后那一份。
+        var redactAt = export.IndexOf("DataSyncRedactor.Redact(doc, effective)", StringComparison.Ordinal);
+        var jsonAt = export.IndexOf("var json = doc.ToJson(settings);", StringComparison.Ordinal);
+        redactAt.ShouldBeGreaterThan(-1);
+        jsonAt.ShouldBeGreaterThan(redactAt, "脱敏必须排在序列化之前");
+    }
+
+    /// <summary>
+    /// 覆盖写每一条都要确认**真的匹配上了**。
+    ///
+    /// upsert 是关着的：批量查目标库时它还在、写下去之前被别处删掉，`ReplaceOneAsync`
+    /// 就是一次空操作。不看返回值的话这一条静默丢失，而 `progress.Updated` 照加、
+    /// 整条 Run 报成功——操作者勾的却是「以源站为准覆盖」。
+    /// </summary>
+    [Fact]
+    public void 覆盖写要确认每条都匹配上了()
+    {
+        var worker = ReadWorkerSource();
+        var loop = worker[worker.IndexOf("foreach (var doc in decision.ToReplace)", StringComparison.Ordinal)..];
+        loop = loop[..loop.IndexOf("progress.Inserted", StringComparison.Ordinal)];
+
+        loop.ShouldContain("var replaced = await target.ReplaceOneAsync(");
+        loop.ShouldContain("if (replaced.MatchedCount == 0)");
+        loop.ShouldContain("throw new InvalidOperationException");
+        // 不就地改成插入——那等于把别人刚删掉的记录悄悄复活。
+        loop.ShouldNotContain("IsUpsert = true");
+        loop.ShouldContain("重新跑一次即可");
     }
 
     /// <summary>

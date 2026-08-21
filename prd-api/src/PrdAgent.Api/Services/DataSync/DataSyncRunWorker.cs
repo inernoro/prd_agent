@@ -467,8 +467,28 @@ public sealed class DataSyncRunWorker : BackgroundService
                         // 它按墙钟跳，不依赖这个循环转到下一圈，所以单条替换卡住也照样跳。
                         foreach (var doc in decision.ToReplace)
                         {
-                            await target.ReplaceOneAsync(
+                            var replaced = await target.ReplaceOneAsync(
                                 Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]), doc, cancellationToken: ct);
+
+                            // 没匹配上就是**什么都没写**——upsert 是关着的。
+                            //
+                            // 能走到这里说明批量查目标库时它还在，是查完到写下去这段时间里
+                            // 被别处删掉了。不看返回值的话：这一条静默丢失，而下面照样
+                            // `progress.Updated += ToReplace.Count`、整条 Run 报成功，
+                            // 操作者勾的却是「以源站为准覆盖」。
+                            //
+                            // 不就地改成插入：那等于把别人刚刚删掉的记录悄悄复活，
+                            // 而删除同样可能是一次有意的操作。当场失败、重跑一次即可——
+                            // 下一轮查目标库看不见它，自然走插入路径。
+                            // 与「插入时撞 _id」那一格同一套处置，两边不各说一套。
+                            if (replaced.MatchedCount == 0)
+                            {
+                                throw new InvalidOperationException(
+                                    $"集合 {collection.Name} 里 _id={doc["_id"]} 的记录在本次同步进行中被别处删除了，"
+                                    + "这一条没有写成。本次勾的是「以源站为准覆盖」，"
+                                    + "静默略过它会让同步报成功却少一条记录，所以这里停下。"
+                                    + "重新跑一次即可——下一轮它会走插入路径。");
+                            }
                         }
                     }, ct);
                     progress.Inserted += decision.ToInsert.Count;
