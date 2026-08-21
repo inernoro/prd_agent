@@ -48,6 +48,9 @@ import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
+import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
+import { SiteContextPanel } from '@/components/web-hosting/SiteContextPanel';
+import { SITE_SOURCE_LABELS } from '@/components/web-hosting/siteFormRegistry';
 import {
   SiteCard,
   SITE_CARD_SIZES,
@@ -296,6 +299,9 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode, teamGroups?: WebP
 
 // ─── 排序循环：单击在 5 个选项之间下一步 ───
 
+/** 来源筛选项由形态注册表的来源标签派生，避免两处各写一份中文名 */
+const SOURCE_FILTER_OPTIONS = Object.entries(SITE_SOURCE_LABELS).map(([value, label]) => ({ value, label }));
+
 const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'newest', label: '最新' },
   { value: 'oldest', label: '最早' },
@@ -390,6 +396,8 @@ export default function WebPagesPage() {
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  // 来源筛选（手动上传 / 工作流生成 / API 生成 / 保存自分享）；null = 不限
+  const [activeSource, setActiveSource] = useState<string | null>(null);
   const [sort, setSort] = useState(() => readPref(PREF_KEYS.sort, 'newest'));
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
     () => readPref(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
@@ -455,7 +463,8 @@ export default function WebPagesPage() {
   // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
   const [askConfigSite, setAskConfigSite] = useState<HostedSite | null>(null);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
-  const [showDesktopFilters, setShowDesktopFilters] = useState(false);
+  // 桌面工具条上同时只展开一个气泡（显示 / 筛选），避免两块浮层互相盖住
+  const [openToolbarPanel, setOpenToolbarPanel] = useState<'display' | 'filter' | null>(null);
 
   // ─── Load ───
 
@@ -464,6 +473,7 @@ export default function WebPagesPage() {
     const res = await listSites({
       keyword: keyword || undefined,
       tag: activeTag || undefined,
+      sourceType: activeSource || undefined,
       sort,
       limit: 200,
       scope: teamScope.scope,
@@ -476,7 +486,7 @@ export default function WebPagesPage() {
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
-  }, [keyword, activeTag, sort, teamScope]);
+  }, [keyword, activeTag, activeSource, sort, teamScope]);
 
   // 团队作用域：按「我的网页托管角色 + 是否站点创建者」解析每个站点的操作能力。
   // 个人作用域：列表全是自己的站点，全权。后端是权威（viewer 写会 404/403），这里只控展示。
@@ -702,6 +712,17 @@ export default function WebPagesPage() {
   );
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
   const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
+  /**
+   * 右栏讲哪个站点：选中恰好一个就讲它；否则讲列表里排在最前的那个（当前排序下最该被看见的）。
+   * 不选中就空着会让右栏大部分时间是一块废地。
+   */
+  const contextSite = useMemo(() => {
+    if (selectedIds.size === 1) {
+      const id = [...selectedIds][0];
+      return displaySites.find(s => s.id === id) ?? null;
+    }
+    return displaySites[0] ?? null;
+  }, [selectedIds, displaySites]);
 
   /**
    * 打开站点本体。与卡片/列表两个视图共用同一条路径：先记一次访客痕迹，
@@ -727,6 +748,7 @@ export default function WebPagesPage() {
     activeFolder != null,
     activeGroupId != null,
     activeTag != null,
+    activeSource != null,
     sort !== 'newest',
     groupMode !== 'time',
     viewMode !== 'grid',
@@ -1074,179 +1096,220 @@ export default function WebPagesPage() {
             </div>
           </div>
         ) : (
-          <div className="surface-nav-bar flex items-center gap-3" style={{ overflow: 'visible' }}>
-            <div className="min-w-[240px] max-w-[380px] flex-[0_1_380px]">
-              <SpaceBar current={currentSpace} onChange={enterSpace} />
-            </div>
+          <>
+            {/*
+              桌面工具条：只留三件常驻 —— 搜索、组织方式、视图。
+              排序与卡片尺寸是「怎么显示」，收进「显示」气泡；文件夹与标签是「看哪一批」，
+              收进「筛选」气泡并在按钮上带命中数。旧版把六组控件平铺在同一行，
+              彼此没有主次，用户不知道先看哪个。
+            */}
+            <div className="surface-nav-bar flex items-center gap-3" style={{ overflow: 'visible' }}>
+              <div className="min-w-[240px] max-w-[380px] flex-[0_1_380px]">
+                <SpaceBar current={currentSpace} onChange={enterSpace} />
+              </div>
 
-            <div className="relative min-w-[260px] flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
-              <input
-                type="text"
-                placeholder="搜索站点名称、描述..."
-                value={keyword}
-                onChange={e => setKeyword(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
-                style={{
-                  background: 'var(--bg-sunken)',
-                  color: 'var(--text-primary)',
-                  border: '1px solid var(--border-default)',
-                }}
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowDesktopFilters(v => !v)}
-              data-tour-id="webpages-desktop-filter"
-              className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 shrink-0 text-sm font-semibold"
-              style={{
-                background: showDesktopFilters || filterCount > 0 ? 'var(--selection-bg)' : 'var(--bg-input)',
-                border: `1px solid ${showDesktopFilters || filterCount > 0 ? 'var(--selection-border)' : 'var(--border-default)'}`,
-                color: showDesktopFilters || filterCount > 0 ? 'var(--selection-text)' : 'var(--text-primary)',
-              }}
-            >
-              <Settings2 size={15} />
-              筛选
-              {filterCount > 0 && <span className="text-[12px] tabular-nums">{filterCount}</span>}
-            </button>
-
-            <div className="min-w-0 shrink text-[12px] whitespace-nowrap overflow-hidden text-ellipsis text-token-muted">
-              {activeFolderLabel} · {activeSortLabel} · 共 {total} 个站点
-            </div>
-          </div>
-        )}
-
-        {!isMobile && currentSpace.kind === 'team' && (
-          <div className="surface-nav-bar" data-tour-id="webpages-team-space-header">
-            <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
-          </div>
-        )}
-
-        {!isMobile && showDesktopFilters && (
-          <div
-            data-tour-id="webpages-desktop-filter-panel"
-            className="surface-nav-bar grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] items-center gap-3"
-            style={{ overflow: 'visible' }}
-          >
-            <div className="space-y-1">
-              <div className="text-[11px] font-semibold text-token-muted">卡片尺寸</div>
-              <div data-tour-id="webpages-card-size-pills" title="调整网页卡片大小，刷新后保持">
-                <SegmentPills
-                  options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
-                  value={cardSize}
-                  onChange={(v) => setCardSize(normalizeCardSize(v))}
+              <div className="relative min-w-[220px] flex-1">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
+                <input
+                  type="text"
+                  placeholder="搜索标题、描述、标签"
+                  value={keyword}
+                  onChange={e => setKeyword(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
+                  style={{
+                    background: 'var(--bg-input)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-default)',
+                  }}
                 />
               </div>
-            </div>
 
-            <div className="space-y-1">
-              <div className="text-[11px] font-semibold text-token-muted">排序</div>
-              <div data-tour-id="webpages-sort-pills">
-                <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-[11px] font-semibold text-token-muted">组织方式</div>
-              <div data-tour-id="webpages-group-pills">
+              <div data-tour-id="webpages-group-pills" className="shrink-0">
                 <SegmentPills
                   options={[
-                    { value: 'time', label: '日期' },
-                    { value: 'folder', label: currentSpace.kind === 'team' ? '分组' : '文件夹' },
+                    { value: 'time', label: '按时间' },
+                    { value: 'folder', label: currentSpace.kind === 'team' ? '按分组' : '按文件夹' },
                   ]}
                   value={groupMode}
                   onChange={(v) => setGroupMode(v as GroupMode)}
                 />
               </div>
-            </div>
 
-            <div className="space-y-1">
-              <div className="text-[11px] font-semibold text-token-muted">视图</div>
-              <div data-tour-id="webpages-view-toggle" className="inline-flex items-center rounded-lg overflow-hidden border border-token-default">
+              <div data-tour-id="webpages-view-toggle" className="inline-flex shrink-0 items-center overflow-hidden rounded-lg border border-token-default">
                 <button
+                  type="button"
                   onClick={() => setViewMode('grid')}
-                  className="h-8 px-3 inline-flex items-center gap-1.5 transition-colors text-sm"
-                  style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
+                  title="网格视图"
+                  aria-label="网格视图"
+                  className="h-8 w-9 inline-flex items-center justify-center transition-colors"
+                  style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
                 >
-                  <Grid3X3 size={14} /> 网格
+                  <Grid3X3 size={14} />
                 </button>
                 <button
+                  type="button"
                   onClick={() => setViewMode('list')}
-                  className="h-8 px-3 inline-flex items-center gap-1.5 transition-colors text-sm"
-                  style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
+                  title="列表视图"
+                  aria-label="列表视图"
+                  className="h-8 w-9 inline-flex items-center justify-center transition-colors"
+                  style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
                 >
-                  <List size={14} /> 列表
+                  <List size={14} />
                 </button>
               </div>
-            </div>
 
-            {currentSpace.kind !== 'team' && (
-              <div className="space-y-1 md:col-span-2 xl:col-span-4">
-                <div className="text-[11px] font-semibold text-token-muted">文件夹</div>
-                <div
-                  data-tour-id="webpages-folders"
-                  className="flex min-h-8 items-center gap-1.5 overflow-x-auto"
-                  style={{ overscrollBehavior: 'contain', scrollbarWidth: 'none' }}
-                >
-                  {spaceFolders.length > 0 ? (
-                    <>
-                      <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
-                        style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                        全部
-                      </button>
-                      {spaceFolders.map((f) => (
-                        <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 inline-flex items-center gap-1"
-                          style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                          <Folder size={11} /> {f}
+              <ToolbarPopover
+                label="显示"
+                tourId="webpages-display-popover"
+                open={openToolbarPanel === 'display'}
+                onOpenChange={(v) => setOpenToolbarPanel(v ? 'display' : null)}
+              >
+                <div className="space-y-3" style={{ minWidth: 260 }}>
+                  <div className="space-y-1">
+                    <div className="text-[11px] font-semibold text-token-muted">排序</div>
+                    <div data-tour-id="webpages-sort-pills">
+                      <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[11px] font-semibold text-token-muted">卡片尺寸</div>
+                    <div data-tour-id="webpages-card-size-pills">
+                      <SegmentPills
+                        options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+                        value={cardSize}
+                        onChange={(v) => setCardSize(normalizeCardSize(v))}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[11px] font-semibold text-token-muted">来源筛选</div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {SOURCE_FILTER_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setActiveSource(activeSource === opt.value ? null : opt.value)}
+                          className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
+                          style={
+                            activeSource === opt.value
+                              ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                              : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }
+                          }
+                        >
+                          {opt.label}
                         </button>
                       ))}
-                    </>
-                  ) : (
-                    <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[11px]"
-                      style={{ background: 'var(--bg-input)', border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}>
-                      <Folder size={11} /> 文件夹（上传站点时填写「文件夹」字段即可在此分类）
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-token-muted">偏好会被记住，下次进来沿用。</div>
+                </div>
+              </ToolbarPopover>
+
+              <ToolbarPopover
+                label="筛选"
+                tourId="webpages-desktop-filter"
+                count={filterCount}
+                open={openToolbarPanel === 'filter'}
+                onOpenChange={(v) => setOpenToolbarPanel(v ? 'filter' : null)}
+              >
+                <div className="space-y-3" style={{ minWidth: 300, maxWidth: 420 }}>
+                  {currentSpace.kind !== 'team' && (
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-semibold text-token-muted">文件夹</div>
+                      <div data-tour-id="webpages-folders" className="flex flex-wrap items-center gap-1.5">
+                        {spaceFolders.length > 0 ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setActiveFolder(null)}
+                              className="h-7 rounded-full px-2.5 text-[12px]"
+                              style={activeFolder === null
+                                ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                                : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                            >
+                              全部
+                            </button>
+                            {spaceFolders.map((f) => (
+                              <button
+                                key={f}
+                                type="button"
+                                onClick={() => setActiveFolder(f)}
+                                className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[12px]"
+                                style={activeFolder === f
+                                  ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                                  : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                              >
+                                <Folder size={11} /> {f}
+                              </button>
+                            ))}
+                          </>
+                        ) : (
+                          <div
+                            className="inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px]"
+                            style={{ background: 'var(--bg-input)', border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}
+                          >
+                            <Folder size={11} /> 上传时填「文件夹」即可在此归档
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
-                </div>
-              </div>
-            )}
 
-            {tags.length > 0 && (
-              <div className="space-y-1 md:col-span-2 xl:col-span-4">
-                <div className="text-[11px] font-semibold text-token-muted">标签</div>
-                <div className="flex min-h-8 items-center gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTag(null)}
-                    className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
-                    style={{
-                      background: !activeTag ? 'rgba(212,175,55,0.18)' : 'var(--bg-input)',
-                      border: !activeTag ? '1px solid transparent' : '1px solid var(--border-subtle)',
-                      color: !activeTag ? 'var(--accent-gold, #d4af37)' : 'var(--text-muted)',
-                    }}
-                  >
-                    全部
-                  </button>
-                  {tags.map(t => (
+                  {tags.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-semibold text-token-muted">标签</div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTag(null)}
+                          className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
+                          style={!activeTag
+                            ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                            : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                        >
+                          全部
+                        </button>
+                        {tags.map(t => (
+                          <button
+                            key={t.tag}
+                            type="button"
+                            onClick={() => setActiveTag(t.tag === activeTag ? null : t.tag)}
+                            className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
+                            style={activeTag === t.tag
+                              ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                              : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                          >
+                            {t.tag} ({t.count})
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {filterCount > 0 && (
                     <button
-                      key={t.tag}
                       type="button"
-                      onClick={() => setActiveTag(t.tag === activeTag ? null : t.tag)}
-                      className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
-                      style={{
-                        background: activeTag === t.tag ? 'rgba(212,175,55,0.18)' : 'var(--bg-input)',
-                        border: activeTag === t.tag ? '1px solid transparent' : '1px solid var(--border-subtle)',
-                        color: activeTag === t.tag ? 'var(--accent-gold, #d4af37)' : 'var(--text-muted)',
-                      }}
+                      onClick={() => { setActiveFolder(null); setActiveTag(null); setActiveSource(null); }}
+                      className="h-7 rounded-md px-2.5 text-[12px]"
+                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
                     >
-                      {t.tag} ({t.count})
+                      清空筛选
                     </button>
-                  ))}
+                  )}
                 </div>
+              </ToolbarPopover>
+
+              <div className="min-w-0 shrink overflow-hidden text-ellipsis whitespace-nowrap text-[12px] text-token-muted">
+                {activeFolderLabel} · {activeSortLabel} · 共 {total} 个站点
+              </div>
+            </div>
+
+            {currentSpace.kind === 'team' && (
+              <div className="surface-nav-bar" data-tour-id="webpages-team-space-header">
+                <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
               </div>
             )}
-          </div>
+          </>
         )}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
@@ -1480,7 +1543,7 @@ export default function WebPagesPage() {
       </div>
 
       {/* Content：团队空间左侧挂分组树导航（空间 → 专题 → 分类），个人空间保持原布局 */}
-      <div className={currentSpace.kind === 'team' && !isMobile ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}>
+      <div className={!isMobile ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}>
         {currentSpace.kind === 'team' && !isMobile && (
           <TeamGroupsTree
             groups={teamGroups}
@@ -1546,6 +1609,17 @@ export default function WebPagesPage() {
         </div>
       )}
         </div>
+        {!isMobile && (
+          <SiteContextPanel
+            site={contextSite}
+            links={shareLinks}
+            onCreateShare={(site) => handleShare(site.id)}
+            onManageShares={(site) => { setShareTargetId(site.id); setShowSharesPanel(true); }}
+            onAnalytics={() => setShowAnalytics(true)}
+            onGuestPreview={(site) => handleVisitSite(site)}
+            onRenew={(link) => { setShareTargetId(link.siteId ?? null); setShowSharesPanel(true); }}
+          />
+        )}
       </div>
 
       {/* Upload / Edit Dialog */}
