@@ -5,6 +5,7 @@ import type {
   LoginContract,
   MiduoPlanetLoginContract,
   SyntheticLoginContract,
+  ChangePasswordContract,
   ResetPasswordContract,
 } from '@/services/contracts/auth';
 import type {
@@ -304,6 +305,7 @@ import {
   loginReal,
   loginWithMiduoPlanetTokenReal,
   loginWithSyntheticTicketReal,
+  changePasswordReal,
   resetPasswordReal,
 } from '@/services/real/auth';
 import { createLlmGatewaySsoTicketReal } from '@/services/real/llmGatewaySso';
@@ -842,6 +844,7 @@ export const getSsoOptions: GetSsoOptionsContract = getSsoOptionsReal;
 export const loginWithMiduoPlanetToken: MiduoPlanetLoginContract = loginWithMiduoPlanetTokenReal;
 export const loginWithSyntheticTicket: SyntheticLoginContract = loginWithSyntheticTicketReal;
 export const resetPassword: ResetPasswordContract = resetPasswordReal;
+export const changePassword: ChangePasswordContract = withAuth(changePasswordReal);
 export const createLlmGatewaySsoTicket: CreateLlmGatewaySsoTicketContract = withAuth(createLlmGatewaySsoTicketReal);
 
 export const getAdminAuthzMe: GetAdminAuthzMeContract = withAuth(getAdminAuthzMeReal);

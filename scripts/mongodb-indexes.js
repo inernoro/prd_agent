@@ -1400,6 +1400,62 @@ db.document_recording_upload_chunks.createIndex(
 )
 // end collection: document_recording_upload_sessions + document_recording_upload_chunks
 
+// collection: data_sync_runs
+// 收尸扫描（DataSyncRunWorker.SweepOrphanedRunsAsync）按 Status + UpdatedAt 查，
+// **每个部署每分钟一次**。这张表只增不删，而分支预览与生产共用同一个库——
+// 没有索引就是「每个部署每分钟全表扫一遍」，随着历史增长一起拖慢共享库。
+db.data_sync_runs.createIndex(
+  { "Status": 1, "UpdatedAt": 1 },
+  { name: "idx_data_sync_runs_status_updated" }
+)
+// 同步历史列表：无过滤、按 CreatedAt 倒序取 20 条。表只增不删，
+// 没有这条索引时每次打开页面都要扫全表再在内存里排序。
+db.data_sync_runs.createIndex(
+  { "CreatedAt": -1 },
+  { name: "idx_data_sync_runs_created_desc" }
+)
+// 过期 pending 清扫（DataSyncRunWorker.SweepExpiredPendingRunsAsync）按
+// Status + ExportTokenExpiresAt 查，与收尸扫描同频（每个部署每分钟一次）。
+// 上面那条 Status + UpdatedAt 支撑不了这个范围条件——只能靠它把 Status 收窄，
+// 再逐条比 ExportTokenExpiresAt。同样是共享库上的常态查询，单独给一条。
+db.data_sync_runs.createIndex(
+  { "Status": 1, "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_runs_status_token_expires" }
+)
+// end collection: data_sync_runs
+
+// collection: data_sync_grants
+// 跨实例同步的授权票据。三条匿名协议请求全部按散列查这张表：
+//   - 换取导出令牌：CodeHash（一次性授权码）
+//   - 清单 / 导出 / 交还令牌：ExportTokenHash（两小时有效期内每一页都查一次）
+// 没有索引时，票据越攒越多，这些**未鉴权前**的请求会退化成全表扫描——既慢，
+// 也把「让源站做无用功」变成一件不要钱的事。
+// 两条都带 TTL 语义之外的过期判据（ExpiresAt / ExportTokenExpiresAt），
+// 走复合索引让过期票不参与实际比较。
+db.data_sync_grants.createIndex(
+  { "CodeHash": 1, "ExpiresAt": 1 },
+  { name: "idx_data_sync_grants_code_expires" }
+)
+db.data_sync_grants.createIndex(
+  { "ExportTokenHash": 1, "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_grants_export_token_expires" }
+)
+// 过期票的清理由应用侧 DataSyncRunWorker 定期删（保留一段留痕窗口），
+// 这条索引是那次清理的查询路径；不用 TTL 索引是因为留痕窗口要能改，
+// 且 TTL 到期即删会让「刚过期就来的请求」查不到、给不出「票过期了」这句话。
+db.data_sync_grants.createIndex(
+  { "ExportTokenExpiresAt": 1 },
+  { name: "idx_data_sync_grants_export_expires" }
+)
+// 清理「同意了却没回来换票」那一类：ExportTokenExpiresAt 恒为 null，按 ExpiresAt 判过期。
+// 上面那两条都以散列打头，支撑不了「等值 null + 范围」这个谓词，于是每个部署的每一轮
+// 清理都要扫遍所有留存的未换票授权。
+db.data_sync_grants.createIndex(
+  { "ExportTokenExpiresAt": 1, "ExpiresAt": 1 },
+  { name: "idx_data_sync_grants_unconsumed_cleanup" }
+)
+// end collection: data_sync_grants
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

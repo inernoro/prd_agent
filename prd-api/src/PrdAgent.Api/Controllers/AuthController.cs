@@ -477,6 +477,179 @@ public class AuthController : ControllerBase
             ResetAt = DateTime.UtcNow
         }));
     }
+
+    /// <summary>
+    /// 自助改密（任何时候，凭旧密码）
+    /// </summary>
+    /// <remarks>
+    /// 与上面的 reset-password 是两件事：那条是「首次登录被强制改」，不问旧密码，
+    /// 靠 MustResetPassword 这个一次性状态兜着；这条是用户随时能走的自助入口，
+    /// 所以必须验旧密码，否则一个被借走的浏览器就能永久夺号。
+    ///
+    /// 改完把两端的 tokenVersion 都抬一格并清掉 refresh 会话，让别处已经登录的
+    /// 会话立刻失效——密码改了旧会话还活着，等于没改。当前这一端会拿到一副新令牌，
+    /// 不至于自己把自己踢下线。
+    /// </remarks>
+    [HttpPost("change-password")]
+    [Authorize]
+    [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request?.CurrentPassword))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "请先填写当前密码"));
+        }
+
+        if (string.IsNullOrWhiteSpace(request?.NewPassword))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "新密码不能为空"));
+        }
+
+        if (request.NewPassword != request.ConfirmPassword)
+        {
+            return BadRequest(ApiResponse<object>.Fail("PASSWORD_MISMATCH", "两次输入的新密码不一致"));
+        }
+
+        if (string.Equals(request.CurrentPassword, request.NewPassword, StringComparison.Ordinal))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "新密码不能与当前密码相同"));
+        }
+
+        var passwordError = PasswordValidator.Validate(request.NewPassword);
+        if (passwordError != null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("WEAK_PASSWORD", passwordError));
+        }
+
+        var userId = this.GetRequiredUserId();
+
+        // root 是环境变量里的破窗账户，不落库，改不了——说清楚而不是报「用户不存在」。
+        if (string.Equals(userId, "root", StringComparison.Ordinal))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                "ROOT_PASSWORD_IMMUTABLE",
+                "ROOT 是环境变量里的应急账户，密码只能改部署配置。请用正式管理员账号登录后再改密。"));
+        }
+
+        var user = await _userService.GetByIdAsync(userId);
+        if (user == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("USER_NOT_FOUND", "用户不存在"));
+        }
+
+        // 被停用的账号不许在这里续命。停用之后既有 access token 还在有效期内，
+        // 如果放它改密码，它会拿到一套全新的令牌——然后在每次过期前再改一次，
+        // 永远登着。停用这个动作就形同虚设。
+        if (user.Status != UserStatus.Active)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("USER_DISABLED", "账号已被停用，无法修改密码。请联系管理员。"));
+        }
+
+        if (string.IsNullOrWhiteSpace(user.PasswordHash)
+            || !BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_CREDENTIALS", "当前密码不正确"));
+        }
+
+        // 条件更新，只许一个赢。校验旧密码和写新密码之间有一段窗口，两个会话可以
+        // 同时通过校验；都无条件写下去的话，两边接着各自清会话、各自签发新会话——
+        // 密码没写赢的那一方仍然登着，而「改密码会把其它设备踢下线」当场落空。
+        var replaced = await _userService.TryReplacePasswordAsync(
+            user.UserId, user.PasswordHash, BCrypt.Net.BCrypt.HashPassword(request.NewPassword));
+        if (!replaced)
+        {
+            return Conflict(ApiResponse<object>.Fail("PASSWORD_CHANGED_ELSEWHERE",
+                "这个账号的密码刚刚在别处改过了，本次修改没有生效。请用新密码重新登录后再试。"));
+        }
+        // 这里**不再**单独清一次 MustResetPassword——那一句已经并进上面那个条件更新。
+        // 拆成两句的话有这么一段窗口：换密成功之后、清标记之前，管理员的重置端点原子地
+        // 写下临时密码 + MustResetPassword=true，紧接着这一句无条件把标记抹回 false，
+        // 于是管理员刚发的临时密码不再强制首登改密，而这一侧还照常签发了新会话。
+
+        // 发新令牌之前再确认一次账号还是启用的。
+        //
+        // 换密那句已经是「只有仍然启用才写得进去」的原子更新，但它管不到这之后：
+        // 管理员在换密成功与签发之间把人停掉的话，下面这段会照着**换密时那一刻**的
+        // 快照继续走——先把会话版本推上去（盖过管理员刚做的踢下线），再签一套当前版本的
+        // 新令牌，于是被停用的账号又拿到了完整凭据。
+        //
+        // 这里重读一次并不能把窗口缩到零（真要零得把签发也并进同一个原子操作），
+        // 但它把「管理员的停用被我方随后签发的令牌抵消」这一段堵上了：重读发现已停用就
+        // 只吊销、不签发。已知边界写在这里，不假装它是完全互斥。
+        var stillActive = await _userService.GetByIdAsync(user.UserId);
+        if (stillActive is null || stillActive.Status != UserStatus.Active)
+        {
+            foreach (var clientType in new[] { "admin", "desktop" })
+            {
+                await _authSessionService.RemoveAllRefreshSessionsAsync(user.UserId, clientType);
+                await _authSessionService.BumpTokenVersionAsync(user.UserId, clientType);
+            }
+            _logger.LogWarning("User {UserId} 改密期间被停用，已吊销会话且不签发新令牌", user.UserId);
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("USER_DISABLED", "账号已被停用，无法修改密码。请联系管理员。"));
+        }
+
+        // 两端一起收口。JwtService 只认这两个 clientType，别处传什么它都会归一到 desktop，
+        // 所以这里穷举它们就等于穷举了全部会话。
+        foreach (var clientType in new[] { "admin", "desktop" })
+        {
+            await _authSessionService.RemoveAllRefreshSessionsAsync(user.UserId, clientType);
+            await _authSessionService.BumpTokenVersionAsync(user.UserId, clientType);
+        }
+
+        var currentClientType = (User.FindFirst("clientType")?.Value ?? string.Empty).Trim().ToLowerInvariant();
+        if (currentClientType is not "admin" and not "desktop")
+        {
+            currentClientType = "desktop";
+        }
+
+        // 签发用**重读回来的那条记录**，不是进函数时的快照。
+        //
+        // 上面那次重读只拿来判了「还启用吗」，签发却仍拿旧快照——于是管理员在这期间
+        // 把这个账号降级（ADMIN → 普通），新令牌照样带着旧的 ADMIN 角色，而它的
+        // tokenVersion 是刚推上去的最新版，校验一路放行：一次自助改密把并发的降级
+        // 抵消掉了。判据读到了对的记录却没用它（predicate-and-wiring-discipline 形状 6）。
+        var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, currentClientType);
+        var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, currentClientType);
+        var accessToken = _jwtService.GenerateAccessToken(stillActive, currentClientType, sessionKey, tokenVersion);
+
+        _logger.LogInformation("User {UserId} changed password (self-service, clientType={ClientType})",
+            user.UserId, currentClientType);
+
+        return Ok(ApiResponse<LoginResponse>.Ok(new LoginResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = refreshToken,
+            SessionKey = sessionKey,
+            ClientType = currentClientType,
+            ExpiresIn = AccessTokenExpiresInSeconds(),
+            // 同理：回给前端的身份也用重读那份，否则界面按旧角色渲染出一套
+            // 这个账号已经没有的入口，点进去才被后端拒绝。
+            User = new UserInfo
+            {
+                UserId = stillActive.UserId,
+                Username = stillActive.Username,
+                DisplayName = stillActive.DisplayName,
+                Role = stillActive.Role,
+                UserType = stillActive.UserType,
+                BotKind = stillActive.BotKind,
+                AvatarFileName = stillActive.AvatarFileName,
+                AvatarUrl = null
+            }
+        }));
+    }
+}
+
+/// <summary>
+/// 自助改密请求（凭旧密码）
+/// </summary>
+public class ChangePasswordRequest
+{
+    public string CurrentPassword { get; set; } = string.Empty;
+    public string NewPassword { get; set; } = string.Empty;
+    public string ConfirmPassword { get; set; } = string.Empty;
 }
 
 /// <summary>

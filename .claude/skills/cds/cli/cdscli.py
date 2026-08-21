@@ -28,6 +28,7 @@ cdscli — CDS 管理 CLI (MVP)
 """
 from __future__ import annotations
 import argparse
+import contextlib
 import hashlib
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
@@ -42,6 +43,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 from typing import Any, Optional
 
 VERSION = "0.13.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
@@ -458,11 +460,44 @@ def _call(method: str, path: str, body: Any = None, timeout: int = 15,
 
 # ── I/O ────────────────────────────────────────────────────────────
 
+# （这里曾有一个 _LAST_SMOKE_GAPS 模块全局，用来把冒烟缺口交给 cmd_deploy。
+#  已删除：那是一条**默认为空**的旁路——只要 cmd_smoke 在设置它之前就因为别的原因
+#  退出，deploy 读到空串却仍以为「只是覆盖不全」，于是既不报错也不报缺口，
+#  一路走到「全绿」。缺口现在写进 die() 的 payload，跟着那次退出一起走，
+#  不存在「旗还没升就退出了」这种状态。）
+
+# 一条命令内部调用另一条命令时，被调那条不许自己往 stdout 写结果。
+# 否则 `cdscli deploy` 会先吐一份 smoke 的 ok:false、再吐一份自己的 ok:true——
+# 机器读到两个 JSON 文档（等于都不能信），人看到「失败」后面紧跟「成功」。
+# 出口只能有一个：被调那条把 payload 交给调用方，由调用方决定最终怎么说。
+_SUPPRESS_EMIT: bool = False
+_NESTED_PAYLOAD: dict[str, Any] | None = None
+
+
+@contextlib.contextmanager
+def _nested_call() -> "Iterator[None]":
+    """把一次内部调用的 ok()/die() 收进 _NESTED_PAYLOAD，不打印、不影响退出码语义。"""
+    global _SUPPRESS_EMIT, _NESTED_PAYLOAD
+    prev_suppress, prev_payload = _SUPPRESS_EMIT, _NESTED_PAYLOAD
+    _SUPPRESS_EMIT, _NESTED_PAYLOAD = True, None
+    try:
+        yield
+    finally:
+        _SUPPRESS_EMIT = prev_suppress
+        # payload 留给调用方读，恢复交给调用方读完之后——这里只还原嵌套层的现场。
+        if prev_suppress:
+            _NESTED_PAYLOAD = prev_payload
+
+
 def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None:
     """Unified error exit. Writes JSON {ok:false, error, trace} to stdout."""
     payload: dict[str, Any] = {"ok": False, "error": msg, "trace": _TRACE_ID}
     if extra:
         payload.update(extra)
+    if _SUPPRESS_EMIT:
+        global _NESTED_PAYLOAD
+        _NESTED_PAYLOAD = payload
+        sys.exit(code)
     if _HUMAN:
         print(f"[FAIL] {msg}", file=sys.stderr)
     else:
@@ -470,8 +505,16 @@ def die(msg: str, *, code: int = 1, extra: dict[str, Any] | None = None) -> None
     sys.exit(code)
 
 
-def ok(data: Any = None, *, note: str | None = None) -> None:
-    """Unified success exit."""
+def ok(data: Any = None, *, note: str | None = None, code: int = 0) -> None:
+    """Unified success exit.
+
+    code 允许非零：用于「这件事做成了，但有一层没验到」这种既不算失败、也绝不能
+    冒充全绿的结局。机器调用方只看退出状态，所以措辞再准确也代替不了一个非零码。
+    """
+    if _SUPPRESS_EMIT:
+        global _NESTED_PAYLOAD
+        _NESTED_PAYLOAD = {"ok": True, "trace": _TRACE_ID, "note": note, "data": data}
+        sys.exit(code)
     if _HUMAN:
         if note:
             print(f"[OK] {note}")
@@ -487,7 +530,7 @@ def ok(data: Any = None, *, note: str | None = None) -> None:
         if data is not None:
             payload["data"] = data
         print(json.dumps(payload, ensure_ascii=False))
-    sys.exit(0)
+    sys.exit(code)
 
 
 # ── Commands ───────────────────────────────────────────────────────
@@ -7403,31 +7446,85 @@ def cmd_smoke(args: argparse.Namespace) -> None:
         if r["pass"]:
             break
     # L3 认证 API
-    key = os.environ.get("AI_ACCESS_KEY", "")
-    user = os.environ.get("MAP_AI_USER", "")
+    #
+    # 这一层打的是**被测应用**，不是 CDS。两者的密钥是两把不同的钥匙：
+    # AI_ACCESS_KEY 是 cdscli 自己连 CDS 用的（见 _auth_headers），被测应用有它自己的
+    # AI_ACCESS_KEY 配在项目环境变量里。早先这里直接复用了前者，于是除非两边碰巧同值，
+    # L3 必然 401——报出来像「应用坏了」，实际是拿错了钥匙（一值两用，见
+    # .claude/rules/cross-project-isolation.md §3）。所以优先读专用变量。
+    app_key = (os.environ.get("MAP_AI_ACCESS_KEY", "")
+               or os.environ.get("SMOKE_AI_ACCESS_KEY", "")).strip()
+    # 兼容旧用法：两把钥匙同值的自托管场景仍然能过。但这条回退正是当初误报的来源，
+    # 所以要记住 key 是不是回退来的，失败时把这个可能性直接写进错误里。
+    key = app_key or os.environ.get("AI_ACCESS_KEY", "").strip()
+    key_from_fallback = not app_key and bool(key)
+    # 应用侧的 AiAccessKeyAuthenticationHandler 把 X-AI-Impersonate 列为必填，且要求
+    # 该用户在 users 集合里真实存在（env 引导账号 root 不算）。缺它就是一个永远不可能
+    # 通过的判据——那种失败只会掩盖真实状态，所以判为跳过，并说清缺什么。
+    user = os.environ.get("MAP_AI_USER", "").strip()
     l3_result: dict[str, Any] | None = None
-    if key:
-        hdrs = {"X-AI-Access-Key": key}
-        if user:
-            hdrs["X-AI-Impersonate"] = user
+    l3_skip_reason = ""
+    if not key:
+        l3_skip_reason = "未提供被测应用的 AI key（设 MAP_AI_ACCESS_KEY）"
+    elif not user:
+        l3_skip_reason = "未提供冒充用户（设 MAP_AI_USER 为该部署 users 集合里真实存在的用户名）"
+    if l3_skip_reason:
+        results.append({"layer": "L3-authed", "skipped": True, "reason": l3_skip_reason})
+    else:
         l3_result = probe("L3-authed", f"{preview}/api/users?pageSize=1",
-                          headers=hdrs, expect_status=200)
+                          headers={"X-AI-Access-Key": key, "X-AI-Impersonate": user},
+                          expect_status=200)
+        if not l3_result["pass"] and l3_result.get("status") == 401 and key_from_fallback:
+            # 401 有两种可能：应用真的坏了，或者这把 key 压根不是被测应用的。
+            # 后者不该报成前者——那正是这条探针历史上误报的形态。
+            l3_result["hint"] = ("这把 key 来自 AI_ACCESS_KEY（cdscli 连 CDS 用的那把），"
+                                 "不一定是被测应用配的那把。请用 MAP_AI_ACCESS_KEY 显式提供应用侧的 key 再判。")
         results.append(l3_result)
 
+    # L3 无论跑没跑都要出现在 layers 里。上一版把它整层拿掉，于是「没测认证路由」被
+    # 报成「冒烟全绿 (2/2)」——一个认证彻底坏掉的部署也能过闸。把假红改成假绿不是修复，
+    # 后者更糟（predicate-and-wiring-discipline 形状 4b：不会红的证据比没有证据更糟）。
     layers = [
         {"layer": "L1", "pass": bool(l1_result["pass"])},
         {"layer": "L2", "pass": any(r["pass"] for r in l2_results)},
+        {"layer": "L3", "pass": bool(l3_result["pass"]) if l3_result is not None else False,
+         "skipped": l3_result is None,
+         **({"reason": l3_skip_reason} if l3_result is None else {})},
     ]
-    if l3_result is not None:
-        layers.append({"layer": "L3", "pass": bool(l3_result["pass"])})
-    passed = sum(1 for layer in layers if layer["pass"])
+    verified = [x for x in layers if not x.get("skipped")]
+    skipped = [x for x in layers if x.get("skipped")]
+    passed = sum(1 for layer in verified if layer["pass"])
+    coverage_complete = not skipped
     summary = {"branchId": branch_id, "preview": preview,
-               "passed": f"{passed}/{len(layers)}", "layers": layers,
-               "probes": results}
-    if passed == len(layers):
+               "passed": f"{passed}/{len(verified)}",
+               "coverageComplete": coverage_complete,
+               "layers": layers, "probes": results}
+
+    if passed < len(verified):
+        die(f"冒烟失败 ({passed}/{len(verified)} 通过)", code=2, extra={"data": summary})
+
+    if coverage_complete:
         ok(summary, note=f"冒烟全绿 ({passed}/{len(layers)})")
         return
-    die(f"冒烟失败 ({passed}/{len(layers)} 通过)", code=2, extra={"data": summary})
+
+    # 跑过的都过了，但覆盖不全。
+    #
+    # 这里曾经调 ok() —— 退出码 0。上层 cmd_deploy 只认非零，于是照样打印
+    # 「deploy 流水线全绿」，我在 summary 里写的 coverageComplete=false 根本没人看。
+    # 「注释里说清楚了」不等于「调用方拿得到」：判据得让机器读得到才算数。
+    # 所以改成独立退出码 3：区别于 2（真的测挂了），调用方据此既不能当成功、
+    # 也不该当成部署失败。
+    #
+    # 但**只靠退出码 3 认不出这件事**：cmd_smoke 里读 /api/branches 失败、响应不是
+    # JSON 之类的服务端错误也走 die(code=3)。上层若按退出码分流，那些真失败会被当成
+    # 「只是覆盖不全」，而全新进程里的 gaps 又是空的——两个分支都不进，deploy 一路
+    # 落到「流水线全绿」退 0。同一个假绿的第五次回潮，就长在治它的那个补丁里。
+    #
+    # 所以身份写进 payload：调用方认这面**自描述的旗**，不认那个全 CLI 共用的退出码。
+    gaps = "；".join(f"{x['layer']} 未测（{x.get('reason', '原因未记录')}）" for x in skipped)
+    die(f"冒烟覆盖不全：{gaps}（已跑的 {passed}/{len(verified)} 层都通过）",
+        code=3,
+        extra={"data": summary, "smokeCoverageIncomplete": True, "smokeGaps": gaps})
 
 
 def cmd_help_me_check(args: argparse.Namespace) -> None:
@@ -7925,15 +8022,45 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         )
 
     # 5. Smoke (skip on --no-smoke)
+    smoke_gaps = ""
+    smoke_die = ""
     if not args.no_smoke:
         print(f"[4/4] Smoke test", file=sys.stderr)
         ns = argparse.Namespace(id=branch_id)
-        try:
-            cmd_smoke(ns)
-        except SystemExit as e:
-            if e.code != 0:
-                die("smoke 失败", code=2,
-                    extra={"hint": f"cdscli smoke {branch_id}"})
+        smoke_payload: dict[str, Any] | None = None
+        # 内部调用：smoke 自己不许打印结果，否则 deploy 会吐出两份互相矛盾的 JSON。
+        with _nested_call():
+            try:
+                cmd_smoke(ns)
+            except SystemExit as e:
+                smoke_payload = _NESTED_PAYLOAD or {}
+                # 按 payload 里那面**自描述的旗**分流，不按退出码。
+                #
+                # 上一版按退出码判：可 3 是整个 CLI 通用的「服务端/解析错误」码——
+                # cmd_smoke 读不到 /api/branches 也退 3。那种情况下全新进程里的
+                # 模块全局缺口是空串：gaps 分支拿到空、failure 分支又被挡住，
+                # 两头落空，deploy 直接走到「流水线全绿」退 0——一个探针都没跑过。
+                # 治假绿的补丁自己变成了第五次假绿。
+                #
+                # 现在只认 smokeCoverageIncomplete；其余任何非零一律当失败（default-deny）。
+                if e.code != 0:
+                    if smoke_payload.get("smokeCoverageIncomplete"):
+                        smoke_gaps = str(smoke_payload.get("smokeGaps") or "（缺口未记录）")
+                    else:
+                        smoke_error = str(
+                            smoke_payload.get("error") or f"smoke 以退出码 {e.code} 结束")
+                        smoke_die = f"smoke 失败：{smoke_error}"
+        if smoke_die:
+            die(smoke_die, code=2, extra={"hint": f"cdscli smoke {branch_id}"})
+    if smoke_gaps:
+        # 退出码必须非零。上一轮我只改了 note 的措辞就以为把假绿治好了，可机器调用方
+        # 看的是退出状态——ok() 退 0，于是「部署完成但关键一层没验」照样被当成通过。
+        # 这是同一个假绿第四次回潮，前三次分别死在：改注释、改 note、改上层判断，
+        # 每次都绕开了真正被读的那个值。所以这次动的是退出码本身。
+        ok({"branch": branch, "branchId": branch_id, "status": final_status,
+            "smokeCoverageComplete": False, "smokeGaps": smoke_gaps},
+           note=f"deploy 已完成，但冒烟覆盖不全：{smoke_gaps}", code=3)
+        return
     ok({"branch": branch, "branchId": branch_id, "status": final_status},
        note="deploy 流水线全绿")
 

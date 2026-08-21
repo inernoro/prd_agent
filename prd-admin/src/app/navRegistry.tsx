@@ -73,6 +73,7 @@ const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m =
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
 const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
+const DataSyncPage = lazy(() => import('@/pages/data-sync/DataSyncPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -722,6 +723,25 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   },
 
   // ╔══════════════ 基础设施（9）═══════════════════════════
+  {
+    // 跨 MAP 实例数据同步。后端只放行管理员（真人会话），这里用通用 access 守卫，
+    // 非管理员进来会看到端点返回的「只有管理员可以发起」而不是一个空白页。
+    path: '/data-sync',
+    permission: 'access',
+    element: shellGuarded('access', <DataSyncPage />),
+    nav: {
+      label: '数据同步',
+      shortLabel: '数据同步',
+      description: '从另一台 MAP 拉一次数据：跳过去让对方管理员当场同意，回来执行一次',
+      icon: 'ArrowRightLeft',
+      // 归 infra 而不是 toolbox：百宝箱那一格是智能体卡片，契约要求每张卡有独占的
+      // 主题插画素材（AgentCardArtwork.test.ts 会红）；数据同步是平台运维入口，
+      // 和知识库、学习中心同类。
+      section: 'infra',
+      wip: true,
+      tags: ['同步', '迁移', '恢复', '跨实例', 'data sync'],
+    },
+  },
   {
     path: '/document-store',
     permission: ['document-store.read', 'document-store.write'],

@@ -157,6 +157,16 @@ export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
       routePath: '/web-pages',
     } as ToolboxItem,
     {
+      // 权限门交给路由（navRegistry 上是 access，后端再判管理员），这里不再加第二道
+      // 判据——两处各判一次迟早会漂移，而这份清单本来就已经和 navRegistry 分家了。
+      id: '__data-sync__',
+      name: '数据同步',
+      description: '从另一台 MAP 拉一次数据：跳过去让对方管理员当场同意，回来执行一次',
+      icon: 'ArrowRightLeft',
+      tags: ['同步', '迁移', '恢复', '跨实例', 'data sync'],
+      routePath: '/data-sync',
+    } as ToolboxItem,
+    {
       id: '__changelog__',
       name: '更新中心',
       description: '代码级周报：自动汇总仓库内的变更',
