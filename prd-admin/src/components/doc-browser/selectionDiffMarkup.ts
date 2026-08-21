@@ -96,6 +96,43 @@ function endsInsideFence(text: string, initial = false): boolean {
   return inside;
 }
 
+
+/**
+ * 流式期间把「还没闭合的行内标记」补齐再渲染。
+ *
+ * 模型逐字吐出 `**加粗**` 时，中途一定会经过 `**加粗` 这个状态——markdown 见到落单的 `**`
+ * 就当普通字符渲染，于是用户眼睁睁看着两颗星号冒出来又消失（2026-08-20 本地取证截图实拍）。
+ * 产物在生长，不该让语法碎片露脸（artifact-is-experience.md）。
+ *
+ * 只在流式期间用：末尾残缺的标记字符先去掉，再按奇偶补上闭合标记。
+ * 完成态的文本是模型的完整输出，一个字都不动。
+ */
+export function closeDanglingInlineMarks(text: string): string {
+  if (!text) return text;
+  // 代码围栏内的星号反引号都是代码，不参与闭合判断
+  const lines = text.split('\n');
+  let inFence = false;
+  const scanned: string[] = [];
+  for (const line of lines) {
+    if (FENCE_RE.test(line)) { inFence = !inFence; continue; }
+    if (!inFence) scanned.push(line);
+  }
+  // 正好停在围栏里 / 停在围栏行上：末尾那几个反引号是围栏本身，一个都不能动
+  if (inFence || FENCE_RE.test(lines[lines.length - 1] ?? '')) return text;
+  const body = scanned.join('\n');
+
+  // 末尾正在打字的半截标记（`*` / `` ` `` / `~`）先摘掉，避免把 `**` 补成 `***`
+  let out = text.replace(/[*`~]+$/, '');
+  const scannedTrimmed = body.replace(/[*`~]+$/, '');
+
+  const count = (re: RegExp) => (scannedTrimmed.match(re) ?? []).length;
+  if (count(/`/g) % 2 === 1) out += '`';
+  if (count(/\*\*/g) % 2 === 1) out += '**';
+  if (count(/~~/g) % 2 === 1) out += '~~';
+  // 围栏没闭合交给 buildInlineDiffBody 收尾，这里不重复处理
+  return out;
+}
+
 /**
  * 生成「原选区 → newText」的就地 diff 正文。
  *

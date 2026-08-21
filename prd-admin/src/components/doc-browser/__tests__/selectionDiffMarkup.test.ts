@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { buildInlineDiffBody, markLine } from '../selectionDiffMarkup';
+import { buildInlineDiffBody, closeDanglingInlineMarks, markLine } from '../selectionDiffMarkup';
 import { DOC_REMARK_PLUGINS, DOC_REHYPE_PLUGINS } from '@/components/file-preview/MarkdownViewer';
 
 /**
@@ -174,5 +174,33 @@ describe('渲染契约：标记必须活到正文渲染器输出的 HTML 里', (
     expect(html).toContain('<table>');
     expect(html).toContain('<ins>名称</ins>');
     expect(html).toContain('<del>说明</del>');
+  });
+});
+
+describe('closeDanglingInlineMarks：流式半截的行内标记不许露脸', () => {
+  it('打到一半的加粗补上闭合，星号不作为文字渲染', () => {
+    const out = closeDanglingInlineMarks('1. **《标准》V0.1');
+    expect(out).toBe('1. **《标准》V0.1**');
+    expect(render(out)).toContain('<strong>');
+    expect(render('1. **《标准》V0.1')).toContain('**'); // 反证：不处理就会漏星号
+  });
+
+  it('末尾刚敲出半截标记时先摘掉，不会补成三颗星', () => {
+    expect(closeDanglingInlineMarks('这是 **')).toBe('这是 ');
+    expect(closeDanglingInlineMarks('这是 *')).toBe('这是 ');
+  });
+
+  it('行内代码与删除线同样补齐', () => {
+    expect(closeDanglingInlineMarks('调用 `apiRequest')).toBe('调用 `apiRequest`');
+    expect(closeDanglingInlineMarks('这段 ~~作废')).toBe('这段 ~~作废~~');
+  });
+
+  it('已经闭合的不动', () => {
+    expect(closeDanglingInlineMarks('**加粗** 与 `代码`')).toBe('**加粗** 与 `代码`');
+  });
+
+  it('代码围栏里的星号是代码，不参与闭合判断', () => {
+    const t = '```js\nconst a = b ** 2;\n```';
+    expect(closeDanglingInlineMarks(t)).toBe(t);
   });
 });
