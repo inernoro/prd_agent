@@ -41,7 +41,7 @@ import {
   canEditInWebHosting,
   canShareInWebHosting,
 } from '@/lib/webHostingRole';
-import { SpaceBar, TeamSpaceHeader, type Space } from '@/components/team/SpaceBar';
+import { SpaceBar, TeamSpaceHeader, readLastSpace, rememberSpace, type Space } from '@/components/team/SpaceBar';
 import { GroupAccessDialog } from '@/components/team/GroupAccessDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
@@ -57,6 +57,15 @@ import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { buildShareLedger } from '@/components/web-hosting/shareLedger';
 import { SITE_SOURCE_LABELS } from '@/components/web-hosting/siteFormRegistry';
+import {
+  buildSiteGroups,
+  availableGroupModes,
+  normalizeGroupMode,
+  GROUP_MODE_LABELS,
+  type GroupMode,
+} from '@/components/web-hosting/siteGrouping';
+import { buildLibraryHeadline, countRecent } from '@/components/web-hosting/libraryHeadline';
+import { LibraryRail } from '@/components/web-hosting/LibraryRail';
 import {
   SiteCard,
   SITE_CARD_SIZES,
@@ -95,6 +104,7 @@ import {
   X,
   Lock,
   Clock,
+  Sparkles,
   RefreshCw,
   Link2,
   Link2Off,
@@ -215,7 +225,6 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 
 // ─── 分组方式（参考文学创作 LiteraryAgentWorkspaceListPage） ───
 
-type GroupMode = 'time' | 'folder';
 /** 卡片尺寸档的唯一定义在 SiteCard 组件（宽度与设计稿绑定），这里只消费。 */
 type WebPageCardSize = SiteCardSize;
 
@@ -249,60 +258,6 @@ function writePref(key: string, value: string): void {
   } catch {
     /* 隐私模式 / 存储已满时静默降级 */
   }
-}
-
-/** 把日期格式化成分组标题：今天 / 昨天 / M月D日 / YYYY年M月D日 */
-function toDateBucketLabel(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '未知时间';
-  const now = new Date();
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
-  if (dayDiff === 0) return '今天';
-  if (dayDiff === 1) return '昨天';
-  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`;
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
-}
-
-interface SiteGroup {
-  key: string;
-  label: string;
-  items: HostedSite[];
-}
-
-/** 按分组方式把（已排序的）站点列表切成分节。
- * 关键：保持传入数组的顺序（= 排序结果），只按 first-seen 顺序建组，
- * 因此「分组」与「排序」互不干扰 —— 排序决定顺序，分组只插标题。
- * teamGroups 传入时（团队空间）按专题/分类实体切分节；否则按个人空间的 folder 字段。 */
-function buildSiteGroups(items: HostedSite[], mode: GroupMode, teamGroups?: WebPageGroup[]): SiteGroup[] {
-  const groupById = new Map((teamGroups ?? []).map((g) => [g.id, g]));
-  const map = new Map<string, SiteGroup>();
-  for (const site of items) {
-    let key: string;
-    let label: string;
-    if (mode === 'folder') {
-      if (teamGroups) {
-        const g = site.groupId ? groupById.get(site.groupId) : undefined;
-        key = g ? `g:${g.id}` : 'g:__none__';
-        label = g ? `${g.kind === 'topic' ? '专题' : '分类'} · ${g.name}` : '未分组';
-      } else {
-        key = site.folder ? `f:${site.folder}` : 'f:__none__';
-        label = site.folder || '未分类';
-      }
-    } else {
-      label = toDateBucketLabel(site.createdAt);
-      key = `t:${label}`;
-    }
-    let g = map.get(key);
-    if (!g) {
-      g = { key, label, items: [] };
-      map.set(key, g);
-    }
-    g.items.push(site);
-  }
-  // 所有分组都保持 first-seen（= 后端排序结果）顺序。
-  // 这样“最新 / 最早 / 标题 / 浏览 / 体积”控制的是全局顺序，分组只负责插入标题。
-  return [...map.values()];
 }
 
 // ─── 排序循环：单击在 5 个选项之间下一步 ───
@@ -390,7 +345,8 @@ export default function WebPagesPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   // SaaS 空间模型：个人空间 / 团队空间（协作边界）；空间内文件夹由内容派生（纯组织）
-  const [currentSpace, setCurrentSpace] = useState<Space>({ kind: 'personal' });
+  // 设计稿屏 1·A 左栏写着「默认沿用上次停留的空间」——这里就按这句实现，不是摆设
+  const [currentSpace, setCurrentSpace] = useState<Space>(() => readLastSpace());
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   // 团队空间分组（专题/日常分类）：团队级实体，可先建空分组再加内容
   const [teamGroups, setTeamGroups] = useState<WebPageGroup[]>([]);
@@ -422,7 +378,7 @@ export default function WebPagesPage() {
     [currentSpace],
   );
   const [groupMode, setGroupMode] = useState<GroupMode>(
-    () => readPref(PREF_KEYS.groupMode, 'time') as GroupMode,
+    () => normalizeGroupMode(readPref(PREF_KEYS.groupMode, 'time') as GroupMode, readLastSpace().kind),
   );
 
   // 排序/视图/分组/卡片尺寸偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
@@ -724,6 +680,12 @@ export default function WebPagesPage() {
     () => buildSiteGroups(displaySites, groupMode, currentSpace.kind === 'team' ? teamGroups : undefined),
     [displaySites, groupMode, currentSpace.kind, teamGroups],
   );
+  // 文件夹计数（个人空间左栏用）
+  const folderCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of spaceSites) if (s.folder) m.set(s.folder, (m.get(s.folder) ?? 0) + 1);
+    return m;
+  }, [spaceSites]);
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 264;
   const siteShareStats = useMemo(() => buildSiteShareStats(shareLinks), [shareLinks]);
   // 顶栏「分享 N」与分享档结论句同一个口径：未过期且未撤销
@@ -760,6 +722,19 @@ export default function WebPagesPage() {
           : (teamGroups.find(g => g.id === activeGroupId)?.name ?? '分组')
         : '全部分组')
     : (activeFolder ?? '全部文件夹');
+  // 列表上方的结论行：现在按什么组织、看的哪一批、共多少、最近 7 天新增多少
+  const headline = useMemo(() => buildLibraryHeadline({
+    mode: groupMode,
+    scopeLabel: currentSpace.kind === 'team'
+      ? (activeGroupId ? activeFolderLabel : null)
+      : (activeFolder ?? null),
+    total,
+    loaded: sites.length,
+    recentCount: countRecent(spaceSites),
+    shown: displaySites.length,
+    filtered: !!(activeFolder || activeGroupId || activeTag || activeSource || keyword.trim()),
+  }), [groupMode, currentSpace.kind, activeGroupId, activeFolderLabel, activeFolder, activeTag, activeSource, keyword, total, sites.length, spaceSites, displaySites.length]);
+
   const filterCount = [
     activeFolder != null,
     activeGroupId != null,
@@ -774,6 +749,9 @@ export default function WebPagesPage() {
     // 幂等守卫：点的就是当前空间则不动（双击当前团队改名时，两次 click 不应触发整页重载）
     if (s.kind === currentSpace.kind && (s.kind === 'personal' || (currentSpace.kind === 'team' && s.teamId === currentSpace.teamId))) return;
     setCurrentSpace(s);
+    rememberSpace(s);
+    // 档位随空间收敛：个人的「按文件夹」进团队就不成立了，落回按时间，不给一个空列表
+    setGroupMode((m) => normalizeGroupMode(m, s.kind));
     setActiveFolder(null);
     setActiveGroupId(null);
     setSelectedIds(new Set());
@@ -1048,7 +1026,9 @@ export default function WebPagesPage() {
                     : { color: 'var(--text-muted)' }}
                 >
                   <Link2 size={13} /> 分享
-                  <span className="tabular-nums opacity-80">{activeShareCount}</span>
+                  {/* 设计稿写的是「分享 有效 7」：数字要说清是哪一档，否则用户不知道过期的算不算 */}
+                  <span className="text-[10px] opacity-70">有效</span>
+                  <span className="tabular-nums opacity-90">{activeShareCount}</span>
                 </button>
               </div>
               <button
@@ -1062,17 +1042,6 @@ export default function WebPagesPage() {
               >
                 <Eye size={13} /> 以访客身份预览
               </button>
-              <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
-              {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
-                <Button size="sm" variant="secondary" title="把个人空间的网页复制一份进当前团队（原网页不受影响）" onClick={() => setShowCopyFromPersonal(true)}>
-                  <FolderInput size={14} className="mr-1" /> 从个人空间添加
-                </Button>
-              )}
-              {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-                <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
-                  <Upload size={14} className="mr-1" /> 上传站点
-                </Button>
-              )}
             </div>
           }
         />
@@ -1134,16 +1103,12 @@ export default function WebPagesPage() {
         ) : (
           <>
             {/*
-              桌面工具条：只留三件常驻 —— 搜索、组织方式、视图。
-              排序与卡片尺寸是「怎么显示」，收进「显示」气泡；文件夹与标签是「看哪一批」，
-              收进「筛选」气泡并在按钮上带命中数。旧版把六组控件平铺在同一行，
-              彼此没有主次，用户不知道先看哪个。
+              桌面工具条（设计稿屏 1·A）：搜索 → 组织方式四档 → 显示 → 视图 → 上传。
+              「我在看哪一批」（空间 / 分组 / 标签）搬去常驻左栏 LibraryRail：
+              那是定位信息，用户全程都得看得见，收进气泡等于每次都要点开才知道自己在哪。
+              留在这一行的是「怎么看」与「加东西」。
             */}
             <div className="surface-nav-bar flex items-center gap-3" style={{ overflow: 'visible' }}>
-              <div className="min-w-[240px] max-w-[380px] flex-[0_1_380px]">
-                <SpaceBar current={currentSpace} onChange={enterSpace} />
-              </div>
-
               <div className="relative min-w-[220px] flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                 <input
@@ -1162,10 +1127,7 @@ export default function WebPagesPage() {
 
               <div data-tour-id="webpages-group-pills" className="shrink-0">
                 <SegmentPills
-                  options={[
-                    { value: 'time', label: '按时间' },
-                    { value: 'folder', label: currentSpace.kind === 'team' ? '按分组' : '按文件夹' },
-                  ]}
+                  options={availableGroupModes(currentSpace.kind).map((m) => ({ value: m, label: GROUP_MODE_LABELS[m] }))}
                   value={groupMode}
                   onChange={(v) => setGroupMode(v as GroupMode)}
                 />
@@ -1241,103 +1203,16 @@ export default function WebPagesPage() {
                 </div>
               </ToolbarPopover>
 
-              <ToolbarPopover
-                label="筛选"
-                tourId="webpages-desktop-filter"
-                count={filterCount}
-                open={openToolbarPanel === 'filter'}
-                onOpenChange={(v) => setOpenToolbarPanel(v ? 'filter' : null)}
-              >
-                <div className="space-y-3" style={{ minWidth: 300, maxWidth: 420 }}>
-                  {currentSpace.kind !== 'team' && (
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">文件夹</div>
-                      <div data-tour-id="webpages-folders" className="flex flex-wrap items-center gap-1.5">
-                        {spaceFolders.length > 0 ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => setActiveFolder(null)}
-                              className="h-7 rounded-full px-2.5 text-[12px]"
-                              style={activeFolder === null
-                                ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-                                : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                            >
-                              全部
-                            </button>
-                            {spaceFolders.map((f) => (
-                              <button
-                                key={f}
-                                type="button"
-                                onClick={() => setActiveFolder(f)}
-                                className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[12px]"
-                                style={activeFolder === f
-                                  ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-                                  : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                              >
-                                <Folder size={11} /> {f}
-                              </button>
-                            ))}
-                          </>
-                        ) : (
-                          <div
-                            className="inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px]"
-                            style={{ background: 'var(--bg-input)', border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}
-                          >
-                            <Folder size={11} /> 上传时填「文件夹」即可在此归档
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {tags.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">标签</div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setActiveTag(null)}
-                          className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
-                          style={!activeTag
-                            ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-                            : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                        >
-                          全部
-                        </button>
-                        {tags.map(t => (
-                          <button
-                            key={t.tag}
-                            type="button"
-                            onClick={() => setActiveTag(t.tag === activeTag ? null : t.tag)}
-                            className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
-                            style={activeTag === t.tag
-                              ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-                              : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-                          >
-                            {t.tag} ({t.count})
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {filterCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => { setActiveFolder(null); setActiveTag(null); setActiveSource(null); }}
-                      className="h-7 rounded-md px-2.5 text-[12px]"
-                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-                    >
-                      清空筛选
-                    </button>
-                  )}
+              {/* 上传按设计稿落在工具条右端：它是「往这批里加东西」，
+                  跟顶栏的语境切换（资产库 / 分享）不是一类动作。
+                  「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
+              {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
+                <div className="ml-auto shrink-0">
+                  <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
+                    <Upload size={14} className="mr-1" /> 上传站点
+                  </Button>
                 </div>
-              </ToolbarPopover>
-
-              <div className="min-w-0 shrink overflow-hidden text-ellipsis whitespace-nowrap text-[12px] text-token-muted">
-                {activeFolderLabel} · {activeSortLabel} · 共 {total} 个站点
-              </div>
+              )}
             </div>
 
             {currentSpace.kind === 'team' && (
@@ -1595,20 +1470,48 @@ export default function WebPagesPage() {
         className={!isMobile ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}
         style={{ display: workspaceTab === 'library' ? undefined : 'none' }}
       >
-        {currentSpace.kind === 'team' && !isMobile && (
-          <TeamGroupsTree
-            groups={teamGroups}
-            activeGroupId={activeGroupId}
-            canEdit={canEditInWebHosting(myWebHostingRole)}
-            canManageAccess={myWebHostingRole === 'owner'}
-            totalCount={spaceSites.length}
-            ungroupedCount={groupCounts.ungrouped}
-            counts={groupCounts.counts}
-            onSelect={setActiveGroupId}
-            onCreate={handleCreateGroup}
-            onDelete={handleDeleteGroup}
-            onRename={handleRenameGroup}
-            onOpenAccess={setAccessGroup}
+        {!isMobile && (
+          <LibraryRail
+            space={currentSpace}
+            onChangeSpace={enterSpace}
+            personalCount={currentSpace.kind === 'personal' ? total : null}
+            spaceHint={`默认沿用上次停留的空间。当前显示：${activeSpaceLabel}。`}
+            folders={currentSpace.kind === 'team' ? undefined : spaceFolders}
+            activeFolder={activeFolder}
+            onFolder={setActiveFolder}
+            folderCounts={folderCounts}
+            teamTree={currentSpace.kind === 'team' ? (
+              <TeamGroupsTree
+                groups={teamGroups}
+                activeGroupId={activeGroupId}
+                canEdit={canEditInWebHosting(myWebHostingRole)}
+                canManageAccess={myWebHostingRole === 'owner'}
+                totalCount={spaceSites.length}
+                ungroupedCount={groupCounts.ungrouped}
+                counts={groupCounts.counts}
+                onSelect={setActiveGroupId}
+                onCreate={handleCreateGroup}
+                onDelete={handleDeleteGroup}
+                onRename={handleRenameGroup}
+                onOpenAccess={setAccessGroup}
+                embedded
+              />
+            ) : undefined}
+            tags={tags}
+            activeTag={activeTag}
+            onTag={setActiveTag}
+            filterCount={filterCount}
+            onClearFilters={() => { setActiveFolder(null); setActiveGroupId(null); setActiveTag(null); setActiveSource(null); }}
+            footer={currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) ? (
+              <button
+                type="button"
+                onClick={() => setShowCopyFromPersonal(true)}
+                className="flex w-full items-center justify-center gap-1.5 rounded-[10px] h-9 text-[12px]"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+              >
+                <FolderInput size={13} /> 从个人空间添加
+              </button>
+            ) : undefined}
           />
         )}
         <div className="flex-1 min-w-0 flex flex-col">
@@ -1641,15 +1544,22 @@ export default function WebPagesPage() {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-4">
+          {/* 结论行（设计稿屏 1·A）：先说「现在按什么组织、看的哪一批」，再给数字 */}
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>{headline.lead}</span>
+            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>{headline.stats}</span>
+          </div>
           {siteGroups.map(group => (
             <div key={group.key} className="flex flex-col gap-2">
               {/* 分节标题：时间桶（今天/昨天/M月D日）或文件夹名 */}
               <div className="flex items-center gap-2 text-xs font-medium text-token-muted">
-                {groupMode === 'folder' ? (
-                  <Folder size={12} className="text-token-accent" />
-                ) : (
+                {groupMode === 'time' ? (
                   <Clock size={12} className="text-token-accent" />
+                ) : groupMode === 'source' ? (
+                  <Sparkles size={12} className="text-token-accent" />
+                ) : (
+                  <Folder size={12} className="text-token-accent" />
                 )}
                 <span>{group.label}</span>
                 <span style={{ color: 'var(--text-faint, var(--text-muted))' }}>· {group.items.length}</span>
@@ -1884,6 +1794,7 @@ function TeamGroupsTree({
   onRename,
   onOpenAccess,
   fullWidth = false,
+  embedded = false,
 }: {
   groups: WebPageGroup[];
   activeGroupId: string | null;
@@ -1898,6 +1809,8 @@ function TeamGroupsTree({
   onRename: (group: WebPageGroup, name: string) => void | Promise<void>;
   onOpenAccess: (group: WebPageGroup) => void;
   fullWidth?: boolean;
+  /** 嵌在常驻左栏里时不再自带卡片外壳（否则就是卡中卡） */
+  embedded?: boolean;
 }) {
   // 节内新建：点击节标题的 + 在该节底部展开输入框
   const [creating, setCreating] = useState<'topic' | 'daily' | null>(null);
@@ -2028,8 +1941,8 @@ function TeamGroupsTree({
   return (
     <aside
       data-tour-id="webpages-folders"
-      className={`${fullWidth ? 'w-full' : 'w-[212px]'} shrink-0 rounded-xl p-2 space-y-2`}
-      style={{
+      className={`${embedded ? 'w-full space-y-2' : `${fullWidth ? 'w-full' : 'w-[212px]'} shrink-0 rounded-xl p-2 space-y-2`}`}
+      style={embedded ? undefined : {
         position: fullWidth ? undefined : 'sticky',
         top: fullWidth ? undefined : 0,
         alignSelf: 'flex-start',

@@ -12,6 +12,30 @@ export type Space = { kind: 'personal' } | { kind: 'team'; teamId: string };
 
 // 记住「团队空间」一级 tab 下最近停留的团队，切回时直达（UI 偏好，旧值无害）
 const LAST_TEAM_KEY = 'webpages.pref.lastTeamId';
+// 记住上次停留在哪个空间（个人 / 某团队），下次进来直接落回去
+const LAST_SPACE_KEY = 'webpages.pref.lastSpace';
+
+/** 上次停留的空间；没有记忆或那个团队已经不在了，就落回个人空间 */
+export function readLastSpace(): Space {
+  try {
+    const raw = sessionStorage.getItem(LAST_SPACE_KEY);
+    if (!raw) return { kind: 'personal' };
+    const v = JSON.parse(raw) as Space;
+    if (v?.kind === 'team' && typeof v.teamId === 'string' && v.teamId) return v;
+  } catch {
+    /* 脏值当没记忆 */
+  }
+  return { kind: 'personal' };
+}
+
+export function rememberSpace(space: Space) {
+  try {
+    sessionStorage.setItem(LAST_SPACE_KEY, JSON.stringify(space));
+    if (space.kind === 'team') sessionStorage.setItem(LAST_TEAM_KEY, space.teamId);
+  } catch {
+    /* 存不进去不影响使用 */
+  }
+}
 
 /**
  * SaaS 空间切换器（只管「在哪个空间」）。
@@ -200,6 +224,125 @@ export function SpaceBar({
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 空间切换的竖排形态（设计稿屏 1·A 左栏「空间」节）：个人空间 + 每个团队各占一行，
+ * 右侧带成员数，行内「+」新建/加入。与横排 SpaceBar 同一套 createTeam/joinTeam 行为，
+ * 只是换了摆法 —— 桌面走这一份（常驻左栏），移动端筛选抽屉仍用横排那份。
+ */
+export function SpaceRailSection({
+  current,
+  onChange,
+  personalCount,
+  hint,
+}: {
+  current: Space;
+  onChange: (s: Space) => void;
+  /** 个人空间的站点数；拿不到就不显示数字，不编 */
+  personalCount?: number | null;
+  hint?: string;
+}) {
+  const { teams, loadTeams } = useTeamStore();
+  const [adding, setAdding] = useState(false);
+  const [addValue, setAddValue] = useState('');
+  const [addBusy, setAddBusy] = useState(false);
+
+  useEffect(() => { void loadTeams(); }, [loadTeams]);
+
+  const submitAdd = async () => {
+    const v = addValue.trim();
+    if (!v || addBusy) return;
+    setAddBusy(true);
+    const res = /^INV-/i.test(v) ? await joinTeam(v) : await createTeam({ name: v });
+    setAddBusy(false);
+    if (!res.success) {
+      toast.error(/^INV-/i.test(v) ? '加入失败' : '创建失败', res.error?.message);
+      return;
+    }
+    setAddValue('');
+    setAdding(false);
+    await loadTeams(true);
+    const teamId = 'teamId' in res.data ? res.data.teamId : res.data.team.id;
+    onChange({ kind: 'team', teamId });
+  };
+
+  // 数字要说清是什么数：个人空间那行是站点数，团队那行拿得到的只有成员数（站点数要额外一次请求，
+  // 不去猜）。所以团队行带「人」字后缀 + title，避免被读成站点数。
+  const row = (opts: { key: string; on: boolean; icon: React.ReactNode; label: string; count?: number | null; countSuffix?: string; countTitle?: string; onClick: () => void }) => (
+    <button
+      key={opts.key}
+      type="button"
+      onClick={opts.onClick}
+      className="flex w-full items-center gap-2 rounded-[10px] px-2.5 h-9 text-[13px] transition-colors"
+      style={opts.on
+        ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+        : { background: 'transparent', border: '1px solid transparent', color: 'var(--text-primary)' }}
+    >
+      <span className="shrink-0 opacity-80">{opts.icon}</span>
+      <span className="flex-1 truncate text-left">{opts.label}</span>
+      {typeof opts.count === 'number' && (
+        <span className="shrink-0 text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }} title={opts.countTitle}>
+          {opts.count.toLocaleString()}{opts.countSuffix ?? ''}
+        </span>
+      )}
+    </button>
+  );
+
+  return (
+    <div data-tour-id="webpages-space-bar" className="space-y-0.5">
+      <div className="px-2.5 pb-1 text-[11px] font-semibold tracking-wide" style={{ color: 'var(--text-muted)' }}>空间</div>
+      {row({
+        key: 'personal',
+        on: current.kind === 'personal',
+        icon: <User size={13} />,
+        label: '个人空间',
+        count: personalCount ?? null,
+        countTitle: '个人空间的站点数',
+        onClick: () => onChange({ kind: 'personal' }),
+      })}
+      {teams.map((t) => row({
+        key: t.team.id,
+        on: current.kind === 'team' && current.teamId === t.team.id,
+        icon: <Users size={13} />,
+        label: t.team.name,
+        count: t.memberCount,
+        countSuffix: ' 人',
+        countTitle: `${t.memberCount} 位成员`,
+        onClick: () => onChange({ kind: 'team', teamId: t.team.id }),
+      }))}
+      {adding ? (
+        <input
+          autoFocus
+          value={addValue}
+          disabled={addBusy}
+          onChange={(e) => setAddValue(e.target.value)}
+          placeholder="团队名称，或粘贴 INV- 邀请码"
+          className="w-full h-8 px-2.5 rounded-[8px] text-[12px] outline-none"
+          style={{ background: 'var(--bg-input)', border: '1px solid var(--selection-border)', color: 'var(--text-primary)', opacity: addBusy ? 0.6 : 1 }}
+          onBlur={() => { if (!addValue.trim()) setAdding(false); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void submitAdd();
+            if (e.key === 'Escape') { setAdding(false); setAddValue(''); }
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          data-tour-id="webpages-space-add"
+          onClick={() => { setAdding(true); setAddValue(''); }}
+          title="新建 / 加入团队空间"
+          className="flex w-full items-center gap-2 rounded-[10px] px-2.5 h-8 text-[12px]"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <Plus size={13} /> 新建 / 加入团队空间
+        </button>
+      )}
+      {hint && (
+        <div className="px-2.5 pt-1.5 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hint}</div>
       )}
     </div>
   );
