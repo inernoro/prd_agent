@@ -15,6 +15,7 @@ import {
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { EChart } from '@/components/charts/EChart';
+import { fmtCount } from './analyticsFormat';
 
 const AXIS_LABEL = 'rgba(130,130,140,0.85)';
 const SPLIT_LINE = 'rgba(130,130,140,0.16)';
@@ -340,7 +341,7 @@ export function ShareAnalyticsDrawer({
               </div>
 
               {activeTab === 'recent' ? (
-                <RecentVisitsTable entries={data.timeline} fmtTime={fmtTime} />
+                <RecentVisitsTable entries={data.timeline ?? []} fmtTime={fmtTime} />
               ) : (
                 <div className="flex flex-col gap-3">
                   <div className="grid grid-cols-2 gap-3">
@@ -359,7 +360,7 @@ export function ShareAnalyticsDrawer({
                       <RecentCommentsList comments={data.recentComments ?? []} fmtTime={fmtTime} />
                     </ChartCard>
                   </div>
-                  <TopLinksTable links={data.topLinks} visibilityBadge={visibilityBadge} fmtTime={fmtTime} />
+                  <TopLinksTable links={data.topLinks ?? []} visibilityBadge={visibilityBadge} fmtTime={fmtTime} />
                 </div>
               )}
             </>
@@ -372,7 +373,7 @@ export function ShareAnalyticsDrawer({
   return createPortal(modal, document.body);
 }
 
-function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: number; sub?: string }) {
+function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: number | null | undefined; sub?: string }) {
   return (
     <div
       className="flex flex-col gap-1 rounded-lg px-3 py-2.5 border border-token-subtle"
@@ -383,7 +384,7 @@ function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: s
         <span>{label}</span>
       </div>
       <div className="text-xl font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>
-        {value.toLocaleString()}
+        {fmtCount(value)}
       </div>
       {sub && (
         <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
@@ -600,10 +601,10 @@ function TopLinksTable({
             <div className="min-w-0">{visibilityBadge(link.visibility)}</div>
             <AvatarStack visitors={link.visitors ?? []} />
             <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-              {link.viewCount.toLocaleString()}
+              {fmtCount(link.viewCount)}
             </span>
             <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-              {link.uniqueIpCount.toLocaleString()}
+              {fmtCount(link.uniqueIpCount)}
             </span>
             <span className="text-right tabular-nums" style={{ color: 'var(--text-secondary)' }}>
               {link.lastViewedAt ? fmtTime(link.lastViewedAt) : '—'}
