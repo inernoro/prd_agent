@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Globe } from 'lucide-react';
+import { AlertTriangle, LayoutTemplate } from 'lucide-react';
 import {
   DIRECT_PREVIEW_SANDBOX,
   SRCDOC_PREVIEW_SANDBOX,
@@ -71,7 +71,7 @@ export function SitePreview({
   const iframeHeight = 800;
 
   // 只有进入视口才去取正文，和 iframe 懒挂同一个开关，列表不会一次性打几十个接口
-  const { srcDoc } = useSitePreviewHtml(site ?? null, inView);
+  const { srcDoc, error: htmlError, loading: htmlLoading } = useSitePreviewHtml(site ?? null, inView);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -146,8 +146,36 @@ export function SitePreview({
         （predicate-and-wiring-discipline 形状 8：不成立的证据不能当证据）。
         改成分层之后不需要任何判据：iframe 画出了东西就自然盖住占位符，没画出来就露出地球。
       */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-        <Globe size={20} style={{ color: 'var(--accent-primary)', opacity: 0.4 }} />
+      {/*
+        占位两态（设计稿屏 2「缩略图两态」）：
+        - 正在取正文：斜纹井底 + 文档图标 + 扫光，明确「在取」而不是空瓦片；
+        - 降级态：额外挂一枚「取不到正文 · 显示占位」的暖色提示条，说明为什么是占位，
+          不假装在加载（跨域 / 打包型 SPA / 代理失败都会走到这里）。
+      */}
+      <div
+        className="absolute inset-0 flex flex-col items-center justify-center gap-1"
+        style={{
+          background: 'var(--bg-well)',
+          backgroundImage: 'repeating-linear-gradient(135deg, var(--border-faint) 0 8px, transparent 8px 16px)',
+        }}
+      >
+        <LayoutTemplate size={22} style={{ color: 'var(--text-tertiary)' }} />
+        {htmlError && !srcDoc && (
+          <span
+            className="inline-flex items-center gap-1"
+            style={{
+              fontSize: 10, padding: '2px 6px', borderRadius: 'var(--radius-xs)',
+              color: 'var(--accent-fg-warning)', border: '1px solid var(--semantic-warning-border)',
+              background: 'var(--semantic-warning-soft)',
+            }}
+            title={htmlError}
+          >
+            <AlertTriangle size={10} /> 取不到正文 · 显示占位
+          </span>
+        )}
+        {htmlLoading && !srcDoc && (
+          <span className="site-preview-shimmer pointer-events-none absolute inset-0" aria-hidden />
+        )}
       </div>
       {inView && (
         <iframe

@@ -29,10 +29,11 @@ export function PdfThumbnail({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: 'linear-gradient(135deg, #dc2626 0%, #991b1b 100%)',
+          background: 'var(--bg-well)',
+          border: '1px solid var(--border-subtle)',
         }}
       >
-        <FileText size={20} color="#fff" strokeWidth={2.2} />
+        <FileText size={20} style={{ color: 'var(--accent-fg-danger)' }} strokeWidth={2.2} />
       </div>
     );
   }
@@ -47,45 +48,35 @@ export function PdfThumbnail({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 12,
-        background:
-          'radial-gradient(120% 80% at 50% 0%, rgba(220, 38, 38, 0.18) 0%, rgba(127, 29, 29, 0.06) 60%, transparent 100%), linear-gradient(180deg, #1a1216 0%, #0f0a0c 100%)',
+        // 设计稿的缩略图两态都是中性深色井底 + 假页渐变，没有任何红色整卡；
+        // 红只保留在中间那枚 PDF 图标上，作为形态标识
+        background: 'var(--thumb-gradient)',
         overflow: 'hidden',
       }}
     >
       <div
         style={{
-          width: 56,
-          height: 68,
-          borderRadius: 8,
-          background: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
+          width: 44,
+          height: 54,
+          borderRadius: 6,
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border-subtle)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          boxShadow: '0 8px 24px rgba(220, 38, 38, 0.35), inset 0 1px 0 rgba(255,255,255,0.15)',
           position: 'relative',
         }}
       >
-        <span
-          style={{
-            color: '#fff',
-            fontSize: 13,
-            fontWeight: 800,
-            letterSpacing: 1,
-            fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
-          }}
-        >
-          PDF
-        </span>
-        <div
-          className="bg-token-nested" style={{ position: 'absolute', top: 0, right: 0, width: 14, height: 14, borderBottomLeftRadius: 6, borderTopRightRadius: 8 }}
-        />
+        {/* 设计稿的 PDF 卡与其它形态同构：中性纸片 + 一枚小图标，形态由左上角徽章负责说明。
+            原来那块大红渐变让 PDF 卡在列表里像个报错块，设计稿里根本没有红色整卡。 */}
+        <FileText size={20} style={{ color: 'var(--accent-fg-danger)' }} strokeWidth={1.8} />
       </div>
       {sizeMb && (
         <span
           style={{
-            color: 'rgba(255,255,255,0.55)',
-            fontSize: 11,
-            fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+            color: 'var(--text-tertiary)',
+            fontSize: 10,
+            fontFamily: 'var(--font-code)',
           }}
         >
           {sizeMb} MB · PDF 文档

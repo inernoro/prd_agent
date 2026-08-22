@@ -4,6 +4,7 @@ using System.Text;
 using Markdig;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -467,6 +468,49 @@ public class WebPagesController : ControllerBase
     // CRUD
     // ─────────────────────────────────────────────
 
+
+    /// <summary>
+    /// 每个站点的独立访客数（卡片上的「N 访客」）。
+    ///
+    /// 去重键：登录访客用 ViewerUserId，匿名访客退回 IP —— 与访客抽屉同一口径。
+    /// 一次聚合把整页站点数完，不按站点逐个查（列表一页最多 200 个站点）。
+    /// 站点没有任何访问记录时不出现在返回里，前端据此显示 0 而不是编一个数。
+    /// </summary>
+    private async Task<Dictionary<string, long>> BuildVisitorCountsAsync(IEnumerable<string> siteIds)
+    {
+        var ids = siteIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<string, long>();
+
+        var visitorKey = new BsonDocument("$ifNull", new BsonArray
+        {
+            "$ViewerUserId",
+            new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "anonymous" }),
+        });
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument("SiteId", new BsonDocument("$in", new BsonArray(ids)))),
+            new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
+            {
+                { "site", "$SiteId" },
+                { "visitor", visitorKey },
+            })),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$_id.site" },
+                { "n", new BsonDocument("$sum", 1) },
+            }),
+        };
+
+        var rows = await _db.SiteViewEvents
+            .Aggregate<BsonDocument>(pipeline)
+            .ToListAsync();
+
+        return rows
+            .Where(r => r.Contains("_id") && !r["_id"].IsBsonNull)
+            .ToDictionary(r => r["_id"].AsString, r => r["n"].ToInt64());
+    }
+
     /// <summary>获取站点列表。scope=team + teamId 时返回该团队共享的站点（含创建者头像昵称），默认返回我的</summary>
     [HttpGet]
     public async Task<IActionResult> List(
@@ -484,6 +528,10 @@ public class WebPagesController : ControllerBase
         var (items, total) = await _siteService.ListAsync(
             userId, keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
 
+        // 卡片要展示「N 访客」（设计稿屏 2 中卡与大卡都有这一格），浏览数是累计次数、访客是去重人数，
+        // 两个数不是一回事，所以必须单独算，不能拿 ViewCount 冒充。
+        var visitors = await BuildVisitorCountsAsync(items.Select(s => s.Id));
+
         // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
         //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
         // teamId 为空 = 跨团队聚合视图（知识库团队空间消费），无单团队角色概念，仅附带 owners。
@@ -496,12 +544,12 @@ public class WebPagesController : ControllerBase
             {
                 var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
                 var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
-                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
+                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors }));
             }
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners }));
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors }));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { items, total }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, visitors }));
     }
 
     /// <summary>设置站点分享到的团队（仅 owner 可调）</summary>

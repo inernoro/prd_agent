@@ -1,4 +1,4 @@
-import { Code2, FileText, FileType2, PlayCircle, Package } from 'lucide-react';
+import { Code2, FileText, FileType2, MonitorPlay, PlayCircle, Package } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { HostedSite } from '@/services/real/webPages';
 
@@ -12,12 +12,11 @@ import type { HostedSite } from '@/services/real/webPages';
  * 判定只认后端真实下发的两个字段（`wrappedAssetType` + `files.length`），
  * 不猜、不靠文件名后缀二次推断（前端推断会和后端包装逻辑漂移）。
  *
- * 已知边界：**幻灯片站（reveal.js / deck）没有独立形态**。后端没有任何字段能把
- * 「一个 HTML 站」和「一个 deck」区分开——`SlideNavCompatVersion` 是无条件盖在所有站点上的
- * 垫片版本号，不是 deck 标记。硬凑一个「幻灯片」形态就是无根之木，故这里只到 HTML 站为止；
- * 要做需要后端先在上传时落一个真实 marker（见 doc/debt.web-hosting.md）。
+ * 幻灯片形态认后端的 `isSlideDeck`：上传/替换时扫入口 HTML 的框架签名落库。
+ * 注意 `SlideNavCompatVersion` 是无条件盖在所有站点上的垫片版本号，**不能**当 deck 标记
+ * （不成立的证据不能当证据）；老数据没有 isSlideDeck 字段，按 false 处理，退回 HTML 站。
  */
-export type SiteFormKey = 'html' | 'zip' | 'pdf' | 'video' | 'markdown';
+export type SiteFormKey = 'html' | 'zip' | 'pdf' | 'video' | 'markdown' | 'deck';
 
 export interface SiteFormConfig {
   /** 徽标文案（缩略图左上） */
@@ -33,9 +32,10 @@ export const SITE_FORM_REGISTRY: Record<SiteFormKey, SiteFormConfig> = {
   pdf: { label: 'PDF', icon: FileText, hint: 'PDF 被包装成可翻页阅读的站点' },
   video: { label: '视频', icon: PlayCircle, hint: '视频被包装成播放页，不支持提问' },
   markdown: { label: 'MD', icon: FileType2, hint: 'Markdown 渲染成网页' },
+  deck: { label: '幻灯片', icon: MonitorPlay, hint: '一套幻灯片，访客可用上下键翻页' },
 };
 
-type SiteFormInput = Pick<HostedSite, 'wrappedAssetType' | 'files'>;
+type SiteFormInput = Pick<HostedSite, 'wrappedAssetType' | 'files'> & { isSlideDeck?: boolean };
 
 /** 判定站点形态。包装类型优先（后端权威），其次按文件数区分单页 HTML 与 ZIP 站。 */
 export function resolveSiteForm(site: SiteFormInput): SiteFormKey {
@@ -43,6 +43,9 @@ export function resolveSiteForm(site: SiteFormInput): SiteFormKey {
   if (wrapped === 'pdf') return 'pdf';
   if (wrapped === 'video') return 'video';
   if (wrapped === 'markdown') return 'markdown';
+  // deck 判定在包装类型之后、文件数之前：一套 reveal.js 幻灯片既可能是单页也可能是 ZIP，
+  // 但它首先是「幻灯片」——用户在列表里要一眼认出的是这个
+  if (site.isSlideDeck) return 'deck';
   return (site.files?.length ?? 0) > 1 ? 'zip' : 'html';
 }
 
@@ -57,6 +60,9 @@ export function siteFormBadge(site: SiteFormInput): string | null {
   const count = site.files?.length ?? 0;
   if (form === 'zip') return `${count.toLocaleString()} 文件`;
   if (form === 'html') return count === 1 ? '单页' : null;
+  // 设计稿的幻灯片角标是「1 / 24」页码、PDF 是「24 页」、视频是「02:14」——
+  // 这三个数后端目前都没有（页数要解析 PDF、时长要探媒体），写「-- 页」比不写更糟。
+  // 缺口记在 doc/debt.web-hosting.md，不在这里编。
   return null;
 }
 

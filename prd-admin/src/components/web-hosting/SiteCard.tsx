@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   BookOpen,
+  Check,
   Edit3,
   Eye,
   FolderInput,
@@ -13,7 +14,6 @@ import {
   Replace,
   Share2,
   Trash2,
-  Users,
 } from 'lucide-react';
 import type { HostedSite, SiteOwnerCard } from '@/services/real/webPages';
 import { SitePreview } from '@/components/SitePreview';
@@ -21,7 +21,7 @@ import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { useDockDrag } from '@/components/share-dock';
-import { CardActionBar, CardIconAction, CardMoreButton, type CardMoreAction } from './SiteCardActions';
+import { CardIconAction, CardMoreButton, type CardMoreAction } from './SiteCardActions';
 import { resolveSiteForm, siteFormBadge, siteSourceLabel, SITE_FORM_REGISTRY } from './siteFormRegistry';
 
 /** 网页托管卡片拖进 ShareDock 投放槽时用的 MIME（页面与卡片共用同一个常量，不各写一份）。 */
@@ -58,6 +58,8 @@ export interface SiteCardProps {
   fresh?: boolean;
   shared?: boolean;
   shareStats?: SiteShareStats;
+  /** 该站点的独立访客数（后端按 userId / IP 去重聚合）；拿不到就不传，位上显示 —— */
+  visitorCount?: number;
   caps?: SiteCaps;
   ownerCard?: SiteOwnerCard;
   onSelect: () => void;
@@ -172,6 +174,7 @@ export function SiteCard({
   fresh,
   shared,
   shareStats,
+  visitorCount,
   caps,
   ownerCard,
   onSelect,
@@ -195,6 +198,13 @@ export function SiteCard({
   const [fileDragOver, setFileDragOver] = useState(false);
   // 拖卡片到 ShareDock 投放槽（把站点投给别的功能用）；与「拖文件进卡片替换内容」是两个方向，互不干扰
   const { onPointerDown } = useDockDrag({ mime: WEB_PAGE_MIME, id: site.id, label: site.title, icon: 'WEB' });
+
+  // 三档尺寸的规格（设计稿屏 2）：圆角、缩略图高、体 padding/gap、标题字号
+  const SPEC = {
+    small: { radius: 10, thumb: 92, pad: '8px 9px 9px', gap: 5, title: 11.5 },
+    medium: { radius: 11, thumb: 140, pad: '10px 11px 11px', gap: 5, title: 13 },
+    large: { radius: 12, thumb: 190, pad: '12px 13px 13px', gap: 8, title: 14.5 },
+  }[size];
 
   const form = resolveSiteForm(site);
   const formConfig = SITE_FORM_REGISTRY[form];
@@ -238,46 +248,28 @@ export function SiteCard({
     onAskConfig,
   });
 
+  // 状态胶囊（设计稿：10.5px / padding 2-6 / radius 5 / 同色系描边 + 淡底，胶囊内无图标）
+  const chip = (key: string, text: string, fg: string, bd: string, bg: string) => (
+    <span
+      key={key}
+      className="inline-flex shrink-0 items-center"
+      style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 'var(--radius-xs)', color: fg, border: `1px solid ${bd}`, background: bg }}
+    >
+      {text}
+    </span>
+  );
+
   const statusChips = (
     <>
-      {shared && (
-        <span
-          className="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-          style={{
-            background: 'var(--semantic-success-soft)',
-            color: 'var(--semantic-success-text)',
-            border: '1px solid var(--semantic-success-border)',
-          }}
-        >
-          <Link2 size={9} />
-          已分享{linkCount > 0 ? ` ${linkCount}` : ''}
-        </span>
-      )}
-      {isPublic && (
-        <span
-          className="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-          style={{
-            background: 'var(--semantic-warning-soft)',
-            color: 'var(--semantic-warning-text)',
-            border: '1px solid var(--semantic-warning-border)',
-          }}
-        >
-          已公开
-        </span>
-      )}
-      {(site.sharedTeamIds?.length ?? 0) > 0 && (
-        <span
-          className="inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold"
-          style={{
-            background: 'var(--bg-tertiary)',
-            color: 'var(--accent-fg-blue)',
-            border: '1px solid var(--border-subtle)',
-          }}
-        >
-          <Users size={9} />
-          团队共享
-        </span>
-      )}
+      {shared && chip('shared', `已分享${linkCount > 0 ? ` ${linkCount}` : ''}`,
+        'var(--semantic-success-text)', 'var(--semantic-success-border)', 'var(--semantic-success-soft)')}
+      {/* 「已公开」在设计稿里走强调色系（#E8A87C），不是警告黄——它不是一个警告 */}
+      {isPublic && chip('public', '已公开',
+        'var(--accent-gold-2)', 'rgba(var(--accent-primary-rgb), 0.4)', 'rgba(var(--accent-primary-rgb), 0.12)')}
+      {(site.sharedTeamIds?.length ?? 0) > 0 && chip('team', '团队共享',
+        'var(--accent-fg-blue)', 'var(--semantic-info-border)', 'var(--semantic-info-soft)')}
+      {!shared && !isPublic && (site.sharedTeamIds?.length ?? 0) === 0 &&
+        chip('none', '未分享', 'var(--text-tertiary)', 'var(--border-subtle)', 'transparent')}
     </>
   );
 
@@ -310,16 +302,19 @@ export function SiteCard({
       />
 
       <div
-        className="relative overflow-hidden rounded-[16px] border transition-all duration-300 group-hover:-translate-y-0.5 group-hover:shadow-xl"
+        className="relative overflow-hidden border transition-all duration-300 group-hover:-translate-y-0.5"
         style={{
-          background: 'var(--nested-block-bg)',
-          borderColor: fileDragOver || selected ? 'var(--accent-primary)' : 'var(--border-default)',
+          borderRadius: SPEC.radius,
+          background: 'var(--bg-site-card)',
+          borderColor: fileDragOver || selected ? 'var(--accent-primary)' : 'var(--border-subtle)',
+          boxShadow: selected ? 'var(--ring-focus)' : 'var(--shadow-site-card)',
         }}
       >
         {fileDragOver && (
           <div
-            className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 rounded-[16px] backdrop-blur-sm"
+            className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 backdrop-blur-sm"
             style={{
+              borderRadius: SPEC.radius,
               background: 'color-mix(in srgb, var(--accent-primary) 26%, var(--bg-tertiary))',
               border: '2px dashed var(--accent-primary)',
             }}
@@ -330,10 +325,10 @@ export function SiteCard({
           </div>
         )}
 
-        {/* ── 缩略图层：只放「这是什么」 ── */}
+        {/* ── 缩略图层：只放「这是什么」+ 压在底部的操作条 ── */}
         <div
           className="relative cursor-pointer overflow-hidden"
-          style={{ aspectRatio: '16 / 10', background: 'var(--bg-tertiary)' }}
+          style={{ height: SPEC.thumb, background: 'var(--bg-well)', borderBottom: '1px solid var(--border-subtle)' }}
           onClick={onVisit}
         >
           {site.coverImageUrl ? (
@@ -347,175 +342,229 @@ export function SiteCard({
             <SitePreview site={site} url={site.siteUrl} className="h-full w-full" />
           )}
 
-          <div className="absolute left-2 top-2 z-20 flex items-center gap-1">
-            <span
-              className="inline-flex h-[22px] items-center gap-1 rounded-md px-1.5 text-[10px] font-semibold backdrop-blur-md"
-              style={{ background: 'var(--panel-solid)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}
-              title={formConfig.hint}
-            >
-              <FormIcon size={11} />
-              {formConfig.label}
-            </span>
-          </div>
+          {/* 左上：内容形态 */}
+          <span
+            className="absolute left-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md"
+            style={{
+              height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
+              fontFamily: 'var(--font-code)', fontSize: 9.5,
+              background: 'var(--scrim-badge-bg)', color: 'var(--text-secondary)',
+              border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
+            }}
+            title={formConfig.hint}
+          >
+            <FormIcon size={11} />
+            {formConfig.label}
+          </span>
 
-          <div className="absolute right-2 top-2 z-20">
+          {/* 右上：来源。小卡不渲染——176px 宽的缩略图顶部放两枚徽章就满了（设计稿小卡只有形态） */}
+          {!isSmall && (
             <span
-              className="inline-flex h-[22px] items-center gap-1 rounded-md px-1.5 text-[10px] backdrop-blur-md"
-              style={{ background: 'var(--panel-solid)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
+              className="absolute right-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md"
+              style={{
+                height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
+                fontFamily: 'var(--font-code)', fontSize: 9,
+                background: 'var(--scrim-badge-bg)', color: 'var(--text-tertiary)',
+                border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
+              }}
             >
               {siteSourceLabel(site.sourceType)}
             </span>
-          </div>
+          )}
 
+          {/* 右下：形态量（单页 / N 文件 / N 页 / 时长） */}
           {formBadge && (
             <span
-              className="absolute bottom-2 right-2 z-20 inline-flex h-[20px] items-center rounded px-1.5 font-mono text-[10px] backdrop-blur-md"
-              style={{ background: 'var(--panel-solid)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }}
+              className="absolute bottom-2 right-2 z-20 inline-flex items-center backdrop-blur-md"
+              style={{
+                height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
+                fontFamily: 'var(--font-code)', fontSize: 9.5,
+                background: 'var(--scrim-badge-bg)', color: 'var(--text-tertiary)',
+                border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
+              }}
             >
               {formBadge}
             </span>
           )}
 
-          {/* 选择框：hover / 已选中时显形，几十张卡时不留常驻噪点 */}
+          {/* 左下：批量勾选（设计稿是常驻 20×20，未选时低对比，不是 hover 才出现） */}
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect();
-            }}
+            onClick={(e) => { e.stopPropagation(); onSelect(); }}
             aria-label={selected ? '取消选择' : '选择'}
-            className={[
-              'absolute bottom-2 left-2 z-20 inline-flex h-6 w-6 items-center justify-center rounded-md backdrop-blur-md transition-opacity',
-              selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100',
-            ].join(' ')}
-            style={{ background: 'var(--panel-solid)', border: '1px solid var(--border-subtle)' }}
+            data-no-drag
+            className="absolute bottom-[7px] left-[7px] z-20 inline-flex items-center justify-center transition-opacity hover:!opacity-100 group-hover:opacity-100"
+            style={{
+              width: 20, height: 20, borderRadius: 'var(--radius-chip)',
+              background: selected ? 'var(--accent-primary)' : 'var(--scrim-badge-bg)',
+              border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--border-strong)'}`,
+              opacity: selected ? 1 : 0.5,
+            }}
           >
-            <input
-              type="checkbox"
-              checked={selected}
-              readOnly
-              className="pointer-events-none"
-              style={{ accentColor: 'var(--accent-primary)' }}
-            />
+            {selected && <Check size={12} strokeWidth={2.8} style={{ color: 'var(--accent-on-primary)' }} />}
           </button>
+
+          {/*
+            操作条压在缩略图底部（设计稿屏 2）：底衬一层渐变让按钮在任何画面上都读得出来。
+            hover / focus 才浮起；触屏（hover:none）整条不渲染，等价项在 kebab 顶部——
+            这条契约由 buildCardActionLayers 保证，改这里不会破它。
+          */}
+          {!isSmall && (
+            <div
+              data-hoverbar
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden items-center gap-[5px] opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 sm:flex"
+              style={{ padding: '7px 7px 7px 33px', background: 'var(--scrim-fade)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CardIconAction label="预览" icon={<Eye size={12} />} onClick={onVisit} primary />
+              {c.canShare && (
+                <CardIconAction
+                  label={shared ? `管理分享${linkCount > 0 ? ` · ${linkCount}` : ''}` : '分享'}
+                  icon={shared ? <Link2 size={12} /> : <Share2 size={12} />}
+                  onClick={onShare}
+                />
+              )}
+              <div className="ml-auto flex items-center gap-[5px]">
+                {hoverActions.map((a) => (
+                  <CardIconAction key={a.label} label={a.label} icon={a.icon} onClick={a.onClick} compact onScrim />
+                ))}
+                <CardMoreButton actions={menuActions} touchActions={hoverActions.length} onScrim />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── 信息层：只放「它现在怎么样」 ── */}
-        <div className="flex flex-col gap-1.5 px-2.5 py-2">
+        <div className="flex flex-col" style={{ padding: SPEC.pad, gap: SPEC.gap }}>
           {!isSmall && (
-            <div className="flex min-w-0 items-center gap-1">
+            <div className="flex min-w-0 items-center gap-1" style={{ height: 20 }}>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{statusChips}</div>
-              {ownerCard && (
-                <span className="shrink-0" title={ownerCard.displayName}>
+              {/* 第四个状态（归属人）本身就是头像，不占胶囊位；个人空间没有 ownerCard 时兜底成「我」 */}
+              <span className="shrink-0" title={ownerCard?.displayName ?? '我创建的'}>
+                {ownerCard ? (
                   <UserAvatar
                     src={resolveAvatarUrl({ avatarFileName: ownerCard.avatarFileName })}
                     className="h-[18px] w-[18px] rounded-full"
                   />
-                </span>
-              )}
+                ) : (
+                  <span
+                    className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-full"
+                    style={{ background: 'var(--avatar-bg-neutral)', color: 'var(--text-secondary)', fontSize: 9 }}
+                  >
+                    我
+                  </span>
+                )}
+              </span>
             </div>
           )}
 
-          <div className="flex min-w-0 items-start gap-1">
-            {isSmall && shared && (
-              <span
-                className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ background: 'var(--semantic-success-text)' }}
-                title={linkCount > 0 ? `已分享 ${linkCount} 条链接` : '已分享'}
-              />
-            )}
-            <h3
-              className="line-clamp-2 flex-1 cursor-pointer text-[13px] font-semibold leading-tight hover:underline"
-              style={{ color: 'var(--text-primary)' }}
-              onClick={onVisit}
-              title={site.title}
+          {/* 小卡：状态点 + 已分享，独占一行（设计稿小卡的状态表达） */}
+          {isSmall && (
+            <div
+              className="flex items-center gap-1.5"
+              style={{ height: 12 }}
+              title={shared ? (linkCount > 0 ? `已分享 ${linkCount} 条链接` : '已分享') : '未分享'}
             >
-              {site.title}
-            </h3>
-          </div>
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                style={{ background: shared ? 'var(--semantic-success-text)' : 'var(--text-disabled)' }}
+              />
+              <span style={{ fontFamily: 'var(--font-code)', fontSize: 9.5, color: shared ? 'var(--semantic-success-text)' : 'var(--text-tertiary)' }}>
+                {shared ? '已分享' : '未分享'}
+              </span>
+            </div>
+          )}
+
+          <h3
+            className="line-clamp-2 cursor-pointer hover:underline"
+            style={{ fontSize: SPEC.title, fontWeight: 600, lineHeight: 1.35, letterSpacing: '-0.005em', color: 'var(--text-primary)' }}
+            onClick={onVisit}
+            title={site.title}
+          >
+            {site.title}
+          </h3>
 
           {isLarge && (
-            <p className="line-clamp-2 text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+            <p className="line-clamp-2" style={{ fontSize: 12, lineHeight: 1.55, color: 'var(--text-secondary)' }}>
               {site.description || formConfig.hint}
             </p>
           )}
 
-          {isLarge && site.tags.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1">
-              {site.tags.slice(0, 3).map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded px-1.5 py-0.5 text-[10px]"
-                  style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
-                >
-                  {tag}
-                </span>
-              ))}
-              {site.tags.length > 3 && (
-                <span className="text-[10px] text-token-muted">+{site.tags.length - 3}</span>
-              )}
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-x-1.5 font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {/* 元信息：中卡是「体积 · N 浏览 · N 访客」，大卡是「体积 · 形态量 · 更新于 X」 */}
+          <div
+            className="flex flex-wrap items-center gap-x-1.5"
+            style={{ fontFamily: 'var(--font-code)', fontSize: 10, color: 'var(--text-tertiary)' }}
+          >
             <span>{fmtSize(site.totalSize)}</span>
-            <span aria-hidden>·</span>
-            <span>{site.viewCount} 浏览</span>
-            {!isSmall && (
+            {isLarge ? (
               <>
-                <span aria-hidden>·</span>
-                {/* 与列表的日期分组桶同源（都按创建时间），否则会出现「分组写 8 月 18 日、卡片写 5 天前」 */}
-                <span>{relativeTime(site.createdAt)}</span>
+                {formBadge && (<><span className="opacity-40" aria-hidden>·</span><span>{formBadge}</span></>)}
+                <span className="opacity-40" aria-hidden>·</span>
+                <span>更新于 {relativeTime(site.updatedAt || site.createdAt)}</span>
+              </>
+            ) : (
+              <>
+                <span className="opacity-40" aria-hidden>·</span>
+                <span>{site.viewCount} 浏览</span>
+                {!isSmall && (
+                  <>
+                    <span className="opacity-40" aria-hidden>·</span>
+                    <span>{typeof visitorCount === 'number' ? `${visitorCount} 访客` : '— 访客'}</span>
+                  </>
+                )}
               </>
             )}
           </div>
 
-          {/* 大卡的成果数据：浏览 / 有效链接 / 最近访问。体积是属性不是成果，退回上面那行元信息。 */}
-          {isLarge && (
-            <div className="mt-1 flex items-end gap-4">
-              <div>
-                <div className="text-[20px] font-semibold leading-none tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                  {site.viewCount}
-                </div>
-                <div className="mt-1 font-mono text-[9.5px]" style={{ color: 'var(--text-muted)' }}>浏览</div>
+          {/* 标签行：中卡以上都有，最多 3 个 + 折叠计数，右端是更新时间（设计稿把时间放这一行） */}
+          {!isSmall && site.tags.length > 0 && (
+            <div className="flex min-w-0 items-center gap-1">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                {site.tags.slice(0, 3).map((tag) => (
+                  <span
+                    key={tag}
+                    style={{ fontSize: 10.5, padding: '2px 6px', borderRadius: 'var(--radius-xs)', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
+                  >
+                    {tag}
+                  </span>
+                ))}
+                {site.tags.length > 3 && (
+                  <span style={{ fontSize: 10.5, color: 'var(--text-tertiary)' }}>+{site.tags.length - 3}</span>
+                )}
               </div>
-              <div>
-                <div className="text-[20px] font-semibold leading-none tracking-tight" style={{ color: 'var(--text-primary)' }}>
-                  {shareStats ? linkCount : '—'}
-                </div>
-                <div className="mt-1 font-mono text-[9.5px]" style={{ color: 'var(--text-muted)' }}>有效链接</div>
-              </div>
-              <div>
-                <div className="text-[13px] font-semibold leading-none" style={{ color: 'var(--text-primary)' }}>
-                  {shareStats?.lastViewedAt ? relativeTime(shareStats.lastViewedAt) : '—'}
-                </div>
-                <div className="mt-1 font-mono text-[9.5px]" style={{ color: 'var(--text-muted)' }}>最近访问</div>
-              </div>
+              {!isLarge && (
+                <span className="shrink-0" style={{ fontFamily: 'var(--font-code)', fontSize: 10, color: 'var(--text-tertiary)' }}>
+                  {relativeTime(site.createdAt)}
+                </span>
+              )}
             </div>
           )}
 
-          {/* 常驻操作条：预览 + 分享/管理分享·N + kebab */}
-          <CardActionBar>
-            {!isSmall && (
-              <CardIconAction label="预览" icon={<Eye size={12} />} onClick={onVisit} primary />
-            )}
-            {!isSmall && c.canShare && (
-              <CardIconAction
-                label={shared ? `管理分享${linkCount > 0 ? ` · ${linkCount}` : ''}` : '分享'}
-                icon={shared ? <Link2 size={12} /> : <Share2 size={12} />}
-                onClick={onShare}
-              />
-            )}
-            <div className="ml-auto flex items-center gap-1">
-              {/* hover 层：桌面显形，触屏不渲染（等价项已在 kebab 顶部） */}
-              <div data-hoverbar className="hidden items-center gap-1 sm:flex">
-                {hoverActions.map((a) => (
-                  <CardIconAction key={a.label} label={a.label} icon={a.icon} onClick={a.onClick} compact />
-                ))}
-              </div>
+          {/* 大卡成果数据四格（设计稿：浏览 / 访客 / 有效链接 / 最近访问，统一 22px） */}
+          {isLarge && (
+            <div className="flex items-end" style={{ gap: 18, borderTop: '1px solid var(--border-subtle)', paddingTop: 8, marginTop: 2 }}>
+              {[
+                { v: String(site.viewCount), label: '浏览' },
+                { v: typeof visitorCount === 'number' ? String(visitorCount) : '—', label: '访客' },
+                { v: shareStats ? String(linkCount) : '—', label: '有效链接' },
+                { v: shareStats?.lastViewedAt ? relativeTime(shareStats.lastViewedAt) : '—', label: '最近访问' },
+              ].map((k) => (
+                <div key={k.label}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, lineHeight: 1, letterSpacing: '-0.04em', color: 'var(--text-primary)' }}>
+                    {k.v}
+                  </div>
+                  <div style={{ marginTop: 4, fontFamily: 'var(--font-code)', fontSize: 9.5, color: 'var(--text-tertiary)' }}>{k.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 小卡只有一枚 kebab（hover 才显形，几十张卡时不留灰框噪点） */}
+          {isSmall && (
+            <div className="flex justify-end opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               <CardMoreButton actions={menuActions} touchActions={hoverActions.length} />
             </div>
-          </CardActionBar>
+          )}
         </div>
       </div>
     </div>

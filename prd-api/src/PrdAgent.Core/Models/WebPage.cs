@@ -102,6 +102,15 @@ public class HostedSite
 
     // ── 公开可见性 ──
 
+    /// <summary>
+    /// 入口文件是不是一套幻灯片（reveal.js / impress.js / remark / deck.js）。
+    ///
+    /// 上传/替换时扫一次入口 HTML 的真实签名落库，不是运行时猜的——设计稿把「幻灯片」
+    /// 列为五种内容形态之一，而 SlideNavCompatVersion 是无条件盖在所有站点上的垫片版本号，
+    /// 不能当 deck 标记用（那是「不成立的证据」）。老数据没有这个字段，前端按 false 处理。
+    /// </summary>
+    public bool IsSlideDeck { get; set; }
+
     /// <summary>可见性：private = 仅自己可见 | public = 出现在个人公开页 /u/:username</summary>
     public string Visibility { get; set; } = "private";
 

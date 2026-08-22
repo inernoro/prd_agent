@@ -209,6 +209,7 @@ public class HostedSiteService : IHostedSiteService
             Folder = folder?.Trim(),
             OwnerUserId = userId,
             SlideNavCompatVersion = SlideNavVersion, // 上传即注入当前版垫片
+            IsSlideDeck = DetectSlideDeck(rewritten),
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -253,6 +254,7 @@ public class HostedSiteService : IHostedSiteService
             OwnerUserId = userId,
             WrappedAssetType = string.IsNullOrWhiteSpace(wrappedAssetType) ? null : wrappedAssetType.Trim().ToLowerInvariant(),
             SlideNavCompatVersion = SlideNavVersion, // 上传即注入当前版垫片（ZIP 内 HTML 条目已注入）
+            IsSlideDeck = result.IsSlideDeck,
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -297,6 +299,7 @@ public class HostedSiteService : IHostedSiteService
                 new() { Path = "index.html", CosKey = cosKey, Size = htmlBytes.Length, MimeType = "text/html" }
             },
             TotalSize = htmlBytes.Length,
+            IsSlideDeck = DetectSlideDeck(htmlBytes),
             Tags = tags ?? new(),
             Folder = folder?.Trim(),
             OwnerUserId = userId,
@@ -339,6 +342,7 @@ public class HostedSiteService : IHostedSiteService
         List<HostedSiteFile> siteFiles;
         string entryFile;
         long totalSize;
+        var replacedIsSlideDeck = false;
 
         if (ext == ".zip")
         {
@@ -352,10 +356,12 @@ public class HostedSiteService : IHostedSiteService
             siteFiles = result.Files;
             entryFile = result.EntryFile;
             totalSize = result.TotalSize;
+            replacedIsSlideDeck = result.IsSlideDeck;
         }
         else if (ext is ".html" or ".htm")
         {
             var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes, "index.html"));
+            replacedIsSlideDeck = DetectSlideDeck(rewritten);
             var cosKey = _storage.BuildSiteKey(siteId, "index.html");
             await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
             siteFiles = new List<HostedSiteFile>
@@ -391,7 +397,9 @@ public class HostedSiteService : IHostedSiteService
             .Set(x => x.WrappedAssetType, normalizedType)
             .Set(x => x.UpdatedAt, now)
             .Set(x => x.ContentVersion, now)
-            .Set(x => x.SlideNavCompatVersion, SlideNavVersion); // 重传内容已注入当前版垫片
+            .Set(x => x.SlideNavCompatVersion, SlideNavVersion) // 重传内容已注入当前版垫片
+            // 换了内容就要重判形态：HTML 站换成 deck 要变、deck 换成普通页也要变回去
+            .Set(x => x.IsSlideDeck, replacedIsSlideDeck);
 
         // 重传把站点换成了不支持提问的形态（如 HTML 站换成视频），提问开关必须一起关掉。
         // 留着不管的话，已经发出去的分享还挂着提问入口，而每次提问都必定 422 ——
@@ -2444,6 +2452,8 @@ public class HostedSiteService : IHostedSiteService
 
     private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes, string? uploadId = null)
     {
+        var isSlideDeck = false;
+
         try
         {
             using var zipStream = new MemoryStream(zipBytes);
@@ -2483,7 +2493,12 @@ public class HostedSiteService : IHostedSiteService
                 var entryBytes = entryMs.ToArray();
 
                 if (mimeType == "text/html")
+                {
                     entryBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(entryBytes, relativePath));
+                    // 只认入口文件的签名：ZIP 里可能夹着别人的 deck 示例，那不代表这个站是幻灯片
+                    if (string.Equals(relativePath, entrySoFar, StringComparison.OrdinalIgnoreCase))
+                        isSlideDeck = DetectSlideDeck(entryBytes);
+                }
 
                 var cosKey = _storage.BuildSiteKey(siteId, relativePath);
                 await _storage.UploadToKeyAsync(cosKey, entryBytes,
@@ -2505,7 +2520,7 @@ public class HostedSiteService : IHostedSiteService
                 ?? files.FirstOrDefault(f => f.MimeType == "text/html")?.Path
                 ?? files[0].Path;
 
-            return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize };
+            return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize, IsSlideDeck = isSlideDeck };
         }
         catch (InvalidDataException)
         {
@@ -2594,6 +2609,26 @@ public class HostedSiteService : IHostedSiteService
     ///   因此垫片代码升级后重跑会把旧块换成新块，而不是被旧 marker 幂等跳过。
     /// - 上传路径即时注入；startup backfill 对存量站点补注入（HostedSiteBackfillService）。
     /// </summary>
+
+    /// <summary>
+    /// 扫入口 HTML 判断是不是一套幻灯片。只认真实签名（框架脚本名 / 约定类名），
+    /// 只看前 200KB —— 签名都在 head 与首屏结构里，整页扫大文件不划算。
+    /// 与前端 slideDeck.ts 是同一份签名表，改一处要同步改另一处。
+    /// </summary>
+    private static bool DetectSlideDeck(byte[] htmlBytes)
+    {
+        if (htmlBytes.Length == 0) return false;
+        var take = Math.Min(htmlBytes.Length, 200 * 1024);
+        var head = Encoding.UTF8.GetString(htmlBytes, 0, take);
+        string[] signatures =
+        {
+            "reveal.js", "reveal.min.js", "class=\"reveal\"", "Reveal.initialize",
+            "impress.js", "impress().init", "id=\"impress\"",
+            "remark.min.js", "remark.create", "deck.core.js", "deck.js",
+        };
+        return signatures.Any(sig => head.Contains(sig, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static byte[] InjectSlideNavCompat(byte[] htmlBytes)
     {
         var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
@@ -3127,6 +3162,9 @@ public class HostedSiteService : IHostedSiteService
 
     private sealed class ZipExtractResult
     {
+        /// <summary>入口 HTML 是不是一套幻灯片（只看入口，不看包里其它 HTML）</summary>
+        public bool IsSlideDeck { get; set; }
+
         public List<HostedSiteFile> Files { get; set; } = new();
         public string EntryFile { get; set; } = "index.html";
         public long TotalSize { get; set; }

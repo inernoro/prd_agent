@@ -356,6 +356,7 @@ export default function WebPagesPage() {
   const [showCopyFromPersonal, setShowCopyFromPersonal] = useState(false);
   const { teams, loadTeams } = useTeamStore();
   const [movingSite, setMovingSite] = useState<HostedSite | null>(null);
+  const [siteVisitors, setSiteVisitors] = useState<Record<string, number>>({});
   const [ownerCards, setOwnerCards] = useState<Record<string, SiteOwnerCard>>({});
   // 团队空间下我的有效角色（owner/editor/viewer）；个人空间为 null（=自己的，全权）
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
@@ -454,6 +455,7 @@ export default function WebPagesPage() {
       setSites(res.data.items);
       setTotal(res.data.total);
       setOwnerCards(res.data.owners ?? {});
+      setSiteVisitors(res.data.visitors ?? {});
       setMyWebHostingRole(res.data.myWebHostingRole ?? null);
     }
     setLoading(false);
@@ -835,6 +837,7 @@ export default function WebPagesPage() {
             shareStats={siteShareStats.get(site.id)}
             caps={siteCaps(site)}
             ownerCard={teamScope.scope === 'team' ? ownerCards[site.ownerUserId] : undefined}
+            visitorCount={siteVisitors[site.id]}
             onVisit={() => handleVisitSite(site)}
             onSelect={() => toggleSelect(site.id)}
             onTogglePublic={() => handleMakePublic(site)}

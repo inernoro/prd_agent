@@ -164,7 +164,9 @@ describe('WebPagesPage SiteCard', () => {
 
     // 小卡放不下常驻按钮条，但 kebab 必须在，否则小卡视图下无法操作
     expect(html).toContain('aria-label="更多设置"');
-    // 分享状态用一个点表达，不能因为卡片小就把「已分享」整个丢掉
+    // 分享状态：小卡是「绿点 + 已分享」独占一行（设计稿屏 2 小卡形态），
+    // 条数收进 title——不能因为卡片小就把这个状态整个丢掉
+    expect(html).toContain('已分享');
     expect(html).toContain('已分享 1 条链接');
   });
 

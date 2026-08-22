@@ -27,12 +27,15 @@ export function CardIconAction({
   onClick,
   primary,
   compact,
+  onScrim,
 }: {
   label: string;
   icon: React.ReactNode;
   onClick: () => void;
   primary?: boolean;
   compact?: boolean;
+  /** 浮在缩略图上（设计稿的 hover 条）：底走暗色蒙版、描边更亮，才在任何画面上都读得出 */
+  onScrim?: boolean;
 }) {
   const base =
     'inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md text-[11px] font-medium transition-colors';
@@ -47,11 +50,10 @@ export function CardIconAction({
         title={label}
         aria-label={label}
         data-no-drag
-        className={[
-          base,
-          'w-7 pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 hover-bg-soft',
-        ].join(' ')}
-        style={{ color: 'var(--text-secondary)', background: 'var(--bg-tertiary)' }}
+        className={[base, 'w-[26px] hover-bg-soft'].join(' ')}
+        style={onScrim
+          ? { color: 'var(--text-primary)', background: 'var(--scrim-button-bg)', border: '1px solid var(--border-strong)' }
+          : { color: 'var(--text-secondary)', background: 'var(--bg-tertiary)' }}
       >
         {icon}
       </button>
@@ -67,11 +69,13 @@ export function CardIconAction({
       title={label}
       aria-label={label}
       data-no-drag
-      className={[base, 'px-2'].join(' ')}
+      className={[base, 'px-[9px]'].join(' ')}
       style={
         primary
-          ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
-          : { background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }
+          ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)', border: '1px solid var(--accent-primary-edge)' }
+          : onScrim
+            ? { background: 'var(--scrim-button-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)' }
+            : { background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }
       }
     >
       {icon}
@@ -87,7 +91,7 @@ export function CardIconAction({
  * 在菜单里仍然保留并置顶，触屏与键盘用户才有等价可达路径（设计稿屏 2 的操作分层要求）。
  * 置顶那几项与其余低频配置之间画一条分隔线，避免读成同一组。
  */
-export function CardMoreButton({ actions, touchActions = 0 }: { actions: CardMoreAction[]; touchActions?: number }) {
+export function CardMoreButton({ actions, touchActions = 0, onScrim }: { actions: CardMoreAction[]; touchActions?: number; onScrim?: boolean }) {
   const anchorRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -102,11 +106,13 @@ export function CardMoreButton({ actions, touchActions = 0 }: { actions: CardMor
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft"
+        className="inline-flex h-7 w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft"
         title="更多设置"
         aria-label="更多设置"
         data-no-drag
-        style={{ color: 'var(--text-secondary)' }}
+        style={onScrim
+          ? { color: 'var(--text-primary)', background: 'var(--scrim-button-bg)', border: '1px solid var(--border-strong)' }
+          : { color: 'var(--text-secondary)' }}
       >
         <MoreHorizontal size={14} />
       </button>

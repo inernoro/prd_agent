@@ -23,6 +23,8 @@ export interface HostedSite {
   entryFile: string;
   /** 自动包装的资产类型 ("pdf" / "video" / "markdown" / undefined=非包装站)；用于区分用户上传的"index.html + .pdf" 与系统自动包装的 PDF 壳子 */
   wrappedAssetType?: string;
+  /** 入口 HTML 是不是一套幻灯片（后端上传时扫签名落库）；老数据没有这个字段 */
+  isSlideDeck?: boolean;
   siteUrl: string;
   /**
    * PDF 包装站的原始 PDF 直链（后端算出，不入库）。
@@ -330,6 +332,9 @@ export async function listSites(params?: {
     items: HostedSite[];
     total: number;
     owners?: Record<string, SiteOwnerCard>;
+    /** 每个站点的独立访客数（siteId → 人数，后端按 userId / IP 去重）。
+     *  浏览数是累计次数、访客是去重人数，两个数不能互相冒充。没有访问记录的站点不出现在表里。 */
+    visitors?: Record<string, number>;
     /** 团队作用域下，我在该团队的网页托管有效角色（owner/editor/viewer）；个人作用域不返回 */
     myWebHostingRole?: WebHostingRole;
   }>
