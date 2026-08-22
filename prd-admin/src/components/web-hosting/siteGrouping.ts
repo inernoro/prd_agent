@@ -67,11 +67,26 @@ export function buildSiteGroups(
   return [...map.values()];
 }
 
-/** 当前空间里成立的组织方式档位（不成立的不摆出来） */
+/** 设计稿工具条固定四档，顺序不变 */
+export const ALL_GROUP_MODES: GroupMode[] = ['time', 'folder', 'group', 'source'];
+
+/** 当前空间里成立的档位。四档常驻展示，不成立的置灰而不是消失——
+ *  消失会让用户以为这个功能没做（设计稿四档同排）。 */
 export function availableGroupModes(spaceKind: 'personal' | 'team'): GroupMode[] {
   return spaceKind === 'team'
     ? ['time', 'group', 'source']
     : ['time', 'folder', 'source'];
+}
+
+/** 某档在当前空间是否成立，以及为什么不成立（置灰时的 title） */
+export function groupModeAvailability(mode: GroupMode, spaceKind: 'personal' | 'team'): { ok: boolean; reason?: string } {
+  if (availableGroupModes(spaceKind).includes(mode)) return { ok: true };
+  return {
+    ok: false,
+    reason: mode === 'folder'
+      ? '文件夹是个人空间的归档方式，团队空间请用「按分组」'
+      : '分组（专题/分类）是团队空间的归档方式，个人空间请用「按文件夹」',
+  };
 }
 
 export const GROUP_MODE_LABELS: Record<GroupMode, string> = {

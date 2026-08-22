@@ -44,8 +44,8 @@ export function SiteContextPanel({
   if (!site) {
     return (
       <aside
-        className="hidden w-[280px] shrink-0 flex-col gap-3 rounded-xl p-3 xl:flex"
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+        className="hidden shrink-0 flex-col gap-3 xl:flex"
+        style={{ width: 300, padding: 14, background: 'var(--bg-rail)', borderLeft: '1px solid var(--border-subtle)' }}
       >
         <div className="text-[11px] font-semibold text-token-muted">站点上下文</div>
         <p className="text-[12px] leading-relaxed text-token-secondary">
@@ -62,8 +62,8 @@ export function SiteContextPanel({
 
   return (
     <aside
-      className="hidden w-[280px] shrink-0 flex-col gap-3 overflow-y-auto rounded-xl p-3 xl:flex"
-      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', overscrollBehavior: 'contain' }}
+      className="hidden shrink-0 flex-col gap-3 overflow-y-auto xl:flex"
+      style={{ width: 300, padding: 14, background: 'var(--bg-rail)', borderLeft: '1px solid var(--border-subtle)', overscrollBehavior: 'contain' }}
     >
       <div className="flex items-center justify-between">
         <div className="text-[11px] font-semibold text-token-muted">站点上下文</div>

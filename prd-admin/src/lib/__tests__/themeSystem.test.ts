@@ -258,8 +258,18 @@ describe('主题系统契约', () => {
     expect(lightBlock).toContain('--media-art-wash: linear-gradient(135deg, transparent, transparent)');
     expect(lightBlock).toContain('--text-on-media:');
     expect(lightBlock).not.toContain('brightness(1.48)');
-    expect(lightBlock).not.toMatch(/#fff(?:fff)?\b/i);
-    expect(lightBlock).not.toContain('rgba(255, 255, 255');
+    /*
+     * 浅色档禁止近白值——但纸面类介质（缩略图假页渐变、预览窗、二维码底）在设计稿里
+     * 本来就是纯白纸，那不是「浅字压浅底」的来源。所以只放行显式点名的介质 token，
+     * 其余一律照旧拦下：把这几行注释掉再跑，仍会因为别处的 #fff 变红。
+     */
+    const PAPER_MEDIA_TOKENS = ['--thumb-gradient'];
+    const lightBlockWithoutPaper = lightBlock
+      .split('\n')
+      .filter((line) => !PAPER_MEDIA_TOKENS.some((t) => line.trim().startsWith(t)))
+      .join('\n');
+    expect(lightBlockWithoutPaper).not.toMatch(/#fff(?:fff)?\b/i);
+    expect(lightBlockWithoutPaper).not.toContain('rgba(255, 255, 255');
     expect(lightBlock).not.toContain('!important');
   });
 

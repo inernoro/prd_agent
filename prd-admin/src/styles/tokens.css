@@ -415,6 +415,75 @@
   --viz-label-muted: rgba(247, 247, 251, 0.60);
   --viz-label-halo: rgba(0, 0, 0, 0.62);
 
+  /* ──────────────────────────────────────────────────────────────
+     设计稿规格 token（网页托管信息架构改版，2026-08）
+     值全部取自设计稿源码字面量，不是估的。深浅两档同批双写。
+     没有这一层，组件里会出现 300+ 处硬编码 px / hex，直接撞主题棘轮。
+     ────────────────────────────────────────────────────────────── */
+
+  /* 文字：设计稿用得最多的一档是 .55（元信息、mono 眉标、计数），token 体系原来断在 .68 */
+  --text-tertiary: rgba(247, 247, 251, 0.55);
+  --text-disabled: rgba(247, 247, 251, 0.45);
+
+  /* 底色第三、四层：侧栏比内容区更暗一档，缩略图井比侧栏更暗 */
+  --bg-rail: #17171c;
+  --bg-well: #0f0f13;
+  --bg-toolbar: #141418;
+  --bg-row: rgba(255, 255, 255, 0.04);
+  --bg-site-card: rgba(255, 255, 255, 0.045);
+
+  /* 描边：控件档（比 subtle 重、比 default 轻），以及一直被消费却从未定义的 border-strong */
+  --border-control: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.24);
+
+  /* 实心强调底上的字与描边。设计稿深色是 #D97757 底 + 纯白字 + #B0523A 描边；
+     浅色改为无描边 + 纸面阴影（见 --button-primary-shadow） */
+  --accent-on-primary: #ffffff;
+  --accent-primary-edge: #B0523A;
+
+  /* 浮在缩略图上的角标与按钮：深色是暗色蒙版，浅色是浅底深字（设计稿 1·B 明确标注） */
+  --scrim-badge-bg: rgba(11, 11, 14, 0.78);
+  --scrim-badge-border: rgba(255, 255, 255, 0.18);
+  --scrim-badge-shadow: none;
+  --scrim-button-bg: rgba(20, 20, 24, 0.8);
+  --scrim-fade: linear-gradient(0deg, rgba(11, 11, 14, 0.92), rgba(11, 11, 14, 0));
+
+  /* 头像底三色（中性 / 暖 / 冷），堆叠时的分隔环恒等于所在容器底色 */
+  --avatar-bg-neutral: #3f3f4a;
+  --avatar-bg-warm: #4a3a34;
+  --avatar-bg-cool: #33404a;
+
+  /* 站点缩略图的假页面渐变 */
+  --thumb-gradient: linear-gradient(160deg, #20222b, #141620);
+
+  /* 焦点/选中环与输入内凹（浅色档才有纸面内凹） */
+  --ring-focus: 0 0 0 3px rgba(217, 119, 87, 0.16);
+  --shadow-input-inset: none;
+  --shadow-site-card: none;
+
+  /* 圆角阶梯：设计稿骨干是 7 / 9 / 10（合计 176 次），原来只有 8/12/14/16 四档 */
+  --radius-2xs: 4px;
+  --radius-xs: 5px;
+  --radius-chip: 6px;
+  --radius-pill: 7px;
+  --radius-control: 9px;
+  --radius-field: 10px;
+  --radius-card: 12px;
+
+  /* mono 字族：设计稿所有眉标 / 尺寸 / 时间 / ID 走 JetBrains Mono。
+     不能叫 --font-mono（会被 Tailwind v4 的 font-mono 工具类劫持，见上文 --font-terminal 的注释）。 */
+  --font-code: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* 这几个原来只在 [data-material="solid"] 与浅色档定义，默认「暗色 + 玻璃」下解析为无效值。
+     补进基线，避免又一次「消费方拿到 transparent」的事故（同 --nested-block-bg 那次）。 */
+  --nested-block-border: rgba(255, 255, 255, 0.09);
+  --list-item-bg: rgba(255, 255, 255, 0.045);
+  --list-item-border: rgba(255, 255, 255, 0.08);
+  --list-item-hover-bg: rgba(255, 255, 255, 0.08);
+  --table-header-bg: rgba(255, 255, 255, 0.045);
+  --table-row-border: rgba(255, 255, 255, 0.08);
+  --table-row-hover-bg: rgba(255, 255, 255, 0.05);
+
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 14px;
@@ -518,6 +587,33 @@
 
 /* 浅色模式是全站 token 的唯一覆盖层。运行时只设置 data-theme，不写颜色。 */
 [data-theme="light"] {
+
+  /* ── 设计稿规格 token · 浅色档（暖纸）。与深色档同批双写，见 :root 同名注释 ── */
+  --text-tertiary: rgba(15, 23, 42, 0.60);
+  --text-disabled: rgba(15, 23, 42, 0.45);
+  --bg-rail: #E9E4DB;
+  --bg-well: #E7E2D9;
+  --bg-toolbar: #F3EFE8;
+  --bg-row: #F8F5EF;
+  --bg-site-card: #F8F5EF;
+  --border-control: rgba(26, 26, 31, 0.14);
+  --border-strong: rgba(26, 26, 31, 0.28);
+  /* 浅色实心底上的字是暖白，不是纯白 */
+  --accent-on-primary: #FBF8F2;
+  --accent-primary-edge: transparent;
+  --scrim-badge-bg: #FBF8F3;
+  --scrim-badge-border: rgba(26, 26, 31, 0.16);
+  --scrim-badge-shadow: 0 1px 3px rgba(26, 26, 31, 0.12);
+  --scrim-button-bg: #FBF8F3;
+  --scrim-fade: linear-gradient(0deg, rgba(26, 26, 31, 0.28), rgba(26, 26, 31, 0));
+  --avatar-bg-neutral: #E4DED5;
+  --avatar-bg-warm: #EADFD6;
+  --avatar-bg-cool: #DCE2EA;
+  --thumb-gradient: linear-gradient(160deg, #FFFFFF, #F1EDE6);
+  --ring-focus: 0 0 0 3px rgba(166, 75, 53, 0.12);
+  --shadow-input-inset: inset 0 1px 2px rgba(26, 26, 31, 0.05);
+  /* 浅色档改用纸面阴影替代描边（设计稿 1·B 的原话） */
+  --shadow-site-card: 0 2px 6px rgba(26, 26, 31, 0.07);
   color-scheme: light;
 
   --bg-base: #EEEAE3;
@@ -862,6 +958,9 @@
 /* 固定暗色可视化表面：容器声明一次，嵌套卡片沿上下文继承。
    仅用于热力图、趋势图等需要稳定暗色画布的创作型区域。 */
 .surface-tone-dark {
+  /* 与 :root 同批新增：岛内也要有值，否则浅色页里的暗岛会退回浅色档的描边 */
+  --border-strong: rgba(255, 255, 255, 0.24);
+  --nested-block-border: rgba(255, 255, 255, 0.09);
   color-scheme: dark;
   --bg-card: rgba(255, 255, 255, 0.08);
   --bg-card-hover: rgba(255, 255, 255, 0.11);

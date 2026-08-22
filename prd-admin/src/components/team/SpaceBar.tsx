@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Settings, User, UserPlus, Users, X } from 'lucide-react';
+import { ChevronDown, Plus, Settings, User, UserPlus, Users, X } from 'lucide-react';
 import { useTeamStore } from '@/stores/teamStore';
 import { TeamManagerPanel } from '@/components/team/TeamManagerPanel';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -230,6 +230,136 @@ export function SpaceBar({
 }
 
 /**
+ * 顶栏的空间/团队切换器（设计稿屏 1·A 顶栏中段）：
+ * `[人形] 团队 · PRD Agent [OWNER] [头像堆叠] ˅`，点开是空间列表 + 成员管理入口。
+ *
+ * 左栏「空间」节只放两行聚合（个人 / 团队），具体是哪个团队在这里换 —— 设计稿就是这么分工的。
+ */
+export function TeamSwitcher({
+  current,
+  onChange,
+  roleLabel,
+}: {
+  current: Space;
+  onChange: (s: Space) => void;
+  /** 当前团队里我的网页托管角色，深色小徽章；个人空间不显示 */
+  roleLabel?: string | null;
+}) {
+  const { teams, loadTeams } = useTeamStore();
+  const [open, setOpen] = useState(false);
+  const [members, setMembers] = useState<TeamMember[]>([]);
+  const [managerOpen, setManagerOpen] = useState(false);
+  const team = current.kind === 'team' ? teams.find((t) => t.team.id === current.teamId) ?? null : null;
+
+  useEffect(() => { void loadTeams(); }, [loadTeams]);
+  useEffect(() => {
+    if (current.kind !== 'team') { setMembers([]); return; }
+    let alive = true;
+    void getTeam(current.teamId).then((r) => { if (alive && r.success) setMembers(r.data.members ?? []); });
+    return () => { alive = false; };
+  }, [current]);
+
+  const label = current.kind === 'team' ? `团队 · ${team?.team.name ?? '团队空间'}` : '个人空间';
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        data-tour-id="webpages-team-switcher"
+        onClick={() => setOpen((o) => !o)}
+        className="flex h-8 items-center gap-2 rounded-[9px] px-2.5 text-[12.5px] transition-colors"
+        style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+      >
+        {current.kind === 'team' ? <Users size={13} /> : <User size={13} />}
+        <span className="max-w-[180px] truncate">{label}</span>
+        {roleLabel && (
+          <span
+            className="rounded-[4px] px-1 text-[10px] uppercase"
+            style={{ fontFamily: 'var(--font-code)', color: 'var(--accent-fg-success)', border: '1px solid rgba(34,197,94,0.35)' }}
+          >
+            {roleLabel}
+          </span>
+        )}
+        {members.length > 0 && (
+          <span className="flex items-center">
+            {members.slice(0, 3).map((m, i) => (
+              <UserAvatar
+                key={m.userId}
+                src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })}
+                className="h-[19px] w-[19px] rounded-full"
+                style={{ border: '1.5px solid var(--bg-elevated)', marginLeft: i === 0 ? 0 : -6 }}
+              />
+            ))}
+            {members.length > 3 && (
+              <span
+                className="flex h-[19px] items-center justify-center rounded-full px-1 text-[9px]"
+                style={{ background: 'var(--avatar-bg-neutral)', color: 'var(--text-secondary)', border: '1.5px solid var(--bg-elevated)', marginLeft: -6 }}
+              >
+                +{members.length - 3}
+              </span>
+            )}
+          </span>
+        )}
+        <ChevronDown size={12} style={{ color: 'var(--text-tertiary)' }} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[60]" onClick={() => setOpen(false)} />
+          <div
+            className="absolute left-0 top-[36px] z-[61] w-[240px] rounded-[12px] p-1.5"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', boxShadow: '0 18px 40px rgba(0,0,0,0.5)' }}
+          >
+            <button
+              type="button"
+              onClick={() => { onChange({ kind: 'personal' }); setOpen(false); }}
+              className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2 text-[12.5px]"
+              style={current.kind === 'personal'
+                ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
+                : { color: 'var(--text-primary)' }}
+            >
+              <User size={13} /> 个人空间
+            </button>
+            {teams.map((t) => (
+              <button
+                key={t.team.id}
+                type="button"
+                onClick={() => { onChange({ kind: 'team', teamId: t.team.id }); setOpen(false); }}
+                className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2 text-[12.5px]"
+                style={current.kind === 'team' && current.teamId === t.team.id
+                  ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
+                  : { color: 'var(--text-primary)' }}
+              >
+                <Users size={13} />
+                <span className="flex-1 truncate text-left">{t.team.name}</span>
+                <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{t.memberCount} 人</span>
+              </button>
+            ))}
+            {team?.myRole === 'admin' && (
+              <>
+                <div className="my-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+                <button
+                  type="button"
+                  onClick={() => { setManagerOpen(true); setOpen(false); }}
+                  className="flex h-8 w-full items-center gap-2 rounded-[8px] px-2 text-[12.5px]"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  <UserPlus size={13} /> 成员与角色
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {managerOpen && current.kind === 'team' && (
+        <TeamManagerPanel initialTeamId={current.teamId} onClose={() => { setManagerOpen(false); void loadTeams(true); }} />
+      )}
+    </div>
+  );
+}
+
+/**
  * 空间切换的竖排形态（设计稿屏 1·A 左栏「空间」节）：个人空间 + 每个团队各占一行，
  * 右侧带成员数，行内「+」新建/加入。与横排 SpaceBar 同一套 createTeam/joinTeam 行为，
  * 只是换了摆法 —— 桌面走这一份（常驻左栏），移动端筛选抽屉仍用横排那份。
@@ -238,55 +368,53 @@ export function SpaceRailSection({
   current,
   onChange,
   personalCount,
+  teamCount,
   hint,
 }: {
   current: Space;
   onChange: (s: Space) => void;
   /** 个人空间的站点数；拿不到就不显示数字，不编 */
   personalCount?: number | null;
+  /** 团队空间的站点数（当前团队）；拿不到就不显示 */
+  teamCount?: number | null;
   hint?: string;
 }) {
   const { teams, loadTeams } = useTeamStore();
-  const [adding, setAdding] = useState(false);
-  const [addValue, setAddValue] = useState('');
-  const [addBusy, setAddBusy] = useState(false);
 
   useEffect(() => { void loadTeams(); }, [loadTeams]);
 
-  const submitAdd = async () => {
-    const v = addValue.trim();
-    if (!v || addBusy) return;
-    setAddBusy(true);
-    const res = /^INV-/i.test(v) ? await joinTeam(v) : await createTeam({ name: v });
-    setAddBusy(false);
-    if (!res.success) {
-      toast.error(/^INV-/i.test(v) ? '加入失败' : '创建失败', res.error?.message);
-      return;
-    }
-    setAddValue('');
-    setAdding(false);
-    await loadTeams(true);
-    const teamId = 'teamId' in res.data ? res.data.teamId : res.data.team.id;
-    onChange({ kind: 'team', teamId });
+  // 设计稿左栏只有两行聚合：团队空间 / 个人空间，数字都是站点数。
+  // 具体切到哪个团队走顶栏的 TeamSwitcher —— 设计稿就是这么分工的。
+  const enterTeam = () => {
+    if (current.kind === 'team') return;
+    const remembered = sessionStorage.getItem(LAST_TEAM_KEY);
+    const target = teams.find((t) => t.team.id === remembered) ?? teams[0];
+    if (target) onChange({ kind: 'team', teamId: target.team.id });
   };
 
-  // 数字要说清是什么数：个人空间那行是站点数，团队那行拿得到的只有成员数（站点数要额外一次请求，
-  // 不去猜）。所以团队行带「人」字后缀 + title，避免被读成站点数。
-  const row = (opts: { key: string; on: boolean; icon: React.ReactNode; label: string; count?: number | null; countSuffix?: string; countTitle?: string; onClick: () => void }) => (
+  const row = (opts: { key: string; on: boolean; icon: React.ReactNode; label: string; count?: number | null; disabled?: boolean; onClick: () => void }) => (
     <button
       key={opts.key}
       type="button"
+      disabled={opts.disabled}
       onClick={opts.onClick}
-      className="flex w-full items-center gap-2 rounded-[10px] px-2.5 h-9 text-[13px] transition-colors"
-      style={opts.on
-        ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-        : { background: 'transparent', border: '1px solid transparent', color: 'var(--text-primary)' }}
+      className="flex w-full items-center gap-2.5 transition-colors"
+      style={{
+        height: 34,
+        padding: '0 8px',
+        borderRadius: 'var(--radius-control)',
+        fontSize: 13,
+        cursor: opts.disabled ? 'not-allowed' : 'pointer',
+        ...(opts.on
+          ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+          : { background: 'transparent', border: '1px solid transparent', color: opts.disabled ? 'var(--text-disabled)' : 'var(--text-primary)' }),
+      }}
     >
       <span className="shrink-0 opacity-80">{opts.icon}</span>
       <span className="flex-1 truncate text-left">{opts.label}</span>
       {typeof opts.count === 'number' && (
-        <span className="shrink-0 text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }} title={opts.countTitle}>
-          {opts.count.toLocaleString()}{opts.countSuffix ?? ''}
+        <span className="shrink-0 tabular-nums" style={{ fontFamily: 'var(--font-code)', fontSize: 11, color: 'var(--text-tertiary)' }}>
+          {opts.count.toLocaleString()}
         </span>
       )}
     </button>
@@ -294,55 +422,26 @@ export function SpaceRailSection({
 
   return (
     <div data-tour-id="webpages-space-bar" className="space-y-0.5">
-      <div className="px-2.5 pb-1 text-[11px] font-semibold tracking-wide" style={{ color: 'var(--text-muted)' }}>空间</div>
+      <div className="px-2 pb-1.5" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>空间</div>
+      {row({
+        key: 'team',
+        on: current.kind === 'team',
+        icon: <Users size={13} />,
+        label: '团队空间',
+        count: current.kind === 'team' ? teamCount ?? null : null,
+        disabled: teams.length === 0,
+        onClick: enterTeam,
+      })}
       {row({
         key: 'personal',
         on: current.kind === 'personal',
         icon: <User size={13} />,
         label: '个人空间',
-        count: personalCount ?? null,
-        countTitle: '个人空间的站点数',
+        count: current.kind === 'personal' ? personalCount ?? null : null,
         onClick: () => onChange({ kind: 'personal' }),
       })}
-      {teams.map((t) => row({
-        key: t.team.id,
-        on: current.kind === 'team' && current.teamId === t.team.id,
-        icon: <Users size={13} />,
-        label: t.team.name,
-        count: t.memberCount,
-        countSuffix: ' 人',
-        countTitle: `${t.memberCount} 位成员`,
-        onClick: () => onChange({ kind: 'team', teamId: t.team.id }),
-      }))}
-      {adding ? (
-        <input
-          autoFocus
-          value={addValue}
-          disabled={addBusy}
-          onChange={(e) => setAddValue(e.target.value)}
-          placeholder="团队名称，或粘贴 INV- 邀请码"
-          className="w-full h-8 px-2.5 rounded-[8px] text-[12px] outline-none"
-          style={{ background: 'var(--bg-input)', border: '1px solid var(--selection-border)', color: 'var(--text-primary)', opacity: addBusy ? 0.6 : 1 }}
-          onBlur={() => { if (!addValue.trim()) setAdding(false); }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void submitAdd();
-            if (e.key === 'Escape') { setAdding(false); setAddValue(''); }
-          }}
-        />
-      ) : (
-        <button
-          type="button"
-          data-tour-id="webpages-space-add"
-          onClick={() => { setAdding(true); setAddValue(''); }}
-          title="新建 / 加入团队空间"
-          className="flex w-full items-center gap-2 rounded-[10px] px-2.5 h-8 text-[12px]"
-          style={{ color: 'var(--text-muted)' }}
-        >
-          <Plus size={13} /> 新建 / 加入团队空间
-        </button>
-      )}
       {hint && (
-        <div className="px-2.5 pt-1.5 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>{hint}</div>
+        <div className="px-2 pt-2" style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--text-tertiary)' }}>{hint}</div>
       )}
     </div>
   );

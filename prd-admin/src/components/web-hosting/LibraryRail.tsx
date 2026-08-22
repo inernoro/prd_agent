@@ -14,6 +14,7 @@ export function LibraryRail({
   space,
   onChangeSpace,
   personalCount,
+  teamCount,
   spaceHint,
   folders,
   activeFolder,
@@ -30,6 +31,7 @@ export function LibraryRail({
   space: Space;
   onChangeSpace: (s: Space) => void;
   personalCount?: number | null;
+  teamCount?: number | null;
   spaceHint?: string;
   /** 个人空间的文件夹清单；团队空间传 undefined，改用 teamTree */
   folders?: string[];
@@ -55,10 +57,16 @@ export function LibraryRail({
       key={key}
       type="button"
       onClick={onClick}
-      className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[12px] transition-colors"
-      style={on
-        ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-        : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+      className="inline-flex items-center gap-1 transition-colors"
+      // 设计稿的标签是 11.5px 紧凑矩形（padding 3/7、radius 6），不是全圆角高胶囊
+      style={{
+        fontSize: 11.5,
+        padding: '3px 7px',
+        borderRadius: 'var(--radius-chip)',
+        ...(on
+          ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+          : { background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }),
+      }}
     >
       {label}
       {typeof count === 'number' && <span className="tabular-nums opacity-70">{count}</span>}
@@ -68,21 +76,25 @@ export function LibraryRail({
   return (
     <aside
       data-tour-id="webpages-library-rail"
-      className="w-[236px] shrink-0 flex flex-col gap-4 rounded-xl p-3"
+      className="shrink-0 flex flex-col gap-3"
       style={{
+        // 设计稿：212px 贴边栏，靠 border-right 与内容区分隔，底色比内容区更暗一档；
+        // 不是一块带圆角的浮动卡（那会在左边留出一条与顶栏对不齐的缝）
+        width: 212,
         alignSelf: 'stretch',
         minHeight: 0,
+        padding: '14px 10px',
         overflowY: 'auto',
         overscrollBehavior: 'contain',
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border-default)',
+        background: 'var(--bg-rail)',
+        borderRight: '1px solid var(--border-subtle)',
       }}
     >
-      <SpaceRailSection current={space} onChange={onChangeSpace} personalCount={personalCount} hint={spaceHint} />
+      <SpaceRailSection current={space} onChange={onChangeSpace} personalCount={personalCount} teamCount={teamCount} hint={spaceHint} />
 
       <div className="space-y-1">
         <div className="flex h-6 items-center justify-between px-1">
-          <span className="text-[11px] font-semibold tracking-wide" style={{ color: 'var(--text-muted)' }}>分组</span>
+          <span style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>分组</span>
           {filterCount > 0 && (
             <button
               type="button"
@@ -136,7 +148,7 @@ export function LibraryRail({
 
       {tags.length > 0 && (
         <div className="space-y-1.5">
-          <div className="px-1 text-[11px] font-semibold tracking-wide" style={{ color: 'var(--text-muted)' }}>标签</div>
+          <div className="px-2" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>标签</div>
           <div className="flex flex-wrap gap-1.5">
             {shownTags.map((t) => chip(t.tag, t.count, activeTag === t.tag, () => onTag(activeTag === t.tag ? null : t.tag), t.tag))}
             {restTags > 0 && (

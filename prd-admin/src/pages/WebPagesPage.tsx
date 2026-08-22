@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
-import { PageHeader } from '@/components/design/PageHeader';
 import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
@@ -41,7 +40,7 @@ import {
   canEditInWebHosting,
   canShareInWebHosting,
 } from '@/lib/webHostingRole';
-import { SpaceBar, TeamSpaceHeader, readLastSpace, rememberSpace, type Space } from '@/components/team/SpaceBar';
+import { SpaceBar, TeamSpaceHeader, TeamSwitcher, readLastSpace, rememberSpace, type Space } from '@/components/team/SpaceBar';
 import { GroupAccessDialog } from '@/components/team/GroupAccessDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
@@ -59,13 +58,15 @@ import { buildShareLedger } from '@/components/web-hosting/shareLedger';
 import { SITE_SOURCE_LABELS } from '@/components/web-hosting/siteFormRegistry';
 import {
   buildSiteGroups,
-  availableGroupModes,
+  ALL_GROUP_MODES,
+  groupModeAvailability,
   normalizeGroupMode,
   GROUP_MODE_LABELS,
   type GroupMode,
 } from '@/components/web-hosting/siteGrouping';
 import { buildLibraryHeadline, countRecent } from '@/components/web-hosting/libraryHeadline';
 import { LibraryRail } from '@/components/web-hosting/LibraryRail';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import {
   SiteCard,
   SITE_CARD_SIZES,
@@ -813,10 +814,14 @@ export default function WebPagesPage() {
   const renderGroupItems = (items: HostedSite[]) =>
     viewMode === 'grid' ? (
       <div
-        className="grid gap-3"
+        className="grid"
         style={{
-          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), ${cardWidth}px))`,
-          justifyContent: isMobile ? 'stretch' : 'center',
+          // 设计稿：minmax(236px,1fr) 拉伸铺满 + gap 14 + 左对齐。
+          // 固定轨道 + 居中会让卡片左缘与上方结论行错开、右侧留一条死区。
+          gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), 1fr))`,
+          justifyContent: isMobile ? 'stretch' : 'start',
+          alignContent: 'start',
+          gap: isMobile ? 12 : 14,
         }}
       >
         {items.map(site => (
@@ -867,6 +872,226 @@ export default function WebPagesPage() {
         ))}
       </div>
     );
+
+  // 桌面工具条（设计稿屏 1·A）：它属于中列，挂在左栏右侧、内容区上方，不是通栏
+  // 顶栏（设计稿屏 1·A）：52px 通栏贴边条，左端品牌，中段语境两档 + 访客预览 + 团队切换器。
+  // 主题切换与头像留在全局左侧栏（那是应用外壳的，不是本模块的），这一处与设计稿不同，已记进偏差台账。
+  const desktopTopBar = (
+    <div
+      data-tour-id="webpages-header-actions"
+      className="flex shrink-0 items-center gap-3.5"
+      style={{ height: 52, padding: '0 18px', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border-subtle)' }}
+    >
+      <div className="flex items-center gap-2">
+        <Globe size={15} style={{ color: 'var(--accent-primary)' }} />
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
+          网页托管
+        </span>
+      </div>
+                {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
+                <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
+                  <button
+                    type="button"
+                    data-tour-id="webpages-tab-library"
+                    onClick={() => setWorkspaceTab('library')}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
+                    style={workspaceTab === 'library'
+                      ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
+                      : { color: 'var(--text-muted)' }}
+                  >
+                    <FolderOpen size={13} /> 资产库
+                  </button>
+                  <button
+                    type="button"
+                    data-tour-id="webpages-tab-shares"
+                    onClick={() => setWorkspaceTab('shares')}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
+                    style={workspaceTab === 'shares'
+                      ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
+                      : { color: 'var(--text-muted)' }}
+                  >
+                    <Link2 size={13} /> 分享
+                    {/* 设计稿写的是「分享 有效 7」：数字要说清是哪一档，否则用户不知道过期的算不算 */}
+                    <span className="text-[10px] opacity-70">有效</span>
+                    <span className="tabular-nums opacity-90">{activeShareCount}</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  data-tour-id="webpages-guest-preview"
+                  onClick={() => { if (contextSite) handleVisitSite(contextSite); }}
+                  disabled={!contextSite}
+                  title={contextSite ? `以访客身份打开「${contextSite.title}」` : '先选一个站点'}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors disabled:opacity-40"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                >
+                  <Eye size={13} /> 以访客身份预览
+                </button>
+      <span className="h-[22px] w-px" style={{ background: 'var(--border-subtle)' }} />
+      <TeamSwitcher
+        current={currentSpace}
+        onChange={enterSpace}
+        roleLabel={currentSpace.kind === 'team' ? myWebHostingRole : null}
+      />
+      <div className="ml-auto flex items-center gap-2">
+        <TipsEntryButton compact />
+      </div>
+    </div>
+  );
+
+  const desktopToolbar = (
+            <>
+              {/*
+                桌面工具条（设计稿屏 1·A）：搜索 → 组织方式四档 → 显示 → 视图 → 上传。
+                「我在看哪一批」（空间 / 分组 / 标签）搬去常驻左栏 LibraryRail：
+                那是定位信息，用户全程都得看得见，收进气泡等于每次都要点开才知道自己在哪。
+                留在这一行的是「怎么看」与「加东西」。
+              */}
+              <div className="surface-nav-bar flex items-center gap-3" style={{ overflow: 'visible' }}>
+                <div className="relative shrink-0" style={{ width: 280 }}>
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
+                  <input
+                    type="text"
+                    placeholder="搜索标题、描述、标签"
+                    value={keyword}
+                    onChange={e => setKeyword(e.target.value)}
+                    className="w-full outline-none"
+                    style={{
+                      height: 34, padding: '0 34px 0 32px', borderRadius: 'var(--radius-field)', fontSize: 13,
+                      background: 'var(--bg-input)', color: 'var(--text-primary)',
+                      border: '1px solid var(--border-subtle)', boxShadow: 'var(--shadow-input-inset)',
+                    }}
+                  />
+                  {/* 设计稿右端的 `/` 快捷键提示片 */}
+                  <span
+                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
+                    style={{ fontFamily: 'var(--font-code)', fontSize: 10, padding: '0 4px', borderRadius: 'var(--radius-2xs)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
+                  >
+                    /
+                  </span>
+                </div>
+
+                <div
+                  data-tour-id="webpages-group-pills"
+                  className="flex shrink-0 items-center"
+                  style={{ padding: 3, gap: 2, borderRadius: 'var(--radius-control)', background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}
+                >
+                  {ALL_GROUP_MODES.map((m) => {
+                    const avail = groupModeAvailability(m, currentSpace.kind);
+                    const on = groupMode === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        disabled={!avail.ok}
+                        title={avail.reason}
+                        onClick={() => setGroupMode(m)}
+                        className="flex items-center whitespace-nowrap transition-colors"
+                        style={{
+                          height: 26, padding: '0 11px', borderRadius: 'var(--radius-pill)', fontSize: 12.5,
+                          cursor: avail.ok ? 'pointer' : 'not-allowed',
+                          ...(on
+                            ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)', fontWeight: 600 }
+                            : { background: 'transparent', color: avail.ok ? 'var(--text-muted)' : 'var(--text-disabled)' }),
+                        }}
+                      >
+                        {GROUP_MODE_LABELS[m]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+
+                <ToolbarPopover
+                  label="显示"
+                  summary={`${activeSortLabel} · ${CARD_SIZE_OPTIONS.find((o) => o.value === cardSize)?.label ?? '中'}`}
+                  tourId="webpages-display-popover"
+                  open={openToolbarPanel === 'display'}
+                  onOpenChange={(v) => setOpenToolbarPanel(v ? 'display' : null)}
+                >
+                  <div className="space-y-3" style={{ minWidth: 260 }}>
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-semibold text-token-muted">排序</div>
+                      <div data-tour-id="webpages-sort-pills">
+                        <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-semibold text-token-muted">卡片尺寸</div>
+                      <div data-tour-id="webpages-card-size-pills">
+                        <SegmentPills
+                          options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+                          value={cardSize}
+                          onChange={(v) => setCardSize(normalizeCardSize(v))}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-semibold text-token-muted">来源筛选</div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {SOURCE_FILTER_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setActiveSource(activeSource === opt.value ? null : opt.value)}
+                            className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
+                            style={
+                              activeSource === opt.value
+                                ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                                : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }
+                            }
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-token-muted">偏好会被记住，下次进来沿用。</div>
+                  </div>
+                </ToolbarPopover>
+
+                <div data-tour-id="webpages-view-toggle" className="inline-flex shrink-0 items-center overflow-hidden rounded-lg border border-token-default">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('grid')}
+                    title="网格视图"
+                    aria-label="网格视图"
+                    className="h-8 w-9 inline-flex items-center justify-center transition-colors"
+                    style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
+                  >
+                    <Grid3X3 size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('list')}
+                    title="列表视图"
+                    aria-label="列表视图"
+                    className="h-8 w-9 inline-flex items-center justify-center transition-colors"
+                    style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
+                  >
+                    <List size={14} />
+                  </button>
+                </div>
+
+                {/* 上传按设计稿落在工具条右端：它是「往这批里加东西」，
+                    跟顶栏的语境切换（资产库 / 分享）不是一类动作。
+                    「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
+                {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
+                  <div className="ml-auto shrink-0">
+                    <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
+                      <Upload size={14} className="mr-1" /> 上传网页
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {currentSpace.kind === 'team' && (
+                <div className="surface-nav-bar" data-tour-id="webpages-team-space-header">
+                  <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
+                </div>
+              )}
+            </>
+  );
 
   return (
     <div
@@ -998,54 +1223,6 @@ export default function WebPagesPage() {
           ]}
         />
       )}
-      {!isMobile && (
-        <PageHeader
-          title="网页托管"
-          actions={
-            <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5">
-              {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
-              <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
-                <button
-                  type="button"
-                  data-tour-id="webpages-tab-library"
-                  onClick={() => setWorkspaceTab('library')}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
-                  style={workspaceTab === 'library'
-                    ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
-                    : { color: 'var(--text-muted)' }}
-                >
-                  <FolderOpen size={13} /> 资产库
-                </button>
-                <button
-                  type="button"
-                  data-tour-id="webpages-tab-shares"
-                  onClick={() => setWorkspaceTab('shares')}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
-                  style={workspaceTab === 'shares'
-                    ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
-                    : { color: 'var(--text-muted)' }}
-                >
-                  <Link2 size={13} /> 分享
-                  {/* 设计稿写的是「分享 有效 7」：数字要说清是哪一档，否则用户不知道过期的算不算 */}
-                  <span className="text-[10px] opacity-70">有效</span>
-                  <span className="tabular-nums opacity-90">{activeShareCount}</span>
-                </button>
-              </div>
-              <button
-                type="button"
-                data-tour-id="webpages-guest-preview"
-                onClick={() => { if (contextSite) handleVisitSite(contextSite); }}
-                disabled={!contextSite}
-                title={contextSite ? `以访客身份打开「${contextSite.title}」` : '先选一个站点'}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors disabled:opacity-40"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-              >
-                <Eye size={13} /> 以访客身份预览
-              </button>
-            </div>
-          }
-        />
-      )}
 
       {/* Toolbar（只属于资产库档；分享档有自己的三层切换与搜索） */}
       <div className="flex flex-col gap-3" style={{ display: workspaceTab === 'library' ? undefined : 'none' }}>
@@ -1100,128 +1277,7 @@ export default function WebPagesPage() {
               )}
             </div>
           </div>
-        ) : (
-          <>
-            {/*
-              桌面工具条（设计稿屏 1·A）：搜索 → 组织方式四档 → 显示 → 视图 → 上传。
-              「我在看哪一批」（空间 / 分组 / 标签）搬去常驻左栏 LibraryRail：
-              那是定位信息，用户全程都得看得见，收进气泡等于每次都要点开才知道自己在哪。
-              留在这一行的是「怎么看」与「加东西」。
-            */}
-            <div className="surface-nav-bar flex items-center gap-3" style={{ overflow: 'visible' }}>
-              <div className="relative min-w-[220px] flex-1">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
-                <input
-                  type="text"
-                  placeholder="搜索标题、描述、标签"
-                  value={keyword}
-                  onChange={e => setKeyword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
-                  style={{
-                    background: 'var(--bg-input)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-default)',
-                  }}
-                />
-              </div>
-
-              <div data-tour-id="webpages-group-pills" className="shrink-0">
-                <SegmentPills
-                  options={availableGroupModes(currentSpace.kind).map((m) => ({ value: m, label: GROUP_MODE_LABELS[m] }))}
-                  value={groupMode}
-                  onChange={(v) => setGroupMode(v as GroupMode)}
-                />
-              </div>
-
-              <div data-tour-id="webpages-view-toggle" className="inline-flex shrink-0 items-center overflow-hidden rounded-lg border border-token-default">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('grid')}
-                  title="网格视图"
-                  aria-label="网格视图"
-                  className="h-8 w-9 inline-flex items-center justify-center transition-colors"
-                  style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
-                >
-                  <Grid3X3 size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('list')}
-                  title="列表视图"
-                  aria-label="列表视图"
-                  className="h-8 w-9 inline-flex items-center justify-center transition-colors"
-                  style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
-                >
-                  <List size={14} />
-                </button>
-              </div>
-
-              <ToolbarPopover
-                label="显示"
-                tourId="webpages-display-popover"
-                open={openToolbarPanel === 'display'}
-                onOpenChange={(v) => setOpenToolbarPanel(v ? 'display' : null)}
-              >
-                <div className="space-y-3" style={{ minWidth: 260 }}>
-                  <div className="space-y-1">
-                    <div className="text-[11px] font-semibold text-token-muted">排序</div>
-                    <div data-tour-id="webpages-sort-pills">
-                      <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-[11px] font-semibold text-token-muted">卡片尺寸</div>
-                    <div data-tour-id="webpages-card-size-pills">
-                      <SegmentPills
-                        options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
-                        value={cardSize}
-                        onChange={(v) => setCardSize(normalizeCardSize(v))}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-[11px] font-semibold text-token-muted">来源筛选</div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {SOURCE_FILTER_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          onClick={() => setActiveSource(activeSource === opt.value ? null : opt.value)}
-                          className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
-                          style={
-                            activeSource === opt.value
-                              ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-                              : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }
-                          }
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-token-muted">偏好会被记住，下次进来沿用。</div>
-                </div>
-              </ToolbarPopover>
-
-              {/* 上传按设计稿落在工具条右端：它是「往这批里加东西」，
-                  跟顶栏的语境切换（资产库 / 分享）不是一类动作。
-                  「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
-              {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-                <div className="ml-auto shrink-0">
-                  <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
-                    <Upload size={14} className="mr-1" /> 上传站点
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            {currentSpace.kind === 'team' && (
-              <div className="surface-nav-bar" data-tour-id="webpages-team-space-header">
-                <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
-              </div>
-            )}
-          </>
-        )}
+        ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
           <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
@@ -1465,9 +1521,15 @@ export default function WebPagesPage() {
         </div>
       )}
 
-      {/* Content：团队空间左侧挂分组树导航（空间 → 专题 → 分类），个人空间保持原布局 */}
+      {/* 屏框（设计稿屏 1·A）：顶栏通栏 52px，其下三列贴边——左栏 212 / 中列（工具条 56 + 内容）/ 右栏 300。
+          三列之间用竖分隔线而不是间隙，工具条属于中列、不横跨左右栏。 */}
       <div
-        className={!isMobile ? 'flex items-stretch gap-4 flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}
+        className={!isMobile ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'contents'}
+        style={!isMobile ? { border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', background: 'var(--bg-base)' } : undefined}
+      >
+      {!isMobile && desktopTopBar}
+      <div
+        className={!isMobile ? 'flex items-stretch flex-1 min-h-0' : 'flex flex-col flex-1 min-h-0'}
         style={{ display: workspaceTab === 'library' ? undefined : 'none' }}
       >
         {!isMobile && (
@@ -1475,6 +1537,7 @@ export default function WebPagesPage() {
             space={currentSpace}
             onChangeSpace={enterSpace}
             personalCount={currentSpace.kind === 'personal' ? total : null}
+            teamCount={currentSpace.kind === 'team' ? total : null}
             spaceHint={`默认沿用上次停留的空间。当前显示：${activeSpaceLabel}。`}
             folders={currentSpace.kind === 'team' ? undefined : spaceFolders}
             activeFolder={activeFolder}
@@ -1514,7 +1577,19 @@ export default function WebPagesPage() {
             ) : undefined}
           />
         )}
-        <div className="flex-1 min-w-0 flex flex-col">
+        <div className="flex-1 min-w-0 flex flex-col min-h-0">
+        {!isMobile && (
+          <div
+            className="shrink-0 flex items-center gap-2.5"
+            style={{ height: 56, padding: '0 18px', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-toolbar)' }}
+          >
+            {desktopToolbar}
+          </div>
+        )}
+        <div
+          className={!isMobile ? 'flex-1 min-h-0 overflow-y-auto flex flex-col' : 'flex-1 min-h-0 flex flex-col'}
+          style={!isMobile ? { padding: '14px 18px', overscrollBehavior: 'contain' } : undefined}
+        >
       {loading && sites.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-token-muted">
           加载中...
@@ -1570,6 +1645,7 @@ export default function WebPagesPage() {
         </div>
       )}
         </div>
+        </div>
         {!isMobile && (
           <SiteContextPanel
             site={contextSite}
@@ -1581,6 +1657,7 @@ export default function WebPagesPage() {
             onRenew={(link) => { setShareTargetId(link.siteId ?? null); setShowSharesPanel(true); }}
           />
         )}
+      </div>
       </div>
 
       {/* Upload / Edit Dialog */}

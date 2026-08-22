@@ -12,6 +12,7 @@ import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 export function ToolbarPopover({
   label,
   count,
+  summary,
   open,
   onOpenChange,
   tourId,
@@ -20,6 +21,8 @@ export function ToolbarPopover({
   label: string;
   /** 生效中的条目数；>0 时按钮高亮并显示数字 */
   count?: number;
+  /** 当前值摘要（设计稿「显示 最新 · 中」）：不点开也知道现在是什么档 */
+  summary?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tourId?: string;
@@ -35,14 +38,20 @@ export function ToolbarPopover({
         type="button"
         data-tour-id={tourId}
         onClick={() => onOpenChange(!open)}
-        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors"
+        className="inline-flex shrink-0 items-center gap-1.5 transition-colors"
         style={{
+          height: 34,
+          padding: '0 12px',
+          borderRadius: 'var(--radius-control)',
+          fontSize: 12.5,
+          fontWeight: 600,
           background: active ? 'var(--selection-bg)' : 'var(--bg-input)',
           border: `1px solid ${active ? 'var(--selection-border)' : 'var(--border-default)'}`,
           color: active ? 'var(--selection-text)' : 'var(--text-primary)',
         }}
       >
         {label}
+        {summary && <span style={{ fontWeight: 400, color: 'var(--text-tertiary)' }}>{summary}</span>}
         {(count ?? 0) > 0 && <span className="text-[12px] tabular-nums">{count}</span>}
         <ChevronDown size={13} style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }} />
       </button>
