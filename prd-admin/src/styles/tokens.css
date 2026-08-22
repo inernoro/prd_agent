@@ -525,8 +525,16 @@
   --table-header-bg: rgba(255, 255, 255, 0.045);
   --table-row-border: rgba(255, 255, 255, 0.08);
   --table-row-hover-bg: rgba(255, 255, 255, 0.05);
+  /*
+   * 素色材质下 legacy.css 会 `backdrop-filter: none !important` 清掉全站模糊，
+   * 半透明的划词浮层就变成「透而不糊」——正文的大标题直接从面板里穿出来
+   * （2026-08-21 设计稿并排比对时抓到：面板声明了 blur(32px)，
+   * 运行时 computed 是 none，我却按「blur 会生效」把底色降到了 93%）。
+   * 与 .prd-dialog-content 同一套处置：清了模糊就把底提到近实心。
+   * 默认材质就是 solid，所以这条才是大多数用户实际看到的那一档。
+   */
+  --selection-overlay-bg: rgba(28, 24, 24, 0.985);
 }
-
 /* 浅色模式是全站 token 的唯一覆盖层。运行时只设置 data-theme，不写颜色。 */
 [data-theme="light"] {
   color-scheme: light;
@@ -873,6 +881,17 @@
   /* 三级背景:浅色下卡片内嵌套块用极浅灰底,与外层暖纸色卡片形成层级差,
      既保持纸感又制造层级。配合 var(--hairline) 实描边强化分层。 */
   --bg-nested:        rgba(15, 23, 42, 0.025);
+}
+
+/*
+ * 浅色 + 素色材质：同上一条（清了模糊就把浮层底提到近实心），只是换成暖纸色。
+ * 位置必须留在浅色块**之后**——多条守卫用 `indexOf('[data-theme="light"]')`
+ * 切「暗色区 / 浅色区」，任何带 data-theme="light" 的复合选择器排到主块前面，
+ * 都会让它们从这一小段开始切，浅色区里剩下的 token 全部判成缺失
+ * （2026-08-21 实际撞红过三条用例）。
+ */
+[data-theme="light"][data-material="solid"] {
+  --selection-overlay-bg: rgba(252, 250, 247, 0.99);
 }
 
 /* 固定暗色可视化表面：容器声明一次，嵌套卡片沿上下文继承。

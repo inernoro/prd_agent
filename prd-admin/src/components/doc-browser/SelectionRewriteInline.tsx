@@ -5,6 +5,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSelectionRewriteActions } from './useSelectionRewriteActions';
 import {
   SELECTION_OVERLAY_CHIP,
+  SELECTION_OVERLAY_FIELD,
   SELECTION_OVERLAY_LABEL,
   SELECTION_OVERLAY_PANEL,
   SELECTION_OVERLAY_PRIMARY,
@@ -129,8 +130,8 @@ export function SelectionRewritePrompt({
             }
           }}
           placeholder="想怎么改？例：能否细化一些？"
-          className="flex-1 h-8 px-2.5 rounded-[10px] text-[12px] outline-none bg-token-nested border border-token-subtle"
-          style={{ color: 'var(--text-primary)' }}
+          className="flex-1 h-8 px-2.5 rounded-[10px] text-[12px] outline-none"
+          style={SELECTION_OVERLAY_FIELD}
         />
         <button
           onClick={send}
@@ -151,11 +152,7 @@ export function SelectionRewritePrompt({
               onClick={() => onSubmit(a.key)}
               title={a.description}
               className="h-6 px-2.5 rounded-full text-[11px] font-semibold cursor-pointer transition-colors"
-              style={{
-                background: 'var(--nested-block-bg)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-secondary)',
-              }}
+              style={SELECTION_OVERLAY_CHIP}
             >
               {a.label}
             </button>
@@ -260,8 +257,8 @@ export function InlineDiffReviewBar({
           </button>
           <button
             onClick={onDiscard}
-            className="h-6.5 px-2 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer bg-token-nested border border-token-subtle shrink-0"
-            style={{ color: 'var(--text-secondary)' }}
+            className="h-6.5 px-2 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer shrink-0"
+            style={SELECTION_OVERLAY_CHIP}
           >
             <Undo2 size={10} /> 撤销
           </button>
@@ -278,8 +275,8 @@ export function InlineDiffReviewBar({
           </span>
           <button
             onClick={onRetry}
-            className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer bg-token-nested border border-token-subtle shrink-0"
-            style={{ color: 'var(--text-secondary)' }}
+            className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer shrink-0"
+            style={SELECTION_OVERLAY_CHIP}
             title="换个说法重新改"
           >
             <RotateCcw size={11} />
@@ -287,8 +284,8 @@ export function InlineDiffReviewBar({
           <button
             onClick={onDiscard}
             disabled={applying}
-            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer bg-token-nested border border-token-subtle shrink-0 disabled:opacity-40"
-            style={{ color: 'var(--text-secondary)' }}
+            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-40"
+            style={SELECTION_OVERLAY_CHIP}
             title="丢弃这次改动，恢复原文"
           >
             <Undo2 size={11} /> 撤销

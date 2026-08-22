@@ -19,14 +19,20 @@
  * border-top 会被 border-radius 拉成一段弧线，绝对定位的子元素则要求容器 overflow:hidden，
  * 而面板里有会溢出的下拉与滚动区，裁不得。背景层天然被圆角裁剪，两个副作用都没有。
  */
+/*
+ * blur 半径比设计稿的 20px 大一档，是并排比对时改的：
+ * 稿子里那段假正文是 34% 灰，20px 就压得住；真实文档里浮层会压在白色 32px 大标题上，
+ * 20px 下大标题的笔画仍然从面板里透出来。稿子的取值在真实内容形态下不成立
+ * （复刻台账 2026-08-21，判据是并排图不是规格）。
+ */
 export const SELECTION_OVERLAY_PANEL = {
   borderRadius: 16,
   background:
     'var(--selection-overlay-accent-line) top left / 100% 2px no-repeat, var(--selection-overlay-bg)',
   border: '1px solid var(--selection-overlay-border)',
   boxShadow: 'var(--shadow-glass-dropdown)',
-  backdropFilter: 'blur(20px)',
-  WebkitBackdropFilter: 'blur(20px)',
+  backdropFilter: 'blur(32px)',
+  WebkitBackdropFilter: 'blur(32px)',
 } as const;
 
 /**
@@ -59,6 +65,16 @@ export const SELECTION_OVERLAY_CHIP = {
   background: 'var(--selection-bg)',
   border: '1px solid var(--selection-border)',
   color: 'var(--selection-text)',
+} as const;
+
+/**
+ * 浮层里的输入框。底仍走通用嵌套块（要能读清打进去的字），只把描边换成暖色淡边，
+ * 让输入框看起来是这个浮层的一部分，而不是从别处抠来贴上的中性控件。
+ */
+export const SELECTION_OVERLAY_FIELD = {
+  background: 'var(--nested-block-bg)',
+  border: '1px solid var(--selection-border)',
+  color: 'var(--text-primary)',
 } as const;
 
 /**

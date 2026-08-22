@@ -10,6 +10,7 @@ import { stripOuterFence } from './selectionEdit';
 import { useSelectionRewriteActions } from './useSelectionRewriteActions';
 import {
   SELECTION_OVERLAY_CHIP,
+  SELECTION_OVERLAY_FIELD,
   SELECTION_OVERLAY_LABEL,
   SELECTION_OVERLAY_PANEL,
   SELECTION_OVERLAY_PRIMARY,
@@ -242,8 +243,8 @@ export function SelectionAiPopover({
           }}
           disabled={busy}
           placeholder="或输入自定义指令，如：改成表格 / 翻译成英文…"
-          className="flex-1 h-7 px-2.5 rounded-[8px] text-[12px] outline-none bg-token-nested border border-token-subtle"
-          style={{ color: 'var(--text-primary)' }}
+          className="flex-1 h-7 px-2.5 rounded-[8px] text-[12px] outline-none"
+          style={SELECTION_OVERLAY_FIELD}
         />
         <button
           onClick={() => customInstruction.trim() && run('custom', customInstruction.trim())}

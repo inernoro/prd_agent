@@ -32,13 +32,12 @@ async function buildTailwindCss(): Promise<string> {
   const source = fs.readFileSync(path.join(STYLES_DIR, 'tailwind.css'), 'utf8');
   const compiled = await compile(source, {
     base: STYLES_DIR,
-    loadStylesheet: async (id: string) => ({
-      base: TW_DIR,
-      content: fs.readFileSync(
-        id === 'tailwindcss' ? path.join(TW_DIR, 'index.css') : path.join(TW_DIR, id.replace(/^\.\//, '')),
-        'utf8',
-      ),
-    }),
+    loadStylesheet: async (id: string) => {
+      const file = id === 'tailwindcss'
+        ? path.join(TW_DIR, 'index.css')
+        : path.join(TW_DIR, id.replace(/^\.\//, ''));
+      return { path: file, base: TW_DIR, content: fs.readFileSync(file, 'utf8') };
+    },
   });
   // 不传候选类名：preflight 与 :root 的 theme 变量与用了哪些工具类无关
   return compiled.build([]);

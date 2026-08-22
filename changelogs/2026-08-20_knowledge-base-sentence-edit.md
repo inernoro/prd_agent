@@ -13,3 +13,8 @@
 | polish | prd-admin | 划词工具条、选区高亮、暗色档文字选区一并从冷紫/系统蓝换成品牌暖赤陶，双主题各自成立 |
 | refactor | prd-admin | 划词浮层配色抽成共用样式模块，三个浮层不再各存一份，配色只在 tokens.css 双写 |
 | test | prd-admin | 新增字体链接线守卫（编译真实 CSS 断言最终生效值）与划词浮层配色 SSOT 守卫 |
+| fix | prd-admin | 默认「素色」材质会全站清掉模糊，划词浮层补上近实心底色兜底，正文大标题不再从面板里穿出来 |
+| polish | prd-admin | 按设计稿并排比对回改：快捷动作 chips、输入框描边、撤销与重试按钮改用品牌暖色，不再是中性灰 |
+| fix | prd-admin | tokens.css 的浅色复合选择器移到浅色块之后，避免主题守卫按 indexOf 切块时误命中 |
+| ci | prd-admin | design-replication 取证脚本默认开 ANGLE swiftshader，无头 Chromium 从此能渲染 backdrop-filter |
+| docs | prd-admin | 知识库台账记下两项本地物理无法验证的字体欠账（容器无中文字体、Google Fonts 不可达） |
