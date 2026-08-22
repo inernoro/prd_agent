@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2, ImageOff, ShieldCheck, X } from 'lucide-react';
+import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2, ImageOff, PlayCircle, ShieldCheck, X } from 'lucide-react';
 
 import { PageHeader } from '@/components/design/PageHeader';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -64,6 +64,8 @@ type RunView = {
   overwriteExisting: boolean;
   error: string | null;
   pendingSecretFields: Record<string, string[]>;
+  promotedToRunId?: string | null;
+  promotedFromRunId?: string | null;
   progress: ProgressRow[];
   createdAt?: string;
   finishedAt?: string | null;
@@ -373,6 +375,29 @@ export default function DataSyncPage() {
     setRun((prev) => (prev ? { ...prev, status: 'running', dryRun, overwriteExisting: overwrite } : prev));
   }
 
+  /**
+   * 试跑确认无误之后，就地转正成一次真跑。
+   *
+   * 原来这一步要人再跑一遍「跳过去让对方同意」——而试跑什么都没写，
+   * 让它吃掉一次批准是没道理的。转正跑的是刚才那一屏冻结下来的同一批数据，
+   * 用的是同一张票，至多一次。
+   */
+  async function promote() {
+    setBusy(true);
+    setError('');
+    const res = await apiRequest<{ runId: string }>(
+      `/api/instance-sync/runs/${encodeURIComponent(runId)}/promote`,
+      { method: 'POST', body: { overwrite } },
+    );
+    setBusy(false);
+    if (!res.success) {
+      setError(res.error?.message || '开始真的搬失败');
+      return;
+    }
+    // 换到那条真跑上去看进度。
+    setSearchParams({ run: res.data.runId });
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <PageHeader
@@ -428,7 +453,15 @@ export default function DataSyncPage() {
             <MapSectionLoader text="正在向源站清点数据…" />
           )
         ) : (
-          <ProgressCard run={run} totals={totals} onBack={() => setSearchParams({})} />
+          <ProgressCard
+            run={run}
+            totals={totals}
+            overwrite={overwrite}
+            onOverwriteChange={setOverwrite}
+            busy={busy}
+            onPromote={promote}
+            onBack={() => setSearchParams({})}
+          />
         )}
         </div>
       </div>
@@ -859,6 +892,10 @@ function PlanCard({
 function ProgressCard({
   run,
   totals,
+  overwrite,
+  onOverwriteChange,
+  busy,
+  onPromote,
   onBack,
 }: {
   run: RunView;
@@ -866,9 +903,15 @@ function ProgressCard({
     fetched: number; inserted: number; skipped: number; updated: number;
     plannedInsert: number; plannedUpdate: number; total: number; doneCount: number;
   };
+  overwrite: boolean;
+  onOverwriteChange: (next: boolean) => void;
+  busy: boolean;
+  onPromote: () => void;
   onBack: () => void;
 }) {
   const finished = TERMINAL.has(run.status);
+  // 试跑跑完且成功、还没转正过 —— 这时候才该出现「开始真的搬」。
+  const canPromote = finished && run.status === 'succeeded' && run.dryRun && !run.promotedToRunId;
   const pendingSecrets = Object.entries(run.pendingSecretFields || {});
   // 资产地址：改写了几条、还有几条认不出。两个数字一起看才说得清「附件能不能打开」。
   const assetsRebased = run.progress.reduce((n, row) => n + (row.assetUrlsRebased || 0), 0);
@@ -991,6 +1034,57 @@ function ProgressCard({
               </li>
             ))}
           </ul>
+        </Card>
+      ) : null}
+
+      {canPromote ? (
+        <Card>
+          <div className="flex items-center gap-2">
+            <PlayCircle size={18} style={{ color: 'var(--accent-primary)' }} />
+            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+              试跑完了，要真的搬吗
+            </h2>
+          </div>
+          {/*
+            这一步以前要人再去源站点一次同意——而试跑什么都没写，让它吃掉一次批准
+            是没道理的，真实迁移两次卡死在这里。现在同一次同意里就能接着搬。
+            但必须说清楚「搬的还是刚才那一份」，否则用户会以为它会重新去问源站要最新数据。
+          */}
+          <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            上面这份就是会写进来的内容，
+            <span style={{ color: 'var(--text-primary)' }}>真的搬只会照着它执行，不会重新去源站取一份新的</span>
+            。用的还是刚才那次授权，不需要再跳过去同意一遍。这次授权只能这么用一次。
+          </p>
+          <label className="mt-3 flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <input
+              type="checkbox"
+              checked={overwrite}
+              disabled={busy}
+              onChange={(e) => onOverwriteChange(e.target.checked)}
+            />
+            本地已有的同一条记录也用源站的覆盖掉（不勾就跳过，只补新的）
+          </label>
+          <button
+            type="button"
+            onClick={onPromote}
+            disabled={busy}
+            className="mt-4 rounded-lg px-4 py-2 text-sm font-medium"
+            style={{
+              background: 'var(--accent-primary)',
+              color: 'var(--accent-on-primary, #fff)',
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? '正在开始…' : '确认无误，开始真的搬'}
+          </button>
+        </Card>
+      ) : null}
+
+      {run.promotedToRunId ? (
+        <Card>
+          <p className="text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            这次试跑已经转正成一次真的搬。
+          </p>
         </Card>
       ) : null}
 

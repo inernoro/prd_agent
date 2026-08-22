@@ -432,6 +432,128 @@ public sealed class DataSyncConsumerController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = "running", dryRun = request.DryRun }));
     }
 
+    /// <summary>
+    /// 试跑确认无误之后，就地转正成一次真跑。
+    ///
+    /// ## 为什么需要这个端点
+    ///
+    /// 原来一条 Run 跑一次、跑完票就交还，于是「先看一眼会搬什么」要花掉一次源站批准，
+    /// 真搬得让人再去点一次同意。2026-08-21 的两次真实迁移都卡死在这一步：
+    /// 4 万多条数据读得出来，写不进去。而试跑本来就不写任何东西。
+    ///
+    /// ## 转正不等于「批准可复用」
+    ///
+    /// 三条边界把它和长期凭据区分开，缺一条都不行：
+    ///
+    /// 1. **范围不重新询问源站**：真跑照抄试跑那一屏冻结下来的 Collections /
+    ///    PlannedCollections / PlannedManifest。源站清单在这中间变了也不影响，
+    ///    跑的仍然是操作者亲眼确认过的那一份。
+    /// 2. **至多一次**：靠「PromotedToRunId 还是空的」做条件更新来保证。两个标签页
+    ///    同时点、或者手快点两下，都只会有一条真跑；重复请求返回同一个 runId。
+    /// 3. **票据没有续命**：还是原来那张，带着原来的两小时硬过期；过期了就老老实实
+    ///    要求重新授权。
+    /// </summary>
+    [HttpPost("runs/{id}/promote")]
+    public async Task<IActionResult> Promote(string id, [FromBody] DataSyncPromoteRequest request, CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
+        var run = await FindRunAsync(id, ct);
+        if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
+
+        // 已经转正过就直接把那条还回去。用户手快点了两下不该收到一个错误，
+        // 更不该产生第二条真跑。
+        if (!string.IsNullOrEmpty(run.PromotedToRunId))
+        {
+            return Ok(ApiResponse<object>.Ok(new { runId = run.PromotedToRunId, status = "running", dryRun = false }));
+        }
+        if (!run.DryRun || run.Status != "succeeded")
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_NOT_ELIGIBLE",
+                "只有跑完并且成功的试跑才能转正成真跑"));
+        }
+        if (run.PlannedCollections.Count == 0)
+        {
+            // 理论上跑成功过就一定有；真为空说明这条记录不完整，宁可要求重来。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PLAN_REQUIRED",
+                "这次试跑没有留下对照表清单，无法转正，请重新授权跑一次"));
+        }
+        var token = _vault.GetExportToken(run.Id);
+        if (token is null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_EXPIRED",
+                "这次授权已经过期（或本站进程重启过），请重新授权后再跑一次"));
+        }
+
+        var child = new DataSyncRun
+        {
+            OperatorUserId = run.OperatorUserId,
+            SourceOrigin = run.SourceOrigin,
+            SourceLabel = run.SourceLabel,
+            Groups = new List<string>(run.Groups),
+            // 范围一律照抄，**不重新问源站**：真跑必须跑操作者刚才看过的那一份。
+            Collections = new List<string>(run.Collections),
+            PlannedCollections = new List<string>(run.PlannedCollections),
+            PlannedManifest = new Dictionary<string, DataSyncPlannedCollection>(run.PlannedManifest),
+            ExportTokenHash = run.ExportTokenHash,
+            ExportTokenExpiresAt = run.ExportTokenExpiresAt,
+            DryRun = false,
+            OverwriteExisting = request.Overwrite,
+            PromotedFromRunId = run.Id,
+            Status = "pending",
+        };
+        // 先落子记录再认领父记录：反过来的话，中间崩一下就会留下一个「已转正、
+        // 但那条真跑不存在」的父记录，而它再也转正不了了。这个顺序下最坏结果是
+        // 一条没人认领的 pending，由既有的过期清扫收走。
+        await _db.DataSyncRuns.InsertOneAsync(child, cancellationToken: ct);
+
+        var claimed = await _db.DataSyncRuns.UpdateOneAsync(
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                // 「还没转正过」放进过滤条件，让唯一性由数据库一次原子完成。
+                Builders<DataSyncRun>.Filter.Or(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.PromotedToRunId, null),
+                    Builders<DataSyncRun>.Filter.Eq(x => x.PromotedToRunId, string.Empty))),
+            Builders<DataSyncRun>.Update
+                .Set(x => x.PromotedToRunId, child.Id)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        if (claimed.ModifiedCount == 0)
+        {
+            // 有人抢先了。把刚插进去的这条撤掉，返回抢赢的那一条。
+            await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, ct);
+            var latest = await FindRunAsync(run.Id, ct);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                runId = latest?.PromotedToRunId ?? run.Id,
+                status = "running",
+                dryRun = false,
+            }));
+        }
+
+        // 票据转到子记录名下再从父记录摘掉：worker 只认领「本进程握着令牌」的 Run，
+        // 顺序反了会有一瞬间谁都拿不到它。
+        _vault.PutExportToken(child.Id, token, run.ExportTokenExpiresAt);
+        _vault.Forget(run.Id);
+
+        await _db.DataSyncRuns.UpdateOneAsync(
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Id, child.Id),
+                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
+            Builders<DataSyncRun>.Update
+                .Set(x => x.Status, "running")
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        _logger.LogInformation("[data-sync] Run {RunId} 试跑转正为真跑 {ChildId}", run.Id, child.Id);
+        return Ok(ApiResponse<object>.Ok(new { runId = child.Id, status = "running", dryRun = false }));
+    }
+
     [HttpGet("runs/{id}")]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
@@ -579,6 +701,10 @@ public sealed class DataSyncConsumerController : ControllerBase
         createdAt = run.CreatedAt,
         finishedAt = run.FinishedAt,
         pendingSecretFields = run.PendingSecretFields,
+        // 转正关系要送出去：界面靠它决定「确认无误，开始真的搬」这个按钮画不画、
+        // 以及跳到哪条真跑。只留在库里等于没做。
+        promotedToRunId = run.PromotedToRunId,
+        promotedFromRunId = run.PromotedFromRunId,
         progress = run.Progress.Select(kv => new
         {
             collection = kv.Key,
@@ -804,5 +930,19 @@ public sealed class DataSyncCallbackRequest
 public sealed class DataSyncStartRequest
 {
     public bool DryRun { get; set; }
+    public bool Overwrite { get; set; }
+}
+
+/// <summary>
+/// 试跑转正成真跑。
+///
+/// 这里**只有** Overwrite 一个字段，没有 DryRun：转正的定义就是「跑真的」，
+/// 给它一个可以传 true 的开关，等于让调用方把这次转正又变成一次试跑、
+/// 白白吃掉唯一那次机会。
+///
+/// 范围也不在这里传：真跑照抄试跑冻结的那一份，调用方无从改动。
+/// </summary>
+public sealed class DataSyncPromoteRequest
+{
     public bool Overwrite { get; set; }
 }

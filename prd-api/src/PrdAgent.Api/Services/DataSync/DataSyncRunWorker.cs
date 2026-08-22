@@ -285,12 +285,30 @@ public sealed class DataSyncRunWorker : BackgroundService
                     "[data-sync] Run {RunId} 跑完时发现终态已被其它部署写过（多半是被判成无心跳收了尸），保留先落的那个结局",
                     run.Id);
             }
-            // 交还令牌一律用 None，和失败/丢租约那两条路径一致。
-            // 用 ct 的话：宿主正在关停时 ct 已取消，这一句立刻失败并把取消咽掉，
-            // 下一行又把本地唯一那份令牌忘了——界面显示「成功」，而源站那张票在剩下的
-            // 两小时里仍然能导数据。作废是收尾动作，不该跟着请求生命周期一起死。
-            await ReturnExportTokenAsync(run, token, CancellationToken.None);
-            _vault.Forget(run.Id);
+            // 试跑成功之后**不作废这张票**：它还要留给「确认无误，开始真的搬」那一步。
+            //
+            // 原来试跑一跑完就交还，于是真搬必须让人再点一次源站的同意——而「看一眼
+            // 会搬什么」本来就不写任何东西，把它算成一次消耗是当初没想清楚。
+            // 2026-08-21 的两次真实迁移都卡死在这里：数据读得出来，写不进去。
+            //
+            // 留着的窗口不是新开的口子：它与「callback 建好 Run、管理员一直没点开始」
+            // 完全同形，上界同样是票据自己的两小时硬过期，源站每次请求还会重对一遍
+            // 允许名单。真跑（或试跑失败）照旧立刻交还。
+            if (run.DryRun && finished.ModifiedCount > 0)
+            {
+                _logger.LogInformation(
+                    "[data-sync] Run {RunId} 试跑完成，票据保留到转正或过期（{ExpiresAt:u}）",
+                    run.Id, run.ExportTokenExpiresAt);
+            }
+            else
+            {
+                // 交还令牌一律用 None，和失败/丢租约那两条路径一致。
+                // 用 ct 的话：宿主正在关停时 ct 已取消，这一句立刻失败并把取消咽掉，
+                // 下一行又把本地唯一那份令牌忘了——界面显示「成功」，而源站那张票在剩下的
+                // 两小时里仍然能导数据。作废是收尾动作，不该跟着请求生命周期一起死。
+                await ReturnExportTokenAsync(run, token, CancellationToken.None);
+                _vault.Forget(run.Id);
+            }
             _logger.LogInformation("[data-sync] Run {RunId} 完成（dryRun={DryRun}）", run.Id, run.DryRun);
         }
         catch (RunLeaseLostException ex)

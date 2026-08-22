@@ -733,6 +733,71 @@ public class DataSyncScopeCoverageTests
     }
 
     [Fact]
+    public void 试跑转正必须至多一次_且不重新问源站要范围()
+    {
+        // 「一次授权 = 一条 Run」原来把试跑也算成一次消耗，于是真搬要人再点一次同意——
+        // 两次真实迁移都卡死在这里。放开之后，三条边界一条都不能松，
+        // 否则它就退化成「一次批准可以反复用」，和长期凭据没区别。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var source = File.ReadAllText(path);
+
+        var promote = Regex.Match(
+            source,
+            @"HttpPost\(""runs/\{id\}/promote""\)(?<body>.*?)(?=
+    \[HttpGet)",
+            RegexOptions.Singleline);
+        Assert.True(promote.Success, "找不到转正端点了，这条守卫的前提已变");
+        var body = promote.Groups["body"].Value;
+        var flat = Regex.Replace(body, @"\s+", " ");
+
+        // 1) 至多一次：唯一性必须由数据库的条件更新保证，不能只在内存里判一下
+        //    （两个标签页同时点会各自读到「还没转正」）。
+        Assert.Contains("Filter.Eq(x => x.PromotedToRunId, null)", flat, StringComparison.Ordinal);
+        Assert.Contains(".Set(x => x.PromotedToRunId, child.Id)", flat, StringComparison.Ordinal);
+        Assert.Contains("claimed.ModifiedCount == 0", flat, StringComparison.Ordinal);
+
+        // 2) 范围照抄，**这一步根本不联系源站**。判据取「端点里没有任何出站调用」
+        //    而不是「没出现 manifest 这个词」——后者会被 PlannedManifest 这个
+        //    正是我们要照抄的字段命中，是一条自相矛盾的断言（第一版就这么红的）。
+        Assert.DoesNotContain("_httpClientFactory", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/instance-sync/export", body, StringComparison.Ordinal);
+        foreach (var copied in new[] { "PlannedCollections =", "PlannedManifest =", "Collections =" })
+        {
+            Assert.Contains(copied, flat, StringComparison.Ordinal);
+        }
+
+        // 3) 只有跑完并且成功的试跑才配转正。少了这一条，一次失败的、甚至正在跑的
+        //    试跑也能转正，跑的就是一份没被确认过的清单。
+        Assert.Contains("!run.DryRun || run.Status != \"succeeded\"", flat, StringComparison.Ordinal);
+
+        // 4) 票据不续命：过期就要求重新授权，不许在这里重签。
+        Assert.Contains("_vault.GetExportToken(run.Id)", flat, StringComparison.Ordinal);
+        Assert.Contains("ExportTokenExpiresAt = run.ExportTokenExpiresAt", flat, StringComparison.Ordinal);
+
+        // 5) 转正请求里不许有 DryRun 开关——给了它，调用方就能把唯一那次转正
+        //    又变成一次试跑，白白吃掉机会。
+        var promoteRequest = Regex.Match(
+            source, @"class DataSyncPromoteRequest\s*\{(?<body>[^}]*)\}", RegexOptions.Singleline);
+        Assert.True(promoteRequest.Success, "找不到转正请求类型了");
+        Assert.DoesNotContain("DryRun", promoteRequest.Groups["body"].Value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 试跑成功不许交还票据_真跑和失败必须交还()
+    {
+        // 票留着，「确认无误，开始真的搬」才点得动。这一条删掉之后转正端点会一直报
+        // 「授权已过期」，而那句话听起来像环境问题，没人会想到是这里把票还回去了。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Services", "DataSync", "DataSyncRunWorker.cs");
+        var worker = File.ReadAllText(path);
+        var flat = Regex.Replace(worker, @"\s+", " ");
+
+        Assert.Contains("if (run.DryRun && finished.ModifiedCount > 0)", flat, StringComparison.Ordinal);
+        // 失败那条路径照旧立刻交还——试跑没成功就没有可确认的清单，票不该留着。
+        Assert.Contains("_vault.Forget(run.Id);", worker, StringComparison.Ordinal);
+        Assert.Contains("ReturnExportTokenAsync", worker, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 资产地址改写必须接在入库之前()
     {
         // 这是一条**接线**守卫，不是行为守卫：把 RebaseIncoming 整个删掉，
