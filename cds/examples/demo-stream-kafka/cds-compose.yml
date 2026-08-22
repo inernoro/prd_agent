@@ -33,7 +33,10 @@ services:
   # Single-node Kafka in KRaft mode (no Zookeeper). The broker is both
   # controller and broker; internal clients reach it at kafka:9092 and must
   # authenticate with SASL/PLAIN — CDS 的基础设施认证门禁不再接受裸 PLAINTEXT
-  # 的客户端监听器（见 doc/debt.cds.md E49）。CONTROLLER 监听器保持 PLAINTEXT：
+  # 的客户端监听器（见 doc/debt.cds.md E49）。客户端监听器叫 CLIENT 而不是
+  # SASL_PLAINTEXT：镜像把 env 名里的下划线全部转成点，监听器名带下划线时
+  # JAAS 那条 env 表达不出正确的属性名，容器会以 `!1: unbound variable` 起不来。
+  # CONTROLLER 监听器保持 PLAINTEXT：
   # 它只在 9093 上、只被本节点自己用，从不对外发布。
   # JAAS 里的值一律不加双引号：CDS 拼 docker run 时 env 走 -e "K=V" 且不转义
   # 值里的双引号，加了引号容器起不来（见 E50）。
@@ -45,14 +48,14 @@ services:
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_LISTENERS: "SASL_PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
-      KAFKA_ADVERTISED_LISTENERS: "SASL_PLAINTEXT://kafka:9092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "SASL_PLAINTEXT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_LISTENERS: "CLIENT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "CLIENT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "SASL_PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "CLIENT"
       KAFKA_SASL_ENABLED_MECHANISMS: "PLAIN"
       KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: "PLAIN"
-      KAFKA_LISTENER_NAME_SASL_PLAINTEXT_PLAIN_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.plain.PlainLoginModule required username=app password=demokafkapw user_app=demokafkapw;"
+      KAFKA_LISTENER_NAME_CLIENT_PLAIN_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.plain.PlainLoginModule required username=app password=demokafkapw user_app=demokafkapw;"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"

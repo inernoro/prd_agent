@@ -415,14 +415,30 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     volumePaths: ['/var/lib/kafka/data'],
     secretKeys: ['password'],
     /**
-     * KRaft 单节点，客户端监听器走 **SASL_PLAINTEXT + PLAIN**。
+     * KRaft 单节点，客户端监听器叫 **CLIENT**，协议是 SASL_PLAINTEXT + PLAIN。
      *
      * 原来客户端监听器是裸 PLAINTEXT：连上 9092 就能建 topic、读全部消息。
      *
-     * 三处必须同时改，少一处就是「配了但没生效」（形状 8）：
-     * 监听器协议（LISTENERS）、协议映射（SECURITY_PROTOCOL_MAP）、以及**自我广播地址**
-     * （ADVERTISED_LISTENERS）——广播地址里若还写着 `PLAINTEXT://`，客户端拿到的
-     * 重定向仍指向明文协议，SASL 等于没开。暴露面自检的判据也盯着这一条。
+     * ## 监听器为什么叫 CLIENT，不叫 SASL_PLAINTEXT
+     *
+     * 2026-08-21 真容器实测抓到的：上一版把监听器**名字**也写成 `SASL_PLAINTEXT`，
+     * 于是 JAAS 那条 env 只能叫 `KAFKA_LISTENER_NAME_SASL_PLAINTEXT_PLAIN_SASL_JAAS_CONFIG`。
+     * 镜像把 env 转成配置项的规则是「去掉 KAFKA_ 前缀、剩下的下划线**全部**变成点」，
+     * 所以它得到的是 `listener.name.sasl.plaintext.plain...`，而正确的属性名是
+     * `listener.name.sasl_plaintext.plain...`（监听器名里那个下划线要保留）。
+     * 名字对不上，镜像的 configure 脚本在 SASL 分支里查不到该有的变量，
+     * 直接 `!1: unbound variable` 退出——**容器根本起不来**。
+     *
+     * 监听器名字是我们自己取的，那就取一个不带下划线的：`CLIENT`。
+     * 名字与协议解耦之后，env→属性的转换不再有歧义。
+     *
+     * ## 三处必须同时改，少一处就是「配了但没生效」（形状 8）
+     *
+     * 监听器（LISTENERS）、协议映射（SECURITY_PROTOCOL_MAP）、**自我广播地址**
+     * （ADVERTISED_LISTENERS）。广播地址是客户端真正拿去连的那一个，它指向的监听器
+     * 若在映射里是 PLAINTEXT，SASL 就等于没开。暴露面自检的判据现在是**顺着映射解析**
+     * 出广播监听器的真实协议，而不是看广播地址的字面前缀——名字可以随便取，
+     * 只看字面就又是一次「读到的不是生效的那个值」。
      *
      * CONTROLLER 监听器保持 PLAINTEXT：它只在 9093 上、只被本节点自己用，
      * 从不发布到宿主；给它套 SASL 只会在单节点自举时增加失败面。
@@ -440,14 +456,14 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
         env: {
           KAFKA_NODE_ID: '1',
           KAFKA_PROCESS_ROLES: 'broker,controller',
-          KAFKA_LISTENERS: 'SASL_PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093',
-          KAFKA_ADVERTISED_LISTENERS: 'SASL_PLAINTEXT://kafka:9092',
+          KAFKA_LISTENERS: 'CLIENT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093',
+          KAFKA_ADVERTISED_LISTENERS: 'CLIENT://kafka:9092',
           KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER',
-          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT',
-          KAFKA_INTER_BROKER_LISTENER_NAME: 'SASL_PLAINTEXT',
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,CLIENT:SASL_PLAINTEXT',
+          KAFKA_INTER_BROKER_LISTENER_NAME: 'CLIENT',
           KAFKA_SASL_ENABLED_MECHANISMS: 'PLAIN',
           KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: 'PLAIN',
-          KAFKA_LISTENER_NAME_SASL_PLAINTEXT_PLAIN_SASL_JAAS_CONFIG: jaas,
+          KAFKA_LISTENER_NAME_CLIENT_PLAIN_SASL_JAAS_CONFIG: jaas,
           KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093',
           KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1',
           KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '1',
@@ -479,14 +495,29 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     labels: { 'cds.no-http-readiness': 'true' },
     secretKeys: ['password'],
     /**
-     * NATS 默认**任何人都能连、能订阅任何主题**。开认证只要 `--user/--pass`。
+     * NATS 默认**任何人都能连、能订阅任何主题**。开认证只要一个 authorization 块。
      *
-     * 麻烦在口令怎么送进去：这个镜像的 ENTRYPOINT 是 `/nats-server` 这个二进制**本身**，
-     * 没有 shell，`$NATS_PASSWORD` 不会被展开——直接写 `--pass <明文>` 就把口令摆进了
-     * 容器 argv，宿主 `ps` 一眼看见（redis 预设当初拒绝的正是这种写法）。所以把
-     * entrypoint 覆盖成 `sh`，在容器内展开后再 `exec` 回二进制。
+     * ## 口令为什么不能走 `--pass`
      *
-     * 二进制路径两种都试：官方镜像放在 `/nats-server`，但别的 tag / 派生镜像可能只在
+     * 2026-08-21 真容器实测抓到的：上一版写的是
+     * `sh -c 'exec /nats-server --user "$NATS_USER" --pass "$NATS_PASSWORD"'`。
+     * 那个 `sh -c` 只挡住了**宿主**这一侧（docker run 的命令行、docker inspect 的
+     * Config.Cmd 里只有变量名）——可它 `exec` 出去的那一刻，展开后的明文就成了
+     * nats-server 自己的 argv，容器里 `/proc/1/cmdline` 一读就是
+     * `nats-server --user app --pass <明文>`，宿主 `ps` 同样看得见（runc 下容器进程
+     * 就在宿主进程表里）。
+     *
+     * redis 那边同样写法之所以没事，是因为 **redis-server 会改写自己的 argv**
+     * （`set-proc-title yes`，见 debt.cds.md E34）。那是 redis 的特性，不是这套写法的
+     * 保证——我把一个特例当成了通则。nats-server 不做这件事。
+     *
+     * ## 现在怎么做
+     *
+     * 在容器里先写一份只有本进程读得到的配置（`chmod 600`），再 `-c` 加载它。
+     * argv 里只剩配置文件路径，口令留在容器内的文件里——和 memcached 的 `-Y`
+     * 同一套做法，那一条真容器实测是过的。
+     *
+     * 二进制路径两种都试：官方镜像放在 `/nats-server`，别的 tag / 派生镜像可能只在
      * PATH 里。写死一个路径，换个 tag 就是「容器起不来」而不是「认证没生效」。
      *
      * **代价**：覆盖 entrypoint 之后镜像默认的 `nats-server.conf` 不再加载。那份配置
@@ -495,8 +526,12 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
      */
     entrypoint: 'sh',
     command: ['-c',
-      'if [ -x /nats-server ]; then exec /nats-server --user "$NATS_USER" --pass "$NATS_PASSWORD";'
-      + ' else exec nats-server --user "$NATS_USER" --pass "$NATS_PASSWORD"; fi'],
+      'set -e;'
+      + ' printf "authorization { user: \\"%s\\", password: \\"%s\\" }\\n"'
+      + ' "$NATS_USER" "$NATS_PASSWORD" > /tmp/cds-nats.conf;'
+      + ' chmod 600 /tmp/cds-nats.conf;'
+      + ' if [ -x /nats-server ]; then exec /nats-server -c /tmp/cds-nats.conf;'
+      + ' else exec nats-server -c /tmp/cds-nats.conf; fi'],
     build: (s) => ({
       env: {
         NATS_USER: 'app',

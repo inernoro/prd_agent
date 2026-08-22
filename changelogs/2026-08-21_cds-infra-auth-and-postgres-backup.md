@@ -8,3 +8,7 @@
 | chore | cds | cdscli 的 nats 模板与 demo-events-nats / demo-stream-kafka 两个示例工程同步改成带认证 |
 | docs | cds | debt.cds.md 新增 E48（postgres 备份缺口）、E49（三个预设无认证 + 门禁缺口）、E50（docker run 的 env 值不转义双引号），E16 结项 |
 | test | cds | 补 postgres 备份的真容器用例：起库塞数据 → 导出 → gzip -t → 清库 → 灌回 → 比对行数，外加守 ON_ERROR_STOP 的「坏 dump 必须失败」一条 |
+| fix | cds | nats 口令不再进容器 argv：改为容器内写 chmod 600 的 authorization 配置再 -c 加载（真容器实测抓到，sh -c 只挡住宿主那一侧） |
+| fix | cds | kafka 监听器改名 CLIENT：名字带下划线时镜像的 env→属性转换表达不出 JAAS 属性名，容器 `!1: unbound variable` 起不来 |
+| fix | cds | kafka 认证判据改为顺着 security.protocol.map 解析生效协议，不再看广播地址的字面前缀（改个名就能骗过） |
+| fix | cds | 真容器测试补上镜像拉不到时的跳过原因，不再静默 skip |

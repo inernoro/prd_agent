@@ -13,8 +13,12 @@ import { getInfraCatalogEntry, type InfraCatalogEntry } from '../../src/services
  *   memcache 用户读得到。文件权限差一位，容器就是起不来或者认证没生效。
  * - kafka：SASL 机制开了，但只要**自我广播地址**还写着 `PLAINTEXT://`，
  *   客户端拿到的重定向仍指向明文协议——「配了但不生效」的典型（形状 8）。
- * - nats：官方镜像的 ENTRYPOINT 是二进制本身。我们把它覆盖成 sh 好让口令在容器内
- *   展开，但这也意味着**二进制路径写死错了就完全起不来**，而这在源码里看不出来。
+ * - nats：官方镜像的 ENTRYPOINT 是二进制本身，没有 shell。上一版用 `sh -c` 包一层再
+ *   `exec ... --pass "$NATS_PASSWORD"`，以为口令就藏住了——**真容器当场证伪**：
+ *   exec 之后展开的明文就是 nats-server 自己的 argv，`/proc/1/cmdline` 一读就有。
+ *   （redis 同样写法没事，是因为它自己改写 argv，那是特例不是通则。）
+ *   现在改成写配置文件再 `-c` 加载，而「二进制路径写死错了就完全起不来」这一层
+ *   仍然只有真容器能发现。
  *
  * 无 docker 的环境跳过，但**打印跳过原因**——一条静默空跑的绿灯比没有测试更糟，
  * 它会让人以为这件事已经验过了。
@@ -44,12 +48,33 @@ function imageAvailable(image: string): boolean {
 }
 
 const DOCKER_OK = dockerAvailable();
-if (!DOCKER_OK) {
-  console.warn(
-    '[infra-auth-presets] 跳过真容器判据：本机没有可用的 docker daemon。'
-    + ' memcached / kafka / nats 三个预设的认证**本次未验证**——'
-    + '「命令里写了 --pass」不等于「服务真的在校验口令」。',
-  );
+
+/**
+ * 「这一条到底跑没跑」必须有声音。
+ *
+ * 上一版只在 daemon 不可用时打印跳过原因，镜像拉不到那一档直接落进
+ * `describe.skipIf(...)` **静默跳过**。2026-08-21 首轮实测就撞上：本机缺 docker
+ * 凭据助手拉不到镜像，输出是干干净净的 `3 skipped`，一句原因都没有——
+ * 一条静默空跑的绿灯比没有测试更糟，它会让人以为这件事已经验过了。
+ *
+ * 现在每个镜像各判一次并各自出声，跳过原因说清是哪一档。
+ */
+function readiness(label: string, image: string): boolean {
+  if (!DOCKER_OK) {
+    console.warn(
+      `[infra-auth-presets] 跳过 ${label} 的真容器判据：本机没有可用的 docker daemon。`
+      + '**本次未验证**——「命令里写了 --pass」不等于「服务真的在校验口令」。',
+    );
+    return false;
+  }
+  if (!imageAvailable(image)) {
+    console.warn(
+      `[infra-auth-presets] 跳过 ${label} 的真容器判据：拉不到镜像 ${image}`
+      + '（daemon 是通的，多半是缺凭据助手或网络受限）。**本次未验证**。',
+    );
+    return false;
+  }
+  return true;
 }
 
 const PASSWORD = 'a1b2c3d4e5f60718';
@@ -98,7 +123,7 @@ const MEMCACHED = getInfraCatalogEntry('memcached')!;
 const NATS = getInfraCatalogEntry('nats')!;
 const KAFKA = getInfraCatalogEntry('kafka')!;
 
-describe.skipIf(!DOCKER_OK || !imageAvailable(MEMCACHED.dockerImage))('memcached 预设：真容器', () => {
+describe.skipIf(!readiness('memcached', MEMCACHED.dockerImage))('memcached 预设：真容器', () => {
   const name = `cds-memcached-auth-${Date.now()}`;
   afterAll(() => {
     try { execSync(`docker rm -f ${name}`, { stdio: 'ignore', timeout: 15_000 }); } catch { /* 没起来过 */ }
@@ -130,7 +155,7 @@ describe.skipIf(!DOCKER_OK || !imageAvailable(MEMCACHED.dockerImage))('memcached
   }, 180_000);
 });
 
-describe.skipIf(!DOCKER_OK || !imageAvailable(NATS.dockerImage))('nats 预设：真容器', () => {
+describe.skipIf(!readiness('nats', NATS.dockerImage))('nats 预设：真容器', () => {
   const name = `cds-nats-auth-${Date.now()}`;
   afterAll(() => {
     try { execSync(`docker rm -f ${name}`, { stdio: 'ignore', timeout: 15_000 }); } catch { /* 没起来过 */ }
@@ -148,6 +173,11 @@ describe.skipIf(!DOCKER_OK || !imageAvailable(NATS.dockerImage))('nats 预设：
     // 但无论哪种形态，明文口令都不许出现。
     expect(pid1, '口令出现在容器 argv 里，宿主 ps 就能看到').not.toContain(PASSWORD);
 
+    // 口令落在容器内的配置文件里，且只有本进程读得到。
+    const perm = execSync(`docker exec ${name} stat -c %a /tmp/cds-nats.conf`,
+      { encoding: 'utf8', timeout: 10_000 }).trim();
+    expect(perm, `配置文件权限 ${perm}，同容器内其它进程也能读到口令`).toBe('600');
+
     // 服务端在 INFO 里自报 auth_required——这是 NATS 协议里「认证开着」的官方判据，
     // 比「日志里有没有某句话」稳。
     const info = execSync(
@@ -158,7 +188,7 @@ describe.skipIf(!DOCKER_OK || !imageAvailable(NATS.dockerImage))('nats 预设：
   }, 180_000);
 });
 
-describe.skipIf(!DOCKER_OK || !imageAvailable(KAFKA.dockerImage))('kafka 预设：真容器', () => {
+describe.skipIf(!readiness('kafka', KAFKA.dockerImage))('kafka 预设：真容器', () => {
   const name = `cds-kafka-auth-${Date.now()}`;
   afterAll(() => {
     try { execSync(`docker rm -f ${name}`, { stdio: 'ignore', timeout: 15_000 }); } catch { /* 没起来过 */ }
@@ -174,7 +204,7 @@ describe.skipIf(!DOCKER_OK || !imageAvailable(KAFKA.dockerImage))('kafka 预设�
     expect(up, `kafka 没起来：\n${logsTail(name, 60)}`).toBe(true);
 
     // 不带 SASL 凭据的客户端必须连不上。用镜像自带的 kafka-topics.sh，
-    // 默认走 PLAINTEXT，SASL_PLAINTEXT 监听器会把它拒掉。
+    // 默认走 PLAINTEXT，而 CLIENT 监听器映射到 SASL_PLAINTEXT，会把它拒掉。
     let out = '';
     let failed = false;
     try {

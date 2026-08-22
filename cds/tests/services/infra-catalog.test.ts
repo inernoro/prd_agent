@@ -186,6 +186,66 @@ describe('catalog 的认证能被暴露审计认出来', () => {
     }
   });
 
+  it('kafka：监听器名字骗不过判据，看的是映射解析出的生效协议', () => {
+    // 名字是部署方随便取的。旧判据看「广播地址是不是 PLAINTEXT:// 开头」，
+    // 于是把监听器改名叫 CLIENT、协议仍是明文，就能骗过它——读的是名字，
+    // 不是生效的那个值（形状 6）。
+    expect(detectInfraAuth('kafka', {
+      KAFKA_SASL_ENABLED_MECHANISMS: 'PLAIN',
+      KAFKA_ADVERTISED_LISTENERS: 'CLIENT://kafka:9092',
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CLIENT:PLAINTEXT',
+    }, []), '名字叫 CLIENT、协议是明文，居然判成已认证').toBe(false);
+
+    // 反过来：名字叫 CLIENT 但映射到 SASL_PLAINTEXT，就是真的认证。
+    expect(detectInfraAuth('kafka', {
+      KAFKA_SASL_ENABLED_MECHANISMS: 'PLAIN',
+      KAFKA_ADVERTISED_LISTENERS: 'CLIENT://kafka:9092',
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,CLIENT:SASL_PLAINTEXT',
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER',
+    }, [])).toBe(true);
+
+    // SSL 只加密不认证，同样不算。
+    expect(detectInfraAuth('kafka', {
+      KAFKA_SASL_ENABLED_MECHANISMS: 'PLAIN',
+      KAFKA_ADVERTISED_LISTENERS: 'CLIENT://kafka:9092',
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CLIENT:SSL',
+    }, [])).toBe(false);
+  });
+
+  it('kafka 监听器名不许带下划线——镜像表达不出来，容器会起不来', () => {
+    // 2026-08-21 真容器实测：监听器名写成 SASL_PLAINTEXT 时，JAAS 那条 env 只能叫
+    // KAFKA_LISTENER_NAME_SASL_PLAINTEXT_..._SASL_JAAS_CONFIG，而镜像把下划线**全部**
+    // 转成点，得到的属性名少了监听器名里那个下划线 → configure 脚本
+    // `!1: unbound variable` 直接退出。这条守的是「名字里别再出现下划线」。
+    const env = getInfraCatalogEntry('kafka')!.build({ password: 'hex0123456789' }).env || {};
+    const names = new Set<string>();
+    for (const key of ['KAFKA_LISTENERS', 'KAFKA_ADVERTISED_LISTENERS'] as const) {
+      for (const entry of String(env[key] || '').split(',')) {
+        const name = entry.split('://')[0]?.trim();
+        if (name) names.add(name);
+      }
+    }
+    expect(names.size).toBeGreaterThan(0);
+    for (const name of names) {
+      expect(name, `监听器名 ${name} 带下划线，镜像的 env→属性转换表达不出来`).not.toContain('_');
+    }
+  });
+
+  it('nats 口令不许出现在会变成 argv 的位置', () => {
+    // 2026-08-21 真容器实测：`sh -c 'exec nats-server --pass "$NATS_PASSWORD"'` 只挡住了
+    // 宿主那一侧，exec 之后展开的明文就是容器 argv，/proc/1/cmdline 一读就有。
+    // redis 同样写法没事是因为它自己改写 argv（E34），那是特例不是通则。
+    const entry = getInfraCatalogEntry('nats')!;
+    const cmd = (Array.isArray(entry.command) ? entry.command : [entry.command || '']).join(' ');
+    // exec 出去的那一段里不许引用口令变量。
+    const execPart = cmd.slice(cmd.indexOf('exec'));
+    expect(execPart, 'exec 的参数里引用了口令变量，展开后就是容器 argv')
+      .not.toContain('NATS_PASSWORD');
+    // 口令要落到容器内的配置文件里，并且那份文件只有本进程读得到。
+    expect(cmd).toContain('authorization');
+    expect(cmd).toContain('chmod 600');
+  });
+
   it('对照组：把认证配置拿掉就必须判成裸奔（防判据恒真）', () => {
     // 上一条如果判据恒真，它照样全绿。这里逐个把生效的那一处拿掉。
     expect(detectInfraAuth('memcached', {}, ['sh', '-c', 'exec docker-entrypoint.sh memcached']))
@@ -201,6 +261,11 @@ describe('catalog 的认证能被暴露审计认出来', () => {
     expect(detectInfraAuth('nats', {}, ['sh', '-c', 'exec /nats-server'])).toBe(false);
     // 引用了一个没有值的变量 = 空口令，不许判成已认证
     expect(detectInfraAuth('nats', {}, ['sh', '-c', 'exec /nats-server --user "$NATS_USER" --pass "$NATS_PASSWORD"']))
+      .toBe(false);
+    // 只加载一份配置文件不算数：文件里可以什么都没有。
+    expect(detectInfraAuth('nats', {}, ['sh', '-c', 'exec /nats-server -c /tmp/x.conf'])).toBe(false);
+    // 写了 authorization 块却没加载它，同样不算。
+    expect(detectInfraAuth('nats', {}, ['sh', '-c', 'printf "authorization { user: a }" > /tmp/x.conf; exec /nats-server']))
       .toBe(false);
   });
 });

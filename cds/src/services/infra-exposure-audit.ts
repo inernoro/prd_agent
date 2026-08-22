@@ -343,6 +343,8 @@ export function detectInfraAuth(
     .flatMap((raw) => String(raw || '').match(/"[^"]*"|'[^']*'|[^\s]+/g) || [])
     .map((t) => String(t || '').trim().toLowerCase())
     .filter(Boolean);
+  /** 整条有效命令，用来匹配跨 token 的结构（如配置文件里的 authorization 块）。 */
+  const joined = tokens.join(' ');
   /** 只在「比对 flag 名」时用；判定值的时候必须保留引号。 */
   const unquote = (t: string): string => t.replace(/^(["'])([\s\S]*)\1$/, '$2');
   /**
@@ -434,19 +436,70 @@ export function detectInfraAuth(
       // `-Y <file>` 是 ASCII 协议认证，`-S` 是 SASL。env 里的 MEMCACHED_PASSWORD
       // 单独不算数——口令存在不等于服务在校验它，必须命令行上真的启用了某一种。
       return hasFlagValue('-y', '--auth-file') || hasFlag('-s');
-    case 'kafka': {
-      // 三处同时成立才算：开了 SASL 机制、客户端监听器不是明文、**自我广播地址**
-      // 也不是明文。广播地址是客户端真正拿去连的那一个（形状 8：一份不生效的声明
-      // 不能当成证明）。
-      const advertised = String(e.KAFKA_ADVERTISED_LISTENERS || '');
-      return Boolean(String(e.KAFKA_SASL_ENABLED_MECHANISMS || '').trim())
-        && !/(?:^|,)\s*PLAINTEXT:\/\//i.test(advertised);
-    }
+    case 'kafka':
+      return kafkaClientListenersAuthenticated(e);
     case 'nats':
-      return hasFlagValue('--pass', '--auth');
+      // 两种配法都认，但都要求「口令确实在某处生效」：
+      // 1. 命令行 `--user/--pass` 或 `--auth <token>`；
+      // 2. 命令自己在容器里写一份带 authorization 块的配置、再 `-c` 加载它
+      //    （预设走的就是这条，为的是不让明文进 argv，见 infra-catalog 的注释）。
+      //
+      // 单看 `-c <file>` 不算数，有两个理由：配置文件里可以什么都没有；而且
+      // **`-c` 这个 flag 太泛**——这些命令外面都套着 `sh -c`，拿 hasFlagValue('-c')
+      // 去问等于恒真（写这条测试时当场撞上）。所以必须是 nats-server 自己被
+      // 带着 `-c/--config` 拉起来，且同一条命令里构造过 authorization 块。
+      return hasFlagValue('--pass', '--auth')
+        || (/authorization\s*\{/i.test(joined)
+          && /nats-server[^|;&]*\s(?:-c|--config)(?:=|\s+)\S/i.test(joined));
     default:
       return null;
   }
+}
+
+/**
+ * Kafka 对外那几个监听器，是不是**每一个**都走了带认证的协议。
+ *
+ * ## 为什么不能只看广播地址的字面前缀
+ *
+ * 监听器的**名字**由部署方随便取，`CLIENT://kafka:9092` 里的 CLIENT 什么也说明不了；
+ * 它到底是明文还是 SASL，写在 `listener.security.protocol.map` 里。上一版判据看的是
+ * 「广播地址是不是以 PLAINTEXT:// 开头」——那读的是名字，不是**生效的协议**
+ * （predicate-and-wiring-discipline 形状 6）。把监听器改名叫 CLIENT 而协议仍是
+ * PLAINTEXT，旧判据会判「已认证」，这正是它最该拦下的那一种。
+ *
+ * 现在顺着映射把每个广播出去的监听器解析成真实协议：只要有一个落到 PLAINTEXT
+ * （或 SSL——那只加密不认证），整台就算没有认证。名字在映射里查不到时，
+ * 按 Kafka 自己的规则回落「名字即协议」。
+ */
+function kafkaClientListenersAuthenticated(e: Record<string, string>): boolean {
+  const advertised = String(e.KAFKA_ADVERTISED_LISTENERS || e.KAFKA_LISTENERS || '').trim();
+  if (!advertised) return false;
+  if (!String(e.KAFKA_SASL_ENABLED_MECHANISMS || '').trim()) return false;
+
+  const map = new Map<string, string>();
+  for (const pair of String(e.KAFKA_LISTENER_SECURITY_PROTOCOL_MAP || '').split(',')) {
+    const [name, protocol] = pair.split(':');
+    if (name && protocol) map.set(name.trim().toUpperCase(), protocol.trim().toUpperCase());
+  }
+  // 控制面监听器不对外发布，用不用 SASL 与「谁能连上这台 broker」无关。
+  const controllerNames = new Set(
+    String(e.KAFKA_CONTROLLER_LISTENER_NAMES || '')
+      .split(',')
+      .map((n) => n.trim().toUpperCase())
+      .filter(Boolean),
+  );
+
+  const clientListeners = advertised
+    .split(',')
+    .map((entry) => entry.split('://')[0]?.trim().toUpperCase() || '')
+    .filter(Boolean)
+    .filter((name) => !controllerNames.has(name));
+  if (clientListeners.length === 0) return false;
+
+  return clientListeners.every((name) => {
+    const protocol = map.get(name) ?? name;
+    return protocol.startsWith('SASL_');
+  });
 }
 
 function describe(f: Omit<InfraExposureFinding, 'reason' | 'severity'>): { severity: ExposureSeverity; reason: string } {
