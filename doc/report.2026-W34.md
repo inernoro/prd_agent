@@ -290,7 +290,7 @@
 - **贡献者**：Claude（139）、InerNoro / inernoro（57，同一人两个署名）
 - **提交类型分布**：fix（107）、docs（20）、security（17）、feat（7）、test（5）、ops（3）、polish（2）、merge（2）、rule（1）、refactor（1）、perf（1）、chore（1）；其余 29 个提交无 Conventional 前缀，拆开是 **22 个 `Merge ...` 合并提交 + 7 个 `每日熵减计划` 例行清理提交**（后者含 PR #1405 的 squash 提交），不是全部为合并提交
 - **改动面（按目录）**：prd-admin（380 文件）、prd-api（209）、cds（139）、changelogs（56）、.claude（50）、scripts（45）、llmgw（45）、doc（38）、e2e（15）
-- **本报告引用的查询手段**：备份历史 `GET /api/infra/:id/backup-history`（下周 P0 第一项的判据端点，正文只描述能力、不写签名）
+- **本报告引用的查询手段**：备份历史 `GET /api/infra/:id/backup-history`（下周**第三条 P0**「先查清本地周期备份的实际留存」的判据端点；前两条 P0 是恢复验收巡检与恢复采集凭据，与本端点无关。正文只描述能力、不写签名）
 - **相关设计与计划文档**：
   - [CDS 基础设施加固计划](./plan.cds.infra-hardening.md)（含三步走看板与当前阻塞）
   - [基建凭据轮换 runbook](./guide.cds.infra-credential-rotation.md)
