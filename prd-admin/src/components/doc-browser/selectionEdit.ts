@@ -156,10 +156,34 @@ function collectMarkerStructures(body: string): MarkerStructure[] {
 }
 
 /**
+ * 选区内部的行内标记是否落单（起点或终点卡在加粗 / 斜体 / 行内代码 / 删除线中间）。
+ *
+ * 为什么必须查（2026-08-21 code review 抓到，可复现的静默破坏）：
+ * 定位改用渲染文本索引之后，用户在页面上选「加粗的句子。」是一次再自然不过的拖选，
+ * 但它在源码里对应 `加粗**的句子。` —— 范围里只有半个 `**`。替换掉这段，
+ * 剩下的那半个 `**` 会和后文的下一个 `**` 配上对，从此整段变粗，且采纳时无声发生。
+ *
+ * 判据是「范围内某种标记的个数为奇数」。这会顺带拒掉「a * b」这类把星号当乘号的选区，
+ * 属于保守误判：结果只是退回老浮层（还能插入 / 复制），不会写坏文档。
+ * 下划线强调（`_x_`）不查——`some_var` 这类标识符会误伤，且本仓库正文一律用星号。
+ */
+function hasUnbalancedInlineMarks(text: string): boolean {
+  // 反引号优先：代码里的星号是代码，不是标记
+  if (((text.match(/`/g) ?? []).length) % 2 === 1) return true;
+  const noCode = text.replace(/`[^`]*`/g, '');
+  if (((noCode.match(/~~/g) ?? []).length) % 2 === 1) return true;
+  const noStrike = noCode.replace(/~~/g, '');
+  if (((noStrike.match(/\*\*/g) ?? []).length) % 2 === 1) return true;
+  return ((noStrike.replace(/\*\*/g, '').match(/\*/g) ?? []).length) % 2 === 1;
+}
+
+/**
  * 已定位的选区能否安全整段替换：与 wikilink / markdown 链接（图片）结构相交
- * 但既不整体覆盖、也不落在其显示文字内部时返回 false。
+ * 但既不整体覆盖、也不落在其显示文字内部时返回 false；
+ * 选区把某个行内标记劈成两半时同样返回 false。
  */
 export function isReplaceSafe(body: string, range: ResolvedRange): boolean {
+  if (hasUnbalancedInlineMarks(body.slice(range.start, range.end))) return false;
   for (const s of collectMarkerStructures(body)) {
     const overlaps = range.start < s.end && range.end > s.start;
     if (!overlaps) continue;

@@ -121,15 +121,31 @@ export function closeDanglingInlineMarks(text: string): string {
   if (inFence || FENCE_RE.test(lines[lines.length - 1] ?? '')) return text;
   const body = scanned.join('\n');
 
-  // 末尾正在打字的半截标记（`*` / `` ` `` / `~`）先摘掉，避免把 `**` 补成 `***`
-  let out = text.replace(/[*`~]+$/, '');
-  const scannedTrimmed = body.replace(/[*`~]+$/, '');
-
-  const count = (re: RegExp) => (scannedTrimmed.match(re) ?? []).length;
-  if (count(/`/g) % 2 === 1) out += '`';
-  if (count(/\*\*/g) % 2 === 1) out += '**';
-  if (count(/~~/g) % 2 === 1) out += '~~';
+  // 顺序很关键（2026-08-21 code review 抓到）：先判「本来就是闭合的吗」。
+  // 上一版无条件把末尾的 `*` / `` ` `` / `~` 摘掉再补，于是刚刚吐完的 `*斜体*`
+  // 被摘成 `*斜体` —— 而单个星号又不在补齐清单里，星号就这么露了出来，
+  // 正是这个函数存在的意义被它自己破坏掉。
+  if (!missingMarks(body)) return text;
+  // 末尾是刚敲出来的半截标记（`这是 **`）：摘掉即闭合，不能补，补了会变成 `****`
+  const stripped = text.replace(/[*`~]+$/, '');
+  const strippedBody = body.replace(/[*`~]+$/, '');
+  if (!missingMarks(strippedBody)) return stripped;
+  // 前文确有没闭合的标记：补在末尾
   // 围栏没闭合交给 buildInlineDiffBody 收尾，这里不重复处理
+  return stripped + missingMarks(strippedBody);
+}
+
+/** 把一段文本补齐所需的收尾标记拼出来；已经闭合则返回空串。 */
+function missingMarks(text: string): string {
+  let out = '';
+  const backticksOdd = ((text.match(/`/g) ?? []).length) % 2 === 1;
+  if (backticksOdd) out += '`';
+  // 反引号里的星号是代码，不参与配对；落单的那个反引号后面全算代码，一并排除
+  const noCode = (backticksOdd ? `${text}\`` : text).replace(/`[^`]*`/g, '');
+  if (((noCode.match(/~~/g) ?? []).length) % 2 === 1) out += '~~';
+  const noStrike = noCode.replace(/~~/g, '');
+  if (((noStrike.match(/\*\*/g) ?? []).length) % 2 === 1) out += '**';
+  else if (((noStrike.replace(/\*\*/g, '').match(/\*/g) ?? []).length) % 2 === 1) out += '*';
   return out;
 }
 

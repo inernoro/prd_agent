@@ -28,6 +28,11 @@ function rewriteAsUser(
   return body.slice(0, range.start) + out + body.slice(range.end);
 }
 
+/** 只给 selectedText 的最小锚点（同文单处出现时够用） */
+function anchor(selectedText: string) {
+  return { selectedText, startOffset: -1, endOffset: -1, domOccurrenceIndex: 0, domOccurrenceTotal: 1 };
+}
+
 describe('渲染文本 → 源码 的定位（页面上看不见的标记不能让匹配落空）', () => {
   it('句子里有行内加粗', () => {
     expect(rewriteAsUser('这是**非常重要**的一句话。\n', '这是非常重要的一句话。', '改写后的话。'))
@@ -150,5 +155,45 @@ describe('位置映射本身', () => {
 
   it('匹配不到就是空，不产出可疑区间', () => {
     expect(findRenderedTextRanges('一些正文', '并不存在的句子')).toEqual([]);
+  });
+});
+
+/**
+ * 2026-08-21 code review 抓到的静默破坏：定位改用渲染文本索引后，
+ * 「在页面上拖选一句跨过加粗边界的话」会得到一个把 `**` 劈成两半的源码范围，
+ * 而 isReplaceSafe 当时还只看 wikilink / 链接结构，一路放行到落库。
+ */
+describe('行内标记被劈成两半的选区：必须拒绝整段替换', () => {
+  const cases: Array<[string, string, string]> = [
+    ['加粗', '这是**加粗**的句子。后面还有别的。', '加粗的句子。'],
+    ['斜体', '这是*斜的*句子。后面还有别的。', '斜的句子。'],
+    ['行内代码', '运行 `pnpm test` 就好了。后面还有别的。', 'pnpm test 就好了。'],
+    ['删除线', '这是~~删掉~~的句子。后面还有别的。', '删掉的句子。'],
+  ];
+
+  for (const [name, body, selected] of cases) {
+    it(`${name}：定位得到、但替换会留下落单标记 → 判不安全`, () => {
+      const range = resolveSelectionRange(body, anchor(selected));
+      expect(range, `${name} 的选区应当能定位到`).not.toBeNull();
+      // 反证这条断言不是空转：如果放行，写回去的正是一段坏掉的 markdown
+      const after = body.slice(0, range!.start) + '改写结果' + body.slice(range!.end);
+      expect(after, `${name} 放行的话会留下落单标记`).toMatch(/\*|`|~/);
+      expect(isReplaceSafe(body, range!)).toBe(false);
+    });
+  }
+
+  it('标记整体落在选区内（两侧都含）仍然安全——不许把保护做成一刀切', () => {
+    const body = '这是**加粗**的句子。后面还有别的。';
+    const range = resolveSelectionRange(body, anchor('这是加粗的句子。'));
+    expect(range).not.toBeNull();
+    expect(body.slice(range!.start, range!.end)).toBe('这是**加粗**的句子。');
+    expect(isReplaceSafe(body, range!)).toBe(true);
+  });
+
+  it('选区完全在加粗内部（不含标记）仍然安全', () => {
+    const body = '这是**加粗**的句子。后面还有别的。';
+    const range = resolveSelectionRange(body, anchor('加粗'));
+    expect(range).not.toBeNull();
+    expect(isReplaceSafe(body, range!)).toBe(true);
   });
 });

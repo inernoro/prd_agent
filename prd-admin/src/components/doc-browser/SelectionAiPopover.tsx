@@ -302,7 +302,12 @@ export function SelectionAiPopover({
           <button
             onClick={() => handleApply('replace')}
             disabled={!canReplace || !!applying}
-            title={canReplace ? '用 AI 结果替换选中片段' : '选区在原文中出现多处且无法唯一定位，为避免替换错位置已禁用；可改用「插入」或复制'}
+            /* 这个浮层只在「整段替换不安全」时才会打开，所以 canReplace 开局必为 false。
+               文案不能只说其中一个原因——定位不唯一与选区卡在标记中间都会走到这里
+               （2026-08-21 code review：提示把另一半原因说成了唯一原因）。 */
+            title={canReplace
+              ? '用 AI 结果替换选中片段'
+              : '这段选区在原文里指认不到唯一位置，或者它卡在链接 / 加粗 / 行内代码的标记中间；直接替换会写错地方或破坏格式，所以禁用。可改用「插到原文后」或复制'}
             className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             style={SELECTION_OVERLAY_PRIMARY}
           >

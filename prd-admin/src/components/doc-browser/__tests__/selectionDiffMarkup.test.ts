@@ -199,6 +199,23 @@ describe('closeDanglingInlineMarks：流式半截的行内标记不许露脸', (
     expect(closeDanglingInlineMarks('**加粗** 与 `代码`')).toBe('**加粗** 与 `代码`');
   });
 
+  it('刚吐完的斜体不许被摘掉尾巴（2026-08-21 code review）', () => {
+    // 上一版无条件摘末尾标记再补，而补齐清单里没有单个星号，
+    // 于是完成态的 `*斜体*` 被摘成 `*斜体`，星号反倒露了出来
+    expect(closeDanglingInlineMarks('*斜体*')).toBe('*斜体*');
+    expect(render(closeDanglingInlineMarks('*斜体*'))).toContain('<em>');
+    expect(closeDanglingInlineMarks('前面 *斜体*')).toBe('前面 *斜体*');
+    expect(closeDanglingInlineMarks('`代码`')).toBe('`代码`');
+    expect(closeDanglingInlineMarks('~~删~~')).toBe('~~删~~');
+    // 粗斜体：末尾三颗星是闭合的一部分，摘一颗再补两颗会少掉一颗
+    expect(closeDanglingInlineMarks('***粗斜***')).toBe('***粗斜***');
+  });
+
+  it('打到一半的斜体补上单个星号', () => {
+    expect(closeDanglingInlineMarks('这是 *斜的')).toBe('这是 *斜的*');
+    expect(render(closeDanglingInlineMarks('这是 *斜的'))).toContain('<em>');
+  });
+
   it('代码围栏里的星号是代码，不参与闭合判断', () => {
     const t = '```js\nconst a = b ** 2;\n```';
     expect(closeDanglingInlineMarks(t)).toBe(t);

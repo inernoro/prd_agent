@@ -18,3 +18,7 @@
 | fix | prd-admin | tokens.css 的浅色复合选择器移到浅色块之后，避免主题守卫按 indexOf 切块时误命中 |
 | ci | prd-admin | design-replication 取证脚本默认开 ANGLE swiftshader，无头 Chromium 从此能渲染 backdrop-filter |
 | docs | prd-admin | 知识库台账记下两项本地物理无法验证的字体欠账（容器无中文字体、Google Fonts 不可达） |
+| fix | prd-admin | 选区把加粗/斜体/行内代码/删除线劈成两半时拒绝整段替换，采纳不再留下落单标记把后文整段变粗 |
+| fix | prd-admin | 流式改写刚吐完的斜体不再被摘掉尾巴，`*斜体*` 不会退化成露出星号的 `*斜体` |
+| fix | prd-admin | 改写一个字都没吐出来就失败时，正文不再整段挂删除线，只有操作条报错 |
+| fix | prd-admin | 划词 AI 浮层「替换原文」的禁用原因文案补全，不再把两种原因说成一种 |

@@ -2407,6 +2407,12 @@ export function DocBrowser({
     if (rewrite.entryId !== selectedEntryId) return null;
     if (typeof selectionRawContent !== 'string' || !preview?.text) return null;
     if (selectionRawContent.slice(rewrite.range.start, rewrite.range.end) !== rewrite.original) return null;
+    // 一个字都没吐出来就失败了：此时 diff 会把整段选区标成删除，用户看到自己的段落
+    // 挂着删除线、条子上写「改写失败」，像是内容已经被删掉了（2026-08-21 code review）。
+    // 拿原文当结果算 diff —— 零增零删，正文原样，只有条子报错。
+    if (rewrite.phase === 'error' && !rewriteOutput) {
+      return buildInlineDiffBody(selectionRawContent, rewrite.range, rewrite.original);
+    }
     // 流式期间在结果末尾点一个光标：让「还在写」这件事发生在文章里，而不是只有状态条在转
     const text = rewrite.phase === 'streaming'
       ? `${closeDanglingInlineMarks(rewriteOutput)}▌`
