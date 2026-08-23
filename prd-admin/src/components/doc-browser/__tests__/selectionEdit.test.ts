@@ -108,9 +108,25 @@ describe('isReplaceSafe', () => {
     expect(isReplaceSafe(body, { start, end: start + 10 })).toBe(true);
   });
 
-  it('选区落在 wikilink 内部（用户在 DOM 选中的是显示名）→ 不安全（Bugbot Medium 回归）', () => {
+  // 2026-08-20 收窄：原判据是「落在标记内部一律不安全」，但双链的**显示名**改了既不断链
+  // 也不坏语法，而「把链接的措辞改一改」是很自然的划词诉求。改为按「可安全改写的显示文字
+  // 区间」精确判定，并用「替换后语法仍合法」来断言，而不是只断言一个布尔值。
+  it('选区落在 wikilink 显示名内部 → 安全，且替换后双链目标不变', () => {
     const start = body.indexOf('双链显示名');
+    const range = { start, end: start + 5 };
+    expect(isReplaceSafe(body, range)).toBe(true);
+    const out = replaceSelectionInBody(body, range, '新显示名');
+    expect(out).toContain('[[知识库网络|新显示名]]');
+  });
+
+  it('选区落在 wikilink 的目标部分 → 不安全（改目标会断链，Bugbot Medium 回归）', () => {
+    const start = body.indexOf('知识库网络');
     expect(isReplaceSafe(body, { start, end: start + 5 })).toBe(false);
+  });
+
+  it('选区跨越 wikilink 边界（显示名 + 后面的正文）→ 不安全', () => {
+    const start = body.indexOf('双链显示名');
+    expect(isReplaceSafe(body, { start, end: start + 12 })).toBe(false);
   });
 
   it('选区整体覆盖整个 wikilink → 安全（整块换掉不破坏语法）', () => {
@@ -118,9 +134,22 @@ describe('isReplaceSafe', () => {
     expect(isReplaceSafe(body, { start: s, end: s + '[[知识库网络|双链显示名]]'.length })).toBe(true);
   });
 
-  it('选区落在 markdown 链接文本内部 → 不安全', () => {
+  it('选区落在 markdown 链接文字内部 → 安全，且替换后地址不变', () => {
     const start = body.indexOf('设计文档');
-    expect(isReplaceSafe(body, { start, end: start + 4 })).toBe(false);
+    const range = { start, end: start + 4 };
+    expect(isReplaceSafe(body, range)).toBe(true);
+    const out = replaceSelectionInBody(body, range, '新文档');
+    expect(out).toContain('[新文档](https://x/doc)');
+  });
+
+  it('选区落在图片 alt 内部 → 不安全（alt 不是正文，改它没有意义且易误伤）', () => {
+    const start = body.indexOf('示意图');
+    expect(isReplaceSafe(body, { start, end: start + 3 })).toBe(false);
+  });
+
+  it('选区跨越链接文字与地址的边界 → 不安全', () => {
+    const start = body.indexOf('设计文档');
+    expect(isReplaceSafe(body, { start, end: start + 10 })).toBe(false);
   });
 
   it('选区与图片标记部分相交（跨出边界）→ 不安全', () => {

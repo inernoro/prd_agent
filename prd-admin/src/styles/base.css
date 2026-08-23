@@ -80,7 +80,13 @@ html, body {
   outline-offset: 2px;
 }
 
-/* 浅色文字选区:Claude 橙轻染替代浏览器默认蓝 */
+/* 文字选区:Claude 橙轻染替代浏览器默认蓝。
+   暗色档过去漏了这条——于是划词时屏幕上最大的一块色是系统蓝，
+   与整个产品的暖赤陶撞色（2026-08-21 划词浮层改配色时补齐）。
+   暗色只染底不改字色:底本来就深,原字色对比度已达标。 */
+::selection {
+  background-color: rgba(217, 119, 87, 0.32);
+}
 [data-theme="light"] ::selection {
   background-color: rgba(204, 120, 92, 0.25);
   color: #0F172A;

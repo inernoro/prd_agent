@@ -60,7 +60,22 @@ const target = /^https?:/.test(opts.url) ? opts.url : pathToFileURL(path.resolve
 const CHROME = process.env.CHROME_BIN
   || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => fs.existsSync(p));
 
-const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
+/*
+ * 无头 Chromium 默认走纯软件光栅，**不渲染 backdrop-filter**：毛玻璃浮层会截成
+ * 「半透明底 + 背后一片清晰文字」，看着像实现没做模糊，实际是取证器材的问题
+ * （2026-08-21 复刻划词浮层时实测：--enable-unsafe-swiftshader 单独给没用，
+ * 必须走 ANGLE 的 swiftshader 后端）。凡是稿子里有 blur / mix-blend / filter 的，
+ * 不开这组 flag 比出来的差异全是假的。
+ * 默认就开；确需关掉（比如要复现无 GPU 环境的降级形态）给 PW_CHROME_ARGS='' 覆盖。
+ */
+const DEFAULT_ARGS = ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'];
+const extraArgs = process.env.PW_CHROME_ARGS === undefined
+  ? DEFAULT_ARGS
+  : process.env.PW_CHROME_ARGS.split(/\s+/).filter(Boolean);
+const browser = await chromium.launch({
+  ...(CHROME ? { executablePath: CHROME } : {}),
+  args: extraArgs,
+});
 const problems = [];
 const manifest = [];
 const themeBg = new Map();

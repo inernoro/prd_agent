@@ -72,6 +72,7 @@ const DataSyncAuthorizePage = lazy(() => import('@/pages/data-sync/DataSyncAutho
 const DataSyncCallbackPage = lazy(() => import('@/pages/data-sync/DataSyncCallbackPage'));
 const InlineCommentBubbleMockupPage = lazy(() => import('@/pages/_mockup/InlineCommentBubbleMockupPage'));
 const InlineCommentOverlayProbe = lazy(() => import('@/pages/_mockup/InlineCommentOverlayProbe'));
+const SelectionDiffProbe = lazy(() => import('@/pages/_mockup/SelectionDiffProbe'));
 const JoinTeamPage = lazy(() => import('@/pages/JoinTeamPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
@@ -258,6 +259,8 @@ export default function App() {
         <Route path="/_mockup/inline-comment-bubble" element={<InlineCommentBubbleMockupPage />} />
         {/* 真实 InlineCommentOverlay 自测页（Playwright 取头像 img 尺寸断言） */}
         <Route path="/_mockup/inline-comment-overlay-probe" element={<InlineCommentOverlayProbe />} />
+        {/* 真实就地 diff 渲染链自测页（Playwright 断言 ins/del 着色与结构，双主题） */}
+        <Route path="/_mockup/selection-diff-probe" element={<SelectionDiffProbe />} />
 
         {/* 公开分享页面 - 无需登录 */}
         <Route path="/s/wp/:token" element={<ShareViewPage />} />
