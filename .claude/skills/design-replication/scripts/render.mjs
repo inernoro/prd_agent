@@ -57,8 +57,13 @@ const states = opts.states.length
   : [{ id: 'default', click: null }];
 
 const target = /^https?:/.test(opts.url) ? opts.url : pathToFileURL(path.resolve(opts.url)).href;
+// 按目录名探测，不写死版本号：写死会在升级 Playwright 后静默退化成「用默认下载路径」，
+// 而容器里根本没下载过浏览器，表现是一句莫名其妙的 launch 失败。
 const CHROME = process.env.CHROME_BIN
-  || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => fs.existsSync(p));
+  || (fs.existsSync('/opt/pw-browsers')
+    ? fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-'))
+      .map((d) => `/opt/pw-browsers/${d}/chrome-linux/chrome`).find((p) => fs.existsSync(p))
+    : undefined);
 
 const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
 const problems = [];

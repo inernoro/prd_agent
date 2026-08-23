@@ -37,8 +37,12 @@ const impl = load(implDir);
 const key = (r) => `${r.state}|${r.theme}|${r.width}`;
 const implBy = new Map(impl.map((r) => [key(r), r]));
 
+// 同 render.mjs：按目录名探测，不写死版本号
 const CHROME = process.env.CHROME_BIN
-  || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => fs.existsSync(p));
+  || (fs.existsSync('/opt/pw-browsers')
+    ? fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-'))
+      .map((d) => `/opt/pw-browsers/${d}/chrome-linux/chrome`).find((p) => fs.existsSync(p))
+    : undefined);
 const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
 const page = await browser.newPage({ deviceScaleFactor: 1 });
 
