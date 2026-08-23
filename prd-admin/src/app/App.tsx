@@ -68,6 +68,8 @@ function NavigationBridge() {
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const SyntheticLoginPage = lazy(() => import('@/pages/SyntheticLoginPage'));
 const ConsoleSsoAuthorizePage = lazy(() => import('@/pages/ConsoleSsoAuthorizePage'));
+const DataSyncAuthorizePage = lazy(() => import('@/pages/data-sync/DataSyncAuthorizePage'));
+const DataSyncCallbackPage = lazy(() => import('@/pages/data-sync/DataSyncCallbackPage'));
 const InlineCommentBubbleMockupPage = lazy(() => import('@/pages/_mockup/InlineCommentBubbleMockupPage'));
 const InlineCommentOverlayProbe = lazy(() => import('@/pages/_mockup/InlineCommentOverlayProbe'));
 const SelectionDiffProbe = lazy(() => import('@/pages/_mockup/SelectionDiffProbe'));
@@ -231,6 +233,24 @@ export default function App() {
           element={
             <RequireAuth>
               <ConsoleSsoAuthorizePage />
+            </RequireAuth>
+          }
+        />
+        {/* 跨 MAP 实例数据同步：源站同意页 / 目标站回跳落地页。
+            两者都不在 AppShell 里——它们是授权链路的中转屏，套上导航反而让人以为还在原来那一页。 */}
+        <Route
+          path="/data-sync/authorize"
+          element={
+            <RequireAuth>
+              <DataSyncAuthorizePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/data-sync/callback"
+          element={
+            <RequireAuth>
+              <DataSyncCallbackPage />
             </RequireAuth>
           }
         />

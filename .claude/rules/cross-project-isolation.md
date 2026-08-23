@@ -30,6 +30,16 @@
 | 7 | CDS 平台注入的 `BULLMQ_PREFIX`（2026-07-09） | 同项目所有分支容器的 BullMQ 队列前缀 | 同项目多分支共用 Redis 时 BullMQ 默认前缀相同 → 兄弟分支互抢 job；平台按分支注入 `BULLMQ_PREFIX=<branch-db-slug>` 隔离 | **只兜底不覆盖**：customEnv/分支 env/profile.env 显式定义一律优先（`cds/src/services/env-provenance.ts` 步骤 4.5 在 profile 层之后判空注入，slug 与 per-branch DB 后缀同 SSOT）；系统级逃生阀 `CDS_BULLMQ_PREFIX_INJECTION=0`。项目若刻意要跨分支共享队列，显式钉住同一个 BULLMQ_PREFIX 即可 |
 | 8 | 共享 Mongo 的 run 队列集合（`image_gen_runs` 等，2026-07-19） | 所有分支预览 + 生产的 `ImageGenRunWorker` | 认领过滤只看 `Status=Queued`，任何部署的 worker 都能抢走任意部署入队的 run——旧构建 worker 抢到新分支的 run 用旧代码执行 | **已隔离**：`ImageGenRun.DeploymentSlug`（入队盖 `DeploymentScope.Current`——`CDS_PROJECT_ID` 标记判分支预览，作用域为 `{projectId}::{分支slug}` 复合（分支 slug 优先取平台强制注入的 `VITE_GIT_BRANCH`、兜底 `BULLMQ_PREFIX`（后者可被项目钉死跨分支共享，非可信分支身份）；纯分支值会让共库项目的同名分支撞车，故必须带项目 ID；不读 `CDS_BRANCH_SLUG`——它只做镜像模板替换、**不注入容器 env**，容器里若出现只能来自项目可配置层，读它等于允许配置伪造作用域），worker 认领只取同作用域（生产认 null，兼容存量无字段文档）；幂等键经 `DeploymentScope.ScopeIdempotencyKey` 加 `{scope}::` 前缀（生产原样），防前端确定性键跨分支撞唯一索引；WeeklyPoster 复用查询同作用域过滤。过渡期已知边界：仍在跑旧构建的存量部署（认领谓词无作用域）在其重建前仍可能抢走新 run。新增其他 Mongo run 队列（video_gen_runs / 对话 Run 等）必须照此加作用域，禁止裸 Status 认领 |
 
+## CDS 上没有「生产」（2026-08-21 用户明确）
+
+用户原话：「只要是在 CDS 上，预览分支和生产就没有意义，这些都是预览、都是测试环境。」
+
+所以判断风险时不要再用「这会碰生产数据」当理由拦人——CDS 上的任何部署都是测试环境。
+**仍然成立的是纯技术约束**：同一个 CDS 项目下所有分支共用同一个 Mongo 库（通道 4），
+所以「A 分支写坏的数据 B 分支立刻可见」这件事照旧，只是它的后果是「测试数据互相干扰」，
+不是「打坏生产」。`DeploymentAuthority` 区分权威部署仍然有用（它防的是共享库里的
+全局单行状态被多个容器互相覆盖），但不要把它读成「生产 vs 非生产」的风险分级。
+
 ## 强制动作
 
 1. **改全局密钥/全局 env**（CDS_JWT_SECRET、`_global` 变量、`.cds.env` 任何值）：

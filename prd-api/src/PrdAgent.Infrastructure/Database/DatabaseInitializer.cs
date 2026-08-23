@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Security;
 using System.Security.Cryptography;
 
 namespace PrdAgent.Infrastructure.Database;
@@ -39,6 +40,27 @@ public class DatabaseInitializer
         await EnsureShortcutExpirationsAsync();
     }
 
+    /// <summary>
+    /// 显式要求把管理员口令重置成配置里那一份的开关。
+    ///
+    /// 为什么需要它：播种只在「库里一个管理员都没有」时发生。一旦那个账号存在，
+    /// 之后再改 <c>MAP_INITIAL_ADMIN_PASSWORD</c> 就永远不生效——真实后果是本仓库
+    /// 2026-08 撞上的那种：库里躺着一个 admin，谁也不知道它的口令，配置里那把强口令
+    /// 对不上，只能靠 env 破窗账号 root 进系统。而 root 不在 users 集合里，
+    /// 界面上一切按 userId 查人的地方都显示「未知用户」。
+    ///
+    /// 所以给一条明确的纠正路径：置 1 启动时把管理员口令改成配置里的值。
+    /// 做成开关而不是默认行为，是因为「每次启动都按配置重置口令」会把用户
+    /// 自己在界面上改过的密码悄悄改回去。
+    /// </summary>
+    private const string ForceResetKey = "MAP_ADMIN_FORCE_RESET";
+
+    /// <summary>
+    /// 「这次救场已经做过了」记在哪。刻意不放 AppSettings——那一行是可导出的，
+    /// 跨实例同步会把别处的标记搬进来，等于把本站的一次性动作重新武装或提前吞掉。
+    /// </summary>
+    private const string ForceResetMarkerId = "admin-force-reset";
+
     private async Task EnsureAdminUserAsync()
     {
         // 检查是否已存在管理员
@@ -47,7 +69,10 @@ public class DatabaseInitializer
             .FirstOrDefaultAsync();
 
         if (existingAdmin != null)
+        {
+            await MaybeForceResetAdminAsync(existingAdmin);
             return;
+        }
 
         var credentials = InitialAdminCredentials.Resolve(_configuration);
 
@@ -64,6 +89,121 @@ public class DatabaseInitializer
 
         await _db.Users.InsertOneAsync(adminUser);
         Console.WriteLine($"Created initial admin user: {adminUser.Username}");
+    }
+
+    /// <summary>
+    /// 这个值是不是「关掉」。空值也算关。
+    ///
+    /// 判据必须先归一大小写，不能枚举变体。上一版写的是
+    /// `flag is "0" or "false" or "False" or "FALSE" or "no" or "off"`——手抄了三种
+    /// false 的写法，却漏了 `OFF` / `No` / `NO` / `Off`。运维随手写一个
+    /// `MAP_ADMIN_FORCE_RESET=OFF` 想表达「关掉」，这里认不出来，就把它当成一个**新的
+    /// 一次性令牌**：下一次权威部署启动会据此把选中的管理员重新启用、口令换成配置里的
+    /// 初始凭据。判据比它承诺的范围窄（形状 1：语义相同、写法不同却翻转答案），
+    /// 而这一档翻转的后果是生产管理员口令被改。
+    ///
+    /// 抽成函数是为了能拿一张大小写表直接断言行为，而不是去扫源码里那串字面量。
+    /// </summary>
+    internal static bool IsForceResetDisabled(string? raw)
+    {
+        var flag = (raw ?? string.Empty).Trim();
+        if (flag.Length == 0) return true;
+        return flag.ToLowerInvariant() is "0" or "false" or "no" or "off";
+    }
+
+    /// <summary>
+    /// 按 <see cref="ForceResetKey"/> 把既有管理员的用户名与口令对齐到配置。
+    /// 只在开关明确为真时动手；改完清掉「必须重设密码」标记，让人能直接登进去，
+    /// 之后在界面上自己改成想要的密码。
+    /// </summary>
+    private async Task MaybeForceResetAdminAsync(User existingAdmin)
+    {
+        var flag = (_configuration[ForceResetKey] ?? string.Empty).Trim();
+        if (IsForceResetDisabled(flag)) return;
+
+        // 这里写的 users 与 deployment_markers 是**全库唯一那一份**：CDS 同项目的所有
+        // 分支共用同一个 Mongo（dbScope 默认 shared，MongoDB__DatabaseName 恒为
+        // prdagent，见 cross-project-isolation 通道 4）。所以在任何一个分支上开这个开关，
+        // 改掉的是所有共库部署都在用的那个管理员。
+        //
+        // 上一版据此**直接跳过分支预览**，理由是「不能让预览动生产」。2026-08-21 用户
+        // 明确否掉了这个前提：CDS 上没有生产，全是测试环境（见
+        // cross-project-isolation「CDS 上没有「生产」」一节）。而救场开关恰恰只在 CDS 上
+        // 才用得着——跳过等于把唯一的钥匙锁在门里，管理员口令丢了就真的进不去了。
+        //
+        // 所以改为照做，但把影响面**说出来**：共库的每个部署都会跟着换口令。
+        // 一次性由下面的 marker 保证，不会每次重启都改一遍。
+        if (DeploymentAuthority.IsCdsBranchPreview(_configuration))
+        {
+            Console.WriteLine(
+                $"[admin-reset] 当前是 CDS 分支预览。{ForceResetKey} 改的是共享库里那一份管理员，" +
+                "同项目其它分支会跟着变——CDS 上都是测试环境，这是有意为之。");
+        }
+
+        // 一次性。容器环境变量是持久的，这段代码每次进程启动都会跑到——不记「这个值
+        // 已经用过了」的话，运维某天例行重新部署，就会把管理员后来在界面上自己改的
+        // 密码悄悄改回那个写在部署配置里、众所周知的救场口令，而且没有任何提示。
+        //
+        // 记的是**开关的值**，不是口令，库里不落任何口令派生物。要再救一次就把开关
+        // 换个值（1 → 2），语义上也更诚实：那确实是另一次救场。
+        var marker = await _db.DeploymentMarkers.Find(x => x.Id == ForceResetMarkerId).FirstOrDefaultAsync();
+        if (string.Equals(marker?.Value, flag, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        InitialAdminCredentials credentials;
+        try
+        {
+            credentials = InitialAdminCredentials.Resolve(_configuration);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 开了开关却没给合法凭据：说清楚，不要静默跳过——否则用户会以为已经重置了。
+            Console.WriteLine($"[admin-reset] {ForceResetKey} 已开启，但凭据不合法，未执行重置：{ex.Message}");
+            return;
+        }
+
+        // 目标用户名可能已经被另一个账号占着（多个 ADMIN 的部署很常见，上面那句
+        // Find 只取到了「某一个」）。这种情况下重命名会撞唯一索引、或者更糟——
+        // 悄悄留下两个同名账号。所以先按用户名找：找得到就重置它，找不到才把
+        // 手上这个管理员改名过去。
+        var target = await _db.Users
+            .Find(u => u.Username == credentials.Username)
+            .FirstOrDefaultAsync() ?? existingAdmin;
+
+        var update = Builders<User>.Update
+            .Set(u => u.Username, credentials.Username)
+            .Set(u => u.PasswordHash, BCrypt.Net.BCrypt.HashPassword(credentials.Password))
+            .Set(u => u.Status, UserStatus.Active)
+            .Set(u => u.MustResetPassword, false);
+
+        // 按用户名捞到的那个不一定是管理员——既然操作者点名要用它登进来救场，
+        // 就把角色一起对齐，否则登进去也是个什么都干不了的账号。
+        if (target.Role != UserRole.ADMIN)
+        {
+            update = update.Set(u => u.Role, UserRole.ADMIN);
+        }
+
+        await _db.Users.UpdateOneAsync(Builders<User>.Filter.Eq(u => u.UserId, target.UserId), update);
+
+        // 记下这个开关值已经用过了。放在重置之后：万一上面那步抛了，这一笔就不落，
+        // 下次启动还会再试一次——宁可重试，也不要「记成用过了但其实没改成」。
+        await _db.DeploymentMarkers.UpdateOneAsync(
+            Builders<DeploymentMarker>.Filter.Eq(x => x.Id, ForceResetMarkerId),
+            Builders<DeploymentMarker>.Update
+                .Set(x => x.Value, flag)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            new UpdateOptions { IsUpsert = true });
+
+        // 已知边界：这里不吊销既有会话。会话版本由 IAuthSessionService 管，
+        // 而它按 clientType 分桶、不在 Infrastructure 的依赖面上。重置口令的场景是
+        // 「我进不去了」而不是「有人偷了我的会话」，所以先不为它把依赖拉过来；
+        // 真要踢下线，管理员登进去后走「强制下线」即可。已记入债务。
+
+        Console.WriteLine(
+            $"[admin-reset] 已按 {ForceResetKey}={flag} 重置管理员 {credentials.Username} 的口令；"
+            + $"该值已记为用过，重启不会再执行。要再救一次请把 {ForceResetKey} 换成别的值。");
     }
 
     private async Task EnsureInitialInviteCodeAsync()
