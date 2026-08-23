@@ -386,3 +386,32 @@ Playwright 逐像素实测双主题全部 ≥4.5:1。**残余风险**：token �
 | 优先级 | 页面 | 路由 | 状态 |
 |--------|------|------|------|
 | P0 | 知识库列表工具栏（统计/发送到/接入AI → ⋯，新建 → FAB） | `/document-store` | 已落地（本次） |
+
+## 墨系色带的管辖范围（紫色到底禁到哪一层）
+
+`lib/tileAccent.ts` 的注释写着「紫、靛、品红一律不在色带内」，读起来像全站禁令；实际是**分域**的，读注释的人很容易误判。本节把边界写死，免得下一个人要么去清一大片、要么把守卫一扩就红。
+
+**真实边界**
+
+| 层 | 紫色允不允许 | 依据 |
+|---|---|---|
+| 品类色带（卡片芯片 / 首页 / 启动器 / 移动首页） | 禁 | `inkPalette.test.ts` 守卫，判据为色相 225-340 且饱和度 ≥0.3、明度 0.12-0.92 |
+| 语义色槽 | **允许** | `tokens.css` 正式定义 `--semantic-purple-soft/border`、`--semantic-indigo-soft/border/text`；守卫的 token 用例显式写「语义色槽除外」 |
+| 其余业务页面 | 不受管 | 守卫的 `GUARDED` 只有 8 项：`pages/home`、`pages/MobileHomePage.tsx`、`pages/mobile-home`、`pages/AgentLauncherPage.tsx`、`styles/home-launcher.css`、`lib/tileAccent.ts`、`lib/agentAccent.ts`、`lib/appStoreTokens.ts` |
+
+**量级**（2026-08-23 用守卫自身判据扫未受管范围）：命中 2129 处、299 个文件，头部是 `pages/library`(146)、`pages/md-to-ppt-agent`(137)、`pages/front-end-agent`(84)、`pages/report-agent`(84)、`components/doc-browser`(80)。
+
+**这 2129 处绝大多数不是缺陷**——它们要么走语义色槽，要么根本不在色带语境里。把它当「待清理违规」处理是误读，会引发一次没有收益的大规模改色。
+
+**真正的缺口只有一条**：部分位置**手写紫色字面量**而不是引用 `--semantic-purple-*` token，两道守卫都拦不住——`inkPalette` 因为不在 `GUARDED`，`themeHardcodeRatchet` 因为只按明度判（白透明 / 暗 hex / 浅色前景），不按色相判。
+
+| 状态 | 项 | 说明 | 优先级 |
+|---|---|---|---|
+| open | 划词浮层手写紫 | `components/doc-browser/DocBrowser.tsx` 的 `SelectionActionPopover`：边框 `rgba(168,85,247,0.4)`、文字 `rgba(216,180,254,0.95)`、`scrollToTextInContainer` 的闪烁高亮 `rgba(168,85,247,0.22)`。应改引 `--semantic-purple-border` / 新增一个文字档 | P3 |
+| open | 再加工抽屉手写紫 | `pages/document-store/ReprocessChatDrawer.tsx` 的 `DropdownRow` 选中态 `rgba(168,85,247,0.10)` + 左边框 `rgba(168,85,247,0.6)`，应改引 `--semantic-purple-soft` | P3 |
+| open | GenSweepLoader 靛蓝流光 | `components/ui/GenSweepLoader.tsx` 的底色与流光用 `rgba(129,140,248,…)` / `rgba(165,180,252,…)`，未走 `--semantic-indigo-*` | P3 |
+| open | 注释误导 | `lib/tileAccent.ts` 的「一律不在色带内」需补一句「该禁令的管辖范围见 `inkPalette.test.ts` 的 GUARDED，语义色槽不在其内」 | P2 |
+| by-design | 不做全站去紫 | 语义色槽的紫是设计的一部分，不是漏网 | - |
+| by-design | 不扩 GUARDED | 在上面三条手写紫收敛完之前扩大 `GUARDED`，会一次红出大量与色带无关的命中，且没有对应收益 | - |
+
+**踩坑记录**：2026-08-23 做首页设计稿时，我照色带把知识库划词浮层画成橄榄绿，而真实代码是紫的，据此判断「代码违规 229 处」并上报。核对后发现两个错——数字只统计了 4 个字面值、漏了守卫真正的判据（真实是 2129 处），结论也错了（分域不是违规）。**教训：断言某处违反某条规则前，先读那条规则的守卫覆盖了哪些路径，再看被判对象是否在那个范围内。** 这正是 `predicate-and-wiring-discipline.md` 形状 7「守卫自己没接上线」的镜像——那条说守卫漏掉了该守的文件，这次是我把守卫没管的文件当成了它该管的。
