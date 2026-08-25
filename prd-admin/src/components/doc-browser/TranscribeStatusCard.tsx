@@ -18,7 +18,6 @@
  */
 import { useEffect, useState } from 'react';
 import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Play, Sparkles, Wand2 } from 'lucide-react';
-import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import { onRecordingDuration } from './recordingPlayBridge';
 import {
@@ -73,12 +72,23 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
         }}
         aria-hidden
       >
-        {done ? <Check size={10} style={{ color: 'var(--bg-base)' }} /> : active ? <MapSpinner size={10} /> : null}
+        {done ? <Check size={10} style={{ color: 'var(--bg-base)' }} /> : active ? (
+          // 设计稿这一格是一枚带缺口的强调色圆环在转，不是通用 spinner 图标
+          <span
+            style={{
+              width: 12, height: 12, borderRadius: '50%',
+              border: '2px solid color-mix(in srgb, var(--accent-fg-info) 28%, transparent)',
+              borderTopColor: 'var(--accent-fg-info)',
+              animation: 'spin 0.9s linear infinite',
+            }}
+            aria-hidden
+          />
+        ) : null}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span
-            className="text-[12px] font-medium"
+            className="text-[13px] font-semibold"
             style={{
               // 正在跑的那一格用强调色：一屏三行，得让人一眼看出现在停在哪一行
               color: active ? 'var(--accent-fg-info)'

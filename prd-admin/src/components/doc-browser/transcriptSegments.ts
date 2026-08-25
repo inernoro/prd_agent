@@ -348,6 +348,20 @@ export function buildSpeakerStats(segments: TranscriptSegment[]): TranscriptSpea
     .sort((a, b) => b.count - a.count || a.speaker.localeCompare(b.speaker, 'zh'));
 }
 
+/**
+ * 纪要里那些「整段就是一张任务清单」的模块要摘出去。
+ * 待办已经单独成区渲染，纪要再原样列一遍，同一份内容就在同屏出现了两次——
+ * 用户会以为那是两批不同的事。判据是**结构**（这一段除了勾选项没有别的内容），
+ * 不是标题里有没有「待办」二字：换个模板叫「行动项」「Next steps」照样成立。
+ */
+export function isTodoOnlyModule(markdown: string): boolean {
+  const lines = markdown.split('\n').map(line => line.trim()).filter(Boolean);
+  if (lines.length === 0) return false;
+  const meaningful = lines.filter(line => !/^#{1,6}\s/.test(line));
+  if (meaningful.length === 0) return false;
+  return meaningful.every(line => /^[-*+]\s+\[[ xX]\]\s+/.test(line));
+}
+
 /** 整理结果里的一条待办。 */
 export type TranscriptTodo = {
   text: string;

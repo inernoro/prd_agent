@@ -44,6 +44,23 @@ for (const theme of ['light', 'dark']) {
     await board.screenshot({ path: file });
     manifest.push({ boardId: id, palette: PALETTE, theme, image: file });
     console.log(id, PALETTE, theme);
+
+    /*
+     * 一屏装不下的画板还要给下滚证据。只截顶部等于把「下面那几块到底做没做」
+     * 留成悬案——审查智能体只能按「拿不准算缺失」处理，分数白扣。
+     * 锚点取画板内的区块标题，标题文本即证据文件名，增减区块自动跟上。
+     */
+    const headings = await board.locator('h3').all();
+    for (const heading of headings) {
+      const name = (await heading.innerText()).trim();
+      if (!name) continue;
+      await heading.evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      await page.waitForTimeout(250);
+      const sectionFile = `${OUT}/${id}.${PALETTE}.${theme}.${name}.png`;
+      await board.screenshot({ path: sectionFile });
+      manifest.push({ boardId: id, palette: PALETTE, theme, section: name, image: sectionFile });
+      console.log('  ↳', name);
+    }
   }
 }
 

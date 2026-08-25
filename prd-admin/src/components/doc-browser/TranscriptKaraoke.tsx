@@ -16,6 +16,7 @@ import {
   extractTranscriptSummary,
   parseSummaryModules,
   extractTranscriptTodos,
+  isTodoOnlyModule,
   buildSpeakerStats,
 } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
@@ -161,7 +162,11 @@ export function TranscriptKaraoke({
   const segments = useMemo(() => parseTranscriptSegments(noteMd), [noteMd]);
   // 摘要一直存在 noteMd 里，只是此前没有任何界面读它；纪要与待办都从这里长出来
   const summaryMd = useMemo(() => extractTranscriptSummary(noteMd), [noteMd]);
-  const summaryModules = useMemo(() => parseSummaryModules(summaryMd), [summaryMd]);
+  // 纯任务清单的模块交给「待办事项」区渲染，纪要里不再重复列一遍
+  const summaryModules = useMemo(
+    () => parseSummaryModules(summaryMd).filter(module => !isTodoOnlyModule(module.markdown)),
+    [summaryMd],
+  );
   const todos = useMemo(() => extractTranscriptTodos(summaryMd), [summaryMd]);
   const synced = useMemo(() => hasUsableTimestamps(segments), [segments]);
 
@@ -458,7 +463,7 @@ export function TranscriptKaraoke({
             我上一轮把它们做成了互斥分区，一次只能看一块——审查智能体判为「打断主路径」，
             结构分扣了 7 分。这里改回并置，分区标签随之取消。
           */}
-          <section>
+          <section style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-token-primary">词云</h3>
               <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句 · 点词看它出现在哪几处</span>
@@ -545,9 +550,10 @@ export function TranscriptKaraoke({
                     // 设计稿把词频压成**三档**（高频黑底大字 / 中频蓝字 / 低频灰底小字）。
                     // 连续映射看着更精确，但一排词里没有哪个能占住视线——三档存在的
                     // 全部理由就是让最高频那个词一眼跳出来。
-                    // 阈值按稿面那组词频（38/29/17/14/9/7/5/4）反推：最高频独占黑档，
-                    // 腰部进蓝档，长尾退灰档。三档的意义是拉开梯度，不是等分。
-                    const tier = weight >= 0.8 ? 'high' : weight >= 0.4 ? 'mid' : 'low';
+                    // 阈值按稿面那组词频（38/29/17/14/9/7/5/4）反推：38 与 29 同为黑档
+                    // ——「这场有两个并列头部词」是一条信息，把第二名压进蓝档就读不出来了；
+                    // 17/14 进蓝档；9 及以下退灰档。三档的意义是拉开梯度，不是等分。
+                    const tier = weight >= 0.7 ? 'high' : weight >= 0.3 ? 'mid' : 'low';
                     const selected = activeTerm === word;
                     const tierStyle = tier === 'high'
                       ? { fontSize: '18px', fontWeight: 700, background: 'var(--text-primary)', color: 'var(--bg-card)', border: '1px solid var(--text-primary)' }
@@ -653,12 +659,17 @@ export function TranscriptKaraoke({
                       key={`${index}-${segment.start}`}
                       type="button"
                       onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
-                      className="min-h-11 rounded-[8px] px-3 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
-                      style={{ background: 'var(--bg-elevated)' }}>
-                      <span className="mr-2 font-mono text-[10px]" style={{ color: 'var(--accent-fg-info)' }}>{segment.start >= 0 ? formatClock(segment.start) : '原文'}</span>
-                      {segment.speaker && <span className="mr-2 font-semibold text-token-primary">{segment.speaker}</span>}
-                      {/* 命中的词要在句子里高亮出来，否则用户还得自己在句中找 */}
-                      {highlightKeyword(segment.text, activeTerm)}
+                      // 时间戳独立成左列：几条命中句的时间纵向对齐，才能一眼扫出「集中在哪一段」
+                      className="grid min-h-11 items-start gap-2 rounded-[8px] px-3 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
+                      style={{ background: 'var(--bg-elevated)', gridTemplateColumns: '44px 1fr' }}>
+                      <span className="pt-[1px] font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
+                        {segment.start >= 0 ? formatClock(segment.start) : '原文'}
+                      </span>
+                      <span className="min-w-0">
+                        {segment.speaker && <span className="mr-1.5 font-semibold text-token-primary">{segment.speaker}</span>}
+                        {/* 命中的词要在句子里高亮出来，否则用户还得自己在句中找 */}
+                        {highlightKeyword(segment.text, activeTerm)}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -666,7 +677,7 @@ export function TranscriptKaraoke({
             )}
             {activeTerm && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
           </section>
-          <section className="mt-4">
+          <section className="mt-4" style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-token-primary">会议纪要</h3>
               {onRestyle && (
@@ -700,7 +711,7 @@ export function TranscriptKaraoke({
               </div>
             )}
           </section>
-          <section className="mt-4">
+          <section className="mt-4" style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-token-primary">待办事项</h3>
               {todos.length > 0 && <span className="text-[11px] tabular-nums text-token-muted">{todos.length} 项</span>}
@@ -744,7 +755,7 @@ export function TranscriptKaraoke({
               </div>
             )}
           </section>
-          <section className="mt-4">
+          <section className="mt-4" style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-token-primary">问这段录音</h3>
               <span />

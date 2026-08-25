@@ -9,6 +9,7 @@ import {
   parseSummaryModules,
   buildSpeakerStats,
   extractTranscriptTodos,
+  isTodoOnlyModule,
   activeSummaryModuleIndex,
   replaceTranscriptSegmentText,
   renameTranscriptSpeaker,
@@ -488,5 +489,26 @@ describe('extractTranscriptTodos', () => {
 
   it('空文本的勾选项跳过，不产出一条看不出内容的待办', () => {
     expect(extractTranscriptTodos('- [ ]   ')).toEqual([]);
+  });
+});
+
+describe('isTodoOnlyModule', () => {
+  it('整段只有勾选项的模块判真——它归待办区，纪要不再重复列', () => {
+    expect(isTodoOnlyModule('- [ ] 出交互稿\n- [x] 复访 3 位用户')).toBe(true);
+    expect(isTodoOnlyModule('## 行动项\n- [ ] 出交互稿')).toBe(true);
+  });
+
+  it('认的是结构不是标题措辞：叫什么名字都一样', () => {
+    expect(isTodoOnlyModule('## Next steps\n- [ ] ship it')).toBe(true);
+  });
+
+  it('夹带正文的模块留在纪要里——那不是一张纯清单', () => {
+    expect(isTodoOnlyModule('结论是导入有问题。\n- [ ] 出交互稿')).toBe(false);
+    expect(isTodoOnlyModule('- 这只是要点\n- 另一个要点')).toBe(false);
+  });
+
+  it('空内容不判真，避免把空模块也吞掉', () => {
+    expect(isTodoOnlyModule('')).toBe(false);
+    expect(isTodoOnlyModule('## 只有标题')).toBe(false);
   });
 });
