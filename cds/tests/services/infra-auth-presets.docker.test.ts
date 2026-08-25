@@ -90,7 +90,16 @@ function runFromPreset(entry: InfraCatalogEntry, name: string): void {
     : '';
   const cmdArr = Array.isArray(entry.command) ? entry.command : entry.command ? [entry.command] : [];
   const cmdParts = cmdArr.map(q).join(' ');
-  execSync(`docker run -d --name ${name} ${envFlags} ${ep} ${entry.dockerImage} ${cmdParts}`,
+  // **必须给主机名**，而且要等于预设里自我引用的那个名字。
+  //
+  // kafka 预设的 env 里写着 `KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093` 与
+  // `KAFKA_ADVERTISED_LISTENERS=CLIENT://kafka:9092`——生产环境里 CDS 会按服务 id
+  // 给容器挂一个网络别名，所以 `kafka` 解析得到；而这里是裸 `docker run`，没有别名，
+  // 容器解析不了自己的名字，KRaft 控制器连不上自己的选票，启动失败后优雅关闭。
+  //
+  // 这是**测试没复刻生产的起法**，不是预设配错了。加上 `--hostname` 之后
+  // docker 会把这个名字写进容器的 /etc/hosts，自我引用就成立了。
+  execSync(`docker run -d --name ${name} --hostname ${q(entry.id)} ${envFlags} ${ep} ${entry.dockerImage} ${cmdParts}`,
     { stdio: 'ignore', timeout: 120_000 });
 }
 
@@ -106,7 +115,9 @@ function isRunning(name: string): boolean {
 
 function logsTail(name: string, lines = 30): string {
   try {
-    return execSync(`docker logs --tail ${lines} ${name} 2>&1`, { encoding: 'utf8', timeout: 15_000 });
+    return execSync(`docker logs --tail ${lines} ${name} 2>&1`, {
+      encoding: 'utf8', timeout: 15_000, maxBuffer: 16 * 1024 * 1024,
+    });
   } catch {
     return '(读不到日志)';
   }
@@ -123,7 +134,12 @@ function logsTail(name: string, lines = 30): string {
  */
 function logsCause(name: string): string {
   try {
-    const all = execSync(`docker logs ${name} 2>&1`, { encoding: 'utf8', timeout: 20_000 });
+    // kafka 的完整日志有好几 MB，execSync 默认 1MB 缓冲会直接 ENOBUFS——
+    // 上一轮我就是这么把诊断信息弄丢的，报错变成了「读不到日志」，
+    // 比原来那个只有噪音的尾巴还糟。
+    const all = execSync(`docker logs ${name} 2>&1`, {
+      encoding: 'utf8', timeout: 20_000, maxBuffer: 64 * 1024 * 1024,
+    });
     const lines = all.split('\n');
     const hits = lines.filter((l) => /ERROR|FATAL|Exception|Caused by|unbound variable|No such file/i.test(l));
     const head = lines.slice(0, 25).join('\n');

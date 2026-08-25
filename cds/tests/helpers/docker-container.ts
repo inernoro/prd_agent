@@ -98,7 +98,11 @@ export function releaseDockerSlot(): void {
 /** 取容器日志尾巴。拿不到就返回一句说明，绝不抛——它本身是用来解释别的失败的。 */
 export function dockerLogsTail(name: string, lines = 40): string {
   try {
-    return execSync(`docker logs --tail ${lines} ${name} 2>&1`, { encoding: 'utf8', timeout: 30_000 });
+    // 缓冲要给够：execSync 默认 1MB，JVM 服务的日志轻松超过，超了会 ENOBUFS
+    // 而不是截断——诊断信息会整个丢掉，只剩一句「取不到」。
+    return execSync(`docker logs --tail ${lines} ${name} 2>&1`, {
+      encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024,
+    });
   } catch (err) {
     return `(取不到容器日志：${(err as Error).message})`;
   }
