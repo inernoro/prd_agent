@@ -929,7 +929,12 @@ export function TranscriptKaraoke({
           */}
           <section style={{ scrollMarginTop: 100 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>录音理解</h3>
+              {/*
+                这块叫「词云」——2026-08-25 产品方明确：这就是他设定的名字。
+                另一张画布（VOICE CAPTURE 的 B3）把同一块内容标成「录音理解」，
+                以产品方的设定为准，那张稿上的名字过时了，已回请设计方同步改。
+              */}
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>词云</h3>
               {/* 稿面 P3 这行右侧除了句数还有一句可供性提示：词条是可以点的，点了看命中 */}
               <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句原文 · 点击查看命中</span>
             </div>
@@ -977,21 +982,18 @@ export function TranscriptKaraoke({
               现在字号/底色/边框/字重全部由 count 相对最大值决定，并把次数直接写在词上（不再藏 title），
               开头先给一句结论，让人一眼知道「这场到底在反复讲什么」而不是自己读一排词去数。
             */}
-            {(wordCloud.length > 0 || onSaveNote) && (
-              <div className="mt-3">
             {/*
-              两张设计稿在这一块上不一致，两边都得照顾：
-              `VOICE TO NOTE`（P3）把这块叫「词云」、打开就是词条；
-              `VOICE CAPTURE`（B3）把它叫「录音理解」，词条上面还压着一句结论。
-              两张都是 V2、覆盖范围不同（交付页 vs 采集与结果），没有新旧之分。
-
-              取法：区块标题按 B3 用「录音理解」并保留那句结论，词条组自己再带一个
-              「词云」小标签——两张稿要的东西都在，只是层级各降一级。
-              这处冲突已写进给设计方的待办，等他们定哪一个是准的。
+              这一块**无条件渲染**。原先的条件是「有词条 或 有编辑权限」，于是
+              「一个词都没重复 + 只读」时整块被跳过——区块标题下面是一张彻头彻尾的空卡。
+              而没有词的时候恰恰最需要告诉用户为什么没有（分词器不认识人名黑话）。
+              空态要给理由和下一步，不能是一片空白（guided-exploration）。
             */}
-                {wordCloud.length > 0 && (
-                <p className="mt-3 text-[12px] font-semibold text-token-muted">词云</p>
-                )}
+            <div className="mt-3">
+            {/*
+              这里原先有一个「词云」小标签：那是两张画布各起一个名时的折中产物——
+              区块标题被另一张稿的「录音理解」占着，只好把真名降一级塞进卡里。
+              产品方已明确这块就叫词云，标题已经写着它了，卡内不必再说第二遍。
+            */}
                 {wordCloud.length > 0 && (
                 <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
                   {wordCloud.map(({ word, count }, index) => {
@@ -1140,8 +1142,7 @@ export function TranscriptKaraoke({
                     )}
                   </div>
                 ) : null}
-              </div>
-            )}
+            </div>
 
             {activeTerm && searchMatches.length > 0 && (
               // 稿面的命中面板是**一整块**浅灰底：抬头与命中句同处一块里，

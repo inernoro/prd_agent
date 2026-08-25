@@ -91,11 +91,13 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    // 区块还在（现在按稿面 B3 叫「录音理解」），只是里面没有词条云、也没有那句结论
-    expect(html).toContain('录音理解');
+    // 区块还在（产品方定的名字就叫「词云」），只是里面没有词条云、也没有那句结论
+    expect(html).toContain('>词云<');
     expect(html).not.toContain('整场录音词云');
     expect(html).not.toContain('的句子提到');
     expect(html).not.toContain('最高频主题');
+    // 但**不许是一张空卡**：没有词的时候恰恰最需要说清为什么没有、怎么补
+    expect(html).toContain('没有反复出现的词');
   });
 
   it('问答提示保留超过四万字录音的开头和结尾，不偷偷截成局部', () => {

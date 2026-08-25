@@ -28,12 +28,12 @@ function at(needle: string): number {
 }
 
 describe('结果页区块顺序（稿面 B1 + B3 + P3 的并集）', () => {
-  it('原文列表紧跟播放区，排在录音理解之前', () => {
-    expect(at('搜索原文关键词')).toBeLessThan(at('>录音理解<'));
+  it('原文列表紧跟播放区，排在词云之前', () => {
+    expect(at('搜索原文关键词')).toBeLessThan(at('>词云<'));
   });
 
-  it('一键整理排在录音理解之后、会议纪要之前——入口在上、产出在下', () => {
-    const understand = at('>录音理解<');
+  it('一键整理排在词云之后、会议纪要之前——入口在上、产出在下', () => {
+    const understand = at('>词云<');
     const organize = at('<OrganizeStylePanel');
     const summary = at('>会议纪要<');
     const todo = at('>待办事项<');
