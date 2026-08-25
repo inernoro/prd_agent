@@ -88,7 +88,8 @@ def test_create_adopts_issued_key_and_drops_bootstrap(workspace, monkeypatch):
     """用一次性钥匙建项目 → 本地换成项目级钥匙，一次性钥匙不再留存。"""
     monkeypatch.setenv("AI_ACCESS_KEY", "cdsg_one_time_never-print")
     cdscli._save_local_credentials(host="https://cds.example",
-                                   bootstrap_key="cdsg_one_time_never-print")
+                                   bootstrap_key="cdsg_one_time_never-print",
+                                   bootstrap_source=cdscli.BOOTSTRAP_SOURCE_PAGE_APPROVAL)
     calls: list = []
     monkeypatch.setattr(cdscli, "_request", make_request(calls))
 
@@ -108,7 +109,8 @@ def test_onboard_also_adopts_issued_key(workspace, monkeypatch):
     """onboard 曾经自己 POST 然后丢掉返回的钥匙——项目建好、钥匙作废、clone 401。"""
     monkeypatch.setenv("AI_ACCESS_KEY", "cdsg_one_time_never-print")
     cdscli._save_local_credentials(host="https://cds.example",
-                                   bootstrap_key="cdsg_one_time_never-print")
+                                   bootstrap_key="cdsg_one_time_never-print",
+                                   bootstrap_source=cdscli.BOOTSTRAP_SOURCE_PAGE_APPROVAL)
     calls: list = []
     base = make_request(calls)
 
@@ -144,7 +146,8 @@ def test_bootstrap_identity_without_issued_key_fails_loudly(workspace, monkeypat
     # 一次性身份的判据是凭据文件里存着 bootstrapKey（页面批准换来的那把），
     # 不是环境里有没有 AI_ACCESS_KEY —— 静态 key 与全权 key 建项目本就不签发新钥匙。
     cdscli._save_local_credentials(host="https://cds.example",
-                                   bootstrap_key="cdsg_one_time_never-print")
+                                   bootstrap_key="cdsg_one_time_never-print",
+                                   bootstrap_source=cdscli.BOOTSTRAP_SOURCE_PAGE_APPROVAL)
     calls: list = []
     monkeypatch.setattr(cdscli, "_request", make_request(calls, issue_key=False))
 
@@ -158,7 +161,8 @@ def test_adopted_key_that_cannot_read_back_fails(workspace, monkeypatch):
     """换钥不能只看「存下来了」，要用新钥匙真读一次；读不回来就是没换成。"""
     monkeypatch.setenv("AI_ACCESS_KEY", "cdsg_one_time_never-print")
     cdscli._save_local_credentials(host="https://cds.example",
-                                   bootstrap_key="cdsg_one_time_never-print")
+                                   bootstrap_key="cdsg_one_time_never-print",
+                                   bootstrap_source=cdscli.BOOTSTRAP_SOURCE_PAGE_APPROVAL)
     calls: list = []
     monkeypatch.setattr(cdscli, "_request",
                         make_request(calls, verify_status=403))
@@ -344,7 +348,8 @@ def test_create_project_argument_errors_happen_before_any_approval(workspace, mo
 def test_verify_hiccup_does_not_discard_completed_handover(workspace, monkeypatch):
     """回读那一跳网络抖动 ≠ 换钥失败：钥匙已在本地，不能再报一次失败诱导重跑。"""
     cdscli._save_local_credentials(host="https://cds.example",
-                                   bootstrap_key="cdsg_one_time_never-print")
+                                   bootstrap_key="cdsg_one_time_never-print",
+                                   bootstrap_source=cdscli.BOOTSTRAP_SOURCE_PAGE_APPROVAL)
     calls: list = []
 
     def fake_request(method, path, body=None, timeout=15, extra_headers=None,
@@ -373,7 +378,8 @@ def test_stale_bootstrap_key_with_explicit_full_key_is_not_a_dead_end(workspace,
     于是在项目**已经建好之后**报死局，诱导重试、建出重复项目。
     """
     cdscli._save_local_credentials(host="https://cds.example",
-                                   bootstrap_key="cdsg_one_time_never-print")
+                                   bootstrap_key="cdsg_one_time_never-print",
+                                   bootstrap_source=cdscli.BOOTSTRAP_SOURCE_PAGE_APPROVAL)
     monkeypatch.setenv("AI_ACCESS_KEY", "static-platform-key")   # 显式全权身份
     calls: list = []
     monkeypatch.setattr(cdscli, "_request", make_request(calls, issue_key=False))
@@ -421,3 +427,44 @@ def test_orphan_project_flags_rejected_before_approval(workspace, monkeypatch):
     assert code == 1, output
     assert "--git-url" in output and "--create-project" in output
     assert seen == [], "报错之前不许发起任何授权申请"
+
+
+def test_init_migrated_static_key_is_not_treated_as_one_time(workspace, monkeypatch):
+    """`init --yes` 会把静态 / 全权 key 也存进 bootstrapKey，值还跟当前身份一模一样。
+
+    判据只比对「值相等」时，这条受支持的初始化路径会被当成一次性授权：后端本就不给
+    这种身份签发新钥匙，于是在项目**已经建好之后**报死局、诱导重试建出重复项目。
+    来源才是能分开两者的那一维。
+    """
+    static_key = "static-platform-key"
+    cdscli._save_local_credentials(host="https://cds.example", bootstrap_key=static_key)
+    monkeypatch.setenv("AI_ACCESS_KEY", static_key)
+    calls: list = []
+    monkeypatch.setattr(cdscli, "_request", make_request(calls, issue_key=False))
+
+    code, output = run_command(["project", "create", "--name", "demo"])
+    assert code == 0, output
+    assert "proj-new" in output
+
+
+def test_connect_marks_bootstrap_credential_provenance(workspace, monkeypatch):
+    """页面批准换来的那把钥匙必须带上来源，否则下游没法把它和静态 key 分开。"""
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
+        if method == "POST" and path == "/api/bootstrap-access-requests":
+            return 201, {"requestId": "req1", "pollToken": "poll1", "status": "pending"}, {}
+        if method == "GET" and path.startswith("/api/bootstrap-access-requests/"):
+            return 200, {"status": "approved",
+                         "authorizationKey": "cdsg_one_time_never-print"}, {}
+        return 200, {"projects": []}, {}
+
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _seconds: None)
+
+    code, output = run_command([
+        "connect", "--host", "https://cds.example", "--new-project", "--agent", "TestAgent",
+    ])
+    assert code == 0, output
+    saved = read_credentials(workspace)
+    assert saved.get("bootstrapSource") == cdscli.BOOTSTRAP_SOURCE_PAGE_APPROVAL
+    assert "cdsg_one_time" not in output

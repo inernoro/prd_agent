@@ -176,10 +176,16 @@ export function AuthModeGatedNotice({
             {feature}是否可用——这是探测失败，不是「认证未启用」。请稍后重试；持续失败通常说明 CDS 正在重启，或前面有网关在拦。
           </p>
         </div>
+        {/* 原始报错里带着方法、内部端点、状态码、requestId 和服务端返回体——那是排障
+            要用的东西，但不该是运维打开这一屏第一眼看到的内容。收进折叠区，并截断，
+            上面那句固定文案才是给人看的结论。 */}
         {probeError ? (
-          <pre className="overflow-x-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs text-muted-foreground">
-            {probeError}
-          </pre>
+          <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs">
+            <summary className="cursor-pointer text-muted-foreground">诊断详情（排障用）</summary>
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all text-muted-foreground">
+              {probeError.slice(0, 400)}
+            </pre>
+          </details>
         ) : null}
         <div className="flex gap-2">
           {onRetryProbe ? (

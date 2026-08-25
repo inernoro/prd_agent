@@ -47,6 +47,11 @@ from collections.abc import Iterator
 from typing import Any, Optional
 
 VERSION = "0.14.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+
+# 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
+# `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
+# 一模一样，但建项目拿不到新钥匙时的正确反应相反（前者是死局，后者完全正常）。
+BOOTSTRAP_SOURCE_PAGE_APPROVAL = "page-approval"
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -120,8 +125,14 @@ def _exclude_local_credentials(root: str) -> None:
 
 def _save_local_credentials(*, host: str, project_id: str | None = None,
                             project_key: str | None = None,
-                            bootstrap_key: str | None = None) -> str:
-    """原子写入当前项目凭据；不打印密钥，不修改 shell profile。"""
+                            bootstrap_key: str | None = None,
+                            bootstrap_source: str | None = None) -> str:
+    """原子写入当前项目凭据；不打印密钥，不修改 shell profile。
+
+    `bootstrap_source` 记这把 bootstrapKey 的来源。`init --yes` 也会把一把静态或
+    全权 AI_ACCESS_KEY 存进同一个字段，光靠「字段名 + 值相等」分不出它和页面批准
+    换来的一次性钥匙——而两者在建项目时的正确反应相反。所以来源要跟着值一起存。
+    """
     root = _workspace_root()
     target = _credentials_path(root)
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -135,6 +146,8 @@ def _save_local_credentials(*, host: str, project_id: str | None = None,
         payload["projectKey"] = project_key
     if bootstrap_key:
         payload["bootstrapKey"] = bootstrap_key
+        if bootstrap_source:
+            payload["bootstrapSource"] = bootstrap_source
     tmp_path = target + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -697,9 +710,17 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
     # 光看文件里存没存 bootstrapKey 不够：老工作区常残留一把过期的，而调用方完全可能
     # 用显式 AI_ACCESS_KEY / CDS_PROJECT_KEY 以全权身份在建项目——那种情况后端本就不签发
     # 新钥匙，误判成一次性身份会在项目已经建好之后报「死局」，诱导重试、建出重复项目。
-    _stored_bootstrap = str(_read_local_credentials_file().get("bootstrapKey") or "").strip()
+    _creds = _read_local_credentials_file()
+    _stored_bootstrap = str(_creds.get("bootstrapKey") or "").strip()
     _active_key = _auth_headers().get("X-AI-Access-Key", "").strip()
-    had_bootstrap_identity = bool(_stored_bootstrap) and _active_key == _stored_bootstrap
+    had_bootstrap_identity = (
+        bool(_stored_bootstrap)
+        and _active_key == _stored_bootstrap
+        # 还要求这把钥匙确实来自页面批准。`init --yes` 会把静态 / 全权 key 也存进
+        # bootstrapKey，那种身份后端本就不签发新钥匙，误判会在项目已经建好之后报
+        # 死局、诱导重试建出重复项目。来源缺失（老版本 CLI 写的文件）按不阻断处理。
+        and str(_creds.get("bootstrapSource") or "").strip() == BOOTSTRAP_SOURCE_PAGE_APPROVAL
+    )
 
     body = _call("POST", "/api/projects", body=payload, timeout=timeout)
     proj = body.get("project") if isinstance(body, dict) else None
@@ -722,6 +743,12 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
                 code=2,
                 extra={"data": {"projectId": pid, "adopted": False}},
             )
+        if _stored_bootstrap and _active_key == _stored_bootstrap and _HUMAN:
+            # 值对上了但来源存疑（老文件或 init --yes 迁进来的）：不阻断，但要说出口，
+            # 免得「项目建了、钥匙没换」这件事无声无息。
+            print(f"  [warn] 项目 {pid} 已创建，但后端未返回项目级 Key；"
+                  f"若当前用的是页面批准的一次性授权，请在项目卡手动签发一把 Key。",
+                  file=sys.stderr)
         return {"project": proj, "projectId": pid, "adopted": False, "verified": True,
                 "verifyStatus": 0, "credentialsPath": None, "issuedProjectKeyMeta": None}
 
@@ -3531,7 +3558,10 @@ def cmd_connect(args: argparse.Namespace) -> None:
         die("等待授权超时，未保存任何凭据。", code=2)
 
     if new_project:
-        credentials_path = _save_local_credentials(host=host, bootstrap_key=authorization_key)
+        credentials_path = _save_local_credentials(
+            host=host, bootstrap_key=authorization_key,
+            bootstrap_source=BOOTSTRAP_SOURCE_PAGE_APPROVAL,
+        )
         os.environ["AI_ACCESS_KEY"] = authorization_key
         os.environ.pop("CDS_PROJECT_KEY", None)
         os.environ.pop("CDS_PROJECT_ID", None)
