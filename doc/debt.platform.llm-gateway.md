@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 34 / in-progress: 8 / paid: 25 / 总计: 67
+当前 open: 35 / in-progress: 8 / paid: 25 / 总计: 68
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -20,6 +20,7 @@
 
 | ID | 严重度 | 创建日期 | 描述 | 触发条件 | 状态 | 备注 |
 |----|--------|---------|------|---------|------|------|
+| 2026-08-25-service-key-appcaller-acceptance-not-in-ci | medium | 2026-08-25 | 接入密钥「按用途生成 appCallerCode」的验收脚本 `e2e/llmgw-service-key-appcaller.mjs` 只能手动跑：它要先 `pnpm --dir llmgw/web build` 出 dist 再起 Playwright，而 CI 里根本没有构建 llmgw/web 的 job（只有 branch-image 的 Docker 构建），同目录的 `llmgw-layout-drift.mjs` 也是同样处境 | 下次有人改 ServiceKeysPage 的生成逻辑或表单结构时 | open | 落地时已跑红绿闭环两轮（改坏段内归一化 → 2 条红；去掉登记接线 → 4 条红），但没接进 CI 就等于没有回归守卫（`predicate-and-wiring-discipline.md` 形状 7）。不在本次展开的理由：要新开一个 llmgw/web 构建 + Playwright 的 CI job，属基础设施改动，按 §5.5 判 B 类。补法：加一个 `llmgw-web` job（build → 跑 layout-drift 与本脚本两条），并把 `llmgw/web/**`、`e2e/llmgw-*.mjs` 一起登记进它的 path filter |
 | 2026-08-18-pool-create-wizard-member-step | low | 2026-08-18 | 设计稿新建向导第 3 步是「成员顺位」（建池时就能定第 1 顺位），实现仍是「业务说明」，建完必须再去详情页加成员；期间这个池接不了任何调用 | 用户抱怨「建完池还得再跑一趟」时 | open | 属于新增能力不是复刻偏差，未在复刻 PR 内展开。设计稿证据：`create` 画板 |
 | 2026-08-18-pool-detail-member-table | low | 2026-08-18 | 池详情成员区设计稿是表格（顺位/模型成员/状态与证据/成功率·近10次/币种·字段能力/操作六列），实现是堆叠卡片；成员多时纵向拉得很长，跨成员比对要上下扫 | 单池成员数常态超过 4 个时 | open | 并排比对时判为「差异明确但不影响判断」，本轮未改。证据：`detail` 画板 |
 | 2026-08-18-llmgw-console-account-shared-db | medium | 2026-08-18 | 控制台账号落在共享库 `llm_gateway`（无 per-branch 后缀），分支预览与其它部署共用同一批账号；播种/改密/破窗 env 都会穿透到别的部署 | 需要在分支预览上做真人登录验收时 | open | 本轮复刻取证因此改用「真实 bundle + stub API」，未动共享状态。对齐 `cross-project-isolation.md` 通道 4，宜按通道 8 的做法加部署作用域 |

@@ -5405,6 +5405,27 @@ a:focus-visible {
   align-items: end;
 }
 
+/* 调用用途一栏放两个控件：用途文字 + 调用类型，类型固定占右侧一小段。 */
+.lg-service-key-caller-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, 0.42fr);
+  gap: 6px;
+}
+
+/* 模式切换写成 button（不是导航），所以要自己抹掉浏览器默认按钮外观。 */
+.lg-service-key-defaults > .lg-service-key-caller-switch {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* 生成出来的 appCallerCode：等宽显示，让人一眼看清点和冒号的位置。 */
+.lg-service-key-generated-caller {
+  font-family: var(--font-mono);
+}
+
 .lg-service-key-fast-action {
   display: flex;
   justify-content: flex-end;
