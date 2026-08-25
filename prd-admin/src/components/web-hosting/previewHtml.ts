@@ -33,9 +33,17 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
  * 前端不看这个字段就会去问、拿回一个预期之内的拒绝，然后在一个本来显示得好好的
  * 直链预览上盖一条错误角标——用户看到的是「这页出错了」，其实什么事都没有。
  *
- * 判据故意宽松：只要声明了任何包装类型就跳过，而不是逐个列举 pdf/video/markdown。
- * 后端将来多一种包装形态，这里不用跟着改（形状 1：判据别比它该管的范围窄）。
+ * 但「任何包装类型一律跳过」又宽过头了：Markdown 包装站的壳子**就是**正文
+ * （服务端把 .md 渲染成完整 HTML、样式内联、无外部引用），它拿得回来、也最适合 srcDoc。
+ * 一刀切跳过的后果是 MD 站在分享页只能走直链 iframe，而直链正是那条会白屏的路径
+ * —— 用户看到的就是标题栏下面一片白（2026-08-25 反馈）。
+ *
+ * 所以改成 default-deny 的白名单：只有确认「壳子即正文」的包装类型才放行，
+ * 后端将来多一种包装形态时保持今天的行为，确认自包含之后才加进来。
+ * 两侧判据必须同步 —— 后端 WebPagesController.SrcDocReadableWrappers 是同一份名单。
  */
+const SRCDOC_READABLE_WRAPPERS = new Set(['markdown']);
+
 export function hasFetchableHtml(site: {
   siteUrl: string;
   entryFile?: string;
@@ -43,7 +51,7 @@ export function hasFetchableHtml(site: {
   wrappedAssetType?: string | null;
 }): boolean {
   if (site.pdfAssetUrl) return false;
-  if (site.wrappedAssetType) return false;
+  if (site.wrappedAssetType && !SRCDOC_READABLE_WRAPPERS.has(site.wrappedAssetType)) return false;
   return isHtmlEntry(site.siteUrl, site.entryFile);
 }
 

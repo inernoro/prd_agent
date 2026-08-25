@@ -920,10 +920,24 @@ public class WebPagesController : ControllerBase
     /// 保证「什么算可读、多大算超限、失败怎么报」只有一份判定（判据分裂会随时间漂移）。
     /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。
     /// </summary>
+    /// <summary>
+    /// 壳子本身就是完整正文、可以直接当 HTML 读回去的包装类型。
+    /// 默认拒绝、这里显式放行：将来新增包装形态时保持今天的行为，
+    /// 确认它自包含之后才加进来（default-deny，不靠「忘了排除」来放行）。
+    /// </summary>
+    private static readonly HashSet<string> SrcDocReadableWrappers =
+        new(StringComparer.OrdinalIgnoreCase) { "markdown" };
+
     private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site)
     {
-        if (!string.IsNullOrEmpty(site.WrappedAssetType))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频/Markdown 包装站，不支持以 HTML 读取"));
+        // 只拒「壳子里没有正文」的那几类：PDF / 视频壳本身只是一个指向同目录资产的容器，
+        // 取回它的 HTML 没有意义，而且它必须以托管域名为文档源才能加载那份资产。
+        // Markdown 包装站不同 —— 它的壳子**就是**正文：服务端把 .md 渲染成完整 HTML、
+        // 样式内联、没有任何外部引用，恰恰是最适合 srcDoc 的那种页面。
+        // 此前一刀切拒绝，导致 MD 站在分享页拿不到原文、只能退回直链 iframe，
+        // 而直链正是那条「Chrome 只绘制空白」的路径 —— 用户看到的就是标题栏下面一片白。
+        if (!string.IsNullOrEmpty(site.WrappedAssetType) && !SrcDocReadableWrappers.Contains(site.WrappedAssetType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频包装站，不支持以 HTML 读取"));
         if (string.IsNullOrWhiteSpace(site.SiteUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
 
