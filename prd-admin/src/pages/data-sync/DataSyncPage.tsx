@@ -1058,7 +1058,7 @@ function ProgressCard({
 
             改法是把话说回事实：承诺范围不变、授权不用再来一次，但明说数据是现取的。
             要做到「真的冻结」得给导出加快照或版本边界，那是另一件事，记在
-            doc/debt.platform.data-sync.md。
+            doc/debt.platform.cross-instance-data-sync.md。
           */}
           <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
             上面这份定的是<span style={{ color: 'var(--text-primary)' }}>搬哪些内容</span>

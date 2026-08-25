@@ -498,7 +498,7 @@ public sealed class DataSyncConsumerController : ControllerBase
             // 范围一律照抄，**不重新问源站要清单**：真跑的集合与计划必须是操作者刚才看过的那一份。
             // 注意这只冻结**范围**，不冻结**数据**——worker 会重新调源站 /export 拉内容，
             // 游标从头开始。期间源站改了的记录，搬过来的是改之后的值。想真冻结数据得给导出
-            // 加快照或版本边界，见 doc/debt.platform.data-sync.md；界面上已如实说明。
+            // 加快照或版本边界，见 doc/debt.platform.cross-instance-data-sync.md；界面上已如实说明。
             Collections = new List<string>(run.Collections),
             PlannedCollections = new List<string>(run.PlannedCollections),
             PlannedManifest = new Dictionary<string, DataSyncPlannedCollection>(run.PlannedManifest),
