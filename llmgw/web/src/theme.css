@@ -2860,6 +2860,341 @@ a:focus-visible {
   font-size: var(--fs-secondary);
 }
 
+/* ── Quickstart 主线：左步骤 / 右产物两栏 ──────────────────────────────
+   两栏各自独立滚动（不共用一个滚动容器），否则右栏一长，左侧步骤条就整片留白。
+   左栏 sticky 到顶：用户滚右栏看片段时，"我在第几步"始终在视野里。 */
+.lg-qs-columns {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(420px, 1.15fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.lg-qs-steps {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lg-qs-products {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lg-qs-step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+}
+
+.lg-qs-step > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lg-qs-step > header > strong {
+  color: var(--text-primary);
+  font-size: var(--fs-heading);
+  font-weight: 650;
+}
+
+.lg-qs-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+}
+
+.lg-qs-step.is-active > header .lg-qs-step-index {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.lg-qs-step.is-done > header .lg-qs-step-index,
+.lg-qs-tail-row.is-done .lg-qs-step-index {
+  border-color: transparent;
+  background: var(--ok);
+  color: var(--accent-contrast);
+}
+
+.lg-qs-tail-row.is-active .lg-qs-step-index {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.lg-qs-step-hint,
+.lg-qs-step-action {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+.lg-qs-step-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.lg-qs-primary {
+  width: 100%;
+  justify-content: center;
+  min-height: 38px;
+}
+
+.lg-qs-secondary {
+  align-self: flex-start;
+}
+
+.lg-qs-locked-preset {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.lg-qs-locked-preset > span {
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
+/* 步骤 3/4 已经没有控件，合并成一条竖直步骤条，把高度还给右侧产物栏。 */
+.lg-qs-step-tail {
+  gap: 8px;
+}
+
+.lg-qs-tail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.lg-qs-tail-row strong {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.lg-qs-tail-row.is-done strong,
+.lg-qs-tail-row.is-active strong {
+  color: var(--text-primary);
+}
+
+.lg-qs-tail-row small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+.lg-qs-products-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.lg-qs-products-heading > h2 {
+  margin-bottom: 0 !important;
+}
+
+.lg-qs-empty-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lg-qs-empty-list > span {
+  padding: 10px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
+.lg-qs-preview-snippet,
+.lg-qs-preview-snippet > summary {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+
+/* 生成中：只列两个真实网络阶段。前端拼片段是毫秒级的，画成第三个阶段是假阶段。 */
+.lg-qs-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lg-qs-stages > li {
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
+.lg-qs-stages > li.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.lg-qs-stages > li.is-done {
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  color: var(--text-secondary);
+}
+
+.lg-qs-stages strong,
+.lg-qs-stages small {
+  display: block;
+}
+
+.lg-qs-product-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+.lg-qs-product-row > code {
+  overflow: auto;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-secondary);
+  white-space: nowrap;
+}
+
+/* 失败归因：三环自检 + 一句归因 + 一个下一步。tone 全走语义色，不硬编码。 */
+.lg-qs-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--warn-bg);
+}
+
+.lg-qs-failure-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--warn);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.lg-qs-failure-head > code {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.lg-qs-chain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lg-qs-chain-link {
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+.lg-qs-chain-link.is-ok {
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  color: var(--ok);
+}
+
+.lg-qs-chain-link.is-bad {
+  border-color: var(--err);
+  background: var(--err-bg);
+  color: var(--err);
+}
+
+.lg-qs-failure-reason {
+  color: var(--text-secondary);
+  font-size: var(--fs-secondary);
+  line-height: 1.55;
+}
+
+.lg-qs-failure-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lg-qs-snippet-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lg-qs-snippet-head > select {
+  margin-left: auto;
+  max-width: 320px;
+}
+
+/* 左栏窄，三个预设竖排；宽屏的三列排布留给别处使用者。 */
+.lg-qs-steps .lg-client-presets {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* 窄屏退化为上下：步骤在上、产物在下，产物区不折叠、不 sticky。 */
+@media (max-width: 1100px) {
+  .lg-qs-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-qs-steps {
+    position: static;
+  }
+}
+
 .lg-client-presets {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

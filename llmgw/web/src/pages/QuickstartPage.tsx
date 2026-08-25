@@ -12,20 +12,19 @@
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, FileCode2, KeyRound, Play, Server, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Copy, FileCode2, KeyRound, Play, Server, ShieldCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, ensurePoolTypes, getOrganization, updateGatewayAppCaller } from '@/lib/api';
+import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, ensurePoolTypes, getOrganization, getPoolTypes, updateGatewayAppCaller } from '@/lib/api';
 import type { OrganizationData } from '@/lib/types';
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
-import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { DetailsBlock, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { invalidateOnboardingCache, markRequestCompleted } from '@/lib/onboarding';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP } from '@/lib/surface';
-import { FIELD_INPUT, FIELD_LABEL, SECTION_TITLE } from '@/lib/typography';
+import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, SECTION_TITLE } from '@/lib/typography';
 
 type Protocol = 'native' | 'openai' | 'claude' | 'gemini';
 type RequestType = 'chat' | 'vision';
@@ -98,6 +97,51 @@ const REQUEST_TYPES: Array<{ id: RequestType; label: string; description: string
   { id: 'vision', label: '图片理解', description: '发送一张内嵌测试图片，验证多模态请求与 vision 策略链。' },
 ];
 
+/**
+ * 失败归因：一次调用要连过三环，坏在哪一环决定了下一步点什么。
+ *
+ * 判据取的是 serving 返回体里的 `error.code`（`{ code, message }`，见 GatewayHttpEndpoints
+ * 的鉴权分支与 GatewayRouteFailure 常量），**不是按文案匹配**——文案会改，码是稳定契约。
+ * 未登记的码退化成「未归类」，只报原文并给出 requestId，绝不猜一个看起来像的环节
+ * （`no-rootless-tree.md`：归因必须有根）。
+ */
+type ChainLinkId = 'key' | 'scope' | 'pool';
+
+const CHAIN_LINKS: Array<{ id: ChainLinkId; label: string }> = [
+  { id: 'key', label: '密钥鉴权' },
+  { id: 'scope', label: '团队与作用域' },
+  { id: 'pool', label: '调用用途 → 模型池' },
+];
+
+type FailureRule = {
+  /** 坏在哪一环；null 表示无法归因到某一环。 */
+  brokenLink: ChainLinkId | null;
+  title: string;
+  reason: string;
+  /** 下一步：页内动作用 action，跨页用 to。 */
+  action?: 'bind-pool';
+  to?: string;
+  actionLabel: string;
+};
+
+const FAILURE_RULES: Record<string, FailureRule> = {
+  GATEWAY_KEY_REQUIRED: { brokenLink: 'key', title: '请求没有带密钥', reason: '这条请求没有 Authorization 头，Gateway 在鉴权前就拒了。', to: '/service-keys', actionLabel: '打开接入密钥' },
+  GATEWAY_KEY_INVALID: { brokenLink: 'key', title: '密钥无效或已撤销', reason: '这把密钥不在租户的有效密钥里。明文只在签发那一刻存在，找不回来，只能重签或轮换。', to: '/service-keys', actionLabel: '去签一把新密钥' },
+  GATEWAY_KEY_EXPIRED: { brokenLink: 'key', title: '密钥已过期', reason: '这把密钥已过有效期，Gateway 直接返回 401。', to: '/service-keys', actionLabel: '去轮换密钥' },
+  GATEWAY_KEY_DISABLED: { brokenLink: 'key', title: '密钥已停用', reason: '这把密钥被撤销或停用了。', to: '/service-keys', actionLabel: '打开接入密钥' },
+  GATEWAY_KEY_SCOPE_DENIED: { brokenLink: 'scope', title: '密钥的授权范围不含这次请求', reason: '密钥授权的来源、调用用途、入口协议或 scope 与这次请求不匹配。', to: '/service-keys', actionLabel: '核对密钥授权范围' },
+  GATEWAY_KEY_TEAM_MISMATCH: { brokenLink: 'scope', title: '密钥与调用用途不属于同一团队', reason: '这把密钥归属的团队不拥有这条调用用途。', to: '/organization', actionLabel: '打开组织与团队' },
+  APP_CALLER_TEAM_MISMATCH: { brokenLink: 'scope', title: '调用用途已归属其他团队', reason: '同名调用用途已经登记在当前租户的另一个团队名下。', to: '/app-callers', actionLabel: '打开调用方' },
+  GATEWAY_KEY_PURPOSE_DENIED: { brokenLink: 'scope', title: '密钥用途不允许数据面调用', reason: '这把密钥的 purpose 不允许发业务请求。', to: '/service-keys', actionLabel: '核对密钥用途' },
+  GATEWAY_KEY_SOURCE_IP_DENIED: { brokenLink: 'scope', title: '来源 IP 不在密钥允许的网段', reason: '密钥限制了来源 CIDR，当前出口 IP 不在其中。', to: '/service-keys', actionLabel: '核对来源 CIDR' },
+  APP_CALLER_DISABLED: { brokenLink: 'scope', title: '调用用途已被禁用', reason: '这条调用用途当前状态不允许调用。', to: '/app-callers', actionLabel: '打开调用方' },
+  APP_CALLER_NOT_FOUND: { brokenLink: 'scope', title: '调用用途尚未登记', reason: '这条调用用途在当前租户里查不到，试跑要求它已登记。', to: '/app-callers', actionLabel: '打开调用方' },
+  APPCALLER_POOL_UNBOUND: { brokenLink: 'pool', title: '安全试跑通过，真实模型调不通', reason: '这条调用用途还没有绑定模型池，Gateway 无处解析实际模型，因此只有 dry-run 能通过。', action: 'bind-pool', actionLabel: '给这个调用用途绑定模型池' },
+  GATEWAY_CONFIG_UNAVAILABLE: { brokenLink: 'pool', title: '网关配置面暂时读不到', reason: '这次不是配置错，是配置面短暂不可读；稍后重试通常就好。', to: '/app-callers', actionLabel: '打开调用方' },
+  ROUTE_CONFIG_INCOMPATIBLE: { brokenLink: 'pool', title: '所选模型池与这次请求不兼容', reason: '模型池类型或成员能力与这次请求的调用类型对不上。', to: '/pools', actionLabel: '打开模型池' },
+  GATEWAY_KEY_RATE_LIMITED: { brokenLink: null, title: '触发了这把密钥的限流', reason: '密钥默认限制 60 次/分钟，稍后再试即可。', actionLabel: '' },
+};
+
 const TEST_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 export function QuickstartPage() {
@@ -126,7 +170,11 @@ export function QuickstartPage() {
   const [preparingRoute, setPreparingRoute] = useState(false);
   const [routePreview, setRoutePreview] = useState<RoutePreview | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestId?: string } | null>(null);
+  // code 是归因的唯一入口（serving 的 error.code），message 只做兜底展示。
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestId?: string; code?: string }
+    | null>(null);
+  const [binding, setBinding] = useState(false);
+  const [bindNotice, setBindNotice] = useState<string | null>(null);
 
   const selectedProtocol = protocolDefinition(protocol);
   const selectedClient = CLIENT_PRESETS.find((item) => item.id === clientPreset) ?? CLIENT_PRESETS[0];
@@ -324,6 +372,45 @@ export function QuickstartPage() {
     setPreparingRoute(false);
   };
 
+  /**
+   * 失败态主行动：把当前调用用途绑到该调用类型的默认池，然后就地重验。
+   *
+   * 两条分支在点击时按真实数据决定，不预先猜：读 `/gw/pool-types`（只读），
+   * 该类型有 ready 的默认池就一键绑（`AppCallerWrite` 外部租户自己就有），
+   * 没有池才降级成「去模型池建一个」——新租户的常态恰恰是后者，只做前者等于对新人失效。
+   */
+  const bindDefaultPool = async () => {
+    if (!bundle || binding) return;
+    setBinding(true);
+    setBindNotice(null);
+    const types = await getPoolTypes();
+    if (!types.success) {
+      setBinding(false);
+      setBindNotice(types.error?.message || '读取模型池类型失败');
+      return;
+    }
+    const target = types.data.items.find((item) => item.code === bundle.requestType);
+    if (!target?.ready || !target.defaultPoolId) {
+      setBinding(false);
+      setBindNotice(`当前租户还没有可用的${requestTypeLabel(bundle.requestType)}默认池，先去模型池建一个再回来重试。`);
+      return;
+    }
+    const updated = await updateGatewayAppCaller(bundle.appCallerId, {
+      status: 'configured',
+      modelPoolId: target.defaultPoolId,
+      modelPolicy: 'pool',
+    });
+    if (!updated.success) {
+      setBinding(false);
+      setBindNotice(updated.error?.message || '绑定模型池失败');
+      return;
+    }
+    setBinding(false);
+    setBindNotice(`已绑定「${target.name}」，正在重新验证。`);
+    void checkRealRoute(bundle);
+    await runTest(bundle, 'safe');
+  };
+
   const runTest = async (target = bundle, mode = testMode) => {
     if (!target || (mode === 'real' && !realRouteReady)) return;
     setTesting(true);
@@ -351,7 +438,7 @@ export function QuickstartPage() {
       const actualRequestId = readRequestId(response, payload) || requestId;
       const upstreamCalled = readUpstreamCalled(response, payload);
       if (!response.ok) {
-        setTestResult({ ok: false, message: readErrorMessage(payload) || `${mode === 'safe' ? '安全测试' : '真实请求'}失败，HTTP ${response.status}`, requestId: actualRequestId });
+        setTestResult({ ok: false, message: readErrorMessage(payload) || `${mode === 'safe' ? '安全测试' : '真实请求'}失败，HTTP ${response.status}`, requestId: actualRequestId, code: readErrorCode(payload) || `HTTP_${response.status}` });
       } else if (mode === 'safe' && upstreamCalled === false) {
         // 这次请求已写进记录。用 markRequestCompleted 而不是裸失效：serving 端
         // 的 LastUsedAt 是不 await 的后台写，只失效+重拉会抢在它落库之前读到旧值。
@@ -416,173 +503,289 @@ export function QuickstartPage() {
     setTestResult(null);
   };
 
+  // 页面只有一条主线，五个状态由真实数据推出来，不额外存一个会和事实打架的 phase 变量。
+  const phase: 'idle' | 'issuing' | 'issued' | 'verifying' | 'failed' = creatingStage !== null
+    ? 'issuing'
+    : testing
+      ? 'verifying'
+      : !bundle
+        ? 'idle'
+        : testResult && !testResult.ok
+          ? 'failed'
+          : 'issued';
+  const diagnosis = phase === 'failed' && testResult ? diagnoseFailure(testResult.code, testResult.message) : null;
+  const chain = diagnosis ? chainState(diagnosis.brokenLink) : [];
+  const blockedByTeam = !organizationLoading && !organizationError && activeTeams.length === 0;
+  const issueDisabled = organizationLoading || creatingStage !== null || blockedByTeam;
+  const stepTone = (done: boolean, active: boolean) => done ? 'is-done' : active ? 'is-active' : '';
+
   return (
     <PageShell>
       <PageHeader
         title="Quickstart"
-        subtitle="选择客户端，生成配置，自动验证密钥与团队边界。"
+        subtitle="选客户端，签一把密钥，当场跑通一条请求。"
       />
 
       <PageBody>
-        {/* 页顶两块由数据说话：接入片段随时可复制，清单用真实状态代替原来的三张步骤卡。 */}
+        {/*
+          老手条只承载「长期事实」：Base URL 与当前已有密钥的前缀。主卡里不再重复渲染地址，
+          右栏只展示「这一次签出来的」产物——两者是分工，不是同一个值渲染两遍。
+          新人四步清单已经在首页常驻，这里不放第二份；真正会挡住人的前置（租户没有团队）
+          直接以阻断提示长在第 2 步里，用户不必先读一份清单再自己对号入座。
+        */}
         <AccessSnippetBar />
-        <OnboardingChecklist />
 
-        <section className="lg-client-presets" aria-label="接入方式">
-          {CLIENT_PRESETS.map((item) => (
-            <button key={item.id} type="button" disabled={identityLocked} className={clientPreset === item.id ? 'is-active' : ''} onClick={() => selectClientPreset(item.id)}>
-              <strong>{item.label}</strong>
-              <span>{item.description}</span>
-            </button>
-          ))}
-        </section>
-
-        <Card style={CARD_BODY}>
-          <h2 style={headingStyle}><ShieldCheck size={15} />{selectedClient.label} 接入配置</h2>
-          {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
-          {organizationLoading ? <SectionLoader text="正在读取当前租户和团队" /> : null}
-          {organizationError ? <div className="lg-test-result is-error">{organizationError}</div> : null}
-          {!organizationLoading && !organizationError && activeTeams.length === 0 ? <div className="lg-quickstart-prerequisite" role="status"><span><strong>先创建一个团队</strong><small>团队决定 appCaller 和 API Key 由谁管理。</small></span><Link to="/organization">打开组织与团队</Link></div> : null}
-          {!organizationLoading ? (
-            <>
-              <div className="lg-quickstart-summary">
-                <span><small>团队</small><strong>{selectedTeam?.name || '尚未选择'}</strong></span>
-                <span><small>appCaller</small><strong>{appCallerCode}</strong></span>
-                <span><small>协议</small><strong>{selectedProtocol.label}</strong></span>
-              </div>
-              <details className="lg-quickstart-advanced-identity">
-                <summary>自定义身份、协议和 Gateway 地址</summary>
-                <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.section, marginTop: GAP.section }}>
-                  <div style={{ gridColumn: '1 / -1' }}>
-                    <div style={labelStyle}>调用类型</div>
-                    <div className="lg-quickstart-request-types" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.normal, marginTop: GAP.tight }}>
-                      {REQUEST_TYPES.map((item) => <button key={item.id} type="button" disabled={identityLocked} onClick={() => changeRequestType(item.id)} aria-pressed={requestType === item.id} className={requestType === item.id ? 'is-active' : ''}><strong>{item.label}</strong><span>{item.description}</span></button>)}
-                    </div>
-                  </div>
-                  <label style={labelStyle}>团队<select value={teamId} disabled={!canCreateAccess || identityLocked} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}><option value="">选择团队</option>{activeTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
-                  <Field label={`appCallerCode（以 ::${requestType} 结尾）`} value={appCallerCode} onChange={setAppCallerCode} placeholder={`my-agent.quickstart::${requestType}`} disabled={!canCreateAccess || identityLocked} />
-                  <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || identityLocked} />
-                  <label style={labelStyle}>环境<select value={environment} disabled={!canCreateAccess || identityLocked} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}><option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option></select></label>
-                  <div style={{ gridColumn: '1 / -1', display: 'flex', gap: GAP.tight, overflowX: 'auto' }}>{PROTOCOLS.map((item) => <Button key={item.id} size="sm" variant={protocol === item.id ? 'primary' : 'ghost'} onClick={() => { setProtocol(item.id); setTestResult(null); if (bundle) void checkRealRoute(bundle); }}>{item.label}</Button>)}</div>
-                  <label style={labelStyle}>Gateway 地址<code className="lg-derived-base-url">{baseUrl}</code></label>
-                  <label style={labelStyle}>测试路径<code className="lg-derived-base-url">{selectedProtocol.path}</code></label>
-                  <Field label="自定义 Gateway 地址" value={baseUrl} onChange={changeBaseUrl} />
+        <div className="lg-qs-columns">
+          <div className="lg-qs-steps">
+            <section className={`lg-qs-step ${stepTone(Boolean(bundle), !bundle)}`} aria-label="第一步：选你要接什么">
+              <header>
+                <span className="lg-qs-step-index">1</span>
+                <strong>选你要接什么</strong>
+                {bundle && canCreateAccess ? <button type="button" className="lg-text-link lg-qs-step-action" onClick={() => void editIdentity()}>更改</button> : null}
+              </header>
+              {identityLocked ? (
+                <div className="lg-qs-locked-preset"><strong>{selectedClient.label}</strong><span>{selectedClient.description}</span></div>
+              ) : (
+                <div className="lg-client-presets" role="radiogroup" aria-label="接入方式">
+                  {CLIENT_PRESETS.map((item) => (
+                    <button key={item.id} type="button" role="radio" aria-checked={clientPreset === item.id} className={clientPreset === item.id ? 'is-active' : ''} onClick={() => selectClientPreset(item.id)}>
+                      <strong>{item.label}</strong>
+                      <span>{item.description}</span>
+                    </button>
+                  ))}
                 </div>
-              </details>
-            </>
-          ) : null}
+              )}
+            </section>
 
-          <div className="lg-quickstart-actions">
-            <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 ${requestTypeLabel(bundle.requestType)} appCaller 和上方四种协议，默认限制 60 次/分钟；切换协议后可直接测试。` : '不会创建通配 key；密钥默认限制 60 次/分钟，也不会调用付费模型。'}</small></div>
-            <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {canCreateAccess && bundle ? <Button variant="ghost" onClick={editIdentity}>修改身份</Button> : null}
-              {canCreateAccess ? <Button variant="primary" title={activeTeams.length === 0 ? '请先创建团队' : undefined} disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '再签一把同配置 key' : `生成并验证 ${selectedClient.label}`}</Button> : null}
-            </div>
-          </div>
+            <section className={`lg-qs-step ${stepTone(Boolean(bundle), !bundle)}`} aria-label="第二步：签出密钥">
+              <header>
+                <span className="lg-qs-step-index">2</span>
+                <strong>签出密钥</strong>
+                <span className="lg-qs-step-hint">{bundle ? '已签发一把' : blockedByTeam ? '前置未满足' : '一次点击'}</span>
+              </header>
+              {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
+              {organizationLoading ? <SectionLoader text="正在读取当前租户和团队" /> : null}
+              {organizationError ? <div className="lg-test-result is-error">{organizationError}</div> : null}
+              {blockedByTeam ? <div className="lg-quickstart-prerequisite" role="status"><span><strong>先创建一个团队</strong><small>团队决定调用用途与密钥归谁管。</small></span><Link to="/organization">打开组织与团队</Link></div> : null}
 
-          {bundle ? (
-            <div className="lg-quickstart-secret">
-              <div><strong>一次性密钥</strong><small>只存在本页内存，刷新即丢失。</small></div>
-              <code>{bundle.key}</code>
-              <Button size="sm" onClick={() => void copyText('key', bundle.key)}>{copied === 'key' ? <Check size={14} /> : <Copy size={14} />}{copied === 'key' ? '已复制' : '复制密钥'}</Button>
-            </div>
-          ) : null}
-          {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
+              {canCreateAccess && !bundle ? (
+                <Button variant="primary" className="lg-qs-primary" title={blockedByTeam ? '请先创建团队' : undefined} disabled={issueDisabled} onClick={() => void createAccessBundle()}>
+                  <KeyRound size={14} />{creatingStage ? '正在签发…' : '签出密钥并跑通一条请求'}
+                </Button>
+              ) : null}
+              {canCreateAccess && bundle ? (
+                <Button variant="ghost" size="sm" className="lg-qs-secondary" disabled={issueDisabled} onClick={() => void createAccessBundle()}>再签一把同配置 key</Button>
+              ) : null}
+              <p style={{ ...BODY_TEXT, margin: `${GAP.tight}px 0 0` }}>不创建通配 key；默认 60 次/分钟，只授权当前调用用途与四种协议，签发后自动跑一次安全试跑。</p>
 
-          <div className="lg-snippet-tabs">
-            <Button size="sm" variant={snippetTab === 'client' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('client')}>{selectedClient.label}</Button>
-            <Button size="sm" variant={snippetTab === 'curl' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('curl')}>cURL</Button>
-            <Button size="sm" variant={snippetTab === 'env' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('env')}>环境变量</Button>
-            <Button size="sm" variant={snippetTab === 'skill' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('skill')}><FileCode2 size={14} />Agent Skill</Button>
-          </div>
-          {snippetTab === 'client' && bundle && bundle.clientPreset !== 'api' ? (
-            <ClientQuickSetup bundle={displayBundle} copied={copied} onCopy={copyText} />
-          ) : (
-            <div style={{ position: 'relative' }}>
-              <pre style={preStyle}><code>{visibleSnippet}</code></pre>
-              <Button size="sm" style={{ position: 'absolute', top: 9, right: 9 }} onClick={() => void copyText(snippetTab, visibleSnippet)}>{copied === snippetTab ? <Check size={14} /> : <Copy size={14} />}{copied === snippetTab ? '已复制' : '复制'}</Button>
-            </div>
-          )}
-          <Prose style={{ marginTop: GAP.normal }}>{snippetMode === 'safe' ? <>示例默认带 <code>X-Gateway-Dry-Run: quickstart</code>，不产生上游费用。</> : <>示例不带 dry-run，会真实调用模型。</>} 密钥不要进仓库、截图或日志。</Prose>
+              {!organizationLoading ? (
+                <>
+                  <div className="lg-quickstart-summary">
+                    <span><small>团队</small><strong>{selectedTeam?.name || '尚未选择'}</strong></span>
+                    <span><small>调用用途</small><strong>{appCallerCode}</strong></span>
+                    <span><small>协议</small><strong>{selectedProtocol.label}</strong></span>
+                  </div>
+                  <details className="lg-quickstart-advanced-identity">
+                    <summary>高级身份与地址（已有默认值）</summary>
+                    <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.section, marginTop: GAP.section }}>
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <div style={labelStyle}>调用类型</div>
+                        <div className="lg-quickstart-request-types" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.normal, marginTop: GAP.tight }}>
+                          {REQUEST_TYPES.map((item) => <button key={item.id} type="button" disabled={identityLocked} onClick={() => changeRequestType(item.id)} aria-pressed={requestType === item.id} className={requestType === item.id ? 'is-active' : ''}><strong>{item.label}</strong><span>{item.description}</span></button>)}
+                        </div>
+                      </div>
+                      <label style={labelStyle}>团队<select value={teamId} disabled={!canCreateAccess || identityLocked} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}><option value="">选择团队</option>{activeTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
+                      <Field label={`appCallerCode（以 ::${requestType} 结尾）`} value={appCallerCode} onChange={setAppCallerCode} placeholder={`my-agent.quickstart::${requestType}`} disabled={!canCreateAccess || identityLocked} />
+                      <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || identityLocked} />
+                      <label style={labelStyle}>环境<select value={environment} disabled={!canCreateAccess || identityLocked} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}><option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option></select></label>
+                      <label style={labelStyle}>Gateway 地址<code className="lg-derived-base-url">{baseUrl}</code></label>
+                      <label style={labelStyle}>测试路径<code className="lg-derived-base-url">{selectedProtocol.path}</code></label>
+                      <Field label="自定义 Gateway 地址" value={baseUrl} onChange={changeBaseUrl} />
+                    </div>
+                  </details>
+                </>
+              ) : null}
+              {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
+            </section>
 
-          <div className="lg-safe-test-panel" style={{ marginTop: GAP.section }}>
-            <div><Play size={17} /><span><strong>接入验证</strong><small>生成后自动跑安全连通测试。</small></span></div>
-            <div className="lg-test-mode" role="group" aria-label="测试模式">
-              <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); setTestResult(null); }}>安全连通</button>
-              <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '在下方展开真实路由，确认当前地址已就绪' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
-            </div>
-            <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={!bundle || testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{canCreateAccess ? (testMode === 'real' ? '只调用下方已解析的真实模型' : '返回 requestId 且 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
-            {testResult ? <div className={testResult.ok ? 'lg-test-result is-ok' : 'lg-test-result is-error'} role="status">{testResult.message}{testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}</div> : null}
-          </div>
-
-          <details className="lg-route-preview" style={{ marginTop: GAP.section }}>
-            <summary className="lg-route-preview-heading"><Server size={17} /><span><strong>真实路由与排障</strong><small>{currentRoutePreview?.success ? `${currentRoutePreview.actualPlatformName || currentRoutePreview.actualPlatformId || 'Provider'} · ${currentRoutePreview.actualModel || '已解析模型'}` : '首次接入不必展开；需要调用真实模型或排查时再查看。'}</small></span></summary>
-            {!bundle ? <p>生成 appCaller 与 key 后自动检查。</p> : routeChecking ? <p>正在检查路由。</p> : currentRoutePreview?.success ? (
-              <div className="lg-route-facts">
-                <RouteFact label="模型池" value={currentRoutePreview.modelGroupName || currentRoutePreview.modelGroupId || '默认池'} />
-                <RouteFact label="Provider" value={currentRoutePreview.actualPlatformName || currentRoutePreview.actualPlatformId || '未命名 Provider'} />
-                <RouteFact label="实际模型" value={currentRoutePreview.actualModel || '未返回'} />
-                <RouteFact label="上游协议" value={currentRoutePreview.protocol || currentRoutePreview.platformType || '自动适配'} />
+            <section className="lg-qs-step lg-qs-step-tail" aria-label="第三步与第四步">
+              <div className={`lg-qs-tail-row ${bundle ? 'is-done' : ''}`}>
+                <span className="lg-qs-step-index">3</span>
+                <div><strong>拿到三件东西</strong><small>地址、一次性密钥、可直接复制的请求片段。</small></div>
               </div>
-            ) : (
-              <div className="lg-route-blocked">
-                <strong>真实请求尚未就绪</strong>
-                <span>{currentRoutePreview?.errorMessage || '当前地址尚未通过真实路由预检。请先点击重新检查。'}</span>
-                {tenant?.isInternal && canManagePromptPolicy ? <Button size="sm" variant="secondary" disabled={!bundle || preparingRoute} onClick={() => void prepareRealRoute()}>{preparingRoute ? '正在只补缺失配置' : '一键准备现有真实上游'}</Button> : null}
-                {!tenant?.isInternal ? <span>请先添加 Provider 密钥、启用模型并加入默认池。</span> : null}
+              <div className={`lg-qs-tail-row ${phase === 'issued' ? 'is-done' : phase === 'verifying' ? 'is-active' : ''}`}>
+                <span className="lg-qs-step-index">4</span>
+                <div><strong>当场验证</strong><small>{phase === 'verifying' ? '正在跑安全试跑（dry-run，不打上游）。' : phase === 'failed' ? '这一环没过，右侧给出下一步。' : phase === 'issued' ? '安全试跑已通过，requestId 可回查。' : '签发后自动跑一次安全试跑。'}</small></div>
               </div>
-            )}
-            {bundle ? <Button size="sm" variant="ghost" disabled={routeChecking} onClick={() => void checkRealRoute()}>{routeChecking ? '检查中' : '重新检查'}</Button> : null}
-          </details>
+            </section>
 
-          {/* 试跑口径原来是一整块常驻小字，现在走出口三，卡片里只留可操作的东西。 */}
-          <DetailsBlock title="工作原理：两种测试怎么算通过">
-            <dl style={dlStyle}>
-              <RouteRow name="安全连通" text="发送 X-Gateway-Dry-Run: quickstart，在模型解析、预算预占和上游发送前结束。" />
-              <RouteRow name="真实模型" text="只有路由预览成功且不是明显开发桩时才能点击；请求不带 dry-run，并把实际结果写入同一套租户日志。" />
-              <RouteRow name="调用类型" text={displayBundle.requestType === 'vision' ? '图片理解：使用内嵌的 1×1 测试图片，只验证多模态协议形状，不读取用户文件。' : '文字对话：使用固定的测试文字，只验证 chat 协议形状。'} />
-              <RouteRow name="通过标准" text="HTTP 成功、返回 requestId，并且 Gateway 明确返回 upstreamCalled=false；缺少任一项都不算通过。" />
-              <RouteRow name="审计边界" text="日志记录服务端解析的 tenant、team、service key、client 和 environment；不记录密钥明文，费用保持 unknown。" />
-            </dl>
-          </DetailsBlock>
-
-          {bundle ? (
-            <details className="lg-quickstart-follow-up">
-              <summary>后续治理：提示词策略</summary>
-              <div>
-                <span><strong>给这个 {requestTypeLabel(bundle.requestType)} appCaller 配置提示词策略</strong><small>预览不保存、不调用模型。</small></span>
-                {canManagePromptPolicy ? <Link to={`/app-callers/${encodeURIComponent(bundle.appCallerId)}/prompt-policy`}>打开提示词策略</Link> : <span>请由 Owner 或 Admin 配置策略</span>}
-              </div>
-            </details>
-          ) : null}
-        </Card>
-
-        <Card style={CARD_BODY}>
-          <h2 style={headingStyle}><KeyRound size={15} />能力边界</h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight }}>
-            <Chip label="本页测试：chat/vision 四协议" color="#3fb950" bg="rgba(63,185,80,0.14)" />
-            <Chip label="安全连通：不访问上游" color="#58a6ff" bg="rgba(88,166,255,0.14)" />
-            <Chip label="真实模型：明确选择后才调用" color="#d29922" bg="rgba(210,153,34,0.14)" />
+            {/* 三处解释块合并成这一处：身份、两种测试的通过判据、失败定位，默认收起。 */}
+            <DetailsBlock title="工作原理：三个身份、两种测试与失败定位">
+              <dl style={dlStyle}>
+                <RouteRow name="service key" text="回答谁在调用；绑定 tenant、team、client、environment、appCaller 和协议。" />
+                <RouteRow name="appCallerCode" text="回答为什么调用；用于提示词策略、预算、限流、统计与专属路由。" />
+                <RouteRow name="model pool" text="回答去哪里调用；默认池与特殊池由平台规则管理，不由 key 承担。" />
+                <RouteRow name="安全连通" text="发送 X-Gateway-Dry-Run: quickstart，在模型解析、预算预占和上游发送前结束；HTTP 成功、返回 requestId 且 upstreamCalled=false 才算通过。" />
+                <RouteRow name="真实模型" text="只有路由预览成功且不是明显开发桩时才能点击；请求不带 dry-run，并把实际结果写入同一套租户日志。" />
+                <RouteRow name="调用类型" text={displayBundle.requestType === 'vision' ? '图片理解：使用内嵌的 1×1 测试图片，只验证多模态协议形状，不读取用户文件。' : '文字对话：使用固定的测试文字，只验证 chat 协议形状。'} />
+                <RouteRow name="401 / 403" text="401 是密钥错误、过期或已撤销；403 是团队、appCaller、协议、scope 或来源范围不匹配。失败时右侧会直接指出坏在哪一环。" />
+                <RouteRow name="审计边界" text="日志记录服务端解析的 tenant、team、service key、client 和 environment；不记录密钥明文，费用保持 unknown。" />
+              </dl>
+              <Prose>
+                首版提示词策略只用于 chat/vision。图片生成、ASR、视频和 raw 接口不通过本页批量试跑；
+                需要真实协议验收时，每类最多一次，其余使用假上游。
+              </Prose>
+              <TutorialLink chapter="chapter-11">查看教程：第 11 章 自助接入</TutorialLink>
+            </DetailsBlock>
           </div>
-        </Card>
 
-        {/* 原来是两张并排的说明卡 + 一段能力边界小字，全是解释句、零控件，收进出口三。 */}
-        <DetailsBlock title="工作原理：三个身份、失败定位与试跑边界">
-          <dl style={dlStyle}>
-            <RouteRow name="service key" text="回答谁在调用；绑定 tenant、team、client、environment、appCaller 和协议。" />
-            <RouteRow name="appCallerCode" text="回答为什么调用；用于提示词策略、预算、限流、统计与专属路由。" />
-            <RouteRow name="model pool" text="回答去哪里调用；默认池与特殊池由平台规则管理，不由 key 承担。" />
-            <RouteRow name="401" text="密钥错误、过期或已撤销。明文无法找回，只能创建或轮换。" />
-            <RouteRow name="403" text="团队、appCaller、协议、scope 或来源范围不匹配。" />
-            <RouteRow name="404 / 409" text="appCaller 尚未创建，或同一身份已归属于其他团队。" />
-            <RouteRow name="requestId" text="测试结果会直接打开请求记录，核对 key、client、environment、状态与路由。" />
-          </dl>
-          <Prose>
-            首版提示词策略只用于 chat/vision。图片生成、ASR、视频和 raw 接口不通过本页批量试跑；
-            需要真实协议验收时，每类最多一次，其余使用假上游。
-          </Prose>
-          <TutorialLink chapter="chapter-11">查看教程：第 11 章 自助接入</TutorialLink>
-        </DetailsBlock>
+          <div className="lg-qs-products">
+            {phase === 'idle' ? (
+              <Card style={CARD_BODY}>
+                <h2 style={headingStyle}><ShieldCheck size={15} />签出后，这里会出现三件东西</h2>
+                <p style={{ ...BODY_TEXT, margin: `0 0 ${GAP.normal}px` }}>密钥拿到之后，片段才带真实值。</p>
+                <div className="lg-qs-empty-list">
+                  <span>Gateway 地址与测试路径</span>
+                  <span>一次性密钥（只显示一次）</span>
+                  <span>请求片段：客户端配置 / cURL / 环境变量 / Agent Skill</span>
+                </div>
+                <details className="lg-qs-preview-snippet">
+                  <summary>先看一眼请求片段（密钥仍是占位符）</summary>
+                  <pre style={preStyle}><code>{snippets.curl}</code></pre>
+                </details>
+              </Card>
+            ) : null}
+
+            {phase === 'issuing' ? (
+              <Card style={CARD_BODY}>
+                <h2 style={headingStyle}><ShieldCheck size={15} />正在生成接入配置</h2>
+                <ol className="lg-qs-stages">
+                  <li className={creatingStage === 'app-caller' ? 'is-active' : 'is-done'}><strong>登记调用用途</strong><small>appCaller {appCallerCode}</small></li>
+                  <li className={creatingStage === 'key' ? 'is-active' : ''}><strong>签发团队密钥</strong><small>{creatingStage === 'key' ? '正在写入密钥目录' : '等待上一步产物'}</small></li>
+                </ol>
+              </Card>
+            ) : null}
+
+            {bundle && (phase === 'issued' || phase === 'verifying' || phase === 'failed') ? (
+              <Card style={CARD_BODY}>
+                <div className="lg-qs-products-heading">
+                  <h2 style={headingStyle}><ShieldCheck size={15} />你的接入产物</h2>
+                  <Chip label={phase === 'failed' ? '待处理' : phase === 'verifying' ? '验证中' : '已签发'} color={phase === 'failed' ? 'var(--warn)' : 'var(--ok)'} bg={phase === 'failed' ? 'var(--warn-bg)' : 'var(--ok-bg)'} />
+                </div>
+
+                {/*
+                  结果块置顶：它是这一屏真正的产物。放在地址与密钥之后就会落到产物栏的
+                  内部滚动区之下，1440x900 下要再滚一屏才看得见——那等于把「失败在哪」藏起来。
+                */}
+                {phase === 'verifying' ? (
+                  <div className="lg-test-result" role="status"><Play size={14} />正在发送安全试跑（dry-run，不访问上游），等待 requestId 回执。</div>
+                ) : null}
+                {phase === 'issued' && testResult?.ok ? (
+                  <div className="lg-test-result is-ok" role="status">
+                    <CheckCircle2 size={14} />{testResult.message}
+                    {testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}
+                  </div>
+                ) : null}
+                {diagnosis ? (
+                  <div className="lg-qs-failure" role="alert">
+                    <div className="lg-qs-failure-head">
+                      <AlertCircle size={16} />
+                      <strong>{diagnosis.title}</strong>
+                      {diagnosis.code ? <code>{diagnosis.code}</code> : null}
+                    </div>
+                    <div className="lg-qs-chain">
+                      {chain.map((link) => <span key={link.id} className={`lg-qs-chain-link is-${link.tone}`}>{link.label}</span>)}
+                    </div>
+                    <span className="lg-qs-failure-reason">{diagnosis.reason}</span>
+                    <div className="lg-qs-failure-actions">
+                      {diagnosis.action === 'bind-pool' && canCreateAccess ? <Button size="sm" variant="secondary" disabled={binding} onClick={() => void bindDefaultPool()}>{binding ? '正在绑定' : diagnosis.actionLabel}</Button> : null}
+                      {diagnosis.to && diagnosis.actionLabel ? <Link className="lg-secondary-link" to={diagnosis.to}>{diagnosis.actionLabel}</Link> : null}
+                      {canCreateAccess ? <Button size="sm" variant="ghost" disabled={testing} onClick={() => void runTest()}>重试验证</Button> : null}
+                      {testResult?.requestId ? <Link className="lg-text-link" to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>{testResult.requestId}</Link> : null}
+                    </div>
+                    {bindNotice ? <span className="lg-qs-failure-reason">{bindNotice}</span> : null}
+                  </div>
+                ) : null}
+
+                <div className="lg-qs-product-row">
+                  <span>Gateway 地址</span>
+                  <code>{`${displayBundle.baseUrl}${selectedProtocol.path}`}</code>
+                  <Button size="sm" variant="ghost" onClick={() => void copyText('base-url', `${displayBundle.baseUrl}${selectedProtocol.path}`)}>{copied === 'base-url' ? <Check size={13} /> : <Copy size={13} />}{copied === 'base-url' ? '已复制' : '复制'}</Button>
+                </div>
+
+                <div className="lg-quickstart-secret">
+                  <div><strong>一次性密钥</strong><small>只存在本页内存，刷新即丢失，没有「再看一次」。</small></div>
+                  <code>{bundle.key}</code>
+                  <Button size="sm" onClick={() => void copyText('key', bundle.key)}>{copied === 'key' ? <Check size={14} /> : <Copy size={14} />}{copied === 'key' ? '已复制' : '复制密钥'}</Button>
+                </div>
+
+                <div className="lg-qs-snippet-head">
+                  <strong style={SECTION_TITLE}>请求片段</strong>
+                  <select
+                    aria-label="入口协议"
+                    value={protocol}
+                    onChange={(event) => { setProtocol(event.target.value as Protocol); setTestResult(null); if (bundle) void checkRealRoute(bundle); }}
+                    style={inputStyle}
+                  >
+                    {PROTOCOLS.map((item) => <option key={item.id} value={item.id}>{`${item.label} ${item.path}`}</option>)}
+                  </select>
+                </div>
+                <div className="lg-snippet-tabs">
+                  <Button size="sm" variant={snippetTab === 'client' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('client')}>{selectedClient.label}</Button>
+                  <Button size="sm" variant={snippetTab === 'curl' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('curl')}>cURL</Button>
+                  <Button size="sm" variant={snippetTab === 'env' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('env')}>环境变量</Button>
+                  <Button size="sm" variant={snippetTab === 'skill' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('skill')}><FileCode2 size={14} />Agent Skill</Button>
+                </div>
+                {snippetTab === 'client' && bundle.clientPreset !== 'api' ? (
+                  <ClientQuickSetup bundle={displayBundle} copied={copied} onCopy={copyText} />
+                ) : (
+                  <div style={{ position: 'relative' }}>
+                    <pre style={preStyle}><code>{visibleSnippet}</code></pre>
+                    <Button size="sm" style={{ position: 'absolute', top: 9, right: 9 }} onClick={() => void copyText(snippetTab, visibleSnippet)}>{copied === snippetTab ? <Check size={14} /> : <Copy size={14} />}{copied === snippetTab ? '已复制' : '复制'}</Button>
+                  </div>
+                )}
+                <Prose style={{ marginTop: GAP.normal }}>{snippetMode === 'safe' ? <>示例默认带 <code>X-Gateway-Dry-Run: quickstart</code>，不产生上游费用。</> : <>示例不带 dry-run，会真实调用模型。</>} 密钥不要进仓库、截图或日志。</Prose>
+
+                <div className="lg-safe-test-panel" style={{ marginTop: GAP.section }}>
+                  <div><Play size={17} /><span><strong>再测一次</strong><small>安全连通不访问上游；真实模型会计费。</small></span></div>
+                  <div className="lg-test-mode" role="group" aria-label="测试模式">
+                    <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); setTestResult(null); }}>安全连通</button>
+                    <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '在下方展开真实路由，确认当前地址已就绪' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
+                  </div>
+                  <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{canCreateAccess ? (testMode === 'real' ? '只调用下方已解析的真实模型' : '返回 requestId 且 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
+                </div>
+
+                <details className="lg-route-preview" style={{ marginTop: GAP.section }}>
+                  <summary className="lg-route-preview-heading"><Server size={17} /><span><strong>真实路由与排障</strong><small>{currentRoutePreview?.success ? `${currentRoutePreview.actualPlatformName || currentRoutePreview.actualPlatformId || 'Provider'} · ${currentRoutePreview.actualModel || '已解析模型'}` : '首次接入不必展开；需要调用真实模型或排查时再查看。'}</small></span></summary>
+                  {routeChecking ? <p>正在检查路由。</p> : currentRoutePreview?.success ? (
+                    <div className="lg-route-facts">
+                      <RouteFact label="模型池" value={currentRoutePreview.modelGroupName || currentRoutePreview.modelGroupId || '默认池'} />
+                      <RouteFact label="Provider" value={currentRoutePreview.actualPlatformName || currentRoutePreview.actualPlatformId || '未命名 Provider'} />
+                      <RouteFact label="实际模型" value={currentRoutePreview.actualModel || '未返回'} />
+                      <RouteFact label="上游协议" value={currentRoutePreview.protocol || currentRoutePreview.platformType || '自动适配'} />
+                    </div>
+                  ) : (
+                    <div className="lg-route-blocked">
+                      <strong>真实请求尚未就绪</strong>
+                      <span>{currentRoutePreview?.errorMessage || '当前地址尚未通过真实路由预检。请先点击重新检查。'}</span>
+                      {tenant?.isInternal && canManagePromptPolicy ? <Button size="sm" variant="secondary" disabled={preparingRoute} onClick={() => void prepareRealRoute()}>{preparingRoute ? '正在只补缺失配置' : '一键准备现有真实上游'}</Button> : null}
+                      {!tenant?.isInternal ? <span>请先添加 Provider 密钥、启用模型并加入默认池。</span> : null}
+                    </div>
+                  )}
+                  <Button size="sm" variant="ghost" disabled={routeChecking} onClick={() => void checkRealRoute()}>{routeChecking ? '检查中' : '重新检查'}</Button>
+                </details>
+
+                <details className="lg-quickstart-follow-up">
+                  <summary>后续治理：提示词策略</summary>
+                  <div>
+                    <span><strong>给这个 {requestTypeLabel(bundle.requestType)} appCaller 配置提示词策略</strong><small>预览不保存、不调用模型。</small></span>
+                    {canManagePromptPolicy ? <Link to={`/app-callers/${encodeURIComponent(bundle.appCallerId)}/prompt-policy`}>打开提示词策略</Link> : <span>请由 Owner 或 Admin 配置策略</span>}
+                  </div>
+                </details>
+              </Card>
+            ) : null}
+          </div>
+        </div>
       </PageBody>
     </PageShell>
   );
@@ -672,6 +875,39 @@ function readUpstreamCalled(response: Response, payload: Record<string, unknown>
 function readErrorMessage(payload: Record<string, unknown> | null) {
   const error = payload?.error as Record<string, unknown> | undefined;
   return stringValue(error?.message) || stringValue((payload?.Error as Record<string, unknown> | undefined)?.Message);
+}
+
+/** serving 的错误体固定是 `error: { code, message }`；归因只认 code，不按文案匹配。 */
+function readErrorCode(payload: Record<string, unknown> | null) {
+  const error = payload?.error as Record<string, unknown> | undefined;
+  return stringValue(error?.code)
+    || stringValue((payload?.Error as Record<string, unknown> | undefined)?.Code)
+    || stringValue(payload?.errorCode)
+    || stringValue(payload?.failureReason);
+}
+
+/** 把一次失败翻译成「哪一环坏了 + 为什么 + 下一步」。取不到规则就如实说未归类。 */
+function diagnoseFailure(code: string | undefined, message: string) {
+  const rule = code ? FAILURE_RULES[code] : undefined;
+  if (rule) return { ...rule, code: code ?? '', reason: rule.reason || message };
+  return {
+    brokenLink: null as ChainLinkId | null,
+    title: '这次调用没通过',
+    reason: message,
+    actionLabel: '',
+    to: undefined,
+    action: undefined,
+    code: code ?? '',
+  };
+}
+
+/** 三环状态：坏的那一环之前判通过，之后判未知——没走到的环不许画成绿色。 */
+function chainState(broken: ChainLinkId | null) {
+  const brokenIndex = broken ? CHAIN_LINKS.findIndex((link) => link.id === broken) : -1;
+  return CHAIN_LINKS.map((link, index) => ({
+    ...link,
+    tone: brokenIndex < 0 ? 'unknown' : index < brokenIndex ? 'ok' : index === brokenIndex ? 'bad' : 'unknown',
+  }));
 }
 
 function readActualModel(payload: Record<string, unknown> | null) {
