@@ -22,9 +22,14 @@ const amber = inkTone(SCENE_HUE.amber);
 const clay = inkTone(SCENE_HUE.clay);
 
 /** 四个风格分别落在墨带的钢青 / 陶土 / 松绿 / 钢蓝，禁止漂出八色带。 */
+/**
+ * 四个风格分别落在墨带的钢青 / 陶土 / 松绿 / 钢蓝。
+ * 饱和与明度必须在同一档（28-34 / 22-28）——只换色相，这是「彩而不乱」的前提。
+ * 陶土原本给到 46/32，四张并排时它一个人跳出来，像另一套配色，已收回档内。
+ */
 const STYLE_PALETTE: Record<LiteraryStyleKey, [number, number, number]> = {
   calm: [SCENE_HUE.steel, 30, 26],
-  warm: [SCENE_HUE.clay, 46, 32],
+  warm: [SCENE_HUE.clay, 34, 28],
   forest: [SCENE_HUE.pine, 28, 24],
   night: [SCENE_HUE.slate, 34, 22],
 };
