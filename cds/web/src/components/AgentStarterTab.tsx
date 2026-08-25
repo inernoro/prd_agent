@@ -201,8 +201,8 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
   }
 
   return (
-    <div data-agent-starter="true" className="flex h-[560px] max-h-[calc(100vh-190px)] min-h-[480px] flex-col overflow-hidden rounded-2xl border border-stone-200 bg-[#fffdf9] text-stone-950 shadow-[0_20px_70px_rgba(75,54,38,0.08)]">
-      <div className="border-b border-stone-200 bg-white px-7 py-5">
+    <div data-agent-starter="true" className="flex h-[560px] max-h-[calc(100vh-190px)] min-h-[480px] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)]">
+      <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-7 py-5">
         <div className="flex items-start justify-between gap-6">
           <div>
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-warn">
@@ -213,8 +213,8 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
           <div className="hidden items-center gap-1 sm:flex">
             {STEPS.map((label, index) => (
               <div key={label} className="flex items-center gap-1">
-                <div className={`h-2.5 rounded-full transition-all duration-300 ${index === step ? 'w-9 bg-warn' : index < step ? 'w-2.5 bg-stone-800' : 'w-2.5 bg-stone-200'}`} />
-                {index === step && <span className="ml-1 text-xs font-semibold text-stone-700">{label}</span>}
+                <div className={`h-2.5 rounded-full transition-all duration-300 ${index === step ? 'w-9 bg-warn' : index < step ? 'w-2.5 bg-[hsl(var(--foreground-muted))]' : 'w-2.5 bg-[hsl(var(--hairline-strong))]'}`} />
+                {index === step && <span className="ml-1 text-xs font-semibold text-muted-foreground">{label}</span>}
               </div>
             ))}
           </div>
@@ -287,7 +287,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                         role="tab"
                         aria-selected={activeSkillGroup === group.key}
                         onClick={() => setActiveSkillGroup(group.key)}
-                        className={`rounded-full px-4 py-2 text-xs font-bold transition-colors ${activeSkillGroup === group.key ? 'bg-stone-950 text-white' : 'border border-stone-300 bg-white text-stone-700 hover:border-stone-500'}`}
+                        className={`rounded-full px-4 py-2 text-xs font-bold transition-colors ${activeSkillGroup === group.key ? 'bg-foreground text-background' : 'border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
                       >
                         {group.label}
                       </button>
@@ -302,23 +302,23 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                         key={skill.key}
                         type="button"
                         onClick={() => setSelectedSkills((current) => selected ? current.filter((key) => key !== skill.key) : [...current, skill.key])}
-                        className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-stone-950 shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-stone-300 bg-white text-stone-800 hover:border-stone-500'}`}
+                        className={`group relative rounded-xl border p-4 text-left transition-all ${selected ? 'border-warn bg-warn-soft text-foreground shadow-[0_8px_24px_rgba(194,91,33,0.12)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-[hsl(var(--hairline-strong))]'}`}
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <PackageCheck className={`h-5 w-5 ${selected ? 'text-warn' : 'text-stone-500'}`} />
-                          <span className={`grid h-5 w-5 place-items-center rounded-full border ${selected ? 'border-warn bg-warn text-white' : 'border-stone-400 bg-white'}`}>
+                          <PackageCheck className={`h-5 w-5 ${selected ? 'text-warn' : 'text-muted-foreground'}`} />
+                          <span className={`grid h-5 w-5 place-items-center rounded-full border ${selected ? 'border-warn bg-warn text-status-ink' : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]'}`}>
                             {selected && <Check className="h-3.5 w-3.5" />}
                           </span>
                         </div>
                         <div className="mt-3 text-sm font-bold">{skill.name}</div>
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-stone-600">{skill.description}</p>
+                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{skill.description}</p>
                       </button>
                     )
                   })}
                 </div>
-                <div className="mt-4 flex items-center justify-between border-t border-stone-200 pt-4">
+                <div className="mt-4 flex items-center justify-between border-t border-[hsl(var(--hairline))] pt-4">
                   <div className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-stone-700">已选择 {selectedSkills.length} 项</span>
+                    <span className="text-sm font-medium text-muted-foreground">已选择 {selectedSkills.length} 项</span>
                     <button
                       type="button"
                       onClick={() => {
@@ -327,7 +327,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                         }
                         setShowSkillLibrary((value) => !value)
                       }}
-                      className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-800 hover:border-stone-500"
+                      className="rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-sm font-bold text-foreground hover:border-[hsl(var(--hairline-strong))]"
                     >
                       {showSkillLibrary ? '返回角色推荐' : `选择更多技能（共 ${availableSkills.length} 项）`}
                     </button>
@@ -345,23 +345,23 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                     type="button"
                     aria-pressed={includeCds}
                     onClick={() => setIncludeCds((value) => !value)}
-                    className={`w-full max-w-2xl rounded-2xl border-2 p-7 text-left transition-all ${includeCds ? 'border-warn bg-warn-soft shadow-[0_18px_50px_rgba(194,91,33,0.15)]' : 'border-stone-300 bg-white'}`}
+                    className={`w-full max-w-2xl rounded-2xl border-2 p-7 text-left transition-all ${includeCds ? 'border-warn bg-warn-soft shadow-[0_18px_50px_rgba(194,91,33,0.15)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'}`}
                   >
                     <div className="flex items-start gap-5">
-                      <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl ${includeCds ? 'bg-warn text-white' : 'bg-stone-200 text-stone-600'}`}>
+                      <div className={`grid h-12 w-12 shrink-0 place-items-center rounded-xl ${includeCds ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>
                         <WandSparkles className="h-6 w-6" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-4">
                           <h4 className="text-lg font-bold">接入 CDS，自动给预览地址</h4>
-                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${includeCds ? 'bg-warn text-white' : 'bg-stone-200 text-stone-700'}`}>{includeCds ? '已开启' : '未开启'}</span>
+                          <span className={`rounded-full px-3 py-1 text-xs font-bold ${includeCds ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>{includeCds ? '已开启' : '未开启'}</span>
                         </div>
-                        <p className="mt-2 text-sm leading-6 text-stone-700">自动处理项目扫描、分支部署、真实预览地址和登录验收。需要账号时，Agent 会验证后再交付安全的临时账号。</p>
+                        <p className="mt-2 text-sm leading-6 text-muted-foreground">自动处理项目扫描、分支部署、真实预览地址和登录验收。需要账号时，Agent 会验证后再交付安全的临时账号。</p>
                       </div>
                     </div>
                   </button>
                 </div>
-                <div className="mt-4 flex justify-end border-t border-stone-200 pt-4">
+                <div className="mt-4 flex justify-end border-t border-[hsl(var(--hairline))] pt-4">
                   <PrimaryNext onClick={() => advance(4)}>生成我的上手包</PrimaryNext>
                 </div>
               </>
@@ -369,19 +369,19 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
 
             {step === 4 && (
               <div className="flex h-full flex-col items-center justify-center text-center">
-                <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-stone-950 text-white shadow-xl">
+                <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground text-background shadow-xl">
                   <Check className="h-7 w-7" />
                 </motion.div>
                 <button
                   type="button"
                   onClick={() => setStep(3)}
-                  className="mb-3 inline-flex min-h-11 items-center gap-2 self-start rounded-xl px-3 text-sm font-semibold text-stone-700 hover:bg-stone-100 hover:text-stone-950"
+                  className="mb-3 inline-flex min-h-11 items-center gap-2 self-start rounded-xl px-3 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
                 >
                   <ArrowLeft className="h-4 w-4" />
                   返回修改
                 </button>
                 <h4 className="mt-5 text-2xl font-bold tracking-tight">你的 Agent 上手包已经配好</h4>
-                <p className="mt-2 max-w-xl text-sm leading-6 text-stone-600">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
 
                 <motion.button
                   type="button"
@@ -391,7 +391,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                     boxShadow: ['0 16px 45px rgba(194,91,33,0.22)', '0 22px 60px rgba(194,91,33,0.38)', '0 16px 45px rgba(194,91,33,0.22)'],
                   }}
                   transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                  className={`mt-7 flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 py-4 text-base font-bold text-white transition-colors ${copied ? 'bg-ok' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
+                  className={`mt-7 flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 py-4 text-base font-bold transition-colors ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn text-white hover:bg-warn'}`}
                 >
                   {copied ? <Check className="h-5 w-5" /> : <ClipboardCopy className="h-5 w-5" />}
                   {copied ? '已复制，现在交给 Agent' : '复制启动提示词'}
@@ -399,10 +399,10 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                 </motion.button>
 
                 <div className="mt-5 flex items-center gap-3">
-                  <button type="button" onClick={() => downloadText('cds-agent-starter.sh', harness)} className="inline-flex items-center gap-2 rounded-xl border border-stone-300 bg-white px-4 py-2.5 text-sm font-semibold text-stone-800 hover:border-stone-500">
+                  <button type="button" onClick={() => downloadText('cds-agent-starter.sh', harness)} className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]">
                     <Download className="h-4 w-4" /> 下载一键脚本
                   </button>
-                  <a href={`${serviceOrigin}/api/skills/bundles`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:text-stone-950">
+                  <a href={`${serviceOrigin}/api/skills/bundles`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground">
                     查看技能来源 <ArrowRight className="h-4 w-4" />
                   </a>
                 </div>
@@ -414,7 +414,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
 
       {step > 0 && step < 4 && (
         <div className="absolute bottom-5 left-8">
-          <button type="button" onClick={() => advance(step - 1)} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-100 hover:text-stone-950">
+          <button type="button" onClick={() => advance(step - 1)} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground">
             <ArrowLeft className="h-4 w-4" /> 返回
           </button>
         </div>
@@ -428,8 +428,8 @@ function StepHeading({ number, title, description }: { number: string; title: st
     <div className="flex items-start gap-4">
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-warn-soft text-sm font-black text-warn">{number}</span>
       <div>
-        <h4 className="text-xl font-bold tracking-tight text-stone-950">{title}</h4>
-        <p className="mt-1 text-sm leading-6 text-stone-600">{description}</p>
+        <h4 className="text-xl font-bold tracking-tight text-foreground">{title}</h4>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p>
       </div>
     </div>
   )
@@ -448,25 +448,25 @@ function ChoiceCard({ selected, title, eyebrow, description, icon, compact = fal
     <button
       type="button"
       onClick={onClick}
-      className={`group relative flex min-h-0 flex-col justify-between rounded-2xl border-2 text-left transition-all duration-200 ${compact ? 'p-4' : 'p-6'} ${selected ? 'border-warn bg-warn-soft shadow-[0_14px_40px_rgba(194,91,33,0.13)]' : 'border-stone-300 bg-white hover:-translate-y-0.5 hover:border-stone-600 hover:shadow-lg'}`}
+      className={`group relative flex min-h-0 flex-col justify-between rounded-2xl border-2 text-left transition-all duration-200 ${compact ? 'p-4' : 'p-6'} ${selected ? 'border-warn bg-warn-soft shadow-[0_14px_40px_rgba(194,91,33,0.13)]' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-lg'}`}
     >
       <div>
         <div className="flex items-start justify-between gap-4">
-          <div className={`grid h-9 w-9 place-items-center rounded-xl ${selected ? 'bg-warn text-white' : 'bg-stone-100 text-stone-700'}`}>{icon ?? <UserRound className="h-5 w-5" />}</div>
-          <span className={`grid h-6 w-6 place-items-center rounded-full border ${selected ? 'border-warn bg-warn text-white' : 'border-stone-400 bg-white'}`}>{selected && <Check className="h-4 w-4" />}</span>
+          <div className={`grid h-9 w-9 place-items-center rounded-xl ${selected ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>{icon ?? <UserRound className="h-5 w-5" />}</div>
+          <span className={`grid h-6 w-6 place-items-center rounded-full border ${selected ? 'border-warn bg-warn text-status-ink' : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]'}`}>{selected && <Check className="h-4 w-4" />}</span>
         </div>
-        <h5 className={`${compact ? 'mt-3 text-base' : 'mt-5 text-xl'} font-bold text-stone-950`}>{title}</h5>
+        <h5 className={`${compact ? 'mt-3 text-base' : 'mt-5 text-xl'} font-bold text-foreground`}>{title}</h5>
         {eyebrow && <div className="mt-1 text-xs font-bold uppercase tracking-wide text-warn">{eyebrow}</div>}
-        <p className={`${compact ? 'mt-2 text-xs leading-5' : 'mt-3 text-sm leading-6'} text-stone-650 text-stone-700`}>{description}</p>
+        <p className={`${compact ? 'mt-2 text-xs leading-5' : 'mt-3 text-sm leading-6'} text-muted-foreground`}>{description}</p>
       </div>
-      <div className="mt-3 flex items-center gap-1 text-xs font-bold text-stone-800 opacity-0 transition-opacity group-hover:opacity-100">选择并继续 <ArrowRight className="h-3.5 w-3.5" /></div>
+      <div className="mt-3 flex items-center gap-1 text-xs font-bold text-foreground opacity-0 transition-opacity group-hover:opacity-100">选择并继续 <ArrowRight className="h-3.5 w-3.5" /></div>
     </button>
   )
 }
 
 function PrimaryNext({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="inline-flex items-center gap-2 rounded-xl bg-stone-950 px-5 py-3 text-sm font-bold text-white shadow-lg transition-transform hover:-translate-y-0.5 hover:bg-black">
+    <button type="button" onClick={onClick} className="inline-flex items-center gap-2 rounded-xl bg-foreground px-5 py-3 text-sm font-bold text-background shadow-lg transition-transform hover:-translate-y-0.5 hover:opacity-90">
       {children} <ArrowRight className="h-4 w-4" />
     </button>
   )

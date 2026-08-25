@@ -135,10 +135,65 @@ const tabGroups: TabGroup[] = [
 
 const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
 
-// 这两个 tab 由 auth-local 路由(仅在 authMode==='github' 时挂载)支撑。
-// basic / disabled 模式下后端根本没注册 /api/auth/users、/api/auth/activity,
-// 无条件渲染会直接 404。按运行时 authMode 门控,非 github 模式一律隐藏。
-const AUTH_GATED_TABS = new Set<TabValue>(['users', 'activity']);
+const AUTH_MODE_LABELS: Record<string, string> = {
+  github: 'GitHub OAuth',
+  basic: '账号密码（单账号）',
+  sso: 'SSO',
+  disabled: '未启用',
+};
+
+/**
+ * 用户管理 / 用户痕迹两个 tab 由 auth-local 路由支撑,而该路由**只在
+ * authMode==='github' 时挂载**;basic / disabled 部署上 /api/auth/users、
+ * /api/auth/activity 根本没注册,直接渲染必然 404。
+ *
+ * 2026-08-25 改法修正:此前是「非 github 模式整条 tab 从导航里消失」。用户在
+ * basic 部署上看到的现象是「用户管理不见了」,分不清是被砍了、坏了还是被藏了
+ * (expectation-management:功能不许无声消失)。现在 tab 永远在,
+ * 只是把会 404 的子组件换成这块说明:当前是什么模式、为什么用不了、怎么开。
+ */
+function AuthModeGatedNotice({
+  feature,
+  mode,
+  onGoToAuth,
+}: {
+  feature: string;
+  mode: CdsAuthPublicStatus['mode'] | null;
+  onGoToAuth: () => void;
+}): JSX.Element {
+  if (!mode) return <SettingsTabFallback />;
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-base font-semibold">{feature}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          当前认证模式是 <strong className="text-foreground">{AUTH_MODE_LABELS[mode] || mode}</strong>，
+          {feature}未启用——不是被隐藏，是这个模式下后端没有多用户账号体系
+          （<code className="rounded bg-[hsl(var(--surface-sunken))] px-1 py-0.5 text-xs">/api/auth/users</code> 仅在 GitHub OAuth 模式挂载）。
+        </p>
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
+        <div className="font-medium">要启用多用户</div>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+          <li>
+            给 CDS 设置 <code className="text-foreground">CDS_AUTH_MODE=github</code>，并配好{' '}
+            <code className="text-foreground">CDS_GITHUB_CLIENT_ID</code> /{' '}
+            <code className="text-foreground">CDS_GITHUB_CLIENT_SECRET</code>
+          </li>
+          <li>重启 CDS；首个登录者可通过 bootstrap 成为系统所有者（需持久化存储后端）</li>
+          <li>回到本页即可创建账号、禁用账号、重置密码，并查看用户痕迹</li>
+        </ol>
+      </div>
+      <button
+        type="button"
+        onClick={onGoToAuth}
+        className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+      >
+        去「登录与认证」查看当前状态
+      </button>
+    </div>
+  );
+}
 
 function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
@@ -178,20 +233,8 @@ export function CdsSettingsPage(): JSX.Element {
     return () => { alive = false; };
   }, []);
 
-  // 认证模式确定后,若当前停在被隐藏的 tab(如 #hash 直链到 users),回退到默认 tab,
-  // 避免右侧内容区空白 + 触发 404。
-  useEffect(() => {
-    if (authMode && authMode !== 'github' && AUTH_GATED_TABS.has(activeTab)) {
-      setActiveTab('maintenance');
-    }
-  }, [authMode, activeTab]);
-
-  const visibleTabGroups = tabGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((tab) => authTabsVisible || !AUTH_GATED_TABS.has(tab.value)),
-    }))
-    .filter((group) => group.items.length > 0);
+  // tab 不再按模式隐藏:#hash 直链到 users 仍然落在 users,只是内容换成说明面板。
+  const visibleTabGroups = tabGroups;
 
   useEffect(() => {
     window.history.replaceState(null, '', `#${activeTab}`);
@@ -259,10 +302,18 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'auth' ? <AuthTab /> : null}
                 </TabsContent>
                 <TabsContent value="users">
-                  {activeTab === 'users' && authTabsVisible ? <UsersTab onToast={setToast} /> : null}
+                  {activeTab !== 'users' ? null : authTabsVisible ? (
+                    <UsersTab onToast={setToast} />
+                  ) : (
+                    <AuthModeGatedNotice feature="用户管理" mode={authMode} onGoToAuth={() => setActiveTab('auth')} />
+                  )}
                 </TabsContent>
                 <TabsContent value="activity">
-                  {activeTab === 'activity' && authTabsVisible ? <ActivityTab /> : null}
+                  {activeTab !== 'activity' ? null : authTabsVisible ? (
+                    <ActivityTab />
+                  ) : (
+                    <AuthModeGatedNotice feature="用户痕迹" mode={authMode} onGoToAuth={() => setActiveTab('auth')} />
+                  )}
                 </TabsContent>
                 <TabsContent value="access-keys">
                   {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}

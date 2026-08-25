@@ -59,6 +59,68 @@ describe('状态色只走 token，不再硬编码调色板', () => {
     expect(bad, `改用语义类 ok / warn / bad / info（各带 -soft 底色）：\n${bad.join('\n')}`).toEqual([]);
   });
 
+  /**
+   * 中性色（stone / slate / zinc / gray / neutral / bg-white）此前不在守卫范围里 ——
+   * 判据太窄（predicate-and-wiring-discipline 形状 1）。真实事故：2026-08-25 用户报
+   * 「接入 Agent 的上手助手在黑色皮肤下看不清」，根因是 AgentStarterTab 整块写死
+   * 浅色调色板（`bg-[#fffdf9]` / `bg-white` / `text-stone-950`），暗色主题下白面板
+   * 加深灰字、选中卡 `bg-warn-soft` 深底上压 `text-stone-950` 近黑字，全部读不出来。
+   *
+   * 棘轮：存量文件按当前条数封顶（多数已自带 `dark:` 配对，属于历史欠账），
+   * 未登记的文件必须是 0。数字只许降不许升；改好一处就把这里调小一格。
+   */
+  const NEUTRAL_LITERAL = /\b(?:bg|text|border|ring|fill)-(?:stone|slate|zinc|gray|neutral)-\d{2,3}\b|\bbg-(?:white|black)\b/g;
+  const NEUTRAL_RATCHET: Record<string, number> = {
+    'pages/ProjectListPage.tsx': 19,
+    'components/BranchDetailDrawer.tsx': 9,
+    'components/GlobalUpdateBadge.tsx': 7,
+    'pages/PreviewPreparingPage.tsx': 6,
+    'components/deployment/ActiveDeployment.tsx': 6,
+    'pages/cds-settings/tabs/LoadingPagesTab.tsx': 5,
+    'pages/ReportsPage.tsx': 2,
+    'pages/release-center/EnvConfigSection.tsx': 1,
+    'pages/release-center/AutoReleaseTab.tsx': 1,
+    'pages/cds-settings/tabs/MaintenanceTab.tsx': 1,
+    'pages/ReleaseConsolePage.tsx': 1,
+    'pages/BranchListPage.tsx': 1,
+    'lib/resources.tsx': 1,
+    'components/ui/dialog.tsx': 1,
+    'components/monitoring/MonitoringDialog.tsx': 1,
+    'components/branch/ReplicaSetPanel.tsx': 1,
+    'components/branch/ReplicaLoadTestPanel.tsx': 1,
+    'components/CommandPalette.tsx': 1,
+  };
+
+  it('组件里没有新增的硬编码中性色（棘轮只降不升）', () => {
+    const over: string[] = [];
+    for (const file of walk(SRC)) {
+      const rel = path.relative(SRC, file).split(path.sep).join('/');
+      const hits = fs.readFileSync(file, 'utf8').match(NEUTRAL_LITERAL) || [];
+      const allowed = NEUTRAL_RATCHET[rel] ?? 0;
+      if (hits.length > allowed) {
+        over.push(`${rel}: ${hits.length} 处（允许 ${allowed}）→ ${[...new Set(hits)].join(' ')}`);
+      }
+    }
+    expect(
+      over,
+      `中性色请走 token：底色 bg-[hsl(var(--surface-raised|base|sunken))]、边框 border-[hsl(var(--hairline))]、\n`
+      + `文字 text-foreground / text-muted-foreground；落在 ok/warn/bad/info 实色上的文字用 text-status-ink。\n${over.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('上手助手（黑色皮肤看不清那处）已经零硬编码中性色', () => {
+    const src = fs.readFileSync(path.join(SRC, 'components/AgentStarterTab.tsx'), 'utf8');
+    expect(src.match(NEUTRAL_LITERAL) || []).toEqual([]);
+    // 反向确认不是把配色整段删了：面板与卡片确实换成了 surface token
+    expect(src).toContain('bg-[hsl(var(--surface-base))]');
+    expect(src).toContain('bg-[hsl(var(--surface-raised))]');
+  });
+
+  it('status-ink 在两个主题里都定义、且 Tailwind 有映射', () => {
+    expect((CSS.match(/--status-ink:/g) || []).length).toBe(2);
+    expect(strip(TW)).toContain("'status-ink': 'hsl(var(--status-ink)");
+  });
+
   it('四档状态色在两个主题里都定义了', () => {
     for (const token of ['ok', 'ok-soft', 'warn', 'warn-soft', 'bad', 'bad-soft', 'info', 'info-soft']) {
       const count = (CSS.match(new RegExp(`--${token}:`, 'g')) || []).length;
