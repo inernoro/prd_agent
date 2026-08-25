@@ -355,9 +355,12 @@ function TierSection({
                 >
                   {l.title || '未命名链接'}
                 </span>
-                <span className="truncate text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
-                  {siteLabel(l)}
-                </span>
+                {/* 链接标题默认取站点标题，两个一样时就别把同一句话写两遍 */}
+                {siteLabel(l) !== (l.title || '未命名链接') && (
+                  <span className="truncate text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+                    {siteLabel(l)}
+                  </span>
+                )}
               </div>
 
               {/* 第二句：它现在什么状态。一行说完，不再摊成五列让人自己拼 */}
