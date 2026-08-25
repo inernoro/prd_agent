@@ -54,6 +54,7 @@ import { buildUploadProgress, fmtDuration, type UnpackFrame } from '@/components
 import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
+import { QuickSharePopover } from '@/components/web-hosting/QuickSharePopover';
 import { buildShareLedger } from '@/components/web-hosting/shareLedger';
 import { buildWeeklyPulse } from '@/components/web-hosting/weeklyPulse';
 import { SITE_SOURCE_LABELS } from '@/components/web-hosting/siteFormRegistry';
@@ -417,6 +418,8 @@ export default function WebPagesPage() {
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
+  /** 分享下拉的锚点（非 null = 下拉打开）。锚的是被点的那枚按钮，下拉就地展开在它下方 */
+  const [quickShareAnchor, setQuickShareAnchor] = useState<HTMLElement | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [shares, setShares] = useState<ShareLinkItem[]>([]);
   const [qrSite, setQrSite] = useState<HostedSite | null>(null);
@@ -548,12 +551,17 @@ export default function WebPagesPage() {
     }
   };
 
-  // 点击站点卡上的「分享」按钮：打开 SharesPanel scoped 到该站点。
-  // 面板内既显示已有分享列表（含续期/取消），也提供「新建分享」CTA → 弹出 ShareDialog。
-  // PR 2026-05-28 起：不再「一键直接生成新链接」，避免用户重复创建后链接互相覆盖。
-  const handleShare = (id: string) => {
+  /**
+   * 点站点卡上的「分享」：就地在按钮下方展开分享下拉（QuickSharePopover）。
+   *
+   * 2026-08-25 改：原来点这里开的是「分享管理弹窗 → 再点新建 → 又开一个 820px 配置弹窗」，
+   * 两层弹窗十几个控件只为拿一条链接（用户原话「过于复杂…无需两个弹窗」）。
+   * 现在下拉里一键生成 + 就地改两项设置，密码/短链/开场问题这些低频项才进配置弹窗，
+   * 「管理全部分享」仍留在下拉之外（顶栏分享档），两个入口各司其职。
+   */
+  const handleShare = (id: string, anchor: HTMLElement) => {
     setShareTargetId(id);
-    setShowSharesPanel(true);
+    setQuickShareAnchor(anchor);
   };
 
   const handleMakePublic = useCallback(async (site: HostedSite) => {
@@ -888,7 +896,7 @@ export default function WebPagesPage() {
             onTogglePublic={() => handleMakePublic(site)}
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
             onDelete={() => handleDelete(site.id)}
-            onShare={() => handleShare(site.id)}
+            onShare={(anchor) => handleShare(site.id, anchor)}
             onQrCode={() => setQrSite(site)}
             onTransferToLibrary={() => setLibraryTargetSite(site)}
             onReplaceFile={(file) => setReplaceTarget({ site, file })}
@@ -911,7 +919,7 @@ export default function WebPagesPage() {
             onSelect={() => toggleSelect(site.id)}
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
             onDelete={() => handleDelete(site.id)}
-            onShare={() => handleShare(site.id)}
+            onShare={(anchor) => handleShare(site.id, anchor)}
             onQrCode={() => setQrSite(site)}
             onTogglePublic={() => handleMakePublic(site)}
             onComments={() => setCommentSite(site)}
@@ -1681,7 +1689,7 @@ export default function WebPagesPage() {
               visitorCount={siteVisitors[selectedSite.id]}
               onGuestPreview={(site) => handleVisitSite(site)}
               onManageShares={(site) => { setShareTargetId(site.id); setShowSharesPanel(true); }}
-              onCreateShare={(site) => handleShare(site.id)}
+              onCreateShare={(site, anchor) => handleShare(site.id, anchor)}
               onClearSelection={() => setSelectedIds(new Set())}
             />
           ) : selectedIds.size > 1 ? (
@@ -1700,7 +1708,7 @@ export default function WebPagesPage() {
               links={shareLinks}
               visitorCount={contextSite ? siteVisitors[contextSite.id] : undefined}
               pulse={weeklyPulse}
-              onCreateShare={(site) => handleShare(site.id)}
+              onCreateShare={(site, anchor) => handleShare(site.id, anchor)}
               onManageShares={(site) => { setShareTargetId(site.id); setShowSharesPanel(true); }}
               onAnalytics={() => setShowAnalytics(true)}
               onRenew={(link) => { setShareTargetId(link.siteId ?? null); setShowSharesPanel(true); }}
@@ -1789,7 +1797,23 @@ export default function WebPagesPage() {
         }
       />
 
-      {/* Share Dialog（保留：拖拽快速分享场景等非 SharesPanel 路径仍使用） */}
+      {/* 分享下拉：点卡片「分享」的主入口。一步生成 + 就地改两项设置，不开弹窗 */}
+      {quickShareAnchor && shareTargetId && (() => {
+        const target = sites.find((s) => s.id === shareTargetId);
+        if (!target) return null;
+        return (
+          <QuickSharePopover
+            anchorEl={quickShareAnchor}
+            site={{ id: target.id, title: target.title }}
+            links={shareLinks}
+            onClose={() => { setQuickShareAnchor(null); setShareTargetId(null); }}
+            onLinksChanged={loadShares}
+            onOpenAdvanced={() => { setQuickShareAnchor(null); setShowShareDialog(true); }}
+          />
+        );
+      })()}
+
+      {/* Share Dialog（高级设置 + 拖拽快速分享等非下拉路径） */}
       {showShareDialog && (
         <ShareDialog
           site={shareTargetId ? (sites.find(x => x.id === shareTargetId) ?? null) : null}
@@ -2577,7 +2601,8 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
-  onShare: () => void;
+  /** 分享下拉要就地弹在按钮下方，所以回调带上那枚按钮当锚点 */
+  onShare: (anchor: HTMLElement) => void;
   onQrCode: () => void;
   onTogglePublic: () => void;
   onComments?: () => void;
@@ -2677,7 +2702,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         </button>
         {c.canShare && (
           <button
-            onClick={onShare}
+            onClick={(e) => onShare(e.currentTarget)}
             className="p-1 rounded hover:bg-[var(--bg-hover)]"
             title={shared ? '已分享' : '分享'}
             aria-label={shared ? '已分享' : '分享'}

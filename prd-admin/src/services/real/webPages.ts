@@ -573,6 +573,28 @@ export async function ensureShareShortLink(shareId: string): Promise<ApiResponse
 }
 
 /**
+ * 就地改一条分享链接的设置（分享下拉面板的「谁能打开 / 有效期」）。
+ *
+ * 与 renewShare 分开：续期是在现有到期日上**累加**，这里是从现在起**重设**。
+ * 面板上选「7 天」，用户要的是「还剩 7 天」。
+ *
+ * 两个字段都可选（不传 = 不动那一项）。expiresInDays 传 0 是「改成永久」，
+ * 与不传是两回事，别在调用前把 undefined 兜成 0。
+ *
+ * 返回的是**改完之后的实际值**，直接拿它更新界面；别用请求参数乐观更新——
+ * 服务端会规范化（白名单、天数夹取），拿参数更新等于显示一个没存进去的值。
+ */
+export async function updateShareSettings(
+  shareId: string,
+  patch: { visibility?: 'owner-only' | 'logged-in' | 'public'; expiresInDays?: number },
+): Promise<ApiResponse<{ visibility: string; expiresAt?: string | null }>> {
+  return apiRequest(`/api/web-pages/shares/${encodeURIComponent(shareId)}`, {
+    method: 'PATCH',
+    body: patch,
+  });
+}
+
+/**
  * 撤销分享链接（不可逆）。
  * @param reason 可选，「为什么撤」。几周后回头看列表时这句话是唯一的线索。
  */

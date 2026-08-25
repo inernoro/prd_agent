@@ -68,7 +68,8 @@ export interface SiteCardProps {
   onTogglePublic: () => void;
   onEdit: () => void;
   onDelete: () => void;
-  onShare: () => void;
+  /** 分享下拉要就地弹在按钮下方，所以回调带上那枚按钮当锚点 */
+  onShare: (anchor: HTMLElement) => void;
   onQrCode: () => void;
   onTransferToLibrary: () => void;
   onReplaceFile: (file: File) => void;

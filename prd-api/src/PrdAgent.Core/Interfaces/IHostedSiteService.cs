@@ -155,6 +155,19 @@ public interface IHostedSiteService
     Task<RenewShareResult> RenewShareAsync(string shareId, string userId, int extendDays, CancellationToken ct = default);
 
     /// <summary>
+    /// 就地改一条已存在分享链接的设置（分享下拉面板里的「谁能打开 / 有效期」）。
+    ///
+    /// 与 <see cref="RenewShareAsync"/> 的区别：续期是**累加**（在现有到期日上加 N 天），
+    /// 这里是**重设**（从现在起算 N 天，0 = 永久）——用户在面板里选「7 天」，期待的是
+    /// 「这条链接还有 7 天」，不是「在原来剩的 3 天上再加 7 天」。
+    ///
+    /// 两个参数都是 null 表示不动该项（局部更新）。已撤销的链接一律拒绝：撤销不可逆，
+    /// 允许改设置等于把死链复活。
+    /// </summary>
+    Task<UpdateShareSettingsResult> UpdateShareSettingsAsync(
+        string shareId, string userId, string? visibility, int? expiresInDays, CancellationToken ct = default);
+
+    /// <summary>
     /// 撤销分享链接（不可逆）。<paramref name="reason"/> 可选，记一句「为什么撤」。
     /// </summary>
     Task<bool> RevokeShareAsync(string shareId, string userId, string? reason = null, CancellationToken ct = default);
@@ -375,6 +388,19 @@ public class RenewShareResult
     public bool Ok { get; set; }
     public string? Error { get; set; }
     public DateTime? NewExpiresAt { get; set; }
+}
+
+/// <summary>
+/// 就地改分享设置的结果。回传**改完之后的实际值**而不是「改成功了」——
+/// 面板那几行显示的就是这两个值，让前端拿请求参数去乐观更新，等于把服务端的规范化
+/// （白名单回退、天数夹取）绕过去，界面会显示一个后端根本没存的值。
+/// </summary>
+public class UpdateShareSettingsResult
+{
+    public bool Ok { get; set; }
+    public string? Error { get; set; }
+    public string Visibility { get; set; } = string.Empty;
+    public DateTime? ExpiresAt { get; set; }
 }
 
 public class ShareAnalyticsResult

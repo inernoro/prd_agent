@@ -1258,7 +1258,10 @@ public class WebPagesController : ControllerBase
             x.RevokedReason,
             isExpired = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now,
             inGracePeriod = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now && x.ExpiresAt.Value > now.AddDays(-7),
-            renewalCount = x.RenewalHistory?.Count ?? 0,
+            // 只数真的续期。RenewalHistory 是「过期时间为什么变了」的审计账，里面还躺着
+            // created / reused / reset —— 全量 Count 会让一条从没续过期的链接显示「续期历史 1 次」
+            // （创建那条也算进去了），列表上那句话就是假的。
+            renewalCount = x.RenewalHistory?.Count(e => e.Action == "renewed") ?? 0,
             // 指向的站点标题；站点已删时该 id 查不到，跳过而不是塞一个占位符
             siteTitles = (x.SiteIds.Count > 0 ? x.SiteIds : (x.SiteId != null ? new List<string> { x.SiteId } : new List<string>()))
                 .Where(titleById.ContainsKey)
@@ -1284,6 +1287,22 @@ public class WebPagesController : ControllerBase
         if (!result.Ok)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "续期失败"));
         return Ok(ApiResponse<object>.Ok(new { newExpiresAt = result.NewExpiresAt }));
+    }
+
+    /// <summary>
+    /// 就地改一条分享链接的设置（分享下拉面板的「谁能打开 / 有效期」两行）。
+    ///
+    /// 与续期分开：续期是在现有到期日上累加，这里是从现在起重设。面板上选「7 天」
+    /// 期待的是「还剩 7 天」，走续期会得到「原来剩的 + 7 天」，两者不能共用一个端点。
+    /// </summary>
+    [HttpPatch("shares/{shareId}")]
+    public async Task<IActionResult> UpdateShareSettings(string shareId, [FromBody] UpdateShareSettingsRequest req)
+    {
+        var result = await _siteService.UpdateShareSettingsAsync(
+            shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        if (!result.Ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "修改失败"));
+        return Ok(ApiResponse<object>.Ok(new { visibility = result.Visibility, expiresAt = result.ExpiresAt }));
     }
 
     /// <summary>
@@ -1625,6 +1644,19 @@ public class RenewShareRequest
 {
     /// <summary>续期天数（1-365）</summary>
     public int ExtendDays { get; set; } = 30;
+}
+
+public class UpdateShareSettingsRequest
+{
+    /// <summary>可见性：owner-only / logged-in / public。null = 不改这一项</summary>
+    public string? Visibility { get; set; }
+
+    /// <summary>
+    /// 从现在起的有效天数（0 = 永久，上限 365）。null = 不改这一项。
+    /// 注意 0 与 null 是两回事：0 是「改成永久」，null 是「别动它」——用不可空 int 接
+    /// 就会把「没传」读成「改成永久」，一次误传把限期链接变永久。
+    /// </summary>
+    public int? ExpiresInDays { get; set; }
 }
 
 public class SetCommentsEnabledRequest

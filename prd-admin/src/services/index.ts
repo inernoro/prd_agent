@@ -1797,6 +1797,7 @@ export {
   saveSharedSite,
   listShareViewLogs,
   renewShare as renewSiteShare,
+  updateShareSettings as updateSiteShareSettings,
   getShareAnalytics as getSiteShareAnalytics,
   listSiteGroups,
   createSiteGroup,

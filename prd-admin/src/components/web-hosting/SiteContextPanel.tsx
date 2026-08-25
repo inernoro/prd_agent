@@ -106,7 +106,8 @@ export function SiteSelectionPanel({
   visitorCount?: number;
   onGuestPreview: (site: HostedSite) => void;
   onManageShares: (site: HostedSite) => void;
-  onCreateShare: (site: HostedSite) => void;
+  /** 分享下拉要就地弹在按钮下方，所以回调带上那枚按钮当锚点 */
+  onCreateShare: (site: HostedSite, anchor: HTMLElement) => void;
   onClearSelection: () => void;
 }) {
   const siteLinks = linksOfSite(links, site.id);
@@ -186,7 +187,7 @@ export function SiteSelectionPanel({
         <>
           <button
             type="button"
-            onClick={() => onCreateShare(site)}
+            onClick={(e) => onCreateShare(site, e.currentTarget)}
             className="inline-flex items-center justify-center gap-2"
             style={{
               height: 38,
@@ -361,7 +362,8 @@ export function SiteContextPanel({
   visitorCount?: number;
   /** 本周分享动态（页面按真实数据算好传进来） */
   pulse: PulseItem[];
-  onCreateShare: (site: HostedSite) => void;
+  /** 分享下拉要就地弹在按钮下方，所以回调带上那枚按钮当锚点 */
+  onCreateShare: (site: HostedSite, anchor: HTMLElement) => void;
   onManageShares: (site: HostedSite) => void;
   onAnalytics: () => void;
   onRenew: (link: ShareLinkItem) => void;
@@ -510,7 +512,7 @@ export function SiteContextPanel({
 
       <button
         type="button"
-        onClick={() => onCreateShare(site)}
+        onClick={(e) => onCreateShare(site, e.currentTarget)}
         className="inline-flex items-center justify-center transition-colors"
         style={{
           height: 32,

@@ -243,57 +243,29 @@ export function SharesWorkspace({
         </div>
       ) : (
         <div
-          className="flex-1 min-h-0 overflow-y-auto rounded-2xl px-4 pb-3"
-          style={{ overscrollBehavior: 'contain', background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+          className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-0.5"
+          style={{ overscrollBehavior: 'contain' }}
         >
-          {/* 每一行是一张独立卡片（设计稿如此），不是传统表格行。
-              分享链接是一个个「东西」——有寿命、有状态、能单独操作，卡片形态才对得上；
-              下划线分隔的表格读起来是一张报表，行与行糊成一片。
-              列对齐仍然靠 table，所以 borderSpacing 撑出行间距而不是 borderCollapse。 */}
-          <table className="w-full" style={{ borderCollapse: 'separate', borderSpacing: '0 8px' }}>
-            <thead>
-              <tr>
-                {['标题 / 链接', '指向的站点', '可见性', '密码', '浏览', '过期 / 最后访问', '操作'].map((h, i) => (
-                  <th
-                    key={h}
-                    className="px-3 py-2 text-[11px] font-normal"
-                    style={{
-                      textAlign: i >= 4 && i <= 5 ? 'right' : i === 6 ? 'right' : 'left',
-                      color: 'var(--text-muted)',
-                      position: 'sticky',
-                      top: 0,
-                      background: 'var(--bg-card)',
-                      paddingTop: 14,
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {tiers.map((t) => {
-                const rows = visible(t);
-                if (rows.length === 0) return null;
-                return (
-                  <TierSection
-                    key={t}
-                    tier={t}
-                    rows={rows}
-                    // 全景时才画分段标题；只看一层时上面的筛选按钮已经说明是哪一层了
-                    showHeading={only === null && t !== 'active'}
-                    siteLabel={siteLabel}
-                    busyId={busyId}
-                    onRenew={handleRenew}
-                    onRevoke={handleRevoke}
-                    onCopy={handleCopy}
-                    onAnalytics={onOpenAnalytics}
-                    onReshare={onCreateShare}
-                  />
-                );
-              })}
-            </tbody>
-          </table>
+          {tiers.map((t) => {
+            const rows = visible(t);
+            if (rows.length === 0) return null;
+            return (
+              <TierSection
+                key={t}
+                tier={t}
+                rows={rows}
+                // 全景时才画分段标题；只看一层时上面的筛选按钮已经说明是哪一层了
+                showHeading={only === null && t !== 'active'}
+                siteLabel={siteLabel}
+                busyId={busyId}
+                onRenew={handleRenew}
+                onRevoke={handleRevoke}
+                onCopy={handleCopy}
+                onAnalytics={onOpenAnalytics}
+                onReshare={onCreateShare}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -312,6 +284,17 @@ function sharePath(l: ShareLinkItem): string {
   return l.shortSeq ? `/s/wp/${l.shortSeq}` : `/s/wp/${l.token}`;
 }
 
+/**
+ * 一层链接的列表。
+ *
+ * 原来这里是一张七列表格，用 `borderSpacing` + 逐个 `<td>` 画边框、首末格补圆角，
+ * 硬拼出「一行看起来像一张卡」。列宽被最长的标题和站点名拖着走，一屏塞七列，
+ * 用户扫一眼分不清哪个数字是什么（2026-08-25 用户原话：「分享列表过于丑陋」）。
+ *
+ * 改成真正的列表：**一条链接一行两句话**——第一句是它是什么（标题 + 指向的站点），
+ * 第二句是它的状态（地址 · 谁能看 · 还剩多久 · 上次谁打开）。浏览数单独占右边一格，
+ * 那是这一屏唯一值得扫的数字。操作平时不占地方，指针移到这一行才出现。
+ */
 function TierSection({
   tier, rows, showHeading, siteLabel, busyId, onRenew, onRevoke, onCopy, onAnalytics, onReshare,
 }: {
@@ -327,149 +310,149 @@ function TierSection({
   onReshare: () => void;
 }) {
   const meta = TIER_META[tier];
-  const dim = tier !== 'active';
-  // 过期层走虚线边框（设计稿：视觉降一档），撤销层走淡红实线
+  const now = Date.now();
+  // 过期层整体压暗一档、走虚线边框（还在，但已经不生效）；撤销层走淡红
   const dashed = tier === 'expired';
   const borderColor = tier === 'revoked' ? 'var(--semantic-danger-border)' : 'var(--border-subtle)';
 
   return (
     <>
       {showHeading && (
-        <tr>
-          <td colSpan={7} className="px-3 pb-1.5 pt-5">
-            <div className="flex items-center justify-between gap-3">
-              <span
-                className="text-[12px] font-semibold"
-                style={{ color: tier === 'revoked' ? 'var(--accent-fg-danger)' : 'var(--text-secondary)' }}
-              >
-                {meta.label} · {rows.length}
-              </span>
-              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{meta.hint}</span>
-            </div>
-            <div className="mt-1.5" style={{ borderTop: '1px dashed var(--border-default)' }} />
-          </td>
-        </tr>
+        <div className="flex items-center justify-between gap-3 px-1 pb-1 pt-4">
+          <span
+            className="text-[12px] font-semibold"
+            style={{ color: tier === 'revoked' ? 'var(--accent-fg-danger)' : 'var(--text-secondary)' }}
+          >
+            {meta.label} · {rows.length}
+          </span>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{meta.hint}</span>
+        </div>
       )}
       {rows.map((l) => {
-        const days = daysUntil(l.expiresAt, Date.now());
+        const days = daysUntil(l.expiresAt, now);
         const busy = busyId === l.id;
-        // 行 = 一张卡片。table 布局下不能给 <tr> 加圆角/边框（浏览器不渲染），
-        // 只能逐个 <td> 画上下边框、首末 td 补左右边框与圆角。
-        const cell = (pos: 'first' | 'mid' | 'last'): React.CSSProperties => ({
-          background: tier === 'revoked' ? 'rgba(248,113,113,0.05)' : 'var(--bg-input)',
-          borderTop: `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}`,
-          borderBottom: `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}`,
-          borderLeft: pos === 'first' ? `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}` : undefined,
-          borderRight: pos === 'last' ? `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}` : undefined,
-          borderTopLeftRadius: pos === 'first' ? 10 : undefined,
-          borderBottomLeftRadius: pos === 'first' ? 10 : undefined,
-          borderTopRightRadius: pos === 'last' ? 10 : undefined,
-          borderBottomRightRadius: pos === 'last' ? 10 : undefined,
-        });
+        const expiringSoon = tier === 'active' && days !== null && days <= 7;
         return (
-          <tr key={l.id} style={{ opacity: dim ? 0.72 : 1 }}>
-            <td className="px-3 py-3" style={cell('first')}>
-              <div
-                className="text-[13.5px] font-semibold truncate"
-                style={{
-                  color: 'var(--text-primary)', maxWidth: 240,
-                  // 撤销的标题划掉：这条链接已经不存在了，视觉上要说清楚
-                  textDecoration: tier === 'revoked' ? 'line-through' : undefined,
-                }}
-              >
-                {l.title || '未命名链接'}
+          <div
+            key={l.id}
+            className="group flex items-center gap-3 rounded-xl px-3.5 py-2.5 transition-colors"
+            style={{
+              background: tier === 'revoked' ? 'var(--semantic-danger-soft)' : 'var(--bg-card)',
+              border: `1px ${dashed ? 'dashed' : 'solid'} ${borderColor}`,
+              opacity: tier === 'active' ? 1 : 0.78,
+            }}
+          >
+            <div className="min-w-0 flex-1">
+              {/* 第一句：这是什么 */}
+              <div className="flex min-w-0 items-baseline gap-2">
+                <span
+                  className="truncate text-[13px] font-semibold"
+                  style={{
+                    color: 'var(--text-primary)',
+                    // 撤销的标题划掉：这条链接已经不存在了，视觉上要说清楚
+                    textDecoration: tier === 'revoked' ? 'line-through' : undefined,
+                  }}
+                >
+                  {l.title || '未命名链接'}
+                </span>
+                <span className="truncate text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+                  {siteLabel(l)}
+                </span>
               </div>
-              <div className="mt-0.5 font-mono text-[11px] truncate" style={{ color: 'var(--text-muted)', maxWidth: 240 }}>
-                {sharePath(l)}
-              </div>
-            </td>
-            <td className="px-3 py-3 text-[12px]" style={{ ...cell('mid'), color: 'var(--text-secondary)' }}>
-              <span className="truncate inline-block align-bottom" style={{ maxWidth: 180 }}>{siteLabel(l)}</span>
-            </td>
-            <td className="px-3 py-3" style={cell('mid')}>
-              <span
-                className="rounded px-1.5 py-0.5 text-[11px]"
-                // 三档三色：公开=橙（要警觉）、登录可见=蓝（有名单）、仅我可见=灰（最安全）。
-                // 只分两色的话，用户扫这一列分不出「登录可见」和「仅我可见」
-                style={{
-                  background: l.visibility === 'public'
-                    ? 'var(--semantic-warning-soft)'
-                    : l.visibility === 'logged-in' ? 'rgba(59,130,246,0.14)' : 'var(--bg-tertiary)',
-                  color: l.visibility === 'public'
-                    ? 'var(--semantic-warning-text)'
-                    : l.visibility === 'logged-in' ? 'var(--accent-fg-blue)' : 'var(--text-secondary)',
-                }}
-              >
-                {VISIBILITY_LABELS[l.visibility ?? 'public'] ?? '公开'}
-              </span>
-            </td>
-            <td className="px-3 py-3" style={cell('mid')}>
-              {l.accessLevel === 'password'
-                ? <Lock size={13} style={{ color: 'var(--accent-fg-emerald)' }} />
-                : <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>无</span>}
-            </td>
-            <td className="px-3 py-3 text-right" style={cell('mid')}>
-              {/* 浏览数是这一屏最该被扫到的数字，字号给到 20（设计稿如此） */}
-              <span className="text-[20px] font-semibold tabular-nums leading-none" style={{ color: 'var(--text-primary)' }}>{l.viewCount ?? 0}</span>
-            </td>
-            <td className="px-3 py-3 text-right" style={cell('mid')}>
-              {tier === 'revoked' ? (
-                <>
-                  <div className="text-[12px]" style={{ color: 'var(--accent-fg-danger)' }}>
+
+              {/* 第二句：它现在什么状态。一行说完，不再摊成五列让人自己拼 */}
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="truncate font-mono" style={{ maxWidth: 190 }}>{sharePath(l)}</span>
+                <Dot />
+                <span style={{ color: visibilityColor(l.visibility) }}>
+                  {VISIBILITY_LABELS[l.visibility ?? 'public'] ?? '公开'}
+                </span>
+                {l.accessLevel === 'password' && (
+                  <>
+                    <Dot />
+                    <span className="inline-flex items-center gap-0.5" style={{ color: 'var(--accent-fg-emerald)' }}>
+                      <Lock size={10} /> 有密码
+                    </span>
+                  </>
+                )}
+                <Dot />
+                {tier === 'revoked' ? (
+                  <span style={{ color: 'var(--accent-fg-danger)' }}>
                     {l.revokedAt ? `${dateLabel(l.revokedAt)}撤销` : '已撤销'}
-                  </div>
-                  {l.revokedReason && (
-                    <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>{l.revokedReason}</div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div
-                    className="text-[12px]"
-                    style={{ color: days !== null && days <= 7 ? 'var(--semantic-warning-text)' : 'var(--text-secondary)' }}
-                  >
+                    {l.revokedReason ? ` · ${l.revokedReason}` : ''}
+                  </span>
+                ) : (
+                  <span style={{ color: expiringSoon ? 'var(--semantic-warning-text)' : undefined }}>
                     {tier === 'expired'
                       ? `${dateLabel(l.expiresAt)}过期`
                       : days === null ? '永久有效' : `剩 ${days} 天`}
-                  </div>
-                  <div className="mt-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    最后访问 {relTime(l.lastViewedAt)}
-                  </div>
-                </>
-              )}
-            </td>
-            <td className="px-3 py-3" style={cell('last')}>
-              <div className="flex items-center justify-end gap-1.5">
-                {tier === 'revoked' ? (
-                  <RowButton onClick={onReshare}><Share2 size={11} className="mr-1" />重新分享</RowButton>
-                ) : (
+                  </span>
+                )}
+                {tier !== 'revoked' && (
                   <>
-                    <RowButton onClick={() => onRenew(l)} disabled={busy} accent={days !== null && days <= 7}>
-                      {busy ? <RefreshCw size={11} className="animate-spin" /> : '续期'}
-                    </RowButton>
-                    {tier === 'expired' && (l.renewalCount ?? 0) > 0 && (
-                      <span className="text-[11px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
-                        续期历史 {l.renewalCount} 次
-                      </span>
-                    )}
-                    {tier === 'active' && (
-                      <>
-                        <RowButton onClick={onAnalytics}><BarChart3 size={11} className="mr-1" />数据</RowButton>
-                        <RowButton onClick={() => onCopy(l)}><Copy size={11} className="mr-1" />复制</RowButton>
-                        <RowButton onClick={() => onRevoke(l)} disabled={busy} danger aria-label="撤销">
-                          <X size={12} />
-                        </RowButton>
-                      </>
-                    )}
+                    <Dot />
+                    <span>最后访问 {relTime(l.lastViewedAt)}</span>
+                  </>
+                )}
+                {(l.renewalCount ?? 0) > 0 && (
+                  <>
+                    <Dot />
+                    <span>续过 {l.renewalCount} 次</span>
                   </>
                 )}
               </div>
-            </td>
-          </tr>
+            </div>
+
+            {/* 浏览数：这一屏唯一值得扫的数字，单独占一格 */}
+            <div className="shrink-0 text-right" style={{ minWidth: 46 }}>
+              <div className="text-[18px] font-semibold leading-none tabular-nums" style={{ color: 'var(--text-primary)' }}>
+                {l.viewCount ?? 0}
+              </div>
+              <div className="mt-0.5 text-[10.5px]" style={{ color: 'var(--text-muted)' }}>次浏览</div>
+            </div>
+
+            {/* 操作：平时不占地方，指针移到这一行才出现。
+                触屏没有 hover，所以 [@media(hover:hover)] 之外恒显——不能让触屏用户点不到续期。 */}
+            <div className="flex shrink-0 items-center gap-1.5 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              {tier === 'revoked' ? (
+                <RowButton onClick={onReshare}><Share2 size={11} className="mr-1" />重新分享</RowButton>
+              ) : (
+                <>
+                  <RowButton onClick={() => onRenew(l)} disabled={busy} accent={expiringSoon}>
+                    {busy ? <RefreshCw size={11} className="animate-spin" /> : '续期'}
+                  </RowButton>
+                  {tier === 'active' && (
+                    <>
+                      <RowButton onClick={onAnalytics}><BarChart3 size={11} className="mr-1" />数据</RowButton>
+                      <RowButton onClick={() => onCopy(l)}><Copy size={11} className="mr-1" />复制</RowButton>
+                      <RowButton onClick={() => onRevoke(l)} disabled={busy} danger aria-label="撤销">
+                        <X size={12} />
+                      </RowButton>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         );
       })}
     </>
   );
+}
+
+/** 状态行里的分隔点。单独抽出来只是为了别在 JSX 里重复六遍同一段样式 */
+function Dot() {
+  return <span style={{ color: 'var(--border-default)' }}>·</span>;
+}
+
+/**
+ * 可见性三档三色：公开=橙（要警觉）、登录可见=蓝（有名单）、仅我可见=灰（最安全）。
+ * 只分两色的话，用户扫这一列分不出「登录可见」和「仅我可见」。
+ */
+function visibilityColor(v: string | undefined): string {
+  if (v === 'public') return 'var(--semantic-warning-text)';
+  if (v === 'logged-in') return 'var(--accent-fg-blue)';
+  return 'var(--text-secondary)';
 }
 
 function RowButton({

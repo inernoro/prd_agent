@@ -31,7 +31,11 @@ export function CardIconAction({
 }: {
   label: string;
   icon: React.ReactNode;
-  onClick: () => void;
+  /**
+   * 回调拿到的是**这枚按钮本身**，给要就地弹下拉的动作（分享）当锚点用。
+   * 不关心锚点的调用方照旧写 `() => doSomething()`，多出来的参数不影响类型。
+   */
+  onClick: (anchor: HTMLElement) => void;
   primary?: boolean;
   compact?: boolean;
   /** 浮在缩略图上（设计稿的 hover 条）：底走暗色蒙版、描边更亮，才在任何画面上都读得出 */
@@ -47,7 +51,7 @@ export function CardIconAction({
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          onClick();
+          onClick(e.currentTarget);
         }}
         title={label}
         aria-label={label}
@@ -66,7 +70,7 @@ export function CardIconAction({
       type="button"
       onClick={(e) => {
         e.stopPropagation();
-        onClick();
+        onClick(e.currentTarget);
       }}
       title={label}
       aria-label={label}

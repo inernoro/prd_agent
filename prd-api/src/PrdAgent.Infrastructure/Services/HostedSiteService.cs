@@ -1853,6 +1853,78 @@ public class HostedSiteService : IHostedSiteService
         return new RenewShareResult { Ok = true, NewExpiresAt = newExpiresAt };
     }
 
+    public async Task<UpdateShareSettingsResult> UpdateShareSettingsAsync(
+        string shareId, string userId, string? visibility, int? expiresInDays, CancellationToken ct = default)
+    {
+        // 白名单与 CreateShareAsync 同一份口径。这里不复用那边的 `_ => "owner-only"` 兜底：
+        // 创建时缺省回退到最安全档是对的，改设置时把一个拼错的档位**静默降级**成 owner-only，
+        // 用户会以为自己设成了「登录可见」，实际谁都打不开——宁可整笔拒绝。
+        string? normalizedVisibility = null;
+        if (visibility != null)
+        {
+            normalizedVisibility = visibility.ToLowerInvariant() switch
+            {
+                "public" => "public",
+                "logged-in" => "logged-in",
+                "owner-only" => "owner-only",
+                _ => null,
+            };
+            if (normalizedVisibility == null)
+                return new UpdateShareSettingsResult { Error = "可见性只能是 owner-only / logged-in / public" };
+        }
+
+        if (expiresInDays is < 0 or > 365)
+            return new UpdateShareSettingsResult { Error = "有效期必须在 0（永久）到 365 天之间" };
+
+        if (normalizedVisibility == null && expiresInDays == null)
+            return new UpdateShareSettingsResult { Error = "没有要改的设置" };
+
+        var share = await _db.WebPageShareLinks.Find(x => x.Id == shareId && x.CreatedBy == userId)
+            .FirstOrDefaultAsync(ct);
+        if (share == null)
+            return new UpdateShareSettingsResult { Error = "分享不存在或无权操作" };
+        if (share.IsRevoked)
+            return new UpdateShareSettingsResult { Error = "链接已撤销，无法修改，请重新分享" };
+
+        var ups = new List<UpdateDefinition<WebPageShareLink>>();
+        var effVisibility = normalizedVisibility ?? share.Visibility;
+        var effExpiresAt = share.ExpiresAt;
+
+        if (normalizedVisibility != null && normalizedVisibility != share.Visibility)
+            ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Visibility, normalizedVisibility));
+
+        if (expiresInDays != null)
+        {
+            // 重设而非累加：面板选「7 天」= 从现在起 7 天，0 = 永久。
+            effExpiresAt = expiresInDays.Value > 0 ? DateTime.UtcNow.AddDays(expiresInDays.Value) : null;
+            ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, effExpiresAt));
+            // 过期时间被谁改成什么，与续期走同一本账——排查「莫名其妙过期」时两类改动要在一处看得见
+            ups.Add(Builders<WebPageShareLink>.Update.Push(x => x.RenewalHistory, new ShareRenewalEvent
+            {
+                Action = "reset",
+                ByUserId = userId,
+                OldExpiresAt = share.ExpiresAt,
+                NewExpiresAt = effExpiresAt,
+                Note = expiresInDays.Value > 0
+                    ? $"panel reset expiry to +{expiresInDays.Value}d"
+                    : "panel reset expiry to never",
+            }));
+        }
+
+        if (ups.Count > 0)
+        {
+            await _db.WebPageShareLinks.UpdateOneAsync(
+                x => x.Id == shareId,
+                Builders<WebPageShareLink>.Update.Combine(ups),
+                cancellationToken: ct);
+            _logger.LogInformation("用户 {UserId} 改分享设置 {ShareId}: visibility={Visibility} expiresAt={ExpiresAt}",
+                userId, shareId, effVisibility, effExpiresAt);
+        }
+
+        // ups 为空（选的就是当前值）也回 Ok：用户点了一下没变化不是错误，面板照常显示当前值。
+        return new UpdateShareSettingsResult { Ok = true, Visibility = effVisibility, ExpiresAt = effExpiresAt };
+    }
+
     public async Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, string? siteId = null, CancellationToken ct = default)
     {
         if (rangeDays <= 0 || rangeDays > 365) rangeDays = 7;
