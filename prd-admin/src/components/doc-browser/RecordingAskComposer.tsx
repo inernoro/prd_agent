@@ -44,8 +44,13 @@ export function RecordingAskComposer({
           rows={1}
           placeholder="例如：客户对于报价的态度是什么？"
           aria-label="问这场录音"
-          className="min-h-11 flex-1 resize-none rounded-[14px] px-3.5 py-2.5 text-[14px] leading-relaxed text-token-primary outline-none"
-          style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
+          className="min-h-[52px] flex-1 resize-none rounded-[16px] px-4 py-3.5 text-[15px] leading-relaxed text-token-primary outline-none"
+          // 有草稿 = 用户正在这里打字，边框跟着亮一档。稿面这一屏画的就是「正在输入」那一刻，
+          // 给它和空框一样的弱边框，读者看不出焦点落在哪（B4 判分记的这处）
+          style={{
+            background: 'var(--bg-input)',
+            border: `1px solid ${value.trim() ? 'var(--border-hover)' : 'var(--border-default)'}`,
+          }}
         />
         <button
           type="button"

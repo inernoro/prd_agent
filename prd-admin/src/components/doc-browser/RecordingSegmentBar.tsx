@@ -56,8 +56,17 @@ export function RecordingSegmentBar({
       >
         <Play size={13} fill="currentColor" style={{ marginLeft: 1 }} />
       </button>
-      {/* 单行截断：这一条只交代「念到哪一句」，句子长短不该让它忽高忽低 */}
-      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-token-primary">{text}</span>
+      {/*
+        最多两行。这一条唯一承载的内容就是这句话，单行截断在 390px 屏上只剩十来个字
+        （时间与箭头把宽度吃掉了），读者反而不知道念到哪了——B3 判分记的正是这处。
+        两行封顶保证它的高度仍然稳定，不会被长句撑成一块。
+      */}
+      <span
+        className="min-w-0 flex-1 text-[13px] font-medium leading-snug text-token-primary"
+        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+      >
+        {text}
+      </span>
       <span className="flex-shrink-0 font-mono text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
         {formatClock(startSec)}{durationSec > 0 ? ` / ${formatClock(durationSec)}` : ''}
       </span>

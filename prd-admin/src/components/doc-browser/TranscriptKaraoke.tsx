@@ -693,7 +693,11 @@ export function TranscriptKaraoke({
         {/* 首末句也能滚到中心：上下各留半屏 padding */}
         <div
           className="flex flex-col items-center gap-1"
-          style={!documentMode && followEnabled ? { padding: '104px 8px' } : { padding: '4px 0' }}>
+          // 浮动药丸出现时列表底部要留出它的高度，否则它压住最后一句正文
+          // （稿面里那颗浮标下方不压任何句子）
+          style={!documentMode && followEnabled
+            ? { padding: '104px 8px' }
+            : { padding: '4px 0', paddingBottom: followLost ? 64 : 4 }}>
           {timelineSegments.map((s, i) => {
             const active = followEnabled && i === activeIdx;
             if (documentMode && editingIndex === i && onSaveNote) {
@@ -861,12 +865,13 @@ export function TranscriptKaraoke({
             type="button"
             onClick={resumeFollow}
             className="flex min-h-11 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold"
+            // 稿面这颗是**反色实心**胶囊（深色屏上是白底黑字）：它是浮在内容之上的主操作，
+            // 做成同色描边就和底下的列表糊在一起，反差不够就不像「浮在上面的一颗按钮」
             style={{
               pointerEvents: 'auto',
-              background: 'var(--bg-card)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border-default)',
-              boxShadow: '0 6px 20px rgba(0,0,0,.18)',
+              background: 'var(--button-primary-bg)',
+              color: 'var(--button-primary-fg)',
+              boxShadow: '0 6px 20px rgba(0,0,0,.24)',
             }}
           >
             <ArrowDown size={14} /> 继续跟随播放
@@ -974,7 +979,12 @@ export function TranscriptKaraoke({
                     // 重新辩解一遍阈值，不如让规则稳定复现稿面的形状。
                     // 加 weight >= 0.3 这道闸是防止「第二名其实只出现两次」也被硬捧成黑档。
                     // 这条规则已写进给设计方的待确认清单，他们可以否决。
-                    const tier = index < 2 && weight >= 0.3 ? 'high' : weight >= 0.3 ? 'mid' : 'low';
+                    // 蓝档同理取**名次前四里的后两个**（第 3、4 名），而不是「所有 weight >= 0.3 的词」：
+                    // 稿面那组词频算下来正好两枚蓝，换一段词频分布平缓的录音（8/5/4/3/3/3…）
+                    // 纯阈值会一口气标出四枚蓝，强调色的分层节奏就散了。
+                    // 名次法在两种分布下都稳定复现稿面的形状：两黑、两蓝、其余灰。
+                    const tier = index < 2 && weight >= 0.3 ? 'high'
+                      : index < 4 && weight >= 0.3 ? 'mid' : 'low';
                     const selected = activeTerm === word;
                     // 稿面这三档是**纯色填充、无描边**，且字号台阶拉得很开（约 24 / 19 / 15）。
                     // 我原先三档都带 1px 描边、字号 18/15/12.5——描边把色块对比削掉一层，

@@ -37,7 +37,12 @@ export function RecordingAnswer({
   if (!answer) return null;
 
   return (
-    <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-nested)' }} aria-live="polite">
+    <div
+      className="mt-3 rounded-[11px] p-3"
+      // 稿面这张卡是「深底 + 1px 亮边」：描边把它和页面底色分开，纯填充块少一层层次
+      style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
+      aria-live="polite"
+    >
       {question && (
         <p
           className="mb-3 ml-auto w-fit max-w-[85%] rounded-[12px] px-3 py-2 text-[13px] leading-relaxed"
