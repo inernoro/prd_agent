@@ -23,11 +23,11 @@
  * 三种都不中就报错退出——**宁可失败也不要输出一份「只有一个画板」的假清单**，
  * 那会让后面所有步骤都以为设计稿只有一屏（见 no-rootless-tree：不编）。
  */
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const { chromium } = createRequire(path.join(process.cwd(), 'noop.js'))('playwright');
+// 用 playwright-core + 容器预装浏览器；解析顺序与失败提示收在 browser.mjs
+import { launch } from './browser.mjs';
 
 function arg(name, dflt) {
   const i = process.argv.indexOf(name);
@@ -46,15 +46,10 @@ if (!url || !out) {
 }
 fs.mkdirSync(out, { recursive: true });
 
-const CHROME = process.env.CHROME_BIN
-  || (fs.existsSync('/opt/pw-browsers')
-    ? fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-'))
-      .map((d) => `/opt/pw-browsers/${d}/chrome-linux/chrome`).find((p) => fs.existsSync(p))
-    : undefined);
 
 const slug = (s) => s.replace(/[\s·（）()\/、,，:：]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 
-const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
+const browser = await launch();
 const page = await browser.newPage({ viewport: { width, height: 1000 }, deviceScaleFactor: dsf });
 
 // 画布 runtime 从 unpkg 取 React/Babel，容器里直连不通；本地缓存喂进去。
@@ -86,12 +81,21 @@ const found = await page.evaluate((markerSrc) => {
   const re = new RegExp(markerSrc);
   const abs = (el) => Math.round(el.getBoundingClientRect().top + window.scrollY);
 
-  const byAttr = [...document.querySelectorAll('[data-screen-label],[data-artboard]')].map((el) => ({
-    label: el.getAttribute('data-screen-label') || el.getAttribute('data-artboard') || '',
-    y: abs(el),
-    h: Math.round(el.getBoundingClientRect().height),
-    via: 'attr',
-  }));
+  const cssQuote = (v) => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  const byAttr = [...document.querySelectorAll('[data-screen-label],[data-artboard]')].map((el) => {
+    const attr = el.hasAttribute('data-screen-label') ? 'data-screen-label' : 'data-artboard';
+    const label = el.getAttribute(attr) || '';
+    return {
+      label,
+      y: abs(el),
+      h: Math.round(el.getBoundingClientRect().height),
+      via: 'attr',
+      // 记下**精确选择器**：并排摆放的画板（同一行三个上传态）纵坐标完全相同，
+      // 只按 y 区间切会把三屏混成一屏 —— 量出来的档位表是三屏的并集，
+      // 看着有数、其实哪一屏都不对（形状 1：判据比它该管的范围窄）。
+      scope: `[${attr}=${cssQuote(label)}]`,
+    };
+  });
   if (byAttr.length) return byAttr;
 
   const byMarker = [];
@@ -141,19 +145,27 @@ for (const b of boards) {
 
   // 逐字文案：取每个元素的**自有文本节点**（不是叶子节点的 textContent）。
   // 父节点不会把整屏文本重复拼一遍，而与图标同级的标签文字（`<span><svg/>HTML</span>`）也不会漏。
-  const texts = await page.evaluate(({ from, to }) => {
+  const texts = await page.evaluate(({ from, to, scopeSel }) => {
     const items = [];
-    document.querySelectorAll('*').forEach((el) => {
+    // 有精确选择器就在那棵子树里取；只有并排画板会暴露 y 区间的问题：
+    // 同一行的三个上传态纵坐标完全相同，按 y 取会让三份文案文件内容一模一样
+    // （都是三屏的并集）——而「三份都是 50 条」这种巧合恰恰不容易被当成 bug。
+    const root = scopeSel ? document.querySelector(scopeSel) : null;
+    const pool = root ? root.querySelectorAll('*') : document.querySelectorAll('*');
+    (root ? [root, ...pool] : [...pool]).forEach((el) => {
       const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(' ').trim();
       if (!own) return;
-      const y = el.getBoundingClientRect().top + window.scrollY;
-      if (y >= from && y < to) items.push(own);
+      if (!root) {
+        const y = el.getBoundingClientRect().top + window.scrollY;
+        if (y < from || y >= to) return;
+      }
+      items.push(own);
     });
     return items;
-  }, { from: b.top, to: b.top + b.height });
+  }, { from: b.top, to: b.top + b.height, scopeSel: b.scope || null });
 
   fs.writeFileSync(path.join(out, `text-${b.id}.txt`), `${b.label}\n${'-'.repeat(40)}\n${texts.join('\n')}\n`);
-  index.push({ id: b.id, label: b.label, via: b.via, top: b.top, height: b.height, files, textFile: `text-${b.id}.txt`, textCount: texts.length });
+  index.push({ id: b.id, label: b.label, via: b.via, scope: b.scope || null, top: b.top, height: b.height, files, textFile: `text-${b.id}.txt`, textCount: texts.length });
 }
 
 fs.writeFileSync(path.join(out, 'index.json'), JSON.stringify({ url, width, dsf, boards: index }, null, 1));

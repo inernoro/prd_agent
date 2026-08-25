@@ -17,13 +17,13 @@
  *   node fixture-drift.mjs --dir <fixture 目录> --url <实现页地址> \
  *     [--storage <auth.json>] [--width 1600] [--wait 12000]
  */
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { installFixtures, keyShape } from './fixtures.mjs';
 
-const { chromium } = createRequire(path.join(process.cwd(), 'noop.js'))('playwright');
+// 用 playwright-core + 容器预装浏览器；解析顺序与失败提示收在 browser.mjs
+import { launch } from './browser.mjs';
 
 const arg = (n, d) => {
   const i = process.argv.indexOf(n);
@@ -43,14 +43,9 @@ if (!fs.existsSync(dir)) {
   process.exit(2);
 }
 
-const CHROME = process.env.CHROME_BIN
-  || (fs.existsSync('/opt/pw-browsers')
-    ? fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-'))
-      .map((d) => `/opt/pw-browsers/${d}/chrome-linux/chrome`).find((p) => fs.existsSync(p))
-    : undefined);
 
 const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'fixture-drift-'));
-const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
+const browser = await launch();
 const ctx = await browser.newContext({
   viewport: { width, height: 1000 },
   storageState: storage && fs.existsSync(storage) ? storage : undefined,

@@ -20,13 +20,13 @@
  *   React，容器网络直连不通，必须由 route 从本地喂进去。
  */
 import { pathToFileURL } from 'node:url';
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { installFixtures } from './fixtures.mjs';
 
 // 脚本住在技能目录里，依赖装在工作目录里：必须从 cwd 解析，不能按脚本位置解析。
-const { chromium } = createRequire(path.join(process.cwd(), 'noop.js'))('playwright');
+// 用 playwright-core + 容器预装浏览器；解析顺序与失败提示收在 browser.mjs
+import { launch } from './browser.mjs';
 
 function parseArgs(argv) {
   const out = { states: [], themes: ['dark', 'light'], width: 1440, full: true };
@@ -64,15 +64,8 @@ const states = opts.states.length
   : [{ id: 'default', click: null }];
 
 const target = /^https?:/.test(opts.url) ? opts.url : pathToFileURL(path.resolve(opts.url)).href;
-// 按目录名探测，不写死版本号：写死会在升级 Playwright 后静默退化成「用默认下载路径」，
-// 而容器里根本没下载过浏览器，表现是一句莫名其妙的 launch 失败。
-const CHROME = process.env.CHROME_BIN
-  || (fs.existsSync('/opt/pw-browsers')
-    ? fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-'))
-      .map((d) => `/opt/pw-browsers/${d}/chrome-linux/chrome`).find((p) => fs.existsSync(p))
-    : undefined);
 
-const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
+const browser = await launch();
 const problems = [];
 const manifest = [];
 const themeBg = new Map();

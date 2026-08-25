@@ -114,6 +114,33 @@ const px = (v) => {
 };
 const firstFamily = (v) => String(v).split(',')[0].replace(/["']/g, '').trim().toLowerCase();
 
+/**
+ * 每个「长度类」维度该在哪些 token 里找。
+ *
+ * 不加这层限制的话，比的是**纯数值**：字号 18px 会配上 `--radius-lg: 18px`，报告写「已有 token」，
+ * 而那两件事毫无关系——照着它写代码就是把圆角变量当字号用（形状 6：判据读的不是真正生效的那个值）。
+ *
+ * 另一半作用：某个维度**一个候选 token 都没有**，说明这个项目压根不用 token 管它
+ * （本仓库就不用 token 管字号，字号走 Tailwind 任意值）。那种情况该报「本项目不这么管」，
+ * 而不是把每一档都算成「缺」——每屏多出五六条假缺失，整张表很快就没人看了。
+ */
+const DIM_TOKEN_NAMES = {
+  radius: [/^--radius-/],
+  fontSize: [/^--font-size-/, /^--text-size-/, /^--fs-/],
+  // 注意别把 `--hairline` 算进来：它在本仓库是**颜色**（rgba），不是宽度。
+  // 算进来的话候选非空、但没有一个能解析成 px，于是每一档都被判「缺」——
+  // 一个纯粹由匹配口径造出来的假缺失。
+  borderWidth: [/^--border-width-/, /^--stroke-width-/],
+  letterSpacing: [/^--tracking-/, /^--letter-spacing-/],
+};
+
+/** 该维度的候选 token；返回空数组 = 本项目不用 token 管这个维度 */
+function candidates(dim) {
+  const pats = DIM_TOKEN_NAMES[dim];
+  if (!pats) return tokens;
+  return tokens.filter((t) => pats.some((re) => re.test(t.name)));
+}
+
 function classify(dim, value) {
   const isColor = ['color', 'background', 'borderColor'].includes(dim);
   const isPx = ['radius', 'fontSize', 'borderWidth', 'letterSpacing'].includes(dim);
@@ -128,19 +155,27 @@ function classify(dim, value) {
     return { kind: 'missing' };
   }
   if (isPx) {
+    const pool = candidates(dim);
+    if (!pool.length) return { kind: 'untracked' };
     // 圆角是四角写法（"10px 10px 10px 10px" 或 "10px"），取第一角比
     const want = px(String(value).split(' ')[0]);
     if (want === null) return { kind: 'skip' };
-    const exact = tokens.filter((t) => px(t.raw) === want);
+    const exact = pool.filter((t) => px(t.raw) === want);
     if (exact.length) return { kind: 'have', tokens: exact.map((t) => t.name) };
-    const near = tokens.filter((t) => px(t.raw) !== null && Math.abs(px(t.raw) - want) <= 1);
+    const near = pool.filter((t) => px(t.raw) !== null && Math.abs(px(t.raw) - want) <= 1);
     if (near.length) return { kind: 'near', tokens: near.map((t) => `${t.name}=${t.raw}`) };
     return { kind: 'missing' };
   }
   if (dim === 'fontFamily') {
     const want = firstFamily(value);
     // 系统兜底字族不算设计决策
-    if (!want || ['ui-sans-serif', 'system-ui', 'sans-serif', 'serif', '-apple-system'].includes(want)) return { kind: 'skip' };
+    // 系统/画布兜底字族不算设计决策：Arial、Helvetica 这些是浏览器与导出工具的默认值，
+    // 设计师并没有「选」它们。把它们算成缺 token，就是逼人给一个默认值补 token。
+    const FALLBACK_FAMILIES = [
+      'ui-sans-serif', 'system-ui', 'sans-serif', 'serif', 'monospace', '-apple-system',
+      'arial', 'helvetica', 'helvetica neue', 'segoe ui', 'roboto', 'times new roman',
+    ];
+    if (!want || FALLBACK_FAMILIES.includes(want.toLowerCase())) return { kind: 'skip' };
     const exact = tokens.filter((t) => firstFamily(t.raw) === want);
     return exact.length ? { kind: 'have', tokens: exact.map((t) => t.name) } : { kind: 'missing' };
   }
@@ -163,6 +198,13 @@ for (const dim of dims) {
   if (!rows.length) continue;
   const graded = rows.map((r) => ({ ...r, ...classify(dim, r.value) })).filter((r) => r.kind !== 'skip');
   if (!graded.length) continue;
+  if (graded.every((r) => r.kind === 'untracked')) {
+    lines.push(`## ${DIM_LABEL[dim] || dim} — 共 ${graded.length} 档：**本项目不用 token 管这个维度**`, '',
+      `token 文件里没有任何 ${dim} 类命名的声明，所以这 ${graded.length} 档不算「缺」。`
+      + '值本身仍然是设计事实，写组件时照 spec 抄；要改成 token 管理是另一件事。', '',
+      `档位：${graded.map((r) => `\`${r.value}\`×${r.count}`).join(' · ')}`, '');
+    continue;
+  }
   const miss = graded.filter((r) => r.kind === 'missing');
   const near = graded.filter((r) => r.kind === 'near');
   missingTotal += miss.length;

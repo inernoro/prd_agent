@@ -30,12 +30,12 @@
  *   spec.md    人读：每个维度一张频次表，降序
  *   text.txt   该范围内逐条可见文案（叶子节点，去重前的原始顺序）
  */
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { installFixtures } from './fixtures.mjs';
 
-const { chromium } = createRequire(path.join(process.cwd(), 'noop.js'))('playwright');
+// 用 playwright-core + 容器预装浏览器；解析顺序与失败提示收在 browser.mjs
+import { launch } from './browser.mjs';
 
 function arg(name, dflt) {
   const i = process.argv.indexOf(name);
@@ -61,13 +61,8 @@ fs.mkdirSync(out, { recursive: true });
 
 // 浏览器路径按目录名探测，不写死版本号——写死会在升级 Playwright 后静默退化成
 // 「找不到就用默认下载路径」，而容器里根本没有下载过。
-const CHROME = process.env.CHROME_BIN
-  || (fs.existsSync('/opt/pw-browsers')
-    ? fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-'))
-      .map((d) => `/opt/pw-browsers/${d}/chrome-linux/chrome`).find((p) => fs.existsSync(p))
-    : undefined);
 
-const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
+const browser = await launch();
 const ctx = await browser.newContext({
   viewport: { width, height: 1000 },
   deviceScaleFactor: 1,
@@ -93,6 +88,9 @@ if (vendor) {
       : route.abort();
   });
 }
+// 网络字体一律不加载：它是取证里最不稳定的一环（拉不到就整屏字体跳变，两次量出来的
+// 字号/行高对不上）。注意这**不影响** fontFamily 的测量——computed font-family 返回的是
+// CSS 声明的字族栈，与字体文件有没有下载下来无关。
 await page.route('**://fonts.googleapis.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
 await page.route('**://fonts.gstatic.com/**', (r) => r.abort());
 

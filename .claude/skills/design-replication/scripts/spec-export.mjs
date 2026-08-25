@@ -20,8 +20,13 @@
  *     --board board-02=屏2站点卡:<spec 目录> \
  *     [--out <导出目录>] [--min-count 2]
  *
- * --board 可给多次，格式 `id=中文名:目录`。目录下要有 extract-spec 产出的 spec.json；
- * 同一个 board 的深浅两套分别放在 `<目录>` 与 `<目录>-light`（有就一起收）。
+ * --board 可给多次，格式 `id=中文名:目录` 或 `id=中文名:目录:主题`（主题缺省 dark）。
+ *
+ * 两种画布约定都支持：
+ *   - 一块画板 + 主题切换 → 深浅两套放 `<目录>` 与 `<目录>-light`，脚本一起收；
+ *   - 深浅各是**独立画板**（本仓库那份就是「01 主控台-深 / 01 主控台-浅」）→ 用第三段显式声明主题。
+ * 不做「按标签名猜主题」：猜错了会把浅色档位记在 dark 键下，后面对 token 全是错的，
+ * 而那份规格看上去完全正常。只在标签明显与声明冲突时**提醒**，判断权还在调用方。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -89,7 +94,23 @@ for (const raw of boardArgs) {
   }
   const id = raw.slice(0, eq);
   const label = raw.slice(eq + 1, colon);
-  const dir = raw.slice(colon + 1);
+  const rest = raw.slice(colon + 1);
+  // 第三段是可选主题；目录名里可能带盘符/冒号，所以从右边找最后一个冒号再判它是不是主题词
+  const lastColon = rest.lastIndexOf(':');
+  const maybeTheme = lastColon > 0 ? rest.slice(lastColon + 1) : '';
+  const hasTheme = maybeTheme === 'dark' || maybeTheme === 'light';
+  const dir = hasTheme ? rest.slice(0, lastColon) : rest;
+  const theme = hasTheme ? maybeTheme : 'dark';
+
+  // 标签写着「浅」却按深色归档，多半是漏了第三段——这种错会让整屏档位对错 token，
+  // 而导出文件本身长得完全正常，事后极难发现。
+  const labelSaysLight = /浅|light/i.test(label);
+  if (labelSaysLight && theme === 'dark') {
+    console.warn(`[存疑] ${id} 标签是「${label}」，却按 dark 归档。要么补第三段 :light，要么确认标签名有误。`);
+  }
+  if (!labelSaysLight && /深|dark/i.test(label) && theme === 'light') {
+    console.warn(`[存疑] ${id} 标签是「${label}」，却按 light 归档。`);
+  }
   const dark = readSpec(dir);
   if (!dark) {
     console.error(`${id}：${dir}/spec.json 不存在。缺一屏就导，导出来的规格是残的，比没有更误导。`);
@@ -103,12 +124,16 @@ for (const raw of boardArgs) {
     range: { yFrom: dark.yFrom ?? null, yTo: dark.yTo === Number.MAX_SAFE_INTEGER ? null : dark.yTo ?? null, scope: dark.scope ?? null },
     elements: dark.elements ?? null,
     scales: {
-      dark: scaleOf(dark.counts, minCount),
-      ...(light ? { light: scaleOf(light.counts, minCount) } : {}),
+      [theme]: scaleOf(dark.counts, minCount),
+      // `<目录>-light` 那套只在「一块画板 + 主题切换」的约定下存在；
+      // 深浅各自成板时不会有它，此处自然为空。
+      ...(light && theme !== 'light' ? { light: scaleOf(light.counts, minCount) } : {}),
     },
     textCount: (dark.texts || []).length,
   });
-  if (!light) console.warn(`[提示] ${id} 没有浅色那一份（${dir}-light），这份规格只覆盖深色档`);
+  if (!light && theme === 'dark') {
+    console.warn(`[提示] ${id} 只有深色档（没有 ${dir}-light，也没声明 :light）`);
+  }
 }
 
 const sha = crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex');
@@ -157,7 +182,7 @@ fs.writeFileSync(path.join(outDir, 'design-spec.md'), `${md.join('\n')}\n`);
 console.log(`导出 ${boards.length} 屏 → ${jsonPath}`);
 for (const b of boards) {
   const themes = Object.keys(b.scales).join(' + ');
-  const dims = Object.keys(b.scales.dark).length;
+  const dims = Object.values(b.scales).reduce((n, sc) => Math.max(n, Object.keys(sc).length), 0);
   console.log(`  ${b.id} ${b.label}：${themes}，${dims} 个维度`);
 }
 }
