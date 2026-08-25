@@ -14,7 +14,11 @@
  *   node extract-spec.mjs --url <地址> --out <目录> \
  *     [--scope '<CSS 选择器>'] [--y-from 0 --y-to 1800] \
  *     [--vendor <React UMD 目录>] [--storage <storageState.json>] \
- *     [--width 1600] [--theme dark] [--wait 12000]
+ *     [--width 1600] [--theme dark] [--wait 12000] \
+ *     [--fixtures <目录> | --record-fixtures <目录>]
+ *
+ * --fixtures 用设计样例数据渲染实现页，让 text.txt 与设计稿的文案可以直接比
+ * （否则两边跑的是不同数据，覆盖率里混着大量「其实是数据不同」的假缺失）。
  *
  * 取范围的两种方式（设计稿用后者，实现页用前者或不给）：
  *   --scope     只统计该选择器子树内的元素
@@ -29,6 +33,7 @@
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
+import { installFixtures } from './fixtures.mjs';
 
 const { chromium } = createRequire(path.join(process.cwd(), 'noop.js'))('playwright');
 
@@ -46,6 +51,8 @@ const storage = arg('--storage', null);
 const width = Number(arg('--width', '1600'));
 const theme = arg('--theme', 'dark');
 const wait = Number(arg('--wait', '12000'));
+const fixturesDir = arg('--fixtures', null) || arg('--record-fixtures', null);
+const fixturesMode = process.argv.includes('--record-fixtures') ? 'record' : 'replay';
 if (!url || !out) {
   console.error('必填：--url --out');
   process.exit(2);
@@ -69,6 +76,13 @@ const ctx = await browser.newContext({
 });
 const page = await ctx.newPage();
 
+// 先装 fixture 再装 vendor：Playwright 后注册的 route 先匹配，
+// 顺序反了接口请求会被 vendor 那几条规则之外的默认路径放走。
+let fixtures = null;
+if (fixturesDir) {
+  fixtures = await installFixtures(page, { dir: fixturesDir, mode: fixturesMode });
+}
+
 if (vendor) {
   const files = fs.readdirSync(vendor);
   await page.route('**://unpkg.com/**', async (route) => {
@@ -85,6 +99,24 @@ await page.route('**://fonts.gstatic.com/**', (r) => r.abort());
 await page.goto(url, { waitUntil: 'load', timeout: 90000 });
 await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
 await page.waitForTimeout(wait);
+
+if (fixtures) {
+  const r = fixtures.report();
+  if (fixturesMode === 'record') console.log(`录到 ${r.recorded.length} 条接口响应 → ${fixturesDir}`);
+  else {
+    console.log(`样例数据命中 ${r.served.length} 条`);
+    // 混合态（一半 fixture 一半真数据）下量出来的文案清单没有可比性，
+    // 直接判失败而不是打条 warning —— warning 会被顺手忽略，然后拿混合态的数字去谈覆盖率。
+    if (r.missed.length) {
+      console.error(`${r.missed.length} 条接口没有样例数据、走了真网络：`
+        + `${r.missed.slice(0, 8).join(' / ')}${r.missed.length > 8 ? ' …' : ''}`);
+      console.error('这一屏是「一半样例一半真数据」的混合态，量出来的文案清单不能拿去比覆盖率。');
+      console.error('要么把缺的那几条录进来（--record-fixtures），要么整屏都别用 fixture。');
+      await browser.close();
+      process.exit(4);
+    }
+  }
+}
 
 const chars = await page.evaluate(() => document.body.innerText.replace(/\s+/g, '').length);
 if (chars < 200) {
