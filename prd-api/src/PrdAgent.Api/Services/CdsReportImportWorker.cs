@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 
@@ -28,8 +29,9 @@ namespace PrdAgent.Api.Services;
 ///    镜像库；后台任务如果替所有用户建库，等于替人做主。所以这里只枚举**已经存在**的
 ///    <c>cds-reports</c> 库并刷新它们——第一次同步仍然由人手动触发，之后才由它保持新鲜。
 ///    一个都没有时安静跳过，并说清是这个原因，而不是留一条看不出所以然的静默。
-/// 3. **一个用户失败不影响其他人**。逐个 catch，失败只记日志；否则第一个没配好连接的用户
+/// 3. **一个库失败不影响其他库**。逐个 catch，失败只记日志；否则第一个没配好连接的用户
 ///    会让整轮同步停摆。
+/// 4. **每个库只从它自己那个 CDS 拉**。判据与理由见 <see cref="CdsReportSyncTargets"/>。
 /// </summary>
 public class CdsReportImportWorker : BackgroundService
 {
@@ -106,13 +108,9 @@ public class CdsReportImportWorker : BackgroundService
             .Find(s => s.AppKey == CdsReportStoreAppKey)
             .ToListAsync(ct);
 
-        var owners = stores
-            .Select(s => s.OwnerId)
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+        var targets = CdsReportSyncTargets.Build(stores);
 
-        if (owners.Count == 0)
+        if (targets.Count == 0)
         {
             _logger.LogInformation(
                 "[CdsReportImportWorker] 还没有任何 CDS 报告镜像库，本轮跳过。"
@@ -122,17 +120,21 @@ public class CdsReportImportWorker : BackgroundService
 
         var ok = 0;
         var failed = 0;
-        foreach (var ownerId in owners)
+        foreach (var t in targets)
         {
             if (ct.IsCancellationRequested) return;
             try
             {
-                var result = await importer.ImportAsync(ownerId, new CdsReportImportOptions(), ct);
+                var result = await importer.ImportAsync(
+                    t.OwnerId,
+                    new CdsReportImportOptions { StoreId = t.StoreId, SourceBaseUrl = t.SourceBaseUrl },
+                    ct);
                 ok++;
                 _logger.LogInformation(
-                    "[CdsReportImportWorker] 用户 {OwnerId} 同步完成：共 {Total}，新增 {Imported}，"
-                    + "更新 {Updated}，跳过 {Skipped}，失败 {Failed}",
-                    ownerId, result.Total, result.Imported, result.Updated, result.Skipped, result.Failed);
+                    "[CdsReportImportWorker] 库 {StoreId}（用户 {OwnerId}，源 {Source}）同步完成："
+                    + "共 {Total}，新增 {Imported}，更新 {Updated}，跳过 {Skipped}，失败 {Failed}",
+                    t.StoreId, t.OwnerId, t.SourceBaseUrl ?? "(默认连接)",
+                    result.Total, result.Imported, result.Updated, result.Skipped, result.Failed);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -141,8 +143,11 @@ public class CdsReportImportWorker : BackgroundService
             catch (Exception ex)
             {
                 failed++;
-                // 一个用户没配好连接，不该让别人也同步不了。
-                _logger.LogWarning(ex, "[CdsReportImportWorker] 用户 {OwnerId} 同步失败，跳过", ownerId);
+                // 一个库的源没了或没配好，不该让别的库也同步不了。
+                // **失败时宁可不同步，也不换个源接着拉**——那正是混源要防的事。
+                _logger.LogWarning(ex,
+                    "[CdsReportImportWorker] 库 {StoreId}（用户 {OwnerId}，源 {Source}）同步失败，跳过",
+                    t.StoreId, t.OwnerId, t.SourceBaseUrl ?? "(默认连接)");
             }
         }
 
