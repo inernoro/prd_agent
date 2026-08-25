@@ -11,25 +11,6 @@ pnpm tsc          # Type check only
 pnpm test         # vitest
 ```
 
-## 热点组件结构基线
-
-`src/components/web-hosting/__snapshots__/` 存着几个高频共享组件的**结构基线**（`.snap` 文本）。
-它记的是几何——尺寸/弹性/定位/间距/溢出/对齐/可点可见——与契约属性（`data-hoverbar`、
-`aria-label` 这些别的代码按它找元素的标记），不记颜色圆角字号。抽取判据在
-`src/lib/structuralSnapshot.ts`，两头都有用例钉着（太宽会让基线沦为橡皮图章，太窄则拦不住真事故）。
-
-**为什么有它**：共享组件改一笔会同时影响好几屏，改的人当场看不到影响面。真实栽过三次——
-hover 条以整条宽度接管指针把勾选框吞掉、卡片少了 `h-full` 高度不再一致、分享档整块摞到顶栏上面，
-三次都是「代码看着对、测试全绿、只有真人打开才看得见」。
-
-**看到 diff 怎么办**：先问「我这次是不是有意改布局」。是 →
-`pnpm vitest -u src/components/web-hosting/__snapshots__` 更新，并在 PR 里说明哪几屏会跟着变；
-否 → 你刚改坏了一处几何，diff 那几行就是现场。**不要习惯性 -u。**
-
-加新组件进基线：在 `hotComponents.test.tsx` 里加一条 `toMatchFileSnapshot`。渲染走
-`renderToStaticMarkup`（本仓库既有做法，不需要 DOM 环境）；组件里若有相对时间这类随时钟变的
-文案，测试文件顶部已经把时钟钉死了，别再引入第二个时间源。
-
 ## 已注册共享组件
 
 | 组件 | 路径 | 数据源 |
