@@ -462,8 +462,10 @@ export function SiteCard({
             </div>
           )}
 
+          {/* 标题恒定单行：多一行标题就把整行卡片撑高，短卡下面留出一截空白（用户原话「胡子太长」）。
+              截断了也不丢信息——title 属性给全文，右栏「站点上下文」也显示完整标题。 */}
           <h3
-            className="line-clamp-2 cursor-pointer hover:underline"
+            className="truncate cursor-pointer hover:underline"
             style={{ fontSize: SPEC.title, fontWeight: 600, lineHeight: 1.35, letterSpacing: 'var(--tracking-title)', color: 'var(--text-primary)' }}
             onClick={onVisit}
             title={site.title}
@@ -506,8 +508,11 @@ export function SiteCard({
           {/* 标签行：中卡以上都有，最多 3 个 + 折叠计数，右端是更新时间（设计稿把时间放这一行）。
               mt-auto：等高之后多出来的空间沉到这一行**之上**，末行始终贴着卡片底边，
               否则短卡片会在中间空出一块，看着像没加载完。 */}
-          {!isSmall && site.tags.length > 0 && (
-            <div className="mt-auto flex min-w-0 items-center gap-1">
+          {/* 这一行**恒定渲染**（有没有标签都在）：它同时承载更新时间，条件渲染会让
+              没标签的卡片既少一行高度、又莫名其妙不显示时间。恒定之后同一档尺寸的卡片
+              内容高度是确定的，等高不再靠拉伸填空（就没有那截「胡子」了）。 */}
+          {!isSmall && (
+            <div className="mt-auto flex min-w-0 items-center gap-1" style={{ minHeight: 18 }}>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                 {site.tags.slice(0, 3).map((tag) => (
                   <span
