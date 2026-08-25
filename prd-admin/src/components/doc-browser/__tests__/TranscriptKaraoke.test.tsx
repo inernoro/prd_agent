@@ -38,7 +38,12 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    expect(html).toContain('录音理解');
+    // 设计稿 P3 是四块同屏并置（词云 / 会议纪要 / 待办 / 提问），不是可切换的分区
+    expect(html).toContain('词云');
+    expect(html).toContain('会议纪要');
+    expect(html).toContain('待办事项');
+    expect(html).toContain('问这段录音');
+    expect(html).not.toContain('role="tab"');
     expect(html).toContain('搜索录音里的关键词');
     expect(html).toContain('整场录音词云');
     // 词云的权重按频次映射，不按排名。断言的是行为不是某个字面尺寸：
@@ -55,9 +60,8 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(html).toContain('说话人1');
     // 说话人不只给名字，还要给「说了几句、占多少」——光有名字看不出这场是谁在说
     expect(html).toMatch(/说话人1<\/span>\s*<span[^>]*>\s*1 句 · 占 50%/);
-    // 提问入口从一个按钮改成了四分区里的一格（设计稿 P3：理解 / 纪要 / 待办 / 提问）
-    expect(html).toContain('role="tab"');
-    expect(html).toContain('提问');
+    // 词频压成三档，最高频那个词要能一眼跳出来：它用反白大字，和其余两档不同量级
+    expect(html).toMatch(/font-size:18px;font-weight:700/);
   });
 
   it('没有任何词被重复提到时不出词云——「反复提到的是 X（1 次）」是句假话', () => {
@@ -69,7 +73,7 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    expect(html).toContain('录音理解');
+    expect(html).toContain('词云');
     expect(html).not.toContain('整场录音词云');
     expect(html).not.toContain('这场反复提到的是');
   });

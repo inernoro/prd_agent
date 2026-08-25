@@ -14,7 +14,15 @@ const page = await browser.newPage({ viewport: { width: 1400, height: 1100 }, de
 const errors = [];
 page.on('pageerror', (e) => errors.push(`PAGEERROR: ${e.message}`));
 
-await page.goto('http://localhost:8123/mock.html', { waitUntil: 'networkidle' });
+/**
+ * 两套配色各取一版：平台主题 vs 设计稿原色。同一批组件、同一批数据，
+ * 只有 token 不同，比出来的差异才只归因于配色本身。
+ */
+const PALETTE = process.env.PALETTE === 'design' ? 'design' : 'platform';
+const url = PALETTE === 'design'
+  ? 'http://localhost:8123/mock.html?palette=design'
+  : 'http://localhost:8123/mock.html';
+await page.goto(url, { waitUntil: 'networkidle' });
 await page.waitForTimeout(3000);
 
 const manifest = [];
@@ -32,13 +40,13 @@ for (const theme of ['light', 'dark']) {
       });
       await page.waitForTimeout(200);
     }
-    const file = `${OUT}/${id}.${theme}.png`;
+    const file = `${OUT}/${id}.${PALETTE}.${theme}.png`;
     await board.screenshot({ path: file });
-    manifest.push({ boardId: id, theme, image: file });
-    console.log(id, theme);
+    manifest.push({ boardId: id, palette: PALETTE, theme, image: file });
+    console.log(id, PALETTE, theme);
   }
 }
 
-fs.writeFileSync(`${OUT}/manifest.json`, JSON.stringify(manifest, null, 2));
+fs.writeFileSync(`${OUT}/manifest.${PALETTE}.json`, JSON.stringify(manifest, null, 2));
 console.log('impl boards:', manifest.length, '| errors:', errors.length ? errors.slice(0, 5) : 'none');
 await browser.close();

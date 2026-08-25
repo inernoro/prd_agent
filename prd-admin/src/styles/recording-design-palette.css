@@ -1,0 +1,72 @@
+/*
+ * 录音交付页的「设计稿原色」皮肤（作用域皮肤，不影响全站）。
+ *
+ * 为什么要它：设计稿 `MAP 录音转录交付页 v2` 指定的强调色是蓝色 #1F5EFF，
+ * 并明令全稿无紫；平台主色是陶土橙。两者不是同一套语言。
+ * 把平台主色换掉会波及全站，把设计稿改成陶土橙则背离设计方；
+ * 所以做成**只作用于这条链路**的第三条路：给这一屏的子树重定义一组 token。
+ *
+ * 怎么用：给录音结果区的最外层容器加 `recording-design-palette` 类即可整体切换，
+ * 子树内所有组件照旧读同一批 token，组件代码一行都不用改
+ * （这也是为什么组件里必须走 token 而不是裸写颜色——admin-dual-theme.md 那条棘轮）。
+ *
+ * 色值来自设计稿「05 开发标注 · 颜色」那一格，浅色与深色两档都是稿面给的原值。
+ */
+
+.recording-design-palette {
+  /* 浅色档（稿面：bg F5F5F2 / surface FFF / ink 16181A / ink2 5C6169 / line E4E3DE） */
+  --bg-primary: #F5F5F2;
+  --bg-base: #EDEDE9;
+  --bg-card: #FFFFFF;
+  --bg-nested: #FFFFFF;
+  --bg-elevated: #F4F4F1;
+  --bg-input: #FFFFFF;
+  --text-primary: #16181A;
+  --text-secondary: #4B5058;
+  --text-muted: #6B7078;
+  --border-faint: #E4E3DE;
+  --border-subtle: #D5D4CF;
+  --border-default: #C9C8C2;
+  /* accent 1F5EFF：稿面规定它只用于播放进度、可点击文本、当前句底色三处 */
+  --accent-fg-info: #1F5EFF;
+  --accent-fg-success: #12885E;
+  --semantic-warning-text: #B26A00;
+  --semantic-warning-soft: #FDF3E3;
+  --semantic-danger: #E5484D;
+  --selection-bg: #E8EEFF;
+  --selection-border: #C7D8FF;
+  --selection-text: #0B41C4;
+  --button-primary-bg: #16181A;
+  --button-primary-fg: #FFFFFF;
+  --button-primary-shadow: none;
+}
+
+/*
+ * 深色档。两处 :root 变体都要写：显式选了深色（data-theme）与跟随系统各一次，
+ * 只写一个的话另一条路径会退回浅色值（cds-theme-tokens 那条纪律的同一根因）。
+ */
+[data-theme='dark'] .recording-design-palette {
+  --bg-primary: #0B0D0F;
+  --bg-base: #08090B;
+  --bg-card: #15181B;
+  --bg-nested: #15181B;
+  --bg-elevated: #1C2024;
+  --bg-input: #1C2024;
+  --text-primary: #EDEEEF;
+  --text-secondary: #B6BCC2;
+  --text-muted: #979DA4;
+  --border-faint: #262A2F;
+  --border-subtle: #2F343A;
+  --border-default: #3A4047;
+  --accent-fg-info: #6E9BFF;
+  --accent-fg-success: #3DD68C;
+  --semantic-warning-text: #E9A23B;
+  --semantic-warning-soft: #2A2113;
+  --semantic-danger: #FF6369;
+  --selection-bg: #16233F;
+  --selection-border: #2C3F66;
+  --selection-text: #9DB8FF;
+  --button-primary-bg: #EDEEEF;
+  --button-primary-fg: #0B0D0F;
+  --button-primary-shadow: none;
+}

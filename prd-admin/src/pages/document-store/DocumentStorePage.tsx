@@ -2683,7 +2683,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
           transcribeFailure={transcribeFailure}
-          transcribeRun={activeTranscribeRun}
+          transcribeRun={activeTranscribeRun && {
+            ...activeTranscribeRun,
+            // 后端在写入阶段才把原文落到 transcriptText；有几句给几句，
+            // 一句都没有时状态卡自己渲染骨架，不在这里造句
+            transcriptPreview: (activeTranscribeRun.transcriptText ?? '')
+              .split('\n')
+              .map(line => line.trim())
+              .filter(Boolean)
+              .slice(0, 3),
+          }}
           onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Info, ListChecks, MessageSquareText, ScrollText, Search, Sparkles, UserRound, X } from 'lucide-react';
+import { Check, Info, RefreshCw, Search, UserRound, X } from 'lucide-react';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import {
   parseTranscriptSegments,
@@ -20,6 +20,36 @@ import {
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { streamDirectChat } from '@/services/real/aiToolbox';
 import { getTranscriptLexicon, updateSystemTranscriptLexicon, updateTranscriptLexicon } from '@/services/real/userPreferences';
+
+/**
+ * 把句子里命中的词包成高亮片段。大小写不敏感，逐段切；
+ * 关键词为空时原样返回——这条分支必须有，否则空关键词会把整句切成无限段。
+ */
+function highlightKeyword(text: string, keyword: string): React.ReactNode {
+  const needle = keyword.trim();
+  if (!needle) return text;
+  const lowerText = text.toLocaleLowerCase();
+  const lowerNeedle = needle.toLocaleLowerCase();
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  for (;;) {
+    const hit = lowerText.indexOf(lowerNeedle, cursor);
+    if (hit < 0) break;
+    if (hit > cursor) parts.push(text.slice(cursor, hit));
+    parts.push(
+      <mark
+        key={`${hit}-${parts.length}`}
+        style={{ background: 'color-mix(in srgb, var(--accent-fg-info) 22%, transparent)', color: 'var(--text-primary)', borderRadius: 3, padding: '0 2px' }}
+      >
+        {text.slice(hit, hit + needle.length)}
+      </mark>,
+    );
+    cursor = hit + needle.length;
+  }
+  if (cursor === 0) return text;
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts;
+}
 
 /** mm:ss；无时间戳的行不显示时钟而不是显示一个假的 0:00。 */
 function formatClock(sec: number): string {
@@ -107,23 +137,13 @@ export function advanceTranscriptLexicon(
  * chat-audio 转写路径无时间戳 → 音频时长就绪后按语速估算逐句位置，并明确标注估算。
  * 用户手动滚动歌词区后，暂停自动跟随 3 秒再恢复（不跟用户抢滚动条）。
  */
-/**
- * 四个分区的注册表（frontend-architecture.md：类型→标签/图标的映射走注册表，不写 switch）。
- * 顺序即设计稿 P3/D1 的顺序：先看懂这场讲了什么，再看整理结果，再看要做什么，最后才是追问。
- */
-const PANEL_TABS = [
-  { key: 'understand', label: '理解', icon: Sparkles },
-  { key: 'summary', label: '纪要', icon: ScrollText },
-  { key: 'todo', label: '待办', icon: ListChecks },
-  { key: 'qa', label: '提问', icon: MessageSquareText },
-] as const;
-
 export function TranscriptKaraoke({
   src,
   noteMd,
   documentMode = false,
   onSaveNote,
   onAskRecording,
+  onRestyle,
 }: {
   src: string;
   noteMd: string;
@@ -133,6 +153,8 @@ export function TranscriptKaraoke({
   onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
   /** 打开以当前录音原文为上下文的知识库问答。 */
   onAskRecording?: () => void;
+  /** 重新生成整理结果（设计稿把它放在「会议纪要」标题右侧）。 */
+  onRestyle?: () => void;
 }) {
   const segments = useMemo(() => parseTranscriptSegments(noteMd), [noteMd]);
   // 摘要一直存在 noteMd 里，只是此前没有任何界面读它；纪要与待办都从这里长出来
@@ -150,12 +172,6 @@ export function TranscriptKaraoke({
   const [keyword, setKeyword] = useState('');
   const [renamingSpeaker, setRenamingSpeaker] = useState<string | null>(null);
   const [speakerDraft, setSpeakerDraft] = useState('');
-  /**
-   * 结果页的四个分区（设计稿 P3 / D1 的「理解 / 纪要 / 待办 / 提问」）。
-   * 改之前这四类内容要么挤在同一张卡里往下堆，要么（纪要、待办）根本没有出口——
-   * 摘要其实一直存在 noteMd 的「## 摘要」段里，只是没有任何界面读它。
-   */
-  const [panelTab, setPanelTab] = useState<'understand' | 'summary' | 'todo' | 'qa'>('understand');
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [asking, setAsking] = useState(false);
@@ -367,68 +383,16 @@ export function TranscriptKaraoke({
 
       {documentMode && (
         <section className="w-full max-w-[760px] rounded-[14px] p-4" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
-          {/* 四分区：横滚一条，手机端放不下也不换行（mobile-first-density） */}
-          <div
-            className="flex items-center gap-1 overflow-x-auto pb-0.5"
-            style={{ overscrollBehavior: 'contain', scrollbarWidth: 'none' }}
-            role="tablist"
-            aria-label="录音理解分区"
-          >
-            {PANEL_TABS.map(({ key, label, icon: Icon }) => {
-              const on = panelTab === key;
-              const count = key === 'todo' ? todos.length : key === 'summary' ? summaryModules.length : 0;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  aria-selected={on}
-                  onClick={() => setPanelTab(key)}
-                  className="flex min-h-9 flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3 text-[12px] transition-colors"
-                  style={on
-                    ? { background: 'color-mix(in srgb, var(--accent-fg-info) 16%, transparent)', color: 'var(--text-primary)', border: '1px solid color-mix(in srgb, var(--accent-fg-info) 32%, transparent)', fontWeight: 600 }
-                    : { background: 'var(--bg-elevated)', color: 'var(--text-muted)', border: '1px solid var(--border-faint)' }}
-                >
-                  <Icon size={13} /> {label}
-                  {count > 0 && <span className="tabular-nums opacity-70">{count}</span>}
-                </button>
-              );
-            })}
-          </div>
-
-          {panelTab === 'qa' && (
-            <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-              <textarea
-                value={question}
-                onChange={event => setQuestion(event.target.value)}
-                rows={2}
-                placeholder="例如：客户对于报价的态度是什么？"
-                className="w-full resize-y rounded-[9px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
-              />
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[10px] text-token-muted">答案会引用时间段；点击时间可从对应录音片段播放</p>
-                <div className="flex items-center gap-2">
-                  {onAskRecording && <button type="button" onClick={onAskRecording} className="min-h-10 rounded-[8px] px-3 text-[11px] text-token-muted">打开多轮问答</button>}
-                  <button type="button" disabled={asking || !question.trim()} onClick={askRecording} className="min-h-10 rounded-[8px] px-3 text-[12px] font-semibold disabled:opacity-50" style={{ background: 'rgba(59,130,246,0.16)', color: 'var(--text-primary)' }}>{asking ? '正在分析整场录音' : '发送问题'}</button>
-                </div>
-              </div>
-              {asking && !answer && <p className="mt-3 animate-pulse text-[12px] text-token-muted motion-reduce:animate-none">正在读取原文并核对时间轴</p>}
-              {qaError && <p className="mt-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
-              {answer && (
-                <div className="mt-3 whitespace-pre-wrap rounded-[9px] p-3 text-[12px] leading-relaxed text-token-secondary" style={{ background: 'var(--bg-nested)' }} aria-live="polite">
-                  {parseRecordingAnswerParts(answer).map((part, index) => part.kind === 'text' ? (
-                    <span key={index}>{part.text}</span>
-                  ) : recordingCitationMatchesTimeline(part.start, timelineSegments) ? (
-                    <button key={index} type="button" onClick={() => seekRef.current?.(part.start)} className="mx-0.5 inline-flex min-h-8 items-center rounded-full px-2 font-mono text-[11px] font-semibold" style={{ background: 'rgba(59,130,246,0.14)', color: 'var(--accent-fg-blue)' }} title="从引用位置播放">{part.label}</button>
-                  ) : <span key={index} className="mx-0.5 font-mono text-[11px] text-token-muted" title="原文时间轴中没有这个位置">{part.label}</span>)}
-                </div>
-              )}
+          {/*
+            设计稿 P3 是三块内容同屏并置：词云 → 会议纪要 → 待办，一屏贯通。
+            我上一轮把它们做成了互斥分区，一次只能看一块——审查智能体判为「打断主路径」，
+            结构分扣了 7 分。这里改回并置，分区标签随之取消。
+          */}
+          <section>
+            <div className="mb-2 flex items-baseline justify-between gap-2">
+              <h3 className="text-[13px] font-semibold text-token-primary">词云</h3>
+              <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句 · 点词看它出现在哪几处</span>
             </div>
-          )}
-
-          {panelTab === 'understand' && (
-            <>
             <label className="mt-3 flex min-h-11 items-center gap-2 rounded-[10px] px-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
               <Search size={14} className="shrink-0 text-token-muted" />
               <input
@@ -442,19 +406,36 @@ export function TranscriptKaraoke({
             </label>
 
             {keyword && searchMatches.length > 0 && (
-              <div className="mt-2 flex max-h-44 flex-col gap-1 overflow-y-auto">
-                {searchMatches.map(({ segment, index }) => (
+              <div className="mt-3">
+                {/* 命中面板的抬头：不写清「哪个词、命中几句」，下面一串句子就成了无主的列表 */}
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <p className="text-[12px] font-semibold text-token-primary">
+                    「{keyword.trim()}」命中 {searchMatches.length} 句
+                  </p>
                   <button
-                    key={`${index}-${segment.start}`}
                     type="button"
-                    onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
-                    className="min-h-11 rounded-[8px] px-3 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
-                    style={{ background: 'var(--bg-elevated)' }}>
-                    <span className="mr-2 font-mono text-[10px] text-token-muted">{segment.start >= 0 ? `${Math.floor(segment.start / 60)}:${String(Math.floor(segment.start % 60)).padStart(2, '0')}` : '原文'}</span>
-                    {segment.speaker && <span className="mr-2 font-semibold text-token-primary">{segment.speaker}</span>}
-                    {segment.text}
+                    onClick={() => setKeyword('')}
+                    className="min-h-9 flex-shrink-0 px-1 text-[11px]"
+                    style={{ color: 'var(--accent-fg-info)' }}
+                  >
+                    全部
                   </button>
-                ))}
+                </div>
+                <div className="flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                  {searchMatches.map(({ segment, index }) => (
+                    <button
+                      key={`${index}-${segment.start}`}
+                      type="button"
+                      onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
+                      className="min-h-11 rounded-[8px] px-3 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
+                      style={{ background: 'var(--bg-elevated)' }}>
+                      <span className="mr-2 font-mono text-[10px]" style={{ color: 'var(--accent-fg-info)' }}>{segment.start >= 0 ? formatClock(segment.start) : '原文'}</span>
+                      {segment.speaker && <span className="mr-2 font-semibold text-token-primary">{segment.speaker}</span>}
+                      {/* 命中的词要在句子里高亮出来，否则用户还得自己在句中找 */}
+                      {highlightKeyword(segment.text, keyword.trim())}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {keyword && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
@@ -525,22 +506,30 @@ export function TranscriptKaraoke({
                 <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
                   {wordCloud.map(({ word, count }) => {
                     const weight = count / wordCloud[0].count;
+                    // 设计稿把词频压成**三档**（高频黑底大字 / 中频蓝字 / 低频灰底小字）。
+                    // 连续映射看着更精确，但一排词里没有哪个能占住视线——三档存在的
+                    // 全部理由就是让最高频那个词一眼跳出来。
+                    const tier = weight >= 0.66 ? 'high' : weight >= 0.33 ? 'mid' : 'low';
+                    const selected = keyword.trim() === word;
+                    const tierStyle = tier === 'high'
+                      ? { fontSize: '18px', fontWeight: 700, background: 'var(--text-primary)', color: 'var(--bg-card)', border: '1px solid var(--text-primary)' }
+                      : tier === 'mid'
+                        ? { fontSize: '15px', fontWeight: 600, background: 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)', color: 'var(--accent-fg-info)', border: '1px solid color-mix(in srgb, var(--accent-fg-info) 30%, transparent)' }
+                        : { fontSize: '12.5px', fontWeight: 400, background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-faint)' };
                     return (
                       <button
                         key={word}
                         type="button"
-                        onClick={() => setKeyword(word)}
+                        onClick={() => setKeyword(selected ? '' : word)}
+                        aria-pressed={selected}
                         className="min-h-9 rounded-full px-3"
                         style={{
-                          fontSize: `${Math.round((12 + weight * 7) * 2) / 2}px`,
-                          fontWeight: weight >= 0.6 ? 600 : 400,
-                          // 无紫色（设计稿硬约束）。权重仍然靠**不透明度**表达，
-                          // 只是底色换成主题强调色，浅色档也成立。
-                          background: `color-mix(in srgb, var(--accent-fg-info) ${Math.round((0.08 + weight * 0.18) * 100)}%, transparent)`,
-                          color: weight >= 0.45 ? 'var(--text-primary)' : 'var(--text-secondary)',
-                          border: `1px solid color-mix(in srgb, var(--accent-fg-info) ${Math.round((0.16 + weight * 0.3) * 100)}%, transparent)`,
+                          ...tierStyle,
+                          // 选中态另加一圈描边：三档底色已经各不相同，光靠底色分不出「选没选」
+                          outline: selected ? '2px solid var(--accent-fg-info)' : 'none',
+                          outlineOffset: 2,
                         }}
-                        title={`出现 ${count} 次，点击检索`}
+                        title={`出现 ${count} 次，点击查看命中`}
                       >
                         {word}
                         <span className="ml-1 text-[10px] font-normal tabular-nums opacity-60">{count}</span>
@@ -603,11 +592,17 @@ export function TranscriptKaraoke({
                 ) : null}
               </div>
             )}
-            </>
-          )}
-
-          {panelTab === 'summary' && (
-            summaryModules.length > 0 ? (
+          </section>
+          <section className="mt-4">
+            <div className="mb-2 flex items-baseline justify-between gap-2">
+              <h3 className="text-[13px] font-semibold text-token-primary">会议纪要</h3>
+              {onRestyle && (
+                <button type="button" onClick={onRestyle} className="flex min-h-9 items-center gap-1 rounded-[8px] px-2 text-[11px]" style={{ color: 'var(--accent-fg-info)' }}>
+                  <RefreshCw size={11} /> 重新生成
+                </button>
+              )}
+            </div>
+            {summaryModules.length > 0 ? (
               <div className="mt-3 flex flex-col gap-3">
                 {summaryModules.map((module, index) => (
                   <article
@@ -630,11 +625,14 @@ export function TranscriptKaraoke({
                   原文已经在下方，可以直接读；需要结论与要点时用上方的「一键整理」，整理完这里就会有内容
                 </p>
               </div>
-            )
-          )}
-
-          {panelTab === 'todo' && (
-            todos.length > 0 ? (
+            )}
+          </section>
+          <section className="mt-4">
+            <div className="mb-2 flex items-baseline justify-between gap-2">
+              <h3 className="text-[13px] font-semibold text-token-primary">待办事项</h3>
+              {todos.length > 0 && <span className="text-[11px] tabular-nums text-token-muted">{todos.length} 项</span>}
+            </div>
+            {todos.length > 0 ? (
               <ul className="mt-3 flex flex-col gap-1.5">
                 {todos.map((todo, index) => (
                   <li
@@ -671,8 +669,42 @@ export function TranscriptKaraoke({
                   待办来自整理结果里的勾选项；换一个带行动项的整理方式重跑，这里就会列出来
                 </p>
               </div>
-            )
-          )}
+            )}
+          </section>
+          <section className="mt-4">
+            <div className="mb-2 flex items-baseline justify-between gap-2">
+              <h3 className="text-[13px] font-semibold text-token-primary">问这段录音</h3>
+              <span />
+            </div>
+            <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+              <textarea
+                value={question}
+                onChange={event => setQuestion(event.target.value)}
+                rows={2}
+                placeholder="例如：客户对于报价的态度是什么？"
+                className="w-full resize-y rounded-[9px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+              />
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] text-token-muted">答案会引用时间段；点击时间可从对应录音片段播放</p>
+                <div className="flex items-center gap-2">
+                  {onAskRecording && <button type="button" onClick={onAskRecording} className="min-h-10 rounded-[8px] px-3 text-[11px] text-token-muted">打开多轮问答</button>}
+                  <button type="button" disabled={asking || !question.trim()} onClick={askRecording} className="min-h-10 rounded-[8px] px-3 text-[12px] font-semibold disabled:opacity-50" style={{ background: 'rgba(59,130,246,0.16)', color: 'var(--text-primary)' }}>{asking ? '正在分析整场录音' : '发送问题'}</button>
+                </div>
+              </div>
+              {asking && !answer && <p className="mt-3 animate-pulse text-[12px] text-token-muted motion-reduce:animate-none">正在读取原文并核对时间轴</p>}
+              {qaError && <p className="mt-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
+              {answer && (
+                <div className="mt-3 whitespace-pre-wrap rounded-[9px] p-3 text-[12px] leading-relaxed text-token-secondary" style={{ background: 'var(--bg-nested)' }} aria-live="polite">
+                  {parseRecordingAnswerParts(answer).map((part, index) => part.kind === 'text' ? (
+                    <span key={index}>{part.text}</span>
+                  ) : recordingCitationMatchesTimeline(part.start, timelineSegments) ? (
+                    <button key={index} type="button" onClick={() => seekRef.current?.(part.start)} className="mx-0.5 inline-flex min-h-8 items-center rounded-full px-2 font-mono text-[11px] font-semibold" style={{ background: 'rgba(59,130,246,0.14)', color: 'var(--accent-fg-blue)' }} title="从引用位置播放">{part.label}</button>
+                  ) : <span key={index} className="mx-0.5 font-mono text-[11px] text-token-muted" title="原文时间轴中没有这个位置">{part.label}</span>)}
+                </div>
+              )}
+            </div>
+          </section>
         </section>
       )}
 

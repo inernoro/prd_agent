@@ -17,7 +17,7 @@
  *   你现在能做什么 → 「音频已就绪，现在就能播放」
  */
 import { useEffect, useState } from 'react';
-import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Sparkles, Wand2 } from 'lucide-react';
+import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Play, Sparkles, Wand2 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import {
@@ -34,6 +34,8 @@ export type TranscribeStatusRun = {
   progress?: number;
   startedAt?: string;
   createdAt?: string;
+  /** 已经生成出来的原文前几句（有就显示，没有就渲染骨架） */
+  transcriptPreview?: string[];
 };
 
 /** 秒级心跳：处理中与倒计时两档都要「持续在动」，静止超过 2 秒即体验缺陷。 */
@@ -47,7 +49,7 @@ function useSecondTick(active: boolean): number {
   return tick;
 }
 
-function StageRow({ stage }: { stage: TranscriptionStage }) {
+function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remainingLabel?: string | null }) {
   const done = stage.state === 'done';
   const active = stage.state === 'active';
   return (
@@ -71,8 +73,8 @@ function StageRow({ stage }: { stage: TranscriptionStage }) {
             {stage.label}
           </span>
           {active && stage.percent !== null && (
-            <span className="text-[11px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
-              {stage.percent}%
+            <span className="flex-shrink-0 text-[11px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
+              {stage.percent}%{remainingLabel ? ` · ${remainingLabel}` : ''}
             </span>
           )}
         </div>
@@ -103,9 +105,13 @@ export function TranscribeStatusCard({
   subtitleEntryId,
   activeRun,
   lastFailure,
+  audioTitle,
+  audioSizeLabel,
+  transcriptPreview,
   onStart,
   onOpenNote,
   onRestyle,
+  onPlayRequest,
 }: {
   currentEntryId: string;
   noteEntryId?: string;
@@ -113,12 +119,20 @@ export function TranscribeStatusCard({
   /** 当前条目那条在途 run；有值即「处理中」，此时不显示手动入口 */
   activeRun?: TranscribeStatusRun | null;
   lastFailure?: FailedTranscriptionNotice | null;
+  /** 这段录音的标题（设计稿处理中那一屏要求把它显示出来，而不是只说「这段录音」） */
+  audioTitle?: string;
+  /** 体积，如「19.1 MB」；拿不到就不传，界面不会编一个 */
+  audioSizeLabel?: string | null;
+  /** 已经生成出来的原文（有几句给几句）；为空时渲染骨架而不是留白 */
+  transcriptPreview?: string[];
   onStart?: (styleKey?: string) => void;
   onOpenNote: (entryId: string) => void;
   onRestyle?: () => void;
+  /** 处理中那一屏的主操作：立刻播放已经保存好的音频 */
+  onPlayRequest?: () => void;
 }) {
   const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
-  const stages = describeTranscriptionStages(activeRun);
+  const stages = describeTranscriptionStages(activeRun, { sizeLabel: audioSizeLabel });
   const processing = stages !== null;
   // 失败卡只在没有在途 run 时出现：又在跑又说失败，等于同屏两句互相打脸
   const showFailure = !processing && !noteEntryId && !!lastFailure;
@@ -133,29 +147,90 @@ export function TranscribeStatusCard({
     <div className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5" data-tour-id="doc-transcribe-hero">
       {processing ? (
         <>
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 shrink-0"><MapSpinner size={16} /></div>
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold text-token-primary">正在整理这段录音</p>
-              {/* 「音频是否安全」+「你现在能做什么」两问合成一句，放在最显眼处 */}
-              <p className="mt-0.5 text-[11px] text-token-muted">
-                音频已经安全保存，现在就可以播放；整理完这一页会自己更新。
+          {/* 页面级标题：设计稿这一屏的 H1，不是卡内小标题 */}
+          <div>
+            <h2 className="text-[20px] font-bold leading-tight text-token-primary">正在整理这段录音</h2>
+            {/* 「音频是否安全」+「你现在能做什么」两问合成一句，紧跟标题 */}
+            <p className="mt-1 text-[12px] leading-relaxed text-token-muted">
+              音频已经安全保存，你现在就可以播放。
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {stages.map(stage => (
+              <StageRow
+                key={stage.key}
+                stage={stage}
+                // 「还要多久」挂在正在跑的那一格右侧，跟着它走；卡底不再重复一次
+                remainingLabel={stage.state === 'active' && timing?.remainingSec != null
+                  ? `约 ${formatDurationSec(timing.remainingSec)}`
+                  : null}
+              />
+            ))}
+          </div>
+
+          {/* 音频已就绪卡：设计稿用它兑现「不必等转录就能听」 */}
+          <div
+            className="flex items-center gap-3 rounded-[12px] px-3 py-2.5"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
+          >
+            <div
+              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]"
+              style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+            >
+              <AudioLines size={16} style={{ color: 'var(--accent-fg-info)' }} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12.5px] font-semibold text-token-primary">
+                {audioTitle?.trim() || '这段录音'}
+              </p>
+              <p className="mt-0.5 text-[11px]" style={{ color: 'var(--accent-fg-success)' }}>
+                音频已就绪，可立即播放
               </p>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2.5">
-            {stages.map(stage => <StageRow key={stage.key} stage={stage} />)}
+          {/* 原文逐句生成中：等待期的主视觉必须是产物本身在长出来，而不是一块空白 */}
+          <div>
+            <p className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>原文逐句生成中</p>
+            <div className="mt-1.5 flex flex-col gap-1.5">
+              {(transcriptPreview ?? []).slice(0, 3).map((line, index) => (
+                <p key={index} className="text-[12.5px] leading-relaxed text-token-secondary">{line}</p>
+              ))}
+              {/* 还没出句子时给产物形状的骨架，占位数固定，不随内容跳动 */}
+              {Array.from({ length: Math.max(0, 3 - (transcriptPreview?.length ?? 0)) }).map((_, index) => (
+                <div
+                  key={`skeleton-${index}`}
+                  className="h-3 rounded-full"
+                  style={{
+                    width: index === 0 ? '92%' : index === 1 ? '78%' : '60%',
+                    background: 'var(--bg-elevated)',
+                    animation: 'pulse 1.6s ease-in-out infinite',
+                    animationDelay: `${index * 0.18}s`,
+                  }}
+                  aria-hidden
+                />
+              ))}
+            </div>
           </div>
 
-          {/* 「还要多久」——算不出来就明说在积累数据，不给一个编出来的数字 */}
           <p className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
             {timing
-              ? timing.remainingSec === null
-                ? `已用 ${formatDurationSec(timing.elapsedSec)} · 正在积累数据，稍后给出预计剩余`
-                : `已用 ${formatDurationSec(timing.elapsedSec)} · 预计还需 ${formatDurationSec(timing.remainingSec)}`
+              ? `已用 ${formatDurationSec(timing.elapsedSec)}${timing.remainingSec === null ? ' · 正在积累数据，稍后给出预计剩余' : ''}`
               : '正在积累数据，稍后给出预计剩余'}
           </p>
+
+          {/* 底部主操作：这一屏必须有出口。整理还没完不妨碍现在就听 */}
+          {onPlayRequest && (
+            <button
+              type="button"
+              onClick={onPlayRequest}
+              className="mt-1 flex min-h-12 w-full items-center justify-center gap-2 rounded-[12px] text-[13px] font-semibold"
+              style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}
+            >
+              <Play size={14} fill="currentColor" /> 立即播放这段录音
+            </button>
+          )}
         </>
       ) : showFailure ? (
         <>

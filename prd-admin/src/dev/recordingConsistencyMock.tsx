@@ -25,6 +25,7 @@ import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import '@/styles/tailwind.css';
 import '@/styles/tokens.css';
 import '@/styles/globals.css';
+import '@/styles/recording-design-palette.css';
 
 /**
  * 台词取自设计稿 P1/P2/P3 画板同一段「用户访谈 · 留存与导入」，
@@ -147,6 +148,7 @@ function Artboard({ boardId, label, note, children }: {
 
 function RecordingConsistencyMock() {
   const audioSrc = useSilentWavUrl(30);
+  const usingDesignPalette = new URLSearchParams(window.location.search).get('palette') === 'design';
   // 走生产的文案判据，而不是在这里手写一句像那样的话
   const banner = useMemo(
     () => describeBackgroundTranscriptionBanner({
@@ -158,13 +160,17 @@ function RecordingConsistencyMock() {
   );
 
   return (
+    /*
+      两套配色对照：默认走平台主题；`?palette=design` 时给整棵子树套上设计稿原色皮肤。
+      同一批组件、同一批数据，只有 token 不同——这样比出来的差异才只归因于配色本身。
+    */
     <div
-      className="flex flex-col gap-9"
+      className={`flex flex-col gap-9${usingDesignPalette ? ' recording-design-palette' : ''}`}
       style={{ background: 'var(--bg-base)', minHeight: '100vh', padding: 40 }}
     >
       <div className="flex flex-col gap-2">
         <div className="font-mono text-[12px] tracking-[.16em]" style={{ color: 'var(--text-muted)' }}>
-          MAP / RECORDING DELIVERY · IMPLEMENTATION AS-IS · 390×844
+          MAP / RECORDING DELIVERY · {usingDesignPalette ? 'DESIGN PALETTE' : 'PLATFORM PALETTE'} · 390×844
         </div>
         <div className="text-[28px] font-bold" style={{ color: 'var(--text-primary)' }}>
           移动端对照台 · 实现现状（mock 数据）
@@ -198,6 +204,8 @@ function RecordingConsistencyMock() {
             )}
             <TranscribeStatusCard
               currentEntryId="entry-mock"
+              audioTitle="用户访谈 · 留存与导入"
+              audioSizeLabel="19.1 MB"
               activeRun={{
                 id: 'run-mock',
                 status: 'running',
@@ -205,8 +213,13 @@ function RecordingConsistencyMock() {
                 progress: 35,
                 startedAt: new Date(Date.now() - 31_000).toISOString(),
               }}
+              transcriptPreview={[
+                '先说结论，导入是这一版最大的漏斗。',
+                '我们看了 312 个新账号，第 7 天只剩 41%。',
+              ]}
               onStart={() => undefined}
               onOpenNote={() => undefined}
+              onPlayRequest={() => undefined}
             />
             {audioSrc && <AudioWavePlayer src={audioSrc} />}
           </div>
@@ -274,6 +287,7 @@ function RecordingConsistencyMock() {
                 documentMode
                 onSaveNote={async () => true}
                 onAskRecording={() => undefined}
+                onRestyle={() => undefined}
               />
             )}
           </div>

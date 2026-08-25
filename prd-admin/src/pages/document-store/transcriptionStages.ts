@@ -29,13 +29,26 @@ export type TranscriptionStage = {
  */
 const UNDERSTANDING_FROM = 70;
 
-/** 音频在 run 开始之前就已经落库了——这一阶段永远是「已完成」，不是猜的。 */
-function audioStage(): TranscriptionStage {
-  return { key: 'audio', label: '保存音频', detail: '已安全保存，现在就可以播放', state: 'done', percent: null };
+/**
+ * 音频在 run 开始之前就已经落库了——这一阶段永远是「已完成」，不是猜的。
+ * 设计稿在这一行还要求带上「时长 · 体积 · 耗时」。时长与体积拿得到就带上，
+ * 拿不到就只说结论——**不许为了凑齐稿面那一行去编一个体积出来**。
+ * 单阶段耗时后端目前不下发，已列入给设计方的待补清单。
+ */
+function audioStage(meta?: { durationLabel?: string | null; sizeLabel?: string | null }): TranscriptionStage {
+  const facts = [meta?.durationLabel, meta?.sizeLabel].filter(Boolean);
+  return {
+    key: 'audio',
+    label: '保存音频',
+    detail: facts.length > 0 ? `${facts.join(' · ')} · 已安全保存` : '已安全保存，现在就可以播放',
+    state: 'done',
+    percent: null,
+  };
 }
 
 export function describeTranscriptionStages(
   run: { status?: string | null; phase?: string | null; progress?: number | null } | null | undefined,
+  audioMeta?: { durationLabel?: string | null; sizeLabel?: string | null },
 ): TranscriptionStage[] | null {
   const status = run?.status?.trim().toLowerCase();
   if (status !== 'queued' && status !== 'running' && status !== 'publishing') return null;
@@ -45,7 +58,7 @@ export function describeTranscriptionStages(
   const inUnderstanding = progress >= UNDERSTANDING_FROM;
 
   return [
-    audioStage(),
+    audioStage(audioMeta),
     {
       key: 'transcript',
       label: '生成原文',

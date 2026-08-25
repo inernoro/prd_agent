@@ -252,7 +252,7 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, htmlBleedX, htmlZoom }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, onRestyleTranscript, htmlBleedX, htmlZoom }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
@@ -261,6 +261,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
   /** 打开知识库智能体，并以当前录音原文作为上下文。 */
   onAskRecording?: () => void;
+  /** 重新生成整理结果；设计稿把它放在结果页「会议纪要」标题右侧 */
+  onRestyleTranscript?: () => void;
   /** 移动端 HTML 预览左右出血像素：抵消调用方内容区的水平 padding，让报告纸面满铺卡片宽度。 */
   htmlBleedX?: number;
   /** HTML 报告字号档位（受控，由调用方工具栏持有；缺省 1 = 100%）。 */
@@ -359,6 +361,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             styleKey={entry.metadata?.transcribe_style_key}
             onSaveNote={onSaveTranscriptNote}
             onAskRecording={onAskRecording}
+            onRestyleTranscript={onRestyleTranscript}
           />
         ) : <AudioWavePlayer src={fileUrl} />}
       </div>
@@ -686,12 +689,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   );
 }
 
-function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote, onAskRecording }: {
+function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote, onAskRecording, onRestyleTranscript }: {
   src: string;
   noteMd: string;
   styleKey?: string;
   onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
   onAskRecording?: () => void;
+  onRestyleTranscript?: () => void;
 }) {
   const summary = extractTranscriptSummary(noteMd);
   const [tab, setTab] = useState<'raw' | 'organized'>('raw');
@@ -739,6 +743,7 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote, onAskRecordin
           documentMode
           onSaveNote={onSaveNote}
           onAskRecording={onAskRecording}
+          onRestyle={onRestyleTranscript}
         />
       )}
     </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { TranscribeStatusCard, type TranscribeStatusRun } from './TranscribeStatusCard';
+import { requestRecordingPlay } from './recordingPlayBridge';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import {
   FilePreview,
@@ -637,6 +638,20 @@ function canTranscribe(entry: DocBrowserEntry): boolean {
   if (entry.isFolder) return false;
   const ct = (entry.contentType ?? '').toLowerCase();
   return ct.startsWith('audio/') || ct.startsWith('video/');
+}
+
+/**
+ * 体积读成人话。拿不到（旧条目没记体积、或就是 0）时返回 null，
+ * 界面据此**整段不显示**，而不是印一个「0 B」出来充数。
+ */
+function formatFileSizeLabel(bytes?: number): string | null {
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
 }
 
 function canReprocess(entry: DocBrowserEntry): boolean {
@@ -3928,6 +3943,10 @@ export function DocBrowser({
                     subtitleEntryId={selectedEntryData.metadata?.subtitle_entry_id}
                     activeRun={transcribeRun}
                     lastFailure={transcribeFailure}
+                    audioTitle={selectedEntryData.title}
+                    audioSizeLabel={formatFileSizeLabel(selectedEntryData.fileSize)}
+                    transcriptPreview={transcribeRun?.transcriptPreview}
+                    onPlayRequest={requestRecordingPlay}
                     onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}
                     onOpenNote={(noteId) => handleSelectEntry(noteId)}
                     onRestyle={onRestyleTranscribe ? () => onRestyleTranscribe(selectedEntryData.id) : undefined}
@@ -4017,6 +4036,9 @@ export function DocBrowser({
                     } : undefined}
                     onAskRecording={selectedEntryData && onAskRecording
                       ? () => onAskRecording(selectedEntryData.id)
+                      : undefined}
+                    onRestyleTranscript={onRestyleTranscribe && selectedEntryData
+                      ? () => onRestyleTranscribe(selectedEntryData.id)
                       : undefined}
                   />
                 ) : (

@@ -131,12 +131,6 @@
     "darkRgbaBg": 4,
     "lightFg": 8
   },
-  "/components/doc-browser/AudioWavePlayer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
   "/components/doc-browser/BulkActionBar.tsx": {
     "whiteAlpha": 0,
     "darkHex": 0,
@@ -152,8 +146,8 @@
   "/components/doc-browser/DocBrowser.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 4
+    "darkRgbaBg": 2,
+    "lightFg": 3
   },
   "/components/doc-browser/DocumentStoreBrowser.tsx": {
     "whiteAlpha": 0,
@@ -2428,6 +2422,12 @@
     "darkHex": 4,
     "darkRgbaBg": 10,
     "lightFg": 15
+  },
+  "/styles/recording-design-palette.css": {
+    "whiteAlpha": 0,
+    "darkHex": 11,
+    "darkRgbaBg": 0,
+    "lightFg": 0
   },
   "/styles/surface.css": {
     "whiteAlpha": 69,
