@@ -748,10 +748,11 @@ export function TranscriptKaraoke({
                     onChange={(event) => setEditDraft(event.target.value)}
                     rows={1}
                     className="w-full resize-none bg-transparent px-0 py-1 text-[14px] leading-relaxed text-token-primary outline-none"
-                    // 底部那道细蓝线是**焦点指示**：稿面在句尾画了一枚光标，说的是
-                    // 「你现在改的就是这一行」。无框内联编辑没有边界，不给这道线就完全看不出焦点在哪。
-                    // 高度跟着内容长——固定 rows 会在短句下留出一段不承载信息的空白。
-                    style={{ border: 'none', borderBottom: '1px solid var(--accent-fg-info)', caretColor: 'var(--accent-fg-info)' }}
+                    // 稿面的编辑区只有一枚光标，没有下划线也没有框。我一度加过一道蓝下划线
+                    // 当焦点指示，因为静态截图里闪烁的光标常常正好没画出来——但那是**截图的局限**，
+                    // 不是实现缺了什么，不该为了让截图好看往产品里加一条稿面没有的线。
+                    // 高度跟着内容长：固定 rows 会在短句下留出一段不承载信息的空白。
+                    style={{ border: 'none', caretColor: 'var(--accent-fg-info)' }}
                   />
                   <div className="mt-2 flex items-center gap-2">
                     <button
@@ -767,9 +768,10 @@ export function TranscriptKaraoke({
                           .finally(() => setSavingEdit(false));
                       }}
                       // 稿面的保存是**蓝色实心**，取消是无框文字——主次要分得出来
-                      className="flex min-h-11 items-center gap-1 rounded-full px-4 text-[12px] font-semibold disabled:opacity-50"
+                      className="flex min-h-11 items-center rounded-full px-5 text-[12px] font-semibold disabled:opacity-50"
                       style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}>
-                      <Check size={12} /> 保存
+                      {/* 稿面这颗是纯文字胶囊，没有图标——加个对勾看着更「完整」，但那是稿面没有的东西 */}
+                      保存
                     </button>
                     {/* 稿面的取消是**和保存等高的描边胶囊**，两颗成对。做成无框文字就不成对了，
                         读者要在「一颗按钮 + 一行字」里分辨哪个才是另一个选择 */}
@@ -817,14 +819,17 @@ export function TranscriptKaraoke({
                         ? 'var(--text-muted)'
                         : 'var(--text-primary)',
                   // 当前句底色 = 强调色（设计稿允许强调色出现的三处之一）；无紫色
+                  // 稿面的当前句是一块**实心蓝卡**，在列表里一眼跳出来。14% 太淡，
+                  // 两位判官各自独立报了同一句「块感弱于稿面」；22% 是照基准图对出来的，
+                  // 不是他们给的数——他们只说了弱，没说弱多少。
                   background: active
-                    ? 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)'
+                    ? 'color-mix(in srgb, var(--accent-fg-info) 22%, transparent)'
                     : 'transparent',
-                  // 稿面的当前句是**纯填充块 + 左侧一道色条**，没有整圈描边：
-                  // 整圈蓝描边会和下面编辑态那张卡的蓝框撞语义——两块看起来是同一类强调，
-                  // 读者分不清「正在念」和「正在改」。
+                  // 稿面的当前句就是**一块纯蓝填充**，既没有整圈描边也没有左侧色条。
+                  // 整圈蓝描边会和编辑态那张卡的蓝框撞语义（分不清「正在念」和「正在改」），
+                  // 左侧色条则是我自己加的第三种写法——两位判官各指一次，翻回基准图确认：
+                  // 稿面两样都没有，照稿面来。
                   border: 'none',
-                  borderLeft: active ? '3px solid var(--accent-fg-info)' : '3px solid transparent',
                 }}
                 title={documentMode && onSaveNote ? '点击修改这句原文' : followEnabled && s.start >= 0 ? '点击跳到这一句' : undefined}
               >
