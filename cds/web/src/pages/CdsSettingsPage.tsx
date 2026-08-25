@@ -152,7 +152,7 @@ const AUTH_MODE_LABELS: Record<string, string> = {
  * (expectation-management:功能不许无声消失)。现在 tab 永远在,
  * 只是把会 404 的子组件换成这块说明:当前是什么模式、为什么用不了、怎么开。
  */
-function AuthModeGatedNotice({
+export function AuthModeGatedNotice({
   feature,
   mode,
   onGoToAuth,
