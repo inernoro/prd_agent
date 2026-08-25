@@ -32,3 +32,8 @@
 | refactor | prd-admin | 逐句修改的流式呈现改走全站统一的 StreamingText：流式期正文只放一个空锚点，正在写的那段由共享组件 portal 进去，节奏与光标不再自建一套 |
 | fix | prd-admin | 流式期正文不再逐 token 重算：正文 DOM 变更 700 次降到 30 次，ins 重建 278 次降到 10 次 |
 | test | prd-admin | 新增流式锚点守卫（含 sanitize 的 user-content- 前缀）与接线守卫（DocBrowser 必须走 StreamingText、memo 依赖不许含已吐出文字） |
+| feat | prd-admin | 共享流式组件 StreamingText 流式期也渲染 markdown：写到一半的行内标记与代码围栏自动补合法，不再让用户盯着满屏星号等到最后一刻 |
+| perf | prd-admin | MarkdownViewer 的渲染器身份改为跨 render 稳定（components 走空依赖 useMemo + 实例态收进 ref），正文不再每次重渲染就整棵重挂：流式一次改写元素重建从 108 次降到 10 次 |
+| polish | prd-admin | 就地 diff 配色从随手写的蓝红原色改为品牌暖色派生：新增是极淡暖底 + 一条细下划线，删除退成 muted 灰 + 细删除线，不再是复古 Windows 那种实心色块 |
+| test | prd-admin | 新增 closeOpenMarkdown 与流式 markdown 渲染单测、MarkdownViewer 渲染器身份守卫 |
+| docs | prd-admin | rule.frontend.streaming-text 升到 v2.1：流式期渲染 markdown，禁止项从「每 chunk 重渲染」改写为「渲染器身份不稳」 |

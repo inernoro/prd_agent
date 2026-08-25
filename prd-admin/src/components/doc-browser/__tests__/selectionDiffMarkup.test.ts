@@ -199,9 +199,14 @@ describe('流式锚点：正文这一层在流式期间完全不动', () => {
   const SEL = '第一阶段建议：\n\n1. 甲\n2. 乙';
   const RANGE = { start: DOC.indexOf(SEL), end: DOC.indexOf(SEL) + SEL.length };
 
-  it('锚点能穿过 rehypeRaw + sanitize 活到 DOM 里', () => {
+  it('锚点能穿过 rehypeRaw + sanitize 活到 DOM 里，且是块级、不被 ins 包住', () => {
     const html = render(buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body);
-    expect(html).toContain('<span id=');
+    // 块级：正在写的那段按 markdown 渲染（标题/列表都是块级元素），
+    // 塞进 span 会被浏览器判成 <p> 里嵌块级元素，排版当场错位
+    expect(html).toMatch(/<div id="[^"]*doc-rewrite-stream"><\/div>/);
+    // 不能被 <ins> 包住：ins 是行内元素，包住整块 markdown 的圆角底色会糊成一团。
+    // 「这是新写的」由 portal 里那个容器自己的样式（.doc-rewrite-stream）表达。
+    expect(html).not.toMatch(/<ins>\s*<div id/);
     // 原选区照旧压成 del，用户看得见「这段正在被替换」
     expect(html).toContain('<del>第一阶段建议：</del>');
   });
@@ -210,7 +215,7 @@ describe('流式锚点：正文这一层在流式期间完全不动', () => {
     // sanitize 会给正文内嵌 HTML 的 id 加前缀防撞车。按写进 markdown 的那个 id 去
     // getElementById 会永远查不到，流式文字一个字都画不出来（形状 6）。
     const html = render(buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body);
-    const id = /<span id="([^"]+)"/.exec(html)?.[1];
+    const id = /<div id="([^"]+)"/.exec(html)?.[1];
     expect(id, '锚点没渲染出来').toBeTruthy();
     expect(id).toBe(STREAM_ANCHOR_DOM_ID);
     expect(STREAM_ANCHOR_SELECTOR).toContain(`#${id}`);

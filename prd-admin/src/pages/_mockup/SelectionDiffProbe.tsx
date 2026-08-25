@@ -137,7 +137,13 @@ export default function SelectionDiffProbe() {
       </div>
 
       {anchorEl && phase === 'streaming' && createPortal(
-        <StreamingText text={REWRITTEN.slice(0, streamedLen)} streaming animateTailChars={400} />,
+        <StreamingText
+          text={REWRITTEN.slice(0, streamedLen)}
+          streaming
+          markdown
+          renderMarkdown={(c) => <MarkdownViewer content={c} />}
+          className="doc-rewrite-stream"
+        />,
         anchorEl,
       )}
 

@@ -591,28 +591,27 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 
 ---
 
-## 正文渲染器每次 render 重挂整棵 DOM
+## 正文渲染器每次 render 重挂整棵 DOM — 已偿还（2026-08-25）
 
-**欠什么**：`MarkdownViewer` 传给 `ReactMarkdown` 的 `components` 是每次 render 新建的一堆内联函数，
-函数标识每次都变，于是 ReactMarkdown 按新标识**重挂整棵正文 DOM**。组件靠 `memo(content 不变就不渲染)`
-兜住了静态阅读场景 —— 只要正文字符串不变就一次都不重挂。
+**曾经欠什么**：`MarkdownViewer` 传给 `ReactMarkdown` 的 `components` 是每次 render 新建的一堆内联函数，
+函数标识每次都变，ReactMarkdown 于是每次重渲染都**重挂整棵正文 DOM**。静态阅读被 `memo` 挡住了，
+但只要 `content` 高频变化就每帧重挂。逐句修改的流式档正是这种用法，用户看到的是
+「一闪一闪，就像是老电脑一样，一点都不丝滑」。
 
-**已经付过的代价**：逐句修改的流式档曾经把已吐出的文字逐 token 拼进正文，于是每 90ms 全篇重挂一次，
-进场动画被无限重启，用户的原话是「一闪一闪，就像是老电脑一样，一点都不丝滑」。
-**已从架构上拿掉**：流式期正文改成一个常量（只有压灰的原文 + 一个空锚点），正在写的那段由共享组件
-`StreamingText` 用 portal 画进锚点。实测正文 DOM 变更从 700 次降到 30 次（只剩两次切档），
-`<ins>` 重建从 278 次降到 10 次。
+**怎么还的**：把随实例变化的东西（slugger / 图片索引 / 主题）收进一个 ref 包，renderer 读 `ctx.current`，
+`components` 本身 `useMemo([], …)` 一次性建好。实测一次流式改写：元素重建从 108 次降到 10 次
+（只剩「新块第一次出现」那几次）。
 
-**还剩什么**：这个「components 不稳」的性质本身还在，只是当前没有调用方会逐 token 改 `content` 去踩它。
-将来任何人想让正文字符串高频变化（实时协同光标、逐段流式渲染整篇文档、正文内嵌实时图表），
-都会当场撞上同一堵墙。修法是把 `components` 稳成模块级常量，把 slugger / 图片索引 / 主题这些实例态
-改走 context 或 ref —— 一次有回归风险的共用组件重构（三处阅读页共用），且它现在的写法正是当初
-为修「划词选区自动撤销」留下的。
+**为什么值得还**：它把「流式期间渲染 Markdown」从不可能变成了可能——正是这一条解锁了 v2.1
+（[doc/rule.frontend.streaming-text.md](./rule.frontend.streaming-text.md)）。顺带修掉的还有：流式期间正文可以正常选中了、
+文档里的 Mermaid/KaTeX 不再每个 token 重新初始化。
 
-**什么时候必须还**：有人要让正文 `content` 高频变化的那一天。在那之前它是一个已知的天花板，不是活跃缺陷。
+**怎么防它退回去**：`src/components/file-preview/__tests__/markdownViewerStability.test.ts`
+断言依赖数组为空、实例态走 ref、JSX 里不再有内联 `components={{…}}`。
+这条守卫必须有——把依赖改回带变量时全量单测照样全绿，只有浏览器里数 DOM 变更才看得出来。
 
-**怎么验它还在**：流式期间人为让 `content` 每个 token 变一次，用 MutationObserver 数正文里
-`addedNodes` 中的 `<ins>`，重建次数远大于元素总数就说明重挂仍在。
+**剩余边界**：ref 包是在 render 阶段刷新的（renderer 在同一次 commit 里被调用，读到的必然是新值）。
+若将来接入 React 并发特性下的可中断渲染，这个假设需要重新审。
 
 ---
 

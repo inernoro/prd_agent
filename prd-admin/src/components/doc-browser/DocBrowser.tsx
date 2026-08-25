@@ -237,6 +237,7 @@ import {
   type ResolvedRange,
 } from './selectionEdit';
 import { StreamingText } from '@/components/streaming';
+import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { buildInlineDiffBody, STREAM_ANCHOR_HTML, STREAM_ANCHOR_SELECTOR } from './selectionDiffMarkup';
 import {
   SelectionRewritePrompt,
@@ -4254,9 +4255,11 @@ export function DocBrowser({
                   <StreamingText
                     text={rewriteOutput}
                     streaming
-                    // 长文改写时只对尾部做词级动画，前面已定稿的部分当稳定纯文本，
-                    // 免得几千个 span 堆在正文里
-                    animateTailChars={400}
+                    // 流式期也按 markdown 渲染：正文里正在长出来的那段，
+                    // 观感必须和它定稿后一致，不能让用户盯着一屏 `**` 和 `-`
+                    markdown
+                    renderMarkdown={(c) => <MarkdownViewer content={c} />}
+                    className="doc-rewrite-stream"
                   />,
                   streamAnchorEl,
                 )}

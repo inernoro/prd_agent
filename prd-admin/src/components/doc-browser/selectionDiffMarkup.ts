@@ -43,7 +43,9 @@ const FENCE_RE = /^ {0,3}(?:```|~~~)/;
  * 「一闪一闪，像老电脑」。锚点让正文这一层彻底不动，节奏与光标交给 StreamingText。
  */
 export const STREAM_ANCHOR_ID = 'doc-rewrite-stream';
-export const STREAM_ANCHOR_HTML = `<span id="${STREAM_ANCHOR_ID}"></span>`;
+// div 而不是 span：正在写的那段现在按 markdown 渲染（标题/列表/代码块都是块级元素），
+// 塞进一个 span 会被浏览器判成 <p> 里嵌块级元素，排版当场错位。
+export const STREAM_ANCHOR_HTML = `<div id="${STREAM_ANCHOR_ID}"></div>`;
 
 /**
  * 锚点在**真实 DOM 里**的 id：rehype-sanitize 会给正文内嵌 HTML 的 id 加 `user-content-`
@@ -183,6 +185,13 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
       if (l.type === 'add') codeChangeUnmarked = true;
       emit(l.text, l.type === 'add' ? 'add' : 'eq');
       if (isFence) outFence = !outFence;
+      continue;
+    }
+    // 流式锚点原样输出，不包 <ins>：它承载的是一整块 markdown，
+    // 而 <ins> 是行内元素，包住块级内容的圆角底色会糊成一团。
+    // 「这是新写的」由 portal 里那个容器自己的样式表达（doc-diff.css 的 .doc-rewrite-stream）。
+    if (l.type === 'add' && l.text.trim() === STREAM_ANCHOR_HTML) {
+      emit(l.text, 'add');
       continue;
     }
     emit(l.type === 'add' ? markLine(l.text, 'ins') : l.text, l.type === 'add' ? 'add' : 'eq');

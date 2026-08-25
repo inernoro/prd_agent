@@ -7,41 +7,70 @@
  * 双皮肤：暗色写在 :root，浅色在同文件用 [data-theme="light"] 覆盖（admin-dual-theme.md）。
  */
 
+/*
+ * 配色一律从品牌 token 派生，不再自带一套蓝红（2026-08-25 用户："太过于复古 windows 的感觉"）。
+ *
+ * 上一版是 #3b82f6 蓝底块 + #f87171 红底块，两个都是随手写的原色，和 tokens.css 毫无关系
+ *（也正是 admin-dual-theme.md 反复要治的那种绕过 token 的硬编码）。饱和整块底色 + 硬边下划线
+ * 就是「Windows 选中高亮 / Word 修订」的观感，跟本系统暖赤陶 + 细描边的语言完全不搭。
+ *
+ * 现在：新增用品牌暖色（极淡底 + 一条细下划线，不再是实心色块），删除退成 muted 灰 + 细删除线，
+ * 不再用红色喊。所有值走 --accent-primary-rgb / --text-* ，双主题自动跟随。
+ */
 :root {
-  --doc-diff-ins-fg: #bfdbfe;
-  --doc-diff-ins-bg: rgba(59, 130, 246, 0.22);
-  --doc-diff-ins-edge: rgba(96, 165, 250, 0.55);
-  --doc-diff-del-fg: rgba(248, 113, 113, 0.85);
-  --doc-diff-del-bg: rgba(248, 113, 113, 0.12);
-  --doc-diff-del-line: rgba(248, 113, 113, 0.75);
+  --doc-diff-ins-fg: var(--accent-gold-2);
+  --doc-diff-ins-bg: rgba(var(--accent-primary-rgb), 0.10);
+  --doc-diff-ins-edge: rgba(var(--accent-primary-rgb), 0.42);
+  --doc-diff-del-fg: var(--text-muted);
+  --doc-diff-del-bg: transparent;
 }
 
 [data-theme='light'] {
-  --doc-diff-ins-fg: #1d4ed8;
-  --doc-diff-ins-bg: rgba(59, 130, 246, 0.16);
-  --doc-diff-ins-edge: rgba(37, 99, 235, 0.45);
-  --doc-diff-del-fg: #b91c1c;
-  --doc-diff-del-bg: rgba(185, 28, 28, 0.09);
-  --doc-diff-del-line: rgba(185, 28, 28, 0.7);
+  /* 浅底上暖色要压深才够对比（accent-primary-solid 就是为「实心底/正文字」备的那一档） */
+  --doc-diff-ins-fg: var(--accent-primary-solid);
+  --doc-diff-ins-bg: rgba(var(--accent-primary-rgb), 0.12);
+  --doc-diff-ins-edge: rgba(var(--accent-primary-rgb), 0.38);
+  --doc-diff-del-fg: var(--text-muted);
+  --doc-diff-del-bg: transparent;
 }
 
 .doc-inline-diff ins {
   color: var(--doc-diff-ins-fg);
   background: var(--doc-diff-ins-bg);
+  /* 一条细下划线代替整块实心底：告诉你「这段是新写的」，但不把正文腌成一片色块 */
   box-shadow: inset 0 -1px 0 var(--doc-diff-ins-edge);
   text-decoration: none;
-  border-radius: 3px;
-  padding: 0 2px;
+  border-radius: 4px;
+  padding: 0 3px;
 }
 
 .doc-inline-diff del {
   color: var(--doc-diff-del-fg);
   background: var(--doc-diff-del-bg);
   text-decoration: line-through;
-  text-decoration-color: var(--doc-diff-del-line);
+  /* 删除线跟着 muted 文字色走，不用品牌色——品牌暖色在这套配色里代表「新写的」，
+     删除线也染成暖色会让删掉的和新加的看起来是一类东西，一眼分不出增删。 */
+  text-decoration-color: currentColor;
   text-decoration-thickness: 1px;
-  border-radius: 3px;
-  padding: 0 2px;
+  /* 删掉的内容退到背景里，不用红色喊——它已经带删除线了，再加底色是双重强调 */
+  padding: 0;
+}
+
+/*
+ * 流式期间正在写的那一段（StreamingText 用 portal 画进正文锚点，走 markdown 渲染）。
+ * 与完成态的 ins 同一套暖色语言：左侧一条品牌细线标明「这块是新长出来的」，
+ * 内部的标题/列表/代码块保持正文本来的排版，不套色块。
+ */
+.doc-rewrite-stream {
+  border-left: 2px solid var(--doc-diff-ins-edge);
+  padding-left: 12px;
+  margin: 4px 0;
+}
+
+.doc-rewrite-stream > * {
+  /* MarkdownViewer 自带 96px 底部留白与最大宽度，嵌进正文里要去掉 */
+  padding-bottom: 0 !important;
+  max-width: 100% !important;
 }
 
 /*
