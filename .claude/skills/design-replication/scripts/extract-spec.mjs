@@ -15,7 +15,14 @@
  *     [--scope '<CSS 选择器>'] [--y-from 0 --y-to 1800] \
  *     [--vendor <React UMD 目录>] [--storage <storageState.json>] \
  *     [--width 1600] [--theme dark] [--wait 12000] \
- *     [--fixtures <目录> | --record-fixtures <目录>]
+ *     [--fixtures <目录> | --record-fixtures <目录>] [--fixtures-ignore <正则>] \
+ *     [--click '<文案>' | --click 'css:<选择器>'] ... [--include-frames]
+ *
+ * --click 可给多次，按顺序点。设计稿画的很多屏是**要点开才存在**的（分享弹窗、上传弹窗、
+ *   数据抽屉、访客抽屉、折叠起来的提问面板）——不给这个能力，那几屏在实现侧根本量不到，
+ *   只能对着一份「实现好像什么都没有」的报告发愣。
+ * --include-frames 把 iframe 里的文案也算进来。默认不算：多数 iframe 里是用户上传的内容，
+ *   不是我们的设计。但设计稿把访客文档一起画进画板时，要开它才对得上。
  *
  * --fixtures 用设计样例数据渲染实现页，让 text.txt 与设计稿的文案可以直接比
  * （否则两边跑的是不同数据，覆盖率里混着大量「其实是数据不同」的假缺失）。
@@ -51,7 +58,21 @@ const storage = arg('--storage', null);
 const width = Number(arg('--width', '1600'));
 const theme = arg('--theme', 'dark');
 const wait = Number(arg('--wait', '12000'));
+/**
+ * 「渲染出来了」的下限字数。
+ *
+ * 默认 200 对绝大多数屏成立，但有一类屏天然达不到：**正文在 iframe 里**
+ * （访客阅读页就是——外层只有顶栏与评论区，一共 95 字，文档本体在 srcDoc 里）。
+ * 那种屏不是没渲染，是本工具**不跨 iframe 量**（iframe 里是用户上传的内容，
+ * 不是我们的设计）。所以这条线要能按屏声明，而不是让人对着一个假失败发愣。
+ */
+const minChars = Number(arg('--min-chars', '200'));
 const fixturesDir = arg('--fixtures', null) || arg('--record-fixtures', null);
+/** 明确不喂这一屏的旁路接口（正则）。被忽略的会打印出来，不会静默放过 */
+const fixturesIgnore = arg('--fixtures-ignore', null);
+/** 按顺序点开的目标；`css:` 前缀走选择器，否则按可见文案找 */
+const clicks = process.argv.reduce((acc, a, i) => (a === '--click' ? [...acc, process.argv[i + 1]] : acc), []);
+const includeFrames = process.argv.includes('--include-frames');
 const fixturesMode = process.argv.includes('--record-fixtures') ? 'record' : 'replay';
 if (!url || !out) {
   console.error('必填：--url --out');
@@ -75,7 +96,11 @@ const page = await ctx.newPage();
 // 顺序反了接口请求会被 vendor 那几条规则之外的默认路径放走。
 let fixtures = null;
 if (fixturesDir) {
-  fixtures = await installFixtures(page, { dir: fixturesDir, mode: fixturesMode });
+  fixtures = await installFixtures(page, {
+    dir: fixturesDir,
+    mode: fixturesMode,
+    ignore: fixturesIgnore ? new RegExp(fixturesIgnore) : undefined,
+  });
 }
 
 if (vendor) {
@@ -96,13 +121,48 @@ await page.route('**://fonts.gstatic.com/**', (r) => r.abort());
 
 await page.goto(url, { waitUntil: 'load', timeout: 90000 });
 await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
-await page.waitForTimeout(wait);
+
+// 等到**页面上真的有东西**，而不是睡固定秒数。
+// 固定等待在慢一点的那次就不够（走隧道取证时尤其明显），表现是「正文只有 95 字」——
+// 同一个地址连跑两次一次空一次满。这类会随网络快慢翻来翻去的结果，比失败更糟：
+// 它会被当成「这一屏就是空的」而不是「这次没等到」。
+const READY_CHARS = minChars;
+const deadline = Date.now() + wait;
+let ready = 0;
+while (Date.now() < deadline) {
+  ready = await page.evaluate(() => document.body.innerText.replace(/\s+/g, '').length);
+  if (ready >= READY_CHARS) break;
+  await page.waitForTimeout(400);
+}
+// 达标后再给一小段安定时间：晚到的元素（异步分块、图片撑开）也算进档位表
+await page.waitForTimeout(1200);
+
+// 按顺序点开这一屏（弹窗 / 抽屉 / 折叠面板）。点不到就**当场失败**——
+// 静默跳过的话，量出来的是「没点开的那一屏」，而报告看上去一切正常。
+for (const target of clicks) {
+  const locator = target.startsWith('css:')
+    ? page.locator(target.slice(4)).first()
+    : page.getByText(target, { exact: false }).first();
+  try {
+    await locator.click({ timeout: 10000 });
+  } catch {
+    console.error(`点不到「${target}」。这一屏没有进入设计稿画的那个状态，量出来的规格是另一屏的。`);
+    await browser.close();
+    process.exit(5);
+  }
+  await page.waitForTimeout(900);
+  console.log(`已点开：${target}`);
+}
 
 if (fixtures) {
   const r = fixtures.report();
   if (fixturesMode === 'record') console.log(`录到 ${r.recorded.length} 条接口响应 → ${fixturesDir}`);
   else {
     console.log(`样例数据命中 ${r.served.length} 条`);
+    if (r.ignored.length) {
+      const uniq = [...new Set(r.ignored)];
+      console.log(`按 --fixtures-ignore 放行 ${r.ignored.length} 次请求（${uniq.length} 个端点）：${uniq.slice(0, 5).join(' / ')}`);
+    }
     // 混合态（一半 fixture 一半真数据）下量出来的文案清单没有可比性，
     // 直接判失败而不是打条 warning —— warning 会被顺手忽略，然后拿混合态的数字去谈覆盖率。
     if (r.missed.length) {
@@ -117,8 +177,14 @@ if (fixtures) {
 }
 
 const chars = await page.evaluate(() => document.body.innerText.replace(/\s+/g, '').length);
-if (chars < 200) {
-  console.error(`正文只有 ${chars} 字，多半没渲染出来。量出来的规格会是一份空表——空表比没有更危险。`);
+if (chars < READY_CHARS) {
+  const frames = await page.evaluate(() => document.querySelectorAll('iframe').length);
+  console.error(`等了 ${wait}ms，外层正文仍只有 ${chars} 字（下限 ${READY_CHARS}），多半没渲染出来。`
+    + '量出来的规格会是一份空表——空表比没有更危险。');
+  if (frames > 0) {
+    console.error(`注意：这一屏有 ${frames} 个 iframe。本工具只量外层文档（iframe 里通常是用户内容，`
+      + '不是我们的设计）。如果这一屏的壳本来就只有这么点字，用 --min-chars 声明它的真实下限。');
+  }
   await browser.close();
   process.exit(3);
 }
@@ -211,6 +277,31 @@ const result = await page.evaluate(({ scopeSel, from, to }) => {
     elements: all.length,
   };
 }, { scopeSel: scope, from: yFrom, to: yTo });
+
+// iframe 里的文案：默认不收（多是用户上传的内容，不是我们的设计），
+// 但设计稿把访客文档一起画进画板时要开，否则那一屏的覆盖率永远上不去。
+if (includeFrames && !result.error) {
+  let added = 0;
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    try {
+      const texts = await frame.evaluate(() => {
+        const items = [];
+        document.querySelectorAll('*').forEach((el) => {
+          const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(' ').trim();
+          if (own) items.push(own);
+        });
+        return items;
+      });
+      result.texts.push(...texts);
+      added += texts.length;
+    } catch {
+      // 跨源 iframe 读不到是正常的，如实计数即可
+      console.log('有一个 iframe 读不到内容（跨源），它的文案没算进来');
+    }
+  }
+  console.log(`iframe 里另收 ${added} 条文案`);
+}
 
 await browser.close();
 

@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:7801/api/web-pages/shares/view/P8lZp0ruPhcM",
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "body": "{\"success\": true, \"data\": {\"title\": \"2026 W33 视觉验收报告 · 客户端首页改版\", \"description\": null, \"shareType\": \"single\", \"createdAt\": \"2026-08-25T09:53:15.522Z\", \"createdBy\": \"cd996f19390745cfb577ea712b0b1868\", \"createdByName\": \"林\", \"sites\": [{\"id\": \"23fdc27703334b95bfd88c56c2edcd35\", \"title\": \"2026 W33 视觉验收报告 · 客户端首页改版\", \"description\": null, \"siteUrl\": \"https://cfi.miduo.org/data/web-hosting/sites/23fdc27703334b95bfd88c56c2edcd35/index.html?v=639232483949906659\", \"entryFile\": \"index.html\", \"totalSize\": 11481, \"fileCount\": 1, \"coverImageUrl\": null, \"pdfAssetUrl\": null, \"wrappedAssetType\": \"markdown\"}], \"ask\": {\"siteId\": \"23fdc27703334b95bfd88c56c2edcd35\", \"enabled\": true, \"allowAnonymous\": true, \"welcome\": \"这是客户端首页改版的验收报告。你可以直接问结论、待修项，或者某一张截图对应的问题。\", \"openingQuestions\": [\"这份验收报告的结论是什么？\", \"哪些问题还没修完？\", \"页面里有提到上线时间吗？\"]}, \"expiresAt\": \"2026-08-28T12:00:00.000Z\"}, \"error\": null}"
+}

@@ -1,0 +1,7 @@
+{
+  "method": "GET",
+  "url": "http://127.0.0.1:7801/api/web-pages/shares/view/P8lZp0ruPhcM/comments",
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "body": "{\"success\": true, \"data\": {\"siteId\": \"23fdc27703334b95bfd88c56c2edcd35\", \"commentsEnabled\": true, \"canComment\": false, \"comments\": [{\"id\": \"c1\", \"siteId\": \"23fdc27703334b95bfd88c56c2edcd35\", \"content\": \"首屏那版卡片间距我们这边看着偏紧，能不能给 20px？\", \"authorUserId\": \"u-zhou\", \"authorName\": \"周\", \"createdAt\": \"2026-08-24T16:22:00.000Z\", \"canDelete\": false}, {\"id\": \"c2\", \"siteId\": \"23fdc27703334b95bfd88c56c2edcd35\", \"content\": \"搜索那条我同意，移动端确实不好点。\", \"authorUserId\": \"\", \"authorName\": \"匿名访客\", \"createdAt\": \"2026-08-25T09:10:00.000Z\", \"canDelete\": false}], \"error\": null, \"httpStatus\": 200, \"errorCode\": null, \"retryAfterSeconds\": null}, \"error\": null}"
+}

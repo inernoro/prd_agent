@@ -252,6 +252,32 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 
 ---
 
+## 访客阅读页 vs 设计稿（2026-08-25 机械核对）
+
+用设计样例数据回放后量的实现侧规格，与设计稿画板「11 阅读页-深」逐条比。
+文案覆盖率 41%（27 条命中 16 条），23 条硬缺失分三组。档位表与样例数据都固化在复刻技能的
+导出与 fixture 目录里（位置见文末「实现来源」），重跑一次即可复现。
+
+### 已知差异（open）
+
+| # | 差异 | 影响 | 后续可补 |
+|---|------|------|----------|
+| 43 | **提问面板与评论区互斥**：设计稿把两者画成同屏上下并列，实现里提问面板是覆盖整页的右侧抽屉，打开它之后评论区的入口点不到 | 设计稿那一屏（含 11 条评论区文案）在实现里根本到不了，访客也没法边看回答边看评论 | 要么把提问改成不遮挡的侧栏（设计稿的形态），要么承认这是有意的取舍并更新设计稿 |
+| 44 | **提问面板不显示本次回答用了哪个模型**：设计稿写「本次回答：qwen3.6-plus · dashscope · 经 MAP LLM Gateway」，实现里没有这一行 | 直接违反「AI 模型可见性」那条规则——用户会因为换了模型感知到回答质量差异，却看不到换没换 | 从网关流的首个 chunk 捕获解析结果，随 SSE 推给前端，面板底部低饱和度展示 |
+| 45 | 提问面板缺配额行「本页今日剩 18 / 20 你这小时剩 4 / 5」 | 访客不知道还能问几次，问到被拒才知道有上限（预期管理：不知道还能做多少） | 后端已有配额判定，随面板初始化一起下发 |
+| 46 | 提问面板的三处文案被截短或改写：设计稿「回答只依据本页正文。问到正文没写的，它会直接说「页面里没有提到」，不会替作者猜。」实现只有前半句；「开场问题 · 来自站点题库」这个分组标题没有；输入框 placeholder 设计稿是「就这一页提个问题」，实现是「问点什么…」 | 访客不知道问了正文没写的东西会得到什么，也不知道那几条问题是作者准备的 | 按该画板的逐条文案文件抄回来，一字不改 |
+| 47 | 顶栏缺「由 {分享人} 分享 · N 天后过期」，且设计稿的「保存到我的托管」+「登录」两个动作在实现里合成了一个「登录并保存」 | 访客看不出这条链接是谁发的、还能用多久 | 分享详情接口已返回分享人与到期时间，顶栏补上；两个动作是否该拆看产品意图 |
+
+### 顺带修掉的取证缺陷（closed）
+
+| # | 缺陷 | 修复 |
+|---|------|------|
+| 48 | ~~按 y 区间切画板~~：并排摆放的三个上传态纵坐标相同，取出的文案是三屏并集（12 屏里 5 屏的文案证据是错的，而文案证据正是覆盖率的比对基准） | 改按画板自己的标注属性选择器切 |
+| 49 | ~~tokens-map 跨维度按纯数值乱配~~：字号 18px 会配上圆角 token 报「已有 token」 | 按维度限定候选 token；某维度没有任何候选时如实报「本项目不用 token 管这个维度」 |
+| 50 | ~~量实现页时拿固定秒数当「加载好了」~~ | 改成等到有内容为止；正文在 iframe 里的屏（阅读页外层只有 95 字）可以声明自己的真实下限，失败信息会提示有几个 iframe |
+
+---
+
 ## 已结清（供回溯）
 
 下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
@@ -283,3 +309,6 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 | 预览判据与取正文 | `prd-admin/src/components/web-hosting/previewHtml.ts`、`prd-admin/src/components/web-hosting/useSitePreviewHtml.ts`、`prd-admin/src/components/SitePreview.tsx`、`prd-admin/src/components/web-hosting/SitePreviewModal.tsx` |
 | 预览守卫 | `prd-admin/src/lib/__tests__/iframeSandboxTokens.test.ts`、`prd-admin/src/components/web-hosting/sitePreviewWiring.test.ts`、`prd-admin/src/pages/ShareViewPage.preview.test.ts` |
 | 关联 | `prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs` |
+| 设计档位表（12 块画板，带画布 sha256） | `.claude/skills/design-replication/exports/web-hosting-v2/design-spec.{json,md}` |
+| 阅读页样例数据（录制-回放） | `.claude/skills/design-replication/fixtures/web-hosting-v2/11-reader/` |
+| 逐画板切图与逐条文案 | 复刻技能 `extract-design.mjs` 的产出（`design/index.json` + `text-<画板>.txt`） |

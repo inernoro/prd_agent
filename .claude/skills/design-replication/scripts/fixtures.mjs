@@ -66,21 +66,45 @@ export function keyShape(value, prefix = '', acc = new Set()) {
  * @param dir       fixture 目录
  * @param mode      'replay'（默认）| 'record'
  * @param match     哪些请求要管，默认所有同源 /api/ 请求
- * @returns {{report: () => {served: string[], missed: string[], recorded: string[]}}}
+ * @param ignore     明确不管的请求（正则）。用于**确实不喂这一屏**的旁路接口——
+ *                   典型是预览环境注入的徽章/心跳流（CDS 的 /cds/api/*）：它们既不该
+ *                   被当成样例数据，也不该把这一屏判成「混合态」。
+ *                   被忽略的一律计数并打印，不许静默——否则这个口子会变成
+ *                   「把守卫调绿」的开关（形状 8）。
+ * @returns {{report: () => {served: string[], missed: string[], recorded: string[], ignored: string[]}}}
  */
-export async function installFixtures(page, { dir, mode = 'replay', match } = {}) {
+export async function installFixtures(page, { dir, mode = 'replay', match, ignore } = {}) {
   if (!dir) throw new Error('installFixtures 需要 dir');
   fs.mkdirSync(dir, { recursive: true });
   const isTarget = match || ((url) => /\/api\//.test(url));
+  const isIgnored = ignore ? (url) => ignore.test(url) : () => false;
 
   const served = [];
   const missed = [];
   const recorded = [];
+  const ignored = [];
 
   await page.route('**/*', async (route) => {
+    try {
+      return await handle(route);
+    } catch (e) {
+      // 页面/上下文在这条请求还在飞的时候被关掉，是收尾阶段的常态
+      // （route.fetch 会抛 "Request context disposed"）。这不是取证失败，
+      // 但未捕获的话会让整个进程带着一个吓人的栈非零退出——
+      // 看起来像「工具坏了」，实际证据已经取全了。
+      try { await route.abort(); } catch { /* 上下文已经没了，无事可做 */ }
+      return undefined;
+    }
+  });
+
+  async function handle(route) {
     const req = route.request();
     const url = req.url();
     if (!isTarget(url)) return route.continue();
+    if (isIgnored(url)) {
+      ignored.push(`${req.method()} ${new URL(url).pathname}`);
+      return route.continue();
+    }
 
     const key = fixtureKey(req.method(), url);
     const file = path.join(dir, `${key}.json`);
@@ -114,7 +138,7 @@ export async function installFixtures(page, { dir, mode = 'replay', match } = {}
       contentType: saved.contentType || 'application/json',
       body: saved.body,
     });
-  });
+  }
 
-  return { report: () => ({ served, missed, recorded }) };
+  return { report: () => ({ served, missed, recorded, ignored }) };
 }
