@@ -3421,6 +3421,18 @@ def cmd_connect(args: argparse.Namespace) -> None:
         die("--create-project 需要一个非空项目名称", code=1)
     if create_name and not new_project:
         die("--create-project 只能与 --new-project 搭配使用", code=1)
+    # --git-url / --slug 只在建项目时有意义。不带 --create-project 就给它们，命令会
+    # 一路跑完（消耗掉一次人工批准、写下一次性凭据）然后**静默忽略**这两个参数，
+    # 还报「接入完成」——用户以为项目建了，其实什么都没建。
+    orphan_flags = [
+        flag for flag, value in (
+            ("--git-url", str(getattr(args, "git_url", "") or "").strip()),
+            ("--slug", str(getattr(args, "slug", "") or "").strip()),
+        ) if value
+    ]
+    if orphan_flags and not create_name:
+        die(f"{' / '.join(orphan_flags)} 只在 --create-project 时生效；"
+            f"要建项目请补上 --create-project <名称>，否则去掉这些参数。", code=1)
     agent_name = str(getattr(args, "agent", "") or "Agent").strip()[:100] or "Agent"
     timeout_seconds = max(10, int(getattr(args, "timeout", 300) or 300))
     interval_seconds = max(1, int(getattr(args, "interval", 2) or 2))
@@ -3547,12 +3559,10 @@ def cmd_connect(args: argparse.Namespace) -> None:
     # 就会被吊销、明文只发一次，错过即不可逆。这里不给它这个机会。
     if create_name:
         payload: dict[str, Any] = {"name": create_name}
-        git_url = str(getattr(args, "git_url", "") or "").strip()
-        if git_url:
-            payload["gitRepoUrl"] = git_url
-        slug = str(getattr(args, "slug", "") or "").strip()
-        if slug:
-            payload["slug"] = slug
+        if str(getattr(args, "git_url", "") or "").strip():
+            payload["gitRepoUrl"] = str(args.git_url).strip()
+        if str(getattr(args, "slug", "") or "").strip():
+            payload["slug"] = str(args.slug).strip()
         if _HUMAN:
             print(f"授权已到手，正在创建项目 {create_name} 并换成项目级授权…", file=sys.stderr)
         outcome = _create_project_and_adopt_key(payload, timeout=30)

@@ -11,9 +11,9 @@
   3. 拿一次性身份建项目却没换到钥匙时，必须显式失败，不许留半成品。
 """
 
+import ast
 import io
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -205,38 +205,112 @@ def test_connect_can_create_project_in_one_command(workspace, monkeypatch):
     assert PROJECT_KEY not in output and "cdsg_one_time" not in output
 
 
-def test_only_one_place_creates_projects(workspace):
-    """防再次分裂：全 CLI 里「POST 到 /api/projects」只允许出现在换钥实现里。
+def _find_project_creation_calls(source: str) -> list[tuple[str, int]]:
+    """用 AST 找出「向 /api/projects 发 POST」的调用，返回 (所在函数, 行号)。
 
-    判据不能是精确子串——换个引号、写成 f-string、或把路径提成变量就绕过去了
-    （守卫太窄本身就是这次要修的那类问题）。这里同时扫两种形状：
-    带 POST 字样的同一行里出现 /api/projects，以及任何形式的 /api/projects 字面量。
+    判据不能停在「同一行里有引号包着的 POST 和 /api/projects」——路径提成常量
+    （PROJECTS_PATH = '/api/projects'）或者参数换行，字符串匹配就瞎了，而那两种写法
+    照样能重新引入一份丢钥匙的建项目实现（predicate-and-wiring-discipline 形状 1：
+    判据比它该管的范围窄）。所以这里解析调用结构，并跟着模块级路径常量一起解。
     """
-    # 只认「真的发起了一次 POST /api/projects」的调用形状：带引号的 POST 方法参数
-    # 紧跟带引号（或 f-string）的 /api/projects 路径。docstring、help 文案、注释里
-    # 出现的 POST /api/projects 是说明文字，不是调用。
-    call_re = re.compile(r"""['"]POST['"]\s*,\s*f?['"]/api/projects(?![\w/-])""")
-    post_hits = [ln.strip() for ln in CLI_SOURCE.splitlines() if call_re.search(ln)]
-    assert len(post_hits) == 1, (
-        "建项目出现了第二处实现——钥匙交接会在那条路上丢掉。命中：\n" + "\n".join(post_hits)
+    tree = ast.parse(source)
+
+    consts: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) \
+                and isinstance(node.value.value, str):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    consts[target.id] = node.value.value
+
+    def as_path(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name):
+            return consts.get(node.id)
+        if isinstance(node, ast.JoinedStr):
+            # f-string 只在「整条路径就是一段字面量」时才算数。取首段前缀会把
+            # f"/api/projects/{pid}/pending-import" 这类子路径误判成建项目
+            # ——判据太宽和太窄一样坏。
+            if len(node.values) == 1 and isinstance(node.values[0], ast.Constant):
+                return node.values[0].value
+        return None
+
+    def is_post(node: ast.Call) -> bool:
+        first = node.args[0] if node.args else None
+        if isinstance(first, ast.Constant) and first.value == "POST":
+            return True
+        return any(kw.arg == "method" and isinstance(kw.value, ast.Constant)
+                   and kw.value.value == "POST" for kw in node.keywords)
+
+    enclosing: dict[int, str] = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for inner in ast.walk(fn):
+                if isinstance(inner, ast.Call):
+                    enclosing.setdefault(id(inner), fn.name)
+
+    hits: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not is_post(node):
+            continue
+        path_arg = node.args[1] if len(node.args) > 1 else next(
+            (kw.value for kw in node.keywords if kw.arg == "path"), None)
+        path = as_path(path_arg) if path_arg is not None else None
+        if path and path.rstrip("/") == "/api/projects":
+            hits.append((enclosing.get(id(node), "<module>"), node.lineno))
+    return hits
+
+
+def test_only_one_place_creates_projects(workspace):
+    """防再次分裂：全 CLI 里「POST 到 /api/projects」只允许出现在换钥实现里。"""
+    hits = _find_project_creation_calls(CLI_SOURCE)
+    assert len(hits) == 1, (
+        "建项目出现了第二处实现——钥匙交接会在那条路上丢掉。命中："
+        + "; ".join(f"{fn}:{line}" for fn, line in hits)
     )
-    assert "_create_project_and_adopt_key" in CLI_SOURCE
-    # 反向确认守卫盯的就是那一处（而不是碰巧只匹配到别的东西）
-    assert "/api/projects" in post_hits[0] and "POST" in post_hits[0]
-    # 换个引号、写成 f-string 都要被同一条判据抓住
-    assert call_re.search("x = _call('POST', '/api/projects', body=p)")
-    assert call_re.search('y = _call("POST", f"/api/projects", body=p)')
+    assert hits[0][0] == "_create_project_and_adopt_key", (
+        f"唯一那处建项目的调用应当在换钥实现里，实际在 {hits[0][0]}"
+    )
 
 
-def test_non_bootstrap_identity_without_issued_key_is_fine(workspace, monkeypatch):
-    """静态 AI key / 全权 key 建项目本来就不签发新钥匙，不能被误判成死局。"""
-    monkeypatch.setenv("AI_ACCESS_KEY", "static-platform-key")
-    calls: list = []
-    monkeypatch.setattr(cdscli, "_request", make_request(calls, issue_key=False))
+def test_single_create_guard_catches_indirect_forms(workspace):
+    """负样本：路径提常量、参数换行、关键字传参，都必须被同一条判据抓住。"""
+    via_constant = "\n".join([
+        "PROJECTS_PATH = '/api/projects'",
+        "",
+        "def sneaky():",
+        "    return _call('POST', PROJECTS_PATH, body={})",
+    ])
+    multiline = "\n".join([
+        "def sneaky():",
+        "    return _call(",
+        "        'POST',",
+        "        '/api/projects',",
+        "        body={},",
+        "    )",
+    ])
+    keyword_form = "\n".join([
+        "def sneaky():",
+        "    return _request(method='POST', path='/api/projects', body={})",
+    ])
+    for label, snippet in (("常量", via_constant), ("换行", multiline), ("关键字", keyword_form)):
+        hits = _find_project_creation_calls(snippet)
+        assert [fn for fn, _ in hits] == ["sneaky"], f"{label}写法没被抓住：{hits}"
 
-    code, output = run_command(["project", "create", "--name", "demo"])
-    assert code == 0, output
-    assert "proj-new" in output
+    # 反向：读项目、打别的路径都不算「建项目」，判据别宽到把它们也算进来
+    read_only = "\n".join(["def reader():", "    return _call('GET', '/api/projects')"])
+    other_path = "\n".join(["def other():", "    return _call('POST', '/api/projects-import')"])
+    sub_path = "\n".join([
+        "def sub():",
+        "    return _request('POST', f'/api/projects/{pid}/pending-import', body={})",
+    ])
+    assert _find_project_creation_calls(read_only) == []
+    assert _find_project_creation_calls(other_path) == []
+    assert _find_project_creation_calls(sub_path) == [], "子路径不是建项目，判据不许宽到这里"
+    # 纯字面量 f-string 仍然算数
+    literal_fstring = "\n".join(["def sneaky():", "    return _call('POST', f'/api/projects', body={})"])
+    assert [fn for fn, _ in _find_project_creation_calls(literal_fstring)] == ["sneaky"]
 
 
 def test_create_project_argument_errors_happen_before_any_approval(workspace, monkeypatch):
@@ -327,3 +401,23 @@ def test_stale_bootstrap_key_does_not_break_normal_create(workspace, monkeypatch
 
     code, output = run_command(["project", "create", "--name", "demo"])
     assert code == 0, output
+
+
+def test_orphan_project_flags_rejected_before_approval(workspace, monkeypatch):
+    """--git-url / --slug 不带 --create-project：此前会消耗一次批准然后静默忽略它们。"""
+    seen: list = []
+
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
+        seen.append((method, path))
+        return 201, {"requestId": "req1", "pollToken": "poll1", "status": "pending"}, {}
+
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+
+    code, output = run_command([
+        "connect", "--host", "https://cds.example", "--new-project",
+        "--git-url", "https://example.com/demo.git",
+    ])
+    assert code == 1, output
+    assert "--git-url" in output and "--create-project" in output
+    assert seen == [], "报错之前不许发起任何授权申请"

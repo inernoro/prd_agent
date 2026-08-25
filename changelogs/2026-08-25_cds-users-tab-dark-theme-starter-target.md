@@ -13,3 +13,5 @@
 | test | cds | Review 修复：中性色守卫补 text-white / text-black（棘轮重算）、单一实现守卫改正则（引号与 f-string 都盖住）、新增 3 例（参数校验先于申请、回读抖动不丢换钥、残留一次性钥匙不影响正常建项目）；上手助手复制按钮的白字挪进 index.css 里那条已强制底色的规则 |
 | fix | cds | Review 修复：用户管理说明面板对 SSO 部署不再劝人改成 GitHub OAuth 模式，改为说明账号归上游身份源管理、切换属认证方案变更 |
 | fix | cds | Codex Review 修复：一次性身份判据改为比对「本次请求实际发出的凭据」与存档 bootstrapKey（残留 bootstrapKey + 显式全权 Key 不再在项目已建好后误报死局）；用户管理说明面板新增探测失败态（可重试 + 错误详情），不再把 /api/auth/public-status 探测失败当成「认证未启用」 |
+| fix | cds | Codex Review 第二轮：connect 的 --git-url / --slug 不带 --create-project 时在发起授权申请之前就拒绝（此前会消耗一次人工批准再静默忽略这两个参数并报「接入完成」） |
+| test | cds | 单一实现守卫从字符串匹配换成 AST 解析（跟解模块级路径常量、参数换行、method=/path= 关键字传参），并补正负样本与红绿闭环；f-string 仅在整条路径是字面量时算数，避免把 /api/projects/{id}/pending-import 误判成建项目 |
