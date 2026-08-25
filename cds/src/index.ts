@@ -32,7 +32,7 @@ import {
 import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
 import {
   backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
-  buildRabbitmqDumpScript, extractBackupScopeNote,
+  buildRabbitmqDumpScript, extractBackupScopeNote, backupScopeGaps,
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
@@ -901,13 +901,19 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);
       const coverageComplete = isBackupRoundHealthy(plan, outcomes);
-      if (outcomes.length > 0 || coverageGaps.length > 0) {
+      // 缺口有两种来源，落盘时必须合起来：计划阶段就知道备不了的（按服务类型判），
+      // 和**跑完才知道只备到一部分**的（导出脚本自己报的范围限制，如 postgres 只导了
+      // POSTGRES_DB 那一个库）。后者原来只挂在 outcome.note 上、没有任何判据读它，
+      // 于是那几个没备份的库既不拉低健康位、也不出现在每日体检的缺口里——灯是绿的，
+      // 备份是缺的（Codex review P1）。
+      const allCoverageGaps = [...coverageGaps, ...backupScopeGaps(outcomes)];
+      if (outcomes.length > 0 || allCoverageGaps.length > 0) {
         const completedAt = new Date().toISOString();
         const health = {
           coverageComplete,
           completedAt: coverageComplete ? completedAt : null,
           remoteVerifiedAt: coverageComplete ? completedAt : null,
-          coverageGaps,
+          coverageGaps: allCoverageGaps,
           objects: outcomes.map((outcome) => ({
             id: outcome.id,
             fileName: outcome.fileName,
@@ -925,12 +931,12 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       // 放进 else 分支的话，像某个库口令不对这种长期部分失败，会被误报成
       // 「周期备份已经哑了」——那是假警报，比不报还糟。
       backupLiveness.markSuccess();
-      if (failed.length > 0 || coverageGaps.length > 0) {
+      if (failed.length > 0 || allCoverageGaps.length > 0) {
         console.warn(`[infra-backup] ${summary}`);
         store?.record({
           category: 'system', severity: 'warn', source: 'infra-backup',
           action: 'infra.backup.partial-failure', message: summary, status: 'warn',
-          details: { outcomes, skipped: plan.skipped, coverageGaps, directory: dir },
+          details: { outcomes, skipped: plan.skipped, coverageGaps: allCoverageGaps, directory: dir },
         });
       } else {
         console.log(`[infra-backup] ${summary}`);
@@ -1113,6 +1119,10 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
       }
       const infra: HealthInfraFact[] = exposure.findings.map((f) => ({
         id: f.id,
+        // 结论的 id 与话术都要带项目：infra id 只在项目内唯一，两个项目各有一个 redis 时，
+        // 只用 id 会生成两条一模一样的 finding id——去重一合并就少一条，运维也看不出
+        // 该修哪个项目的那台（Codex review P2）。
+        projectId: f.projectId,
         publiclyPublished: f.publiclyPublished,
         // 防火墙状态必须一起带过去。只传原始绑定的话，一台「绑在全网卡但被宿主
         // 防火墙挡住」的库——暴露面自检特意把它降到 warn 的那一类——会在体检这边

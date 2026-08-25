@@ -47,6 +47,13 @@ export interface DailyHealthVerdict {
 /** 一台被检查的数据服务。 */
 export interface HealthInfraFact {
   id: string;
+  /**
+   * 它属于哪个项目。**必须带**：infra id 只在项目内唯一，这台机器上六个项目可以各有一个
+   * 叫 `redis` 的服务。豁免台账的 key 已经带了项目（exemptKey），但结论的 id 与话术如果
+   * 还只用 svc.id，两个项目的问题会生成一模一样的 finding id——去重一合并就少一条，
+   * 运维也看不出该去修哪个项目的那台（Codex review P2）。
+   */
+  projectId?: string | null;
   /** 端口是不是发布到了公网（由暴露面自检算出来）。 */
   publiclyPublished: boolean;
   /**
@@ -193,6 +200,20 @@ function reachableFromInternet(s: HealthInfraFact): boolean {
 }
 
 /**
+ * 结论里怎么称呼这台服务。**带项目**：infra id 只在项目内唯一，两个项目各有一个 `redis` 时，
+ * 只用 id 会生成两条一模一样的 finding id——按 id 去重就少一条，运维也看不出该修哪个项目的
+ * 那一台（Codex review P2）。项目未知时退回裸 id，不编一个假的作用域。
+ *
+ * 写成函数是为了让 id 与话术用同一个口径，不给它们各自漂移的机会（形状 3）。
+ */
+function svcRef(s: HealthInfraFact): { key: string; label: string } {
+  const p = String(s.projectId || '').trim();
+  return p
+    ? { key: `${p}::${s.id}`, label: `${p} 项目的 ${s.id}` }
+    : { key: s.id, label: s.id };
+}
+
+/**
  * 跑一次体检。纯函数：给什么事实就得什么结论，同样的输入永远同样的输出。
  */
 export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict {
@@ -202,18 +223,18 @@ export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict
   const nakedOnInternet = input.infra.filter((s) => reachableFromInternet(s) && s.authenticated === false);
   for (const svc of nakedOnInternet) {
     findings.push({
-      id: `infra.naked-public.${svc.id}`,
+      id: `infra.naked-public.${svcRef(svc).key}`,
       severity: 'critical',
-      message: `${svc.id} 的端口开在公网上，而且没有认证——任何人扫到就能直接读写`,
+      message: `${svcRef(svc).label} 的端口开在公网上，而且没有认证——任何人扫到就能直接读写`,
     });
   }
 
   // 认不出有没有认证的，单独报。「不知道」和「没问题」不是一回事。
   for (const svc of input.infra.filter((s) => reachableFromInternet(s) && s.authenticated === null)) {
     findings.push({
-      id: `infra.unknown-auth.${svc.id}`,
+      id: `infra.unknown-auth.${svcRef(svc).key}`,
       severity: 'warn',
-      message: `${svc.id} 的端口开在公网上，但认不出它有没有认证，需要人工确认`,
+      message: `${svcRef(svc).label} 的端口开在公网上，但认不出它有没有认证，需要人工确认`,
     });
   }
 
@@ -230,9 +251,9 @@ export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict
     (s) => s.publiclyPublished && s.firewallBlocked === true && s.authenticated !== true,
   )) {
     findings.push({
-      id: `infra.firewall-shielded.${svc.id}`,
+      id: `infra.firewall-shielded.${svcRef(svc).key}`,
       severity: 'warn',
-      message: `${svc.id} 的端口绑在全网卡上`
+      message: `${svcRef(svc).label} 的端口绑在全网卡上`
         + `${svc.authenticated === false ? '且没有认证' : '，且认不出有没有认证'}`
         + '，目前靠宿主防火墙挡着——这层保护重启就丢，丢了立刻变成公网裸奔，'
         + '根治要重建容器把绑定地址收窄',
@@ -242,9 +263,9 @@ export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict
   // ---- 2. 内网但无口令：公网收口之后，这些就是下一道防线 ----
   for (const svc of input.infra.filter((s) => !s.publiclyPublished && s.authenticated === false)) {
     findings.push({
-      id: `infra.naked-internal.${svc.id}`,
+      id: `infra.naked-internal.${svcRef(svc).key}`,
       severity: 'warn',
-      message: `${svc.id} 没有认证（目前只在内网可达）`,
+      message: `${svcRef(svc).label} 没有认证（目前只在内网可达）`,
     });
   }
 

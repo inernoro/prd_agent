@@ -43,6 +43,18 @@ public static class CdsReportSyncTargets
             if (s == null) continue;
             // 缺属主就没法做写入鉴权，缺 id 就只能 find-or-create——两种都不该硬着头皮同步。
             if (string.IsNullOrWhiteSpace(s.Id) || string.IsNullOrWhiteSpace(s.OwnerId)) continue;
+            // **只刷新「全量镜像」，不碰带过滤的镜像。**
+            //
+            // 手动导入可以只导一条报告（reportId）或只导一个项目（projectId）——那种库里
+            // 装的就是用户特意挑的那几条。后台任务不带过滤地再导一遍，会把那个 CDS 上所有
+            // 读得到的报告统统灌进去，每小时一次，而且没有任何地方会说一声。用户点了「存这一条」
+            // 却收获整座库，这是在替他改主意（Codex review P1）。
+            //
+            // 判据不新加字段，用已经在存的那个：`PeerSyncLastAt` 只有**默认全量且零失败**的
+            // 那种导入才回写（见 CdsReportImportService 的 isDefaultScopeImport），
+            // 带过滤的导入从来不写它。所以「有水位」正好等价于「这个库被当作全量镜像用过」。
+            // 没有水位的一律跳过——宁可不自动刷新，也不擅自把范围撑大。
+            if (s.PeerSyncLastAt == null) continue;
             // 空白来源 = 这个库还没记下它从哪来（历史数据）。退回默认解析，与手动导入首次
             // 的行为一致；导入成功后服务会把来源写回库上，下一轮就钉住了。
             var source = string.IsNullOrWhiteSpace(s.PeerSyncNodeBaseUrl) ? null : s.PeerSyncNodeBaseUrl!.Trim();

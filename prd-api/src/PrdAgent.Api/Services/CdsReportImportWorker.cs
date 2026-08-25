@@ -112,9 +112,12 @@ public class CdsReportImportWorker : BackgroundService
 
         if (targets.Count == 0)
         {
+            // 说清是「一个库都没有」还是「有库但都不符合自动刷新条件」——两者的下一步不一样。
             _logger.LogInformation(
-                "[CdsReportImportWorker] 还没有任何 CDS 报告镜像库，本轮跳过。"
-                + "第一次同步请在知识库里手动导入一次，之后本任务会自动保持新鲜");
+                "[CdsReportImportWorker] 本轮没有可自动刷新的 CDS 报告镜像库（扫到 {Total} 个 {AppKey} 库）。"
+                + "只有「默认全量导入且零失败」过的库才会自动刷新：只导过单条报告或单个项目的库不会被撑成全量，"
+                + "从没成功全量导入过的库也不会。第一次同步请在知识库里手动导入一次",
+                stores.Count, CdsReportStoreAppKey);
             return;
         }
 

@@ -350,6 +350,46 @@ describe('平台存储事实：没有 Mongo 就别报', () => {
  *
  * 这是形状 6：判据读到的值不是真正生效的那个（原始绑定 ≠ 有效可达性）。
  */
+describe('结论必须分得清是哪个项目的那台服务', () => {
+  it('两个项目各有一个 redis：出两条结论，id 不撞、话里说得清是谁', () => {
+    // 豁免台账的 key 早就带了项目（exemptKey），但结论的 id 与话术还只用 svc.id 的话，
+    // 两个项目会生成一模一样的 finding id——按 id 去重就少一条，运维也看不出该去修
+    // 哪个项目的那台（Codex review P2）。
+    const v = evaluateDailyHealth(input({
+      infra: [
+        { id: 'redis', projectId: 'proj-a', publiclyPublished: true, authenticated: false },
+        { id: 'redis', projectId: 'proj-b', publiclyPublished: true, authenticated: false },
+      ],
+    }));
+    const ids = v.findings.map((f) => f.id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).toEqual(['infra.naked-public.proj-a::redis', 'infra.naked-public.proj-b::redis']);
+    expect(v.findings[0].message).toContain('proj-a');
+    expect(v.findings[1].message).toContain('proj-b');
+  });
+
+  it('项目未知时退回裸 id，不编一个假的作用域', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'lonely-redis', publiclyPublished: false, authenticated: false }],
+    }));
+    expect(v.findings[0].id).toBe('infra.naked-internal.lonely-redis');
+    expect(v.findings[0].message).toContain('lonely-redis');
+    expect(v.findings[0].message).not.toContain('::');
+  });
+
+  it('四类结论都带项目，不是只修了最显眼的那一条', () => {
+    // 只改「公网裸奔」那一条最容易漏掉其余三条，而它们同样会撞 id。
+    const v = evaluateDailyHealth(input({
+      infra: [
+        { id: 'a', projectId: 'p1', publiclyPublished: true, authenticated: null },
+        { id: 'a', projectId: 'p1', publiclyPublished: true, firewallBlocked: true, authenticated: false },
+        { id: 'b', projectId: 'p1', publiclyPublished: false, authenticated: false },
+      ],
+    }));
+    for (const f of v.findings) expect(f.id).toContain('p1::');
+  });
+});
+
 describe('防火墙挡着的端口：不许报成公网裸奔，也不许当成没事', () => {
   it('绑全网卡 + 无认证 + 防火墙挡着 → warn，且不说「任何人扫到就能读写」', () => {
     const v = evaluateDailyHealth(input({

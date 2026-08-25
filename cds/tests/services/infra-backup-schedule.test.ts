@@ -21,6 +21,7 @@ import {
   backupKindOf,
   isAutoBackupFile,
   isBackupRoundHealthy,
+  backupScopeGaps,
   parseDfAvailableBytes,
   planInfraBackups,
   selectExpiredBackups,
@@ -216,6 +217,41 @@ describe('结论可读', () => {
     expect(isBackupRoundHealthy(complete, [{ id: 'mongo', ok: true, bytes: 128 }])).toBe(true);
     expect(isBackupRoundHealthy(complete, [{ id: 'mongo', ok: false, error: 'failed' }])).toBe(false);
     expect(isBackupRoundHealthy(complete, [])).toBe(false);
+  });
+
+  it('备成了但只备到一部分：算缺口、拉低整轮健康，不能报成 complete', () => {
+    // postgres 只导 POSTGRES_DB 那一个库，同实例其它库一条都没带走，导出脚本会往
+    // stderr 报一行范围限制。原来这行只挂在 outcome.note 上，而 note 没有任何判据在读——
+    // ok 仍是 true，于是整轮判成 coverageComplete、备份健康时间照常刷新、每日体检也
+    // 报不出缺口。**那几个库一份备份都没有，而灯是绿的**（Codex review P1）。
+    const complete: BackupPlan = { targets: [], skipped: [] };
+    const partial = [{
+      id: 'postgres',
+      ok: true,
+      bytes: 4096,
+      note: '只导出了 appdb；同实例还有 analytics、audit 未纳入本次备份',
+    }];
+
+    const gaps = backupScopeGaps(partial);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].id).toBe('postgres');
+    expect(gaps[0].blocksHealthy).toBe(true);
+    // 原因原样带出来，让看到缺口的人当场知道缺的是哪几个库。
+    expect(gaps[0].reason).toContain('analytics');
+    expect(isBackupRoundHealthy(complete, partial)).toBe(false);
+  });
+
+  it('没有范围限制时不许凭空造缺口（防判据恒真）', () => {
+    // 没有这一条，把 backupScopeGaps 写成「永远返回一条」也能让上面那条绿，
+    // 而整轮健康会从此永远为假——一盏永远红着的灯，正是这批改动要治的另一半病。
+    const complete: BackupPlan = { targets: [], skipped: [] };
+    expect(backupScopeGaps([{ id: 'mongo', ok: true, bytes: 128 }])).toEqual([]);
+    expect(isBackupRoundHealthy(complete, [{ id: 'mongo', ok: true, bytes: 128 }])).toBe(true);
+  });
+
+  it('失败的那条不重复算成范围缺口——它已经是失败了', () => {
+    // ok=false 时整轮本来就不健康，再把它算进「范围缺口」只会让同一件事被报两遍。
+    expect(backupScopeGaps([{ id: 'postgres', ok: false, error: '导出失败', note: '范围提示' }])).toEqual([]);
   });
 });
 

@@ -368,11 +368,41 @@ export function backupCoverageGaps(plan: BackupPlan): BackupPlan['skipped'] {
   return plan.skipped.filter((item) => item.blocksHealthy);
 }
 
-/** 只有每个运行中目标都得到可校验副本时，整轮才允许刷新健康时间。 */
+/**
+ * 备成了、但**只备到了一部分**的那些缺口。
+ *
+ * postgres 是最典型的：脚本只导 `POSTGRES_DB` 那一个库，同实例其它库一条都没带走，
+ * 于是导出脚本往 stderr 报一行 `cds-backup-scope:`。原来这行只挂在 outcome 的 `note` 上，
+ * 而 `note` 没有任何判据在读——`ok` 仍是 true，于是整轮判成 coverageComplete，
+ * 备份健康时间照常刷新，每日体检也报不出缺口。**那几个库一份备份都没有，而灯是绿的。**
+ *
+ * 这正是这一整批改动要治的病（一盏说谎的灯比一盏红着的灯更糟），不能自己先犯
+ *（Codex review P1）。所以把运行时发现的范围限制升级成正式缺口：既进持久化的
+ * coverageGaps 给每日体检看，也拉低整轮健康。
+ *
+ * 注意它和 `ok` 的分工：那份单库产物**本身是有效备份**，不该被判成失败——失败会让
+ * 「导出崩了」和「导出成功但只覆盖一部分」混成一件事。所以 ok 保持 true，只算缺口。
+ */
+export function backupScopeGaps(outcomes: readonly BackupOutcome[]): BackupPlan['skipped'] {
+  const gaps: BackupPlan['skipped'] = [];
+  for (const o of outcomes) {
+    if (!o.ok || !o.note) continue;
+    gaps.push({ id: o.id, reason: o.note, blocksHealthy: true });
+  }
+  return gaps;
+}
+
+/**
+ * 只有每个运行中目标都得到可校验副本、且没有任何覆盖缺口时，整轮才允许刷新健康时间。
+ *
+ * 缺口有两种来源，缺一种都会让健康位说谎：**计划阶段**就知道备不了的（backupCoverageGaps，
+ * 按服务类型判），和**跑完才知道只备到一部分**的（backupScopeGaps，按导出脚本的实际报告判）。
+ */
 export function isBackupRoundHealthy(plan: BackupPlan, outcomes: readonly BackupOutcome[]): boolean {
   return outcomes.length > 0
     && outcomes.every((outcome) => outcome.ok)
-    && backupCoverageGaps(plan).length === 0;
+    && backupCoverageGaps(plan).length === 0
+    && backupScopeGaps(outcomes).length === 0;
 }
 
 export interface ExistingBackup {

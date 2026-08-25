@@ -23,8 +23,15 @@ namespace PrdAgent.Tests;
 /// </summary>
 public class CdsReportSyncTargetTests
 {
-    private static DocumentStore Store(string id, string owner, string? source)
-        => new() { Id = id, OwnerId = owner, PeerSyncNodeBaseUrl = source };
+    /// <summary>默认造一个「全量镜像」：有水位 = 被当作默认全量导入过（见 Build 的判据）。</summary>
+    private static DocumentStore Store(string id, string owner, string? source, DateTime? lastAt = null)
+        => new()
+        {
+            Id = id,
+            OwnerId = owner,
+            PeerSyncNodeBaseUrl = source,
+            PeerSyncLastAt = lastAt ?? new DateTime(2026, 8, 25, 0, 0, 0, DateTimeKind.Utc),
+        };
 
     [Fact]
     public void 每个库都带着自己的来源_不会混源()
@@ -88,5 +95,35 @@ public class CdsReportSyncTargetTests
     public void 一个库都没有时返回空_让调用方去说清原因()
     {
         Assert.Empty(CdsReportSyncTargets.Build(Array.Empty<DocumentStore>()));
+    }
+
+    [Fact]
+    public void 带过滤的镜像库不自动刷新_不许把单条报告撑成整座库()
+    {
+        // 手动导入可以只导一条报告或只导一个项目，那种库里装的是用户特意挑的那几条。
+        // 后台任务不带过滤地再导一遍，会把那个 CDS 上所有读得到的报告统统灌进去，
+        // 每小时一次且无人告知——用户点了「存这一条」却收获整座库（Codex review P1）。
+        //
+        // 判据用已经在存的 PeerSyncLastAt：只有「默认全量且零失败」的导入才回写它，
+        // 带过滤的导入从来不写。所以没有水位 = 不能证明它是全量镜像 = 不碰。
+        var targets = CdsReportSyncTargets.Build(new[]
+        {
+            Store("store-filtered", "user-1", "https://cds-a.example.com", lastAt: null),
+            Store("store-full", "user-1", "https://cds-a.example.com"),
+        });
+
+        Assert.Single(targets);
+        Assert.Equal("store-full", targets[0].StoreId);
+    }
+
+    [Fact]
+    public void 从没成功全量导入过的库也不刷_宁可不同步也不撑大范围()
+    {
+        // 全量导入但有失败时同样不回写水位（那是为了让失败条目下轮重试）。
+        // 这种库这轮也不自动刷新——保守方向一致：证明不了是全量镜像就不碰。
+        Assert.Empty(CdsReportSyncTargets.Build(new[]
+        {
+            Store("store-partial-fail", "user-1", "https://cds-a.example.com", lastAt: null),
+        }));
     }
 }
