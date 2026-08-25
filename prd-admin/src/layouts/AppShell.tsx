@@ -69,7 +69,8 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
-import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useMobileThemeStore, watchSystemThemeChange, type MobileThemeMode } from '@/stores/mobileThemeStore';
+import { THEME_MODE_OPTIONS } from '@/lib/themeModeRegistry';
 import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
 import { MobileCompatGate } from '@/components/MobileCompatGate';
@@ -89,7 +90,6 @@ import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/d
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
-import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 import { MapBrandMark } from '@/components/ui/MapBrandMark';
 import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
 
@@ -231,14 +231,24 @@ export default function AppShell() {
     ownsThemeRef.current = true;
   }, [mobileThemeMode, location.pathname]);
 
-  const handleThemeModeToggle = useCallback<React.MouseEventHandler<HTMLButtonElement>>((event) => {
+  const handleThemeModeSelect = useCallback((next: MobileThemeMode, event: React.MouseEvent<HTMLElement>) => {
+    if (next === mobileThemeMode) return;
     transitionThemeMode({
-      mode: mobileThemeMode === 'light' ? 'dark' : 'light',
+      mode: next,
       pathname: location.pathname,
       origin: event,
       commit: setThemeMode,
     });
   }, [location.pathname, mobileThemeMode, setThemeMode]);
+
+  // 「随系统」要真的跟着系统走：选了它之后，用户在系统里切深浅，页面得当场变。
+  // 只在 mode === 'system' 时订阅，否则系统怎么变都不该覆盖用户的显式选择。
+  useEffect(() => {
+    if (mobileThemeMode !== 'system') return;
+    return watchSystemThemeChange(() => {
+      applyDocumentThemeMode('system', location.pathname);
+    });
+  }, [mobileThemeMode, location.pathname]);
 
   // 壳层卸载(登出回登录页):清掉自己设置的主题,不让移动浅色泄漏到登录页(Codex P2)
   useEffect(
@@ -1459,18 +1469,7 @@ export default function AppShell() {
               collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'
             )}
           >
-            <div className="mb-1 flex justify-center px-1">
-              <ThemeModeToggle mode={mobileThemeMode} onToggle={handleThemeModeToggle} />
-            </div>
-            {/* 分隔线 */}
-            <div
-              className={cn('mx-auto mb-2', collapsed ? '' : 'mx-3')}
-              style={{
-                height: 1,
-                background: 'var(--border-faint)',
-                width: collapsed ? 24 : undefined,
-              }}
-            />
+            {/* 皮肤切换已挪进用户菜单（横排三选项），侧栏底部只留头像，让它真正贴底 */}
             <div
               className={cn(
                 'group relative shrink-0 rounded-[10px]',
@@ -1585,6 +1584,52 @@ export default function AppShell() {
                   {/* 让「再点一次头像改头像」这条隐式交互可被看见，不靠用户自己撞出来 */}
                   <div className="mt-2 text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                     再点一次侧栏头像即可修改头像
+                  </div>
+                </div>
+
+                <DropdownMenu.Separator
+                  className="h-px mx-2 my-1"
+                  style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
+                />
+
+                {/* 外观：横排三选项（白天 / 黑夜 / 随系统）。
+                    用 DropdownMenu.Item 而不是裸 button —— 菜单里的键盘上下键才够得到它；
+                    onSelect 里 preventDefault 让点完菜单不关，用户能当场看见整屏换肤。 */}
+                <div
+                  className="mx-1 mb-1 mt-0.5 rounded-[12px] p-1"
+                  style={{ background: 'var(--nested-block-bg)' }}
+                  role="radiogroup"
+                  aria-label="外观"
+                >
+                  <div className="flex items-stretch gap-1">
+                    {THEME_MODE_OPTIONS.map((option) => {
+                      const Icon = option.icon;
+                      const selected = option.value === mobileThemeMode;
+                      return (
+                        <DropdownMenu.Item
+                          key={option.value}
+                          asChild
+                          onSelect={(event) => event.preventDefault()}
+                        >
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            title={option.description}
+                            onClick={(event) => handleThemeModeSelect(option.value, event)}
+                            className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-[9px] px-2 py-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                            style={
+                              selected
+                                ? { background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }
+                                : { background: 'transparent', color: 'var(--text-secondary)' }
+                            }
+                          >
+                            <Icon size={15} aria-hidden />
+                            <span className="text-[11px] leading-none">{option.label}</span>
+                          </button>
+                        </DropdownMenu.Item>
+                      );
+                    })}
                   </div>
                 </div>
 

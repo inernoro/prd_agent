@@ -35,7 +35,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
-import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useMobileThemeStore, useResolvedThemeMode } from '@/stores/mobileThemeStore';
 import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
@@ -63,6 +63,8 @@ export function LibraryShareViewPage() {
   const location = useLocation();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const themeMode = useMobileThemeStore((s) => s.mode);
+  // 「随系统」下必须按当前真正显示的明暗来翻面，否则点了没反应
+  const resolvedThemeMode = useResolvedThemeMode();
   const setThemeMode = useMobileThemeStore((s) => s.setMode);
   const [searchParams, setSearchParams] = useSearchParams();
   // URL ?entry={id} 优先级最高：归档脚本/外部链接可指定一打开就高亮某篇
@@ -89,12 +91,12 @@ export function LibraryShareViewPage() {
 
   const toggleTheme = useCallback<MouseEventHandler<HTMLButtonElement>>((event) => {
     transitionThemeMode({
-      mode: themeMode === 'light' ? 'dark' : 'light',
+      mode: resolvedThemeMode === 'light' ? 'dark' : 'light',
       pathname: location.pathname,
       origin: event,
       commit: setThemeMode,
     });
-  }, [location.pathname, setThemeMode, themeMode]);
+  }, [location.pathname, setThemeMode, resolvedThemeMode]);
 
   const shareSortMode = useMemo(
     () => resolveLibraryShareSortMode(
@@ -333,7 +335,7 @@ export function LibraryShareViewPage() {
           </span>
         </div>
         <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} variant="inline" />
+          <ThemeModeToggle mode={resolvedThemeMode} onToggle={toggleTheme} variant="inline" />
           {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
           <button
             onClick={() => navigate(knowledgeBaseReturnPath)}
