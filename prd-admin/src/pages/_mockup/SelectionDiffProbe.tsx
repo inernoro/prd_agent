@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
-import { buildInlineDiffBody, STREAM_CURSOR } from '@/components/doc-browser/selectionDiffMarkup';
+import { createPortal } from 'react-dom';
+import { StreamingText } from '@/components/streaming';
+import { buildInlineDiffBody, STREAM_ANCHOR_HTML, STREAM_ANCHOR_SELECTOR } from '@/components/doc-browser/selectionDiffMarkup';
 import { InlineDiffReviewBar } from '@/components/doc-browser/SelectionRewriteInline';
 
 // 自测专用：把真实的就地 diff 渲染链（buildInlineDiffBody → MarkdownViewer → doc-diff.css）
@@ -73,11 +75,29 @@ export default function SelectionDiffProbe() {
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [run]);
 
+  // 与 DocBrowser 同一套：流式档正文只放一个空锚点（与吐了多少字无关），
+  // 正在写的那段由 StreamingText 用 portal 画进去。deps 不含 streamedLen 是关键——
+  // 正文在整个流式期间是同一个字符串，一次都不重渲染。
   const diff = useMemo(() => {
     if (phase === 'idle') return null;
-    const text = phase === 'streaming' ? `${REWRITTEN.slice(0, streamedLen)}${STREAM_CURSOR}` : REWRITTEN;
-    return buildInlineDiffBody(ORIGINAL, RANGE, text);
-  }, [phase, streamedLen]);
+    if (phase === 'streaming') return buildInlineDiffBody(ORIGINAL, RANGE, STREAM_ANCHOR_HTML);
+    return buildInlineDiffBody(ORIGINAL, RANGE, REWRITTEN);
+  }, [phase]);
+
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (phase !== 'streaming') { setAnchorEl(null); return; }
+    let raf = 0;
+    let tries = 0;
+    const tick = () => {
+      const el = document.querySelector<HTMLElement>(STREAM_ANCHOR_SELECTOR);
+      if (el) { setAnchorEl(el); return; }
+      if (++tries > 180) return;
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [phase, diff]);
 
   const toggleTheme = () => {
     const root = document.documentElement;
@@ -116,11 +136,16 @@ export default function SelectionDiffProbe() {
         <MarkdownViewer content={diff ? diff.body : ORIGINAL} />
       </div>
 
+      {anchorEl && phase === 'streaming' && createPortal(
+        <StreamingText text={REWRITTEN.slice(0, streamedLen)} streaming animateTailChars={400} />,
+        anchorEl,
+      )}
+
       {diff && phase !== 'idle' && (
         <InlineDiffReviewBar
           phase={phase === 'streaming' ? 'streaming' : 'review'}
           model="probe/fake-model"
-          added={diff.added}
+          added={phase === 'streaming' ? REWRITTEN.slice(0, streamedLen).split('\n').length : diff.added}
           removed={diff.removed}
           codeChangeUnmarked={diff.codeChangeUnmarked}
           startedAt={startedAt}

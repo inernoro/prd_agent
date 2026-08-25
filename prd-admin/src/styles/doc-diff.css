@@ -68,17 +68,17 @@
 }
 
 /*
- * 流式期间不给单个 ins 播进场动画——这是「一闪一闪，像老电脑」的根因。
+ * 流式期间不给 ins 播进场动画。
  *
- * MarkdownViewer 传给 ReactMarkdown 的 components 是每次 render 新建的内联函数
- *（那份 memo 注释里写着，为的是修另一个 bug），所以正文每收到一个 token 就整棵 DOM 重挂。
- * 重挂 = 每个 ins 从头重播这段 260ms 动画，而下一个 token 90ms 就到，动画永远播不完：
- * 实测开头那段早就写完的新增文字，246 帧里没有一帧到过 opacity 1，底色在 7 种蓝之间来回跳。
- * 已经定稿的字一直在闪，正是「不丝滑」。
+ * 逐字生长的节奏归共享组件 StreamingText 管（词级 blur focus + MAP 光标），
+ * 这里再叠一层元素级进场只会打架（doc/rule.frontend.streaming-text.md：
+ * 「组件自己负责逐字节奏与光标——调用方不做打字机逻辑」）。
+ * 动画留给流式结束那一下：去掉 --streaming 时全篇 ins 一起浮现一次，
+ * 正好是「改完了」的那个瞬间。
  *
- * 流式期间本来也不需要逐元素进场：文字在一个字一个字地长，那本身就是动效
- *（artifact-is-experience.md：动的应该是产物）。动画留给流式结束那一下——
- * 去掉 --streaming 时全篇 ins 一起浮现一次，正好是「改完了」的那个瞬间。
+ * 历史：这条规则最早是为了堵「一闪一闪，像老电脑」——那时正文逐 token 全量重渲染，
+ * 每个 ins 都在从头重播这段 260ms 动画且永远播不完。根因已经从架构上拿掉了
+ *（流式期正文是常量，正在写的那段走 portal），这条规则留作纪律，不再是补丁。
  */
 .doc-inline-diff.doc-inline-diff--streaming ins {
   animation: none;
@@ -95,10 +95,9 @@
   }
 }
 
-/* 流式期间正文末尾的 ▌ 是写进 markdown 的真字符（selectionDiffMarkup 的 STREAM_CURSOR），
- * 不是伪元素——伪元素只能选到「每个父元素里最后一个 ins」，跨段落的新内容会同时冒出好几个光标。
- * 它被刻意留在 <ins> 外面，所以上面那套新增块样式（底色/圆角/内边距/进场动画）不落在它头上：
- * 包进去的话，刚换行、整行只剩光标的那几帧会渲染成一个孤零零的蓝色小方块。 */
+/* 光标不在这里：流式期正文里放的是一个空锚点（selectionDiffMarkup 的 STREAM_ANCHOR_HTML），
+ * StreamingText 用 portal 把「正在写的那段 + MAP 品牌光标」画进去，样式归 streaming.css。
+ * 首字节到达前那个 ins 里只有一枚光标，看着就是「AI 要在这儿写」，不是残留的方块。 */
 
 @media (prefers-reduced-motion: reduce) {
   .doc-inline-diff ins {

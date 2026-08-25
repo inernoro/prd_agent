@@ -236,7 +236,8 @@ import {
   stripDuplicatedBlockPrefix,
   type ResolvedRange,
 } from './selectionEdit';
-import { buildInlineDiffBody, closeDanglingInlineMarks, STREAM_CURSOR } from './selectionDiffMarkup';
+import { StreamingText } from '@/components/streaming';
+import { buildInlineDiffBody, STREAM_ANCHOR_HTML, STREAM_ANCHOR_SELECTOR } from './selectionDiffMarkup';
 import {
   SelectionRewritePrompt,
   InlineDiffReviewBar,
@@ -2402,6 +2403,21 @@ export function DocBrowser({
   const rewriteOutputRef = useRef(rewriteOutput);
   rewriteOutputRef.current = rewriteOutput;
 
+  // 流式档的正文只与「选区在哪」有关，与已经吐出多少字无关 —— 依赖项刻意不含 rewrite.text，
+  // 于是整个流式期间它返回**同一个对象**，下游 previewForRender / MarkdownViewer 的 memo
+  // 才能真的挡住重渲染（MarkdownViewer 只吃一个 content 字符串，字符串不变就整棵不动）。
+  const streamingRangeStart = rewrite?.range.start;
+  const streamingRangeEnd = rewrite?.range.end;
+  const streamingDiff = useMemo(() => {
+    if (typeof selectionRawContent !== 'string') return null;
+    if (streamingRangeStart == null || streamingRangeEnd == null) return null;
+    return buildInlineDiffBody(
+      selectionRawContent,
+      { start: streamingRangeStart, end: streamingRangeEnd },
+      STREAM_ANCHOR_HTML,
+    );
+  }, [selectionRawContent, streamingRangeStart, streamingRangeEnd]);
+
   const rewriteDiff = useMemo(() => {
     if (!rewrite || rewrite.phase === 'prompt') return null;
     if (rewrite.entryId !== selectedEntryId) return null;
@@ -2413,12 +2429,13 @@ export function DocBrowser({
     if (rewrite.phase === 'error' && !rewriteOutput) {
       return buildInlineDiffBody(selectionRawContent, rewrite.range, rewrite.original);
     }
-    // 流式期间在结果末尾点一个光标：让「还在写」这件事发生在文章里，而不是只有状态条在转
-    const text = rewrite.phase === 'streaming'
-      ? `${closeDanglingInlineMarks(rewriteOutput)}${STREAM_CURSOR}`
-      : rewriteOutput;
-    return buildInlineDiffBody(selectionRawContent, rewrite.range, text);
-  }, [rewrite, rewriteOutput, selectionRawContent, preview, selectedEntryId]);
+    // 流式期间正文里放的是一个**空锚点**，不是已吐出的文字（doc/rule.frontend.streaming-text.md：
+    // 「流式期间使用轻量纯文本动效，完成后再切换完整 Markdown 渲染」「禁止每个 chunk 都执行完整
+    // Markdown 高亮和布局」）。于是这个 memo 在整个流式期间返回同一个字符串，正文一次都不重渲染；
+    // 正在写的那段由共享组件 StreamingText 用 portal 画进锚点，节奏与光标都归它管。
+    if (rewrite.phase === 'streaming') return streamingDiff;
+    return buildInlineDiffBody(selectionRawContent, rewrite.range, rewriteOutput);
+  }, [rewrite, rewriteOutput, streamingDiff, selectionRawContent, preview, selectedEntryId]);
 
   // 采纳落库那一瞬间正文已换成新内容、diff 失效，这属于成功路径，不能报「文档已变化」
   const rewriteDiffBroken = !!rewrite && rewrite.phase !== 'prompt' && !rewrite.applying && !rewriteDiff;
@@ -2446,6 +2463,25 @@ export function DocBrowser({
     if (!preview || !rewriteDiff || typeof selectionRawContent !== 'string') return preview;
     return { ...preview, text: frontmatterPrefixOf(preview.text ?? '', selectionRawContent) + rewriteDiff.body };
   }, [preview, rewriteDiff, selectionRawContent]);
+
+  // 正文里那个空锚点的真实 DOM 节点：StreamingText 靠 portal 画进去。
+  // 正文是渲染完才有这个节点，所以用 rAF 轮询到它出现为止；给个上限，
+  // 免得 diff 画不出来时（切档 / 正文被别的路径改过）在这儿空转到天荒地老。
+  const rewriteStreaming = rewrite?.phase === 'streaming';
+  const [streamAnchorEl, setStreamAnchorEl] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!rewriteStreaming) { setStreamAnchorEl(null); return; }
+    let raf = 0;
+    let tries = 0;
+    const tick = () => {
+      const el = document.querySelector<HTMLElement>(STREAM_ANCHOR_SELECTOR);
+      if (el) { setStreamAnchorEl(el); return; }
+      if (++tries > 180) return; // 约 3 秒，找不到就算了（条子仍会报状态）
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [rewriteStreaming, previewForRender]);
 
   // 划词配图：生成的图片以 markdown 形式插入选区所在段落之后
   const handleInsertSelectionImage = useCallback(async (url: string, name?: string) => {
@@ -4210,12 +4246,30 @@ export function DocBrowser({
                 )}
                 {/* 逐句修改：改动已就地长在正文里 → 只剩操作条（撤销 / 采纳）。
                     这里不再画选区高亮：正文里的 del/ins 着色本身就是「选了哪段、改了什么」 */}
+                {/* 正在写的那段：交给全站统一的流式组件，画进正文里的锚点。
+                    节奏（词级 blur focus）、光标（MAP 品牌 M）、offset 稳定 key 都归它管——
+                    doc/rule.frontend.streaming-text.md 明令「调用方不做打字机逻辑」，
+                    自己写一套的下场就是每个页面节奏不一样、且重挂时动画无限重启。 */}
+                {streamAnchorEl && rewrite?.phase === 'streaming' && createPortal(
+                  <StreamingText
+                    text={rewriteOutput}
+                    streaming
+                    // 长文改写时只对尾部做词级动画，前面已定稿的部分当稳定纯文本，
+                    // 免得几千个 span 堆在正文里
+                    animateTailChars={400}
+                  />,
+                  streamAnchorEl,
+                )}
                 {rewrite && rewrite.phase !== 'prompt' && (rewriteDiff || rewrite.applying) && !editMode && (
                   <InlineDiffReviewBar
                     scrollRef={contentAreaRef}
                     phase={rewrite.phase}
                     model={rewrite.model}
-                    added={(rewriteDiff ?? lastDiffStatsRef.current).added}
+                    added={rewrite.phase === 'streaming'
+                      // 流式档的正文只有锚点（恒 1 行），拿它当新增数会一直显示 +1。
+                      // 真正的新增量是「已经吐出来的行数」，按它报。
+                      ? (rewriteOutput ? rewriteOutput.split('\n').length : 0)
+                      : (rewriteDiff ?? lastDiffStatsRef.current).added}
                     removed={(rewriteDiff ?? lastDiffStatsRef.current).removed}
                     codeChangeUnmarked={(rewriteDiff ?? lastDiffStatsRef.current).codeChangeUnmarked}
                     startedAt={rewrite.startedAt}

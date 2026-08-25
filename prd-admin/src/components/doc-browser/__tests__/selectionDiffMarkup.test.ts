@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { buildInlineDiffBody, closeDanglingInlineMarks, markLine, STREAM_CURSOR } from '../selectionDiffMarkup';
+import {
+  buildInlineDiffBody, markLine,
+  STREAM_ANCHOR_DOM_ID, STREAM_ANCHOR_HTML, STREAM_ANCHOR_SELECTOR,
+} from '../selectionDiffMarkup';
 import { DOC_REMARK_PLUGINS, DOC_REHYPE_PLUGINS } from '@/components/file-preview/MarkdownViewer';
 
 /**
@@ -177,110 +182,69 @@ describe('渲染契约：标记必须活到正文渲染器输出的 HTML 里', (
   });
 });
 
-describe('closeDanglingInlineMarks：流式半截的行内标记不许露脸', () => {
-  it('打到一半的加粗补上闭合，星号不作为文字渲染', () => {
-    const out = closeDanglingInlineMarks('1. **《标准》V0.1');
-    expect(out).toBe('1. **《标准》V0.1**');
-    expect(render(out)).toContain('<strong>');
-    expect(render('1. **《标准》V0.1')).toContain('**'); // 反证：不处理就会漏星号
+/**
+ * 流式锚点。
+ *
+ * 2026-08-25 用户："你不懂自己去增加这种绘制，本系统里面就有全局绘制组件。"
+ * 确实——doc/rule.frontend.streaming-text.md 明令流式文本走 StreamingText，
+ * 「流式期间使用轻量纯文本动效，完成后再切换完整 Markdown 渲染」，
+ * 并禁止「每个 chunk 都执行完整 Markdown 高亮和布局」。
+ * 之前这条链自己把已吐出的文字拼进 markdown 逐 token 重渲染，两条都违反了，
+ * 表现就是正文整棵重挂、进场动画无限重启、「一闪一闪像老电脑」。
+ *
+ * 现在流式档正文里只有一个空锚点，正在写的那段由 StreamingText 用 portal 画进去。
+ */
+describe('流式锚点：正文这一层在流式期间完全不动', () => {
+  const DOC = '# 标题\n\n第一阶段建议：\n\n1. 甲\n2. 乙\n\n结尾。\n';
+  const SEL = '第一阶段建议：\n\n1. 甲\n2. 乙';
+  const RANGE = { start: DOC.indexOf(SEL), end: DOC.indexOf(SEL) + SEL.length };
+
+  it('锚点能穿过 rehypeRaw + sanitize 活到 DOM 里', () => {
+    const html = render(buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body);
+    expect(html).toContain('<span id=');
+    // 原选区照旧压成 del，用户看得见「这段正在被替换」
+    expect(html).toContain('<del>第一阶段建议：</del>');
   });
 
-  it('末尾刚敲出半截标记时先摘掉，不会补成三颗星', () => {
-    expect(closeDanglingInlineMarks('这是 **')).toBe('这是 ');
-    expect(closeDanglingInlineMarks('这是 *')).toBe('这是 ');
+  it('DOM 里的 id 带 user-content- 前缀——查节点必须用真正生效的那个', () => {
+    // sanitize 会给正文内嵌 HTML 的 id 加前缀防撞车。按写进 markdown 的那个 id 去
+    // getElementById 会永远查不到，流式文字一个字都画不出来（形状 6）。
+    const html = render(buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body);
+    const id = /<span id="([^"]+)"/.exec(html)?.[1];
+    expect(id, '锚点没渲染出来').toBeTruthy();
+    expect(id).toBe(STREAM_ANCHOR_DOM_ID);
+    expect(STREAM_ANCHOR_SELECTOR).toContain(`#${id}`);
   });
 
-  it('行内代码与删除线同样补齐', () => {
-    expect(closeDanglingInlineMarks('调用 `apiRequest')).toBe('调用 `apiRequest`');
-    expect(closeDanglingInlineMarks('这段 ~~作废')).toBe('这段 ~~作废~~');
-  });
-
-  it('已经闭合的不动', () => {
-    expect(closeDanglingInlineMarks('**加粗** 与 `代码`')).toBe('**加粗** 与 `代码`');
-  });
-
-  it('刚吐完的斜体不许被摘掉尾巴（2026-08-21 code review）', () => {
-    // 上一版无条件摘末尾标记再补，而补齐清单里没有单个星号，
-    // 于是完成态的 `*斜体*` 被摘成 `*斜体`，星号反倒露了出来
-    expect(closeDanglingInlineMarks('*斜体*')).toBe('*斜体*');
-    expect(render(closeDanglingInlineMarks('*斜体*'))).toContain('<em>');
-    expect(closeDanglingInlineMarks('前面 *斜体*')).toBe('前面 *斜体*');
-    expect(closeDanglingInlineMarks('`代码`')).toBe('`代码`');
-    expect(closeDanglingInlineMarks('~~删~~')).toBe('~~删~~');
-    // 粗斜体：末尾三颗星是闭合的一部分，摘一颗再补两颗会少掉一颗
-    expect(closeDanglingInlineMarks('***粗斜***')).toBe('***粗斜***');
-  });
-
-  it('打到一半的斜体补上单个星号', () => {
-    expect(closeDanglingInlineMarks('这是 *斜的')).toBe('这是 *斜的*');
-    expect(render(closeDanglingInlineMarks('这是 *斜的'))).toContain('<em>');
-  });
-
-  it('代码围栏里的星号是代码，不参与闭合判断', () => {
-    const t = '```js\nconst a = b ** 2;\n```';
-    expect(closeDanglingInlineMarks(t)).toBe(t);
+  it('流式档的正文是常量：与「已经吐出多少字」无关', () => {
+    const a = buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body;
+    const b = buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body;
+    expect(a).toBe(b);
+    // 反证：老写法把已吐出的文字拼进去，每多一个字正文就是一个新字符串
+    expect(buildInlineDiffBody(DOC, RANGE, '新句').body)
+      .not.toBe(buildInlineDiffBody(DOC, RANGE, '新句子').body);
   });
 });
 
 /**
- * 流式光标（STREAM_CURSOR）。
- *
- * 2026-08-25 用户指着截图里一个孤零零的蓝色小方块问「这个东西为什么会存在，这是故意设计吗」。
- * 光标是故意的，方块不是：光标当时被包进了 <ins>，于是套上了新增块的底色/圆角/内边距/进场动画，
- * 在刚换行、整行只剩光标的那几帧里就渲染成一块什么字都没有的蓝色小砖。
- *
- * 判据是「渲染出来的 <ins> 里有没有只装着光标的」，扫的是真实渲染结果不是源码字面量。
+ * 接线守卫（predicate-and-wiring-discipline.md 形状 2）：
+ * 上面那些性质删掉都不会红——真正会退化的是「DocBrowser 有没有照着用」。
+ * 所以直接扫调用方源码，断言这条链没有偷偷回到自己拼 markdown 的老路。
  */
-describe('流式光标不许被当成新增内容', () => {
-  const ORIGINAL = `# 标题
+describe('接线：DocBrowser 的流式档确实走共享组件', () => {
+  const SRC = readFileSync(resolve(__dirname, '../DocBrowser.tsx'), 'utf-8');
 
-第一阶段建议至少形成以下成果：
-
-1. 《真实工作能力基准标准》，定义任务来源、任务分级、验证方式；
-2. 《真实任务制作模板》，统一问题说明、代码版本、环境；
-
-结尾段落逐字保留。
-`;
-  const SELECTED = ORIGINAL.slice(ORIGINAL.indexOf('第一阶段'), ORIGINAL.indexOf('\n\n结尾'));
-  const RANGE = { start: ORIGINAL.indexOf(SELECTED), end: ORIGINAL.indexOf(SELECTED) + SELECTED.length };
-  const REWRITTEN = `第一阶段建议至少形成以下可落地成果：
-
-1. **《真实工作能力基准标准》V0.1**
-   - 明确任务来源分类及每类的可入库条件
-2. **《真实任务制作模板》V0.1**
-   - 必须字段：问题背景、目标、代码版本`;
-
-  it('逐帧扫全程：没有任何一帧渲染出「只装着光标」的 ins', () => {
-    const offenders: string[] = [];
-    for (let n = 0; n <= REWRITTEN.length; n++) {
-      const text = `${closeDanglingInlineMarks(REWRITTEN.slice(0, n))}${STREAM_CURSOR}`;
-      const html = render(buildInlineDiffBody(ORIGINAL, RANGE, text).body);
-      // 只装着光标（或光标 + 空白）的 ins —— 就是用户截图里那块蓝色小砖
-      const m = html.match(new RegExp(`<ins>\\s*${STREAM_CURSOR}\\s*</ins>`, 'g'));
-      if (m) offenders.push(`n=${n} ${m[0]}`);
-    }
-    expect(offenders, `这些帧把光标标成了新增块：\n${offenders.join('\n')}`).toEqual([]);
+  it('流式文本用的是 StreamingText，不是自己写的打字机', () => {
+    expect(SRC).toContain("import { StreamingText } from '@/components/streaming'");
+    expect(SRC).toMatch(/createPortal\(\s*<StreamingText/);
   });
 
-  it('光标始终留在 ins 外面：行里有真内容时也不进标记', () => {
-    const one = { start: 0, end: '旧句子'.length };
-    const out = buildInlineDiffBody('旧句子', one, `新句子${STREAM_CURSOR}`).body;
-    expect(out).toContain(`<ins>新句子</ins>${STREAM_CURSOR}`);
-    expect(out).not.toContain(`${STREAM_CURSOR}</ins>`);
-    // 渲染后光标是 ins 的兄弟节点，不在它里面
-    expect(render(out)).toContain(`<ins>新句子</ins>${STREAM_CURSOR}`);
-  });
-
-  it('列表项刚起头、一个字都没吐出来：整行原样，不标成新增', () => {
-    const one = { start: 0, end: '旧'.length };
-    const out = buildInlineDiffBody('旧', one, `1. ${STREAM_CURSOR}`).body;
-    expect(out).toContain(`1. ${STREAM_CURSOR}`);
-    expect(out).not.toContain('<ins>');
-  });
-
-  it('表格行例外：从中间切开会破坏单元格，光标留在单元格里', () => {
-    const one = { start: 0, end: '旧'.length };
-    const out = buildInlineDiffBody('旧', one, `| 甲 | 乙${STREAM_CURSOR} |`).body;
-    expect(out).toContain(`| <ins>甲</ins> | <ins>乙${STREAM_CURSOR}</ins> |`);
+  it('流式档正文的 memo 依赖里没有已吐出的文字', () => {
+    // 依赖项一旦混进 rewriteOutput / rewrite.text，正文就会逐 token 重算，
+    // 「一闪一闪」当场复发，而任何现有断言都不会红。
+    const block = /const streamingDiff = useMemo\([\s\S]*?\}, \[([^\]]*)\]\);/.exec(SRC);
+    expect(block, '找不到 streamingDiff 这个 memo').toBeTruthy();
+    expect(block![1]).not.toMatch(/rewriteOutput|rewrite\.text/);
+    expect(block![0]).toContain('STREAM_ANCHOR_HTML');
   });
 });

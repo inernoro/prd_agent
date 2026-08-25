@@ -29,3 +29,6 @@
 | fix | prd-admin | 流式改写不再一闪一闪：正文每个 token 全量重挂会把新增块的进场动画无限重启，改成流式期间不播逐元素动画，动画留给「改完」那一下 |
 | test | prd-admin | 新增 doc-diff.css 层叠守卫：按特异性 + 顺序算出最终生效值，防止同特异性覆盖靠行号成立 |
 | docs | prd-admin | 知识库台账记下「正文渲染器每个 token 重挂整棵 DOM」这笔债（选区丢失 / CPU / Mermaid 重初始化） |
+| refactor | prd-admin | 逐句修改的流式呈现改走全站统一的 StreamingText：流式期正文只放一个空锚点，正在写的那段由共享组件 portal 进去，节奏与光标不再自建一套 |
+| fix | prd-admin | 流式期正文不再逐 token 重算：正文 DOM 变更 700 次降到 30 次，ins 重建 278 次降到 10 次 |
+| test | prd-admin | 新增流式锚点守卫（含 sanitize 的 user-content- 前缀）与接线守卫（DocBrowser 必须走 StreamingText、memo 依赖不许含已吐出文字） |

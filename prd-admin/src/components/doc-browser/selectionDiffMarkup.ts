@@ -33,13 +33,26 @@ export interface InlineDiffMarkup {
 const FENCE_RE = /^ {0,3}(?:```|~~~)/;
 
 /**
- * 流式期间缀在已吐出正文末尾的光标字符，是写进 markdown 的**真字符**（不是伪元素——
- * 伪元素只能选到「每个父元素里最后一个 ins」，跨段落的新内容会同时冒出好几个光标）。
+ * 流式期间放进正文的**空锚点**：AI 正在写的那段文字由共享组件 StreamingText 用 portal
+ * 渲染进这个节点，正文 markdown 本身与「已经吐出多少字」无关，全程一个常量。
  *
- * 这里是它的唯一定义处：DocBrowser 与自测探针都从这里取，不许各写一个 `▌` 字面量
- * （predicate-and-wiring-discipline.md 形状 3：同一个判据抄成两份，改一处忘一处）。
+ * 为什么是锚点而不是把流式文本拼进 markdown（doc/rule.frontend.streaming-text.md）：
+ * 规则明令「流式期间使用轻量纯文本动效，完成后再切换完整 Markdown 渲染」「禁止每个 chunk
+ * 都执行完整 Markdown 高亮和布局」。逐 token 重算正文会让 MarkdownViewer 整棵重挂
+ *（它的 components 是每次 render 新建的内联函数），进场动画被无限重启，用户看到的是
+ * 「一闪一闪，像老电脑」。锚点让正文这一层彻底不动，节奏与光标交给 StreamingText。
  */
-export const STREAM_CURSOR = '▌';
+export const STREAM_ANCHOR_ID = 'doc-rewrite-stream';
+export const STREAM_ANCHOR_HTML = `<span id="${STREAM_ANCHOR_ID}"></span>`;
+
+/**
+ * 锚点在**真实 DOM 里**的 id：rehype-sanitize 会给正文内嵌 HTML 的 id 加 `user-content-`
+ * 前缀（防上传文档拿 id 撞应用自身的锚点），所以写进 markdown 的那个 id 查不到节点。
+ * 这正是 predicate-and-wiring-discipline.md 形状 6——判据要读真正生效的那个值。
+ * 两个都收在选择器里：前缀策略若变，DOM 侧不至于当场失灵，测试会先红。
+ */
+export const STREAM_ANCHOR_DOM_ID = `user-content-${STREAM_ANCHOR_ID}`;
+export const STREAM_ANCHOR_SELECTOR = `#${STREAM_ANCHOR_DOM_ID}, #${STREAM_ANCHOR_ID}`;
 
 /**
  * 行首的块级标记：引用符 > / 列表符 -*+ 或 1. / 任务框 [ ] / 标题 #。
@@ -96,27 +109,6 @@ export function markLine(line: string, tag: 'del' | 'ins'): string {
   return `${lead}<${tag}>${rest}</${tag}>`;
 }
 
-/**
- * 给「新增行」打 ins 标记：光标永远留在 <ins> 外面。
- *
- * 光标表示「写到这儿了」，不是新增内容。包进 ins 就会一并套上新增块的底色、
- * 圆角、内边距和进场动画——在刚换行、整行只剩一个光标的那几帧里，它会渲染成
- * 一个孤零零的蓝色小方块，看着像渲染坏了而不是像光标
- *（2026-08-25 用户指着截图问「这个东西为什么会存在，这是故意设计吗」）。
- *
- * 表格行例外：markLine 对表格是按 `|` 逐单元格包裹的，从中间切开会破坏单元格
- * 结构，光标留在单元格里反而无害。
- */
-function markAddedLine(line: string): string {
-  const cursorAt = line.indexOf(STREAM_CURSOR);
-  if (cursorAt < 0 || TABLE_ROW_RE.test(line)) return markLine(line, 'ins');
-  const before = line.slice(0, cursorAt);
-  const m = LEAD_MARKER_RE.exec(before);
-  // 整行只有前导标记 + 光标：一个字的新内容都还没有，不该标成「新增」
-  if (!(m ? m[2] : before).trim()) return line;
-  return markLine(before, 'ins') + line.slice(cursorAt);
-}
-
 /** 统计一段文本结束时是否停在代码围栏内部 */
 function endsInsideFence(text: string, initial = false): boolean {
   let inside = initial;
@@ -126,58 +118,6 @@ function endsInsideFence(text: string, initial = false): boolean {
   return inside;
 }
 
-
-/**
- * 流式期间把「还没闭合的行内标记」补齐再渲染。
- *
- * 模型逐字吐出 `**加粗**` 时，中途一定会经过 `**加粗` 这个状态——markdown 见到落单的 `**`
- * 就当普通字符渲染，于是用户眼睁睁看着两颗星号冒出来又消失（2026-08-20 本地取证截图实拍）。
- * 产物在生长，不该让语法碎片露脸（artifact-is-experience.md）。
- *
- * 只在流式期间用：末尾残缺的标记字符先去掉，再按奇偶补上闭合标记。
- * 完成态的文本是模型的完整输出，一个字都不动。
- */
-export function closeDanglingInlineMarks(text: string): string {
-  if (!text) return text;
-  // 代码围栏内的星号反引号都是代码，不参与闭合判断
-  const lines = text.split('\n');
-  let inFence = false;
-  const scanned: string[] = [];
-  for (const line of lines) {
-    if (FENCE_RE.test(line)) { inFence = !inFence; continue; }
-    if (!inFence) scanned.push(line);
-  }
-  // 正好停在围栏里 / 停在围栏行上：末尾那几个反引号是围栏本身，一个都不能动
-  if (inFence || FENCE_RE.test(lines[lines.length - 1] ?? '')) return text;
-  const body = scanned.join('\n');
-
-  // 顺序很关键（2026-08-21 code review 抓到）：先判「本来就是闭合的吗」。
-  // 上一版无条件把末尾的 `*` / `` ` `` / `~` 摘掉再补，于是刚刚吐完的 `*斜体*`
-  // 被摘成 `*斜体` —— 而单个星号又不在补齐清单里，星号就这么露了出来，
-  // 正是这个函数存在的意义被它自己破坏掉。
-  if (!missingMarks(body)) return text;
-  // 末尾是刚敲出来的半截标记（`这是 **`）：摘掉即闭合，不能补，补了会变成 `****`
-  const stripped = text.replace(/[*`~]+$/, '');
-  const strippedBody = body.replace(/[*`~]+$/, '');
-  if (!missingMarks(strippedBody)) return stripped;
-  // 前文确有没闭合的标记：补在末尾
-  // 围栏没闭合交给 buildInlineDiffBody 收尾，这里不重复处理
-  return stripped + missingMarks(strippedBody);
-}
-
-/** 把一段文本补齐所需的收尾标记拼出来；已经闭合则返回空串。 */
-function missingMarks(text: string): string {
-  let out = '';
-  const backticksOdd = ((text.match(/`/g) ?? []).length) % 2 === 1;
-  if (backticksOdd) out += '`';
-  // 反引号里的星号是代码，不参与配对；落单的那个反引号后面全算代码，一并排除
-  const noCode = (backticksOdd ? `${text}\`` : text).replace(/`[^`]*`/g, '');
-  if (((noCode.match(/~~/g) ?? []).length) % 2 === 1) out += '~~';
-  const noStrike = noCode.replace(/~~/g, '');
-  if (((noStrike.match(/\*\*/g) ?? []).length) % 2 === 1) out += '**';
-  else if (((noStrike.replace(/\*\*/g, '').match(/\*/g) ?? []).length) % 2 === 1) out += '*';
-  return out;
-}
 
 /**
  * 生成「原选区 → newText」的就地 diff 正文。
@@ -245,7 +185,7 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
       if (isFence) outFence = !outFence;
       continue;
     }
-    emit(l.type === 'add' ? markAddedLine(l.text) : l.text, l.type === 'add' ? 'add' : 'eq');
+    emit(l.type === 'add' ? markLine(l.text, 'ins') : l.text, l.type === 'add' ? 'add' : 'eq');
   }
 
   // 流式期间常常停在「开了围栏还没写完」的半截状态：不补上收尾围栏，
