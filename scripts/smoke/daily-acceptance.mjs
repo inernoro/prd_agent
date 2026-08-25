@@ -209,10 +209,13 @@ async function checkShareArtifact(ctx, form, token4Url) {
 async function checkCheckboxHittable(ctx) {
   const page = await ctx.newPage();
   await page.goto(`${BASE}/web-pages`, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(8000);
-  const box = await page.locator('button[aria-label="选择"]').first().boundingBox().catch(() => null);
+  // 等元素本身出现，别拿一个固定秒数当「加载好了」：8s 在慢一点的那次就不够，
+  // 报出来是「页面上找不到勾选框」——一条会随网络快慢翻来翻去的判据，比没有更糟。
+  const box = await page.waitForSelector('button[aria-label="选择"]', { timeout: 25000, state: 'visible' })
+    .then((h) => h.boundingBox())
+    .catch(() => null);
   if (!box) {
-    record('主控台勾选框可点（真实指针）', false, '页面上找不到勾选框');
+    record('主控台勾选框可点（真实指针）', false, '等了 25s 页面上仍然没有勾选框');
     await page.close();
     return;
   }
@@ -242,11 +245,12 @@ async function checkSharePopover(ctx) {
   const bad = [];
   page.on('pageerror', (e) => bad.push(e.message.slice(0, 60)));
   await page.goto(`${BASE}/web-pages`, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(8000);
 
-  const card = await page.locator('[data-hoverbar]').first().boundingBox().catch(() => null);
+  const card = await page.waitForSelector('[data-hoverbar]', { timeout: 25000 })
+    .then((h) => h.boundingBox())
+    .catch(() => null);
   if (!card) {
-    record('分享下拉能打开（真实指针）', false, '页面上找不到站点卡');
+    record('分享下拉能打开（真实指针）', false, '等了 25s 页面上仍然没有站点卡');
     await page.close();
     return;
   }
