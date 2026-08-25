@@ -1,7 +1,7 @@
 import { ArrowRight, Play, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { ProductMockup } from '../components/ProductMockup';
 import { Reveal } from '../components/Reveal';
+import { VisualCanvasStage } from '../scenes/VisualCanvasScene';
 import { TechLogoBar } from '../components/TechLogoBar';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -293,11 +293,47 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         </Reveal>
       </div>
 
-      {/* ── Phase 3 · 产品壳 mockup — 核心信息就位后，视觉证据最后浮出 ── */}
-      {/* 不带 blur：对 ~1000px 宽的大块做 3s 滤镜动画 = 大面积逐帧重绘，只保留 fade + rise */}
+      {/* ── Phase 3 · 第一屏的产品证据：视觉创作工作台 ──
+          这里原来是一个通用的「对话壳」mockup，任何 AI 产品都能套。
+          换成照真实面板复刻、还能点的视觉创作画布：第一屏必须是本系统的核心，
+          而不是一张谁都能画的示意图。
+          不带 blur：对 ~1000px 宽的大块做 3s 滤镜动画 = 大面积逐帧重绘，只保留 fade + rise */}
       <Reveal delay={1800} offset={60} duration={3000}>
-        <div className="relative z-10 pb-32 md:pb-40 px-4 md:px-8">
-          <ProductMockup />
+        <div className="relative z-10 pb-20 md:pb-28 px-4 md:px-8">
+          <div className="max-w-[1280px] mx-auto">
+            <div className="flex flex-col lg:flex-row lg:items-end gap-4 lg:gap-10 mb-5">
+              <div className="shrink-0">
+                <div
+                  className="flex items-center gap-2 uppercase text-white/42"
+                  style={{ fontFamily: 'var(--font-terminal)', fontSize: '15px', letterSpacing: '0.18em' }}
+                >
+                  <span
+                    className="block w-[5px] h-[5px] rounded-full shrink-0"
+                    style={{ background: 'hsl(16 54% 62%)' }}
+                  />
+                  {t.scenes.visual.eyebrow}
+                </div>
+                <h2
+                  className="mt-2.5 font-medium text-white"
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 'clamp(1.6rem, 2.8vw, 2.1rem)',
+                    lineHeight: 1.34,
+                    letterSpacing: '-0.02em',
+                  }}
+                >
+                  {t.scenes.visual.title}
+                </h2>
+              </div>
+              <p
+                className="text-white/62 lg:pb-1.5"
+                style={{ fontSize: '13.5px', lineHeight: 1.8, maxWidth: '29em' }}
+              >
+                {t.scenes.visual.description}
+              </p>
+            </div>
+            <VisualCanvasStage />
+          </div>
         </div>
       </Reveal>
     </section>

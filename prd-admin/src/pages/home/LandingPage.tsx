@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 
 import { HeroSection, HERO_GRADIENT, HERO_GRADIENT_FG, HERO_GRADIENT_STOPS } from './sections/HeroSection';
 import { StatsStrip } from './sections/StatsStrip';
-import { ThreePillars } from './sections/ThreePillars';
 import { FeatureDeepDive } from './sections/FeatureDeepDive';
 import { WorkflowCanvas } from './sections/WorkflowCanvas';
 import { SignatureCinema } from './sections/SignatureCinema';
@@ -14,6 +13,9 @@ import { CommunityPulse } from './sections/CommunityPulse';
 import { DesktopDownload } from './sections/DesktopDownload';
 import { FinalCta } from './sections/FinalCta';
 import { MinimalFooter } from './sections/MinimalFooter';
+import { LiteraryScene } from './scenes/LiteraryScene';
+import { KnowledgeScene } from './scenes/KnowledgeScene';
+import { LayersScene } from './scenes/LayersScene';
 import { StaticBackdrop } from './components/StaticBackdrop';
 import { LanguageToggle } from './components/LanguageToggle';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
@@ -21,18 +23,25 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 /**
  * LandingPage — 米多 Agent 平台 /home
  *
- * 十一幕结构（Linear.app × Retro-Futurism 融合）：
- *   1 · Hero
+ * 结构：
+ *   1 · Hero（第一屏就是视觉创作工作台——本系统的核心，不是通用对话壳）
  *   2 · StatsStrip
- *   3 · FeatureDeepDive（六段左右交替，每段内部分步 reveal）
- *   4 · SignatureCinema
- *   5 · HowItWorks
- *   6 · AgentGrid
- *   7 · CompatibilityStack
- *   8 · CommunityPulse
- *   9 · DesktopDownload
- *  10 · FinalCta
- *  11 · MinimalFooter
+ *   3 · LiteraryScene   ← 文学创作：左文右图，可切风格
+ *   4 · KnowledgeScene  ← 知识库：三栏阅读器 + 划词浮层 + 知识星系
+ *   5 · LayersScene     ← 三层一体：MAP / LLMGW / CDS，各画一块真实界面切片
+ *   6 · FeatureDeepDive（六段左右交替，每段内部分步 reveal）
+ *   7 · WorkflowCanvas
+ *   8 · SignatureCinema
+ *   9 · HowItWorks
+ *  10 · AgentGrid
+ *  11 · CompatibilityStack
+ *  12 · CommunityPulse
+ *  13 · DesktopDownload
+ *  14 · FinalCta
+ *  15 · MinimalFooter
+ *
+ * 3~5 幕是「照真实产品面板复刻」的场景（`scenes/`），替代了原来的 ThreePillars——
+ * 那三根支柱是通用线框 + 三句口号，说不清这个系统到底长什么样。
  *
  * 背景：StaticBackdrop 纯 CSS 静态层。
  * 国际化：LanguageProvider 仅作用于本页（中 / EN 切换器在顶栏右上角）。
@@ -260,8 +269,16 @@ function LandingInner() {
         <StatsStrip />
       </div>
 
+      <div id="literary" style={BELOW_FOLD_SECTION}>
+        <LiteraryScene />
+      </div>
+
+      <div id="knowledge" style={BELOW_FOLD_SECTION}>
+        <KnowledgeScene />
+      </div>
+
       <div id="pillars" style={BELOW_FOLD_SECTION}>
-        <ThreePillars />
+        <LayersScene />
       </div>
 
       <div id="features" style={BELOW_FOLD_SECTION}>

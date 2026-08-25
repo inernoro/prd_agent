@@ -1169,12 +1169,6 @@
     "darkRgbaBg": 0,
     "lightFg": 1
   },
-  "/pages/home/components/ProductMockup.tsx": {
-    "whiteAlpha": 11,
-    "darkHex": 11,
-    "darkRgbaBg": 1,
-    "lightFg": 2
-  },
   "/pages/home/components/StaticBackdrop.tsx": {
     "whiteAlpha": 3,
     "darkHex": 2,
@@ -1185,6 +1179,12 @@
     "whiteAlpha": 0,
     "darkHex": 2,
     "darkRgbaBg": 3,
+    "lightFg": 0
+  },
+  "/pages/home/scenes/sceneTokens.ts": {
+    "whiteAlpha": 11,
+    "darkHex": 6,
+    "darkRgbaBg": 0,
     "lightFg": 0
   },
   "/pages/home/sections/AgentGrid.tsx": {
@@ -1240,12 +1240,6 @@
     "darkHex": 0,
     "darkRgbaBg": 0,
     "lightFg": 0
-  },
-  "/pages/home/sections/ThreePillars.tsx": {
-    "whiteAlpha": 17,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
   },
   "/pages/home/sections/WorkflowCanvas.tsx": {
     "whiteAlpha": 10,
