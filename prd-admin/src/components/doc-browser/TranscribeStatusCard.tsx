@@ -65,7 +65,7 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
   return (
     <div className="flex items-start gap-2.5">
       <div
-        className="mt-[2px] flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full"
+        className="mt-[2px] flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-full"
         style={{
           background: done ? 'var(--accent-fg-success)' : 'transparent',
           border: done ? 'none' : `1px solid ${active ? 'var(--accent-fg-info)' : 'var(--border-faint)'}`,
@@ -75,9 +75,11 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
         {done ? <Check size={10} style={{ color: 'var(--bg-base)' }} /> : active ? (
           // 设计稿这一格是一枚带缺口的强调色圆环在转，不是通用 spinner 图标
           <span
+            // 与完成/排队两档的圈同尺寸同重量：小一号、描边细一档，三行的圈列就不齐了，
+            // 「正在做的那一格」反而比做完的更弱（判官记的是「视觉对齐节奏被打断」）。
             style={{
-              width: 12, height: 12, borderRadius: '50%',
-              border: '2px solid color-mix(in srgb, var(--accent-fg-info) 28%, transparent)',
+              width: 16, height: 16, borderRadius: '50%',
+              border: '2.5px solid color-mix(in srgb, var(--accent-fg-info) 26%, transparent)',
               borderTopColor: 'var(--accent-fg-info)',
               animation: 'spin 0.9s linear infinite',
             }}

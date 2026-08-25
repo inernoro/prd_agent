@@ -20,3 +20,6 @@
 | fix | prd-admin | markdown 嵌小卡时压掉首元素上边距，去掉卡顶那条空带 |
 | fix | prd-admin | 时间戳分钟补两位，原文列表时间列对齐 |
 | fix | prd-admin | 哨兵脱离文档流，去掉顶栏与波形之间那条空带；波形加密到 64 条；倍速药丸改白底描边 |
+| fix | prd-admin | 波形振幅取中、加密到 72 条；三阶段进行中的圈与另两档同尺寸 |
+| fix | prd-admin | 对照台 R4 画板改接 onEnterResult，截图不再是降级文案 |
+| docs | prd-agent | 记账：处理中那屏主按钮之下保留播放器，是有意偏离稿面，1 分照扣 |

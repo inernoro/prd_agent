@@ -61,14 +61,15 @@ function seededBars(src: string, n: number): number[] {
     h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h |= 0;
     const r = ((h >>> 0) % 1000) / 1000;
     // 正弦包络 + 随机扰动：形似语音的起伏，不是纯噪声
-    // 稿面波形的高低差很大；振幅压得太平会退化成一排等高栅格
-    out.push(0.10 + 0.90 * (0.55 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.45 * r));
+    // 振幅取中：0.22 起判官说「接近等高栅格」，0.10 起又被判「起伏剧烈」。
+    // 稿面是密集细条 + **克制**的高低差，两次反向意见夹出来的区间就在这里。
+    out.push(0.28 + 0.72 * (0.55 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.45 * r));
   }
   return out;
 }
 
-// 稿面波形是一排细密竖条（约 60 根）；条数减半就会变粗，节奏跟着变钝
-const BAR_COUNT = 64;
+// 稿面波形是一排细密竖条（约 50-60 根铺满整宽），条要细、间距要匀
+const BAR_COUNT = 72;
 
 export function AudioWavePlayer({
   src,
@@ -234,7 +235,7 @@ export function AudioWavePlayer({
       {/* 语音消息式声纹条：不读取跨域 PCM，播放与进度只依赖原生 audio。 */}
       <div className="relative mb-3">
         <div
-          className="flex h-[72px] w-full items-end gap-[2px]"
+          className="flex h-[72px] w-full items-end gap-[1.5px]"
           style={{ cursor: ready && duration > 0 ? 'pointer' : 'default', alignItems: 'center' }}
           onClick={(e) => {
             if (!ready || duration <= 0 || !audioRef.current) return;

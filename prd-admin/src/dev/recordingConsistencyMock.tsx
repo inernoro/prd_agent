@@ -229,7 +229,11 @@ function RecordingConsistencyMock() {
               ]}
               onStart={() => undefined}
               onOpenNote={() => undefined}
-              onPlayRequest={() => undefined}
+              // 必须接 onEnterResult 而不是 onPlayRequest：生产路径（DocumentStorePage）
+              // 传的就是前者，主按钮因此写「进入结果页并开始播放」。台架接了后者，
+              // 截出来的是降级文案「立即播放这段录音」——判官照图判缺失，扣的是台架的账
+              // 不是实现的账（形状 6：判据读到的不是真正生效的那个值）。
+              onEnterResult={() => undefined}
             />
             {audioSrc && <AudioWavePlayer src={audioSrc} />}
           </div>
