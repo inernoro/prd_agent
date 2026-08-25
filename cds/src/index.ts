@@ -23,6 +23,10 @@ import {
   type FirewallBackendSnapshot, type InfraExposureInput, type InfraExposureReport,
 } from './services/infra-exposure-audit.js';
 import {
+  evaluateDailyHealth, type HealthInfraFact, type HealthPlatformStoreFact,
+} from './services/platform-daily-health.js';
+import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
+import {
   backupDirCandidates, buildMysqlDumpScript, buildPostgresDumpScript, extractBackupScopeNote,
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
@@ -269,6 +273,14 @@ const INFRA_HEALTH_INTERVAL_MS = 15 * 60_000;
 const INFRA_HEALTH_STARTUP_DELAY_MS = 2 * 60_000;
 const INFRA_BACKUP_HEALTH_FILE = '.cds-backup-health.json';
 const EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS = 30_000;
+
+/**
+ * 每日安全体检的节奏。一天一次：它回答的是「今天这台机器健康吗」，
+ * 不是实时监控——那一层由暴露面自检（每小时）和基础设施看门狗（每 15 分钟）承担。
+ */
+const PLATFORM_DAILY_HEALTH_INTERVAL_MS = 24 * 60 * 60_000;
+/** 启动后延迟首检：要等暴露面自检先跑出一份运行态真值，否则第一份体检是空的。 */
+const PLATFORM_DAILY_HEALTH_STARTUP_DELAY_MS = 5 * 60_000;
 
 let lastInfraExposureReport: InfraExposureReport | null = null;
 
@@ -1017,6 +1029,124 @@ function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Dat
   return { completedAt: null, remoteVerifiedAt: null };
 }
 
+/**
+ * 每日安全体检：把散落各处的事实合成一句「今天这台机器健康吗」。
+ *
+ * 2026-08-23 一次人工安全审计查出来的东西，本来每一项都该由系统自己每天说出来
+ * （公网端口、无口令的库、备份新鲜度、恢复演练）。这些事实各自都有人算，
+ * 但**没有任何一处把它们合起来**——于是要等人想起来查一次才发现。
+ *
+ * 判定全在 platform-daily-health（纯函数、可回归），这里只负责取事实和落事件。
+ */
+function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+
+  const run = (): void => {
+    try {
+      // 事实一：运行态的库。直接用暴露面自检刚算完的那一份，不再自己 inspect 一遍
+      // ——两处各算一次必然漂移，而这里要的正是它已经算好的东西。
+      const exposure = lastInfraExposureReport;
+      if (!exposure) {
+        // 首检还没跑完就不出结论：拿一份空事实去体检，会得出「一切正常」这种
+        // 最糟糕的假绿灯。
+        console.log('[daily-health] 暴露面自检还没跑过，本轮跳过（下一轮再来）');
+        return;
+      }
+      const exempt = new Map<string, string>();
+      for (const service of stateService.getInfraServices() || []) {
+        const decision = evaluateInfraAuthentication(
+          {
+            dockerImage: service.dockerImage,
+            id: service.id,
+            name: service.name,
+            basePresetId: service.basePresetId,
+            containerName: service.containerName,
+            containerPort: service.containerPort,
+            env: service.env,
+            command: service.command,
+            entrypoint: service.entrypoint,
+            createdAt: service.createdAt,
+          },
+          { graceUntil: process.env.CDS_INFRA_AUTH_GRACE_UNTIL || null },
+        );
+        // 只有「靠豁免才放行」的才记倒计时：本来就配了认证的不该被算进去。
+        if (decision.exemption) exempt.set(service.id, decision.exemption.expiresAt);
+      }
+      const infra: HealthInfraFact[] = exposure.findings.map((f) => ({
+        id: f.id,
+        publiclyPublished: f.publiclyPublished,
+        authenticated: f.authenticated,
+        authExemptionExpiresAt: exempt.get(f.id) ?? null,
+      }));
+
+      // 事实二：平台自身的存储。认证门禁只管「项目基础设施容器」，CDS 自己这几个
+      // 库从来不在它的管辖范围内，也就永远不会有人被提醒——这一条只有本体检会说。
+      const platformStores: HealthPlatformStoreFact[] = [
+        { label: 'CDS 状态库', connectionUri: process.env.CDS_MONGO_URI || null },
+      ];
+
+      // 事实三：备份。这里自己读一遍而不复用 readBackupHealth()——那个函数把
+      // 「覆盖不全」压成了「完全没备份过」，两件事在体检里要分开报。
+      let lastCompletedAt: string | null = null;
+      let coverageGaps: string[] = [];
+      for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
+        try {
+          const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
+            completedAt?: string | null;
+            coverageGaps?: Array<{ id?: string }>;
+          };
+          lastCompletedAt = value.completedAt ?? null;
+          coverageGaps = (value.coverageGaps || []).map((g) => String(g?.id || '')).filter(Boolean);
+          break;
+        } catch { /* 换下一个候选目录 */ }
+      }
+
+      // 事实四：恢复演练。**目前没有任何地方记录它**，所以恒为 null——
+      // 体检会如实报「从来没演练过」。这不是占位符：在补上记录之前，
+      // 「能不能真的恢复」的答案就是「不知道」，报成不知道才是对的。
+      const verdict = evaluateDailyHealth({
+        now: new Date(),
+        infra,
+        platformStores,
+        backup: { lastCompletedAt, coverageGaps },
+        lastRestoreDrillAt: null,
+      });
+
+      const body = [verdict.headline, '', ...verdict.findings.map((f) => `- [${f.severity}] ${f.message}`)]
+        .join('\n');
+      if (verdict.severity === 'ok') {
+        console.log(`[daily-health] ${verdict.headline}`);
+      } else {
+        console.warn(`[daily-health] ${verdict.headline}`);
+      }
+      store?.record({
+        category: 'system',
+        severity: verdict.severity === 'critical' ? 'error' : verdict.severity === 'warn' ? 'warn' : 'info',
+        source: 'daily-health',
+        action: 'platform.daily-health',
+        message: body,
+        status: verdict.severity === 'critical' ? 'error' : verdict.severity === 'warn' ? 'warn' : 'info',
+        details: { severity: verdict.severity, findings: verdict.findings },
+      });
+    } catch (err) {
+      // 体检自己挂了同样要出声：一个静默失败的体检和一个说「没问题」的体检，
+      // 在日志里长得一模一样。
+      console.warn(`[daily-health] 体检失败: ${(err as Error).message}`);
+      store?.record({
+        category: 'system', severity: 'warn', source: 'daily-health',
+        action: 'platform.daily-health.failed',
+        message: `每日安全体检没能跑完：${(err as Error).message}。本轮结论不可信。`,
+        status: 'warn',
+      });
+    }
+  };
+
+  setTimeout(run, PLATFORM_DAILY_HEALTH_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(run, PLATFORM_DAILY_HEALTH_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
+
 function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
   if (config.mode === 'executor' || isPreviewInstance()) return null;
   let lastSignature = '';
@@ -1724,6 +1854,9 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
 const externalPortAuditWatchdog = startExternalPortAuditWatchdog(activeServerEventLogStore);
 const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
+// 每日安全体检：把公网端口、无口令的库、备份新鲜度、恢复演练合成一句结论。
+// 这些事实各自都有人算，但此前没有任何一处把它们合起来——于是要等人想起来查才发现。
+const platformDailyHealthCheck = startPlatformDailyHealthCheck(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 /**
