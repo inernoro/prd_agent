@@ -6,3 +6,6 @@
 | polish | cds | 上手助手 CDS 卡片文案写明「不需要先准备任何密钥」 |
 | docs | cds | debt.cds 记 D12：创建项目本身依赖宿主 Docker（建项目即建项目网络），无 dockerd 时 POST /api/projects 直接 500 —— 零凭据接入链路复测发现 |
 | docs | cds | debt.cds 记 D13：页面批准换来的一次性 create-only Key 对全部只读接口放行（线上实测可枚举项目/分支/全局变量名/全局 Key 清单/自更新历史，值与明文已掩码），对外开放接入前需收敛为显式只读白名单 |
+| fix | cds | 建项目+换钥收敛成 cdscli 单一实现（含用新钥匙回读自证、本地不再持有一次性钥匙的断言）；onboard 此前自己 POST 并丢弃返回的项目级 Key，用一次性授权走这条路会「项目建好、钥匙作废、下一步 401」 |
+| feat | cds | cdscli connect 新增 --create-project：批准后在同一进程内建项目并换成项目级授权，一次性钥匙不再在模型手里停留；上手助手口令改为给这一条命令 |
+| test | cds | 新增 test_cdscli_project_key_handover.py（6 例）：换钥落盘、onboard 同样换钥、回读失败与拿不到钥匙必须显式失败、一条命令全链路、建项目只允许一处实现 |

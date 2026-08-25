@@ -676,6 +676,96 @@ def cmd_project_show(args: argparse.Namespace) -> None:
     ok(_redact_project(body, include_sensitive))
 
 
+def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30) -> dict[str, Any]:
+    """建项目 + 换钥的**唯一**实现。任何「创建项目」的入口都必须走这里。
+
+    为什么必须收成一处（2026-08-25 修）：建项目这件事此前有两份实现——
+    `project create` 会把后端返回的 `issuedProjectKey` 存下来，`onboard` 直接
+    自己 POST 然后把它丢掉。而后端一旦签发了项目级 key 就会**立刻吊销**那把
+    一次性 create-only key（明文只发一次），于是走 onboard 那条路的 Agent
+    项目建出来了、手里的钥匙却当场作废，下一步 clone 直接 401。
+    钥匙交接不能交给上层调用方各写一遍，更不能交给大模型按提示词自己拼。
+
+    这里做完三件事才返回：换写凭据（原子 + 0600 + git exclude）、用新钥匙回读
+    一次项目、断言本地已不再持有一次性钥匙。任何一步不成立都显式 die，绝不
+    留一个「项目已建但没人有钥匙」的半成品状态。
+    """
+    # 判据只认「本地凭据文件里存着 bootstrapKey」——那是页面批准换来的一次性钥匙，
+    # 也是唯一一种「建完项目拿不到新钥匙就彻底没辙」的身份。静态 AI_ACCESS_KEY 与
+    # 全权 cdsg_ 建项目本来就不签发新钥匙，读环境变量会把它们一起误判成死局。
+    had_bootstrap_identity = bool(str(_read_local_credentials_file().get("bootstrapKey") or "").strip())
+
+    body = _call("POST", "/api/projects", body=payload, timeout=timeout)
+    proj = body.get("project") if isinstance(body, dict) else None
+    pid = str((proj or {}).get("id") or "").strip()
+    if not pid:
+        die(f"创建项目返回缺 id: {body}", code=2)
+
+    issued = body.get("issuedProjectKey") if isinstance(body, dict) else None
+    plaintext = str(issued.get("plaintext") or "").strip() if isinstance(issued, dict) else ""
+
+    if not plaintext:
+        # 全权 key / cookie 建项目时后端不签发新 key，这是正常的；但如果调用方
+        # 拿的是一次性 create-only 身份，没换到钥匙就是死局——那把一次性 key 建完
+        # 项目就作废了，此时必须明说，不能让调用方继续往下跑一串 401。
+        if had_bootstrap_identity:
+            die(
+                f"项目已创建（id={pid}），但后端未返回项目级 Key，当前一次性授权即将失效。\n"
+                f"用户需要做：在 CDS 项目卡「Agent Key」里手动签发一把该项目的 Key，"
+                f"再让 Agent 重新 connect --project {pid}。",
+                code=2,
+                extra={"data": {"projectId": pid, "adopted": False}},
+            )
+        return {"project": proj, "projectId": pid, "adopted": False,
+                "credentialsPath": None, "issuedProjectKeyMeta": None}
+
+    credentials_path = _save_local_credentials(
+        host=_cds_base(), project_id=pid, project_key=plaintext,
+    )
+    os.environ["CDS_PROJECT_ID"] = pid
+    os.environ["CDS_PROJECT_KEY"] = plaintext
+    os.environ.pop("AI_ACCESS_KEY", None)
+
+    # 自证一：新钥匙真的能用（不是存下来就算数）
+    verify_status, _verify_body, _ = _request(
+        "GET", f"/api/projects/{urllib.parse.quote(pid)}", timeout=15,
+    )
+    if not 200 <= verify_status < 300:
+        die(
+            f"项目已创建（id={pid}）且项目级 Key 已保存，但用它回读项目失败：HTTP {verify_status}。\n"
+            f"凭据在 {credentials_path}；请人工确认该 Key 是否被吊销，必要时在项目卡重新签发。",
+            code=2,
+            extra={"data": {"projectId": pid, "adopted": True,
+                            "credentialsPath": credentials_path,
+                            "verifyStatus": verify_status}},
+        )
+
+    # 自证二：本地不再持有一次性钥匙（换钥是替换，不是并存）
+    saved = _read_local_credentials_file()
+    if not saved.get("projectKey") or saved.get("bootstrapKey"):
+        die(
+            f"项目已创建（id={pid}），但本地凭据换钥不干净："
+            f"projectKey={'有' if saved.get('projectKey') else '无'}，"
+            f"bootstrapKey={'仍在' if saved.get('bootstrapKey') else '已清'}。",
+            code=2,
+            extra={"data": {"projectId": pid, "credentialsPath": credentials_path}},
+        )
+
+    meta = {k: v for k, v in issued.items() if k != "plaintext"} if isinstance(issued, dict) else None
+    return {"project": proj, "projectId": pid, "adopted": True,
+            "credentialsPath": credentials_path, "issuedProjectKeyMeta": meta}
+
+
+def _read_local_credentials_file() -> dict[str, Any]:
+    """只读回本地凭据文件内容，不注入环境（换钥自证用）。"""
+    try:
+        with open(_credentials_path(), "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def cmd_project_create(args: argparse.Namespace) -> None:
     """创建空项目骨架。后端 POST /api/projects 接受 { name, gitRepoUrl, slug?, description? }。
 
@@ -692,24 +782,12 @@ def cmd_project_create(args: argparse.Namespace) -> None:
         payload["slug"] = args.slug.strip()
     if args.description:
         payload["description"] = args.description.strip()
-    body = _call("POST", "/api/projects", body=payload, timeout=30)
-    proj = body.get("project") if isinstance(body, dict) else None
     # 统一授权模型(2026-07-09):若本次是用「只能创建项目」的全局 cdsg_ key 建的项目,
-    # 后端会返回一把绑定到新项目的 cdsp_ scoped key(issuedProjectKey)。这把 key 明文
-    # 只此一次,后续对该项目的部署/操作应切到它(create-only 全局 key 碰不到新项目)。
-    issued = body.get("issuedProjectKey") if isinstance(body, dict) else None
-    saved_credentials_path: str | None = None
-    if proj and isinstance(issued, dict) and issued.get("plaintext"):
-        pid = str(proj.get("id") or "").strip()
-        if pid:
-            saved_credentials_path = _save_local_credentials(
-                host=_cds_base(),
-                project_id=pid,
-                project_key=str(issued["plaintext"]),
-            )
-            os.environ["CDS_PROJECT_ID"] = pid
-            os.environ["CDS_PROJECT_KEY"] = str(issued["plaintext"])
-            os.environ.pop("AI_ACCESS_KEY", None)
+    # 后端会返回一把绑定到新项目的 cdsp_ scoped key。明文只此一次,换钥、回读自证
+    # 与失败处理全在 _create_project_and_adopt_key 里做,这里不再自己拼一遍。
+    outcome = _create_project_and_adopt_key(payload, timeout=30)
+    proj = outcome["project"]
+    saved_credentials_path = outcome["credentialsPath"]
     if proj and _HUMAN:
         pid = proj.get("id", "?")
         slug = proj.get("slug", "?")
@@ -719,10 +797,7 @@ def cmd_project_create(args: argparse.Namespace) -> None:
         if saved_credentials_path:
             print(f"  项目授权已安全保存到 {saved_credentials_path}，未输出密钥。")
         return
-    safe_issued = None
-    if isinstance(issued, dict):
-        safe_issued = {k: v for k, v in issued.items() if k != "plaintext"}
-    ok({"project": proj or body, "issuedProjectKey": safe_issued,
+    ok({"project": proj, "issuedProjectKey": outcome["issuedProjectKeyMeta"],
         "credentialsPath": saved_credentials_path},
        note=f"已创建项目 {(proj or {}).get('slug','?')} "
             f"id={(proj or {}).get('id','?')}"
@@ -2425,12 +2500,12 @@ def cmd_onboard(args: argparse.Namespace) -> None:
                                "gitRepoUrl": git_url}
     if args.description:
         payload["description"] = args.description.strip()
-    create_body = _call("POST", "/api/projects",
-                        body=payload, timeout=30)
-    proj = create_body.get("project") if isinstance(create_body, dict) else None
-    pid = (proj or {}).get("id")
-    if not pid:
-        die(f"创建项目返回缺 id: {create_body}", code=2)
+    # 走统一的建项目+换钥实现:onboard 此前自己 POST 然后丢掉后端返回的项目级 Key,
+    # 用一次性 create-only 身份跑到这里会「项目建好、钥匙作废」,下一步 clone 必 401。
+    create_outcome = _create_project_and_adopt_key(payload, timeout=30)
+    pid = create_outcome["projectId"]
+    if _HUMAN and create_outcome["adopted"]:
+        print(f"  已切换到新项目授权（凭据: {create_outcome['credentialsPath']}）")
 
     # Step 2: clone (复用 cmd_project_clone 的流式解析)
     if _HUMAN:
@@ -2517,6 +2592,8 @@ def cmd_onboard(args: argparse.Namespace) -> None:
             print("  没有 required env (或后端尚未生成 envMeta)")
 
     ok({"projectId": pid, "slug": slug, "name": name,
+        "adoptedProjectKey": create_outcome["adopted"],
+        "credentialsPath": create_outcome["credentialsPath"],
         "cloneEvents": len(clone_events),
         "finalEvent": final_event,
         "requiredEnvKeys": required},
@@ -3438,6 +3515,37 @@ def cmd_connect(args: argparse.Namespace) -> None:
     verify_status, _verify_body, _ = _request("GET", verification_path, timeout=10)
     if not 200 <= verify_status < 300:
         die(f"授权已保存，但验证失败: HTTP {verify_status}", code=2)
+
+    # --create-project：把「批准 → 一次性钥匙 → 建项目 → 换成项目级钥匙」压成
+    # 同一条命令、同一个进程。分成两步时，那把一次性钥匙要在上层（往往是大模型）
+    # 手里停留一轮，它少跑一步、跑错参数或中途改主意，钥匙就悬着——而它建完项目
+    # 就会被吊销、明文只发一次，错过即不可逆。这里不给它这个机会。
+    create_name = str(getattr(args, "create_project", "") or "").strip()
+    if create_name:
+        if not new_project:
+            _restore_auth_env(previous)
+            die("--create-project 只能与 --new-project 搭配使用", code=1)
+        payload: dict[str, Any] = {"name": create_name}
+        git_url = str(getattr(args, "git_url", "") or "").strip()
+        if git_url:
+            payload["gitRepoUrl"] = git_url
+        slug = str(getattr(args, "slug", "") or "").strip()
+        if slug:
+            payload["slug"] = slug
+        if _HUMAN:
+            print(f"授权已到手，正在创建项目 {create_name} 并换成项目级授权…", file=sys.stderr)
+        outcome = _create_project_and_adopt_key(payload, timeout=30)
+        ok({
+            "host": host,
+            "projectId": outcome["projectId"],
+            "scope": "project" if outcome["adopted"] else "create-project-once",
+            "adoptedProjectKey": outcome["adopted"],
+            "credentialsPath": outcome["credentialsPath"] or credentials_path,
+            "approvalUrl": approval_url,
+        }, note=f"CDS 接入完成：项目 {outcome['projectId']} 已创建"
+                + ("，一次性授权已换成项目级授权" if outcome["adopted"] else ""))
+        return
+
     ok({
         "host": host,
         "projectId": resolved_project_id or None,
@@ -8751,6 +8859,10 @@ def _build_parser() -> argparse.ArgumentParser:
     con_target = con.add_mutually_exclusive_group(required=True)
     con_target.add_argument("--project", help="连接已有项目 ID")
     con_target.add_argument("--new-project", action="store_true", help="申请一次性创建项目权限")
+    con.add_argument("--create-project", metavar="NAME",
+                     help="批准后立刻用一次性授权创建该项目并换成项目级授权（与 --new-project 搭配，一条命令走完接入全链路）")
+    con.add_argument("--git-url", help="随 --create-project 一起给新项目绑定的 Git 仓库地址（可选）")
+    con.add_argument("--slug", help="随 --create-project 一起指定 slug（可选，默认后端从名称推导）")
     con.add_argument("--agent", default="Agent", help="审批盒中显示的 Agent 名称")
     con.add_argument("--timeout", type=int, default=300, help="等待批准秒数（默认 300）")
     con.add_argument("--interval", type=int, default=2, help="轮询间隔秒数（默认 2）")

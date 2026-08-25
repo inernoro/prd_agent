@@ -62,6 +62,10 @@ describe('CDS Agent 接入口令', () => {
       target: { kind: 'new' },
     });
     expect(prompt).toContain('--new-project');
+    // 建项目与换钥必须压在同一条命令里：一次性钥匙建完项目就被吊销、明文只发一次，
+    // 拆成两步等模型接力，就多了一次「少跑一步即不可逆」的机会。
+    expect(prompt).toContain('--create-project');
+    expect(prompt).toContain('不要拆成两步、也不要自己保存任何密钥');
     expect(prompt).toContain('一次性创建权限会自动吊销并换成该项目的长期项目级凭据');
     expect(prompt).toContain('仓库根、规范化 remote、当前分支和候选项目名');
     expect(prompt).toContain('project show <返回的 projectId>');
