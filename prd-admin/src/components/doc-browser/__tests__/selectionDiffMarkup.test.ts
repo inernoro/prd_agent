@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { buildInlineDiffBody, closeDanglingInlineMarks, markLine } from '../selectionDiffMarkup';
+import { buildInlineDiffBody, closeDanglingInlineMarks, markLine, STREAM_CURSOR } from '../selectionDiffMarkup';
 import { DOC_REMARK_PLUGINS, DOC_REHYPE_PLUGINS } from '@/components/file-preview/MarkdownViewer';
 
 /**
@@ -219,5 +219,68 @@ describe('closeDanglingInlineMarks：流式半截的行内标记不许露脸', (
   it('代码围栏里的星号是代码，不参与闭合判断', () => {
     const t = '```js\nconst a = b ** 2;\n```';
     expect(closeDanglingInlineMarks(t)).toBe(t);
+  });
+});
+
+/**
+ * 流式光标（STREAM_CURSOR）。
+ *
+ * 2026-08-25 用户指着截图里一个孤零零的蓝色小方块问「这个东西为什么会存在，这是故意设计吗」。
+ * 光标是故意的，方块不是：光标当时被包进了 <ins>，于是套上了新增块的底色/圆角/内边距/进场动画，
+ * 在刚换行、整行只剩光标的那几帧里就渲染成一块什么字都没有的蓝色小砖。
+ *
+ * 判据是「渲染出来的 <ins> 里有没有只装着光标的」，扫的是真实渲染结果不是源码字面量。
+ */
+describe('流式光标不许被当成新增内容', () => {
+  const ORIGINAL = `# 标题
+
+第一阶段建议至少形成以下成果：
+
+1. 《真实工作能力基准标准》，定义任务来源、任务分级、验证方式；
+2. 《真实任务制作模板》，统一问题说明、代码版本、环境；
+
+结尾段落逐字保留。
+`;
+  const SELECTED = ORIGINAL.slice(ORIGINAL.indexOf('第一阶段'), ORIGINAL.indexOf('\n\n结尾'));
+  const RANGE = { start: ORIGINAL.indexOf(SELECTED), end: ORIGINAL.indexOf(SELECTED) + SELECTED.length };
+  const REWRITTEN = `第一阶段建议至少形成以下可落地成果：
+
+1. **《真实工作能力基准标准》V0.1**
+   - 明确任务来源分类及每类的可入库条件
+2. **《真实任务制作模板》V0.1**
+   - 必须字段：问题背景、目标、代码版本`;
+
+  it('逐帧扫全程：没有任何一帧渲染出「只装着光标」的 ins', () => {
+    const offenders: string[] = [];
+    for (let n = 0; n <= REWRITTEN.length; n++) {
+      const text = `${closeDanglingInlineMarks(REWRITTEN.slice(0, n))}${STREAM_CURSOR}`;
+      const html = render(buildInlineDiffBody(ORIGINAL, RANGE, text).body);
+      // 只装着光标（或光标 + 空白）的 ins —— 就是用户截图里那块蓝色小砖
+      const m = html.match(new RegExp(`<ins>\\s*${STREAM_CURSOR}\\s*</ins>`, 'g'));
+      if (m) offenders.push(`n=${n} ${m[0]}`);
+    }
+    expect(offenders, `这些帧把光标标成了新增块：\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  it('光标始终留在 ins 外面：行里有真内容时也不进标记', () => {
+    const one = { start: 0, end: '旧句子'.length };
+    const out = buildInlineDiffBody('旧句子', one, `新句子${STREAM_CURSOR}`).body;
+    expect(out).toContain(`<ins>新句子</ins>${STREAM_CURSOR}`);
+    expect(out).not.toContain(`${STREAM_CURSOR}</ins>`);
+    // 渲染后光标是 ins 的兄弟节点，不在它里面
+    expect(render(out)).toContain(`<ins>新句子</ins>${STREAM_CURSOR}`);
+  });
+
+  it('列表项刚起头、一个字都没吐出来：整行原样，不标成新增', () => {
+    const one = { start: 0, end: '旧'.length };
+    const out = buildInlineDiffBody('旧', one, `1. ${STREAM_CURSOR}`).body;
+    expect(out).toContain(`1. ${STREAM_CURSOR}`);
+    expect(out).not.toContain('<ins>');
+  });
+
+  it('表格行例外：从中间切开会破坏单元格，光标留在单元格里', () => {
+    const one = { start: 0, end: '旧'.length };
+    const out = buildInlineDiffBody('旧', one, `| 甲 | 乙${STREAM_CURSOR} |`).body;
+    expect(out).toContain(`| <ins>甲</ins> | <ins>乙${STREAM_CURSOR}</ins> |`);
   });
 });

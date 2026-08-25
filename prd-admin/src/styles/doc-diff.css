@@ -75,8 +75,10 @@
   }
 }
 
-/* 流式期间正文末尾的 ▌ 是写进 markdown 的真字符（DocBrowser 的 rewriteDiff），不是伪元素——
- * 伪元素只能选到「每个父元素里最后一个 ins」，跨段落的新内容会同时冒出好几个光标。 */
+/* 流式期间正文末尾的 ▌ 是写进 markdown 的真字符（selectionDiffMarkup 的 STREAM_CURSOR），
+ * 不是伪元素——伪元素只能选到「每个父元素里最后一个 ins」，跨段落的新内容会同时冒出好几个光标。
+ * 它被刻意留在 <ins> 外面，所以上面那套新增块样式（底色/圆角/内边距/进场动画）不落在它头上：
+ * 包进去的话，刚换行、整行只剩光标的那几帧会渲染成一个孤零零的蓝色小方块。 */
 
 @media (prefers-reduced-motion: reduce) {
   .doc-inline-diff ins {

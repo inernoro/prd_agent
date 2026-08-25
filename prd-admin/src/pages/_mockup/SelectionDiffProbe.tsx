@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
-import { buildInlineDiffBody } from '@/components/doc-browser/selectionDiffMarkup';
+import { buildInlineDiffBody, STREAM_CURSOR } from '@/components/doc-browser/selectionDiffMarkup';
 import { InlineDiffReviewBar } from '@/components/doc-browser/SelectionRewriteInline';
 
 // 自测专用：把真实的就地 diff 渲染链（buildInlineDiffBody → MarkdownViewer → doc-diff.css）
@@ -75,7 +75,7 @@ export default function SelectionDiffProbe() {
 
   const diff = useMemo(() => {
     if (phase === 'idle') return null;
-    const text = phase === 'streaming' ? `${REWRITTEN.slice(0, streamedLen)}▌` : REWRITTEN;
+    const text = phase === 'streaming' ? `${REWRITTEN.slice(0, streamedLen)}${STREAM_CURSOR}` : REWRITTEN;
     return buildInlineDiffBody(ORIGINAL, RANGE, text);
   }, [phase, streamedLen]);
 

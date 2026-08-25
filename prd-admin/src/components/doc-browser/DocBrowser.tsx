@@ -236,7 +236,7 @@ import {
   stripDuplicatedBlockPrefix,
   type ResolvedRange,
 } from './selectionEdit';
-import { buildInlineDiffBody, closeDanglingInlineMarks } from './selectionDiffMarkup';
+import { buildInlineDiffBody, closeDanglingInlineMarks, STREAM_CURSOR } from './selectionDiffMarkup';
 import {
   SelectionRewritePrompt,
   InlineDiffReviewBar,
@@ -2415,7 +2415,7 @@ export function DocBrowser({
     }
     // 流式期间在结果末尾点一个光标：让「还在写」这件事发生在文章里，而不是只有状态条在转
     const text = rewrite.phase === 'streaming'
-      ? `${closeDanglingInlineMarks(rewriteOutput)}▌`
+      ? `${closeDanglingInlineMarks(rewriteOutput)}${STREAM_CURSOR}`
       : rewriteOutput;
     return buildInlineDiffBody(selectionRawContent, rewrite.range, text);
   }, [rewrite, rewriteOutput, selectionRawContent, preview, selectedEntryId]);

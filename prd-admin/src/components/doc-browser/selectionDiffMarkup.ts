@@ -33,6 +33,15 @@ export interface InlineDiffMarkup {
 const FENCE_RE = /^ {0,3}(?:```|~~~)/;
 
 /**
+ * 流式期间缀在已吐出正文末尾的光标字符，是写进 markdown 的**真字符**（不是伪元素——
+ * 伪元素只能选到「每个父元素里最后一个 ins」，跨段落的新内容会同时冒出好几个光标）。
+ *
+ * 这里是它的唯一定义处：DocBrowser 与自测探针都从这里取，不许各写一个 `▌` 字面量
+ * （predicate-and-wiring-discipline.md 形状 3：同一个判据抄成两份，改一处忘一处）。
+ */
+export const STREAM_CURSOR = '▌';
+
+/**
  * 行首的块级标记：引用符 > / 列表符 -*+ 或 1. / 任务框 [ ] / 标题 #。
  * 标记要留在 <del>/<ins> 外面——包进去就不再是列表/标题，块级结构当场塌掉。
  */
@@ -85,6 +94,27 @@ export function markLine(line: string, tag: 'del' | 'ins'): string {
   const rest = m ? m[2] : line;
   if (!rest.trim()) return line;
   return `${lead}<${tag}>${rest}</${tag}>`;
+}
+
+/**
+ * 给「新增行」打 ins 标记：光标永远留在 <ins> 外面。
+ *
+ * 光标表示「写到这儿了」，不是新增内容。包进 ins 就会一并套上新增块的底色、
+ * 圆角、内边距和进场动画——在刚换行、整行只剩一个光标的那几帧里，它会渲染成
+ * 一个孤零零的蓝色小方块，看着像渲染坏了而不是像光标
+ *（2026-08-25 用户指着截图问「这个东西为什么会存在，这是故意设计吗」）。
+ *
+ * 表格行例外：markLine 对表格是按 `|` 逐单元格包裹的，从中间切开会破坏单元格
+ * 结构，光标留在单元格里反而无害。
+ */
+function markAddedLine(line: string): string {
+  const cursorAt = line.indexOf(STREAM_CURSOR);
+  if (cursorAt < 0 || TABLE_ROW_RE.test(line)) return markLine(line, 'ins');
+  const before = line.slice(0, cursorAt);
+  const m = LEAD_MARKER_RE.exec(before);
+  // 整行只有前导标记 + 光标：一个字的新内容都还没有，不该标成「新增」
+  if (!(m ? m[2] : before).trim()) return line;
+  return markLine(before, 'ins') + line.slice(cursorAt);
 }
 
 /** 统计一段文本结束时是否停在代码围栏内部 */
@@ -215,7 +245,7 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
       if (isFence) outFence = !outFence;
       continue;
     }
-    emit(l.type === 'add' ? markLine(l.text, 'ins') : l.text, l.type === 'add' ? 'add' : 'eq');
+    emit(l.type === 'add' ? markAddedLine(l.text) : l.text, l.type === 'add' ? 'add' : 'eq');
   }
 
   // 流式期间常常停在「开了围栏还没写完」的半截状态：不补上收尾围栏，
