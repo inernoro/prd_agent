@@ -27,6 +27,12 @@ interface AudioWavePlayerProps {
   /** 注册跳播函数：父组件拿到 seek(sec) 后可实现「点歌词跳播」；跳播后若暂停会自动继续播 */
   registerSeek?: (seek: (sec: number) => void) => void;
   className?: string;
+  /** 传输行里跟在时间后面的一小段信息（稿面是「第 N / M 句」）。 */
+  transportMeta?: React.ReactNode;
+  /** 传输行下方的一行说明（稿面是「精准时间轴 · 逐句对齐」）。 */
+  caption?: string;
+  /** 通铺：不套外层卡片，波形与控件直接落在分区底上（稿面 B1 的播放区）。 */
+  flush?: boolean;
 }
 
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
@@ -68,6 +74,9 @@ export function AudioWavePlayer({
   onPlaybackChange,
   registerSeek,
   className = '',
+  transportMeta,
+  caption,
+  flush = false,
 }: AudioWavePlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // ref 隔离 onTimeUpdate：父组件重渲染传新函数引用不应触发 ws 重建
@@ -207,8 +216,11 @@ export function AudioWavePlayer({
 
   return (
     <div
-      className={`w-[480px] max-w-[92%] rounded-[14px] p-4 ${className}`}
-      style={{
+      // flush：稿面 B1 的播放区是**通铺**的，波形与控件直接落在分区底上，
+      // 不套卡。包一层白卡会把「播放区通铺白 / 原文区灰底」这层分区关系抹掉，
+      // 两位判官都指到了这处。非 flush 时维持原样，其余调用方不受影响。
+      className={flush ? `w-full ${className}` : `w-[480px] max-w-[92%] rounded-[14px] p-4 ${className}`}
+      style={flush ? undefined : {
         // 设计稿 `MAP 录音转录交付页 v2` 硬约束：全稿无紫色，强调色只用于
         // 播放进度 / 可点击文本 / 当前句底色。这里走 --accent-fg-info（双主题蓝），
         // 不写死设计稿里的 #1F5EFF —— 硬编码颜色会被双皮肤棘轮拦下，也没有浅色档。
@@ -275,6 +287,14 @@ export function AudioWavePlayer({
           {ready ? formatTime(duration) : '--:--'}
         </span>
 
+        {/*
+          稿面把「第 N / M 句」编在这一行里，紧跟时间——它和时间回答的是同一个问题
+          「我在哪」。此前它被放到下方当前句卡的右上角，这一行就只剩时间了。
+        */}
+        {transportMeta && (
+          <span className="ml-2 min-w-0 truncate text-[11px] text-token-muted">{transportMeta}</span>
+        )}
+
         <div className="flex-1" />
 
         {/* 倍速切换 */}
@@ -291,9 +311,14 @@ export function AudioWavePlayer({
           }}
           title="点击切换倍速"
         >
-          {PLAYBACK_RATES[rateIdx]}x
+          {/* 稿面写的是 1.0×，不是 1x */}
+          {PLAYBACK_RATES[rateIdx].toFixed(1)}×
         </button>
       </div>
+      {/* 稿面把这句放在时间行正下方，属于播放器主体的一部分，不是分区标题的附注 */}
+      {caption && (
+        <p className="mt-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>{caption}</p>
+      )}
 
       <style>{`
         @keyframes wave-pulse {

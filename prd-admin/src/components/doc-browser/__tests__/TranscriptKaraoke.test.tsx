@@ -21,7 +21,9 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    expect(html).toContain('精准时间轴，播放时逐句高亮');
+    // 这句现在归播放器主体（稿面就画在时间行正下方），文案照稿改成「精准时间轴 · 逐句对齐」。
+    // 断言的是「有一句话交代时间轴精度」，不是它此刻的逐字写法。
+    expect(html).toMatch(/精准时间轴[^<]*逐句/);
     expect(html).not.toContain('普通播放');
     expect(html).not.toContain('交互式播放');
     expect(html.match(/title="播放"/g)).toHaveLength(1);

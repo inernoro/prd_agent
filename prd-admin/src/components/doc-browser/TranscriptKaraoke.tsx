@@ -394,18 +394,13 @@ export function TranscriptKaraoke({
   return (
     <div className="flex w-full flex-col items-center gap-4">
       {documentMode && (
-        <div className="flex w-full max-w-[760px] flex-wrap items-center justify-between gap-2">
+        // 时间轴精度那句已经搬进播放器主体（稿面就画在时间行正下方），
+        // 这里再写一遍就是同一句话出现两次；分区标题只留标题。
+        <div className="flex w-full max-w-[760px] items-center justify-between gap-2">
           <p className="text-[12px] font-semibold text-token-muted">录音</p>
-          <p className="text-[11px] text-token-muted" aria-live="polite">
-            {playing && followEnabled
-              ? `正在跟随第 ${activeIdx + 1}/${timelineSegments.length} 句`
-              : synced
-                ? '精准时间轴，播放时逐句高亮'
-                : estimated
-                  ? documentMode && onSaveNote
-                    ? '智能估算逐句跟随，点击可校对'
-                    : '智能估算跟随，可点句跳播'
-                  : '正在读取音频时长，随后开启原文跟随'}
+          {/* 跟随进度仍要播报给读屏，只是不再占一行可见文案 */}
+          <p className="sr-only" aria-live="polite">
+            {playing && followEnabled ? `正在跟随第 ${activeIdx + 1}/${timelineSegments.length} 句` : ''}
           </p>
         </div>
       )}
@@ -470,6 +465,10 @@ export function TranscriptKaraoke({
           onDurationChange={setDuration}
           onPlaybackChange={setPlaying}
           registerSeek={(seek) => { seekRef.current = seek; }}
+          // 句序与「逐句对齐」这句都归播放器主体：它们和时间回答的是同一个问题
+          transportMeta={documentMode && followEnabled ? `第 ${activeIdx + 1} / ${timelineSegments.length} 句` : undefined}
+          caption={documentMode ? (estimated ? '智能估算时间轴 · 可能有偏差' : '精准时间轴 · 逐句对齐') : undefined}
+          flush={documentMode}
         />
 
         </div>
@@ -494,10 +493,7 @@ export function TranscriptKaraoke({
                 )}
                 <span className="font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>{formatClock(currentSegment.start)}</span>
               </span>
-              {/* 「第几句 / 共几句」是这一屏唯一能回答「我看到哪了」的东西 */}
-              <span className="flex-shrink-0 font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                第 {activeIdx + 1} / {timelineSegments.length} 句
-              </span>
+
             </div>
             <p
               className="mt-1 text-[15px] font-semibold leading-snug text-token-primary"
@@ -704,42 +700,11 @@ export function TranscriptKaraoke({
           <section style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
               <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>词云</h3>
-              <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句 · 点词看它出现在哪几处</span>
+              <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句 · 点击查看命中</span>
             </div>
             <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
 
 
-            {speakers.length > 0 && (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="flex items-center gap-1 text-[11px] text-token-muted"><UserRound size={12} /> 说话人</span>
-                {speakers.map(speaker => renamingSpeaker === speaker ? (
-                  <span key={speaker} className="flex items-center gap-1">
-                    <input autoFocus value={speakerDraft} onChange={event => setSpeakerDraft(event.target.value)} className="h-9 w-28 rounded-[8px] px-2 text-[12px] outline-none" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }} />
-                    <button type="button" className="min-h-9 rounded-[8px] px-2 text-[11px]" onClick={() => {
-                      if (!onSaveNote || !speakerDraft.trim()) return;
-                      const next = renameTranscriptSpeaker(noteMd, speaker, speakerDraft);
-                      setSavingEdit(true);
-                      void onSaveNote(next).then(ok => { if (ok !== false) setRenamingSpeaker(null); }).finally(() => setSavingEdit(false));
-                    }} disabled={savingEdit}>保存</button>
-                  </span>
-                ) : (
-                  (() => {
-                  // 光有名字看不出这场是谁在说；句数与占比是数得出来的事实（设计稿 P3/D1）
-                  const stat = speakerStats.find(item => item.speaker === speaker);
-                  return (
-                    <button key={speaker} type="button" onClick={() => { setRenamingSpeaker(speaker); setSpeakerDraft(speaker); }} className="flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[11px] text-token-secondary" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }} title="修改这个说话人的名称">
-                      <span className="font-semibold text-token-primary">{speaker}</span>
-                      {stat && (
-                        <span className="tabular-nums text-token-muted">
-                          {stat.count} 句 · 占 {stat.percent}%
-                        </span>
-                      )}
-                    </button>
-                  );
-                })()
-                ))}
-              </div>
-            )}
 
             {speakerSource && (
               <p
@@ -760,17 +725,10 @@ export function TranscriptKaraoke({
             */}
             {(wordCloud.length > 0 || onSaveNote) && (
               <div className="mt-3">
-                {wordCloud.length > 0 ? (
-                  <p className="text-[11px] leading-relaxed text-token-muted">
-                    这场反复提到的是 <strong className="font-semibold text-token-secondary">{wordCloud[0].word}</strong>（{wordCloud[0].count} 次）；点任意一个词看它出现在哪几处
-                  </p>
-                ) : (
-                  // 词云为空恰恰是最需要补词典的时刻：多半是人名/黑话被通用分词器切成了单字。
-                  // 把补词入口一起藏起来，用户就没有任何办法让词云长出来（形状 8：写了一个到不了的入口）。
-                  <p className="text-[11px] leading-relaxed text-token-muted">
-                    没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。
-                  </p>
-                )}
+            {/*
+              稿面这张卡打开就是词条云：词条在最前，结论句与说话人占比排在它后面。
+              我原先把占比行和结论句垫在词条上面，等于把设计稿定义的区块起点往后推了一屏。
+            */}
                 {wordCloud.length > 0 && (
                 <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
                   {wordCloud.map(({ word, count }, index) => {
@@ -821,6 +779,48 @@ export function TranscriptKaraoke({
                   })}
                 </div>
                 )}
+                {wordCloud.length > 0 ? (
+                  <p className="text-[11px] leading-relaxed text-token-muted">
+                    这场反复提到的是 <strong className="font-semibold text-token-secondary">{wordCloud[0].word}</strong>（{wordCloud[0].count} 次）；点任意一个词看它出现在哪几处
+                  </p>
+                ) : (
+                  // 词云为空恰恰是最需要补词典的时刻：多半是人名/黑话被通用分词器切成了单字。
+                  // 把补词入口一起藏起来，用户就没有任何办法让词云长出来（形状 8：写了一个到不了的入口）。
+                  <p className="text-[11px] leading-relaxed text-token-muted">
+                    没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。
+                  </p>
+                )}
+            {speakers.length > 0 && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="flex items-center gap-1 text-[11px] text-token-muted"><UserRound size={12} /> 说话人</span>
+                {speakers.map(speaker => renamingSpeaker === speaker ? (
+                  <span key={speaker} className="flex items-center gap-1">
+                    <input autoFocus value={speakerDraft} onChange={event => setSpeakerDraft(event.target.value)} className="h-9 w-28 rounded-[8px] px-2 text-[12px] outline-none" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }} />
+                    <button type="button" className="min-h-9 rounded-[8px] px-2 text-[11px]" onClick={() => {
+                      if (!onSaveNote || !speakerDraft.trim()) return;
+                      const next = renameTranscriptSpeaker(noteMd, speaker, speakerDraft);
+                      setSavingEdit(true);
+                      void onSaveNote(next).then(ok => { if (ok !== false) setRenamingSpeaker(null); }).finally(() => setSavingEdit(false));
+                    }} disabled={savingEdit}>保存</button>
+                  </span>
+                ) : (
+                  (() => {
+                  // 光有名字看不出这场是谁在说；句数与占比是数得出来的事实（设计稿 P3/D1）
+                  const stat = speakerStats.find(item => item.speaker === speaker);
+                  return (
+                    <button key={speaker} type="button" onClick={() => { setRenamingSpeaker(speaker); setSpeakerDraft(speaker); }} className="flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[11px] text-token-secondary" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }} title="修改这个说话人的名称">
+                      <span className="font-semibold text-token-primary">{speaker}</span>
+                      {stat && (
+                        <span className="tabular-nums text-token-muted">
+                          {stat.count} 句 · 占 {stat.percent}%
+                        </span>
+                      )}
+                    </button>
+                  );
+                })()
+                ))}
+              </div>
+            )}
                 {/*
                   词典入口就放在词云下面：发现「某个词该在却不在」正是在看这一屏的时候。
                   逼用户跑去设置页再回来是绕路（anti-detour.md）。
@@ -895,7 +895,7 @@ export function TranscriptKaraoke({
                   </button>
                 </div>
                 <div className="flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                  {searchMatches.map(({ segment, index }, position) => (
+                  {searchMatches.map(({ segment, index }) => (
                     <button
                       key={`${index}-${segment.start}`}
                       type="button"
@@ -903,10 +903,8 @@ export function TranscriptKaraoke({
                       // 时间戳独立成左列：几条命中句的时间纵向对齐，才能一眼扫出「集中在哪一段」
                       // 面板已经是一整块灰底，句子行自己不再叠第二层底色，靠细分隔线分行
                       className="grid min-h-11 items-start gap-2 px-1 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
-                      style={{
-                        gridTemplateColumns: '44px 1fr',
-                        borderTop: position === 0 ? 'none' : '1px solid var(--border-faint)',
-                      }}>
+                      // 稿面这块是紧凑列表，没有逐行分隔线——面板本身那块灰底已经是分组
+                      style={{ gridTemplateColumns: '44px 1fr' }}>
                       <span className="pt-[1px] font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
                         {segment.start >= 0 ? formatClock(segment.start) : '原文'}
                       </span>
