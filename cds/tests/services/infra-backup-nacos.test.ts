@@ -149,6 +149,8 @@ describe('nacos 脚本：真跑一遍', () => {
     probeExit?: number;
     /** `/v1/console/namespaces` 返回的 JSON。 */
     namespacesJson?: string;
+    /** 命名空间接口的退出码（非零 = 接口挂了）。 */
+    namespacesExit?: number;
     /** 导出某个命名空间时的退出码。 */
     exportExit?: number;
     /** 登录返回的 JSON。 */
@@ -200,7 +202,7 @@ describe('nacos 脚本：真跑一遍', () => {
         `    echo OK; exit ${s.probeExit ?? 0} ;;`,
         '  *console/namespaces*)',
         `    printf '%s' '${s.namespacesJson ?? '{"data":[{"namespace":"","namespaceShowName":"public"}]}'}'`,
-        '    exit 0 ;;',
+        `    exit ${s.namespacesExit ?? 0} ;;`,
         '  *export=true*)',
         `    [ -n "$out" ] && printf 'PK-fake-zip' > "$out"`,
         `    exit ${s.exportExit ?? 0} ;;`,
@@ -320,6 +322,27 @@ describe('nacos 脚本：真跑一遍', () => {
       expect(exports.some((u) => /tenant=(&|$)/.test(u)), 'public 命名空间没导').toBe(true);
       expect(exports.some((u) => u.includes('tenant=dev-ns'))).toBe(true);
       expect(exports.some((u) => u.includes('tenant=prod-ns'))).toBe(true);
+    });
+
+    it('命名空间接口失败：整轮作废，绝不只导 public 冒充全量', () => {
+      // Codex review P1。原来是 `cds_nacos_get ... | tr | sed` 一条管道，
+      // shell 看到的退出码是**最后一环 sed 的**，而 sed 对着空输入照样退 0。
+      // 于是接口一挂，命名空间列表静默变空，只导 public 一个还报
+      // 「成功，1 个命名空间」——一份看起来成功的空壳。
+      const r = run(buildNacosDumpScript(), { namespacesExit: 22 });
+      expect(r.code).toBe(78);
+      expect(r.stderr).toContain('列不出 nacos 命名空间');
+      // 关键：一个命名空间都不许导。
+      expect(r.urls.some((u) => u.includes('export=true'))).toBe(false);
+    });
+
+    it('接口回 200 但内容不是清单：同样作废，不当成空清单', () => {
+      // 「解析出零个命名空间」和「真的只有 public」长得一模一样，
+      // 这是同一个坑的另一半：只看退出码挡不住返回登录页 / 错误 JSON 的情况。
+      const r = run(buildNacosDumpScript(), { namespacesJson: '{"code":403,"message":"forbidden"}' });
+      expect(r.code).toBe(78);
+      expect(r.stderr).toContain('认不出这是清单');
+      expect(r.urls.some((u) => u.includes('export=true'))).toBe(false);
     });
 
     it('某个命名空间导失败：整轮作废，不留半份', () => {

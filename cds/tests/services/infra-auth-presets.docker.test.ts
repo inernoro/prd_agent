@@ -1,6 +1,7 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { execSync } from 'node:child_process';
 import { getInfraCatalogEntry, type InfraCatalogEntry } from '../../src/services/infra-catalog.js';
+import { acquireDockerSlot, releaseDockerSlot } from '../helpers/docker-container.js';
 
 /**
  * memcached / kafka / nats 三个预设的**运行时**判据：真起容器，看认证是不是真的开着。
@@ -125,7 +126,11 @@ const KAFKA = getInfraCatalogEntry('kafka')!;
 
 describe.skipIf(!readiness('memcached', MEMCACHED.dockerImage))('memcached 预设：真容器', () => {
   const name = `cds-memcached-auth-${Date.now()}`;
+  // 重型容器排队起，别几个数据库同时冷启动把 runner 压垮（首轮 CI 四个容器全挂就是这么来的，见 helpers/docker-container.ts）。
+  beforeAll(() => { if (READY) acquireDockerSlot('auth-presets'); }, 1_800_000);
+
   afterAll(() => {
+    releaseDockerSlot();
     try { execSync(`docker rm -f ${name}`, { stdio: 'ignore', timeout: 15_000 }); } catch { /* 没起来过 */ }
   });
 

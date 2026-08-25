@@ -77,6 +77,40 @@ export interface DailyHealthInput {
   lastRestoreDrillAt: string | null;
 }
 
+/**
+ * 豁免台账的 key。**必须带项目**：infra id 只在项目内唯一，六个项目可以各有一个
+ * 叫 `redis` 的服务；只用 id 会让 A 项目的豁免被 B 项目同名服务捡走，于是一台
+ * 配好认证的库被报成「靠存量豁免在跑」，倒计时也算错（Codex review P2）。
+ *
+ * 写成函数而不是就地拼串，是为了让**写入与读取用不了两种口径**（形状 3）。
+ */
+export function exemptKey(projectId: string | undefined | null, id: string): string {
+  return `${String(projectId || '')}::${String(id || '')}`;
+}
+
+/**
+ * 平台自身存储的事实清单。
+ *
+ * **只在真的用 Mongo 时才给**：CDS 支持 json 状态后端，那种部署压根没有 Mongo，
+ * 无条件塞一条 `connectionUri: null` 会被判成「没有凭据」，于是天天为一个不存在的
+ * 库报警。一盏永远亮着的灯没人会看——那正是这个体检要治的病，不能自己先犯
+ * （Codex review P2）。
+ *
+ * 判据与 index.ts 里选存储后端那段同源：显式 `CDS_STORAGE_MODE` 优先，
+ * 缺省时看有没有连接串。
+ */
+export function platformStoreFacts(env: Record<string, string | undefined>): HealthPlatformStoreFact[] {
+  const explicit = String(env.CDS_STORAGE_MODE || '').trim().toLowerCase();
+  const uri = String(env.CDS_MONGO_URI || '').trim();
+  const usesMongo = explicit === 'json'
+    ? false
+    : (explicit === 'mongo' || explicit === 'mongo-split')
+      ? true
+      : Boolean(uri);
+  if (!usesMongo) return [];
+  return [{ label: 'CDS 状态库', connectionUri: uri || null }];
+}
+
 /** 备份超过这个时长没跑就算陈旧。周期是 6 小时，给两轮的余量。 */
 export const BACKUP_STALE_AFTER_MS = 13 * 60 * 60_000;
 

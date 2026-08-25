@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +8,7 @@ import {
   buildNacosRestoreScript,
   buildNacosConfigCountScript,
 } from '../../src/services/infra-backup-schedule.js';
+import { acquireDockerSlot, releaseDockerSlot, waitForService } from '../helpers/docker-container.js';
 
 /**
  * nacos 配置备份与恢复的**运行时**判据：真起一个 nacos、真写配置、真导出、真删掉、真灌回去。
@@ -116,7 +117,11 @@ describe.skipIf(!READY)('nacos 配置备份与恢复：真容器', () => {
   const hostDump = path.join(workDir, 'configs.tar.gz');
   const inContainer = '/tmp/cds-restore.tar.gz';
 
+  // 重型容器排队起，别几个数据库同时冷启动把 runner 压垮（首轮 CI 四个容器全挂就是这么来的，见 helpers/docker-container.ts）。
+  beforeAll(() => { if (READY) acquireDockerSlot('nacos-backup'); }, 1_800_000);
+
   afterAll(() => {
+    releaseDockerSlot();
     try { execSync(`docker rm -f ${NAME}`, { stdio: 'ignore', timeout: 20_000 }); } catch { /* 没起来过 */ }
     if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
   });
@@ -124,18 +129,19 @@ describe.skipIf(!READY)('nacos 配置备份与恢复：真容器', () => {
   it('起服务 → 写配置 → 导出 → 删掉 → 灌回来，配置还在且内容一致', () => {
     execSync(`docker run -d --name ${NAME} -e MODE=standalone ${IMAGE}`, { stdio: 'ignore', timeout: 180_000 });
 
-    let ready = false;
-    for (let i = 0; i < 180 && !ready; i += 1) {
-      try {
-        const r = execSync(
-          `docker exec ${NAME} curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8848/nacos/v1/console/health/readiness`,
-          { encoding: 'utf8', timeout: 15_000 },
-        ).trim();
-        ready = r === '200';
-      } catch { /* 还在启动 */ }
-      if (!ready) execSync('sleep 1');
-    }
-    expect(ready, 'nacos 在 180 秒内没有就绪').toBe(true);
+    // 探活走 waitForService：容器一旦退出就立刻抛出并带上日志，
+    // 而不是空等到超时再报一句「expected false to be true」——
+    // 首轮 CI 四个容器全挂，我拿到的就只有那句话，等于要再花一轮才能开始诊断。
+    waitForService({
+      name: NAME,
+      label: 'nacos',
+      timeoutMs: 300_000,
+      intervalMs: 2_000,
+      probe: () => execSync(
+        `docker exec ${NAME} curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8848/nacos/v1/console/health/readiness`,
+        { encoding: 'utf8', timeout: 15_000 },
+      ).trim() === '200',
+    });
 
     // 容器里有没有 curl，是这条路能不能走通的前提。这里顺带把它证了——
     // 上面那个 readiness 探测本身就是用容器内的 curl 发的。

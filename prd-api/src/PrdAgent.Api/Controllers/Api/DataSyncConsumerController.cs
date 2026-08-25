@@ -509,7 +509,14 @@ public sealed class DataSyncConsumerController : ControllerBase
         // 先落子记录再认领父记录：反过来的话，中间崩一下就会留下一个「已转正、
         // 但那条真跑不存在」的父记录，而它再也转正不了了。这个顺序下最坏结果是
         // 一条没人认领的 pending，由既有的过期清扫收走。
-        await _db.DataSyncRuns.InsertOneAsync(child, cancellationToken: ct);
+        //
+        // 从这里往下的每一次写库都用 CancellationToken.None，**不跟 HTTP 连接绑死**。
+        // 原来传的是请求的取消令牌，于是浏览器一关（或代理超时）就可能停在
+        // 「父记录已认领、子记录还是 pending」这一步：worker 只认领 running，
+        // 而父记录的 PromotedToRunId 已经被占住，那唯一一次转正机会就永久作废了
+        // ——接口还照样回「status: running」，是句假话（Codex review P1）。
+        // 这也正是 server-authority 那条规则的原文要求：状态变更一律用 None。
+        await _db.DataSyncRuns.InsertOneAsync(child, cancellationToken: CancellationToken.None);
 
         var claimed = await _db.DataSyncRuns.UpdateOneAsync(
             Builders<DataSyncRun>.Filter.And(
@@ -521,12 +528,12 @@ public sealed class DataSyncConsumerController : ControllerBase
             Builders<DataSyncRun>.Update
                 .Set(x => x.PromotedToRunId, child.Id)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         if (claimed.ModifiedCount == 0)
         {
             // 有人抢先了。把刚插进去的这条撤掉，返回抢赢的那一条。
-            await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, ct);
+            await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, CancellationToken.None);
             var latest = await FindRunAsync(run.Id, ct);
             return Ok(ApiResponse<object>.Ok(new
             {
@@ -548,7 +555,7 @@ public sealed class DataSyncConsumerController : ControllerBase
             Builders<DataSyncRun>.Update
                 .Set(x => x.Status, "running")
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         _logger.LogInformation("[data-sync] Run {RunId} 试跑转正为真跑 {ChildId}", run.Id, child.Id);
         return Ok(ApiResponse<object>.Ok(new { runId = child.Id, status = "running", dryRun = false }));

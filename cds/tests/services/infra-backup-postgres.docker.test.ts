@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,7 @@ import {
   buildPostgresTableCountScript,
 } from '../../src/services/infra-backup-schedule.js';
 import { getInfraCatalogEntry } from '../../src/services/infra-catalog.js';
+import { acquireDockerSlot, releaseDockerSlot, waitForService } from '../helpers/docker-container.js';
 
 /**
  * postgres 备份与恢复的**运行时**判据：真起一个库、真塞数据、真导出、真清库、真灌回去。
@@ -67,6 +68,8 @@ if (!READY) {
 }
 
 const PASSWORD = 'pgbackuptest0123';
+/** 目标库名。测试与预设必须用同一个值，两边各写一遍就会出现「探活说好了、查询打空」。 */
+const DB = 'appdb';
 const NAME = `cds-pg-backup-${Date.now()}`;
 /** 建表塞多少行。数字本身不重要，重要的是恢复前后能对上。 */
 const ROWS = 37;
@@ -77,7 +80,7 @@ const ROWS = 37;
  * 不传口令：官方镜像 initdb 把本地 socket 配成 trust，`docker exec` 进去用 `-U app`
  * 就能连上。这也正是导出脚本依赖的那条路径——测试用同一条，顺带把它验了。
  */
-function sql(statement: string, db = 'appdb'): string {
+function sql(statement: string, db = DB): string {
   return execSync(
     `docker exec ${NAME} psql -U app -d ${db} -tAc ${shq(statement)}`,
     { encoding: 'utf8', timeout: 60_000 },
@@ -134,7 +137,11 @@ describe.skipIf(!READY)('postgres 备份与恢复：真容器', () => {
   const hostDump = path.join(workDir, 'dump.sql.gz');
   const inContainer = '/tmp/cds-restore.sql.gz';
 
+  // 重型容器排队起，别几个数据库同时冷启动把 runner 压垮（首轮 CI 四个容器全挂就是这么来的，见 helpers/docker-container.ts）。
+  beforeAll(() => { if (READY) acquireDockerSlot('postgres-backup'); }, 1_800_000);
+
   afterAll(() => {
+    releaseDockerSlot();
     try { execSync(`docker rm -f ${NAME}`, { stdio: 'ignore', timeout: 20_000 }); } catch { /* 没起来过 */ }
     if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
   });
@@ -142,20 +149,24 @@ describe.skipIf(!READY)('postgres 备份与恢复：真容器', () => {
   it('起库 → 塞数据 → 导出 → 清库 → 灌回来，行数对得上', () => {
     // 完全按 catalog 的产物起容器：env 取自预设，不在测试里另写一份，
     // 否则测的是测试自己编的配置，不是产品真正会用的那一套。
-    const built = ENTRY.build({ password: PASSWORD }, { dbName: 'appdb' });
+    const built = ENTRY.build({ password: PASSWORD }, { dbName: DB });
     const envFlags = Object.entries(built.env || {}).map(([k, v]) => `-e ${shq(`${k}=${v}`)}`).join(' ');
     execSync(`docker run -d --name ${NAME} ${envFlags} ${IMAGE}`, { stdio: 'ignore', timeout: 120_000 });
 
-    // 等就绪：initdb 之后 postgres 会重启一次监听，只探一次会撞上那个空窗。
-    let ready = false;
-    for (let i = 0; i < 120 && !ready; i += 1) {
-      try {
-        execSync(`docker exec ${NAME} pg_isready -U app -d appdb`, { stdio: 'ignore', timeout: 10_000 });
-        ready = true;
-      } catch { /* 还在初始化 */ }
-      if (!ready) execSync('sleep 0.5');
-    }
-    expect(ready, 'postgres 在 60 秒内没有就绪').toBe(true);
+    // 探活必须是**拿目标库真跑一次查询**，不是 pg_isready。
+    //
+    // 官方镜像 initdb 阶段会先起一个临时服务器，那时 pg_isready 就已经返回成功，
+    // 而 POSTGRES_DB 还没建出来——首轮 CI 的 `database "appdb" does not exist`
+    // 正是这么来的：探活说好了，第一条 SQL 却打在一个不存在的库上。
+    waitForService({
+      name: NAME,
+      label: 'postgres',
+      timeoutMs: 180_000,
+      probe: () => {
+        execSync(`docker exec ${NAME} psql -U app -d ${DB} -tAc 'SELECT 1'`, { stdio: 'ignore', timeout: 10_000 });
+        return true;
+      },
+    });
 
     sql('CREATE TABLE cds_probe (id serial primary key, note text not null)');
     sql(`INSERT INTO cds_probe (note) SELECT 'row-' || g FROM generate_series(1, ${ROWS}) g`);

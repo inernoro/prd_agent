@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,7 @@ import {
   buildRabbitmqQueueCountScript,
 } from '../../src/services/infra-backup-schedule.js';
 import { getInfraCatalogEntry } from '../../src/services/infra-catalog.js';
+import { acquireDockerSlot, releaseDockerSlot, waitForService } from '../helpers/docker-container.js';
 
 /**
  * rabbitmq definitions 备份与恢复的**运行时**判据：真起一个节点、真声明队列、
@@ -119,7 +120,11 @@ describe.skipIf(!READY)('rabbitmq definitions 备份与恢复：真容器', () =
   const hostDump = path.join(workDir, 'definitions.json.gz');
   const inContainer = '/tmp/cds-restore.json.gz';
 
+  // 重型容器排队起，别几个数据库同时冷启动把 runner 压垮（首轮 CI 四个容器全挂就是这么来的，见 helpers/docker-container.ts）。
+  beforeAll(() => { if (READY) acquireDockerSlot('rabbitmq-backup'); }, 1_800_000);
+
   afterAll(() => {
+    releaseDockerSlot();
     try { execSync(`docker rm -f ${NAME}`, { stdio: 'ignore', timeout: 20_000 }); } catch { /* 没起来过 */ }
     if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
   });
@@ -131,15 +136,17 @@ describe.skipIf(!READY)('rabbitmq definitions 备份与恢复：真容器', () =
     const envFlags = Object.entries(built.env || {}).map(([k, v]) => `-e ${shq(`${k}=${v}`)}`).join(' ');
     execSync(`docker run -d --name ${NAME} ${envFlags} ${IMAGE}`, { stdio: 'ignore', timeout: 120_000 });
 
-    let ready = false;
-    for (let i = 0; i < 120 && !ready; i += 1) {
-      try {
+    // 探活走 waitForService：容器退出即抛并带上日志，不空等到超时。
+    waitForService({
+      name: NAME,
+      label: 'rabbitmq',
+      timeoutMs: 300_000,
+      intervalMs: 2_000,
+      probe: () => {
         execSync(`docker exec ${NAME} rabbitmqctl -q -t 5 await_startup`, { stdio: 'ignore', timeout: 20_000 });
-        ready = true;
-      } catch { /* 还在 boot */ }
-      if (!ready) execSync('sleep 1');
-    }
-    expect(ready, 'rabbitmq 在 120 秒内没有起来').toBe(true);
+        return true;
+      },
+    });
 
     // 声明两个持久队列 + 一个自定义交换机，作为 definitions 里可核对的东西。
     ctl('add_vhost cds_probe_vhost');

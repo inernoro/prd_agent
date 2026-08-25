@@ -1289,7 +1289,28 @@ const NACOS_CLIENT_LINES: readonly string[] = [
  * 凡是把配置放在自定义命名空间的项目，备份会是一份看起来成功的空壳。
  */
 const NACOS_NAMESPACE_LINES: readonly string[] = [
-  'CDS_NACOS_NS=$(cds_nacos_get "$CDS_NACOS_BASE/v1/console/namespaces?cds=1$CDS_NACOS_AUTH" 2>/dev/null'
+  // **先把响应整个拿到手，再解析。**
+  //
+  // 原来是 `cds_nacos_get ... | tr | sed` 一条管道：shell 看到的退出码是**最后一环
+  // sed 的**，而 sed 对着空输入照样退 0。于是命名空间接口一旦失败（网络、鉴权、
+  // 改版），`CDS_NACOS_NS` 静默变成空，接下来只导 public 一个命名空间，
+  // 还报「成功，1 个命名空间」——一份看起来成功的空壳，而这正是本文件反复在防的东西
+  // （Codex review P1）。所以取值与解析分成两步，取值失败当场退出。
+  'CDS_NACOS_NS_RAW=$(cds_nacos_get "$CDS_NACOS_BASE/v1/console/namespaces?cds=1$CDS_NACOS_AUTH" 2>&1) || {',
+  '  echo "cds-backup: 列不出 nacos 命名空间（$CDS_NACOS_BASE）：$CDS_NACOS_NS_RAW" >&2',
+  '  echo "cds-backup: 拿不到命名空间清单就无法保证备全，拒绝只导 public 冒充全量" >&2',
+  '  exit 78',
+  '}',
+  // 响应必须长得像命名空间清单。返回 200 但内容是登录页 / 错误 JSON 时，
+  // 解析出零个命名空间和「真的只有 public」长得一模一样——那是同一个坑的另一半。
+  'case "$CDS_NACOS_NS_RAW" in',
+  '  *\'"namespace"\'*) ;;',
+  '  *)',
+  '    echo "cds-backup: 命名空间接口的响应里没有 namespace 字段，认不出这是清单，拒绝当成空清单继续" >&2',
+  '    exit 78',
+  '    ;;',
+  'esac',
+  `CDS_NACOS_NS=$(printf '%s' "$CDS_NACOS_NS_RAW"`
     + ' | tr \'{\' \'\\n\' | sed -n \'s/.*"namespace":"\\([^"]*\\)".*/\\1/p\')',
   'CDS_NACOS_NS_COUNT=1',
   'for ns in $CDS_NACOS_NS; do CDS_NACOS_NS_COUNT=$((CDS_NACOS_NS_COUNT+1)); done',

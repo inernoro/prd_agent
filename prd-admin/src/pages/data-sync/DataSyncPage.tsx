@@ -1069,9 +1069,13 @@ function ProgressCard({
             onClick={onPromote}
             disabled={busy}
             className="mt-4 rounded-lg px-4 py-2 text-sm font-medium"
+            // 主按钮走 button-primary 这对 token，不要拿 accent 底自己配前景色。
+            // 原来写的是 `--accent-primary` 配 `var(--accent-on-primary, #fff)`：
+            // 那个 fallback 的 `#fff` 是写死的浅色，accent 底上对比度只有 3.12:1，
+            // 而且一旦这块翻成浅色主题，字直接消失——双皮肤棘轮拦下的就是这个。
             style={{
-              background: 'var(--accent-primary)',
-              color: 'var(--accent-on-primary, #fff)',
+              background: 'var(--button-primary-bg)',
+              color: 'var(--button-primary-fg)',
               opacity: busy ? 0.6 : 1,
             }}
           >

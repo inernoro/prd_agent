@@ -23,7 +23,11 @@ import {
   type FirewallBackendSnapshot, type InfraExposureInput, type InfraExposureReport,
 } from './services/infra-exposure-audit.js';
 import {
-  evaluateDailyHealth, type HealthInfraFact, type HealthPlatformStoreFact,
+  evaluateDailyHealth,
+  type HealthInfraFact,
+  type HealthPlatformStoreFact,
+  exemptKey,
+  platformStoreFacts,
 } from './services/platform-daily-health.js';
 import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
 import {
@@ -1084,20 +1088,28 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
           { graceUntil: process.env.CDS_INFRA_AUTH_GRACE_UNTIL || null },
         );
         // 只有「靠豁免才放行」的才记倒计时：本来就配了认证的不该被算进去。
-        if (decision.exemption) exempt.set(service.id, decision.exemption.expiresAt);
+        //
+        // key 必须带项目：**infra id 只在项目内唯一**，这台机器上六个项目各有一个叫
+        // `redis` 的服务。只用 id 当 key，A 项目的豁免会被 B 项目同名服务捡走——
+        // 于是一台配好认证的库被报成「靠存量豁免在跑」，倒计时也算错。
+        // 这正是 cross-project-isolation 反复强调的「标识要带作用域」（形状 1）。
+        if (decision.exemption) exempt.set(exemptKey(service.projectId, service.id), decision.exemption.expiresAt);
       }
       const infra: HealthInfraFact[] = exposure.findings.map((f) => ({
         id: f.id,
         publiclyPublished: f.publiclyPublished,
         authenticated: f.authenticated,
-        authExemptionExpiresAt: exempt.get(f.id) ?? null,
+        authExemptionExpiresAt: exempt.get(exemptKey(f.projectId, f.id)) ?? null,
       }));
 
       // 事实二：平台自身的存储。认证门禁只管「项目基础设施容器」，CDS 自己这几个
       // 库从来不在它的管辖范围内，也就永远不会有人被提醒——这一条只有本体检会说。
-      const platformStores: HealthPlatformStoreFact[] = [
-        { label: 'CDS 状态库', connectionUri: process.env.CDS_MONGO_URI || null },
-      ];
+      //
+      // **只在真的用 Mongo 时才报**：CDS 支持 json 状态后端，那种部署压根没有 Mongo，
+      // 无条件塞一条 `connectionUri: null` 会被判成「没有凭据」，于是天天为一个
+      // 不存在的库报警。一盏永远亮着的灯没人会看——那正是这个体检要治的病，
+      // 不能自己先犯（Codex review P2）。
+      const platformStores: HealthPlatformStoreFact[] = platformStoreFacts(process.env);
 
       // 事实三：备份。这里自己读一遍而不复用 readBackupHealth()——那个函数把
       // 「覆盖不全」压成了「完全没备份过」，两件事在体检里要分开报。

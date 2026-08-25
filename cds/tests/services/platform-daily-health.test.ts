@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   connectionUriHasCredentials,
   evaluateDailyHealth,
+  exemptKey,
+  platformStoreFacts,
   BACKUP_STALE_AFTER_MS,
   RESTORE_DRILL_STALE_AFTER_MS,
   EXEMPTION_URGENT_DAYS,
@@ -247,5 +249,59 @@ describe('第一屏那句话', () => {
     expect(ids).toContain('restore-drill.never');
     // 旧库有口令，所以不该出现在无认证清单里——它的问题是端口，那一条由暴露面自检报。
     expect(ids.some((id) => id.includes('old-prod-mongo'))).toBe(false);
+  });
+});
+
+/**
+ * 下面两组是 2026-08-25 Codex review 的两条 P2。两条都是我自己写的新代码里的
+ * 缺陷，而且**都是「一盏永远亮着的灯」这个病的复发**——这个体检本来就是为治它而生的。
+ */
+describe('豁免台账的 key 必须带项目', () => {
+  it('同名服务不会互相捡走对方的豁免', () => {
+    // 这台机器上六个项目各有一个叫 redis 的服务。只用 id 当 key 的话，
+    // A 项目的豁免会被 B 项目同名服务捡走：一台配好认证的库被报成
+    // 「靠存量豁免在跑」，倒计时也跟着算错。
+    expect(exemptKey('proj-a', 'redis')).not.toBe(exemptKey('proj-b', 'redis'));
+  });
+
+  it('同项目同服务是同一个 key（写入与读取对得上）', () => {
+    expect(exemptKey('proj-a', 'redis')).toBe(exemptKey('proj-a', 'redis'));
+  });
+
+  it('projectId 缺失时不会把不同服务撞成一个 key', () => {
+    expect(exemptKey(null, 'redis')).not.toBe(exemptKey(null, 'mysql'));
+    expect(exemptKey(undefined, 'redis')).toBe(exemptKey('', 'redis'));
+  });
+});
+
+describe('平台存储事实：没有 Mongo 就别报', () => {
+  it('json 后端不报——那种部署压根没有 CDS 自己的 Mongo', () => {
+    // 无条件塞一条 connectionUri: null 会被判成「没有凭据」，
+    // 于是天天为一个不存在的库报警。这个体检不能自己先犯这个病。
+    expect(platformStoreFacts({ CDS_STORAGE_MODE: 'json', CDS_MONGO_URI: 'mongodb://x' })).toEqual([]);
+    expect(platformStoreFacts({})).toEqual([]);
+  });
+
+  it('显式 mongo 模式即使没连接串也要报——那才是真的少配了', () => {
+    const facts = platformStoreFacts({ CDS_STORAGE_MODE: 'mongo-split' });
+    expect(facts).toHaveLength(1);
+    expect(facts[0].connectionUri).toBeNull();
+  });
+
+  it('缺省模式看有没有连接串', () => {
+    expect(platformStoreFacts({ CDS_MONGO_URI: 'mongodb://cds:pw@h:27017/db' })).toHaveLength(1);
+    expect(platformStoreFacts({ CDS_STORAGE_MODE: 'auto' })).toEqual([]);
+  });
+
+  it('接上体检之后：json 部署不会因为这条变红', () => {
+    // 端到端断言，而不是只看数组长度——判据与体检各自漂移的话这条会红。
+    const v = evaluateDailyHealth({
+      now: NOW,
+      infra: [],
+      platformStores: platformStoreFacts({ CDS_STORAGE_MODE: 'json' }),
+      backup: { lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(), coverageGaps: [] },
+      lastRestoreDrillAt: new Date(NOW.getTime() - 86_400_000).toISOString(),
+    });
+    expect(v.severity).toBe('ok');
   });
 });
