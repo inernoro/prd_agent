@@ -20,6 +20,10 @@
  *
  * 已排进计划任务：Routine `trig_017sNsVhR9oSVa5SKbVLwC8i`「每日关键功能验收（网页托管）」，
  * 每天 01:05 UTC（北京时间 09:05）在一个全新会话里跑，失败推送 + 邮件。
+ * 被测环境钉死在 https://main-prd-agent.miduo.org（main 分支预览）——不跟着功能分支跑，
+ * 否则分支一合并这条例程就永远拿不到地址。同一环境上还有 48 小时一轮的稳定冒烟
+ * （Routine `trig_01ALxMepdiLx49Qhw3ZdvoXC`，走 .claude/skills/stable-smoke）。
+ * 两者分工：本脚本管「产物有没有出现」的快判据，稳定冒烟管全业务线的双环境矩阵。
  * 改 cron 或停用走 claude.ai 的 Routines 界面，或让 agent 调 update_trigger / delete_trigger。
  *
  * 加一条用例的成本：往 FORMS 加一行（形态类），或往主流程加一个 checkXxx（交互类）。
