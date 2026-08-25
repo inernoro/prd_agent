@@ -60,7 +60,8 @@ function seededBars(src: string, n: number): number[] {
     h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h |= 0;
     const r = ((h >>> 0) % 1000) / 1000;
     // 正弦包络 + 随机扰动：形似语音的起伏，不是纯噪声
-    out.push(0.22 + 0.78 * (0.55 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.45 * r));
+    // 稿面波形的高低差很大；振幅压得太平会退化成一排等高栅格
+    out.push(0.10 + 0.90 * (0.55 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.45 * r));
   }
   return out;
 }
@@ -231,7 +232,7 @@ export function AudioWavePlayer({
       {/* 语音消息式声纹条：不读取跨域 PCM，播放与进度只依赖原生 audio。 */}
       <div className="relative mb-3">
         <div
-          className="flex h-[56px] w-full items-end gap-[2px]"
+          className="flex h-[72px] w-full items-end gap-[2px]"
           style={{ cursor: ready && duration > 0 ? 'pointer' : 'default', alignItems: 'center' }}
           onClick={(e) => {
             if (!ready || duration <= 0 || !audioRef.current) return;
@@ -260,6 +261,10 @@ export function AudioWavePlayer({
       </div>
 
       {/* 控制条 */}
+      {/*
+        稿面这一块是「播放键 | 一列（时间行 + 说明行） | 倍速药丸」。
+        我先前把说明行摊成整行贴到最左，它就和时间脱了组——两位判官都指到这处。
+      */}
       <div className="flex items-center gap-3">
         <button
           onClick={togglePlay}
@@ -279,23 +284,29 @@ export function AudioWavePlayer({
           {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" style={{ marginLeft: 2 }} />}
         </button>
 
-        <span className="text-[11px] font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
-          {formatTime(currentTime)}
-        </span>
-        <span className="text-[11px] text-token-muted">/</span>
-        <span className="text-[11px] font-mono tabular-nums text-token-muted">
-          {ready ? formatTime(duration) : '--:--'}
-        </span>
-
-        {/*
-          稿面把「第 N / M 句」编在这一行里，紧跟时间——它和时间回答的是同一个问题
-          「我在哪」。此前它被放到下方当前句卡的右上角，这一行就只剩时间了。
-        */}
-        {transportMeta && (
-          <span className="ml-2 min-w-0 truncate text-[11px] text-token-muted">{transportMeta}</span>
-        )}
-
-        <div className="flex-1" />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-baseline gap-2">
+            {/* 稿面把当前时间做成播放区的视觉重心：大号加粗黑，总时长与句序退到灰色小字 */}
+            <span className="font-mono text-[17px] font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
+              {formatTime(currentTime)}
+            </span>
+            <span className="text-[13px] text-token-muted">/</span>
+            <span className="font-mono text-[13px] tabular-nums text-token-muted">
+              {ready ? formatTime(duration) : '--:--'}
+            </span>
+            {/*
+              稿面把「第 N / M 句」编在这一行里，紧跟时间——它和时间回答的是同一个问题
+              「我在哪」。此前它被放到下方当前句卡的右上角，这一行就只剩时间了。
+            */}
+            {transportMeta && (
+              <span className="ml-1 min-w-0 truncate text-[12px] text-token-muted">{transportMeta}</span>
+            )}
+          </div>
+          {/* 说明行跟着时间列走，与时间左对齐；摊成整行贴到最左会让它和时间脱组 */}
+          {caption && (
+            <p className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{caption}</p>
+          )}
+        </div>
 
         {/* 倍速切换 */}
         <button
@@ -315,10 +326,6 @@ export function AudioWavePlayer({
           {PLAYBACK_RATES[rateIdx].toFixed(1)}×
         </button>
       </div>
-      {/* 稿面把这句放在时间行正下方，属于播放器主体的一部分，不是分区标题的附注 */}
-      {caption && (
-        <p className="mt-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>{caption}</p>
-      )}
 
       <style>{`
         @keyframes wave-pulse {

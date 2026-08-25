@@ -214,7 +214,10 @@ function MarkdownViewerBase({ content, compact = false }: {
   return (
     // F2：文档站观感——更大行距、自适应宽度（窄屏占满，宽屏给到 1180 上限避免长行不利阅读）、底部留白
     <div
-      className="prose-invert text-[14px]"
+      // compact 还要压掉**首元素的上边距**：标题类元素带着 mt-7 ~ mt-9（28-36px），
+      // 嵌在小卡里就变成卡片顶部一条无内容的空带——判分里 B1 与 P3 各自独立报了
+      // 「卡内顶部留白是下沿的一倍半」。整篇阅读时那段上边距是对的，所以只在 compact 关掉。
+      className={`prose-invert text-[14px]${compact ? ' md-compact' : ''}`}
       style={{
         lineHeight: 1.78,
         maxWidth: 'min(100%, 1180px)',

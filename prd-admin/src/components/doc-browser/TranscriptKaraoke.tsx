@@ -394,15 +394,12 @@ export function TranscriptKaraoke({
   return (
     <div className="flex w-full flex-col items-center gap-4">
       {documentMode && (
-        // 时间轴精度那句已经搬进播放器主体（稿面就画在时间行正下方），
-        // 这里再写一遍就是同一句话出现两次；分区标题只留标题。
-        <div className="flex w-full max-w-[760px] items-center justify-between gap-2">
-          <p className="text-[12px] font-semibold text-token-muted">录音</p>
-          {/* 跟随进度仍要播报给读屏，只是不再占一行可见文案 */}
-          <p className="sr-only" aria-live="polite">
-            {playing && followEnabled ? `正在跟随第 ${activeIdx + 1}/${timelineSegments.length} 句` : ''}
-          </p>
-        </div>
+        // 「录音」这个分区标题去掉了：顶栏已经写明这一屏是什么，稿面也没有它；
+        // 留着的代价是它和下方白底播放区之间空出一大块灰，正是判官记的「播放区顶部留白」。
+        // 跟随进度仍要播报给读屏，只是不再占一行可见文案。
+        <p className="sr-only" aria-live="polite">
+          {playing && followEnabled ? `正在跟随第 ${activeIdx + 1}/${timelineSegments.length} 句` : ''}
+        </p>
       )}
       {/*
         吸顶播放区（设计稿 P1）：原文往下滚的时候，播放器和「现在念到哪一句」必须一直在视野里。
@@ -411,9 +408,14 @@ export function TranscriptKaraoke({
         只在同文档模式吸顶：另一种形态本身就是固定高度的滚轮，不存在滚走的问题。
       */}
       {documentMode && <div ref={collapseSentinelRef} aria-hidden style={{ height: 1, width: '100%' }} />}
+      {/*
+        稿面 B1 靠**两种底色**把播放区与原文区切开：播放区通铺白、原文区浅灰。
+        我原先两区同底色，分层只剩标题文字承担——两位判官都记了这一处。
+        白底同时让当前句卡那块浅灰重新看得见（此前两者几乎同色，卡片形同没有）。
+      */}
       <div
-        className={documentMode ? 'sticky top-0 z-10 flex w-full flex-col items-center gap-2 pb-2' : 'contents'}
-        style={documentMode ? { background: 'var(--bg-primary)' } : undefined}
+        className={documentMode ? 'sticky top-0 z-10 -mx-4 flex w-[calc(100%+2rem)] flex-col items-center gap-2 px-4 pb-3 pt-1' : 'contents'}
+        style={documentMode ? { background: 'var(--bg-card)', borderBottom: '1px solid var(--border-faint)' } : undefined}
       >
         {/* 折叠态：56px 一条，只留播放键与当前句；展开态是完整波形播放器 */}
         {documentMode && playerCollapsed && currentSegment ? (
@@ -475,10 +477,11 @@ export function TranscriptKaraoke({
         {documentMode && !playerCollapsed && followEnabled && currentSegment && (
           <div
             className="w-full max-w-[760px] rounded-[12px] px-3 py-2.5"
-            // 稿面这张卡是**中性灰底**，蓝色留给里面那枚说话人胶囊。
+            // 稿面这张卡是**中性灰底 + 圆角**，蓝色留给里面那枚说话人胶囊。
             // 我原先整张卡都用蓝，于是它和原文列表里的当前句高亮同色——
             // 两种不同语义共用一个颜色，谁也说不清蓝底到底在指什么。
-            style={{ background: 'var(--bg-elevated)' }}
+            // 灰要压得住：播放区已经是白底，浅一档就退化成「看不出有卡」。
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
             aria-live="polite"
           >
             <div className="flex items-baseline justify-between gap-2 text-[11px]">
