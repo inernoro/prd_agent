@@ -15,3 +15,4 @@
 | fix | cds | Codex Review 修复：一次性身份判据改为比对「本次请求实际发出的凭据」与存档 bootstrapKey（残留 bootstrapKey + 显式全权 Key 不再在项目已建好后误报死局）；用户管理说明面板新增探测失败态（可重试 + 错误详情），不再把 /api/auth/public-status 探测失败当成「认证未启用」 |
 | fix | cds | Codex Review 第二轮：connect 的 --git-url / --slug 不带 --create-project 时在发起授权申请之前就拒绝（此前会消耗一次人工批准再静默忽略这两个参数并报「接入完成」） |
 | test | cds | 单一实现守卫从字符串匹配换成 AST 解析（跟解模块级路径常量、参数换行、method=/path= 关键字传参），并补正负样本与红绿闭环；f-string 仅在整条路径是字面量时算数，避免把 /api/projects/{id}/pending-import 误判成建项目 |
+| fix | cds | cdscli 版本 bump 到 0.14.0（SKILL.md 同步）：新增 --create-project 属接入契约变更，不 bump 的话服务端仍把 0.13.2 通告为 latest，存量安装被口令要求跑一个它不认识的参数，零凭据接入直接卡住 |

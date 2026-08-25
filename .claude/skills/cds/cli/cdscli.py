@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.13.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.14.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
