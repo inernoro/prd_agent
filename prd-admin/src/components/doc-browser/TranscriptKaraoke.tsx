@@ -17,6 +17,7 @@ import {
   parseSummaryModules,
   extractTranscriptTodos,
   isTodoOnlyModule,
+  findTodoSource,
   buildSpeakerStats,
 } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
@@ -262,6 +263,12 @@ export function TranscriptKaraoke({
     () => [...new Set(segments.map(segment => segment.speaker).filter((value): value is string => Boolean(value)))],
     [segments],
   );
+  // 每条待办回原文找出处；找不到的就没有出处，不硬挂一句上去
+  const todoSources = useMemo(
+    () => todos.map(todo => findTodoSource(todo.text, timelineSegments)),
+    [todos, timelineSegments],
+  );
+  const todoSourceCount = todoSources.filter(Boolean).length;
   const speakerStats = useMemo(() => buildSpeakerStats(segments), [segments]);
   // 默认选中最高频的那个词：命中面板一进来就有内容，而不是先让用户猜该点哪个。
   // 设计稿画的也是「已选中某词」这一态；只在换了录音（词云变了）时重置。
@@ -386,7 +393,7 @@ export function TranscriptKaraoke({
               type="button"
               onClick={requestRecordingPlay}
               className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full"
-              style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}
+              style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
               title="播放"
             >
               <Play size={13} fill="currentColor" style={{ marginLeft: 1 }} />
@@ -395,7 +402,8 @@ export function TranscriptKaraoke({
               {currentSegment.text}
             </span>
             <span className="flex-shrink-0 font-mono text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-              {formatClock(currentSegment.start)}
+              {/* 折叠之后播放进度也得看得见，否则只剩一句台词、不知道播到哪了 */}
+              {formatClock(currentSegment.start)}{duration > 0 ? ` / ${formatClock(duration)}` : ''}
             </span>
             <button
               type="button"
@@ -465,7 +473,7 @@ export function TranscriptKaraoke({
           */}
           <section style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h3 className="text-[13px] font-semibold text-token-primary">词云</h3>
+              <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>词云</h3>
               <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句 · 点词看它出现在哪几处</span>
             </div>
             <label className="mt-3 flex min-h-11 items-center gap-2 rounded-[10px] px-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
@@ -569,9 +577,9 @@ export function TranscriptKaraoke({
                         className="min-h-9 rounded-full px-3"
                         style={{
                           ...tierStyle,
-                          // 选中态另加一圈描边：三档底色已经各不相同，光靠底色分不出「选没选」
-                          outline: selected ? '2px solid var(--accent-fg-info)' : 'none',
-                          outlineOffset: 2,
+                          // 选中的词直接用黑底（高频档同款），不再另加一圈蓝描边——
+                          // 稿面把蓝色留给时间戳与「全部」，到处用会把它的意思稀释掉
+                          ...(selected ? { background: 'var(--text-primary)', color: 'var(--bg-card)', border: '1px solid var(--text-primary)' } : {}),
                         }}
                         title={`出现 ${count} 次，点击查看命中`}
                       >
@@ -679,9 +687,9 @@ export function TranscriptKaraoke({
           </section>
           <section className="mt-4" style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h3 className="text-[13px] font-semibold text-token-primary">会议纪要</h3>
+              <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>会议纪要</h3>
               {onRestyle && (
-                <button type="button" onClick={onRestyle} className="flex min-h-9 items-center gap-1 rounded-[8px] px-2 text-[11px]" style={{ color: 'var(--accent-fg-info)' }}>
+                <button type="button" onClick={onRestyle} className="flex min-h-9 items-center gap-1 rounded-[8px] px-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   <RefreshCw size={11} /> 重新生成
                 </button>
               )}
@@ -696,7 +704,7 @@ export function TranscriptKaraoke({
                   >
                     <h4 className="text-[12px] font-semibold text-token-primary">{module.title}</h4>
                     <div className="mt-1.5 text-[12px] leading-relaxed text-token-secondary">
-                      <MarkdownViewer content={module.markdown} />
+                      <MarkdownViewer content={module.markdown} compact />
                     </div>
                   </article>
                 ))}
@@ -713,8 +721,12 @@ export function TranscriptKaraoke({
           </section>
           <section className="mt-4" style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h3 className="text-[13px] font-semibold text-token-primary">待办事项</h3>
-              {todos.length > 0 && <span className="text-[11px] tabular-nums text-token-muted">{todos.length} 项</span>}
+              <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>待办事项</h3>
+              {todos.length > 0 && (
+                <span className="text-[11px] tabular-nums text-token-muted">
+                  {todos.length} 项{todoSourceCount > 0 ? ` · 来自 ${todoSourceCount} 处原文` : ''}
+                </span>
+              )}
             </div>
             {todos.length > 0 ? (
               <ul className="mt-3 flex flex-col gap-1.5">
@@ -734,14 +746,29 @@ export function TranscriptKaraoke({
                     >
                       {todo.done && <Check size={10} style={{ color: 'var(--bg-base)' }} />}
                     </span>
-                    <span
-                      className="min-w-0 break-words text-[12px] leading-relaxed"
-                      style={{
-                        color: todo.done ? 'var(--text-muted)' : 'var(--text-secondary)',
-                        textDecoration: todo.done ? 'line-through' : undefined,
-                      }}
-                    >
-                      {todo.text}
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span
+                        className="min-w-0 break-words text-[12px] leading-relaxed"
+                        style={{
+                          color: todo.done ? 'var(--text-muted)' : 'var(--text-secondary)',
+                          textDecoration: todo.done ? 'line-through' : undefined,
+                        }}
+                      >
+                        {todo.text}
+                      </span>
+                      {/* 出处：这条待办是几点、谁提出来的。点它跳到原文那一句 */}
+                      {todoSources[index] && (
+                        <button
+                          type="button"
+                          onClick={event => { event.stopPropagation(); seekRef.current?.(todoSources[index]!.start); }}
+                          className="self-start font-mono text-[10.5px] tabular-nums"
+                          style={{ color: 'var(--text-muted)' }}
+                          title="跳到原文这一句"
+                        >
+                          {formatClock(todoSources[index]!.start)}
+                          {todoSources[index]!.speaker ? ` · ${todoSources[index]!.speaker}` : ''}
+                        </button>
+                      )}
                     </span>
                   </li>
                 ))}
@@ -757,7 +784,7 @@ export function TranscriptKaraoke({
           </section>
           <section className="mt-4" style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h3 className="text-[13px] font-semibold text-token-primary">问这段录音</h3>
+              <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>问这段录音</h3>
               <span />
             </div>
             <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>

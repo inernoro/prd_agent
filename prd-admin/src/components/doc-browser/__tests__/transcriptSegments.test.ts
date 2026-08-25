@@ -10,6 +10,7 @@ import {
   buildSpeakerStats,
   extractTranscriptTodos,
   isTodoOnlyModule,
+  findTodoSource,
   activeSummaryModuleIndex,
   replaceTranscriptSegmentText,
   renameTranscriptSpeaker,
@@ -385,13 +386,24 @@ describe('estimateTranscriptSegments', () => {
 describe('parseSummaryModules', () => {
   it('按 Markdown 标题和自然段拆分，不绑定具体整理方式', () => {
     const modules = parseSummaryModules('## 结论\n\n已确认上线。\n\n## 待办\n- [ ] 补测试');
-    expect(modules).toEqual([
-      { title: '结论', markdown: '已确认上线。' },
-      { title: '待办', markdown: '- [ ] 补测试' },
+    expect(modules.map(m => [m.title, m.markdown])).toEqual([
+      ['结论', '已确认上线。'],
+      ['待办', '- [ ] 补测试'],
     ]);
   });
 
-  it('没有标题时仍可按自然段形成顺序模块', () => {
+  it('标题之下的连续段落同属一个模块——一段结论加两条要点是一块，不是两块', () => {
+    // 拆成两块的话，要点那块会被自动编一个从正文截出来的标题，既不是人写的也读不通
+    const modules = parseSummaryModules(
+      '## 结论\n\n导入是最大的漏斗。\n\n- 拆成两步\n- 展示真实进度',
+    );
+    expect(modules).toHaveLength(1);
+    expect(modules[0].title).toBe('结论');
+    expect(modules[0].markdown).toContain('导入是最大的漏斗。');
+    expect(modules[0].markdown).toContain('- 拆成两步');
+  });
+
+  it('没有标题时仍可按自然段形成顺序模块（不会被并进上一块）', () => {
     expect(parseSummaryModules('一段概述。\n\n- 要点一\n- 要点二')).toHaveLength(2);
   });
 });
@@ -510,5 +522,30 @@ describe('isTodoOnlyModule', () => {
   it('空内容不判真，避免把空模块也吞掉', () => {
     expect(isTodoOnlyModule('')).toBe(false);
     expect(isTodoOnlyModule('## 只有标题')).toBe(false);
+  });
+});
+
+describe('findTodoSource', () => {
+  const segs = [
+    { start: 601, end: 610, text: '我们打算把导入拆成两步，先让他们看到结果', speaker: '主持人' },
+    { start: 862, end: 870, text: '解析阶段没有任何进度反馈，我以为它卡死了', speaker: '受访者 A' },
+    { start: 900, end: 905, text: '今天天气不错', speaker: '主持人' },
+  ];
+
+  it('挂到重合最多的那一句上，带回时间与说话人', () => {
+    expect(findTodoSource('出导入两步拆分的交互稿', segs)).toEqual({ start: 601, speaker: '主持人' });
+    expect(findTodoSource('补齐解析阶段的进度反馈埋点', segs)).toEqual({ start: 862, speaker: '受访者 A' });
+  });
+
+  it('重合不够就不给出处——宁可没有时间戳，也不伪造溯源', () => {
+    expect(findTodoSource('再约三位重度用户复访', segs)).toBeNull();
+    expect(findTodoSource('', segs)).toBeNull();
+    expect(findTodoSource('出导入两步拆分的交互稿', [])).toBeNull();
+  });
+
+  it('无时间戳的句子不作为出处（给不出「几点」这半句话）', () => {
+    expect(findTodoSource('出导入两步拆分的交互稿', [
+      { start: -1, end: -1, text: '我们打算把导入拆成两步，先让他们看到结果', speaker: '主持人' },
+    ])).toBeNull();
   });
 });

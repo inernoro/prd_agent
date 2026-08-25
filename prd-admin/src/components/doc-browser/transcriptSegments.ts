@@ -20,6 +20,8 @@ export type SummaryModule = {
   title: string;
   /** 保留模块内 Markdown，交互播放器可复用知识库正文渲染。 */
   markdown: string;
+  /** 标题是原文里真有的（而不是按内容截出来的）；决定后续段落能否并入本模块 */
+  fromHeading?: boolean;
 };
 
 export type RecordingAnswerPart =
@@ -374,6 +376,41 @@ export type TranscriptTodo = {
  * 靠「标题里有没有『待办』两个字」去猜，换一套整理模板就失灵。
  * 没有任务列表就返回空数组，界面据此如实说「这次整理没有产出待办」，不编。
  */
+/**
+ * 给待办找它的出处（设计稿每条待办下面那行「14:22 · 主持人」，以及标题右侧的
+ * 「来自 N 处原文」）。
+ *
+ * 整理结果本身不带出处，只能回到原文里找。判据是**双字词重合**：
+ * 待办文本与某句原文共享的双字片段最多的那一句，且至少要重合两个片段才算数。
+ * 一个都不够就**不给出处**——宁可这条待办没有时间戳，也不能随便挂一句原文上去，
+ * 那等于伪造溯源（no-rootless-tree）。
+ */
+export type TodoSource = { start: number; speaker?: string };
+
+function bigrams(text: string): Set<string> {
+  const clean = text.replace(/[\s\p{P}]/gu, '');
+  const out = new Set<string>();
+  for (let i = 0; i + 2 <= clean.length; i++) out.add(clean.slice(i, i + 2));
+  return out;
+}
+
+export function findTodoSource(
+  todoText: string,
+  segments: TranscriptSegment[],
+): TodoSource | null {
+  const needle = bigrams(todoText);
+  if (needle.size === 0) return null;
+  let best: { overlap: number; segment: TranscriptSegment } | null = null;
+  for (const segment of segments) {
+    if (segment.start < 0) continue;
+    let overlap = 0;
+    for (const gram of bigrams(segment.text)) if (needle.has(gram)) overlap++;
+    if (overlap > (best?.overlap ?? 0)) best = { overlap, segment };
+  }
+  if (!best || best.overlap < 2) return null;
+  return { start: best.segment.start, speaker: best.segment.speaker };
+}
+
 export function extractTranscriptTodos(summaryMd: string): TranscriptTodo[] {
   if (!summaryMd) return [];
   const todos: TranscriptTodo[] = [];
@@ -442,8 +479,16 @@ export function parseSummaryModules(md: string): SummaryModule[] {
     const heading = /^(#{1,6})\s+(.+?)(?:\n([\s\S]*))?$/.exec(block);
     if (heading) {
       const body = heading[3]?.trim();
-      if (body) modules.push({ title: heading[2].trim(), markdown: body });
+      if (body) modules.push({ title: heading[2].trim(), markdown: body, fromHeading: true });
       else pendingTitle = heading[2].trim();
+      return;
+    }
+    // 标题之下的连续段落同属这个标题：一段结论加两条要点是**一个**模块。
+    // 各自成模块的话，要点那块会被自动编一个截断出来的标题
+    //（「拆分导入为「上传 / 解析」两步，解」），既不是人写的也读不通。
+    if (pendingTitle === null && modules.length > 0 && modules[modules.length - 1].fromHeading) {
+      const last = modules[modules.length - 1];
+      last.markdown = `${last.markdown}\n\n${block}`;
       return;
     }
     const fallbackTitle = block
@@ -456,6 +501,7 @@ export function parseSummaryModules(md: string): SummaryModule[] {
     modules.push({
       title: (pendingTitle ?? fallbackTitle.slice(0, 18)) || `第 ${modules.length + 1} 段`,
       markdown: block,
+      fromHeading: pendingTitle !== null,
     });
     pendingTitle = null;
   });

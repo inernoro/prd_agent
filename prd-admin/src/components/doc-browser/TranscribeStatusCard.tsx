@@ -88,11 +88,14 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <span
-            className="text-[13px] font-semibold"
+            className="text-[13px]"
             style={{
-              // 正在跑的那一格用强调色：一屏三行，得让人一眼看出现在停在哪一行
+              // 三行要能一眼分出「做完了 / 正在做 / 还没开始」：
+              // 正在做的用强调色 + 最重字重，还没开始的降到常规字重与弱化色，
+              // 三行同一个字重等于把这层层级抹平（审查智能体上一轮正是扣在这里）。
               color: active ? 'var(--accent-fg-info)'
                 : stage.state === 'pending' ? 'var(--text-muted)' : 'var(--text-primary)',
+              fontWeight: active ? 700 : stage.state === 'pending' ? 400 : 600,
             }}
           >
             {stage.label}

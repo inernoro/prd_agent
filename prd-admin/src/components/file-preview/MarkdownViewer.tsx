@@ -133,7 +133,11 @@ function preprocessWikilinks(body: string): string {
   });
 }
 
-function MarkdownViewerBase({ content }: { content: string }) {
+function MarkdownViewerBase({ content, compact = false }: {
+  content: string;
+  /** 嵌在小卡片里时去掉整篇阅读用的底部留白（纪要模块等） */
+  compact?: boolean;
+}) {
   // 代码块配色跟随主题：浅色纸面上再摆一块黑底白字的代码框，是「样式混乱」的头号来源
   // （2026-07-31 用户反馈）。高亮主题也要换，否则 oneDark 的浅色 token 会打在浅底上。
   const theme = useDataTheme();
@@ -214,7 +218,9 @@ function MarkdownViewerBase({ content }: { content: string }) {
       style={{
         lineHeight: 1.78,
         maxWidth: 'min(100%, 1180px)',
-        paddingBottom: '96px',
+        // 96px 是整篇文档阅读时的底部呼吸位；嵌在小卡片里（纪要模块之类）
+        // 它就变成一屏死空白，所以给调用方一个紧凑开关，默认行为不变。
+        paddingBottom: compact ? 0 : '96px',
         // 显式允许文本选中（划词评论硬依赖）。
         // 修复 2026-05-28 用户反馈："选中的内容会自动消失"——
         // 任何祖先一旦 user-select:none 都会让选区瞬间清空，这里硬复位为 text。
