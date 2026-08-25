@@ -392,7 +392,11 @@ export function SiteCard({
           {!isSmall && (
             <div
               data-hoverbar
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden items-center gap-[5px] opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 sm:flex"
+              /* 容器**永远** pointer-events-none，可点的只有里面的按钮（每个自带 pointer-events-auto）。
+                 曾经写的是 group-hover:pointer-events-auto —— 一旦 hover，这条横条就以整条宽度接管
+                 了指针，把它左下角盖住的批量勾选框整个吞掉：勾选框看得见、点不动，
+                 而程序化 .click() 又能过，所以单测和源码扫描都发现不了（只有真实指针序列会红）。 */
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden items-center gap-[5px] opacity-0 transition-all duration-200 group-hover:opacity-100 group-focus-within:opacity-100 sm:flex"
               style={{ padding: '7px 7px 7px 33px', background: 'var(--scrim-fade)' }}
               onClick={(e) => e.stopPropagation()}
             >

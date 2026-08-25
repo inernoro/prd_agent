@@ -1,4 +1,4 @@
-import { Link2 } from 'lucide-react';
+import { Eye, Link2, Share2, Trash2 } from 'lucide-react';
 import type { HostedSite, ShareLinkItem } from '@/services/real/webPages';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
@@ -57,6 +57,222 @@ const RAIL_STYLE: React.CSSProperties = {
   overscrollBehavior: 'contain',
 };
 
+/** 右栏三态共用的外壳（宽度 / 底色 / 左描边 / 内边距都在这里，不各写一份） */
+function RailShell({ gap = 12, children }: { gap?: number; children: React.ReactNode }) {
+  return (
+    <aside className="hidden shrink-0 flex-col overflow-y-auto xl:flex" style={{ ...RAIL_STYLE, gap }}>
+      {children}
+    </aside>
+  );
+}
+
+/** 三态都在底部收口的「取消选择」；描边态，不抢主操作 */
+function ClearSelectionButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        height: 32,
+        fontSize: 12.5,
+        borderRadius: 'var(--radius-control)',
+        border: '1px solid var(--border-subtle)',
+        background: 'transparent',
+        color: 'var(--text-muted)',
+      }}
+    >
+      取消选择
+    </button>
+  );
+}
+
+/**
+ * 选中恰好一个站点时的右栏（设计稿屏 1 的 `oneSelected` 态）。
+ *
+ * 这一态回答的不是「这个站点怎么样」（那是 noSelection 态的事），而是
+ * 「我选中它，现在要拿它做什么」—— 所以主操作是以访客身份看一眼，其次是管理它的分享。
+ */
+export function SiteSelectionPanel({
+  site,
+  links,
+  visitorCount,
+  onGuestPreview,
+  onManageShares,
+  onClearSelection,
+}: {
+  site: HostedSite;
+  links: ShareLinkItem[];
+  visitorCount?: number;
+  onGuestPreview: (site: HostedSite) => void;
+  onManageShares: (site: HostedSite) => void;
+  onClearSelection: () => void;
+}) {
+  const siteLinks = linksOfSite(links, site.id);
+  const active = siteLinks.filter((l) => !l.isRevoked && !l.isExpired);
+  const views = active.reduce((sum, l) => sum + (l.viewCount ?? 0), 0);
+
+  return (
+    <RailShell gap={11}>
+      <div style={{
+        fontFamily: 'var(--font-code)',
+        fontSize: 10,
+        letterSpacing: 'var(--tracking-eyebrow)',
+        color: 'var(--accent-gold-2)',
+      }}>
+        选中的站点
+      </div>
+      <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: 'var(--text-primary)' }}>{site.title}</div>
+
+      <button
+        type="button"
+        onClick={() => onGuestPreview(site)}
+        className="inline-flex items-center justify-center gap-2"
+        style={{
+          height: 38,
+          fontSize: 13,
+          fontWeight: 600,
+          borderRadius: 'var(--radius-field)',
+          border: '1px solid var(--info-action-border)',
+          background: 'var(--info-action-bg)',
+          color: 'var(--accent-fg-blue)',
+        }}
+      >
+        <Eye size={14} /> 以访客身份预览这条链接
+      </button>
+      {/* 设计稿这句写的是「可切换未登录 / 已登录 / 密码未输入三种身份」——身份切换器还没做，
+          照抄会承诺一个点不出来的能力，所以先写它真正做的事（no-rootless-tree）。 */}
+      <div style={{ fontSize: 11.5, lineHeight: 1.6, color: 'var(--text-muted)' }}>
+        用真实访客链接打开，看到的和访客一样：没有链接就先建一条。
+      </div>
+
+      <div style={{ height: 1, background: 'var(--border-subtle)' }} />
+
+      <button
+        type="button"
+        onClick={() => onManageShares(site)}
+        className="inline-flex items-center justify-center"
+        style={{
+          height: 34,
+          fontSize: 12.5,
+          borderRadius: 'var(--radius-control)',
+          border: '1px solid var(--border-subtle)',
+          background: 'var(--bg-card)',
+          color: 'var(--text-primary)',
+        }}
+      >
+        管理分享
+      </button>
+
+      <div style={{
+        fontFamily: 'var(--font-code)',
+        fontSize: 10.5,
+        lineHeight: 1.7,
+        letterSpacing: 'var(--tracking-meta)',
+        color: 'var(--text-tertiary)',
+      }}>
+        这条站点的链接：{active.length} 条有效
+        <br />
+        累计 {views} 次访问{typeof visitorCount === 'number' ? ` · ${visitorCount} 位访客` : ''}
+      </div>
+
+      <div className="flex-1" />
+      <ClearSelectionButton onClick={onClearSelection} />
+    </RailShell>
+  );
+}
+
+/**
+ * 选中多个站点时的右栏（设计稿屏 1 的 `manySelected` 态）。
+ *
+ * 批量操作原本摆在列表上方的一条横条里；设计稿把它收进右栏，
+ * 因为「选中了什么、能对它们做什么」是同一件事的两半，不该分在屏幕两处。
+ */
+export function SiteBatchPanel({
+  count,
+  canShare,
+  canDelete,
+  groupPicker,
+  onBatchShare,
+  onBatchDelete,
+  onClearSelection,
+}: {
+  count: number;
+  canShare: boolean;
+  canDelete: boolean;
+  /** 团队空间的「移入分组」选择器（页面传入，个人空间为 null——那边还没有批量移动文件夹的接口） */
+  groupPicker?: React.ReactNode;
+  onBatchShare: () => void;
+  onBatchDelete: () => void;
+  onClearSelection: () => void;
+}) {
+  return (
+    <RailShell gap={10}>
+      <div style={{
+        fontFamily: 'var(--font-code)',
+        fontSize: 10,
+        letterSpacing: 'var(--tracking-eyebrow)',
+        color: 'var(--accent-gold-2)',
+      }}>
+        批量操作
+      </div>
+      <div style={{
+        fontFamily: 'var(--font-display)',
+        fontSize: 30,
+        lineHeight: 1,
+        letterSpacing: 'var(--tracking-number)',
+        color: 'var(--text-primary)',
+      }}>
+        {count}
+        <span style={{ marginLeft: 6, fontFamily: 'var(--font-body)', fontSize: 13, letterSpacing: 0, color: 'var(--text-muted)' }}>
+          个站点已选
+        </span>
+      </div>
+
+      {canShare && (
+        <button
+          type="button"
+          onClick={onBatchShare}
+          className="inline-flex items-center justify-center gap-2"
+          style={{
+            height: 38,
+            fontSize: 13,
+            fontWeight: 600,
+            borderRadius: 'var(--radius-field)',
+            border: '1px solid var(--accent-primary-edge)',
+            background: 'var(--accent-primary)',
+            color: 'var(--accent-on-primary)',
+          }}
+        >
+          <Share2 size={14} /> 分享成一个合集
+        </button>
+      )}
+
+      {groupPicker}
+
+      {canDelete && (
+        <button
+          type="button"
+          onClick={onBatchDelete}
+          className="inline-flex items-center justify-center gap-2"
+          style={{
+            height: 36,
+            fontSize: 13,
+            borderRadius: 'var(--radius-field)',
+            border: '1px solid var(--semantic-danger-border)',
+            background: 'var(--semantic-danger-soft)',
+            color: 'var(--accent-fg-danger)',
+          }}
+        >
+          <Trash2 size={14} /> 删除（危险 · 需二次确认）
+        </button>
+      )}
+
+      <div className="flex-1" />
+      <ClearSelectionButton onClick={onClearSelection} />
+    </RailShell>
+  );
+}
+
 /**
  * 右栏「站点上下文」—— 主控台里回答「这个站点现在对外是什么样」的那一块（设计稿屏 1·右栏）。
  *
@@ -91,13 +307,13 @@ export function SiteContextPanel({
 }) {
   if (!site) {
     return (
-      <aside className="hidden shrink-0 flex-col gap-3 overflow-y-auto xl:flex" style={RAIL_STYLE}>
+      <RailShell>
         <Eyebrow>站点上下文</Eyebrow>
         <p style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
           选中一张卡片，这里会告诉你它对外是什么样：还有几条链接活着、快过期了没、有没有人在看。
         </p>
         <PulseList items={pulse} />
-      </aside>
+      </RailShell>
     );
   }
 
@@ -107,7 +323,7 @@ export function SiteContextPanel({
   const activeLinks = siteLinks.filter((l) => !l.isRevoked && !l.isExpired);
 
   return (
-    <aside className="hidden shrink-0 flex-col overflow-y-auto xl:flex" style={{ ...RAIL_STYLE, gap: 12 }}>
+    <RailShell>
       <Eyebrow>站点上下文 · 最近动过</Eyebrow>
 
       {/* 站点卡：缩略图与标题在同一张卡里，不是一张裸图加两行字 */}
@@ -248,6 +464,6 @@ export function SiteContextPanel({
       </button>
 
       <PulseList items={pulse} />
-    </aside>
+    </RailShell>
   );
 }

@@ -37,8 +37,10 @@ export function CardIconAction({
   /** 浮在缩略图上（设计稿的 hover 条）：底走暗色蒙版、描边更亮，才在任何画面上都读得出 */
   onScrim?: boolean;
 }) {
+  // pointer-events-auto 是必须的：这些按钮的容器（卡片 hover 条）恒为 pointer-events-none，
+  // 「可点的只有按钮本身」这条契约靠这里成立，去掉了 hover 条会重新以整条宽度吞掉底下的勾选框。
   const base =
-    'inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md text-[11px] font-medium transition-colors';
+    'pointer-events-auto inline-flex h-7 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-md text-[11px] font-medium transition-colors';
   if (compact) {
     return (
       <button
@@ -106,7 +108,7 @@ export function CardMoreButton({ actions, touchActions = 0, onScrim }: { actions
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="inline-flex h-7 w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft"
+        className="pointer-events-auto inline-flex h-7 w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft"
         title="更多设置"
         aria-label="更多设置"
         data-no-drag

@@ -492,6 +492,10 @@
      直接套 semantic-info 会比稿子重一档。 */
   --info-callout-bg: rgba(96, 165, 250, 0.08);
   --info-callout-border: rgba(96, 165, 250, 0.22);
+  /* 同族但更重一档：info 语义的**实心动作按钮**（如「以访客身份预览这条链接」），
+     比 callout 的底更实、描边更亮，才压得住主按钮的分量 */
+  --info-action-bg: rgba(96, 165, 250, 0.16);
+  --info-action-border: rgba(147, 197, 253, 0.5);
 
   /* 这几个原来只在 [data-material="solid"] 与浅色档定义，默认「暗色 + 玻璃」下解析为无效值。
      补进基线，避免又一次「消费方拿到 transparent」的事故（同 --nested-block-bg 那次）。 */
@@ -637,6 +641,8 @@
      字距不在这里重定义——它是排印规格，两个主题同值。 */
   --info-callout-bg: rgba(29, 78, 216, 0.06);
   --info-callout-border: rgba(29, 78, 216, 0.22);
+  --info-action-bg: rgba(29, 78, 216, 0.07);
+  --info-action-border: rgba(29, 78, 216, 0.45);
   color-scheme: light;
 
   --bg-base: #EEEAE3;

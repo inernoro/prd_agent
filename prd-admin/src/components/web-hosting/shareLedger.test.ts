@@ -31,11 +31,13 @@ describe('分享档账本', () => {
   });
 
   it('有效层按快到期排前面，永久链排最后', () => {
+    // 必须把 NOW 注进去：到期时间是相对 NOW 造的，用真实时钟排序会随日子过去而漂
+    // （这条用例 2026-08-25 就是这样红的：inDays(2) 已经变成过去时间，被当成永久链排到最后）
     const ledger = buildShareLedger([
       link({ id: 'forever', viewCount: 500 }),
       link({ id: 'far', expiresAt: inDays(30) }),
       link({ id: 'soon', expiresAt: inDays(2) }),
-    ]);
+    ], NOW);
     expect(ledger.active.map((l) => l.id)).toEqual(['soon', 'far', 'forever']);
   });
 

@@ -23,13 +23,16 @@ export function tierOf(link: ShareLinkItem): ShareTier {
   return 'active';
 }
 
-export function buildShareLedger(links: ShareLinkItem[]): ShareLedger {
+/** `now` 必须能被注入：排序与结论句读同一个时钟，否则两者会对同一批链接给出互相矛盾的
+ *  「谁最急」——测试注入固定时刻、排序却偷偷读真实时钟，正是这种漂移
+ *  （`.claude/rules/predicate-and-wiring-discipline.md` 形状 6：判据读的不是真正生效的那个值）。 */
+export function buildShareLedger(links: ShareLinkItem[], now: number = Date.now()): ShareLedger {
   const ledger: ShareLedger = { active: [], expired: [], revoked: [] };
   for (const l of links) ledger[tierOf(l)].push(l);
   // 有效层按「快到期的排前面」——用户在这一屏最该先处理的就是快断的链接
   ledger.active.sort((a, b) => {
-    const da = daysUntil(a.expiresAt, Date.now());
-    const db = daysUntil(b.expiresAt, Date.now());
+    const da = daysUntil(a.expiresAt, now);
+    const db = daysUntil(b.expiresAt, now);
     if (da === null && db === null) return b.viewCount - a.viewCount;
     if (da === null) return 1; // 永久链排后面
     if (db === null) return -1;
@@ -59,7 +62,7 @@ export interface LedgerSegment {
  * 「近 7 天 / 多少位访客」需要访问日志聚合，这一屏拿不到，就不写。
  */
 export function buildLedgerConclusion(links: ShareLinkItem[], now: number = Date.now()): LedgerSegment[] {
-  const ledger = buildShareLedger(links);
+  const ledger = buildShareLedger(links, now);
   const active = ledger.active;
 
   if (active.length === 0) {

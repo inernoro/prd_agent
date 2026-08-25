@@ -48,7 +48,7 @@ import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
-import { SiteContextPanel } from '@/components/web-hosting/SiteContextPanel';
+import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/components/web-hosting/SiteContextPanel';
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
 import { buildUploadProgress, fmtDuration, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
 import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
@@ -699,15 +699,56 @@ export default function WebPagesPage() {
    * 不选中就空着会让右栏大部分时间是一块废地。
    */
   const contextSite = useMemo(() => {
-    if (selectedIds.size === 1) {
-      const id = [...selectedIds][0];
-      return displaySites.find(s => s.id === id) ?? null;
-    }
-    return displaySites[0] ?? null;
+    if (displaySites.length === 0) return null;
+    // 取真正「最近动过」的那个，而不是当前排序下排第一的那个 —— 眉标写的就是这个口径，
+    // 用户换个排序方式它不该跟着跳到别的站点上去。
+    return displaySites.reduce((best, s) => {
+      const t = new Date(s.updatedAt || s.createdAt).getTime();
+      const bt = new Date(best.updatedAt || best.createdAt).getTime();
+      return Number.isFinite(t) && t > bt ? s : best;
+    });
+  }, [displaySites]);
+
+  /** 恰好选中一个站点时的那个站点（右栏切到「选中的站点」态） */
+  const selectedSite = useMemo(() => {
+    if (selectedIds.size !== 1) return null;
+    const id = [...selectedIds][0];
+    return displaySites.find(s => s.id === id) ?? null;
   }, [selectedIds, displaySites]);
 
   /** 右栏底部的「本周分享动态」：只由当前列表数据算得出来的三件事组成，口径见 weeklyPulse.ts */
   const weeklyPulse = useMemo(() => buildWeeklyPulse(sites, shareLinks), [sites, shareLinks]);
+
+  /**
+   * 批量「移入分组」选择器。团队空间才有分组这回事，个人空间那边还没有批量移动文件夹的接口，
+   * 所以那种情况下这里是 null —— 不摆一个点了没反应的按钮。
+   * 抽成变量是因为右栏（xl 起）与窄屏横条两处都要用同一个，不抄两份。
+   */
+  const batchGroupPicker = (teamScope.scope === 'team' && canEditInWebHosting(myWebHostingRole) && teamGroups.length > 0) ? (
+    <select
+      className="h-8 px-2 rounded-[9px] text-[12px] outline-none bg-token-input border border-token-default text-token-primary"
+      value=""
+      onChange={async (e) => {
+        const v = e.target.value;
+        if (!v) return;
+        const gid = v === '__none__' ? null : v;
+        let ok = 0;
+        for (const id of selectedIds) {
+          const r = await setSiteGroup(id, gid);
+          if (r.success) ok++;
+        }
+        toast.success('已更新分组', `${ok} 个网页已${gid ? '移入所选分组' : '移出分组'}`);
+        setSelectedIds(new Set());
+        await load();
+      }}
+    >
+      <option value="">移动到分组 / 文件夹…</option>
+      <option value="__none__">移出分组</option>
+      {teamGroups.map((g) => (
+        <option key={g.id} value={g.id}>{g.kind === 'topic' ? '专题' : '分类'} · {g.name}</option>
+      ))}
+    </select>
+  ) : null;
 
   /**
    * 打开站点本体。与卡片/列表两个视图共用同一条路径：先记一次访客痕迹，
@@ -1475,39 +1516,16 @@ export default function WebPagesPage() {
           </MobileBottomSheet>
         )}
 
+        {/* 窄屏（右栏在 xl 以下不渲染）保留这条横条兜底；xl 起批量操作在右栏里，
+            两处同时出现就是同一件事摆两遍。 */}
         {selectedIds.size > 0 && (
-          <div className="surface-nav-bar flex items-center gap-2" style={{ overflow: 'visible' }}>
+          <div className="surface-nav-bar flex items-center gap-2 xl:hidden" style={{ overflow: 'visible' }}>
             <span className="text-sm text-token-muted">已选 {selectedIds.size} 项</span>
             {/* 团队作用域按角色门控批量操作；个人作用域全开（站点都是自己的）。后端是最终权威。 */}
             {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
               <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
             )}
-            {/* 团队空间：把选中的网页移入专题/分类（编辑权限） */}
-            {teamScope.scope === 'team' && canEditInWebHosting(myWebHostingRole) && teamGroups.length > 0 && (
-              <select
-                className="h-7 px-2 rounded-[8px] text-[12px] outline-none bg-token-input border border-token-default text-token-primary"
-                value=""
-                onChange={async (e) => {
-                  const v = e.target.value;
-                  if (!v) return;
-                  const gid = v === '__none__' ? null : v;
-                  let ok = 0;
-                  for (const id of selectedIds) {
-                    const r = await setSiteGroup(id, gid);
-                    if (r.success) ok++;
-                  }
-                  toast.success('已更新分组', `${ok} 个网页已${gid ? '移入所选分组' : '移出分组'}`);
-                  setSelectedIds(new Set());
-                  await load();
-                }}
-              >
-                <option value="">移入分组…</option>
-                <option value="__none__">移出分组</option>
-                {teamGroups.map((g) => (
-                  <option key={g.id} value={g.id}>{g.kind === 'topic' ? '专题' : '分类'} · {g.name}</option>
-                ))}
-              </select>
-            )}
+            {batchGroupPicker}
             {(teamScope.scope !== 'team' || myWebHostingRole === 'owner') && (
               <Button size="xs" variant="danger" onClick={handleBatchDelete}><Trash2 size={12} className="mr-1" /> 批量删除</Button>
             )}
@@ -1653,17 +1671,40 @@ export default function WebPagesPage() {
       )}
         </div>
         </div>
+        {/* 右栏三态（设计稿屏 1）：没选中 = 讲「最近动过」的那个站点；选中 1 个 = 对它做什么；
+            选中多个 = 批量操作。选中**不是**换上下文的手段，它换的是整块面板的用途。 */}
         {!isMobile && (
-          <SiteContextPanel
-            site={contextSite}
-            links={shareLinks}
-            visitorCount={contextSite ? siteVisitors[contextSite.id] : undefined}
-            pulse={weeklyPulse}
-            onCreateShare={(site) => handleShare(site.id)}
-            onManageShares={(site) => { setShareTargetId(site.id); setShowSharesPanel(true); }}
-            onAnalytics={() => setShowAnalytics(true)}
-            onRenew={(link) => { setShareTargetId(link.siteId ?? null); setShowSharesPanel(true); }}
-          />
+          selectedSite ? (
+            <SiteSelectionPanel
+              site={selectedSite}
+              links={shareLinks}
+              visitorCount={siteVisitors[selectedSite.id]}
+              onGuestPreview={(site) => handleVisitSite(site)}
+              onManageShares={(site) => { setShareTargetId(site.id); setShowSharesPanel(true); }}
+              onClearSelection={() => setSelectedIds(new Set())}
+            />
+          ) : selectedIds.size > 1 ? (
+            <SiteBatchPanel
+              count={selectedIds.size}
+              canShare={teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)}
+              canDelete={teamScope.scope !== 'team' || myWebHostingRole === 'owner'}
+              groupPicker={batchGroupPicker}
+              onBatchShare={handleBatchShare}
+              onBatchDelete={handleBatchDelete}
+              onClearSelection={() => setSelectedIds(new Set())}
+            />
+          ) : (
+            <SiteContextPanel
+              site={contextSite}
+              links={shareLinks}
+              visitorCount={contextSite ? siteVisitors[contextSite.id] : undefined}
+              pulse={weeklyPulse}
+              onCreateShare={(site) => handleShare(site.id)}
+              onManageShares={(site) => { setShareTargetId(site.id); setShowSharesPanel(true); }}
+              onAnalytics={() => setShowAnalytics(true)}
+              onRenew={(link) => { setShareTargetId(link.siteId ?? null); setShowSharesPanel(true); }}
+            />
+          )
         )}
       </div>
       </div>
