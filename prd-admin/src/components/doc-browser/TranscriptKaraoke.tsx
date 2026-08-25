@@ -626,7 +626,12 @@ export function TranscriptKaraoke({
           */}
           <div className="flex items-center gap-2">
             {/* 稿面的搜索框是全药丸，与右边「继续跟随」同一族圆角 */}
-            <label className="flex min-h-11 flex-1 items-center gap-2 rounded-full px-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+            {/*
+              `min-w-0` 不能省：flex 子项的 min-width 默认是 auto，撑不小于内容的最小宽度。
+              放大镜 + 输入框 + 命中计数三样加起来就是这个下限，于是搜索行在 390px 屏上
+              整行右溢出——右边那颗「继续跟随」被视口切掉一半（判官记的正是这处）。
+            */}
+            <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-full px-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
               <Search size={14} className="shrink-0 text-token-muted" />
               <input
                 value={keyword}
