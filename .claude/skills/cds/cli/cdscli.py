@@ -693,15 +693,13 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
     # 判据只认「本地凭据文件里存着 bootstrapKey」——那是页面批准换来的一次性钥匙，
     # 也是唯一一种「建完项目拿不到新钥匙就彻底没辙」的身份。静态 AI_ACCESS_KEY 与
     # 全权 cdsg_ 建项目本来就不签发新钥匙，读环境变量会把它们一起误判成死局。
-    _creds_before = _read_local_credentials_file()
-    had_bootstrap_identity = (
-        bool(str(_creds_before.get("bootstrapKey") or "").strip())
-        # 文件里残留一把过期的 bootstrapKey 很常见（换钥之前的老工作区、手动拷贝）。
-        # 只有「确实没有项目级钥匙可用」时它才是本次调用的身份，否则会把一次正常的
-        # 全权/项目级建项目误报成「一次性授权即将失效」。
-        and not str(_creds_before.get("projectKey") or "").strip()
-        and not os.environ.get("CDS_PROJECT_KEY", "").strip()
-    )
+    # 判据要问的是「**这次请求实际拿哪把钥匙发出去的**，是不是那把页面批准换来的一次性钥匙」。
+    # 光看文件里存没存 bootstrapKey 不够：老工作区常残留一把过期的，而调用方完全可能
+    # 用显式 AI_ACCESS_KEY / CDS_PROJECT_KEY 以全权身份在建项目——那种情况后端本就不签发
+    # 新钥匙，误判成一次性身份会在项目已经建好之后报「死局」，诱导重试、建出重复项目。
+    _stored_bootstrap = str(_read_local_credentials_file().get("bootstrapKey") or "").strip()
+    _active_key = _auth_headers().get("X-AI-Access-Key", "").strip()
+    had_bootstrap_identity = bool(_stored_bootstrap) and _active_key == _stored_bootstrap
 
     body = _call("POST", "/api/projects", body=payload, timeout=timeout)
     proj = body.get("project") if isinstance(body, dict) else None

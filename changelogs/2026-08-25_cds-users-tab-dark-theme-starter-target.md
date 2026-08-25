@@ -12,3 +12,4 @@
 | fix | cds | Review 修复：--create-project 的参数校验移到发起授权申请之前（避免用户白批一次）、空白名称显式报错；换钥自证区分「4xx 明确被拒」与「网络抖动没验成」，后者不再把已完成的不可逆换钥报成失败；一次性身份判据加上「当前确实没有项目级钥匙」，残留 bootstrapKey 不再让正常建项目误报死局 |
 | test | cds | Review 修复：中性色守卫补 text-white / text-black（棘轮重算）、单一实现守卫改正则（引号与 f-string 都盖住）、新增 3 例（参数校验先于申请、回读抖动不丢换钥、残留一次性钥匙不影响正常建项目）；上手助手复制按钮的白字挪进 index.css 里那条已强制底色的规则 |
 | fix | cds | Review 修复：用户管理说明面板对 SSO 部署不再劝人改成 GitHub OAuth 模式，改为说明账号归上游身份源管理、切换属认证方案变更 |
+| fix | cds | Codex Review 修复：一次性身份判据改为比对「本次请求实际发出的凭据」与存档 bootstrapKey（残留 bootstrapKey + 显式全权 Key 不再在项目已建好后误报死局）；用户管理说明面板新增探测失败态（可重试 + 错误详情），不再把 /api/auth/public-status 探测失败当成「认证未启用」 |

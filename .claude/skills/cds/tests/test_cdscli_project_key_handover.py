@@ -292,6 +292,23 @@ def test_verify_hiccup_does_not_discard_completed_handover(workspace, monkeypatc
     assert "bootstrapKey" not in saved
 
 
+def test_stale_bootstrap_key_with_explicit_full_key_is_not_a_dead_end(workspace, monkeypatch):
+    """残留 bootstrapKey + 显式全权 AI_ACCESS_KEY：本次请求发出去的不是那把一次性钥匙。
+
+    判据必须比对「实际发出去的凭据」，只看文件里存没存会把全权身份误判成一次性身份，
+    于是在项目**已经建好之后**报死局，诱导重试、建出重复项目。
+    """
+    cdscli._save_local_credentials(host="https://cds.example",
+                                   bootstrap_key="cdsg_one_time_never-print")
+    monkeypatch.setenv("AI_ACCESS_KEY", "static-platform-key")   # 显式全权身份
+    calls: list = []
+    monkeypatch.setattr(cdscli, "_request", make_request(calls, issue_key=False))
+
+    code, output = run_command(["project", "create", "--name", "demo"])
+    assert code == 0, output
+    assert "proj-new" in output
+
+
 def test_stale_bootstrap_key_does_not_break_normal_create(workspace, monkeypatch):
     """工作区残留一把过期的一次性钥匙，不该让正常的项目级建项目误报死局。"""
     cdscli._save_local_credentials(host="https://cds.example",

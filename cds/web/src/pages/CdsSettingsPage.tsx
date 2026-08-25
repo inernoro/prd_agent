@@ -156,12 +156,52 @@ export function AuthModeGatedNotice({
   feature,
   mode,
   onGoToAuth,
+  probeError,
+  onRetryProbe,
 }: {
   feature: string;
-  mode: CdsAuthPublicStatus['mode'] | null;
+  mode: CdsAuthPublicStatus['mode'] | 'probe-failed' | null;
   onGoToAuth: () => void;
+  probeError?: string;
+  onRetryProbe?: () => void;
 }): JSX.Element {
   if (!mode) return <SettingsTabFallback />;
+  if (mode === 'probe-failed') {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-base font-semibold">{feature}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            没能读到这台 CDS 的当前认证模式，所以现在<strong className="text-foreground">无法判断</strong>
+            {feature}是否可用——这是探测失败，不是「认证未启用」。请稍后重试；持续失败通常说明 CDS 正在重启，或前面有网关在拦。
+          </p>
+        </div>
+        {probeError ? (
+          <pre className="overflow-x-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs text-muted-foreground">
+            {probeError}
+          </pre>
+        ) : null}
+        <div className="flex gap-2">
+          {onRetryProbe ? (
+            <button
+              type="button"
+              onClick={onRetryProbe}
+              className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+            >
+              重新探测
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onGoToAuth}
+            className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+          >
+            去「登录与认证」查看当前状态
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="space-y-4">
       <div>
@@ -230,19 +270,29 @@ function SettingsTabFallback(): JSX.Element {
 export function CdsSettingsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
-  // null = 认证模式探测中;非 github 时隐藏用户管理/用户痕迹 tab(其后端未挂载)。
-  const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | null>(null);
+  // null = 探测中;'probe-failed' = 没问出来。**探测失败不等于「认证未启用」**:
+  // 把失败当成 disabled，会让一台其实跑在 GitHub 模式的实例被告知「认证没开、去改
+  // CDS_AUTH_MODE 再重启」——拿推断出来的模式当权威结论，正是 expectation-management
+  // 要治的那种失控。所以失败单列一态，给可重试的诊断而不是编一个模式。
+  const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | 'probe-failed' | null>(null);
+  const [authProbeError, setAuthProbeError] = useState('');
+  const [authProbeSeq, setAuthProbeSeq] = useState(0);
   const authTabsVisible = authMode === 'github';
 
   useEffect(() => {
     let alive = true;
     // /api/auth/public-status 在所有认证模式下都挂载(server.ts:1802,早于 github-only 块),
-    // 是判定当前模式的权威且安全入口。探测失败按最保守处理:隐藏 auth 相关 tab。
+    // 是判定当前模式的权威且安全入口。
+    setAuthMode(null);
     fetchAuthPublicStatus()
-      .then((status) => { if (alive) setAuthMode(status.mode); })
-      .catch(() => { if (alive) setAuthMode('disabled'); });
+      .then((status) => { if (alive) { setAuthMode(status.mode); setAuthProbeError(''); } })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setAuthMode('probe-failed');
+        setAuthProbeError(err instanceof Error ? err.message : String(err));
+      });
     return () => { alive = false; };
-  }, []);
+  }, [authProbeSeq]);
 
   // tab 不再按模式隐藏:#hash 直链到 users 仍然落在 users,只是内容换成说明面板。
   const visibleTabGroups = tabGroups;
@@ -316,14 +366,26 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab !== 'users' ? null : authTabsVisible ? (
                     <UsersTab onToast={setToast} />
                   ) : (
-                    <AuthModeGatedNotice feature="用户管理" mode={authMode} onGoToAuth={() => setActiveTab('auth')} />
+                    <AuthModeGatedNotice
+                      feature="用户管理"
+                      mode={authMode}
+                      probeError={authProbeError}
+                      onRetryProbe={() => setAuthProbeSeq((n) => n + 1)}
+                      onGoToAuth={() => setActiveTab('auth')}
+                    />
                   )}
                 </TabsContent>
                 <TabsContent value="activity">
                   {activeTab !== 'activity' ? null : authTabsVisible ? (
                     <ActivityTab />
                   ) : (
-                    <AuthModeGatedNotice feature="用户痕迹" mode={authMode} onGoToAuth={() => setActiveTab('auth')} />
+                    <AuthModeGatedNotice
+                      feature="用户痕迹"
+                      mode={authMode}
+                      probeError={authProbeError}
+                      onRetryProbe={() => setAuthProbeSeq((n) => n + 1)}
+                      onGoToAuth={() => setActiveTab('auth')}
+                    />
                   )}
                 </TabsContent>
                 <TabsContent value="access-keys">
