@@ -1,0 +1,28 @@
+div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
+  input .hidden [type=file]
+  div .flex.flex-col.h-full.overflow-hidden.relative
+    div .overflow-hidden.relative {height:92px}
+      img .absolute.h-full.inset-0.w-full
+      span .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20 {height:20px;padding:0 6px}
+        svg
+        "HTML"
+      span .absolute.bottom-2.inline-flex.items-center.right-2.z-20 {height:20px;padding:0 6px}
+        "单页"
+      button .absolute.bottom-[7px].group-hover:opacity-100.inline-flex.items-center.justify-center.left-[7px].z-20 {height:20px;opacity:0.5;width:20px} [data-no-drag=true aria-label=选择 type=button]
+    div .flex.flex-1.flex-col {gap:5px;padding:8px 9px 9px}
+      div .flex.gap-1.5.items-center {height:12px}
+        span .h-1.5.shrink-0.w-1.5
+        span
+          "未分享"
+      h3 .truncate
+        "多租户架构设计"
+      div .flex.flex-wrap.gap-x-1.5.items-center
+        span
+          "11.0 KB"
+        span .opacity-40
+          "·"
+        span
+          "9 浏览"
+      div .flex.group-focus-within:opacity-100.group-hover:opacity-100.justify-end.opacity-0
+        button .h-7.inline-flex.items-center.justify-center.pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
+          svg
