@@ -1,12 +1,12 @@
 ---
 name: design-replication
-version: 2.1.0
+version: 2.2.0
 description: '按设计稿生成页面的取证 → 规格 → 实现 → 核对流水线。先把画布切成逐画板证据（切图 + 逐字文案），再量出设计系统档位表并落进 token 层，然后照证据写实现，最后用机械核对（文案覆盖率 + 档位差）与对抗式审查判「像不像」，杜绝「按我自己读出来的规格实现了，用户一看只有 40% 像」。适用于收到外部设计交付后在既有代码库里还原、或改版后核对实现是否贴稿。触发词："复刻"、"还原设计稿"、"贴稿"、"按设计稿生成页面"、"设计稿比对"、"design replication"、"/复刻"。'
 ---
 
 # 设计稿复刻（Design Replication）
 
-> **版本**：v2.1.0 | **触发**：`/复刻`、"复刻"、"还原设计稿"、"贴稿"、"按设计稿生成页面"
+> **版本**：v2.2.0 | **触发**：`/复刻`、"复刻"、"还原设计稿"、"贴稿"、"按设计稿生成页面"
 
 ## 一、核心命题
 
@@ -50,6 +50,7 @@ description: '按设计稿生成页面的取证 → 规格 → 实现 → 核对
 - [ ] Step 0: 起环境
 - [ ] Step 1: 取证据 —— 画板清单 + 逐画板切图 + 逐条文案
 - [ ] Step 2: 取规格 —— 量出设计系统档位表
+- [ ] Step 2.5: 固化档位表进仓库（带来源指纹，改版时可 diff）
 - [ ] Step 3: 落 token —— 档位对到 token 层，缺的先补（闸门：缺项归零才动组件）
 - [ ] Step 4: 照证据写实现（一屏一屏来，文案从文件复制）
 - [ ] Step 5: 机械核对 —— 文案覆盖率 + 档位差 + 并排图
@@ -100,11 +101,42 @@ node $SK/scripts/extract-spec.mjs --url "http://127.0.0.1:8899/<编码后的文�
 
 浅色主题再跑一次 `--theme light`，两套值都要有。
 
+### Step 2.5：把档位表固化进仓库（一次导出，长期可用）
+
+`extract-spec` 的产物落在 scratchpad 里，会话一结束就没了。于是下次想回答「这一屏的圆角
+到底有几档」「改版之后哪几档变了」，又得把整条取证重跑一遍——要画布文件、要起服务、
+要装浏览器，多数时候没人跑，最后退回「凭印象说」。导出一次就不用了：
+
+```bash
+node $SK/scripts/spec-export.mjs --design <稿子名> --source "<画布文件>" \
+  --board "board-01=屏1主控台:$WORK/spec/board-01" \
+  --board "board-02=屏2站点卡:$WORK/spec/board-02"
+# → .claude/skills/design-replication/exports/<稿子名>/design-spec.{json,md}
+```
+
+导出带**来源指纹**（画布文件 sha256 + 量取时间）：说不清「从哪个稿子、什么时候量的」
+规格，下次没人敢信，等于白导（`no-rootless-tree.md`）。深浅两套都导——把
+`--y-from/--y-to` 那次的 `--theme light` 产物放在 `<目录>-light`，脚本会一起收。
+
+稿子改版后再导一份，然后：
+
+```bash
+node $SK/scripts/spec-diff.mjs --a <旧 design-spec.json> --b <新 design-spec.json>
+```
+
+它只报档位集合的增减，不报次数波动、不报 sample、不报时间戳——报那些等于制造噪音，
+噪音一多人就不看了。每一处增减都要落到 token 层。
+
 ### Step 3：落 token（闸门）
 
 ```bash
+# 用刚量的（scratchpad）
 node $SK/scripts/tokens-map.mjs --spec "$WORK/spec/board-01/spec.json" \
   --tokens prd-admin/src/styles/tokens.css --out "$WORK/spec/board-01"
+
+# 或直接用固化好的那份（不必重跑取证）
+node $SK/scripts/tokens-map.mjs --export "$SK/exports/<稿子名>/design-spec.json" \
+  --board board-01 --theme dark --tokens prd-admin/src/styles/tokens.css
 ```
 
 输出三类：**已有 token** / **接近但不等**（多半是同一档被写歪，判一下）/ **缺 token**。

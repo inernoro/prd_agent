@@ -132,8 +132,10 @@ jobs:
               - 'scripts/compose-stable-smoke-supervisor-report.mjs'
               - 'scripts/prepare-stable-smoke-archive-report.mjs'
               - 'scripts/split-stable-smoke-report.mjs'
-              # 设计样例数据（录制-回放）的判据函数，被 design-fixtures.test.mjs 守着
+              # 设计复刻工具里被守卫盯着的判据函数（样例数据键、档位导出与比对）
               - '.claude/skills/design-replication/scripts/fixtures.mjs'
+              - '.claude/skills/design-replication/scripts/spec-export.mjs'
+              - '.claude/skills/design-replication/scripts/spec-diff.mjs'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
             acceptance_report:

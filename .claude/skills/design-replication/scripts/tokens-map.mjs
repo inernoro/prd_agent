@@ -10,6 +10,7 @@
  *
  * 用法：
  *   node tokens-map.mjs --spec <spec.json> --tokens <tokens.css> \
+ *   node tokens-map.mjs --export <design-spec.json> --board board-01 [--theme dark] --tokens <tokens.css> \
  *     [--dims color,background,borderColor,radius,fontSize,fontFamily] \
  *     [--min-count 2] [--out <目录>]
  *
@@ -24,17 +25,51 @@ function arg(name, dflt) {
   return i < 0 ? dflt : process.argv[i + 1];
 }
 const specPath = arg('--spec');
+// 也接固化好的导出规格：scratchpad 里的 spec.json 会话一结束就没了，而导出那份在仓库里，
+// 随时能直接对 token，不必为了回答「这一屏有几档圆角」把整条取证重跑一遍。
+const exportPath = arg('--export');
+const exportBoard = arg('--board');
+const exportTheme = arg('--theme', 'dark');
 const tokensPath = arg('--tokens');
 const outDir = arg('--out', null);
 const minCount = Number(arg('--min-count', '2'));
 const dims = arg('--dims', 'color,background,borderColor,radius,fontSize,fontFamily')
   .split(',').map((s) => s.trim()).filter(Boolean);
-if (!specPath || !tokensPath) {
-  console.error('必填：--spec <spec.json> --tokens <tokens.css>');
+if ((!specPath && !exportPath) || !tokensPath) {
+  console.error('必填：--tokens <tokens.css>，外加 --spec <spec.json> 或 --export <design-spec.json> --board <id>');
   process.exit(2);
 }
 
-const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
+/** 把导出规格里某一屏某一主题的档位，还原成 spec.json 那种 { counts: {...} } 形状 */
+function fromExport(file, boardId, theme) {
+  const doc = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!boardId) {
+    console.error(`--export 需要同时给 --board。这份规格里有：${(doc.boards || []).map((b) => `${b.id}(${b.label})`).join(' / ')}`);
+    process.exit(2);
+  }
+  const board = (doc.boards || []).find((b) => b.id === boardId);
+  if (!board) {
+    console.error(`规格里没有 ${boardId}。有的是：${(doc.boards || []).map((b) => b.id).join(' / ')}`);
+    process.exit(2);
+  }
+  const scales = board.scales?.[theme];
+  if (!scales) {
+    console.error(`${boardId} 没有 ${theme} 这一套档位（有的是：${Object.keys(board.scales || {}).join(' / ')}）。`
+      + '缺哪一套就别拿另一套顶——浅色底色对不上深色 token，出来的映射是错的。');
+    process.exit(2);
+  }
+  console.log(`用导出规格：${doc.design} / ${board.id} ${board.label} / ${theme}`
+    + `（来源 ${doc.source?.file}，量于 ${doc.extractedAt}）`);
+  return { counts: scales };
+}
+
+const spec = exportPath
+  ? fromExport(exportPath, exportBoard, exportTheme)
+  : JSON.parse(fs.readFileSync(specPath, 'utf8'));
+/** 报告抬头要说清这份档位是哪来的：走导出规格时 specPath 是空的，直接 path.resolve 会当场炸 */
+const specLabel = exportPath
+  ? `${path.resolve(exportPath)}（${exportBoard} / ${exportTheme}）`
+  : path.resolve(specPath);
 const css = fs.readFileSync(tokensPath, 'utf8');
 
 /** 解析 `--name: value;` 声明。同名 token 在多个主题块里会各有一条，全都收下 ——
@@ -118,7 +153,7 @@ const DIM_LABEL = {
 };
 
 const lines = ['# 设计规格 → token 对照', '',
-  `规格：${path.resolve(specPath)}`, `token：${path.resolve(tokensPath)}（解析到 ${tokens.length} 条声明）`,
+  `规格：${specLabel}`, `token：${path.resolve(tokensPath)}（解析到 ${tokens.length} 条声明）`,
   `口径：只看出现 ≥${minCount} 次的档位（更低的多半是偶发值，不是设计档）`, ''];
 let missingTotal = 0;
 let nearTotal = 0;
