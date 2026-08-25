@@ -6,6 +6,7 @@ import { StreamingText } from '@/components/streaming';
 import { toast } from '@/lib/toast';
 import { computeLineDiff, type DiffLine } from '@/lib/lineDiff';
 import { streamSelectionRewrite } from '@/services/real/documentStore';
+import { useScrollFollowTransform } from './useOverlayFollow';
 import { stripOuterFence } from './selectionEdit';
 import { useSelectionRewriteActions } from './useSelectionRewriteActions';
 import {
@@ -64,22 +65,12 @@ export function SelectionAiPopover({
   const [errorMsg, setErrorMsg] = useState('');
   const [showDiff, setShowDiff] = useState(false);
   const [applying, setApplying] = useState<'replace' | 'insert-after' | null>(null);
-  const [scrollDy, setScrollDy] = useState(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // 跟随滚动走直写 DOM，不走 state——走 state 浮层会慢内容一帧，看着就是「跟不上手」
+  useScrollFollowTransform(panelRef, scrollRef);
   const abortRef = useRef<(() => void) | null>(null);
   const outputBoxRef = useRef<HTMLDivElement>(null);
 
-  // 跟随正文滚动平移（与 InlineCommentComposer 同一套 scrollDy 逻辑）
-  useEffect(() => {
-    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
-    const start = read();
-    const onScroll = () => setScrollDy(read() - start);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [scrollRef]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -153,13 +144,13 @@ export function SelectionAiPopover({
 
   const node = (
     <div
+      ref={panelRef}
       className="fixed z-[120] flex flex-col"
       style={{
         top,
         left,
         width,
         maxHeight: Math.min(480, window.innerHeight - 16),
-        transform: `translateY(${-scrollDy}px)`,
         padding: 12,
         ...SELECTION_OVERLAY_PANEL,
       }}

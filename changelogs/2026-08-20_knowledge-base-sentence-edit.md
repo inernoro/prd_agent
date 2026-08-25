@@ -37,3 +37,7 @@
 | polish | prd-admin | 就地 diff 配色从随手写的蓝红原色改为品牌暖色派生：新增是极淡暖底 + 一条细下划线，删除退成 muted 灰 + 细删除线，不再是复古 Windows 那种实心色块 |
 | test | prd-admin | 新增 closeOpenMarkdown 与流式 markdown 渲染单测、MarkdownViewer 渲染器身份守卫 |
 | docs | prd-admin | rule.frontend.streaming-text 升到 v2.1：流式期渲染 markdown，禁止项从「每 chunk 重渲染」改写为「渲染器身份不稳」 |
+| feat | prd-admin | 就地 diff 改成词级：一行只改了几个字时只标那几个字，不再整行删+整行增（行内标记整体算一个原子，不会被劈开） |
+| refactor | prd-admin | 划词改写不再流式渲染半成品：等 AI 写完 diff 一次性出现，等待期只把选区压灰 + 条子报已用时/可停止 |
+| polish | prd-admin | 新增内容去掉下划线；浮层顶部那条品牌渐变去掉（纯装饰，用户会追问它的含义就说明它在制造疑问） |
+| perf | prd-admin | 划词浮层跟随滚动改为 rAF 合帧 + 直写 DOM，不再每个 scroll 事件同步读布局并触发 React 提交；四处抄本合并成一个共享 hook |

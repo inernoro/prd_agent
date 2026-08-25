@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Send, X, CornerDownLeft, Quote } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useScrollFollowTransform } from './useOverlayFollow';
 
 // 划词后「就地输入」批注的小浮层（取代甩到右侧抽屉）。
 // 锚在选区附近，写完 ⌘/Ctrl+Enter 发送；遵 frontend-modal.md：createPortal 到 body + inline style 定位。
@@ -24,25 +25,15 @@ export function InlineCommentComposer({
   const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
   // 打开时清了选区、坐标是当时快照；滚动后按「累计滚动位移」把浮层平移回锚点处
-  const [scrollDy, setScrollDy] = useState(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // 跟随滚动走直写 DOM，不走 state（见 useOverlayFollow 的注释：走 state 会慢一帧）
+  useScrollFollowTransform(panelRef, scrollRef);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
-    const start = read();
-    const onScroll = () => setScrollDy(read() - start);
-    // capture=true 捕获正文内层滚动容器；resize 兜底
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [scrollRef]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -68,13 +59,12 @@ export function InlineCommentComposer({
 
   const node = (
     <div
+      ref={panelRef}
       className="fixed z-[120]"
       style={{
         top,
         left,
         width,
-        // 正文滚动 dy 后锚点上移 dy，浮层同步上移，保持贴着选区
-        transform: `translateY(${-scrollDy}px)`,
         borderRadius: 14,
         padding: 12,
         background: 'var(--overlay-panel-bg)',

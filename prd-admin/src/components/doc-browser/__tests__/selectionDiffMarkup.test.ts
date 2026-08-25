@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import ReactMarkdown from 'react-markdown';
-import {
-  buildInlineDiffBody, markLine,
-  STREAM_ANCHOR_DOM_ID, STREAM_ANCHOR_HTML, STREAM_ANCHOR_SELECTOR,
-} from '../selectionDiffMarkup';
+import { buildInlineDiffBody, markLine } from '../selectionDiffMarkup';
 import { DOC_REMARK_PLUGINS, DOC_REHYPE_PLUGINS } from '@/components/file-preview/MarkdownViewer';
 
 /**
@@ -57,29 +52,38 @@ describe('buildInlineDiffBody：只改选区，前后文逐字保留', () => {
     const r = buildInlineDiffBody(body, range, '新句子。');
     expect(r.body.startsWith('开头段落。\n\n')).toBe(true);
     expect(r.body.endsWith('\n\n结尾段落。\n')).toBe(true);
-    expect(r.body).toContain('<del>旧句子。</del>');
-    expect(r.body).toContain('<ins>新句子。</ins>');
+    // 词级 diff：只标真正变了的那个字，「句子。」是两边共有的，不该被标
+    expect(r.body).toContain('<del>旧</del><ins>新</ins>句子。');
     expect(r.added).toBe(1);
     expect(r.removed).toBe(1);
     expect(r.codeChangeUnmarked).toBe(false);
   });
 
-  it('流式期间的半截结果也能标注（增量就是产物本身在生长）', () => {
+  it('半截结果也能标注（错误档拿原文当结果时同理）', () => {
+    // 「新句」与「旧句子。」只共用一个「句」字，相似度不到门槛，退回整行标注
     const r = buildInlineDiffBody(body, range, '新句');
-    expect(r.body).toContain('<ins>新句</ins>');
     expect(r.body).toContain('<del>旧句子。</del>');
+    expect(r.body).toContain('<ins>新句</ins>');
   });
 
-  it('结果与原文逐行相同的部分不标注（只标真正变了的行）', () => {
+  it('没变的行一个标记都不加；变了的那行只标变了的词（2026-08-25 用户：diff 要精准）', () => {
     const multi = '第一行\n第二行\n第三行';
     const b = `前言\n\n${multi}\n\n后记`;
     const rg = { start: b.indexOf(multi), end: b.indexOf(multi) + multi.length };
     const r = buildInlineDiffBody(b, rg, '第一行\n改过的第二行\n第三行');
     expect(r.body).toContain('第一行\n');
-    expect(r.body).toContain('<del>第二行</del>');
-    expect(r.body).toContain('<ins>改过的第二行</ins>');
+    expect(r.body).toContain('第三行');
+    // 「第二行」三个字两边都有，只有「改过的」是新增的
+    expect(r.body).toContain('<ins>改过的</ins>第二行');
+    expect(r.body).not.toContain('<del>第二行</del>');
     expect(r.added).toBe(1);
     expect(r.removed).toBe(1);
+  });
+
+  it('两行完全不相干时不硬凑词级 diff，老实整行标（碎成一地反而看不懂）', () => {
+    const r = buildInlineDiffBody(body, range, '这是一句毫不相干的全新表述内容。');
+    expect(r.body).toContain('<del>旧句子。</del>');
+    expect(r.body).toContain('<ins>这是一句毫不相干的全新表述内容。</ins>');
   });
 
   it('代码围栏内的改动不标色，改后代码保持合法围栏并明说这一点', () => {
@@ -135,16 +139,19 @@ describe('渲染契约：标记必须活到正文渲染器输出的 HTML 里', (
       '1. 新条目',
     ).body;
     const html = render(md);
+    // 序号留在标记外面，列表结构不塌；条目内部走词级 diff，只标变了的那个字
     expect(html).toContain('<li>');
-    expect(html).toContain('<del>旧条目</del>');
-    expect(html).toContain('<ins>新条目</ins>');
+    expect(html).toContain('<del>旧</del>');
+    expect(html).toContain('<ins>新</ins>');
+    expect(html).toContain('条目');
   });
 
   it('删除的列表与新增的列表分成两个 ol，新条目从 1 重新编号', () => {
     const original = '1. 旧一\n2. 旧二';
     const body = `前言\n\n${original}\n\n结尾`;
     const range = { start: body.indexOf(original), end: body.indexOf(original) + original.length };
-    const md = buildInlineDiffBody(body, range, '1. 新一\n2. 新二\n3. 新三').body;
+    // 用完全不相干的条目，逼出「整块删 + 整块增」那条路径（相似的条目会走词级 diff 合成一行）
+    const md = buildInlineDiffBody(body, range, '1. 完全不同的第一项\n2. 完全不同的第二项\n3. 完全不同的第三项').body;
     const html = render(md);
     // 不分开的话六条会连成一个列表，新条目从 3. 开始编号，读起来像「原来有五条」
     expect((html.match(/<ol/g) ?? []).length).toBe(2);
@@ -179,77 +186,5 @@ describe('渲染契约：标记必须活到正文渲染器输出的 HTML 里', (
     expect(html).toContain('<table>');
     expect(html).toContain('<ins>名称</ins>');
     expect(html).toContain('<del>说明</del>');
-  });
-});
-
-/**
- * 流式锚点。
- *
- * 2026-08-25 用户："你不懂自己去增加这种绘制，本系统里面就有全局绘制组件。"
- * 确实——doc/rule.frontend.streaming-text.md 明令流式文本走 StreamingText，
- * 「流式期间使用轻量纯文本动效，完成后再切换完整 Markdown 渲染」，
- * 并禁止「每个 chunk 都执行完整 Markdown 高亮和布局」。
- * 之前这条链自己把已吐出的文字拼进 markdown 逐 token 重渲染，两条都违反了，
- * 表现就是正文整棵重挂、进场动画无限重启、「一闪一闪像老电脑」。
- *
- * 现在流式档正文里只有一个空锚点，正在写的那段由 StreamingText 用 portal 画进去。
- */
-describe('流式锚点：正文这一层在流式期间完全不动', () => {
-  const DOC = '# 标题\n\n第一阶段建议：\n\n1. 甲\n2. 乙\n\n结尾。\n';
-  const SEL = '第一阶段建议：\n\n1. 甲\n2. 乙';
-  const RANGE = { start: DOC.indexOf(SEL), end: DOC.indexOf(SEL) + SEL.length };
-
-  it('锚点能穿过 rehypeRaw + sanitize 活到 DOM 里，且是块级、不被 ins 包住', () => {
-    const html = render(buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body);
-    // 块级：正在写的那段按 markdown 渲染（标题/列表都是块级元素），
-    // 塞进 span 会被浏览器判成 <p> 里嵌块级元素，排版当场错位
-    expect(html).toMatch(/<div id="[^"]*doc-rewrite-stream"><\/div>/);
-    // 不能被 <ins> 包住：ins 是行内元素，包住整块 markdown 的圆角底色会糊成一团。
-    // 「这是新写的」由 portal 里那个容器自己的样式（.doc-rewrite-stream）表达。
-    expect(html).not.toMatch(/<ins>\s*<div id/);
-    // 原选区照旧压成 del，用户看得见「这段正在被替换」
-    expect(html).toContain('<del>第一阶段建议：</del>');
-  });
-
-  it('DOM 里的 id 带 user-content- 前缀——查节点必须用真正生效的那个', () => {
-    // sanitize 会给正文内嵌 HTML 的 id 加前缀防撞车。按写进 markdown 的那个 id 去
-    // getElementById 会永远查不到，流式文字一个字都画不出来（形状 6）。
-    const html = render(buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body);
-    const id = /<div id="([^"]+)"/.exec(html)?.[1];
-    expect(id, '锚点没渲染出来').toBeTruthy();
-    expect(id).toBe(STREAM_ANCHOR_DOM_ID);
-    expect(STREAM_ANCHOR_SELECTOR).toContain(`#${id}`);
-  });
-
-  it('流式档的正文是常量：与「已经吐出多少字」无关', () => {
-    const a = buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body;
-    const b = buildInlineDiffBody(DOC, RANGE, STREAM_ANCHOR_HTML).body;
-    expect(a).toBe(b);
-    // 反证：老写法把已吐出的文字拼进去，每多一个字正文就是一个新字符串
-    expect(buildInlineDiffBody(DOC, RANGE, '新句').body)
-      .not.toBe(buildInlineDiffBody(DOC, RANGE, '新句子').body);
-  });
-});
-
-/**
- * 接线守卫（predicate-and-wiring-discipline.md 形状 2）：
- * 上面那些性质删掉都不会红——真正会退化的是「DocBrowser 有没有照着用」。
- * 所以直接扫调用方源码，断言这条链没有偷偷回到自己拼 markdown 的老路。
- */
-describe('接线：DocBrowser 的流式档确实走共享组件', () => {
-  const SRC = readFileSync(resolve(__dirname, '../DocBrowser.tsx'), 'utf-8');
-
-  it('流式文本用的是 StreamingText，不是自己写的打字机', () => {
-    expect(SRC).toContain("import { StreamingText } from '@/components/streaming'");
-    expect(SRC).toMatch(/createPortal\(\s*<StreamingText/);
-  });
-
-  it('流式档正文的 memo 依赖里没有已吐出的文字', () => {
-    // 依赖项一旦混进 rewriteOutput / rewrite.text，正文就会逐 token 重算，
-    // 「一闪一闪」当场复发，而任何现有断言都不会红。
-    const block = /const streamingDiff = useMemo\([\s\S]*?\}, \[([^\]]*)\]\);/.exec(SRC);
-    expect(block, '找不到 streamingDiff 这个 memo').toBeTruthy();
-    expect(block![1]).not.toMatch(/rewriteOutput|rewrite\.text/);
-    expect(block![0]).toContain('STREAM_ANCHOR_HTML');
   });
 });

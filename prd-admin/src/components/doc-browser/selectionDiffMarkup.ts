@@ -10,7 +10,7 @@
 // 不能靠人肉回归。渲染侧的契约（<ins>/<del> 能穿过 rehypeRaw + rehypeSanitize 活下来）
 // 由 __tests__/selectionDiffMarkup.test.ts 用 MarkdownViewer 的真实插件链断言。
 
-import { computeLineDiff } from '@/lib/lineDiff';
+import { computeInlineDiff, computeLineDiff, lineSimilarity } from '@/lib/lineDiff';
 import type { ResolvedRange } from './selectionEdit';
 
 export interface InlineDiffMarkup {
@@ -31,30 +31,6 @@ export interface InlineDiffMarkup {
 
 /** ``` 或 ~~~ 围栏行（允许最多 3 个前导空格，与 CommonMark 一致） */
 const FENCE_RE = /^ {0,3}(?:```|~~~)/;
-
-/**
- * 流式期间放进正文的**空锚点**：AI 正在写的那段文字由共享组件 StreamingText 用 portal
- * 渲染进这个节点，正文 markdown 本身与「已经吐出多少字」无关，全程一个常量。
- *
- * 为什么是锚点而不是把流式文本拼进 markdown（doc/rule.frontend.streaming-text.md）：
- * 规则明令「流式期间使用轻量纯文本动效，完成后再切换完整 Markdown 渲染」「禁止每个 chunk
- * 都执行完整 Markdown 高亮和布局」。逐 token 重算正文会让 MarkdownViewer 整棵重挂
- *（它的 components 是每次 render 新建的内联函数），进场动画被无限重启，用户看到的是
- * 「一闪一闪，像老电脑」。锚点让正文这一层彻底不动，节奏与光标交给 StreamingText。
- */
-export const STREAM_ANCHOR_ID = 'doc-rewrite-stream';
-// div 而不是 span：正在写的那段现在按 markdown 渲染（标题/列表/代码块都是块级元素），
-// 塞进一个 span 会被浏览器判成 <p> 里嵌块级元素，排版当场错位。
-export const STREAM_ANCHOR_HTML = `<div id="${STREAM_ANCHOR_ID}"></div>`;
-
-/**
- * 锚点在**真实 DOM 里**的 id：rehype-sanitize 会给正文内嵌 HTML 的 id 加 `user-content-`
- * 前缀（防上传文档拿 id 撞应用自身的锚点），所以写进 markdown 的那个 id 查不到节点。
- * 这正是 predicate-and-wiring-discipline.md 形状 6——判据要读真正生效的那个值。
- * 两个都收在选择器里：前缀策略若变，DOM 侧不至于当场失灵，测试会先红。
- */
-export const STREAM_ANCHOR_DOM_ID = `user-content-${STREAM_ANCHOR_ID}`;
-export const STREAM_ANCHOR_SELECTOR = `#${STREAM_ANCHOR_DOM_ID}, #${STREAM_ANCHOR_ID}`;
 
 /**
  * 行首的块级标记：引用符 > / 列表符 -*+ 或 1. / 任务框 [ ] / 标题 #。
@@ -111,6 +87,83 @@ export function markLine(line: string, tag: 'del' | 'ins'): string {
   return `${lead}<${tag}>${rest}</${tag}>`;
 }
 
+/**
+ * 一对「被改写的行」：只把真正变了的那几个词标出来，其余原样。
+ *
+ * 行级 diff 判的是「这一行变了没有」，改一个词也会标成「删一整行 + 加一整行」，
+ * 用户得自己逐字比对才知道改了哪儿（2026-08-25 用户："diff 不够精准"）。
+ * 这里对配对上的两行再算一次原子级 diff，产出一行里混着 <del>/<ins> 的标记。
+ *
+ * 前提由 pairChangedLines 保证：两行的块级前缀（`1. ` / `- ` / `## `）相同，
+ * 且相似到值得逐词比。前缀留在标记外面，与 markLine 同一口径。
+ */
+function markPairedLine(delLine: string, addLine: string): string {
+  const dm = LEAD_MARKER_RE.exec(delLine);
+  const am = LEAD_MARKER_RE.exec(addLine);
+  const lead = am ? am[1] : '';
+  const delRest = dm ? dm[2] : delLine;
+  const addRest = am ? am[2] : addLine;
+  const segs = computeInlineDiff(delRest, addRest);
+  const body = segs.map((s) => {
+    if (s.type === 'eq') return s.text;
+    // 纯空白的增删是噪音（多一个空格少一个空格），原样输出不标色
+    if (!s.text.trim()) return s.type === 'del' ? '' : s.text;
+    return `<${s.type === 'del' ? 'del' : 'ins'}>${s.text}</${s.type === 'del' ? 'del' : 'ins'}>`;
+  }).join('');
+  return `${lead}${body}`;
+}
+
+/** 两行能不能做行内 diff：块级前缀相同 + 相似度够高 + 都不是表格/分隔线 */
+function canPairInline(delLine: string, addLine: string): boolean {
+  if (FENCE_RE.test(delLine) || FENCE_RE.test(addLine)) return false;
+  if (TABLE_ROW_RE.test(delLine) || TABLE_ROW_RE.test(addLine)) return false;
+  if (THEMATIC_BREAK_RE.test(delLine) || THEMATIC_BREAK_RE.test(addLine)) return false;
+  if (!delLine.trim() || !addLine.trim()) return false;
+  const dm = LEAD_MARKER_RE.exec(delLine);
+  const am = LEAD_MARKER_RE.exec(addLine);
+  // 前缀不同（段落改成列表项、列表符号变了）就不是「同一行的修订」，老实分开标
+  if ((dm ? dm[1] : '') !== (am ? am[1] : '')) return false;
+  // 相似度太低说明是两句不相干的话，逐词标出来只会碎成一地
+  return lineSimilarity(dm ? dm[2] : delLine, am ? am[2] : addLine) >= 0.4;
+}
+
+type DiffOp =
+  | { kind: 'eq' | 'del' | 'add'; text: string }
+  /** 一行被改写：同一行里既有删也有增，只标真正变了的那几个词 */
+  | { kind: 'pair'; del: string; add: string };
+
+/**
+ * 把「连着的一批删除行 + 紧跟着的一批新增行」按顺序配对。
+ * 配得上的合成 pair（行内 diff），配不上的仍然各标各的整行。
+ */
+function pairChangedLines(lines: { type: 'eq' | 'add' | 'del'; text: string }[]): DiffOp[] {
+  const out: DiffOp[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].type !== 'del') {
+      out.push({ kind: lines[i].type, text: lines[i].text });
+      i += 1;
+      continue;
+    }
+    // 收一段连续的删除行，再收紧跟其后的一段连续新增行
+    const dels: string[] = [];
+    while (i < lines.length && lines[i].type === 'del') dels.push(lines[i++].text);
+    const adds: string[] = [];
+    while (i < lines.length && lines[i].type === 'add') adds.push(lines[i++].text);
+
+    // 逐位配对：第 k 条被删的行对第 k 条新增的行。配不上就退回整行标注。
+    const paired = Math.min(dels.length, adds.length);
+    let k = 0;
+    for (; k < paired; k++) {
+      if (canPairInline(dels[k], adds[k])) out.push({ kind: 'pair', del: dels[k], add: adds[k] });
+      else break; // 一旦配不上，后面的对齐关系也就不可信了，剩下的老实分开标
+    }
+    for (let d = k; d < dels.length; d++) out.push({ kind: 'del', text: dels[d] });
+    for (let a = k; a < adds.length; a++) out.push({ kind: 'add', text: adds[a] });
+  }
+  return out;
+}
+
 /** 统计一段文本结束时是否停在代码围栏内部 */
 function endsInsideFence(text: string, initial = false): boolean {
   let inside = initial;
@@ -130,7 +183,7 @@ function endsInsideFence(text: string, initial = false): boolean {
  */
 export function buildInlineDiffBody(body: string, range: ResolvedRange, newText: string): InlineDiffMarkup {
   const original = body.slice(range.start, range.end);
-  const lines = computeLineDiff(original, newText);
+  const lines = pairChangedLines(computeLineDiff(original, newText));
 
   // 选区本身可能落在一个代码围栏内部（用户选了代码块里的几行）——
   // 围栏状态必须从正文开头算起，否则会把代码当普通文字标注、把 <del> 渲染成代码。
@@ -159,7 +212,21 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
     lastEmitted = { type, isTableRow };
   };
 
-  for (const l of lines) {
+  for (const op of lines) {
+    // 一行被改写：删增合成一行，行内只标变了的那几个词
+    if (op.kind === 'pair') {
+      removed += 1;
+      added += 1;
+      if (outFence) {
+        // 围栏内的一切都是代码，标签会被原样显示成代码文本
+        codeChangeUnmarked = true;
+        emit(op.add, 'add');
+        continue;
+      }
+      emit(markPairedLine(op.del, op.add), 'add');
+      continue;
+    }
+    const l = { type: op.kind, text: op.text };
     if (l.type === 'del') {
       removed += 1;
       const isFence = FENCE_RE.test(l.text);
@@ -185,13 +252,6 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
       if (l.type === 'add') codeChangeUnmarked = true;
       emit(l.text, l.type === 'add' ? 'add' : 'eq');
       if (isFence) outFence = !outFence;
-      continue;
-    }
-    // 流式锚点原样输出，不包 <ins>：它承载的是一整块 markdown，
-    // 而 <ins> 是行内元素，包住块级内容的圆角底色会糊成一团。
-    // 「这是新写的」由 portal 里那个容器自己的样式表达（doc-diff.css 的 .doc-rewrite-stream）。
-    if (l.type === 'add' && l.text.trim() === STREAM_ANCHOR_HTML) {
-      emit(l.text, 'add');
       continue;
     }
     emit(l.type === 'add' ? markLine(l.text, 'ins') : l.text, l.type === 'add' ? 'add' : 'eq');

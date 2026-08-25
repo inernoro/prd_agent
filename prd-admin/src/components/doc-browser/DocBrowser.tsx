@@ -236,9 +236,8 @@ import {
   stripDuplicatedBlockPrefix,
   type ResolvedRange,
 } from './selectionEdit';
-import { StreamingText } from '@/components/streaming';
-import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
-import { buildInlineDiffBody, STREAM_ANCHOR_HTML, STREAM_ANCHOR_SELECTOR } from './selectionDiffMarkup';
+import { useScrollFollowTransform, usePaneRect } from './useOverlayFollow';
+import { buildInlineDiffBody } from './selectionDiffMarkup';
 import {
   SelectionRewritePrompt,
   InlineDiffReviewBar,
@@ -2404,20 +2403,24 @@ export function DocBrowser({
   const rewriteOutputRef = useRef(rewriteOutput);
   rewriteOutputRef.current = rewriteOutput;
 
-  // 流式档的正文只与「选区在哪」有关，与已经吐出多少字无关 —— 依赖项刻意不含 rewrite.text，
-  // 于是整个流式期间它返回**同一个对象**，下游 previewForRender / MarkdownViewer 的 memo
-  // 才能真的挡住重渲染（MarkdownViewer 只吃一个 content 字符串，字符串不变就整棵不动）。
-  const streamingRangeStart = rewrite?.range.start;
-  const streamingRangeEnd = rewrite?.range.end;
-  const streamingDiff = useMemo(() => {
+  /*
+   * 等待档的正文：只把选区整体压灰（--streaming 那档 CSS），一个半成品的字都不渲染。
+   *
+   * 2026-08-25 用户："一次性完成，其实无需流式输出，不然最后一闪，用户不知道哪些内容发生了变更。"
+   * 逐字长出来的过程看着热闹，但它和最终的 diff 是两套画面 —— 切换那一下整段重排，
+   * 用户刚追着读的位置全变了，反而看不清到底改了哪儿。改成：等 AI 写完，diff 一次性出现。
+   * 等待期的反馈交给条子（正在改写 · 已等待 Xs · 可停止）+ 选区压灰，不是静止的转圈。
+   *
+   * 依赖项只有「选区在哪」，所以整个等待期返回同一个对象，正文一次都不重渲染。
+   */
+  const waitingRangeStart = rewrite?.range.start;
+  const waitingRangeEnd = rewrite?.range.end;
+  const waitingDiff = useMemo(() => {
     if (typeof selectionRawContent !== 'string') return null;
-    if (streamingRangeStart == null || streamingRangeEnd == null) return null;
-    return buildInlineDiffBody(
-      selectionRawContent,
-      { start: streamingRangeStart, end: streamingRangeEnd },
-      STREAM_ANCHOR_HTML,
-    );
-  }, [selectionRawContent, streamingRangeStart, streamingRangeEnd]);
+    if (waitingRangeStart == null || waitingRangeEnd == null) return null;
+    // newText 传空串 = 整个选区都算「待替换」，全部标 del；流式档的 CSS 把 del 画成压灰无删除线
+    return buildInlineDiffBody(selectionRawContent, { start: waitingRangeStart, end: waitingRangeEnd }, '');
+  }, [selectionRawContent, waitingRangeStart, waitingRangeEnd]);
 
   const rewriteDiff = useMemo(() => {
     if (!rewrite || rewrite.phase === 'prompt') return null;
@@ -2430,13 +2433,10 @@ export function DocBrowser({
     if (rewrite.phase === 'error' && !rewriteOutput) {
       return buildInlineDiffBody(selectionRawContent, rewrite.range, rewrite.original);
     }
-    // 流式期间正文里放的是一个**空锚点**，不是已吐出的文字（doc/rule.frontend.streaming-text.md：
-    // 「流式期间使用轻量纯文本动效，完成后再切换完整 Markdown 渲染」「禁止每个 chunk 都执行完整
-    // Markdown 高亮和布局」）。于是这个 memo 在整个流式期间返回同一个字符串，正文一次都不重渲染；
-    // 正在写的那段由共享组件 StreamingText 用 portal 画进锚点，节奏与光标都归它管。
-    if (rewrite.phase === 'streaming') return streamingDiff;
+    // 还在等 AI：正文只把选区压灰，不渲染半成品（见 waitingDiff 的注释）
+    if (rewrite.phase === 'streaming') return waitingDiff;
     return buildInlineDiffBody(selectionRawContent, rewrite.range, rewriteOutput);
-  }, [rewrite, rewriteOutput, streamingDiff, selectionRawContent, preview, selectedEntryId]);
+  }, [rewrite, rewriteOutput, waitingDiff, selectionRawContent, preview, selectedEntryId]);
 
   // 采纳落库那一瞬间正文已换成新内容、diff 失效，这属于成功路径，不能报「文档已变化」
   const rewriteDiffBroken = !!rewrite && rewrite.phase !== 'prompt' && !rewrite.applying && !rewriteDiff;
@@ -2465,24 +2465,6 @@ export function DocBrowser({
     return { ...preview, text: frontmatterPrefixOf(preview.text ?? '', selectionRawContent) + rewriteDiff.body };
   }, [preview, rewriteDiff, selectionRawContent]);
 
-  // 正文里那个空锚点的真实 DOM 节点：StreamingText 靠 portal 画进去。
-  // 正文是渲染完才有这个节点，所以用 rAF 轮询到它出现为止；给个上限，
-  // 免得 diff 画不出来时（切档 / 正文被别的路径改过）在这儿空转到天荒地老。
-  const rewriteStreaming = rewrite?.phase === 'streaming';
-  const [streamAnchorEl, setStreamAnchorEl] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    if (!rewriteStreaming) { setStreamAnchorEl(null); return; }
-    let raf = 0;
-    let tries = 0;
-    const tick = () => {
-      const el = document.querySelector<HTMLElement>(STREAM_ANCHOR_SELECTOR);
-      if (el) { setStreamAnchorEl(el); return; }
-      if (++tries > 180) return; // 约 3 秒，找不到就算了（条子仍会报状态）
-      raf = requestAnimationFrame(tick);
-    };
-    tick();
-    return () => cancelAnimationFrame(raf);
-  }, [rewriteStreaming, previewForRender]);
 
   // 划词配图：生成的图片以 markdown 形式插入选区所在段落之后
   const handleInsertSelectionImage = useCallback(async (url: string, name?: string) => {
@@ -4247,32 +4229,12 @@ export function DocBrowser({
                 )}
                 {/* 逐句修改：改动已就地长在正文里 → 只剩操作条（撤销 / 采纳）。
                     这里不再画选区高亮：正文里的 del/ins 着色本身就是「选了哪段、改了什么」 */}
-                {/* 正在写的那段：交给全站统一的流式组件，画进正文里的锚点。
-                    节奏（词级 blur focus）、光标（MAP 品牌 M）、offset 稳定 key 都归它管——
-                    doc/rule.frontend.streaming-text.md 明令「调用方不做打字机逻辑」，
-                    自己写一套的下场就是每个页面节奏不一样、且重挂时动画无限重启。 */}
-                {streamAnchorEl && rewrite?.phase === 'streaming' && createPortal(
-                  <StreamingText
-                    text={rewriteOutput}
-                    streaming
-                    // 流式期也按 markdown 渲染：正文里正在长出来的那段，
-                    // 观感必须和它定稿后一致，不能让用户盯着一屏 `**` 和 `-`
-                    markdown
-                    renderMarkdown={(c) => <MarkdownViewer content={c} />}
-                    className="doc-rewrite-stream"
-                  />,
-                  streamAnchorEl,
-                )}
                 {rewrite && rewrite.phase !== 'prompt' && (rewriteDiff || rewrite.applying) && !editMode && (
                   <InlineDiffReviewBar
                     scrollRef={contentAreaRef}
                     phase={rewrite.phase}
                     model={rewrite.model}
-                    added={rewrite.phase === 'streaming'
-                      // 流式档的正文只有锚点（恒 1 行），拿它当新增数会一直显示 +1。
-                      // 真正的新增量是「已经吐出来的行数」，按它报。
-                      ? (rewriteOutput ? rewriteOutput.split('\n').length : 0)
-                      : (rewriteDiff ?? lastDiffStatsRef.current).added}
+                    added={(rewriteDiff ?? lastDiffStatsRef.current).added}
                     removed={(rewriteDiff ?? lastDiffStatsRef.current).removed}
                     codeChangeUnmarked={(rewriteDiff ?? lastDiffStatsRef.current).codeChangeUnmarked}
                     startedAt={rewrite.startedAt}
@@ -4632,74 +4594,47 @@ function PendingSelectionHighlight({
   rects: Array<{ top: number; left: number; width: number; height: number }>;
   scrollRef?: React.RefObject<HTMLElement>;
 }) {
-  const [scrollDy, setScrollDy] = useState(0);
-  // 滚动容器在视口里的 bounding rect —— 用来把高亮裁剪在正文区域内，
-  // 避免选区滚出正文后还在 toolbar/sidebar 上面继续画（Codex P2）。
-  const [clip, setClip] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
-  useEffect(() => {
-    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
-    const start = read();
-    const onScroll = () => {
-      setScrollDy(read() - start);
-      const el = scrollRef?.current;
-      if (el) {
-        const r = el.getBoundingClientRect();
-        setClip({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
-      } else {
-        setClip(null);
-      }
-    };
-    onScroll(); // 初始化一次拿到当前裁剪框
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [scrollRef]);
+  const layerRef = useRef<HTMLDivElement>(null);
+  // 跟随滚动**直写 DOM**，不走 state：这是整条链上面积最大的浮层，
+  // 原来每个 scroll 事件都 setState 两次（clip 每次还是新对象，必定重渲染），
+  // 而且走 state 意味着高亮永远慢正文一帧——正是「浮动窗卡卡的」里最重的一份。
+  useScrollFollowTransform(layerRef, scrollRef);
+  // 滚动容器在视口里的位置：拿它当裁剪框，避免选区滚出正文后还在 toolbar/sidebar 上继续画。
+  // 它只在侧栏收放 / 窗口缩放时才变，走 state 完全够用。
+  const clip = usePaneRect(scrollRef);
   if (rects.length === 0) return null;
   return createPortal(
-    <div aria-hidden style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 115 }}>
-      {rects.map((r, i) => {
-        // 视口坐标：rect 原始 top - 累计滚动位移
-        const top = r.top - scrollDy;
-        const left = r.left;
-        const right = left + r.width;
-        const bottom = top + r.height;
-        // 完全滚出滚动容器 → 不渲染（节流 DOM）；部分相交 → 用 clipPath 裁掉容器外的部分
-        if (clip) {
-          if (bottom <= clip.top || top >= clip.bottom || right <= clip.left || left >= clip.right) {
-            return null;
-          }
-        }
-        // 用 inset(top right bottom left) clip-path 把超出 clip 的部分切掉；
-        // 数值相对于元素自身左上角（top/right/bottom/left = 各边收进多少 px）
-        let clipPath: string | undefined;
-        if (clip) {
-          const cTop = Math.max(0, clip.top - top);
-          const cLeft = Math.max(0, clip.left - left);
-          const cRight = Math.max(0, right - clip.right);
-          const cBottom = Math.max(0, bottom - clip.bottom);
-          if (cTop || cLeft || cRight || cBottom) {
-            clipPath = `inset(${cTop}px ${cRight}px ${cBottom}px ${cLeft}px)`;
-          }
-        }
-        return (
+    // 外层钉在正文区上并裁剪：用 overflow:hidden 代替逐块算 clipPath——
+    // 同样的效果，少一坨每帧都要重算的数学。
+    <div
+      aria-hidden
+      style={{
+        position: 'fixed',
+        top: clip?.top ?? 0,
+        left: clip?.left ?? 0,
+        width: clip ? clip.width : '100vw',
+        height: clip ? clip.height : '100vh',
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        zIndex: 115,
+      }}
+    >
+      <div ref={layerRef} style={{ position: 'absolute', inset: 0 }}>
+        {rects.map((r, i) => (
           <div
             key={i}
             style={{
               position: 'absolute',
-              top,
-              left,
+              top: r.top - (clip?.top ?? 0),
+              left: r.left - (clip?.left ?? 0),
               width: r.width,
               height: r.height,
               ...SELECTION_OVERLAY_HIGHLIGHT,
               borderRadius: 2,
-              clipPath,
             }}
           />
-        );
-      })}
+        ))}
+      </div>
     </div>,
     document.body,
   );

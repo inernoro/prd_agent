@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Sparkles, ArrowUp, X, Check, Undo2, RotateCcw, Square } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useScrollFollowTransform, usePaneRect } from './useOverlayFollow';
 import { useSelectionRewriteActions } from './useSelectionRewriteActions';
 import {
   SELECTION_OVERLAY_CHIP,
@@ -17,42 +18,6 @@ import { toFriendlyRewriteError } from './selectionRewriteError';
 //   2. InlineDiffReviewBar   —— 改动直接长在正文里之后的「撤销 / 采纳」（图 4）
 // 两者都不承载结果内容：结果就是文章本身的变化（artifact-is-experience.md）。
 // 布局遵 frontend-modal.md：createPortal 到 body + inline style 定位。
-
-/** 浮层跟随正文滚动平移（与 InlineCommentComposer / PendingSelectionHighlight 同一套） */
-function useScrollFollow(scrollRef?: RefObject<HTMLElement>): number {
-  const [dy, setDy] = useState(0);
-  useEffect(() => {
-    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
-    const start = read();
-    const onScroll = () => setDy(read() - start);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [scrollRef]);
-  return dy;
-}
-
-/**
- * 正文滚动区在视口里的位置。钉在正文右上角的条子要靠它定位——
- * 侧栏收放、窗口缩放、正文滚动都会挪动这块区域，所以三种事件都要重算。
- */
-function usePaneRect(scrollRef?: RefObject<HTMLElement>): DOMRect | null {
-  const [rect, setRect] = useState<DOMRect | null>(null);
-  useEffect(() => {
-    const read = () => setRect(scrollRef?.current?.getBoundingClientRect() ?? null);
-    read();
-    window.addEventListener('scroll', read, true);
-    window.addEventListener('resize', read);
-    return () => {
-      window.removeEventListener('scroll', read, true);
-      window.removeEventListener('resize', read);
-    };
-  }, [scrollRef]);
-  return rect;
-}
 
 export interface AnchorRect {
   top: number;
@@ -96,7 +61,9 @@ export function SelectionRewritePrompt({
   const actions = useSelectionRewriteActions();
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  const scrollDy = useScrollFollow(scrollRef);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // 跟随滚动走直写 DOM，不走 state（见 useOverlayFollow：走 state 会慢内容一帧，跟不上手）
+  useScrollFollowTransform(panelRef, scrollRef);
 
   useEffect(() => {
     // 选中即就绪：打开就能直接打字（chief-designer-usability.md 第一原则）
@@ -118,8 +85,9 @@ export function SelectionRewritePrompt({
 
   return createPortal(
     <div
+      ref={panelRef}
       className="fixed z-[120] flex flex-col"
-      style={{ top, left, width, padding: 10, transform: `translateY(${-scrollDy}px)`, ...SELECTION_OVERLAY_PANEL }}
+      style={{ top, left, width, padding: 10, ...SELECTION_OVERLAY_PANEL }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >

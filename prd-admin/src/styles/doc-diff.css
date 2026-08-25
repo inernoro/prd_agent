@@ -14,7 +14,7 @@
  *（也正是 admin-dual-theme.md 反复要治的那种绕过 token 的硬编码）。饱和整块底色 + 硬边下划线
  * 就是「Windows 选中高亮 / Word 修订」的观感，跟本系统暖赤陶 + 细描边的语言完全不搭。
  *
- * 现在：新增用品牌暖色（极淡底 + 一条细下划线，不再是实心色块），删除退成 muted 灰 + 细删除线，
+ * 现在：新增用品牌暖色（暖字 + 极淡暖底，不描边不加线），删除退成 muted 灰 + 同色细删除线，
  * 不再用红色喊。所有值走 --accent-primary-rgb / --text-* ，双主题自动跟随。
  */
 :root {
@@ -37,8 +37,8 @@
 .doc-inline-diff ins {
   color: var(--doc-diff-ins-fg);
   background: var(--doc-diff-ins-bg);
-  /* 一条细下划线代替整块实心底：告诉你「这段是新写的」，但不把正文腌成一片色块 */
-  box-shadow: inset 0 -1px 0 var(--doc-diff-ins-edge);
+  /* 不加下划线（2026-08-25 用户）：暖色字 + 极淡暖底已经足够说明「这段是新写的」，
+     再压一条线只是给每一段新内容都描个边，读起来更吵。 */
   text-decoration: none;
   border-radius: 4px;
   padding: 0 3px;
@@ -57,28 +57,9 @@
 }
 
 /*
- * 流式期间正在写的那一段（StreamingText 用 portal 画进正文锚点，走 markdown 渲染）。
- * 与完成态的 ins 同一套暖色语言：左侧一条品牌细线标明「这块是新长出来的」，
- * 内部的标题/列表/代码块保持正文本来的排版，不套色块。
- */
-.doc-rewrite-stream {
-  border-left: 2px solid var(--doc-diff-ins-edge);
-  padding-left: 12px;
-  margin: 4px 0;
-}
-
-.doc-rewrite-stream > * {
-  /* MarkdownViewer 自带 96px 底部留白与最大宽度，嵌进正文里要去掉 */
-  padding-bottom: 0 !important;
-  max-width: 100% !important;
-}
-
-/*
- * 流式期间：原文只是「正在被替换」，还没被删掉。
- * 这一档把它整体压灰、去掉删除线与红底——ChatGPT canvas 的做法，也是用户 2026-08-25
- * 指着截图要的那个观感：进行中原文变灰，结束了才是灰删除线 + 蓝新增。
- * 之前流式和完成态共用一套红删除线，每 100ms 重算一次，满屏红杠乱跳，
- * 用户的原话是「这是什么雷霆布局」。
+ * 等 AI 写完那段时间：原文只是「正在被替换」，还没被删掉，所以整体压灰、不划删除线。
+ * 这一档正文里**没有** ins —— 半成品一个字都不渲染，等结果齐了 diff 一次性出现
+ *（2026-08-25 用户："一次性完成，不然最后一闪，用户不知道哪些内容发生了变更"）。
  */
 /* 两个类都写上不是啰嗦：`.doc-inline-diff--streaming del` 与 `.doc-inline-diff del`
  * 特异性一模一样（各一个类 + 一个标签），谁赢只看谁写在后面——这种「靠行号成立」的覆盖
@@ -91,26 +72,13 @@
   transition: opacity 200ms ease-out;
 }
 
-/* 新增内容进场：不是「有东西在动」，是产物本身在长出来（artifact-is-experience.md） */
+/*
+ * 改动出现时浮现一次。
+ * 这是整条链上唯一的动效，也是它存在的理由：diff 是一次性出现的，
+ * 一起浮现能让用户的眼睛抓住「刚刚变的是这些地方」（expectation-management.md：变化必须可感知）。
+ */
 .doc-inline-diff ins {
   animation: doc-diff-ins-in 260ms ease-out both;
-}
-
-/*
- * 流式期间不给 ins 播进场动画。
- *
- * 逐字生长的节奏归共享组件 StreamingText 管（词级 blur focus + MAP 光标），
- * 这里再叠一层元素级进场只会打架（doc/rule.frontend.streaming-text.md：
- * 「组件自己负责逐字节奏与光标——调用方不做打字机逻辑」）。
- * 动画留给流式结束那一下：去掉 --streaming 时全篇 ins 一起浮现一次，
- * 正好是「改完了」的那个瞬间。
- *
- * 历史：这条规则最早是为了堵「一闪一闪，像老电脑」——那时正文逐 token 全量重渲染，
- * 每个 ins 都在从头重播这段 260ms 动画且永远播不完。根因已经从架构上拿掉了
- *（流式期正文是常量，正在写的那段走 portal），这条规则留作纪律，不再是补丁。
- */
-.doc-inline-diff.doc-inline-diff--streaming ins {
-  animation: none;
 }
 
 @keyframes doc-diff-ins-in {
@@ -123,10 +91,6 @@
     background: var(--doc-diff-ins-bg);
   }
 }
-
-/* 光标不在这里：流式期正文里放的是一个空锚点（selectionDiffMarkup 的 STREAM_ANCHOR_HTML），
- * StreamingText 用 portal 把「正在写的那段 + MAP 品牌光标」画进去，样式归 streaming.css。
- * 首字节到达前那个 ins 里只有一枚光标，看着就是「AI 要在这儿写」，不是残留的方块。 */
 
 @media (prefers-reduced-motion: reduce) {
   .doc-inline-diff ins {

@@ -79,14 +79,12 @@ const STREAMING = ['doc-inline-diff', 'doc-inline-diff--streaming'];
 const REVIEW = ['doc-inline-diff'];
 
 describe('doc-diff.css 层叠：最终生效值', () => {
-  it('流式期间新增块不播逐元素进场动画（这是「一闪一闪像老电脑」的根因）', () => {
-    // 正文每来一个 token 就整棵 DOM 重挂，动画被无限重启、永远播不完，
-    // 已经写完的字一直在 0.35~0.66 的透明度之间抖。
-    expect(winning('animation', 'ins', STREAMING)?.value).toBe('none');
+  it('改动出现时浮现一次——diff 是一次性出现的，动效是让眼睛抓住「刚刚变的是这些」', () => {
+    expect(winning('animation', 'ins', REVIEW)?.value).toContain('doc-diff-ins-in');
   });
 
-  it('改完待确认那一档保留进场动画：全篇 ins 一起浮现一次', () => {
-    expect(winning('animation', 'ins', REVIEW)?.value).toContain('doc-diff-ins-in');
+  it('新增内容不加下划线（2026-08-25 用户：暖字 + 淡底够了，再描边更吵）', () => {
+    expect(winning('box-shadow', 'ins', REVIEW)).toBeNull();
   });
 
   it('流式期间原文只压灰，不划红删除线', () => {
@@ -96,10 +94,10 @@ describe('doc-diff.css 层叠：最终生效值', () => {
     expect(winning('text-decoration', 'del', REVIEW)?.value).toBe('line-through');
   });
 
-  it('覆盖不许靠行号成立：流式规则的特异性必须严格高于基础规则', () => {
-    const streamingIns = winning('animation', 'ins', STREAMING)!.selector;
-    const baseIns = parseRules(stripAtBlocks(CSS))
-      .find((r) => r.decls.animation && !r.selector.includes('--streaming'))!.selector;
-    expect(specificity(streamingIns)).toBeGreaterThan(specificity(baseIns));
+  it('覆盖不许靠行号成立：等待档规则的特异性必须严格高于基础规则', () => {
+    const streamingDel = winning('text-decoration', 'del', STREAMING)!.selector;
+    const baseDel = parseRules(stripAtBlocks(CSS))
+      .find((r) => r.decls['text-decoration'] === 'line-through')!.selector;
+    expect(specificity(streamingDel)).toBeGreaterThan(specificity(baseDel));
   });
 });

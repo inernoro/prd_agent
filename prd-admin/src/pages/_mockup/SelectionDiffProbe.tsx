@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
-import { createPortal } from 'react-dom';
-import { StreamingText } from '@/components/streaming';
-import { buildInlineDiffBody, STREAM_ANCHOR_HTML, STREAM_ANCHOR_SELECTOR } from '@/components/doc-browser/selectionDiffMarkup';
+import { buildInlineDiffBody } from '@/components/doc-browser/selectionDiffMarkup';
 import { InlineDiffReviewBar } from '@/components/doc-browser/SelectionRewriteInline';
 
 // 自测专用：把真实的就地 diff 渲染链（buildInlineDiffBody → MarkdownViewer → doc-diff.css）
@@ -44,7 +42,7 @@ const REWRITTEN = `第一阶段建议至少形成以下可落地成果（从「�
 const RANGE = { start: ORIGINAL.indexOf(SELECTED), end: ORIGINAL.indexOf(SELECTED) + SELECTED.length };
 
 export default function SelectionDiffProbe() {
-  const [streamedLen, setStreamedLen] = useState(0);
+  const [, setStreamedLen] = useState(0);
   const [phase, setPhase] = useState<'idle' | 'streaming' | 'review'>('idle');
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const timerRef = useRef<number | null>(null);
@@ -75,29 +73,13 @@ export default function SelectionDiffProbe() {
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [run]);
 
-  // 与 DocBrowser 同一套：流式档正文只放一个空锚点（与吐了多少字无关），
-  // 正在写的那段由 StreamingText 用 portal 画进去。deps 不含 streamedLen 是关键——
-  // 正文在整个流式期间是同一个字符串，一次都不重渲染。
+  // 与 DocBrowser 同一套：等 AI 写完再一次性出 diff。
+  // 等待期正文只把选区压灰（newText 传空串 = 整段待替换），不渲染任何半成品。
   const diff = useMemo(() => {
     if (phase === 'idle') return null;
-    if (phase === 'streaming') return buildInlineDiffBody(ORIGINAL, RANGE, STREAM_ANCHOR_HTML);
+    if (phase === 'streaming') return buildInlineDiffBody(ORIGINAL, RANGE, '');
     return buildInlineDiffBody(ORIGINAL, RANGE, REWRITTEN);
   }, [phase]);
-
-  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    if (phase !== 'streaming') { setAnchorEl(null); return; }
-    let raf = 0;
-    let tries = 0;
-    const tick = () => {
-      const el = document.querySelector<HTMLElement>(STREAM_ANCHOR_SELECTOR);
-      if (el) { setAnchorEl(el); return; }
-      if (++tries > 180) return;
-      raf = requestAnimationFrame(tick);
-    };
-    tick();
-    return () => cancelAnimationFrame(raf);
-  }, [phase, diff]);
 
   const toggleTheme = () => {
     const root = document.documentElement;
@@ -128,30 +110,22 @@ export default function SelectionDiffProbe() {
         </span>
       </div>
 
+      {/* 正文区做成真的可滚动窗格，并把 ref 传给条子——真实页面就是这样，
+          浮层的跟随/裁剪逻辑只有在这种结构下才跑得到（否则自测页测不出滚动卡顿） */}
       <div
         ref={anchorRef}
+        data-testid="probe-pane"
         className={`px-6 py-4${diff ? ' doc-inline-diff' : ''}${phase === 'streaming' ? ' doc-inline-diff--streaming' : ''}`}
-        style={{ maxWidth: 900 }}
+        style={{ maxWidth: 900, height: 460, overflowY: 'auto', overscrollBehavior: 'contain' }}
       >
         <MarkdownViewer content={diff ? diff.body : ORIGINAL} />
       </div>
-
-      {anchorEl && phase === 'streaming' && createPortal(
-        <StreamingText
-          text={REWRITTEN.slice(0, streamedLen)}
-          streaming
-          markdown
-          renderMarkdown={(c) => <MarkdownViewer content={c} />}
-          className="doc-rewrite-stream"
-        />,
-        anchorEl,
-      )}
 
       {diff && phase !== 'idle' && (
         <InlineDiffReviewBar
           phase={phase === 'streaming' ? 'streaming' : 'review'}
           model="probe/fake-model"
-          added={phase === 'streaming' ? REWRITTEN.slice(0, streamedLen).split('\n').length : diff.added}
+          added={diff.added}
           removed={diff.removed}
           codeChangeUnmarked={diff.codeChangeUnmarked}
           startedAt={startedAt}
@@ -160,6 +134,7 @@ export default function SelectionDiffProbe() {
           onDiscard={() => setPhase('idle')}
           onRetry={run}
           onStop={() => setPhase('review')}
+          scrollRef={anchorRef}
         />
       )}
     </div>
