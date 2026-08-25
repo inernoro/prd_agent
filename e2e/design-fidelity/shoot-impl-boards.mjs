@@ -25,6 +25,26 @@ const url = PALETTE === 'design'
 await page.goto(url, { waitUntil: 'networkidle' });
 await page.waitForTimeout(3000);
 
+/**
+ * 把画板驱动到它该有的状态。只认真实交互：输入框就真的输入，要进编辑态就真的点那一行。
+ * 认不出的画板原样返回（大多数画板是静态的，不需要驱动）。
+ */
+async function driveBoardState(page, board, id) {
+  if (id !== 'cap-B2') return;
+  // 稿面 B2：搜索框里有「导入」，命中计数亮着，其中一句处于编辑态
+  const search = board.locator('input[aria-label^="搜索"]').first();
+  if (await search.count() === 0) return;
+  await search.fill('导入');
+  await page.waitForTimeout(400);
+  // 点第三条原文进编辑态（稿面画的就是列表中段某一句在改）
+  const rows = board.locator('[data-transcript-row]');
+  const total = await rows.count();
+  if (total >= 3) {
+    await rows.nth(2).click();
+    await page.waitForTimeout(400);
+  }
+}
+
 const manifest = [];
 // 设计稿的深浅两档要分别取证：只在一个主题下比对等于放过一半
 for (const theme of ['light', 'dark']) {
@@ -40,6 +60,13 @@ for (const theme of ['light', 'dark']) {
       });
       await page.waitForTimeout(200);
     }
+    /*
+     * 有些画板画的是**某个交互之后**的状态（B2 是「搜了词 + 正在改一句」）。
+     * 这类状态一律用真实交互驱动出来，不给组件开只给取证用的后门——
+     * 后门做出来的图判的是后门，不是用户真能看到的那一屏。
+     */
+    await driveBoardState(page, board, id);
+
     const file = `${OUT}/${id}.${PALETTE}.${theme}.png`;
     await board.screenshot({ path: file });
     manifest.push({ boardId: id, palette: PALETTE, theme, image: file });

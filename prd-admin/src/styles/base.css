@@ -101,6 +101,19 @@ select:focus-visible {
   outline: none;
 }
 
+/*
+ * 浅色档必须再写一遍，否则这条「不画内环」在浅色下根本不生效。
+ * 上面那条 `[data-theme="light"] :focus-visible` 的特异性是 (0,2,0)，
+ * 而 `textarea:focus-visible` 只有 (0,1,1)——属性选择器赢过元素选择器，
+ * 于是浅色主题下每个输入框仍然套着一圈橙环，和注释写的意图正好相反。
+ * 这类「注释说了、实际没生效」比没写还糟：后来人读注释就以为已经处理过了。
+ */
+[data-theme="light"] input:focus-visible,
+[data-theme="light"] textarea:focus-visible,
+[data-theme="light"] select:focus-visible {
+  outline: none;
+}
+
 /* 禁用 focus 样式的元素（用于自定义聚焦容器的内部元素） */
 .no-focus-ring:focus,
 .no-focus-ring:focus-visible {

@@ -56,7 +56,10 @@ describe('TranscriptKaraoke unified playback', () => {
     // 词云的权重按频次映射，不按排名。断言的是行为不是某个字面尺寸：
     // 云里必须出现**多种**字号（旧写法 15 - index*0.2 也会多种，所以还要下一条），
     // 且最大的那一档必须落在频次最高的词上。
-    expect(html).toContain('这场反复提到的是');
+    // 稿面 B3 的开场结论：一句挂着**真实百分比**的话（含最高频词的句子 ÷ 总句数），
+    // 不是从稿面抄一个数字过来。断言口径而不是具体数值——换个样本数值就变。
+    expect(html).toContain('最高频主题');
+    expect(html).toMatch(/这场有 \d+% 的句子提到/);
     // 只切词云那一块。此前切到文末，把**原文列表**的行内字号也算了进去——
     // 于是「云里有多种字号」这条断言其实在测原文，词云只有一个词也照样绿
     // （形状 6：判据读到的不是它要判的那个值）。原文一挪到词云前面就露馅了。
@@ -88,9 +91,11 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    expect(html).toContain('词云');
+    // 区块还在（现在按稿面 B3 叫「录音理解」），只是里面没有词条云、也没有那句结论
+    expect(html).toContain('录音理解');
     expect(html).not.toContain('整场录音词云');
-    expect(html).not.toContain('这场反复提到的是');
+    expect(html).not.toContain('的句子提到');
+    expect(html).not.toContain('最高频主题');
   });
 
   it('问答提示保留超过四万字录音的开头和结尾，不偷偷截成局部', () => {

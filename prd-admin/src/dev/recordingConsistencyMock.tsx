@@ -19,6 +19,8 @@ import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { TranscribeStatusCard } from '@/components/doc-browser/TranscribeStatusCard';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { RecordingResultShell } from '@/pages/document-store/RecordingResultPage';
+import { RecordingAnswer } from '@/components/doc-browser/RecordingAnswer';
+import { parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { describeBackgroundTranscriptionBanner } from '@/pages/document-store/recordingVault';
 import { RecentEntriesList } from '@/pages/document-store/RecentEntriesList';
@@ -73,6 +75,12 @@ const MOCK_NOTE_MD = `# 用户访谈 · 留存与导入
 **[14:50 - 14:58]** [主持人] 留存这块你怎么看？
 **[15:05 - 15:13]** [受访者 A] 留存掉在导入，不在功能本身。
 `;
+
+/**
+ * B4 那块回答区要拿真实句子做引用卡。这里用**生产的解析器**从同一份 mock 笔记里解，
+ * 不另手写一份句子数组——手写的那份会和笔记各自漂移，引用卡就变成了对不上原文的摆设。
+ */
+const MOCK_SEGMENTS = parseTranscriptSegments(MOCK_NOTE_MD);
 
 /**
  * 知识库「最近」的 mock 数据。时间用相对当下的偏移生成，
@@ -334,6 +342,101 @@ function RecordingConsistencyMock() {
                 />
               </div>
             )}
+          </RecordingResultShell>
+        </Artboard>
+
+        {/*
+          B3 / B2 / B4 与 B1 是**同一屏的不同状态**，所以共用同一份组件树，
+          区别只在取证脚本把它驱动到哪一态：
+            B3 滚到「录音理解 / 一键整理」
+            B2 在搜索框里真的输入、真的点进某一句的编辑态
+            B4 喂一份定稿回答给回答区
+          状态不是靠给组件开测试后门做出来的——B2 走真实交互，B4 用生产同一份
+          RecordingAnswer 组件，两者都不是副本（形状 6）。
+        */}
+        <Artboard
+          boardId="cap-B3"
+          label="G · 录音理解 + 一键整理（对应设计稿 B3）"
+          note="整理方式清单来自后端注册表；四张卡的状态由 organizeStyles 纯函数判定"
+        >
+          <RecordingResultShell
+            title="用户访谈 · 留存与导入"
+            subtitle="已保存到「产品研究」· 24:18"
+            onBack={() => undefined}
+          >
+            {audioSrc && (
+              <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3">
+                <TranscriptKaraoke
+                  src={audioSrc}
+                  noteMd={MOCK_NOTE_MD}
+                  documentMode
+                  onSaveNote={async () => true}
+                  onAskRecording={() => undefined}
+                  onRestyle={() => undefined}
+                  organize={{
+                    currentStyleKey: 'general',
+                    generatedAt: new Date(Date.now() - 12_000).toISOString(),
+                    runningStyleKey: 'meeting',
+                    runningPercent: 40,
+                  }}
+                  onPickOrganizeStyle={() => undefined}
+                />
+              </div>
+            )}
+          </RecordingResultShell>
+        </Artboard>
+
+        <Artboard
+          boardId="cap-B2"
+          label="H · 搜索命中 + 编辑态（对应设计稿 B2）"
+          note="取证脚本在这块里真的输入关键词、真的点进编辑态，不走组件后门"
+        >
+          <RecordingResultShell
+            title="用户访谈 · 留存与导入"
+            subtitle="已保存到「产品研究」· 24:18"
+            onBack={() => undefined}
+          >
+            {audioSrc && (
+              <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3">
+                <TranscriptKaraoke
+                  src={audioSrc}
+                  noteMd={MOCK_NOTE_MD}
+                  documentMode
+                  onSaveNote={async () => true}
+                  onAskRecording={() => undefined}
+                  onRestyle={() => undefined}
+                />
+              </div>
+            )}
+          </RecordingResultShell>
+        </Artboard>
+
+        <Artboard
+          boardId="cap-B4"
+          label="I · 问这场录音 · 已有回答（对应设计稿 B4）"
+          note="回答区是生产同一份 RecordingAnswer；引用卡由 resolveAnswerCitations 从原文解析"
+        >
+          <RecordingResultShell
+            title="用户访谈 · 留存与导入"
+            subtitle="已保存到「产品研究」· 24:18"
+            onBack={() => undefined}
+          >
+            <div className="flex flex-col gap-3 px-4 pb-8 pt-3">
+              <h3 className="text-[19px] font-bold text-token-primary">问这场录音</h3>
+              {/* 稿面顶部那条琥珀提示：上一问没答上来，而且是如实说的 */}
+              <p
+                className="rounded-[11px] px-3 py-2.5 text-[12px] leading-relaxed"
+                style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
+              >
+                上一问「价格」：原文无相关内容，已如实说明。
+              </p>
+              <RecordingAnswer
+                question="为什么放弃导入？"
+                answer={'解析等待 40 秒且无进度反馈，被判断为卡死。[09:58]'}
+                segments={MOCK_SEGMENTS}
+                onSeek={() => undefined}
+              />
+            </div>
           </RecordingResultShell>
         </Artboard>
       </div>

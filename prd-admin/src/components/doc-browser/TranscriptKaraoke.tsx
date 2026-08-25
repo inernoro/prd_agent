@@ -3,6 +3,7 @@ import { Check, ChevronUp, Info, Play, RefreshCw, Search, UserRound, X } from 'l
 import { requestRecordingPlay } from './recordingPlayBridge';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import {
+  isUnansweredByTranscript,
   parseTranscriptSegments,
   hasUsableTimestamps,
   activeSegmentIndex,
@@ -11,7 +12,6 @@ import {
   replaceTranscriptSegmentText,
   renameTranscriptSpeaker,
   buildTranscriptWordCloud,
-  parseRecordingAnswerParts,
   parseSpeakerSourceNote,
   extractTranscriptSummary,
   parseSummaryModules,
@@ -21,6 +21,8 @@ import {
   buildSpeakerStats,
 } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
+import { OrganizeStylePanel, type OrganizeState } from '@/components/doc-browser/OrganizeStylePanel';
+import { RecordingAnswer } from '@/components/doc-browser/RecordingAnswer';
 import { streamDirectChat } from '@/services/real/aiToolbox';
 import { getTranscriptLexicon, updateSystemTranscriptLexicon, updateTranscriptLexicon } from '@/services/real/userPreferences';
 
@@ -174,6 +176,8 @@ export function TranscriptKaraoke({
   onSaveNote,
   onAskRecording,
   onRestyle,
+  organize,
+  onPickOrganizeStyle,
 }: {
   src: string;
   noteMd: string;
@@ -185,6 +189,14 @@ export function TranscriptKaraoke({
   onAskRecording?: () => void;
   /** 重新生成整理结果（设计稿把它放在「会议纪要」标题右侧）。 */
   onRestyle?: () => void;
+  /**
+   * 「一键整理」那块网格的状态（稿面 B3）。宿主知道当前笔记用的是哪种整理方式、
+   * 有没有在途 run，就传进来；不传的话四张卡都是「点击生成」——那是**如实的**
+   * 「不知道」，不是假装某一张已生成。
+   */
+  organize?: OrganizeState;
+  /** 选了某种整理方式：宿主去发起 restyle。不传就不渲染这一块。 */
+  onPickOrganizeStyle?: (styleKey: string) => void;
 }) {
   const segments = useMemo(() => parseTranscriptSegments(noteMd), [noteMd]);
   // 摘要一直存在 noteMd 里，只是此前没有任何界面读它；纪要与待办都从这里长出来
@@ -210,6 +222,10 @@ export function TranscriptKaraoke({
   const [answer, setAnswer] = useState('');
   const [asking, setAsking] = useState(false);
   const [qaError, setQaError] = useState('');
+  /** 当前这条回答对应的提问（稿面 B4 把它做成右对齐气泡） */
+  const [askedQuestion, setAskedQuestion] = useState('');
+  /** 上一问「原文里没有」的那个问题；空串表示没有这种情况 */
+  const [lastUnanswered, setLastUnanswered] = useState('');
   const cancelQaRef = useRef<(() => void) | null>(null);
   const seekRef = useRef<((sec: number) => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -317,6 +333,39 @@ export function TranscriptKaraoke({
       .map((segment, index) => ({ segment, index }))
       .filter(({ segment }) => segment.text.toLocaleLowerCase().includes(normalized));
   }, [activeTerm, timelineSegments]);
+  /**
+   * 命中之间来回跳（稿面 B2 的「3 / 9」+ 旁边那颗圆钮）。
+   * 换关键词就归零——否则上一次停在第 7 个，新词只有 2 个命中，「8 / 2」是句假话。
+   */
+  const [hitCursor, setHitCursor] = useState(0);
+  useEffect(() => { setHitCursor(0); }, [activeTerm]);
+  const gotoNextHit = useCallback(() => {
+    if (searchMatches.length === 0) return;
+    const next = (hitCursor + 1) % searchMatches.length;
+    setHitCursor(next);
+    const target = searchMatches[next];
+    // 跳过去要做两件事：把那一句滚进视野，能跳播的话顺便跳播
+    lineRefs.current[target.index]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    manualUntilRef.current = Date.now() + 3000;
+    if (followEnabled && target.segment.start >= 0) seekRef.current?.(target.segment.start);
+  }, [followEnabled, hitCursor, searchMatches]);
+
+  /**
+   * 稿面 B3 开场那句结论要挂一个真实百分比。它就是「含最高频词的句子 ÷ 总句数」，
+   * 不是从稿面抄一个 62% 过来（no-rootless-tree）——所以文案也照这个口径写，
+   * 不写成含糊的「内容占比」，读者能自己复核。
+   */
+  const topicLede = useMemo(() => {
+    if (wordCloud.length === 0 || timelineSegments.length === 0) return null;
+    const top = wordCloud[0].word;
+    const needle = top.toLocaleLowerCase();
+    const hits = timelineSegments.filter(seg => seg.text.toLocaleLowerCase().includes(needle)).length;
+    const percent = Math.round((hits / timelineSegments.length) * 100);
+    // 连 1% 都不到时这句结论没有意义，不如不说
+    if (percent < 1) return null;
+    return { top, second: wordCloud[1]?.word ?? '', percent };
+  }, [timelineSegments, wordCloud]);
+
   const questionTranscript = useMemo(
     () => buildRecordingQuestionTranscript(timelineSegments, noteMd),
     [noteMd, timelineSegments],
@@ -344,11 +393,21 @@ export function TranscriptKaraoke({
     setAnswer('');
     setQaError('');
     setAsking(true);
+    setAskedQuestion(userQuestion);
     cancelQaRef.current = streamDirectChat({
       message: buildRecordingQuestionPrompt(questionTranscript, userQuestion),
       onText: chunk => setAnswer(current => current + chunk),
       onError: error => { setQaError(error || '问答失败，请稍后重试'); setAsking(false); },
-      onDone: () => setAsking(false),
+      onDone: () => {
+        setAsking(false);
+        // 这一问没答上来的话记一笔：稿面 B4 顶部那条琥珀提示要的就是
+        // 「上一问没答上来，而且是如实说的」——不记下来，用户下次提问时
+        // 已经看不到系统曾经诚实过一次了。
+        setAnswer((current) => {
+          setLastUnanswered(isUnansweredByTranscript(current) ? userQuestion : '');
+          return current;
+        });
+      },
     });
   };
 
@@ -547,8 +606,26 @@ export function TranscriptKaraoke({
                 className="min-w-0 flex-1 bg-transparent text-[13px] text-token-primary outline-none"
                 aria-label="搜索原文关键词"
               />
-              {keyword && <span className="text-[11px] tabular-nums text-token-muted">{searchMatches.length} 处</span>}
+              {keyword && (
+                // 稿面 B2 是「3 / 9」——当前落在第几个命中，不是只说共几处。
+                // 只给总数的话，用户点了下一个也不知道自己走到哪了。
+                <span className="text-[11px] tabular-nums text-token-muted">
+                  {searchMatches.length > 0 ? `${hitCursor + 1} / ${searchMatches.length}` : '0 / 0'}
+                </span>
+              )}
             </label>
+            {keyword && searchMatches.length > 0 && (
+              <button
+                type="button"
+                onClick={gotoNextHit}
+                aria-label="跳到下一个命中"
+                title="跳到下一个命中"
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full"
+                style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+              >
+                <ChevronUp size={16} />
+              </button>
+            )}
             {followEnabled && (
               /*
                 「继续跟随」：手动滚过原文之后自动跟随会暂停 3 秒不跟用户抢滚动条，
@@ -596,7 +673,34 @@ export function TranscriptKaraoke({
             const active = followEnabled && i === activeIdx;
             if (documentMode && editingIndex === i && onSaveNote) {
               return (
-                <div key={i} className="w-full rounded-[10px] p-2" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+                // 稿面 B2 的编辑态是一张**蓝色描边卡**，抬头一行是「时间 · 说话人（可改） · 改说话人」，
+                // 底下一行是「保存 / 取消」加一句「仅修改原文，音频不变」——那句话是承诺：
+                // 用户在这里改字不会动到音频，不写出来他不敢改。
+                <div key={i} className="w-full rounded-[12px] p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--accent-fg-info)' }}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="font-mono text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                      {s.start >= 0 ? formatClock(s.start) : ''}
+                    </span>
+                    {s.speaker && (
+                      <span
+                        className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                        style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
+                      >
+                        {s.speaker}
+                      </span>
+                    )}
+                    <span className="flex-1" />
+                    {s.speaker && (
+                      <button
+                        type="button"
+                        onClick={() => { setRenamingSpeaker(s.speaker || null); setSpeakerDraft(s.speaker || ''); }}
+                        className="min-h-9 px-1 text-[11px]"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        改说话人
+                      </button>
+                    )}
+                  </div>
                   <textarea
                     autoFocus
                     value={editDraft}
@@ -605,10 +709,7 @@ export function TranscriptKaraoke({
                     className="w-full resize-y rounded-[8px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
                     style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
                   />
-                  <div className="mt-2 flex justify-end gap-2">
-                    <button type="button" disabled={savingEdit} onClick={() => setEditingIndex(null)} className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] text-token-muted">
-                      <X size={12} /> 取消
-                    </button>
+                  <div className="mt-2 flex items-center gap-2">
                     <button
                       type="button"
                       disabled={savingEdit || !editDraft.trim()}
@@ -621,10 +722,16 @@ export function TranscriptKaraoke({
                           .then((ok) => { if (ok !== false) setEditingIndex(null); })
                           .finally(() => setSavingEdit(false));
                       }}
-                      className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
-                      style={{ background: 'rgba(59,130,246,0.16)', color: 'var(--accent-fg-blue)' }}>
+                      // 稿面的保存是**蓝色实心**，取消是无框文字——主次要分得出来
+                      className="flex min-h-11 items-center gap-1 rounded-full px-4 text-[12px] font-semibold disabled:opacity-50"
+                      style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}>
                       <Check size={12} /> 保存
                     </button>
+                    <button type="button" disabled={savingEdit} onClick={() => setEditingIndex(null)} className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] text-token-muted">
+                      <X size={12} /> 取消
+                    </button>
+                    <span className="flex-1" />
+                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>仅修改原文，音频不变</span>
                   </div>
                 </div>
               );
@@ -633,6 +740,9 @@ export function TranscriptKaraoke({
               <button
                 key={i}
                 ref={(el) => { lineRefs.current[i] = el; }}
+                // 取证脚本靠这个属性把画板驱动到「某一句正在改」那一态——
+                // 它比 nth-child 稳：行的层级结构改一次，位置选择器就静默失灵
+                data-transcript-row={i}
                 onClick={() => {
                   if (documentMode && onSaveNote) {
                     setEditingIndex(i);
@@ -681,7 +791,8 @@ export function TranscriptKaraoke({
                     {s.speaker && (
                       <span className="mb-0.5 block text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>{s.speaker}</span>
                     )}
-                    <span className="block min-w-0 break-words">{s.text}</span>
+                    {/* 命中词在正文里也要高亮：只在命中面板里标，用户在原文里还得自己找 */}
+                    <span className="block min-w-0 break-words">{highlightKeyword(s.text, keyword)}</span>
                   </span>
                 </span>
               </button>
@@ -709,10 +820,33 @@ export function TranscriptKaraoke({
           */}
           <section style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>词云</h3>
-              <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句 · 点击查看命中</span>
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>录音理解</h3>
+              <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句原文</span>
             </div>
             <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
+            {/*
+              稿面 B3 的开场是「最高频主题」标签 + 一句挂着数字的结论，然后才是词条。
+              先给结论再给数字（conclusion-before-numbers）：一排词读不出「这场在讲什么」，
+              得读者自己数；这句话替他数完了。
+
+              这个百分比必须是真的：它就是「含最高频词的句子 ÷ 总句数」，
+              不是从稿面抄一个 62% 过来（no-rootless-tree）。文案也照这个口径写，
+              不写成含糊的「内容占比」。
+            */}
+            {topicLede && (
+              <div className="mb-3">
+                <span
+                  className="inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
+                >
+                  最高频主题
+                </span>
+                <p className="mt-2.5 text-[17px] font-bold leading-snug text-token-primary">
+                  这场有 {topicLede.percent}% 的句子提到「{topicLede.top}」
+                  {topicLede.second ? <>，其次是「{topicLede.second}」</> : null}。
+                </p>
+              </div>
+            )}
 
 
 
@@ -736,9 +870,18 @@ export function TranscriptKaraoke({
             {(wordCloud.length > 0 || onSaveNote) && (
               <div className="mt-3">
             {/*
-              稿面这张卡打开就是词条云：词条在最前，结论句与说话人占比排在它后面。
-              我原先把占比行和结论句垫在词条上面，等于把设计稿定义的区块起点往后推了一屏。
+              两张设计稿在这一块上不一致，两边都得照顾：
+              `VOICE TO NOTE`（P3）把这块叫「词云」、打开就是词条；
+              `VOICE CAPTURE`（B3）把它叫「录音理解」，词条上面还压着一句结论。
+              两张都是 V2、覆盖范围不同（交付页 vs 采集与结果），没有新旧之分。
+
+              取法：区块标题按 B3 用「录音理解」并保留那句结论，词条组自己再带一个
+              「词云」小标签——两张稿要的东西都在，只是层级各降一级。
+              这处冲突已写进给设计方的待办，等他们定哪一个是准的。
             */}
+                {wordCloud.length > 0 && (
+                <p className="mt-3 text-[12px] font-semibold text-token-muted">词云</p>
+                )}
                 {wordCloud.length > 0 && (
                 <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
                   {wordCloud.map(({ word, count }, index) => {
@@ -789,13 +932,12 @@ export function TranscriptKaraoke({
                   })}
                 </div>
                 )}
-                {wordCloud.length > 0 ? (
-                  <p className="text-[11px] leading-relaxed text-token-muted">
-                    这场反复提到的是 <strong className="font-semibold text-token-secondary">{wordCloud[0].word}</strong>（{wordCloud[0].count} 次）；点任意一个词看它出现在哪几处
-                  </p>
-                ) : (
-                  // 词云为空恰恰是最需要补词典的时刻：多半是人名/黑话被通用分词器切成了单字。
-                  // 把补词入口一起藏起来，用户就没有任何办法让词云长出来（形状 8：写了一个到不了的入口）。
+                {/*
+                  结论已经在卡顶（稿面 B3 的「最高频主题 + 一句话」），这里不再重复一遍——
+                  同一件事说两次会让读者以为是两条不同的信息。
+                  只留词云为空时的那句：那种时候恰恰最需要告诉用户为什么空、怎么补。
+                */}
+                {wordCloud.length === 0 && (
                   <p className="text-[11px] leading-relaxed text-token-muted">
                     没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。
                   </p>
@@ -1035,12 +1177,36 @@ export function TranscriptKaraoke({
             )}
             </div>
           </section>
+          {/*
+            「一键整理」：稿面 B3 在录音理解之后就是这一块——四种整理方式各带状态，
+            外加一条自定义。整理方式清单来自后端注册表，不在前端另抄一份。
+          */}
+          {onPickOrganizeStyle && (
+            <OrganizeStylePanel
+              state={organize ?? {}}
+              onPick={onPickOrganizeStyle}
+              onCustom={onRestyle}
+            />
+          )}
           <section style={{ scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
               <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>问这段录音</h3>
               <span />
             </div>
             <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
+            {/*
+              稿面 B4 顶部这条琥珀提示记的是**上一问没答上来、而且是如实说的**。
+              它不是错误提示——恰恰相反，是系统在证明自己没有替用户编一个答案。
+              不记下来，用户下次提问时就看不到这次诚实了。
+            */}
+            {lastUnanswered && (
+              <p
+                className="mb-3 rounded-[11px] px-3 py-2.5 text-[12px] leading-relaxed"
+                style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
+              >
+                上一问「{lastUnanswered}」：原文无相关内容，已如实说明。
+              </p>
+            )}
             <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
               <textarea
                 value={question}
@@ -1059,15 +1225,12 @@ export function TranscriptKaraoke({
               </div>
               {asking && !answer && <p className="mt-3 animate-pulse text-[12px] text-token-muted motion-reduce:animate-none">正在读取原文并核对时间轴</p>}
               {qaError && <p className="mt-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
-              {answer && (
-                <div className="mt-3 whitespace-pre-wrap rounded-[9px] p-3 text-[12px] leading-relaxed text-token-secondary" style={{ background: 'var(--bg-nested)' }} aria-live="polite">
-                  {parseRecordingAnswerParts(answer).map((part, index) => part.kind === 'text' ? (
-                    <span key={index}>{part.text}</span>
-                  ) : recordingCitationMatchesTimeline(part.start, timelineSegments) ? (
-                    <button key={index} type="button" onClick={() => seekRef.current?.(part.start)} className="mx-0.5 inline-flex min-h-8 items-center rounded-full px-2 font-mono text-[11px] font-semibold" style={{ background: 'rgba(59,130,246,0.14)', color: 'var(--accent-fg-blue)' }} title="从引用位置播放">{part.label}</button>
-                  ) : <span key={index} className="mx-0.5 font-mono text-[11px] text-token-muted" title="原文时间轴中没有这个位置">{part.label}</span>)}
-                </div>
-              )}
+              <RecordingAnswer
+                question={askedQuestion}
+                answer={answer}
+                segments={timelineSegments}
+                onSeek={sec => seekRef.current?.(sec)}
+              />
             </div>
             </div>
           </section>

@@ -516,3 +516,54 @@ export function activeSummaryModuleIndex(moduleCount: number, currentSec: number
   const ratio = Math.min(0.999999, Math.max(0, currentSec / durationSec));
   return Math.floor(ratio * moduleCount);
 }
+
+/**
+ * 把问答的回答拆成「结论 + 引用」两块（稿面 B4）。
+ *
+ * 稿面把引用从正文里**提出来**做成卡片：一句原文 + 时间 + 说话人 + 一个播放键。
+ * 之前的做法是在正文里内联一颗时间药丸——点得到，但读者看不出被引用的那句话是什么，
+ * 得自己跳过去看。提出来之后「凭什么这么说」和「结论」并排摆着。
+ *
+ * 引用必须能在时间轴上找到对应句子才算数：模型报了一个原文里没有的时间，
+ * 那是幻觉，不能给它做一张像模像样的卡（no-rootless-tree）。找不到的原样留在正文里。
+ */
+export function resolveAnswerCitations(
+  answer: string,
+  segments: Array<{ start: number; end: number; text: string; speaker?: string }>,
+): {
+  conclusion: string;
+  citations: Array<{ label: string; start: number; text: string; speaker?: string }>;
+} {
+  const parts = parseRecordingAnswerParts(answer);
+  const citations: Array<{ label: string; start: number; text: string; speaker?: string }> = [];
+  const conclusionPieces: string[] = [];
+  const seen = new Set<number>();
+
+  for (const part of parts) {
+    if (part.kind === 'text') { conclusionPieces.push(part.text); continue; }
+    const hit = segments.find(seg => (
+      seg.start >= 0 && part.start >= seg.start && part.start <= Math.max(seg.start, seg.end)
+    ));
+    // 找不到对应句子的引用留在正文里，由既有的「时间轴中没有这个位置」分支处理
+    if (!hit) { conclusionPieces.push(part.label); continue; }
+    if (seen.has(hit.start)) continue;
+    seen.add(hit.start);
+    citations.push({ label: part.label, start: hit.start, text: hit.text, speaker: hit.speaker });
+  }
+
+  return { conclusion: conclusionPieces.join('').trim(), citations };
+}
+
+/**
+ * 这次回答是不是「原文里没有」。
+ *
+ * 判据来自我们自己给模型的硬约束——提示词写明「如果原文不足以回答，明确说无法从录音确认」，
+ * 所以这里认的是那句话的几种说法，不是去猜模型的语气。
+ * 稿面 B4 顶部那条琥珀提示要的就是这件事：**上一问没答上来，而且是如实说的**。
+ * 把它显式记下来，用户才知道系统没有替他编一个答案。
+ */
+export function isUnansweredByTranscript(answer: string): boolean {
+  const text = answer.replace(/\s+/g, '');
+  return ['无法从录音确认', '原文无相关内容', '原文中没有', '录音中没有提到', '未提及']
+    .some(phrase => text.includes(phrase.replace(/\s+/g, '')));
+}
