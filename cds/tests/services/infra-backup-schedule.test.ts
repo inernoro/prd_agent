@@ -63,8 +63,11 @@ describe('选谁备份', () => {
     expect(plan.targets.map((t) => t.id)).toEqual(['mongodb', 'redis', 'mysql']);
     expect(plan.skipped.map((s) => s.id)).toEqual(['kafka', 'minio']);
     expect(backupCoverageGaps(plan).map((s) => s.id)).toEqual(['kafka', 'minio']);
-    // 跳过的必须写明为什么，否则「没备份」和「不需要备份」分不开
-    for (const s of plan.skipped) expect(s.reason).toContain('不支持');
+    // 跳过的必须写明**该用什么手段**，不能只说「不支持」——那句话把
+    // 「有数据但要另一套办法」和「压根没有数据」说成了同一件事。
+    for (const s of plan.skipped) expect(s.reason.length).toBeGreaterThan(20);
+    expect(plan.skipped.find((s) => s.id === 'kafka')!.reason).toContain('MirrorMaker');
+    expect(plan.skipped.find((s) => s.id === 'minio')!.reason).toContain('桶到桶');
   });
 
   it('没在跑的容器跳过并说明原因', () => {

@@ -33,6 +33,9 @@ import {
   buildPostgresDumpScript,
   buildPostgresRestoreScript,
   buildPostgresTableCountScript,
+  buildRabbitmqDumpScript,
+  buildRabbitmqRestoreScript,
+  buildRabbitmqQueueCountScript,
   buildRedisAppendOnlyScript,
   buildRedisRestorePlan,
   buildRedisRdbPathScript,
@@ -59,6 +62,53 @@ export interface InfraBackupRouterDeps {
  */
 function detectKind(svc: Pick<InfraService, 'dockerImage' | 'id' | 'containerName'>): BackupKind | 'generic' {
   return backupKindOf(svc.dockerImage, { id: svc.id, containerName: svc.containerName }) ?? 'generic';
+}
+
+/**
+ * 走「在容器里跑一段导出脚本」这条路的类型，连同它的三段脚本、扩展名与计数单位。
+ *
+ * 原来这几样靠 `const isPg = kind === 'postgres'` 带出来的一串三元表达式，
+ * 在下载和恢复两处**各写了一遍**。加第三种类型时要同时改对两条三元链、还要记得
+ * 把两个地方写死的 `.sql.gz` 一起换掉——判据分裂就是这么开始的（形状 3）。
+ *
+ * 收成一张表：新增一种只加一行；表里取不到，就说明它不走这条路。
+ */
+export const SCRIPTED_DUMP_KINDS = {
+  mysql: {
+    label: 'MySQL',
+    ext: 'sql.gz',
+    /** 恢复前后各数一次的那个东西叫什么，进「XX 数 3 → 5」这句话。 */
+    unit: '表',
+    tool: 'mysqldump',
+    dump: buildMysqlDumpScript,
+    restore: buildMysqlRestoreScript,
+    count: buildMysqlTableCountScript,
+  },
+  postgres: {
+    label: 'PostgreSQL',
+    ext: 'sql.gz',
+    unit: '表',
+    tool: 'pg_dump',
+    dump: buildPostgresDumpScript,
+    restore: buildPostgresRestoreScript,
+    count: buildPostgresTableCountScript,
+  },
+  rabbitmq: {
+    label: 'RabbitMQ definitions',
+    // 产物是 JSON 不是 SQL，扩展名必须说实话，否则拿到手的人不知道该怎么灌。
+    ext: 'json.gz',
+    unit: '队列',
+    tool: 'rabbitmqctl export_definitions',
+    dump: buildRabbitmqDumpScript,
+    restore: buildRabbitmqRestoreScript,
+    count: buildRabbitmqQueueCountScript,
+  },
+} as const;
+
+type ScriptedDumpKind = keyof typeof SCRIPTED_DUMP_KINDS;
+
+export function scriptedDump(kind: BackupKind | 'generic'): (typeof SCRIPTED_DUMP_KINDS)[ScriptedDumpKind] | null {
+  return (SCRIPTED_DUMP_KINDS as Record<string, (typeof SCRIPTED_DUMP_KINDS)[ScriptedDumpKind]>)[kind] ?? null;
 }
 
 function shq(s: string): string {
@@ -177,11 +227,12 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     }
 
     const kind = detectKind(svc);
+    const scripted = scriptedDump(kind);
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const filename = `${svc.id}-${stamp}.`
       + (kind === 'mongo' ? 'archive.gz'
         : kind === 'redis' ? 'rdb'
-          : kind === 'mysql' || kind === 'postgres' ? 'sql.gz' : 'tar.gz');
+          : scripted ? scripted.ext : 'tar.gz');
 
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -248,15 +299,16 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           if (!res.headersSent) res.status(500).json({ error: err.message });
           else res.end();
         });
-      } else if (kind === 'mysql' || kind === 'postgres') {
-        // 这两类此前都掉进下面的兜底 `tar -C /data`，而它们的数据分别在
+      } else if (scripted) {
+        // mysql / postgres 此前都掉进下面的兜底 `tar -C /data`，而它们的数据分别在
         // /var/lib/mysql 与 /var/lib/postgresql/data，于是**下载得到一个 22 字节的
-        // 空 gzip 壳，HTTP 却是 200**（E41，2026-08-18 实测三个 mysql 全是这样；
-        // postgres 是同一个形状，这一轮一起修）。拿它当迁移数据源或动手前的兜底，
-        // 等于什么都没有。现在走与周期备份同一段导出脚本：流式压缩、两端退出码都保住。
+        // 空 gzip 壳，HTTP 却是 200**（E41，2026-08-18 实测三个 mysql 全是这样）。
+        // 拿它当迁移数据源或动手前的兜底，等于什么都没有。rabbitmq 的数据在
+        // /var/lib/rabbitmq，同一个形状。现在都走与周期备份同一段导出脚本：
+        // 流式压缩、两端退出码都保住。
         const cmd = ['docker', 'exec', '-i', svc.containerName, 'sh', '-s'];
         const proc = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
-        proc.stdin.end(kind === 'mysql' ? buildMysqlDumpScript() : buildPostgresDumpScript());
+        proc.stdin.end(scripted.dump());
         proc.stdout.pipe(res);
         let stderr = '';
         proc.stderr.on('data', (c: Buffer) => { stderr += c.toString(); });
@@ -265,7 +317,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
             // 截断取**尾**不取头：真正说明失败原因的那几行在末尾，取头只会拿到
             // 一堆无关的启动噪音（house rule 见 ssh-exec-failure 的三宗罪）。
             const tail = stderr.length > 300 ? `…（前文截断）${stderr.slice(-300)}` : stderr;
-            const tool = kind === 'mysql' ? 'mysqldump' : 'pg_dump';
+            const tool = scripted.tool;
             console.error(`[infra-backup] ${tool} exit ${code}: ${tail}`);
             if (!res.headersSent) res.status(500).json({ error: `导出失败 exit=${code}`, detail: tail });
             else res.destroy(new Error(`${tool} exit ${code}: ${tail}`));
@@ -330,6 +382,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     }
 
     const kind = detectKind(svc);
+    const scripted = scriptedDump(kind);
     const { spawn } = await import('node:child_process');
 
     // 1) 先自动备份当前状态（便于"撤销恢复"）
@@ -340,7 +393,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     // 真要拿它回滚的人分不清能不能直接喂回去。
     const preBackupExt = kind === 'mongo' ? 'archive.gz'
       : kind === 'redis' ? 'rdb'
-        : kind === 'mysql' || kind === 'postgres' ? 'sql.gz' : 'bin';
+        : scripted ? scripted.ext : 'bin';
     const preBackupPath = `${backupDir}/${backupKey(svc.projectId, svc.id)}-pre-restore-${stamp}.${preBackupExt}`;
 
     try {
@@ -481,21 +534,20 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           preRestoreBackup: preBackupPath,
           message: 'Redis 已从快照恢复：容器先停止、覆盖快照文件、再启动加载',
         });
-      } else if (kind === 'mysql' || kind === 'postgres') {
-        // 这两类此前**根本没有恢复入口**——能导出却灌不回去，等于没有备份。
+      } else if (scripted) {
+        // 这几类此前**根本没有恢复入口**——能导出却灌不回去，等于没有备份。
         // 大 dump 不能走 stdin 字符串（170MB 的库很常见），所以先落宿主暂存文件，
-        // 再 docker cp 进容器、在容器内解压灌库，最后清理两边。
+        // 再 docker cp 进容器、在容器内解压灌回去，最后清理两边。
         //
-        // 两侧共用同一条流程，只有三段脚本按类型取：导出（恢复前快照）、导入、数表。
+        // 各类共用同一条流程，只有三段脚本按类型取：导出（恢复前快照）、导入、计数。
         // 各自的坑写在脚本函数的注释里（mysql 是管道退出码，postgres 是 psql 默认
-        // 遇错继续照样 exit 0），这里不复述。
-        const isPg = kind === 'postgres';
-        const engineLabel = isPg ? 'PostgreSQL' : 'MySQL';
-        const dumpScript = isPg ? buildPostgresDumpScript() : buildMysqlDumpScript();
-        const restoreScript = isPg ? buildPostgresRestoreScript : buildMysqlRestoreScript;
-        const tableCountScript = isPg ? buildPostgresTableCountScript() : buildMysqlTableCountScript();
-        const uploadPath = `${backupDir}/.upload-${backupKey(svc.projectId, svc.id)}-${stamp}.sql.gz`;
-        const inContainer = `/tmp/cds-restore-${stamp}.sql.gz`;
+        // 遇错继续照样 exit 0，rabbitmq 是 import 只合并不替换），这里不复述。
+        const engineLabel = scripted.label;
+        const dumpScript = scripted.dump();
+        const restoreScript = scripted.restore;
+        const tableCountScript = scripted.count();
+        const uploadPath = `${backupDir}/.upload-${backupKey(svc.projectId, svc.id)}-${stamp}.${scripted.ext}`;
+        const inContainer = `/tmp/cds-restore-${stamp}.${scripted.ext}`;
         let uploadBytes = 0;
         // 数不出来就留 null，不要拿 0 顶替——「没数到」和「一张表都没有」是两回事。
         let tablesBefore: number | null = null;
@@ -525,7 +577,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         }
         if (uploadBytes === 0) {
           await shell.exec(`rm -f ${shq(uploadPath)}`).catch(() => { /* 空文件清不掉不影响结果 */ });
-          res.status(400).json({ error: '上传内容为空（收到 0 字节），未做任何改动。请确认请求体里带上了 .sql.gz 文件。' });
+          res.status(400).json({ error: `上传内容为空（收到 0 字节），未做任何改动。请确认请求体里带上了 .${scripted.ext} 文件。` });
           return;
         }
 
@@ -574,7 +626,13 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
           tablesAfter,
           // 「已恢复」这句话必须带着能被核对的数字，否则和上一版那句假成功长得一模一样。
           message: `${engineLabel} 已从 dump 恢复：收到 ${uploadBytes} 字节，`
-            + `表数 ${tablesBefore ?? '未知'} → ${tablesAfter ?? '未知'}`
+            + `${scripted.unit}数 ${tablesBefore ?? '未知'} → ${tablesAfter ?? '未知'}`
+            // RabbitMQ 的 import 是合并不是替换，备份之后新建的东西会留着。
+            // 这句话必须跟在结果旁边——它决定了操作者要不要再做点什么。
+            + (kind === 'rabbitmq'
+              ? '。注意 definitions 是合并导入：备份之后新建的队列/交换机/用户不会被删掉，'
+                + '队列里的消息也不在这份备份里'
+              : '')
             + '（恢复前状态已另存，可回滚）',
         });
       } else {

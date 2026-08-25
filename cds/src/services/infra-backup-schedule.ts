@@ -17,7 +17,7 @@
 
 import { detectInfraKind, type InfraKindHints } from './infra-exposure-audit.js';
 
-export type BackupKind = 'mongo' | 'redis' | 'mysql' | 'postgres';
+export type BackupKind = 'mongo' | 'redis' | 'mysql' | 'postgres' | 'rabbitmq';
 
 export interface BackupCandidate {
   id: string;
@@ -93,7 +93,133 @@ export function backupDirCandidates(opts: {
 }
 
 /** 有成熟一致性导出手段的类型。不在这个集合里的，不假装能备。 */
-const BACKUP_CAPABLE_KINDS = new Set<string>(['mongo', 'redis', 'mysql', 'postgres']);
+const BACKUP_CAPABLE_KINDS = new Set<string>(['mongo', 'redis', 'mysql', 'postgres', 'rabbitmq']);
+
+/**
+ * 没被周期备份覆盖的服务，究竟属于哪一类。
+ *
+ * ## 为什么要分类
+ *
+ * 原来所有备不了的类型共用一句「暂不支持自动备份的类型」，并且一律 `blocksHealthy`。
+ * 这一句话把三件完全不同的事说成了同一件：
+ *
+ * - memcached 压根没有持久化功能，重启即空**是它的设计**，没有东西可丢；
+ * - MinIO 里放着真实文件，它需要的是桶到桶复制，不是一份 dump；
+ * - SQL Server 有标准的 `BACKUP DATABASE`，只是我们还没接。
+ *
+ * 后果不只是措辞难看。任何项目只要跑着一个 memcached 或 nats，
+ * `isBackupRoundHealthy` 就**永远为假**——于是这个健康位从上线那天起就是红的，
+ * 红了几个月和绿了几个月对磁盘上的备份份数没有任何区别，没人会因为它去补什么。
+ * 这正是 postgres 那条（E48）被埋了三个月的形状：一个长期红着、没人当真的灯。
+ *
+ * 所以现在分开：**真的有东西可丢**才算缺口（红灯），没有持久状态的不算，
+ * 而算缺口的那些要在原地说清「缺的是哪一套手段」，让看到的人知道下一步该做什么。
+ */
+export type BackupCoverageBucket =
+  /** 有成熟导出手段并且已经接上。 */
+  | 'covered'
+  /** 有持久数据，但要用另一套机制（不是一份 dump 文件）。 */
+  | 'different-mechanism'
+  /** 有标准 dump 手段，只是还没接。 */
+  | 'not-yet'
+  /** 没有需要备份的持久状态。 */
+  | 'no-durable-state'
+  /** 认不出是什么。未知一律从严。 */
+  | 'unknown';
+
+export interface BackupCoverageVerdict {
+  bucket: BackupCoverageBucket;
+  /** 一句话说清「为什么没备 + 该用什么」，直接进跳过原因。 */
+  reason: string;
+  /** 算不算真实缺口——只有它为真才拖垮整轮健康状态。 */
+  blocksHealthy: boolean;
+}
+
+/** JetStream 一开，nats 就有了落盘的流和消费者位点，「没有持久状态」立刻不成立。 */
+function natsHasJetStream(env?: Record<string, string> | null, command?: string[] | string | null): boolean {
+  const cmd = Array.isArray(command) ? command.join(' ') : String(command || '');
+  const envText = Object.entries(env || {}).map(([k, v]) => `${k}=${v}`).join(' ');
+  const joined = `${cmd} ${envText}`;
+  // 命令行开关、配置块、以及官方镜像认的那个环境变量，三种写法都要认。
+  return /(^|\s)(-js|--jetstream)(\s|$)/.test(joined)
+    || /jetstream\s*[{:]/i.test(joined)
+    || /\bJS_ENABLED=(1|true|yes)\b/i.test(joined);
+}
+
+/**
+ * 这个服务在备份上处于什么位置。
+ *
+ * 判据只看类型（外加 nats 的 JetStream 开关），不看镜像名——「这是什么库」那份判据
+ * 已经收敛到 `detectInfraKind`，这里不再开第二个口径（形状 3）。
+ */
+export function classifyBackupCoverage(
+  kind: string,
+  opts: { env?: Record<string, string> | null; command?: string[] | string | null } = {},
+): BackupCoverageVerdict {
+  if (BACKUP_CAPABLE_KINDS.has(kind)) {
+    return { bucket: 'covered', reason: '已纳入周期备份', blocksHealthy: false };
+  }
+  switch (kind) {
+    case 'minio':
+      return {
+        bucket: 'different-mechanism',
+        blocksHealthy: true,
+        reason: 'MinIO 里是对象文件，导不成一份 dump：要的是桶到桶复制（`mc mirror` 到另一个'
+          + '端点或另一台机器）。这条不是「还没做」，是需要另立一套离机复制，本周期备份不覆盖',
+      };
+    case 'kafka':
+      return {
+        bucket: 'different-mechanism',
+        blocksHealthy: true,
+        reason: 'Kafka 的数据是分区日志加消费位点，没有一致性快照命令：要的是 MirrorMaker 2 '
+          + '往另一个集群持续复制。这条同样是另一套机制，不是本周期备份能接的',
+      };
+    case 'elasticsearch':
+      return {
+        bucket: 'different-mechanism',
+        blocksHealthy: true,
+        reason: 'Elasticsearch 只能走快照 API，而快照要先注册一个仓库（本地路径或 S3）并写进'
+          + '节点配置，容器里一条命令做不到。要备它得先把仓库配起来',
+      };
+    case 'sqlserver':
+      return {
+        bucket: 'not-yet',
+        blocksHealthy: true,
+        reason: 'SQL Server 有标准的 `BACKUP DATABASE ... TO DISK`，只是还没接进来——这条是欠账，不是做不到',
+      };
+    case 'clickhouse':
+      return {
+        bucket: 'not-yet',
+        blocksHealthy: true,
+        reason: 'ClickHouse 有 `BACKUP TABLE ... TO Disk()`，只是还没接进来——这条是欠账，不是做不到',
+      };
+    case 'memcached':
+      return {
+        bucket: 'no-durable-state',
+        blocksHealthy: false,
+        reason: 'memcached 没有持久化功能，重启即空是它的设计，没有需要备份的状态',
+      };
+    case 'nats':
+      return natsHasJetStream(opts.env, opts.command)
+        ? {
+          bucket: 'not-yet',
+          blocksHealthy: true,
+          reason: '这个 nats 开了 JetStream，流和消费者位点是会落盘的持久状态，需要单独备份（还没接）',
+        }
+        : {
+          bucket: 'no-durable-state',
+          blocksHealthy: false,
+          reason: '这个 nats 没开 JetStream，消息只在内存里中转，没有需要备份的持久状态',
+        };
+    default:
+      // 认不出来就当它有数据。把未知当安全是这类判定最常见的失效方式。
+      return {
+        bucket: 'unknown',
+        blocksHealthy: true,
+        reason: '认不出这是什么服务，无法判断有没有需要备份的数据——按「有」处理',
+      };
+  }
+}
 
 /**
  * 这个服务该用哪种方式备份。
@@ -126,6 +252,8 @@ const BACKUP_EXT: Record<BackupKind, string> = {
   redis: 'rdb',
   mysql: 'sql.gz',
   postgres: 'sql.gz',
+  // definitions 是 JSON，不是 SQL。扩展名要能让人一眼知道这份东西该怎么灌回去。
+  rabbitmq: 'json.gz',
 };
 
 /**
@@ -209,12 +337,19 @@ export function planInfraBackups(
     }
     // id / 容器名一起交给判据：私有仓库或摘要镜像的名字里可能一个产品名都没有，
     // 只看 image 会把一台真库判成「不认识的类型」并跳过——那是静默零备份。
-    const kind = backupKindOf(c.dockerImage, { id: c.id, containerName: c.containerName });
+    const hints = { id: c.id, containerName: c.containerName };
+    const kind = backupKindOf(c.dockerImage, hints);
     if (!kind) {
+      // 分类而不是一句「暂不支持」：没有持久状态的不该算缺口（否则健康位从上线
+      // 那天起就永远红着），真算缺口的要当场说清缺的是哪一套手段。
+      const verdict = classifyBackupCoverage(detectInfraKind(c.dockerImage, hints), {
+        env: c.env,
+        command: c.command,
+      });
       skipped.push({
         id: c.id,
-        reason: `暂不支持自动备份的类型（${c.dockerImage}）`,
-        blocksHealthy: true,
+        reason: `${verdict.reason}（${c.dockerImage}）`,
+        blocksHealthy: verdict.blocksHealthy,
       });
       continue;
     }
@@ -943,14 +1078,154 @@ export function buildPostgresTableCountScript(): string {
   ].join('\n');
 }
 
-/** 导出脚本写给 stderr 的作用域说明的机器标记。调用方靠它把这一行认出来。 */
-export const POSTGRES_SCOPE_NOTE_MARKER = 'cds-backup-scope:';
+/**
+ * 先确认能跟 rabbitmq 节点说上话。
+ *
+ * 和 mysql / postgres 不同，`rabbitmqctl` 不用账号口令——它靠 Erlang cookie 连本机节点，
+ * 所以这里没有「挑一套凭据」的问题，只有「节点起来了没有」。
+ *
+ * 用 `await_startup` 而不是 `status`：容器刚起来的那几十秒里节点在 boot，
+ * 任何命令都会失败，而那不是「坏了」是「还没好」。await_startup 会等到 boot 完成，
+ * 超时才算真的连不上。给 20 秒上限，免得一台真的起不来的节点把整轮备份拖住。
+ */
+const RABBITMQ_PROBE_LINES: readonly string[] = [
+  'CDS_RMQ_PROBE=$(rabbitmqctl -q -t 20 await_startup 2>&1) || {',
+  '  echo "cds-backup: 连不上 rabbitmq 节点（20s 内没等到 await_startup）：$CDS_RMQ_PROBE" >&2',
+  '  exit 78',
+  '}',
+];
+
+/**
+ * 这份备份**没带走什么**，当场说清楚。
+ *
+ * definitions 导的是拓扑（vhost / 队列与交换机的声明 / 绑定 / 用户 / 权限 / 策略 / 参数），
+ * **队列里的消息一条都不在里面**。这不是实现取舍，是 definitions 这个东西的定义——
+ * RabbitMQ 没有「把消息一致性快照出来」的命令。
+ *
+ * 所以这条注记是无条件发的，而且带上数字：光说「不含消息」谁都不会当回事，
+ * 说「当前积压 12000 条消息不在这份备份里」才是一个能让人做决定的事实。
+ *
+ * 数不出来时说「数不出来」，不拿 0 顶替——一个真的空队列和一次失败的查询，
+ * 在「输出为空」这件事上长得一模一样，混着报就又是一次「以为有、其实没有」。
+ * 所以退出码单独接一手，不靠输出是否为空来猜。
+ *
+ * 走 stderr：stdout 是备份产物本身，往里写一个字都会污染 definitions JSON。
+ */
+const RABBITMQ_SCOPE_NOTE_LINES: readonly string[] = [
+  'CDS_RMQ_Q=$(rabbitmqctl -q list_queues messages 2>/dev/null); CDS_RMQ_RC=$?',
+  'if [ "$CDS_RMQ_RC" = 0 ]; then',
+  // 只累加纯数字行：任何版本差异带来的表头/提示行都进不了这个和。
+  `  CDS_RMQ_MSGS=$(printf '%s\\n' "$CDS_RMQ_Q" | awk 'BEGIN{s=0}/^[0-9]+$/{s+=$1}END{print s}')`,
+  '  echo "cds-backup-scope: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；默认 vhost 当前积压 $CDS_RMQ_MSGS 条消息，它们不会被这份备份带走" >&2',
+  'else',
+  '  echo "cds-backup-scope: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；当前积压多少条没数出来（list_queues 失败）" >&2',
+  'fi',
+];
+
+/**
+ * RabbitMQ 导出：definitions 转 JSON，容器内流式压缩。
+ *
+ * ## 为什么是 definitions 而不是别的
+ *
+ * RabbitMQ 没有「全量一致性备份」这种东西。官方给的持久化恢复手段就两条：
+ * 拷 mnesia 数据目录（要求节点停机，而且换个节点名就读不回来），或者导 definitions。
+ * 前者做不成「跑着的服务定期备份」，所以只有后者可用。
+ *
+ * 代价是**消息不在里面**——由 RABBITMQ_SCOPE_NOTE_LINES 每轮当场报出来，
+ * 不做成一句藏在文档里的免责声明。
+ *
+ * ## 为什么带 -q
+ *
+ * 不加 `-q` 时 rabbitmqctl 会往 stdout 打「Exporting definitions ...」之类的提示行，
+ * 那会直接混进 JSON 里，产出一份**看起来成功、其实解析不了**的备份。
+ *
+ * 管道退出码那三个坑（默认只给最后一环、dash 没有 pipefail、gzip 写盘失败留下截断档案
+ * 还被当成功）在 `buildMysqlDumpScript` 的注释里写全了，这里用同一套 fd3 / fd4 写法。
+ */
+export function buildRabbitmqDumpScript(): string {
+  return [
+    ...RABBITMQ_PROBE_LINES,
+    ...RABBITMQ_SCOPE_NOTE_LINES,
+    'exec 3>&1',
+    'codes=$( { { rabbitmqctl -q export_definitions - --format=json;'
+      + ' echo "dump=$?" >&4; }'
+      + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
+    `d=$(printf '%s\\n' "$codes" | sed -n 's/^dump=//p')`,
+    `g=$(printf '%s\\n' "$codes" | sed -n 's/^gzip=//p')`,
+    '[ "${d:-1}" = 0 ] || exit "${d:-1}"',
+    '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
+  ].join('\n');
+}
+
+/**
+ * RabbitMQ 恢复：把 definitions 灌回节点。
+ *
+ * ## 一个和 SQL 那两条完全不同的语义，必须知道
+ *
+ * `import_definitions` 是**合并**不是**替换**。pg_dump 那份带着 `DROP ... IF EXISTS`，
+ * 灌回去之后库的状态就等于备份那一刻；definitions 不是——它只会把文件里写的东西声明出来，
+ * **备份之后新建的队列、交换机、用户会原样留着**。
+ *
+ * 也就是说这条路能救「配置被删了」，救不了「配置被加错了」。这一点写在这里，
+ * 是因为它没法在代码里修（RabbitMQ 就没给替换语义），只能让用的人知道。
+ *
+ * 其余（先 `gunzip -t` 验完整性、两端退出码经 fd4 回传）与 mysql / postgres 同一套写法。
+ */
+export function buildRabbitmqRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    ...RABBITMQ_PROBE_LINES,
+    `gunzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gunzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    // rabbitmqctl 的 stdout 是噪音，赶到 stderr，别混进退出码通道。
+    `codes=$( { { gunzip -c ${p}; echo "gunzip=$?" >&4; }`
+      + ' | { rabbitmqctl -q import_definitions - --format=json >&2; echo "import=$?" >&4; }; } 4>&1 )',
+    `u=$(printf '%s\\n' "$codes" | sed -n 's/^gunzip=//p')`,
+    `m=$(printf '%s\\n' "$codes" | sed -n 's/^import=//p')`,
+    // 读不到退出码按失败处理——「不确定」不能当成「成功」。
+    '[ "${u:-1}" = 0 ] || exit "${u:-1}"',
+    '[ "${m:-1}" = 0 ] || exit "${m:-1}"',
+    'exit 0',
+  ].join('\n');
+}
+
+/**
+ * 数一数默认 vhost 里有多少个队列。
+ *
+ * 和 mysql / postgres 侧的数表同一个用途：恢复前后各数一次，让「已恢复」这句话
+ * 带着能被核对的数字。
+ *
+ * **只覆盖默认 vhost**，而 definitions 是跨 vhost 的——这个数字是个证人，不是账本。
+ * 跨 vhost 计数要循环 `list_vhosts` 再逐个 `list_queues -p`，在这里换来的精度
+ * 不值它增加的版本兼容面。
+ *
+ * `awk` 兜底而不是 `grep -c .`：一个队列都没有时 grep 退出码是 1，
+ * 会把整条取证判成失败——而「零个队列」是一个完全正常的答案。
+ */
+export function buildRabbitmqQueueCountScript(): string {
+  return [
+    ...RABBITMQ_PROBE_LINES,
+    `rabbitmqctl -q list_queues name 2>/dev/null | awk 'NF{n++}END{print n+0}'`,
+  ].join('\n');
+}
+
+/**
+ * 导出脚本写给 stderr 的作用域说明的机器标记。调用方靠它把这一行认出来。
+ *
+ * 名字里不带类型：postgres（同实例别的库没备）和 rabbitmq（消息不在里面）都在用它，
+ * 后面还会有别的。叫 `POSTGRES_*` 的共享常量迟早被人复制出第二份。
+ */
+export const BACKUP_SCOPE_NOTE_MARKER = 'cds-backup-scope:';
 
 /** 从一段 stderr 里捞出作用域说明（没有就返回 null）。 */
 export function extractBackupScopeNote(stderr: string): string | null {
   const line = String(stderr || '')
     .split('\n')
     .map((l) => l.trim())
-    .find((l) => l.includes(POSTGRES_SCOPE_NOTE_MARKER));
-  return line ? line.slice(line.indexOf(POSTGRES_SCOPE_NOTE_MARKER) + POSTGRES_SCOPE_NOTE_MARKER.length).trim() : null;
+    .find((l) => l.includes(BACKUP_SCOPE_NOTE_MARKER));
+  return line
+    ? line.slice(line.indexOf(BACKUP_SCOPE_NOTE_MARKER) + BACKUP_SCOPE_NOTE_MARKER.length).trim()
+    : null;
 }

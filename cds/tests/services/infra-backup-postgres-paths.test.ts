@@ -12,6 +12,7 @@ import {
   extractBackupScopeNote,
   summarizeBackupRound,
 } from '../../src/services/infra-backup-schedule.js';
+import { scriptedDump } from '../../src/routes/infra-backup.js';
 
 /**
  * postgres 的备份缺口。
@@ -47,8 +48,11 @@ describe('postgres 进入备份判据', () => {
   });
 
   it('下载与恢复都走同一段 pg_dump 脚本，不是 tar /data', () => {
-    expect(SRC).toContain('buildPostgresDumpScript()');
-    expect(SRC).toContain('buildPostgresRestoreScript');
+    // 断在「路由取到的脚本 === 周期备份那一段」这个事实上，而不是断在某个文件里
+    // 还有没有那一行调用——路由改成查表取脚本时，字面量断言会变红而它守的事没变。
+    expect(scriptedDump('postgres')?.dump()).toBe(buildPostgresDumpScript());
+    expect(scriptedDump('postgres')?.restore('/tmp/x.sql.gz'))
+      .toBe(buildPostgresRestoreScript('/tmp/x.sql.gz'));
   });
 });
 

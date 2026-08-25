@@ -27,7 +27,8 @@ import {
 } from './services/platform-daily-health.js';
 import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
 import {
-  backupDirCandidates, buildMysqlDumpScript, buildPostgresDumpScript, extractBackupScopeNote,
+  backupDirCandidates, buildMysqlDumpScript, buildPostgresDumpScript, buildRabbitmqDumpScript,
+  extractBackupScopeNote,
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
@@ -696,6 +697,11 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 脚本与判据在 buildPostgresDumpScript()：容器内认证 + 流式压缩 + 两端退出码，
             // 并把「同实例还有哪些库没被带走」写到 stderr（见下面的 scopeNote）。
             cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildPostgresDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'rabbitmq') {
+            // RabbitMQ 导的是 definitions（拓扑），不是消息——它没有一致性消息快照命令。
+            // 这个取舍不藏着：脚本每轮往 stderr 写一行「当前积压 N 条不在这份备份里」，
+            // 由下面的 scopeNote 接进本轮结论。判据在 buildRabbitmqDumpScript()。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildRabbitmqDumpScript())} > ${shq(out)}`;
           } else if (t.kind === 'redis') {
             // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
             //
