@@ -56,13 +56,18 @@ try {
     log('侧边栏未命中入口，退回直达（记为降级路径）');
     await page.goto(`${BASE}/mds`, { waitUntil: 'domcontentloaded' });
   }
-  await page.waitForTimeout(4000);
+  // 等真正的产物出现再截图，不用固定 sleep——固定 sleep 会拍到 MAP 加载动画，
+  // 那种图按 closed-loop-acceptance 是断头验收，绝不能当通过证据。
+  await page.waitForSelector('text=模型管理已经搬到', { timeout: 30_000 });
+  await page.waitForTimeout(800);
   log('url:', page.url());
 
   // ── 暗色 ──
   await shot(page, '模型管理-墓碑页-暗色');
-  const darkText = await page.evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' '));
-  result.themes.dark = /模型管理已经搬到「模型网关」/.test(darkText);
+  result.themes.first = {
+    theme: await page.evaluate(() => document.documentElement.getAttribute('data-theme')),
+    contentVisible: await page.evaluate(() => /模型管理已经搬到「模型网关」/.test((document.body.innerText || '').replace(/\s+/g, ' '))),
+  };
 
   // 页面上不该再有任何写入口
   const forbidden = ['新建模型池', '添加平台', '添加模型', '管理模型池', '删除平台', '保存', '应用模型池管理', '平台管理', '模型中继'];
@@ -83,16 +88,19 @@ try {
     btn.click();
     return true;
   });
-  await page.waitForTimeout(2500);
+  await page.waitForSelector('text=模型管理已经搬到', { timeout: 30_000 });
+  await page.waitForTimeout(1200);
   if (!toggled) {
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
     await page.waitForTimeout(1200);
   }
   await shot(page, '模型管理-墓碑页-浅色');
-  result.themes.light = await page.evaluate(
-    () => /模型管理已经搬到「模型网关」/.test((document.body.innerText || '').replace(/\s+/g, ' '))
-  );
-  result.themeAttr = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+  result.themes.second = {
+    theme: await page.evaluate(() => document.documentElement.getAttribute('data-theme')),
+    contentVisible: await page.evaluate(() => /模型管理已经搬到「模型网关」/.test((document.body.innerText || '').replace(/\s+/g, ' '))),
+  };
+  result.bothThemesCovered = result.themes.first.theme !== result.themes.second.theme
+    && result.themes.first.contentVisible && result.themes.second.contentVisible;
 
   console.log('\nRESULT', JSON.stringify(result, null, 2));
 } catch (e) {
