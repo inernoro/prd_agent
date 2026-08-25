@@ -293,6 +293,41 @@ describe('平台存储事实：没有 Mongo 就别报', () => {
     expect(platformStoreFacts({ CDS_STORAGE_MODE: 'auto' })).toEqual([]);
   });
 
+  it('json 状态后端 + mongo 鉴权后端：那台 Mongo 照样要报', () => {
+    // 这是**受支持的组合**（index.ts 的 initAuthStore 明写 CDS_AUTH_BACKEND=mongo
+    // 需要 CDS_MONGO_URI，且与 CDS_STORAGE_MODE 无关）。第一版只看存储模式，
+    // 于是一个正在存账号口令的 Mongo 从体检里彻底消失——漏报比误报更糟，
+    // 误报至少还看得见（Codex review P2 第四轮）。
+    const facts = platformStoreFacts({
+      CDS_STORAGE_MODE: 'json',
+      CDS_AUTH_BACKEND: 'mongo',
+      CDS_MONGO_URI: 'mongodb://h:27017/cds_auth_db',
+    });
+    expect(facts).toHaveLength(1);
+    expect(facts[0].label).toBe('CDS 鉴权库');
+    // 端到端：没凭据就得真的变红，不是只出现在数组里。
+    expect(evaluateDailyHealth(input({ platformStores: facts })).severity).toBe('warn');
+  });
+
+  it('两个后端都用 mongo 时报一条，标签说清是谁在用', () => {
+    // 标准安装（exec_cds.sh init）就是这个组合，指的还是同一个 Mongo。
+    const facts = platformStoreFacts({
+      CDS_STORAGE_MODE: 'mongo-split',
+      CDS_AUTH_BACKEND: 'mongo',
+      CDS_MONGO_URI: 'mongodb://cds:pw@h:27017/db',
+    });
+    expect(facts).toHaveLength(1);
+    expect(facts[0].label).toBe('CDS 状态库与鉴权库');
+  });
+
+  it('鉴权后端不是 mongo 就不算——认不出的值在 index.ts 里退回 memory', () => {
+    expect(platformStoreFacts({ CDS_STORAGE_MODE: 'json', CDS_AUTH_BACKEND: 'memory' })).toEqual([]);
+    expect(platformStoreFacts({ CDS_STORAGE_MODE: 'json', CDS_AUTH_BACKEND: 'mongodb' })).toEqual([]);
+    expect(platformStoreFacts({ CDS_STORAGE_MODE: 'json', CDS_AUTH_BACKEND: '' })).toEqual([]);
+    // 大小写与空格不该改变判定。
+    expect(platformStoreFacts({ CDS_STORAGE_MODE: 'json', CDS_AUTH_BACKEND: ' Mongo ' })).toHaveLength(1);
+  });
+
   it('接上体检之后：json 部署不会因为这条变红', () => {
     // 端到端断言，而不是只看数组长度——判据与体检各自漂移的话这条会红。
     const v = evaluateDailyHealth({

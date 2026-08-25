@@ -106,17 +106,30 @@ export function exemptKey(projectId: string | undefined | null, id: string): str
  *
  * 判据与 index.ts 里选存储后端那段同源：显式 `CDS_STORAGE_MODE` 优先，
  * 缺省时看有没有连接串。
+ *
+ * **但状态库不是唯一的用户**：`CDS_AUTH_BACKEND=mongo` 是一条独立开关，它自己就要求
+ * `CDS_MONGO_URI`，而且 `CDS_STORAGE_MODE=json` 与它是**受支持的组合**。第一版只看
+ * 存储模式，于是那种部署里一个正在存账号口令的 Mongo 从体检里彻底消失——比误报更糟，
+ * 误报至少还看得见（Codex review P2 第四轮）。所以两个消费方分开问，任一在用就要报。
  */
 export function platformStoreFacts(env: Record<string, string | undefined>): HealthPlatformStoreFact[] {
   const explicit = String(env.CDS_STORAGE_MODE || '').trim().toLowerCase();
   const uri = String(env.CDS_MONGO_URI || '').trim();
-  const usesMongo = explicit === 'json'
+  const stateUsesMongo = explicit === 'json'
     ? false
     : (explicit === 'mongo' || explicit === 'mongo-split')
       ? true
       : Boolean(uri);
-  if (!usesMongo) return [];
-  return [{ label: 'CDS 状态库', connectionUri: uri || null }];
+  // 鉴权库：显式写了 mongo 才算。缺省是 memory，index.ts 里认不出的值也退回 memory，
+  // 所以这里同样只认这一个字面量——两边不许有第二种口径（形状 3）。
+  const authUsesMongo = String(env.CDS_AUTH_BACKEND || '').trim().toLowerCase() === 'mongo';
+  if (!stateUsesMongo && !authUsesMongo) return [];
+  // 标签说清是谁在用它。两者常常指同一个 Mongo（标准安装就是），
+  // 报一条即可，但话要对得上实际配置，否则排障时会找错地方。
+  const label = stateUsesMongo && authUsesMongo
+    ? 'CDS 状态库与鉴权库'
+    : stateUsesMongo ? 'CDS 状态库' : 'CDS 鉴权库';
+  return [{ label, connectionUri: uri || null }];
 }
 
 /** 备份超过这个时长没跑就算陈旧。周期是 6 小时，给两轮的余量。 */

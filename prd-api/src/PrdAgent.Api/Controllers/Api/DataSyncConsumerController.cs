@@ -495,7 +495,10 @@ public sealed class DataSyncConsumerController : ControllerBase
             SourceOrigin = run.SourceOrigin,
             SourceLabel = run.SourceLabel,
             Groups = new List<string>(run.Groups),
-            // 范围一律照抄，**不重新问源站**：真跑必须跑操作者刚才看过的那一份。
+            // 范围一律照抄，**不重新问源站要清单**：真跑的集合与计划必须是操作者刚才看过的那一份。
+            // 注意这只冻结**范围**，不冻结**数据**——worker 会重新调源站 /export 拉内容，
+            // 游标从头开始。期间源站改了的记录，搬过来的是改之后的值。想真冻结数据得给导出
+            // 加快照或版本边界，见 doc/debt.platform.data-sync.md；界面上已如实说明。
             Collections = new List<string>(run.Collections),
             PlannedCollections = new List<string>(run.PlannedCollections),
             PlannedManifest = new Dictionary<string, DataSyncPlannedCollection>(run.PlannedManifest),
@@ -556,8 +559,13 @@ public sealed class DataSyncConsumerController : ControllerBase
         // **那唯一一次转正机会就此作废**，接口却回过「running」（Codex review P1 第二轮）。
         //
         // 所以失败要补偿回可重试的状态：票还回父记录、清掉父记录的认领、删掉子记录，
-        // 然后如实报错。补偿本身再失败也只能记日志——那时手上没有别的办法，
-        // 但至少日志里留下了「这条 Run 卡在哪一步」，而不是一句假的成功。
+        // 然后如实报错。
+        //
+        // **补偿本身也会失败**，而且最可能就败在同一次数据库抖动上（Codex review P1
+        // 第三轮）。那时候唯一还能做对的事是**别说自己回滚成功了**：原来无论补偿成没成
+        // 都回同一句「已回滚到可重试状态，请再点一次」，用户照着再点一次只会撞回
+        // 「已经转正过」，而父记录还占着认领、票已经在内存里还回去了——比不回滚更难查。
+        // 所以这里把补偿结果记下来，两种情况说两句不同的话。
         try
         {
             await _db.DataSyncRuns.UpdateOneAsync(
@@ -572,6 +580,7 @@ public sealed class DataSyncConsumerController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "[data-sync] Run {RunId} 转正后激活子记录 {ChildId} 失败，回滚到可重试状态", run.Id, child.Id);
+            var rolledBack = false;
             try
             {
                 _vault.PutExportToken(run.Id, token, run.ExportTokenExpiresAt);
@@ -583,16 +592,26 @@ public sealed class DataSyncConsumerController : ControllerBase
                         .Set(x => x.UpdatedAt, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None);
                 await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, CancellationToken.None);
+                rolledBack = true;
             }
             catch (Exception rollbackEx)
             {
-                // 补偿也失败了。这时候唯一还能做对的事就是说实话。
+                // 补偿也失败了。这时候唯一还能做对的事就是说实话——而不是照旧回一句
+                // 「已回滚，请再点一次」，那会把人骗去按一个必然撞回「已经转正过」的按钮。
                 _logger.LogError(rollbackEx,
-                    "[data-sync] Run {RunId} 回滚也失败，这条试跑可能无法再转正，需要人工检查", run.Id);
+                    "[data-sync] Run {RunId} 回滚也失败：父记录可能仍占着认领、子记录 {ChildId} 仍是 pending，需要人工检查",
+                    run.Id, child.Id);
             }
             return StatusCode(StatusCodes.Status500InternalServerError,
-                ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_FAILED",
-                    "转正没能启动，已回滚到可重试状态，请再点一次；若反复失败请检查数据库连接"));
+                rolledBack
+                    ? ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_FAILED",
+                        "转正没能启动，已回滚到可重试状态，请再点一次；若反复失败请检查数据库连接")
+                    // 回滚也没成：不许说「请再点一次」。把要人工看什么说清楚，
+                    // 两个 id 都给出来，否则运维只能对着一句「失败了」翻库。
+                    : ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_STUCK",
+                        $"转正没能启动，回滚也失败了，这条试跑现在卡在中间状态、再点也没用。"
+                        + $"请让人工检查数据库连接，并核对这两条记录：试跑 {run.Id}（PromotedToRunId 可能仍指向下面这条）、"
+                        + $"真跑 {child.Id}（可能仍是 pending）"));
         }
 
         _logger.LogInformation("[data-sync] Run {RunId} 试跑转正为真跑 {ChildId}", run.Id, child.Id);
