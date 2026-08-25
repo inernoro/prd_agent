@@ -167,10 +167,11 @@ const result = await page.evaluate(({ scopeSel, from, to }) => {
     if (pad !== '0px 0px 0px 0px') bump(dims.padding, pad, el);
     if (!NOISE.has(cs.boxShadow)) bump(dims.boxShadow, cs.boxShadow, el);
 
-    if (!el.children.length) {
-      const s = (el.textContent || '').trim();
-      if (s) texts.push(s);
-    }
+    // 取**自有文本节点**，不是「叶子节点的 textContent」：
+    // 「叶子」口径会漏掉所有与 <svg> 图标同级的标签文字（`<span><svg/>HTML</span>` 不是叶子），
+    // 而两边把图标放在不同层级时，同一句文案会被判成一边有一边没有 —— 假缺失，直接污染覆盖率。
+    const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(' ').trim();
+    if (own) texts.push(own);
   }
 
   const dump = (m) => [...m.values()].sort((a, b) => b.count - a.count);

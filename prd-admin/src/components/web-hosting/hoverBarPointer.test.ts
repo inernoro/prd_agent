@@ -39,6 +39,22 @@ describe('卡片 hover 条的指针契约', () => {
     expect(cls).not.toContain('group-focus-within:pointer-events-auto');
   });
 
+  it('hover 条的出现方式与设计稿一致：淡入 + 上移 6px，不是纯淡入', () => {
+    const cls = hoverBarClassName(read('SiteCard.tsx'));
+    // 设计稿：[data-hoverbar]{opacity:0;transform:translateY(6px)} → hover 时 transform:none
+    expect(cls).toContain('translate-y-[6px]');
+    expect(cls).toContain('group-hover:translate-y-0');
+    expect(cls).toContain('group-hover:opacity-100');
+  });
+
+  it('触屏按「有没有 hover 能力」判，不按屏幕宽度判', () => {
+    const cls = hoverBarClassName(read('SiteCard.tsx'));
+    // 设计稿写的是 @media (hover:none){display:none}。用 sm:/md: 这类宽度断点代替，
+    // 会让宽屏触屏设备（横屏平板）显示一条永远唤不出来的条。
+    expect(cls).toContain('[@media(hover:hover)]:flex');
+    expect(cls).not.toMatch(/\b(sm|md|lg|xl):flex\b/);
+  });
+
   it('hover 条里的按钮自己是可点的（否则整条都点不动）', () => {
     const actions = read('SiteCardActions.tsx');
     // CardIconAction 的共用 base 与 CardMoreButton 的触发按钮都要带上

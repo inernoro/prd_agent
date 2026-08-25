@@ -257,7 +257,10 @@ export function SiteCard({
     <div
       data-tour-id="webpages-card"
       data-card
-      className={['group relative w-full cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
+      /* h-full + flex 链：grid item 本来就被拉伸到行高，但内部盒子是内容高，
+         于是同一行的卡片下边缘参差（标题一行/两行、有无标签都会差几十像素）。
+         设计稿的 grid 是默认 stretch，卡片在行内等高——这条链把高度真正传下去。 */
+      className={['group relative flex h-full w-full flex-col cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
       style={{
         borderRadius: 20,
         outline: selected ? '2px solid var(--accent-primary)' : '1px solid transparent',
@@ -282,7 +285,7 @@ export function SiteCard({
       />
 
       <div
-        className="relative overflow-hidden border transition-all duration-300 group-hover:-translate-y-0.5"
+        className="relative flex h-full flex-col overflow-hidden border transition-colors duration-200"
         style={{
           borderRadius: SPEC.radius,
           background: 'var(--bg-site-card)',
@@ -396,7 +399,7 @@ export function SiteCard({
                  曾经写的是 group-hover:pointer-events-auto —— 一旦 hover，这条横条就以整条宽度接管
                  了指针，把它左下角盖住的批量勾选框整个吞掉：勾选框看得见、点不动，
                  而程序化 .click() 又能过，所以单测和源码扫描都发现不了（只有真实指针序列会红）。 */
-              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden items-center gap-[5px] opacity-0 transition-all duration-200 group-hover:opacity-100 group-focus-within:opacity-100 sm:flex"
+              className="pointer-events-none absolute inset-x-0 bottom-0 z-20 hidden translate-y-[6px] items-center gap-[5px] opacity-0 transition-[opacity,transform] duration-[180ms] ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 [@media(hover:hover)]:flex"
               style={{ padding: '7px 7px 7px 33px', background: 'var(--scrim-fade)' }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -419,7 +422,7 @@ export function SiteCard({
         </div>
 
         {/* ── 信息层：只放「它现在怎么样」 ── */}
-        <div className="flex flex-col" style={{ padding: SPEC.pad, gap: SPEC.gap }}>
+        <div className="flex flex-1 flex-col" style={{ padding: SPEC.pad, gap: SPEC.gap }}>
           {!isSmall && (
             <div className="flex min-w-0 items-center gap-1" style={{ height: 20 }}>
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">{statusChips}</div>
@@ -500,9 +503,11 @@ export function SiteCard({
             )}
           </div>
 
-          {/* 标签行：中卡以上都有，最多 3 个 + 折叠计数，右端是更新时间（设计稿把时间放这一行） */}
+          {/* 标签行：中卡以上都有，最多 3 个 + 折叠计数，右端是更新时间（设计稿把时间放这一行）。
+              mt-auto：等高之后多出来的空间沉到这一行**之上**，末行始终贴着卡片底边，
+              否则短卡片会在中间空出一块，看着像没加载完。 */}
           {!isSmall && site.tags.length > 0 && (
-            <div className="flex min-w-0 items-center gap-1">
+            <div className="mt-auto flex min-w-0 items-center gap-1">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
                 {site.tags.slice(0, 3).map((tag) => (
                   <span

@@ -139,15 +139,15 @@ for (const b of boards) {
     files.push(file);
   }
 
-  // 逐字文案：只取叶子节点，避免父节点把整屏文本重复拼一遍
+  // 逐字文案：取每个元素的**自有文本节点**（不是叶子节点的 textContent）。
+  // 父节点不会把整屏文本重复拼一遍，而与图标同级的标签文字（`<span><svg/>HTML</span>`）也不会漏。
   const texts = await page.evaluate(({ from, to }) => {
     const items = [];
     document.querySelectorAll('*').forEach((el) => {
-      if (el.children.length) return;
-      const s = (el.textContent || '').trim();
-      if (!s) return;
+      const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join(' ').trim();
+      if (!own) return;
       const y = el.getBoundingClientRect().top + window.scrollY;
-      if (y >= from && y < to) items.push(s);
+      if (y >= from && y < to) items.push(own);
     });
     return items;
   }, { from: b.top, to: b.top + b.height });

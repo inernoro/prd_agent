@@ -1,4 +1,4 @@
-import { Eye, Link2, Share2, Trash2 } from 'lucide-react';
+import { Eye, Link2, Plus, Share2, Trash2 } from 'lucide-react';
 import type { HostedSite, ShareLinkItem } from '@/services/real/webPages';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
@@ -98,6 +98,7 @@ export function SiteSelectionPanel({
   visitorCount,
   onGuestPreview,
   onManageShares,
+  onCreateShare,
   onClearSelection,
 }: {
   site: HostedSite;
@@ -105,11 +106,15 @@ export function SiteSelectionPanel({
   visitorCount?: number;
   onGuestPreview: (site: HostedSite) => void;
   onManageShares: (site: HostedSite) => void;
+  onCreateShare: (site: HostedSite) => void;
   onClearSelection: () => void;
 }) {
   const siteLinks = linksOfSite(links, site.id);
   const active = siteLinks.filter((l) => !l.isRevoked && !l.isExpired);
   const views = active.reduce((sum, l) => sum + (l.viewCount ?? 0), 0);
+  // 没有任何有效链接时，「以访客身份预览这条链接」指着一条不存在的链接，
+  // 「管理分享」也没东西可管 —— 这一屏对用户就是空转。这种时候该做的事只有一件：先建一条。
+  const hasLink = active.length > 0;
 
   return (
     <RailShell gap={11}>
@@ -123,57 +128,113 @@ export function SiteSelectionPanel({
       </div>
       <div style={{ fontSize: 13.5, fontWeight: 600, lineHeight: 1.45, color: 'var(--text-primary)' }}>{site.title}</div>
 
-      <button
-        type="button"
-        onClick={() => onGuestPreview(site)}
-        className="inline-flex items-center justify-center gap-2"
-        style={{
-          height: 38,
-          fontSize: 13,
-          fontWeight: 600,
-          borderRadius: 'var(--radius-field)',
-          border: '1px solid var(--info-action-border)',
-          background: 'var(--info-action-bg)',
-          color: 'var(--accent-fg-blue)',
-        }}
-      >
-        <Eye size={14} /> 以访客身份预览这条链接
-      </button>
-      {/* 设计稿这句写的是「可切换未登录 / 已登录 / 密码未输入三种身份」——身份切换器还没做，
-          照抄会承诺一个点不出来的能力，所以先写它真正做的事（no-rootless-tree）。 */}
-      <div style={{ fontSize: 11.5, lineHeight: 1.6, color: 'var(--text-muted)' }}>
-        用真实访客链接打开，看到的和访客一样：没有链接就先建一条。
-      </div>
+      {hasLink ? (
+        <>
+          <button
+            type="button"
+            onClick={() => onGuestPreview(site)}
+            className="inline-flex items-center justify-center gap-2"
+            style={{
+              height: 38,
+              fontSize: 13,
+              fontWeight: 600,
+              borderRadius: 'var(--radius-field)',
+              border: '1px solid var(--info-action-border)',
+              background: 'var(--info-action-bg)',
+              color: 'var(--accent-fg-blue)',
+            }}
+          >
+            <Eye size={14} /> 以访客身份预览这条链接
+          </button>
+          {/* 设计稿这句写的是「可切换未登录 / 已登录 / 密码未输入三种身份」——身份切换器还没做，
+              照抄会承诺一个点不出来的能力，所以先写它真正做的事（no-rootless-tree）。 */}
+          <div style={{ fontSize: 11.5, lineHeight: 1.6, color: 'var(--text-muted)' }}>
+            用它真实的访客链接打开，看到的和访客一样。
+          </div>
 
-      <div style={{ height: 1, background: 'var(--border-subtle)' }} />
+          <div style={{ height: 1, background: 'var(--border-subtle)' }} />
 
-      <button
-        type="button"
-        onClick={() => onManageShares(site)}
-        className="inline-flex items-center justify-center"
-        style={{
-          height: 34,
-          fontSize: 12.5,
-          borderRadius: 'var(--radius-control)',
-          border: '1px solid var(--border-subtle)',
-          background: 'var(--bg-card)',
-          color: 'var(--text-primary)',
-        }}
-      >
-        管理分享
-      </button>
+          <button
+            type="button"
+            onClick={() => onManageShares(site)}
+            className="inline-flex items-center justify-center"
+            style={{
+              height: 34,
+              fontSize: 12.5,
+              borderRadius: 'var(--radius-control)',
+              border: '1px solid var(--border-subtle)',
+              background: 'var(--bg-card)',
+              color: 'var(--text-primary)',
+            }}
+          >
+            管理分享
+          </button>
 
-      <div style={{
-        fontFamily: 'var(--font-code)',
-        fontSize: 10.5,
-        lineHeight: 1.7,
-        letterSpacing: 'var(--tracking-meta)',
-        color: 'var(--text-tertiary)',
-      }}>
-        这条站点的链接：{active.length} 条有效
-        <br />
-        累计 {views} 次访问{typeof visitorCount === 'number' ? ` · ${visitorCount} 位访客` : ''}
-      </div>
+          <div style={{
+            fontFamily: 'var(--font-code)',
+            fontSize: 10.5,
+            lineHeight: 1.7,
+            letterSpacing: 'var(--tracking-meta)',
+            color: 'var(--text-tertiary)',
+          }}>
+            这条站点的链接：{active.length} 条有效
+            <br />
+            累计 {views} 次访问{typeof visitorCount === 'number' ? ` · ${visitorCount} 位访客` : ''}
+          </div>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => onCreateShare(site)}
+            className="inline-flex items-center justify-center gap-2"
+            style={{
+              height: 38,
+              fontSize: 13,
+              fontWeight: 600,
+              borderRadius: 'var(--radius-field)',
+              border: '1px solid var(--accent-primary-edge)',
+              background: 'var(--accent-primary)',
+              color: 'var(--accent-on-primary)',
+            }}
+          >
+            <Plus size={14} /> 创建分享链接
+          </button>
+          <div style={{ fontSize: 11.5, lineHeight: 1.6, color: 'var(--text-muted)' }}>
+            它现在只有你自己能打开。建一条链接，才能把它发给别人，也才会开始有访问数据。
+          </div>
+
+          <div style={{ height: 1, background: 'var(--border-subtle)' }} />
+
+          <button
+            type="button"
+            onClick={() => onGuestPreview(site)}
+            className="inline-flex items-center justify-center gap-2"
+            style={{
+              height: 34,
+              fontSize: 12.5,
+              borderRadius: 'var(--radius-control)',
+              border: '1px solid var(--border-subtle)',
+              background: 'var(--bg-card)',
+              color: 'var(--text-primary)',
+            }}
+          >
+            <Eye size={13} /> 先自己看一眼
+          </button>
+
+          <div style={{
+            fontFamily: 'var(--font-code)',
+            fontSize: 10.5,
+            lineHeight: 1.7,
+            letterSpacing: 'var(--tracking-meta)',
+            color: 'var(--text-tertiary)',
+          }}>
+            这条站点的链接：还没有
+            <br />
+            建一条之后，这里会显示访问次数与访客数
+          </div>
+        </>
+      )}
 
       <div className="flex-1" />
       <ClearSelectionButton onClick={onClearSelection} />

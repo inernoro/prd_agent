@@ -1681,6 +1681,7 @@ export default function WebPagesPage() {
               visitorCount={siteVisitors[selectedSite.id]}
               onGuestPreview={(site) => handleVisitSite(site)}
               onManageShares={(site) => { setShareTargetId(site.id); setShowSharesPanel(true); }}
+              onCreateShare={(site) => handleShare(site.id)}
               onClearSelection={() => setSelectedIds(new Set())}
             />
           ) : selectedIds.size > 1 ? (
