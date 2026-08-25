@@ -94,7 +94,7 @@ export function LibraryRail({
 
       <div className="space-y-1">
         <div className="flex h-6 items-center justify-between px-1">
-          <span style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>分组</span>
+          <span style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: 'var(--tracking-eyebrow)', color: 'var(--text-tertiary)' }}>分组</span>
           {filterCount > 0 && (
             <button
               type="button"
@@ -148,7 +148,7 @@ export function LibraryRail({
 
       {tags.length > 0 && (
         <div className="space-y-1.5">
-          <div className="px-2" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>标签</div>
+          <div className="px-2" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: 'var(--tracking-eyebrow)', color: 'var(--text-tertiary)' }}>标签</div>
           <div className="flex flex-wrap gap-1.5">
             {shownTags.map((t) => chip(t.tag, t.count, activeTag === t.tag, () => onTag(activeTag === t.tag ? null : t.tag), t.tag))}
             {restTags > 0 && (

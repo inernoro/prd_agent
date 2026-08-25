@@ -55,6 +55,7 @@ import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { buildShareLedger } from '@/components/web-hosting/shareLedger';
+import { buildWeeklyPulse } from '@/components/web-hosting/weeklyPulse';
 import { SITE_SOURCE_LABELS } from '@/components/web-hosting/siteFormRegistry';
 import {
   buildSiteGroups,
@@ -705,6 +706,9 @@ export default function WebPagesPage() {
     return displaySites[0] ?? null;
   }, [selectedIds, displaySites]);
 
+  /** 右栏底部的「本周分享动态」：只由当前列表数据算得出来的三件事组成，口径见 weeklyPulse.ts */
+  const weeklyPulse = useMemo(() => buildWeeklyPulse(sites, shareLinks), [sites, shareLinks]);
+
   /**
    * 打开站点本体。与卡片/列表两个视图共用同一条路径：先记一次访客痕迹，
    * 再用 /s/wp/{token} 访问链打开（同步开窗规避弹窗拦截，地址异步解析后填入）。
@@ -887,7 +891,7 @@ export default function WebPagesPage() {
     >
       <div className="flex items-center gap-2">
         <Globe size={15} style={{ color: 'var(--accent-primary)' }} />
-        <span style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text-primary)' }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, letterSpacing: 'var(--tracking-display)', color: 'var(--text-primary)' }}>
           网页托管
         </span>
       </div>
@@ -1653,10 +1657,11 @@ export default function WebPagesPage() {
           <SiteContextPanel
             site={contextSite}
             links={shareLinks}
+            visitorCount={contextSite ? siteVisitors[contextSite.id] : undefined}
+            pulse={weeklyPulse}
             onCreateShare={(site) => handleShare(site.id)}
             onManageShares={(site) => { setShareTargetId(site.id); setShowSharesPanel(true); }}
             onAnalytics={() => setShowAnalytics(true)}
-            onGuestPreview={(site) => handleVisitSite(site)}
             onRenew={(link) => { setShareTargetId(link.siteId ?? null); setShowSharesPanel(true); }}
           />
         )}

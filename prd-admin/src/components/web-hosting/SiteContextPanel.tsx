@@ -1,8 +1,10 @@
-import { BarChart3, Eye, Link2, Lock, Plus, RefreshCw } from 'lucide-react';
+import { Link2 } from 'lucide-react';
 import type { HostedSite, ShareLinkItem } from '@/services/real/webPages';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { buildSiteConclusion, daysUntil, linksOfSite } from './siteConclusion';
+import { fmtSize, relativeTime } from './siteFormat';
+import type { PulseItem } from './weeklyPulse';
 
 const VISIBILITY_LABELS: Record<string, string> = {
   'owner-only': '仅我可见',
@@ -10,159 +12,219 @@ const VISIBILITY_LABELS: Record<string, string> = {
   public: '公开',
 };
 
-function fmtSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+const PULSE_DOT: Record<PulseItem['tone'], string> = {
+  success: 'var(--accent-fg-success)',
+  violet: 'var(--accent-fg-violet)',
+  warn: 'var(--accent-fg-warning)',
+};
+
+/** 分节眉标：mono 10px + 0.12em 字距，设计稿全篇同一档 */
+function Eyebrow({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      fontFamily: 'var(--font-code)',
+      fontSize: 10,
+      letterSpacing: 'var(--tracking-eyebrow)',
+      color: 'var(--text-tertiary)',
+    }}>
+      {children}
+    </div>
+  );
 }
 
+function PulseList({ items }: { items: PulseItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col" style={{ gap: 6 }}>
+      <Eyebrow>本周分享动态</Eyebrow>
+      <div>
+        {items.map((p) => (
+          <div key={p.key} className="flex items-baseline" style={{ gap: 7, fontSize: 12, lineHeight: '20px', color: 'var(--text-secondary)' }}>
+            <span aria-hidden style={{ color: PULSE_DOT[p.tone] }}>·</span>
+            <span>{p.text}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const RAIL_STYLE: React.CSSProperties = {
+  width: 300,
+  padding: 14,
+  background: 'var(--bg-rail)',
+  borderLeft: '1px solid var(--border-subtle)',
+  overscrollBehavior: 'contain',
+};
+
 /**
- * 右栏「站点上下文」—— 主控台里回答「这个站点现在对外是什么样」的那一块。
+ * 右栏「站点上下文」—— 主控台里回答「这个站点现在对外是什么样」的那一块（设计稿屏 1·右栏）。
+ *
+ * 自上而下：眉标 → 站点卡（缩略图 + 标题 + 大小/更新时间）→ 结论块 → 链接清单 →
+ * 再建一条 → 本周分享动态。
  *
  * 第一行永远是一句挂着可点数字的判断，不是一排让人自己算的指标（conclusion-before-numbers）。
- * 下面才是这个站点名下的链接清单与「再建一条」。
+ * 「访客视角」不在这一栏 —— 顶栏的「以访客身份预览」作用于同一个 contextSite，
+ * 摆两个入口只是重复（设计稿此处也没有）。
  */
 export function SiteContextPanel({
   site,
   links,
+  visitorCount,
+  pulse,
   onCreateShare,
   onManageShares,
   onAnalytics,
-  onGuestPreview,
   onRenew,
 }: {
   site: HostedSite | null;
   /** 当前用户的全部分享链接；面板内部按站点筛 */
   links: ShareLinkItem[];
+  /** 该站点的去重访客数（列表接口的 visitors 映射）；拿不到就不写「N 位访客」那半句 */
+  visitorCount?: number;
+  /** 本周分享动态（页面按真实数据算好传进来） */
+  pulse: PulseItem[];
   onCreateShare: (site: HostedSite) => void;
   onManageShares: (site: HostedSite) => void;
   onAnalytics: () => void;
-  onGuestPreview: (site: HostedSite) => void;
   onRenew: (link: ShareLinkItem) => void;
 }) {
   if (!site) {
     return (
-      <aside
-        className="hidden shrink-0 flex-col gap-3 xl:flex"
-        style={{ width: 300, padding: 14, background: 'var(--bg-rail)', borderLeft: '1px solid var(--border-subtle)' }}
-      >
-        <div className="text-[11px] font-semibold text-token-muted">站点上下文</div>
-        <p className="text-[12px] leading-relaxed text-token-secondary">
+      <aside className="hidden shrink-0 flex-col gap-3 overflow-y-auto xl:flex" style={RAIL_STYLE}>
+        <Eyebrow>站点上下文</Eyebrow>
+        <p style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
           选中一张卡片，这里会告诉你它对外是什么样：还有几条链接活着、快过期了没、有没有人在看。
         </p>
+        <PulseList items={pulse} />
       </aside>
     );
   }
 
   const siteLinks = linksOfSite(links, site.id);
-  const conclusion = buildSiteConclusion(siteLinks);
-  const activeLinks = siteLinks.filter((l) => !l.isRevoked && !l.isExpired);
   const now = Date.now();
+  const conclusion = buildSiteConclusion(siteLinks, now, visitorCount);
+  const activeLinks = siteLinks.filter((l) => !l.isRevoked && !l.isExpired);
 
   return (
-    <aside
-      className="hidden shrink-0 flex-col gap-3 overflow-y-auto xl:flex"
-      style={{ width: 300, padding: 14, background: 'var(--bg-rail)', borderLeft: '1px solid var(--border-subtle)', overscrollBehavior: 'contain' }}
-    >
-      <div className="flex items-center justify-between">
-        <div className="text-[11px] font-semibold text-token-muted">站点上下文</div>
-        <button
-          type="button"
-          onClick={() => onGuestPreview(site)}
-          className="inline-flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium"
-          style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-          title="以访客身份打开这个站点，看到的和真实访客一样"
-        >
-          <Eye size={11} /> 访客视角
-        </button>
-      </div>
+    <aside className="hidden shrink-0 flex-col overflow-y-auto xl:flex" style={{ ...RAIL_STYLE, gap: 12 }}>
+      <Eyebrow>站点上下文 · 最近动过</Eyebrow>
 
-      <div className="overflow-hidden rounded-lg" style={{ aspectRatio: '16 / 10', background: 'var(--bg-tertiary)' }}>
-        {isPdfSite(site) ? (
-          <PdfThumbnail
-            sizeBytes={site.files.find((f) => f.path?.toLowerCase().endsWith('.pdf'))?.size ?? site.totalSize}
-            className="h-full w-full"
-          />
-        ) : (
-          <SitePreview site={site} url={site.siteUrl} className="h-full w-full" />
-        )}
-      </div>
-
-      <div>
-        <div className="line-clamp-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{site.title}</div>
-        <div className="mt-0.5 font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-          {fmtSize(site.totalSize)} · {site.viewCount} 浏览
+      {/* 站点卡：缩略图与标题在同一张卡里，不是一张裸图加两行字 */}
+      <div style={{
+        background: 'var(--bg-site-card)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-card)',
+        overflow: 'hidden',
+      }}>
+        <div style={{ aspectRatio: '16 / 10', background: 'var(--bg-tertiary)' }}>
+          {isPdfSite(site) ? (
+            <PdfThumbnail
+              sizeBytes={site.files.find((f) => f.path?.toLowerCase().endsWith('.pdf'))?.size ?? site.totalSize}
+              className="h-full w-full"
+            />
+          ) : (
+            <SitePreview site={site} url={site.siteUrl} className="h-full w-full" />
+          )}
+        </div>
+        <div style={{ padding: 10 }}>
+          <div
+            className="line-clamp-2"
+            style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: 'var(--tracking-title)', color: 'var(--text-primary)' }}
+          >
+            {site.title}
+          </div>
+          <div style={{
+            marginTop: 3,
+            fontFamily: 'var(--font-code)',
+            fontSize: 10,
+            letterSpacing: 'var(--tracking-meta)',
+            color: 'var(--text-tertiary)',
+          }}>
+            {fmtSize(site.totalSize)} · 更新于 {relativeTime(site.updatedAt, now)}
+          </div>
         </div>
       </div>
 
-      {/* 结论先行：一句挂着可点数字的判断 */}
-      <div
-        className="rounded-lg p-2.5 text-[12px] leading-relaxed"
-        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-      >
-        {conclusion.segments.map((seg, i) =>
-          seg.drillTo ? (
+      {/* 结论先行：一句挂着可点数字的判断。数字放大一档走 display 字族，
+          「快过期」用警告色行内强调 —— 两者是不同的语义层，不能都做成加粗。 */}
+      <div style={{
+        background: 'var(--info-callout-bg)',
+        border: '1px solid var(--info-callout-border)',
+        borderRadius: 'var(--radius-field)',
+        padding: 10,
+        fontSize: 12.5,
+        lineHeight: 1.75,
+        color: 'var(--text-secondary)',
+      }}>
+        {conclusion.segments.map((seg, i) => {
+          if (!seg.drillTo) return <span key={i}>{seg.text}</span>;
+          const numeric = seg.numeric === true;
+          return (
             <button
               key={i}
               type="button"
               onClick={() => (seg.drillTo === 'analytics' ? onAnalytics() : onManageShares(site))}
               className="underline decoration-dotted underline-offset-2"
-              style={{
-                color: seg.tone === 'warn' ? 'var(--semantic-warning-text)' : 'var(--text-primary)',
-                fontWeight: 600,
-              }}
+              style={numeric
+                ? {
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 16,
+                    letterSpacing: 'var(--tracking-number)',
+                    // 链接条数那一档跟 callout 同族的蓝（两个主题分别是 #93c5fd / #1d4ed8），
+                    // 访问与访客数走正文主色 —— 量自设计稿深浅两块画板，不是随手挑的强调色
+                    color: seg.tone === 'info' ? 'var(--accent-fg-blue)' : 'var(--text-primary)',
+                  }
+                : { color: 'var(--accent-fg-warning)' }}
             >
               {seg.text}
             </button>
-          ) : (
-            <span key={i}>{seg.text}</span>
-          ),
-        )}
+          );
+        })}
       </div>
 
       {activeLinks.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <div className="text-[11px] font-semibold text-token-muted">这个站点的链接</div>
+        <div className="flex flex-col" style={{ gap: 6 }}>
+          <Eyebrow>这条站点的链接</Eyebrow>
           {activeLinks.map((l) => {
             const days = daysUntil(l.expiresAt, now);
+            const hasPassword = l.accessLevel === 'password' || Boolean(l.password);
+            const expiringSoon = days !== null && days <= 3;
             return (
               <div
                 key={l.id}
-                className="rounded-lg p-2"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+                className="flex items-center"
+                style={{
+                  gap: 8,
+                  padding: '8px 9px',
+                  background: 'var(--bg-site-card)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-control)',
+                }}
               >
-                <div className="flex items-center gap-1.5">
-                  <Link2 size={11} style={{ color: 'var(--text-muted)' }} />
-                  <span className="truncate text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {l.title || '未命名链接'}
-                  </span>
-                  <span className="ml-auto shrink-0 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    {VISIBILITY_LABELS[l.visibility ?? 'owner-only'] ?? l.visibility}
-                  </span>
+                <Link2 size={13} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate" style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+                    {(l.title || '未命名链接')} · {VISIBILITY_LABELS[l.visibility ?? 'owner-only'] ?? l.visibility}
+                  </div>
+                  <div style={{
+                    fontFamily: 'var(--font-code)',
+                    fontSize: 9.5,
+                    color: 'var(--text-tertiary)',
+                  }}>
+                    {l.viewCount} 次 · {days === null ? '永久' : `剩 ${days} 天`} · {hasPassword ? '有密码' : '无密码'}
+                  </div>
                 </div>
-                <div className="mt-1 flex items-center gap-1.5 font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                  <span>{l.viewCount} 次</span>
-                  <span aria-hidden>·</span>
-                  <span style={days !== null && days <= 3 ? { color: 'var(--semantic-warning-text)' } : undefined}>
-                    {days === null ? '永久' : `剩 ${days} 天`}
-                  </span>
-                  {(l.accessLevel === 'password' || l.password) && (
-                    <>
-                      <span aria-hidden>·</span>
-                      <Lock size={9} />
-                      <span>有密码</span>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onRenew(l)}
-                    className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-0.5"
-                    style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}
-                  >
-                    <RefreshCw size={9} /> 续期
-                  </button>
-                </div>
+                {/* 快过期的那条给「续期」，其余给「数据」——同一个位置按当下最该做的事换动作 */}
+                <button
+                  type="button"
+                  onClick={() => (expiringSoon ? onRenew(l) : onAnalytics())}
+                  className="shrink-0"
+                  style={{ fontSize: 11, color: expiringSoon ? 'var(--accent-fg-warning)' : 'var(--text-muted)' }}
+                  title={expiringSoon ? `「${l.title || '未命名链接'}」${days} 天后过期，点这里续期` : '看这条链接的访问数据'}
+                >
+                  {expiringSoon ? '续期' : '数据'}
+                </button>
               </div>
             );
           })}
@@ -172,20 +234,20 @@ export function SiteContextPanel({
       <button
         type="button"
         onClick={() => onCreateShare(site)}
-        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg text-[12px] font-semibold"
-        style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }}
+        className="inline-flex items-center justify-center transition-colors"
+        style={{
+          height: 32,
+          fontSize: 12,
+          borderRadius: 'var(--radius-control)',
+          border: '1px solid var(--border-strong)',
+          color: 'var(--text-secondary)',
+          background: 'transparent',
+        }}
       >
-        <Plus size={13} /> {conclusion.empty ? '创建分享链接' : '再建一条链接'}
+        {conclusion.empty ? '创建分享链接' : '再建一条链接'}
       </button>
 
-      <button
-        type="button"
-        onClick={onAnalytics}
-        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg text-[12px]"
-        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-      >
-        <BarChart3 size={13} /> 看访问数据
-      </button>
+      <PulseList items={pulse} />
     </aside>
   );
 }

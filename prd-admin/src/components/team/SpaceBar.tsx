@@ -422,7 +422,7 @@ export function SpaceRailSection({
 
   return (
     <div data-tour-id="webpages-space-bar" className="space-y-0.5">
-      <div className="px-2 pb-1.5" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>空间</div>
+      <div className="px-2 pb-1.5" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: 'var(--tracking-eyebrow)', color: 'var(--text-tertiary)' }}>空间</div>
       {row({
         key: 'team',
         on: current.kind === 'team',

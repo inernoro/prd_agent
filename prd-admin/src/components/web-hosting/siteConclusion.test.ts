@@ -20,8 +20,8 @@ function link(over: Partial<ShareLinkItem> = {}): ShareLinkItem {
   };
 }
 
-function text(links: ShareLinkItem[]): string {
-  return buildSiteConclusion(links, NOW).segments.map((s) => s.text).join('');
+function text(links: ShareLinkItem[], visitors?: number): string {
+  return buildSiteConclusion(links, NOW, visitors).segments.map((s) => s.text).join('');
 }
 
 describe('站点结论句', () => {
@@ -42,18 +42,30 @@ describe('站点结论句', () => {
   it('把条数与累计访问合成一句判断，数字可点进明细', () => {
     const links = [link({ viewCount: 98 }), link({ id: 'l2', viewCount: 34 })];
     expect(text(links)).toContain('有 2 条有效链接');
-    expect(text(links)).toContain('累计带来 132 次访问');
+    expect(text(links)).toContain('累计 132 次访问');
 
     const drills = buildSiteConclusion(links, NOW).segments.filter((s) => s.drillTo);
     expect(drills.map((s) => s.drillTo)).toEqual(['shares', 'analytics']);
   });
 
-  it('七天内到期的链接必须出现在结论里并标成警告色', () => {
+  // 设计稿屏 1 的结论块里，条数与访问/访客是放大一档的 Space Grotesk 数字，
+  // 「3 天后过期」则是行内正文色块 —— 这个区分靠 numeric 标记传给渲染层。
+  it('访客数拿得到就并进同一句，拿不到只说访问次数（不编一个访客数）', () => {
+    const links = [link({ viewCount: 98 }), link({ id: 'l2', viewCount: 34 })];
+    expect(text(links, 3)).toContain('累计 132 次访问 来自 3 位访客');
+    expect(text(links)).not.toContain('位访客');
+
+    const nums = buildSiteConclusion(links, NOW, 3).segments.filter((s) => s.numeric);
+    expect(nums.map((s) => s.text)).toEqual(['2', '132', '3']);
+    expect(nums[0].tone).toBe('info');
+  });
+
+  it('七天内到期的链接必须出现在结论里并标成警告色，且说清有几条', () => {
     const links = [
       link({ viewCount: 10, expiresAt: '2026-09-30T00:00:00.000Z' }),
       link({ id: 'l2', viewCount: 1, expiresAt: '2026-08-24T00:00:00.000Z' }),
     ];
-    expect(text(links)).toContain('其中最早的 3 天后过期');
+    expect(text(links)).toContain('其中 1 条 3 天后过期');
     const warn = buildSiteConclusion(links, NOW).segments.find((s) => s.tone === 'warn');
     expect(warn?.text).toBe('3 天后过期');
   });

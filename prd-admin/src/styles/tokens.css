@@ -474,6 +474,25 @@
      不能叫 --font-mono（会被 Tailwind v4 的 font-mono 工具类劫持，见上文 --font-terminal 的注释）。 */
   --font-code: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 
+  /* 字距阶梯（量自设计稿：mono 一律正字距、Inter/Space Grotesk 一律负字距）。
+     写成 em 而不是 px：同一档在不同字号上等比缩放，px 值会在 9.5px 与 13px 上表现成两档。
+       眉标 mono 10px = 0.12em · 徽标 mono 9~9.5px = 0.04em · meta mono 10px = 0.02em
+       卡片标题 Inter 13px = -0.005em · 分组标题 Space Grotesk 15px = -0.01em
+       结论数字 Space Grotesk 16px = -0.02em
+     两个主题同值——字距是排印规格，不随明暗变。 */
+  --tracking-eyebrow: 0.12em;
+  --tracking-badge: 0.04em;
+  --tracking-meta: 0.02em;
+  --tracking-title: -0.005em;
+  --tracking-display: -0.01em;
+  --tracking-number: -0.02em;
+
+  /* 结论块（站点上下文里那条蓝色 callout）。与 --semantic-info-soft/-border 不是同一档：
+     设计稿用的是更亮一档的 info 蓝（#60a5fa = --accent-fg-info）且透明度更低，
+     直接套 semantic-info 会比稿子重一档。 */
+  --info-callout-bg: rgba(96, 165, 250, 0.08);
+  --info-callout-border: rgba(96, 165, 250, 0.22);
+
   /* 这几个原来只在 [data-material="solid"] 与浅色档定义，默认「暗色 + 玻璃」下解析为无效值。
      补进基线，避免又一次「消费方拿到 transparent」的事故（同 --nested-block-bg 那次）。 */
   --nested-block-border: rgba(255, 255, 255, 0.09);
@@ -614,6 +633,10 @@
   --shadow-input-inset: inset 0 1px 2px rgba(26, 26, 31, 0.05);
   /* 浅色档改用纸面阴影替代描边（设计稿 1·B 的原话） */
   --shadow-site-card: 0 2px 6px rgba(26, 26, 31, 0.07);
+  /* 结论块在浅色档换成同族的深蓝（浅色的品牌交互是暖赤陶，蓝只留给 semantic-info）；
+     字距不在这里重定义——它是排印规格，两个主题同值。 */
+  --info-callout-bg: rgba(29, 78, 216, 0.06);
+  --info-callout-border: rgba(29, 78, 216, 0.22);
   color-scheme: light;
 
   --bg-base: #EEEAE3;

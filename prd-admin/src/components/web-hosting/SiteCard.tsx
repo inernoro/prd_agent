@@ -23,6 +23,7 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { useDockDrag } from '@/components/share-dock';
 import { CardIconAction, CardMoreButton, type CardMoreAction } from './SiteCardActions';
 import { resolveSiteForm, siteFormBadge, siteSourceLabel, SITE_FORM_REGISTRY } from './siteFormRegistry';
+import { fmtSize, relativeTime } from './siteFormat';
 
 /** 网页托管卡片拖进 ShareDock 投放槽时用的 MIME（页面与卡片共用同一个常量，不各写一份）。 */
 export const WEB_PAGE_MIME = 'application/x-map-site-id';
@@ -75,27 +76,6 @@ export interface SiteCardProps {
   onMove?: () => void;
   onComments?: () => void;
   onAskConfig?: () => void;
-}
-
-function fmtSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-function relativeTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const diff = Date.now() - new Date(iso).getTime();
-  if (Number.isNaN(diff)) return '—';
-  const min = Math.floor(diff / 60000);
-  if (min < 1) return '刚刚';
-  if (min < 60) return `${min} 分钟前`;
-  const hour = Math.floor(min / 60);
-  if (hour < 24) return `${hour} 小时前`;
-  const day = Math.floor(hour / 24);
-  if (day < 30) return `${day} 天前`;
-  return new Date(iso).toLocaleDateString('zh-CN');
 }
 
 /**
@@ -347,7 +327,7 @@ export function SiteCard({
             className="absolute left-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md"
             style={{
               height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
-              fontFamily: 'var(--font-code)', fontSize: 9.5,
+              fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)',
               background: 'var(--scrim-badge-bg)', color: 'var(--text-secondary)',
               border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
             }}
@@ -363,7 +343,7 @@ export function SiteCard({
               className="absolute right-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md"
               style={{
                 height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
-                fontFamily: 'var(--font-code)', fontSize: 9,
+                fontFamily: 'var(--font-code)', fontSize: 9, letterSpacing: 'var(--tracking-badge)',
                 background: 'var(--scrim-badge-bg)', color: 'var(--text-tertiary)',
                 border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
               }}
@@ -378,7 +358,7 @@ export function SiteCard({
               className="absolute bottom-2 right-2 z-20 inline-flex items-center backdrop-blur-md"
               style={{
                 height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
-                fontFamily: 'var(--font-code)', fontSize: 9.5,
+                fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)',
                 background: 'var(--scrim-badge-bg)', color: 'var(--text-tertiary)',
                 border: '1px solid var(--scrim-badge-border)', boxShadow: 'var(--scrim-badge-shadow)',
               }}
@@ -469,7 +449,7 @@ export function SiteCard({
                 className="h-1.5 w-1.5 shrink-0 rounded-full"
                 style={{ background: shared ? 'var(--semantic-success-text)' : 'var(--text-disabled)' }}
               />
-              <span style={{ fontFamily: 'var(--font-code)', fontSize: 9.5, color: shared ? 'var(--semantic-success-text)' : 'var(--text-tertiary)' }}>
+              <span style={{ fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)', color: shared ? 'var(--semantic-success-text)' : 'var(--text-tertiary)' }}>
                 {shared ? '已分享' : '未分享'}
               </span>
             </div>
@@ -477,7 +457,7 @@ export function SiteCard({
 
           <h3
             className="line-clamp-2 cursor-pointer hover:underline"
-            style={{ fontSize: SPEC.title, fontWeight: 600, lineHeight: 1.35, letterSpacing: '-0.005em', color: 'var(--text-primary)' }}
+            style={{ fontSize: SPEC.title, fontWeight: 600, lineHeight: 1.35, letterSpacing: 'var(--tracking-title)', color: 'var(--text-primary)' }}
             onClick={onVisit}
             title={site.title}
           >
@@ -493,7 +473,7 @@ export function SiteCard({
           {/* 元信息：中卡是「体积 · N 浏览 · N 访客」，大卡是「体积 · 形态量 · 更新于 X」 */}
           <div
             className="flex flex-wrap items-center gap-x-1.5"
-            style={{ fontFamily: 'var(--font-code)', fontSize: 10, color: 'var(--text-tertiary)' }}
+            style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: 'var(--tracking-meta)', color: 'var(--text-tertiary)' }}
           >
             <span>{fmtSize(site.totalSize)}</span>
             {isLarge ? (
@@ -533,7 +513,7 @@ export function SiteCard({
                 )}
               </div>
               {!isLarge && (
-                <span className="shrink-0" style={{ fontFamily: 'var(--font-code)', fontSize: 10, color: 'var(--text-tertiary)' }}>
+                <span className="shrink-0" style={{ fontFamily: 'var(--font-code)', fontSize: 10, letterSpacing: 'var(--tracking-meta)', color: 'var(--text-tertiary)' }}>
                   {relativeTime(site.createdAt)}
                 </span>
               )}
@@ -550,10 +530,10 @@ export function SiteCard({
                 { v: shareStats?.lastViewedAt ? relativeTime(shareStats.lastViewedAt) : '—', label: '最近访问' },
               ].map((k) => (
                 <div key={k.label}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, lineHeight: 1, letterSpacing: '-0.04em', color: 'var(--text-primary)' }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, lineHeight: 1, letterSpacing: 'var(--tracking-number)', color: 'var(--text-primary)' }}>
                     {k.v}
                   </div>
-                  <div style={{ marginTop: 4, fontFamily: 'var(--font-code)', fontSize: 9.5, color: 'var(--text-tertiary)' }}>{k.label}</div>
+                  <div style={{ marginTop: 4, fontFamily: 'var(--font-code)', fontSize: 9.5, letterSpacing: 'var(--tracking-badge)', color: 'var(--text-tertiary)' }}>{k.label}</div>
                 </div>
               ))}
             </div>
