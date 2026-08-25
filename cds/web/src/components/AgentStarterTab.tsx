@@ -356,7 +356,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                           <h4 className="text-lg font-bold">接入 CDS，自动给预览地址</h4>
                           <span className={`rounded-full px-3 py-1 text-xs font-bold ${includeCds ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>{includeCds ? '已开启' : '未开启'}</span>
                         </div>
-                        <p className="mt-2 text-sm leading-6 text-muted-foreground">自动处理项目扫描、分支部署、真实预览地址和登录验收。需要账号时，Agent 会验证后再交付安全的临时账号。</p>
+                        <p className="mt-2 text-sm leading-6 text-muted-foreground">自动处理项目扫描、分支部署、真实预览地址和登录验收。你不需要先准备任何密钥：Agent 会在需要授权时发起申请，你在页面点一下批准即可。需要账号时，Agent 会验证后再交付安全的临时账号。</p>
                       </div>
                     </div>
                   </button>
