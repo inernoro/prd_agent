@@ -91,8 +91,32 @@ export interface InfraExposureFinding {
   hostPorts: number[];
 }
 
+/**
+ * 一台**跑着但一个端口都没发布**的服务。
+ *
+ * 它不构成暴露面，所以不在 findings 里；但它确实在跑，而且「内网无口令」这类判断
+ * 要的正是它。第一版直接 `continue` 丢掉，于是每日体检拿 findings 当完整清单用时，
+ * 「内网但无口令」那一档对这类服务永远不会响——一台纯内网的老库可以一直无声地
+ * 没有口令（Codex review P1）。
+ *
+ * 所以这里把它留下来：**筛掉的是「不算暴露」，不是「不存在」。**
+ */
+export interface InfraInternalService {
+  id: string;
+  projectId: string;
+  containerName: string;
+  kind: InfraKind;
+  /** 有没有配认证；认不出类型时为 null。 */
+  authenticated: boolean | null;
+}
+
 export interface InfraExposureReport {
   findings: InfraExposureFinding[];
+  /**
+   * 跑着但没发布任何端口的服务。**不进 summary、不进 signature**——它们不是暴露面，
+   * 把它们算进去会让告警标题里的数字对不上人能看见的问题。
+   */
+  internalOnly: InfraInternalService[];
   criticalCount: number;
   warnCount: number;
   /** 一句话结论，进日志与站内告警标题。 */
@@ -588,6 +612,7 @@ export function auditInfraExposure(
   opts: { firewall?: FirewallGuard | null } = {},
 ): InfraExposureReport {
   const findings: InfraExposureFinding[] = [];
+  const internalOnly: InfraInternalService[] = [];
   for (const svc of inputs) {
     // 停掉的容器不占端口，不构成暴露面
     if (svc.running === false) continue;
@@ -597,8 +622,19 @@ export function auditInfraExposure(
       runtimePorts: svc.runtimePorts,
     });
     const boundHosts = parsePublishedHosts(svc.runtimePorts);
-    // 没发布任何端口 = 完全不对外，直接跳过（区别于「读不到」）
-    if (svc.runtimePorts != null && boundHosts.length === 0) continue;
+    // 没发布任何端口 = 完全不对外（区别于「读不到」）。不算暴露面，但**要留着**：
+    // 它还在跑，「内网无口令」那类判断要的就是它。丢掉的话，下游把 findings 当完整
+    // 清单用时会静默漏掉整整一类服务（Codex review P1）。
+    if (svc.runtimePorts != null && boundHosts.length === 0) {
+      internalOnly.push({
+        id: svc.id,
+        projectId: svc.projectId,
+        containerName: svc.containerName,
+        kind,
+        authenticated: detectInfraAuth(kind, svc.env, svc.args),
+      });
+      continue;
+    }
     const hostPorts = parsePublishedPorts(svc.runtimePorts);
     const base = {
       id: svc.id,
@@ -629,6 +665,7 @@ export function auditInfraExposure(
 
   return {
     findings,
+    internalOnly,
     criticalCount: critical.length,
     warnCount: warn.length,
     summary,

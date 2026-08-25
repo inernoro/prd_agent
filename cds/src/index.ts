@@ -26,7 +26,7 @@ import {
   evaluateDailyHealth,
   type HealthInfraFact,
   type HealthPlatformStoreFact,
-  exemptKey,
+  type InfraExemptionFact,
   platformStoreFacts,
 } from './services/platform-daily-health.js';
 import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
@@ -1092,7 +1092,11 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
         console.log('[daily-health] 暴露面自检还没跑过，本轮跳过（下一轮再来）');
         return;
       }
-      const exempt = new Map<string, string>();
+      // 事实一 b：存量豁免台账。**从配置层取，不从运行态取**——豁免是「这台服务
+      // 靠一条到期日在跑」，跟它此刻有没有对外端口、甚至跑没跑都没关系。挂在运行态
+      // 事实上的话，覆盖面会被暴露面那层筛子卡住，一台纯内网或当前停着的老库到期前
+      // 不会有任何提示，到期后直接起不来（Codex review P1）。
+      const exemptions: InfraExemptionFact[] = [];
       for (const service of stateService.getInfraServices() || []) {
         const decision = evaluateInfraAuthentication(
           {
@@ -1111,11 +1115,16 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
         );
         // 只有「靠豁免才放行」的才记倒计时：本来就配了认证的不该被算进去。
         //
-        // key 必须带项目：**infra id 只在项目内唯一**，这台机器上六个项目各有一个叫
-        // `redis` 的服务。只用 id 当 key，A 项目的豁免会被 B 项目同名服务捡走——
-        // 于是一台配好认证的库被报成「靠存量豁免在跑」，倒计时也算错。
-        // 这正是 cross-project-isolation 反复强调的「标识要带作用域」（形状 1）。
-        if (decision.exemption) exempt.set(exemptKey(service.projectId, service.id), decision.exemption.expiresAt);
+        // 带项目：**infra id 只在项目内唯一**，这台机器上六个项目各有一个叫 `redis`
+        // 的服务，结论的 id 与话术只用 id 会把两个项目的问题说成同一条
+        //（cross-project-isolation：标识要带作用域，形状 1）。
+        if (decision.exemption) {
+          exemptions.push({
+            id: service.id,
+            projectId: service.projectId,
+            expiresAt: decision.exemption.expiresAt,
+          });
+        }
       }
       const infra: HealthInfraFact[] = exposure.findings.map((f) => ({
         id: f.id,
@@ -1130,8 +1139,19 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
         // 验伪**的话（Codex review P2）。
         firewallBlocked: f.firewallBlocked,
         authenticated: f.authenticated,
-        authExemptionExpiresAt: exempt.get(exemptKey(f.projectId, f.id)) ?? null,
       }));
+      // **再把「跑着但一个端口都没发布」的那批接上。** findings 是按暴露面筛过的清单，
+      // 不是完整台账；只喂它进去，「内网但无口令」那一整档就永远不会响——一台纯内网的
+      // 老库可以一直无声地没有口令（Codex review P1）。
+      for (const svc of exposure.internalOnly) {
+        infra.push({
+          id: svc.id,
+          projectId: svc.projectId,
+          publiclyPublished: false,
+          firewallBlocked: false,
+          authenticated: svc.authenticated,
+        });
+      }
 
       // 事实二：平台自身的存储。认证门禁只管「项目基础设施容器」，CDS 自己这几个
       // 库从来不在它的管辖范围内，也就永远不会有人被提醒——这一条只有本体检会说。
@@ -1164,6 +1184,7 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
       const verdict = evaluateDailyHealth({
         now: new Date(),
         infra,
+        infraExemptions: exemptions,
         platformStores,
         backup: { lastCompletedAt, coverageGaps },
         lastRestoreDrillAt: null,

@@ -1465,11 +1465,28 @@ export function buildNacosConfigCountScript(): string {
     'for ns in __public__ $CDS_NACOS_NS; do',
     '  CDS_NACOS_TENANT=""',
     '  [ "$ns" = "__public__" ] || CDS_NACOS_TENANT="$ns"',
-    '  CDS_NACOS_N=$(cds_nacos_get'
+    // 先把响应整个接住再解析。**不能直接 `cds_nacos_get | sed`**：管道的退出码是
+    // 最后一条命令的，sed 对着空输入照样成功，于是「这个命名空间没查通」和
+    // 「这个命名空间有 0 条配置」变成同一件事。下面 `${CDS_NACOS_N:-0}` 再把它
+    // 兜成一个真实的 0，最后恢复端点报出一个看着可信、其实少算了的数字
+    //（Codex review P2）。数不出来就必须让整段脚本失败，让调用方显示「未知」。
+    '  CDS_NACOS_BODY=$(cds_nacos_get'
       + ' "$CDS_NACOS_BASE/v1/cs/configs?search=accurate&dataId=&group=&pageNo=1&pageSize=1'
-      + '&tenant=$CDS_NACOS_TENANT$CDS_NACOS_AUTH" 2>/dev/null'
+      + '&tenant=$CDS_NACOS_TENANT$CDS_NACOS_AUTH" 2>/dev/null)',
+    '  if [ $? -ne 0 ]; then',
+    '    echo "cds-count: 命名空间 $ns 查询失败，数不出配置条数" >&2',
+    '    exit 66',
+    '  fi',
+    '  CDS_NACOS_N=$(printf %s "$CDS_NACOS_BODY"'
       + ' | sed -n \'s/.*"totalCount":\\([0-9]*\\).*/\\1/p\')',
-    '  CDS_NACOS_TOTAL=$((CDS_NACOS_TOTAL + ${CDS_NACOS_N:-0}))',
+    // 查通了但响应里没有 totalCount：同样是「数不出来」，不是 0。
+    '  case "$CDS_NACOS_N" in',
+    '    "" | *[!0-9]* )',
+    '      echo "cds-count: 命名空间 $ns 的响应里没有 totalCount，数不出配置条数" >&2',
+    '      exit 66',
+    '      ;;',
+    '  esac',
+    '  CDS_NACOS_TOTAL=$((CDS_NACOS_TOTAL + CDS_NACOS_N))',
     'done',
     'echo "$CDS_NACOS_TOTAL"',
   ].join('\n');

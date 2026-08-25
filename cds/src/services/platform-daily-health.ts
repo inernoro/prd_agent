@@ -49,7 +49,7 @@ export interface HealthInfraFact {
   id: string;
   /**
    * 它属于哪个项目。**必须带**：infra id 只在项目内唯一，这台机器上六个项目可以各有一个
-   * 叫 `redis` 的服务。豁免台账的 key 已经带了项目（exemptKey），但结论的 id 与话术如果
+   * 叫 `redis` 的服务。豁免台账已经按项目记，但结论的 id 与话术如果
    * 还只用 svc.id，两个项目的问题会生成一模一样的 finding id——去重一合并就少一条，
    * 运维也看不出该去修哪个项目的那台（Codex review P2）。
    */
@@ -66,8 +66,25 @@ export interface HealthInfraFact {
   firewallBlocked?: boolean;
   /** 有没有认证。null = 认不出来（也是一种要报的状态）。 */
   authenticated: boolean | null;
-  /** 存量豁免的到期时间；靠豁免才起得来的服务才有。 */
-  authExemptionExpiresAt?: string | null;
+}
+
+/**
+ * 一条存量豁免：某台服务眼下靠豁免才起得来，到期后会直接起不来。
+ *
+ * **单独一份输入，不挂在 HealthInfraFact 上。** 第一版挂在上面，于是倒计时的覆盖面
+ * 被运行态事实的覆盖面卡住了——运行态那份是**按暴露面筛过的**（不发布端口的、停着的
+ * 都不在里面），而豁免是配置层的事实，跟「此刻有没有对外端口」毫无关系。结果是：
+ * 一台纯内网、或者当前停着的老库，豁免到期前不会有任何提示，到期后直接起不来
+ * ——而这条倒计时存在的全部意义就是提前说这句话（Codex review P1）。
+ *
+ * 这是形状 1：判据的取材范围比它该管的范围窄。修法不是把筛子放宽，而是让两件事
+ * 各取各的源——运行态取运行态，配置取台账。
+ */
+export interface InfraExemptionFact {
+  id: string;
+  projectId?: string | null;
+  /** 豁免到期时间（ISO 字符串）。 */
+  expiresAt: string;
 }
 
 /** 平台自身的存储（不是项目基础设施，门禁管不到）。 */
@@ -80,7 +97,13 @@ export interface HealthPlatformStoreFact {
 
 export interface DailyHealthInput {
   now: Date;
+  /**
+   * 运行态的数据服务。**包含只在内网可达的那些**——判据里有一整档「内网但无口令」，
+   * 只喂「有对外端口的」进来，那一档就永远不会响（Codex review P1）。
+   */
   infra: readonly HealthInfraFact[];
+  /** 存量豁免台账。取自配置层，覆盖面不受运行态筛选影响。 */
+  infraExemptions: readonly InfraExemptionFact[];
   platformStores: readonly HealthPlatformStoreFact[];
   backup: {
     /** 上一轮周期备份完成时间；null = 读不到（不等于没问题）。 */
@@ -90,17 +113,6 @@ export interface DailyHealthInput {
   };
   /** 最近一次「把备份真的灌回去读通了」的时间；null = 从来没演练过。 */
   lastRestoreDrillAt: string | null;
-}
-
-/**
- * 豁免台账的 key。**必须带项目**：infra id 只在项目内唯一，六个项目可以各有一个
- * 叫 `redis` 的服务；只用 id 会让 A 项目的豁免被 B 项目同名服务捡走，于是一台
- * 配好认证的库被报成「靠存量豁免在跑」，倒计时也算错（Codex review P2）。
- *
- * 写成函数而不是就地拼串，是为了让**写入与读取用不了两种口径**（形状 3）。
- */
-export function exemptKey(projectId: string | undefined | null, id: string): string {
-  return `${String(projectId || '')}::${String(id || '')}`;
 }
 
 /**
@@ -206,7 +218,7 @@ function reachableFromInternet(s: HealthInfraFact): boolean {
  *
  * 写成函数是为了让 id 与话术用同一个口径，不给它们各自漂移的机会（形状 3）。
  */
-function svcRef(s: HealthInfraFact): { key: string; label: string } {
+function svcRef(s: { id: string; projectId?: string | null }): { key: string; label: string } {
   const p = String(s.projectId || '').trim();
   return p
     ? { key: `${p}::${s.id}`, label: `${p} 项目的 ${s.id}` }
@@ -282,11 +294,11 @@ export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict
   }
 
   // ---- 4. 存量豁免倒计时：到期后那些库会直接起不来 ----
-  const exempt = input.infra.filter((s) => s.authExemptionExpiresAt);
+  const exempt = input.infraExemptions;
   if (exempt.length > 0) {
     // 取最近的那个到期日：先到的先炸。
     const soonest = exempt
-      .map((s) => ({ id: s.id, days: daysBetween(input.now, s.authExemptionExpiresAt!) }))
+      .map((s) => ({ id: svcRef(s).label, days: daysBetween(input.now, s.expiresAt) }))
       .filter((x): x is { id: string; days: number } => x.days !== null)
       .sort((a, b) => a.days - b.days)[0];
     if (soonest) {

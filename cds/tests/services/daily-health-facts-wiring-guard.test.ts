@@ -53,6 +53,30 @@ describe('每日体检的事实来源接线守卫', () => {
     expect(mapping).toContain('authenticated: f.authenticated');
   });
 
+  it('「跑着但没发布端口」的那批也要接进事实', () => {
+    const source = read('src/index.ts');
+    // 锚在合并那一段本身，不是文件里随便哪处提到 internalOnly 的地方。
+    const merge = windowAfter(source, 'for (const svc of exposure.internalOnly)', 400);
+    expect(
+      merge,
+      'findings 是按暴露面筛过的清单，不是完整台账。只喂它进去，'
+      + '「内网但无口令」那一整档永远不会响——一台纯内网的老库可以一直无声地没有口令',
+    ).toContain('publiclyPublished: false');
+    expect(merge).toContain('authenticated: svc.authenticated');
+  });
+
+  it('豁免倒计时从台账取，不从运行态事实取', () => {
+    const source = read('src/index.ts');
+    expect(
+      source,
+      '豁免是配置层的事实。挂回运行态事实上的话，覆盖面会被暴露面那层筛子卡住，'
+      + '纯内网或当前停着的库到期前不会有任何提示',
+    ).toContain('infraExemptions: exemptions');
+    // 台账必须来自完整的 infra 服务清单，而不是 exposure 里那份。
+    const ledger = windowAfter(source, 'const exemptions: InfraExemptionFact[] = [];', 300);
+    expect(ledger).toContain('stateService.getInfraServices()');
+  });
+
   it('暴露面自检不许在「没认出容器」时早退', () => {
     const source = read('src/index.ts');
     expect(

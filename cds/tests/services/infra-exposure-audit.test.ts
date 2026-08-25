@@ -478,3 +478,52 @@ describe('memcached 的 -S 必须区分大小写', () => {
     expect(detectInfraAuth('memcached', { MEMCACHED_PASSWORD: 'x' }, ['memcached'])).toBe(false);
   });
 });
+
+describe('跑着但一个端口都没发布的服务：不算暴露面，但要留下来', () => {
+  // 2026-08-25 Codex review P1。第一版直接 `continue` 丢掉，于是每日体检把
+  // findings 当完整台账用时，「内网但无口令」那一整档对这类服务永远不会响。
+  const svc = {
+    id: 'legacy-mongo',
+    projectId: 'proj-a',
+    containerName: 'cds-proj-a-legacy-mongo',
+    dockerImage: 'mongo:6',
+    env: {},
+    runtimePorts: '27017/tcp',   // 只暴露给容器网络，没有 -> 宿主映射
+    running: true,
+  };
+
+  it('不进 findings——它确实不构成暴露面', () => {
+    const report = auditInfraExposure([svc]);
+    expect(report.findings).toHaveLength(0);
+    expect(report.criticalCount).toBe(0);
+    expect(report.warnCount).toBe(0);
+  });
+
+  it('但要出现在 internalOnly 里，带着「有没有认证」这个结论', () => {
+    const report = auditInfraExposure([svc]);
+    expect(report.internalOnly).toHaveLength(1);
+    expect(report.internalOnly[0]).toMatchObject({
+      id: 'legacy-mongo',
+      projectId: 'proj-a',
+      kind: 'mongo',
+      authenticated: false,   // 没有 MONGO_INITDB_ROOT_USERNAME
+    });
+  });
+
+  it('停着的容器不算——它既不暴露也不在跑', () => {
+    const report = auditInfraExposure([{ ...svc, running: false }]);
+    expect(report.internalOnly).toHaveLength(0);
+  });
+
+  it('反面对照：发布了端口的走 findings，不进 internalOnly', () => {
+    const report = auditInfraExposure([{ ...svc, runtimePorts: '0.0.0.0:27017->27017/tcp' }]);
+    expect(report.internalOnly).toHaveLength(0);
+    expect(report.findings).toHaveLength(1);
+  });
+
+  it('读不到端口映射时按「对外」从严处理，同样不进 internalOnly', () => {
+    const report = auditInfraExposure([{ ...svc, runtimePorts: null }]);
+    expect(report.internalOnly).toHaveLength(0);
+    expect(report.findings).toHaveLength(1);
+  });
+});

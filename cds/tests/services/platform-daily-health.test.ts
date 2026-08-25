@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   connectionUriHasCredentials,
   evaluateDailyHealth,
-  exemptKey,
   platformStoreFacts,
   BACKUP_STALE_AFTER_MS,
   RESTORE_DRILL_STALE_AFTER_MS,
@@ -23,6 +22,7 @@ function input(patch: Partial<DailyHealthInput> = {}): DailyHealthInput {
   return {
     now: NOW,
     infra: [],
+    infraExemptions: [],
     platformStores: [],
     backup: { lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(), coverageGaps: [] },
     lastRestoreDrillAt: new Date(NOW.getTime() - 86_400_000).toISOString(),
@@ -121,7 +121,7 @@ describe('存量豁免倒计时', () => {
   it('还剩两周以内 → critical，并说清到期后是起不来不是告警', () => {
     const soon = new Date(NOW.getTime() + (EXEMPTION_URGENT_DAYS - 1) * 86_400_000).toISOString();
     const v = evaluateDailyHealth(input({
-      infra: [{ id: 'legacy-mongo', publiclyPublished: false, authenticated: true, authExemptionExpiresAt: soon }],
+      infraExemptions: [{ id: 'legacy-mongo', expiresAt: soon }],
     }));
     expect(v.severity).toBe('critical');
     expect(v.findings[0].message).toContain('起不来');
@@ -130,7 +130,7 @@ describe('存量豁免倒计时', () => {
   it('还早 → warn', () => {
     const later = new Date(NOW.getTime() + 60 * 86_400_000).toISOString();
     const v = evaluateDailyHealth(input({
-      infra: [{ id: 'legacy-mongo', publiclyPublished: false, authenticated: true, authExemptionExpiresAt: later }],
+      infraExemptions: [{ id: 'legacy-mongo', expiresAt: later }],
     }));
     expect(v.severity).toBe('warn');
   });
@@ -138,7 +138,7 @@ describe('存量豁免倒计时', () => {
   it('已经过期 → critical，措辞改成「已经到期」', () => {
     const past = new Date(NOW.getTime() - 86_400_000).toISOString();
     const v = evaluateDailyHealth(input({
-      infra: [{ id: 'legacy-mongo', publiclyPublished: false, authenticated: true, authExemptionExpiresAt: past }],
+      infraExemptions: [{ id: 'legacy-mongo', expiresAt: past }],
     }));
     expect(v.severity).toBe('critical');
     expect(v.findings[0].message).toContain('已经到期');
@@ -146,9 +146,9 @@ describe('存量豁免倒计时', () => {
 
   it('多个豁免只报最近的那个——先到的先炸', () => {
     const v = evaluateDailyHealth(input({
-      infra: [
-        { id: 'far', publiclyPublished: false, authenticated: true, authExemptionExpiresAt: new Date(NOW.getTime() + 60 * 86_400_000).toISOString() },
-        { id: 'near', publiclyPublished: false, authenticated: true, authExemptionExpiresAt: new Date(NOW.getTime() + 3 * 86_400_000).toISOString() },
+      infraExemptions: [
+        { id: 'far', expiresAt: new Date(NOW.getTime() + 60 * 86_400_000).toISOString() },
+        { id: 'near', expiresAt: new Date(NOW.getTime() + 3 * 86_400_000).toISOString() },
       ],
     }));
     const deadline = v.findings.find((f) => f.id === 'infra.auth-exemption-deadline')!;
@@ -223,13 +223,9 @@ describe('第一屏那句话', () => {
         { id: 'old-prod-mongo', publiclyPublished: true, authenticated: true },
         { id: 'new-prod-mongo', publiclyPublished: false, authenticated: false },
         { id: 'prod-redis', publiclyPublished: false, authenticated: false },
-        {
-          id: 'legacy-project-mongo',
-          publiclyPublished: false,
-          authenticated: false,
-          authExemptionExpiresAt: '2026-09-17T00:00:00.000Z',
-        },
+        { id: 'legacy-project-mongo', publiclyPublished: false, authenticated: false },
       ],
+      infraExemptions: [{ id: 'legacy-project-mongo', expiresAt: '2026-09-17T00:00:00.000Z' }],
       platformStores: [
         { label: 'CDS 主库', connectionUri: 'mongodb://cds-mongo:27017/cds' },
         { label: 'CDS 状态库', connectionUri: 'mongodb://cds-state:27017/state' },
@@ -256,21 +252,46 @@ describe('第一屏那句话', () => {
  * 下面两组是 2026-08-25 Codex review 的两条 P2。两条都是我自己写的新代码里的
  * 缺陷，而且**都是「一盏永远亮着的灯」这个病的复发**——这个体检本来就是为治它而生的。
  */
-describe('豁免台账的 key 必须带项目', () => {
-  it('同名服务不会互相捡走对方的豁免', () => {
-    // 这台机器上六个项目各有一个叫 redis 的服务。只用 id 当 key 的话，
-    // A 项目的豁免会被 B 项目同名服务捡走：一台配好认证的库被报成
-    // 「靠存量豁免在跑」，倒计时也跟着算错。
-    expect(exemptKey('proj-a', 'redis')).not.toBe(exemptKey('proj-b', 'redis'));
+describe('豁免倒计时的覆盖面不受运行态筛选影响', () => {
+  // 2026-08-25 Codex review P1。第一版把到期日挂在 HealthInfraFact 上，于是倒计时
+  // 只覆盖得到「暴露面自检认下来的那批」——不发布端口的、当前停着的都不在里面。
+  // 而这条倒计时存在的全部意义，就是在这些库起不来之前先说一句。
+  it('一台压根不在运行态清单里的服务，照样能报出它的倒计时', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [],   // 运行态一台都没有：它停着，或者纯内网没发布端口
+      infraExemptions: [{ id: 'legacy-mongo', projectId: 'proj-a', expiresAt: new Date(NOW.getTime() + 3 * 86_400_000).toISOString() }],
+    }));
+    const deadline = v.findings.find((f) => f.id === 'infra.auth-exemption-deadline');
+    expect(deadline, '豁免是配置层的事实，不该被运行态清单卡住').toBeTruthy();
+    expect(deadline!.message).toContain('proj-a 项目的 legacy-mongo');
   });
 
-  it('同项目同服务是同一个 key（写入与读取对得上）', () => {
-    expect(exemptKey('proj-a', 'redis')).toBe(exemptKey('proj-a', 'redis'));
+  it('反面对照：台账为空时不报——判据不是恒真的', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'legacy-mongo', publiclyPublished: false, authenticated: true }],
+      infraExemptions: [],
+    }));
+    expect(v.findings.some((f) => f.id === 'infra.auth-exemption-deadline')).toBe(false);
+  });
+});
+
+describe('内网但无口令：不发布端口的服务也要被看见', () => {
+  // 同一条 P1 的另一半。「内网但无口令」这一整档，判的正是没有对外端口的服务；
+  // 如果喂进来的事实只有「有对外端口的」，这一档永远不会响。
+  it('publiclyPublished=false + 无认证 → 报出来', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'legacy-mongo', projectId: 'proj-a', publiclyPublished: false, authenticated: false }],
+    }));
+    const f = v.findings.find((x) => x.id === 'infra.naked-internal.proj-a::legacy-mongo');
+    expect(f, '纯内网、没口令的库必须报').toBeTruthy();
+    expect(f!.severity).toBe('warn');
   });
 
-  it('projectId 缺失时不会把不同服务撞成一个 key', () => {
-    expect(exemptKey(null, 'redis')).not.toBe(exemptKey(null, 'mysql'));
-    expect(exemptKey(undefined, 'redis')).toBe(exemptKey('', 'redis'));
+  it('反面对照：配了口令就不报', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'legacy-mongo', projectId: 'proj-a', publiclyPublished: false, authenticated: true }],
+    }));
+    expect(v.findings.some((x) => x.id.startsWith('infra.naked-internal.'))).toBe(false);
   });
 });
 
@@ -333,6 +354,7 @@ describe('平台存储事实：没有 Mongo 就别报', () => {
     const v = evaluateDailyHealth({
       now: NOW,
       infra: [],
+      infraExemptions: [],
       platformStores: platformStoreFacts({ CDS_STORAGE_MODE: 'json' }),
       backup: { lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(), coverageGaps: [] },
       lastRestoreDrillAt: new Date(NOW.getTime() - 86_400_000).toISOString(),
@@ -352,7 +374,7 @@ describe('平台存储事实：没有 Mongo 就别报', () => {
  */
 describe('结论必须分得清是哪个项目的那台服务', () => {
   it('两个项目各有一个 redis：出两条结论，id 不撞、话里说得清是谁', () => {
-    // 豁免台账的 key 早就带了项目（exemptKey），但结论的 id 与话术还只用 svc.id 的话，
+    // 豁免台账早就按项目记，但结论的 id 与话术还只用 svc.id 的话，
     // 两个项目会生成一模一样的 finding id——按 id 去重就少一条，运维也看不出该去修
     // 哪个项目的那台（Codex review P2）。
     const v = evaluateDailyHealth(input({
