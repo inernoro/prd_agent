@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hasFetchableHtml, canUseSrcDocPreview } from './previewHtml';
+import { hasFetchableHtml, canUseSrcDocPreview, withPreviewBase } from './previewHtml';
 
 /**
  * 「这个站点走 srcDoc 还是直链」的判据。
@@ -66,5 +66,31 @@ describe('srcDoc 安全判据（模块脚本一律退回直链）', () => {
     expect(canUseSrcDocPreview('<script type="module" src="/a.js"></script>')).toBe(false);
     expect(canUseSrcDocPreview("<script type='module'>import './a.js'</script>")).toBe(false);
     expect(canUseSrcDocPreview('<script type=module src=/a.js></script>')).toBe(false);
+  });
+});
+
+describe('CDN 注入的遥测脚本', () => {
+  // 托管域名前面的 CDN 会往每份 HTML 里塞一条 type=module 的 beacon。
+  // 它不是用户内容，却让 canUseSrcDocPreview 一律判否 —— 每个站点都被踢到会白屏的直链路径。
+  const beacon = '<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v4513226?token=x"></script>';
+  const page = `<!DOCTYPE html><html><body><h1>正文</h1>${beacon}</body></html>`;
+
+  it('带 beacon 的普通页面仍然可以走 srcDoc', () => {
+    expect(canUseSrcDocPreview(page)).toBe(true);
+  });
+
+  it('页面自己的 module 脚本照旧退回直链（不能被这条豁免带跑）', () => {
+    expect(canUseSrcDocPreview(`${page}<script type="module" src="./app.js"></script>`)).toBe(false);
+  });
+
+  it('注入 base 时把 beacon 一并剥掉，别在访客控制台刷 CORS 报错', () => {
+    const out = withPreviewBase(page, 'https://host.example/u/abc/index.html');
+    expect(out).not.toContain('cloudflareinsights.com');
+    expect(out).toContain('<h1>正文</h1>');
+  });
+
+  it('不做「凡是跨域 module 一律剥」——那种页面可能真靠 CDN 上的 ESM 依赖跑', () => {
+    const esm = '<script type="module" src="https://esm.sh/vue@3"></script>';
+    expect(canUseSrcDocPreview(`<html><body>${esm}</body></html>`)).toBe(false);
   });
 });

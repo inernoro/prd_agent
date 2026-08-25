@@ -71,7 +71,36 @@ export function hasFetchableHtml(site: {
  */
 export function canUseSrcDocPreview(html: string): boolean {
   if (!html) return false;
-  return !hasModuleScript(html);
+  return !hasModuleScript(stripInjectedTelemetry(html));
+}
+
+/**
+ * 剥掉**传输途中被注入的**遥测脚本。
+ *
+ * 托管域名前面挂着 CDN，它会往每一份 HTML 里塞一条
+ * `<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/...">`。
+ * 那不是用户上传的内容，却是 `type="module"` —— 于是 canUseSrcDocPreview 一律判否，
+ * **每一个**经过该 CDN 的托管站点都被踢出 srcDoc、落到会白屏的直链路径上。
+ * （2026-08-25 每日验收脚本第一次跑就抓到：自己传的 200 字节纯 HTML，取回来 9336 字节、
+ * 带着这条 beacon，于是 mode=direct、正文 0 字。）
+ *
+ * 判据刻意窄：只认「已知的第三方遥测端点」，逐条列出。
+ * 不做「凡是跨域 module 一律剥」——那种页面可能真的靠 CDN 上的 ESM 依赖跑，
+ * 剥掉等于把内容也剥了；它们留在直链路径上是对的。
+ */
+const INJECTED_TELEMETRY_HOSTS = [
+  'static.cloudflareinsights.com',
+];
+
+export function stripInjectedTelemetry(html: string): string {
+  if (!html) return html;
+  let out = html;
+  for (const host of INJECTED_TELEMETRY_HOSTS) {
+    // 只删「开标签里 src 指向该 host」的那一对 script，不碰别的
+    const re = new RegExp(`<script\\b[^>]*\\bsrc\\s*=\\s*["']?[^"'>]*${host.replace(/\./g, '\\.')}[^"'>]*["']?[^>]*>\\s*</script>`, 'gi');
+    out = out.replace(re, '');
+  }
+  return out;
 }
 
 /**
@@ -136,6 +165,9 @@ function isAbsoluteBaseHref(href: string): boolean {
 }
 
 export function withPreviewBase(html: string, siteUrl: string) {
+  // 同一处剥干净：srcDoc 里留着一条注定加载不了的第三方 beacon 没有意义，
+  // 还会在访客的控制台里刷一条 CORS 报错，让真问题更难被看见。
+  html = stripInjectedTelemetry(html);
   const baseHref = new URL('.', siteUrl).toString();
 
   // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。
