@@ -69,27 +69,31 @@ describe('状态色只走 token，不再硬编码调色板', () => {
    * 棘轮：存量文件按当前条数封顶（多数已自带 `dark:` 配对，属于历史欠账），
    * 未登记的文件必须是 0。数字只许降不许升；改好一处就把这里调小一格。
    */
-  const NEUTRAL_LITERAL = /\b(?:bg|text|border|ring|fill)-(?:stone|slate|zinc|gray|neutral)-\d{2,3}\b|\bbg-(?:white|black)\b/g;
+  // text-white / text-black 一起盯：它们也不跟主题走。暗色主题下 ok/warn 那几档是亮色，
+  // 亮黄底上压 text-white 只有约 2 比 1 的对比度——正是这次要修的那种「看不清」。
+  const NEUTRAL_LITERAL = /\b(?:bg|text|border|ring|fill)-(?:stone|slate|zinc|gray|neutral)-\d{2,3}\b|\b(?:bg|text)-(?:white|black)\b/g;
   const NEUTRAL_RATCHET: Record<string, number> = {
     'pages/ProjectListPage.tsx': 19,
-    'components/BranchDetailDrawer.tsx': 9,
+    'pages/PreviewPreparingPage.tsx': 14,
+    'components/BranchDetailDrawer.tsx': 12,
+    'components/branch/ReplicaSetPanel.tsx': 9,
+    'pages/cds-settings/tabs/LoadingPagesTab.tsx': 8,
     'components/GlobalUpdateBadge.tsx': 7,
-    'pages/PreviewPreparingPage.tsx': 6,
     'components/deployment/ActiveDeployment.tsx': 6,
-    'pages/cds-settings/tabs/LoadingPagesTab.tsx': 5,
-    'pages/ReportsPage.tsx': 2,
-    'pages/release-center/EnvConfigSection.tsx': 1,
-    'pages/release-center/AutoReleaseTab.tsx': 1,
-    'pages/cds-settings/tabs/MaintenanceTab.tsx': 1,
-    'pages/ReleaseConsolePage.tsx': 1,
-    'pages/BranchListPage.tsx': 1,
-    'lib/resources.tsx': 1,
-    'components/ui/dialog.tsx': 1,
-    'components/monitoring/MonitoringDialog.tsx': 1,
-    'components/branch/ReplicaSetPanel.tsx': 1,
-    'components/branch/ReplicaLoadTestPanel.tsx': 1,
+    'pages/ReportsPage.tsx': 3,
+    'components/AccessRequestInbox.tsx': 1,
     'components/CommandPalette.tsx': 1,
+    'components/branch/ReplicaLoadTestPanel.tsx': 1,
+    'components/monitoring/MonitoringDialog.tsx': 1,
+    'components/ui/dialog.tsx': 1,
+    'lib/resources.tsx': 1,
+    'pages/BranchListPage.tsx': 1,
+    'pages/ReleaseConsolePage.tsx': 1,
+    'pages/cds-settings/tabs/MaintenanceTab.tsx': 1,
+    'pages/release-center/AutoReleaseTab.tsx': 1,
+    'pages/release-center/EnvConfigSection.tsx': 1,
   };
+
 
   it('组件里没有新增的硬编码中性色（棘轮只降不升）', () => {
     const over: string[] = [];

@@ -172,18 +172,29 @@ export function AuthModeGatedNotice({
           （<code className="rounded bg-[hsl(var(--surface-sunken))] px-1 py-0.5 text-xs">/api/auth/users</code> 仅在 GitHub OAuth 模式挂载）。
         </p>
       </div>
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
-        <div className="font-medium">要启用多用户</div>
-        <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
-          <li>
-            给 CDS 设置 <code className="text-foreground">CDS_AUTH_MODE=github</code>，并配好{' '}
-            <code className="text-foreground">CDS_GITHUB_CLIENT_ID</code> /{' '}
-            <code className="text-foreground">CDS_GITHUB_CLIENT_SECRET</code>
-          </li>
-          <li>重启 CDS；首个登录者可通过 bootstrap 成为系统所有者（需持久化存储后端）</li>
-          <li>回到本页即可创建账号、禁用账号、重置密码，并查看用户痕迹</li>
-        </ol>
-      </div>
+      {/* SSO 部署的账号在上游身份源里，让他们「改成 github 模式」等于劝人关掉 SSO —— 分开说。 */}
+      {mode === 'sso' ? (
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
+          <div className="font-medium">这台 CDS 的账号在上游身份源里管理</div>
+          <p className="mt-2 text-muted-foreground">
+            用户的新增、停用与密码都归发起 SSO 的那套系统管，CDS 侧不再维护第二份账号表，所以本页没有可管理的对象。
+            要在 CDS 自己这一层管账号，只有改用 GitHub OAuth 模式——那会替换掉当前的 SSO 登录方式，属于认证方案变更，请先确认是否真要这么做。
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
+          <div className="font-medium">要启用多用户</div>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>
+              给 CDS 设置 <code className="text-foreground">CDS_AUTH_MODE=github</code>，并配好{' '}
+              <code className="text-foreground">CDS_GITHUB_CLIENT_ID</code> /{' '}
+              <code className="text-foreground">CDS_GITHUB_CLIENT_SECRET</code>
+            </li>
+            <li>重启 CDS；首个登录者可通过 bootstrap 成为系统所有者（需持久化存储后端）</li>
+            <li>回到本页即可创建账号、禁用账号、重置密码，并查看用户痕迹</li>
+          </ol>
+        </div>
+      )}
       <button
         type="button"
         onClick={onGoToAuth}

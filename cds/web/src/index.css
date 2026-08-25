@@ -5656,7 +5656,10 @@
   position: relative;
   isolation: isolate;
   transform: none !important;
+  /* 这颗按钮的底色不跟主题走（两个主题都用同一枚深橙），所以它的**文字色也归这里管**。
+     组件里写 text-white 会被中性色守卫当成漏网之鱼，而且底色一旦改深浅就没人记得改字色。 */
   background-color: rgb(194 65 12) !important;
+  color: rgb(255 255 255) !important;
 }
 
 [data-agent-starter='true'] .agent-starter-copy:hover {

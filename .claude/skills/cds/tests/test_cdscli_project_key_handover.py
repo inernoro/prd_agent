@@ -13,6 +13,7 @@
 
 import io
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -164,7 +165,7 @@ def test_adopted_key_that_cannot_read_back_fails(workspace, monkeypatch):
 
     code, output = run_command(["project", "create", "--name", "demo"])
     assert code == 2, output
-    assert "回读项目失败" in output
+    assert "回读项目被拒" in output
 
 
 def test_connect_can_create_project_in_one_command(workspace, monkeypatch):
@@ -205,14 +206,26 @@ def test_connect_can_create_project_in_one_command(workspace, monkeypatch):
 
 
 def test_only_one_place_creates_projects(workspace):
-    """防再次分裂：全 CLI 里 POST /api/projects 只允许出现在换钥实现里。"""
-    hits = [line.strip() for line in CLI_SOURCE.splitlines()
-            if '"POST", "/api/projects"' in line]
-    assert len(hits) == 1, (
-        "建项目出现了第二处实现——钥匙交接会在那条路上丢掉。"
-        f"命中：\n" + "\n".join(hits)
+    """防再次分裂：全 CLI 里「POST 到 /api/projects」只允许出现在换钥实现里。
+
+    判据不能是精确子串——换个引号、写成 f-string、或把路径提成变量就绕过去了
+    （守卫太窄本身就是这次要修的那类问题）。这里同时扫两种形状：
+    带 POST 字样的同一行里出现 /api/projects，以及任何形式的 /api/projects 字面量。
+    """
+    # 只认「真的发起了一次 POST /api/projects」的调用形状：带引号的 POST 方法参数
+    # 紧跟带引号（或 f-string）的 /api/projects 路径。docstring、help 文案、注释里
+    # 出现的 POST /api/projects 是说明文字，不是调用。
+    call_re = re.compile(r"""['"]POST['"]\s*,\s*f?['"]/api/projects(?![\w/-])""")
+    post_hits = [ln.strip() for ln in CLI_SOURCE.splitlines() if call_re.search(ln)]
+    assert len(post_hits) == 1, (
+        "建项目出现了第二处实现——钥匙交接会在那条路上丢掉。命中：\n" + "\n".join(post_hits)
     )
     assert "_create_project_and_adopt_key" in CLI_SOURCE
+    # 反向确认守卫盯的就是那一处（而不是碰巧只匹配到别的东西）
+    assert "/api/projects" in post_hits[0] and "POST" in post_hits[0]
+    # 换个引号、写成 f-string 都要被同一条判据抓住
+    assert call_re.search("x = _call('POST', '/api/projects', body=p)")
+    assert call_re.search('y = _call("POST", f"/api/projects", body=p)')
 
 
 def test_non_bootstrap_identity_without_issued_key_is_fine(workspace, monkeypatch):
@@ -224,3 +237,76 @@ def test_non_bootstrap_identity_without_issued_key_is_fine(workspace, monkeypatc
     code, output = run_command(["project", "create", "--name", "demo"])
     assert code == 0, output
     assert "proj-new" in output
+
+
+def test_create_project_argument_errors_happen_before_any_approval(workspace, monkeypatch):
+    """参数错在发起申请之前就要报出来，不能让用户白批一次。"""
+    seen: list = []
+
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
+        seen.append((method, path))
+        return 201, {"requestId": "req1", "pollToken": "poll1", "status": "pending"}, {}
+
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+
+    code, output = run_command([
+        "connect", "--host", "https://cds.example", "--project", "proj-a",
+        "--create-project", "demo",
+    ])
+    assert code == 1, output
+    assert "只能与 --new-project 搭配使用" in output
+    assert seen == [], "报错之前不许发起任何授权申请"
+
+    code, output = run_command([
+        "connect", "--host", "https://cds.example", "--new-project",
+        "--create-project", "   ",
+    ])
+    assert code == 1, output
+    assert "非空项目名称" in output
+    assert seen == []
+
+
+def test_verify_hiccup_does_not_discard_completed_handover(workspace, monkeypatch):
+    """回读那一跳网络抖动 ≠ 换钥失败：钥匙已在本地，不能再报一次失败诱导重跑。"""
+    cdscli._save_local_credentials(host="https://cds.example",
+                                   bootstrap_key="cdsg_one_time_never-print")
+    calls: list = []
+
+    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
+                     fatal_network_errors=True):
+        calls.append((method, path))
+        if method == "POST" and path == "/api/projects":
+            return 201, {"project": {"id": "proj-new", "slug": "demo"},
+                         "issuedProjectKey": {"keyId": "k1", "plaintext": PROJECT_KEY}}, {}
+        if method == "GET" and path.startswith("/api/projects/"):
+            return 0, {"error": "timeout"}, {}   # 网络抖动
+        return 200, {}, {}
+
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+
+    code, output = run_command(["project", "create", "--name", "demo"])
+    assert code == 0, output
+    saved = read_credentials(workspace)
+    assert saved.get("projectKey") == PROJECT_KEY
+    assert "bootstrapKey" not in saved
+
+
+def test_stale_bootstrap_key_does_not_break_normal_create(workspace, monkeypatch):
+    """工作区残留一把过期的一次性钥匙，不该让正常的项目级建项目误报死局。"""
+    cdscli._save_local_credentials(host="https://cds.example",
+                                   project_id="proj-old",
+                                   project_key="cdsp_existing_never-print")
+    # 手工塞一把残留的 bootstrapKey，模拟老工作区
+    import json as _json
+    path = workspace / ".cds" / "credentials.json"
+    payload = _json.loads(path.read_text(encoding="utf-8"))
+    payload["bootstrapKey"] = "cdsg_stale_never-print"
+    path.write_text(_json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("CDS_PROJECT_KEY", "cdsp_existing_never-print")
+
+    calls: list = []
+    monkeypatch.setattr(cdscli, "_request", make_request(calls, issue_key=False))
+
+    code, output = run_command(["project", "create", "--name", "demo"])
+    assert code == 0, output
