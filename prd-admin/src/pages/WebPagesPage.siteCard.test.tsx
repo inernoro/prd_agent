@@ -74,8 +74,14 @@ describe('WebPagesPage SiteCard', () => {
     // 编辑/替换/二维码属于 hover 层：渲染了但不可点，hover 或键盘 focus 才展开
     expect(html).toContain('aria-label="编辑信息"');
     expect(html).toContain('pointer-events-none');
-    expect(html).toContain('group-hover:pointer-events-auto');
-    expect(html).toContain('group-focus-within:pointer-events-auto');
+    // 容器**不能**在 hover 时整条变可点：它以整条宽度盖住左下角的批量勾选框，
+    // 一旦接管指针，勾选框就看得见点不动（2026-08-25 实测，只有真实指针序列会红）。
+    // 可点的只能是里面的按钮，它们自带 pointer-events-auto。
+    expect(html).not.toContain('group-hover:pointer-events-auto');
+    expect(html).toContain('pointer-events-auto inline-flex');
+    // 键盘 focus 走同一条路：容器只负责显形（opacity/位移），可点性始终在按钮身上
+    expect(html).not.toContain('group-focus-within:pointer-events-auto');
+    expect(html).toContain('group-focus-within:opacity-100');
   });
 
   it('hover 层的每一项都必须在更多菜单里有等价入口（触屏与键盘可达）', () => {

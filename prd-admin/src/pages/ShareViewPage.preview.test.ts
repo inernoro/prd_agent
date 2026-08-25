@@ -47,14 +47,25 @@ describe('分享页预览接线', () => {
    * 表单里敲的字、PPT 翻到第几页全部清零。这条接线删掉之后没有任何单测会红（它藏在 effect
    * 的异步回调里），所以在这里按源码守住：ref 要存在，且必须在写 srcDoc 之前真的拦一道。
    */
-  it('遮罩让位之后到的原文要丢弃，不能当面把页面重载一次', () => {
+  it('直链已经在用户眼前跑起来之后，迟到的原文要丢弃，不能当面把页面重载一次', () => {
     expect(source).toContain('exposedDirectRef');
-    expect(source).toMatch(/if\s*\(\s*exposedDirectRef\.current\s*\)\s*return;/);
+    // 2026-08-25 收紧：光看「遮罩到点」不够。直链本身也可能是一片白
+    // （站点没有入口地址、或直链就是那条会白屏的路径），这时丢掉迟到的 srcDoc
+    // 等于把唯一能救场的那一份也扔了，用户永远盯着空白。
+    // 所以判据是两条并列：遮罩已让位 **且** 直链真的加载出了内容。
+    const guard = source.search(/if\s*\(\s*exposedDirectRef\.current\s*&&\s*directLoadedRef\.current\s*\)\s*return;/);
+    expect(guard, '丢弃判据必须同时要求「直链真的加载过」').toBeGreaterThan(-1);
     // 光记下来不用等于没接线：拦截必须出现在 setEmbeddedHtml 之前
-    const guard = source.search(/if\s*\(\s*exposedDirectRef\.current\s*\)\s*return;/);
     const apply = source.indexOf('setEmbeddedHtml({ siteUrl');
-    expect(guard).toBeGreaterThan(-1);
     expect(apply).toBeGreaterThan(guard);
+    // directLoadedRef 只能由「直链 + 有真实地址」的 onLoad 置真，about:blank 不算
+    expect(source).toMatch(/if\s*\(!iframeHtml\s*&&\s*site\.siteUrl\)\s*directLoadedRef\.current\s*=\s*true;/);
+  });
+
+  it('既没有原文也没有入口地址时，页面要说清为什么是空的，而不是摆一个空 iframe', () => {
+    // about:blank 的 iframe 在控制台一条错都没有，用户无从判断发生了什么
+    expect(source).toContain('!iframeHtml && !site.siteUrl');
+    expect(source).toContain('这个站点没有可加载的入口地址');
   });
 
   it('加载超时不产生「失败」文案——超时只是慢，不是坏', () => {
@@ -287,7 +298,14 @@ describe('hasFetchableHtml', () => {
     expect(hasFetchableHtml(html)).toBe(true);
   });
 
-  it.each(['pdf', 'video', 'markdown', 'PDF', 'audio'])('包装站一律不取正文：%s', (type) => {
+  // 2026-08-25 收紧：不再「一律不取」。Markdown 壳子就是服务端渲染好的完整正文，
+  // 它取得回来、也最适合 srcDoc；一刀切排除会让 MD 站永远走直链，那正是白屏那条路。
+  // 其余包装类型（含将来新增的）保持默认不取。
+  it('Markdown 包装站要取正文', () => {
+    expect(hasFetchableHtml({ ...html, wrappedAssetType: 'markdown' })).toBe(true);
+  });
+
+  it.each(['pdf', 'video', 'PDF', 'audio'])('壳子里没有正文的包装站不取：%s', (type) => {
     expect(hasFetchableHtml({ ...html, wrappedAssetType: type })).toBe(false);
   });
 

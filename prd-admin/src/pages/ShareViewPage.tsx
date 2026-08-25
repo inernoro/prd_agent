@@ -137,6 +137,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
   /** 遮罩的短窗口是否已到点。到点后不再遮挡底下的直链 iframe，见 PREVIEW_MASK_TIMEOUT_MS */
   const [previewMaskExpired, setPreviewMaskExpired] = useState(false);
+  /** 直链 iframe 是否**真的加载出了内容**（有真实 src 且 load 事件到过）。
+   *  丢弃迟到 srcDoc 的前提是「用户已经在用底下那一页」——如果底下那页压根没加载
+   *  （站点没有入口地址、或直链本身就白屏），丢掉迟到的 srcDoc 等于让用户一直盯着空白。 */
+  const directLoadedRef = useRef(false);
   /** 直链 iframe 是否已经露给用户看过（遮罩到点即为真）。异步回调读它，不读 state */
   const exposedDirectRef = useRef(false);
   /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
@@ -259,6 +263,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     // 同一个「到点了」要被两处读：渲染读 state，异步回调读 ref。
     // 回调闭包里的 state 是发起那一刻的旧值，永远看不到超时后的 true。
     exposedDirectRef.current = false;
+    directLoadedRef.current = false;
     const maskTimer = window.setTimeout(() => {
       if (!alive) return;
       exposedDirectRef.current = true;
@@ -277,7 +282,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           // 对浏览器就是换一个文档：滚动位置、表单里敲的字、PPT 翻到第几页全部清零。
           // 代理最慢可以拖到 20s 才回来，那时候用户早就在用这个页面了——
           // 「可能更好的预览」不值一次当面重载，迟到就直接丢弃。
-          if (exposedDirectRef.current) return;
+          // 两个条件都成立才丢：遮罩已让位**且**直链真的加载出了东西。
+          // 只判前者会在「直链本来就白屏」时把唯一能救场的 srcDoc 也丢掉。
+          if (exposedDirectRef.current && directLoadedRef.current) return;
           setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) });
           return;
         }
@@ -685,7 +692,31 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             // invalid sandbox flag." 并忽略它——写了两个月，deck 自带的全屏按钮一天没生效过。
             allow="fullscreen"
             allowFullScreen
+            onLoad={() => {
+              // 只有「直链 + 有真实地址」这一种组合才算「用户已经在看底下那一页」。
+              // srcDoc 分支与 about:blank（没有入口地址时的空 iframe）都不记账。
+              if (!iframeHtml && site.siteUrl) directLoadedRef.current = true;
+            }}
           />
+          {/* 既没有取回的正文、也没有入口地址 —— iframe 会停在 about:blank，
+              用户看到的就是标题栏下面一片白、控制台一条错都没有，无从判断发生了什么。
+              这种时候必须把「为什么是空的」说出来（no-rootless-tree / expectation-management）。 */}
+          {!iframeHtml && !site.siteUrl && (
+            <div style={{
+              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 8,
+              background: '#fff', color: '#475569', fontSize: 14, padding: 24, textAlign: 'center',
+            }}>
+              <div style={{ fontWeight: 600 }}>这个站点没有可加载的入口地址</div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.7, maxWidth: 460 }}>
+                它的托管地址是空的，浏览器没有东西可以打开。多半是上传中断或内容已被清理，
+                请让分享者重新上传一次。
+              </div>
+              <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, opacity: 0.65 }}>
+                站点 ID {site.id}
+              </div>
+            </div>
+          )}
           {/* 遮罩是为了避免「先闪直链、再跳 srcDoc」的跳变，但它不透明且全屏：代理慢或不可达时
               会把底下那个其实已经渲染好的直链页面白屏盖住整个 HTTP 超时。所以只挡一小会儿，
               到点让位——判据抽在 shouldMaskDirectPreview，守卫见 ShareViewPage.preview.test.ts。 */}
