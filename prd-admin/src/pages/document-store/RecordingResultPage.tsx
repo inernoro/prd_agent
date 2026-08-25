@@ -17,7 +17,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, MoreHorizontal } from 'lucide-react';
+import { ChevronLeft, MoreHorizontal } from 'lucide-react';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -79,7 +79,8 @@ export function RecordingResultShell({
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
           style={{ color: 'var(--text-primary)' }}
         >
-          <ArrowLeft size={20} />
+          {/* 稿面用的是细 chevron「‹」，不是实心箭头 */}
+          <ChevronLeft size={22} strokeWidth={1.75} />
         </button>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h1>

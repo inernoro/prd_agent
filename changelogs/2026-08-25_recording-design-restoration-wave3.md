@@ -23,3 +23,5 @@
 | fix | prd-admin | 波形振幅取中、加密到 72 条；三阶段进行中的圈与另两档同尺寸 |
 | fix | prd-admin | 对照台 R4 画板改接 onEnterResult，截图不再是降级文案 |
 | docs | prd-agent | 记账：处理中那屏主按钮之下保留播放器，是有意偏离稿面，1 分照扣 |
+| fix | prd-admin | 处理中不再重复摆结果页入口；「正在整理这段录音」提到稿面的 H1 层级 |
+| fix | prd-admin | 结果页返回图标改回稿面的细 chevron |

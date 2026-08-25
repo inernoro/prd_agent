@@ -187,7 +187,7 @@ export function TranscribeStatusCard({
 
   const timing = processing ? estimateRemainingSeconds(activeRun, now) : null;
   const chips = (noteEntryId && !inPlace) || subtitleEntryId || (noteEntryId && onRestyle)
-    || (onEnterResult && !inPlace);
+    || (onEnterResult && !inPlace && !processing);
 
   return (
     <div className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5" data-tour-id="doc-transcribe-hero">
@@ -195,7 +195,8 @@ export function TranscribeStatusCard({
         <>
           {/* 页面级标题：设计稿这一屏的 H1，不是卡内小标题 */}
           <div>
-            <h2 className="text-[20px] font-bold leading-tight text-token-primary">正在整理这段录音</h2>
+            {/* 稿面这句是超大号 H1，要和副标题、阶段标题拉开三级；20px 压不出这个层级 */}
+            <h2 className="text-[26px] font-bold leading-tight tracking-tight text-token-primary">正在整理这段录音</h2>
             {/* 「音频是否安全」+「你现在能做什么」两问合成一句，紧跟标题 */}
             <p className="mt-1 text-[12px] leading-relaxed text-token-muted">
               音频已经安全保存，你现在就可以播放。
@@ -379,7 +380,13 @@ export function TranscribeStatusCard({
             那一小段时间，光靠它的话，跑完之后这条链路就再也没有入口了
             （形状 2：入口只建在一条会消失的分支上）。
           */}
-          {onEnterResult && !inPlace && (
+          {/*
+            处理中不出现：那一档的底部主按钮本身就是「进入结果页并开始播放」，
+            这里再摆一颗同义的，主次就被摊平成两个说同一句话的按钮。
+            这颗常驻入口存在的理由是「转录跑完后主按钮那条分支会消失」，
+            所以它只该在非处理中出现。
+          */}
+          {onEnterResult && !inPlace && !processing && (
             <button
               onClick={onEnterResult}
               className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
