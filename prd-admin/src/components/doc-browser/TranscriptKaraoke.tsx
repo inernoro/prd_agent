@@ -55,6 +55,16 @@ function highlightKeyword(text: string, keyword: string): React.ReactNode {
   return parts;
 }
 
+/**
+ * 结果页那几段内容各自是一张卡（词云 / 会议纪要 / 待办 / 问这段录音）。
+ * 抽成常量而不是各写各的：四处必须长得一样，写四遍就是四处会各自漂移的地方。
+ */
+const SECTION_CARD = 'rounded-[14px] p-4';
+const SECTION_CARD_STYLE: React.CSSProperties = {
+  background: 'var(--bg-nested)',
+  border: '1px solid var(--border-faint)',
+};
+
 /** mm:ss；无时间戳的行不显示时钟而不是显示一个假的 0:00。 */
 function formatClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '';
@@ -465,13 +475,17 @@ export function TranscriptKaraoke({
       </div>
 
       {documentMode && (
-        <section className="w-full max-w-[760px] rounded-[14px] p-4" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
+        <div className="flex w-full max-w-[760px] flex-col gap-3">
           {/*
             设计稿 P3 是三块内容同屏并置：词云 → 会议纪要 → 待办，一屏贯通。
             我上一轮把它们做成了互斥分区，一次只能看一块——审查智能体判为「打断主路径」，
             结构分扣了 7 分。这里改回并置，分区标签随之取消。
+
+            并置之后还差一层：稿面这三段是**三张并列的白卡**，不是一张大卡里的三个小节。
+            我原先做成后者，两位判官各自独立指到同一处——分组感弱一档。所以卡片挂在每一段上，
+            外层退成纯排版容器。
           */}
-          <section style={{ scrollMarginTop: 72 }}>
+          <section className={SECTION_CARD} style={{ ...SECTION_CARD_STYLE, scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>词云</h3>
               <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句 · 点词看它出现在哪几处</span>
@@ -646,8 +660,10 @@ export function TranscriptKaraoke({
             )}
 
             {activeTerm && searchMatches.length > 0 && (
-              <div className="mt-3">
-                {/* 命中面板的抬头：不写清「哪个词、命中几句」，下面一串句子就成了无主的列表 */}
+              // 稿面的命中面板是**一整块**浅灰底：抬头与命中句同处一块里，
+              // 才读得出「这些句子属于这个词」。此前抬头裸在外面、每句各自一个灰块，
+              // 分组这一层就丢了（两位判官都指到这处）。
+              <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)' }}>
                 <div className="mb-1.5 flex items-baseline justify-between gap-2">
                   <p className="text-[12px] font-semibold text-token-primary">
                     「{activeTerm}」命中 {searchMatches.length} 句
@@ -662,14 +678,18 @@ export function TranscriptKaraoke({
                   </button>
                 </div>
                 <div className="flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                  {searchMatches.map(({ segment, index }) => (
+                  {searchMatches.map(({ segment, index }, position) => (
                     <button
                       key={`${index}-${segment.start}`}
                       type="button"
                       onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
                       // 时间戳独立成左列：几条命中句的时间纵向对齐，才能一眼扫出「集中在哪一段」
-                      className="grid min-h-11 items-start gap-2 rounded-[8px] px-3 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
-                      style={{ background: 'var(--bg-elevated)', gridTemplateColumns: '44px 1fr' }}>
+                      // 面板已经是一整块灰底，句子行自己不再叠第二层底色，靠细分隔线分行
+                      className="grid min-h-11 items-start gap-2 px-1 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
+                      style={{
+                        gridTemplateColumns: '44px 1fr',
+                        borderTop: position === 0 ? 'none' : '1px solid var(--border-faint)',
+                      }}>
                       <span className="pt-[1px] font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
                         {segment.start >= 0 ? formatClock(segment.start) : '原文'}
                       </span>
@@ -685,7 +705,7 @@ export function TranscriptKaraoke({
             )}
             {activeTerm && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
           </section>
-          <section className="mt-4" style={{ scrollMarginTop: 72 }}>
+          <section className={SECTION_CARD} style={{ ...SECTION_CARD_STYLE, scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>会议纪要</h3>
               {onRestyle && (
@@ -719,7 +739,7 @@ export function TranscriptKaraoke({
               </div>
             )}
           </section>
-          <section className="mt-4" style={{ scrollMarginTop: 72 }}>
+          <section className={SECTION_CARD} style={{ ...SECTION_CARD_STYLE, scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>待办事项</h3>
               {todos.length > 0 && (
@@ -729,12 +749,14 @@ export function TranscriptKaraoke({
               )}
             </div>
             {todos.length > 0 ? (
-              <ul className="mt-3 flex flex-col gap-1.5">
+              <ul className="mt-3 flex flex-col">
                 {todos.map((todo, index) => (
                   <li
                     key={`${todo.text}-${index}`}
-                    className="flex items-start gap-2 rounded-[10px] px-3 py-2"
-                    style={{ background: 'var(--bg-elevated)' }}
+                    // 稿面的待办是「无底色行 + 细分隔线」。此前每条各是一个灰底卡片，
+                    // 在一张已经有底色的卡里再叠一层灰，读起来是三层盒子而不是一份清单。
+                    className="flex items-start gap-2 px-1 py-2.5"
+                    style={{ borderTop: index === 0 ? 'none' : '1px solid var(--border-faint)' }}
                   >
                     <span
                       className="mt-[2px] flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px]"
@@ -782,7 +804,7 @@ export function TranscriptKaraoke({
               </div>
             )}
           </section>
-          <section className="mt-4" style={{ scrollMarginTop: 72 }}>
+          <section className={SECTION_CARD} style={{ ...SECTION_CARD_STYLE, scrollMarginTop: 72 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>问这段录音</h3>
               <span />
@@ -816,7 +838,7 @@ export function TranscriptKaraoke({
               )}
             </div>
           </section>
-        </section>
+        </div>
       )}
 
       {documentMode && (

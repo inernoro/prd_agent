@@ -12,18 +12,48 @@ import fs from 'node:fs';
 const OUT = process.env.OUT_DIR || '/tmp/claude-0/-home-user-prd-agent/e94f0ca4-fb88-51cb-95f1-831ce61d00ee/scratchpad/design-boards';
 fs.mkdirSync(OUT, { recursive: true });
 
+/**
+ * 设计稿是**可交互原型**：画板内容由它自带的 `support.js` 渲染，而那个运行时
+ * 开局就要 `window.React` / `window.ReactDOM`，原稿是从 unpkg 取的——沙箱打不通。
+ *
+ * 我先前的绕法是剥掉脚本截静态副本，代价是凡由数据驱动的画板全切成了
+ * 字面量 `{{ curTime }}`（B1 那块整个播放区都是），拿去判分等于拿废图当基准。
+ * 重写一套模板引擎更糟：那是在猜设计稿的语义。
+ *
+ * 正解是把**本地的** React UMD 喂给它自己的运行时，让设计稿按它自己的逻辑渲染。
+ * 于是这里改回加载带脚本的原稿，React 从 node_modules 注入。
+ */
 const PAGES = [
-  { file: 'static-delivery-v2.html', prefix: 'v2' },
-  { file: 'static-capture-and-result.html', prefix: 'cap' },
+  { file: 'delivery-v2.html', prefix: 'v2' },
+  { file: 'capture-and-result.html', prefix: 'cap' },
 ];
+
+const REACT_UMD = [
+  'prd-admin/node_modules/react/umd/react.production.min.js',
+  'prd-admin/node_modules/react-dom/umd/react-dom.production.min.js',
+].map((rel) => {
+  const path = `${process.env.REPO_ROOT || '/home/user/prd_agent'}/${rel}`;
+  if (!fs.existsSync(path)) throw new Error(`缺 React UMD：${path}（先在 prd-admin 装依赖）`);
+  return fs.readFileSync(path, 'utf8');
+});
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
 const manifest = [];
 
 for (const { file, prefix } of PAGES) {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1200 }, deviceScaleFactor: 2 });
+  // 必须赶在页面脚本之前落地，否则 support.js 先跑一步就抛「React is not available yet」
+  for (const source of REACT_UMD) await page.addInitScript({ content: source });
+  // 拦掉原稿里指向 unpkg 的那两个 script：网络打不通，networkidle 会白等到超时
+  await page.route('**://unpkg.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
   await page.goto(`http://localhost:8188/${file}`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2500);
+
+  // 判据不能是「脚本加载了没有」，要看**渲染结果**：还留着未解析的 {{ }} 就是没渲染成功。
+  // 这一条是形状 8 的防线——一块看着正常、实则整片是模板字面量的画板，
+  // 拿去判分会得到一个像模像样却毫无意义的分数。
+  const unresolved = await page.evaluate(() => (document.body.innerText.match(/\{\{[^}]*\}\}/g) || []).length);
+  if (unresolved > 0) throw new Error(`${file} 仍有 ${unresolved} 处未解析模板，运行时没跑起来，不能用来判分`);
 
   const boards = await page.evaluate(() => {
     // 标签行的特征：13px / 500 字重的短文本，紧跟着一个有圆角和固定宽度的盒子
@@ -34,23 +64,27 @@ for (const { file, prefix } of PAGES) {
     // 只认其中一种就会漏掉整整一节（v2 的 S1-S8、另一份的 S1-S12 共 20 张）。
     // 光靠字号会把画板**内部**的「09:41」状态栏也当成标签（它同样是 mono 12px）。
     // 设计稿自己给每块画板编了号（R1/P1/A1/B1/D1/S1…），按编号认最稳。
+    // 判据读**计算样式**，不读 style 属性的字面量。
+    // 手写的静态副本里是 `font-size:13px`，同一份稿由运行时渲染出来是 `font-size: 13px`
+    // ——冒号后多一个空格，字面量判据就整体翻转成 0 块（形状 1：语义相同、写法不同）。
+    // 计算样式是浏览器求值后的结果，两种写法在这里收敛成同一个值。
     const SHAPES = [
       {
-        match: (st, text) => /font-size:13px/.test(st) && /font-weight:500/.test(st)
+        match: (cs, text) => cs.fontSize === '13px' && cs.fontWeight === '500'
           && /^[A-Z]\d+\s*·/.test(text),
         minW: 200, minH: 200, kind: 'screen',
       },
       {
-        match: (st, text) => /JetBrains Mono/.test(st) && /font-size:12px/.test(st)
+        match: (cs, text) => /JetBrains Mono/.test(cs.fontFamily) && cs.fontSize === '12px'
           && /^S\d+\s/.test(text),
         minW: 200, minH: 40, kind: 'state',
       },
     ];
     document.querySelectorAll('div').forEach((el) => {
-      const style = el.getAttribute('style') || '';
       const label = (el.textContent || '').trim();
       if (!label || label.length > 40) return;
-      const shape = SHAPES.find((s) => s.match(style, label));
+      const cs = getComputedStyle(el);
+      const shape = SHAPES.find((s) => s.match(cs, label));
       if (!shape) return;
       const next = el.nextElementSibling;
       if (!(next instanceof HTMLElement)) return;
