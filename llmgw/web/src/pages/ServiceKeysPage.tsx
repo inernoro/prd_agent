@@ -296,10 +296,9 @@ export function ServiceKeysPage() {
   const effectiveAppCallerCodes = appCallerMode === 'generate' ? [generatedAppCallerCode] : splitValues(appCallerCodes);
   // 登记归属：优先密钥自己选的团队，其次当前身份唯一的团队，最后租户里第一个可用团队。
   // 三者都取不到就是「租户还没有团队」，提交时明确报出来，不静默失败。
-  const appCallerTeamId = teamId.trim()
-    || (tenant?.teamIds.length === 1 ? tenant.teamIds[0] : '')
-    || teams[0]?.id
-    || '';
+  // 先用当前身份自己的团队，再兜租户的第一个团队：Developer 只能给自己所在团队登记，
+  // 拿租户列表的第一个会被服务端以 TEAM_SCOPE_DENIED 挡回来。
+  const appCallerTeamId = teamId.trim() || tenant?.teamIds[0] || teams[0]?.id || '';
   const appCallerTeamName = teams.find((team) => team.id === appCallerTeamId)?.name || appCallerTeamId;
   const usesWildcard = sourceSystem.trim() === '*'
     || effectiveAppCallerCodes.includes('*')
