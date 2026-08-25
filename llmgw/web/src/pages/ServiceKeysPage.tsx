@@ -208,7 +208,8 @@ export function ServiceKeysPage() {
     setShowCreate(false);
     setName('');
     setClientCode('');
-    setAppCallerMode('generate');
+    // 复位回默认路径，但 MAP 身份没有自助登记这一档，留在「选择已有」。
+    setAppCallerMode(sourceIsMap ? 'existing' : 'generate');
     setAppCallerFeature('');
     setAppCallerCodes('');
     setTeamId('');
