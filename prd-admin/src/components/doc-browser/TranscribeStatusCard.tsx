@@ -140,6 +140,7 @@ export function TranscribeStatusCard({
   onStart,
   onOpenNote,
   onRestyle,
+  onEnterResult,
   onPlayRequest,
 }: {
   currentEntryId: string;
@@ -157,7 +158,16 @@ export function TranscribeStatusCard({
   onStart?: (styleKey?: string) => void;
   onOpenNote: (entryId: string) => void;
   onRestyle?: () => void;
-  /** 处理中那一屏的主操作：立刻播放已经保存好的音频 */
+  /**
+   * 处理中那一屏的主操作。设计稿画的是「进入结果页并开始播放」——它同时是这一屏
+   * 通往结果页的**唯一**入口，不是单纯的播放键。有结果页可去时传这个。
+   */
+  onEnterResult?: () => void;
+  /**
+   * 降级：宿主没有结果页可跳（分享只读页、周报页）时的就地播放。
+   * 两个入口分开而不是共用一个，是因为按钮文案必须和它真正做的事一致——
+   * 写「进入结果页」却只是就地播放，是最典型的意外。
+   */
   onPlayRequest?: () => void;
 }) {
   const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
@@ -174,7 +184,8 @@ export function TranscribeStatusCard({
   const waitingAutoRetry = Number.isFinite(retryAt) && retryAt > now;
 
   const timing = processing ? estimateRemainingSeconds(activeRun, now) : null;
-  const chips = (noteEntryId && !inPlace) || subtitleEntryId || (noteEntryId && onRestyle);
+  const chips = (noteEntryId && !inPlace) || subtitleEntryId || (noteEntryId && onRestyle)
+    || (onEnterResult && !inPlace);
 
   return (
     <div className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5" data-tour-id="doc-transcribe-hero">
@@ -261,14 +272,15 @@ export function TranscribeStatusCard({
           </p>
 
           {/* 底部主操作：这一屏必须有出口。整理还没完不妨碍现在就听 */}
-          {onPlayRequest && (
+          {(onEnterResult || onPlayRequest) && (
             <button
               type="button"
-              onClick={onPlayRequest}
+              onClick={onEnterResult ?? onPlayRequest}
               className="mt-1 flex min-h-12 w-full items-center justify-center gap-2 rounded-[12px] text-[13px] font-semibold"
               style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}
             >
-              <Play size={14} fill="currentColor" /> 立即播放这段录音
+              <Play size={14} fill="currentColor" />
+              {onEnterResult ? '进入结果页并开始播放' : '立即播放这段录音'}
             </button>
           )}
         </>
@@ -360,6 +372,22 @@ export function TranscribeStatusCard({
       {/* 已转录的历史产物入口：处理中也保留，用户可以边等边看上一版 */}
       {chips && (
         <div className="flex flex-wrap items-center gap-1.5">
+          {/*
+            已经转录完的录音同样要进得去结果页——处理中那一屏的主按钮只覆盖「正在跑」
+            那一小段时间，光靠它的话，跑完之后这条链路就再也没有入口了
+            （形状 2：入口只建在一条会消失的分支上）。
+          */}
+          {onEnterResult && !inPlace && (
+            <button
+              onClick={onEnterResult}
+              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
+              style={{
+                background: 'var(--button-primary-bg)',
+                color: 'var(--button-primary-fg)',
+              }}>
+              <Play size={11} fill="currentColor" /> 打开录音结果页 <ChevronRight size={11} />
+            </button>
+          )}
           {noteEntryId && !inPlace && (
             <button
               onClick={() => onOpenNote(noteEntryId)}

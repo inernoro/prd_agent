@@ -412,6 +412,14 @@ export type DocBrowserProps = {
   onQuickRecord?: () => void;
   /** 音频结果区「换个整理方式」：对已完成转录的音频免重跑 ASR 重新整理摘要 */
   onRestyleTranscribe?: (entryId: string) => void;
+  /**
+   * 打开这条录音的独立结果页并开始播放。
+   *
+   * 阅读器是共享组件，三处宿主（私人知识库 / 分享只读 / 周报）各自的路由语义不同，
+   * 所以它不认识路由——由知道路由的那个页面传进来。宿主不传就没有结果页可去，
+   * 处理中那一屏自动退回「就地播放」，按钮文案跟着变。
+   */
+  onOpenRecordingResult?: (audioEntryId: string) => void;
   /** 当前选中音频最近一次转录失败的说明；有值时结果区如实写明原因并把按钮改成重试 */
   transcribeFailure?: FailedTranscriptionNotice | null;
   /** 当前条目那条在途转录 run；有值时结果区顶部显示三阶段进度而不是手动入口 */
@@ -1615,6 +1623,7 @@ export function DocBrowser({
   onUploadAudio,
   onQuickRecord,
   onRestyleTranscribe,
+  onOpenRecordingResult,
   transcribeFailure,
   transcribeRun,
   onReprocess,
@@ -3946,6 +3955,9 @@ export function DocBrowser({
                     audioTitle={selectedEntryData.title}
                     audioSizeLabel={formatFileSizeLabel(selectedEntryData.fileSize)}
                     transcriptPreview={transcribeRun?.transcriptPreview}
+                    onEnterResult={onOpenRecordingResult
+                      ? () => onOpenRecordingResult(selectedEntryData.id)
+                      : undefined}
                     onPlayRequest={requestRecordingPlay}
                     onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}
                     onOpenNote={(noteId) => handleSelectEntry(noteId)}

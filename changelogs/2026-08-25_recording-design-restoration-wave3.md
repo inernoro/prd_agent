@@ -2,3 +2,6 @@
 | fix | prd-agent | 设计稿切图改用本地 React 驱动原稿自身运行时，修掉整批未解析模板的废基准 |
 | fix | prd-agent | 画板识别判据改读计算样式，不再因 style 字面量多一个空格整体失效 |
 | rule | prd-agent | 还原度判分豁免设备外框（系统状态栏 / home indicator），网页画不出也不该伪造 |
+| feat | prd-admin | 录音交付页新增独立全屏路由，带稿面顶部栏与作用域皮肤 |
+| feat | prd-admin | 处理中主操作改为「进入结果页并开始播放」，无结果页可去时退回就地播放 |
+| test | prd-admin | 补录音结果页四环接线守卫，任一环删掉即红 |

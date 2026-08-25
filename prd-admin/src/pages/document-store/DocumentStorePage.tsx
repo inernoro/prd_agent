@@ -2702,6 +2702,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               transcribeFlowOpenRef.current = true;
             }
           }}
+          onOpenRecordingResult={(audioEntryId) => {
+            // 设计稿这一下是「进入结果页并开始播放」：跳转与起播是同一个动作。
+            // play=1 交给结果页在挂载后发一次播放请求——起播必须发生在那一屏，
+            // 在这里先播会造成「声音已经在响、画面还在旧页」。
+            navigate(`/document-store/${storeId}/recording/${audioEntryId}?play=1`);
+          }}
           onRestyleTranscribe={(id) => {
             const entry = entries.find(e => e.id === id);
             if (!entry) return;
