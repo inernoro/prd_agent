@@ -14,44 +14,11 @@ export interface StatItem {
   label: string;
 }
 
-export interface FeatureItem {
-  id: string;
-  eyebrow: string;
-  title: string;
-  description: string;
-  bullets: string[];
-}
 
-export interface HowStep {
-  n: string;
-  title: string;
-  description: string;
-  demo: string;
-}
 
-export interface AgentItem {
-  id: string;
-  name: string;
-  description: string;
-}
 
-export interface PulseStat {
-  id: string;
-  label: string;
-  trend: string;
-}
 
-export interface LeaderboardRow {
-  id: string;
-  name: string;
-  delta: string;
-}
 
-export interface PlatformItem {
-  id: string;
-  name: string;
-  arch: string;
-}
 
 
 
@@ -197,12 +164,75 @@ export interface ScenesTranslation {
   };
 }
 
+/** 尾部四幕的一个 Agent 条目（名字与一句话都取自 toolboxStore 的真实注册表）。 */
+export interface RosterItem {
+  name: string;
+  desc: string;
+  /** ICON 注册表里的图标名 */
+  icon: string;
+  /** 未转正的标记（真实注册表里的 wip） */
+  preview?: boolean;
+}
+
+/**
+ * 尾部四幕：Agent 全家福 / 模型这一层 / 从这里开始 / 收口。
+ *
+ * 取代了原来的九幕（六段 Agent 深潜、工作流、片花、三步、Agent 网格、
+ * 兼容栈、社区脉搏、桌面下载）——那九幕是另一套语言：抽象色块、logo 墙、
+ * Coming soon 占位、硬编码假数据，和前四幕的「照真实面板画」接不上。
+ */
+export interface TailTranslation {
+  roster: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    searchPlaceholder: string;
+    /** 演到「搜一下」那一拍时，输入框里逐字打出来的词 */
+    searchWord: string;
+    emptyHint: string;
+    previewTag: string;
+    beats: string[];
+    groups: Array<{ label: string; items: RosterItem[] }>;
+    footer: string;
+  };
+  models: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    counts: Array<{ value: string; label: string }>;
+    poolLabel: string;
+    poolName: string;
+    columns: { model: string; upstream: string; health: string; latency: string };
+    members: Array<{ model: string; upstream: string; health: 'ok' | 'half' | 'down'; latency: string }>;
+    healthLabels: { ok: string; half: string; down: string };
+    fallback: string;
+    beats: string[];
+  };
+  start: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    steps: Array<{ title: string; desc: string }>;
+    surfaces: Array<{ name: string; desc: string; state: string }>;
+  };
+  closing: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    primary: string;
+    secondary: string;
+    footnote: string;
+  };
+}
+
 export interface TranslationShape {
   nav: {
     products: string;
     agents: string;
-    cinema: string;
-    community: string;
+    models: string;
     download: string;
     docs: string;
     login: string;
@@ -220,119 +250,13 @@ export interface TranslationShape {
   stats: StatItem[];
   /** 四幕「真实面板」场景（视觉创作 / 文学创作 / 知识库 / 三层一体） */
   scenes: ScenesTranslation;
-  features: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    learnMore: string;
-    chapterLabel: string;
-    items: FeatureItem[];
-  };
-  workflow: {
-    eyebrow: string;
-    title: string;
-    description: string;
-    chapterMarker: string;
-    canvasTitle: string;
-    runLabel: string;
-    nodes: Array<{ title: string; subtitle: string }>;
-    status: {
-      running: string;
-      elapsed: string;
-      eta: string;
-      trace: string;
-    };
-  };
-  cinema: {
-    eyebrow: string;
-    title: string;
-    tail: string;
-    caption: string;
-    comingSoon: string;
-  };
-  how: {
-    eyebrow: string;
-    title: string;
-    steps: HowStep[];
-  };
-  agents: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    dedicated: string;
-    assistant: string;
-    items: AgentItem[];
-  };
-  compat: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    footer: string;
-    action: string;
-  };
-  pulse: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    leaderboard: string;
-    stats: PulseStat[];
-    rows: LeaderboardRow[];
-  };
-  download: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    bullets: string[];
-    platforms: PlatformItem[];
-  };
-  cta: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    primary: string;
-    secondary: string;
-  };
+  /** 尾部四幕（Agent 全家福 / 模型这一层 / 从这里开始 / 收口） */
+  tail: TailTranslation;
   footer: {
     brand: string;
     github: string;
     backToTop: string;
     copyright: string;
-  };
-  /** FeatureDeepDive 内各 mockup 的示意文案 */
-  mockups: {
-    visual: {
-      header: string;
-      status: string;
-    };
-    literary: {
-      header: string;
-      progress: string;
-      added: string;
-      deleted: string;
-      diffView: string;
-    };
-    prd: {
-      header: string;
-      sections: Array<{ title: string; note?: string }>;
-    };
-    video: {
-      header: string;
-      status: string;
-    };
-    defect: {
-      header: string;
-      items: Array<{ sev: string; title: string }>;
-      assigned: string;
-      newThisWeek: string;
-      fixed: string;
-      fixRate: string;
-    };
-    report: {
-      header: string;
-      plan: string;
-      actual: string;
-      days: string[];
-    };
   };
 }
 
@@ -342,9 +266,8 @@ const zh: TranslationShape = {
   nav: {
     products: '产品',
     agents: 'Agent',
-    cinema: '片花',
-    community: '社区',
-    download: '下载',
+    models: '模型',
+    download: '开始',
     docs: '文档',
     login: '登录 / 注册',
   },
@@ -590,269 +513,122 @@ const zh: TranslationShape = {
       },
     },
   },
-  features: {
-    eyebrow: 'Core Capabilities',
-    title: '六个专业 Agent，\n一个工作台',
-    subtitle:
-      '每一个 Agent 都是一个独立的领域专家，在 MAP 里它们共享上下文、互相调用，像一个真正的团队。',
-    learnMore: '了解更多',
-    chapterLabel: 'CHAPTER',
-    items: [
-      {
-        id: 'visual',
-        eyebrow: 'VISUAL · 视觉设计师',
-        title: '从一句话到一组完整视觉',
-        description:
-          '文生图、图生图、多图组合、局部重绘、风格迁移。配合参考图池与水印预设，让品牌视觉在一次对话中成型。',
-        bullets: [
-          '文生图 / 图生图 / 多图组合',
-          '参考图池 + 风格迁移 + 局部重绘',
-          '可绑定水印配置，一键导出品牌成图',
-        ],
-      },
-      {
-        id: 'literary',
-        eyebrow: 'LITERARY · 文学创作者',
-        title: '让文字在工作台里流淌',
-        description:
-          '从命题写作、段落润色到自动配图，文学创作者把写作流程拆成可感知的阶段。每一次调整都能看到上一版的差异。',
-        bullets: [
-          '多风格命题写作与续写',
-          '按段润色 + 差异对比视图',
-          '自动为段落生成配图',
-        ],
-      },
-      {
-        id: 'prd',
-        eyebrow: 'PRD · 产品分析师',
-        title: '读懂 PRD 的第二双眼睛',
-        description:
-          '把 PRD 文档丢进来，PRD 分析师会识别需求缺口、回答产品问题、生成评审意见，在方案落地前就找到那些被忽略的角落。',
-        bullets: [
-          '需求缺口自动识别',
-          '对话式产品答疑',
-          '正式评审前的 AI 预审',
-        ],
-      },
-      {
-        id: 'video',
-        eyebrow: 'VIDEO · 视频创作者',
-        title: '文章直接生成分镜与预览',
-        description:
-          '上传一篇文章，视频创作者会拆出分镜脚本、逐帧预览图，甚至帮你拼好草稿时间线。适合教程、产品讲解、短视频场景。',
-        bullets: [
-          '文章 → 分镜脚本自动拆解',
-          '每一镜生成预览图',
-          '草稿时间线可以直接导入 Remotion',
-        ],
-      },
-      {
-        id: 'defect',
-        eyebrow: 'DEFECT · 缺陷管理员',
-        title: '让每一个 Bug 都能被看见',
-        description:
-          '从截图、录屏、用户反馈里自动提取关键信息，分类、指派、跟进。外部 Agent 还能接入，做复现 + 根因分析 + 修复报告。',
-        bullets: [
-          '截图 / 录屏自动提取信息',
-          '严重度分类 + 优先级指派',
-          '外部 Agent 复现 + 修复报告闭环',
-        ],
-      },
-      {
-        id: 'report',
-        eyebrow: 'REPORT · 周报管理员',
-        title: '周五不再凑字数',
-        description:
-          '从 Git 提交、任务流水、日报碎片自动汇总一份结构化周报，团队 Leader 还能用"计划 vs 实际"的比对视图审阅。',
-        bullets: [
-          '从 Git / 任务 / 日报自动合成',
-          '团队汇总 + 计划对比视图',
-          '一键导出 Markdown / PDF',
-        ],
-      },
-    ],
-  },
-  workflow: {
-    eyebrow: 'Workflow · 编排',
-    title: '把 Agent 串成一条工作流',
-    description:
-      '工作流引擎把重复的多步骤操作串成可视化节点图：一个触发器、多个 Agent 协作、条件分支、错误回退与定时调度，重复的流程变成一次配置终身受益。',
-    chapterMarker: '2.0 Orchestrate →',
-    canvasTitle: 'daily-content-pipeline.workflow',
-    runLabel: 'Run',
-    nodes: [
-      { title: '触发器', subtitle: '定时 · 每日 09:00' },
-      { title: 'PRD 分析师', subtitle: '读需求' },
-      { title: '视觉设计师', subtitle: '出海报' },
-      { title: '文学创作者', subtitle: '写文案' },
-      { title: '发布', subtitle: '多平台' },
-    ],
-    status: {
-      running: '执行中 · step 3 / 5',
-      elapsed: '已用时 · 00:12',
-      eta: '预计剩余 · 00:28',
-      trace: 'trace · wf-4e9ed6f',
+  tail: {
+    roster: {
+      eyebrow: '百宝箱 · 一个台面装下所有人',
+      title: '不是六个 Agent，是三十几个，都在同一个台面上',
+      description:
+        '这些不是宣传口径，是登录后百宝箱里真实在跑的条目。名字、一句话、图标都取自同一份注册表——加一个新 Agent，这里自动多一个。',
+      note: '带「预览」标的是还没通过完整验收的，摆在这里而不是藏起来：能用到什么程度就说到什么程度。',
+      searchPlaceholder: '想干什么就搜什么…',
+      searchWord: '配图',
+      emptyHint: '搜「配图」，跟配图相关的都浮上来',
+      previewTag: '预览',
+      beats: [
+        '三十几个 Agent，按干的活分四组',
+        '想干什么就搜什么',
+        '跟「配图」相关的浮上来，其余淡下去',
+        '选一个，直接开工',
+      ],
+      groups: [
+        {
+          label: '创作',
+          items: [
+            { name: '视觉创作智能体', desc: '文生图、图生图、多图组合，画布与对话同屏', icon: 'Palette' },
+            { name: '文学创作智能体', desc: '写作、润色，整篇读完按段落语义一次配图', icon: 'PenTool' },
+            { name: '视觉分镜台', desc: '一句话拆成电影分镜，关键帧实时生长、逐镜精修', icon: 'Clapperboard', preview: true },
+            { name: '视频创作智能体', desc: '文章转视频教程，AI 驱动分镜脚本与预览图', icon: 'Video' },
+          ],
+        },
+        {
+          label: '交付',
+          items: [
+            { name: '缺陷管理智能体', desc: '缺陷提交与跟踪，信息提取、分类、生成报告', icon: 'Bug' },
+            { name: 'PR 审查智能体', desc: '用你自己的 GitHub 账号审查任意有权访问的 PR', icon: 'GitPullRequest' },
+            { name: '前端搭档智能体', desc: '给后端同事用：接 API、写组件、修报错、看截图现象', icon: 'FolderKanban', preview: true },
+            { name: 'CDS Agent', desc: '远程跑 Claude Code / Codex 类沙箱任务，流式对话', icon: 'Terminal' },
+          ],
+        },
+        {
+          label: '沉淀',
+          items: [
+            { name: '知识库', desc: '划词就能让 AI 改一句话，确认才落库', icon: 'BookOpen' },
+            { name: '周报智能体', desc: '创建、提交、审阅，AI 生成、团队汇总、计划比对', icon: 'FileBarChart' },
+            { name: 'MD 转网页 PPT', desc: '粘一段 Markdown，出一份 reveal.js 网页演示', icon: 'FileText' },
+            { name: '转录工作台', desc: '多模型 ASR 转写、时间戳编辑、模板转文案', icon: 'AudioLines' },
+          ],
+        },
+        {
+          label: '协同',
+          items: [
+            { name: '项目管理', desc: '立项、看板、甘特图，AI 自动把需求拆成任务', icon: 'FolderKanban', preview: true },
+            { name: '产品管理', desc: '产品到缺陷全链路串联，版本化管理与分级追溯', icon: 'Blocks', preview: true },
+            { name: 'AI 竞技场智能体', desc: '多模型盲测对战，匿名 PK 后揭晓真实身份', icon: 'Swords' },
+            { name: '毒舌秘书', desc: '把模糊想法转成 MECE 执行清单', icon: 'PaSecretary', preview: true },
+          ],
+        },
+      ],
+      footer: '这里列了 16 个，注册表里还有十几个——搜索框比翻页快。',
     },
-  },
-  cinema: {
-    eyebrow: 'Signature · 一镜到底',
-    title: '看 AI 如何成为',
-    tail: ' 你的第二颗大脑',
-    caption: 'MAP · 产品片花',
-    comingSoon: 'Coming soon · 即将上线',
-  },
-  how: {
-    eyebrow: 'How It Works',
-    title: '三步，从想法到产物',
-    steps: [
-      {
-        n: '01',
-        title: '提出需求',
-        description:
-          '用自然语言描述你想做的事 —— 不用选模型，不用挑 Agent，直接说。',
-        demo: '帮我生成一张"未来科技城市"的海报',
-      },
-      {
-        n: '02',
-        title: 'Agent 自动选型',
-        description:
-          'MAP 会根据意图路由到最合适的 Agent + 模型组合，必要时多个 Agent 协作。',
-        demo: '→ 视觉设计师 · GPT-image-1 · 16:9',
-      },
-      {
-        n: '03',
-        title: '流式输出',
-        description:
-          '实时看到思考过程、中间产物、进度，随时可以打断、分支、继续。',
-        demo: '生成中 · 2 / 4 已完成 · 预计 12s',
-      },
-    ],
-  },
-  agents: {
-    eyebrow: 'The Roster',
-    title: '十五位 Agent，\n随时可以派工',
-    subtitle:
-      '11 位深度定制 + 4 位通用对话助手。每一位都能独立上岗，也能被别的 Agent 调用。',
-    dedicated: 'Dedicated',
-    assistant: 'Assistant',
-    items: [
-      { id: 'visual', name: '视觉创作智能体', description: '文生图 · 图生图 · 多图组合 · 局部重绘' },
-      { id: 'literary', name: '文学创作智能体', description: '命题写作 · 段落润色 · 自动配图' },
-      { id: 'prd', name: 'PRD 解读智能体', description: '需求缺口识别 · 对话答疑 · AI 预审' },
-      { id: 'video', name: '视频创作智能体', description: '文章 → 分镜 → 预览 → 时间线' },
-      { id: 'defect', name: '缺陷管理智能体', description: '信息提取 · 严重度分类 · 修复闭环' },
-      { id: 'report', name: '周报智能体', description: 'Git 合成 · 计划对比 · 团队汇总' },
-      { id: 'arena', name: 'AI 竞技场智能体', description: '多模型盲测 PK · 揭晓真实身份' },
-      { id: 'workflow', name: '工作流引擎', description: '可视化编排 · 多步骤串联' },
-      { id: 'shortcuts', name: '快捷指令', description: '一键执行 · 自定义 · 可分享' },
-      { id: 'review', name: '产品评审智能体', description: '方案多维度打分 · 问题清单' },
-      { id: 'transcript', name: '转录工作台', description: '多模型 ASR · 时间戳编辑 · 转文案' },
-      { id: 'code-review', name: '代码审查员', description: '代码质量审查 · Bug · 性能' },
-      { id: 'translator', name: '多语言翻译', description: '专业级翻译 · 中英日韩' },
-      { id: 'summarizer', name: '内容摘要师', description: '长文本要点提取 · 关键数据' },
-      { id: 'data-analyst', name: '数据分析师', description: '趋势分析 · 图表建议 · 洞察' },
-    ],
-  },
-  compat: {
-    eyebrow: 'Compatible With',
-    title: '一套配置，\n连接你用过的所有大模型',
-    subtitle:
-      '通过统一的 ILlmGateway 接入 12 家主流平台，按任务类型动态路由，支持健康度监控、配额管理、失败回退。',
-    footer: '以及任何兼容 OpenAI 接口规范的自建 / 第三方服务',
-    action: '打开模型网关控制台',
-  },
-  pulse: {
-    eyebrow: 'Live · Pulse',
-    title: '整个平台，\n此时此刻在做什么',
-    subtitle: '实时数据脉搏 + 本周 Agent 使用排行。参与越多，你的 Agent 越聪明。',
-    leaderboard: 'Weekly Leaderboard',
-    stats: [
-      { id: 'active', label: 'ACTIVE AGENTS', trend: 'all online' },
-      { id: 'convos', label: 'CONVERSATIONS · 24H', trend: '+18% ↑' },
-      { id: 'tokens', label: 'TOKENS PROCESSED', trend: 'p95 · 62ms' },
-      { id: 'media', label: 'MEDIA GENERATED', trend: 'last 7d' },
-    ],
-    rows: [
-      { id: 'visual', name: '视觉设计师', delta: '+32%' },
-      { id: 'prd', name: 'PRD 分析师', delta: '+14%' },
-      { id: 'literary', name: '文学创作者', delta: '+8%' },
-      { id: 'defect', name: '缺陷管理员', delta: '+22%' },
-      { id: 'report', name: '周报管理员', delta: '+5%' },
-    ],
-  },
-  download: {
-    eyebrow: 'Desktop Client',
-    title: '把整个 Agent 平台\n带到你的桌面',
-    subtitle:
-      '基于 Tauri 2.0 的原生桌面客户端，系统托盘常驻、快捷键唤醒、离线缓存、全局剪贴板注入。和 Web 端共享同一套账号体系。',
-    bullets: [
-      '系统托盘常驻 · 快捷键 Cmd+Shift+M 唤醒',
-      '自动更新 · Tauri updater 签名校验',
-      '所有平台共 134 MB · 零 Node runtime',
-    ],
-    platforms: [
-      { id: 'macos', name: 'macOS', arch: 'Apple Silicon · Intel' },
-      { id: 'windows', name: 'Windows', arch: 'x64 · ARM64' },
-      { id: 'linux', name: 'Linux', arch: 'AppImage · .deb' },
-    ],
-  },
-  cta: {
-    eyebrow: 'Ready Player One',
-    title: '现在，轮到你了。',
-    subtitle: '十五位 Agent 已经就位。你的第一个任务是什么？',
-    primary: '进入 MAP',
-    secondary: '联系我们',
+    models: {
+      eyebrow: 'LLMGW · 模型这一层',
+      title: '一套配置连上所有模型，坏了自动换下一个',
+      description:
+        '不是一排 logo。真实的样子是模型池：谁能用哪个模型、按任务怎么选、某一个挂了换谁接上——这一层在网关里，业务代码看不见。',
+      note: '池内成员换人由网关决定，跨池代选默认禁止；单个成员坏了只更新它自己的健康，不会把整个目录清空。',
+      counts: [
+        { value: '3', label: '接入平台' },
+        { value: '17', label: '可调用模型' },
+        { value: '6', label: '模型池' },
+      ],
+      poolLabel: '当前模型池',
+      poolName: 'chat-default',
+      columns: { model: '成员', upstream: '上游', health: '健康', latency: '首字延迟' },
+      members: [
+        { model: 'Claude 4.6', upstream: 'OpenRouter', health: 'ok', latency: '0.9s' },
+        { model: 'GPT-5', upstream: 'OpenAI', health: 'ok', latency: '1.2s' },
+        { model: 'DeepSeek V3', upstream: '硅基流动', health: 'half', latency: '2.4s' },
+        { model: 'Qwen 3', upstream: '阿里云', health: 'ok', latency: '1.1s' },
+        { model: 'Kimi K2', upstream: 'Moonshot', health: 'down', latency: '1.4s' },
+      ],
+      healthLabels: { ok: '正常', half: '半开', down: '隔离' },
+      fallback: 'Kimi K2 已隔离 · 这一池的请求自动落到 Claude 4.6，调用方无感',
+      beats: [
+        '一池五个成员，各自的上游与延迟摆在这儿',
+        'DeepSeek V3 转半开 · 用受限的真实请求探它，不发合成探测',
+        'Kimi K2 隔离 · 请求自动落到下一个，调用方无感',
+      ],
+    },
+    start: {
+      eyebrow: '从这里开始',
+      title: '登录，挑一个，说一句话',
+      description: '没有安装、没有配置向导、不用先建项目。三步之内你会拿到第一个产物。',
+      note: '桌面端与移动端和网页版是同一套账号、同一份数据，换个地方接着干。',
+      steps: [
+        { title: '登录', desc: '一个账号进整个台面，权限跟着角色走' },
+        { title: '挑一个 Agent', desc: '不知道挑哪个就搜你要干的事' },
+        { title: '说一句话', desc: '产物落在画布或文档里，不是聊天记录里' },
+      ],
+      surfaces: [
+        { name: '网页', desc: '打开就用，主力形态', state: '可用' },
+        { name: '桌面端', desc: 'Tauri 打包，本地文件直连', state: '可用' },
+        { name: '移动端', desc: '看进度、审阅、回一句', state: '可用' },
+      ],
+    },
+    closing: {
+      eyebrow: '轮到你了',
+      title: '先挑一个 Agent，干成一件小事',
+      description: '不用整套流程都跑一遍。挑一个离你今天工作最近的，让它替你做完一件事——好不好用，一次就知道。',
+      primary: '进入 MAP',
+      secondary: '看看有哪些 Agent',
+      footnote: '需要私有部署或想聊聊怎么接进你们的流程，也可以直接找我们。',
+    },
   },
   footer: {
     brand: '米多智能体生态平台',
     github: 'GitHub',
     backToTop: '回到顶部',
     copyright: '© 2026 MAP',
-  },
-  mockups: {
-    visual: {
-      header: 'visual-agent · 4 张候选',
-      status: '生成中 · 2 / 4 已完成',
-    },
-    literary: {
-      header: 'literary-agent · 润色中',
-      progress: '段 3 / 7',
-      added: '+ 12 字',
-      deleted: '删除 3 字',
-      diffView: '差异视图',
-    },
-    prd: {
-      header: 'prd-agent · v3.0 需求分析',
-      sections: [
-        { title: '§ 用户故事' },
-        { title: '§ 核心流程', note: '缺少异常分支' },
-        { title: '§ 数据模型' },
-        { title: '§ 权限矩阵', note: '未定义角色边界' },
-        { title: '§ 测试用例', note: '缺少失败场景' },
-      ],
-    },
-    video: {
-      header: 'video-agent · 6 分镜',
-      status: '渲染中 · 72%',
-    },
-    defect: {
-      header: 'defect-agent · 3 个待处理',
-      items: [
-        { sev: 'P0', title: '对话消息在刷新后丢失' },
-        { sev: 'P1', title: '图像生成超时未释放' },
-        { sev: 'P2', title: '深色模式下描边消失' },
-      ],
-      assigned: '已分派',
-      newThisWeek: '本周新增 · 27',
-      fixed: '已修复 · 19',
-      fixRate: '修复率 · 70%',
-    },
-    report: {
-      header: 'report-agent · W15',
-      plan: '计划',
-      actual: '实际',
-      days: ['周一', '周二', '周三', '周四', '周五'],
-    },
   },
 };
 
@@ -862,9 +638,8 @@ const en: TranslationShape = {
   nav: {
     products: 'Product',
     agents: 'Agents',
-    cinema: 'Showcase',
-    community: 'Community',
-    download: 'Download',
+    models: 'Models',
+    download: 'Start',
     docs: 'Docs',
     login: 'Sign In',
   },
@@ -1110,270 +885,122 @@ const en: TranslationShape = {
       },
     },
   },
-  features: {
-    eyebrow: 'Core Capabilities',
-    title: 'Six specialized Agents,\none workbench.',
-    subtitle:
-      'Each Agent is an independent domain expert. Inside MAP they share context and call each other, like a real team.',
-    learnMore: 'Learn more',
-    chapterLabel: 'CHAPTER',
-    items: [
-      {
-        id: 'visual',
-        eyebrow: 'VISUAL · Visual Designer',
-        title: 'From one sentence to a full visual set',
-        description:
-          'Text-to-image, image-to-image, compositions, inpainting, style transfer. Paired with reference pools and watermark presets — shape a brand look in a single conversation.',
-        bullets: [
-          'Text-to-image / image-to-image / compositions',
-          'Reference pool + style transfer + inpainting',
-          'Bind watermark presets, export branded output in one click',
-        ],
-      },
-      {
-        id: 'literary',
-        eyebrow: 'LITERARY · Writing Studio',
-        title: 'Make text flow through the workbench',
-        description:
-          'From prompted writing to paragraph polishing to auto-illustration, the Writing Agent breaks the drafting loop into perceivable stages. Every revision shows a diff from the last.',
-        bullets: [
-          'Multi-style prompted writing and continuation',
-          'Per-paragraph polish + side-by-side diff view',
-          'Auto-generate artwork for each paragraph',
-        ],
-      },
-      {
-        id: 'prd',
-        eyebrow: 'PRD · Spec Analyst',
-        title: 'A second pair of eyes for your spec',
-        description:
-          'Drop a PRD in. The Spec Agent finds requirement gaps, answers product questions, drafts review notes — catching the corners that always get skipped before ship time.',
-        bullets: [
-          'Automatic gap detection',
-          'Conversational product Q&A',
-          'AI pre-review before the stakeholder meeting',
-        ],
-      },
-      {
-        id: 'video',
-        eyebrow: 'VIDEO · Video Studio',
-        title: 'Article → storyboard → preview in one pass',
-        description:
-          'Upload an article. The Video Agent splits it into shots, renders a preview frame per shot, and assembles a draft timeline ready for teaching, product walkthroughs, and shorts.',
-        bullets: [
-          'Article → shot list auto-decomposition',
-          'Preview frame generated per shot',
-          'Draft timeline exports straight to Remotion',
-        ],
-      },
-      {
-        id: 'defect',
-        eyebrow: 'DEFECT · Defect Manager',
-        title: 'Every bug, seen and triaged',
-        description:
-          'Pull signals out of screenshots, screen recordings, and user feedback. Classify, assign, follow up. External Agents can even reproduce, diagnose, and write the fix report.',
-        bullets: [
-          'Auto-extract info from screenshots / recordings',
-          'Severity classification + owner assignment',
-          'External Agent repro + fix-report closed loop',
-        ],
-      },
-      {
-        id: 'report',
-        eyebrow: 'REPORT · Weekly Report',
-        title: 'No more Friday word-padding',
-        description:
-          'Auto-compose a structured weekly report from Git commits, task activity, and daily notes. Leaders get a plan-vs-actual review view with a click.',
-        bullets: [
-          'Synthesize from Git / tasks / daily notes',
-          'Team roll-up + plan-vs-actual comparison',
-          'One-click export to Markdown / PDF',
-        ],
-      },
-    ],
-  },
-  workflow: {
-    eyebrow: 'Workflow · Orchestration',
-    title: 'Chain Agents into a workflow',
-    description:
-      'The Workflow Engine turns repeated multi-step operations into a visual node graph: one trigger, multiple Agents collaborating, conditional branches, error fallbacks, and scheduled runs. Configure once, benefit forever.',
-    chapterMarker: '2.0 Orchestrate →',
-    canvasTitle: 'daily-content-pipeline.workflow',
-    runLabel: 'Run',
-    nodes: [
-      { title: 'Trigger', subtitle: 'Scheduled · 09:00 daily' },
-      { title: 'Spec Analyst', subtitle: 'reads spec' },
-      { title: 'Visual Designer', subtitle: 'makes poster' },
-      { title: 'Writing Studio', subtitle: 'drafts copy' },
-      { title: 'Publish', subtitle: 'multi-channel' },
-    ],
-    status: {
-      running: 'Running · step 3 / 5',
-      elapsed: 'Elapsed · 00:12',
-      eta: 'ETA · 00:28',
-      trace: 'trace · wf-4e9ed6f',
+  tail: {
+    roster: {
+      eyebrow: 'Toolbox · one desk holds all of them',
+      title: 'Not six agents. Thirty-odd, all on the same desk',
+      description:
+        'These are not marketing copy — they are the entries actually running in the toolbox after you log in. Names, one-liners and icons all come from the same registry: add an agent and one more appears here.',
+      note: 'The ones tagged Preview have not passed full acceptance yet. They sit here rather than being hidden: we say exactly how far each one goes.',
+      searchPlaceholder: 'Search for whatever you need to do…',
+      searchWord: 'illustrate',
+      emptyHint: 'Search "illustrate" and everything related floats up',
+      previewTag: 'Preview',
+      beats: [
+        'Thirty-odd agents, grouped by the work they do',
+        'Search for whatever you need to do',
+        'Anything about illustration floats up; the rest fades back',
+        'Pick one and start',
+      ],
+      groups: [
+        {
+          label: 'Create',
+          items: [
+            { name: 'Visual agent', desc: 'Text-to-image, image-to-image, composites — canvas and chat on one screen', icon: 'Palette' },
+            { name: 'Writing agent', desc: 'Draft and polish, then illustrate every paragraph by meaning', icon: 'PenTool' },
+            { name: 'Storyboard bench', desc: 'One sentence becomes film shots; keyframes grow live, refined shot by shot', icon: 'Clapperboard', preview: true },
+            { name: 'Video agent', desc: 'Turns an article into a tutorial video with AI-driven shots and previews', icon: 'Video' },
+          ],
+        },
+        {
+          label: 'Deliver',
+          items: [
+            { name: 'Defect agent', desc: 'File and track defects, with extraction, triage and generated reports', icon: 'Bug' },
+            { name: 'PR review agent', desc: 'Reviews any PR you can access, using your own GitHub account', icon: 'GitPullRequest' },
+            { name: 'Frontend partner', desc: 'For backend folks: wire APIs, write components, fix errors, read screenshots', icon: 'FolderKanban', preview: true },
+            { name: 'CDS agent', desc: 'Runs Claude Code / Codex sandbox tasks remotely, streaming', icon: 'Terminal' },
+          ],
+        },
+        {
+          label: 'Retain',
+          items: [
+            { name: 'Knowledge base', desc: 'Select a sentence and let AI rewrite it; saved only on confirm', icon: 'BookOpen' },
+            { name: 'Weekly report agent', desc: 'Create, submit, review — AI drafts, the team rolls up, plans compare', icon: 'FileBarChart' },
+            { name: 'Markdown to slides', desc: 'Paste Markdown, get a reveal.js deck', icon: 'FileText' },
+            { name: 'Transcription bench', desc: 'Multi-model ASR, timestamp editing, templates into copy', icon: 'AudioLines' },
+          ],
+        },
+        {
+          label: 'Coordinate',
+          items: [
+            { name: 'Project management', desc: 'Kickoff, boards, Gantt — AI breaks requirements into tasks', icon: 'FolderKanban', preview: true },
+            { name: 'Product management', desc: 'Product to defect end to end, versioned and traceable by tier', icon: 'Blocks', preview: true },
+            { name: 'AI arena', desc: 'Blind multi-model duels; identities revealed after the vote', icon: 'Swords' },
+            { name: 'Blunt secretary', desc: 'Turns a vague idea into a MECE action list', icon: 'PaSecretary', preview: true },
+          ],
+        },
+      ],
+      footer: 'Sixteen shown here; the registry holds a dozen more — search beats paging.',
     },
-  },
-  cinema: {
-    eyebrow: 'Signature · One Take',
-    title: 'See how AI becomes',
-    tail: ' your second brain',
-    caption: 'MAP · Trailer',
-    comingSoon: 'Coming soon',
-  },
-  how: {
-    eyebrow: 'How It Works',
-    title: 'Three steps, from idea to artifact',
-    steps: [
-      {
-        n: '01',
-        title: 'Describe',
-        description:
-          'Say what you want in plain language. No model picking, no Agent picking — just talk.',
-        demo: 'Make me a "future city" poster',
-      },
-      {
-        n: '02',
-        title: 'Agent picks itself',
-        description:
-          'MAP routes intent to the best Agent + model combination. Multiple Agents collaborate when needed.',
-        demo: '→ Visual Designer · GPT-image-1 · 16:9',
-      },
-      {
-        n: '03',
-        title: 'Streaming output',
-        description:
-          'Watch thinking, interim artifacts, and progress live. Interrupt, branch, or resume at any moment.',
-        demo: 'Generating · 2 / 4 done · ETA 12s',
-      },
-    ],
-  },
-  agents: {
-    eyebrow: 'The Roster',
-    title: 'Fifteen Agents,\nready on demand',
-    subtitle:
-      '11 dedicated domain experts + 4 general assistants. Each can operate solo or be invoked by another.',
-    dedicated: 'Dedicated',
-    assistant: 'Assistant',
-    items: [
-      { id: 'visual', name: 'Visual Designer', description: 'T2I · I2I · compositions · inpainting' },
-      { id: 'literary', name: 'Writing Studio', description: 'Prompted writing · polish · auto-illustration' },
-      { id: 'prd', name: 'Spec Analyst', description: 'Gap detection · Q&A · AI pre-review' },
-      { id: 'video', name: 'Video Studio', description: 'Article → storyboard → preview → timeline' },
-      { id: 'defect', name: 'Defect Manager', description: 'Signal extraction · triage · fix loop' },
-      { id: 'report', name: 'Weekly Report', description: 'Git synthesis · plan-vs-actual · team roll-up' },
-      { id: 'arena', name: 'AI Arena', description: 'Blind multi-model duels · reveal after' },
-      { id: 'workflow', name: 'Workflow Engine', description: 'Visual orchestration · multi-step chains' },
-      { id: 'shortcuts', name: 'Shortcuts', description: 'One-tap ops · custom · shareable' },
-      { id: 'review', name: 'Plan Reviewer', description: 'Multi-axis scoring · issue checklist' },
-      { id: 'transcript', name: 'Transcript Studio', description: 'Multi-model ASR · timestamp edit · templating' },
-      { id: 'code-review', name: 'Code Reviewer', description: 'Quality audit · bugs · performance' },
-      { id: 'translator', name: 'Translator', description: 'Pro CN/EN/JA/KO translation' },
-      { id: 'summarizer', name: 'Summarizer', description: 'Long-text key points · data extract' },
-      { id: 'data-analyst', name: 'Data Analyst', description: 'Trends · chart advice · insights' },
-    ],
-  },
-  compat: {
-    eyebrow: 'Compatible With',
-    title: 'One config,\nall the LLMs you have ever used',
-    subtitle:
-      'Through a unified ILlmGateway, MAP connects 12 major platforms with task-type routing, health monitoring, quota management, and automatic fallback.',
-    footer: 'Plus any OpenAI-compatible self-hosted or third-party service',
-    action: 'Open LLM Gateway Console',
-  },
-  pulse: {
-    eyebrow: 'Live · Pulse',
-    title: 'The platform,\nat this very moment',
-    subtitle:
-      'Live data pulse + weekly Agent usage leaderboard. The more you use them, the smarter they get.',
-    leaderboard: 'Weekly Leaderboard',
-    stats: [
-      { id: 'active', label: 'ACTIVE AGENTS', trend: 'all online' },
-      { id: 'convos', label: 'CONVERSATIONS · 24H', trend: '+18% ↑' },
-      { id: 'tokens', label: 'TOKENS PROCESSED', trend: 'p95 · 62ms' },
-      { id: 'media', label: 'MEDIA GENERATED', trend: 'last 7d' },
-    ],
-    rows: [
-      { id: 'visual', name: 'Visual Designer', delta: '+32%' },
-      { id: 'prd', name: 'Spec Analyst', delta: '+14%' },
-      { id: 'literary', name: 'Writing Studio', delta: '+8%' },
-      { id: 'defect', name: 'Defect Manager', delta: '+22%' },
-      { id: 'report', name: 'Weekly Report', delta: '+5%' },
-    ],
-  },
-  download: {
-    eyebrow: 'Desktop Client',
-    title: 'Bring the whole platform\nto your desktop',
-    subtitle:
-      'Native desktop client built on Tauri 2.0. System tray, keyboard wake, offline cache, global clipboard injection. Shares the same account with the Web app.',
-    bullets: [
-      'Tray-resident · Cmd+Shift+M to summon',
-      'Auto-update · Tauri signed updater',
-      '134 MB total across platforms · zero Node runtime',
-    ],
-    platforms: [
-      { id: 'macos', name: 'macOS', arch: 'Apple Silicon · Intel' },
-      { id: 'windows', name: 'Windows', arch: 'x64 · ARM64' },
-      { id: 'linux', name: 'Linux', arch: 'AppImage · .deb' },
-    ],
-  },
-  cta: {
-    eyebrow: 'Ready Player One',
-    title: "Now it's your turn.",
-    subtitle: 'Fifteen Agents are standing by. What is your first task?',
-    primary: 'Enter MAP',
-    secondary: 'Contact us',
+    models: {
+      eyebrow: 'LLMGW · the model layer',
+      title: 'One config reaches every model, and failover is automatic',
+      description:
+        'Not a row of logos. The real shape is a model pool: who may use which model, how one is picked per task, and who takes over when one breaks — that layer lives in the gateway, invisible to product code.',
+      note: 'Swapping members inside a pool is the gateway’s call; picking across pools is off by default. One member failing updates only its own health — it never wipes the catalogue.',
+      counts: [
+        { value: '3', label: 'Providers' },
+        { value: '17', label: 'Callable models' },
+        { value: '6', label: 'Pools' },
+      ],
+      poolLabel: 'Current pool',
+      poolName: 'chat-default',
+      columns: { model: 'Member', upstream: 'Upstream', health: 'Health', latency: 'First byte' },
+      members: [
+        { model: 'Claude 4.6', upstream: 'OpenRouter', health: 'ok', latency: '0.9s' },
+        { model: 'GPT-5', upstream: 'OpenAI', health: 'ok', latency: '1.2s' },
+        { model: 'DeepSeek V3', upstream: 'SiliconFlow', health: 'half', latency: '2.4s' },
+        { model: 'Qwen 3', upstream: 'Aliyun', health: 'ok', latency: '1.1s' },
+        { model: 'Kimi K2', upstream: 'Moonshot', health: 'down', latency: '1.4s' },
+      ],
+      healthLabels: { ok: 'Healthy', half: 'Half-open', down: 'Isolated' },
+      fallback: 'Kimi K2 isolated · this pool now falls to Claude 4.6, and callers never notice',
+      beats: [
+        'Five members in one pool, each with its upstream and latency',
+        'DeepSeek V3 goes half-open · probed with real, limited traffic — never synthetic calls',
+        'Kimi K2 isolated · requests fall to the next member, callers never notice',
+      ],
+    },
+    start: {
+      eyebrow: 'Start here',
+      title: 'Log in, pick one, say a sentence',
+      description: 'No install, no setup wizard, no project to create first. You will have your first artifact within three steps.',
+      note: 'Desktop and mobile share the same account and the same data as the web — pick up where you left off.',
+      steps: [
+        { title: 'Log in', desc: 'One account for the whole desk; permissions follow your role' },
+        { title: 'Pick an agent', desc: 'Not sure which? Search for the thing you need done' },
+        { title: 'Say a sentence', desc: 'The artifact lands on a canvas or in a document, not in a chat log' },
+      ],
+      surfaces: [
+        { name: 'Web', desc: 'Open and go — the primary surface', state: 'Available' },
+        { name: 'Desktop', desc: 'Packaged with Tauri, direct access to local files', state: 'Available' },
+        { name: 'Mobile', desc: 'Check progress, review, reply in a line', state: 'Available' },
+      ],
+    },
+    closing: {
+      eyebrow: 'Your turn',
+      title: 'Pick one agent and finish one small thing',
+      description: 'You do not need to run the whole pipeline. Pick whichever agent sits closest to today’s work and let it finish one thing — one round tells you whether this is for you.',
+      primary: 'Enter MAP',
+      secondary: 'See the agents',
+      footnote: 'Want it self-hosted, or want to talk about fitting it into your workflow? Just reach out.',
+    },
   },
   footer: {
     brand: 'Midoo Agentic Platform',
     github: 'GitHub',
     backToTop: 'Back to top',
     copyright: '© 2026 MAP',
-  },
-  mockups: {
-    visual: {
-      header: 'visual-agent · 4 candidates',
-      status: 'Generating · 2 / 4 done',
-    },
-    literary: {
-      header: 'literary-agent · polishing',
-      progress: 'Para 3 / 7',
-      added: '+12 chars',
-      deleted: '-3 chars',
-      diffView: 'Diff view',
-    },
-    prd: {
-      header: 'prd-agent · v3.0 spec analysis',
-      sections: [
-        { title: '§ User Stories' },
-        { title: '§ Core Flow', note: 'Missing edge cases' },
-        { title: '§ Data Model' },
-        { title: '§ Permission Matrix', note: 'Undefined role boundaries' },
-        { title: '§ Test Cases', note: 'Missing failure scenarios' },
-      ],
-    },
-    video: {
-      header: 'video-agent · 6 shots',
-      status: 'Rendering · 72%',
-    },
-    defect: {
-      header: 'defect-agent · 3 open',
-      items: [
-        { sev: 'P0', title: 'Messages lost on refresh' },
-        { sev: 'P1', title: 'Image gen timeout unreleased' },
-        { sev: 'P2', title: 'Strokes disappear in dark mode' },
-      ],
-      assigned: 'Assigned',
-      newThisWeek: 'New this week · 27',
-      fixed: 'Fixed · 19',
-      fixRate: 'Fix rate · 70%',
-    },
-    report: {
-      header: 'report-agent · W15',
-      plan: 'Plan',
-      actual: 'Actual',
-      days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-    },
   },
 };
 
