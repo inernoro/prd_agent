@@ -82,7 +82,9 @@ function nearestScrollParent(el: HTMLElement): HTMLElement | null {
 /** mm:ss；无时间戳的行不显示时钟而不是显示一个假的 0:00。 */
 function formatClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '';
-  return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+  // 分钟也补两位：稿面全场是 09:58 / 09:20 / 09:41，原文列表左侧那一列靠它对齐；
+  // 写成 9:58 就会和 10:12 参差，扫读节奏没了。
+  return `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 }
 
 export function buildRecordingQuestionPrompt(noteMd: string, question: string): string {
@@ -392,7 +394,7 @@ export function TranscriptKaraoke({
   if (segments.length === 0) return <AudioWavePlayer src={src} />;
 
   return (
-    <div className="flex w-full flex-col items-center gap-4">
+    <div className="relative flex w-full flex-col items-center gap-4">
       {documentMode && (
         // 「录音」这个分区标题去掉了：顶栏已经写明这一屏是什么，稿面也没有它；
         // 留着的代价是它和下方白底播放区之间空出一大块灰，正是判官记的「播放区顶部留白」。
@@ -407,14 +409,19 @@ export function TranscriptKaraoke({
         想跳播只能先滚回顶部——这也是那一屏「只剩一个播放器和一堆留白」的原因之一。
         只在同文档模式吸顶：另一种形态本身就是固定高度的滚轮，不存在滚走的问题。
       */}
-      {documentMode && <div ref={collapseSentinelRef} aria-hidden style={{ height: 1, width: '100%' }} />}
+      {/*
+        哨兵绝对定位：它在流内会白占一个 gap-4（16px），和外层 pt-3 一起在顶栏与波形之间
+        堆出一条什么都不承载的空带。绝对定位后它仍在根容器顶端那个位置，
+        IntersectionObserver 与 scrollIntoView 都照常工作。
+      */}
+      {documentMode && <div ref={collapseSentinelRef} aria-hidden style={{ position: 'absolute', top: 0, height: 1, width: '100%' }} />}
       {/*
         稿面 B1 靠**两种底色**把播放区与原文区切开：播放区通铺白、原文区浅灰。
         我原先两区同底色，分层只剩标题文字承担——两位判官都记了这一处。
         白底同时让当前句卡那块浅灰重新看得见（此前两者几乎同色，卡片形同没有）。
       */}
       <div
-        className={documentMode ? 'sticky top-0 z-10 -mx-4 flex w-[calc(100%+2rem)] flex-col items-center gap-2 px-4 pb-3 pt-1' : 'contents'}
+        className={documentMode ? 'sticky top-0 z-10 -mx-4 -mt-3 flex w-[calc(100%+2rem)] flex-col items-center gap-2 px-4 pb-3 pt-3' : 'contents'}
         style={documentMode ? { background: 'var(--bg-card)', borderBottom: '1px solid var(--border-faint)' } : undefined}
       >
         {/* 折叠态：56px 一条，只留播放键与当前句；展开态是完整波形播放器 */}

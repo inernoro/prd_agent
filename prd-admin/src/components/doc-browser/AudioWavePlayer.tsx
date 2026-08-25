@@ -41,7 +41,8 @@ function formatTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return '0:00';
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  // 分钟补两位，与转录列表的时间戳同一口径（稿面全场 09:58 / 24:18）
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
 /**
@@ -66,7 +67,8 @@ function seededBars(src: string, n: number): number[] {
   return out;
 }
 
-const BAR_COUNT = 48;
+// 稿面波形是一排细密竖条（约 60 根）；条数减半就会变粗，节奏跟着变钝
+const BAR_COUNT = 64;
 
 export function AudioWavePlayer({
   src,
@@ -315,9 +317,10 @@ export function AudioWavePlayer({
           // 稿面的倍速是全圆角药丸，不是方角小块
           className="min-h-11 min-w-11 cursor-pointer rounded-full px-3 py-1 text-[11px] transition-all motion-reduce:transition-none"
           style={{
-            background: 'var(--bg-elevated)',
+            // 稿面的倍速药丸是白底描边，不是浅灰无边框
+            background: 'var(--bg-card)',
             color: 'var(--text-secondary)',
-            border: '1px solid var(--border-faint)',
+            border: '1px solid var(--border-subtle)',
             fontFamily: 'ui-monospace, monospace',
           }}
           title="点击切换倍速"
