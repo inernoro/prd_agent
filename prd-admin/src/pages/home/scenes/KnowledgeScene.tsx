@@ -1,5 +1,6 @@
-import { SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
+import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import { SCENE, SCENE_HUE, galaxyBackdrop, inkTone } from './sceneTokens';
+import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
 
 /**
@@ -24,16 +25,17 @@ const FILE_ICON = 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14
 
 /** 左栏条目的结构（文案在 i18n，形状在这里）。 */
 const TREE_SHAPE = [
-  { folder: true, indent: 0, badges: [] as string[] },
-  { folder: false, indent: 1, badges: ['tag', 'shared'], active: true },
-  { folder: false, indent: 1, badges: ['tag'] },
-  { folder: false, indent: 1, badges: [] as string[], fresh: true },
-  { folder: true, indent: 0, badges: [] as string[] },
-  { folder: false, indent: 1, badges: ['pass'] },
-  { folder: false, indent: 1, badges: ['redo'] },
-  { folder: true, indent: 0, badges: [] as string[] },
-  { folder: false, indent: 1, badges: ['tag'] },
+  { at: 0, folder: true, indent: 0, badges: [] as string[] },
+  { at: 1, folder: false, indent: 1, badges: ['tag', 'shared'], active: true },
+  { at: 2, folder: false, indent: 1, badges: [] as string[], fresh: true },
+  { at: 4, folder: true, indent: 0, badges: [] as string[] },
+  { at: 5, folder: false, indent: 1, badges: ['pass'] },
+  { at: 6, folder: false, indent: 1, badges: ['redo'] },
 ] as const;
+
+/** 每一拍停多久（ms）。 */
+const HOLDS = [1500, 1200, 900, 1300, 2300, 2000];
+const B = { reading: 0, selecting: 1, popover: 2, tapped: 3, streaming: 4, replaced: 5 } as const;
 
 const BADGE_TONE: Record<string, { bg: string; fg: string }> = {
   shared: { bg: inkTone(176).soft, fg: inkTone(176).bright },
@@ -91,7 +93,7 @@ const ARCS = [
 ];
 
 /** 星场：确定性伪随机（不用 Math.random，这一屏每次必须长一样）。 */
-const STARS = Array.from({ length: 56 }, (_, i) => {
+const STARS = Array.from({ length: 34 }, (_, i) => {
   const a = Math.sin(i * 12.9898) * 43758.5453;
   const b = Math.sin(i * 78.233) * 12345.6789;
   const c = Math.sin(i * 39.425) * 24634.6345;
@@ -104,12 +106,11 @@ const STARS = Array.from({ length: 56 }, (_, i) => {
   };
 });
 
+/** 阅读头只留三个主操作，其余收进「更多」——五个平铺在这么窄的中栏里就是噪音。 */
 const READER_TOOL_ICONS = [
   'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
   'M12 3l1.9 4.4L18 9l-4.1 1.6L12 15l-1.9-4.4L6 9l4.1-1.6z',
   'M21 15l-5-5L5 21M3 5h18v14H3z',
-  'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8M16 6l-4-4-4 4M12 2v14',
-  'M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
 ];
 
 const SELECTION_ICONS = [
@@ -121,6 +122,7 @@ const SELECTION_ICONS = [
 export function KnowledgeScene() {
   const { t } = useLanguage();
   const s = t.scenes.knowledge;
+  const { beat, ref, visible } = useSceneTimeline(HOLDS);
 
   return (
     <SceneFrame
@@ -133,7 +135,7 @@ export function KnowledgeScene() {
       panelStyle={{ background: SCENE.base }}
     >
       {/* ── 三栏阅读器 ── */}
-      <div className="relative flex" style={{ height: 'clamp(460px, 58vh, 620px)' }}>
+      <div ref={ref} className="relative flex" style={{ height: 'clamp(460px, 58vh, 620px)' }}>
         {/* 左：文件树 */}
         <div
           className="hidden md:flex flex-col shrink-0 relative"
@@ -185,6 +187,7 @@ export function KnowledgeScene() {
                     borderRadius: '8px',
                     background: active ? olive.soft : 'transparent',
                     border: `1px solid ${active ? olive.border : 'transparent'}`,
+                    ...enterAt(beat, 0, { rise: 6, delay: i * 70 }),
                   }}
                 >
                   <SceneIcon
@@ -281,8 +284,8 @@ export function KnowledgeScene() {
             className="flex items-center gap-1 overflow-x-auto"
             style={{ padding: '11px 20px 10px', borderBottom: `1px solid ${SCENE.hair}` }}
           >
-            {s.readerTools.map((label, i) => {
-              const on = i === 0;
+            {s.readerTools.slice(0, 3).map((label, i) => {
+              const on = beat >= B.tapped ? i === 1 : i === 0;
               return (
                 <span
                   key={label}
@@ -302,6 +305,16 @@ export function KnowledgeScene() {
                 </span>
               );
             })}
+            <span
+              className="flex items-center gap-1.5 shrink-0"
+              style={{
+                height: '27px', padding: '0 9px', borderRadius: '7px', fontSize: '11.5px',
+                background: SCENE.ghost, border: `1px solid ${SCENE.edge}`, color: SCENE.inkDim,
+              }}
+            >
+              <SceneIcon d="M12 5v.01M12 12v.01M12 19v.01" size={12} />
+              {s.more}
+            </span>
           </div>
 
           {/* 阅读进度条 */}
@@ -323,31 +336,43 @@ export function KnowledgeScene() {
             <p style={{ marginBottom: '18px' }}>{s.doc.p1}</p>
             <p style={{ marginBottom: '18px' }}>
               {s.doc.p2before}
+              {/* 选区高亮划词那一拍才亮；最后一拍整句换成改写后的文本——
+                  「替换原文」不能只是浮层里点一下，正文得真的变 */}
               <span
                 style={{
-                  background: `hsla(${SCENE_HUE.olive}, 54%, 58%, 0.26)`,
+                  background: beat >= B.selecting && beat < B.replaced ? `hsla(${SCENE_HUE.olive}, 54%, 58%, 0.26)` : 'transparent',
                   borderRadius: '3px',
                   padding: '1px 2px',
-                  boxShadow: `0 0 0 1px ${olive.border}`,
+                  boxShadow: beat >= B.selecting && beat < B.replaced ? `0 0 0 1px ${olive.border}` : 'none',
+                  color: beat >= B.replaced ? SCENE.ink : 'inherit',
+                  transition: 'background .45s ease, box-shadow .45s ease, color .45s ease',
                 }}
               >
-                {s.doc.selected}
+                {beat >= B.replaced ? s.rewrite.after : s.doc.selected}
               </span>
               {s.doc.p2after}
             </p>
 
-            {/* 改写浮层浮在这段空档上，不压住正文 */}
-            <div style={{ height: '186px' }} />
+            {/* 浮层出场时才给它腾地方，收起就还回去——常驻一个 186px 的空档
+                正是这一幕之前显得又密又挤的一半原因 */}
+            <div
+              style={{
+                height: beat >= B.popover && beat < B.replaced ? '196px' : '0px',
+                transition: 'height .5s cubic-bezier(.19,1,.22,1)',
+              }}
+            />
 
             <p style={{ marginBottom: '18px' }}>{s.doc.p3}</p>
             <p className="hidden lg:block" style={{ marginBottom: '18px' }}>
               {s.doc.p4}
             </p>
 
-            {/* 划词浮层：真实是 h-8 三动作，浮在选区上方 */}
+            {/* 划词浮层：真实是 h-8 三动作，浮在选区上方。只在「浮层出现 → 点了改写」两拍在场 */}
             <div
               className="absolute flex items-center"
               style={{
+                ...enterAt(beat, B.popover, { rise: 6 }),
+                ...(beat > B.tapped ? { opacity: 0, pointerEvents: 'none' as const } : null),
                 left: '20px',
                 top: '48px',
                 height: '32px',
@@ -373,6 +398,10 @@ export function KnowledgeScene() {
                       fontSize: '11px',
                       fontWeight: 500,
                       color: olive.bright,
+                      // 被点中的那一项按下去一下，让人看清「点的是哪个」
+                      background: beat >= B.tapped && i === 1 ? olive.soft : 'transparent',
+                      transform: beat >= B.tapped && i === 1 ? 'scale(0.95)' : 'scale(1)',
+                      transition: 'background .25s ease, transform .25s ease',
                     }}
                   >
                     <SceneIcon d={SELECTION_ICONS[i]} size={13} strokeWidth={1.9} />
@@ -382,10 +411,12 @@ export function KnowledgeScene() {
               ))}
             </div>
 
-            {/* AI 改写浮层：流式 + diff 预览 + 替换/插入 */}
+            {/* AI 改写浮层：流式 + diff 预览 + 替换/插入。点了才来，替换完就走 */}
             <div
               className="absolute"
               style={{
+                ...enterAt(beat, B.tapped, { rise: 8 }),
+                ...(beat >= B.replaced ? { opacity: 0, pointerEvents: 'none' as const } : null),
                 left: '20px',
                 right: '20px',
                 top: '100px',
@@ -441,7 +472,7 @@ export function KnowledgeScene() {
                     color: SCENE.ink,
                   }}
                 >
-                  {s.rewrite.after}
+                  {beat >= B.streaming ? s.rewrite.after : ''}
                   <span
                     className="inline-block map-scene-anim"
                     style={{
@@ -542,7 +573,8 @@ export function KnowledgeScene() {
               height: `${star.size}px`,
               background: SCENE.captionFg,
               opacity: star.opacity,
-              animation: `mapSceneTwinkle ${star.duration.toFixed(2)}s ease-in-out infinite`,
+              // 只在这一幕进视口时闪：滚开还在跑就是白烧帧
+              animation: visible ? `mapSceneTwinkle ${star.duration.toFixed(2)}s ease-in-out infinite` : undefined,
             }}
           />
         ))}
@@ -636,6 +668,8 @@ export function KnowledgeScene() {
           </SceneMono>
         </div>
       </div>
+
+      <BeatNarration beats={s.beats} beat={beat} hue={SCENE_HUE.olive} />
     </SceneFrame>
   );
 }

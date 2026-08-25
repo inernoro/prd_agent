@@ -1,26 +1,48 @@
-import { useState, type CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { useIsMobile } from '@/hooks/useBreakpoint';
-import { SceneIcon, SceneMono } from './SceneFrame';
+import { BeatNarration, SceneIcon, SceneMono } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
+import { enterAt, useSceneTimeline, useTypewriter } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
 
 /**
  * VisualCanvasStage —— 第一屏的视觉创作工作台（照 `pages/ai-chat/AdvancedVisualAgentTab.tsx` 复刻）。
  *
- * 真实结构（这一版之前画错过一次，是照着 import 列表凭空想的，重画时读了真实 return）：
- *   · 画布**铺满整块**，没有全宽顶栏；
- *   · 左边是竖向浮动工具条（胶囊，选择 / 上传 / 形状 / 文字 / 生成器 / 手绘 / 删除）；
- *   · 右边是 420px 的浮动对话面板，贴右贴顶、撑满高度；
- *   · 顶部居中只有一个缩放胶囊。
+ * 真实结构：画布铺满整块；左边竖向浮动工具条；右边 420px 浮动对话面板贴右贴顶撑满；
+ * 顶部居中只有一个缩放胶囊——没有全宽顶栏。
  *
- * 可交互：点画布上任意一张图，选中环与动作条（ImageQuickActionBar）跟着移到那张上方。
- * 这不是装饰——真实产品里选中图才会浮出动作条，这一屏要让人看懂这件事。
+ * 这一版最要紧的改动：**它开始时是空的，演给你看**。
+ * 滚到这里才起拍：打字 → 发送 → 思考 → 回话 → 渲染 → 落回画布 → 再出一张 →
+ * 选中 → 选第二张做混合计算 → 混合结果落地。
+ * 之前是「已经做完的样子」，看不出这些图是怎么来的，也就看不出这个产品在干什么。
+ *
+ * 顺带一个性能收益：扫光只在「渲染中」那一拍存在，不再是常驻的无限循环。
  */
 
 const clay = inkTone(SCENE_HUE.clay);
 const steel = inkTone(SCENE_HUE.steel);
 const pine = inkTone(SCENE_HUE.pine);
 const amber = inkTone(SCENE_HUE.amber);
+const olive = inkTone(SCENE_HUE.olive);
+
+/** 节拍表。索引即拍号，值是这一拍停多久（ms）。 */
+const HOLDS = [
+  1000, // 0 空画布
+  1700, // 1 打字
+  700,  // 2 发送
+  1100, // 3 思考
+  1500, // 4 回话
+  2300, // 5 渲染中
+  1500, // 6 落回画布
+  1700, // 7 再出一张
+  1500, // 8 选中
+  2100, // 9 混合计算中
+  1800, // 10 混合结果落地
+];
+const B = {
+  idle: 0, typing: 1, sent: 2, thinking: 3, replying: 4,
+  rendering: 5, landed: 6, warm: 7, selected: 8, mixing: 9, mixed: 10,
+} as const;
 
 /** 左侧竖向工具条：选择 / 上传图片 / 形状 / 文字 / 图像生成器 / 手绘板 / 删除 */
 const TOOL_PATHS = [
@@ -41,37 +63,48 @@ const ACTION_PATHS = [
   'M12 2l9 5-9 5-9-5zM3 12l9 5 9-5M3 17l9 5 9-5',
   'M12 3v12m0 0l4-4m-4 4l-4-4M4 19h16',
 ];
+const MIX_PATH = 'M9 3a6 6 0 1 0 0 12A6 6 0 0 0 9 3M15 9a6 6 0 1 0 0 12 6 6 0 0 0 0-12';
+
+interface TileSpec {
+  id: 'a' | 'c' | 'b' | 'mix';
+  hue: number;
+  at: number;          // 第几拍出现
+  fog: boolean;
+  wide: CSSProperties; // 宽屏位置
+  narrow: CSSProperties;
+}
 
 /**
- * 三张图在画布上的位置（相对「画布可用区」的百分比，随宽度自适应）。
- *
- * 手机上不是把桌面这套等比缩小——那样画布下半屏是空的、动作条又和缩放胶囊打架。
- * 窄屏另排一套：图铺开占满，动作条落到画布底部横滑，第二张生成卡与生成器元素退场。
+ * 画布上的图。位置是相对「画布可用区」的百分比，随宽度自适应。
+ * 手机上不是把桌面这套等比缩小——那样下半屏是空的、动作条又和缩放胶囊打架，另排一套。
  */
-const TILES_WIDE = [
-  { id: 'a', hue: SCENE_HUE.steel, left: 8, top: 10, width: 34, fog: false },
-  { id: 'b', hue: SCENE_HUE.clay, left: 46, top: 17, width: 26, fog: false },
-  { id: 'c', hue: SCENE_HUE.pine, left: 14, top: 50, width: 29, fog: true },
-] as const;
-
-const TILES_NARROW = [
-  { id: 'a', hue: SCENE_HUE.steel, left: 5, top: 9, width: 45, fog: false },
-  { id: 'b', hue: SCENE_HUE.clay, left: 55, top: 22, width: 38, fog: false },
-  { id: 'c', hue: SCENE_HUE.pine, left: 9, top: 48, width: 42, fog: true },
-] as const;
-
-type TileId = (typeof TILES_WIDE)[number]['id'];
+const TILES: TileSpec[] = [
+  { id: 'a', hue: SCENE_HUE.steel, at: B.idle, fog: false,
+    wide: { left: '7%', top: '11%', width: '33%' }, narrow: { left: '5%', top: '9%', width: '43%' } },
+  { id: 'c', hue: SCENE_HUE.pine, at: B.landed, fog: true,
+    wide: { left: '13%', top: '52%', width: '28%' }, narrow: { left: '8%', top: '48%', width: '40%' } },
+  { id: 'b', hue: SCENE_HUE.clay, at: B.warm, fog: false,
+    wide: { left: '45%', top: '18%', width: '25%' }, narrow: { left: '54%', top: '20%', width: '38%' } },
+  { id: 'mix', hue: SCENE_HUE.olive, at: B.mixed, fog: false,
+    wide: { left: '46%', top: '54%', width: '27%' }, narrow: { left: '54%', top: '52%', width: '38%' } },
+];
 
 export function VisualCanvasStage() {
   const { t } = useLanguage();
   const s = t.scenes.visual;
   const isMobile = useIsMobile();
-  const tiles = isMobile ? TILES_NARROW : TILES_WIDE;
-  const [picked, setPicked] = useState<TileId>('a');
-  const active = tiles.find((tile) => tile.id === picked) ?? tiles[0];
+  const { beat, ref } = useSceneTimeline(HOLDS);
+  const typed = useTypewriter(s.chat.user, beat === B.typing, 1500);
+
+  /** 这一拍谁被选中：先选雾天，混合时雾天 + 暖调两张都亮 */
+  const isPicked = (id: TileSpec['id']) =>
+    (beat >= B.selected && id === 'c') || (beat >= B.mixing && beat < B.mixed && id === 'b');
+
+  const barAnchor = TILES[1]; // 动作条永远挂在「雾天版本」那张上
+  const showBar = beat >= B.selected;
 
   return (
-    <div className="w-full">
+    <div className="w-full" ref={ref}>
       <div
         className="relative w-full overflow-hidden rounded-2xl"
         style={{
@@ -83,34 +116,30 @@ export function VisualCanvasStage() {
           boxShadow: SCENE.liftLg,
         }}
       >
-        {/* 品类渗光 */}
         <div
           className="absolute inset-0 pointer-events-none"
           style={{ background: `radial-gradient(360px 190px at 5% 0%, ${clay.faint} 0%, transparent 100%)` }}
         />
 
-        {/* ── 画布可用区：宽屏时给右侧对话面板让出 432px ── */}
+        {/* ── 画布可用区：宽屏时给右侧对话面板让出 444px ── */}
         <div className="absolute inset-0 lg:right-[444px]">
-          {tiles.map((tile) => {
-            const on = tile.id === picked;
+          {TILES.map((tile) => {
+            const on = beat >= tile.at;
+            const picked = isPicked(tile.id);
             const tone = inkTone(tile.hue);
             return (
-              <button
+              <div
                 key={tile.id}
-                type="button"
-                onClick={() => setPicked(tile.id)}
-                aria-pressed={on}
-                aria-label={s.tiles[tile.id]}
-                className="absolute overflow-hidden rounded-[10px] transition-shadow duration-200"
+                className="absolute overflow-hidden rounded-[10px]"
                 style={{
-                  left: `${tile.left}%`,
-                  top: `${tile.top}%`,
-                  width: `${tile.width}%`,
+                  ...(isMobile ? tile.narrow : tile.wide),
                   aspectRatio: '3 / 2',
-                  border: `1px solid ${on ? tone.solid : SCENE.line}`,
-                  boxShadow: on ? `0 0 0 1px ${tone.solid}` : 'none',
-                  cursor: 'pointer',
-                  padding: 0,
+                  border: `1px solid ${picked ? tone.solid : SCENE.line}`,
+                  boxShadow: picked ? `0 0 0 1px ${tone.solid}, 0 0 26px ${tone.faint}` : 'none',
+                  opacity: on ? 1 : 0,
+                  // 图是「落」下来的，不是「淡」出来的：产物落位要有重量
+                  animation: on ? 'mapSceneLand .62s cubic-bezier(.19,1,.22,1) both' : undefined,
+                  transition: 'border-color .4s ease, box-shadow .4s ease',
                 }}
               >
                 <CanvasArt id={tile.id} hue={tile.hue} fog={tile.fog} />
@@ -125,23 +154,25 @@ export function VisualCanvasStage() {
                 >
                   {s.tiles[tile.id]}
                 </span>
-              </button>
+              </div>
             );
           })}
 
-          {/* 生成中占位卡 —— GenSweepLoader 形态，就落在画布上（等待期主视觉是产物本身在长） */}
-          <GenTile
-            style={isMobile ? { left: '56%', top: '52%', width: '38%' } : { left: '75%', top: '10%', width: '24%' }}
-            label={s.genRunning.label}
-            status={s.genRunning.status}
-            percent={70}
-            tone={steel}
-          />
-          {/* 超预计态：转琥珀「即将完成」，进度封顶 95%——不假装精确后卡死 */}
-          {!isMobile && (
+          {/* 渲染中的占位卡：只在那一拍存在。产物就在它自己的位置上长出来，
+              下一拍原地换成成品——而不是「转圈转完，图从别处飞进来」 */}
+          {beat === B.rendering && (
             <GenTile
-              style={{ left: '46%', top: '52%', width: '28%' }}
-              label={s.genOvertime.label}
+              style={isMobile ? TILES[1].narrow : TILES[1].wide}
+              label={s.genRunning.label}
+              status={s.genRunning.status}
+              percent={70}
+              tone={steel}
+            />
+          )}
+          {beat === B.mixing && (
+            <GenTile
+              style={isMobile ? TILES[3].narrow : TILES[3].wide}
+              label={s.mixAction}
               status={s.genOvertime.status}
               percent={95}
               tone={amber}
@@ -151,14 +182,13 @@ export function VisualCanvasStage() {
 
           {/* 图像生成器：画布上的一个元素，不是一个弹窗 */}
           <div
-            className="absolute hidden sm:flex flex-col justify-center gap-2 rounded-[10px]"
+            className="absolute hidden xl:flex flex-col justify-center gap-2 rounded-[10px]"
             style={{
-              left: '75%',
-              top: '56%',
-              width: '24%',
+              left: '75%', top: '13%', width: '23%',
               padding: '15px',
               border: `1px dashed ${SCENE.edgeStrong}`,
               background: SCENE.faintFill,
+              ...enterAt(beat, B.idle),
             }}
           >
             <SceneMono className="flex items-center gap-2" style={{ letterSpacing: '0.18em', textTransform: 'uppercase' }}>
@@ -168,72 +198,78 @@ export function VisualCanvasStage() {
             <span style={{ fontSize: '12px', color: SCENE.inkMid, lineHeight: 1.7 }}>{s.generator.body}</span>
           </div>
 
-          {/*
-           * 动作条：ImageQuickActionBar，跟着选中项走。
-           *
-           * 定位挂在一个和选中图同尺寸的隐形框上（同样的 left/top/width + 3:2），
-           * 于是「贴着这张图的上沿 / 下沿」可以用 100% 表达，不必知道像素高度。
-           * 靠画布顶部的两张图把动作条放到图**下方**：放上方会和顶部居中的缩放胶囊
-           * 撞在一起——真实产品里画布很高不会撞，这里画布被压扁了才暴露出来。
-           */}
+          {/* 动作条：ImageQuickActionBar。挂在与选中图同尺寸的隐形框上，
+              于是「贴着这张图的下沿」可以用 100% 表达，不必知道像素高度。
+              放下方是因为这张图靠上，放上方会撞到顶部居中的缩放胶囊。 */}
           <div
-            className="absolute pointer-events-none transition-all duration-300 ease-out"
+            className="absolute pointer-events-none"
             style={
               isMobile
                 ? { left: '8px', right: '8px', bottom: '10px' }
-                : { left: `${active.left}%`, top: `${active.top}%`, width: `${active.width}%`, aspectRatio: '3 / 2' }
+                : { ...barAnchor.wide, aspectRatio: '3 / 2' }
             }
           >
-          <div
-            className="absolute flex items-center z-[4] pointer-events-auto"
-            style={{
-              ...(isMobile
-                ? { left: 0, right: 0, bottom: 0 }
-                : active.top < 30
-                  ? { left: 0, top: 'calc(100% + 8px)' }
-                  : { left: 0, bottom: 'calc(100% + 8px)' }),
-              // 上限按「这张图右边还剩多少画布」折算成自身宽度的百分比：
-              // 直接写死一个倍数，窄的那张图会把动作条截断（第一版 132% 就切掉了「AI 分层 / 下载」）。
-              maxWidth: isMobile ? '100%' : `${Math.round(((100 - active.left) / active.width) * 100)}%`,
-              overflowX: 'auto',
-              gap: '2px',
-              padding: '4px',
-              background: SCENE.overlay,
-              border: `1px solid ${SCENE.edgeStrong}`,
-              borderRadius: '10px',
-              boxShadow: SCENE.liftBar,
-            }}
-          >
-            {s.actions.map((name, i) => (
-              <span key={name} className="flex items-center" style={{ gap: '2px' }}>
-                {(i === 3 || i === 5) && (
+            <div
+              className="absolute flex items-center z-[4] pointer-events-auto"
+              style={{
+                ...(isMobile ? { left: 0, right: 0, bottom: 0 } : { left: 0, bottom: 'calc(100% + 8px)' }),
+                maxWidth: isMobile ? '100%' : '270%',
+                overflowX: 'auto',
+                gap: '2px',
+                padding: '4px',
+                background: SCENE.overlay,
+                border: `1px solid ${SCENE.edgeStrong}`,
+                borderRadius: '10px',
+                boxShadow: SCENE.liftBar,
+                opacity: showBar ? 1 : 0,
+                transform: showBar ? 'translateY(0)' : 'translateY(6px)',
+                transition: 'opacity .38s cubic-bezier(.19,1,.22,1), transform .38s cubic-bezier(.19,1,.22,1)',
+                pointerEvents: showBar ? 'auto' : 'none',
+              }}
+            >
+              {s.actions.map((name, i) => (
+                <span key={name} className="flex items-center" style={{ gap: '2px' }}>
+                  {(i === 3 || i === 5) && (
+                    <span className="block shrink-0" style={{ width: '1px', height: '17px', background: SCENE.hair, margin: '0 3px' }} />
+                  )}
                   <span
-                    className="block shrink-0"
-                    style={{ width: '1px', height: '17px', background: SCENE.hair, margin: '0 3px' }}
-                  />
-                )}
-                <span
-                  className="flex items-center gap-1.5 whitespace-nowrap"
-                  style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '7px', color: SCENE.inkSoft }}
-                >
-                  <SceneIcon d={ACTION_PATHS[i]} size={12} strokeWidth={1.9} style={{ opacity: 0.75 }} />
-                  {name}
+                    className="flex items-center gap-1.5 whitespace-nowrap"
+                    style={{ fontSize: '12px', padding: '6px 10px', borderRadius: '7px', color: SCENE.inkSoft }}
+                  >
+                    <SceneIcon d={ACTION_PATHS[i]} size={12} strokeWidth={1.9} style={{ opacity: 0.75 }} />
+                    {name}
+                  </span>
                 </span>
+              ))}
+              {/* 选中两张才出现的第七个动作 —— 混合计算 */}
+              <span
+                className="flex items-center whitespace-nowrap"
+                style={{
+                  gap: '6px',
+                  fontSize: '12px',
+                  padding: '6px 10px',
+                  borderRadius: '7px',
+                  marginLeft: '3px',
+                  background: beat >= B.mixing ? olive.soft : 'transparent',
+                  border: `1px solid ${beat >= B.mixing ? olive.border : 'transparent'}`,
+                  color: beat >= B.mixing ? olive.bright : SCENE.inkGhost,
+                  maxWidth: beat >= B.mixing ? '160px' : '0px',
+                  overflow: 'hidden',
+                  transition: 'max-width .45s cubic-bezier(.19,1,.22,1), background .3s ease, color .3s ease',
+                }}
+              >
+                <SceneIcon d={MIX_PATH} size={12} strokeWidth={1.9} />
+                {s.mixAction}
               </span>
-            ))}
-          </div>
+            </div>
           </div>
 
           {/* 顶部居中：缩放胶囊（真实位置，不是全宽顶栏） */}
           <div
             className="absolute z-[5] flex items-center whitespace-nowrap"
             style={{
-              top: '14px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              height: '36px',
-              gap: '4px',
-              padding: '0 6px',
+              top: '14px', left: '50%', transform: 'translateX(-50%)',
+              height: '36px', gap: '4px', padding: '0 6px',
               borderRadius: '999px',
               background: SCENE.pill,
               border: `1px solid ${SCENE.edge}`,
@@ -241,9 +277,7 @@ export function VisualCanvasStage() {
             }}
           >
             <PillButton d="M5 12h14" />
-            <SceneMono size={15} color={SCENE.inkMid} style={{ minWidth: '46px', textAlign: 'center' }}>
-              100%
-            </SceneMono>
+            <SceneMono size={15} color={SCENE.inkMid} style={{ minWidth: '46px', textAlign: 'center' }}>100%</SceneMono>
             <PillButton d="M12 5v14M5 12h14" />
             <span className="block" style={{ width: '1px', height: '16px', background: SCENE.line, margin: '0 2px' }} />
             <PillButton d="M3 9V5a2 2 0 0 1 2-2h4M21 9V5a2 2 0 0 0-2-2h-4M3 15v4a2 2 0 0 0 2 2h4M21 15v4a2 2 0 0 1-2 2h-4" />
@@ -255,30 +289,20 @@ export function VisualCanvasStage() {
             style={{ left: '84px', bottom: '12px', fontSize: '11.5px', color: SCENE.inkFaint }}
           >
             {s.gesture.before}
-            <SceneMono
-              size={13}
-              color={SCENE.inkMid}
-              style={{ border: `1px solid ${SCENE.line}`, borderRadius: '4px', padding: '0 5px', margin: '0 3px' }}
-            >
+            <SceneMono size={13} color={SCENE.inkMid} style={{ border: `1px solid ${SCENE.line}`, borderRadius: '4px', padding: '0 5px', margin: '0 3px' }}>
               Ctrl
             </SceneMono>
             {s.gesture.after}
           </div>
         </div>
 
-        {/* ── 左侧：竖向浮动工具条（胶囊） ── */}
+        {/* ── 左侧：竖向浮动工具条 ── */}
         <div
           className="absolute z-[5] hidden sm:flex flex-col"
           style={{
-            left: '12px',
-            top: '50%',
-            transform: 'translateY(-50%)',
-            gap: '6px',
-            padding: '6px',
-            borderRadius: '999px',
-            background: SCENE.pill,
-            border: `1px solid ${SCENE.edge}`,
-            boxShadow: SCENE.liftMd,
+            left: '12px', top: '50%', transform: 'translateY(-50%)',
+            gap: '6px', padding: '6px', borderRadius: '999px',
+            background: SCENE.pill, border: `1px solid ${SCENE.edge}`, boxShadow: SCENE.liftMd,
           }}
         >
           {TOOL_PATHS.map((d, i) => (
@@ -286,9 +310,7 @@ export function VisualCanvasStage() {
               key={d}
               className="flex items-center justify-center"
               style={{
-                width: '44px',
-                height: '44px',
-                borderRadius: '14px',
+                width: '44px', height: '44px', borderRadius: '14px',
                 background: i === 0 ? clay.soft : 'transparent',
                 color: i === 0 ? clay.solid : SCENE.inkMid,
               }}
@@ -298,69 +320,58 @@ export function VisualCanvasStage() {
           ))}
         </div>
 
-        {/* ── 右侧：浮动对话面板（420px，贴右贴顶，撑满高度） ── */}
+        {/* ── 右侧：浮动对话面板（420px） ── */}
         <div
           className="absolute z-[6] hidden lg:flex flex-col rounded-[14px]"
           style={{
-            right: '12px',
-            top: '12px',
-            bottom: '12px',
-            width: '420px',
-            padding: '12px',
-            background: SCENE.panel,
-            border: `1px solid ${SCENE.edge}`,
-            boxShadow: SCENE.liftLg,
+            right: '12px', top: '12px', bottom: '12px', width: '420px', padding: '12px',
+            background: SCENE.panel, border: `1px solid ${SCENE.edge}`, boxShadow: SCENE.liftLg,
           }}
         >
-          <ChatPanel />
+          <ChatPanel beat={beat} typed={typed} />
         </div>
       </div>
 
       {/* 窄屏：对话面板落到画布下方，保持「画布 + 设计师」两件东西都在 */}
       <div
         className="lg:hidden mt-3 flex flex-col rounded-[14px]"
-        style={{
-          padding: '12px',
-          background: SCENE.panel,
-          border: `1px solid ${SCENE.edge}`,
-          boxShadow: SCENE.liftMd,
-        }}
+        style={{ padding: '12px', background: SCENE.panel, border: `1px solid ${SCENE.edge}`, boxShadow: SCENE.liftMd }}
       >
-        <ChatPanel compact />
+        <ChatPanel beat={beat} typed={typed} compact />
+      </div>
+
+      {/* 旁白：此刻在发生什么 */}
+      <div
+        className="mt-3 rounded-[14px]"
+        style={{ background: SCENE.panel, border: `1px solid ${SCENE.edge}` }}
+      >
+        <BeatNarration beats={s.beats} beat={beat} hue={SCENE_HUE.clay} />
       </div>
     </div>
   );
 }
 
-/** 右侧对话面板的内容。窄屏下只保留头 / 最后两条 / 模型行 / 输入区。 */
-function ChatPanel({ compact = false }: { compact?: boolean }) {
+/** 右侧对话面板。窄屏下省掉思考行与流式追问，其余一致。 */
+function ChatPanel({ beat, typed, compact = false }: { beat: number; typed: string; compact?: boolean }) {
   const { t } = useLanguage();
   const s = t.scenes.visual;
+  const composing = beat === B.typing;
 
   return (
     <>
-      {/* 面板头 */}
       <div className="flex items-start gap-2 shrink-0">
         <div className="min-w-0 flex-1">
           <div style={{ fontSize: '13px', fontWeight: 500, color: SCENE.ink }}>{s.chat.title}</div>
-          <div style={{ marginTop: '3px', fontSize: '10.5px', lineHeight: 1.5, color: SCENE.inkDim }}>
-            {s.chat.subtitle}
-          </div>
+          <div style={{ marginTop: '3px', fontSize: '10.5px', lineHeight: 1.5, color: SCENE.inkDim }}>{s.chat.subtitle}</div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <IconSlot d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z" />
-          <IconSlot d="M8 6h8v3a4 4 0 0 1-8 0zM6 13h12M4 10h2M18 10h2M5 17h3M16 17h3" />
+          <IconSlot d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6" />
           <span
             className="flex items-center gap-1"
             style={{
-              height: '24px',
-              padding: '0 8px',
-              borderRadius: '6px',
-              background: clay.soft,
-              border: `1px solid ${clay.border}`,
-              color: clay.bright,
-              fontSize: '11px',
-              whiteSpace: 'nowrap',
+              height: '24px', padding: '0 8px', borderRadius: '6px',
+              background: clay.soft, border: `1px solid ${clay.border}`, color: clay.bright,
+              fontSize: '11px', whiteSpace: 'nowrap',
             }}
           >
             <SceneIcon d="M22 2L11 13M22 2l-7 20-4-9-9-4z" size={11} strokeWidth={2} />
@@ -371,93 +382,59 @@ function ChatPanel({ compact = false }: { compact?: boolean }) {
 
       <div className="shrink-0" style={{ height: '1px', background: SCENE.hair, margin: '11px 0' }} />
 
-      {/* 对话流 */}
+      {/* 对话流：新消息贴底，跟真实聊天一致 */}
       <div className="flex-1 min-h-0 flex flex-col justify-end gap-3 overflow-hidden">
-        <div
-          className="self-end"
-          style={{
-            maxWidth: '82%',
-            padding: '9px 12px',
-            borderRadius: '12px 12px 3px 12px',
-            background: clay.soft,
-            border: `1px solid ${clay.border}`,
-            fontSize: '12.5px',
-            lineHeight: 1.75,
-            color: SCENE.ink,
-          }}
-        >
-          {s.chat.user}
-        </div>
+        <Bubble side="user" style={enterAt(beat, B.sent)}>{s.chat.user}</Bubble>
 
-        {!compact && (
-          <div style={{ maxWidth: '88%' }}>
+        {!compact && beat >= B.thinking && (
+          <div style={{ maxWidth: '88%', ...enterAt(beat, B.thinking) }}>
             <SceneMono size={13} color={SCENE.inkGhost} style={{ letterSpacing: '0.14em', textTransform: 'uppercase' }}>
-              {s.chat.thinking}
+              {beat === B.thinking ? `${s.chat.thinking} ·` : s.chat.thinking}
             </SceneMono>
-            <div
-              style={{
-                marginTop: '5px',
-                padding: '9px 12px',
-                borderRadius: '12px 12px 12px 3px',
-                background: SCENE.tile,
-                border: `1px solid ${SCENE.edge}`,
-                fontSize: '12.5px',
-                lineHeight: 1.8,
-                color: SCENE.inkSoft,
-              }}
-            >
-              {s.chat.reply}
-            </div>
+            {beat >= B.replying && (
+              <Bubble side="agent" style={{ marginTop: '5px' }}>{s.chat.reply}</Bubble>
+            )}
           </div>
         )}
 
-        {/* 落回画布的产物条 —— 产物在哪、有没有压住别的图，都说清楚 */}
-        <div
-          className="flex items-center gap-2"
-          style={{
-            padding: '8px 10px',
-            borderRadius: '10px',
-            background: SCENE.ghost,
-            border: `1px solid ${SCENE.hair}`,
-          }}
-        >
-          <span
-            className="shrink-0"
+        {/* 产物条：落在哪、有没有压住别的图，都说清楚 */}
+        {beat >= B.landed && (
+          <div
+            className="flex items-center gap-2"
             style={{
-              width: '40px',
-              height: '28px',
-              borderRadius: '5px',
-              background: `linear-gradient(160deg, hsl(${SCENE_HUE.pine} 26% 20%), hsl(${SCENE_HUE.pine} 20% 10%))`,
+              padding: '8px 10px', borderRadius: '10px',
+              background: SCENE.ghost, border: `1px solid ${SCENE.hair}`,
+              ...enterAt(beat, B.landed),
             }}
-          />
-          <span style={{ fontSize: '11.5px', color: SCENE.inkMid, lineHeight: 1.5 }}>{s.chat.landed}</span>
-        </div>
+          >
+            <span
+              className="shrink-0"
+              style={{
+                width: '40px', height: '28px', borderRadius: '5px',
+                background: `linear-gradient(160deg, hsl(${SCENE_HUE.pine} 26% 20%), hsl(${SCENE_HUE.pine} 20% 10%))`,
+              }}
+            />
+            <span style={{ fontSize: '11.5px', color: SCENE.inkMid, lineHeight: 1.5 }}>{s.chat.landed}</span>
+          </div>
+        )}
 
-        <div
-          style={{
-            maxWidth: '88%',
-            padding: '9px 12px',
-            borderRadius: '12px 12px 12px 3px',
-            background: SCENE.tile,
-            border: `1px solid ${SCENE.edge}`,
-            fontSize: '12.5px',
-            lineHeight: 1.8,
-            color: SCENE.inkSoft,
-          }}
-        >
-          {s.chat.streaming}
-          <span
-            className="inline-block map-scene-anim"
-            style={{
-              width: '2px',
-              height: '13px',
-              background: clay.solid,
-              marginLeft: '3px',
-              verticalAlign: '-2px',
-              animation: 'mapSceneCaret 1s steps(1) infinite',
-            }}
-          />
-        </div>
+        {!compact && beat >= B.warm && beat < B.mixing && (
+          <Bubble side="agent" style={enterAt(beat, B.warm)}>
+            {s.chat.streaming}
+            <span
+              className="inline-block map-scene-anim"
+              style={{
+                width: '2px', height: '13px', background: clay.solid,
+                marginLeft: '3px', verticalAlign: '-2px',
+                animation: 'mapSceneCaret 1s steps(1) infinite',
+              }}
+            />
+          </Bubble>
+        )}
+
+        {beat >= B.mixing && (
+          <Bubble side="user" style={enterAt(beat, B.mixing)}>{s.chat.user2}</Bubble>
+        )}
       </div>
 
       {/* 模型可见性（ai-model-visibility：当前模型与模型池必须露出） */}
@@ -468,29 +445,42 @@ function ChatPanel({ compact = false }: { compact?: boolean }) {
         {s.chat.pool}
       </SceneMono>
 
-      {/* 输入区 */}
+      {/* 输入区：正在输入那一拍逐字吐字，发送后清空 */}
       <div
         className="shrink-0"
         style={{
           borderRadius: '12px',
           background: SCENE.tileHi,
-          border: `1px solid ${SCENE.line}`,
+          border: `1px solid ${composing ? clay.border : SCENE.line}`,
           padding: '10px 11px',
+          transition: 'border-color .35s ease',
         }}
       >
-        <div style={{ fontSize: '12.5px', color: SCENE.inkFaint, lineHeight: 1.6 }}>{s.chat.placeholder}</div>
+        <div style={{ fontSize: '12.5px', color: composing ? SCENE.ink : SCENE.inkFaint, lineHeight: 1.6, minHeight: '20px' }}>
+          {composing ? (
+            <>
+              {typed}
+              <span
+                className="inline-block map-scene-anim"
+                style={{ width: '2px', height: '13px', background: clay.solid, marginLeft: '2px', verticalAlign: '-2px', animation: 'mapSceneCaret 1s steps(1) infinite' }}
+              />
+            </>
+          ) : (
+            s.chat.placeholder
+          )}
+        </div>
         <div className="flex items-center gap-1.5" style={{ marginTop: '10px' }}>
           <IconSlot d="M21 15l-5-5L5 21M3 5h18v14H3z" boxed />
           <IconSlot d="M12 3v18M3 12h18" boxed />
           <span
             className="flex items-center gap-1.5 ml-auto"
             style={{
-              height: '28px',
-              padding: '0 14px',
-              borderRadius: '8px',
-              background: SCENE.brand,
-              color: SCENE.brandFg,
-              fontSize: '12.5px',
+              height: '28px', padding: '0 14px', borderRadius: '8px',
+              background: SCENE.brand, color: SCENE.brandFg, fontSize: '12.5px',
+              // 发送那一拍按钮自己有反应，不是文字凭空跳走
+              transform: beat === B.sent ? 'scale(0.94)' : 'scale(1)',
+              boxShadow: beat === B.sent ? `0 0 0 4px ${clay.soft}` : 'none',
+              transition: 'transform .28s cubic-bezier(.19,1,.22,1), box-shadow .28s ease',
             }}
           >
             {s.chat.send}
@@ -499,6 +489,28 @@ function ChatPanel({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
     </>
+  );
+}
+
+function Bubble({ side, children, style }: { side: 'user' | 'agent'; children: React.ReactNode; style?: CSSProperties }) {
+  const user = side === 'user';
+  return (
+    <div
+      className={user ? 'self-end' : undefined}
+      style={{
+        maxWidth: user ? '82%' : '88%',
+        padding: '9px 12px',
+        borderRadius: user ? '12px 12px 3px 12px' : '12px 12px 12px 3px',
+        background: user ? clay.soft : SCENE.tile,
+        border: `1px solid ${user ? clay.border : SCENE.edge}`,
+        fontSize: '12.5px',
+        lineHeight: user ? 1.75 : 1.8,
+        color: user ? SCENE.ink : SCENE.inkSoft,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -521,10 +533,7 @@ function IconSlot({ d, boxed = false }: { d: string; boxed?: boolean }) {
 
 function PillButton({ d }: { d: string }) {
   return (
-    <span
-      className="flex items-center justify-center"
-      style={{ width: '28px', height: '28px', borderRadius: '999px', color: SCENE.inkMid }}
-    >
+    <span className="flex items-center justify-center" style={{ width: '28px', height: '28px', borderRadius: '999px', color: SCENE.inkMid }}>
       <SceneIcon d={d} size={14} strokeWidth={2} />
     </span>
   );
@@ -532,16 +541,11 @@ function PillButton({ d }: { d: string }) {
 
 /**
  * 生成中的占位卡。等待期屏幕上是**产物的形状**在长，不是一个居中 spinner
- * （artifact-is-experience）；并且给「已耗时 / 预计」而不是一个会卡死的百分比
- * （expectation-management）。
+ * （artifact-is-experience）；给「已耗时 / 预计」而不是一个会卡死的百分比
+ * （expectation-management）。只在对应那一拍挂载，不做常驻循环。
  */
 function GenTile({
-  style,
-  label,
-  status,
-  percent,
-  tone,
-  statusColor,
+  style, label, status, percent, tone, statusColor,
 }: {
   style: CSSProperties;
   label: string;
@@ -558,36 +562,24 @@ function GenTile({
         aspectRatio: '3 / 2',
         border: `1px solid ${SCENE.line}`,
         background: SCENE.base,
+        animation: 'mapSceneLand .5s cubic-bezier(.19,1,.22,1) both',
       }}
     >
       <div
         className="absolute inset-0"
-        style={{
-          background: `linear-gradient(180deg, ${tone.faint} 0%, transparent 45%, ${tone.faint} 100%), ${SCENE.hatch}`,
-        }}
+        style={{ background: `linear-gradient(180deg, ${tone.faint} 0%, transparent 45%, ${tone.faint} 100%), ${SCENE.hatch}` }}
       />
       <div
         className="absolute map-scene-anim"
         style={{
-          top: '-10%',
-          bottom: '-10%',
-          left: 0,
-          width: '92%',
+          top: '-10%', bottom: '-10%', left: 0, width: '92%',
           background: `linear-gradient(108deg, transparent 0%, ${SCENE.sweepEdge} 22%, ${tone.soft} 50%, ${SCENE.sweepEdge} 78%, transparent 100%)`,
           animation: 'mapSceneSweep 2.8s linear infinite',
         }}
       />
-      {/* 一行放不下就让状态先省略，绝不换行——「HD 放 / 大」那样断开比截断更难读 */}
-      <div
-        className="absolute flex items-baseline gap-2 overflow-hidden"
-        style={{ left: '9px', right: '9px', bottom: '14px' }}
-      >
+      <div className="absolute flex items-baseline gap-2 overflow-hidden" style={{ left: '9px', right: '9px', bottom: '14px' }}>
         <SceneMono style={{ letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>{label}</SceneMono>
-        <SceneMono
-          className="ml-auto min-w-0 truncate"
-          color={statusColor ?? SCENE.inkFaint}
-          style={{ letterSpacing: '0.08em' }}
-        >
+        <SceneMono className="ml-auto min-w-0 truncate" color={statusColor ?? SCENE.inkFaint} style={{ letterSpacing: '0.08em' }}>
           {status}
         </SceneMono>
       </div>
@@ -595,10 +587,7 @@ function GenTile({
         className="absolute overflow-hidden"
         style={{ left: '9px', right: '9px', bottom: '8px', height: '2px', borderRadius: '2px', background: SCENE.line }}
       >
-        <span
-          className="block h-full"
-          style={{ width: `${percent}%`, background: `linear-gradient(90deg, ${tone.border}, ${tone.solid})` }}
-        />
+        <span className="block h-full" style={{ width: `${percent}%`, background: `linear-gradient(90deg, ${tone.border}, ${tone.solid})` }} />
       </div>
     </div>
   );
@@ -611,12 +600,7 @@ function GenTile({
 function CanvasArt({ id, hue, fog }: { id: string; hue: number; fog: boolean }) {
   const gid = `mapCanvasArt-${id}`;
   return (
-    <svg
-      viewBox="0 0 300 200"
-      preserveAspectRatio="none"
-      className="block w-full h-full"
-      aria-hidden="true"
-    >
+    <svg viewBox="0 0 300 200" preserveAspectRatio="none" className="block w-full h-full" aria-hidden="true">
       <defs>
         <linearGradient id={`${gid}-sky`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor={`hsl(${hue} 32% 17%)`} />
@@ -633,17 +617,11 @@ function CanvasArt({ id, hue, fog }: { id: string; hue: number; fog: boolean }) 
       </defs>
       <rect width="300" height="200" fill={`url(#${gid}-sky)`} />
       <rect width="300" height="200" fill={`url(#${gid}-sun)`} />
-      <path
-        d="M0 118 L58 88 L104 116 L152 78 L206 112 L262 92 L300 118 L300 200 L0 200 Z"
-        fill={`hsl(${hue} 27% 13%)`}
-      />
+      <path d="M0 118 L58 88 L104 116 L152 78 L206 112 L262 92 L300 118 L300 200 L0 200 Z" fill={`hsl(${hue} 27% 13%)`} />
       {fog ? (
         <rect y="72" width="300" height="128" fill={`url(#${gid}-fog)`} />
       ) : (
-        <path
-          d="M0 146 L64 128 L128 150 L196 130 L262 152 L300 138 L300 200 L0 200 Z"
-          fill={`hsl(${hue} 22% 10%)`}
-        />
+        <path d="M0 146 L64 128 L128 150 L196 130 L262 152 L300 138 L300 200 L0 200 Z" fill={`hsl(${hue} 22% 10%)`} />
       )}
     </svg>
   );

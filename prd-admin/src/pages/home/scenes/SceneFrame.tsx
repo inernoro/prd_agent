@@ -140,6 +140,57 @@ export function SceneFrame({
   );
 }
 
+/**
+ * 旁白条 —— 一幕在演的时候，告诉观众此刻在发生什么。
+ *
+ * 光让画面动起来还不够：没有旁白，一堆东西自己在变只会读成「乱动」。
+ * 一行随节拍换的句子 + 一排节拍点，把它从「动画」变成「有人在给你演示」
+ * （`expectation-management`：用户任何时刻都该知道现在在发生什么）。
+ *
+ * 换句时不做上下滚动，只做淡入 —— 文字位移在小字号上抖得厉害。
+ */
+export function BeatNarration({ beats, beat, hue }: { beats: string[]; beat: number; hue: number }) {
+  const tone = inkTone(hue);
+  return (
+    <div
+      className="flex items-center gap-3 flex-wrap"
+      style={{ padding: '11px 16px', borderTop: `1px solid ${SCENE.hair}` }}
+    >
+      <span
+        className="block w-[6px] h-[6px] rounded-full shrink-0 map-scene-anim"
+        style={{ background: tone.solid, animation: 'mapSceneTwinkle 1.9s ease-in-out infinite' }}
+      />
+      {/* key 换了才会重播淡入；min-height 钉死，避免换句时整条抖一下 */}
+      <span
+        key={beat}
+        className="min-w-0"
+        style={{
+          fontSize: '12.5px',
+          lineHeight: 1.5,
+          color: SCENE.inkSoft,
+          animation: 'mapSceneBeatIn .42s cubic-bezier(.19,1,.22,1) both',
+        }}
+      >
+        {beats[beat] ?? beats[beats.length - 1]}
+      </span>
+      <span className="ml-auto flex items-center gap-1.5 shrink-0">
+        {beats.map((label, i) => (
+          <span
+            key={label}
+            style={{
+              width: i === beat ? '14px' : '5px',
+              height: '5px',
+              borderRadius: '999px',
+              background: i === beat ? tone.solid : i < beat ? tone.border : SCENE.line,
+              transition: 'width .35s cubic-bezier(.19,1,.22,1), background .35s ease',
+            }}
+          />
+        ))}
+      </span>
+    </div>
+  );
+}
+
 /** 场景里反复出现的 VT323 眉标（模型名 / 计时 / 状态）。 */
 export function SceneMono({
   children,

@@ -69,7 +69,10 @@ export interface ScenesTranslation {
     eyebrow: string;
     title: string;
     description: string;
-    tiles: { a: string; b: string; c: string };
+    /** 每一拍的旁白：告诉观众此刻在发生什么 */
+    beats: string[];
+    mixAction: string;
+    tiles: { a: string; b: string; c: string; mix: string };
     genRunning: { label: string; status: string };
     genOvertime: { label: string; status: string };
     generator: { title: string; body: string };
@@ -80,6 +83,7 @@ export interface ScenesTranslation {
       subtitle: string;
       submit: string;
       user: string;
+      user2: string;
       thinking: string;
       reply: string;
       landed: string;
@@ -95,6 +99,9 @@ export interface ScenesTranslation {
     title: string;
     description: string;
     note: string;
+    beats: string[];
+    /** 打锚点那一拍的模板，{n} 会被替换成已识别的位置数 */
+    marking: string;
     styleLabel: string;
     styleHint: string;
     styles: Record<LiteraryStyleKey, string>;
@@ -118,6 +125,8 @@ export interface ScenesTranslation {
     title: string;
     description: string;
     note: string;
+    beats: string[];
+    more: string;
     search: string;
     badges: { shared: string; redo: string; pass: string; tag: string };
     tree: Array<{ name: string; time: string }>;
@@ -373,7 +382,21 @@ const zh: TranslationShape = {
       title: '涂涂改改，又是一天',
       description:
         '左边是无限画布，图散在上面；右边是设计师，一直在。说一句话，新图落回画布；点一张图，动作条浮出来。',
-      tiles: { a: '主视觉 · 初稿', b: '暖调变体', c: '雾天版本' },
+      beats: [
+        '空画布 · 只有一张初稿',
+        '正在输入…',
+        '已发送',
+        '模型在想 · 2.1s',
+        '正在回话',
+        '开始渲染 · 产物就在画布上长出来',
+        '雾天版本已落回画布 · 没压住已有图',
+        '顺手再出一张暖调变体',
+        '点一张图，动作条就浮出来',
+        '选中两张 · 混合计算中',
+        '混合结果已落回画布',
+      ],
+      mixAction: '混合计算',
+      tiles: { a: '主视觉 · 初稿', b: '暖调变体', c: '雾天版本', mix: '混合结果' },
       genRunning: { label: 'HD 放大', status: '4.2s / 预计 ~6s' },
       genOvertime: { label: 'AI 分层', status: '即将完成 · 8.4s' },
       generator: { title: '图像生成器', body: '选中它，画布上就出现快捷输入。参考图拖进来即可。' },
@@ -384,6 +407,7 @@ const zh: TranslationShape = {
         subtitle: '点画板图片即可选中，可作为图生图的首帧。',
         submit: '投稿当前',
         user: '把主视觉改成雾天，山脊线保留',
+        user2: '把这两张混一下，取雾天的天、暖调的光',
         thinking: '思考 · 2.1s',
         reply: '只动天气层，山脊线的路径不变。给你出一张。',
         landed: '雾天版本已落在画布 · 未压住已有图',
@@ -400,6 +424,17 @@ const zh: TranslationShape = {
       description:
         '左边是你的文章，逐段成稿；右边是配图工作台，一张张竖着落位。整篇读完，按段落语义一次配齐，换个风格整列重配，正文不动。',
       note: '换风格只换图，正文一个字都不动——风格是 AI 生成时的参照，不是事后给图套一层滤镜。',
+      beats: [
+        '只有文字 · 还没有一张图',
+        '文档已就位',
+        'AI 正在通读全文并打配图锚点',
+        '一次生成全部配图',
+        '配图 1 完成 · 落进正文对应段落',
+        '配图 2 完成 · 继续往下落',
+        '配图 3 还在跑 · 给的是已耗时与预计',
+        '换个风格 · 整列重配，正文一个字不动',
+      ],
+      marking: 'AI 正在分析文章并生成配图标记…已识别 {n} 个位置',
       styleLabel: '风格',
       styleHint: '切一下试试：整列配图连同正文内联图一起换色，文字不动。',
       styles: { calm: '沉静', warm: '暖光', forest: '林间', night: '夜航' },
@@ -413,7 +448,7 @@ const zh: TranslationShape = {
         p4: '回程时天已经很亮了。同一条路，来时看不清的东西，这会儿全都在了——原来不是路变了，是雾散了。',
         fig1: '配图 1 · 雾压山谷的清晨旧路',
         fig2: '配图 4 · 谷底被水泡得发白的木桥',
-        slot: '[插图 2] · 右侧正在生成，出图后自动落进这里',
+        slot: '[插图 {n}] · 右侧出图后自动落进这里',
       },
       summary: { words: '正文 1,284 字', paragraphs: '段落 12', figures: '配图 6', currentStyle: '当前风格' },
       steps: ['上传', '标记', '配图'],
@@ -436,6 +471,15 @@ const zh: TranslationShape = {
       description:
         '左边是文件树，中间是正文，右边是本页章节。选中任意一段，浮层就在选区上方——评论、AI 改写、配图，三件事，就地做完。',
       note: 'AI 改写走流式 + diff 预览，确认才落库、原文不动。下半段是知识星系：根到分类到文档的层级弧线，拱得更高的那几条是文档之间的横向引用。',
+      beats: [
+        '安静地读一篇文档',
+        '划中一句话',
+        '浮层出现 · 评论 / AI 改写 / 配图',
+        '点了 AI 改写',
+        '流式生成 · 红绿 diff 当场可比',
+        '替换原文 · 确认才落库，浮层退场',
+      ],
+      more: '更多',
       search: '搜索文档…',
       badges: { shared: '已分享', redo: '再加工中', pass: '通过 L1', tag: '规则' },
       tree: [
@@ -858,7 +902,21 @@ const en: TranslationShape = {
       title: 'Tweak, redraw, and another day is gone',
       description:
         'An infinite canvas on the left with your images spread across it; a designer on the right who never leaves. Say a sentence and a new image lands on the canvas; click an image and the action bar floats up.',
-      tiles: { a: 'Key visual · draft', b: 'Warm variant', c: 'Foggy version' },
+      beats: [
+        'Empty canvas · one draft only',
+        'Typing…',
+        'Sent',
+        'Thinking · 2.1s',
+        'Replying',
+        'Rendering · the artifact grows on the canvas itself',
+        'Foggy version landed · nothing covered',
+        'One warm variant while we are here',
+        'Click an image and the action bar floats up',
+        'Two selected · blending',
+        'Blended result landed on the canvas',
+      ],
+      mixAction: 'Blend',
+      tiles: { a: 'Key visual · draft', b: 'Warm variant', c: 'Foggy version', mix: 'Blended result' },
       genRunning: { label: 'HD upscale', status: '4.2s / est. ~6s' },
       genOvertime: { label: 'AI layers', status: 'Almost done · 8.4s' },
       generator: { title: 'Image generator', body: 'Select it and a quick prompt appears on the canvas. Drop reference images in.' },
@@ -869,6 +927,7 @@ const en: TranslationShape = {
         subtitle: 'Click any image on the canvas to select it, then use it as the first frame.',
         submit: 'Publish',
         user: 'Make the key visual foggy, keep the ridgeline',
+        user2: 'Blend these two — fog from one, light from the other',
         thinking: 'Thinking · 2.1s',
         reply: 'Only the weather layer changes; the ridgeline path stays. Here is one.',
         landed: 'Foggy version landed on the canvas · nothing covered',
@@ -885,6 +944,17 @@ const en: TranslationShape = {
       description:
         'Your article on the left, drafted paragraph by paragraph. The illustration bench on the right, one image per slot. It reads the whole piece, then fills every slot by paragraph meaning.',
       note: 'Switching style repaints the images only — not one word of the text moves. Style is what the model draws from, not a filter applied afterwards.',
+      beats: [
+        'Text only · not one image yet',
+        'Document in place',
+        'Reading the whole piece and marking illustration points',
+        'Generating every illustration at once',
+        'Figure 1 done · dropped into its paragraph',
+        'Figure 2 done · next one lands',
+        'Figure 3 still running · elapsed and estimate, not a fake percentage',
+        'Switch style · the column repaints, the text stays put',
+      ],
+      marking: 'Reading the article and marking illustration points… {n} found so far',
       styleLabel: 'Style',
       styleHint: 'Try it: every illustration recolours, inline ones included. The text stays put.',
       styles: { calm: 'Calm', warm: 'Warm', forest: 'Forest', night: 'Night' },
@@ -898,7 +968,7 @@ const en: TranslationShape = {
         p4: 'It was bright by the time I walked back. Same path — everything I could not see on the way up was simply there. The path had not changed; the fog had lifted.',
         fig1: 'Figure 1 · the old path under valley fog',
         fig2: 'Figure 4 · the water-bleached wooden bridge',
-        slot: '[Figure 2] · generating on the right, it will drop in here',
+        slot: '[Figure {n}] · it will drop in here once the right side finishes',
       },
       summary: { words: '1,284 words', paragraphs: '12 paragraphs', figures: '6 figures', currentStyle: 'Style' },
       steps: ['Upload', 'Mark', 'Illustrate'],
@@ -921,6 +991,15 @@ const en: TranslationShape = {
       description:
         'File tree on the left, the document in the middle, this page’s outline on the right. Select any passage and the popover appears right above it — comment, AI rewrite, illustrate. Three things, done in place.',
       note: 'The rewrite streams in with a diff preview, and nothing is written until you confirm. Below is the knowledge galaxy: root to category to document, with the higher arcs being cross-references between documents.',
+      beats: [
+        'Reading a document, quietly',
+        'One sentence selected',
+        'Popover appears · comment / AI rewrite / illustrate',
+        'AI rewrite tapped',
+        'Streaming · red-green diff you can compare on the spot',
+        'Replaced · saved only on confirm, popovers dismissed',
+      ],
+      more: 'More',
       search: 'Search documents…',
       badges: { shared: 'Shared', redo: 'Reworking', pass: 'Passed L1', tag: 'Rule' },
       tree: [

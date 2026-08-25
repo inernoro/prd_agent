@@ -122,6 +122,8 @@ export const SCENE_KEYFRAMES = `
 @keyframes mapSceneSweep { from { transform: translateX(-100%); } to { transform: translateX(120%); } }
 @keyframes mapSceneCaret { 50% { opacity: 0; } }
 @keyframes mapSceneTwinkle { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@keyframes mapSceneBeatIn { from { opacity: 0; filter: blur(3px); } to { opacity: 1; filter: blur(0); } }
+@keyframes mapSceneLand { 0% { opacity: 0; transform: translateY(14px) scale(.94); } 60% { opacity: 1; } 100% { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) {
   .map-scene-anim { animation: none !important; }
 }
