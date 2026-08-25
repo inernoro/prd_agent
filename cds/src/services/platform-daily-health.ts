@@ -49,6 +49,14 @@ export interface HealthInfraFact {
   id: string;
   /** 端口是不是发布到了公网（由暴露面自检算出来）。 */
   publiclyPublished: boolean;
+  /**
+   * 宿主防火墙当前是不是把这个端口挡在外面（同样来自暴露面自检）。
+   *
+   * **它不是「安全了」的同义词**，所以不能拿来把 publiclyPublished 抹掉：iptables
+   * 规则重启就丢，丢了立刻回到裸奔。但它确实改变了「现在有没有人能连上」这件事，
+   * 因此判据必须分开两问——「端口绑在哪」与「此刻外面打不打得进来」。
+   */
+  firewallBlocked?: boolean;
   /** 有没有认证。null = 认不出来（也是一种要报的状态）。 */
   authenticated: boolean | null;
   /** 存量豁免的到期时间；靠豁免才起得来的服务才有。 */
@@ -159,13 +167,26 @@ function worst(items: readonly HealthFinding[]): HealthSeverity {
 }
 
 /**
+ * 此刻真的能从公网连上吗。
+ *
+ * 「端口绑在全网卡」不等于「外面打得进来」——宿主防火墙挡着的时候，说
+ * 「任何人扫到就能直接读写」是一句能被当场验伪的话。判据要取**有效可达性**，
+ * 不是取原始绑定（形状 6：读到的值不是真正生效的那个）。
+ *
+ * 写成函数是为了让三处过滤用同一个口径，不给它们各自漂移的机会（形状 3）。
+ */
+function reachableFromInternet(s: HealthInfraFact): boolean {
+  return s.publiclyPublished && s.firewallBlocked !== true;
+}
+
+/**
  * 跑一次体检。纯函数：给什么事实就得什么结论，同样的输入永远同样的输出。
  */
 export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict {
   const findings: HealthFinding[] = [];
 
   // ---- 1. 公网上的无认证数据库：这一类永远排最前 ----
-  const nakedOnInternet = input.infra.filter((s) => s.publiclyPublished && s.authenticated === false);
+  const nakedOnInternet = input.infra.filter((s) => reachableFromInternet(s) && s.authenticated === false);
   for (const svc of nakedOnInternet) {
     findings.push({
       id: `infra.naked-public.${svc.id}`,
@@ -175,11 +196,33 @@ export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict
   }
 
   // 认不出有没有认证的，单独报。「不知道」和「没问题」不是一回事。
-  for (const svc of input.infra.filter((s) => s.publiclyPublished && s.authenticated === null)) {
+  for (const svc of input.infra.filter((s) => reachableFromInternet(s) && s.authenticated === null)) {
     findings.push({
       id: `infra.unknown-auth.${svc.id}`,
       severity: 'warn',
       message: `${svc.id} 的端口开在公网上，但认不出它有没有认证，需要人工确认`,
+    });
+  }
+
+  // ---- 1b. 绑在全网卡、但眼下被宿主防火墙挡着的 ----
+  //
+  // 这一类不能报 critical：说「任何人扫到就能直接读写」是**假的**，此刻外面根本
+  // 连不上，而一条被验伪的告警会让人开始怀疑整张表。也不能不报：防火墙规则重启
+  // 就丢，丢了立刻变成上面那一类。所以单列一档 warn，把「靠什么挡着、为什么不算
+  // 解决」写在话里（Codex review P2）。
+  //
+  // 只在认证有问题时报：认证配好了的库，防火墙这层易失保护由暴露面自检自己报，
+  // 体检这边再报一遍只是把同一件事说两次。
+  for (const svc of input.infra.filter(
+    (s) => s.publiclyPublished && s.firewallBlocked === true && s.authenticated !== true,
+  )) {
+    findings.push({
+      id: `infra.firewall-shielded.${svc.id}`,
+      severity: 'warn',
+      message: `${svc.id} 的端口绑在全网卡上`
+        + `${svc.authenticated === false ? '且没有认证' : '，且认不出有没有认证'}`
+        + '，目前靠宿主防火墙挡着——这层保护重启就丢，丢了立刻变成公网裸奔，'
+        + '根治要重建容器把绑定地址收窄',
     });
   }
 

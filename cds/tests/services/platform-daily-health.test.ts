@@ -305,3 +305,78 @@ describe('平台存储事实：没有 Mongo 就别报', () => {
     expect(v.severity).toBe('ok');
   });
 });
+
+/**
+ * 2026-08-25 Codex review 第三轮 P2：防火墙状态在事实映射里被丢掉了。
+ *
+ * 暴露面自检对「绑在全网卡、但宿主防火墙挡着」这一类是**特意**降到 warn 的，
+ * 因为说「任何人扫到就能直接读写」当场就能被验伪。体检拿到的事实里少了这一位，
+ * 于是同一台库在这边又被判回 critical，并把那句假话原样说了出去。
+ *
+ * 这是形状 6：判据读到的值不是真正生效的那个（原始绑定 ≠ 有效可达性）。
+ */
+describe('防火墙挡着的端口：不许报成公网裸奔，也不许当成没事', () => {
+  it('绑全网卡 + 无认证 + 防火墙挡着 → warn，且不说「任何人扫到就能读写」', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'shielded-mongo', publiclyPublished: true, firewallBlocked: true, authenticated: false }],
+    }));
+    expect(v.severity).toBe('warn');
+    expect(v.findings.map((f) => f.id)).toEqual(['infra.firewall-shielded.shielded-mongo']);
+    // 那句会被当场验伪的话不许出现。
+    expect(v.findings[0].message).not.toContain('任何人扫到');
+    // 但也必须说清这层保护是易失的，否则会被读成「已经解决了」。
+    expect(v.findings[0].message).toContain('重启就丢');
+  });
+
+  it('同一台库，防火墙没了就立刻升回 critical（红绿两端都钉住）', () => {
+    // 没有这一条，把 reachableFromInternet 写成恒 false 也能让上面那条绿。
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'shielded-mongo', publiclyPublished: true, firewallBlocked: false, authenticated: false }],
+    }));
+    expect(v.severity).toBe('critical');
+    expect(v.findings.map((f) => f.id)).toEqual(['infra.naked-public.shielded-mongo']);
+    expect(v.findings[0].message).toContain('任何人扫到');
+  });
+
+  it('字段缺失按「没挡着」算——安全自检里不确定就从严', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'legacy-fact', publiclyPublished: true, authenticated: false }],
+    }));
+    expect(v.severity).toBe('critical');
+    expect(v.findings[0].id).toBe('infra.naked-public.legacy-fact');
+  });
+
+  it('防火墙挡着 + 认不出认证 → 也只到 warn，且说明是「认不出」', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'mystery', publiclyPublished: true, firewallBlocked: true, authenticated: null }],
+    }));
+    expect(v.severity).toBe('warn');
+    expect(v.findings.map((f) => f.id)).toEqual(['infra.firewall-shielded.mystery']);
+    expect(v.findings[0].message).toContain('认不出');
+  });
+
+  it('防火墙挡着 + 认证配好了 → 体检这边不报（那层易失保护由暴露面自检说）', () => {
+    const v = evaluateDailyHealth(input({
+      infra: [{ id: 'fine', publiclyPublished: true, firewallBlocked: true, authenticated: true }],
+    }));
+    expect(v.severity).toBe('ok');
+    expect(v.findings).toEqual([]);
+  });
+
+  it('每台库只落进一个桶，不会既报公网又报内网', () => {
+    // 加了新分档最容易出的错是漏改另外两处过滤，让同一台库出现两次。
+    const v = evaluateDailyHealth(input({
+      infra: [
+        { id: 'a', publiclyPublished: true, firewallBlocked: true, authenticated: false },
+        { id: 'b', publiclyPublished: true, firewallBlocked: false, authenticated: false },
+        { id: 'c', publiclyPublished: false, authenticated: false },
+      ],
+    }));
+    expect(v.findings).toHaveLength(3);
+    expect(v.findings.map((f) => f.id).sort()).toEqual([
+      'infra.firewall-shielded.a',
+      'infra.naked-internal.c',
+      'infra.naked-public.b',
+    ]);
+  });
+});

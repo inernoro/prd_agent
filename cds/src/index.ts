@@ -411,32 +411,42 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
         if (detectInfraKind(image, { containerName: name, runtimePorts: ports }) === 'other') continue;
         rows.push({ name, image, ports: ports ?? '', running: (state || '').toLowerCase() === 'running' });
       }
-      if (rows.length === 0) return;
-
+      // 一个数据面容器都没认出来，**也是一份检查完了的结果**，不是「还没检查」。
+      // 这里早退过：于是 lastInfraExposureReport 永远停在 null，而每日体检正是
+      // 靠它判断「首检跑没跑过」——json 状态后端、全用外部库的部署因此天天跳过
+      // 体检，连备份新鲜度、恢复演练这些跟容器毫无关系的项也一起被跳掉，
+      // 而且因为空容器集每轮都一样，这类部署永远等不到第一次结论
+      //（Codex review P2）。
+      //
+      // 所以不早退：只跳过「为判定这些容器才需要做的 inspect 与防火墙探测」，
+      // 报告照出，出的是一份如实的空报告。
+      //
       // 认证判据必须取**容器自己的**配置，不是 CDS 台账里那份：台账记的是
       // 「建它时用了什么」，compose 导入的、手工起的、密码写在启动参数里的
       // （redis 的 --requirepass）台账里都看不到，照台账判会把有密码的库
       // 误报成裸奔——一条假警报会让人开始怀疑整张表。
       const authByContainer = new Map<string, { env: Record<string, string>; args: string[] }>();
-      const inspect = await shell.exec(
-        `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}' `
-        + rows.map((r) => `'${r.name.replace(/'/g, `'"'"'`)}'`).join(' '),
-        { timeout: 30_000 },
-      );
-      for (const line of (inspect.stdout || '').split('\n')) {
-        const [rawName, envJson, cmdJson] = line.split('\t');
-        if (!rawName) continue;
-        const name = rawName.replace(/^\//, '').trim();
-        const env: Record<string, string> = {};
-        try {
-          for (const kv of (JSON.parse(envJson || '[]') as string[]) || []) {
-            const i = kv.indexOf('=');
-            if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
-          }
-        } catch { /* 解析不了就当没有，下游按未知从严 */ }
-        let args: string[] = [];
-        try { args = (JSON.parse(cmdJson || '[]') as string[]) || []; } catch { args = []; }
-        authByContainer.set(name, { env, args });
+      if (rows.length > 0) {
+        const inspect = await shell.exec(
+          `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}' `
+          + rows.map((r) => `'${r.name.replace(/'/g, `'"'"'`)}'`).join(' '),
+          { timeout: 30_000 },
+        );
+        for (const line of (inspect.stdout || '').split('\n')) {
+          const [rawName, envJson, cmdJson] = line.split('\t');
+          if (!rawName) continue;
+          const name = rawName.replace(/^\//, '').trim();
+          const env: Record<string, string> = {};
+          try {
+            for (const kv of (JSON.parse(envJson || '[]') as string[]) || []) {
+              const i = kv.indexOf('=');
+              if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
+            }
+          } catch { /* 解析不了就当没有，下游按未知从严 */ }
+          let args: string[] = [];
+          try { args = (JSON.parse(cmdJson || '[]') as string[]) || []; } catch { args = []; }
+          authByContainer.set(name, { env, args });
+        }
       }
 
       const inputs: InfraExposureInput[] = rows.map((r) => {
@@ -457,32 +467,38 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
       // 把宿主防火墙纳入判据。两个方向都要：绑在全网卡但被挡住的不该报成 critical
       // （报多了没人看），而**规则一旦丢失（重启即丢）就要立刻升回 critical**——
       // 只看容器绑定的自检对「防火墙没了」这件事完全无感。
-      const pubIf = (await shell.exec(
-        `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
-        { timeout: 15_000 },
-      )).stdout.trim();
-      const firewallBackends: FirewallBackendSnapshot[] = [];
-      for (const tool of ['iptables-nft', 'iptables-legacy'] as const) {
-        const present = await shell.exec(`command -v ${tool} >/dev/null 2>&1`, { timeout: 15_000 });
-        if (present.exitCode !== 0) {
+      //
+      // 没有容器要判的时候整段跳过：探防火墙是为了给某个端口定性，没有端口就
+      // 没有要定的性，跑一遍只是白花十几秒。
+      let firewall: ReturnType<typeof resolveRuntimeFirewallGuard> | null = null;
+      if (rows.length > 0) {
+        const pubIf = (await shell.exec(
+          `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
+          { timeout: 15_000 },
+        )).stdout.trim();
+        const firewallBackends: FirewallBackendSnapshot[] = [];
+        for (const tool of ['iptables-nft', 'iptables-legacy'] as const) {
+          const present = await shell.exec(`command -v ${tool} >/dev/null 2>&1`, { timeout: 15_000 });
+          if (present.exitCode !== 0) {
+            firewallBackends.push({
+              name: tool, available: false, dockerNatActive: false, rulesReadable: false, rules: '',
+            });
+            continue;
+          }
+          const [nat, filter] = await Promise.all([
+            shell.exec(`${tool} -t nat -S 2>/dev/null`, { timeout: 15_000 }),
+            shell.exec(`${tool} -S 2>/dev/null`, { timeout: 15_000 }),
+          ]);
           firewallBackends.push({
-            name: tool, available: false, dockerNatActive: false, rulesReadable: false, rules: '',
+            name: tool,
+            available: true,
+            dockerNatActive: nat.exitCode === 0 ? /(?:^-N DOCKER$|^-A DOCKER\s)/m.test(nat.stdout || '') : null,
+            rulesReadable: filter.exitCode === 0,
+            rules: filter.stdout || '',
           });
-          continue;
         }
-        const [nat, filter] = await Promise.all([
-          shell.exec(`${tool} -t nat -S 2>/dev/null`, { timeout: 15_000 }),
-          shell.exec(`${tool} -S 2>/dev/null`, { timeout: 15_000 }),
-        ]);
-        firewallBackends.push({
-          name: tool,
-          available: true,
-          dockerNatActive: nat.exitCode === 0 ? /(?:^-N DOCKER$|^-A DOCKER\s)/m.test(nat.stdout || '') : null,
-          rulesReadable: filter.exitCode === 0,
-          rules: filter.stdout || '',
-        });
+        firewall = pubIf ? resolveRuntimeFirewallGuard(firewallBackends, pubIf) : null;
       }
-      const firewall = pubIf ? resolveRuntimeFirewallGuard(firewallBackends, pubIf) : null;
 
       const report = auditInfraExposure(inputs, { firewall });
       lastInfraExposureReport = report;
@@ -1098,6 +1114,11 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
       const infra: HealthInfraFact[] = exposure.findings.map((f) => ({
         id: f.id,
         publiclyPublished: f.publiclyPublished,
+        // 防火墙状态必须一起带过去。只传原始绑定的话，一台「绑在全网卡但被宿主
+        // 防火墙挡住」的库——暴露面自检特意把它降到 warn 的那一类——会在体检这边
+        // 被重新判成 critical，并且说出「任何人扫到就能直接读写」这种**当场可以
+        // 验伪**的话（Codex review P2）。
+        firewallBlocked: f.firewallBlocked,
         authenticated: f.authenticated,
         authExemptionExpiresAt: exempt.get(exemptKey(f.projectId, f.id)) ?? null,
       }));
