@@ -253,15 +253,18 @@ export function AudioWavePlayer({
           onClick={togglePlay}
           data-testid="audio-play-toggle"
           disabled={!ready}
-          className="flex h-11 w-11 items-center justify-center rounded-full cursor-pointer transition-all motion-reduce:transition-none disabled:cursor-not-allowed"
+          // 稿面的播放键是**黑色实心大圆**：蓝色在这套设计里只有三个用途
+          // （播放进度、可点文本、当前句底色），主操作用主按钮色。
+          // 播放键也用蓝，等于把蓝的意思稀释成「什么都是蓝」。
+          className="flex h-14 w-14 items-center justify-center rounded-full cursor-pointer transition-all motion-reduce:transition-none disabled:cursor-not-allowed"
           style={{
-            background: ready ? 'var(--accent-fg-info)' : 'var(--bg-elevated)',
-            color: ready ? 'var(--bg-base)' : 'var(--text-muted)',
+            background: ready ? 'var(--button-primary-bg)' : 'var(--bg-elevated)',
+            color: ready ? 'var(--button-primary-fg)' : 'var(--text-muted)',
             boxShadow: 'none',
           }}
           title={playing ? '暂停' : '播放'}
         >
-          {playing ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" style={{ marginLeft: 1 }} />}
+          {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" style={{ marginLeft: 2 }} />}
         </button>
 
         <span className="text-[11px] font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>

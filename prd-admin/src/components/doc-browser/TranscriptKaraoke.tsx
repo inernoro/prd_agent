@@ -65,6 +65,20 @@ const SECTION_CARD_STYLE: React.CSSProperties = {
   border: '1px solid var(--border-faint)',
 };
 
+/**
+ * 找到真正在滚的那个祖先容器。找不到就返回 null（= 用视口，那是正确的兜底：
+ * 整页滚动时视口本来就是滚动容器）。
+ */
+function nearestScrollParent(el: HTMLElement): HTMLElement | null {
+  let node = el.parentElement;
+  while (node) {
+    const overflowY = getComputedStyle(node).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll') return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
 /** mm:ss；无时间戳的行不显示时钟而不是显示一个假的 0:00。 */
 function formatClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '';
@@ -344,7 +358,13 @@ export function TranscriptKaraoke({
    * 审查智能体判的「首屏主角是播放器而不是内容」就是这个。
    *
    * 用哨兵元素 + IntersectionObserver，不监听 scroll：滚动事件要自己找滚动容器、
-   * 自己节流，而这一屏的滚动容器在不同入口下并不是同一个。
+   * 自己节流。
+   *
+   * 但 root 必须显式给**真正在滚的那个祖先**，不能用默认的视口。这一屏的滚动发生在
+   * 阅读器的内容区 / 结果页的 main 里，那些容器往往整体就在视口之外或只露一部分；
+   * 拿视口当 root 的话，用户一下都没滚，哨兵就已经算「不相交」——播放器一进屏就是
+   * 折叠态。B1 首判 32 分里最重的那几条（波形、当前句卡、句序、倍速全不见）
+   * 就是这一个默认值造成的：判据取的不是它要判的那个滚动位置。
    */
   const collapseSentinelRef = useRef<HTMLDivElement>(null);
   const [playerCollapsed, setPlayerCollapsed] = useState(false);
@@ -352,8 +372,15 @@ export function TranscriptKaraoke({
     const sentinel = collapseSentinelRef.current;
     if (!documentMode || !sentinel || typeof IntersectionObserver === 'undefined') return;
     const observer = new IntersectionObserver(
-      ([entry]) => setPlayerCollapsed(!entry.isIntersecting),
-      { rootMargin: '-120px 0px 0px 0px', threshold: 0 },
+      ([entry]) => {
+        // 只有哨兵**滚到了顶上面**才算折叠。光看 isIntersecting 不够：
+        // 哨兵在滚动区最顶端，还没滚时它同样不与「被负 margin 缩掉 120px 的顶部」相交，
+        // 于是一进屏就判折叠——播放器从来没展开过。
+        // 判据必须区分「滚上去了」和「还没滚到」，这两件事的 isIntersecting 都是 false。
+        const rootTop = entry.rootBounds?.top ?? 0;
+        setPlayerCollapsed(!entry.isIntersecting && entry.boundingClientRect.top < rootTop);
+      },
+      { root: nearestScrollParent(sentinel), rootMargin: '0px', threshold: 0 },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -474,6 +501,157 @@ export function TranscriptKaraoke({
         )}
       </div>
 
+      {/*
+        设计稿的顺序是 播放区 → 原文 → 录音理解（词云/纪要/待办）→ 问这场录音。
+        原文紧跟播放器，因为跟读是这一屏的主路径：听到哪、字在哪，两者必须挨着。
+        我原先把录音理解整块插在播放器与原文之间，等于把主路径推到四张卡以下——
+        B1 判分里「原文列表不存在」那几条就是这么来的（它其实在，只是被推到看不见的地方）。
+      */}
+      {documentMode && (
+        <div className="mt-2 flex w-full max-w-[760px] flex-col gap-2">
+          <p className="text-[12px] font-semibold text-token-muted">转录原文</p>
+          {/*
+            搜索框归属原文段，不归词云——稿面 B1 把它排在原文列表正上方，
+            它过滤的是原文。此前它挂在词云卡里，作用对象与位置都跟稿面对不上。
+          */}
+          <div className="flex items-center gap-2">
+            <label className="flex min-h-11 flex-1 items-center gap-2 rounded-[10px] px-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+              <Search size={14} className="shrink-0 text-token-muted" />
+              <input
+                value={keyword}
+                onChange={event => setKeyword(event.target.value)}
+                placeholder="搜索原文关键词"
+                className="min-w-0 flex-1 bg-transparent text-[13px] text-token-primary outline-none"
+                aria-label="搜索原文关键词"
+              />
+              {keyword && <span className="text-[11px] tabular-nums text-token-muted">{searchMatches.length} 处</span>}
+            </label>
+            {followEnabled && (
+              /*
+                「继续跟随」：手动滚过原文之后自动跟随会暂停 3 秒不跟用户抢滚动条，
+                但用户想回到当前句时没有任何入口——只能自己找。这颗按钮就是那个入口，
+                点它取消暂停并把当前句拉回视野。
+              */
+              <button
+                type="button"
+                onClick={() => {
+                  manualUntilRef.current = 0;
+                  lineRefs.current[activeIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                }}
+                className="min-h-11 flex-shrink-0 rounded-[10px] px-3 text-[13px] font-semibold"
+                style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
+              >
+                继续跟随
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {/* 歌词滚轮：普通模式为上下渐隐滚轮；同一文档模式随外层页面自然展开。 */}
+      <div
+        ref={listRef}
+        onWheel={markManualScroll}
+        onTouchMove={markManualScroll}
+        className={documentMode ? 'w-full max-w-[760px]' : 'w-[480px] max-w-[92%] overflow-y-auto'}
+        style={{
+          height: !documentMode && followEnabled ? 240 : 'auto',
+          maxHeight: documentMode ? undefined : followEnabled ? 240 : 320,
+          overscrollBehavior: documentMode ? undefined : 'contain',
+          WebkitMaskImage: !documentMode && followEnabled
+            ? 'linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%)'
+            : undefined,
+          maskImage: !documentMode && followEnabled
+            ? 'linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%)'
+            : undefined,
+        }}
+      >
+        {/* 首末句也能滚到中心：上下各留半屏 padding */}
+        <div
+          className="flex flex-col items-center gap-1"
+          style={!documentMode && followEnabled ? { padding: '104px 8px' } : { padding: '4px 0' }}>
+          {timelineSegments.map((s, i) => {
+            const active = followEnabled && i === activeIdx;
+            const dist = Math.abs(i - activeIdx);
+            if (documentMode && editingIndex === i && onSaveNote) {
+              return (
+                <div key={i} className="w-full rounded-[10px] p-2" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
+                  <textarea
+                    autoFocus
+                    value={editDraft}
+                    onChange={(event) => setEditDraft(event.target.value)}
+                    rows={2}
+                    className="w-full resize-y rounded-[8px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                  />
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button type="button" disabled={savingEdit} onClick={() => setEditingIndex(null)} className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] text-token-muted">
+                      <X size={12} /> 取消
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingEdit || !editDraft.trim()}
+                      onClick={() => {
+                        const next = estimated
+                          ? replaceEstimatedTranscriptSentenceText(noteMd, i, editDraft)
+                          : replaceTranscriptSegmentText(noteMd, i, editDraft);
+                        setSavingEdit(true);
+                        void onSaveNote(next)
+                          .then((ok) => { if (ok !== false) setEditingIndex(null); })
+                          .finally(() => setSavingEdit(false));
+                      }}
+                      className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
+                      style={{ background: 'rgba(59,130,246,0.16)', color: 'var(--accent-fg-blue)' }}>
+                      <Check size={12} /> 保存
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <button
+                key={i}
+                ref={(el) => { lineRefs.current[i] = el; }}
+                onClick={() => {
+                  if (documentMode && onSaveNote) {
+                    setEditingIndex(i);
+                    setEditDraft(s.text);
+                    return;
+                  }
+                  if (followEnabled && s.start >= 0) seekRef.current?.(s.start);
+                }}
+                className={`min-h-11 w-full overflow-hidden rounded-[10px] px-3 py-2 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
+                style={{
+                  fontSize: active ? 15 : 13,
+                  fontWeight: active ? 600 : 400,
+                  color: active
+                    ? 'var(--text-primary)'
+                    : followEnabled
+                      ? `rgba(148,163,184,${Math.max(0.35, 0.8 - dist * 0.15)})`
+                      : 'var(--text-secondary)',
+                  // 当前句底色 = 强调色（设计稿允许强调色出现的三处之一）；无紫色
+                  background: active
+                    ? 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)'
+                    : 'transparent',
+                  border: active
+                    ? '1px solid color-mix(in srgb, var(--accent-fg-info) 30%, transparent)'
+                    : '1px solid transparent',
+                }}
+                title={documentMode && onSaveNote ? '点击修改这句原文' : followEnabled && s.start >= 0 ? '点击跳到这一句' : undefined}
+              >
+                {s.speaker && <span className="mr-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: 'rgba(59,130,246,0.10)', color: 'var(--text-secondary)' }}>{s.speaker}</span>}
+                <span className="min-w-0 break-words">{s.text}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {estimated && (
+        <p className="text-[11px] text-token-muted">
+          当前跟随位置按语速智能估算，不会重复转录；
+          {documentMode && onSaveNote ? '可直接播放或点击句子校对' : '可直接播放或点句跳转'}
+        </p>
+      )}
       {documentMode && (
         <div className="flex w-full max-w-[760px] flex-col gap-3">
           {/*
@@ -485,22 +663,12 @@ export function TranscriptKaraoke({
             我原先做成后者，两位判官各自独立指到同一处——分组感弱一档。所以卡片挂在每一段上，
             外层退成纯排版容器。
           */}
-          <section className={SECTION_CARD} style={{ ...SECTION_CARD_STYLE, scrollMarginTop: 72 }}>
-            <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>词云</h3>
+          <section style={{ scrollMarginTop: 72 }}>
+            <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>词云</h3>
               <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句 · 点词看它出现在哪几处</span>
             </div>
-            <label className="mt-3 flex min-h-11 items-center gap-2 rounded-[10px] px-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
-              <Search size={14} className="shrink-0 text-token-muted" />
-              <input
-                value={keyword}
-                onChange={event => setKeyword(event.target.value)}
-                placeholder="搜索录音里的关键词"
-                className="min-w-0 flex-1 bg-transparent text-[13px] text-token-primary outline-none"
-                aria-label="搜索录音里的关键词"
-              />
-              {keyword && <span className="text-[11px] tabular-nums text-token-muted">{searchMatches.length} 处</span>}
-            </label>
+            <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
 
 
             {speakers.length > 0 && (
@@ -577,11 +745,14 @@ export function TranscriptKaraoke({
                     // 17/14 进蓝档；9 及以下退灰档。三档的意义是拉开梯度，不是等分。
                     const tier = weight >= 0.7 ? 'high' : weight >= 0.3 ? 'mid' : 'low';
                     const selected = activeTerm === word;
+                    // 稿面这三档是**纯色填充、无描边**，且字号台阶拉得很开（约 24 / 19 / 15）。
+                    // 我原先三档都带 1px 描边、字号 18/15/12.5——描边把色块对比削掉一层，
+                    // 台阶又太密，一排词里看不出谁是头部词，等于三档白分了。
                     const tierStyle = tier === 'high'
-                      ? { fontSize: '18px', fontWeight: 700, background: 'var(--text-primary)', color: 'var(--bg-card)', border: '1px solid var(--text-primary)' }
+                      ? { fontSize: '22px', fontWeight: 700, background: 'var(--text-primary)', color: 'var(--bg-card)' }
                       : tier === 'mid'
-                        ? { fontSize: '15px', fontWeight: 600, background: 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)', color: 'var(--accent-fg-info)', border: '1px solid color-mix(in srgb, var(--accent-fg-info) 30%, transparent)' }
-                        : { fontSize: '12.5px', fontWeight: 400, background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-faint)' };
+                        ? { fontSize: '17px', fontWeight: 600, background: 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)', color: 'var(--accent-fg-info)' }
+                        : { fontSize: '13px', fontWeight: 400, background: 'var(--bg-elevated)', color: 'var(--text-secondary)' };
                     return (
                       <button
                         key={word}
@@ -593,7 +764,7 @@ export function TranscriptKaraoke({
                           ...tierStyle,
                           // 选中的词直接用黑底（高频档同款），不再另加一圈蓝描边——
                           // 稿面把蓝色留给时间戳与「全部」，到处用会把它的意思稀释掉
-                          ...(selected ? { background: 'var(--text-primary)', color: 'var(--bg-card)', border: '1px solid var(--text-primary)' } : {}),
+                          ...(selected ? { background: 'var(--text-primary)', color: 'var(--bg-card)' } : {}),
                         }}
                         title={`出现 ${count} 次，点击查看命中`}
                       >
@@ -704,26 +875,29 @@ export function TranscriptKaraoke({
               </div>
             )}
             {activeTerm && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
+            </div>
           </section>
-          <section className={SECTION_CARD} style={{ ...SECTION_CARD_STYLE, scrollMarginTop: 72 }}>
-            <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>会议纪要</h3>
+          <section style={{ scrollMarginTop: 72 }}>
+            <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>会议纪要</h3>
               {onRestyle && (
                 <button type="button" onClick={onRestyle} className="flex min-h-9 items-center gap-1 rounded-[8px] px-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   <RefreshCw size={11} /> 重新生成
                 </button>
               )}
             </div>
+            <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
             {summaryModules.length > 0 ? (
-              <div className="mt-3 flex flex-col gap-3">
+              // 稿面的纪要正文是**直接铺在白卡上**的：一段结论 + 两条要点，没有内嵌灰底。
+              // 现在标题已经移到卡外、内容自己就是一张卡，再包一层灰底就是第三层盒子。
+              // 只有一个模块时连小标题都不要——那句「结论」是卡片本身在说的话。
+              <div className="mt-3 flex flex-col gap-4">
                 {summaryModules.map((module, index) => (
-                  <article
-                    key={`${module.title}-${index}`}
-                    className="rounded-[11px] p-3"
-                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
-                  >
-                    <h4 className="text-[12px] font-semibold text-token-primary">{module.title}</h4>
-                    <div className="mt-1.5 text-[12px] leading-relaxed text-token-secondary">
+                  <article key={`${module.title}-${index}`}>
+                    {summaryModules.length > 1 && (
+                      <h4 className="mb-1.5 text-[12px] font-semibold text-token-primary">{module.title}</h4>
+                    )}
+                    <div className="text-[13px] leading-relaxed text-token-secondary">
                       <MarkdownViewer content={module.markdown} compact />
                     </div>
                   </article>
@@ -738,16 +912,18 @@ export function TranscriptKaraoke({
                 </p>
               </div>
             )}
+            </div>
           </section>
-          <section className={SECTION_CARD} style={{ ...SECTION_CARD_STYLE, scrollMarginTop: 72 }}>
-            <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>待办事项</h3>
+          <section style={{ scrollMarginTop: 72 }}>
+            <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>待办事项</h3>
               {todos.length > 0 && (
                 <span className="text-[11px] tabular-nums text-token-muted">
                   {todos.length} 项{todoSourceCount > 0 ? ` · 来自 ${todoSourceCount} 处原文` : ''}
                 </span>
               )}
             </div>
+            <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
             {todos.length > 0 ? (
               <ul className="mt-3 flex flex-col">
                 {todos.map((todo, index) => (
@@ -803,12 +979,14 @@ export function TranscriptKaraoke({
                 </p>
               </div>
             )}
+            </div>
           </section>
-          <section className={SECTION_CARD} style={{ ...SECTION_CARD_STYLE, scrollMarginTop: 72 }}>
-            <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h3 className="text-[13px] font-semibold text-token-primary" style={{ scrollMarginTop: 76 }}>问这段录音</h3>
+          <section style={{ scrollMarginTop: 72 }}>
+            <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>问这段录音</h3>
               <span />
             </div>
+            <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
             <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
               <textarea
                 value={question}
@@ -837,120 +1015,11 @@ export function TranscriptKaraoke({
                 </div>
               )}
             </div>
+            </div>
           </section>
         </div>
       )}
 
-      {documentMode && (
-        <div className="mt-2 w-full max-w-[760px]">
-          <p className="text-[12px] font-semibold text-token-muted">转录原文</p>
-        </div>
-      )}
-      {/* 歌词滚轮：普通模式为上下渐隐滚轮；同一文档模式随外层页面自然展开。 */}
-      <div
-        ref={listRef}
-        onWheel={markManualScroll}
-        onTouchMove={markManualScroll}
-        className={documentMode ? 'w-full max-w-[760px]' : 'w-[480px] max-w-[92%] overflow-y-auto'}
-        style={{
-          height: !documentMode && followEnabled ? 240 : 'auto',
-          maxHeight: documentMode ? undefined : followEnabled ? 240 : 320,
-          overscrollBehavior: documentMode ? undefined : 'contain',
-          WebkitMaskImage: !documentMode && followEnabled
-            ? 'linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%)'
-            : undefined,
-          maskImage: !documentMode && followEnabled
-            ? 'linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%)'
-            : undefined,
-        }}
-      >
-        {/* 首末句也能滚到中心：上下各留半屏 padding */}
-        <div
-          className="flex flex-col items-center gap-1"
-          style={!documentMode && followEnabled ? { padding: '104px 8px' } : { padding: '4px 0' }}>
-          {timelineSegments.map((s, i) => {
-            const active = followEnabled && i === activeIdx;
-            const dist = Math.abs(i - activeIdx);
-            if (documentMode && editingIndex === i && onSaveNote) {
-              return (
-                <div key={i} className="w-full rounded-[10px] p-2" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-                  <textarea
-                    autoFocus
-                    value={editDraft}
-                    onChange={(event) => setEditDraft(event.target.value)}
-                    rows={2}
-                    className="w-full resize-y rounded-[8px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
-                  />
-                  <div className="mt-2 flex justify-end gap-2">
-                    <button type="button" disabled={savingEdit} onClick={() => setEditingIndex(null)} className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] text-token-muted">
-                      <X size={12} /> 取消
-                    </button>
-                    <button
-                      type="button"
-                      disabled={savingEdit || !editDraft.trim()}
-                      onClick={() => {
-                        const next = estimated
-                          ? replaceEstimatedTranscriptSentenceText(noteMd, i, editDraft)
-                          : replaceTranscriptSegmentText(noteMd, i, editDraft);
-                        setSavingEdit(true);
-                        void onSaveNote(next)
-                          .then((ok) => { if (ok !== false) setEditingIndex(null); })
-                          .finally(() => setSavingEdit(false));
-                      }}
-                      className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
-                      style={{ background: 'rgba(59,130,246,0.16)', color: 'var(--accent-fg-blue)' }}>
-                      <Check size={12} /> 保存
-                    </button>
-                  </div>
-                </div>
-              );
-            }
-            return (
-              <button
-                key={i}
-                ref={(el) => { lineRefs.current[i] = el; }}
-                onClick={() => {
-                  if (documentMode && onSaveNote) {
-                    setEditingIndex(i);
-                    setEditDraft(s.text);
-                    return;
-                  }
-                  if (followEnabled && s.start >= 0) seekRef.current?.(s.start);
-                }}
-                className={`min-h-11 w-full overflow-hidden rounded-[10px] px-3 py-2 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
-                style={{
-                  fontSize: active ? 15 : 13,
-                  fontWeight: active ? 600 : 400,
-                  color: active
-                    ? 'var(--text-primary)'
-                    : followEnabled
-                      ? `rgba(148,163,184,${Math.max(0.35, 0.8 - dist * 0.15)})`
-                      : 'var(--text-secondary)',
-                  // 当前句底色 = 强调色（设计稿允许强调色出现的三处之一）；无紫色
-                  background: active
-                    ? 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)'
-                    : 'transparent',
-                  border: active
-                    ? '1px solid color-mix(in srgb, var(--accent-fg-info) 30%, transparent)'
-                    : '1px solid transparent',
-                }}
-                title={documentMode && onSaveNote ? '点击修改这句原文' : followEnabled && s.start >= 0 ? '点击跳到这一句' : undefined}
-              >
-                {s.speaker && <span className="mr-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: 'rgba(59,130,246,0.10)', color: 'var(--text-secondary)' }}>{s.speaker}</span>}
-                <span className="min-w-0 break-words">{s.text}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {estimated && (
-        <p className="text-[11px] text-token-muted">
-          当前跟随位置按语速智能估算，不会重复转录；
-          {documentMode && onSaveNote ? '可直接播放或点击句子校对' : '可直接播放或点句跳转'}
-        </p>
-      )}
     </div>
   );
 }

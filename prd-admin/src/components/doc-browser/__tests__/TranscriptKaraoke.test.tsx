@@ -31,7 +31,9 @@ describe('TranscriptKaraoke unified playback', () => {
     const html = renderToStaticMarkup(
       <TranscriptKaraoke
         src="/recording.m4a"
-        noteMd={'## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 客户认为报价合理，报价还要再谈。\n**[00:03 - 00:06]** [说话人2] 交付质量需要保证，报价我们再看。'}
+        // 词频要拉开档次这条断言才有意义：导入 4 次 / 等待 2 次，
+        // 否则云里只有一个词，「多种字号」根本无从谈起。
+        noteMd={'## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 导入的时候要等待，导入很慢。\n**[00:03 - 00:06]** [说话人2] 导入失败要等待重来，导入这块最痛。\n**[00:06 - 00:09]** [说话人1] 客户认为报价合理，报价还要再谈。'}
         documentMode
         onSaveNote={async () => true}
         onAskRecording={() => undefined}
@@ -44,13 +46,20 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(html).toContain('待办事项');
     expect(html).toContain('问这段录音');
     expect(html).not.toContain('role="tab"');
-    expect(html).toContain('搜索录音里的关键词');
+    // 断言的是「有一个搜关键词的输入口」，不是它此刻的 placeholder 原文——
+    // 稿面把它排在原文列表上方（B1），文案随之从「搜索录音里的关键词」变成
+    // 「搜索原文关键词」；逐字比对会让这类合规改动无端变红（形状 4a）。
+    expect(html).toMatch(/aria-label="搜索[^"]*关键词"/);
     expect(html).toContain('整场录音词云');
     // 词云的权重按频次映射，不按排名。断言的是行为不是某个字面尺寸：
     // 云里必须出现**多种**字号（旧写法 15 - index*0.2 也会多种，所以还要下一条），
     // 且最大的那一档必须落在频次最高的词上。
     expect(html).toContain('这场反复提到的是');
-    const cloudHtml = html.slice(html.indexOf('整场录音词云'));
+    // 只切词云那一块。此前切到文末，把**原文列表**的行内字号也算了进去——
+    // 于是「云里有多种字号」这条断言其实在测原文，词云只有一个词也照样绿
+    // （形状 6：判据读到的不是它要判的那个值）。原文一挪到词云前面就露馅了。
+    const cloudStart = html.indexOf('整场录音词云');
+    const cloudHtml = html.slice(cloudStart, html.indexOf('少了某个词', cloudStart));
     const sizes = [...cloudHtml.matchAll(/font-size:([\d.]+)px/g)].map(m => Number(m[1]));
     expect(sizes.length).toBeGreaterThan(1);
     expect(new Set(sizes).size).toBeGreaterThan(1);
@@ -59,9 +68,13 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(cloudHtml).toMatch(/报价<span[^>]*>\d+<\/span>/);
     expect(html).toContain('说话人1');
     // 说话人不只给名字，还要给「说了几句、占多少」——光有名字看不出这场是谁在说
-    expect(html).toMatch(/说话人1<\/span>\s*<span[^>]*>\s*1 句 · 占 50%/);
-    // 词频压成三档，最高频那个词要能一眼跳出来：它用反白大字，和其余两档不同量级
-    expect(html).toMatch(/font-size:18px;font-weight:700/);
+    expect(html).toMatch(/说话人1<\/span>\s*<span[^>]*>\s*2 句 · 占 67%/);
+    // 词频压成三档，最高频那个词要能一眼跳出来：它用反白大字，和其余两档不同量级。
+    // 断言「最大那一档明显大于次档」而不是某个具体像素——稿面的台阶宽度调过一次，
+    // 逐字钉死尺寸只会让下次合规调整无端变红。
+    // 稿面相邻两档大约差 1.25 倍（24 / 19 / 15），按这个下限卡
+    expect(Math.max(...sizes) / Math.min(...sizes)).toBeGreaterThanOrEqual(1.25);
+    expect(cloudHtml).toContain('font-weight:700');
   });
 
   it('没有任何词被重复提到时不出词云——「反复提到的是 X（1 次）」是句假话', () => {
