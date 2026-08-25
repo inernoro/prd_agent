@@ -116,12 +116,19 @@ function useSilentWavUrl(seconds: number): string {
 }
 
 /** 390×844 手机画板，尺寸对齐设计稿 `MAP KNOWLEDGE BASE / VOICE TO NOTE · V2 · 390×844`。 */
-function Artboard({ label, note, children }: { label: string; note: string; children: React.ReactNode }) {
+function Artboard({ boardId, label, note, children }: {
+  /** 对应设计稿画板编号（design-boards/manifest.json 的 id）；不在设计稿里的给 null */
+  boardId: string | null;
+  label: string;
+  note: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-2">
       <div className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>{label}</div>
       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{note}</div>
       <div
+        data-impl-board={boardId ?? undefined}
         className="flex flex-col overflow-hidden"
         style={{
           width: 390,
@@ -171,6 +178,7 @@ function RecordingConsistencyMock() {
 
       <div className="flex flex-wrap items-start gap-8">
         <Artboard
+          boardId="v2-R4"
           label="A · 处理中（对齐设计稿 R4「结束处理三阶段」）"
           note="三阶段 + 状态四问：音频安不安全 / 在做什么 / 还要多久 / 现在能做什么"
         >
@@ -205,6 +213,7 @@ function RecordingConsistencyMock() {
         </Artboard>
 
         <Artboard
+          boardId="v2-S5"
           label="F · 失败（对齐设计稿 S5「四字段逐条渲染」）"
           note="原因与 code / 时间 / 仍可用能力 / 下一步"
         >
@@ -226,6 +235,7 @@ function RecordingConsistencyMock() {
         </Artboard>
 
         <Artboard
+          boardId="v2-S6"
           label="G · 自动重试中（对齐设计稿 S6）"
           note="倒计时 + 明说无需操作，不给一个点了没用的按钮"
         >
@@ -252,6 +262,7 @@ function RecordingConsistencyMock() {
           那样截出来的「缺词典入口」是台架自己造的假差异，不是实现的问题。
         */}
         <Artboard
+          boardId="v2-P3"
           label="B · 转录后（对应设计稿 P1/P2/P3「台词跟读 + 词云」）"
           note="接线照抄 FilePreview.tsx:736 的生产调用；词云/说话人/搜索/提问均为真实实现"
         >
@@ -280,6 +291,7 @@ function RecordingConsistencyMock() {
 
       <div className="flex flex-wrap items-start gap-8">
         <Artboard
+          boardId={null}
           label="D · 知识库 → 最近"
           note="跨库时间线：今天 / 昨天 / 更早三组，每条带所属知识库与新增标"
         >
@@ -288,7 +300,7 @@ function RecordingConsistencyMock() {
           </div>
         </Artboard>
 
-        <Artboard label="E · 最近 · 空态" note="空状态必须给引导，不能只写「暂无数据」">
+        <Artboard boardId={null} label="E · 最近 · 空态" note="空状态必须给引导，不能只写「暂无数据」">
           <div className="flex-1 overflow-y-auto px-3 py-4" style={{ minHeight: 0 }}>
             <RecentEntriesList items={[]} onOpen={() => undefined} />
           </div>

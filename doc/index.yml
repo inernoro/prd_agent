@@ -274,6 +274,7 @@ docs:
   plan.platform.core-business-stability: "MAP 核心业务稳定基线落地 · 计划"
   plan.platform.llm-gateway.authoritative-tutorial: "LLM Gateway 模型网关权威教程 · 计划"
   plan.platform.llm-gateway.external-platform: "LLM Gateway 外部平台化与控制台体验收口 · 计划"
+  plan.prd-admin.recording-design-restoration: "录音交付页设计稿还原工程 · 计划与看板"
   plan.platform.llm-gateway.full-cutover: "LLM 网关旧路径物理退场 · 计划"
   plan.platform.llm-gateway.resilience: "LLM Gateway 故障隔离与恢复 · 计划"
   plan.platform.llm-routing.capability-contract: "模型路由能力契约治理 · 状态看板"
