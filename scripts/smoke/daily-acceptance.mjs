@@ -91,6 +91,22 @@ const FORMS = [
   },
 ];
 
+/**
+ * 页面级「有没有东西」判据。按业务功能台账（stable-smoke/reference/business-function-catalog.json）
+ * 里的 P0 功能线挑，再按真实数据量排序 —— 只挑读路径，写入与计费类不放进日常例程
+ * （生图/视频要花钱、要清理，属于 48 小时那一轮的事）。
+ *
+ * anchor 是这一屏「渲染成功才会出现」的字样。选常驻文案，不要选依赖数据的字段：
+ * 数据一变判据就假红，假红几次之后没人再看这份报告。
+ */
+const PAGES = [
+  { key: 'shell',      route: '/',               anchor: null,     minChars: 60, label: '导航与应用外壳' },
+  { key: 'web-pages',  route: '/web-pages',      anchor: '网页托管', minChars: 80, label: '网页托管主控台' },
+  { key: 'doc-store',  route: '/document-store', anchor: null,     minChars: 60, label: '知识库 / 文件解析' },
+  { key: 'defect',     route: '/defect-agent',   anchor: null,     minChars: 60, label: '缺陷管理' },
+  { key: 'visual',     route: '/visual-agent',   anchor: null,     minChars: 60, label: '视觉创作' },
+];
+
 const results = [];
 const record = (name, ok, detail) => {
   results.push({ name, ok, detail });
@@ -214,6 +230,33 @@ async function checkCheckboxHittable(ctx) {
   record('主控台勾选框可点（真实指针）', railHead.includes('选中的站点'), `右栏首行「${railHead}」`);
 }
 
+/**
+ * 一屏「打开了但是空的」判据。
+ * 只断言三件事：正文有字、自家域名没有 4xx、没有 pageerror。
+ * 不断言具体数字或条数 —— 那些随数据变，会制造假红。
+ */
+async function checkPageAlive(ctx, page4) {
+  const page = await ctx.newPage();
+  const bad = [];
+  page.on('response', (r) => {
+    const u = r.url();
+    if (u.startsWith(BASE) && r.status() >= 400) bad.push(`${r.status()} ${u.slice(BASE.length).slice(0, 50)}`);
+  });
+  page.on('pageerror', (e) => bad.push(`pageerror: ${e.message.slice(0, 50)}`));
+  await page.goto(`${BASE}${page4.route}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(9000);
+  const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ''));
+  await page.close();
+
+  const enough = text.length >= page4.minChars;
+  const anchored = !page4.anchor || text.includes(page4.anchor.replace(/\s+/g, ''));
+  record(
+    `页面产物可见 · ${page4.label}`,
+    enough && anchored && bad.length === 0,
+    `正文${text.length}字${page4.anchor ? ` 锚点${anchored ? '命中' : '缺失'}` : ''}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
+  );
+}
+
 // ── 主流程 ──
 let exitCode = 0;
 try {
@@ -242,6 +285,10 @@ try {
     } catch (e) {
       record(`分享页产物可见 · ${form.key}`, false, `前置失败：${e.message}`);
     }
+  }
+
+  for (const p4 of PAGES) {
+    try { await checkPageAlive(ctx, p4); } catch (e) { record(`页面产物可见 · ${p4.label}`, false, e.message.slice(0, 80)); }
   }
 
   await checkCheckboxHittable(ctx);
