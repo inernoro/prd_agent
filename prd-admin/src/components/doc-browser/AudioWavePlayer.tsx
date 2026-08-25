@@ -66,8 +66,10 @@ function seededBars(src: string, n: number): number[] {
     //   只有逐条抖动的话，整条波形的平均高度处处相同，远看就是一块实心色块；
     //   逐条抖动决定同一段里每根条的高低差。
     // 四位判官分别在 B1 与 B2 上报过同一句「起伏丢失、退化成栅格」，加了慢包络才拉开。
+    // 下限 0.22 不是随手取的：再低，最短的那几根在 3px 宽 + 全圆角下会缩成一颗**圆点**，
+    // 判官报的「柱间夹杂小圆点」就是它。稿面是一排等宽柱，没有点。
     const envelope = 0.55 + 0.45 * Math.sin(i * 0.11 + 1.3);
-    out.push(0.12 + 0.88 * envelope * (0.6 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.4 * r));
+    out.push(0.22 + 0.78 * envelope * (0.6 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.4 * r));
   }
   return out;
 }

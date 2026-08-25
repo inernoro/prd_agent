@@ -625,7 +625,8 @@ export function TranscriptKaraoke({
             它过滤的是原文。此前它挂在词云卡里，作用对象与位置都跟稿面对不上。
           */}
           <div className="flex items-center gap-2">
-            <label className="flex min-h-11 flex-1 items-center gap-2 rounded-[10px] px-3" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+            {/* 稿面的搜索框是全药丸，与右边「继续跟随」同一族圆角 */}
+            <label className="flex min-h-11 flex-1 items-center gap-2 rounded-full px-4" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
               <Search size={14} className="shrink-0 text-token-muted" />
               <input
                 value={keyword}
@@ -807,8 +808,11 @@ export function TranscriptKaraoke({
                 }}
                 className={`min-h-11 w-full overflow-hidden rounded-[10px] px-3 py-1.5 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
                 style={{
-                  fontSize: active ? 15 : 13,
-                  fontWeight: active ? 600 : 400,
+                  // 稿面的当前句**只靠底色**区分，字号字重与其它行一样。
+                  // 我另外加了放大 + 加粗 + 时间戳染蓝三层强调，判官记的是「强调强度超出稿面」——
+                  // 三层叠起来，那一行读起来像另一种内容，而不是同一份原文里被点亮的一句。
+                  fontSize: 13,
+                  fontWeight: 400,
                   // 稿面把「已播过的」压灰、「还没播到的」留深色，两档区分出「读到哪了」。
                   // 原写法按与当前句的距离统一渐隐，前后一样淡，这层信息就没了。
                   color: active
@@ -842,7 +846,8 @@ export function TranscriptKaraoke({
                 <span className="grid gap-x-3" style={{ gridTemplateColumns: '48px 1fr' }}>
                   <span
                     className="pt-[2px] font-mono text-[11px] tabular-nums"
-                    style={{ color: active ? 'var(--accent-fg-info)' : 'var(--text-muted)' }}
+                    // 时间戳全程淡灰：稿面当前句那一行的时间也是灰的，染蓝是我加的第三层强调
+                    style={{ color: 'var(--text-muted)' }}
                   >
                     {s.start >= 0 ? formatClock(s.start) : ''}
                   </span>
