@@ -1,0 +1,17 @@
+import { chromium } from '@playwright/test';
+import fs from 'node:fs';
+const OUT = '/tmp/claude-0/-home-user-prd-agent/e94f0ca4-fb88-51cb-95f1-831ce61d00ee/scratchpad/real';
+fs.mkdirSync(OUT, { recursive: true });
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const p = await b.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+const errs = [];
+p.on('pageerror', e => errs.push('PAGEERROR ' + e.message));
+await p.goto('http://127.0.0.1:7801/', { waitUntil: 'networkidle' }).catch(e => errs.push('goto ' + e.message));
+await p.waitForTimeout(2500);
+console.log('url:', p.url());
+console.log('title:', await p.title());
+await p.screenshot({ path: `${OUT}/01-root.png`, fullPage: false });
+const txt = await p.evaluate(() => document.body.innerText.slice(0, 600));
+console.log('--- text ---\n' + txt);
+console.log('errors:', errs.slice(0,3));
+await b.close();

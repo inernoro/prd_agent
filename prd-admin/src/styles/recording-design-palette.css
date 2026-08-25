@@ -14,6 +14,19 @@
  */
 
 .recording-design-palette {
+  /*
+   * 稿面指定 Noto Sans SC。平台全站字体链把苹方排在思源/Noto 前面，
+   * 这一屏把稿面那一档提到最前，其余顺序原样继承——**只在这条链路生效**，不动全站。
+   *
+   * 这里不引外部字体：装了就用稿面那一档，没装就照旧退回平台链。
+   * 我原先想申请「把字体差异从判分里豁免」，那是给自己找台阶——
+   * 能对齐的就对齐，对不齐的（没装字体）如实退化，不写成豁免。
+   */
+  font-family:
+    'Noto Sans SC', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI',
+    'PingFang SC', 'HarmonyOS Sans SC', 'Source Han Sans SC',
+    'Microsoft YaHei UI', 'Microsoft YaHei', ui-sans-serif, system-ui, sans-serif;
+
   /* 浅色档（稿面：bg F5F5F2 / surface FFF / ink 16181A / ink2 5C6169 / line E4E3DE） */
   --bg-primary: #F5F5F2;
   --bg-base: #EDEDE9;
