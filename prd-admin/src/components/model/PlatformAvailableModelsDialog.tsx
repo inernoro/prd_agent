@@ -7,12 +7,10 @@ import type { Platform } from '@/types/admin';
 import { resolveCherryGroupKey } from '@/lib/cherryModelGrouping';
 import { inferPresetTagKeys, matchAvailableModelsTab, type PresetTagKey } from '@/lib/modelPresetTags';
 import { getAvatarUrlByGroup, getAvatarUrlByModelName, useAvatarUpdates } from '@/assets/model-avatars';
-import { ArrowDown, DatabaseZap, Film, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Wand2, Zap, Settings } from 'lucide-react';
+import { ArrowDown, DatabaseZap, Film, ImagePlus, Link2, Minus, Plus, RefreshCw, ScanEye, Search, Sparkles, Star, Zap, Settings } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { matchAdapterConfig } from '@/lib/imageGenAdapterConfigs';
 import { Tooltip } from '@/components/ui/Tooltip';
-import { systemDialog } from '@/lib/systemDialog';
-import { toast } from '@/lib/toast';
 
 export type AvailableModel = {
   /** 平台侧模型 ID（业务语义 modelId；后端字段名为 ModelName，前端历史命名为 modelName） */
@@ -135,7 +133,6 @@ export function PlatformAvailableModelsDialog({
   isSelected,
   onToggle,
   onBulkAddGroup,
-  onAfterWriteBack,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -147,7 +144,6 @@ export function PlatformAvailableModelsDialog({
   isSelected: (m: AvailableModel) => boolean;
   onToggle: (m: AvailableModel) => void | Promise<void>;
   onBulkAddGroup: (groupName: string, ms: AvailableModel[]) => void | Promise<void>;
-  onAfterWriteBack?: () => void | Promise<void>;
 }) {
   useAvatarUpdates();
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
@@ -252,42 +248,6 @@ export function PlatformAvailableModelsDialog({
     }
   };
 
-  const reclassifyWithMainModel = async () => {
-    if (!platform?.id) return;
-    const ok = await systemDialog.confirm({
-      title: '确认执行',
-      message: '将使用“主模型”对该平台可用模型重新分类，并写回已配置模型的分组/标签。是否继续？',
-      confirmText: '继续',
-      cancelText: '取消',
-    });
-    if (!ok) return;
-
-    setAvailableLoading(true);
-    setAvailableError(null);
-    try {
-      const idem = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-      const r = await apiRequest<{
-        updatedCount: number;
-        availableCount: number;
-        configuredCount: number;
-      }>(`/api/mds/platforms/${platform.id}/reclassify-models`, {
-        method: 'POST',
-        body: {},
-        headers: { 'Idempotency-Key': idem },
-      });
-      if (!r.success) {
-        setAvailableError(r.error?.message || '主模型分类失败');
-        return;
-      }
-      const d = r.data as { updatedCount?: number; configuredCount?: number; availableCount?: number } | null;
-      toast.success(`主模型分类完成：更新 ${d?.updatedCount ?? 0} 个（已配置 ${d?.configuredCount ?? 0} / 可用 ${d?.availableCount ?? 0}）`);
-      if (onAfterWriteBack) await onAfterWriteBack();
-      await fetchAvailableModels({ refresh: true });
-    } finally {
-      setAvailableLoading(false);
-    }
-  };
-
   useEffect(() => {
     if (!open) return;
     if (!platform?.id) return;
@@ -342,19 +302,9 @@ export function PlatformAvailableModelsDialog({
             >
               {availableLoading ? <MapSpinner size={16} /> : <RefreshCw size={16} />}
             </Button>
-            {/* 虚拟中继平台无需主模型分类 */}
-            {platform && platform.kind !== 'exchange' && !platform.isVirtual && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={reclassifyWithMainModel}
-                disabled={!platform?.id || availableLoading}
-                aria-label="主模型分类"
-                title="主模型分类（写回分组与标签）"
-              >
-                <Wand2 size={16} />
-              </Button>
-            )}
+            {/* 2026-08-25：这里原来有一个「主模型分类」按钮，会拿主模型给上游模型重新分类并
+                **写回** MAP 的 llmmodels（分组与能力标签）。模型的分组与能力现在由 LLM Gateway
+                控制台维护，这个写回入口一并下线；本弹窗从此只读上游清单，不再改任何配置。 */}
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
