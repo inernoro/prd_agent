@@ -23,14 +23,20 @@ namespace PrdAgent.Tests;
 /// </summary>
 public class CdsReportSyncTargetTests
 {
-    /// <summary>默认造一个「全量镜像」：有水位 = 被当作默认全量导入过（见 Build 的判据）。</summary>
-    private static DocumentStore Store(string id, string owner, string? source, DateTime? lastAt = null)
+    /// <summary>
+    /// 默认造一个「全量镜像」：有水位 = 被当作默认全量导入过（见 Build 的判据）。
+    ///
+    /// 参数是 bool 不是可空时间：第一版写成「传进来的 ?? 默认值」，于是传 null
+    /// （想表达「没有水位」）被 ?? 吃掉又变回默认值，两条断言「应该跳过」的用例
+    /// 拿到的其实是有水位的库，CI 才红。**可选参数不能用来表达「显式的空」。**
+    /// </summary>
+    private static DocumentStore Store(string id, string owner, string? source, bool fullySyncedBefore = true)
         => new()
         {
             Id = id,
             OwnerId = owner,
             PeerSyncNodeBaseUrl = source,
-            PeerSyncLastAt = lastAt ?? new DateTime(2026, 8, 25, 0, 0, 0, DateTimeKind.Utc),
+            PeerSyncLastAt = fullySyncedBefore ? new DateTime(2026, 8, 25, 0, 0, 0, DateTimeKind.Utc) : null,
         };
 
     [Fact]
@@ -108,7 +114,7 @@ public class CdsReportSyncTargetTests
         // 带过滤的导入从来不写。所以没有水位 = 不能证明它是全量镜像 = 不碰。
         var targets = CdsReportSyncTargets.Build(new[]
         {
-            Store("store-filtered", "user-1", "https://cds-a.example.com", lastAt: null),
+            Store("store-filtered", "user-1", "https://cds-a.example.com", fullySyncedBefore: false),
             Store("store-full", "user-1", "https://cds-a.example.com"),
         });
 
@@ -123,7 +129,7 @@ public class CdsReportSyncTargetTests
         // 这种库这轮也不自动刷新——保守方向一致：证明不了是全量镜像就不碰。
         Assert.Empty(CdsReportSyncTargets.Build(new[]
         {
-            Store("store-partial-fail", "user-1", "https://cds-a.example.com", lastAt: null),
+            Store("store-partial-fail", "user-1", "https://cds-a.example.com", fullySyncedBefore: false),
         }));
     }
 }
