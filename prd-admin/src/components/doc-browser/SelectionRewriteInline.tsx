@@ -10,6 +10,7 @@ import {
   SELECTION_OVERLAY_PANEL,
   SELECTION_OVERLAY_PRIMARY,
 } from './selectionOverlayStyle';
+import { toFriendlyRewriteError } from './selectionRewriteError';
 
 // 知识库「逐句修改」的两个就地条：
 //   1. SelectionRewritePrompt —— 划词后原地问「想怎么改」（图 1/2）
@@ -32,6 +33,25 @@ function useScrollFollow(scrollRef?: RefObject<HTMLElement>): number {
     };
   }, [scrollRef]);
   return dy;
+}
+
+/**
+ * 正文滚动区在视口里的位置。钉在正文右上角的条子要靠它定位——
+ * 侧栏收放、窗口缩放、正文滚动都会挪动这块区域，所以三种事件都要重算。
+ */
+function usePaneRect(scrollRef?: RefObject<HTMLElement>): DOMRect | null {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  useEffect(() => {
+    const read = () => setRect(scrollRef?.current?.getBoundingClientRect() ?? null);
+    read();
+    window.addEventListener('scroll', read, true);
+    window.addEventListener('resize', read);
+    return () => {
+      window.removeEventListener('scroll', read, true);
+      window.removeEventListener('resize', read);
+    };
+  }, [scrollRef]);
+  return rect;
 }
 
 export interface AnchorRect {
@@ -172,7 +192,6 @@ export type InlineRewritePhase = 'streaming' | 'review' | 'error';
  * 用户任何时刻都知道在做什么、还要多久）。
  */
 export function InlineDiffReviewBar({
-  anchorRect,
   scrollRef,
   phase,
   model,
@@ -187,7 +206,6 @@ export function InlineDiffReviewBar({
   onRetry,
   onStop,
 }: {
-  anchorRect: AnchorRect;
   scrollRef?: RefObject<HTMLElement>;
   phase: InlineRewritePhase;
   model?: string;
@@ -202,7 +220,7 @@ export function InlineDiffReviewBar({
   onRetry: () => void;
   onStop: () => void;
 }) {
-  const scrollDy = useScrollFollow(scrollRef);
+  const paneRect = usePaneRect(scrollRef);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (phase !== 'streaming') return;
@@ -210,16 +228,28 @@ export function InlineDiffReviewBar({
     return () => window.clearInterval(t);
   }, [phase]);
   const waited = useMemo(() => Math.max(0, Math.round((now - startedAt) / 1000)), [now, startedAt]);
+  const friendlyError = useMemo(() => toFriendlyRewriteError(errorMsg), [errorMsg]);
 
   const width = clampWidth(phase === 'streaming' ? 320 : 300);
-  // 操作条永远压在选区上方：正文里的改动是主角，条子不许盖住它（content-fills-canvas.md）
-  const top = Math.max(8, anchorRect.top - 42);
-  const left = Math.max(8, Math.min(window.innerWidth - width - 8, anchorRect.left + anchorRect.width / 2 - width / 2));
+  /*
+   * 条子钉在正文区的右上角，不追着选区跑。
+   *
+   * 上一版是「压在选区正上方」，结果选区靠近正文顶部时它就砸在标题和正文上
+   * （2026-08-25 用户指着截图问「这是什么雷霆布局」）。追随选区还有两个躲不掉的坏处：
+   * 选区一长，条子必然盖住它自己要展示的那段改动；正文一滚，条子跟着乱飘。
+   * 正文里的改动才是主角，条子只是遥控器（content-fills-canvas.md），
+   * 所以按 ChatGPT canvas 的做法固定在右上角——永远不压字，位置也永远可预期。
+   */
+  const pane = paneRect;
+  const top = (pane?.top ?? 8) + 12;
+  const left = pane
+    ? Math.max(8, pane.right - width - 16)
+    : Math.max(8, window.innerWidth - width - 16);
 
   return createPortal(
     <div
       className="fixed z-[120] flex flex-col gap-1"
-      style={{ top, left, width, padding: 8, transform: `translateY(${-scrollDy}px)`, ...SELECTION_OVERLAY_PANEL }}
+      style={{ top, left, width, padding: 8, ...SELECTION_OVERLAY_PANEL }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
@@ -245,8 +275,16 @@ export function InlineDiffReviewBar({
 
       {phase === 'error' && (
         <div className="flex items-center gap-2">
-          <span className="text-[11px] flex-1 min-w-0 truncate" style={{ color: 'var(--accent-fg-danger)' }}>
-            {errorMsg || '改写失败'}
+          {/* 上游原文只进 title（排查用），面上给用户能照着做的一句话 */}
+          <span className="flex-1 min-w-0" title={friendlyError.raw || undefined}>
+            <span className="text-[11px] block truncate" style={{ color: 'var(--accent-fg-danger)' }}>
+              {friendlyError.message}
+            </span>
+            {friendlyError.hint && (
+              <span className="text-[10px] block truncate" style={{ color: 'var(--text-muted)' }}>
+                {friendlyError.hint}
+              </span>
+            )}
           </span>
           <button
             onClick={onRetry}

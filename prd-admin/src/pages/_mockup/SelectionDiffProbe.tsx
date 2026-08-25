@@ -47,7 +47,6 @@ export default function SelectionDiffProbe() {
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const timerRef = useRef<number | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
-  const [anchorRect, setAnchorRect] = useState({ top: 120, left: 80, width: 420, height: 24 });
 
   const run = useCallback(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -73,13 +72,6 @@ export default function SelectionDiffProbe() {
     if (new URLSearchParams(window.location.search).get('autorun') === '1') run();
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [run]);
-
-  useEffect(() => {
-    const el = anchorRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setAnchorRect({ top: r.top + 90, left: r.left + 24, width: 420, height: 24 });
-  }, [phase]);
 
   const diff = useMemo(() => {
     if (phase === 'idle') return null;
@@ -118,7 +110,7 @@ export default function SelectionDiffProbe() {
 
       <div
         ref={anchorRef}
-        className={`px-6 py-4${diff ? ' doc-inline-diff' : ''}`}
+        className={`px-6 py-4${diff ? ' doc-inline-diff' : ''}${phase === 'streaming' ? ' doc-inline-diff--streaming' : ''}`}
         style={{ maxWidth: 900 }}
       >
         <MarkdownViewer content={diff ? diff.body : ORIGINAL} />
@@ -126,7 +118,6 @@ export default function SelectionDiffProbe() {
 
       {diff && phase !== 'idle' && (
         <InlineDiffReviewBar
-          anchorRect={anchorRect}
           phase={phase === 'streaming' ? 'streaming' : 'review'}
           model="probe/fake-model"
           added={diff.added}

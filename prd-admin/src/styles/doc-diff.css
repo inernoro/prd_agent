@@ -44,6 +44,21 @@
   padding: 0 2px;
 }
 
+/*
+ * 流式期间：原文只是「正在被替换」，还没被删掉。
+ * 这一档把它整体压灰、去掉删除线与红底——ChatGPT canvas 的做法，也是用户 2026-08-25
+ * 指着截图要的那个观感：进行中原文变灰，结束了才是灰删除线 + 蓝新增。
+ * 之前流式和完成态共用一套红删除线，每 100ms 重算一次，满屏红杠乱跳，
+ * 用户的原话是「这是什么雷霆布局」。
+ */
+.doc-inline-diff--streaming del {
+  color: var(--text-muted);
+  background: transparent;
+  text-decoration: none;
+  opacity: 0.55;
+  transition: opacity 200ms ease-out;
+}
+
 /* 新增内容进场：不是「有东西在动」，是产物本身在长出来（artifact-is-experience.md） */
 .doc-inline-diff ins {
   animation: doc-diff-ins-in 260ms ease-out both;

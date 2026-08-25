@@ -4000,8 +4000,12 @@ export function DocBrowser({
                 ref={contentAreaRef}
                 className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`
                   // 就地 diff 的着色挂在容器类上：正文里的 <ins>/<del> 会被 sanitize 剥掉 class，
-                  // 只能由容器按标签选择（styles/doc-diff.css）
-                  + (rewriteDiff ? ' doc-inline-diff' : '')}
+                  // 只能由容器按标签选择（styles/doc-diff.css）。
+                  // 流式期间额外挂 --streaming：原文只是「正在被替换」，还没被删掉，
+                  // 此时全篇红删除线会让人以为内容已经没了（2026-08-25 用户对着截图说「什么雷霆布局」）。
+                  // 那一档按 ChatGPT canvas 的做法：原文整体压灰，新内容照常蓝色长出来。
+                  + (rewriteDiff ? ' doc-inline-diff' : '')
+                  + (rewrite?.phase === 'streaming' ? ' doc-inline-diff--streaming' : '')}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
                 {/* 生成产物（转录笔记/字幕/再加工）→ 来源文件快速跳转：
@@ -4208,7 +4212,6 @@ export function DocBrowser({
                     这里不再画选区高亮：正文里的 del/ins 着色本身就是「选了哪段、改了什么」 */}
                 {rewrite && rewrite.phase !== 'prompt' && (rewriteDiff || rewrite.applying) && !editMode && (
                   <InlineDiffReviewBar
-                    anchorRect={rewrite.rect}
                     scrollRef={contentAreaRef}
                     phase={rewrite.phase}
                     model={rewrite.model}
