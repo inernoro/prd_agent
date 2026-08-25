@@ -39,6 +39,72 @@ type LoadState =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; title: string; storeName: string; audioUrl: string; noteMd: string };
 
+/**
+ * 结果页外壳（纯展示）。
+ *
+ * 抽出来是为了让**对照台**能用同一份 chrome 出图：在 mock 里照着重写一遍顶部栏，
+ * 判分判的就是那一份副本，真页面改了它不会跟着变——判据读到的不是真正生效的值
+ * （形状 6）。所以外壳只有这一份，两边都用它。
+ */
+export function RecordingResultShell({
+  title,
+  subtitle,
+  onBack,
+  children,
+}: {
+  title: string;
+  /** 稿面那行绿色副标题：「已保存到「X」· 24:18」。给不出就不显示，不编。 */
+  subtitle?: string;
+  onBack: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      // 作用域皮肤：这一屏整棵子树读设计稿自己那组 token，不影响全站
+      className="recording-design-palette flex h-full min-h-0 w-full flex-col"
+      style={{ background: 'var(--bg-primary)' }}
+    >
+      {/*
+        稿面的顶部栏：返回 / 标题 + 副标题 / 更多。它吸顶且始终占一行，
+        不随内容滚动——B1 到 B4 每一屏都画着它，是这条链路的身份标识。
+      */}
+      <header
+        className="flex shrink-0 items-center gap-3 px-4 py-3"
+        style={{ background: 'var(--bg-primary)', borderBottom: '1px solid var(--border-faint)' }}
+      >
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="返回"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          <ArrowLeft size={20} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h1>
+          {subtitle && (
+            // 稿面这一行是绿色的：它说的是「音频已经安全了」，与进度、失败分属不同语义
+            <p className="truncate text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>{subtitle}</p>
+          )}
+        </div>
+        <button
+          type="button"
+          aria-label="更多"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          <MoreHorizontal size={20} />
+        </button>
+      </header>
+
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+        {children}
+      </main>
+    </div>
+  );
+}
+
 export function RecordingResultPage() {
   const { storeId, entryId } = useParams<{ storeId: string; entryId: string }>();
   const navigate = useNavigate();
@@ -126,64 +192,22 @@ export function RecordingResultPage() {
   }, [durationSec, state]);
 
   return (
-    <div
-      // 作用域皮肤：这一屏整棵子树读设计稿自己那组 token，不影响全站
-      className="recording-design-palette flex h-full min-h-0 w-full flex-col"
-      style={{ background: 'var(--bg-primary)' }}
-    >
-      {/*
-        稿面的顶部栏：返回 / 标题 + 副标题 / 更多。它吸顶且始终占一行，
-        不随内容滚动——B1 到 B4 每一屏都画着它，是这条链路的身份标识。
-      */}
-      <header
-        className="flex shrink-0 items-center gap-3 px-4 py-3"
-        style={{ background: 'var(--bg-primary)', borderBottom: '1px solid var(--border-faint)' }}
-      >
-        <button
-          type="button"
-          onClick={goBack}
-          aria-label="返回"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
-          style={{ color: 'var(--text-primary)' }}
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            {state.kind === 'ready' ? state.title : '录音'}
-          </h1>
-          {subtitle && (
-            // 稿面这一行是绿色的：它说的是「音频已经安全了」，与进度、失败分属不同语义
-            <p className="truncate text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>{subtitle}</p>
-          )}
+    <RecordingResultShell title={state.kind === 'ready' ? state.title : '录音'} subtitle={subtitle} onBack={goBack}>
+      {state.kind === 'loading' && <MapSectionLoader text="正在打开这段录音…" />}
+      {state.kind === 'error' && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+          <p className="text-[14px]" style={{ color: 'var(--text-primary)' }}>{state.message}</p>
+          <button type="button" onClick={goBack} className="min-h-11 text-[13px]" style={{ color: 'var(--accent-fg-info)' }}>
+            返回知识库
+          </button>
         </div>
-        <button
-          type="button"
-          aria-label="更多"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
-          style={{ color: 'var(--text-primary)' }}
-        >
-          <MoreHorizontal size={20} />
-        </button>
-      </header>
-
-      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        {state.kind === 'loading' && <MapSectionLoader text="正在打开这段录音…" />}
-        {state.kind === 'error' && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-            <p className="text-[14px]" style={{ color: 'var(--text-primary)' }}>{state.message}</p>
-            <button type="button" onClick={goBack} className="min-h-11 text-[13px]" style={{ color: 'var(--accent-fg-info)' }}>
-              返回知识库
-            </button>
-          </div>
-        )}
-        {state.kind === 'ready' && (
-          <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3">
-            <TranscriptKaraoke src={state.audioUrl} noteMd={state.noteMd} documentMode />
-          </div>
-        )}
-      </main>
-    </div>
+      )}
+      {state.kind === 'ready' && (
+        <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3">
+          <TranscriptKaraoke src={state.audioUrl} noteMd={state.noteMd} documentMode />
+        </div>
+      )}
+    </RecordingResultShell>
   );
 }
 

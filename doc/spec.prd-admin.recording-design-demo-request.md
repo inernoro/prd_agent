@@ -83,5 +83,5 @@
 
 ## 相关
 
-- 工程看板与当前成绩：`doc/plan.prd-admin.recording-design-restoration.md`
+- 工程看板与当前成绩：[doc/plan.prd-admin.recording-design-restoration.md](./plan.prd-admin.recording-design-restoration.md)
 - 判分规则：`.claude/agents/design-fidelity-judge.md`

@@ -18,6 +18,7 @@ import { createRoot } from 'react-dom/client';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { TranscribeStatusCard } from '@/components/doc-browser/TranscribeStatusCard';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
+import { RecordingResultShell } from '@/pages/document-store/RecordingResultPage';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { describeBackgroundTranscriptionBanner } from '@/pages/document-store/recordingVault';
 import { RecentEntriesList } from '@/pages/document-store/RecentEntriesList';
@@ -300,6 +301,36 @@ function RecordingConsistencyMock() {
               />
             )}
           </div>
+        </Artboard>
+
+        {/*
+          B1 是独立全屏结果页：稿面这一屏自带顶部栏（返回 / 标题 / 绿色副标题 / 更多），
+          主体是同一份跟读组件。外壳走生产那一份 RecordingResultShell，不在这里重画一遍
+          ——重画出来的副本会和真页面各自漂移，判分判的就成了副本（形状 6）。
+        */}
+        <Artboard
+          boardId="cap-B1"
+          label="C · 录音结果页 · 独立全屏（对应设计稿 B1）"
+          note="外壳与生产同一份 RecordingResultShell；顶部栏、副标题、主体接线均为真实实现"
+        >
+          <RecordingResultShell
+            title="用户访谈 · 留存与导入"
+            subtitle="已保存到「产品研究」· 24:18"
+            onBack={() => undefined}
+          >
+            {audioSrc && (
+              <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3">
+                <TranscriptKaraoke
+                  src={audioSrc}
+                  noteMd={MOCK_NOTE_MD}
+                  documentMode
+                  onSaveNote={async () => true}
+                  onAskRecording={() => undefined}
+                  onRestyle={() => undefined}
+                />
+              </div>
+            )}
+          </RecordingResultShell>
         </Artboard>
       </div>
 
