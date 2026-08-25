@@ -231,6 +231,48 @@ async function checkCheckboxHittable(ctx) {
 }
 
 /**
+ * 分享入口：点卡片上的「分享」必须就地展开下拉，而且下拉里得有能拿到链接的东西。
+ *
+ * 这是网页托管最常走的那条路（分享是这个功能存在的理由）。同样用真实指针序列：
+ * 下拉锚在 hover 条里的按钮上，程序化点击既不触发 hover 也绕过命中测试，
+ * 测出来的绿灯不作数。
+ */
+async function checkSharePopover(ctx) {
+  const page = await ctx.newPage();
+  const bad = [];
+  page.on('pageerror', (e) => bad.push(e.message.slice(0, 60)));
+  await page.goto(`${BASE}/web-pages`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(8000);
+
+  const card = await page.locator('[data-hoverbar]').first().boundingBox().catch(() => null);
+  if (!card) {
+    record('分享下拉能打开（真实指针）', false, '页面上找不到站点卡');
+    await page.close();
+    return;
+  }
+  await page.mouse.move(card.x + card.width / 2, card.y + card.height / 2);
+  await page.waitForTimeout(400);
+  const btn = await page.locator('button[aria-label="分享"], button[aria-label^="管理分享"]').first().boundingBox().catch(() => null);
+  if (!btn) {
+    record('分享下拉能打开（真实指针）', false, 'hover 条里找不到分享按钮');
+    await page.close();
+    return;
+  }
+  await page.mouse.move(btn.x + btn.width / 2, btn.y + btn.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(60);
+  await page.mouse.up();
+  await page.waitForTimeout(1200);
+
+  const text = await page.evaluate(() => document.body.innerText);
+  await page.close();
+  // 两种形态都算开：没链接时是「生成链接并复制」，有链接时是那几行设置
+  const opened = text.includes('生成链接并复制') || text.includes('谁能打开');
+  record('分享下拉能打开（真实指针）', opened && bad.length === 0,
+    opened ? (bad.length ? `但有 JS 异常：${bad[0]}` : '') : '点完没有下拉文案');
+}
+
+/**
  * 一屏「打开了但是空的」判据。
  * 只断言三件事：正文有字、自家域名没有 4xx、没有 pageerror。
  * 不断言具体数字或条数 —— 那些随数据变，会制造假红。
@@ -292,6 +334,7 @@ try {
   }
 
   await checkCheckboxHittable(ctx);
+  await checkSharePopover(ctx);
   await ctx.close();
   await browser.close();
 } catch (e) {
