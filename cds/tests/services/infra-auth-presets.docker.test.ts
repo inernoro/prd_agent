@@ -112,6 +112,29 @@ function logsTail(name: string, lines = 30): string {
   }
 }
 
+/**
+ * 起不来时该看的是**第一条报错**，不是日志尾巴。
+ *
+ * kafka 这类 JVM 服务把致命原因打在最前面，然后是几十行优雅关闭的 INFO。
+ * 两轮 CI 里我拿到的都是那几十行噪音，真正的原因一次都没露面——
+ * 一个不说明原因的失败和静默跳过是同一类毛病。
+ *
+ * 所以这里挑出 ERROR / FATAL / Exception / Caused by 那些行，再附上开头几行兜底。
+ */
+function logsCause(name: string): string {
+  try {
+    const all = execSync(`docker logs ${name} 2>&1`, { encoding: 'utf8', timeout: 20_000 });
+    const lines = all.split('\n');
+    const hits = lines.filter((l) => /ERROR|FATAL|Exception|Caused by|unbound variable|No such file/i.test(l));
+    const head = lines.slice(0, 25).join('\n');
+    return hits.length > 0
+      ? `报错行：\n${hits.slice(0, 25).join('\n')}\n\n开头 25 行：\n${head}`
+      : `没匹配到报错行，开头 25 行：\n${head}`;
+  } catch (err) {
+    return `(读不到日志：${(err as Error).message})`;
+  }
+}
+
 function waitFor(check: () => boolean, seconds: number): boolean {
   for (let i = 0; i < seconds * 2; i += 1) {
     if (check()) return true;
@@ -124,13 +147,34 @@ const MEMCACHED = getInfraCatalogEntry('memcached')!;
 const NATS = getInfraCatalogEntry('nats')!;
 const KAFKA = getInfraCatalogEntry('kafka')!;
 
-describe.skipIf(!readiness('memcached', MEMCACHED.dockerImage))('memcached 预设：真容器', () => {
-  const name = `cds-memcached-auth-${Date.now()}`;
-  // 重型容器排队起，别几个数据库同时冷启动把 runner 压垮（首轮 CI 四个容器全挂就是这么来的，见 helpers/docker-container.ts）。
-  beforeAll(() => { if (READY) acquireDockerSlot('auth-presets'); }, 1_800_000);
+/**
+ * 三个 readiness 先算好再用。
+ *
+ * 直接写在 `skipIf(!readiness(...))` 里的话，槽位那段没法知道「这个文件到底要不要起容器」，
+ * 而重算一次会再触发一轮 docker pull。
+ */
+const MEMCACHED_READY = readiness('memcached', MEMCACHED.dockerImage);
+const NATS_READY = readiness('nats', NATS.dockerImage);
+const KAFKA_READY = readiness('kafka', KAFKA.dockerImage);
 
+/**
+ * **整个文件取一次槽位**，不是每个 describe 各取一次。
+ *
+ * 上一版把 beforeAll 塞进了第一个 describe，还引用了一个这个文件里不存在的变量，
+ * 于是 CI 里直接 `ReferenceError: READY is not defined`——**互斥从头到尾没生效**，
+ * kafka 一直是在和别的容器抢资源的情况下起的。
+ *
+ * 一个文件内的 describe 本来就是顺序执行的，所以文件级一把锁既够用又不会自己锁自己。
+ */
+beforeAll(() => {
+  if (MEMCACHED_READY || NATS_READY || KAFKA_READY) acquireDockerSlot('auth-presets');
+}, 1_800_000);
+
+afterAll(() => { releaseDockerSlot(); });
+
+describe.skipIf(!MEMCACHED_READY)('memcached 预设：真容器', () => {
+  const name = `cds-memcached-auth-${Date.now()}`;
   afterAll(() => {
-    releaseDockerSlot();
     try { execSync(`docker rm -f ${name}`, { stdio: 'ignore', timeout: 15_000 }); } catch { /* 没起来过 */ }
   });
 
@@ -160,7 +204,7 @@ describe.skipIf(!readiness('memcached', MEMCACHED.dockerImage))('memcached 预�
   }, 180_000);
 });
 
-describe.skipIf(!readiness('nats', NATS.dockerImage))('nats 预设：真容器', () => {
+describe.skipIf(!NATS_READY)('nats 预设：真容器', () => {
   const name = `cds-nats-auth-${Date.now()}`;
   afterAll(() => {
     try { execSync(`docker rm -f ${name}`, { stdio: 'ignore', timeout: 15_000 }); } catch { /* 没起来过 */ }
@@ -193,7 +237,7 @@ describe.skipIf(!readiness('nats', NATS.dockerImage))('nats 预设：真容器',
   }, 180_000);
 });
 
-describe.skipIf(!readiness('kafka', KAFKA.dockerImage))('kafka 预设：真容器', () => {
+describe.skipIf(!KAFKA_READY)('kafka 预设：真容器', () => {
   const name = `cds-kafka-auth-${Date.now()}`;
   afterAll(() => {
     try { execSync(`docker rm -f ${name}`, { stdio: 'ignore', timeout: 15_000 }); } catch { /* 没起来过 */ }
@@ -206,7 +250,7 @@ describe.skipIf(!readiness('kafka', KAFKA.dockerImage))('kafka 预设：真容�
       () => isRunning(name) && /started \(kafka\.server\.KafkaRaftServer\)|Kafka Server started/i.test(logsTail(name, 200)),
       120,
     );
-    expect(up, `kafka 没起来：\n${logsTail(name, 60)}`).toBe(true);
+    expect(up, `kafka 没起来：\n${logsCause(name)}`).toBe(true);
 
     // 不带 SASL 凭据的客户端必须连不上。用镜像自带的 kafka-topics.sh，
     // 默认走 PLAINTEXT，而 CLIENT 监听器映射到 SASL_PLAINTEXT，会把它拒掉。
