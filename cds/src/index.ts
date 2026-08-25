@@ -115,6 +115,8 @@ import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
 import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
+import { backfillReportReadScope } from './services/connection/pairing-service.js';
+
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -1870,6 +1872,19 @@ const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeSer
 // 这些事实各自都有人算，但此前没有任何一处把它们合起来——于是要等人想起来查才发现。
 const platformDailyHealthCheck = startPlatformDailyHealthCheck(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
+
+// 存量系统互联连接补上 report:read。判据与默认 scope 都加好了，但已经配好的那条连接里
+// 没有这个 scope——不补的话 MAP 的验收报告同步照样 401，「修了像没修」。
+// 幂等，只动 active 的；为什么这不是提权见 backfillReportReadScope 的注释。
+try {
+  const patchedConnections = backfillReportReadScope(stateService);
+  if (patchedConnections.length > 0) {
+    console.log(`[connection-scope] 已给 ${patchedConnections.length} 条存量系统互联连接补上 report:read`);
+  }
+} catch (err) {
+  // 补不上不该拦住启动：报告同步会继续 401，但那是可见的失败，比 CDS 起不来好。
+  console.error('[connection-scope] 补 report:read 失败', err);
+}
 
 /**
  * 重启之后回头看一眼：上一次自更新声称更到的 sha，和现在真实的 HEAD 对得上吗？

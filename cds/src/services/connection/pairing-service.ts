@@ -74,7 +74,48 @@ export class PairingError extends Error {
   }
 }
 
-const DEFAULT_SCOPES = ['shared-service:deploy', 'instance:read', 'deployment:stream'];
+/**
+ * 新配对默认授予的 scope。**这是唯一一份**——授权页、authorize 端点、回包里的 scopes
+ * 原来各自写了一遍同样的三个字符串，加第四个时改漏一处，用户看到的授权范围就与实际不符。
+ *
+ * `report:read` 是 2026-08-25 加的：MAP 的验收报告导入器一直在用这条连接的长效 token 调
+ * CDS 的 `/api/reports`，而 CDS 那边只在 `/api/bridge/*` 上认这个 token——**MAP 侧接好了、
+ * CDS 侧没接**，于是同步从来没成功过（形状 2，建了一半，删掉也不会红）。
+ * 它能碰的端点由 server.ts 的 CONNECTION_TOKEN_GRANTS 逐条列举，只有两个 GET。
+ */
+export const DEFAULT_SCOPES = [
+  'shared-service:deploy',
+  'instance:read',
+  'deployment:stream',
+  'report:read',
+];
+
+/**
+ * 给存量连接补上 `report:read`。幂等，启动时跑一次。
+ *
+ * ## 为什么要补而不是等重新配对
+ *
+ * 判据加好了、默认 scope 也加好了，但**已经配好的那条连接**里没有这个 scope，
+ * 于是同步照样 401——「修了像没修」。而重新配对要用户再走一次授权跳转。
+ *
+ * ## 为什么这不是提权
+ *
+ * 这些连接手上已经有 `shared-service:deploy`（能部署）与 `instance:read`（能驱动页面），
+ * 两者都严格宽于「只读两个验收报告端点」。补的是一个它本就能力覆盖的窄权限，
+ * 不是给它一件原来做不到的事。只补 active 的；revoked / pending 一律不动。
+ */
+export function backfillReportReadScope(stateService: {
+  getActiveCdsConnections(): Array<{ id: string; scopes: string[] }>;
+  updateCdsConnection(id: string, fields: { scopes: string[] }): unknown;
+}): string[] {
+  const patched: string[] = [];
+  for (const conn of stateService.getActiveCdsConnections()) {
+    if (conn.scopes.includes('report:read')) continue;
+    stateService.updateCdsConnection(conn.id, { scopes: [...conn.scopes, 'report:read'] });
+    patched.push(conn.id);
+  }
+  return patched;
+}
 const PAIRING_TTL_DEFAULT_MIN = 10;
 const PAIRING_TTL_MIN = 1;
 const PAIRING_TTL_MAX = 60;
