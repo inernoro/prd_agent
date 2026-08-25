@@ -8,12 +8,13 @@ import {
   expiryLabel,
   isLiveShareLink,
   pickQuickShareLink,
+  resolveVisibility,
 } from './quickShare';
 
 const NOW = new Date('2026-08-25T12:00:00Z').getTime();
 const at = (days: number) => new Date(NOW + days * 86400000).toISOString();
 
-const link = (over: Partial<ShareLinkItem> = {}): ShareLinkItem => ({
+const link = (over: Partial<ShareLinkItem> & { visibility?: ShareLinkItem['visibility'] } = {}): ShareLinkItem => ({
   id: 'l1',
   token: 'tok1',
   siteId: 's1',
@@ -144,5 +145,25 @@ describe('前后端可见性档位一致', () => {
     for (const v of ['"public"', '"logged-in"', '"owner-only"']) {
       expect(body, `后端白名单缺 ${v}`).toContain(v);
     }
+  });
+});
+
+describe('存量链接（没有 visibility 字段）', () => {
+  /**
+   * 后端读路径把 legacy 空值按 public 处理（否则功能上线那刻旧链接会被一起拒掉）。
+   * 面板要是自己猜成 owner-only，就会告诉用户「只有你自己能打开」，而实际上谁都能打开——
+   * 往「更安全」的方向猜，在这里是最危险的猜法。
+   */
+  it('按 public 显示，不按 owner-only 猜', () => {
+    expect(resolveVisibility({ visibility: undefined })).toBe('public');
+    expect(resolveVisibility({ visibility: '' })).toBe('public');
+    expect(resolveVisibility({ visibility: null })).toBe('public');
+    expect(describeQuickShare(link({ visibility: undefined }), NOW)).toContain('未登录');
+  });
+
+  it('认识的三档原样返回', () => {
+    expect(resolveVisibility({ visibility: 'owner-only' })).toBe('owner-only');
+    expect(resolveVisibility({ visibility: 'logged-in' })).toBe('logged-in');
+    expect(resolveVisibility({ visibility: 'public' })).toBe('public');
   });
 });

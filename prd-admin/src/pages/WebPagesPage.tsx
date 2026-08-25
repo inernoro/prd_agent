@@ -1542,18 +1542,6 @@ export default function WebPagesPage() {
         )}
       </div>
 
-      {workspaceTab === 'shares' && (
-        <div className="flex-1 min-h-0">
-          <SharesWorkspace
-            sites={sites}
-            links={shareLinks}
-            onLinksChange={setShareLinks}
-            onOpenAnalytics={() => setShowAnalytics(true)}
-            onCreateShare={() => setWorkspaceTab('library')}
-          />
-        </div>
-      )}
-
       {/* 屏框（设计稿屏 1·A）：顶栏通栏 52px，其下三列贴边——左栏 212 / 中列（工具条 56 + 内容）/ 右栏 300。
           三列之间用竖分隔线而不是间隙，工具条属于中列、不横跨左右栏。 */}
       <div
@@ -1716,6 +1704,21 @@ export default function WebPagesPage() {
           )
         )}
       </div>
+
+      {/* 分享档：与资产库同处屏框之内，共用上面那条顶栏。
+          它原先渲染在屏框**外面**（顶栏之前），于是切到分享档时，列表出现在顶栏上方、
+          顶栏下方剩一大块空框——两块内容各自成立，摞在一起却是错的。 */}
+      {workspaceTab === 'shares' && (
+        <div className={!isMobile ? 'flex-1 min-h-0 px-4 pb-4 pt-3' : 'flex-1 min-h-0'}>
+          <SharesWorkspace
+            sites={sites}
+            links={shareLinks}
+            onLinksChange={setShareLinks}
+            onOpenAnalytics={() => setShowAnalytics(true)}
+            onCreateShare={() => setWorkspaceTab('library')}
+          />
+        </div>
+      )}
       </div>
 
       {/* Upload / Edit Dialog */}

@@ -51,6 +51,20 @@ export const EXPIRY_OPTIONS: { days: number; label: string }[] = [
   { days: 0, label: '永久' },
 ];
 
+/**
+ * 这条链接实际生效的可见性档。
+ *
+ * 存量链接没有 visibility 字段（反序列化出空串/undefined），后端的读路径把这种
+ * legacy 值**按 public 处理**——不这么兼容的话，功能上线那一刻所有旧链接会被一起拒掉。
+ * 所以面板也必须按 public 显示：默认成 owner-only 会告诉用户「只有你自己能打开」，
+ * 而真相是任何拿到链接的人都能打开。往「更安全」的方向猜，在这里恰恰是最危险的猜法。
+ */
+export function resolveVisibility(link: { visibility?: string | null }): ShareVisibility {
+  const v = link.visibility;
+  if (v === 'owner-only' || v === 'logged-in' || v === 'public') return v;
+  return 'public';
+}
+
 /** 这条链接现在还打得开吗（未撤销、未过期） */
 export function isLiveShareLink(link: ShareLinkItem, now: number): boolean {
   if (link.isRevoked) return false;
@@ -123,9 +137,10 @@ export function expiryLabel(expiresAt: string | undefined, now: number = Date.no
  * （conclusion-before-numbers：先给结论，再给可改的那几行）。
  */
 export function describeQuickShare(link: ShareLinkItem, now: number = Date.now()): string {
-  const who = link.visibility === 'public'
+  const v = resolveVisibility(link);
+  const who = v === 'public'
     ? '任何拿到链接的人（含未登录）'
-    : link.visibility === 'owner-only'
+    : v === 'owner-only'
       ? '只有你自己'
       : '任何登录的人';
   const pwd = link.accessLevel === 'password' ? '，还需要输密码' : '';

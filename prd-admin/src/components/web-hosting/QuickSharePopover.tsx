@@ -14,6 +14,7 @@ import {
   expiryLabel,
   pickQuickShareLink,
   quickShareUrl,
+  resolveVisibility,
   type ShareVisibility,
 } from './quickShare';
 
@@ -154,7 +155,8 @@ export function QuickSharePopover({
   };
 
   const url = link ? quickShareUrl(origin, link) : '';
-  const visibility: ShareVisibility = link?.visibility ?? 'owner-only';
+  // 存量链接没有这个字段，按后端读路径的口径当 public——不是当 owner-only（见 resolveVisibility）
+  const visibility: ShareVisibility = link ? resolveVisibility(link) : 'public';
 
   return (
     <AnchoredMenu
