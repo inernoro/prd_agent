@@ -281,7 +281,8 @@ export function AudioWavePlayer({
         <button
           onClick={() => setRateIdx((i) => (i + 1) % PLAYBACK_RATES.length)}
           disabled={!ready}
-          className="min-h-11 min-w-11 cursor-pointer rounded-[8px] px-2 py-1 text-[11px] transition-all motion-reduce:transition-none"
+          // 稿面的倍速是全圆角药丸，不是方角小块
+          className="min-h-11 min-w-11 cursor-pointer rounded-full px-3 py-1 text-[11px] transition-all motion-reduce:transition-none"
           style={{
             background: 'var(--bg-elevated)',
             color: 'var(--text-secondary)',
