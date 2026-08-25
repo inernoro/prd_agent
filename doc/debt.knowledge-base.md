@@ -594,6 +594,43 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 
 ---
 
+## 录音交付页与设计稿 `MAP 录音转录交付页 v2` 的偏差 — 未偿还（2026-08-25 核对）
+
+**怎么核的**：设计稿是一张 390×844 的画布交付稿。实现侧建了一个开发期对照台，在**没有后端**的
+机器上渲染生产组件本体（转文字入口卡、音频播放器、转录跟读组件），接线照抄唯一的生产调用方，
+只有台词与在途录音是 mock，双主题各截一版。对照台复刻出的「转录前」形态与用户当天的线上截图
+逐像素一致，所以下面列的偏差都是实现的，不是对照台自己造出来的。
+
+**结论**：不是「细节没对齐」，是**交付形态不同**。设计稿描述的是一条「结束录音即自动成稿、
+边等边看、成稿后按理解／纪要／待办／提问四个分区消费」的链路；实现是「录音存下来 →
+用户手动点一次转文字 → 出一份原文加词云」。逐条如下，`P1` 表示影响用户能不能完成任务，
+`P2` 表示形态差异。
+
+| # | 设计稿要求 | 实现现状 | 级别 |
+|---|---|---|---|
+| 1 | 结束录音后自动推进三阶段：保存音频 → 生成原文 → 补齐录音理解（硬约束「绝不出现空白等待页」） | 必须用户主动点「转成文字」才开始；不点就永远停在音频 | P1 |
+| 2 | 状态永远回答四句：音频是否安全／现在在做什么／还要多久／你现在能做什么 | 后台处理横幅只答了第二句，没有百分比、没有预计剩余、没说音频已安全 | P1 |
+| 3 | 失败必须给出 code、时间、仍可用能力、重试方式四项并逐条渲染 | 只给一句失败原因；失败码在判据函数里被接收却不进返回值，失败时间取到了但界面不显示 | P1 |
+| 4 | 标题是业务标题 + 「已保存到「某库」· 时长」 | 标题是录音文件名，不带所属知识库、不带时长 | P2 |
+| 5 | 全稿无紫色，强调色只用于播放进度、可点击文本与当前句底色 | 播放器与词云整体是紫色系 | P2 |
+| 6 | 结果页播放器吸顶，带当前句大字、「第 N / 132 句」计数与「下一句」预告；原文向上滚动超过一段距离后收成迷你条 | 播放器随页面滚走，无句序计数、无下一句、无迷你条 | P2 |
+| 7 | 理解／纪要／待办／提问四个分区，含会议纪要与待办事项 | 只有词云、说话人、搜索、提问按钮、原文；**没有会议纪要，也没有待办事项** | P2 |
+| 8 | 说话人显示句数与占比 | 只有名字与改名入口 | P2 |
+| 9 | 点词后出现「某词命中 N 句」的独立面板，可在命中与全部之间切换 | 点词等价于把词填进搜索框过滤原文，没有独立的命中面板 | P2 |
+| 10 | 转录前这一屏应当被处理进度填满 | 一屏里产物只占上方约三分之一，其余留白 | P2 |
+
+**同时确认「实现是对的、不算偏差」的两件事**（免得下一个人重复排查）：词云本身工作正常，
+对照台用真实台词统计出了词频；知识库正文里的转录形态确实带词云、说话人、搜索与提问。
+
+**另有一条与设计稿无关、但同屏可见的缺陷**：词典读取失败（接口 404 或断网）时，
+「加入我的词典」按钮永久禁用且不给原因、不给重试——对照台实测按钮处于禁用态。
+修复早在 2026-08-12 就写好了，但那个提交晚于当时的 PR 合并八分钟，此后从未开第二个 PR，
+至今没进主干。这条不是新债务，是一条**已经写完却没合并**的修复。
+
+**下一步的取舍（未决，需要用户拍板）**：偏差 1、2、3 是链路形态与失败契约，
+不是调样式能补的；5、6、8、9、10 是可以照设计稿逐条对齐的界面工作。
+建议先定第 1 条（自动成稿还是手动触发）——它决定后面几条落在哪。
+
 ## 实现来源
 
 给要跳去看代码的人；只读这篇文档的人可以整块跳过。
@@ -607,3 +644,6 @@ v2 已落「文档不存在」橙色虚链 + 悬停提示，但**主动 AI 扫�
 | 双链自动补全 | `prd-admin/src/components/doc-browser/WikilinkAutocomplete.tsx` |
 | 星系与宇宙图 | `prd-admin/src/pages/document-store/DocumentGalaxyView.tsx`、`prd-admin/src/pages/document-store/UniverseGraphPage.tsx`、`prd-admin/src/pages/document-store/DocumentStorePage.tsx` |
 | 录音词云 | `prd-admin/src/components/doc-browser/transcriptSegments.ts`（`buildTranscriptWordCloud` / `FUNCTION_CHARS` / `STOP_WORDS`）、`prd-admin/src/components/doc-browser/__tests__/transcriptSegments.test.ts`、`prd-admin/src/components/doc-browser/TranscriptKaraoke.tsx` |
+| 录音交付页对照台（开发期） | `prd-admin/mock.html`、`prd-admin/src/dev/recordingConsistencyMock.tsx` |
+| 录音转文字入口与失败文案 | `prd-admin/src/components/doc-browser/DocBrowser.tsx`（`TranscribeHeroCard`）、`prd-admin/src/pages/document-store/recordingVault.ts`（`describeBackgroundTranscriptionBanner` / `describeFailedTranscription`） |
+| 录音播放器与转录跟读 | `prd-admin/src/components/doc-browser/AudioWavePlayer.tsx`、`prd-admin/src/components/doc-browser/TranscriptKaraoke.tsx`、`prd-admin/src/components/file-preview/FilePreview.tsx` |

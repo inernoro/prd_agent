@@ -25,6 +25,7 @@ import {
   Pencil,
   Heart,
   Bookmark,
+  Clock,
   Users,
   ArrowUpRight,
   Wand2,
@@ -65,6 +66,7 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
+import { RecentEntriesList } from './RecentEntriesList';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
@@ -133,6 +135,7 @@ import {
   ensureDocStoreShareLinkShortSeq,
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
+  listRecentDocumentEntries,
   setStoreTeams,
   getStoresAnalyticsSummary,
   getUserPreferences,
@@ -164,6 +167,7 @@ import type {
   DocumentEntry,
   DocumentStoreShareLink,
   InteractionStoreCard,
+  RecentDocumentEntry,
   DocumentStoreAccountSummary,
   TutorialLinkGraphSnapshot,
 } from '@/services/contracts/documentStore';
@@ -3305,7 +3309,14 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
-type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync';
+type StoreTab = 'mine' | 'team' | 'recent' | 'favorites' | 'likes' | 'sync';
+
+/**
+ * 「最近」等不走库列表管线的 tab 的占位空列表。
+ * 必须是模块级常量：写成行内 `[]` 每次渲染都是新引用，
+ * 会让下游 useMemo 的依赖每帧都变（eslint react-hooks/exhaustive-deps 会直接报出来）。
+ */
+const EMPTY_STORE_LIST: DocumentStoreWithPreview[] = [];
 
 type StoreSort = 'updated-desc' | 'created-desc' | 'name-asc' | 'docs-desc';
 const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
@@ -3330,11 +3341,12 @@ export function DocumentStorePage() {
   );
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
-    return saved === 'team' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
+    return saved === 'team' || saved === 'recent' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
   });
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
   const [likes, setLikes] = useState<InteractionStoreCard[]>([]);
+  const [recentEntries, setRecentEntries] = useState<RecentDocumentEntry[]>([]);
   const [loading, setLoading] = useState(true);
   // 我的 / 团队 作用域（默认我的；仅 mine 标签生效）
   const [teamScope, setTeamScope] = useState<TeamScope>(() => useTeamStore.getState().getScope('document-store'));
@@ -3427,7 +3439,7 @@ export function DocumentStorePage() {
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
   useEffect(() => {
     const t = new URLSearchParams(location.search).get('tab');
-    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
+    const valid: StoreTab[] = ['mine', 'team', 'recent', 'favorites', 'likes', 'sync'];
     if (t && (valid as string[]).includes(t)) {
       setTab(t as StoreTab);
       const deepLink = parseDocumentStoreDeepLink(location.search);
@@ -3708,6 +3720,21 @@ export function DocumentStorePage() {
     setLoading(false);
   }, []);
 
+  const loadRecent = useCallback(async () => {
+    const mySeq = ++listFetchSeq.current;
+    setLoading(true);
+    const res = await listRecentDocumentEntries(50);
+    if (listFetchSeq.current !== mySeq) return;
+    if (res.success) {
+      setRecentEntries(res.data.items);
+    } else {
+      // 与其他 loader 同口径：失败必须清空，否则上一个 tab 的数据卡在屏上让人误判
+      setRecentEntries([]);
+      toast.error('加载最近内容失败', res.error?.message);
+    }
+    setLoading(false);
+  }, []);
+
   const loadLikes = useCallback(async () => {
     const mySeq = ++listFetchSeq.current;
     setLoading(true);
@@ -3790,6 +3817,8 @@ export function DocumentStorePage() {
       const effectiveTeamId = teamScope.teamId
         ?? (remembered.scope === 'team' ? remembered.teamId : null);
       loadStores('team', effectiveTeamId);
+    } else if (tab === 'recent') {
+      loadRecent();
     } else if (tab === 'favorites') {
       loadFavorites();
     } else if (tab === 'likes') {
@@ -3798,7 +3827,7 @@ export function DocumentStorePage() {
       ++listFetchSeq.current;
       setLoading(false);
     }
-  }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes]);
+  }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes, loadRecent]);
 
   // 持久化选中的 storeId / tab 到 sessionStorage
   useEffect(() => {
@@ -3838,17 +3867,29 @@ export function DocumentStorePage() {
     setPendingEntryId(null);
     setSelectedStoreId(sid);
   }, []);
+  /**
+   * 「最近」点一条直接落到那篇内容本身：storeId 决定进哪个库，entryId 决定打开哪篇。
+   * 与 openStore 同一条路径（StoreDetailView 的 initialEntryId），不另建第二套打开逻辑。
+   */
+  const openRecentEntry = useCallback((entry: RecentDocumentEntry) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(entry.id);
+    setSelectedStoreId(entry.storeId);
+  }, []);
 
   const tabs: { key: StoreTab; label: string; icon: typeof Library; dataTourId?: string }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '团队空间', icon: Users },
+    // 「最近」在收藏左侧：用户找的是「我刚存进来的那篇」，按库分组的卡片答不了这个问题
+    { key: 'recent', label: '最近', icon: Clock },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
   ];
 
   const isStoreTab = tab === 'mine' || tab === 'team';
+  // 「最近」渲染的是文档条目而不是库卡片，走独立分支，不进这条库列表管线
   const rawList: InteractionStoreCard[] | DocumentStoreWithPreview[] =
-    isStoreTab ? stores : tab === 'favorites' ? favorites : likes;
+    isStoreTab ? stores : tab === 'favorites' ? favorites : tab === 'likes' ? likes : EMPTY_STORE_LIST;
 
   // 搜索 + 标签 + 排序（仅 store tab 生效；收藏/点赞页签不参与本页 toolbar 状态以避免混淆）
   const currentList = useMemo(() => {
@@ -3935,6 +3976,7 @@ export function DocumentStorePage() {
           if (teamScope.teamId) loadStores('team', teamScope.teamId);
           else { ++listFetchSeq.current; setStores([]); setLoading(false); }
         }
+        else if (tab === 'recent') loadRecent();
         else if (tab === 'favorites') loadFavorites();
         else if (tab === 'likes') loadLikes();
         else setLoading(false);
@@ -4448,6 +4490,9 @@ export function DocumentStorePage() {
           <SyncManagerPanel />
         ) : loading ? (
           <MapSectionLoader text="加载中..." />
+        ) : tab === 'recent' ? (
+          /* 「最近」：跨库的内容时间线（自带空态引导，不落到下面的库列表管线） */
+          <RecentEntriesList items={recentEntries} onOpen={openRecentEntry} />
         ) : isFilteredOut ? (
           /* 筛选无结果 */
           <div className="flex flex-col items-center justify-center py-16">

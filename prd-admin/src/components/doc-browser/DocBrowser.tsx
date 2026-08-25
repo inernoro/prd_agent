@@ -640,7 +640,7 @@ function canTranscribe(entry: DocBrowserEntry): boolean {
  * - 未转录 → 只生成可编辑原文，不提前强迫用户选整理方式；
  * - 已转录 → 原文留在当前录音页，整理作为用户主动选择的下一步。
  */
-function TranscribeHeroCard({
+export function TranscribeHeroCard({
   currentEntryId,
   noteEntryId,
   subtitleEntryId,

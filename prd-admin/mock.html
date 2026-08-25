@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>录音交付页一致性对照台（开发用）</title>
+  </head>
+  <body style="margin: 0">
+    <!--
+      录音交付页「设计稿 vs 实现」对照台。仅 dev server 使用，不是 vite build 的入口，
+      不进 App.tsx 路由（因此不受 navCoverage 约束）。说明见 src/dev/recordingConsistencyMock.tsx。
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/dev/recordingConsistencyMock.tsx"></script>
+  </body>
+</html>

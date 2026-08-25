@@ -662,6 +662,17 @@ export async function listMyFavoriteDocumentStores() {
   );
 }
 
+/**
+ * 跨知识库的「最近」文档时间线。
+ * 作用域（我的 ∪ 团队）与 isNew 判据都在后端算好，前端只渲染。
+ */
+export async function listRecentDocumentEntries(limit = 50) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').RecentDocumentEntry[] }>(
+    api.documentStore.entries.recent(limit),
+    { method: 'GET' },
+  );
+}
+
 /** 列出我点赞的知识库（含最近文档预览 + 店主信息） */
 export async function listMyLikedDocumentStores() {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').InteractionStoreCard[] }>(
