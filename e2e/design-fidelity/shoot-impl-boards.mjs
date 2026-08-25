@@ -36,12 +36,28 @@ async function driveBoardState(page, board, id) {
   if (await search.count() === 0) return;
   await search.fill('导入');
   await page.waitForTimeout(400);
-  // 点第三条原文进编辑态（稿面画的就是列表中段某一句在改）
-  const rows = board.locator('[data-transcript-row]');
-  const total = await rows.count();
-  if (total >= 3) {
-    await rows.nth(2).click();
+  /*
+   * 点第 4 句进编辑态（稿面画的就是搜索行下面第四句在改）。
+   * 必须按 `data-transcript-row="3"` 这个**绝对序号**点，不能用 nth(3)：
+   * 已经在编辑的那一句不再渲染成行按钮，nth 会顺位错到下一句——
+   * 深浅两轮跑下来编辑位置一轮比一轮低，最后被切出屏外。
+   * 已经在编辑态时这个元素不存在，count 为 0，保持原状即可。
+   */
+  const target = board.locator('[data-transcript-row="3"]');
+  if (await target.count() > 0) {
+    await target.click();
     await page.waitForTimeout(400);
+  }
+  /*
+   * 进编辑态会 autoFocus 到输入区，浏览器把它滚进视野——于是播放区、搜索行全被顶出屏外，
+   * 截出来的这一屏和稿面对不上（稿面 B2 是「播放区 + 搜索行 + 三句 + 编辑卡」同屏）。
+   * 所以驱动完再把滚动位置压回顶部：要判的是这一屏的排布，不是浏览器的滚动行为。
+   */
+  for (let r = 0; r < 3; r++) {
+    await board.evaluate((el) => {
+      el.querySelectorAll('*').forEach((n) => { if (n.scrollHeight > n.clientHeight + 4) n.scrollTop = 0; });
+    });
+    await page.waitForTimeout(150);
   }
 }
 

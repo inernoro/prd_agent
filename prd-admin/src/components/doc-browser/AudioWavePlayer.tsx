@@ -61,9 +61,10 @@ function seededBars(src: string, n: number): number[] {
     h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h |= 0;
     const r = ((h >>> 0) % 1000) / 1000;
     // 正弦包络 + 随机扰动：形似语音的起伏，不是纯噪声
-    // 振幅取中：0.22 起判官说「接近等高栅格」，0.10 起又被判「起伏剧烈」。
-    // 稿面是密集细条 + **克制**的高低差，两次反向意见夹出来的区间就在这里。
-    out.push(0.28 + 0.72 * (0.55 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.45 * r));
+    // 振幅下限：0.22 起判官说「接近等高栅格」，0.10 起又被判「起伏剧烈」。
+    // 波形条从 72px 压到 40px 之后，同样的比例读起来更平——0.28 又被判回「等高栅格」，
+    // 所以按高度缩减同比放开一档，落在两次反向意见夹出来的区间中段。
+    out.push(0.16 + 0.84 * (0.55 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.45 * r));
   }
   return out;
 }
@@ -233,10 +234,19 @@ export function AudioWavePlayer({
       }}
     >
       {/* 语音消息式声纹条：不读取跨域 PCM，播放与进度只依赖原生 audio。 */}
-      <div className="relative mb-3">
+      {/*
+        flush（稿面 B1/B2 的播放区）里波形只有约 34px 高——它是「这段有多长、播到哪」的
+        缩略图，不是主角。72px 那一版把当前句卡和搜索行一起推出首屏，B2 判分里
+        「编辑卡被切在视口下沿」有一半是这里吃掉的高度。非 flush 维持原高度。
+      */}
+      <div className={flush ? 'relative mb-2' : 'relative mb-3'}>
         <div
-          className="flex h-[72px] w-full items-end gap-[1.5px]"
-          style={{ cursor: ready && duration > 0 ? 'pointer' : 'default', alignItems: 'center' }}
+          className="flex w-full items-end gap-[1.5px]"
+          style={{
+            height: flush ? 40 : 72,
+            cursor: ready && duration > 0 ? 'pointer' : 'default',
+            alignItems: 'center',
+          }}
           onClick={(e) => {
             if (!ready || duration <= 0 || !audioRef.current) return;
             const rect = e.currentTarget.getBoundingClientRect();

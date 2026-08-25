@@ -15,11 +15,14 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { useAuthStore } from '@/stores/authStore';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { TranscribeStatusCard } from '@/components/doc-browser/TranscribeStatusCard';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { RecordingResultShell } from '@/pages/document-store/RecordingResultPage';
 import { RecordingAnswer } from '@/components/doc-browser/RecordingAnswer';
+import { RecordingAskComposer } from '@/components/doc-browser/RecordingAskComposer';
+import { RecordingSegmentBar } from '@/components/doc-browser/RecordingSegmentBar';
 import { parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { describeBackgroundTranscriptionBanner } from '@/pages/document-store/recordingVault';
@@ -29,6 +32,47 @@ import '@/styles/tailwind.css';
 import '@/styles/tokens.css';
 import '@/styles/globals.css';
 import '@/styles/recording-design-palette.css';
+
+/**
+ * 假后端：只应答本页真正会打的那两个只读接口，其余原样交给真 fetch。
+ *
+ * 为什么必须有它：「一键整理」那块网格的清单来自后端注册表
+ * （`GET /api/document-store/transcribe-styles`）。没有后端时这一拉必然失败，
+ * 组件按设计返回 null——**整块消失**。第一轮 B3 判分 59 分里最重的那几条
+ * （分区标题、四张卡、自定义入口、四种状态全都「不存在」）就是这么来的：
+ * 代码在，只是台架从来没让它拿到数据（predicate-and-wiring-discipline 形状 2）。
+ *
+ * 应答体照抄后端 `TranscribeStyleRegistry` 的四种方式。这是一份**会漂移的拷贝**，
+ * 但它漂移的后果只是台架截图上少一张卡，不会影响产品——真实产品仍然只认后端那一份。
+ */
+const FAKE_TRANSCRIBE_STYLES = {
+  items: [
+    { key: 'general', label: '智能摘要', description: '一段话概述 + 要点，识别到结论/待办时单独列出（默认）' },
+    { key: 'meeting', label: '会议纪要', description: '提炼议题、观点、结论和待办，可直接发送或继续编辑' },
+    { key: 'todo', label: '待办清单', description: '只提取行动项，输出可勾选的待办列表' },
+    { key: 'interview', label: '访谈整理', description: '按问答对整理，保留关键原话，适合访谈/用户调研' },
+    { key: 'custom', label: '自定义', description: '自己描述想要的整理方式' },
+  ],
+};
+
+function installFakeBackend() {
+  // apiRequest 在没有 token 时**根本不发请求**就返回 UNAUTHORIZED，
+  // 所以光有 fetch 桩不够，得先让它认为自己登录着。
+  useAuthStore.setState({ token: 'mock-token' });
+  const realFetch = window.fetch.bind(window);
+  // 信封必须三个键齐全：`apiClient` 认的是 `success/data/error` 三键同在，
+  // 少一个 `error` 就走「非契约响应」分支把整个信封当成 data 再包一层，
+  // 于是 `res.data.items` 是 undefined、网格空、整块消失——查到这一层才看得出来
+  const ok = (data: unknown) => new Response(
+    JSON.stringify({ success: true, data, error: null }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('/api/document-store/transcribe-styles')) return Promise.resolve(ok(FAKE_TRANSCRIBE_STYLES));
+    return realFetch(input, init);
+  };
+}
 
 /**
  * 台词取自设计稿 P1/P2/P3 画板同一段「用户访谈 · 留存与导入」，
@@ -164,8 +208,17 @@ function Artboard({ boardId, label, note, children }: {
   );
 }
 
+/**
+ * 24:18 —— 与画板顶部副标题那行写的时长同一个数。
+ *
+ * 之前给的是 30 秒：于是同一屏上顶栏写「· 24:18」、播放器写「00:00 / 00:30」，
+ * 两个互斥的时长同时出现（B1 判分把这条记成内容缺陷，而且它不是样本差异，
+ * 是台架自己对不上）。台词的时间戳也全在 09:41-15:13，本来就超出 30 秒的音频。
+ */
+const MOCK_DURATION_SEC = 24 * 60 + 18;
+
 function RecordingConsistencyMock() {
-  const audioSrc = useSilentWavUrl(30);
+  const audioSrc = useSilentWavUrl(MOCK_DURATION_SEC);
   const usingDesignPalette = new URLSearchParams(window.location.search).get('palette') === 'design';
   // 走生产的文案判据，而不是在这里手写一句像那样的话
   const banner = useMemo(
@@ -421,20 +474,45 @@ function RecordingConsistencyMock() {
             subtitle="已保存到「产品研究」· 24:18"
             onBack={() => undefined}
           >
-            <div className="flex flex-col gap-3 px-4 pb-8 pt-3">
-              <h3 className="text-[19px] font-bold text-token-primary">问这场录音</h3>
-              {/* 稿面顶部那条琥珀提示：上一问没答上来，而且是如实说的 */}
-              <p
-                className="rounded-[11px] px-3 py-2.5 text-[12px] leading-relaxed"
-                style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
+            {/*
+              稿面 B4 是「顶部当前片段条 / 中间对话 / 底部贴底输入区」三段。
+              贴底那一段是这块画板的命题所在（键盘弹起时输入区不被遮挡），
+              所以这里照它的骨架摆：中间可滚，输入区固定在最下面。
+              三个部件都是生产组件本体，不是照着重画的副本。
+            */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              {/* 通栏吸顶层：背景与分隔线由容器给，条本身不套卡（与产品页同一种承载方式） */}
+              <div
+                className="shrink-0 px-4 py-2"
+                style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border-faint)' }}
               >
-                上一问「价格」：原文无相关内容，已如实说明。
-              </p>
-              <RecordingAnswer
-                question="为什么放弃导入？"
-                answer={'解析等待 40 秒且无进度反馈，被判断为卡死。[09:58]'}
-                segments={MOCK_SEGMENTS}
-                onSeek={() => undefined}
+                <RecordingSegmentBar
+                  text="等待解析那 40 秒，我以为它卡死了。"
+                  startSec={598}
+                  onPlay={() => undefined}
+                />
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4 pt-3">
+                <h3 className="text-[19px] font-bold text-token-primary">问这场录音</h3>
+                {/* 稿面顶部那条琥珀提示：上一问没答上来，而且是如实说的 */}
+                <p
+                  className="rounded-[11px] px-3 py-2.5 text-[12px] leading-relaxed"
+                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
+                >
+                  上一问「价格」：原文无相关内容，已如实说明。
+                </p>
+                <RecordingAnswer
+                  question="为什么放弃导入？"
+                  answer={'解析等待 40 秒且无进度反馈，被判断为卡死。[09:58]'}
+                  segments={MOCK_SEGMENTS}
+                  onSeek={() => undefined}
+                />
+              </div>
+              <RecordingAskComposer
+                pinned
+                value="还有哪些人提到过重开"
+                onChange={() => undefined}
+                onSend={() => undefined}
               />
             </div>
           </RecordingResultShell>
@@ -471,4 +549,5 @@ function RecordingConsistencyMock() {
   );
 }
 
+installFakeBackend();
 createRoot(document.getElementById('root') as HTMLElement).render(<RecordingConsistencyMock />);

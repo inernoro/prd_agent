@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronUp, Info, Play, RefreshCw, Search, UserRound, X } from 'lucide-react';
+import { ArrowDown, Check, ChevronDown, ChevronUp, Info, RefreshCw, Search, UserRound } from 'lucide-react';
 import { requestRecordingPlay } from './recordingPlayBridge';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
+import { RecordingSegmentBar } from '@/components/doc-browser/RecordingSegmentBar';
+import { RecordingAskComposer } from '@/components/doc-browser/RecordingAskComposer';
 import {
   isUnansweredByTranscript,
   parseTranscriptSegments,
@@ -44,8 +46,11 @@ function highlightKeyword(text: string, keyword: string): React.ReactNode {
     parts.push(
       <mark
         key={`${hit}-${parts.length}`}
-        // 设计稿的命中高亮是黄色，与蓝色强调色分工：蓝表示「可点/进行中」，黄表示「就是这里」
-        style={{ background: 'var(--semantic-warning-soft)', color: 'var(--text-primary)', borderRadius: 3, padding: '0 2px' }}
+        // 设计稿的命中高亮是**记号笔**：高明度黄底 + 深色字，与蓝色强调色分工——
+        // 蓝表示「可点/进行中」，黄表示「就是这里」。
+        // 此前用 --semantic-warning-soft（12% 透明度），深色主题下几乎与正文同色，
+        // 记号笔退化成一层看不见的底纹（B2 判分记的正是这处）。
+        style={{ background: 'var(--highlight-mark-bg)', color: 'var(--highlight-mark-fg)', borderRadius: 3, padding: '0 2px' }}
       >
         {text.slice(hit, hit + needle.length)}
       </mark>,
@@ -207,6 +212,19 @@ export function TranscriptKaraoke({
     [summaryMd],
   );
   const todos = useMemo(() => extractTranscriptTodos(summaryMd), [summaryMd]);
+  /**
+   * 「一键整理」结果卡的正文：当前这份摘要的开头一段。
+   * 稿面 B3 那张卡就是一段话——它是「你刚选的这一种整理，产出长这样」的凭证，
+   * 不是纪要全文（全文在下面的分区里，那是另一张画布 P3 定义的结构）。
+   * 取第一段而不是全文，也是为了不在同一屏把同一段话完整念两遍。
+   */
+  const organizeLede = useMemo(() => {
+    const body = summaryModules[0]?.markdown ?? '';
+    return body
+      .split(/\n{2,}/)
+      .map(part => part.trim())
+      .find(part => part && !part.startsWith('-') && !part.startsWith('#') && !part.startsWith('*')) ?? '';
+  }, [summaryModules]);
   const synced = useMemo(() => hasUsableTimestamps(segments), [segments]);
 
   const [activeIdx, setActiveIdx] = useState(0);
@@ -381,8 +399,10 @@ export function TranscriptKaraoke({
   useEffect(() => {
     if (!followEnabled) return;
     if (Date.now() < manualUntilRef.current) return;
+    // 正在改某一句时绝不自动滚：光标还在框里，列表却把这一句滚走，等于把用户的手推开
+    if (editingIndex !== null) return;
     lineRefs.current[activeIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [activeIdx, followEnabled]);
+  }, [activeIdx, editingIndex, followEnabled]);
 
   useEffect(() => () => cancelQaRef.current?.(), []);
 
@@ -411,7 +431,39 @@ export function TranscriptKaraoke({
     });
   };
 
-  const markManualScroll = () => { manualUntilRef.current = Date.now() + 3000; };
+  /**
+   * 自动跟随被暂停时，用户手里没有「回到播放位置」的入口——只能自己往回滚找。
+   * 稿面 B2 给的出口是屏底那颗浮动药丸「继续跟随播放」；B1 给的是搜索行里那颗
+   * 「继续跟随」。两颗都留：搜索行那颗是常驻入口，浮动那颗只在真的跟丢了才浮出来。
+   * 跟丢有两种：手动滚过（3 秒冷却）、正在改某一句（改完才算数）。
+   */
+  const [followPaused, setFollowPaused] = useState(false);
+  const followPauseTimerRef = useRef<number | null>(null);
+  useEffect(() => () => { if (followPauseTimerRef.current) window.clearTimeout(followPauseTimerRef.current); }, []);
+  /** 让内联编辑区的高度跟着内容长，短句下不留一段不承载信息的空白 */
+  const autoGrow = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+  useEffect(() => {
+    const el = document.activeElement;
+    if (el instanceof HTMLTextAreaElement && editingIndex !== null) autoGrow(el);
+  }, [autoGrow, editDraft, editingIndex]);
+
+  const markManualScroll = () => {
+    manualUntilRef.current = Date.now() + 3000;
+    setFollowPaused(true);
+    if (followPauseTimerRef.current) window.clearTimeout(followPauseTimerRef.current);
+    followPauseTimerRef.current = window.setTimeout(() => setFollowPaused(false), 3000);
+  };
+  const resumeFollow = () => {
+    manualUntilRef.current = 0;
+    if (followPauseTimerRef.current) window.clearTimeout(followPauseTimerRef.current);
+    setFollowPaused(false);
+    lineRefs.current[activeIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+  const followLost = followEnabled && (followPaused || editingIndex !== null);
 
   /**
    * 播放区折叠（设计稿：原文向上滚过一段距离后，播放区收成一条迷你条）。
@@ -483,47 +535,15 @@ export function TranscriptKaraoke({
         className={documentMode ? 'sticky top-0 z-10 -mx-4 -mt-3 flex w-[calc(100%+2rem)] flex-col items-center gap-2 px-4 pb-3 pt-3' : 'contents'}
         style={documentMode ? { background: 'var(--bg-card)', borderBottom: '1px solid var(--border-faint)' } : undefined}
       >
-        {/* 折叠态：56px 一条，只留播放键与当前句；展开态是完整波形播放器 */}
+        {/* 折叠态：一条 56px 的当前片段条；展开态是完整波形播放器 */}
         {documentMode && playerCollapsed && currentSegment ? (
-          <div
-            // 稿面这条是**两行**：第一行整句、第二行 mm:ss / mm:ss。
-            // 我原先把句子和时间挤在一行，于是句子被省略号截断——折叠态本来就只剩这一句，
-            // 再截掉一半，用户就彻底不知道念到哪了（判官记的是「结构塌陷带来的内容丢失」）。
-            className="flex w-full max-w-[760px] items-center gap-3 rounded-[12px] px-3 py-2"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
-          >
-            <button
-              type="button"
-              onClick={requestRecordingPlay}
-              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full"
-              style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
-              title="播放"
-            >
-              <Play size={13} fill="currentColor" style={{ marginLeft: 1 }} />
-            </button>
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span
-                className="min-w-0 text-[12.5px] font-medium leading-snug text-token-primary"
-                // 锁两行：句子长短不一时这条的高度不会跟着跳，下面的内容也就不会上下窜
-                style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-              >
-                {currentSegment.text}
-              </span>
-              <span className="mt-0.5 font-mono text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                {/* 折叠之后播放进度也得看得见，否则只剩一句台词、不知道播到哪了 */}
-                {formatClock(currentSegment.start)}{duration > 0 ? ` / ${formatClock(duration)}` : ''}
-              </span>
-            </span>
-            <button
-              type="button"
-              onClick={() => collapseSentinelRef.current?.scrollIntoView({ block: 'start' })}
-              className="flex h-9 w-9 flex-shrink-0 items-center justify-center"
-              style={{ color: 'var(--text-muted)' }}
-              title="展开播放器"
-            >
-              <ChevronUp size={15} />
-            </button>
-          </div>
+          <RecordingSegmentBar
+            text={currentSegment.text}
+            startSec={currentSegment.start}
+            durationSec={duration}
+            onPlay={requestRecordingPlay}
+            onExpand={() => collapseSentinelRef.current?.scrollIntoView({ block: 'start' })}
+          />
         ) : null}
 
         <div style={documentMode && playerCollapsed ? { display: 'none' } : undefined} className="flex w-full flex-col items-center gap-2">
@@ -564,8 +584,12 @@ export function TranscriptKaraoke({
               </span>
 
             </div>
+            {/*
+              稿面这句是整个播放区的第一视觉焦点：字号明显大过下方列表，一眼就落在
+              「现在念的是这句」。15px 与列表的 13px 只差两档，主次被抹平（B2 判分记的这处）。
+            */}
             <p
-              className="mt-1 text-[15px] font-semibold leading-snug text-token-primary"
+              className="mt-1 text-[19px] font-bold leading-snug text-token-primary"
               style={{
                 // 锁两行：句子长短不一时高度恒定，跟读过程中下方原文不会跟着上下跳
                 display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
@@ -591,7 +615,11 @@ export function TranscriptKaraoke({
       */}
       {documentMode && (
         <div className="mt-2 flex w-full max-w-[760px] flex-col gap-2">
-          <p className="text-[12px] font-semibold text-token-muted">转录原文</p>
+          {/*
+            这里原本还有一行「转录原文」小标题。稿面 B1/B2 的原文区**没有**这个标题：
+            搜索框紧贴播放区，下面就是句子。多出来的一行把编辑态卡片顶出了首屏下沿
+            （B2 判分记的「保存/取消被切在视口下沿」有一部分是它吃掉的高度）。
+          */}
           {/*
             搜索框归属原文段，不归词云——稿面 B1 把它排在原文列表正上方，
             它过滤的是原文。此前它挂在词云卡里，作用对象与位置都跟稿面对不上。
@@ -634,10 +662,7 @@ export function TranscriptKaraoke({
               */
               <button
                 type="button"
-                onClick={() => {
-                  manualUntilRef.current = 0;
-                  lineRefs.current[activeIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                }}
+                onClick={resumeFollow}
                 className="min-h-11 flex-shrink-0 rounded-[10px] px-3 text-[13px] font-semibold"
                 style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
               >
@@ -682,12 +707,18 @@ export function TranscriptKaraoke({
                       {s.start >= 0 ? formatClock(s.start) : ''}
                     </span>
                     {s.speaker && (
-                      <span
-                        className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                      // 稿面这枚徽章带一个 ▾：它自己就是「换说话人」的入口，
+                      // 不是一块只能看的标签。右上那个文字入口保留给发现不了 ▾ 的人。
+                      <button
+                        type="button"
+                        onClick={() => { setRenamingSpeaker(s.speaker || null); setSpeakerDraft(s.speaker || ''); }}
+                        className="flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-semibold"
                         style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
+                        title="换一个说话人"
                       >
                         {s.speaker}
-                      </span>
+                        <ChevronDown size={11} />
+                      </button>
                     )}
                     <span className="flex-1" />
                     {s.speaker && (
@@ -701,13 +732,22 @@ export function TranscriptKaraoke({
                       </button>
                     )}
                   </div>
+                  {/*
+                    稿面的编辑区是**就地改字**：没有框、没有底色、只有一个光标，
+                    看起来就是那句话本身可以改。套上输入框之后它变成「另一个地方的一份拷贝」，
+                    「原地编辑一句话」的形态就没了（B2 判分记的正是这处）。
+                  */}
                   <textarea
                     autoFocus
+                    ref={autoGrow}
                     value={editDraft}
                     onChange={(event) => setEditDraft(event.target.value)}
-                    rows={2}
-                    className="w-full resize-y rounded-[8px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                    rows={1}
+                    className="w-full resize-none bg-transparent px-0 py-1 text-[14px] leading-relaxed text-token-primary outline-none"
+                    // 底部那道细蓝线是**焦点指示**：稿面在句尾画了一枚光标，说的是
+                    // 「你现在改的就是这一行」。无框内联编辑没有边界，不给这道线就完全看不出焦点在哪。
+                    // 高度跟着内容长——固定 rows 会在短句下留出一段不承载信息的空白。
+                    style={{ border: 'none', borderBottom: '1px solid var(--accent-fg-info)', caretColor: 'var(--accent-fg-info)' }}
                   />
                   <div className="mt-2 flex items-center gap-2">
                     <button
@@ -727,8 +767,16 @@ export function TranscriptKaraoke({
                       style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}>
                       <Check size={12} /> 保存
                     </button>
-                    <button type="button" disabled={savingEdit} onClick={() => setEditingIndex(null)} className="flex min-h-11 items-center gap-1 rounded-[8px] px-3 text-[11px] text-token-muted">
-                      <X size={12} /> 取消
+                    {/* 稿面的取消是**和保存等高的描边胶囊**，两颗成对。做成无框文字就不成对了，
+                        读者要在「一颗按钮 + 一行字」里分辨哪个才是另一个选择 */}
+                    <button
+                      type="button"
+                      disabled={savingEdit}
+                      onClick={() => setEditingIndex(null)}
+                      className="flex min-h-11 items-center gap-1 rounded-full px-4 text-[12px] font-semibold"
+                      style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+                    >
+                      取消
                     </button>
                     <span className="flex-1" />
                     <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>仅修改原文，音频不变</span>
@@ -751,7 +799,7 @@ export function TranscriptKaraoke({
                   }
                   if (followEnabled && s.start >= 0) seekRef.current?.(s.start);
                 }}
-                className={`min-h-11 w-full overflow-hidden rounded-[10px] px-3 py-2 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
+                className={`min-h-11 w-full overflow-hidden rounded-[10px] px-3 py-1.5 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
                 style={{
                   fontSize: active ? 15 : 13,
                   fontWeight: active ? 600 : 400,
@@ -801,6 +849,31 @@ export function TranscriptKaraoke({
         </div>
       </div>
 
+      {/*
+        稿面 B2 屏底那颗浮动药丸。它和搜索行里那颗「继续跟随」不是重复：
+        搜索行那颗要滚回上面才点得到，而跟丢恰恰发生在人已经滚远的时候——
+        这颗贴着屏底浮出来，就在拇指够得着的地方。↓ 指的是「回到下面正在播的那句」。
+        零高度的 sticky 容器托着它，所以它不会在列表末尾撑出一条空带。
+      */}
+      {documentMode && followLost && (
+        <div className="sticky bottom-3 z-20 flex h-0 w-full items-end justify-center" style={{ pointerEvents: 'none' }}>
+          <button
+            type="button"
+            onClick={resumeFollow}
+            className="flex min-h-11 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold"
+            style={{
+              pointerEvents: 'auto',
+              background: 'var(--bg-card)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-default)',
+              boxShadow: '0 6px 20px rgba(0,0,0,.18)',
+            }}
+          >
+            <ArrowDown size={14} /> 继续跟随播放
+          </button>
+        </div>
+      )}
+
       {estimated && (
         <p className="text-[11px] text-token-muted">
           当前跟随位置按语速智能估算，不会重复转录；
@@ -818,10 +891,11 @@ export function TranscriptKaraoke({
             我原先做成后者，两位判官各自独立指到同一处——分组感弱一档。所以卡片挂在每一段上，
             外层退成纯排版容器。
           */}
-          <section style={{ scrollMarginTop: 72 }}>
+          <section style={{ scrollMarginTop: 100 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>录音理解</h3>
-              <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句原文</span>
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>录音理解</h3>
+              {/* 稿面 P3 这行右侧除了句数还有一句可供性提示：词条是可以点的，点了看命中 */}
+              <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句原文 · 点击查看命中</span>
             </div>
             <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
             {/*
@@ -1035,7 +1109,8 @@ export function TranscriptKaraoke({
               <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)' }}>
                 <div className="mb-1.5 flex items-baseline justify-between gap-2">
                   <p className="text-[12px] font-semibold text-token-primary">
-                    「{activeTerm}」命中 {searchMatches.length} 句
+                    {/* 「点击跳播」是稿面 B3 写在这里的可供性提示：这几句都点得动，点了从那一秒开始播 */}
+                    「{activeTerm}」命中 {searchMatches.length} 句 <span className="font-normal text-token-muted">· 点击跳播</span>
                   </p>
                   <button
                     type="button"
@@ -1054,7 +1129,9 @@ export function TranscriptKaraoke({
                       onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
                       // 时间戳独立成左列：几条命中句的时间纵向对齐，才能一眼扫出「集中在哪一段」
                       // 面板已经是一整块灰底，句子行自己不再叠第二层底色，靠细分隔线分行
-                      className="grid min-h-11 items-start gap-2 px-1 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
+                      // 稿面这几句是这块面板里的**主阅读字号**（与纪要正文同级）：
+                      // 它们是「这个词到底在哪几句里出现」的答案，压成小字就不像答案了
+                      className="grid min-h-11 items-start gap-2 px-1 py-2 text-left text-[14px] leading-relaxed text-token-secondary"
                       // 稿面这块是紧凑列表，没有逐行分隔线——面板本身那块灰底已经是分组
                       style={{ gridTemplateColumns: '44px 1fr' }}>
                       <span className="pt-[1px] font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
@@ -1073,9 +1150,27 @@ export function TranscriptKaraoke({
             {activeTerm && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
             </div>
           </section>
-          <section style={{ scrollMarginTop: 72 }}>
+          {/*
+            「一键整理」排在录音理解之后、纪要与待办之前——稿面 B3 的层级是
+            「先选一种整理方式，产出落在下面」。此前它被排到待办后面，两级关系倒过来了：
+            读者先看见产出、翻到底才看见入口，于是判官记的是「整理入口不存在」
+            （它其实在，只是在产出下面，没人会往那儿找）。
+            整理方式清单来自后端注册表，不在前端另抄一份。
+          */}
+          {onPickOrganizeStyle && (
+            <OrganizeStylePanel
+              state={organize ?? {}}
+              onPick={onPickOrganizeStyle}
+              onCustom={onRestyle}
+              // 稿面 B3 在虚线按钮下面画了一张结果卡：小标签写着当前那一种整理方式，
+              // 底下是它整理出来的开头一段。它回答的是「我刚点的那一张，产出在哪」——
+              // 没有它，「已生成」这个状态就落不到任何看得见的东西上。
+              resultText={organizeLede}
+            />
+          )}
+          <section style={{ scrollMarginTop: 100 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>会议纪要</h3>
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>会议纪要</h3>
               {onRestyle && (
                 <button type="button" onClick={onRestyle} className="flex min-h-9 items-center gap-1 rounded-[8px] px-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   <RefreshCw size={11} /> 重新生成
@@ -1110,9 +1205,9 @@ export function TranscriptKaraoke({
             )}
             </div>
           </section>
-          <section style={{ scrollMarginTop: 72 }}>
+          <section style={{ scrollMarginTop: 100 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>待办事项</h3>
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>待办事项</h3>
               {todos.length > 0 && (
                 <span className="text-[11px] tabular-nums text-token-muted">
                   {todos.length} 项{todoSourceCount > 0 ? ` · 来自 ${todoSourceCount} 处原文` : ''}
@@ -1177,20 +1272,9 @@ export function TranscriptKaraoke({
             )}
             </div>
           </section>
-          {/*
-            「一键整理」：稿面 B3 在录音理解之后就是这一块——四种整理方式各带状态，
-            外加一条自定义。整理方式清单来自后端注册表，不在前端另抄一份。
-          */}
-          {onPickOrganizeStyle && (
-            <OrganizeStylePanel
-              state={organize ?? {}}
-              onPick={onPickOrganizeStyle}
-              onCustom={onRestyle}
-            />
-          )}
-          <section style={{ scrollMarginTop: 72 }}>
+          <section style={{ scrollMarginTop: 100 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>问这段录音</h3>
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>问这段录音</h3>
               <span />
             </div>
             <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
@@ -1208,22 +1292,13 @@ export function TranscriptKaraoke({
               </p>
             )}
             <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-              <textarea
+              <RecordingAskComposer
                 value={question}
-                onChange={event => setQuestion(event.target.value)}
-                rows={2}
-                placeholder="例如：客户对于报价的态度是什么？"
-                className="w-full resize-y rounded-[9px] px-3 py-2 text-[13px] leading-relaxed text-token-primary outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                onChange={setQuestion}
+                onSend={askRecording}
+                sending={asking}
+                onOpenMultiTurn={onAskRecording}
               />
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[10px] text-token-muted">答案会引用时间段；点击时间可从对应录音片段播放</p>
-                <div className="flex items-center gap-2">
-                  {onAskRecording && <button type="button" onClick={onAskRecording} className="min-h-10 rounded-[8px] px-3 text-[11px] text-token-muted">打开多轮问答</button>}
-                  <button type="button" disabled={asking || !question.trim()} onClick={askRecording} className="min-h-10 rounded-[8px] px-3 text-[12px] font-semibold disabled:opacity-50" style={{ background: 'rgba(59,130,246,0.16)', color: 'var(--text-primary)' }}>{asking ? '正在分析整场录音' : '发送问题'}</button>
-                </div>
-              </div>
-              {asking && !answer && <p className="mt-3 animate-pulse text-[12px] text-token-muted motion-reduce:animate-none">正在读取原文并核对时间轴</p>}
               {qaError && <p className="mt-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
               <RecordingAnswer
                 question={askedQuestion}

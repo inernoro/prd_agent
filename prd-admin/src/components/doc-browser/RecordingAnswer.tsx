@@ -47,7 +47,11 @@ export function RecordingAnswer({
         </p>
       )}
       <p className="text-[11px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>结论</p>
-      <p className="mt-1 whitespace-pre-wrap text-[15px] font-semibold leading-relaxed text-token-primary">
+      {/*
+        稿面这段结论是**大号常规字重**的陈述句，明显大过卡里其余文字——它就是这张卡的答案本身。
+        压成小号粗体之后，它和「引用原文 · N 条」那类标签落在同一档，读者一眼看不出哪句才是回答。
+      */}
+      <p className="mt-1 whitespace-pre-wrap text-[18px] font-medium leading-relaxed text-token-primary">
         {conclusion}
       </p>
       {citations.length > 0 && (

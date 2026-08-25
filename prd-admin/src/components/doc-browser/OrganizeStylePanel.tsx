@@ -66,7 +66,6 @@ export function OrganizeStylePanel({
   state,
   onPick,
   onCustom,
-  resultLabel,
   resultText,
 }: {
   state: OrganizeState;
@@ -74,9 +73,11 @@ export function OrganizeStylePanel({
   onPick: (styleKey: string) => void;
   /** 自定义整理要求：宿主打开输入入口 */
   onCustom?: () => void;
-  /** 结果卡的小标题（当前整理方式的名字） */
-  resultLabel?: string;
-  /** 结果正文；为空时不渲染结果卡 */
+  /**
+   * 结果卡正文（当前这份摘要的开头一段）；为空时不渲染结果卡。
+   * 卡上那个小标签由本组件从注册表里取——宿主不必再传一份方式名，
+   * 传了就会和网格上那张卡的名字各自漂移（形状 3）。
+   */
   resultText?: string;
 }) {
   const [styles, setStyles] = useState<OrganizeStyle[]>([]);
@@ -105,12 +106,15 @@ export function OrganizeStylePanel({
     [state, styles, tick],
   );
 
+  // 结果卡的小标签 = 当前生效的那一种整理方式，取自同一份 cards，与网格上那张黑卡同源
+  const doneCard = cards.find(card => card.state === 'done');
+
   if (cards.length === 0) return null;
 
   return (
-    <section style={{ scrollMarginTop: 72 }}>
+    <section style={{ scrollMarginTop: 100 }}>
       <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-        <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 76 }}>一键整理</h3>
+        <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>一键整理</h3>
         {/* 稿面这句是承诺，不是说明文：整理只写摘要节，原始录音与原文一个字都不动 */}
         <span className="text-[11px] text-token-muted">不会修改原始录音与原文</span>
       </div>
@@ -136,7 +140,7 @@ export function OrganizeStylePanel({
           className="mt-3 rounded-[14px] p-4"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
         >
-          {resultLabel && <p className="mb-1.5 text-[11px] text-token-muted">{resultLabel}</p>}
+          {doneCard && <p className="mb-1.5 text-[11px] text-token-muted">{doneCard.label}</p>}
           <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-token-secondary">{resultText}</p>
         </article>
       )}
