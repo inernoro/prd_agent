@@ -1885,13 +1885,18 @@ const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeSer
 const platformDailyHealthCheck = startPlatformDailyHealthCheck(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
-// 存量系统互联连接补上 report:read。判据与默认 scope 都加好了，但已经配好的那条连接里
-// 没有这个 scope——不补的话 MAP 的验收报告同步照样 401，「修了像没修」。
-// 幂等，只动 active 的；为什么这不是提权见 backfillReportReadScope 的注释。
+// 存量系统互联连接补 report:read —— **默认不做**，要管理员显式开开关。
+//
+// 自动补等于在用户没重新看过授权页的情况下扩大一张已签发的长期令牌，那是替他做了同意。
+// 不补的话存量连接的报告同步会 401，正路是让用户重新走一次授权（授权页已列出该 scope）；
+// 赶时间可以设 CDS_GRANT_REPORT_READ_TO_EXISTING=1 重启一次，那是个需要动手的决定。
 try {
-  const patchedConnections = backfillReportReadScope(stateService);
-  if (patchedConnections.length > 0) {
-    console.log(`[connection-scope] 已给 ${patchedConnections.length} 条存量系统互联连接补上 report:read`);
+  const grantEnabled = ['1', 'true', 'yes']
+    .includes(String(process.env.CDS_GRANT_REPORT_READ_TO_EXISTING || '').trim().toLowerCase());
+  const patchedConnections = backfillReportReadScope(stateService, { enabled: grantEnabled });
+  for (const id of patchedConnections) {
+    // 逐条留痕：一个没人看得见的授权变更，和把门禁删掉没有区别。
+    console.log(`[connection-scope] 按 CDS_GRANT_REPORT_READ_TO_EXISTING 给存量连接 ${id} 补上 report:read`);
   }
 } catch (err) {
   // 补不上不该拦住启动：报告同步会继续 401，但那是可见的失败，比 CDS 起不来好。

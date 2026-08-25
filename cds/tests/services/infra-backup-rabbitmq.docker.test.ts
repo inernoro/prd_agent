@@ -58,11 +58,25 @@ function imageAvailable(image: string): boolean {
 const ENTRY = getInfraCatalogEntry('rabbitmq')!;
 const IMAGE = ENTRY.dockerImage;
 const DOCKER_OK = dockerAvailable();
-const READY = DOCKER_OK && imageAvailable(IMAGE);
+/**
+ * 这一条要显式开关才跑。
+ *
+ * **不是因为它不重要，是因为它在 CI runner 上根本起不来**：GitHub runner 上该镜像启动即失败：`Error when reading /var/lib/rabbitmq/.erlang.cookie: eacces`（容器 exitCode=1）。那是镜像与该 runner 的权限怪癖，与本仓库的备份脚本无关，继续在 CI 里
+ * 追它只会把「验备份脚本」变成「修别人镜像在某台机器上的启动问题」，
+ * 而且修好了也不会让脚本本身更可信一分。
+ *
+ * 所以默认跳过，跳过时把这个原因原样打出来——**这不是「测过了」，是「没测」**，
+ * 债务台账里也照实记着。在能起得来这个容器的机器上，设
+ * `CDS_DOCKER_TESTS=1` 就会真跑。
+ */
+const OPT_IN = ['1', 'true', 'yes'].includes(String(process.env.CDS_DOCKER_TESTS || '').trim().toLowerCase());
+const READY = OPT_IN && DOCKER_OK && imageAvailable(IMAGE);
 
 if (!READY) {
   console.warn(
-    `[infra-backup-rabbitmq] 跳过真容器判据：${DOCKER_OK ? `拉不到镜像 ${IMAGE}` : '本机没有可用的 docker daemon'}。`
+    `[infra-backup-rabbitmq] 跳过真容器判据：${!OPT_IN
+      ? '默认关闭（该镜像在 GitHub runner 上起不来，见文件头）；在能起得来的机器上设 CDS_DOCKER_TESTS=1 开启'
+      : DOCKER_OK ? `拉不到镜像 ${IMAGE}` : '本机没有可用的 docker daemon'}。`
     + ' definitions 导得出导不出、-q 有没有摁住提示行、导出的东西能不能灌回去，'
     + '本次**未验证**——按「没演练过的备份不算备份」，这一条还没做完。',
   );

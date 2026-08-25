@@ -348,6 +348,25 @@ export function detectInfraAuth(
     .flatMap((raw) => String(raw || '').match(/"[^"]*"|'[^']*'|[^\s]+/g) || [])
     .map((t) => String(t || '').trim().toLowerCase())
     .filter(Boolean);
+  /**
+   * 原样保留大小写的那一份。
+   *
+   * 上面为了比对方便把所有 token 转成了小写，而**有些命令行开关是大小写敏感的**：
+   * memcached 的 `-s <file>` 是 unix socket，`-S` 才是启用 SASL。全转小写之后
+   * 两者无法区分，于是一台走 unix socket、根本没配认证的 memcached 会被判成
+   * 「已认证」，还能过认证门禁（Codex review P2）。需要区分大小写的判据用这一份。
+   */
+  const casedTokens = [
+    ...(args || []).flatMap((a) => String(a || '').split(/\s+/)),
+    ...argCarryingEnv.flatMap((k) => (e[k] || '').split(/\s+/)),
+  ]
+    .flatMap((raw) => String(raw || '').match(/"[^"]*"|'[^']*'|[^\s]+/g) || [])
+    .map((t) => String(t || '').trim())
+    .filter(Boolean);
+  /** 大小写敏感的裸 flag 判定。只给 `-S` 这类大小写本身携带语义的开关用。 */
+  const hasCasedFlag = (...flags: string[]): boolean => flags.some(
+    (flag) => casedTokens.some((t) => t.replace(/^(["'])([\s\S]*)\1$/, '$2') === flag),
+  );
   /** 整条有效命令，用来匹配跨 token 的结构（如配置文件里的 authorization 块）。 */
   const joined = tokens.join(' ');
   /** 只在「比对 flag 名」时用；判定值的时候必须保留引号。 */
@@ -455,7 +474,11 @@ export function detectInfraAuth(
       //
       // `-Y <file>` 是 ASCII 协议认证，`-S` 是 SASL。env 里的 MEMCACHED_PASSWORD
       // 单独不算数——口令存在不等于服务在校验它，必须命令行上真的启用了某一种。
-      return hasFlagValue('-y', '--auth-file') || hasFlag('-s');
+      //
+      // **`-S` 必须区分大小写**：小写的 `-s <file>` 是 unix socket，和认证毫无关系。
+      // 原来用的是转小写之后的 token，于是一台走 unix socket、没配任何认证的
+      // memcached 会被判成「已认证」并通过门禁（Codex review P2）。
+      return hasFlagValue('-y', '--auth-file') || hasCasedFlag('-S');
     case 'kafka':
       return kafkaClientListenersAuthenticated(e);
     case 'nats':

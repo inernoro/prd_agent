@@ -131,7 +131,7 @@ describe('新配对默认就带 report:read', () => {
   });
 });
 
-describe('存量连接补 report:read', () => {
+describe('存量连接补 report:read：默认不动，必须管理员显式开', () => {
   function fakeState(conns: Array<{ id: string; scopes: string[] }>) {
     const store = conns.map((c) => ({ ...c, scopes: [...c.scopes] }));
     return {
@@ -145,14 +145,30 @@ describe('存量连接补 report:read', () => {
     };
   }
 
-  it('缺的补上，已有的不动', () => {
-    // 不补的话：判据加好了、默认 scope 也加好了，但线上**已经配好的那条连接**
-    // 里没有这个 scope，同步照样 401——「修了像没修」。
+  it('**默认什么都不做** —— 不许替用户同意扩大一张已签发的长期令牌', () => {
+    // 第一版是每次启动自动补，理由写的是「已有的 scope 严格更宽」。
+    // 那个理由被本文件上面那组用例直接推翻：instance:read 只开 /api/bridge/*，
+    // 两者都不含读验收报告。所以自动补 = 在用户没重新看过授权页的情况下
+    // 扩大了他手上那张票能读到的东西（Codex review P1）。
+    const st = fakeState([{ id: 'c1', scopes: ['shared-service:deploy', 'instance:read'] }]);
+    expect(backfillReportReadScope(st)).toEqual([]);
+    expect(st.store[0].scopes).toEqual(['shared-service:deploy', 'instance:read']);
+    expect(backfillReportReadScope(st, {})).toEqual([]);
+    expect(backfillReportReadScope(st, { enabled: false })).toEqual([]);
+  });
+
+  it('这条正是「已有 scope 并不覆盖新权限」的证明', () => {
+    // 把当初那个错误理由写成断言：如果哪天 instance:read 真的覆盖了报告读取，
+    // 这条会红，那时候才轮到重新讨论要不要自动补。
+    expect(connectionTokenAllows(['shared-service:deploy', 'instance:read'], 'GET', '/api/reports')).toBe(false);
+  });
+
+  it('显式开了才补：缺的补上，已有的不动', () => {
     const st = fakeState([
       { id: 'c1', scopes: ['shared-service:deploy', 'instance:read', 'deployment:stream'] },
       { id: 'c2', scopes: ['instance:read', 'report:read'] },
     ]);
-    const patched = backfillReportReadScope(st);
+    const patched = backfillReportReadScope(st, { enabled: true });
     expect(patched).toEqual(['c1']);
     expect(st.store[0].scopes).toContain('report:read');
     // 原有 scope 一个都不能丢。
@@ -160,27 +176,24 @@ describe('存量连接补 report:read', () => {
     expect(st.store[1].scopes).toEqual(['instance:read', 'report:read']);
   });
 
-  it('幂等：再跑一次什么都不改', () => {
+  it('幂等：开着再跑一次什么都不改', () => {
     const st = fakeState([{ id: 'c1', scopes: ['instance:read'] }]);
-    expect(backfillReportReadScope(st)).toEqual(['c1']);
-    expect(backfillReportReadScope(st)).toEqual([]);
-    // 补两次不该出现两个 report:read。
+    expect(backfillReportReadScope(st, { enabled: true })).toEqual(['c1']);
+    expect(backfillReportReadScope(st, { enabled: true })).toEqual([]);
     expect(st.store[0].scopes.filter((s) => s === 'report:read')).toHaveLength(1);
   });
 
   it('补完之后判据真的放行（端到端，不只是数组里多了个字符串）', () => {
     const st = fakeState([{ id: 'c1', scopes: ['instance:read'] }]);
     expect(connectionTokenAllows(st.store[0].scopes, 'GET', '/api/reports')).toBe(false);
-    backfillReportReadScope(st);
+    backfillReportReadScope(st, { enabled: true });
     expect(connectionTokenAllows(st.store[0].scopes, 'GET', '/api/reports')).toBe(true);
     // 补的是窄权限，不是万能钥匙。
     expect(connectionTokenAllows(st.store[0].scopes, 'DELETE', '/api/reports/x')).toBe(false);
   });
 
   it('只动 active 的——revoked 连接由 getActiveCdsConnections 挡在外面', () => {
-    // 判据取的是「active 列表」，撤销过的连接压根不在里面。
-    // 这条断言的是接线口径：换成 getCdsConnections() 会把已撤销的也复活成可用。
     const st = fakeState([]);
-    expect(backfillReportReadScope(st)).toEqual([]);
+    expect(backfillReportReadScope(st, { enabled: true })).toEqual([]);
   });
 });

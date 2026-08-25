@@ -457,3 +457,24 @@ describe('认证判定：有这个 key 不等于配了认证', () => {
     expect(detectInfraAuth('mongo', {}, ['mongod', '--keyfile'])).toBe(false);
   });
 });
+
+describe('memcached 的 -S 必须区分大小写', () => {
+  it('小写 -s 是 unix socket，不是认证', () => {
+    // tokens 在上游被统一转成了小写，于是 `hasFlag('-s')` 把 `-s <file>`
+    // 也当成了启用 SASL。一台走 unix socket、根本没配认证的 memcached
+    // 会被判成「已认证」，还能过认证门禁（Codex review P2）。
+    expect(detectInfraAuth('memcached', {}, ['memcached', '-s', '/tmp/memcached.sock'])).toBe(false);
+  });
+
+  it('大写 -S 才算启用 SASL', () => {
+    expect(detectInfraAuth('memcached', {}, ['memcached', '-S'])).toBe(true);
+  });
+
+  it('-Y 认证文件照旧算', () => {
+    expect(detectInfraAuth('memcached', {}, ['sh', '-c', 'exec memcached -Y /tmp/cds-memcached.auth'])).toBe(true);
+  });
+
+  it('env 里有口令但命令行没启用，不算（口令存在不等于服务在校验它）', () => {
+    expect(detectInfraAuth('memcached', { MEMCACHED_PASSWORD: 'x' }, ['memcached'])).toBe(false);
+  });
+});

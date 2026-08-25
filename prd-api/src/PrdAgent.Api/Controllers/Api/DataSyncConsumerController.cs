@@ -548,14 +548,52 @@ public sealed class DataSyncConsumerController : ControllerBase
         _vault.PutExportToken(child.Id, token, run.ExportTokenExpiresAt);
         _vault.Forget(run.Id);
 
-        await _db.DataSyncRuns.UpdateOneAsync(
-            Builders<DataSyncRun>.Filter.And(
-                Builders<DataSyncRun>.Filter.Eq(x => x.Id, child.Id),
-                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
-            Builders<DataSyncRun>.Update
-                .Set(x => x.Status, "running")
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
+        // 最后这一步是**激活**：worker 只跑 running 的 Run。
+        //
+        // 不可取消已经不够——这次写库还可能因为网络抖动、副本切换直接抛异常。
+        // 一旦它没成，父记录已经认领、票也转走了，而子记录停在 pending：
+        // 谁都不会去跑它，重试又会被开头那句「已经转正过」原样挡回来，
+        // **那唯一一次转正机会就此作废**，接口却回过「running」（Codex review P1 第二轮）。
+        //
+        // 所以失败要补偿回可重试的状态：票还回父记录、清掉父记录的认领、删掉子记录，
+        // 然后如实报错。补偿本身再失败也只能记日志——那时手上没有别的办法，
+        // 但至少日志里留下了「这条 Run 卡在哪一步」，而不是一句假的成功。
+        try
+        {
+            await _db.DataSyncRuns.UpdateOneAsync(
+                Builders<DataSyncRun>.Filter.And(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Id, child.Id),
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
+                Builders<DataSyncRun>.Update
+                    .Set(x => x.Status, "running")
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[data-sync] Run {RunId} 转正后激活子记录 {ChildId} 失败，回滚到可重试状态", run.Id, child.Id);
+            try
+            {
+                _vault.PutExportToken(run.Id, token, run.ExportTokenExpiresAt);
+                _vault.Forget(child.Id);
+                await _db.DataSyncRuns.UpdateOneAsync(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                    Builders<DataSyncRun>.Update
+                        .Set(x => x.PromotedToRunId, (string?)null)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, CancellationToken.None);
+            }
+            catch (Exception rollbackEx)
+            {
+                // 补偿也失败了。这时候唯一还能做对的事就是说实话。
+                _logger.LogError(rollbackEx,
+                    "[data-sync] Run {RunId} 回滚也失败，这条试跑可能无法再转正，需要人工检查", run.Id);
+            }
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_FAILED",
+                    "转正没能启动，已回滚到可重试状态，请再点一次；若反复失败请检查数据库连接"));
+        }
 
         _logger.LogInformation("[data-sync] Run {RunId} 试跑转正为真跑 {ChildId}", run.Id, child.Id);
         return Ok(ApiResponse<object>.Ok(new { runId = child.Id, status = "running", dryRun = false }));

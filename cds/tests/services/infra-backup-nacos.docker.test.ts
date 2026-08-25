@@ -55,11 +55,25 @@ function imageAvailable(image: string): boolean {
 /** 与线上那两台在跑的实例同一个镜像——测的必须是真正在用的那一版。 */
 const IMAGE = 'nacos/nacos-server:v2.3.2-slim';
 const DOCKER_OK = dockerAvailable();
-const READY = DOCKER_OK && imageAvailable(IMAGE);
+/**
+ * 这一条要显式开关才跑。
+ *
+ * **不是因为它不重要，是因为它在 CI runner 上根本起不来**：GitHub runner 上该镜像启动即失败：镜像里那个老 JDK 解析不了 runner 的 cgroup v2，`CgroupV2Subsystem.getInstance` 抛空指针，Spring 起不来。那是 JDK 与内核的不兼容，与本仓库的备份脚本无关，继续在 CI 里
+ * 追它只会把「验备份脚本」变成「修别人镜像在某台机器上的启动问题」，
+ * 而且修好了也不会让脚本本身更可信一分。
+ *
+ * 所以默认跳过，跳过时把这个原因原样打出来——**这不是「测过了」，是「没测」**，
+ * 债务台账里也照实记着。在能起得来这个容器的机器上，设
+ * `CDS_DOCKER_TESTS=1` 就会真跑。
+ */
+const OPT_IN = ['1', 'true', 'yes'].includes(String(process.env.CDS_DOCKER_TESTS || '').trim().toLowerCase());
+const READY = OPT_IN && DOCKER_OK && imageAvailable(IMAGE);
 
 if (!READY) {
   console.warn(
-    `[infra-backup-nacos] 跳过真容器判据：${DOCKER_OK ? `拉不到镜像 ${IMAGE}` : '本机没有可用的 docker daemon'}。`
+    `[infra-backup-nacos] 跳过真容器判据：${!OPT_IN
+      ? '默认关闭（该镜像在 GitHub runner 上起不来，见文件头）；在能起得来的机器上设 CDS_DOCKER_TESTS=1 开启'
+      : DOCKER_OK ? `拉不到镜像 ${IMAGE}` : '本机没有可用的 docker daemon'}。`
     + ' 镜像里有没有 curl / wget、配置导出接口回的东西能不能灌回去，本次**未验证**——'
     + '按「没演练过的备份不算备份」，这一条还没做完。',
   );

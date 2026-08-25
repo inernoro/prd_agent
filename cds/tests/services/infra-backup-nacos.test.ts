@@ -370,6 +370,34 @@ describe('nacos 脚本：真跑一遍', () => {
     });
   });
 
+  describe('上下文路径', () => {
+    it('运维按 servlet 习惯写成 /nacos 也要拼对，不能出现双斜杠', () => {
+      // 直接插值会拼出 `http://host:8848//nacos`，之后探活、列命名空间、导出、
+      // 导入**全部打错路径**——而默认路径的容器用例照样绿，这种漏法只有
+      // 配了上下文路径的实例才会撞上（Codex review P2）。
+      const r = run(buildNacosDumpScript(), { env: { NACOS_CONTEXT_PATH: '/nacos' }, restoreZips: [] });
+      expect(r.code, r.stderr).toBe(0);
+      for (const u of r.urls) expect(u).not.toContain('8848//');
+      expect(r.urls.some((u) => u.includes('8848/nacos/v1/'))).toBe(true);
+    });
+
+    it('写成 nacos/ 或 /nacos/ 结果一样', () => {
+      for (const ctx of ['nacos/', '/nacos/']) {
+        const r = run(buildNacosDumpScript(), { env: { NACOS_CONTEXT_PATH: ctx }, restoreZips: [] });
+        expect(r.code, `${ctx}: ${r.stderr}`).toBe(0);
+        expect(r.urls.some((u) => u.includes('8848/nacos/v1/')), ctx).toBe(true);
+      }
+    });
+
+    it('根路径 `/`：拼出来不带多余段，也不带双斜杠', () => {
+      // 2.4 起默认上下文就是根。写成 `/` 时不该变成 `8848//v1/...`。
+      const r = run(buildNacosDumpScript(), { env: { NACOS_CONTEXT_PATH: '/' }, restoreZips: [] });
+      expect(r.code, r.stderr).toBe(0);
+      for (const u of r.urls) expect(u).not.toContain('8848//');
+      expect(r.urls.some((u) => u.includes('8848/v1/'))).toBe(true);
+    });
+  });
+
   describe('鉴权开着的时候', () => {
     const AUTH_ON = { NACOS_AUTH_ENABLE: 'true', NACOS_AUTH_PASSWORD: 'sup3r-secret' };
 

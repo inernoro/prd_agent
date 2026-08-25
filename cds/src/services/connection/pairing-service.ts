@@ -91,23 +91,30 @@ export const DEFAULT_SCOPES = [
 ];
 
 /**
- * 给存量连接补上 `report:read`。幂等，启动时跑一次。
+ * 给存量连接补上 `report:read`。**默认不做**，必须由管理员显式打开开关。
  *
- * ## 为什么要补而不是等重新配对
+ * ## 为什么原来那版是错的
  *
- * 判据加好了、默认 scope 也加好了，但**已经配好的那条连接**里没有这个 scope，
- * 于是同步照样 401——「修了像没修」。而重新配对要用户再走一次授权跳转。
+ * 第一版在每次启动时自动补，理由写的是「这些连接已经有 shared-service:deploy 与
+ * instance:read，都严格宽于只读两个报告端点」。**这个理由被我自己写的授权表推翻了**：
+ * server.ts 的 CONNECTION_TOKEN_GRANTS 里，`instance:read` 只开 `/api/bridge/*`，
+ * `shared-service:deploy` 是另一件事——两者都不含读取验收报告。
  *
- * ## 为什么这不是提权
+ * 也就是说自动补等于**在用户没有再看过授权页的情况下，扩大了一张已经签发出去的
+ * 长期令牌能读到的东西**。哪怕扩得很窄，那也是替用户做了同意（Codex review P1）。
  *
- * 这些连接手上已经有 `shared-service:deploy`（能部署）与 `instance:read`（能驱动页面），
- * 两者都严格宽于「只读两个验收报告端点」。补的是一个它本就能力覆盖的窄权限，
- * 不是给它一件原来做不到的事。只补 active 的；revoked / pending 一律不动。
+ * ## 现在怎么做
+ *
+ * 两条正路：让用户重新走一次授权跳转（授权页现在会列出 report:read），
+ * 或者由管理员显式设 `CDS_GRANT_REPORT_READ_TO_EXISTING=1` 后重启一次——
+ * 那是一个需要动手的决定，不是默默发生的事。补过之后每条都会打日志留痕。
  */
 export function backfillReportReadScope(stateService: {
   getActiveCdsConnections(): Array<{ id: string; scopes: string[] }>;
   updateCdsConnection(id: string, fields: { scopes: string[] }): unknown;
-}): string[] {
+}, opts: { enabled?: boolean } = {}): string[] {
+  // 没有显式开关就什么都不做——扩大已签发令牌的权限必须有人点头。
+  if (!opts.enabled) return [];
   const patched: string[] = [];
   for (const conn of stateService.getActiveCdsConnections()) {
     if (conn.scopes.includes('report:read')) continue;

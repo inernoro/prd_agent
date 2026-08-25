@@ -1247,7 +1247,12 @@ const NACOS_CLIENT_LINES: readonly string[] = [
   '  if [ "$CDS_NACOS_HTTP" = curl ]; then curl -fsS -o "$2" "$1"; else wget -q -O "$2" "$1"; fi',
   '}',
   // 端口与上下文路径都可被 env 改（2.4 起上下文路径默认成了根），所以不写死。
-  'CDS_NACOS_BASE="http://127.0.0.1:${NACOS_APPLICATION_PORT:-8848}/${NACOS_CONTEXT_PATH:-nacos}"',
+  // 上下文路径要去掉首尾斜杠再拼。运维按 servlet 习惯写成 `/nacos` 或 `/` 是常态，
+  // 直接插值会拼出 `//nacos` / `//`，之后探活、列命名空间、导出、导入**全部打错路径**
+  // ——而默认路径的容器用例照样绿，这种漏法只有配了上下文路径的实例才会撞上
+  // （Codex review P2）。
+  `CDS_NACOS_CTX=$(printf '%s' "\${NACOS_CONTEXT_PATH:-nacos}" | sed 's#^/*##; s#/*$##')`,
+  'CDS_NACOS_BASE="http://127.0.0.1:${NACOS_APPLICATION_PORT:-8848}${CDS_NACOS_CTX:+/$CDS_NACOS_CTX}"',
   'CDS_NACOS_AUTH=""',
   'case "$(printf \'%s\' "${NACOS_AUTH_ENABLE:-}" | tr \'A-Z\' \'a-z\')" in',
   '  true|1|yes)',
