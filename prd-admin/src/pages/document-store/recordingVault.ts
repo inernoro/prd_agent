@@ -302,9 +302,25 @@ export function describeBackgroundTranscriptionBanner(args: {
   selectedEntryId?: string | null;
   selectedHasFailure: boolean;
   runs: Array<{ entryId?: string | null; title?: string | null }>;
+  /**
+   * 当前这条录音的进度是否已经由正文里的三阶段卡在讲。
+   * 是的话横幅就不该再说一遍——同屏两处讲同一件事，还各讲一半
+   * （横幅只有一句话、卡里有阶段和百分比），用户不知道该信哪个。
+   * 此时横幅只负责「**其它**录音也在跑」，一条都没有就整个消失。
+   */
+  currentRunHasInlineCard?: boolean;
 }): BackgroundTranscriptionBannerCopy | null {
   if (args.runs.length === 0) return null;
   const selectedId = args.selectedEntryId?.trim();
+  if (args.currentRunHasInlineCard && selectedId) {
+    const others = args.runs.filter((run) => run.entryId !== selectedId);
+    if (others.length === 0) return null;
+    return describeBackgroundTranscriptionBanner({
+      selectedEntryId: args.selectedEntryId,
+      selectedHasFailure: args.selectedHasFailure,
+      runs: others,
+    });
+  }
   const currentIsRunning = !args.selectedHasFailure
     && Boolean(selectedId)
     && args.runs.some((run) => run.entryId === selectedId);
@@ -367,6 +383,38 @@ export function startSerialBackgroundPoller(
  *
  * 只认失败态；诊断块（后端追加的 [diagnostic] JSON）给的是排障细节，不是给用户看的，截掉。
  */
+/**
+ * 失败说明的四个字段，对齐设计稿 S5/S6 的硬约束「失败对象必须含
+ * code / 时间 / 仍可用能力 / 重试方式，UI 逐条渲染」。
+ *
+ * 「仍可用能力」不进这个结构：它是**恒真**的一句（音频已经安全落库，播放和下载
+ * 从来不受转录失败影响），由 UI 直接写死更诚实——放进判据会让人以为它有条件。
+ * 这里只给机器判定得出来的三项，外加自动重试的结构化事实。
+ */
+export type FailedTranscriptionNotice = {
+  reason: string;
+  at: string | null;
+  /** 机器可判定的失败类别（如 ERR_CODEC）；上游没给就为 null，UI 此时不编一个出来 */
+  code: string | null;
+  /** 已自动重试次数；后端没下发按 0 计 */
+  automaticRetryCount: number;
+  /** 下一次自动重试的时刻；为 null 表示自动重试已耗尽，轮到用户手动重试 */
+  automaticRetryNextAt: string | null;
+};
+
+/** 后台失联（心跳停了）不是上游报的失败，是我们自己判出来的一类；
+ *  它同样要凑齐四个字段，否则这条路径上的界面又退回「只有一句话」。
+ *  code 用我们自己的分类 RUN_STALLED —— 这是判据算出来的，不是替上游编的。 */
+export function stalledTranscriptionNotice(at: string | null): FailedTranscriptionNotice {
+  return {
+    reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
+    at,
+    code: 'RUN_STALLED',
+    automaticRetryCount: 0,
+    automaticRetryNextAt: null,
+  };
+}
+
 export function describeFailedTranscription(
   run: {
     status?: string | null;
@@ -375,13 +423,19 @@ export function describeFailedTranscription(
     endedAt?: string | null;
     updatedAt?: string | null;
     createdAt?: string | null;
+    automaticRetryCount?: number | null;
+    automaticRetryNextAt?: string | null;
   } | null | undefined,
-): { reason: string; at: string | null } | null {
+): FailedTranscriptionNotice | null {
   if (run?.status?.trim().toLowerCase() !== 'failed') return null;
   const raw = (run.errorMessage ?? '').split('[diagnostic]')[0].trim();
+  const code = run.failureCode?.trim();
   return {
     reason: raw || '转录失败，原因未知',
     at: (run.endedAt ?? run.updatedAt ?? run.createdAt ?? null),
+    code: code ? code : null,
+    automaticRetryCount: Math.max(0, run.automaticRetryCount ?? 0),
+    automaticRetryNextAt: run.automaticRetryNextAt?.trim() || null,
   };
 }
 

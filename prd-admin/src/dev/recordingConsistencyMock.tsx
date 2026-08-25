@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
-import { TranscribeHeroCard } from '@/components/doc-browser/DocBrowser';
+import { TranscribeStatusCard } from '@/components/doc-browser/TranscribeStatusCard';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { describeBackgroundTranscriptionBanner } from '@/pages/document-store/recordingVault';
@@ -33,6 +33,19 @@ import '@/styles/globals.css';
  * 只出现一次的词不进词云，用一次性台词会把「词云为空」误判成实现缺陷。
  */
 const MOCK_NOTE_MD = `# 用户访谈 · 留存与导入
+
+## 摘要
+
+## 结论
+
+导入环节的核心问题是「无反馈的等待」：解析阶段 40 秒空白直接导致用户判定卡死并重开，
+是第 7 天留存跌到 41% 的主因。
+
+## 行动项
+
+- [ ] 出导入两步拆分的交互稿
+- [ ] 补齐解析阶段的进度埋点
+- [x] 再约 3 位重度用户复访
 
 ## 转录全文
 
@@ -158,8 +171,8 @@ function RecordingConsistencyMock() {
 
       <div className="flex flex-wrap items-start gap-8">
         <Artboard
-          label="A · 转录前（对应设计稿 R4「结束处理三阶段」）"
-          note="线上真实形态：后台处理横幅 + 手动「转成文字」+ 播放器"
+          label="A · 处理中（对齐设计稿 R4「结束处理三阶段」）"
+          note="三阶段 + 状态四问：音频安不安全 / 在做什么 / 还要多久 / 现在能做什么"
         >
           <div className="flex flex-col gap-3 overflow-y-auto px-3 py-3">
             {banner && (
@@ -175,8 +188,57 @@ function RecordingConsistencyMock() {
                 </div>
               </div>
             )}
-            <TranscribeHeroCard
+            <TranscribeStatusCard
               currentEntryId="entry-mock"
+              activeRun={{
+                id: 'run-mock',
+                status: 'running',
+                phase: '解析音频',
+                progress: 35,
+                startedAt: new Date(Date.now() - 31_000).toISOString(),
+              }}
+              onStart={() => undefined}
+              onOpenNote={() => undefined}
+            />
+            {audioSrc && <AudioWavePlayer src={audioSrc} />}
+          </div>
+        </Artboard>
+
+        <Artboard
+          label="F · 失败（对齐设计稿 S5「四字段逐条渲染」）"
+          note="原因与 code / 时间 / 仍可用能力 / 下一步"
+        >
+          <div className="flex flex-col gap-3 overflow-y-auto px-3 py-3">
+            <TranscribeStatusCard
+              currentEntryId="entry-mock"
+              lastFailure={{
+                reason: '音频编码不受支持',
+                at: new Date(Date.now() - 600_000).toISOString(),
+                code: 'ERR_CODEC',
+                automaticRetryCount: 3,
+                automaticRetryNextAt: null,
+              }}
+              onStart={() => undefined}
+              onOpenNote={() => undefined}
+            />
+            {audioSrc && <AudioWavePlayer src={audioSrc} />}
+          </div>
+        </Artboard>
+
+        <Artboard
+          label="G · 自动重试中（对齐设计稿 S6）"
+          note="倒计时 + 明说无需操作，不给一个点了没用的按钮"
+        >
+          <div className="flex flex-col gap-3 overflow-y-auto px-3 py-3">
+            <TranscribeStatusCard
+              currentEntryId="entry-mock"
+              lastFailure={{
+                reason: '转录暂时不可用',
+                at: new Date(Date.now() - 120_000).toISOString(),
+                code: 'ASR_UNAVAILABLE',
+                automaticRetryCount: 1,
+                automaticRetryNextAt: new Date(Date.now() + 8_000).toISOString(),
+              }}
               onStart={() => undefined}
               onOpenNote={() => undefined}
             />

@@ -7,6 +7,8 @@ import {
   estimateTranscriptSegments,
   replaceEstimatedTranscriptSentenceText,
   parseSummaryModules,
+  buildSpeakerStats,
+  extractTranscriptTodos,
   activeSummaryModuleIndex,
   replaceTranscriptSegmentText,
   renameTranscriptSpeaker,
@@ -435,5 +437,56 @@ describe('parseSpeakerSourceNote', () => {
     expect(parseTranscriptSegments(md)).toEqual([
       { start: 0, end: 9, speaker: '说话人1', text: '甲。' },
     ]);
+  });
+});
+
+describe('buildSpeakerStats', () => {
+  const seg = (speaker?: string) => ({ start: 0, end: 1, text: 'x', speaker });
+
+  it('按句数降序给出占比', () => {
+    const stats = buildSpeakerStats([
+      seg('主持人'), seg('受访者 A'), seg('受访者 A'), seg('受访者 A'),
+    ]);
+    expect(stats).toEqual([
+      { speaker: '受访者 A', count: 3, percent: 75 },
+      { speaker: '主持人', count: 1, percent: 25 },
+    ]);
+  });
+
+  it('无标签句子不进分母——否则每个人的占比都被无缘无故稀释', () => {
+    const stats = buildSpeakerStats([seg('主持人'), seg(undefined), seg('  ')]);
+    expect(stats).toEqual([{ speaker: '主持人', count: 1, percent: 100 }]);
+  });
+
+  it('全场都没有说话人标签时给空数组，界面据此不渲染这一栏', () => {
+    expect(buildSpeakerStats([seg(undefined), seg(undefined)])).toEqual([]);
+    expect(buildSpeakerStats([])).toEqual([]);
+  });
+});
+
+describe('extractTranscriptTodos', () => {
+  it('认的是任务列表这个结构，不是标题里的「待办」二字', () => {
+    const todos = extractTranscriptTodos('## 行动项\n- [ ] 出导入两步拆分的交互稿\n- [x] 补齐解析阶段埋点');
+    expect(todos).toEqual([
+      { text: '出导入两步拆分的交互稿', done: false },
+      { text: '补齐解析阶段埋点', done: true },
+    ]);
+  });
+
+  it('大写 X 也算完成', () => {
+    expect(extractTranscriptTodos('- [X] 已做')[0].done).toBe(true);
+  });
+
+  it('普通列表项不算待办，不能把纪要要点混进待办栏', () => {
+    expect(extractTranscriptTodos('- 这只是一个要点\n* 另一个要点')).toEqual([]);
+  });
+
+  it('没有任务列表就是空——界面据此如实说没有产出待办，不编一条', () => {
+    expect(extractTranscriptTodos('结论是导入环节有问题。')).toEqual([]);
+    expect(extractTranscriptTodos('')).toEqual([]);
+  });
+
+  it('空文本的勾选项跳过，不产出一条看不出内容的待办', () => {
+    expect(extractTranscriptTodos('- [ ]   ')).toEqual([]);
   });
 });

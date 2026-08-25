@@ -320,6 +320,59 @@ export function extractTranscriptSummary(md: string): string {
   return md.slice(start, transcriptIdx >= 0 ? transcriptIdx : undefined).trim();
 }
 
+/**
+ * 每位说话人说了多少句、占全场多大比例（设计稿 P3/D1 的「71 句 · 占 58%」）。
+ * 只给句数与占比这两件**数得出来**的事；「谁更重要」之类的判断不在这里编。
+ *
+ * 占比按有说话人标签的句子算，不按总句数——没标签的句子既不属于任何人，
+ * 拿它当分母会让所有人的占比都无缘无故变小，加起来也凑不满 100%。
+ */
+export type TranscriptSpeakerStat = {
+  speaker: string;
+  count: number;
+  /** 0-100 的整数百分比；无标签句子不计入分母 */
+  percent: number;
+};
+
+export function buildSpeakerStats(segments: TranscriptSegment[]): TranscriptSpeakerStat[] {
+  const counts = new Map<string, number>();
+  for (const segment of segments) {
+    const speaker = segment.speaker?.trim();
+    if (!speaker) continue;
+    counts.set(speaker, (counts.get(speaker) ?? 0) + 1);
+  }
+  const labelled = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  if (labelled === 0) return [];
+  return [...counts.entries()]
+    .map(([speaker, count]) => ({ speaker, count, percent: Math.round((count / labelled) * 100) }))
+    .sort((a, b) => b.count - a.count || a.speaker.localeCompare(b.speaker, 'zh'));
+}
+
+/** 整理结果里的一条待办。 */
+export type TranscriptTodo = {
+  text: string;
+  done: boolean;
+};
+
+/**
+ * 从整理结果里提取待办（设计稿 P3「待办事项」）。
+ * 判据是 Markdown 任务列表 `- [ ]` / `- [x]`——那是**结构**，不是措辞；
+ * 靠「标题里有没有『待办』两个字」去猜，换一套整理模板就失灵。
+ * 没有任务列表就返回空数组，界面据此如实说「这次整理没有产出待办」，不编。
+ */
+export function extractTranscriptTodos(summaryMd: string): TranscriptTodo[] {
+  if (!summaryMd) return [];
+  const todos: TranscriptTodo[] = [];
+  for (const raw of summaryMd.split('\n')) {
+    const m = /^\s*[-*+]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(raw);
+    if (!m) continue;
+    const text = m[2].trim();
+    if (!text) continue;
+    todos.push({ text, done: m[1].toLowerCase() === 'x' });
+  }
+  return todos;
+}
+
 /** 是否具备可用于播放跟随的时间戳（至少两句、且时间在涨） */
 export function hasUsableTimestamps(segments: TranscriptSegment[]): boolean {
   const timed = segments.filter(s => s.start >= 0);

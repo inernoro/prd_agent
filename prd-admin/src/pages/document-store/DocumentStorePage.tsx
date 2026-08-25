@@ -168,6 +168,7 @@ import type {
   DocumentStoreShareLink,
   InteractionStoreCard,
   RecentDocumentEntry,
+  DocumentStoreAgentRun,
   DocumentStoreAccountSummary,
   TutorialLinkGraphSnapshot,
 } from '@/services/contracts/documentStore';
@@ -185,6 +186,8 @@ import {
   decideBackgroundRunLookup,
   bindBackgroundTranscriptionSource,
   describeBackgroundTranscriptionBanner,
+  stalledTranscriptionNotice,
+  type FailedTranscriptionNotice,
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
@@ -1272,7 +1275,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, []);
 
   // 最近一次转录失败的说明（按当前选中条目）。null = 没失败过或已被新一轮覆盖。
-  const [transcribeFailure, setTranscribeFailure] = useState<{ reason: string; at: string | null } | null>(null);
+  const [transcribeFailure, setTranscribeFailure] = useState<FailedTranscriptionNotice | null>(null);
+  /**
+   * 当前选中条目那条**在途**转录 run。轮询本来就把完整 run 拿到了手里，
+   * 却在非终局时直接丢掉——于是「正在做什么、到哪一步了、还要多久」全屏无处可看，
+   * 只剩一句没有进度的横幅。这里接住它，交给结果区渲染三阶段（设计稿 R4）。
+   */
+  const [activeTranscribeRun, setActiveTranscribeRun] = useState<DocumentStoreAgentRun | null>(null);
   // 在途轮询的 effect 只依赖 runId 列表（不能把选中项塞进 deps，否则每次切条目都重建定时器），
   // 所以「这条失败 run 是不是当前这篇的」得靠 ref 取当下值，闭包里的旧值会张冠李戴。
   const selectedEntryIdRef = useRef<string | undefined>(selectedEntryId);
@@ -1295,10 +1304,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       // 其他协作者，不能把它加入当前用户的轮询队列，否则 404 会让提示永久不消失。
       if (!currentUserId || res.data?.userId !== currentUserId) return;
       if (isStalledBackgroundTranscriptionRun(res.data)) {
-        setTranscribeFailure({
-          reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
-          at: res.data.heartbeatAt ?? res.data.startedAt ?? res.data.createdAt ?? null,
-        });
+        setTranscribeFailure(stalledTranscriptionNotice(
+          res.data.heartbeatAt ?? res.data.startedAt ?? res.data.createdAt ?? null,
+        ));
         return;
       }
       // 失败态在这里落地：在途 run 有下面的看护、成功 run 会长出笔记，
@@ -1774,10 +1782,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           } else if (decision.reason === 'stalled-run') {
             if (recordingSource?.entryId === selectedEntryIdRef.current) {
               const staleRun = decision.replacementRun ?? (res.success ? res.data : latestRun);
-              setTranscribeFailure({
-                reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
-                at: staleRun?.heartbeatAt ?? staleRun?.startedAt ?? staleRun?.createdAt ?? null,
-              });
+              setTranscribeFailure(stalledTranscriptionNotice(
+                staleRun?.heartbeatAt ?? staleRun?.startedAt ?? staleRun?.createdAt ?? null,
+              ));
             }
             toast.error('录音任务超过一小时未报告状态', '已停止等待旧任务；录音仍保留，可以点击重试');
           }
@@ -1786,7 +1793,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         }
         const observedRun = decision.run;
         const st = observedRun.status;
-        if (st !== 'done' && st !== 'failed' && st !== 'cancelled') continue;
+        if (st !== 'done' && st !== 'failed' && st !== 'cancelled') {
+          // 在途：只有「这条 run 正是当前这一屏的录音」才往界面上放，
+          // 否则会把别的录音的进度画到用户正看着的这条上（同屏多录音时的串台）。
+          if (observedRun.sourceEntryId === selectedEntryIdRef.current) {
+            setActiveTranscribeRun(observedRun);
+          }
+          continue;
+        }
+        // 走到终局：这条 run 不该再占着进度条
+        setActiveTranscribeRun(current => (current?.id === runId ? null : current));
         handledRunIds.add(runId);
         const recordingSource = recordingRunSourceRef.current.get(runId);
         recordingRunSourceRef.current.delete(runId);
@@ -2277,6 +2293,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const backgroundTranscriptionBanner = describeBackgroundTranscriptionBanner({
     selectedEntryId,
     selectedHasFailure: Boolean(transcribeFailure),
+    currentRunHasInlineCard: Boolean(activeTranscribeRun),
     runs: bgTranscribeRunIds.map((runId) => {
       const source = recordingRunSourceRef.current.get(runId);
       return {
@@ -2666,6 +2683,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
           transcribeFailure={transcribeFailure}
+          transcribeRun={activeTranscribeRun}
           onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {

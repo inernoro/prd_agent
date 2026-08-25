@@ -198,8 +198,11 @@ export function AudioWavePlayer({
     <div
       className={`w-[480px] max-w-[92%] rounded-[14px] p-4 ${className}`}
       style={{
-        background: 'linear-gradient(135deg, rgba(168,85,247,0.06), rgba(59,130,246,0.04))',
-        border: '1px solid rgba(168,85,247,0.18)',
+        // 设计稿 `MAP 录音转录交付页 v2` 硬约束：全稿无紫色，强调色只用于
+        // 播放进度 / 可点击文本 / 当前句底色。这里走 --accent-fg-info（双主题蓝），
+        // 不写死设计稿里的 #1F5EFF —— 硬编码颜色会被双皮肤棘轮拦下，也没有浅色档。
+        background: 'var(--bg-nested)',
+        border: '1px solid var(--border-faint)',
       }}
     >
       {/* 语音消息式声纹条：不读取跨域 PCM，播放与进度只依赖原生 audio。 */}
@@ -223,7 +226,8 @@ export function AudioWavePlayer({
                 className="min-w-0 flex-1 rounded-full transition-colors duration-150"
                 style={{
                   height: `${Math.round(h * 100)}%`,
-                  background: played ? 'rgba(216,180,254,0.95)' : 'rgba(168,85,247,0.30)',
+                  // 播放进度是强调色唯一该出现的地方之一；未播段落退到中性色
+                  background: played ? 'var(--accent-fg-info)' : 'var(--border-default)',
                   ...(ready ? {} : { animation: `wave-pulse 1.2s ease-in-out ${(i % 8) * 0.12}s infinite` }),
                 }}
               />
@@ -240,11 +244,9 @@ export function AudioWavePlayer({
           disabled={!ready}
           className="flex h-11 w-11 items-center justify-center rounded-full cursor-pointer transition-all motion-reduce:transition-none disabled:cursor-not-allowed"
           style={{
-            background: ready
-              ? 'linear-gradient(135deg, rgba(168,85,247,0.95), rgba(216,180,254,0.95))'
-              : 'rgba(168,85,247,0.3)',
-            color: '#fff',
-            boxShadow: ready ? '0 4px 12px rgba(168,85,247,0.35)' : 'none',
+            background: ready ? 'var(--accent-fg-info)' : 'var(--bg-elevated)',
+            color: ready ? 'var(--bg-base)' : 'var(--text-muted)',
+            boxShadow: 'none',
           }}
           title={playing ? '暂停' : '播放'}
         >
@@ -267,9 +269,9 @@ export function AudioWavePlayer({
           disabled={!ready}
           className="min-h-11 min-w-11 cursor-pointer rounded-[8px] px-2 py-1 text-[11px] transition-all motion-reduce:transition-none"
           style={{
-            background: 'rgba(168,85,247,0.1)',
-            color: 'var(--accent-fg-violet)',
-            border: '1px solid rgba(168,85,247,0.2)',
+            background: 'var(--bg-elevated)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border-faint)',
             fontFamily: 'ui-monospace, monospace',
           }}
           title="点击切换倍速"

@@ -53,7 +53,11 @@ describe('TranscriptKaraoke unified playback', () => {
     // 次数直接写在词上，不再只藏在 title 里
     expect(cloudHtml).toMatch(/报价<span[^>]*>\d+<\/span>/);
     expect(html).toContain('说话人1');
-    expect(html).toContain('问这场录音');
+    // 说话人不只给名字，还要给「说了几句、占多少」——光有名字看不出这场是谁在说
+    expect(html).toMatch(/说话人1<\/span>\s*<span[^>]*>\s*1 句 · 占 50%/);
+    // 提问入口从一个按钮改成了四分区里的一格（设计稿 P3：理解 / 纪要 / 待办 / 提问）
+    expect(html).toContain('role="tab"');
+    expect(html).toContain('提问');
   });
 
   it('没有任何词被重复提到时不出词云——「反复提到的是 X（1 次）」是句假话', () => {

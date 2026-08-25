@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { TranscribeStatusCard, type TranscribeStatusRun } from './TranscribeStatusCard';
+import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import {
   FilePreview,
   HTML_ZOOM_STORAGE_KEY,
@@ -410,7 +412,9 @@ export type DocBrowserProps = {
   /** 音频结果区「换个整理方式」：对已完成转录的音频免重跑 ASR 重新整理摘要 */
   onRestyleTranscribe?: (entryId: string) => void;
   /** 当前选中音频最近一次转录失败的说明；有值时结果区如实写明原因并把按钮改成重试 */
-  transcribeFailure?: { reason: string; at: string | null } | null;
+  transcribeFailure?: FailedTranscriptionNotice | null;
+  /** 当前条目那条在途转录 run；有值时结果区顶部显示三阶段进度而不是手动入口 */
+  transcribeRun?: TranscribeStatusRun | null;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
   /** 音频原文页的问答入口；可预置带时间引用约束的提问。 */
@@ -633,123 +637,6 @@ function canTranscribe(entry: DocBrowserEntry): boolean {
   if (entry.isFolder) return false;
   const ct = (entry.contentType ?? '').toLowerCase();
   return ct.startsWith('audio/') || ct.startsWith('video/');
-}
-
-/**
- * 录音/上传音频的统一结果区（音频块下方常驻，2026-07-13 用户确认交互）：
- * - 未转录 → 只生成可编辑原文，不提前强迫用户选整理方式；
- * - 已转录 → 原文留在当前录音页，整理作为用户主动选择的下一步。
- */
-export function TranscribeHeroCard({
-  currentEntryId,
-  noteEntryId,
-  subtitleEntryId,
-  lastFailure,
-  onStart,
-  onOpenNote,
-  onRestyle,
-}: {
-  currentEntryId: string;
-  noteEntryId?: string;
-  subtitleEntryId?: string;
-  /** 最近一次转录失败的说明；有值时卡片如实写明失败原因，按钮改为重试 */
-  lastFailure?: { reason: string; at: string | null } | null;
-  /** 发起原文转录；整理在完成后另选 */
-  onStart?: (styleKey?: string) => void;
-  onOpenNote: (entryId: string) => void;
-  /** 换个整理方式（免重跑转录，打开整理面板） */
-  onRestyle?: () => void;
-}) {
-  const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
-  // 没转出笔记、且上次是失败告终 —— 这时候必须说话，不能装作从没跑过
-  const showFailure = !noteEntryId && !!lastFailure;
-  return (
-    <div
-      className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
-      data-tour-id="doc-transcribe-hero">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="surface-action-accent flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]">
-            <AudioLines size={16} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[13px] font-semibold text-token-primary">
-              {inPlace ? '录音和原文已保存在本页'
-                : noteEntryId ? '录音原文已生成'
-                : showFailure ? '上次转文字没成功'
-                : '把录音转成文字'}
-            </p>
-            <p className="truncate text-[11px] text-token-muted">
-              {inPlace ? '位置与标题保持不变，需要时再一键整理'
-                : noteEntryId ? '点下方打开原文，需要时再一键整理'
-                : showFailure ? '录音还在，没有丢；可以直接重试'
-                : '先生成可编辑原文，不自动总结或改写'}
-            </p>
-          </div>
-        </div>
-        {!noteEntryId && onStart && (
-          <button
-            onClick={() => onStart()}
-            className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
-            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}>
-            {showFailure ? '重试' : '转成文字'}
-          </button>
-        )}
-      </div>
-
-      {/* 失败原因照抄服务端，不改写成「稍后再试」那种等于没说的话 */}
-      {showFailure && (
-        <div
-          className="flex items-start gap-2 rounded-[10px] px-3 py-2 text-[11.5px] leading-relaxed"
-          style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
-          <AlertTriangle size={13} className="mt-[2px] flex-shrink-0" />
-          <span className="min-w-0 break-words">{lastFailure!.reason}</span>
-        </div>
-      )}
-
-      {/* 已转录：历史产物 chips + 换个整理方式 */}
-      {(noteEntryId || subtitleEntryId) && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {noteEntryId && !inPlace && (
-            <button
-              onClick={() => onOpenNote(noteEntryId)}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
-              style={{
-                background: 'rgba(34,197,94,0.1)',
-                border: '1px solid rgba(34,197,94,0.22)',
-                color: 'var(--accent-fg-success)',
-              }}>
-              <BookOpen size={11} /> 转录笔记 <ChevronRight size={11} />
-            </button>
-          )}
-          {subtitleEntryId && (
-            <button
-              onClick={() => onOpenNote(subtitleEntryId)}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
-              style={{
-                background: 'rgba(168,85,247,0.1)',
-                border: '1px solid rgba(168,85,247,0.22)',
-                color: 'var(--accent-fg-violet)',
-              }}>
-              <Sparkles size={11} /> 字幕 <ChevronRight size={11} />
-            </button>
-          )}
-          {noteEntryId && onRestyle && (
-            <button
-              onClick={onRestyle}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover-bg-soft"
-              style={{
-                background: 'var(--bg-elevated)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-faint)',
-              }}>
-              <Wand2 size={11} /> 一键整理
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function canReprocess(entry: DocBrowserEntry): boolean {
@@ -1714,6 +1601,7 @@ export function DocBrowser({
   onQuickRecord,
   onRestyleTranscribe,
   transcribeFailure,
+  transcribeRun,
   onReprocess,
   onAskRecording,
   onShareEntry,
@@ -4017,9 +3905,10 @@ export function DocBrowser({
                       onClick={() => handleSelectEntry(srcId)}
                       className="mb-3 flex max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors hover-bg-soft"
                       style={{
-                        background: 'rgba(168,85,247,0.08)',
-                        border: '1px solid rgba(168,85,247,0.22)',
-                        color: 'var(--accent-fg-violet)',
+                        // 无紫色（设计稿硬约束）：来源文件与录音结果同屏，配色必须一致
+                        background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-faint)',
+                        color: 'var(--text-secondary)',
                       }}
                       title="打开来源文件">
                       {isAudioSrc ? <AudioLines size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}
@@ -4033,10 +3922,11 @@ export function DocBrowser({
                     未转录时给「开始转录」主按钮，已转录时给「查看转录笔记」直达 */}
                 {!contentLoading && !editMode && selectedEntryData && canTranscribe(selectedEntryData)
                   && (onTranscribe || selectedEntryData.metadata?.transcribe_entry_id) && (
-                  <TranscribeHeroCard
+                  <TranscribeStatusCard
                     currentEntryId={selectedEntryData.id}
                     noteEntryId={selectedEntryData.metadata?.transcribe_entry_id}
                     subtitleEntryId={selectedEntryData.metadata?.subtitle_entry_id}
+                    activeRun={transcribeRun}
                     lastFailure={transcribeFailure}
                     onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}
                     onOpenNote={(noteId) => handleSelectEntry(noteId)}

@@ -478,3 +478,36 @@ describe('recording vault server recovery decision', () => {
     })).toBe('recover-local');
   });
 });
+
+describe('describeBackgroundTranscriptionBanner · 与正文三阶段卡的分工', () => {
+  const run = (entryId: string, title: string) => ({ entryId, title });
+
+  it('当前录音的进度已由正文卡在讲时，横幅不再重复说一遍', () => {
+    expect(describeBackgroundTranscriptionBanner({
+      selectedEntryId: 'e1',
+      selectedHasFailure: false,
+      runs: [run('e1', '录音 A')],
+      currentRunHasInlineCard: true,
+    })).toBeNull();
+  });
+
+  it('但其它录音仍在跑时照说不误——那件事正文卡管不着', () => {
+    const copy = describeBackgroundTranscriptionBanner({
+      selectedEntryId: 'e1',
+      selectedHasFailure: false,
+      runs: [run('e1', '录音 A'), run('e2', '录音 B')],
+      currentRunHasInlineCard: true,
+    });
+    expect(copy?.title).toContain('其他录音');
+    expect(copy?.detail).toContain('录音 B');
+    expect(copy?.detail).not.toContain('录音 A');
+  });
+
+  it('没有正文卡时行为不变（旧路径不受影响）', () => {
+    expect(describeBackgroundTranscriptionBanner({
+      selectedEntryId: 'e1',
+      selectedHasFailure: false,
+      runs: [run('e1', '录音 A')],
+    })?.title).toBe('当前录音正在后台处理');
+  });
+});
