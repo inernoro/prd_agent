@@ -39,6 +39,7 @@ export type InfraKind =
   | 'memcached'
   | 'kafka'
   | 'nats'
+  | 'nacos'
   | 'other';
 
 export interface InfraKindHints {
@@ -124,6 +125,9 @@ export function detectInfraKind(dockerImage: string, hints: InfraKindHints = {})
   if (includes('memcached')) return 'memcached';
   if (includes('kafka')) return 'kafka';
   if (includes('nats')) return 'nats';
+  // nacos 此前根本不在这张表里，于是线上两台跑着的 nacos 一直被归成「认不出的服务」：
+  // 安全面判不了它有没有认证，备份面也说不出它缺的是什么。
+  if (includes('nacos')) return 'nacos';
 
   const publishedContainerPorts = [...String(hints.runtimePorts || '').matchAll(/->(\d+)\//g)]
     .map((match) => Number(match[1]));
@@ -142,6 +146,7 @@ export function detectInfraKind(dockerImage: string, hints: InfraKindHints = {})
   if (ports.has(11211)) return 'memcached';
   if (ports.has(9092)) return 'kafka';
   if (ports.has(4222)) return 'nats';
+  if (ports.has(8848) || ports.has(9848)) return 'nacos';
   return 'other';
 }
 
@@ -428,6 +433,21 @@ export function detectInfraAuth(
     case 'minio':
       return has('MINIO_ROOT_USER', 'MINIO_ACCESS_KEY')
         && has('MINIO_ROOT_PASSWORD', 'MINIO_SECRET_KEY');
+    case 'nacos': {
+      /**
+       * nacos **默认不开鉴权**：不设 `NACOS_AUTH_ENABLE=true` 时，任何人打到
+       * 8848 就能读写全部配置。所以这里的判据是「开关真的打开了」，
+       * 而不是「env 里有没有口令」——口令配了但开关没开，等于没配。
+       *
+       * 开关打开之后 nacos 还要求 `NACOS_AUTH_TOKEN`（JWT 密钥）与两个 identity
+       * 变量，缺任何一个它会拒绝启动或退回不安全模式。少一个就不算配好。
+       */
+      const enabled = String(e.NACOS_AUTH_ENABLE || '').trim().toLowerCase();
+      if (!['true', '1', 'yes'].includes(enabled)) return false;
+      return has('NACOS_AUTH_TOKEN')
+        && has('NACOS_AUTH_IDENTITY_KEY')
+        && has('NACOS_AUTH_IDENTITY_VALUE');
+    }
     case 'memcached':
       // 这三类原来一律 `return false`（「目录还没给它们认证」）。目录补上之后
       // 那个常量就从「保守判定」变成了**谎报**：一台配好认证的库会永远挂在

@@ -33,6 +33,9 @@ import {
   buildPostgresDumpScript,
   buildPostgresRestoreScript,
   buildPostgresTableCountScript,
+  buildNacosDumpScript,
+  buildNacosRestoreScript,
+  buildNacosConfigCountScript,
   buildRabbitmqDumpScript,
   buildRabbitmqRestoreScript,
   buildRabbitmqQueueCountScript,
@@ -92,6 +95,16 @@ export const SCRIPTED_DUMP_KINDS = {
     dump: buildPostgresDumpScript,
     restore: buildPostgresRestoreScript,
     count: buildPostgresTableCountScript,
+  },
+  nacos: {
+    label: 'Nacos 配置',
+    // 每个命名空间一个 zip，打成一包再压。`.gz` 结尾还让上游的 gzip -t 自动生效。
+    ext: 'tar.gz',
+    unit: '配置',
+    tool: 'nacos 配置导出接口',
+    dump: buildNacosDumpScript,
+    restore: buildNacosRestoreScript,
+    count: buildNacosConfigCountScript,
   },
   rabbitmq: {
     label: 'RabbitMQ definitions',

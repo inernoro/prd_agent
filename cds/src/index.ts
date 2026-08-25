@@ -27,8 +27,8 @@ import {
 } from './services/platform-daily-health.js';
 import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
 import {
-  backupDirCandidates, buildMysqlDumpScript, buildPostgresDumpScript, buildRabbitmqDumpScript,
-  extractBackupScopeNote,
+  backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
+  buildRabbitmqDumpScript, extractBackupScopeNote,
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
@@ -702,6 +702,12 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 这个取舍不藏着：脚本每轮往 stderr 写一行「当前积压 N 条不在这份备份里」，
             // 由下面的 scopeNote 接进本轮结论。判据在 buildRabbitmqDumpScript()。
             cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildRabbitmqDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'nacos') {
+            // nacos 此前连「这是什么服务」都认不出来，两台在跑的实例一直归在
+            // 「认不出的类型」里，零备份。它的配置可能落 Derby 也可能落外部 MySQL，
+            // 容器外看不出是哪种——所以走它自己的配置导出接口，两种形态同一份产物。
+            // 判据在 buildNacosDumpScript()：逐命名空间导出，打包压缩，两端退出码都保住。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildNacosDumpScript())} > ${shq(out)}`;
           } else if (t.kind === 'redis') {
             // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
             //

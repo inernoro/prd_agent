@@ -17,7 +17,7 @@
 
 import { detectInfraKind, type InfraKindHints } from './infra-exposure-audit.js';
 
-export type BackupKind = 'mongo' | 'redis' | 'mysql' | 'postgres' | 'rabbitmq';
+export type BackupKind = 'mongo' | 'redis' | 'mysql' | 'postgres' | 'rabbitmq' | 'nacos';
 
 export interface BackupCandidate {
   id: string;
@@ -93,7 +93,7 @@ export function backupDirCandidates(opts: {
 }
 
 /** 有成熟一致性导出手段的类型。不在这个集合里的，不假装能备。 */
-const BACKUP_CAPABLE_KINDS = new Set<string>(['mongo', 'redis', 'mysql', 'postgres', 'rabbitmq']);
+const BACKUP_CAPABLE_KINDS = new Set<string>(['mongo', 'redis', 'mysql', 'postgres', 'rabbitmq', 'nacos']);
 
 /**
  * 没被周期备份覆盖的服务，究竟属于哪一类。
@@ -160,6 +160,8 @@ export function classifyBackupCoverage(
     return { bucket: 'covered', reason: '已纳入周期备份', blocksHealthy: false };
   }
   switch (kind) {
+    // 'nacos' 走上面的 covered 分支，这里不再列——它一度被归进「认不出的服务」，
+    // 而线上真有两台在跑、零备份，靠的正是「认不出就当有数据」那条兜底把它留在缺口里。
     case 'minio':
       return {
         bucket: 'different-mechanism',
@@ -254,6 +256,9 @@ const BACKUP_EXT: Record<BackupKind, string> = {
   postgres: 'sql.gz',
   // definitions 是 JSON，不是 SQL。扩展名要能让人一眼知道这份东西该怎么灌回去。
   rabbitmq: 'json.gz',
+  // 每个命名空间一个 zip，打成一包再压——`.gz` 结尾还顺带让上游的 `gzip -t`
+  // 完整性校验自动生效（那一步只对 `.gz` 跑）。
+  nacos: 'tar.gz',
 };
 
 /**
@@ -1208,6 +1213,209 @@ export function buildRabbitmqQueueCountScript(): string {
   return [
     ...RABBITMQ_PROBE_LINES,
     `rabbitmqctl -q list_queues name 2>/dev/null | awk 'NF{n++}END{print n+0}'`,
+  ].join('\n');
+}
+
+/**
+ * nacos 导出的公共前置：挑一个 HTTP 客户端、算出根地址、必要时登录、确认服务活着。
+ *
+ * ## 为什么走 HTTP 而不是拷数据目录
+ *
+ * nacos 的配置可能落在内嵌 Derby，也可能落在外部 MySQL，**同一个镜像两种形态**，
+ * 而容器外面看不出来是哪一种。配置导出接口对两种形态给出同一份产物，
+ * 所以它是唯一一条不用先猜存储后端的路。
+ *
+ * 拷 Derby 目录那条路还有个更硬的问题：热拷一个正在写的 Derby 库，拿到的东西
+ * 可能根本打不开——那是「导得出、灌不回」，等于没有备份。
+ *
+ * ## 为什么容忍 curl 缺失但绝不静默
+ *
+ * 官方镜像里有没有 curl 是**关于镜像的假设**，不是关于我们脚本的。所以两种客户端
+ * 都试，一个都没有就退 78 并说清原因——**绝不产出一份空的、看起来成功的备份**。
+ */
+const NACOS_CLIENT_LINES: readonly string[] = [
+  'if command -v curl >/dev/null 2>&1; then CDS_NACOS_HTTP=curl',
+  'elif command -v wget >/dev/null 2>&1; then CDS_NACOS_HTTP=wget',
+  'else',
+  '  echo "cds-backup: 容器里既没有 curl 也没有 wget，而 nacos 的配置只能从它的 HTTP 接口导出" >&2',
+  '  exit 78',
+  'fi',
+  'cds_nacos_get() {',
+  '  if [ "$CDS_NACOS_HTTP" = curl ]; then curl -fsS "$1"; else wget -q -O - "$1"; fi',
+  '}',
+  'cds_nacos_download() {',
+  '  if [ "$CDS_NACOS_HTTP" = curl ]; then curl -fsS -o "$2" "$1"; else wget -q -O "$2" "$1"; fi',
+  '}',
+  // 端口与上下文路径都可被 env 改（2.4 起上下文路径默认成了根），所以不写死。
+  'CDS_NACOS_BASE="http://127.0.0.1:${NACOS_APPLICATION_PORT:-8848}/${NACOS_CONTEXT_PATH:-nacos}"',
+  'CDS_NACOS_AUTH=""',
+  'case "$(printf \'%s\' "${NACOS_AUTH_ENABLE:-}" | tr \'A-Z\' \'a-z\')" in',
+  '  true|1|yes)',
+  '    if [ "$CDS_NACOS_HTTP" != curl ]; then',
+  // wget 只能把 POST body 摆在命令行上，那会让口令进容器的进程列表。
+  // 宁可这一轮不备份，也不为了跑通把口令泄出去（与 nats 那次的教训同源）。
+  '      echo "cds-backup: nacos 开了鉴权，但容器里只有 wget——用它登录会把口令摆进进程列表，拒绝这么做" >&2',
+  '      exit 78',
+  '    fi',
+  '    CDS_NACOS_USER="${NACOS_AUTH_USERNAME:-${NACOS_USERNAME:-nacos}}"',
+  '    CDS_NACOS_PW="${NACOS_AUTH_PASSWORD:-${NACOS_PASSWORD:-}}"',
+  '    if [ -z "$CDS_NACOS_PW" ]; then',
+  '      echo "cds-backup: nacos 开了鉴权，容器 env 里却没有口令（找过 NACOS_AUTH_PASSWORD / NACOS_PASSWORD）" >&2',
+  '      exit 78',
+  '    fi',
+  // body 走 stdin（`--data-binary @-`），不进 argv：容器内 ps 看不到口令。
+  '    CDS_NACOS_TOKEN=$(printf \'username=%s&password=%s\' "$CDS_NACOS_USER" "$CDS_NACOS_PW"'
+    + ' | curl -fsS --data-binary @- "$CDS_NACOS_BASE/v1/auth/login" 2>/dev/null'
+    + ' | sed -n \'s/.*"accessToken":"\\([^"]*\\)".*/\\1/p\')',
+  '    if [ -z "$CDS_NACOS_TOKEN" ]; then',
+  '      echo "cds-backup: nacos 登录没拿到 accessToken（用户=$CDS_NACOS_USER），导不出配置" >&2',
+  '      exit 78',
+  '    fi',
+  '    CDS_NACOS_AUTH="&accessToken=$CDS_NACOS_TOKEN"',
+  '    ;;',
+  'esac',
+  // 先真连一次。连不上就停在这里，不带着一个空结果往下走。
+  'CDS_NACOS_PROBE=$(cds_nacos_get "$CDS_NACOS_BASE/v1/console/health/readiness?cds=1$CDS_NACOS_AUTH" 2>&1) || {',
+  '  echo "cds-backup: 连不上 nacos（$CDS_NACOS_BASE）：$CDS_NACOS_PROBE" >&2',
+  '  exit 78',
+  '}',
+];
+
+/**
+ * 列出所有命名空间。public 那个在接口里的 id 是空串，本文件用 `__public__` 代表它。
+ *
+ * 为什么要逐个命名空间导：nacos 的配置导出接口**一次只能导一个命名空间**
+ * （tenant 参数），没有跨命名空间的全量导出。只导 public 的话，
+ * 凡是把配置放在自定义命名空间的项目，备份会是一份看起来成功的空壳。
+ */
+const NACOS_NAMESPACE_LINES: readonly string[] = [
+  'CDS_NACOS_NS=$(cds_nacos_get "$CDS_NACOS_BASE/v1/console/namespaces?cds=1$CDS_NACOS_AUTH" 2>/dev/null'
+    + ' | tr \'{\' \'\\n\' | sed -n \'s/.*"namespace":"\\([^"]*\\)".*/\\1/p\')',
+  'CDS_NACOS_NS_COUNT=1',
+  'for ns in $CDS_NACOS_NS; do CDS_NACOS_NS_COUNT=$((CDS_NACOS_NS_COUNT+1)); done',
+];
+
+/**
+ * nacos 导出：逐命名空间取配置 zip，打成一包再压。
+ *
+ * 产物是 `tar.gz`，里面每个命名空间一个 `.zip`，文件名就是命名空间 id
+ * （public 那个叫 `__public__.zip`）。这样恢复时能一个个原样灌回对应命名空间。
+ *
+ * 管道退出码那三个坑（默认只给最后一环、dash 没有 pipefail、gzip 写盘失败留下
+ * 截断档案还被当成功）在 `buildMysqlDumpScript` 的注释里写全了，这里同一套 fd3/fd4 写法。
+ */
+export function buildNacosDumpScript(): string {
+  return [
+    ...NACOS_CLIENT_LINES,
+    ...NACOS_NAMESPACE_LINES,
+    // 这份备份**没带走什么**，当场说清楚：服务注册列表是各实例自己上报的、
+    // 重启会重来，本来就不该备；用户/角色/权限存在库里，配置导出接口不含它们。
+    'echo "cds-backup-scope: 这份备份是 nacos 的配置（$CDS_NACOS_NS_COUNT 个命名空间），'
+      + '不含服务注册列表与用户/角色/权限——它们不在配置导出接口里" >&2',
+    'CDS_NACOS_DIR=$(mktemp -d /tmp/cds-nacos-XXXXXX) || { echo "cds-backup: 建不出临时目录" >&2; exit 74; }',
+    'trap \'rm -rf "$CDS_NACOS_DIR"\' EXIT',
+    'for ns in __public__ $CDS_NACOS_NS; do',
+    '  CDS_NACOS_TENANT=""',
+    '  [ "$ns" = "__public__" ] || CDS_NACOS_TENANT="$ns"',
+    '  cds_nacos_download'
+      + ' "$CDS_NACOS_BASE/v1/cs/configs?export=true&group=&appName=&ids=&tenant=$CDS_NACOS_TENANT$CDS_NACOS_AUTH"'
+      + ' "$CDS_NACOS_DIR/$ns.zip" || {',
+    '    echo "cds-backup: 导出命名空间 [$ns] 失败，整轮作废——半份备份比没有更危险" >&2',
+    '    exit 1',
+    '  }',
+    'done',
+    'exec 3>&1',
+    'codes=$( { { tar -cf - -C "$CDS_NACOS_DIR" .; echo "tar=$?" >&4; }'
+      + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
+    't=$(printf \'%s\\n\' "$codes" | sed -n \'s/^tar=//p\')',
+    'g=$(printf \'%s\\n\' "$codes" | sed -n \'s/^gzip=//p\')',
+    '[ "${t:-1}" = 0 ] || exit "${t:-1}"',
+    '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
+  ].join('\n');
+}
+
+/**
+ * nacos 恢复：把每个命名空间的 zip 灌回对应命名空间。
+ *
+ * ## 三件必须知道的事
+ *
+ * 1. **导入策略是 OVERWRITE**：同名配置以备份里的为准。备份之后**新建**的配置
+ *    不会被删掉——和 rabbitmq 的 definitions 一样，这条路能救「配置被删/被改坏了」，
+ *    救不了「配置被加错了」。nacos 的导入接口就没给「清空后导入」这个语义。
+ * 2. **命名空间必须已经存在**：导入不会替你建命名空间。备份里有而目标上没有的，
+ *    那一包会被拒绝，脚本当场整体失败，不让它变成一次「部分成功」。
+ * 3. **失败也可能回 HTTP 200**：nacos 的导入接口把结果写在 body 的 `code` 里，
+ *    只看退出码会把失败读成成功——psql 那条（默认遇错继续照样 exit 0）的同一形状。
+ *    所以这里还要检查 body。
+ *
+ * 上传要走 multipart，wget 做不了，所以恢复这条路强制要 curl。
+ */
+export function buildNacosRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    ...NACOS_CLIENT_LINES,
+    'if [ "$CDS_NACOS_HTTP" != curl ]; then',
+    '  echo "cds-restore: 导入要走 multipart 上传，容器里没有 curl，做不到" >&2',
+    '  exit 78',
+    'fi',
+    // 先验完整性再动配置。空文件、传了一半的文件在这里就出局。
+    `gzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    'CDS_NACOS_DIR=$(mktemp -d /tmp/cds-nacos-XXXXXX) || { echo "cds-restore: 建不出临时目录" >&2; exit 74; }',
+    'trap \'rm -rf "$CDS_NACOS_DIR"\' EXIT',
+    `tar -xzf ${p} -C "$CDS_NACOS_DIR" || { echo "cds-restore: 这份包解不开，未导入任何内容" >&2; exit 65; }`,
+    'CDS_NACOS_DONE=0',
+    'for f in "$CDS_NACOS_DIR"/*.zip; do',
+    // glob 没匹配到时 sh 会把模式原样留下，`-f` 挡住它。
+    '  [ -f "$f" ] || continue',
+    '  ns=$(basename "$f" .zip)',
+    '  CDS_NACOS_TENANT=""',
+    '  [ "$ns" = "__public__" ] || CDS_NACOS_TENANT="$ns"',
+    '  CDS_NACOS_RESP=$(curl -fsS -F "file=@$f"'
+      + ' "$CDS_NACOS_BASE/v1/cs/configs?import=true&policy=OVERWRITE&namespace=$CDS_NACOS_TENANT$CDS_NACOS_AUTH"'
+      + ' 2>&1) || {',
+    '    echo "cds-restore: 导入命名空间 [$ns] 失败：$CDS_NACOS_RESP" >&2',
+    '    exit 1',
+    '  }',
+    '  case "$CDS_NACOS_RESP" in',
+    '    *\'"code":200\'*) ;;',
+    '    *)',
+    '      echo "cds-restore: 导入命名空间 [$ns] 被 nacos 拒绝：$CDS_NACOS_RESP" >&2',
+    '      exit 1',
+    '      ;;',
+    '  esac',
+    '  CDS_NACOS_DONE=$((CDS_NACOS_DONE+1))',
+    'done',
+    'if [ "$CDS_NACOS_DONE" = 0 ]; then',
+    // 一个 zip 都没有 = 这份备份是空的。报成功会让人以为已经恢复了。
+    '  echo "cds-restore: 这份包里一个命名空间都没有，什么都没导入" >&2',
+    '  exit 65',
+    'fi',
+    'exit 0',
+  ].join('\n');
+}
+
+/**
+ * 数一数所有命名空间加起来有多少条配置。
+ *
+ * 和 mysql / postgres 侧的数表同一个用途：恢复前后各数一次，让「已恢复」这句话
+ * 带着能被核对的数字。这里是跨命名空间求和，覆盖面与备份本身一致。
+ */
+export function buildNacosConfigCountScript(): string {
+  return [
+    ...NACOS_CLIENT_LINES,
+    ...NACOS_NAMESPACE_LINES,
+    'CDS_NACOS_TOTAL=0',
+    'for ns in __public__ $CDS_NACOS_NS; do',
+    '  CDS_NACOS_TENANT=""',
+    '  [ "$ns" = "__public__" ] || CDS_NACOS_TENANT="$ns"',
+    '  CDS_NACOS_N=$(cds_nacos_get'
+      + ' "$CDS_NACOS_BASE/v1/cs/configs?search=accurate&dataId=&group=&pageNo=1&pageSize=1'
+      + '&tenant=$CDS_NACOS_TENANT$CDS_NACOS_AUTH" 2>/dev/null'
+      + ' | sed -n \'s/.*"totalCount":\\([0-9]*\\).*/\\1/p\')',
+    '  CDS_NACOS_TOTAL=$((CDS_NACOS_TOTAL + ${CDS_NACOS_N:-0}))',
+    'done',
+    'echo "$CDS_NACOS_TOTAL"',
   ].join('\n');
 }
 
