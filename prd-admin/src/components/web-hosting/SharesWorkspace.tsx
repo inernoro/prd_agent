@@ -278,10 +278,22 @@ export function SharesWorkspace({
   );
 }
 
-/** 长链地址：短链号存在时优先用它（更短、可口述） */
-function sharePath(l: ShareLinkItem): string {
-  if (l.shareType === 'collection') return `/s/wp/c/${l.token}`;
-  return l.shortSeq ? `/s/wp/${l.shortSeq}` : `/s/wp/${l.token}`;
+/**
+ * 这条链接对外的地址。列表显示它、「复制」也复制它，所以拼错 = 用户拿到一条 404。
+ *
+ * 数字短链和字母长链是**两条不同的路由**：
+ *   /s/{seq}       —— ShortLinkRouter，按自增号解析
+ *   /s/wp/{token}  —— ShareViewPage，按 token 解析
+ * 原来这里写的是 `/s/wp/{shortSeq}`：把号码塞进按 token 查的那条路由，后端查不到，
+ * 实测 404（2026-08-25 现造一条带 seq 的链接验的：/shares/view/1 → 404、
+ * /shares/view/{token} → 200）。
+ *
+ * 合集也没有单独的路由。原来写的 `/s/wp/c/{token}` 多一段路径，前端路由表里根本没有
+ * 这条，直接落到 404 页——合集分享自建出来那天起，列表里给的就是死链。
+ * 后端对两种 shareType 返回的都是 `/s/wp/{token}`，以它为准。
+ */
+export function sharePath(l: Pick<ShareLinkItem, 'token' | 'shortSeq'>): string {
+  return l.shortSeq && l.shortSeq > 0 ? `/s/${l.shortSeq}` : `/s/wp/${l.token}`;
 }
 
 /**
