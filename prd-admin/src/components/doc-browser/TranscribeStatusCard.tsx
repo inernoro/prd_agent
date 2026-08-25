@@ -103,7 +103,10 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
             {stage.label}
           </span>
           {active && stage.percent !== null && (
-            <span className="flex-shrink-0 text-[11px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
+            // 百分比与剩余时间在稿面是**灰色次要文本**。蓝在这套设计里只留给
+            // 阶段标题与进度条两处；这一行也用蓝，强调色就扩散成「哪都是蓝」，
+            // 阶段标题反而不再突出。
+            <span className="flex-shrink-0 text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
               {stage.percent}%{remainingLabel ? ` · ${remainingLabel}` : ''}
             </span>
           )}
