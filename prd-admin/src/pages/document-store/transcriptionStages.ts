@@ -71,7 +71,7 @@ export function describeTranscriptionStages(
     {
       key: 'understanding',
       label: '补齐录音理解',
-      detail: inUnderstanding ? (phase || '正在整理') : '词云、说话人、纪要 · 排队中',
+      detail: inUnderstanding ? (phase || '正在整理') : '词云、纪要、待办 · 排队中',
       state: inUnderstanding ? 'active' : 'pending',
       percent: inUnderstanding
         ? Math.round(((progress - UNDERSTANDING_FROM) / (100 - UNDERSTANDING_FROM)) * 100)

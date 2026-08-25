@@ -13,6 +13,13 @@
 
 export const RECORDING_PLAY_REQUEST_EVENT = 'map:recording-play-request';
 
+/**
+ * 音频时长从播放器往上报。设计稿要求处理中那一屏的「保存音频」行写明时长，
+ * 但时长只有加载完音频的播放器知道，条目元数据里没有这个字段。
+ * 与其为了一个数字去后端加字段，不如让已经知道它的那一端说出来。
+ */
+export const RECORDING_DURATION_EVENT = 'map:recording-duration';
+
 /** 请求播放当前这段录音。没有播放器在监听时是安全的空操作。 */
 export function requestRecordingPlay(): void {
   if (typeof window === 'undefined') return;
@@ -24,4 +31,22 @@ export function onRecordingPlayRequest(handler: () => void): () => void {
   if (typeof window === 'undefined') return () => undefined;
   window.addEventListener(RECORDING_PLAY_REQUEST_EVENT, handler);
   return () => window.removeEventListener(RECORDING_PLAY_REQUEST_EVENT, handler);
+}
+
+/** 播放器把它读到的音频时长（秒）广播出去。 */
+export function announceRecordingDuration(seconds: number): void {
+  if (typeof window === 'undefined') return;
+  if (!Number.isFinite(seconds) || seconds <= 0) return;
+  window.dispatchEvent(new CustomEvent(RECORDING_DURATION_EVENT, { detail: seconds }));
+}
+
+/** 订阅音频时长；返回退订函数。 */
+export function onRecordingDuration(handler: (seconds: number) => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  const listener = (event: Event) => {
+    const seconds = (event as CustomEvent<number>).detail;
+    if (Number.isFinite(seconds) && seconds > 0) handler(seconds);
+  };
+  window.addEventListener(RECORDING_DURATION_EVENT, listener);
+  return () => window.removeEventListener(RECORDING_DURATION_EVENT, listener);
 }

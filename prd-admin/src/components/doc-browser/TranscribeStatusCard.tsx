@@ -20,12 +20,23 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Play, Sparkles, Wand2 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
+import { onRecordingDuration } from './recordingPlayBridge';
 import {
   describeTranscriptionStages,
   estimateRemainingSeconds,
   formatDurationSec,
   type TranscriptionStage,
 } from '@/pages/document-store/transcriptionStages';
+
+/** mm:ss / h:mm:ss —— 设计稿「保存音频」那一行要的时长写法。 */
+function formatClockLabel(sec: number): string {
+  const total = Math.round(sec);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
 
 export type TranscribeStatusRun = {
   id: string;
@@ -68,7 +79,11 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
         <div className="flex items-baseline justify-between gap-2">
           <span
             className="text-[12px] font-medium"
-            style={{ color: stage.state === 'pending' ? 'var(--text-muted)' : 'var(--text-primary)' }}
+            style={{
+              // 正在跑的那一格用强调色：一屏三行，得让人一眼看出现在停在哪一行
+              color: active ? 'var(--accent-fg-info)'
+                : stage.state === 'pending' ? 'var(--text-muted)' : 'var(--text-primary)',
+            }}
           >
             {stage.label}
           </span>
@@ -78,7 +93,7 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
             </span>
           )}
         </div>
-        <p className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{stage.detail}</p>
+        {/* 设计稿的顺序是 标题 → 进度条 → 副行：先看到走到哪，再看它在干嘛 */}
         {active && stage.percent !== null && (
           <div
             className="mt-1.5 h-[3px] w-full overflow-hidden rounded-full"
@@ -94,6 +109,7 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
             />
           </div>
         )}
+        <p className="mt-1 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{stage.detail}</p>
       </div>
     </div>
   );
@@ -132,7 +148,11 @@ export function TranscribeStatusCard({
   onPlayRequest?: () => void;
 }) {
   const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
-  const stages = describeTranscriptionStages(activeRun, { sizeLabel: audioSizeLabel });
+  // 时长只有播放器知道（条目元数据没这个字段），订阅它广播的那一个数
+  const [durationSec, setDurationSec] = useState(0);
+  useEffect(() => onRecordingDuration(setDurationSec), []);
+  const durationLabel = durationSec > 0 ? formatClockLabel(durationSec) : null;
+  const stages = describeTranscriptionStages(activeRun, { sizeLabel: audioSizeLabel, durationLabel });
   const processing = stages !== null;
   // 失败卡只在没有在途 run 时出现：又在跑又说失败，等于同屏两句互相打脸
   const showFailure = !processing && !noteEntryId && !!lastFailure;
@@ -169,41 +189,48 @@ export function TranscribeStatusCard({
             ))}
           </div>
 
-          {/* 音频已就绪卡：设计稿用它兑现「不必等转录就能听」 */}
+          {/* 音频已就绪卡：设计稿用它兑现「不必等转录就能听」，缩略图本身就是播放键 */}
           <div
             className="flex items-center gap-3 rounded-[12px] px-3 py-2.5"
-            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
           >
-            <div
-              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]"
-              style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+            <button
+              type="button"
+              onClick={onPlayRequest}
+              disabled={!onPlayRequest}
+              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px] disabled:cursor-default"
+              style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+              title="播放这段录音"
             >
-              <AudioLines size={16} style={{ color: 'var(--accent-fg-info)' }} />
-            </div>
+              <Play size={15} fill="currentColor" style={{ marginLeft: 1 }} />
+            </button>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12.5px] font-semibold text-token-primary">
                 {audioTitle?.trim() || '这段录音'}
               </p>
               <p className="mt-0.5 text-[11px]" style={{ color: 'var(--accent-fg-success)' }}>
-                音频已就绪，可立即播放
+                音频已就绪，可立即播放{durationLabel ? ` · ${durationLabel}` : ''}
               </p>
             </div>
           </div>
 
           {/* 原文逐句生成中：等待期的主视觉必须是产物本身在长出来，而不是一块空白 */}
-          <div>
+          <div
+            className="rounded-[12px] px-3 py-2.5"
+            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+          >
             <p className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>原文逐句生成中</p>
             <div className="mt-1.5 flex flex-col gap-1.5">
-              {(transcriptPreview ?? []).slice(0, 3).map((line, index) => (
+              {(transcriptPreview ?? []).slice(0, 2).map((line, index) => (
                 <p key={index} className="text-[12.5px] leading-relaxed text-token-secondary">{line}</p>
               ))}
-              {/* 还没出句子时给产物形状的骨架，占位数固定，不随内容跳动 */}
-              {Array.from({ length: Math.max(0, 3 - (transcriptPreview?.length ?? 0)) }).map((_, index) => (
+              {/* 已生成的句子后面永远吊两条骨架：它是「还在往下长」的那个暗示，不能省 */}
+              {[0, 1].map(index => (
                 <div
                   key={`skeleton-${index}`}
                   className="h-3 rounded-full"
                   style={{
-                    width: index === 0 ? '92%' : index === 1 ? '78%' : '60%',
+                    width: index === 0 ? '92%' : '64%',
                     background: 'var(--bg-elevated)',
                     animation: 'pulse 1.6s ease-in-out infinite',
                     animationDelay: `${index * 0.18}s`,

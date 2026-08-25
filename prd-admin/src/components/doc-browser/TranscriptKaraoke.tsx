@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Info, RefreshCw, Search, UserRound, X } from 'lucide-react';
+import { Check, ChevronUp, Info, Play, RefreshCw, Search, UserRound, X } from 'lucide-react';
+import { requestRecordingPlay } from './recordingPlayBridge';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import {
   parseTranscriptSegments,
@@ -39,7 +40,8 @@ function highlightKeyword(text: string, keyword: string): React.ReactNode {
     parts.push(
       <mark
         key={`${hit}-${parts.length}`}
-        style={{ background: 'color-mix(in srgb, var(--accent-fg-info) 22%, transparent)', color: 'var(--text-primary)', borderRadius: 3, padding: '0 2px' }}
+        // 设计稿的命中高亮是黄色，与蓝色强调色分工：蓝表示「可点/进行中」，黄表示「就是这里」
+        style={{ background: 'var(--semantic-warning-soft)', color: 'var(--text-primary)', borderRadius: 3, padding: '0 2px' }}
       >
         {text.slice(hit, hit + needle.length)}
       </mark>,
@@ -256,16 +258,27 @@ export function TranscriptKaraoke({
     [segments],
   );
   const speakerStats = useMemo(() => buildSpeakerStats(segments), [segments]);
+  // 默认选中最高频的那个词：命中面板一进来就有内容，而不是先让用户猜该点哪个。
+  // 设计稿画的也是「已选中某词」这一态；只在换了录音（词云变了）时重置。
+  const topWord = wordCloud[0]?.word ?? '';
+  useEffect(() => { setSelectedWord(topWord); }, [topWord]);
   // 说话人是原生识别来的还是本地声纹估算来的，可信度差一个量级。
   // 不标出来的话两者在界面上完全一样，用户没有任何线索判断该不该信。
   const speakerSource = useMemo(() => parseSpeakerSourceNote(noteMd), [noteMd]);
+  /**
+   * 命中面板认的词有两个来源：搜索框输入，和词云里被点中的那个词。
+   * 分成两个状态而不是共用一个：点词不该把词填进搜索框（设计稿里搜索框是空的），
+   * 搜索也不该把词云的选中态改掉。搜索优先——用户正在打字时那是他当下的意图。
+   */
+  const [selectedWord, setSelectedWord] = useState('');
+  const activeTerm = keyword.trim() || selectedWord;
   const searchMatches = useMemo(() => {
-    const normalized = keyword.trim().toLocaleLowerCase();
+    const normalized = activeTerm.toLocaleLowerCase();
     if (!normalized) return [];
     return timelineSegments
       .map((segment, index) => ({ segment, index }))
       .filter(({ segment }) => segment.text.toLocaleLowerCase().includes(normalized));
-  }, [keyword, timelineSegments]);
+  }, [activeTerm, timelineSegments]);
   const questionTranscript = useMemo(
     () => buildRecordingQuestionTranscript(timelineSegments, noteMd),
     [noteMd, timelineSegments],
@@ -303,6 +316,27 @@ export function TranscriptKaraoke({
 
   const markManualScroll = () => { manualUntilRef.current = Date.now() + 3000; };
 
+  /**
+   * 播放区折叠（设计稿：原文向上滚过一段距离后，播放区收成一条迷你条）。
+   * 不折叠的话，滚到原文中段时半屏还被波形占着，词云与纪要被挤到屏外——
+   * 审查智能体判的「首屏主角是播放器而不是内容」就是这个。
+   *
+   * 用哨兵元素 + IntersectionObserver，不监听 scroll：滚动事件要自己找滚动容器、
+   * 自己节流，而这一屏的滚动容器在不同入口下并不是同一个。
+   */
+  const collapseSentinelRef = useRef<HTMLDivElement>(null);
+  const [playerCollapsed, setPlayerCollapsed] = useState(false);
+  useEffect(() => {
+    const sentinel = collapseSentinelRef.current;
+    if (!documentMode || !sentinel || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setPlayerCollapsed(!entry.isIntersecting),
+      { rootMargin: '-120px 0px 0px 0px', threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [documentMode]);
+
   const currentSegment = timelineSegments[activeIdx] ?? null;
   const nextSegment = timelineSegments[activeIdx + 1] ?? null;
 
@@ -332,10 +366,45 @@ export function TranscriptKaraoke({
         想跳播只能先滚回顶部——这也是那一屏「只剩一个播放器和一堆留白」的原因之一。
         只在同文档模式吸顶：另一种形态本身就是固定高度的滚轮，不存在滚走的问题。
       */}
+      {documentMode && <div ref={collapseSentinelRef} aria-hidden style={{ height: 1, width: '100%' }} />}
       <div
         className={documentMode ? 'sticky top-0 z-10 flex w-full flex-col items-center gap-2 pb-2' : 'contents'}
         style={documentMode ? { background: 'var(--bg-primary)' } : undefined}
       >
+        {/* 折叠态：56px 一条，只留播放键与当前句；展开态是完整波形播放器 */}
+        {documentMode && playerCollapsed && currentSegment ? (
+          <div
+            className="flex w-full max-w-[760px] items-center gap-3 rounded-[12px] px-3"
+            style={{ height: 56, background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+          >
+            <button
+              type="button"
+              onClick={requestRecordingPlay}
+              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full"
+              style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}
+              title="播放"
+            >
+              <Play size={13} fill="currentColor" style={{ marginLeft: 1 }} />
+            </button>
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-token-primary">
+              {currentSegment.text}
+            </span>
+            <span className="flex-shrink-0 font-mono text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+              {formatClock(currentSegment.start)}
+            </span>
+            <button
+              type="button"
+              onClick={() => collapseSentinelRef.current?.scrollIntoView({ block: 'start' })}
+              className="flex h-9 w-9 flex-shrink-0 items-center justify-center"
+              style={{ color: 'var(--text-muted)' }}
+              title="展开播放器"
+            >
+              <ChevronUp size={15} />
+            </button>
+          </div>
+        ) : null}
+
+        <div style={documentMode && playerCollapsed ? { display: 'none' } : undefined} className="flex w-full flex-col items-center gap-2">
         <AudioWavePlayer
           src={src}
           onTimeUpdate={onTimeUpdate}
@@ -344,7 +413,8 @@ export function TranscriptKaraoke({
           registerSeek={(seek) => { seekRef.current = seek; }}
         />
 
-        {documentMode && followEnabled && currentSegment && (
+        </div>
+        {documentMode && !playerCollapsed && followEnabled && currentSegment && (
           <div
             className="w-full max-w-[760px] rounded-[12px] px-3 py-2.5"
             style={{
@@ -405,40 +475,6 @@ export function TranscriptKaraoke({
               {keyword && <span className="text-[11px] tabular-nums text-token-muted">{searchMatches.length} 处</span>}
             </label>
 
-            {keyword && searchMatches.length > 0 && (
-              <div className="mt-3">
-                {/* 命中面板的抬头：不写清「哪个词、命中几句」，下面一串句子就成了无主的列表 */}
-                <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                  <p className="text-[12px] font-semibold text-token-primary">
-                    「{keyword.trim()}」命中 {searchMatches.length} 句
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setKeyword('')}
-                    className="min-h-9 flex-shrink-0 px-1 text-[11px]"
-                    style={{ color: 'var(--accent-fg-info)' }}
-                  >
-                    全部
-                  </button>
-                </div>
-                <div className="flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                  {searchMatches.map(({ segment, index }) => (
-                    <button
-                      key={`${index}-${segment.start}`}
-                      type="button"
-                      onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
-                      className="min-h-11 rounded-[8px] px-3 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
-                      style={{ background: 'var(--bg-elevated)' }}>
-                      <span className="mr-2 font-mono text-[10px]" style={{ color: 'var(--accent-fg-info)' }}>{segment.start >= 0 ? formatClock(segment.start) : '原文'}</span>
-                      {segment.speaker && <span className="mr-2 font-semibold text-token-primary">{segment.speaker}</span>}
-                      {/* 命中的词要在句子里高亮出来，否则用户还得自己在句中找 */}
-                      {highlightKeyword(segment.text, keyword.trim())}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {keyword && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
 
             {speakers.length > 0 && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -509,8 +545,10 @@ export function TranscriptKaraoke({
                     // 设计稿把词频压成**三档**（高频黑底大字 / 中频蓝字 / 低频灰底小字）。
                     // 连续映射看着更精确，但一排词里没有哪个能占住视线——三档存在的
                     // 全部理由就是让最高频那个词一眼跳出来。
-                    const tier = weight >= 0.66 ? 'high' : weight >= 0.33 ? 'mid' : 'low';
-                    const selected = keyword.trim() === word;
+                    // 阈值按稿面那组词频（38/29/17/14/9/7/5/4）反推：最高频独占黑档，
+                    // 腰部进蓝档，长尾退灰档。三档的意义是拉开梯度，不是等分。
+                    const tier = weight >= 0.8 ? 'high' : weight >= 0.4 ? 'mid' : 'low';
+                    const selected = activeTerm === word;
                     const tierStyle = tier === 'high'
                       ? { fontSize: '18px', fontWeight: 700, background: 'var(--text-primary)', color: 'var(--bg-card)', border: '1px solid var(--text-primary)' }
                       : tier === 'mid'
@@ -520,7 +558,7 @@ export function TranscriptKaraoke({
                       <button
                         key={word}
                         type="button"
-                        onClick={() => setKeyword(selected ? '' : word)}
+                        onClick={() => { setKeyword(''); setSelectedWord(selected ? '' : word); }}
                         aria-pressed={selected}
                         className="min-h-9 rounded-full px-3"
                         style={{
@@ -592,6 +630,41 @@ export function TranscriptKaraoke({
                 ) : null}
               </div>
             )}
+
+            {activeTerm && searchMatches.length > 0 && (
+              <div className="mt-3">
+                {/* 命中面板的抬头：不写清「哪个词、命中几句」，下面一串句子就成了无主的列表 */}
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <p className="text-[12px] font-semibold text-token-primary">
+                    「{activeTerm}」命中 {searchMatches.length} 句
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setKeyword(''); setSelectedWord(''); }}
+                    className="min-h-9 flex-shrink-0 px-1 text-[11px]"
+                    style={{ color: 'var(--accent-fg-info)' }}
+                  >
+                    全部
+                  </button>
+                </div>
+                <div className="flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                  {searchMatches.map(({ segment, index }) => (
+                    <button
+                      key={`${index}-${segment.start}`}
+                      type="button"
+                      onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
+                      className="min-h-11 rounded-[8px] px-3 py-2 text-left text-[12px] leading-relaxed text-token-secondary"
+                      style={{ background: 'var(--bg-elevated)' }}>
+                      <span className="mr-2 font-mono text-[10px]" style={{ color: 'var(--accent-fg-info)' }}>{segment.start >= 0 ? formatClock(segment.start) : '原文'}</span>
+                      {segment.speaker && <span className="mr-2 font-semibold text-token-primary">{segment.speaker}</span>}
+                      {/* 命中的词要在句子里高亮出来，否则用户还得自己在句中找 */}
+                      {highlightKeyword(segment.text, activeTerm)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {activeTerm && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
           </section>
           <section className="mt-4">
             <div className="mb-2 flex items-baseline justify-between gap-2">

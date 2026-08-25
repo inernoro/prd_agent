@@ -14,7 +14,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Download, Play, Pause } from 'lucide-react';
-import { onRecordingPlayRequest } from './recordingPlayBridge';
+import { announceRecordingDuration, onRecordingPlayRequest } from './recordingPlayBridge';
 
 interface AudioWavePlayerProps {
   src: string;
@@ -176,6 +176,9 @@ export function AudioWavePlayer({
     if (audio.paused) void audio.play().catch(() => setError('当前浏览器无法播放这段录音'));
     else audio.pause();
   };
+
+  // 时长只有加载完音频的这一端知道；上面的状态卡要用它，往上报一次
+  useEffect(() => { announceRecordingDuration(duration); }, [duration]);
 
   // 处理中那一屏的「立即播放」主按钮离播放器隔着三层组件，走窄通道过来
   useEffect(() => onRecordingPlayRequest(() => {
