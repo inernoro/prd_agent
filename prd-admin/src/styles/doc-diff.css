@@ -51,7 +51,10 @@
  * 之前流式和完成态共用一套红删除线，每 100ms 重算一次，满屏红杠乱跳，
  * 用户的原话是「这是什么雷霆布局」。
  */
-.doc-inline-diff--streaming del {
+/* 两个类都写上不是啰嗦：`.doc-inline-diff--streaming del` 与 `.doc-inline-diff del`
+ * 特异性一模一样（各一个类 + 一个标签），谁赢只看谁写在后面——这种「靠行号成立」的覆盖
+ * 是下一次漂移的温床（predicate-and-wiring-discipline.md 形状 6）。写成两个类就与顺序无关。 */
+.doc-inline-diff.doc-inline-diff--streaming del {
   color: var(--text-muted);
   background: transparent;
   text-decoration: none;
@@ -62,6 +65,23 @@
 /* 新增内容进场：不是「有东西在动」，是产物本身在长出来（artifact-is-experience.md） */
 .doc-inline-diff ins {
   animation: doc-diff-ins-in 260ms ease-out both;
+}
+
+/*
+ * 流式期间不给单个 ins 播进场动画——这是「一闪一闪，像老电脑」的根因。
+ *
+ * MarkdownViewer 传给 ReactMarkdown 的 components 是每次 render 新建的内联函数
+ *（那份 memo 注释里写着，为的是修另一个 bug），所以正文每收到一个 token 就整棵 DOM 重挂。
+ * 重挂 = 每个 ins 从头重播这段 260ms 动画，而下一个 token 90ms 就到，动画永远播不完：
+ * 实测开头那段早就写完的新增文字，246 帧里没有一帧到过 opacity 1，底色在 7 种蓝之间来回跳。
+ * 已经定稿的字一直在闪，正是「不丝滑」。
+ *
+ * 流式期间本来也不需要逐元素进场：文字在一个字一个字地长，那本身就是动效
+ *（artifact-is-experience.md：动的应该是产物）。动画留给流式结束那一下——
+ * 去掉 --streaming 时全篇 ins 一起浮现一次，正好是「改完了」的那个瞬间。
+ */
+.doc-inline-diff.doc-inline-diff--streaming ins {
+  animation: none;
 }
 
 @keyframes doc-diff-ins-in {
