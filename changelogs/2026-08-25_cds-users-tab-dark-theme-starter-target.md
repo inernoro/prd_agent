@@ -5,3 +5,4 @@
 | docs | cds | 教程与指南同步零凭据接入链路：guide.cds.tutorial 增「为什么不用先准备密钥」与接入目标步骤、guide.cds.agent-onboarding-harness 增目标选择步骤、guide.cds.ai-auth 增首次接入链路与用户管理认证模式说明、design.cds.project-bootstrap 增鸡生蛋三断点与防复发判据 |
 | polish | cds | 上手助手 CDS 卡片文案写明「不需要先准备任何密钥」 |
 | docs | cds | debt.cds 记 D12：创建项目本身依赖宿主 Docker（建项目即建项目网络），无 dockerd 时 POST /api/projects 直接 500 —— 零凭据接入链路复测发现 |
+| docs | cds | debt.cds 记 D13：页面批准换来的一次性 create-only Key 对全部只读接口放行（线上实测可枚举项目/分支/全局变量名/全局 Key 清单/自更新历史，值与明文已掩码），对外开放接入前需收敛为显式只读白名单 |
