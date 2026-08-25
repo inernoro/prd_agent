@@ -152,8 +152,8 @@
   "/components/doc-browser/DocBrowser.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 4
+    "darkRgbaBg": 2,
+    "lightFg": 3
   },
   "/components/doc-browser/DocumentStoreBrowser.tsx": {
     "whiteAlpha": 0,

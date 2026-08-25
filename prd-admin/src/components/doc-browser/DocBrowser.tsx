@@ -4403,7 +4403,10 @@ function SelectionActionPopover({
       style={{
         top,
         left,
-        background: 'rgba(20,20,30,0.92)',
+        background: 'var(--overlay-panel-solid)',
+        // 描边保持字面量：暗岛(.surface-tone-dark)没有覆盖 --semantic-purple-*，
+        // 改引它会在浅色档下取到 rgba(107,33,168,.24) 深紫压深底、描边直接消失。
+        // 这是 admin-dual-theme「暗色形态专用值」的合法例外，不是待清理硬编码。
         border: '1px solid rgba(168,85,247,0.4)',
         boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
         backdropFilter: 'blur(12px)',
@@ -4416,7 +4419,7 @@ function SelectionActionPopover({
           <button
             onClick={a.onClick}
             className="h-6.5 px-2 rounded-[8px] flex items-center gap-1.5 cursor-pointer hover-bg-soft transition-colors"
-            style={{ color: 'rgba(216,180,254,0.95)' }}
+            style={{ color: 'var(--accent-fg-violet-strong)' }}
           >
             {a.icon}
             <span className="text-[11px] font-semibold whitespace-nowrap">{a.label}</span>

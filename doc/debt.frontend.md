@@ -407,11 +407,14 @@ Playwright 逐像素实测双主题全部 ≥4.5:1。**残余风险**：token �
 
 | 状态 | 项 | 说明 | 优先级 |
 |---|---|---|---|
-| open | 划词浮层手写紫 | `components/doc-browser/DocBrowser.tsx` 的 `SelectionActionPopover`：边框 `rgba(168,85,247,0.4)`、文字 `rgba(216,180,254,0.95)`、`scrollToTextInContainer` 的闪烁高亮 `rgba(168,85,247,0.22)`。应改引 `--semantic-purple-border` / 新增一个文字档 | P3 |
-| open | 再加工抽屉手写紫 | `pages/document-store/ReprocessChatDrawer.tsx` 的 `DropdownRow` 选中态 `rgba(168,85,247,0.10)` + 左边框 `rgba(168,85,247,0.6)`，应改引 `--semantic-purple-soft` | P3 |
-| open | GenSweepLoader 靛蓝流光 | `components/ui/GenSweepLoader.tsx` 的底色与流光用 `rgba(129,140,248,…)` / `rgba(165,180,252,…)`，未走 `--semantic-indigo-*` | P3 |
-| open | 注释误导 | `lib/tileAccent.ts` 的「一律不在色带内」需补一句「该禁令的管辖范围见 `inkPalette.test.ts` 的 GUARDED，语义色槽不在其内」 | P2 |
+| done | 划词浮层手写紫 | `components/doc-browser/DocBrowser.tsx` 的 `SelectionActionPopover`：文字 → `var(--accent-fg-violet-strong)`、底 → `var(--overlay-panel-solid)`。棘轮 `lightFg 4→3`、`darkRgbaBg 3→2`。**描边保持字面量**（见下方陷阱），已就地加注释说明 | - |
+| by-design | 划词高亮 `rgba(168,85,247,0.22)` | `scrollToTextInContainer` 把它写在正文元素上，正文跟随主题、浅色下紫底 0.22 依然可见，不需要 token 化 | - |
+| open | 再加工抽屉手写紫 | `pages/document-store/ReprocessChatDrawer.tsx` 的 `DropdownRow` 选中态 `rgba(168,85,247,0.10)` + 左边框 `rgba(168,85,247,0.6)`。它在 `surface-tone-dark` 容器内，**不能**改引 `--semantic-purple-*`（暗岛未覆盖）；要么给暗岛补这三件套，要么按合法例外加注释 | P3 |
+| open | GenSweepLoader 靛蓝流光 | `components/ui/GenSweepLoader.tsx` 的底色与流光用 `rgba(129,140,248,…)` / `rgba(165,180,252,…)`。它落在视觉创作画布上（画布底固定 `#1e1e1e`），改引 `--semantic-indigo-*` 会在浅色档取到深靛压深底；同上，属合法例外，缺的是注释不是 token | P3 |
+| done | 注释误导 | `lib/tileAccent.ts` 已补【管辖范围】段：写明只约束品类色带、GUARDED 覆盖面、语义色槽除外 | - |
 | by-design | 不做全站去紫 | 语义色槽的紫是设计的一部分，不是漏网 | - |
 | by-design | 不扩 GUARDED | 在上面三条手写紫收敛完之前扩大 `GUARDED`，会一次红出大量与色带无关的命中，且没有对应收益 | - |
+
+**修法陷阱（比缺口本身更容易翻车）**：这三处都在**固定暗底表面**上——`SelectionActionPopover` 带 `surface-tone-dark`，`DropdownRow` 在 `surface-tone-dark` 容器内，`GenSweepLoader` 落在硬编码 `#1e1e1e` 的画布上。`.surface-tone-dark` 暗岛覆盖了 `--accent-fg-violet` / `--accent-fg-violet-strong` / `--overlay-panel-solid` / `--semantic-indigo-text`，**但没有覆盖 `--semantic-purple-text/soft/border`**。所以「把字面量换成 `--semantic-purple-*`」这条看似正确的修法，会在浅色档取到 `#6b21a8` / `rgba(107,33,168,.24)` 深紫压深底 —— 正是 `tokens.css` 暗岛注释里警告的那种反向翻车。**动手前先确认：目标 token 在暗岛里被覆盖了吗？** 没覆盖就先补暗岛，或按合法例外留字面量 + 注释。
 
 **踩坑记录**：2026-08-23 做首页设计稿时，我照色带把知识库划词浮层画成橄榄绿，而真实代码是紫的，据此判断「代码违规 229 处」并上报。核对后发现两个错——数字只统计了 4 个字面值、漏了守卫真正的判据（真实是 2129 处），结论也错了（分域不是违规）。**教训：断言某处违反某条规则前，先读那条规则的守卫覆盖了哪些路径，再看被判对象是否在那个范围内。** 这正是 `predicate-and-wiring-discipline.md` 形状 7「守卫自己没接上线」的镜像——那条说守卫漏掉了该守的文件，这次是我把守卫没管的文件当成了它该管的。
