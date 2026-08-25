@@ -820,9 +820,11 @@ export function TranscriptKaraoke({
                   background: active
                     ? 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)'
                     : 'transparent',
-                  border: active
-                    ? '1px solid color-mix(in srgb, var(--accent-fg-info) 30%, transparent)'
-                    : '1px solid transparent',
+                  // 稿面的当前句是**纯填充块 + 左侧一道色条**，没有整圈描边：
+                  // 整圈蓝描边会和下面编辑态那张卡的蓝框撞语义——两块看起来是同一类强调，
+                  // 读者分不清「正在念」和「正在改」。
+                  border: 'none',
+                  borderLeft: active ? '3px solid var(--accent-fg-info)' : '3px solid transparent',
                 }}
                 title={documentMode && onSaveNote ? '点击修改这句原文' : followEnabled && s.start >= 0 ? '点击跳到这一句' : undefined}
               >
@@ -860,13 +862,25 @@ export function TranscriptKaraoke({
         零高度的 sticky 容器托着它，所以它不会在列表末尾撑出一条空带。
       */}
       {documentMode && followLost && (
-        <div className="sticky bottom-3 z-20 flex h-0 w-full items-end justify-center" style={{ pointerEvents: 'none' }}>
+        <div className="sticky bottom-3 z-20 flex h-0 w-full items-end justify-center" style={{ pointerEvents: 'none', position: 'sticky' }}>
+          {/*
+            药丸底下垫一层向下渐深的蒙版：浮动元素总会盖住底下的内容，
+            不给蒙版就是「一句话被切掉半截」，给了就是「列表在这里淡出」。
+            纯装饰，不吃点击。
+          */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 block h-24"
+            style={{ background: 'linear-gradient(to bottom, transparent, var(--bg-primary))' }}
+          />
           <button
             type="button"
             onClick={resumeFollow}
-            className="flex min-h-11 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold"
+            className="relative z-10 flex min-h-11 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold"
             // 稿面这颗是**反色实心**胶囊（深色屏上是白底黑字）：它是浮在内容之上的主操作，
-            // 做成同色描边就和底下的列表糊在一起，反差不够就不像「浮在上面的一颗按钮」
+            // 做成同色描边就和底下的列表糊在一起，反差不够就不像「浮在上面的一颗按钮」。
+            // `relative z-10` 是必须的：垫在下面那层淡出蒙版是绝对定位的兄弟节点，
+            // 不显式抬一层，它会盖在按钮上把白底压成灰底。
             style={{
               pointerEvents: 'auto',
               background: 'var(--button-primary-bg)',
