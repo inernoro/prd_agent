@@ -2619,7 +2619,7 @@ public class HostedSiteService : IHostedSiteService
     {
         if (htmlBytes.Length == 0) return false;
         var take = Math.Min(htmlBytes.Length, 200 * 1024);
-        var head = Encoding.UTF8.GetString(htmlBytes, 0, take);
+        var head = System.Text.Encoding.UTF8.GetString(htmlBytes, 0, take);
         string[] signatures =
         {
             "reveal.js", "reveal.min.js", "class=\"reveal\"", "Reveal.initialize",
