@@ -280,12 +280,14 @@ export function QuickSharePopover({
               onClick={onOpenAdvanced}
               className="hover-bg-soft flex h-9 w-full cursor-pointer items-center gap-2 px-2.5 text-left"
               style={{ borderTop: '1px solid var(--border-subtle)' }}
-              title="密码、数字短链、开场问题这些低频项在高级设置里"
+              title="配置弹窗是「新建」不是「编辑」：它会给这个站点再建一条链接，上面那条不受影响"
             >
               <Settings2 size={12} style={{ color: 'var(--text-muted)' }} />
-              <span className="text-[11.5px] font-medium" style={{ color: 'var(--text-primary)' }}>高级设置</span>
+              {/* 写「高级设置」会让人以为是在改上面那条链接，其实那个弹窗只会新建一条。
+                  预期管理：按钮上写清点下去会发生什么，别让用户点完才发现多了一条链接。 */}
+              <span className="text-[11.5px] font-medium" style={{ color: 'var(--text-primary)' }}>再建一条（可设密码）</span>
               <span className="ml-auto text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                {link.accessLevel === 'password' ? '已设密码' : '密码 · 短链 · 开场问题'}
+                密码 · 短链 · 开场问题
               </span>
               <ChevronRight size={12} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
             </button>
@@ -325,7 +327,7 @@ export function QuickSharePopover({
             className="hover-bg-soft mt-1.5 flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-[9px] text-[11.5px]"
             style={{ color: 'var(--text-secondary)' }}
           >
-            <Settings2 size={12} /> 想先设密码、有效期？走高级设置
+            <Settings2 size={12} /> 想先设密码 / 短链 / 开场问题？走完整配置
           </button>
         </>
       )}
