@@ -848,7 +848,9 @@ export function TranscriptKaraoke({
                   </span>
                   <span className="min-w-0">
                     {s.speaker && (
-                      <span className="mb-0.5 block text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>{s.speaker}</span>
+                      // 稿面里说话人名与时间戳同为小号淡灰，正文才是最重的那一档。
+                      // 加粗之后三级层级压成两级，扫读时眼睛会先落在人名上而不是话上。
+                      <span className="mb-0.5 block text-[11px]" style={{ color: 'var(--text-muted)' }}>{s.speaker}</span>
                     )}
                     {/* 命中词在正文里也要高亮：只在命中面板里标，用户在原文里还得自己找 */}
                     <span className="block min-w-0 break-words">{highlightKeyword(s.text, keyword)}</span>

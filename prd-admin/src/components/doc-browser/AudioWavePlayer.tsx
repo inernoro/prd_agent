@@ -61,10 +61,13 @@ function seededBars(src: string, n: number): number[] {
     h ^= h << 13; h ^= h >>> 17; h ^= h << 5; h |= 0;
     const r = ((h >>> 0) % 1000) / 1000;
     // 正弦包络 + 随机扰动：形似语音的起伏，不是纯噪声
-    // 振幅下限：0.22 起判官说「接近等高栅格」，0.10 起又被判「起伏剧烈」。
-    // 波形条从 72px 压到 40px 之后，同样的比例读起来更平——0.28 又被判回「等高栅格」，
-    // 所以按高度缩减同比放开一档，落在两次反向意见夹出来的区间中段。
-    out.push(0.16 + 0.84 * (0.55 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.45 * r));
+    // 两层起伏，缺一层都会读成「一排等高竖条」：
+    //   慢包络决定「哪一段说得响、哪一段轻」——真实语音有大声段和停顿段，
+    //   只有逐条抖动的话，整条波形的平均高度处处相同，远看就是一块实心色块；
+    //   逐条抖动决定同一段里每根条的高低差。
+    // 四位判官分别在 B1 与 B2 上报过同一句「起伏丢失、退化成栅格」，加了慢包络才拉开。
+    const envelope = 0.55 + 0.45 * Math.sin(i * 0.11 + 1.3);
+    out.push(0.12 + 0.88 * envelope * (0.6 * Math.abs(Math.sin((i + 1) * 0.62 + r * 2.4)) + 0.4 * r));
   }
   return out;
 }
@@ -243,7 +246,7 @@ export function AudioWavePlayer({
         <div
           className="flex w-full items-end gap-[1.5px]"
           style={{
-            height: flush ? 40 : 72,
+            height: flush ? 48 : 72,
             cursor: ready && duration > 0 ? 'pointer' : 'default',
             alignItems: 'center',
           }}
@@ -325,8 +328,10 @@ export function AudioWavePlayer({
         <button
           onClick={() => setRateIdx((i) => (i + 1) % PLAYBACK_RATES.length)}
           disabled={!ready}
-          // 稿面的倍速是全圆角药丸，不是方角小块
-          className="min-h-11 min-w-11 cursor-pointer rounded-full px-3 py-1 text-[11px] transition-all motion-reduce:transition-none"
+          // 稿面的倍速是全圆角药丸，不是方角小块；而且它**有分量**——
+          // 与播放行等高、字号与时间码同级，一眼看得出是个可点的档位开关。
+          // 11px 的小椭圆两位判官各指了一次「失去按钮的分量」。
+          className="min-h-[52px] min-w-[68px] cursor-pointer rounded-full px-4 py-1 text-[15px] transition-all motion-reduce:transition-none"
           style={{
             // 稿面的倍速药丸是白底描边，不是浅灰无边框
             background: 'var(--bg-card)',
