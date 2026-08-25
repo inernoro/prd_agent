@@ -47,8 +47,10 @@ export function ModelManageMovedPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className="mx-auto w-full max-w-[860px] px-4 py-8 flex flex-col gap-4">
+      {/* 内容只有两块卡，撑不满一屏。与其把空白全甩在下半屏（content-fills-canvas 反面），
+          不如让内容块在可用高度里居中——短内容时上下留白对称，内容长了 `m-auto` 自动失效退回正常滚动。 */}
+      <div className="flex-1 min-h-0 overflow-y-auto flex" style={{ overscrollBehavior: 'contain' }}>
+        <div className="m-auto w-full max-w-[860px] px-4 py-8 flex flex-col gap-4">
           <GlassCard padding="lg">
             <div className="flex flex-col gap-5">
               <div className="flex items-center gap-2">
