@@ -17,6 +17,14 @@
  *
  * 凭据只从环境变量取（MAP_USER / MAP_PASSWORD），不写进文件、不打印。
  * 退出码：0 全过 / 1 有用例红 / 2 参数或前置条件问题（这种不算「功能坏了」）。
+ *
+ * 已排进计划任务：Routine `trig_017sNsVhR9oSVa5SKbVLwC8i`「每日关键功能验收（网页托管）」，
+ * 每天 01:05 UTC（北京时间 09:05）在一个全新会话里跑，失败推送 + 邮件。
+ * 改 cron 或停用走 claude.ai 的 Routines 界面，或让 agent 调 update_trigger / delete_trigger。
+ *
+ * 加一条用例的成本：往 FORMS 加一行（形态类），或往主流程加一个 checkXxx（交互类）。
+ * 加之前先问一句：**这条断言能被测红吗？** 不能测红的用例比没有更糟——
+ * 它会让下一个人以为这件事已经验过了。
  */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
