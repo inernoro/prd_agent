@@ -839,6 +839,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       env: built.env,
       envVars: built.envVars,
       command: entry.command,
+      entrypoint: entry.entrypoint,
       labels: entry.labels,
     };
   }
@@ -907,6 +908,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         ...(dbName ? { dbName } : {}),
         ...(initSql ? { initSql } : {}),
         ...(preset.command ? { command: preset.command } : {}),
+        // entrypoint 与 command 必须一起落库。只落 command 的话，nats / memcached 这类
+        // 「命令是 sh 片段、entrypoint 被覆盖成 sh」的预设会把 `-c '...'` 直接交给
+        // 镜像原本的 ENTRYPOINT（nats 那个是二进制），容器起都起不来——
+        // 而这在 catalog 里完全看不出来（建了一半，形状 2）。
+        ...(preset.entrypoint ? { entrypoint: preset.entrypoint } : {}),
         createdAt: new Date().toISOString(),
       };
       stateService.addInfraService(service);

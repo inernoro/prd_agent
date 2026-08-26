@@ -15,7 +15,9 @@
  * 这样能拿真实数值写回归。执行侧在 index.ts。
  */
 
-export type BackupKind = 'mongo' | 'redis' | 'mysql';
+import { detectInfraKind, type InfraKindHints } from './infra-exposure-audit.js';
+
+export type BackupKind = 'mongo' | 'redis' | 'mysql' | 'postgres' | 'rabbitmq' | 'nacos';
 
 export interface BackupCandidate {
   id: string;
@@ -90,13 +92,154 @@ export function backupDirCandidates(opts: {
   return [...new Set(out)];
 }
 
-/** 只有这几类有成熟的一致性导出手段；其余类型不假装能备。 */
-export function backupKindOf(dockerImage: string): BackupKind | null {
-  const l = (dockerImage || '').toLowerCase();
-  if (l.includes('mongo')) return 'mongo';
-  if (l.includes('redis')) return 'redis';
-  if (l.includes('mysql') || l.includes('mariadb')) return 'mysql';
-  return null;
+/** 有成熟一致性导出手段的类型。不在这个集合里的，不假装能备。 */
+const BACKUP_CAPABLE_KINDS = new Set<string>(['mongo', 'redis', 'mysql', 'postgres', 'rabbitmq', 'nacos']);
+
+/**
+ * 没被周期备份覆盖的服务，究竟属于哪一类。
+ *
+ * ## 为什么要分类
+ *
+ * 原来所有备不了的类型共用一句「暂不支持自动备份的类型」，并且一律 `blocksHealthy`。
+ * 这一句话把三件完全不同的事说成了同一件：
+ *
+ * - memcached 压根没有持久化功能，重启即空**是它的设计**，没有东西可丢；
+ * - MinIO 里放着真实文件，它需要的是桶到桶复制，不是一份 dump；
+ * - SQL Server 有标准的 `BACKUP DATABASE`，只是我们还没接。
+ *
+ * 后果不只是措辞难看。任何项目只要跑着一个 memcached 或 nats，
+ * `isBackupRoundHealthy` 就**永远为假**——于是这个健康位从上线那天起就是红的，
+ * 红了几个月和绿了几个月对磁盘上的备份份数没有任何区别，没人会因为它去补什么。
+ * 这正是 postgres 那条（E48）被埋了三个月的形状：一个长期红着、没人当真的灯。
+ *
+ * 所以现在分开：**真的有东西可丢**才算缺口（红灯），没有持久状态的不算，
+ * 而算缺口的那些要在原地说清「缺的是哪一套手段」，让看到的人知道下一步该做什么。
+ */
+export type BackupCoverageBucket =
+  /** 有成熟导出手段并且已经接上。 */
+  | 'covered'
+  /** 有持久数据，但要用另一套机制（不是一份 dump 文件）。 */
+  | 'different-mechanism'
+  /** 有标准 dump 手段，只是还没接。 */
+  | 'not-yet'
+  /** 没有需要备份的持久状态。 */
+  | 'no-durable-state'
+  /** 认不出是什么。未知一律从严。 */
+  | 'unknown';
+
+export interface BackupCoverageVerdict {
+  bucket: BackupCoverageBucket;
+  /** 一句话说清「为什么没备 + 该用什么」，直接进跳过原因。 */
+  reason: string;
+  /** 算不算真实缺口——只有它为真才拖垮整轮健康状态。 */
+  blocksHealthy: boolean;
+}
+
+/** JetStream 一开，nats 就有了落盘的流和消费者位点，「没有持久状态」立刻不成立。 */
+function natsHasJetStream(env?: Record<string, string> | null, command?: string[] | string | null): boolean {
+  const cmd = Array.isArray(command) ? command.join(' ') : String(command || '');
+  const envText = Object.entries(env || {}).map(([k, v]) => `${k}=${v}`).join(' ');
+  const joined = `${cmd} ${envText}`;
+  // 命令行开关、配置块、以及官方镜像认的那个环境变量，三种写法都要认。
+  return /(^|\s)(-js|--jetstream)(\s|$)/.test(joined)
+    || /jetstream\s*[{:]/i.test(joined)
+    || /\bJS_ENABLED=(1|true|yes)\b/i.test(joined);
+}
+
+/**
+ * 这个服务在备份上处于什么位置。
+ *
+ * 判据只看类型（外加 nats 的 JetStream 开关），不看镜像名——「这是什么库」那份判据
+ * 已经收敛到 `detectInfraKind`，这里不再开第二个口径（形状 3）。
+ */
+export function classifyBackupCoverage(
+  kind: string,
+  opts: { env?: Record<string, string> | null; command?: string[] | string | null } = {},
+): BackupCoverageVerdict {
+  if (BACKUP_CAPABLE_KINDS.has(kind)) {
+    return { bucket: 'covered', reason: '已纳入周期备份', blocksHealthy: false };
+  }
+  switch (kind) {
+    // 'nacos' 走上面的 covered 分支，这里不再列——它一度被归进「认不出的服务」，
+    // 而线上真有两台在跑、零备份，靠的正是「认不出就当有数据」那条兜底把它留在缺口里。
+    case 'minio':
+      return {
+        bucket: 'different-mechanism',
+        blocksHealthy: true,
+        reason: 'MinIO 里是对象文件，导不成一份 dump：要的是桶到桶复制（`mc mirror` 到另一个'
+          + '端点或另一台机器）。这条不是「还没做」，是需要另立一套离机复制，本周期备份不覆盖',
+      };
+    case 'kafka':
+      return {
+        bucket: 'different-mechanism',
+        blocksHealthy: true,
+        reason: 'Kafka 的数据是分区日志加消费位点，没有一致性快照命令：要的是 MirrorMaker 2 '
+          + '往另一个集群持续复制。这条同样是另一套机制，不是本周期备份能接的',
+      };
+    case 'elasticsearch':
+      return {
+        bucket: 'different-mechanism',
+        blocksHealthy: true,
+        reason: 'Elasticsearch 只能走快照 API，而快照要先注册一个仓库（本地路径或 S3）并写进'
+          + '节点配置，容器里一条命令做不到。要备它得先把仓库配起来',
+      };
+    case 'sqlserver':
+      return {
+        bucket: 'not-yet',
+        blocksHealthy: true,
+        reason: 'SQL Server 有标准的 `BACKUP DATABASE ... TO DISK`，只是还没接进来——这条是欠账，不是做不到',
+      };
+    case 'clickhouse':
+      return {
+        bucket: 'not-yet',
+        blocksHealthy: true,
+        reason: 'ClickHouse 有 `BACKUP TABLE ... TO Disk()`，只是还没接进来——这条是欠账，不是做不到',
+      };
+    case 'memcached':
+      return {
+        bucket: 'no-durable-state',
+        blocksHealthy: false,
+        reason: 'memcached 没有持久化功能，重启即空是它的设计，没有需要备份的状态',
+      };
+    case 'nats':
+      return natsHasJetStream(opts.env, opts.command)
+        ? {
+          bucket: 'not-yet',
+          blocksHealthy: true,
+          reason: '这个 nats 开了 JetStream，流和消费者位点是会落盘的持久状态，需要单独备份（还没接）',
+        }
+        : {
+          bucket: 'no-durable-state',
+          blocksHealthy: false,
+          reason: '这个 nats 没开 JetStream，消息只在内存里中转，没有需要备份的持久状态',
+        };
+    default:
+      // 认不出来就当它有数据。把未知当安全是这类判定最常见的失效方式。
+      return {
+        bucket: 'unknown',
+        blocksHealthy: true,
+        reason: '认不出这是什么服务，无法判断有没有需要备份的数据——按「有」处理',
+      };
+  }
+}
+
+/**
+ * 这个服务该用哪种方式备份。
+ *
+ * ## 为什么不自己再判一遍镜像名
+ *
+ * 「这是个什么库」这件事，本仓库一度有三份各自演化的判据：本函数、下载端点里的
+ * `detectKind`、以及暴露面自检的 `detectInfraKind`。三份都靠 `image.includes(...)`，
+ * 但覆盖的类型各不相同——postgres 在自检里认得出、在这里认不出，于是同一台库
+ * 「安全面知道它是 postgres」而「备份面把它当不认识的类型跳过」。
+ * 这正是 predicate-and-wiring-discipline 形状 3（判据分裂后各自漂移）。
+ *
+ * 现在只保留一份判据（`detectInfraKind`，它还能用 id / 容器名兜底，认得出私有仓库
+ * 那种名字里不含产品名的镜像），本函数只负责回答「这个类型我们有没有导出手段」。
+ */
+export function backupKindOf(dockerImage: string, hints: InfraKindHints = {}): BackupKind | null {
+  const kind = detectInfraKind(dockerImage, hints);
+  return BACKUP_CAPABLE_KINDS.has(kind) ? (kind as BackupKind) : null;
 }
 
 /**
@@ -110,6 +253,12 @@ const BACKUP_EXT: Record<BackupKind, string> = {
   mongo: 'archive.gz',
   redis: 'rdb',
   mysql: 'sql.gz',
+  postgres: 'sql.gz',
+  // definitions 是 JSON，不是 SQL。扩展名要能让人一眼知道这份东西该怎么灌回去。
+  rabbitmq: 'json.gz',
+  // 每个命名空间一个 zip，打成一包再压——`.gz` 结尾还顺带让上游的 `gzip -t`
+  // 完整性校验自动生效（那一步只对 `.gz` 跑）。
+  nacos: 'tar.gz',
 };
 
 /**
@@ -191,12 +340,21 @@ export function planInfraBackups(
       skipped.push({ id: c.id, reason: '容器未运行', blocksHealthy: false });
       continue;
     }
-    const kind = backupKindOf(c.dockerImage);
+    // id / 容器名一起交给判据：私有仓库或摘要镜像的名字里可能一个产品名都没有，
+    // 只看 image 会把一台真库判成「不认识的类型」并跳过——那是静默零备份。
+    const hints = { id: c.id, containerName: c.containerName };
+    const kind = backupKindOf(c.dockerImage, hints);
     if (!kind) {
+      // 分类而不是一句「暂不支持」：没有持久状态的不该算缺口（否则健康位从上线
+      // 那天起就永远红着），真算缺口的要当场说清缺的是哪一套手段。
+      const verdict = classifyBackupCoverage(detectInfraKind(c.dockerImage, hints), {
+        env: c.env,
+        command: c.command,
+      });
       skipped.push({
         id: c.id,
-        reason: `暂不支持自动备份的类型（${c.dockerImage}）`,
-        blocksHealthy: true,
+        reason: `${verdict.reason}（${c.dockerImage}）`,
+        blocksHealthy: verdict.blocksHealthy,
       });
       continue;
     }
@@ -210,11 +368,43 @@ export function backupCoverageGaps(plan: BackupPlan): BackupPlan['skipped'] {
   return plan.skipped.filter((item) => item.blocksHealthy);
 }
 
-/** 只有每个运行中目标都得到可校验副本时，整轮才允许刷新健康时间。 */
+/**
+ * 备成了、但**只备到了一部分**的那些缺口。
+ *
+ * postgres 是最典型的：脚本只导 `POSTGRES_DB` 那一个库，同实例其它库一条都没带走，
+ * 于是导出脚本往 stderr 报一行 `cds-backup-scope:`。原来这行只挂在 outcome 的 `note` 上，
+ * 而 `note` 没有任何判据在读——`ok` 仍是 true，于是整轮判成 coverageComplete，
+ * 备份健康时间照常刷新，每日体检也报不出缺口。**那几个库一份备份都没有，而灯是绿的。**
+ *
+ * 这正是这一整批改动要治的病（一盏说谎的灯比一盏红着的灯更糟），不能自己先犯
+ *（Codex review P1）。所以把运行时发现的范围限制升级成正式缺口：既进持久化的
+ * coverageGaps 给每日体检看，也拉低整轮健康。
+ *
+ * 注意它和 `ok` 的分工：那份单库产物**本身是有效备份**，不该被判成失败——失败会让
+ * 「导出崩了」和「导出成功但只覆盖一部分」混成一件事。所以 ok 保持 true，只算缺口。
+ */
+export function backupScopeGaps(outcomes: readonly BackupOutcome[]): BackupPlan['skipped'] {
+  const gaps: BackupPlan['skipped'] = [];
+  for (const o of outcomes) {
+    // 只认 gapNote。**不能读 note**：那是纯说明，而 rabbitmq 与 nacos 每轮都会
+    // 无条件报一行，读它等于让任何装了这两者的部署健康位永远刷不新（见 gapNote 的注释）。
+    if (!o.ok || !o.gapNote) continue;
+    gaps.push({ id: o.id, reason: o.gapNote, blocksHealthy: true });
+  }
+  return gaps;
+}
+
+/**
+ * 只有每个运行中目标都得到可校验副本、且没有任何覆盖缺口时，整轮才允许刷新健康时间。
+ *
+ * 缺口有两种来源，缺一种都会让健康位说谎：**计划阶段**就知道备不了的（backupCoverageGaps，
+ * 按服务类型判），和**跑完才知道只备到一部分**的（backupScopeGaps，按导出脚本的实际报告判）。
+ */
 export function isBackupRoundHealthy(plan: BackupPlan, outcomes: readonly BackupOutcome[]): boolean {
   return outcomes.length > 0
     && outcomes.every((outcome) => outcome.ok)
-    && backupCoverageGaps(plan).length === 0;
+    && backupCoverageGaps(plan).length === 0
+    && backupScopeGaps(outcomes).length === 0;
 }
 
 export interface ExistingBackup {
@@ -314,6 +504,28 @@ export interface BackupOutcome {
    * 「彻底没有」说成同一件事。
    */
   localOnly?: boolean;
+  /**
+   * 这份备份**覆盖到哪**的说明，由导出脚本自己报。
+   *
+   * 和 `error` 分开：它不表示失败，它表示「成功了，但别把它当成全量」。
+   * 两者混在一个字段里，要么把一次正常备份报成故障，要么让范围缺口彻底消失。
+   *
+   * **纯说明，不拉低健康位**——拉低健康的是下面的 `gapNote`。
+   */
+  note?: string;
+  /**
+   * 这一轮**真的少备了东西**时的说明（`cds-backup-gap:`）。只有它算覆盖缺口。
+   *
+   * 与 `note` 分家是因为上一版把两者混成了一个：任何 `cds-backup-scope:` 行都被
+   * 升级成阻塞缺口，而 rabbitmq 与 nacos 是**每轮无条件**报一行说明的（讲清楚
+   * definitions 不含消息、配置导出不含服务注册）。于是任何装了这两者的部署，
+   * 备份健康位从此永远刷不新、每日体检天天报「读不到上一轮备份」——一次成功的
+   * 备份被说成了不知道有没有备（Codex review P1）。
+   *
+   * 判据因此改成问一句：**这一行说的是「机制本来就不含」，还是「这次本可以带走
+   * 却没带走」？** 只有后者是缺口。
+   */
+  gapNote?: string;
 }
 
 /**
@@ -357,6 +569,12 @@ export function summarizeBackupRound(outcomes: readonly BackupOutcome[], skipped
     parts.push(`失败 ${hardFailed.length} 个（${hardFailed.map((f) => f.id).join('、')}）`);
   }
   if (skipped) parts.push(`跳过 ${skipped} 个`);
+  // 范围说明必须进这句话。它只活在 outcome 对象里的话，「这份 dump 没带走另外两个库」
+  // 就没有任何一个人会看到——那正是「备了」被读成「备全了」的路径。
+  const noted = outcomes.filter((o) => o.note);
+  if (noted.length) {
+    parts.push(`范围提示 ${noted.length} 条（${noted.map((o) => `${o.id}：${o.note}`).join('；')}）`);
+  }
   return parts.length ? `基础设施自动备份：${parts.join('，')}` : '基础设施自动备份：没有可备份的目标';
 }
 
@@ -773,4 +991,571 @@ export function buildMysqlTableCountScript(): string {
     'mysql -u"$CDS_MYSQL_USER" -N -B -e "SELECT COUNT(*) FROM information_schema.tables'
       + " WHERE table_schema NOT IN ('information_schema','performance_schema')\"",
   ].join('\n');
+}
+
+/**
+ * 在容器内挑一套能用的 PostgreSQL 凭据，并当场证明连得上。
+ *
+ * ## 为什么 postgres 此前一份备份都没有
+ *
+ * 判据太窄（形状 1）：`backupKindOf` 只认 mongo / redis / mysql，postgres 是一等预设
+ * 却整个落在「暂不支持的类型」里。它确实被记进了覆盖缺口（整轮健康因此不刷新），
+ * 但**没有人因为一个长期红着的健康位去补它**——红了三个月和绿了三个月，磁盘上
+ * 同样是零份 postgres 备份。手工下载那条路更糟：postgres 掉进兜底的 `tar -C /data`，
+ * 而它的数据在 `/var/lib/postgresql/data`，于是下载得到一个空壳、HTTP 还是 200
+ * （和 mysql 的 E41 一模一样的形状）。
+ *
+ * ## 凭据从哪来
+ *
+ * 官方镜像的 initdb 把本地 socket 配成 `trust`，所以 `docker exec` 进去用
+ * `-U <POSTGRES_USER>` 走 socket 就能连上，不依赖口令是否被记在 env 里；
+ * PGPASSWORD 仍然导出，兼容把 `POSTGRES_HOST_AUTH_METHOD` 改严过的实例。
+ * 全程在容器内展开：不进宿主命令行、不进 CDS 日志、不进宿主 ps。
+ *
+ * ## 连不上就退出，不猜
+ *
+ * 先真连一次。连不上直接 78 退出并说清用的是哪个用户、哪个库——上一版 mysql 的
+ * 教训就是「Access denied」被读成「口令不对」，实际是判据取错了账号，白等了一周。
+ */
+const POSTGRES_CREDENTIAL_LINES: readonly string[] = [
+  'CDS_PG_USER="${POSTGRES_USER:-${PGUSER:-postgres}}"',
+  'CDS_PG_PW="${POSTGRES_PASSWORD:-${PGPASSWORD:-}}"',
+  // 官方镜像里 POSTGRES_DB 缺省就等于 POSTGRES_USER，这里照同一条缺省链走。
+  'CDS_PG_DB="${POSTGRES_DB:-${PGDATABASE:-$CDS_PG_USER}}"',
+  'export PGPASSWORD="$CDS_PG_PW"',
+  'CDS_PG_PROBE=$(psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -tAc "SELECT 1" 2>&1) || {',
+  '  echo "cds-backup: 连不上 postgres（用户=$CDS_PG_USER 库=$CDS_PG_DB）：$CDS_PG_PROBE" >&2',
+  '  exit 78',
+  '}',
+];
+
+/**
+ * 同实例里**没被这份备份覆盖**的其它库，逐个报出来。
+ *
+ * 这一段不是装饰。本函数导出的是**一个库**（`$CDS_PG_DB`），而 postgres 一个实例
+ * 可以有很多库；「备了」和「备全了」是两件事，混着报就是下一次「以为有、其实没有」。
+ * 排除 `postgres` 维护库：它是镜像自带的空库，报出来只会变成每轮都在的噪音。
+ *
+ * 走 stderr 而不是 stdout：stdout 是备份产物本身，往里写一个字都会污染 dump。
+ * 前缀 `cds-backup-gap:` 是给调用方认领用的机器标记：同实例别的库没备走，是**这一轮
+ * 真的少备了东西**，该拉低健康位（区别于「机制本来就不含」那种纯说明，见
+ * `BACKUP_GAP_NOTE_MARKER`）。
+ */
+const POSTGRES_SCOPE_NOTE_LINES: readonly string[] = [
+  'CDS_PG_OTHERS=$(psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -tAc '
+    + `"SELECT string_agg(datname, ',' ORDER BY datname) FROM pg_database`
+    + ` WHERE datallowconn AND NOT datistemplate AND datname <> current_database() AND datname <> 'postgres'"`
+    + ' 2>/dev/null | tr -d " ")',
+  // 空结果时 `[ -n ... ]` 为假，整条复合命令返回 1；后面还有语句，但加 `|| true`
+  // 免得将来有人把它挪到末尾，静默把整个脚本判成失败。
+  '[ -n "$CDS_PG_OTHERS" ] && echo "cds-backup-gap: 本次只导出库 $CDS_PG_DB；'
+    + '同实例另有未纳入备份的库：$CDS_PG_OTHERS" >&2 || true',
+];
+
+/**
+ * PostgreSQL 导出：容器内流式压缩，两端退出码都保住。
+ *
+ * 管道退出码那三个坑（默认只给最后一环、dash 没有 pipefail、gzip 写盘失败留下
+ * 一份截断档案还被当成功）在 `buildMysqlDumpScript` 的注释里写全了，这里用同一套
+ * fd3 / fd4 写法，不再复述。
+ *
+ * ## 为什么是 pg_dump 不是 pg_dumpall
+ *
+ * `pg_dumpall` 能一次带走整个集群和角色，但它的产物**没法灌回一个已经存在的集群**：
+ * 里面的 `CREATE ROLE` 撞上已存在的角色就报错，加 `--clean` 又会尝试 DROP 掉当前
+ * 连接用的那个角色。一份「导得出、灌不回」的备份等于没有备份——mysql 那侧的原话。
+ *
+ * `pg_dump --clean --if-exists` 相反：对同一个库反复灌都成立（先 DROP IF EXISTS
+ * 再建），既能盖回自己，也能搬到另一台空库上。`--no-owner --no-privileges` 是为了
+ * 后者：目标集群没有源集群那些角色时，属主/授权语句会整片失败。
+ *
+ * 代价是**角色、权限、以及同实例其它库不在这份备份里**。这不是悄悄的取舍：
+ * 其它库由 POSTGRES_SCOPE_NOTE_LINES 当场报出来，角色缺失记在 debt.cds.infra-backup.md。
+ */
+export function buildPostgresDumpScript(): string {
+  return [
+    ...POSTGRES_CREDENTIAL_LINES,
+    ...POSTGRES_SCOPE_NOTE_LINES,
+    'exec 3>&1',
+    'codes=$( { { pg_dump -U "$CDS_PG_USER" -d "$CDS_PG_DB" --clean --if-exists --no-owner --no-privileges;'
+      + ' echo "dump=$?" >&4; }'
+      + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
+    `d=$(printf '%s\\n' "$codes" | sed -n 's/^dump=//p')`,
+    `g=$(printf '%s\\n' "$codes" | sed -n 's/^gzip=//p')`,
+    '[ "${d:-1}" = 0 ] || exit "${d:-1}"',
+    '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
+  ].join('\n');
+}
+
+/**
+ * PostgreSQL 恢复：把 `.sql.gz` 灌回目标库。
+ *
+ * ## 这里有一个 mysql 那侧没有的坑
+ *
+ * **psql 默认遇错继续，跑完照样 exit 0。** 一份灌到一半全是错的 dump，psql 会把
+ * 错误打在 stderr 上然后返回 0——调用方读到 0 就报「已恢复」，正是本文件被烧过
+ * 三次的那种假成功，而且这一次连管道退出码都救不了（psql 自己就是撒谎的那个）。
+ * 所以 `-v ON_ERROR_STOP=1` 不是可选项：第一条语句失败即中止并返回非零。
+ *
+ * 其余（先 `gunzip -t` 验完整性、两端退出码经 fd4 回传）与 mysql 侧同一套写法。
+ */
+export function buildPostgresRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    ...POSTGRES_CREDENTIAL_LINES,
+    `gunzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gunzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    // psql 的 stdout 是噪音（一堆 SET / DROP 回显），赶到 stderr，别混进退出码通道。
+    `codes=$( { { gunzip -c ${p}; echo "gunzip=$?" >&4; }`
+      + ' | { psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -v ON_ERROR_STOP=1 --quiet >&2; echo "psql=$?" >&4; }; } 4>&1 )',
+    `u=$(printf '%s\\n' "$codes" | sed -n 's/^gunzip=//p')`,
+    `m=$(printf '%s\\n' "$codes" | sed -n 's/^psql=//p')`,
+    // 读不到退出码按失败处理——「不确定」不能当成「成功」。
+    '[ "${u:-1}" = 0 ] || exit "${u:-1}"',
+    '[ "${m:-1}" = 0 ] || exit "${m:-1}"',
+    'exit 0',
+  ].join('\n');
+}
+
+/**
+ * 数一数目标库里有多少张用户表。
+ *
+ * 和 mysql 侧同样的用途：恢复前后各数一次，让「已恢复」这句话带着能被核对的数字，
+ * 而不是一个自称。
+ */
+export function buildPostgresTableCountScript(): string {
+  return [
+    ...POSTGRES_CREDENTIAL_LINES,
+    'psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -tAc "SELECT count(*) FROM information_schema.tables'
+      + " WHERE table_schema NOT IN ('pg_catalog','information_schema')\"",
+  ].join('\n');
+}
+
+/**
+ * 先确认能跟 rabbitmq 节点说上话。
+ *
+ * 和 mysql / postgres 不同，`rabbitmqctl` 不用账号口令——它靠 Erlang cookie 连本机节点，
+ * 所以这里没有「挑一套凭据」的问题，只有「节点起来了没有」。
+ *
+ * 用 `await_startup` 而不是 `status`：容器刚起来的那几十秒里节点在 boot，
+ * 任何命令都会失败，而那不是「坏了」是「还没好」。await_startup 会等到 boot 完成，
+ * 超时才算真的连不上。给 20 秒上限，免得一台真的起不来的节点把整轮备份拖住。
+ */
+const RABBITMQ_PROBE_LINES: readonly string[] = [
+  'CDS_RMQ_PROBE=$(rabbitmqctl -q -t 20 await_startup 2>&1) || {',
+  '  echo "cds-backup: 连不上 rabbitmq 节点（20s 内没等到 await_startup）：$CDS_RMQ_PROBE" >&2',
+  '  exit 78',
+  '}',
+];
+
+/**
+ * 这份备份**没带走什么**，当场说清楚。
+ *
+ * definitions 导的是拓扑（vhost / 队列与交换机的声明 / 绑定 / 用户 / 权限 / 策略 / 参数），
+ * **队列里的消息一条都不在里面**。这不是实现取舍，是 definitions 这个东西的定义——
+ * RabbitMQ 没有「把消息一致性快照出来」的命令。
+ *
+ * 所以这条注记是无条件发的，而且带上数字：光说「不含消息」谁都不会当回事，
+ * 说「当前积压 12000 条消息不在这份备份里」才是一个能让人做决定的事实。
+ *
+ * 数不出来时说「数不出来」，不拿 0 顶替——一个真的空队列和一次失败的查询，
+ * 在「输出为空」这件事上长得一模一样，混着报就又是一次「以为有、其实没有」。
+ * 所以退出码单独接一手，不靠输出是否为空来猜。
+ *
+ * 走 stderr：stdout 是备份产物本身，往里写一个字都会污染 definitions JSON。
+ */
+export const RABBITMQ_SCOPE_NOTE_LINES: readonly string[] = [
+  'CDS_RMQ_Q=$(rabbitmqctl -q list_queues messages 2>/dev/null); CDS_RMQ_RC=$?',
+  'if [ "$CDS_RMQ_RC" = 0 ]; then',
+  // 只累加纯数字行：任何版本差异带来的表头/提示行都进不了这个和。
+  `  CDS_RMQ_MSGS=$(printf '%s\\n' "$CDS_RMQ_Q" | awk 'BEGIN{s=0}/^[0-9]+$/{s+=$1}END{print s}')`,
+  // 有积压才算「这轮少备了东西」。**0 条时只报说明、不算缺口**——definitions 不含
+  // 消息是这套机制固有的，无条件当缺口会让任何装了 rabbitmq 的部署健康位永远刷不新
+  //（Codex review P1）。数不出来时按缺口从严：证明不了没漏，就当漏了。
+  '  if [ "$CDS_RMQ_MSGS" -gt 0 ] 2>/dev/null; then',
+  '    echo "cds-backup-gap: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；默认 vhost 当前积压 $CDS_RMQ_MSGS 条消息，它们不会被这份备份带走" >&2',
+  '  else',
+  '    echo "cds-backup-scope: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；默认 vhost 当前没有积压消息，这一轮没有东西被漏下" >&2',
+  '  fi',
+  'else',
+  '  echo "cds-backup-gap: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；当前积压多少条没数出来（list_queues 失败），按有积压从严处理" >&2',
+  'fi',
+];
+
+/**
+ * RabbitMQ 导出：definitions 转 JSON，容器内流式压缩。
+ *
+ * ## 为什么是 definitions 而不是别的
+ *
+ * RabbitMQ 没有「全量一致性备份」这种东西。官方给的持久化恢复手段就两条：
+ * 拷 mnesia 数据目录（要求节点停机，而且换个节点名就读不回来），或者导 definitions。
+ * 前者做不成「跑着的服务定期备份」，所以只有后者可用。
+ *
+ * 代价是**消息不在里面**——由 RABBITMQ_SCOPE_NOTE_LINES 每轮当场报出来，
+ * 不做成一句藏在文档里的免责声明。
+ *
+ * ## 为什么带 -q
+ *
+ * 不加 `-q` 时 rabbitmqctl 会往 stdout 打「Exporting definitions ...」之类的提示行，
+ * 那会直接混进 JSON 里，产出一份**看起来成功、其实解析不了**的备份。
+ *
+ * 管道退出码那三个坑（默认只给最后一环、dash 没有 pipefail、gzip 写盘失败留下截断档案
+ * 还被当成功）在 `buildMysqlDumpScript` 的注释里写全了，这里用同一套 fd3 / fd4 写法。
+ */
+export function buildRabbitmqDumpScript(): string {
+  return [
+    ...RABBITMQ_PROBE_LINES,
+    ...RABBITMQ_SCOPE_NOTE_LINES,
+    'exec 3>&1',
+    'codes=$( { { rabbitmqctl -q export_definitions - --format=json;'
+      + ' echo "dump=$?" >&4; }'
+      + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
+    `d=$(printf '%s\\n' "$codes" | sed -n 's/^dump=//p')`,
+    `g=$(printf '%s\\n' "$codes" | sed -n 's/^gzip=//p')`,
+    '[ "${d:-1}" = 0 ] || exit "${d:-1}"',
+    '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
+  ].join('\n');
+}
+
+/**
+ * RabbitMQ 恢复：把 definitions 灌回节点。
+ *
+ * ## 一个和 SQL 那两条完全不同的语义，必须知道
+ *
+ * `import_definitions` 是**合并**不是**替换**。pg_dump 那份带着 `DROP ... IF EXISTS`，
+ * 灌回去之后库的状态就等于备份那一刻；definitions 不是——它只会把文件里写的东西声明出来，
+ * **备份之后新建的队列、交换机、用户会原样留着**。
+ *
+ * 也就是说这条路能救「配置被删了」，救不了「配置被加错了」。这一点写在这里，
+ * 是因为它没法在代码里修（RabbitMQ 就没给替换语义），只能让用的人知道。
+ *
+ * 其余（先 `gunzip -t` 验完整性、两端退出码经 fd4 回传）与 mysql / postgres 同一套写法。
+ */
+export function buildRabbitmqRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    ...RABBITMQ_PROBE_LINES,
+    `gunzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gunzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    // rabbitmqctl 的 stdout 是噪音，赶到 stderr，别混进退出码通道。
+    `codes=$( { { gunzip -c ${p}; echo "gunzip=$?" >&4; }`
+      + ' | { rabbitmqctl -q import_definitions - --format=json >&2; echo "import=$?" >&4; }; } 4>&1 )',
+    `u=$(printf '%s\\n' "$codes" | sed -n 's/^gunzip=//p')`,
+    `m=$(printf '%s\\n' "$codes" | sed -n 's/^import=//p')`,
+    // 读不到退出码按失败处理——「不确定」不能当成「成功」。
+    '[ "${u:-1}" = 0 ] || exit "${u:-1}"',
+    '[ "${m:-1}" = 0 ] || exit "${m:-1}"',
+    'exit 0',
+  ].join('\n');
+}
+
+/**
+ * 数一数默认 vhost 里有多少个队列。
+ *
+ * 和 mysql / postgres 侧的数表同一个用途：恢复前后各数一次，让「已恢复」这句话
+ * 带着能被核对的数字。
+ *
+ * **只覆盖默认 vhost**，而 definitions 是跨 vhost 的——这个数字是个证人，不是账本。
+ * 跨 vhost 计数要循环 `list_vhosts` 再逐个 `list_queues -p`，在这里换来的精度
+ * 不值它增加的版本兼容面。
+ *
+ * `awk` 兜底而不是 `grep -c .`：一个队列都没有时 grep 退出码是 1，
+ * 会把整条取证判成失败——而「零个队列」是一个完全正常的答案。
+ */
+export function buildRabbitmqQueueCountScript(): string {
+  return [
+    ...RABBITMQ_PROBE_LINES,
+    `rabbitmqctl -q list_queues name 2>/dev/null | awk 'NF{n++}END{print n+0}'`,
+  ].join('\n');
+}
+
+/**
+ * nacos 导出的公共前置：挑一个 HTTP 客户端、算出根地址、必要时登录、确认服务活着。
+ *
+ * ## 为什么走 HTTP 而不是拷数据目录
+ *
+ * nacos 的配置可能落在内嵌 Derby，也可能落在外部 MySQL，**同一个镜像两种形态**，
+ * 而容器外面看不出来是哪一种。配置导出接口对两种形态给出同一份产物，
+ * 所以它是唯一一条不用先猜存储后端的路。
+ *
+ * 拷 Derby 目录那条路还有个更硬的问题：热拷一个正在写的 Derby 库，拿到的东西
+ * 可能根本打不开——那是「导得出、灌不回」，等于没有备份。
+ *
+ * ## 为什么容忍 curl 缺失但绝不静默
+ *
+ * 官方镜像里有没有 curl 是**关于镜像的假设**，不是关于我们脚本的。所以两种客户端
+ * 都试，一个都没有就退 78 并说清原因——**绝不产出一份空的、看起来成功的备份**。
+ */
+const NACOS_CLIENT_LINES: readonly string[] = [
+  'if command -v curl >/dev/null 2>&1; then CDS_NACOS_HTTP=curl',
+  'elif command -v wget >/dev/null 2>&1; then CDS_NACOS_HTTP=wget',
+  'else',
+  '  echo "cds-backup: 容器里既没有 curl 也没有 wget，而 nacos 的配置只能从它的 HTTP 接口导出" >&2',
+  '  exit 78',
+  'fi',
+  'cds_nacos_get() {',
+  '  if [ "$CDS_NACOS_HTTP" = curl ]; then curl -fsS "$1"; else wget -q -O - "$1"; fi',
+  '}',
+  'cds_nacos_download() {',
+  '  if [ "$CDS_NACOS_HTTP" = curl ]; then curl -fsS -o "$2" "$1"; else wget -q -O "$2" "$1"; fi',
+  '}',
+  // 端口与上下文路径都可被 env 改（2.4 起上下文路径默认成了根），所以不写死。
+  // 上下文路径要去掉首尾斜杠再拼。运维按 servlet 习惯写成 `/nacos` 或 `/` 是常态，
+  // 直接插值会拼出 `//nacos` / `//`，之后探活、列命名空间、导出、导入**全部打错路径**
+  // ——而默认路径的容器用例照样绿，这种漏法只有配了上下文路径的实例才会撞上
+  // （Codex review P2）。
+  `CDS_NACOS_CTX=$(printf '%s' "\${NACOS_CONTEXT_PATH:-nacos}" | sed 's#^/*##; s#/*$##')`,
+  'CDS_NACOS_BASE="http://127.0.0.1:${NACOS_APPLICATION_PORT:-8848}${CDS_NACOS_CTX:+/$CDS_NACOS_CTX}"',
+  'CDS_NACOS_AUTH=""',
+  'case "$(printf \'%s\' "${NACOS_AUTH_ENABLE:-}" | tr \'A-Z\' \'a-z\')" in',
+  '  true|1|yes)',
+  '    if [ "$CDS_NACOS_HTTP" != curl ]; then',
+  // wget 只能把 POST body 摆在命令行上，那会让口令进容器的进程列表。
+  // 宁可这一轮不备份，也不为了跑通把口令泄出去（与 nats 那次的教训同源）。
+  '      echo "cds-backup: nacos 开了鉴权，但容器里只有 wget——用它登录会把口令摆进进程列表，拒绝这么做" >&2',
+  '      exit 78',
+  '    fi',
+  '    CDS_NACOS_USER="${NACOS_AUTH_USERNAME:-${NACOS_USERNAME:-nacos}}"',
+  '    CDS_NACOS_PW="${NACOS_AUTH_PASSWORD:-${NACOS_PASSWORD:-}}"',
+  '    if [ -z "$CDS_NACOS_PW" ]; then',
+  '      echo "cds-backup: nacos 开了鉴权，容器 env 里却没有口令（找过 NACOS_AUTH_PASSWORD / NACOS_PASSWORD）" >&2',
+  '      exit 78',
+  '    fi',
+  // body 走 stdin（`--data-binary @-`），不进 argv：容器内 ps 看不到口令。
+  '    CDS_NACOS_TOKEN=$(printf \'username=%s&password=%s\' "$CDS_NACOS_USER" "$CDS_NACOS_PW"'
+    + ' | curl -fsS --data-binary @- "$CDS_NACOS_BASE/v1/auth/login" 2>/dev/null'
+    + ' | sed -n \'s/.*"accessToken":"\\([^"]*\\)".*/\\1/p\')',
+  '    if [ -z "$CDS_NACOS_TOKEN" ]; then',
+  '      echo "cds-backup: nacos 登录没拿到 accessToken（用户=$CDS_NACOS_USER），导不出配置" >&2',
+  '      exit 78',
+  '    fi',
+  '    CDS_NACOS_AUTH="&accessToken=$CDS_NACOS_TOKEN"',
+  '    ;;',
+  'esac',
+  // 先真连一次。连不上就停在这里，不带着一个空结果往下走。
+  'CDS_NACOS_PROBE=$(cds_nacos_get "$CDS_NACOS_BASE/v1/console/health/readiness?cds=1$CDS_NACOS_AUTH" 2>&1) || {',
+  '  echo "cds-backup: 连不上 nacos（$CDS_NACOS_BASE）：$CDS_NACOS_PROBE" >&2',
+  '  exit 78',
+  '}',
+];
+
+/**
+ * 列出所有命名空间。public 那个在接口里的 id 是空串，本文件用 `__public__` 代表它。
+ *
+ * 为什么要逐个命名空间导：nacos 的配置导出接口**一次只能导一个命名空间**
+ * （tenant 参数），没有跨命名空间的全量导出。只导 public 的话，
+ * 凡是把配置放在自定义命名空间的项目，备份会是一份看起来成功的空壳。
+ */
+const NACOS_NAMESPACE_LINES: readonly string[] = [
+  // **先把响应整个拿到手，再解析。**
+  //
+  // 原来是 `cds_nacos_get ... | tr | sed` 一条管道：shell 看到的退出码是**最后一环
+  // sed 的**，而 sed 对着空输入照样退 0。于是命名空间接口一旦失败（网络、鉴权、
+  // 改版），`CDS_NACOS_NS` 静默变成空，接下来只导 public 一个命名空间，
+  // 还报「成功，1 个命名空间」——一份看起来成功的空壳，而这正是本文件反复在防的东西
+  // （Codex review P1）。所以取值与解析分成两步，取值失败当场退出。
+  'CDS_NACOS_NS_RAW=$(cds_nacos_get "$CDS_NACOS_BASE/v1/console/namespaces?cds=1$CDS_NACOS_AUTH" 2>&1) || {',
+  '  echo "cds-backup: 列不出 nacos 命名空间（$CDS_NACOS_BASE）：$CDS_NACOS_NS_RAW" >&2',
+  '  echo "cds-backup: 拿不到命名空间清单就无法保证备全，拒绝只导 public 冒充全量" >&2',
+  '  exit 78',
+  '}',
+  // 响应必须长得像命名空间清单。返回 200 但内容是登录页 / 错误 JSON 时，
+  // 解析出零个命名空间和「真的只有 public」长得一模一样——那是同一个坑的另一半。
+  'case "$CDS_NACOS_NS_RAW" in',
+  '  *\'"namespace"\'*) ;;',
+  '  *)',
+  '    echo "cds-backup: 命名空间接口的响应里没有 namespace 字段，认不出这是清单，拒绝当成空清单继续" >&2',
+  '    exit 78',
+  '    ;;',
+  'esac',
+  `CDS_NACOS_NS=$(printf '%s' "$CDS_NACOS_NS_RAW"`
+    + ' | tr \'{\' \'\\n\' | sed -n \'s/.*"namespace":"\\([^"]*\\)".*/\\1/p\')',
+  'CDS_NACOS_NS_COUNT=1',
+  'for ns in $CDS_NACOS_NS; do CDS_NACOS_NS_COUNT=$((CDS_NACOS_NS_COUNT+1)); done',
+];
+
+/**
+ * nacos 导出：逐命名空间取配置 zip，打成一包再压。
+ *
+ * 产物是 `tar.gz`，里面每个命名空间一个 `.zip`，文件名就是命名空间 id
+ * （public 那个叫 `__public__.zip`）。这样恢复时能一个个原样灌回对应命名空间。
+ *
+ * 管道退出码那三个坑（默认只给最后一环、dash 没有 pipefail、gzip 写盘失败留下
+ * 截断档案还被当成功）在 `buildMysqlDumpScript` 的注释里写全了，这里同一套 fd3/fd4 写法。
+ */
+export function buildNacosDumpScript(): string {
+  return [
+    ...NACOS_CLIENT_LINES,
+    ...NACOS_NAMESPACE_LINES,
+    // 这份备份**没带走什么**，当场说清楚：服务注册列表是各实例自己上报的、
+    // 重启会重来，本来就不该备；用户/角色/权限存在库里，配置导出接口不含它们。
+    'echo "cds-backup-scope: 这份备份是 nacos 的配置（$CDS_NACOS_NS_COUNT 个命名空间），'
+      + '不含服务注册列表与用户/角色/权限——它们不在配置导出接口里" >&2',
+    'CDS_NACOS_DIR=$(mktemp -d /tmp/cds-nacos-XXXXXX) || { echo "cds-backup: 建不出临时目录" >&2; exit 74; }',
+    'trap \'rm -rf "$CDS_NACOS_DIR"\' EXIT',
+    'for ns in __public__ $CDS_NACOS_NS; do',
+    '  CDS_NACOS_TENANT=""',
+    '  [ "$ns" = "__public__" ] || CDS_NACOS_TENANT="$ns"',
+    '  cds_nacos_download'
+      + ' "$CDS_NACOS_BASE/v1/cs/configs?export=true&group=&appName=&ids=&tenant=$CDS_NACOS_TENANT$CDS_NACOS_AUTH"'
+      + ' "$CDS_NACOS_DIR/$ns.zip" || {',
+    '    echo "cds-backup: 导出命名空间 [$ns] 失败，整轮作废——半份备份比没有更危险" >&2',
+    '    exit 1',
+    '  }',
+    'done',
+    'exec 3>&1',
+    'codes=$( { { tar -cf - -C "$CDS_NACOS_DIR" .; echo "tar=$?" >&4; }'
+      + ' | { gzip -n -c >&3; echo "gzip=$?" >&4; }; } 4>&1 )',
+    't=$(printf \'%s\\n\' "$codes" | sed -n \'s/^tar=//p\')',
+    'g=$(printf \'%s\\n\' "$codes" | sed -n \'s/^gzip=//p\')',
+    '[ "${t:-1}" = 0 ] || exit "${t:-1}"',
+    '[ "${g:-1}" = 0 ] || exit "${g:-1}"',
+  ].join('\n');
+}
+
+/**
+ * nacos 恢复：把每个命名空间的 zip 灌回对应命名空间。
+ *
+ * ## 三件必须知道的事
+ *
+ * 1. **导入策略是 OVERWRITE**：同名配置以备份里的为准。备份之后**新建**的配置
+ *    不会被删掉——和 rabbitmq 的 definitions 一样，这条路能救「配置被删/被改坏了」，
+ *    救不了「配置被加错了」。nacos 的导入接口就没给「清空后导入」这个语义。
+ * 2. **命名空间必须已经存在**：导入不会替你建命名空间。备份里有而目标上没有的，
+ *    那一包会被拒绝，脚本当场整体失败，不让它变成一次「部分成功」。
+ * 3. **失败也可能回 HTTP 200**：nacos 的导入接口把结果写在 body 的 `code` 里，
+ *    只看退出码会把失败读成成功——psql 那条（默认遇错继续照样 exit 0）的同一形状。
+ *    所以这里还要检查 body。
+ *
+ * 上传要走 multipart，wget 做不了，所以恢复这条路强制要 curl。
+ */
+export function buildNacosRestoreScript(inContainerPath: string): string {
+  // 单引号里只有 `'` 需要处理，其余字符（含 $ ` \ 空格）都是字面量。
+  const p = `'${String(inContainerPath).replace(/'/g, `'"'"'`)}'`;
+  return [
+    ...NACOS_CLIENT_LINES,
+    'if [ "$CDS_NACOS_HTTP" != curl ]; then',
+    '  echo "cds-restore: 导入要走 multipart 上传，容器里没有 curl，做不到" >&2',
+    '  exit 78',
+    'fi',
+    // 先验完整性再动配置。空文件、传了一半的文件在这里就出局。
+    `gzip -t ${p} || { echo "cds-restore: 读不出这份 gz（见上一行 gzip 的输出），未导入任何内容" >&2; exit 65; }`,
+    'CDS_NACOS_DIR=$(mktemp -d /tmp/cds-nacos-XXXXXX) || { echo "cds-restore: 建不出临时目录" >&2; exit 74; }',
+    'trap \'rm -rf "$CDS_NACOS_DIR"\' EXIT',
+    `tar -xzf ${p} -C "$CDS_NACOS_DIR" || { echo "cds-restore: 这份包解不开，未导入任何内容" >&2; exit 65; }`,
+    'CDS_NACOS_DONE=0',
+    'for f in "$CDS_NACOS_DIR"/*.zip; do',
+    // glob 没匹配到时 sh 会把模式原样留下，`-f` 挡住它。
+    '  [ -f "$f" ] || continue',
+    '  ns=$(basename "$f" .zip)',
+    '  CDS_NACOS_TENANT=""',
+    '  [ "$ns" = "__public__" ] || CDS_NACOS_TENANT="$ns"',
+    '  CDS_NACOS_RESP=$(curl -fsS -F "file=@$f"'
+      + ' "$CDS_NACOS_BASE/v1/cs/configs?import=true&policy=OVERWRITE&namespace=$CDS_NACOS_TENANT$CDS_NACOS_AUTH"'
+      + ' 2>&1) || {',
+    '    echo "cds-restore: 导入命名空间 [$ns] 失败：$CDS_NACOS_RESP" >&2',
+    '    exit 1',
+    '  }',
+    '  case "$CDS_NACOS_RESP" in',
+    '    *\'"code":200\'*) ;;',
+    '    *)',
+    '      echo "cds-restore: 导入命名空间 [$ns] 被 nacos 拒绝：$CDS_NACOS_RESP" >&2',
+    '      exit 1',
+    '      ;;',
+    '  esac',
+    '  CDS_NACOS_DONE=$((CDS_NACOS_DONE+1))',
+    'done',
+    'if [ "$CDS_NACOS_DONE" = 0 ]; then',
+    // 一个 zip 都没有 = 这份备份是空的。报成功会让人以为已经恢复了。
+    '  echo "cds-restore: 这份包里一个命名空间都没有，什么都没导入" >&2',
+    '  exit 65',
+    'fi',
+    'exit 0',
+  ].join('\n');
+}
+
+/**
+ * 数一数所有命名空间加起来有多少条配置。
+ *
+ * 和 mysql / postgres 侧的数表同一个用途：恢复前后各数一次，让「已恢复」这句话
+ * 带着能被核对的数字。这里是跨命名空间求和，覆盖面与备份本身一致。
+ */
+export function buildNacosConfigCountScript(): string {
+  return [
+    ...NACOS_CLIENT_LINES,
+    ...NACOS_NAMESPACE_LINES,
+    'CDS_NACOS_TOTAL=0',
+    'for ns in __public__ $CDS_NACOS_NS; do',
+    '  CDS_NACOS_TENANT=""',
+    '  [ "$ns" = "__public__" ] || CDS_NACOS_TENANT="$ns"',
+    // 先把响应整个接住再解析。**不能直接 `cds_nacos_get | sed`**：管道的退出码是
+    // 最后一条命令的，sed 对着空输入照样成功，于是「这个命名空间没查通」和
+    // 「这个命名空间有 0 条配置」变成同一件事。下面 `${CDS_NACOS_N:-0}` 再把它
+    // 兜成一个真实的 0，最后恢复端点报出一个看着可信、其实少算了的数字
+    //（Codex review P2）。数不出来就必须让整段脚本失败，让调用方显示「未知」。
+    '  CDS_NACOS_BODY=$(cds_nacos_get'
+      + ' "$CDS_NACOS_BASE/v1/cs/configs?search=accurate&dataId=&group=&pageNo=1&pageSize=1'
+      + '&tenant=$CDS_NACOS_TENANT$CDS_NACOS_AUTH" 2>/dev/null)',
+    '  if [ $? -ne 0 ]; then',
+    '    echo "cds-count: 命名空间 $ns 查询失败，数不出配置条数" >&2',
+    '    exit 66',
+    '  fi',
+    '  CDS_NACOS_N=$(printf %s "$CDS_NACOS_BODY"'
+      + ' | sed -n \'s/.*"totalCount":\\([0-9]*\\).*/\\1/p\')',
+    // 查通了但响应里没有 totalCount：同样是「数不出来」，不是 0。
+    '  case "$CDS_NACOS_N" in',
+    '    "" | *[!0-9]* )',
+    '      echo "cds-count: 命名空间 $ns 的响应里没有 totalCount，数不出配置条数" >&2',
+    '      exit 66',
+    '      ;;',
+    '  esac',
+    '  CDS_NACOS_TOTAL=$((CDS_NACOS_TOTAL + CDS_NACOS_N))',
+    'done',
+    'echo "$CDS_NACOS_TOTAL"',
+  ].join('\n');
+}
+
+/**
+ * 导出脚本写给 stderr 的作用域说明的机器标记。调用方靠它把这一行认出来。
+ *
+ * 名字里不带类型：postgres（同实例别的库没备）和 rabbitmq（消息不在里面）都在用它，
+ * 后面还会有别的。叫 `POSTGRES_*` 的共享常量迟早被人复制出第二份。
+ */
+export const BACKUP_SCOPE_NOTE_MARKER = 'cds-backup-scope:';
+
+/**
+ * 「这一轮真的少备了东西」的机器标记。**只有它算覆盖缺口、只有它拉低健康位。**
+ *
+ * 与 `BACKUP_SCOPE_NOTE_MARKER` 分家的理由见 `BackupOutcome.gapNote`：说明性的
+ * 那一行（definitions 不含消息、配置导出不含服务注册）是每轮无条件报的，
+ * 把它当缺口会让健康位永远刷不新。
+ */
+export const BACKUP_GAP_NOTE_MARKER = 'cds-backup-gap:';
+
+/** 从一段 stderr 里捞出作用域说明（没有就返回 null）。 */
+export function extractBackupScopeNote(stderr: string): string | null {
+  return extractMarkedNote(stderr, BACKUP_SCOPE_NOTE_MARKER);
+}
+
+/** 从一段 stderr 里捞出「这轮真的少备了」的说明（没有就返回 null）。 */
+export function extractBackupGapNote(stderr: string): string | null {
+  return extractMarkedNote(stderr, BACKUP_GAP_NOTE_MARKER);
+}
+
+/**
+ * 两个标记共用一套取值，别让它们各写一遍（形状 3：判据分裂后各自漂移）。
+ *
+ * 用 `startsWith` 而不是 `includes`：`cds-backup-scope:` 是 `cds-backup-gap:` 之外
+ * 的另一个前缀，但两行都以 `cds-backup-` 开头，将来再加第三个标记时，
+ * `includes` 很容易让一行被两个提取器同时认领。
+ */
+function extractMarkedNote(stderr: string, marker: string): string | null {
+  const line = String(stderr || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l.startsWith(marker));
+  return line ? line.slice(marker.length).trim() : null;
 }

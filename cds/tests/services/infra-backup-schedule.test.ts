@@ -10,6 +10,10 @@ import {
   backupFileName,
   backupCoverageGaps,
   buildMysqlDumpScript,
+  buildNacosConfigCountScript,
+  extractBackupGapNote,
+  extractBackupScopeNote,
+  RABBITMQ_SCOPE_NOTE_LINES,
   buildRedisBackupProbeScript,
   buildRedisRdbPathScript,
   REDIS_CONNECT_LINES,
@@ -21,6 +25,7 @@ import {
   backupKindOf,
   isAutoBackupFile,
   isBackupRoundHealthy,
+  backupScopeGaps,
   parseDfAvailableBytes,
   planInfraBackups,
   selectExpiredBackups,
@@ -63,8 +68,11 @@ describe('选谁备份', () => {
     expect(plan.targets.map((t) => t.id)).toEqual(['mongodb', 'redis', 'mysql']);
     expect(plan.skipped.map((s) => s.id)).toEqual(['kafka', 'minio']);
     expect(backupCoverageGaps(plan).map((s) => s.id)).toEqual(['kafka', 'minio']);
-    // 跳过的必须写明为什么，否则「没备份」和「不需要备份」分不开
-    for (const s of plan.skipped) expect(s.reason).toContain('不支持');
+    // 跳过的必须写明**该用什么手段**，不能只说「不支持」——那句话把
+    // 「有数据但要另一套办法」和「压根没有数据」说成了同一件事。
+    for (const s of plan.skipped) expect(s.reason.length).toBeGreaterThan(20);
+    expect(plan.skipped.find((s) => s.id === 'kafka')!.reason).toContain('MirrorMaker');
+    expect(plan.skipped.find((s) => s.id === 'minio')!.reason).toContain('桶到桶');
   });
 
   it('没在跑的容器跳过并说明原因', () => {
@@ -188,12 +196,24 @@ describe('结论可读', () => {
   });
 
   it('运行中的不支持类型会阻断健康状态，停止的服务不会', () => {
+    // 例子从 postgres 换成 elasticsearch：postgres 已经有导出手段了（见下一条），
+    // 继续拿它当「不支持」的样本，测的就不再是这条规则本身。
     const plan = planInfraBackups([
-      cand({ id: 'postgres', dockerImage: 'postgres:16', running: true }),
+      cand({ id: 'search', dockerImage: 'elasticsearch:8.11.0', running: true }),
       cand({ id: 'stopped-mongo', running: false }),
     ], { now: NOW });
-    expect(backupCoverageGaps(plan).map((item) => item.id)).toEqual(['postgres']);
+    expect(backupCoverageGaps(plan).map((item) => item.id)).toEqual(['search']);
     expect(isBackupRoundHealthy(plan, [{ id: 'mongo', ok: true, bytes: 128 }])).toBe(false);
+  });
+
+  it('postgres 是备份目标，不再算覆盖缺口', () => {
+    // 它此前一直被记成「暂不支持的类型」——整轮健康因此长期红着，
+    // 而磁盘上一份 postgres 备份都没有。红着不等于备着。
+    const plan = planInfraBackups([
+      cand({ id: 'postgres', dockerImage: 'postgres:16-alpine', running: true }),
+    ], { now: NOW });
+    expect(backupCoverageGaps(plan)).toEqual([]);
+    expect(plan.targets.map((t) => [t.kind, t.fileName.endsWith('.sql.gz')])).toEqual([['postgres', true]]);
   });
 
   it('只有全部目标成功且没有覆盖缺口才允许刷新健康时间', () => {
@@ -201,6 +221,71 @@ describe('结论可读', () => {
     expect(isBackupRoundHealthy(complete, [{ id: 'mongo', ok: true, bytes: 128 }])).toBe(true);
     expect(isBackupRoundHealthy(complete, [{ id: 'mongo', ok: false, error: 'failed' }])).toBe(false);
     expect(isBackupRoundHealthy(complete, [])).toBe(false);
+  });
+
+  it('备成了但只备到一部分：算缺口、拉低整轮健康，不能报成 complete', () => {
+    // postgres 只导 POSTGRES_DB 那一个库，同实例其它库一条都没带走，导出脚本会往
+    // stderr 报一行范围限制。原来这行只挂在 outcome.note 上，而 note 没有任何判据在读——
+    // ok 仍是 true，于是整轮判成 coverageComplete、备份健康时间照常刷新、每日体检也
+    // 报不出缺口。**那几个库一份备份都没有，而灯是绿的**（Codex review P1）。
+    const complete: BackupPlan = { targets: [], skipped: [] };
+    const partial = [{
+      id: 'postgres',
+      ok: true,
+      bytes: 4096,
+      gapNote: '只导出了 appdb；同实例还有 analytics、audit 未纳入本次备份',
+    }];
+
+    const gaps = backupScopeGaps(partial);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].id).toBe('postgres');
+    expect(gaps[0].blocksHealthy).toBe(true);
+    // 原因原样带出来，让看到缺口的人当场知道缺的是哪几个库。
+    expect(gaps[0].reason).toContain('analytics');
+    expect(isBackupRoundHealthy(complete, partial)).toBe(false);
+  });
+
+  it('没有范围限制时不许凭空造缺口（防判据恒真）', () => {
+    // 没有这一条，把 backupScopeGaps 写成「永远返回一条」也能让上面那条绿，
+    // 而整轮健康会从此永远为假——一盏永远红着的灯，正是这批改动要治的另一半病。
+    const complete: BackupPlan = { targets: [], skipped: [] };
+    expect(backupScopeGaps([{ id: 'mongo', ok: true, bytes: 128 }])).toEqual([]);
+    expect(isBackupRoundHealthy(complete, [{ id: 'mongo', ok: true, bytes: 128 }])).toBe(true);
+  });
+
+  it('失败的那条不重复算成范围缺口——它已经是失败了', () => {
+    // ok=false 时整轮本来就不健康，再把它算进「范围缺口」只会让同一件事被报两遍。
+    expect(backupScopeGaps([{ id: 'postgres', ok: false, error: '导出失败', gapNote: '范围提示' }])).toEqual([]);
+  });
+
+  it('纯说明（note）不算缺口——否则装了 rabbitmq/nacos 的部署健康位永远刷不新', () => {
+    // 2026-08-26 Codex review P1。rabbitmq 与 nacos **每轮无条件**报一行说明
+    //（definitions 不含消息、配置导出不含服务注册）。上一版把任何 note 都升级成
+    // 阻塞缺口，于是这两类部署一次成功的备份也会被说成「读不到上一轮备份」，
+    // 而且永远刷不新——正是这批改动本来要治的那盏永远亮着的灯。
+    const complete: BackupPlan = { targets: [], skipped: [] };
+    const informational = [{
+      id: 'rabbitmq',
+      ok: true,
+      bytes: 2048,
+      note: '这份备份只有 definitions；默认 vhost 当前没有积压消息，这一轮没有东西被漏下',
+    }];
+    expect(backupScopeGaps(informational)).toEqual([]);
+    expect(isBackupRoundHealthy(complete, informational), '成功且没漏东西的一轮必须算健康').toBe(true);
+  });
+
+  it('两者同时出现时，只有 gapNote 算缺口', () => {
+    const both = [{
+      id: 'rabbitmq',
+      ok: true,
+      bytes: 2048,
+      note: '这份备份只有 definitions',
+      gapNote: '默认 vhost 当前积压 12 条消息，它们不会被这份备份带走',
+    }];
+    const gaps = backupScopeGaps(both);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].reason).toContain('12 条');
+    expect(gaps[0].reason).not.toContain('只有 definitions');
   });
 });
 
@@ -1362,5 +1447,111 @@ describe('执行层真的保留了本地副本', () => {
     expect(upload).toBeGreaterThan(0);
     expect(promote).toBeGreaterThan(upload);
     expect(prune).toBeGreaterThan(promote);
+  });
+});
+
+describe('nacos 数配置条数：数不出来就必须失败，不许兜成 0', () => {
+  /**
+   * 2026-08-25 Codex review P2。原来是 `cds_nacos_get ... | sed ...`——管道的退出码
+   * 是 sed 的，sed 对着空输入照样成功；后面 `${CDS_NACOS_N:-0}` 再把「没查通」兜成
+   * 一个真实的 0。于是恢复端点报出一个看着可信、其实少算了的数字。
+   *
+   * 断言跑真脚本，不是扫源码字面量：判据要的是「行为」，而不是「某段实现还在」。
+   */
+  const runCount = (curlBody: string, curlExit: number): { status: number; stdout: string; stderr: string } => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-nacos-count-'));
+    fs.writeFileSync(path.join(box, 'curl'), [
+      '#!/bin/sh',
+      'case "$*" in',
+      // 只让「数配置」这一发按用例要求成败。探活与列命名空间一律放行——否则脚本
+      // 会先在探活那步退出，测到的就不是我们要测的那一段（第一版就栽在这里）。
+      `  *v1/cs/configs*) printf '%s' '${curlBody}'; exit ${curlExit} ;;`,
+      // 命名空间清单：响应里必须有 namespace 字段，否则上游那道校验会先拦下来。
+      // 这里只留一个空名（= 只有 public），让求和的循环恰好跑一轮，好断言数字。
+      '  *namespaces*) echo \'{"data":[{"namespace":""}]}\'; exit 0 ;;',
+      'esac',
+      'echo ok',
+    ].join('\n'), { mode: 0o755 });
+    const r = spawnSync('/bin/sh', ['-s'], {
+      input: buildNacosConfigCountScript(),
+      encoding: 'utf8',
+      env: { PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}` },
+    });
+    return { status: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
+  };
+
+  it('查询失败 → 非零退出，不打印数字', () => {
+    const r = runCount('', 22);
+    expect(r.status, '数不出来必须让整段失败，让调用方显示「未知」').not.toBe(0);
+    expect(r.stdout.trim()).toBe('');
+    expect(r.stderr).toContain('数不出配置条数');
+  });
+
+  it('查通了但响应里没有 totalCount → 同样是「数不出来」，不是 0', () => {
+    const r = runCount('{"pageItems":[]}', 0);
+    expect(r.status).not.toBe(0);
+    expect(r.stdout.trim()).toBe('');
+  });
+
+  it('反面对照：正常响应照常求和', () => {
+    const r = runCount('{"totalCount":7,"pageItems":[]}', 0);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe('7');
+  });
+
+  it('语法要在 dash / busybox 那种 sh 里也成立', () => {
+    execFileSync('/bin/sh', ['-n'], { input: buildNacosConfigCountScript(), encoding: 'utf8' });
+  });
+});
+
+describe('rabbitmq 的范围提示：有积压才算缺口，没积压只是说明', () => {
+  /**
+   * 2026-08-26 Codex review P1 的红绿锚点。断言的是**脚本真跑出来是哪个标记**，
+   * 不是源码里有没有那个字符串——后者改个措辞就绿，测不到行为。
+   */
+  const runNote = (queuesStdout: string, exitCode: number): { stderr: string } => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rmq-note-'));
+    fs.writeFileSync(path.join(box, 'rabbitmqctl'), [
+      '#!/bin/sh',
+      `printf '%s' '${queuesStdout}'`,
+      `exit ${exitCode}`,
+    ].join('\n'), { mode: 0o755 });
+    const r = spawnSync('/bin/sh', ['-s'], {
+      input: RABBITMQ_SCOPE_NOTE_LINES.join('\n'),
+      encoding: 'utf8',
+      env: { PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}` },
+    });
+    return { stderr: r.stderr };
+  };
+
+  it('积压 0 条 → 只报说明，不算缺口', () => {
+    const { stderr } = runNote('0\n0\n', 0);
+    expect(extractBackupGapNote(stderr), '没有东西被漏下，就不该拉低健康位').toBeNull();
+    expect(extractBackupScopeNote(stderr)).toContain('没有积压消息');
+  });
+
+  it('有积压 → 算缺口，并把条数带出来', () => {
+    const { stderr } = runNote('7\n5\n', 0);
+    const gap = extractBackupGapNote(stderr);
+    expect(gap).toContain('12');
+    expect(extractBackupScopeNote(stderr), '同一轮不该两个标记都报').toBeNull();
+  });
+
+  it('数不出来（list_queues 失败）→ 从严当缺口', () => {
+    const { stderr } = runNote('', 69);
+    expect(extractBackupGapNote(stderr)).toContain('没数出来');
+  });
+
+  it('语法要在 dash / busybox 那种 sh 里也成立', () => {
+    execFileSync('/bin/sh', ['-n'], { input: RABBITMQ_SCOPE_NOTE_LINES.join('\n'), encoding: 'utf8' });
+  });
+});
+
+describe('两个标记的提取器不互相认领', () => {
+  it('scope 行不会被当成 gap，反之亦然', () => {
+    expect(extractBackupGapNote('cds-backup-scope: 只是说明')).toBeNull();
+    expect(extractBackupScopeNote('cds-backup-gap: 真的漏了')).toBeNull();
+    expect(extractBackupScopeNote('cds-backup-scope: 只是说明')).toBe('只是说明');
+    expect(extractBackupGapNote('cds-backup-gap: 真的漏了')).toBe('真的漏了');
   });
 });

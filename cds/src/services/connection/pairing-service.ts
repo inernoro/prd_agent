@@ -74,7 +74,55 @@ export class PairingError extends Error {
   }
 }
 
-const DEFAULT_SCOPES = ['shared-service:deploy', 'instance:read', 'deployment:stream'];
+/**
+ * 新配对默认授予的 scope。**这是唯一一份**——授权页、authorize 端点、回包里的 scopes
+ * 原来各自写了一遍同样的三个字符串，加第四个时改漏一处，用户看到的授权范围就与实际不符。
+ *
+ * `report:read` 是 2026-08-25 加的：MAP 的验收报告导入器一直在用这条连接的长效 token 调
+ * CDS 的 `/api/reports`，而 CDS 那边只在 `/api/bridge/*` 上认这个 token——**MAP 侧接好了、
+ * CDS 侧没接**，于是同步从来没成功过（形状 2，建了一半，删掉也不会红）。
+ * 它能碰的端点由 server.ts 的 CONNECTION_TOKEN_GRANTS 逐条列举，只有两个 GET。
+ */
+export const DEFAULT_SCOPES = [
+  'shared-service:deploy',
+  'instance:read',
+  'deployment:stream',
+  'report:read',
+];
+
+/**
+ * 给存量连接补上 `report:read`。**默认不做**，必须由管理员显式打开开关。
+ *
+ * ## 为什么原来那版是错的
+ *
+ * 第一版在每次启动时自动补，理由写的是「这些连接已经有 shared-service:deploy 与
+ * instance:read，都严格宽于只读两个报告端点」。**这个理由被我自己写的授权表推翻了**：
+ * server.ts 的 CONNECTION_TOKEN_GRANTS 里，`instance:read` 只开 `/api/bridge/*`，
+ * `shared-service:deploy` 是另一件事——两者都不含读取验收报告。
+ *
+ * 也就是说自动补等于**在用户没有再看过授权页的情况下，扩大了一张已经签发出去的
+ * 长期令牌能读到的东西**。哪怕扩得很窄，那也是替用户做了同意（Codex review P1）。
+ *
+ * ## 现在怎么做
+ *
+ * 两条正路：让用户重新走一次授权跳转（授权页现在会列出 report:read），
+ * 或者由管理员显式设 `CDS_GRANT_REPORT_READ_TO_EXISTING=1` 后重启一次——
+ * 那是一个需要动手的决定，不是默默发生的事。补过之后每条都会打日志留痕。
+ */
+export function backfillReportReadScope(stateService: {
+  getActiveCdsConnections(): Array<{ id: string; scopes: string[] }>;
+  updateCdsConnection(id: string, fields: { scopes: string[] }): unknown;
+}, opts: { enabled?: boolean } = {}): string[] {
+  // 没有显式开关就什么都不做——扩大已签发令牌的权限必须有人点头。
+  if (!opts.enabled) return [];
+  const patched: string[] = [];
+  for (const conn of stateService.getActiveCdsConnections()) {
+    if (conn.scopes.includes('report:read')) continue;
+    stateService.updateCdsConnection(conn.id, { scopes: [...conn.scopes, 'report:read'] });
+    patched.push(conn.id);
+  }
+  return patched;
+}
 const PAIRING_TTL_DEFAULT_MIN = 10;
 const PAIRING_TTL_MIN = 1;
 const PAIRING_TTL_MAX = 60;
