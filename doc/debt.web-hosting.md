@@ -258,14 +258,18 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 23 条硬缺失，**逐条复核后大幅收窄**——原始数字把三类东西混在了一起，只有第一类是要改的。
 档位表与样例数据都固化在复刻技能的导出与 fixture 目录里（位置见文末「实现来源」），重跑可复现。
 
-### 一、真差异，要改（open）
+### 一、真差异（四条已于 2026-08-26 修完，closed）
 
-| # | 差异 | 影响 | 怎么改 |
+| # | 差异 | 影响 | 已怎么改 |
 |---|------|------|--------|
-| 43 | 提问面板的免责句被截短：设计稿是「回答只依据本页正文。问到正文没写的，它会直接说「页面里没有提到」，不会替作者猜。」实现只有前半句 | 访客不知道问了正文没写的东西会得到什么，容易把「页面里没有提到」当成故障 | 按画板的逐条文案抄回来，一字不改 |
-| 44 | 开场问题上方缺分组标题「开场问题 · 来自站点题库」 | 访客不知道那几条是作者预备的问题，容易当成系统猜的 | 加一行分组标题 |
-| 45 | 输入框 placeholder：设计稿「就这一页提个问题」，实现「问点什么…」 | 后者没说清「只问这一页」这个边界，而这正是本功能的核心约束 | 换成设计稿那句 |
-| 46 | 提问面板没有配额行（设计稿写「本页今日剩 18 / 20 你这小时剩 4 / 5」） | 访客问到被拒才知道有上限（预期管理：不知道还能做多少）。后端有配额判定但目前只在**拒绝时**随错误下发，面板初始化时拿不到剩余数 | 要么初始化时下发剩余额度，要么承认只在接近上限时提示 |
+| 43（已修） | ~~提问面板的免责句被截短，只有「回答只依据这个页面的内容。」~~ | 访客不知道问了正文没写的东西会得到什么，容易把「页面里没有提到」当成故障 | 按画板逐字补全后半句；「只依据本页正文」用 `<strong>` 内联强调，与画板同结构 |
+| 44（已修） | ~~开场问题上方缺分组标题~~ | 访客不知道那几条是作者预备的问题，容易当成系统猜的 | 加「开场问题 · 来自站点题库」 |
+| 45（已修） | ~~输入框 placeholder 是「问点什么…」~~ | 没说清「只问这一页」这个边界，而这正是本功能的核心约束 | 换成「就这一页提个问题」 |
+| 46（已修） | ~~提问面板没有配额行~~。后端有配额判定，但此前只在**拒绝时**随错误下发，面板初始化拿不到剩余数 | 访客问到被拒才知道有上限（预期管理：不知道还能做多少） | 新增 `GET /api/web-pages/shares/view/{token}/ask/quota`：读 Redis 计数但**不 INCR**，门禁与提问路径逐条同源（同一个 `ResolveShareSiteAsync`、同一个 `GetAbuseControlClientIp`），读不到就返回 `available:false`、前端整块不渲染。位置照设计稿放**顶栏右侧**两行 mono，不放消息区——消息区那行会随对话滚走 |
+
+额度这条旁路有三条静默失效路径（前端路径拼错 / 后端换段名 / 匿名开放被摘掉），表现完全一致：
+那两行安静消失、无报错、无用例变红。因此配了一条接线守卫（位置见文末「实现来源」），
+断言前端拼出的路径能被后端的路由声明接住、且该接口对匿名开放；三条逐个改坏确认变红后恢复。
 
 ### 二、设计稿画的是合成态，实现里不存在那个时刻（需要产品裁决）
 
@@ -280,6 +284,7 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 | # | 情况 | 理由 |
 |---|------|------|
 | 50 | 顶栏不展示「由 {分享人} 分享」前缀 | 代码里明确注释「不再展示『{用户} 分享给你的』前缀，直接显示站点标题」——是先前的有意决定，不是漏做。要恢复得先推翻那个决定 |
+| 54 | 模型名放**顶栏副标题**，设计稿放在输入框下方（「本次回答：{模型} · {平台} · 经 MAP LLM Gateway」） | `ai-model-visibility` 第 1 条要求「UI 最顶部展示当前调用的模型」。照设计稿挪到底部会与该规则冲突，且会把站点标题挤出顶栏。保留顶栏位置；「经 MAP LLM Gateway」这句归属没有实现，因为网关名不由 `model` 事件下发，编一个不算有根 |
 
 ### 四、顺带修掉的取证缺陷（closed）
 
@@ -328,6 +333,7 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 | 总览 | `prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs`、`prd-admin/src/pages/WebPagesPage.tsx`、`prd-admin/src/pages/ShareViewPage.tsx` |
 | 预览判据与取正文 | `prd-admin/src/components/web-hosting/previewHtml.ts`、`prd-admin/src/components/web-hosting/useSitePreviewHtml.ts`、`prd-admin/src/components/SitePreview.tsx`、`prd-admin/src/components/web-hosting/SitePreviewModal.tsx` |
 | 预览守卫 | `prd-admin/src/lib/__tests__/iframeSandboxTokens.test.ts`、`prd-admin/src/components/web-hosting/sitePreviewWiring.test.ts`、`prd-admin/src/pages/ShareViewPage.preview.test.ts` |
+| 提问剩余额度（端点 / 前端 / 接线守卫） | `prd-api/src/PrdAgent.Infrastructure/Services/AskQuotaService.cs`、`prd-admin/src/components/web-hosting/ask/useAskQuota.ts`、`prd-admin/src/components/web-hosting/askQuotaPath.test.ts` |
 | 关联 | `prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs` |
 | 设计档位表（12 块画板，带画布 sha256） | `.claude/skills/design-replication/exports/web-hosting-v2/design-spec.{json,md}` |
 | 阅读页样例数据（录制-回放） | `.claude/skills/design-replication/fixtures/web-hosting-v2/11-reader/` |
