@@ -199,6 +199,10 @@ export function ToolboxScene() {
         </div>
 
         {/* 四组密排。命中的抬起来，没命中的压下去——不是隐藏，是让位 */}
+        {/*
+          * 手机上四组各自纵向排、整列一路铺下去 = 16 张卡叠成一千多像素。
+          * 组内改两列（组标题仍占满一行），手机端这一段砍掉一半高度。
+          */}
         <div className="relative grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3.5" style={{ padding: '16px' }}>
           {s.groups.map((group, gi) => {
             const tone = inkTone(GROUP_HUES[gi]);
@@ -212,6 +216,7 @@ export function ToolboxScene() {
                   {group.label}
                 </SceneMono>
 
+                <div className="grid grid-cols-2 md:grid-cols-1 gap-2.5">
                 {group.items.map((item, ii) => {
                   const hit = matchesQuery(item, query);
                   const picked = beat >= B.pick && hit;
@@ -271,6 +276,7 @@ export function ToolboxScene() {
                     </div>
                   );
                 })}
+                </div>
               </div>
             );
           })}

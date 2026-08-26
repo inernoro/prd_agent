@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
@@ -25,17 +26,23 @@ const HOLDS = [2000, 1500, 2200, 2400];
 const B = { sweep: 0, calm: 1, pain: 2, drill: 3 } as const;
 
 /**
- * 冷色平静海的模块色相。真实那页用的是自己的 16 色带（起点 222），这里收进本站
- * 八色墨带的冷段：slate 214 → steel 196 → celadon 176 → pine 152，末位借 olive 92。
- * 不照抄 222 是因为它紧贴 no-purple 守卫的靛色起点（225），差三度不值得赌。
+ * 冷色平静海的模块色相：slate 214 → pine 142 之间九支等距，一区一支不重复。
+ *
+ * 上一版只有五支（含暖调的 olive 92），九个分区轮着用 —— 结果同色相的区块散落在
+ * 图的两头、看不出分区边界，橄榄绿又和琥珀色的告警撞调，整张图从"平静海"变成"花布"。
+ * 冷段本来就够宽，等距切九份即可，不必借暖色。
+ *
+ * 上界停在 214 而不是更靠蓝：215 往上就贴着 no-purple 守卫的靛色起点（225）了，
+ * 差十度不值得赌。
  */
-const GROUP_HUES = [214, 196, 176, 152, 92];
+const GROUP_HUES = [214, 205, 196, 187, 178, 169, 160, 151, 142];
 /** 告警两色：报错走陶土、偏慢走琥珀，落在八色带里（不引入带外的红黄）。 */
 const ERR_HUE = SCENE_HUE.clay;
 const SLOW_HUE = SCENE_HUE.amber;
 
 const VIEW_W = 1000;
-const VIEW_H = 420;
+// 块数从 18 涨到 38 后画布跟着抬高：块再挤下去就只剩色块、看不见名字了
+const VIEW_H = 470;
 const PAD = 3;
 const HDR = 15;
 
@@ -96,19 +103,30 @@ function squarify<T extends { weight: number }>(items: T[], rect: Rect): Placed<
 function leafFill(status: VocLeaf['status'], hue: number, depth: number): string {
   if (status === 'error') return `hsl(${ERR_HUE} 56% 46%)`;
   if (status === 'slow') return `hsl(${SLOW_HUE} 58% 46%)`;
-  return `hsl(${hue} 32% ${18 + depth * 5}%)`;
+  // 饱和 26%、明度 16..40：区内靠明度递变分层，但整体压得住 —— 告警一出来才跳得出去。
+  // 上一版 32% / 18+5*depth 在七叶的分区里能冲到 48%，块本身比告警还抢眼。
+  return `hsl(${hue} 26% ${16 + depth * 4}%)`;
 }
 
 export function VocScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.voc;
   const { beat, ref, visible } = useSceneTimeline(HOLDS);
+  const isMobile = useIsMobile();
   const steel = inkTone(SCENE_HUE.steel);
 
-  /** 布局纯几何、与拍子无关，算一次就够 */
+  /**
+   * 布局纯几何、与拍子无关，算一次就够。
+   *
+   * 手机上只铺前四个分区：390px 宽塞 38 块，每块不到 40px，名字一个都读不出来，
+   * 整张图退化成一片色格。真实那一页在手机上也是收着看的（`mobile-first-density`：
+   * 手机屏寸土寸金，宁可少给几块也不给一片认不出的马赛克）。
+   * 取前四个是按声明顺序，也正好是权重最大的四区。
+   */
   const layout = useMemo(() => {
+    const source = isMobile ? s.groups.slice(0, 4) : s.groups;
     const groups = squarify(
-      s.groups.map((g) => ({ ...g, weight: g.leaves.reduce((n, l) => n + l.weight, 0) })),
+      source.map((g) => ({ ...g, weight: g.leaves.reduce((n, l) => n + l.weight, 0) })),
       { x: 0, y: 0, w: VIEW_W, h: VIEW_H },
     );
     return groups.map((g, gi) => {
@@ -121,7 +139,7 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
       const leaves = squarify(g.leaves, inner).map((leaf, li) => ({ ...leaf, depth: li, hue: GROUP_HUES[gi % GROUP_HUES.length] }));
       return { ...g, hue: GROUP_HUES[gi % GROUP_HUES.length], leaves };
     });
-  }, [s.groups]);
+  }, [s.groups, isMobile]);
 
   /** 全图块的书写顺序按 x 排，扫描线才是"从左写到右"而不是乱蹦 */
   const order = useMemo(() => {
@@ -166,7 +184,7 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
           <svg
             viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
             preserveAspectRatio="none"
-            style={{ display: 'block', width: '100%', height: 'clamp(220px, 26vw, 330px)' }}
+            style={{ display: 'block', width: '100%', height: isMobile ? '300px' : 'clamp(250px, 30vw, 390px)' }}
             role="img"
             aria-label={s.title}
           >
@@ -195,7 +213,12 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
                   /* 痛点要到第三拍才点睛：在那之前它跟着平静海一个色，不许提前剧透 */
                   const lit = alarm && beat >= B.pain;
                   const fill = lit ? leafFill(leaf.status, leaf.hue, leaf.depth) : leafFill('ok', leaf.hue, leaf.depth);
-                  const showLabel = leaf.rect.w > 74 && leaf.rect.h > 26;
+                  /*
+                   * 小块也给名字，只是缩一档字号。阈值从 74×26 放到 52×20 ——
+                   * 38 块里有一半够不到原阈值，全成无名色块的话这张图就退化成装饰。
+                   */
+                  const showLabel = leaf.rect.w > 52 && leaf.rect.h > 20;
+                  const tiny = leaf.rect.w < 88 || leaf.rect.h < 30;
                   return (
                     <g key={leaf.label}>
                       <rect
@@ -215,11 +238,11 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
                       />
                       {showLabel && (
                         <text
-                          x={leaf.rect.x + 8}
-                          y={leaf.rect.y + 19}
+                          x={leaf.rect.x + (tiny ? 5 : 8)}
+                          y={leaf.rect.y + (tiny ? 14 : 19)}
                           style={{
                             fill: lit ? SCENE.ink : SCENE.inkMid,
-                            fontSize: '10.5px',
+                            fontSize: tiny ? '8.5px' : '10.5px',
                             fontFamily: 'var(--font-body)',
                             opacity: written ? 1 : 0,
                             transition: `opacity .5s ease ${idx * 55 + 160}ms, fill .7s ease`,

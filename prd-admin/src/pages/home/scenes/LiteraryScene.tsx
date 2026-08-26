@@ -302,7 +302,12 @@ export function LiteraryScene() {
               {s.marking.replace('{n}', String(marked))}
             </div>
 
-            <div className="flex flex-col gap-3 lg:flex-1 lg:min-h-0 lg:overflow-hidden">
+            {/*
+              * 手机上改两列：单列时每张卡按 4/3 撑到近 260px 高，三张连着就是
+              * 一屏半的空框（配图还没生成时更明显）。两列后每张约 120px，
+              * 整段从 ~800px 收到 ~280px。宽屏维持单列纵向排布不变。
+              */}
+            <div className="grid grid-cols-2 gap-3 lg:flex lg:flex-col lg:flex-1 lg:min-h-0 lg:overflow-hidden">
               {CARD_SHAPE.map((shape, i) => (
                 <FigureCard
                   key={s.cards[i].prompt}

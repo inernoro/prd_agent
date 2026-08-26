@@ -1,5 +1,6 @@
 import { ArrowRight, Play, Sparkles } from 'lucide-react';
 import { InkOrb } from '@/components/backgrounds/InkOrb';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import { cn } from '@/lib/cn';
 import { Reveal } from '../components/Reveal';
 import { VisualCanvasStage } from '../scenes/VisualCanvasScene';
@@ -65,6 +66,7 @@ interface HeroSectionProps {
 
 export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectionProps) {
   const { t } = useLanguage();
+  const isMobile = useIsMobile();
   return (
     <section
       className={cn('relative overflow-hidden', className)}
@@ -305,12 +307,18 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         </div>
 
         {/*
-          * 右栏：那颗墨滴。lg 以下整块不渲染 —— 它是全页最贵的一个 WebGL 上下文，
-          * 而手机正是最不该付这笔钱的地方；墨场背景在手机上仍然在。
+          * 右栏：那颗墨滴。
+          *
+          * 这里必须**条件挂载**，不能只写 `hidden lg:block`：display:none 只是不显示，
+          * React 照样把 InkOrb 挂上、照样 new 一个 WebGL 上下文。手机端体检时
+          * canvas 数是 2 就是这么来的 —— 一个看不见的上下文白占着显存。
+          * 换成 useIsMobile 之后手机端只剩墨场那一个 canvas。
           */}
-        <div className="relative hidden lg:block" style={{ aspectRatio: '1 / 1' }}>
-          <InkOrb className="absolute inset-0" colors={HERO_ORB_COLORS} amplitude={0.22} />
-        </div>
+        {!isMobile && (
+          <div className="relative hidden lg:block" style={{ aspectRatio: '1 / 1' }}>
+            <InkOrb className="absolute inset-0" colors={HERO_ORB_COLORS} amplitude={0.22} />
+          </div>
+        )}
         </div>
 
         {/* ── Phase 2 · Powered by — 装饰性，独占一行压在两栏底下 ── */}

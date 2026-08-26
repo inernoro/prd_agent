@@ -726,6 +726,9 @@ const zh: TranslationShape = {
       note: '数据来自真实的请求日志，不是埋点问卷——没人填表，图自己就画出来了。',
       windowLabel: '近 7 天 · 共 41.2 万次请求',
       legend: { ok: '正常', slow: '偏慢', error: '报错' },
+      // 分区名取自后端 TeamActivityController.ModuleLabels，块名取自同文件 SegmentLabels。
+      // 从 5 区 18 块扩到 9 区 38 块：treemap 的说服力就在"密"——块少了看着像示意图，
+      // 密起来才像真的把整个接口面摊开了。
       groups: [
         {
           label: '视觉创作',
@@ -735,6 +738,8 @@ const zh: TranslationShape = {
             { label: '附件上传', weight: 14, status: 'slow' },
             { label: '预览', weight: 9, status: 'ok' },
             { label: '收藏', weight: 5, status: 'ok' },
+            { label: '水印', weight: 4, status: 'ok' },
+            { label: '分享', weight: 3, status: 'ok' },
           ],
         },
         {
@@ -744,6 +749,7 @@ const zh: TranslationShape = {
             { label: '空间', weight: 12, status: 'ok' },
             { label: '行内评论', weight: 7, status: 'ok' },
             { label: '发布', weight: 4, status: 'ok' },
+            { label: '附件', weight: 3, status: 'ok' },
           ],
         },
         {
@@ -752,6 +758,7 @@ const zh: TranslationShape = {
             { label: '列表', weight: 16, status: 'ok' },
             { label: '详情', weight: 9, status: 'ok' },
             { label: '批量导出', weight: 6, status: 'error' },
+            { label: '统计', weight: 4, status: 'ok' },
           ],
         },
         {
@@ -759,6 +766,7 @@ const zh: TranslationShape = {
           leaves: [
             { label: '本周', weight: 11, status: 'ok' },
             { label: '汇总', weight: 6, status: 'ok' },
+            { label: '审阅', weight: 4, status: 'ok' },
           ],
         },
         {
@@ -766,6 +774,39 @@ const zh: TranslationShape = {
           leaves: [
             { label: '流式', weight: 13, status: 'ok' },
             { label: '模型池', weight: 5, status: 'ok' },
+            { label: '日志', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: '文学创作',
+          leaves: [
+            { label: '工作区', weight: 12, status: 'ok' },
+            { label: '配图', weight: 8, status: 'ok' },
+            { label: '导出', weight: 3, status: 'slow' },
+          ],
+        },
+        {
+          label: '工作流',
+          leaves: [
+            { label: '运行记录', weight: 9, status: 'ok' },
+            { label: '定义', weight: 5, status: 'ok' },
+            { label: '事件', weight: 3, status: 'ok' },
+          ],
+        },
+        {
+          label: '认证',
+          leaves: [
+            { label: '登录', weight: 14, status: 'ok' },
+            { label: '刷新令牌', weight: 10, status: 'ok' },
+            { label: '当前用户', weight: 7, status: 'ok' },
+          ],
+        },
+        {
+          label: '开放接口',
+          leaves: [
+            { label: '调用', weight: 8, status: 'ok' },
+            { label: '统计', weight: 4, status: 'ok' },
+            { label: '密钥', weight: 2, status: 'ok' },
           ],
         },
       ],
@@ -773,11 +814,12 @@ const zh: TranslationShape = {
       pains: [
         { label: '缺陷管理 · 批量导出', metric: '报错 4.7%', note: '超过 500 条时网关超时，环比突增 3.1 倍', status: 'error' },
         { label: '视觉创作 · 附件上传', metric: 'P95 6.2s', note: '大图直传没走分片，移动端尤其慢', status: 'slow' },
+        { label: '文学创作 · 导出', metric: 'P95 4.1s', note: '带配图的长文整篇同步渲染，篇幅一长就顶到超时线', status: 'slow' },
       ],
       beats: [
         '扫一遍：每块一个接口，面积就是它被用了多少',
         '大部分是安静的冷色 —— 这一片没人喊疼',
-        '两块跳出来了：一块在报错，一块在变慢',
+        '三块跳出来了：一块在报错，两块在变慢',
         '点进去，直接落到痛点榜对应那一行',
       ],
     },
@@ -1266,6 +1308,8 @@ const en: TranslationShape = {
             { label: 'Upload', weight: 14, status: 'slow' },
             { label: 'Preview', weight: 9, status: 'ok' },
             { label: 'Favorites', weight: 5, status: 'ok' },
+            { label: 'Watermark', weight: 4, status: 'ok' },
+            { label: 'Share', weight: 3, status: 'ok' },
           ],
         },
         {
@@ -1275,6 +1319,7 @@ const en: TranslationShape = {
             { label: 'Spaces', weight: 12, status: 'ok' },
             { label: 'Comments', weight: 7, status: 'ok' },
             { label: 'Publish', weight: 4, status: 'ok' },
+            { label: 'Files', weight: 3, status: 'ok' },
           ],
         },
         {
@@ -1283,6 +1328,7 @@ const en: TranslationShape = {
             { label: 'List', weight: 16, status: 'ok' },
             { label: 'Detail', weight: 9, status: 'ok' },
             { label: 'Bulk export', weight: 6, status: 'error' },
+            { label: 'Stats', weight: 4, status: 'ok' },
           ],
         },
         {
@@ -1290,6 +1336,7 @@ const en: TranslationShape = {
           leaves: [
             { label: 'This week', weight: 11, status: 'ok' },
             { label: 'Roll-up', weight: 6, status: 'ok' },
+            { label: 'Review', weight: 4, status: 'ok' },
           ],
         },
         {
@@ -1297,6 +1344,39 @@ const en: TranslationShape = {
           leaves: [
             { label: 'Stream', weight: 13, status: 'ok' },
             { label: 'Pools', weight: 5, status: 'ok' },
+            { label: 'Logs', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Writing',
+          leaves: [
+            { label: 'Workspace', weight: 12, status: 'ok' },
+            { label: 'Illustrate', weight: 8, status: 'ok' },
+            { label: 'Export', weight: 3, status: 'slow' },
+          ],
+        },
+        {
+          label: 'Workflows',
+          leaves: [
+            { label: 'Runs', weight: 9, status: 'ok' },
+            { label: 'Definitions', weight: 5, status: 'ok' },
+            { label: 'Events', weight: 3, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Auth',
+          leaves: [
+            { label: 'Login', weight: 14, status: 'ok' },
+            { label: 'Refresh', weight: 10, status: 'ok' },
+            { label: 'Me', weight: 7, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Open API',
+          leaves: [
+            { label: 'Calls', weight: 8, status: 'ok' },
+            { label: 'Stats', weight: 4, status: 'ok' },
+            { label: 'Keys', weight: 2, status: 'ok' },
           ],
         },
       ],
@@ -1304,11 +1384,12 @@ const en: TranslationShape = {
       pains: [
         { label: 'Defects · Bulk export', metric: '4.7% errors', note: 'Gateway times out past 500 rows, 3.1× week over week', status: 'error' },
         { label: 'Visual · Upload', metric: 'P95 6.2s', note: 'Large images skip chunking — worst on mobile', status: 'slow' },
+        { label: 'Writing · Export', metric: 'P95 4.1s', note: 'Illustrated long-form renders synchronously; length pushes it to the timeout', status: 'slow' },
       ],
       beats: [
         'One sweep: each block an endpoint, its area how much it gets used',
         'Most of it is quiet cold colour — nothing hurting over here',
-        'Two blocks push out: one throwing errors, one going slow',
+        'Three blocks push out: one throwing errors, two going slow',
         'Click through and you land on that row in the pain list',
       ],
     },
