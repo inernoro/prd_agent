@@ -44,9 +44,12 @@
     .hb.primary { background: rgba(217,119,87,0.18); color: #f7f7fb; }
     .hb.edit { background: rgba(74,222,128,0.14); color: #f7f7fb; }
     .hsep { width: 1px; height: 18px; background: rgba(255,255,255,0.14); margin: 0 3px; }
-    .prefill { width: 720px; border-radius: 16px; background: rgba(30,30,36,0.97); border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 24px 60px -12px rgba(10,10,14,0.65); overflow: hidden; }
-    .quote { display: flex; gap: 9px; margin: 13px 15px 0; padding: 9px 11px; border-radius: 9px; background: rgba(217,119,87,0.10); border-left: 2px solid #D97757; font-size: 12px; line-height: 1.65; color: rgba(247,247,251,0.80); }
-    .field { display: flex; align-items: center; gap: 10px; height: 44px; margin: 11px 15px 15px; padding: 0 6px 0 14px; border-radius: 12px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .prefill { width: 700px; border-radius: 24px; background: rgba(24,24,30,0.80);
+               backdrop-filter: blur(22px) saturate(140%); -webkit-backdrop-filter: blur(22px) saturate(140%);
+               border: 1px solid rgba(255,255,255,0.16);
+               box-shadow: 0 20px 48px -14px rgba(10,10,14,0.60), inset 0 1px 0 rgba(255,255,255,0.10); overflow: hidden; }
+    .quote { display: flex; gap: 9px; margin: 14px 14px 0; padding: 9px 11px; border-radius: 9px; background: rgba(217,119,87,0.10); border-left: 2px solid #D97757; font-size: 12px; line-height: 1.65; color: rgba(247,247,251,0.80); }
+    .field { display: flex; align-items: center; gap: 10px; height: 46px; margin: 11px 12px 12px; padding: 0 6px 0 18px; border-radius: 999px; background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.14); }
     .field span { flex-grow: 1; font-size: 13.5px; color: #f7f7fb; }
     .role { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; }
     .role.guest { background: rgba(255,255,255,0.08); color: rgba(247,247,251,0.80); }
@@ -85,7 +88,7 @@
         </div>
         <div class="field">
           <span>关于这一段，</span>
-          <div class="send" style="width:32px; height:32px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+          <div class="send" style="width:34px; height:34px; border-radius:999px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
         </div>
       </div>
     </div>

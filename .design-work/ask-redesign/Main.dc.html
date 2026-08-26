@@ -33,22 +33,31 @@
     .note-row b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
     .note-row .ok b { color: #4ade80; }
     .note-row .warn b { color: #D97757; }
-    .pill { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 15px; border-radius: 20px; background: #B0523A; box-shadow: 0 12px 32px -8px rgba(10,10,14,0.55); font-size: 13px; color: #fff; font-weight: 500; }
-    .lift { width: 720px; border-radius: 16px; background: rgba(30,30,36,0.97); border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 24px 60px -12px rgba(10,10,14,0.65); overflow: hidden; }
-    .l-head { display: flex; align-items: center; gap: 8px; padding: 11px 15px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-    .l-title { font-size: 13px; font-weight: 600; }
-    .l-scope { font-size: 11.5px; color: rgba(247,247,251,0.55); }
-    .l-body { padding: 13px 15px 4px; }
-    .srclabel { display: flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); margin-bottom: 9px; }
-    .qs { display: flex; flex-direction: column; gap: 8px; }
-    .q { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 11px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); font-size: 13.5px; color: rgba(247,247,251,0.86); }
-    .qnum { flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.9); }
-    .qmore { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; border-radius: 9px; border: 1px dashed rgba(255,255,255,0.14); font-size: 12px; color: rgba(247,247,251,0.55); }
-    .l-foot { padding: 11px 15px 14px; }
-    .field { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 6px 0 14px; border-radius: 12px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
-    .field span { flex-grow: 1; font-size: 13.5px; color: rgba(247,247,251,0.55); }
+    .pill { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 15px; border-radius: 999px; background: #B0523A; box-shadow: 0 12px 32px -8px rgba(10,10,14,0.55); font-size: 13px; color: #fff; font-weight: 500; }
+    /* 起手条：半圆两端 + 半透明 + 背后模糊。它压在浅色正文上，靠模糊和描边分层，
+       而不是靠一块实底把正文挡死 —— 这是「长条」与「方盒子」的根本区别。 */
+    .bar { display: flex; align-items: center; gap: 11px; width: 660px; height: 54px; padding: 0 8px 0 20px;
+           border-radius: 999px; background: rgba(24,24,30,0.78); backdrop-filter: blur(22px) saturate(140%);
+           -webkit-backdrop-filter: blur(22px) saturate(140%); border: 1px solid rgba(255,255,255,0.16);
+           box-shadow: 0 20px 48px -14px rgba(10,10,14,0.60), inset 0 1px 0 rgba(255,255,255,0.10); }
+    .bar-ph { flex-grow: 1; font-size: 14px; color: rgba(247,247,251,0.62); }
+    .kbd { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,247,251,0.55); border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; padding: 3px 7px; }
+    /* 悬浮在长条上方的提示。同一套玻璃质感，比长条小一号，读起来像「从条里飘出来的」 */
+    .hints { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; max-width: 760px; }
+    .hint { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; border-radius: 999px;
+            background: rgba(24,24,30,0.76); backdrop-filter: blur(18px) saturate(140%);
+            -webkit-backdrop-filter: blur(18px) saturate(140%); border: 1px solid rgba(255,255,255,0.16);
+            box-shadow: 0 8px 24px -8px rgba(10,10,14,0.50); font-size: 12.5px; color: rgba(247,247,251,0.88); }
+    .hint.more { color: rgba(247,247,251,0.58); font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 0 12px; }
+    .barmeta { display: flex; align-items: center; gap: 8px; height: 24px; padding: 0 12px; border-radius: 999px;
+               background: rgba(26,26,32,0.62); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+               border: 1px solid rgba(255,255,255,0.10);
+               font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.02em; color: rgba(247,247,251,0.62); }
+    .barmeta i { font-style: normal; opacity: 0.42; }
+    .stack { position: absolute; left: 0; right: 0; bottom: 22px; display: flex; flex-direction: column; align-items: center; gap: 11px; }
     .aside { position: absolute; top: 0; right: 0; bottom: 0; width: 400px; background: #1e1e24; border-left: 1px solid rgba(255,255,255,0.14); box-shadow: -16px 0 48px rgba(0,0,0,0.45); display: flex; flex-direction: column; }
     .a-head { display: flex; align-items: center; gap: 8px; padding: 11px 13px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .l-title { font-size: 13px; font-weight: 600; }
     .icb { width: 26px; height: 26px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; color: rgba(247,247,251,0.68); }
     .a-body { flex-grow: 1; padding: 13px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
     .askrow { display: flex; justify-content: flex-end; }
@@ -57,6 +66,8 @@
     .ans b { color: #f7f7fb; font-weight: 600; }
     .cursor { display: inline-block; width: 7px; height: 13px; background: #D97757; vertical-align: -2px; }
     .a-foot { padding: 11px 13px 13px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .field { display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 5px 0 14px; border-radius: 999px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .field span { flex-grow: 1; font-size: 12.5px; color: rgba(247,247,251,0.55); }
     .flowmark { display: flex; align-items: center; gap: 10px; padding: 9px 13px; border-radius: 9px; background: rgba(217,119,87,0.10); border: 1px solid rgba(217,119,87,0.28); font-size: 12px; color: rgba(247,247,251,0.80); }
     .flowmark .n { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.95); flex-shrink: 0; }
   </style>
@@ -65,7 +76,7 @@
 <div class="board">
 
   <div class="eyebrow">状态 1 · 收起<em>右下角一枚胶囊。除此之外页面上没有任何提问相关的东西</em></div>
-  <div class="screen" style="height: 460px">
+  <div class="screen" style="height: 440px">
     <div class="topbar">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
       <div class="tb-title">客户端首页改版 · 视觉验收</div>
@@ -74,7 +85,7 @@
       <div class="tb-btn">新窗口打开</div>
       <div class="tb-btn">评论 3</div>
     </div>
-    <div class="paper" style="height: 416px; padding: 28px 0">
+    <div class="paper" style="height: 396px; padding: 28px 0">
       <div class="paper-in">
         <h1>客户端首页改版 · 视觉验收</h1>
         <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
@@ -92,69 +103,57 @@
     </div>
   </div>
 
-  <div class="flowmark"><span class="n">点一下</span>浮层从胶囊位置向中下升起 —— 起手时注意力在正文中间，把它放在最近的地方</div>
+  <div class="flowmark"><span class="n">点一下</span>胶囊化成一条长条落到中下，三个提示从条里飘出来浮在它上面 —— 不是弹一个盒子出来</div>
 
-  <div class="eyebrow">状态 2 · 中下起手<em>三条问题直接可点，第四条是自己输入；这是「还没开始对话」时的形态</em></div>
-  <div class="screen" style="height: 520px">
+  <div class="eyebrow">状态 2 · 中下起手<em>半圆两端的半透明长条，三个提示悬浮在上方。正文透着看得见，它不是一块挡板</em></div>
+  <div class="screen" style="height: 460px">
     <div class="topbar">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
       <div class="tb-title">客户端首页改版 · 视觉验收</div>
       <div class="sp"></div>
       <div class="tb-btn">评论 3</div>
     </div>
-    <div class="paper" style="height: 476px; padding: 28px 0">
+    <div class="paper" style="height: 416px; padding: 28px 0">
       <div class="paper-in">
         <h1>客户端首页改版 · 视觉验收</h1>
         <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
         <h2>一、首屏与信息层级</h2>
         <p>首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项，二级项进入抽屉。走查结论为通过。</p>
+        <h2>二、搜索入口</h2>
+        <p>搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</p>
       </div>
     </div>
-    <div style="position:absolute; left:0; right:0; bottom:24px; display:flex; justify-content:center">
-      <div class="lift">
-        <div class="l-head">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
-          <div class="l-title">向我提问</div>
-          <div class="l-scope">只依据本页正文</div>
-          <div class="sp"></div>
-          <div class="quota">本页今日剩 18 / 20<br>你这小时剩 4 / 5</div>
+    <div class="stack">
+      <div class="hints">
+        <div class="hint">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
+          这份报告的结论是什么？
         </div>
-        <div class="l-body">
-          <div class="srclabel">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
-            上传时从正文自动读出的问题
-          </div>
-          <div class="qs">
-            <div class="q"><span class="qnum">01</span>这份验收报告的结论是什么？</div>
-            <div class="q"><span class="qnum">02</span>哪些问题还没修完？</div>
-            <div class="q"><span class="qnum">03</span>搜索入口为什么算未通过？</div>
-            <div class="qmore">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"></path></svg>
-              还有 2 条
-            </div>
-          </div>
-        </div>
-        <div class="l-foot">
-          <div class="field">
-            <span>或者直接问你自己的问题</span>
-            <div class="send" style="width:32px; height:32px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
-          </div>
-        </div>
+        <div class="hint">哪些问题还没修完？</div>
+        <div class="hint">搜索入口为什么没通过？</div>
+        <div class="hint more">+2</div>
       </div>
+      <div class="bar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        <div class="bar-ph">就这一页提个问题</div>
+        <div class="kbd">⌘K</div>
+        <div class="send" style="width:38px; height:38px; border-radius:999px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+      </div>
+      <div class="barmeta">只依据本页正文<i>·</i>本页今日剩 18 / 20<i>·</i>你这小时剩 4 / 5</div>
     </div>
   </div>
 
-  <div class="flowmark"><span class="n">问出去</span>浮层往右收成侧栏并开始流式回答 —— 转场要看得见，不能这里闪没、那里闪出</div>
+  <div class="flowmark"><span class="n">问出去</span>长条往右滑成侧栏并开始流式回答 —— 转场要看得见，不能这里闪没、那里闪出</div>
 
   <div class="eyebrow">状态 3 · 右侧对话<em>答案会变长，需要一个能长期驻留、能滚、不挡正文中心的地方。覆盖不推挤，正文排版不受影响</em></div>
-  <div class="screen" style="height: 520px">
+  <div class="screen" style="height: 500px">
     <div class="topbar">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
       <div class="tb-title">客户端首页改版 · 视觉验收</div>
       <div class="sp"></div>
       <div class="tb-btn">评论 3</div>
     </div>
-    <div class="paper" style="height: 476px; padding: 28px 0">
+    <div class="paper" style="height: 456px; padding: 28px 0">
       <div class="paper-in" style="width: 640px; margin: 0 0 0 90px">
         <h1>客户端首页改版 · 视觉验收</h1>
         <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
@@ -169,8 +168,8 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
         <div class="l-title">向我提问</div>
         <div class="sp"></div>
-        <div class="icb" title="历史"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>
-        <div class="icb" title="折起"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"></path></svg></div>
+        <div class="icb"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>
+        <div class="icb"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"></path></svg></div>
       </div>
       <div class="a-body">
         <div class="askrow"><div class="ask">这份验收报告的结论是什么？</div></div>
@@ -185,17 +184,17 @@
         </div>
       </div>
       <div class="a-foot">
-        <div class="field" style="height:40px">
-          <span style="font-size:12.5px">接着问</span>
-          <div class="send" style="width:30px; height:30px; border-radius:9px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+        <div class="field">
+          <span>接着问</span>
+          <div class="send" style="width:30px; height:30px; border-radius:999px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
         </div>
       </div>
     </div>
   </div>
 
   <div class="note-row">
-    <div class="ok"><b>为什么中下起手、右侧对话</b>起手时你在读正文，注意力在中间，浮层出现在最近的地方且三条问题横向好扫；一旦开始对话，答案变长、要能滚、要长期驻留，那就该去右侧。Cursor 的 ⌘K 与 Chat 分工是同一个直觉。</div>
-    <div class="warn"><b>代价与对策</b>侧栏是覆盖不是推挤（推挤会改变托管页自己的排版，PPT 和宽表格站当场破相），所以它确实盖住了右边 400px。对策是随时能折成一条竖条 —— 见「三种折叠」那块。</div>
+    <div class="ok"><b>长条而不是盒子</b>起手态只有两件事要做：挑一条现成的问题，或者自己敲一句。一条半透明长条 + 三枚悬浮提示刚好装得下，而且正文在它背后透着看得见 —— 它是浮在页面上的一件东西，不是盖住页面的一块板。第 4、5 条问题收在「+2」里，需要时才展开。</div>
+    <div class="warn"><b>透明的代价</b>模糊底在浅色长文上很稳，但托管页什么底都可能有（深色、大图、满屏渐变）。所以底色不能只靠透明度：`rgba(26,26,32,0.72)` 加 blur 之后仍要保证文字对比度达标，图片底上要能兜住。这条得拿几种真实站点试过才算定。</div>
   </div>
 
 </div>
