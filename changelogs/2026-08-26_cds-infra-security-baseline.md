@@ -75,3 +75,5 @@
 | test | cds | 补 7 条跨 vhost 分档回归（含「默认空、别处有消息」这一档与带空格的 vhost 名），并把一条钉变量名的断言改成断行为契约 |
 | fix | cds | nacos 登录两个端点都试（/v1/auth/users/login 与 /v1/auth/login）：两者在不同大版本上各自成立，写死一个会让开了鉴权的那一整类实例一次备份都做不了，而报错只说「没拿到 accessToken」看不出是端点错了 |
 | test | cds | 两个登录端点在假件里分开认（原来一条 *auth/login* 把两者都吃掉，等于没测），补 4 条：新端点可用、新端点 404 回落旧端点、两个都不行时报清试过哪两个、口令仍不进 argv |
+| fix | cds | JetStream 只写在 `entrypoint` 里的 nats 不再被判成「没有持久状态」：判据只看 command 和 env，这台真开着 JetStream 的服务不进缺口也不挡健康位，整轮备份报健康而它的流和消费者位点零备份 |
+| test | cds | 补 entrypoint 形态的 JetStream 用例（判据一条 + 整轮一条，证明 planInfraBackups 真的把字段交了下去），做过红绿闭环 |

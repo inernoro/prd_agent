@@ -210,6 +210,22 @@ describe('没备的那些，分类说清楚', () => {
     expect(classifyBackupCoverage('nats', { env: { JS_ENABLED: 'true' } }).blocksHealthy).toBe(true);
   });
 
+  it('JetStream 写在 entrypoint 里也要认', () => {
+    // `InfraService.entrypoint` 是受支持的字段，一个自定义 nats 完全可以只写
+    // entrypoint 不写 command。判据只看 command + env 的话，这台真开着 JetStream
+    // 的 nats 会被判成「没有持久状态」——不进缺口、不挡健康位，于是整轮备份报健康，
+    // 而它的流和消费者位点一份备份都没有（Codex review P1）。
+    const arrayForm = classifyBackupCoverage('nats', { entrypoint: ['nats-server', '--jetstream'] });
+    expect(arrayForm.bucket).toBe('not-yet');
+    expect(arrayForm.blocksHealthy).toBe(true);
+    expect(arrayForm.reason).toContain('JetStream');
+
+    expect(classifyBackupCoverage('nats', { entrypoint: 'nats-server -js' }).blocksHealthy).toBe(true);
+    // 只写 entrypoint、不写 command 的普通 nats 照样不许被误判成有持久状态。
+    expect(classifyBackupCoverage('nats', { entrypoint: ['nats-server', '-c', '/tmp/n.conf'] }).blocksHealthy)
+      .toBe(false);
+  });
+
   it('JetStream 判据不是恒真：普通 nats 配置不许被误判', () => {
     // 没有这条，上面那组即使在「永远返回 true」时也会绿。
     const plain = { command: ['-c', 'printf "authorization { user: a }" > /tmp/n.conf; exec nats-server -c /tmp/n.conf'] };
@@ -260,6 +276,20 @@ describe('整轮健康：跑着 memcached 不再让它永远红着', () => {
 
     const off = planInfraBackups([
       cand({ id: 'bus', dockerImage: 'nats:2-alpine', command: ['-c', 'exec nats-server -c /tmp/n.conf'] }),
+    ], { now: NOW });
+    expect(backupCoverageGaps(off)).toEqual([]);
+  });
+
+  it('JetStream 只写在 entrypoint 里，整轮也必须判成缺口', () => {
+    // 上一条只证明 classifyBackupCoverage 认得 entrypoint；这条证明 planInfraBackups
+    // 真的把它交了下去。少了这一跳，判据改对了整轮照样报健康（建了一半）。
+    const on = planInfraBackups([
+      cand({ id: 'bus', dockerImage: 'nats:2-alpine', entrypoint: ['nats-server', '--jetstream'] }),
+    ], { now: NOW });
+    expect(backupCoverageGaps(on).map((s) => s.id)).toEqual(['bus']);
+
+    const off = planInfraBackups([
+      cand({ id: 'bus', dockerImage: 'nats:2-alpine', entrypoint: ['nats-server', '-c', '/tmp/n.conf'] }),
     ], { now: NOW });
     expect(backupCoverageGaps(off)).toEqual([]);
   });

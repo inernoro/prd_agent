@@ -33,6 +33,16 @@ export interface BackupCandidate {
    * 字段一旦改名，编译器一声不吭，凭据静默变空。
    */
   command?: string[] | string | null;
+  /**
+   * `docker run --entrypoint` 覆盖。和 `command` 一样必须**显式声明**，理由同上。
+   *
+   * 为什么备份判据要看它：一个自定义 nats 完全可以只写
+   * `entrypoint: ['nats-server', '--jetstream']` 而不写 `command`。判据只看
+   * command 和 env 的话，这台开着 JetStream 的 nats 会被判成「没有持久状态」
+   * ——不进缺口、不挡健康位，于是**整轮备份报健康，而它的流和消费者位点一份
+   * 备份都没有**（Codex review P1）。
+   */
+  entrypoint?: string[] | string | null;
 }
 
 export interface BackupTarget extends BackupCandidate {
@@ -136,10 +146,16 @@ export interface BackupCoverageVerdict {
 }
 
 /** JetStream 一开，nats 就有了落盘的流和消费者位点，「没有持久状态」立刻不成立。 */
-function natsHasJetStream(env?: Record<string, string> | null, command?: string[] | string | null): boolean {
-  const cmd = Array.isArray(command) ? command.join(' ') : String(command || '');
+function natsHasJetStream(
+  env?: Record<string, string> | null,
+  command?: string[] | string | null,
+  entrypoint?: string[] | string | null,
+): boolean {
+  // 三处都要看：JetStream 的开关写在 command、entrypoint、env 里都合法，
+  // 少看一处就是一台真开着 JetStream 的 nats 被判成「没有持久状态」。
+  const flatten = (v?: string[] | string | null) => (Array.isArray(v) ? v.join(' ') : String(v || ''));
   const envText = Object.entries(env || {}).map(([k, v]) => `${k}=${v}`).join(' ');
-  const joined = `${cmd} ${envText}`;
+  const joined = `${flatten(command)} ${flatten(entrypoint)} ${envText}`;
   // 命令行开关、配置块、以及官方镜像认的那个环境变量，三种写法都要认。
   return /(^|\s)(-js|--jetstream)(\s|$)/.test(joined)
     || /jetstream\s*[{:]/i.test(joined)
@@ -154,7 +170,11 @@ function natsHasJetStream(env?: Record<string, string> | null, command?: string[
  */
 export function classifyBackupCoverage(
   kind: string,
-  opts: { env?: Record<string, string> | null; command?: string[] | string | null } = {},
+  opts: {
+    env?: Record<string, string> | null;
+    command?: string[] | string | null;
+    entrypoint?: string[] | string | null;
+  } = {},
 ): BackupCoverageVerdict {
   if (BACKUP_CAPABLE_KINDS.has(kind)) {
     return { bucket: 'covered', reason: '已纳入周期备份', blocksHealthy: false };
@@ -202,7 +222,7 @@ export function classifyBackupCoverage(
         reason: 'memcached 没有持久化功能，重启即空是它的设计，没有需要备份的状态',
       };
     case 'nats':
-      return natsHasJetStream(opts.env, opts.command)
+      return natsHasJetStream(opts.env, opts.command, opts.entrypoint)
         ? {
           bucket: 'not-yet',
           blocksHealthy: true,
@@ -350,6 +370,7 @@ export function planInfraBackups(
       const verdict = classifyBackupCoverage(detectInfraKind(c.dockerImage, hints), {
         env: c.env,
         command: c.command,
+        entrypoint: c.entrypoint,
       });
       skipped.push({
         id: c.id,
