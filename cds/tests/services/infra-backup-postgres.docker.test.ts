@@ -7,6 +7,8 @@ import {
   buildPostgresDumpScript,
   buildPostgresRestoreScript,
   buildPostgresTableCountScript,
+  extractBackupGapNote,
+  extractBackupScopeNote,
 } from '../../src/services/infra-backup-schedule.js';
 import { getInfraCatalogEntry } from '../../src/services/infra-catalog.js';
 import { acquireDockerSlot, releaseDockerSlot, waitForService } from '../helpers/docker-container.js';
@@ -240,8 +242,11 @@ describe.skipIf(!READY)('postgres 备份与恢复：真容器', () => {
     try {
       const dump = runScript(buildPostgresDumpScript(), { outFile: path.join(workDir, 'scoped.sql.gz') });
       expect(dump.code, `导出失败：${dump.stderr}`).toBe(0);
-      expect(dump.stderr).toContain('cds-backup-scope:');
-      expect(dump.stderr).toContain('analytics');
+      // 走 gap 标记：同实例别的库没备走是「本可以带走却没带走」，该拉低健康位。
+      // 与 rabbitmq「definitions 天生不含消息」那种纯说明分开——后者每轮无条件报，
+      // 当缺口会让健康位永远刷不新（2026-08-26 Codex review P1）。
+      expect(extractBackupGapNote(dump.stderr)).toContain('analytics');
+      expect(extractBackupScopeNote(dump.stderr), '同一轮不该两个标记都报').toBeNull();
     } finally {
       try { sql('DROP DATABASE analytics', 'postgres'); } catch { /* 清不掉不影响结论 */ }
     }

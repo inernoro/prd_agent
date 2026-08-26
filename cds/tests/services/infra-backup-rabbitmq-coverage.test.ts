@@ -6,6 +6,7 @@ import {
   buildRabbitmqRestoreScript,
   buildRabbitmqQueueCountScript,
   classifyBackupCoverage,
+  extractBackupGapNote,
   extractBackupScopeNote,
   planInfraBackups,
   backupCoverageGaps,
@@ -99,6 +100,10 @@ describe('rabbitmq 导出脚本', () => {
   it('无条件报出「消息不在这份备份里」，并带上条数', () => {
     // 光说「不含消息」谁都不会当回事；说「当前积压 N 条不会被带走」才是
     // 一个能让人做决定的事实。
+    //
+    // 两个标记都要在：有积压走 gap（算缺口、拉低健康位），0 条走 scope（纯说明）。
+    // 行为层面的分档断言在 infra-backup-schedule.test.ts 里跑真脚本。
+    expect(dump).toContain('cds-backup-gap:');
     expect(dump).toContain('cds-backup-scope:');
     expect(dump).toContain('definitions');
     expect(dump).toContain('$CDS_RMQ_MSGS');
@@ -114,13 +119,18 @@ describe('rabbitmq 导出脚本', () => {
   it('注记走 stderr，不污染产物', () => {
     // stdout 是 definitions JSON 本身，往里写一个字这份备份就废了。
     for (const line of dump.split('\n')) {
-      if (line.includes('cds-backup-scope:')) expect(line).toContain('>&2');
+      // 两个标记都要走 stderr——只检查其中一个的话，另一个漏写 >&2 时
+      // 这条守卫会静默放行，而那正好会把 definitions JSON 写坏。
+      if (line.includes('cds-backup-scope:') || line.includes('cds-backup-gap:')) {
+        expect(line, line).toContain('>&2');
+      }
     }
   });
 
-  it('从 stderr 里能把注记捞回来（和 postgres 共用同一个标记）', () => {
-    const note = extractBackupScopeNote(
-      'some noise\ncds-backup-scope: 这份备份只有 definitions；默认 vhost 当前积压 12 条消息\n',
+  it('从 stderr 里能把注记捞回来', () => {
+    // 有积压那一档现在走 gap 标记：它是「本可以带走却没带走」，该算缺口。
+    const note = extractBackupGapNote(
+      'some noise\ncds-backup-gap: 这份备份只有 definitions；默认 vhost 当前积压 12 条消息\n',
     );
     expect(note).toContain('definitions');
     expect(note).toContain('12 条');

@@ -69,3 +69,5 @@
 | fix | cds | 备份的「范围说明」与「真的少备了」分成两个标记：上一版把任何说明都算成阻塞缺口，而 rabbitmq / nacos 每轮无条件报一行，导致装了这两者的部署备份健康位永远刷不新、每日体检天天报「读不到上一轮备份」 |
 | fix | cds | kafka 示例工程的后端补上 SASL 账号口令两个环境变量：x-cds-env 只是插值输入不会自动进容器，漏了它们后端会退回无认证连接，broker 拒绝，/api/health 永远起不来 |
 | test | cds | 补 9 条：note/gapNote 分家 2 条（含反面对照）、rabbitmq 标记按积压分档跑真脚本 4 条（含 dash 语法校验）、两个提取器互不认领 1 条、postgres 改断言行为 2 条 |
+| fix | cds | postgres 真容器用例改断言 gap 标记：本机无 docker 时它被跳过，只有 CI 会跑，上一条改动漏了它 |
+| test | cds | rabbitmq 的 stderr 走向守卫改为两个标记都查（只查一个的话另一个漏写 >&2 会静默放行、写坏 definitions JSON）；真容器用例按实际积压分档断言，不写死单一标记 |

@@ -194,8 +194,12 @@ describe.skipIf(!READY)('rabbitmq definitions 备份与恢复：真容器', () =
     expect(parsed.vhosts?.some((v) => v.name === 'cds_probe_vhost')).toBe(true);
 
     // 范围注记：消息不在这份备份里，必须当场说出来。
-    expect(dump.stderr).toContain('cds-backup-scope:');
-    expect(dump.stderr).toContain('definitions');
+    // 两个标记恰好出现一个——有积压走 gap（算缺口），没积压走 scope（纯说明）。
+    // 写死其中一个的话，换个队列状态这条就会假红/假绿。
+    const scopeNote = extractBackupScopeNote(dump.stderr);
+    const gapNote = extractBackupGapNote(dump.stderr);
+    expect([scopeNote, gapNote].filter(Boolean), '必须恰好报一个范围注记').toHaveLength(1);
+    expect(scopeNote ?? gapNote).toContain('definitions');
 
     // ---- 毁掉拓扑 ----
     execSync(
