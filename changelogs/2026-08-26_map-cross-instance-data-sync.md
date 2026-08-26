@@ -23,3 +23,4 @@
 | fix | prd-api | 附件地址只改「这一批真会写进去的」：不覆盖模式下目标站已有的那些会被判成跳过、一个字节都不入库，原来整页一起改写并计数，界面上「已改写 N 条」里掺着一批从未落库的条数 |
 | test | prd-api | 顺序守卫改锚到真正写库那两句（原来锚在纯内存的分堆上，正是它逼着改写排在分堆之前），并补「只改写库集合」的断言，做过红绿闭环 |
 | docs | prd-api | debt.platform.cross-instance-data-sync.md 新增 DS32：两个标签页同时转正时，「已经转正过」那条快速返回会在子记录还是 pending 的窗口里报 running（根治与 DS29 同为「认领+激活原子化」，按 §5.5 熔断记账不在本 PR 展开）|
+| docs | prd-api | debt.platform.cross-instance-data-sync.md 新增 DS33：改写契约只登记了 attachments，而「创作与素材」实际导出四个存绝对地址的集合，搬完仍从源站加载且一个数都不报（与 DS30/DS31 同一张契约上的洞，应当一起做）|
