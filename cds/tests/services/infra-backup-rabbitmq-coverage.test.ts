@@ -111,9 +111,14 @@ describe('rabbitmq 导出脚本', () => {
 
   it('数不出来时说数不出来，不拿 0 顶替', () => {
     // 一个真的空队列和一次失败的查询，在「输出为空」这件事上长得一模一样。
-    // 所以退出码单独接一手，不靠输出是否为空来猜。
-    expect(dump).toContain('CDS_RMQ_RC=$?');
+    // 所以查询的成败要单独接一手，不靠输出是否为空来猜。
+    //
+    // 这里只断言「有这么一条路」，不钉具体变量名——上一版写死 `CDS_RMQ_RC=$?`，
+    // 把跨 vhost 求和那次重写钉红了，而行为其实是对的（形状 4a：断言实现的
+    // 字面存在，而不是行为）。真正分档的行为断言在 infra-backup-schedule.test.ts，
+    // 那里塞假 rabbitmqctl 用真 sh 跑一遍，覆盖「查不到」「有积压」「没积压」三档。
     expect(dump).toContain('没数出来');
+    expect(dump).toMatch(/CDS_RMQ_UNKNOWN=1/);
   });
 
   it('注记走 stderr，不污染产物', () => {

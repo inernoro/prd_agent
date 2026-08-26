@@ -1504,18 +1504,38 @@ describe('nacos 数配置条数：数不出来就必须失败，不许兜成 0',
   });
 });
 
-describe('rabbitmq 的范围提示：有积压才算缺口，没积压只是说明', () => {
+describe('rabbitmq 的范围提示：跨全部 vhost 数，有积压才算缺口', () => {
   /**
-   * 2026-08-26 Codex review P1 的红绿锚点。断言的是**脚本真跑出来是哪个标记**，
+   * 2026-08-26 Codex review 两条 P1 的红绿锚点。断言的是**脚本真跑出来是哪个标记**，
    * 不是源码里有没有那个字符串——后者改个措辞就绿，测不到行为。
+   *
+   * 假件按 vhost 返回各自的积压数，好覆盖「默认 vhost 空、别处有消息」那一档：
+   * 那正是上一版会打出「什么都没漏」假绿的场景。
    */
-  const runNote = (queuesStdout: string, exitCode: number): { stderr: string } => {
+  const runNote = (opts: {
+    vhosts?: string;
+    vhostsExit?: number;
+    perVhost?: Record<string, string>;
+    queuesExit?: number;
+  }): { stderr: string } => {
     const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rmq-note-'));
+    const per = opts.perVhost || {};
+    const cases = Object.entries(per)
+      .map(([v, out]) => `    *"-p ${v} "*|*"-p ${v}") printf '%s' '${out}'; exit ${opts.queuesExit ?? 0} ;;`)
+      .join('\n');
     fs.writeFileSync(path.join(box, 'rabbitmqctl'), [
       '#!/bin/sh',
-      `printf '%s' '${queuesStdout}'`,
-      `exit ${exitCode}`,
-    ].join('\n'), { mode: 0o755 });
+      'case "$*" in',
+      `  *list_vhosts*) printf '%s' '${opts.vhosts ?? ''}'; exit ${opts.vhostsExit ?? 0} ;;`,
+      '  *list_queues*)',
+      '    case "$*" in',
+      cases,
+      `    esac`,
+      // 没有登记的 vhost：按查询失败处理，正好覆盖「某个 vhost 查不到」那一档。
+      `    exit ${opts.queuesExit ?? 69} ;;`,
+      'esac',
+      'exit 0',
+    ].filter(Boolean).join('\n'), { mode: 0o755 });
     const r = spawnSync('/bin/sh', ['-s'], {
       input: RABBITMQ_SCOPE_NOTE_LINES.join('\n'),
       encoding: 'utf8',
@@ -1524,21 +1544,43 @@ describe('rabbitmq 的范围提示：有积压才算缺口，没积压只是说�
     return { stderr: r.stderr };
   };
 
-  it('积压 0 条 → 只报说明，不算缺口', () => {
-    const { stderr } = runNote('0\n0\n', 0);
+  it('全部 vhost 都没积压 → 只报说明，不算缺口', () => {
+    const { stderr } = runNote({ vhosts: '/\napp\n', perVhost: { '/': '0\n0\n', app: '0\n' } });
     expect(extractBackupGapNote(stderr), '没有东西被漏下，就不该拉低健康位').toBeNull();
-    expect(extractBackupScopeNote(stderr)).toContain('没有积压消息');
+    expect(extractBackupScopeNote(stderr)).toContain('都没有积压消息');
   });
 
-  it('有积压 → 算缺口，并把条数带出来', () => {
-    const { stderr } = runNote('7\n5\n', 0);
+  it('默认 vhost 空、消息在别的 vhost → 必须算缺口（上一版在这里报假绿）', () => {
+    // definitions 是跨 vhost 的，而 list_queues 不带 -p 只看默认 vhost。
+    // 上一版会打出「当前没有积压消息，这一轮没有东西被漏下」，而那 7 条消息
+    // 确实没有任何备份。
+    const { stderr } = runNote({ vhosts: '/\nprobe\n', perVhost: { '/': '0\n', probe: '7\n' } });
     const gap = extractBackupGapNote(stderr);
-    expect(gap).toContain('12');
+    expect(gap, '别的 vhost 有积压就是漏了东西').toContain('7');
     expect(extractBackupScopeNote(stderr), '同一轮不该两个标记都报').toBeNull();
   });
 
-  it('数不出来（list_queues 失败）→ 从严当缺口', () => {
-    const { stderr } = runNote('', 69);
+  it('多个 vhost 的积压要相加', () => {
+    const { stderr } = runNote({ vhosts: '/\na\nb\n', perVhost: { '/': '1\n', a: '2\n', b: '4\n' } });
+    expect(extractBackupGapNote(stderr)).toContain('7');
+  });
+
+  it('vhost 名字带空格也要数到，不能被词分割拆开', () => {
+    // `for v in $(list_vhosts)` 会把 `my vhost` 拆成 `my` 和 `vhost` 两个名字，
+    // 两个都查不到 → 按「查不到」从严报，那台 vhost 的 3 条消息永远数不出来。
+    // 走 while read 才能整行读进来。
+    const { stderr } = runNote({ vhosts: 'my vhost\n', perVhost: { 'my vhost': '3\n' } });
+    expect(extractBackupGapNote(stderr), '带空格的 vhost 必须被完整读到').toContain('3');
+  });
+
+  it('列 vhost 失败 → 从严当缺口', () => {
+    const { stderr } = runNote({ vhostsExit: 69 });
+    expect(extractBackupGapNote(stderr)).toContain('没数出来');
+  });
+
+  it('某个 vhost 的队列查不到 → 从严当缺口，不拿已数到的部分冒充全量', () => {
+    // 已经数到 5 条了，但还有一个 vhost 查不动。报「5 条」等于宣称数清楚了。
+    const { stderr } = runNote({ vhosts: '/\nbroken\n', perVhost: { '/': '5\n' } });
     expect(extractBackupGapNote(stderr)).toContain('没数出来');
   });
 

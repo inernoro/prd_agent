@@ -71,3 +71,5 @@
 | test | cds | 补 9 条：note/gapNote 分家 2 条（含反面对照）、rabbitmq 标记按积压分档跑真脚本 4 条（含 dash 语法校验）、两个提取器互不认领 1 条、postgres 改断言行为 2 条 |
 | fix | cds | postgres 真容器用例改断言 gap 标记：本机无 docker 时它被跳过，只有 CI 会跑，上一条改动漏了它 |
 | test | cds | rabbitmq 的 stderr 走向守卫改为两个标记都查（只查一个的话另一个漏写 >&2 会静默放行、写坏 definitions JSON）；真容器用例按实际积压分档断言，不写死单一标记 |
+| fix | cds | rabbitmq 的积压统计跨全部 vhost：原来 list_queues 不带 -p 只看默认 vhost，默认 vhost 空而消息在别处时会打出「什么都没漏」的假绿，而那些消息确实零备份 |
+| test | cds | 补 7 条跨 vhost 分档回归（含「默认空、别处有消息」这一档与带空格的 vhost 名），并把一条钉变量名的断言改成断行为契约 |

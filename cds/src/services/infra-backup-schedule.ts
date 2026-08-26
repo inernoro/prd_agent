@@ -1165,23 +1165,41 @@ const RABBITMQ_PROBE_LINES: readonly string[] = [
  * 走 stderr：stdout 是备份产物本身，往里写一个字都会污染 definitions JSON。
  */
 export const RABBITMQ_SCOPE_NOTE_LINES: readonly string[] = [
-  'CDS_RMQ_Q=$(rabbitmqctl -q list_queues messages 2>/dev/null); CDS_RMQ_RC=$?',
-  'if [ "$CDS_RMQ_RC" = 0 ]; then',
+  // **跨全部 vhost 数，不能只数默认那个。** definitions 是跨 vhost 的，而
+  // `list_queues` 不带 `-p` 只看默认 vhost `/`。默认 vhost 空、消息全在别的
+  // vhost 里时，上一版会打出「当前没有积压消息，这一轮没有东西被漏下」——
+  // 一句当场就能被证伪的假绿，而那些消息确实没有任何备份（Codex review P1）。
+  'CDS_RMQ_UNKNOWN=0',
+  'CDS_RMQ_MSGS=0',
+  // 走临时文件而不是 `for v in $(...)`：vhost 名字里可以有空格，词分割会把
+  // 一个 vhost 拆成两个再双双查不到。`while ... done < file` 不起子 shell，
+  // 循环里对计数器的赋值在循环结束后仍然有效（管道写法就不行）。
+  'CDS_RMQ_VH_FILE=$(mktemp /tmp/cds-rmq-vhosts-XXXXXX) || CDS_RMQ_UNKNOWN=1',
+  'if [ "$CDS_RMQ_UNKNOWN" = 0 ]; then',
+  '  rabbitmqctl -q list_vhosts name > "$CDS_RMQ_VH_FILE" 2>/dev/null || CDS_RMQ_UNKNOWN=1',
+  'fi',
+  'if [ "$CDS_RMQ_UNKNOWN" = 0 ]; then',
+  '  while IFS= read -r cds_rmq_v; do',
+  '    [ -n "$cds_rmq_v" ] || continue',
+  '    CDS_RMQ_Q=$(rabbitmqctl -q list_queues -p "$cds_rmq_v" messages 2>/dev/null) || { CDS_RMQ_UNKNOWN=1; break; }',
   // 只累加纯数字行：任何版本差异带来的表头/提示行都进不了这个和。
-  `  CDS_RMQ_MSGS=$(printf '%s\\n' "$CDS_RMQ_Q" | awk 'BEGIN{s=0}/^[0-9]+$/{s+=$1}END{print s}')`,
+  `    CDS_RMQ_N=$(printf '%s\\n' "$CDS_RMQ_Q" | awk 'BEGIN{s=0}/^[0-9]+$/{s+=$1}END{print s}')`,
+  '    CDS_RMQ_MSGS=$((CDS_RMQ_MSGS + CDS_RMQ_N))',
+  '  done < "$CDS_RMQ_VH_FILE"',
+  'fi',
+  'rm -f "$CDS_RMQ_VH_FILE"',
   // 有积压才算「这轮少备了东西」。**0 条时只报说明、不算缺口**——definitions 不含
   // 消息是这套机制固有的，无条件当缺口会让任何装了 rabbitmq 的部署健康位永远刷不新
   //（Codex review P1）。数不出来时按缺口从严：证明不了没漏，就当漏了。
-  '  if [ "$CDS_RMQ_MSGS" -gt 0 ] 2>/dev/null; then',
-  '    echo "cds-backup-gap: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
-    + '队列里的消息不在里面；默认 vhost 当前积压 $CDS_RMQ_MSGS 条消息，它们不会被这份备份带走" >&2',
-  '  else',
-  '    echo "cds-backup-scope: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
-    + '队列里的消息不在里面；默认 vhost 当前没有积压消息，这一轮没有东西被漏下" >&2',
-  '  fi',
-  'else',
+  'if [ "$CDS_RMQ_UNKNOWN" != 0 ]; then',
   '  echo "cds-backup-gap: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
-    + '队列里的消息不在里面；当前积压多少条没数出来（list_queues 失败），按有积压从严处理" >&2',
+    + '队列里的消息不在里面；当前积压多少条没数出来（列 vhost 或列队列失败），按有积压从严处理" >&2',
+  'elif [ "$CDS_RMQ_MSGS" -gt 0 ] 2>/dev/null; then',
+  '  echo "cds-backup-gap: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；全部 vhost 当前合计积压 $CDS_RMQ_MSGS 条消息，它们不会被这份备份带走" >&2',
+  'else',
+  '  echo "cds-backup-scope: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；全部 vhost 当前都没有积压消息，这一轮没有东西被漏下" >&2',
   'fi',
 ];
 
