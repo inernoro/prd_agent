@@ -123,19 +123,28 @@ public class CdsReportImportWorker : BackgroundService
         {
             if (ct.IsCancellationRequested) return;
             if (string.IsNullOrWhiteSpace(store.Id)) continue;
-            var ids = await db.DocumentEntries
+            // 连**来源**一起取：每一份报告要刷回它自己那台 CDS，不能都按库级来源刷
+            // （库级记的是「最后一次导入从哪来」，一个人从两台 CDS 各存过就会被后存的覆盖）。
+            var docs = await db.DocumentEntries
                 .Find(Builders<DocumentEntry>.Filter.And(
                     Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, store.Id),
                     Builders<DocumentEntry>.Filter.Exists("Metadata.cdsReportId")))
-                .Project(Builders<DocumentEntry>.Projection.Include("Metadata.cdsReportId"))
+                .Project(Builders<DocumentEntry>.Projection
+                    .Include("Metadata.cdsReportId")
+                    .Include("Metadata.cdsSourceBaseUrl"))
                 .ToListAsync(ct);
-            var reportIds = ids
-                .Select(d => d.GetValue("Metadata", null)?.AsBsonDocument?.GetValue("cdsReportId", null)?.AsString)
-                .Where(v => !string.IsNullOrWhiteSpace(v))
-                .Select(v => v!)
-                .ToList();
-            if (reportIds.Count == 0) continue;
-            mirrors.Add(new CdsReportMirror(store, reportIds));
+            var mirrored = new List<CdsMirroredReport>();
+            foreach (var d in docs)
+            {
+                var meta = d.GetValue("Metadata", null)?.AsBsonDocument;
+                var reportId = meta?.GetValue("cdsReportId", null)?.AsString;
+                if (string.IsNullOrWhiteSpace(reportId)) continue;
+                // 老条目可能没记来源，交给判据退回库级兜底。
+                var entrySource = meta?.GetValue("cdsSourceBaseUrl", null)?.AsString;
+                mirrored.Add(new CdsMirroredReport(reportId!, entrySource));
+            }
+            if (mirrored.Count == 0) continue;
+            mirrors.Add(new CdsReportMirror(store, mirrored));
         }
 
         var targets = CdsReportSyncTargets.Build(mirrors);
@@ -149,7 +158,7 @@ public class CdsReportImportWorker : BackgroundService
                 _logger.LogWarning(
                     "[CdsReportImportWorker] 库 {StoreId} 里有 {Total} 份报告，本轮只刷前 {Cap} 份，"
                     + "剩下 {Truncated} 份这轮没刷（上限见 CdsReportSyncTargets.MaxReportsPerStorePerRound）",
-                    m.Store.Id, m.MirroredReportIds.Count, CdsReportSyncTargets.MaxReportsPerStorePerRound, truncated);
+                    m.Store.Id, m.MirroredReports.Count, CdsReportSyncTargets.MaxReportsPerStorePerRound, truncated);
             }
         }
 

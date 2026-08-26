@@ -27,8 +27,15 @@ public class CdsReportSyncTargetTests
     private static DocumentStore Store(string id, string owner, string? source)
         => new() { Id = id, OwnerId = owner, CdsReportSourceBaseUrl = source };
 
+    /// <summary>条目没记自己的来源（老数据）——判据应退回库级兜底。</summary>
     private static CdsReportMirror Mirror(string id, string owner, string? source, params string[] reportIds)
-        => new(Store(id, owner, source), reportIds);
+        => new(Store(id, owner, source), reportIds.Select(r => new CdsMirroredReport(r, null)).ToArray());
+
+    /// <summary>条目各自记着自己从哪台 CDS 来的。</summary>
+    private static CdsReportMirror MirrorWithSources(
+        string id, string owner, string? storeSource, params (string ReportId, string? Source)[] entries)
+        => new(Store(id, owner, storeSource),
+            entries.Select(e => new CdsMirroredReport(e.ReportId, e.Source)).ToArray());
 
     [Fact]
     public void 库里存过哪几份就刷哪几份()
@@ -156,6 +163,74 @@ public class CdsReportSyncTargetTests
     public void 没超上限时截断数是零_不许恒报一个数()
     {
         Assert.Equal(0, CdsReportSyncTargets.TruncatedCount(Mirror("s", "u", null, "rep-1", "rep-2")));
+    }
+
+    [Fact]
+    public void 每一份报告刷回它自己那台cds_不按库级来源一刀切()
+    {
+        // 一个人从两台 CDS 各存过报告，两次都落进同一个默认库；库级来源被后存的那次覆盖。
+        // 照库级来源刷，先存的那台的报告要么找不到，要么在 id 撞车时被另一台的同名报告
+        // 覆盖掉——正是这个文件通篇在防的「混源」，只是换了个入口（Codex review P1）。
+        var targets = CdsReportSyncTargets.Build(new[]
+        {
+            MirrorWithSources("store-a", "user-1", "https://cds-b.example.com",
+                ("rep-1", "https://cds-a.example.com"),
+                ("rep-2", "https://cds-b.example.com")),
+        });
+
+        Assert.Equal(2, targets.Count);
+        Assert.Equal("https://cds-a.example.com", targets[0].SourceBaseUrl);
+        Assert.Equal("https://cds-b.example.com", targets[1].SourceBaseUrl);
+    }
+
+    [Fact]
+    public void 两台cds上的同名报告是两份东西_不许按id去重吞掉一份()
+    {
+        // 报告 id 在不同 CDS 上可以重名。只按 id 去重会把其中一份悄悄吞掉，
+        // 而那一份从此再也不刷新，且看不出来。
+        var targets = CdsReportSyncTargets.Build(new[]
+        {
+            MirrorWithSources("store-a", "user-1", null,
+                ("rep-same", "https://cds-a.example.com"),
+                ("rep-same", "https://cds-b.example.com")),
+        });
+
+        Assert.Equal(2, targets.Count);
+        Assert.Equal(
+            new[] { "https://cds-a.example.com", "https://cds-b.example.com" },
+            targets.Select(t => t.SourceBaseUrl));
+    }
+
+    [Fact]
+    public void 同一台cds上的同一份报告仍然只刷一遍()
+    {
+        // 反面对照：上一条把去重键加宽了，这条保证它没宽过头——
+        // 真正重复的条目（同 id 同源）还是只该刷一次。
+        var targets = CdsReportSyncTargets.Build(new[]
+        {
+            MirrorWithSources("store-a", "user-1", null,
+                ("rep-1", "https://cds-a.example.com"),
+                ("rep-1", "  https://cds-a.example.com  "),
+                ("  rep-1  ", "https://cds-a.example.com")),
+        });
+
+        Assert.Single(targets);
+    }
+
+    [Fact]
+    public void 条目没记来源时才退回库级兜底()
+    {
+        // 本改动之前存进来的条目没有 cdsSourceBaseUrl。它们不该因此被跳过，
+        // 退回库级来源与从前的行为一致。
+        var targets = CdsReportSyncTargets.Build(new[]
+        {
+            MirrorWithSources("store-a", "user-1", "https://cds-legacy.example.com",
+                ("rep-old", null),
+                ("rep-old-blank", "   ")),
+        });
+
+        Assert.Equal(2, targets.Count);
+        Assert.All(targets, t => Assert.Equal("https://cds-legacy.example.com", t.SourceBaseUrl));
     }
 
     [Theory]

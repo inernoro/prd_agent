@@ -14,11 +14,16 @@ public readonly record struct CdsReportSyncTarget(
     string? SourceBaseUrl,
     string ReportId);
 
+/// <summary>库里已经镜像着的一份报告：它是谁、当初从哪个 CDS 拉来的。</summary>
+/// <param name="ReportId">条目上记的 `cdsReportId`。</param>
+/// <param name="SourceBaseUrl">条目上记的 `cdsSourceBaseUrl`；老条目可能没有，此时退回库级来源。</param>
+public readonly record struct CdsMirroredReport(string ReportId, string? SourceBaseUrl);
+
 /// <summary>本轮要刷新的一个库，以及它当前镜像着哪些报告。</summary>
-/// <param name="MirroredReportIds">库里已有条目的 `cdsReportId` 集合——**这就是要刷的清单**。</param>
+/// <param name="MirroredReports">库里已有条目——**这就是要刷的清单**，每一条自带它的来源。</param>
 public readonly record struct CdsReportMirror(
     DocumentStore Store,
-    IReadOnlyCollection<string> MirroredReportIds);
+    IReadOnlyCollection<CdsMirroredReport> MirroredReports);
 
 /// <summary>
 /// 「刷哪些库的哪些报告、各自从哪个源拉」的判据。
@@ -59,7 +64,12 @@ public static class CdsReportSyncTargets
     /// 导入服务的 find-or-create 只会命中其中一个，另一个永远不刷新，而且看不出来
     /// ——它只是一直是旧的。
     ///
-    /// **二、每个库只从它自己那个 CDS 拉。** 空 options 会让导入服务挑「最近更新的那条
+    /// **二、每一份报告刷回它自己那台 CDS。** 库级来源记的是「最后一次导入从哪来」，
+    /// 不是「这一份从哪来」。一个人从两台 CDS 各存过报告时，两次都落进同一个默认库，
+    /// 库级来源被后存的那次覆盖；照它去刷，先存的那台的报告要么找不到、要么在 id 撞车时
+    /// 被另一台的同名报告覆盖掉（Codex review P1）。条目上本来就记着自己的来源，用它。
+    ///
+    /// **三、每个库只从它自己那个 CDS 拉。** 空 options 会让导入服务挑「最近更新的那条
     /// active CDS 连接」。装了两条系统互联时，它可能从 CDS-B 拉报告，写进一个来源记着
     /// CDS-A 的库里；两个来源的报告 id 与正文就此混进同一个镜像，每小时自动混一次，
     /// 而且没有任何地方会报错——报告 id 在不同 CDS 上可以重名，混完连「这条是谁家的」
@@ -75,19 +85,24 @@ public static class CdsReportSyncTargets
             // 缺属主就没法做写入鉴权，缺 id 就只能 find-or-create——两种都不该硬着头皮同步。
             if (string.IsNullOrWhiteSpace(s.Id) || string.IsNullOrWhiteSpace(s.OwnerId)) continue;
 
-            // 空白来源 = 这个库还没记下它从哪来（历史数据）。退回默认解析，与手动导入首次
-            // 的行为一致；导入成功后服务会把来源写回库上，下一轮就钉住了。
-            var source = Blank(s.CdsReportSourceBaseUrl);
+            // 库级来源只当**兜底**：它记的是「最后一次导入从哪来」，不是「这一份从哪来」。
+            // 一个人从两台 CDS 各存过报告时，两次都落进同一个默认库，库级来源会被后存的那次
+            // 覆盖——照它去刷，先存的那台的报告要么找不到、要么在 id 撞车时被另一台的同名
+            // 报告覆盖掉（Codex review P1）。**每一份报告刷回它自己那台**，条目上记着。
+            var storeFallback = Blank(s.CdsReportSourceBaseUrl);
 
-            // 报告 id 去重且保持稳定顺序：同一份报告在库里理论上只有一条，
+            // 按 (报告, 来源) 去重且保持稳定顺序：同一份报告在库里理论上只有一条，
             // 但重复插入的历史数据（见 debt 里那条「自动与手动没有互斥」）会让它出现两次，
-            // 那时候没必要刷两遍。
-            var seen = new HashSet<string>(StringComparer.Ordinal);
+            // 那时候没必要刷两遍。**去重带上来源**——两台 CDS 上的同名报告是两份不同的东西，
+            // 按 id 去重会把其中一份悄悄吞掉。
+            var seen = new HashSet<(string, string?)>();
             var taken = 0;
-            foreach (var raw in m.MirroredReportIds ?? Array.Empty<string>())
+            foreach (var entry in m.MirroredReports ?? Array.Empty<CdsMirroredReport>())
             {
-                var reportId = Blank(raw);
-                if (reportId == null || !seen.Add(reportId)) continue;
+                var reportId = Blank(entry.ReportId);
+                if (reportId == null) continue;
+                var source = Blank(entry.SourceBaseUrl) ?? storeFallback;
+                if (!seen.Add((reportId, source))) continue;
                 if (taken >= MaxReportsPerStorePerRound) break;
                 taken++;
                 targets.Add(new CdsReportSyncTarget(s.Id, s.OwnerId, source, reportId));
@@ -102,11 +117,12 @@ public static class CdsReportSyncTargets
     /// </summary>
     public static int TruncatedCount(CdsReportMirror mirror)
     {
-        var distinct = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var raw in mirror.MirroredReportIds ?? Array.Empty<string>())
+        var storeFallback = Blank(mirror.Store?.CdsReportSourceBaseUrl);
+        var distinct = new HashSet<(string, string?)>();
+        foreach (var entry in mirror.MirroredReports ?? Array.Empty<CdsMirroredReport>())
         {
-            var id = Blank(raw);
-            if (id != null) distinct.Add(id);
+            var id = Blank(entry.ReportId);
+            if (id != null) distinct.Add((id, Blank(entry.SourceBaseUrl) ?? storeFallback));
         }
         return Math.Max(0, distinct.Count - MaxReportsPerStorePerRound);
     }
