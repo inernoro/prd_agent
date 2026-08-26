@@ -383,7 +383,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         }
 
         var url = BuildPublicUrl(key);
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime);
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
     }
 
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)

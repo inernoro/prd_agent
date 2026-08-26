@@ -5,6 +5,7 @@ using PrdAgent.Api.Services.DataSync;
 using PrdAgent.Core.DataSync;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services.DataSync;
 
@@ -53,18 +54,41 @@ public sealed class DataSyncRunWorker : BackgroundService
     private readonly IServiceProvider _services;
     private readonly DataSyncTokenVault _vault;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IAssetStorage _assetStorage;
     private readonly ILogger<DataSyncRunWorker> _logger;
 
     public DataSyncRunWorker(
         IServiceProvider services,
         DataSyncTokenVault vault,
         IHttpClientFactory httpClientFactory,
+        IAssetStorage assetStorage,
         ILogger<DataSyncRunWorker> logger)
     {
         _services = services;
         _vault = vault;
         _httpClientFactory = httpClientFactory;
+        _assetStorage = assetStorage;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 把 key 拼成**本站**的资产地址。前缀怎么拼是存储实现自己的事，这里不另写一份。
+    ///
+    /// 存储实现抛异常时返回 null 而不是让整条同步炸掉：拼不出地址只是这一条附件
+    /// 打不开，而调用方会把它算进「认不出」如实报出来；为此中断一次几千条的迁移不划算。
+    /// </summary>
+    private string? BuildLocalAssetUrl(string key)
+    {
+        try
+        {
+            var url = _assetStorage.BuildUrlForKey(key);
+            return string.IsNullOrWhiteSpace(url) ? null : url;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[data-sync] 资产地址改写失败，保留源站地址：{Key}", key);
+            return null;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -261,12 +285,30 @@ public sealed class DataSyncRunWorker : BackgroundService
                     "[data-sync] Run {RunId} 跑完时发现终态已被其它部署写过（多半是被判成无心跳收了尸），保留先落的那个结局",
                     run.Id);
             }
-            // 交还令牌一律用 None，和失败/丢租约那两条路径一致。
-            // 用 ct 的话：宿主正在关停时 ct 已取消，这一句立刻失败并把取消咽掉，
-            // 下一行又把本地唯一那份令牌忘了——界面显示「成功」，而源站那张票在剩下的
-            // 两小时里仍然能导数据。作废是收尾动作，不该跟着请求生命周期一起死。
-            await ReturnExportTokenAsync(run, token, CancellationToken.None);
-            _vault.Forget(run.Id);
+            // 试跑成功之后**不作废这张票**：它还要留给「确认无误，开始真的搬」那一步。
+            //
+            // 原来试跑一跑完就交还，于是真搬必须让人再点一次源站的同意——而「看一眼
+            // 会搬什么」本来就不写任何东西，把它算成一次消耗是当初没想清楚。
+            // 2026-08-21 的两次真实迁移都卡死在这里：数据读得出来，写不进去。
+            //
+            // 留着的窗口不是新开的口子：它与「callback 建好 Run、管理员一直没点开始」
+            // 完全同形，上界同样是票据自己的两小时硬过期，源站每次请求还会重对一遍
+            // 允许名单。真跑（或试跑失败）照旧立刻交还。
+            if (run.DryRun && finished.ModifiedCount > 0)
+            {
+                _logger.LogInformation(
+                    "[data-sync] Run {RunId} 试跑完成，票据保留到转正或过期（{ExpiresAt:u}）",
+                    run.Id, run.ExportTokenExpiresAt);
+            }
+            else
+            {
+                // 交还令牌一律用 None，和失败/丢租约那两条路径一致。
+                // 用 ct 的话：宿主正在关停时 ct 已取消，这一句立刻失败并把取消咽掉，
+                // 下一行又把本地唯一那份令牌忘了——界面显示「成功」，而源站那张票在剩下的
+                // 两小时里仍然能导数据。作废是收尾动作，不该跟着请求生命周期一起死。
+                await ReturnExportTokenAsync(run, token, CancellationToken.None);
+                _vault.Forget(run.Id);
+            }
             _logger.LogInformation("[data-sync] Run {RunId} 完成（dryRun={DryRun}）", run.Id, run.DryRun);
         }
         catch (RunLeaseLostException ex)
@@ -317,6 +359,14 @@ public sealed class DataSyncRunWorker : BackgroundService
             var page = ReadPage(await response.Content.ReadAsStringAsync(ct), collection.Name);
             var documents = DataSyncApply.ParseDocuments(page.Documents);
             progress.Fetched += documents.Count;
+
+            // 资产地址改写要在**入库之前**做：写进去再回头批量改，中间那一段时间
+            // 界面上的图片全是指回源站的死链，而且一旦崩在中间就没人知道改到哪了。
+            // 只改地址、不搬字节——两站不共用同一个桶时，改完是「指向自己家的空位」，
+            // 所以下面把认不出的条数如实累进 Run 里，由界面照实说。
+            var rebase = DataSyncAssetUrls.RebaseIncoming(documents, collection.Name, BuildLocalAssetUrl);
+            progress.AssetUrlsRebased += rebase.Rebased;
+            progress.AssetUrlsUnresolved += rebase.Unrecognized;
 
             if (documents.Count > 0)
             {

@@ -732,6 +732,147 @@ public class DataSyncScopeCoverageTests
         Assert.False(DataSyncScope.TryResolve(null, out _));
     }
 
+    [Fact]
+    public void 试跑转正必须至多一次_且不重新问源站要范围()
+    {
+        // 「一次授权 = 一条 Run」原来把试跑也算成一次消耗，于是真搬要人再点一次同意——
+        // 两次真实迁移都卡死在这里。放开之后，三条边界一条都不能松，
+        // 否则它就退化成「一次批准可以反复用」，和长期凭据没区别。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var source = File.ReadAllText(path);
+
+        var promote = Regex.Match(
+            source,
+            @"HttpPost\(""runs/\{id\}/promote""\)(?<body>.*?)(?=
+    \[HttpGet)",
+            RegexOptions.Singleline);
+        Assert.True(promote.Success, "找不到转正端点了，这条守卫的前提已变");
+        var body = promote.Groups["body"].Value;
+        var flat = Regex.Replace(body, @"\s+", " ");
+
+        // 1) 至多一次：唯一性必须由数据库的条件更新保证，不能只在内存里判一下
+        //    （两个标签页同时点会各自读到「还没转正」）。
+        Assert.Contains("Filter.Eq(x => x.PromotedToRunId, null)", flat, StringComparison.Ordinal);
+        Assert.Contains(".Set(x => x.PromotedToRunId, child.Id)", flat, StringComparison.Ordinal);
+        Assert.Contains("claimed.ModifiedCount == 0", flat, StringComparison.Ordinal);
+
+        // 2) 范围照抄，**这一步根本不联系源站**。判据取「端点里没有任何出站调用」
+        //    而不是「没出现 manifest 这个词」——后者会被 PlannedManifest 这个
+        //    正是我们要照抄的字段命中，是一条自相矛盾的断言（第一版就这么红的）。
+        Assert.DoesNotContain("_httpClientFactory", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/instance-sync/export", body, StringComparison.Ordinal);
+        foreach (var copied in new[] { "PlannedCollections =", "PlannedManifest =", "Collections =" })
+        {
+            Assert.Contains(copied, flat, StringComparison.Ordinal);
+        }
+
+        // 3) 只有跑完并且成功的试跑才配转正。少了这一条，一次失败的、甚至正在跑的
+        //    试跑也能转正，跑的就是一份没被确认过的清单。
+        Assert.Contains("!run.DryRun || run.Status != \"succeeded\"", flat, StringComparison.Ordinal);
+
+        // 4) 票据不续命：过期就要求重新授权，不许在这里重签。
+        Assert.Contains("_vault.GetExportToken(run.Id)", flat, StringComparison.Ordinal);
+        Assert.Contains("ExportTokenExpiresAt = run.ExportTokenExpiresAt", flat, StringComparison.Ordinal);
+
+        // 5) 转正请求里不许有 DryRun 开关——给了它，调用方就能把唯一那次转正
+        //    又变成一次试跑，白白吃掉机会。
+        var promoteRequest = Regex.Match(
+            source, @"class DataSyncPromoteRequest\s*\{(?<body>[^}]*)\}", RegexOptions.Singleline);
+        Assert.True(promoteRequest.Success, "找不到转正请求类型了");
+        Assert.DoesNotContain("DryRun", promoteRequest.Groups["body"].Value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 试跑成功不许交还票据_真跑和失败必须交还()
+    {
+        // 票留着，「确认无误，开始真的搬」才点得动。这一条删掉之后转正端点会一直报
+        // 「授权已过期」，而那句话听起来像环境问题，没人会想到是这里把票还回去了。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Services", "DataSync", "DataSyncRunWorker.cs");
+        var worker = File.ReadAllText(path);
+        var flat = Regex.Replace(worker, @"\s+", " ");
+
+        Assert.Contains("if (run.DryRun && finished.ModifiedCount > 0)", flat, StringComparison.Ordinal);
+        // 失败那条路径照旧立刻交还——试跑没成功就没有可确认的清单，票不该留着。
+        Assert.Contains("_vault.Forget(run.Id);", worker, StringComparison.Ordinal);
+        Assert.Contains("ReturnExportTokenAsync", worker, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 资产地址改写必须接在入库之前()
+    {
+        // 这是一条**接线**守卫，不是行为守卫：把 RebaseIncoming 整个删掉，
+        // DataSyncAssetUrlsTests 全绿、编译也过——坏掉的只是「没人调它」，
+        // 而后果要等一次真迁移之后才看得见（图片全指回源站）。
+        //
+        // 顺序同样要钉：先入库再回头批量改的话，中间那一段时间界面上全是死链，
+        // 崩在中间还没人知道改到哪了。
+        var workerPath = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Services", "DataSync", "DataSyncRunWorker.cs");
+        var worker = File.ReadAllText(workerPath);
+
+        var rebaseAt = worker.IndexOf("DataSyncAssetUrls.RebaseIncoming(", StringComparison.Ordinal);
+        Assert.True(rebaseAt >= 0, "同步执行端没有任何一处调用资产地址改写，DS1 的修复没接上线");
+
+        var decideAt = worker.IndexOf("DataSyncApply.Decide(", StringComparison.Ordinal);
+        Assert.True(decideAt >= 0, "找不到落库决策了，这条守卫的前提已变");
+        Assert.True(rebaseAt < decideAt, "资产地址改写排在了落库决策之后：写进去的会是源站地址");
+
+        // 两个数字都要落进进度，界面才说得出「改了几条 / 还有几条没救」。
+        Assert.Contains("progress.AssetUrlsRebased +=", worker, StringComparison.Ordinal);
+        Assert.Contains("progress.AssetUrlsUnresolved +=", worker, StringComparison.Ordinal);
+
+        // 并且真的送到前端。只算不送等于没算。
+        var controllerPath = Path.Combine(
+            LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var controller = File.ReadAllText(controllerPath);
+        Assert.Contains("assetUrlsRebased = kv.Value.AssetUrlsRebased", controller, StringComparison.Ordinal);
+        Assert.Contains("assetUrlsUnresolved = kv.Value.AssetUrlsUnresolved", controller, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 存储实现必须回填对象_key()
+    {
+        // StoredAsset.Key 是可空带默认值的——「忘了传」编译不会报错，
+        // 而后果是附件没有 key、只能靠猜 URL（形状 2）。
+        var root = Path.Combine(LocateSrcRoot(), "PrdAgent.Infrastructure", "Services", "AssetStorage");
+        foreach (var file in new[] { "CloudflareR2Storage.cs", "TencentCosStorage.cs", "LocalAssetStorage.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(root, file));
+            var save = Regex.Match(
+                source,
+                @"public async Task<StoredAsset> SaveAsync\((?<body>.*?)
+    \}",
+                RegexOptions.Singleline);
+            Assert.True(save.Success, $"{file} 里找不到 SaveAsync 了，这条守卫的前提已变");
+            Assert.Matches(
+                new Regex(@"return new StoredAsset\([^)]*,\s*key\)"),
+                save.Groups["body"].Value);
+        }
+    }
+
+    [Fact]
+    public void 附件落库时必须存下对象_key()
+    {
+        // 只存绝对 Url 的话，换桶 / 换公网域名 / 搬机器之后地址全部指回原处（DS1），
+        // 而且没有任何东西能把它算回来。每一处建 Attachment 的地方都要带上 key。
+        var apiRoot = Path.Combine(LocateSrcRoot(), "PrdAgent.Api");
+        var offenders = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(apiRoot, "*.cs", SearchOption.AllDirectories))
+        {
+            var source = File.ReadAllText(file);
+            foreach (Match m in Regex.Matches(source, @"new Attachment\s*\{(?<body>[^}]*)\}", RegexOptions.Singleline))
+            {
+                var body = m.Groups["body"].Value;
+                // 只管那些从 StoredAsset 拿地址的：别处（如外部视频直链）本来就没有 key。
+                if (!body.Contains("Url = stored.Url", StringComparison.Ordinal)) continue;
+                if (!body.Contains("StorageKey", StringComparison.Ordinal))
+                {
+                    offenders.Add(Path.GetFileName(file));
+                }
+            }
+        }
+        Assert.True(offenders.Count == 0, $"这些地方建附件时没有存下对象 key：{string.Join("、", offenders.Distinct())}");
+    }
+
     private static string LocateSrcRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
