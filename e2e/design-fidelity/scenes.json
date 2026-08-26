@@ -1,0 +1,15 @@
+[
+  {
+    "id": "result",
+    "board": "cap-B1/B2/B3/B4",
+    "note": "转录完成的常态结果页；驱一遍真人操作，覆盖搜索命中、已作答、如实说没有、引用跳播、整理进行中、编辑原文、播放中",
+    "drive": ["full", "playing"],
+    "expect": ["一键整理", "词云", "会议纪要", "待办事项", "问这场录音"]
+  },
+  {
+    "id": "reader",
+    "note": "知识库阅读器里的转录笔记（用户最可能点的入口，走内嵌形态）",
+    "url": "/document-store?store=store-demo&entry=entry-note",
+    "sections": false
+  }
+]

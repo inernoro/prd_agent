@@ -1,5 +1,5 @@
 /**
- * 在**真实应用**里把录音结果页截出来——不是对照台。
+ * 在**真实应用**里把录音这条链路的每个状态截出来——不是对照台。
  *
  * 为什么必须有这一份：此前判分用的是 `mock.html` 对照台，那里的画板是手搭的，
  * 绕过了 React Router、`RecordingResultPage` 本身、数据加载、路由守卫和 AppShell。
@@ -13,8 +13,14 @@
  * 所以这份图能证明的是「真实路由与真实页面组件渲染出来是什么样」，
  * **不能**证明真实后端数据下也一样——那一层仍缺凭据，如实记着，不含糊过去。
  *
- * 顺带截另一条路径：从知识库阅读器里打开转录笔记。那是用户最可能点的入口，
- * 它走的是内嵌形态（外面套平台外壳），和设计稿差得最远——要摆出来，不能藏。
+ * 稿面画的多半是「做过一个动作之后」或「后端那样回的时候」，所以这里有两套驱动：
+ *   - **场景**（scenes.json）：改写桩的应答，把页面驱到失败 / 重试 / 离线 / 缺数据等状态
+ *   - **驱动**（DRIVERS）：模拟真人操作，输词、点发送、点整理卡、点波形起播
+ * 驱不到的状态要**明说驱不到**，不能默认它成立（closed-loop-acceptance）。
+ *
+ * 跑法：
+ *   node e2e/design-fidelity/shoot-real-app.mjs               # 全部场景
+ *   SCENES=result,fail-manual node e2e/design-fidelity/...     # 只跑指定场景
  */
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
@@ -29,27 +35,53 @@ const STORE_ID = 'store-demo';
 const AUDIO_ID = 'entry-audio';
 const NOTE_ID = 'entry-note';
 
+/** 24:18 —— 与顶栏副标题写的时长同一个数（对照台踩过这个坑：两处时长互相矛盾） */
+const DURATION_SEC = 24 * 60 + 18;
+
 /** 与对照台同一份样本，两边比的才是同一段内容 */
 const NOTE_MD = fs.readFileSync(
   path.resolve(process.cwd(), 'e2e/design-fidelity/fixtures/recording-note.md'),
   'utf8',
 );
 
-/** 24:18 —— 与顶栏副标题写的时长同一个数（对照台踩过这个坑：两处时长互相矛盾） */
-const DURATION_SEC = 24 * 60 + 18;
+/**
+ * 场景（scene）——把这一屏驱到设计稿画的那个**状态**。
+ *
+ * 稿面 40 块里有一半以上是状态卡：转录失败、自动重试中、离线、没有说话人、
+ * 没有词云……它们在真实页面上都存在，只是要「后端那样回」才会出现。
+ * 所以桩不能只有一份定值，要能按场景改写。
+ *
+ * 一个 scene 就是一份补丁（字段见 scenes.json 的注释条目）：
+ *   - `rules`：[{ match: 正则源码, data }] 或 { match, status, message }，
+ *     按声明顺序**先于**默认链匹配，所以能覆盖任何默认应答
+ *   - `noteMd`：换掉转录笔记正文（驱「没有说话人 / 没有整理结果 / 只有半篇原文」）
+ *   - `audioMeta` / `noteMeta`：并进条目 metadata
+ *   - `drive`：跑哪一套真人操作（见 DRIVERS）
+ *   - `url`：不写就是独立全屏结果页
+ *
+ * 场景清单与脚本分开放，加一个状态不该动取证逻辑。
+ */
+const SCENES = JSON.parse(fs.readFileSync(
+  path.resolve(process.cwd(), 'e2e/design-fidelity/scenes.json'), 'utf8',
+));
+const ONLY = process.env.SCENES ? process.env.SCENES.split(',').map(s => s.trim()).filter(Boolean) : null;
+const ACTIVE = SCENES.filter(s => !ONLY || ONLY.includes(s.id));
+if (ACTIVE.length === 0) throw new Error(`没有匹配的场景：${process.env.SCENES}（可用：${SCENES.map(s => s.id).join(', ')}）`);
 
 /**
- * 假后端：只应答这一屏真正会打的那几个只读接口。
+ * 假后端：只应答这一屏真正会打的那几个接口。
  * 认不出的 `/api/*` 一律回一个空的成功信封——**不能回 401**：
  * 401 会让 apiRequest 触发 logout + 跳 /login，那样截到的是登录页，不是要判的那一屏。
  */
-const INIT = `
+function buildInit(scene) {
+  return `
 (() => {
   const STORE_ID = ${JSON.stringify(STORE_ID)};
   const AUDIO_ID = ${JSON.stringify(AUDIO_ID)};
   const NOTE_ID  = ${JSON.stringify(NOTE_ID)};
-  const NOTE_MD  = ${JSON.stringify(NOTE_MD)};
+  const NOTE_MD  = ${JSON.stringify(scene.noteMd ?? NOTE_MD)};
   const DURATION_SEC = ${DURATION_SEC};
+  const SCENE = ${JSON.stringify(scene)};
 
   // 1) 先坐上登录态：真实路由守卫要 isAuthenticated + permissions
   try {
@@ -91,13 +123,16 @@ const INIT = `
     // 整理方式盖在音频条目上：没有它，「一键整理」四张卡全都只能显示「点击生成」——
     // 那是页面**如实**的「不知道」，但和稿面画的「已生成 · 12s 前」对不上，
     // 于是判分把桩的缺口记成了实现的缺失。真实数据里这个字段是有的，桩就得有。
-    metadata: { transcribe_entry_id: NOTE_ID, transcribe_style_key: 'general' },
+    metadata: Object.assign(
+      { transcribe_entry_id: NOTE_ID, transcribe_style_key: 'general' },
+      SCENE.audioMeta || {},
+    ),
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
   const noteEntry = {
     id: NOTE_ID, storeId: STORE_ID, title: '用户访谈 · 留存与导入（转录笔记）',
     contentType: 'text/markdown', tags: [],
-    metadata: { source_entry_id: AUDIO_ID, transcribe_style_key: 'general' },
+    metadata: Object.assign({ source_entry_id: AUDIO_ID, transcribe_style_key: 'general' }, SCENE.noteMeta || {}),
     createdAt: new Date().toISOString(),
     // 「已生成 · 12s 前」那行相对时间读的就是这个
     updatedAt: new Date(Date.now() - 12_000).toISOString(),
@@ -114,6 +149,9 @@ const INIT = `
   // 信封必须三键齐全：apiClient 认 success/data/error 同在，少一个就退化成「非契约响应」
   const env = (data) => new Response(JSON.stringify({ success: true, data, error: null }),
     { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const fail = (status, message) => new Response(
+    JSON.stringify({ success: false, data: null, error: { message: message || '请求失败' } }),
+    { status: status, headers: { 'Content-Type': 'application/json' } });
 
   /*
    * 「问这场录音」走的是 SSE 直连对话。桩必须真的推一串 text 事件，
@@ -154,6 +192,14 @@ const INIT = `
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (!/\\/api\\//.test(url)) return real(input, init);
 
+    // 场景规则先于默认链：它要能覆盖任何一条默认应答，否则驱不到失败/重试/离线
+    for (const rule of (SCENE.rules || [])) {
+      if (!new RegExp(rule.match).test(url)) continue;
+      if (rule.status && rule.status >= 400) return Promise.resolve(fail(rule.status, rule.message));
+      if (rule.reject) return Promise.reject(new TypeError('Failed to fetch'));
+      return Promise.resolve(env(rule.data));
+    }
+
     if (url.includes('/ai-toolbox/direct-chat')) return Promise.resolve(sseAnswer(init && init.body));
     // 点一张整理卡 → 真实页面发起 run 并开始轮询；桩让它停在「生成中 40%」，
     // 稿面 B3 画的就是这一刻（一张已生成 + 一张在跑）
@@ -180,196 +226,186 @@ const INIT = `
     // 少给一个就会在 useMemo 里抛「not iterable」把整棵树打崩——一次给全。
     return Promise.resolve(env({
       items: [], total: 0, fragments: [], entries: [], list: [], records: [], data: [],
+      backlinks: [], forwardLinks: [], backlinksCount: 0, forwardLinksCount: 0,
     }));
   };
 })();
 `;
+}
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
 const manifest = [];
 const problems = [];
 
-for (const theme of ['light', 'dark']) {
-  const ctx = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-    deviceScaleFactor: 2,
-    reducedMotion: 'reduce',
-  });
-  await ctx.addInitScript({ content: INIT });
-  const page = await ctx.newPage();
-  page.on('pageerror', (e) => problems.push(`[${theme}] PAGEERROR ${e.message} @ ${(e.stack||'').split('\n')[1]?.trim() ?? ''}`));
+/** 滚动容器是页面里那个 overflow-auto 的 main，不是 window——`window.scrollTo` 在这一屏是空操作 */
+const scrollTop = page => page.evaluate(() => {
+  document.querySelectorAll('*').forEach((el) => { if (el.scrollTop > 0) el.scrollTop = 0; });
+});
 
-  const shots = [
-    { id: 'result', url: `${BASE}/document-store/${STORE_ID}/recording/${AUDIO_ID}`, note: '独立全屏结果页（设计稿 B1-B4 对应的那一屏）' },
-    { id: 'reader', url: `${BASE}/document-store?store=${STORE_ID}&entry=${NOTE_ID}`, note: '知识库阅读器里的转录笔记（用户最可能点的入口）' },
-  ];
+/**
+ * 真人操作驱动。稿面 B2/B3/B4 画的都是**做过一个动作之后**的样子：搜过词、
+ * 点过一张整理卡、问过一个问题。不驱到那一步就截图，判分看到的是空搜索框、
+ * 四张「点击生成」、一张空输入卡——那不是实现缺失，是取证没走到。
+ */
+const DRIVERS = {
+  async full(page, shot, theme, snap) {
+    // B2：搜一个词，看命中计数与黄底高亮
+    const search = page.getByPlaceholder('搜索原文关键词');
+    if (await search.count()) {
+      await search.first().fill('导入');
+      await page.waitForTimeout(600);
+      await snap('搜索命中');
+      await search.first().fill('');
+      await page.waitForTimeout(300);
+    }
 
-  for (const shot of shots) {
-    await page.goto(shot.url, { waitUntil: 'domcontentloaded' });
-    await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
-    await page.waitForTimeout(3500);
-    const landed = new URL(page.url()).pathname;
-    // 被守卫踢走了就直说，不要把登录页当成「那一屏」交上去
-    if (landed.includes('/login')) problems.push(`[${theme}] ${shot.id} 被路由守卫踢到 ${landed}`);
-    const file = `${OUT}/${shot.id}.${theme}.png`;
-    await page.screenshot({ path: file });
-    manifest.push({ id: shot.id, theme, url: shot.url, landed, image: file, note: shot.note });
-    console.log(`${shot.id} ${theme} -> ${landed}`);
+    // B4：问一个问题，等答案真的流完再截（没流完就截 = 断头验收）
+    const ask = page.getByLabel('问这场录音');
+    if (await ask.count()) {
+      await ask.first().fill('为什么放弃导入？');
+      await page.getByLabel('发送问题').first().click();
+      await page.getByText('引用原文').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
+      await page.waitForTimeout(600);
+      await page.getByRole('heading', { name: '问这场录音' }).first()
+        .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      await page.waitForTimeout(300);
+      await snap('问答已作答');
 
-    /*
-     * 稿面 B2 / B3 / B4 画的都是**做过一个动作之后**的样子：搜过词、点过一张整理卡、
-     * 问过一个问题。不驱到那一步就截图，判分看到的是空搜索框、四张「点击生成」、
-     * 一张空输入卡——那不是实现缺失，是取证没走到。所以这里照真人的操作驱一遍，
-     * 每一步都走真实按钮与真实服务调用，只有网络是桩。
-     */
-    if (shot.id === 'result') {
-      // B2：搜一个词，看命中计数与黄底高亮
-      const search = page.getByPlaceholder('搜索原文关键词');
-      if (await search.count()) {
-        await search.first().fill('导入');
-        await page.waitForTimeout(600);
-        const f = `${OUT}/${shot.id}.${theme}.搜索命中.png`;
-        await page.screenshot({ path: f });
-        manifest.push({ id: shot.id, theme, section: '搜索命中', image: f });
-        console.log('  ↳ 搜索命中');
-        await search.first().fill('');
-        await page.waitForTimeout(300);
-      }
-
-      // B4：问一个问题，等答案真的流完再截（没流完就截 = 断头验收）
-      const ask = page.getByLabel('问这场录音');
-      if (await ask.count()) {
-        await ask.first().fill('为什么放弃导入？');
-        await page.getByLabel('发送问题').first().click();
-        await page.getByText('引用原文').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
-        await page.waitForTimeout(600);
-        await page.getByRole('heading', { name: '问这场录音' }).first()
-          .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
-        await page.waitForTimeout(300);
-        const f = `${OUT}/${shot.id}.${theme}.问答已作答.png`;
-        await page.screenshot({ path: f });
-        manifest.push({ id: shot.id, theme, section: '问答已作答', image: f });
-        console.log('  ↳ 问答已作答');
-
-        // 点一下引用卡：稿面要求顶部播放条跟着跳到被引的那一句
-        const citation = page.getByTitle('从引用位置播放');
-        if (await citation.count()) {
-          await citation.first().click();
-          await page.waitForTimeout(700);
-          const fc = `${OUT}/${shot.id}.${theme}.引用跳播.png`;
-          await page.screenshot({ path: fc });
-          manifest.push({ id: shot.id, theme, section: '引用跳播', image: fc });
-          console.log('  ↳ 引用跳播');
-        } else {
-          problems.push(`[${theme}] 引用跳播一屏没取到：找不到引用卡`);
-        }
-
-        /*
-         * 再问一个原文里没有的问题：稿面 B4 顶部那条琥珀提示记的是
-         * 「上一问没答上来、而且是如实说的」。不驱到这一步，就只能声称它做了——
-         * 那是拿不会红的证据当证据。
-         */
-        await ask.first().fill('他们怎么看价格？');
-        await page.getByLabel('发送问题').first().click();
-        await page.getByText('无法从录音确认').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
-        await ask.first().fill('还有哪些人提到过重开');
-        await page.getByLabel('发送问题').first().click();
-        await page.getByText('上一问').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
-        await page.waitForTimeout(600);
-        await page.getByRole('heading', { name: '问这场录音' }).first()
-          .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
-        await page.waitForTimeout(300);
-        const fu = `${OUT}/${shot.id}.${theme}.如实说没有.png`;
-        await page.screenshot({ path: fu });
-        manifest.push({ id: shot.id, theme, section: '如实说没有', image: fu });
-        console.log('  ↳ 如实说没有');
-      }
-
-      // B3：点「会议纪要」那张卡 → 真实页面发起 run 并轮询 → 卡上出现「生成中 40%」
-      const meetingCard = page.getByRole('button', { name: /会议纪要/ });
-      if (await meetingCard.count()) {
-        await meetingCard.first().click();
-        await page.waitForTimeout(2600); // 轮询 2s 一次，等它至少跑完一轮
-        await page.getByRole('heading', { name: '一键整理' }).first()
-          .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
-        await page.waitForTimeout(300);
-        const f = `${OUT}/${shot.id}.${theme}.整理进行中.png`;
-        await page.screenshot({ path: f });
-        manifest.push({ id: shot.id, theme, section: '整理进行中', image: f });
-        console.log('  ↳ 整理进行中');
-        await page.evaluate(() => window.scrollTo(0, 0));
-        await page.waitForTimeout(300);
+      // 点一下引用卡：稿面要求顶部播放条跟着跳到被引的那一句
+      const citation = page.getByTitle('从引用位置播放');
+      if (await citation.count()) {
+        await citation.first().click();
+        await page.waitForTimeout(700);
+        await snap('引用跳播');
+      } else {
+        problems.push(`[${theme}] 引用跳播一屏没取到：找不到引用卡`);
       }
 
       /*
-       * B2 还画了「点开某一句改原文」那一刻。同样是状态，不点开截不到：
-       * 点第 4 行（绝对选择器，不用 nth——编辑中的那一行不是按钮，
-       * nth 会在两轮主题之间整体位移）。
+       * 再问一个原文里没有的问题：稿面 B4 顶部那条琥珀提示记的是
+       * 「上一问没答上来、而且是如实说的」。不驱到这一步，就只能声称它做了——
+       * 那是拿不会红的证据当证据。
        */
-      const row = page.locator('[data-transcript-row="3"]');
-      if (await row.count()) {
-        await row.first().click();
-        await page.waitForTimeout(500);
-        const f = `${OUT}/${shot.id}.${theme}.编辑原文.png`;
-        await page.screenshot({ path: f });
-        manifest.push({ id: shot.id, theme, section: '编辑原文', image: f });
-        console.log('  ↳ 编辑原文');
-        await page.keyboard.press('Escape').catch(() => undefined);
-        const cancel = page.getByRole('button', { name: '取消' });
-        if (await cancel.count()) await cancel.first().click().catch(() => undefined);
-        await page.evaluate(() => window.scrollTo(0, 0));
-        await page.waitForTimeout(300);
-      }
+      await ask.first().fill('他们怎么看价格？');
+      await page.getByLabel('发送问题').first().click();
+      await page.getByText('无法从录音确认').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
+      await ask.first().fill('还有哪些人提到过重开');
+      await page.getByLabel('发送问题').first().click();
+      await page.getByText('上一问').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
+      await page.waitForTimeout(600);
+      await page.getByRole('heading', { name: '问这场录音' }).first()
+        .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      await page.waitForTimeout(300);
+      await snap('如实说没有');
+    }
+
+    // B3：点「会议纪要」那张卡 → 真实页面发起 run 并轮询 → 卡上出现「生成中 40%」
+    const meetingCard = page.getByRole('button', { name: /会议纪要/ });
+    if (await meetingCard.count()) {
+      await meetingCard.first().click();
+      await page.waitForTimeout(2600); // 轮询 2s 一次，等它至少跑完一轮
+      await page.getByRole('heading', { name: '一键整理' }).first()
+        .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      await page.waitForTimeout(300);
+      await snap('整理进行中');
+    }
+
+    /*
+     * B2 还画了「点开某一句改原文」那一刻。同样是状态，不点开截不到：
+     * 点第 4 行（绝对选择器，不用 nth——编辑中的那一行不是按钮，
+     * nth 会在两轮主题之间整体位移）。
+     */
+    const row = page.locator('[data-transcript-row="3"]');
+    if (await row.count()) {
+      await row.first().click();
+      await page.waitForTimeout(500);
+      await snap('编辑原文');
+      await page.keyboard.press('Escape').catch(() => undefined);
+      const cancel = page.getByRole('button', { name: '取消' });
+      if (await cancel.count()) await cancel.first().click().catch(() => undefined);
+      await scrollTop(page);
+      await page.waitForTimeout(300);
+    }
+  },
+
+  /**
+   * 最后驱一次「播放到一半」：稿面 B1/B2 的波形是左侧约四成染成强调色的，
+   * 那是**播放进度**，00:00 时当然只有第一根。点波形四成处跳过去再起播。
+   */
+  async playing(page, shot, theme, snap) {
+    await scrollTop(page);
+    await page.waitForTimeout(500);
+    const wave = page.locator('[title="点击跳到对应位置"]');
+    const box = await wave.first().boundingBox().catch(() => null);
+    if (!box) {
+      // 取不到就明说取不到，不静默跳过——一条不会红的证据比没有证据更糟
+      problems.push(`[${theme}] 播放中一屏没取到：波形不可见`);
+      return;
+    }
+    await page.mouse.click(box.x + box.width * 0.4, box.y + box.height / 2);
+    await page.waitForTimeout(400);
+    await page.getByTitle('播放').first().click().catch(() => undefined);
+    await page.waitForTimeout(900);
+    await snap('播放中');
+  },
+};
+
+for (const scene of ACTIVE) {
+  for (const theme of ['light', 'dark']) {
+    const ctx = await browser.newContext({
+      viewport: scene.viewport ?? { width: 390, height: 844 },
+      deviceScaleFactor: 2,
+      reducedMotion: 'reduce',
+    });
+    await ctx.addInitScript({ content: buildInit(scene) });
+    const page = await ctx.newPage();
+    page.on('pageerror', (e) => problems.push(`[${scene.id}/${theme}] PAGEERROR ${e.message} @ ${(e.stack || '').split('\n')[1]?.trim() ?? ''}`));
+
+    const url = `${BASE}${scene.url ?? `/document-store/${STORE_ID}/recording/${AUDIO_ID}`}`;
+    const snap = async (section) => {
+      const file = `${OUT}/${scene.id}.${theme}${section ? `.${section}` : ''}.png`;
+      await page.screenshot({ path: file });
+      manifest.push({ scene: scene.id, board: scene.board ?? null, theme, section: section ?? null, image: file, note: scene.note ?? '' });
+      console.log(section ? `  ↳ ${section}` : `${scene.id} ${theme} -> ${url}`);
+    };
+
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+    await page.waitForTimeout(scene.settleMs ?? 3500);
+    const landed = new URL(page.url()).pathname;
+    // 被守卫踢走了就直说，不要把登录页当成「那一屏」交上去
+    if (landed.includes('/login')) problems.push(`[${scene.id}/${theme}] 被路由守卫踢到 ${landed}`);
+    await snap('');
+
+    for (const name of (scene.drive ?? [])) {
+      const driver = DRIVERS[name];
+      if (!driver) { problems.push(`[${scene.id}] 未知驱动 ${name}`); continue; }
+      await driver(page, scene, theme, snap);
     }
 
     // 一屏装不下的部分按区块标题给下滚证据
-    const headings = await page.locator('h3').all();
-    for (const h of headings) {
-      const name = (await h.innerText()).trim();
-      if (!name) continue;
-      await h.evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
-      await page.waitForTimeout(250);
-      const f = `${OUT}/${shot.id}.${theme}.${name}.png`;
-      await page.screenshot({ path: f });
-      manifest.push({ id: shot.id, theme, section: name, image: f });
-      console.log('  ↳', name);
-    }
-
-    /*
-     * 最后驱一次「播放到一半」：稿面 B1/B2 的波形是左侧约四成染成强调色的，
-     * 那是**播放进度**，00:00 时当然只有第一根。点波形四成处跳过去再起播——
-     * 放在最后是因为它会改当前句与高亮行，别让前面几屏跟着变。
-     */
-    if (shot.id === 'result') {
-      /*
-       * 先把真正的滚动容器拨回顶部：这一屏滚的是页面里那个 overflow-auto 的 main，
-       * `window.scrollTo(0,0)` 是空操作。停在下面时播放区已经收成吸顶条，
-       * 完整波形根本不在 DOM 的可见区里，scrollIntoViewIfNeeded 会一直等到超时。
-       */
-      await page.evaluate(() => {
-        document.querySelectorAll('*').forEach((el) => { if (el.scrollTop > 0) el.scrollTop = 0; });
-      });
-      await page.waitForTimeout(500);
-      const wave = page.locator('[title="点击跳到对应位置"]');
-      const box = await wave.first().boundingBox().catch(() => null);
-      if (box) {
-        await page.mouse.click(box.x + box.width * 0.4, box.y + box.height / 2);
-        await page.waitForTimeout(400);
-        await page.getByTitle('播放').first().click().catch(() => undefined);
-        await page.waitForTimeout(900);
-        const f = `${OUT}/${shot.id}.${theme}.播放中.png`;
-        await page.screenshot({ path: f });
-        manifest.push({ id: shot.id, theme, section: '播放中', image: f });
-        console.log('  ↳ 播放中');
-      } else {
-        // 取不到就明说取不到，不静默跳过——一条不会红的证据比没有证据更糟
-        problems.push(`[${theme}] 播放中一屏没取到：波形不可见`);
+    if (scene.sections !== false) {
+      const headings = await page.locator('h3').all();
+      for (const h of headings) {
+        const name = (await h.innerText()).trim();
+        if (!name) continue;
+        await h.evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+        await page.waitForTimeout(250);
+        await snap(name);
       }
     }
+
+    // 场景声明了它必须出现的证据文案，就当场核一下——驱不到要明说，不能默认成立
+    for (const must of (scene.expect ?? [])) {
+      const hit = await page.getByText(must, { exact: false }).count().catch(() => 0);
+      if (!hit) problems.push(`[${scene.id}/${theme}] 期望出现「${must}」但页面上没有`);
+    }
+
+    await ctx.close();
   }
-  await ctx.close();
 }
 
 fs.writeFileSync(`${OUT}/manifest.json`, JSON.stringify(manifest, null, 2));
-console.log('real-app shots:', manifest.length, '| problems:', problems.length ? problems : 'none');
+console.log(`\n场景 ${ACTIVE.length} 个 · 截图 ${manifest.length} 张 · 问题 ${problems.length}`);
+if (problems.length) console.log(problems.map(p => '  ! ' + p).join('\n'));
 await browser.close();
