@@ -145,7 +145,9 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         // 网关取不到 UserId 会以 "User not found" 的形式炸在运行时（llm-gateway 规则）。
         // 这条调用没有请求上下文（是后台任务），身份记在站点 owner 账上——
         // 这批题是为他的站点生成的，账单归属也是对的。
-        using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+        // 变量名不能叫 _：本方法后面有 `_cooldownUntil.TryRemove(siteId, out _)`，
+        // 而 `_` 一旦被 using 变量占用，那个 out 就不再是弃元、直接编译错（CS1657）。
+        using var llmScope = ctxAccessor.BeginScope(new LlmRequestContext(
             RequestId: requestId,
             GroupId: null,
             SessionId: null,
