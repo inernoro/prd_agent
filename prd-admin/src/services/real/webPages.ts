@@ -861,8 +861,13 @@ export async function updateSiteAskConfig(
 /** 重新按正文生成开场问题的结果 */
 export interface AskQuestionRegenResult {
   siteId: string;
-  /** 这次是不是真的写出了新题库。false = 读不出正文或模型没给出可用问题 */
+  /** 这次是不是真的写出了新题库 */
   generated: boolean;
+  /**
+   * 这次的结局。四种「没生成出来」的下一步不同，界面上不要压成同一句「失败了」：
+   * NoContent 重试没用、ModelUnavailable 值得过会儿再点、ModelUnusable 该自己加一条。
+   */
+  outcome?: 'Generated' | 'NoContent' | 'ModelUnusable' | 'ModelUnavailable' | 'Skipped';
   suggestedQuestions: string[];
   questionsSource?: 'auto' | 'manual';
   /** generated=false 时的原话，直接展示，不要自己编一句 */

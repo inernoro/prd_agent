@@ -48,6 +48,16 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
     /// <summary>正在跑的站点。同一个站点被并发打开多次时只跑一次，不然是按访客数烧钱。</summary>
     private readonly ConcurrentDictionary<string, byte> _inFlight = new();
 
+    /// <summary>
+    /// 模型这一侧失败（调不通 / 一个字都没回）之后的冷静期。
+    ///
+    /// 这类失败**不盖版本戳**——盖了就等于把「网关这会儿没配好模型池」当成了这一版正文的
+    /// 永久结论，池子配好之后它也不会再试。可不盖戳又意味着每个访客打开页面都会重排一次，
+    /// 于是用一个进程内冷静期兜住：自动路径十分钟内不重试，owner 手点「重新生成」不受它约束。
+    /// </summary>
+    private static readonly TimeSpan FailureCooldown = TimeSpan.FromMinutes(10);
+    private readonly ConcurrentDictionary<string, DateTime> _cooldownUntil = new();
+
     public AskOpeningQuestionGenerator(IServiceScopeFactory scopes, ILogger<AskOpeningQuestionGenerator> logger)
     {
         _scopes = scopes;
@@ -76,6 +86,7 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
     public void QueueEnsure(HostedSite site)
     {
         if (!NeedsGeneration(site)) return;
+        if (_cooldownUntil.TryGetValue(site.Id, out var until) && DateTime.UtcNow < until) return;
         if (!_inFlight.TryAdd(site.Id, 0)) return;
 
         // 刻意不 await：调用方全在请求路径上。异常在里面就地吞掉并记日志——
@@ -97,10 +108,10 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         });
     }
 
-    public async Task<bool> EnsureAsync(string siteId, CancellationToken ct = default)
+    public async Task<AskOpenerOutcome> EnsureAsync(string siteId, CancellationToken ct = default)
         => await RunAsync(siteId, ct);
 
-    private async Task<bool> RunAsync(string siteId, CancellationToken ct)
+    private async Task<AskOpenerOutcome> RunAsync(string siteId, CancellationToken ct)
     {
         using var scope = _scopes.CreateScope();
         var sp = scope.ServiceProvider;
@@ -109,7 +120,7 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         // 重新读一遍而不是用入队时那份：入队到执行之间 owner 可能刚好关了提问、
         // 或者自己填了几条题。拿旧快照判断就会把他刚写的覆盖掉。
         var site = await db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync(ct);
-        if (site == null || !NeedsGeneration(site)) return false;
+        if (site == null || !NeedsGeneration(site)) return AskOpenerOutcome.Skipped;
 
         var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
 
@@ -122,7 +133,7 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
             await StampAsync(db, siteId, version, questions: null, ct);
             _logger.LogInformation("[AskOpeners] 站点 {SiteId} 读不到正文，跳过生成：{Reason}",
                 siteId, snapshot.Unavailable ?? "正文为空");
-            return false;
+            return AskOpenerOutcome.NoContent;
         }
 
         var text = snapshot.Text.Length > PromptTextBudget ? snapshot.Text[..PromptTextBudget] : snapshot.Text;
@@ -154,32 +165,56 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
             temperature: 0.3);
 
         var raw = new StringBuilder();
+        var callFailed = false;
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(GenerationTimeout);
 
         var userContent = $"网页标题：{site.Title}\n\n网页正文：\n{text}";
-        await foreach (var chunk in client.StreamGenerateAsync(
-            SystemPrompt,
-            new List<LLMMessage> { new() { Role = "user", Content = userContent } },
-            cts.Token))
+        try
         {
-            if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
-                raw.Append(chunk.Content);
+            await foreach (var chunk in client.StreamGenerateAsync(
+                SystemPrompt,
+                new List<LLMMessage> { new() { Role = "user", Content = userContent } },
+                cts.Token))
+            {
+                if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
+                    raw.Append(chunk.Content);
+            }
+        }
+        catch (Exception ex)
+        {
+            callFailed = true;
+            _logger.LogWarning(ex, "[AskOpeners] 站点 {SiteId} 调模型失败", siteId);
+        }
+
+        // 「一个字都没回」与「回了但没法用」是两件事，处理方式必须不同。
+        // 前者是模型这一侧的问题（没配模型池、网关不通、超时）——**不盖戳**，
+        // 否则等于把一次网关故障固化成这一版正文的永久结论，池子配好之后也不会再试。
+        // 真栽过：验收当天这套部署 model_groups 是空的，一次自动生成就把版本戳盖死了。
+        if (callFailed || raw.Length == 0)
+        {
+            _cooldownUntil[siteId] = DateTime.UtcNow + FailureCooldown;
+            _logger.LogWarning("[AskOpeners] 站点 {SiteId} 模型没有任何输出，不盖版本戳，{Minutes} 分钟后自动重试",
+                siteId, FailureCooldown.TotalMinutes);
+            return AskOpenerOutcome.ModelUnavailable;
         }
 
         var questions = AskOpeningQuestions.ParseGenerated(raw.ToString());
         if (questions.Count == 0)
         {
-            // 解析不出来同样盖戳：反复重试一个会返回废话的模型不会有别的结果，
-            // 只会按访客数重复烧钱。正文换了（版本变了）自然会再试一次。
+            // 模型确实答了、只是答的没法用 —— 这个是盖戳的：同一份正文再问同一个模型
+            // 不会有别的结果，只会按访客数重复烧钱。正文换了（版本变了）自然会再试一次，
+            // owner 也随时可以点「重新生成」破掉这个戳。
             await StampAsync(db, siteId, version, questions: null, ct);
             _logger.LogInformation("[AskOpeners] 站点 {SiteId} 模型没给出可用问题，这一栏保持为空", siteId);
-            return false;
+            return AskOpenerOutcome.ModelUnusable;
         }
+
+        _cooldownUntil.TryRemove(siteId, out _);
 
         await StampAsync(db, siteId, version, questions, ct);
         _logger.LogInformation("[AskOpeners] 站点 {SiteId} 生成了 {Count} 条开场问题", siteId, questions.Count);
-        return true;
+        return AskOpenerOutcome.Generated;
     }
 
     /// <summary>

@@ -163,17 +163,29 @@ public class WebPageAskController : ControllerBase
 
         // CancellationToken.None：owner 关掉抽屉不该取消这次生成（server-authority）。
         // 真正的兜底是生成器内部那 45 秒超时，而不是这条 HTTP 连接活不活着。
-        var wrote = await _askOpeners.EnsureAsync(siteId, CancellationToken.None);
+        var outcome = await _askOpeners.EnsureAsync(siteId, CancellationToken.None);
         var latest = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync();
+
+        // 四种「没生成出来」的下一步各不相同，压成一句「失败了」等于把已经知道的信息又丢了：
+        // 没正文是重试也没用，模型不通是值得等一会儿再点，答得没法用是换正文或换模型。
+        var message = outcome switch
+        {
+            AskOpenerOutcome.Generated => null,
+            AskOpenerOutcome.NoContent => "这一页读不出可提问的正文（比如纯视频、纯图的包装站），重试也不会有结果。",
+            AskOpenerOutcome.ModelUnusable => "模型读完这一页没写出能用的问题。可以先自己加一条，或者换一版正文再试。",
+            AskOpenerOutcome.ModelUnavailable => "模型这会儿调不通（网关没有可用模型池或暂时不可达）。这是暂时的，过一会儿再点一次。",
+            _ => "这个站点现在不需要生成（提问没开，或题库已经是你自己写的）。",
+        };
 
         return Ok(ApiResponse<object>.Ok(new
         {
             siteId,
             // 没生成出来就如实说没有，不摆几句凑数的（no-rootless-tree）
-            generated = wrote,
+            generated = outcome == AskOpenerOutcome.Generated,
+            outcome = outcome.ToString(),
             suggestedQuestions = latest?.AskSuggestedQuestions ?? new List<string>(),
-            questionsSource = "auto",
-            message = wrote ? null : "这一页读不出可提问的正文，或模型没给出可用的问题。",
+            questionsSource = latest?.AskQuestionsSource ?? "auto",
+            message,
         }));
     }
 

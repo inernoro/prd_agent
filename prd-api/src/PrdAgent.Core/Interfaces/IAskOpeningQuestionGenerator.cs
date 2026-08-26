@@ -20,7 +20,29 @@ public interface IAskOpeningQuestionGenerator
     void QueueEnsure(HostedSite site);
 
     /// <summary>
-    /// 同步跑一次并返回结果（true = 这次真的写了新题库）。给测试与手动「重新生成」用。
+    /// 同步跑一次并返回这次的结局。给 owner 手点的「重新生成」用（他明确要的，所以等得起）。
     /// </summary>
-    Task<bool> EnsureAsync(string siteId, CancellationToken ct = default);
+    Task<AskOpenerOutcome> EnsureAsync(string siteId, CancellationToken ct = default);
+}
+
+/// <summary>
+/// 一次生成的结局。压成一个 bool 是不够的：四种「没生成出来」的下一步完全不同，
+/// 合并之后只能给用户一句放之四海而皆准的「失败了」，他不知道该重试、该换页面还是该等。
+/// </summary>
+public enum AskOpenerOutcome
+{
+    /// <summary>写出了新题库</summary>
+    Generated,
+
+    /// <summary>这个站点压根没有可读正文（纯视频/纯图包装站）。重试没用，别劝他重试。</summary>
+    NoContent,
+
+    /// <summary>模型答了，但答的没法用。换一版正文或换模型才有意义。</summary>
+    ModelUnusable,
+
+    /// <summary>模型这一侧不通（没配模型池 / 网关不可达 / 超时）。这是暂时的，值得重试。</summary>
+    ModelUnavailable,
+
+    /// <summary>不该生成（提问没开 / owner 手写过 / 这一版正文已经算过）</summary>
+    Skipped,
 }

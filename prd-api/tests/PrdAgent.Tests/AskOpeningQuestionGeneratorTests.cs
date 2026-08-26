@@ -176,6 +176,29 @@ public class AskOpeningQuestionWiringTests
     }
 
     [Fact]
+    public void 四种失败各有各的下一步_不许在接口上压成一句失败了()
+    {
+        // NoContent 重试没用、ModelUnavailable 值得过会儿再点、ModelUnusable 该自己加一条、
+        // Skipped 压根不需要生成。压成一个 bool 就只能给用户一句放之四海而皆准的「失败了」。
+        var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
+        foreach (var name in new[] { "NoContent", "ModelUnusable", "ModelUnavailable", "Generated" })
+            Assert.Contains($"AskOpenerOutcome.{name}", ctrl);
+    }
+
+    [Fact]
+    public void 模型调不通不许盖版本戳_否则网关一次故障就固化成永久结论()
+    {
+        // 真栽过：验收当天这套部署 model_groups 是空的，第一次自动生成就把版本戳盖死了，
+        // 池子配好之后它再也不会自己重试。判据是「模型有没有给出任何输出」。
+        var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
+        var idx = gen.IndexOf("if (callFailed || raw.Length == 0)", StringComparison.Ordinal);
+        Assert.True(idx > 0, "找不到「模型没有任何输出」那一档，判据可能被改掉了");
+        var branch = gen.Substring(idx, Math.Min(700, gen.Length - idx));
+        Assert.DoesNotContain("StampAsync", branch);
+        Assert.Contains("_cooldownUntil", branch);
+    }
+
+    [Fact]
     public void 生成器已注册进 DI_否则每个消费方启动即炸()
     {
         var program = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Program.cs"));
