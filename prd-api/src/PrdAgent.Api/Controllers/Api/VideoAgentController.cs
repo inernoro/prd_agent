@@ -113,7 +113,8 @@ public class VideoAgentController : ControllerBase
         ModelGroupItem? pricing)
     {
         var key = $"{id} {providerModelName}".ToLowerInvariant();
-        var isSeedance20 = key.Contains("seedance-2");
+        var isSeedance25 = key.Contains("seedance-2.5");
+        var isSeedance2X = key.Contains("seedance-2");
         var isSeedance15 = key.Contains("seedance-1-5") || key.Contains("seedance-1.5");
         var isSeedance = key.Contains("seedance");
         var isWan = key.Contains("wan-") || key.Contains("wan2");
@@ -123,12 +124,16 @@ public class VideoAgentController : ControllerBase
             Id = id,
             Name = string.IsNullOrWhiteSpace(displayName) ? id : displayName,
             HealthStatus = healthStatus,
-            SupportsAudio = isSeedance15 || isSeedance20 || isVeo,
+            SupportsAudio = isSeedance15 || isSeedance2X || isVeo,
             SupportsFirstFrame = true,
             SupportsLastFrame = isSeedance || isWan,
-            SupportsReferenceAssets = isSeedance20,
+            SupportsReferenceAssets = isSeedance2X,
             AspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-            Resolutions = isSeedance || isWan || isVeo ? ["720p", "1080p"] : ["720p"],
+            Resolutions = isSeedance25
+                ? ["480p", "720p"]
+                : isSeedance || isWan || isVeo
+                    ? ["720p", "1080p"]
+                    : ["720p"],
             Durations = VideoModelCapabilities.GetSupportedDurations(key).ToList(),
             PricePerCall = pricing?.PricePerCall,
             PriceCurrency = pricing?.PriceCurrency,
