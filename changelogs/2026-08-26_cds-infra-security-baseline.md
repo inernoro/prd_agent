@@ -78,3 +78,4 @@
 | fix | cds | JetStream 只写在 `entrypoint` 里的 nats 不再被判成「没有持久状态」：判据只看 command 和 env，这台真开着 JetStream 的服务不进缺口也不挡健康位，整轮备份报健康而它的流和消费者位点零备份 |
 | test | cds | 补 entrypoint 形态的 JetStream 用例（判据一条 + 整轮一条，证明 planInfraBackups 真的把字段交了下去），做过红绿闭环 |
 | docs | cds | debt.cds.md 新增 E60（手动下载不透出范围限制，恢复时才发现少东西）/ E61（有覆盖缺口就报「读不到备份结果」，与 E55 同族且触发面更大）/ E62（体检读的目录与写入端选的可能不是同一个），三条按 §5.5 熔断记账 |
+| docs | cds | debt.cds.md 新增 E63（postgres 恢复不在事务里，中途失败留下改了一半的库）/ E64（nacos 导出不校验产物是不是 ZIP，废备份能顶掉好备份）/ E65（nacos 多命名空间恢复无前置校验，中途失败前面几个已被覆盖）/ E66（轮次摘要只念 note 不念 gapNote）/ E67（本地成功离机失败的轮次丢掉有效范围缺口），五条按 §5.5 熔断记账 |
