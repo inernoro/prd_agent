@@ -4,3 +4,6 @@
 | test | prd-api | 「同一个源吗」收敛成唯一判据 + 6 条等价写法用例，另加两条源码守卫（真的清了水位、判断没被抄成第二份），两处均做过红绿闭环 |
 | fix | prd-api | 每小时同步的闸改用 `CanRunSharedScheduledWork`：原来走的 `IsAuthoritativeDeployment` 按契约只管通知，分支预览打开「接管全局告警」的逃生阀就会顺带获得对共享库和 CDS 跑周期拉取的权限 |
 | test | prd-api | 新增 `CanRunSharedScheduledWork`（软开关只能收紧不能放宽）三条行为用例 + 一条接线守卫，做过红绿闭环 |
+| fix | prd-api | 自动同步改成「刷库里已经存过的那些报告」，不再靠记录首次导入范围重放：产品里唯一的导入入口一次只存一份、都进同一个默认库，记范围等于每存一份新的就把整个库钉死在那一份上，之前存的全部不再更新 |
+| fix | prd-api | CDS 来源改用独立字段 `CdsReportSourceBaseUrl`，不再复用跨库同步的 `PeerSyncNodeBaseUrl`：同一个库走过 peer-sync 后那个字段会变成对端 MAP 地址，拿它解析 CDS 凭据必然失败、该库每小时被静默跳过 |
+| test | prd-api | 判据用例改写成 11 条（含「存三份就刷三份」「重复 id 不刷两遍」「超上限截断且报得出截了多少」），做过红绿闭环 |

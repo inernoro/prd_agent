@@ -64,7 +64,7 @@ public class CdsReportImportService
         // CDS 源，复用它会让 updatedSince 把另一作用域里更早更新的报告永久跳过 —— 例如先导项目 A
         // 把游标戳到 now，再导项目 B 时 B 的旧报告 updatedAt < now 就被漏掉（Codex P2）。
         // 故过滤/换源导入一律全量扫描，靠正文 contentHash 去重保证幂等，且**不回写**共享水位。
-        var sourceChanged = CdsReportSyncTargets.SourceChanged(store.PeerSyncNodeBaseUrl, baseUrl);
+        var sourceChanged = CdsReportSyncTargets.SourceChanged(store.CdsReportSourceBaseUrl, baseUrl);
         var isDefaultScopeImport =
             string.IsNullOrWhiteSpace(opts.ProjectId)
             && string.IsNullOrWhiteSpace(opts.ReportId)
@@ -255,15 +255,10 @@ public class CdsReportImportService
             Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeBaseUrl, baseUrl),
             Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastResult, $"导入 {result.Imported} 新 / {result.Updated} 更新 / {result.Skipped} 跳过 / {result.Failed} 失败"),
             Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
-            // **把这次用的范围记下来，每轮都记**（含「就是全量」那一种）。
-            // 每小时的自动同步照着它重放：单条刷那一条、单项目刷那个项目、全量走增量水位。
-            // 不记的话，自动同步只能靠「有没有水位」猜，而那个判据会把小范围的库
-            // 永远排除在自动刷新之外——用户存的那条报告在 CDS 上更新了这边也看不到。
-            Builders<DocumentStore>.Update.Set(s => s.CdsReportScopeRecordedAt, DateTime.UtcNow),
-            Builders<DocumentStore>.Update.Set(s => s.CdsReportScopeProjectId,
-                string.IsNullOrWhiteSpace(opts.ProjectId) ? null : opts.ProjectId!.Trim()),
-            Builders<DocumentStore>.Update.Set(s => s.CdsReportScopeReportId,
-                string.IsNullOrWhiteSpace(opts.ReportId) ? null : opts.ReportId!.Trim()),
+            // 记下这次是从哪个 CDS 拉的，供每小时的自动同步钉住同一个源。
+            // **单独一个字段，不复用 PeerSyncNodeBaseUrl**——那个归跨库同步所有，
+            // 同一个库走过 peer-sync 后它会变成对端 MAP 的地址（Codex review P2）。
+            Builders<DocumentStore>.Update.Set(s => s.CdsReportSourceBaseUrl, baseUrl),
         };
         // 只有默认全量镜像才回写增量游标 PeerSyncLastAt；过滤/换源导入若回写，会污染默认镜像的
         // updatedSince 游标，使另一作用域的旧报告被永久跳过（Codex P2）。

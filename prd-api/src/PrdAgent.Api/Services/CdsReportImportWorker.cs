@@ -1,7 +1,9 @@
+using System.Linq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -35,9 +37,9 @@ namespace PrdAgent.Api.Services;
 ///    一个都没有时安静跳过，并说清是这个原因，而不是留一条看不出所以然的静默。
 /// 3. **一个库失败不影响其他库**。逐个 catch，失败只记日志；否则第一个没配好连接的用户
 ///    会让整轮同步停摆。
-/// 4. **每个库只从它自己那个 CDS 拉，且只刷它自己那个范围**。判据与理由见
-///    <see cref="CdsReportSyncTargets"/>——尤其是第三条：小范围的库同样要能自动新鲜，
-///    办法是重放它首次导入的范围，而不是把它排除在自动刷新之外。
+/// 4. **只刷库里已经存过的那些报告，每个库只从它自己那个 CDS 拉**。要刷什么不靠另记
+///    一套「范围」账，靠库里每条 entry 自带的 `cdsReportId`——它天然跟着用户的实际操作走。
+///    判据与踩过的坑见 <see cref="CdsReportSyncTargets"/>。
 /// </summary>
 public class CdsReportImportWorker : BackgroundService
 {
@@ -103,7 +105,7 @@ public class CdsReportImportWorker : BackgroundService
         while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
-    /// <summary>跑一轮：刷新每个已存在的 CDS 报告镜像库。</summary>
+    /// <summary>跑一轮：把每个镜像库里已有的那些报告各刷新一遍。</summary>
     private async Task RunOnceAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -114,16 +116,50 @@ public class CdsReportImportWorker : BackgroundService
             .Find(s => s.AppKey == CdsReportStoreAppKey)
             .ToListAsync(ct);
 
-        var targets = CdsReportSyncTargets.Build(stores);
+        // **要刷哪些报告，库里已经写着了**：每条 entry 的 Metadata.cdsReportId 就是权威清单。
+        // 不另记一套「范围」账——那套账会和用户的实际操作漂开（见 CdsReportSyncTargets 的注释）。
+        var mirrors = new List<CdsReportMirror>();
+        foreach (var store in stores)
+        {
+            if (ct.IsCancellationRequested) return;
+            if (string.IsNullOrWhiteSpace(store.Id)) continue;
+            var ids = await db.DocumentEntries
+                .Find(Builders<DocumentEntry>.Filter.And(
+                    Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, store.Id),
+                    Builders<DocumentEntry>.Filter.Exists("Metadata.cdsReportId")))
+                .Project(Builders<DocumentEntry>.Projection.Include("Metadata.cdsReportId"))
+                .ToListAsync(ct);
+            var reportIds = ids
+                .Select(d => d.GetValue("Metadata", null)?.AsBsonDocument?.GetValue("cdsReportId", null)?.AsString)
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v!)
+                .ToList();
+            if (reportIds.Count == 0) continue;
+            mirrors.Add(new CdsReportMirror(store, reportIds));
+        }
+
+        var targets = CdsReportSyncTargets.Build(mirrors);
+
+        // 被上限截掉的必须说出来。悄悄少刷会让「每小时都在更新」这句话在大库上变成假话。
+        foreach (var m in mirrors)
+        {
+            var truncated = CdsReportSyncTargets.TruncatedCount(m);
+            if (truncated > 0)
+            {
+                _logger.LogWarning(
+                    "[CdsReportImportWorker] 库 {StoreId} 里有 {Total} 份报告，本轮只刷前 {Cap} 份，"
+                    + "剩下 {Truncated} 份这轮没刷（上限见 CdsReportSyncTargets.MaxReportsPerStorePerRound）",
+                    m.Store.Id, m.MirroredReportIds.Count, CdsReportSyncTargets.MaxReportsPerStorePerRound, truncated);
+            }
+        }
 
         if (targets.Count == 0)
         {
-            // 说清是「一个库都没有」还是「有库但都不符合自动刷新条件」——两者的下一步不一样。
+            // 说清是「一个库都没有」还是「有库但里面还没存过报告」——两者的下一步不一样。
             _logger.LogInformation(
-                "[CdsReportImportWorker] 本轮没有可自动刷新的 CDS 报告镜像库（扫到 {Total} 个 {AppKey} 库）。"
-                + "自动刷新会照着每个库自己记下的导入范围重放（单条 / 单项目 / 全量都行），"
-                + "但**范围要先被记下来**——本次改动之前建的老库没有这个记录，只有当年按全量导入过的"
-                + "才会被继续按全量刷。手动导入一次即可登记范围，此后自动生效",
+                "[CdsReportImportWorker] 本轮没有要刷新的报告（扫到 {Total} 个 {AppKey} 库）。"
+                + "自动刷新只刷**库里已经存过的**报告——先在 CDS 报告页点一次「保存到 MAP 知识库」，"
+                + "此后那一份就会每小时保持新鲜",
                 stores.Count, CdsReportStoreAppKey);
             return;
         }
@@ -141,19 +177,19 @@ public class CdsReportImportWorker : BackgroundService
                     {
                         StoreId = t.StoreId,
                         SourceBaseUrl = t.SourceBaseUrl,
-                        // 范围照抄这个库自己记下的那一份：单条刷那一条、单项目刷那个项目、
-                        // 全量走增量水位。不传的话所有库都会被按全量刷，用户特意只存一条
-                        // 报告的库会被每小时撑成整座库。
-                        ProjectId = t.ProjectId,
+                        // 只刷这一份。正文 contentHash 没变就只轻量同步元数据，代价很小。
                         ReportId = t.ReportId,
                     },
                     ct);
                 ok++;
-                _logger.LogInformation(
-                    "[CdsReportImportWorker] 库 {StoreId}（用户 {OwnerId}，源 {Source}，范围 {Scope}）同步完成："
-                    + "共 {Total}，新增 {Imported}，更新 {Updated}，跳过 {Skipped}，失败 {Failed}",
-                    t.StoreId, t.OwnerId, t.SourceBaseUrl ?? "(默认连接)", CdsReportSyncTargets.DescribeScope(t),
-                    result.Total, result.Imported, result.Updated, result.Skipped, result.Failed);
+                if (result.Updated > 0 || result.Failed > 0)
+                {
+                    _logger.LogInformation(
+                        "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）："
+                        + "更新 {Updated}，跳过 {Skipped}，失败 {Failed}",
+                        t.StoreId, t.ReportId, t.SourceBaseUrl ?? "(默认连接)",
+                        result.Updated, result.Skipped, result.Failed);
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -162,15 +198,16 @@ public class CdsReportImportWorker : BackgroundService
             catch (Exception ex)
             {
                 failed++;
-                // 一个库的源没了或没配好，不该让别的库也同步不了。
+                // 一份报告拉不到，不该让别的报告也刷不了。
                 // **失败时宁可不同步，也不换个源接着拉**——那正是混源要防的事。
                 _logger.LogWarning(ex,
-                    "[CdsReportImportWorker] 库 {StoreId}（用户 {OwnerId}，源 {Source}）同步失败，跳过",
-                    t.StoreId, t.OwnerId, t.SourceBaseUrl ?? "(默认连接)");
+                    "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）刷新失败，跳过",
+                    t.StoreId, t.ReportId, t.SourceBaseUrl ?? "(默认连接)");
             }
         }
 
-        _logger.LogInformation("[CdsReportImportWorker] 本轮结束：成功 {Ok}，失败 {Failed}", ok, failed);
+        _logger.LogInformation(
+            "[CdsReportImportWorker] 本轮结束：刷了 {Ok} 份，失败 {Failed} 份", ok, failed);
     }
 
     /// <summary>

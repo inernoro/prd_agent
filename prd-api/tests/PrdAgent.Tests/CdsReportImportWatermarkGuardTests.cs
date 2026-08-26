@@ -67,8 +67,14 @@ public class CdsReportImportWatermarkGuardTests
         // 「同一个源吗」这件事有两个消费方：能不能复用增量水位、要不要清掉旧水位。
         // 两边必须同进同退，所以只许有一处定义。抄成两份 TrimEnd('/') 比较的话，
         // 改一处忘一处就会漏出上面那条静默通路。
-        Assert.Contains("CdsReportSyncTargets.SourceChanged(store.PeerSyncNodeBaseUrl, baseUrl)", source);
-        Assert.DoesNotContain("store.PeerSyncNodeBaseUrl.TrimEnd('/')", source);
+        Assert.Contains("CdsReportSyncTargets.SourceChanged(store.CdsReportSourceBaseUrl, baseUrl)", source);
+        Assert.DoesNotContain("store.CdsReportSourceBaseUrl.TrimEnd('/')", source);
+
+        // 而且判的是**自己那个来源字段**，不是跨库同步那套的。同一个库若走过 peer-sync，
+        // `MarkPeerSyncAsync` 会把 PeerSyncNodeBaseUrl 改写成对端 MAP 的地址；
+        // 拿它当 CDS 源去解析凭据必然找不到 active 连接，这个库每小时被静默跳过一次
+        //（Codex review P2）。
+        Assert.DoesNotContain("SourceChanged(store.PeerSyncNodeBaseUrl", source);
     }
 
     private static string FindSrcRoot()
