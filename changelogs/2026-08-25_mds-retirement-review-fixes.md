@@ -6,6 +6,6 @@
 | refactor | prd-admin | 清掉模型管理退场后无人调用的写包装：models 12 / platforms 3 / llmConfigs 4 / modelGroups 8 / schedulerConfig 1，整份 exchanges.ts 与 mock/impl/models.ts 一并删除，契约同步收成只读 |
 | polish | llmgw | 窄屏行操作菜单按实测抬高，避开 CDS 预览徽章（fixed 左下角、z-index 99999）的遮挡，正式环境无该元素时行为不变 |
 | fix | llmgw | 池健康统计不再把「指不到任何上游或模型」的成员算成 healthy——一次请求都发不出去的池此前在控制台显示「健康」 |
-| fix | llmgw | 成员顺位的圆点与池级徽章口径统一：指不到上游的成员在列表响应里归一成「不可用」，不再出现「池标已中断、第 1 顺位却是绿点」
+| fix | llmgw | 成员顺位的圆点与池级徽章口径统一：指不到上游的成员在列表响应里归一成「不可用」，不再出现「池标已中断、第 1 顺位却是绿点」 |
 | refactor | llmgw | 可解析成员判定收敛成一个入口（IsResolvablePoolMemberKey），删掉运行 gate 里抄的第二份，补守卫钉住只许有一份口径 |
 | docs | doc | debt.platform.llm-gateway 记两条待清理数据：三个全失效专用池、与托管默认池重复的对话主池 |
