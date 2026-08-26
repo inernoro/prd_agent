@@ -18,6 +18,7 @@
  */
 import { useEffect, useState } from 'react';
 import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Play, Sparkles, Wand2 } from 'lucide-react';
+import { describeFailurePresentation } from '@/pages/document-store/recordingVault';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import { onRecordingDuration } from './recordingPlayBridge';
 import {
@@ -187,6 +188,14 @@ export function TranscribeStatusCard({
   const retryAt = lastFailure?.automaticRetryNextAt ? Date.parse(lastFailure.automaticRetryNextAt) : NaN;
   const now = useSecondTick(processing || Number.isFinite(retryAt));
   const waitingAutoRetry = Number.isFinite(retryAt) && retryAt > now;
+  // 失败卡的三句话（抬头 / 副标 / 下一步）全从这一份判据来，不在 JSX 里各写各的
+  const failureCopy = lastFailure
+    ? describeFailurePresentation(lastFailure, {
+      waitingAutoRetry,
+      retryLabel: waitingAutoRetry ? `${formatDurationSec((retryAt - now) / 1000)}后` : undefined,
+      hasPartialTranscript: (transcriptPreview?.length ?? 0) > 0,
+    })
+    : null;
 
   const timing = processing ? estimateRemainingSeconds(activeRun, now) : null;
   const chips = (noteEntryId && !inPlace) || subtitleEntryId || (noteEntryId && onRestyle)
@@ -300,10 +309,8 @@ export function TranscribeStatusCard({
               <AlertTriangle size={16} />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-semibold text-token-primary">
-                {waitingAutoRetry ? '转录失败，正在自动重试' : '上次转文字没成功'}
-              </p>
-              <p className="mt-0.5 text-[11px] text-token-muted">录音还在，没有丢</p>
+              <p className="text-[13px] font-semibold text-token-primary">{failureCopy!.title}</p>
+              <p className="mt-0.5 text-[11px] text-token-muted">{failureCopy!.subtitle}</p>
             </div>
             {!waitingAutoRetry && onStart && (
               <button
@@ -340,9 +347,7 @@ export function TranscribeStatusCard({
             <div className="flex gap-2">
               <dt className="w-[52px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>下一步</dt>
               <dd style={{ color: 'var(--text-secondary)' }}>
-                {waitingAutoRetry
-                  ? `第 ${lastFailure!.automaticRetryCount + 1} 次自动重试将在 ${formatDurationSec((retryAt - now) / 1000)}后开始，无需操作`
-                  : '点「重试」；若反复失败，可转码后重新上传'}
+                {failureCopy!.nextStep}
               </dd>
             </div>
           </dl>

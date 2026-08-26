@@ -15,6 +15,7 @@ import {
   replaceTranscriptSegmentText,
   renameTranscriptSpeaker,
   buildTranscriptWordCloud,
+  describeWordCloudEmptyState,
   parseSpeakerSourceNote,
   extractTranscriptSummary,
   parseSummaryModules,
@@ -1078,7 +1079,7 @@ export function TranscriptKaraoke({
                 */}
                 {wordCloud.length === 0 && (
                   <p className="text-[11px] leading-relaxed text-token-muted">
-                    没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。
+                    {describeWordCloudEmptyState(timelineSegments.length)}
                   </p>
                 )}
             {speakers.length > 0 && (

@@ -10,6 +10,7 @@ import {
   recordingCitationMatchesTimeline,
   TranscriptKaraoke,
 } from '../TranscriptKaraoke';
+import { describeWordCloudEmptyState } from '../transcriptSegments';
 
 describe('TranscriptKaraoke unified playback', () => {
   it('renders one direct player with follow-along guidance and no playback mode switch', () => {
@@ -96,8 +97,13 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(html).not.toContain('整场录音词云');
     expect(html).not.toContain('的句子提到');
     expect(html).not.toContain('最高频主题');
-    // 但**不许是一张空卡**：没有词的时候恰恰最需要说清为什么没有、怎么补
-    expect(html).toContain('没有反复出现的词');
+    /*
+     * 但**不许是一张空卡**：没有词的时候恰恰最需要说清为什么没有、怎么补。
+     * 这里断言的是「给了解释」这件事本身，不是某一句的字面量——
+     * 具体给哪一句由 describeWordCloudEmptyState 按原文长短分档
+     * （它自己有单测），把文案钉死在这里会让改文案的人莫名其妙地红。
+     */
+    expect(html).toContain(describeWordCloudEmptyState(1));
   });
 
   it('问答提示保留超过四万字录音的开头和结尾，不偷偷截成局部', () => {

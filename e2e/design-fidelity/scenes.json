@@ -71,5 +71,220 @@
         }
       }
     ]
+  },
+  {
+    "id": "fail-manual",
+    "board": "v2-S5 / cap-S8",
+    "note": "转录失败、自动重试已耗尽、轮到用户手动重试的那张卡",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 9000,
+    "audioMeta": {
+      "transcribe_entry_id": null
+    },
+    "expect": [
+      "上次转文字没成功",
+      "ERR_CODEC"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "status": "failed",
+          "progress": 0,
+          "errorMessage": "音频编码不受支持，无法解码这段录音。",
+          "failureCode": "ERR_CODEC",
+          "automaticRetryCount": 3,
+          "automaticRetryNextAt": null,
+          "endedAt": "@ago:120"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "status": "failed",
+          "progress": 0,
+          "errorMessage": "音频编码不受支持，无法解码这段录音。",
+          "failureCode": "ERR_CODEC",
+          "automaticRetryCount": 3,
+          "automaticRetryNextAt": null,
+          "endedAt": "@ago:120"
+        }
+      }
+    ]
+  },
+  {
+    "id": "no-speech",
+    "board": "v2-S4",
+    "note": "整段几乎只有环境噪声，后端判 ASR_NO_SPEECH",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 9000,
+    "audioMeta": {
+      "transcribe_entry_id": null
+    },
+    "expect": [
+      "没有检测到有效语音",
+      "重试不会有别的结果"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "status": "failed",
+          "progress": 0,
+          "errorMessage": "没有识别到有效语音。请确认录音中有人声且音量清晰，然后重新上传；原始音频已保留。",
+          "failureCode": "ASR_NO_SPEECH",
+          "automaticRetryCount": 0,
+          "automaticRetryNextAt": null,
+          "endedAt": "@ago:90"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "status": "failed",
+          "progress": 0,
+          "errorMessage": "没有识别到有效语音。请确认录音中有人声且音量清晰，然后重新上传；原始音频已保留。",
+          "failureCode": "ASR_NO_SPEECH",
+          "automaticRetryCount": 0,
+          "automaticRetryNextAt": null,
+          "endedAt": "@ago:90"
+        }
+      }
+    ]
+  },
+  {
+    "id": "auto-retry",
+    "board": "v2-S6 / cap-S7（按拍板缩水成整条转录的重试卡）",
+    "note": "失败但自动重试还没耗尽：第 2/3 次将在 8 秒后开始",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 9000,
+    "audioMeta": {
+      "transcribe_entry_id": null
+    },
+    "expect": [
+      "转录失败，正在自动重试",
+      "自动重试将在"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "status": "failed",
+          "progress": 0,
+          "errorMessage": "模型请求超时。",
+          "failureCode": "ERR_TIMEOUT",
+          "automaticRetryCount": 2,
+          "automaticRetryNextAt": "@in:8",
+          "endedAt": "@ago:20"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "status": "failed",
+          "progress": 0,
+          "errorMessage": "模型请求超时。",
+          "failureCode": "ERR_TIMEOUT",
+          "automaticRetryCount": 2,
+          "automaticRetryNextAt": "@in:8",
+          "endedAt": "@ago:20"
+        }
+      }
+    ]
+  },
+  {
+    "id": "stalled",
+    "board": "cap-S10（按拍板保留重试，只改文案与陪伴）",
+    "note": "后台任务超过一小时没报告状态",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 9000,
+    "audioMeta": {
+      "transcribe_entry_id": null
+    },
+    "expect": [
+      "处理已超过一小时",
+      "还在排队",
+      "关掉这一页"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:11530",
+          "startedAt": "@ago:11520",
+          "status": "running",
+          "progress": 30,
+          "phase": "排队中",
+          "heartbeatAt": "@ago:7200"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:11530",
+          "startedAt": "@ago:11520",
+          "status": "running",
+          "progress": 30,
+          "phase": "排队中",
+          "heartbeatAt": "@ago:7200"
+        }
+      }
+    ]
   }
 ]

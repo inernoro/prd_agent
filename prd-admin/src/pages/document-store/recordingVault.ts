@@ -639,3 +639,66 @@ export async function vaultDeleteSession(id: string): Promise<void> {
   } catch { /* best-effort */ }
   db.close();
 }
+
+/**
+ * 失败卡该说什么 —— 按失败类别分档。
+ *
+ * 为什么要分档：同一张「上次转文字没成功」把三种完全不同的处境说成了一句话。
+ *   - 后台失联一小时：任务多半还在排队，用户需要的是「可以走开」，
+ *     而旧文案说「不能确认仍会自行完成」，读起来像坏了（稿面 cap-S10）。
+ *   - 整段没有人声：重试同一段音频不会有别的结果，用户需要的是先播一遍确认，
+ *     而旧文案让他「点重试」（稿面 v2-S4）。
+ *   - 编码不支持等真失败：旧文案本来就对（稿面 v2-S5）。
+ *
+ * 抽成纯函数而不是写在卡里：这三档的差别是**判据**，判据要能被单测钉住；
+ * 写在 JSX 里只能靠肉眼看截图，而截图看不出「换一个 failureCode 会不会走错档」。
+ *
+ * 产品方 2026-08-26 裁定：一小时那一档**保留重试按钮**（它是用户唯一的恢复出口），
+ * 只改文案与陪伴，不动「超时判失败」的判定逻辑，也不新增完成通知订阅。
+ */
+export type FailurePresentation = {
+  title: string;
+  /** 抬头第二行：一句话说清什么没丢 */
+  subtitle: string;
+  /** 「下一步」那一行 */
+  nextStep: string;
+};
+
+/** 后端把「整段没有有效语音」分成两个 code，UI 该给同一档 */
+const NO_SPEECH_CODES = new Set(['ASR_NO_SPEECH', 'ASR_ALL_CANDIDATES_NO_SPEECH']);
+
+export function describeFailurePresentation(
+  notice: FailedTranscriptionNotice,
+  opts: { waitingAutoRetry: boolean; retryLabel?: string; hasPartialTranscript?: boolean } = { waitingAutoRetry: false },
+): FailurePresentation {
+  // 自动重试还没耗尽：这一档压过所有类别——正在自愈的时候不该让用户做任何事
+  if (opts.waitingAutoRetry) {
+    return {
+      title: '转录失败，正在自动重试',
+      subtitle: '录音还在，没有丢',
+      nextStep: `第 ${notice.automaticRetryCount + 1} 次自动重试将在 ${opts.retryLabel ?? '稍后'}开始，无需操作`,
+    };
+  }
+  const code = (notice.code ?? '').trim().toUpperCase();
+  if (code === 'RUN_STALLED') {
+    return {
+      title: '处理已超过一小时',
+      subtitle: '录音已经安全保存，任务还在排队',
+      nextStep: opts.hasPartialTranscript
+        ? '已经生成的部分原文可以先读；可以关掉这一页，回来时这里就是最新状态。等不及就点「重试」重新排队'
+        : '可以关掉这一页，回来时这里就是最新状态。等不及就点「重试」重新排队',
+    };
+  }
+  if (NO_SPEECH_CODES.has(code)) {
+    return {
+      title: '没有检测到有效语音',
+      subtitle: '音频已保留，可以直接播放确认',
+      nextStep: '先播一遍确认这段录音里有没有人声。确实没有就重新录一次——同一段音频重试不会有别的结果',
+    };
+  }
+  return {
+    title: '上次转文字没成功',
+    subtitle: '录音还在，没有丢',
+    nextStep: '点「重试」；若反复失败，可转码后重新上传',
+  };
+}

@@ -596,3 +596,23 @@ export function advanceUnansweredNotice(
   if (!prev.question) return NO_UNANSWERED_NOTICE;
   return prev.shown ? NO_UNANSWERED_NOTICE : { question: prev.question, shown: true };
 }
+
+/**
+ * 词云为空时该说哪一句 —— 稿面 cap-S12 要求把「太短」和「词没被认出来」分开说。
+ *
+ * 一个诚实性约束：稿面写的是「超过 50 句时会自动出现主题与关键词」，
+ * 但实现的门槛从来不是句数，是**同一个词出现两次以上**（buildTranscriptWordCloud 的
+ * count>=2）。照抄稿面那句就是承诺一条不存在的规则——录满 60 句但没有任何重复词时
+ * 词云照样是空的，那句话当场变成谎话（no-rootless-tree）。
+ *
+ * 所以这里只用句数判「哪一句更可能是真原因」，措辞回到真实门槛上：
+ * 短到没机会重复 → 说太短；够长却仍为空 → 说词没被分词器认出来。
+ */
+export const WORD_CLOUD_SHORT_SENTENCES = 50;
+
+export function describeWordCloudEmptyState(sentenceCount: number): string {
+  if (sentenceCount > 0 && sentenceCount < WORD_CLOUD_SHORT_SENTENCES) {
+    return `这段录音只有 ${sentenceCount} 句，还太短。一个词要在原文里出现两次以上才会进词云，录长一点自然就有了。`;
+  }
+  return '没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。';
+}
