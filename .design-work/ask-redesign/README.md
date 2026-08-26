@@ -55,6 +55,7 @@ document.getAnimations().forEach(a => { a.pause(); a.currentTime = 1020; });
 | 文件 | 是什么 |
 |---|---|
 | `Motion.dc.html` | **真在动的** demo：胶囊 → 长条 → 侧栏 → 收回，8 秒一轮，纯 CSS 无 JS |
+| `motion-demo.html` | 上面那块的**独立可打开版**，多一条控制栏（暂停 / 拖时间轴 / 0.25 倍速 / 跳关键帧）。由 `build-motion-demo.py` 从 `Motion.dc.html` 生成，别手改 |
 | `MotionSpec.dc.html` | 时间线、弹簧曲线、四条工程坑、reduced-motion 分支 |
 
 ### 第三页 · 划词、改写、词条来路、移动端

@@ -163,6 +163,6 @@
   ],
   "launch": {
     "view": "canvas",
-    "page": "page-1"
+    "page": "page-motion"
   }
 }
