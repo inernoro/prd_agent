@@ -1,4 +1,5 @@
 import { ArrowRight, Play, Sparkles } from 'lucide-react';
+import { InkOrb } from '@/components/backgrounds/InkOrb';
 import { cn } from '@/lib/cn';
 import { Reveal } from '../components/Reveal';
 import { VisualCanvasStage } from '../scenes/VisualCanvasScene';
@@ -28,6 +29,12 @@ import { useLanguage } from '../contexts/LanguageContext';
  * 产品预览发送键、导航 Logo），每一份都各自漂移、各自配错前景色。
  * 想用它就 import，不要再抄一遍色值。
  */
+/**
+ * 墨滴的两支色：鼓起来的地方走品牌赭红，凹下去的地方走钢青。
+ * 和 HERO_GRADIENT_STOPS 同源不同用途 —— 那三支是按钮/文字的实心渐变，这两支是 3D 的光。
+ */
+export const HERO_ORB_COLORS: [string, string] = ['#D97757', '#6AB6D2'];
+
 export const HERO_GRADIENT_STOPS = ['#CE6B41', '#D97757', '#E0A06B'] as const;
 export const HERO_GRADIENT = `linear-gradient(135deg, ${HERO_GRADIENT_STOPS[0]} 0%, ${HERO_GRADIENT_STOPS[1]} 48%, ${HERO_GRADIENT_STOPS[2]} 100%)`;
 /**
@@ -133,9 +140,18 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
       </div>
 
       {/* ── 第一屏内容（居中标题 + CTA） ── */}
+      {/*
+        * 版式：左文右物的不对称两栏，不再是居中堆叠。
+        *
+        * 原来 badge / 大标题 / 副标题 / 两个按钮 / logo 墙全部居中竖着摞 —— 那是 2015 年的
+        * SaaS 模板骨架，配什么字体、什么颜色都救不回来，用户的评价是"单调、丑陋"。
+        * 换成两栏之后右边空出一块，正好给那颗会呼吸的墨滴 —— 整页第一个能转的实体。
+        */}
       <div
-        className="relative z-10 min-h-[82vh] flex flex-col items-center justify-center px-6 pt-32 pb-16"
+        className="relative z-10 min-h-[82vh] flex flex-col justify-center px-6 pt-32 pb-16"
       >
+        <div className="w-full max-w-[1280px] mx-auto grid lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] gap-8 lg:gap-14 items-center">
+        <div className="flex flex-col items-start">
         {/*
          * 呼吸设计 — 学习 Linear.app 的节奏
          *
@@ -152,7 +168,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         {/* ── Phase 2 · HUD 状态条 — 装饰性，比核心信息晚出 ── */}
         <Reveal delay={1200} duration={2000} offset={6}>
           <div
-            className="inline-flex items-center gap-3 px-4 py-2 mb-12 rounded-md"
+            className="inline-flex items-center gap-3 px-4 py-2 mb-9 rounded-md"
             style={{
               background: 'rgba(10, 14, 22, 0.72)',
               border: '1px solid rgba(203, 213, 225, 0.22)',
@@ -194,10 +210,11 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         {/* ★ 主标题 — 4s duration，前 600ms 可读，后 3.4s 雾慢慢散 */}
         <Reveal delay={0} blur={10} duration={4000} offset={30}>
           <h1
-            className="text-center font-medium"
+            className="font-medium"
             style={{
               fontFamily: 'var(--font-display)',
-              fontSize: 'clamp(2.75rem, 7.5vw, 6.5rem)',
+              // 从 7.5vw / 6.5rem 收下来：现在只占左半栏，原尺寸会把两栏挤散
+              fontSize: 'clamp(2.6rem, 5.2vw, 4.7rem)',
               lineHeight: 1.08,
               letterSpacing: '-0.035em',
               maxWidth: '16ch',
@@ -224,7 +241,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         {/* 容器放宽到 max-w-3xl、字号收到 clamp(13.6,0.95vw,16px)，承载 100 字中文定义 */}
         <Reveal delay={500} duration={2000} offset={20}>
           <p
-            className="mt-8 text-center text-white/62 max-w-2xl mx-auto"
+            className="mt-7 text-white/62 max-w-xl"
             style={{
               fontFamily: 'var(--font-body)',
               fontSize: 'clamp(0.85rem, 0.95vw, 1rem)',
@@ -238,7 +255,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
 
         {/* CTA — 和副标题同时出发，2s duration */}
         <Reveal delay={500} duration={2000} offset={20}>
-          <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <div className="mt-10 flex flex-col sm:flex-row items-start sm:items-center gap-4">
             {/* 主 CTA */}
             <button
               onClick={onGetStarted}
@@ -285,9 +302,20 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </div>
         </Reveal>
 
-        {/* ── Phase 2 · Powered by — 装饰性 ── */}
+        </div>
+
+        {/*
+          * 右栏：那颗墨滴。lg 以下整块不渲染 —— 它是全页最贵的一个 WebGL 上下文，
+          * 而手机正是最不该付这笔钱的地方；墨场背景在手机上仍然在。
+          */}
+        <div className="relative hidden lg:block" style={{ aspectRatio: '1 / 1' }}>
+          <InkOrb className="absolute inset-0" colors={HERO_ORB_COLORS} amplitude={0.22} />
+        </div>
+        </div>
+
+        {/* ── Phase 2 · Powered by — 装饰性，独占一行压在两栏底下 ── */}
         <Reveal delay={1400} duration={2000} offset={6}>
-          <div className="mt-20 md:mt-24 w-full">
+          <div className="mt-16 md:mt-20 w-full max-w-[1280px] mx-auto">
             <TechLogoBar />
           </div>
         </Reveal>

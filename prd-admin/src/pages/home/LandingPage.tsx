@@ -14,6 +14,7 @@ import { ModelLayerScene } from './scenes/ModelLayerScene';
 import { CdsScene } from './scenes/CdsScene';
 import { StartScene } from './scenes/StartScene';
 import { StaticBackdrop } from './components/StaticBackdrop';
+import { InkFieldBackdrop } from '@/components/backgrounds/InkFieldBackdrop';
 import { LanguageToggle } from './components/LanguageToggle';
 import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 
@@ -72,6 +73,13 @@ function MapLogo({ className = 'w-10 h-10' }: { className?: string }) {
   );
 }
 
+/**
+ * 墨场的三支色：陶土 / 钢青 / 松绿（前两支是主体，第三支只做稀有点缀），取自八色墨带（`lib/tileAccent.ts` 的 INK_HUES
+ * 在 54%/62% 档的实心值）。写在这里而不是组件里，是为了让色值留在受 no-purple
+ * 守卫扫描的 `pages/home` 这一侧 —— 哪天有人改成靛蓝，CI 当场就红。
+ */
+const INK_FIELD_COLORS: [string, string, string] = ['#D38669', '#6AB6D2', '#6AD2A2'];
+
 /** 首屏之下区块的渲染跳过策略：离视口远时不渲染（含内部动画），滚近时自动补渲染 */
 const BELOW_FOLD_SECTION: CSSProperties = {
   contentVisibility: 'auto',
@@ -92,8 +100,12 @@ function LandingInner() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleGetStarted = () => navigate('/login');
+  /*
+   * 次 CTA 原来滚到 #cinema —— 那一幕（片花，Coming soon 占位）早就撤了，
+   * 于是这颗按钮点下去什么都不发生，一直是个死链。改成滚到第一幕真面板。
+   */
   const handleWatchDemo = () => {
-    document.getElementById('cinema')?.scrollIntoView({ behavior: 'smooth' });
+    document.getElementById('literary')?.scrollIntoView({ behavior: 'smooth' });
   };
 
   /*
@@ -117,8 +129,19 @@ function LandingInner() {
       style={{ scrollBehavior: 'smooth', fontFamily: 'var(--font-body)' }}
       data-lang={lang}
     >
-      {/* 静态背景 */}
+      {/*
+        * 背景两层：
+        *   1 StaticBackdrop —— 纯 CSS 底色 + 点阵 + 噪点，零 JS。它同时是降级形态：
+        *     拿不到 WebGL 时上面那层什么都不画，页面回到改版前的样子，不会开天窗。
+        *   2 InkFieldBackdrop —— 墨在水里散开的 WebGL 流场，跟指针有极轻的互动。
+        * 只有一层静态 CSS 是这页「平」的根因：十幕内容压在一块死黑板上。
+        */}
       <StaticBackdrop />
+      <InkFieldBackdrop
+        className="fixed inset-0 z-0 pointer-events-none"
+        colors={INK_FIELD_COLORS}
+        intensity={0.30}
+      />
 
       {/* 顶栏 */}
       <nav className="fixed top-0 left-0 right-0 z-50">

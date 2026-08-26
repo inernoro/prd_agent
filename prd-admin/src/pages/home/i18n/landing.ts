@@ -373,10 +373,14 @@ const zh: TranslationShape = {
     status: 'SYSTEM ONLINE',
     brand: 'MAP · 米多智能体生态平台',
     title: '让创造，自由呼吸',
+    // 原文是一百字企业话术（"碳硅共生的深度融合、人机共治、价值共创、共同进化"）。
+    // 这种句子放到任何一家公司的首页都成立，等于没说；居中三行排下来也是首屏最难看的一块。
+    // 换成这一页接下来真的会演给你看的东西。
     subtitle:
-      'MAP（Midoo Agentic Platform）· 米多智能体生态平台是企业级数字劳动力平台，致力于将 AI 从辅助工具升级为具备端到端作业能力的数字劳动力，强调碳硅共生的深度融合、人机共治、价值共创、共同进化，赋能企业进化为碳硅共生的智能型组织。',
+      '三十几个 Agent 在同一个台面上干活，模型调度和交付环境都在下面接着。你说一句话，产物落在画布或文档里，不是聊天记录里。',
     primaryCta: '进入 MAP',
-    secondaryCta: '观看片花',
+    // 原来是「观看片花」，指向的 #cinema 那一幕早就撤了 —— 一颗点下去什么也不发生的按钮
+    secondaryCta: '看它怎么干活',
     techBarLabel: 'POWERED BY',
     techItems: [
       'GPT-5',
@@ -893,9 +897,9 @@ const en: TranslationShape = {
     brand: 'MAP · MIDOO AGENTIC PLATFORM',
     title: 'Create, freely.',
     subtitle:
-      'MAP (Midoo Agentic Platform) is an enterprise-grade digital workforce platform — upgrading AI from an assistant into a workforce with end-to-end execution, built on deep carbon-silicon symbiosis, human-AI co-governance, shared value creation, and continuous co-evolution.',
+      'Thirty-odd agents working on one desk, with model routing and delivery environments underneath. Say a sentence — the artifact lands on a canvas or in a document, not in a chat log.',
     primaryCta: 'Enter MAP',
-    secondaryCta: 'Watch Trailer',
+    secondaryCta: 'See it work',
     techBarLabel: 'POWERED BY',
     techItems: [
       'GPT-5',
