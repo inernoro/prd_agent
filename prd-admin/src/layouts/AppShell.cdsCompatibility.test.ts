@@ -3,13 +3,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { stripComments } from '@/test-utils/sourceScan';
+
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const layoutSource = readFileSync(path.resolve(testDirectory, 'AppShell.tsx'), 'utf8');
 const globalsSource = readFileSync(path.resolve(testDirectory, '../styles/globals.css'), 'utf8');
 // 跨模块读 CDS 注入脚本：侧栏留不留底部空位，取决于它把徽章锚在哪一侧。
-const widgetSource = readFileSync(
-  path.resolve(testDirectory, '../../../cds/src/widget-script.ts'),
-  'utf8',
+// 去注释再扫：判据要回答「这行代码在不在」，注释掉的调用不算在。
+const widgetSource = stripComments(
+  readFileSync(path.resolve(testDirectory, '../../../cds/src/widget-script.ts'), 'utf8'),
 );
 
 describe('AppShell CDS preview compatibility', () => {
@@ -43,13 +45,13 @@ describe('AppShell CDS preview compatibility', () => {
     expect(renderBody).toContain("root.style.bottom=pos.y+'px'");
 
     // 而且 render() 必须在初始化时就被调用一次（不是等到某个交互）。
-    // 判据只认「整行就是这个调用」：最初写成 /── Initial[\s\S]{0,200}?render\(\);/，
-    // 结果把 `// render();` 这种注释掉的调用也判成了证据（红绿闭环时才发现它不变红）。
-    const initBlock = widgetSource.slice(widgetSource.indexOf('── Initial'));
-    const initCalls = initBlock
+    // 定位靠缩进：注入脚本整体包在一个 IIFE 里，顶层语句缩进 2 格，函数体内的调用
+    // 都更深。全文件 29 处 render()，只有初始化那一处在顶层。
+    // （不能用 trim() —— 那会把 29 处全算上；也不能拿注释里的 `── Initial` 当锚点，
+    //   widgetSource 已经去过注释，而且注释本来就不该充当判据。）
+    const topLevelCalls = widgetSource
       .split('\n')
-      .slice(0, 8)
-      .filter((line) => line.trim() === 'render();');
-    expect(initCalls).toHaveLength(1);
+      .filter((line) => /^ {2}render\(\);\s*$/.test(line));
+    expect(topLevelCalls).toHaveLength(1);
   });
 });

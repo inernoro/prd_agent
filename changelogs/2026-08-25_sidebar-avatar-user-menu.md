@@ -15,3 +15,5 @@
 | fix | prd-admin | Codex review 二轮修复：选「随系统」在 Safari 14 之前的浏览器上直接抛（那些 MediaQueryList 只有 addListener，没有 addEventListener），整档功能用不了；新增 lib/mediaQuerySubscribe 共享订阅带老旧回退，watchSystemThemeChange 改走它 |
 | test | prd-admin | 新增 mediaQuerySubscribe 用例（6 例）：现代/老旧/两者皆无/SSR 四种环境的订阅与取消订阅行为，外加「老旧回退不许再抄第五份」棘轮与「随系统不自己 addEventListener」守卫；已跑红绿闭环 |
 | test | prd-admin | Codex review 三轮：新增「首屏由 render() 落 pos」接线守卫——原守卫只断言 defaultWidgetLeft 的返回值，删掉 render 里那两行落 inline style 的代码它照样全绿，而徽章会退回 CSS 默认 left:12px 压住贴底头像；顺带修了自己判据里的形状 8（初判据把注释掉的 `// render();` 也当成证据，红绿闭环时不变红才发现，已收紧成只认整行调用） |
+| fix | prd-admin | Codex review 四轮：用户菜单里的外观三选项此前是 DropdownMenu.Item + 自己写 role="radio"，子元素 role 覆盖掉 Item 给的 menuitem，菜单里挂出几个裸 radio，屏幕阅读器读到的结构与导航上下文是坏的；改用 Radix 原生 RadioGroup / RadioItem（落 role="group" 与 role="menuitemradio" + aria-checked），选中态由 RadioGroup 的 value 驱动 |
+| test | prd-admin | 新增 test-utils/sourceScan 的 stripComments：源码扫描类守卫扫之前先去注释。本 PR 同一个坑连踩三次（addEventListener 误红、注释掉的 render() 被当成调用、role="radio" 命中解释性注释），三次都在打补丁收紧正则；改为在判据前统一去注释，并把二轮/三轮/四轮那三条判据都收到它上面。含 7 例行为用例（行注释/块注释/JSX 注释/字符串与模板串不误伤/转义引号），另加 3 例菜单单选角色守卫；均跑红绿闭环 |

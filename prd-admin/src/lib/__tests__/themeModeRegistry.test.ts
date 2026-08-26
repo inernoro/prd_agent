@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { THEME_MODE_OPTIONS, THEME_MODE_ORDER, THEME_MODE_REGISTRY } from '../themeModeRegistry';
 import { resolveThemeMode } from '@/stores/mobileThemeStore';
+import { stripComments } from '@/test-utils/sourceScan';
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const srcDirectory = path.resolve(testDirectory, '../..');
@@ -133,5 +134,34 @@ describe('AppShell 之外的独立全屏页必须走共享 hook 落主题', () =
   it('hook 与壳层都把解析后的明暗放进了 effect deps', () => {
     expect(read('hooks/useApplyDocumentTheme.ts')).toContain('[mode, resolved, pathname]');
     expect(read('layouts/AppShell.tsx')).toContain('[mobileThemeMode, resolvedThemeMode, location.pathname]');
+  });
+});
+
+describe('用户菜单里的外观三选项用的是菜单单选角色', () => {
+  // Codex review 四轮 P2：原写法是 DropdownMenu.Item + 自己写 role="radio"，
+  // 子元素的 role 会覆盖掉 Item 给的 role="menuitem"，于是 menu 里挂着几个裸 radio ——
+  // 对屏幕阅读器来说结构是坏的。改回去这三条都会红。
+  // 去掉注释再扫：下面那条 not.toMatch(/role="radio"/) 一开始就被本文件上方
+  // 解释「原来错在哪」的那句注释判红了。判据只该看会执行的代码。
+  const shellSource = stripComments(
+    readFileSync(path.resolve(srcDirectory, 'layouts/AppShell.tsx'), 'utf8'),
+  );
+
+  it('三选项走 Radix 的 RadioGroup / RadioItem', () => {
+    expect(shellSource).toContain('DropdownMenu.RadioGroup');
+    expect(shellSource).toContain('DropdownMenu.RadioItem');
+  });
+
+  it('不自己声明 role / aria-checked，交给 Radix 落 menuitemradio', () => {
+    // 这两个属性一旦自己写，就会覆盖 Radix 给的角色与选中态。
+    expect(shellSource).not.toMatch(/role="radio"/);
+    expect(shellSource).not.toMatch(/role="radiogroup"/);
+    expect(shellSource).not.toMatch(/aria-checked=\{/);
+  });
+
+  it('选中态由 RadioGroup 的 value 驱动（唯一事实源仍是偏好 store）', () => {
+    expect(shellSource).toMatch(
+      /DropdownMenu\.RadioGroup[\s\S]{0,200}?value=\{mobileThemeMode\}/,
+    );
   });
 });

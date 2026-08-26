@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { subscribeMediaQuery } from '../mediaQuerySubscribe';
+import { stripComments } from '@/test-utils/sourceScan';
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const srcDirectory = path.resolve(testDirectory, '../..');
@@ -91,9 +92,12 @@ describe('老旧 Safari 回退不许再抄第五份', () => {
   });
 
   it('「随系统」的订阅走共享实现，不自己 addEventListener', () => {
-    const store = readFileSync(path.resolve(srcDirectory, 'stores/mobileThemeStore.ts'), 'utf8');
+    // 扫之前先去注释：这个文件的注释正好解释「为什么不能直接 addEventListener」，
+    // 判据看得见注释就会误红（本 PR 二轮踩过一次）。
+    const store = stripComments(
+      readFileSync(path.resolve(srcDirectory, 'stores/mobileThemeStore.ts'), 'utf8'),
+    );
     expect(store).toContain('subscribeMediaQuery(SYSTEM_DARK_QUERY');
-    // 只认真正的调用；注释里提到这个名字（解释为什么不能直接用它）不该判红。
-    expect(store).not.toMatch(/\.addEventListener\s*\(/);
+    expect(store).not.toContain('addEventListener');
   });
 });

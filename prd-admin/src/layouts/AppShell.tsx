@@ -1597,45 +1597,48 @@ export default function AppShell() {
                 />
 
                 {/* 外观：横排三选项（白天 / 黑夜 / 随系统）。
-                    用 DropdownMenu.Item 而不是裸 button —— 菜单里的键盘上下键才够得到它；
+                    用 Radix 的 RadioGroup / RadioItem，不是 Item + 自己写 role="radio" ——
+                    后者会把 Item 给的 role="menuitem" 覆盖掉，菜单里就多出几个裸 radio，
+                    屏幕阅读器读到的结构和导航上下文都是坏的（Codex review 四轮 P2）。
+                    RadioGroup 落 role="group"、RadioItem 落 role="menuitemradio" + aria-checked，
+                    这两个才是 menu 的合法子角色，选中态也不用自己声明。
+                    不传 onValueChange：提交只走 button 的 onClick 一条路（它需要鼠标事件当
+                    换肤动画的原点），避免两条路各提交一次。
                     onSelect 里 preventDefault 让点完菜单不关，用户能当场看见整屏换肤。 */}
-                <div
-                  className="mx-1 mb-1 mt-0.5 rounded-[12px] p-1"
-                  style={{ background: 'var(--nested-block-bg)' }}
-                  role="radiogroup"
+                <DropdownMenu.RadioGroup
+                  value={mobileThemeMode}
                   aria-label="外观"
+                  className="mx-1 mb-1 mt-0.5 flex items-stretch gap-1 rounded-[12px] p-1"
+                  style={{ background: 'var(--nested-block-bg)' }}
                 >
-                  <div className="flex items-stretch gap-1">
-                    {THEME_MODE_OPTIONS.map((option) => {
-                      const Icon = option.icon;
-                      const selected = option.value === mobileThemeMode;
-                      return (
-                        <DropdownMenu.Item
-                          key={option.value}
-                          asChild
-                          onSelect={(event) => event.preventDefault()}
+                  {THEME_MODE_OPTIONS.map((option) => {
+                    const Icon = option.icon;
+                    const selected = option.value === mobileThemeMode;
+                    return (
+                      <DropdownMenu.RadioItem
+                        key={option.value}
+                        value={option.value}
+                        asChild
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        <button
+                          type="button"
+                          title={option.description}
+                          onClick={(event) => handleThemeModeSelect(option.value, event)}
+                          className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-[9px] px-2 py-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          style={
+                            selected
+                              ? { background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }
+                              : { background: 'transparent', color: 'var(--text-secondary)' }
+                          }
                         >
-                          <button
-                            type="button"
-                            role="radio"
-                            aria-checked={selected}
-                            title={option.description}
-                            onClick={(event) => handleThemeModeSelect(option.value, event)}
-                            className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-[9px] px-2 py-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
-                            style={
-                              selected
-                                ? { background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }
-                                : { background: 'transparent', color: 'var(--text-secondary)' }
-                            }
-                          >
-                            <Icon size={15} aria-hidden />
-                            <span className="text-[11px] leading-none">{option.label}</span>
-                          </button>
-                        </DropdownMenu.Item>
-                      );
-                    })}
-                  </div>
-                </div>
+                          <Icon size={15} aria-hidden />
+                          <span className="text-[11px] leading-none">{option.label}</span>
+                        </button>
+                      </DropdownMenu.RadioItem>
+                    );
+                  })}
+                </DropdownMenu.RadioGroup>
 
                 <DropdownMenu.Separator
                   className="h-px mx-2 my-1"
