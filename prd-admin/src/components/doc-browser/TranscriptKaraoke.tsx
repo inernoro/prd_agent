@@ -104,6 +104,15 @@ function nearestScrollParent(el: HTMLElement): HTMLElement | null {
 }
 
 /** mm:ss；无时间戳的行不显示时钟而不是显示一个假的 0:00。 */
+/**
+ * 说话人圆标取哪个字：名字里带拉丁字母或数字就取最后那一个（受访者 A → A、嘉宾 2 → 2），
+ * 否则取首字（主持人 → 主）。稿面 D1 两种都画了，规则由这一条统一。
+ */
+function speakerInitial(speaker: string): string {
+  const latin = speaker.trim().match(/[A-Za-z0-9](?=[^A-Za-z0-9]*$)/);
+  return latin ? latin[0].toUpperCase() : speaker.trim().slice(0, 1);
+}
+
 function formatClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return '';
   // 分钟也补两位：稿面全场是 09:58 / 09:20 / 09:41，原文列表左侧那一列靠它对齐；
@@ -553,10 +562,12 @@ export function TranscriptKaraoke({
   return (
     <div
       className={documentMode
-        ? 'relative flex w-full flex-col items-stretch gap-4 lg:flex-row lg:items-start lg:gap-6'
+        ? 'relative flex w-full flex-col items-stretch gap-4 lg:h-full lg:min-h-0 lg:flex-row lg:items-stretch lg:gap-6'
         : 'relative flex w-full flex-col items-center gap-4'}>
       {/* 主栏：波形 + 播放条 + 原文。桌面下它占主导宽度，右栏是配角（content-fills-canvas） */}
-      <div className={documentMode ? 'flex w-full min-w-0 flex-col items-center gap-4 lg:flex-1' : 'contents'}>
+      <div className={documentMode
+        ? 'flex w-full min-w-0 flex-col items-center gap-4 lg:h-full lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pb-6'
+        : 'contents'}>
       {documentMode && (
         // 「录音」这个分区标题去掉了：顶栏已经写明这一屏是什么，稿面也没有它；
         // 留着的代价是它和下方白底播放区之间空出一大块灰，正是判官记的「播放区顶部留白」。
@@ -956,14 +967,20 @@ export function TranscriptKaraoke({
                 <span className="grid gap-x-3" style={{ gridTemplateColumns: isDesktop ? '56px 92px 1fr' : '48px 1fr' }}>
                   <span
                     className="pt-[2px] font-mono text-[11px] tabular-nums"
-                    // 时间戳全程淡灰：稿面当前句那一行的时间也是灰的，染蓝是我加的第三层强调
-                    style={{ color: 'var(--text-muted)' }}
+                    /*
+                      窄屏（B1/B2）稿面里时间戳全程淡灰，当前句只靠底色区分；
+                      宽屏（D1/D2）稿面把当前行的时间与人名一起染成强调色。
+                      两稿对同一处给了两种画法，按屏宽各取各的。
+                    */
+                    style={{ color: isDesktop && active ? 'var(--accent-fg-info)' : 'var(--text-muted)' }}
                   >
                     {s.start >= 0 ? formatClock(s.start) : ''}
                   </span>
                   {isDesktop && (
-                    // 稿面里说话人名与时间戳同为小号淡灰，正文才是最重的那一档
-                    <span className="min-w-0 truncate pt-[2px] text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <span
+                      className="min-w-0 truncate pt-[2px] text-[11px]"
+                      style={{ color: active ? 'var(--accent-fg-info)' : 'var(--text-muted)' }}
+                    >
                       {s.speaker ?? ''}
                     </span>
                   )}
@@ -1029,8 +1046,8 @@ export function TranscriptKaraoke({
       </div>
       {documentMode && (
         <aside
-          className="flex w-full max-w-[760px] flex-col gap-3 lg:sticky lg:top-0 lg:h-[100dvh] lg:w-[400px] lg:max-w-none lg:shrink-0 lg:self-stretch lg:overflow-y-auto lg:py-3 lg:pl-1"
-          style={isDesktop ? { maxHeight: '100dvh', borderLeft: '1px solid var(--border-faint)', paddingLeft: 20 } : undefined}>
+          className="flex w-full max-w-[760px] flex-col gap-3 lg:h-full lg:min-h-0 lg:w-[400px] lg:max-w-none lg:shrink-0 lg:overflow-y-auto lg:py-3 lg:pl-1"
+          style={isDesktop ? { borderLeft: '1px solid var(--border-faint)', paddingLeft: 20 } : undefined}>
           {/* 稿面 D1/D2 的右栏抬头：理解 / 纪要 / 待办 / 提问 四个分页签 */}
           {isDesktop && (
             <div className="flex items-center gap-5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
@@ -1205,7 +1222,11 @@ export function TranscriptKaraoke({
                 <div className="mt-4">
                   <p className="mb-2 flex items-center gap-1 text-[11px] text-token-muted"><UserRound size={12} /> 说话人</p>
                   <ul className="flex flex-col">
-                    {speakers.map((speaker, index) => {
+                    {/* 稿面 D1 按占比降序：谁说得多谁在上。按出现顺序排会把主要发言人压到下面 */}
+                    {[...speakers]
+                      .sort((a, b) => (speakerStats.find(i => i.speaker === b)?.count ?? 0)
+                        - (speakerStats.find(i => i.speaker === a)?.count ?? 0))
+                      .map((speaker, index) => {
                       const stat = speakerStats.find(item => item.speaker === speaker);
                       const editing = renamingSpeaker === speaker;
                       return (
@@ -1219,7 +1240,7 @@ export function TranscriptKaraoke({
                             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold"
                             style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
                           >
-                            {speaker.trim().slice(0, 1)}
+                            {speakerInitial(speaker)}
                           </span>
                           {editing ? (
                             <>
@@ -1521,8 +1542,8 @@ export function TranscriptKaraoke({
                 <span />
               </div>
               <div
-                className={`${SECTION_CARD} ${isDesktop ? 'flex min-h-0 flex-1 flex-col' : ''}`}
-                style={SECTION_CARD_STYLE}>
+                className={isDesktop ? 'flex min-h-0 flex-1 flex-col' : SECTION_CARD}
+                style={isDesktop ? undefined : SECTION_CARD_STYLE}>
               {/*
                 稿面 B4 顶部这条琥珀提示记的是**上一问没答上来、而且是如实说的**。
                 它不是错误提示——恰恰相反，是系统在证明自己没有替用户编一个答案。

@@ -150,7 +150,9 @@ export function RecordingResultShell({
         </button>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+      <main
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:overflow-hidden"
+        style={{ overscrollBehavior: 'contain' }}>
         {children}
       </main>
       </div>
@@ -483,7 +485,7 @@ export function RecordingResultPage() {
         </div>
       )}
       {state.kind === 'ready' && (
-        <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3">
+        <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3 lg:h-full lg:min-h-0 lg:pb-0">
           <TranscriptKaraoke
             src={state.audioUrl}
             noteMd={state.noteMd}

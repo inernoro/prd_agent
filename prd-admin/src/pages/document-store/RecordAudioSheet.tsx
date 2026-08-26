@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle, BookText, Check, ChevronDown, ChevronUp, Clock3, CloudUpload, FileCheck2, FileUp,
-  HardDrive, Mic, MicOff, MoreHorizontal, Pause, Play, ShieldCheck, Square, WifiOff, X,
+  HardDrive, Mic, MicOff, MoreHorizontal, Pause, Play, ShieldCheck, Square, Upload, WifiOff, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -310,7 +310,7 @@ export function RecordAudioSheet({
     // 展开态同样贴底：稿面 cap-A3 里带光标的那句（正在转写的）就在列表最后一条，
     // 停在顶部的话，用户点开「展开全部」看到的是开头，正在说的那句反而不在视野里。
     container.scrollTop = container.scrollHeight;
-  }, [liveTranscript, liveTranscriptExpanded]);
+  }, [liveSentences, liveTranscriptExpanded]);
   const pendingLivePcmRef = useRef<Int16Array[]>([]);
   const livePcmCompleteRef = useRef(true);
   const liveCaptureRef = useRef<LivePcmCaptureController | null>(null);
@@ -863,8 +863,15 @@ export function RecordAudioSheet({
       for (let i = 0; i < maxBars; i++) {
         const x = i * (barW + gap);
         const recorded = i < slice.length;
-        // 还没录到的那一段画成浅色底纹：让「录了多少」一眼可量，而不是一条永远满格的带子
-        const level = recorded ? slice[i] : 0.45;
+        /*
+         * 两段必须读成同一条波形，只是换个颜色（判分连着四块都指到这处）：
+         *   已录段给一个下限——安静的那一格也是一根短柱，不是一个点，
+         *   否则整段退化成「稀疏长柱 + 一条虚线基线」，和右边的占位段不像同一件东西；
+         *   未录段是占位，用一条确定的缓起伏（不是数据，纯粹为了保持同一套律动）。
+         */
+        const level = recorded
+          ? Math.max(0.22, slice[i])
+          : 0.3 + 0.16 * (0.5 + 0.5 * Math.sin(i * 0.55));
         const h = Math.max(4, level * height);
         g.fillStyle = recorded && !frozen ? activeColor : idleColor;
         g.fillRect(x, (height - h) / 2, barW, h);
@@ -969,7 +976,8 @@ export function RecordAudioSheet({
   const destinationPicker = storeOptions.length > 0 ? (
     <span className="relative inline-flex max-w-full items-center gap-1 rounded-[8px] px-1.5 py-0.5">
       <BookText size={13} style={{ color: 'var(--accent-fg-success)' }} aria-hidden />
-      <span className="truncate text-[12px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
+      {/* 库名不参与收缩：这一行真正要读的是「存到哪」，日期段可以先让 */}
+      <span className="shrink-0 text-[12px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
         保存到「{storeOptions.find(o => o.id === targetStoreId)?.name || storeName || '当前知识库'}」
       </span>
       {/*
@@ -978,7 +986,7 @@ export function RecordAudioSheet({
         它就是这条录音将来在库里的名字。编一个「用户访谈」才是没根的。
       */}
       {recordingName && (
-        <span className="truncate text-[12px] text-token-muted">· {recordingName}</span>
+        <span className="min-w-0 truncate text-[11px] text-token-muted">· {recordingName}</span>
       )}
       <ChevronDown size={12} style={{ color: 'var(--accent-fg-success)' }} aria-hidden />
       <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>切换</span>
@@ -1100,8 +1108,9 @@ export function RecordAudioSheet({
             <p className="text-[13px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
               网络较弱，实时字幕已暂停
             </p>
-            <p className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--semantic-warning-text)' }}>
-              完整音频正在本机安全录制与缓存，<strong>不会丢失任何一秒</strong>。结束录音后会自动上传并校准出完整原文。
+            {/* 稿面这段正文是深色的：琥珀只落在图标与标题，刷到正文就是强调色外溢 */}
+            <p className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              完整音频正在本机安全录制与缓存，<strong style={{ color: 'var(--text-primary)' }}>不会丢失任何一秒</strong>。结束录音后会自动上传并校准出完整原文。
             </p>
           </div>
         </div>
@@ -1262,7 +1271,16 @@ export function RecordAudioSheet({
           data-testid="recording-live-transcript"
           ref={liveTranscriptScrollRef}
           className="mt-3 min-h-0 flex-1 pr-1"
-          style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          style={{
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+            // 折叠态贴底滚动，最上面那句会被卷掉半行。加一道渐隐让这道切口读成
+            // 「上面还有」，而不是「这行字被裁坏了」——稿面那句淡灰的首行就是这个意思。
+            ...(liveTranscriptExpanded ? {} : {
+              WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, black 34px)',
+              maskImage: 'linear-gradient(to bottom, transparent 0, black 34px)',
+            }),
+          }}>
           {liveSentences.length === 0 ? (
             <p className="text-[14px] leading-7 text-token-muted">
               {liveView === 'degraded'
@@ -1294,9 +1312,14 @@ export function RecordAudioSheet({
           ) : (
             // 折叠态（稿面 R1/A1）：只留最后三句，越新越实——最新那句是黑体，还带着光标
             <div className="flex flex-col gap-2.5">
-              {liveSentences.slice(-3).map((sentence, index, arr) => {
+              {/*
+                折叠态铺到卡片装得下为止（容器贴底滚动，最新那句永远在下沿）。
+                固定只留三句的话，卡片撑满之后下半截是空白盒——稿面那三句是「它那一屏
+                恰好装得下三句」，不是「只准显示三句」。
+              */}
+              {liveSentences.slice(-8).map((sentence, index, arr) => {
                 const last = index === arr.length - 1;
-                const faded = index === 0 && arr.length === 3;
+                const faded = index < arr.length - 2;
                 return (
                   <p
                     key={`${index}-${sentence.atSec}`}
@@ -1306,7 +1329,7 @@ export function RecordAudioSheet({
                         ? 'var(--text-muted)'
                         : last ? 'var(--text-primary)' : 'var(--text-secondary)',
                     }}>
-                    {faded ? `…${sentence.text}` : sentence.text}
+                    {index === 0 && arr.length > 2 ? `…${sentence.text}` : sentence.text}
                     {last && state === 'recording' && <LiveCaret />}
                   </p>
                 );
@@ -1314,9 +1337,16 @@ export function RecordAudioSheet({
             </div>
           )}
           {liveView === 'degraded' && (
-            <div className="mt-3 flex flex-col gap-2" aria-hidden>
-              <span className="block h-3 w-3/4 rounded-full" style={{ background: 'var(--bg-elevated)' }} />
-              <span className="block h-3 w-1/2 rounded-full" style={{ background: 'var(--bg-elevated)' }} />
+            // 骨架条铺满剩下的地方：这段空白本来就是「等着被补上的那几句原文」，
+            // 画满了它才说得通，留着一片空带就只是版式塌了
+            <div className="mt-3 flex flex-col gap-3" aria-hidden>
+              {[3, 4, 2, 3, 4, 2].map((flex, index) => (
+                <span
+                  key={index}
+                  className="block h-3 rounded-full"
+                  style={{ background: 'var(--bg-elevated)', width: `${40 + flex * 12}%` }}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -1374,17 +1404,21 @@ export function RecordAudioSheet({
 
         {/* 顶栏（稿面 R1/A1）：左关闭、中间标题 + 保存目标、右更多 */}
         <div className="relative shrink-0 px-4 py-3">
-          <div className="flex items-start justify-between gap-2">
+          {/*
+            两颗图标绝对定位：它们在流内会各吃掉 44px，中间那行只剩 ~270px，
+            于是库名和录音名双双被省略号吃掉——稿面这一行是完整可读的（判分连记三块）。
+          */}
+          <div className="flex items-start justify-center gap-2">
             <button
               onClick={() => stopRecorder('discard')}
               disabled={state === 'finalizing'}
               aria-label="取消录音"
               // 稿面 R1/R2/R3 这两颗是**裸图标**直接压在背景上。加了白色方块底板之后，
               // 顶栏的视觉重量盖过标题区，主次关系反了（三张稿的判分都指到这一处）。
-              className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[12px] text-token-primary hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
+              className="absolute left-2 top-2 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[12px] text-token-primary hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
               <X size={18} strokeWidth={1.9} />
             </button>
-            <div className="min-w-0 flex-1 pt-0.5 text-center">
+            <div className="min-w-0 flex-1 px-12 pt-0.5 text-center">
               <p className="truncate text-[16px] font-semibold text-token-primary">录音转笔记</p>
               <div className="mt-0.5 flex justify-center">{destinationPicker}</div>
             </div>
@@ -1392,7 +1426,7 @@ export function RecordAudioSheet({
               onClick={() => setMenuOpen(value => !value)}
               aria-label="更多操作"
               aria-expanded={menuOpen}
-              className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[12px] text-token-primary hover-bg-soft">
+              className="absolute right-2 top-2 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[12px] text-token-primary hover-bg-soft">
               <MoreHorizontal size={18} />
             </button>
           </div>
@@ -1496,7 +1530,7 @@ export function RecordAudioSheet({
               // 稿面画的是中性文字 + 蓝图标。
               className="mt-3 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[13px] font-semibold"
               style={{ color: 'var(--text-secondary)' }}>
-              <FileUp size={14} style={{ color: 'var(--accent-fg-info)' }} /> 上传已有音频文件
+              <Upload size={14} style={{ color: 'var(--accent-fg-info)' }} /> 上传已有音频文件
             </button>
           </div>
         )}
