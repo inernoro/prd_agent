@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { resolveAccountAvatarAction } from './accountAvatarAction';
+import { isMenuKeyboardActivation, resolveAccountAvatarAction } from './accountAvatarAction';
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const layoutSource = readFileSync(path.resolve(testDirectory, 'AppShell.tsx'), 'utf8');
@@ -28,5 +28,30 @@ describe('侧栏底部头像的点击语义', () => {
     );
     // 「···」按钮（MoreHorizontal）已从侧栏移除，连 import 都不该留。
     expect(layoutSource).not.toContain('MoreHorizontal');
+  });
+});
+
+describe('展开态用户名按钮的键盘可达性', () => {
+  // 它从 DropdownMenu.Trigger 退回普通 button 时丢了 Trigger 自带的键盘激活。
+  // Enter / Space 不发 pointerdown —— 只挂 onPointerDown 的按钮对键盘用户是死的。
+  it('Enter 与 Space 算激活', () => {
+    expect(isMenuKeyboardActivation('Enter')).toBe(true);
+    expect(isMenuKeyboardActivation(' ')).toBe(true);
+    expect(isMenuKeyboardActivation('Spacebar')).toBe(true);
+  });
+
+  it('普通字符与导航键不算激活', () => {
+    for (const key of ['a', 'Tab', 'Escape', 'ArrowDown', 'Shift']) {
+      expect(isMenuKeyboardActivation(key)).toBe(false);
+    }
+  });
+
+  it('用户名按钮同时挂了 onPointerDown 和 onKeyDown（少一个就有一半用户点不动）', () => {
+    const block = layoutSource.slice(
+      layoutSource.indexOf('handleUserMenuTogglePointerDown}'),
+      layoutSource.indexOf('handleUserMenuTogglePointerDown}') + 400,
+    );
+    expect(block).toContain('onKeyDown={handleUserMenuToggleKeyDown}');
+    expect(block).toContain('aria-haspopup="menu"');
   });
 });

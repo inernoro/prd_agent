@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,14 @@ import { resolveThemeMode } from '@/stores/mobileThemeStore';
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const srcDirectory = path.resolve(testDirectory, '../..');
 const read = (relative: string) => readFileSync(path.resolve(srcDirectory, relative), 'utf8');
+
+function listSourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listSourceFiles(full);
+    return /\.tsx?$/.test(entry.name) ? [full] : [];
+  });
+}
 
 // 本套件跑在 node 环境（仓库没配 jsdom），所以要连 window 一起造 ——
 // 只 stub matchMedia 的话 `typeof window === 'undefined'` 那条兜底会先命中，
@@ -91,5 +99,39 @@ describe('拿明暗做分支的地方不许直接比较偏好（否则「随系�
     const source = read(relative);
     expect(source).toContain('useResolvedThemeMode');
     expect(source).not.toMatch(/themeMode === '(dark|light)'/);
+  });
+});
+
+describe('AppShell 之外的独立全屏页必须走共享 hook 落主题', () => {
+  // 这些页面不在 AppShell 里，各自写 effect 时都漏了同一件事：偏好是 'system' 时
+  // store 里的 mode 不变，只把 mode 放进 deps 的 effect 不会重跑，DOM 停在旧主题。
+  // 收敛成 useApplyDocumentTheme 之后，这条守卫防止下一个独立页再抄一份错的。
+  const ALLOWED_CALLERS = [
+    'hooks/useApplyDocumentTheme.ts', // 唯一实现
+    'layouts/AppShell.tsx',           // 壳层自己要管 data-theme 的所有权，单独一份
+    'lib/themeTransition.ts',         // 定义处
+  ];
+
+  it('applyDocumentThemeMode 只允许在唯一实现与壳层里被调用', () => {
+    const offenders = listSourceFiles(srcDirectory)
+      .filter((file) => !file.includes('__tests__') && !file.endsWith('.test.ts'))
+      .filter((file) => readFileSync(file, 'utf8').includes('applyDocumentThemeMode('))
+      .map((file) => path.relative(srcDirectory, file).split(path.sep).join('/'))
+      .filter((rel) => !ALLOWED_CALLERS.includes(rel));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it.each([
+    ['分享阅读页', 'pages/library/LibraryShareViewPage.tsx'],
+    ['数据同步授权页', 'pages/data-sync/DataSyncAuthorizePage.tsx'],
+    ['数据同步回调页', 'pages/data-sync/DataSyncCallbackPage.tsx'],
+  ])('%s 用 useApplyDocumentTheme', (_name, relative) => {
+    expect(read(relative)).toContain('useApplyDocumentTheme(');
+  });
+
+  it('hook 与壳层都把解析后的明暗放进了 effect deps', () => {
+    expect(read('hooks/useApplyDocumentTheme.ts')).toContain('[mode, resolved, pathname]');
+    expect(read('layouts/AppShell.tsx')).toContain('[mobileThemeMode, resolvedThemeMode, location.pathname]');
   });
 });

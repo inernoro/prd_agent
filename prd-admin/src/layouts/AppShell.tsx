@@ -69,13 +69,13 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
-import { useMobileThemeStore, watchSystemThemeChange, type MobileThemeMode } from '@/stores/mobileThemeStore';
+import { useMobileThemeStore, useResolvedThemeMode, type MobileThemeMode } from '@/stores/mobileThemeStore';
 import { THEME_MODE_OPTIONS } from '@/lib/themeModeRegistry';
 import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
 import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
-import { resolveAccountAvatarAction } from './accountAvatarAction';
+import { isMenuKeyboardActivation, resolveAccountAvatarAction } from './accountAvatarAction';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
 import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, uploadMyAvatar } from '@/services';
@@ -212,6 +212,9 @@ export default function AppShell() {
   const { isMobile } = useBreakpoint();
   const mobileThemeMode = useMobileThemeStore((st) => st.mode);
   const setThemeMode = useMobileThemeStore((st) => st.setMode);
+  // 解析后的明暗（'system' 已展开）。订阅系统深浅变化这件事收在 hook 里，
+  // 壳层不再自己写一份 matchMedia 监听 —— 两份实现迟早漂移。
+  const resolvedThemeMode = useResolvedThemeMode();
   // 壳层是否"持有"过 data-theme:只有自己设过的才负责清,避免动到
   // 仍保留纸面身份的独立页面主题。
   const ownsThemeRef = useRef(false);
@@ -221,6 +224,8 @@ export default function AppShell() {
   // 壳层统一落 <html data-theme>。deps 带 pathname:自管主题的页面卸载清属性后,
   // 导航到普通页由这里重申。自管主题路由(独立纸面身份,页面自己 set/remove data-theme)
   // 壳层不插手,否则父 effect 晚于子 effect 运行,会把页面刚设好的主题清掉。
+  // resolvedThemeMode 必须在 deps 里：偏好是 'system' 时 mobileThemeMode 不变、
+  // 只有它会跟着系统深浅翻面 —— 少了它，选「随系统」后系统切换不会重新落 DOM。
   useEffect(() => {
     if (!applyDocumentThemeMode(mobileThemeMode, location.pathname)) {
       // 属性所有权移交给页面:壳层卸载也不清理,避免误清页面自管的主题(Codex P2 二轮)。
@@ -229,7 +234,7 @@ export default function AppShell() {
       return;
     }
     ownsThemeRef.current = true;
-  }, [mobileThemeMode, location.pathname]);
+  }, [mobileThemeMode, resolvedThemeMode, location.pathname]);
 
   const handleThemeModeSelect = useCallback((next: MobileThemeMode, event: React.MouseEvent<HTMLElement>) => {
     if (next === mobileThemeMode) return;
@@ -240,15 +245,6 @@ export default function AppShell() {
       commit: setThemeMode,
     });
   }, [location.pathname, mobileThemeMode, setThemeMode]);
-
-  // 「随系统」要真的跟着系统走：选了它之后，用户在系统里切深浅，页面得当场变。
-  // 只在 mode === 'system' 时订阅，否则系统怎么变都不该覆盖用户的显式选择。
-  useEffect(() => {
-    if (mobileThemeMode !== 'system') return;
-    return watchSystemThemeChange(() => {
-      applyDocumentThemeMode('system', location.pathname);
-    });
-  }, [mobileThemeMode, location.pathname]);
 
   // 壳层卸载(登出回登录页):清掉自己设置的主题,不让移动浅色泄漏到登录页(Codex P2)
   useEffect(
@@ -310,6 +306,13 @@ export default function AppShell() {
   // 展开态的用户名按钮：纯 toggle，不再是 Trigger（一个 Root 只能有一个锚点，锚点归头像）。
   const handleUserMenuTogglePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
+    event.preventDefault();
+    handleUserMenuOpenChange(!userMenuOpenRef.current);
+  }, [handleUserMenuOpenChange]);
+  // 不再是 Trigger 就没有它自带的键盘激活；Enter / Space 不发 pointerdown，
+  // 必须自己补，否则这个按钮对键盘用户是死的。
+  const handleUserMenuToggleKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!isMenuKeyboardActivation(event.key)) return;
     event.preventDefault();
     handleUserMenuOpenChange(!userMenuOpenRef.current);
   }, [handleUserMenuOpenChange]);
@@ -1518,6 +1521,7 @@ export default function AppShell() {
                       <button
                         type="button"
                         onPointerDown={handleUserMenuTogglePointerDown}
+                        onKeyDown={handleUserMenuToggleKeyDown}
                         className="min-w-0 flex-1 cursor-pointer rounded-[8px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
                         aria-haspopup="menu"
                         aria-expanded={userMenuOpen}
