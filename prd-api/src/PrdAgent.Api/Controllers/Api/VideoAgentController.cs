@@ -83,7 +83,17 @@ public class VideoAgentController : ControllerBase
             .Select(group => group.First())
             .ToList();
         if (poolItems.Count == 0)
-            return Ok(ApiResponse<List<VideoModelOption>>.Ok([]));
+        {
+            // 直出模式允许显式指定 OpenRouter 视频模型。旧版 MDS 尚未同步视频目录时，
+            // 保留已在 LLMGW 注册的 Seedance 2.5 入口，避免配置完成后页面仍无模型可选。
+            var seedance = BuildVideoModelOption(
+                "bytedance/seedance-2.5",
+                "bytedance/seedance-2.5",
+                "Seedance 2.5",
+                "Healthy",
+                null);
+            return Ok(ApiResponse<List<VideoModelOption>>.Ok([seedance]));
+        }
 
         var modelIds = poolItems.Select(item => item.ModelId).ToList();
         var models = await _db.LLMModels.Find(model =>
