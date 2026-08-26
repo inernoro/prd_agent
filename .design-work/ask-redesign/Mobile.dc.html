@@ -9,78 +9,174 @@
 <helmet>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
   <style>
-    body { margin: 0; background: #141418; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; color: #f7f7fb; }
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; color: #f7f7fb; }
     a { color: #D97757; } a:hover { color: #B0523A; }
-    .phone { position: relative; height: 844px; overflow: hidden; }
-    .topbar { height: 46px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-    .tb-title { font-size: 12.5px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-    .paper { background: #FAFAF8; color: #17171c; padding: 20px 0; height: 798px; box-sizing: border-box; }
-    .paper-in { padding: 0 18px; }
-    .paper h1 { font-size: 20px; margin: 0 0 6px; letter-spacing: -0.01em; }
-    .paper .sub { font-size: 11.5px; color: #6b6b75; margin-bottom: 16px; }
-    .paper h2 { font-size: 14px; margin: 16px 0 6px; }
-    .paper p { font-size: 13px; line-height: 1.8; color: #33333c; margin: 0 0 8px; }
-    .sheet { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 18px 18px 0 0; background: rgba(30,30,36,0.98); border-top: 1px solid rgba(255,255,255,0.12); box-shadow: 0 -12px 48px rgba(0,0,0,0.55); }
-    .grab { width: 34px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.24); margin: 9px auto 4px; }
-    .s-head { display: flex; align-items: center; gap: 8px; padding: 6px 15px 10px; }
-    .s-title { font-size: 14px; font-weight: 600; }
-    .spacer { flex-grow: 1; }
-    .quota { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
-    .lead { font-size: 12px; line-height: 1.7; color: rgba(247,247,251,0.68); margin: 0 15px 12px; }
-    .lead b { color: rgba(247,247,251,0.86); font-weight: 600; }
-    .srclabel { display: flex; align-items: center; gap: 6px; margin: 0 15px 8px; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); }
-    .qs { display: flex; flex-direction: column; gap: 8px; margin: 0 15px; }
-    .q { display: flex; align-items: center; gap: 9px; min-height: 46px; padding: 10px 13px; border-radius: 11px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); font-size: 13.5px; line-height: 1.45; color: rgba(247,247,251,0.86); box-sizing: border-box; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 10px; }
+    .eyebrow em { font-style: normal; color: rgba(247,247,251,0.42); letter-spacing: 0; font-family: Inter, sans-serif; font-size: 11.5px; }
+    .screen { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .sp { flex-grow: 1; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .paper { background: #FAFAF8; color: #17171c; box-sizing: border-box; }
+    .paper-in { width: 700px; margin: 0 auto; }
+    .paper h1 { font-size: 25px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .paper .sub { font-size: 12.5px; color: #6b6b75; margin-bottom: 20px; }
+    .paper h2 { font-size: 15px; margin: 18px 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .send { border-radius: 10px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .note-row { display: flex; gap: 22px; padding: 2px 2px 0; }
+    .note-row div { flex-grow: 1; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .note-row b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .note-row .ok b { color: #4ade80; }
+    .note-row .warn b { color: #D97757; }
+    .row3 { display: flex; gap: 22px; align-items: flex-start; }
+    .col { display: flex; flex-direction: column; gap: 9px; }
+    .cap { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; color: rgba(247,247,251,0.55); }
+    .cap em { font-style: normal; display: block; margin-top: 3px; font-family: Inter, sans-serif; font-size: 11px; letter-spacing: 0; color: rgba(247,247,251,0.42); line-height: 1.55; }
+    .phone { position: relative; width: 340px; height: 700px; border-radius: 20px; overflow: hidden; border: 1px solid rgba(255,255,255,0.14); background: #141418; }
+    .ptop { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .ptitle { font-size: 12px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .ppaper { background: #FAFAF8; color: #17171c; height: 658px; padding: 18px 16px; box-sizing: border-box; }
+    .ppaper h1 { font-size: 18px; margin: 0 0 5px; letter-spacing: -0.01em; }
+    .ppaper .sub { font-size: 11px; color: #6b6b75; margin-bottom: 14px; }
+    .ppaper h2 { font-size: 13.5px; margin: 14px 0 6px; }
+    .ppaper p { font-size: 12.5px; line-height: 1.8; color: #33333c; margin: 0 0 8px; }
+    .pill { position: absolute; right: 14px; bottom: 16px; display: flex; align-items: center; gap: 7px; height: 38px; padding: 0 14px; border-radius: 19px; background: #B0523A; box-shadow: 0 12px 30px -8px rgba(10,10,14,0.6); font-size: 12.5px; color: #fff; font-weight: 500; }
+    .sheet { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 18px 18px 0 0; background: rgba(30,30,36,0.98); border-top: 1px solid rgba(255,255,255,0.14); box-shadow: 0 -12px 44px rgba(0,0,0,0.55); }
+    .grab { width: 32px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.24); margin: 9px auto 4px; }
+    .shead { display: flex; align-items: center; gap: 8px; padding: 5px 14px 10px; }
+    .stitle { font-size: 13.5px; font-weight: 600; }
+    .srclabel { display: flex; align-items: center; gap: 6px; margin: 0 14px 8px; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); }
+    .qs { display: flex; flex-direction: column; gap: 8px; margin: 0 14px; }
+    .q { display: flex; align-items: center; gap: 9px; min-height: 46px; padding: 10px 12px; border-radius: 11px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); font-size: 13px; line-height: 1.45; color: rgba(247,247,251,0.86); box-sizing: border-box; }
     .qnum { flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.9); }
-    .s-foot { padding: 12px 15px 22px; }
-    .field { display: flex; align-items: center; gap: 9px; height: 48px; padding: 0 6px 0 14px; border-radius: 13px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
-    .field span { flex-grow: 1; font-size: 14px; color: rgba(247,247,251,0.55); }
-    .send { width: 40px; height: 40px; border-radius: 11px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .sfoot { padding: 11px 14px 20px; }
+    .field { display: flex; align-items: center; gap: 9px; height: 46px; padding: 0 6px 0 13px; border-radius: 13px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .field span { flex-grow: 1; font-size: 13.5px; color: rgba(247,247,251,0.55); }
+    .askrow { display: flex; justify-content: flex-end; margin: 0 14px; }
+    .ask { max-width: 82%; padding: 8px 12px; border-radius: 12px; background: rgba(255,255,255,0.10); font-size: 12.5px; line-height: 1.6; }
+    .ans { margin: 10px 14px 0; font-size: 12.5px; line-height: 1.8; color: rgba(247,247,251,0.80); }
+    .ans b { color: #f7f7fb; font-weight: 600; }
+    .cites { display: flex; flex-wrap: wrap; gap: 7px; margin: 9px 14px 0; }
+    .cite { display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 8px; background: rgba(217,119,87,0.12); border: 1px solid rgba(217,119,87,0.32); font-size: 11px; }
+    .cite em { font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: rgba(217,119,87,0.95); }
+    .icb { width: 26px; height: 26px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); display: flex; align-items: center; justify-content: center; color: rgba(247,247,251,0.68); }
   </style>
 </helmet>
 
-<div class="phone">
-  <div class="topbar">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
-    <div class="tb-title">客户端首页改版 · 视觉验收</div>
-    <div class="spacer"></div>
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(247,247,251,0.68)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"></path></svg>
-  </div>
-  <div class="paper">
-    <div class="paper-in">
-      <h1>客户端首页改版 · 视觉验收</h1>
-      <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
-      <h2>一、首屏与信息层级</h2>
-      <p>首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项，二级项进入抽屉。走查结论为通过。</p>
-      <h2>二、搜索入口</h2>
-      <p>搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</p>
+<div class="board">
+
+  <div class="eyebrow">移动端<em>同一条主线的三态。手机上没有「右侧」，第三态退化成一张高 sheet —— 这是形态变了，不是功能少了</em></div>
+
+  <div class="row3">
+    <div class="col">
+      <div class="cap">状态 1 · 收起<em>右下角一枚，位置与桌面一致</em></div>
+      <div class="phone">
+        <div class="ptop">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
+          <div class="ptitle">客户端首页改版 · 视觉验收</div>
+          <div class="sp"></div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(247,247,251,0.68)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"></path></svg>
+        </div>
+        <div class="ppaper">
+          <h1>客户端首页改版 · 视觉验收</h1>
+          <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
+          <h2>一、首屏与信息层级</h2>
+          <p>首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项，二级项进入抽屉。走查结论为通过。</p>
+          <h2>二、搜索入口</h2>
+          <p>搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</p>
+        </div>
+        <div class="pill">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+          向我提问
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="sheet">
-    <div class="grab"></div>
-    <div class="s-head">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
-      <div class="s-title">向我提问</div>
-      <div class="spacer"></div>
-      <div class="quota">本页今日剩 18 / 20<br>你这小时剩 4 / 5</div>
+
+    <div class="col">
+      <div class="cap">状态 2 · 起手<em>桌面的「中下浮层」在手机上就是半高 sheet，正文露出上半</em></div>
+      <div class="phone">
+        <div class="ptop">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
+          <div class="ptitle">客户端首页改版 · 视觉验收</div>
+        </div>
+        <div class="ppaper">
+          <h1>客户端首页改版 · 视觉验收</h1>
+          <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
+          <h2>一、首屏与信息层级</h2>
+          <p>首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项。</p>
+        </div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <div class="shead">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+            <div class="stitle">向我提问</div>
+            <div class="sp"></div>
+            <div class="quota">今日剩 18 / 20<br>你剩 4 / 5</div>
+          </div>
+          <div class="srclabel">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
+            上传时从正文自动读出的问题
+          </div>
+          <div class="qs">
+            <div class="q"><span class="qnum">01</span>这份验收报告的结论是什么？</div>
+            <div class="q"><span class="qnum">02</span>哪些问题还没修完？</div>
+            <div class="q"><span class="qnum">03</span>搜索入口为什么算未通过？</div>
+          </div>
+          <div class="sfoot">
+            <div class="field">
+              <span>或者直接问</span>
+              <div class="send" style="width:36px; height:36px; border-radius:11px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-    <p class="lead">回答<b>只依据本页正文</b>。问到正文没写的，它会直接说「页面里没有提到」。</p>
-    <div class="srclabel">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
-      上传时从正文自动读出的 5 个问题
-    </div>
-    <div class="qs">
-      <div class="q"><span class="qnum">01</span>这份验收报告的结论是什么？</div>
-      <div class="q"><span class="qnum">02</span>哪些问题还没修完？</div>
-      <div class="q"><span class="qnum">03</span>搜索入口为什么算未通过？</div>
-    </div>
-    <div class="s-foot">
-      <div class="field">
-        <span>就这一页提个问题</span>
-        <div class="send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+
+    <div class="col">
+      <div class="cap">状态 3 · 对话<em>sheet 长到接近满屏；下拉手柄一拉就回到状态 1，正文原样在下面</em></div>
+      <div class="phone">
+        <div class="ptop">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
+          <div class="ptitle">客户端首页改版 · 视觉验收</div>
+        </div>
+        <div class="ppaper">
+          <h1>客户端首页改版 · 视觉验收</h1>
+        </div>
+        <div class="sheet" style="top: 76px">
+          <div class="grab"></div>
+          <div class="shead">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+            <div class="stitle">向我提问</div>
+            <div class="sp"></div>
+            <div class="icb"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></div>
+          </div>
+          <div class="askrow"><div class="ask">这份验收报告的结论是什么？</div></div>
+          <div class="ans">34 项走查里<b>通过 29 项、待修 5 项</b>。首屏与信息层级判为通过。搜索入口是唯一写明未结的一条 —— 已提到常驻，但<b>移动端触达仍偏低</b>，标注为待二轮走查。</div>
+          <div class="cites">
+            <div class="cite"><em>引用 1</em>一、首屏与信息层级</div>
+            <div class="cite"><em>引用 2</em>二、搜索入口</div>
+          </div>
+          <div class="sfoot" style="padding-top: 240px">
+            <div class="field">
+              <span>接着问</span>
+              <div class="send" style="width:36px; height:36px; border-radius:11px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
+
+  <div class="note-row">
+    <div class="ok"><b>手机上折叠只有两档</b>桌面有三档（竖条 / 折输入框 / 收胶囊），手机没有「侧栏」这个概念，所以只保留「下拉收回胶囊」和「拉低一档看正文」。硬把三档搬过来只会让手势打架。</div>
+    <div class="warn"><b>划词在手机上是长按</b>选中一段后系统自己会弹一层原生菜单（复制 / 全选），我们的悬浮条要避开它，或者干脆退化成 sheet 顶部出现一条「就这段问」。这条得在真机上试过才能定，现在不画死。</div>
+  </div>
+
 </div>
 </x-dc>
 </body>

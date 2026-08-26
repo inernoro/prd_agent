@@ -11,10 +11,10 @@
 node "<design 技能目录>/seed-canvas.mjs" \
   --template "<design 技能目录>/payload.template.html" \
   --out ask-me-redesign.html --title "向我提问 · 重做" \
-  --artboard Main.dc.html --artboard Answer.dc.html \
-  --artboard DirectionA.dc.html --artboard DirectionC.dc.html \
-  --artboard DirectionD.dc.html --artboard Pipeline.dc.html \
-  --artboard Mobile.dc.html --canvas canvas.json
+  --artboard Main.dc.html --artboard Sidebar.dc.html --artboard Collapsed.dc.html \
+  --artboard Selection.dc.html --artboard EditFlow.dc.html --artboard Pipeline.dc.html \
+  --artboard Mobile.dc.html --artboard DirectionA.dc.html --artboard DirectionC.dc.html \
+  --artboard DirectionD.dc.html --canvas canvas.json
 ```
 
 然后把 `ask-me-redesign.html` 发布回**同一个** artifact 地址，链接才不会变。
@@ -25,19 +25,40 @@ node "<design 技能目录>/seed-canvas.mjs" \
 画框是手算的，超了会在画布上被裁掉而不报错，这条是唯一能提前发现的判据。
 
 ```bash
-node preview-artboard.mjs Main.dc.html out.png 1440 1040
+node preview-artboard.mjs Main.dc.html out.png 1440 1900
 ```
+
+`_base.css` 是各画板共用的样式底子，`_head.sh` 把它拼成 `.dc.html` 的固定头部——
+新增画板照抄现有那几个的写法即可，别手抄 `<x-dc>` / `<helmet>` 那几行。
 
 ## 画板一览
 
+方案是「融合」：一个入口、三个停靠位。收起在右下角，点开在中下起手，问出去之后收成右侧栏。
+
+### 第一页 · 主线三态
+
 | 文件 | 是什么 |
 |---|---|
-| `Main.dc.html` | 方向 B（领先方案）：底部停靠的收起态 + 展开空态 |
-| `Answer.dc.html` | 方向 B 的答案态，引用点回正文并高亮 |
-| `DirectionA.dc.html` | 方向 A：居中命令面板 |
-| `DirectionC.dc.html` | 方向 C：内联问答区，与评论同在一条滚动流里 |
-| `DirectionD.dc.html` | 方向 D：推挤式右栏，正文压窄不遮 |
-| `Pipeline.dc.html` | 快捷词条的来路：上传时自动生成，上传者无感知 |
-| `Mobile.dc.html` | 方向 B 的移动端形态 |
+| `Main.dc.html` | 主线：收起（右下胶囊）→ 中下起手（三条自动问题）→ 右侧对话 |
+| `Sidebar.dc.html` | 右侧栏细节：对话中（答案 + 引用回跳）、历史（这一页问过的每一轮） |
+| `Collapsed.dc.html` | 三档折叠：侧栏收成竖条 / 只折输入框 / 整个收回胶囊，每档都留数字 |
+
+### 第二页 · 划词、改写、词条来路、移动端
+
+| 文件 | 是什么 |
+|---|---|
+| `Selection.dc.html` | 划词悬浮：访客「就这段问」；站点主人多一枚「改这段」。含 iframe 选区的硬前提 |
+| `EditFlow.dc.html` | 「改这段」的四条代价与建议（建议留到二期，理由是三条产品决策未拍板） |
+| `Pipeline.dc.html` | 快捷词条的来路：上传时从正文自动读出，上传者无感知 |
+| `Mobile.dc.html` | 移动端三态；第三态退化成高 sheet，折叠只保留两档 |
+
+### 第三页 · 来路
+
+`DirectionA` / `DirectionC` / `DirectionD` 是上一轮没被选中的三个方向，留着当记录。
+
+## 两处已拍板的取舍
+
+- **右侧栏是覆盖不是推挤。** 推挤会改变托管页自己的排版，PPT 与宽表格站当场破相；代价是盖住右边 400px，用三档折叠兜。
+- **折叠必须留痕。** 竖条上的数字、胶囊上的角标——没有它用户会以为对话没了，重问一遍白烧额度。
 
 配色与字号取自 `prd-admin/src/styles/tokens.css`，不是另配的一套。

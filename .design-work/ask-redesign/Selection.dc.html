@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; color: #f7f7fb; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 10px; }
+    .eyebrow em { font-style: normal; color: rgba(247,247,251,0.42); letter-spacing: 0; font-family: Inter, sans-serif; font-size: 11.5px; }
+    .screen { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .sp { flex-grow: 1; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .paper { background: #FAFAF8; color: #17171c; box-sizing: border-box; }
+    .paper-in { width: 700px; margin: 0 auto; }
+    .paper h1 { font-size: 25px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .paper .sub { font-size: 12.5px; color: #6b6b75; margin-bottom: 20px; }
+    .paper h2 { font-size: 15px; margin: 18px 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+    .send { border-radius: 10px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .note-row { display: flex; gap: 22px; padding: 2px 2px 0; }
+    .note-row div { flex-grow: 1; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .note-row b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .note-row .ok b { color: #4ade80; }
+    .note-row .warn b { color: #D97757; }
+    .stage { position: relative; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); background: #141418; height: 340px; }
+    .paperfull { background: #FAFAF8; color: #17171c; height: 340px; padding: 26px 0 0 0; box-sizing: border-box; }
+    .pin { width: 700px; margin: 0 auto; }
+    .pin h2 { font-size: 15px; margin: 0 0 8px; }
+    .pin p { font-size: 13.5px; line-height: 1.9; color: #33333c; margin: 0 0 10px; }
+    .selected { background: rgba(217,119,87,0.28); box-shadow: 0 0 0 2px rgba(217,119,87,0.28); border-radius: 2px; }
+    .hover { position: absolute; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 10px; background: rgba(30,30,36,0.98); border: 1px solid rgba(255,255,255,0.20); box-shadow: 0 14px 36px rgba(0,0,0,0.55); }
+    .hb { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border-radius: 7px; font-size: 12.5px; color: rgba(247,247,251,0.86); }
+    .hb.primary { background: rgba(217,119,87,0.18); color: #f7f7fb; }
+    .hb.edit { background: rgba(74,222,128,0.14); color: #f7f7fb; }
+    .hsep { width: 1px; height: 18px; background: rgba(255,255,255,0.14); margin: 0 3px; }
+    .prefill { width: 720px; border-radius: 16px; background: rgba(30,30,36,0.97); border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 24px 60px -12px rgba(10,10,14,0.65); overflow: hidden; }
+    .quote { display: flex; gap: 9px; margin: 13px 15px 0; padding: 9px 11px; border-radius: 9px; background: rgba(217,119,87,0.10); border-left: 2px solid #D97757; font-size: 12px; line-height: 1.65; color: rgba(247,247,251,0.80); }
+    .field { display: flex; align-items: center; gap: 10px; height: 44px; margin: 11px 15px 15px; padding: 0 6px 0 14px; border-radius: 12px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .field span { flex-grow: 1; font-size: 13.5px; color: #f7f7fb; }
+    .role { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; }
+    .role.guest { background: rgba(255,255,255,0.08); color: rgba(247,247,251,0.80); }
+    .role.owner { background: rgba(74,222,128,0.14); border: 1px solid rgba(74,222,128,0.30); color: #f7f7fb; }
+    .gate { display: flex; gap: 12px; padding: 13px 15px; border-radius: 11px; background: rgba(217,119,87,0.09); border: 1px solid rgba(217,119,87,0.28); }
+    .gate .t { font-size: 12.5px; font-weight: 600; margin-bottom: 4px; }
+    .gate .d { font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.72); }
+  </style>
+</helmet>
+
+<div class="board">
+
+  <div class="eyebrow">划词 · 访客<em><span class="role guest">任何人</span>选中一段就问它 —— 问题预填成引用，不用自己复述「就是那个搜索那段」</em></div>
+  <div class="stage">
+    <div class="paperfull">
+      <div class="pin">
+        <h2>二、搜索入口</h2>
+        <p><span class="selected">搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</span></p>
+        <p style="color:#8a8a92">走查人：视觉组 · 复核：产品组</p>
+      </div>
+    </div>
+    <div class="hover" style="left:398px; top:118px">
+      <div class="hb primary">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        就这段问
+      </div>
+      <div class="hb">解释一下</div>
+      <div class="hsep"></div>
+      <div class="hb"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5h10"></path></svg>复制</div>
+    </div>
+    <div style="position:absolute; left:0; right:0; bottom:16px; display:flex; justify-content:center">
+      <div class="prefill">
+        <div class="quote">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.9" stroke-linecap="round" style="flex-shrink:0; margin-top:2px"><path d="M7 7h4v6a4 4 0 0 1-4 4M15 7h4v6a4 4 0 0 1-4 4"></path></svg>
+          搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。
+        </div>
+        <div class="field">
+          <span>关于这一段，</span>
+          <div class="send" style="width:32px; height:32px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="eyebrow">划词 · 站点主人<em><span class="role owner">登录且是这个站的主人</span>同一条悬浮条多一枚绿色的「改这段」，其余一模一样</em></div>
+  <div class="stage" style="height: 240px">
+    <div class="paperfull" style="height: 240px">
+      <div class="pin">
+        <h2>二、搜索入口</h2>
+        <p><span class="selected">搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</span></p>
+      </div>
+    </div>
+    <div class="hover" style="left:398px; top:118px">
+      <div class="hb primary">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        就这段问
+      </div>
+      <div class="hb">解释一下</div>
+      <div class="hsep"></div>
+      <div class="hb edit">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10-10-4-4L4 16z"></path></svg>
+        改这段
+      </div>
+      <div class="hb"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5h10"></path></svg>复制</div>
+    </div>
+  </div>
+
+  <div class="gate">
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.9" stroke-linecap="round" style="flex-shrink:0; margin-top:1px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>
+    <div>
+      <div class="t">这条交互有一个硬前提：正文得在我们手里</div>
+      <div class="d">
+        托管正文跑在 iframe 里。走 srcDoc（服务端把原文取回来注入）的站点，选区拿得到，划词成立；
+        走跨域直链的站点，浏览器不让读里面的选区 —— 这不是能不能做，是做不了。
+        所以划词只在能取回原文的那类站点上出现，取不回的站点直接不渲染这条悬浮，而不是给一个点了没反应的按钮。
+      </div>
+    </div>
+  </div>
+
+  <div class="note-row">
+    <div class="ok"><b>为什么值得做</b>「就这段问」把一整类问题的成本降到零：读到一句看不懂的话，不用自己组织语言复述它。这是划词提问在阅读器里普遍存在的原因。</div>
+    <div class="warn"><b>「改这段」不在这一版</b>它不是多一个按钮，是多一条发布链路：托管站是静态产物，改一段等于改文件、出新版本、已分享的链接内容跟着变。代价摊在下一块。</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
