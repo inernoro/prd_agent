@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Send, Sparkles, X } from 'lucide-react';
-import { ASK_REFUSAL_REGISTRY, AskRefusalCard, resolveAskRefusal } from './askRefusal';
-import { StreamingText } from '@/components/streaming/StreamingText';
-import { AskMarkdown } from './AskMarkdown';
+import { ASK_REFUSAL_REGISTRY, resolveAskRefusal } from './askRefusal';
+import AskThread from './AskThread';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
@@ -46,7 +45,6 @@ export default function AskPanel({
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { messages, status, phaseMessage, model, gateError, isBusy, ask } = useAskStream(source);
   const [draft, setDraft] = useState('');
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   // 几种「问不了」各有各的下一步，判定收在 resolveAskRefusal 里（有守卫）
   const refusal = resolveAskRefusal({ isAuthenticated, allowAnonymous, gateErrorCode: gateError?.code });
@@ -61,14 +59,6 @@ export default function AskPanel({
     if (status === 'done' || status === 'error') void refreshQuota();
   }, [status, refreshQuota]);
 
-  // 新内容进来时贴住底部；用户正在往上翻看历史时不抢滚动
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
-  }, [messages]);
-
   const submit = useCallback(
     (text: string) => {
       const q = text.trim();
@@ -78,8 +68,6 @@ export default function AskPanel({
     },
     [ask, isBusy, blocked],
   );
-
-  const showOpening = messages.length === 0 && openingQuestions.length > 0 && !blocked;
 
   return (
     <div
@@ -168,113 +156,38 @@ export default function AskPanel({
         )}
       </div>
 
-      {/* 消息区。
-          minHeight:0 不能省——flex 子元素的默认 min-height 是 auto，内容一多它就不肯收缩，
-          overflow 没机会触发，输入区被顶出面板（frontend-modal.md 第 3 条硬约束）。 */}
-      <div
-        ref={scrollRef}
-        style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 14 }}
-      >
-        {messages.length === 0 && (
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-            {welcome?.trim() || `关于「${title}」，有什么想了解的？`}
-            {/* 「只依据本页正文」是个约束，光说约束等于让人自己去猜后果。
-                把后果写出来（问到没写的会直说没提到），他才知道该期待什么。 */}
-            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-              回答<strong style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>只依据本页正文</strong>
-              。问到正文没写的，它会直接说「页面里没有提到」，不会替作者猜。
-            </div>
-          </div>
-        )}
-
-        {showOpening && (
-          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* 没有这行标题时，几个按钮看着像 AI 现编的推荐；标明来自站点题库，
-                用户才知道这是作者预备好的问题，点下去大概率有答案。 */}
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              开场问题 · 来自站点题库
-            </div>
-            {openingQuestions.map((q) => (
-              <button
-                key={q}
-                onClick={() => submit(q)}
-                style={{
-                  textAlign: 'left', padding: '9px 12px', borderRadius: 10,
-                  border: '1px solid var(--border-subtle)', background: 'var(--bg-card)',
-                  color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer', lineHeight: 1.5,
-                }}
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {refusal && (
-          <AskRefusalCard
-            refusal={refusal}
-            // 后端这几档的原话带着真实数字（每小时几次、还剩多久），优先于注册表兜底文案。
-            // 但只在错误码确实对应当前这一档时才用——未登录压过服务端错误码那条优先级里，
-            // gateError 可能是上一次会话的残留，拿它的文案去配「需要登录」的标题就串了。
-            serverMessage={resolveAskRefusal({
-              isAuthenticated, allowAnonymous: true, gateErrorCode: gateError?.code,
-            }) === refusal ? gateError?.message : null}
-            onLogin={() => {
-              // 带 redirect 回到当前这一页：登录完还得让他自己找回来就白做了
-              const back = encodeURIComponent(window.location.pathname + window.location.search);
-              window.location.href = `/login?redirect=${back}`;
-            }}
-            onRetry={() => {
-              // 读不到正文时后端会 RefundAsync 把额度退回来，所以重试是安全的、不烧额度。
-              // 重问最后一句用户问过的话；一句都还没问过就什么都不做。
-              const lastAsked = [...messages].reverse().find((m) => m.role === 'user');
-              if (lastAsked) void ask(lastAsked.content);
-            }}
-          />
-        )}
-
-        {messages.map((m) => (
-          <div key={m.id} style={{ marginTop: 16 }}>
-            {m.role === 'user' ? (
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <div
-                  style={{
-                    maxWidth: '85%', padding: '8px 12px', borderRadius: 12,
-                    background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
-                    fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  }}
-                >
-                  {m.content}
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
-                {m.error ? (
-                  <span style={{ color: 'var(--accent-primary)' }}>{m.error}</span>
-                ) : (
-                  <StreamingText
-                    text={m.content}
-                    streaming={!!m.streaming}
-                    markdown
-                    // 没有 renderMarkdown 的话 StreamingText 不会切到 markdown 视图，
-                    // 完成后的答案会把 **加粗**、列表、链接的原始语法裸露出来
-                    renderMarkdown={(c) => <AskMarkdown content={c} />}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* 等待期不能静止（CLAUDE.md 规则 #6）：还没有第一个字时给阶段文案 + 转圈 */}
-        {isBusy && !messages.some((m) => m.streaming && m.content) && (
-          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-            <MapSpinner size={14} />
-            {phaseMessage || '正在思考…'}
-          </div>
-        )}
-
-      </div>
+      {/* 消息区由 AskThread 承担（浮层坞与嵌入面板共用同一份渲染）。
+          minHeight:0 在它内部——flex 子元素默认 min-height 是 auto，内容一多就不肯收缩，
+          overflow 没机会触发，输入区会被顶出面板（frontend-modal.md 第 3 条硬约束）。 */}
+      <AskThread
+        messages={messages}
+        welcome={welcome}
+        title={title}
+        openingQuestions={openingQuestions}
+        onPick={submit}
+        refusal={refusal}
+        // 后端这几档的原话带着真实数字（每小时几次、还剩多久），优先于注册表兜底文案。
+        // 但只在错误码确实对应当前这一档时才用——未登录压过服务端错误码那条优先级里，
+        // gateError 可能是上一次会话的残留，拿它的文案去配「需要登录」的标题就串了。
+        refusalServerMessage={
+          resolveAskRefusal({ isAuthenticated, allowAnonymous: true, gateErrorCode: gateError?.code }) === refusal
+            ? gateError?.message
+            : null
+        }
+        onLogin={() => {
+          // 带 redirect 回到当前这一页：登录完还得让他自己找回来就白做了
+          const back = encodeURIComponent(window.location.pathname + window.location.search);
+          window.location.href = `/login?redirect=${back}`;
+        }}
+        onRetry={() => {
+          // 读不到正文时后端会 RefundAsync 把额度退回来，所以重试是安全的、不烧额度。
+          // 重问最后一句用户问过的话；一句都还没问过就什么都不做。
+          const lastAsked = [...messages].reverse().find((m) => m.role === 'user');
+          if (lastAsked) void ask(lastAsked.content);
+        }}
+        isBusy={isBusy}
+        phaseMessage={phaseMessage}
+      />
 
       {/* 输入区。
           手机端面板铺满视口，而 app 开了 viewport-fit=cover——不补安全区内边距的话，
