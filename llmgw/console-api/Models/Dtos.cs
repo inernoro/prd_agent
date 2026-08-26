@@ -954,10 +954,26 @@ public sealed class PoolAppCallerItem
     public string? Title { get; set; }
     public string Status { get; set; } = "";
 }
+/// <summary>
+/// 池成员可解析性索引：一次请求里建一次，给所有池复用。
+/// 内容是「当前还存在且启用」的平台 id、模型文档、中继文档三张表。
+/// </summary>
+public sealed record PoolResolutionIndex(
+    HashSet<string> PlatformIds,
+    List<MongoDB.Bson.BsonDocument> Models,
+    List<MongoDB.Bson.BsonDocument> Exchanges);
+
 public sealed class PoolModelItem
 {
     public string ModelId { get; set; } = ""; public string PlatformId { get; set; } = ""; public int Priority { get; set; }
     public string? Protocol { get; set; } public int HealthStatus { get; set; } public string HealthStatusLabel { get; set; } = "";
+    /// <summary>
+    /// 不可用的原因，只有「不是因为调用失败」时才有值：
+    /// <c>upstream-missing</c> 挂的上游已经不存在；<c>model-missing</c> 上游还在但这个模型没了。
+    /// 为空表示走的是常规健康判定（真的调用失败过），由 ConsecutiveFailures 一路解释。
+    /// 有它才能避免界面写出「不可用（连续失败 0 次）」这种自相矛盾的归因。
+    /// </summary>
+    public string? UnavailableReason { get; set; }
     public string? LastFailedAt { get; set; } public string? LastSuccessAt { get; set; }
     public int ConsecutiveFailures { get; set; } public int ConsecutiveSuccesses { get; set; }
     public bool? EnablePromptCache { get; set; } public int? MaxTokens { get; set; }

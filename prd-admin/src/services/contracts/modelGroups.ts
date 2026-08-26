@@ -1,97 +1,17 @@
 import type { ApiResponse } from '@/types/api';
-import type {
-  ModelGroup,
-  ModelGroupForApp,
-  CreateModelGroupRequest,
-  UpdateModelGroupRequest,
-  ModelGroupMonitoringData,
-  ModelGroupUsageApp,
-  ModelGroupHealthOverview,
-} from '../../types/modelGroup';
+import type { ModelGroup, ModelGroupHealthOverview } from '../../types/modelGroup';
 
+/**
+ * 模型池只读契约。
+ *
+ * 2026-08-25 模型管理退场后，模型池的增删改、绑定解绑、健康模拟与重置一律由
+ * LLM Gateway 控制台承担（MAP 侧对应的 `api/mds/model-groups*` 写接口已 410）。
+ * 这里只保留仍有活消费方的两条读：百宝箱快速创建向导挑池、模型池健康总览卡片。
+ */
 export interface IModelGroupsService {
-  /**
-   * 获取模型分组列表
-   */
+  /** 获取模型分组列表 */
   getModelGroups(modelType?: string): Promise<ApiResponse<ModelGroup[]>>;
 
-  /**
-   * 只读：模型池健康 + fallback 率告警总览（默认近 7 天）
-   */
+  /** 只读：模型池健康 + fallback 率告警总览（默认近 7 天） */
   getModelGroupHealthOverview(days?: number): Promise<ApiResponse<ModelGroupHealthOverview>>;
-
-  /**
-   * 按应用标识获取模型分组列表（按优先级排序：专属池 > 默认池 > 传统配置）
-   */
-  getModelGroupsForApp(appCallerCode: string | null, modelType: string): Promise<ApiResponse<ModelGroupForApp[]>>;
-
-  /**
-   * 获取单个模型分组
-   */
-  getModelGroup(id: string): Promise<ApiResponse<ModelGroup>>;
-
-  /**
-   * 创建模型分组
-   */
-  createModelGroup(
-    request: CreateModelGroupRequest
-  ): Promise<ApiResponse<ModelGroup>>;
-
-  /**
-   * 更新模型分组
-   */
-  updateModelGroup(
-    id: string,
-    request: UpdateModelGroupRequest
-  ): Promise<ApiResponse<ModelGroup>>;
-
-  /**
-   * 删除模型分组
-   */
-  deleteModelGroup(id: string): Promise<ApiResponse<{ id: string }>>;
-
-  /**
-   * 获取正在使用该分组的应用列表（删除受阻时展示）
-   */
-  getModelGroupUsage(id: string): Promise<ApiResponse<ModelGroupUsageApp[]>>;
-
-  /**
-   * 解绑应用对该分组的引用（不传 appIds 则解绑全部）
-   */
-  unbindModelGroup(id: string, appIds?: string[]): Promise<ApiResponse<{ groupId: string; unboundCount: number }>>;
-
-  /**
-   * 获取分组监控数据
-   */
-  getGroupMonitoring(groupId: string): Promise<ApiResponse<ModelGroupMonitoringData>>;
-
-  /**
-   * 模拟降权
-   */
-  simulateDowngrade(
-    groupId: string,
-    modelId: string,
-    platformId: string,
-    failureCount: number
-  ): Promise<ApiResponse<void>>;
-
-  /**
-   * 模拟恢复
-   */
-  simulateRecover(
-    groupId: string,
-    modelId: string,
-    platformId: string,
-    successCount: number
-  ): Promise<ApiResponse<void>>;
-
-  /**
-   * 重置单个模型的健康状态为 Healthy
-   */
-  resetModelHealth(groupId: string, modelId: string): Promise<ApiResponse<void>>;
-
-  /**
-   * 重置模型池中所有模型的健康状态
-   */
-  resetAllModelsHealth(groupId: string): Promise<ApiResponse<void>>;
 }

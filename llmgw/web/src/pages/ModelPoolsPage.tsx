@@ -98,6 +98,20 @@ function nextTailPriority(members: PoolModelInfo[]): number {
   return max + 10;
 }
 
+/**
+ * 一个坏掉的成员为什么坏。
+ *
+ * 「连续失败 N 次」只解释得了**真的被调用过并失败**的成员。指向已删上游 / 已删模型的
+ * 成员从来没被调用过，consecutiveFailures 恒为 0，照那个模板印就会写出
+ * 「不可用（连续失败 0 次）」——状态对了、归因在说谎，运维拿不到任何下一步。
+ * 所以先看后端给的 unavailableReason，它有值就说真正的原因。
+ */
+function memberFaultPhrase(member: PoolModelInfo): string {
+  if (member.unavailableReason === 'upstream-missing') return '所挂的上游已不存在';
+  if (member.unavailableReason === 'model-missing') return '上游还在，但这个模型已不存在';
+  return `连续失败 ${member.consecutiveFailures} 次`;
+}
+
 function poolEvidence(pool: ModelPool): { text: string; tone: string } {
   const lead = pool.models.slice().sort((a, b) => a.priority - b.priority)[0];
   if (pool.health === 'empty') return { text: '没有成员，调用会直接失败', tone: 'var(--text-muted)' };
@@ -105,7 +119,9 @@ function poolEvidence(pool: ModelPool): { text: string; tone: string } {
   const failed = relativeTime(lead.lastFailedAt);
   const ok = relativeTime(lead.lastSuccessAt);
   if (pool.health === 'unavailable') {
-    return { text: `第1顺位连续失败 ${lead.consecutiveFailures} 次 · 最近失败 ${failed} · 最近成功 ${ok}`, tone: '#f85149' };
+    return lead.unavailableReason
+      ? { text: `第1顺位「${lead.modelId}」${memberFaultPhrase(lead)} · 需要摘除或重新接上上游`, tone: '#f85149' }
+      : { text: `第1顺位连续失败 ${lead.consecutiveFailures} 次 · 最近失败 ${failed} · 最近成功 ${ok}`, tone: '#f85149' };
   }
   if (pool.health === 'degraded') {
     // degraded = 有健康的也有不健康的。归因必须落到**真正坏掉的那一个**：
@@ -114,7 +130,9 @@ function poolEvidence(pool: ModelPool): { text: string; tone: string } {
     const worst = pool.models.slice().sort((a, b) => (b.healthStatus - a.healthStatus) || (a.priority - b.priority))[0];
     if (worst && worst.healthStatus !== 0) {
       return {
-        text: `第${worst.priority}顺位「${worst.modelId}」连续失败 ${worst.consecutiveFailures} 次（${relativeTime(worst.lastFailedAt)}起）· 池仍在承接`,
+        text: worst.unavailableReason
+          ? `第${worst.priority}顺位「${worst.modelId}」${memberFaultPhrase(worst)} · 池仍在承接`
+          : `第${worst.priority}顺位「${worst.modelId}」连续失败 ${worst.consecutiveFailures} 次（${relativeTime(worst.lastFailedAt)}起）· 池仍在承接`,
         tone: '#d29922',
       };
     }
@@ -1108,7 +1126,7 @@ function poolVerdict(pool: ModelPool): string {
   if (pool.health === 'degraded') {
     const bad = members.find((m) => m.healthStatus !== 0) || lead;
     const tail = healthy ? `，第${healthy.priority}顺位 ${healthy.modelId} 在承接` : '';
-    return `第${bad.priority}顺位 ${bad.modelId} ${(MEMBER_STATUS[String(bad.healthStatus)] || MEMBER_STATUS['1']).label}（连续失败 ${bad.consecutiveFailures} 次）${tail}；建议处理但未中断。`;
+    return `第${bad.priority}顺位 ${bad.modelId} ${(MEMBER_STATUS[String(bad.healthStatus)] || MEMBER_STATUS['1']).label}（${memberFaultPhrase(bad)}）${tail}；建议处理但未中断。`;
   }
   if (pool.recentRequests === 0) return `状态正常，但最近调用是 ${relativeTime(pool.lastRequestAt)}，指标为最后一次结果。`;
   return `全部顺位可用，最近一次失败是 ${relativeTime(lead.lastFailedAt)}。`;
@@ -1493,7 +1511,9 @@ function PoolDetail({
                 <span style={{ flexBasis: '100%', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>
                   {isVerifying
                     ? '已恢复接单，等下一条真实业务请求验证（不发探测请求）'
-                    : `连续失败 ${member.consecutiveFailures} 次 · 最近失败 ${relativeTime(member.lastFailedAt)} · 最近成功 ${relativeTime(member.lastSuccessAt)}`}
+                    : member.unavailableReason
+                      ? `${memberFaultPhrase(member)} · 这个顺位永远接不到调用，建议摘除`
+                      : `连续失败 ${member.consecutiveFailures} 次 · 最近失败 ${relativeTime(member.lastFailedAt)} · 最近成功 ${relativeTime(member.lastSuccessAt)}`}
                 </span>
                 <CapabilityTags labels={capabilityLabelsForMember(member)} />
                 {editable ? (
