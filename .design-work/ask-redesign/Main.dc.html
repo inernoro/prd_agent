@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 10px; }
+    .eyebrow em { font-style: normal; color: rgba(247,247,251,0.38); letter-spacing: 0; font-family: Inter, sans-serif; font-size: 11px; }
+    .screen { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); background: #141418; }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .tb-spacer { flex-grow: 1; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .paper { background: #FAFAF8; color: #17171c; padding: 34px 0; }
+    .paper-in { width: 720px; margin: 0 auto; }
+    .paper h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .paper .sub { font-size: 12.5px; color: #6b6b75; margin-bottom: 22px; }
+    .paper h2 { font-size: 15px; margin: 20px 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .shot { display: flex; gap: 10px; margin: 10px 0 4px; }
+    .shot span { flex-grow: 1; height: 58px; border-radius: 6px; background: #ECEBE6; border: 1px solid #DEDDD6; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #8a8a92; }
+    .chips { display: flex; gap: 8px; justify-content: center; }
+    .chip { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 15px; background: rgba(30,30,36,0.92); border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.80); font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.40); }
+    .dock { display: flex; align-items: center; gap: 10px; width: 720px; height: 52px; padding: 0 8px 0 16px; border-radius: 26px; background: rgba(30,30,36,0.94); border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 20px 44px -16px rgba(10,10,14,0.55); }
+    .dock-ph { flex-grow: 1; font-size: 13.5px; color: rgba(247,247,251,0.55); }
+    .kbd { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: rgba(247,247,251,0.55); border: 1px solid rgba(255,255,255,0.12); border-radius: 5px; padding: 3px 6px; }
+    .send { width: 36px; height: 36px; border-radius: 18px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .panel { width: 760px; border-radius: 16px 16px 0 0; background: rgba(30,30,36,0.97); border: 1px solid rgba(255,255,255,0.12); border-bottom: none; box-shadow: 0 -12px 48px rgba(0,0,0,0.50); overflow: hidden; }
+    .p-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .p-title { font-size: 13.5px; font-weight: 600; color: #f7f7fb; }
+    .p-scope { font-size: 11.5px; color: rgba(247,247,251,0.55); }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .p-body { padding: 14px 16px 6px; }
+    .lead { font-size: 12.5px; line-height: 1.7; color: rgba(247,247,251,0.68); margin: 0 0 12px; }
+    .lead b { color: rgba(247,247,251,0.86); font-weight: 600; }
+    .srclabel { display: flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); margin-bottom: 8px; }
+    .qgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .q { display: flex; align-items: center; gap: 9px; padding: 11px 13px; border-radius: 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: rgba(247,247,251,0.86); font-size: 13px; line-height: 1.45; }
+    .q.wide { grid-column: span 2; }
+    .qnum { flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.9); }
+    .p-foot { padding: 10px 16px 14px; }
+    .field { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 6px 0 14px; border-radius: 12px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .field span { flex-grow: 1; font-size: 13.5px; color: rgba(247,247,251,0.55); }
+    .send-sm { width: 32px; height: 32px; border-radius: 9px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .note { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 11px; color: rgba(247,247,251,0.55); }
+    .dot { width: 3px; height: 3px; border-radius: 2px; background: rgba(247,247,251,0.30); }
+  </style>
+</helmet>
+
+<div class="board">
+
+  <div class="eyebrow">方向 B · 收起态<em>常驻底部，词条就是入口 —— 不点开也知道能问什么</em></div>
+  <div class="screen" style="height: 240px">
+    <div class="paper" style="padding: 22px 0 0; height: 240px; box-sizing: border-box">
+      <div class="paper-in">
+        <h2 style="margin:0 0 8px">二、搜索入口</h2>
+        <p style="margin:0">搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</p>
+      </div>
+    </div>
+    <div style="position:absolute; left:0; right:0; bottom:0; padding:0 0 22px; display:flex; flex-direction:column; align-items:center; gap:10px">
+      <div class="chips">
+        <div class="chip"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>这份报告的结论是什么？</div>
+        <div class="chip">哪些问题还没修完？</div>
+        <div class="chip">搜索入口为什么没通过？</div>
+      </div>
+      <div class="dock">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        <div class="dock-ph">就这一页提个问题</div>
+        <div class="kbd">⌘K</div>
+        <div class="send">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="eyebrow">方向 B · 展开-空态<em>面板最高 64vh，正文继续可读；评论仍在页面里，不被盖住</em></div>
+  <div class="screen" style="height: 620px">
+    <div class="topbar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
+      <div class="tb-title">客户端首页改版 · 视觉验收</div>
+      <div class="tb-spacer"></div>
+      <div class="tb-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>全屏演示</div>
+      <div class="tb-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6M20 4l-8 8M10 6H5v13h13v-5"></path></svg>新窗口打开</div>
+      <div class="tb-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"></path></svg>评论 3</div>
+    </div>
+    <div class="paper" style="height: 576px; box-sizing: border-box">
+      <div class="paper-in">
+        <h1>客户端首页改版 · 视觉验收</h1>
+        <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
+        <h2>一、首屏与信息层级</h2>
+        <p>首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项，二级项进入抽屉。走查结论为通过。</p>
+        <div class="shot"><span>截图 01 · 首屏</span><span>截图 02 · 导航</span></div>
+      </div>
+    </div>
+    <div style="position:absolute; left:0; right:0; bottom:0; display:flex; justify-content:center">
+      <div class="panel">
+        <div class="p-head">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+          <div class="p-title">向我提问</div>
+          <div class="p-scope">qwen3.6-plus · dashscope</div>
+          <div class="tb-spacer"></div>
+          <div class="quota">本页今日剩 18 / 20<br>你这小时剩 4 / 5</div>
+        </div>
+        <div class="p-body">
+          <p class="lead">回答<b>只依据本页正文</b>。问到正文没写的，它会直接说「页面里没有提到」，不会替作者猜。</p>
+          <div class="srclabel">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
+            上传时从正文自动读出的 5 个问题
+          </div>
+          <div class="qgrid">
+            <div class="q"><span class="qnum">01</span>这份验收报告的结论是什么？</div>
+            <div class="q"><span class="qnum">02</span>哪些问题还没修完？</div>
+            <div class="q"><span class="qnum">03</span>搜索入口为什么算未通过？</div>
+            <div class="q"><span class="qnum">04</span>34 项走查里通过了多少？</div>
+            <div class="q wide"><span class="qnum">05</span>导航从 7 项收敛到 4 项，剩下的去哪了？</div>
+          </div>
+        </div>
+        <div class="p-foot">
+          <div class="field">
+            <span>就这一页提个问题</span>
+            <div class="send-sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+          </div>
+          <div class="note">
+            <span>Esc 收起</span><span class="dot"></span><span>答案里的引用点一下回到正文对应段落</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

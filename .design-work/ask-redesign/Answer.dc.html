@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); display: flex; align-items: center; gap: 10px; }
+    .eyebrow em { font-style: normal; color: rgba(247,247,251,0.38); letter-spacing: 0; font-family: Inter, sans-serif; font-size: 11px; }
+    .screen { position: relative; overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; height: 560px; }
+    .paper { background: #FAFAF8; color: #17171c; padding: 26px 0 0; height: 560px; box-sizing: border-box; }
+    .paper-in { width: 720px; margin: 0 auto; }
+    .paper h2 { font-size: 15px; margin: 0 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .hl { background: rgba(217,119,87,0.20); box-shadow: 0 0 0 3px rgba(217,119,87,0.20); border-radius: 3px; }
+    .jump { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; padding: 2px 7px; border-radius: 5px; background: #D97757; color: #fff; font-size: 10.5px; font-family: 'JetBrains Mono', monospace; vertical-align: middle; }
+    .panel { width: 760px; border-radius: 16px 16px 0 0; background: rgba(30,30,36,0.97); border: 1px solid rgba(255,255,255,0.12); border-bottom: none; box-shadow: 0 -12px 48px rgba(0,0,0,0.50); overflow: hidden; }
+    .p-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .p-title { font-size: 13.5px; font-weight: 600; color: #f7f7fb; }
+    .p-scope { font-size: 11.5px; color: rgba(247,247,251,0.55); }
+    .spacer { flex-grow: 1; }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .thread { padding: 14px 16px 4px; display: flex; flex-direction: column; gap: 12px; }
+    .askrow { display: flex; justify-content: flex-end; }
+    .ask { max-width: 78%; padding: 8px 12px; border-radius: 12px; background: rgba(255,255,255,0.10); color: #f7f7fb; font-size: 13px; line-height: 1.6; }
+    .ans { font-size: 13px; line-height: 1.8; color: rgba(247,247,251,0.80); }
+    .ans b { color: #f7f7fb; font-weight: 600; }
+    .cites { display: flex; gap: 8px; margin-top: 10px; }
+    .cite { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px; background: rgba(217,119,87,0.12); border: 1px solid rgba(217,119,87,0.32); color: rgba(247,247,251,0.86); font-size: 11.5px; }
+    .cite em { font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.95); }
+    .more { display: flex; gap: 8px; padding: 10px 16px 0; }
+    .mchip { padding: 7px 11px; border-radius: 9px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: rgba(247,247,251,0.68); font-size: 12px; }
+    .p-foot { padding: 10px 16px 14px; }
+    .field { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 6px 0 14px; border-radius: 12px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .field span { flex-grow: 1; font-size: 13.5px; color: rgba(247,247,251,0.55); }
+    .send-sm { width: 32px; height: 32px; border-radius: 9px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+  </style>
+</helmet>
+
+<div class="board">
+  <div class="eyebrow">方向 B · 答案态<em>引用是回正文的跳板，不是脚注 —— 点一下正文滚过去并高亮那一段</em></div>
+  <div class="screen">
+    <div class="paper">
+      <div class="paper-in">
+        <h2>二、搜索入口</h2>
+        <p><span class="hl">搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</span><span class="jump">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>引用 2</span></p>
+        <p style="color:#8a8a92">走查人：视觉组 · 复核：产品组</p>
+      </div>
+    </div>
+    <div style="position:absolute; left:0; right:0; bottom:0; display:flex; justify-content:center">
+      <div class="panel">
+        <div class="p-head">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+          <div class="p-title">向我提问</div>
+          <div class="p-scope">qwen3.6-plus · dashscope</div>
+          <div class="spacer"></div>
+          <div class="quota">本页今日剩 17 / 20<br>你这小时剩 3 / 5</div>
+        </div>
+        <div class="thread">
+          <div class="askrow"><div class="ask">这份验收报告的结论是什么？</div></div>
+          <div class="ans">
+            34 项走查里<b>通过 29 项、待修 5 项</b>。首屏与信息层级判为通过：单栏卡片流、导航从 7 项收敛到 4 项。
+            搜索入口是唯一写明未结的一条 —— 已从抽屉提到常驻，但<b>移动端触达仍偏低</b>，标注为待二轮走查。
+            <div class="cites">
+              <div class="cite"><em>引用 1</em>一、首屏与信息层级</div>
+              <div class="cite"><em>引用 2</em>二、搜索入口</div>
+            </div>
+          </div>
+        </div>
+        <div class="more">
+          <div class="mchip">哪些问题还没修完？</div>
+          <div class="mchip">34 项走查里通过了多少？</div>
+        </div>
+        <div class="p-foot">
+          <div class="field">
+            <span>接着问</span>
+            <div class="send-sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
