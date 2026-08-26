@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>向我提问 · 可点原型</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg-base:#141418; --bg-elevated:#1e1e24;
+  --text-primary:#f7f7fb; --text-secondary:rgba(247,247,251,.80);
+  --text-muted:rgba(247,247,251,.68); --text-tertiary:rgba(247,247,251,.55);
+  --border-faint:rgba(255,255,255,.08); --border-subtle:rgba(255,255,255,.12);
+  --border-default:rgba(255,255,255,.18);
+  --accent:#D97757; --accent-solid:#B0523A;
+  --node-1:#93c5fd; --node-2:#86efac; --node-3:#E8A87C;
+  /* 弹簧烘成 linear()：贝塞尔画不出过冲再回弹，而那正是手感来源 */
+  --spring:linear(0,.1055,.3144,.5281,.7045,.8326,.9171,.9677,.9948,1.0071,1.0109,1.0105,1.0084,1.006,1.0039,1.0023,1.0012,1.0005,1.0001,1,.9999,.9999,.9999,.9999,1,1,1);
+  --pop:linear(0,.1095,.3349,.5715,.7673,.9057,.9898,1.0317,1.0455,1.0431,1.0336,1.0226,1.0129,1.0058,1.0013,.9989,.998,.9979,.9983,.9988,.9993,.9997,.9999,1,1.0001,1.0001,1.0001);
+  --ease:cubic-bezier(.2,0,0,1);
+}
+*{box-sizing:border-box}
+body{margin:0;background:#0b0b0e;color:var(--text-primary);font-family:Inter,-apple-system,'PingFang SC',sans-serif}
+.hint-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border-faint);font-size:12px;color:var(--text-tertiary)}
+.hint-bar b{color:var(--text-primary);font-weight:600;font-size:12.5px}
+.hint-bar kbd{font-family:'JetBrains Mono',monospace;font-size:10.5px;border:1px solid var(--border-subtle);border-radius:5px;padding:2px 6px}
+.hint-bar button{font:inherit;font-size:11.5px;color:var(--text-muted);background:rgba(255,255,255,.06);border:1px solid var(--border-subtle);border-radius:7px;padding:5px 10px;cursor:pointer}
+.hint-bar button:hover{background:rgba(255,255,255,.11)}
+.hint-bar .sp{flex-grow:1}
+
+/* ── 阅读页 ── */
+#stage{position:relative;height:calc(100vh - 43px);overflow:hidden;background:var(--bg-base)}
+.topbar{height:44px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border-faint)}
+.tb-title{font-size:12.5px;font-weight:500}
+.sp{flex-grow:1}
+.tb-btn{display:flex;align-items:center;gap:5px;height:26px;padding:0 9px;border-radius:7px;border:1px solid var(--border-subtle);color:var(--text-muted);font-size:11.5px;cursor:default}
+.paper{height:calc(100% - 44px);background:#FAFAF8;color:#17171c;padding:30px 0;overflow-y:auto}
+.paper-in{width:min(700px,calc(100% - 480px));margin:0 auto;transition:width .5s var(--ease)}
+.paper h1{font-size:26px;margin:0 0 8px;letter-spacing:-.01em}
+.paper .sub{font-size:12.5px;color:#6b6b75;margin-bottom:22px}
+.paper h2{font-size:15px;margin:22px 0 8px}
+.paper p{font-size:13.5px;line-height:1.85;color:#33333c;margin:0 0 10px}
+.paper .flash{background:rgba(217,119,87,.22);box-shadow:0 0 0 4px rgba(217,119,87,.22);border-radius:3px}
+.paper h2,.paper span{transition:background .3s,box-shadow .3s}
+
+/* ── 会形变的那一个元素。从头到尾只有它，内容只做透明度 ── */
+#morph{position:absolute;overflow:hidden;cursor:pointer;
+  background:var(--accent-solid);border:1px solid transparent;
+  box-shadow:0 12px 32px -8px rgba(10,10,14,.55);
+  right:22px;bottom:20px;width:132px;height:40px;border-radius:999px}
+#morph.glass{background:rgba(24,24,30,.78);border-color:rgba(255,255,255,.16);
+  backdrop-filter:blur(22px) saturate(140%);-webkit-backdrop-filter:blur(22px) saturate(140%);
+  box-shadow:0 20px 48px -14px rgba(10,10,14,.60),inset 0 1px 0 rgba(255,255,255,.10)}
+#morph.solid{background:var(--bg-elevated);border-color:rgba(255,255,255,.14);backdrop-filter:none;-webkit-backdrop-filter:none;
+  box-shadow:-16px 0 48px rgba(0,0,0,.45);cursor:default}
+/* 形变过程中把 blur 关掉：面板浮在 iframe 上时跨帧合成很容易掉到 30fps */
+#morph.moving{backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(26,26,32,.92)}
+
+.layer{position:absolute;inset:0;display:flex;align-items:center;opacity:0;pointer-events:none;transition:opacity .09s var(--ease)}
+.layer.on{opacity:1;pointer-events:auto;transition:opacity .14s var(--ease) .08s}
+.l-pill{justify-content:center;gap:8px;font-size:13px;font-weight:500;color:#fff}
+.l-bar{gap:11px;padding:0 8px 0 18px}
+.l-side{flex-direction:column;align-items:stretch}
+.l-rail{flex-direction:column;align-items:center;gap:12px;padding:12px 0;justify-content:flex-start}
+
+.bar-in{flex-grow:1;background:none;border:none;outline:none;font:inherit;font-size:14px;color:var(--text-primary);min-width:0}
+.bar-in::placeholder{color:var(--text-tertiary)}
+.kbd{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--text-tertiary);border:1px solid rgba(255,255,255,.16);border-radius:6px;padding:3px 7px;flex-shrink:0}
+.go{width:38px;height:38px;border-radius:999px;background:var(--accent-solid);display:flex;align-items:center;justify-content:center;flex-shrink:0;border:none;cursor:pointer}
+.go:disabled{background:rgba(255,255,255,.10);cursor:default}
+
+/* 提示：从长条里弹出来，不是淡入 */
+#hints{position:absolute;left:0;right:0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;pointer-events:none;z-index:2}
+.hint{display:flex;align-items:center;gap:7px;height:34px;padding:0 14px;border-radius:999px;
+  background:rgba(24,24,30,.76);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
+  border:1px solid rgba(255,255,255,.16);box-shadow:0 8px 24px -8px rgba(10,10,14,.50);
+  font:inherit;font-size:12.5px;color:rgba(247,247,251,.88);cursor:pointer;white-space:nowrap;
+  opacity:0;transform:translateY(26px) scale(.7);transition:opacity .2s var(--ease),transform .48s var(--pop)}
+#hints.on .hint{opacity:1;transform:none;pointer-events:auto}
+#hints.on .hint:nth-child(2){transition-delay:.06s}
+#hints.on .hint:nth-child(3){transition-delay:.12s}
+#hints.on .hint:nth-child(4){transition-delay:.18s}
+#hints.on .hint:nth-child(5){transition-delay:.24s}
+.hint:hover{background:rgba(38,38,46,.9)}
+.hint.more{color:var(--text-tertiary);font-family:'JetBrains Mono',monospace;font-size:11px;padding:0 12px}
+#meta{position:absolute;left:0;right:0;display:flex;justify-content:center;pointer-events:none;opacity:0;transition:opacity .2s var(--ease);z-index:2}
+#meta.on{opacity:1}
+#meta span{display:flex;align-items:center;gap:8px;height:24px;padding:0 12px;border-radius:999px;
+  background:rgba(24,24,30,.62);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.10);font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(247,247,251,.62)}
+#meta i{font-style:normal;opacity:.42}
+
+/* ── 侧栏内容 ── */
+.s-head{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border-faint);flex-shrink:0}
+.s-title{font-size:13px;font-weight:600}
+.icb{width:26px;height:26px;border-radius:7px;border:1px solid var(--border-subtle);background:none;display:flex;align-items:center;justify-content:center;color:var(--text-muted);cursor:pointer;flex-shrink:0}
+.icb:hover{background:rgba(255,255,255,.08)}
+.icb.on{background:rgba(217,119,87,.16);border-color:rgba(217,119,87,.36);color:var(--text-primary)}
+.s-body{flex-grow:1;padding:13px;display:flex;flex-direction:column;gap:11px;overflow-y:auto;min-height:0}
+.askrow{display:flex;justify-content:flex-end}
+.ask{max-width:82%;padding:8px 12px;border-radius:12px;background:rgba(255,255,255,.10);font-size:12.5px;line-height:1.6}
+.ans{font-size:12.5px;line-height:1.8;color:var(--text-secondary)}
+.ans b{color:var(--text-primary);font-weight:600}
+.caret{display:inline-block;width:7px;height:13px;background:var(--accent);vertical-align:-2px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.cites{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+.cite{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:8px;background:rgba(217,119,87,.12);border:1px solid rgba(217,119,87,.32);font:inherit;font-size:11px;color:var(--text-primary);cursor:pointer}
+.cite:hover{background:rgba(217,119,87,.22)}
+.cite em{font-style:normal;font-family:'JetBrains Mono',monospace;font-size:9.5px;color:rgba(217,119,87,.95)}
+.follow{display:flex;flex-wrap:wrap;gap:7px}
+.fchip{padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.05);border:1px solid var(--border-faint);font:inherit;font-size:11.5px;color:var(--text-muted);cursor:pointer}
+.fchip:hover{background:rgba(255,255,255,.10)}
+.metaline{display:flex;align-items:center;gap:7px;font-size:10.5px;color:var(--text-tertiary);margin-top:auto;padding-top:8px}
+.mono{font-family:'JetBrains Mono',monospace}
+.s-foot{padding:11px 13px 13px;border-top:1px solid var(--border-faint);flex-shrink:0}
+.field{display:flex;align-items:center;gap:9px;height:40px;padding:0 5px 0 14px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid var(--border-subtle)}
+.field input{flex-grow:1;background:none;border:none;outline:none;font:inherit;font-size:12.5px;color:var(--text-primary);min-width:0}
+.field input::placeholder{color:var(--text-tertiary)}
+.foldbar{display:flex;align-items:center;justify-content:center;gap:8px;height:30px;border-radius:9px;border:1px dashed rgba(255,255,255,.16);font:inherit;font-size:11.5px;color:var(--text-tertiary);background:none;cursor:pointer;width:100%}
+.foldbar:hover{background:rgba(255,255,255,.05)}
+.vt{writing-mode:vertical-rl;font-size:12px;letter-spacing:.08em;color:var(--text-muted)}
+.badge{min-width:18px;height:18px;border-radius:9px;background:var(--accent-solid);color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;font-family:'JetBrains Mono',monospace}
+.dot{position:absolute;top:-5px;right:-5px;min-width:19px;height:19px;border-radius:10px;background:var(--bg-elevated);border:1px solid rgba(255,255,255,.24);color:var(--text-primary);font-size:10px;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;padding:0 5px;opacity:0;transition:opacity .2s}
+.dot.on{opacity:1}
+
+/* 历史 */
+#hist{position:absolute;top:46px;left:8px;right:8px;border-radius:12px;background:rgba(36,36,44,.99);border:1px solid var(--border-default);box-shadow:0 20px 48px rgba(0,0,0,.55);overflow:hidden;z-index:3;
+  opacity:0;transform:translateY(-8px) scale(.98);pointer-events:none;transition:opacity .16s var(--ease),transform .28s var(--ease)}
+#hist.on{opacity:1;transform:none;pointer-events:auto}
+.h-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-faint);font-size:12px;color:var(--text-secondary)}
+.h-row{display:block;width:100%;text-align:left;padding:10px 12px;border:none;border-bottom:1px solid rgba(255,255,255,.06);background:none;font:inherit;cursor:pointer}
+.h-row:hover{background:rgba(255,255,255,.05)}
+.h-row .q{font-size:12.5px;color:var(--text-primary);margin-bottom:3px}
+.h-row .m{font-size:10.5px;color:rgba(247,247,251,.50);font-family:'JetBrains Mono',monospace}
+.h-foot{padding:9px 12px;font-size:11px;line-height:1.6;color:var(--text-tertiary)}
+
+@media (prefers-reduced-motion:reduce){
+  #morph,.layer,.hint,#meta,#hist,.paper-in{transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<div class="hint-bar">
+  <b>可点原型</b>
+  <span>点右下角那枚 M 开始</span><span>·</span>
+  <span><kbd>⌘K</kbd> / <kbd>Ctrl K</kbd> 唤起</span><span>·</span>
+  <span><kbd>Esc</kbd> 退一步</span>
+  <span class="sp"></span>
+  <button id="reset">重置</button>
+</div>
+
+<div id="stage">
+  <div class="topbar">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
+    <div class="tb-title">客户端首页改版 · 视觉验收</div>
+    <div class="sp"></div>
+    <div class="tb-btn">全屏演示</div>
+    <div class="tb-btn">新窗口打开</div>
+    <div class="tb-btn">评论 3</div>
+  </div>
+
+  <div class="paper">
+    <div class="paper-in" id="paperIn">
+      <h1>客户端首页改版 · 视觉验收</h1>
+      <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
+      <h2 id="sec1">一、首屏与信息层级</h2>
+      <p><span id="hl1">首屏改为单栏卡片流，主标题字重与行高按规范执行；导航从 7 项收敛到 4 项，二级项进入抽屉。走查结论为通过。</span></p>
+      <h2 id="sec2">二、搜索入口</h2>
+      <p><span id="hl2">搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</span></p>
+      <p style="color:#8a8a92">走查人：视觉组 · 复核：产品组</p>
+      <h2 id="sec3">三、后续</h2>
+      <p>待修 5 项已建单，二轮走查排在下个迭代。本页只记录本轮结论，不含逐条清单。</p>
+    </div>
+  </div>
+
+  <div id="hints"></div>
+  <div id="meta"><span>只依据本页正文<i>·</i>本页今日剩 <b id="q1">18</b> / 20<i>·</i>你这小时剩 <b id="q2">4</b> / 5</span></div>
+
+  <div id="morph">
+    <!-- 收起 -->
+    <div class="layer l-pill on" id="lPill">
+      <svg viewBox="0 0 32 32" width="17" height="17" aria-hidden="true"><path d="M7.5 23.5V9.5L16 19l8.5-9.5v14" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      向我提问
+      <span class="dot" id="pillDot">0</span>
+    </div>
+
+    <!-- 起手长条 -->
+    <div class="layer l-bar" id="lBar">
+      <svg viewBox="0 0 32 32" width="20" height="20" style="flex-shrink:0" aria-hidden="true">
+        <path d="M7.5 23.5V9.5L16 19l8.5-9.5v14" fill="none" stroke="#D97757" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path>
+        <circle cx="7.5" cy="9.5" r="2" fill="#93c5fd"></circle><circle cx="16" cy="19" r="2" fill="#86efac"></circle><circle cx="24.5" cy="9.5" r="2" fill="#E8A87C"></circle>
+      </svg>
+      <input class="bar-in" id="barIn" placeholder="就这一页提个问题" autocomplete="off">
+      <span class="kbd">⌘K</span>
+      <button class="go" id="barGo" disabled aria-label="发送"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></button>
+    </div>
+
+    <!-- 对话侧栏 -->
+    <div class="layer l-side" id="lSide">
+      <div class="s-head">
+        <svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true">
+          <path d="M7.5 23.5V9.5L16 19l8.5-9.5v14" fill="none" stroke="#D97757" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path>
+          <circle cx="7.5" cy="9.5" r="2" fill="#93c5fd"></circle><circle cx="16" cy="19" r="2" fill="#86efac"></circle><circle cx="24.5" cy="9.5" r="2" fill="#E8A87C"></circle>
+        </svg>
+        <div class="s-title">向我提问</div>
+        <div class="sp"></div>
+        <button class="icb" id="btnHist" title="这一页问过的"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></button>
+        <button class="icb" id="btnRail" title="折成竖条"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"></path></svg></button>
+        <button class="icb" id="btnClose" title="收回胶囊"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+      </div>
+      <div class="s-body" id="thread"></div>
+      <div class="s-foot" id="sFoot"></div>
+      <div id="hist">
+        <div class="h-head">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+          这一页问过的<div class="sp"></div><span class="mono" style="font-size:10px;color:rgba(247,247,251,.5)" id="histN">0 轮</span>
+        </div>
+        <div id="histRows"></div>
+        <div class="h-foot">没登录的话，这份历史只留在这台设备的浏览器里，换设备或清缓存就没了。登录之后跟着账号走。</div>
+      </div>
+    </div>
+
+    <!-- 折成竖条 -->
+    <div class="layer l-rail" id="lRail">
+      <button class="icb" id="btnUnrail" title="展开"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"></path></svg></button>
+      <svg viewBox="0 0 32 32" width="18" height="18" aria-hidden="true"><path d="M7.5 23.5V9.5L16 19l8.5-9.5v14" fill="none" stroke="#D97757" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+      <div class="vt">向我提问</div>
+      <div class="badge" id="railN">0</div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const stage = $('#stage'), morph = $('#morph');
+const SPRING = 'linear(0,.1055,.3144,.5281,.7045,.8326,.9171,.9677,.9948,1.0071,1.0109,1.0105,1.0084,1.006,1.0039,1.0023,1.0012,1.0005,1.0001,1,.9999,.9999,.9999,.9999,1,1,1)';
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const QUESTIONS = [
+  '这份验收报告的结论是什么？',
+  '哪些问题还没修完？',
+  '搜索入口为什么算未通过？',
+  '34 项走查里通过了多少？',
+  '导航从 7 项收敛到 4 项，剩下的去哪了？',
+];
+const ANSWERS = {
+  default: {
+    text: '34 项走查里**通过 29 项、待修 5 项**。首屏与信息层级判为通过：单栏卡片流、导航从 7 项收敛到 4 项。搜索入口是唯一写明未结的一条 —— 已提到常驻，但**移动端触达仍偏低**，标注为待二轮走查。',
+    cites: [['引用 1','一、首屏与信息层级','hl1'],['引用 2','二、搜索入口','hl2']],
+  },
+  '哪些问题还没修完？': {
+    text: '页面里只写了「待修 5」这个数，**没有逐条列出来**。第三节说这 5 项已建单、二轮走查排在下个迭代 —— 要具体清单得回去问走查人。',
+    cites: [['引用 1','三、后续','sec3']],
+  },
+  '搜索入口为什么算未通过？': {
+    text: '原文的说法是：搜索**已经**从抽屉提到常驻，但**移动端触达仍偏低**，所以标注为「待二轮走查」。页面里没有给触达率的具体数字。',
+    cites: [['引用 1','二、搜索入口','hl2']],
+  },
+};
+
+// 每个状态的几何。用函数算是为了跟着窗口走 —— 写死尺寸的原型换个屏就散架。
+function geo(state){
+  const W = stage.clientWidth, H = stage.clientHeight;
+  const barW = Math.min(660, W - 80);
+  if (state === 'collapsed') return {right:22, bottom:20, width:132, height:40, radius:'999px 999px 999px 999px'};
+  if (state === 'bar')       return {right:(W-barW)/2, bottom:57, width:barW, height:54, radius:'999px 999px 999px 999px'};
+  if (state === 'rail')      return {right:0, bottom:0, width:44, height:H, radius:'14px 0px 0px 14px'};
+  return {right:0, bottom:0, width:Math.min(400, W-40), height:H, radius:'18px 0px 0px 18px'};
+}
+const px = g => ({right:g.right+'px', bottom:g.bottom+'px', width:g.width+'px', height:g.height+'px', borderRadius:g.radius});
+
+let state = 'collapsed', rounds = [], busy = false, typer = null;
+
+function applyStatic(g){ Object.assign(morph.style, px(g)); }
+
+/**
+ * 形变。中间那一帧（横向窜过头 + 压扁）是「水珠被拉长」的全部来源，
+ * 纯 transition 插不进这一帧，所以走 WAAPI 显式写关键帧。
+ */
+function morphTo(next){
+  const from = morph.getBoundingClientRect(), sb = stage.getBoundingClientRect();
+  const cur = {right: sb.right-from.right, bottom: sb.bottom-from.bottom, width: from.width, height: from.height,
+               radius: getComputedStyle(morph).borderRadius};
+  const to = geo(next);
+  const wasCollapsed = state === 'collapsed', toBar = next === 'bar';
+
+  morph.classList.toggle('glass', next === 'bar');
+  morph.classList.toggle('solid', next === 'chat' || next === 'rail');
+  state = next;
+  paint();
+
+  if (reduced){ applyStatic(to); return; }
+
+  const frames = [px(cur)];
+  if (wasCollapsed && toBar){
+    // 只有「胶囊 → 长条」这一程有水珠感：先窜过头、压扁，再弹回落位
+    frames.push({right:(cur.right+to.right)/2-70+'px', bottom:to.bottom-14+'px',
+                 width:to.width*0.66+'px', height:'44px', borderRadius:'999px 999px 999px 999px', offset:0.3});
+  }
+  frames.push(px(to));
+
+  morph.classList.add('moving');
+  const a = morph.animate(frames, {duration: wasCollapsed&&toBar ? 660 : 560, easing: SPRING, fill:'forwards'});
+  a.onfinish = () => { a.cancel(); applyStatic(to); morph.classList.remove('moving'); };
+}
+
+function paint(){
+  $('#lPill').classList.toggle('on', state==='collapsed');
+  $('#lBar').classList.toggle('on', state==='bar');
+  $('#lSide').classList.toggle('on', state==='chat');
+  $('#lRail').classList.toggle('on', state==='rail');
+  morph.style.cursor = state==='collapsed' ? 'pointer' : 'default';
+
+  const barOn = state==='bar';
+  $('#hints').classList.toggle('on', barOn);
+  $('#meta').classList.toggle('on', barOn);
+  const g = geo('bar');
+  $('#hints').style.bottom = (g.bottom + g.height + 11) + 'px';
+  $('#meta').style.bottom = '22px';
+
+  $('#paperIn').style.width = (state==='chat') ? 'min(640px, calc(100% - 520px))' : 'min(700px, calc(100% - 480px))';
+  $('#railN').textContent = rounds.length;
+  $('#pillDot').textContent = rounds.length;
+  $('#pillDot').classList.toggle('on', rounds.length>0);
+  $('#histN').textContent = rounds.length + ' 轮';
+  if (state!=='chat') $('#hist').classList.remove('on');
+}
+
+// ── 提示 ──
+let expanded = false;
+function renderHints(){
+  const box = $('#hints'); box.innerHTML = '';
+  const list = expanded ? QUESTIONS : QUESTIONS.slice(0,3);
+  list.forEach((q,i) => {
+    const b = document.createElement('button');
+    b.className = 'hint';
+    b.innerHTML = (i===0 ? '<svg viewBox="0 0 32 32" width="13" height="13" style="flex-shrink:0"><path d="M7.5 23.5V9.5L16 19l8.5-9.5v14" fill="none" stroke="#D97757" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>' : '') + q;
+    b.onclick = e => { e.stopPropagation(); ask(q); };
+    box.appendChild(b);
+  });
+  if (!expanded){
+    const m = document.createElement('button');
+    m.className = 'hint more'; m.textContent = '+2';
+    m.onclick = e => { e.stopPropagation(); expanded = true; renderHints(); requestAnimationFrame(()=>$('#hints').classList.add('on')); };
+    box.appendChild(m);
+  }
+}
+
+// ── 输入区（可折叠） ──
+let fieldFolded = false;
+function renderFoot(){
+  const f = $('#sFoot');
+  if (fieldFolded){
+    f.innerHTML = '<button class="foldbar"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>点这里接着问</button>';
+    f.querySelector('button').onclick = () => { fieldFolded = false; renderFoot(); f.querySelector('input').focus(); };
+  } else {
+    f.innerHTML = '<div class="field"><input id="sideIn" placeholder="接着问" autocomplete="off">'
+      + '<button class="icb" id="btnFold" title="折起输入框" style="border:none"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 15l6-6 6 6"/></svg></button>'
+      + '<button class="go" style="width:30px;height:30px" aria-label="发送"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button></div>';
+    const inp = f.querySelector('input');
+    f.querySelector('.go').onclick = () => { if (inp.value.trim()) ask(inp.value.trim()), inp.value=''; };
+    f.querySelector('#btnFold').onclick = () => { fieldFolded = true; renderFoot(); };
+    inp.onkeydown = e => { if (e.key==='Enter' && inp.value.trim()){ ask(inp.value.trim()); inp.value=''; } };
+  }
+}
+
+// ── 问答 ──
+function md(s){ return s.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+function ask(q){
+  if (busy) return;
+  busy = true;
+  if (state !== 'chat') morphTo('chat');
+  fieldFolded = false; renderFoot();
+
+  const thread = $('#thread');
+  thread.insertAdjacentHTML('beforeend', '<div class="askrow"><div class="ask"></div></div>');
+  thread.lastElementChild.querySelector('.ask').textContent = q;
+  const ansEl = document.createElement('div');
+  ansEl.className = 'ans'; ansEl.innerHTML = '<span class="caret"></span>';
+  thread.appendChild(ansEl);
+  thread.scrollTop = thread.scrollHeight;
+
+  const a = ANSWERS[q] || ANSWERS.default;
+  rounds.unshift({ q, at: rounds.length ? '刚刚' : '刚刚' });
+  renderHist(); paint();
+
+  // 假流式：一次吐几个字，读起来才像在生成
+  let i = 0;
+  clearInterval(typer);
+  typer = setInterval(() => {
+    i += 3;
+    ansEl.innerHTML = md(a.text.slice(0, i)) + (i < a.text.length ? '<span class="caret"></span>' : '');
+    thread.scrollTop = thread.scrollHeight;
+    if (i >= a.text.length){
+      clearInterval(typer);
+      const box = document.createElement('div'); box.className = 'cites';
+      a.cites.forEach(([n,label,target]) => {
+        const c = document.createElement('button'); c.className = 'cite';
+        c.innerHTML = '<em>'+n+'</em>'+label;
+        c.onclick = () => jump(target);
+        box.appendChild(c);
+      });
+      ansEl.appendChild(box);
+      const fu = document.createElement('div'); fu.className = 'follow';
+      QUESTIONS.filter(x => x!==q).slice(0,2).forEach(x => {
+        const b = document.createElement('button'); b.className='fchip'; b.textContent = x;
+        b.onclick = () => ask(x); fu.appendChild(b);
+      });
+      thread.appendChild(fu);
+      const m = document.createElement('div'); m.className = 'metaline';
+      m.innerHTML = '<svg viewBox="0 0 32 32" width="12" height="12"><path d="M7.5 23.5V9.5L16 19l8.5-9.5v14" fill="none" stroke="#D97757" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>qwen3.6-plus · dashscope'
+        + '<div class="sp"></div><span class="mono" id="sideQuota"></span>';
+      thread.appendChild(m);
+      // 额度是真的在减 —— 界面上说了会减，就不能只是个装饰
+      $('#q1').textContent = Math.max(0, +$('#q1').textContent - 1);
+      $('#q2').textContent = Math.max(0, +$('#q2').textContent - 1);
+      // 起手条上有额度、进了对话反而没有，等于问着问着就不知道还剩几次
+      m.querySelector('#sideQuota').textContent = '本页今日剩 ' + $('#q1').textContent + ' / 20 · 你这小时剩 ' + $('#q2').textContent + ' / 5';
+      thread.scrollTop = thread.scrollHeight;
+      busy = false;
+    }
+  }, 26);
+}
+
+function jump(id){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({behavior: reduced?'auto':'smooth', block:'center'});
+  // 高亮走一个通用 class：引用可能指向段落里的一小段，也可能指向一个小标题，
+  // 只对 .hl 生效的话，指向标题的那几条点了没反应 —— 而「没反应」比跳错还难查。
+  document.querySelectorAll('.flash').forEach(x => x.classList.remove('flash'));
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 2200);
+}
+
+function renderHist(){
+  const box = $('#histRows'); box.innerHTML = '';
+  rounds.forEach((r,i) => {
+    const b = document.createElement('button'); b.className = 'h-row';
+    b.innerHTML = '<div class="q"></div><div class="m">'+(i===0?'刚刚':i+' 轮之前')+' · 1 轮往返</div>';
+    b.querySelector('.q').textContent = r.q;
+    b.onclick = () => { $('#hist').classList.remove('on'); $('#btnHist').classList.remove('on'); };
+    box.appendChild(b);
+  });
+  if (!rounds.length) box.innerHTML = '<div class="h-foot" style="border-bottom:1px solid rgba(255,255,255,.06)">这一页还没问过。</div>';
+}
+
+// ── 交互接线 ──
+// 绑在胶囊那一层，不是整个 #morph：绑在容器上时，侧栏里任何按钮的点击都会冒泡上来，
+// 而「收回胶囊」的处理器先把 state 改成 collapsed，冒泡到这里判据正好成立 —— 刚收起又展开。
+$('#lPill').onclick = () => { morphTo('bar'); setTimeout(()=>$('#barIn').focus(), 240); };
+$('#barIn').oninput = e => { $('#barGo').disabled = !e.target.value.trim(); };
+$('#barIn').onkeydown = e => {
+  if (e.key === 'Enter' && e.target.value.trim()){ ask(e.target.value.trim()); e.target.value=''; $('#barGo').disabled = true; }
+};
+$('#barGo').onclick = e => { e.stopPropagation(); const v = $('#barIn').value.trim(); if (v){ ask(v); $('#barIn').value=''; $('#barGo').disabled = true; } };
+$('#btnRail').onclick = () => morphTo('rail');
+$('#btnUnrail').onclick = () => morphTo('chat');
+$('#btnClose').onclick = () => morphTo('collapsed');
+$('#btnHist').onclick = () => { const on = !$('#hist').classList.contains('on'); $('#hist').classList.toggle('on', on); $('#btnHist').classList.toggle('on', on); };
+$('#reset').onclick = () => {
+  clearInterval(typer); busy = false; rounds = []; expanded = false; fieldFolded = false;
+  $('#thread').innerHTML = ''; $('#q1').textContent = '18'; $('#q2').textContent = '4';
+  renderHints(); renderFoot(); renderHist(); morphTo('collapsed');
+};
+addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k'){
+    e.preventDefault();
+    if (state === 'collapsed'){ morphTo('bar'); setTimeout(()=>$('#barIn').focus(), 240); }
+    else if (state === 'rail') morphTo('chat');
+  } else if (e.key === 'Escape'){
+    if (state === 'bar') morphTo('collapsed');
+    else if (state === 'chat') morphTo('rail');
+    else if (state === 'rail') morphTo('collapsed');
+  }
+});
+addEventListener('resize', () => { applyStatic(geo(state)); paint(); });
+
+renderHints(); renderFoot(); renderHist(); paint(); applyStatic(geo('collapsed'));
+</script>
+</body>
+</html>
