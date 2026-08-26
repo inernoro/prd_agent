@@ -239,6 +239,10 @@ var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] 
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+// 视频模型与 Provider 已迁到独立 LLMGW 配置域；继续走旧 MDS inproc 解析会在空池时
+// 提交前失败，也会绕过控制台中已配置的 video-gen 默认池。
+httpAllowlist.Add(AppCallerRegistry.VideoAgent.VideoGen.Generate);
+httpAllowlist.Add(AppCallerRegistry.VisualAgent.VideoGen.Generate);
 var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))
