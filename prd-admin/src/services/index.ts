@@ -142,6 +142,7 @@ import type {
 } from '@/services/contracts/desktopAssets';
 import type { GetDesktopBrandingSettingsContract, UpdateDesktopBrandingSettingsContract } from '@/services/contracts/desktopBranding';
 import type {
+  AdoptHomepageAssetContract,
   DeleteHomepageAssetContract,
   GetHomepageAssetsPublicContract,
   ListHomepageAssetsContract,
@@ -486,6 +487,7 @@ import {
   uploadHomepageAsset as uploadHomepageAssetReal,
   deleteHomepageAsset as deleteHomepageAssetReal,
   getHomepageAssetsPublic as getHomepageAssetsPublicReal,
+  adoptHomepageAssetFromRun as adoptHomepageAssetFromRunReal,
 } from '@/services/real/homepageAssets';
 import { listRecentWork as listRecentWorkReal } from '@/services/real/homeRecentWork';
 import {
@@ -1038,6 +1040,7 @@ export const listHomepageAssets: ListHomepageAssetsContract = withAuth(listHomep
 export const uploadHomepageAsset: UploadHomepageAssetContract = withAuth(uploadHomepageAssetReal);
 export const deleteHomepageAsset: DeleteHomepageAssetContract = withAuth(deleteHomepageAssetReal);
 export const getHomepageAssetsPublic: GetHomepageAssetsPublicContract = withAuth(getHomepageAssetsPublicReal);
+export const adoptHomepageAssetFromRun: AdoptHomepageAssetContract = withAuth(adoptHomepageAssetFromRunReal);
 export const listRecentWork: ListRecentWorkContract = withAuth(listRecentWorkReal);
 
 export const createVisualAgentSession: CreateVisualAgentSessionContract = withAuth(createVisualAgentSessionReal);

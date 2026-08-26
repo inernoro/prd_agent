@@ -13,6 +13,7 @@ import { AccountSettings } from '@/pages/settings/AccountSettings';
 import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
 import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
 import { PeerNodesSettings } from '@/pages/settings/PeerNodesSettings';
+import LandingPreviewSettings from '@/pages/settings/LandingPreviewSettings';
 import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -23,6 +24,7 @@ import { getMenuGroupedDefaultOrder } from '@/lib/unifiedNavCatalog';
 import {
   Palette,
   Image,
+  ImagePlus,
   UserCog,
   UserCircle2,
   Database,
@@ -299,6 +301,8 @@ export default function SettingsPage() {
 
     const hasPerm = (perm: string) => isRoot || perms.includes(perm) || perms.includes('super');
     if (hasPerm('assets.read')) list.push({ key: 'assets', label: '资源管理', icon: <Image size={14} /> });
+    // 生成会写 slot，所以按写权限收口（只读的人看到一屏点不动的按钮没有意义）
+    if (hasPerm('assets.write')) list.push({ key: 'landing-preview', label: '首页预览图', icon: <ImagePlus size={14} /> });
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
     list.push({ key: 'infra-services', label: '基础设施服务', icon: <Server size={14} /> });
@@ -334,6 +338,7 @@ export default function SettingsPage() {
         {activeTab === 'skin' && <SkinSettings />}
         {activeTab === 'nav-order' && <NavOrderSettings />}
         {activeTab === 'assets' && <AssetsManagePage />}
+        {activeTab === 'landing-preview' && <LandingPreviewSettings />}
         {activeTab === 'authz' && <AuthzPage />}
         {activeTab === 'data' && <DataManagePage />}
         {activeTab === 'infra-services' && <InfraServicesPage />}

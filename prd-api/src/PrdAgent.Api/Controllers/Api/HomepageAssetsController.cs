@@ -114,7 +114,8 @@ public class HomepageAssetsController : ControllerBase
         Url = x.Url,
         Mime = x.Mime,
         SizeBytes = x.SizeBytes,
-        UpdatedAt = x.UpdatedAt
+        UpdatedAt = x.UpdatedAt,
+        Prompt = x.Prompt
     };
 
     /// <summary>
@@ -207,9 +208,12 @@ public class HomepageAssetsController : ControllerBase
                 .Set(x => x.Url, url)
                 .Set(x => x.Mime, mime)
                 .Set(x => x.SizeBytes, bytes.LongLength)
+                // 手工上传覆盖掉 AI 生成的那版时，旧提示词就不再描述这张图了，一并清掉
+                .Set(x => x.Prompt, (string?)null)
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
 
+        existing.Prompt = null;
         existing.RelativePath = objectKey;
         existing.Url = url;
         existing.Mime = mime;
@@ -217,6 +221,124 @@ public class HomepageAssetsController : ControllerBase
         existing.UpdatedAt = now;
 
         _logger.LogInformation("Replaced homepage asset: slot={Slot} ext={Ext} size={Size}", slotNorm, ext, bytes.LongLength);
+        return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(existing)));
+    }
+
+    /// <summary>
+    /// 认领：把一次生图任务的产物挂到某个 slot 上（管理端「首页预览图」的生成落地口）。
+    ///
+    /// 这里**不复制字节**，直接引用生图产物已有的 CDN URL：
+    /// 生图 Worker 保存的是内容寻址对象（同一张图 URL 恒定、不会被覆盖或过期），
+    /// 再拷一份到 `icon/homepage/*` 只会多一份同样的字节和一条会漂的路径。
+    /// 代价是这类记录的 `RelativePath` 为空——删除/替换时不去删那个对象（它属于
+    /// 生图任务，不属于本 slot），下面两处删除逻辑都判了空。
+    /// </summary>
+    [HttpPost("adopt-image-run")]
+    [ProducesResponseType(typeof(ApiResponse<HomepageAssetDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> AdoptImageRun([FromBody] AdoptImageRunRequest req, CancellationToken ct)
+    {
+        var adminId = this.GetRequiredUserId();
+
+        var (ok, err, slotNorm) = NormalizeSlot(req?.Slot ?? string.Empty);
+        if (!ok) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "slot 不合法"));
+
+        var runId = (req?.RunId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(runId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+
+        var run = await _db.ImageGenRuns.Find(x => x.Id == runId).Limit(1).FirstOrDefaultAsync(ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图任务不存在"));
+        // 只有任务发起人能把它的产物挂到首页 slot 上，避免拿到别人的 runId 就能改首页
+        if (!string.Equals(run.OwnerAdminId, adminId, StringComparison.Ordinal))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图任务不存在"));
+
+        var itemIndex = req?.ItemIndex ?? 0;
+        var imageIndex = req?.ImageIndex ?? 0;
+        var item = await _db.ImageGenRunItems
+            .Find(x => x.RunId == runId && x.ItemIndex == itemIndex && x.ImageIndex == imageIndex)
+            .Limit(1)
+            .FirstOrDefaultAsync(ct);
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图结果不存在"));
+        if (item.Status != ImageGenRunItemStatus.Done || string.IsNullOrWhiteSpace(item.Url))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "这张图还没生成完成，不能挂到首页"));
+
+        // 尺寸/MIME 从资产记录取；取不到就按 URL 后缀猜，缺这两个字段不该挡住认领
+        var imageUrl = item.Url!;
+        var mime = string.Empty;
+        long sizeBytes = 0;
+        var displaySha = item.DisplaySha256;
+        if (!string.IsNullOrWhiteSpace(displaySha))
+        {
+            var asset = await _db.ImageAssets
+                .Find(x => x.DisplaySha256 == displaySha)
+                .Limit(1)
+                .FirstOrDefaultAsync(ct);
+            if (asset != null)
+            {
+                mime = asset.Mime;
+                sizeBytes = asset.SizeBytes;
+            }
+        }
+        if (string.IsNullOrWhiteSpace(mime))
+        {
+            // 从 URL 猜后缀：先切掉 query/fragment，否则 `.png?v=1` 会被当成扩展名 `.png?v=1`
+            var pathOnly = imageUrl.Split('?', '#')[0];
+            mime = GuessMimeByExt(Path.GetExtension(pathOnly));
+        }
+
+        var prompt = (req?.Prompt ?? item.Prompt ?? string.Empty).Trim();
+        if (prompt.Length > 4000) prompt = prompt[..4000];
+
+        var now = DateTime.UtcNow;
+        var existing = await _db.HomepageAssets.Find(x => x.Slot == slotNorm).Limit(1).FirstOrDefaultAsync(ct);
+        if (existing == null)
+        {
+            var rec = new HomepageAsset
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Slot = slotNorm,
+                RelativePath = string.Empty,
+                Url = imageUrl,
+                Mime = mime,
+                SizeBytes = sizeBytes,
+                Prompt = string.IsNullOrWhiteSpace(prompt) ? null : prompt,
+                CreatedByAdminId = adminId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            await _db.HomepageAssets.InsertOneAsync(rec, cancellationToken: ct);
+            _logger.LogInformation("Adopted image-gen result into homepage slot={Slot} run={Run}", slotNorm, runId);
+            return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(rec)));
+        }
+
+        // 上一版是手工上传的（我们自己持有那个对象）才去删；引用生图产物的不删
+        if (!string.IsNullOrWhiteSpace(existing.RelativePath))
+        {
+            try { await _assetStorage.DeleteByKeyAsync(existing.RelativePath, ct); }
+            catch (Exception ex) { _logger.LogWarning("Failed to delete old homepage asset {Key}: {Msg}", existing.RelativePath, ex.Message); }
+        }
+
+        await _db.HomepageAssets.UpdateOneAsync(
+            x => x.Id == existing.Id,
+            Builders<HomepageAsset>.Update
+                .Set(x => x.RelativePath, string.Empty)
+                .Set(x => x.Url, imageUrl)
+                .Set(x => x.Mime, mime)
+                .Set(x => x.SizeBytes, sizeBytes)
+                .Set(x => x.Prompt, string.IsNullOrWhiteSpace(prompt) ? null : prompt)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        existing.RelativePath = string.Empty;
+        existing.Url = imageUrl;
+        existing.Mime = mime;
+        existing.SizeBytes = sizeBytes;
+        existing.Prompt = string.IsNullOrWhiteSpace(prompt) ? null : prompt;
+        existing.UpdatedAt = now;
+
+        _logger.LogInformation("Replaced homepage slot={Slot} with image-gen result run={Run}", slotNorm, runId);
         return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(existing)));
     }
 
@@ -234,13 +356,36 @@ public class HomepageAssetsController : ControllerBase
         if (existing == null)
             return Ok(ApiResponse<object>.Ok(new { deleted = false, reason = "not found" }));
 
-        try { await _assetStorage.DeleteByKeyAsync(existing.RelativePath, ct); }
-        catch (Exception ex) { _logger.LogWarning("Failed to delete homepage asset object {Key}: {Msg}", existing.RelativePath, ex.Message); }
+        // RelativePath 为空 = 这条只是引用了生图产物的 URL，对象不归本 slot 所有，不能删
+        if (!string.IsNullOrWhiteSpace(existing.RelativePath))
+        {
+            try { await _assetStorage.DeleteByKeyAsync(existing.RelativePath, ct); }
+            catch (Exception ex) { _logger.LogWarning("Failed to delete homepage asset object {Key}: {Msg}", existing.RelativePath, ex.Message); }
+        }
 
         var res = await _db.HomepageAssets.DeleteOneAsync(x => x.Id == existing.Id, ct);
         _logger.LogWarning("Admin deleted homepage asset slot={Slot}", slotNorm);
         return Ok(ApiResponse<object>.Ok(new { deleted = res.DeletedCount > 0 }));
     }
+}
+
+/// <summary>把一次生图任务的某张产物挂到首页 slot 上。</summary>
+public class AdoptImageRunRequest
+{
+    /// <summary>目标槽位，如 `landing.layers`</summary>
+    public string Slot { get; set; } = string.Empty;
+
+    /// <summary>生图任务 Id（必须是调用者本人发起的）</summary>
+    public string RunId { get; set; } = string.Empty;
+
+    /// <summary>任务内第几条计划项（一次「全部重新生成」会有多条）</summary>
+    public int ItemIndex { get; set; }
+
+    /// <summary>该计划项里的第几张图（当前每项只生一张，恒为 0）</summary>
+    public int ImageIndex { get; set; }
+
+    /// <summary>本次实际用的提示词；留空则回落到生图结果自带的那条</summary>
+    public string? Prompt { get; set; }
 }
 
 /// <summary>
@@ -275,7 +420,8 @@ public class HomepageAssetsPublicController : ControllerBase
                 Url = x.Url,
                 Mime = x.Mime,
                 SizeBytes = x.SizeBytes,
-                UpdatedAt = x.UpdatedAt
+                UpdatedAt = x.UpdatedAt,
+                Prompt = x.Prompt
             });
         return Ok(ApiResponse<Dictionary<string, HomepageAssetDto>>.Ok(map));
     }

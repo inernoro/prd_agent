@@ -308,6 +308,7 @@ export const api = {
       list: () => '/api/assets/homepage/list',
       upload: () => '/api/assets/homepage/upload',
       bySlot: (slot: string) => `/api/assets/homepage/${encodeURIComponent(slot)}`,
+      adoptImageRun: () => '/api/assets/homepage/adopt-image-run',
     },
   },
 
