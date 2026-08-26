@@ -9,6 +9,7 @@ import {
   buildPostgresDumpScript,
   buildPostgresRestoreScript,
   buildPostgresTableCountScript,
+  extractBackupGapNote,
   extractBackupScopeNote,
   summarizeBackupRound,
 } from '../../src/services/infra-backup-schedule.js';
@@ -245,16 +246,23 @@ describe('postgres 脚本：真跑一遍', () => {
     expect(r.pgUser, '库都没连，更不该有灌库那一次').toBe('');
   });
 
-  it('同实例还有别的库时，当场把范围说清楚', () => {
+  it('同实例还有别的库时，当场把范围说清楚，且算成真的缺口', () => {
     // 这份 dump 只带走一个库。不报出来的话，「成功 1 个」会被读成全量备份。
+    //
+    // 走 gap 标记而不是 scope 标记：这是「本可以带走却没带走」，该拉低健康位。
+    // 与 rabbitmq「definitions 天生不含消息」那种纯说明分开——后者无条件每轮都报，
+    // 当缺口会让健康位永远刷不新（2026-08-26 Codex review P1）。
     const r = run(dump, { otherDbs: 'analytics,billing' });
     expect(r.code).toBe(0);
-    expect(r.stderr).toContain('cds-backup-scope:');
-    expect(r.stderr).toContain('analytics,billing');
+    const gap = extractBackupGapNote(r.stderr);
+    expect(gap, '别的库没备走是真的缺口，不是说明').toContain('analytics,billing');
+    expect(extractBackupScopeNote(r.stderr), '同一轮不该两个标记都报').toBeNull();
   });
 
   it('只有一个库时不报噪音', () => {
-    expect(run(dump, { otherDbs: '' }).stderr).not.toContain('cds-backup-scope:');
+    const stderr = run(dump, { otherDbs: '' }).stderr;
+    expect(extractBackupGapNote(stderr)).toBeNull();
+    expect(extractBackupScopeNote(stderr)).toBeNull();
   });
 });
 

@@ -32,7 +32,7 @@ import {
 import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
 import {
   backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
-  buildRabbitmqDumpScript, extractBackupScopeNote, backupScopeGaps,
+  buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
   buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
@@ -806,6 +806,9 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           // 只在失败时看 stderr 的话，一次成功但只覆盖了一个库的备份，
           // 会以「成功 1 个」的形态被读成全量。
           const scopeNote = extractBackupScopeNote(r.stderr || '');
+          // 「机制本来就不含」与「这轮真的少备了」分两个字段接：混成一个的话，
+          // rabbitmq / nacos 每轮无条件报的那行说明会把健康位永远钉死（Codex review P1）。
+          const gapNote = extractBackupGapNote(r.stderr || '');
 
           const stat = await shell.exec(`stat -c %s ${shq(out)} 2>/dev/null || echo 0`, { timeout: 10_000 });
           const bytes = Number((stat.stdout || '0').trim()) || 0;
@@ -887,6 +890,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             remoteObjectKey: remote?.objectKey,
             sha256: remote?.sha256,
             note: scopeNote ?? undefined,
+            gapNote: gapNote ?? undefined,
           });
         } catch (err) {
           // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），

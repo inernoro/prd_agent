@@ -11,6 +11,9 @@ import {
   backupCoverageGaps,
   buildMysqlDumpScript,
   buildNacosConfigCountScript,
+  extractBackupGapNote,
+  extractBackupScopeNote,
+  RABBITMQ_SCOPE_NOTE_LINES,
   buildRedisBackupProbeScript,
   buildRedisRdbPathScript,
   REDIS_CONNECT_LINES,
@@ -230,7 +233,7 @@ describe('结论可读', () => {
       id: 'postgres',
       ok: true,
       bytes: 4096,
-      note: '只导出了 appdb；同实例还有 analytics、audit 未纳入本次备份',
+      gapNote: '只导出了 appdb；同实例还有 analytics、audit 未纳入本次备份',
     }];
 
     const gaps = backupScopeGaps(partial);
@@ -252,7 +255,37 @@ describe('结论可读', () => {
 
   it('失败的那条不重复算成范围缺口——它已经是失败了', () => {
     // ok=false 时整轮本来就不健康，再把它算进「范围缺口」只会让同一件事被报两遍。
-    expect(backupScopeGaps([{ id: 'postgres', ok: false, error: '导出失败', note: '范围提示' }])).toEqual([]);
+    expect(backupScopeGaps([{ id: 'postgres', ok: false, error: '导出失败', gapNote: '范围提示' }])).toEqual([]);
+  });
+
+  it('纯说明（note）不算缺口——否则装了 rabbitmq/nacos 的部署健康位永远刷不新', () => {
+    // 2026-08-26 Codex review P1。rabbitmq 与 nacos **每轮无条件**报一行说明
+    //（definitions 不含消息、配置导出不含服务注册）。上一版把任何 note 都升级成
+    // 阻塞缺口，于是这两类部署一次成功的备份也会被说成「读不到上一轮备份」，
+    // 而且永远刷不新——正是这批改动本来要治的那盏永远亮着的灯。
+    const complete: BackupPlan = { targets: [], skipped: [] };
+    const informational = [{
+      id: 'rabbitmq',
+      ok: true,
+      bytes: 2048,
+      note: '这份备份只有 definitions；默认 vhost 当前没有积压消息，这一轮没有东西被漏下',
+    }];
+    expect(backupScopeGaps(informational)).toEqual([]);
+    expect(isBackupRoundHealthy(complete, informational), '成功且没漏东西的一轮必须算健康').toBe(true);
+  });
+
+  it('两者同时出现时，只有 gapNote 算缺口', () => {
+    const both = [{
+      id: 'rabbitmq',
+      ok: true,
+      bytes: 2048,
+      note: '这份备份只有 definitions',
+      gapNote: '默认 vhost 当前积压 12 条消息，它们不会被这份备份带走',
+    }];
+    const gaps = backupScopeGaps(both);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].reason).toContain('12 条');
+    expect(gaps[0].reason).not.toContain('只有 definitions');
   });
 });
 
@@ -1451,7 +1484,6 @@ describe('nacos 数配置条数：数不出来就必须失败，不许兜成 0',
     const r = runCount('', 22);
     expect(r.status, '数不出来必须让整段失败，让调用方显示「未知」').not.toBe(0);
     expect(r.stdout.trim()).toBe('');
-    console.log('DBG-status', r.status, 'DBG-stderr:', JSON.stringify(r.stderr));
     expect(r.stderr).toContain('数不出配置条数');
   });
 
@@ -1469,5 +1501,57 @@ describe('nacos 数配置条数：数不出来就必须失败，不许兜成 0',
 
   it('语法要在 dash / busybox 那种 sh 里也成立', () => {
     execFileSync('/bin/sh', ['-n'], { input: buildNacosConfigCountScript(), encoding: 'utf8' });
+  });
+});
+
+describe('rabbitmq 的范围提示：有积压才算缺口，没积压只是说明', () => {
+  /**
+   * 2026-08-26 Codex review P1 的红绿锚点。断言的是**脚本真跑出来是哪个标记**，
+   * 不是源码里有没有那个字符串——后者改个措辞就绿，测不到行为。
+   */
+  const runNote = (queuesStdout: string, exitCode: number): { stderr: string } => {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rmq-note-'));
+    fs.writeFileSync(path.join(box, 'rabbitmqctl'), [
+      '#!/bin/sh',
+      `printf '%s' '${queuesStdout}'`,
+      `exit ${exitCode}`,
+    ].join('\n'), { mode: 0o755 });
+    const r = spawnSync('/bin/sh', ['-s'], {
+      input: RABBITMQ_SCOPE_NOTE_LINES.join('\n'),
+      encoding: 'utf8',
+      env: { PATH: `${box}:${process.env.PATH || '/usr/bin:/bin'}` },
+    });
+    return { stderr: r.stderr };
+  };
+
+  it('积压 0 条 → 只报说明，不算缺口', () => {
+    const { stderr } = runNote('0\n0\n', 0);
+    expect(extractBackupGapNote(stderr), '没有东西被漏下，就不该拉低健康位').toBeNull();
+    expect(extractBackupScopeNote(stderr)).toContain('没有积压消息');
+  });
+
+  it('有积压 → 算缺口，并把条数带出来', () => {
+    const { stderr } = runNote('7\n5\n', 0);
+    const gap = extractBackupGapNote(stderr);
+    expect(gap).toContain('12');
+    expect(extractBackupScopeNote(stderr), '同一轮不该两个标记都报').toBeNull();
+  });
+
+  it('数不出来（list_queues 失败）→ 从严当缺口', () => {
+    const { stderr } = runNote('', 69);
+    expect(extractBackupGapNote(stderr)).toContain('没数出来');
+  });
+
+  it('语法要在 dash / busybox 那种 sh 里也成立', () => {
+    execFileSync('/bin/sh', ['-n'], { input: RABBITMQ_SCOPE_NOTE_LINES.join('\n'), encoding: 'utf8' });
+  });
+});
+
+describe('两个标记的提取器不互相认领', () => {
+  it('scope 行不会被当成 gap，反之亦然', () => {
+    expect(extractBackupGapNote('cds-backup-scope: 只是说明')).toBeNull();
+    expect(extractBackupScopeNote('cds-backup-gap: 真的漏了')).toBeNull();
+    expect(extractBackupScopeNote('cds-backup-scope: 只是说明')).toBe('只是说明');
+    expect(extractBackupGapNote('cds-backup-gap: 真的漏了')).toBe('真的漏了');
   });
 });

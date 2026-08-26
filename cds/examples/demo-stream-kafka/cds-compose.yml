@@ -26,6 +26,12 @@ services:
     environment:
       PORT: "3000"
       KAFKA_BROKERS: ${KAFKA_BROKERS}
+      # broker 的客户端监听器是 SASL_PLAINTEXT/PLAIN，这两个必须显式注进容器。
+      # `x-cds-env` 只是插值输入，**不会**自动出现在每个服务的环境里——漏了这两行，
+      # server.js 会走「没配凭据就退回无认证」那条分支，连不上 broker，
+      # /api/health 永远起不来（Codex review P1）。
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD}
     labels:
       cds.path-prefix: /api/
       cds.readiness-path: /api/health

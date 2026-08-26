@@ -386,8 +386,10 @@ export function backupCoverageGaps(plan: BackupPlan): BackupPlan['skipped'] {
 export function backupScopeGaps(outcomes: readonly BackupOutcome[]): BackupPlan['skipped'] {
   const gaps: BackupPlan['skipped'] = [];
   for (const o of outcomes) {
-    if (!o.ok || !o.note) continue;
-    gaps.push({ id: o.id, reason: o.note, blocksHealthy: true });
+    // 只认 gapNote。**不能读 note**：那是纯说明，而 rabbitmq 与 nacos 每轮都会
+    // 无条件报一行，读它等于让任何装了这两者的部署健康位永远刷不新（见 gapNote 的注释）。
+    if (!o.ok || !o.gapNote) continue;
+    gaps.push({ id: o.id, reason: o.gapNote, blocksHealthy: true });
   }
   return gaps;
 }
@@ -503,13 +505,27 @@ export interface BackupOutcome {
    */
   localOnly?: boolean;
   /**
-   * 这份备份**覆盖到哪**的说明，由导出脚本自己报（目前只有 postgres 会报：
-   * 同实例还有别的库没被这份 dump 带走）。
+   * 这份备份**覆盖到哪**的说明，由导出脚本自己报。
    *
    * 和 `error` 分开：它不表示失败，它表示「成功了，但别把它当成全量」。
    * 两者混在一个字段里，要么把一次正常备份报成故障，要么让范围缺口彻底消失。
+   *
+   * **纯说明，不拉低健康位**——拉低健康的是下面的 `gapNote`。
    */
   note?: string;
+  /**
+   * 这一轮**真的少备了东西**时的说明（`cds-backup-gap:`）。只有它算覆盖缺口。
+   *
+   * 与 `note` 分家是因为上一版把两者混成了一个：任何 `cds-backup-scope:` 行都被
+   * 升级成阻塞缺口，而 rabbitmq 与 nacos 是**每轮无条件**报一行说明的（讲清楚
+   * definitions 不含消息、配置导出不含服务注册）。于是任何装了这两者的部署，
+   * 备份健康位从此永远刷不新、每日体检天天报「读不到上一轮备份」——一次成功的
+   * 备份被说成了不知道有没有备（Codex review P1）。
+   *
+   * 判据因此改成问一句：**这一行说的是「机制本来就不含」，还是「这次本可以带走
+   * 却没带走」？** 只有后者是缺口。
+   */
+  gapNote?: string;
 }
 
 /**
@@ -1021,7 +1037,9 @@ const POSTGRES_CREDENTIAL_LINES: readonly string[] = [
  * 排除 `postgres` 维护库：它是镜像自带的空库，报出来只会变成每轮都在的噪音。
  *
  * 走 stderr 而不是 stdout：stdout 是备份产物本身，往里写一个字都会污染 dump。
- * 前缀 `cds-backup-scope:` 是给调用方认领用的机器标记（见 index.ts 的 scopeNote）。
+ * 前缀 `cds-backup-gap:` 是给调用方认领用的机器标记：同实例别的库没备走，是**这一轮
+ * 真的少备了东西**，该拉低健康位（区别于「机制本来就不含」那种纯说明，见
+ * `BACKUP_GAP_NOTE_MARKER`）。
  */
 const POSTGRES_SCOPE_NOTE_LINES: readonly string[] = [
   'CDS_PG_OTHERS=$(psql -U "$CDS_PG_USER" -d "$CDS_PG_DB" -tAc '
@@ -1030,7 +1048,7 @@ const POSTGRES_SCOPE_NOTE_LINES: readonly string[] = [
     + ' 2>/dev/null | tr -d " ")',
   // 空结果时 `[ -n ... ]` 为假，整条复合命令返回 1；后面还有语句，但加 `|| true`
   // 免得将来有人把它挪到末尾，静默把整个脚本判成失败。
-  '[ -n "$CDS_PG_OTHERS" ] && echo "cds-backup-scope: 本次只导出库 $CDS_PG_DB；'
+  '[ -n "$CDS_PG_OTHERS" ] && echo "cds-backup-gap: 本次只导出库 $CDS_PG_DB；'
     + '同实例另有未纳入备份的库：$CDS_PG_OTHERS" >&2 || true',
 ];
 
@@ -1146,16 +1164,24 @@ const RABBITMQ_PROBE_LINES: readonly string[] = [
  *
  * 走 stderr：stdout 是备份产物本身，往里写一个字都会污染 definitions JSON。
  */
-const RABBITMQ_SCOPE_NOTE_LINES: readonly string[] = [
+export const RABBITMQ_SCOPE_NOTE_LINES: readonly string[] = [
   'CDS_RMQ_Q=$(rabbitmqctl -q list_queues messages 2>/dev/null); CDS_RMQ_RC=$?',
   'if [ "$CDS_RMQ_RC" = 0 ]; then',
   // 只累加纯数字行：任何版本差异带来的表头/提示行都进不了这个和。
   `  CDS_RMQ_MSGS=$(printf '%s\\n' "$CDS_RMQ_Q" | awk 'BEGIN{s=0}/^[0-9]+$/{s+=$1}END{print s}')`,
-  '  echo "cds-backup-scope: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+  // 有积压才算「这轮少备了东西」。**0 条时只报说明、不算缺口**——definitions 不含
+  // 消息是这套机制固有的，无条件当缺口会让任何装了 rabbitmq 的部署健康位永远刷不新
+  //（Codex review P1）。数不出来时按缺口从严：证明不了没漏，就当漏了。
+  '  if [ "$CDS_RMQ_MSGS" -gt 0 ] 2>/dev/null; then',
+  '    echo "cds-backup-gap: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
     + '队列里的消息不在里面；默认 vhost 当前积压 $CDS_RMQ_MSGS 条消息，它们不会被这份备份带走" >&2',
+  '  else',
+  '    echo "cds-backup-scope: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；默认 vhost 当前没有积压消息，这一轮没有东西被漏下" >&2',
+  '  fi',
   'else',
-  '  echo "cds-backup-scope: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
-    + '队列里的消息不在里面；当前积压多少条没数出来（list_queues 失败）" >&2',
+  '  echo "cds-backup-gap: 这份备份只有 definitions（vhost/队列/交换机/绑定/用户/权限/策略），'
+    + '队列里的消息不在里面；当前积压多少条没数出来（list_queues 失败），按有积压从严处理" >&2',
   'fi',
 ];
 
@@ -1500,13 +1526,36 @@ export function buildNacosConfigCountScript(): string {
  */
 export const BACKUP_SCOPE_NOTE_MARKER = 'cds-backup-scope:';
 
+/**
+ * 「这一轮真的少备了东西」的机器标记。**只有它算覆盖缺口、只有它拉低健康位。**
+ *
+ * 与 `BACKUP_SCOPE_NOTE_MARKER` 分家的理由见 `BackupOutcome.gapNote`：说明性的
+ * 那一行（definitions 不含消息、配置导出不含服务注册）是每轮无条件报的，
+ * 把它当缺口会让健康位永远刷不新。
+ */
+export const BACKUP_GAP_NOTE_MARKER = 'cds-backup-gap:';
+
 /** 从一段 stderr 里捞出作用域说明（没有就返回 null）。 */
 export function extractBackupScopeNote(stderr: string): string | null {
+  return extractMarkedNote(stderr, BACKUP_SCOPE_NOTE_MARKER);
+}
+
+/** 从一段 stderr 里捞出「这轮真的少备了」的说明（没有就返回 null）。 */
+export function extractBackupGapNote(stderr: string): string | null {
+  return extractMarkedNote(stderr, BACKUP_GAP_NOTE_MARKER);
+}
+
+/**
+ * 两个标记共用一套取值，别让它们各写一遍（形状 3：判据分裂后各自漂移）。
+ *
+ * 用 `startsWith` 而不是 `includes`：`cds-backup-scope:` 是 `cds-backup-gap:` 之外
+ * 的另一个前缀，但两行都以 `cds-backup-` 开头，将来再加第三个标记时，
+ * `includes` 很容易让一行被两个提取器同时认领。
+ */
+function extractMarkedNote(stderr: string, marker: string): string | null {
   const line = String(stderr || '')
     .split('\n')
     .map((l) => l.trim())
-    .find((l) => l.includes(BACKUP_SCOPE_NOTE_MARKER));
-  return line
-    ? line.slice(line.indexOf(BACKUP_SCOPE_NOTE_MARKER) + BACKUP_SCOPE_NOTE_MARKER.length).trim()
-    : null;
+    .find((l) => l.startsWith(marker));
+  return line ? line.slice(marker.length).trim() : null;
 }
