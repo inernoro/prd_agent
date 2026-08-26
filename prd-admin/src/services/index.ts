@@ -51,8 +51,7 @@ import type {
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
 import type { GetExecutiveOverviewContract, GetExecutiveTrendsContract, GetExecutiveTeamContract, GetExecutiveAgentsContract, GetExecutiveModelsContract, GetExecutiveLeaderboardContract, GetTeamInsightsContract } from '@/services/contracts/executive';
 import type { GetPlatformsContract } from '@/services/contracts/platforms';
-import type { GetModelsContract, GetModelAdapterInfoContract, GetModelsAdapterInfoBatchContract, GetAdapterInfoByModelNameContract } from '@/services/contracts/models';
-import type { GetLLMConfigsContract } from '@/services/contracts/llmConfigs';
+import type { GetModelsContract } from '@/services/contracts/models';
 import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract, GetLlmLogsTimeseriesContract, GetLlmLogsSessionsContract, GetLlmLogsAppSummaryContract, RestoreLlmLogTextContract } from '@/services/contracts/llmLogs';
 import type { GetTeamActivityEndpointDetailContract, GetTeamActivityExperienceMapContract, GetTeamActivityExperienceTrendContract, GetTeamActivityInsightsContract, GetTeamActivityLogsContract, GetTeamActivityModulesContract, GetTeamActivityStatsContract, InsightToRequirementContract, SetTeamActivityInsightStateContract } from '@/services/contracts/teamActivity';
 import type { GetAdminDocumentContentContract } from '@/services/contracts/adminDocuments';
@@ -344,8 +343,7 @@ import {
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { getExecutiveOverviewReal, getExecutiveTrendsReal, getExecutiveTeamReal, getExecutiveAgentsReal, getExecutiveModelsReal, getExecutiveLeaderboardReal, getTeamInsightsReal } from '@/services/real/executive';
 import { getPlatformsReal } from '@/services/real/platforms';
-import { getModelsReal, getModelAdapterInfoReal, getModelsAdapterInfoBatchReal, getAdapterInfoByModelNameReal } from '@/services/real/models';
-import { getLLMConfigsReal } from '@/services/real/llmConfigs';
+import { getModelsReal } from '@/services/real/models';
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal, getLlmLogsTimeseriesReal, getLlmLogsSessionsReal, getLlmLogsAppSummaryReal, restoreLlmLogTextReal } from '@/services/real/llmLogs';
 import { getTeamActivityEndpointDetailReal, getTeamActivityExperienceMapReal, getTeamActivityExperienceTrendReal, getTeamActivityInsightsReal, getTeamActivityLogsReal, getTeamActivityModulesReal, getTeamActivityStatsReal, insightToRequirementReal, setTeamActivityInsightStateReal } from '@/services/real/teamActivity';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
@@ -922,11 +920,6 @@ export const simulateStreamMessages: SimulateStreamMessagesContract = withAuth(s
 export const getPlatforms: GetPlatformsContract = withAuth(getPlatformsReal);
 
 export const getModels: GetModelsContract = withAuth(getModelsReal);
-export const getModelAdapterInfo: GetModelAdapterInfoContract = withAuth(getModelAdapterInfoReal);
-export const getModelsAdapterInfoBatch: GetModelsAdapterInfoBatchContract = withAuth(getModelsAdapterInfoBatchReal);
-export const getAdapterInfoByModelName: GetAdapterInfoByModelNameContract = withAuth(getAdapterInfoByModelNameReal);
-
-export const getLLMConfigs: GetLLMConfigsContract = withAuth(getLLMConfigsReal);
 
 export const getTeamActivityLogs: GetTeamActivityLogsContract = withAuth(getTeamActivityLogsReal);
 export const getTeamActivityModules: GetTeamActivityModulesContract = withAuth(getTeamActivityModulesReal);

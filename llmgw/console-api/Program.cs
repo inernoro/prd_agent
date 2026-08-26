@@ -2821,6 +2821,54 @@ app.MapPost("/gw/pool-types/ensure", async (HttpContext http) =>
     }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
+// ── 池成员可解析性：建索引 + 归一 ───────────────────────────────────────────────
+//
+// 「这个成员还指得到一个上游 + 模型吗」这件事，池列表要用、每个返回池的变更端点也要用。
+// 只做在列表上就会分裂：改完成员拿回来的那份响应还是库里的原始健康值，
+// 卡片当场翻绿、刷新又变回去——正是归一本身要防的自相矛盾，换条路径复现（形状 3）。
+// 所以收成一个出口，谁要吐 PoolItem 谁就过这道。
+
+async Task<PoolResolutionIndex> BuildPoolResolutionIndexAsync(HttpContext http)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var platformIds = (await gwPlatforms.Find(TenantAccess.Filter(http))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled"))
+            .ToListAsync())
+        .Where(d => d.AsNullableBool("Enabled") ?? true)
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToHashSet(StringComparer.Ordinal);
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http, fb.Ne("Enabled", false)))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+        .ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http, fb.Ne("Enabled", false)))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+        .ToListAsync();
+
+    // GW 与 MAP 两侧取并集：内部租户的池列表里两种权威来源混在一起，
+    // 只查一侧会把另一侧的活成员误判成死的。MAP 集合本就是内部租户专属，外部租户不查。
+    if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+    {
+        foreach (var d in await platforms.Find(FilterDefinition<BsonDocument>.Empty)
+                     .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled")).ToListAsync())
+        {
+            if ((d.AsNullableBool("Enabled") ?? true) && !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
+                platformIds.Add(d.GetStringOrEmpty("_id"));
+        }
+        modelDocs.AddRange(await models.Find(fb.Ne("Enabled", false))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+            .ToListAsync());
+        exchangeDocs.AddRange(await modelExchanges.Find(fb.Ne("Enabled", false))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+            .ToListAsync());
+    }
+    return new PoolResolutionIndex(platformIds, modelDocs, exchangeDocs);
+}
+
+/// <summary>建一次索引、映射一个池并归一。变更端点用它替代裸 MapPool。</summary>
+async Task<PoolItem> MapPoolResolvedAsync(HttpContext http, BsonDocument doc)
+    => ApplyPoolMemberResolution(MapPool(doc), await BuildPoolResolutionIndexAsync(http));
+
 app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHours) =>
 {
     var tenantId = TenantAccess.GetRequired(http).TenantId;
@@ -2833,36 +2881,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
     var gwIds = gwDocs.Select(d => d.GetStringOrEmpty("_id")).Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet(StringComparer.Ordinal);
     var docs = gwDocs.Concat(mapDocs.Where(d => !gwIds.Contains(d.GetStringOrEmpty("_id")))).ToList();
 
-    // 池成员的「指得到指不到」索引，一次性建好给下面每个池复用。
-    // GW 与 MAP 两侧取并集：列表里同时有两种权威来源的池，只查一侧会把另一侧的活成员误判成死的。
-    var resolvablePlatformIds = (await gwPlatforms.Find(TenantAccess.Filter(http))
-            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled"))
-            .ToListAsync())
-        .Where(d => d.AsNullableBool("Enabled") ?? true)
-        .Select(d => d.GetStringOrEmpty("_id"))
-        .Where(x => !string.IsNullOrWhiteSpace(x))
-        .ToHashSet(StringComparer.Ordinal);
-    var resolvableModels = await gwModels.Find(TenantAccess.Filter(http, fb.Ne("Enabled", false)))
-        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
-        .ToListAsync();
-    var resolvableExchanges = await gwModelExchanges.Find(TenantAccess.Filter(http, fb.Ne("Enabled", false)))
-        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
-        .ToListAsync();
-    if (tenantId == internalTenantId)
-    {
-        foreach (var d in await platforms.Find(FilterDefinition<BsonDocument>.Empty)
-                     .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled")).ToListAsync())
-        {
-            if ((d.AsNullableBool("Enabled") ?? true) && !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
-                resolvablePlatformIds.Add(d.GetStringOrEmpty("_id"));
-        }
-        resolvableModels.AddRange(await models.Find(fb.Ne("Enabled", false))
-            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
-            .ToListAsync());
-        resolvableExchanges.AddRange(await modelExchanges.Find(fb.Ne("Enabled", false))
-            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
-            .ToListAsync());
-    }
+    var resolutionIndex = await BuildPoolResolutionIndexAsync(http);
 
     var hours = sinceHours is > 0 and <= 24 * 90 ? sinceHours.Value : 24 * 7;
     var since = DateTime.UtcNow.AddHours(-hours);
@@ -2948,22 +2967,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             : Math.Round(recentTen.Count(log => string.Equals(log.AsNullableString("Status"), "succeeded", StringComparison.Ordinal)) * 100m / recentTen.Count, 1, MidpointRounding.AwayFromZero);
         item.LastRequestAt = stats?.AsNullableUtcDateTime("LastRequestAt").ToIso();
 
-        // 指不到任何上游 / 模型的成员，先在**展示层**归一成不可用，再统计。
-        //
-        // 只看存库的 HealthStatus 会把这种成员算成健康——它从没失败过，因为它从来没被
-        // 调用成功过一次。于是一个一次请求都发不出去的池在控制台上显示「健康」，
-        // 正好骗过要靠它做判断的人（形状 8）。
-        //
-        // 归一放在计数之前而不是只改计数：池级徽章、成员顺位的圆点、可用/不可用三个数字
-        // 都读同一个字段，只改其中一处就会出现「池标已中断、第 1 顺位却是绿点」的自相矛盾。
-        // 归一只作用于这次响应，不回写库——库里的健康状态仍由真实调用结果决定。
-        foreach (var model in item.Models)
-        {
-            if (model.HealthStatus == 2) continue;
-            if (IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, resolvablePlatformIds, resolvableModels, resolvableExchanges)) continue;
-            model.HealthStatus = 2;
-            model.HealthStatusLabel = HealthLabel(2);
-        }
+        ApplyPoolMemberResolution(item, resolutionIndex);
         item.HealthyMembers = item.Models.Count(model => model.HealthStatus == 0);
         item.DegradedMembers = item.Models.Count(model => model.HealthStatus == 1);
         item.UnavailableMembers = item.Models.Count(model => model.HealthStatus == 2);
@@ -9569,7 +9573,7 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
             { "isDefaultForType", false },
         });
 
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(doc)), jsonOptions, 201);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, doc)), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池属性编辑：只允许写 GW 权威池。MAP 来源池必须先认领，避免把目标权威又写回旧集合。
@@ -9764,7 +9768,7 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
         changes: changes);
 
     var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 批量认领 MAP 模型池：把 MAP model_groups 复制到 llm_gateway，自有池默认不覆盖。
@@ -9834,7 +9838,7 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
             }
         }
         claimed++;
-        changedItems.Add(MapPool(claimedDoc));
+        changedItems.Add(await MapPoolResolvedAsync(http, claimedDoc));
     }
 
     await WriteOperationAuditAsync(
@@ -10158,7 +10162,7 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
         SkippedExisting = skippedExisting,
         SkippedInvalid = Math.Max(0, skippedInvalid),
         CapabilityFilter = capabilityFilter,
-        Pool = MapPool(fresh),
+        Pool = await MapPoolResolvedAsync(http, fresh),
     };
 
     await WriteOperationAuditAsync(
@@ -10458,7 +10462,7 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
         });
 
     var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 手动恢复保持成员不可用，只授予进入原子半开的资格；下一条真实业务请求负责验证，不发送额外付费探测。
@@ -10516,7 +10520,7 @@ app.MapPost("/gw/pools/{id}/models/recover", async (HttpContext http, string id,
         });
 
     var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池成员删除：只允许从 GW 权威池删除；MAP 来源池必须先认领。
@@ -10598,7 +10602,7 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
         });
 
     var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池默认标记：单文档原子更新类型注册表中的 DefaultPoolId。
@@ -10689,7 +10693,7 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
             { "typeVersion", updatedType.AsNullableLong("Version") ?? 0 },
         });
     var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    var item = MapPool(fresh);
+    var item = await MapPoolResolvedAsync(http, fresh);
     item.IsDefaultForType = string.Equals(authoritativePoolId, id, StringComparison.Ordinal);
     return Json(ApiEnvelope<PoolItem>.Ok(item), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -10753,7 +10757,7 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
         });
 
     var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // ───────────────────── 快捷提 bug（Ctrl+B 全局面板，2026-07-27）─────────────────────
@@ -13949,6 +13953,34 @@ static bool IsResolvableGatewayPoolMember(
         enabledPlatformIds,
         enabledModels,
         enabledExchanges);
+}
+
+/// <summary>
+/// 把「指不到任何上游 / 模型」的成员在**展示层**归一成不可用，并写明原因。
+///
+/// 只看存库的 HealthStatus 会把这种成员算成健康——它从没失败过，因为它从来没被
+/// 调用成功过一次。于是一个一次请求都发不出去的池在控制台上显示「健康」，
+/// 正好骗过要靠它做判断的人（形状 8）。
+///
+/// 归一必须发生在任何计数之前：池级徽章、成员顺位的圆点、可用/不可用三个数字读的是
+/// 同一个字段，只改其中一处就会出现「池标已中断、第 1 顺位却是绿点」的自相矛盾。
+/// 只作用于本次响应，不回写库——库里的健康状态仍由真实调用结果决定。
+/// </summary>
+static PoolItem ApplyPoolMemberResolution(PoolItem item, PoolResolutionIndex index)
+{
+    foreach (var model in item.Models)
+    {
+        if (model.HealthStatus == 2) continue;
+        if (IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, index.PlatformIds, index.Models, index.Exchanges)) continue;
+        model.HealthStatus = 2;
+        model.HealthStatusLabel = HealthLabel(2);
+        // 分清两种死法，界面才不会写出「不可用（连续失败 0 次）」这种自相矛盾的归因：
+        // 上游整个没了，还是上游还在、只是这个模型被删了。
+        model.UnavailableReason = index.PlatformIds.Contains(model.PlatformId)
+            ? "model-missing"
+            : "upstream-missing";
+    }
+    return item;
 }
 
 /// <summary>

@@ -179,11 +179,16 @@ public class MdsWriteRetiredGuardTests
         }));
 
     [Fact]
-    public void EveryMdsWriteEndpointIsCoveredByTheGate()
+    public void AllowlistIsPinnedToExactlyTheKnownExemptions()
     {
-        // 扫真实的 Controller 源码，确认没有哪个 api/mds 写端点被漏在闸外面。
-        // 这条是为「以后有人新加写端点」准备的：新端点若不在白名单里就会被闸挡住（预期），
-        // 若有人顺手把它塞进白名单，这里会因为白名单变长而暴露出来。
+        // 澄清这条守卫**不做什么**：它不扫 Controller、不做端点覆盖率统计。
+        // 端点覆盖靠闸本身的 default-deny 语义——新加的写端点默认就被挡住，不需要谁去登记。
+        // 这条只钉住白名单本身：豁免是稀缺资源，多一条就说明有人把写口子开回来了，
+        // 必须在这里显式改测试、在 review 里被看见。
+        //
+        // （原名 EveryMdsWriteEndpointIsCoveredByTheGate + 「扫真实的 Controller 源码」的注释
+        //   是虚的承诺：一行 Controller 都没扫。名字和注释给人「覆盖已被守住」的错觉，
+        //   而守卫实际只锁了白名单长度——这正是形状 8：拿一份不成立的证据当成证明。）
         var allowlist = typeof(MdsWriteRetiredFilter)
             .GetField("ReadOnlyProbes", BindingFlags.NonPublic | BindingFlags.Static)!
             .GetValue(null) as HashSet<string>;

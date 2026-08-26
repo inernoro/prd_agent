@@ -10,3 +10,10 @@
 | refactor | llmgw | 可解析成员判定收敛成一个入口（IsResolvablePoolMemberKey），删掉运行 gate 里抄的第二份，补守卫钉住只许有一份口径 |
 | docs | doc | debt.platform.llm-gateway 记两条待清理数据：三个全失效专用池、与托管默认池重复的对话主池 |
 | ops | llmgw | 清掉四个空壳模型池（ASR 豆包 BigModel / Stream、视频 Seedance 2.0 Fast、与托管默认池重复的对话主池），剩余 13 个池一类一个、全部网关权威 |
+| fix | llmgw | 成员可解析性归一收进唯一出口，变更端点不再吐库里的原始健康值——原先改完成员卡片会当场翻绿、刷新又变回去 |
+| fix | llmgw | 不可用成员说得出为什么：新增 unavailableReason（上游没了 / 模型没了），界面不再写「不可用（连续失败 0 次）」这种自相矛盾的归因 |
+| ops | llmgw | 摘掉图片生成默认池里两个悬空成员（挂已删上游、且排在所有真实模型之前），末态 13 池 311 成员全部可用 |
+| test | prd-api | 补三条守卫：归一必须覆盖每一个吐出池的出口、不可用成员必须说得出为什么、窄屏行操作菜单必须量出遮挡再让位（前端契约守卫自动镜像，368→374 条断言） |
+| fix | prd-admin | 主题硬编码基线清掉三条指向已删页面的幽灵条目，并给棘轮加上「基线里的文件必须存在」断言 |
+| refactor | prd-admin | 再清一轮零消费方死代码：三个 adapter-info 读包装、整份 llmConfigs 服务与契约、services/mock 三个孤儿文件、api.ts 里 11 个无人引用的 mds 地址构造器 |
+| docs | prd-api | 点名两处虚的承诺：白名单守卫改名为名副其实的 AllowlistIsPinnedToExactlyTheKnownExemptions；LlmSchedulingIntegrationTests 标注为退场后永远跑不通 |

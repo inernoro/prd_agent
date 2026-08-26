@@ -1,11 +1,4 @@
-import type {
-  GetModelsContract,
-  GetModelAdapterInfoContract,
-  GetModelsAdapterInfoBatchContract,
-  GetAdapterInfoByModelNameContract,
-  ModelAdapterInfo,
-  ModelAdapterInfoBrief,
-} from '@/services/contracts/models';
+import type { GetModelsContract } from '@/services/contracts/models';
 import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import type { Model } from '@/types/admin';
@@ -16,20 +9,3 @@ import type { Model } from '@/types/admin';
 export const getModelsReal: GetModelsContract = async () => {
   return await apiRequest<Model[]>(api.mds.models());
 };
-
-export const getModelAdapterInfoReal: GetModelAdapterInfoContract = async (modelId: string) => {
-  return await apiRequest<ModelAdapterInfo>(api.mds.adapterInfo(modelId));
-};
-
-export const getModelsAdapterInfoBatchReal: GetModelsAdapterInfoBatchContract = async (modelIds: string[]) => {
-  return await apiRequest<Record<string, ModelAdapterInfoBrief>>(api.mds.adapterInfoBatch(), {
-    method: 'POST',
-    body: modelIds,
-  });
-};
-
-/** 根据平台侧模型名直接获取适配信息（无需查询数据库） */
-export const getAdapterInfoByModelNameReal: GetAdapterInfoByModelNameContract = async (modelName: string) => {
-  return await apiRequest<ModelAdapterInfo>(api.mds.adapterInfoByModelName(modelName));
-};
-

@@ -139,25 +139,47 @@ public class GatewayLegacySweepGuardTests
         // 一个成员指向已删的上游或已删的模型，它的 HealthStatus 永远是 0——因为它从来没被
         // 调用失败过，它压根没被调用成功过一次。只按 HealthStatus 统计，就会把一个一次请求
         // 都发不出去的池显示成「健康」，正好骗过要靠这个数字做判断的人（形状 8）。
-        var handler = Console[Console.IndexOf("app.MapGet(\"/gw/pools\"", StringComparison.Ordinal)..];
-        handler = handler[..handler.IndexOf("}).RequireAuthorization", StringComparison.Ordinal)];
+        var handler = PoolsListHandlerSource();
 
         var healthyAt = handler.IndexOf("item.HealthyMembers =", StringComparison.Ordinal);
         Assert.True(healthyAt >= 0, "找不到池健康统计，守卫的取值口径需要更新");
         // 归一必须排在计数之前：池级徽章、成员圆点、三个计数读的是同一个字段，
         // 只改计数不改字段就会出现「池标已中断、第 1 顺位却是绿点」的自相矛盾。
-        var normalizeAt = handler.IndexOf("IsResolvablePoolMemberKey", StringComparison.Ordinal);
+        var normalizeAt = handler.IndexOf("ApplyPoolMemberResolution", StringComparison.Ordinal);
         Assert.True(normalizeAt >= 0, "池列表没有按可解析性归一成员健康");
         Assert.True(normalizeAt < healthyAt, "成员健康归一必须排在计数之前");
-        Assert.Contains("model.HealthStatus = 2;", handler);
-        Assert.Contains("HealthLabel(2)", handler);
 
-        // 判定必须走那个共享的 key 版判定函数，而不是在这儿另写一份「平台在不在」
-        Assert.Contains("var resolvablePlatformIds", handler);
-        // GW 与 MAP 两侧都要进索引：列表里两种权威来源的池混在一起，只查一侧会把活成员判成死的
-        Assert.Contains("tenantId == internalTenantId", handler);
-        Assert.Contains("resolvableModels.AddRange", handler);
-        Assert.Contains("resolvableExchanges.AddRange", handler);
+        var fn = FunctionSource("static PoolItem ApplyPoolMemberResolution");
+        Assert.Contains("model.HealthStatus = 2;", fn);
+        Assert.Contains("HealthLabel(2)", fn);
+        Assert.Contains("IsResolvablePoolMemberKey", fn);
+    }
+
+    [Fact]
+    public void 归一必须覆盖每一个吐出池的出口()
+    {
+        // 只归一列表是不够的：改完成员拿回来的那份响应若还是库里的原始健康值，
+        // 卡片当场翻绿、刷新又变回去 —— 正是归一本身要防的自相矛盾，换条路径复现（形状 3）。
+        // 所以凡是把 PoolItem 放进响应的地方，都必须过 MapPoolResolvedAsync，不许裸 MapPool。
+        Assert.DoesNotContain("ApiEnvelope<PoolItem>.Ok(MapPool(", Console);
+        Assert.Contains("MapPoolResolvedAsync", Console);
+
+        var wrapper = Console[Console.IndexOf("async Task<PoolItem> MapPoolResolvedAsync", StringComparison.Ordinal)..];
+        wrapper = wrapper[..wrapper.IndexOf("\n\n", StringComparison.Ordinal)];
+        Assert.Contains("ApplyPoolMemberResolution", wrapper);
+        Assert.Contains("BuildPoolResolutionIndexAsync", wrapper);
+    }
+
+    [Fact]
+    public void 不可用成员必须说得出为什么()
+    {
+        // 「连续失败 N 次」只解释得了真的被调用过并失败的成员。指向已删上游的成员
+        // consecutiveFailures 恒为 0，照那个模板印就是「不可用（连续失败 0 次）」——
+        // 状态对了、归因在说谎，运维拿不到任何下一步（形状 8 的文案版）。
+        var fn = FunctionSource("static PoolItem ApplyPoolMemberResolution");
+        Assert.Contains("UnavailableReason", fn);
+        Assert.Contains("\"upstream-missing\"", fn);
+        Assert.Contains("\"model-missing\"", fn);
     }
 
     [Fact]
@@ -171,6 +193,22 @@ public class GatewayLegacySweepGuardTests
              i = Console.IndexOf(matcher, i + 1, StringComparison.Ordinal))
             count++;
         Assert.Equal(1, count);
+    }
+
+    private static string PoolsListHandlerSource()
+    {
+        var handler = Console[Console.IndexOf("app.MapGet(\"/gw/pools\"", StringComparison.Ordinal)..];
+        return handler[..handler.IndexOf("}).RequireAuthorization", StringComparison.Ordinal)];
+    }
+
+    /// <summary>按签名截出一个顶层函数的源码，到下一个 /// 文档注释为止。</summary>
+    private static string FunctionSource(string signature)
+    {
+        var at = Console.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"找不到函数：{signature}");
+        var fn = Console[at..];
+        var end = fn.IndexOf("\n/// <summary>", StringComparison.Ordinal);
+        return end > 0 ? fn[..end] : fn;
     }
 
     private static string DanglingMemberSource()

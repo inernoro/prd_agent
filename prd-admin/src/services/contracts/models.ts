@@ -6,11 +6,11 @@ import type { Model } from '@/types/admin';
  *
  * 2026-08-25 模型管理退场：模型的增删改、用途标记（主 / 意图 / 视觉 / 生图）与优先级
  * 改由 LLM Gateway 控制台承担，MAP 侧 `api/mds` 写端点已统一 410，对应写契约一并移除。
- * 适配器信息（尺寸约束等）仍是纯读，视觉创作等页面依赖它渲染尺寸选项。
+ *
+ * `api/mds` 那三个适配器信息读契约同期删除——它们零消费方：视觉创作走的是
+ * `api/visual-agent/image-gen/adapter-info`，只复用下面的 ModelAdapterInfo 数据类型。
  */
 export type GetModelsContract = () => Promise<ApiResponse<Model[]>>;
-
-export type PlatformModelKey = { platformId: string; modelId: string };
 
 export type ModelAdapterSizeConstraint = {
   type: 'whitelist' | 'range' | 'aspect_ratio' | 'adaptive';
@@ -54,23 +54,3 @@ export type ModelAdapterInfo = {
   /** 自适应模型：true 表示尺寸不通过 API 字段传输 */
   isAdaptive?: boolean;
 };
-
-export type ModelAdapterInfoBrief = {
-  matched: boolean;
-  adapterName?: string;
-  displayName?: string;
-  provider?: string;
-  sizeConstraintType?: string;
-  sizesCount?: number;
-  sizesByResolution?: Record<string, SizeOptionFromBackend[]>;
-  notes?: string[];
-  sizesNotApplicable?: boolean;
-  /** 自适应模型标识 */
-  isAdaptive?: boolean;
-};
-
-export type GetModelAdapterInfoContract = (modelId: string) => Promise<ApiResponse<ModelAdapterInfo>>;
-export type GetModelsAdapterInfoBatchContract = (modelIds: string[]) => Promise<ApiResponse<Record<string, ModelAdapterInfoBrief>>>;
-
-/** 根据平台侧模型名直接获取适配信息（无需查询数据库） */
-export type GetAdapterInfoByModelNameContract = (modelName: string) => Promise<ApiResponse<ModelAdapterInfo>>;
