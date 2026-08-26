@@ -133,6 +133,41 @@ public class GatewayLegacySweepGuardTests
         Assert.Contains("mapExchanges.Find", fn);
     }
 
+    [Fact]
+    public void 池健康统计不得把指不到东西的成员算成健康()
+    {
+        // 一个成员指向已删的上游或已删的模型，它的 HealthStatus 永远是 0——因为它从来没被
+        // 调用失败过，它压根没被调用成功过一次。只按 HealthStatus 统计，就会把一个一次请求
+        // 都发不出去的池显示成「健康」，正好骗过要靠这个数字做判断的人（形状 8）。
+        var handler = Console[Console.IndexOf("app.MapGet(\"/gw/pools\"", StringComparison.Ordinal)..];
+        handler = handler[..handler.IndexOf("}).RequireAuthorization", StringComparison.Ordinal)];
+
+        var healthyAt = handler.IndexOf("item.HealthyMembers =", StringComparison.Ordinal);
+        Assert.True(healthyAt >= 0, "找不到池健康统计，守卫的取值口径需要更新");
+        var healthyExpr = handler[healthyAt..handler.IndexOf("item.DegradedMembers", StringComparison.Ordinal)];
+        Assert.Contains("IsResolvablePoolMemberKey", healthyExpr);
+
+        // 判定必须走那个共享的 key 版判定函数，而不是在这儿另写一份「平台在不在」
+        Assert.Contains("var resolvablePlatformIds", handler);
+        // GW 与 MAP 两侧都要进索引：列表里两种权威来源的池混在一起，只查一侧会把活成员判成死的
+        Assert.Contains("tenantId == internalTenantId", handler);
+        Assert.Contains("resolvableModels.AddRange", handler);
+        Assert.Contains("resolvableExchanges.AddRange", handler);
+    }
+
+    [Fact]
+    public void 可解析判定只许有一份口径()
+    {
+        // 默认池成员校验与池健康统计必须共用 IsResolvablePoolMemberKey。
+        // 谁再抄一份「_id / ModelName / Name 三选一 + PlatformId 相等」的匹配，这里就会红（形状 3）。
+        var matcher = "string.Equals(model.AsNullableString(\"ModelName\"), modelId, StringComparison.Ordinal)";
+        var count = 0;
+        for (var i = Console.IndexOf(matcher, StringComparison.Ordinal); i >= 0;
+             i = Console.IndexOf(matcher, i + 1, StringComparison.Ordinal))
+            count++;
+        Assert.Equal(1, count);
+    }
+
     private static string DanglingMemberSource()
     {
         var fn = Console[Console.IndexOf("static async Task<bool> IsDanglingPoolMemberAsync", StringComparison.Ordinal)..];

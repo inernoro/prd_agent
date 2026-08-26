@@ -2832,6 +2832,38 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
     var gwDocs = await gwModelPools.Find(TenantAccess.Filter(http, filter)).Sort(Builders<BsonDocument>.Sort.Ascending("Priority")).ToListAsync();
     var gwIds = gwDocs.Select(d => d.GetStringOrEmpty("_id")).Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet(StringComparer.Ordinal);
     var docs = gwDocs.Concat(mapDocs.Where(d => !gwIds.Contains(d.GetStringOrEmpty("_id")))).ToList();
+
+    // 池成员的「指得到指不到」索引，一次性建好给下面每个池复用。
+    // GW 与 MAP 两侧取并集：列表里同时有两种权威来源的池，只查一侧会把另一侧的活成员误判成死的。
+    var resolvablePlatformIds = (await gwPlatforms.Find(TenantAccess.Filter(http))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled"))
+            .ToListAsync())
+        .Where(d => d.AsNullableBool("Enabled") ?? true)
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToHashSet(StringComparer.Ordinal);
+    var resolvableModels = await gwModels.Find(TenantAccess.Filter(http, fb.Ne("Enabled", false)))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+        .ToListAsync();
+    var resolvableExchanges = await gwModelExchanges.Find(TenantAccess.Filter(http, fb.Ne("Enabled", false)))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+        .ToListAsync();
+    if (tenantId == internalTenantId)
+    {
+        foreach (var d in await platforms.Find(FilterDefinition<BsonDocument>.Empty)
+                     .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled")).ToListAsync())
+        {
+            if ((d.AsNullableBool("Enabled") ?? true) && !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
+                resolvablePlatformIds.Add(d.GetStringOrEmpty("_id"));
+        }
+        resolvableModels.AddRange(await models.Find(fb.Ne("Enabled", false))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+            .ToListAsync());
+        resolvableExchanges.AddRange(await modelExchanges.Find(fb.Ne("Enabled", false))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+            .ToListAsync());
+    }
+
     var hours = sinceHours is > 0 and <= 24 * 90 ? sinceHours.Value : 24 * 7;
     var since = DateTime.UtcNow.AddHours(-hours);
     var appCallerDocs = await gwAppCallers.Find(TenantAccess.FilterTeamScope(http, fb.Empty))
@@ -2916,7 +2948,12 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             : Math.Round(recentTen.Count(log => string.Equals(log.AsNullableString("Status"), "succeeded", StringComparison.Ordinal)) * 100m / recentTen.Count, 1, MidpointRounding.AwayFromZero);
         item.LastRequestAt = stats?.AsNullableUtcDateTime("LastRequestAt").ToIso();
 
-        item.HealthyMembers = item.Models.Count(model => model.HealthStatus == 0);
+        // healthy 的前提是「这成员真的指得到一个上游 + 模型」。只看 HealthStatus 会把
+        // 指向已删上游 / 已删模型的成员算成健康——它从没失败过，因为它从来没被调用成功过一次。
+        // 于是一个一次请求都发不出去的池在控制台上显示「健康」，正好骗过要靠它做判断的人（形状 8）。
+        item.HealthyMembers = item.Models.Count(model =>
+            model.HealthStatus == 0
+            && IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, resolvablePlatformIds, resolvableModels, resolvableExchanges));
         item.DegradedMembers = item.Models.Count(model => model.HealthStatus == 1);
         item.UnavailableMembers = item.Models.Count(model => model.HealthStatus == 2);
         item.Health = item.Models.Count == 0
@@ -4019,37 +4056,11 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             .Select(x => x.AsBsonDocument)
             .Any(member => IsResolvablePoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges));
     }
+    // 这里原本抄了一份和 IsResolvableGatewayPoolMember 一模一样的判定（连中继匹配都抄了一遍）。
+    // 两份口径必然各自漂移：池健康统计说这成员是活的、默认池校验说它是死的，谁也说不清哪个对。
+    // 收敛成一个入口，下面这两个只是薄转发。
     static bool IsResolvablePoolMember(BsonDocument member, HashSet<string> enabledPlatformIds, List<BsonDocument> enabledModels, List<BsonDocument> enabledExchanges)
-    {
-        if ((member.AsNullableInt("HealthStatus") ?? 0) == 2) return false;
-        var modelId = member.GetStringOrEmpty("ModelId");
-        var platformId = member.GetStringOrEmpty("PlatformId");
-        if (modelId.Length == 0 || platformId.Length == 0) return false;
-        if (string.Equals(platformId, "__exchange__", StringComparison.Ordinal))
-        {
-            return enabledExchanges.Any(exchange => ExchangeSupportsModel(exchange, modelId));
-        }
-        var exchangeById = enabledExchanges.FirstOrDefault(exchange => string.Equals(exchange.GetStringOrEmpty("_id"), platformId, StringComparison.Ordinal));
-        if (exchangeById is not null) return ExchangeSupportsModel(exchangeById, modelId);
-        if (!enabledPlatformIds.Contains(platformId)) return false;
-        return enabledModels.Any(model =>
-            string.Equals(model.AsNullableString("PlatformId"), platformId, StringComparison.Ordinal)
-            && (string.Equals(model.GetStringOrEmpty("_id"), modelId, StringComparison.Ordinal)
-                || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
-                || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal)));
-    }
-    static bool ExchangeSupportsModel(BsonDocument exchange, string modelId)
-    {
-        if (string.Equals(exchange.AsNullableString("ModelAlias"), modelId, StringComparison.Ordinal)) return true;
-        if (exchange.AsStringList("ModelAliases").Contains(modelId, StringComparer.Ordinal)) return true;
-        var modelsArr = exchange.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-        return modelsArr
-            .Where(x => x.IsBsonDocument)
-            .Select(x => x.AsBsonDocument)
-            .Any(m => (m.AsNullableBool("Enabled") ?? true)
-                      && (string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
-                          || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
-    }
+        => IsResolvableGatewayPoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges);
 
     var gwPoolIds = IdSet(gwPoolDocs);
     var activeAppCallers = appCallerDocs
@@ -13921,8 +13932,27 @@ static bool IsResolvableGatewayPoolMember(
     List<BsonDocument> enabledExchanges)
 {
     if ((member.AsNullableInt("HealthStatus") ?? 0) == 2) return false;
-    var modelId = member.GetStringOrEmpty("ModelId");
-    var platformId = member.GetStringOrEmpty("PlatformId");
+    return IsResolvablePoolMemberKey(
+        member.GetStringOrEmpty("ModelId"),
+        member.GetStringOrEmpty("PlatformId"),
+        enabledPlatformIds,
+        enabledModels,
+        enabledExchanges);
+}
+
+/// <summary>
+/// (modelId, platformId) 这对键还指得到一个能用的成员吗——不看健康状态，只看指得到指不到。
+///
+/// 抽出来是为了让「默认池成员校验」与「池健康统计」共用同一个口径：
+/// 两处各写一份判定，就会出现一边说这成员是死的、一边把它算成 healthy（形状 3 + 形状 8）。
+/// </summary>
+static bool IsResolvablePoolMemberKey(
+    string modelId,
+    string platformId,
+    HashSet<string> enabledPlatformIds,
+    List<BsonDocument> enabledModels,
+    List<BsonDocument> enabledExchanges)
+{
     if (modelId.Length == 0 || platformId.Length == 0) return false;
     if (string.Equals(platformId, "__exchange__", StringComparison.Ordinal))
     {
