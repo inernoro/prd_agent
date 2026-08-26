@@ -138,6 +138,28 @@ public class CdsReportAutoSyncWiringGuardTests
     }
 
     [Fact]
+    public void 空跑一轮不许把镜像库顶到知识库列表最前面()
+    {
+        var source = ReadImportService();
+        var squashed = Squash(source);
+
+        // 知识库列表按库的「最后修改时间」倒序排。无条件更新它 = 每小时那一轮跑完，
+        // CDS 镜像库就被顶到最前面，哪怕一份都没变、甚至一份都没刷到；用户手改过的库
+        // 反而被挤下去（Codex review P2）。
+        //
+        // 断言把条件和它守着的那一句绑在一起——本文件已经因为分开断言漏过一次。
+        Assert.Contains(
+            "if (result.Imported > 0 || result.Updated > 0) updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));",
+            squashed);
+
+        // 而且 updates 是从空开始的：留着初始化里那一条，上面的条件就是死代码。
+        Assert.Contains("var updates = new List<UpdateDefinition<DocumentStore>>();", squashed);
+
+        // 全都没得写的那一轮别发空更新——空 Combine 拼不出合法的更新语句。
+        Assert.Contains("if (updates.Count > 0) { await _db.DocumentStores.UpdateOneAsync(", squashed);
+    }
+
+    [Fact]
     public void 一份报告一旦开始写就写完_停机信号不许从中间掐断()
     {
         var worker = ReadWorker();

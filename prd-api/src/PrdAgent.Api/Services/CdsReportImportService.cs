@@ -253,10 +253,15 @@ public class CdsReportImportService
         }
 
         // 4) 落同步摘要（下次只增量）
-        var updates = new List<UpdateDefinition<DocumentStore>>
-        {
-            Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
-        };
+        var updates = new List<UpdateDefinition<DocumentStore>>();
+
+        // **真的改了东西才动库的「最后修改时间」。** 知识库列表按这个字段倒序排，
+        // 所以无条件更新它意味着：每小时那一轮跑完，CDS 镜像库就被顶到列表最前面，
+        // 哪怕这轮一份都没变、甚至一份都没刷到。用户手改过的库反而被挤下去
+        //（Codex review P2）。「我今天动过哪些库」是这个字段唯一的用途，
+        // 后台任务空跑一轮不算「动过」。
+        if (result.Imported > 0 || result.Updated > 0)
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
         if (!isTargetedImport)
         {
             // 记下这次全量镜像是从哪个 CDS 拉的，给「换没换源」判据和水位配对用。
@@ -303,10 +308,15 @@ public class CdsReportImportService
             // （Codex review P1）。清掉之后下一次全量导入从头扫一遍，自己建一条属于 B 的水位。
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastAt, (DateTime?)null));
         }
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == store.Id,
-            Builders<DocumentStore>.Update.Combine(updates),
-            cancellationToken: ct);
+        // 一份没变、也没换源、还不写展示字段的那一轮，updates 会是空的——
+        // 空 Combine 会拼出一条没有操作符的更新，Mongo 直接报错。没什么要写就别写。
+        if (updates.Count > 0)
+        {
+            await _db.DocumentStores.UpdateOneAsync(
+                s => s.Id == store.Id,
+                Builders<DocumentStore>.Update.Combine(updates),
+                cancellationToken: ct);
+        }
 
         _logger.LogInformation(
             "[cds-report-import] 完成 store={StoreId} total={Total} imported={Imported} updated={Updated} skipped={Skipped} failed={Failed}",
