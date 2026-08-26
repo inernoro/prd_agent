@@ -17,7 +17,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { BookText, ChevronLeft, Download, FileText, Mic, MoreHorizontal } from 'lucide-react';
+import { BookText, Check, ChevronLeft, Download, FileText, Mic, MoreHorizontal } from 'lucide-react';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { buildSpeakerStats, parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
 import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
@@ -123,11 +123,22 @@ export function RecordingResultShell({
         </button>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h1>
-          {subtitle && (
-            // 稿面这一行是绿色的：它说的是「音频已经安全了」，与进度、失败分属不同语义
-            <p className="truncate text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>{subtitle}</p>
+          {/*
+            稿面 D1/D2 把这行元信息放在标题**同一行**、贴着导出按钮；
+            窄屏地方不够才落到标题下面。绿色说的是「音频已经安全了」，
+            与进度、失败分属不同语义，前面那枚对勾是稿面画的。
+          */}
+          {subtitle && !isDesktop && (
+            <p className="flex items-center gap-1 truncate text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>
+              <Check size={13} className="shrink-0" aria-hidden /> {subtitle}
+            </p>
           )}
         </div>
+        {subtitle && isDesktop && (
+          <p className="flex shrink-0 items-center gap-1.5 text-[13px]" style={{ color: 'var(--accent-fg-success)' }}>
+            <Check size={15} aria-hidden /> {subtitle}
+          </p>
+        )}
         {isDesktop && actions}
         <button
           type="button"

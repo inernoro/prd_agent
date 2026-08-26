@@ -2,7 +2,7 @@
  * 「问这场录音」的回答区 —— 对齐设计稿 B4。
  *
  * 稿面把回答排成三段：
- *   提问气泡（右对齐） → 「结论」+ 答案正文 → 「引用原文 · N 条」+ 引用卡
+ *   提问气泡（右对齐） → 「结论」+ 答案正文 → 「引用录音 · N 处」+ 引用卡
  *
  * 引用是从正文里**提出来**的，不是正文里一颗时间药丸：药丸点得到，
  * 但读者看不出被引的是哪句话，得自己跳过去看。提成卡片之后，
@@ -54,14 +54,14 @@ export function RecordingAnswer({
       <p className="text-[11px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>结论</p>
       {/*
         稿面这段结论是**大号常规字重**的陈述句，明显大过卡里其余文字——它就是这张卡的答案本身。
-        压成小号粗体之后，它和「引用原文 · N 条」那类标签落在同一档，读者一眼看不出哪句才是回答。
+        压成小号粗体之后，它和「引用录音 · N 处」那类标签落在同一档，读者一眼看不出哪句才是回答。
       */}
       <p className="mt-1 whitespace-pre-wrap text-[18px] font-medium leading-relaxed text-token-primary">
         {conclusion}
       </p>
       {citations.length > 0 && (
         <>
-          <p className="mt-3 text-[11px] text-token-muted">引用原文 · {citations.length} 条</p>
+          <p className="mt-3 text-[11px] text-token-muted">引用录音 · {citations.length} 处</p>
           <div className="mt-1.5 flex flex-col gap-1.5">
             {citations.map(citation => (
               <button

@@ -35,6 +35,11 @@ interface AudioWavePlayerProps {
    */
   onSkipPrev?: () => void;
   onSkipNext?: () => void;
+  /**
+   * 播放行右侧的插槽（设计稿 D1/D2 把「当前念到哪一句」压在播放键同一行）。
+   * 不传就不占位；窄屏调用方仍可把同样的内容摆在播放器下方。
+   */
+  transportAside?: React.ReactNode;
   /** 传输行下方的一行说明（稿面是「精准时间轴 · 逐句对齐」）。 */
   caption?: string;
   /** 通铺：不套外层卡片，波形与控件直接落在分区底上（稿面 B1 的播放区）。 */
@@ -93,6 +98,7 @@ export function AudioWavePlayer({
   transportMeta,
   onSkipPrev,
   onSkipNext,
+  transportAside,
   caption,
   flush = false,
 }: AudioWavePlayerProps) {
@@ -334,8 +340,12 @@ export function AudioWavePlayer({
           </button>
         )}
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-baseline gap-2">
+        {/*
+          有右侧插槽时，时间列退成自然宽度：两边都抢 flex-1 的话，插槽会被压到
+          放不下一行字，内容竖着排（D1 第一版就是这样把当前句挤成了一列单字）。
+        */}
+        <div className={transportAside ? 'flex shrink-0 flex-col' : 'flex min-w-0 flex-1 flex-col'}>
+          <div className="flex items-baseline gap-2 whitespace-nowrap">
             {/* 稿面把当前时间做成播放区的视觉重心：大号加粗黑，总时长与句序退到灰色小字 */}
             <span className="font-mono text-[17px] font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
               {formatTime(currentTime)}
@@ -357,6 +367,8 @@ export function AudioWavePlayer({
             <p className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{caption}</p>
           )}
         </div>
+
+        {transportAside}
 
         {/* 倍速切换 */}
         <button

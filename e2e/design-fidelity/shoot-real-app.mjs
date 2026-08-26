@@ -159,7 +159,7 @@ function buildInit(scene) {
 
   /*
    * 「问这场录音」走的是 SSE 直连对话。桩必须真的推一串 text 事件，
-   * 否则那一屏永远停在空输入框——稿面 B4 画的是**答完之后**：结论 + 引用原文。
+   * 否则那一屏永远停在空输入框——稿面 B4 画的是**答完之后**：结论 + 引用录音。
    * 推的内容照着稿面那一问，措辞由本桩给定，不代表真实模型会这么答。
    */
   // 引用只写 [mm:ss] 标记，不把原句再抄一遍——组件会按标记把那一句提成引用卡；
@@ -315,7 +315,7 @@ const DRIVERS = {
     if (await ask.count()) {
       await ask.first().fill('为什么放弃导入？');
       await page.getByLabel('发送问题').first().click();
-      await page.getByText('引用原文').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
+      await page.getByText('引用录音').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
       await page.waitForTimeout(600);
       await page.getByRole('heading', { name: '问这场录音' }).first()
         .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
@@ -420,7 +420,7 @@ const DRIVERS = {
     if (await box2.count()) {
       await box2.first().fill('为什么放弃导入？');
       await page.getByLabel('发送问题').first().click();
-      await page.getByText('引用原文').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
+      await page.getByText('引用录音').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
       await page.waitForTimeout(600);
     } else {
       problems.push(`[${scene.id}/${theme}] 提问页签里没有输入框`);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, Check, ChevronDown, ChevronUp, Info, RefreshCw, Search, UserRound } from 'lucide-react';
+import { ArrowDown, Check, ChevronDown, ChevronUp, Info, Pencil, RefreshCw, Search, UserRound } from 'lucide-react';
 import { requestRecordingPlay } from './recordingPlayBridge';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { RecordingSegmentBar } from '@/components/doc-browser/RecordingSegmentBar';
@@ -605,7 +605,9 @@ export function TranscriptKaraoke({
           onPlaybackChange={setPlaying}
           registerSeek={(seek) => { seekRef.current = seek; }}
           // 句序与「逐句对齐」这句都归播放器主体：它们和时间回答的是同一个问题
-          transportMeta={documentMode && followEnabled ? `第 ${activeIdx + 1} / ${timelineSegments.length} 句` : undefined}
+          transportMeta={documentMode && followEnabled && !isDesktop
+            ? `第 ${activeIdx + 1} / ${timelineSegments.length} 句`
+            : undefined}
           // 稿面 D1/D2 播放键两侧那对 « »：跳到上一句 / 下一句的开头。
           // 只有真的有逐句时间轴时才给——没有时间轴就没有「一句」可跳。
           onSkipPrev={documentMode && timelineSegments.length > 1
@@ -614,12 +616,52 @@ export function TranscriptKaraoke({
           onSkipNext={documentMode && timelineSegments.length > 1
             ? () => seekRef.current?.(timelineSegments[Math.min(timelineSegments.length - 1, activeIdx + 1)]?.start ?? 0)
             : undefined}
+          /*
+            稿面 D1/D2 把「现在念到哪一句」压在播放键同一行：那一行回答的是同一个问题
+            「我在哪」。拆成上下两块之后播放行的信息密度散掉，原文列表起始位也被推下去。
+            窄屏没这个横向余量，仍走播放器下方那张卡。
+          */
+          transportAside={documentMode && isDesktop && followEnabled && currentSegment ? (
+            <div
+              className="flex min-w-0 flex-1 items-stretch gap-3 rounded-[12px] px-3 py-2"
+              style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}
+              aria-live="polite"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 whitespace-nowrap text-[11px]">
+                  {currentSegment.speaker && (
+                    <span
+                      className="flex-shrink-0 rounded-full px-2 py-0.5 font-semibold"
+                      style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
+                    >
+                      {currentSegment.speaker}
+                    </span>
+                  )}
+                  <span className="font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                    {formatClock(currentSegment.start)}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    · 第 {activeIdx + 1} / {timelineSegments.length} 句
+                  </span>
+                </div>
+                <p className="mt-0.5 truncate text-[16px] font-bold text-token-primary">{currentSegment.text}</p>
+              </div>
+              {nextSegment && (
+                <span
+                  className="hidden min-w-0 max-w-[120px] items-center truncate pl-3 text-[11px] xl:flex"
+                  style={{ borderLeft: '1px solid var(--border-faint)', color: 'var(--text-muted)' }}
+                >
+                  下一句 · {nextSegment.text}
+                </span>
+              )}
+            </div>
+          ) : undefined}
           caption={documentMode ? (estimated ? '智能估算时间轴 · 可能有偏差' : '精准时间轴 · 逐句对齐') : undefined}
           flush={documentMode}
         />
 
         </div>
-        {documentMode && !playerCollapsed && followEnabled && currentSegment && (
+        {documentMode && !playerCollapsed && followEnabled && currentSegment && !isDesktop && (
           <div
             className="w-full max-w-[760px] rounded-[12px] px-3 py-2.5"
             // 稿面这张卡是**中性灰底 + 圆角**，蓝色留给里面那枚说话人胶囊。
@@ -907,7 +949,11 @@ export function TranscriptKaraoke({
                   而这一屏的核心就是「逐句对齐」，没有时间就失去了时间轴锚点，
                   两位判官各自把它列为最重的一条缺失。
                 */}
-                <span className="grid gap-x-3" style={{ gridTemplateColumns: '48px 1fr' }}>
+                {/*
+                  宽屏（稿面 D1/D2）改成「时间 / 说话人 / 正文」三列同基线：
+                  横向有地方，堆两行只是把行高翻倍、扫读节奏变碎。窄屏地方不够，维持两行堆叠。
+                */}
+                <span className="grid gap-x-3" style={{ gridTemplateColumns: isDesktop ? '56px 92px 1fr' : '48px 1fr' }}>
                   <span
                     className="pt-[2px] font-mono text-[11px] tabular-nums"
                     // 时间戳全程淡灰：稿面当前句那一行的时间也是灰的，染蓝是我加的第三层强调
@@ -915,10 +961,15 @@ export function TranscriptKaraoke({
                   >
                     {s.start >= 0 ? formatClock(s.start) : ''}
                   </span>
+                  {isDesktop && (
+                    // 稿面里说话人名与时间戳同为小号淡灰，正文才是最重的那一档
+                    <span className="min-w-0 truncate pt-[2px] text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      {s.speaker ?? ''}
+                    </span>
+                  )}
                   <span className="min-w-0">
-                    {s.speaker && (
-                      // 稿面里说话人名与时间戳同为小号淡灰，正文才是最重的那一档。
-                      // 加粗之后三级层级压成两级，扫读时眼睛会先落在人名上而不是话上。
+                    {!isDesktop && s.speaker && (
+                      // 加粗之后三级层级压成两级，扫读时眼睛会先落在人名上而不是话上
                       <span className="mb-0.5 block text-[11px]" style={{ color: 'var(--text-muted)' }}>{s.speaker}</span>
                     )}
                     {/* 命中词在正文里也要高亮：只在命中面板里标，用户在原文里还得自己找 */}
@@ -978,7 +1029,7 @@ export function TranscriptKaraoke({
       </div>
       {documentMode && (
         <aside
-          className="flex w-full max-w-[760px] flex-col gap-3 lg:sticky lg:top-0 lg:w-[400px] lg:max-w-none lg:shrink-0 lg:self-stretch lg:overflow-y-auto lg:py-3 lg:pl-1"
+          className="flex w-full max-w-[760px] flex-col gap-3 lg:sticky lg:top-0 lg:h-[100dvh] lg:w-[400px] lg:max-w-none lg:shrink-0 lg:self-stretch lg:overflow-y-auto lg:py-3 lg:pl-1"
           style={isDesktop ? { maxHeight: '100dvh', borderLeft: '1px solid var(--border-faint)', paddingLeft: 20 } : undefined}>
           {/* 稿面 D1/D2 的右栏抬头：理解 / 纪要 / 待办 / 提问 四个分页签 */}
           {isDesktop && (
@@ -1146,34 +1197,88 @@ export function TranscriptKaraoke({
                     </p>
                   )}
               {speakers.length > 0 && (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <span className="flex items-center gap-1 text-[11px] text-token-muted"><UserRound size={12} /> 说话人</span>
-                  {speakers.map(speaker => renamingSpeaker === speaker ? (
-                    <span key={speaker} className="flex items-center gap-1">
-                      <input autoFocus value={speakerDraft} onChange={event => setSpeakerDraft(event.target.value)} className="h-9 w-28 rounded-[8px] px-2 text-[12px] outline-none" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }} />
-                      <button type="button" className="min-h-9 rounded-[8px] px-2 text-[11px]" onClick={() => {
-                        if (!onSaveNote || !speakerDraft.trim()) return;
-                        const next = renameTranscriptSpeaker(noteMd, speaker, speakerDraft);
-                        setSavingEdit(true);
-                        void onSaveNote(next).then(ok => { if (ok !== false) setRenamingSpeaker(null); }).finally(() => setSavingEdit(false));
-                      }} disabled={savingEdit}>保存</button>
-                    </span>
-                  ) : (
-                    (() => {
-                    // 光有名字看不出这场是谁在说；句数与占比是数得出来的事实（设计稿 P3/D1）
-                    const stat = speakerStats.find(item => item.speaker === speaker);
-                    return (
-                      <button key={speaker} type="button" onClick={() => { setRenamingSpeaker(speaker); setSpeakerDraft(speaker); }} className="flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[11px] text-token-secondary" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }} title="修改这个说话人的名称">
-                        <span className="font-semibold text-token-primary">{speaker}</span>
-                        {stat && (
-                          <span className="tabular-nums text-token-muted">
-                            {stat.count} 句 · 占 {stat.percent}%
+                /*
+                  稿面 D1 右栏的说话人是一份**清单**：每行一枚首字圆标、名字、句数占比，
+                  行尾一支铅笔。此前做成一排横向胶囊——点得动，但没有任何「这里能改」的
+                  可供性，判分把它记成「逐位重命名入口整个消失」。
+                */
+                <div className="mt-4">
+                  <p className="mb-2 flex items-center gap-1 text-[11px] text-token-muted"><UserRound size={12} /> 说话人</p>
+                  <ul className="flex flex-col">
+                    {speakers.map((speaker, index) => {
+                      const stat = speakerStats.find(item => item.speaker === speaker);
+                      const editing = renamingSpeaker === speaker;
+                      return (
+                        <li
+                          key={speaker}
+                          className="flex items-center gap-2.5 py-2"
+                          style={{ borderTop: index === 0 ? 'none' : '1px solid var(--border-faint)' }}
+                        >
+                          <span
+                            aria-hidden
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold"
+                            style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
+                          >
+                            {speaker.trim().slice(0, 1)}
                           </span>
-                        )}
-                      </button>
-                    );
-                  })()
-                  ))}
+                          {editing ? (
+                            <>
+                              <input
+                                autoFocus
+                                value={speakerDraft}
+                                onChange={event => setSpeakerDraft(event.target.value)}
+                                className="h-9 min-w-0 flex-1 rounded-[8px] px-2 text-[13px] outline-none"
+                                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                              />
+                              <button
+                                type="button"
+                                className="min-h-9 shrink-0 rounded-[8px] px-2 text-[12px] font-semibold"
+                                style={{ color: 'var(--accent-fg-info)' }}
+                                disabled={savingEdit}
+                                onClick={() => {
+                                  if (!onSaveNote || !speakerDraft.trim()) return;
+                                  const next = renameTranscriptSpeaker(noteMd, speaker, speakerDraft);
+                                  setSavingEdit(true);
+                                  void onSaveNote(next).then(ok => { if (ok !== false) setRenamingSpeaker(null); }).finally(() => setSavingEdit(false));
+                                }}
+                              >
+                                保存
+                              </button>
+                              <button
+                                type="button"
+                                className="min-h-9 shrink-0 rounded-[8px] px-2 text-[12px] text-token-muted"
+                                onClick={() => setRenamingSpeaker(null)}
+                              >
+                                取消
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-semibold text-token-primary">{speaker}</span>
+                                {stat && (
+                                  <span className="block text-[11px] tabular-nums text-token-muted">
+                                    {stat.count} 句 · 占 {stat.percent}%
+                                  </span>
+                                )}
+                              </span>
+                              {onSaveNote && (
+                                <button
+                                  type="button"
+                                  onClick={() => { setRenamingSpeaker(speaker); setSpeakerDraft(speaker); }}
+                                  aria-label={`修改说话人「${speaker}」的名称`}
+                                  title="修改这个说话人的名称"
+                                  className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover-bg-soft"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
               )}
                   {/*
@@ -1406,12 +1511,18 @@ export function TranscriptKaraoke({
             </section>
           )}
           {showPanel('ask') && (
-            <section style={{ scrollMarginTop: 100 }}>
+            // 稿面 D2 的输入框贴着右栏底部通栏、上面的问答区自己滚。随内容流的话，
+            // 答案短时右栏下方会空出三分之一且无人认领（D2 判分记的这处）。
+            <section
+              className={isDesktop ? 'flex min-h-0 flex-1 flex-col' : undefined}
+              style={{ scrollMarginTop: 100 }}>
               <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
                 <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>问这场录音</h3>
                 <span />
               </div>
-              <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
+              <div
+                className={`${SECTION_CARD} ${isDesktop ? 'flex min-h-0 flex-1 flex-col' : ''}`}
+                style={SECTION_CARD_STYLE}>
               {/*
                 稿面 B4 顶部这条琥珀提示记的是**上一问没答上来、而且是如实说的**。
                 它不是错误提示——恰恰相反，是系统在证明自己没有替用户编一个答案。
@@ -1435,12 +1546,16 @@ export function TranscriptKaraoke({
                 多这一层就变成四层套娃，每一层再吃掉一圈内边距，问答卡被越挤越窄。
                 分区卡本身已经给了背景与描边，这一层没有承担任何新的语义。
               */}
-              <RecordingAnswer
-                question={askedQuestion}
-                answer={answer}
-                segments={timelineSegments}
-                onSeek={sec => seekRef.current?.(sec)}
-              />
+              <div
+                className={isDesktop ? 'min-h-0 flex-1' : undefined}
+                style={isDesktop ? { overflowY: 'auto', overscrollBehavior: 'contain' } : undefined}>
+                <RecordingAnswer
+                  question={askedQuestion}
+                  answer={answer}
+                  segments={timelineSegments}
+                  onSeek={sec => seekRef.current?.(sec)}
+                />
+              </div>
               {qaError && <p className="mb-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
               <RecordingAskComposer
                 value={question}
