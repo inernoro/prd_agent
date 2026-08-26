@@ -178,8 +178,9 @@ public class GatewayLegacySweepGuardTests
         // 状态对了、归因在说谎，运维拿不到任何下一步（形状 8 的文案版）。
         var fn = FunctionSource("static PoolItem ApplyPoolMemberResolution");
         Assert.Contains("UnavailableReason", fn);
-        Assert.Contains("\"upstream-missing\"", fn);
-        Assert.Contains("\"model-missing\"", fn);
+        // 归因本身收在 ClassifyUnavailableReason 里（见「停用与不存在必须分开」那条），
+        // 这里只钉住归一环节确实把它填上了，不重复断言取值。
+        Assert.Contains("ClassifyUnavailableReason", fn);
     }
 
     [Fact]
@@ -236,10 +237,34 @@ public class GatewayLegacySweepGuardTests
         var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
 
         Assert.Contains("const removableDebris", page);
-        Assert.Contains("locked && !!member.unavailableReason", page);
+        Assert.Contains("locked && isDeadMember(member)", page);
         Assert.Contains("removableDebris ? removeButton : null", page);
         // 两个分支共用同一个按钮，别再抄一份出来各自漂移
         Assert.Equal(1, CountOccurrences(page, ">移除</Button>"));
+    }
+
+    [Fact]
+    public void 停用与不存在必须分开且只对不存在给摘除入口()
+    {
+        // 可解析索引按「存在且启用」算，而后端悬空判定只查存在性。两者口径不同，
+        // 拿「不可用」当摘除条件，就会给仅仅被停用的成员长出一个点了必然 409 的按钮，
+        // 外加一句撒谎的归因（说「已不存在」，其实只是停用）。
+        var fn = FunctionSource("static string ClassifyUnavailableReason");
+        foreach (var reason in new[] { "\"upstream-missing\"", "\"model-missing\"", "\"upstream-disabled\"", "\"model-disabled\"" })
+            Assert.Contains(reason, fn);
+        // 判「存在不存在」必须用不带启用过滤的那套索引
+        Assert.Contains("index.ExistingPlatformIds", fn);
+        Assert.Contains("index.ExistingModels", fn);
+        // 中继成员的「上游」是那条中继本身，不是平台
+        Assert.Contains("isExchangeMember", fn);
+
+        // 前端只对两个 -missing 放开摘除
+        var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+        var dead = page[page.IndexOf("function isDeadMember", StringComparison.Ordinal)..];
+        dead = dead[..dead.IndexOf("\n}", StringComparison.Ordinal)];
+        Assert.Contains("'upstream-missing'", dead);
+        Assert.Contains("'model-missing'", dead);
+        Assert.DoesNotContain("disabled", dead);
     }
 
     private static int CountOccurrences(string haystack, string needle)

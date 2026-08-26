@@ -2862,7 +2862,40 @@ async Task<PoolResolutionIndex> BuildPoolResolutionIndexAsync(HttpContext http)
             .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
             .ToListAsync());
     }
-    return new PoolResolutionIndex(platformIds, modelDocs, exchangeDocs);
+    // 第二套：只看存在、不看启用。用来把「被停用」和「压根没了」分开——
+    // 少了它，一个仅仅被停用的上游会被标成「已不存在」并给出摘除入口，
+    // 而后端的悬空判定查的是存在性，那个按钮点下去必然 APPEND_ONLY_POOL。
+    var existingPlatformIds = (await gwPlatforms.Find(TenantAccess.Filter(http))
+            .Project(Builders<BsonDocument>.Projection.Include("_id"))
+            .ToListAsync())
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToHashSet(StringComparer.Ordinal);
+    var existingModels = await gwModels.Find(TenantAccess.Filter(http))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+        .ToListAsync();
+    var existingExchanges = await gwModelExchanges.Find(TenantAccess.Filter(http))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+        .ToListAsync();
+    if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+    {
+        foreach (var d in await platforms.Find(FilterDefinition<BsonDocument>.Empty)
+                     .Project(Builders<BsonDocument>.Projection.Include("_id")).ToListAsync())
+        {
+            if (!string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
+                existingPlatformIds.Add(d.GetStringOrEmpty("_id"));
+        }
+        existingModels.AddRange(await models.Find(FilterDefinition<BsonDocument>.Empty)
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+            .ToListAsync());
+        existingExchanges.AddRange(await modelExchanges.Find(FilterDefinition<BsonDocument>.Empty)
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+            .ToListAsync());
+    }
+
+    return new PoolResolutionIndex(
+        platformIds, modelDocs, exchangeDocs,
+        existingPlatformIds, existingModels, existingExchanges);
 }
 
 /// <summary>建一次索引、映射一个池并归一。变更端点用它替代裸 MapPool。</summary>
@@ -13990,13 +14023,35 @@ static PoolItem ApplyPoolMemberResolution(PoolItem item, PoolResolutionIndex ind
         if (IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, index.PlatformIds, index.Models, index.Exchanges)) continue;
         model.HealthStatus = 2;
         model.HealthStatusLabel = HealthLabel(2);
-        // 分清两种死法，界面才不会写出「不可用（连续失败 0 次）」这种自相矛盾的归因：
-        // 上游整个没了，还是上游还在、只是这个模型被删了。
-        model.UnavailableReason = index.PlatformIds.Contains(model.PlatformId)
-            ? "model-missing"
-            : "upstream-missing";
+        model.UnavailableReason = ClassifyUnavailableReason(model, index);
     }
     return item;
+}
+
+/// <summary>
+/// 这个成员为什么不可用。四种，两两成对：
+/// <c>upstream-missing</c> / <c>model-missing</c> 是死成员，不可逆，该给摘除入口；
+/// <c>upstream-disabled</c> / <c>model-disabled</c> 只是被停用，启用即恢复，**不该**给摘除入口。
+///
+/// 必须分开的原因：可解析索引按「存在且启用」算，而后端的悬空判定只查存在性。
+/// 不分开的话，一个仅仅被停用的上游会被标成「已不存在」并在控制台长出一个摘除按钮，
+/// 点下去后端必然回 APPEND_ONLY_POOL —— 一个可预见会失败的操作，
+/// 外加一句撒谎的归因（「已不存在」其实只是停用）。
+/// </summary>
+static string ClassifyUnavailableReason(PoolModelItem model, PoolResolutionIndex index)
+{
+    // 中继成员的 PlatformId 不是平台 id，对它而言「上游」就是那条中继本身
+    var isExchangeMember = string.Equals(model.PlatformId, "__exchange__", StringComparison.Ordinal)
+        || index.ExistingExchanges.Any(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal));
+
+    var existsAtAll = IsResolvablePoolMemberKey(
+        model.ModelId, model.PlatformId,
+        index.ExistingPlatformIds, index.ExistingModels, index.ExistingExchanges);
+
+    if (isExchangeMember) return existsAtAll ? "upstream-disabled" : "upstream-missing";
+    if (existsAtAll)
+        return index.PlatformIds.Contains(model.PlatformId) ? "model-disabled" : "upstream-disabled";
+    return index.ExistingPlatformIds.Contains(model.PlatformId) ? "model-missing" : "upstream-missing";
 }
 
 /// <summary>

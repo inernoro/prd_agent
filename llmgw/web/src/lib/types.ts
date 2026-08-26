@@ -487,7 +487,9 @@ export type PoolModelInfo = {
   healthStatus: number; healthStatusLabel: string;
   /**
    * 不可用的原因，只有「不是因为调用失败」时才有值：
-   * `upstream-missing` 挂的上游已经不存在；`model-missing` 上游还在但这个模型没了。
+   * `upstream-missing` 上游已不存在；`model-missing` 上游还在但模型没了；
+   * `upstream-disabled` 上游还在、只是被停用；`model-disabled` 模型还在、只是被停用。
+   * 两个 `-missing` 是死成员（该摘除），两个 `-disabled` 是临时状态（启用即恢复）。
    * 为空表示走的是常规健康判定，由 consecutiveFailures 一路解释。
    * 有它文案才不会写出「不可用（连续失败 0 次）」这种自相矛盾的归因。
    */
