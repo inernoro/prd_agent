@@ -32,6 +32,14 @@ interface Props {
   safeBottom: number;
   /** 上层有别的浮层（全屏演示 / 评论抽屉）时整坞藏起来，但**不卸载** */
   hidden?: boolean;
+  /**
+   * 形态变化时通知父级。
+   *
+   * 存在的理由只有一个：访客页底部中间还站着别人（幻灯片站那条「方向键翻页」邀请条），
+   * 起手长条一展开就会和它叠在一起。邀请条是邀请不是控件，该让开——但它归 ShareViewPage 管，
+   * 坞自己够不着，所以把形态报上去由页面决定谁让谁。
+   */
+  onStateChange?: (state: AskDockState) => void;
 }
 
 function boxToStyle(b: AskDockBox) {
@@ -59,7 +67,7 @@ function boxToStyle(b: AskDockBox) {
  * 回头重问一遍，白烧一次额度。
  */
 export default function AskDock({
-  source, title, welcome, openingQuestions, allowAnonymous, isMobile, safeBottom, hidden,
+  source, title, welcome, openingQuestions, allowAnonymous, isMobile, safeBottom, hidden, onStateChange,
 }: Props) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { messages, status, phaseMessage, model, gateError, isBusy, ask } = useAskStream(source);
@@ -230,6 +238,8 @@ export default function AskDock({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [hidden, openFromPill, morphTo, rounds]);
+
+  useEffect(() => { onStateChange?.(state); }, [state, onStateChange]);
 
   useEffect(() => () => animRef.current?.cancel(), []);
 
@@ -750,8 +760,18 @@ export default function AskDock({
             <ChevronLeft size={13} />
           </button>
           <MapMarkGlyph size={18} tone="var(--accent-primary)" nodes={false} />
-          <div style={{ writingMode: 'vertical-rl', fontSize: 12, letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
-            向我提问
+          {/* 逐字换行而不是 writing-mode：竖条是 flex 列，vertical-rl 的块在主轴上算不出高度，
+              真机量到这一格只有 4px，四个字整个被压没了（截图里竖条上是空的）。
+              逐字堆叠在 44px 宽的竖条里是完全确定的，也省掉 writing-mode 的浏览器差异。 */}
+          <div
+            style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0,
+              fontSize: 12, lineHeight: 1.25, color: 'var(--text-muted)',
+            }}
+          >
+            {'向我提问'.split('').map((ch, i) => (
+              <span key={`${ch}-${i}`}>{ch}</span>
+            ))}
           </div>
           {rounds > 0 && (
             <div

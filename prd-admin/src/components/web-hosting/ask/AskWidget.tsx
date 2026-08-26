@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import AskDock from './AskDock';
+import type { AskDockState } from './askDockGeometry';
 import type { AskSource } from './askTypes';
 
 interface Props {
@@ -14,6 +15,8 @@ interface Props {
    * 组件自己不去猜"现在是不是全屏"。
    */
   hidden?: boolean;
+  /** 坞的形态变化。访客页据此让托管内容自己的底部浮层（幻灯片邀请条）让开 */
+  onStateChange?: (state: AskDockState) => void;
 }
 
 /**
@@ -46,7 +49,7 @@ function measureSafeBottom(): number {
  * 从头变到尾，拆开两个组件就没法形变了。
  */
 export default function AskWidget({
-  source, title, welcome, openingQuestions, allowAnonymous, hidden,
+  source, title, welcome, openingQuestions, allowAnonymous, hidden, onStateChange,
 }: Props) {
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth < 768 : false,
@@ -82,6 +85,7 @@ export default function AskWidget({
       isMobile={isMobile}
       safeBottom={safeBottom}
       hidden={hidden}
+      onStateChange={onStateChange}
     />,
     document.body,
   );

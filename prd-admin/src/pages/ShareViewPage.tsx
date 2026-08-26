@@ -11,6 +11,7 @@ import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-ho
 import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   DIRECT_PREVIEW_SANDBOX,
@@ -29,7 +30,7 @@ import {
  * 为什么会自己消失：它是邀请不是控件，说完就该让开——内容才是主角
  * （content-fills-canvas：产物占主导，chrome 压到最少）。
  */
-function SlideKeyboardInvite() {
+function SlideKeyboardInvite({ yield: stepAside }: { yield?: boolean }) {
   const [gone, setGone] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setGone(true), 6000);
@@ -57,7 +58,9 @@ function SlideKeyboardInvite() {
         fontSize: 12.5, whiteSpace: 'nowrap',
         // 邀请条永远不该拦住底下 deck 的点击
         pointerEvents: 'none',
-        opacity: gone ? 0 : 1,
+        // 邀请条和提问坞的额度小条都站在底部正中。这一条是邀请不是控件，
+        // 用户一展开提问长条它就该让开——不然两枚药丸直接叠在一起，看着像渲染坏了。
+        opacity: gone || stepAside ? 0 : 1,
         transition: 'opacity 600ms ease',
       }}
     >
@@ -131,6 +134,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'already'>('idle');
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
+  /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
+  const [askState, setAskState] = useState<AskDockState>('collapsed');
   // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
   const [commentCount, setCommentCount] = useState<number | null>(null);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
@@ -739,7 +744,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             </div>
           )}
           {/* 幻灯片邀请条：这是一套 deck，告诉访客键盘能翻页，几秒后自己淡出不挡内容 */}
-          {isDeck && <SlideKeyboardInvite />}
+          {isDeck && <SlideKeyboardInvite yield={askState === 'bar'} />}
 
           {/* 取回原文失败：不遮住 iframe（页面多半仍能直接加载出来），只在角落把原因说清楚。
               静默吞掉失败正是「明明打不开、却不知道为什么」的来源。 */}
@@ -806,6 +811,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             openingQuestions={data.ask.openingQuestions ?? []}
             allowAnonymous={data.ask.allowAnonymous}
             hidden={isFullscreen || showComments}
+            onStateChange={setAskState}
           />
         )}
       </div>
