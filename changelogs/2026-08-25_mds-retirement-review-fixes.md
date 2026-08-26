@@ -17,3 +17,7 @@
 | fix | prd-admin | 主题硬编码基线清掉三条指向已删页面的幽灵条目，并给棘轮加上「基线里的文件必须存在」断言 |
 | refactor | prd-admin | 再清一轮零消费方死代码：三个 adapter-info 读包装、整份 llmConfigs 服务与契约、services/mock 三个孤儿文件、api.ts 里 11 个无人引用的 mds 地址构造器 |
 | docs | prd-api | 点名两处虚的承诺：白名单守卫改名为名副其实的 AllowlistIsPinnedToExactlyTheKnownExemptions；LlmSchedulingIntegrationTests 标注为退场后永远跑不通 |
+| fix | llmgw | MAP 遗留默认池不再被当成非默认删掉：判据原先在读到 IsDefaultForType 之前就因缺 TenantId 早退，任何 MAP 默认池只要没 appCaller 绑定就能被直接删，而 ModelResolver 还在拿它当兜底 |
+| fix | llmgw | 摘除托管池成员改为定点 $pull + 版本递增：原先整数组覆写会吞掉并发改动，且不递增版本让陈旧句柄能把摘掉的成员写回来 |
+| fix | llmgw | 控制台给得出摘除死成员的入口：托管池整体只读，但指向已删上游的成员放开「移除」，否则文案在叫人做一件控制台里做不到的事 |
+| test | prd-api | 补三条守卫钉住上述三点，均已跑负对照 |

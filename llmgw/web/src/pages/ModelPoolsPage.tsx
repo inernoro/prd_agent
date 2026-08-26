@@ -1502,6 +1502,16 @@ function PoolDetail({
             const isVerifying = verifying.has(key);
             const chip = MEMBER_STATUS[isVerifying ? 'verify' : String(member.healthStatus)] || MEMBER_STATUS['0'];
             const editable = canWrite && !isExternal && !locked;
+            // 托管池整体只读（顺位与字段由平台维护），但**死成员**是例外：它指向的上游或模型
+            // 已经不存在，永远接不到调用，后端也专门为它开了摘除口子。
+            // 只读到底会让上面那句「建议摘除」变成一句做不到的建议——用户在控制台找不到任何按钮，
+            // 只能去打 API（我自己清那两个 stub 成员时就是这么绕的）。所以这一种放开「移除」。
+            const removableDebris = canWrite && !isExternal && locked && !!member.unavailableReason;
+            // 只写一次：可编辑池与「托管池里的死成员」共用同一个按钮，
+            // 避免两处抄本各自漂移（也让文字预算守卫只数到一处标签）。
+            const removeButton = (
+              <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDeleteMember(pool, member)}>移除</Button>
+            );
             return (
               <div key={key} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', ...INSET_BLOCK, fontSize: 'var(--fs-secondary)' }}>
                 <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-caption)', flexShrink: 0 }}>第{member.priority}顺位</span>
@@ -1512,7 +1522,7 @@ function PoolDetail({
                   {isVerifying
                     ? '已恢复接单，等下一条真实业务请求验证（不发探测请求）'
                     : member.unavailableReason
-                      ? `${memberFaultPhrase(member)} · 这个顺位永远接不到调用，建议摘除`
+                      ? `${memberFaultPhrase(member)} · 这个顺位永远接不到调用`
                       : `连续失败 ${member.consecutiveFailures} 次 · 最近失败 ${relativeTime(member.lastFailedAt)} · 最近成功 ${relativeTime(member.lastSuccessAt)}`}
                 </span>
                 <CapabilityTags labels={capabilityLabelsForMember(member)} />
@@ -1524,11 +1534,14 @@ function PoolDetail({
                     <span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.tight }}>
                       {member.healthStatus === 2 && !isVerifying ? <Button size="sm" variant="secondary" disabled={busyId === key} onClick={() => void onRecoverMember(pool, member)}>恢复接单</Button> : null}
                       <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSaveMember(pool, member)}>保存</Button>
-                      <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDeleteMember(pool, member)}>移除</Button>
+                      {removeButton}
                     </span>
                   </>
                 ) : (
-                  <span style={{ marginLeft: 'auto', ...HINT_TEXT }}>{locked ? '顺位与字段由平台维护' : isExternal ? '接管配置后可编辑' : ''}</span>
+                  <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: GAP.tight }}>
+                    <span style={HINT_TEXT}>{locked ? '顺位与字段由平台维护' : isExternal ? '接管配置后可编辑' : ''}</span>
+                    {removableDebris ? removeButton : null}
+                  </span>
                 )}
               </div>
             );

@@ -12697,18 +12697,24 @@ static async Task<List<string>> PruneManagedPoolMembersAsync(
     var pruned = new List<string>();
     foreach (var pool in pools.Where(IsManagedAppendOnlyPool))
     {
-        var members = (pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray())
-            .Where(x => x.IsBsonDocument)
-            .Select(x => x.AsBsonDocument)
-            .Where(m => !(aliases.Contains(m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
-                          && string.Equals(m.GetStringOrEmpty("PlatformId"), platformId, StringComparison.Ordinal)))
-            .ToList();
-        await gwPools.UpdateOneAsync(
+        // 定点摘除，不整数组覆写。
+        //
+        // 原来是「读出来、在内存里过滤、再 Set 回整个 Models」，两个问题：
+        // 一是并发的成员改动会被这次覆写吞掉（读到写之间别人加的成员直接没了）；
+        // 二是不递增 Version，于是在这次 prune 之前加载过该池的客户端，之后仍能拿着
+        // 旧版本号通过 PoolVersionGuard，把刚摘掉的成员原样写回来。
+        // 改成 $pull + Inc("Version")：摘除本身是幂等的定点操作，不需要版本守卫；
+        // 递增版本则让所有陈旧句柄的后续写入被既有守卫挡下，与其它成员改动端点同一套口径。
+        var pullResult = await gwPools.UpdateOneAsync(
             TenantAccess.Filter(http, fb.Eq("_id", pool.GetStringOrEmpty("_id"))),
             Builders<BsonDocument>.Update
-                .Set("Models", new BsonArray(members))
-                .Set("UpdatedAt", DateTime.UtcNow));
-        pruned.Add(pool.AsNullableString("Name") ?? pool.GetStringOrEmpty("_id"));
+                .PullFilter("Models", fb.And(
+                    fb.In("ModelId", aliases),
+                    fb.Eq("PlatformId", platformId)))
+                .Set("UpdatedAt", DateTime.UtcNow)
+                .Inc("Version", 1));
+        if (pullResult.ModifiedCount > 0)
+            pruned.Add(pool.AsNullableString("Name") ?? pool.GetStringOrEmpty("_id"));
     }
     return pruned;
 }
@@ -12818,8 +12824,18 @@ static async Task<bool> IsCurrentDefaultPoolAsync(
     var tenantId = pool.AsNullableString("TenantId");
     var modelType = pool.AsNullableString("ModelType");
     var poolId = pool.AsNullableString("_id");
-    if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(modelType) || string.IsNullOrWhiteSpace(poolId))
+    if (string.IsNullOrWhiteSpace(modelType) || string.IsNullOrWhiteSpace(poolId))
         return false;
+
+    // MAP 遗留池（model_groups）压根没有 TenantId 字段，它「是不是默认」只由自身的
+    // IsDefaultForType 决定——这正是下面 `type is null` 那条兜底想覆盖的情况。
+    // 原来把 TenantId 为空也一并早退成 false，等于在读到那个标记之前就把兜底短路掉了：
+    // 于是任何 MAP 遗留默认池对删除阻挡清单都报「不是当前默认」，只要它碰巧没有
+    // appCaller 绑定就能被直接删掉，而 ModelResolver 仍在拿它当该模型类型的兜底，
+    // 删完那一类调用就没有后备了（形状 1：判据比它该管的范围窄）。
+    if (string.IsNullOrWhiteSpace(tenantId))
+        return pool.AsNullableBool("IsDefaultForType") == true;
+
     var type = await poolTypes.Find(Builders<BsonDocument>.Filter.And(
         Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
         Builders<BsonDocument>.Filter.Eq("Code", modelType))).FirstOrDefaultAsync();

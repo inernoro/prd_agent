@@ -195,6 +195,62 @@ public class GatewayLegacySweepGuardTests
         Assert.Equal(1, count);
     }
 
+    [Fact]
+    public void MAP遗留默认池不得被当成非默认删掉()
+    {
+        // MAP 的 model_groups 文档没有 TenantId。原实现把「TenantId 为空」也一并早退成 false，
+        // 于是任何 MAP 遗留默认池对删除阻挡清单都报「不是当前默认」，只要它碰巧没有 appCaller
+        // 绑定就能被直接删掉——而 ModelResolver 仍在拿它当该模型类型的兜底（形状 1）。
+        var fn = FunctionSource("static async Task<bool> IsCurrentDefaultPoolAsync");
+
+        // 早退里不许再出现 tenantId 判空：那正是把兜底短路掉的那一行
+        var guardLine = fn[..fn.IndexOf("var type = await poolTypes", StringComparison.Ordinal)];
+        Assert.DoesNotContain("string.IsNullOrWhiteSpace(tenantId) ||", guardLine);
+        // 没有租户时必须落到自身的 IsDefaultForType，而不是无条件放行
+        Assert.Contains("if (string.IsNullOrWhiteSpace(tenantId))", fn);
+        Assert.Contains("return pool.AsNullableBool(\"IsDefaultForType\") == true;", guardLine);
+    }
+
+    [Fact]
+    public void 摘除托管池成员必须定点且递增版本()
+    {
+        // 整数组覆写会吞掉并发的成员改动；不递增 Version 则让 prune 之前加载过该池的客户端
+        // 之后仍能通过 PoolVersionGuard，把刚摘掉的成员原样写回来。
+        var fn = FunctionSource("static async Task<List<string>> PruneManagedPoolMembersAsync");
+
+        Assert.Contains("PullFilter(\"Models\"", fn);
+        Assert.Contains("Inc(\"Version\", 1)", fn);
+        // 不许退回「读出来过滤再整个 Set 回去」
+        Assert.DoesNotContain(".Set(\"Models\"", fn);
+        // 只对托管池动手；人手编排的池仍由 blockers 拦下来问人
+        Assert.Contains("pools.Where(IsManagedAppendOnlyPool)", fn);
+        Assert.DoesNotContain("DeleteOneAsync", fn);
+    }
+
+    [Fact]
+    public void 控制台必须给得出摘除死成员的入口()
+    {
+        // 后端专门为死成员开了摘除口子、文案也在说这个顺位永远接不到调用，
+        // 但托管池整体 locked、移除按钮不渲染的话，这条清理路径在控制台里根本够不着，
+        // 只能去打 API。能力建了一半等于没建（形状 2）。
+        var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+
+        Assert.Contains("const removableDebris", page);
+        Assert.Contains("locked && !!member.unavailableReason", page);
+        Assert.Contains("removableDebris ? removeButton : null", page);
+        // 两个分支共用同一个按钮，别再抄一份出来各自漂移
+        Assert.Equal(1, CountOccurrences(page, ">移除</Button>"));
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var i = haystack.IndexOf(needle, StringComparison.Ordinal); i >= 0;
+             i = haystack.IndexOf(needle, i + 1, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
     private static string PoolsListHandlerSource()
     {
         var handler = Console[Console.IndexOf("app.MapGet(\"/gw/pools\"", StringComparison.Ordinal)..];
