@@ -100,6 +100,7 @@ const CLIENT_PRESETS: Array<{
  * FEATURE_PRESETS 同一套解法：预设给合法取值，自定义那档才让人填英文。
  */
 const PURPOSE_PRESETS: Array<{ code: string; label: string }> = [
+  { code: 'quickstart', label: '通用接入' },
   { code: 'desktop', label: '桌面客户端' },
   { code: 'agent', label: 'Agent 调用' },
   { code: 'backend', label: '后端服务' },
@@ -170,7 +171,7 @@ export function QuickstartPage() {
   const [baseUrl, setBaseUrl] = useState(resolveDefaultServingBaseUrl);
   const [appCallerCode, setAppCallerCode] = useState('my-agent.quickstart::chat');
   // 用途是这一页唯一「系统无从得知」的业务命名：调用用途码由它派生，不选不许创建。
-  const [purpose, setPurpose] = useState('');
+  const [purpose, setPurpose] = useState('quickstart');
   const [customPurpose, setCustomPurpose] = useState('');
   const [appCallerCodeTouched, setAppCallerCodeTouched] = useState(false);
   const [clientCode, setClientCode] = useState('my-agent');
@@ -622,6 +623,8 @@ export function QuickstartPage() {
   const blockedByTeam = !organizationLoading && !organizationError && activeTeams.length === 0;
   const issueDisabled = organizationLoading || creatingStage !== null || blockedByTeam
     || Boolean(budgetPair.error) || !purposeReady || !teamId;
+  // 注：purposeReady 现在只校验「派生出来的码合不合法」，不再要求用户必须挑一个——
+  // 用途只是生成 appCallerCode 的来源，一把 key 本来就可以授权多条调用用途。
   // 创建屏与产物屏互斥：没有密钥时整屏只有一张创建卡，签出来之后整屏让给产物。
   // 两者不同时占版面，就不会出现「左右一起变」——这是本页改版要治的核心问题。
   const onCreateScreen = phase === 'idle' || phase === 'issuing';
@@ -699,7 +702,7 @@ export function QuickstartPage() {
 
                   <div className="lg-qs-decision-row">
                   <div className="lg-qs-decision">
-                    <div className="lg-qs-decision-head"><strong>用途</strong><small>必选</small></div>
+                    <div className="lg-qs-decision-head"><strong>用途</strong><small>决定调用用途码</small></div>
                     <div className="lg-qs-type-row" role="radiogroup" aria-label="用途">
                       {PURPOSE_PRESETS.map((item) => (
                         <button
@@ -737,7 +740,7 @@ export function QuickstartPage() {
                       ))}
                     </div>
                     <small className={`lg-qs-note${purposeReady ? '' : ' is-bad'}`}>
-                      {purposeReady ? `调用用途码：${derivedAppCallerCode}` : '先选用途才能创建。'}
+                      {purposeReady ? `调用用途码：${derivedAppCallerCode}` : `格式须为 {应用}.{用途}::${requestType}，小写字母数字与短横线。`}
                     </small>
                   </div>
 
@@ -825,7 +828,9 @@ export function QuickstartPage() {
               <DetailsBlock title="工作原理：三个身份、预算与失败定位">
                 <dl style={dlStyle}>
                   <RouteRow name="service key" text="回答谁在调用；绑定 tenant、team、client、environment、appCaller 和协议。" />
-                  <RouteRow name="appCallerCode" text="回答为什么调用；提示词策略、预算、限流与专属路由都挂在它上面。" />
+                  <RouteRow name="appCallerCode" text="回答为什么调用；提示词策略、预算、限流与专属路由都挂在它上面。格式 {应用}.{用途}::chat 或 ::vision，至少两段，只允许小写字母、数字与短横线，最长 200 字符。" />
+                  <RouteRow name="用途码与团队" text="同一租户里一条码只能归一个团队；换团队再登记同一条码会被拒（APP_CALLER_IDENTITY_CONFLICT）。一把 key 可以授权多条码，本页只登记它用到的这一条。" />
+                  <RouteRow name="两个可选请求头" text="X-Gateway-App-Caller 传码：兼容协议下如果这把 key 只授权了一条码，可以不传、由网关推断；gw-native 必须传。X-Gateway-App-Title 传一句人话标题，只进日志，不参与鉴权与路由。" />
                   <RouteRow name="model pool" text="回答去哪里调用；默认池与特殊池由平台规则管理，不由 key 承担。" />
                   <RouteRow name="预算与预占" text="月预算与单次预占上限必须成对写入；只写一个会被网关配置校验拒绝。留空表示不限额。" />
                   <RouteRow name="安全连通" text="发送 X-Gateway-Dry-Run: quickstart，在模型解析、预算预占和上游发送前结束；HTTP 成功、返回 requestId 且 upstreamCalled=false 才算通过。" />
@@ -898,7 +903,7 @@ export function QuickstartPage() {
                     <Button size="sm" variant="ghost" onClick={() => void copyText('app-caller', displayBundle.appCallerCode)}>{copied === 'app-caller' ? <Check size={13} /> : <Copy size={13} />}{copied === 'app-caller' ? '已复制' : '复制'}</Button>
                   </div>
                   <code className="lg-qs-hero-value">{displayBundle.appCallerCode}</code>
-                  <small className="lg-qs-hero-note">请求头 X-Gateway-App-Caller 用它。</small>
+                  <small className="lg-qs-hero-note">归属团队 {selectedTeam?.name ?? '未指定'}；这把 key 只授权了它一条，兼容协议下请求头可省略。</small>
                 </Card>
 
                 <Card style={CARD_BODY} className="lg-qs-hero is-secret">

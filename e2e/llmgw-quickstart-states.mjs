@@ -177,16 +177,16 @@ async function pickPurpose(page, label = '桌面客户端') {
 gatewayMode = 'pass';
 let page = await openQuickstart();
 check('创建屏只有一个主按钮', await page.locator('.lg-qs-primary').count(), 1);
-// 用途是唯一「系统无从得知」的必填项：不填就不许创建。
-check('未填用途时主按钮禁用', await page.locator('.lg-qs-primary').isDisabled(), true);
-posted.length = 0;
-await page.locator('.lg-qs-primary').click({ force: true }).catch(() => {});
-await page.waitForTimeout(800);
-check('未填用途时点不出任何写请求', posted.length, 0);
+// 用途只是生成 appCallerCode 的来源，不是必填项——一把 key 本来就可以授权多条码。
+// 所以默认就有一个合法值，且生成出来的码必须当场可见（不能又是「什么都没填却过了」）。
+check('用途有合法默认值', (await page.locator('.lg-qs-decision', { hasText: '用途' }).first().locator('.lg-qs-note').innerText()).trim(), '调用用途码：miduo-agent.quickstart::chat');
+check('默认状态下主按钮就可用', await page.locator('.lg-qs-primary').isDisabled(), false);
 await page.getByRole('radiogroup', { name: '用途' }).getByRole('radio', { name: '桌面客户端' }).click();
 await page.waitForTimeout(300);
-check('填了用途后主按钮可用', await page.locator('.lg-qs-primary').isDisabled(), false);
-check('调用用途码按用途派生', (await page.locator('.lg-qs-decision .lg-qs-note').first().innerText()).includes('miduo-agent.desktop::chat'), true);
+check('换用途后调用用途码跟着变', (await page.locator('.lg-qs-decision', { hasText: '用途' }).first().locator('.lg-qs-note').innerText()).includes('miduo-agent.desktop::chat'), true);
+// 派生出来的码必须满足 console-api 的自助格式：{kebab}.{kebab}::chat|vision，至少两段。
+check('派生的码符合自助格式', /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+::(chat|vision)$/.test(
+  (await page.locator('.lg-qs-decision', { hasText: '用途' }).first().locator('.lg-qs-note').innerText()).replace('调用用途码：', '').trim()), true);
 check('创建屏只有四个决定', await page.locator('.lg-qs-decision').count(), 4);
 check('创建屏不出现一次性密钥', await page.locator('.lg-qs-secret-code').count(), 0);
 check('创建屏不出现产物细条', await page.locator('.lg-qs-ribbon').count(), 0);
@@ -232,6 +232,7 @@ check('左侧三张卡（地址 + 密钥 + 调用用途）+ 右侧片段', [
   await page.locator('.lg-qs-code').count(),
 ], [3, 1]);
 check('产物屏露出本次登记的调用用途码', (await page.locator('.lg-qs-hero.is-caller code').innerText()).trim(), 'miduo-agent.desktop::chat');
+check('调用用途卡标出归属团队', (await page.locator('.lg-qs-hero.is-caller small').innerText()).includes('归属团队 核心平台组'), true);
 // 候选只能来自这条 appCaller 真正走的那个池：另一个同类型池的成员不许混进来，
 // 否则真实租户上会平铺出 200+ 个模型，且违反「可选模型必须来自获准的池」。
 check('模型候选只来自被路由到的池', await page.locator('.lg-qs-testbar select option').allInnerTexts(), ['auto（由模型池调度）', 'demo/chat-1', 'demo/chat-2']);
