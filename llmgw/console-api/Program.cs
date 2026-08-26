@@ -2948,12 +2948,23 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             : Math.Round(recentTen.Count(log => string.Equals(log.AsNullableString("Status"), "succeeded", StringComparison.Ordinal)) * 100m / recentTen.Count, 1, MidpointRounding.AwayFromZero);
         item.LastRequestAt = stats?.AsNullableUtcDateTime("LastRequestAt").ToIso();
 
-        // healthy 的前提是「这成员真的指得到一个上游 + 模型」。只看 HealthStatus 会把
-        // 指向已删上游 / 已删模型的成员算成健康——它从没失败过，因为它从来没被调用成功过一次。
-        // 于是一个一次请求都发不出去的池在控制台上显示「健康」，正好骗过要靠它做判断的人（形状 8）。
-        item.HealthyMembers = item.Models.Count(model =>
-            model.HealthStatus == 0
-            && IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, resolvablePlatformIds, resolvableModels, resolvableExchanges));
+        // 指不到任何上游 / 模型的成员，先在**展示层**归一成不可用，再统计。
+        //
+        // 只看存库的 HealthStatus 会把这种成员算成健康——它从没失败过，因为它从来没被
+        // 调用成功过一次。于是一个一次请求都发不出去的池在控制台上显示「健康」，
+        // 正好骗过要靠它做判断的人（形状 8）。
+        //
+        // 归一放在计数之前而不是只改计数：池级徽章、成员顺位的圆点、可用/不可用三个数字
+        // 都读同一个字段，只改其中一处就会出现「池标已中断、第 1 顺位却是绿点」的自相矛盾。
+        // 归一只作用于这次响应，不回写库——库里的健康状态仍由真实调用结果决定。
+        foreach (var model in item.Models)
+        {
+            if (model.HealthStatus == 2) continue;
+            if (IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, resolvablePlatformIds, resolvableModels, resolvableExchanges)) continue;
+            model.HealthStatus = 2;
+            model.HealthStatusLabel = HealthLabel(2);
+        }
+        item.HealthyMembers = item.Models.Count(model => model.HealthStatus == 0);
         item.DegradedMembers = item.Models.Count(model => model.HealthStatus == 1);
         item.UnavailableMembers = item.Models.Count(model => model.HealthStatus == 2);
         item.Health = item.Models.Count == 0

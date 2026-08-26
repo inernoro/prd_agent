@@ -144,8 +144,13 @@ public class GatewayLegacySweepGuardTests
 
         var healthyAt = handler.IndexOf("item.HealthyMembers =", StringComparison.Ordinal);
         Assert.True(healthyAt >= 0, "找不到池健康统计，守卫的取值口径需要更新");
-        var healthyExpr = handler[healthyAt..handler.IndexOf("item.DegradedMembers", StringComparison.Ordinal)];
-        Assert.Contains("IsResolvablePoolMemberKey", healthyExpr);
+        // 归一必须排在计数之前：池级徽章、成员圆点、三个计数读的是同一个字段，
+        // 只改计数不改字段就会出现「池标已中断、第 1 顺位却是绿点」的自相矛盾。
+        var normalizeAt = handler.IndexOf("IsResolvablePoolMemberKey", StringComparison.Ordinal);
+        Assert.True(normalizeAt >= 0, "池列表没有按可解析性归一成员健康");
+        Assert.True(normalizeAt < healthyAt, "成员健康归一必须排在计数之前");
+        Assert.Contains("model.HealthStatus = 2;", handler);
+        Assert.Contains("HealthLabel(2)", handler);
 
         // 判定必须走那个共享的 key 版判定函数，而不是在这儿另写一份「平台在不在」
         Assert.Contains("var resolvablePlatformIds", handler);
