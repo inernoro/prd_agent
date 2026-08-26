@@ -8,5 +8,6 @@ export { ToolboxScene } from './scenes/ToolboxScene';
 export { WorkflowScene } from './scenes/WorkflowScene';
 export { VocScene } from './scenes/VocScene';
 export { ModelLayerScene } from './scenes/ModelLayerScene';
+export { CdsScene } from './scenes/CdsScene';
 export { StartScene } from './scenes/StartScene';
 export { MinimalFooter } from './sections/MinimalFooter';

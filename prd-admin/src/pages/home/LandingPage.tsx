@@ -11,6 +11,7 @@ import { ToolboxScene } from './scenes/ToolboxScene';
 import { WorkflowScene } from './scenes/WorkflowScene';
 import { VocScene } from './scenes/VocScene';
 import { ModelLayerScene } from './scenes/ModelLayerScene';
+import { CdsScene } from './scenes/CdsScene';
 import { StartScene } from './scenes/StartScene';
 import { StaticBackdrop } from './components/StaticBackdrop';
 import { LanguageToggle } from './components/LanguageToggle';
@@ -29,8 +30,9 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
  *   7 · WorkflowScene    ← 工作流 `/workflow-agent`：舱库 + 真实模板链，跑给你看
  *   8 · VocScene         ← 体验地图 `/team-activity`：treemap，痛点自己跳出来
  *   9 · ModelLayerScene  ← 模型池 LLMGW `/pools`：成员顺位，坏了自动顶上
- *  10 · StartScene       ← 三步开始 + 三端 + 收口
- *  11 · MinimalFooter
+ *  10 · CdsScene         ← CDS 分支页 + 部署记录：分支即环境，push 是唯一那一步
+ *  11 · StartScene       ← 三步开始 + 三端 + 收口
+ *  12 · MinimalFooter
  *
  * 3~9 幕共用同一条纪律：**每一幕都照一张真实存在的页面画缩微版**，页面路径写在
  * 各自组件的头注释里。用户对上一版尾部的原话是「样式不错，但是不够真实，首先得
@@ -291,6 +293,10 @@ function LandingInner() {
 
       <div id="compat" style={BELOW_FOLD_SECTION}>
         <ModelLayerScene />
+      </div>
+
+      <div id="cds" style={BELOW_FOLD_SECTION}>
+        <CdsScene />
       </div>
 
       <div id="download" style={BELOW_FOLD_SECTION}>

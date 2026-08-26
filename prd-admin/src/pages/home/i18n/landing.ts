@@ -252,6 +252,39 @@ export interface TailTranslation {
     pains: Array<{ label: string; metric: string; note: string; status: 'slow' | 'error' }>;
     beats: string[];
   };
+  /**
+   * CDS，照分支页 + 部署记录页。这一幕只讲一件事：**分支即环境**。
+   * 日志逐字取自这个首页自己某一次真实部署的 deployment run。
+   */
+  cds: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    /** 用户唯一要做的那一步 */
+    oneStep: string;
+    autoChip: string;
+    projectLabel: string;
+    branchesLabel: string;
+    branches: Array<{ name: string; state: 'ready' | 'building'; meta: string; acting?: boolean }>;
+    stateLabels: { ready: string; building: string };
+    /** 不可变部署版本：成功版本可直接复用、可回滚，是 CDS 的另一半 */
+    versionsLabel: string;
+    versions: Array<{ id: string; note: string; action: string }>;
+    versionsNote: string;
+    runLabel: string;
+    /** 真实部署日志：at 是这行在第几拍出现 */
+    logs: Array<{ at: number; text: string }>;
+    previewLabel: string;
+    /** 预览地址只给形状不给域名——每个人的 CDS 域名不一样，编一个就是假的 */
+    previewShape: string;
+    openLabel: string;
+    previewNote: string;
+    ownLabel: string;
+    own: Array<{ title: string; desc: string }>;
+    gone: string;
+    beats: string[];
+  };
   /** 模型池，照 LLMGW 控制台的 `/pools` 列表——列名与 ModelPoolsPage 的表头逐字一致 */
   models: {
     eyebrow: string;
@@ -565,7 +598,7 @@ const zh: TranslationShape = {
       cds: {
         role: '交付与验收',
         meta: '8 分支 · 8 运行',
-        lead: '推一个分支就有一个能打开的地址，改坏了回滚到上一版。',
+        lead: '一条分支就是一整套环境：自己的域名、自己的容器。推上去就有，删掉就没。',
         branches: [
           {
             name: 'claude/homepage-redesign',
@@ -744,6 +777,64 @@ const zh: TranslationShape = {
         '大部分是安静的冷色 —— 这一片没人喊疼',
         '两块跳出来了：一块在报错，一块在变慢',
         '点进去，直接落到痛点榜对应那一行',
+      ],
+    },
+    cds: {
+      eyebrow: 'CDS · 分支即环境',
+      title: '从一句话到能打开的地址，你只做一步',
+      description:
+        '那一步是 git push。之后拉代码、起基础设施、分层构建五个服务、就绪探测、下发域名，全是它的事。下面这条日志不是示意——是这个首页自己某一次部署的真实记录。',
+      note: '删掉分支，这一整套跟着一起消失。环境的生命周期就是分支的生命周期，不用谁记得回收。',
+      oneStep: 'git push origin claude/homepage-redesign',
+      autoChip: '推送即部署',
+      projectLabel: 'prd-agent',
+      branchesLabel: '分支',
+      branches: [
+        { name: 'claude/homepage-redesign', state: 'building', meta: 'afbaced5 · 刚刚', acting: true },
+        { name: 'main', state: 'ready', meta: '7e04b18 · 1 小时前 · 容器 5/5' },
+        { name: 'codex/model-pool-fix', state: 'ready', meta: '2d91f0c · 昨天 · 容器 5/5' },
+      ],
+      stateLabels: { ready: '就绪', building: '构建中' },
+      versionsLabel: '不可变版本',
+      versions: [
+        { id: 'dv_edaea72a', note: '刚生成 · 本次部署', action: '可复用' },
+        { id: 'dv_9c31b04f', note: '昨天 · main', action: '可回滚' },
+      ],
+      versionsNote: '代码没变就复用成功版本，不重新构建；新版本出问题，回滚到标记过的那一版，回滚本身也是一条完整的部署记录。',
+      runLabel: '本次部署',
+      logs: [
+        { at: 1, text: '分支部署请求已受理' },
+        { at: 1, text: '正在拉取最新代码...' },
+        { at: 1, text: '已拉取: afbaced59 首页尾部四幕改照真实页面画' },
+        { at: 2, text: '基础设施为共享模式 —— 正在确保 2 个依赖可用' },
+        { at: 2, text: 'MongoDB 8 已启动 :10001 · healthy OK' },
+        { at: 2, text: 'Redis 7 已启动 :10002 · healthy OK' },
+        { at: 3, text: '启动计划: 2 层, 5 服务' },
+        { at: 3, text: '启动第 0 层: api, admin, llmgw, llmgw-serve' },
+        { at: 3, text: 'admin 运行于 :19116 · llmgw 运行于 :19133' },
+        { at: 3, text: '启动第 1 层: llmgw-web · 运行于 :19167' },
+        { at: 4, text: '运行时已通过就绪探测' },
+        { at: 4, text: '已生成不可变部署版本 dv_edaea72a' },
+        { at: 4, text: '部署完成并通过验证' },
+      ],
+      previewLabel: '预览地址',
+      previewShape: '<分支>-<项目>.<你自己的域名>',
+      openLabel: '打开预览',
+      previewNote: '地址由 CDS 下发，不由前端拼。多入口的项目会一次给全。',
+      ownLabel: '这条分支独占什么',
+      own: [
+        { title: '自己的域名', desc: '一条分支一个 HTTPS 入口，多出口的项目一次下发多个，不用抢同一个测试环境' },
+        { title: '自己的一套容器', desc: '五个服务按依赖分层起，端口各自分配，和别的分支互不打搅' },
+        { title: '自己的队列前缀', desc: '平台按分支注入 BULLMQ_PREFIX，兄弟分支不会互抢对方的任务' },
+        { title: '可选自己的库', desc: '默认与其它分支共用一个库；打开 per-branch，库名自动加分支后缀，migration 不再互相踩' },
+      ],
+      gone: '还能只给这一条分支临时加一个服务：跑在本分支的网里、不进项目配置、不用全局审批，删分支即消失。',
+      beats: [
+        '你只做一件事：把分支推上去',
+        'CDS 收到推送 —— 拉代码，确认依赖的基础设施在',
+        '按依赖分层构建、启动五个服务，端口各自分配',
+        '就绪探测通过，生成不可变版本，域名下发 —— 可以打开了',
+        '这就是「分支即环境」：这条分支独占的四样东西',
       ],
     },
     models: {
@@ -1229,6 +1320,64 @@ const en: TranslationShape = {
         'Most of it is quiet cold colour — nothing hurting over here',
         'Two blocks push out: one throwing errors, one going slow',
         'Click through and you land on that row in the pain list',
+      ],
+    },
+    cds: {
+      eyebrow: 'CDS · a branch is an environment',
+      title: 'From one command to a URL you can open — you do one step',
+      description:
+        'That step is git push. Pulling the code, bringing up the infrastructure, building five services in dependency layers, probing readiness, issuing the domain — all of it is on CDS. The log below is not a mock-up: it is one real deployment of this very homepage.',
+      note: 'Delete the branch and the whole set goes with it. The environment lives exactly as long as the branch does — nobody has to remember to clean up.',
+      oneStep: 'git push origin claude/homepage-redesign',
+      autoChip: 'Push to deploy',
+      projectLabel: 'prd-agent',
+      branchesLabel: 'Branches',
+      branches: [
+        { name: 'claude/homepage-redesign', state: 'building', meta: 'afbaced5 · just now', acting: true },
+        { name: 'main', state: 'ready', meta: '7e04b18 · 1h ago · 5/5 containers' },
+        { name: 'codex/model-pool-fix', state: 'ready', meta: '2d91f0c · yesterday · 5/5 containers' },
+      ],
+      stateLabels: { ready: 'Ready', building: 'Building' },
+      versionsLabel: 'Immutable versions',
+      versions: [
+        { id: 'dv_edaea72a', note: 'just cut · this run', action: 'Redeploy' },
+        { id: 'dv_9c31b04f', note: 'yesterday · main', action: 'Roll back' },
+      ],
+      versionsNote: 'Unchanged code redeploys a known-good version without rebuilding; a bad release rolls back to one you marked — and the rollback is itself a full deployment record.',
+      runLabel: 'This deployment',
+      logs: [
+        { at: 1, text: 'Branch deployment request accepted' },
+        { at: 1, text: 'Pulling latest code...' },
+        { at: 1, text: 'Pulled: afbaced59 homepage tail redrawn from real pages' },
+        { at: 2, text: 'Shared infrastructure — ensuring 2 dependencies are up' },
+        { at: 2, text: 'MongoDB 8 up on :10001 · healthy OK' },
+        { at: 2, text: 'Redis 7 up on :10002 · healthy OK' },
+        { at: 3, text: 'Startup plan: 2 layers, 5 services' },
+        { at: 3, text: 'Layer 0: api, admin, llmgw, llmgw-serve' },
+        { at: 3, text: 'admin on :19116 · llmgw on :19133' },
+        { at: 3, text: 'Layer 1: llmgw-web · on :19167' },
+        { at: 4, text: 'Runtime passed the readiness probe' },
+        { at: 4, text: 'Immutable deployment version dv_edaea72a created' },
+        { at: 4, text: 'Deployment complete and verified' },
+      ],
+      previewLabel: 'Preview URL',
+      previewShape: '<branch>-<project>.<your own domain>',
+      openLabel: 'Open preview',
+      previewNote: 'The URL comes from CDS; the frontend never builds it. Multi-entry projects get all of them at once.',
+      ownLabel: 'What this branch owns',
+      own: [
+        { title: 'Its own domain', desc: 'One branch, one HTTPS entry — multi-exit projects get several at once. No queueing for a shared staging box.' },
+        { title: 'Its own containers', desc: 'Five services started in dependency layers, ports allocated per branch, nothing shared with siblings' },
+        { title: 'Its own queue prefix', desc: 'The platform injects BULLMQ_PREFIX per branch, so sibling branches never steal each other’s jobs' },
+        { title: 'Its own database, if you want', desc: 'Shared by default; switch on per-branch and the DB name gets a branch suffix — migrations stop stepping on each other' },
+      ],
+      gone: 'You can also attach a service to just this one branch: it runs on the branch network, never enters project config, needs no global approval, and disappears with the branch.',
+      beats: [
+        'You do exactly one thing: push the branch',
+        'CDS picks up the push — pulls the code, confirms the infrastructure is up',
+        'Builds and starts five services in dependency layers, ports allocated per branch',
+        'Readiness probe passes, an immutable version is cut, the domain is issued — open it',
+        'That is "a branch is an environment": four things this branch owns outright',
       ],
     },
     models: {
