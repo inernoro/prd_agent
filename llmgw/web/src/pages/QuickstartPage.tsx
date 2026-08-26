@@ -194,6 +194,7 @@ export function QuickstartPage() {
     | null>(null);
   // 一键测试用的模型候选：只列该调用类型模型池里的成员，不让人随便填一个池外的模型。
   const [poolModels, setPoolModels] = useState<string[]>([]);
+  const [poolName, setPoolName] = useState('');
   const [testModel, setTestModel] = useState('auto');
   const [binding, setBinding] = useState(false);
   const [bindNotice, setBindNotice] = useState<string | null>(null);
@@ -220,17 +221,29 @@ export function QuickstartPage() {
 
   const currentUsername = user?.username ?? '';
 
-  // 签发之后才拉：创建屏用不到，早拉一次纯属浪费。
+  /**
+   * 一键测试的模型候选：**只列这条 appCaller 真正会走的那个池的成员**。
+   *
+   * 不能把该类型下所有池的成员平铺出来——真实租户上那是 263 个，既没法选，
+   * 也不符合「用户可选模型必须来自 AppCallerCode 获准的模型池」（`llm-gateway.md` 规则 1）。
+   * 优先用路由预览回来的池（那才是运行时真会用的），拿不到就退回该类型的默认池。
+   */
   useEffect(() => {
     if (!bundle) return;
     let active = true;
     void getPools(bundle.requestType).then((response) => {
       if (!active || !response.success) return;
-      const ids = response.data.items.flatMap((pool) => pool.models.map((model) => model.modelId));
-      setPoolModels([...new Set(ids)].filter(Boolean));
+      const pools = response.data.items;
+      const routedPoolId = routePreview?.success ? routePreview.modelGroupId : undefined;
+      const target = pools.find((pool) => pool.id === routedPoolId)
+        ?? pools.find((pool) => pool.isDefaultForType)
+        ?? null;
+      const ids = (target?.models ?? []).map((model) => model.modelId).filter(Boolean);
+      setPoolModels([...new Set(ids)]);
+      setPoolName(target?.name ?? '');
     });
     return () => { active = false; };
-  }, [bundle?.appCallerId, bundle?.requestType]);
+  }, [bundle?.appCallerId, bundle?.requestType, routePreview?.modelGroupId, routePreview?.success]);
   useEffect(() => {
     let active = true;
     void getOrganization().then((response) => {
@@ -923,7 +936,7 @@ export function QuickstartPage() {
                         <Play size={14} />{testing ? '正在执行' : '执行测试'}
                       </Button>
                     ) : null}
-                    <small>{poolModels.length === 0 ? '暂无池内成员，走 auto。' : `${poolModels.length} 个池内成员，cURL 跟着变。`}</small>
+                    <small>{poolModels.length === 0 ? '暂无池内成员，走 auto。' : `来自「${poolName || '默认池'}」的 ${poolModels.length} 个成员。`}</small>
                   </div>
                   <div className="lg-qs-snippet-head">
                     <div className="lg-snippet-tabs">

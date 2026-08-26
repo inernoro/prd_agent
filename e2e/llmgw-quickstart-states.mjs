@@ -59,7 +59,15 @@ const STUBS = {
     boundAppCallerCount: 0, boundAppCallers: [], recentRequests: 0, recentSucceeded: 0, recentFailed: 0,
     trafficWindowHours: 168, recentTenRequests: 0, health: 'healthy', healthyMembers: 2, degradedMembers: 0,
     unavailableMembers: 0, managedByRegistry: false, appendOnly: false,
-  }], total: 1 },
+  }, {
+    id: 'pool-2', name: '实验池', code: 'chat-lab', priority: 2, modelType: 'chat', isDefaultForType: false,
+    strategyType: 0, sourceCollection: 'llmgw', authority: 'llmgw', models: [
+      { modelId: 'lab/should-not-be-listed', platformId: 'p2', priority: 1, healthStatus: 0, healthStatusLabel: 'healthy', consecutiveFailures: 0, consecutiveSuccesses: 1, isMain: true, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
+    ],
+    boundAppCallerCount: 0, boundAppCallers: [], recentRequests: 0, recentSucceeded: 0, recentFailed: 0,
+    trafficWindowHours: 168, recentTenRequests: 0, health: 'healthy', healthyMembers: 1, degradedMembers: 0,
+    unavailableMembers: 0, managedByRegistry: false, appendOnly: false,
+  }], total: 2 },
   '/pool-types': { items: [{ code: 'chat', name: '对话默认池', purpose: '常规对话', sortOrder: 1, defaultPoolId: 'pool-1', modelCount: 2, ready: true, version: 1 }], total: 1, ready: 1, waiting: 0 },
   '/organization': {
     tenant: { id: 't1', name: 'Miduo 平台', slug: 'miduo', status: 'active', isInternal: false },
@@ -224,7 +232,9 @@ check('左侧三张卡（地址 + 密钥 + 调用用途）+ 右侧片段', [
   await page.locator('.lg-qs-code').count(),
 ], [3, 1]);
 check('产物屏露出本次登记的调用用途码', (await page.locator('.lg-qs-hero.is-caller code').innerText()).trim(), 'miduo-agent.desktop::chat');
-check('一键测试条列出池内成员', await page.locator('.lg-qs-testbar select option').allInnerTexts(), ['auto（由模型池调度）', 'demo/chat-1', 'demo/chat-2']);
+// 候选只能来自这条 appCaller 真正走的那个池：另一个同类型池的成员不许混进来，
+// 否则真实租户上会平铺出 200+ 个模型，且违反「可选模型必须来自获准的池」。
+check('模型候选只来自被路由到的池', await page.locator('.lg-qs-testbar select option').allInnerTexts(), ['auto（由模型池调度）', 'demo/chat-1', 'demo/chat-2']);
 // 产物屏必须一屏装下：内容区不许出现纵向滚动（片段太长时在它自己的框里滚）。
 check('产物屏 1440x900 不出现纵向滚动', await page.evaluate(() => {
   const body = document.querySelector('.lg-page-body');
