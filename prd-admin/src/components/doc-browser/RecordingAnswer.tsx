@@ -26,21 +26,28 @@ export function RecordingAnswer({
   answer,
   segments,
   onSeek,
+  flat = false,
 }: {
   /** 这条回答对应的提问；为空则不渲染气泡 */
   question?: string;
   answer: string;
   segments: Array<{ start: number; end: number; text: string; speaker?: string }>;
   onSeek?: (sec: number) => void;
+  /**
+   * 平铺形态（设计稿 D2 的右栏）：结论与引用直接落在栏底色上，不再包一层描边卡。
+   * 窄屏（B4）稿面画的是有卡的，所以默认仍带卡。
+   */
+  flat?: boolean;
 }) {
   const { conclusion, citations } = resolveAnswerCitations(answer, segments);
   if (!answer) return null;
 
   return (
     <div
-      className="mt-3 rounded-[11px] p-3"
-      // 稿面这张卡是「深底 + 1px 亮边」：描边把它和页面底色分开，纯填充块少一层层次
-      style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
+      className={flat ? 'mt-1' : 'mt-3 rounded-[11px] p-3'}
+      // 稿面这张卡是「深底 + 1px 亮边」：描边把它和页面底色分开，纯填充块少一层层次。
+      // 宽屏 D2 的右栏本身就是一列，再包一层就读成「一条聊天消息」，答案的分量掉一档。
+      style={flat ? undefined : { background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}
       aria-live="polite"
     >
       {question && (
@@ -56,7 +63,7 @@ export function RecordingAnswer({
         稿面这段结论是**大号常规字重**的陈述句，明显大过卡里其余文字——它就是这张卡的答案本身。
         压成小号粗体之后，它和「引用录音 · N 处」那类标签落在同一档，读者一眼看不出哪句才是回答。
       */}
-      <p className="mt-1 whitespace-pre-wrap text-[18px] font-medium leading-relaxed text-token-primary">
+      <p className={`mt-1 whitespace-pre-wrap font-medium leading-relaxed text-token-primary ${flat ? 'text-[20px]' : 'text-[18px]'}`}>
         {conclusion}
       </p>
       {citations.length > 0 && (

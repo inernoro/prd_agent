@@ -974,7 +974,12 @@ export function RecordAudioSheet({
    * 文字是给眼睛看的，真正接事件的是盖在上面的原生 select——移动端仍然拉起系统选择器。
    */
   const destinationPicker = storeOptions.length > 0 ? (
-    <span className="relative inline-flex max-w-full items-center gap-1 rounded-[8px] px-1.5 py-0.5">
+    <span
+      className="relative inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-1"
+      // 稿面 cap-A1/A2 把这一行画成一枚白色药丸：它是一个可点的整体，
+      // 纯文字行看不出边界，用户不知道这里点得动
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+    >
       <BookText size={13} style={{ color: 'var(--accent-fg-success)' }} aria-hidden />
       {/* 库名不参与收缩：这一行真正要读的是「存到哪」，日期段可以先让 */}
       <span className="shrink-0 text-[12px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
@@ -1276,9 +1281,11 @@ export function RecordAudioSheet({
             overscrollBehavior: 'contain',
             // 折叠态贴底滚动，最上面那句会被卷掉半行。加一道渐隐让这道切口读成
             // 「上面还有」，而不是「这行字被裁坏了」——稿面那句淡灰的首行就是这个意思。
-            ...(liveTranscriptExpanded ? {} : {
-              WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, black 34px)',
-              maskImage: 'linear-gradient(to bottom, transparent 0, black 34px)',
+            // 只有真的卷上去了才渐隐：内容没超出时挂渐隐，第一行会莫名其妙比第二行浅，
+            // 同一句话读成两个颜色（R3 判分抓到的正是这个）。
+            ...(liveTranscriptExpanded || liveSentences.length <= 2 ? {} : {
+              WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, black 46px)',
+              maskImage: 'linear-gradient(to bottom, transparent 0, black 46px)',
             }),
           }}>
           {liveSentences.length === 0 ? (

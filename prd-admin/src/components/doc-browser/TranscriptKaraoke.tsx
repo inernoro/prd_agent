@@ -784,6 +784,8 @@ export function TranscriptKaraoke({
                 className="min-h-11 flex-shrink-0 rounded-[10px] px-3 text-[13px] font-semibold"
                 style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
               >
+                {/* 稿面 D1 这颗带一个向下箭头：它说的是「跳回正在播的那一句」，不是一个开关 */}
+                <ArrowDown size={13} className="mr-1 inline-block align-[-2px]" aria-hidden />
                 继续跟随
               </button>
             )}
@@ -1575,6 +1577,7 @@ export function TranscriptKaraoke({
                   answer={answer}
                   segments={timelineSegments}
                   onSeek={sec => seekRef.current?.(sec)}
+                  flat={isDesktop}
                 />
               </div>
               {qaError && <p className="mb-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
