@@ -9,3 +9,4 @@
 | fix | llmgw | 成员顺位的圆点与池级徽章口径统一：指不到上游的成员在列表响应里归一成「不可用」，不再出现「池标已中断、第 1 顺位却是绿点」 |
 | refactor | llmgw | 可解析成员判定收敛成一个入口（IsResolvablePoolMemberKey），删掉运行 gate 里抄的第二份，补守卫钉住只许有一份口径 |
 | docs | doc | debt.platform.llm-gateway 记两条待清理数据：三个全失效专用池、与托管默认池重复的对话主池 |
+| ops | llmgw | 清掉四个空壳模型池（ASR 豆包 BigModel / Stream、视频 Seedance 2.0 Fast、与托管默认池重复的对话主池），剩余 13 个池一类一个、全部网关权威 |
