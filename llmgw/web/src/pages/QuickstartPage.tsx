@@ -18,7 +18,7 @@ import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, ens
 import type { OrganizationData } from '@/lib/types';
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
-import { DetailsBlock, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { DetailsBlock, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
 import { invalidateOnboardingCache, markRequestCompleted } from '@/lib/onboarding';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
@@ -602,9 +602,11 @@ export function QuickstartPage() {
       <PageBody>
         {onCreateScreen ? (
           /*
-            创建屏：一张居中卡，只放三个决定——接什么、花多少、算谁的。
+            创建屏：一张铺满内容区的卡，只放三个决定——接什么、花多少、算谁的。
             其余全部是派生值或有正确默认值，收进「高级设置」，默认不展开
             （`minimal-user-input.md`：系统知道的值不该摆成输入框）。
+            主行动钉在卡片右下角：向导式的「下一步」位置，视线从左上读到右下就落在它上面，
+            不是窄窄一条居中卡下面再挂一个通栏按钮。
           */
           <div className="lg-qs-create">
             <Card style={CARD_BODY} className="lg-qs-create-card">
@@ -658,6 +660,7 @@ export function QuickstartPage() {
                     </div>
                   </div>
 
+                  <div className="lg-qs-decision-row">
                   <div className="lg-qs-decision">
                     <div className="lg-qs-decision-head"><strong>月预算</strong><small>留空即不限</small></div>
                     <div className="lg-qs-budget">
@@ -710,6 +713,7 @@ export function QuickstartPage() {
                       </div>
                     ) : null}
                   </div>
+                  </div>
 
                   <DetailsBlock title="高级设置（已有默认值）">
                     <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.section }}>
@@ -746,15 +750,17 @@ export function QuickstartPage() {
                   </DetailsBlock>
 
                   {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
+
+                  {canCreateAccess ? (
+                    <div className="lg-qs-create-footer">
+                      <Button variant="primary" className="lg-qs-primary" title={blockedByTeam ? '请先创建团队' : undefined} disabled={issueDisabled} onClick={() => void createAccessBundle()}>
+                        <KeyRound size={15} />创建密钥
+                      </Button>
+                    </div>
+                  ) : null}
                 </>
               )}
             </Card>
-
-            {phase === 'idle' && canCreateAccess ? (
-              <Button variant="primary" className="lg-qs-primary" title={blockedByTeam ? '请先创建团队' : undefined} disabled={issueDisabled} onClick={() => void createAccessBundle()}>
-                <KeyRound size={15} />创建密钥
-              </Button>
-            ) : null}
 
             <div className="lg-qs-footline">
               <DetailsBlock title="已经有密钥？看接入地址与现有密钥前缀">
@@ -775,7 +781,10 @@ export function QuickstartPage() {
           </div>
         ) : (
           /*
-            产物屏：创建卡收成一条细条，整屏让给「复制走就能用」的三样东西。
+            产物屏：创建卡收成一条细条，整屏让给「复制走就能用」的三样东西——
+            接入地址、一次性密钥、请求片段。这三样占据视觉重心，细条、试跑结果、
+            协议下拉、排障入口一律压成弱化的一行；整屏一次装下，页面不滚动
+            （片段本身太长时在它自己的框里滚，不推着整页走）。
             结果条与失败条共用顶部同一个槽位——成功也要留下 requestId，
             否则这次试跑没有任何可回查的凭据（`closed-loop-acceptance.md`）。
           */
@@ -817,24 +826,26 @@ export function QuickstartPage() {
             ) : null}
 
             {bundle ? (
-              <>
-                <Card style={CARD_BODY} className="lg-qs-secret-card">
-                  <div className="lg-qs-secret-head">
-                    <strong style={SECTION_TITLE}>一次性密钥</strong>
-                    <Chip label="只显示一次" color="var(--warn)" bg="var(--warn-bg)" />
-                    <small>离开或刷新即不可再取，没有「再看一次」。</small>
-                  </div>
-                  <code className="lg-qs-secret-code">{bundle.key}</code>
-                  <div className="lg-qs-secret-actions">
-                    <Button size="sm" onClick={() => void copyText('key', bundle.key)}>{copied === 'key' ? <Check size={14} /> : <Copy size={14} />}{copied === 'key' ? '已复制' : '复制密钥'}</Button>
-                    <small>只存在本页内存，不写浏览器存储；不要进仓库、截图或日志。</small>
-                  </div>
-                  <div className="lg-qs-product-row">
-                    <span>接入地址</span>
-                    <code>{`${displayBundle.baseUrl}${selectedProtocol.path}`}</code>
+              <div className="lg-qs-focus">
+                <div className="lg-qs-focus-side">
+                <Card style={CARD_BODY} className="lg-qs-hero">
+                  <div className="lg-qs-hero-head">
+                    <strong>接入地址</strong>
                     <Button size="sm" variant="ghost" onClick={() => void copyText('base-url', `${displayBundle.baseUrl}${selectedProtocol.path}`)}>{copied === 'base-url' ? <Check size={13} /> : <Copy size={13} />}{copied === 'base-url' ? '已复制' : '复制'}</Button>
                   </div>
+                  <code className="lg-qs-hero-value">{`${displayBundle.baseUrl}${selectedProtocol.path}`}</code>
                 </Card>
+
+                <Card style={CARD_BODY} className="lg-qs-hero is-secret">
+                  <div className="lg-qs-hero-head">
+                    <strong>一次性密钥</strong>
+                    <Chip label="只显示一次" color="var(--warn)" bg="var(--warn-bg)" />
+                    <Button size="sm" onClick={() => void copyText('key', bundle.key)}>{copied === 'key' ? <Check size={14} /> : <Copy size={14} />}{copied === 'key' ? '已复制' : '复制密钥'}</Button>
+                  </div>
+                  <code className="lg-qs-hero-value lg-qs-secret-code">{bundle.key}</code>
+                  <small className="lg-qs-hero-note">离开或刷新即不可再取；只存在本页内存，不要进仓库、截图或日志。</small>
+                </Card>
+                </div>
 
                 <Card style={CARD_BODY} className="lg-qs-snippet-card">
                   <div className="lg-qs-snippet-head">
@@ -856,15 +867,18 @@ export function QuickstartPage() {
                   {snippetTab === 'client' && hasClientTab ? (
                     <ClientQuickSetup bundle={displayBundle} copied={copied} onCopy={copyText} />
                   ) : (
-                    <div style={{ position: 'relative' }}>
-                      <pre style={preStyle}><code>{visibleSnippet}</code></pre>
+                    <div className="lg-qs-code-wrap">
+                      <pre style={preStyle} className="lg-qs-code"><code>{visibleSnippet}</code></pre>
                       <Button size="sm" style={{ position: 'absolute', top: 9, right: 9 }} onClick={() => void copyText(snippetTab, visibleSnippet)}>{copied === snippetTab ? <Check size={14} /> : <Copy size={14} />}{copied === snippetTab ? '已复制' : '复制'}</Button>
                     </div>
                   )}
-                  <Prose style={{ marginTop: GAP.normal }}>{snippetMode === 'safe' ? <>示例默认带 <code>X-Gateway-Dry-Run: quickstart</code>，不产生上游费用。</> : <>示例不带 dry-run，会真实调用模型。</>}</Prose>
+                  <small className="lg-qs-note">{snippetMode === 'safe' ? '示例默认带 X-Gateway-Dry-Run: quickstart，不产生上游费用。' : '示例不带 dry-run，会真实调用模型。'}</small>
                 </Card>
+                </div>
+            ) : null}
 
-                {/* 再测一次与真实路由排障不占第一屏：首次接入不需要，排障时再展开。 */}
+            {bundle ? (
+                /* 再测一次与真实路由排障不占重心：首次接入不需要，排障时再展开。 */
                 <DetailsBlock title="再测一次 / 真实路由与排障">
                   <div className="lg-safe-test-panel">
                     <div><Play size={17} /><span><strong>再测一次</strong><small>安全连通不访问上游；真实模型会计费。</small></span></div>
@@ -900,7 +914,6 @@ export function QuickstartPage() {
                       : <span style={BODY_TEXT}>提示词策略需由 Owner 或 Admin 配置。</span>}
                   </div>
                 </DetailsBlock>
-              </>
             ) : null}
           </div>
         )}

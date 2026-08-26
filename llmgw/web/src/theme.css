@@ -2862,20 +2862,47 @@ a:focus-visible {
 
 /* ── Quickstart：创建屏 / 产物屏两屏互斥 ─────────────────────────────
    改版前是左右常驻两栏，任何状态变化两栏一起重排，用户找不到重点。
-   现在没有密钥时整屏只有一张居中创建卡（三个决定 + 一个按钮），
-   签出来之后创建卡收成一条细条，整屏让给「复制走就能用」的产物。 */
+   现在没有密钥时整屏只有一张创建卡（三个决定 + 右下角一个主行动），
+   签出来之后创建卡收成一条细条，整屏让给「复制走就能用」的产物。
+   创建卡铺满内容区、不再是窄窄一条居中卡：三个决定横着摊开各自占位，
+   主行动钉在右下角（向导式的「下一步」位置），视线读到底就落在它上面。 */
 .lg-qs-create {
   width: 100%;
-  max-width: 640px;
-  margin: 0 auto;
+  max-width: 1080px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
+/* 月预算与负责人并排：两个都是「一句话就能定」的决定，各占半屏比上下堆更好扫。 */
+.lg-qs-decision-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 24px;
+  align-items: start;
+}
+
+/* 主行动区：说明句靠左、按钮靠右下，中间用一条分隔线与决定区断开。 */
+.lg-qs-create-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.lg-qs-create-footer > span {
+  margin-right: auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
 /* 卡片本身不带排版：块与块之间 24px 的呼吸感在这里给，别靠各块自己加 margin。 */
 .lg-qs-create-card,
-.lg-qs-secret-card,
+.lg-qs-hero,
 .lg-qs-snippet-card {
   display: flex;
   flex-direction: column;
@@ -2885,9 +2912,8 @@ a:focus-visible {
   gap: 24px;
 }
 
-.lg-qs-secret-card,
 .lg-qs-snippet-card {
-  gap: 16px;
+  gap: 12px;
 }
 
 .lg-qs-create-head {
@@ -2936,16 +2962,20 @@ a:focus-visible {
   margin-left: auto;
 }
 
+/* 接入方式：宽屏横铺三列，各自成卡；窄屏由下面的媒体查询退回竖排。 */
 .lg-qs-preset-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
 }
 
 .lg-qs-preset-list > button {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   align-items: center;
-  gap: 12px;
+  gap: 4px 10px;
   min-width: 0;
   padding: 14px 16px;
   border: 1px solid var(--border-subtle);
@@ -2968,18 +2998,21 @@ a:focus-visible {
 }
 
 .lg-qs-preset-list > button > strong {
-  flex: 0 0 auto;
-  font-size: var(--fs-body);
-  font-weight: 650;
-}
-
-.lg-qs-preset-list > button > span:last-child {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--fs-secondary);
+  font-size: var(--fs-body);
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 说明句换到第二行，跨两列：横铺之后每列变窄，跟在标题后面会被截成一截。 */
+.lg-qs-preset-list > button > span:last-child {
+  grid-column: 1 / -1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+  line-height: 1.5;
 }
 
 .lg-qs-radio {
@@ -3095,8 +3128,8 @@ a:focus-visible {
 }
 
 .lg-qs-primary {
-  width: 100%;
-  height: 48px;
+  height: 44px;
+  padding: 0 24px;
   justify-content: center;
   font-size: var(--fs-body);
   font-weight: 650;
@@ -3199,20 +3232,107 @@ a:focus-visible {
   font-family: var(--font-mono);
 }
 
-/* ── 产物屏 ───────────────────────────────────────────────────────── */
+/* ── 产物屏 ─────────────────────────────────────────────────────────
+   三样重点（接入地址 / 一次性密钥 / 请求片段）占满一屏的视觉重心，
+   细条、试跑结果、协议下拉、排障入口一律弱化成一行。整屏一次装下：
+   页面自己不滚，片段太长时在它**自己**的框里滚。 */
 .lg-qs-artifacts {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
+}
+
+/* 左窄右宽：地址与密钥都是短串，片段是长文本，给它更大的版面。 */
+.lg-qs-focus {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, 0.8fr) minmax(420px, 1.2fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.lg-qs-focus-side {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 重点卡：比周围的弱化行更亮一档，值用等宽大字，一眼能认出「这就是要复制的东西」。 */
+.lg-qs-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border-subtle));
+}
+
+.lg-qs-hero.is-secret {
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--border-subtle));
+}
+
+.lg-qs-hero-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lg-qs-hero-head > strong {
+  margin-right: auto;
+  color: var(--text-primary);
+  font-size: var(--fs-heading);
+  font-weight: var(--fw-strong, 650);
+}
+
+.lg-qs-hero-value {
+  display: block;
+  overflow-x: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  white-space: nowrap;
+}
+
+.lg-qs-hero-note {
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+  line-height: 1.5;
+}
+
+/* 片段卡撑满右栏；代码块吃掉剩余高度，自己滚，不推着整页走。 */
+.lg-qs-snippet-card {
+  min-height: 0;
+}
+
+.lg-qs-code-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.lg-qs-code {
+  flex: 1;
+  min-height: 0 !important;
+  margin: 0;
+  overflow: auto;
 }
 
 .lg-qs-ribbon {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
-  padding: 0 16px;
+  min-height: 36px;
+  padding: 0 14px;
   border: 1px solid color-mix(in srgb, var(--ok) 30%, var(--border-subtle));
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
@@ -3222,8 +3342,8 @@ a:focus-visible {
 .lg-qs-ribbon > span {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--fs-secondary);
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3386,10 +3506,37 @@ a:focus-visible {
   max-width: 320px;
 }
 
-/* 窄屏：负责人列表单列，片段头的协议下拉换行不再右对齐挤成一条缝。 */
+/* 中屏：产物屏两栏放不下时上下排，片段块给一个够读的固定高度。 */
+@media (max-width: 1100px) {
+  .lg-qs-focus {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-qs-artifacts,
+  .lg-qs-focus {
+    flex: none;
+    min-height: 0;
+  }
+
+  .lg-qs-code {
+    min-height: 240px !important;
+  }
+}
+
+/* 窄屏：三处横排退回单列，片段头的协议下拉换行不再右对齐挤成一条缝。 */
 @media (max-width: 760px) {
+  .lg-qs-preset-list,
+  .lg-qs-decision-row,
   .lg-qs-owner-list {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-qs-create-footer > span {
+    margin-right: 0;
+  }
+
+  .lg-qs-primary {
+    width: 100%;
   }
 
   .lg-qs-snippet-head > select {

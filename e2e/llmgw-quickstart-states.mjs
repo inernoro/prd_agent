@@ -156,6 +156,16 @@ check('创建屏只有一个主按钮', await page.locator('.lg-qs-primary').cou
 check('创建屏只有三个决定', await page.locator('.lg-qs-decision').count(), 3);
 check('创建屏不出现一次性密钥', await page.locator('.lg-qs-secret-code').count(), 0);
 check('创建屏不出现产物细条', await page.locator('.lg-qs-ribbon').count(), 0);
+// 主行动钉在卡片右下角（向导式的「下一步」位置）：通栏按钮或左对齐都会让这条红。
+check('主行动贴着创建卡右边缘', await page.evaluate(() => {
+  const btn = document.querySelector('.lg-qs-primary');
+  const card = document.querySelector('.lg-qs-create-card');
+  if (!btn || !card) return 'missing';
+  const b = btn.getBoundingClientRect();
+  const c = card.getBoundingClientRect();
+  if (b.width > c.width * 0.5) return 'full-width';
+  return Math.abs((c.right - b.right)) <= 40 ? 'right' : 'not-right';
+}), 'right');
 check('负责人默认是当前登录的人', (await page.locator('.lg-qs-owner-line strong').innerText()).trim(), '周越（你）');
 check('负责人默认不展开成员列表', await page.locator('.lg-qs-owner-list').count(), 0);
 
@@ -179,6 +189,16 @@ check('产物屏不再有表单决定块', await page.locator('.lg-qs-decision')
 check('产物屏出现签发细条', await page.locator('.lg-qs-ribbon').count(), 1);
 check('密钥明文可见', (await page.locator('.lg-qs-secret-code').innerText()).startsWith('gwk_'), true);
 check('同一时刻只渲染一份片段', await page.locator('.lg-qs-artifacts pre').count(), 1);
+check('三样重点各就各位（地址 + 密钥 + 片段）', [
+  await page.locator('.lg-qs-hero').count(),
+  await page.locator('.lg-qs-code').count(),
+], [2, 1]);
+// 产物屏必须一屏装下：内容区不许出现纵向滚动（片段太长时在它自己的框里滚）。
+check('产物屏 1440x900 不出现纵向滚动', await page.evaluate(() => {
+  const body = document.querySelector('.lg-page-body');
+  if (!body) return 'missing';
+  return body.scrollHeight <= body.clientHeight + 1 ? 'fits' : `overflow:${body.scrollHeight - body.clientHeight}`;
+}), 'fits');
 const okBox = await page.locator('.lg-test-result.is-ok').boundingBox();
 const artifactsBox = await page.locator('.lg-qs-artifacts').boundingBox();
 check('试跑结果块渲染出来了', Boolean(okBox), true);
