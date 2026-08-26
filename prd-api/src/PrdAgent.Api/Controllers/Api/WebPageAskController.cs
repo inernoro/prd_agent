@@ -168,7 +168,8 @@ public class WebPageAskController : ControllerBase
 
         // 四种「没生成出来」的下一步各不相同，压成一句「失败了」等于把已经知道的信息又丢了：
         // 没正文是重试也没用，模型不通是值得等一会儿再点，答得没法用是换正文或换模型。
-        var message = outcome switch
+        // 显式写成 string?：首个分支是 null，靠推断的话「最佳公共类型」在某些编译器版本上会失败
+        string? message = outcome switch
         {
             AskOpenerOutcome.Generated => null,
             AskOpenerOutcome.NoContent => "这一页读不出可提问的正文（比如纯视频、纯图的包装站），重试也不会有结果。",
