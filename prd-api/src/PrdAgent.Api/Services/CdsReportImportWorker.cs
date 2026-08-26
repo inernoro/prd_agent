@@ -23,8 +23,12 @@ namespace PrdAgent.Api.Services;
 /// 1. **只在权威部署上跑**。同一个 CDS 项目下所有分支预览共用一个 Mongo（见
 ///    cross-project-isolation 通道 4），每个分支预览也都跑着一份 MAP。不加这道闸的话，
 ///    N 个分支预览会同时对 CDS 发起导入、并往同一个共享库里写同一批文档——既是对 CDS
-///    的自我 DDoS，也让「谁写的」变得不可追。判据复用 <see cref="DeploymentAuthority"/>，
-///    不另造一份。
+///    的自我 DDoS，也让「谁写的」变得不可追。判据走
+///    <see cref="DeploymentAuthority.CanRunSharedScheduledWork"/>——**不是**
+///    `IsAuthoritativeDeployment`：后者按它自己的契约只管通知，且
+///    `ManageGlobalNotification=true` 是留给分支「临时接管全局告警行」的逃生阀。
+///    一个为了看告警而打开它的分支，不该顺带获得「对着共享库和 CDS 跑周期拉取」的权限
+///    （Codex review P2）。
 /// 2. **不新建知识库，只刷新已有的**。<c>ImportAsync</c> 会 find-or-create 一个属于某个用户的
 ///    镜像库；后台任务如果替所有用户建库，等于替人做主。所以这里只枚举**已经存在**的
 ///    <c>cds-reports</c> 库并刷新它们——第一次同步仍然由人手动触发，之后才由它保持新鲜。
@@ -64,7 +68,7 @@ public class CdsReportImportWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!DeploymentAuthority.IsAuthoritativeDeployment(_configuration))
+        if (!DeploymentAuthority.CanRunSharedScheduledWork(_configuration))
         {
             // 说清为什么不跑。一条没有理由的静默会让人以为任务坏了。
             _logger.LogInformation(
