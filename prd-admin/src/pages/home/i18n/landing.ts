@@ -816,6 +816,7 @@ const zh: TranslationShape = {
         { at: 4, text: '运行时已通过就绪探测' },
         { at: 4, text: '已生成不可变部署版本 dv_edaea72a' },
         { at: 4, text: '部署完成并通过验证' },
+        // at 的取值必须和 CdsScene 的 B 对齐：pull=1 / infra=2 / start=3 / ready=4
       ],
       previewLabel: '预览地址',
       previewShape: '<分支>-<项目>.<你自己的域名>',
@@ -831,7 +832,8 @@ const zh: TranslationShape = {
       gone: '还能只给这一条分支临时加一个服务：跑在本分支的网里、不进项目配置、不用全局审批，删分支即消失。',
       beats: [
         '你只做一件事：把分支推上去',
-        'CDS 收到推送 —— 拉代码，确认依赖的基础设施在',
+        'CDS 收到推送 —— 把这次的代码拉下来',
+        '确认这条分支依赖的基础设施都在',
         '按依赖分层构建、启动五个服务，端口各自分配',
         '就绪探测通过，生成不可变版本，域名下发 —— 可以打开了',
         '这就是「分支即环境」：这条分支独占的四样东西',
@@ -1374,7 +1376,8 @@ const en: TranslationShape = {
       gone: 'You can also attach a service to just this one branch: it runs on the branch network, never enters project config, needs no global approval, and disappears with the branch.',
       beats: [
         'You do exactly one thing: push the branch',
-        'CDS picks up the push — pulls the code, confirms the infrastructure is up',
+        'CDS picks up the push — pulls this revision',
+        'Confirms the infrastructure this branch depends on is up',
         'Builds and starts five services in dependency layers, ports allocated per branch',
         'Readiness probe passes, an immutable version is cut, the domain is issued — open it',
         'That is "a branch is an environment": four things this branch owns outright',

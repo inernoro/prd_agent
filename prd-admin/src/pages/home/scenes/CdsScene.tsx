@@ -17,11 +17,18 @@ import { useLanguage } from '../contexts/LanguageContext';
  *     某一次真实部署**（`cdscli deployment-run show` 拉的 message），不是编的
  *   - 底：这条分支独占什么（域名 / 容器 / 队列前缀 / 库）—— 这才是「分支即环境」
  *
- * 演五拍：push → 拉代码 → 分层构建 → 就绪 + 域名下发 → 摊开独占的四样东西。
+ * 演六拍：push → 拉代码 → 基础设施 → 分层启动 → 就绪 + 域名下发 → 摊开独占的四样东西。
  */
 
-const HOLDS = [1900, 2000, 2100, 2000, 3000];
-const B = { push: 0, pull: 1, build: 2, ready: 3, own: 4 } as const;
+/*
+ * 六拍。拆得比看上去多一拍是有原因的：日志分四组（拉取 / 基础设施 / 分层启动 /
+ * 就绪），旁白得逐组说。上一版把「基础设施」和「分层启动」并成一拍，于是
+ * 「就绪探测通过、域名下发」这句在第 3 拍就念了，而那三行日志要第 4 拍才打——
+ * 旁白说完了、日志还没到，域名却已经浮出来。
+ * i18n 里每条 log 的 at 必须对齐下面这张表。
+ */
+const HOLDS = [1800, 1600, 1600, 1800, 1900, 3000];
+const B = { push: 0, pull: 1, infra: 2, start: 3, ready: 4, own: 5 } as const;
 
 const pine = inkTone(SCENE_HUE.pine);
 const amber = inkTone(SCENE_HUE.amber);
