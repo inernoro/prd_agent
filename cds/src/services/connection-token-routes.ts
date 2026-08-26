@@ -75,6 +75,36 @@ export function connectionTokenRequiredScope(method: string, path: string): stri
   return null;
 }
 
+/**
+ * 「最近用过」这个时间戳，隔多久才值得往存储里写一次。
+ *
+ * 它只是给人看的「这把凭据还活着吗」，精确到分钟绰绰有余。而写它的代价不小：
+ * 每次更新都会把整份状态存一遍。
+ *
+ * 这在原来只有页面代理能用这把凭据时无所谓（那是人在操作，频率很低）。
+ * 报告只读放开之后完全不同：一个存了 200 份报告的库，每小时的自动刷新会发出
+ * 400 多个请求，每个都想更新一次这个时间戳——一次只读的定时任务就变成了
+ * 每小时几百次整份状态落盘（Codex review P2）。
+ */
+export const CONNECTION_USE_THROTTLE_MS = 5 * 60 * 1000;
+
+/**
+ * 这次请求要不要把「最近用过」写回去。
+ *
+ * @param lastUsedAt 存储里现有的值；空 / 认不出来的一律当成「从没记过」，写一次。
+ * @param nowIso 当前时间。
+ */
+export function shouldRecordConnectionUse(lastUsedAt: string | undefined | null, nowIso: string): boolean {
+  if (!lastUsedAt) return true;
+  const last = Date.parse(lastUsedAt);
+  const now = Date.parse(nowIso);
+  if (Number.isNaN(last) || Number.isNaN(now)) return true;
+  // 存的值比现在还新（改过系统时间、或多实例时钟不齐）——写一次把它拉回来，
+  // 否则一个未来的时间戳会让这里永远不再更新。
+  if (last > now) return true;
+  return now - last >= CONNECTION_USE_THROTTLE_MS;
+}
+
 /** 给排障与测试用：这把凭据当前能到达哪些东西，以及为什么。 */
 export function describeConnectionTokenRoutes(): readonly string[] {
   return RULES.map((r) => `${r.methods === '*' ? 'ANY' : r.methods.join('/')} → ${r.why}`);

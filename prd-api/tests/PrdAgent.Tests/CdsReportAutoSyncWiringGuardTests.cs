@@ -138,6 +138,25 @@ public class CdsReportAutoSyncWiringGuardTests
     }
 
     [Fact]
+    public void 一条脏元数据不许掀掉整轮()
+    {
+        var worker = ReadWorker();
+        var squashed = Squash(worker);
+
+        // 条目的 Metadata 可被通用的元数据更新接口写成任意 BSON（null、数字、嵌套文档）。
+        // 直接 AsString 会抛，而这段在逐份报告的 try/catch **之外**——一条脏数据就让
+        // 整轮所有库都不刷，且每小时准时复发（Codex review P2）。
+        var loop = Window(worker, "var mirrored = new List<CdsMirroredReport>();", "var targets = CdsReportSyncTargets.Build(");
+        Assert.DoesNotContain(".AsString", loop);
+        Assert.Contains("ReadMetaString(d, \"cdsReportId\")", loop);
+        Assert.Contains("ReadMetaString(d, \"cdsSourceBaseUrl\")", loop);
+
+        // 读取前先验类型，认不出来就当没有——只判非空是不够的，BsonNull 非空但 AsString 照抛。
+        Assert.Contains("if (meta == null || !meta.IsBsonDocument) return null;", squashed);
+        Assert.Contains("if (value == null || !value.IsString) return null;", squashed);
+    }
+
+    [Fact]
     public void 空跑一轮不许把镜像库顶到知识库列表最前面()
     {
         var source = ReadImportService();

@@ -136,12 +136,15 @@ public class CdsReportImportWorker : BackgroundService
             var mirrored = new List<CdsMirroredReport>();
             foreach (var d in docs)
             {
-                var meta = d.GetValue("Metadata", null)?.AsBsonDocument;
-                var reportId = meta?.GetValue("cdsReportId", null)?.AsString;
-                if (string.IsNullOrWhiteSpace(reportId)) continue;
-                // 老条目可能没记来源，交给判据退回库级兜底。
-                var entrySource = meta?.GetValue("cdsSourceBaseUrl", null)?.AsString;
-                mirrored.Add(new CdsMirroredReport(reportId!, entrySource));
+                // **一条脏数据不能掀掉整轮。** 这段在逐份报告的 try/catch **之外**，
+                // 所以这里抛一次异常，本轮所有库都不刷了，而且每小时准时再抛一次。
+                // 条目的 Metadata 是可以被通用的元数据更新接口写成任意 BSON 的
+                // （null、数字、嵌套文档都可能），直接 AsString 就会炸（Codex review P2）。
+                // 认不出来的就跳过这一条，别连累别人。
+                var reportId = ReadMetaString(d, "cdsReportId");
+                if (reportId == null) continue;
+                // 老条目可能没记来源，交给判据处理（留空，不拿库级来源顶替）。
+                mirrored.Add(new CdsMirroredReport(reportId, ReadMetaString(d, "cdsSourceBaseUrl")));
             }
             if (mirrored.Count == 0) continue;
             mirrors.Add(new CdsReportMirror(store, mirrored));
@@ -251,6 +254,24 @@ public class CdsReportImportWorker : BackgroundService
         _logger.LogInformation(
             "[CdsReportImportWorker] 本轮结束：刷了 {Ok} 份，失败 {Failed} 份，CDS 上已找不到 {Missing} 份",
             ok, failed, missing);
+    }
+
+    /// <summary>
+    /// 从投影出来的文档里读一个元数据字段，认不出来就当没有。
+    ///
+    /// 条目的 Metadata 可以被通用的元数据更新接口写成任意 BSON——null、数字、
+    /// 嵌套文档都可能。直接 `AsString` 会抛 <see cref="InvalidCastException"/>，
+    /// 而调用它的地方在逐份报告的 try/catch **之外**，一条脏数据就能让整轮同步
+    /// 全不刷，且每小时准时复发一次（Codex review P2）。
+    /// </summary>
+    private static string? ReadMetaString(BsonDocument doc, string key)
+    {
+        var meta = doc.GetValue("Metadata", null);
+        if (meta == null || !meta.IsBsonDocument) return null;
+        var value = meta.AsBsonDocument.GetValue(key, null);
+        if (value == null || !value.IsString) return null;
+        var text = value.AsString;
+        return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 
     /// <summary>

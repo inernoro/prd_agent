@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  CONNECTION_USE_THROTTLE_MS,
   connectionTokenRequiredScope,
   describeConnectionTokenRoutes,
+  shouldRecordConnectionUse,
 } from '../../src/services/connection-token-routes.js';
 
 /**
@@ -111,5 +113,53 @@ describe('接线', () => {
 
   it('scope 不再写死成字面量，跟着表走', () => {
     expect(serverSource).not.toContain("connection.scopes.includes('instance:read')");
+  });
+});
+
+/**
+ * 「最近用过」是给人看的存活指示，但每写一次就把整份状态存一遍。
+ * 报告只读放开之后，一轮自动刷新会打出几百个请求——不节流就是把一个只读的
+ * 定时任务变成每小时几百次整份落盘（Codex review P2）。
+ */
+describe('最近用过的节流写', () => {
+  const now = '2026-08-26T12:00:00.000Z';
+
+  it('从没记过就写一次', () => {
+    expect(shouldRecordConnectionUse(undefined, now)).toBe(true);
+    expect(shouldRecordConnectionUse(null, now)).toBe(true);
+    expect(shouldRecordConnectionUse('', now)).toBe(true);
+  });
+
+  it('刚写过就不再写——同一轮里的几百个请求只落一次盘', () => {
+    expect(shouldRecordConnectionUse('2026-08-26T11:59:59.000Z', now)).toBe(false);
+    expect(shouldRecordConnectionUse('2026-08-26T11:56:00.000Z', now)).toBe(false);
+  });
+
+  it('隔得够久了才写', () => {
+    expect(shouldRecordConnectionUse('2026-08-26T11:55:00.000Z', now)).toBe(true);
+    expect(shouldRecordConnectionUse('2026-08-26T10:00:00.000Z', now)).toBe(true);
+  });
+
+  it('认不出来的值当成没记过，不能让它把写入永久卡死', () => {
+    expect(shouldRecordConnectionUse('not-a-date', now)).toBe(true);
+  });
+
+  it('存了个未来时间也要能自愈', () => {
+    // 改过系统时间或多实例时钟不齐时会出现。判据写成「now - last >= 阈值」
+    // 而不处理这一支的话，一个未来时间戳会让它永远不再更新。
+    expect(shouldRecordConnectionUse('2026-08-27T00:00:00.000Z', now)).toBe(true);
+  });
+
+  it('阈值是分钟级，不是秒级也不是天级', () => {
+    expect(CONNECTION_USE_THROTTLE_MS).toBeGreaterThanOrEqual(60 * 1000);
+    expect(CONNECTION_USE_THROTTLE_MS).toBeLessThanOrEqual(60 * 60 * 1000);
+  });
+
+  it('鉴权入口真的走了节流，不是每次都写', () => {
+    const src = readFileSync(join(process.cwd(), 'src/server.ts'), 'utf8');
+    const squashed = src.split(/\s+/).join(' ');
+    expect(squashed).toContain(
+      'if (shouldRecordConnectionUse(connection.lastUsedAt, nowIso)) { stateService.updateCdsConnection(connection.id, { lastUsedAt: nowIso });',
+    );
   });
 });

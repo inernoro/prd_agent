@@ -12,7 +12,7 @@ import { createDeploymentVersionsRouter } from './routes/deployment-versions.js'
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
 import { ReplicaSetService } from './services/replica-set.js';
 import { isRemoteExecutorOwned } from './services/executor-ownership.js';
-import { connectionTokenRequiredScope } from './services/connection-token-routes.js';
+import { connectionTokenRequiredScope, shouldRecordConnectionUse } from './services/connection-token-routes.js';
 import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
@@ -1415,7 +1415,12 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
       const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
       const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
       if (connection && connection.scopes.includes(connectionScope)) {
-        stateService.updateCdsConnection(connection.id, { lastUsedAt: new Date().toISOString() });
+        // 「最近用过」节流写：每次更新都会把整份状态存一遍，而报告只读放开之后
+        // 一轮自动刷新会打出几百个请求。判据见 connection-token-routes.ts。
+        const nowIso = new Date().toISOString();
+        if (shouldRecordConnectionUse(connection.lastUsedAt, nowIso)) {
+          stateService.updateCdsConnection(connection.id, { lastUsedAt: nowIso });
+        }
         return {
           id: `cds-connection:${connection.id}`,
           agentName: `MAP (${connection.partnerName || connection.partnerId || connection.id})`,
