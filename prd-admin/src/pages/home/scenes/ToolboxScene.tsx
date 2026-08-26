@@ -6,16 +6,20 @@ import { useLanguage } from '../contexts/LanguageContext';
 import type { RosterItem } from '../i18n/landing';
 
 /**
- * RosterScene —— Agent 全家福：照百宝箱（`stores/toolboxStore.ts` 的 BUILTIN_TOOLS）画的台面。
+ * ToolboxScene —— 百宝箱，照 `pages/ai-toolbox/AiToolboxPage.tsx` 画的缩微版。
  *
- * 取代了原来的「六段 Agent 深潜」（5828px，占整页三分之一，且头两段和前面两幕
- * 讲的是同一个视觉/文学）+「十五位 Agent」网格。那两块合起来 7213px 说的事，
- * 一屏密排就说完了，而且说得更全：真实注册表里是三十几个，不是六个。
+ * 页面上有什么，这里就有什么：
+ *   - 权属 tab（全部 / 我的 / 别人的 / 收藏）    → 该页 CATEGORY_TABS
+ *   - 类型 tab（全部类型 / 智能体 / 工具）        → 该页 KIND_TABS
+ *   - 搜索框 placeholder「搜索工具名称、描述或标签...」→ 与该页逐字一致
+ *   - 计数 pill / 展示方式切换 / 最近使用条        → toolbox-count-pill、
+ *     toolbox-display-switch、toolbox-recent-strip
+ * 条目本身取自 `stores/toolboxStore.ts` 的 BUILTIN_TOOLS（含 wip 标记）。
  *
- * 名字、一句话、图标、预览标记全部取自那份注册表——不编。
+ * 上一版只画了「一个搜索框 + 一片卡片」——样式对，但系统里没有那个界面。
+ * 用户原话：「不够真实，首先得需要我们的真实页面」。
  *
- * 演一次搜索：输入「配图」→ 相关的浮上来、其余淡下去。这是这一幕的命题
- * （"想干什么就搜什么"），也是它和「一堆卡片摆在那儿」的区别。
+ * 演一次搜索：输入「配图」→ 相关的浮上来、其余淡下去。
  */
 
 const HOLDS = [1800, 1500, 2400, 1900];
@@ -47,6 +51,19 @@ const ICON_PATHS: Record<string, string> = {
 };
 const FALLBACK_ICON = 'M4 4h16v16H4z';
 
+/** 权属 / 类型 tab 的图标，对齐 AiToolboxPage 里 CATEGORY_TABS、KIND_TABS 的 lucide 选型。 */
+const TAB_ICONS = [
+  'M4 4h7v7H4zM13 13h7v7h-7zM13 4h7v7h-7zM4 13h7v7H4z',              // Boxes 全部
+  'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8M4 21a8 8 0 0 1 16 0',            // User 我的
+  'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18', // Globe2 别人的
+  'M12 3l2.6 5.6 6.1.8-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.4l6.1-.8z', // Star 收藏
+];
+const KIND_ICONS = [
+  'M4 4h7v7H4zM13 13h7v7h-7zM13 4h7v7h-7zM4 13h7v7H4z',               // Boxes 全部类型
+  'M9 3h6v3h3a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3zM9 12h.01M15 12h.01', // Bot 智能体
+  'M13 2L4 14h6l-1 8 9-12h-6z',                                        // Zap 工具
+];
+
 /** 搜到「配图」时该浮上来的条目 —— 判定放在一处，别让每个卡片各判各的。 */
 function matchesQuery(item: RosterItem, query: string): boolean {
   if (!query) return true;
@@ -54,11 +71,12 @@ function matchesQuery(item: RosterItem, query: string): boolean {
   return hay.includes(query.toLowerCase());
 }
 
-export function RosterScene() {
+export function ToolboxScene() {
   const { t } = useLanguage();
-  const s = t.tail.roster;
+  const s = t.tail.toolbox;
   const { beat, ref } = useSceneTimeline(HOLDS);
   const typed = useTypewriter(s.searchWord, beat === B.typing, 900);
+  const amber = inkTone(SCENE_HUE.amber);
 
   /** 打字那一拍跟着已输入的部分实时筛，筛完的两拍保持筛后状态 */
   const query = beat === B.typing ? typed : beat >= B.filtered ? s.searchWord : '';
@@ -70,7 +88,7 @@ export function RosterScene() {
 
   return (
     <SceneFrame
-      id="scene-roster"
+      id="scene-toolbox"
       hue={SCENE_HUE.amber}
       eyebrow={s.eyebrow}
       title={s.title}
@@ -79,37 +97,105 @@ export function RosterScene() {
       panelStyle={{ background: SCENE.base }}
     >
       <div ref={ref}>
-        {/* 台面顶部：搜索条 + 计数。搜索是这一幕的主角，摆在最上面 */}
+        {/* 控制条：权属 tab + 类型 tab + 搜索 + 计数 + 展示切换，照真实那一页的顺序摆 */}
         <div
-          className="relative flex items-center gap-2.5 flex-wrap"
-          style={{ padding: '13px 16px', borderBottom: `1px solid ${SCENE.hair}` }}
+          className="relative flex items-center gap-2 flex-wrap"
+          style={{ padding: '12px 16px', borderBottom: `1px solid ${SCENE.hair}` }}
         >
+          <div className="flex items-center gap-0.5 shrink-0" style={{ padding: '2px', borderRadius: '9px', background: SCENE.tile }}>
+            {s.tabs.map((tab, i) => (
+              <span
+                key={tab}
+                className="flex items-center gap-1.5"
+                style={{
+                  height: '26px', padding: '0 9px', borderRadius: '7px', fontSize: '11.5px',
+                  background: i === 0 ? SCENE.tileHi : 'transparent',
+                  color: i === 0 ? SCENE.ink : SCENE.inkFaint,
+                }}
+              >
+                <SceneIcon d={TAB_ICONS[i]} size={12} />
+                {tab}
+              </span>
+            ))}
+          </div>
+          <div className="hidden xl:flex items-center gap-0.5 shrink-0" style={{ padding: '2px', borderRadius: '9px', background: SCENE.tile }}>
+            {s.kindTabs.map((tab, i) => (
+              <span
+                key={tab}
+                className="flex items-center gap-1.5"
+                style={{
+                  height: '26px', padding: '0 9px', borderRadius: '7px', fontSize: '11.5px',
+                  background: i === 0 ? SCENE.tileHi : 'transparent',
+                  color: i === 0 ? SCENE.ink : SCENE.inkFaint,
+                }}
+              >
+                <SceneIcon d={KIND_ICONS[i]} size={12} />
+                {tab}
+              </span>
+            ))}
+          </div>
+
           <div
-            className="flex-1 min-w-[220px] flex items-center gap-2"
+            className="flex-1 min-w-[190px] flex items-center gap-2"
             style={{
-              height: '34px', padding: '0 11px', borderRadius: '9px',
+              height: '30px', padding: '0 10px', borderRadius: '9px',
               background: SCENE.tile,
-              border: `1px solid ${beat === B.typing ? inkTone(SCENE_HUE.amber).border : SCENE.edge}`,
-              fontSize: '12.5px',
-              color: query ? SCENE.ink : SCENE.inkFaint,
+              border: `1px solid ${beat === B.typing ? amber.border : SCENE.edge}`,
+              fontSize: '12px',
+              color: query ? SCENE.ink : SCENE.inkGhost,
               transition: 'border-color .35s ease',
             }}
           >
-            <SceneIcon d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12M21 21l-5.2-5.2" size={14} />
-            {query || s.searchPlaceholder}
+            <SceneIcon d="M11 17a6 6 0 1 0 0-12 6 6 0 0 0 0 12M21 21l-5.2-5.2" size={13} />
+            <span className="truncate">{query || s.searchPlaceholder}</span>
             {beat === B.typing && (
               <span
-                className="inline-block map-scene-anim"
-                style={{
-                  width: '2px', height: '13px', background: inkTone(SCENE_HUE.amber).solid,
-                  animation: 'mapSceneCaret 1s steps(1) infinite',
-                }}
+                className="inline-block map-scene-anim shrink-0"
+                style={{ width: '2px', height: '12px', background: amber.solid, animation: 'mapSceneCaret 1s steps(1) infinite' }}
               />
             )}
           </div>
-          <SceneMono size={14} color={SCENE.inkDim} style={{ whiteSpace: 'nowrap' }}>
-            {query ? `${hitCount} / ${total}` : `${total}`}
+
+          <SceneMono size={13} color={SCENE.inkDim} className="shrink-0" style={{ whiteSpace: 'nowrap' }}>
+            {query ? `${hitCount} / ${total}` : `${total} ${s.countSuffix}`}
           </SceneMono>
+
+          {/* 展示方式切换（网格 / 列表），真实那页在计数右边 */}
+          <div className="hidden sm:flex items-center gap-0.5 shrink-0" style={{ padding: '2px', borderRadius: '8px', background: SCENE.tile }}>
+            {['M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z', 'M4 6h16M4 12h16M4 18h16'].map((d, i) => (
+              <span
+                key={d}
+                className="flex items-center justify-center"
+                style={{
+                  width: '24px', height: '24px', borderRadius: '6px',
+                  background: i === 0 ? SCENE.tileHi : 'transparent',
+                  color: i === 0 ? SCENE.ink : SCENE.inkGhost,
+                }}
+              >
+                <SceneIcon d={d} size={12} />
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* 最近使用条 —— 真实那页在控制条与网格之间 */}
+        <div
+          className="relative flex items-center gap-2 flex-wrap"
+          style={{ padding: '9px 16px', borderBottom: `1px solid ${SCENE.hair}` }}
+        >
+          <SceneMono size={13} color={SCENE.inkGhost} className="shrink-0">{s.recentLabel}</SceneMono>
+          {s.recent.map((name) => (
+            <span
+              key={name}
+              style={{
+                height: '22px', padding: '0 9px', borderRadius: '999px', fontSize: '11px',
+                display: 'inline-flex', alignItems: 'center',
+                background: SCENE.tile, border: `1px solid ${SCENE.edge}`, color: SCENE.inkDim,
+              }}
+            >
+              {name}
+            </span>
+          ))}
         </div>
 
         {/* 四组密排。命中的抬起来，没命中的压下去——不是隐藏，是让位 */}

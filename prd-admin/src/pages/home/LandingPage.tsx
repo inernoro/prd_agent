@@ -7,7 +7,9 @@ import { MinimalFooter } from './sections/MinimalFooter';
 import { LiteraryScene } from './scenes/LiteraryScene';
 import { KnowledgeScene } from './scenes/KnowledgeScene';
 import { LayersScene } from './scenes/LayersScene';
-import { RosterScene } from './scenes/RosterScene';
+import { ToolboxScene } from './scenes/ToolboxScene';
+import { WorkflowScene } from './scenes/WorkflowScene';
+import { VocScene } from './scenes/VocScene';
 import { ModelLayerScene } from './scenes/ModelLayerScene';
 import { StartScene } from './scenes/StartScene';
 import { StaticBackdrop } from './components/StaticBackdrop';
@@ -17,23 +19,23 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
 /**
  * LandingPage — 米多 Agent 平台 /home
  *
- * 结构（八幕）：
+ * 结构（十幕）：
  *   1 · Hero（第一屏就是视觉创作工作台——本系统的核心，不是通用对话壳）
  *   2 · StatsStrip
- *   3 · LiteraryScene    ← 文学创作：左文右图，可切风格
- *   4 · KnowledgeScene   ← 知识库：三栏阅读器 + 划词浮层 + 知识星系
+ *   3 · LiteraryScene    ← 文学创作 `/literary-agent`：左文右图，可切风格
+ *   4 · KnowledgeScene   ← 知识库 `/document-store`：三栏阅读器 + 划词浮层 + 知识星系
  *   5 · LayersScene      ← 三层一体：MAP / LLMGW / CDS 各一块真实界面切片
- *   6 · RosterScene      ← Agent 全家福：百宝箱真实注册表，搜一下就筛
- *   7 · ModelLayerScene  ← 模型这一层：LLMGW 模型池，成员坏了自动换人
- *   8 · StartScene       ← 三步开始 + 三端 + 收口
- *   9 · MinimalFooter
+ *   6 · ToolboxScene     ← 百宝箱 `/ai-toolbox`：真实控制条 + 注册表，搜一下就筛
+ *   7 · WorkflowScene    ← 工作流 `/workflow-agent`：舱库 + 真实模板链，跑给你看
+ *   8 · VocScene         ← 体验地图 `/team-activity`：treemap，痛点自己跳出来
+ *   9 · ModelLayerScene  ← 模型池 LLMGW `/pools`：成员顺位，坏了自动顶上
+ *  10 · StartScene       ← 三步开始 + 三端 + 收口
+ *  11 · MinimalFooter
  *
- * 3~8 幕都在 `scenes/`，共用同一套语言：照真实产品面板复刻 + 节拍驱动 + 旁白。
- *
- * 尾部原有九幕（六段 Agent 深潜 / 工作流 / 片花 / 三步 / Agent 网格 / 兼容栈 /
- * 社区脉搏 / 桌面下载 / FinalCta）已由 6~8 幕取代。那九幕是另一套语言：抽象色块、
- * logo 墙、Coming soon 占位、硬编码假数据，和前面接不上；其中六段深潜的头两段
- * 讲的还是 1、3 两幕已经用真实面板讲过的视觉与文学。
+ * 3~9 幕共用同一条纪律：**每一幕都照一张真实存在的页面画缩微版**，页面路径写在
+ * 各自组件的头注释里。用户对上一版尾部的原话是「样式不错，但是不够真实，首先得
+ * 需要我们的真实页面」——所以 6~9 幕逐个换成了百宝箱、工作流、体验地图、模型池
+ * 这四张真页面，而不是自造的卡片墙与四列表。
  *
  * 背景：StaticBackdrop 纯 CSS 静态层。
  * 国际化：LanguageProvider 仅作用于本页（中 / EN 切换器在顶栏右上角）。
@@ -101,6 +103,7 @@ function LandingInner() {
   const navLinks = [
     { label: t.nav.products, href: '#literary' },
     { label: t.nav.agents, href: '#agents' },
+    { label: t.nav.workflow, href: '#workflow' },
     { label: t.nav.models, href: '#compat' },
     { label: t.nav.download, href: '#download' },
     { label: t.nav.docs, href: 'https://github.com/inernoro/prd_agent', external: true },
@@ -275,7 +278,15 @@ function LandingInner() {
       </div>
 
       <div id="agents" style={BELOW_FOLD_SECTION}>
-        <RosterScene />
+        <ToolboxScene />
+      </div>
+
+      <div id="workflow" style={BELOW_FOLD_SECTION}>
+        <WorkflowScene />
+      </div>
+
+      <div id="voc" style={BELOW_FOLD_SECTION}>
+        <VocScene />
       </div>
 
       <div id="compat" style={BELOW_FOLD_SECTION}>

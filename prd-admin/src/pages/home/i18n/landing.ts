@@ -174,40 +174,110 @@ export interface RosterItem {
   preview?: boolean;
 }
 
+/** 工作流舱的四种分类，与 `pages/workflow-agent/capsuleRegistry.tsx` 的 CapsuleCategory 同名。 */
+export type CapsuleKind = 'trigger' | 'processor' | 'control' | 'output';
+
+/** 体验地图的一块：面积按 weight 分，颜色按健康。与 ExperienceMapLeaf 的 status 同枚举。 */
+export interface VocLeaf {
+  label: string;
+  weight: number;
+  status: 'ok' | 'slow' | 'error';
+}
+
 /**
- * 尾部四幕：Agent 全家福 / 模型这一层 / 从这里开始 / 收口。
+ * 尾部五幕：百宝箱 / 工作流 / 体验地图 / 模型池 / 从这里开始。
  *
- * 取代了原来的九幕（六段 Agent 深潜、工作流、片花、三步、Agent 网格、
- * 兼容栈、社区脉搏、桌面下载）——那九幕是另一套语言：抽象色块、logo 墙、
- * Coming soon 占位、硬编码假数据，和前四幕的「照真实面板画」接不上。
+ * 每一幕都照一张**真实存在的页面**画缩微版，页面在哪写在各自组件的注释里。
+ * 上一版这几幕是「样式对、内容编」——卡片网格、自造的四列表，看着像产品截图
+ * 其实系统里没有那个界面。用户的原话是「不够真实，首先得需要我们的真实页面」。
  */
 export interface TailTranslation {
-  roster: {
+  /** 百宝箱，照 `/ai-toolbox`（AiToolboxPage）——权属 tab + 类型 tab + 搜索 + 计数 + 最近使用 + 网格 */
+  toolbox: {
     eyebrow: string;
     title: string;
     description: string;
     note: string;
+    /** 权属维度 tab，取自 AiToolboxPage 的 CATEGORY_TABS */
+    tabs: string[];
+    /** 功能类型 tab，取自同页的 KIND_TABS */
+    kindTabs: string[];
+    /** 真实 placeholder，与那一页逐字一致 */
     searchPlaceholder: string;
     /** 演到「搜一下」那一拍时，输入框里逐字打出来的词 */
     searchWord: string;
+    countSuffix: string;
+    recentLabel: string;
+    recent: string[];
     emptyHint: string;
     previewTag: string;
     beats: string[];
     groups: Array<{ label: string; items: RosterItem[] }>;
     footer: string;
   };
+  /** 工作流画布，照 `/workflow-agent/:id/canvas`——左舱库 + 画布上的舱链 + 执行态 */
+  workflow: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    /** 真实模板名，取自 workflowTemplates.ts */
+    templateName: string;
+    libraryLabel: string;
+    /** 舱库四类与真实舱数，取自 capsuleRegistry 的 CAPSULE_CATEGORIES */
+    categories: Array<{ label: string; kind: CapsuleKind; count: number }>;
+    runLabel: string;
+    runningLabel: string;
+    doneLabel: string;
+    waitingLabel: string;
+    runPanelLabel: string;
+    /** 执行日志的两条模板，措辞照 ExecutionDetailPanel 里真实打出来的那行 */
+    logStart: string;
+    logDone: string;
+    /** 这条链上的舱，逐个取自那份模板；secs/artifacts 喂给右侧执行日志 */
+    nodes: Array<{ name: string; kind: CapsuleKind; detail: string; secs: string; artifacts: number }>;
+    beats: string[];
+  };
+  /** 体验地图，照 `/team-activity` 的体验全景热力图（ExperienceMap 的 squarified treemap） */
+  voc: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    windowLabel: string;
+    legend: { ok: string; slow: string; error: string };
+    /** 分区名取自后端 ModuleLabels，块名取自 SegmentLabels */
+    groups: Array<{ label: string; leaves: VocLeaf[] }>;
+    painTitle: string;
+    pains: Array<{ label: string; metric: string; note: string; status: 'slow' | 'error' }>;
+    beats: string[];
+  };
+  /** 模型池，照 LLMGW 控制台的 `/pools` 列表——列名与 ModelPoolsPage 的表头逐字一致 */
   models: {
     eyebrow: string;
     title: string;
     description: string;
     note: string;
     counts: Array<{ value: string; label: string }>;
-    poolLabel: string;
-    poolName: string;
-    columns: { model: string; upstream: string; health: string; latency: string };
-    members: Array<{ model: string; upstream: string; health: 'ok' | 'half' | 'down'; latency: string }>;
-    healthLabels: { ok: string; half: string; down: string };
-    fallback: string;
+    windowText: string;
+    countSuffix: string;
+    columns: { status: string; pool: string; evidence: string; members: string; success: string; duration: string; requests: string };
+    statusLabels: { ok: string; watch: string };
+    /** 演出只动第一池：它的第二顺位成员挂掉、第三顺位顶上 */
+    pools: Array<{
+      name: string;
+      type: string;
+      evidence: string;
+      members: string[];
+      success: string;
+      successDegraded?: string;
+      duration: string;
+      requests: string;
+      /** 该池是否参与演出（挂人 → 顶上） */
+      acting?: boolean;
+    }>;
+    downTag: string;
+    promotedTag: string;
     beats: string[];
   };
   start: {
@@ -232,6 +302,7 @@ export interface TranslationShape {
   nav: {
     products: string;
     agents: string;
+    workflow: string;
     models: string;
     download: string;
     docs: string;
@@ -266,6 +337,7 @@ const zh: TranslationShape = {
   nav: {
     products: '产品',
     agents: 'Agent',
+    workflow: '工作流',
     models: '模型',
     download: '开始',
     docs: '文档',
@@ -514,14 +586,19 @@ const zh: TranslationShape = {
     },
   },
   tail: {
-    roster: {
-      eyebrow: '百宝箱 · 一个台面装下所有人',
+    toolbox: {
+      eyebrow: '百宝箱 · /ai-toolbox',
       title: '不是六个 Agent，是三十几个，都在同一个台面上',
       description:
-        '这些不是宣传口径，是登录后百宝箱里真实在跑的条目。名字、一句话、图标都取自同一份注册表——加一个新 Agent，这里自动多一个。',
+        '这就是登录后「百宝箱」那一页：权属、类型、搜索、最近使用，一个不少。名字、一句话、图标都取自同一份注册表——加一个新 Agent，这里自动多一个。',
       note: '带「预览」标的是还没通过完整验收的，摆在这里而不是藏起来：能用到什么程度就说到什么程度。',
-      searchPlaceholder: '想干什么就搜什么…',
+      tabs: ['全部', '我的', '别人的', '收藏'],
+      kindTabs: ['全部类型', '智能体', '工具'],
+      searchPlaceholder: '搜索工具名称、描述或标签...',
       searchWord: '配图',
+      countSuffix: '个工具',
+      recentLabel: '最近使用',
+      recent: ['视觉创作智能体', '周报智能体', 'CDS Agent'],
       emptyHint: '搜「配图」，跟配图相关的都浮上来',
       previewTag: '预览',
       beats: [
@@ -570,33 +647,140 @@ const zh: TranslationShape = {
       ],
       footer: '这里列了 16 个，注册表里还有十几个——搜索框比翻页快。',
     },
+    workflow: {
+      eyebrow: '工作流 · /workflow-agent',
+      title: '把这些 Agent 串成一条自己跑的流水线',
+      description:
+        '画布上一个「舱」就是一步。三十几种舱分触发、处理、流程控制、输出四类，连起来就是一条能定时跑、能被 Webhook 叫醒的流水线。下面这条是模板库里现成的一条。',
+      note: '每个舱单独可测：不必跑完整条链，点一下就能只试这一步，拿到真实输入输出再往下接。',
+      templateName: 'TAPD 缺陷采集与分析',
+      libraryLabel: '舱库',
+      categories: [
+        { label: '触发', kind: 'trigger', count: 5 },
+        { label: '处理', kind: 'processor', count: 19 },
+        { label: '流程控制', kind: 'control', count: 2 },
+        { label: '输出', kind: 'output', count: 7 },
+      ],
+      runLabel: '运行',
+      runningLabel: '运行中...',
+      doneLabel: '完成',
+      waitingLabel: '等待',
+      runPanelLabel: '本次执行',
+      logStart: '开始执行',
+      logDone: '完成 ({d})，产出 {n} 个产物',
+      nodes: [
+        { name: '手动触发', kind: 'trigger', detail: '点一下就跑，也可以换成定时器或 Webhook', secs: '0.1s', artifacts: 1 },
+        { name: 'TAPD 数据采集', kind: 'processor', detail: '按项目与时间窗拉缺陷', secs: '4.7s', artifacts: 1 },
+        { name: '缺陷统计报告生成', kind: 'processor', detail: 'JS 脚本，确定性统计', secs: '0.3s', artifacts: 1 },
+        { name: 'HTML 网页渲染', kind: 'processor', detail: '确定性排版，不让模型画版式', secs: '0.2s', artifacts: 1 },
+        { name: '导出 HTML 网页', kind: 'output', detail: '产物落成可分享的文件', secs: '0.6s', artifacts: 1 },
+        { name: '完成通知', kind: 'output', detail: '站内通知，带产物直达链接', secs: '0.2s', artifacts: 1 },
+      ],
+      beats: [
+        '一条现成的流水线：六个舱，从触发到通知',
+        '点运行 —— 逐舱往下走，每一步的产物喂给下一步',
+        '统计与排版都走确定性脚本，模型只在需要判断的那一步进来',
+        '跑完了：产物导出、通知发出，全程没人守着',
+      ],
+    },
+    voc: {
+      eyebrow: '体验地图 · /team-activity',
+      title: '整个系统哪里在被用、哪里在硌人，摊成一张图',
+      description:
+        '每一块是一个接口，面积是被调用的次数，颜色是健康。绝大多数时候它是一片安静的冷色海；报错和变慢会自己从平静里跳出来，点一下直接下钻到那条痛点。',
+      note: '数据来自真实的请求日志，不是埋点问卷——没人填表，图自己就画出来了。',
+      windowLabel: '近 7 天 · 共 41.2 万次请求',
+      legend: { ok: '正常', slow: '偏慢', error: '报错' },
+      groups: [
+        {
+          label: '视觉创作',
+          leaves: [
+            { label: '工作区', weight: 30, status: 'ok' },
+            { label: '生成', weight: 22, status: 'ok' },
+            { label: '附件上传', weight: 14, status: 'slow' },
+            { label: '预览', weight: 9, status: 'ok' },
+            { label: '收藏', weight: 5, status: 'ok' },
+          ],
+        },
+        {
+          label: '知识库',
+          leaves: [
+            { label: '条目', weight: 20, status: 'ok' },
+            { label: '空间', weight: 12, status: 'ok' },
+            { label: '行内评论', weight: 7, status: 'ok' },
+            { label: '发布', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: '缺陷管理',
+          leaves: [
+            { label: '列表', weight: 16, status: 'ok' },
+            { label: '详情', weight: 9, status: 'ok' },
+            { label: '批量导出', weight: 6, status: 'error' },
+          ],
+        },
+        {
+          label: '周报管理',
+          leaves: [
+            { label: '本周', weight: 11, status: 'ok' },
+            { label: '汇总', weight: 6, status: 'ok' },
+          ],
+        },
+        {
+          label: 'LLM 网关',
+          leaves: [
+            { label: '流式', weight: 13, status: 'ok' },
+            { label: '模型池', weight: 5, status: 'ok' },
+          ],
+        },
+      ],
+      painTitle: '痛点榜',
+      pains: [
+        { label: '缺陷管理 · 批量导出', metric: '报错 4.7%', note: '超过 500 条时网关超时，环比突增 3.1 倍', status: 'error' },
+        { label: '视觉创作 · 附件上传', metric: 'P95 6.2s', note: '大图直传没走分片，移动端尤其慢', status: 'slow' },
+      ],
+      beats: [
+        '扫一遍：每块一个接口，面积就是它被用了多少',
+        '大部分是安静的冷色 —— 这一片没人喊疼',
+        '两块跳出来了：一块在报错，一块在变慢',
+        '点进去，直接落到痛点榜对应那一行',
+      ],
+    },
     models: {
-      eyebrow: 'LLMGW · 模型这一层',
+      eyebrow: 'LLMGW · /pools',
       title: '一套配置连上所有模型，坏了自动换下一个',
       description:
-        '不是一排 logo。真实的样子是模型池：谁能用哪个模型、按任务怎么选、某一个挂了换谁接上——这一层在网关里，业务代码看不见。',
+        '不是一排 logo。网关控制台里真实的那张表：每一行是一个模型池，池里成员按顺位排队，谁挂了后面的自动顶上——业务代码只认池名，看不见这些。',
       note: '池内成员换人由网关决定，跨池代选默认禁止；单个成员坏了只更新它自己的健康，不会把整个目录清空。',
       counts: [
         { value: '3', label: '接入平台' },
         { value: '17', label: '可调用模型' },
         { value: '6', label: '模型池' },
       ],
-      poolLabel: '当前模型池',
-      poolName: 'chat-default',
-      columns: { model: '成员', upstream: '上游', health: '健康', latency: '首字延迟' },
-      members: [
-        { model: 'Claude 4.6', upstream: 'OpenRouter', health: 'ok', latency: '0.9s' },
-        { model: 'GPT-5', upstream: 'OpenAI', health: 'ok', latency: '1.2s' },
-        { model: 'DeepSeek V3', upstream: '硅基流动', health: 'half', latency: '2.4s' },
-        { model: 'Qwen 3', upstream: '阿里云', health: 'ok', latency: '1.1s' },
-        { model: 'Kimi K2', upstream: 'Moonshot', health: 'down', latency: '1.4s' },
+      windowText: '近 24h',
+      countSuffix: '个池',
+      columns: {
+        status: '状态', pool: '池 / 类型', evidence: '证据', members: '成员顺位',
+        success: '成功率', duration: '平均耗时', requests: '请求',
+      },
+      statusLabels: { ok: '正常', watch: '观察' },
+      pools: [
+        {
+          name: 'chat-default', type: '对话', evidence: '真实请求',
+          members: ['Claude 4.6', 'Kimi K2', 'GPT-5'],
+          success: '99.4%', successDegraded: '96.1%', duration: '1.1s', requests: '18.3k',
+          acting: true,
+        },
+        { name: 'vision-main', type: '视觉', evidence: '真实请求', members: ['GPT-5', 'Qwen3-VL'], success: '99.8%', duration: '2.3s', requests: '4.1k' },
+        { name: 'image-gen', type: '生图', evidence: '真实请求', members: ['Seedream 4', 'FLUX.1'], success: '98.9%', duration: '9.7s', requests: '2.6k' },
+        { name: 'intent-fast', type: '意图', evidence: '真实请求', members: ['Qwen3-Turbo', 'DeepSeek V3'], success: '99.9%', duration: '0.4s', requests: '31.7k' },
       ],
-      healthLabels: { ok: '正常', half: '半开', down: '隔离' },
-      fallback: 'Kimi K2 已隔离 · 这一池的请求自动落到 Claude 4.6，调用方无感',
+      downTag: '已隔离',
+      promotedTag: '顶上',
       beats: [
-        '一池五个成员，各自的上游与延迟摆在这儿',
-        'DeepSeek V3 转半开 · 用受限的真实请求探它，不发合成探测',
-        'Kimi K2 隔离 · 请求自动落到下一个，调用方无感',
+        '六个池，每池成员按顺位排队 —— 第一顺位优先，往后依次兜底',
+        'chat-default 的第二顺位挂了：成功率掉到 96.1%，池转「观察」',
+        '第三顺位自动顶上，成功率回到 99.4% —— 调用方全程没改一行代码',
       ],
     },
     start: {
@@ -638,6 +822,7 @@ const en: TranslationShape = {
   nav: {
     products: 'Product',
     agents: 'Agents',
+    workflow: 'Workflows',
     models: 'Models',
     download: 'Start',
     docs: 'Docs',
@@ -886,14 +1071,19 @@ const en: TranslationShape = {
     },
   },
   tail: {
-    roster: {
-      eyebrow: 'Toolbox · one desk holds all of them',
+    toolbox: {
+      eyebrow: 'Toolbox · /ai-toolbox',
       title: 'Not six agents. Thirty-odd, all on the same desk',
       description:
-        'These are not marketing copy — they are the entries actually running in the toolbox after you log in. Names, one-liners and icons all come from the same registry: add an agent and one more appears here.',
+        'This is the Toolbox page you land on after logging in — ownership tabs, kind tabs, search, count, recents, all of it. Names, one-liners and icons come from the same registry: add an agent and one more appears here.',
       note: 'The ones tagged Preview have not passed full acceptance yet. They sit here rather than being hidden: we say exactly how far each one goes.',
-      searchPlaceholder: 'Search for whatever you need to do…',
+      tabs: ['All', 'Mine', 'Shared', 'Starred'],
+      kindTabs: ['All kinds', 'Agents', 'Tools'],
+      searchPlaceholder: 'Search by name, description or tag...',
       searchWord: 'illustrate',
+      countSuffix: 'tools',
+      recentLabel: 'Recent',
+      recent: ['Visual agent', 'Weekly report agent', 'CDS agent'],
       emptyHint: 'Search "illustrate" and everything related floats up',
       previewTag: 'Preview',
       beats: [
@@ -942,33 +1132,140 @@ const en: TranslationShape = {
       ],
       footer: 'Sixteen shown here; the registry holds a dozen more — search beats paging.',
     },
+    workflow: {
+      eyebrow: 'Workflows · /workflow-agent',
+      title: 'Chain those agents into a pipeline that runs itself',
+      description:
+        'One "capsule" on the canvas is one step. Thirty-odd capsule types split across trigger, process, control and output — wire them up and you have a pipeline that can run on a timer or wake on a webhook. Below is one straight from the template library.',
+      note: 'Every capsule is testable on its own: no need to run the whole chain — fire one step, see its real input and output, then wire the next.',
+      templateName: 'TAPD defect collection and analysis',
+      libraryLabel: 'Capsules',
+      categories: [
+        { label: 'Trigger', kind: 'trigger', count: 5 },
+        { label: 'Process', kind: 'processor', count: 19 },
+        { label: 'Control', kind: 'control', count: 2 },
+        { label: 'Output', kind: 'output', count: 7 },
+      ],
+      runLabel: 'Run',
+      runningLabel: 'Running...',
+      doneLabel: 'Done',
+      waitingLabel: 'Waiting',
+      runPanelLabel: 'This run',
+      logStart: 'Started',
+      logDone: 'Done ({d}), {n} artifact(s)',
+      nodes: [
+        { name: 'Manual trigger', kind: 'trigger', detail: 'Click to run; swap for a timer or webhook any time', secs: '0.1s', artifacts: 1 },
+        { name: 'TAPD collector', kind: 'processor', detail: 'Pulls defects by project and time window', secs: '4.7s', artifacts: 1 },
+        { name: 'Defect stats report', kind: 'processor', detail: 'JS script, deterministic aggregation', secs: '0.3s', artifacts: 1 },
+        { name: 'HTML render', kind: 'processor', detail: 'Deterministic layout — the model never draws the page', secs: '0.2s', artifacts: 1 },
+        { name: 'Export HTML', kind: 'output', detail: 'The artifact becomes a shareable file', secs: '0.6s', artifacts: 1 },
+        { name: 'Completion notice', kind: 'output', detail: 'In-app notice with a direct link to the artifact', secs: '0.2s', artifacts: 1 },
+      ],
+      beats: [
+        'One ready-made pipeline: six capsules, trigger to notice',
+        'Hit Run — each capsule hands its artifact to the next',
+        'Stats and layout are deterministic scripts; the model only enters where judgement is needed',
+        'Done: artifact exported, notice sent, nobody watching',
+      ],
+    },
+    voc: {
+      eyebrow: 'Experience map · /team-activity',
+      title: 'Where the system gets used, and where it hurts — on one map',
+      description:
+        'Every block is one endpoint, its area is how often it was called, its colour is health. Most of the time this is a quiet cold-coloured sea; errors and slowdowns push themselves out of the calm, and one click drills into that pain point.',
+      note: 'This comes from real request logs, not a survey — nobody fills anything in, the map draws itself.',
+      windowLabel: 'Last 7 days · 412k requests',
+      legend: { ok: 'Healthy', slow: 'Slow', error: 'Errors' },
+      groups: [
+        {
+          label: 'Visual',
+          leaves: [
+            { label: 'Workspace', weight: 30, status: 'ok' },
+            { label: 'Generate', weight: 22, status: 'ok' },
+            { label: 'Upload', weight: 14, status: 'slow' },
+            { label: 'Preview', weight: 9, status: 'ok' },
+            { label: 'Favorites', weight: 5, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Knowledge',
+          leaves: [
+            { label: 'Entries', weight: 20, status: 'ok' },
+            { label: 'Spaces', weight: 12, status: 'ok' },
+            { label: 'Comments', weight: 7, status: 'ok' },
+            { label: 'Publish', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Defects',
+          leaves: [
+            { label: 'List', weight: 16, status: 'ok' },
+            { label: 'Detail', weight: 9, status: 'ok' },
+            { label: 'Bulk export', weight: 6, status: 'error' },
+          ],
+        },
+        {
+          label: 'Weekly',
+          leaves: [
+            { label: 'This week', weight: 11, status: 'ok' },
+            { label: 'Roll-up', weight: 6, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Gateway',
+          leaves: [
+            { label: 'Stream', weight: 13, status: 'ok' },
+            { label: 'Pools', weight: 5, status: 'ok' },
+          ],
+        },
+      ],
+      painTitle: 'Pain points',
+      pains: [
+        { label: 'Defects · Bulk export', metric: '4.7% errors', note: 'Gateway times out past 500 rows, 3.1× week over week', status: 'error' },
+        { label: 'Visual · Upload', metric: 'P95 6.2s', note: 'Large images skip chunking — worst on mobile', status: 'slow' },
+      ],
+      beats: [
+        'One sweep: each block an endpoint, its area how much it gets used',
+        'Most of it is quiet cold colour — nothing hurting over here',
+        'Two blocks push out: one throwing errors, one going slow',
+        'Click through and you land on that row in the pain list',
+      ],
+    },
     models: {
-      eyebrow: 'LLMGW · the model layer',
+      eyebrow: 'LLMGW · /pools',
       title: 'One config reaches every model, and failover is automatic',
       description:
-        'Not a row of logos. The real shape is a model pool: who may use which model, how one is picked per task, and who takes over when one breaks — that layer lives in the gateway, invisible to product code.',
+        'Not a row of logos. This is the real table in the gateway console: one row per model pool, members queued by priority, and whoever is next takes over when one breaks — product code only ever names the pool.',
       note: 'Swapping members inside a pool is the gateway’s call; picking across pools is off by default. One member failing updates only its own health — it never wipes the catalogue.',
       counts: [
         { value: '3', label: 'Providers' },
         { value: '17', label: 'Callable models' },
         { value: '6', label: 'Pools' },
       ],
-      poolLabel: 'Current pool',
-      poolName: 'chat-default',
-      columns: { model: 'Member', upstream: 'Upstream', health: 'Health', latency: 'First byte' },
-      members: [
-        { model: 'Claude 4.6', upstream: 'OpenRouter', health: 'ok', latency: '0.9s' },
-        { model: 'GPT-5', upstream: 'OpenAI', health: 'ok', latency: '1.2s' },
-        { model: 'DeepSeek V3', upstream: 'SiliconFlow', health: 'half', latency: '2.4s' },
-        { model: 'Qwen 3', upstream: 'Aliyun', health: 'ok', latency: '1.1s' },
-        { model: 'Kimi K2', upstream: 'Moonshot', health: 'down', latency: '1.4s' },
+      windowText: '24h',
+      countSuffix: 'pools',
+      columns: {
+        status: 'State', pool: 'Pool / type', evidence: 'Evidence', members: 'Member order',
+        success: 'Success', duration: 'Avg', requests: 'Requests',
+      },
+      statusLabels: { ok: 'Healthy', watch: 'Watching' },
+      pools: [
+        {
+          name: 'chat-default', type: 'Chat', evidence: 'Real traffic',
+          members: ['Claude 4.6', 'Kimi K2', 'GPT-5'],
+          success: '99.4%', successDegraded: '96.1%', duration: '1.1s', requests: '18.3k',
+          acting: true,
+        },
+        { name: 'vision-main', type: 'Vision', evidence: 'Real traffic', members: ['GPT-5', 'Qwen3-VL'], success: '99.8%', duration: '2.3s', requests: '4.1k' },
+        { name: 'image-gen', type: 'Image', evidence: 'Real traffic', members: ['Seedream 4', 'FLUX.1'], success: '98.9%', duration: '9.7s', requests: '2.6k' },
+        { name: 'intent-fast', type: 'Intent', evidence: 'Real traffic', members: ['Qwen3-Turbo', 'DeepSeek V3'], success: '99.9%', duration: '0.4s', requests: '31.7k' },
       ],
-      healthLabels: { ok: 'Healthy', half: 'Half-open', down: 'Isolated' },
-      fallback: 'Kimi K2 isolated · this pool now falls to Claude 4.6, and callers never notice',
+      downTag: 'Isolated',
+      promotedTag: 'Took over',
       beats: [
-        'Five members in one pool, each with its upstream and latency',
-        'DeepSeek V3 goes half-open · probed with real, limited traffic — never synthetic calls',
-        'Kimi K2 isolated · requests fall to the next member, callers never notice',
+        'Six pools, members queued by priority — first choice, then the fallbacks in order',
+        'chat-default loses its second: success drops to 96.1%, the pool goes to Watching',
+        'The third takes over, success back to 99.4% — callers never changed a line',
       ],
     },
     start: {
