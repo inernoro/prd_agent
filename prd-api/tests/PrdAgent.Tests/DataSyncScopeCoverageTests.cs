@@ -873,6 +873,12 @@ public class DataSyncScopeCoverageTests
         Assert.True(offenders.Count == 0, $"这些地方建附件时没有存下对象 key：{string.Join("、", offenders.Distinct())}");
     }
 
+    /// <summary>
+    /// 给同目录的其它守卫用。原来是 private，第二个守卫要用就得复制一份找根目录的逻辑，
+    /// 而那是最典型的「判据分裂后各自漂移」。
+    /// </summary>
+    internal static string LocateSrcRootForTests() => LocateSrcRoot();
+
     private static string LocateSrcRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

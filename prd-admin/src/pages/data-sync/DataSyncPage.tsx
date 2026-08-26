@@ -388,7 +388,9 @@ export default function DataSyncPage() {
     setError('');
     const res = await apiRequest<{ runId: string }>(
       `/api/instance-sync/runs/${encodeURIComponent(runId)}/promote`,
-      { method: 'POST', body: { overwrite } },
+      // 送**冻结的那个值**，不是页面上当前的勾选状态：转正执行的必须是刚才
+      // 预览过的那一份。后端也会拒不一致的请求，这里对齐是为了别让用户撞那个错。
+      { method: 'POST', body: { overwrite: run?.overwriteExisting ?? false } },
     );
     setBusy(false);
     if (!res.success) {
@@ -457,8 +459,6 @@ export default function DataSyncPage() {
           <ProgressCard
             run={run}
             totals={totals}
-            overwrite={overwrite}
-            onOverwriteChange={setOverwrite}
             busy={busy}
             onPromote={promote}
             onBack={() => setSearchParams({})}
@@ -893,8 +893,6 @@ function PlanCard({
 function ProgressCard({
   run,
   totals,
-  overwrite,
-  onOverwriteChange,
   busy,
   onPromote,
   onBack,
@@ -904,8 +902,6 @@ function ProgressCard({
     fetched: number; inserted: number; skipped: number; updated: number;
     plannedInsert: number; plannedUpdate: number; total: number; doneCount: number;
   };
-  overwrite: boolean;
-  onOverwriteChange: (next: boolean) => void;
   busy: boolean;
   onPromote: () => void;
   onBack: () => void;
@@ -1090,15 +1086,21 @@ function ProgressCard({
             真的搬会重新去源站拉一遍这些集合。刚才到现在源站要是改过某条记录，搬过来的就是改之后的值，
             上面那些条数也可能对不上。要求两边完全一致的话，请确认这段时间源站没人在写。
           </p>
-          <label className="mt-3 flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
-            <input
-              type="checkbox"
-              checked={overwrite}
-              disabled={busy}
-              onChange={(e) => onOverwriteChange(e.target.checked)}
-            />
-            本地已有的同一条记录也用源站的覆盖掉（不勾就跳过，只补新的）
-          </label>
+          {/*
+            **这里不再给可改的勾选框。** 上面那些「预计新增 / 预计更新」和跳过数，
+            全是按试跑那次的策略算出来的。转正时换成覆盖，那批「本来会跳过」的记录
+            会被真的写掉，而这些写入一次都没被预览过——「确认无误再搬」就落了空
+            （Codex review P1）。所以这里只把冻结的那个策略读出来，要改就重新试跑。
+          */}
+          <p className="mt-3 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            这次会沿用试跑时的策略：
+            <span style={{ color: 'var(--text-primary)' }}>
+              {run.overwriteExisting
+                ? '本地已有的同一条记录，用源站的覆盖掉'
+                : '本地已有的同一条记录跳过，只补新的'}
+            </span>
+            。上面的预计条数就是按它算的；要换策略，请带着新策略重新试跑一次，看过新的对照表再来。
+          </p>
           <button
             type="button"
             onClick={onPromote}
