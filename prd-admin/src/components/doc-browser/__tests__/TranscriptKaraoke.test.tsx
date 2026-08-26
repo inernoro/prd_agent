@@ -46,7 +46,7 @@ describe('TranscriptKaraoke unified playback', () => {
     expect(html).toContain('词云');
     expect(html).toContain('会议纪要');
     expect(html).toContain('待办事项');
-    expect(html).toContain('问这段录音');
+    expect(html).toContain('问这场录音');
     expect(html).not.toContain('role="tab"');
     // 断言的是「有一个搜关键词的输入口」，不是它此刻的 placeholder 原文——
     // 稿面把它排在原文列表上方（B1），文案随之从「搜索录音里的关键词」变成

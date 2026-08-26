@@ -243,7 +243,7 @@ for (const theme of ['light', 'dark']) {
         await page.getByLabel('发送问题').first().click();
         await page.getByText('引用原文').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
         await page.waitForTimeout(600);
-        await page.getByRole('heading', { name: '问这段录音' }).first()
+        await page.getByRole('heading', { name: '问这场录音' }).first()
           .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
         await page.waitForTimeout(300);
         const f = `${OUT}/${shot.id}.${theme}.问答已作答.png`;
@@ -276,7 +276,7 @@ for (const theme of ['light', 'dark']) {
         await page.getByLabel('发送问题').first().click();
         await page.getByText('上一问').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
         await page.waitForTimeout(600);
-        await page.getByRole('heading', { name: '问这段录音' }).first()
+        await page.getByRole('heading', { name: '问这场录音' }).first()
           .evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
         await page.waitForTimeout(300);
         const fu = `${OUT}/${shot.id}.${theme}.如实说没有.png`;

@@ -65,7 +65,7 @@ function highlightKeyword(text: string, keyword: string): React.ReactNode {
 }
 
 /**
- * 结果页那几段内容各自是一张卡（词云 / 会议纪要 / 待办 / 问这段录音）。
+ * 结果页那几段内容各自是一张卡（词云 / 会议纪要 / 待办 / 问这场录音）。
  * 抽成常量而不是各写各的：四处必须长得一样，写四遍就是四处会各自漂移的地方。
  */
 const SECTION_CARD = 'rounded-[14px] p-4';
@@ -1338,7 +1338,7 @@ export function TranscriptKaraoke({
           </section>
           <section style={{ scrollMarginTop: 100 }}>
             <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>问这段录音</h3>
+              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>问这场录音</h3>
               <span />
             </div>
             <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>

@@ -42,8 +42,8 @@ describe('结果页区块顺序（稿面 B1 + B3 + P3 的并集）', () => {
     expect(summary).toBeLessThan(todo);
   });
 
-  it('问这段录音在最后', () => {
-    expect(at('>问这段录音<')).toBeGreaterThan(at('>待办事项<'));
+  it('问这场录音在最后', () => {
+    expect(at('>问这场录音<')).toBeGreaterThan(at('>待办事项<'));
   });
 });
 
