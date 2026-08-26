@@ -6,6 +6,7 @@ import { AskMarkdown } from './AskMarkdown';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
+import { useAskQuota } from './useAskQuota';
 import { useAskStream } from './useAskStream';
 
 interface Props {
@@ -51,6 +52,14 @@ export default function AskPanel({
   const refusal = resolveAskRefusal({ isAuthenticated, allowAnonymous, gateErrorCode: gateError?.code });
   // 被拒时输入区一并禁用：留一个能打字却发不出去的输入框，只会让人白写一段
   const blocked = refusal !== null;
+
+  // 剩余额度。面板收起时不拉——藏起来的面板照样发请求是白烧一次。
+  const { quota, refresh: refreshQuota } = useAskQuota(source, !hidden);
+  // 每问完一次（成功或失败）都重算：失败里含「读不到正文」那档，后端会把额度退回来，
+  // 只在成功时减一会让用户看到一个偏小的数，而他并没有被扣。
+  useEffect(() => {
+    if (status === 'done' || status === 'error') void refreshQuota();
+  }, [status, refreshQuota]);
 
   // 新内容进来时贴住底部；用户正在往上翻看历史时不抢滚动
   useEffect(() => {
@@ -149,17 +158,39 @@ export default function AskPanel({
         ref={scrollRef}
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 14 }}
       >
+        {/* 还能问几次。放在最上面而不是只在空态出现：问到第三条时才最需要知道还剩几次。
+            读不到就整条不显示——宁可不说，也不给一个编的数（no-rootless-tree）。 */}
+        {quota && (
+          <div
+            style={{
+              display: 'flex', flexWrap: 'wrap', gap: '2px 12px', marginBottom: 12,
+              fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            <span>本页今日剩 {quota.siteRemaining} / {quota.siteLimit}</span>
+            <span>你这小时剩 {quota.visitorRemaining} / {quota.visitorLimit}</span>
+          </div>
+        )}
+
         {messages.length === 0 && (
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
             {welcome?.trim() || `关于「${title}」，有什么想了解的？`}
-            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
-              回答只依据这个页面的内容。
+            {/* 「只依据本页正文」是个约束，光说约束等于让人自己去猜后果。
+                把后果写出来（问到没写的会直说没提到），他才知道该期待什么。 */}
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              回答<strong style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>只依据本页正文</strong>
+              。问到正文没写的，它会直接说「页面里没有提到」，不会替作者猜。
             </div>
           </div>
         )}
 
         {showOpening && (
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* 没有这行标题时，几个按钮看着像 AI 现编的推荐；标明来自站点题库，
+                用户才知道这是作者预备好的问题，点下去大概率有答案。 */}
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              开场问题 · 来自站点题库
+            </div>
             {openingQuestions.map((q) => (
               <button
                 key={q}
@@ -264,7 +295,9 @@ export default function AskPanel({
                 submit(draft);
               }
             }}
-            placeholder={refusal ? ASK_REFUSAL_REGISTRY[refusal].placeholder : '问点什么…'}
+            // 「问点什么…」没说清能问什么，用户会拿它当通用聊天框问页面外的事然后吃一句
+            // 「页面里没有提到」。把范围写进 placeholder，问之前就知道边界。
+            placeholder={refusal ? ASK_REFUSAL_REGISTRY[refusal].placeholder : '就这一页提个问题'}
             disabled={blocked}
             rows={1}
             // 与后端同一个上限。后端超长直接 400（不静默截断），这里把边界前移到打字时，

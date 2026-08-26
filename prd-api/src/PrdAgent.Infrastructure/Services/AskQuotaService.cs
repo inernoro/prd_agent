@@ -95,6 +95,38 @@ public class AskQuotaService : IAskQuotaService
         }
     }
 
+    public async Task<AskQuotaSnapshot?> PeekAsync(
+        string siteId, string? userId, string? clientIp, int siteDailyLimit, CancellationToken ct = default)
+    {
+        try
+        {
+            var db = _redis.GetDatabase();
+            var isAnonymous = string.IsNullOrWhiteSpace(userId);
+            // 键与阈值都复用 TryConsumeAsync 那一套，不另写一份 —— 两份迟早对不上，
+            // 而对不上的表现是「面板说还剩 5 次，第 1 次就被拒」，比不显示更伤信任。
+            var visitorKey = VisitorKey(isAnonymous, userId, clientIp);
+            var siteKey = SiteKey(siteId);
+
+            // StringGet 不存在时返回 null，转成 0：窗口还没开始就是一次都没用
+            var visitorUsed = (int?)await db.StringGetAsync(visitorKey) ?? 0;
+            var siteUsed = (int?)await db.StringGetAsync(siteKey) ?? 0;
+
+            return new AskQuotaSnapshot
+            {
+                VisitorUsed = visitorUsed,
+                VisitorLimit = isAnonymous ? AnonymousHourlyLimit : VisitorHourlyLimit,
+                SiteUsed = siteUsed,
+                SiteLimit = siteDailyLimit > 0 ? siteDailyLimit : DefaultSiteDailyLimit,
+            };
+        }
+        catch (Exception ex)
+        {
+            // 读不到就**不显示**，不是显示一个猜的数（no-rootless-tree）
+            _logger.LogWarning(ex, "提问配额：读取快照失败，本次不显示剩余数 site={SiteId}", siteId);
+            return null;
+        }
+    }
+
     public async Task RefundAsync(
         string siteId, string? userId, string? clientIp, CancellationToken ct = default)
     {

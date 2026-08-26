@@ -165,6 +165,54 @@ public class WebPageAskController : ControllerBase
         await RunAskAsync(site, req, userId, shareToken: null);
     }
 
+    /// <summary>
+    /// 经分享链接读一眼配额还剩多少（只读，不消耗）。
+    ///
+    /// 面板打开时问一次，让访客一开始就知道还能问几次——而不是问到被拒才发现有上限
+    /// （预期管理：任何时候都该知道自己还能做多少）。
+    ///
+    /// 门禁与提问那条**完全一致**（同一个 ResolveShareSiteAsync + 同样的合集/开关/匿名判定）：
+    /// 少判一条就等于拿这个端点当侧信道，能探出「某个站点今天被问了多少次」。
+    /// </summary>
+    [HttpGet("shares/view/{token}/ask/quota")]
+    [AllowAnonymous]
+    public async Task<IActionResult> AskQuotaByShare(string token, [FromQuery] string? siteId, [FromQuery] string? password)
+    {
+        var viewerUserId = User.Identity?.IsAuthenticated == true ? this.GetRequiredUserId() : null;
+        var resolved = await _siteService.ResolveShareSiteAsync(token, siteId, password, viewerUserId);
+        if (resolved.Error != null)
+        {
+            if (resolved.HttpStatus == 429 && resolved.RetryAfterSeconds is { } ra && ra > 0)
+                Response.Headers["Retry-After"] = ra.ToString();
+            return StatusCode(resolved.HttpStatus, ApiResponse<object>.Fail(resolved.ErrorCode ?? ErrorCodes.NOT_FOUND, resolved.Error));
+        }
+        if (AskAccessPolicy.IsCollectionShare(resolved.Share?.ShareType))
+            return StatusCode(403, ApiResponse<object>.Fail("ASK_DISABLED", "合集分享暂不支持提问"));
+
+        var site = resolved.Site!;
+        if (!site.AskEnabled)
+            return StatusCode(403, ApiResponse<object>.Fail("ASK_DISABLED", "这个页面没有开启提问"));
+        if (viewerUserId == null && !site.AskAllowAnonymous)
+            return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "这个页面需要登录后才能提问"));
+
+        // IP 与提问路径同源（GetAbuseControlClientIp），否则读到的是另一个配额桶的数
+        var snapshot = await _quota.PeekAsync(site.Id, viewerUserId, HttpContext.GetAbuseControlClientIp(), site.AskDailyLimit);
+        if (snapshot == null)
+        {
+            // 读不到就如实说读不到，让前端什么都不显示——不编一个数（no-rootless-tree）
+            return Ok(ApiResponse<object>.Ok(new { available = false }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            available = true,
+            siteRemaining = snapshot.SiteRemaining,
+            siteLimit = snapshot.SiteLimit,
+            visitorRemaining = snapshot.VisitorRemaining,
+            visitorLimit = snapshot.VisitorLimit,
+        }));
+    }
+
     /// <summary>经分享链接提问（匿名或登录，取决于站点的 AllowAnonymous 开关）。</summary>
     [HttpPost("shares/view/{token}/ask/stream")]
     [AllowAnonymous]
