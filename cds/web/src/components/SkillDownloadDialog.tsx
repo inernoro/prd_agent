@@ -15,6 +15,7 @@ import {
   createAgentMissionContext,
   getAgentMissionScope,
   PROJECT_SKILL_PATHS,
+  resolveAgentConnectTarget,
   resolveAgentMissionContextForTarget,
   type AgentPageContext,
   type AgentPageContextId,
@@ -92,11 +93,13 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     effectiveProjectId,
   );
   const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
-  const target: CdsConnectTarget = mapSelection.kind === 'new'
-    ? { kind: 'new' }
-    : effectiveProjectId
-      ? { kind: 'existing', projectId: effectiveProjectId }
-      : { kind: 'system' };
+  // 目标解析（含「上手助手不许落到 system」那条）收在 agent-onboarding 里，
+  // 由 agent-onboarding.test.ts 直接断言行为，避免这段判断只能靠扫源码验证。
+  const target: CdsConnectTarget = resolveAgentConnectTarget({
+    tab: active,
+    selection: mapSelection,
+    effectiveProjectId,
+  });
   const targetKind = target.kind;
   const prompt = useMemo(
     () => buildCdsAgentPrompt({ cdsOrigin, target, context: selectedContext }),
@@ -142,7 +145,9 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           onMissionChange={setMissionId}
         /> : null}
 
-        {active === 'connect' ? <div className="grid gap-2 sm:grid-cols-2">
+        {/* 目标选择在「上手助手」上同样要给：口令里嵌的是新建项目还是已有项目，
+            决定了 Agent 走不走一次性创建授权，用户必须看得见、改得动。 */}
+        {active === 'connect' || active === 'starter' ? <div className="grid gap-2 sm:grid-cols-2">
           <button
             type="button"
             onClick={chooseExistingTarget}
@@ -170,7 +175,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </button>
         </div> : null}
 
-        {active === 'connect' && targetKind === 'existing' ? (
+        {(active === 'connect' || active === 'starter') && targetKind === 'existing' ? (
           <label className="space-y-1 text-sm">
             <span className="text-xs font-medium text-foreground">选择项目</span>
             <select

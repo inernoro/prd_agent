@@ -3,8 +3,7 @@ import { ShieldCheck, ShieldAlert, ChevronDown, ChevronRight } from 'lucide-reac
 
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { apiRequest } from '@/services/real/apiClient';
-import { applyDocumentThemeMode } from '@/lib/themeTransition';
-import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { shouldRequireTrustConfirm } from './trustGate';
 
 /**
@@ -57,11 +56,8 @@ function formatCount(n: number): string {
 export default function DataSyncAuthorizePage() {
   // 同意页在 AppShell 之外（授权链路的中转屏，套导航反而让人以为还在原来那一页），
   // 于是没人替它把用户的明暗偏好落到 html 的 data-theme 上——真机取证时抓到：
-  // 切成浅色之后，这一屏仍然是暗的。这里自己应用一次。
-  const themeMode = useMobileThemeStore((s) => s.mode);
-  useEffect(() => {
-    applyDocumentThemeMode(themeMode, window.location.pathname);
-  }, [themeMode]);
+  // 切成浅色之后，这一屏仍然是暗的。这里自己应用一次（'system' 偏好下也会跟着系统变）。
+  useApplyDocumentTheme(window.location.pathname);
 
   const params = useMemo(readParams, []);
   const [catalog, setCatalog] = useState<ScopeCatalog | null>(null);

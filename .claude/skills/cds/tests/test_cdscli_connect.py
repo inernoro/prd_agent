@@ -204,6 +204,9 @@ def test_project_create_switches_from_bootstrap_to_project_key(workspace, monkey
         "project": {"id": "proj-new", "slug": "new", "name": "New"},
         "issuedProjectKey": {"keyId": "k1", "plaintext": project_key},
     })
+    # 换钥后会用新 key 回读一次项目（自证钥匙真能用），这一跳走 _request。
+    monkeypatch.setattr(cdscli, "_request",
+                        lambda *args, **kwargs: (200, {"id": "proj-new"}, {}))
 
     code, output = run_command(["project", "create", "--name", "New"])
 

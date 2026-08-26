@@ -574,3 +574,13 @@ processed:
   - 2026-08-17_cds-security-baseline.md
   - 2026-08-17_entropy-cleanup.md
   - 2026-08-17_image-generation-capability-alias.md
+  - 2026-08-17_llm-routing-capability-contract.md
+  - 2026-08-18_cds-audit-liveness.md
+  - 2026-08-18_cds-infra-auth-legacy-exemption.md
+  - 2026-08-18_cds-infra-backup-status.md
+  - 2026-08-18_cds-infra-hardening-final.md
+  - 2026-08-20_knowledge-base-sentence-edit.md
+  - 2026-08-23_entropy-cleanup.md
+  - 2026-08-23_weekly-w34.md
+  - 2026-08-24_entropy-cleanup.md
+  - 2026-08-25_cds-users-tab-dark-theme-starter-target.md

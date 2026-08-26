@@ -122,6 +122,33 @@ export function createAgentMissionContext(
   return createRegisteredAgentContext(contextId, projectId);
 }
 
+export type AgentConnectSelection =
+  | { kind: 'system' }
+  | { kind: 'new' }
+  | { kind: 'project'; projectId: string };
+
+/**
+ * 「接入 Agent」弹窗里，当前页签 + 目标选择 → 口令要写哪种接入目标。
+ *
+ * 关键一条：**上手助手页签不允许落到 system 目标**。从 /project-list 打开时
+ * mapSelection 默认是 system（该页 mission scope 就是 system），而 system 分支的
+ * 口令明确写着「不运行 connect --project、不生成占位项目命令」——复制出来的口令
+ * 于是恰好缺了 connect --new-project，也就是解开「没有密钥建不了项目 / 没有项目
+ * 用不上密钥」这个环的那一步。上手助手是零基础用户的主路径，必须默认走新建项目。
+ */
+export function resolveAgentConnectTarget(input: {
+  tab: string;
+  selection: AgentConnectSelection;
+  effectiveProjectId: string;
+}): CdsConnectTarget {
+  const selection = input.tab === 'starter' && input.selection.kind === 'system'
+    ? ({ kind: 'new' } as const)
+    : input.selection;
+  if (selection.kind === 'new') return { kind: 'new' };
+  if (input.effectiveProjectId) return { kind: 'existing', projectId: input.effectiveProjectId };
+  return { kind: 'system' };
+}
+
 export function requestAgentAccess(contextId?: AgentPageContextId): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(OPEN_AGENT_ACCESS_EVENT, {
@@ -219,7 +246,7 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
       ? `已有项目 ${target.projectId}`
       : 'CDS 系统任务，当前没有可用项目身份';
   const projectPermissionCheck = target.kind === 'new'
-    ? '当前任务需要创建新项目。先读取当前仓库根、规范化 remote、当前分支和候选项目名；如果已有凭据不具备创建权限，再申请一次性新项目授权。'
+    ? '当前任务需要创建新项目。先读取当前仓库根、规范化 remote、当前分支和候选项目名；如果已有凭据不具备创建权限，再申请一次性新项目授权。没有任何密钥也能起步：技能包匿名可下载，connect --new-project 直接走页面批准换一次性创建权限，不需要先有项目、也不需要先有 Key。'
     : target.kind === 'existing'
       ? `认证通过后继续运行 cdscli project show ${target.projectId}；只有该命令也成功，才算已经拥有目标项目权限。`
       : '当前是系统级任务且没有真实项目 ID。只读取公开认证状态和脱敏配置；不得用项目列表第一项或占位项目 ID 代替，也不得尝试项目级授权。';
@@ -228,7 +255,12 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     : target.kind === 'existing'
       ? `批准后把 CDS 主机、项目 ID ${target.projectId} 和项目级凭据保存到当前仓库 .cds/credentials.json；该文件必须保持 Git 忽略。`
       : '系统级写操作必须由已登录的人类系统所有者在 CDS 页面完成或明确批准。项目 Agent Key 不能修改全局 SSO、用户或系统配置。';
-  const authorizationRequest = connectArgs
+  // 新项目走一条命令到底：批准换来的一次性钥匙建完项目就会被吊销、明文只发一次，
+  // 让它在两条命令之间等模型自己接力，就多了一次「少跑一步即不可逆」的机会。
+  // --create-project 把「建项目 + 换成项目级钥匙 + 回读自证」压进同一个进程。
+  const authorizationRequest = target.kind === 'new'
+    ? `仅在第二步未通过时运行 cli/cdscli.py connect --host ${cdsOrigin} --new-project --create-project <项目名称> --agent <当前 Agent 名称>。这一条命令会在批准后自动创建项目并把一次性授权换成项目级授权，不要拆成两步、也不要自己保存任何密钥。`
+    : connectArgs
     ? `仅在第二步未通过时运行 cli/cdscli.py connect --host ${cdsOrigin} ${connectArgs} --agent <当前 Agent 名称>。`
     : '当前没有真实项目身份，不运行 connect --project，也不生成占位项目命令。需要系统级写权限时，引导用户先在 CDS 页面完成管理员登录。';
   const authorizationFollowUp = connectArgs
@@ -257,7 +289,9 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     `完整技能包包含 ${CDS_AGENT_SKILL_DEFINITIONS.map((skill) => skill.id).join('、')} 五个技能。`,
     '先运行 cdscli version。只有五个技能都存在、manifest 可读且本地版本不是 stale，才直接复用。',
     '技能缺失、manifest 不完整或版本落后时运行 cdscli update；它应原子更新完整技能包并把旧版备份到当前项目 .cds/skill-backups。',
-    `只有缺失时才从 ${cdsOrigin}/api/export-skill 下载技能包，并安装到当前仓库的项目级技能目录。`,
+    // 这里必须区分两个下载端点，否则「还没有凭据」的 Agent 会被指向要登录的
+    // /api/export-skill 拿 401，卡在装 cdscli 这一步——正是 connect 想解开的那个环。
+    `只有缺失时才下载技能包并安装到当前仓库的项目级技能目录：还没有任何 CDS 凭据时使用匿名端点 ${cdsOrigin}/api/skills/cds-pack/download；已经登录或已有凭据时也可用 ${cdsOrigin}/api/export-skill。`,
     '不要安装到用户主目录。旧版本备份放到当前项目 .cds/skill-backups，不得留在技能扫描目录。',
     `CDS 当前登记 ${CDS_AGENT_CAPABILITY_DEFINITIONS.length} 个接口模块族。任务只显示用户场景，但 Agent 必须以能力目录中的认证、风险和 agentUse 为准。`,
     '没有 CLI 封装时不得编造命令；先退回对应技能的 API reference 做只读检查。guided、protocol-only、internal-only 能力不能降级成任意 REST 或 Shell 调用。',
