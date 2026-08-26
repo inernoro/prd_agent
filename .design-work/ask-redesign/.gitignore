@@ -7,3 +7,8 @@ node_modules
 
 # 联系表是取证产物，随时能重生成
 motion-frames.png
+
+# demo 不进仓库：motion-demo 由 build-motion-demo.py 从 Motion.dc.html 重新生成；
+# prototype 是一次性的交互草稿，真实现落地后它就该退场，别留一份会漂的第二真相。
+motion-demo.html
+prototype.html
