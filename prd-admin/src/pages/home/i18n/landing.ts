@@ -132,33 +132,42 @@ export interface ScenesTranslation {
     title: string;
     description: string;
     note: string;
+    /** 五拍旁白：同一条请求依次穿过三层 */
+    beats: string[];
+    /**
+     * 三层各画一种**形状不同**的拓扑，同一条请求穿过它们：
+     * MAP 横向工位流 → LLMGW 纵向调度栈 → CDS 分支拓扑。
+     * 三块同拍播放，读起来才是"一层一层接着的"，而不是三张同款卡并排。
+     */
     map: {
       role: string;
       meta: string;
       lead: string;
-      statusLine: string;
-      command: string;
-      usage: string;
-      frequentLabel: string;
-      frequent: string[];
-      activeLabel: string;
-      active: Array<{ title: string; at: string }>;
+      /** 横向流水：你 → Agent → Agent → 产物 */
+      lane: Array<{ kind: 'you' | 'agent' | 'artifact'; label: string; detail: string }>;
+      footnote: string;
     };
     gateway: {
       role: string;
       meta: string;
       lead: string;
-      counts: Array<{ value: string; label: string }>;
-      gatesLabel: string;
-      gates: Array<{ title: string; state: string }>;
-      topology: string;
+      /** 纵向调度栈：调用方 → 模型池 → 成员顺位 → 上游，逐层往下落 */
+      stack: Array<{ label: string; detail: string }>;
+      footnote: string;
     };
     cds: {
       role: string;
       meta: string;
       lead: string;
-      branches: Array<{ name: string; status: string; meta1: string; meta2: string }>;
-      branchActions: string[];
+      baseBranch: string;
+      branch: string;
+      branchMeta: string;
+      /** 四个服务，照用户给的那张拓扑图：api / admin / mongo / redis */
+      services: Array<{ name: string; detail: string; port?: string }>;
+      previewLabel: string;
+      /** 域名只给形状 —— 每个人的 CDS 域名不一样 */
+      previewShape: string;
+      terminal: string;
       footnote: string;
     };
   };
@@ -323,6 +332,11 @@ export interface TailTranslation {
     footnote: string;
   };
 }
+
+/** 三层一体三块各自的数据形状 —— 组件直接引这三个别名，不要去 typeof import 整棵树 */
+export type MapLaneData = TranslationShape['scenes']['layers']['map']['lane'];
+export type GatewayStackData = TranslationShape['scenes']['layers']['gateway']['stack'];
+export type CdsTopologyData = TranslationShape['scenes']['layers']['cds'];
 
 export interface TranslationShape {
   nav: {
@@ -563,60 +577,56 @@ const zh: TranslationShape = {
     layers: {
       eyebrow: '三层一体',
       title: '上面三块能成立，是因为下面这三层',
+      beats: [
+        '三层就位 —— 各干各的那一段',
+        'MAP：你说一句话，第一个 Agent 接住',
+        'LLMGW：这次调用落进哪个池、排第几；CDS：容器起来了',
+        'MAP：产物成形；LLMGW：打到上游；CDS：依赖也就位',
+        '一条请求穿完三层：产物落地，域名下发',
+      ],
       description: '每一层都是能打开的真实界面，不是三句口号。下面三块画的就是各自那一屏的样子。',
       note: '三层各自独立可用，合在一起才是一条完整的链路：在 MAP 里干活，算力从 LLMGW 调度，做完的东西由 CDS 变成一个能打开的地址。',
       map: {
         role: '工位与团队',
         meta: '/home',
-        lead: '十几个智能体在同一个空间接活、共享上下文、互相调用。',
-        statusLine: '周五 15:20 · 陈默 · 产品',
-        command: '说一句话，或按 ⌘K',
-        usage: '近 7 日 128 次',
-        frequentLabel: '常去',
-        frequent: ['视觉创作', '文学创作', '知识库', '缺陷管理'],
-        activeLabel: '在办',
-        active: [
-          { title: '首页重构 · 等你验收', at: '2h' },
-          { title: '缺陷 #1274 · 已修待复测', at: '昨天' },
+        lead: '一句话进来，几个 Agent 接力干完，产物落在文档或画布里。',
+        lane: [
+          { kind: 'you', label: '你', detail: '说一句话' },
+          { kind: 'agent', label: '文学创作', detail: '起草与润色' },
+          { kind: 'agent', label: '视觉创作', detail: '按段落配图' },
+          { kind: 'artifact', label: '一篇带图的稿子', detail: '落进知识库' },
         ],
+        footnote: '接力发生在同一个空间里，上下文不用你转述。',
       },
       gateway: {
         role: '人事与算力',
-        meta: '系统运维',
-        lead: '判断网关能否按预期承接流量：谁能用哪个模型、按任务怎么选、坏了换谁。',
-        counts: [
-          { value: '3', label: '平台' },
-          { value: '17', label: '模型' },
-          { value: '6', label: '模型池' },
+        meta: '/pools',
+        lead: '每一次调用往下落四层：谁在调、准用哪个池、池里排第几、最后打到哪个上游。',
+        stack: [
+          { label: '调用方', detail: 'literary-agent.chat' },
+          { label: '模型池', detail: 'chat-default' },
+          { label: '成员顺位', detail: 'Claude 4.6 · 第 1 顺位' },
+          { label: '上游', detail: 'OpenRouter' },
         ],
-        gatesLabel: '运行闸门',
-        gates: [
-          { title: '默认模式已切 http', state: '就绪' },
-          { title: '影子比对 diff 率 0.4%', state: '就绪' },
-          { title: '17 个模型缺价格', state: '待补' },
-        ],
-        topology: '容器拓扑（4 个容器）',
+        footnote: '这四层业务代码一层都看不见，它只认池名。',
       },
       cds: {
         role: '交付与验收',
-        meta: '8 分支 · 8 运行',
-        lead: '一条分支就是一整套环境：自己的域名、自己的容器。推上去就有，删掉就没。',
-        branches: [
-          {
-            name: 'claude/homepage-redesign',
-            status: '构建中',
-            meta1: 'a3f19c2 · 2 分钟前 · prd-admin',
-            meta2: '容器 3/4 · 拉取 → 构建 → 启动',
-          },
-          {
-            name: 'main',
-            status: '就绪',
-            meta1: '7e04b18 · 1 小时前 · 全部 4 端',
-            meta2: '容器 4/4 · 双出口 HTTPS',
-          },
+        meta: '/branches',
+        lead: '一条分支拉出去，就是一整套自己的容器和一个能打开的地址。',
+        baseBranch: 'main',
+        branch: 'feature/auth-flow',
+        branchMeta: '3 commits · 已推送',
+        services: [
+          { name: 'api', detail: '.NET 8 service', port: ':5000' },
+          { name: 'admin', detail: 'React · Vite', port: ':5500' },
+          { name: 'mongo', detail: 'replica · 1' },
+          { name: 'redis', detail: 'cache' },
         ],
-        branchActions: ['打开预览', '详情', '回滚'],
-        footnote: '预览地址由 CDS 下发，不由前端拼。',
+        previewLabel: '预览 · 自动分配',
+        previewShape: '<分支>.<你自己的域名>',
+        terminal: 'cds > detect stack · .NET 8 + React + mongo + redis',
+        footnote: '技术栈是它自己认出来的，端口是它自己分的。',
       },
     },
   },
@@ -1136,60 +1146,56 @@ const en: TranslationShape = {
     layers: {
       eyebrow: 'Three layers, one system',
       title: 'The three above work because of the three below',
+      beats: [
+        'Three layers in place — each doing its own stretch',
+        'MAP: you say one sentence, the first agent picks it up',
+        'LLMGW: which pool, which position; CDS: containers coming up',
+        'MAP: the artifact takes shape; LLMGW: it hits the upstream; CDS: dependencies ready',
+        'One request through all three: artifact lands, URL issued',
+      ],
       description: 'Every layer is a real screen you can open, not a slogan. Each card below is a slice of that screen.',
       note: 'Each layer stands on its own; together they are one chain: you work in MAP, LLMGW schedules the compute, and CDS turns what you built into an address you can open.',
       map: {
         role: 'Desk & team',
         meta: '/home',
-        lead: 'A dozen agents take work in one space, share context, and call each other.',
-        statusLine: 'Fri 15:20 · Chen Mo · Product',
-        command: 'Say something, or press ⌘K',
-        usage: '128 runs in 7 days',
-        frequentLabel: 'Frequent',
-        frequent: ['Visual', 'Writing', 'Knowledge', 'Defects'],
-        activeLabel: 'In flight',
-        active: [
-          { title: 'Homepage rebuild · awaiting you', at: '2h' },
-          { title: 'Defect #1274 · fixed, needs retest', at: 'yest.' },
+        lead: 'One sentence goes in, a few agents hand it along, the artifact lands in a document or on a canvas.',
+        lane: [
+          { kind: 'you', label: 'You', detail: 'say one sentence' },
+          { kind: 'agent', label: 'Writing', detail: 'draft and polish' },
+          { kind: 'agent', label: 'Visual', detail: 'illustrate by paragraph' },
+          { kind: 'artifact', label: 'An illustrated draft', detail: 'lands in the knowledge base' },
         ],
+        footnote: 'The hand-off happens in one space — you never re-explain the context.',
       },
       gateway: {
-        role: 'Staffing & compute',
-        meta: 'Operations',
-        lead: 'Whether the gateway can carry the traffic: who may use which model, how one is picked per task, who takes over when it breaks.',
-        counts: [
-          { value: '3', label: 'Providers' },
-          { value: '17', label: 'Models' },
-          { value: '6', label: 'Pools' },
+        role: 'People & compute',
+        meta: '/pools',
+        lead: 'Every call falls through four layers: who is calling, which pool they may use, where in the queue, and which upstream it lands on.',
+        stack: [
+          { label: 'Caller', detail: 'literary-agent.chat' },
+          { label: 'Pool', detail: 'chat-default' },
+          { label: 'Member order', detail: 'Claude 4.6 · first' },
+          { label: 'Upstream', detail: 'OpenRouter' },
         ],
-        gatesLabel: 'Release gates',
-        gates: [
-          { title: 'Default mode switched to http', state: 'Ready' },
-          { title: 'Shadow diff rate 0.4%', state: 'Ready' },
-          { title: '17 models missing pricing', state: 'Open' },
-        ],
-        topology: 'Container topology (4 containers)',
+        footnote: 'Product code sees none of these four. It only ever names the pool.',
       },
       cds: {
         role: 'Delivery & acceptance',
-        meta: '8 branches · 8 running',
-        lead: 'Push a branch and you get an address you can open; break something and roll back a version.',
-        branches: [
-          {
-            name: 'claude/homepage-redesign',
-            status: 'Building',
-            meta1: 'a3f19c2 · 2 min ago · prd-admin',
-            meta2: 'Containers 3/4 · pull → build → start',
-          },
-          {
-            name: 'main',
-            status: 'Ready',
-            meta1: '7e04b18 · 1 hour ago · all 4 apps',
-            meta2: 'Containers 4/4 · dual HTTPS exits',
-          },
+        meta: '/branches',
+        lead: 'Pull one branch and you have a whole set of containers and a URL you can open.',
+        baseBranch: 'main',
+        branch: 'feature/auth-flow',
+        branchMeta: '3 commits · pushed',
+        services: [
+          { name: 'api', detail: '.NET 8 service', port: ':5000' },
+          { name: 'admin', detail: 'React · Vite', port: ':5500' },
+          { name: 'mongo', detail: 'replica · 1' },
+          { name: 'redis', detail: 'cache' },
         ],
-        branchActions: ['Open preview', 'Details', 'Roll back'],
-        footnote: 'Preview URLs come from CDS. The frontend never builds them.',
+        previewLabel: 'Preview · auto-assigned',
+        previewShape: '<branch>.<your own domain>',
+        terminal: 'cds > detect stack · .NET 8 + React + mongo + redis',
+        footnote: 'It works the stack out itself, and allocates the ports itself.',
       },
     },
   },
