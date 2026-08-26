@@ -26,6 +26,7 @@
 //      之前判通过、之后判未知——没走到的环不许画成绿色。
 //
 // 断言的是真实浏览器行为与真实网络请求，桩只负责让页面跑起来。
+import { Buffer } from 'node:buffer';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,6 +45,8 @@ const REQUEST_ID = 'quickstart-8f2c41d9ab7e4c30';
 let gatewayMode = 'pass';
 /** 浏览器真正发出的控制台写请求。 */
 const posted = [];
+/** 真实调用发出的请求体：用来断言上传的内容真的进了 payload。 */
+const realBodies = [];
 
 const LIST = { items: [], total: 0, page: 1, pageSize: 20 };
 const STUBS = {
@@ -98,6 +101,28 @@ const server = http.createServer((req, res) => {
   if (p === '/v1/chat/completions' || p === '/gw/v1/invoke' || p === '/v1/messages' || p.startsWith('/v1beta/')) {
     const failure = GATEWAY_FAILURES[gatewayMode];
     if (failure) return json(res, failure[0], failure[1]);
+    // 没有 dry-run 头 = 真实调用：按 OpenAI 的 SSE 形状分帧回文字，验证前端真的边收边渲染。
+    if (!req.headers['x-gateway-dry-run']) {
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => {
+        realBodies.push(raw ? JSON.parse(raw) : null);
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'X-Request-Id': REQUEST_ID });
+        const frames = ['你好', '，这是', '流式', '输出'];
+        let i = 0;
+        const timer = setInterval(() => {
+          if (i < frames.length) {
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: frames[i] } }] })}\n\n`);
+            i += 1;
+            return;
+          }
+          clearInterval(timer);
+          res.write('data: [DONE]\n\n');
+          res.end();
+        }, 120);
+      });
+      return undefined;
+    }
     return json(res, 200, { model: 'demo/chat-1', gateway: { requestId: REQUEST_ID, upstreamCalled: false } });
   }
   if (p === '/gw/v1/resolve') return json(res, 200, { success: true, actualModel: 'demo/chat-1', actualPlatformName: '教程假上游', modelGroupName: '对话默认池', protocol: 'openai' });
@@ -251,20 +276,47 @@ check('试跑结果块渲染出来了', Boolean(okBox), true);
 // 真正的判据是它离产物区顶端多远：排到密钥与片段之后就会被推下去 200px 以上。
 check('试跑结果块紧贴产物区顶部', Boolean(okBox && artifactsBox && okBox.y - artifactsBox.y < 120), true);
 check('成功态留下 requestId 回查深链', await page.locator(`.lg-test-result.is-ok a[href*="requestId=${REQUEST_ID}"]`).count(), 1);
-check('候选提示写明健康数与总数', (await page.locator('.lg-qs-testbar small').innerText()).trim(), '「对话默认池」4 个成员中 2 个健康，可搜索。');
+check('候选提示写明健康数与总数', (await page.locator('.lg-qs-testbar-models').innerText()).trim(), '「对话默认池」4 个成员中 2 个健康，可搜索。');
 // 填一个不在健康清单里的模型：执行必须被挡住，否则那一次试跑注定白跑。
 await page.getByLabel('测试模型').fill('demo/chat-down');
 await page.waitForTimeout(300);
-check('选了非健康成员时执行被禁用', await page.getByRole('button', { name: '执行测试' }).isDisabled(), true);
+check('选了非健康成员时两个执行按钮都禁用', [
+  await page.getByRole('button', { name: '安全试跑' }).isDisabled(),
+  await page.getByRole('button', { name: '真实调用' }).isDisabled(),
+], [true, true]);
 await page.getByLabel('测试模型').fill('demo/chat-2');
 await page.waitForTimeout(300);
-check('选了健康成员后可执行', await page.getByRole('button', { name: '执行测试' }).isDisabled(), false);
+check('选了健康成员后可执行', await page.getByRole('button', { name: '安全试跑' }).isDisabled(), false);
 check('cURL 跟着所选模型变', (await page.locator('.lg-qs-code').innerText()).includes('"model": "demo/chat-2"'), true);
 await page.getByLabel('测试模型').fill('');
 await page.waitForTimeout(300);
 check('清空即回到 auto', (await page.locator('.lg-qs-code').innerText()).includes('"model": "auto"'), true);
 
 check('横向不滚动', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
+// ── 真实调用：文字必须边收边渲染，且返回内容要显示出来 ────────────────
+realBodies.length = 0;
+await page.getByRole('button', { name: '真实调用' }).click();
+await page.waitForTimeout(260);
+// 第一帧到了、最后一帧还没到的那个瞬间：面板里已经有字，且还挂着「正在接收」。
+const midway = await page.locator('.lg-qs-output pre').innerText();
+check('流式：第一帧就已经渲染出来', midway.length > 0 && midway.length < '你好，这是流式输出'.length, true);
+check('流式：未收完时标着正在接收', await page.locator('.lg-qs-output-head em').count(), 1);
+await page.waitForTimeout(1200);
+check('流式：收完后是完整文本', (await page.locator('.lg-qs-output pre').innerText()).trim(), '你好，这是流式输出');
+check('流式：收完后不再标正在接收', await page.locator('.lg-qs-output-head em').count(), 0);
+check('返回内容标出类型', (await page.locator('.lg-qs-output-head span').innerText()).trim(), '文字');
+check('真实调用请求体带 stream:true', realBodies[0]?.stream, true);
+check('真实调用不带 dry-run 头（桩已按此分流）', realBodies.length, 1);
+
+// ── 上传：上传的文本必须真的进请求体，也要进 cURL ─────────────────────
+await page.getByLabel('上传测试输入').setInputFiles({ name: 'prompt.txt', mimeType: 'text/plain', buffer: Buffer.from('用三个字回答：你好吗') });
+await page.waitForTimeout(400);
+check('cURL 用上了上传的文本', (await page.locator('.lg-qs-code').innerText()).includes('用三个字回答：你好吗'), true);
+realBodies.length = 0;
+await page.getByRole('button', { name: '真实调用' }).click();
+await page.waitForTimeout(1400);
+check('上传的文本进了真实请求体', realBodies[0]?.messages?.[0]?.content, '用三个字回答：你好吗');
+
 await page.close();
 
 // ── 4) 月预算留空 = 不限：连治理写入本身都不该发生 ─────────────────────
@@ -329,14 +381,13 @@ check('390 创建屏不出现横向滚动', await page.evaluate(() => document.d
 await create(page).click();
 await page.waitForTimeout(2400);
 check('390 产物屏不出现横向滚动', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
-// 真实密钥是 47 个字符，在 390 宽下一定放不下：要么给它自己的横向滚动条，
-// 要么就是被裁掉——被裁掉意味着用户永远复制不到完整密钥，而它取不回来第二次。
-check('390 密钥串自己可横向滚动', await page.evaluate(() => {
+// 真实密钥是 47 个字符，窄屏一行放不下。它取不回来第二次，所以宁可换行也不能被裁：
+// 判据是「整串都在可视范围内」——横向溢出即判红，不管有没有滚动条。
+check('390 密钥完整可见、没有被裁', await page.evaluate(() => {
   const code = document.querySelector('.lg-qs-secret-code');
   if (!code) return 'missing';
-  if (code.scrollWidth <= code.clientWidth) return 'not-overflowing';
-  return getComputedStyle(code).overflowX;
-}), 'auto');
+  return code.scrollWidth <= code.clientWidth + 1 ? 'fully-visible' : `clipped:${code.scrollWidth - code.clientWidth}`;
+}), 'fully-visible');
 await page.close();
 
 await browser.close();

@@ -12,7 +12,7 @@
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Check, CheckCircle2, Copy, FileCode2, KeyRound, Play } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Copy, FileCode2, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, ensurePoolTypes, getOrganization, getPools, getPoolTypes, updateGatewayAppCaller } from '@/lib/api';
 import type { OrganizationData } from '@/lib/types';
@@ -198,6 +198,10 @@ export function QuickstartPage() {
   const [poolName, setPoolName] = useState('');
   const [poolMemberCount, setPoolMemberCount] = useState(0);
   const [modelQuery, setModelQuery] = useState('');
+  /** 用户上传的测试输入：图片理解用图片，文字对话用一段文本文件。 */
+  const [attachment, setAttachment] = useState<{ name: string; kind: 'image' | 'text'; dataUrl?: string; text?: string } | null>(null);
+  /** 真实调用的返回：文字边收边渲染，图片/音频收完再渲染。 */
+  const [liveOutput, setLiveOutput] = useState<{ kind: 'text' | 'image' | 'audio'; text: string; url?: string; done: boolean } | null>(null);
   const [binding, setBinding] = useState(false);
   const [bindNotice, setBindNotice] = useState<string | null>(null);
   // 月预算是本页唯一要用户想的数字；单次预占上限由它派生（成对约束见 budgetPair）。
@@ -305,10 +309,10 @@ export function QuickstartPage() {
   const snippetMode: TestMode = testMode === 'real' && realRouteReady ? 'real' : 'safe';
   const snippets = useMemo(() => ({
     client: clientSetupSnippet(displayBundle),
-    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel),
+    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel, attachment),
     env: environmentSnippet(displayBundle),
     skill: agentSkillSnippet(displayBundle, snippetMode),
-  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel]);
+  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel, attachment]);
   const visibleSnippet = snippets[snippetTab === 'client' && !hasClientTab ? 'curl' : snippetTab];
 
   const copyText = async (name: string, value: string) => {
@@ -551,7 +555,7 @@ export function QuickstartPage() {
       const response = await fetch(new URL(definition.path, `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
         headers,
-        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel)),
+        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment)),
         credentials: 'omit',
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
@@ -577,6 +581,105 @@ export function QuickstartPage() {
     } finally {
       setTesting(false);
     }
+  };
+
+  /**
+   * 真实调用：不带 dry-run，会真的打上游并计费，所以只在用户显式点击时发生。
+   *
+   * OpenAI 兼容协议走流式（stream: true + SSE），文字边收边渲染；其余三个协议
+   * 的流式帧格式各不相同，这里不假装支持——它们一次性收完再渲染，并在界面上说明。
+   * 返回内容按形状判断：先看有没有图片（b64/url），再看有没有音频，最后当文字。
+   */
+  const runRealTest = async () => {
+    if (!bundle || testing) return;
+    const target = bundle;
+    const definition = protocolDefinition(protocol);
+    const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+    const requestId = createRequestId();
+    const canStream = protocol === 'openai';
+    setTesting(true);
+    setTestResult(null);
+    setActionError(null);
+    setLiveOutput({ kind: 'text', text: '', done: false });
+    try {
+      const response = await fetch(new URL(definition.path, `${normalizedBaseUrl}/`).toString(), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${target.key}`,
+          'Content-Type': 'application/json',
+          'X-Gateway-Source': 'external',
+          'X-Gateway-App-Caller': target.appCallerCode,
+          'X-Request-Id': requestId,
+        },
+        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, canStream)),
+        credentials: 'omit',
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+        setLiveOutput(null);
+        setTestResult({
+          ok: false,
+          message: readErrorMessage(payload) || `真实调用失败，HTTP ${response.status}`,
+          requestId: readRequestId(response, payload) || requestId,
+          code: readErrorCode(payload) || `HTTP_${response.status}`,
+        });
+        return;
+      }
+      const actualRequestId = readRequestId(response, null) || requestId;
+      if (canStream && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let text = '';
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            const delta = readStreamDelta(line);
+            if (delta === null) continue;
+            text += delta;
+            setLiveOutput({ kind: 'text', text, done: false });
+          }
+        }
+        setLiveOutput({ kind: 'text', text, done: true });
+      } else {
+        const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+        setLiveOutput(readNonStreamOutput(payload));
+      }
+      markRequestCompleted(tenant?.id);
+      setTestResult({ ok: true, message: `真实调用已返回，模型 ${testModel === 'auto' ? currentRoutePreview?.actualModel || '由池调度' : testModel}；本次会计入用量与费用。`, requestId: actualRequestId });
+    } catch (error) {
+      setLiveOutput(null);
+      setTestResult({ ok: false, message: error instanceof Error ? `真实调用失败：${error.message}` : '真实调用失败。' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  /** 读上传的文件：图片转 data URL 进请求体，文本直接当提示词。不上传后端。 */
+  const pickAttachment = async (file: File | null) => {
+    if (!file) return;
+    setTestResult(null);
+    if (file.size > 4 * 1024 * 1024) {
+      setActionError('测试输入请控制在 4 MB 以内。');
+      return;
+    }
+    setActionError(null);
+    if (displayBundle.requestType === 'vision') {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      setAttachment({ name: file.name, kind: 'image', dataUrl });
+      return;
+    }
+    const text = (await file.text()).slice(0, 4000);
+    setAttachment({ name: file.name, kind: 'text', text });
   };
 
   const editIdentity = async () => {
@@ -940,6 +1043,7 @@ export function QuickstartPage() {
                     成员，不让人填一个池外模型（`llm-gateway.md`：可选模型必须来自获准的池）。
                   */}
                   <div className="lg-qs-testbar">
+                    <div className="lg-qs-testbar-controls">
                     <span className="lg-qs-testbar-type">{requestTypeLabel(displayBundle.requestType)}</span>
                     <label>
                       模型
@@ -955,13 +1059,49 @@ export function QuickstartPage() {
                         {poolModels.map((modelId) => <option key={modelId} value={modelId} />)}
                       </datalist>
                     </label>
+                    <label className="lg-qs-upload">
+                      <Upload size={13} />
+                      {attachment ? attachment.name : displayBundle.requestType === 'vision' ? '上传图片' : '上传文本'}
+                      <input
+                        type="file"
+                        aria-label="上传测试输入"
+                        accept={displayBundle.requestType === 'vision' ? 'image/*' : '.txt,.md,.json,text/*'}
+                        onChange={(event) => { void pickAttachment(event.target.files?.[0] ?? null); event.target.value = ''; }}
+                      />
+                    </label>
+                    {attachment ? <button type="button" className="lg-text-link" onClick={() => { setAttachment(null); setTestResult(null); }}>移除</button> : null}
                     {canCreateAccess ? (
-                      <Button size="sm" variant="primary" disabled={testing || !modelValid} onClick={() => void runTest()}>
-                        <Play size={14} />{testing ? '正在执行' : '执行测试'}
-                      </Button>
+                      <>
+                        <Button size="sm" variant="secondary" disabled={testing || !modelValid} onClick={() => void runTest(bundle, 'safe')}>
+                          <Play size={14} />{testing ? '执行中' : '安全试跑'}
+                        </Button>
+                        <Button size="sm" variant="primary" disabled={testing || !modelValid} onClick={() => void runRealTest()}>
+                          <Play size={14} />真实调用
+                        </Button>
+                      </>
                     ) : null}
-                    <small className={modelValid ? undefined : 'is-bad'}>{modelHint}</small>
+                    </div>
+                    <div className="lg-qs-testbar-hints">
+                      <small className={`lg-qs-testbar-models${modelValid ? '' : ' is-bad'}`}>{modelHint}</small>
+                      <small className="lg-qs-testbar-cost">安全试跑不打上游、不计费；真实调用会计入用量与费用。</small>
+                    </div>
                   </div>
+
+                  {liveOutput ? (
+                    <div className="lg-qs-output" role="status" aria-live="polite">
+                      <div className="lg-qs-output-head">
+                        <strong>模型返回</strong>
+                        <span>{liveOutput.kind === 'image' ? '图片' : liveOutput.kind === 'audio' ? '音频' : '文字'}</span>
+                        {!liveOutput.done ? <em>正在接收…</em> : null}
+                        <button type="button" className="lg-text-link" onClick={() => setLiveOutput(null)}>清除</button>
+                      </div>
+                      {liveOutput.kind === 'image' && liveOutput.url ? <img src={liveOutput.url} alt="模型返回的图片" /> : null}
+                      {liveOutput.kind === 'audio' && liveOutput.url ? <audio controls src={liveOutput.url} /> : null}
+                      {liveOutput.kind === 'text' ? (
+                        <pre>{liveOutput.text || (liveOutput.done ? '（上游返回了空内容）' : '')}<span className={liveOutput.done ? 'lg-qs-caret is-done' : 'lg-qs-caret'} /></pre>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className="lg-qs-snippet-head">
                     <div className="lg-snippet-tabs">
                       {hasClientTab ? <Button size="sm" variant={snippetTab === 'client' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('client')}>{selectedClient.label}</Button> : null}
@@ -1123,18 +1263,47 @@ function createRequestId() {
   return `quickstart-${suffix.slice(0, 24)}`;
 }
 
-function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string, model = 'auto') {
+type TestAttachment = { name: string; kind: 'image' | 'text'; dataUrl?: string; text?: string } | null;
+
+function userContentFor(requestType: RequestType, attachment: TestAttachment, flavor: 'openai' | 'claude' | 'gemini') {
+  // 上传了图片就用上传的那张，没传才用内嵌的 1x1 测试图；上传文本就用文本当提示词。
+  const prompt = attachment?.kind === 'text' && attachment.text ? attachment.text : 'Reply with OK';
+  if (requestType !== 'vision') return flavor === 'gemini' ? [{ text: prompt }] : prompt;
+  // 没上传图片就沿用内嵌的 1x1 测试图：那三个 vision*Content 仍是各协议形状的唯一来源。
+  if (!(attachment?.kind === 'image' && attachment.dataUrl)) {
+    if (flavor === 'claude') return visionClaudeContent();
+    if (flavor === 'gemini') return visionGeminiParts();
+    return visionOpenAiContent();
+  }
+  const dataUrl = attachment.dataUrl;
+  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const mediaType = dataUrl.slice(5, dataUrl.indexOf(';')) || 'image/png';
+  if (flavor === 'claude') return [
+    { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+    { type: 'text', text: prompt },
+  ];
+  if (flavor === 'gemini') return [
+    { inline_data: { mime_type: mediaType, data: base64 } },
+    { text: prompt },
+  ];
+  return [
+    { type: 'image_url', image_url: { url: dataUrl } },
+    { type: 'text', text: prompt },
+  ];
+}
+
+function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string, model = 'auto', attachment: TestAttachment = null, stream = false) {
   // model=auto 表示交给模型池调度；选了具体成员就把它发出去，由网关按池规则校验。
   const policy = model === 'auto' ? 'auto' : 'pool';
   if (protocol === 'native') return {
     appCallerCode,
     modelType: requestType,
-    requestBody: { model, messages: [{ role: 'user', content: requestType === 'vision' ? visionOpenAiContent() : 'Reply with OK' }] },
+    requestBody: { model, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai') }] },
     context: { requestId, sourceSystem: 'external', modelPolicy: policy },
   };
-  if (protocol === 'claude') return { model, model_policy: policy, max_tokens: 64, messages: [{ role: 'user', content: requestType === 'vision' ? visionClaudeContent() : 'Reply with OK' }] };
-  if (protocol === 'gemini') return { model, model_policy: policy, contents: [{ role: 'user', parts: requestType === 'vision' ? visionGeminiParts() : [{ text: 'Reply with OK' }] }] };
-  return { model, model_policy: policy, messages: [{ role: 'user', content: requestType === 'vision' ? visionOpenAiContent() : 'Reply with OK' }], stream: false };
+  if (protocol === 'claude') return { model, model_policy: policy, max_tokens: 64, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'claude') }] };
+  if (protocol === 'gemini') return { model, model_policy: policy, contents: [{ role: 'user', parts: userContentFor(requestType, attachment, 'gemini') }] };
+  return { model, model_policy: policy, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai') }], stream };
 }
 
 function visionOpenAiContent() {
@@ -1212,6 +1381,56 @@ function chainState(broken: ChainLinkId | null) {
     ...link,
     tone: brokenIndex < 0 ? 'unknown' : index < brokenIndex ? 'ok' : index === brokenIndex ? 'bad' : 'unknown',
   }));
+}
+
+/** 解析一行 SSE：返回这一帧的文字增量；不是内容帧就返回 null。 */
+function readStreamDelta(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) return null;
+  const data = trimmed.slice(5).trim();
+  if (data.length === 0 || data === '[DONE]') return null;
+  try {
+    const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: unknown } }> };
+    const content = parsed.choices?.[0]?.delta?.content;
+    return typeof content === 'string' && content.length > 0 ? content : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 非流式返回按形状判断类型：先图片、再音频、最后文字。绝不猜——认不出就原样给 JSON。 */
+function readNonStreamOutput(payload: Record<string, unknown> | null): { kind: 'text' | 'image' | 'audio'; text: string; url?: string; done: boolean } {
+  if (!payload) return { kind: 'text', text: '（上游没有返回可解析的内容）', done: true };
+  const image = findFirstString(payload, ['b64_json', 'image_base64']);
+  if (image) return { kind: 'image', text: '', url: image.startsWith('data:') ? image : `data:image/png;base64,${image}`, done: true };
+  const imageUrl = findFirstString(payload, ['image_url']);
+  if (imageUrl) return { kind: 'image', text: '', url: imageUrl, done: true };
+  const audio = findFirstString(payload, ['audio_base64', 'audio_url']);
+  if (audio) return { kind: 'audio', text: '', url: audio.startsWith('data:') || audio.startsWith('http') ? audio : `data:audio/mpeg;base64,${audio}`, done: true };
+  const text = findFirstString(payload, ['content', 'text', 'output_text']);
+  return { kind: 'text', text: text || JSON.stringify(payload, null, 2), done: true };
+}
+
+/** 深度找第一个非空字符串字段。上游形状各异，比逐协议写一套解析更耐改。 */
+function findFirstString(node: unknown, keys: string[]): string | null {
+  if (typeof node !== 'object' || node === null) return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const hit = findFirstString(item, keys);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  const record = node as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value;
+  }
+  for (const value of Object.values(record)) {
+    const hit = findFirstString(value, keys);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function readActualModel(payload: Record<string, unknown> | null) {
@@ -1371,14 +1590,14 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 - 401 时轮换密钥；403 时检查 team、appCaller、协议和 scope，禁止通过扩大到通配 key 绕过。`;
 }
 
-function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode, model = 'auto') {
+function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode, model = 'auto', attachment: TestAttachment = null) {
   const definition = protocolDefinition(protocol);
   const requestIdToken = '__LLMGW_REQUEST_ID__';
   const common = `-H "Authorization: Bearer \$LLMGW_API_KEY" \\
   -H "X-Gateway-Source: external" \\
   -H "X-Gateway-App-Caller: ${appCaller}" \\${mode === 'safe' ? '\n  -H "X-Gateway-Dry-Run: quickstart" \\' : ''}
   -H "X-Request-Id: \$REQUEST_ID"`;
-  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model), null, 2)
+  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model, attachment), null, 2)
     .replace(requestIdToken, `'"$REQUEST_ID"'`);
   const extra = protocol === 'claude' ? ' \\\n  -H "anthropic-version: 2023-06-01"' : '';
   return `REQUEST_ID="quickstart-\$(date +%s)-\$RANDOM"

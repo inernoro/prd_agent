@@ -2926,14 +2926,147 @@ a:focus-visible {
   opacity: 0.6;
 }
 
+/* 上传测试输入：原生 file input 藏起来，只留一个和按钮同高的虚线标签。 */
+.lg-qs-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  overflow: hidden;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--fs-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lg-qs-upload:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.lg-qs-upload > input[type="file"] {
+  display: none;
+}
+
+/* 模型返回：文字边收边渲染，图片与音频收完再渲染。 */
+.lg-qs-output {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border-subtle));
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.lg-qs-output-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lg-qs-output-head > strong {
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.lg-qs-output-head > span {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-caption);
+}
+
+.lg-qs-output-head > em {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  font-style: normal;
+}
+
+.lg-qs-output-head > .lg-text-link {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lg-qs-output > pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.lg-qs-output > img {
+  max-width: 100%;
+  max-height: 240px;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+}
+
+.lg-qs-output > audio {
+  width: 100%;
+}
+
+/* 流式光标：还在收就闪，收完即隐——让「正在输出」这件事看得见。 */
+.lg-qs-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: lg-qs-blink 1s step-end infinite;
+}
+
+.lg-qs-caret.is-done {
+  display: none;
+}
+
+@keyframes lg-qs-blink {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg-qs-caret {
+    animation: none;
+  }
+}
+
 /* 一键测试条：类型只读、模型可选、一个执行按钮，压在片段区顶部。 */
 .lg-qs-testbar {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+/* 控件一行、说明一行：让它们自由换行会排成参差的三行，重点反而看不出来。 */
+.lg-qs-testbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lg-qs-testbar-hints {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .lg-qs-testbar-type {
@@ -2978,11 +3111,16 @@ a:focus-visible {
   color: var(--err);
 }
 
-.lg-qs-testbar > small {
+.lg-qs-testbar-hints > small {
   min-width: 0;
-  margin-left: auto;
   color: var(--text-muted);
   font-size: var(--fs-caption);
+}
+
+/* 计费提示推到最右——两条都要，别互相挤掉。 */
+.lg-qs-testbar-hints > .lg-qs-testbar-cost {
+  margin-left: auto;
+  text-align: right;
 }
 
 .lg-qs-hero.is-caller {
@@ -3352,16 +3490,47 @@ a:focus-visible {
   gap: 12px;
 }
 
-/* 重点卡：比周围的弱化行更亮一档，值用等宽大字，一眼能认出「这就是要复制的东西」。 */
+/* 三张卡不是平权的：密钥是唯一取不回来的东西，必须最重；地址与用途是随时能查回来的
+   参考值，压到次一档。同为「卡片」但字重、底色、值的字号都拉开。 */
 .lg-qs-hero {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border-subtle));
+  gap: 10px;
+  border-color: var(--border-subtle);
 }
 
+.lg-qs-hero > .lg-qs-hero-head > strong {
+  color: var(--text-secondary);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.lg-qs-hero > .lg-qs-hero-value {
+  font-size: var(--fs-secondary);
+}
+
+/* 密钥卡：整屏最重的一块——warn 描边 + 染色底 + 更大的等宽字。 */
 .lg-qs-hero.is-secret {
-  border-color: color-mix(in srgb, var(--warn) 40%, var(--border-subtle));
+  gap: 12px;
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn-bg) 55%, var(--bg-surface));
+}
+
+.lg-qs-hero.is-secret > .lg-qs-hero-head > strong {
+  color: var(--text-primary);
+  font-size: var(--fs-heading);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.lg-qs-hero.is-secret > .lg-qs-hero-value {
+  padding: 16px;
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--border-subtle));
+  font-size: var(--fs-metric);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .lg-qs-hero-head {
