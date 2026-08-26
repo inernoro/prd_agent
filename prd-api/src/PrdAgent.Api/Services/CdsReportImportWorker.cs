@@ -175,6 +175,7 @@ public class CdsReportImportWorker : BackgroundService
 
         var ok = 0;
         var failed = 0;
+        var missing = 0;
         foreach (var t in targets)
         {
             if (ct.IsCancellationRequested) return;
@@ -199,8 +200,23 @@ public class CdsReportImportWorker : BackgroundService
                 // 记进 result.Failed（正文 404、资产归一化炸了）的那些情况全都会被计成
                 // 「刷了 N 份」——本轮结束那行日志于是永远报成功，一份都没真刷进去也看不出来
                 //（Codex review P2）。
-                if (result.Failed > 0) failed++; else ok++;
-                if (result.Updated > 0 || result.Failed > 0)
+                //
+                // **一份都没列到也不算刷成功。** 这份报告在 CDS 上被删掉之后，按 reportId
+                // 查列表会正常返回 200 + 空数组，于是 Total 与 Failed 都是 0——上面那一句会把它
+                // 计进 ok，镜像原封不动地留着，而日志每小时报一次「刷成功」。计数上单立一类，
+                // 并且**每一份都要说出来**（它天生不会进下面那个 Updated>0 的日志分支，
+                // 不单独说就等于没说）（Codex review P2）。
+                if (result.Failed > 0) failed++;
+                else if (result.Total == 0) missing++;
+                else ok++;
+                if (result.Total == 0)
+                {
+                    _logger.LogWarning(
+                        "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）在 CDS 上已经列不到了，"
+                        + "这轮没刷；镜像里的旧版本原样留着。多半是它在 CDS 上被删了",
+                        t.StoreId, t.ReportId, t.SourceBaseUrl ?? "(默认连接)");
+                }
+                else if (result.Updated > 0 || result.Failed > 0)
                 {
                     _logger.LogInformation(
                         "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）："
@@ -226,7 +242,8 @@ public class CdsReportImportWorker : BackgroundService
         }
 
         _logger.LogInformation(
-            "[CdsReportImportWorker] 本轮结束：刷了 {Ok} 份，失败 {Failed} 份", ok, failed);
+            "[CdsReportImportWorker] 本轮结束：刷了 {Ok} 份，失败 {Failed} 份，CDS 上已找不到 {Missing} 份",
+            ok, failed, missing);
     }
 
     /// <summary>

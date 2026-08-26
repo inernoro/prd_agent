@@ -351,6 +351,14 @@ public class CdsReportImportService
                 .ToListAsync(ct);
             conn = candidates.FirstOrDefault(c =>
                 string.Equals(c.PartnerBaseUrl?.TrimEnd('/'), normalizedSource, StringComparison.OrdinalIgnoreCase));
+            // 地址对不上，不代表那台 CDS 没了——**重新授权时地址本来就可能变**
+            //（`InfraAgentSessionService.FindActiveReplacementConnectionAsync` 那段注释举的例子就是
+            // 从带子域的地址换成裸域）。仓库里既有的「同一台 CDS」判据是 partner + projectId，
+            // 不是地址；照搬它，别让一次重新授权把所有条目永久判成孤儿（Codex review P2）。
+            //
+            // 老地址仍然认得出**那条旧连接记录**（重新授权把它置为 revoked，不删），
+            // 从它身上取 projectId 就够了。导入成功后条目上的来源会被改写成新地址，自愈一次即可。
+            conn ??= await FindReauthorizedConnectionAsync(normalizedSource, ct);
             if (conn == null)
                 throw new InvalidOperationException(
                     "这份报告记着的那台 CDS，在「系统互联」里已经没有对应的已授权连接了。"
@@ -382,6 +390,34 @@ public class CdsReportImportService
             throw new InvalidOperationException("CDS 连接缺少 baseUrl。");
 
         return (conn.PartnerBaseUrl.TrimEnd('/'), token!);
+    }
+
+    /// <summary>
+    /// 条目记着的地址已经找不到 active 连接时，看看是不是**同一台 CDS 换了地址重新授权**。
+    ///
+    /// 判据照搬仓库里既有的那条（`InfraAgentSessionService.FindActiveReplacementConnectionAsync`）：
+    /// 同一台 = 同 partner + 同 projectId，**不看地址**——重新授权时地址本来就可能变。
+    /// 不另立一套「稳定身份」，那会是新语义 + 数据迁移；这里只是把已有的判据用在同一件事上。
+    ///
+    /// 两道收紧，防它退化成「找不到就随便挑一条」：
+    /// - 老地址必须真的对应一条记录在案的连接（重新授权把旧记录置为 revoked，不删）；
+    /// - 那条记录必须有 projectId。projectId 为空时按空值去匹配会捞到一堆不相干的连接，
+    ///   那就成了另一种形式的猜。
+    /// </summary>
+    private async Task<InfraConnection?> FindReauthorizedConnectionAsync(string normalizedSource, CancellationToken ct)
+    {
+        var known = await _db.InfraConnections
+            .Find(c => c.Partner == "cds")
+            .SortByDescending(c => c.UpdatedAt)
+            .ToListAsync(ct);
+        var previous = known.FirstOrDefault(c =>
+            string.Equals(c.PartnerBaseUrl?.TrimEnd('/'), normalizedSource, StringComparison.OrdinalIgnoreCase));
+        if (previous == null || string.IsNullOrWhiteSpace(previous.ProjectId)) return null;
+
+        return known.FirstOrDefault(c =>
+            c.Id != previous.Id
+            && string.Equals(c.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(c.ProjectId, previous.ProjectId, StringComparison.Ordinal));
     }
 
     private async Task<DocumentStore> ResolveStoreAsync(string userId, string? storeId, CancellationToken ct)

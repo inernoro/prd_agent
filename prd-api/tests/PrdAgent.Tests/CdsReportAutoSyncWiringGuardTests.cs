@@ -25,6 +25,13 @@ public class CdsReportAutoSyncWiringGuardTests
     }
 
     /// <summary>
+    /// 把连续空白压成一个空格，好让断言能跨行把「条件」和「它守着的那一句」绑在一起，
+    /// 而不必写死换行符（`\n` 与 `\r\n` 在不同检出下不一样）。
+    /// </summary>
+    private static string Squash(string source)
+        => string.Join(' ', source.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    /// <summary>
     /// 从 <paramref name="begin"/> 截到 <paramref name="end"/>。锚不到就报错，
     /// 不许静默退化成扫全文——散扫的话随便哪句注释都能让守卫变绿。
     /// </summary>
@@ -122,9 +129,48 @@ public class CdsReportAutoSyncWiringGuardTests
         // 一份都没真刷进去也看不出来（Codex review P2）。
         var loop = Window(worker, "foreach (var t in targets)", "[CdsReportImportWorker] 本轮结束");
 
-        Assert.Contains("if (result.Failed > 0) failed++; else ok++;", loop);
-        // 反面对照：别把 ok++ 又无条件写回去。整个循环里 ok++ 只该出现在上面那个三目里一次。
+        Assert.Contains("if (result.Failed > 0) failed++;", loop);
+        // 一份都没列到（报告在 CDS 上被删了）同样不算刷成功——它的 Total 与 Failed 都是 0，
+        // 不单立一类就会被计进 ok，日志每小时报一次假的成功。
+        Assert.Contains("else if (result.Total == 0) missing++;", loop);
+        // 而且**每一份都要说出来**：它天生不会进 Updated>0 那个日志分支，不单独说等于没说。
+        //
+        // 断言必须把 LogWarning 和它的条件绑在一起。只分开断言「有 result.Total == 0」和
+        // 「有 LogWarning」是不成立的证据——上面那句 `else if (result.Total == 0) missing++;`
+        // 会替条件作证，于是把 if 改成 `if (false)` 也照样绿（第一次写就栽在这里）。
+        Assert.Contains("if (result.Total == 0) { _logger.LogWarning(", Squash(loop));
+        // 反面对照：别把 ok++ 又无条件写回去。整个循环里 ok++ 只该出现在上面那串条件里一次。
         Assert.Equal(1, loop.Split("ok++").Length - 1);
+
+        // 本轮结束那行必须把三类都报出来，否则单立一类等于白立。
+        var summary = Window(worker, "[CdsReportImportWorker] 本轮结束", "public const string CdsReportStoreAppKey");
+        Assert.Contains("{Missing}", summary);
+    }
+
+    [Fact]
+    public void 同一台cds换地址重新授权后_条目不该变成永久孤儿()
+    {
+        var source = ReadImportService();
+
+        // 条目记的是地址，而重新授权时地址本来就可能变（仓库里 InfraAgentSessionService
+        // 那段注释举的例子就是从带子域换成裸域）。只按地址找 active 连接，一次重新授权
+        // 就把所有条目永久判成孤儿，每小时失败一次，直到人把每一份都重新保存（Codex review P2）。
+        var resolve = Window(
+            source,
+            "private async Task<(string baseUrl, string key)> ResolveCdsCredentialsAsync",
+            "private async Task<InfraConnection?> FindReauthorizedConnectionAsync");
+        Assert.Contains("FindReauthorizedConnectionAsync(normalizedSource, ct)", resolve);
+
+        // 判据照搬既有那条：同 partner + 同 projectId，不看地址。
+        var fallback = Window(
+            source,
+            "private async Task<InfraConnection?> FindReauthorizedConnectionAsync",
+            "private async Task<DocumentStore> ResolveStoreAsync");
+        Assert.Contains("c.ProjectId, previous.ProjectId", fallback);
+        // 两道收紧，防它退化成「找不到就随便挑一条」：老地址得真对应一条记录在案的连接，
+        // 且那条得有 projectId（为空时按空值匹配会捞到一堆不相干的）。
+        Assert.Contains("string.IsNullOrWhiteSpace(previous.ProjectId)", fallback);
+        Assert.Contains("c.Id != previous.Id", fallback);
     }
 
     private static string FindSrcRoot()
