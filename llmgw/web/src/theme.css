@@ -2860,190 +2860,305 @@ a:focus-visible {
   font-size: var(--fs-secondary);
 }
 
-/* ── Quickstart 主线：左步骤 / 右产物两栏 ──────────────────────────────
-   两栏各自独立滚动（不共用一个滚动容器），否则右栏一长，左侧步骤条就整片留白。
-   左栏 sticky 到顶：用户滚右栏看片段时，"我在第几步"始终在视野里。 */
-.lg-qs-columns {
-  display: grid;
-  grid-template-columns: minmax(320px, 0.85fr) minmax(420px, 1.15fr);
-  gap: 14px;
-  align-items: start;
-}
-
-.lg-qs-steps {
-  position: sticky;
-  top: 0;
+/* ── Quickstart：创建屏 / 产物屏两屏互斥 ─────────────────────────────
+   改版前是左右常驻两栏，任何状态变化两栏一起重排，用户找不到重点。
+   现在没有密钥时整屏只有一张居中创建卡（三个决定 + 一个按钮），
+   签出来之后创建卡收成一条细条，整屏让给「复制走就能用」的产物。 */
+.lg-qs-create {
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-width: 0;
+  gap: 16px;
 }
 
-.lg-qs-products {
+/* 卡片本身不带排版：块与块之间 24px 的呼吸感在这里给，别靠各块自己加 margin。 */
+.lg-qs-create-card,
+.lg-qs-secret-card,
+.lg-qs-snippet-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-width: 0;
 }
 
-.lg-qs-step {
+.lg-qs-create-card {
+  gap: 24px;
+}
+
+.lg-qs-secret-card,
+.lg-qs-snippet-card {
+  gap: 16px;
+}
+
+.lg-qs-create-head {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--bg-surface);
-}
-
-.lg-qs-step > header {
-  display: flex;
-  align-items: center;
   gap: 8px;
 }
 
-.lg-qs-step > header > strong {
+/* 决定行右侧的「换一个人」是文字动作：button 的默认底色和描边要清掉。 */
+.lg-qs-decision-head > .lg-text-link,
+.lg-qs-ribbon > .lg-text-link {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lg-qs-create-head > h2 {
+  margin-bottom: 0;
+}
+
+/* 一个决定 = 一个区块：标题行 + 控件 + 一句说明，块间 24px，块内 8/16px。 */
+.lg-qs-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lg-qs-decision-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.lg-qs-decision-head > strong {
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.lg-qs-decision-head > small {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+.lg-qs-decision-head > .lg-text-link {
+  margin-left: auto;
+}
+
+.lg-qs-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lg-qs-preset-list > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lg-qs-preset-list > button:hover:not(:disabled),
+.lg-qs-preset-list > button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.lg-qs-preset-list > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.lg-qs-preset-list > button > strong {
+  flex: 0 0 auto;
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.lg-qs-preset-list > button > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lg-qs-radio {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+}
+
+.lg-qs-preset-list > button.is-active .lg-qs-radio {
+  border-color: var(--accent);
+  border-width: 5px;
+}
+
+.lg-qs-budget {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  height: 44px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
+.lg-qs-budget > input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-heading);
+  font-weight: 650;
+  outline: none;
+}
+
+/* 这一行是成句解释（预占上限怎么来的），按字体阶梯守卫必须走 --fs-secondary 以上。 */
+.lg-qs-note {
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+  line-height: 1.55;
+}
+
+.lg-qs-note.is-bad {
+  color: var(--err);
+}
+
+.lg-qs-owner-line,
+.lg-qs-owner-list > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.lg-qs-owner-line > span:last-child,
+.lg-qs-owner-list > button > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lg-qs-owner-line strong,
+.lg-qs-owner-list strong {
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.lg-qs-owner-line small,
+.lg-qs-owner-list small {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+.lg-qs-owner-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lg-qs-owner-list > button {
+  cursor: pointer;
+}
+
+.lg-qs-owner-list > button:hover,
+.lg-qs-owner-list > button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.lg-qs-avatar {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  font-weight: 700;
+}
+
+.lg-qs-primary {
+  width: 100%;
+  height: 48px;
+  justify-content: center;
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.lg-qs-footline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 签发中：阶段感长在创建卡里，卡不跳位，只有内容换。 */
+.lg-qs-issuing {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lg-qs-issuing-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   color: var(--text-primary);
   font-size: var(--fs-heading);
   font-weight: 650;
 }
 
-.lg-qs-step-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  color: var(--text-muted);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-}
-
-.lg-qs-step.is-active > header .lg-qs-step-index {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-contrast);
-}
-
-.lg-qs-step.is-done > header .lg-qs-step-index,
-.lg-qs-tail-row.is-done .lg-qs-step-index {
-  border-color: transparent;
-  background: var(--ok);
-  color: var(--accent-contrast);
-}
-
-.lg-qs-tail-row.is-active .lg-qs-step-index {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.lg-qs-step-hint,
-.lg-qs-step-action {
+.lg-qs-issuing-head > span {
   margin-left: auto;
   color: var(--text-muted);
   font-size: var(--fs-caption);
+  font-weight: 400;
 }
 
-.lg-qs-step-action {
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-
-.lg-qs-primary {
-  width: 100%;
-  justify-content: center;
-  min-height: 38px;
-}
-
-.lg-qs-secondary {
-  align-self: flex-start;
-}
-
-.lg-qs-locked-preset {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+.lg-qs-issuing-bar {
+  overflow: hidden;
+  height: 3px;
+  border-radius: 999px;
   background: var(--bg-elevated);
 }
 
-.lg-qs-locked-preset > span {
-  color: var(--text-muted);
-  font-size: var(--fs-secondary);
-}
-
-/* 步骤 3/4 已经没有控件，合并成一条竖直步骤条，把高度还给右侧产物栏。 */
-.lg-qs-step-tail {
-  gap: 8px;
-}
-
-.lg-qs-tail-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.lg-qs-tail-row strong {
+.lg-qs-issuing-bar > i {
   display: block;
-  color: var(--text-muted);
-  font-size: var(--fs-body);
-  font-weight: 600;
+  width: 32%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: lg-qs-sweep 1.15s ease-in-out infinite;
 }
 
-.lg-qs-tail-row.is-done strong,
-.lg-qs-tail-row.is-active strong {
-  color: var(--text-primary);
+@keyframes lg-qs-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
 }
 
-.lg-qs-tail-row small {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-muted);
-  font-size: var(--fs-caption);
+@media (prefers-reduced-motion: reduce) {
+  .lg-qs-issuing-bar > i {
+    width: 100%;
+    animation: none;
+  }
 }
 
-.lg-qs-products-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.lg-qs-products-heading > h2 {
-  margin-bottom: 0 !important;
-}
-
-.lg-qs-empty-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.lg-qs-empty-list > span {
-  padding: 10px;
-  border: 1px dashed var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: var(--fs-secondary);
-}
-
-.lg-qs-preview-snippet,
-.lg-qs-preview-snippet > summary {
-  margin-top: 10px;
-  color: var(--text-muted);
-  font-size: var(--fs-caption);
-  cursor: pointer;
-}
-
-/* 生成中：只列两个真实网络阶段。前端拼片段是毫秒级的，画成第三个阶段是假阶段。 */
 .lg-qs-stages {
   display: flex;
   flex-direction: column;
@@ -3054,36 +3169,120 @@ a:focus-visible {
 }
 
 .lg-qs-stages > li {
-  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
-  color: var(--text-muted);
-  font-size: var(--fs-secondary);
 }
 
 .lg-qs-stages > li.is-active {
   border-color: var(--accent);
   background: var(--accent-soft);
-  color: var(--text-primary);
 }
 
 .lg-qs-stages > li.is-done {
   border-color: color-mix(in srgb, var(--ok) 40%, transparent);
-  color: var(--text-secondary);
 }
 
-.lg-qs-stages strong,
+.lg-qs-stages strong {
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
 .lg-qs-stages small {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  font-family: var(--font-mono);
+}
+
+/* ── 产物屏 ───────────────────────────────────────────────────────── */
+.lg-qs-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.lg-qs-ribbon {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, var(--border-subtle));
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--ok);
+}
+
+.lg-qs-ribbon > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--fs-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lg-qs-ribbon > .lg-text-link {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.lg-qs-secret-card {
+  border-color: color-mix(in srgb, var(--warn) 28%, var(--border-subtle));
+}
+
+.lg-qs-secret-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lg-qs-secret-head > small {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+}
+
+/* 密钥串在窄屏必须能横向滚动，不能被裁掉——它是这一屏唯一取不回来的东西。 */
+.lg-qs-secret-code {
   display: block;
+  overflow-x: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  white-space: nowrap;
+}
+
+.lg-qs-secret-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lg-qs-secret-actions > small {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
 }
 
 .lg-qs-product-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
-  padding: 10px;
+  padding: 10px 14px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
@@ -3092,11 +3291,19 @@ a:focus-visible {
 }
 
 .lg-qs-product-row > code {
-  overflow: auto;
+  overflow-x: auto;
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--fs-secondary);
   white-space: nowrap;
+}
+
+.lg-qs-more-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
 }
 
 /* 失败归因：三环自检 + 一句归因 + 一个下一步。tone 全走语义色，不硬编码。 */
@@ -3179,19 +3386,15 @@ a:focus-visible {
   max-width: 320px;
 }
 
-/* 左栏窄，三个预设竖排；宽屏的三列排布留给别处使用者。 */
-.lg-qs-steps .lg-client-presets {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-/* 窄屏退化为上下：步骤在上、产物在下，产物区不折叠、不 sticky。 */
-@media (max-width: 1100px) {
-  .lg-qs-columns {
+/* 窄屏：负责人列表单列，片段头的协议下拉换行不再右对齐挤成一条缝。 */
+@media (max-width: 760px) {
+  .lg-qs-owner-list {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .lg-qs-steps {
-    position: static;
+  .lg-qs-snippet-head > select {
+    margin-left: 0;
+    max-width: 100%;
   }
 }
 

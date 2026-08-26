@@ -12,7 +12,7 @@
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Check, CheckCircle2, Copy, FileCode2, KeyRound, Play, Server, ShieldCheck } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Copy, FileCode2, KeyRound, Play } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, ensurePoolTypes, getOrganization, getPoolTypes, updateGatewayAppCaller } from '@/lib/api';
 import type { OrganizationData } from '@/lib/types';
@@ -145,7 +145,7 @@ const FAILURE_RULES: Record<string, FailureRule> = {
 const TEST_IMAGE_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 export function QuickstartPage() {
-  const { tenant } = useAuth();
+  const { tenant, user } = useAuth();
   const canCreateAccess = canUseCapability(tenant?.role, 'appCallerWrite') && canUseCapability(tenant?.role, 'serviceKeyWrite');
   const { confirm } = useDialogs();
   const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
@@ -175,13 +175,26 @@ export function QuickstartPage() {
     | null>(null);
   const [binding, setBinding] = useState(false);
   const [bindNotice, setBindNotice] = useState<string | null>(null);
+  // 月预算是本页唯一要用户想的数字；单次预占上限由它派生（成对约束见 budgetPair）。
+  const [budgetUsd, setBudgetUsd] = useState('');
+  const [holdCapUsd, setHoldCapUsd] = useState('');
+  // 负责人默认就是当前登录的人，不让用户在成员列表里硬选；要改再展开挑。
+  const [ownerUserId, setOwnerUserId] = useState('');
+  const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
 
   const selectedProtocol = protocolDefinition(protocol);
   const selectedClient = CLIENT_PRESETS.find((item) => item.id === clientPreset) ?? CLIENT_PRESETS[0];
+  /** 只有真有客户端配置页要填的预设才给「客户端配置」标签，避免与环境变量重复。 */
+  const hasClientTab = (bundle?.clientPreset ?? clientPreset) !== 'api';
   const activeTeams = organization?.teams.filter((team) => team.status === 'active') ?? [];
   const selectedTeam = activeTeams.find((team) => team.id === teamId);
+  const activeMembers = organization?.members.filter((member) => member.status === 'active') ?? [];
+  const selectedMember = activeMembers.find((member) => member.userId === ownerUserId) ?? null;
+  const ownerLabel = memberLabel(selectedMember) || user?.displayName || user?.username || '未指定';
+  const budgetPair = deriveBudgetPair(budgetUsd, holdCapUsd);
   const identityLocked = Boolean(bundle) || creatingStage !== null;
 
+  const currentUsername = user?.username ?? '';
   useEffect(() => {
     let active = true;
     void getOrganization().then((response) => {
@@ -193,13 +206,21 @@ export function QuickstartPage() {
       }
       setOrganization(response.data);
       const firstTeam = response.data.teams.find((team) => team.status === 'active');
+      // 负责人默认取「当前登录的这个人」，取不到（联邦账号还没进成员表）才留空，
+      // 留空时提交 owner 用会话里的显示名兜底——不编造一个别人的名字。
+      const me = response.data.members.find((member) => member.status === 'active'
+        && member.username && member.username === currentUsername);
+      if (me) {
+        setOwnerUserId((current) => current || me.userId);
+        setTeamId((current) => current || me.teamIds.find((id) => id) || firstTeam?.id || '');
+      }
       if (firstTeam) setTeamId((current) => current || firstTeam.id);
       const suggestedClient = normalizeClientCode(response.data.tenant?.slug || 'my-agent');
       setClientCode((current) => current === 'my-agent' ? suggestedClient : current);
       setAppCallerCode((current) => current === 'my-agent.quickstart::chat' ? `${suggestedClient}.quickstart::chat` : current);
     });
     return () => { active = false; };
-  }, []);
+  }, [currentUsername]);
 
   const displayBundle: DisplayBundle = {
     key: bundle?.key ?? '',
@@ -224,7 +245,7 @@ export function QuickstartPage() {
     env: environmentSnippet(displayBundle),
     skill: agentSkillSnippet(displayBundle, snippetMode),
   }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode]);
-  const visibleSnippet = snippets[snippetTab];
+  const visibleSnippet = snippets[snippetTab === 'client' && !hasClientTab ? 'curl' : snippetTab];
 
   const copyText = async (name: string, value: string) => {
     await navigator.clipboard.writeText(value);
@@ -238,6 +259,10 @@ export function QuickstartPage() {
     const normalizedBaseUrl = baseUrl.trim().replace(/\/$/, '');
     if (!teamId || !normalizedBaseUrl || !isValidAppCaller(normalizedCode, requestType) || !/^[a-z][a-z0-9._-]{1,79}$/.test(normalizedClient)) {
       setActionError(`请确认团队、Gateway 地址和 clientCode 有效，并让 appCallerCode 以 ::${requestType} 结尾。`);
+      return;
+    }
+    if (budgetPair.error) {
+      setActionError(budgetPair.error);
       return;
     }
     if (bundle && !await confirm({ title: '将签发一把新密钥', description: '现有密钥不会自动撤销。', confirmLabel: '继续签发' })) return;
@@ -255,6 +280,15 @@ export function QuickstartPage() {
     if (!callerResponse.success) {
       setCreatingStage(null);
       setActionError(callerResponse.error?.message || '创建 appCaller 失败');
+      return;
+    }
+
+    // 预算与负责人挂在 appCaller 上（密钥本身没有这两个字段）。放在签密钥之前：
+    // 预算被后端拒收时还没有密钥生出来，不会留下一把「没有预算约束」的孤儿 key。
+    const governance = await applyGovernance(callerResponse.data.id);
+    if (governance) {
+      setCreatingStage(null);
+      setActionError(governance);
       return;
     }
 
@@ -295,9 +329,30 @@ export function QuickstartPage() {
       clientPreset,
     };
     setBundle(nextBundle);
-    setSnippetTab('client');
+    // 「API 与 Agent」这一档没有客户端配置页可填，clientSetupSnippet 会退化成环境变量，
+    // 和「环境变量」标签一字不差。所以那一档直接落到 cURL，不摆一个重复的标签。
+    setSnippetTab(clientPreset === 'api' ? 'curl' : 'client');
     void checkRealRoute(nextBundle);
     void runTest(nextBundle, 'safe');
+  };
+
+  /**
+   * 把负责人与预算写到刚登记的 appCaller 上；返回 null 表示成功，否则返回要展示的错误。
+   *
+   * 预算必须成对提交：只给月预算而不给单次预占上限，console-api 会 400
+   * （`ValidateBudgetConfiguration`），而库里真出现单边配置会让 serving 启动自检直接抛错。
+   * 所以派生值由 `deriveBudgetPair` 统一算，且只在两个都成立时才进请求体。
+   */
+  const applyGovernance = async (appCallerId: string) => {
+    const ownerValue = memberOwnerValue(selectedMember) || (user?.username ?? '').trim();
+    const hasBudget = budgetPair.monthly !== null && budgetPair.hold !== null;
+    if (!ownerValue && !hasBudget) return null;
+    const response = await updateGatewayAppCaller(appCallerId, {
+      ...(ownerValue ? { owner: ownerValue } : {}),
+      ...(hasBudget ? { monthlyBudgetUsd: budgetPair.monthly!, budgetReservationUsd: budgetPair.hold! } : {}),
+    });
+    if (response.success) return null;
+    return `调用用途已登记，但${hasBudget ? '预算' : '负责人'}没写上：${response.error?.message || '未知错误'}。密钥尚未签发，改完再点一次即可。`;
   };
 
   const checkRealRoute = async (target = bundle) => {
@@ -503,6 +558,19 @@ export function QuickstartPage() {
     setTestResult(null);
   };
 
+  /**
+   * 换负责人时顺带确定团队：成员可能属于 0 个或多个团队，所以不是无脑覆盖——
+   * 当前团队已经在这个人名下就保持不动，否则取他的第一个团队；一个都没有就留着
+   * 原来的选择，让高级设置里的团队下拉继续做主。
+   */
+  const applyOwner = (member: { userId: string; teamIds: string[] }) => {
+    setOwnerUserId(member.userId);
+    setOwnerPickerOpen(false);
+    const usable = member.teamIds.filter((id) => activeTeams.some((team) => team.id === id));
+    if (usable.length === 0) return;
+    setTeamId((current) => usable.includes(current) ? current : usable[0]);
+  };
+
   // 页面只有一条主线，五个状态由真实数据推出来，不额外存一个会和事实打架的 phase 变量。
   const phase: 'idle' | 'issuing' | 'issued' | 'verifying' | 'failed' = creatingStage !== null
     ? 'issuing'
@@ -516,248 +584,301 @@ export function QuickstartPage() {
   const diagnosis = phase === 'failed' && testResult ? diagnoseFailure(testResult.code, testResult.message) : null;
   const chain = diagnosis ? chainState(diagnosis.brokenLink) : [];
   const blockedByTeam = !organizationLoading && !organizationError && activeTeams.length === 0;
-  const issueDisabled = organizationLoading || creatingStage !== null || blockedByTeam;
-  const stepTone = (done: boolean, active: boolean) => done ? 'is-done' : active ? 'is-active' : '';
+  const issueDisabled = organizationLoading || creatingStage !== null || blockedByTeam || Boolean(budgetPair.error);
+  // 创建屏与产物屏互斥：没有密钥时整屏只有一张创建卡，签出来之后整屏让给产物。
+  // 两者不同时占版面，就不会出现「左右一起变」——这是本页改版要治的核心问题。
+  const onCreateScreen = phase === 'idle' || phase === 'issuing';
+  const ribbonText = bundle
+    ? `已按「${selectedClient.label}」签发 · ${ownerLabel}${selectedTeam ? ` · ${selectedTeam.name}` : ''} · ${budgetPair.monthly !== null ? `${budgetPair.monthly} USD/月` : '预算不限'}`
+    : '';
 
   return (
     <PageShell>
       <PageHeader
         title="Quickstart"
-        subtitle="选客户端，签一把密钥，当场跑通一条请求。"
+        subtitle={onCreateScreen ? '三个决定，一次点击；密钥在下一屏只显示一次。' : '密钥只显示这一次，复制走再刷新。'}
       />
 
       <PageBody>
-        {/*
-          老手条只承载「长期事实」：Base URL 与当前已有密钥的前缀。主卡里不再重复渲染地址，
-          右栏只展示「这一次签出来的」产物——两者是分工，不是同一个值渲染两遍。
-          新人四步清单已经在首页常驻，这里不放第二份；真正会挡住人的前置（租户没有团队）
-          直接以阻断提示长在第 2 步里，用户不必先读一份清单再自己对号入座。
-        */}
-        <AccessSnippetBar />
+        {onCreateScreen ? (
+          /*
+            创建屏：一张居中卡，只放三个决定——接什么、花多少、算谁的。
+            其余全部是派生值或有正确默认值，收进「高级设置」，默认不展开
+            （`minimal-user-input.md`：系统知道的值不该摆成输入框）。
+          */
+          <div className="lg-qs-create">
+            <Card style={CARD_BODY} className="lg-qs-create-card">
+              <div className="lg-qs-create-head">
+                <h2 style={headingStyle}><KeyRound size={15} />创建接入密钥</h2>
+                <p style={{ ...BODY_TEXT, margin: 0 }}>不创建通配 key；默认 60 次/分钟，只授权当前调用用途与四种协议，签发后自动跑一次安全试跑。</p>
+              </div>
 
-        <div className="lg-qs-columns">
-          <div className="lg-qs-steps">
-            <section className={`lg-qs-step ${stepTone(Boolean(bundle), !bundle)}`} aria-label="第一步：选你要接什么">
-              <header>
-                <span className="lg-qs-step-index">1</span>
-                <strong>选你要接什么</strong>
-                {bundle && canCreateAccess ? <button type="button" className="lg-text-link lg-qs-step-action" onClick={() => void editIdentity()}>更改</button> : null}
-              </header>
-              {identityLocked ? (
-                <div className="lg-qs-locked-preset"><strong>{selectedClient.label}</strong><span>{selectedClient.description}</span></div>
-              ) : (
-                <div className="lg-client-presets" role="radiogroup" aria-label="接入方式">
-                  {CLIENT_PRESETS.map((item) => (
-                    <button key={item.id} type="button" role="radio" aria-checked={clientPreset === item.id} className={clientPreset === item.id ? 'is-active' : ''} onClick={() => selectClientPreset(item.id)}>
-                      <strong>{item.label}</strong>
-                      <span>{item.description}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section className={`lg-qs-step ${stepTone(Boolean(bundle), !bundle)}`} aria-label="第二步：签出密钥">
-              <header>
-                <span className="lg-qs-step-index">2</span>
-                <strong>签出密钥</strong>
-                <span className="lg-qs-step-hint">{bundle ? '已签发一把' : blockedByTeam ? '前置未满足' : '一次点击'}</span>
-              </header>
               {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
-              {organizationLoading ? <SectionLoader text="正在读取当前租户和团队" /> : null}
+              {organizationLoading ? <SectionLoader text="正在读取当前租户、团队和成员" /> : null}
               {organizationError ? <div className="lg-test-result is-error">{organizationError}</div> : null}
-              {blockedByTeam ? <div className="lg-quickstart-prerequisite" role="status"><span><strong>先创建一个团队</strong><small>团队决定调用用途与密钥归谁管。</small></span><Link to="/organization">打开组织与团队</Link></div> : null}
-
-              {canCreateAccess && !bundle ? (
-                <Button variant="primary" className="lg-qs-primary" title={blockedByTeam ? '请先创建团队' : undefined} disabled={issueDisabled} onClick={() => void createAccessBundle()}>
-                  <KeyRound size={14} />{creatingStage ? '正在签发…' : '签出密钥并跑通一条请求'}
-                </Button>
+              {blockedByTeam ? (
+                <div className="lg-quickstart-prerequisite" role="status">
+                  <span><strong>先创建一个团队</strong><small>团队决定调用用途与密钥归谁管。</small></span>
+                  <Link to="/organization">打开组织与团队</Link>
+                </div>
               ) : null}
-              {canCreateAccess && bundle ? (
-                <Button variant="ghost" size="sm" className="lg-qs-secondary" disabled={issueDisabled} onClick={() => void createAccessBundle()}>再签一把同配置 key</Button>
-              ) : null}
-              <p style={{ ...BODY_TEXT, margin: `${GAP.tight}px 0 0` }}>不创建通配 key；默认 60 次/分钟，只授权当前调用用途与四种协议，签发后自动跑一次安全试跑。</p>
 
-              {!organizationLoading ? (
-                <>
-                  <div className="lg-quickstart-summary">
-                    <span><small>团队</small><strong>{selectedTeam?.name || '尚未选择'}</strong></span>
-                    <span><small>调用用途</small><strong>{appCallerCode}</strong></span>
-                    <span><small>协议</small><strong>{selectedProtocol.label}</strong></span>
+              {phase === 'issuing' ? (
+                <div className="lg-qs-issuing">
+                  <div className="lg-qs-issuing-head">
+                    <strong>正在签发</strong>
+                    <span>{creatingStage === 'app-caller' ? '1 / 2' : '2 / 2'}</span>
                   </div>
-                  <details className="lg-quickstart-advanced-identity">
-                    <summary>高级身份与地址（已有默认值）</summary>
-                    <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.section, marginTop: GAP.section }}>
+                  <div className="lg-qs-issuing-bar"><i /></div>
+                  <ol className="lg-qs-stages">
+                    <li className={creatingStage === 'app-caller' ? 'is-active' : 'is-done'}><strong>登记调用用途</strong><small>appCaller {appCallerCode}</small></li>
+                    <li className={creatingStage === 'key' ? 'is-active' : ''}><strong>签发密钥</strong><small>{creatingStage === 'key' ? '正在写入密钥目录' : '等待上一步产物'}</small></li>
+                  </ol>
+                </div>
+              ) : (
+                <>
+                  <div className="lg-qs-decision">
+                    <div className="lg-qs-decision-head"><strong>接入方式</strong></div>
+                    <div className="lg-qs-preset-list" role="radiogroup" aria-label="接入方式">
+                      {CLIENT_PRESETS.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={clientPreset === item.id}
+                          className={clientPreset === item.id ? 'is-active' : ''}
+                          disabled={!canCreateAccess}
+                          onClick={() => selectClientPreset(item.id)}
+                        >
+                          <span className="lg-qs-radio" aria-hidden="true" />
+                          <strong>{item.label}</strong>
+                          <span>{item.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="lg-qs-decision">
+                    <div className="lg-qs-decision-head"><strong>月预算</strong><small>留空即不限</small></div>
+                    <div className="lg-qs-budget">
+                      <span>USD</span>
+                      <input
+                        aria-label="月预算（美元）"
+                        inputMode="decimal"
+                        placeholder="不限"
+                        value={budgetUsd}
+                        disabled={!canCreateAccess}
+                        onChange={(event) => setBudgetUsd(event.target.value.replace(/[^\d.]/g, ''))}
+                      />
+                      <span>/ 月</span>
+                    </div>
+                    <small className={`lg-qs-note${budgetPair.error ? ' is-bad' : ''}`}>{budgetPair.error || budgetPair.holdNote}</small>
+                  </div>
+
+                  <div className="lg-qs-decision">
+                    <div className="lg-qs-decision-head">
+                      <strong>负责人</strong>
+                      {canCreateAccess && activeMembers.length > 1
+                        ? <button type="button" className="lg-text-link" onClick={() => setOwnerPickerOpen((current) => !current)}>{ownerPickerOpen ? '收起' : '换一个人'}</button>
+                        : null}
+                    </div>
+                    {/* 展开挑人时收起这一行：否则当前负责人会在同一屏出现两次。 */}
+                    {ownerPickerOpen ? null : (
+                    <div className="lg-qs-owner-line">
+                      <span className="lg-qs-avatar" aria-hidden="true">{initialsOf(ownerLabel)}</span>
+                      <span>
+                        <strong>{ownerLabel}{selectedMember && selectedMember.username === currentUsername ? '（你）' : ''}</strong>
+                        <small>{selectedTeam ? `密钥与预算记在「${selectedTeam.name}」名下` : '尚未确定团队，可在高级设置里选'}</small>
+                      </span>
+                    </div>
+                    )}
+                    {ownerPickerOpen ? (
+                      <div className="lg-qs-owner-list" role="radiogroup" aria-label="负责人">
+                        {activeMembers.map((member) => (
+                          <button
+                            key={member.userId}
+                            type="button"
+                            role="radio"
+                            aria-checked={member.userId === ownerUserId}
+                            className={member.userId === ownerUserId ? 'is-active' : ''}
+                            onClick={() => applyOwner(member)}
+                          >
+                            <span className="lg-qs-avatar" aria-hidden="true">{initialsOf(memberLabel(member))}</span>
+                            <span><strong>{memberLabel(member)}</strong><small>{member.role}</small></span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <DetailsBlock title="高级设置（已有默认值）">
+                    <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.section }}>
                       <div style={{ gridColumn: '1 / -1' }}>
                         <div style={labelStyle}>调用类型</div>
                         <div className="lg-quickstart-request-types" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.normal, marginTop: GAP.tight }}>
-                          {REQUEST_TYPES.map((item) => <button key={item.id} type="button" disabled={identityLocked} onClick={() => changeRequestType(item.id)} aria-pressed={requestType === item.id} className={requestType === item.id ? 'is-active' : ''}><strong>{item.label}</strong><span>{item.description}</span></button>)}
+                          {REQUEST_TYPES.map((item) => (
+                            <button key={item.id} type="button" disabled={identityLocked} onClick={() => changeRequestType(item.id)} aria-pressed={requestType === item.id} className={requestType === item.id ? 'is-active' : ''}>
+                              <strong>{item.label}</strong><span>{item.description}</span>
+                            </button>
+                          ))}
                         </div>
                       </div>
-                      <label style={labelStyle}>团队<select value={teamId} disabled={!canCreateAccess || identityLocked} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}><option value="">选择团队</option>{activeTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
+                      <label style={labelStyle}>团队
+                        <select value={teamId} disabled={!canCreateAccess || identityLocked} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}>
+                          <option value="">选择团队</option>
+                          {activeTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                        </select>
+                      </label>
+                      <Field label="单次预占上限（USD，留空按月预算派生）" value={holdCapUsd} onChange={setHoldCapUsd} placeholder="自动" disabled={!canCreateAccess} />
                       <Field label={`appCallerCode（以 ::${requestType} 结尾）`} value={appCallerCode} onChange={setAppCallerCode} placeholder={`my-agent.quickstart::${requestType}`} disabled={!canCreateAccess || identityLocked} />
                       <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || identityLocked} />
-                      <label style={labelStyle}>环境<select value={environment} disabled={!canCreateAccess || identityLocked} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}><option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option></select></label>
-                      <label style={labelStyle}>Gateway 地址<code className="lg-derived-base-url">{baseUrl}</code></label>
+                      <label style={labelStyle}>环境
+                        <select value={environment} disabled={!canCreateAccess || identityLocked} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
+                          <option value="development">开发</option>
+                          <option value="test">测试</option>
+                          <option value="staging">预发布</option>
+                          <option value="production">生产</option>
+                        </select>
+                      </label>
                       <label style={labelStyle}>测试路径<code className="lg-derived-base-url">{selectedProtocol.path}</code></label>
-                      <Field label="自定义 Gateway 地址" value={baseUrl} onChange={changeBaseUrl} />
+                      <Field label="Gateway 地址" value={baseUrl} onChange={changeBaseUrl} />
                     </div>
-                  </details>
+                  </DetailsBlock>
+
+                  {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
                 </>
-              ) : null}
-              {actionError ? <div className="lg-test-result is-error" role="alert">{actionError}</div> : null}
-            </section>
+              )}
+            </Card>
 
-            <section className="lg-qs-step lg-qs-step-tail" aria-label="第三步与第四步">
-              <div className={`lg-qs-tail-row ${bundle ? 'is-done' : ''}`}>
-                <span className="lg-qs-step-index">3</span>
-                <div><strong>拿到三件东西</strong><small>地址、一次性密钥、可直接复制的请求片段。</small></div>
-              </div>
-              <div className={`lg-qs-tail-row ${phase === 'issued' ? 'is-done' : phase === 'verifying' ? 'is-active' : ''}`}>
-                <span className="lg-qs-step-index">4</span>
-                <div><strong>当场验证</strong><small>{phase === 'verifying' ? '正在跑安全试跑（dry-run，不打上游）。' : phase === 'failed' ? '这一环没过，右侧给出下一步。' : phase === 'issued' ? '安全试跑已通过，requestId 可回查。' : '签发后自动跑一次安全试跑。'}</small></div>
-              </div>
-            </section>
+            {phase === 'idle' && canCreateAccess ? (
+              <Button variant="primary" className="lg-qs-primary" title={blockedByTeam ? '请先创建团队' : undefined} disabled={issueDisabled} onClick={() => void createAccessBundle()}>
+                <KeyRound size={15} />创建密钥
+              </Button>
+            ) : null}
 
-            {/* 三处解释块合并成这一处：身份、两种测试的通过判据、失败定位，默认收起。 */}
-            <DetailsBlock title="工作原理：三个身份、两种测试与失败定位">
-              <dl style={dlStyle}>
-                <RouteRow name="service key" text="回答谁在调用；绑定 tenant、team、client、environment、appCaller 和协议。" />
-                <RouteRow name="appCallerCode" text="回答为什么调用；用于提示词策略、预算、限流、统计与专属路由。" />
-                <RouteRow name="model pool" text="回答去哪里调用；默认池与特殊池由平台规则管理，不由 key 承担。" />
-                <RouteRow name="安全连通" text="发送 X-Gateway-Dry-Run: quickstart，在模型解析、预算预占和上游发送前结束；HTTP 成功、返回 requestId 且 upstreamCalled=false 才算通过。" />
-                <RouteRow name="真实模型" text="只有路由预览成功且不是明显开发桩时才能点击；请求不带 dry-run，并把实际结果写入同一套租户日志。" />
-                <RouteRow name="调用类型" text={displayBundle.requestType === 'vision' ? '图片理解：使用内嵌的 1×1 测试图片，只验证多模态协议形状，不读取用户文件。' : '文字对话：使用固定的测试文字，只验证 chat 协议形状。'} />
-                <RouteRow name="401 / 403" text="401 是密钥错误、过期或已撤销；403 是团队、appCaller、协议、scope 或来源范围不匹配。失败时右侧会直接指出坏在哪一环。" />
-                <RouteRow name="审计边界" text="日志记录服务端解析的 tenant、team、service key、client 和 environment；不记录密钥明文，费用保持 unknown。" />
-              </dl>
-              <Prose>
-                首版提示词策略只用于 chat/vision。图片生成、ASR、视频和 raw 接口不通过本页批量试跑；
-                需要真实协议验收时，每类最多一次，其余使用假上游。
-              </Prose>
-              <TutorialLink chapter="chapter-11">查看教程：第 11 章 自助接入</TutorialLink>
-            </DetailsBlock>
+            <div className="lg-qs-footline">
+              <DetailsBlock title="已经有密钥？看接入地址与现有密钥前缀">
+                <AccessSnippetBar />
+              </DetailsBlock>
+              <DetailsBlock title="工作原理：三个身份、预算与失败定位">
+                <dl style={dlStyle}>
+                  <RouteRow name="service key" text="回答谁在调用；绑定 tenant、team、client、environment、appCaller 和协议。" />
+                  <RouteRow name="appCallerCode" text="回答为什么调用；提示词策略、预算、限流与专属路由都挂在它上面。" />
+                  <RouteRow name="model pool" text="回答去哪里调用；默认池与特殊池由平台规则管理，不由 key 承担。" />
+                  <RouteRow name="预算与预占" text="月预算与单次预占上限必须成对写入；只写一个会被网关配置校验拒绝。留空表示不限额。" />
+                  <RouteRow name="安全连通" text="发送 X-Gateway-Dry-Run: quickstart，在模型解析、预算预占和上游发送前结束；HTTP 成功、返回 requestId 且 upstreamCalled=false 才算通过。" />
+                  <RouteRow name="401 / 403" text="401 是密钥错误、过期或已撤销；403 是团队、appCaller、协议、scope 或来源范围不匹配。失败时下一屏会直接指出坏在哪一环。" />
+                </dl>
+                <TutorialLink chapter="chapter-11">查看教程：第 11 章 自助接入</TutorialLink>
+              </DetailsBlock>
+            </div>
           </div>
+        ) : (
+          /*
+            产物屏：创建卡收成一条细条，整屏让给「复制走就能用」的三样东西。
+            结果条与失败条共用顶部同一个槽位——成功也要留下 requestId，
+            否则这次试跑没有任何可回查的凭据（`closed-loop-acceptance.md`）。
+          */
+          <div className="lg-qs-artifacts">
+            <div className="lg-qs-ribbon">
+              <CheckCircle2 size={15} />
+              <span>{ribbonText}</span>
+              {canCreateAccess ? <button type="button" className="lg-text-link" onClick={() => void editIdentity()}>更改</button> : null}
+            </div>
 
-          <div className="lg-qs-products">
-            {phase === 'idle' ? (
-              <Card style={CARD_BODY}>
-                <h2 style={headingStyle}><ShieldCheck size={15} />签出后，这里会出现三件东西</h2>
-                <p style={{ ...BODY_TEXT, margin: `0 0 ${GAP.normal}px` }}>密钥拿到之后，片段才带真实值。</p>
-                <div className="lg-qs-empty-list">
-                  <span>Gateway 地址与测试路径</span>
-                  <span>一次性密钥（只显示一次）</span>
-                  <span>请求片段：客户端配置 / cURL / 环境变量 / Agent Skill</span>
+            {phase === 'verifying' ? (
+              <div className="lg-test-result" role="status"><Play size={14} />正在发送安全试跑（dry-run，不访问上游），等待 requestId 回执。</div>
+            ) : null}
+            {phase === 'issued' && testResult?.ok ? (
+              <div className="lg-test-result is-ok" role="status">
+                <CheckCircle2 size={14} />{testResult.message}
+                {testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}
+              </div>
+            ) : null}
+            {diagnosis ? (
+              <div className="lg-qs-failure" role="alert">
+                <div className="lg-qs-failure-head">
+                  <AlertCircle size={16} />
+                  <strong>{diagnosis.title}</strong>
+                  {diagnosis.code ? <code>{diagnosis.code}</code> : null}
                 </div>
-                <details className="lg-qs-preview-snippet">
-                  <summary>先看一眼请求片段（密钥仍是占位符）</summary>
-                  <pre style={preStyle}><code>{snippets.curl}</code></pre>
-                </details>
-              </Card>
+                <div className="lg-qs-chain">
+                  {chain.map((link) => <span key={link.id} className={`lg-qs-chain-link is-${link.tone}`}>{link.label}</span>)}
+                </div>
+                <span className="lg-qs-failure-reason">{diagnosis.reason}</span>
+                <div className="lg-qs-failure-actions">
+                  {diagnosis.action === 'bind-pool' && canCreateAccess ? <Button size="sm" variant="secondary" disabled={binding} onClick={() => void bindDefaultPool()}>{binding ? '正在绑定' : diagnosis.actionLabel}</Button> : null}
+                  {diagnosis.to && diagnosis.actionLabel ? <Link className="lg-secondary-link" to={diagnosis.to}>{diagnosis.actionLabel}</Link> : null}
+                  {canCreateAccess ? <Button size="sm" variant="ghost" disabled={testing} onClick={() => void runTest()}>重试验证</Button> : null}
+                  {testResult?.requestId ? <Link className="lg-text-link" to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>{testResult.requestId}</Link> : null}
+                </div>
+                {bindNotice ? <span className="lg-qs-failure-reason">{bindNotice}</span> : null}
+              </div>
             ) : null}
 
-            {phase === 'issuing' ? (
-              <Card style={CARD_BODY}>
-                <h2 style={headingStyle}><ShieldCheck size={15} />正在生成接入配置</h2>
-                <ol className="lg-qs-stages">
-                  <li className={creatingStage === 'app-caller' ? 'is-active' : 'is-done'}><strong>登记调用用途</strong><small>appCaller {appCallerCode}</small></li>
-                  <li className={creatingStage === 'key' ? 'is-active' : ''}><strong>签发团队密钥</strong><small>{creatingStage === 'key' ? '正在写入密钥目录' : '等待上一步产物'}</small></li>
-                </ol>
-              </Card>
-            ) : null}
-
-            {bundle && (phase === 'issued' || phase === 'verifying' || phase === 'failed') ? (
-              <Card style={CARD_BODY}>
-                <div className="lg-qs-products-heading">
-                  <h2 style={headingStyle}><ShieldCheck size={15} />你的接入产物</h2>
-                  <Chip label={phase === 'failed' ? '待处理' : phase === 'verifying' ? '验证中' : '已签发'} color={phase === 'failed' ? 'var(--warn)' : 'var(--ok)'} bg={phase === 'failed' ? 'var(--warn-bg)' : 'var(--ok-bg)'} />
-                </div>
-
-                {/*
-                  结果块置顶：它是这一屏真正的产物。放在地址与密钥之后就会落到产物栏的
-                  内部滚动区之下，1440x900 下要再滚一屏才看得见——那等于把「失败在哪」藏起来。
-                */}
-                {phase === 'verifying' ? (
-                  <div className="lg-test-result" role="status"><Play size={14} />正在发送安全试跑（dry-run，不访问上游），等待 requestId 回执。</div>
-                ) : null}
-                {phase === 'issued' && testResult?.ok ? (
-                  <div className="lg-test-result is-ok" role="status">
-                    <CheckCircle2 size={14} />{testResult.message}
-                    {testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}
+            {bundle ? (
+              <>
+                <Card style={CARD_BODY} className="lg-qs-secret-card">
+                  <div className="lg-qs-secret-head">
+                    <strong style={SECTION_TITLE}>一次性密钥</strong>
+                    <Chip label="只显示一次" color="var(--warn)" bg="var(--warn-bg)" />
+                    <small>离开或刷新即不可再取，没有「再看一次」。</small>
                   </div>
-                ) : null}
-                {diagnosis ? (
-                  <div className="lg-qs-failure" role="alert">
-                    <div className="lg-qs-failure-head">
-                      <AlertCircle size={16} />
-                      <strong>{diagnosis.title}</strong>
-                      {diagnosis.code ? <code>{diagnosis.code}</code> : null}
+                  <code className="lg-qs-secret-code">{bundle.key}</code>
+                  <div className="lg-qs-secret-actions">
+                    <Button size="sm" onClick={() => void copyText('key', bundle.key)}>{copied === 'key' ? <Check size={14} /> : <Copy size={14} />}{copied === 'key' ? '已复制' : '复制密钥'}</Button>
+                    <small>只存在本页内存，不写浏览器存储；不要进仓库、截图或日志。</small>
+                  </div>
+                  <div className="lg-qs-product-row">
+                    <span>接入地址</span>
+                    <code>{`${displayBundle.baseUrl}${selectedProtocol.path}`}</code>
+                    <Button size="sm" variant="ghost" onClick={() => void copyText('base-url', `${displayBundle.baseUrl}${selectedProtocol.path}`)}>{copied === 'base-url' ? <Check size={13} /> : <Copy size={13} />}{copied === 'base-url' ? '已复制' : '复制'}</Button>
+                  </div>
+                </Card>
+
+                <Card style={CARD_BODY} className="lg-qs-snippet-card">
+                  <div className="lg-qs-snippet-head">
+                    <div className="lg-snippet-tabs">
+                      {hasClientTab ? <Button size="sm" variant={snippetTab === 'client' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('client')}>{selectedClient.label}</Button> : null}
+                      <Button size="sm" variant={snippetTab === 'curl' || (snippetTab === 'client' && !hasClientTab) ? 'primary' : 'ghost'} onClick={() => setSnippetTab('curl')}>cURL</Button>
+                      <Button size="sm" variant={snippetTab === 'env' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('env')}>环境变量</Button>
+                      <Button size="sm" variant={snippetTab === 'skill' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('skill')}><FileCode2 size={14} />Agent Skill</Button>
                     </div>
-                    <div className="lg-qs-chain">
-                      {chain.map((link) => <span key={link.id} className={`lg-qs-chain-link is-${link.tone}`}>{link.label}</span>)}
+                    <select
+                      aria-label="入口协议"
+                      value={protocol}
+                      onChange={(event) => { setProtocol(event.target.value as Protocol); setTestResult(null); if (bundle) void checkRealRoute(bundle); }}
+                      style={inputStyle}
+                    >
+                      {PROTOCOLS.map((item) => <option key={item.id} value={item.id}>{`${item.label} ${item.path}`}</option>)}
+                    </select>
+                  </div>
+                  {snippetTab === 'client' && hasClientTab ? (
+                    <ClientQuickSetup bundle={displayBundle} copied={copied} onCopy={copyText} />
+                  ) : (
+                    <div style={{ position: 'relative' }}>
+                      <pre style={preStyle}><code>{visibleSnippet}</code></pre>
+                      <Button size="sm" style={{ position: 'absolute', top: 9, right: 9 }} onClick={() => void copyText(snippetTab, visibleSnippet)}>{copied === snippetTab ? <Check size={14} /> : <Copy size={14} />}{copied === snippetTab ? '已复制' : '复制'}</Button>
                     </div>
-                    <span className="lg-qs-failure-reason">{diagnosis.reason}</span>
-                    <div className="lg-qs-failure-actions">
-                      {diagnosis.action === 'bind-pool' && canCreateAccess ? <Button size="sm" variant="secondary" disabled={binding} onClick={() => void bindDefaultPool()}>{binding ? '正在绑定' : diagnosis.actionLabel}</Button> : null}
-                      {diagnosis.to && diagnosis.actionLabel ? <Link className="lg-secondary-link" to={diagnosis.to}>{diagnosis.actionLabel}</Link> : null}
-                      {canCreateAccess ? <Button size="sm" variant="ghost" disabled={testing} onClick={() => void runTest()}>重试验证</Button> : null}
-                      {testResult?.requestId ? <Link className="lg-text-link" to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>{testResult.requestId}</Link> : null}
+                  )}
+                  <Prose style={{ marginTop: GAP.normal }}>{snippetMode === 'safe' ? <>示例默认带 <code>X-Gateway-Dry-Run: quickstart</code>，不产生上游费用。</> : <>示例不带 dry-run，会真实调用模型。</>}</Prose>
+                </Card>
+
+                {/* 再测一次与真实路由排障不占第一屏：首次接入不需要，排障时再展开。 */}
+                <DetailsBlock title="再测一次 / 真实路由与排障">
+                  <div className="lg-safe-test-panel">
+                    <div><Play size={17} /><span><strong>再测一次</strong><small>安全连通不访问上游；真实模型会计费。</small></span></div>
+                    <div className="lg-test-mode" role="group" aria-label="测试模式">
+                      <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); setTestResult(null); }}>安全连通</button>
+                      <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '先在下方确认真实路由已就绪' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
                     </div>
-                    {bindNotice ? <span className="lg-qs-failure-reason">{bindNotice}</span> : null}
+                    <div className="lg-safe-test-controls">
+                      {canCreateAccess ? <Button variant="primary" disabled={testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}
+                      <span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{canCreateAccess ? (testMode === 'real' ? '只调用下方已解析的真实模型' : '返回 requestId 且 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span>
+                    </div>
                   </div>
-                ) : null}
 
-                <div className="lg-qs-product-row">
-                  <span>Gateway 地址</span>
-                  <code>{`${displayBundle.baseUrl}${selectedProtocol.path}`}</code>
-                  <Button size="sm" variant="ghost" onClick={() => void copyText('base-url', `${displayBundle.baseUrl}${selectedProtocol.path}`)}>{copied === 'base-url' ? <Check size={13} /> : <Copy size={13} />}{copied === 'base-url' ? '已复制' : '复制'}</Button>
-                </div>
-
-                <div className="lg-quickstart-secret">
-                  <div><strong>一次性密钥</strong><small>只存在本页内存，刷新即丢失，没有「再看一次」。</small></div>
-                  <code>{bundle.key}</code>
-                  <Button size="sm" onClick={() => void copyText('key', bundle.key)}>{copied === 'key' ? <Check size={14} /> : <Copy size={14} />}{copied === 'key' ? '已复制' : '复制密钥'}</Button>
-                </div>
-
-                <div className="lg-qs-snippet-head">
-                  <strong style={SECTION_TITLE}>请求片段</strong>
-                  <select
-                    aria-label="入口协议"
-                    value={protocol}
-                    onChange={(event) => { setProtocol(event.target.value as Protocol); setTestResult(null); if (bundle) void checkRealRoute(bundle); }}
-                    style={inputStyle}
-                  >
-                    {PROTOCOLS.map((item) => <option key={item.id} value={item.id}>{`${item.label} ${item.path}`}</option>)}
-                  </select>
-                </div>
-                <div className="lg-snippet-tabs">
-                  <Button size="sm" variant={snippetTab === 'client' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('client')}>{selectedClient.label}</Button>
-                  <Button size="sm" variant={snippetTab === 'curl' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('curl')}>cURL</Button>
-                  <Button size="sm" variant={snippetTab === 'env' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('env')}>环境变量</Button>
-                  <Button size="sm" variant={snippetTab === 'skill' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('skill')}><FileCode2 size={14} />Agent Skill</Button>
-                </div>
-                {snippetTab === 'client' && bundle.clientPreset !== 'api' ? (
-                  <ClientQuickSetup bundle={displayBundle} copied={copied} onCopy={copyText} />
-                ) : (
-                  <div style={{ position: 'relative' }}>
-                    <pre style={preStyle}><code>{visibleSnippet}</code></pre>
-                    <Button size="sm" style={{ position: 'absolute', top: 9, right: 9 }} onClick={() => void copyText(snippetTab, visibleSnippet)}>{copied === snippetTab ? <Check size={14} /> : <Copy size={14} />}{copied === snippetTab ? '已复制' : '复制'}</Button>
-                  </div>
-                )}
-                <Prose style={{ marginTop: GAP.normal }}>{snippetMode === 'safe' ? <>示例默认带 <code>X-Gateway-Dry-Run: quickstart</code>，不产生上游费用。</> : <>示例不带 dry-run，会真实调用模型。</>} 密钥不要进仓库、截图或日志。</Prose>
-
-                <div className="lg-safe-test-panel" style={{ marginTop: GAP.section }}>
-                  <div><Play size={17} /><span><strong>再测一次</strong><small>安全连通不访问上游；真实模型会计费。</small></span></div>
-                  <div className="lg-test-mode" role="group" aria-label="测试模式">
-                    <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); setTestResult(null); }}>安全连通</button>
-                    <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '在下方展开真实路由，确认当前地址已就绪' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
-                  </div>
-                  <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{canCreateAccess ? (testMode === 'real' ? '只调用下方已解析的真实模型' : '返回 requestId 且 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
-                </div>
-
-                <details className="lg-route-preview" style={{ marginTop: GAP.section }}>
-                  <summary className="lg-route-preview-heading"><Server size={17} /><span><strong>真实路由与排障</strong><small>{currentRoutePreview?.success ? `${currentRoutePreview.actualPlatformName || currentRoutePreview.actualPlatformId || 'Provider'} · ${currentRoutePreview.actualModel || '已解析模型'}` : '首次接入不必展开；需要调用真实模型或排查时再查看。'}</small></span></summary>
-                  {routeChecking ? <p>正在检查路由。</p> : currentRoutePreview?.success ? (
+                  {routeChecking ? <p style={BODY_TEXT}>正在检查路由。</p> : currentRoutePreview?.success ? (
                     <div className="lg-route-facts">
                       <RouteFact label="模型池" value={currentRoutePreview.modelGroupName || currentRoutePreview.modelGroupId || '默认池'} />
                       <RouteFact label="Provider" value={currentRoutePreview.actualPlatformName || currentRoutePreview.actualPlatformId || '未命名 Provider'} />
@@ -772,20 +893,17 @@ export function QuickstartPage() {
                       {!tenant?.isInternal ? <span>请先添加 Provider 密钥、启用模型并加入默认池。</span> : null}
                     </div>
                   )}
-                  <Button size="sm" variant="ghost" disabled={routeChecking} onClick={() => void checkRealRoute()}>{routeChecking ? '检查中' : '重新检查'}</Button>
-                </details>
-
-                <details className="lg-quickstart-follow-up">
-                  <summary>后续治理：提示词策略</summary>
-                  <div>
-                    <span><strong>给这个 {requestTypeLabel(bundle.requestType)} appCaller 配置提示词策略</strong><small>预览不保存、不调用模型。</small></span>
-                    {canManagePromptPolicy ? <Link to={`/app-callers/${encodeURIComponent(bundle.appCallerId)}/prompt-policy`}>打开提示词策略</Link> : <span>请由 Owner 或 Admin 配置策略</span>}
+                  <div className="lg-qs-more-actions">
+                    <Button size="sm" variant="ghost" disabled={routeChecking} onClick={() => void checkRealRoute()}>{routeChecking ? '检查中' : '重新检查路由'}</Button>
+                    {canManagePromptPolicy
+                      ? <Link className="lg-text-link" to={`/app-callers/${encodeURIComponent(bundle.appCallerId)}/prompt-policy`}>给这个调用用途配提示词策略</Link>
+                      : <span style={BODY_TEXT}>提示词策略需由 Owner 或 Admin 配置。</span>}
                   </div>
-                </details>
-              </Card>
+                </DetailsBlock>
+              </>
             ) : null}
           </div>
-        </div>
+        )}
       </PageBody>
     </PageShell>
   );
@@ -812,6 +930,80 @@ function isValidAppCaller(value: string, requestType: RequestType) {
 
 function requestTypeLabel(requestType: RequestType) {
   return requestType === 'vision' ? '图片理解' : '文字对话';
+}
+
+type OrganizationMember = OrganizationData['members'][number];
+
+function memberLabel(member: OrganizationMember | null) {
+  if (!member) return '';
+  return (member.displayName || member.username || '').trim();
+}
+
+/** 写进 appCaller.owner 的值：优先用户名（稳定标识），显示名只是兜底。 */
+function memberOwnerValue(member: OrganizationMember | null) {
+  if (!member) return '';
+  return (member.username || member.displayName || '').trim();
+}
+
+function initialsOf(label: string) {
+  const trimmed = label.trim();
+  if (!trimmed) return '?';
+  if (/^[\x20-\x7e]+$/.test(trimmed)) {
+    const parts = trimmed.split(/[\s._-]+/).filter(Boolean);
+    return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : trimmed.slice(0, 2)).toUpperCase();
+  }
+  return trimmed.slice(0, 1);
+}
+
+type BudgetPair = { monthly: number | null; hold: number | null; error: string | null; holdNote: string };
+
+/**
+ * 月预算与单次预占上限是**一对**，不是两个独立字段。
+ *
+ * console-api 的 `ValidateBudgetConfiguration` 会拒绝「只有月预算」「只有预占上限」
+ * 「预占大于月预算」三种组合（400）；库里真落进单边配置，serving 启动自检会直接抛
+ * `APP_CALLER_BUDGET_MIGRATION_REQUIRED` 拒绝启动。所以：
+ *   - 月预算留空 = 不限额，两个值都不提交（此时高级设置里填的预占上限一并丢弃）；
+ *   - 填了月预算但没填预占 = 按月预算的 1% 派生，下限 0.5 USD，且**再夹回月预算**
+ *     （月预算小于 0.5 时，1% 的下限会反超月预算，那正是后端拒收的第三种组合）。
+ */
+function deriveBudgetPair(budgetInput: string, holdInput: string): BudgetPair {
+  const budgetText = budgetInput.trim();
+  const holdText = holdInput.trim();
+  if (!budgetText) {
+    return {
+      monthly: null,
+      hold: null,
+      error: null,
+      holdNote: holdText
+        ? '月预算留空表示不限额；单次预占上限只有在填了月预算之后才会一起提交。'
+        : '留空表示不限额，本次不写预算约束。',
+    };
+  }
+  const monthly = Number(budgetText);
+  if (!Number.isFinite(monthly) || monthly <= 0) {
+    return { monthly: null, hold: null, error: '月预算要填一个大于 0 的金额，或者留空表示不限额。', holdNote: '' };
+  }
+  const derived = Math.min(Math.max(round2(monthly / 100), 0.5), round2(monthly));
+  const hold = holdText ? Number(holdText) : derived;
+  if (!Number.isFinite(hold) || hold <= 0) {
+    return { monthly: null, hold: null, error: '单次预占上限要填一个大于 0 的金额，或者留空由月预算派生。', holdNote: '' };
+  }
+  if (round2(hold) > round2(monthly)) {
+    return { monthly: null, hold: null, error: '单次预占上限不能大于月预算，网关会拒绝这种配置。', holdNote: '' };
+  }
+  return {
+    monthly: round2(monthly),
+    hold: round2(hold),
+    error: null,
+    holdNote: holdText
+      ? `单次预占上限 ${round2(hold)} USD 与月预算一起提交。`
+      : `单次预占上限自动派生为 ${derived} USD，与月预算一起提交；可在高级设置里改。`,
+  };
+}
+
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 function createRequestId() {
