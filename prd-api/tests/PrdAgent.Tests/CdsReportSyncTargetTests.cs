@@ -247,4 +247,19 @@ public class CdsReportSyncTargetTests
     [InlineData("https://cds-a.example.com", "https://cds-b.example.com", true)]
     public void 换没换源_同一个源的各种写法不算换(string? recorded, string? resolved, bool expected)
         => Assert.Equal(expected, CdsReportSyncTargets.SourceChanged(recorded, resolved));
+
+    [Theory]
+    // 一条都没有：两种调用方都只能失败，没什么可挑的。
+    [InlineData(0, true, CdsSourcePick.None)]
+    [InlineData(0, false, CdsSourcePick.None)]
+    // 只有一条：那就不叫猜。自动刷新照样用，否则装了一条连接的人反而刷不动。
+    [InlineData(1, true, CdsSourcePick.Single)]
+    [InlineData(1, false, CdsSourcePick.Single)]
+    // 两条以上：手动导入维持原样（人当场发起、挑错看得见）；
+    // 自动刷新必须停手——挑错是把 CDS-B 的正文写进一条来自 CDS-A 的条目，不响。
+    [InlineData(2, true, CdsSourcePick.Single)]
+    [InlineData(2, false, CdsSourcePick.Ambiguous)]
+    [InlineData(5, false, CdsSourcePick.Ambiguous)]
+    public void 没记来源时_只有一条连接才不算猜(int count, bool allowGuess, CdsSourcePick expected)
+        => Assert.Equal(expected, CdsReportSyncTargets.PickDefaultSource(count, allowGuess));
 }

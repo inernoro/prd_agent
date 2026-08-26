@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -128,10 +129,7 @@ public class CdsReportImportService
                 }
 
                 var hash = Sha256Hex(content.Replace("\r\n", "\n"));
-                var existFilter = Builders<DocumentEntry>.Filter.And(
-                    Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, store.Id),
-                    Builders<DocumentEntry>.Filter.Eq("Metadata.cdsReportId", r.Id));
-                var existing = await _db.DocumentEntries.Find(existFilter).FirstOrDefaultAsync(ct);
+                var existing = await FindExistingEntryAsync(store.Id, r.Id, baseUrl, ct);
                 if (existing != null && existing.ContentHash == hash)
                 {
                     // 正文未变，但元数据（verdict/title/projectSlug/updatedAt）可能改了——CDS 列表正是因
@@ -250,16 +248,25 @@ public class CdsReportImportService
         // 4) 落同步摘要（下次只增量）
         var updates = new List<UpdateDefinition<DocumentStore>>
         {
-            Builders<DocumentStore>.Update.Set(s => s.PeerSyncStatus, "idle"),
-            Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeName, "CDS 验收中心"),
-            Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeBaseUrl, baseUrl),
-            Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastResult, $"导入 {result.Imported} 新 / {result.Updated} 更新 / {result.Skipped} 跳过 / {result.Failed} 失败"),
             Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
             // 记下这次是从哪个 CDS 拉的，供每小时的自动同步钉住同一个源。
             // **单独一个字段，不复用 PeerSyncNodeBaseUrl**——那个归跨库同步所有，
             // 同一个库走过 peer-sync 后它会变成对端 MAP 的地址（Codex review P2）。
             Builders<DocumentStore>.Update.Set(s => s.CdsReportSourceBaseUrl, baseUrl),
         };
+        // 那四个 PeerSync* 展示字段归**跨库同步**所有，导入只是顺带把它们改写成「CDS 验收中心」。
+        // 人手动点一次导入时这么干还说得过去（是他刚做的事）；改成每小时自动跑之后就不行了：
+        // 一个既走 peer-sync 又存过 CDS 报告的库，其真正的对端同步状态会被每小时覆盖一次，
+        // 用户再也看不到对端同步到底成没成（Codex review P2）。所以自动刷新不碰它们。
+        if (!opts.SkipPeerSyncDisplayFields)
+        {
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncStatus, "idle"));
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeName, "CDS 验收中心"));
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeBaseUrl, baseUrl));
+            updates.Add(Builders<DocumentStore>.Update.Set(
+                s => s.PeerSyncLastResult,
+                $"导入 {result.Imported} 新 / {result.Updated} 更新 / {result.Skipped} 跳过 / {result.Failed} 失败"));
+        }
         // 只有默认全量镜像才回写增量游标 PeerSyncLastAt；过滤/换源导入若回写，会污染默认镜像的
         // updatedSince 游标，使另一作用域的旧报告被永久跳过（Codex P2）。
         //
@@ -292,6 +299,39 @@ public class CdsReportImportService
         return result;
     }
 
+    /// <summary>
+    /// 库里已经镜像着的**同一份**报告是哪一条。
+    ///
+    /// 同一份 = 同一个库 + 同一个报告 id + **同一台 CDS**。少了最后一项就是本轮 P1：
+    /// 报告 id 在不同 CDS 上可以重名，只按 (库, 报告id) 认领，会让从 CDS-B 拉回来的正文
+    /// 直接盖掉那条来自 CDS-A 的条目——A 的那一份就此消失，没有任何报错
+    ///（Codex review P1）。调度那一侧已经按 (报告id, 来源) 排目标了，认领这一侧必须用同一个身份，
+    /// 否则等于「排了两份、写成一份」。
+    ///
+    /// 老条目（本改动之前存进来的）没记来源，认领它并在写回时盖上来源；不认领的话，
+    /// 每小时会给同一份报告新插一条，一份变两份。
+    /// </summary>
+    private async Task<DocumentEntry?> FindExistingEntryAsync(
+        string storeId, string reportId, string baseUrl, CancellationToken ct)
+    {
+        var f = Builders<DocumentEntry>.Filter;
+        var sameReport = f.And(
+            f.Eq(e => e.StoreId, storeId),
+            f.Eq("Metadata.cdsReportId", reportId));
+
+        var sameSource = await _db.DocumentEntries
+            .Find(f.And(sameReport, f.Eq("Metadata.cdsSourceBaseUrl", baseUrl)))
+            .FirstOrDefaultAsync(ct);
+        if (sameSource != null) return sameSource;
+
+        return await _db.DocumentEntries
+            .Find(f.And(sameReport, f.Or(
+                f.Exists("Metadata.cdsSourceBaseUrl", false),
+                f.Eq("Metadata.cdsSourceBaseUrl", BsonNull.Value),
+                f.Eq("Metadata.cdsSourceBaseUrl", string.Empty))))
+            .FirstOrDefaultAsync(ct);
+    }
+
     private async Task<(string baseUrl, string key)> ResolveCdsCredentialsAsync(CdsReportImportOptions opts, CancellationToken ct)
     {
         // 显式传入（测试 / 无连接时）优先
@@ -311,12 +351,26 @@ public class CdsReportImportService
                 .ToListAsync(ct);
             conn = candidates.FirstOrDefault(c =>
                 string.Equals(c.PartnerBaseUrl?.TrimEnd('/'), normalizedSource, StringComparison.OrdinalIgnoreCase));
+            if (conn == null)
+                throw new InvalidOperationException(
+                    "这份报告记着的那台 CDS，在「系统互联」里已经没有对应的已授权连接了。"
+                    + "请重新授权那台 CDS，或在 CDS 报告页重新保存一次这份报告以更新来源。");
         }
         else
-            conn = await _db.InfraConnections
+        {
+            var candidates = await _db.InfraConnections
                 .Find(c => c.Partner == "cds" && c.Status == "active")
                 .SortByDescending(c => c.UpdatedAt)
-                .FirstOrDefaultAsync(ct);
+                .ToListAsync(ct);
+            // 没记来源时，「挑最近更新的那条」在只有一条连接时是确定的，在有两条时就是猜。
+            // 自动刷新不许猜——猜错会把 B 的正文写进一条来自 A 的条目，而且不响（Codex review P1）。
+            var pick = CdsReportSyncTargets.PickDefaultSource(candidates.Count, allowGuess: !opts.RejectAmbiguousSource);
+            if (pick == CdsSourcePick.Ambiguous)
+                throw new InvalidOperationException(
+                    $"这份报告没记来源，而「系统互联」里有 {candidates.Count} 条已授权的 CDS 连接——挑哪一条都是猜。"
+                    + "请在 CDS 报告页手动重新保存一次这份报告，把来源钉住之后自动刷新才会接着跑。");
+            conn = pick == CdsSourcePick.Single ? candidates[0] : null;
+        }
 
         if (conn == null)
             throw new InvalidOperationException("未找到可用的 CDS 系统互联连接。请先在「系统互联」授权 CDS，或显式传 cdsBaseUrl + cdsAccessKey。");
@@ -450,6 +504,22 @@ public class CdsReportImportOptions
     public string? StoreId { get; set; }
     /// <summary>忽略增量水位，全量重拉。</summary>
     public bool Full { get; set; }
+
+    /// <summary>
+    /// 没记来源、而已授权的 CDS 连接不止一条时，宁可这一份失败，也不挑一条接着拉。
+    ///
+    /// 每小时的自动刷新走这条。手动导入维持原样：那是人当场发起的，挑错他看得见、能重来；
+    /// 自动刷新挑错则是把 CDS-B 的正文写进一条来自 CDS-A 的条目，不响，也没人会去看
+    ///（Codex review P1）。
+    /// </summary>
+    public bool RejectAmbiguousSource { get; set; }
+
+    /// <summary>
+    /// 不要动库上那四个归**跨库同步**所有的展示字段（PeerSyncStatus / NodeName / NodeBaseUrl /
+    /// LastResult）。每小时的自动刷新走这条——否则一个既走 peer-sync 又存过 CDS 报告的库，
+    /// 其真正的对端同步状态会被每小时覆盖成「CDS 验收中心」（Codex review P2）。
+    /// </summary>
+    public bool SkipPeerSyncDisplayFields { get; set; }
 }
 
 /// <summary>导入结果。</summary>

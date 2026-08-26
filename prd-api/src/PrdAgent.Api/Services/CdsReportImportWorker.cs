@@ -188,16 +188,26 @@ public class CdsReportImportWorker : BackgroundService
                         SourceBaseUrl = t.SourceBaseUrl,
                         // 只刷这一份。正文 contentHash 没变就只轻量同步元数据，代价很小。
                         ReportId = t.ReportId,
+                        // 老条目没记来源时，只有「一条连接都不用挑」才继续；两条以上就让这一份
+                        // 这轮失败，而不是挑一条接着拉（挑错不响，见 CdsReportSyncTargets）。
+                        RejectAmbiguousSource = true,
+                        // 那四个 PeerSync* 字段归跨库同步所有，每小时刷一次会把它盖掉。
+                        SkipPeerSyncDisplayFields = true,
                     },
                     ct);
-                ok++;
+                // **有失败就算这一份失败。** 只在抛异常时才计失败的话，导入服务把错误
+                // 记进 result.Failed（正文 404、资产归一化炸了）的那些情况全都会被计成
+                // 「刷了 N 份」——本轮结束那行日志于是永远报成功，一份都没真刷进去也看不出来
+                //（Codex review P2）。
+                if (result.Failed > 0) failed++; else ok++;
                 if (result.Updated > 0 || result.Failed > 0)
                 {
                     _logger.LogInformation(
                         "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）："
-                        + "更新 {Updated}，跳过 {Skipped}，失败 {Failed}",
+                        + "更新 {Updated}，跳过 {Skipped}，失败 {Failed}{Detail}",
                         t.StoreId, t.ReportId, t.SourceBaseUrl ?? "(默认连接)",
-                        result.Updated, result.Skipped, result.Failed);
+                        result.Updated, result.Skipped, result.Failed,
+                        result.Messages.Count > 0 ? "；" + string.Join("；", result.Messages) : string.Empty);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

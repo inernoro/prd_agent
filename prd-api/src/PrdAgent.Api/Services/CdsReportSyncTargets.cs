@@ -132,6 +132,26 @@ public static class CdsReportSyncTargets
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
+    /// 没记来源时，能不能从「已授权的 CDS 连接」里挑一条出来用。
+    ///
+    /// 本改动之前存进来的条目没有 `cdsSourceBaseUrl`，刷新它们时只能退回默认解析。
+    /// 默认解析挑的是「最近更新的那条 active 连接」——**装了两条系统互联时，那就是在猜**。
+    /// 猜错的后果不响：从 CDS-B 拉回正文，写进一条本来来自 CDS-A 的条目；报告 id 在两台
+    /// CDS 上可以重名，混完连「这条是谁家的」都答不上来，而且没有任何地方会报错
+    ///（Codex review P1）。
+    ///
+    /// 所以每小时的自动刷新传 <c>allowGuess: false</c>：只有一条连接（没有可猜的余地）才用，
+    /// 不止一条就让这一份这轮失败，等人在报告页重新保存一次把来源钉住。
+    /// 手动导入维持原样（<c>allowGuess: true</c>）——那是人当场发起的，猜错他看得见。
+    /// </summary>
+    public static CdsSourcePick PickDefaultSource(int activeConnectionCount, bool allowGuess)
+    {
+        if (activeConnectionCount <= 0) return CdsSourcePick.None;
+        if (activeConnectionCount == 1) return CdsSourcePick.Single;
+        return allowGuess ? CdsSourcePick.Single : CdsSourcePick.Ambiguous;
+    }
+
+    /// <summary>
     /// 这一轮要拉的源，和库上记着的那个是不是**换了一个**。
     ///
     /// 「库上还没记过来源」不算换——那是历史数据或第一次导入，没有旧状态可作废。
@@ -161,4 +181,17 @@ public static class CdsReportSyncTargets
             Blank(resolvedBaseUrl)?.TrimEnd('/') ?? string.Empty,
             StringComparison.OrdinalIgnoreCase);
     }
+}
+
+/// <summary>没指定来源时，默认解析的三种结局。</summary>
+public enum CdsSourcePick
+{
+    /// <summary>一条已授权的 CDS 连接都没有。</summary>
+    None,
+
+    /// <summary>用得了：要么只有一条（没什么可挑的），要么调用方允许在多条里挑。</summary>
+    Single,
+
+    /// <summary>不止一条，而调用方不允许猜——这一份该失败，不该随便挑一条接着拉。</summary>
+    Ambiguous,
 }
