@@ -225,6 +225,23 @@ function buildInit(scene) {
       return Promise.resolve(env(resolveTimes(rule.data)));
     }
 
+    // 采集屏：开会话 + 逐片上传。uploadedBytes 按真实收到的字节累加，
+    // 「已上传 96%」那个数才是真的算出来的，不是桩里写死的一个好看数字。
+    if (/\\/stores\\/[^/]+\\/recording-uploads$/.test(url)) {
+      return Promise.resolve(env({ sessionId: 'sess-live', uploadedBytes: 0, nextChunkIndex: 0, status: 'uploading' }));
+    }
+    if (/\\/recording-uploads\\/[^/]+\\/chunks\\/(\\d+)/.test(url)) {
+      const index = Number(/chunks\\/(\\d+)/.exec(url)[1]);
+      const size = (init && init.body && init.body.size) || 0;
+      window.__stubUploadedBytes = (window.__stubUploadedBytes || 0) + size;
+      return Promise.resolve(env({
+        accepted: true, duplicate: false,
+        nextChunkIndex: index + 1,
+        // 桩如实回「到此刻为止收到了多少」：追不追得平由真实竞速决定，
+        // 不在这里人为打折造一个好看的百分比
+        uploadedBytes: window.__stubUploadedBytes,
+      }));
+    }
     if (url.includes('/ai-toolbox/direct-chat')) return Promise.resolve(sseAnswer(init && init.body));
     // 点一张整理卡 → 真实页面发起 run 并开始轮询；桩让它停在「生成中 40%」，
     // 稿面 B3 画的就是这一刻（一张已生成 + 一张在跑）
@@ -258,7 +275,16 @@ function buildInit(scene) {
 `;
 }
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await chromium.launch({
+  executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  // 采集屏必须真的拿到一路音频：没有假设备就停在「正在请求麦克风权限」，
+  // 波形、字节数、实时原文全都取不到（而那正是要判的那几块）。
+  args: [
+    '--use-fake-device-for-media-stream',
+    '--use-fake-ui-for-media-stream',
+    '--autoplay-policy=no-user-gesture-required',
+  ],
+});
 const manifest = [];
 const problems = [];
 
@@ -354,6 +380,102 @@ const DRIVERS = {
   },
 
   /**
+   * 桌面三栏（稿面 D1/D2）：左栏文档清单、中栏波形与原文、右栏四个分页签。
+   * D1 是「理解」页签 + 搜索命中 + 正在播放，D2 是「提问」页签 + 已作答。
+   * 两张稿画的都是操作之后，所以照样要驱。
+   */
+  async desktop(page, scene, theme, snap) {
+    const search = page.getByPlaceholder('搜索原文关键词');
+    if (await search.count()) {
+      await search.first().fill('导入');
+      await page.waitForTimeout(500);
+    } else {
+      problems.push(`[${scene.id}/${theme}] 桌面搜索框没取到`);
+    }
+    const wave = page.locator('[title="点击跳到对应位置"]');
+    const box = await wave.first().boundingBox().catch(() => null);
+    if (box) {
+      await page.mouse.click(box.x + box.width * 0.4, box.y + box.height / 2);
+      await page.waitForTimeout(300);
+      await page.getByTitle('播放').first().click().catch(() => undefined);
+      await page.waitForTimeout(800);
+    } else {
+      problems.push(`[${scene.id}/${theme}] 桌面波形没取到`);
+    }
+    await snap('理解');
+
+    for (const tab of ['纪要', '待办']) {
+      const button = page.getByRole('button', { name: tab, exact: true });
+      if (!(await button.count())) { problems.push(`[${scene.id}/${theme}] 右栏没有「${tab}」页签`); continue; }
+      await button.first().click();
+      await page.waitForTimeout(500);
+      await snap(tab);
+    }
+
+    const ask = page.getByRole('button', { name: '提问', exact: true });
+    if (!(await ask.count())) { problems.push(`[${scene.id}/${theme}] 右栏没有「提问」页签`); return; }
+    await ask.first().click();
+    await page.waitForTimeout(400);
+    const box2 = page.getByLabel('问这场录音');
+    if (await box2.count()) {
+      await box2.first().fill('为什么放弃导入？');
+      await page.getByLabel('发送问题').first().click();
+      await page.getByText('引用原文').first().waitFor({ timeout: 30_000 }).catch(() => undefined);
+      await page.waitForTimeout(600);
+    } else {
+      problems.push(`[${scene.id}/${theme}] 提问页签里没有输入框`);
+    }
+    await snap('提问');
+  },
+
+  /**
+   * 采集屏（稿面 R1/R2/R3、cap-A1/A2/A3）：从知识库右下角的新增入口打开录音面板，
+   * 让它真的录一段（浏览器带假麦克风启动），再按场景点暂停 / 展开全部。
+   *
+   * 这几屏没有一个是「打开就长这样」的：波形要录几秒才有形状，字节数要等分片，
+   * 实时原文要等服务端推句子，暂停态要点一下。所以必须驱，不能开屏就截。
+   */
+  async capture(page, scene, theme, snap) {
+    const fab = page.getByRole('button', { name: /新增内容/ });
+    if (!(await fab.count())) {
+      problems.push(`[${scene.id}/${theme}] 采集屏没取到：知识库里找不到新增入口`);
+      return;
+    }
+    await fab.first().click();
+    await page.waitForTimeout(400);
+    const record = page.getByRole('button', { name: '录音转笔记' });
+    if (!(await record.count())) {
+      problems.push(`[${scene.id}/${theme}] 采集屏没取到：新增菜单里没有「录音转笔记」`);
+      return;
+    }
+    await record.first().click();
+
+    // 录一会儿：波形、本机字节、实时原文都要靠这段时间长出来
+    await page.waitForTimeout(scene.capture?.recordMs ?? 7000);
+
+    if (scene.capture?.expand) {
+      const expand = page.getByRole('button', { name: /展开全部/ });
+      if (await expand.count()) {
+        await expand.first().click();
+        await page.waitForTimeout(600);
+      } else {
+        problems.push(`[${scene.id}/${theme}] 展开态没取到：找不到「展开全部」`);
+      }
+    }
+    if (scene.capture?.pause) {
+      const pause = page.getByLabel('暂停录音');
+      if (await pause.count()) {
+        await pause.first().click();
+        // 暂停后队列要追平才敢说「已全部上传」，等一轮分片确认
+        await page.waitForTimeout(1800);
+      } else {
+        problems.push(`[${scene.id}/${theme}] 暂停态没取到：找不到暂停按钮`);
+      }
+    }
+    await snap('采集中');
+  },
+
+  /**
    * 最后驱一次「播放到一半」：稿面 B1/B2 的波形是左侧约四成染成强调色的，
    * 那是**播放进度**，00:00 时当然只有第一根。点波形四成处跳过去再起播。
    */
@@ -381,9 +503,44 @@ for (const scene of ACTIVE) {
       viewport: scene.viewport ?? { width: 390, height: 844 },
       deviceScaleFactor: 2,
       reducedMotion: 'reduce',
+      permissions: ['microphone'],
     });
     await ctx.addInitScript({ content: buildInit(scene) });
     const page = await ctx.newPage();
+
+    /*
+     * 实时转写走 WebSocket，HTTP 桩够不着它。这里用 routeWebSocket 当「服务端」：
+     *   capture.live 有句子 → 逐句推，页面进入「实时原文 · 正常」
+     *   capture.live === false → 每次连上就断，页面按真实退避重连、最终降级
+     * 不铺这条线的话，所有采集屏都只能截到降级态——那不是实现的样子，是取证缺口。
+     */
+    if (scene.capture) {
+      const plan = scene.capture.live;
+      await page.routeWebSocket(/live-transcription/, (ws) => {
+        if (!plan) {
+          // 立刻 close 的话浏览器侧还停在 CONNECTING，onclose 不会触发，页面永远显示「连接中」。
+          // 先让它连上、再断开，走的才是真实的「连上又掉线」那条路径。
+          // 1006 是保留码，不能显式发送（发了会被拒，socket 反而一直开着，
+          // 页面就永远显示「正常」——正是这条假绿灯让第一版取证判成了通过）。
+          setTimeout(() => { ws.close({ code: 1011, reason: 'stub-offline' }); }, 300);
+          return;
+        }
+        let alive = true;
+        ws.onClose(() => { alive = false; });
+        ws.onMessage(() => undefined);
+        ws.send(JSON.stringify({ type: 'ready', message: '正在实时转写' }));
+        let index = 0;
+        let text = '';
+        const tick = () => {
+          if (!alive || index >= plan.length) return;
+          text += plan[index++];
+          try { ws.send(JSON.stringify({ type: 'partial', text, stable: true })); } catch { alive = false; }
+          setTimeout(tick, scene.capture.stepMs ?? 800);
+        };
+        setTimeout(tick, 400);
+      });
+    }
+
     page.on('pageerror', (e) => problems.push(`[${scene.id}/${theme}] PAGEERROR ${e.message} @ ${(e.stack || '').split('\n')[1]?.trim() ?? ''}`));
 
     const url = `${BASE}${scene.url ?? `/document-store/${STORE_ID}/recording/${AUDIO_ID}`}`;

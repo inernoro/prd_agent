@@ -1,3 +1,5 @@
+import { liveTranscriptionRetryDelayMs } from './recordingCaptureView';
+
 export type LiveTranscriptionEvent = {
   type: 'ready' | 'status' | 'partial' | 'final' | 'degraded' | 'error';
   sequence?: number;
@@ -36,7 +38,6 @@ const TARGET_SAMPLE_RATE = 16_000;
 const FRAME_SAMPLES = 1_600;
 const MAX_QUEUED_FRAMES = 300;
 const MAX_RECONNECT_ATTEMPTS = 3;
-const RECONNECT_DELAY_MS = 800;
 export const MAX_PENDING_LIVE_PCM_FRAMES = 100;
 
 /**
@@ -240,6 +241,12 @@ export class LiveTranscriptionSocket {
     private readonly token: string,
     private readonly onEvent: (event: LiveTranscriptionEvent) => void,
     private readonly onState: (state: LiveTranscriptionState) => void,
+    /**
+     * 已排期的下一次重连时刻（epoch ms），没有排期时为 null。
+     * 采集屏那句「N 秒后重试」只能由它驱动：没有真的排期就不许显示倒计时，
+     * 否则那行字是画上去的，不是系统真的打算做的事。
+     */
+    private readonly onRetryScheduled: (nextRetryAt: number | null) => void = () => undefined,
   ) {}
 
   connect(): void {
@@ -248,6 +255,7 @@ export class LiveTranscriptionSocket {
   }
 
   private openSocket(): void {
+    this.onRetryScheduled(null);
     this.setState('connecting');
     const resumed = this.reconnectAttempts > 0;
     const socket = new WebSocket(
@@ -258,7 +266,12 @@ export class LiveTranscriptionSocket {
     this.socket = socket;
     socket.onopen = () => {
       if (this.socket !== socket) return;
-      this.reconnectAttempts = 0;
+      /*
+       * 这里**不**重置退避计数。「连上」不等于「这条连接有用」：弱网下的典型形态是
+       * 握手成功、随即被中间设备掐断，一开就重置的话退避永远停在第一档，
+       * 变成每 800ms 敲一次的死循环，既压不住抖动，也永远走不到「多次重连失败」那一档。
+       * 重置放在真的收到第一条服务端事件之后（见 onmessage）。
+       */
       this.sequence = 0;
       this.setState('live');
       for (const pcm of this.queuedFrames) socket.send(encodeLivePcmFrame(++this.sequence, pcm));
@@ -269,6 +282,8 @@ export class LiveTranscriptionSocket {
       try {
         const event = JSON.parse(message.data) as LiveTranscriptionEvent;
         if (!event?.type) return;
+        // 收到服务端的第一条事件才算这条连接真的可用，此时退避归零
+        this.reconnectAttempts = 0;
         if (event.type === 'ready' || event.type === 'partial') this.setState('live');
         if (event.type === 'final') this.setState('completed');
         if (event.type === 'degraded' || event.type === 'error') this.setState('degraded');
@@ -371,6 +386,7 @@ export class LiveTranscriptionSocket {
 
   close(): void {
     this.intentionallyClosing = true;
+    this.onRetryScheduled(null);
     if (this.reconnectTimer != null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -403,10 +419,12 @@ export class LiveTranscriptionSocket {
       totalAttempts: MAX_RECONNECT_ATTEMPTS,
       message: `实时转写连接中断，正在重连 ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`,
     });
+    const delayMs = liveTranscriptionRetryDelayMs(this.reconnectAttempts);
+    this.onRetryScheduled(Date.now() + delayMs);
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
       this.openSocket();
-    }, RECONNECT_DELAY_MS);
+    }, delayMs);
   }
 
   private setState(state: LiveTranscriptionState): void {
@@ -418,6 +436,7 @@ export class LiveTranscriptionSocket {
   private resolveTerminal(event: LiveTranscriptionEvent): void {
     if (this.terminalEvent) return;
     this.terminalEvent = event;
+    this.onRetryScheduled(null);
     for (const resolve of this.terminalWaiters.splice(0)) resolve(event);
   }
 

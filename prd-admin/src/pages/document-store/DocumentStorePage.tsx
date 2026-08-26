@@ -85,6 +85,8 @@ import {
 } from './downloadFormats';
 import {
   hasQuickRecordRequest,
+  hasRecordInStoreRequest,
+  withoutRecordInStoreRequest,
   parseDocumentStoreDeepLink,
   withDocumentStoreEntry,
   withoutDocumentStoreTabRequest,
@@ -3421,6 +3423,30 @@ export function DocumentStorePage() {
   const quickCaptureRequestRef = useRef<QuickCaptureRequestHolder<QuickCaptureResponse>>({ current: null });
   const cdsImportRequestRef = useRef<string | null>(null);
   const tutorialRouteRequestRef = useRef<string | null>(null);
+
+  /*
+   * `?store=X&record=1`：直接在 X 库里开录音（结果页左栏那颗「新录音」走这条）。
+   * 与 quickRecord 不同，它不去创建快捷库——用户是在某个库里点的，就录进那个库。
+   * 消费一次就把参数抹掉，否则返回这一页会再弹一次录音面板。
+   */
+  const recordInStoreConsumedRef = useRef(false);
+  useEffect(() => {
+    if (recordInStoreConsumedRef.current) return;
+    if (!hasRecordInStoreRequest(location.search)) return;
+    const target = initialDeepLinkRef.current.storeId ?? selectedStoreId;
+    if (!target) return;
+    recordInStoreConsumedRef.current = true;
+    setDetailInitialAction({
+      id: ++detailInitialActionSequenceRef.current,
+      storeId: target,
+      action: 'record',
+    });
+    navigate({
+      pathname: location.pathname,
+      search: withoutRecordInStoreRequest(location.search),
+      hash: location.hash,
+    }, { replace: true });
+  }, [location.search, location.pathname, location.hash, navigate, selectedStoreId]);
 
   // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
   // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。

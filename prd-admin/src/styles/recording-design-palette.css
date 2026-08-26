@@ -46,12 +46,28 @@
   --semantic-warning-text: #B26A00;
   --semantic-warning-soft: #FDF3E3;
   --semantic-danger: #E5484D;
+  /*
+   * 采集屏（R1/R2/R3、A1/A2）的凭据胶囊底色。稿面给的是浅底 + 同色深字：
+   * 绿=已保护/本机已存、蓝=实时上传、琥珀=上传等待中、红=正在录音。
+   */
+  --semantic-success-soft: #E4F3EA;
+  --semantic-success-text: #12885E;
+  --semantic-info-soft: #E8EEFF;
+  --semantic-info-text: #1F5EFF;
+  --semantic-danger-soft: #FBE4E5;
   --selection-bg: #E8EEFF;
   --selection-border: #C7D8FF;
   --selection-text: #0B41C4;
   --button-primary-bg: #16181A;
   --button-primary-fg: #FFFFFF;
   --button-primary-shadow: none;
+  /*
+   * 左栏那颗「新录音」（稿面 D1/D2）：浅色档是黑色实心，深色档稿面换成了蓝色实心
+   * 而不是白色——白色在那一栏会和文档清单的选中底抢，蓝色才读得出「这是主操作」。
+   * 所以它不能直接复用 --button-primary-*（那对在深色档是白底黑字）。
+   */
+  --recording-cta-bg: var(--button-primary-bg);
+  --recording-cta-fg: var(--button-primary-fg);
 }
 
 /*
@@ -76,10 +92,21 @@
   --semantic-warning-text: #E9A23B;
   --semantic-warning-soft: #2A2113;
   --semantic-danger: #FF6369;
+  /*
+   * 深色档的胶囊底走「亮色 + 低透明度」而不是深色 hex：深底上观感一致，
+   * 又不给双皮肤棘轮再添一笔深色字面量（themeHardcodeRatchet 判据 2）。
+   */
+  --semantic-success-soft: rgba(61, 214, 140, 0.14);
+  --semantic-success-text: #3DD68C;
+  --semantic-info-soft: rgba(110, 155, 255, 0.16);
+  --semantic-info-text: #6E9BFF;
+  --semantic-danger-soft: rgba(255, 99, 105, 0.14);
   --selection-bg: #16233F;
   --selection-border: #2C3F66;
   --selection-text: #9DB8FF;
   --button-primary-bg: #EDEEEF;
   --button-primary-fg: #0B0D0F;
   --button-primary-shadow: none;
+  --recording-cta-bg: var(--accent-fg-info);
+  --recording-cta-fg: var(--bg-primary);
 }

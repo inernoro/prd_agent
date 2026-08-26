@@ -306,5 +306,183 @@
       "还太短",
       "还没有整理结果"
     ]
+  },
+  {
+    "id": "capture-live",
+    "board": "v2-R1 / cap-A1",
+    "note": "正在录音的常态：真的开一路假麦克风录几秒，波形、本机字节、已上传百分比、实时原文全部是跑出来的",
+    "url": "/document-store?store=store-demo",
+    "sections": false,
+    "settleMs": 6000,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "drive": [
+      "capture"
+    ],
+    "capture": {
+      "live": [
+        "先说结论，导入是这一版最大的漏斗。",
+        "我们看了 312 个新账号，第 7 天只剩 41%。",
+        "掉落最集中的一步是等待解析，平均 40 秒没有任何反馈。",
+        "所以这次调研我们优先看留存曲线。",
+        "第一组用户在第 7 天有明显掉落，主要卡在导入环节。",
+        "我们打算把导入拆成两步，先让他们看到结果"
+      ],
+      "recordMs": 7000,
+      "stepMs": 800
+    },
+    "expect": [
+      "正在录音",
+      "本机已存",
+      "实时上传",
+      "已保护"
+    ]
+  },
+  {
+    "id": "capture-paused",
+    "board": "v2-R2",
+    "note": "点一下暂停：状态胶囊翻成已暂停、波形冻结、主按钮变「继续录音」、实时原文停在第几句",
+    "url": "/document-store?store=store-demo",
+    "sections": false,
+    "settleMs": 6000,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "drive": [
+      "capture"
+    ],
+    "capture": {
+      "live": [
+        "先说结论，导入是这一版最大的漏斗。",
+        "我们看了 312 个新账号，第 7 天只剩 41%。",
+        "掉落最集中的一步是等待解析，平均 40 秒没有任何反馈。",
+        "所以这次调研我们优先看留存曲线。",
+        "第一组用户在第 7 天有明显掉落，主要卡在导入环节。",
+        "我们打算把导入拆成两步，先让他们看到结果"
+      ],
+      "recordMs": 7000,
+      "stepMs": 800,
+      "pause": true
+    },
+    "expect": [
+      "已暂停",
+      "波形已冻结",
+      "继续录音",
+      "已停在"
+    ]
+  },
+  {
+    "id": "capture-expanded",
+    "board": "cap-A3",
+    "note": "展开全部：逐句列出，左边那一列是这句第一次出现的录音时刻（协议里没有逐句时间戳，只能这么来）",
+    "url": "/document-store?store=store-demo",
+    "sections": false,
+    "settleMs": 6000,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "drive": [
+      "capture"
+    ],
+    "capture": {
+      "live": [
+        "先说结论，导入是这一版最大的漏斗。",
+        "我们看了 312 个新账号，第 7 天只剩 41%。",
+        "掉落最集中的一步是等待解析，平均 40 秒没有任何反馈。",
+        "所以这次调研我们优先看留存曲线。",
+        "第一组用户在第 7 天有明显掉落，主要卡在导入环节。",
+        "我们打算把导入拆成两步，先让他们看到结果"
+      ],
+      "recordMs": 8000,
+      "stepMs": 700,
+      "expand": true
+    },
+    "expect": [
+      "全部",
+      "收起"
+    ]
+  },
+  {
+    "id": "capture-degraded",
+    "board": "cap-A2 / v2-R3",
+    "note": "实时转写连不上：按真实退避重连（800ms / 4s / 15s），卡上给中断时刻与倒计时，录音与上传不受影响",
+    "url": "/document-store?store=store-demo",
+    "sections": false,
+    "settleMs": 6000,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "drive": [
+      "capture"
+    ],
+    "capture": {
+      "live": false,
+      "recordMs": 9000
+    },
+    "expect": [
+      "实时原文暂时不可用",
+      "录音与上传未受影响",
+      "网络较弱",
+      "不会丢失任何一秒"
+    ]
+  },
+  {
+    "id": "capture-upload-offline",
+    "board": "v2-R3",
+    "note": "分片上传通道建不起来：顶部琥珀横幅 + 「上传等待中」，但「已保护」仍然成立——本机保险箱在录音第一秒就生效",
+    "url": "/document-store?store=store-demo",
+    "sections": false,
+    "settleMs": 6000,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "drive": [
+      "capture"
+    ],
+    "capture": {
+      "live": false,
+      "recordMs": 7000
+    },
+    "rules": [
+      {
+        "match": "/stores/[^/]+/recording-uploads$",
+        "status": 500,
+        "message": "网络不可用"
+      }
+    ],
+    "expect": [
+      "上传等待中",
+      "网络较弱",
+      "不会丢失任何一秒",
+      "已保护"
+    ]
+  },
+  {
+    "id": "desktop",
+    "board": "v2-D1 / v2-D2",
+    "note": "桌面三栏：左栏文档清单 + 中栏波形与原文 + 右栏四页签。D1 是理解页签，D2 是提问页签",
+    "sections": false,
+    "settleMs": 5000,
+    "viewport": {
+      "width": 1442,
+      "height": 902
+    },
+    "drive": [
+      "desktop"
+    ],
+    "expect": [
+      "MAP 知识库",
+      "新录音",
+      "理解",
+      "纪要",
+      "待办",
+      "提问"
+    ]
   }
 ]

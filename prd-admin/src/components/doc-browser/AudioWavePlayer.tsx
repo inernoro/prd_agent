@@ -13,7 +13,7 @@
  *   - 失败：自动 fallback 浏览器原生 <audio controls>
  */
 import { useEffect, useRef, useState } from 'react';
-import { Download, Play, Pause } from 'lucide-react';
+import { ChevronsLeft, ChevronsRight, Download, Play, Pause } from 'lucide-react';
 import { announceRecordingDuration, onRecordingPlayRequest } from './recordingPlayBridge';
 
 interface AudioWavePlayerProps {
@@ -29,6 +29,12 @@ interface AudioWavePlayerProps {
   className?: string;
   /** 传输行里跟在时间后面的一小段信息（稿面是「第 N / M 句」）。 */
   transportMeta?: React.ReactNode;
+  /**
+   * 上一句 / 下一句（设计稿 D1/D2 里播放键两侧那对 « »）。
+   * 不传就不渲染——没有逐句时间轴的调用方给一对点了没反应的按钮更糟。
+   */
+  onSkipPrev?: () => void;
+  onSkipNext?: () => void;
   /** 传输行下方的一行说明（稿面是「精准时间轴 · 逐句对齐」）。 */
   caption?: string;
   /** 通铺：不套外层卡片，波形与控件直接落在分区底上（稿面 B1 的播放区）。 */
@@ -85,6 +91,8 @@ export function AudioWavePlayer({
   registerSeek,
   className = '',
   transportMeta,
+  onSkipPrev,
+  onSkipNext,
   caption,
   flush = false,
 }: AudioWavePlayerProps) {
@@ -284,6 +292,18 @@ export function AudioWavePlayer({
         我先前把说明行摊成整行贴到最左，它就和时间脱了组——两位判官都指到这处。
       */}
       <div className="flex items-center gap-3">
+        {onSkipPrev && (
+          <button
+            onClick={onSkipPrev}
+            disabled={!ready}
+            aria-label="上一句"
+            title="上一句"
+            className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-[14px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+          >
+            <ChevronsLeft size={18} />
+          </button>
+        )}
         <button
           onClick={togglePlay}
           data-testid="audio-play-toggle"
@@ -301,6 +321,18 @@ export function AudioWavePlayer({
         >
           {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" style={{ marginLeft: 2 }} />}
         </button>
+        {onSkipNext && (
+          <button
+            onClick={onSkipNext}
+            disabled={!ready}
+            aria-label="下一句"
+            title="下一句"
+            className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-[14px] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+          >
+            <ChevronsRight size={18} />
+          </button>
+        )}
 
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-baseline gap-2">

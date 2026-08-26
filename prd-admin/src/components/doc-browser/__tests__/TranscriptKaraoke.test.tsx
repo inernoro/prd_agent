@@ -43,12 +43,16 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    // 设计稿 P3 是四块同屏并置（词云 / 会议纪要 / 待办 / 提问），不是可切换的分区
+    // 窄屏（这里的静态渲染按窄屏走）：设计稿 P3 是四块同屏并置
+    //（词云 / 会议纪要 / 待办 / 提问），不是可切换的分区。
+    // 宽屏才收成 D1/D2 那四个分页签——那一档由取证截图证明，不在这里断言。
     expect(html).toContain('词云');
     expect(html).toContain('会议纪要');
     expect(html).toContain('待办事项');
     expect(html).toContain('问这场录音');
     expect(html).not.toContain('role="tab"');
+    // 并置形态里不该出现分页签抬头，否则就是宽屏形态漏到了窄屏
+    expect(html).not.toContain('aria-pressed="true">理解');
     // 断言的是「有一个搜关键词的输入口」，不是它此刻的 placeholder 原文——
     // 稿面把它排在原文列表上方（B1），文案随之从「搜索录音里的关键词」变成
     // 「搜索原文关键词」；逐字比对会让这类合规改动无端变红（形状 4a）。

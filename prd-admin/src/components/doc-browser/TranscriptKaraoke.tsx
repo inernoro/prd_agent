@@ -29,6 +29,7 @@ import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { OrganizeStylePanel, type OrganizeState } from '@/components/doc-browser/OrganizeStylePanel';
 import { RecordingAnswer } from '@/components/doc-browser/RecordingAnswer';
 import { streamDirectChat } from '@/services/real/aiToolbox';
+import { useIsDesktop } from '@/hooks/useBreakpoint';
 import { getTranscriptLexicon, updateSystemTranscriptLexicon, updateTranscriptLexicon } from '@/services/real/userPreferences';
 
 /**
@@ -69,6 +70,19 @@ function highlightKeyword(text: string, keyword: string): React.ReactNode {
  * 结果页那几段内容各自是一张卡（词云 / 会议纪要 / 待办 / 问这场录音）。
  * 抽成常量而不是各写各的：四处必须长得一样，写四遍就是四处会各自漂移的地方。
  */
+/**
+ * 桌面三栏（设计稿 D1/D2）右栏的四个分页签。
+ * 手机上这四块是**并置**往下铺的（P3 那一屏画的就是并置），桌面才收成分页签——
+ * 宽屏一次只看一块是稿面的选择，窄屏一次只看一块会把主路径切断。
+ */
+const DESKTOP_PANELS = [
+  { key: 'understand', label: '理解' },
+  { key: 'summary', label: '纪要' },
+  { key: 'todo', label: '待办' },
+  { key: 'ask', label: '提问' },
+] as const;
+type DesktopPanelKey = (typeof DESKTOP_PANELS)[number]['key'];
+
 const SECTION_CARD = 'rounded-[14px] p-4';
 const SECTION_CARD_STYLE: React.CSSProperties = {
   background: 'var(--bg-nested)',
@@ -522,13 +536,27 @@ export function TranscriptKaraoke({
     return () => observer.disconnect();
   }, [documentMode]);
 
+  /*
+   * 桌面三栏（D1/D2）：右栏收成分页签，主栏留给波形与原文。
+   * 断点不能只靠 CSS——两种形态渲染的节点不一样（桌面一次只挂一块），
+   * 纯 `lg:hidden` 会把四块全渲染出来再藏三块，滚动位置与懒加载都会跟着错。
+   */
+  const isDesktop = useIsDesktop();
+  const [panelTab, setPanelTab] = useState<DesktopPanelKey>('understand');
+  const showPanel = (key: DesktopPanelKey) => !isDesktop || panelTab === key;
+
   const currentSegment = timelineSegments[activeIdx] ?? null;
   const nextSegment = timelineSegments[activeIdx + 1] ?? null;
 
   if (segments.length === 0) return <AudioWavePlayer src={src} />;
 
   return (
-    <div className="relative flex w-full flex-col items-center gap-4">
+    <div
+      className={documentMode
+        ? 'relative flex w-full flex-col items-stretch gap-4 lg:flex-row lg:items-start lg:gap-6'
+        : 'relative flex w-full flex-col items-center gap-4'}>
+      {/* 主栏：波形 + 播放条 + 原文。桌面下它占主导宽度，右栏是配角（content-fills-canvas） */}
+      <div className={documentMode ? 'flex w-full min-w-0 flex-col items-center gap-4 lg:flex-1' : 'contents'}>
       {documentMode && (
         // 「录音」这个分区标题去掉了：顶栏已经写明这一屏是什么，稿面也没有它；
         // 留着的代价是它和下方白底播放区之间空出一大块灰，正是判官记的「播放区顶部留白」。
@@ -578,6 +606,14 @@ export function TranscriptKaraoke({
           registerSeek={(seek) => { seekRef.current = seek; }}
           // 句序与「逐句对齐」这句都归播放器主体：它们和时间回答的是同一个问题
           transportMeta={documentMode && followEnabled ? `第 ${activeIdx + 1} / ${timelineSegments.length} 句` : undefined}
+          // 稿面 D1/D2 播放键两侧那对 « »：跳到上一句 / 下一句的开头。
+          // 只有真的有逐句时间轴时才给——没有时间轴就没有「一句」可跳。
+          onSkipPrev={documentMode && timelineSegments.length > 1
+            ? () => seekRef.current?.(timelineSegments[Math.max(0, activeIdx - 1)]?.start ?? 0)
+            : undefined}
+          onSkipNext={documentMode && timelineSegments.length > 1
+            ? () => seekRef.current?.(timelineSegments[Math.min(timelineSegments.length - 1, activeIdx + 1)]?.start ?? 0)
+            : undefined}
           caption={documentMode ? (estimated ? '智能估算时间轴 · 可能有偏差' : '精准时间轴 · 逐句对齐') : undefined}
           flush={documentMode}
         />
@@ -939,8 +975,34 @@ export function TranscriptKaraoke({
           {documentMode && onSaveNote ? '可直接播放或点击句子校对' : '可直接播放或点句跳转'}
         </p>
       )}
+      </div>
       {documentMode && (
-        <div className="flex w-full max-w-[760px] flex-col gap-3">
+        <aside
+          className="flex w-full max-w-[760px] flex-col gap-3 lg:sticky lg:top-0 lg:w-[400px] lg:max-w-none lg:shrink-0 lg:self-stretch lg:overflow-y-auto lg:py-3 lg:pl-1"
+          style={isDesktop ? { maxHeight: '100dvh', borderLeft: '1px solid var(--border-faint)', paddingLeft: 20 } : undefined}>
+          {/* 稿面 D1/D2 的右栏抬头：理解 / 纪要 / 待办 / 提问 四个分页签 */}
+          {isDesktop && (
+            <div className="flex items-center gap-5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
+              {DESKTOP_PANELS.map(panel => (
+                <button
+                  key={panel.key}
+                  type="button"
+                  onClick={() => setPanelTab(panel.key)}
+                  aria-pressed={panelTab === panel.key}
+                  className="relative min-h-11 cursor-pointer text-[14px] font-semibold"
+                  style={{ color: panelTab === panel.key ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {panel.label}
+                  {panelTab === panel.key && (
+                    <span
+                      aria-hidden
+                      className="absolute inset-x-0 -bottom-px block h-[2px] rounded-full"
+                      style={{ background: 'var(--accent-fg-info)' }}
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
           {/*
             设计稿 P3 是三块内容同屏并置：词云 → 会议纪要 → 待办，一屏贯通。
             我上一轮把它们做成了互斥分区，一次只能看一块——审查智能体判为「打断主路径」，
@@ -950,271 +1012,273 @@ export function TranscriptKaraoke({
             我原先做成后者，两位判官各自独立指到同一处——分组感弱一档。所以卡片挂在每一段上，
             外层退成纯排版容器。
           */}
-          <section style={{ scrollMarginTop: 100 }}>
-            <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              {/*
-                这块叫「词云」——2026-08-25 产品方明确：这就是他设定的名字。
-                另一张画布（VOICE CAPTURE 的 B3）把同一块内容标成「录音理解」，
-                以产品方的设定为准，那张稿上的名字过时了，已回请设计方同步改。
-              */}
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>词云</h3>
-              {/* 稿面 P3 这行右侧除了句数还有一句可供性提示：词条是可以点的，点了看命中 */}
-              <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句原文 · 点击查看命中</span>
-            </div>
-            <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
-            {/*
-              稿面 B3 的开场是「最高频主题」标签 + 一句挂着数字的结论，然后才是词条。
-              先给结论再给数字（conclusion-before-numbers）：一排词读不出「这场在讲什么」，
-              得读者自己数；这句话替他数完了。
-
-              这个百分比必须是真的：它就是「含最高频词的句子 ÷ 总句数」，
-              不是从稿面抄一个 62% 过来（no-rootless-tree）。文案也照这个口径写，
-              不写成含糊的「内容占比」。
-            */}
-            {topicLede && (
-              <div className="mb-3">
-                <span
-                  className="inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold"
-                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
-                >
-                  最高频主题
-                </span>
-                <p className="mt-2.5 text-[17px] font-bold leading-snug text-token-primary">
-                  这场有 {topicLede.percent}% 的句子提到「{topicLede.top}」
-                  {topicLede.second ? <>，其次是「{topicLede.second}」</> : null}。
-                </p>
+          {showPanel('understand') && (
+            <section style={{ scrollMarginTop: 100 }}>
+              <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+                {/*
+                  这块叫「词云」——2026-08-25 产品方明确：这就是他设定的名字。
+                  另一张画布（VOICE CAPTURE 的 B3）把同一块内容标成「录音理解」，
+                  以产品方的设定为准，那张稿上的名字过时了，已回请设计方同步改。
+                */}
+                <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>词云</h3>
+                {/* 稿面 P3 这行右侧除了句数还有一句可供性提示：词条是可以点的，点了看命中 */}
+                <span className="text-[11px] text-token-muted">基于 {timelineSegments.length} 句原文 · 点击查看命中</span>
               </div>
-            )}
+              <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
+              {/*
+                稿面 B3 的开场是「最高频主题」标签 + 一句挂着数字的结论，然后才是词条。
+                先给结论再给数字（conclusion-before-numbers）：一排词读不出「这场在讲什么」，
+                得读者自己数；这句话替他数完了。
+
+                这个百分比必须是真的：它就是「含最高频词的句子 ÷ 总句数」，
+                不是从稿面抄一个 62% 过来（no-rootless-tree）。文案也照这个口径写，
+                不写成含糊的「内容占比」。
+              */}
+              {topicLede && (
+                <div className="mb-3">
+                  <span
+                    className="inline-block rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                    style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
+                  >
+                    最高频主题
+                  </span>
+                  <p className="mt-2.5 text-[17px] font-bold leading-snug text-token-primary">
+                    这场有 {topicLede.percent}% 的句子提到「{topicLede.top}」
+                    {topicLede.second ? <>，其次是「{topicLede.second}」</> : null}。
+                  </p>
+                </div>
+              )}
 
 
 
-            {speakerSource && (
-              <p
-                className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed"
-                style={{ color: speakerSource.estimated ? 'var(--semantic-warning-text)' : 'var(--text-muted)' }}
-              >
-                <Info size={12} className="mt-0.5 shrink-0" />
-                <span>{speakerSource.text}</span>
-              </p>
-            )}
+              {speakerSource && (
+                <p
+                  className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed"
+                  style={{ color: speakerSource.estimated ? 'var(--semantic-warning-text)' : 'var(--text-muted)' }}
+                >
+                  <Info size={12} className="mt-0.5 shrink-0" />
+                  <span>{speakerSource.text}</span>
+                </p>
+              )}
 
-            {/*
-              词云的权重必须按「出现几次」映射，不能按排名。旧写法是 15 - index*0.2：
-              18 个词从 15px 递减到 11.4px，肉眼分不出；而且排名相邻的两个词就算一个说了 30 次、
-              一个说了 3 次也一样大——等于把唯一有信息量的那一维抹平了，剩下一排一模一样的药丸。
-              现在字号/底色/边框/字重全部由 count 相对最大值决定，并把次数直接写在词上（不再藏 title），
-              开头先给一句结论，让人一眼知道「这场到底在反复讲什么」而不是自己读一排词去数。
-            */}
-            {/*
-              这一块**无条件渲染**。原先的条件是「有词条 或 有编辑权限」，于是
-              「一个词都没重复 + 只读」时整块被跳过——区块标题下面是一张彻头彻尾的空卡。
-              而没有词的时候恰恰最需要告诉用户为什么没有（分词器不认识人名黑话）。
-              空态要给理由和下一步，不能是一片空白（guided-exploration）。
-            */}
-            <div className="mt-3">
-            {/*
-              这里原先有一个「词云」小标签：那是两张画布各起一个名时的折中产物——
-              区块标题被另一张稿的「录音理解」占着，只好把真名降一级塞进卡里。
-              产品方已明确这块就叫词云，标题已经写着它了，卡内不必再说第二遍。
-            */}
-                {wordCloud.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
-                  {wordCloud.map(({ word, count }, index) => {
-                    const weight = count / wordCloud[0].count;
-                    // 设计稿把词频压成**三档**（高频黑底大字 / 中频蓝字 / 低频灰底小字）。
-                    // 连续映射看着更精确，但一排词里没有哪个能占住视线——三档存在的
-                    // 全部理由就是让最高频那个词一眼跳出来。
-                    // 阈值按稿面那组词频（38/29/17/14/9/7/5/4）反推：38 与 29 同为黑档
-                    // ——「这场有两个并列头部词」是一条信息，把第二名压进蓝档就读不出来了；
-                    // 17/14 进蓝档；9 及以下退灰档。三档的意义是拉开梯度，不是等分。
-                    // 黑档取**词频最高的两个**，但要求它们本身足够高频（weight >= 0.3）。
-                    //
-                    // 原写法是纯比例阈值 0.7。它能复现稿面那组数（29÷38=0.76 落在黑档），
-                    // 但换一段录音就未必还是两个黑档——三位判官分别独立报了同一条
-                    // 「稿面是两枚黑底大词、实现只有一枚」。稿面是 SSOT，与其每次判分都
-                    // 重新辩解一遍阈值，不如让规则稳定复现稿面的形状。
-                    // 加 weight >= 0.3 这道闸是防止「第二名其实只出现两次」也被硬捧成黑档。
-                    // 这条规则已写进给设计方的待确认清单，他们可以否决。
-                    // 蓝档同理取**名次前四里的后两个**（第 3、4 名），而不是「所有 weight >= 0.3 的词」：
-                    // 稿面那组词频算下来正好两枚蓝，换一段词频分布平缓的录音（8/5/4/3/3/3…）
-                    // 纯阈值会一口气标出四枚蓝，强调色的分层节奏就散了。
-                    // 名次法在两种分布下都稳定复现稿面的形状：两黑、两蓝、其余灰。
-                    const tier = index < 2 && weight >= 0.3 ? 'high'
-                      : index < 4 && weight >= 0.3 ? 'mid' : 'low';
-                    const selected = activeTerm === word;
-                    // 稿面这三档是**纯色填充、无描边**，且字号台阶拉得很开（约 24 / 19 / 15）。
-                    // 我原先三档都带 1px 描边、字号 18/15/12.5——描边把色块对比削掉一层，
-                    // 台阶又太密，一排词里看不出谁是头部词，等于三档白分了。
-                    const tierStyle = tier === 'high'
-                      ? { fontSize: '22px', fontWeight: 700, background: 'var(--text-primary)', color: 'var(--bg-card)' }
-                      : tier === 'mid'
-                        ? { fontSize: '17px', fontWeight: 600, background: 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)', color: 'var(--accent-fg-info)' }
-                        : { fontSize: '13px', fontWeight: 400, background: 'var(--bg-elevated)', color: 'var(--text-secondary)' };
+              {/*
+                词云的权重必须按「出现几次」映射，不能按排名。旧写法是 15 - index*0.2：
+                18 个词从 15px 递减到 11.4px，肉眼分不出；而且排名相邻的两个词就算一个说了 30 次、
+                一个说了 3 次也一样大——等于把唯一有信息量的那一维抹平了，剩下一排一模一样的药丸。
+                现在字号/底色/边框/字重全部由 count 相对最大值决定，并把次数直接写在词上（不再藏 title），
+                开头先给一句结论，让人一眼知道「这场到底在反复讲什么」而不是自己读一排词去数。
+              */}
+              {/*
+                这一块**无条件渲染**。原先的条件是「有词条 或 有编辑权限」，于是
+                「一个词都没重复 + 只读」时整块被跳过——区块标题下面是一张彻头彻尾的空卡。
+                而没有词的时候恰恰最需要告诉用户为什么没有（分词器不认识人名黑话）。
+                空态要给理由和下一步，不能是一片空白（guided-exploration）。
+              */}
+              <div className="mt-3">
+              {/*
+                这里原先有一个「词云」小标签：那是两张画布各起一个名时的折中产物——
+                区块标题被另一张稿的「录音理解」占着，只好把真名降一级塞进卡里。
+                产品方已明确这块就叫词云，标题已经写着它了，卡内不必再说第二遍。
+              */}
+                  {wordCloud.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2" aria-label="整场录音词云">
+                    {wordCloud.map(({ word, count }, index) => {
+                      const weight = count / wordCloud[0].count;
+                      // 设计稿把词频压成**三档**（高频黑底大字 / 中频蓝字 / 低频灰底小字）。
+                      // 连续映射看着更精确，但一排词里没有哪个能占住视线——三档存在的
+                      // 全部理由就是让最高频那个词一眼跳出来。
+                      // 阈值按稿面那组词频（38/29/17/14/9/7/5/4）反推：38 与 29 同为黑档
+                      // ——「这场有两个并列头部词」是一条信息，把第二名压进蓝档就读不出来了；
+                      // 17/14 进蓝档；9 及以下退灰档。三档的意义是拉开梯度，不是等分。
+                      // 黑档取**词频最高的两个**，但要求它们本身足够高频（weight >= 0.3）。
+                      //
+                      // 原写法是纯比例阈值 0.7。它能复现稿面那组数（29÷38=0.76 落在黑档），
+                      // 但换一段录音就未必还是两个黑档——三位判官分别独立报了同一条
+                      // 「稿面是两枚黑底大词、实现只有一枚」。稿面是 SSOT，与其每次判分都
+                      // 重新辩解一遍阈值，不如让规则稳定复现稿面的形状。
+                      // 加 weight >= 0.3 这道闸是防止「第二名其实只出现两次」也被硬捧成黑档。
+                      // 这条规则已写进给设计方的待确认清单，他们可以否决。
+                      // 蓝档同理取**名次前四里的后两个**（第 3、4 名），而不是「所有 weight >= 0.3 的词」：
+                      // 稿面那组词频算下来正好两枚蓝，换一段词频分布平缓的录音（8/5/4/3/3/3…）
+                      // 纯阈值会一口气标出四枚蓝，强调色的分层节奏就散了。
+                      // 名次法在两种分布下都稳定复现稿面的形状：两黑、两蓝、其余灰。
+                      const tier = index < 2 && weight >= 0.3 ? 'high'
+                        : index < 4 && weight >= 0.3 ? 'mid' : 'low';
+                      const selected = activeTerm === word;
+                      // 稿面这三档是**纯色填充、无描边**，且字号台阶拉得很开（约 24 / 19 / 15）。
+                      // 我原先三档都带 1px 描边、字号 18/15/12.5——描边把色块对比削掉一层，
+                      // 台阶又太密，一排词里看不出谁是头部词，等于三档白分了。
+                      const tierStyle = tier === 'high'
+                        ? { fontSize: '22px', fontWeight: 700, background: 'var(--text-primary)', color: 'var(--bg-card)' }
+                        : tier === 'mid'
+                          ? { fontSize: '17px', fontWeight: 600, background: 'color-mix(in srgb, var(--accent-fg-info) 14%, transparent)', color: 'var(--accent-fg-info)' }
+                          : { fontSize: '13px', fontWeight: 400, background: 'var(--bg-elevated)', color: 'var(--text-secondary)' };
+                      return (
+                        <button
+                          key={word}
+                          type="button"
+                          onClick={() => { setKeyword(''); setSelectedWord(selected ? '' : word); }}
+                          aria-pressed={selected}
+                          className="min-h-9 rounded-full px-3"
+                          style={{
+                            ...tierStyle,
+                            // 选中的词直接用黑底（高频档同款），不再另加一圈蓝描边——
+                            // 稿面把蓝色留给时间戳与「全部」，到处用会把它的意思稀释掉
+                            ...(selected ? { background: 'var(--text-primary)', color: 'var(--bg-card)' } : {}),
+                          }}
+                          title={`出现 ${count} 次，点击查看命中`}
+                        >
+                          {word}
+                          <span className="ml-1 text-[10px] font-normal tabular-nums opacity-60">{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  )}
+                  {/*
+                    结论已经在卡顶（稿面 B3 的「最高频主题 + 一句话」），这里不再重复一遍——
+                    同一件事说两次会让读者以为是两条不同的信息。
+                    只留词云为空时的那句：那种时候恰恰最需要告诉用户为什么空、怎么补。
+                  */}
+                  {wordCloud.length === 0 && (
+                    <p className="text-[11px] leading-relaxed text-token-muted">
+                      {describeWordCloudEmptyState(timelineSegments.length)}
+                    </p>
+                  )}
+              {speakers.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="flex items-center gap-1 text-[11px] text-token-muted"><UserRound size={12} /> 说话人</span>
+                  {speakers.map(speaker => renamingSpeaker === speaker ? (
+                    <span key={speaker} className="flex items-center gap-1">
+                      <input autoFocus value={speakerDraft} onChange={event => setSpeakerDraft(event.target.value)} className="h-9 w-28 rounded-[8px] px-2 text-[12px] outline-none" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }} />
+                      <button type="button" className="min-h-9 rounded-[8px] px-2 text-[11px]" onClick={() => {
+                        if (!onSaveNote || !speakerDraft.trim()) return;
+                        const next = renameTranscriptSpeaker(noteMd, speaker, speakerDraft);
+                        setSavingEdit(true);
+                        void onSaveNote(next).then(ok => { if (ok !== false) setRenamingSpeaker(null); }).finally(() => setSavingEdit(false));
+                      }} disabled={savingEdit}>保存</button>
+                    </span>
+                  ) : (
+                    (() => {
+                    // 光有名字看不出这场是谁在说；句数与占比是数得出来的事实（设计稿 P3/D1）
+                    const stat = speakerStats.find(item => item.speaker === speaker);
                     return (
-                      <button
-                        key={word}
-                        type="button"
-                        onClick={() => { setKeyword(''); setSelectedWord(selected ? '' : word); }}
-                        aria-pressed={selected}
-                        className="min-h-9 rounded-full px-3"
-                        style={{
-                          ...tierStyle,
-                          // 选中的词直接用黑底（高频档同款），不再另加一圈蓝描边——
-                          // 稿面把蓝色留给时间戳与「全部」，到处用会把它的意思稀释掉
-                          ...(selected ? { background: 'var(--text-primary)', color: 'var(--bg-card)' } : {}),
-                        }}
-                        title={`出现 ${count} 次，点击查看命中`}
-                      >
-                        {word}
-                        <span className="ml-1 text-[10px] font-normal tabular-nums opacity-60">{count}</span>
+                      <button key={speaker} type="button" onClick={() => { setRenamingSpeaker(speaker); setSpeakerDraft(speaker); }} className="flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[11px] text-token-secondary" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }} title="修改这个说话人的名称">
+                        <span className="font-semibold text-token-primary">{speaker}</span>
+                        {stat && (
+                          <span className="tabular-nums text-token-muted">
+                            {stat.count} 句 · 占 {stat.percent}%
+                          </span>
+                        )}
                       </button>
                     );
-                  })}
+                  })()
+                  ))}
                 </div>
-                )}
-                {/*
-                  结论已经在卡顶（稿面 B3 的「最高频主题 + 一句话」），这里不再重复一遍——
-                  同一件事说两次会让读者以为是两条不同的信息。
-                  只留词云为空时的那句：那种时候恰恰最需要告诉用户为什么空、怎么补。
-                */}
-                {wordCloud.length === 0 && (
-                  <p className="text-[11px] leading-relaxed text-token-muted">
-                    {describeWordCloudEmptyState(timelineSegments.length)}
-                  </p>
-                )}
-            {speakers.length > 0 && (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="flex items-center gap-1 text-[11px] text-token-muted"><UserRound size={12} /> 说话人</span>
-                {speakers.map(speaker => renamingSpeaker === speaker ? (
-                  <span key={speaker} className="flex items-center gap-1">
-                    <input autoFocus value={speakerDraft} onChange={event => setSpeakerDraft(event.target.value)} className="h-9 w-28 rounded-[8px] px-2 text-[12px] outline-none" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }} />
-                    <button type="button" className="min-h-9 rounded-[8px] px-2 text-[11px]" onClick={() => {
-                      if (!onSaveNote || !speakerDraft.trim()) return;
-                      const next = renameTranscriptSpeaker(noteMd, speaker, speakerDraft);
-                      setSavingEdit(true);
-                      void onSaveNote(next).then(ok => { if (ok !== false) setRenamingSpeaker(null); }).finally(() => setSavingEdit(false));
-                    }} disabled={savingEdit}>保存</button>
-                  </span>
-                ) : (
-                  (() => {
-                  // 光有名字看不出这场是谁在说；句数与占比是数得出来的事实（设计稿 P3/D1）
-                  const stat = speakerStats.find(item => item.speaker === speaker);
-                  return (
-                    <button key={speaker} type="button" onClick={() => { setRenamingSpeaker(speaker); setSpeakerDraft(speaker); }} className="flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[11px] text-token-secondary" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }} title="修改这个说话人的名称">
-                      <span className="font-semibold text-token-primary">{speaker}</span>
-                      {stat && (
-                        <span className="tabular-nums text-token-muted">
-                          {stat.count} 句 · 占 {stat.percent}%
-                        </span>
-                      )}
-                    </button>
-                  );
-                })()
-                ))}
-              </div>
-            )}
-                {/*
-                  词典入口就放在词云下面：发现「某个词该在却不在」正是在看这一屏的时候。
-                  逼用户跑去设置页再回来是绕路（anti-detour.md）。
-                  说话人名不用在这里加——它们已经自动进词典了。
-                  **它不跟着词云一起隐藏**：词云为空正是最需要补词的场景。
-                */}
-                {onSaveNote ? (
-                  <div className="mt-2">
-                    {lexiconOpen ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input
-                          value={lexiconDraft}
-                          onChange={event => setLexiconDraft(event.target.value)}
-                          onKeyDown={event => { if (event.key === 'Enter') void addLexiconTerm('mine'); }}
-                          placeholder="例如：人名、产品名、团队黑话"
-                          aria-label="补充词条"
-                          className="h-9 min-w-0 flex-1 rounded-[8px] px-2 text-[12px] text-token-primary outline-none"
-                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
-                        />
-                        <button
-                          type="button"
-                          disabled={!lexicon || savingLexicon || lexiconDraft.trim().length < 2}
-                          onClick={() => void addLexiconTerm('mine')}
-                          className="min-h-9 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
-                          style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)' }}
-                        >
-                          {savingLexicon ? '保存中' : '加入我的词典'}
-                        </button>
-                        {/* 有设置写权限的人才看得到这个：没权限却给入口，点了只会拿到 403 */}
-                        {lexicon?.canManageSystem ? (
+              )}
+                  {/*
+                    词典入口就放在词云下面：发现「某个词该在却不在」正是在看这一屏的时候。
+                    逼用户跑去设置页再回来是绕路（anti-detour.md）。
+                    说话人名不用在这里加——它们已经自动进词典了。
+                    **它不跟着词云一起隐藏**：词云为空正是最需要补词的场景。
+                  */}
+                  {onSaveNote ? (
+                    <div className="mt-2">
+                      {lexiconOpen ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={lexiconDraft}
+                            onChange={event => setLexiconDraft(event.target.value)}
+                            onKeyDown={event => { if (event.key === 'Enter') void addLexiconTerm('mine'); }}
+                            placeholder="例如：人名、产品名、团队黑话"
+                            aria-label="补充词条"
+                            className="h-9 min-w-0 flex-1 rounded-[8px] px-2 text-[12px] text-token-primary outline-none"
+                            style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+                          />
                           <button
                             type="button"
                             disabled={!lexicon || savingLexicon || lexiconDraft.trim().length < 2}
-                            onClick={() => void addLexiconTerm('system')}
-                            className="min-h-9 rounded-[8px] px-3 text-[11px] disabled:opacity-50"
-                            style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
-                            title="加进全局词典，所有人默认引用"
+                            onClick={() => void addLexiconTerm('mine')}
+                            className="min-h-9 rounded-[8px] px-3 text-[11px] font-semibold disabled:opacity-50"
+                            style={{ background: 'var(--selection-bg)', color: 'var(--text-primary)' }}
                           >
-                            加入系统词典
+                            {savingLexicon ? '保存中' : '加入我的词典'}
                           </button>
-                        ) : null}
-                        <button type="button" onClick={() => setLexiconOpen(false)} className="min-h-9 px-2 text-[11px] text-token-muted">收起</button>
-                      </div>
-                    ) : (
-                      <button type="button" onClick={() => setLexiconOpen(true)} className="min-h-9 text-[11px] text-token-muted">
-                        {wordCloud.length > 0
-                          ? '少了某个词？通用分词器不认识人名和黑话，可以补进词典'
-                          : '补一个词进词典试试'}
-                      </button>
-                    )}
-                  </div>
-                ) : null}
-            </div>
-
-            {activeTerm && searchMatches.length > 0 && (
-              // 稿面的命中面板是**一整块**浅灰底：抬头与命中句同处一块里，
-              // 才读得出「这些句子属于这个词」。此前抬头裸在外面、每句各自一个灰块，
-              // 分组这一层就丢了（两位判官都指到这处）。
-              <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)' }}>
-                <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                  <p className="text-[12px] font-semibold text-token-primary">
-                    {/* 「点击跳播」是稿面 B3 写在这里的可供性提示：这几句都点得动，点了从那一秒开始播 */}
-                    「{activeTerm}」命中 {searchMatches.length} 句 <span className="font-normal text-token-muted">· 点击跳播</span>
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => { setKeyword(''); setSelectedWord(''); }}
-                    className="min-h-9 flex-shrink-0 px-1 text-[11px]"
-                    style={{ color: 'var(--accent-fg-info)' }}
-                  >
-                    全部
-                  </button>
-                </div>
-                <div className="flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                  {searchMatches.map(({ segment, index }) => (
-                    <button
-                      key={`${index}-${segment.start}`}
-                      type="button"
-                      onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
-                      // 时间戳独立成左列：几条命中句的时间纵向对齐，才能一眼扫出「集中在哪一段」
-                      // 面板已经是一整块灰底，句子行自己不再叠第二层底色，靠细分隔线分行
-                      // 稿面这几句是这块面板里的**主阅读字号**（与纪要正文同级）：
-                      // 它们是「这个词到底在哪几句里出现」的答案，压成小字就不像答案了
-                      className="grid min-h-11 items-start gap-2 px-1 py-2 text-left text-[14px] leading-relaxed text-token-secondary"
-                      // 稿面这块是紧凑列表，没有逐行分隔线——面板本身那块灰底已经是分组
-                      style={{ gridTemplateColumns: '44px 1fr' }}>
-                      <span className="pt-[1px] font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
-                        {segment.start >= 0 ? formatClock(segment.start) : '原文'}
-                      </span>
-                      <span className="min-w-0">
-                        {segment.speaker && <span className="mr-1.5 font-semibold text-token-primary">{segment.speaker}</span>}
-                        {/* 命中的词要在句子里高亮出来，否则用户还得自己在句中找 */}
-                        {highlightKeyword(segment.text, activeTerm)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                          {/* 有设置写权限的人才看得到这个：没权限却给入口，点了只会拿到 403 */}
+                          {lexicon?.canManageSystem ? (
+                            <button
+                              type="button"
+                              disabled={!lexicon || savingLexicon || lexiconDraft.trim().length < 2}
+                              onClick={() => void addLexiconTerm('system')}
+                              className="min-h-9 rounded-[8px] px-3 text-[11px] disabled:opacity-50"
+                              style={{ background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}
+                              title="加进全局词典，所有人默认引用"
+                            >
+                              加入系统词典
+                            </button>
+                          ) : null}
+                          <button type="button" onClick={() => setLexiconOpen(false)} className="min-h-9 px-2 text-[11px] text-token-muted">收起</button>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => setLexiconOpen(true)} className="min-h-9 text-[11px] text-token-muted">
+                          {wordCloud.length > 0
+                            ? '少了某个词？通用分词器不认识人名和黑话，可以补进词典'
+                            : '补一个词进词典试试'}
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
               </div>
-            )}
-            {activeTerm && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
-            </div>
-          </section>
+
+              {activeTerm && searchMatches.length > 0 && (
+                // 稿面的命中面板是**一整块**浅灰底：抬头与命中句同处一块里，
+                // 才读得出「这些句子属于这个词」。此前抬头裸在外面、每句各自一个灰块，
+                // 分组这一层就丢了（两位判官都指到这处）。
+                <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)' }}>
+                  <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                    <p className="text-[12px] font-semibold text-token-primary">
+                      {/* 「点击跳播」是稿面 B3 写在这里的可供性提示：这几句都点得动，点了从那一秒开始播 */}
+                      「{activeTerm}」命中 {searchMatches.length} 句 <span className="font-normal text-token-muted">· 点击跳播</span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => { setKeyword(''); setSelectedWord(''); }}
+                      className="min-h-9 flex-shrink-0 px-1 text-[11px]"
+                      style={{ color: 'var(--accent-fg-info)' }}
+                    >
+                      全部
+                    </button>
+                  </div>
+                  <div className="flex max-h-44 flex-col gap-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                    {searchMatches.map(({ segment, index }) => (
+                      <button
+                        key={`${index}-${segment.start}`}
+                        type="button"
+                        onClick={() => segment.start >= 0 && seekRef.current?.(segment.start)}
+                        // 时间戳独立成左列：几条命中句的时间纵向对齐，才能一眼扫出「集中在哪一段」
+                        // 面板已经是一整块灰底，句子行自己不再叠第二层底色，靠细分隔线分行
+                        // 稿面这几句是这块面板里的**主阅读字号**（与纪要正文同级）：
+                        // 它们是「这个词到底在哪几句里出现」的答案，压成小字就不像答案了
+                        className="grid min-h-11 items-start gap-2 px-1 py-2 text-left text-[14px] leading-relaxed text-token-secondary"
+                        // 稿面这块是紧凑列表，没有逐行分隔线——面板本身那块灰底已经是分组
+                        style={{ gridTemplateColumns: '44px 1fr' }}>
+                        <span className="pt-[1px] font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>
+                          {segment.start >= 0 ? formatClock(segment.start) : '原文'}
+                        </span>
+                        <span className="min-w-0">
+                          {segment.speaker && <span className="mr-1.5 font-semibold text-token-primary">{segment.speaker}</span>}
+                          {/* 命中的词要在句子里高亮出来，否则用户还得自己在句中找 */}
+                          {highlightKeyword(segment.text, activeTerm)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {activeTerm && searchMatches.length === 0 && <p className="mt-2 text-[11px] text-token-muted">没有找到这个词，原文仍可继续校对。</p>}
+              </div>
+            </section>
+          )}
           {/*
             「一键整理」排在录音理解之后、纪要与待办之前——稿面 B3 的层级是
             「先选一种整理方式，产出落在下面」。此前它被排到待办后面，两级关系倒过来了：
@@ -1222,7 +1286,7 @@ export function TranscriptKaraoke({
             （它其实在，只是在产出下面，没人会往那儿找）。
             整理方式清单来自后端注册表，不在前端另抄一份。
           */}
-          {onPickOrganizeStyle && (
+          {showPanel('summary') && onPickOrganizeStyle && (
             <OrganizeStylePanel
               state={organize ?? {}}
               onPick={onPickOrganizeStyle}
@@ -1233,156 +1297,162 @@ export function TranscriptKaraoke({
               resultText={organizeLede}
             />
           )}
-          <section style={{ scrollMarginTop: 100 }}>
-            <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>会议纪要</h3>
-              {onRestyle && (
-                <button type="button" onClick={onRestyle} className="flex min-h-9 items-center gap-1 rounded-[8px] px-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  <RefreshCw size={11} /> 重新生成
-                </button>
-              )}
-            </div>
-            <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
-            {summaryModules.length > 0 ? (
-              // 稿面的纪要正文是**直接铺在白卡上**的：一段结论 + 两条要点，没有内嵌灰底。
-              // 现在标题已经移到卡外、内容自己就是一张卡，再包一层灰底就是第三层盒子。
-              // 只有一个模块时连小标题都不要——那句「结论」是卡片本身在说的话。
-              <div className="mt-3 flex flex-col gap-4">
-                {summaryModules.map((module, index) => (
-                  <article key={`${module.title}-${index}`}>
-                    {summaryModules.length > 1 && (
-                      <h4 className="mb-1.5 text-[12px] font-semibold text-token-primary">{module.title}</h4>
-                    )}
-                    <div className="text-[13px] leading-relaxed text-token-secondary">
-                      <MarkdownViewer content={module.markdown} compact />
-                    </div>
-                  </article>
-                ))}
+          {showPanel('summary') && (
+            <section style={{ scrollMarginTop: 100 }}>
+              <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+                <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>会议纪要</h3>
+                {onRestyle && (
+                  <button type="button" onClick={onRestyle} className="flex min-h-9 items-center gap-1 rounded-[8px] px-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <RefreshCw size={11} /> 重新生成
+                  </button>
+                )}
               </div>
-            ) : (
-              // 没有整理结果就说没有，并给出**能到达**的下一步；不摆一句「暂无数据」了事
-              <div className="mt-3 rounded-[11px] px-3 py-4 text-center" style={{ background: 'var(--bg-elevated)' }}>
-                <p className="text-[12px] text-token-secondary">这份录音还没有整理结果</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
-                  原文已经在下方，可以直接读；需要结论与要点时用上方的「一键整理」，整理完这里就会有内容
-                </p>
-              </div>
-            )}
-            </div>
-          </section>
-          <section style={{ scrollMarginTop: 100 }}>
-            <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>待办事项</h3>
-              {todos.length > 0 && (
-                <span className="text-[11px] tabular-nums text-token-muted">
-                  {todos.length} 项{todoSourceCount > 0 ? ` · 来自 ${todoSourceCount} 处原文` : ''}
-                </span>
-              )}
-            </div>
-            <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
-            {todos.length > 0 ? (
-              <ul className="mt-3 flex flex-col">
-                {todos.map((todo, index) => (
-                  <li
-                    key={`${todo.text}-${index}`}
-                    // 稿面的待办是「无底色行 + 细分隔线」。此前每条各是一个灰底卡片，
-                    // 在一张已经有底色的卡里再叠一层灰，读起来是三层盒子而不是一份清单。
-                    className="flex items-start gap-2 px-1 py-2.5"
-                    style={{ borderTop: index === 0 ? 'none' : '1px solid var(--border-faint)' }}
-                  >
-                    <span
-                      className="mt-[2px] flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px]"
-                      style={{
-                        background: todo.done ? 'var(--accent-fg-success)' : 'transparent',
-                        border: todo.done ? 'none' : '1px solid var(--border-default)',
-                      }}
-                      aria-hidden
-                    >
-                      {todo.done && <Check size={10} style={{ color: 'var(--bg-base)' }} />}
-                    </span>
-                    <span className="flex min-w-0 flex-col gap-0.5">
-                      <span
-                        className="min-w-0 break-words text-[12px] leading-relaxed"
-                        style={{
-                          color: todo.done ? 'var(--text-muted)' : 'var(--text-secondary)',
-                          textDecoration: todo.done ? 'line-through' : undefined,
-                        }}
-                      >
-                        {todo.text}
-                      </span>
-                      {/* 出处：这条待办是几点、谁提出来的。点它跳到原文那一句 */}
-                      {todoSources[index] && (
-                        <button
-                          type="button"
-                          onClick={event => { event.stopPropagation(); seekRef.current?.(todoSources[index]!.start); }}
-                          className="self-start font-mono text-[10.5px] tabular-nums"
-                          style={{ color: 'var(--text-muted)' }}
-                          title="跳到原文这一句"
-                        >
-                          {formatClock(todoSources[index]!.start)}
-                          {todoSources[index]!.speaker ? ` · ${todoSources[index]!.speaker}` : ''}
-                        </button>
+              <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
+              {summaryModules.length > 0 ? (
+                // 稿面的纪要正文是**直接铺在白卡上**的：一段结论 + 两条要点，没有内嵌灰底。
+                // 现在标题已经移到卡外、内容自己就是一张卡，再包一层灰底就是第三层盒子。
+                // 只有一个模块时连小标题都不要——那句「结论」是卡片本身在说的话。
+                <div className="mt-3 flex flex-col gap-4">
+                  {summaryModules.map((module, index) => (
+                    <article key={`${module.title}-${index}`}>
+                      {summaryModules.length > 1 && (
+                        <h4 className="mb-1.5 text-[12px] font-semibold text-token-primary">{module.title}</h4>
                       )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="mt-3 rounded-[11px] px-3 py-4 text-center" style={{ background: 'var(--bg-elevated)' }}>
-                <p className="text-[12px] text-token-secondary">这次整理没有产出待办</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
-                  待办来自整理结果里的勾选项；换一个带行动项的整理方式重跑，这里就会列出来
-                </p>
+                      <div className="text-[13px] leading-relaxed text-token-secondary">
+                        <MarkdownViewer content={module.markdown} compact />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                // 没有整理结果就说没有，并给出**能到达**的下一步；不摆一句「暂无数据」了事
+                <div className="mt-3 rounded-[11px] px-3 py-4 text-center" style={{ background: 'var(--bg-elevated)' }}>
+                  <p className="text-[12px] text-token-secondary">这份录音还没有整理结果</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
+                    原文已经在下方，可以直接读；需要结论与要点时用上方的「一键整理」，整理完这里就会有内容
+                  </p>
+                </div>
+              )}
               </div>
-            )}
-            </div>
-          </section>
-          <section style={{ scrollMarginTop: 100 }}>
-            <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>问这场录音</h3>
-              <span />
-            </div>
-            <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
-            {/*
-              稿面 B4 顶部这条琥珀提示记的是**上一问没答上来、而且是如实说的**。
-              它不是错误提示——恰恰相反，是系统在证明自己没有替用户编一个答案。
-              不记下来，用户下次提问时就看不到这次诚实了。
-            */}
-            {lastUnanswered && (
-              <p
-                className="mb-3 rounded-[11px] px-3 py-2.5 text-[12px] leading-relaxed"
-                style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
-              >
-                上一问「{lastUnanswered}」：原文无相关内容，已如实说明。
-              </p>
-            )}
-            {/*
-              稿面 B4 的顺序是「问答记录在上、输入在下」——和所有聊天界面一样：
-              新内容往下长，输入框永远在手指够得到的那一端。把输入框放在最上面，
-              答案就会被它压在下面，读者要往回翻才看得到自己刚问的那一句。
-            */}
-            {/*
-              这里原先还套了一层浅灰卡。稿面这一屏只有两层盒子（问答卡 → 引用卡），
-              多这一层就变成四层套娃，每一层再吃掉一圈内边距，问答卡被越挤越窄。
-              分区卡本身已经给了背景与描边，这一层没有承担任何新的语义。
-            */}
-            <RecordingAnswer
-              question={askedQuestion}
-              answer={answer}
-              segments={timelineSegments}
-              onSeek={sec => seekRef.current?.(sec)}
-            />
-            {qaError && <p className="mb-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
-            <RecordingAskComposer
-              value={question}
-              onChange={setQuestion}
-              onSend={askRecording}
-              sending={asking}
-              onOpenMultiTurn={onAskRecording}
-            />
-            </div>
-          </section>
-        </div>
+            </section>
+          )}
+          {showPanel('todo') && (
+            <section style={{ scrollMarginTop: 100 }}>
+              <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+                <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>待办事项</h3>
+                {todos.length > 0 && (
+                  <span className="text-[11px] tabular-nums text-token-muted">
+                    {todos.length} 项{todoSourceCount > 0 ? ` · 来自 ${todoSourceCount} 处原文` : ''}
+                  </span>
+                )}
+              </div>
+              <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
+              {todos.length > 0 ? (
+                <ul className="mt-3 flex flex-col">
+                  {todos.map((todo, index) => (
+                    <li
+                      key={`${todo.text}-${index}`}
+                      // 稿面的待办是「无底色行 + 细分隔线」。此前每条各是一个灰底卡片，
+                      // 在一张已经有底色的卡里再叠一层灰，读起来是三层盒子而不是一份清单。
+                      className="flex items-start gap-2 px-1 py-2.5"
+                      style={{ borderTop: index === 0 ? 'none' : '1px solid var(--border-faint)' }}
+                    >
+                      <span
+                        className="mt-[2px] flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-[5px]"
+                        style={{
+                          background: todo.done ? 'var(--accent-fg-success)' : 'transparent',
+                          border: todo.done ? 'none' : '1px solid var(--border-default)',
+                        }}
+                        aria-hidden
+                      >
+                        {todo.done && <Check size={10} style={{ color: 'var(--bg-base)' }} />}
+                      </span>
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <span
+                          className="min-w-0 break-words text-[12px] leading-relaxed"
+                          style={{
+                            color: todo.done ? 'var(--text-muted)' : 'var(--text-secondary)',
+                            textDecoration: todo.done ? 'line-through' : undefined,
+                          }}
+                        >
+                          {todo.text}
+                        </span>
+                        {/* 出处：这条待办是几点、谁提出来的。点它跳到原文那一句 */}
+                        {todoSources[index] && (
+                          <button
+                            type="button"
+                            onClick={event => { event.stopPropagation(); seekRef.current?.(todoSources[index]!.start); }}
+                            className="self-start font-mono text-[10.5px] tabular-nums"
+                            style={{ color: 'var(--text-muted)' }}
+                            title="跳到原文这一句"
+                          >
+                            {formatClock(todoSources[index]!.start)}
+                            {todoSources[index]!.speaker ? ` · ${todoSources[index]!.speaker}` : ''}
+                          </button>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="mt-3 rounded-[11px] px-3 py-4 text-center" style={{ background: 'var(--bg-elevated)' }}>
+                  <p className="text-[12px] text-token-secondary">这次整理没有产出待办</p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
+                    待办来自整理结果里的勾选项；换一个带行动项的整理方式重跑，这里就会列出来
+                  </p>
+                </div>
+              )}
+              </div>
+            </section>
+          )}
+          {showPanel('ask') && (
+            <section style={{ scrollMarginTop: 100 }}>
+              <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+                <h3 className="text-[19px] font-bold text-token-primary" style={{ scrollMarginTop: 100 }}>问这场录音</h3>
+                <span />
+              </div>
+              <div className={SECTION_CARD} style={SECTION_CARD_STYLE}>
+              {/*
+                稿面 B4 顶部这条琥珀提示记的是**上一问没答上来、而且是如实说的**。
+                它不是错误提示——恰恰相反，是系统在证明自己没有替用户编一个答案。
+                不记下来，用户下次提问时就看不到这次诚实了。
+              */}
+              {lastUnanswered && (
+                <p
+                  className="mb-3 rounded-[11px] px-3 py-2.5 text-[12px] leading-relaxed"
+                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
+                >
+                  上一问「{lastUnanswered}」：原文无相关内容，已如实说明。
+                </p>
+              )}
+              {/*
+                稿面 B4 的顺序是「问答记录在上、输入在下」——和所有聊天界面一样：
+                新内容往下长，输入框永远在手指够得到的那一端。把输入框放在最上面，
+                答案就会被它压在下面，读者要往回翻才看得到自己刚问的那一句。
+              */}
+              {/*
+                这里原先还套了一层浅灰卡。稿面这一屏只有两层盒子（问答卡 → 引用卡），
+                多这一层就变成四层套娃，每一层再吃掉一圈内边距，问答卡被越挤越窄。
+                分区卡本身已经给了背景与描边，这一层没有承担任何新的语义。
+              */}
+              <RecordingAnswer
+                question={askedQuestion}
+                answer={answer}
+                segments={timelineSegments}
+                onSeek={sec => seekRef.current?.(sec)}
+              />
+              {qaError && <p className="mb-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
+              <RecordingAskComposer
+                value={question}
+                onChange={setQuestion}
+                onSend={askRecording}
+                sending={asking}
+                onOpenMultiTurn={onAskRecording}
+              />
+              </div>
+            </section>
+          )}
+        </aside>
       )}
 
     </div>

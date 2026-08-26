@@ -17,12 +17,15 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, MoreHorizontal } from 'lucide-react';
+import { BookText, ChevronLeft, Download, FileText, Mic, MoreHorizontal } from 'lucide-react';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
+import { buildSpeakerStats, parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
 import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { useIsDesktop } from '@/hooks/useBreakpoint';
 import {
   getAgentRun,
+  listDocumentEntriesReal,
   getDocumentEntry,
   getDocumentContent,
   getDocumentStoreReal,
@@ -41,6 +44,13 @@ function formatDuration(seconds: number): string {
   if (m < 60) return `${m}:${String(s).padStart(2, '0')}`;
   return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
+
+type DocumentEntryLike = {
+  id: string;
+  title?: string;
+  contentType?: string;
+  metadata?: Record<string, unknown> & { source_entry_id?: string };
+};
 
 type LoadState =
   | { kind: 'loading' }
@@ -69,20 +79,30 @@ export function RecordingResultShell({
   title,
   subtitle,
   onBack,
+  sidebar,
+  actions,
   children,
 }: {
   title: string;
   /** 稿面那行绿色副标题：「已保存到「X」· 24:18」。给不出就不显示，不编。 */
   subtitle?: string;
   onBack: () => void;
+  /** 稿面 D1/D2 的左栏（知识库导航）。只在 ≥1024px 挂出来，手机上这一栏是上一屏。 */
+  sidebar?: React.ReactNode;
+  /** 顶栏右侧的动作（稿面 D1 的「导出」）。窄屏不挂：那一档稿面把它收进「更多」。 */
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const isDesktop = useIsDesktop();
   return (
     <div
       // 作用域皮肤：这一屏整棵子树读设计稿自己那组 token，不影响全站
-      className="recording-design-palette flex h-full min-h-0 w-full flex-col"
+      className="recording-design-palette flex h-full min-h-0 w-full"
       style={{ background: 'var(--bg-primary)' }}
     >
+      {/* 左栏：宽屏才有。窄屏下「回到知识库」是顶栏那颗返回，不是一条常驻的栏 */}
+      {isDesktop && sidebar}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/*
         稿面的顶部栏：返回 / 标题 + 副标题 / 更多。它吸顶且始终占一行，
         不随内容滚动——B1 到 B4 每一屏都画着它，是这条链路的身份标识。
@@ -108,6 +128,7 @@ export function RecordingResultShell({
             <p className="truncate text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>{subtitle}</p>
           )}
         </div>
+        {isDesktop && actions}
         <button
           type="button"
           aria-label="更多"
@@ -121,6 +142,7 @@ export function RecordingResultShell({
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
         {children}
       </main>
+      </div>
     </div>
   );
 }
@@ -209,14 +231,132 @@ export function RecordingResultPage() {
     else navigate(`/document-store?store=${storeId ?? ''}`);
   }, [navigate, storeId]);
 
+  /*
+   * 左栏那份文档清单（设计稿 D1/D2）。只在宽屏挂出来，所以也只在宽屏拉——
+   * 手机上多打一次列表请求，换不来任何一个像素。
+   *
+   * 转录笔记（带 source_entry_id 的那些）不进清单：它们是音频条目的产出，
+   * 列进去会让同一段录音在栏里出现两次，用户点第二条会落到一个没有播放器的纯文本页。
+   */
+  const isDesktop = useIsDesktop();
+  const [siblings, setSiblings] = useState<{ id: string; title: string; isAudio: boolean }[]>([]);
+  useEffect(() => {
+    if (!isDesktop || !storeId) return;
+    let alive = true;
+    void listDocumentEntriesReal(storeId).then((res) => {
+      if (!alive || !res.success) return;
+      const items = (res.data as { items?: DocumentEntryLike[] } | null)?.items ?? [];
+      setSiblings(items
+        .filter(item => !item.metadata?.source_entry_id)
+        .map(item => ({
+          id: item.id,
+          title: item.title ?? '未命名',
+          isAudio: (item.contentType ?? '').toLowerCase().startsWith('audio/'),
+        })));
+    });
+    return () => { alive = false; };
+  }, [isDesktop, storeId]);
+
+  const openSibling = useCallback((item: { id: string; isAudio: boolean }) => {
+    if (item.id === entryId) return;
+    if (item.isAudio) navigate(`/document-store/${storeId}/recording/${item.id}`);
+    else navigate(`/document-store?store=${storeId}&entry=${item.id}`);
+  }, [entryId, navigate, storeId]);
+
+  const sidebar = state.kind === 'ready' ? (
+    <nav
+      className="flex h-full w-[300px] shrink-0 flex-col gap-4 overflow-y-auto px-4 py-4"
+      style={{ background: 'var(--bg-base)', borderRight: '1px solid var(--border-faint)' }}
+      aria-label="知识库导航"
+    >
+      <div className="flex items-center gap-2.5 px-1">
+        <span
+          className="flex h-8 w-8 items-center justify-center rounded-[9px]"
+          style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+          aria-hidden
+        >
+          <BookText size={16} />
+        </span>
+        <span className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>MAP 知识库</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => navigate(`/document-store?store=${storeId}&record=1`)}
+        className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-[12px] text-[14px] font-semibold"
+        style={{ background: 'var(--recording-cta-bg)', color: 'var(--recording-cta-fg)' }}
+      >
+        <Mic size={15} /> 新录音
+      </button>
+      <div className="flex flex-col gap-1">
+        <p className="px-2 pb-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>{state.storeName || '知识库'}</p>
+        {siblings.map(item => {
+          const current = item.id === entryId;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => openSibling(item)}
+              aria-current={current ? 'page' : undefined}
+              className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-[10px] px-2 text-left text-[14px]"
+              style={{
+                background: current ? 'var(--bg-elevated)' : 'transparent',
+                color: current ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: current ? 600 : 400,
+              }}
+            >
+              <FileText size={15} className="shrink-0" style={{ color: 'var(--text-muted)' }} aria-hidden />
+              <span className="truncate">{item.title}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  ) : null;
+
+  /** 说话人数：从原文里数出来的，数不出来（没有说话人标签）就不说这一句 */
+  const speakerCount = useMemo(() => {
+    if (state.kind !== 'ready') return 0;
+    return buildSpeakerStats(parseTranscriptSegments(state.noteMd)).length;
+  }, [state]);
+
   const subtitle = useMemo(() => {
     if (state.kind !== 'ready') return '';
     const parts: string[] = [];
     if (state.storeName) parts.push(`已保存到「${state.storeName}」`);
     const duration = formatDuration(durationSec);
     if (duration) parts.push(duration);
+    if (speakerCount > 0) parts.push(`${speakerCount} 位说话人`);
     return parts.join(' · ');
-  }, [durationSec, state]);
+  }, [durationSec, speakerCount, state]);
+
+  /**
+   * 导出（稿面 D1 顶栏那颗）：把这份转录原文存成本地 .md。
+   * 不做「导出为 PDF/Word」那一摊——稿面只画了一个按钮，多出来的格式没有依据。
+   */
+  const exportNote = useCallback(() => {
+    if (state.kind !== 'ready') return;
+    const blob = new Blob([state.noteMd], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${state.title || '录音转录'}.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // 立刻回收会让部分浏览器来不及取数据，留一帧再释放
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [state]);
+
+  const headerActions = state.kind === 'ready' ? (
+    <button
+      type="button"
+      onClick={exportNote}
+      className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-[12px] px-3.5 text-[14px] font-semibold"
+      style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+    >
+      <Download size={15} /> 导出
+    </button>
+  ) : null;
 
   /*
    * 下面这几条回调是这一屏的**接线**。它们缺席时组件不会报错，只是把
@@ -315,7 +455,13 @@ export function RecordingResultPage() {
   }, [onPickOrganizeStyle, state]);
 
   return (
-    <RecordingResultShell title={state.kind === 'ready' ? state.title : '录音'} subtitle={subtitle} onBack={goBack}>
+    <RecordingResultShell
+      title={state.kind === 'ready' ? state.title : '录音'}
+      subtitle={subtitle}
+      onBack={goBack}
+      sidebar={sidebar}
+      actions={headerActions}
+    >
       {state.kind === 'loading' && <MapSectionLoader text="正在打开这段录音…" />}
       {state.kind === 'error' && (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
