@@ -64,11 +64,11 @@ public class CdsReportImportService
         // CDS 源，复用它会让 updatedSince 把另一作用域里更早更新的报告永久跳过 —— 例如先导项目 A
         // 把游标戳到 now，再导项目 B 时 B 的旧报告 updatedAt < now 就被漏掉（Codex P2）。
         // 故过滤/换源导入一律全量扫描，靠正文 contentHash 去重保证幂等，且**不回写**共享水位。
+        var sourceChanged = CdsReportSyncTargets.SourceChanged(store.PeerSyncNodeBaseUrl, baseUrl);
         var isDefaultScopeImport =
             string.IsNullOrWhiteSpace(opts.ProjectId)
             && string.IsNullOrWhiteSpace(opts.ReportId)
-            && (string.IsNullOrWhiteSpace(store.PeerSyncNodeBaseUrl)
-                || string.Equals(store.PeerSyncNodeBaseUrl.TrimEnd('/'), baseUrl, StringComparison.OrdinalIgnoreCase));
+            && !sourceChanged;
         var useIncrementalCursor = isDefaultScopeImport && !opts.Full;
 
         // 2) 列表（增量水位 = 库的 PeerSyncLastAt，仅默认全量镜像启用）
@@ -276,6 +276,15 @@ public class CdsReportImportService
         {
             var newWatermark = watermark > DateTime.MinValue ? watermark : DateTime.UtcNow;
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastAt, newWatermark));
+        }
+        else if (sourceChanged)
+        {
+            // **换源就必须把旧水位一起作废。** 下面那行无条件把来源改成了新的 baseUrl，
+            // 而水位是跟着源走的状态——留着它，库上就成了「源 = B、水位 = A 的游标」这种
+            // 看起来完全合法、实际对不上的组合。每小时的自动同步照着它拉，会拿 A 的游标去
+            // 列 B 的报告，**B 上更新时间早于该游标的报告被永久跳过**，一次报错都没有
+            // （Codex review P1）。清掉之后下一次全量导入从头扫一遍，自己建一条属于 B 的水位。
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastAt, (DateTime?)null));
         }
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == store.Id,

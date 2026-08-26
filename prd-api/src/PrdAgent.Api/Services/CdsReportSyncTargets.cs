@@ -89,6 +89,37 @@ public static class CdsReportSyncTargets
     private static string? Blank(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    /// <summary>
+    /// 这一轮要拉的源，和库上记着的那个是不是**换了一个**。
+    ///
+    /// 「库上还没记过来源」不算换——那是历史数据或第一次导入，没有旧状态可作废。
+    ///
+    /// ## 为什么这个判断值得单独一个函数
+    ///
+    /// 它有两个消费方，而且两边必须给出完全一致的答案：
+    ///
+    /// - `CdsReportImportService` 判「能不能复用增量水位」——换了源就不能，
+    ///   否则 `updatedSince` 会拿着 CDS-A 的游标去列 CDS-B 的报告；
+    /// - 同一个地方判「要不要把旧水位清掉」——水位是**跟着源走**的状态，
+    ///   源换了它就作废。
+    ///
+    /// 这两件事必须同进同退。抄成两份 `TrimEnd('/') + OrdinalIgnoreCase` 的话，
+    /// 改一处忘一处就会漏出这样一条静默通路：先从 CDS-A 全量导入（水位戳到 T_A），
+    /// 再从 CDS-B 全量导入一次（换源，这轮不用水位、也不回写，但**来源字段被改成了 B**），
+    /// 从此库上是「源 = B、水位 = T_A」——每小时的自动同步看这个组合完全合法，
+    /// 于是一直拿 T_A 当游标去拉 B，**B 上所有更新时间早于 T_A 的报告被永久跳过**，
+    /// 没有任何报错（Codex review P1）。
+    /// </summary>
+    public static bool SourceChanged(string? recordedBaseUrl, string? resolvedBaseUrl)
+    {
+        var recorded = Blank(recordedBaseUrl);
+        if (recorded == null) return false;
+        return !string.Equals(
+            recorded.TrimEnd('/'),
+            Blank(resolvedBaseUrl)?.TrimEnd('/') ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>把一个目标的范围说成人话，进日志用。</summary>
     public static string DescribeScope(CdsReportSyncTarget target)
     {

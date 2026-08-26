@@ -184,6 +184,21 @@ public class CdsReportSyncTargetTests
         }));
     }
 
+    [Theory]
+    // 还没记过来源 = 没有旧状态可作废，不算换源。
+    [InlineData(null, "https://cds-a.example.com", false)]
+    [InlineData("   ", "https://cds-a.example.com", false)]
+    // 同一个源的各种等价写法都不算换：尾斜杠、大小写、两侧空白。
+    // 判成「换了」会白清一次水位，把本可增量的一轮变成全量扫描。
+    [InlineData("https://cds-a.example.com", "https://cds-a.example.com", false)]
+    [InlineData("https://cds-a.example.com/", "https://cds-a.example.com", false)]
+    [InlineData("HTTPS://CDS-A.EXAMPLE.COM", "https://cds-a.example.com", false)]
+    [InlineData("  https://cds-a.example.com  ", "https://cds-a.example.com", false)]
+    // 真换了。这一条判错就是那条静默通路：拿 A 的游标去列 B 的报告。
+    [InlineData("https://cds-a.example.com", "https://cds-b.example.com", true)]
+    public void 换没换源_同一个源的各种写法不算换(string? recorded, string? resolved, bool expected)
+        => Assert.Equal(expected, CdsReportSyncTargets.SourceChanged(recorded, resolved));
+
     [Fact]
     public void 范围里的空白当没有_不会拼出一个空过滤条件()
     {
