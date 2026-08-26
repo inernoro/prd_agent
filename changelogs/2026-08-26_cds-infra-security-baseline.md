@@ -79,3 +79,4 @@
 | test | cds | 补 entrypoint 形态的 JetStream 用例（判据一条 + 整轮一条，证明 planInfraBackups 真的把字段交了下去），做过红绿闭环 |
 | docs | cds | debt.cds.md 新增 E60（手动下载不透出范围限制，恢复时才发现少东西）/ E61（有覆盖缺口就报「读不到备份结果」，与 E55 同族且触发面更大）/ E62（体检读的目录与写入端选的可能不是同一个），三条按 §5.5 熔断记账 |
 | docs | cds | debt.cds.md 新增 E63（postgres 恢复不在事务里，中途失败留下改了一半的库）/ E64（nacos 导出不校验产物是不是 ZIP，废备份能顶掉好备份）/ E65（nacos 多命名空间恢复无前置校验，中途失败前面几个已被覆盖）/ E66（轮次摘要只念 note 不念 gapNote）/ E67（本地成功离机失败的轮次丢掉有效范围缺口），五条按 §5.5 熔断记账 |
+| docs | cds | debt.cds.md 新增 E68（备份路径拿不到 containerPort，本轮给 nacos 加的端口识别在这条路上没接上线）/ E69（运行时认证自检只读 Cmd 不读 Entrypoint，与创建门禁结论相反，天天发假警报），两条按 §5.5 熔断记账 |
