@@ -12,6 +12,7 @@ import { createDeploymentVersionsRouter } from './routes/deployment-versions.js'
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
 import { ReplicaSetService } from './services/replica-set.js';
 import { isRemoteExecutorOwned } from './services/executor-ownership.js';
+import { connectionTokenRequiredScope } from './services/connection-token-routes.js';
 import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
@@ -1401,14 +1402,19 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
     }
-    // MAP/CDS system connection long token: only allow it on Bridge routes.
-    // This token is the user-approved, long-lived authorization used by MAP
-    // after /api/cds-system/connections/authorize, so it must be able to drive
-    // Page Agent Bridge without granting broad CDS admin access.
-    if (stateService && req.path.startsWith('/api/bridge/')) {
+    // MAP/CDS system connection long token. This token is the user-approved,
+    // long-lived authorization handed to an external system (MAP) after
+    // /api/cds-system/connections/authorize. It is deliberately NOT equivalent
+    // to a CDS admin key: it only reaches the routes declared in
+    // connection-token-routes.ts, and each of those declares the scope it needs.
+    // Keep the list there, not here — see that file for why.
+    const connectionScope = stateService
+      ? connectionTokenRequiredScope(req.method, req.path)
+      : null;
+    if (stateService && connectionScope) {
       const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
       const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
-      if (connection && connection.scopes.includes('instance:read')) {
+      if (connection && connection.scopes.includes(connectionScope)) {
         stateService.updateCdsConnection(connection.id, { lastUsedAt: new Date().toISOString() });
         return {
           id: `cds-connection:${connection.id}`,
