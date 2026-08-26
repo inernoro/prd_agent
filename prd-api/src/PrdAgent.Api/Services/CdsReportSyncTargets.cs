@@ -85,12 +85,6 @@ public static class CdsReportSyncTargets
             // 缺属主就没法做写入鉴权，缺 id 就只能 find-or-create——两种都不该硬着头皮同步。
             if (string.IsNullOrWhiteSpace(s.Id) || string.IsNullOrWhiteSpace(s.OwnerId)) continue;
 
-            // 库级来源只当**兜底**：它记的是「最后一次导入从哪来」，不是「这一份从哪来」。
-            // 一个人从两台 CDS 各存过报告时，两次都落进同一个默认库，库级来源会被后存的那次
-            // 覆盖——照它去刷，先存的那台的报告要么找不到、要么在 id 撞车时被另一台的同名
-            // 报告覆盖掉（Codex review P1）。**每一份报告刷回它自己那台**，条目上记着。
-            var storeFallback = Blank(s.CdsReportSourceBaseUrl);
-
             // 按 (报告, 来源) 去重且保持稳定顺序：同一份报告在库里理论上只有一条，
             // 但重复插入的历史数据（见 debt 里那条「自动与手动没有互斥」）会让它出现两次，
             // 那时候没必要刷两遍。**去重带上来源**——两台 CDS 上的同名报告是两份不同的东西，
@@ -101,7 +95,13 @@ public static class CdsReportSyncTargets
             {
                 var reportId = Blank(entry.ReportId);
                 if (reportId == null) continue;
-                var source = Blank(entry.SourceBaseUrl) ?? storeFallback;
+                // **条目没记来源就留空，不拿库级来源顶替。** 库级来源记的是「最后一次导入从哪来」，
+                // 拿它替一条来历不明的老条目作答，就是猜。而且这个猜会绕开「不许猜」那道闸：
+                // 老库里有一堆没记来源的条目时，用户按提示重新保存**其中一份**就会把库级来源
+                // 钉上，下一轮剩下那些老条目全都「有来源」了，于是被一股脑按这个源去刷——
+                // 恰恰是那道闸要拦的事（Codex review P1）。留空则交给凭据解析判：
+                // 只有一条已授权连接时照常用，两条以上就让这一份失败，等它自己被重新保存。
+                var source = Blank(entry.SourceBaseUrl);
                 if (!seen.Add((reportId, source))) continue;
                 if (taken >= MaxReportsPerStorePerRound) break;
                 taken++;
@@ -117,12 +117,11 @@ public static class CdsReportSyncTargets
     /// </summary>
     public static int TruncatedCount(CdsReportMirror mirror)
     {
-        var storeFallback = Blank(mirror.Store?.CdsReportSourceBaseUrl);
         var distinct = new HashSet<(string, string?)>();
         foreach (var entry in mirror.MirroredReports ?? Array.Empty<CdsMirroredReport>())
         {
             var id = Blank(entry.ReportId);
-            if (id != null) distinct.Add((id, Blank(entry.SourceBaseUrl) ?? storeFallback));
+            if (id != null) distinct.Add((id, Blank(entry.SourceBaseUrl)));
         }
         return Math.Max(0, distinct.Count - MaxReportsPerStorePerRound);
     }

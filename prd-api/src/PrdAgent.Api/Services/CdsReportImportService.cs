@@ -65,11 +65,18 @@ public class CdsReportImportService
         // CDS 源，复用它会让 updatedSince 把另一作用域里更早更新的报告永久跳过 —— 例如先导项目 A
         // 把游标戳到 now，再导项目 B 时 B 的旧报告 updatedAt < now 就被漏掉（Codex P2）。
         // 故过滤/换源导入一律全量扫描，靠正文 contentHash 去重保证幂等，且**不回写**共享水位。
-        var sourceChanged = CdsReportSyncTargets.SourceChanged(store.CdsReportSourceBaseUrl, baseUrl);
-        var isDefaultScopeImport =
-            string.IsNullOrWhiteSpace(opts.ProjectId)
-            && string.IsNullOrWhiteSpace(opts.ReportId)
-            && !sourceChanged;
+        //
+        // **库级来源与水位只归「默认全量镜像」那一路管。** 带过滤的导入（指定项目 / 指定报告）
+        // 一律不碰它们。不这么划的话会出现一种每小时自己跟自己打架的状态：库里有 A、B 两台
+        // CDS 的报告时，每小时的定点刷新一份接一份地把库级来源改成自己那台，下一份进来一看
+        // 「换源了」就把水位清一次——两台交替，水位每小时被清掉，而它同时还是跨库同步的
+        // 「上次同步时间」（Codex review P2）。条目自己记着来源之后，库级那个字段对定点刷新
+        // 本来也没用了。
+        var isTargetedImport =
+            !string.IsNullOrWhiteSpace(opts.ProjectId) || !string.IsNullOrWhiteSpace(opts.ReportId);
+        var sourceChanged = !isTargetedImport
+            && CdsReportSyncTargets.SourceChanged(store.CdsReportSourceBaseUrl, baseUrl);
+        var isDefaultScopeImport = !isTargetedImport && !sourceChanged;
         var useIncrementalCursor = isDefaultScopeImport && !opts.Full;
 
         // 2) 列表（增量水位 = 库的 PeerSyncLastAt，仅默认全量镜像启用）
@@ -249,11 +256,19 @@ public class CdsReportImportService
         var updates = new List<UpdateDefinition<DocumentStore>>
         {
             Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
-            // 记下这次是从哪个 CDS 拉的，供每小时的自动同步钉住同一个源。
+        };
+        if (!isTargetedImport)
+        {
+            // 记下这次全量镜像是从哪个 CDS 拉的，给「换没换源」判据和水位配对用。
             // **单独一个字段，不复用 PeerSyncNodeBaseUrl**——那个归跨库同步所有，
             // 同一个库走过 peer-sync 后它会变成对端 MAP 的地址（Codex review P2）。
-            Builders<DocumentStore>.Update.Set(s => s.CdsReportSourceBaseUrl, baseUrl),
-        };
+            //
+            // **定点刷新不写它。** 每份报告的来源记在条目上，库级那个字段对定点刷新没有意义；
+            // 写了反而有害：库里有两台 CDS 的报告时，每小时的定点刷新会一份接一份地把它改成
+            // 自己那台，下一份进来一看「换源了」就清一次水位——两台交替，水位每小时被清掉
+            //（Codex review P2）。
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.CdsReportSourceBaseUrl, baseUrl));
+        }
         // 那四个 PeerSync* 展示字段归**跨库同步**所有，导入只是顺带把它们改写成「CDS 验收中心」。
         // 人手动点一次导入时这么干还说得过去（是他刚做的事）；改成每小时自动跑之后就不行了：
         // 一个既走 peer-sync 又存过 CDS 报告的库，其真正的对端同步状态会被每小时覆盖一次，

@@ -195,7 +195,14 @@ public class CdsReportImportWorker : BackgroundService
                         // 那四个 PeerSync* 字段归跨库同步所有，每小时刷一次会把它盖掉。
                         SkipPeerSyncDisplayFields = true,
                     },
-                    ct);
+                    // **一份报告一旦开始写就写完，不许被停机信号从中间掐断。**
+                    // 导入一份报告是多步写：存正文 → 插条目 → 给库的条目计数加一。
+                    // 把 stoppingToken 透进去，容器优雅重启时可能停在「条目插了、计数没加」
+                    // 或「正文存了、条目没指过去」，留下对不上的计数和没人引用的正文
+                    //（Codex review P2；也是 server-authority 那条「数据库写操作用
+                    // CancellationToken.None」的要求）。取消只在**两份报告之间**判，
+                    // 循环开头那句 ct.IsCancellationRequested 就是。
+                    CancellationToken.None);
                 // **有失败就算这一份失败。** 只在抛异常时才计失败的话，导入服务把错误
                 // 记进 result.Failed（正文 404、资产归一化炸了）的那些情况全都会被计成
                 // 「刷了 N 份」——本轮结束那行日志于是永远报成功，一份都没真刷进去也看不出来

@@ -18,8 +18,10 @@ namespace PrdAgent.Tests;
 /// 二、**同一个人的两个镜像库都要刷到**。第一版按 OwnerId 去重，导入服务的 find-or-create
 ///     只会命中其中一个，另一个永远是旧的，而且看不出来。
 ///
-/// 三、**每个库只从它自己那个 CDS 拉**。空 options 会让导入服务挑「最近更新的那条 active
-///     连接」，可能从 CDS-B 拉报告写进记着 CDS-A 的库；报告 id 在不同 CDS 上可以重名，
+/// 三、**每一份报告刷回它自己那台 CDS**，条目上记着；没记的一律留空，不拿库级来源顶替。
+///     库级来源记的是「最后一次导入从哪来」，拿它替一条来历不明的老条目作答就是猜；
+///     而且那个猜会绕开「认不出就不猜」那道闸——重新保存其中一份就会把库级来源钉上，
+///     下一轮剩下的老条目全都「有来源」了（Codex review P1）。报告 id 在不同 CDS 上可以重名，
 ///     混完连「这条是谁家的」都答不上来。
 /// </summary>
 public class CdsReportSyncTargetTests
@@ -27,7 +29,7 @@ public class CdsReportSyncTargetTests
     private static DocumentStore Store(string id, string owner, string? source)
         => new() { Id = id, OwnerId = owner, CdsReportSourceBaseUrl = source };
 
-    /// <summary>条目没记自己的来源（老数据）——判据应退回库级兜底。</summary>
+    /// <summary>条目没记自己的来源（老数据）——判据应把目标源留空，交给凭据解析去判。</summary>
     private static CdsReportMirror Mirror(string id, string owner, string? source, params string[] reportIds)
         => new(Store(id, owner, source), reportIds.Select(r => new CdsMirroredReport(r, null)).ToArray());
 
@@ -56,8 +58,8 @@ public class CdsReportSyncTargetTests
     {
         var targets = CdsReportSyncTargets.Build(new[]
         {
-            Mirror("store-a", "user-1", "https://cds-a.example.com", "rep-1"),
-            Mirror("store-b", "user-1", "https://cds-b.example.com", "rep-2"),
+            MirrorWithSources("store-a", "user-1", null, ("rep-1", "https://cds-a.example.com")),
+            MirrorWithSources("store-b", "user-1", null, ("rep-2", "https://cds-b.example.com")),
         });
 
         Assert.Equal(2, targets.Count);
@@ -72,8 +74,9 @@ public class CdsReportSyncTargetTests
     [Fact]
     public void 库还没记过来源时才退回默认连接()
     {
-        // 历史数据：手动导入过但那会儿还没有这个字段。退回默认解析，与手动导入首次的
-        // 行为一致；导入成功后服务会把来源写回库上，下一轮就钉住了。
+        // 历史数据：手动导入过但那会儿还没有这个字段。目标源留空，交给凭据解析判——
+        // 只有一条已授权连接时照常用，两条以上就让这一份失败。导入成功后条目上会盖上来源，
+        // 下一轮就钉住了。
         var targets = CdsReportSyncTargets.Build(new[]
         {
             Mirror("store-legacy", "user-1", null, "rep-1"),
@@ -89,7 +92,7 @@ public class CdsReportSyncTargetTests
     {
         var targets = CdsReportSyncTargets.Build(new[]
         {
-            Mirror("store-a", "user-1", "  https://cds-a.example.com  ", "rep-1"),
+            MirrorWithSources("store-a", "user-1", null, ("rep-1", "  https://cds-a.example.com  ")),
         });
 
         Assert.Equal("https://cds-a.example.com", targets[0].SourceBaseUrl);
@@ -101,9 +104,9 @@ public class CdsReportSyncTargetTests
         // 缺属主就没法做写入鉴权，缺 id 就只能 find-or-create——两种都不该硬着头皮同步。
         var targets = CdsReportSyncTargets.Build(new[]
         {
-            Mirror("", "user-1", "https://cds-a.example.com", "rep-1"),
-            Mirror("store-b", "", "https://cds-a.example.com", "rep-2"),
-            Mirror("store-c", "user-1", "https://cds-a.example.com", "rep-3"),
+            Mirror("", "user-1", null, "rep-1"),
+            Mirror("store-b", "", null, "rep-2"),
+            Mirror("store-c", "user-1", null, "rep-3"),
         });
 
         Assert.Single(targets);
@@ -168,7 +171,8 @@ public class CdsReportSyncTargetTests
     [Fact]
     public void 每一份报告刷回它自己那台cds_不按库级来源一刀切()
     {
-        // 一个人从两台 CDS 各存过报告，两次都落进同一个默认库；库级来源被后存的那次覆盖。
+        // 一个人从两台 CDS 各存过报告，两次都落进同一个默认库；库级来源被后存的那次覆盖
+        // （这里特意把它设成 B，用来证明判据完全不看它）。
         // 照库级来源刷，先存的那台的报告要么找不到，要么在 id 撞车时被另一台的同名报告
         // 覆盖掉——正是这个文件通篇在防的「混源」，只是换了个入口（Codex review P1）。
         var targets = CdsReportSyncTargets.Build(new[]
@@ -218,10 +222,16 @@ public class CdsReportSyncTargetTests
     }
 
     [Fact]
-    public void 条目没记来源时才退回库级兜底()
+    public void 条目没记来源时目标源留空_不拿库级来源顶替()
     {
-        // 本改动之前存进来的条目没有 cdsSourceBaseUrl。它们不该因此被跳过，
-        // 退回库级来源与从前的行为一致。
+        // 本改动之前存进来的条目没有 cdsSourceBaseUrl。它们不该被跳过（还是要刷），
+        // 但**也不能拿库级来源替它作答**——那记的是「最后一次导入从哪来」，不是「这一份从哪来」。
+        //
+        // 这条防的是一条绕闸通路：老库里一堆没记来源的条目，用户按提示重新保存**其中一份**，
+        // 库级来源就被钉上；下一轮剩下那些老条目全都「有来源」了，于是被一股脑按这个源去刷，
+        // 「认不出就不猜」那道闸从此形同虚设（Codex review P1）。
+        //
+        // 留空之后由凭据解析判：只有一条已授权连接时照常用，两条以上就让这一份失败。
         var targets = CdsReportSyncTargets.Build(new[]
         {
             MirrorWithSources("store-a", "user-1", "https://cds-legacy.example.com",
@@ -230,7 +240,24 @@ public class CdsReportSyncTargetTests
         });
 
         Assert.Equal(2, targets.Count);
-        Assert.All(targets, t => Assert.Equal("https://cds-legacy.example.com", t.SourceBaseUrl));
+        Assert.All(targets, t => Assert.Null(t.SourceBaseUrl));
+    }
+
+    [Fact]
+    public void 同一个库里_记了来源的照自己的刷_没记的留空()
+    {
+        // 反面对照：上一条把库级兜底删掉了，这条保证没删过头——条目自己记着来源时
+        // 仍然按它刷，不会连带被清成空。
+        var targets = CdsReportSyncTargets.Build(new[]
+        {
+            MirrorWithSources("store-a", "user-1", "https://cds-legacy.example.com",
+                ("rep-known", "https://cds-a.example.com"),
+                ("rep-old", null)),
+        });
+
+        Assert.Equal(2, targets.Count);
+        Assert.Equal("https://cds-a.example.com", targets[0].SourceBaseUrl);
+        Assert.Null(targets[1].SourceBaseUrl);
     }
 
     [Theory]

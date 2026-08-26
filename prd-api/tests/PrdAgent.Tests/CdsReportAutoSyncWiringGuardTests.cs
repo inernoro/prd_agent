@@ -111,12 +111,44 @@ public class CdsReportAutoSyncWiringGuardTests
         foreach (var field in new[] { "PeerSyncStatus", "PeerSyncNodeName", "PeerSyncNodeBaseUrl", "PeerSyncLastResult" })
             Assert.Contains($"s.{field}", guarded);
 
-        // 而**来源字段与水位**不在这道闸里：它们是自动刷新赖以工作的状态，
-        // 一起关掉的话每一轮都在从头猜源、从头全量扫。
-        var beforeGuard = updateWindow[..updateWindow.IndexOf("if (!opts.SkipPeerSyncDisplayFields)", StringComparison.Ordinal)];
-        Assert.Contains("s.CdsReportSourceBaseUrl, baseUrl", beforeGuard);
-
         Assert.Contains("SkipPeerSyncDisplayFields = true", ReadWorker());
+    }
+
+    [Fact]
+    public void 定点刷新不许写库级来源_否则两台cds会每小时轮流清掉水位()
+    {
+        var source = ReadImportService();
+
+        // 库级来源与水位是「默认全量镜像」那一路的状态，配对使用。定点刷新也去写库级来源的话，
+        // 库里有两台 CDS 的报告时，每小时的定点刷新会一份接一份把它改成自己那台，
+        // 下一份进来一看「换源了」就清一次水位——两台交替，水位每小时被清掉，
+        // 而它同时还是跨库同步的「上次同步时间」（Codex review P2）。
+        var squashed = Squash(source);
+        // 带过滤的导入（指定项目 / 指定报告）一律不碰库级来源与「换没换源」。
+        Assert.Contains("var sourceChanged = !isTargetedImport && CdsReportSyncTargets.SourceChanged(", squashed);
+        Assert.Contains("var isDefaultScopeImport = !isTargetedImport && !sourceChanged;", squashed);
+        // 写库级来源那一句必须被这道闸罩住——断言得把闸和它守着的那一句绑在一起，
+        // 分开断言会被别处的同款表达式替作证（这个坑本文件上一轮刚踩过一次）。
+        Assert.Contains(
+            "if (!isTargetedImport) { // 记下这次全量镜像是从哪个 CDS 拉的",
+            squashed);
+        Assert.Contains(
+            "updates.Add(Builders<DocumentStore>.Update.Set(s => s.CdsReportSourceBaseUrl, baseUrl)); }",
+            squashed);
+    }
+
+    [Fact]
+    public void 一份报告一旦开始写就写完_停机信号不许从中间掐断()
+    {
+        var worker = ReadWorker();
+
+        // 导入一份报告是多步写：存正文、插条目、给库的条目计数加一。把 stoppingToken 透进去，
+        // 优雅重启时可能停在「条目插了、计数没加」，留下对不上的计数和没人引用的正文
+        //（Codex review P2；也是 server-authority 那条「数据库写操作用 CancellationToken.None」）。
+        var call = Window(worker, "var result = await importer.ImportAsync(", "catch (OperationCanceledException)");
+        Assert.Contains("CancellationToken.None);", call);
+        // 取消只在两份报告之间判——这一句还得在，否则停机时整轮跑完才退。
+        Assert.Contains("if (ct.IsCancellationRequested) return;", Window(worker, "foreach (var t in targets)", "var result = await importer.ImportAsync("));
     }
 
     [Fact]
