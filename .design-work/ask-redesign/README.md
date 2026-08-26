@@ -12,7 +12,7 @@ node "<design 技能目录>/seed-canvas.mjs" \
   --template "<design 技能目录>/payload.template.html" \
   --out ask-me-redesign.html --title "向我提问 · 重做" \
   --artboard Main.dc.html --artboard Sidebar.dc.html --artboard Collapsed.dc.html \
-  --artboard Selection.dc.html --artboard EditFlow.dc.html --artboard Pipeline.dc.html \
+  --artboard Motion.dc.html --artboard MotionSpec.dc.html --artboard Selection.dc.html --artboard EditFlow.dc.html --artboard Pipeline.dc.html \
   --artboard Mobile.dc.html --artboard DirectionA.dc.html --artboard DirectionC.dc.html \
   --artboard DirectionD.dc.html --canvas canvas.json
 ```
@@ -25,7 +25,14 @@ node "<design 技能目录>/seed-canvas.mjs" \
 画框是手算的，超了会在画布上被裁掉而不报错，这条是唯一能提前发现的判据。
 
 ```bash
-node preview-artboard.mjs Main.dc.html out.png 1440 1900
+node preview-artboard.mjs Main.dc.html out.png 1440 1800
+```
+
+要取动效画板的某一帧，别用「负 animation-delay + paused」——那样得到的是
+「已跑时间 + delay」而不是绝对时刻，每帧都会往后偏一整段。用 Web Animations API：
+
+```js
+document.getAnimations().forEach(a => { a.pause(); a.currentTime = 1020; });
 ```
 
 `_base.css` 是各画板共用的样式底子，`_head.sh` 把它拼成 `.dc.html` 的固定头部——
@@ -43,7 +50,14 @@ node preview-artboard.mjs Main.dc.html out.png 1440 1900
 | `Sidebar.dc.html` | 右侧栏细节：对话中（答案 + 引用回跳）、历史（这一页问过的每一轮） |
 | `Collapsed.dc.html` | 三档折叠：侧栏收成竖条 / 只折输入框 / 整个收回胶囊，每档都留数字 |
 
-### 第二页 · 划词、改写、词条来路、移动端
+### 第二页 · 动效
+
+| 文件 | 是什么 |
+|---|---|
+| `Motion.dc.html` | **真在动的** demo：胶囊 → 长条 → 侧栏 → 收回，8 秒一轮，纯 CSS 无 JS |
+| `MotionSpec.dc.html` | 时间线、弹簧曲线、四条工程坑、reduced-motion 分支 |
+
+### 第三页 · 划词、改写、词条来路、移动端
 
 | 文件 | 是什么 |
 |---|---|
@@ -52,7 +66,7 @@ node preview-artboard.mjs Main.dc.html out.png 1440 1900
 | `Pipeline.dc.html` | 快捷词条的来路：上传时从正文自动读出，上传者无感知 |
 | `Mobile.dc.html` | 移动端三态；第三态退化成高 sheet，折叠只保留两档 |
 
-### 第三页 · 来路
+### 第四页 · 来路
 
 `DirectionA` / `DirectionC` / `DirectionD` 是上一轮没被选中的三个方向，留着当记录。
 
