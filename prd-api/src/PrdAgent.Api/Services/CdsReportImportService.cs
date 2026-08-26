@@ -332,7 +332,7 @@ public class CdsReportImportService
         }
 
         var store = await _db.DocumentStores
-            .Find(s => s.OwnerId == userId && s.AppKey == CdsReportImportWorker.CdsReportStoreAppKey)
+            .Find(s => s.OwnerId == userId && s.AppKey == "cds-reports")
             .FirstOrDefaultAsync(ct);
         if (store != null) return store;
 
@@ -341,7 +341,7 @@ public class CdsReportImportService
             Name = "CDS 验收报告",
             Description = "从 CDS 验收中心同步的验收报告（只读镜像，按 contentHash 增量）。",
             OwnerId = userId,
-            AppKey = CdsReportImportWorker.CdsReportStoreAppKey,
+            AppKey = "cds-reports",
             Tags = new List<string> { "CDS", "验收" },
         };
         await _db.DocumentStores.InsertOneAsync(store, cancellationToken: ct);
