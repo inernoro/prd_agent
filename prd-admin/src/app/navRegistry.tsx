@@ -761,6 +761,11 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     // 套在平台外壳里还原不到位（结构与版式的失分大半在这一层）。
     // 它是从知识库某条录音点进来的深页，不进导航目录——nav 留空即不登记。
     path: '/document-store/:storeId/recording/:entryId',
+    // `placement` 不写就默认 shell，条目会被挂进 AppShell——外面套着平台顶栏与底部
+    // TabBar，稿面自己那条顶栏被挤到屏幕中段，整屏和设计稿差得最远。
+    // 这一条漏了半天没人发现：`fullscreenGuarded` 只管鉴权，不决定挂在哪；
+    // 编译过、测试绿、路由也能进，只有真的打开那一屏才看得出来。
+    placement: 'fullscreen',
     permission: ['document-store.read', 'document-store.write'],
     element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingResultPage />),
   },

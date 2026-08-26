@@ -15,13 +15,21 @@
  * 指向转录笔记，笔记正文就是跟读组件吃的 markdown。两处读同一个字段，
  * 阅读器改了取法这里不会静默走旧路。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, MoreHorizontal } from 'lucide-react';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getDocumentEntry, getDocumentContent, getDocumentStoreReal } from '@/services/real/documentStore';
+import {
+  getAgentRun,
+  getDocumentEntry,
+  getDocumentContent,
+  getDocumentStoreReal,
+  transcribeEntry,
+  updateDocumentContent,
+} from '@/services/real/documentStore';
+import { toast } from '@/lib/toast';
 import '@/styles/recording-design-palette.css';
 
 /** mm:ss / h:mm:ss。给不出时长就不显示那一段，不摆一个假的 0:00。 */
@@ -37,7 +45,18 @@ function formatDuration(seconds: number): string {
 type LoadState =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; title: string; storeName: string; audioUrl: string; noteMd: string };
+  | {
+      kind: 'ready';
+      title: string;
+      storeName: string;
+      audioUrl: string;
+      noteMd: string;
+      /** 转录笔记条目 id：校对保存写的是它，不是音频条目 */
+      noteId: string;
+      /** 这份摘要用的整理方式 + 生成时间——「一键整理」四张卡的状态全靠这两个值 */
+      styleKey: string | null;
+      generatedAt: string | null;
+    };
 
 /**
  * 结果页外壳（纯展示）。
@@ -152,9 +171,12 @@ export function RecordingResultPage() {
       const noteId = entry.metadata?.transcribe_entry_id;
       // 音频本体与转录笔记是两条内容：音频给播放器，笔记给跟读。
       // 笔记还没生成时不是错误——那是「还在处理」，交给下面的空态说清楚。
-      const [audioRes, noteRes, storeRes] = await Promise.all([
+      // 笔记**条目**也要拉：它的 updatedAt 就是「这份整理是什么时候生成的」，
+      // 「一键整理」那张已生成卡上的「12 秒前」读的正是它。
+      const [audioRes, noteRes, noteEntryRes, storeRes] = await Promise.all([
         getDocumentContent(entry.id),
         noteId ? getDocumentContent(noteId) : Promise.resolve(null),
+        noteId ? getDocumentEntry(noteId) : Promise.resolve(null),
         getDocumentStoreReal(storeId),
       ]);
       if (stale) return;
@@ -169,6 +191,10 @@ export function RecordingResultPage() {
         storeName: storeRes?.success ? (storeRes.data?.name ?? '') : '',
         audioUrl,
         noteMd: noteRes?.success ? (noteRes.data?.content ?? '') : '',
+        noteId: noteId ?? '',
+        // 整理方式盖在音频条目上（与阅读器读同一个字段，不新开一条取法）
+        styleKey: entry.metadata?.transcribe_style_key ?? null,
+        generatedAt: noteEntryRes?.success ? (noteEntryRes.data?.updatedAt ?? null) : null,
       });
     })().catch((error: unknown) => {
       if (!stale) setState({ kind: 'error', message: error instanceof Error ? error.message : '这条录音打不开' });
@@ -192,6 +218,102 @@ export function RecordingResultPage() {
     return parts.join(' · ');
   }, [durationSec, state]);
 
+  /*
+   * 下面这几条回调是这一屏的**接线**。它们缺席时组件不会报错，只是把
+   * 一键整理 / 逐句校对 / 词典 / 改说话人 / 重新生成整块静默藏起来——
+   * 编译过、路由能进、测试也绿，只有真的打开这一屏才看得出少了半个页面
+   * （predicate-and-wiring-discipline 形状 2：建了一半的链路只会静默退化）。
+   * 阅读器内嵌形态早就接好了这几条，独立全屏页此前一条都没传。
+   */
+
+  /** 在途的整理 run：选了哪一种、跑到哪了。没有在途就是 null。 */
+  const [running, setRunning] = useState<{ runId: string; styleKey: string; percent: number } | null>(null);
+
+  // 轮询回调里要读「当前的笔记 id」，但它不能进 effect 依赖——依赖一变轮询就重来。
+  const noteIdRef = useRef('');
+  noteIdRef.current = state.kind === 'ready' ? state.noteId : '';
+
+  /** 重新拉一次笔记正文与生成时间（整理跑完之后，界面得换成新的那一份） */
+  const reloadNote = useCallback(async () => {
+    const noteId = noteIdRef.current;
+    if (!noteId || !entryId) return;
+    const [contentRes, noteEntryRes, audioEntryRes] = await Promise.all([
+      getDocumentContent(noteId),
+      getDocumentEntry(noteId),
+      getDocumentEntry(entryId),
+    ]);
+    setState(cur => (cur.kind === 'ready'
+      ? {
+        ...cur,
+        noteMd: contentRes.success ? (contentRes.data?.content ?? cur.noteMd) : cur.noteMd,
+        generatedAt: noteEntryRes.success ? (noteEntryRes.data?.updatedAt ?? cur.generatedAt) : cur.generatedAt,
+        styleKey: audioEntryRes.success ? (audioEntryRes.data?.metadata?.transcribe_style_key ?? cur.styleKey) : cur.styleKey,
+      }
+      : cur));
+  }, [entryId]);
+
+  /*
+   * run 状态轮询。这里不订 SSE：这一屏只需要「跑完了没有、跑到哪了」两个数，
+   * 2 秒一次的轮询足够，且断线自愈——而 SSE 漏一个 done 事件就会永远停在「生成中」。
+   */
+  const reloadNoteRef = useRef(reloadNote);
+  reloadNoteRef.current = reloadNote;
+  useEffect(() => {
+    if (!running) return;
+    let stale = false;
+    const tick = async () => {
+      const res = await getAgentRun(running.runId);
+      if (stale || !res.success) return;
+      const run = res.data;
+      if (run.status === 'done') {
+        setRunning(null);
+        await reloadNoteRef.current();
+      } else if (run.status === 'failed' || run.status === 'cancelled') {
+        setRunning(null);
+        toast.error(run.errorMessage || '整理没有完成');
+      } else {
+        setRunning(prev => (prev && prev.runId === run.id ? { ...prev, percent: run.progress ?? prev.percent } : prev));
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => { void tick(); }, 2000);
+    return () => { stale = true; window.clearInterval(timer); };
+  }, [running]);
+
+  /** 同页校对：整份 markdown 覆盖写回转录笔记条目 */
+  const onSaveNote = useCallback(async (nextNoteMd: string) => {
+    if (state.kind !== 'ready' || !state.noteId) return false;
+    const res = await updateDocumentContent(state.noteId, nextNoteMd, 'text/markdown');
+    if (!res.success) {
+      toast.error(res.error?.message || '保存失败');
+      return false;
+    }
+    // 乐观落到本地：等下一次拉取会让这行字先消失再出现，那是「凭空消失」
+    setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: nextNoteMd } : prev));
+    return true;
+  }, [state]);
+
+  /**
+   * 选一种整理方式。走的是条目级的 transcribe 端点：它会复用已完成的 ASR，
+   * 只重新生成摘要那一节，不会把音频重转一遍（`reused` 就是这个意思）。
+   */
+  const onPickOrganizeStyle = useCallback((styleKey: string) => {
+    if (!entryId || running) return;
+    void transcribeEntry(entryId, { styleKey }).then((res) => {
+      if (!res.success) {
+        toast.error(res.error?.message || '发起整理失败');
+        return;
+      }
+      setRunning({ runId: res.data.runId, styleKey, percent: 0 });
+    });
+  }, [entryId, running]);
+
+  /** 重新生成：就是按当前这一种再整理一次（当前那一种未知时退回默认的智能摘要） */
+  const onRestyle = useCallback(() => {
+    if (state.kind !== 'ready') return;
+    onPickOrganizeStyle(state.styleKey || 'general');
+  }, [onPickOrganizeStyle, state]);
+
   return (
     <RecordingResultShell title={state.kind === 'ready' ? state.title : '录音'} subtitle={subtitle} onBack={goBack}>
       {state.kind === 'loading' && <MapSectionLoader text="正在打开这段录音…" />}
@@ -205,7 +327,21 @@ export function RecordingResultPage() {
       )}
       {state.kind === 'ready' && (
         <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3">
-          <TranscriptKaraoke src={state.audioUrl} noteMd={state.noteMd} documentMode />
+          <TranscriptKaraoke
+            src={state.audioUrl}
+            noteMd={state.noteMd}
+            documentMode
+            // 没有笔记条目就没有可写回的地方——此时不给编辑入口，而不是给一个点了报错的
+            onSaveNote={state.noteId ? onSaveNote : undefined}
+            onRestyle={onRestyle}
+            organize={{
+              currentStyleKey: state.styleKey,
+              generatedAt: state.generatedAt,
+              runningStyleKey: running?.styleKey ?? null,
+              runningPercent: running?.percent ?? null,
+            }}
+            onPickOrganizeStyle={onPickOrganizeStyle}
+          />
         </div>
       )}
     </RecordingResultShell>

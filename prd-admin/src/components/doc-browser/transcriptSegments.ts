@@ -567,3 +567,32 @@ export function isUnansweredByTranscript(answer: string): boolean {
   return ['无法从录音确认', '原文无相关内容', '原文中没有', '录音中没有提到', '未提及']
     .some(phrase => text.includes(phrase.replace(/\s+/g, '')));
 }
+
+/** 琥珀提示条的状态：记着哪一问没答上来，以及它是否已经露过面。 */
+export type UnansweredNotice = {
+  /** 上一问「原文里没有」的那个问题；空串表示现在没有这种情况 */
+  question: string;
+  /** 已经陪着一轮「答得上来」的问答同屏露过面了 */
+  shown: boolean;
+};
+
+export const NO_UNANSWERED_NOTICE: UnansweredNotice = { question: '', shown: false };
+
+/**
+ * 一问答完之后，琥珀提示条该变成什么样。
+ *
+ * 抽成纯函数是因为**留多久**这件事只有驱到「先问一个答不上来的、再问一个答得上来的」
+ * 才看得出来：早先的写法在后一问答完时顺手把它清掉，于是它只存在于两次提问之间的空档，
+ * 屏幕上永远等不到——代码在、界面上没有，测试也不会红。稿面 B4 画的正是
+ * 「琥珀条 + 一条答得上来的问答」同屏，所以它必须陪满下一轮再退场。
+ */
+export function advanceUnansweredNotice(
+  prev: UnansweredNotice,
+  input: { question: string; answer: string },
+): UnansweredNotice {
+  // 又一次没答上来：换成最近这一条，重新开始计它的寿命
+  if (isUnansweredByTranscript(input.answer)) return { question: input.question, shown: false };
+  // 这一轮答得上来：让它跟着露一次面；已经露过就退场
+  if (!prev.question) return NO_UNANSWERED_NOTICE;
+  return prev.shown ? NO_UNANSWERED_NOTICE : { question: prev.question, shown: true };
+}

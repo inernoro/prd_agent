@@ -5,7 +5,8 @@ import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { RecordingSegmentBar } from '@/components/doc-browser/RecordingSegmentBar';
 import { RecordingAskComposer } from '@/components/doc-browser/RecordingAskComposer';
 import {
-  isUnansweredByTranscript,
+  advanceUnansweredNotice,
+  NO_UNANSWERED_NOTICE,
   parseTranscriptSegments,
   hasUsableTimestamps,
   activeSegmentIndex,
@@ -22,6 +23,7 @@ import {
   findTodoSource,
   buildSpeakerStats,
 } from '@/components/doc-browser/transcriptSegments';
+import type { UnansweredNotice } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { OrganizeStylePanel, type OrganizeState } from '@/components/doc-browser/OrganizeStylePanel';
 import { RecordingAnswer } from '@/components/doc-browser/RecordingAnswer';
@@ -242,9 +244,12 @@ export function TranscriptKaraoke({
   const [qaError, setQaError] = useState('');
   /** 当前这条回答对应的提问（稿面 B4 把它做成右对齐气泡） */
   const [askedQuestion, setAskedQuestion] = useState('');
-  /** 上一问「原文里没有」的那个问题；空串表示没有这种情况 */
-  const [lastUnanswered, setLastUnanswered] = useState('');
+  /** 琥珀提示条：上一问没答上来时记一笔，规则见 advanceUnansweredNotice */
+  const [notice, setNotice] = useState<UnansweredNotice>(NO_UNANSWERED_NOTICE);
+  const lastUnanswered = notice.question;
   const cancelQaRef = useRef<(() => void) | null>(null);
+  /** 这一问累积到现在的全文；onDone 要读它判断「是不是如实说了没有」 */
+  const answerRef = useRef('');
   const seekRef = useRef<((sec: number) => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -414,19 +419,36 @@ export function TranscriptKaraoke({
     setQaError('');
     setAsking(true);
     setAskedQuestion(userQuestion);
+    // 发出去就把输入框腾空：这一问已经变成上面那颗气泡了，留在框里既像没发出去，
+    // 又挡着下一问（稿面 B4 的已发送态输入框里是空的）。
+    setQuestion('');
+    /*
+     * 流下来的字要同时进 state（给渲染）和 ref（给 onDone 读全文）。
+     * 原先是在 `setAnswer` 的 updater 里顺手调 `setLastUnanswered` 来读全文——
+     * 那个 updater 返回的是同一个字符串，React 判等后整批更新被丢掉，
+     * 嵌在里面的那一发也跟着没了：琥珀提示条因此从来没有真正亮过一次。
+     * 取证驱到「问一个原文答不上来的问题」那一步才照出来（形状 2：只建了一半）。
+     */
+    answerRef.current = '';
     cancelQaRef.current = streamDirectChat({
       message: buildRecordingQuestionPrompt(questionTranscript, userQuestion),
-      onText: chunk => setAnswer(current => current + chunk),
+      onText: (chunk) => {
+        answerRef.current += chunk;
+        setAnswer(current => current + chunk);
+      },
       onError: error => { setQaError(error || '问答失败，请稍后重试'); setAsking(false); },
       onDone: () => {
         setAsking(false);
-        // 这一问没答上来的话记一笔：稿面 B4 顶部那条琥珀提示要的就是
-        // 「上一问没答上来，而且是如实说的」——不记下来，用户下次提问时
-        // 已经看不到系统曾经诚实过一次了。
-        setAnswer((current) => {
-          setLastUnanswered(isUnansweredByTranscript(current) ? userQuestion : '');
-          return current;
-        });
+        /*
+         * 这一问没答上来的话记一笔：稿面 B4 顶部那条琥珀提示要的就是
+         * 「上一问没答上来，而且是如实说的」——不记下来，用户下次提问时
+         * 已经看不到系统曾经诚实过一次了。
+         *
+         * 关键在**留多久**：稿面画的正是「琥珀条 + 一条答得上来的问答」同屏，
+         * 所以答得上来的那一轮不能顺手把它清掉——那样它只在两次提问之间的
+         * 空档里存在，屏幕上永远等不到它。让它陪满下一轮再退场。
+         */
+        setNotice(prev => advanceUnansweredNotice(prev, { question: userQuestion, answer: answerRef.current }));
       },
     });
   };
@@ -1333,22 +1355,30 @@ export function TranscriptKaraoke({
                 上一问「{lastUnanswered}」：原文无相关内容，已如实说明。
               </p>
             )}
-            <div className="mt-3 rounded-[11px] p-3" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-              <RecordingAskComposer
-                value={question}
-                onChange={setQuestion}
-                onSend={askRecording}
-                sending={asking}
-                onOpenMultiTurn={onAskRecording}
-              />
-              {qaError && <p className="mt-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
-              <RecordingAnswer
-                question={askedQuestion}
-                answer={answer}
-                segments={timelineSegments}
-                onSeek={sec => seekRef.current?.(sec)}
-              />
-            </div>
+            {/*
+              稿面 B4 的顺序是「问答记录在上、输入在下」——和所有聊天界面一样：
+              新内容往下长，输入框永远在手指够得到的那一端。把输入框放在最上面，
+              答案就会被它压在下面，读者要往回翻才看得到自己刚问的那一句。
+            */}
+            {/*
+              这里原先还套了一层浅灰卡。稿面这一屏只有两层盒子（问答卡 → 引用卡），
+              多这一层就变成四层套娃，每一层再吃掉一圈内边距，问答卡被越挤越窄。
+              分区卡本身已经给了背景与描边，这一层没有承担任何新的语义。
+            */}
+            <RecordingAnswer
+              question={askedQuestion}
+              answer={answer}
+              segments={timelineSegments}
+              onSeek={sec => seekRef.current?.(sec)}
+            />
+            {qaError && <p className="mb-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
+            <RecordingAskComposer
+              value={question}
+              onChange={setQuestion}
+              onSend={askRecording}
+              sending={asking}
+              onOpenMultiTurn={onAskRecording}
+            />
             </div>
           </section>
         </div>

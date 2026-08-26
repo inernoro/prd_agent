@@ -11,7 +11,18 @@
  * 单独成文件：B4 那一屏要把它贴到底并单独取证，留在 `TranscriptKaraoke` 内部的话
  * 对照台只能照着重画一份（predicate-and-wiring-discipline 形状 6）。
  */
+import { useLayoutEffect, useRef } from 'react';
 import { ArrowUp } from 'lucide-react';
+
+/**
+ * 输入变长就把框撑高（到上限为止再内部滚动）。
+ * 固定高度 + 多行输入 = 用户看不到自己刚打的字，那比排版难看严重得多。
+ */
+function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${el.scrollHeight}px`;
+}
 
 export function RecordingAskComposer({
   value,
@@ -32,6 +43,12 @@ export function RecordingAskComposer({
   pinned?: boolean;
 }) {
   const canSend = !sending && value.trim().length > 0;
+  /*
+   * 高度跟着**受控值**走，不只跟着敲键盘走：发送成功后由宿主把值清空，
+   * 只在 onChange 里量的话框会保持刚才那个高度，留下一个空的高框。
+   */
+  const boxRef = useRef<HTMLTextAreaElement | null>(null);
+  useLayoutEffect(() => { autoGrow(boxRef.current); }, [value]);
   return (
     <div
       className={pinned ? 'w-full px-4 pb-4 pt-3' : 'w-full'}
@@ -41,10 +58,17 @@ export function RecordingAskComposer({
         <textarea
           value={value}
           onChange={event => onChange(event.target.value)}
+          ref={boxRef}
           rows={1}
-          placeholder="例如：客户对于报价的态度是什么？"
+          /*
+           * 占位文案必须在 390px 屏上排得下**一行**：textarea 没有 ellipsis，
+           * 排到第二行就会被 `min-h-[52px]` 的固定高度从中间切断——真实页面上
+           * 原先那句「例如：客户对于报价的态度是什么？」的「么？」两个字就是这么被吃掉的。
+           * 加长它之前先在 390px 量一遍。
+           */
+          placeholder="例如：客户怎么看报价？"
           aria-label="问这场录音"
-          className="min-h-[52px] flex-1 resize-none rounded-[16px] px-4 py-3.5 text-[15px] leading-relaxed text-token-primary outline-none"
+          className="min-h-[52px] max-h-[132px] flex-1 resize-none overflow-y-auto rounded-[16px] px-4 py-3.5 text-[15px] leading-relaxed text-token-primary outline-none"
           // 有草稿 = 用户正在这里打字，边框跟着亮一档。稿面这一屏画的就是「正在输入」那一刻，
           // 给它和空框一样的弱边框，读者看不出焦点落在哪（B4 判分记的这处）
           style={{
