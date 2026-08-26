@@ -136,6 +136,23 @@ export default function AskPanel({
             {model ? `${model.model}${model.platform ? ` · ${model.platform}` : ''}` : title}
           </div>
         </div>
+        {/* 还剩几次。放顶栏而不是消息区顶部：消息区会随对话滚走，而「还能问几次」
+            恰恰是问到第三条时最需要看见的。读不到就整块不渲染——宁可不说，
+            也不给一个编的数（no-rootless-tree）。 */}
+        {quota && (
+          <div
+            title="两层独立计数：站点每日总量 + 你这一小时的额度"
+            style={{
+              flexShrink: 0, textAlign: 'right', lineHeight: 1.45,
+              fontFamily: 'var(--font-code, ui-monospace, monospace)', fontSize: 9.5,
+              color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            本页今日剩 {quota.siteRemaining} / {quota.siteLimit}
+            <br />
+            你这小时剩 {quota.visitorRemaining} / {quota.visitorLimit}
+          </div>
+        )}
         {!embedded && (
           <button
             onClick={onClose}
@@ -158,20 +175,6 @@ export default function AskPanel({
         ref={scrollRef}
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 14 }}
       >
-        {/* 还能问几次。放在最上面而不是只在空态出现：问到第三条时才最需要知道还剩几次。
-            读不到就整条不显示——宁可不说，也不给一个编的数（no-rootless-tree）。 */}
-        {quota && (
-          <div
-            style={{
-              display: 'flex', flexWrap: 'wrap', gap: '2px 12px', marginBottom: 12,
-              fontSize: 11, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            <span>本页今日剩 {quota.siteRemaining} / {quota.siteLimit}</span>
-            <span>你这小时剩 {quota.visitorRemaining} / {quota.visitorLimit}</span>
-          </div>
-        )}
-
         {messages.length === 0 && (
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
             {welcome?.trim() || `关于「${title}」，有什么想了解的？`}
