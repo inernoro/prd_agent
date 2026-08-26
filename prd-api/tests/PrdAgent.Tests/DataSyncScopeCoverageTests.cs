@@ -812,9 +812,31 @@ public class DataSyncScopeCoverageTests
         var rebaseAt = worker.IndexOf("DataSyncAssetUrls.RebaseIncoming(", StringComparison.Ordinal);
         Assert.True(rebaseAt >= 0, "同步执行端没有任何一处调用资产地址改写，DS1 的修复没接上线");
 
+        // 锚在**真正写库的那两句**上，不是锚在 Decide 上。
+        //
+        // 上一版写的是 `rebaseAt < decideAt`。Decide 只是把这一页在内存里分成
+        // 「插 / 替 / 跳过」三堆，一个字节都没落库——拿它当「入库」的替身，等于用一个
+        // 不是那件事的东西去证明那件事（形状 6）。代价很实在：改写为了满足这条守卫
+        // 必须排在分堆之前，于是**整页**文档都被改写并计数，其中被判成跳过的那些
+        // 改完就丢，界面却把它们算进「已改写 N 条」（Codex review P2）。
+        var insertAt = worker.IndexOf("InsertManyAsync(", StringComparison.Ordinal);
+        var replaceAt = worker.IndexOf("ReplaceOneAsync(", StringComparison.Ordinal);
+        Assert.True(insertAt >= 0, "找不到插入写库那一句了，这条守卫的前提已变");
+        Assert.True(replaceAt >= 0, "找不到覆盖写库那一句了，这条守卫的前提已变");
+        Assert.True(rebaseAt < insertAt && rebaseAt < replaceAt,
+            "资产地址改写排在了写库之后：中间那段时间界面上的图全是指回源站的死链");
+
+        // 而且只改**这一批真会写进去的**。不覆盖模式下目标站已有的那些会被判成跳过、
+        // 一个字节都不入库，把它们一起数进「已改写」就是把没做的事记成做过的。
         var decideAt = worker.IndexOf("DataSyncApply.Decide(", StringComparison.Ordinal);
         Assert.True(decideAt >= 0, "找不到落库决策了，这条守卫的前提已变");
-        Assert.True(rebaseAt < decideAt, "资产地址改写排在了落库决策之后：写进去的会是源站地址");
+        Assert.True(decideAt < rebaseAt, "改写排在了分堆之前：那样整页都会被改写并计数");
+        var rebaseCallEnd = worker.IndexOf(')', rebaseAt);
+        Assert.True(rebaseCallEnd > rebaseAt, "读不出改写那一句的参数，守卫已失效");
+        var rebaseArgs = worker[rebaseAt..rebaseCallEnd];
+        Assert.DoesNotContain("RebaseIncoming(documents", rebaseArgs, StringComparison.Ordinal);
+        Assert.Contains("decision.ToInsert", worker, StringComparison.Ordinal);
+        Assert.Contains("decision.ToReplace", worker, StringComparison.Ordinal);
 
         // 两个数字都要落进进度，界面才说得出「改了几条 / 还有几条没救」。
         Assert.Contains("progress.AssetUrlsRebased +=", worker, StringComparison.Ordinal);

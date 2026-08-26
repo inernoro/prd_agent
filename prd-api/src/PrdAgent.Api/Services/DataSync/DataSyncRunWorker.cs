@@ -360,14 +360,6 @@ public sealed class DataSyncRunWorker : BackgroundService
             var documents = DataSyncApply.ParseDocuments(page.Documents);
             progress.Fetched += documents.Count;
 
-            // 资产地址改写要在**入库之前**做：写进去再回头批量改，中间那一段时间
-            // 界面上的图片全是指回源站的死链，而且一旦崩在中间就没人知道改到哪了。
-            // 只改地址、不搬字节——两站不共用同一个桶时，改完是「指向自己家的空位」，
-            // 所以下面把认不出的条数如实累进 Run 里，由界面照实说。
-            var rebase = DataSyncAssetUrls.RebaseIncoming(documents, collection.Name, BuildLocalAssetUrl);
-            progress.AssetUrlsRebased += rebase.Rebased;
-            progress.AssetUrlsUnresolved += rebase.Unrecognized;
-
             if (documents.Count > 0)
             {
                 // 查已有文档时，同一个逻辑 id 的**两种物理形态**都要带上。
@@ -407,6 +399,24 @@ public sealed class DataSyncRunWorker : BackgroundService
 
                 var decision = DataSyncApply.Decide(documents, existingIdsByKey, run.OverwriteExisting);
                 progress.Skipped += decision.SkippedIds.Count;
+
+                // 资产地址改写要在**入库之前**做：写进去再回头批量改，中间那一段时间
+                // 界面上的图片全是指回源站的死链，而且一旦崩在中间就没人知道改到哪了。
+                // 只改地址、不搬字节——两站不共用同一个桶时，改完是「指向自己家的空位」，
+                // 所以下面把认不出的条数如实累进 Run 里，由界面照实说。
+                //
+                // 但只改**这一批真会写进去的那些**，不是整页拉回来的文档。
+                // 不覆盖模式下，目标站已经有的那些会被 Decide 判成跳过、一个字节都不入库；
+                // 对它们改写只发生在内存里，改完就随对象一起丢掉。整页一起数的话，界面上
+                // 「已把 N 条地址改写成本站的」里就掺着一批**从未落库**的条数——用户照着这个
+                // 数字判断附件还有没有问题，而它比真相大（Codex review P2）。
+                // 这条和本 PR 那三处话术修复是同一条纪律：打算做的事不能记成做过的事。
+                var willWrite = new List<BsonDocument>(decision.ToInsert.Count + decision.ToReplace.Count);
+                willWrite.AddRange(decision.ToInsert);
+                willWrite.AddRange(decision.ToReplace);
+                var rebase = DataSyncAssetUrls.RebaseIncoming(willWrite, collection.Name, BuildLocalAssetUrl);
+                progress.AssetUrlsRebased += rebase.Rebased;
+                progress.AssetUrlsUnresolved += rebase.Unrecognized;
 
                 // 覆盖写是整份替换，所以「目标站本地执行历史」这类字段必须在替换前接回来，
                 // 否则源站那台机器跑过哪些迁移会变成本站的账：本站没跑过的被当成跑过而跳过，
