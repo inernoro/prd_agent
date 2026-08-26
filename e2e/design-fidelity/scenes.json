@@ -1,15 +1,75 @@
 [
   {
     "id": "result",
-    "board": "cap-B1/B2/B3/B4",
+    "board": "cap-B1 / cap-B2 / cap-B3 / cap-B4 / v2-P1 / v2-P2 / v2-P3 / v2-P4",
     "note": "转录完成的常态结果页；驱一遍真人操作，覆盖搜索命中、已作答、如实说没有、引用跳播、整理进行中、编辑原文、播放中",
-    "drive": ["full", "playing"],
-    "expect": ["一键整理", "词云", "会议纪要", "待办事项", "问这场录音"]
+    "drive": [
+      "full",
+      "playing"
+    ],
+    "expect": [
+      "一键整理",
+      "词云",
+      "会议纪要",
+      "待办事项",
+      "问这场录音"
+    ]
   },
   {
     "id": "reader",
     "note": "知识库阅读器里的转录笔记（用户最可能点的入口，走内嵌形态）",
     "url": "/document-store?store=store-demo&entry=entry-note",
     "sections": false
+  },
+  {
+    "id": "processing",
+    "board": "v2-R4 / v2-S2 / cap-S3",
+    "note": "录音结束、音频已落地、原文还在跑的处理中屏。三块稿面画的是同一个 TranscribeStatusCard 的不同层：R4 是整屏、S2 是里面那张进度卡、S3 是「音频已保存」压「原文生成中」的双层",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 14000,
+    "audioMeta": {
+      "transcribe_entry_id": null
+    },
+    "expect": [
+      "正在整理这段录音",
+      "音频已经安全保存"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "running",
+          "phase": "解析音频",
+          "progress": 45,
+          "transcriptText": "先说结论，导入是这一版最大的漏斗。\n我们看了 312 个新账号，第 7 天只剩 41%。",
+          "createdAt": "@ago:33",
+          "startedAt": "@ago:31",
+          "heartbeatAt": "@now"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "running",
+          "phase": "解析音频",
+          "progress": 45,
+          "transcriptText": "先说结论，导入是这一版最大的漏斗。\n我们看了 312 个新账号，第 7 天只剩 41%。",
+          "createdAt": "@ago:33",
+          "startedAt": "@ago:31",
+          "heartbeatAt": "@now"
+        }
+      }
+    ]
   }
 ]

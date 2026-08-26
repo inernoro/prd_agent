@@ -116,6 +116,7 @@ function buildInit(scene) {
     return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
   }
   const audioUrl = silentWavUrl(DURATION_SEC);
+  const dropNulls = (o) => { const r = {}; for (const k in o) if (o[k] !== null) r[k] = o[k]; return r; };
 
   const audioEntry = {
     id: AUDIO_ID, storeId: STORE_ID, title: '用户访谈 · 留存与导入',
@@ -123,16 +124,19 @@ function buildInit(scene) {
     // 整理方式盖在音频条目上：没有它，「一键整理」四张卡全都只能显示「点击生成」——
     // 那是页面**如实**的「不知道」，但和稿面画的「已生成 · 12s 前」对不上，
     // 于是判分把桩的缺口记成了实现的缺失。真实数据里这个字段是有的，桩就得有。
-    metadata: Object.assign(
+    // 场景补丁里写 null 表示**删掉**这个字段，不是把它设成 null——
+    // 「原文还在跑」那一档的判据正是条目上还没有 transcribe_entry_id，
+    // 只能加不能减的合并做不出这一档。
+    metadata: dropNulls(Object.assign(
       { transcribe_entry_id: NOTE_ID, transcribe_style_key: 'general' },
       SCENE.audioMeta || {},
-    ),
+    )),
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
   const noteEntry = {
     id: NOTE_ID, storeId: STORE_ID, title: '用户访谈 · 留存与导入（转录笔记）',
     contentType: 'text/markdown', tags: [],
-    metadata: Object.assign({ source_entry_id: AUDIO_ID, transcribe_style_key: 'general' }, SCENE.noteMeta || {}),
+    metadata: dropNulls(Object.assign({ source_entry_id: AUDIO_ID, transcribe_style_key: 'general' }, SCENE.noteMeta || {})),
     createdAt: new Date().toISOString(),
     // 「已生成 · 12s 前」那行相对时间读的就是这个
     updatedAt: new Date(Date.now() - 12_000).toISOString(),
@@ -187,6 +191,27 @@ function buildInit(scene) {
     return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
   }
 
+  /*
+   * 场景是静态 JSON，但「已用 31 秒」「一小时前没心跳了」「8 秒后重试」这些
+   * 判据读的是**相对现在**的时刻。所以规则里的时间写成记号，取用时才求值：
+   *   "@ago:31" = 31 秒前　"@in:8" = 8 秒后　"@now" = 现在
+   * 写死一个 ISO 串的话，隔天再跑同一个场景就会滑到另一档（比如从「处理中」
+   * 滑成「超过一小时未完成」），而脚本还照样绿。
+   */
+  const TIME = /^@(ago|in|now)(?::(\\d+))?$/;
+  function resolveTimes(v) {
+    if (typeof v === 'string') {
+      const m = TIME.exec(v);
+      if (!m) return v;
+      const sec = Number(m[2] || 0);
+      const t = m[1] === 'ago' ? Date.now() - sec * 1000 : m[1] === 'in' ? Date.now() + sec * 1000 : Date.now();
+      return new Date(t).toISOString();
+    }
+    if (Array.isArray(v)) return v.map(resolveTimes);
+    if (v && typeof v === 'object') { const r = {}; for (const k in v) r[k] = resolveTimes(v[k]); return r; }
+    return v;
+  }
+
   const real = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -197,7 +222,7 @@ function buildInit(scene) {
       if (!new RegExp(rule.match).test(url)) continue;
       if (rule.status && rule.status >= 400) return Promise.resolve(fail(rule.status, rule.message));
       if (rule.reject) return Promise.reject(new TypeError('Failed to fetch'));
-      return Promise.resolve(env(rule.data));
+      return Promise.resolve(env(resolveTimes(rule.data)));
     }
 
     if (url.includes('/ai-toolbox/direct-chat')) return Promise.resolve(sseAnswer(init && init.body));
