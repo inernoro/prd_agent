@@ -104,6 +104,35 @@ public class GatewayLegacySweepGuardTests
         Assert.Contains("if (string.IsNullOrWhiteSpace(memberPlatformId)) return false;", fn);
     }
 
+    [Fact]
+    public void 托管默认池不得否决它自己派生出来的模型()
+    {
+        // 托管默认池的成员是按用途自动收进来的派生结果。让派生引用去阻挡源模型的删除，
+        // 会和 APPEND_ONLY_POOL（不许手工摘成员）形成死锁——退役一条上游时两头堵死。
+        var collector = Console[Console.IndexOf("static async Task<ModelDeleteBlockers> CollectModelDeleteBlockersAsync", StringComparison.Ordinal)..];
+        collector = collector[..collector.IndexOf("\nstatic ", StringComparison.Ordinal)];
+        Assert.Contains("poolDocs.Where(p => !IsManagedAppendOnlyPool(p))", collector);
+
+        // 放行的前提是删除路径会同步摘掉成员，否则会留下解析不到任何东西的悬空成员
+        var handler = HandlerSource("app.MapDelete(\"/gw/models/{id}\"");
+        var pruneAt = handler.IndexOf("PruneManagedPoolMembersAsync", StringComparison.Ordinal);
+        var deleteAt = handler.IndexOf("DeleteOneAsync", StringComparison.Ordinal);
+        Assert.True(pruneAt >= 0, "删除模型必须同步摘掉托管池成员");
+        Assert.True(pruneAt < deleteAt, "必须先摘成员再删模型，顺序反了会留下悬空引用");
+        Assert.Contains("prunedManagedPools", handler);
+    }
+
+    [Fact]
+    public void 摘除托管池成员只动托管池()
+    {
+        var fn = Console[Console.IndexOf("static async Task<List<string>> PruneManagedPoolMembersAsync", StringComparison.Ordinal)..];
+        fn = fn[..fn.IndexOf("\n/// <summary>", StringComparison.Ordinal)];
+        // 只对托管池动手；人手编排的池仍由 blockers 拦下来问人
+        Assert.Contains("pools.Where(IsManagedAppendOnlyPool)", fn);
+        Assert.Contains("UpdateOneAsync", fn);
+        Assert.DoesNotContain("DeleteOneAsync", fn);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

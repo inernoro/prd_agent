@@ -8681,6 +8681,8 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
             409);
     }
 
+    // 先把成员从平台托管默认池里摘掉，再删模型：顺序反了会留下一条解析不到任何东西的派生成员。
+    var prunedManagedPools = await PruneManagedPoolMembersAsync(http, gwModelPools, doc);
     if (isMapLegacy) await models.DeleteOneAsync(sourceFilter);
     else await gwModels.DeleteOneAsync(filter);
     await WriteOperationAuditAsync(
@@ -8697,6 +8699,8 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
             { "modelName", ToBsonAuditValue(doc.AsNullableString("ModelName")) },
             { "platformId", ToBsonAuditValue(doc.AsNullableString("PlatformId")) },
             { "authority", isMapLegacy ? "map" : "llm_gateway" },
+            // 顺带从哪些托管默认池里摘了成员，要留痕——否则事后看不出池成员数为什么少了
+            { "prunedManagedPools", new BsonArray(prunedManagedPools) },
         });
     return Json(ApiEnvelope<ModelDeleteBlockers>.Ok(new ModelDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -12635,6 +12639,54 @@ static bool ModelHasParameterCapability(BsonDocument modelDoc)
 }
 
 /// <summary>
+/// 把一个即将被删的模型，从所有「平台托管默认池」的成员里摘掉，返回被摘的池名。
+///
+/// 这类池的成员是按用途自动收进来的派生结果，所以删源模型时同步收敛属于维护而非编排改动；
+/// 非托管池不碰——那些是人手编排的，成员该不该走由 CollectModelDeleteBlockersAsync 拦下来问人。
+/// </summary>
+static async Task<List<string>> PruneManagedPoolMembersAsync(
+    HttpContext http,
+    IMongoCollection<BsonDocument> gwPools,
+    BsonDocument modelDoc)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var platformId = modelDoc.GetStringOrEmpty("PlatformId");
+    var aliases = new[]
+        {
+            modelDoc.GetStringOrEmpty("_id"),
+            modelDoc.AsNullableString("ModelName") ?? string.Empty,
+            modelDoc.AsNullableString("Name") ?? string.Empty,
+        }
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+    if (aliases.Length == 0 || string.IsNullOrWhiteSpace(platformId)) return new List<string>();
+
+    var memberFilter = fb.ElemMatch<BsonDocument>(
+        "Models",
+        fb.And(fb.In("ModelId", aliases), fb.Eq("PlatformId", platformId)));
+    var pools = await gwPools.Find(TenantAccess.Filter(http, memberFilter)).ToListAsync();
+
+    var pruned = new List<string>();
+    foreach (var pool in pools.Where(IsManagedAppendOnlyPool))
+    {
+        var members = (pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray())
+            .Where(x => x.IsBsonDocument)
+            .Select(x => x.AsBsonDocument)
+            .Where(m => !(aliases.Contains(m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
+                          && string.Equals(m.GetStringOrEmpty("PlatformId"), platformId, StringComparison.Ordinal)))
+            .ToList();
+        await gwPools.UpdateOneAsync(
+            TenantAccess.Filter(http, fb.Eq("_id", pool.GetStringOrEmpty("_id"))),
+            Builders<BsonDocument>.Update
+                .Set("Models", new BsonArray(members))
+                .Set("UpdatedAt", DateTime.UtcNow));
+        pruned.Add(pool.AsNullableString("Name") ?? pool.GetStringOrEmpty("_id"));
+    }
+    return pruned;
+}
+
+/// <summary>
 /// 这条池成员是不是「死成员」——它挂的 platformId 在 GW 与 MAP 两侧都已经不存在了。
 ///
 /// 池成员按 (ModelId, PlatformId) 定位，上游一删，成员就再也解析不到任何东西；
@@ -13023,6 +13075,13 @@ static async Task<ModelDeleteBlockers> CollectModelDeleteBlockersAsync(
         fb.And(fb.In("ModelId", aliases), fb.Eq("PlatformId", platformId)));
     var poolDocs = await gwPools.Find(TenantAccess.Filter(http, memberFilter)).ToListAsync();
     if (isInternal) poolDocs.AddRange(await mapPools.Find(memberFilter).ToListAsync());
+
+    // 平台托管默认池不算阻挡：它的成员是**按用途自动收进来的派生结果**，不是谁手写的编排。
+    // 派生出来的引用不该反过来否决它的来源——否则退役一条上游时会死锁：
+    // 要删模型得先摘成员，而托管池又不许手工摘成员（APPEND_ONLY_POOL），两头堵死。
+    // 删除路径会同步把成员从这类池里摘掉（见 PruneManagedPoolMembersAsync），
+    // 注册表下次仍会按现存模型重新收敛，所以这里放行不会留下悬空引用。
+    poolDocs = poolDocs.Where(p => !IsManagedAppendOnlyPool(p)).ToList();
 
     return new ModelDeleteBlockers
     {
