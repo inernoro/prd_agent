@@ -1146,6 +1146,14 @@ public static class Admin
             Category = "Chat"
         )]
         public const string Ask = "prd-agent-web.web-hosting.ask::chat";
+
+        [AppCallerMetadata(
+            "网页托管-开场问题生成",
+            "上传/开启提问后读一遍页面正文，写出访客最可能问的几句，落成站点题库",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Chat"
+        )]
+        public const string AskOpeners = "prd-agent-web.web-hosting.ask-openers::intent";
     }
 
     public static class Lab

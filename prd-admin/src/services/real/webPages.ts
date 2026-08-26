@@ -821,6 +821,13 @@ export interface SiteAskConfig {
   /** 0 = 用系统默认 */
   dailyLimit: number;
   updatedAt?: string | null;
+  /**
+   * 这批题是谁写的：'auto' = 系统读正文生成，'manual' = owner 自己动过手。
+   * 自动填的值必须让用户看得出来、可改、说得出依据（minimal-user-input 第 3 条）。
+   */
+  questionsSource?: 'auto' | 'manual';
+  /** 上一次自动生成对应的内容版本时间；没生成过则为空 */
+  questionsGeneratedAt?: string | null;
   /** 题库最多存几条（服务端 SSOT，前端不自己定）。这是**存储**上限，不是展示上限 */
   maxQuestions: number;
   /** 一条分享面板最多显示几条（题库比它大，分享时挑子集） */
@@ -849,4 +856,27 @@ export async function updateSiteAskConfig(
   },
 ): Promise<ApiResponse<SiteAskConfig>> {
   return apiRequest(api.webPages.askConfig(siteId), { method: 'PUT', body: config });
+}
+
+/** 重新按正文生成开场问题的结果 */
+export interface AskQuestionRegenResult {
+  siteId: string;
+  /** 这次是不是真的写出了新题库。false = 读不出正文或模型没给出可用问题 */
+  generated: boolean;
+  suggestedQuestions: string[];
+  questionsSource?: 'auto' | 'manual';
+  /** generated=false 时的原话，直接展示，不要自己编一句 */
+  message?: string | null;
+}
+
+/**
+ * 重新按正文生成开场问题（仅 owner / editor）。
+ *
+ * 同步等：这是 owner 明确点的按钮，转个圈几秒钟，比让他保存完再刷新猜有没有到位清楚。
+ * 会覆盖他之前手写的那份——按钮文案必须把这件事说清。
+ */
+export async function regenerateSiteAskQuestions(
+  siteId: string,
+): Promise<ApiResponse<AskQuestionRegenResult>> {
+  return apiRequest(api.webPages.askRegenerateQuestions(siteId), { method: 'POST' });
 }

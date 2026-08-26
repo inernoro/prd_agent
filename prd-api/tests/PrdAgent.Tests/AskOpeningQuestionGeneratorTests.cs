@@ -1,0 +1,184 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.RegularExpressions;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services;
+using Xunit;
+
+namespace PrdAgent.Tests;
+
+/// <summary>
+/// 开场问题自动生成的两处判据：解析模型输出、判断该不该生成。
+///
+/// 两个都是纯函数，也都是这功能里最容易悄悄退化的地方——
+/// 解析退化的表现是「题库突然空了」，判据退化的表现是「owner 改的几句被冲掉」
+/// 或「每个访客都触发一次模型调用」，三种都不会有任何测试自己变红。
+/// </summary>
+public class AskOpeningQuestionGeneratorTests
+{
+    // ── ParseGenerated ──
+
+    [Fact]
+    public void 裸数组_原样解析()
+    {
+        var got = AskOpeningQuestions.ParseGenerated("[\"结论是什么？\",\"哪几项没修完？\"]");
+        Assert.Equal(new[] { "结论是什么？", "哪几项没修完？" }, got);
+    }
+
+    [Fact]
+    public void 带代码围栏和前后寒暄_照样解析()
+    {
+        const string raw = "好的，我读完了这一页。\n```json\n[\"结论是什么？\", \"搜索为什么没通过？\"]\n```\n希望有帮助。";
+        var got = AskOpeningQuestions.ParseGenerated(raw);
+        Assert.Equal(new[] { "结论是什么？", "搜索为什么没通过？" }, got);
+    }
+
+    [Fact]
+    public void 模型把每条包成对象_也认()
+    {
+        var got = AskOpeningQuestions.ParseGenerated("[{\"question\":\"结论是什么？\"},{\"text\":\"还差什么？\"}]");
+        Assert.Equal(new[] { "结论是什么？", "还差什么？" }, got);
+    }
+
+    [Fact]
+    public void 认不出来就返回空_不许硬凑()
+    {
+        // 宁可这一栏整块不出现，也不摆几句放到任何页面都成立的空话（no-rootless-tree）
+        Assert.Empty(AskOpeningQuestions.ParseGenerated("这一页没有实质内容。"));
+        Assert.Empty(AskOpeningQuestions.ParseGenerated("[\"没闭合的数组"));
+        Assert.Empty(AskOpeningQuestions.ParseGenerated("{\"questions\":[\"这是对象不是数组\"]}"));
+        Assert.Empty(AskOpeningQuestions.ParseGenerated(""));
+        Assert.Empty(AskOpeningQuestions.ParseGenerated(null));
+    }
+
+    [Fact]
+    public void 去重_去空_截断_限量_全都走同一套 Normalize()
+    {
+        var raw = "[\"重复的\",\"重复的\",\"  \",\"" + new string('长', 80) + "\",\"a\",\"b\",\"c\",\"d\",\"e\",\"f\"]";
+        var got = AskOpeningQuestions.ParseGenerated(raw);
+        Assert.Equal(AskOpeningQuestions.GeneratedCount, got.Count);
+        Assert.Equal("重复的", got[0]);
+        Assert.All(got, q => Assert.True(q.Length <= AskOpeningQuestions.MaxLength));
+        Assert.Equal(got.Count, new HashSet<string>(got).Count);
+    }
+
+    [Fact]
+    public void 一次最多生成几条_必须夹在展示上限与题库上限之间()
+    {
+        // 只生成 MaxDisplay 条 → 分享链接无从挑子集；一次塞满 MaxLibrary → owner 加不进自己的题
+        Assert.True(AskOpeningQuestions.GeneratedCount > AskOpeningQuestions.MaxDisplay);
+        Assert.True(AskOpeningQuestions.GeneratedCount < AskOpeningQuestions.MaxLibrary);
+    }
+
+    // ── NeedsGeneration ──
+
+    private static HostedSite SiteWithAsk(Action<HostedSite>? tweak = null)
+    {
+        var site = new HostedSite
+        {
+            Id = "site-1",
+            OwnerUserId = "u1",
+            AskEnabled = true,
+            ContentVersion = new DateTime(2026, 8, 26, 0, 0, 0, DateTimeKind.Utc),
+        };
+        tweak?.Invoke(site);
+        return site;
+    }
+
+    [Fact]
+    public void 提问没开就不生成_默认关闭时给每个上传都跑一遍模型是纯浪费()
+    {
+        Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(SiteWithAsk(s => s.AskEnabled = false)));
+        Assert.True(AskOpeningQuestionGenerator.NeedsGeneration(SiteWithAsk()));
+    }
+
+    [Fact]
+    public void owner 动过手就永不覆盖()
+    {
+        var site = SiteWithAsk(s => s.AskQuestionsSource = "manual");
+        Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(site));
+    }
+
+    [Fact]
+    public void 这一版正文算过就不重算_一次上传一次调用()
+    {
+        var site = SiteWithAsk();
+        site.AskQuestionsGeneratedFor = site.ContentVersion;
+        Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(site));
+
+        // 重新上传换了 ContentVersion → 旧那批题是对着旧内容写的，要重算
+        site.ContentVersion = site.ContentVersion.AddDays(1);
+        Assert.True(AskOpeningQuestionGenerator.NeedsGeneration(site));
+    }
+
+    [Fact]
+    public void 读不出正文时盖的戳同样算数_否则每个访客都触发一次重试()
+    {
+        // 生成器在「读不到正文」与「模型没给出可用问题」两条路径上都只盖戳、不写题库。
+        // 判据必须认这个戳，不然一个永远读不出正文的站点会被每个访客各排一次生成。
+        var site = SiteWithAsk();
+        site.AskQuestionsGeneratedFor = site.ContentVersion;
+        site.AskSuggestedQuestions = new List<string>();
+        Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(site));
+    }
+
+    [Fact]
+    public void 存量站点没有 ContentVersion 时回退到 CreatedAt_而不是每次都判成要重算()
+    {
+        var site = SiteWithAsk(s =>
+        {
+            s.ContentVersion = default;
+            s.CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        });
+        Assert.True(AskOpeningQuestionGenerator.NeedsGeneration(site));
+
+        site.AskQuestionsGeneratedFor = site.CreatedAt;
+        Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(site));
+    }
+}
+
+/// <summary>
+/// 接线守卫：生成器建好了、判据也对，但没人调它 —— 那就是建了一半
+/// （predicate-and-wiring-discipline 形状 2：删掉不会红，只会静默退化成「题库永远是空的」）。
+///
+/// 按源码守是因为这几处调用全是 fire-and-forget，去掉任何一处都没有行为测试会变红。
+/// </summary>
+public class AskOpeningQuestionWiringTests
+{
+    private static string ReadSrc(string relative)
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir != null && !Directory.Exists(Path.Combine(dir, "src", "PrdAgent.Api")))
+            dir = Directory.GetParent(dir)?.FullName;
+        Assert.NotNull(dir);
+        return File.ReadAllText(Path.Combine(dir!, relative));
+    }
+
+    [Fact]
+    public void 开启提问与重新上传都要排一次生成()
+    {
+        var svc = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "HostedSiteService.cs"));
+        // 三处：开启提问、重新上传换了正文、分享页兜底（存量站点走不到前两处）
+        Assert.Equal(3, Regex.Matches(svc, @"_askOpeners\.QueueEnsure\(").Count);
+        Assert.Contains("SetAskConfigAsync", svc);
+    }
+
+    [Fact]
+    public void owner 打开设置面板时也兜一次_并且有重新生成的入口()
+    {
+        var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
+        Assert.Contains("_askOpeners.QueueEnsure(site)", ctrl);
+        Assert.Contains("ask/questions/regenerate", ctrl);
+        Assert.Contains("_askOpeners.EnsureAsync(", ctrl);
+        // 来源必须透出去：自动填的值不能是黑箱（minimal-user-input 第 3 条）
+        Assert.Contains("questionsSource", ctrl);
+    }
+
+    [Fact]
+    public void 生成器已注册进 DI_否则每个消费方启动即炸()
+    {
+        var program = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Program.cs"));
+        Assert.Matches(@"AddSingleton<[^>]*IAskOpeningQuestionGenerator[^>]*>", program);
+    }
+}

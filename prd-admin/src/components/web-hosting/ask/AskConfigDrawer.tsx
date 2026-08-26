@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Trash2, X } from 'lucide-react';
+import { Plus, RotateCw, Trash2, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { getSiteAskConfig, updateSiteAskConfig, type SiteAskConfig } from '@/services/real/webPages';
+import { getSiteAskConfig, regenerateSiteAskQuestions, updateSiteAskConfig, type SiteAskConfig } from '@/services/real/webPages';
 import { ASK_MAX_WELCOME_LENGTH } from './askTypes';
 
 interface Props {
@@ -34,6 +34,11 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   const [maxQuestions, setMaxQuestions] = useState(12);
   /** 站点形态不支持提问时的原因；非空则开关灰掉（服务端同一判定源，前端不自己判） */
   const [unsupportedReason, setUnsupportedReason] = useState<string | null>(null);
+  /** 这批题是系统读正文写的（auto）还是 owner 自己写的（manual） */
+  const [questionsSource, setQuestionsSource] = useState<'auto' | 'manual'>('auto');
+  const [regenerating, setRegenerating] = useState(false);
+  /** 重新生成没生成出东西时，后端的原话。不自己编一句「失败了」 */
+  const [regenNote, setRegenNote] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -45,6 +50,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
         setAllowAnonymous(res.data.allowAnonymous);
         setDailyLimit(res.data.dailyLimit ?? 0);
         setQuestions(res.data.suggestedQuestions ?? []);
+        setQuestionsSource(res.data.questionsSource === 'manual' ? 'manual' : 'auto');
         setMaxLength(res.data.maxQuestionLength ?? 60);
         setMaxQuestions(res.data.maxQuestions ?? 12);
         setUnsupportedReason(res.data.supported === false ? (res.data.unsupportedReason ?? '这个站点暂不支持提问。') : null);
@@ -66,8 +72,28 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     setQuestions((prev) =>
       prev.includes(q) || prev.length >= maxQuestions ? prev : [...prev, q.slice(0, maxLength)],
     );
+    // 界面上立刻改口径：他一动手，这批题就归他了，之后重新上传不会再被自动覆盖。
+    // 与后端判据同义（后端按提交的列表与库里那份是否相同来判），这里只是提前说出来。
+    setQuestionsSource('manual');
+    setRegenNote(null);
     setDraft('');
   }, [draft, maxLength, maxQuestions]);
+
+  const regenerate = useCallback(async () => {
+    setRegenerating(true);
+    setRegenNote(null);
+    const res = await regenerateSiteAskQuestions(siteId);
+    setRegenerating(false);
+    if (!res.success) {
+      setRegenNote(res.error?.message ?? '重新生成失败');
+      return;
+    }
+    setQuestions(res.data?.suggestedQuestions ?? []);
+    setQuestionsSource('auto');
+    // 没生成出来就把后端的原话摆出来（这一页读不出正文 / 模型没给出可用问题），
+    // 不假装成功，也不自己换一套说法（no-rootless-tree）
+    if (!res.data?.generated) setRegenNote(res.data?.message ?? '这一页没能读出可提问的正文。');
+  }, [siteId]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -166,17 +192,55 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
             </div>
 
             <div>
-              <div style={{ fontSize: 13, marginBottom: 4 }}>开场问题题库</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <div style={{ fontSize: 13 }}>开场问题题库</div>
+                {/* 来源标签：自动填的东西不能是黑箱，用户得看得出这几句是谁写的 */}
+                <span
+                  style={{
+                    fontSize: 10.5, padding: '2px 7px', borderRadius: 5, flexShrink: 0,
+                    fontFamily: 'var(--font-code, ui-monospace, monospace)',
+                    background: questionsSource === 'manual' ? 'var(--bg-tertiary)' : 'var(--semantic-info-soft)',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  {questionsSource === 'manual' ? '你自己写的' : '系统读正文生成'}
+                </span>
+                <button
+                  onClick={() => void regenerate()}
+                  disabled={regenerating || !!unsupportedReason}
+                  title="重新读一遍这一页的正文，写一批新的开场问题；会覆盖现在这几条"
+                  style={{
+                    marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                    height: 26, padding: '0 9px', borderRadius: 7,
+                    border: '1px solid var(--border-subtle)', background: 'transparent',
+                    color: 'var(--text-muted)', fontSize: 11.5,
+                    cursor: regenerating || unsupportedReason ? 'default' : 'pointer',
+                  }}
+                >
+                  {regenerating ? <MapSpinner size={12} /> : <RotateCw size={12} />}
+                  {regenerating ? '正在读正文…' : '重新生成'}
+                </button>
+              </div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.6 }}>
                 访客打开面板时可以一点即问。分享的时候还能从这个题库里给每条链接单独挑几条——
                 发给客户和发给同事，开场问题可以不一样。
+                {questionsSource === 'auto' && '这几条是开启提问时系统读你上传的正文写的，你改过之后就不再被自动覆盖。'}
               </div>
+              {regenNote && (
+                <div style={{ fontSize: 12, color: 'var(--accent-primary)', marginBottom: 8, lineHeight: 1.6 }}>
+                  {regenNote}
+                </div>
+              )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {questions.map((q, i) => (
                   <div key={q} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}>
                     <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>{q}</span>
                     <button
-                      onClick={() => setQuestions((prev) => prev.filter((_, idx) => idx !== i))}
+                      onClick={() => {
+                        setQuestions((prev) => prev.filter((_, idx) => idx !== i));
+                        setQuestionsSource('manual');
+                        setRegenNote(null);
+                      }}
                       aria-label={`删除「${q}」`}
                       style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}
                     >

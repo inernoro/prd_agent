@@ -147,6 +147,26 @@ public class HostedSite
     /// </summary>
     public List<string> AskSuggestedQuestions { get; set; } = new();
 
+    /// <summary>
+    /// 这批开场问题是谁写的。
+    ///
+    ///   null / "auto" —— 系统读正文自动生成的，内容一换就重算
+    ///   "manual"      —— owner 在提问设置里动过手，此后自动生成不再覆盖它
+    ///
+    /// 没有这个标记的话，owner 精心改的几句会在下次重新上传时被静默冲掉，
+    /// 而他根本不知道发生过（改动消失是最难查的一类缺陷）。
+    /// </summary>
+    public string? AskQuestionsSource { get; set; }
+
+    /// <summary>
+    /// 上一次自动生成是针对哪个 ContentVersion 算的。
+    ///
+    /// 与 ContentVersion 相等就不重跑——一次上传一次调用，正文没变不重算。
+    /// 读不出正文（纯视频包装站等）时也会盖上这个戳，否则每次有人打开页面
+    /// 都要为一个永远读不出正文的站点重试一遍。
+    /// </summary>
+    public DateTime? AskQuestionsGeneratedFor { get; set; }
+
     /// <summary>是否允许未登录访客提问。false = 只有登录用户能问（默认，防白嫖 token）</summary>
     public bool AskAllowAnonymous { get; set; }
 

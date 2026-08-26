@@ -26,6 +26,7 @@ public class WebPageAskController : ControllerBase
     private readonly IHostedSiteService _siteService;
     private readonly ISiteContentSnapshotService _snapshots;
     private readonly IAskQuotaService _quota;
+    private readonly IAskOpeningQuestionGenerator _askOpeners;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly MongoDbContext _db;
@@ -35,6 +36,7 @@ public class WebPageAskController : ControllerBase
         IHostedSiteService siteService,
         ISiteContentSnapshotService snapshots,
         IAskQuotaService quota,
+        IAskOpeningQuestionGenerator askOpeners,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         MongoDbContext db,
@@ -43,6 +45,7 @@ public class WebPageAskController : ControllerBase
         _siteService = siteService;
         _snapshots = snapshots;
         _quota = quota;
+        _askOpeners = askOpeners;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _db = db;
@@ -61,12 +64,20 @@ public class WebPageAskController : ControllerBase
         if (site == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
 
+        // owner 打开设置面板时兜一次：存量站点（本功能上线前就开着提问的）走不到
+        // 「刚开启」「刚重传」那两个钩子，题库会一直是空的。排队立刻返回，不拖慢这次读取。
+        _askOpeners.QueueEnsure(site);
+
         return Ok(ApiResponse<object>.Ok(new
         {
             siteId = site.Id,
             enabled = site.AskEnabled,
             welcome = site.AskWelcome,
             suggestedQuestions = site.AskSuggestedQuestions ?? new List<string>(),
+            // 这批题是系统读正文写的还是 owner 自己写的。自动填的值必须看得出来、可改、
+            // 说得出依据（minimal-user-input 第 3 条）——否则就是个黑箱。
+            questionsSource = site.AskQuestionsSource ?? "auto",
+            questionsGeneratedAt = site.AskQuestionsGeneratedFor,
             allowAnonymous = site.AskAllowAnonymous,
             dailyLimit = site.AskDailyLimit,
             updatedAt = site.AskConfigUpdatedAt,
@@ -121,6 +132,48 @@ public class WebPageAskController : ControllerBase
             suggestedQuestions = site.AskSuggestedQuestions,
             allowAnonymous = site.AskAllowAnonymous,
             dailyLimit = site.AskDailyLimit,
+        }));
+    }
+
+    /// <summary>
+    /// 重新按正文生成开场问题（仅 owner / editor）。
+    ///
+    /// 与后台那条自动路径的差别只有两点：它是 owner 明确要的，所以**同步等**（几秒钟，
+    /// 面板转个圈就好，比让他保存完再刷新猜有没有到位清楚得多）；而且它会先把
+    /// 「owner 动过手」的标记清掉——他点这个按钮就是在说「不要我那份了，重读一遍」。
+    /// </summary>
+    [HttpPost("{siteId}/ask/questions/regenerate")]
+    public async Task<IActionResult> RegenerateAskQuestions(string siteId)
+    {
+        var site = await _siteService.GetByIdAsync(siteId, this.GetRequiredUserId());
+        if (site == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+
+        var reason = AskAccessPolicy.UnsupportedReason(site.WrappedAssetType);
+        if (reason != null)
+            return BadRequest(ApiResponse<object>.Fail("ASK_UNSUPPORTED", reason));
+
+        // 清掉 manual 标记与版本戳，否则 NeedsGeneration 会判「这一版算过了」直接返回。
+        // 这两笔就是「重新生成」这个动作的全部语义，判据仍只有 NeedsGeneration 一处。
+        await _db.HostedSites.UpdateOneAsync(
+            s => s.Id == siteId,
+            Builders<HostedSite>.Update
+                .Set(s => s.AskQuestionsSource, "auto")
+                .Unset(s => s.AskQuestionsGeneratedFor));
+
+        // CancellationToken.None：owner 关掉抽屉不该取消这次生成（server-authority）。
+        // 真正的兜底是生成器内部那 45 秒超时，而不是这条 HTTP 连接活不活着。
+        var wrote = await _askOpeners.EnsureAsync(siteId, CancellationToken.None);
+        var latest = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            siteId,
+            // 没生成出来就如实说没有，不摆几句凑数的（no-rootless-tree）
+            generated = wrote,
+            suggestedQuestions = latest?.AskSuggestedQuestions ?? new List<string>(),
+            questionsSource = "auto",
+            message = wrote ? null : "这一页读不出可提问的正文，或模型没给出可用的问题。",
         }));
     }
 

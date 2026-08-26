@@ -132,6 +132,16 @@
 
 | 33 | 卡片形态角标缺两个数：PDF 页数、视频时长 | 设计稿屏 2 的角标是「24 页」「02:14」「1 / 24」，实现只有 ZIP 文件数与 HTML「单页」——PDF 页数要在上传时解析 PDF、视频时长要探媒体，后端目前都没有这两条链路。当前按「拿不到就不渲染角标」处理，不写「-- 页」 | 上传包装 PDF 时读页数落 `PdfPageCount`；包装视频时用媒体探针落 `VideoDurationSeconds`。幻灯片形态已在本轮解决（`IsSlideDeck` 上传时扫签名落库） |
 
+### 「向我提问」重做成形变坞 + 开场问题自动生成（2026-08-26，open）
+
+| # | 边界 | 影响 | 后续可补 |
+|---|------|------|----------|
+| 56 | 形变逐帧改的是 right/bottom/width/height，不是 transform | 这几个属性走布局而非合成层，低端机上四态切换可能掉帧。已用「形变途中关掉 backdrop-filter」压掉最贵的一项，但没做 FLIP（scale 模拟尺寸）改造——那要求内容层反向缩放，代价高于当前收益 | 真机上确认掉帧再改 FLIP |
+| 57 | 提问历史只有本次访问的轮次 | 刷新页面就重新开始；跨设备的历史没有做。面板底部已如实写明，不假装有 | 要做得先决定匿名访客的身份口径（IP？浏览器指纹？），那是另一件事 |
+| 58 | 开场问题自动生成的触发点有三处，都是 fire-and-forget | 开启提问 / 重新上传 / 分享页兜底。第三处意味着**存量站点的第一个访客看不到词条、下一个才有**——生成要几秒，不能让他等着 | 可以在上传完成就预生成（而不是等开启提问），代价是给永远不开提问的站点白烧钱 |
+| 59 | owner 的配置抽屉开着时，重新上传触发的重算会覆盖他正看着的那份 | 竞态窗口窄（他得正好在抽屉开着时另一端重传同一个站点），且他一保存就翻成 manual、之后不再被覆盖 | 抽屉可以订阅站点变更，或保存时带上读取到的版本做乐观锁 |
+| 60 | 生成失败（读不出正文 / 模型给不出可用问题）会盖版本戳，此后同一版正文不再重试 | 这是有意的：不盖戳的话，一个永远读不出正文的站点会被每个访客各排一次生成。代价是「模型这次抽风」也被当成结论 | owner 有「重新生成」按钮可以手动破戳；自动重试要先有失败原因分类（读不到 vs 模型抽风），否则重试的是同一个必然失败 |
+
 ### 已修复（closed）
 
 > 本节条目已全部结清，明细见文末「已结清（供回溯）」。
@@ -361,6 +371,8 @@ PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」�
 | 总览 | `prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs`、`prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs`、`prd-admin/src/pages/WebPagesPage.tsx`、`prd-admin/src/pages/ShareViewPage.tsx` |
 | 预览判据与取正文 | `prd-admin/src/components/web-hosting/previewHtml.ts`、`prd-admin/src/components/web-hosting/useSitePreviewHtml.ts`、`prd-admin/src/components/SitePreview.tsx`、`prd-admin/src/components/web-hosting/SitePreviewModal.tsx` |
 | 预览守卫 | `prd-admin/src/lib/__tests__/iframeSandboxTokens.test.ts`、`prd-admin/src/components/web-hosting/sitePreviewWiring.test.ts`、`prd-admin/src/pages/ShareViewPage.preview.test.ts` |
+| 提问坞（四态形变 / 几何守卫 / 共用对话流） | `prd-admin/src/components/web-hosting/ask/AskDock.tsx`、`askDockGeometry.ts`、`askDockGeometry.test.ts`、`AskThread.tsx`、`AskWidget.tsx`、`askDock.css` |
+| 开场问题自动生成（判据 / 生成器 / 接线守卫） | `prd-api/src/PrdAgent.Core/Models/AskOpeningQuestions.cs`、`prd-api/src/PrdAgent.Infrastructure/Services/AskOpeningQuestionGenerator.cs`、`prd-api/tests/PrdAgent.Tests/AskOpeningQuestionGeneratorTests.cs` |
 | 提问剩余额度（端点 / 前端 / 接线守卫） | `prd-api/src/PrdAgent.Infrastructure/Services/AskQuotaService.cs`、`prd-admin/src/components/web-hosting/ask/useAskQuota.ts`、`prd-admin/src/components/web-hosting/askQuotaPath.test.ts` |
 | 关联 | `prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs` |
 | 设计档位表（12 块画板，带画布 sha256） | `.claude/skills/design-replication/exports/web-hosting-v2/design-spec.{json,md}` |

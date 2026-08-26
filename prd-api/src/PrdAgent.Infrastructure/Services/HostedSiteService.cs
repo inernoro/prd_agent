@@ -19,6 +19,7 @@ public class HostedSiteService : IHostedSiteService
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
     private readonly IUploadProgressService _uploadProgress;
+    private readonly IAskOpeningQuestionGenerator _askOpeners;
     private readonly ILogger<HostedSiteService> _logger;
 
     // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
@@ -88,6 +89,7 @@ public class HostedSiteService : IHostedSiteService
         ITeamService teams,
         ITeamActivityService teamActivity,
         IUploadProgressService uploadProgress,
+        IAskOpeningQuestionGenerator askOpeners,
         ILogger<HostedSiteService> logger)
     {
         _db = db;
@@ -97,6 +99,7 @@ public class HostedSiteService : IHostedSiteService
         _teams = teams;
         _teamActivity = teamActivity;
         _uploadProgress = uploadProgress;
+        _askOpeners = askOpeners;
         _logger = logger;
     }
 
@@ -419,7 +422,13 @@ public class HostedSiteService : IHostedSiteService
             catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
         }
 
-        return AttachDerivedFields((await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!)!;
+        var reloaded = (await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!;
+
+        // 正文换了，旧那批开场问题就是对着旧内容写的。ContentVersion 变了 →
+        // NeedsGeneration 自然成立 → 重算一批。owner 手写过的（source=manual）不动。
+        _askOpeners.QueueEnsure(reloaded);
+
+        return AttachDerivedFields(reloaded)!;
     }
 
     // ─────────────────────────────────────────────
@@ -1458,6 +1467,11 @@ public class HostedSiteService : IHostedSiteService
             : null;
         var exposeAsk = !isCollection
             && AskAccessPolicy.ShouldExposeAskOnShare(sites.Count, askSite?.AskEnabled ?? false);
+
+        // 兜底一次：本功能上线之前就已经开着提问的站点，既不会走「刚开启」也不会走「刚重传」，
+        // 光靠那两个钩子它们永远是空题库。这里排一次，第一个访客看不到词条、下一个就有了。
+        // 不会按访客数烧钱：生成器自己按站点去重，且算过一版正文就盖戳不再重算。
+        if (exposeAsk && askSite != null) _askOpeners.QueueEnsure(askSite);
 
         return new ShareViewResult
         {
@@ -2942,6 +2956,11 @@ public class HostedSiteService : IHostedSiteService
         if (role != "owner" && role != "editor") return null;
 
         var questions = AskOpeningQuestions.Normalize(update.SuggestedQuestions);
+        // owner 提交的题库与库里那份不一样 = 他动过手，此后自动生成不再覆盖它。
+        // 相同就保持原样（多半是他只改了别的开关，把面板上原样回显的那份又提交了一遍）——
+        // 每次保存都判 manual 的话，自动生成第一次写完就永远不会再更新了。
+        var ownerEdited = !questions.SequenceEqual(site.AskSuggestedQuestions ?? new List<string>(), StringComparer.Ordinal);
+        var questionsSource = ownerEdited ? "manual" : site.AskQuestionsSource;
         var dailyLimit = update.DailyLimit < 0 ? 0 : update.DailyLimit;
         // 欢迎语要落库、而且随**每一次公开分享视图**返回，不设上限的话一段几 MB 的粘贴
         // 既能撑爆这次更新，也会让之后每个访客都多下载一遍。截断而不是拒绝：
@@ -2956,6 +2975,7 @@ public class HostedSiteService : IHostedSiteService
                 .Set(s => s.AskEnabled, update.Enabled)
                 .Set(s => s.AskWelcome, welcome)
                 .Set(s => s.AskSuggestedQuestions, questions)
+                .Set(s => s.AskQuestionsSource, questionsSource)
                 .Set(s => s.AskAllowAnonymous, update.AllowAnonymous)
                 .Set(s => s.AskDailyLimit, dailyLimit)
                 .Set(s => s.AskConfigUpdatedAt, DateTime.UtcNow)
@@ -2966,10 +2986,16 @@ public class HostedSiteService : IHostedSiteService
         site.AskEnabled = update.Enabled;
         site.AskWelcome = welcome;
         site.AskSuggestedQuestions = questions;
+        site.AskQuestionsSource = questionsSource;
         site.AskAllowAnonymous = update.AllowAnonymous;
         site.AskDailyLimit = dailyLimit;
         site.AskConfigUpdatedAt = DateTime.UtcNow;
         site.AskConfigUpdatedBy = userId;
+
+        // 打开提问的那一刻才排生成：AskEnabled 默认关闭，给每个上传都跑一遍模型是纯浪费。
+        // 排队立刻返回，owner 不用为这几句题多等；他下次打开设置面板就能看见。
+        _askOpeners.QueueEnsure(site);
+
         return AttachDerivedFields(site);
     }
 
