@@ -8648,10 +8648,20 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
 // 而且平台删除要求先清模型引用，没有这个端点，那条路径根本走不通。
 app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
 {
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    var filter = TenantAccess.Filter(http, sourceFilter);
     var doc = await gwModels.Find(filter).FirstOrDefaultAsync();
+    // MAP 遗留模型清理：理由同 pools 的 MAP 分支——平台删除的阻挡清单会数 MAP 的 llmmodels，
+    // 不给一条能扫掉它们的路，上游就永远删不动（MAP 侧写接口已退场）。
+    var isMapLegacy = false;
     if (doc is null)
-        return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型；MAP 来源模型请先认领"), jsonOptions, 409);
+    {
+        if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+            doc = await models.Find(sourceFilter).FirstOrDefaultAsync();
+        if (doc is null)
+            return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型；MAP 来源模型请先认领"), jsonOptions, 409);
+        isMapLegacy = true;
+    }
 
     var blockers = await CollectModelDeleteBlockersAsync(
         http, doc, gwModelPools, modelGroups, gwModelOfferings, gwLogicalModels, internalTenantId);
@@ -8671,12 +8681,13 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
             409);
     }
 
-    await gwModels.DeleteOneAsync(filter);
+    if (isMapLegacy) await models.DeleteOneAsync(sourceFilter);
+    else await gwModels.DeleteOneAsync(filter);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
         action: "model.delete",
-        targetType: "llmgw_model",
+        targetType: isMapLegacy ? "map_llm_model" : "llmgw_model",
         targetId: id,
         targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
         success: true,
@@ -8685,7 +8696,7 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
         {
             { "modelName", ToBsonAuditValue(doc.AsNullableString("ModelName")) },
             { "platformId", ToBsonAuditValue(doc.AsNullableString("PlatformId")) },
-            { "authority", "llm_gateway" },
+            { "authority", isMapLegacy ? "map" : "llm_gateway" },
         });
     return Json(ApiEnvelope<ModelDeleteBlockers>.Ok(new ModelDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -9541,10 +9552,26 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
 //   - 还有 appCaller 绑着它    → 那些调用方会失去路由目标
 app.MapDelete("/gw/pools/{id}", async (HttpContext http, string id) =>
 {
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    var filter = TenantAccess.Filter(http, sourceFilter);
     var doc = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+    // MAP 遗留池清理：GW 里没有这条，就去 MAP 的 model_groups 找。
+    //
+    // 为什么必须能删：平台/模型的删除阻挡清单**会数** MAP 侧的引用
+    //（CollectPlatformDeleteBlockersAsync / CollectModelDeleteBlockersAsync 都扫 modelGroups），
+    // 但删除历来只写 GW 集合。于是出现「看得见、清不掉」——网关报着一串 MAP 遗留池挡路，
+    // 而网关自己没有任何端点能扫掉它们；MAP 那边的模型管理写接口又已整体退场（410）。
+    // 那不是保护，是死锁：debris 只能一直堆着，上游永远删不干净。
+    // 补这条 MAP 分支，等于让「谁数得出来，谁就扫得掉」重新成立。
+    var isMapLegacy = false;
     if (doc is null)
-        return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型池；MAP 来源请先认领"), jsonOptions, 409);
+    {
+        if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+            doc = await modelGroups.Find(sourceFilter).FirstOrDefaultAsync();
+        if (doc is null)
+            return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型池；MAP 来源请先认领"), jsonOptions, 409);
+        isMapLegacy = true;
+    }
 
     var blockers = new PoolDeleteBlockers
     {
@@ -9569,17 +9596,21 @@ app.MapDelete("/gw/pools/{id}", async (HttpContext http, string id) =>
         return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("POOL_IN_USE", string.Join("；", parts), blockers), jsonOptions, 409);
     }
 
-    await gwModelPools.DeleteOneAsync(filter);
+    if (isMapLegacy) await modelGroups.DeleteOneAsync(sourceFilter);
+    else await gwModelPools.DeleteOneAsync(filter);
     await WriteOperationAuditAsync(
         operationAudits, http,
-        action: "pool.delete", targetType: "llmgw_model_pool", targetId: id,
+        action: "pool.delete",
+        targetType: isMapLegacy ? "map_model_group" : "llmgw_model_pool",
+        targetId: id,
         targetName: doc.AsNullableString("Name"), success: true, reason: null,
         changes: new BsonDocument
         {
             { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
             { "modelType", ToBsonAuditValue(doc.AsNullableString("ModelType")) },
             { "memberCount", doc.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray.Count : 0 },
-            { "authority", "llm_gateway" },
+            // 审计必须能分清扫的是哪一侧：MAP 遗留池删掉就再也回不来（MAP 写接口已退场）
+            { "authority", isMapLegacy ? "map" : "llm_gateway" },
         });
     return Json(ApiEnvelope<PoolDeleteBlockers>.Ok(new PoolDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -10474,9 +10505,18 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
     if (IsManagedAppendOnlyPool(pool))
     {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "APPEND_ONLY_POOL",
-            "平台托管默认池不允许删除成员；如需特殊化，请创建专用模型池。"), jsonOptions, 409);
+        // append-only 是为了防「手滑摘掉一个还在服务的成员」，不是为了把**指向已删上游的死成员**钉死。
+        // 后者是纯 debris：那条上游没了，成员按 (modelId, platformId) 永远解析不到，
+        // 留着只会让平台删除的阻挡清单一直挂着一条谁也清不掉的引用（本轮就是这么卡住的）。
+        // 所以只放开这一种：目标成员的 platformId 在 GW 与 MAP 两侧都已不存在。
+        var danglingOnly = await IsDanglingPoolMemberAsync(
+            gwPlatforms, platforms, http, pool, normalizedModelId, normalizedPlatformId, internalTenantId);
+        if (!danglingOnly)
+        {
+            return Json(ApiEnvelope<PoolItem>.Fail(
+                "APPEND_ONLY_POOL",
+                "平台托管默认池不允许删除成员；如需特殊化，请创建专用模型池。"), jsonOptions, 409);
+        }
     }
 
     var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
@@ -12592,6 +12632,46 @@ static bool ModelHasParameterCapability(BsonDocument modelDoc)
         .Where(x => x.IsBsonDocument)
         .Select(x => x.AsBsonDocument.GetStringOrEmpty("Type"))
         .Any(type => type.StartsWith("parameter:", StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>
+/// 这条池成员是不是「死成员」——它挂的 platformId 在 GW 与 MAP 两侧都已经不存在了。
+///
+/// 池成员按 (ModelId, PlatformId) 定位，上游一删，成员就再也解析不到任何东西；
+/// 它只会继续出现在平台/模型删除的阻挡清单里，把清理链路整个卡死。
+/// 判定刻意从严：成员必须真实存在、必须带得出 platformId，且两侧都查不到那条上游，才算 dangling；
+/// 任何一条查得到、或者 platformId 是空的，一律当活成员保护住（宁可拒绝，不可误删活的）。
+/// </summary>
+static async Task<bool> IsDanglingPoolMemberAsync(
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> mapPlatforms,
+    HttpContext http,
+    BsonDocument pool,
+    string modelId,
+    string platformId,
+    string internalTenantId)
+{
+    var membersValue = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
+    var targets = membersValue
+        .Where(x => x.IsBsonDocument)
+        .Select(x => x.AsBsonDocument)
+        .Where(m => string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
+                    && (platformId.Length == 0 || string.Equals(m.GetStringOrEmpty("PlatformId"), platformId, StringComparison.Ordinal)))
+        .ToList();
+    if (targets.Count == 0) return false;
+
+    var fb = Builders<BsonDocument>.Filter;
+    var isInternal = TenantAccess.GetRequired(http).TenantId == internalTenantId;
+    foreach (var member in targets)
+    {
+        var memberPlatformId = member.GetStringOrEmpty("PlatformId");
+        if (string.IsNullOrWhiteSpace(memberPlatformId)) return false;
+
+        var gwHit = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", memberPlatformId))).AnyAsync();
+        if (gwHit) return false;
+        if (isInternal && await mapPlatforms.Find(fb.Eq("_id", memberPlatformId)).AnyAsync()) return false;
+    }
+    return true;
 }
 
 static bool IsManagedAppendOnlyPool(BsonDocument pool)
