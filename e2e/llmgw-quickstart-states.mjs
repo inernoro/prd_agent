@@ -17,8 +17,9 @@
 //      console-api 会 400；库里真落进单边配置，serving 启动自检会拒绝启动。
 //      断言看的是浏览器真实发出的 PUT body，不是页面上的提示文案。
 //      月预算留空时**两个都不许出现**——这正是「留空即不限」最容易写错的地方。
-//   3. **负责人默认就是当前登录的人。** 不让用户在成员列表里硬选；断言默认值
-//      直接落到提交体的 owner 上。
+//   3. **密钥归团队，不归个人。** 提交体里必须有 teamId、必须**没有** owner——
+//      「负责人」这个概念已经从本页移除，谁点的创建由服务端记进审计。
+//      断言看的是真实提交体，不是页面上有没有那个控件。
 //   4. **成功也要留下 requestId。** 失败态有归因链接，成功态如果只显示密钥，
 //      这次试跑就没有任何可回查的凭据（断头验收）。断言成功条里有 requestId 深链。
 //   5. **失败归因走 error.code，不走文案。** 三环着色随码变化：坏在第 N 环，
@@ -166,8 +167,8 @@ check('主行动贴着创建卡右边缘', await page.evaluate(() => {
   if (b.width > c.width * 0.5) return 'full-width';
   return Math.abs((c.right - b.right)) <= 40 ? 'right' : 'not-right';
 }), 'right');
-check('负责人默认是当前登录的人', (await page.locator('.lg-qs-owner-line strong').innerText()).trim(), '周越（你）');
-check('负责人默认不展开成员列表', await page.locator('.lg-qs-owner-list').count(), 0);
+check('归属团队默认选中当前用户所在团队', await page.locator('.lg-qs-team-list button.is-active').innerText(), '核心平台组');
+check('创建屏不出现任何个人归属控件', await page.locator('.lg-qs-owner-line, .lg-qs-owner-list').count(), 0);
 
 // 月预算派生：极小额度时预占上限必须夹回月预算，否则后端拒收（预占 > 月预算）。
 await page.getByLabel('月预算（美元）').fill('0.3');
@@ -182,7 +183,10 @@ posted.length = 0;
 await create(page).click();
 await page.waitForTimeout(2400);
 check('三个写请求与顺序', posted.map((item) => `${item.method} ${item.api}`), ['POST /app-callers', 'PUT /app-callers/ac-new', 'POST /service-keys']);
-check('治理写入负责人与成对预算', posted.find((item) => item.method === 'PUT')?.body, { owner: 'zhou', monthlyBudgetUsd: 200, budgetReservationUsd: 2 });
+check('治理只写成对预算，不写个人归属', posted.find((item) => item.method === 'PUT')?.body, { monthlyBudgetUsd: 200, budgetReservationUsd: 2 });
+check('密钥归属团队', posted.find((item) => item.api === '/service-keys')?.body?.teamId, 'team-1');
+check('调用用途也登记在同一个团队下', posted.find((item) => item.api === '/app-callers')?.body?.teamId, 'team-1');
+check('提交体里不存在 owner 字段', posted.some((item) => item.body && 'owner' in item.body), false);
 
 // ── 3) 产物屏：表单让位，密钥 + 地址 + 单个复制区，成功也留 requestId ────
 check('产物屏不再有表单决定块', await page.locator('.lg-qs-decision').count(), 0);
@@ -209,13 +213,13 @@ check('成功态留下 requestId 回查深链', await page.locator(`.lg-test-res
 check('横向不滚动', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
 await page.close();
 
-// ── 4) 月预算留空 = 不限：两个预算字段都不许出现在提交体里 ───────────────
+// ── 4) 月预算留空 = 不限：连治理写入本身都不该发生 ─────────────────────
 gatewayMode = 'pass';
 page = await openQuickstart();
 posted.length = 0;
 await create(page).click();
 await page.waitForTimeout(2400);
-check('留空月预算时只写负责人', posted.find((item) => item.method === 'PUT')?.body, { owner: 'zhou' });
+check('留空月预算时不发治理写入', posted.map((item) => `${item.method} ${item.api}`), ['POST /app-callers', 'POST /service-keys']);
 await page.close();
 
 // ── 5) 失败：调用用途没绑模型池（最高频的一类）──────────────────────

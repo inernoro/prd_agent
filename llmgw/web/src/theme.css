@@ -2868,18 +2868,63 @@ a:focus-visible {
    主行动钉在右下角（向导式的「下一步」位置），视线读到底就落在它上面。 */
 .lg-qs-create {
   width: 100%;
-  max-width: 1080px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-/* 月预算与负责人并排：两个都是「一句话就能定」的决定，各占半屏比上下堆更好扫。 */
+/* 月预算与归属团队并排：两个都是「一句话就能定」的决定，各占半屏比上下堆更好扫。 */
 .lg-qs-decision-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 24px;
   align-items: start;
+}
+
+/* 归属团队：团队通常就两三个，按内容排成一行行的可选项，选中态整块高亮。 */
+.lg-qs-team-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.lg-qs-team-list > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lg-qs-team-list > button:hover:not(:disabled),
+.lg-qs-team-list > button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.lg-qs-team-list > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.lg-qs-team-list > button.is-active .lg-qs-radio {
+  border-color: var(--accent);
+  border-width: 5px;
+}
+
+.lg-qs-team-list > button > strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-body);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 主行动区：说明句靠左、按钮靠右下，中间用一条分隔线与决定区断开。 */
@@ -2965,7 +3010,7 @@ a:focus-visible {
 /* 接入方式：宽屏横铺三列，各自成卡；窄屏由下面的媒体查询退回竖排。 */
 .lg-qs-preset-list {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 12px;
   align-items: stretch;
 }
@@ -3061,70 +3106,6 @@ a:focus-visible {
 
 .lg-qs-note.is-bad {
   color: var(--err);
-}
-
-.lg-qs-owner-line,
-.lg-qs-owner-list > button {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  text-align: left;
-}
-
-.lg-qs-owner-line > span:last-child,
-.lg-qs-owner-list > button > span:last-child {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.lg-qs-owner-line strong,
-.lg-qs-owner-list strong {
-  font-size: var(--fs-body);
-  font-weight: 650;
-}
-
-.lg-qs-owner-line small,
-.lg-qs-owner-list small {
-  color: var(--text-muted);
-  font-size: var(--fs-caption);
-}
-
-.lg-qs-owner-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.lg-qs-owner-list > button {
-  cursor: pointer;
-}
-
-.lg-qs-owner-list > button:hover,
-.lg-qs-owner-list > button.is-active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.lg-qs-avatar {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--fs-caption);
-  font-weight: 700;
 }
 
 .lg-qs-primary {
@@ -3527,7 +3508,7 @@ a:focus-visible {
 @media (max-width: 760px) {
   .lg-qs-preset-list,
   .lg-qs-decision-row,
-  .lg-qs-owner-list {
+  .lg-qs-team-list {
     grid-template-columns: minmax(0, 1fr);
   }
 

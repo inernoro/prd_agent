@@ -178,9 +178,6 @@ export function QuickstartPage() {
   // 月预算是本页唯一要用户想的数字；单次预占上限由它派生（成对约束见 budgetPair）。
   const [budgetUsd, setBudgetUsd] = useState('');
   const [holdCapUsd, setHoldCapUsd] = useState('');
-  // 负责人默认就是当前登录的人，不让用户在成员列表里硬选；要改再展开挑。
-  const [ownerUserId, setOwnerUserId] = useState('');
-  const [ownerPickerOpen, setOwnerPickerOpen] = useState(false);
 
   const selectedProtocol = protocolDefinition(protocol);
   const selectedClient = CLIENT_PRESETS.find((item) => item.id === clientPreset) ?? CLIENT_PRESETS[0];
@@ -188,9 +185,6 @@ export function QuickstartPage() {
   const hasClientTab = (bundle?.clientPreset ?? clientPreset) !== 'api';
   const activeTeams = organization?.teams.filter((team) => team.status === 'active') ?? [];
   const selectedTeam = activeTeams.find((team) => team.id === teamId);
-  const activeMembers = organization?.members.filter((member) => member.status === 'active') ?? [];
-  const selectedMember = activeMembers.find((member) => member.userId === ownerUserId) ?? null;
-  const ownerLabel = memberLabel(selectedMember) || user?.displayName || user?.username || '未指定';
   const budgetPair = deriveBudgetPair(budgetUsd, holdCapUsd);
   const identityLocked = Boolean(bundle) || creatingStage !== null;
 
@@ -205,16 +199,14 @@ export function QuickstartPage() {
         return;
       }
       setOrganization(response.data);
-      const firstTeam = response.data.teams.find((team) => team.status === 'active');
-      // 负责人默认取「当前登录的这个人」，取不到（联邦账号还没进成员表）才留空，
-      // 留空时提交 owner 用会话里的显示名兜底——不编造一个别人的名字。
+      const activeTeamList = response.data.teams.filter((team) => team.status === 'active');
+      const firstTeam = activeTeamList[0];
+      // 密钥归团队，不归个人。默认团队取「当前登录的人所在的那个」——他多半就是要给
+      // 自己团队开 key；取不到（联邦账号还没进成员表）才退回租户的第一个活跃团队。
       const me = response.data.members.find((member) => member.status === 'active'
         && member.username && member.username === currentUsername);
-      if (me) {
-        setOwnerUserId((current) => current || me.userId);
-        setTeamId((current) => current || me.teamIds.find((id) => id) || firstTeam?.id || '');
-      }
-      if (firstTeam) setTeamId((current) => current || firstTeam.id);
+      const myTeam = me?.teamIds.find((id) => activeTeamList.some((team) => team.id === id));
+      if (myTeam || firstTeam) setTeamId((current) => current || myTeam || firstTeam.id);
       const suggestedClient = normalizeClientCode(response.data.tenant?.slug || 'my-agent');
       setClientCode((current) => current === 'my-agent' ? suggestedClient : current);
       setAppCallerCode((current) => current === 'my-agent.quickstart::chat' ? `${suggestedClient}.quickstart::chat` : current);
@@ -337,22 +329,23 @@ export function QuickstartPage() {
   };
 
   /**
-   * 把负责人与预算写到刚登记的 appCaller 上；返回 null 表示成功，否则返回要展示的错误。
+   * 把预算写到刚登记的 appCaller 上；返回 null 表示成功，否则返回要展示的错误。
+   *
+   * 这里**不写任何个人归属**：密钥的归属是团队（`teamId`），谁点的创建由服务端
+   * 自己记进审计（`createdByUsername`），不需要也不应该让用户挑一个「负责人」。
    *
    * 预算必须成对提交：只给月预算而不给单次预占上限，console-api 会 400
    * （`ValidateBudgetConfiguration`），而库里真出现单边配置会让 serving 启动自检直接抛错。
    * 所以派生值由 `deriveBudgetPair` 统一算，且只在两个都成立时才进请求体。
    */
   const applyGovernance = async (appCallerId: string) => {
-    const ownerValue = memberOwnerValue(selectedMember) || (user?.username ?? '').trim();
-    const hasBudget = budgetPair.monthly !== null && budgetPair.hold !== null;
-    if (!ownerValue && !hasBudget) return null;
+    if (budgetPair.monthly === null || budgetPair.hold === null) return null;
     const response = await updateGatewayAppCaller(appCallerId, {
-      ...(ownerValue ? { owner: ownerValue } : {}),
-      ...(hasBudget ? { monthlyBudgetUsd: budgetPair.monthly!, budgetReservationUsd: budgetPair.hold! } : {}),
+      monthlyBudgetUsd: budgetPair.monthly,
+      budgetReservationUsd: budgetPair.hold,
     });
     if (response.success) return null;
-    return `调用用途已登记，但${hasBudget ? '预算' : '负责人'}没写上：${response.error?.message || '未知错误'}。密钥尚未签发，改完再点一次即可。`;
+    return `调用用途已登记，但预算没写上：${response.error?.message || '未知错误'}。密钥尚未签发，改完再点一次即可。`;
   };
 
   const checkRealRoute = async (target = bundle) => {
@@ -558,18 +551,6 @@ export function QuickstartPage() {
     setTestResult(null);
   };
 
-  /**
-   * 换负责人时顺带确定团队：成员可能属于 0 个或多个团队，所以不是无脑覆盖——
-   * 当前团队已经在这个人名下就保持不动，否则取他的第一个团队；一个都没有就留着
-   * 原来的选择，让高级设置里的团队下拉继续做主。
-   */
-  const applyOwner = (member: { userId: string; teamIds: string[] }) => {
-    setOwnerUserId(member.userId);
-    setOwnerPickerOpen(false);
-    const usable = member.teamIds.filter((id) => activeTeams.some((team) => team.id === id));
-    if (usable.length === 0) return;
-    setTeamId((current) => usable.includes(current) ? current : usable[0]);
-  };
 
   // 页面只有一条主线，五个状态由真实数据推出来，不额外存一个会和事实打架的 phase 变量。
   const phase: 'idle' | 'issuing' | 'issued' | 'verifying' | 'failed' = creatingStage !== null
@@ -589,7 +570,7 @@ export function QuickstartPage() {
   // 两者不同时占版面，就不会出现「左右一起变」——这是本页改版要治的核心问题。
   const onCreateScreen = phase === 'idle' || phase === 'issuing';
   const ribbonText = bundle
-    ? `已按「${selectedClient.label}」签发 · ${ownerLabel}${selectedTeam ? ` · ${selectedTeam.name}` : ''} · ${budgetPair.monthly !== null ? `${budgetPair.monthly} USD/月` : '预算不限'}`
+    ? `已按「${selectedClient.label}」签发 · 团队 ${selectedTeam?.name ?? '未指定'} · ${budgetPair.monthly !== null ? `${budgetPair.monthly} USD/月` : '预算不限'}`
     : '';
 
   return (
@@ -680,38 +661,30 @@ export function QuickstartPage() {
 
                   <div className="lg-qs-decision">
                     <div className="lg-qs-decision-head">
-                      <strong>负责人</strong>
-                      {canCreateAccess && activeMembers.length > 1
-                        ? <button type="button" className="lg-text-link" onClick={() => setOwnerPickerOpen((current) => !current)}>{ownerPickerOpen ? '收起' : '换一个人'}</button>
-                        : null}
+                      <strong>归属团队</strong>
+                      <small>密钥与预算都记在团队名下</small>
                     </div>
-                    {/* 展开挑人时收起这一行：否则当前负责人会在同一屏出现两次。 */}
-                    {ownerPickerOpen ? null : (
-                    <div className="lg-qs-owner-line">
-                      <span className="lg-qs-avatar" aria-hidden="true">{initialsOf(ownerLabel)}</span>
-                      <span>
-                        <strong>{ownerLabel}{selectedMember && selectedMember.username === currentUsername ? '（你）' : ''}</strong>
-                        <small>{selectedTeam ? `密钥与预算记在「${selectedTeam.name}」名下` : '尚未确定团队，可在高级设置里选'}</small>
-                      </span>
+                    {/*
+                      密钥归团队，不归个人：这里只让人选团队，不再挑「负责人」。
+                      谁点的创建由服务端记进审计（createdByUsername），不是用户要填的东西。
+                      只有一个团队时也照样显示——用户要看得见这把 key 会落到哪儿。
+                    */}
+                    <div className="lg-qs-team-list" role="radiogroup" aria-label="归属团队">
+                      {activeTeams.map((team) => (
+                        <button
+                          key={team.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={team.id === teamId}
+                          className={team.id === teamId ? 'is-active' : ''}
+                          disabled={!canCreateAccess || identityLocked}
+                          onClick={() => setTeamId(team.id)}
+                        >
+                          <span className="lg-qs-radio" aria-hidden="true" />
+                          <strong>{team.name}</strong>
+                        </button>
+                      ))}
                     </div>
-                    )}
-                    {ownerPickerOpen ? (
-                      <div className="lg-qs-owner-list" role="radiogroup" aria-label="负责人">
-                        {activeMembers.map((member) => (
-                          <button
-                            key={member.userId}
-                            type="button"
-                            role="radio"
-                            aria-checked={member.userId === ownerUserId}
-                            className={member.userId === ownerUserId ? 'is-active' : ''}
-                            onClick={() => applyOwner(member)}
-                          >
-                            <span className="lg-qs-avatar" aria-hidden="true">{initialsOf(memberLabel(member))}</span>
-                            <span><strong>{memberLabel(member)}</strong><small>{member.role}</small></span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
                   </div>
                   </div>
 
@@ -727,12 +700,6 @@ export function QuickstartPage() {
                           ))}
                         </div>
                       </div>
-                      <label style={labelStyle}>团队
-                        <select value={teamId} disabled={!canCreateAccess || identityLocked} onChange={(event) => setTeamId(event.target.value)} style={inputStyle}>
-                          <option value="">选择团队</option>
-                          {activeTeams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
-                        </select>
-                      </label>
                       <Field label="单次预占上限（USD，留空按月预算派生）" value={holdCapUsd} onChange={setHoldCapUsd} placeholder="自动" disabled={!canCreateAccess} />
                       <Field label={`appCallerCode（以 ::${requestType} 结尾）`} value={appCallerCode} onChange={setAppCallerCode} placeholder={`my-agent.quickstart::${requestType}`} disabled={!canCreateAccess || identityLocked} />
                       <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || identityLocked} />
@@ -945,28 +912,6 @@ function requestTypeLabel(requestType: RequestType) {
   return requestType === 'vision' ? '图片理解' : '文字对话';
 }
 
-type OrganizationMember = OrganizationData['members'][number];
-
-function memberLabel(member: OrganizationMember | null) {
-  if (!member) return '';
-  return (member.displayName || member.username || '').trim();
-}
-
-/** 写进 appCaller.owner 的值：优先用户名（稳定标识），显示名只是兜底。 */
-function memberOwnerValue(member: OrganizationMember | null) {
-  if (!member) return '';
-  return (member.username || member.displayName || '').trim();
-}
-
-function initialsOf(label: string) {
-  const trimmed = label.trim();
-  if (!trimmed) return '?';
-  if (/^[\x20-\x7e]+$/.test(trimmed)) {
-    const parts = trimmed.split(/[\s._-]+/).filter(Boolean);
-    return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : trimmed.slice(0, 2)).toUpperCase();
-  }
-  return trimmed.slice(0, 1);
-}
 
 type BudgetPair = { monthly: number | null; hold: number | null; error: string | null; holdNote: string };
 
