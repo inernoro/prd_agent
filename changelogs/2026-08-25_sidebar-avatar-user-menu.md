@@ -12,3 +12,5 @@
 | fix | prd-admin | Codex review 修复：展开态用户名按钮从 DropdownMenu.Trigger 退回普通 button 后丢了键盘激活（Enter/Space 不发 pointerdown），对键盘用户是死的；补 isMenuKeyboardActivation + onKeyDown |
 | refactor | prd-admin | AppShell 删掉自己那份 matchMedia 监听，改为把 useResolvedThemeMode 放进既有 effect 的 deps——「订阅系统深浅」只保留 hook 里这一份实现 |
 | test | prd-admin | 新增 4 条守卫：applyDocumentThemeMode 只许在共享 hook 与壳层里调用（防下一个独立页再抄错）、三页都走 hook、hook 与壳层的 deps 都含解析值、用户名按钮 pointer+keyboard 双通道；均跑过红绿闭环 |
+| fix | prd-admin | Codex review 二轮修复：选「随系统」在 Safari 14 之前的浏览器上直接抛（那些 MediaQueryList 只有 addListener，没有 addEventListener），整档功能用不了；新增 lib/mediaQuerySubscribe 共享订阅带老旧回退，watchSystemThemeChange 改走它 |
+| test | prd-admin | 新增 mediaQuerySubscribe 用例（6 例）：现代/老旧/两者皆无/SSR 四种环境的订阅与取消订阅行为，外加「老旧回退不许再抄第五份」棘轮与「随系统不自己 addEventListener」守卫；已跑红绿闭环 |

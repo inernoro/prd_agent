@@ -14,6 +14,8 @@ import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
+import { subscribeMediaQuery } from '@/lib/mediaQuerySubscribe';
+
 /**
  * 用户选的偏好。'system' 是偏好、不是最终值——落 DOM 前一律先过 resolveThemeMode()。
  * 存量用户存的是 'light' / 'dark'，仍然合法，不需要迁移。
@@ -40,11 +42,9 @@ export function resolveThemeMode(mode: MobileThemeMode): ResolvedThemeMode {
  * 返回取消订阅函数。
  */
 export function watchSystemThemeChange(onChange: () => void): () => void {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return () => {};
-  const query = window.matchMedia(SYSTEM_DARK_QUERY);
-  const handler = () => onChange();
-  query.addEventListener('change', handler);
-  return () => query.removeEventListener('change', handler);
+  // 走共享订阅：Safari 14 之前 MediaQueryList 只有 addListener，直接
+  // addEventListener 会当场抛，「随系统」这一档在那些浏览器上整个用不了。
+  return subscribeMediaQuery(SYSTEM_DARK_QUERY, onChange);
 }
 
 interface MobileThemeState {
