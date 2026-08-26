@@ -155,6 +155,10 @@ describe('nacos 脚本：真跑一遍', () => {
     exportExit?: number;
     /** 登录返回的 JSON。 */
     loginJson?: string;
+    usersLoginJson?: string;
+    usersLoginExit?: number;
+    legacyLoginJson?: string;
+    legacyLoginExit?: number;
     /** 导入接口返回的 body。 */
     importBody?: string;
     /** 导入接口的退出码。 */
@@ -194,10 +198,17 @@ describe('nacos 脚本：真跑一遍', () => {
         `printf '%s\\n' "$url" >> ${dir}/urls`,
         // 登录：body 走 stdin，顺手记下来证明口令没进 argv。
         'case "$url" in',
-        '  *auth/login*)',
+        // 两个登录端点**分开认**。原来一条 `*auth/login*` 把两者都吃掉，于是
+        // 「脚本打的是哪个端点」这件事根本没被测到——写死一个错的也照样绿
+        //（Codex review P1）。哪个端点给 token 由用例指定。
+        '  */v1/auth/users/login*)',
         `    cat >> ${dir}/posts`,
-        `    printf '%s' '${s.loginJson ?? '{"accessToken":"tok-123","tokenTtl":18000}'}'`,
-        '    exit 0 ;;',
+        `    printf '%s' '${s.usersLoginJson ?? (s.loginJson ?? '{"accessToken":"tok-123","tokenTtl":18000}')}'`,
+        `    exit ${s.usersLoginExit ?? 0} ;;`,
+        '  */v1/auth/login*)',
+        `    cat >> ${dir}/posts`,
+        `    printf '%s' '${s.legacyLoginJson ?? ''}'`,
+        `    exit ${s.legacyLoginExit ?? 0} ;;`,
         '  *health/readiness*)',
         `    echo OK; exit ${s.probeExit ?? 0} ;;`,
         '  *console/namespaces*)',
@@ -400,6 +411,62 @@ describe('nacos 脚本：真跑一遍', () => {
 
   describe('鉴权开着的时候', () => {
     const AUTH_ON = { NACOS_AUTH_ENABLE: 'true', NACOS_AUTH_PASSWORD: 'sup3r-secret' };
+
+  describe('nacos 登录端点：两个都试，别赌自己记得哪个版本用哪个', () => {
+    /**
+     * 2026-08-26 Codex review P1。nacos 换过登录端点的位置，`/v1/auth/users/login`
+     * 与 `/v1/auth/login` 在不同大版本上各自成立。写死一个，另一个版本上就 404 ——
+     * token 空、退 78，报的还只是「没拿到 accessToken」，看不出是端点错了，
+     * 于是**开了鉴权的那一整类 nacos 一次备份都做不了**。
+     *
+     * 上一版的假件用一条 `*auth/login*` 把两个端点都吃掉，所以「打的是哪个」
+     * 从来没被测到——写死一个错的也照样绿。现在两个端点分开认。
+     */
+    it('新端点给 token 时就用它，不再打旧端点', () => {
+      const r = run(buildNacosDumpScript(), {
+        env: AUTH_ON,
+        usersLoginJson: '{"accessToken":"tok-new","tokenTtl":18000}',
+      });
+      expect(r.code).toBe(0);
+      expect(r.urls.some((u) => u.includes('/v1/auth/users/login'))).toBe(true);
+      expect(r.urls.some((u) => u.includes('accessToken=tok-new'))).toBe(true);
+    });
+
+    it('新端点 404（旧版本）时回落到旧端点，照样能备', () => {
+      // 这一条就是这次 review 指的那个场景：只认新端点的实现在这里会整个失败。
+      const r = run(buildNacosDumpScript(), {
+        env: AUTH_ON,
+        usersLoginJson: '',
+        usersLoginExit: 22,
+        legacyLoginJson: '{"accessToken":"tok-legacy","tokenTtl":18000}',
+      });
+      expect(r.code, `不该失败：${r.stderr}`).toBe(0);
+      expect(r.urls.some((u) => u.includes('/v1/auth/login')), '必须回落到旧端点').toBe(true);
+      expect(r.urls.some((u) => u.includes('accessToken=tok-legacy'))).toBe(true);
+    });
+
+    it('两个端点都拿不到 token → 退 78，并把试过哪两个说出来', () => {
+      const r = run(buildNacosDumpScript(), {
+        env: AUTH_ON,
+        usersLoginJson: '',
+        usersLoginExit: 22,
+        legacyLoginJson: '{"message":"unknown user"}',
+      });
+      expect(r.code).toBe(78);
+      expect(r.stderr).toContain('/v1/auth/users/login');
+      expect(r.stderr).toContain('/v1/auth/login');
+    });
+
+    it('口令仍然不进 argv：两个端点的 body 都走 stdin', () => {
+      const r = run(buildNacosDumpScript(), {
+        env: AUTH_ON,
+        usersLoginJson: '',
+        usersLoginExit: 22,
+        legacyLoginJson: '{"accessToken":"tok-legacy"}',
+      });
+      expect(r.urls.some((u) => u.includes('password')), '口令不许出现在 URL 里').toBe(false);
+    });
+  });
 
     it('口令走 stdin，不进容器的进程列表', () => {
       // nats 那次的教训：`sh -c` 只挡住宿主那一侧，展开后的明文照样是进程 argv。

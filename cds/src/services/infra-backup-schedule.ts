@@ -1342,12 +1342,28 @@ const NACOS_CLIENT_LINES: readonly string[] = [
   '      echo "cds-backup: nacos 开了鉴权，容器 env 里却没有口令（找过 NACOS_AUTH_PASSWORD / NACOS_PASSWORD）" >&2',
   '      exit 78',
   '    fi',
-  // body 走 stdin（`--data-binary @-`），不进 argv：容器内 ps 看不到口令。
-  '    CDS_NACOS_TOKEN=$(printf \'username=%s&password=%s\' "$CDS_NACOS_USER" "$CDS_NACOS_PW"'
-    + ' | curl -fsS --data-binary @- "$CDS_NACOS_BASE/v1/auth/login" 2>/dev/null'
-    + ' | sed -n \'s/.*"accessToken":"\\([^"]*\\)".*/\\1/p\')',
+  // **两个登录端点都试。**
+  //
+  // nacos 换过位置：`/v1/auth/users/login` 与 `/v1/auth/login` 在不同大版本上
+  // 各自成立，写死哪一个都会在另一个版本上 404——而 404 之后 token 是空的，
+  // 于是「开了鉴权的 nacos 一次备份都做不了」，报的还只是「没拿到 accessToken」，
+  // 看不出是端点错了（Codex review P1）。
+  //
+  // 与其赌自己记得哪个版本用哪个，不如两个都打一次：先新后旧，谁给出 accessToken
+  // 就用谁。多一次失败请求的代价，远小于「整类部署静默备不了」。
+  // body 一律走 stdin（`--data-binary @-`），不进 argv：容器内 ps 看不到口令。
+  '    cds_nacos_login() {',
+  '      printf \'username=%s&password=%s\' "$CDS_NACOS_USER" "$CDS_NACOS_PW"'
+    + ' | curl -fsS --data-binary @- "$1" 2>/dev/null'
+    + ' | sed -n \'s/.*"accessToken":"\\([^"]*\\)".*/\\1/p\'',
+  '    }',
+  '    CDS_NACOS_TOKEN=$(cds_nacos_login "$CDS_NACOS_BASE/v1/auth/users/login")',
   '    if [ -z "$CDS_NACOS_TOKEN" ]; then',
-  '      echo "cds-backup: nacos 登录没拿到 accessToken（用户=$CDS_NACOS_USER），导不出配置" >&2',
+  '      CDS_NACOS_TOKEN=$(cds_nacos_login "$CDS_NACOS_BASE/v1/auth/login")',
+  '    fi',
+  '    if [ -z "$CDS_NACOS_TOKEN" ]; then',
+  '      echo "cds-backup: nacos 登录没拿到 accessToken（用户=$CDS_NACOS_USER，'
+    + '两个端点都试过了：/v1/auth/users/login 与 /v1/auth/login），导不出配置" >&2',
   '      exit 78',
   '    fi',
   '    CDS_NACOS_AUTH="&accessToken=$CDS_NACOS_TOKEN"',

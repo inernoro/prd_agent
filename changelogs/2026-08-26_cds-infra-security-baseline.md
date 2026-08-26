@@ -73,3 +73,5 @@
 | test | cds | rabbitmq 的 stderr 走向守卫改为两个标记都查（只查一个的话另一个漏写 >&2 会静默放行、写坏 definitions JSON）；真容器用例按实际积压分档断言，不写死单一标记 |
 | fix | cds | rabbitmq 的积压统计跨全部 vhost：原来 list_queues 不带 -p 只看默认 vhost，默认 vhost 空而消息在别处时会打出「什么都没漏」的假绿，而那些消息确实零备份 |
 | test | cds | 补 7 条跨 vhost 分档回归（含「默认空、别处有消息」这一档与带空格的 vhost 名），并把一条钉变量名的断言改成断行为契约 |
+| fix | cds | nacos 登录两个端点都试（/v1/auth/users/login 与 /v1/auth/login）：两者在不同大版本上各自成立，写死一个会让开了鉴权的那一整类实例一次备份都做不了，而报错只说「没拿到 accessToken」看不出是端点错了 |
+| test | cds | 两个登录端点在假件里分开认（原来一条 *auth/login* 把两者都吃掉，等于没测），补 4 条：新端点可用、新端点 404 回落旧端点、两个都不行时报清试过哪两个、口令仍不进 argv |
