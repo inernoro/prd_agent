@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Check, CheckCircle2, Copy, FileCode2, KeyRound, Play } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, ensurePoolTypes, getOrganization, getPoolTypes, updateGatewayAppCaller } from '@/lib/api';
+import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, ensurePoolTypes, getOrganization, getPools, getPoolTypes, updateGatewayAppCaller } from '@/lib/api';
 import type { OrganizationData } from '@/lib/types';
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
@@ -92,6 +92,21 @@ const CLIENT_PRESETS: Array<{
   { id: 'openclaw', label: 'OpenClaw', description: '生成可直接粘贴的 provider 配置。', clientCode: 'openclaw-agent', appCallerCode: 'openclaw.gateway::chat' },
 ];
 
+/**
+ * 用途预设：显示中文、取值是英文段。
+ *
+ * 不能让用户直接把中文用途当 appCallerCode 的一段——`toAppCallerSegment` 会把 CJK
+ * 全部替换掉，得到空串，于是「填了用途却仍然不合法」。这与 ServiceKeysPage 的
+ * FEATURE_PRESETS 同一套解法：预设给合法取值，自定义那档才让人填英文。
+ */
+const PURPOSE_PRESETS: Array<{ code: string; label: string }> = [
+  { code: 'desktop', label: '桌面客户端' },
+  { code: 'agent', label: 'Agent 调用' },
+  { code: 'backend', label: '后端服务' },
+  { code: 'batch', label: '批处理' },
+  { code: 'custom', label: '其他' },
+];
+
 const REQUEST_TYPES: Array<{ id: RequestType; label: string; description: string }> = [
   { id: 'chat', label: '文字对话', description: '发送普通文字消息，适合问答、总结和 Agent 推理。' },
   { id: 'vision', label: '图片理解', description: '发送一张内嵌测试图片，验证多模态请求与 vision 策略链。' },
@@ -154,6 +169,10 @@ export function QuickstartPage() {
   const [requestType, setRequestType] = useState<RequestType>('chat');
   const [baseUrl, setBaseUrl] = useState(resolveDefaultServingBaseUrl);
   const [appCallerCode, setAppCallerCode] = useState('my-agent.quickstart::chat');
+  // 用途是这一页唯一「系统无从得知」的业务命名：调用用途码由它派生，不选不许创建。
+  const [purpose, setPurpose] = useState('');
+  const [customPurpose, setCustomPurpose] = useState('');
+  const [appCallerCodeTouched, setAppCallerCodeTouched] = useState(false);
   const [clientCode, setClientCode] = useState('my-agent');
   const [environment, setEnvironment] = useState('test');
   const [teamId, setTeamId] = useState('');
@@ -173,6 +192,9 @@ export function QuickstartPage() {
   // code 是归因的唯一入口（serving 的 error.code），message 只做兜底展示。
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestId?: string; code?: string }
     | null>(null);
+  // 一键测试用的模型候选：只列该调用类型模型池里的成员，不让人随便填一个池外的模型。
+  const [poolModels, setPoolModels] = useState<string[]>([]);
+  const [testModel, setTestModel] = useState('auto');
   const [binding, setBinding] = useState(false);
   const [bindNotice, setBindNotice] = useState<string | null>(null);
   // 月预算是本页唯一要用户想的数字；单次预占上限由它派生（成对约束见 budgetPair）。
@@ -186,9 +208,29 @@ export function QuickstartPage() {
   const activeTeams = organization?.teams.filter((team) => team.status === 'active') ?? [];
   const selectedTeam = activeTeams.find((team) => team.id === teamId);
   const budgetPair = deriveBudgetPair(budgetUsd, holdCapUsd);
+  const purposeSegment = purpose === 'custom' ? toAppCallerSegment(customPurpose) : purpose;
+  // 高级设置里手改过 appCallerCode 就以手改的为准，不再被用途覆盖（推断值可覆盖、覆盖后不回弹）。
+  const derivedAppCallerCode = appCallerCodeTouched
+    ? appCallerCode
+    : `${toAppCallerSegment(clientCode) || 'my-agent'}.${purposeSegment || 'quickstart'}::${requestType}`;
+  const purposeReady = appCallerCodeTouched
+    ? isValidAppCaller(appCallerCode.trim(), requestType)
+    : purposeSegment.length > 0;
   const identityLocked = Boolean(bundle) || creatingStage !== null;
 
   const currentUsername = user?.username ?? '';
+
+  // 签发之后才拉：创建屏用不到，早拉一次纯属浪费。
+  useEffect(() => {
+    if (!bundle) return;
+    let active = true;
+    void getPools(bundle.requestType).then((response) => {
+      if (!active || !response.success) return;
+      const ids = response.data.items.flatMap((pool) => pool.models.map((model) => model.modelId));
+      setPoolModels([...new Set(ids)].filter(Boolean));
+    });
+    return () => { active = false; };
+  }, [bundle?.appCallerId, bundle?.requestType]);
   useEffect(() => {
     let active = true;
     void getOrganization().then((response) => {
@@ -221,7 +263,7 @@ export function QuickstartPage() {
     appCallerId: bundle?.appCallerId ?? '',
     protocol,
     baseUrl: baseUrl.replace(/\/$/, ''),
-    appCallerCode: bundle?.appCallerCode ?? (appCallerCode.trim() || 'my-agent.quickstart::chat'),
+    appCallerCode: bundle?.appCallerCode ?? (derivedAppCallerCode.trim() || 'my-agent.quickstart::chat'),
     requestType: bundle?.requestType ?? requestType,
     clientCode: bundle?.clientCode ?? (clientCode.trim() || 'my-agent'),
     environment: bundle?.environment ?? environment,
@@ -233,10 +275,10 @@ export function QuickstartPage() {
   const snippetMode: TestMode = testMode === 'real' && realRouteReady ? 'real' : 'safe';
   const snippets = useMemo(() => ({
     client: clientSetupSnippet(displayBundle),
-    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode),
+    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel),
     env: environmentSnippet(displayBundle),
     skill: agentSkillSnippet(displayBundle, snippetMode),
-  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode]);
+  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel]);
   const visibleSnippet = snippets[snippetTab === 'client' && !hasClientTab ? 'curl' : snippetTab];
 
   const copyText = async (name: string, value: string) => {
@@ -246,7 +288,7 @@ export function QuickstartPage() {
   };
 
   const createAccessBundle = async () => {
-    const normalizedCode = appCallerCode.trim();
+    const normalizedCode = derivedAppCallerCode.trim();
     const normalizedClient = clientCode.trim().toLowerCase();
     const normalizedBaseUrl = baseUrl.trim().replace(/\/$/, '');
     if (!teamId || !normalizedBaseUrl || !isValidAppCaller(normalizedCode, requestType) || !/^[a-z][a-z0-9._-]{1,79}$/.test(normalizedClient)) {
@@ -479,7 +521,7 @@ export function QuickstartPage() {
       const response = await fetch(new URL(definition.path, `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
         headers,
-        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId)),
+        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel)),
         credentials: 'omit',
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
@@ -565,7 +607,8 @@ export function QuickstartPage() {
   const diagnosis = phase === 'failed' && testResult ? diagnoseFailure(testResult.code, testResult.message) : null;
   const chain = diagnosis ? chainState(diagnosis.brokenLink) : [];
   const blockedByTeam = !organizationLoading && !organizationError && activeTeams.length === 0;
-  const issueDisabled = organizationLoading || creatingStage !== null || blockedByTeam || Boolean(budgetPair.error);
+  const issueDisabled = organizationLoading || creatingStage !== null || blockedByTeam
+    || Boolean(budgetPair.error) || !purposeReady || !teamId;
   // 创建屏与产物屏互斥：没有密钥时整屏只有一张创建卡，签出来之后整屏让给产物。
   // 两者不同时占版面，就不会出现「左右一起变」——这是本页改版要治的核心问题。
   const onCreateScreen = phase === 'idle' || phase === 'issuing';
@@ -614,7 +657,7 @@ export function QuickstartPage() {
                   </div>
                   <div className="lg-qs-issuing-bar"><i /></div>
                   <ol className="lg-qs-stages">
-                    <li className={creatingStage === 'app-caller' ? 'is-active' : 'is-done'}><strong>登记调用用途</strong><small>appCaller {appCallerCode}</small></li>
+                    <li className={creatingStage === 'app-caller' ? 'is-active' : 'is-done'}><strong>登记调用用途</strong><small>appCaller {derivedAppCallerCode}</small></li>
                     <li className={creatingStage === 'key' ? 'is-active' : ''}><strong>签发密钥</strong><small>{creatingStage === 'key' ? '正在写入密钥目录' : '等待上一步产物'}</small></li>
                   </ol>
                 </div>
@@ -642,6 +685,49 @@ export function QuickstartPage() {
                   </div>
 
                   <div className="lg-qs-decision-row">
+                  <div className="lg-qs-decision">
+                    <div className="lg-qs-decision-head"><strong>用途</strong><small>必选</small></div>
+                    <div className="lg-qs-type-row" role="radiogroup" aria-label="用途">
+                      {PURPOSE_PRESETS.map((item) => (
+                        <button
+                          key={item.code}
+                          type="button"
+                          role="radio"
+                          aria-checked={purpose === item.code}
+                          className={purpose === item.code ? 'is-active' : ''}
+                          disabled={!canCreateAccess || identityLocked}
+                          onClick={() => { setPurpose(item.code); setAppCallerCodeTouched(false); }}
+                        >{item.label}</button>
+                      ))}
+                    </div>
+                    {purpose === 'custom' ? (
+                      <input
+                        className="lg-qs-purpose-input"
+                        aria-label="自定义用途"
+                        placeholder="英文短横线，例如 weekly-report"
+                        value={customPurpose}
+                        disabled={!canCreateAccess || identityLocked}
+                        onChange={(event) => { setAppCallerCodeTouched(false); setCustomPurpose(event.target.value); }}
+                      />
+                    ) : null}
+                    <div className="lg-qs-type-row" role="radiogroup" aria-label="调用类型">
+                      {REQUEST_TYPES.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={requestType === item.id}
+                          className={requestType === item.id ? 'is-active' : ''}
+                          disabled={!canCreateAccess || identityLocked}
+                          onClick={() => changeRequestType(item.id)}
+                        >{item.label}</button>
+                      ))}
+                    </div>
+                    <small className={`lg-qs-note${purposeReady ? '' : ' is-bad'}`}>
+                      {purposeReady ? `调用用途码：${derivedAppCallerCode}` : '先选用途才能创建。'}
+                    </small>
+                  </div>
+
                   <div className="lg-qs-decision">
                     <div className="lg-qs-decision-head"><strong>月预算</strong><small>留空即不限</small></div>
                     <div className="lg-qs-budget">
@@ -690,18 +776,8 @@ export function QuickstartPage() {
 
                   <DetailsBlock title="高级设置（已有默认值）">
                     <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.section }}>
-                      <div style={{ gridColumn: '1 / -1' }}>
-                        <div style={labelStyle}>调用类型</div>
-                        <div className="lg-quickstart-request-types" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.normal, marginTop: GAP.tight }}>
-                          {REQUEST_TYPES.map((item) => (
-                            <button key={item.id} type="button" disabled={identityLocked} onClick={() => changeRequestType(item.id)} aria-pressed={requestType === item.id} className={requestType === item.id ? 'is-active' : ''}>
-                              <strong>{item.label}</strong><span>{item.description}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
                       <Field label="单次预占上限（USD，留空按月预算派生）" value={holdCapUsd} onChange={setHoldCapUsd} placeholder="自动" disabled={!canCreateAccess} />
-                      <Field label={`appCallerCode（以 ::${requestType} 结尾）`} value={appCallerCode} onChange={setAppCallerCode} placeholder={`my-agent.quickstart::${requestType}`} disabled={!canCreateAccess || identityLocked} />
+                      <Field label={`appCallerCode（以 ::${requestType} 结尾）`} value={derivedAppCallerCode} onChange={(next) => { setAppCallerCodeTouched(true); setAppCallerCode(next); }} placeholder={`my-agent.quickstart::${requestType}`} disabled={!canCreateAccess || identityLocked} />
                       <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || identityLocked} />
                       <label style={labelStyle}>环境
                         <select value={environment} disabled={!canCreateAccess || identityLocked} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
@@ -803,6 +879,15 @@ export function QuickstartPage() {
                   <code className="lg-qs-hero-value">{`${displayBundle.baseUrl}${selectedProtocol.path}`}</code>
                 </Card>
 
+                <Card style={CARD_BODY} className="lg-qs-hero is-caller">
+                  <div className="lg-qs-hero-head">
+                    <strong>调用用途</strong>
+                    <Button size="sm" variant="ghost" onClick={() => void copyText('app-caller', displayBundle.appCallerCode)}>{copied === 'app-caller' ? <Check size={13} /> : <Copy size={13} />}{copied === 'app-caller' ? '已复制' : '复制'}</Button>
+                  </div>
+                  <code className="lg-qs-hero-value">{displayBundle.appCallerCode}</code>
+                  <small className="lg-qs-hero-note">请求头 X-Gateway-App-Caller 用它。</small>
+                </Card>
+
                 <Card style={CARD_BODY} className="lg-qs-hero is-secret">
                   <div className="lg-qs-hero-head">
                     <strong>一次性密钥</strong>
@@ -810,11 +895,36 @@ export function QuickstartPage() {
                     <Button size="sm" onClick={() => void copyText('key', bundle.key)}>{copied === 'key' ? <Check size={14} /> : <Copy size={14} />}{copied === 'key' ? '已复制' : '复制密钥'}</Button>
                   </div>
                   <code className="lg-qs-hero-value lg-qs-secret-code">{bundle.key}</code>
-                  <small className="lg-qs-hero-note">离开或刷新即不可再取；只存在本页内存，不要进仓库、截图或日志。</small>
+                  <small className="lg-qs-hero-note">离开或刷新即不可再取；不要进仓库、截图或日志。</small>
                 </Card>
                 </div>
 
                 <Card style={CARD_BODY} className="lg-qs-snippet-card">
+                  {/*
+                    一键测试：类型是这把 key 的调用用途本身携带的（appCallerCode 以 ::chat / ::vision
+                    结尾，签发后不可改），所以这里只读展示；能选的是模型——且只列该类型模型池里的
+                    成员，不让人填一个池外模型（`llm-gateway.md`：可选模型必须来自获准的池）。
+                  */}
+                  <div className="lg-qs-testbar">
+                    <span className="lg-qs-testbar-type">{requestTypeLabel(displayBundle.requestType)}</span>
+                    <label>
+                      模型
+                      <select
+                        aria-label="测试模型"
+                        value={testModel}
+                        onChange={(event) => { setTestModel(event.target.value); setTestResult(null); }}
+                      >
+                        <option value="auto">auto（由模型池调度）</option>
+                        {poolModels.map((modelId) => <option key={modelId} value={modelId}>{modelId}</option>)}
+                      </select>
+                    </label>
+                    {canCreateAccess ? (
+                      <Button size="sm" variant="primary" disabled={testing} onClick={() => void runTest()}>
+                        <Play size={14} />{testing ? '正在执行' : '执行测试'}
+                      </Button>
+                    ) : null}
+                    <small>{poolModels.length === 0 ? '暂无池内成员，走 auto。' : `${poolModels.length} 个池内成员，cURL 跟着变。`}</small>
+                  </div>
                   <div className="lg-qs-snippet-head">
                     <div className="lg-snippet-tabs">
                       {hasClientTab ? <Button size="sm" variant={snippetTab === 'client' ? 'primary' : 'ghost'} onClick={() => setSnippetTab('client')}>{selectedClient.label}</Button> : null}
@@ -908,6 +1018,11 @@ function isValidAppCaller(value: string, requestType: RequestType) {
   return new RegExp(`^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+::${requestType}$`).test(value) && value.length <= 200;
 }
 
+/** 把一句人话用途压成 appCallerCode 里的一段（与 ServiceKeysPage 同一套写法）。 */
+function toAppCallerSegment(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+}
+
 function requestTypeLabel(requestType: RequestType) {
   return requestType === 'vision' ? '图片理解' : '文字对话';
 }
@@ -971,16 +1086,18 @@ function createRequestId() {
   return `quickstart-${suffix.slice(0, 24)}`;
 }
 
-function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string) {
+function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string, model = 'auto') {
+  // model=auto 表示交给模型池调度；选了具体成员就把它发出去，由网关按池规则校验。
+  const policy = model === 'auto' ? 'auto' : 'pool';
   if (protocol === 'native') return {
     appCallerCode,
     modelType: requestType,
-    requestBody: { messages: [{ role: 'user', content: requestType === 'vision' ? visionOpenAiContent() : 'Reply with OK' }] },
-    context: { requestId, sourceSystem: 'external', modelPolicy: 'auto' },
+    requestBody: { model, messages: [{ role: 'user', content: requestType === 'vision' ? visionOpenAiContent() : 'Reply with OK' }] },
+    context: { requestId, sourceSystem: 'external', modelPolicy: policy },
   };
-  if (protocol === 'claude') return { model: 'auto', model_policy: 'auto', max_tokens: 64, messages: [{ role: 'user', content: requestType === 'vision' ? visionClaudeContent() : 'Reply with OK' }] };
-  if (protocol === 'gemini') return { model_policy: 'auto', contents: [{ role: 'user', parts: requestType === 'vision' ? visionGeminiParts() : [{ text: 'Reply with OK' }] }] };
-  return { model: 'auto', model_policy: 'auto', messages: [{ role: 'user', content: requestType === 'vision' ? visionOpenAiContent() : 'Reply with OK' }], stream: false };
+  if (protocol === 'claude') return { model, model_policy: policy, max_tokens: 64, messages: [{ role: 'user', content: requestType === 'vision' ? visionClaudeContent() : 'Reply with OK' }] };
+  if (protocol === 'gemini') return { model, model_policy: policy, contents: [{ role: 'user', parts: requestType === 'vision' ? visionGeminiParts() : [{ text: 'Reply with OK' }] }] };
+  return { model, model_policy: policy, messages: [{ role: 'user', content: requestType === 'vision' ? visionOpenAiContent() : 'Reply with OK' }], stream: false };
 }
 
 function visionOpenAiContent() {
@@ -1217,14 +1334,14 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 - 401 时轮换密钥；403 时检查 team、appCaller、协议和 scope，禁止通过扩大到通配 key 绕过。`;
 }
 
-function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode) {
+function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode, model = 'auto') {
   const definition = protocolDefinition(protocol);
   const requestIdToken = '__LLMGW_REQUEST_ID__';
   const common = `-H "Authorization: Bearer \$LLMGW_API_KEY" \\
   -H "X-Gateway-Source: external" \\
   -H "X-Gateway-App-Caller: ${appCaller}" \\${mode === 'safe' ? '\n  -H "X-Gateway-Dry-Run: quickstart" \\' : ''}
   -H "X-Request-Id: \$REQUEST_ID"`;
-  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken), null, 2)
+  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model), null, 2)
     .replace(requestIdToken, `'"$REQUEST_ID"'`);
   const extra = protocol === 'claude' ? ' \\\n  -H "anthropic-version: 2023-06-01"' : '';
   return `REQUEST_ID="quickstart-\$(date +%s)-\$RANDOM"

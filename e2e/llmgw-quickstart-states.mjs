@@ -50,6 +50,16 @@ const STUBS = {
   '/auth/tenants': [],
   '/service-keys': [],
   '/app-callers': { ...LIST },
+  '/pools': { items: [{
+    id: 'pool-1', name: '对话默认池', code: 'chat-default', priority: 1, modelType: 'chat', isDefaultForType: true,
+    strategyType: 0, sourceCollection: 'llmgw', authority: 'llmgw', models: [
+      { modelId: 'demo/chat-1', platformId: 'p1', priority: 1, healthStatus: 0, healthStatusLabel: 'healthy', consecutiveFailures: 0, consecutiveSuccesses: 3, isMain: true, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
+      { modelId: 'demo/chat-2', platformId: 'p1', priority: 2, healthStatus: 0, healthStatusLabel: 'healthy', consecutiveFailures: 0, consecutiveSuccesses: 1, isMain: false, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
+    ],
+    boundAppCallerCount: 0, boundAppCallers: [], recentRequests: 0, recentSucceeded: 0, recentFailed: 0,
+    trafficWindowHours: 168, recentTenRequests: 0, health: 'healthy', healthyMembers: 2, degradedMembers: 0,
+    unavailableMembers: 0, managedByRegistry: false, appendOnly: false,
+  }], total: 1 },
   '/pool-types': { items: [{ code: 'chat', name: '对话默认池', purpose: '常规对话', sortOrder: 1, defaultPoolId: 'pool-1', modelCount: 2, ready: true, version: 1 }], total: 1, ready: 1, waiting: 0 },
   '/organization': {
     tenant: { id: 't1', name: 'Miduo 平台', slug: 'miduo', status: 'active', isInternal: false },
@@ -149,12 +159,27 @@ async function chainTones(page) {
 }
 
 const create = (page) => page.getByRole('button', { name: '创建密钥' });
+/** 用途现在是必选项：每条场景在点创建之前都得先选一个，否则按钮是禁用的。 */
+async function pickPurpose(page, label = '桌面客户端') {
+  await page.getByRole('radiogroup', { name: '用途' }).getByRole('radio', { name: label }).click();
+  await page.waitForTimeout(250);
+}
 
 // ── 1) 创建屏：三个决定 + 一个主按钮，一件产物都不露 ───────────────────
 gatewayMode = 'pass';
 let page = await openQuickstart();
 check('创建屏只有一个主按钮', await page.locator('.lg-qs-primary').count(), 1);
-check('创建屏只有三个决定', await page.locator('.lg-qs-decision').count(), 3);
+// 用途是唯一「系统无从得知」的必填项：不填就不许创建。
+check('未填用途时主按钮禁用', await page.locator('.lg-qs-primary').isDisabled(), true);
+posted.length = 0;
+await page.locator('.lg-qs-primary').click({ force: true }).catch(() => {});
+await page.waitForTimeout(800);
+check('未填用途时点不出任何写请求', posted.length, 0);
+await page.getByRole('radiogroup', { name: '用途' }).getByRole('radio', { name: '桌面客户端' }).click();
+await page.waitForTimeout(300);
+check('填了用途后主按钮可用', await page.locator('.lg-qs-primary').isDisabled(), false);
+check('调用用途码按用途派生', (await page.locator('.lg-qs-decision .lg-qs-note').first().innerText()).includes('miduo-agent.desktop::chat'), true);
+check('创建屏只有四个决定', await page.locator('.lg-qs-decision').count(), 4);
 check('创建屏不出现一次性密钥', await page.locator('.lg-qs-secret-code').count(), 0);
 check('创建屏不出现产物细条', await page.locator('.lg-qs-ribbon').count(), 0);
 // 主行动钉在卡片右下角（向导式的「下一步」位置）：通栏按钮或左对齐都会让这条红。
@@ -173,10 +198,11 @@ check('创建屏不出现任何个人归属控件', await page.locator('.lg-qs-o
 // 月预算派生：极小额度时预占上限必须夹回月预算，否则后端拒收（预占 > 月预算）。
 await page.getByLabel('月预算（美元）').fill('0.3');
 await page.waitForTimeout(200);
-check('极小月预算时预占上限夹回月预算', (await page.locator('.lg-qs-note').innerText()).includes('0.3 USD'), true);
+const budgetNote = () => page.locator('.lg-qs-decision', { hasText: '月预算' }).locator('.lg-qs-note');
+check('极小月预算时预占上限夹回月预算', (await budgetNote().innerText()).includes('0.3 USD'), true);
 await page.getByLabel('月预算（美元）').fill('200');
 await page.waitForTimeout(200);
-check('常规月预算按 1% 派生预占上限', (await page.locator('.lg-qs-note').innerText()).includes('2 USD'), true);
+check('常规月预算按 1% 派生预占上限', (await budgetNote().innerText()).includes('2 USD'), true);
 
 // ── 2) 签发：登记用途 → 写治理（负责人 + 成对预算）→ 签密钥 ─────────────
 posted.length = 0;
@@ -193,10 +219,12 @@ check('产物屏不再有表单决定块', await page.locator('.lg-qs-decision')
 check('产物屏出现签发细条', await page.locator('.lg-qs-ribbon').count(), 1);
 check('密钥明文可见', (await page.locator('.lg-qs-secret-code').innerText()).startsWith('gwk_'), true);
 check('同一时刻只渲染一份片段', await page.locator('.lg-qs-artifacts pre').count(), 1);
-check('三样重点各就各位（地址 + 密钥 + 片段）', [
+check('左侧三张卡（地址 + 密钥 + 调用用途）+ 右侧片段', [
   await page.locator('.lg-qs-hero').count(),
   await page.locator('.lg-qs-code').count(),
-], [2, 1]);
+], [3, 1]);
+check('产物屏露出本次登记的调用用途码', (await page.locator('.lg-qs-hero.is-caller code').innerText()).trim(), 'miduo-agent.desktop::chat');
+check('一键测试条列出池内成员', await page.locator('.lg-qs-testbar select option').allInnerTexts(), ['auto（由模型池调度）', 'demo/chat-1', 'demo/chat-2']);
 // 产物屏必须一屏装下：内容区不许出现纵向滚动（片段太长时在它自己的框里滚）。
 check('产物屏 1440x900 不出现纵向滚动', await page.evaluate(() => {
   const body = document.querySelector('.lg-page-body');
@@ -217,6 +245,7 @@ await page.close();
 gatewayMode = 'pass';
 page = await openQuickstart();
 posted.length = 0;
+await pickPurpose(page);
 await create(page).click();
 await page.waitForTimeout(2400);
 check('留空月预算时不发治理写入', posted.map((item) => `${item.method} ${item.api}`), ['POST /app-callers', 'POST /service-keys']);
@@ -225,6 +254,7 @@ await page.close();
 // ── 5) 失败：调用用途没绑模型池（最高频的一类）──────────────────────
 gatewayMode = 'fail-pool';
 page = await openQuickstart();
+await pickPurpose(page);
 await create(page).click();
 await page.waitForTimeout(2400);
 check('失败块渲染出来了', await page.locator('.lg-qs-failure').count(), 1);
@@ -248,6 +278,7 @@ await page.close();
 // ── 6) 失败：作用域不匹配。没走到的环不许画成绿色 ────────────────────
 gatewayMode = 'fail-scope';
 page = await openQuickstart();
+await pickPurpose(page);
 await create(page).click();
 await page.waitForTimeout(2400);
 check('作用域失败的码', (await page.locator('.lg-qs-failure-head code').innerText()).trim(), 'GATEWAY_KEY_SCOPE_DENIED');
@@ -257,6 +288,7 @@ await page.close();
 // ── 7) 失败：密钥无效。第一环就坏，后两环都是未知 ──────────────────
 gatewayMode = 'fail-key';
 page = await openQuickstart('light');
+await pickPurpose(page);
 await create(page).click();
 await page.waitForTimeout(2400);
 check('密钥失败的码', (await page.locator('.lg-qs-failure-head code').innerText()).trim(), 'GATEWAY_KEY_INVALID');
@@ -266,6 +298,7 @@ await page.close();
 // ── 8) 窄屏：页面不横向滚动，但密钥串自己能滚（不能被裁掉）─────────────
 gatewayMode = 'pass';
 page = await openQuickstart('dark', 390);
+await pickPurpose(page);
 check('390 创建屏不出现横向滚动', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
 await create(page).click();
 await page.waitForTimeout(2400);
