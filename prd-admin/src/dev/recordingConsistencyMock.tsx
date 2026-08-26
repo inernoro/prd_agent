@@ -313,7 +313,7 @@ function RecordingConsistencyMock() {
                 at: new Date(Date.now() - 600_000).toISOString(),
                 code: 'ERR_CODEC',
                 automaticRetryCount: 3,
-                automaticRetryNextAt: null,
+                automaticRetryNextAt: null, partialTranscript: []
               }}
               onStart={() => undefined}
               onOpenNote={() => undefined}
@@ -336,6 +336,7 @@ function RecordingConsistencyMock() {
                 code: 'ASR_UNAVAILABLE',
                 automaticRetryCount: 1,
                 automaticRetryNextAt: new Date(Date.now() + 8_000).toISOString(),
+                partialTranscript: ['先说结论，导入是这一版最大的漏斗。'],
               }}
               onStart={() => undefined}
               onOpenNote={() => undefined}

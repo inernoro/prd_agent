@@ -7,11 +7,11 @@
  * 截图看不出这件事。
  */
 import { describe, it, expect } from 'vitest';
-import { describeFailurePresentation } from '@/pages/document-store/recordingVault';
+import { describeFailurePresentation, stalledTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 
 const notice = (over: Partial<FailedTranscriptionNotice> = {}): FailedTranscriptionNotice => ({
-  reason: '模型请求超时。', at: null, code: null, automaticRetryCount: 0, automaticRetryNextAt: null, ...over,
+  reason: '模型请求超时。', at: null, code: null, automaticRetryCount: 0, automaticRetryNextAt: null, partialTranscript: [], ...over,
 });
 
 describe('describeFailurePresentation', () => {
@@ -56,5 +56,32 @@ describe('describeFailurePresentation', () => {
     const p = describeFailurePresentation(notice({ code: 'ERR_CODEC' }), { waitingAutoRetry: false });
     expect(p.title).toBe('上次转文字没成功');
     expect(p.nextStep).toContain('转码');
+  });
+});
+
+describe('四种处境必须长得不一样', () => {
+  const cases = [
+    ['ERR_CODEC', false, 'danger', 'alert'],
+    ['ASR_NO_SPEECH', false, 'neutral', 'mic-off'],
+    ['RUN_STALLED', false, 'queued', 'clock'],
+    ['ERR_TIMEOUT', true, 'retrying', 'retry'],
+  ] as const;
+
+  it.each(cases)('%s → 色调 %s、图标 %s', (code, waiting, tone, icon) => {
+    const p = describeFailurePresentation(notice({ code }), { waitingAutoRetry: waiting, retryLabel: '8 秒后' });
+    expect(p.tone).toBe(tone);
+    expect(p.icon).toBe(icon);
+  });
+
+  it('四种处境两两不同色不同图标——共用一套壳就等于没分档', () => {
+    const seen = cases.map(([code, waiting]) =>
+      describeFailurePresentation(notice({ code }), { waitingAutoRetry: waiting, retryLabel: '8 秒后' }));
+    expect(new Set(seen.map(p => p.tone)).size).toBe(4);
+    expect(new Set(seen.map(p => p.icon)).size).toBe(4);
+  });
+
+  it('排队那一档的原因不许把等待说成故障', () => {
+    expect(stalledTranscriptionNotice(null).reason).not.toContain('不能确认');
+    expect(stalledTranscriptionNotice(null).reason).toContain('排队');
   });
 });

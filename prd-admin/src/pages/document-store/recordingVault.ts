@@ -400,18 +400,33 @@ export type FailedTranscriptionNotice = {
   automaticRetryCount: number;
   /** 下一次自动重试的时刻；为 null 表示自动重试已耗尽，轮到用户手动重试 */
   automaticRetryNextAt: string | null;
+  /**
+   * 已经生成出来的那几句原文。
+   *
+   * 稿面 cap-S10 对「排队超过一小时」这一档的核心承诺是「原文完成的部分现在就能读」——
+   * 那是把「等太久」从焦虑变成「我还能干点什么」的唯一落点。此前这条说明只带
+   * 原因/时间/次数三样，正文里那半篇原文明明在 run 上，却在这里被丢掉了，
+   * 于是界面只能说「播放、下载音频」，那句承诺没有兑现处。
+   */
+  partialTranscript: string[];
 };
 
 /** 后台失联（心跳停了）不是上游报的失败，是我们自己判出来的一类；
  *  它同样要凑齐四个字段，否则这条路径上的界面又退回「只有一句话」。
  *  code 用我们自己的分类 RUN_STALLED —— 这是判据算出来的，不是替上游编的。 */
-export function stalledTranscriptionNotice(at: string | null): FailedTranscriptionNotice {
+export function stalledTranscriptionNotice(
+  at: string | null,
+  partialTranscript: string[] = [],
+): FailedTranscriptionNotice {
   return {
-    reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
+    // 措辞是安抚不是报错：这一档多半是排队久了，不是坏了。旧文案「不能确认仍会
+    // 自行完成。请点击重试」把等待叙述成故障，判分与产品方都点了这一处。
+    reason: '后台转录已经排队超过一小时还没轮到。录音与音频都在，等不及可以点重试重新排队。',
     at,
     code: 'RUN_STALLED',
     automaticRetryCount: 0,
     automaticRetryNextAt: null,
+    partialTranscript,
   };
 }
 
@@ -425,6 +440,7 @@ export function describeFailedTranscription(
     createdAt?: string | null;
     automaticRetryCount?: number | null;
     automaticRetryNextAt?: string | null;
+    transcriptText?: string | null;
   } | null | undefined,
 ): FailedTranscriptionNotice | null {
   if (run?.status?.trim().toLowerCase() !== 'failed') return null;
@@ -436,7 +452,13 @@ export function describeFailedTranscription(
     code: code ? code : null,
     automaticRetryCount: Math.max(0, run.automaticRetryCount ?? 0),
     automaticRetryNextAt: run.automaticRetryNextAt?.trim() || null,
+    partialTranscript: splitPartialTranscript(run.transcriptText),
   };
+}
+
+/** run 上的原文是一整块文本；界面只摆前几句，多了会把失败说明淹掉。 */
+export function splitPartialTranscript(text: string | null | undefined, max = 3): string[] {
+  return (text ?? '').split('\n').map(line => line.trim()).filter(Boolean).slice(0, max);
 }
 
 function openDb(): Promise<IDBDatabase | null> {
@@ -662,6 +684,15 @@ export type FailurePresentation = {
   subtitle: string;
   /** 「下一步」那一行 */
   nextStep: string;
+  /**
+   * 卡面的语义色调。稿面给四种处境各画了一种面孔：真失败是红/粉错误面、
+   * 自动重试与排队是暖琥珀的「在动，别急」、没听到人声是克制的中性白。
+   * 此前四张卡共用同一套中性壳 + 同一枚警告三角，用户**看不出这是哪一种**——
+   * 四份独立判分都各自指到了这同一处根因。
+   */
+  tone: 'danger' | 'retrying' | 'queued' | 'neutral';
+  /** 图标语义：转圈箭头代表「后台在动」，闹钟代表「在排队」，划掉的麦克风代表「没听到人声」 */
+  icon: 'alert' | 'retry' | 'clock' | 'mic-off';
 };
 
 /** 后端把「整段没有有效语音」分成两个 code，UI 该给同一档 */
@@ -677,6 +708,8 @@ export function describeFailurePresentation(
       title: '转录失败，正在自动重试',
       subtitle: '录音还在，没有丢',
       nextStep: `第 ${notice.automaticRetryCount + 1} 次自动重试将在 ${opts.retryLabel ?? '稍后'}开始，无需操作`,
+      tone: 'retrying',
+      icon: 'retry',
     };
   }
   const code = (notice.code ?? '').trim().toUpperCase();
@@ -687,6 +720,8 @@ export function describeFailurePresentation(
       nextStep: opts.hasPartialTranscript
         ? '已经生成的部分原文可以先读；可以关掉这一页，回来时这里就是最新状态。等不及就点「重试」重新排队'
         : '可以关掉这一页，回来时这里就是最新状态。等不及就点「重试」重新排队',
+      tone: 'queued',
+      icon: 'clock',
     };
   }
   if (NO_SPEECH_CODES.has(code)) {
@@ -694,11 +729,15 @@ export function describeFailurePresentation(
       title: '没有检测到有效语音',
       subtitle: '音频已保留，可以直接播放确认',
       nextStep: '先播一遍确认这段录音里有没有人声。确实没有就重新录一次——同一段音频重试不会有别的结果',
+      tone: 'neutral',
+      icon: 'mic-off',
     };
   }
   return {
     title: '上次转文字没成功',
     subtitle: '录音还在，没有丢',
     nextStep: '点「重试」；若反复失败，可转码后重新上传',
+    tone: 'danger',
+    icon: 'alert',
   };
 }

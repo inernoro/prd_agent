@@ -17,16 +17,37 @@
  *   你现在能做什么 → 「音频已就绪，现在就能播放」
  */
 import { useEffect, useState } from 'react';
-import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Play, Sparkles, Wand2 } from 'lucide-react';
+import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Clock3, MicOff, Play, RefreshCw, Sparkles, Wand2 } from 'lucide-react';
 import { describeFailurePresentation } from '@/pages/document-store/recordingVault';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import { onRecordingDuration } from './recordingPlayBridge';
+import '@/styles/recording-design-palette.css';
 import {
   describeTranscriptionStages,
   estimateRemainingSeconds,
   formatDurationSec,
   type TranscriptionStage,
 } from '@/pages/document-store/transcriptionStages';
+
+/**
+ * 失败卡四种处境的面孔。稿面给它们各画了一种：真失败是红/粉错误面、
+ * 自动重试与排队是暖琥珀的「在动，别急」、没听到人声是克制的中性白。
+ * 全部走语义 token，双主题各自成立（admin-dual-theme 那条棘轮）。
+ */
+const FAILURE_TONE: Record<string, { surface: string; border: string; iconBg: string; iconFg: string }> = {
+  danger:   { surface: 'var(--semantic-danger-soft)',  border: 'var(--semantic-danger)',       iconBg: 'var(--semantic-danger-soft)',  iconFg: 'var(--semantic-danger)' },
+  retrying: { surface: 'var(--semantic-warning-soft)', border: 'var(--semantic-warning-text)', iconBg: 'var(--semantic-warning-soft)', iconFg: 'var(--semantic-warning-text)' },
+  queued:   { surface: 'var(--semantic-warning-soft)', border: 'var(--border-faint)',          iconBg: 'var(--semantic-warning-soft)', iconFg: 'var(--semantic-warning-text)' },
+  neutral:  { surface: 'var(--bg-card)',               border: 'var(--border-faint)',          iconBg: 'var(--bg-elevated)',           iconFg: 'var(--text-secondary)' },
+};
+
+function FailureIcon({ kind }: { kind: string }) {
+  // 转圈箭头要真的在转：后台正在替用户做事，静止图标读起来和硬失败一样
+  if (kind === 'retry') return <RefreshCw size={16} className="animate-spin motion-reduce:animate-none" />;
+  if (kind === 'clock') return <Clock3 size={16} />;
+  if (kind === 'mic-off') return <MicOff size={16} />;
+  return <AlertTriangle size={16} />;
+}
 
 /** mm:ss / h:mm:ss —— 设计稿「保存音频」那一行要的时长写法。 */
 function formatClockLabel(sec: number): string {
@@ -193,7 +214,7 @@ export function TranscribeStatusCard({
     ? describeFailurePresentation(lastFailure, {
       waitingAutoRetry,
       retryLabel: waitingAutoRetry ? `${formatDurationSec((retryAt - now) / 1000)}后` : undefined,
-      hasPartialTranscript: (transcriptPreview?.length ?? 0) > 0,
+      hasPartialTranscript: (lastFailure.partialTranscript?.length ?? 0) > 0 || (transcriptPreview?.length ?? 0) > 0,
     })
     : null;
 
@@ -202,7 +223,23 @@ export function TranscribeStatusCard({
     || (onEnterResult && !inPlace && !processing);
 
   return (
-    <div className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5" data-tour-id="doc-transcribe-hero">
+    /*
+     * 作用域皮肤：这张卡属于录音这条链路，稿面给它的强调色是蓝、主按钮是黑，
+     * 而它寄生在知识库阅读器里，默认拿到的是平台的陶土橙——判分里
+     * 「主按钮与播放按钮由黑改橙棕、强调色从两处扩到四处」扣的就是这个。
+     * 皮肤是 token 覆盖且只作用于这棵子树，组件代码一行都不用改
+     * （与录音结果页共用同一份 recording-design-palette.css）。
+     */
+    <div
+      className="recording-design-palette surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
+      data-tour-id="doc-transcribe-hero"
+      // 失败态整张卡跟着色调走：四种处境此前共用同一套中性壳，
+      // 用户扫一眼分不出「坏了」「在重试」「在排队」「没听到人声」
+      style={showFailure && failureCopy ? {
+        background: FAILURE_TONE[failureCopy.tone].surface,
+        border: `1px solid ${FAILURE_TONE[failureCopy.tone].border}`,
+      } : undefined}
+    >
       {processing ? (
         <>
           {/* 页面级标题：设计稿这一屏的 H1，不是卡内小标题 */}
@@ -304,9 +341,9 @@ export function TranscribeStatusCard({
           <div className="flex items-start gap-3">
             <div
               className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]"
-              style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
+              style={{ background: FAILURE_TONE[failureCopy!.tone].iconBg, color: FAILURE_TONE[failureCopy!.tone].iconFg }}
             >
-              <AlertTriangle size={16} />
+              <FailureIcon kind={failureCopy!.icon} />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-[13px] font-semibold text-token-primary">{failureCopy!.title}</p>
@@ -351,6 +388,21 @@ export function TranscribeStatusCard({
               </dd>
             </div>
           </dl>
+
+          {/*
+            「已完成的部分现在就能读」这句承诺的落点。稿面 cap-S10 把它当作
+            这一屏的核心价值——等太久时用户要的不是道歉，是「我还能干点什么」。
+            只写在文案里、正文却一个字都不给，等于没兑现。
+          */}
+          {(failureCopy!.tone === 'queued' || failureCopy!.tone === 'retrying')
+            && (lastFailure!.partialTranscript?.length ?? 0) > 0 && (
+            <div className="rounded-[11px] px-3 py-2.5" style={{ background: 'var(--bg-card)' }}>
+              <p className="mb-1 text-[10.5px]" style={{ color: 'var(--text-muted)' }}>已生成的部分原文</p>
+              {lastFailure!.partialTranscript.map((line, i) => (
+                <p key={i} className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{line}</p>
+              ))}
+            </div>
+          )}
         </>
       ) : (
         <div className="flex items-center justify-between gap-3">

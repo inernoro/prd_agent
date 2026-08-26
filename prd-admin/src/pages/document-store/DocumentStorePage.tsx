@@ -187,6 +187,7 @@ import {
   bindBackgroundTranscriptionSource,
   describeBackgroundTranscriptionBanner,
   stalledTranscriptionNotice,
+  splitPartialTranscript,
   type FailedTranscriptionNotice,
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
@@ -1306,6 +1307,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       if (isStalledBackgroundTranscriptionRun(res.data)) {
         setTranscribeFailure(stalledTranscriptionNotice(
           res.data.heartbeatAt ?? res.data.startedAt ?? res.data.createdAt ?? null,
+          // 排队久了不等于什么都没产出：已经生成的那几句现在就能读，稿面 cap-S10 的核心承诺
+          splitPartialTranscript(res.data.transcriptText),
         ));
         return;
       }
@@ -1784,6 +1787,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               const staleRun = decision.replacementRun ?? (res.success ? res.data : latestRun);
               setTranscribeFailure(stalledTranscriptionNotice(
                 staleRun?.heartbeatAt ?? staleRun?.startedAt ?? staleRun?.createdAt ?? null,
+                splitPartialTranscript(staleRun?.transcriptText),
               ));
             }
             toast.error('录音任务超过一小时未报告状态', '已停止等待旧任务；录音仍保留，可以点击重试');
