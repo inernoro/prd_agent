@@ -1,4 +1,5 @@
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
+import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, galaxyBackdrop, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -119,7 +120,7 @@ const SELECTION_ICONS = [
   'M21 15l-5-5L5 21M3 5h18v14H3z',
 ];
 
-export function KnowledgeScene() {
+export function KnowledgeScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.scenes.knowledge;
   const { beat, ref, visible } = useSceneTimeline(HOLDS);
@@ -127,6 +128,7 @@ export function KnowledgeScene() {
   return (
     <SceneFrame
       id="scene-knowledge"
+      variant={variant}
       hue={SCENE_HUE.olive}
       eyebrow={s.eyebrow}
       title={s.title}

@@ -1,5 +1,6 @@
 import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { Reveal } from '../components/Reveal';
+import { useParallax } from '../components/scrollRhythm';
 import { SCENE, SCENE_KEYFRAMES, inkTone } from './sceneTokens';
 
 /**
@@ -10,6 +11,24 @@ import { SCENE, SCENE_KEYFRAMES, inkTone } from './sceneTokens';
  *
  * 之所以抽出来：四幕的引言排版一模一样，散着写必然各自漂移（间距、字号、
  * 色相点的大小）。这里是它们的唯一定义处。
+ *
+ * ## variant —— 打断节奏
+ *
+ * 抽公共外壳的代价是：九幕长得一模一样，一路读下来像同一张幻灯片播了九遍。
+ * 用户原话「太单调」。所以外壳保持唯一，但给四种版式：
+ *
+ *   `default`  左标题 / 右描述，标准宽度 —— 基准拍
+ *   `flip`     镜像：描述在左、标题在右，面板略窄并右对齐 —— 反拍
+ *   `wide`     容器放宽到 1440，引言压扁 —— 给全景类内容（三层一体、热力图）
+ *   `stage`    标题居中放大、描述居中收窄 —— 给需要停顿的重头戏
+ *
+ * 排布见 `LandingPage`：三拍一循环 + 两次换气（Interlude）+ 一次高潮。
+ *
+ * ## 层次与阻尼
+ *
+ * 引言与面板挂在同一套滚动引擎上，但**视差速度符号相反**：滚动时标题往上飘、
+ * 面板往下沉，两者分出前后层。面板另外带一点阻尼位移 —— 滚得快时滞后几像素，
+ * 松手弹回。细节见 `components/scrollRhythm.ts`。
  */
 
 const KEYFRAMES_ID = 'map-scene-keyframes';
@@ -25,6 +44,16 @@ function useSceneKeyframes() {
   }, []);
 }
 
+export type SceneVariant = 'default' | 'flip' | 'wide' | 'stage';
+
+/** 每种版式的容器宽度、纵向留白、引言排布。改这里就是改整页的节奏。 */
+const VARIANT: Record<SceneVariant, { max: string; pad: string; leadGap: string }> = {
+  default: { max: '1280px', pad: 'py-14 md:py-20', leadGap: 'mb-8 md:mb-10' },
+  flip: { max: '1180px', pad: 'py-14 md:py-20', leadGap: 'mb-8 md:mb-10' },
+  wide: { max: '1440px', pad: 'py-12 md:py-16', leadGap: 'mb-7 md:mb-8' },
+  stage: { max: '1180px', pad: 'py-20 md:py-28', leadGap: 'mb-10 md:mb-14' },
+};
+
 interface SceneFrameProps {
   /** 品类色相（墨系色带的度数） */
   hue: number;
@@ -39,6 +68,8 @@ interface SceneFrameProps {
   /** 面板高度（桌面）——各幕不同，由调用方给 */
   panelStyle?: CSSProperties;
   id?: string;
+  /** 版式变体，默认 default。取值与排布理由见文件头注释 */
+  variant?: SceneVariant;
 }
 
 export function SceneFrame({
@@ -50,19 +81,34 @@ export function SceneFrame({
   children,
   panelStyle,
   id,
+  variant = 'default',
 }: SceneFrameProps) {
   useSceneKeyframes();
   const tone = inkTone(hue);
+  const v = VARIANT[variant];
+  const stage = variant === 'stage';
+  const flip = variant === 'flip';
+
+  /* 引言往上飘、面板往下沉 —— 反向视差，两者才分得出前后 */
+  const leadRef = useParallax<HTMLDivElement>({ speed: -0.045 });
+  const panelRef = useParallax<HTMLDivElement>({ speed: 0.022, damping: 0.055, dampingMax: 12 });
 
   return (
-    <section id={id} className="relative py-14 md:py-20 px-4 sm:px-6" style={{ fontFamily: 'var(--font-body)' }}>
-      <div className="max-w-[1280px] mx-auto">
-        {/* ── 引言：左标题 / 右描述，宽屏并排，窄屏堆叠 ── */}
+    <section id={id} className={`relative ${v.pad} px-4 sm:px-6`} style={{ fontFamily: 'var(--font-body)' }}>
+      <div className="mx-auto" style={{ maxWidth: v.max }}>
+        {/* ── 引言：版式随 variant 变 ── */}
+        <div ref={leadRef}>
         <Reveal offset={20} duration={1600}>
-          <div className="flex flex-col lg:flex-row lg:items-end gap-5 lg:gap-10 mb-8 md:mb-10">
-            <div className="shrink-0">
+          <div
+            className={
+              stage
+                ? `flex flex-col items-center text-center gap-4 ${v.leadGap}`
+                : `flex flex-col ${flip ? 'lg:flex-row-reverse lg:text-right' : 'lg:flex-row'} lg:items-end gap-5 lg:gap-10 ${v.leadGap}`
+            }
+          >
+            <div className={stage ? 'flex flex-col items-center' : 'shrink-0'}>
               <div
-                className="flex items-center gap-2 uppercase"
+                className={`flex items-center gap-2 uppercase ${flip ? 'lg:flex-row-reverse' : ''}`}
                 style={{
                   fontFamily: 'var(--font-terminal)',
                   fontSize: '15px',
@@ -80,30 +126,36 @@ export function SceneFrame({
                 className="mt-2.5 font-medium"
                 style={{
                   fontFamily: 'var(--font-display)',
-                  fontSize: 'clamp(1.75rem, 3.2vw, 2.3rem)',
-                  lineHeight: 1.34,
+                  // stage 是重头戏，字号顶上去；其余保持基准
+                  fontSize: stage ? 'clamp(2.1rem, 4.4vw, 3.2rem)' : 'clamp(1.75rem, 3.2vw, 2.3rem)',
+                  lineHeight: stage ? 1.22 : 1.34,
                   letterSpacing: '-0.02em',
                   color: SCENE.ink,
+                  // 22ch 不是 18ch：ch 按 '0' 的宽度算，中文字形比它宽，
+                  // 18ch 会把「早上说一句话，下午就能打开看」在倒数第三个字断掉
+                  maxWidth: stage ? '22ch' : undefined,
                 }}
               >
                 {title}
               </h2>
             </div>
             <p
-              className="lg:pb-1.5"
+              className={stage ? '' : 'lg:pb-1.5'}
               style={{
-                fontSize: '13.5px',
+                fontSize: stage ? '14.5px' : '13.5px',
                 lineHeight: 1.8,
                 color: SCENE.inkMid,
-                maxWidth: '29em',
+                maxWidth: stage ? '38em' : '29em',
               }}
             >
               {description}
             </p>
           </div>
         </Reveal>
+        </div>
 
         {/* ── 面板本体 ── */}
+        <div ref={panelRef}>
         <Reveal offset={36} duration={2200} delay={120}>
           <div
             className="relative overflow-hidden rounded-2xl"
@@ -124,11 +176,12 @@ export function SceneFrame({
             {children}
           </div>
         </Reveal>
+        </div>
 
         {note && (
           <Reveal offset={12} duration={1600} delay={240}>
             <p
-              className="mt-4"
+              className={`mt-4 ${stage ? 'mx-auto text-center' : ''}`}
               style={{ fontSize: '12px', lineHeight: 1.75, color: SCENE.inkFaint, maxWidth: '54em' }}
             >
               {note}

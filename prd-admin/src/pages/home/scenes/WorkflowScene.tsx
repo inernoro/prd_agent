@@ -1,4 +1,5 @@
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
+import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -61,7 +62,7 @@ function nodeStateAt(index: number, beat: number): NodeState {
   return 'done';
 }
 
-export function WorkflowScene() {
+export function WorkflowScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.workflow;
   const { beat, ref } = useSceneTimeline(HOLDS);
@@ -71,6 +72,7 @@ export function WorkflowScene() {
   return (
     <SceneFrame
       id="scene-workflow"
+      variant={variant}
       hue={SCENE_HUE.steel}
       eyebrow={s.eyebrow}
       title={s.title}

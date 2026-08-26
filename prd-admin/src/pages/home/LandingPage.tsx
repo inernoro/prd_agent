@@ -12,6 +12,8 @@ import { WorkflowScene } from './scenes/WorkflowScene';
 import { VocScene } from './scenes/VocScene';
 import { ModelLayerScene } from './scenes/ModelLayerScene';
 import { CdsScene } from './scenes/CdsScene';
+import { Interlude } from './components/Interlude';
+import { SCENE_HUE } from './scenes/sceneTokens';
 import { StartScene } from './scenes/StartScene';
 import { StaticBackdrop } from './components/StaticBackdrop';
 import { InkFieldBackdrop } from '@/components/backgrounds/InkFieldBackdrop';
@@ -39,6 +41,19 @@ import { LanguageProvider, useLanguage } from './contexts/LanguageContext';
  * 各自组件的头注释里。用户对上一版尾部的原话是「样式不错，但是不够真实，首先得
  * 需要我们的真实页面」——所以 6~9 幕逐个换成了百宝箱、工作流、体验地图、模型池
  * 这四张真页面，而不是自造的卡片墙与四列表。
+ *
+ * ## 节奏表（每一幕的 variant）
+ *
+ *   文学 default → 知识库 flip → 三层一体 wide → 【换气 1】
+ *   百宝箱 default → 工作流 flip → 体验地图 wide → 【换气 2】
+ *   模型池 default → CDS stage（高潮）→ 从这里开始 default
+ *
+ * 三拍一循环（基准 / 反拍 / 全景），两次换气，一次居中放大的高潮。
+ * 这张表就是这一页的律动 —— 改任何一幕的 variant 之前先看整列，别只看它自己：
+ * 九幕全是 default 正是用户说「太单调」的那一版。
+ *
+ * 层次与阻尼由 `components/scrollRhythm.ts` 统一驱动：一个 rAF 循环，
+ * 引言往上飘、面板往下沉、换气页最深，面板另带滞后回弹。
  *
  * 背景：StaticBackdrop 纯 CSS 静态层。
  * 国际化：LanguageProvider 仅作用于本页（中 / EN 切换器在顶栏右上角）。
@@ -295,11 +310,15 @@ function LandingInner() {
       </div>
 
       <div id="knowledge" style={BELOW_FOLD_SECTION}>
-        <KnowledgeScene />
+        <KnowledgeScene variant="flip" />
       </div>
 
       <div id="pillars" style={BELOW_FOLD_SECTION}>
-        <LayersScene />
+        <LayersScene variant="wide" />
+      </div>
+
+      <div style={BELOW_FOLD_SECTION}>
+        <Interlude hue={SCENE_HUE.amber} {...t.interludes[0]} />
       </div>
 
       <div id="agents" style={BELOW_FOLD_SECTION}>
@@ -307,11 +326,15 @@ function LandingInner() {
       </div>
 
       <div id="workflow" style={BELOW_FOLD_SECTION}>
-        <WorkflowScene />
+        <WorkflowScene variant="flip" />
       </div>
 
       <div id="voc" style={BELOW_FOLD_SECTION}>
-        <VocScene />
+        <VocScene variant="wide" />
+      </div>
+
+      <div style={BELOW_FOLD_SECTION}>
+        <Interlude hue={SCENE_HUE.steel} {...t.interludes[1]} />
       </div>
 
       <div id="compat" style={BELOW_FOLD_SECTION}>
@@ -319,7 +342,7 @@ function LandingInner() {
       </div>
 
       <div id="cds" style={BELOW_FOLD_SECTION}>
-        <CdsScene />
+        <CdsScene variant="stage" />
       </div>
 
       <div id="download" style={BELOW_FOLD_SECTION}>

@@ -1,4 +1,5 @@
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
+import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { useSceneTimeline } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -29,7 +30,7 @@ function actorTone(actor: 'you' | 'it') {
   return actor === 'you' ? clay : pine;
 }
 
-export function CdsScene() {
+export function CdsScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.cds;
   const { beat, ref } = useSceneTimeline(HOLDS);
@@ -42,6 +43,7 @@ export function CdsScene() {
   return (
     <SceneFrame
       id="scene-cds"
+      variant={variant}
       hue={SCENE_HUE.pine}
       eyebrow={s.eyebrow}
       title={s.title}

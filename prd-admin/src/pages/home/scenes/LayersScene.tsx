@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
+import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -37,13 +38,14 @@ function tint(hue: number) {
   return `radial-gradient(150px 100px at 12% 0%, hsla(${hue}, 54%, 58%, 0.09) 0%, transparent 100%), ${SCENE.tile}`;
 }
 
-export function LayersScene() {
+export function LayersScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.scenes.layers;
 
   return (
     <SceneFrame
       id="scene-layers"
+      variant={variant}
       hue={SCENE_HUE.clay}
       eyebrow={s.eyebrow}
       title={s.title}

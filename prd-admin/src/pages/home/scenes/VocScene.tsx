@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
+import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { useSceneTimeline } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -98,7 +99,7 @@ function leafFill(status: VocLeaf['status'], hue: number, depth: number): string
   return `hsl(${hue} 32% ${18 + depth * 5}%)`;
 }
 
-export function VocScene() {
+export function VocScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.voc;
   const { beat, ref, visible } = useSceneTimeline(HOLDS);
@@ -132,6 +133,7 @@ export function VocScene() {
   return (
     <SceneFrame
       id="scene-voc"
+      variant={variant}
       hue={SCENE_HUE.slate}
       eyebrow={s.eyebrow}
       title={s.title}

@@ -349,6 +349,11 @@ export interface TranslationShape {
   scenes: ScenesTranslation;
   /** 尾部四幕（Agent 全家福 / 模型这一层 / 从这里开始 / 收口） */
   tail: TailTranslation;
+  /**
+   * 两页幕间换气。九幕连排会读麻，这两页什么都不给看，只承上启下。
+   * 摆放位置见 `LandingPage` 的节奏表。
+   */
+  interludes: Array<{ kicker: string; title: string; note: string }>;
   footer: {
     brand: string;
     github: string;
@@ -872,6 +877,18 @@ const zh: TranslationShape = {
       footnote: '需要私有部署或想聊聊怎么接进你们的流程，也可以直接找我们。',
     },
   },
+  interludes: [
+    {
+      kicker: '底座讲完了',
+      title: '接下来是你每天真正会碰到的东西',
+      note: '以下每一幕，都是登录后打得开的一张真实页面 —— 不是示意图。',
+    },
+    {
+      kicker: '那么这些是怎么跑起来的',
+      title: '每一次生成，背后都要挑一个模型、起一套环境',
+      note: '这两件事都不该由业务代码操心。下面两幕就是它们各自那一层。',
+    },
+  ],
   footer: {
     brand: '米多智能体生态平台',
     github: 'GitHub',
@@ -1391,6 +1408,18 @@ const en: TranslationShape = {
       footnote: 'Want it self-hosted, or want to talk about fitting it into your workflow? Just reach out.',
     },
   },
+  interludes: [
+    {
+      kicker: 'That is the foundation',
+      title: 'Now the things you actually touch every day',
+      note: 'Every act below is a real page you can open after logging in — not an illustration.',
+    },
+    {
+      kicker: 'So how does any of it run',
+      title: 'Every generation has to pick a model and raise an environment',
+      note: 'Neither should be product code’s problem. The next two acts are those layers.',
+    },
+  ],
   footer: {
     brand: 'Midoo Agentic Platform',
     github: 'GitHub',
