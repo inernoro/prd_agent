@@ -55,6 +55,8 @@ const STUBS = {
     strategyType: 0, sourceCollection: 'llmgw', authority: 'llmgw', models: [
       { modelId: 'demo/chat-1', platformId: 'p1', priority: 1, healthStatus: 0, healthStatusLabel: 'healthy', consecutiveFailures: 0, consecutiveSuccesses: 3, isMain: true, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
       { modelId: 'demo/chat-2', platformId: 'p1', priority: 2, healthStatus: 0, healthStatusLabel: 'healthy', consecutiveFailures: 0, consecutiveSuccesses: 1, isMain: false, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
+      { modelId: 'demo/chat-degraded', platformId: 'p1', priority: 3, healthStatus: 1, healthStatusLabel: 'degraded', consecutiveFailures: 4, consecutiveSuccesses: 0, isMain: false, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
+      { modelId: 'demo/chat-down', platformId: 'p1', priority: 4, healthStatus: 2, healthStatusLabel: 'unavailable', consecutiveFailures: 9, consecutiveSuccesses: 0, isMain: false, isIntent: false, isVision: false, isImageGen: false, capabilities: [] },
     ],
     boundAppCallerCount: 0, boundAppCallers: [], recentRequests: 0, recentSucceeded: 0, recentFailed: 0,
     trafficWindowHours: 168, recentTenRequests: 0, health: 'healthy', healthyMembers: 2, degradedMembers: 0,
@@ -235,7 +237,7 @@ check('产物屏露出本次登记的调用用途码', (await page.locator('.lg-
 check('调用用途卡标出归属团队', (await page.locator('.lg-qs-hero.is-caller small').innerText()).includes('归属团队 核心平台组'), true);
 // 候选只能来自这条 appCaller 真正走的那个池：另一个同类型池的成员不许混进来，
 // 否则真实租户上会平铺出 200+ 个模型，且违反「可选模型必须来自获准的池」。
-check('模型候选只来自被路由到的池', await page.locator('.lg-qs-testbar select option').allInnerTexts(), ['auto（由模型池调度）', 'demo/chat-1', 'demo/chat-2']);
+check('模型候选只来自被路由到的池、且只列健康成员', await page.$$eval('#lg-qs-model-options option', (nodes) => nodes.map((n) => n.value)), ['demo/chat-1', 'demo/chat-2']);
 // 产物屏必须一屏装下：内容区不许出现纵向滚动（片段太长时在它自己的框里滚）。
 check('产物屏 1440x900 不出现纵向滚动', await page.evaluate(() => {
   const body = document.querySelector('.lg-page-body');
@@ -249,6 +251,19 @@ check('试跑结果块渲染出来了', Boolean(okBox), true);
 // 真正的判据是它离产物区顶端多远：排到密钥与片段之后就会被推下去 200px 以上。
 check('试跑结果块紧贴产物区顶部', Boolean(okBox && artifactsBox && okBox.y - artifactsBox.y < 120), true);
 check('成功态留下 requestId 回查深链', await page.locator(`.lg-test-result.is-ok a[href*="requestId=${REQUEST_ID}"]`).count(), 1);
+check('候选提示写明健康数与总数', (await page.locator('.lg-qs-testbar small').innerText()).trim(), '「对话默认池」4 个成员中 2 个健康，可搜索。');
+// 填一个不在健康清单里的模型：执行必须被挡住，否则那一次试跑注定白跑。
+await page.getByLabel('测试模型').fill('demo/chat-down');
+await page.waitForTimeout(300);
+check('选了非健康成员时执行被禁用', await page.getByRole('button', { name: '执行测试' }).isDisabled(), true);
+await page.getByLabel('测试模型').fill('demo/chat-2');
+await page.waitForTimeout(300);
+check('选了健康成员后可执行', await page.getByRole('button', { name: '执行测试' }).isDisabled(), false);
+check('cURL 跟着所选模型变', (await page.locator('.lg-qs-code').innerText()).includes('"model": "demo/chat-2"'), true);
+await page.getByLabel('测试模型').fill('');
+await page.waitForTimeout(300);
+check('清空即回到 auto', (await page.locator('.lg-qs-code').innerText()).includes('"model": "auto"'), true);
+
 check('横向不滚动', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
 await page.close();
 

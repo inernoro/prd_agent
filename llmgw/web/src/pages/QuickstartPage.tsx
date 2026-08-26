@@ -196,7 +196,8 @@ export function QuickstartPage() {
   // 一键测试用的模型候选：只列该调用类型模型池里的成员，不让人随便填一个池外的模型。
   const [poolModels, setPoolModels] = useState<string[]>([]);
   const [poolName, setPoolName] = useState('');
-  const [testModel, setTestModel] = useState('auto');
+  const [poolMemberCount, setPoolMemberCount] = useState(0);
+  const [modelQuery, setModelQuery] = useState('');
   const [binding, setBinding] = useState(false);
   const [bindNotice, setBindNotice] = useState<string | null>(null);
   // 月预算是本页唯一要用户想的数字；单次预占上限由它派生（成对约束见 budgetPair）。
@@ -210,6 +211,14 @@ export function QuickstartPage() {
   const activeTeams = organization?.teams.filter((team) => team.status === 'active') ?? [];
   const selectedTeam = activeTeams.find((team) => team.id === teamId);
   const budgetPair = deriveBudgetPair(budgetUsd, holdCapUsd);
+  // 输入框空着就是 auto；填了就必须是这个池里的健康成员，否则不让执行（选了也是白跑）。
+  const testModel = modelQuery.trim() || 'auto';
+  const modelValid = testModel === 'auto' || poolModels.includes(testModel);
+  const modelHint = !modelValid
+    ? '这个模型不在池内健康成员里，换一个或清空走 auto。'
+    : poolModels.length === 0
+      ? '池内暂无健康成员，走 auto。'
+      : `「${poolName || '默认池'}」${poolMemberCount} 个成员中 ${poolModels.length} 个健康，可搜索。`;
   const purposeSegment = purpose === 'custom' ? toAppCallerSegment(customPurpose) : purpose;
   // 高级设置里手改过 appCallerCode 就以手改的为准，不再被用途覆盖（推断值可覆盖、覆盖后不回弹）。
   const derivedAppCallerCode = appCallerCodeTouched
@@ -239,8 +248,15 @@ export function QuickstartPage() {
       const target = pools.find((pool) => pool.id === routedPoolId)
         ?? pools.find((pool) => pool.isDefaultForType)
         ?? null;
-      const ids = (target?.models ?? []).map((model) => model.modelId).filter(Boolean);
-      setPoolModels([...new Set(ids)]);
+      const members = target?.models ?? [];
+      // 只列健康成员（healthStatus 0 = healthy）：降级或不可用的成员选了也是白跑一次，
+      // 真实租户上这个池有两百多个成员，把坏的也堆进候选只会让人更难挑。
+      const healthy = members
+        .filter((model) => model.healthStatus === 0 && model.modelId)
+        .sort((a, b) => a.priority - b.priority)
+        .map((model) => model.modelId);
+      setPoolModels([...new Set(healthy)]);
+      setPoolMemberCount(members.length);
       setPoolName(target?.name ?? '');
     });
     return () => { active = false; };
@@ -927,21 +943,24 @@ export function QuickstartPage() {
                     <span className="lg-qs-testbar-type">{requestTypeLabel(displayBundle.requestType)}</span>
                     <label>
                       模型
-                      <select
+                      {/* 搜索式选择：datalist 让浏览器自己做过滤，两百多个成员也能敲几个字定位。 */}
+                      <input
                         aria-label="测试模型"
-                        value={testModel}
-                        onChange={(event) => { setTestModel(event.target.value); setTestResult(null); }}
-                      >
-                        <option value="auto">auto（由模型池调度）</option>
-                        {poolModels.map((modelId) => <option key={modelId} value={modelId}>{modelId}</option>)}
-                      </select>
+                        list="lg-qs-model-options"
+                        placeholder="auto（由模型池调度）"
+                        value={modelQuery}
+                        onChange={(event) => { setModelQuery(event.target.value); setTestResult(null); }}
+                      />
+                      <datalist id="lg-qs-model-options">
+                        {poolModels.map((modelId) => <option key={modelId} value={modelId} />)}
+                      </datalist>
                     </label>
                     {canCreateAccess ? (
-                      <Button size="sm" variant="primary" disabled={testing} onClick={() => void runTest()}>
+                      <Button size="sm" variant="primary" disabled={testing || !modelValid} onClick={() => void runTest()}>
                         <Play size={14} />{testing ? '正在执行' : '执行测试'}
                       </Button>
                     ) : null}
-                    <small>{poolModels.length === 0 ? '暂无池内成员，走 auto。' : `来自「${poolName || '默认池'}」的 ${poolModels.length} 个成员。`}</small>
+                    <small className={modelValid ? undefined : 'is-bad'}>{modelHint}</small>
                   </div>
                   <div className="lg-qs-snippet-head">
                     <div className="lg-snippet-tabs">

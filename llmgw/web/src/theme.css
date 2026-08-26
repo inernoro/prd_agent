@@ -2956,15 +2956,26 @@ a:focus-visible {
   font-size: var(--fs-secondary);
 }
 
-.lg-qs-testbar select {
-  max-width: 320px;
+.lg-qs-testbar input {
+  width: 260px;
+  max-width: 100%;
   height: 32px;
   padding: 0 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
   color: var(--text-primary);
+  font-family: var(--font-mono);
   font-size: var(--fs-secondary);
+}
+
+.lg-qs-testbar input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.lg-qs-testbar > small.is-bad {
+  color: var(--err);
 }
 
 .lg-qs-testbar > small {
