@@ -989,20 +989,40 @@ function ProgressCard({
             </h2>
           </div>
           {/*
-            这一段必须同时说两件事，缺一件就变成误导：
-            地址已经改成本站的（否则图片会指回源站），以及**文件本身没有搬过来**。
+            这一段必须同时说三件事，缺一件就变成误导：
+            这次到底写没写库、地址改成了本站的（否则图片会指回源站）、**文件本身没有搬过来**。
             两站不共用同一个对象存储时，改完地址只是从「指回别人家」变成「指向自己家的空位」。
+
+            **试跑必须用将来时。** 改写发生在入库之前、计数也在那时累加，但真正的写入整段
+            包在 `if (!run.DryRun)` 里——试跑一条都没落库。原来这段话不分试跑真跑，一律写
+            「已把 N 条改写成本站地址」「这次只搬了记录」，于是运维会以为附件此刻已经指向本站、
+            点开就能看（Codex review P2）。这和上一轮修的密钥卡是同一条纪律的同一处漏网：
+            打算做的事不能记成做过的事。
           */}
           <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
-            已把 {assetsRebased} 条附件地址改写成本站地址
-            {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、保留了源站地址` : ''}
-            。注意：<span style={{ color: 'var(--text-primary)' }}>这次只搬了记录，没有搬文件本身</span>。
-            两站用的是同一个对象存储时，附件现在就能打开；不是同一个的话，需要另外把文件搬过来
-            （或让两站指向同一个桶），否则会看到图片裂开。
+            {run.dryRun ? (
+              <>
+                这是一次试跑，<span style={{ color: 'var(--text-primary)' }}>一条记录都没有写进来</span>。
+                真跑时会把 {assetsRebased} 条附件地址改写成本站地址
+                {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、会保留源站地址` : ''}
+                。到时候也<span style={{ color: 'var(--text-primary)' }}>只搬记录，不搬文件本身</span>——
+                两站用的是同一个对象存储时附件才打得开；不是同一个的话，需要另外把文件搬过来
+                （或让两站指向同一个桶），否则会看到图片裂开。
+              </>
+            ) : (
+              <>
+                已把 {assetsRebased} 条附件地址改写成本站地址
+                {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、保留了源站地址` : ''}
+                。注意：<span style={{ color: 'var(--text-primary)' }}>这次只搬了记录，没有搬文件本身</span>。
+                两站用的是同一个对象存储时，附件现在就能打开；不是同一个的话，需要另外把文件搬过来
+                （或让两站指向同一个桶），否则会看到图片裂开。
+              </>
+            )}
           </p>
           {assetsUnresolved > 0 ? (
             <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
-              那 {assetsUnresolved} 条多半是更早期、不带对象位置信息的旧附件——它们的地址仍然指向源站，
+              那 {assetsUnresolved} 条多半是更早期、不带对象位置信息的旧附件——
+              {run.dryRun ? '真跑之后它们的地址会仍然指向源站' : '它们的地址仍然指向源站'}，
               源站一旦下线就打不开。
             </p>
           ) : null}
