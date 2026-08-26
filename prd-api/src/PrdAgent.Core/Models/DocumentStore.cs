@@ -111,6 +111,30 @@ public class DocumentStore
     public string? PeerSyncLastResult { get; set; }
 
     /// <summary>
+    /// 这个库上一次「CDS 验收报告导入」用的是什么范围——记下来，好让每小时的自动同步
+    /// **照着同一个范围重放**。
+    ///
+    /// 为什么需要它：上一版的自动同步只肯刷新「默认全量镜像」（判据是有没有同步水位），
+    /// 理由是怕把「用户特意只存了一条报告」的库每小时撑成整座库。方向对，代价却是
+    /// **小范围的库从此永远不会自动更新**——用户存了一条报告，那条报告在 CDS 上更新了，
+    /// 这边永远看不到，而且看不出为什么（2026-08-26 真人验收现场撞上）。
+    ///
+    /// 正解不是二选一，是把范围记下来：单条就每小时刷那一条，单项目就刷那个项目，
+    /// 全量就照旧走增量水位。三种都能自动新鲜，谁也不会被撑大。
+    ///
+    /// `RecordedAt` 用来区分「记过范围，而且范围就是全量」和「压根没记过」：
+    /// 两者的 ProjectId/ReportId 都是空，只有这个字段能分开。没记过的老库（本改动之前
+    /// 建的）仍走保守判据——有水位才自动刷，等它下次被手工导入一次就自动登记上。
+    /// </summary>
+    public DateTime? CdsReportScopeRecordedAt { get; set; }
+
+    /// <summary>上次导入限定的 CDS 项目；空 = 不按项目过滤。</summary>
+    public string? CdsReportScopeProjectId { get; set; }
+
+    /// <summary>上次导入限定的单份 CDS 报告；空 = 不按报告过滤。</summary>
+    public string? CdsReportScopeReportId { get; set; }
+
+    /// <summary>
     /// 是否开启后台自动同步（用户在「同步中心」显式开启）。开启后 PeerSyncScheduleWorker 按
     /// PeerSyncIntervalMinutes 周期复用最近一次同步的对端 + 方向，自动 push/pull/both（非破坏性，绝不删条目）。
     /// 默认 false —— 历史上手动同步过一次的库不会被动开始发流量，避免「意料之外」的对端请求。

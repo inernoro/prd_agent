@@ -255,6 +255,15 @@ public class CdsReportImportService
             Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeBaseUrl, baseUrl),
             Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastResult, $"导入 {result.Imported} 新 / {result.Updated} 更新 / {result.Skipped} 跳过 / {result.Failed} 失败"),
             Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
+            // **把这次用的范围记下来，每轮都记**（含「就是全量」那一种）。
+            // 每小时的自动同步照着它重放：单条刷那一条、单项目刷那个项目、全量走增量水位。
+            // 不记的话，自动同步只能靠「有没有水位」猜，而那个判据会把小范围的库
+            // 永远排除在自动刷新之外——用户存的那条报告在 CDS 上更新了这边也看不到。
+            Builders<DocumentStore>.Update.Set(s => s.CdsReportScopeRecordedAt, DateTime.UtcNow),
+            Builders<DocumentStore>.Update.Set(s => s.CdsReportScopeProjectId,
+                string.IsNullOrWhiteSpace(opts.ProjectId) ? null : opts.ProjectId!.Trim()),
+            Builders<DocumentStore>.Update.Set(s => s.CdsReportScopeReportId,
+                string.IsNullOrWhiteSpace(opts.ReportId) ? null : opts.ReportId!.Trim()),
         };
         // 只有默认全量镜像才回写增量游标 PeerSyncLastAt；过滤/换源导入若回写，会污染默认镜像的
         // updatedSince 游标，使另一作用域的旧报告被永久跳过（Codex P2）。
@@ -332,7 +341,7 @@ public class CdsReportImportService
         }
 
         var store = await _db.DocumentStores
-            .Find(s => s.OwnerId == userId && s.AppKey == "cds-reports")
+            .Find(s => s.OwnerId == userId && s.AppKey == CdsReportImportWorker.CdsReportStoreAppKey)
             .FirstOrDefaultAsync(ct);
         if (store != null) return store;
 
@@ -341,7 +350,7 @@ public class CdsReportImportService
             Name = "CDS 验收报告",
             Description = "从 CDS 验收中心同步的验收报告（只读镜像，按 contentHash 增量）。",
             OwnerId = userId,
-            AppKey = "cds-reports",
+            AppKey = CdsReportImportWorker.CdsReportStoreAppKey,
             Tags = new List<string> { "CDS", "验收" },
         };
         await _db.DocumentStores.InsertOneAsync(store, cancellationToken: ct);
