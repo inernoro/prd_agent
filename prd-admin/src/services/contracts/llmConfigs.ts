@@ -1,28 +1,10 @@
 import type { ApiResponse } from '@/types/api';
 import type { LLMConfig } from '@/types/admin';
 
+/**
+ * 旧 LLM 配置只读契约。
+ *
+ * 2026-08-25 模型管理退场：创建 / 更新 / 删除 / 激活改由 LLM Gateway 控制台承担，
+ * MAP 侧 `api/mds/llm-configs*` 写端点已统一 410。
+ */
 export type GetLLMConfigsContract = () => Promise<ApiResponse<LLMConfig[]>>;
-
-export type CreateLLMConfigInput = {
-  provider: string;
-  model: string;
-  apiEndpoint?: string;
-  apiKey: string;
-  maxTokens: number;
-  temperature: number;
-  topP: number;
-  rateLimitPerMinute: number;
-  isActive?: boolean;
-  /** 是否启用Prompt Caching（Claude可节省90%输入token费用） */
-  enablePromptCache?: boolean;
-};
-
-export type CreateLLMConfigContract = (input: CreateLLMConfigInput) => Promise<ApiResponse<LLMConfig>>;
-
-export type UpdateLLMConfigInput = Partial<Omit<CreateLLMConfigInput, 'apiKey'>> & { apiKey?: string };
-
-export type UpdateLLMConfigContract = (id: string, input: UpdateLLMConfigInput) => Promise<ApiResponse<LLMConfig>>;
-
-export type DeleteLLMConfigContract = (id: string) => Promise<ApiResponse<true>>;
-
-export type ActivateLLMConfigContract = (id: string) => Promise<ApiResponse<true>>;

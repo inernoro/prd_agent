@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using PrdAgent.Core.Models;
@@ -34,7 +35,9 @@ public sealed class MdsWriteRetiredFilter : IActionFilter
     /// </summary>
     private static readonly HashSet<string> ReadOnlyProbes = new(StringComparer.OrdinalIgnoreCase)
     {
-        // 批量读取模型适配器信息（视觉创作等页面用），纯查询
+        // 批量读取模型适配器信息，纯查询（POST 只是为了带模型 id 列表，不写任何配置）。
+        // 澄清：视觉创作走的是 /api/visual-agent/image-gen/adapter-info，不是这条；
+        // 这条目前前端无活消费方，留着是因为它语义是读——不该用 410 去挡一个读接口。
         "POST api/mds/adapter-info/batch",
         // 从上游重新拉取模型清单：只清/写本地缓存，不改 llmplatforms / llmmodels
         "POST api/mds/platforms/{id}/refresh-models",
@@ -55,15 +58,28 @@ public sealed class MdsWriteRetiredFilter : IActionFilter
         "PUT api/mds/exchanges/{id}",
     };
 
+    /// <summary>
+    /// 是不是 mds 这个模块的路由。
+    ///
+    /// 必须**按段**判定，不能裸 StartsWith("api/mds")——那样 <c>api/mdsomething-else</c>
+    /// 也会被误当成 mds 端点连带挡掉（形状 1：语义不同、写法相近的输入让判据翻转）。
+    /// 前后斜杠都先削掉，避免 <c>/api/mds/</c> 这种写法漏判。
+    /// </summary>
+    private static bool IsMdsRoute(string normalizedTemplate)
+        => normalizedTemplate.Equals("api/mds", StringComparison.OrdinalIgnoreCase)
+        || normalizedTemplate.StartsWith("api/mds/", StringComparison.OrdinalIgnoreCase);
+
     public void OnActionExecuting(ActionExecutingContext context)
     {
         var template = context.ActionDescriptor.AttributeRouteInfo?.Template;
         if (string.IsNullOrWhiteSpace(template)) return;
-        if (!template.StartsWith("api/mds", StringComparison.OrdinalIgnoreCase)) return;
+        // 归一化一次，判据和白名单查表用同一个取值口径（形状 6：别一处取原值一处取归一值）
+        var normalized = template.Trim().Trim('/');
+        if (!IsMdsRoute(normalized)) return;
 
         var method = context.HttpContext.Request.Method;
         if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method)) return;
-        var key = $"{method} {template}";
+        var key = $"{method} {normalized}";
         if (ReadOnlyProbes.Contains(key) || OpsOnlyWrites.Contains(key)) return;
 
         context.Result = new ObjectResult(

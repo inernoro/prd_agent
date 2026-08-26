@@ -15,6 +15,22 @@ import { MoreHorizontal } from 'lucide-react';
  * overflow 裁剪）、按可用空间上下翻转、窄屏贴底、点外面或 Esc 关闭。
  */
 
+/**
+ * 视口底部被常驻浮层占掉多少高度。
+ *
+ * 目前只有一个已知遮挡物：CDS 注入的预览徽章 `#cds-widget`。它不是本应用渲染的，
+ * 拿不到组件树里的尺寸，只能按 id 量。判据要求它真的贴在视口底部附近才算数——
+ * 有人把同名元素挪到别处时不该跟着抬高。查不到就返回 0，正式环境行为不变。
+ */
+function bottomObstructionHeight(viewportHeight: number): number {
+  if (typeof document === 'undefined') return 0;
+  const widget = document.getElementById('cds-widget');
+  if (!widget) return 0;
+  const rect = widget.getBoundingClientRect();
+  if (rect.height <= 0 || rect.bottom < viewportHeight - 160) return 0;
+  return Math.max(0, viewportHeight - rect.top);
+}
+
 export type RowAction = {
   key: string;
   label: string;
@@ -52,7 +68,19 @@ export function RowActions({
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       if (vw <= 720) {
-        setStyle({ top: 'auto', right: 10, bottom: 10, left: 10, width: 'auto', visibility: 'visible' });
+        // 窄屏贴底，但底部左下角常驻着 CDS 预览徽章（#cds-widget，fixed / bottom:12 / z-index 99999），
+        // 它的层级永远压过这个菜单，硬贴 10px 就会被盖住一角。所以**量出真实遮挡**再让位，
+        // 而不是拍一个固定留白：预览环境里自动抬高，正式环境里没有这个元素就还是贴底 10px。
+        const bottom = Math.max(10, bottomObstructionHeight(vh) + 8);
+        setStyle({
+          top: 'auto',
+          right: 10,
+          bottom,
+          left: 10,
+          width: 'auto',
+          maxHeight: Math.max(120, vh - bottom - 16),
+          visibility: 'visible',
+        });
         return;
       }
       const width = 184;

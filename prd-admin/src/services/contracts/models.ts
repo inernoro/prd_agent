@@ -1,44 +1,17 @@
 import type { ApiResponse } from '@/types/api';
 import type { Model } from '@/types/admin';
 
+/**
+ * 模型目录只读契约。
+ *
+ * 2026-08-25 模型管理退场：模型的增删改、用途标记（主 / 意图 / 视觉 / 生图）与优先级
+ * 改由 LLM Gateway 控制台承担，MAP 侧 `api/mds` 写端点已统一 410，对应写契约一并移除。
+ * 适配器信息（尺寸约束等）仍是纯读，视觉创作等页面依赖它渲染尺寸选项。
+ */
 export type GetModelsContract = () => Promise<ApiResponse<Model[]>>;
 
-export type CreateModelInput = {
-  name: string;
-  modelName: string;
-  platformId: string;
-  enabled: boolean;
-  group?: string;
-  enablePromptCache?: boolean;
-  /** 透传到大模型请求的 max_tokens；不传/传 null 表示使用后端默认 */
-  maxTokens?: number | null;
-};
-
-export type UpdateModelInput = Partial<CreateModelInput> & {
-  isMain?: boolean;
-};
-
-export type CreateModelContract = (input: CreateModelInput) => Promise<ApiResponse<Model>>;
-export type UpdateModelContract = (id: string, input: UpdateModelInput) => Promise<ApiResponse<Model>>;
-export type DeleteModelContract = (id: string) => Promise<ApiResponse<true>>;
-
-export type TestModelContract = (id: string) => Promise<ApiResponse<{ success: boolean; duration: number; error?: string }>>;
-
-/** 业务侧模型唯一键：platformId + modelId（平台侧模型 ID，等价于后端 llmmodels.modelName） */
 export type PlatformModelKey = { platformId: string; modelId: string };
 
-export type SetMainModelContract = (input: PlatformModelKey) => Promise<ApiResponse<true>>;
-export type SetIntentModelContract = (input: PlatformModelKey) => Promise<ApiResponse<true>>;
-export type ClearIntentModelContract = () => Promise<ApiResponse<true>>;
-export type SetVisionModelContract = (input: PlatformModelKey) => Promise<ApiResponse<true>>;
-export type ClearVisionModelContract = () => Promise<ApiResponse<true>>;
-export type SetImageGenModelContract = (input: PlatformModelKey) => Promise<ApiResponse<true>>;
-export type ClearImageGenModelContract = () => Promise<ApiResponse<true>>;
-
-export type ModelPriorityUpdate = { id: string; priority: number };
-export type UpdateModelPrioritiesContract = (updates: ModelPriorityUpdate[]) => Promise<ApiResponse<{ updated: number }>>;
-
-// 模型适配器信息
 export type ModelAdapterSizeConstraint = {
   type: 'whitelist' | 'range' | 'aspect_ratio' | 'adaptive';
   description: string;

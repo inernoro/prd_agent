@@ -118,11 +118,33 @@ public class MdsWriteRetiredGuardTests
         => Assert.Null(Run(method, routeTemplate));
 
     [Theory]
-    // 闸只管 api/mds，别的模块的写操作一概不受影响
+    // 闸只管 api/mds，别的模块的写操作一概不受影响。
+    // api/mdsomething-else 这条是关键：判据必须按段比，裸 StartsWith("api/mds") 会把它一起挡掉。
     [InlineData("POST", "api/document-store/entries")]
     [InlineData("DELETE", "api/mdsomething-else/{id}")]
+    [InlineData("POST", "api/mdsx")]
+    [InlineData("POST", "api/mds-legacy/platforms")]
     public void OtherModules_AreNotAffected(string method, string routeTemplate)
         => Assert.Null(Run(method, routeTemplate));
+
+    [Theory]
+    // 前后斜杠只是写法差异，不该让判据翻转（形状 1）
+    [InlineData("POST", "/api/mds/platforms")]
+    [InlineData("POST", "api/mds/platforms/")]
+    [InlineData("POST", "/api/mds")]
+    public void SlashVariants_AreStillBlocked(string method, string routeTemplate)
+    {
+        var obj = Assert.IsType<ObjectResult>(Run(method, routeTemplate));
+        Assert.Equal(StatusCodes.Status410Gone, obj.StatusCode);
+    }
+
+    [Fact]
+    public void SlashVariants_DoNotBreakTheAllowlist()
+    {
+        // 白名单查表用的必须是归一化后的模板，否则带斜杠写法会把豁免端点误挡
+        Assert.Null(Run("PUT", "/api/mds/exchanges/{id}"));
+        Assert.Null(Run("POST", "api/mds/adapter-info/batch/"));
+    }
 
     [Fact]
     public void MissingRouteTemplate_IsIgnoredInsteadOfBlocking()
@@ -132,9 +154,29 @@ public class MdsWriteRetiredGuardTests
     public void FilterIsActuallyRegisteredGlobally()
     {
         // 形状 2：写了闸但没人挂 = 建了一半，删掉这行注册编译照过、上面所有用例照绿。
-        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        //
+        // 注意必须先剥注释再断言：直接 Contains 整份源码的话，把注册行注释掉
+        // 一样能匹配上，守卫本身就成了形状 8——拿一份「不生效的声明」当成生效的证明。
+        var program = StripLineComments(ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs"));
         Assert.Contains("options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();", program);
     }
+
+    [Fact]
+    public void RegistrationGuard_GoesRedWhenTheLineIsCommentedOut()
+    {
+        // 负对照：证明上面那条守卫真的会红。剥注释这步一旦被人删掉，这条立刻失败。
+        var commented = StripLineComments(
+            "    // options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();\n");
+        Assert.DoesNotContain("options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();", commented);
+    }
+
+    /// <summary>把 // 之后的内容削掉，只保留会被编译器看见的部分。字符串里出现 // 的行本仓库没有，够用。</summary>
+    private static string StripLineComments(string source)
+        => string.Join('\n', source.Split('\n').Select(line =>
+        {
+            var at = line.IndexOf("//", StringComparison.Ordinal);
+            return at >= 0 ? line[..at] : line;
+        }));
 
     [Fact]
     public void EveryMdsWriteEndpointIsCoveredByTheGate()

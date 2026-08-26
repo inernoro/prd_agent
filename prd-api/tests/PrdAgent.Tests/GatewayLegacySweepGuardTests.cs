@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -88,20 +87,56 @@ public class GatewayLegacySweepGuardTests
     [Fact]
     public void 死成员判定必须两侧都查不到才算死()
     {
-        var fn = Console[Console.IndexOf("static async Task<bool> IsDanglingPoolMemberAsync", StringComparison.Ordinal)..];
-        fn = fn[..fn.IndexOf("\nstatic ", StringComparison.Ordinal)];
+        var fn = DanglingMemberSource();
 
         // GW 侧查得到 -> 活的
         Assert.Contains("gwPlatforms.Find", fn);
         // MAP 侧查得到 -> 也是活的（只查一侧就会把 MAP 来源的活成员误判成死成员）
         Assert.Contains("mapPlatforms.Find", fn);
-        // 四条早退：成员不存在 / platformId 为空 / GW 侧命中 / MAP 侧命中。
-        // 任一命中立即 return false，不允许改成「都查完再取或」——那种写法一旦某条查询抛错或被短路，
-        // 就会把活成员判成死成员摘掉（宁可拒绝，不可误删）。
-        Assert.Equal(4, Regex.Matches(fn, @"return false;").Count);
         // 成员不存在、platformId 为空，一律当活成员保护
         Assert.Contains("if (targets.Count == 0) return false;", fn);
         Assert.Contains("if (string.IsNullOrWhiteSpace(memberPlatformId)) return false;", fn);
+        // 早退全部写成「命中即 return false」，不允许改成「都查完再取或」——
+        // 那种写法一旦某条查询抛错或被短路，就会把活成员判成死成员摘掉（宁可拒绝，不可误删）。
+        Assert.DoesNotContain("dangling = true", fn);
+        Assert.DoesNotContain("return true;", fn[..fn.LastIndexOf("return true;", StringComparison.Ordinal)]);
+    }
+
+    [Fact]
+    public void 死成员判定必须连模型一起查()
+    {
+        // 只判「上游还在不在」会漏掉第二种死法：上游还在、这个模型被删了。
+        // 那种成员照样解析不到任何东西，却会一直挂在删除阻挡清单里，
+        // 而 append-only 又不让手工摘 —— 与本文件第一条守卫要解的是同一个死锁。
+        var fn = DanglingMemberSource();
+        Assert.Contains("gwModels.Find", fn);
+        Assert.Contains("mapModels.Find", fn);
+        Assert.Contains("PoolMemberModelFilter", fn);
+
+        // 模型匹配的口径必须与 IsResolvableGatewayPoolMember 一致：_id / ModelName / Name 三个都认。
+        // 两处用不同口径，就会一边说这成员死了、一边说它还活着。
+        var filter = Console[Console.IndexOf("static FilterDefinition<BsonDocument> PoolMemberModelFilter", StringComparison.Ordinal)..];
+        filter = filter[..filter.IndexOf("\nstatic ", StringComparison.Ordinal)];
+        foreach (var key in new[] { "\"_id\"", "\"ModelName\"", "\"Name\"" })
+            Assert.Contains(key, filter);
+        Assert.Contains("fb.Eq(\"PlatformId\", platformId)", filter);
+    }
+
+    [Fact]
+    public void 中继成员不得被平台表判死()
+    {
+        // 中继成员的 PlatformId 是 __exchange__ 或某条中继的 id，压根不是平台 id。
+        // 拿平台表去查必然「两侧都查不到」——不特判就会把活的中继成员判成死成员放行摘除（形状 1）。
+        var fn = DanglingMemberSource();
+        Assert.Contains("__exchange__", fn);
+        Assert.Contains("gwExchanges.Find", fn);
+        Assert.Contains("mapExchanges.Find", fn);
+    }
+
+    private static string DanglingMemberSource()
+    {
+        var fn = Console[Console.IndexOf("static async Task<bool> IsDanglingPoolMemberAsync", StringComparison.Ordinal)..];
+        return fn[..fn.IndexOf("\n/// <summary>", StringComparison.Ordinal)];
     }
 
     [Fact]

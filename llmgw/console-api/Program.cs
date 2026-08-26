@@ -10514,7 +10514,8 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
         // 留着只会让平台删除的阻挡清单一直挂着一条谁也清不掉的引用（本轮就是这么卡住的）。
         // 所以只放开这一种：目标成员的 platformId 在 GW 与 MAP 两侧都已不存在。
         var danglingOnly = await IsDanglingPoolMemberAsync(
-            gwPlatforms, platforms, http, pool, normalizedModelId, normalizedPlatformId, internalTenantId);
+            gwPlatforms, platforms, gwModels, models, gwModelExchanges, modelExchanges,
+            http, pool, normalizedModelId, normalizedPlatformId, internalTenantId);
         if (!danglingOnly)
         {
             return Json(ApiEnvelope<PoolItem>.Fail(
@@ -12687,16 +12688,25 @@ static async Task<List<string>> PruneManagedPoolMembersAsync(
 }
 
 /// <summary>
-/// 这条池成员是不是「死成员」——它挂的 platformId 在 GW 与 MAP 两侧都已经不存在了。
+/// 这条池成员是不是「死成员」——它按 (ModelId, PlatformId) 已经解析不到任何东西了。
 ///
-/// 池成员按 (ModelId, PlatformId) 定位，上游一删，成员就再也解析不到任何东西；
-/// 它只会继续出现在平台/模型删除的阻挡清单里，把清理链路整个卡死。
-/// 判定刻意从严：成员必须真实存在、必须带得出 platformId，且两侧都查不到那条上游，才算 dangling；
-/// 任何一条查得到、或者 platformId 是空的，一律当活成员保护住（宁可拒绝，不可误删活的）。
+/// 死法有两种，缺一不可地都要认：**上游没了**（platformId 两侧都查不到），
+/// 以及**上游还在、但那个模型没了**（platform 命中，模型按 _id / ModelName / Name 都对不上）。
+/// 只判前者会漏掉后者——退役一条上游的某个模型时，成员仍会被当活的，
+/// 于是它继续挂在删除阻挡清单里，而 append-only 又不让手工摘，两头堵死。
+///
+/// 判定刻意从严，只要有任何一条「还解析得到 / 判不准」的迹象就当活成员保护住
+///（宁可拒绝，不可误删活的）：成员不存在、platformId 为空、走中继解析（中继成员的
+/// platformId 是 `__exchange__` 或某条中继的 id，压根不是平台 id，不能拿平台表来判生死）、
+/// 平台在且模型在 —— 一律 return false。
 /// </summary>
 static async Task<bool> IsDanglingPoolMemberAsync(
     IMongoCollection<BsonDocument> gwPlatforms,
     IMongoCollection<BsonDocument> mapPlatforms,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> mapModels,
+    IMongoCollection<BsonDocument> gwExchanges,
+    IMongoCollection<BsonDocument> mapExchanges,
     HttpContext http,
     BsonDocument pool,
     string modelId,
@@ -12719,12 +12729,42 @@ static async Task<bool> IsDanglingPoolMemberAsync(
         var memberPlatformId = member.GetStringOrEmpty("PlatformId");
         if (string.IsNullOrWhiteSpace(memberPlatformId)) return false;
 
-        var gwHit = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", memberPlatformId))).AnyAsync();
-        if (gwHit) return false;
-        if (isInternal && await mapPlatforms.Find(fb.Eq("_id", memberPlatformId)).AnyAsync()) return false;
+        // 中继成员不走平台表解析，拿平台表判它必然「查不到」，会把活的中继成员误判成死成员
+        if (string.Equals(memberPlatformId, "__exchange__", StringComparison.Ordinal)) return false;
+        if (await gwExchanges.Find(TenantAccess.Filter(http, fb.Eq("_id", memberPlatformId))).AnyAsync()) return false;
+        if (isInternal && await mapExchanges.Find(fb.Eq("_id", memberPlatformId)).AnyAsync()) return false;
+
+        var memberModelId = member.GetStringOrEmpty("ModelId");
+        if (string.IsNullOrWhiteSpace(memberModelId)) return false;
+
+        var gwPlatformHit = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", memberPlatformId))).AnyAsync();
+        if (gwPlatformHit)
+        {
+            if (await gwModels.Find(TenantAccess.Filter(http, PoolMemberModelFilter(fb, memberPlatformId, memberModelId))).AnyAsync())
+                return false;
+        }
+
+        if (isInternal && await mapPlatforms.Find(fb.Eq("_id", memberPlatformId)).AnyAsync())
+        {
+            if (await mapModels.Find(PoolMemberModelFilter(fb, memberPlatformId, memberModelId)).AnyAsync())
+                return false;
+        }
     }
     return true;
 }
+
+/// <summary>
+/// 池成员的 ModelId 不是单一口径：历史数据里它可能是模型文档 _id，也可能是 ModelName 或 Name。
+/// 三个字段都要认，口径与 <see cref="IsResolvableGatewayPoolMember"/> 保持一致——
+/// 两处判「这个成员指得到模型吗」用不同口径，就会一边说死一边说活。
+/// </summary>
+static FilterDefinition<BsonDocument> PoolMemberModelFilter(
+    FilterDefinitionBuilder<BsonDocument> fb,
+    string platformId,
+    string modelId)
+    => fb.And(
+        fb.Eq("PlatformId", platformId),
+        fb.Or(fb.Eq("_id", modelId), fb.Eq("ModelName", modelId), fb.Eq("Name", modelId)));
 
 static bool IsManagedAppendOnlyPool(BsonDocument pool)
     => pool.AsNullableBool("ManagedByRegistry") == true
