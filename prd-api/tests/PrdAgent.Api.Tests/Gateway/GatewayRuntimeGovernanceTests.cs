@@ -1658,6 +1658,9 @@ public sealed class GatewayRuntimeGovernanceTests
     [Fact]
     public async Task ScopedKey_EnforcesTenantScopedPerMinuteLimit()
     {
+        // 限流窗口按墙钟分钟取键：这组请求跨过分钟边界就会插出第二条窗口、计数从头算，
+        // 下面的 SingleAsync() 与精确计数都会假红。判据见 RateWindowTiming。
+        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(5)));
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -1696,6 +1699,9 @@ public sealed class GatewayRuntimeGovernanceTests
     [Fact]
     public async Task ScopedKey_FirstMinuteConcurrentRequests_DoNotFailWithDuplicateWindow()
     {
+        // 限流窗口按墙钟分钟取键：这组请求跨过分钟边界就会插出第二条窗口、计数从头算，
+        // 下面的 SingleAsync() 与精确计数都会假红。判据见 RateWindowTiming。
+        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(10)));
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -1735,6 +1741,9 @@ public sealed class GatewayRuntimeGovernanceTests
     [Fact]
     public async Task ScopedKey_ConcurrentLimitsAreIndependentAcrossTenantsAndAuditsKeepTenantId()
     {
+        // 限流窗口按墙钟分钟取键：这组请求跨过分钟边界就会插出第二条窗口、计数从头算，
+        // 下面的 SingleAsync() 与精确计数都会假红。判据见 RateWindowTiming。
+        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(10)));
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
