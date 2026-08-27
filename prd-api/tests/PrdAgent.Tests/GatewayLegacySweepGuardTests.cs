@@ -299,6 +299,21 @@ public class GatewayLegacySweepGuardTests
     }
 
     [Fact]
+    public void 批量认领不许每认领一个池就重建一次解析索引()
+    {
+        // 索引扫的是上游/模型/中继三张表（内部租户还要各扫 GW 与 MAP 两侧，共 12 次集合读），
+        // 而认领池根本不改这三张表。每个池重建一次，认领 13 个池就是 156 次读同一份内容。
+        var fn = Console[Console.IndexOf("app.MapPost(\"/gw/pools/bulk-claim\"", StringComparison.Ordinal)..];
+        fn = fn[..fn.IndexOf("\napp.Map", StringComparison.Ordinal)];
+
+        // 循环体里不许再出现「建索引 + 映射」的合并入口
+        Assert.DoesNotContain("MapPoolResolvedAsync", fn);
+        // 建一次、整批复用；按需建，避免一个都没认领时白扫
+        Assert.Contains("resolutionIndex ??= await BuildPoolResolutionIndexAsync(http);", fn);
+        Assert.Contains("ApplyPoolMemberResolution(MapPool(claimedDoc), resolutionIndex)", fn);
+    }
+
+    [Fact]
     public void 接管默认位必须同时退役MAP遗留默认位()
     {
         // model_groups 没有 TenantId，也不再有任何写入口（MAP 模型管理写接口整体退场）。

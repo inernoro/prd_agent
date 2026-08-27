@@ -127,13 +127,21 @@ function memberCanRecover(member: PoolModelInfo): boolean {
   return !member.unavailableReason;
 }
 
-/** 坏成员的下一步：能不能救、怎么救。与 memberFaultPhrase 拼成一句完整归因。 */
+/**
+ * 坏成员的下一步：能不能救、先动哪一步。与 memberFaultPhrase 拼成一句完整归因。
+ *
+ * 措辞一律是「先……」而不是「……之后就会接单」：归因只报**一个**故障，
+ * 而故障可以同时有好几个（上游被停用、同时那个模型也被删了，归因只会说后者）。
+ * 承诺「做完这一件就恢复」在多重故障下就是假话，而判定「还有没有别的毛病」
+ * 要把四种归因两两组合地摊开——那是给自己再加一族语义类别。
+ * 只说下一步、不承诺充分性，既诚实又不用扩枚举。
+ */
 function memberNextStep(member: PoolModelInfo): string {
   if (member.removable) return '这个顺位永远接不到调用';
-  if (member.unavailableReason === 'upstream-disabled') return '把这个上游重新启用后才会接单';
-  if (member.unavailableReason === 'model-disabled') return '把这个模型重新启用后才会接单';
-  if (member.unavailableReason === 'upstream-missing') return '重新接上上游后才会接单';
-  if (member.unavailableReason === 'model-missing') return '把这个模型接回来后才会接单';
+  if (member.unavailableReason === 'upstream-disabled') return '先把这个上游重新启用';
+  if (member.unavailableReason === 'model-disabled') return '先把这个模型重新启用';
+  if (member.unavailableReason === 'upstream-missing') return '先重新接上上游';
+  if (member.unavailableReason === 'model-missing') return '先把这个模型接回来';
   return '恢复后即可继续承接';
 }
 

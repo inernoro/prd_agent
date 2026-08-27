@@ -9818,6 +9818,10 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
     var claimed = 0;
     var skipped = 0;
     var changedItems = new List<PoolItem>();
+    // 索引按需建一次、整批复用。它扫的是上游/模型/中继三张表（内部租户还要各扫 GW 与 MAP 两侧，
+    // 共 12 次集合读），而认领池并不会改动这三张表——每认领一个池重建一次，
+    // 认领 13 个池就是 156 次读，全部读出同一份内容。
+    PoolResolutionIndex? resolutionIndex = null;
 
     foreach (var source in mapDocs)
     {
@@ -9871,7 +9875,8 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
             }
         }
         claimed++;
-        changedItems.Add(await MapPoolResolvedAsync(http, claimedDoc));
+        resolutionIndex ??= await BuildPoolResolutionIndexAsync(http);
+        changedItems.Add(ApplyPoolMemberResolution(MapPool(claimedDoc), resolutionIndex));
     }
 
     await WriteOperationAuditAsync(
