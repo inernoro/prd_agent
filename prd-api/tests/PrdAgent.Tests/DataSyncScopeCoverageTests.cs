@@ -212,6 +212,93 @@ public class DataSyncScopeCoverageTests
             + string.Join("\n  ", stale));
     }
 
+    /// <summary>
+    /// 反方向的闸：导出清单里带地址字段的集合，一个都不许没交代（DS33）。
+    ///
+    /// 原来只有单向闸——「登记的字段必须真实存在」。它挡得住「登记了一个拼错的名字」，
+    /// 挡不住「压根没登记」：新增一个存资产地址的集合，`RebaseIncoming` 对它直接返回
+    /// 空，地址原样落库，而三个计数全是 0——**连附件卡都不出现**，一个字都不说
+    /// （predicate-and-wiring-discipline 形状 2：反方向那半没接）。
+    ///
+    /// 三个去处，必须占且只占一个：改写（UrlFields）／想清楚了不改（NotRebased）／
+    /// 该改但方式没定（PendingSurvey，只许缩小）。
+    /// </summary>
+    [Fact]
+    public void 导出的带地址集合必须三选一有交代()
+    {
+        var collectionToType = ReadCollectionTypeMap();
+        var propsByType = ReadModelProperties();
+
+        var withUrlFields = new List<string>();
+        foreach (var collection in DataSyncScope.AllExportableCollections.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            if (!collectionToType.TryGetValue(collection, out var typeName)) continue;
+            if (!propsByType.TryGetValue(typeName, out var properties)) continue;
+            if (properties.Keys.Any(p => p.EndsWith("Url", StringComparison.Ordinal)
+                                      || p.EndsWith("Urls", StringComparison.Ordinal)))
+            {
+                withUrlFields.Add(collection);
+            }
+        }
+
+        // 一个都没扫到时下面每条断言都天然成立——先把「确实扫到了东西」本身断言掉。
+        Assert.True(withUrlFields.Count > 20,
+            $"只扫到 {withUrlFields.Count} 个带地址字段的可导出集合，解析多半失效了");
+
+        var rebased = DataSyncAssetUrls.FieldMap.Keys.ToHashSet(StringComparer.Ordinal);
+        var declined = DataSyncAssetUrls.NotRebasedReasons.Keys.ToHashSet(StringComparer.Ordinal);
+        var pending = DataSyncAssetUrls.PendingSurveyReasons.Keys.ToHashSet(StringComparer.Ordinal);
+
+        var unclassified = withUrlFields
+            .Where(c => !rebased.Contains(c) && !declined.Contains(c) && !pending.Contains(c))
+            .ToList();
+        Assert.True(unclassified.Count == 0,
+            "下列集合会被导出、模型上带着地址字段，却既没登记改写、也没写明为什么不改：\n  "
+            + string.Join("\n  ", unclassified)
+            + "\n（该改 -> 登记进 DataSyncAssetUrls.UrlFields；指向别人家 -> 加进 NotRebased 并写明理由；"
+            + "该改但 key 形态还没想清楚 -> 加进 PendingSurvey，那一栏只许缩小）");
+
+        foreach (var c in withUrlFields)
+        {
+            var hits = new[] { rebased.Contains(c), declined.Contains(c), pending.Contains(c) }.Count(x => x);
+            Assert.True(hits <= 1, $"{c} 同时出现在多个去处，判据自相矛盾");
+        }
+
+        // 三份名单都不许留死条目：集合被移出导出清单之后，留着的那条会让人以为
+        // 「这个看过了」，实际它早就不在扫描范围里。
+        var surface = withUrlFields.ToHashSet(StringComparer.Ordinal);
+        var stale = rebased.Concat(declined).Concat(pending)
+            .Where(c => !surface.Contains(c))
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+        Assert.True(stale.Count == 0,
+            "下列条目已经扫不到了（集合不再导出，或模型上的地址字段被改名），请删除：\n  "
+            + string.Join("\n  ", stale));
+    }
+
+    /// <summary>
+    /// 「还没想清楚」那一栏是棘轮：只许缩小。
+    ///
+    /// 没有这条，PendingSurvey 就退化成兜底口袋——新增的资产集合往里一塞，
+    /// 反向闸照样绿，而 DS33 要挡的正是这种静默。
+    /// </summary>
+    [Fact]
+    public void 待定名单只许缩小()
+    {
+        const int Baseline = 14; // 2026-08-27 落地时的条数，只减不增
+        Assert.True(DataSyncAssetUrls.PendingSurveyReasons.Count <= Baseline,
+            $"PendingSurvey 涨到了 {DataSyncAssetUrls.PendingSurveyReasons.Count} 条（基线 {Baseline}）："
+            + "新增的资产集合要么当场登记改写，要么写明为什么不改，不许挂进待定栏。"
+            + "清空了条目请把基线一起调小。");
+
+        var blank = DataSyncAssetUrls.PendingSurveyReasons
+            .Concat(DataSyncAssetUrls.NotRebasedReasons)
+            .Where(kv => string.IsNullOrWhiteSpace(kv.Value))
+            .Select(kv => kv.Key)
+            .ToList();
+        Assert.True(blank.Count == 0, "下列集合交代了却没写理由：" + string.Join("、", blank));
+    }
+
     [Fact]
     public void 登记的脱敏字段必须在实体顶层真实存在()
     {
@@ -838,9 +925,12 @@ public class DataSyncScopeCoverageTests
         Assert.Contains("decision.ToInsert", worker, StringComparison.Ordinal);
         Assert.Contains("decision.ToReplace", worker, StringComparison.Ordinal);
 
-        // 两个数字都要落进进度，界面才说得出「改了几条 / 还有几条没救」。
+        // 三个数字都要落进进度，界面才说得出「改了几条 / 还有几条没救 / 还有几条本来就是
+        // 相对路径」。少送第三个就是 DS30 那种彻底静默：本地磁盘存附件的源站，
+        // 前两个数恒为 0，附件卡整个不出现。
         Assert.Contains("progress.AssetUrlsRebased +=", worker, StringComparison.Ordinal);
         Assert.Contains("progress.AssetUrlsUnresolved +=", worker, StringComparison.Ordinal);
+        Assert.Contains("progress.AssetUrlsRelative +=", worker, StringComparison.Ordinal);
 
         // 并且真的送到前端。只算不送等于没算。
         var controllerPath = Path.Combine(
@@ -848,6 +938,41 @@ public class DataSyncScopeCoverageTests
         var controller = File.ReadAllText(controllerPath);
         Assert.Contains("assetUrlsRebased = kv.Value.AssetUrlsRebased", controller, StringComparison.Ordinal);
         Assert.Contains("assetUrlsUnresolved = kv.Value.AssetUrlsUnresolved", controller, StringComparison.Ordinal);
+        Assert.Contains("assetUrlsRelative = kv.Value.AssetUrlsRelative", controller, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 撞唯一索引被剔掉的那几条，改写计数要按**同一批下标**回冲（DS34）。
+    ///
+    /// 改写发生在内存里、写库之前；插入撞索引会被整条剔除，而计数在那之前就加过了。
+    /// 不回冲的话，「已改写 N 条」里混着从没落库的几条。
+    ///
+    /// 这条同时钉住回冲成立的**前提**：`willWrite` 必须先插入后替换拼起来，
+    /// 插入侧的下标才等于 `rebase.ByDocument` 的下标。顺序一反，回冲就冲到别人头上——
+    /// 那比不回冲更糟，而且照样全绿。
+    /// </summary>
+    [Fact]
+    public void 没落库的那几条要从改写计数里回冲()
+    {
+        var worker = ReadApiServiceSource("DataSync", "DataSyncRunWorker.cs");
+
+        var insertAt = worker.IndexOf("willWrite.AddRange(decision.ToInsert);", StringComparison.Ordinal);
+        var replaceAt = worker.IndexOf("willWrite.AddRange(decision.ToReplace);", StringComparison.Ordinal);
+        Assert.True(insertAt >= 0 && replaceAt > insertAt,
+            "willWrite 不再是「先插入、后替换」拼的，按插入下标回冲会冲到替换那一批身上");
+
+        // 逐文档结果要真的被用上：只算不冲，等于 DataSyncAssetUrls 那半白做了（形状 2）。
+        Assert.Contains("rebase.ByDocument[idx]", worker, StringComparison.Ordinal);
+        foreach (var counter in new[] { "AssetUrlsRebased -=", "AssetUrlsUnresolved -=", "AssetUrlsRelative -=" })
+        {
+            Assert.Contains($"progress.{counter}", worker, StringComparison.Ordinal);
+        }
+
+        // 回冲用的下标必须和剔除用的是同一份。各取各的就是判据分裂（形状 3）：
+        // 两处迟早对不上，而对不上的表现只是一个数字偏了几条，没人会发现。
+        var branch = worker[worker.IndexOf("var failedIndexes =", StringComparison.Ordinal)..];
+        branch = branch[..branch.IndexOf("SurvivingInserts", StringComparison.Ordinal)];
+        Assert.Contains("foreach (var idx in failedIndexes)", branch, StringComparison.Ordinal);
     }
 
     [Fact]

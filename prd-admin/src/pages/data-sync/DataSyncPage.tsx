@@ -50,6 +50,7 @@ type ProgressRow = {
   plannedUpdate: number;
   assetUrlsRebased?: number;
   assetUrlsUnresolved?: number;
+  assetUrlsRelative?: number;
   done: boolean;
 };
 type RunView = {
@@ -910,9 +911,12 @@ function ProgressCard({
   // 试跑跑完且成功、还没转正过 —— 这时候才该出现「开始真的搬」。
   const canPromote = finished && run.status === 'succeeded' && run.dryRun && !run.promotedToRunId;
   const pendingSecrets = Object.entries(run.pendingSecretFields || {});
-  // 资产地址：改写了几条、还有几条认不出。两个数字一起看才说得清「附件能不能打开」。
+  // 资产地址：改写了几条、几条认不出、几条本来就是相对路径。
+  // 三个数字一起看才说得清「附件能不能打开」——少看第三个的后果是**整张卡不出现**：
+  // 源站用本地磁盘存附件时，地址全是 `/local-assets/...`，前两个数恒为 0（DS30）。
   const assetsRebased = run.progress.reduce((n, row) => n + (row.assetUrlsRebased || 0), 0);
   const assetsUnresolved = run.progress.reduce((n, row) => n + (row.assetUrlsUnresolved || 0), 0);
+  const assetsRelative = run.progress.reduce((n, row) => n + (row.assetUrlsRelative || 0), 0);
   return (
     <div className="space-y-4">
       <Card>
@@ -976,7 +980,7 @@ function ProgressCard({
         </div>
       </Card>
 
-      {assetsRebased + assetsUnresolved > 0 ? (
+      {assetsRebased + assetsUnresolved + assetsRelative > 0 ? (
         <Card>
           <div className="flex items-center gap-2">
             <ImageOff size={18} style={{ color: 'var(--accent-primary)' }} />
@@ -996,10 +1000,15 @@ function ProgressCard({
             打算做的事不能记成做过的事。
           */}
           <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            {/*
+              「改写了 N 条」这一句要 N>0 才说。源站用本地磁盘存附件时 N 恒为 0，
+              照说会得到「已把 0 条地址改写成本站地址…附件现在就能打开」——
+              一句既没信息量又把人往反方向带的话（DS30）。
+            */}
             {run.dryRun ? (
               <>
                 这是一次试跑，<span style={{ color: 'var(--text-primary)' }}>一条记录都没有写进来</span>。
-                真跑时会把 {assetsRebased} 条附件地址改写成本站地址
+                {assetsRebased > 0 ? `真跑时会把 ${assetsRebased} 条附件地址改写成本站地址` : '真跑时不会有任何一条附件地址能改写成本站地址'}
                 {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、会保留源站地址` : ''}
                 。到时候也<span style={{ color: 'var(--text-primary)' }}>只搬记录，不搬文件本身</span>——
                 两站用的是同一个对象存储时附件才打得开；不是同一个的话，需要另外把文件搬过来
@@ -1007,7 +1016,7 @@ function ProgressCard({
               </>
             ) : (
               <>
-                已把 {assetsRebased} 条附件地址改写成本站地址
+                {assetsRebased > 0 ? `已把 ${assetsRebased} 条附件地址改写成本站地址` : '没有任何一条附件地址能改写成本站地址'}
                 {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、保留了源站地址` : ''}
                 。注意：<span style={{ color: 'var(--text-primary)' }}>这次只搬了记录，没有搬文件本身</span>。
                 两站用的是同一个对象存储时，附件现在就能打开；不是同一个的话，需要另外把文件搬过来
@@ -1020,6 +1029,27 @@ function ProgressCard({
               那 {assetsUnresolved} 条多半是更早期、不带对象位置信息的旧附件——
               {run.dryRun ? '真跑之后它们的地址会仍然指向源站' : '它们的地址仍然指向源站'}，
               源站一旦下线就打不开。
+            </p>
+          ) : null}
+          {/*
+            相对地址这一档单独说，而且必须说得比另外两档更重。
+
+            早先的判据把「已经是相对路径」读成「天然可移植」直接放行：既不改写、也不计数。
+            可这两件事只在两站共享同一份磁盘时才等价，而跨实例同步的前提恰恰是两台不同的
+            机器。源站用本地磁盘存附件的部署里，每一个附件链接都指向本站不存在的文件，
+            而附件卡因为三个数全是 0 整个不出现——**一句提示都没有**（DS30）。
+
+            这里不改写是因为确实无从改起：key 不在地址里，文件也没搬。能做的是别再静默。
+          */}
+          {assetsRelative > 0 ? (
+            <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+              另有 <span style={{ color: 'var(--text-primary)' }}>{assetsRelative} 条是相对地址</span>
+              （形如 <code className="font-mono text-xs">/local-assets/…</code>），说明源站把附件
+              存在<span style={{ color: 'var(--text-primary)' }}>它自己那台机器的磁盘上</span>。
+              这种地址改不了也用不了：地址里没有对象位置，本站磁盘上也没有这些文件，
+              {run.dryRun ? '真跑之后' : '现在'}点开就是 404。
+              要让它们打开，得把源站那个目录里的文件复制到本站对应目录，
+              或者两站都改用同一个对象存储再重新同步。
             </p>
           ) : null}
         </Card>

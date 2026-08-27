@@ -153,6 +153,19 @@ public class DataSyncCollectionProgress
     /// </summary>
     public long AssetUrlsUnresolved { get; set; }
 
+    /// <summary>
+    /// 本来就是**相对地址**的资产字段数（源站用本地磁盘存附件时就是这种）。
+    ///
+    /// **这一档不是「没事」，是「多半有事」。** 判据早先把「已经是相对路径」读成
+    /// 「天然可移植」直接放行，既不改写也不计数——可这两件事只在两站共享同一份磁盘时
+    /// 才等价，而跨实例同步的前提恰恰是两台不同的机器。于是源站用本地磁盘的部署里，
+    /// 每一个附件链接都指向本站不存在的文件，而附件卡因为三个数全是 0 整个不出现，
+    /// **一句提示都没有**（DS30）。
+    ///
+    /// 不改写是因为确实无从改起：key 不在地址里，文件也没搬。能做的是别再静默。
+    /// </summary>
+    public long AssetUrlsRelative { get; set; }
+
     /// <summary>断点续传游标：上一批最后一个 _id 的扩展 JSON 表示</summary>
     public string? Cursor { get; set; }
 
