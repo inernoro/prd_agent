@@ -1,6 +1,18 @@
 namespace PrdAgent.Infrastructure.Services.AssetStorage;
 
-public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime);
+/// <summary>
+/// 一次保存的结果。
+///
+/// <para><b>为什么要带 <paramref name="Key"/></b>：<paramref name="Url"/> 是**本站此刻**的绝对地址
+/// （公网域名 + 本站前缀 + key）。把它当成附件的身份存进库，等于把「东西在哪」和
+/// 「这台机器叫什么」焊死在一起——换个桶、换个公网域名、或者把库搬到另一台机器，
+/// 存量地址全部指回原处（debt.platform.cross-instance-data-sync 的 DS1）。</para>
+///
+/// <para>key 才是不随部署变化的那一半。存下它，运行时用 <see cref="IAssetStorage.BuildUrlForKey"/>
+/// 拼本站前缀，地址就跟着部署走。可空只是为了兼容存量与测试替身；
+/// 真实实现必须回填，有守卫盯着。</para>
+/// </summary>
+public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime, string? Key = null);
 public record AssetReadHandle(Stream Content, string Mime, long? Length);
 
 /// <summary>
