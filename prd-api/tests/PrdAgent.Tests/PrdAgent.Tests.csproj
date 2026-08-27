@@ -38,6 +38,9 @@
     <Compile Include="..\..\..\llmgw\console-api\Organization\MembershipPolicy.cs" Link="Gateway\MembershipPolicy.cs" />
     <Compile Include="..\..\..\llmgw\console-api\Governance\OfferingRoutingChangePolicy.cs" Link="Gateway\OfferingRoutingChangePolicy.cs" />
     <Compile Include="..\..\src\PrdAgent.Api\Services\InstanceIdentity.cs" Link="Services\InstanceIdentity.cs" />
+    <!-- CDS 报告同步的「刷哪些库、各自从哪个源拉」判据。单独一个文件、只依赖 Core，
+         就是为了能这样 link 进来跑；worker 本体拖着 BackgroundService/Mongo，搬不动。 -->
+    <Compile Include="..\..\src\PrdAgent.Api\Services\CdsReportSyncTargets.cs" Link="Services\CdsReportSyncTargets.cs" />
     <Compile Include="..\..\src\PrdAgent.Api\Filters\MdsWriteRetiredFilter.cs" Link="Filters\MdsWriteRetiredFilter.cs" />
   </ItemGroup>
 

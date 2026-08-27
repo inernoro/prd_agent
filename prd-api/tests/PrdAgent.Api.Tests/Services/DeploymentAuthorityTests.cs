@@ -31,6 +31,43 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
+    public void SharedScheduledWork_ProductionRuns_PreviewDoesNot()
+    {
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new())).ShouldBeTrue();
+        DeploymentAuthority.CanRunSharedScheduledWork(
+            Build(new() { ["CDS_PROJECT_ID"] = "50bf3eac3d02" })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SharedScheduledWork_NotificationTakeoverDoesNotUnlockPreview()
+    {
+        // ManageGlobalNotification=true 的语义是「让这个分支临时接管全局告警行」。
+        // 它绝不该顺带把「对着共享库和 CDS 跑周期拉取」也解锁——同项目所有分支预览
+        // 共用一个 Mongo，N 个分支同时跑同一个拉取任务，既是对上游的自我 DDoS，
+        // 也让「这批文档是谁写的」变得不可追（Codex review P2）。
+        //
+        // 没有这一条，把判据换回 IsAuthoritativeDeployment 也全绿——那正是这次的缺陷。
+        var previewTakingOverNotifications = Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "true",
+        });
+        DeploymentAuthority.IsAuthoritativeDeployment(previewTakingOverNotifications).ShouldBeTrue();
+        DeploymentAuthority.CanRunSharedScheduledWork(previewTakingOverNotifications).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SharedScheduledWork_ExplicitFalseIsAVeto()
+    {
+        // 软开关只能收紧：standby/canary 写 false 表示「我不拥有任何共享状态」，
+        // 那么周期任务也不许跑。与 CanRotateSharedCiphertext 同一形状。
+        DeploymentAuthority.CanRunSharedScheduledWork(Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
     public void LegacyTranscriptAdoption_UsesOneBoundedAuthorityPerEnvironment()
     {
         var production = Build(new());
