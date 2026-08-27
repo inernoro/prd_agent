@@ -909,10 +909,10 @@ loopback——只绑回环等于全线断库。所以绑的是「消费方实际
 
 ### A. 项目发布门禁可以被两次 API 调用绕过（高）
 
-`cds/src/routes/releases.ts` 的 `rejectUnscopedAiMutation` 明确写着「AI 操作项目发布必须使用
+发布路由上的那道门禁（`rejectUnscopedAiMutation`）明确写着「AI 操作项目发布必须使用
 项目级 Agent Key，禁止用全局 AI key 配置或执行项目发布」，配置发布目标与触发发布都被它挡住。
 但**签发项目级 Key 的那个接口没有同样的门禁**：`POST /api/projects/:id/agent-keys`
-（`cds/src/routes/projects.ts`）只做 `assertProjectAccess`——项目级 Key 持有者只能给自己项目签，
+只做 `assertProjectAccess`——项目级 Key 持有者只能给自己项目签，
 而**全局 AI key 不受这条限制**，可以给任意项目签一把 `cdsp_*` 再拿回来过门禁。
 
 也就是说这条门禁挡的是「没读过代码的调用方」，不是「拿着全局 key 的 AI」。要么给签发接口补上
@@ -945,11 +945,11 @@ authenticated`）。已经在跑的容器没事——它们的连接是在改动
 没有接口能把值交出来。真正的解法不是把口令要出来，而是**让 CDS 自己去发**：它本来就存着
 那对账号口令，只是从没往消费方容器发过。
 
-- 生产侧：`cds/src/services/infra-credential-env.ts` + `getCdsEnvVars` 接线，按镜像约定的
+- 生产侧：新增一个凭据派生模块，接进 `getCdsEnvVars`，按镜像约定的
   env 键名（不按服务 id，多实例改名都不受影响）派生 `CDS_<服务>_USER` / `_PASSWORD` / `_URL`，
   URL 的 userinfo 段做百分号编码。没口令的服务一个键都不发。
 - 消费侧：三个 profile（`api-prd-agent` / `llmgw-prd-agent` / `llmgw-serve-prd-agent`）的连接串
-  改成引用凭据；`cds-compose.yml` 同步改掉，避免下次重新导入 compose 打回原样。
+  改成引用凭据；仓库里那份 compose 声明同步改掉，避免下次重新导入打回原样。
   Mongo 用 `${CDS_MONGODB_URL}`；Redis 因为 StackExchange.Redis 不吃 `redis://` URI，
   按它的格式拼 `host:port,user=,password=`。
 
@@ -970,6 +970,14 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 
 **顺带**：把 profile 改成引用 `${CDS_REDIS_URL}` 的那次改动，从落地起就没生效过——那个名字当时
 在 CDS 里根本不存在。现在它存在了，那次改动的意图反而是对的，只是缺了生产侧那一半。
+
+### 实现来源（本节两条）
+
+- `cds/src/routes/releases.ts` —— 发布门禁 `rejectUnscopedAiMutation`
+- `cds/src/routes/projects.ts` —— 项目级 Agent Key 签发接口
+- `cds/src/services/infra-credential-env.ts` —— 凭据派生与已知边界
+- `cds/src/services/state.ts` —— `getCdsEnvVars` 接线与模板解析
+- `cds-compose.yml` —— prd-agent 三个 profile 的连接串声明
 
 ---
 
