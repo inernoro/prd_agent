@@ -881,6 +881,53 @@ loopback——只绑回环等于全线断库。所以绑的是「消费方实际
 兜底——它自己拼发布参数，不走上面这条收窄路径，也不该被收窄。那是本仓库唯一做对了的
 暴露路径，改它只会破坏功能而不提升安全。
 
+## 2026-08-27 排查中撞见的两条（活账）
+
+### A. 项目发布门禁可以被两次 API 调用绕过（高）
+
+`cds/src/routes/releases.ts` 的 `rejectUnscopedAiMutation` 明确写着「AI 操作项目发布必须使用
+项目级 Agent Key，禁止用全局 AI key 配置或执行项目发布」，配置发布目标与触发发布都被它挡住。
+但**签发项目级 Key 的那个接口没有同样的门禁**：`POST /api/projects/:id/agent-keys`
+（`cds/src/routes/projects.ts`）只做 `assertProjectAccess`——项目级 Key 持有者只能给自己项目签，
+而**全局 AI key 不受这条限制**，可以给任意项目签一把 `cdsp_*` 再拿回来过门禁。
+
+也就是说这条门禁挡的是「没读过代码的调用方」，不是「拿着全局 key 的 AI」。要么给签发接口补上
+同一条判据（全局 AI key 不许签项目 Key，必须走页面批准），要么承认这条门禁只是提示、别当成边界。
+
+发现经过：本次要修一个发布目标脚本，用全局 key 提交被 403 拦下；顺着看签发路径时发现它没设防。
+**没有利用它**——绕过去等于把这条门禁作废。
+
+### B. prd-agent 的 redis / mongo 连接串不带凭据，新建的分支容器全崩（高，正在发生）
+
+线上 prd-agent 的 redis 跑 `redis-server --aclfile`（ACL 认证）、mongo 跑 `mongod --auth`，
+但分支容器拿到的是：
+
+```
+MongoDB__ConnectionString = mongodb://<host>:<port>
+Redis__ConnectionString   = <host>:<port>
+```
+
+一个凭据都没有，于是每个**新建**的容器启动即崩（`NOAUTH Returned - connection has not yet
+authenticated`）。已经在跑的容器没事——它们的连接是在改动之前建立的，所以面板上看着还有一半分支
+是 running，掩盖了这件事。2026-08-27 当时 18 条分支里 5 条 error，全是这个原因。
+
+根子在判据指向了一个不存在的名字：项目 build profile 里写的是
+`Redis__ConnectionString: ${CDS_REDIS_URL}` / `MongoDB__ConnectionString: ${CDS_MONGODB_URL}`，
+而 **`CDS_REDIS_URL` 与 `CDS_MONGODB_URL` 这两个名字在 CDS 源码里一次都没出现过**
+（`getCdsEnvVars` 只产 `CDS_<服务>_HOST` / `CDS_<服务>_PORT`）。当前容器里那个值是老 profile
+（`${CDS_HOST}:${CDS_REDIS_PORT}`）留下的，下一次部署会拿到空串。属于形状 8：声明了但永远不生效。
+
+**修法**：把这两个变量在 prd-agent 项目级 env 里定义出来，值是带账号口令的完整连接串
+（redis 要 StackExchange 格式 `host:port,user=…,password=…`，不是 `redis://`）。项目级 env
+所有分支共用，写一次全分支下次部署恢复。
+
+**卡在哪**：CDS 对基础设施凭据是全链路脱敏的（列表只给键名，日志与查询输出都过
+`maskTextSecrets`），没有接口能把值交出来，所以口令必须由人给。用 `container-exec` 去容器里把
+ACL 文件读出来能绕开，但那是在故意作废一个专为此设的脱敏控制，**没有做**。
+
+**顺带**：把 profile 改成引用 `${CDS_REDIS_URL}` 的那次改动，从落地起就没生效过。谁改的谁知道
+本来想引哪个变量。
+
 ---
 
 ## 已结清（供回溯）

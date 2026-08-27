@@ -396,16 +396,20 @@ MAP 去 CDS 拉报告时用的是「系统互联」授权时拿到的那把长�
   全部改成引用同一个常量**——原先这三处各抄了一份，加一项范围只改常量的话对真正的授权流程
   一次都不生效（判据形状 6：读的不是真正生效的那个值）。四条守卫逐条红过再恢复。
 
-### 待清理：同一件事有两份实现，合并时留一份
+### 已清理：同一件事的两份实现，已在 #1416 合并 main 时收敛成一份（2026-08-27）
 
-「让 CDS 认这把凭据读报告」在两条分支上各写了一遍：main（PR #1418，本文上一条）和
-`claude/cds-infra-security-baseline`（PR #1416，当前 CDS 线上跑的就是它）。两份都在
-`server.ts` 的鉴权分支上动刀，会冲突。
+「让 CDS 认这把凭据读报告」曾在两条分支上各写了一遍，撞在 `server.ts` 同一段鉴权代码上，
+main 前进后 #1416 变成 `dirty`。已解，取舍如下：
 
-线上那份是权威——它先落地、正在服务，而且从一开始就用的 `report:read`。#1416 解冻合并时
-**保留它那份**（表放在 `server.ts` 内、函数名 `connectionTokenAllows`），把 main 这份
-（独立文件 `connection-token-routes.ts`）合过去或删掉，别两份并存。本次已把 main 这份的
-范围名对齐成 `report:read`，所以合并时是「二选一」，不再是「行为不一致的二选一」。
+- **保留** main 的模块化判据 `connection-token-routes.ts`（`connectionTokenRequiredScope`），
+  它带独立测试与接线守卫；**删掉** #1416 内联在 `server.ts` 的 `CONNECTION_TOKEN_GRANTS`
+  与 `connectionTokenAllows` / `connectionScopeLabels`（无其它引用）。
+- **保留** main 那侧独有的「最近用过」节流写——#1416 那版每次请求都落一次整份状态。
+- **把报告两条的范围钉成 `report:read`**。main 上它还是 `instance:read`，直接合并会把这条
+  分支线上正在用的严格语义悄悄放宽成「老授权顺手能读所有报告」，那正是用户明确否掉的做法。
+- #1416 自己那份 `connection-token-scope.test.ts` **一条断言都没删**：加了一个逐字复刻
+  `server.ts` 用法的适配器把它接到存活的模块上，另外两处依赖 `connectionScopeLabels` 的用例
+  改成从判据反推所需范围（不再读一份可能漂移的标签表）。两套合计 44 条全绿。
 
 另外 #1416 里还有一个管理员开关 `CDS_GRANT_REPORT_READ_TO_EXISTING=1`，作用是给存量连接
 补上 `report:read`（默认关）。它和「重新授权一次」是同一件事的两条路，别同时用。
