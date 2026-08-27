@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { SCENE } from '../scenes/sceneTokens';
 
 /**
@@ -7,19 +7,28 @@ import { SCENE } from '../scenes/sceneTokens';
  * 之前每一幕都是状态自己翻转：图凭空出现、文字凭空被选中。看的人能看出在动，
  * 但看不出**是谁让它动的**。补一枚会走位、会按下的指针，动作就有了主语。
  *
+ * 落点**只认真实元素，不认手写坐标**。第一版是给每一拍写一对百分比，结果指针
+ * 全程落在空处：那些百分比是相对整块面板量的，而画布上的图活在一个
+ * `lg:right-[444px]` 的子容器里 —— 两套坐标系差着一整个对话面板的宽度，怎么调
+ * 都对不上。所以这一版反过来：每一拍只说**指向谁**（目标元素上的
+ * `data-cursor-target`），落点由 `getBoundingClientRect` 当场量。元素挪了、
+ * 换了断点、面板缩放了，指针跟着走，不需要有人回来改数字。
+ *
  * 三条约定：
  *
  * 1. **先走到，再发生**。指针到位与状态翻转之间留一拍，顺序是「移过去 → 按下 →
  *    然后那件事才发生」。反过来（东西先变、指针后到）比没有指针更假。
- * 2. **坐标用百分比**，跟着面板缩放走。面板在手机上会变窄，写死 px 会飘到框外。
+ * 2. **落点来自真实元素**，不写死坐标（理由见上）。
  * 3. **`prefers-reduced-motion` 下整枚不渲染**：它纯粹是动效，关掉动效的人不需要
  *    一枚静止的箭头杵在画面中间（内容一个都不能少，但装饰可以少）。
  */
 
 export interface CursorSpot {
-  /** 落点，面板宽高的百分比 */
-  x: number;
-  y: number;
+  /** 指向谁：目标元素上 `data-cursor-target` 的值 */
+  target: string;
+  /** 落点在目标框里的相对位置（0=左/上，1=右/下），默认正中偏左上一点，像真手停的地方 */
+  ax?: number;
+  ay?: number;
   /** 这一拍是否处于「按下」状态（画一圈按下波纹） */
   press?: boolean;
   /** 这一拍是否隐藏指针（比如还没开始操作，或已经离开面板） */
@@ -28,6 +37,8 @@ export interface CursorSpot {
 
 /** 指针本体的箭头路径（macOS 风格实心箭头 + 描边，深浅底上都看得见）。 */
 const ARROW = 'M3 2l14 10.2-6.1.5 3.4 6.7-2.6 1.3-3.4-6.8L3 18.6z';
+
+interface Pos { left: number; top: number }
 
 export function SceneCursor({
   spot,
@@ -39,37 +50,71 @@ export function SceneCursor({
   travelMs?: number;
   style?: CSSProperties;
 }) {
+  const hostRef = useRef<HTMLSpanElement | null>(null);
+  const [pos, setPos] = useState<Pos | null>(null);
+  const prevPos = useRef<Pos | null>(null);
+
+  const target = spot?.target ?? null;
+  const ax = spot?.ax ?? 0.5;
+  const ay = spot?.ay ?? 0.5;
+
+  useLayoutEffect(() => {
+    const anchor = hostRef.current;
+    if (!anchor || !target) return undefined;
+    // offsetParent = 最近的定位祖先，也就是这一幕的面板根。目标必须在同一个面板里，
+    // 否则量出来的偏移没有意义（窄屏时对话面板挪到了面板外面，就属于这种情况）。
+    const host = anchor.offsetParent as HTMLElement | null;
+    if (!host) return undefined;
+
+    let raf = 0;
+    const measure = () => {
+      const el = host.querySelector<HTMLElement>(`[data-cursor-target="${CSS.escape(target)}"]`);
+      if (!el) { setPos(null); return; }
+      const t = el.getBoundingClientRect();
+      const h = host.getBoundingClientRect();
+      if (t.width === 0 || t.height === 0) { setPos(null); return; }
+      setPos({ left: t.left - h.left + t.width * ax, top: t.top - h.top + t.height * ay });
+    };
+
+    measure();
+    // 目标可能和指针同一拍出现（这一帧还没挂上），补量一次
+    raf = requestAnimationFrame(measure);
+
+    const ro = new ResizeObserver(measure);
+    ro.observe(host);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [target, ax, ay]);
+
   // 这一拍有没有换落点。换了 → 波纹要等它走到再扩散，否则就成了「东西先响、
-  // 指针后到」，比没有指针更假（见文件头第 1 条约定）。
+  // 指针后到」，比没有指针更假（见上面第 1 条约定）。
   // 记上一拍的落点走 effect 而不是渲染期改 ref：StrictMode 会重复渲染，
   // 渲染期写 ref 的话第二遍就把「刚才在哪」冲成了「现在在哪」，moved 恒 false。
-  const last = useRef<string | null>(null);
-  const here = spot ? `${spot.x},${spot.y}` : null;
-  const prev = last.current;
-  useEffect(() => { last.current = here; }, [here]);
-  const moved = here !== null && prev !== null && prev !== here;
+  const prev = prevPos.current;
+  useEffect(() => { prevPos.current = pos; }, [pos]);
+  const moved = !!pos && !!prev && (Math.abs(prev.left - pos.left) > 2 || Math.abs(prev.top - pos.top) > 2);
 
-  if (!spot) return null;
-  const on = !spot.hidden;
+  // 量不到目标就整枚收起来：宁可没有指针，也不要一枚指着空处的箭头
+  const on = !!spot && !spot.hidden && !!pos;
 
   return (
     <span
+      ref={hostRef}
       aria-hidden
       className="absolute pointer-events-none map-scene-anim"
       style={{
-        left: `${spot.x}%`,
-        top: `${spot.y}%`,
+        left: `${pos?.left ?? 0}px`,
+        top: `${pos?.top ?? 0}px`,
         // z 要压过面板里的卡片，但别压过旁白条
         zIndex: 20,
         opacity: on ? 1 : 0,
-        transform: `translate(-2px, -2px) scale(${spot.press ? 0.88 : 1})`,
+        transform: `translate(-2px, -2px) scale(${spot?.press ? 0.88 : 1})`,
         transition: `left ${travelMs}ms cubic-bezier(.32,.72,.24,1), top ${travelMs}ms cubic-bezier(.32,.72,.24,1),`
           + ` opacity .32s ease, transform .18s ease`,
         ...style,
       }}
     >
       {/* 按下波纹：只在 press 那一拍出现，扩散一次就没 */}
-      {spot.press && (
+      {on && spot?.press && (
         <span
           className="absolute block rounded-full"
           style={{

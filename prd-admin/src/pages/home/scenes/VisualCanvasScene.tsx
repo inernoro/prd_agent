@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useBreakpoint, useIsMobile } from '@/hooks/useBreakpoint';
 import { BeatNarration, SceneIcon, SceneMono } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline, useTypewriter } from './useSceneTimeline';
@@ -97,6 +97,9 @@ export function VisualCanvasStage() {
   const { t } = useLanguage();
   const s = t.scenes.visual;
   const isMobile = useIsMobile();
+  // 指针只在 lg 以上画：对话面板在 lg 以下会挪到面板外面，
+  // 「发送键」就不在指针能量到的坐标系里了
+  const { isDesktop } = useBreakpoint();
   const { beat, ref } = useSceneTimeline(HOLDS);
   const typed = useTypewriter(s.chat.user, beat === B.typing, 1500);
 
@@ -125,8 +128,8 @@ export function VisualCanvasStage() {
           style={{ background: `radial-gradient(360px 190px at 5% 0%, ${clay.faint} 0%, transparent 100%)` }}
         />
 
-        {/* 演示指针：手机上不画 —— 小屏本来就没有鼠标，画一枚箭头反而突兀 */}
-        {!isMobile && <SceneCursor spot={CURSOR_AT[beat] ?? null} />}
+        {/* 演示指针：窄屏不画 —— 小屏本来就没有鼠标，画一枚箭头反而突兀 */}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} />}
 
         {/* ── 画布可用区：宽屏时给右侧对话面板让出 444px ── */}
         <div className="absolute inset-0 lg:right-[444px]">
@@ -137,6 +140,7 @@ export function VisualCanvasStage() {
             return (
               <div
                 key={tile.id}
+                data-cursor-target={`tile-${tile.id}`}
                 className="absolute overflow-hidden rounded-[10px]"
                 style={{
                   ...(isMobile ? tile.narrow : tile.wide),
@@ -462,7 +466,7 @@ function ChatPanel({ beat, typed, compact = false }: { beat: number; typed: stri
           transition: 'border-color .35s ease',
         }}
       >
-        <div style={{ fontSize: '12.5px', color: composing ? SCENE.ink : SCENE.inkFaint, lineHeight: 1.6, minHeight: '20px' }}>
+        <div data-cursor-target="chat-input" style={{ fontSize: '12.5px', color: composing ? SCENE.ink : SCENE.inkFaint, lineHeight: 1.6, minHeight: '20px' }}>
           {composing ? (
             <>
               {typed}
@@ -479,6 +483,7 @@ function ChatPanel({ beat, typed, compact = false }: { beat: number; typed: stri
           <IconSlot d="M21 15l-5-5L5 21M3 5h18v14H3z" boxed />
           <IconSlot d="M12 3v18M3 12h18" boxed />
           <span
+            data-cursor-target="chat-send"
             className="flex items-center gap-1.5 ml-auto"
             style={{
               height: '28px', padding: '0 14px', borderRadius: '8px',
@@ -611,22 +616,24 @@ function GenTile({
  * `selected` 那一拍指针压在雾天那张上，选中框才亮起来。反过来（东西先变、指针后到）
  * 比没有指针更假。
  *
- * 宽屏下右侧对话面板占 444px，落点按整块面板的百分比给，所以对话区大约在 x>70 的位置。
+ * 每一拍只说**指向谁**，落点由 SceneCursor 当场量目标元素。画布上的图活在
+ * `lg:right-[444px]` 的子容器里，而指针挂在面板根上——手写百分比必然差一整个
+ * 对话面板的宽度，这也正是第一版指针全程落在空处的原因。
  */
 const CURSOR_AT: Record<number, CursorSpot> = {
-  [B.idle]: { x: 84, y: 88, hidden: true },
-  [B.typing]: { x: 84, y: 88 },                 // 移到输入框
-  [B.sent]: { x: 93, y: 88, press: true },      // 按下发送
-  [B.thinking]: { x: 90, y: 80 },
-  [B.replying]: { x: 88, y: 72 },
-  [B.rendering]: { x: 30, y: 40 },              // 回到画布看着它长出来
-  [B.landed]: { x: 26, y: 62 },
+  [B.idle]: { target: 'chat-input', hidden: true },
+  [B.typing]: { target: 'chat-input', ax: 0.42 },   // 停在正在吐字的那行上
+  [B.sent]: { target: 'chat-send', press: true },   // 按下发送
+  [B.thinking]: { target: 'chat-send' },
+  [B.replying]: { target: 'tile-c', ay: 0.25 },     // 手往画布挪，等图长出来
+  [B.rendering]: { target: 'tile-c' },              // 就在它自己的位置上长出来
+  [B.landed]: { target: 'tile-c' },
   // 提前一拍就停在待会儿要点的那张上：等 selected 那拍按下时是「原地按」，
   // 不是「一边飞过去一边已经选中了」
-  [B.warm]: { x: 26, y: 62 },
-  [B.selected]: { x: 26, y: 62, press: true },  // 按下雾天那张 → 选中框亮
-  [B.mixing]: { x: 48, y: 40, press: true },    // 再按一张，开始混合
-  [B.mixed]: { x: 52, y: 62 },
+  [B.warm]: { target: 'tile-c' },
+  [B.selected]: { target: 'tile-c', press: true },  // 按下雾天那张 → 选中框亮
+  [B.mixing]: { target: 'tile-b', press: true },    // 再按暖调那张 → 两张都选中，混合计算亮起
+  [B.mixed]: { target: 'tile-mix' },                // 看着结果落地
 };
 
 /** 对话里「已落在画布」那枚缩略片：直接引用雾天那张真图。 */

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useLandingAsset } from '../hooks/useLandingAssets';
 import { SceneCursor, SelectionSweep, type CursorSpot } from '../components/SceneCursor';
@@ -97,6 +98,24 @@ export function LiteraryScene() {
     if (beat === B.idle) touched.current = false;
   }, [beat]);
 
+  // 指针只在 lg 以上画：窄屏下左右两栏摞成上下，配图卡不在指针那套坐标系里
+  const { isDesktop } = useBreakpoint();
+
+  /**
+   * 换风格那两拍的落点：指针要**提前一拍**停在即将被点亮的那枚 chip 上，
+   * 到 restyle 那拍才原地按下 —— 否则又是「颜色先变、指针后到」。
+   * fig3 拍时 style 还是旧值，算出来的下一档正好就是 restyle 会切到的那档。
+   */
+  const [aimStyle, setAimStyle] = useState<LiteraryStyleKey>(() => STYLE_ORDER[1]);
+  useEffect(() => {
+    if (beat === B.fig3) setAimStyle(STYLE_ORDER[(STYLE_ORDER.indexOf(style) + 1) % STYLE_ORDER.length]);
+  }, [beat, style]);
+
+  const cursorSpot: CursorSpot | null =
+    beat === B.fig3 ? { target: `style-${aimStyle}` }
+      : beat === B.restyle ? { target: `style-${aimStyle}`, press: true }
+        : CURSOR_AT[beat] ?? null;
+
   return (
     <SceneFrame
       id="scene-literary"
@@ -107,7 +126,10 @@ export function LiteraryScene() {
       note={s.note}
       panelStyle={{ background: SCENE.base }}
     >
-      <div ref={ref}>
+      <div ref={ref} className="relative">
+        {/* 演示指针：窄屏不画（小屏没有鼠标，画一枚箭头反而突兀）。
+            挂在这一层是因为它要同时够得着顶栏的风格 chip 和下面正文里的段落。 */}
+        {isDesktop && <SceneCursor spot={cursorSpot} />}
         {/* 风格切换：这一幕唯一的杠杆，摆在面板顶部让人一眼看见 */}
         <div className="relative flex items-center gap-2 flex-wrap" style={{ padding: '12px 14px', borderBottom: `1px solid ${SCENE.hair}` }}>
           <SceneMono style={{ letterSpacing: '0.18em', textTransform: 'uppercase' }}>{s.styleLabel}</SceneMono>
@@ -117,6 +139,7 @@ export function LiteraryScene() {
               <button
                 key={key}
                 type="button"
+                data-cursor-target={`style-${key}`}
                 onClick={() => { touched.current = true; setStyle(key); }}
                 aria-pressed={on}
                 style={{
@@ -135,8 +158,6 @@ export function LiteraryScene() {
         </div>
 
         <div className="relative flex flex-col lg:flex-row lg:h-[680px] gap-4" style={{ padding: '14px' }}>
-          {/* 演示指针：手机端不画（小屏没有鼠标，画一枚箭头反而突兀） */}
-          <span className="hidden lg:block"><SceneCursor spot={CURSOR_AT[beat] ?? null} /></span>
           {/* ── 左：文章编辑器 ── */}
           <div
             className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden rounded-2xl"
@@ -149,7 +170,7 @@ export function LiteraryScene() {
               <span className="flex items-center" style={{ color: SCENE.inkSoft }}>
                 <SceneIcon d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M9 13h6M9 17h6" size={15} />
               </span>
-              <span style={{ fontSize: '13.5px', color: SCENE.ink, whiteSpace: 'nowrap', ...enterAt(beat, B.uploaded, { rise: 4 }) }}>
+              <span data-cursor-target="doc-title" style={{ fontSize: '13.5px', color: SCENE.ink, whiteSpace: 'nowrap', ...enterAt(beat, B.uploaded, { rise: 4 }) }}>
                 {s.fileName}
               </span>
               <SceneMono className="ml-auto hidden md:flex items-center gap-2.5">
@@ -231,6 +252,7 @@ export function LiteraryScene() {
               </div>
 
               <div
+                data-cursor-target="generate-all"
                 className="flex items-center justify-center gap-1.5"
                 style={{
                   marginTop: '13px', height: '34px', borderRadius: '9px',
@@ -356,7 +378,7 @@ function Paragraph({
   children, beat, anchorAt, delay = 0, last = false, sweep = false,
 }: { children: ReactNode; beat: number; anchorAt: number; delay?: number; last?: boolean; sweep?: boolean }) {
   return (
-    <div className="relative" style={{ marginBottom: last ? 0 : '20px' }}>
+    <div data-cursor-target={sweep ? 'para-1' : undefined} className="relative" style={{ marginBottom: last ? 0 : '20px' }}>
       {/* gutter 锚点：AI 通读到这一段时才点亮，逐段错峰，像有人在逐段读 */}
       <span
         className="absolute hidden xl:block text-center"
@@ -416,23 +438,23 @@ function FigureSlot({
 
 
 /**
- * 指针走位表：按拍号给落点（面板宽高的百分比）。
+ * 指针走位表：每一拍只说**指向谁**，落点由 SceneCursor 当场量那个元素。
  *
  * 这一幕的动作顺序是「划中一句 → 按下生成 → 图逐张落位 → 换风格」，指针必须踩着
- * 同一条顺序走，而且**先到位再发生**：`marking` 那一拍指针从句首扫到句尾，
+ * 同一条顺序走，而且**先到位再发生**：`marking` 那一拍指针停在被划中那段的句尾，
  * 选区底色跟着铺开；`generating` 那一拍压在「生成全部配图」上，图才开始出。
  *
- * 宽屏下右侧配图工作台约占 384px，所以按钮落点在 x≈78。
+ * 换风格那两拍不在这张表里 —— 目标是「即将被点亮的那枚 chip」，得看当前风格算，
+ * 见 `LiteraryStage` 里的 `cursorSpot`。
  */
 const CURSOR_AT: Record<number, CursorSpot> = {
-  [B.idle]: { x: 20, y: 22, hidden: true },
-  [B.uploaded]: { x: 16, y: 18 },
-  [B.marking]: { x: 62, y: 26 },              // 从句首划到句尾
-  [B.generating]: { x: 78, y: 24, press: true }, // 按下「生成全部配图」
-  [B.fig1]: { x: 74, y: 48 },
-  [B.fig2]: { x: 74, y: 62 },
-  [B.fig3]: { x: 70, y: 70 },
-  [B.restyle]: { x: 15, y: 9, press: true },  // 回到顶部换风格
+  [B.idle]: { target: 'doc-title', hidden: true },
+  [B.uploaded]: { target: 'doc-title' },
+  // 落在被划中那段的句尾：选区从左铺到右，手停在右下角，跟真的划完一句一样
+  [B.marking]: { target: 'para-1', ax: 0.94, ay: 0.82 },
+  [B.generating]: { target: 'generate-all', press: true }, // 按下「生成全部配图」
+  [B.fig1]: { target: 'card-1' },
+  [B.fig2]: { target: 'card-2' },
 };
 
 /**
@@ -562,7 +584,7 @@ function FigureCard({
         : { background: SCENE.line, color: SCENE.inkMid };
 
   return (
-    <div className="relative overflow-hidden shrink-0" style={{ borderRadius: '12px', border: `1px solid ${SCENE.hair}`, background: SCENE.ghost }}>
+    <div data-cursor-target={`card-${index}`} className="relative overflow-hidden shrink-0" style={{ borderRadius: '12px', border: `1px solid ${SCENE.hair}`, background: SCENE.ghost }}>
       <div className="relative" style={{ padding: '6px 6px 0', background: SCENE.mediaWell, boxSizing: 'border-box' }}>
         {state === 'done' && photo && (
           <div style={{ aspectRatio: '4 / 3', borderRadius: '8px', overflow: 'hidden', animation: 'mapSceneLand .55s cubic-bezier(.19,1,.22,1) both' }}>
