@@ -712,6 +712,30 @@ CDS 的验收报告镜像进 MAP 知识库这件事，此前只有一个手动�
 
 ---
 
+## 正文渲染器每次 render 重挂整棵 DOM — 已偿还（2026-08-25）
+
+**曾经欠什么**：`MarkdownViewer` 传给 `ReactMarkdown` 的 `components` 是每次 render 新建的一堆内联函数，
+函数标识每次都变，ReactMarkdown 于是每次重渲染都**重挂整棵正文 DOM**。静态阅读被 `memo` 挡住了，
+但只要 `content` 高频变化就每帧重挂。逐句修改的流式档正是这种用法，用户看到的是
+「一闪一闪，就像是老电脑一样，一点都不丝滑」。
+
+**怎么还的**：把随实例变化的东西（slugger / 图片索引 / 主题）收进一个 ref 包，renderer 读 `ctx.current`，
+`components` 本身 `useMemo([], …)` 一次性建好。实测一次流式改写：元素重建从 108 次降到 10 次
+（只剩「新块第一次出现」那几次）。
+
+**为什么值得还**：它把「流式期间渲染 Markdown」从不可能变成了可能——正是这一条解锁了 v2.1
+（[doc/rule.frontend.streaming-text.md](./rule.frontend.streaming-text.md)）。顺带修掉的还有：流式期间正文可以正常选中了、
+文档里的 Mermaid/KaTeX 不再每个 token 重新初始化。
+
+**怎么防它退回去**：`src/components/file-preview/__tests__/markdownViewerStability.test.ts`
+断言依赖数组为空、实例态走 ref、JSX 里不再有内联 `components={{…}}`。
+这条守卫必须有——把依赖改回带变量时全量单测照样全绿，只有浏览器里数 DOM 变更才看得出来。
+
+**剩余边界**：ref 包是在 render 阶段刷新的（renderer 在同一次 commit 里被调用，读到的必然是新值）。
+若将来接入 React 并发特性下的可中断渲染，这个假设需要重新审。
+
+---
+
 ## 实现来源
 
 给要跳去看代码的人；只读这篇文档的人可以整块跳过。

@@ -1,5 +1,6 @@
 import { Fragment, memo, useMemo, type ReactNode } from 'react';
 import { MapCursor } from './MapCursor';
+import { closeOpenMarkdown, MARKDOWN_STREAM_CARET } from './streamingMarkdown';
 import './streaming.css';
 
 export type StreamingMode = 'blur' | 'wordFade' | 'typewriter' | 'rise';
@@ -13,8 +14,15 @@ export interface StreamingTextProps {
   mode?: StreamingMode;
   /**
    * 是否为 markdown 内容:
-   * - streaming=true 时仍按词级动画渲染纯文本 (避免每个 chunk 全量 markdown reflow)
+   * - streaming=true 时也按 markdown 渲染 (2026-08-25 起), 中途没闭合的行内标记与代码围栏
+   *   由 closeOpenMarkdown 补齐, 末尾缀一个光标字符
    * - streaming=false 时调用 renderMarkdown 渲染最终 markdown
+   *
+   * 历史: 这里原本在流式期间退化成纯文本词级动画, 理由是「避免每个 chunk 全量 markdown reflow」。
+   * 代价是用户在整个生成过程中看着满屏 `**` `#` `-` 这些语法符号, 到完成那一刻才变成排版好的样子。
+   * 真正让 reflow 变卡的是渲染器身份不稳导致的整棵重挂 (MarkdownViewer 的 components 曾是
+   * 每次 render 新建的内联函数), 那条根因已经单独修掉; 逐 token 重新解析 markdown 本身并不贵。
+   * 用户 2026-08-25 拍板: 流式期也渲染 markdown。
    */
   markdown?: boolean;
   /** 自定义 markdown 渲染器 (适配各页面已有的 ReactMarkdown 配置) */
@@ -153,14 +161,17 @@ export const StreamingText = memo(function StreamingText({
   block = false,
   className,
 }: StreamingTextProps) {
-  const showFinalMarkdown = markdown && !streaming && !!renderMarkdown;
+  // markdown + renderMarkdown 齐备时, 流式与完成态都走 markdown 渲染。
+  // 差别只有两点: 流式期要把写到一半的语法补合法, 并在末尾缀一个光标。
+  const renderAsMarkdown = markdown && !!renderMarkdown;
+  const showFinalMarkdown = renderAsMarkdown && !streaming;
 
   // 计算实际要 tokenize 的文本 + offset 基准
   // - 不限制时: tokenize 全文, offset 从 0 起
   // - 限制时: 只 tokenize 尾部 maxTailChars 个字符, 但 token offset 从 text.length - tail.length 起
   //   这样滑窗时 React 用绝对 offset 作 key, 已 mount 的 span 不会被复用造成"内容互换闪烁"
   const { staticPrefix, tokens } = useMemo(() => {
-    if (showFinalMarkdown) return { staticPrefix: '', tokens: [] };
+    if (renderAsMarkdown) return { staticPrefix: '', tokens: [] };
     const full = text || '';
     if (!maxTailChars || full.length <= maxTailChars) {
       if (animateTailChars && animateTailChars > 0 && full.length > animateTailChars) {
@@ -177,14 +188,19 @@ export const StreamingText = memo(function StreamingText({
     // 首字符 '…' 占 1 字符, 后续真实字符 offset 从 base 开始
     // 用 base - 1 让 '…' 拿到稳定的负数 key, 后续 token offset 就是 absolute
     return { staticPrefix: '', tokens: tokenize(tail, base - 1) };
-  }, [text, showFinalMarkdown, maxTailChars, animateTailChars]);
+  }, [text, renderAsMarkdown, maxTailChars, animateTailChars]);
 
   const showCursor = cursor ?? streaming;
 
-  if (showFinalMarkdown) {
+  if (renderAsMarkdown) {
+    // 流式期: 补齐没闭合的行内标记与代码围栏, 末尾缀光标字符
+    // (为什么是字符不是品牌 M, 见 streamingMarkdown.ts 的 MARKDOWN_STREAM_CARET 注释)
+    const source = showFinalMarkdown
+      ? (text || '')
+      : closeOpenMarkdown(text || '') + (showCursor ? MARKDOWN_STREAM_CARET : '');
     return (
       <div className={className}>
-        {renderMarkdown!(text || '')}
+        {renderMarkdown!(source)}
       </div>
     );
   }

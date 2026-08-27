@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Sparkles, ArrowUp, X, Check, Undo2, RotateCcw, Square } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useScrollFollowTransform, usePaneRect } from './useOverlayFollow';
 import { useSelectionRewriteActions } from './useSelectionRewriteActions';
 import {
   SELECTION_OVERLAY_CHIP,
@@ -10,29 +11,13 @@ import {
   SELECTION_OVERLAY_PANEL,
   SELECTION_OVERLAY_PRIMARY,
 } from './selectionOverlayStyle';
+import { toFriendlyRewriteError } from './selectionRewriteError';
 
 // 知识库「逐句修改」的两个就地条：
 //   1. SelectionRewritePrompt —— 划词后原地问「想怎么改」（图 1/2）
 //   2. InlineDiffReviewBar   —— 改动直接长在正文里之后的「撤销 / 采纳」（图 4）
 // 两者都不承载结果内容：结果就是文章本身的变化（artifact-is-experience.md）。
 // 布局遵 frontend-modal.md：createPortal 到 body + inline style 定位。
-
-/** 浮层跟随正文滚动平移（与 InlineCommentComposer / PendingSelectionHighlight 同一套） */
-function useScrollFollow(scrollRef?: RefObject<HTMLElement>): number {
-  const [dy, setDy] = useState(0);
-  useEffect(() => {
-    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
-    const start = read();
-    const onScroll = () => setDy(read() - start);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [scrollRef]);
-  return dy;
-}
 
 export interface AnchorRect {
   top: number;
@@ -76,7 +61,9 @@ export function SelectionRewritePrompt({
   const actions = useSelectionRewriteActions();
   const [text, setText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  const scrollDy = useScrollFollow(scrollRef);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // 跟随滚动走直写 DOM，不走 state（见 useOverlayFollow：走 state 会慢内容一帧，跟不上手）
+  useScrollFollowTransform(panelRef, scrollRef);
 
   useEffect(() => {
     // 选中即就绪：打开就能直接打字（chief-designer-usability.md 第一原则）
@@ -98,8 +85,9 @@ export function SelectionRewritePrompt({
 
   return createPortal(
     <div
+      ref={panelRef}
       className="fixed z-[120] flex flex-col"
-      style={{ top, left, width, padding: 10, transform: `translateY(${-scrollDy}px)`, ...SELECTION_OVERLAY_PANEL }}
+      style={{ top, left, width, padding: 10, ...SELECTION_OVERLAY_PANEL }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
@@ -172,7 +160,6 @@ export type InlineRewritePhase = 'streaming' | 'review' | 'error';
  * 用户任何时刻都知道在做什么、还要多久）。
  */
 export function InlineDiffReviewBar({
-  anchorRect,
   scrollRef,
   phase,
   model,
@@ -187,7 +174,6 @@ export function InlineDiffReviewBar({
   onRetry,
   onStop,
 }: {
-  anchorRect: AnchorRect;
   scrollRef?: RefObject<HTMLElement>;
   phase: InlineRewritePhase;
   model?: string;
@@ -202,7 +188,7 @@ export function InlineDiffReviewBar({
   onRetry: () => void;
   onStop: () => void;
 }) {
-  const scrollDy = useScrollFollow(scrollRef);
+  const paneRect = usePaneRect(scrollRef);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (phase !== 'streaming') return;
@@ -210,16 +196,28 @@ export function InlineDiffReviewBar({
     return () => window.clearInterval(t);
   }, [phase]);
   const waited = useMemo(() => Math.max(0, Math.round((now - startedAt) / 1000)), [now, startedAt]);
+  const friendlyError = useMemo(() => toFriendlyRewriteError(errorMsg), [errorMsg]);
 
   const width = clampWidth(phase === 'streaming' ? 320 : 300);
-  // 操作条永远压在选区上方：正文里的改动是主角，条子不许盖住它（content-fills-canvas.md）
-  const top = Math.max(8, anchorRect.top - 42);
-  const left = Math.max(8, Math.min(window.innerWidth - width - 8, anchorRect.left + anchorRect.width / 2 - width / 2));
+  /*
+   * 条子钉在正文区的右上角，不追着选区跑。
+   *
+   * 上一版是「压在选区正上方」，结果选区靠近正文顶部时它就砸在标题和正文上
+   * （2026-08-25 用户指着截图问「这是什么雷霆布局」）。追随选区还有两个躲不掉的坏处：
+   * 选区一长，条子必然盖住它自己要展示的那段改动；正文一滚，条子跟着乱飘。
+   * 正文里的改动才是主角，条子只是遥控器（content-fills-canvas.md），
+   * 所以按 ChatGPT canvas 的做法固定在右上角——永远不压字，位置也永远可预期。
+   */
+  const pane = paneRect;
+  const top = (pane?.top ?? 8) + 12;
+  const left = pane
+    ? Math.max(8, pane.right - width - 16)
+    : Math.max(8, window.innerWidth - width - 16);
 
   return createPortal(
     <div
       className="fixed z-[120] flex flex-col gap-1"
-      style={{ top, left, width, padding: 8, transform: `translateY(${-scrollDy}px)`, ...SELECTION_OVERLAY_PANEL }}
+      style={{ top, left, width, padding: 8, ...SELECTION_OVERLAY_PANEL }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
@@ -245,8 +243,16 @@ export function InlineDiffReviewBar({
 
       {phase === 'error' && (
         <div className="flex items-center gap-2">
-          <span className="text-[11px] flex-1 min-w-0 truncate" style={{ color: 'var(--accent-fg-danger)' }}>
-            {errorMsg || '改写失败'}
+          {/* 上游原文只进 title（排查用），面上给用户能照着做的一句话 */}
+          <span className="flex-1 min-w-0" title={friendlyError.raw || undefined}>
+            <span className="text-[11px] block truncate" style={{ color: 'var(--accent-fg-danger)' }}>
+              {friendlyError.message}
+            </span>
+            {friendlyError.hint && (
+              <span className="text-[10px] block truncate" style={{ color: 'var(--text-muted)' }}>
+                {friendlyError.hint}
+              </span>
+            )}
           </span>
           <button
             onClick={onRetry}

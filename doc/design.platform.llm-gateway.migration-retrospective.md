@@ -407,3 +407,11 @@ MAP 前端 / MAP Agent / 外部系统
 - [doc/design.platform.llm-gateway.physical-isolation.md](./design.platform.llm-gateway.physical-isolation.md)：控制面、数据面和跨进程 serving 物理剥离
 - [doc/debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)：保留的运行和清理债务
 - [doc/debt.platform.llm-gateway.protocol-fidelity.md](./debt.platform.llm-gateway.protocol-fidelity.md)：协议高级字段保真边界
+
+## 十二、MDS 管理面退场与网关自清理（2026-08-25）
+
+模型管理旧控制台（`/mds` 四个 tab：应用模型池/模型池/平台/中继）整套下线，`prd-admin` 侧改为指向 LLM Gateway 控制台的墓碑页；`prd-api` 新增 `MdsWriteRetiredFilter`，对 `api/mds` 下的写操作统一返回 410 并指路网关，读接口与运行时解析路径原样保留（避免破坏尚未迁移完的调用方）。判据按路由模板分段匹配，不误伤 `api/mdsomething-else` 这类前缀相似但不属于该命名空间的路径。
+
+配套落地网关自身的「删除即清理」能力：删除模型池 / 模型时，同步回收 MAP 遗留的 `model_groups` 与 `llmmodels`（此前只有阻挡清单能数出引用、没有端点能一并清掉）；平台托管默认池不再因为「不许摘活成员」的规则反过来卡死「删除已被摘除上游的死成员」——死成员判定综合上游存在性、模型存在性、是否中继成员三个条件，只对确认失效的成员放开手工摘除。
+
+同批修了池健康与可用性口径上的两处漂移：一是健康统计不再把「指不到任何上游或模型的成员」算作 healthy；二是成员可用性归一收进唯一入口（`IsResolvablePoolMemberKey`），删除了运行 gate 里抄的第二份判据，界面不再出现「已中断的池、第一顺位却显示绿点」这类自相矛盾的状态。不可用原因现在会说清楚是「上游没了」还是「模型没了」，而不是「不可用（连续失败 0 次）」这种循环论证。

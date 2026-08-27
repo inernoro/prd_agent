@@ -29,6 +29,11 @@
     <ProjectReference Include="..\..\src\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
   </ItemGroup>
 
+  <!-- MdsWriteRetiredFilter 是 MVC IActionFilter，要在测试里直接 new 出来跑，需要 MVC 类型 -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Include="..\..\..\llmgw\console-api\Organization\MembershipPolicy.cs" Link="Gateway\MembershipPolicy.cs" />
     <Compile Include="..\..\..\llmgw\console-api\Governance\OfferingRoutingChangePolicy.cs" Link="Gateway\OfferingRoutingChangePolicy.cs" />
@@ -36,6 +41,7 @@
     <!-- CDS 报告同步的「刷哪些库、各自从哪个源拉」判据。单独一个文件、只依赖 Core，
          就是为了能这样 link 进来跑；worker 本体拖着 BackgroundService/Mongo，搬不动。 -->
     <Compile Include="..\..\src\PrdAgent.Api\Services\CdsReportSyncTargets.cs" Link="Services\CdsReportSyncTargets.cs" />
+    <Compile Include="..\..\src\PrdAgent.Api\Filters\MdsWriteRetiredFilter.cs" Link="Filters\MdsWriteRetiredFilter.cs" />
   </ItemGroup>
 
 </Project>

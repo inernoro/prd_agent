@@ -91,6 +91,9 @@ builder.Services.AddControllers(options =>
     {
         // 团队动态：全局白名单审计（白名单外的动作一次字典查找即逃逸）
         options.Filters.Add<PrdAgent.Api.Filters.ActivityLogActionFilter>();
+        // 模型管理退场：api/mds 下的写操作一律 410，配置改由 LLM Gateway 控制台承担。
+        // 挂在 ActivityLog 之后：被挡下的请求本来就没发生写入，不该留一条动态。
+        options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();
     })
     .AddJsonOptions(options =>
     {
