@@ -21,6 +21,7 @@ import type { CdsConnection, CdsConfig, Project } from '../types.js';
 import {
   CdsPairingService,
   PairingError,
+  DEFAULT_SCOPES,
 } from '../services/connection/pairing-service.js';
 
 export interface CdsSystemConnectionsRouterDeps {
@@ -209,7 +210,7 @@ export function createCdsSystemConnectionsRouter(
     try {
       const result = pairing.issue({
         name: `authorize ${mapName}`,
-        scopes: ['shared-service:deploy', 'instance:read', 'deployment:stream'],
+        scopes: DEFAULT_SCOPES,
         ttlMinutes: 10,
         hint: { supportsSidecar: true, defaultSidecarPort: 7400 },
       });
@@ -260,7 +261,7 @@ export function createCdsSystemConnectionsRouter(
         ...result,
         cdsId: cdsIdGetter(),
         cdsName: cdsNameGetter(),
-        scopes: ['shared-service:deploy', 'instance:read', 'deployment:stream'],
+        scopes: DEFAULT_SCOPES,
       });
     } catch (err) {
       if (err instanceof PairingError) {
@@ -445,7 +446,7 @@ function renderAuthorizePage(input: {
       <div class="row"><dt>MAP 地址</dt><dd>${mapBaseUrl}</dd></div>
       <div class="row"><dt>回跳地址</dt><dd>${redirectHost}</dd></div>
     </dl>
-    <div class="scopes">授权范围：shared-service:deploy, instance:read, deployment:stream</div>
+    <div class="scopes">授权范围：${DEFAULT_SCOPES.join(", ")}</div>
     <a class="button" href="${approveUrl}">授权并返回 MAP</a>
   </main>
 </body>

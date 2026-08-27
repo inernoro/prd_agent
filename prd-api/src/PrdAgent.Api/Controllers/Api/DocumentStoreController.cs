@@ -3713,7 +3713,8 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = bytes.LongLength,
             Url = stored.Url,
-            StorageKey = storedUpload.StorageKey,
+            // `_it/` 那条受控路径自己带 key（它还牵着回收账），其余走存储回填的真实 key。
+            StorageKey = storedUpload.StorageKey ?? storedUpload.Asset.Key,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
@@ -3838,7 +3839,7 @@ public class DocumentStoreController : ControllerBase
                     await _assetStorage.UploadToKeyAsync(key, bytes, mime, cancellationToken);
                     var sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                     return new StoredUploadAsset(
-                        new StoredAsset(sha256, _assetStorage.BuildUrlForKey(key), bytes.LongLength, mime),
+                        new StoredAsset(sha256, _assetStorage.BuildUrlForKey(key), bytes.LongLength, mime, key),
                         key);
                 }
 
@@ -3926,7 +3927,8 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = file.Length,
             Url = stored.Url,
-            StorageKey = storedUpload.StorageKey,
+            // `_it/` 那条受控路径自己带 key（它还牵着回收账），其余走存储回填的真实 key。
+            StorageKey = storedUpload.StorageKey ?? storedUpload.Asset.Key,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,

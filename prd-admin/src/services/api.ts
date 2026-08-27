@@ -83,16 +83,6 @@ export const api = {
   mds: {
     models: () => '/api/mds',
     model: (id: string) => `/api/mds/${id}`,
-    test: (id: string) => `/api/mds/${id}/test`,
-    priorities: () => '/api/mds/priorities',
-    mainModel: () => '/api/mds/main-model',
-    intentModel: () => '/api/mds/intent-model',
-    visionModel: () => '/api/mds/vision-model',
-    imageGenModel: () => '/api/mds/image-gen-model',
-    adapterInfoBatch: () => '/api/mds/adapter-info/batch',
-    adapterInfo: (modelId: string) => `/api/mds/${modelId}/adapter-info`,
-    /** 根据平台侧模型ID（modelName）直接获取适配信息，无需查询数据库 */
-    adapterInfoByModelName: (modelName: string) => `/api/mds/adapter-info?modelId=${encodeURIComponent(modelName)}`,
 
     // 平台
     platforms: {
@@ -115,27 +105,6 @@ export const api = {
         `/api/mds/model-groups/${groupId}/reset-model-health?modelId=${encodeURIComponent(modelId)}`,
       resetAllHealth: (groupId: string) =>
         `/api/mds/model-groups/${groupId}/reset-all-health`,
-    },
-
-    // LLM 配置
-    llmConfigs: {
-      list: () => '/api/mds/llm-configs',
-      byId: (id: string) => `/api/mds/llm-configs/${id}`,
-      activate: (id: string) => `/api/mds/llm-configs/${id}/activate`,
-    },
-
-    // 模型中继 (Exchange)
-    exchanges: {
-      list: () => '/api/mds/exchanges',
-      byId: (id: string) => `/api/mds/exchanges/${id}`,
-      test: (id: string) => `/api/mds/exchanges/${id}/test`,
-      testStreamAsrSse: (id: string) => `/api/mds/exchanges/${id}/test-stream-asr/sse`,
-      transformerTypes: () => '/api/mds/exchanges/transformer-types',
-      forPool: () => '/api/mds/exchanges/for-pool',
-      templates: () => '/api/mds/exchanges/templates',
-      importFromTemplate: () => '/api/mds/exchanges/import-from-template',
-      tryModel: (id: string, modelId: string) =>
-        `/api/mds/exchanges/${id}/models/${encodeURIComponent(modelId)}/try-it`,
     },
 
     // 调度器配置
@@ -224,7 +193,6 @@ export const api = {
     list: () => '/api/skills',
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
-
 
   // ============ Skill Agent 技能引导创建 ============
   skillAgent: {

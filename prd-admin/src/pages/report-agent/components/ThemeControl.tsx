@@ -1,13 +1,11 @@
 import { useCallback, type MouseEvent } from 'react';
-import { Moon, Sun, type LucideIcon } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { transitionThemeMode } from '@/lib/themeTransition';
+import { THEME_MODE_OPTIONS } from '@/lib/themeModeRegistry';
 import { useMobileThemeStore, type MobileThemeMode } from '@/stores/mobileThemeStore';
 
-const OPTIONS: { value: MobileThemeMode; label: string; icon: LucideIcon }[] = [
-  { value: 'dark', label: '暗色', icon: Moon },
-  { value: 'light', label: '浅色', icon: Sun },
-];
+// 选项来自唯一注册表：漏掉「随系统」会让用户在别处选了它之后，这里三个都不高亮。
+const OPTIONS = THEME_MODE_OPTIONS;
 
 export function ThemeControl() {
   const location = useLocation();

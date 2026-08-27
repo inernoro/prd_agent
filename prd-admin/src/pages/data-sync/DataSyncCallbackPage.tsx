@@ -4,8 +4,7 @@ import { ShieldAlert } from 'lucide-react';
 
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { apiRequest } from '@/services/real/apiClient';
-import { applyDocumentThemeMode } from '@/lib/themeTransition';
-import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 
 /** 发起跳转时把「这次是去哪台源站」记在这里，回调时凭 state 取回。 */
 const DATA_SYNC_PENDING_PREFIX = 'data-sync:pending:';
@@ -70,10 +69,7 @@ function dropPendingAuthorization(state: string): void {
  */
 export default function DataSyncCallbackPage() {
   // 同上：回跳落地页也在 AppShell 之外，主题要自己应用。
-  const themeMode = useMobileThemeStore((s) => s.mode);
-  useEffect(() => {
-    applyDocumentThemeMode(themeMode, window.location.pathname);
-  }, [themeMode]);
+  useApplyDocumentTheme(window.location.pathname);
 
   const navigate = useNavigate();
   const [error, setError] = useState('');

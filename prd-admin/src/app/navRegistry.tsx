@@ -58,7 +58,8 @@ const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').t
 const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
 const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
-const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
+// 2026-08-25：MAP 侧模型管理整套下线，`/mds` 只剩一块指向 LLM Gateway 控制台的墓碑页。
+const ModelManageMovedPage = lazy(() => import('@/pages/ModelManageMovedPage').then(m => ({ default: m.ModelManageMovedPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
 const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
@@ -849,14 +850,16 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   {
     path: '/mds',
     permission: 'mds.read',
-    element: shellGuarded('mds.read', <ModelManageTabsPage />),
+    element: shellGuarded('mds.read', <ModelManageMovedPage />),
     nav: {
-      label: '模型中心',
+      // 保留在目录里而不是直接摘掉：搜「模型」的人得撞上这块路牌，而不是撞上 404
+      // 或者退回去在别处再配一遍（navigation-registry：路由必须登记，且不能是 phantom）。
+      label: '模型管理（已迁移）',
       shortLabel: '模型',
-      description: '大模型与模型池配置、健康监控',
+      description: '上游、模型、模型池已统一到 LLM Gateway 控制台，这里只剩入口',
       icon: 'Cpu',
       section: 'infra',
-      tags: ['模型', 'LLM', '模型池', '调度', 'mds'],
+      tags: ['模型', 'LLM', '模型池', '调度', 'mds', '网关', 'gateway'],
     },
   },
   {

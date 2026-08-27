@@ -32,7 +32,7 @@ import {
 import { accentFor, iconFor } from '@/lib/agentAccent';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import { resolveMobileCompat } from '@/lib/mobileCompatibility';
-import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useMobileThemeStore, useResolvedThemeMode } from '@/stores/mobileThemeStore';
 import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 import {
   formatCompactNumber,
@@ -73,9 +73,10 @@ export default function MobileHomePage() {
   // 打开智能体一律走带记账的出口，否则手机上的启动不计入「你常用的」
   const openRoute = useTrackedNavigate();
   const data = useMobileHomeData();
-  const themeMode = useMobileThemeStore((st) => st.mode);
   const setThemeMode = useMobileThemeStore((st) => st.setMode);
-  const isDark = themeMode === 'dark';
+  // 用解析后的明暗，不用偏好本身：选了「随系统」时 mode === 'dark' 永远为 false，
+  // 皮肤对象会挑成浅色而 DOM 已经是暗色。
+  const isDark = useResolvedThemeMode() === 'dark';
   const C = useAppStoreColors();
 
   const headline = data.recentWork[0] ?? null;

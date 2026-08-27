@@ -251,6 +251,48 @@ must(
   'ModelPoolsPage: 「验证中」必须能退出（成员健康快照变化即出结果），不能只进不出',
 );
 
+// 「解析不到」不是「失败」：后端只对指不到上游/模型的成员给 unavailableReason，
+// 而调度侧永远不会把真实请求发给这种成员。给它一个「恢复接单」按钮，点下去只翻健康位，
+// 界面就永久挂在「验证中」等一个不会来的结果——恰恰是上一条守卫要防的「只进不出」，
+// 换了个入口重演。判据必须是「有没有归因」，不是「归因是哪一种」：后者每加一种归因
+// 就得改一次，迟早漏掉某一种（形状 1）。
+must(
+  // 窗口用 [^}] 而不是 [\s\S]{0,N}：后者会越过函数的收尾大括号，一路匹配到 memberNextStep
+  // 里同名的字面量，把「判据被掏空」判成绿灯（形状 1：窗口开太宽，判据自己失效）。
+  /function memberCanRecover[^}]*!member\.unavailableReason[^}]*\}/.test(pools),
+  'ModelPoolsPage: 「能不能恢复」必须只看有没有 unavailableReason，不能按归因种类逐个列举',
+);
+must(
+  /healthStatus === 2 && !isVerifying && memberCanRecover\(member\)/.test(pools),
+  'ModelPoolsPage: 解析不到的成员不得出现「恢复接单」——点了也没有请求能到它，界面会永久停在验证中',
+);
+must(
+  /function memberNextStep[^}]*'upstream-disabled'[^}]*'model-disabled'[^}]*'upstream-missing'[^}]*'model-missing'[^}]*\}/.test(pools),
+  'ModelPoolsPage: 四种归因必须各有各的下一步，不能沿用「恢复后即可继续承接」这句对谁都不成立的话',
+);
+// 下一步只许说「先做什么」，不许承诺「做完这件就会接单」：归因只报一个故障，
+// 而故障可以同时有好几个（上游被停用、同时模型也被删了，归因只说后者）。
+// 承诺充分性在多重故障下就是假话，判「还有没有别的毛病」又要把四种归因两两摊开——
+// 那是再造一族语义类别。不承诺，就两头都不用付代价。
+must(
+  !/才会接单|之后就会接单|后即可接单/.test(pools),
+  'ModelPoolsPage: 坏成员的下一步不得承诺「做完这一件就会接单」——同时存在多个故障时那是假话',
+);
+// 上一条只证明这套文案**存在**。它有没有被那句提示真的用上，是另一件事——
+// 第一版守卫就漏在这里：把提示改回旧的 removable 三元、函数原地不动，守卫照样全绿（形状 2）。
+must(
+  pools.includes('`${memberFaultPhrase(member)} · ${memberNextStep(member)}`'),
+  'ModelPoolsPage: 成员归因提示必须走 memberNextStep，不能在 JSX 里另写一份下一步文案',
+);
+// 池级证据句是同一件事的另一处出口：原来一律写「需要摘除或重新接上上游」，
+// 而被停用的成员既摘不掉也不用重接，模型被停用时更是指错了资源——
+// 一个下一步两处写法，必然和成员行自相矛盾（形状 3）。
+must(
+  pools.includes('`第1顺位「${lead.modelId}」${memberFaultPhrase(lead)} · ${memberNextStep(lead)}`')
+    && !pools.includes('需要摘除或重新接上上游'),
+  'ModelPoolsPage: 池级证据句的下一步必须走 memberNextStep，不得另写一份固定文案',
+);
+
 // 详情/新建这一支不走 PageBody，而 PageShell 与 console-content 都是 overflow:hidden。
 // 不自建滚动容器，成员表下半截与「添加成员」会被裁掉、用户够不到。
 must(

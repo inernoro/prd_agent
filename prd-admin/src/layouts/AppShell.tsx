@@ -46,7 +46,6 @@ import {
   GraduationCap,
   Droplets,
   ExternalLink,
-  MoreHorizontal,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -70,11 +69,13 @@ import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
 import { MobileDrawer } from '@/components/ui/MobileDrawer';
 import { MobileTabBar } from '@/components/ui/MobileTabBar';
-import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { useMobileThemeStore, useResolvedThemeMode, type MobileThemeMode } from '@/stores/mobileThemeStore';
+import { THEME_MODE_OPTIONS } from '@/lib/themeModeRegistry';
 import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
 import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { isMenuKeyboardActivation, resolveAccountAvatarAction } from './accountAvatarAction';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
 import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, uploadMyAvatar } from '@/services';
@@ -89,7 +90,6 @@ import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/d
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
-import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 import { MapBrandMark } from '@/components/ui/MapBrandMark';
 import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
 
@@ -212,6 +212,9 @@ export default function AppShell() {
   const { isMobile } = useBreakpoint();
   const mobileThemeMode = useMobileThemeStore((st) => st.mode);
   const setThemeMode = useMobileThemeStore((st) => st.setMode);
+  // 解析后的明暗（'system' 已展开）。订阅系统深浅变化这件事收在 hook 里，
+  // 壳层不再自己写一份 matchMedia 监听 —— 两份实现迟早漂移。
+  const resolvedThemeMode = useResolvedThemeMode();
   // 壳层是否"持有"过 data-theme:只有自己设过的才负责清,避免动到
   // 仍保留纸面身份的独立页面主题。
   const ownsThemeRef = useRef(false);
@@ -221,6 +224,8 @@ export default function AppShell() {
   // 壳层统一落 <html data-theme>。deps 带 pathname:自管主题的页面卸载清属性后,
   // 导航到普通页由这里重申。自管主题路由(独立纸面身份,页面自己 set/remove data-theme)
   // 壳层不插手,否则父 effect 晚于子 effect 运行,会把页面刚设好的主题清掉。
+  // resolvedThemeMode 必须在 deps 里：偏好是 'system' 时 mobileThemeMode 不变、
+  // 只有它会跟着系统深浅翻面 —— 少了它，选「随系统」后系统切换不会重新落 DOM。
   useEffect(() => {
     if (!applyDocumentThemeMode(mobileThemeMode, location.pathname)) {
       // 属性所有权移交给页面:壳层卸载也不清理,避免误清页面自管的主题(Codex P2 二轮)。
@@ -229,11 +234,12 @@ export default function AppShell() {
       return;
     }
     ownsThemeRef.current = true;
-  }, [mobileThemeMode, location.pathname]);
+  }, [mobileThemeMode, resolvedThemeMode, location.pathname]);
 
-  const handleThemeModeToggle = useCallback<React.MouseEventHandler<HTMLButtonElement>>((event) => {
+  const handleThemeModeSelect = useCallback((next: MobileThemeMode, event: React.MouseEvent<HTMLElement>) => {
+    if (next === mobileThemeMode) return;
     transitionThemeMode({
-      mode: mobileThemeMode === 'light' ? 'dark' : 'light',
+      mode: next,
       pathname: location.pathname,
       origin: event,
       commit: setThemeMode,
@@ -273,6 +279,43 @@ export default function AppShell() {
     return Array.from(merged);
   }, [defaultNavHidden, navHidden, navOrder]);
   const [avatarOpen, setAvatarOpen] = useState(false);
+  // 侧栏用户菜单：受控开关。头像同时承担「打开菜单」与「再点一次改头像」两种语义，
+  // 不能交给 Radix Trigger 自己 toggle，否则第二次点击只会把菜单关掉。
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuOpenRef = useRef(false);
+  // 从菜单直接跳进头像编辑弹窗时，别让菜单把焦点抢回头像，否则和 Dialog 的焦点陷阱打架。
+  const skipUserMenuRefocusRef = useRef(false);
+  const handleUserMenuOpenChange = useCallback((next: boolean) => {
+    userMenuOpenRef.current = next;
+    setUserMenuOpen(next);
+  }, []);
+  // 头像点击语义：第一次点开用户菜单，菜单开着时再点一次才进「修改我的头像」。
+  // 判定必须落在 pointerdown —— Radix 的 Trigger 也挂在 pointerdown 上，
+  // composeEventHandlers 见到 defaultPrevented 就会跳过它，菜单开合于是完全由这里决定。
+  const handleAccountAvatarPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    if (resolveAccountAvatarAction(userMenuOpenRef.current) === 'edit-avatar') {
+      skipUserMenuRefocusRef.current = true;
+      handleUserMenuOpenChange(false);
+      setAvatarOpen(true);
+      return;
+    }
+    handleUserMenuOpenChange(true);
+  }, [handleUserMenuOpenChange]);
+  // 展开态的用户名按钮：纯 toggle，不再是 Trigger（一个 Root 只能有一个锚点，锚点归头像）。
+  const handleUserMenuTogglePointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handleUserMenuOpenChange(!userMenuOpenRef.current);
+  }, [handleUserMenuOpenChange]);
+  // 不再是 Trigger 就没有它自带的键盘激活；Enter / Space 不发 pointerdown，
+  // 必须自己补，否则这个按钮对键盘用户是死的。
+  const handleUserMenuToggleKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!isMenuKeyboardActivation(event.key)) return;
+    event.preventDefault();
+    handleUserMenuOpenChange(!userMenuOpenRef.current);
+  }, [handleUserMenuOpenChange]);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
   const [notificationDialogTab, setNotificationDialogTab] = useState<'list' | 'subscriptions'>('list');
   const [notifications, setNotifications] = useState<AdminNotificationItem[]>([]);
@@ -1429,18 +1472,7 @@ export default function AppShell() {
               collapsed ? 'flex flex-col items-center gap-1 py-1' : 'px-1 py-1'
             )}
           >
-            <div className="mb-1 flex justify-center px-1">
-              <ThemeModeToggle mode={mobileThemeMode} onToggle={handleThemeModeToggle} />
-            </div>
-            {/* 分隔线 */}
-            <div
-              className={cn('mx-auto mb-2', collapsed ? '' : 'mx-3')}
-              style={{
-                height: 1,
-                background: 'var(--border-faint)',
-                width: collapsed ? 24 : undefined,
-              }}
-            />
+            {/* 皮肤切换已挪进用户菜单（横排三选项），侧栏底部只留头像，让它真正贴底 */}
             <div
               className={cn(
                 'group relative shrink-0 rounded-[10px]',
@@ -1455,60 +1487,52 @@ export default function AppShell() {
               />
 
               <div className={cn('relative flex items-center', collapsed ? 'flex-col justify-center gap-1' : 'gap-3')}>
-                {/* 头像直接打开编辑器，用户名保留用户菜单入口。 */}
-                <DropdownMenu.Root>
+                {/* 头像是唯一的用户菜单入口：点一次开菜单，菜单开着时再点一次进「修改我的头像」。
+                    原来的「···」按钮已移除，头像因此落到侧栏最底部。 */}
+                <DropdownMenu.Root open={userMenuOpen} onOpenChange={handleUserMenuOpenChange} modal={false}>
                   <div className={cn('flex items-center', collapsed ? 'flex-col gap-1' : 'gap-3 flex-1 min-w-0')}>
-                    <button
-                      type="button"
-                      onClick={() => setAvatarOpen(true)}
-                      className="shrink-0 cursor-pointer rounded-full transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
-                      aria-label="修改我的头像"
-                      title="修改我的头像"
-                    >
-                      {/* 头像外圈 = 教程掌握度进度环(诉求 12):已学会本页教程占比,满环加毕业角标 */}
-                      <AvatarProgressRing size={30} stroke={2.5}>
-                        <UserAvatar
-                          src={resolveAvatarUrl({
-                            username: user?.username,
-                            userType: user?.userType,
-                            botKind: user?.botKind,
-                            avatarFileName: user?.avatarFileName ?? null,
-                            avatarUrl: user?.avatarUrl,
-                          })}
-                          alt="avatar"
-                          className="h-full w-full object-cover"
-                        />
-                      </AvatarProgressRing>
-                    </button>
-
-                    {collapsed && (
-                      <DropdownMenu.Trigger asChild>
-                        <button
-                          type="button"
-                          className="flex h-7 w-8 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
-                          aria-label="打开用户菜单"
-                          title="用户菜单"
-                        >
-                          <MoreHorizontal size={16} />
-                        </button>
-                      </DropdownMenu.Trigger>
-                    )}
+                    <DropdownMenu.Trigger asChild>
+                      <button
+                        type="button"
+                        onPointerDown={handleAccountAvatarPointerDown}
+                        className="shrink-0 cursor-pointer rounded-full transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                        aria-label={userMenuOpen ? '修改我的头像' : '打开用户菜单'}
+                        title={userMenuOpen ? '修改我的头像' : '用户菜单（再点一次头像可修改头像）'}
+                      >
+                        {/* 头像外圈 = 教程掌握度进度环(诉求 12):已学会本页教程占比,满环加毕业角标 */}
+                        <AvatarProgressRing size={30} stroke={2.5}>
+                          <UserAvatar
+                            src={resolveAvatarUrl({
+                              username: user?.username,
+                              userType: user?.userType,
+                              botKind: user?.botKind,
+                              avatarFileName: user?.avatarFileName ?? null,
+                              avatarUrl: user?.avatarUrl,
+                            })}
+                            alt="avatar"
+                            className="h-full w-full object-cover"
+                          />
+                        </AvatarProgressRing>
+                      </button>
+                    </DropdownMenu.Trigger>
 
                     {/* 用户信息（仅展开时显示，点击后打开用户菜单） */}
                     {!collapsed && (
-                      <DropdownMenu.Trigger asChild>
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 cursor-pointer rounded-[8px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
-                          title="用户菜单"
-                        >
+                      <button
+                        type="button"
+                        onPointerDown={handleUserMenuTogglePointerDown}
+                        onKeyDown={handleUserMenuToggleKeyDown}
+                        className="min-w-0 flex-1 cursor-pointer rounded-[8px] text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                        aria-haspopup="menu"
+                        aria-expanded={userMenuOpen}
+                        title="用户菜单"
+                      >
                         <div className="min-w-0 flex-1">
                           <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
                             {user?.displayName || 'Admin'}
                           </div>
                         </div>
-                        </button>
-                      </DropdownMenu.Trigger>
+                      </button>
                     )}
                   </div>
 
@@ -1519,6 +1543,11 @@ export default function AppShell() {
                 sideOffset={8}
                 side="top"
                 align="start"
+                onCloseAutoFocus={(event) => {
+                  if (!skipUserMenuRefocusRef.current) return;
+                  skipUserMenuRefocusRef.current = false;
+                  event.preventDefault();
+                }}
               >
                 {/* 用户信息区 */}
                 <div className="px-2 py-3">
@@ -1556,7 +1585,60 @@ export default function AppShell() {
                       </div>
                     </div>
                   </div>
+                  {/* 让「再点一次头像改头像」这条隐式交互可被看见，不靠用户自己撞出来 */}
+                  <div className="mt-2 text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                    再点一次侧栏头像即可修改头像
+                  </div>
                 </div>
+
+                <DropdownMenu.Separator
+                  className="h-px mx-2 my-1"
+                  style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
+                />
+
+                {/* 外观：横排三选项（白天 / 黑夜 / 随系统）。
+                    用 Radix 的 RadioGroup / RadioItem，不是 Item + 自己写 role="radio" ——
+                    后者会把 Item 给的 role="menuitem" 覆盖掉，菜单里就多出几个裸 radio，
+                    屏幕阅读器读到的结构和导航上下文都是坏的（Codex review 四轮 P2）。
+                    RadioGroup 落 role="group"、RadioItem 落 role="menuitemradio" + aria-checked，
+                    这两个才是 menu 的合法子角色，选中态也不用自己声明。
+                    不传 onValueChange：提交只走 button 的 onClick 一条路（它需要鼠标事件当
+                    换肤动画的原点），避免两条路各提交一次。
+                    onSelect 里 preventDefault 让点完菜单不关，用户能当场看见整屏换肤。 */}
+                <DropdownMenu.RadioGroup
+                  value={mobileThemeMode}
+                  aria-label="外观"
+                  className="mx-1 mb-1 mt-0.5 flex items-stretch gap-1 rounded-[12px] p-1"
+                  style={{ background: 'var(--nested-block-bg)' }}
+                >
+                  {THEME_MODE_OPTIONS.map((option) => {
+                    const Icon = option.icon;
+                    const selected = option.value === mobileThemeMode;
+                    return (
+                      <DropdownMenu.RadioItem
+                        key={option.value}
+                        value={option.value}
+                        asChild
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        <button
+                          type="button"
+                          title={option.description}
+                          onClick={(event) => handleThemeModeSelect(option.value, event)}
+                          className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-[9px] px-2 py-2 outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                          style={
+                            selected
+                              ? { background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }
+                              : { background: 'transparent', color: 'var(--text-secondary)' }
+                          }
+                        >
+                          <Icon size={15} aria-hidden />
+                          <span className="text-[11px] leading-none">{option.label}</span>
+                        </button>
+                      </DropdownMenu.RadioItem>
+                    );
+                  })}
+                </DropdownMenu.RadioGroup>
 
                 <DropdownMenu.Separator
                   className="h-px mx-2 my-1"
@@ -1769,8 +1851,7 @@ export default function AppShell() {
             </div>
           </div>
 
-          {/* 底部间距 */}
-          <div className="shrink-0 h-1" />
+          {/* 头像已是侧栏最后一个控件，不再留额外底部间距，让它真正贴到底 */}
 
           <AvatarEditDialog
             open={avatarOpen}

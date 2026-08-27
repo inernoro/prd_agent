@@ -3,9 +3,18 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 一次「从另一台 MAP 拉数据」的执行记录（本站作为目标站时使用）。
 ///
-/// 一次授权对应一条 Run，跑完即终态；要再同步必须重新走一次授权跳转。这是产品约束
+/// 一条 Run 跑一次，跑完即终态；要再同步必须重新走一次授权跳转。这是产品约束
 /// 不是技术限制：动态授权的意义就在于「批准的是这一次」，如果一次批准能复用，
 /// 那它和长期凭据没有区别。
+///
+/// **唯一的例外：试跑之后可以就地转正成一次真跑**（<see cref="PromotedToRunId"/>）。
+/// 原来的规则是「一次授权 = 一条 Run」，于是「看一眼会搬什么」这个动作要花掉一次批准，
+/// 真搬得让人再点一次同意——2026-08-21 的两次真实迁移都卡死在这一步，
+/// 第二次同意点不了，4 万多条数据读得出来却写不进去。
+///
+/// 转正不等于「批准可复用」：搬的是**同一批数据**（范围在试跑时就已冻结，不再重新
+/// 询问源站）、同一张票（还带着原来的两小时硬过期）、且**至多一次**。
+/// 试跑本来就不写任何东西，把它算成一次消耗才是当初没想清楚的地方。
 /// </summary>
 public class DataSyncRun
 {
@@ -74,6 +83,17 @@ public class DataSyncRun
     /// <summary>被源站清空、需要在本站手工补填的字段：集合名 -> 字段名列表</summary>
     public Dictionary<string, List<string>> PendingSecretFields { get; set; } = new();
 
+    /// <summary>
+    /// 这次试跑转正成的那条真跑。**同一条 Run 只能转正一次**，靠「这个字段还是空的」
+    /// 做条件更新来保证——两个标签页同时点、或者手快点两下，都只会有一条真跑。
+    ///
+    /// 非空还意味着这张票已经交给那条真跑了，本条不能再转正。
+    /// </summary>
+    public string? PromotedToRunId { get; set; }
+
+    /// <summary>这条真跑是从哪次试跑转正来的。用来在界面上把两条串成一次操作。</summary>
+    public string? PromotedFromRunId { get; set; }
+
     public string? Error { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
@@ -116,6 +136,22 @@ public class DataSyncCollectionProgress
 
     /// <summary>真跑将会覆盖的条数。试跑靠它给出「预计覆盖」，真跑时与 Updated 相等。</summary>
     public long PlannedUpdate { get; set; }
+
+    /// <summary>
+    /// 已改写成本站地址的资产字段数。
+    ///
+    /// 附件搬的只有元数据，地址是**源站**的绝对地址。不改的话，两站不共用同一个桶
+    /// （或公网前缀不同）时，同步过来的图片、录音、导出文件全部指回源站。
+    /// </summary>
+    public long AssetUrlsRebased { get; set; }
+
+    /// <summary>
+    /// 是绝对地址、却认不出对象 key，只能原样留着的资产字段数。
+    ///
+    /// **这几条就是搬完之后仍然可能打不开的**。单独计数而不是并进上面那个：
+    /// 「改了 N 条」和「还有 M 条没救」是两件事，混成一个数字等于把缺口藏起来。
+    /// </summary>
+    public long AssetUrlsUnresolved { get; set; }
 
     /// <summary>断点续传游标：上一批最后一个 _id 的扩展 JSON 表示</summary>
     public string? Cursor { get; set; }

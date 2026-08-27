@@ -954,10 +954,40 @@ public sealed class PoolAppCallerItem
     public string? Title { get; set; }
     public string Status { get; set; } = "";
 }
+/// <summary>
+/// 池成员可解析性索引：一次请求里建一次，给所有池复用。
+/// 前三张是「存在**且启用**」，用来判成员还能不能承接调用；
+/// 后三张是「只要存在就算」（不看启用），用来把「被停用」和「压根没了」分开——
+/// 停用是临时状态，启用即恢复；不存在才是死成员，才该给摘除入口。
+/// </summary>
+public sealed record PoolResolutionIndex(
+    HashSet<string> PlatformIds,
+    List<MongoDB.Bson.BsonDocument> Models,
+    List<MongoDB.Bson.BsonDocument> Exchanges,
+    HashSet<string> ExistingPlatformIds,
+    List<MongoDB.Bson.BsonDocument> ExistingModels,
+    List<MongoDB.Bson.BsonDocument> ExistingExchanges);
+
 public sealed class PoolModelItem
 {
     public string ModelId { get; set; } = ""; public string PlatformId { get; set; } = ""; public int Priority { get; set; }
     public string? Protocol { get; set; } public int HealthStatus { get; set; } public string HealthStatusLabel { get; set; } = "";
+    /// <summary>
+    /// 不可用的原因，只有「不是因为调用失败」时才有值：
+    /// <c>upstream-missing</c> 挂的上游已经不存在；<c>model-missing</c> 上游还在但这个模型没了；
+    /// <c>upstream-disabled</c> 上游还在、只是被停用；<c>model-disabled</c> 模型还在、只是被停用。
+    /// 两个 <c>-missing</c> 是死成员（不可逆，该摘除），两个 <c>-disabled</c> 是临时状态（启用即恢复）。
+    /// 为空表示走的是常规健康判定（真的调用失败过），由 ConsecutiveFailures 一路解释。
+    /// 有它才能避免界面写出「不可用（连续失败 0 次）」这种自相矛盾的归因。
+    /// </summary>
+    public string? UnavailableReason { get; set; }
+
+    /// <summary>
+    /// 这个成员能不能被摘除（指向的上游或模型已经不存在了）。
+    /// 由后端与成员删除端点**同一个判据**算出，前端直接用，不要自己拼条件去猜——
+    /// 猜的那一版连续三轮 review 各漏一处，每处都表现为「按钮亮着、点下去 409」。
+    /// </summary>
+    public bool Removable { get; set; }
     public string? LastFailedAt { get; set; } public string? LastSuccessAt { get; set; }
     public int ConsecutiveFailures { get; set; } public int ConsecutiveSuccesses { get; set; }
     public bool? EnablePromptCache { get; set; } public int? MaxTokens { get; set; }

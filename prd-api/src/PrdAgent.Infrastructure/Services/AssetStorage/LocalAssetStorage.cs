@@ -41,7 +41,8 @@ public class LocalAssetStorage : IAssetStorage
         // 不能复用 image-master 的按 SHA 路由：它只扫描少数图片域，文档、音频等
         // 其他 domain/type 会保存成功但读取 404。
         var url = BuildUrlForPath(filePath);
-        return new StoredAsset(sha, url, bytes.LongLength, safeMime);
+        var key = Path.GetRelativePath(_baseDir, filePath).Replace(Path.DirectorySeparatorChar, '/');
+        return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
     }
 
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
