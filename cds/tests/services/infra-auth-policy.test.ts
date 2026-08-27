@@ -98,13 +98,20 @@ describe('基础设施认证硬门禁', () => {
     })).not.toThrow();
   });
 
-  it('不干预当前只依赖私网隔离的基础设施', () => {
-    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'memcached:1-alpine' }))
-      .not.toThrow();
-    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'apache/kafka:3.7' }))
-      .not.toThrow();
-    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'nats:2-alpine' }))
-      .not.toThrow();
+  it('memcached / kafka / nats 不再靠私网隔离蒙混过关', () => {
+    // 这三个原来落到门禁末尾的 `configured = true`——**一个默认值把它们静默放行了**。
+    // 门禁看起来管着所有数据服务，实际有三个类型从来没被判过（形状 1：判据太窄，
+    // 而且缺口没有任何声音）。现在裸配一律拒绝。
+    for (const image of ['memcached:1-alpine', 'apache/kafka:3.7', 'nats:2-alpine']) {
+      expect(() => assertInfraAuthenticationConfigured({ dockerImage: image }), image)
+        .toThrow('拒绝创建无认证的');
+    }
+  });
+
+  it('认不出类型的镜像仍然放行——门禁只管它判得了的东西', () => {
+    // 对照组：`other` 不能被上面那条顺手拖下水。无法判断有没有认证时拒绝创建，
+    // 等于禁掉所有自定义镜像。
+    expect(() => assertInfraAuthenticationConfigured({ dockerImage: 'nginx:alpine' })).not.toThrow();
   });
 
   it('目录中每个声明凭据的服务都能通过同一启动门禁', () => {
@@ -119,6 +126,9 @@ describe('基础设施认证硬门禁', () => {
         containerPort: entry.containerPort,
         env: built.env,
         command: entry.command,
+        // entrypoint 也要送进来：memcached / nats 把认证放在「覆盖成 sh 之后
+        // 再 exec 回去」的那条命令里，漏掉这一半就测不到真实形状。
+        entrypoint: entry.entrypoint,
       }), `目录服务 ${entry.id} 的认证配置没有通过启动门禁`).not.toThrow();
     }
   });

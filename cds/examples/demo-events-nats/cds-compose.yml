@@ -30,9 +30,11 @@ services:
       cds.path-prefix: /api/
       cds.readiness-path: /api/health
 
-  # NATS server (no auth in this demo). Internal clients reach it at nats:4222.
+  # NATS server. Internal clients reach it at nats:4222 and must authenticate:
+  # CDS 的基础设施认证门禁不再接受裸奔的 nats(见 doc/debt.cds.md E49)。
   nats:
     image: nats:2-alpine
+    command: --user ${NATS_USER} --pass ${NATS_PASSWORD}
     ports:
       - "4222:4222"
 
@@ -41,9 +43,17 @@ x-cds-project:
   description: 前端发布消息到 NATS 主题，后端订阅者实时接收并回显。纯 image + command + bind-mount 一键部署。
 
 x-cds-env:
-  NATS_URL: nats://nats:4222
+  NATS_USER: app
+  NATS_PASSWORD: demo-nats-pw
+  NATS_URL: nats://app:demo-nats-pw@nats:4222
 
 x-cds-env-meta:
+  NATS_USER:
+    kind: infra-derived
+    hint: NATS 账号，随服务一起创建。
+  NATS_PASSWORD:
+    kind: infra-derived
+    hint: NATS 口令。示例工程用固定值方便复现；真实项目应让 CDS 生成随机值。
   NATS_URL:
     kind: infra-derived
-    hint: 后端连接的 NATS 地址（容器网络内通过服务名 nats 访问，无密码）。
+    hint: 后端连接的 NATS 地址（容器网络内通过服务名 nats 访问，带账号口令）。

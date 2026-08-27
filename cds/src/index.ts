@@ -6,7 +6,12 @@ import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
-import { discoverComposeFiles, parseCdsCompose } from './services/compose-parser.js';
+import {
+  discoverComposeFiles,
+  parseCdsCompose,
+  resolveEnvTemplates,
+  resolveCommandTemplate,
+} from './services/compose-parser.js';
 import fs from 'node:fs';
 import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } from './server.js';
 import type { ActivityEvent } from './server.js';
@@ -23,7 +28,17 @@ import {
   type FirewallBackendSnapshot, type InfraExposureInput, type InfraExposureReport,
 } from './services/infra-exposure-audit.js';
 import {
-  backupDirCandidates, buildMysqlDumpScript, buildRedisBackupProbeScript,
+  evaluateDailyHealth,
+  type HealthInfraFact,
+  type HealthPlatformStoreFact,
+  type InfraExemptionFact,
+  platformStoreFacts,
+} from './services/platform-daily-health.js';
+import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
+import {
+  backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
+  buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
+  buildRedisBackupProbeScript,
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
@@ -109,6 +124,8 @@ import './load-env.js';
 import { parseCsv } from './util/parse-csv.js';
 import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
+import { backfillReportReadScope } from './services/connection/pairing-service.js';
+
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
@@ -269,6 +286,14 @@ const INFRA_HEALTH_STARTUP_DELAY_MS = 2 * 60_000;
 const INFRA_BACKUP_HEALTH_FILE = '.cds-backup-health.json';
 const EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS = 30_000;
 
+/**
+ * 每日安全体检的节奏。一天一次：它回答的是「今天这台机器健康吗」，
+ * 不是实时监控——那一层由暴露面自检（每小时）和基础设施看门狗（每 15 分钟）承担。
+ */
+const PLATFORM_DAILY_HEALTH_INTERVAL_MS = 24 * 60 * 60_000;
+/** 启动后延迟首检：要等暴露面自检先跑出一份运行态真值，否则第一份体检是空的。 */
+const PLATFORM_DAILY_HEALTH_STARTUP_DELAY_MS = 5 * 60_000;
+
 let lastInfraExposureReport: InfraExposureReport | null = null;
 
 // 基础设施暴露面自检间隔。判据取 `docker ps` 的运行态真值，不读台账——
@@ -391,32 +416,53 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
         if (detectInfraKind(image, { containerName: name, runtimePorts: ports }) === 'other') continue;
         rows.push({ name, image, ports: ports ?? '', running: (state || '').toLowerCase() === 'running' });
       }
-      if (rows.length === 0) return;
-
+      // 一个数据面容器都没认出来，**也是一份检查完了的结果**，不是「还没检查」。
+      // 这里早退过：于是 lastInfraExposureReport 永远停在 null，而每日体检正是
+      // 靠它判断「首检跑没跑过」——json 状态后端、全用外部库的部署因此天天跳过
+      // 体检，连备份新鲜度、恢复演练这些跟容器毫无关系的项也一起被跳掉，
+      // 而且因为空容器集每轮都一样，这类部署永远等不到第一次结论
+      //（Codex review P2）。
+      //
+      // 所以不早退：只跳过「为判定这些容器才需要做的 inspect 与防火墙探测」，
+      // 报告照出，出的是一份如实的空报告。
+      //
       // 认证判据必须取**容器自己的**配置，不是 CDS 台账里那份：台账记的是
       // 「建它时用了什么」，compose 导入的、手工起的、密码写在启动参数里的
       // （redis 的 --requirepass）台账里都看不到，照台账判会把有密码的库
       // 误报成裸奔——一条假警报会让人开始怀疑整张表。
       const authByContainer = new Map<string, { env: Record<string, string>; args: string[] }>();
-      const inspect = await shell.exec(
-        `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}' `
-        + rows.map((r) => `'${r.name.replace(/'/g, `'"'"'`)}'`).join(' '),
-        { timeout: 30_000 },
-      );
-      for (const line of (inspect.stdout || '').split('\n')) {
-        const [rawName, envJson, cmdJson] = line.split('\t');
-        if (!rawName) continue;
-        const name = rawName.replace(/^\//, '').trim();
-        const env: Record<string, string> = {};
-        try {
-          for (const kv of (JSON.parse(envJson || '[]') as string[]) || []) {
-            const i = kv.indexOf('=');
-            if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
-          }
-        } catch { /* 解析不了就当没有，下游按未知从严 */ }
-        let args: string[] = [];
-        try { args = (JSON.parse(cmdJson || '[]') as string[]) || []; } catch { args = []; }
-        authByContainer.set(name, { env, args });
+      if (rows.length > 0) {
+        // Entrypoint 必须和 Cmd 一起取。
+        //
+        // 认证判据看的是「启动时到底跑了什么」，而这句话有两半：memcached / nats
+        // 这类预设把 entrypoint 覆盖成 `sh`、真正的认证参数在 `-c '...'` 那段里，
+        // 只读 Cmd 等于只看到半条命令。之前靠「env 里有口令也算认证」把这半条
+        // 盖住了；判据收敛到只认启动参数（台账 E81）之后，缺的这半条会直接变成
+        // 假警报——判据必须读真正生效的那个东西（形状 6）。
+        const inspect = await shell.exec(
+          `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}\t{{json .Config.Entrypoint}}' `
+          + rows.map((r) => `'${r.name.replace(/'/g, `'"'"'`)}'`).join(' '),
+          { timeout: 30_000 },
+        );
+        for (const line of (inspect.stdout || '').split('\n')) {
+          const [rawName, envJson, cmdJson, entrypointJson] = line.split('\t');
+          if (!rawName) continue;
+          const name = rawName.replace(/^\//, '').trim();
+          const env: Record<string, string> = {};
+          try {
+            for (const kv of (JSON.parse(envJson || '[]') as string[]) || []) {
+              const i = kv.indexOf('=');
+              if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
+            }
+          } catch { /* 解析不了就当没有，下游按未知从严 */ }
+          let args: string[] = [];
+          try {
+            const cmd = (JSON.parse(cmdJson || '[]') as string[]) || [];
+            const entrypoint = (JSON.parse(entrypointJson || '[]') as string[]) || [];
+            args = [...entrypoint, ...cmd];
+          } catch { args = []; }
+          authByContainer.set(name, { env, args });
+        }
       }
 
       const inputs: InfraExposureInput[] = rows.map((r) => {
@@ -437,32 +483,38 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
       // 把宿主防火墙纳入判据。两个方向都要：绑在全网卡但被挡住的不该报成 critical
       // （报多了没人看），而**规则一旦丢失（重启即丢）就要立刻升回 critical**——
       // 只看容器绑定的自检对「防火墙没了」这件事完全无感。
-      const pubIf = (await shell.exec(
-        `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
-        { timeout: 15_000 },
-      )).stdout.trim();
-      const firewallBackends: FirewallBackendSnapshot[] = [];
-      for (const tool of ['iptables-nft', 'iptables-legacy'] as const) {
-        const present = await shell.exec(`command -v ${tool} >/dev/null 2>&1`, { timeout: 15_000 });
-        if (present.exitCode !== 0) {
+      //
+      // 没有容器要判的时候整段跳过：探防火墙是为了给某个端口定性，没有端口就
+      // 没有要定的性，跑一遍只是白花十几秒。
+      let firewall: ReturnType<typeof resolveRuntimeFirewallGuard> | null = null;
+      if (rows.length > 0) {
+        const pubIf = (await shell.exec(
+          `ip -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* dev \\([^ ]*\\).*/\\1/p' | head -1`,
+          { timeout: 15_000 },
+        )).stdout.trim();
+        const firewallBackends: FirewallBackendSnapshot[] = [];
+        for (const tool of ['iptables-nft', 'iptables-legacy'] as const) {
+          const present = await shell.exec(`command -v ${tool} >/dev/null 2>&1`, { timeout: 15_000 });
+          if (present.exitCode !== 0) {
+            firewallBackends.push({
+              name: tool, available: false, dockerNatActive: false, rulesReadable: false, rules: '',
+            });
+            continue;
+          }
+          const [nat, filter] = await Promise.all([
+            shell.exec(`${tool} -t nat -S 2>/dev/null`, { timeout: 15_000 }),
+            shell.exec(`${tool} -S 2>/dev/null`, { timeout: 15_000 }),
+          ]);
           firewallBackends.push({
-            name: tool, available: false, dockerNatActive: false, rulesReadable: false, rules: '',
+            name: tool,
+            available: true,
+            dockerNatActive: nat.exitCode === 0 ? /(?:^-N DOCKER$|^-A DOCKER\s)/m.test(nat.stdout || '') : null,
+            rulesReadable: filter.exitCode === 0,
+            rules: filter.stdout || '',
           });
-          continue;
         }
-        const [nat, filter] = await Promise.all([
-          shell.exec(`${tool} -t nat -S 2>/dev/null`, { timeout: 15_000 }),
-          shell.exec(`${tool} -S 2>/dev/null`, { timeout: 15_000 }),
-        ]);
-        firewallBackends.push({
-          name: tool,
-          available: true,
-          dockerNatActive: nat.exitCode === 0 ? /(?:^-N DOCKER$|^-A DOCKER\s)/m.test(nat.stdout || '') : null,
-          rulesReadable: filter.exitCode === 0,
-          rules: filter.stdout || '',
-        });
+        firewall = pubIf ? resolveRuntimeFirewallGuard(firewallBackends, pubIf) : null;
       }
-      const firewall = pubIf ? resolveRuntimeFirewallGuard(firewallBackends, pubIf) : null;
 
       const report = auditInfraExposure(inputs, { firewall });
       lastInfraExposureReport = report;
@@ -677,7 +729,24 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 同时用 fd 腾挪保住 mysqldump 自己的退出码（管道默认只给最后一环的，
             // 而 dash 没有 pipefail）。三次踩坑的经过写在那个函数的注释里。
             cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildMysqlDumpScript())} > ${shq(out)}`;
-          } else {
+          } else if (t.kind === 'postgres') {
+            // postgres 此前完全不在备份范围里——不是失败，是压根没被当成目标（判据只认
+            // mongo/redis/mysql）。它一直被记进覆盖缺口让整轮健康红着，但红着不等于有备份。
+            // 脚本与判据在 buildPostgresDumpScript()：容器内认证 + 流式压缩 + 两端退出码，
+            // 并把「同实例还有哪些库没被带走」写到 stderr（见下面的 scopeNote）。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildPostgresDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'rabbitmq') {
+            // RabbitMQ 导的是 definitions（拓扑），不是消息——它没有一致性消息快照命令。
+            // 这个取舍不藏着：脚本每轮往 stderr 写一行「当前积压 N 条不在这份备份里」，
+            // 由下面的 scopeNote 接进本轮结论。判据在 buildRabbitmqDumpScript()。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildRabbitmqDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'nacos') {
+            // nacos 此前连「这是什么服务」都认不出来，两台在跑的实例一直归在
+            // 「认不出的类型」里，零备份。它的配置可能落 Derby 也可能落外部 MySQL，
+            // 容器外看不出是哪种——所以走它自己的配置导出接口，两种形态同一份产物。
+            // 判据在 buildNacosDumpScript()：逐命名空间导出，打包压缩，两端退出码都保住。
+            cmd = `docker exec ${shq(t.containerName)} sh -c ${shq(buildNacosDumpScript())} > ${shq(out)}`;
+          } else if (t.kind === 'redis') {
             // redis：BGSAVE 落盘后拷 dump.rdb。三件事必须都成立才敢认这份备份。
             //
             // 1. **要能连上**。配了 requirepass 的实例（密码常写在 --requirepass
@@ -721,6 +790,18 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
               throw new Error(`探测脚本没有回传快照路径（拿到 ${JSON.stringify(rdbPath.slice(0, 80))}），拒绝按默认路径猜`);
             }
             cmd = `docker cp ${shq(`${t.containerName}:${rdbPath}`)} ${shq(out)}`;
+          } else {
+            /**
+             * 这里原来是 redis 的 `else`——**新增一种备份类型而忘了在这里加分支时，
+             * 它会掉进 redis 那一条，对着一台 postgres 跑 BGSAVE**，然后拷一个
+             * 根本不存在的 dump.rdb。判定层认得它、执行层没接线，正是
+             * predicate-and-wiring-discipline 形状 2（建了一半，删掉不会红）。
+             *
+             * 改成穷尽分支之后，`never` 这一行让**编译器**替我们守着：
+             * BackupKind 多一个成员而这里没加分支，`tsc` 当场报错。
+             */
+            const unreachable: never = t.kind;
+            throw new Error(`备份类型 ${String(unreachable)} 没有对应的导出实现`);
           }
           // 前置闸只证明「此刻还有空间」，这次写入本身是无界的——一个大库照样能把
           // 最后一个字节吃掉，而根盘写满会同时打死所有预览、构建和 CDS 自己。给这次
@@ -736,6 +817,14 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 撞上限和别的失败要能分开：前者是「这个库太大」，后者才是「备份坏了」。
             throw new Error(`${combinedOutput(r).slice(0, 400)}（本次写入上限 ${capGiB} GiB，超限会被内核中断）`);
           }
+
+          // 成功路径上的 stderr 也要读。导出脚本用它报「这份备份覆盖到哪」——
+          // 只在失败时看 stderr 的话，一次成功但只覆盖了一个库的备份，
+          // 会以「成功 1 个」的形态被读成全量。
+          const scopeNote = extractBackupScopeNote(r.stderr || '');
+          // 「机制本来就不含」与「这轮真的少备了」分两个字段接：混成一个的话，
+          // rabbitmq / nacos 每轮无条件报的那行说明会把健康位永远钉死（Codex review P1）。
+          const gapNote = extractBackupGapNote(r.stderr || '');
 
           const stat = await shell.exec(`stat -c %s ${shq(out)} 2>/dev/null || echo 0`, { timeout: 10_000 });
           const bytes = Number((stat.stdout || '0').trim()) || 0;
@@ -816,6 +905,8 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             pruned: doomed,
             remoteObjectKey: remote?.objectKey,
             sha256: remote?.sha256,
+            note: scopeNote ?? undefined,
+            gapNote: gapNote ?? undefined,
           });
         } catch (err) {
           // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），
@@ -830,13 +921,19 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       const summary = summarizeBackupRound(outcomes, plan.skipped.length);
       const failed = outcomes.filter((o) => !o.ok);
       const coverageComplete = isBackupRoundHealthy(plan, outcomes);
-      if (outcomes.length > 0 || coverageGaps.length > 0) {
+      // 缺口有两种来源，落盘时必须合起来：计划阶段就知道备不了的（按服务类型判），
+      // 和**跑完才知道只备到一部分**的（导出脚本自己报的范围限制，如 postgres 只导了
+      // POSTGRES_DB 那一个库）。后者原来只挂在 outcome.note 上、没有任何判据读它，
+      // 于是那几个没备份的库既不拉低健康位、也不出现在每日体检的缺口里——灯是绿的，
+      // 备份是缺的（Codex review P1）。
+      const allCoverageGaps = [...coverageGaps, ...backupScopeGaps(outcomes)];
+      if (outcomes.length > 0 || allCoverageGaps.length > 0) {
         const completedAt = new Date().toISOString();
         const health = {
           coverageComplete,
           completedAt: coverageComplete ? completedAt : null,
           remoteVerifiedAt: coverageComplete ? completedAt : null,
-          coverageGaps,
+          coverageGaps: allCoverageGaps,
           objects: outcomes.map((outcome) => ({
             id: outcome.id,
             fileName: outcome.fileName,
@@ -854,12 +951,12 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       // 放进 else 分支的话，像某个库口令不对这种长期部分失败，会被误报成
       // 「周期备份已经哑了」——那是假警报，比不报还糟。
       backupLiveness.markSuccess();
-      if (failed.length > 0 || coverageGaps.length > 0) {
+      if (failed.length > 0 || allCoverageGaps.length > 0) {
         console.warn(`[infra-backup] ${summary}`);
         store?.record({
           category: 'system', severity: 'warn', source: 'infra-backup',
           action: 'infra.backup.partial-failure', message: summary, status: 'warn',
-          details: { outcomes, skipped: plan.skipped, coverageGaps, directory: dir },
+          details: { outcomes, skipped: plan.skipped, coverageGaps: allCoverageGaps, directory: dir },
         });
       } else {
         console.log(`[infra-backup] ${summary}`);
@@ -990,6 +1087,170 @@ function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Dat
     } catch { /* 继续检查下一个实际落盘目录 */ }
   }
   return { completedAt: null, remoteVerifiedAt: null };
+}
+
+/**
+ * 每日安全体检：把散落各处的事实合成一句「今天这台机器健康吗」。
+ *
+ * 2026-08-23 一次人工安全审计查出来的东西，本来每一项都该由系统自己每天说出来
+ * （公网端口、无口令的库、备份新鲜度、恢复演练）。这些事实各自都有人算，
+ * 但**没有任何一处把它们合起来**——于是要等人想起来查一次才发现。
+ *
+ * 判定全在 platform-daily-health（纯函数、可回归），这里只负责取事实和落事件。
+ */
+function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (config.mode === 'executor' || isPreviewInstance()) return null;
+
+  const run = (): void => {
+    try {
+      // 事实一：运行态的库。直接用暴露面自检刚算完的那一份，不再自己 inspect 一遍
+      // ——两处各算一次必然漂移，而这里要的正是它已经算好的东西。
+      const exposure = lastInfraExposureReport;
+      if (!exposure) {
+        // 首检还没跑完就不出结论：拿一份空事实去体检，会得出「一切正常」这种
+        // 最糟糕的假绿灯。
+        console.log('[daily-health] 暴露面自检还没跑过，本轮跳过（下一轮再来）');
+        return;
+      }
+      // 事实一 b：存量豁免台账。**从配置层取，不从运行态取**——豁免是「这台服务
+      // 靠一条到期日在跑」，跟它此刻有没有对外端口、甚至跑没跑都没关系。挂在运行态
+      // 事实上的话，覆盖面会被暴露面那层筛子卡住，一台纯内网或当前停着的老库到期前
+      // 不会有任何提示，到期后直接起不来（Codex review P1）。
+      const exemptions: InfraExemptionFact[] = [];
+      for (const service of stateService.getInfraServices() || []) {
+        // 判据必须读**容器真正会拿到的那个值**，不是它在台账里的样子。
+        //
+        // `InfraService.env` / `command` 存的是未展开的模板：compose 导入和手工建的
+        // 服务里，值经常就是字面的 `${CDS_MYSQL_PASSWORD}`，到启动容器那一刻才解析
+        // （线上现在就有四个项目这样存着）。直接拿生值来判，认证判据看到的是
+        // 一串 `${...}`——它当然「有值」，于是每一台模板式配置的库都被判成
+        // 「配了认证」，而它到底配没配，这条体检从来没真的看过（形状 6，台账 E75）。
+        const projectEnv = stateService.getCustomEnv(service.projectId || 'default');
+        const decision = evaluateInfraAuthentication(
+          {
+            dockerImage: service.dockerImage,
+            id: service.id,
+            name: service.name,
+            basePresetId: service.basePresetId,
+            containerName: service.containerName,
+            containerPort: service.containerPort,
+            env: resolveEnvTemplates(service.env || {}, projectEnv),
+            command: resolveCommandTemplate(service.command, projectEnv),
+            entrypoint: resolveCommandTemplate(service.entrypoint, projectEnv),
+            createdAt: service.createdAt,
+          },
+          { graceUntil: process.env.CDS_INFRA_AUTH_GRACE_UNTIL || null },
+        );
+        // 只有「靠豁免才放行」的才记倒计时：本来就配了认证的不该被算进去。
+        //
+        // 带项目：**infra id 只在项目内唯一**，这台机器上六个项目各有一个叫 `redis`
+        // 的服务，结论的 id 与话术只用 id 会把两个项目的问题说成同一条
+        //（cross-project-isolation：标识要带作用域，形状 1）。
+        if (decision.exemption) {
+          exemptions.push({
+            id: service.id,
+            projectId: service.projectId,
+            expiresAt: decision.exemption.expiresAt,
+          });
+        }
+      }
+      const infra: HealthInfraFact[] = exposure.findings.map((f) => ({
+        id: f.id,
+        // 结论的 id 与话术都要带项目：infra id 只在项目内唯一，两个项目各有一个 redis 时，
+        // 只用 id 会生成两条一模一样的 finding id——去重一合并就少一条，运维也看不出
+        // 该修哪个项目的那台（Codex review P2）。
+        projectId: f.projectId,
+        publiclyPublished: f.publiclyPublished,
+        // 防火墙状态必须一起带过去。只传原始绑定的话，一台「绑在全网卡但被宿主
+        // 防火墙挡住」的库——暴露面自检特意把它降到 warn 的那一类——会在体检这边
+        // 被重新判成 critical，并且说出「任何人扫到就能直接读写」这种**当场可以
+        // 验伪**的话（Codex review P2）。
+        firewallBlocked: f.firewallBlocked,
+        authenticated: f.authenticated,
+      }));
+      // **再把「跑着但一个端口都没发布」的那批接上。** findings 是按暴露面筛过的清单，
+      // 不是完整台账；只喂它进去，「内网但无口令」那一整档就永远不会响——一台纯内网的
+      // 老库可以一直无声地没有口令（Codex review P1）。
+      for (const svc of exposure.internalOnly) {
+        infra.push({
+          id: svc.id,
+          projectId: svc.projectId,
+          publiclyPublished: false,
+          firewallBlocked: false,
+          authenticated: svc.authenticated,
+        });
+      }
+
+      // 事实二：平台自身的存储。认证门禁只管「项目基础设施容器」，CDS 自己这几个
+      // 库从来不在它的管辖范围内，也就永远不会有人被提醒——这一条只有本体检会说。
+      //
+      // **只在真的用 Mongo 时才报**：CDS 支持 json 状态后端，那种部署压根没有 Mongo，
+      // 无条件塞一条 `connectionUri: null` 会被判成「没有凭据」，于是天天为一个
+      // 不存在的库报警。一盏永远亮着的灯没人会看——那正是这个体检要治的病，
+      // 不能自己先犯（Codex review P2）。
+      const platformStores: HealthPlatformStoreFact[] = platformStoreFacts(process.env);
+
+      // 事实三：备份。这里自己读一遍而不复用 readBackupHealth()——那个函数把
+      // 「覆盖不全」压成了「完全没备份过」，两件事在体检里要分开报。
+      let lastCompletedAt: string | null = null;
+      let coverageGaps: string[] = [];
+      for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
+        try {
+          const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
+            completedAt?: string | null;
+            coverageGaps?: Array<{ id?: string }>;
+          };
+          lastCompletedAt = value.completedAt ?? null;
+          coverageGaps = (value.coverageGaps || []).map((g) => String(g?.id || '')).filter(Boolean);
+          break;
+        } catch { /* 换下一个候选目录 */ }
+      }
+
+      // 事实四：恢复演练。**目前没有任何地方记录它**，所以恒为 null——
+      // 体检会如实报「从来没演练过」。这不是占位符：在补上记录之前，
+      // 「能不能真的恢复」的答案就是「不知道」，报成不知道才是对的。
+      const verdict = evaluateDailyHealth({
+        now: new Date(),
+        infra,
+        infraExemptions: exemptions,
+        platformStores,
+        backup: { lastCompletedAt, coverageGaps },
+        lastRestoreDrillAt: null,
+      });
+
+      const body = [verdict.headline, '', ...verdict.findings.map((f) => `- [${f.severity}] ${f.message}`)]
+        .join('\n');
+      if (verdict.severity === 'ok') {
+        console.log(`[daily-health] ${verdict.headline}`);
+      } else {
+        console.warn(`[daily-health] ${verdict.headline}`);
+      }
+      store?.record({
+        category: 'system',
+        severity: verdict.severity === 'critical' ? 'error' : verdict.severity === 'warn' ? 'warn' : 'info',
+        source: 'daily-health',
+        action: 'platform.daily-health',
+        message: body,
+        status: verdict.severity === 'critical' ? 'error' : verdict.severity === 'warn' ? 'warn' : 'info',
+        details: { severity: verdict.severity, findings: verdict.findings },
+      });
+    } catch (err) {
+      // 体检自己挂了同样要出声：一个静默失败的体检和一个说「没问题」的体检，
+      // 在日志里长得一模一样。
+      console.warn(`[daily-health] 体检失败: ${(err as Error).message}`);
+      store?.record({
+        category: 'system', severity: 'warn', source: 'daily-health',
+        action: 'platform.daily-health.failed',
+        message: `每日安全体检没能跑完：${(err as Error).message}。本轮结论不可信。`,
+        status: 'warn',
+      });
+    }
+  };
+
+  setTimeout(run, PLATFORM_DAILY_HEALTH_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(run, PLATFORM_DAILY_HEALTH_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
 }
 
 function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
@@ -1699,7 +1960,28 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
 const externalPortAuditWatchdog = startExternalPortAuditWatchdog(activeServerEventLogStore);
 const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeServerEventLogStore);
+// 每日安全体检：把公网端口、无口令的库、备份新鲜度、恢复演练合成一句结论。
+// 这些事实各自都有人算，但此前没有任何一处把它们合起来——于是要等人想起来查才发现。
+const platformDailyHealthCheck = startPlatformDailyHealthCheck(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
+
+// 存量系统互联连接补 report:read —— **默认不做**，要管理员显式开开关。
+//
+// 自动补等于在用户没重新看过授权页的情况下扩大一张已签发的长期令牌，那是替他做了同意。
+// 不补的话存量连接的报告同步会 401，正路是让用户重新走一次授权（授权页已列出该 scope）；
+// 赶时间可以设 CDS_GRANT_REPORT_READ_TO_EXISTING=1 重启一次，那是个需要动手的决定。
+try {
+  const grantEnabled = ['1', 'true', 'yes']
+    .includes(String(process.env.CDS_GRANT_REPORT_READ_TO_EXISTING || '').trim().toLowerCase());
+  const patchedConnections = backfillReportReadScope(stateService, { enabled: grantEnabled });
+  for (const id of patchedConnections) {
+    // 逐条留痕：一个没人看得见的授权变更，和把门禁删掉没有区别。
+    console.log(`[connection-scope] 按 CDS_GRANT_REPORT_READ_TO_EXISTING 给存量连接 ${id} 补上 report:read`);
+  }
+} catch (err) {
+  // 补不上不该拦住启动：报告同步会继续 401，但那是可见的失败，比 CDS 起不来好。
+  console.error('[connection-scope] 补 report:read 失败', err);
+}
 
 /**
  * 重启之后回头看一眼：上一次自更新声称更到的 sha，和现在真实的 HEAD 对得上吗？
