@@ -6,3 +6,4 @@
 | fix | chore | .gitignore 的 node_modules 补一条不带尾斜杠的：带斜杠只匹配目录，匹配不到同名软链，于是临时 worktree 里为跑测试建的依赖软链被 git add -A 收了进去、四条 CI 全红 |
 | test | prd-api | 网关限流用例不再骑在分钟边界上：窗口按墙钟分钟取键，三条用例连发请求并断言「只有一条窗口 + 计数精确」，跨过边界就插出第二条、计数从头算，SingleAsync() 假红（CI 上真中过）。抽出纯函数判据配 6 条不依赖 Mongo 的单测，三条用例统一先等到新窗口 |
 | fix | cds | CDS 往消费方容器发的只有地址没有凭据，数据服务一旦开认证，每个新建容器启动即崩（NOAUTH）——而 CDS 自己存着那对账号口令。getCdsEnvVars 补出 CDS_<服务>_USER / _PASSWORD / _URL：按镜像约定的 env 键名认（不按服务 id，多实例改名都不受影响），URL 的 userinfo 段做百分号编码，没口令的服务一个键都不发 |
+| fix | ops | cds-compose.yml 的 Mongo/Redis 连接串改成带凭据：Mongo 用 `${CDS_MONGODB_URL}`（百分号编码好的完整 URI），Redis 因为 StackExchange.Redis 不吃 `redis://` 而按它的格式拼 `host:port,user=,password=`。此前只给地址，mongo 开 `--auth`、redis 开 `--aclfile` 之后 17 条分支里 7 条起不来 |

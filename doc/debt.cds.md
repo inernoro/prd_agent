@@ -917,16 +917,27 @@ authenticated`）。已经在跑的容器没事——它们的连接是在改动
 （`getCdsEnvVars` 只产 `CDS_<服务>_HOST` / `CDS_<服务>_PORT`）。当前容器里那个值是老 profile
 （`${CDS_HOST}:${CDS_REDIS_PORT}`）留下的，下一次部署会拿到空串。属于形状 8：声明了但永远不生效。
 
-**修法**：把这两个变量在 prd-agent 项目级 env 里定义出来，值是带账号口令的完整连接串
-（redis 要 StackExchange 格式 `host:port,user=…,password=…`，不是 `redis://`）。项目级 env
-所有分支共用，写一次全分支下次部署恢复。
+**已修（2026-08-27 当天）**。原先卡在「口令必须由人给」——CDS 对基础设施凭据全链路脱敏，
+没有接口能把值交出来。真正的解法不是把口令要出来，而是**让 CDS 自己去发**：它本来就存着
+那对账号口令，只是从没往消费方容器发过。
 
-**卡在哪**：CDS 对基础设施凭据是全链路脱敏的（列表只给键名，日志与查询输出都过
-`maskTextSecrets`），没有接口能把值交出来，所以口令必须由人给。用 `container-exec` 去容器里把
-ACL 文件读出来能绕开，但那是在故意作废一个专为此设的脱敏控制，**没有做**。
+- 生产侧：`cds/src/services/infra-credential-env.ts` + `getCdsEnvVars` 接线，按镜像约定的
+  env 键名（不按服务 id，多实例改名都不受影响）派生 `CDS_<服务>_USER` / `_PASSWORD` / `_URL`，
+  URL 的 userinfo 段做百分号编码。没口令的服务一个键都不发。
+- 消费侧：三个 profile（`api-prd-agent` / `llmgw-prd-agent` / `llmgw-serve-prd-agent`）的连接串
+  改成引用凭据；`cds-compose.yml` 同步改掉，避免下次重新导入 compose 打回原样。
+  Mongo 用 `${CDS_MONGODB_URL}`；Redis 因为 StackExchange.Redis 不吃 `redis://` URI，
+  按它的格式拼 `host:port,user=,password=`。
 
-**顺带**：把 profile 改成引用 `${CDS_REDIS_URL}` 的那次改动，从落地起就没生效过。谁改的谁知道
-本来想引哪个变量。
+顺序上先让生产侧真的存在，再改消费侧——不能重蹈「profile 指向不存在的变量」那个覆辙。
+
+**留下的已知边界**：原始 `USER` / `PASSWORD` 交给消费方自己拼时，转义责任在消费方。口令里若出现
+StackExchange 格式的保留字符（`,` `=`），拼出来的串会被解析歪。CDS 生成的口令是十六进制不会命中，
+**用户手工改过口令的服务才有这个风险**。要根治得给 redis 也提供一个「已转义、可直接用」的形态，
+或者在 CDS 侧拒绝含保留字符的手工口令。
+
+**顺带**：把 profile 改成引用 `${CDS_REDIS_URL}` 的那次改动，从落地起就没生效过——那个名字当时
+在 CDS 里根本不存在。现在它存在了，那次改动的意图反而是对的，只是缺了生产侧那一半。
 
 ---
 
