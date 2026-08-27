@@ -10570,12 +10570,12 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     {
         // append-only 是为了防「手滑摘掉一个还在服务的成员」，不是为了把**指向已删上游的死成员**钉死。
         // 后者是纯 debris：那条上游没了，成员按 (modelId, platformId) 永远解析不到，
-        // 留着只会让平台删除的阻挡清单一直挂着一条谁也清不掉的引用（本轮就是这么卡住的）。
-        // 所以只放开这一种：目标成员的 platformId 在 GW 与 MAP 两侧都已不存在。
-        var danglingOnly = await IsDanglingPoolMemberAsync(
-            gwPlatforms, platforms, gwModels, models, gwModelExchanges, modelExchanges,
-            http, pool, normalizedModelId, normalizedPlatformId, internalTenantId);
-        if (!danglingOnly)
+        // 留着只会让平台删除的阻挡清单一直挂着一条谁也清不掉的引用。
+        //
+        // 判据与池列表下发的 Removable 是**同一个函数**——控制台显示的那个按钮，
+        // 就是这里放行的那个条件，不存在「按钮亮着但点下去 409」。
+        var resolutionIndex = await BuildPoolResolutionIndexAsync(http);
+        if (!IsDeadPoolMember(normalizedModelId, normalizedPlatformId, resolutionIndex))
         {
             return Json(ApiEnvelope<PoolItem>.Fail(
                 "APPEND_ONLY_POOL",
@@ -12753,83 +12753,38 @@ static async Task<List<string>> PruneManagedPoolMembersAsync(
 }
 
 /// <summary>
-/// 这条池成员是不是「死成员」——它按 (ModelId, PlatformId) 已经解析不到任何东西了。
+/// 这条池成员是不是「死成员」——它按 (ModelId, PlatformId) 已经指不到任何东西了。
 ///
-/// 死法有两种，缺一不可地都要认：**上游没了**（platformId 两侧都查不到），
-/// 以及**上游还在、但那个模型没了**（platform 命中，模型按 _id / ModelName / Name 都对不上）。
-/// 只判前者会漏掉后者——退役一条上游的某个模型时，成员仍会被当活的，
-/// 于是它继续挂在删除阻挡清单里，而 append-only 又不让手工摘，两头堵死。
+/// **这是「能不能摘除」的唯一判据。** 池列表把它算成 <c>PoolItem.Models[].Removable</c> 下发，
+/// 成员删除端点用同一个函数放行；前端不再自己拼条件去猜后端会不会答应。
 ///
-/// 判定刻意从严，只要有任何一条「还解析得到 / 判不准」的迹象就当活成员保护住
-///（宁可拒绝，不可误删活的）：成员不存在、platformId 为空、走中继解析（中继成员的
-/// platformId 是 `__exchange__` 或某条中继的 id，压根不是平台 id，不能拿平台表来判生死）、
-/// 平台在且模型在 —— 一律 return false。
+/// 为什么必须唯一：此前前端拿派生的「不可用」标记去重建这个判据，连续三轮 review 抓出三处
+/// 分歧——上游只是被停用、成员挂在中继上、成员在上游被删之前就已经不健康——每一处都表现为
+/// 「控制台长出一个按钮，点下去必然 409」。补洞补不完，因为那本就是两份判据在各自漂移（形状 3）。
+///
+/// 判定刻意从严，只要有任何一条「还指得到 / 判不准」的迹象就当活成员保护住
+///（宁可拒绝，不可误删）：键为空、走中继解析（中继成员的 platformId 是 <c>__exchange__</c>
+/// 或某条中继的 id，压根不是平台 id）、平台还在且模型还在 —— 一律不算死。
+///
+/// 只看「在不在」，不看「启不启用」：停用是可逆的临时状态，启用即恢复，不该被当成 debris 摘掉。
+/// 也不看健康状态：一个在上游被删之前就已经失败到不可用的成员，照样是死成员。
 /// </summary>
-static async Task<bool> IsDanglingPoolMemberAsync(
-    IMongoCollection<BsonDocument> gwPlatforms,
-    IMongoCollection<BsonDocument> mapPlatforms,
-    IMongoCollection<BsonDocument> gwModels,
-    IMongoCollection<BsonDocument> mapModels,
-    IMongoCollection<BsonDocument> gwExchanges,
-    IMongoCollection<BsonDocument> mapExchanges,
-    HttpContext http,
-    BsonDocument pool,
-    string modelId,
-    string platformId,
-    string internalTenantId)
+static bool IsDeadPoolMember(string modelId, string platformId, PoolResolutionIndex index)
 {
-    var membersValue = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-    var targets = membersValue
-        .Where(x => x.IsBsonDocument)
-        .Select(x => x.AsBsonDocument)
-        .Where(m => string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
-                    && (platformId.Length == 0 || string.Equals(m.GetStringOrEmpty("PlatformId"), platformId, StringComparison.Ordinal)))
-        .ToList();
-    if (targets.Count == 0) return false;
+    if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId)) return false;
 
-    var fb = Builders<BsonDocument>.Filter;
-    var isInternal = TenantAccess.GetRequired(http).TenantId == internalTenantId;
-    foreach (var member in targets)
+    // 中继成员不走平台表解析，拿平台表判它必然「查不到」，会把活的中继成员误判成死成员
+    if (string.Equals(platformId, "__exchange__", StringComparison.Ordinal)) return false;
+    if (index.ExistingExchanges.Any(e => string.Equals(e.GetStringOrEmpty("_id"), platformId, StringComparison.Ordinal)))
+        return false;
+
+    // 上游还在 -> 再看这个模型还在不在；上游都没了 -> 直接是死成员
+    if (index.ExistingPlatformIds.Contains(platformId))
     {
-        var memberPlatformId = member.GetStringOrEmpty("PlatformId");
-        if (string.IsNullOrWhiteSpace(memberPlatformId)) return false;
-
-        // 中继成员不走平台表解析，拿平台表判它必然「查不到」，会把活的中继成员误判成死成员
-        if (string.Equals(memberPlatformId, "__exchange__", StringComparison.Ordinal)) return false;
-        if (await gwExchanges.Find(TenantAccess.Filter(http, fb.Eq("_id", memberPlatformId))).AnyAsync()) return false;
-        if (isInternal && await mapExchanges.Find(fb.Eq("_id", memberPlatformId)).AnyAsync()) return false;
-
-        var memberModelId = member.GetStringOrEmpty("ModelId");
-        if (string.IsNullOrWhiteSpace(memberModelId)) return false;
-
-        var gwPlatformHit = await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", memberPlatformId))).AnyAsync();
-        if (gwPlatformHit)
-        {
-            if (await gwModels.Find(TenantAccess.Filter(http, PoolMemberModelFilter(fb, memberPlatformId, memberModelId))).AnyAsync())
-                return false;
-        }
-
-        if (isInternal && await mapPlatforms.Find(fb.Eq("_id", memberPlatformId)).AnyAsync())
-        {
-            if (await mapModels.Find(PoolMemberModelFilter(fb, memberPlatformId, memberModelId)).AnyAsync())
-                return false;
-        }
+        return !index.ExistingModels.Any(model => PoolMemberMatchesModelDoc(model, platformId, modelId));
     }
     return true;
 }
-
-/// <summary>
-/// 池成员的 ModelId 不是单一口径：历史数据里它可能是模型文档 _id，也可能是 ModelName 或 Name。
-/// 三个字段都要认，口径与 <see cref="IsResolvableGatewayPoolMember"/> 保持一致——
-/// 两处判「这个成员指得到模型吗」用不同口径，就会一边说死一边说活。
-/// </summary>
-static FilterDefinition<BsonDocument> PoolMemberModelFilter(
-    FilterDefinitionBuilder<BsonDocument> fb,
-    string platformId,
-    string modelId)
-    => fb.And(
-        fb.Eq("PlatformId", platformId),
-        fb.Or(fb.Eq("_id", modelId), fb.Eq("ModelName", modelId), fb.Eq("Name", modelId)));
 
 static bool IsManagedAppendOnlyPool(BsonDocument pool)
     => pool.AsNullableBool("ManagedByRegistry") == true
@@ -14019,11 +13974,18 @@ static PoolItem ApplyPoolMemberResolution(PoolItem item, PoolResolutionIndex ind
 {
     foreach (var model in item.Models)
     {
+        // Removable 对**每个**成员都算：它只看「指向的东西还在不在」，与健康状态无关。
+        // 原来它跟着 HealthStatus==2 一起早退，于是「上游被删之前就已经失败到不可用」的成员
+        // 永远拿不到标记、控制台不给按钮，而后端其实允许删它。
+        model.Removable = IsDeadPoolMember(model.ModelId, model.PlatformId, index);
+
+        if (IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, index.PlatformIds, index.Models, index.Exchanges))
+            continue;
+        // 归因是给人看的文案，不参与「能不能摘除」的判断——它算错了只影响措辞，不影响按钮
+        model.UnavailableReason = ClassifyUnavailableReason(model, index);
         if (model.HealthStatus == 2) continue;
-        if (IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, index.PlatformIds, index.Models, index.Exchanges)) continue;
         model.HealthStatus = 2;
         model.HealthStatusLabel = HealthLabel(2);
-        model.UnavailableReason = ClassifyUnavailableReason(model, index);
     }
     return item;
 }
@@ -14075,12 +14037,21 @@ static bool IsResolvablePoolMemberKey(
     var exchangeById = enabledExchanges.FirstOrDefault(exchange => string.Equals(exchange.GetStringOrEmpty("_id"), platformId, StringComparison.Ordinal));
     if (exchangeById is not null) return GatewayExchangeSupportsModel(exchangeById, modelId);
     if (!enabledPlatformIds.Contains(platformId)) return false;
-    return enabledModels.Any(model =>
-        string.Equals(model.AsNullableString("PlatformId"), platformId, StringComparison.Ordinal)
-        && (string.Equals(model.GetStringOrEmpty("_id"), modelId, StringComparison.Ordinal)
-            || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
-            || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal)));
+    return enabledModels.Any(model => PoolMemberMatchesModelDoc(model, platformId, modelId));
 }
+
+/// <summary>
+/// 一条模型文档是不是池成员 (modelId, platformId) 指的那个。
+///
+/// modelId 不是单一口径：历史数据里它可能是模型文档 _id，也可能是 ModelName 或 Name，三个都要认。
+/// 抽成一处是因为「指不指得到」这件事有两个调用方（可解析判定、死成员判定），
+/// 各写一份必然漂移，然后一边说这成员死了、一边说它还活着（形状 3）。
+/// </summary>
+static bool PoolMemberMatchesModelDoc(BsonDocument model, string platformId, string modelId)
+    => string.Equals(model.AsNullableString("PlatformId"), platformId, StringComparison.Ordinal)
+    && (string.Equals(model.GetStringOrEmpty("_id"), modelId, StringComparison.Ordinal)
+        || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
+        || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal));
 
 static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
 {

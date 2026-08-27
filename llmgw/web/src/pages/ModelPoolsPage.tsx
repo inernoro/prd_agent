@@ -114,11 +114,6 @@ function memberFaultPhrase(member: PoolModelInfo): string {
   return `连续失败 ${member.consecutiveFailures} 次`;
 }
 
-/** 死成员：指向的东西真没了，不可逆。仅仅被停用不算——那是临时状态，启用即恢复。 */
-function isDeadMember(member: PoolModelInfo): boolean {
-  return member.unavailableReason === 'upstream-missing' || member.unavailableReason === 'model-missing';
-}
-
 function poolEvidence(pool: ModelPool): { text: string; tone: string } {
   const lead = pool.models.slice().sort((a, b) => a.priority - b.priority)[0];
   if (pool.health === 'empty') return { text: '没有成员，调用会直接失败', tone: 'var(--text-muted)' };
@@ -1513,9 +1508,9 @@ function PoolDetail({
             // 已经不存在，永远接不到调用，后端也专门为它开了摘除口子。
             // 只读到底会让上面那句「建议摘除」变成一句做不到的建议——用户在控制台找不到任何按钮，
             // 只能去打 API（我自己清那两个 stub 成员时就是这么绕的）。所以这一种放开「移除」。
-            // 只对**真死成员**放开：后端的悬空判定查的是存在性，
-            // 拿「不可用」当条件会给仅仅被停用的成员长出一个点了必然 409 的按钮。
-            const removableDebris = canWrite && !isExternal && locked && isDeadMember(member);
+            // 用后端下发的 removable，不自己拼条件：它与成员删除端点是同一个判据，
+            // 按钮亮着就一定删得掉。此前用「不可用」重建这个判断，三轮 review 各漏一处。
+            const removableDebris = canWrite && !isExternal && locked && member.removable === true;
             // 只写一次：可编辑池与「托管池里的死成员」共用同一个按钮，
             // 避免两处抄本各自漂移（也让文字预算守卫只数到一处标签）。
             const removeButton = (
@@ -1531,7 +1526,7 @@ function PoolDetail({
                   {isVerifying
                     ? '已恢复接单，等下一条真实业务请求验证（不发探测请求）'
                     : member.unavailableReason
-                      ? `${memberFaultPhrase(member)} · ${isDeadMember(member) ? '这个顺位永远接不到调用' : '启用后即可恢复承接'}`
+                      ? `${memberFaultPhrase(member)} · ${member.removable ? '这个顺位永远接不到调用' : '恢复后即可继续承接'}`
                       : `连续失败 ${member.consecutiveFailures} 次 · 最近失败 ${relativeTime(member.lastFailedAt)} · 最近成功 ${relativeTime(member.lastSuccessAt)}`}
                 </span>
                 <CapabilityTags labels={capabilityLabelsForMember(member)} />

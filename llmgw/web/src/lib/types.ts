@@ -494,6 +494,12 @@ export type PoolModelInfo = {
    * 有它文案才不会写出「不可用（连续失败 0 次）」这种自相矛盾的归因。
    */
   unavailableReason?: string | null;
+  /**
+   * 能不能摘除。由后端与成员删除端点**同一个判据**算出，直接用，不要自己拼条件去猜——
+   * 猜的那一版连续三轮 review 各漏一处（停用 / 中继 / 事先就不健康），
+   * 每处都表现为「按钮亮着、点下去 409」。
+   */
+  removable?: boolean;
   lastFailedAt?: string | null; lastSuccessAt?: string | null;
   consecutiveFailures: number; consecutiveSuccesses: number;
   enablePromptCache?: boolean | null; maxTokens?: number | null;

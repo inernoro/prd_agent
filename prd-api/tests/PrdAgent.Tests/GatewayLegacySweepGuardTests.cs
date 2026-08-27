@@ -80,57 +80,61 @@ public class GatewayLegacySweepGuardTests
 
         // 例外必须走那个专门的判定函数，而不是把 append-only 检查整段删掉
         Assert.Contains("IsManagedAppendOnlyPool(pool)", handler);
-        Assert.Contains("IsDanglingPoolMemberAsync", handler);
+        Assert.Contains("IsDeadPoolMember", handler);
         Assert.Contains("APPEND_ONLY_POOL", handler);
     }
 
     [Fact]
-    public void 死成员判定必须两侧都查不到才算死()
+    public void 能不能摘除只许有一个判据()
     {
-        var fn = DanglingMemberSource();
+        // 这是本轮改动的全部意义：控制台显示的那个按钮，必须就是删除端点放行的那个条件。
+        // 此前前端拿派生的「不可用」标记去重建它，连续三轮 review 抓出三处分歧
+        //（上游只是停用 / 成员挂在中继上 / 成员在上游被删之前就已不健康），
+        // 每处都表现为「按钮亮着、点下去必然 409」。补洞补不完，因为那是两份判据在漂移。
+        Assert.Contains("static bool IsDeadPoolMember", Console);
 
-        // GW 侧查得到 -> 活的
-        Assert.Contains("gwPlatforms.Find", fn);
-        // MAP 侧查得到 -> 也是活的（只查一侧就会把 MAP 来源的活成员误判成死成员）
-        Assert.Contains("mapPlatforms.Find", fn);
-        // 成员不存在、platformId 为空，一律当活成员保护
-        Assert.Contains("if (targets.Count == 0) return false;", fn);
-        Assert.Contains("if (string.IsNullOrWhiteSpace(memberPlatformId)) return false;", fn);
-        // 早退全部写成「命中即 return false」，不允许改成「都查完再取或」——
-        // 那种写法一旦某条查询抛错或被短路，就会把活成员判成死成员摘掉（宁可拒绝，不可误删）。
-        Assert.DoesNotContain("dangling = true", fn);
-        Assert.DoesNotContain("return true;", fn[..fn.LastIndexOf("return true;", StringComparison.Ordinal)]);
+        // 删除端点必须调它，而不是另写一套
+        var handler = HandlerSource("app.MapDelete(\"/gw/pools/{id}/models\"");
+        Assert.Contains("IsDeadPoolMember(normalizedModelId, normalizedPlatformId", handler);
+        Assert.Contains("APPEND_ONLY_POOL", handler);
+
+        // 列表下发的 Removable 也必须来自它
+        var apply = FunctionSource("static PoolItem ApplyPoolMemberResolution");
+        Assert.Contains("model.Removable = IsDeadPoolMember(", apply);
+
+        // 判据只许有这一处定义
+        Assert.Equal(1, CountOccurrences(Console, "static bool IsDeadPoolMember"));
     }
 
     [Fact]
-    public void 死成员判定必须连模型一起查()
+    public void 摘除标记不许跟着健康状态早退()
     {
-        // 只判「上游还在不在」会漏掉第二种死法：上游还在、这个模型被删了。
-        // 那种成员照样解析不到任何东西，却会一直挂在删除阻挡清单里，
-        // 而 append-only 又不让手工摘 —— 与本文件第一条守卫要解的是同一个死锁。
-        var fn = DanglingMemberSource();
-        Assert.Contains("gwModels.Find", fn);
-        Assert.Contains("mapModels.Find", fn);
-        Assert.Contains("PoolMemberModelFilter", fn);
-
-        // 模型匹配的口径必须与 IsResolvableGatewayPoolMember 一致：_id / ModelName / Name 三个都认。
-        // 两处用不同口径，就会一边说这成员死了、一边说它还活着。
-        var filter = Console[Console.IndexOf("static FilterDefinition<BsonDocument> PoolMemberModelFilter", StringComparison.Ordinal)..];
-        filter = filter[..filter.IndexOf("\nstatic ", StringComparison.Ordinal)];
-        foreach (var key in new[] { "\"_id\"", "\"ModelName\"", "\"Name\"" })
-            Assert.Contains(key, filter);
-        Assert.Contains("fb.Eq(\"PlatformId\", platformId)", filter);
+        // 一个在上游被删**之前**就已经失败到不可用的成员，照样是死成员。
+        // 让 Removable 跟着 HealthStatus==2 一起早退，它就永远拿不到标记、控制台不给按钮，
+        // 而删除端点其实允许删它——能力又建了一半（形状 2）。
+        var apply = FunctionSource("static PoolItem ApplyPoolMemberResolution");
+        var removableAt = apply.IndexOf("model.Removable =", StringComparison.Ordinal);
+        var earlyExitAt = apply.IndexOf("if (model.HealthStatus == 2) continue;", StringComparison.Ordinal);
+        Assert.True(removableAt >= 0, "归一没有下发 Removable");
+        Assert.True(earlyExitAt < 0 || removableAt < earlyExitAt, "Removable 必须在任何健康状态早退之前算出来");
     }
 
     [Fact]
-    public void 中继成员不得被平台表判死()
+    public void 死成员判定只看在不在不看启用与健康()
     {
-        // 中继成员的 PlatformId 是 __exchange__ 或某条中继的 id，压根不是平台 id。
-        // 拿平台表去查必然「两侧都查不到」——不特判就会把活的中继成员判成死成员放行摘除（形状 1）。
-        var fn = DanglingMemberSource();
+        // 停用是可逆的临时状态，启用即恢复，不该被当成 debris 摘掉；
+        // 健康状态同理与「指不指得到」无关。判据只许查存在性那三张表。
+        var fn = FunctionSource("static bool IsDeadPoolMember");
+        Assert.Contains("index.ExistingPlatformIds", fn);
+        Assert.Contains("index.ExistingModels", fn);
+        Assert.Contains("index.ExistingExchanges", fn);
+        // 不许把启用过滤过的那三张表混进来
+        Assert.DoesNotContain("index.PlatformIds", fn);
+        Assert.DoesNotContain("index.Models", fn);
+        Assert.DoesNotContain("index.Exchanges", fn);
+        Assert.DoesNotContain("HealthStatus", fn);
+        // 中继成员一律保护：它的 platformId 不是平台 id，拿平台表判必然误杀
         Assert.Contains("__exchange__", fn);
-        Assert.Contains("gwExchanges.Find", fn);
-        Assert.Contains("mapExchanges.Find", fn);
     }
 
     [Fact]
@@ -186,14 +190,12 @@ public class GatewayLegacySweepGuardTests
     [Fact]
     public void 可解析判定只许有一份口径()
     {
-        // 默认池成员校验与池健康统计必须共用 IsResolvablePoolMemberKey。
-        // 谁再抄一份「_id / ModelName / Name 三选一 + PlatformId 相等」的匹配，这里就会红（形状 3）。
+        // 「_id / ModelName / Name 三选一 + PlatformId 相等」这套匹配只许有一处定义。
+        // 可解析判定与死成员判定都要用它，各抄一份必然漂移——
+        // 然后一边说这成员死了、一边说它还活着（形状 3）。本轮就是被这条守卫自己抓到的。
         var matcher = "string.Equals(model.AsNullableString(\"ModelName\"), modelId, StringComparison.Ordinal)";
-        var count = 0;
-        for (var i = Console.IndexOf(matcher, StringComparison.Ordinal); i >= 0;
-             i = Console.IndexOf(matcher, i + 1, StringComparison.Ordinal))
-            count++;
-        Assert.Equal(1, count);
+        Assert.Equal(1, CountOccurrences(Console, matcher));
+        Assert.Equal(1, CountOccurrences(Console, "static bool PoolMemberMatchesModelDoc"));
     }
 
     [Fact]
@@ -237,7 +239,7 @@ public class GatewayLegacySweepGuardTests
         var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
 
         Assert.Contains("const removableDebris", page);
-        Assert.Contains("locked && isDeadMember(member)", page);
+        Assert.Contains("locked && member.removable === true", page);
         Assert.Contains("removableDebris ? removeButton : null", page);
         // 两个分支共用同一个按钮，别再抄一份出来各自漂移
         Assert.Equal(1, CountOccurrences(page, ">移除</Button>"));
@@ -258,13 +260,13 @@ public class GatewayLegacySweepGuardTests
         // 中继成员的「上游」是那条中继本身，不是平台
         Assert.Contains("isExchangeMember", fn);
 
-        // 前端只对两个 -missing 放开摘除
+        // 归因**可以**被读来做文案（memberFaultPhrase 就该读它），
+        // 不许的是拿它当摘除按钮的开关——那正是三轮分歧的来源。
         var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
-        var dead = page[page.IndexOf("function isDeadMember", StringComparison.Ordinal)..];
-        dead = dead[..dead.IndexOf("\n}", StringComparison.Ordinal)];
-        Assert.Contains("'upstream-missing'", dead);
-        Assert.Contains("'model-missing'", dead);
-        Assert.DoesNotContain("disabled", dead);
+        Assert.DoesNotContain("function isDeadMember", page);
+        var gateLine = page.Split('\n').Single(line => line.Contains("const removableDebris", StringComparison.Ordinal));
+        Assert.DoesNotContain("unavailableReason", gateLine);
+        Assert.Contains("member.removable === true", gateLine);
     }
 
     private static int CountOccurrences(string haystack, string needle)

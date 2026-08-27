@@ -981,6 +981,13 @@ public sealed class PoolModelItem
     /// 有它才能避免界面写出「不可用（连续失败 0 次）」这种自相矛盾的归因。
     /// </summary>
     public string? UnavailableReason { get; set; }
+
+    /// <summary>
+    /// 这个成员能不能被摘除（指向的上游或模型已经不存在了）。
+    /// 由后端与成员删除端点**同一个判据**算出，前端直接用，不要自己拼条件去猜——
+    /// 猜的那一版连续三轮 review 各漏一处，每处都表现为「按钮亮着、点下去 409」。
+    /// </summary>
+    public bool Removable { get; set; }
     public string? LastFailedAt { get; set; } public string? LastSuccessAt { get; set; }
     public int ConsecutiveFailures { get; set; } public int ConsecutiveSuccesses { get; set; }
     public bool? EnablePromptCache { get; set; } public int? MaxTokens { get; set; }
