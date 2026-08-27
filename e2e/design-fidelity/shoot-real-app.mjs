@@ -611,8 +611,16 @@ for (const scene of ACTIVE) {
      */
     if (scene.capture) {
       const plan = scene.capture.live;
+      /*
+       * 连接计数跨重连累计：`dropAfter` 的语义是「**第一次**连上推 N 句再掐断，
+       * 之后每次重连立刻断」。不记这个数的话，每次重连都是一个全新的 handler，
+       * 又老老实实推三句——客户端的退避计数被首个入站消息重置，于是它永远在
+       * 800ms 这一档打转，终态降级那一屏一次都到不了（本轮取证就卡在这里）。
+       */
+      let liveConnections = 0;
       await page.routeWebSocket(/live-transcription/, (ws) => {
-        if (!plan) {
+        const firstConnection = liveConnections++ === 0;
+        if (!plan || (scene.capture.dropAfter != null && !firstConnection)) {
           // 立刻 close 的话浏览器侧还停在 CONNECTING，onclose 不会触发，页面永远显示「连接中」。
           // 先让它连上、再断开，走的才是真实的「连上又掉线」那条路径。
           // 1006 是保留码，不能显式发送（发了会被拒，socket 反而一直开着，
@@ -632,7 +640,7 @@ for (const scene of ACTIVE) {
          * 那句话只有真的先识别出来过才会有。一上来就断的桩永远造不出这一档，
          * 于是判分把「桩造不出的东西」记成了实现缺失。
          */
-        const dropAfter = scene.capture.dropAfter ?? null;
+        const dropAfter = firstConnection ? (scene.capture.dropAfter ?? null) : null;
         const tick = () => {
           if (!alive || index >= plan.length) return;
           text += plan[index++];
