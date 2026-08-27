@@ -480,6 +480,20 @@ public class WebPageAskController : ControllerBase
         using var heartbeatCts = new CancellationTokenSource();
         var heartbeat = RunHeartbeatAsync(startedAt, () => answer.Length > 0, heartbeatCts.Token);
 
+        // 一个字都没生成出来的失败，配额得退回去——与上面「读不到正文」那档同一个道理：
+        // 用户一定会重试，不退的话额度先被烧光，等故障恢复了反而问不了了，
+        // 用一次故障换掉一整个窗口的可用性。真栽过：网关没配模型池那阵子，每问一次
+        // 界面显示「回答失败了」而右上角的剩余次数照样减一，用户看着自己的额度白白流走。
+        //
+        // 判据是**有没有产出**，不是有没有报错：答到一半断掉的那种 token 已经花了，不退。
+        // 抽成一个本地函数是因为两条失败出口（网关 Error chunk、外层 catch）都要走它，
+        // 抄两遍就会改一处忘一处。
+        async Task RefundIfNothingProducedAsync()
+        {
+            if (answer.Length > 0) return;
+            await _quota.RefundAsync(site.Id, userId, clientIp);
+        }
+
         try
         {
             // CancellationToken.None：客户端断开不取消服务端任务（server-authority 规则）。
@@ -503,6 +517,7 @@ public class WebPageAskController : ControllerBase
                 {
                     var err = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
                     _logger.LogError("网页托管提问 网关错误 site={SiteId}: {Error}", site.Id, err);
+                    await RefundIfNothingProducedAsync();
                     await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                         snapshot.Text.Length, model, platform, Elapsed(startedAt), err);
                     // 详情只进日志与消息记录，**不回给访客**：见 PublicErrorMessage
@@ -527,6 +542,7 @@ public class WebPageAskController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "网页托管提问失败 site={SiteId}", site.Id);
+            await RefundIfNothingProducedAsync();
             await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                 snapshot.Text.Length, model, platform, Elapsed(startedAt), ex.Message);
             await WriteSseAsync("error", new { code = "ASK_FAILED", message = PublicErrorMessage });

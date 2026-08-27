@@ -199,6 +199,21 @@ public class AskOpeningQuestionWiringTests
     }
 
     [Fact]
+    public void 一个字都没生成出来的失败必须退配额_两条失败出口都要走()
+    {
+        // 用户报的：界面显示「回答失败了」，右上角剩余次数照样减一。网关没配模型池那阵子
+        // 每问一次白烧一次额度。判据是「有没有产出」而不是「有没有报错」——答到一半断掉的
+        // token 已经花了，不该退。两条失败出口（网关 Error chunk / 外层 catch）都得走同一个判据。
+        var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
+        Assert.Equal(3, Regex.Matches(ctrl, @"RefundIfNothingProducedAsync\(\)").Count); // 1 处定义 + 2 处调用
+        var idx = ctrl.IndexOf("async Task RefundIfNothingProducedAsync()", StringComparison.Ordinal);
+        Assert.True(idx > 0);
+        var body = ctrl.Substring(idx, Math.Min(320, ctrl.Length - idx));
+        Assert.Contains("answer.Length > 0", body);
+        Assert.Contains("RefundAsync", body);
+    }
+
+    [Fact]
     public void 生成器已注册进 DI_否则每个消费方启动即炸()
     {
         var program = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Program.cs"));
