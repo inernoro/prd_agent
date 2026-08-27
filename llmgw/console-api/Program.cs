@@ -12740,8 +12740,13 @@ static async Task<List<string>> PruneManagedPoolMembersAsync(
         // 旧版本号通过 PoolVersionGuard，把刚摘掉的成员原样写回来。
         // 改成 $pull + Inc("Version")：摘除本身是幂等的定点操作，不需要版本守卫；
         // 递增版本则让所有陈旧句柄的后续写入被既有守卫挡下，与其它成员改动端点同一套口径。
+        // 过滤里必须带上 memberFilter：$pull 匹配不到东西时是空操作，
+        // 但 Set/Inc 是无条件的，只用 _id 过滤会让「什么都没摘到」也算 ModifiedCount>0——
+        // 于是并发的第二个请求把自己记成「摘过了」写进审计，还白白 bump 一次版本，
+        // 把别人手里还有效的版本句柄作废掉。带上 memberFilter 后，
+        // 成员已经被别人摘走时这次更新压根不匹配，版本、时间戳、审计一起不动。
         var pullResult = await gwPools.UpdateOneAsync(
-            TenantAccess.Filter(http, fb.Eq("_id", pool.GetStringOrEmpty("_id"))),
+            TenantAccess.Filter(http, fb.And(fb.Eq("_id", pool.GetStringOrEmpty("_id")), memberFilter)),
             Builders<BsonDocument>.Update
                 .PullFilter("Models", fb.And(
                     fb.In("ModelId", aliases),

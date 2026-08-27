@@ -238,6 +238,10 @@ public class GatewayLegacySweepGuardTests
 
         Assert.Contains("PullFilter(\"Models\"", fn);
         Assert.Contains("Inc(\"Version\", 1)", fn);
+        // 更新的过滤必须带 memberFilter：$pull 空转时 Set/Inc 仍会生效，
+        // 只按 _id 过滤会让「什么都没摘到」也算 ModifiedCount>0——并发的第二个请求
+        // 把自己记成摘过了写进审计，还白白 bump 版本作废别人的句柄。
+        Assert.Contains("fb.And(fb.Eq(\"_id\", pool.GetStringOrEmpty(\"_id\")), memberFilter)", fn);
         // 不许退回「读出来过滤再整个 Set 回去」
         Assert.DoesNotContain(".Set(\"Models\"", fn);
         // 只对托管池动手；人手编排的池仍由 blockers 拦下来问人
