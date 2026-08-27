@@ -1490,7 +1490,7 @@ function PoolDetail({
       {locked || isExternal ? (
         <div style={{ ...INSET_BLOCK, border: '1px solid var(--border-subtle)', ...BODY_TEXT }}>
           {locked
-            ? '平台托管池：可以追加成员，但顺位、币种、字段能力由平台维护，也不能移除成员。'
+            ? '平台托管池：可以追加成员，顺位、币种、字段能力由平台维护。成员一般不能移除，指向已删上游或模型的死成员除外。'
             : '外部来源池：配置由上游系统同步，接管配置后才能编辑成员。'}
         </div>
       ) : null}

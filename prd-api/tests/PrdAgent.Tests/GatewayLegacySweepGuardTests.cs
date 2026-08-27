@@ -243,6 +243,12 @@ public class GatewayLegacySweepGuardTests
         Assert.Contains("removableDebris ? removeButton : null", page);
         // 两个分支共用同一个按钮，别再抄一份出来各自漂移
         Assert.Equal(1, CountOccurrences(page, ">移除</Button>"));
+
+        // 受限说明不许和按钮打架：一边给得出摘除入口、一边写「不能移除成员」，
+        // 运维会以为那个按钮不该按。留了例外就必须在说明里讲出来。
+        var lockedNotice = page.Split('\n').Single(line => line.Contains("平台托管池：", StringComparison.Ordinal));
+        Assert.Contains("死成员除外", lockedNotice);
+        Assert.DoesNotContain("也不能移除成员。", lockedNotice);
     }
 
     [Fact]
