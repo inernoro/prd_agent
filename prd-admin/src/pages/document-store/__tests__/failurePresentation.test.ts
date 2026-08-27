@@ -54,7 +54,7 @@ describe('describeFailurePresentation', () => {
 
   it('其余真失败维持原样', () => {
     const p = describeFailurePresentation(notice({ code: 'ERR_CODEC' }), { waitingAutoRetry: false });
-    expect(p.title).toBe('上次转文字没成功');
+    expect(p.title).toBe('转录失败');
     expect(p.nextStep).toContain('转码');
   });
 });

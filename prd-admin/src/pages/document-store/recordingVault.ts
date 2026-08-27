@@ -742,11 +742,27 @@ export const AUTOMATIC_RETRY_LIMIT = 3;
  * 「仍可用」那一行：按**这一刻真实存在的东西**算，不照抄稿面的枚举。
  * 没有原文时说「原文不受影响」是一句假话——那正是把用户骗一次的成本最高的地方。
  */
-function describeStillWorks(opts: { hasTranscript?: boolean; hasSummary?: boolean }): string {
+function describeStillWorks(opts: {
+  hasTranscript?: boolean;
+  hasSummary?: boolean;
+  /** 这一刻挂掉的那一样。它**必须**从可用清单里剔掉，否则就是自己打自己的脸 */
+  target?: string;
+}): string {
   if (!opts.hasTranscript) return '播放、下载音频（音频不受转录失败影响）';
   const abilities = ['播放', '原文', '编辑', '搜索', '跳播', '词云', '问答'];
   if (opts.hasSummary) abilities.push('纪要');
-  return `${abilities.join('、')}都不受影响`;
+  /*
+    挂掉的那一样不能出现在「仍可用」里。
+    上一版把「纪要」写死进清单，于是「会议纪要生成失败」的卡上紧跟着一句
+    「纪要都不受影响」——三份判分各记了一次「状态表达自相矛盾」。
+    整理与纪要是同一件事的两个说法，所以两个词都要过滤。
+  */
+  const failed = (opts.target ?? '').trim();
+  const aliases = failed
+    ? [failed, ...(/纪要|整理|摘要/.test(failed) ? ['纪要'] : []), ...(/词云/.test(failed) ? ['词云'] : [])]
+    : [];
+  const usable = abilities.filter(item => !aliases.some(alias => alias.includes(item) || item.includes(alias)));
+  return `${usable.join('、')}都不受影响`;
 }
 
 export function describeFailurePresentation(
@@ -769,8 +785,8 @@ export function describeFailurePresentation(
     durationLabel?: string | null;
   } = { waitingAutoRetry: false },
 ): FailurePresentation {
-  const stillWorks = describeStillWorks(opts);
   const target = opts.target?.trim() || '';
+  const stillWorks = describeStillWorks({ ...opts, target });
   // 自动重试还没耗尽：这一档压过所有类别——正在自愈的时候不该让用户做任何事
   if (opts.waitingAutoRetry) {
     return {
@@ -825,7 +841,7 @@ export function describeFailurePresentation(
     };
   }
   return {
-    title: target ? `${target}生成失败` : '上次转文字没成功',
+    title: target ? `${target}生成失败` : '转录失败',
     subtitle: '录音还在，没有丢',
     nextStep: opts.hasTranscript
       ? '点「重试」；若反复失败，可转码后重新上传，或先复制原文自行整理'

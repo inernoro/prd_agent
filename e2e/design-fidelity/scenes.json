@@ -135,7 +135,7 @@
       "transcribe_entry_id": null
     },
     "expect": [
-      "上次转文字没成功",
+      "转录失败",
       "ERR_CODEC"
     ],
     "rules": [
@@ -204,8 +204,8 @@
           "startedAt": "@ago:590",
           "status": "failed",
           "progress": 0,
-          "errorMessage": "音频编码不受支持，无法解码这段录音。",
-          "failureCode": "ERR_CODEC",
+          "errorMessage": "模型请求超时，未能生成会议纪要。",
+          "failureCode": "ERR_TIMEOUT",
           "automaticRetryCount": 3,
           "automaticRetryNextAt": null,
           "endedAt": "@ago:120"
@@ -223,8 +223,8 @@
           "startedAt": "@ago:590",
           "status": "failed",
           "progress": 0,
-          "errorMessage": "音频编码不受支持，无法解码这段录音。",
-          "failureCode": "ERR_CODEC",
+          "errorMessage": "模型请求超时，未能生成会议纪要。",
+          "failureCode": "ERR_TIMEOUT",
           "automaticRetryCount": 3,
           "automaticRetryNextAt": null,
           "endedAt": "@ago:120"
@@ -554,7 +554,7 @@
   {
     "id": "capture-upload-offline",
     "board": "v2-R3",
-    "note": "分片上传通道建不起来：顶部琥珀横幅 + 「上传等待中」，但「已保护」仍然成立——本机保险箱在录音第一秒就生效",
+    "note": "分片上传通道建不起来：顶部琥珀横幅 + 「上传等待中」；实时通道也在推了三句之后掉线，稿面 R3 的降级卡里保留着中断前最后一句",
     "url": "/document-store?store=store-demo",
     "sections": false,
     "settleMs": 6000,
@@ -566,8 +566,14 @@
       "capture"
     ],
     "capture": {
-      "live": false,
-      "recordMs": 7000
+      "live": [
+        "先说结论，导入是这一版最大的漏斗。",
+        "我们看了 312 个新账号，第 7 天只剩 41%。",
+        "第一组用户在第 7 天有明显掉落，主要卡在导入环节。"
+      ],
+      "dropAfter": 3,
+      "stepMs": 600,
+      "recordMs": 11000
     },
     "rules": [
       {

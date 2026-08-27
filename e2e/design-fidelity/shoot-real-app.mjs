@@ -416,6 +416,15 @@ const DRIVERS = {
        */
       await search.first().fill('导入');
       await page.waitForTimeout(500);
+      /*
+       * 稿面 P2 的第一枚说话人 chip 是**选中态**。不点它就只能截到一排未选中的 chip，
+       * 判分读不出「筛选生效了没有」——那是取证没走到，不是实现少了。
+       */
+      const speakerChip = page.getByRole('button', { name: /受访者|主持人/ }).first();
+      if (await speakerChip.count()) {
+        await speakerChip.click();
+        await page.waitForTimeout(400);
+      }
       // 滚到那一行：播放区收成迷你条要靠真的滚过顶部哨兵，不滚就截不到收起态
       await row.first().scrollIntoViewIfNeeded();
       await page.waitForTimeout(400);
@@ -457,7 +466,7 @@ const DRIVERS = {
     const meetingHeading = page.getByRole('heading', { name: '词云' });
     if (await meetingHeading.count()) {
       const original = page.viewportSize();
-      await page.setViewportSize({ width: 390, height: 1500 });
+      await page.setViewportSize({ width: 390, height: 1900 });
       await page.waitForTimeout(500);
       await meetingHeading.first().evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
       await page.waitForTimeout(500);

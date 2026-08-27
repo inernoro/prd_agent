@@ -923,8 +923,14 @@ export function TranscriptKaraoke({
             : { padding: '4px 0', paddingBottom: followLost ? 96 : 4 }}>
           {timelineSegments.map((s, i) => {
             const active = followEnabled && i === activeIdx;
-            // 筛掉的句子整行不渲染；下标仍是原始下标，跳播与保存写回都不受影响
-            if (speakerFilter && (s.speaker?.trim() || UNLABELED_SPEAKER) !== speakerFilter) return null;
+            /*
+              选中某位说话人时**不删行、只压暗**别人的句子。
+              稿面 P2 选中「受访者 A」的那一屏里，主持人的句子照样在列表里——
+              这一排 chip 是「聚焦谁在说」，不是「只留下谁」：把别人整段删掉，
+              时间轴就断了，用户也失去了上下文（谁在回答谁）。
+            */
+            const dimmedBySpeaker = !!speakerFilter
+              && (s.speaker?.trim() || UNLABELED_SPEAKER) !== speakerFilter;
             if (documentMode && editingIndex === i && onSaveNote) {
               return (
                 // 稿面 B2 的编辑态是一张**蓝色描边卡**，抬头一行是「时间 · 说话人（可改） · 改说话人」，
@@ -1066,6 +1072,7 @@ export function TranscriptKaraoke({
                       : i < activeIdx
                         ? 'var(--text-muted)'
                         : 'var(--text-primary)',
+                  opacity: dimmedBySpeaker ? 0.38 : 1,
                   // 当前句底色 = 强调色（设计稿允许强调色出现的三处之一）；无紫色
                   // 稿面的当前句是一块**实心蓝卡**，在列表里一眼跳出来。14% 太淡，
                   // 两位判官各自独立报了同一句「块感弱于稿面」；22% 是照基准图对出来的，

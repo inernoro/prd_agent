@@ -1463,14 +1463,17 @@ export function RecordAudioSheet({
             </div>
           )}
           {liveView === 'degraded' && (
-            // 骨架条铺满剩下的地方：这段空白本来就是「等着被补上的那几句原文」，
-            // 画满了它才说得通，留着一片空带就只是版式塌了
-            <div className="mt-3 flex flex-col gap-3" aria-hidden>
-              {[3, 4, 2, 3, 4, 2].map((flex, index) => (
+            /*
+              骨架条画的是「断在这里、这段还没转出来」。稿面 R3 / cap-A2 给的是**两条**，
+              紧跟在最后一句已识别文本之后——那是它的意思所在：让人看得见缺口的位置。
+              上一版铺六条把卡片撑爆，反而把最后那句真原文顶出了可视区。
+            */
+            <div className="mt-2.5 flex flex-col gap-2.5" aria-hidden>
+              {[92, 64].map((width, index) => (
                 <span
                   key={index}
                   className="block h-3 rounded-full"
-                  style={{ background: 'var(--bg-elevated)', width: `${40 + flex * 12}%` }}
+                  style={{ background: 'var(--skeleton-fill)', width: `${width}%` }}
                 />
               ))}
             </div>

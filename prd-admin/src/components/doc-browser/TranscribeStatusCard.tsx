@@ -194,6 +194,26 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
           那一行的作用不是报进度，是当场消掉等待焦虑。此前它被拆到播放卡与底部蓝条两处，
           单看这一格读不到这句话（两份判分各扣了一次结构与内容）。
         */}
+        {/*
+          补齐那一档在跑时，稿面 cap-A5 在这一格下面画了一组词云占位块：
+          等待期的主视觉要是**产物本身的形状**，不是一行「正在生成」。
+        */}
+        {active && stage.key === 'understanding' && (
+          <span className="mt-2 flex flex-wrap gap-1.5" aria-hidden>
+            {[54, 38, 66, 44].map((width, index) => (
+              <span
+                key={index}
+                className="block h-5 rounded-full"
+                style={{
+                  width,
+                  background: 'var(--skeleton-fill)',
+                  animation: 'pulse 1.6s ease-in-out infinite',
+                  animationDelay: `${index * 0.14}s`,
+                }}
+              />
+            ))}
+          </span>
+        )}
         {active && stage.key === 'transcript' && (
           <p className="mt-1 text-[11px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
             音频已可播放，无需等待
@@ -395,7 +415,12 @@ export function TranscribeStatusCard({
   /** 原文那一格是否已经写完（决定音频卡带不带句数、蓝提示条说哪一句） */
   const transcriptDone = stages?.find(stage => stage.key === 'transcript')?.state === 'done';
   const reorganizing = processing && !!noteEntryId;
-  const completionCopy = !processing && completion ? describeCompletionSummary(completion) : null;
+  /*
+    有失败卡的时候不再摆那张绿色成果卡。
+    「全部完成 · 纪要与待办已就绪」压在「会议纪要生成失败」上面，是同屏两句互相打脸，
+    而且抢走了失败卡的首位——三份判分都指到这一处。
+  */
+  const completionCopy = !processing && !showFailure && completion ? describeCompletionSummary(completion) : null;
   const organizeCopy = reorganizing
     ? describeOrganizeProgress({
       styleLabel: organizeStyleLabel,
@@ -451,23 +476,27 @@ export function TranscribeStatusCard({
             ；理解、整理、问答已折叠，恢复后自动补齐。
           </p>
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {/*
+              稿面这张卡只画了一个出口：通栏的「查看服务状态」。
+              「重试」是我们补的——服务恢复之后总得有地方重新排队——但它不能抢走首位：
+              上一版把重试做成白底实心摆在右边，卡内视觉最重的按钮就成了稿面没有的那一颗。
+            */}
             {onOpenServiceStatus && (
               <button
                 type="button"
                 onClick={onOpenServiceStatus}
-                className="flex min-h-10 flex-1 cursor-pointer items-center justify-center rounded-[10px] px-3 text-[13px] font-semibold"
-                style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                className="flex min-h-10 w-full cursor-pointer items-center justify-center rounded-[10px] px-3 text-[13px] font-semibold"
+                style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
               >
                 查看服务状态
               </button>
             )}
-            {/* 服务恢复之后要能重新排队，否则这一屏没有出口 */}
             {onStart && (
               <button
                 type="button"
                 onClick={() => onStart()}
-                className="flex min-h-10 cursor-pointer items-center justify-center rounded-[10px] px-4 text-[13px] font-semibold"
-                style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+                className="flex min-h-10 w-full cursor-pointer items-center justify-center rounded-[10px] px-4 text-[13px] font-semibold"
+                style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
               >
                 重试
               </button>
