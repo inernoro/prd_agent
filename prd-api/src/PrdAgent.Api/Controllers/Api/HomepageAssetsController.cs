@@ -369,6 +369,45 @@ public class HomepageAssetsController : ControllerBase
     }
 }
 
+/// <summary>
+/// 对外首页（`/home`）的配图读取 —— **匿名可读**。
+///
+/// 为什么不复用 `api/homepage/assets`：那个端点是 `[Authorize]`，服务的是登录后的
+/// 首页；而 `/home` 是不登录就能打开的宣传页，拿不到 token。
+///
+/// 只暴露 `landing.` 前缀这一族，不是整张表：这里是公网无鉴权面，把全部 slot
+/// （含内部卡片背景、Agent 封面）一并吐出去等于白送一份资源清单。
+/// </summary>
+[ApiController]
+[Route("api/v1/landing/preview-assets")]
+[AllowAnonymous]
+public class LandingPreviewAssetsController : ControllerBase
+{
+    private const string SlotPrefix = "landing.";
+    private readonly MongoDbContext _db;
+
+    public LandingPreviewAssetsController(MongoDbContext db)
+    {
+        _db = db;
+    }
+
+    /// <summary>返回 slot → url 的字典；没有配图的幕不出现在结果里。</summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(ApiResponse<Dictionary<string, string>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAll(CancellationToken ct)
+    {
+        var list = await _db.HomepageAssets
+            .Find(x => x.Slot.StartsWith(SlotPrefix))
+            .ToListAsync(ct);
+
+        // 只给 slot 与 url：提示词、体积、上传者都是内部信息，公网面不该带
+        var map = list
+            .Where(x => !string.IsNullOrWhiteSpace(x.Url))
+            .ToDictionary(x => x.Slot, x => x.Url);
+        return Ok(ApiResponse<Dictionary<string, string>>.Ok(map));
+    }
+}
+
 /// <summary>把一次生图任务的某张产物挂到首页 slot 上。</summary>
 public class AdoptImageRunRequest
 {

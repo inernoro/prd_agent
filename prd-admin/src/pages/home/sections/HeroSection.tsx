@@ -3,7 +3,9 @@ import { InkOrb } from '@/components/backgrounds/InkOrb';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { cn } from '@/lib/cn';
 import { Reveal } from '../components/Reveal';
+import { SceneIllustration } from '../components/SceneIllustration';
 import { VisualCanvasStage } from '../scenes/VisualCanvasScene';
+import { SCENE_HUE } from '../scenes/sceneTokens';
 import { TechLogoBar } from '../components/TechLogoBar';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -369,6 +371,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
               </p>
             </div>
             <VisualCanvasStage />
+            {/*
+              Hero 这一幕不走 SceneFrame（它有自己那套排版），所以 slot 手写在这里。
+              另一头由守卫测试盯着：`landing.hero` 必须真的出现在 pages/home 源码里，
+              否则「注册表里有这一幕、页面上永远不显示」会静默成立。
+            */}
+            <SceneIllustration slot="landing.hero" hue={SCENE_HUE.clay} />
           </div>
         </div>
       </Reveal>

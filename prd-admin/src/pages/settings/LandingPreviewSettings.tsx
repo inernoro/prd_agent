@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image as ImageIcon, RefreshCw, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Image as ImageIcon, Maximize2, RefreshCw, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import {
   adoptHomepageAssetFromRun,
   createImageGenRun,
@@ -14,10 +14,12 @@ import { Button } from '@/components/design/Button';
 import { Select } from '@/components/design/Select';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { toast } from '@/lib/toast';
 import {
   LANDING_PREVIEW_SLOTS,
   buildLandingPreviewPrompt,
+  landingPreviewSlotById,
   type LandingPreviewSlot,
 } from '@/lib/landingPreviewSlots';
 
@@ -27,22 +29,39 @@ import {
  * 对外首页（`/home`）十幕，每幕一张示意图；这一屏负责把它们生出来、看一眼、
  * 不满意就带着改过的提示词再生一次。
  *
- * 三条设计取舍：
+ * 四条设计取舍：
  *
  * 1. **提示词有默认值，且默认值是好用的那版**（`lib/landingPreviewSlots.ts`）。
  *    管理员打开弹窗看到的是一段能直接出图的完整提示词，不是空白框
  *    （`zero-friction-input`）。改过一次之后回填的是他自己那版，不是默认版——
  *    否则每次微调都要从头改一遍。
- * 2. **模型不问人**：只有一个可用出图池时不显示选择器（`chief-designer-usability`
- *    第二原则：只有一个选项的选择器一律不显示）。
- * 3. **等待期给产物的形状**：生成中的卡片是一块带斜纹的画框加秒表，不是转圈
+ * 2. **一个模型不行就自动换下一个**。池里 15 个出图模型全报 Healthy，实测只有
+ *    两个真能出图，其余一律 400（这是模型池健康探针的问题，不是这一屏的）。
+ *    只按优先级挑第一个 = 稳定挑中坏的那个，用户点一次错一次。所以失败时按池内
+ *    顺序自动往下试，上限 `MODEL_FALLBACK_LIMIT` 个，并在卡片上写明正在试哪个——
+ *    「自动换了模型」这件事不能不告诉人（`expectation-management`）。
+ * 3. **缩略图只占一小条**。十幕排成十张大图要滚很久，而这一屏的用途是「扫一眼谁
+ *    还没配、谁配得不对」，不是看图。所以缩略图压到 108px 宽的一条，点开才放大；
+ *    放大弹层里直接给「重新生成」，看和换在同一个地方完成。
+ * 4. **等待期给产物的形状**：生成中的缩略图是一块带斜纹的画框加秒表，不是转圈
  *    （`artifact-is-experience`）。一次「全部重新生成」十张并发跑，谁先出谁先落位。
  */
+
+/**
+ * 一次生成最多自动试几个模型。
+ * 不设成「把池子试穿」：15 个模型逐个试要几分钟、烧十几次配额，而失败大多同因。
+ * 试到第 3 个还不行，基本就是池子本身有问题，该去模型中心看，不该在这儿硬磨。
+ */
+const MODEL_FALLBACK_LIMIT = 3;
 
 type SlotState = {
   status: 'idle' | 'running' | 'error';
   startedAt?: number;
   error?: string;
+  /** 这一拍正在用哪个模型试（自动换模型时要让人看见换到哪了） */
+  model?: string;
+  /** 第几次尝试，从 1 起 */
+  attempt?: number;
 };
 
 /**
@@ -61,30 +80,45 @@ export default function LandingPreviewSettings() {
   const [states, setStates] = useState<Record<string, SlotState>>({});
   const [tick, setTick] = useState(0);
   const [editing, setEditing] = useState<{ slot: LandingPreviewSlot; prompt: string } | null>(null);
+  const [zoomSlotId, setZoomSlotId] = useState<string | null>(null);
 
   const controllersRef = useRef<AbortController[]>([]);
   /** 卸载后丢弃在途 SSE 回调，避免在已卸载组件上 setState */
   const aliveRef = useRef(true);
 
-  const modelOptions = useMemo(() => {
-    const opts: { key: string; poolName: string; modelName: string; platformId: string }[] = [];
-    pools.forEach((pool, idx) => {
-      if (!pool.models || pool.models.length === 0) return;
-      const sorted = [...pool.models].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
-      // 先挑健康的，再挑非不可用的，全挂才回退第一个 —— 与分镜板同一条挑法
-      const m =
-        sorted.find((x) => x.healthStatus === ModelHealthStatus.Healthy) ??
-        sorted.find((x) => x.healthStatus !== ModelHealthStatus.Unavailable) ??
-        sorted[0];
-      opts.push({ key: `${idx}:${pool.name}`, poolName: pool.name, modelName: m.modelId, platformId: m.platformId });
+  /**
+   * 把池子摊平成**一串可依次尝试的模型**，而不是「每个池挑一个代表」。
+   *
+   * 挑代表那种写法在这里是错的：池里 15 个模型全报 Healthy，实测只有两个能出图。
+   * 只挑优先级最高的那个 = 每次都稳定挑中同一个坏的，用户点一次错一次。
+   * 摊平之后，第一个失败就能顺着往下试。
+   */
+  const modelChain = useMemo(() => {
+    const list: { key: string; label: string; poolName: string; modelId: string; platformId: string }[] = [];
+    pools.forEach((pool, pi) => {
+      const sorted = [...(pool.models ?? [])].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
+      sorted.forEach((m) => {
+        // 明确标记不可用的直接不进候选；其余（含 Healthy 与降级）都留着，靠真实调用淘汰
+        if (m.healthStatus === ModelHealthStatus.Unavailable) return;
+        list.push({
+          key: `${pi}:${pool.name}:${m.modelId}`,
+          label: m.modelId,
+          poolName: pool.name,
+          modelId: m.modelId,
+          platformId: m.platformId,
+        });
+      });
     });
-    return opts;
+    return list;
   }, [pools]);
 
-  const activeModel = useMemo(() => {
-    const opt = modelOptions.find((o) => o.key === selectedModelKey) ?? modelOptions[0];
-    return opt ? { name: opt.poolName, modelName: opt.modelName, platformId: opt.platformId } : null;
-  }, [modelOptions, selectedModelKey]);
+  /** 用户选中的起点；没选就是链头 */
+  const startIndex = useMemo(() => {
+    const i = modelChain.findIndex((o) => o.key === selectedModelKey);
+    return i >= 0 ? i : 0;
+  }, [modelChain, selectedModelKey]);
+
+  const hasModel = modelChain.length > 0;
 
   const reload = useCallback(async () => {
     const res = await listHomepageAssets();
@@ -129,18 +163,20 @@ export default function LandingPreviewSettings() {
   };
 
   /**
-   * 生成一批槽位。一次 run 带 N 条 item，itemIndex 与 targets 下标一一对应 ——
-   * 回填时靠这个下标认领，别用 prompt 反查（同一段提示词可能被两个槽位共用）。
+   * 用一个指定模型跑一批槽位，返回**这一轮没出图的那些**（留给下一个模型接着试）。
+   *
+   * 一次 run 带 N 条 item，itemIndex 与 targets 下标一一对应 —— 回填时靠这个下标
+   * 认领，别用 prompt 反查（同一段提示词可能被两个槽位共用）。
    */
-  const generate = async (targets: { slot: LandingPreviewSlot; prompt: string }[]) => {
-    if (!activeModel) {
-      toast.error('没有可用的文生图模型池，请先在模型中心配置');
-      return;
-    }
-    if (targets.length === 0) return;
-
+  const runOnce = async (
+    targets: { slot: LandingPreviewSlot; prompt: string }[],
+    model: { modelId: string; platformId: string },
+    attempt: number,
+  ): Promise<{ slot: LandingPreviewSlot; prompt: string }[]> => {
     const now = Date.now();
-    targets.forEach((t) => patchState(t.slot.slot, { status: 'running', startedAt: now }));
+    targets.forEach((t) =>
+      patchState(t.slot.slot, { status: 'running', startedAt: now, model: model.modelId, attempt }),
+    );
 
     const ac = new AbortController();
     controllersRef.current.push(ac);
@@ -148,25 +184,22 @@ export default function LandingPreviewSettings() {
     const created = await createImageGenRun({
       input: {
         appKey: 'visual-agent',
-        modelId: activeModel.modelName,
-        platformId: activeModel.platformId,
+        modelId: model.modelId,
+        platformId: model.platformId,
         items: targets.map((t) => ({ prompt: t.prompt, count: 1, size: t.slot.size })),
         responseFormat: 'b64_json',
         maxConcurrency: 3,
       },
       idempotencyKey: `landing_${now}_${Math.random().toString(16).slice(2)}`,
     });
-    if (!created.success) {
-      const msg = created.error?.message || '创建生成任务失败';
-      toast.error(msg);
-      targets.forEach((t) => patchState(t.slot.slot, { status: 'error', error: msg }));
-      return;
-    }
+    if (!created.success) return targets;
+
     const runId = String(created.data?.runId || '').trim();
-    if (!runId) {
-      targets.forEach((t) => patchState(t.slot.slot, { status: 'error', error: '任务未返回 runId，请重试' }));
-      return;
-    }
+    if (!runId) return targets;
+
+    /** 这一轮已经出图并挂上去的槽位；剩下的就是要换模型再试的 */
+    const settled = new Set<string>();
+    const adoptions: Promise<void>[] = [];
 
     await streamImageGenRunWithRetry({
       runId,
@@ -184,41 +217,66 @@ export default function LandingPreviewSettings() {
 
         if (type === 'imageDone') {
           // 出图即落位：把这张挂到槽位上，管理员不用再点一次「保存」
-          void adoptHomepageAssetFromRun({
-            slot: target.slot.slot,
-            runId,
-            itemIndex,
-            imageIndex: 0,
-            prompt: target.prompt,
-          }).then(async (res) => {
-            if (!aliveRef.current) return;
-            if (!res.success) {
-              patchState(target.slot.slot, { status: 'error', error: res.error?.message || '挂到槽位失败' });
-              return;
-            }
-            patchState(target.slot.slot, { status: 'idle' });
-            await reload();
-          });
-        } else if (type === 'imageError') {
-          patchState(target.slot.slot, {
-            status: 'error',
-            error: String((o.errorMessage as string | undefined) ?? '生成失败'),
-          });
+          adoptions.push(
+            adoptHomepageAssetFromRun({
+              slot: target.slot.slot,
+              runId,
+              itemIndex,
+              imageIndex: 0,
+              prompt: target.prompt,
+            }).then((res) => {
+              if (!aliveRef.current) return;
+              if (!res.success) {
+                patchState(target.slot.slot, { status: 'error', error: res.error?.message || '挂到槽位失败' });
+                // 挂载失败是我们这边的问题，换模型也救不了，标记为已了结不再重试
+                settled.add(target.slot.slot);
+                return;
+              }
+              settled.add(target.slot.slot);
+              patchState(target.slot.slot, { status: 'idle' });
+            }),
+          );
         }
+        // imageError 不在这里落状态：留给外层决定是换模型再试还是报错收场
       },
     });
 
-    // 流结束兜底：还挂在 running 的都算失败，别让卡片永远转下去
-    if (!aliveRef.current) return;
-    setStates((prev) => {
-      const next = { ...prev };
-      targets.forEach((t) => {
-        if (next[t.slot.slot]?.status === 'running') {
-          next[t.slot.slot] = { status: 'error', error: '生成超时或连接中断，请重试' };
-        }
-      });
-      return next;
-    });
+    // 等挂载都落完再判定剩余，否则会把「已出图但 adopt 还在飞」的误判成失败又重跑一遍
+    await Promise.all(adoptions);
+    if (!aliveRef.current) return [];
+    await reload();
+    return targets.filter((t) => !settled.has(t.slot.slot));
+  };
+
+  /**
+   * 生成一批槽位：一个模型不行就自动换下一个，最多 `MODEL_FALLBACK_LIMIT` 个。
+   */
+  const generate = async (targets: { slot: LandingPreviewSlot; prompt: string }[]) => {
+    if (!hasModel) {
+      toast.error('没有可用的文生图模型，请先在模型中心配置');
+      return;
+    }
+    if (targets.length === 0) return;
+
+    let pending = targets;
+    let lastModel = '';
+    for (let i = 0; i < MODEL_FALLBACK_LIMIT && pending.length > 0; i++) {
+      const model = modelChain[(startIndex + i) % modelChain.length];
+      if (!model) break;
+      lastModel = model.modelId;
+      pending = await runOnce(pending, model, i + 1);
+      if (!aliveRef.current) return;
+    }
+
+    if (pending.length === 0) return;
+    // 试穿了还是不行：如实说试了几个、最后一个是谁，别只丢一句"生成失败"
+    const tried = Math.min(MODEL_FALLBACK_LIMIT, modelChain.length);
+    pending.forEach((t) =>
+      patchState(t.slot.slot, {
+        status: 'error',
+        error: `换了 ${tried} 个模型都没出图（最后一个：${lastModel}）。多半是模型池本身有问题，去「模型中心 → 模型池」看一眼。`,
+      }),
+    );
   };
 
   const openDialog = (slot: LandingPreviewSlot) => {
@@ -249,6 +307,11 @@ export default function LandingPreviewSettings() {
   if (loading) return <MapSectionLoader text="正在加载首页预览图…" />;
 
   const generatedCount = LANDING_PREVIEW_SLOTS.filter((s) => assets[s.slot]?.url).length;
+  const zoomSlot = zoomSlotId ? landingPreviewSlotById(zoomSlotId) : undefined;
+  const zoomAsset = zoomSlot ? assets[zoomSlot.slot] : undefined;
+  const zoomSrc = zoomAsset?.url
+    ? (zoomAsset.updatedAt ? `${zoomAsset.url}?v=${Date.parse(zoomAsset.updatedAt) || ''}` : zoomAsset.url)
+    : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -263,16 +326,16 @@ export default function LandingPreviewSettings() {
           </div>
         </div>
 
-        {/* 只有一个池就不摆选择器（没得选就别假装能选） */}
-        {modelOptions.length > 1 && (
-          <div className="ml-auto shrink-0" style={{ minWidth: '200px' }}>
+        {/* 一个模型也没有时不摆选择器；有多个时让人能钉住起点（失败仍会自动往下试） */}
+        {modelChain.length > 1 && (
+          <div className="ml-auto shrink-0" style={{ minWidth: '220px' }}>
             <Select
-              value={selectedModelKey ?? modelOptions[0]?.key ?? ''}
+              value={selectedModelKey ?? modelChain[0]?.key ?? ''}
               onChange={(e) => setSelectedModelKey(e.target.value)}
               uiSize="sm"
             >
-              {modelOptions.map((o) => (
-                <option key={o.key} value={o.key}>{o.poolName}</option>
+              {modelChain.map((o) => (
+                <option key={o.key} value={o.key}>{o.label}</option>
               ))}
             </Select>
           </div>
@@ -281,24 +344,29 @@ export default function LandingPreviewSettings() {
         <Button
           variant="secondary"
           onClick={handleGenerateAll}
-          disabled={anyRunning || !activeModel}
-          className={modelOptions.length > 1 ? 'shrink-0' : 'ml-auto shrink-0'}
+          disabled={anyRunning || !hasModel}
+          className={modelChain.length > 1 ? 'shrink-0' : 'ml-auto shrink-0'}
         >
           {anyRunning ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
           全部重新生成
         </Button>
       </div>
 
-      {!activeModel && (
+      {!hasModel && (
         <div
           className="text-xs"
           style={{ padding: '10px 12px', borderRadius: '10px', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
         >
-          当前没有可用的文生图模型池，生成按钮不可用。请先到「模型中心 → 模型池」配置一个 text2img 池。
+          当前没有可用的文生图模型，生成按钮不可用。请先到「模型中心 → 模型池」配置一个 text2img 池。
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      {/*
+        一行一幕的紧凑列表，缩略图只占 108px 宽的一条。
+        十幕排成十张大图要滚很久，而这一屏的用途是「扫一眼谁还没配、谁配得不对」，
+        不是看图 —— 看图点开缩略图，放大层里连「重新生成」一起给。
+      */}
+      <div className="flex flex-col gap-2">
         {LANDING_PREVIEW_SLOTS.map((slot) => {
           const asset = assets[slot.slot];
           const st = states[slot.slot] ?? { status: 'idle' as const };
@@ -306,79 +374,124 @@ export default function LandingPreviewSettings() {
           const elapsed = running && st.startedAt ? Math.max(0, Math.round((Date.now() - st.startedAt) / 1000)) : 0;
           // tick 只为让上面这个秒数每秒重算一次；读一下它，避免被当成未使用
           void tick;
+          const src = asset?.url
+            ? (asset.updatedAt ? `${asset.url}?v=${Date.parse(asset.updatedAt) || ''}` : asset.url)
+            : null;
 
           return (
             <div
               key={slot.slot}
-              className="flex flex-col overflow-hidden"
+              className="flex items-center gap-3 overflow-hidden"
               style={{
-                borderRadius: '12px',
+                padding: '8px 10px',
+                borderRadius: '10px',
                 border: '1px solid var(--border-secondary)',
                 background: 'var(--bg-card)',
               }}
             >
-              {/* 画框：3:2，不管有没有图都占同样的位置，出图时不会跳版 */}
-              <div
-                className="relative flex items-center justify-center"
+              {/* 缩略图：3:2 的一小条，固定宽高，出图时不跳版 */}
+              <button
+                type="button"
+                onClick={() => { if (src) setZoomSlotId(slot.id); }}
+                disabled={!src}
+                title={src ? '点击放大' : undefined}
+                className="relative flex items-center justify-center shrink-0 overflow-hidden group"
                 style={{
-                  aspectRatio: '3 / 2',
+                  width: '108px',
+                  height: '72px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-subtle)',
                   background: running ? HATCH : 'var(--bg-secondary)',
                   backgroundColor: 'var(--bg-secondary)',
-                  borderBottom: '1px solid var(--border-subtle)',
+                  cursor: src ? 'zoom-in' : 'default',
+                  padding: 0,
                 }}
               >
-                {asset?.url && !running && (
-                  <img
-                    src={asset.updatedAt ? `${asset.url}?v=${Date.parse(asset.updatedAt) || ''}` : asset.url}
-                    alt={slot.label}
-                    className="w-full h-full"
-                    style={{ objectFit: 'cover' }}
-                  />
-                )}
-                {running && (
-                  <div className="flex flex-col items-center gap-2">
-                    <MapSpinner size={20} />
-                    <span className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                      正在画第 {slot.where.replace(/[^0-9]/g, '') || '?'} 幕 · 已等待 {elapsed}s
+                {src && !running && (
+                  <>
+                    <img src={src} alt={slot.label} className="w-full h-full" style={{ objectFit: 'cover' }} />
+                    {/*
+                      hover 时压一层同色遮罩再放图标。用 --bg-base + 半透明而不是黑色
+                      字面量：浅色主题下压黑会变成一块脏灰（双皮肤棘轮也拦这条）。
+                    */}
+                    <span
+                      className="absolute inset-0 items-center justify-center hidden group-hover:flex"
+                      style={{ background: 'var(--bg-base)', opacity: 0.72 }}
+                    >
+                      <Maximize2 size={15} style={{ color: 'var(--text-primary)' }} />
                     </span>
-                  </div>
+                  </>
                 )}
-                {!asset?.url && !running && (
-                  <div className="flex flex-col items-center gap-1.5 px-4 text-center">
-                    <ImageIcon size={20} style={{ color: 'var(--text-muted)' }} />
-                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>还没有配图，点下面「生成」</span>
-                  </div>
+                {running && <MapSpinner size={16} />}
+                {!src && !running && <ImageIcon size={16} style={{ color: 'var(--text-muted)' }} />}
+              </button>
+
+              <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{slot.label}</span>
+                  <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{slot.where}</span>
+                  <span className="text-[11px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>{slot.size}</span>
+                </div>
+
+                {running ? (
+                  <span className="text-[11px] tabular-nums truncate" style={{ color: 'var(--text-secondary)' }}>
+                    正在生成 · 已等待 {elapsed}s
+                    {st.model ? ` · ${st.model}` : ''}
+                    {st.attempt && st.attempt > 1 ? `（第 ${st.attempt} 个模型）` : ''}
+                  </span>
+                ) : st.status === 'error' ? (
+                  <span className="text-[11px]" style={{ color: 'var(--semantic-danger-text)' }}>{st.error}</span>
+                ) : (
+                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                    {src ? '点缩略图放大，或直接重新生成' : '还没有配图'}
+                  </span>
                 )}
               </div>
 
-              <div className="flex flex-col gap-1 p-3">
-                <div className="flex items-baseline gap-2 min-w-0">
-                  <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{slot.label}</span>
-                  <span className="text-[11px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>{slot.size}</span>
-                </div>
-                <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>{slot.where}</span>
-
-                {st.status === 'error' && (
-                  <span className="text-[11px]" style={{ color: 'var(--semantic-danger-text)' }}>{st.error}</span>
-                )}
-
-                <div className="flex items-center gap-2 mt-1.5">
-                  <Button variant="secondary" size="sm" onClick={() => openDialog(slot)} disabled={running || !activeModel}>
-                    <Sparkles size={13} />
-                    {asset?.url ? '重新生成' : '生成'}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button variant="secondary" size="sm" onClick={() => openDialog(slot)} disabled={running || !hasModel}>
+                  <Sparkles size={13} />
+                  {src ? '重新生成' : '生成'}
+                </Button>
+                {src && (
+                  <Button variant="ghost" size="sm" onClick={() => void handleDelete(slot)} disabled={running}>
+                    <Trash2 size={13} />
+                    清除
                   </Button>
-                  {asset?.url && (
-                    <Button variant="ghost" size="sm" onClick={() => void handleDelete(slot)} disabled={running}>
-                      <Trash2 size={13} />
-                      清除
-                    </Button>
-                  )}
-                </div>
+                )}
               </div>
             </div>
           );
         })}
       </div>
+
+      {/*
+        放大层：看图与换图在同一个地方完成 —— 点开是为了判断这张行不行，
+        判断完就该能当场换掉，不该关掉再去列表里找那一行。
+      */}
+      {zoomSlot && zoomSrc && (
+        <>
+          <ImagePreviewDialog
+            images={[{ url: zoomSrc, alt: zoomSlot.label }]}
+            initialIndex={0}
+            open
+            onClose={() => setZoomSlotId(null)}
+          />
+          <div
+            className="fixed left-1/2 -translate-x-1/2 flex items-center gap-2"
+            style={{ bottom: '28px', zIndex: 2147483647 }}
+          >
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => { setZoomSlotId(null); openDialog(zoomSlot); }}
+            >
+              <Sparkles size={13} />
+              换一张
+            </Button>
+          </div>
+        </>
+      )}
 
       <ResponsiveDialog
         open={!!editing}
