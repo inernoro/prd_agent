@@ -303,7 +303,11 @@ services:
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      # CDS 共享 Mongo 已开鉴权（security-baseline），无凭据串一律 "requires authentication"。
+      # ${CDS_MONGODB_URL} 是 CDS 运行时注入的带凭据连接串（凡 CDS_*_URL / _HOST / _PORT 都由运行时注入，
+      # 见 compose 契约的 env-var-cds-runtime 规则）。不写嵌套兜底：旧串现在是确定失败的，
+      # 退回去没有意义，而嵌套 ${} 能不能被 CDS 展开本身又是一个赌。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__DatabaseName: llm_gateway
       # CDS 预览虽使用 ASPNETCORE_ENVIRONMENT=Production，但不是正式生产；显式钉 inproc，
@@ -318,7 +322,9 @@ services:
       LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
-      Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
+      # 同上：Redis 也已开鉴权，无密码连上去是 NOAUTH。StackExchange.Redis 2.8 能解析 redis:// URI
+      # （含 userinfo 里的密码），所以直接吃 CDS 注入的 ${CDS_REDIS_URL}。
+      Redis__ConnectionString: "${CDS_REDIS_URL}"
       # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
       # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
       # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
@@ -401,7 +407,11 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      # CDS 共享 Mongo 已开鉴权（security-baseline），无凭据串一律 "requires authentication"。
+      # ${CDS_MONGODB_URL} 是 CDS 运行时注入的带凭据连接串（凡 CDS_*_URL / _HOST / _PORT 都由运行时注入，
+      # 见 compose 契约的 env-var-cds-runtime 规则）。不写嵌套兜底：旧串现在是确定失败的，
+      # 退回去没有意义，而嵌套 ${} 能不能被 CDS 展开本身又是一个赌。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
@@ -444,7 +454,11 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      # CDS 共享 Mongo 已开鉴权（security-baseline），无凭据串一律 "requires authentication"。
+      # ${CDS_MONGODB_URL} 是 CDS 运行时注入的带凭据连接串（凡 CDS_*_URL / _HOST / _PORT 都由运行时注入，
+      # 见 compose 契约的 env-var-cds-runtime 规则）。不写嵌套兜底：旧串现在是确定失败的，
+      # 退回去没有意义，而嵌套 ${} 能不能被 CDS 展开本身又是一个赌。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
