@@ -103,11 +103,16 @@ export const LANDING_PREVIEW_SLOTS: LandingPreviewSlot[] = [
     size: '1536x1024',
     subject:
       'Subject: three horizontal bands stacked vertically, numbered 01, 02, 03 in small monospace down a thin rail on the left, ' +
-      'the rail joining the three numbers into one vertical line. Band 01: four rounded nodes in a row, joined left to right ' +
-      'by short arrows, the last node tinted pine green. Band 02: four rounded nodes that get visibly narrower left to right, ' +
-      'sitting inside a faint steel-blue wedge that closes as it goes right. Band 03: on the left a branch graph — a horizontal ' +
-      'line with three commit dots, one of them curving away downward to a single detached node — and on the right four small ' +
-      'service boxes in a row above one wide card. A faint hexagonal grid sits behind band 03 only, fading out to the right.',
+      'the rail joining the three numbers into one vertical line. Every node below is a near-black rounded rectangle with a ' +
+      'hairline border and a short lowercase label inside it — none of them are filled with colour. ' +
+      'Band 01: four such nodes in an evenly spaced row, joined left to right by short terracotta arrows; only the last node ' +
+      'has a pine-green border, marking the finished artefact. ' +
+      'Band 02: four such nodes in a row that get progressively shorter in width from left to right, so the row visibly ' +
+      'narrows as it goes right; two thin steel-blue guide lines run above and below the row and converge toward the right ' +
+      'edge, forming a funnel that closes down onto the last and smallest node. ' +
+      'Band 03: on the left a branch graph — a horizontal line with three small hollow commit dots, one of them curving away ' +
+      'downward to a single detached dot — and on the right four small labelled service boxes in a row above one wide ' +
+      'labelled card. A faint hexagonal grid sits behind band 03 only, fading out toward the right edge.',
   },
   {
     id: 'toolbox',

@@ -68,6 +68,11 @@ export function SceneIllustration({ slot, hue }: { slot: string; hue: number }) 
           boxShadow: SCENE.liftMd,
         }}
       >
+        {/*
+          限高：3:2 的图铺满 1400px 宽就是 900+px 高，比它上面那块真实界面还高一倍，
+          喧宾夺主。这一幕的主角是那块能打开的界面，配图是旁注 —— 收到半屏以内，
+          用 contain 而不是 cover（示意图裁掉一边就读不通了）。
+        */}
         <img
           src={url}
           alt=""
@@ -75,7 +80,11 @@ export function SceneIllustration({ slot, hue }: { slot: string; hue: number }) 
           decoding="async"
           onError={() => setBroken(true)}
           className="block w-full"
-          style={{ height: 'auto', borderBottom: `1px solid ${tone.border}` }}
+          style={{
+            maxHeight: 'min(46vh, 420px)',
+            objectFit: 'contain',
+            borderBottom: `1px solid ${tone.border}`,
+          }}
         />
       </div>
     </Reveal>
