@@ -77,7 +77,14 @@ export function describeTranscriptionStages(
       label: '生成原文',
       // 阶段内百分比按该阶段自己的区间归一，否则「生成原文」会在整体 70% 时显示 70%，
       // 而它其实已经做完了——用户看到的进度必须是这一格的进度。
-      detail: inUnderstanding ? '原文已生成' : (phase || '正在转写'),
+      /*
+        写完之后这一格也要带着**它产出了多少**（稿面 cap-A5 在这一格画的是「48s · 132 句」）。
+        只写「原文已生成」的话，三阶段里唯有它没有任何度量，读者不知道这一步到底产出了什么。
+        耗时后端不下发，所以只给句数——给得出的给，给不出的不编。
+      */
+      detail: inUnderstanding
+        ? ((audioMeta?.generatedSentences ?? 0) > 0 ? `原文已生成 · ${audioMeta?.generatedSentences} 句` : '原文已生成')
+        : (phase || '正在转写'),
       state: inUnderstanding ? 'done' : 'active',
       percent: inUnderstanding ? null : Math.round((progress / UNDERSTANDING_FROM) * 100),
       yieldLine: inUnderstanding

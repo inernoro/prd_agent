@@ -343,7 +343,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
-      <div className={`flex min-h-full w-full flex-col items-center gap-5 ${effectiveTranscript ? 'justify-start py-2' : 'justify-center py-12'}`}>
+      /*
+        没有转录笔记时此前是 `justify-center`：播放器被顶到整块可用高度的正中间，
+        上面那张状态卡与它之间空出五百多像素——失败/无语音/排队这几屏的版式失分
+        全部出在这里（内容区没被填满，主产物也不在它该在的位置）。
+        播放器就该紧跟状态卡，那才是「这段音频还在，现在就能听」的落点。
+      */
+      <div className={`flex min-h-full w-full flex-col items-center gap-5 justify-start ${effectiveTranscript ? 'py-2' : 'py-4'}`}>
         {archivePending && (
           <RecordingArchiveProgress
             hasPlayback

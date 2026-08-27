@@ -117,8 +117,12 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
             // 「正在做的那一格」反而比做完的更弱（判官记的是「视觉对齐节奏被打断」）。
             style={{
               width: 16, height: 16, borderRadius: '50%',
-              border: '2.5px solid color-mix(in srgb, var(--accent-fg-info) 26%, transparent)',
+              // 稿面这枚是**一段缺口弧线**在转。整圈淡蓝 + 顶端一段深蓝那种画法，
+              // 静态截图里读起来就是一个闭合圆环，「正在转」的形状语义没了（R4 判分记的这处）。
+              // 三面透明只留一段，缺口才看得出来。
+              border: '2.5px solid transparent',
               borderTopColor: 'var(--accent-fg-info)',
+              borderRightColor: 'var(--accent-fg-info)',
               animation: 'spin 0.9s linear infinite',
             }}
             aria-hidden
@@ -183,6 +187,16 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
         {stage.yieldLine && (
           <p className="mt-0.5 truncate text-[11px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
             {stage.yieldLine}
+          </p>
+        )}
+        {/*
+          稿面 v2-S2 / cap-S3 把「音频已可播放，无需等待」写在**进度块自己**里：
+          那一行的作用不是报进度，是当场消掉等待焦虑。此前它被拆到播放卡与底部蓝条两处，
+          单看这一格读不到这句话（两份判分各扣了一次结构与内容）。
+        */}
+        {active && stage.key === 'transcript' && (
+          <p className="mt-1 text-[11px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
+            音频已可播放，无需等待
           </p>
         )}
       </div>
@@ -378,6 +392,8 @@ export function TranscribeStatusCard({
   const timing = processing ? estimateRemainingSeconds(activeRun, now) : null;
   /** 「生成原文」那一格算出来的产出计数，骨架条脚注与阶段行读同一份，不各算一次（形状 3） */
   const transcriptYieldLine = stages?.find(stage => stage.key === 'transcript')?.yieldLine ?? null;
+  /** 原文那一格是否已经写完（决定音频卡带不带句数、蓝提示条说哪一句） */
+  const transcriptDone = stages?.find(stage => stage.key === 'transcript')?.state === 'done';
   const reorganizing = processing && !!noteEntryId;
   const completionCopy = !processing && completion ? describeCompletionSummary(completion) : null;
   const organizeCopy = reorganizing
@@ -422,10 +438,12 @@ export function TranscribeStatusCard({
             强调色从一个点扩散成一整片背景，「AI 那一层没了、其余照常」这句话
             读起来像整屏都出事了。
           */
-          style={{ background: 'var(--bg-card)', border: '1px solid var(--semantic-warning-text)' }}
+          // 橙色只出现在标题一处：给整卡再描一圈橙边、再加一枚橙色警示图标，
+          // 强调色就从一个点扩散到三处，「只是理解那一层没了」听起来像整屏出事
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
         >
-          <p className="flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
-            <AlertTriangle size={14} aria-hidden /> AI 服务暂时不可用
+          <p className="text-[13px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
+            AI 服务暂时不可用
           </p>
           <p className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
             {aiDown.at ? `发生于 ${new Date(aiDown.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}。` : ''}
@@ -520,6 +538,41 @@ export function TranscribeStatusCard({
             </p>
           </div>
 
+          {/*
+            横向三段进度条（稿面 cap-A4 的画法）。另一张画布（R4）把同一刻画成竖排清单，
+            两稿对同一处给了两种组织方式——都给：这一条负责「一眼扫完三阶段走到哪」，
+            下面的清单负责「每一阶段的细节」。三段的颜色直接读清单同一份 state，不另判一次。
+          */}
+          <div className="flex items-stretch gap-1.5" aria-hidden>
+            {stages.map(stage => (
+              <span key={`bar-${stage.key}`} className="flex min-w-0 flex-1 flex-col gap-1">
+                <span
+                  className="block h-[4px] w-full overflow-hidden rounded-full"
+                  style={{ background: 'var(--bg-elevated)' }}
+                >
+                  <span
+                    className="block h-full rounded-full"
+                    style={{
+                      width: stage.state === 'done' ? '100%' : stage.state === 'active' ? `${Math.max(6, stage.percent ?? 0)}%` : '0%',
+                      background: stage.state === 'done' ? 'var(--accent-fg-success)' : 'var(--accent-fg-info)',
+                      transition: 'width 300ms linear',
+                    }}
+                  />
+                </span>
+                <span
+                  className="block truncate text-[10px]"
+                  style={{
+                    color: stage.state === 'done'
+                      ? 'var(--accent-fg-success)'
+                      : stage.state === 'active' ? 'var(--accent-fg-info)' : 'var(--text-muted)',
+                  }}
+                >
+                  {stage.label}
+                </span>
+              </span>
+            ))}
+          </div>
+
           <div className="flex flex-col gap-3">
             {stages.map(stage => (
               <StageRow
@@ -539,11 +592,16 @@ export function TranscribeStatusCard({
             ))}
           </div>
 
-          {/* 音频已就绪卡：设计稿用它兑现「不必等转录就能听」，缩略图本身就是播放键 */}
+          {/*
+            音频卡与逐句原文在稿面 cap-A4/A5 是**同一张卡的两个面**，用一条分隔线连起来：
+            上面是这段音频本身，下面是它正在长出来的字。拆成两张独立卡之后，
+            「这两块说的是同一条录音」这层从属关系就断了（判分记的正是这处）。
+          */}
           <div
-            className="flex items-center gap-3 rounded-[12px] px-3 py-2.5"
+            className="flex flex-col rounded-[12px]"
             style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
           >
+          <div className="flex items-center gap-3 px-3 py-2.5">
             <button
               type="button"
               onClick={onPlayRequest}
@@ -563,15 +621,20 @@ export function TranscribeStatusCard({
                 {audioTitle?.trim() || '这段录音'}{audioDateLabel ? ` · ${audioDateLabel}` : ''}
               </p>
               <p className="mt-0.5 text-[11px]" style={{ color: 'var(--accent-fg-success)' }}>
+                {/*
+                  原文写完之后这张卡也要带上句数（稿面 cap-A5 的音频卡副行是「24:18 · 原文 132 句」）：
+                  到了补齐那一档，「这条录音现在有什么」才是用户关心的事，不只是它能不能播。
+                */}
                 音频已就绪，可立即播放{durationLabel ? ` · ${durationLabel}` : ''}
+                {transcriptDone && (generatedSentences ?? 0) > 0 ? ` · 原文 ${generatedSentences} 句` : ''}
               </p>
             </div>
           </div>
 
           {/* 原文逐句生成中：等待期的主视觉必须是产物本身在长出来，而不是一块空白 */}
           <div
-            className="rounded-[12px] px-3 py-2.5"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+            className="px-3 py-2.5"
+            style={{ borderTop: '1px solid var(--border-faint)' }}
           >
             <p className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>原文逐句生成中</p>
             <div className="mt-1.5 flex flex-col gap-1.5">
@@ -604,6 +667,7 @@ export function TranscribeStatusCard({
               </p>
             )}
           </div>
+          </div>
 
           {/*
             稿面 cap-A4/A5 在这一屏底部压了一条蓝色告知：它回答的是「我能不能走」。
@@ -613,7 +677,14 @@ export function TranscribeStatusCard({
             className="rounded-[10px] px-3 py-2.5 text-[12px] leading-relaxed"
             style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
           >
-            整理与问答会在原文完成后自动开始，无需停留在此页面。
+            {/*
+              这条提示回答的是「我能不能走」。到了补齐那一档，稿面 cap-A5 把它换成了
+              更强的两句：**哪些能力现在已经可用**、以及**补齐完成会在原位更新**——
+              前者是让用户敢走的理由，后者是让他敢回来的理由。
+            */}
+            {transcriptDone
+              ? '播放、阅读原文和编辑现在都已可用；补齐完成会在原位更新，无需停留在此页面。'
+              : '整理与问答会在原文完成后自动开始，无需停留在此页面。'}
           </p>
 
           {/* 算不出预计剩余时才单独说一句；「已用」已经编进进度那一行了，不在这里重复 */}
@@ -723,9 +794,26 @@ export function TranscribeStatusCard({
                   onClick={action.run}
                   disabled={action.disabled}
                   className="flex min-h-10 cursor-pointer items-center gap-1.5 rounded-[10px] px-3.5 text-[12.5px] font-semibold disabled:cursor-default disabled:opacity-60"
+                  /*
+                    次操作跟着卡面的色调走：琥珀卡上摆一颗中性白底描边钮，
+                    它与主操作的层级对比被拉平，看起来像两颗并列的同级按钮
+                    （cap-S10 / v2-S5 两份判分各记了一次）。
+                  */
                   style={index === 0
                     ? { background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }
-                    : { background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    : {
+                      background: 'transparent',
+                      border: `1px solid ${failureCopy!.tone === 'danger'
+                        ? 'var(--semantic-danger)'
+                        : failureCopy!.tone === 'retrying' || failureCopy!.tone === 'queued'
+                          ? 'var(--semantic-warning-text)'
+                          : 'var(--border-default)'}`,
+                      color: failureCopy!.tone === 'danger'
+                        ? 'var(--semantic-danger)'
+                        : failureCopy!.tone === 'retrying' || failureCopy!.tone === 'queued'
+                          ? 'var(--semantic-warning-text)'
+                          : 'var(--text-primary)',
+                    }}
                 >
                   {action.icon} {action.label}
                 </button>

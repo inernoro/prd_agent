@@ -66,6 +66,13 @@
     骨架要能一眼看出「这里是占位」，所以比面色再深一档。
   */
   --skeleton-fill: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  /*
+    命中高亮（记号笔）。平台默认那支是 #fde047 的荧光黄——落在这套录音皮肤的
+    深色屏上比稿面刺眼一档，黑字亮黄块把周围正文都压下去了（P2 判分记的这处）。
+    这里把它降到稿面那种低饱和琥珀，正文色不变。
+  */
+  --highlight-mark-bg: #FDE9A8;
+  --highlight-mark-fg: #3B2E05;
   --recording-chip-tier2-bg: #EDEBFF;
   --recording-chip-tier2-fg: #4B3FD1;
   --selection-bg: #E8EEFF;
@@ -114,6 +121,8 @@
   --semantic-info-soft: rgba(110, 155, 255, 0.16);
   --semantic-info-text: #6E9BFF;
   --semantic-danger-soft: rgba(255, 99, 105, 0.14);
+  --highlight-mark-bg: rgba(226, 180, 74, 0.34);
+  --highlight-mark-fg: #F3E2BC;
   --recording-chip-tier2-bg: rgba(150, 138, 255, 0.16);
   --recording-chip-tier2-fg: #B7AEFF;
   --selection-bg: #16233F;

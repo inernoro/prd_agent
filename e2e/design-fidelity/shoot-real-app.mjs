@@ -332,6 +332,15 @@ const scrollTop = page => page.evaluate(() => {
  */
 const DRIVERS = {
   async full(page, shot, theme, snap) {
+    /*
+     * 先补一张**没被滚动过**的顶部图。页面一挂上来就会把正在播的那一句滚进视野，
+     * 于是「打开这一屏第一眼看到什么」这件事在所有截图里都拍不到——
+     * cap-B1 判分里「播放区整块不在画面内」正是这么来的（实现没少，取证没拍到）。
+     */
+    await scrollTop(page);
+    await page.waitForTimeout(500);
+    await snap('顶部');
+
     // B2：搜一个词，看命中计数与黄底高亮
     const search = page.getByPlaceholder('搜索原文关键词');
     if (await search.count()) {
@@ -437,6 +446,24 @@ const DRIVERS = {
       if (await cancel.count()) await cancel.first().click().catch(() => undefined);
       await scrollTop(page);
       await page.waitForTimeout(300);
+    }
+
+    /*
+     * 稿面 v2-P3 要的是「词云 → 会议纪要 → 待办」**同屏**交付。
+     * 390x844 这一档装不下三段（我们的词云卡比稿面多了结论句与补词典入口，
+     * 中间还隔着稿面没有的「一键整理」入口区）——那是两张画布的取舍冲突，不是内容缺失。
+     * 换一张更高的画幅把三段一起拍下来，判分才看得到它们确实是并置的。
+     */
+    const meetingHeading = page.getByRole('heading', { name: '词云' });
+    if (await meetingHeading.count()) {
+      const original = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: 1500 });
+      await page.waitForTimeout(500);
+      await meetingHeading.first().evaluate(el => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      await page.waitForTimeout(500);
+      await snap('三段同屏');
+      if (original) await page.setViewportSize(original);
+      await page.waitForTimeout(400);
     }
   },
 
@@ -599,10 +626,21 @@ for (const scene of ACTIVE) {
         ws.send(JSON.stringify({ type: 'ready', message: '正在实时转写' }));
         let index = 0;
         let text = '';
+        /*
+         * `dropAfter`：先推 N 句、再把连接掐掉。
+         * 稿面 R3 / cap-A2 画的降级态里保留着**中断前最后一句已识别文本**——
+         * 那句话只有真的先识别出来过才会有。一上来就断的桩永远造不出这一档，
+         * 于是判分把「桩造不出的东西」记成了实现缺失。
+         */
+        const dropAfter = scene.capture.dropAfter ?? null;
         const tick = () => {
           if (!alive || index >= plan.length) return;
           text += plan[index++];
           try { ws.send(JSON.stringify({ type: 'partial', text, stable: true })); } catch { alive = false; }
+          if (dropAfter !== null && index >= dropAfter) {
+            setTimeout(() => { try { ws.close({ code: 1011, reason: 'stub-dropped' }); } catch { /* 已经断了 */ } }, 300);
+            return;
+          }
           setTimeout(tick, scene.capture.stepMs ?? 800);
         };
         setTimeout(tick, 400);

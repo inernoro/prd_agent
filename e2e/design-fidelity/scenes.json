@@ -233,7 +233,10 @@
     ],
     "audioMeta": {
       "transcribe_style_key": "meeting"
-    }
+    },
+    "drive": [
+      "top"
+    ]
   },
   {
     "id": "no-speech",
@@ -344,7 +347,10 @@
     ],
     "audioMeta": {
       "transcribe_style_key": "meeting"
-    }
+    },
+    "drive": [
+      "top"
+    ]
   },
   {
     "id": "stalled",
@@ -518,7 +524,7 @@
   {
     "id": "capture-degraded",
     "board": "cap-A2 / v2-R3",
-    "note": "实时转写连不上：按真实退避重连（800ms / 4s / 15s），卡上给中断时刻与倒计时。顶部横幅归「上传通道断了」那一档（稿面 R3），这一档不出现——稿面 A2 也没画它",
+    "note": "先识别出三句、再把实时通道掐掉：稿面 R3 / cap-A2 的降级卡里保留着中断前最后一句已识别文本，一上来就断造不出这一档",
     "url": "/document-store?store=store-demo",
     "sections": false,
     "settleMs": 6000,
@@ -530,8 +536,14 @@
       "capture"
     ],
     "capture": {
-      "live": false,
-      "recordMs": 9000
+      "live": [
+        "先说结论，导入是这一版最大的漏斗。",
+        "我们看了 312 个新账号，第 7 天只剩 41%。",
+        "第一组用户在第 7 天有明显掉落，主要卡在导入环节。"
+      ],
+      "recordMs": 11000,
+      "dropAfter": 3,
+      "stepMs": 600
     },
     "expect": [
       "实时原文暂时不可用",

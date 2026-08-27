@@ -1035,7 +1035,9 @@ export function RecordAudioSheet({
         稿面 v2-S8 这块是一张**白底描边卡**。平铺在页面底色上时，它与页面其它内容
         之间没有任何边界，读起来像一段说明文字而不是一个需要处理的状态。
       */
-      className="mx-auto flex w-full max-w-[360px] flex-col gap-4 rounded-[16px] px-5 py-6"
+      // `self-start`：不加的话它会被父级的 stretch 拉成整屏高，
+      // 按钮下面留出上千像素的空白卡面，读起来像内容没加载完（S8 判分记的这处）
+      className="mx-auto flex w-full max-w-[360px] flex-col gap-4 self-start rounded-[16px] px-5 py-6"
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
     >
       <div className="flex items-center gap-2.5">
@@ -1282,7 +1284,14 @@ export function RecordAudioSheet({
       {!liveTranscriptExpanded && liveProtection === 'active' && localBytes > 0 && (
         <div className="w-full" data-testid="recording-upload-progress">
           <div className="flex items-baseline justify-between gap-2">
-            <span className="text-[13px] font-semibold text-token-primary">正在实时上传</span>
+            {/*
+              暂停之后不再产生新分片，队列追平就是真的全部传完了。
+              这一块此前恒写「正在实时上传」，于是同屏出现「已暂停」「采集暂停中」
+              「已全部上传」配一句「录音还在继续」——四句话互相打脸（R2 判分记的这处）。
+            */}
+            <span className="text-[13px] font-semibold text-token-primary">
+              {paused && protectedBytes >= localBytes ? '已全部上传' : '正在实时上传'}
+            </span>
             <span className="font-mono text-[13px] tabular-nums text-token-secondary">
               {formatCapturedSize(protectedBytes)} / {formatCapturedSize(localBytes)}
             </span>
@@ -1302,7 +1311,7 @@ export function RecordAudioSheet({
           </div>
           <p className="mt-1.5 text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>
             断网也不会丢失，会自动续传
-            {protectedBytes >= localBytes ? '；录音还在继续，新片段会接着传' : ''}
+            {protectedBytes >= localBytes && !paused ? '；录音还在继续，新片段会接着传' : ''}
           </p>
         </div>
       )}

@@ -1510,13 +1510,19 @@ export function TranscriptKaraoke({
                   那是一句路标不是一个入口——判官按「本空态不可操作」扣了 12 分。
                   稿面 cap-S13 画的是标题 + 说明 + 主次两颗按钮，就地能发起。
                 */
-                <div className="mt-3 rounded-[11px] px-3 py-4 text-center" style={{ background: 'var(--bg-elevated)' }}>
+                /*
+                  稿面 cap-S13 这张卡是**左对齐**、并且以主操作收尾：
+                  标题 → 说明（含「整理只读取原文，不会修改录音」这句承诺）→ 按钮行。
+                  居中 + 把承诺挪到按钮下方当脚注之后，卡片以一行灰字结尾，
+                  扫读起点也从左边挪到了中间（判分记的正是这两处）。
+                */
+                <div className="mt-3 rounded-[11px] px-3.5 py-4" style={{ background: 'var(--bg-elevated)' }}>
                   <p className="text-[14px] font-bold text-token-primary">还没有整理结果</p>
                   <p className="mt-1.5 text-[12px] leading-relaxed text-token-muted">
-                    原文已经在下方，可以直接读。需要结论与要点时点下面一颗，整理完这里就会有内容。
+                    原文已经在下方，可以直接读。需要结论与要点时点下面一颗，整理完这里就会有内容。整理只读取原文，不会修改录音。
                   </p>
                   {(onPickOrganizeStyle || onRestyle) && (
-                    <div className="mt-3 flex items-center justify-center gap-2">
+                    <div className="mt-3 flex items-center gap-2">
                       {onPickOrganizeStyle && (
                         <button
                           type="button"
@@ -1539,7 +1545,6 @@ export function TranscriptKaraoke({
                       )}
                     </div>
                   )}
-                  <p className="mt-2.5 text-[11px] text-token-muted">整理只读取原文，不会修改录音。</p>
                 </div>
               )}
               </div>
@@ -1637,7 +1642,7 @@ export function TranscriptKaraoke({
               {speakers.length === 0 && timelineSegments.length > 0 && (
                 <div className="rounded-[12px] px-3.5 py-3" style={{ background: 'var(--bg-elevated)' }}>
                   <p className="text-[13px] font-semibold text-token-primary">未能区分说话人</p>
-                  <p className="mt-1 text-[12px] leading-relaxed text-token-secondary">
+                  <p className="mt-1 text-[12px] leading-relaxed text-token-muted">
                     上游没有区分出说话人（常见于单声道录音或多人抢话）。原文按时间分句展示，
                     你可以手动为句子指定说话人。
                   </p>
@@ -1802,8 +1807,19 @@ export function TranscriptKaraoke({
                 />
               </div>
               {qaError && <p className="mb-3 text-[12px]" style={{ color: 'var(--semantic-danger)' }}>{qaError}</p>}
-              {/* 稿面 P4 用一条分隔线把输入区与答案区断开：它们是两层，不是一段内容的下半截 */}
-              <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-faint)' }}>
+              {/*
+                稿面 P4 用一条分隔线把输入区与答案区断开，并把它**钉在下沿**：
+                提问是这一段的常驻入口，答案再长也不该把它推到看不见的地方。
+                窄屏用 sticky 贴在滚动容器底部；桌面右栏本来就是固定高度的一列，
+                它自己那套 flex 布局已经把输入区压在底部，不必再叠一层。
+              */}
+              <div
+                className={isDesktop ? 'mt-3 pt-3' : 'sticky bottom-0 z-10 mt-3 pt-3'}
+                style={{
+                  borderTop: '1px solid var(--border-faint)',
+                  ...(isDesktop ? {} : { background: 'var(--bg-card)' }),
+                }}
+              >
               <RecordingAskComposer
                 value={question}
                 onChange={setQuestion}

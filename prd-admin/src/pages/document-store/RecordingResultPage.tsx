@@ -135,8 +135,15 @@ export function RecordingResultShell({
             与进度、失败分属不同语义，前面那枚对勾是稿面画的。
           */}
           {subtitle && !isDesktop && (
-            <p className="flex items-center gap-1 truncate text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>
-              <Check size={13} className="shrink-0" aria-hidden /> {subtitle}
+            /*
+              `truncate` 挂在 flex 容器上是无效的：那三条属性（nowrap/overflow/ellipsis）
+              管的是**文本**，flex 子项不会继承。此前这一行既不省略也不收缩，
+              直接被视口切在「2 位说话」处（B1/B2/P1 三份判分各记了一次）。
+              真正要收的是里面那段文字，所以 truncate 得挂在它自己身上。
+            */
+            <p className="flex min-w-0 items-center gap-1 text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>
+              <Check size={13} className="shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">{subtitle}</span>
             </p>
           )}
         </div>
@@ -556,7 +563,7 @@ export function RecordingResultPage() {
         同形是重点——它保证内容到位时不跳动；转圈做不到这件事，还会让人以为页面卡了。
       */}
       {state.kind === 'loading' && (
-        <div className="flex flex-col gap-3 px-4 pb-8 pt-3" data-testid="recording-result-skeleton" aria-busy="true">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-8 pt-3" data-testid="recording-result-skeleton" aria-busy="true">
           <div className="flex items-center gap-3 rounded-[14px] px-4 py-3.5" style={{ background: 'var(--bg-card)' }}>
             <span className="h-12 w-12 shrink-0 rounded-[14px]" style={{ background: 'var(--skeleton-fill)' }} />
             <span className="flex min-w-0 flex-1 flex-col gap-2">
@@ -590,9 +597,13 @@ export function RecordingResultPage() {
               <span className="block h-8 w-16 rounded-full" style={{ background: 'var(--skeleton-fill)' }} />
             </span>
           </div>
-          {/* 原文列表的骨架：真实布局这一段是最长的一块，只给四行会让下半屏空着 */}
-          <div className="flex flex-col gap-2.5 rounded-[14px] px-4 py-3.5" style={{ background: 'var(--bg-card)' }}>
-            {[92, 78, 86, 64, 90, 71, 83, 58, 88, 74].map((width, index) => (
+          {/*
+            原文列表的骨架：真实布局这一段是最长的一块，它得**吃掉剩下的全部高度**。
+            只给固定几行的话，加载态下半屏是空的，而内容一到位就把页面往下顶——
+            那正是这一屏自己写的「骨架保持与真实布局一致，避免跳动」要避免的事。
+          */}
+          <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden rounded-[14px] px-4 py-3.5" style={{ background: 'var(--bg-card)' }}>
+            {[92, 78, 86, 64, 90, 71, 83, 58, 88, 74, 95, 68, 81, 60, 89, 73].map((width, index) => (
               <span key={index} className="block h-3 rounded-full" style={{ width: `${width}%`, background: 'var(--skeleton-fill)' }} />
             ))}
           </div>

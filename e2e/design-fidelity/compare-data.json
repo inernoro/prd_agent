@@ -65,8 +65,8 @@
       "board": "v2-P3",
       "canvas": "VOICE TO NOTE",
       "label": "P3 · 浅色 · 词云 + 会议纪要 + 待办",
-      "wide": false,
-      "shot": "result.light.词云",
+      "wide": true,
+      "shot": "result.light.三段同屏",
       "driven": "下滚到词云分区",
       "score": null,
       "note": ""
@@ -156,7 +156,7 @@
       "canvas": "VOICE TO NOTE",
       "label": "S6 自动重试中",
       "wide": false,
-      "shot": "auto-retry.light",
+      "shot": "auto-retry.light.顶部",
       "driven": "第 3 次重试排在 8 秒后",
       "score": null,
       "note": ""
@@ -236,7 +236,7 @@
       "canvas": "VOICE CAPTURE",
       "label": "B1 · 浅色 · 顶部栏 + 播放区 + 原文",
       "wide": false,
-      "shot": "result.light",
+      "shot": "result.light.顶部",
       "driven": "打开结果页",
       "score": null,
       "note": ""
@@ -336,7 +336,7 @@
       "canvas": "VOICE CAPTURE",
       "label": "S7 自动重试中",
       "wide": false,
-      "shot": "auto-retry.light",
+      "shot": "auto-retry.light.顶部",
       "driven": "第 3 次重试排在 8 秒后",
       "score": null,
       "note": ""
@@ -346,7 +346,7 @@
       "canvas": "VOICE CAPTURE",
       "label": "S8 需手动重试",
       "wide": false,
-      "shot": "fail-derived.light",
+      "shot": "fail-derived.light.顶部",
       "driven": "ERR_CODEC，自动重试已耗尽",
       "score": null,
       "note": ""
