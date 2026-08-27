@@ -65,12 +65,31 @@
  * 两条边界都记在 `doc/debt.cds.md`。
  */
 
-/** 一类基础设施服务：账号口令在它自己容器 env 的哪两个键里，以及它的 URI scheme。 */
-interface CredentialSource {
-  /** 用户名所在的 env 键；留空表示这类服务没有用户名概念（例如只设口令的 redis）。 */
+/**
+ * 一个账号：用户名与口令分别在哪个 env 键里。
+ *
+ * 必须成对绑定，不能拆成「用户名候选表 + 口令候选表」各自取第一个命中的——
+ * mysql 同时带着业务账号（`MYSQL_USER` / `MYSQL_PASSWORD`）和 root 口令
+ * （`MYSQL_ROOT_PASSWORD`）时，分开取会拼出「业务用户名 + root 口令」这种
+ * 根本不存在的账号，而报错只会说「认证失败」。
+ */
+interface CredentialAccount {
+  /** 用户名所在的 env 键；留空表示这个账号的用户名是固定的（见 defaultUser）。 */
   userKey?: string;
-  /** 口令所在的 env 键。 */
+  /** userKey 缺值时用的固定用户名，取自镜像约定的管理员账号名。 */
+  defaultUser?: string;
+  /** 口令所在的 env 键。**它有值** = 这个账号成立。 */
   passwordKey: string;
+}
+
+/** 一类基础设施服务：它可能用哪几个账号，以及它的 URI scheme。 */
+interface CredentialSource {
+  /**
+   * 账号候选，**按优先级**：取第一个「口令键有值」的。
+   *
+   * 顺序即最小权限——业务账号排在管理员账号前面，两个都在时发业务账号。
+   */
+  accounts: readonly CredentialAccount[];
   /** 标准 URI 的 scheme；留空表示这类服务没有公认的 URI 形态，只发 USER/PASSWORD。 */
   scheme?: string;
   /** 给人看的说明，出现在测试与排障里。 */
@@ -78,55 +97,96 @@ interface CredentialSource {
 }
 
 /**
- * 键名来自各官方镜像的约定，不是拍脑袋起的。新增一类服务时照抄它镜像文档里
- * 的键名，并在 `why` 里写清出处。
+ * 键名有两个来源，都不是拍脑袋起的：官方镜像的 env 约定，以及 CDS 自己的
+ * `infra-catalog` 预设（memcached 那种没有官方约定的）。
+ *
+ * ## 这张表必须覆盖认证门禁认可的每一种形态
+ *
+ * `infra-auth-policy.ts` 的门禁说某台库「配了认证」，本表就必须能把那对凭据派生
+ * 出来——否则会出现最难查的一种状态：**门禁放行、服务真的开着认证、而消费方一个
+ * 凭据都收不到**，分支容器照样连不上库。那正是本模块存在的理由。
+ *
+ * 线上真中过：一个项目的 mysql 只设了 `MYSQL_ROOT_PASSWORD`（门禁明确接受这种），
+ * 而本表第一版只认 `MYSQL_USER` / `MYSQL_PASSWORD`，于是那台库一个键都发不出去。
+ *
+ * 两处键名各写一份就会漂（形状 3），所以配了守卫：扫门禁源码里 `hasValue` 认的键，
+ * 逐个断言本表也认。往门禁加别名却忘了加到这里，CI 会红。
  */
 const CREDENTIAL_SOURCES: readonly CredentialSource[] = [
   {
-    userKey: 'MONGO_INITDB_ROOT_USERNAME',
-    passwordKey: 'MONGO_INITDB_ROOT_PASSWORD',
+    accounts: [
+      { userKey: 'MONGO_INITDB_ROOT_USERNAME', passwordKey: 'MONGO_INITDB_ROOT_PASSWORD' },
+      { userKey: 'MONGO_USERNAME', passwordKey: 'MONGO_PASSWORD' },
+      { userKey: 'MONGODB_USERNAME', passwordKey: 'MONGODB_PASSWORD' },
+    ],
     scheme: 'mongodb',
-    why: 'mongo 官方镜像的 root 账号；开了 --auth 之后连接串必须带它',
+    why: 'mongo 的 root 账号（官方镜像键名，外加门禁认可的两种别名）；开了 --auth 之后连接串必须带它',
   },
   {
     // redis 有两种认证：只设口令（--requirepass）与 ACL 用户（--aclfile）。
     // 前者没有用户名，后者有；同一对键名覆盖两种，缺 username 时自然为空。
-    userKey: 'REDIS_USERNAME',
-    passwordKey: 'REDIS_PASSWORD',
+    // 这里**不设 defaultUser**：redis 只设口令时就是「没有用户名」，
+    // 补一个 `default` 反而会让消费方拼出一个它没打算用的 ACL 用户。
+    accounts: [{ userKey: 'REDIS_USERNAME', passwordKey: 'REDIS_PASSWORD' }],
     scheme: 'redis',
     why: 'redis 口令或 ACL 用户；ACL 模式下用户名不可省',
   },
   {
-    userKey: 'MYSQL_USER',
-    passwordKey: 'MYSQL_PASSWORD',
+    accounts: [
+      { userKey: 'MYSQL_USER', passwordKey: 'MYSQL_PASSWORD' },
+      { userKey: 'MARIADB_USER', passwordKey: 'MARIADB_PASSWORD' },
+      { defaultUser: 'root', passwordKey: 'MYSQL_ROOT_PASSWORD' },
+      { defaultUser: 'root', passwordKey: 'MARIADB_ROOT_PASSWORD' },
+      // 只有 root 口令也算配了认证（门禁明确接受，周期备份也固定用 root）。
+      // 排在业务账号后面：两个都在时发权限小的那个。
+    ],
     scheme: 'mysql',
-    why: 'mysql 官方镜像的业务账号（不是 root）',
+    why: 'mysql / mariadb 的业务账号，没有业务账号时退到 root',
   },
   {
-    userKey: 'POSTGRES_USER',
-    passwordKey: 'POSTGRES_PASSWORD',
+    // postgres 的超级用户名可以不设，镜像默认就叫 postgres。
+    accounts: [
+      { userKey: 'POSTGRES_USER', defaultUser: 'postgres', passwordKey: 'POSTGRES_PASSWORD' },
+      { userKey: 'POSTGRES_USER', defaultUser: 'postgres', passwordKey: 'PGPASSWORD' },
+    ],
     scheme: 'postgresql',
-    why: 'postgres 官方镜像的超级用户',
+    why: 'postgres 超级用户；用户名不设时镜像默认是 postgres',
   },
   {
-    userKey: 'RABBITMQ_DEFAULT_USER',
-    passwordKey: 'RABBITMQ_DEFAULT_PASS',
+    accounts: [{ userKey: 'RABBITMQ_DEFAULT_USER', passwordKey: 'RABBITMQ_DEFAULT_PASS' }],
     scheme: 'amqp',
     why: 'rabbitmq 官方镜像的默认账号',
   },
   {
-    userKey: 'MINIO_ROOT_USER',
-    passwordKey: 'MINIO_ROOT_PASSWORD',
-    why: 'minio 的 root 账号；S3 客户端不用 URI，只发 USER/PASSWORD',
+    accounts: [
+      { userKey: 'MINIO_ROOT_USER', passwordKey: 'MINIO_ROOT_PASSWORD' },
+      { userKey: 'MINIO_ACCESS_KEY', passwordKey: 'MINIO_SECRET_KEY' },
+    ],
+    why: 'minio 的 root 账号（含旧版 ACCESS_KEY/SECRET_KEY 别名）；S3 客户端不用 URI，只发 USER/PASSWORD',
   },
   {
     // 键名照抄 infra-catalog 的 memcached 预设（它写的是 MEMCACHED_USER，
     // 不是别处常见的 MEMCACHED_USERNAME）。memcached 没有官方镜像 env 约定，
-    // 这一对是 CDS 自己定的，所以 SSOT 就是那个预设——写错一个字母的后果是
-    // 只发口令不发用户名，正好是本文件反复强调「不能发半套凭据」的那种坏。
-    userKey: 'MEMCACHED_USER',
-    passwordKey: 'MEMCACHED_PASSWORD',
+    // 这一对是 CDS 自己定的，所以 SSOT 就是那个预设。
+    accounts: [{ userKey: 'MEMCACHED_USER', passwordKey: 'MEMCACHED_PASSWORD' }],
     why: 'memcached 的认证账号（键名以 infra-catalog 预设为准）；客户端各家格式不一，只发 USER/PASSWORD',
+  },
+  {
+    // 下面三类门禁都认，之前本表整个没有——门禁放行而消费方收不到凭据，
+    // 与 mysql 只有 root 口令是同一种坏。
+    accounts: [
+      { defaultUser: 'sa', passwordKey: 'MSSQL_SA_PASSWORD' },
+      { defaultUser: 'sa', passwordKey: 'SA_PASSWORD' },
+    ],
+    why: 'sqlserver 的 sa 账号；用户名固定，只有口令写在 env 里',
+  },
+  {
+    accounts: [{ userKey: 'CLICKHOUSE_USER', defaultUser: 'default', passwordKey: 'CLICKHOUSE_PASSWORD' }],
+    why: 'clickhouse 账号；用户名不设时镜像默认是 default',
+  },
+  {
+    accounts: [{ defaultUser: 'elastic', passwordKey: 'ELASTIC_PASSWORD' }],
+    why: 'elasticsearch 的内置 elastic 账号；用户名固定，只有口令写在 env 里',
   },
 ];
 
@@ -165,15 +225,22 @@ export function deriveInfraCredentialEnv(
   const prefix = cdsEnvPrefix(serviceId);
 
   for (const source of CREDENTIAL_SOURCES) {
-    const password = env[source.passwordKey];
-    // 没有口令就不是「开了认证」，什么都不发——别造出空口令让消费方以为配好了。
-    if (!password) continue;
-    // 调用方没解析模板：发字面占位符比不发更坏，整类跳过。
-    if (looksUnresolved(password)) continue;
-    const rawUser = source.userKey ? (env[source.userKey] || '') : '';
-    // 用户名单独判：口令解析出来了、用户名没有，是半套凭据，同样不能发。
+    // 账号候选按优先级取第一个「口令有值」的；用户名与口令在同一个候选里成对取，
+    // 不跨候选拼（否则 mysql 会拼出「业务用户名 + root 口令」这种不存在的账号）。
+    const account = source.accounts.find((a) => {
+      const pwd = env[a.passwordKey];
+      // 没有口令就不是「开了认证」——别造出空口令让消费方以为配好了。
+      // 还带着 `${...}` 说明调用方没解析模板：发字面占位符比不发更坏，同样不算。
+      return Boolean(pwd) && !looksUnresolved(pwd);
+    });
+    if (!account) continue;
+
+    const password = env[account.passwordKey];
+    const rawUser = account.userKey ? (env[account.userKey] || '') : '';
+    // 用户名单独判：口令解出来了、用户名还是占位符 = 半套凭据，整类跳过。
     if (looksUnresolved(rawUser)) continue;
-    const user = rawUser;
+    // 用户名可以省（镜像有默认管理员名），但不能是空字符串——空的比没有更坏。
+    const user = rawUser || account.defaultUser || '';
 
     if (user) out[`CDS_${prefix}_USER`] = user;
     out[`CDS_${prefix}_PASSWORD`] = password;
@@ -192,7 +259,9 @@ export function deriveInfraCredentialEnv(
 
 /** 给排障与测试用：当前认得出哪几类服务的凭据，以及为什么。 */
 export function describeCredentialSources(): readonly string[] {
-  return CREDENTIAL_SOURCES.map((s) => `${s.passwordKey} -> ${s.why}`);
+  return CREDENTIAL_SOURCES.map(
+    (s) => `${s.accounts.map((a) => a.passwordKey).join(' | ')} -> ${s.why}`,
+  );
 }
 
 /**
@@ -204,5 +273,19 @@ export function describeCredentialSources(): readonly string[] {
  * 而不是去扫源码里的字面量；扫字面量的守卫在「改了预设、忘了改表」时照样绿。
  */
 export function credentialSourceKeys(): readonly { userKey?: string; passwordKey: string }[] {
-  return CREDENTIAL_SOURCES.map((s) => ({ userKey: s.userKey, passwordKey: s.passwordKey }));
+  return CREDENTIAL_SOURCES.flatMap(
+    (s) => s.accounts.map((a) => ({ userKey: a.userKey, passwordKey: a.passwordKey })),
+  );
+}
+
+/** 本表认得出的全部 env 键名（用户名与口令都算），给「与门禁对齐」那条守卫用。 */
+export function knownCredentialEnvKeys(): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const s of CREDENTIAL_SOURCES) {
+    for (const a of s.accounts) {
+      if (a.userKey) keys.add(a.userKey);
+      keys.add(a.passwordKey);
+    }
+  }
+  return keys;
 }

@@ -5,6 +5,7 @@ import {
   cdsEnvPrefix,
   credentialSourceKeys,
   deriveInfraCredentialEnv,
+  knownCredentialEnvKeys,
   describeCredentialSources,
 } from '../../src/services/infra-credential-env.js';
 import { INFRA_CATALOG } from '../../src/services/infra-catalog.js';
@@ -171,6 +172,59 @@ describe('从基础设施服务派生连接凭据', () => {
     expect(checked, 'catalog 里没有任何预设命中凭据表，这条守卫在空跑').toBeGreaterThan(0);
   });
 
+  it('只设了 root 口令的 mysql 也要发得出凭据（门禁明确接受这种）', () => {
+    // 线上真有一台这样的库：只有 MYSQL_ROOT_PASSWORD，没有业务账号。
+    // 门禁放行、服务真开着认证、而消费方一个键都收不到——最难查的一种状态。
+    const out = deriveInfraCredentialEnv('mysql', {
+      MYSQL_DATABASE: 'app', MYSQL_ROOT_PASSWORD: 'rp',
+    }, at);
+    expect(out.CDS_MYSQL_USER).toBe('root');
+    expect(out.CDS_MYSQL_PASSWORD).toBe('rp');
+  });
+
+  it('业务账号与 root 口令同在时发业务账号，且不跨账号拼', () => {
+    // 拆成「用户名候选表 + 口令候选表」各取第一个命中的，就会拼出
+    // 「业务用户名 + root 口令」这种根本不存在的账号。
+    const out = deriveInfraCredentialEnv('mysql', {
+      MYSQL_USER: 'app', MYSQL_PASSWORD: 'ap', MYSQL_ROOT_PASSWORD: 'rp',
+    }, at);
+    expect(out.CDS_MYSQL_USER).toBe('app');
+    expect(out.CDS_MYSQL_PASSWORD).toBe('ap');
+    // 只设了业务用户名却没有业务口令时，退到 root 账号——用户名也要跟着换成 root。
+    const fallback = deriveInfraCredentialEnv('mysql', {
+      MYSQL_USER: 'app', MYSQL_ROOT_PASSWORD: 'rp',
+    }, at);
+    expect(fallback.CDS_MYSQL_USER).toBe('root');
+    expect(fallback.CDS_MYSQL_PASSWORD).toBe('rp');
+  });
+
+  it('用户名可以省的服务用镜像默认名，不发空用户名', () => {
+    expect(deriveInfraCredentialEnv('postgres', { POSTGRES_PASSWORD: 'p' }, at).CDS_POSTGRES_USER)
+      .toBe('postgres');
+    expect(deriveInfraCredentialEnv('mssql', { MSSQL_SA_PASSWORD: 'p' }, at).CDS_MSSQL_USER)
+      .toBe('sa');
+    expect(deriveInfraCredentialEnv('es', { ELASTIC_PASSWORD: 'p' }, at).CDS_ES_USER)
+      .toBe('elastic');
+    expect(deriveInfraCredentialEnv('ch', { CLICKHOUSE_PASSWORD: 'p' }, at).CDS_CH_USER)
+      .toBe('default');
+    // redis 只设口令时是**真的没有用户名**，不该凭空补一个。
+    expect(deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p' }, at))
+      .not.toHaveProperty('CDS_REDIS_USER');
+  });
+
+  it('门禁认可的别名也要认（mongo / minio / mariadb / pg 的第二套键名）', () => {
+    expect(deriveInfraCredentialEnv('mongodb', {
+      MONGO_USERNAME: 'u', MONGO_PASSWORD: 'p',
+    }, at).CDS_MONGODB_USER).toBe('u');
+    expect(deriveInfraCredentialEnv('minio', {
+      MINIO_ACCESS_KEY: 'ak', MINIO_SECRET_KEY: 'sk',
+    }, at).CDS_MINIO_USER).toBe('ak');
+    expect(deriveInfraCredentialEnv('maria', {
+      MARIADB_USER: 'u', MARIADB_PASSWORD: 'p',
+    }, at).CDS_MARIA_PASSWORD).toBe('p');
+    expect(deriveInfraCredentialEnv('pg', { PGPASSWORD: 'p' }, at).CDS_PG_PASSWORD).toBe('p');
+  });
+
   it('每一类都写得出「为什么认这两个键」', () => {
     const described = describeCredentialSources();
     expect(described.length).toBeGreaterThan(0);
@@ -182,6 +236,42 @@ describe('从基础设施服务派生连接凭据', () => {
  * 判据建好了没人调用，是本仓库反复栽过的形状（形状 2）。这次事故本身就是它的
  * 另一半：有人把 profile 改成引用 `${CDS_REDIS_URL}`，而那个名字从来没被生产过。
  */
+describe('与认证门禁对齐', () => {
+  /**
+   * 门禁说「这台库配了认证」，凭据派生就必须能把那对凭据发出去。做不到就是最难查的
+   * 一种状态：门禁放行、服务真开着认证、消费方一个键都收不到，分支照样连不上库。
+   * 线上真中过（只有 MYSQL_ROOT_PASSWORD 的那台 mysql）。
+   *
+   * 两处键名各写一份必然漂（形状 3）。理想解是抽一份共享的键名表，两边都读它；
+   * 那要动认证门禁本身，而门禁是安全件、这个 PR 已冻结，所以先用守卫钉住：
+   * 扫门禁源码里 `hasValue(env, ...)` 认的键，逐个断言本表也认。
+   * 往门禁加别名却忘了加到这里，这条会红。欠的那次收敛记在 doc/debt.cds.md。
+   */
+  const policySource = readFileSync(join(process.cwd(), 'src/services/infra-auth-policy.ts'), 'utf8');
+
+  it('门禁 hasValue 认的每个 env 键，凭据表都认得出来', () => {
+    const known = knownCredentialEnvKeys();
+    const calls = [...policySource.matchAll(/hasValue\(\s*env\s*,([^)]*)\)/g)];
+    // 判据自己不能空跑：门禁改了写法（比如不再用 hasValue）就该红，而不是静默通过。
+    expect(calls.length, '门禁源码里一个 hasValue(env, ...) 都没扫到，这条守卫在空跑')
+      .toBeGreaterThan(3);
+
+    const missing: string[] = [];
+    for (const call of calls) {
+      for (const m of call[1].matchAll(/'([A-Za-z0-9_.]+)'/g)) {
+        const key = m[1];
+        // 带点的是 elasticsearch 那种 yaml 式开关（xpack.security.enabled），不是凭据键。
+        if (key.includes('.')) continue;
+        if (!known.has(key)) missing.push(key);
+      }
+    }
+    expect(
+      [...new Set(missing)],
+      '门禁认这些键算「配了认证」，凭据表却认不出来 —— 这些库会门禁放行但消费方收不到凭据',
+    ).toEqual([]);
+  });
+});
+
 describe('接线', () => {
   const stateSource = readFileSync(join(process.cwd(), 'src/services/state.ts'), 'utf8');
 
