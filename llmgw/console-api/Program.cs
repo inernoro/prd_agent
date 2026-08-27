@@ -14034,21 +14034,36 @@ static PoolItem ApplyPoolMemberResolution(PoolItem item, PoolResolutionIndex ind
 /// </summary>
 static string ClassifyUnavailableReason(PoolModelItem model, PoolResolutionIndex index)
 {
-    // 中继成员的 PlatformId 不是平台 id，对它而言「上游」就是那条中继本身
-    var isExchangeMember = string.Equals(model.PlatformId, "__exchange__", StringComparison.Ordinal)
-        || index.ExistingExchanges.Any(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal));
+    // 中继成员的 PlatformId 不是平台 id，对它而言「上游」就是那条中继本身，
+    // 「模型」是中继里那条 Models 映射。两者各有独立的 Enabled，必须分开看：
+    // 合成一个结论就会叫运维去启用一个本来就启用着的中继（形状 1：判据比它该管的范围窄）。
+    var exchangeDoc = index.ExistingExchanges
+        .FirstOrDefault(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal));
+    var isAnyExchangeMember = string.Equals(model.PlatformId, "__exchange__", StringComparison.Ordinal);
 
-    if (isExchangeMember)
+    if (isAnyExchangeMember)
     {
-        // 存在性必须忽略嵌套 Enabled：中继里那条模型映射被停用，不等于上游没了。
+        // __exchange__ 没点名上游，只能问「有没有哪条中继认这个模型」。
+        // 启用着的中继里能找到这条映射，却仍解析不到 → 只可能是映射本身被停用。
+        if (index.Exchanges.Any(e => GatewayExchangeSupportsModel(e, model.ModelId, ignoreEntryDisabled: true)))
+            return "model-disabled";
+        return index.ExistingExchanges.Any(e => GatewayExchangeSupportsModel(e, model.ModelId, ignoreEntryDisabled: true))
+            ? "upstream-disabled"
+            : "upstream-missing";
+    }
+
+    if (exchangeDoc is not null)
+    {
+        // 存在性必须忽略嵌套 Enabled：映射被停用不等于上游没了。
         // 走 IsResolvablePoolMemberKey 会连带套上「能不能用」的过滤，
         // 于是一条只是被停用的映射被说成「上游已不存在」，给的下一步就错了。
-        var exchangeHasEntry = string.Equals(model.PlatformId, "__exchange__", StringComparison.Ordinal)
-            ? index.ExistingExchanges.Any(e => GatewayExchangeSupportsModel(e, model.ModelId, ignoreEntryDisabled: true))
-            : index.ExistingExchanges
-                .Where(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal))
-                .Any(e => GatewayExchangeSupportsModel(e, model.ModelId, ignoreEntryDisabled: true));
-        return exchangeHasEntry ? "upstream-disabled" : "upstream-missing";
+        if (!GatewayExchangeSupportsModel(exchangeDoc, model.ModelId, ignoreEntryDisabled: true))
+            return "model-missing";
+        // 中继在、映射也在，却解析不到：中继整条停用 → upstream-disabled；
+        // 中继启用着 → 只剩「这条映射被停用」这一种可能。
+        return index.Exchanges.Any(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal))
+            ? "model-disabled"
+            : "upstream-disabled";
     }
 
     var existsAtAll = IsResolvablePoolMemberKey(

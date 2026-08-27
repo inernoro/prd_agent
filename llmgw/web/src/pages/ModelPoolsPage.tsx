@@ -115,25 +115,25 @@ function memberFaultPhrase(member: PoolModelInfo): string {
 }
 
 /**
- * 这个成员是「被人停用」而不是「被健康判定关掉」吗？
+ * 「恢复接单」对这个成员有没有用。
  *
- * 两者的下一步完全相反：真失败关掉的成员点「恢复接单」就能重新排队，
- * 上游或模型被停用的成员点了也没用——调度侧只挑 Enabled 的上游与模型，
- * 停用状态下永远不会有真实请求打到它，界面会永远停在「验证中」等一个不会来的结果。
- * 所以停用态既不给恢复按钮，也不许说「恢复后即可继续承接」，
- * 只指路去把那个具体资源重新启用。
- *
- * 判据只有这一份，按钮和文案共用，避免两处各自漂移（形状 3）。
+ * 后端只对**解析不到**的成员给 unavailableReason（指不到上游 / 指不到模型，
+ * 无论是没了还是被停用）。解析不到就意味着调度侧永远不会把真实请求发给它，
+ * 而「恢复接单」只翻健康位——点下去界面会永久停在「验证中」等一个不会来的结果。
+ * 所以判据是「有没有归因」，不是「归因是哪一种」：后者每加一个归因就得改一次，
+ * 迟早漏掉某一种（形状 1：判据比它该管的范围窄）。
  */
-function memberBlockedByDisabled(member: PoolModelInfo): boolean {
-  return member.unavailableReason === 'upstream-disabled' || member.unavailableReason === 'model-disabled';
+function memberCanRecover(member: PoolModelInfo): boolean {
+  return !member.unavailableReason;
 }
 
-/** 坏成员的下一步：能不能救、去哪救。与 memberFaultPhrase 拼成一句完整归因。 */
+/** 坏成员的下一步：能不能救、怎么救。与 memberFaultPhrase 拼成一句完整归因。 */
 function memberNextStep(member: PoolModelInfo): string {
   if (member.removable) return '这个顺位永远接不到调用';
-  if (member.unavailableReason === 'upstream-disabled') return '去上游页把这个上游启用才会重新接单';
-  if (member.unavailableReason === 'model-disabled') return '去模型页把这个模型启用才会重新接单';
+  if (member.unavailableReason === 'upstream-disabled') return '把这个上游重新启用后才会接单';
+  if (member.unavailableReason === 'model-disabled') return '把这个模型重新启用后才会接单';
+  if (member.unavailableReason === 'upstream-missing') return '重新接上上游后才会接单';
+  if (member.unavailableReason === 'model-missing') return '把这个模型接回来后才会接单';
   return '恢复后即可继续承接';
 }
 
@@ -1559,7 +1559,7 @@ function PoolDetail({
                     <select value={(member.priceCurrency || 'CNY').toUpperCase()} onChange={(event) => onCurrencyChange(pool.id, member, event.target.value)} style={smallSelectStyle(74)} aria-label="价格币种"><option value="CNY">CNY</option><option value="USD">USD</option></select>
                     <input value={memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities)} onChange={(event) => onParameterChange(key, event.target.value)} placeholder="字段能力，例如 seed" list="gw-parameter-capability-options" style={{ ...inputStyle, flex: '1 1 160px' }} aria-label="字段级参数能力" />
                     <span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.tight }}>
-                      {member.healthStatus === 2 && !isVerifying && !memberBlockedByDisabled(member) ? <Button size="sm" variant="secondary" disabled={busyId === key} onClick={() => void onRecoverMember(pool, member)}>恢复接单</Button> : null}
+                      {member.healthStatus === 2 && !isVerifying && memberCanRecover(member) ? <Button size="sm" variant="secondary" disabled={busyId === key} onClick={() => void onRecoverMember(pool, member)}>恢复接单</Button> : null}
                       <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSaveMember(pool, member)}>保存</Button>
                       {removeButton}
                     </span>

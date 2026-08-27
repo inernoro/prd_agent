@@ -283,7 +283,7 @@ public class GatewayLegacySweepGuardTests
         Assert.Contains("index.ExistingPlatformIds", fn);
         Assert.Contains("index.ExistingModels", fn);
         // 中继成员的「上游」是那条中继本身，不是平台
-        Assert.Contains("isExchangeMember", fn);
+        Assert.Contains("exchangeDoc", fn);
         // 中继的存在性必须忽略嵌套 Enabled：映射被停用不等于上游没了。
         // 沿用「能不能用」那套过滤，会把只是被停用的映射说成「上游已不存在」，
         // 给运维的下一步就从「去启用」错成「去重建」。
@@ -296,6 +296,57 @@ public class GatewayLegacySweepGuardTests
         var gateLine = page.Split('\n').Single(line => line.Contains("const removableDebris", StringComparison.Ordinal));
         Assert.DoesNotContain("unavailableReason", gateLine);
         Assert.Contains("member.removable === true", gateLine);
+    }
+
+    [Fact]
+    public void 中继整条停用与它里面那条映射停用必须分开()
+    {
+        // 中继有两个各自独立的 Enabled：中继文档自己一个，Models 里那条映射一个。
+        // 合成一个结论，就会叫运维去启用一条本来就启用着的中继——归因指错了人，
+        // 下一步照着做也修不好（形状 1：判据比它该管的范围窄）。
+        var fn = FunctionSource("static string ClassifyUnavailableReason");
+
+        // 点名中继的那一支：从它开始，到平台分支之前为止。断言切在这一支里，
+        // 不能拿整个函数去 Contains——"model-disabled" 在平台分支里也有一份，
+        // 那样即使这一支被掏空也照样绿（形状 6：判据读到的不是它要判的那段）。
+        var namedStart = fn.IndexOf("if (exchangeDoc is not null)", StringComparison.Ordinal);
+        Assert.True(namedStart >= 0, "点名中继的分支不见了");
+        var namedEnd = fn.IndexOf("var existsAtAll", StringComparison.Ordinal);
+        Assert.True(namedEnd > namedStart, "平台分支不见了");
+        var named = fn[namedStart..namedEnd];
+
+        // 存在性查不带启用过滤的那套索引，启用与否查带过滤的那套；两套都得用上
+        Assert.Contains("ignoreEntryDisabled: true", named);
+        Assert.Contains("index.Exchanges.Any(", named);
+        // 三种结论各自出现：映射没了 / 中继整条停用 / 只有映射停用
+        Assert.Contains("\"model-missing\"", named);
+        Assert.Contains("\"upstream-disabled\"", named);
+        Assert.Contains("\"model-disabled\"", named);
+
+        // __exchange__ 那一支同样要分开：它没点名上游，只能问「有没有启用着的中继认这个模型」
+        var anyStart = fn.IndexOf("if (isAnyExchangeMember)", StringComparison.Ordinal);
+        Assert.True(anyStart >= 0, "__exchange__ 的分支不见了");
+        var any = fn[anyStart..namedStart];
+        Assert.Contains("index.Exchanges.Any(", any);
+        Assert.Contains("\"model-disabled\"", any);
+        Assert.Contains("\"upstream-disabled\"", any);
+    }
+
+    [Fact]
+    public void 解析不到的成员一律不给恢复接单()
+    {
+        // 后端只对解析不到的成员给 unavailableReason，而调度侧永远不会把真实请求
+        // 发给这种成员。「恢复接单」只翻健康位，点下去界面会永久停在「验证中」
+        // 等一个不会来的结果。判据必须是「有没有归因」，不是「归因是哪一种」——
+        // 后者每加一种归因就得改一次，迟早漏掉某一种。
+        var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
+        var recoverLine = page.Split('\n').Single(line => line.Contains(">恢复接单<", StringComparison.Ordinal));
+        Assert.Contains("memberCanRecover(member)", recoverLine);
+        var predicate = page[page.IndexOf("function memberCanRecover", StringComparison.Ordinal)..];
+        predicate = predicate[..predicate.IndexOf('}')];
+        Assert.Contains("!member.unavailableReason", predicate);
+        // 逐个列举归因种类的老写法不许回来
+        Assert.DoesNotContain("upstream-disabled", predicate);
     }
 
     private static int CountOccurrences(string haystack, string needle)
