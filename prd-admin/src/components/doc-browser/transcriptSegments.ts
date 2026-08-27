@@ -116,6 +116,35 @@ export function replaceTranscriptSegmentText(md: string, index: number, nextText
 }
 
 /**
+ * 给第 index 条句子指定说话人（设计稿 cap-S11「手动标记说话人」的落点）。
+ *
+ * 上游没能区分说话人时，原文里那一段是「时间戳 + 正文」，中间没有 `[名字]`。
+ * 这个函数把名字补进去；传空名字则是把已有的标签去掉。只动那一行，
+ * 时间戳与全文之外的摘要一个字都不碰（与 replaceTranscriptSegmentText 同一套口径）。
+ */
+export function assignTranscriptSegmentSpeaker(md: string, index: number, speaker: string): string {
+  if (index < 0) return md;
+  const marker = '## 转录全文';
+  const markerIdx = md.indexOf(marker);
+  const bodyStart = markerIdx >= 0 ? markerIdx + marker.length : 0;
+  const head = md.slice(0, bodyStart);
+  const lines = md.slice(bodyStart).split('\n');
+  const name = speaker.trim();
+  let cursor = -1;
+
+  const updated = lines.map((raw) => {
+    const line = raw.trim();
+    const timed = TS_LINE_RE.exec(line);
+    if (!timed) return raw;
+    cursor += 1;
+    if (cursor !== index) return raw;
+    const label = name ? ` [${name}]` : '';
+    return `**[${timed[1]} - ${timed[2]}]**${label} ${timed[4].trim()}`;
+  });
+  return head + updated.join('\n');
+}
+
+/**
  * 说话人来源（后端 SubtitleFormatter.FormatSpeakerSourceNote 写进笔记的那一行）。
  * key 用来决定展示口吻，text 直接来自笔记——文案只有后端一份，前端不再抄一遍。
  */
@@ -615,4 +644,26 @@ export function describeWordCloudEmptyState(sentenceCount: number): string {
     return `这段录音只有 ${sentenceCount} 句，还太短。一个词要在原文里出现两次以上才会进词云，录长一点自然就有了。`;
   }
   return '没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。';
+}
+
+/**
+ * 一份转录笔记「产出了什么」的清点（设计稿 v2-S3 / cap-S5 那条绿卡的口径）。
+ *
+ * 四个数全部数自这份 markdown 本身：句数、区分出来的说话人数、有没有整理出纪要、
+ * 有没有待办。没有第五个来源，也不接受调用方传一个「示例值」进来。
+ */
+export function describeTranscriptOutcome(noteMd: string): {
+  sentences: number;
+  speakers: number;
+  hasSummary: boolean;
+  hasTodos: boolean;
+} {
+  const segments = parseTranscriptSegments(noteMd);
+  const summary = extractTranscriptSummary(noteMd);
+  return {
+    sentences: segments.length,
+    speakers: buildSpeakerStats(segments).length,
+    hasSummary: summary.trim().length > 0,
+    hasTodos: extractTranscriptTodos(summary).length > 0,
+  };
 }

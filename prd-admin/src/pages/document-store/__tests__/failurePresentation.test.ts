@@ -21,7 +21,7 @@ describe('describeFailurePresentation', () => {
       { waitingAutoRetry: true, retryLabel: '8 秒后' },
     );
     expect(p.title).toBe('转录失败，正在自动重试');
-    expect(p.nextStep).toContain('第 3 次');
+    expect(p.nextStep).toContain('第 3 / 3 次');
     expect(p.nextStep).toContain('8 秒后');
   });
 

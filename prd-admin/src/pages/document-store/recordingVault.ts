@@ -698,6 +698,16 @@ export type FailurePresentation = {
 /** 后端把「整段没有有效语音」分成两个 code，UI 该给同一档 */
 const NO_SPEECH_CODES = new Set(['ASR_NO_SPEECH', 'ASR_ALL_CANDIDATES_NO_SPEECH']);
 
+/**
+ * 后端每条 run 的自动重试预算。
+ *
+ * 它在后端是 `DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries`，
+ * 接口里没有下发，所以这里只能存一份副本——**同一个判断存两份就会漂**
+ * （predicate-and-wiring-discipline 形状 3）。守卫在
+ * `__tests__/automaticRetryLimit.test.ts`：它直接读那个 .cs 文件，两边对不上就红。
+ */
+export const AUTOMATIC_RETRY_LIMIT = 3;
+
 export function describeFailurePresentation(
   notice: FailedTranscriptionNotice,
   opts: { waitingAutoRetry: boolean; retryLabel?: string; hasPartialTranscript?: boolean } = { waitingAutoRetry: false },
@@ -707,7 +717,9 @@ export function describeFailurePresentation(
     return {
       title: '转录失败，正在自动重试',
       subtitle: '录音还在，没有丢',
-      nextStep: `第 ${notice.automaticRetryCount + 1} 次自动重试将在 ${opts.retryLabel ?? '稍后'}开始，无需操作`,
+      // 分母是后端那条自动重试预算：没有它，用户读不出「还剩几次机会」
+      // （稿面 v2-S6 / cap-S7 写的是「第 2 / 3 次」）。
+      nextStep: `第 ${notice.automaticRetryCount + 1} / ${AUTOMATIC_RETRY_LIMIT} 次自动重试将在 ${opts.retryLabel ?? '稍后'}开始，无需操作`,
       tone: 'retrying',
       icon: 'retry',
     };

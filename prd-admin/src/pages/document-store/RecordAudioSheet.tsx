@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle, BookText, Check, ChevronDown, ChevronUp, Clock3, CloudUpload, FileCheck2, FileUp,
-  HardDrive, Mic, MicOff, MoreHorizontal, Pause, Play, ShieldCheck, Square, Upload, WifiOff, X,
+  HardDrive, Lock, Mic, MoreHorizontal, Pause, Play, ShieldCheck, Square, Upload, WifiOff, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -27,10 +27,12 @@ import {
   vaultUpdateSessionStore,
 } from './recordingVault';
 import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
+import { describeMicHealth } from './recordingCompletionView';
 import {
   advanceLiveSentenceLog,
   describeCaptureChips,
   describeLiveTranscriptTitle,
+  capturedUploadPercent,
   describeRetryCountdown,
   formatCapturedSize,
   type CaptureChipIcon,
@@ -266,6 +268,10 @@ export function RecordAudioSheet({
   const [retryNow, setRetryNow] = useState(() => Date.now());
   /** 实时字幕是在录音的第几秒断的——用于「中断（12:19）」那句话。 */
   const [degradedAtSec, setDegradedAtSec] = useState<number | null>(null);
+  /** 设备自检用的峰值电平（稿面 cap-S1 那句「麦克风正常 · 音量适中」的唯一依据） */
+  const [peakLevel, setPeakLevel] = useState(0);
+  /** 「前往系统设置」展开的那段路径说明（网页开不了系统面板，只能告诉你在哪一格） */
+  const [permissionHelpOpen, setPermissionHelpOpen] = useState(false);
   const [liveProtection, setLiveProtection] = useState<'pending' | 'active' | 'local'>('pending');
   const [liveTranscript, setLiveTranscript] = useState('');
   const [liveTranscriptExpanded, setLiveTranscriptExpanded] = useState(false);
@@ -961,6 +967,13 @@ export function RecordAudioSheet({
     setLiveSentences(prev => advanceLiveSentenceLog(prev, liveTranscript, elapsedRef.current));
   }, [liveTranscript]);
 
+  // 设备自检结论每秒更新一次就够；跟着绘制帧走会把整棵树每秒重渲染六十次
+  useEffect(() => {
+    if (state !== 'recording' && state !== 'paused') return;
+    const id = window.setInterval(() => setPeakLevel(peakLevelRef.current), 1000);
+    return () => window.clearInterval(id);
+  }, [state]);
+
   // 倒计时只在真有一次已排期的重连时才走秒
   useEffect(() => {
     if (liveRetryAt == null) return;
@@ -1012,17 +1025,51 @@ export function RecordAudioSheet({
   );
 
   const body = state === 'unavailable' ? (
-    <div className="mx-auto flex min-h-full w-full max-w-[360px] flex-col items-center justify-center gap-4 py-8 text-center">
+    /*
+      稿面 v2-S8：一枚锁、一句「需要麦克风权限」、一段说清「还能做什么」的正文，
+      再给两颗按钮。此前只有一颗「上传音频文件」——没有权限的人第一反应是
+      「怎么给权限」，那条路没有出口，他就卡在这一屏了。
+    */
+    <div className="mx-auto flex min-h-full w-full max-w-[360px] flex-col justify-center gap-4 py-8">
+      <div className="flex items-center gap-2.5">
+        <Lock size={20} style={{ color: 'var(--text-primary)' }} aria-hidden />
+        <p className="text-[19px] font-bold text-token-primary">需要麦克风权限</p>
+      </div>
+      <p className="text-[13px] leading-relaxed text-token-secondary">
+        {unavailableReason || '系统已拒绝麦克风访问，无法开始录音。'}你仍可以上传已有音频文件获得完整转录能力。
+      </p>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <button
+          type="button"
+          onClick={() => setPermissionHelpOpen(value => !value)}
+          aria-expanded={permissionHelpOpen}
+          className="flex min-h-11 cursor-pointer items-center justify-center rounded-[12px] px-5 text-[14px] font-semibold"
+          style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>
+          前往系统设置
+        </button>
+        <button
+          type="button"
+          onClick={() => { onClose(); onPickFile(targetStoreId || storeId); }}
+          className="flex min-h-11 cursor-pointer items-center justify-center rounded-[12px] px-5 text-[14px] font-semibold"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}>
+          上传文件
+        </button>
+      </div>
+      {/*
+        网页开不了系统设置面板——浏览器没有这个 API。所以这颗按钮兑现的是
+        「告诉你在哪一格里改」，而不是假装能替你打开它（no-rootless-tree）。
+      */}
+      {permissionHelpOpen && (
+        <div
+          className="rounded-[12px] px-3.5 py-3 text-[12px] leading-relaxed"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}>
+          <p className="mb-1.5 font-semibold text-token-primary">网页无法替你打开系统设置，路径在这里：</p>
+          <p>浏览器：地址栏左侧的锁形图标 → 网站设置 → 麦克风 → 允许，然后刷新本页。</p>
+          <p className="mt-1">macOS：系统设置 → 隐私与安全性 → 麦克风 → 勾选你的浏览器。</p>
+          <p className="mt-1">Windows：设置 → 隐私和安全性 → 麦克风 → 允许桌面应用访问。</p>
+        </div>
+      )}
       {destinationPicker}
-      <span
-        className="flex h-14 w-14 items-center justify-center rounded-full"
-        style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)' }}>
-        <MicOff size={24} />
-      </span>
-      <p className="max-w-[300px] text-[13px] leading-relaxed text-token-secondary">{unavailableReason}</p>
-      <Button variant="primary" size="sm" onClick={() => { onClose(); onPickFile(targetStoreId || storeId); }}>
-        <FileUp size={14} /> 上传音频文件
-      </Button>
     </div>
   ) : state === 'finalizing' ? (
     <div
@@ -1170,6 +1217,16 @@ export function RecordAudioSheet({
         )}
       </div>
 
+      {/*
+        设备自检（稿面 cap-S1 的副行）：录音时用户第二怕的事是「我以为在录，其实没收到声」。
+        结论来自这段录音真实的峰值电平，四档各说各的，不一律显示「麦克风正常」。
+      */}
+      {state !== 'requesting' && (
+        <p className="-mt-2 text-center text-[12px] text-token-muted" data-testid="recording-mic-health">
+          {describeMicHealth(peakLevel, elapsed)}
+        </p>
+      )}
+
       {/* 计时大字：这一屏唯一的主角，稿面给了近 60px */}
       <p
         data-testid="recording-elapsed"
@@ -1195,6 +1252,34 @@ export function RecordAudioSheet({
       </div>
 
       </>
+      )}
+
+      {/*
+        实时上传条（稿面 cap-S2）：两个体积并排 + 一条进度条 + 一句承诺。
+        胶囊只说了「传了多少」，这条回答的是「相对多少」和「断网会不会白录」。
+      */}
+      {!liveTranscriptExpanded && liveProtection === 'active' && localBytes > 0 && (
+        <div className="w-full" data-testid="recording-upload-progress">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[13px] font-semibold text-token-primary">正在实时上传</span>
+            <span className="font-mono text-[13px] tabular-nums text-token-secondary">
+              {formatCapturedSize(protectedBytes)} / {formatCapturedSize(localBytes)}
+            </span>
+          </div>
+          <div className="mt-1.5 h-[5px] w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-elevated)' }}>
+            <span
+              className="block h-full rounded-full"
+              style={{
+                width: `${Math.max(2, capturedUploadPercent(protectedBytes, localBytes))}%`,
+                background: 'var(--accent-fg-info)',
+                transition: 'width 300ms linear',
+              }}
+            />
+          </div>
+          <p className="mt-1.5 text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>
+            断网也不会丢失，会自动续传
+          </p>
+        </div>
       )}
 
       {/* 实时电平波形（产物感：屏幕上有持续变化的内容） */}

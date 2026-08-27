@@ -17,12 +17,18 @@
  *   你现在能做什么 → 「音频已就绪，现在就能播放」
  */
 import { useEffect, useState } from 'react';
-import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Clock3, MicOff, Play, RefreshCw, Sparkles, Wand2 } from 'lucide-react';
+import { AlertTriangle, AudioLines, BookOpen, Check, ChevronRight, Clock3, Download, Mic, MicOff, Play, RefreshCw, Sparkles, Wand2 } from 'lucide-react';
 import { describeFailurePresentation } from '@/pages/document-store/recordingVault';
 import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import { onRecordingDuration } from './recordingPlayBridge';
 import '@/styles/recording-design-palette.css';
 import {
+  describeCompletionSummary,
+  describeOrganizeProgress,
+  isAiUnavailableFailure,
+} from '@/pages/document-store/recordingCompletionView';
+import {
+  describeAudioStageElapsed,
   describeTranscriptionStages,
   estimateRemainingSeconds,
   formatDurationSec,
@@ -150,6 +156,16 @@ function StageRow({ stage, remainingLabel }: { stage: TranscriptionStage; remain
           </div>
         )}
         <p className="mt-1 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{stage.detail}</p>
+        {/*
+          产出计数（稿面 R4「已生成 84 / 约 132 句」、cap-S4「其余会陆续出现」）：
+          它回答的是「产物到哪了、还剩多少」，和「百分比」不是同一件事——
+          百分比是时间进度，这一行是**东西**的进度。
+        */}
+        {stage.yieldLine && (
+          <p className="mt-0.5 truncate text-[11px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+            {stage.yieldLine}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -164,6 +180,12 @@ export function TranscribeStatusCard({
   audioTitle,
   audioSizeLabel,
   transcriptPreview,
+  generatedSentences,
+  completion,
+  organizing,
+  onOpenServiceStatus,
+  onReRecord,
+  onDownloadAudio,
   onStart,
   onOpenNote,
   onRestyle,
@@ -182,6 +204,21 @@ export function TranscribeStatusCard({
   audioSizeLabel?: string | null;
   /** 已经生成出来的原文（有几句给几句）；为空时渲染骨架而不是留白 */
   transcriptPreview?: string[];
+  /**
+   * 已生成的**总**句数（预览只给前几行，算产出计数要的是总数）。
+   * 拿不到就退回预览行数——那会偏小，但偏小是如实的下界，不是编的。
+   */
+  generatedSentences?: number;
+  /** 转录全部跑完之后那条绿卡的口径（稿面 v2-S3 / cap-S5）。数不出来就不传，界面不编。 */
+  completion?: { sentences: number; speakers: number; hasSummary: boolean; hasTodos: boolean } | null;
+  /** 后台整理进行中（稿面 cap-S6）：点名到具体哪一种产物 + 一个「不用等」的出口。 */
+  organizing?: { styleLabel?: string | null; remainingSec?: number | null } | null;
+  /** 「查看服务状态」的去处（稿面 cap-S9）。不传就不渲染那颗按钮，不给一个点了没反应的。 */
+  onOpenServiceStatus?: () => void;
+  /** 「重新录制」（稿面 v2-S4）：这段没人声时，重试同一段音频不会有别的结果，出口是重录。 */
+  onReRecord?: () => void;
+  /** 「下载音频」（稿面 v2-S5）：转录失败不影响音频本身，用户要能把它拿走。 */
+  onDownloadAudio?: () => void;
   onStart?: (styleKey?: string) => void;
   onOpenNote: (entryId: string) => void;
   onRestyle?: () => void;
@@ -202,7 +239,13 @@ export function TranscribeStatusCard({
   const [durationSec, setDurationSec] = useState(0);
   useEffect(() => onRecordingDuration(setDurationSec), []);
   const durationLabel = durationSec > 0 ? formatClockLabel(durationSec) : null;
-  const stages = describeTranscriptionStages(activeRun, { sizeLabel: audioSizeLabel, durationLabel });
+  const stages = describeTranscriptionStages(activeRun, {
+    sizeLabel: audioSizeLabel,
+    durationLabel,
+    elapsedLabel: describeAudioStageElapsed(activeRun),
+    // 已经吐出来的句数：优先用调用方数过的真数，没有就退回预览行数
+    generatedSentences: generatedSentences ?? transcriptPreview?.length ?? 0,
+  });
   const processing = stages !== null;
   // 失败卡只在没有在途 run 时出现：又在跑又说失败，等于同屏两句互相打脸
   const showFailure = !processing && !noteEntryId && !!lastFailure;
@@ -219,6 +262,11 @@ export function TranscribeStatusCard({
     : null;
 
   const timing = processing ? estimateRemainingSeconds(activeRun, now) : null;
+  const completionCopy = !processing && completion ? describeCompletionSummary(completion) : null;
+  const organizeCopy = !processing && organizing ? describeOrganizeProgress(organizing) : null;
+  // AI 整体不可用是**另一件事**：录音与原文都好好的，只是理解/整理/问答这一层没了。
+  // 混进转录失败卡里说，用户会以为录音也出事了（稿面 cap-S9 专门画了一条横幅）。
+  const aiDown = isAiUnavailableFailure(lastFailure?.code) ? lastFailure : null;
   const chips = (noteEntryId && !inPlace) || subtitleEntryId || (noteEntryId && onRestyle)
     || (onEnterResult && !inPlace && !processing);
 
@@ -240,6 +288,79 @@ export function TranscribeStatusCard({
         border: `1px solid ${FAILURE_TONE[failureCopy.tone].border}`,
       } : undefined}
     >
+      {/*
+        AI 服务不可用（稿面 cap-S9）：它不是「转录失败」，而是「理解那一层暂时没了」。
+        所以单独一条横幅，并且明确列出哪些能力照常可用——用户最怕的是「是不是全废了」。
+      */}
+      {aiDown && (
+        <div
+          className="rounded-[12px] px-3.5 py-3"
+          style={{ background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-soft)' }}
+        >
+          <p className="text-[13px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
+            AI 服务暂时不可用
+          </p>
+          <p className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            {aiDown.at ? `发生于 ${new Date(aiDown.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}。` : ''}
+            <strong style={{ color: 'var(--text-primary)' }}>录音、原文、编辑、搜索、跳播全部照常可用</strong>
+            ；理解、整理、问答已折叠，恢复后自动补齐。
+          </p>
+          {onOpenServiceStatus && (
+            <button
+              type="button"
+              onClick={onOpenServiceStatus}
+              className="mt-2.5 flex min-h-10 w-full cursor-pointer items-center justify-center rounded-[10px] text-[13px] font-semibold"
+              style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            >
+              查看服务状态
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 转录跑完那条绿卡（稿面 v2-S3 / cap-S5）：一句话交代产出了多少东西 */}
+      {completionCopy && (
+        <div
+          className="flex items-center gap-3 rounded-[12px] px-3.5 py-3"
+          style={{ background: 'var(--semantic-success-soft)' }}
+        >
+          <span
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full"
+            style={{ background: 'var(--accent-fg-success)', color: 'var(--bg-card)' }}
+            aria-hidden
+          >
+            <Check size={16} />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[14px] font-semibold" style={{ color: 'var(--semantic-success-text)' }}>
+              {completionCopy.title}
+            </span>
+            <span className="mt-0.5 block text-[12px]" style={{ color: 'var(--semantic-success-text)' }}>
+              {completionCopy.detail}
+            </span>
+          </span>
+        </div>
+      )}
+
+      {/* 后台整理进行中（稿面 cap-S6）：点名到具体那一种产物，并给「不用在这等」的出口 */}
+      {organizeCopy && (
+        <div className="flex items-center gap-3 rounded-[12px] px-3.5 py-3" style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}>
+          <span
+            aria-hidden
+            style={{
+              width: 20, height: 20, borderRadius: '50%',
+              border: '2.5px solid color-mix(in srgb, var(--accent-fg-info) 26%, transparent)',
+              borderTopColor: 'var(--accent-fg-info)',
+              animation: 'spin 0.9s linear infinite',
+            }}
+          />
+          <span className="min-w-0">
+            <span className="block text-[13px] font-semibold text-token-primary">{organizeCopy.title}</span>
+            <span className="mt-0.5 block text-[11px] text-token-muted">{organizeCopy.detail}</span>
+          </span>
+        </div>
+      )}
+
       {processing ? (
         <>
           {/* 页面级标题：设计稿这一屏的 H1，不是卡内小标题 */}
@@ -317,6 +438,17 @@ export function TranscribeStatusCard({
             </div>
           </div>
 
+          {/*
+            稿面 cap-A4/A5 在这一屏底部压了一条蓝色告知：它回答的是「我能不能走」。
+            没有它，用户会以为必须守着这一页等整理跑完。
+          */}
+          <p
+            className="rounded-[10px] px-3 py-2.5 text-[12px] leading-relaxed"
+            style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
+          >
+            整理与问答会在原文完成后自动开始，无需停留在此页面。
+          </p>
+
           <p className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
             {timing
               ? `已用 ${formatDurationSec(timing.elapsedSec)}${timing.remainingSec === null ? ' · 正在积累数据，稍后给出预计剩余' : ''}`
@@ -388,6 +520,47 @@ export function TranscribeStatusCard({
               </dd>
             </div>
           </dl>
+
+          {/*
+            失败卡的出口按处境给（稿面 v2-S4 / v2-S5）：
+              没人声 → 「播放确认」+「重新录制」（同一段音频重试不会有别的结果）
+              其它失败 → 「下载音频」（音频本身没坏，用户要能拿走）
+            此前只有一颗「重试」，落到「没检测到人声」那一档就是一句自相矛盾的建议。
+          */}
+          {(failureCopy!.icon === 'mic-off' || failureCopy!.tone === 'danger') && (
+            <div className="flex flex-wrap items-center gap-2">
+              {failureCopy!.icon === 'mic-off' && onPlayRequest && (
+                <button
+                  type="button"
+                  onClick={onPlayRequest}
+                  className="flex min-h-10 cursor-pointer items-center gap-1.5 rounded-[10px] px-3.5 text-[12.5px] font-semibold"
+                  style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+                >
+                  <Play size={12} fill="currentColor" /> 播放确认
+                </button>
+              )}
+              {failureCopy!.icon === 'mic-off' && onReRecord && (
+                <button
+                  type="button"
+                  onClick={onReRecord}
+                  className="flex min-h-10 cursor-pointer items-center gap-1.5 rounded-[10px] px-3.5 text-[12.5px] font-semibold"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                >
+                  <Mic size={12} /> 重新录制
+                </button>
+              )}
+              {failureCopy!.tone === 'danger' && onDownloadAudio && (
+                <button
+                  type="button"
+                  onClick={onDownloadAudio}
+                  className="flex min-h-10 cursor-pointer items-center gap-1.5 rounded-[10px] px-3.5 text-[12.5px] font-semibold"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                >
+                  <Download size={12} /> 下载音频
+                </button>
+              )}
+            </div>
+          )}
 
           {/*
             「已完成的部分现在就能读」这句承诺的落点。稿面 cap-S10 把它当作

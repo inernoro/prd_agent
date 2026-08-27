@@ -20,6 +20,8 @@ export type TranscriptionStage = {
   state: TranscriptionStageState;
   /** 仅 active 阶段有值：该阶段自身的完成度（0-100） */
   percent: number | null;
+  /** 副行下面还有一行产出计数（「已生成 84 / 约 132 句」）；没有就是 null */
+  yieldLine?: string | null;
 };
 
 /**
@@ -35,8 +37,12 @@ const UNDERSTANDING_FROM = 70;
  * 拿不到就只说结论——**不许为了凑齐稿面那一行去编一个体积出来**。
  * 单阶段耗时后端目前不下发，已列入给设计方的待补清单。
  */
-function audioStage(meta?: { durationLabel?: string | null; sizeLabel?: string | null }): TranscriptionStage {
-  const facts = [meta?.durationLabel, meta?.sizeLabel].filter(Boolean);
+function audioStage(meta?: {
+  durationLabel?: string | null;
+  sizeLabel?: string | null;
+  elapsedLabel?: string | null;
+}): TranscriptionStage {
+  const facts = [meta?.durationLabel, meta?.sizeLabel, meta?.elapsedLabel].filter(Boolean);
   return {
     key: 'audio',
     label: '保存音频',
@@ -48,7 +54,14 @@ function audioStage(meta?: { durationLabel?: string | null; sizeLabel?: string |
 
 export function describeTranscriptionStages(
   run: { status?: string | null; phase?: string | null; progress?: number | null } | null | undefined,
-  audioMeta?: { durationLabel?: string | null; sizeLabel?: string | null },
+  audioMeta?: {
+    durationLabel?: string | null;
+    sizeLabel?: string | null;
+    /** 「保存音频」那一格的耗时（describeAudioStageElapsed 算出来的） */
+    elapsedLabel?: string | null;
+    /** 已经吐出来的句数——用来给「生成原文」那一格算产出计数 */
+    generatedSentences?: number;
+  },
 ): TranscriptionStage[] | null {
   const status = run?.status?.trim().toLowerCase();
   if (status !== 'queued' && status !== 'running' && status !== 'publishing') return null;
@@ -67,6 +80,12 @@ export function describeTranscriptionStages(
       detail: inUnderstanding ? '原文已生成' : (phase || '正在转写'),
       state: inUnderstanding ? 'done' : 'active',
       percent: inUnderstanding ? null : Math.round((progress / UNDERSTANDING_FROM) * 100),
+      yieldLine: inUnderstanding
+        ? null
+        : describeTranscriptYield(
+          audioMeta?.generatedSentences ?? 0,
+          Math.round((progress / UNDERSTANDING_FROM) * 100),
+        ),
     },
     {
       key: 'understanding',
@@ -112,4 +131,44 @@ export function formatDurationSec(sec: number): string {
   const m = Math.floor(s / 60);
   const rest = s % 60;
   return rest === 0 ? `${m} 分钟` : `${m} 分 ${rest} 秒`;
+}
+
+/**
+ * 「保存音频」那一格的耗时（设计稿 R4 / cap-A4 都写了「耗时 1.2s」）。
+ *
+ * 取的是 run 被创建到真正开跑之间的那段——音频在 run 开始前就已经落库，
+ * 这段时间正是「把音频存好」花掉的。拿不到任一端就不说，不编一个 1.2s 出来。
+ */
+export function describeAudioStageElapsed(
+  run: { createdAt?: string | null; startedAt?: string | null } | null | undefined,
+): string | null {
+  const created = run?.createdAt ? new Date(run.createdAt).getTime() : NaN;
+  const started = run?.startedAt ? new Date(run.startedAt).getTime() : NaN;
+  if (!Number.isFinite(created) || !Number.isFinite(started)) return null;
+  const sec = (started - created) / 1000;
+  if (sec < 0 || sec > 3600) return null;
+  return sec < 10 ? `耗时 ${sec.toFixed(1)}s` : `耗时 ${formatDurationSec(sec)}`;
+}
+
+/**
+ * 「已生成 84 / 约 132 句」（设计稿 R4 / cap-S4）。
+ *
+ * 后端不下发总句数，所以分母只能外推：这一格跑到 p%，已经吐出 n 句，
+ * 那么总数 ≈ n × 100 / p。这是**这一次运行自己的速度**算出来的，不是常数。
+ * 进度太小时外推会得到荒唐的数（跑到 1% 出 1 句就推成 100 句），所以低于阈值
+ * 只说已生成多少，不给分母——宁可少说一半，也不给一个假的总数。
+ */
+export const TRANSCRIPT_YIELD_MIN_PERCENT = 12;
+
+export function describeTranscriptYield(
+  generatedSentences: number,
+  stagePercent: number | null,
+): string | null {
+  if (generatedSentences <= 0) return null;
+  if (stagePercent == null || stagePercent < TRANSCRIPT_YIELD_MIN_PERCENT) {
+    return `已生成 ${generatedSentences} 句`;
+  }
+  const total = Math.round((generatedSentences * 100) / Math.min(100, stagePercent));
+  if (total <= generatedSentences) return `已生成 ${generatedSentences} 句`;
+  return `已生成 ${generatedSentences} / 约 ${total} 句，其余会陆续出现`;
 }

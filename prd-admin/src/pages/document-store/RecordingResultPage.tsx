@@ -17,11 +17,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { BookText, Check, ChevronLeft, Download, FileText, Mic, MoreHorizontal } from 'lucide-react';
+import { BookText, Check, ChevronLeft, Download, FileText, Mic, MoreHorizontal, WifiOff } from 'lucide-react';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { buildSpeakerStats, parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
 import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useIsDesktop } from '@/hooks/useBreakpoint';
 import {
   getAgentRun,
@@ -251,6 +250,16 @@ export function RecordingResultPage() {
    * 转录笔记（带 source_entry_id 的那些）不进清单：它们是音频条目的产出，
    * 列进去会让同一段录音在栏里出现两次，用户点第二条会落到一个没有播放器的纯文本页。
    */
+  /** 离线告知（稿面 v2-S7）：只告知，不建离线编辑队列 */
+  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
+  useEffect(() => {
+    const online = () => setOffline(false);
+    const down = () => setOffline(true);
+    window.addEventListener('online', online);
+    window.addEventListener('offline', down);
+    return () => { window.removeEventListener('online', online); window.removeEventListener('offline', down); };
+  }, []);
+
   const isDesktop = useIsDesktop();
   const [siblings, setSiblings] = useState<{ id: string; title: string; isAudio: boolean }[]>([]);
   useEffect(() => {
@@ -475,7 +484,28 @@ export function RecordingResultPage() {
       sidebar={sidebar}
       actions={headerActions}
     >
-      {state.kind === 'loading' && <MapSectionLoader text="正在打开这段录音…" />}
+      {/*
+        稿面 v2-S1：打开这一屏的瞬间给的是**和真实布局同形的骨架**，不是一个居中转圈。
+        同形是重点——它保证内容到位时不跳动；转圈做不到这件事，还会让人以为页面卡了。
+      */}
+      {state.kind === 'loading' && (
+        <div className="flex flex-col gap-3 px-4 pb-8 pt-3" data-testid="recording-result-skeleton" aria-busy="true">
+          <div className="flex items-center gap-3 rounded-[14px] px-4 py-3.5" style={{ background: 'var(--bg-card)' }}>
+            <span className="h-12 w-12 shrink-0 rounded-[14px]" style={{ background: 'var(--bg-elevated)' }} />
+            <span className="flex min-w-0 flex-1 flex-col gap-2">
+              <span className="block h-3.5 w-3/4 rounded-full" style={{ background: 'var(--bg-elevated)' }} />
+              <span className="block h-3 w-1/2 rounded-full" style={{ background: 'var(--bg-elevated)' }} />
+            </span>
+          </div>
+          <span className="block h-16 w-full rounded-[14px]" style={{ background: 'var(--bg-card)' }} />
+          <div className="flex flex-col gap-2.5 rounded-[14px] px-4 py-3.5" style={{ background: 'var(--bg-card)' }}>
+            {[92, 78, 86, 64].map((width, index) => (
+              <span key={index} className="block h-3 rounded-full" style={{ width: `${width}%`, background: 'var(--bg-elevated)' }} />
+            ))}
+          </div>
+          <p className="px-1 text-[12px] text-token-muted">正在打开录音…骨架保持与真实布局一致，避免跳动</p>
+        </div>
+      )}
       {state.kind === 'error' && (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <p className="text-[14px]" style={{ color: 'var(--text-primary)' }}>{state.message}</p>
@@ -486,6 +516,26 @@ export function RecordingResultPage() {
       )}
       {state.kind === 'ready' && (
         <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3 lg:h-full lg:min-h-0 lg:pb-0">
+          {/*
+            稿面 v2-S7 离线卡。按 2026-08-26 拍板只做**告知版**：不建离线编辑队列，
+            所以这里绝不写「已排队 N 处待同步」——那是一个我们并没有实现的承诺。
+            如实说清此刻能做什么、不能做什么，比编一个队列安全得多。
+          */}
+          {offline && (
+            <div
+              className="w-full max-w-[760px] rounded-[14px] px-3.5 py-3"
+              style={{ background: 'var(--semantic-warning-soft)' }}
+              role="status"
+            >
+              <p className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
+                <WifiOff size={15} aria-hidden /> 当前离线
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                <strong style={{ color: 'var(--text-primary)' }}>本机音频与已下载原文照常播放、阅读</strong>
+                。此刻的校对无法保存，联网后再改；已经保存过的内容不受影响。
+              </p>
+            </div>
+          )}
           <TranscriptKaraoke
             src={state.audioUrl}
             noteMd={state.noteMd}

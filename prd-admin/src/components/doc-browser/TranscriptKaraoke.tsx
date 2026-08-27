@@ -13,6 +13,7 @@ import {
   estimateTranscriptSegments,
   replaceEstimatedTranscriptSentenceText,
   replaceTranscriptSegmentText,
+  assignTranscriptSegmentSpeaker,
   renameTranscriptSpeaker,
   buildTranscriptWordCloud,
   describeWordCloudEmptyState,
@@ -552,6 +553,8 @@ export function TranscriptKaraoke({
    */
   const isDesktop = useIsDesktop();
   const [panelTab, setPanelTab] = useState<DesktopPanelKey>('understand');
+  /** 编辑态里给这一句现填的说话人（稿面 cap-S11 的落点） */
+  const [assignSpeakerDraft, setAssignSpeakerDraft] = useState('');
   const showPanel = (key: DesktopPanelKey) => !isDesktop || panelTab === key;
 
   const currentSegment = timelineSegments[activeIdx] ?? null;
@@ -844,6 +847,21 @@ export function TranscriptKaraoke({
                         <ChevronDown size={11} />
                       </button>
                     )}
+                    {/*
+                      上游没区分出说话人时，这一行原本什么都没有——用户看得到「未能区分说话人」
+                      那张卡，却找不到落点（稿面 cap-S11 的「手动标记说话人」）。这里补上入口：
+                      直接给这一句指定一个人。
+                    */}
+                    {!s.speaker && s.start >= 0 && (
+                      <input
+                        value={assignSpeakerDraft}
+                        onChange={(event) => setAssignSpeakerDraft(event.target.value)}
+                        placeholder="指定说话人"
+                        aria-label="给这一句指定说话人"
+                        className="h-8 w-28 rounded-full px-2.5 text-[11px] outline-none"
+                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)', color: 'var(--text-primary)' }}
+                      />
+                    )}
                     <span className="flex-1" />
                     {s.speaker && (
                       <button
@@ -879,9 +897,13 @@ export function TranscriptKaraoke({
                       type="button"
                       disabled={savingEdit || !editDraft.trim()}
                       onClick={() => {
-                        const next = estimated
+                        const withText = estimated
                           ? replaceEstimatedTranscriptSentenceText(noteMd, i, editDraft)
                           : replaceTranscriptSegmentText(noteMd, i, editDraft);
+                        // 这一句原本没有说话人、而用户在上面填了一个：一并落进去
+                        const next = !s.speaker && assignSpeakerDraft.trim()
+                          ? assignTranscriptSegmentSpeaker(withText, i, assignSpeakerDraft)
+                          : withText;
                         setSavingEdit(true);
                         void onSaveNote(next)
                           .then((ok) => { if (ok !== false) setEditingIndex(null); })
@@ -1215,6 +1237,37 @@ export function TranscriptKaraoke({
                       {describeWordCloudEmptyState(timelineSegments.length)}
                     </p>
                   )}
+              {/*
+                稿面 cap-S11：一份没有说话人标签的原文不能只是「少了点东西」，
+                要说清为什么没有、以及我能不能自己补。原因写成「常见于」——
+                上游只告诉我们「没区分出来」，没告诉我们是单声道还是抢话，
+                照抄稿面那句断言就是编一个我们并不知道的事实。
+              */}
+              {speakers.length === 0 && timelineSegments.length > 0 && (
+                <div className="mt-4 rounded-[12px] px-3.5 py-3" style={{ background: 'var(--bg-elevated)' }}>
+                  <p className="text-[13px] font-semibold text-token-primary">未能区分说话人</p>
+                  <p className="mt-1 text-[12px] leading-relaxed text-token-secondary">
+                    上游没有区分出说话人（常见于单声道录音或多人抢话）。原文按时间分句展示，
+                    你可以手动为句子指定说话人。
+                  </p>
+                  {onSaveNote && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingIndex(0);
+                        setEditDraft(timelineSegments[0]?.text ?? '');
+                        setAssignSpeakerDraft('');
+                        document.querySelector('[data-transcript-row="0"]')
+                          ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                      }}
+                      className="mt-2.5 flex min-h-11 w-full cursor-pointer items-center justify-center rounded-full text-[13px] font-semibold"
+                      style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    >
+                      手动标记说话人
+                    </button>
+                  )}
+                </div>
+              )}
               {speakers.length > 0 && (
                 /*
                   稿面 D1 右栏的说话人是一份**清单**：每行一枚首字圆标、名字、句数占比，

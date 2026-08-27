@@ -35,6 +35,8 @@ import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '
 import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { glassMobileHeader } from '@/lib/glassStyles';
 import { compareDocBrowserEntries, computeReorderUpdates, type DocBrowserReorderUpdate, type DocBrowserSortMode } from './docBrowserSort';
+import { describeTranscriptOutcome } from './transcriptSegments';
+import { useNavigate } from 'react-router-dom';
 
 export type { DocBrowserSortMode } from './docBrowserSort';
 
@@ -1660,6 +1662,8 @@ export function DocBrowser({
   const [preview, setPreview] = useState<EntryPreview | null>(null);
   // 音频条目的转录笔记 markdown（歌词滚轮跟读数据源；无笔记为 null）
   const [transcriptNoteMd, setTranscriptNoteMd] = useState<string | null>(null);
+  // 「查看服务状态」的去处：系统告警落在通知中心，不另造一个状态页
+  const navigate = useNavigate();
   // preview 的 ref 镜像：loadEntryContent 的「刚保存豁免」要读当前 preview.text，但不能把 preview 放进
   // 它的 deps —— 否则 setPreview(null)（切文档）会改变回调标识，触发下方 effect 二次 loadContent，大文档被下载两次（Codex P2）。
   const previewRef = useRef<EntryPreview | null>(null);
@@ -3955,6 +3959,25 @@ export function DocBrowser({
                     audioTitle={selectedEntryData.title}
                     audioSizeLabel={formatFileSizeLabel(selectedEntryData.fileSize)}
                     transcriptPreview={transcribeRun?.transcriptPreview}
+                    generatedSentences={transcribeRun?.transcriptPreview?.length}
+                    /*
+                      转录跑完那条绿卡（稿面 v2-S3 / cap-S5）的口径全部数自这份原文本身：
+                      句数、说话人数、有没有纪要与待办。数不出来（还没加载到原文）就传 null，
+                      卡片不出现——不摆一个「132 句」的示例数。
+                    */
+                    completion={transcriptNoteMd ? describeTranscriptOutcome(transcriptNoteMd) : null}
+                    onOpenServiceStatus={() => navigate('/notifications')}
+                    // 「重新录制」走的就是这个库的录音入口，不另开一条路径
+                    onReRecord={onQuickRecord ?? onUploadAudio}
+                    // 「下载音频」用的是这条音频真实的下载地址；没加载到就不给按钮
+                    onDownloadAudio={preview?.fileUrl ? () => {
+                      const link = document.createElement('a');
+                      link.href = preview.fileUrl!;
+                      link.download = selectedEntryData.title || '录音';
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                    } : undefined}
                     onEnterResult={onOpenRecordingResult
                       ? () => onOpenRecordingResult(selectedEntryData.id)
                       : undefined}
