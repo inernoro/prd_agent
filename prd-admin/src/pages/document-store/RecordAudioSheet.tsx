@@ -1381,7 +1381,13 @@ export function RecordAudioSheet({
           所以先说清中断在第几分钟、录音没受影响，再用骨架条把那段空白**画出来**，
           让用户看得见它的位置，而不是以为原文到此为止。
         */}
-        {liveInterrupted && (
+        {/*
+          顶部那条横幅已经在说同一件事时，卡内这个橙框就不再重复。
+          稿面分工很清楚：R3（上传通道断了）只有顶部横幅，A2（实时字幕连上又掉）
+          只有卡内橙框。两个都摆出来不只是啰嗦——它会把已识别的那几句和占位骨架
+          一起挤出卡外，而那几句正是这一档要给用户看的东西。
+        */}
+        {liveInterrupted && !uploadDegraded && (
           <div
             className="mt-3 rounded-[12px] px-3 py-2.5 text-[12px] leading-relaxed"
             style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
@@ -1398,6 +1404,13 @@ export function RecordAudioSheet({
           style={{
             overflowY: 'auto',
             overscrollBehavior: 'contain',
+            /*
+              降级那一档卡内还压着一个琥珀说明框和两条占位骨架，它们会把这块
+              `flex-1` 挤到零高度——已经识别出来的句子一句都露不出来。
+              而稿面 R3 / cap-A2 在这一档要的恰恰是「中断前最后一句还在」。
+              给它一个下限，保证至少留得下两行。
+            */
+            ...(liveView === 'degraded' && !liveTranscriptExpanded ? { minHeight: 72 } : {}),
             // 折叠态贴底滚动，最上面那句会被卷掉半行。加一道渐隐让这道切口读成
             // 「上面还有」，而不是「这行字被裁坏了」——稿面那句淡灰的首行就是这个意思。
             // 只有真的卷上去了才渐隐：内容没超出时挂渐隐，第一行会莫名其妙比第二行浅，
@@ -1462,23 +1475,26 @@ export function RecordAudioSheet({
               })}
             </div>
           )}
-          {liveView === 'degraded' && (
-            /*
-              骨架条画的是「断在这里、这段还没转出来」。稿面 R3 / cap-A2 给的是**两条**，
-              紧跟在最后一句已识别文本之后——那是它的意思所在：让人看得见缺口的位置。
-              上一版铺六条把卡片撑爆，反而把最后那句真原文顶出了可视区。
-            */
-            <div className="mt-2.5 flex flex-col gap-2.5" aria-hidden>
-              {[92, 64].map((width, index) => (
-                <span
-                  key={index}
-                  className="block h-3 rounded-full"
-                  style={{ background: 'var(--skeleton-fill)', width: `${width}%` }}
-                />
-              ))}
-            </div>
-          )}
         </div>
+        {liveView === 'degraded' && (
+          /*
+            骨架条画的是「断在这里、这段还没转出来」。稿面 R3 / cap-A2 给的是**两条**，
+            紧跟在最后一句已识别文本之后——那是它的意思所在：让人看得见缺口的位置。
+
+            它必须在滚动区**外面**。放进去的话，容器贴底滚动会把视窗停在这两条上，
+            刚识别出来的那几句被顶到看不见的地方——判分连着两轮都报「屏幕上一个字都没有」，
+            而其实句子一直在，只是被自己的占位条挤出了可视区。
+          */
+          <div className="mt-2.5 flex shrink-0 flex-col gap-2.5" aria-hidden>
+            {[92, 64].map((width, index) => (
+              <span
+                key={index}
+                className="block h-3 rounded-full"
+                style={{ background: 'var(--skeleton-fill)', width: `${width}%` }}
+              />
+            ))}
+          </div>
+        )}
 
         {liveView === 'degraded' && (
           <p className="mt-3 text-[12px] leading-relaxed text-token-muted">

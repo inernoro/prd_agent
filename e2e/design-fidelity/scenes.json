@@ -554,7 +554,7 @@
   {
     "id": "capture-upload-offline",
     "board": "v2-R3",
-    "note": "分片上传通道建不起来：顶部琥珀横幅 + 「上传等待中」；实时通道也在推了三句之后掉线，稿面 R3 的降级卡里保留着中断前最后一句",
+    "note": "录到一半网变差：会话已建立、实时转写推过三句，随后分片上传开始失败（顶部琥珀横幅 + 上传等待中），实时通道也掉线",
     "url": "/document-store?store=store-demo",
     "sections": false,
     "settleMs": 6000,
@@ -573,11 +573,12 @@
       ],
       "dropAfter": 3,
       "stepMs": 600,
-      "recordMs": 11000
+      "recordMs": 26000,
+      "servePlanConnections": 2
     },
     "rules": [
       {
-        "match": "/stores/[^/]+/recording-uploads$",
+        "match": "/recording-uploads/[^/]+/chunks/(?:[3-9]|[1-9][0-9]+)$",
         "status": 500,
         "message": "网络不可用"
       }

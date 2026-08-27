@@ -627,9 +627,30 @@ for (const scene of ACTIVE) {
        * 800ms 这一档打转，终态降级那一屏一次都到不了（本轮取证就卡在这里）。
        */
       let liveConnections = 0;
+      /*
+       * 累计文本与游标挂在**页面级**而不是每条连接上：重连之后从头再推一遍的话，
+       * 客户端拿到的整段原文比上一次短，逐句日志会按新文本整体重算，
+       * 已经显示出来的句子当场消失。真实的 ASR 服务端也是接着上次的位置继续。
+       */
+      let liveText = '';
+      let liveIndex = 0;
       await page.routeWebSocket(/live-transcription/, (ws) => {
-        const firstConnection = liveConnections++ === 0;
-        if (!plan || (scene.capture.dropAfter != null && !firstConnection)) {
+        /*
+         * 前两次连接照常推完整个 plan 再掐断，之后每次重连立刻断。
+         * 为什么不是「只有第一次」：这一屏在建立上传会话的过程中可能先开过一路连接，
+         * 它会把「第一次」用掉，真正承载音频的那一路就直接被闭门羹挡回去——
+         * 结果是三句一句都没到，而降级时刻却晚到 00:07（重连耗尽的时间）。
+         * 留两次余量，既保证句子发得出去，也仍然会走到终态降级。
+         */
+        /*
+         * 有几条连接照常推句子，由场景自己说（默认 1）。
+         * 为什么要可调：上传通道那一档在建立会话的过程中会先开掉几路连接，
+         * 只放行第一条的话，真正承载音频的那一路吃闭门羹，三句一句都到不了；
+         * 而只有实时通道掉线的那一档必须只放行一条，否则客户端的退避计数被
+         * 每次入站消息重置，永远走不到终态降级。两档要的数不一样。
+         */
+        const servesPlan = liveConnections++ < (scene.capture.servePlanConnections ?? 1);
+        if (!plan || (scene.capture.dropAfter != null && !servesPlan)) {
           // 立刻 close 的话浏览器侧还停在 CONNECTING，onclose 不会触发，页面永远显示「连接中」。
           // 先让它连上、再断开，走的才是真实的「连上又掉线」那条路径。
           // 1006 是保留码，不能显式发送（发了会被拒，socket 反而一直开着，
@@ -641,20 +662,30 @@ for (const scene of ACTIVE) {
         ws.onClose(() => { alive = false; });
         ws.onMessage(() => undefined);
         ws.send(JSON.stringify({ type: 'ready', message: '正在实时转写' }));
-        let index = 0;
-        let text = '';
+
         /*
          * `dropAfter`：先推 N 句、再把连接掐掉。
          * 稿面 R3 / cap-A2 画的降级态里保留着**中断前最后一句已识别文本**——
          * 那句话只有真的先识别出来过才会有。一上来就断的桩永远造不出这一档，
          * 于是判分把「桩造不出的东西」记成了实现缺失。
          */
-        const dropAfter = firstConnection ? (scene.capture.dropAfter ?? null) : null;
+        const dropAfter = servesPlan ? (scene.capture.dropAfter ?? null) : null;
         const tick = () => {
-          if (!alive || index >= plan.length) return;
-          text += plan[index++];
-          try { ws.send(JSON.stringify({ type: 'partial', text, stable: true })); } catch { alive = false; }
-          if (dropAfter !== null && index >= dropAfter) {
+          if (!alive) return;
+          /*
+           * plan 推完了也要**关掉**这一路，而不是挂着。
+           * 挂着的话客户端一直连得好好的，永远走不到「实时原文暂时不可用」——
+           * 而这一档要判的正是那个终态。
+           */
+          if (liveIndex >= plan.length) {
+            if (dropAfter !== null) {
+              setTimeout(() => { try { ws.close({ code: 1011, reason: 'stub-plan-done' }); } catch { /* 已经断了 */ } }, 300);
+            }
+            return;
+          }
+          liveText += plan[liveIndex++];
+          try { ws.send(JSON.stringify({ type: 'partial', text: liveText, stable: true })); } catch { alive = false; }
+          if (dropAfter !== null && liveIndex >= dropAfter) {
             setTimeout(() => { try { ws.close({ code: 1011, reason: 'stub-dropped' }); } catch { /* 已经断了 */ } }, 300);
             return;
           }

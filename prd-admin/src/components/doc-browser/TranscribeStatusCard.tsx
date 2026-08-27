@@ -55,6 +55,22 @@ function FailureIcon({ kind }: { kind: string }) {
   return <AlertTriangle size={16} />;
 }
 
+/**
+ * 把「第 2 / 3 次」「8 秒」这类计数与倒计时从句子里**加粗提出来**。
+ *
+ * 稿面 v2-S6 / cap-S7 的那句话里，这两个数是唯一带字重的锚点——用户扫这张卡时
+ * 要的就是「还剩几次、还要等多久」，其余是解释。整句同一个字重的话，
+ * 他得逐字读完才找得到答案（两份判分各记了一次）。
+ */
+function emphasizeCounters(text: string): React.ReactNode {
+  const parts = text.split(/(第\s*\d+\s*\/\s*\d+\s*次|\d+(?:\.\d+)?\s*(?:秒|分钟|小时|s))/);
+  return parts.map((part, index) => (
+    index % 2 === 1
+      ? <strong key={index} style={{ color: 'var(--text-primary)' }}>{part}</strong>
+      : <span key={index}>{part}</span>
+  ));
+}
+
 /** mm:ss / h:mm:ss —— 设计稿「保存音频」那一行要的时长写法。 */
 function formatClockLabel(sec: number): string {
   const total = Math.round(sec);
@@ -798,7 +814,7 @@ export function TranscribeStatusCard({
             <div className="flex gap-2">
               <dt className="w-[52px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>下一步</dt>
               <dd style={{ color: 'var(--text-secondary)' }}>
-                {failureCopy!.nextStep}
+                {emphasizeCounters(failureCopy!.nextStep)}
               </dd>
             </div>
           </dl>
@@ -911,10 +927,14 @@ export function TranscribeStatusCard({
             <button
               onClick={onEnterResult}
               className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
-              style={{
-                background: 'var(--button-primary-bg)',
-                color: 'var(--button-primary-fg)',
-              }}>
+              /*
+                失败态下这颗退成描边：稿面把「重试」定成那一屏唯一的黑色实心主按钮，
+                而这颗常驻入口同样是黑色实心、还更宽，于是同屏出现两个同级黑块，
+                稿面定义的主次被摊平（cap-S8 判分记的正是这处）。
+              */
+              style={showFailure
+                ? { border: '1px solid var(--border-default)', color: 'var(--text-primary)' }
+                : { background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>
               <Play size={11} fill="currentColor" /> 打开录音结果页 <ChevronRight size={11} />
             </button>
           )}
