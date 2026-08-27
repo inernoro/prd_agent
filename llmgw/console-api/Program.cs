@@ -10574,8 +10574,10 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
         //
         // 判据与池列表下发的 Removable 是**同一个函数**——控制台显示的那个按钮，
         // 就是这里放行的那个条件，不存在「按钮亮着但点下去 409」。
+        // platformId 可省略（按模型名删），那样可能一次覆盖多个成员，必须全死才放行；
+        // 逐个成员走的仍是池列表下发 Removable 的同一个原语。
         var resolutionIndex = await BuildPoolResolutionIndexAsync(http);
-        if (!IsDeadPoolMember(normalizedModelId, normalizedPlatformId, resolutionIndex))
+        if (!AreAllTargetedPoolMembersDead(pool, normalizedModelId, normalizedPlatformId, resolutionIndex))
         {
             return Json(ApiEnvelope<PoolItem>.Fail(
                 "APPEND_ONLY_POOL",
@@ -12784,6 +12786,31 @@ static bool IsDeadPoolMember(string modelId, string platformId, PoolResolutionIn
         return !index.ExistingModels.Any(model => PoolMemberMatchesModelDoc(model, platformId, modelId));
     }
     return true;
+}
+
+/// <summary>
+/// 这次删除请求覆盖到的**所有**成员是不是都已经死了。
+///
+/// <c>platformId</c> 是可选的：只给 modelId 时按模型名删，可能一次匹配到多个成员
+///（同一个模型名挂在不同上游上）。此时必须**全都**是死成员才放行——只要还有一个活的，
+/// 这次删除就会顺带把它也摘掉。目标为空同样拒绝（判不准就保护）。
+///
+/// 逐个成员的判定复用 <see cref="IsDeadPoolMember"/>，与池列表下发 Removable 用的是同一个原语，
+/// 所以「控制台按钮亮着」和「删除端点放行」不可能分歧。
+/// </summary>
+static bool AreAllTargetedPoolMembersDead(
+    BsonDocument pool, string modelId, string platformId, PoolResolutionIndex index)
+{
+    var membersValue = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
+    var targets = membersValue
+        .Where(x => x.IsBsonDocument)
+        .Select(x => x.AsBsonDocument)
+        .Where(m => string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
+                    && (platformId.Length == 0
+                        || string.Equals(m.GetStringOrEmpty("PlatformId"), platformId, StringComparison.Ordinal)))
+        .ToList();
+    if (targets.Count == 0) return false;
+    return targets.All(m => IsDeadPoolMember(m.GetStringOrEmpty("ModelId"), m.GetStringOrEmpty("PlatformId"), index));
 }
 
 static bool IsManagedAppendOnlyPool(BsonDocument pool)

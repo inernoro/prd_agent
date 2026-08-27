@@ -80,7 +80,7 @@ public class GatewayLegacySweepGuardTests
 
         // 例外必须走那个专门的判定函数，而不是把 append-only 检查整段删掉
         Assert.Contains("IsManagedAppendOnlyPool(pool)", handler);
-        Assert.Contains("IsDeadPoolMember", handler);
+        Assert.Contains("AreAllTargetedPoolMembersDead", handler);
         Assert.Contains("APPEND_ONLY_POOL", handler);
     }
 
@@ -93,10 +93,12 @@ public class GatewayLegacySweepGuardTests
         // 每处都表现为「按钮亮着、点下去必然 409」。补洞补不完，因为那是两份判据在漂移。
         Assert.Contains("static bool IsDeadPoolMember", Console);
 
-        // 删除端点必须调它，而不是另写一套
+        // 删除端点必须走同一个原语（经「覆盖到的成员全死了吗」这层），而不是另写一套
         var handler = HandlerSource("app.MapDelete(\"/gw/pools/{id}/models\"");
-        Assert.Contains("IsDeadPoolMember(normalizedModelId, normalizedPlatformId", handler);
+        Assert.Contains("AreAllTargetedPoolMembersDead(pool, normalizedModelId, normalizedPlatformId", handler);
         Assert.Contains("APPEND_ONLY_POOL", handler);
+        var targeted = FunctionSource("static bool AreAllTargetedPoolMembersDead");
+        Assert.Contains("IsDeadPoolMember(", targeted);
 
         // 列表下发的 Removable 也必须来自它
         var apply = FunctionSource("static PoolItem ApplyPoolMemberResolution");
@@ -104,6 +106,19 @@ public class GatewayLegacySweepGuardTests
 
         // 判据只许有这一处定义
         Assert.Equal(1, CountOccurrences(Console, "static bool IsDeadPoolMember"));
+    }
+
+    [Fact]
+    public void 按模型名删时必须解析出目标成员而不是拿空platformId硬判()
+    {
+        // platformId 是可选的：只给 modelId 时按模型名删。拿空 platformId 直接进逐成员判定，
+        // 「判不准就保护」会让它恒为 false，托管池上这种删法一律 409——支持的契约被判死。
+        // 正确做法是先从池里解析出这次覆盖到的成员，再要求它们**全都**是死成员。
+        var fn = FunctionSource("static bool AreAllTargetedPoolMembersDead");
+        Assert.Contains("platformId.Length == 0", fn);          // 省略时不按平台过滤
+        Assert.Contains("if (targets.Count == 0) return false;", fn);  // 一个都没匹配到就拒绝
+        Assert.Contains("targets.All(", fn);                     // 必须全死，剩一个活的就不放行
+        Assert.DoesNotContain("targets.Any(", fn);
     }
 
     [Fact]
