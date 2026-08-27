@@ -889,7 +889,7 @@ public class DataSyncScopeCoverageTests
         // 现在扫整个 src 树，两种写法都认，并且先剥掉注释再扫。
         var srcRoot = LocateSrcRoot();
         var offenders = new List<string>();
-        var scanned = 0;
+        var found = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var file in Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories))
         {
             var source = StripLineComments(File.ReadAllText(file));
@@ -897,20 +897,46 @@ public class DataSyncScopeCoverageTests
             {
                 // 只管那些从 StoredAsset 拿地址的：别处（如外部视频直链）本来就没有 key。
                 if (!body.Contains("Url = stored.Url", StringComparison.Ordinal)) continue;
-                scanned++;
+                var name = Path.GetFileName(file);
+                found[name] = found.GetValueOrDefault(name) + 1;
                 if (!body.Contains("StorageKey", StringComparison.Ordinal))
                 {
-                    offenders.Add(Path.GetFileName(file));
+                    offenders.Add(name);
                 }
             }
         }
 
-        // 空跑闸：一处都没扫到就说明判据已经跟不上真实写法了，
-        // 那时候「零违规」是假绿，不是真干净。
+        // 站点清单必须**逐一对上**，不是「够多就行」。
+        //
+        // 上一版用的是 `扫到的处数 >= 6`。那个阈值挡不住「悄悄少一处」：把某个工厂方法
+        // 从表达式体改成块体（`return new() { ... };` —— 一样合法的写法），判据就认不出它了，
+        // 同时把那处的 StorageKey 去掉，处数从 9 掉到 8，仍然 >= 6，于是这个真实回归一路绿。
+        //
+        // 所以判据不再问「够不够多」，改问「是不是正好这几处」：少一处、多一处都红。
+        // 少了 = 要么真被删了、要么判据认不出它的新写法，两种都必须有人看一眼；
+        // 多了 = 新增了建附件的地方，必须显式登记进来（顺带被这条守卫盯上）。
+        //
+        // 这是第三次在同一条判据上被 review 挑出「换个等价写法就绕过去」。
+        // 前两次的应对都是给正则加一种写法，第三次不再那么做——按 AGENTS.md §5.5，
+        // 同一个文本判据反复被要求加格式时，正解是换成有限枚举，而不是加第四个正则。
+        var expected = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["AttachmentsController.cs"] = 1,
+            ["DocumentRecordingArchiveWorker.cs"] = 1,
+            ["DocumentStoreController.cs"] = 2,
+            ["DocumentStoreSyncResource.cs"] = 1,
+            ["ReportAgentController.cs"] = 3,
+            ["ReviewAgentController.cs"] = 1,
+        };
         Assert.True(
-            scanned >= 6,
-            $"只扫到 {scanned} 处从 StoredAsset 建附件的地方，判据多半已经跟不上真实写法了");
+            found.Count == expected.Count && found.All(kv => expected.GetValueOrDefault(kv.Key) == kv.Value),
+            "从 StoredAsset 建附件的站点清单和登记的对不上。\n"
+            + $"登记：{Render(expected)}\n实际：{Render(found)}\n"
+            + "少了就去看那处是被删了还是判据认不出它的新写法；多了就把新站点登记进来。");
         Assert.True(offenders.Count == 0, $"这些地方建附件时没有存下对象 key：{string.Join("、", offenders.Distinct())}");
+
+        static string Render(Dictionary<string, int> d)
+            => string.Join("、", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}×{kv.Value}"));
     }
 
     /// <summary>
