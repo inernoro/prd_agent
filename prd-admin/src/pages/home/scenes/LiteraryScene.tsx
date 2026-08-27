@@ -503,7 +503,10 @@ function StyledPhotoFill({ src, tone }: { src: string; tone: Tone }) {
         style={{
           background: tone.mid,
           mixBlendMode: 'color',
-          opacity: 0.72,
+          // 0.34 而不是 0.72：0.72 会把照片洗成一块单色，看着又变回「贴图」了，
+          // 而这几张的全部意义就是「这是真照片」。压到三成左右，切风格时色调仍然
+          // 明显在变，但山脊、雾、木纹的固有色还在。
+          opacity: 0.34,
           transition: 'background-color .55s ease',
         }}
       />

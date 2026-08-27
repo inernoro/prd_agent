@@ -77,11 +77,15 @@ export const LANDING_PREVIEW_SLOTS: LandingPreviewSlot[] = [
     where: '第 1 幕 视觉创作画布 · 左下那张',
     size: '1536x1024',
     subject:
-      'Subject: the exact same mountain ridge, from the exact same viewpoint and the exact same composition ' +
-      'as the clear blue-hour shot — the same three overlapping ranges in the same positions, the same dark ' +
-      'foreground slope. The only thing that changes is the weather: a low bank of fog now fills the valley and ' +
-      'drifts across the lower slopes, softening the far ranges into pale silhouettes. ' +
-      'The ridge line along the top stays visible and unchanged. Cooler, greyer and quieter than the clear version.',
+      // 这段刻意把初稿那张的构图逐条描出来（圆钝双峰、左侧长脊、右下前景坡、右侧两道远山、
+      // 右侧地平线偏暖）。本该用图生图锁住同一条山脊，但本环境没有配 vision 模型池，
+      // 图生图一律 MODEL_POOL_EMPTY，只能靠文生图尽量复述构图 —— 详见 debt 里记的那条。
+      'Subject: a broad rounded mountain massif with a gentle double summit just right of centre, seen from a ' +
+      'facing slope across a wide valley. A long dark ridge descends from the left edge of the frame; a dark ' +
+      'foreground slope rises from the bottom-right corner. Two paler ranges recede behind it toward the right. ' +
+      'The weather is fog: a low bank fills the valley and drifts across the lower slopes, softening the far ' +
+      'ranges into pale silhouettes, while the summit line along the top stays visible and unbroken. ' +
+      'Cool, grey and quiet — the same place as the clear shot, on a foggy morning.',
   },
   {
     id: 'visual-warm',
