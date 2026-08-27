@@ -312,7 +312,10 @@ services:
       LlmGateway__Mode: "inproc"
       # CDS 将 profile env 原样写入容器，不展开 Docker Compose 的 `${KEY:-default}` 语法。
       # 录音转写调用方固定走独立 serving 权威；如需扩展灰度范围，必须通过受审 compose 导入修改。
-      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr"
+      # 「向我提问」两个调用方一并切到 HTTP 权威：模型池配置在 llmgw 那边，
+      # 留在 inproc 会去查 MAP 自己的 model_groups —— 那张表在网关剥离之后就是空的，
+      # 结果是 [ModelResolver] 未找到可用模型（无池且 legacy 未命中），访客看到「回答失败了」。
+      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
