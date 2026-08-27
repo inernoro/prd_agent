@@ -28,7 +28,9 @@ describe('搜索行在窄屏上不许右溢出', () => {
   });
 
   it('右侧两颗按钮保持 flex-shrink-0，被压扁的应该是搜索框不是按钮', () => {
-    expect(SRC).toContain('aria-label="跳到下一个命中"');
+    // 稿面 B2 的命中导航是**一对**方向键，两颗都要在
+    expect(SRC).toContain('aria-label="上一个命中"');
+    expect(SRC).toContain('aria-label="下一个命中"');
     // 命中跳转钮与「继续跟随」都要 shrink-0，否则窄屏下它们会被压成一条缝
     const shrinkGuards = SRC.match(/flex-shrink-0/g) ?? [];
     expect(shrinkGuards.length).toBeGreaterThanOrEqual(2);

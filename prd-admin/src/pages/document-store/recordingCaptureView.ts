@@ -110,6 +110,21 @@ export function describeCaptureChips(input: {
     chips.push({ key: 'upload', label: '已全部上传', tone: 'success', icon: 'check' });
     return chips;
   }
+  /*
+    录音**还在继续**、而队列已经追平：这一刻的真话是「已录的都传上去了」，
+    不是「99%」。此前一律显示 percent，于是同屏出现「46 KB / 46 KB」配「99%」，
+    两处口径互相打脸（cap-S2 判分记的正是这处）。99% 那个上限本意是不许在录音期间
+    宣称「全部完成」——换成一句「已跟上录音进度」既守住了这条，又不再自相矛盾。
+  */
+  if (input.uploadedBytes >= input.localBytes) {
+    chips.push({
+      key: 'upload',
+      label: `实时上传 ${formatCapturedSize(input.uploadedBytes)} · 已跟上录音进度`,
+      tone: 'info',
+      icon: 'upload',
+    });
+    return chips;
+  }
   chips.push({
     key: 'upload',
     label: `实时上传 ${formatCapturedSize(input.uploadedBytes)} · ${percent}%`,

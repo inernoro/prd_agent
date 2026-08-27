@@ -813,6 +813,13 @@ export type TranscribeStyleParams = {
   customPrompt?: string;
 };
 
+/**
+ * 默认整理方式的 key。SSOT 是后端 `TranscribeStyleRegistry.DefaultKey`，
+ * 这里是它的镜像——`transcriptDefaultStyleKey.test.ts` 直接读那份 C# 源码比对，
+ * 后端改了这边不跟着改，测试会红（形状 3：判据抄成两份然后各自漂移）。
+ */
+export const DEFAULT_ORGANIZE_STYLE_KEY = 'general';
+
 /** 发起录音转录。默认只保存 ASR 原文；显式传 styleKey 时才继续生成对应整理结果。 */
 export async function transcribeEntry(entryId: string, style?: TranscribeStyleParams) {
   return await apiRequest<{ runId: string; status: string; reused: boolean }>(

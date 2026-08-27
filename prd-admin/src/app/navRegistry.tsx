@@ -29,6 +29,7 @@ const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => (
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
 const RecordingResultPage = lazy(() => import('@/pages/document-store/RecordingResultPage').then(m => ({ default: m.RecordingResultPage })));
+const RecordingProcessingPage = lazy(() => import('@/pages/document-store/RecordingProcessingPage').then(m => ({ default: m.RecordingProcessingPage })));
 const UniverseGraphPage = lazy(() => import('@/pages/document-store/UniverseGraphPage').then(m => ({ default: m.UniverseGraphPage })));
 const GalaxyStandalonePage = lazy(() => import('@/pages/document-store/GalaxyStandalonePage').then(m => ({ default: m.GalaxyStandalonePage })));
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
@@ -768,6 +769,15 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     placement: 'fullscreen',
     permission: ['document-store.read', 'document-store.write'],
     element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingResultPage />),
+  },
+  {
+    // 录音处理页：稿面 R4 / cap-A4 / cap-A5 画的是**整屏接管**，屏底压着主操作。
+    // 与结果页分成两条路由而不是同一屏的两个状态——那颗按钮写的就是「进入结果页」，
+    // 同一个地址上说这句话说不通。
+    path: '/document-store/:storeId/recording/:entryId/processing',
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingProcessingPage />),
   },
   {
     path: '/document-store/:storeId/universe',

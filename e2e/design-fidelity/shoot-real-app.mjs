@@ -400,8 +400,37 @@ const DRIVERS = {
      */
     const row = page.locator('[data-transcript-row="3"]');
     if (await row.count()) {
+      /*
+       * 稿面 P2 是**同一屏**里的三件事：搜索命中态（3 / 9 + 黄底高亮）、说话人筛选、
+       * 正在改的那一句。上一版把搜索先清空再点开编辑，于是判分看到的是一个空搜索框，
+       * 「这一屏的两个主命题都没实现」——其实实现了，只是取证没把它们摆在同一张图里。
+       */
+      await search.first().fill('导入');
+      await page.waitForTimeout(500);
+      // 滚到那一行：播放区收成迷你条要靠真的滚过顶部哨兵，不滚就截不到收起态
+      await row.first().scrollIntoViewIfNeeded();
+      await page.waitForTimeout(400);
       await row.first().click();
       await page.waitForTimeout(500);
+      /*
+       * 稿面 P2 这一屏里搜索行与说话人筛选就在编辑卡上方。点开编辑之后如果不校准滚动位置，
+       * 它们会被顶出画面，判分看到的就是「这两层根本不存在」。
+       * 校准法：把搜索框滚到顶，再回退一点点，让它落在吸顶播放条正下方——
+       * 回退量远小于播放区高度，顶部哨兵仍在画面之上，收起态不会被这一下弄没。
+       */
+      /*
+       * 校准要跑**两遍**：第一遍滚过去会让播放区收成迷你条，吸顶容器从三百多像素塌到六十几，
+       * 底下的内容整体上移，第一遍算好的位置当场作废。等收起动画落定再滚一遍才稳。
+       * 这类「测量 → 应用 → 布局因这次应用而改变」的坑，一遍是看不出来的。
+       */
+      for (let i = 0; i < 3; i++) {
+        await page.evaluate(() => {
+          // 滚的是**整行**那个容器：scrollMarginTop 挂在它身上，滚输入框本身拿不到这份留白
+          const row = document.querySelector('[data-transcript-search-row]');
+          row?.scrollIntoView({ block: 'start', behavior: 'instant' });
+        });
+        await page.waitForTimeout(350);
+      }
       await snap('编辑原文');
       await page.keyboard.press('Escape').catch(() => undefined);
       const cancel = page.getByRole('button', { name: '取消' });

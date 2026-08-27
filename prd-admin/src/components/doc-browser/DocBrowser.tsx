@@ -3976,6 +3976,10 @@ export function DocBrowser({
                     lastFailure={transcribeFailure}
                     audioTitle={selectedEntryData.title}
                     audioSizeLabel={formatFileSizeLabel(selectedEntryData.fileSize)}
+                    /* 录制日期（稿面 cap-A4/A5 编在音频卡标题里）：条目自己的创建时刻，不另造 */
+                    audioDateLabel={selectedEntryData.createdAt
+                      ? new Date(selectedEntryData.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
+                      : null}
                     transcriptPreview={transcribeRun?.transcriptPreview}
                     generatedSentences={transcribeRun?.transcriptPreview?.length}
                     /*
@@ -4003,6 +4007,20 @@ export function DocBrowser({
                       link.click();
                       link.remove();
                     } : undefined}
+                    /*
+                      「复制原文」（稿面 cap-S8）：整理挂了但原文好好的，先把原文拿走自己整理。
+                      拿不到原文就不给这颗按钮——不给一个点了什么都不发生的出口。
+                    */
+                    onCopyTranscript={transcriptNoteMd
+                      ? () => {
+                        void navigator.clipboard?.writeText(transcriptNoteMd).then(
+                          () => toast.success('原文已复制'),
+                          () => toast.error('复制失败，请手动选中原文复制'),
+                        );
+                      }
+                      : undefined}
+                    // 「联系支持」（稿面 cap-S10）落到缺陷智能体：那是这套系统里真实的报障入口
+                    onContactSupport={() => navigate('/defect-agent')}
                     onEnterResult={onOpenRecordingResult
                       ? () => onOpenRecordingResult(selectedEntryData.id)
                       : undefined}

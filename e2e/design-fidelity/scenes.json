@@ -23,17 +23,18 @@
   },
   {
     "id": "processing",
-    "board": "v2-R4 / v2-S2 / cap-S3",
-    "note": "录音结束、音频已落地、原文还在跑的处理中屏。三块稿面画的是同一个 TranscribeStatusCard 的不同层：R4 是整屏、S2 是里面那张进度卡、S3 是「音频已保存」压「原文生成中」的双层",
-    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "board": "v2-R4 / v2-S2 / cap-S3 / cap-S4 / cap-A4",
+    "note": "录音结束、音频已落地、原文还在跑的**整屏**处理页（稿面画的就是整屏，屏底压着主操作）",
+    "url": "/document-store/store-demo/recording/entry-audio/processing",
     "sections": false,
     "settleMs": 14000,
     "audioMeta": {
       "transcribe_entry_id": null
     },
     "expect": [
-      "正在整理这段录音",
-      "音频已经安全保存"
+      "正在准备结果页",
+      "音频已经安全保存",
+      "进入结果页并开始播放"
     ],
     "rules": [
       {
@@ -73,8 +74,59 @@
     ]
   },
   {
+    "id": "processing-stage3",
+    "board": "cap-A5",
+    "note": "阶段 3：原文已经写完，正在补齐词云与整理（progress 越过 70 就进这一格）",
+    "url": "/document-store/store-demo/recording/entry-audio/processing",
+    "sections": false,
+    "settleMs": 14000,
+    "audioMeta": {
+      "transcribe_entry_id": null
+    },
+    "expect": [
+      "正在准备结果页",
+      "补齐录音理解"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "running",
+          "phase": "正在生成词云与智能摘要",
+          "progress": 85,
+          "transcriptText": "先说结论，导入是这一版最大的漏斗。\n我们看了 312 个新账号，第 7 天只剩 41%。\n掉落最集中的一步是等待解析。",
+          "createdAt": "@ago:33",
+          "startedAt": "@ago:31",
+          "heartbeatAt": "@now"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "running",
+          "phase": "正在生成词云与智能摘要",
+          "progress": 85,
+          "transcriptText": "先说结论，导入是这一版最大的漏斗。\n我们看了 312 个新账号，第 7 天只剩 41%。\n掉落最集中的一步是等待解析。",
+          "createdAt": "@ago:33",
+          "startedAt": "@ago:31",
+          "heartbeatAt": "@now"
+        }
+      }
+    ]
+  },
+  {
     "id": "fail-manual",
-    "board": "v2-S5 / cap-S8",
+    "board": "v2-S5",
     "note": "转录失败、自动重试已耗尽、轮到用户手动重试的那张卡",
     "url": "/document-store?store=store-demo&entry=entry-audio",
     "sections": false,
@@ -126,6 +178,62 @@
         }
       }
     ]
+  },
+  {
+    "id": "fail-derived",
+    "board": "cap-S8",
+    "note": "原文已经在了，会议纪要反复生成失败、自动重试耗尽，轮到用户手动重试；兜底出口是「复制原文」",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 9000,
+    "expect": [
+      "生成失败",
+      "都不受影响",
+      "复制原文"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "status": "failed",
+          "progress": 0,
+          "errorMessage": "音频编码不受支持，无法解码这段录音。",
+          "failureCode": "ERR_CODEC",
+          "automaticRetryCount": 3,
+          "automaticRetryNextAt": null,
+          "endedAt": "@ago:120"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "status": "failed",
+          "progress": 0,
+          "errorMessage": "音频编码不受支持，无法解码这段录音。",
+          "failureCode": "ERR_CODEC",
+          "automaticRetryCount": 3,
+          "automaticRetryNextAt": null,
+          "endedAt": "@ago:120"
+        }
+      }
+    ],
+    "audioMeta": {
+      "transcribe_style_key": "meeting"
+    }
   },
   {
     "id": "no-speech",
@@ -184,17 +292,15 @@
   },
   {
     "id": "auto-retry",
-    "board": "v2-S6 / cap-S7（按拍板缩水成整条转录的重试卡）",
-    "note": "失败但自动重试还没耗尽：第 2/3 次将在 8 秒后开始",
+    "board": "v2-S6 / cap-S7",
+    "note": "原文已经在了，挂的是整理那一层：会议纪要生成失败、自动重试还没耗尽。播放/原文/编辑/搜索都不受影响",
     "url": "/document-store?store=store-demo&entry=entry-audio",
     "sections": false,
     "settleMs": 9000,
-    "audioMeta": {
-      "transcribe_entry_id": null
-    },
     "expect": [
-      "转录失败，正在自动重试",
-      "自动重试将在"
+      "生成失败，正在自动重试",
+      "自动重试将在",
+      "都不受影响"
     ],
     "rules": [
       {
@@ -235,7 +341,10 @@
           "endedAt": "@ago:20"
         }
       }
-    ]
+    ],
+    "audioMeta": {
+      "transcribe_style_key": "meeting"
+    }
   },
   {
     "id": "stalled",
@@ -249,8 +358,8 @@
     },
     "expect": [
       "处理已超过一小时",
-      "还在排队",
-      "部分原文"
+      "完成后通知我",
+      "联系支持"
     ],
     "rules": [
       {
@@ -292,8 +401,8 @@
   {
     "id": "bare-note",
     "board": "cap-S11 / cap-S12 / cap-S13",
-    "note": "一份短的、没有说话人标签、没有摘要节的转录笔记：同时驱出「没有说话人」「词云太短」「还没有整理结果」三种空态",
-    "sections": false,
+    "note": "一份短的、没有说话人标签、没有摘要节的转录笔记：同时驱出「没有说话人」「词云太短」「还没有整理结果」三种空态。开分区截图：cap-S11/S12/S13 三张空态卡分别落在「词云」与「会议纪要」两节里",
+    "sections": true,
     "settleMs": 6000,
     "noteMd": "# 现场速记\n\n## 转录全文\n\n**[00:04 - 00:09]** 先把桌子挪到窗边，插排从左边绕过来。\n**[00:11 - 00:16]** 麦克风离得太近了，往后挪半个胳膊。\n**[00:19 - 00:25]** 好，现在这个位置我听着挺清楚的。\n**[00:28 - 00:33]** 待会儿开场先讲背景，别一上来就说结论。\n**[00:36 - 00:41]** 灯有点晃，把顶上那盏关掉一半。\n**[00:44 - 00:50]** 行，那我们就按刚才说的顺序走一遍。\n",
     "audioMeta": {

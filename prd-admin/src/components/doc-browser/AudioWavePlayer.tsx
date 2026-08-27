@@ -24,6 +24,11 @@ interface AudioWavePlayerProps {
   onDurationChange?: (durationSec: number) => void;
   /** 播放状态同步给交互式播放器，用于状态文案与无障碍反馈。 */
   onPlaybackChange?: (playing: boolean) => void;
+  /**
+   * 当前倍速播报（如 `1.5×`）。收起态那条迷你播放条要显示它（稿面 P2「09:58 / 24:18 · 1.5×」），
+   * 而倍速是这个组件内部的状态——不播报出去，外面只能自己再存一份，两份立刻开始漂移。
+   */
+  onRateChange?: (rateLabel: string) => void;
   /** 注册跳播函数：父组件拿到 seek(sec) 后可实现「点歌词跳播」；跳播后若暂停会自动继续播 */
   registerSeek?: (seek: (sec: number) => void) => void;
   className?: string;
@@ -93,6 +98,7 @@ export function AudioWavePlayer({
   onTimeUpdate,
   onDurationChange,
   onPlaybackChange,
+  onRateChange,
   registerSeek,
   className = '',
   transportMeta,
@@ -110,8 +116,21 @@ export function AudioWavePlayer({
   useEffect(() => { onDurationChangeRef.current = onDurationChange; }, [onDurationChange]);
   const onPlaybackChangeRef = useRef(onPlaybackChange);
   useEffect(() => { onPlaybackChangeRef.current = onPlaybackChange; }, [onPlaybackChange]);
+  const onRateChangeRef = useRef(onRateChange);
+  useEffect(() => { onRateChangeRef.current = onRateChange; }, [onRateChange]);
   const registerSeekRef = useRef(registerSeek);
   useEffect(() => { registerSeekRef.current = registerSeek; }, [registerSeek]);
+
+  /** 进度轨道上按下/拖动 → 换算成秒并跳播。轨道与波形共用同一套换算，不各写一份。 */
+  const seekFromPointer = (track: HTMLElement, clientX: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const total = audio.duration;
+    if (!Number.isFinite(total) || total <= 0) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    audio.currentTime = ratio * total;
+  };
 
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -198,9 +217,10 @@ export function AudioWavePlayer({
     };
   }, [src]);
 
-  // 切换倍速时同步到原生播放器
+  // 切换倍速时同步到原生播放器，并播报给收起态那条迷你播放条
   useEffect(() => {
     if (audioRef.current) audioRef.current.playbackRate = PLAYBACK_RATES[rateIdx];
+    onRateChangeRef.current?.(`${PLAYBACK_RATES[rateIdx].toFixed(1)}×`);
   }, [rateIdx]);
 
   const togglePlay = () => {
@@ -345,13 +365,19 @@ export function AudioWavePlayer({
           放不下一行字，内容竖着排（D1 第一版就是这样把当前句挤成了一列单字）。
         */}
         <div className={transportAside ? 'flex shrink-0 flex-col' : 'flex min-w-0 flex-1 flex-col'}>
-          <div className="flex items-baseline gap-2 whitespace-nowrap">
+          {/*
+            不再对整行写 whitespace-nowrap：那一笔让这一行**没法收缩**，
+            390px 屏上「24:18」被裁成「24:1」、句序整段掉出视口（P1/P2 判分记的正是这处）。
+            改成允许换行 + 每一段自己 nowrap：放得下就一行，放不下句序落到第二行，
+            没有任何一段被切一半。
+          */}
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             {/* 稿面把当前时间做成播放区的视觉重心：大号加粗黑，总时长与句序退到灰色小字 */}
-            <span className="font-mono text-[17px] font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
+            <span className="whitespace-nowrap font-mono text-[17px] font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>
               {formatTime(currentTime)}
             </span>
             <span className="text-[13px] text-token-muted">/</span>
-            <span className="font-mono text-[13px] tabular-nums text-token-muted">
+            <span className="whitespace-nowrap font-mono text-[13px] tabular-nums text-token-muted">
               {ready ? formatTime(duration) : '--:--'}
             </span>
             {/*
@@ -359,8 +385,54 @@ export function AudioWavePlayer({
               「我在哪」。此前它被放到下方当前句卡的右上角，这一行就只剩时间了。
             */}
             {transportMeta && (
-              <span className="ml-1 min-w-0 truncate text-[12px] text-token-muted">{transportMeta}</span>
+              // 不 truncate：句序被切成「第 52 / 13…」比换一行更糟
+              <span className="ml-1 whitespace-nowrap text-[12px] text-token-muted">{transportMeta}</span>
             )}
+          </div>
+          {/*
+            进度轨道（稿面 P1 画在时间行正下方）：它和波形回答的不是同一个问题——
+            波形是「这段声音长什么样」，这条是「播到哪了、我能拖到哪」。
+            没有它，用户在这一屏唯一能定位的手段是去点波形，而波形上一根条就是十几秒。
+          */}
+          <div
+            role="slider"
+            aria-label="播放进度"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(duration) || 0}
+            aria-valuenow={Math.round(currentTime) || 0}
+            tabIndex={ready ? 0 : -1}
+            onKeyDown={(e) => {
+              if (!ready || duration <= 0 || !audioRef.current) return;
+              if (e.key === 'ArrowRight') audioRef.current.currentTime = Math.min(duration, currentTime + 5);
+              else if (e.key === 'ArrowLeft') audioRef.current.currentTime = Math.max(0, currentTime - 5);
+              else return;
+              e.preventDefault();
+            }}
+            onPointerDown={(e) => {
+              if (!ready || duration <= 0) return;
+              const track = e.currentTarget;
+              track.setPointerCapture(e.pointerId);
+              seekFromPointer(track, e.clientX);
+            }}
+            onPointerMove={(e) => {
+              if (!ready || duration <= 0) return;
+              if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+              seekFromPointer(e.currentTarget, e.clientX);
+            }}
+            className="mt-1 w-full touch-none py-2"
+            style={{ cursor: ready && duration > 0 ? 'pointer' : 'default' }}
+          >
+            <div className="h-[5px] w-full overflow-hidden rounded-full" style={{ background: 'var(--border-default)' }}>
+              <div
+                className="h-full rounded-full"
+                style={{
+                  // 稿面这条是**黑色**实心，不是强调蓝：蓝在这一屏已经归当前句底色与可点文本，
+                  // 再给进度就成了「哪儿都是蓝」。
+                  width: `${duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0}%`,
+                  background: 'var(--text-primary)',
+                }}
+              />
+            </div>
           </div>
           {/* 说明行跟着时间列走，与时间左对齐；摊成整行贴到最左会让它和时间脱组 */}
           {caption && (

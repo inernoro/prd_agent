@@ -409,6 +409,12 @@ export type FailedTranscriptionNotice = {
    * 于是界面只能说「播放、下载音频」，那句承诺没有兑现处。
    */
   partialTranscript: string[];
+  /**
+   * 挂掉的是哪一样。空表示整条转录失败；给了名字（「词云」「会议纪要」）表示
+   * 只有这一样衍生产物失败——那一档原文与播放都还在，界面不该讲成全盘失败
+   * （稿面 v2-S6 / cap-S7 / cap-S8 画的都是这一种）。
+   */
+  target?: string | null;
 };
 
 /** 后台失联（心跳停了）不是上游报的失败，是我们自己判出来的一类；
@@ -693,7 +699,31 @@ export type FailurePresentation = {
   tone: 'danger' | 'retrying' | 'queued' | 'neutral';
   /** 图标语义：转圈箭头代表「后台在动」，闹钟代表「在排队」，划掉的麦克风代表「没听到人声」 */
   icon: 'alert' | 'retry' | 'clock' | 'mic-off';
+  /**
+   * 「仍可用」那一行的枚举。
+   *
+   * 它此前是卡里写死的一句「播放、下载音频」——于是**衍生产物**失败（词云/纪要挂了、
+   * 原文好好的）时，界面把「局部失败」讲成了「全盘失败」：用户读不到原文、编辑、搜索
+   * 其实一样能用（稿面 v2-S6 / cap-S7 / cap-S8 都把这几项点了名）。
+   * 现在按真实可用性算：有没有原文、有没有纪要，决定这一行列几项。
+   */
+  stillWorks: string;
+  /**
+   * 这一档该给哪些出口，**第一项是主操作**。
+   * 稿面把主操作画在底部按钮组的首位；此前实现把「重试」固定钉在卡头右上，
+   * 于是「没人声」那一档的主操作成了一个自己文案都说没用的重试
+   * （v2-S4 / v2-S5 / cap-S10 三份判分各自指到这处）。
+   */
+  actions: FailureAction[];
 };
+
+/**
+ * 失败卡的出口种类。
+ * `notify` / `support` 是稿面 cap-S10「排队超一小时」那一档的两颗；
+ * `copyTranscript` 是 cap-S8 的兜底自救（纪要没生成出来，先把原文拿走自己整理）。
+ */
+export type FailureAction =
+  | 'retry' | 'download' | 'play' | 'rerecord' | 'copyTranscript' | 'notify' | 'support';
 
 /** 后端把「整段没有有效语音」分成两个 code，UI 该给同一档 */
 const NO_SPEECH_CODES = new Set(['ASR_NO_SPEECH', 'ASR_ALL_CANDIDATES_NO_SPEECH']);
@@ -708,15 +738,46 @@ const NO_SPEECH_CODES = new Set(['ASR_NO_SPEECH', 'ASR_ALL_CANDIDATES_NO_SPEECH'
  */
 export const AUTOMATIC_RETRY_LIMIT = 3;
 
+/**
+ * 「仍可用」那一行：按**这一刻真实存在的东西**算，不照抄稿面的枚举。
+ * 没有原文时说「原文不受影响」是一句假话——那正是把用户骗一次的成本最高的地方。
+ */
+function describeStillWorks(opts: { hasTranscript?: boolean; hasSummary?: boolean }): string {
+  if (!opts.hasTranscript) return '播放、下载音频（音频不受转录失败影响）';
+  const abilities = ['播放', '原文', '编辑', '搜索', '跳播', '词云', '问答'];
+  if (opts.hasSummary) abilities.push('纪要');
+  return `${abilities.join('、')}都不受影响`;
+}
+
 export function describeFailurePresentation(
   notice: FailedTranscriptionNotice,
-  opts: { waitingAutoRetry: boolean; retryLabel?: string; hasPartialTranscript?: boolean } = { waitingAutoRetry: false },
+  opts: {
+    waitingAutoRetry: boolean;
+    retryLabel?: string;
+    hasPartialTranscript?: boolean;
+    /**
+     * 挂掉的是哪一样。为空表示整条转录失败；给了名字（如「词云」「会议纪要」）表示
+     * 只有这一样衍生产物失败，原文与播放都还在——稿面 v2-S6 / cap-S7 / cap-S8
+     * 画的都是这一种，而不是整段转录失败。
+     */
+    target?: string | null;
+    /** 这一刻原文在不在（决定「仍可用」怎么写，也决定给不给「复制原文」这个出口） */
+    hasTranscript?: boolean;
+    /** 纪要在不在 */
+    hasSummary?: boolean;
+    /** 这段录音有多长（稿面 v2-S4 / cap-S10 都把它编进正文，让用户判断值不值得等） */
+    durationLabel?: string | null;
+  } = { waitingAutoRetry: false },
 ): FailurePresentation {
+  const stillWorks = describeStillWorks(opts);
+  const target = opts.target?.trim() || '';
   // 自动重试还没耗尽：这一档压过所有类别——正在自愈的时候不该让用户做任何事
   if (opts.waitingAutoRetry) {
     return {
-      title: '转录失败，正在自动重试',
+      title: target ? `${target}生成失败，正在自动重试` : '转录失败，正在自动重试',
       subtitle: '录音还在，没有丢',
+      stillWorks,
+      actions: [],
       // 分母是后端那条自动重试预算：没有它，用户读不出「还剩几次机会」
       // （稿面 v2-S6 / cap-S7 写的是「第 2 / 3 次」）。
       nextStep: `第 ${notice.automaticRetryCount + 1} / ${AUTOMATIC_RETRY_LIMIT} 次自动重试将在 ${opts.retryLabel ?? '稍后'}开始，无需操作`,
@@ -729,27 +790,50 @@ export function describeFailurePresentation(
     return {
       title: '处理已超过一小时',
       subtitle: '录音已经安全保存，任务还在排队',
-      nextStep: opts.hasPartialTranscript
-        ? '已经生成的部分原文可以先读；可以关掉这一页，回来时这里就是最新状态。等不及就点「重试」重新排队'
-        : '可以关掉这一页，回来时这里就是最新状态。等不及就点「重试」重新排队',
+      /*
+        稿面 cap-S10 这一档的主张是「你可以走开，好了会叫你」——所以「完成后会收到通知」
+        这句必须写出来，而且必须有一颗真的按钮兜着（见 actions 里的 notify）。
+        录音时长也编进来：等三个小时和等三分钟，用户的决定完全不同。
+      */
+      nextStep: `${opts.durationLabel ? `这段 ${opts.durationLabel} 的录音仍在排队。` : ''}${
+        opts.hasPartialTranscript ? '已经生成的部分原文可以先读；' : ''
+      }点「完成后通知我」就可以关掉这一页，完成后会收到通知；等不及就点「重试」重新排队`,
       tone: 'queued',
       icon: 'clock',
+      stillWorks,
+      // 稿面 cap-S10 的主操作是「完成后通知我」——这一档用户要的不是再排一次队，
+      // 是「我可以走开，好了叫我」。重试降为第三顺位。
+      actions: ['notify', 'support', 'retry'],
     };
   }
   if (NO_SPEECH_CODES.has(code)) {
     return {
       title: '没有检测到有效语音',
-      subtitle: '音频已保留，可以直接播放确认',
+      /*
+        稿面 v2-S4 在这里给了两样：**这段录音有多长**、以及**里面到底是什么**。
+        前者让用户判断值不值得重录，后者让「为什么判成没有语音」落地。
+        措辞写成「常见于」而不是断言环境噪声——上游只告诉我们「没识别到人声」，
+        没告诉我们那段声音是什么，照抄稿面那句断言就是编一个我们不知道的事实。
+      */
+      subtitle: `${opts.durationLabel ? `这段 ${opts.durationLabel} 的录音` : '这段录音'}里几乎没有可识别的人声（常见于环境噪声或音量过低）。音频已保留，可以直接播放确认`,
       nextStep: '先播一遍确认这段录音里有没有人声。确实没有就重新录一次——同一段音频重试不会有别的结果',
       tone: 'neutral',
       icon: 'mic-off',
+      stillWorks,
+      // 这一档**不给重试**：同一段音频重试不会有别的结果，摆一颗重试就是自相矛盾
+      actions: ['play', 'rerecord'],
     };
   }
   return {
-    title: '上次转文字没成功',
+    title: target ? `${target}生成失败` : '上次转文字没成功',
     subtitle: '录音还在，没有丢',
-    nextStep: '点「重试」；若反复失败，可转码后重新上传',
+    nextStep: opts.hasTranscript
+      ? '点「重试」；若反复失败，可转码后重新上传，或先复制原文自行整理'
+      : '点「重试」；若反复失败，可转码后重新上传',
     tone: 'danger',
     icon: 'alert',
+    stillWorks,
+    // 有原文时兜底出口是「复制原文」（自己整理去），没有原文才退回「下载音频」
+    actions: opts.hasTranscript ? ['retry', 'copyTranscript'] : ['retry', 'download'],
   };
 }

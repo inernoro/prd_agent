@@ -13,7 +13,7 @@
  * 也要这条，对照台得能单独摆出它。留在组件内部的话，台架只能照着重画一份，
  * 判分判的就成了副本（predicate-and-wiring-discipline 形状 6）。
  */
-import { ChevronUp, Play } from 'lucide-react';
+import { ChevronUp, Pause, Play } from 'lucide-react';
 
 /** mm:ss，与转录列表同一口径（分钟补两位）。 */
 function formatClock(sec: number): string {
@@ -27,6 +27,8 @@ export function RecordingSegmentBar({
   durationSec = 0,
   onPlay,
   onExpand,
+  rateLabel,
+  playing = false,
 }: {
   /** 正在念的那句原文 */
   text: string;
@@ -35,6 +37,13 @@ export function RecordingSegmentBar({
   /** 整段录音时长；给 0 表示还不知道，此时只显示当前位置，不编一个总长出来 */
   durationSec?: number;
   onPlay?: () => void;
+  /**
+   * 当前倍速（如 `1.5×`）。稿面 P2 把它编在时间后面：收起之后倍速按钮不在视野里了，
+   * 不写出来用户就不知道自己还挂着 1.5 倍速。拿不到就不显示，不写一个默认的 1.0×。
+   */
+  rateLabel?: string;
+  /** 正在播时按钮画暂停图标——收起态这颗是这一屏唯一的播放开关 */
+  playing?: boolean;
   /** 给了就渲染展开箭头（回到完整播放区）；不给就没有这颗 */
   onExpand?: () => void;
 }) {
@@ -54,21 +63,28 @@ export function RecordingSegmentBar({
         style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
         title="播放"
       >
-        <Play size={13} fill="currentColor" style={{ marginLeft: 1 }} />
+        {playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" style={{ marginLeft: 1 }} />}
       </button>
       {/*
         最多两行。这一条唯一承载的内容就是这句话，单行截断在 390px 屏上只剩十来个字
         （时间与箭头把宽度吃掉了），读者反而不知道念到哪了——B3 判分记的正是这处。
         两行封顶保证它的高度仍然稳定，不会被长句撑成一块。
       */}
-      <span
-        className="min-w-0 flex-1 text-[13px] font-medium leading-snug text-token-primary"
-        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
-      >
-        {text}
-      </span>
-      <span className="flex-shrink-0 font-mono text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-        {formatClock(startSec)}{durationSec > 0 ? ` / ${formatClock(durationSec)}` : ''}
+      {/*
+        稿面 P2/P3 把这条画成**两行左对齐**：句子在上、时间与倍速在下。
+        时间摆到右边那一版（B3/B4 的画法）在 390px 上会把句子挤成两行，
+        「现在念到哪一句」反而读不完整——两稿冲突时取信息完整的那一种。
+      */}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span
+          className="min-w-0 text-[13px] font-medium leading-snug text-token-primary"
+          style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+        >
+          {text}
+        </span>
+        <span className="mt-0.5 font-mono text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          {formatClock(startSec)}{durationSec > 0 ? ` / ${formatClock(durationSec)}` : ''}{rateLabel ? ` · ${rateLabel}` : ''}
+        </span>
       </span>
       {onExpand && (
         <button

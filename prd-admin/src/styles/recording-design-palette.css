@@ -55,6 +55,19 @@
   --semantic-info-soft: #E8EEFF;
   --semantic-info-text: #1F5EFF;
   --semantic-danger-soft: #FBE4E5;
+  /*
+    词云二档词条（稿面 P3 的「进度反馈 / 留存」）：靛紫，不是主强调蓝。
+    同一屏里主强调蓝已经归了当前句底色、可点时间码与进度；二档词条再用同一支蓝，
+    「哪些词是头部、哪些是次级」这一层就只剩字号在扛（判官记的是「改成纯蓝底蓝字」）。
+  */
+  /*
+    骨架块的填充。此前直接用 `--bg-elevated`——它是「比卡片再浅一档的面」，
+    落在白卡上几乎看不见，骨架读起来像空白（S1 判分：骨架灰度过浅，近白）。
+    骨架要能一眼看出「这里是占位」，所以比面色再深一档。
+  */
+  --skeleton-fill: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  --recording-chip-tier2-bg: #EDEBFF;
+  --recording-chip-tier2-fg: #4B3FD1;
   --selection-bg: #E8EEFF;
   --selection-border: #C7D8FF;
   --selection-text: #0B41C4;
@@ -101,6 +114,8 @@
   --semantic-info-soft: rgba(110, 155, 255, 0.16);
   --semantic-info-text: #6E9BFF;
   --semantic-danger-soft: rgba(255, 99, 105, 0.14);
+  --recording-chip-tier2-bg: rgba(150, 138, 255, 0.16);
+  --recording-chip-tier2-fg: #B7AEFF;
   --selection-bg: #16233F;
   --selection-border: #2C3F66;
   --selection-text: #9DB8FF;

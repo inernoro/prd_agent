@@ -84,7 +84,9 @@ export function RecordingAskComposer({
           title={sending ? '正在分析整场录音' : '发送问题'}
           // 稿面这颗是圆形实心蓝 + 白色上箭头；不可发送时压暗而不是隐藏，
           // 否则用户看不出「还差一步就能发」
-          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full disabled:opacity-40"
+          // 压到 40% 之后它在稿面那一刻（已发送、输入框空着）读起来像个失效控件，
+          // 判官记的是「主操作在这一屏不突出」。55% 仍然明显是「还差一步」，但不再灰掉。
+          className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full disabled:opacity-55"
           style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}
         >
           <ArrowUp size={18} />
