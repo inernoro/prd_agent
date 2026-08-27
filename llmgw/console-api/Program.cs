@@ -10711,6 +10711,24 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
             .Set("UpdatedAt", now)
             .Unset("DefaultSwitchPendingUntil")
             .Inc("Version", 1));
+    // MAP 遗留默认位一并退役。
+    //
+    // model_groups 没有 TenantId，也不再有任何写入口（MAP 模型管理写接口整体退场）。
+    // 它的 IsDefaultForType 一旦为真就再也清不掉：删除阻挡清单会永远报「这是当前默认池」，
+    // 而唯一的解法「先把默认改指别的池」在遗留侧根本不存在——那个池成了死胡同。
+    // 所以「GW 池接管这个类型的默认位」必须同时落到遗留侧，这就是那条缺失的迁移路径。
+    //
+    // 连带的运行时后果要说清楚：ModelResolver 第三步（回退默认池）只读 model_groups。
+    // 清零之后，既没进 GW appCaller 注册表、也没有专属绑定的调用方不再命中这个遗留池，
+    // 按 llm-gateway 规则既定的优先级降到第四步的传统配置（IsMain / IsIntent / ...）。
+    // 这正是「接管默认位」该有的语义——在此之前控制台说默认是 A、解析器却仍在发 B，
+    // 那才是真正的不一致。
+    var retiredLegacyDefaults = tenantId == internalTenantId
+        ? (await modelGroups.UpdateManyAsync(
+            fb.And(fb.Eq("ModelType", modelType), fb.Eq("IsDefaultForType", true), fb.Ne("_id", id)),
+            Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now))).ModifiedCount
+        : 0;
+
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -10726,6 +10744,7 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
             { "modelType", modelType },
             { "authority", "llm_gateway" },
             { "typeVersion", updatedType.AsNullableLong("Version") ?? 0 },
+            { "retiredLegacyDefaults", retiredLegacyDefaults },
         });
     var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
     var item = await MapPoolResolvedAsync(http, fresh);

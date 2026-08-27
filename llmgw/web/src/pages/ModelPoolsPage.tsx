@@ -145,7 +145,9 @@ function poolEvidence(pool: ModelPool): { text: string; tone: string } {
   const ok = relativeTime(lead.lastSuccessAt);
   if (pool.health === 'unavailable') {
     return lead.unavailableReason
-      ? { text: `第1顺位「${lead.modelId}」${memberFaultPhrase(lead)} · 需要摘除或重新接上上游`, tone: '#f85149' }
+      // 下一步走 memberNextStep，不在这里另写一句：池级证据句原来一律说「需要摘除或重新接上上游」，
+      // 而被停用的成员既摘不掉、也不用重接（去启用就行），模型被停用时更是指错了资源。
+      ? { text: `第1顺位「${lead.modelId}」${memberFaultPhrase(lead)} · ${memberNextStep(lead)}`, tone: '#f85149' }
       : { text: `第1顺位连续失败 ${lead.consecutiveFailures} 次 · 最近失败 ${failed} · 最近成功 ${ok}`, tone: '#f85149' };
   }
   if (pool.health === 'degraded') {

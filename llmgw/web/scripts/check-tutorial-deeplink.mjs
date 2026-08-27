@@ -276,6 +276,14 @@ must(
   pools.includes('`${memberFaultPhrase(member)} · ${memberNextStep(member)}`'),
   'ModelPoolsPage: 成员归因提示必须走 memberNextStep，不能在 JSX 里另写一份下一步文案',
 );
+// 池级证据句是同一件事的另一处出口：原来一律写「需要摘除或重新接上上游」，
+// 而被停用的成员既摘不掉也不用重接，模型被停用时更是指错了资源——
+// 一个下一步两处写法，必然和成员行自相矛盾（形状 3）。
+must(
+  pools.includes('`第1顺位「${lead.modelId}」${memberFaultPhrase(lead)} · ${memberNextStep(lead)}`')
+    && !pools.includes('需要摘除或重新接上上游'),
+  'ModelPoolsPage: 池级证据句的下一步必须走 memberNextStep，不得另写一份固定文案',
+);
 
 // 详情/新建这一支不走 PageBody，而 PageShell 与 console-content 都是 overflow:hidden。
 // 不自建滚动容器，成员表下半截与「添加成员」会被裁掉、用户够不到。

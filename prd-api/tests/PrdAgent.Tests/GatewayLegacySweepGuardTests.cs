@@ -299,6 +299,30 @@ public class GatewayLegacySweepGuardTests
     }
 
     [Fact]
+    public void 接管默认位必须同时退役MAP遗留默认位()
+    {
+        // model_groups 没有 TenantId，也不再有任何写入口（MAP 模型管理写接口整体退场）。
+        // 它的 IsDefaultForType 一旦为真就再也清不掉：删除阻挡清单永远报「这是当前默认池」，
+        // 而唯一的解法「先把默认改指别的池」在遗留侧根本不存在——那个池成了死胡同。
+        // 把默认位交给 GW 池时一并清掉遗留标记，就是那条缺失的迁移路径。
+        var fn = Console[Console.IndexOf("app.MapPut(\"/gw/pools/{id}/default\"", StringComparison.Ordinal)..];
+        fn = fn[..fn.IndexOf("app.MapPut(\"/gw/pools/{id}/claim\"", StringComparison.Ordinal)];
+
+        Assert.Contains("retiredLegacyDefaults", fn);
+        // 清的是 MAP 遗留集合，不是 GW 自己那份镜像
+        Assert.Contains("modelGroups.UpdateManyAsync", fn);
+        // 只在内部租户上做：model_groups 本就是内部租户专属
+        Assert.Contains("tenantId == internalTenantId", fn);
+        // 换默认位属于必须留痕的操作（llm-gateway 规则第 9 条）
+        Assert.Contains("{ \"retiredLegacyDefaults\", retiredLegacyDefaults },", fn);
+
+        // 判据本身不许被「和 GW 指针比一比」替换掉：ModelResolver 第三步只读 model_groups，
+        // 拿 GW 指针判「它不是默认了」会放行一个解析器仍在用的池——那正是本 PR 第一个提交修的 P1。
+        var predicate = FunctionSource("static async Task<bool> IsCurrentDefaultPoolAsync");
+        Assert.Contains("return pool.AsNullableBool(\"IsDefaultForType\") == true;", predicate);
+    }
+
+    [Fact]
     public void 中继整条停用与它里面那条映射停用必须分开()
     {
         // 中继有两个各自独立的 Enabled：中继文档自己一个，Models 里那条映射一个。
