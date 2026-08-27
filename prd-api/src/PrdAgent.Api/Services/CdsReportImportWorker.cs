@@ -1,0 +1,314 @@
+using System.Linq;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Security;
+
+namespace PrdAgent.Api.Services;
+
+/// <summary>
+/// 每小时把 CDS 验收中心的报告同步进 MAP 知识库。
+///
+/// ## 为什么要有
+///
+/// 导入这件事本来只有一个手动入口（<c>POST /api/document-store/import-cds-reports</c>）：
+/// 有人点一次才同步一次。于是「CDS 上有新验收报告」和「MAP 里看得到」之间隔着一个
+/// 谁也不会记得去做的动作，报告镜像库一直是陈的。
+///
+/// ## 三条刻意的边界
+///
+/// 1. **只在权威部署上跑**。同一个 CDS 项目下所有分支预览共用一个 Mongo（见
+///    cross-project-isolation 通道 4），每个分支预览也都跑着一份 MAP。不加这道闸的话，
+///    N 个分支预览会同时对 CDS 发起导入、并往同一个共享库里写同一批文档——既是对 CDS
+///    的自我 DDoS，也让「谁写的」变得不可追。判据走
+///    <see cref="DeploymentAuthority.CanRunSharedScheduledWork"/>——**不是**
+///    `IsAuthoritativeDeployment`：后者按它自己的契约只管通知，且
+///    `ManageGlobalNotification=true` 是留给分支「临时接管全局告警行」的逃生阀。
+///    一个为了看告警而打开它的分支，不该顺带获得「对着共享库和 CDS 跑周期拉取」的权限
+///    （Codex review P2）。
+/// 2. **不新建知识库，只刷新已有的**。<c>ImportAsync</c> 会 find-or-create 一个属于某个用户的
+///    镜像库；后台任务如果替所有用户建库，等于替人做主。所以这里只枚举**已经存在**的
+///    <c>cds-reports</c> 库并刷新它们——第一次同步仍然由人手动触发，之后才由它保持新鲜。
+///    一个都没有时安静跳过，并说清是这个原因，而不是留一条看不出所以然的静默。
+/// 3. **一个库失败不影响其他库**。逐个 catch，失败只记日志；否则第一个没配好连接的用户
+///    会让整轮同步停摆。
+/// 4. **只刷库里已经存过的那些报告，每个库只从它自己那个 CDS 拉**。要刷什么不靠另记
+///    一套「范围」账，靠库里每条 entry 自带的 `cdsReportId`——它天然跟着用户的实际操作走。
+///    判据与踩过的坑见 <see cref="CdsReportSyncTargets"/>。
+/// </summary>
+public class CdsReportImportWorker : BackgroundService
+{
+    /// <summary>同步间隔。用户 2026-08-25 明确要求 60 分钟。</summary>
+    public static readonly TimeSpan SyncInterval = TimeSpan.FromMinutes(60);
+
+    /// <summary>
+    /// 启动后先等一会儿再跑第一轮。
+    ///
+    /// 容器刚起来时要建连接、跑迁移、暖缓存，这时候再去拉一遍 CDS 是给自己添堵；
+    /// 而且多个实例同时重启时错峰能避免一起打 CDS。
+    /// </summary>
+    private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(3);
+
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<CdsReportImportWorker> _logger;
+
+    public CdsReportImportWorker(
+        IServiceScopeFactory scopeFactory,
+        IConfiguration configuration,
+        ILogger<CdsReportImportWorker> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _configuration = configuration;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        if (!DeploymentAuthority.CanRunSharedScheduledWork(_configuration))
+        {
+            // 说清为什么不跑。一条没有理由的静默会让人以为任务坏了。
+            _logger.LogInformation(
+                "[CdsReportImportWorker] 本部署不是权威部署（CDS 分支预览），不跑验收报告自动同步——"
+                + "同项目所有分支共用一个库，多份同时写会互相打架");
+            return;
+        }
+
+        try { await Task.Delay(StartupDelay, stoppingToken); }
+        catch (OperationCanceledException) { return; }
+
+        _logger.LogInformation("[CdsReportImportWorker] 已启动，每 {Interval} 同步一次 CDS 验收报告", SyncInterval);
+
+        using var timer = new PeriodicTimer(SyncInterval);
+        do
+        {
+            try
+            {
+                await RunOnceAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                // 一轮失败不许让 worker 退出——退出之后没有任何东西会把它拉起来，
+                // 而「任务不在了」在外部看来和「同步一直没有新东西」长得一模一样。
+                _logger.LogError(ex, "[CdsReportImportWorker] 本轮同步失败，等下一轮重试");
+            }
+        }
+        while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+
+    /// <summary>跑一轮：把每个镜像库里已有的那些报告各刷新一遍。</summary>
+    private async Task RunOnceAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var importer = scope.ServiceProvider.GetRequiredService<CdsReportImportService>();
+
+        var stores = await db.DocumentStores
+            .Find(s => s.AppKey == CdsReportStoreAppKey)
+            .ToListAsync(ct);
+
+        // **要刷哪些报告，库里已经写着了**：每条 entry 的 Metadata.cdsReportId 就是权威清单。
+        // 不另记一套「范围」账——那套账会和用户的实际操作漂开（见 CdsReportSyncTargets 的注释）。
+        var mirrors = new List<CdsReportMirror>();
+        foreach (var store in stores)
+        {
+            if (ct.IsCancellationRequested) return;
+            if (string.IsNullOrWhiteSpace(store.Id)) continue;
+            // 连**来源**一起取：每一份报告要刷回它自己那台 CDS，不能都按库级来源刷
+            // （库级记的是「最后一次导入从哪来」，一个人从两台 CDS 各存过就会被后存的覆盖）。
+            var docs = await db.DocumentEntries
+                .Find(Builders<DocumentEntry>.Filter.And(
+                    Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, store.Id),
+                    Builders<DocumentEntry>.Filter.Exists("Metadata.cdsReportId")))
+                .Project(Builders<DocumentEntry>.Projection
+                    .Include("Metadata.cdsReportId")
+                    .Include("Metadata.cdsSourceBaseUrl"))
+                .ToListAsync(ct);
+            var mirrored = new List<CdsMirroredReport>();
+            foreach (var d in docs)
+            {
+                // **一条脏数据不能掀掉整轮。** 这段在逐份报告的 try/catch **之外**，
+                // 所以这里抛一次异常，本轮所有库都不刷了，而且每小时准时再抛一次。
+                // 条目的 Metadata 是可以被通用的元数据更新接口写成任意 BSON 的
+                // （null、数字、嵌套文档都可能），直接 AsString 就会炸（Codex review P2）。
+                // 认不出来的就跳过这一条，别连累别人。
+                var reportId = ReadMetaString(d, "cdsReportId");
+                if (reportId == null) continue;
+                // 老条目可能没记来源，交给判据处理（留空，不拿库级来源顶替）。
+                mirrored.Add(new CdsMirroredReport(reportId, ReadMetaString(d, "cdsSourceBaseUrl")));
+            }
+            if (mirrored.Count == 0) continue;
+            mirrors.Add(new CdsReportMirror(store, mirrored));
+        }
+
+        var targets = CdsReportSyncTargets.Build(mirrors);
+
+        // 被上限截掉的必须说出来。悄悄少刷会让「每小时都在更新」这句话在大库上变成假话。
+        foreach (var m in mirrors)
+        {
+            var truncated = CdsReportSyncTargets.TruncatedCount(m);
+            if (truncated > 0)
+            {
+                _logger.LogWarning(
+                    "[CdsReportImportWorker] 库 {StoreId} 里有 {Total} 份报告，本轮只刷前 {Cap} 份，"
+                    + "剩下 {Truncated} 份这轮没刷（上限见 CdsReportSyncTargets.MaxReportsPerStorePerRound）",
+                    m.Store.Id, m.MirroredReports.Count, CdsReportSyncTargets.MaxReportsPerStorePerRound, truncated);
+            }
+        }
+
+        if (targets.Count == 0)
+        {
+            // 说清是「一个库都没有」还是「有库但里面还没存过报告」——两者的下一步不一样。
+            _logger.LogInformation(
+                "[CdsReportImportWorker] 本轮没有要刷新的报告（扫到 {Total} 个 {AppKey} 库）。"
+                + "自动刷新只刷**库里已经存过的**报告——先在 CDS 报告页点一次「保存到 MAP 知识库」，"
+                + "此后那一份就会每小时保持新鲜",
+                stores.Count, CdsReportStoreAppKey);
+            return;
+        }
+
+        var ok = 0;
+        var failed = 0;
+        var missing = 0;
+        // **一台 CDS 连不上，这轮就别再挨个去撞它。**
+        // 这个循环是一份报告一次 ImportAsync，每次都要先发一个列表请求，超时 60 秒。
+        // 一台 CDS 掉线时，一个存了 200 份报告的库能在它身上耗掉三个多小时——而且是**串行**的，
+        // 排在后面的库这一轮根本轮不到；等轮到时定时器早就过期，下一轮立刻又开始，
+        // 健康的库被永久饿死（Codex review P1）。
+        //
+        // 判据只认**网络层**的失败（连不上、超时）：那才是「这台机器现在不通」。
+        // 凭据不对、库没权限那类会立刻抛、不耗时间，也不代表整台 CDS 不通，不进这个名单。
+        var unreachableSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var skippedByUnreachable = 0;
+        foreach (var t in targets)
+        {
+            if (ct.IsCancellationRequested) return;
+            var sourceKey = t.SourceBaseUrl ?? "(默认连接)";
+            if (unreachableSources.Contains(sourceKey))
+            {
+                skippedByUnreachable++;
+                continue;
+            }
+            try
+            {
+                var result = await importer.ImportAsync(
+                    t.OwnerId,
+                    new CdsReportImportOptions
+                    {
+                        StoreId = t.StoreId,
+                        SourceBaseUrl = t.SourceBaseUrl,
+                        // 只刷这一份。正文 contentHash 没变就只轻量同步元数据，代价很小。
+                        ReportId = t.ReportId,
+                        // 老条目没记来源时，只有「一条连接都不用挑」才继续；两条以上就让这一份
+                        // 这轮失败，而不是挑一条接着拉（挑错不响，见 CdsReportSyncTargets）。
+                        RejectAmbiguousSource = true,
+                        // 那四个 PeerSync* 字段归跨库同步所有，每小时刷一次会把它盖掉。
+                        SkipPeerSyncDisplayFields = true,
+                    },
+                    // **一份报告一旦开始写就写完，不许被停机信号从中间掐断。**
+                    // 导入一份报告是多步写：存正文 → 插条目 → 给库的条目计数加一。
+                    // 把 stoppingToken 透进去，容器优雅重启时可能停在「条目插了、计数没加」
+                    // 或「正文存了、条目没指过去」，留下对不上的计数和没人引用的正文
+                    //（Codex review P2；也是 server-authority 那条「数据库写操作用
+                    // CancellationToken.None」的要求）。取消只在**两份报告之间**判，
+                    // 循环开头那句 ct.IsCancellationRequested 就是。
+                    CancellationToken.None);
+                // **有失败就算这一份失败。** 只在抛异常时才计失败的话，导入服务把错误
+                // 记进 result.Failed（正文 404、资产归一化炸了）的那些情况全都会被计成
+                // 「刷了 N 份」——本轮结束那行日志于是永远报成功，一份都没真刷进去也看不出来
+                //（Codex review P2）。
+                //
+                // **一份都没列到也不算刷成功。** 这份报告在 CDS 上被删掉之后，按 reportId
+                // 查列表会正常返回 200 + 空数组，于是 Total 与 Failed 都是 0——上面那一句会把它
+                // 计进 ok，镜像原封不动地留着，而日志每小时报一次「刷成功」。计数上单立一类，
+                // 并且**每一份都要说出来**（它天生不会进下面那个 Updated>0 的日志分支，
+                // 不单独说就等于没说）（Codex review P2）。
+                if (result.Failed > 0) failed++;
+                else if (result.Total == 0) missing++;
+                else ok++;
+                if (result.Total == 0)
+                {
+                    _logger.LogWarning(
+                        "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）在 CDS 上已经列不到了，"
+                        + "这轮没刷；镜像里的旧版本原样留着。多半是它在 CDS 上被删了",
+                        t.StoreId, t.ReportId, t.SourceBaseUrl ?? "(默认连接)");
+                }
+                else if (result.Updated > 0 || result.Failed > 0)
+                {
+                    _logger.LogInformation(
+                        "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）："
+                        + "更新 {Updated}，跳过 {Skipped}，失败 {Failed}{Detail}",
+                        t.StoreId, t.ReportId, t.SourceBaseUrl ?? "(默认连接)",
+                        result.Updated, result.Skipped, result.Failed,
+                        result.Messages.Count > 0 ? "；" + string.Join("；", result.Messages) : string.Empty);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                // 一份报告拉不到，不该让别的报告也刷不了。
+                // **失败时宁可不同步，也不换个源接着拉**——那正是混源要防的事。
+                _logger.LogWarning(ex,
+                    "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）刷新失败，跳过",
+                    t.StoreId, t.ReportId, t.SourceBaseUrl ?? "(默认连接)");
+
+                // 网络层失败 = 这台 CDS 现在不通，本轮不必再挨个去撞它（每撞一次要等 60 秒超时）。
+                // 只认这两类：别的异常（凭据不对、库没权限）立刻就抛、不耗时间，
+                // 也不代表整台机器不通，把它们算进来会误伤同源的健康报告。
+                if (ex is HttpRequestException || ex is TaskCanceledException)
+                {
+                    unreachableSources.Add(sourceKey);
+                    _logger.LogWarning(
+                        "[CdsReportImportWorker] 源 {Source} 这轮判定为连不上，剩下要从它拉的报告本轮全部跳过，下一轮再试",
+                        sourceKey);
+                }
+            }
+        }
+
+        // 被「源不通」跳掉的必须说出来，否则本轮结束那行会让人以为只有几份失败
+        // ——实际是几百份根本没试（no-silent-caps）。
+        _logger.LogInformation(
+            "[CdsReportImportWorker] 本轮结束：刷了 {Ok} 份，失败 {Failed} 份，"
+            + "CDS 上已找不到 {Missing} 份，因源不通跳过 {SkippedByUnreachable} 份",
+            ok, failed, missing, skippedByUnreachable);
+    }
+
+    /// <summary>
+    /// 从投影出来的文档里读一个元数据字段，认不出来就当没有。
+    ///
+    /// 条目的 Metadata 可以被通用的元数据更新接口写成任意 BSON——null、数字、
+    /// 嵌套文档都可能。直接 `AsString` 会抛 <see cref="InvalidCastException"/>，
+    /// 而调用它的地方在逐份报告的 try/catch **之外**，一条脏数据就能让整轮同步
+    /// 全不刷，且每小时准时复发一次（Codex review P2）。
+    /// </summary>
+    private static string? ReadMetaString(BsonDocument doc, string key)
+    {
+        var meta = doc.GetValue("Metadata", null);
+        if (meta == null || !meta.IsBsonDocument) return null;
+        var value = meta.AsBsonDocument.GetValue(key, null);
+        if (value == null || !value.IsString) return null;
+        var text = value.AsString;
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    /// <summary>
+    /// CDS 报告镜像库的 AppKey。
+    ///
+    /// 与 <see cref="CdsReportImportService"/> 里 find-or-create 用的那个必须是同一个值——
+    /// 两边各写一遍字面量的话，改一处忘一处就会变成「后台任务永远找不到库、静默什么都不做」。
+    /// </summary>
+    public const string CdsReportStoreAppKey = "cds-reports";
+}

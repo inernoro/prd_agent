@@ -42,12 +42,11 @@ const REWRITTEN = `第一阶段建议至少形成以下可落地成果（从「�
 const RANGE = { start: ORIGINAL.indexOf(SELECTED), end: ORIGINAL.indexOf(SELECTED) + SELECTED.length };
 
 export default function SelectionDiffProbe() {
-  const [streamedLen, setStreamedLen] = useState(0);
+  const [, setStreamedLen] = useState(0);
   const [phase, setPhase] = useState<'idle' | 'streaming' | 'review'>('idle');
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const timerRef = useRef<number | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
-  const [anchorRect, setAnchorRect] = useState({ top: 120, left: 80, width: 420, height: 24 });
 
   const run = useCallback(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -74,18 +73,13 @@ export default function SelectionDiffProbe() {
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [run]);
 
-  useEffect(() => {
-    const el = anchorRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setAnchorRect({ top: r.top + 90, left: r.left + 24, width: 420, height: 24 });
-  }, [phase]);
-
+  // 与 DocBrowser 同一套：等 AI 写完再一次性出 diff。
+  // 等待期正文只把选区压灰（newText 传空串 = 整段待替换），不渲染任何半成品。
   const diff = useMemo(() => {
     if (phase === 'idle') return null;
-    const text = phase === 'streaming' ? `${REWRITTEN.slice(0, streamedLen)}▌` : REWRITTEN;
-    return buildInlineDiffBody(ORIGINAL, RANGE, text);
-  }, [phase, streamedLen]);
+    if (phase === 'streaming') return buildInlineDiffBody(ORIGINAL, RANGE, '');
+    return buildInlineDiffBody(ORIGINAL, RANGE, REWRITTEN);
+  }, [phase]);
 
   const toggleTheme = () => {
     const root = document.documentElement;
@@ -116,17 +110,19 @@ export default function SelectionDiffProbe() {
         </span>
       </div>
 
+      {/* 正文区做成真的可滚动窗格，并把 ref 传给条子——真实页面就是这样，
+          浮层的跟随/裁剪逻辑只有在这种结构下才跑得到（否则自测页测不出滚动卡顿） */}
       <div
         ref={anchorRef}
-        className={`px-6 py-4${diff ? ' doc-inline-diff' : ''}`}
-        style={{ maxWidth: 900 }}
+        data-testid="probe-pane"
+        className={`px-6 py-4${diff ? ' doc-inline-diff' : ''}${phase === 'streaming' ? ' doc-inline-diff--streaming' : ''}`}
+        style={{ maxWidth: 900, height: 460, overflowY: 'auto', overscrollBehavior: 'contain' }}
       >
         <MarkdownViewer content={diff ? diff.body : ORIGINAL} />
       </div>
 
       {diff && phase !== 'idle' && (
         <InlineDiffReviewBar
-          anchorRect={anchorRect}
           phase={phase === 'streaming' ? 'streaming' : 'review'}
           model="probe/fake-model"
           added={diff.added}
@@ -138,6 +134,7 @@ export default function SelectionDiffProbe() {
           onDiscard={() => setPhase('idle')}
           onRetry={run}
           onStop={() => setPhase('review')}
+          scrollRef={anchorRef}
         />
       )}
     </div>

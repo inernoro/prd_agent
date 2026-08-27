@@ -15,9 +15,10 @@
 /**
  * 浮层面板本体。
  *
- * 顶部那条 2px 品牌渐变走 background 的第一层，不是 border-top 也不是绝对定位的子元素：
- * border-top 会被 border-radius 拉成一段弧线，绝对定位的子元素则要求容器 overflow:hidden，
- * 而面板里有会溢出的下拉与滚动区，裁不得。背景层天然被圆角裁剪，两个副作用都没有。
+ * 顶部那条 2px 品牌渐变已去掉（2026-08-25 用户问「上面的横线是什么意思？是否可以去掉」）。
+ * 老实说：它不表示任何东西，是设计稿里纯装饰的一笔。用户会去问一个装饰件的含义，
+ * 本身就说明它在制造疑问而不是传达信息——那它就不该留着。
+ * 面板的品牌感由暖色描边、暖色标题字与主操作实心块承担，不靠这条线。
  */
 /*
  * blur 半径比设计稿的 20px 大一档，是并排比对时改的：
@@ -27,8 +28,7 @@
  */
 export const SELECTION_OVERLAY_PANEL = {
   borderRadius: 16,
-  background:
-    'var(--selection-overlay-accent-line) top left / 100% 2px no-repeat, var(--selection-overlay-bg)',
+  background: 'var(--selection-overlay-bg)',
   border: '1px solid var(--selection-overlay-border)',
   boxShadow: 'var(--shadow-glass-dropdown)',
   backdropFilter: 'blur(32px)',

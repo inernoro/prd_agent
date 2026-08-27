@@ -384,7 +384,6 @@
    */
   --selection-overlay-bg: rgba(30, 26, 26, 0.93);
   --selection-overlay-border: rgba(217, 119, 87, 0.20);
-  --selection-overlay-accent-line: linear-gradient(90deg, #D97757, rgba(217, 119, 87, 0.15));
   /* 划词当下压在正文上的那层高亮（浮层拿走 focus 后由它兜底），与浮层同色系。 */
   --selection-highlight-bg: rgba(217, 119, 87, 0.24);
   --selection-highlight-underline: rgba(217, 119, 87, 0.85);
@@ -690,7 +689,6 @@
   /* 划词浮层浅色档：暖纸面 + 深赭描边。半透明深底叠在纸面上就是「白底浮暗卡」。 */
   --selection-overlay-bg: rgba(252, 250, 247, 0.95);
   --selection-overlay-border: rgba(166, 75, 53, 0.22);
-  --selection-overlay-accent-line: linear-gradient(90deg, #A64B35, rgba(166, 75, 53, 0.14));
   --selection-highlight-bg: rgba(166, 75, 53, 0.18);
   --selection-highlight-underline: rgba(166, 75, 53, 0.72);
   --selection-checkbox-bg: var(--bg-card);

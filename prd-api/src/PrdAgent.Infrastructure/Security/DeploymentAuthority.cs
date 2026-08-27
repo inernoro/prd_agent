@@ -180,6 +180,34 @@ public static class DeploymentAuthority
     }
 
     /// <summary>
+    /// 当前部署是否有权**跑打共享库与外部服务的周期后台任务**（scheduled 层）。
+    ///
+    /// 与通知授权**独立且更严**，判据形状与 <see cref="CanRotateSharedCiphertext"/> 完全一致
+    /// （软开关只能收紧、不能放宽）：
+    /// 1. `ManageGlobalNotification=false` 是「我不拥有任何共享状态」的总开关，
+    ///    standby/canary 用它退出时，周期任务也不许跑；
+    /// 2. 必须是真正的生产部署（无 CDS 分支预览标记 CDS_PROJECT_ID）。
+    ///
+    /// **关键：`ManageGlobalNotification=true` 绝不为 preview 放宽这一层。**
+    /// 那个开关的语义是「让某个分支临时接管全局告警行」——它管的是往共享库写一行通知。
+    /// 周期后台任务是另一回事：同项目所有分支预览共用一个 Mongo，N 个分支同时跑同一个
+    /// 拉取任务，既是对上游的自我 DDoS，也让「这批文档是谁写的」变得不可追。
+    /// 一个为了看告警而临时接管通知的分支，不该顺带获得这个权限（Codex review P2）。
+    ///
+    /// 这也正是本类已有的纪律：软开关一票否决可以，一票放行不行。
+    /// </summary>
+    public static bool CanRunSharedScheduledWork(IConfiguration configuration)
+    {
+        // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决。
+        var explicitFlag = configuration[ManageGlobalNotificationKey];
+        if (bool.TryParse(explicitFlag, out var forced) && !forced)
+            return false;
+
+        // 条件 2：只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
+        return !IsCdsBranchPreview(configuration);
+    }
+
+    /// <summary>
     /// 产出短来源标签（host@sha·branch），写进告警文案，便于一眼看出是「哪个容器、哪个构建」在喊，
     /// 旧容器的喊叫不再冒充无名的全局事故。
     /// </summary>

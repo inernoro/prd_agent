@@ -229,6 +229,16 @@ describe('双皮肤硬编码棘轮（admin-dual-theme）', () => {
     const baseline: Record<string, Counts> = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
     const violations: string[] = [];
 
+    // 幽灵条目：文件已经删了，欠账还挂在台账上，让欠账数虚高、看着像一直没还。
+    // 2026-08-25 模型管理退场删掉五个页面后就残留了三条，跑遍全量测试也没人红。
+    const ghosts = Object.keys(baseline).filter((file) => !fs.existsSync(path.join(SRC_DIR, file.replace(/^\//, ''))));
+    if (ghosts.length > 0) {
+      violations.push(
+        `基线里有 ${ghosts.length} 条指向已删文件的幽灵条目：${ghosts.join('、')}。` +
+          '删掉文件时请一并从 themeHardcodeBaseline.json 移除，否则欠账台账会虚高。',
+      );
+    }
+
     for (const [file, counts] of Object.entries(current)) {
       const base = baseline[file] ?? { whiteAlpha: 0, darkHex: 0, darkRgbaBg: 0, lightFg: 0 };
       if (counts.whiteAlpha > base.whiteAlpha) {
