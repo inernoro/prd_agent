@@ -120,9 +120,13 @@ const CREDENTIAL_SOURCES: readonly CredentialSource[] = [
     why: 'minio 的 root 账号；S3 客户端不用 URI，只发 USER/PASSWORD',
   },
   {
-    userKey: 'MEMCACHED_USERNAME',
+    // 键名照抄 infra-catalog 的 memcached 预设（它写的是 MEMCACHED_USER，
+    // 不是别处常见的 MEMCACHED_USERNAME）。memcached 没有官方镜像 env 约定，
+    // 这一对是 CDS 自己定的，所以 SSOT 就是那个预设——写错一个字母的后果是
+    // 只发口令不发用户名，正好是本文件反复强调「不能发半套凭据」的那种坏。
+    userKey: 'MEMCACHED_USER',
     passwordKey: 'MEMCACHED_PASSWORD',
-    why: 'memcached 的 SASL 账号；客户端各家格式不一，只发 USER/PASSWORD',
+    why: 'memcached 的 -Y 认证账号（键名以 infra-catalog 预设为准）；客户端各家格式不一，只发 USER/PASSWORD',
   },
 ];
 

@@ -6,6 +6,7 @@ import {
   deriveInfraCredentialEnv,
   describeCredentialSources,
 } from '../../src/services/infra-credential-env.js';
+import { getInfraCatalogEntry } from '../../src/services/infra-catalog.js';
 
 /**
  * 消费方容器的连接凭据。
@@ -124,6 +125,34 @@ describe('从基础设施服务派生连接凭据', () => {
     // resolveEnvTemplates 对解不出来的模板返回空字符串而不是留占位符，
     // 所以调用方解析过之后，缺值的服务自然什么都不发。
     expect(deriveInfraCredentialEnv('mysql', { MYSQL_USER: '', MYSQL_PASSWORD: '' }, at)).toEqual({});
+  });
+
+  it('凭据表认的键名与 infra-catalog 预设真实产出的一致（不是照记忆写的）', () => {
+    // 形状 3：同一件事在两处各写一份，然后各自漂。memcached 就漂过——预设写的是
+    // MEMCACHED_USER，这张表照别处常见的写法写成了 MEMCACHED_USERNAME，结果只发
+    // 口令不发用户名，正好是「半套凭据」。判据不能扫源码字面量，得**真跑一次预设**
+    // 拿它的输出来比，否则改了预设、忘了改表，这条守卫照样绿。
+    const cases: Array<{ presetId: string; expectUser?: string; expectPassword: string }> = [
+      { presetId: 'memcached', expectUser: 'CDS_MEMCACHED_USER', expectPassword: 'CDS_MEMCACHED_PASSWORD' },
+      { presetId: 'rabbitmq', expectUser: 'CDS_RABBITMQ_USER', expectPassword: 'CDS_RABBITMQ_PASSWORD' },
+      { presetId: 'minio', expectUser: 'CDS_MINIO_USER', expectPassword: 'CDS_MINIO_PASSWORD' },
+      { presetId: 'postgres', expectUser: 'CDS_POSTGRES_USER', expectPassword: 'CDS_POSTGRES_PASSWORD' },
+      { presetId: 'mysql', expectUser: 'CDS_MYSQL_USER', expectPassword: 'CDS_MYSQL_PASSWORD' },
+      { presetId: 'mongodb', expectUser: 'CDS_MONGODB_USER', expectPassword: 'CDS_MONGODB_PASSWORD' },
+    ];
+    for (const c of cases) {
+      const entry = getInfraCatalogEntry(c.presetId);
+      expect(entry, `预设 ${c.presetId} 不在 catalog 里`).toBeTruthy();
+      // 预设要几把密钥就给几把，值取可辨认的假值。
+      const secrets: Record<string, string> = {};
+      for (const k of entry!.secretKeys || []) secrets[k] = `fake-${k}`;
+      const built = entry!.build(secrets);
+      const out = deriveInfraCredentialEnv(c.presetId, built.env, at);
+      expect(out, `${c.presetId} 一个凭据键都没派生出来`).toHaveProperty(c.expectPassword);
+      if (c.expectUser) {
+        expect(out, `${c.presetId} 只发了口令、没发用户名（半套凭据）`).toHaveProperty(c.expectUser);
+      }
+    }
   });
 
   it('每一类都写得出「为什么认这两个键」', () => {
