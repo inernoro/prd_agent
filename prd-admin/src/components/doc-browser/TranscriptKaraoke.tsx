@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, Check, ChevronDown, ChevronUp, Info, MessageSquare, Pencil, RefreshCw, Search, UserRound } from 'lucide-react';
+import { ArrowDown, Check, ChevronDown, ChevronUp, Info, MessageSquare, Pencil, RefreshCw, Search, UserRound, Users } from 'lucide-react';
 import { requestRecordingPlay } from './recordingPlayBridge';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { RecordingSegmentBar } from '@/components/doc-browser/RecordingSegmentBar';
@@ -886,7 +886,8 @@ export function TranscriptKaraoke({
                       ? { background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--accent-fg-info)' }
                       : { color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}
                   >
-                    {picked && <UserRound size={12} aria-hidden />}
+                    {/* 稿面这枚是**双人**图标：它说的是「在一群说话人里挑出这一位」，不是「某个人」 */}
+                    {picked && <Users size={12} aria-hidden />}
                     {chip.speaker} · {chip.count}{chip.speaker === UNLABELED_SPEAKER ? '' : ' 句'}
                   </button>
                 );

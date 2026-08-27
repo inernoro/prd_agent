@@ -59,11 +59,13 @@ export function RecordingSegmentBar({
       <button
         type="button"
         onClick={onPlay}
-        className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full"
+        // 稿面 P2/P3 这枚圆钮明显大过两行文字的高度——它是收起态里唯一的播放开关，
+        // 36px 会让它退到和时间码同一量级，读起来像个装饰而不是主控件。
+        className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full"
         style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
         title="播放"
       >
-        {playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" style={{ marginLeft: 1 }} />}
+        {playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" style={{ marginLeft: 1 }} />}
       </button>
       {/*
         最多两行。这一条唯一承载的内容就是这句话，单行截断在 390px 屏上只剩十来个字
