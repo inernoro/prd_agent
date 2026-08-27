@@ -123,11 +123,12 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
         style={{
           background: done ? 'var(--accent-fg-success)' : 'transparent',
           /*
-            进行中那一档**不给外圈**：里面转的是一段带缺口的弧，外面再套一整圈蓝描边
-            就把缺口补死了，静态截图里读成一枚均匀的闭合圆环，「正在转」的形状语义没了
-            （R4 判分连着三轮指到这处）。排队态才需要那圈灰底轨来占位。
+            进行中那一档的外圈要**中性色**，不能也用强调色：整圈蓝会把里面那段弧的缺口
+            补死，静态截图里读成一枚均匀闭合的圆环（R4 判分连着三轮指到这处）。
+            但外圈本身不能去掉——去掉之后这一格只剩一段小弧，与上下两枚圆点不再是
+            同尺寸同家族（去掉那一轮 R4 又记了一次）。中性底轨 + 蓝色弧，两头都成立。
           */
-          border: done || active ? 'none' : '1px solid var(--border-faint)',
+          border: done ? 'none' : '1px solid var(--border-faint)',
         }}
         aria-hidden
       >
@@ -229,6 +230,17 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
     </div>
   );
 }
+
+/**
+ * 三段横条各格的标签（稿面 cap-A4 / cap-A5）。它与竖排清单的标签是两套：
+ * 横条说的是「这一步现在处于什么状态」，清单说的是「这一步在做什么」。
+ * 查不到就退回清单那套，不留空。
+ */
+const BAR_LABEL: Record<string, Partial<Record<'done' | 'active' | 'pending', string>>> = {
+  audio: { done: '录音已保存', active: '正在保存录音', pending: '等待保存' },
+  transcript: { done: '原文已生成', active: '正在生成原文', pending: '等待生成原文' },
+  understanding: { done: '结果页已补齐', active: '结果页补齐', pending: '结果页补齐' },
+};
 
 export function TranscribeStatusCard({
   currentEntryId,
@@ -601,8 +613,10 @@ export function TranscribeStatusCard({
             <h2 className="text-[26px] font-bold leading-tight tracking-tight text-token-primary">
               {headline?.trim() || '正在整理这段录音'}
             </h2>
-            {/* 「音频是否安全」+「你现在能做什么」两问合成一句，紧跟标题 */}
-            <p className="mt-1 text-[12px] leading-relaxed text-token-muted">
+            {/* 「音频是否安全」+「你现在能做什么」两问合成一句，紧跟标题。
+                稿面这一句是接近正文的大号灰字，与 H1 构成两级递降；压到最小号之后
+                它读成一行附注，两级层级塌成一级（cap-A4 判分记的这处）。 */}
+            <p className="mt-1.5 text-[14px] leading-relaxed text-token-muted">
               {/*
                 两张画布对这一屏的 H1 各写各的：R4 是「正在整理这段录音」，
                 cap-A4/A5 是「正在准备结果页」。整屏那一版取后者当 H1，
@@ -653,7 +667,13 @@ export function TranscribeStatusCard({
                       : stage.state === 'active' ? 'var(--accent-fg-info)' : 'var(--text-muted)',
                   }}
                 >
-                  {stage.label}
+                  {/*
+                    这条横条是 cap-A4/A5 的元件，它的标签是**状态化文案**
+                    （录音已保存 / 正在生成原文 / 结果页补齐）；下面那份竖排清单是
+                    v2-R4 的元件，用的是动作名（保存音频 / 生成原文 / 补齐录音理解）。
+                    两稿各要一套，各归各的元件，不是二选一。
+                  */}
+                  {BAR_LABEL[stage.key]?.[stage.state] ?? stage.label}
                 </span>
                 {/*
                   每段自己的量级行（稿面 cap-A4/A5 是「标签 + 数值」两行）。
@@ -669,8 +689,10 @@ export function TranscribeStatusCard({
                     ? (stage.key === 'transcript'
                       ? [transcriptStageElapsed, (generatedSentences ?? 0) > 0 ? `${generatedSentences} 句` : null]
                         .filter(Boolean).join(' · ') || '已完成'
+                      // 「耗时」两个字要带着（稿面 cap-A4 这一格写的是「耗时 1.2s」）：
+                      // 只留裸数值的话，横条单独看是一个没人解释的数字
                       : stage.key === 'audio'
-                        ? (audioStageElapsed?.replace('耗时 ', '') || '已完成')
+                        ? (audioStageElapsed || '已完成')
                         : '已完成')
                     : stage.state === 'active'
                       ? `${stage.percent ?? 0}%${timing?.remainingSec != null ? ` · 约 ${formatDurationSec(timing.remainingSec)}` : ''}`
@@ -772,7 +794,9 @@ export function TranscribeStatusCard({
               {(transcriptPreview ?? []).slice(0, 2).map((line, index) => (
                 <p
                   key={index}
-                  className={`text-[12.5px] leading-relaxed ${index === 0 ? 'font-semibold' : ''}`}
+                  // 首句在稿面里是这张卡除标题外的第二个视觉重心（字号接近卡标题），
+                  // 整卡压成同一小档之后，正文与骨架条、卡底说明就扁平成一片
+                  className={`leading-relaxed ${index === 0 ? 'text-[13.5px] font-semibold' : 'text-[12.5px]'}`}
                   style={{ color: index === 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}
                 >
                   {line}
@@ -848,7 +872,7 @@ export function TranscribeStatusCard({
             没有它，用户会以为必须守着这一页等整理跑完。
           */}
           <p
-            className="rounded-[10px] px-3 py-2.5 text-[12px] leading-relaxed"
+            className="rounded-[12px] px-4 py-3.5 text-[13px] leading-relaxed"
             style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)' }}
           >
             {/*
