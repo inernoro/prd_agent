@@ -34,12 +34,35 @@
  *   `:` `/` `?` `#` 时，不编码会让 URI 被解析成完全不同的主机——这正是同期
  *   review 在 nacos 登录表单上抓到的同一类错误，不能在这里再犯一次。
  *
+ * ## 传进来的 env 必须是**解析过**的
+ *
+ * `InfraService.env` 存的是未展开的模板：compose 导入和手工建的服务里，
+ * 值经常就是字面的 `${CDS_MYSQL_USER}`，到启动容器那一刻才 `resolveEnvTemplates`。
+ * 线上真实数据里现在就有四个项目这样存着。
+ *
+ * 所以本模块**不接受生 env**：直接读的话，`${CDS_POSTGRES_PASSWORD}` 这个占位符
+ * 会被当成真口令发出去，`_URL` 里还会变成 `%24%7B...%7D`——消费方拿到一个长得像
+ * 凭据的东西，然后认证失败。比什么都不发更难查。
+ *
+ * 判据必须读**真正生效的那个值**，而不是它在存储里的样子。调用方先解析、再进来；
+ * 下面的 `looksUnresolved` 是第二道闸：万一有人忘了解析，宁可一个键都不发。
+ * 解析器对解不出来的模板返回空字符串（不是留下占位符），落到「没口令就什么都不发」
+ * 那条路上，正好是我们要的行为。
+ *
  * ## 已知边界
  *
  * 原始 `USER` / `PASSWORD` 交给消费方自己拼时，转义责任也在消费方。口令里如果
  * 出现该格式的保留字符（StackExchange 的 `,` 与 `=`），拼出来的串会被解析歪。
  * CDS 生成的口令是十六进制，不会命中；用户手工改过口令的服务才有这个风险。
- * 记在 `doc/debt.cds.md`。
+ *
+ * `_URL` **不带库名**，也不带 `authSource`：它的语义是「地址 + 凭据」。mongo 这一侧
+ * 是有意的——不写库名时 authSource 按 URI 规范默认为 `admin`，正好是 root 账号所在的库；
+ * 补上 `/<库名>` 却不同时补 `?authSource=admin` 会直接把认证打死。而 CDS 知道的
+ * `MONGO_INITDB_DATABASE` 是**初始化用的库**，不等于消费方要读写的库（当前唯一消费方
+ * prd-agent 就是另外用 `MongoDB__DatabaseName` 指定的）。mysql / postgres 的 `_URL`
+ * 目前没有任何消费方，等真有人用再按引擎补库名，别现在凭空替他们决定。
+ *
+ * 两条边界都记在 `doc/debt.cds.md`。
  */
 
 /** 一类基础设施服务：账号口令在它自己容器 env 的哪两个键里，以及它的 URI scheme。 */
@@ -109,10 +132,22 @@ export function cdsEnvPrefix(serviceId: string): string {
 }
 
 /**
+ * 这个值还是个没展开的模板吗（`${...}`）。
+ *
+ * 调用方本该先 `resolveEnvTemplates`。忘了的话，这里当作「没有凭据」处理——
+ * 发一个字面的 `${CDS_MYSQL_PASSWORD}` 出去，消费方会拿它去认证然后失败，
+ * 比什么都不发难查得多。
+ */
+function looksUnresolved(value: string): boolean {
+  return /\$\{[^}]*\}/.test(value);
+}
+
+/**
  * 从一个基础设施服务自己的 env，派生出消费方要用的凭据变量。
  *
  * @param serviceId 服务 id（决定变量名前缀）。
- * @param serviceEnv 该服务容器自己的 env（CDS 状态里存着）。
+ * @param serviceEnv 该服务容器自己的 env，**必须已经过 `resolveEnvTemplates`**。
+ *   还带着 `${...}` 的值一律当没有（见文件头「传进来的 env 必须是解析过的」）。
  * @param endpoint 消费方实际连过去的地址；URI 形态需要它。
  * @returns 要注入消费方容器的键值；这个服务没有可识别的凭据时返回空对象。
  */
@@ -129,7 +164,12 @@ export function deriveInfraCredentialEnv(
     const password = env[source.passwordKey];
     // 没有口令就不是「开了认证」，什么都不发——别造出空口令让消费方以为配好了。
     if (!password) continue;
-    const user = source.userKey ? (env[source.userKey] || '') : '';
+    // 调用方没解析模板：发字面占位符比不发更坏，整类跳过。
+    if (looksUnresolved(password)) continue;
+    const rawUser = source.userKey ? (env[source.userKey] || '') : '';
+    // 用户名单独判：口令解析出来了、用户名没有，是半套凭据，同样不能发。
+    if (looksUnresolved(rawUser)) continue;
+    const user = rawUser;
 
     if (user) out[`CDS_${prefix}_USER`] = user;
     out[`CDS_${prefix}_PASSWORD`] = password;

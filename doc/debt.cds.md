@@ -936,6 +936,14 @@ StackExchange 格式的保留字符（`,` `=`），拼出来的串会被解析�
 **用户手工改过口令的服务才有这个风险**。要根治得给 redis 也提供一个「已转义、可直接用」的形态，
 或者在 CDS 侧拒绝含保留字符的手工口令。
 
+**留下的第二条已知边界**：`CDS_<服务>_URL` 只带地址与凭据，**不带库名、不带 `authSource`**
+（Codex review P1 提的就是这条）。mongo 这一侧是有意为之——不写库名时 authSource 按 URI 规范
+默认落到 `admin`，正好是 root 账号所在的库；补 `/<库名>` 却不同时补 `?authSource=admin`
+会直接把认证打死。而且 CDS 知道的 `MONGO_INITDB_DATABASE` 是**初始化用的库**，不等于消费方
+要读写的库——当前唯一消费方 prd-agent 就是另外用 `MongoDB__DatabaseName` 指定的。
+mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按引擎补库名，不在这个 PR 里
+凭空替不存在的消费方决定语义（AGENTS.md §5.5 的 B 类）。
+
 **顺带**：把 profile 改成引用 `${CDS_REDIS_URL}` 的那次改动，从落地起就没生效过——那个名字当时
 在 CDS 里根本不存在。现在它存在了，那次改动的意图反而是对的，只是缺了生产侧那一半。
 

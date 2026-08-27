@@ -39,6 +39,7 @@ import {
   selectReleaseRunsToPrune,
 } from './release-retention.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
+import { resolveEnvTemplates } from './compose-parser.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -4450,9 +4451,18 @@ export class StateService {
       result[hostKey] = dockerHost;
       // 只发地址不发凭据，服务一旦开了认证，消费方容器启动即崩（NOAUTH）——
       // 而 CDS 自己存着那对账号口令。判据与已知边界见 infra-credential-env.ts。
+      //
+      // svc.env 存的是**未展开的模板**（compose 导入的服务里 MYSQL_USER 常常就是
+      // 字面的 `${CDS_MYSQL_USER}`）。容器启动、数据工作台、数据操作三处都是先解析
+      // 再用，这里必须走同一套，否则会把占位符当口令发出去。解析器对解不出来的模板
+      // 返回空字符串，正好落到派生函数「没口令就什么都不发」那条路上。
+      const resolvedSvcEnv = resolveEnvTemplates(
+        svc.env || {},
+        this.getCustomEnv(svc.projectId || 'default'),
+      );
       Object.assign(
         result,
-        deriveInfraCredentialEnv(svc.id, svc.env, { host: dockerHost, port: svc.hostPort }),
+        deriveInfraCredentialEnv(svc.id, resolvedSvcEnv, { host: dockerHost, port: svc.hostPort }),
       );
     }
     return result;

@@ -100,6 +100,32 @@ describe('从基础设施服务派生连接凭据', () => {
     expect(out.CDS_WEIRD_PASSWORD).toBe('mp');
   });
 
+  it('值还是没展开的模板时，一个键都不发', () => {
+    // InfraService.env 存的是未展开模板，线上真有四个项目的 MYSQL_USER / MINIO_ROOT_USER
+    // 就是字面的 `${...}`。把占位符当口令发出去，消费方会拿它去认证然后失败——
+    // 比什么都不发难查得多。调用方本该先解析，这里是第二道闸。
+    expect(deriveInfraCredentialEnv('mysql', {
+      MYSQL_USER: '${CDS_MYSQL_USER}',
+      MYSQL_PASSWORD: '${CDS_MYSQL_PASSWORD}',
+    }, at)).toEqual({});
+    // 口令解出来了、用户名没有 = 半套凭据，同样不发。
+    expect(deriveInfraCredentialEnv('mysql', {
+      MYSQL_USER: '${CDS_MYSQL_USER}',
+      MYSQL_PASSWORD: 'real',
+    }, at)).toEqual({});
+    // 反过来也一样。
+    expect(deriveInfraCredentialEnv('mysql', {
+      MYSQL_USER: 'app',
+      MYSQL_PASSWORD: '${CDS_MYSQL_PASSWORD}',
+    }, at)).toEqual({});
+  });
+
+  it('解析器把解不出来的模板变成空串，正好落到「没口令就不发」', () => {
+    // resolveEnvTemplates 对解不出来的模板返回空字符串而不是留占位符，
+    // 所以调用方解析过之后，缺值的服务自然什么都不发。
+    expect(deriveInfraCredentialEnv('mysql', { MYSQL_USER: '', MYSQL_PASSWORD: '' }, at)).toEqual({});
+  });
+
   it('每一类都写得出「为什么认这两个键」', () => {
     const described = describeCredentialSources();
     expect(described.length).toBeGreaterThan(0);
@@ -120,6 +146,13 @@ describe('接线', () => {
 
   it('派生用的是服务自己的 env 与消费方实际连的地址', () => {
     const squashed = stateSource.split(/\s+/).join(' ');
-    expect(squashed).toContain('deriveInfraCredentialEnv(svc.id, svc.env, { host: dockerHost, port: svc.hostPort })');
+    expect(squashed).toContain('deriveInfraCredentialEnv(svc.id, resolvedSvcEnv, { host: dockerHost, port: svc.hostPort })');
+  });
+
+  it('传进去的 env 先过了模板解析，而不是存储里的生值', () => {
+    // 容器启动、数据工作台、数据操作三处都是先 resolveEnvTemplates 再用；
+    // 这一处漏了就会把 `${CDS_MYSQL_PASSWORD}` 当成真口令发给消费方。
+    const squashed = stateSource.split(/\s+/).join(' ');
+    expect(squashed).toContain('const resolvedSvcEnv = resolveEnvTemplates( svc.env || {}, this.getCustomEnv(svc.projectId || \'default\'), )');
   });
 });
