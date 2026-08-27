@@ -182,7 +182,7 @@ export function TranscribeStatusCard({
   transcriptPreview,
   generatedSentences,
   completion,
-  organizing,
+  organizeStyleLabel,
   onOpenServiceStatus,
   onReRecord,
   onDownloadAudio,
@@ -211,8 +211,12 @@ export function TranscribeStatusCard({
   generatedSentences?: number;
   /** 转录全部跑完之后那条绿卡的口径（稿面 v2-S3 / cap-S5）。数不出来就不传，界面不编。 */
   completion?: { sentences: number; speakers: number; hasSummary: boolean; hasTodos: boolean } | null;
-  /** 后台整理进行中（稿面 cap-S6）：点名到具体哪一种产物 + 一个「不用等」的出口。 */
-  organizing?: { styleLabel?: string | null; remainingSec?: number | null } | null;
+  /**
+   * 这次在跑的整理方式的**显示名**（如「会议纪要」）。
+   * 只在「原文已经有了、正在重新整理」时用得上——那一刻不该再摆一遍三阶段清单，
+   * 稿面 cap-S6 画的是一条「正在生成会议纪要 · 约 20s · 可以先去播放和阅读」。
+   */
+  organizeStyleLabel?: string | null;
   /** 「查看服务状态」的去处（稿面 cap-S9）。不传就不渲染那颗按钮，不给一个点了没反应的。 */
   onOpenServiceStatus?: () => void;
   /** 「重新录制」（稿面 v2-S4）：这段没人声时，重试同一段音频不会有别的结果，出口是重录。 */
@@ -239,6 +243,8 @@ export function TranscribeStatusCard({
   const [durationSec, setDurationSec] = useState(0);
   useEffect(() => onRecordingDuration(setDurationSec), []);
   const durationLabel = durationSec > 0 ? formatClockLabel(durationSec) : null;
+  // 原文已经在了还在跑 run，那跑的是「补齐理解」那一层，不是从头转录：
+  // 再摆一遍「保存音频 → 生成原文 → 补齐理解」等于把两件事说成同一件。
   const stages = describeTranscriptionStages(activeRun, {
     sizeLabel: audioSizeLabel,
     durationLabel,
@@ -248,7 +254,10 @@ export function TranscribeStatusCard({
   });
   const processing = stages !== null;
   // 失败卡只在没有在途 run 时出现：又在跑又说失败，等于同屏两句互相打脸
-  const showFailure = !processing && !noteEntryId && !!lastFailure;
+  const aiUnavailable = isAiUnavailableFailure(lastFailure?.code);
+  // AI 整体不可用时不再叠一张「转录失败」卡：那是同一件事的两种说法，
+  // 两张一起出现，用户会以为出了两个故障（稿面 cap-S9 只画了那一条横幅）。
+  const showFailure = !processing && !noteEntryId && !!lastFailure && !aiUnavailable;
   const retryAt = lastFailure?.automaticRetryNextAt ? Date.parse(lastFailure.automaticRetryNextAt) : NaN;
   const now = useSecondTick(processing || Number.isFinite(retryAt));
   const waitingAutoRetry = Number.isFinite(retryAt) && retryAt > now;
@@ -262,11 +271,17 @@ export function TranscribeStatusCard({
     : null;
 
   const timing = processing ? estimateRemainingSeconds(activeRun, now) : null;
+  const reorganizing = processing && !!noteEntryId;
   const completionCopy = !processing && completion ? describeCompletionSummary(completion) : null;
-  const organizeCopy = !processing && organizing ? describeOrganizeProgress(organizing) : null;
+  const organizeCopy = reorganizing
+    ? describeOrganizeProgress({
+      styleLabel: organizeStyleLabel,
+      remainingSec: estimateRemainingSeconds(activeRun, now)?.remainingSec ?? null,
+    })
+    : null;
   // AI 整体不可用是**另一件事**：录音与原文都好好的，只是理解/整理/问答这一层没了。
   // 混进转录失败卡里说，用户会以为录音也出事了（稿面 cap-S9 专门画了一条横幅）。
-  const aiDown = isAiUnavailableFailure(lastFailure?.code) ? lastFailure : null;
+  const aiDown = aiUnavailable && !processing && !noteEntryId ? lastFailure : null;
   const chips = (noteEntryId && !inPlace) || subtitleEntryId || (noteEntryId && onRestyle)
     || (onEnterResult && !inPlace && !processing);
 
@@ -305,16 +320,29 @@ export function TranscribeStatusCard({
             <strong style={{ color: 'var(--text-primary)' }}>录音、原文、编辑、搜索、跳播全部照常可用</strong>
             ；理解、整理、问答已折叠，恢复后自动补齐。
           </p>
-          {onOpenServiceStatus && (
-            <button
-              type="button"
-              onClick={onOpenServiceStatus}
-              className="mt-2.5 flex min-h-10 w-full cursor-pointer items-center justify-center rounded-[10px] text-[13px] font-semibold"
-              style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
-            >
-              查看服务状态
-            </button>
-          )}
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {onOpenServiceStatus && (
+              <button
+                type="button"
+                onClick={onOpenServiceStatus}
+                className="flex min-h-10 flex-1 cursor-pointer items-center justify-center rounded-[10px] px-3 text-[13px] font-semibold"
+                style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+              >
+                查看服务状态
+              </button>
+            )}
+            {/* 服务恢复之后要能重新排队，否则这一屏没有出口 */}
+            {onStart && (
+              <button
+                type="button"
+                onClick={() => onStart()}
+                className="flex min-h-10 cursor-pointer items-center justify-center rounded-[10px] px-4 text-[13px] font-semibold"
+                style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+              >
+                重试
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -361,7 +389,7 @@ export function TranscribeStatusCard({
         </div>
       )}
 
-      {processing ? (
+      {processing && !reorganizing ? (
         <>
           {/* 页面级标题：设计稿这一屏的 H1，不是卡内小标题 */}
           <div>

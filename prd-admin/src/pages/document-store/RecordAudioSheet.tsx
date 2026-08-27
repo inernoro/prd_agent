@@ -1030,14 +1030,18 @@ export function RecordAudioSheet({
       再给两颗按钮。此前只有一颗「上传音频文件」——没有权限的人第一反应是
       「怎么给权限」，那条路没有出口，他就卡在这一屏了。
     */
-    <div className="mx-auto flex min-h-full w-full max-w-[360px] flex-col justify-center gap-4 py-8">
+    <div className="mx-auto flex w-full max-w-[360px] flex-col gap-4 py-6">
       <div className="flex items-center gap-2.5">
         <Lock size={20} style={{ color: 'var(--text-primary)' }} aria-hidden />
         <p className="text-[19px] font-bold text-token-primary">需要麦克风权限</p>
       </div>
       <p className="text-[13px] leading-relaxed text-token-secondary">
-        {unavailableReason || '系统已拒绝麦克风访问，无法开始录音。'}你仍可以上传已有音频文件获得完整转录能力。
+        系统已拒绝麦克风访问，无法开始录音。你仍可以上传已有音频文件获得完整转录能力。
       </p>
+      {/* 浏览器给的原话保留在下面一行：它比通用文案更能定位到底卡在哪一层 */}
+      {unavailableReason && (
+        <p className="text-[12px] leading-relaxed text-token-muted">{unavailableReason}</p>
+      )}
       <div className="flex flex-wrap items-center gap-2.5">
         <button
           type="button"
@@ -1069,7 +1073,6 @@ export function RecordAudioSheet({
           <p className="mt-1">Windows：设置 → 隐私和安全性 → 麦克风 → 允许桌面应用访问。</p>
         </div>
       )}
-      {destinationPicker}
     </div>
   ) : state === 'finalizing' ? (
     <div

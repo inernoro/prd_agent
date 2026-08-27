@@ -212,6 +212,30 @@ function buildInit(scene) {
     return v;
   }
 
+  /*
+   * 离线那一屏（稿面 v2-S7）：navigator.onLine 是只读属性，Playwright 的
+   * context.setOffline 会连 Vite 的模块也一起断掉（页面根本加载不出来）。
+   * 所以只改浏览器**对外的那个信号**：应用读到的就是离线，网络本身照常。
+   */
+  if (SCENE.offline) {
+    try {
+      Object.defineProperty(window.navigator, 'onLine', { get: () => false, configurable: true });
+    } catch { /* 改不了就让那一屏如实截不到 */ }
+    window.addEventListener('load', () => {
+      setTimeout(() => window.dispatchEvent(new Event('offline')), 300);
+    });
+  }
+
+  /*
+   * 「麦克风被拒」那一屏（稿面 v2-S8）：浏览器是带假设备起的，真实拒绝拿不到。
+   * 这里只让 getUserMedia 抛出与系统拒绝同一个错误名，走的是实现里同一条分支。
+   */
+  if (SCENE.capture && SCENE.capture.noMicrophone && navigator.mediaDevices) {
+    navigator.mediaDevices.getUserMedia = () => Promise.reject(
+      Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' }),
+    );
+  }
+
   const real = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -220,9 +244,16 @@ function buildInit(scene) {
     // 场景规则先于默认链：它要能覆盖任何一条默认应答，否则驱不到失败/重试/离线
     for (const rule of (SCENE.rules || [])) {
       if (!new RegExp(rule.match).test(url)) continue;
-      if (rule.status && rule.status >= 400) return Promise.resolve(fail(rule.status, rule.message));
-      if (rule.reject) return Promise.reject(new TypeError('Failed to fetch'));
-      return Promise.resolve(env(resolveTimes(rule.data)));
+      // delayMs：把某个接口按住不放。「打开瞬间的骨架」那一屏只有这样才截得到——
+      // 真实网络里它存在几百毫秒，截图永远抢不到。
+      const hold = (value) => rule.delayMs
+        ? new Promise(resolve => setTimeout(() => resolve(value), rule.delayMs))
+        : Promise.resolve(value);
+      if (rule.status && rule.status >= 400) return hold(fail(rule.status, rule.message));
+      if (rule.reject) return rule.delayMs
+        ? new Promise((_, reject) => setTimeout(() => reject(new TypeError('Failed to fetch')), rule.delayMs))
+        : Promise.reject(new TypeError('Failed to fetch'));
+      return hold(env(resolveTimes(rule.data)));
     }
 
     // 采集屏：开会话 + 逐片上传。uploadedBytes 按真实收到的字节累加，
@@ -257,7 +288,8 @@ function buildInit(scene) {
     }
     if (url.includes('/document-store/transcribe-styles')) return Promise.resolve(env(STYLES));
     if (url.includes('/entries/' + AUDIO_ID + '/content')) return Promise.resolve(env({ fileUrl: audioUrl, contentType: 'audio/mp4' }));
-    if (url.includes('/entries/' + NOTE_ID + '/content'))  return Promise.resolve(env({ content: NOTE_MD, contentType: 'text/markdown' }));
+    // hasContent 必须给：阅读器那条取内容的路径判的是它，少一个字段正文就整篇变 null
+    if (url.includes('/entries/' + NOTE_ID + '/content'))  return Promise.resolve(env({ hasContent: true, content: NOTE_MD, contentType: 'text/markdown' }));
     if (url.includes('/entries/' + AUDIO_ID))              return Promise.resolve(env(audioEntry));
     if (url.includes('/entries/' + NOTE_ID))               return Promise.resolve(env(noteEntry));
     if (url.includes('/stores/' + STORE_ID + '/entries'))  return Promise.resolve(env({ items: [audioEntry, noteEntry], total: 2 }));
@@ -377,6 +409,13 @@ const DRIVERS = {
       await scrollTop(page);
       await page.waitForTimeout(300);
     }
+  },
+
+  /** 只把滚动复位到顶部：状态卡在页首，页面自动跟随播放会把它滚出视野 */
+  async top(page, scene, theme, snap) {
+    await scrollTop(page);
+    await page.waitForTimeout(400);
+    await snap('顶部');
   },
 
   /**

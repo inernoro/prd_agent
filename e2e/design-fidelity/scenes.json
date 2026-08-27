@@ -483,5 +483,214 @@
       "待办",
       "提问"
     ]
+  },
+  {
+    "id": "audio-done",
+    "board": "v2-S3 / cap-S5",
+    "note": "转录全部跑完：成果卡给出句数、说话人数、纪要与待办是否就绪——四项全数自这份原文本身",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 7000,
+    "expect": [
+      "全部完成",
+      "19 句",
+      "2 位说话人"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "done",
+          "progress": 100,
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "endedAt": "@ago:120"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "done",
+          "progress": 100,
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "endedAt": "@ago:120"
+        }
+      }
+    ],
+    "drive": [
+      "top"
+    ]
+  },
+  {
+    "id": "organizing",
+    "board": "cap-S6",
+    "note": "原文已经在了、正在重新整理：不再摆三阶段清单，给一条「正在生成会议纪要 · 约 Ns · 可以先去播放和阅读」",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 7000,
+    "expect": [
+      "正在生成",
+      "可以先去播放和阅读"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "running",
+          "phase": "正在按会议纪要重新整理",
+          "progress": 45,
+          "createdAt": "@ago:33",
+          "startedAt": "@ago:31",
+          "heartbeatAt": "@now"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "running",
+          "phase": "正在按会议纪要重新整理",
+          "progress": 45,
+          "createdAt": "@ago:33",
+          "startedAt": "@ago:31",
+          "heartbeatAt": "@now"
+        }
+      }
+    ],
+    "drive": [
+      "top"
+    ]
+  },
+  {
+    "id": "ai-down",
+    "board": "cap-S9",
+    "note": "AI 服务整体不可用：录音与原文都好好的，只是理解那一层没了——单独一条横幅，不混进转录失败卡",
+    "url": "/document-store?store=store-demo&entry=entry-audio",
+    "sections": false,
+    "settleMs": 7000,
+    "audioMeta": {
+      "transcribe_entry_id": null
+    },
+    "expect": [
+      "AI 服务暂时不可用",
+      "照常可用",
+      "查看服务状态"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "failed",
+          "progress": 0,
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "endedAt": "@ago:60",
+          "errorMessage": "模型池全部候选不可用。",
+          "failureCode": "LLM_UNAVAILABLE",
+          "automaticRetryCount": 3,
+          "automaticRetryNextAt": null
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "failed",
+          "progress": 0,
+          "createdAt": "@ago:600",
+          "startedAt": "@ago:590",
+          "endedAt": "@ago:60",
+          "errorMessage": "模型池全部候选不可用。",
+          "failureCode": "LLM_UNAVAILABLE",
+          "automaticRetryCount": 3,
+          "automaticRetryNextAt": null
+        }
+      }
+    ],
+    "drive": [
+      "top"
+    ]
+  },
+  {
+    "id": "loading",
+    "board": "v2-S1",
+    "note": "打开录音结果页的那一瞬间：与真实布局同形的骨架。条目接口被按住 20 秒才截得到这一屏",
+    "sections": false,
+    "settleMs": 4000,
+    "expect": [
+      "正在打开录音"
+    ],
+    "rules": [
+      {
+        "match": "/entries/entry-audio$",
+        "delayMs": 20000,
+        "data": {}
+      }
+    ]
+  },
+  {
+    "id": "offline",
+    "board": "v2-S7",
+    "note": "离线告知卡（按拍板只做告知版，不建离线编辑队列）",
+    "sections": false,
+    "settleMs": 6000,
+    "offline": true,
+    "expect": [
+      "当前离线",
+      "照常播放、阅读"
+    ]
+  },
+  {
+    "id": "permission-denied",
+    "board": "v2-S8",
+    "note": "麦克风被系统拒绝：锁标题 + 两颗按钮 + 各平台授权路径。浏览器不带假设备启动就能真实走到这一档",
+    "url": "/document-store?store=store-demo",
+    "sections": false,
+    "settleMs": 6000,
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "drive": [
+      "capture"
+    ],
+    "capture": {
+      "live": false,
+      "recordMs": 2500,
+      "noMicrophone": true
+    },
+    "expect": [
+      "需要麦克风权限",
+      "上传文件"
+    ]
   }
 ]

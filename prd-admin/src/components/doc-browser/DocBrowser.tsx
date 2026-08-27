@@ -221,6 +221,7 @@ import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow, History, AlertTriangle } from 'lucide-react';
 import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
+import { listTranscribeStyles } from '@/services/real/documentStore';
 import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
 import { DocEmptyState } from './DocEmptyState';
@@ -1664,6 +1665,23 @@ export function DocBrowser({
   const [transcriptNoteMd, setTranscriptNoteMd] = useState<string | null>(null);
   // 「查看服务状态」的去处：系统告警落在通知中心，不另造一个状态页
   const navigate = useNavigate();
+  /*
+    正在重新整理时要点名到具体那一种（稿面 cap-S6）。整理方式清单是后端注册表，
+    这里只在真的需要显示时拉一次，绝不在前端另抄一份 key → 名字的映射
+    （frontend-architecture：前端不维护业务映射表）。
+  */
+  const [transcribeStyleNames, setTranscribeStyleNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (Object.keys(transcribeStyleNames).length > 0) return;
+    let stale = false;
+    void listTranscribeStyles().then((res) => {
+      if (stale || !res.success) return;
+      const next: Record<string, string> = {};
+      for (const item of res.data?.items ?? []) next[item.key] = item.label;
+      setTranscribeStyleNames(next);
+    }).catch(() => undefined);
+    return () => { stale = true; };
+  }, [transcribeStyleNames]);
   // preview 的 ref 镜像：loadEntryContent 的「刚保存豁免」要读当前 preview.text，但不能把 preview 放进
   // 它的 deps —— 否则 setPreview(null)（切文档）会改变回调标识，触发下方 effect 二次 loadContent，大文档被下载两次（Codex P2）。
   const previewRef = useRef<EntryPreview | null>(null);
@@ -3967,6 +3985,13 @@ export function DocBrowser({
                     */
                     completion={transcriptNoteMd ? describeTranscriptOutcome(transcriptNoteMd) : null}
                     onOpenServiceStatus={() => navigate('/notifications')}
+                    /*
+                      正在重新整理时点名到具体那一种（稿面 cap-S6）。名字来自笔记条目上
+                      记着的整理方式，不在这里另抄一份清单——清单是后端注册表。
+                    */
+                    organizeStyleLabel={transcribeStyleNames[
+                      String(selectedEntryData.metadata?.transcribe_style_key ?? '')
+                    ] ?? null}
                     // 「重新录制」走的就是这个库的录音入口，不另开一条路径
                     onReRecord={onQuickRecord ?? onUploadAudio}
                     // 「下载音频」用的是这条音频真实的下载地址；没加载到就不给按钮
