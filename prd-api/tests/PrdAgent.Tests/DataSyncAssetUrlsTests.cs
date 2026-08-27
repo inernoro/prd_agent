@@ -448,6 +448,50 @@ public class DataSyncAssetUrlsTests
         Assert.Equal(new DataSyncAssetUrls.RebaseResult(1, 1, 0), actual);
     }
 
+    /// <summary>
+    /// 真的跑一次本地存储，拿**它产出的那个 key** 来验形状判据（Codex review P1）。
+    ///
+    /// 上一版的判据只认 26 位 base32（R2 / COS 的写法），而本地磁盘存的是完整
+    /// sha256 十六进制、64 位。于是源站用本地磁盘时，`StorageKey` 明明是可用的，
+    /// 却过不了形状检查——DS30 要修的正是这个场景，判据反倒把它挡在门外。
+    ///
+    /// 这条**不扫源码、不写死形状**：直接 `SaveAsync` 一次拿真 key 来跑。
+    /// 哪天本地存储改了命名，这条就红——那正是它该红的时候（形状 6：
+    /// 判据要读真正生效的值，不是读我以为的那个）。
+    /// </summary>
+    [Fact]
+    public async Task 本地存储产出的_key_必须过得了形状判据()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ds-local-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var storage = new PrdAgent.Infrastructure.Services.AssetStorage.LocalAssetStorage(dir);
+            var stored = await storage.SaveAsync(
+                new byte[] { 1, 2, 3, 4 }, "image/png", CancellationToken.None,
+                domain: "prd-agent", type: "img", extensionHint: "png");
+
+            Assert.False(string.IsNullOrWhiteSpace(stored.Key), "本地存储没回填 key，这条守卫的前提已变");
+
+            // 一、它自己就该被认出来。
+            var logical = DataSyncAssetUrls.TryExtractContentAddressedKey(stored.Key!, alreadyKey: true);
+            Assert.Equal(stored.Key!.ToLowerInvariant(), logical);
+
+            // 二、端到端：地址是相对的、key 是本地存储那一套，照样改得了。
+            var docs = new List<BsonDocument>
+            {
+                Attachment(stored.Url, storageKey: stored.Key),
+            };
+            var result = DataSyncAssetUrls.RebaseIncoming(docs, "attachments", LocalBuild).Total;
+            Assert.Equal(1, result.Rebased);
+            Assert.Equal(0, result.AlreadyRelative);
+            Assert.Equal($"https://cdn.local.test/local/{stored.Key}", docs[0]["Url"].AsString);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
     [Fact]
     public void 登记的字段必须在对应模型上真实存在()
     {

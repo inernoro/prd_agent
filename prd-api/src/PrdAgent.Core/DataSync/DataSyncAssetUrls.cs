@@ -174,15 +174,32 @@ public static class DataSyncAssetUrls
         => UrlFields.ContainsKey(collectionName ?? string.Empty);
 
     /// <summary>
-    /// 内容寻址对象的 key 形状：`{domain}/{type}/{26 位 base32}.{ext}`。
+    /// 内容寻址对象的 key 形状：`{domain}/{type}/{内容指纹}.{ext}`。
     ///
     /// 判据卡得这么死是有意的：没有 StorageKey 的存量文档只能从 URL 反推 key，
     /// 而「路径的最后三段」这种宽判据会把网页托管（`web-hosting/sites/...`）、
     /// 头像（`icon/backups/head/...`）这些**层级不同**的地址也一起改坏。
     /// 认不出来就不动，并如实计数——改错一条地址比不改更难查。
+    ///
+    /// ## 指纹有两种写法，两种都得认（Codex review P1）
+    ///
+    /// 本仓库的三个存储实现都按内容寻址命名，但编码不同：
+    ///
+    /// | 实现 | 文件名 | 出处 |
+    /// |---|---|---|
+    /// | R2 / COS | sha256 前 16 字节的 base32，26 位 | `Sha256HexToBase32Lower128` |
+    /// | 本地磁盘 | 完整 sha256 十六进制，64 位 | `LocalAssetStorage.Sha256Hex` |
+    ///
+    /// 上一版只写了 26 位那一种，于是**源站用本地磁盘时，`StorageKey` 明明存着一个
+    /// 完全可用的 key，却过不了这道形状检查**——地址照样改不了。这正是 DS30 要修的
+    /// 那个场景，判据却把它挡在门外（形状 1：判据比它该管的范围窄）。
+    ///
+    /// 这里不是「多认一种同义词」那种越描越宽的口子：两种写法各自对应一个真实存在的
+    /// 存储实现，是封闭的两项，不是开放的模式。下面那条守卫会真的跑一次
+    /// `LocalAssetStorage.SaveAsync` 拿它产出的 key 来验，实现改了命名就会红。
     /// </summary>
     private static readonly Regex ContentAddressedTail = new(
-        @"^[a-z0-9-]+/[a-z0-9-]+/[a-z2-7]{26}\.[a-z0-9]{1,10}$",
+        @"^[a-z0-9-]+/[a-z0-9-]+/(?:[a-z2-7]{26}|[0-9a-f]{64})\.[a-z0-9]{1,10}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <param name="Rebased">已改写成本站地址的字段数。</param>
