@@ -19,12 +19,14 @@ import { INFRA_CATALOG } from '../../src/services/infra-catalog.js';
  */
 describe('从基础设施服务派生连接凭据', () => {
   const at = { host: '172.17.0.1', port: 10002 };
+  // redis 必须由启动参数证明服务端真的在校验口令，所以它的用例都要带上这个。
+  const redisAuthOn = { command: ['redis-server', '--aclfile', '/etc/redis/users.acl'] };
 
   it('redis 的 ACL 用户与口令都要发出来', () => {
     const out = deriveInfraCredentialEnv('redis', {
       REDIS_USERNAME: 'app',
       REDIS_PASSWORD: 'p4ss',
-    }, at);
+    }, at, redisAuthOn);
     expect(out.CDS_REDIS_USER).toBe('app');
     expect(out.CDS_REDIS_PASSWORD).toBe('p4ss');
     expect(out.CDS_REDIS_URL).toBe('redis://app:p4ss@172.17.0.1:10002');
@@ -32,7 +34,7 @@ describe('从基础设施服务派生连接凭据', () => {
 
   it('只设了口令没有用户名时不发空的 USER', () => {
     // 发一个空字符串比不发更坏：消费方会以为「配好了，用户名就是空」。
-    const out = deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p4ss' }, at);
+    const out = deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p4ss' }, at, redisAuthOn);
     expect(out).not.toHaveProperty('CDS_REDIS_USER');
     expect(out.CDS_REDIS_PASSWORD).toBe('p4ss');
     expect(out.CDS_REDIS_URL).toBe('redis://:p4ss@172.17.0.1:10002');
@@ -62,9 +64,9 @@ describe('从基础设施服务派生连接凭据', () => {
   });
 
   it('没有口令就什么都不发（没开认证的服务不该凭空多出凭据）', () => {
-    expect(deriveInfraCredentialEnv('redis', {}, at)).toEqual({});
-    expect(deriveInfraCredentialEnv('redis', undefined, at)).toEqual({});
-    expect(deriveInfraCredentialEnv('redis', { REDIS_USERNAME: 'app' }, at)).toEqual({});
+    expect(deriveInfraCredentialEnv('redis', {}, at, redisAuthOn)).toEqual({});
+    expect(deriveInfraCredentialEnv('redis', undefined, at, redisAuthOn)).toEqual({});
+    expect(deriveInfraCredentialEnv('redis', { REDIS_USERNAME: 'app' }, at, redisAuthOn)).toEqual({});
   });
 
   it('没有公认 URI 形态的服务只发 USER/PASSWORD', () => {
@@ -86,7 +88,7 @@ describe('从基础设施服务派生连接凭据', () => {
 
   it('变量名前缀与既有的 PORT/HOST 一套口径（同一个服务 id 派生同一个前缀）', () => {
     expect(cdsEnvPrefix('redis-mdimp')).toBe('REDIS_MDIMP');
-    const out = deriveInfraCredentialEnv('redis-mdimp', { REDIS_PASSWORD: 'x' }, at);
+    const out = deriveInfraCredentialEnv('redis-mdimp', { REDIS_PASSWORD: 'x' }, at, redisAuthOn);
     // 已有命名是 CDS_REDIS_MDIMP_PORT；凭据必须落在同一个前缀下，
     // 否则模板里 `${CDS_REDIS_MDIMP_PORT}` 与 `${CDS_REDIS_MDIMP_PASSWORD}` 会指到两台机器。
     expect(out).toHaveProperty('CDS_REDIS_MDIMP_PASSWORD');
@@ -150,7 +152,10 @@ describe('从基础设施服务派生连接凭据', () => {
       const matched = sources.find((s) => built[s.passwordKey]);
       if (!matched) continue;
 
-      const out = deriveInfraCredentialEnv(entry.id, built, at);
+      // 预设自己的启动命令一起送进去：redis 这类服务要由它证明服务端真在校验口令。
+      const out = deriveInfraCredentialEnv(entry.id, built, at, {
+        command: entry.command, entrypoint: entry.entrypoint,
+      });
       const prefix = cdsEnvPrefix(entry.id);
       expect(out, `预设 ${entry.id} 有 ${matched.passwordKey} 却没派生出口令`)
         .toHaveProperty(`CDS_${prefix}_PASSWORD`);
@@ -208,7 +213,7 @@ describe('从基础设施服务派生连接凭据', () => {
     expect(deriveInfraCredentialEnv('ch', { CLICKHOUSE_PASSWORD: 'p' }, at).CDS_CH_USER)
       .toBe('default');
     // redis 只设口令时是**真的没有用户名**，不该凭空补一个。
-    expect(deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p' }, at))
+    expect(deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p' }, at, redisAuthOn))
       .not.toHaveProperty('CDS_REDIS_USER');
   });
 
@@ -223,6 +228,57 @@ describe('从基础设施服务派生连接凭据', () => {
       MARIADB_USER: 'u', MARIADB_PASSWORD: 'p',
     }, at).CDS_MARIA_PASSWORD).toBe('p');
     expect(deriveInfraCredentialEnv('pg', { PGPASSWORD: 'p' }, at).CDS_PG_PASSWORD).toBe('p');
+  });
+
+  it('残缺的账号候选要跳过去试下一个，不能发出没有用户名的连接串', () => {
+    // 只看口令选候选会中这个陷阱：有 MYSQL_PASSWORD 没有 MYSQL_USER 时选中业务账号，
+    // 发出 `mysql://:口令@主机`——没有用户名，而旁边完整的 root 候选永远轮不到。
+    const out = deriveInfraCredentialEnv('mysql', {
+      MYSQL_PASSWORD: 'ap', MYSQL_ROOT_PASSWORD: 'rp',
+    }, at);
+    expect(out.CDS_MYSQL_USER).toBe('root');
+    expect(out.CDS_MYSQL_PASSWORD).toBe('rp');
+    expect(out.CDS_MYSQL_URL).toBe('mysql://root:rp@172.17.0.1:10002');
+  });
+
+  it('用户名是没展开的模板时作废该候选，但不放弃整类服务', () => {
+    // 此前这里是 `continue` 掉整个服务类，于是 root 兜底候选根本轮不到——
+    // 一台门禁认可的库就这么一个键都发不出去。
+    const out = deriveInfraCredentialEnv('mysql', {
+      MYSQL_USER: '${CDS_MYSQL_USER}', MYSQL_PASSWORD: 'ap', MYSQL_ROOT_PASSWORD: 'rp',
+    }, at);
+    expect(out.CDS_MYSQL_USER).toBe('root');
+    expect(out.CDS_MYSQL_PASSWORD).toBe('rp');
+  });
+
+  it('声明了用户名却是占位符时，不许退到 defaultUser', () => {
+    // 写了 POSTGRES_USER 就说明本意不是用默认超级用户；解析不出来时退到
+    // `postgres` 等于悄悄换了个账号连库，比报错更难查。
+    expect(deriveInfraCredentialEnv('postgres', {
+      POSTGRES_USER: '${CDS_PG_USER}', POSTGRES_PASSWORD: 'p',
+    }, at)).toEqual({});
+  });
+
+  it('redis 的口令要由启动参数证明服务端真在校验，证不了就一个键都不发', () => {
+    // env 里放着 REDIS_PASSWORD、启动命令却既没 --requirepass 也没 --aclfile 的库
+    // 是真实存在的。这种库不校验口令，消费方带着口令连过去会被
+    // 「ERR Client sent AUTH, but no password is set」顶回来——发凭据反而把本来
+    // 能裸连的消费方弄坏。与认证门禁同一口径。
+    const noProof = { command: ['redis-server', '--appendonly', 'yes'] };
+    expect(deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p' }, at, noProof)).toEqual({});
+    // 完全拿不到启动参数时同样不发：不能证明就不发。
+    expect(deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p' }, at)).toEqual({});
+    // 两种真认证都要认，写在 entrypoint 里也算。
+    expect(deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p' }, at, {
+      command: 'redis-server --requirepass p',
+    }).CDS_REDIS_PASSWORD).toBe('p');
+    expect(deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p' }, at, {
+      entrypoint: ['redis-server', '--aclfile', '/etc/redis/users.acl'],
+    }).CDS_REDIS_PASSWORD).toBe('p');
+    // 判据不许恒真：名字里带 aclfile 字样但没真开的不算。
+    expect(deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'p' }, at, {
+      command: 'redis-server --dir /var/lib/aclfile-backup',
+    })).toEqual({});
   });
 
   it('每一类都写得出「为什么认这两个键」', () => {
@@ -281,7 +337,16 @@ describe('接线', () => {
 
   it('派生用的是服务自己的 env 与消费方实际连的地址', () => {
     const squashed = stateSource.split(/\s+/).join(' ');
-    expect(squashed).toContain('deriveInfraCredentialEnv(svc.id, resolvedSvcEnv, { host: dockerHost, port: svc.hostPort })');
+    expect(squashed).toContain('deriveInfraCredentialEnv( svc.id, resolvedSvcEnv, { host: dockerHost, port: svc.hostPort },');
+  });
+
+  it('启动参数也送了进去，并且同样先解析过模板', () => {
+    // 少了这一段，redis 就永远证明不了「服务端在校验口令」，凭据一个都发不出去；
+    // 而不解析模板的话，`--requirepass ${CDS_REDIS_PASSWORD}` 这种写法虽然能命中
+    // 判据、但拿到的是没展开的原文，下次改判据就会踩空。
+    const squashed = stateSource.split(/\s+/).join(' ');
+    expect(squashed).toContain('command: resolveCommandTemplate(svc.command, svcCustomEnv),');
+    expect(squashed).toContain('entrypoint: resolveCommandTemplate(svc.entrypoint, svcCustomEnv),');
   });
 
   it('传进去的 env 先过了模板解析，而不是存储里的生值', () => {

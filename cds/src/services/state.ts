@@ -39,7 +39,7 @@ import {
   selectReleaseRunsToPrune,
 } from './release-retention.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
-import { resolveEnvTemplates } from './compose-parser.js';
+import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -4460,9 +4460,21 @@ export class StateService {
         svc.env || {},
         this.getCustomEnv(svc.projectId || 'default'),
       );
+      // 启动参数也要一起送进去，并且同样先解析模板：redis 这类服务「env 里有口令」
+      // 不等于「服务端在校验它」，判据要看命令行上有没有 --requirepass / --aclfile。
+      // 与认证门禁同一口径；证不出来就不发凭据，免得把本来能裸连的消费方弄坏。
+      const svcCustomEnv = this.getCustomEnv(svc.projectId || 'default');
       Object.assign(
         result,
-        deriveInfraCredentialEnv(svc.id, resolvedSvcEnv, { host: dockerHost, port: svc.hostPort }),
+        deriveInfraCredentialEnv(
+          svc.id,
+          resolvedSvcEnv,
+          { host: dockerHost, port: svc.hostPort },
+          {
+            command: resolveCommandTemplate(svc.command, svcCustomEnv),
+            entrypoint: resolveCommandTemplate(svc.entrypoint, svcCustomEnv),
+          },
+        ),
       );
     }
     return result;

@@ -78,12 +78,34 @@ interface CredentialAccount {
   userKey?: string;
   /** userKey 缺值时用的固定用户名，取自镜像约定的管理员账号名。 */
   defaultUser?: string;
+  /**
+   * 这类账号的用户名**可以真的不存在**。
+   *
+   * 只有 redis 是这样：`--requirepass` 模式下就是没有用户名，发
+   * `redis://:口令@主机` 完全正确。其余服务缺了用户名就是半套凭据，
+   * 该候选作废、去试下一个（例如 mysql 退到 root），而不是发一个没有
+   * 用户名的连接串出去。
+   */
+  userOptional?: boolean;
   /** 口令所在的 env 键。**它有值** = 这个账号成立。 */
   passwordKey: string;
 }
 
 /** 一类基础设施服务：它可能用哪几个账号，以及它的 URI scheme。 */
 interface CredentialSource {
+  /**
+   * 这类服务「口令存在」不足以证明「服务端在校验它」时，用它去启动参数里找真凭据。
+   *
+   * redis 是典型：env 里放着 `REDIS_PASSWORD`、但启动命令既没有 `--requirepass`
+   * 也没有 `--aclfile` 的库是真实存在的（存量/自定义部署）。这种库**不校验口令**，
+   * 而客户端带着口令连上去会被 `ERR Client sent AUTH, but no password is set` 顶回来——
+   * 也就是说发凭据反而把本来能连的消费方弄坏了。
+   *
+   * 认证门禁（`infra-auth-policy.ts`）对 redis / memcached / kafka / nats 早就是这么判的，
+   * 注释里写着「口令存在不等于服务在校验它」。这里必须同口径，否则两边对同一台库给出
+   * 相反结论。声明了这个函数的服务，**拿不到启动参数就一个键都不发**——不能证明就不发。
+   */
+  provenByStartup?: (startupText: string) => boolean;
   /**
    * 账号候选，**按优先级**：取第一个「口令键有值」的。
    *
@@ -124,12 +146,19 @@ const CREDENTIAL_SOURCES: readonly CredentialSource[] = [
   },
   {
     // redis 有两种认证：只设口令（--requirepass）与 ACL 用户（--aclfile）。
-    // 前者没有用户名，后者有；同一对键名覆盖两种，缺 username 时自然为空。
+    // 前者没有用户名，后者有；同一对键名覆盖两种。
     // 这里**不设 defaultUser**：redis 只设口令时就是「没有用户名」，
     // 补一个 `default` 反而会让消费方拼出一个它没打算用的 ACL 用户。
-    accounts: [{ userKey: 'REDIS_USERNAME', passwordKey: 'REDIS_PASSWORD' }],
+    // `userOptional` 就是为这一种服务开的——别处缺用户名一律作废该候选。
+    accounts: [{ userKey: 'REDIS_USERNAME', passwordKey: 'REDIS_PASSWORD', userOptional: true }],
     scheme: 'redis',
-    why: 'redis 口令或 ACL 用户；ACL 模式下用户名不可省',
+    // env 里有 REDIS_PASSWORD 不代表服务端在校验它：既没 --requirepass 也没
+    // --aclfile 的 redis 是真实存在的，而带着口令连过去会被
+    // 「ERR Client sent AUTH, but no password is set」顶回来——发凭据反而把
+    // 本来能连的消费方弄坏。与认证门禁同一口径，只认启动参数上的真凭据。
+    provenByStartup: (startup) => /(?:^|\s)--requirepass(?:=|\s+)\S+/.test(startup)
+      || /(?:^|\s)--aclfile(?:=|\s+)\S+/.test(startup),
+    why: 'redis 口令或 ACL 用户；必须由启动参数证明服务端真的在校验'
   },
   {
     accounts: [
@@ -206,6 +235,36 @@ function looksUnresolved(value: string): boolean {
   return /\$\{[^}]*\}/.test(value);
 }
 
+/** 把 command / entrypoint 拍平成一行，用来在启动参数里找认证开关。 */
+function flattenStartup(startup: {
+  command?: string | string[] | null;
+  entrypoint?: string | string[] | null;
+}): string {
+  const one = (v?: string | string[] | null) => (Array.isArray(v) ? v.join(' ') : String(v || ''));
+  return `${one(startup.command)} ${one(startup.entrypoint)}`;
+}
+
+/**
+ * 这个账号候选能不能用——**在选中它之前**就要判完。
+ *
+ * 只判「口令有值」是不够的：mysql 有 `MYSQL_PASSWORD` 却没有 `MYSQL_USER` 时，
+ * 那样会选中一个残缺账号并发出没有用户名的连接串，而后面那个完整的 root 候选
+ * 永远轮不到。用户名是占位符时同理——那说明调用方没解析模板，这个候选不可信，
+ * 但**不该因此放弃整类服务**，该继续试下一个候选。
+ */
+function accountUsable(account: CredentialAccount, env: Record<string, string>): boolean {
+  const password = env[account.passwordKey];
+  if (!password || looksUnresolved(password)) return false;
+  if (!account.userKey) return true;
+  const rawUser = env[account.userKey];
+  // 有值但没展开 = 这个候选的用户名不可信，作废它（不要退到 defaultUser：
+  // 声明了用户名就说明本意不是用默认管理员）。
+  if (rawUser && looksUnresolved(rawUser)) return false;
+  if (rawUser) return true;
+  // 用户名缺席：只有「镜像有默认管理员名」或「这类服务本来就没有用户名」才算完整。
+  return Boolean(account.defaultUser) || account.userOptional === true;
+}
+
 /**
  * 从一个基础设施服务自己的 env，派生出消费方要用的凭据变量。
  *
@@ -219,27 +278,30 @@ export function deriveInfraCredentialEnv(
   serviceId: string,
   serviceEnv: Record<string, string> | undefined,
   endpoint?: { host: string; port: number | string },
+  startup?: { command?: string | string[] | null; entrypoint?: string | string[] | null },
 ): Record<string, string> {
   const env = serviceEnv || {};
   const out: Record<string, string> = {};
   const prefix = cdsEnvPrefix(serviceId);
+  const startupText = startup === undefined ? null : flattenStartup(startup);
 
   for (const source of CREDENTIAL_SOURCES) {
-    // 账号候选按优先级取第一个「口令有值」的；用户名与口令在同一个候选里成对取，
-    // 不跨候选拼（否则 mysql 会拼出「业务用户名 + root 口令」这种不存在的账号）。
-    const account = source.accounts.find((a) => {
-      const pwd = env[a.passwordKey];
-      // 没有口令就不是「开了认证」——别造出空口令让消费方以为配好了。
-      // 还带着 `${...}` 说明调用方没解析模板：发字面占位符比不发更坏，同样不算。
-      return Boolean(pwd) && !looksUnresolved(pwd);
-    });
+    // 账号候选按优先级取第一个**完整可用**的。
+    //
+    // 只看口令是不够的（这里栽过）：mysql 有 MYSQL_PASSWORD 却没有 MYSQL_USER 时，
+    // 只看口令会选中这个残缺候选，发出 `mysql://:口令@主机`——没有用户名的连接串，
+    // 而旁边那个完整的 root 候选永远轮不到。完整性判定必须在**选之前**做。
+    const account = source.accounts.find((a) => accountUsable(a, env));
     if (!account) continue;
+
+    // 「口令存在」不等于「服务端在校验它」。这类服务必须由启动参数证明，
+    // 证不了就一个键都不发——发出去会把本来能裸连的消费方弄坏。
+    if (source.provenByStartup && !(startupText && source.provenByStartup(startupText))) continue;
+
 
     const password = env[account.passwordKey];
     const rawUser = account.userKey ? (env[account.userKey] || '') : '';
-    // 用户名单独判：口令解出来了、用户名还是占位符 = 半套凭据，整类跳过。
-    if (looksUnresolved(rawUser)) continue;
-    // 用户名可以省（镜像有默认管理员名），但不能是空字符串——空的比没有更坏。
+    // 用户名可以省（镜像有默认管理员名，或 redis 那种本来就没有），但不能是空字符串。
     const user = rawUser || account.defaultUser || '';
 
     if (user) out[`CDS_${prefix}_USER`] = user;
