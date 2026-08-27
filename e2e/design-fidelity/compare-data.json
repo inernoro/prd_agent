@@ -8,7 +8,7 @@
       "wide": false,
       "shot": "capture-live.light.采集中",
       "driven": "打开录音面板真录 7 秒",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -18,8 +18,8 @@
       "wide": false,
       "shot": "capture-paused.dark.采集中",
       "driven": "录 7 秒后点暂停",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：状态条外包了一层卡、chip 折成两排，纵向节奏比稿面松一档。"
     },
     {
       "board": "v2-R3",
@@ -48,8 +48,8 @@
       "wide": false,
       "shot": "result.light.播放中",
       "driven": "点波形四成处再起播",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：顶栏副标题比稿面多带了「2 位说话人」，390 宽下末尾省略号截断。"
     },
     {
       "board": "v2-P2",
@@ -78,8 +78,8 @@
       "wide": false,
       "shot": "result.dark.问答已作答",
       "driven": "问一个问题并等答案流完",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：发送键是圆形低饱和，稿面是亮蓝圆角方块（另一张画布 cap-B4 要的是圆形）。"
     },
     {
       "board": "v2-D1",
@@ -88,8 +88,8 @@
       "wide": true,
       "shot": "desktop.light.理解",
       "driven": "搜索命中 + 起播",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：右栏底部「待办事项生成中 · 约 12s」那条跨页签的生成中提示未做。"
     },
     {
       "board": "v2-D2",
@@ -98,7 +98,7 @@
       "wide": true,
       "shot": "desktop.dark.提问",
       "driven": "切到提问页签并作答",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -108,8 +108,8 @@
       "wide": false,
       "shot": "loading.light",
       "driven": "把条目接口按住 20 秒",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：最后一块骨架卡下缘仍留一段空白。"
     },
     {
       "board": "v2-S2",
@@ -118,7 +118,7 @@
       "wide": false,
       "shot": "processing.light",
       "driven": "run 停在 45%",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -128,7 +128,7 @@
       "wide": false,
       "shot": "audio-done.light.顶部",
       "driven": "run 已 done、原文已加载",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -138,7 +138,7 @@
       "wide": false,
       "shot": "no-speech.light",
       "driven": "后端回 ASR_NO_SPEECH",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -148,7 +148,7 @@
       "wide": false,
       "shot": "fail-manual.light",
       "driven": "ERR_CODEC，自动重试已耗尽",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -158,8 +158,8 @@
       "wide": false,
       "shot": "auto-retry.light.顶部",
       "driven": "第 3 次重试排在 8 秒后",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：稿面把「第 2 / 3」「8s」加粗提出来，实现同字重（本轮已补加粗，未复判）。"
     },
     {
       "board": "v2-S7",
@@ -168,7 +168,7 @@
       "wide": false,
       "shot": "offline.light",
       "driven": "navigator.onLine 置假并派 offline 事件",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -188,8 +188,8 @@
       "wide": false,
       "shot": "capture-live.light.采集中",
       "driven": "打开录音面板真录 7 秒",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：顶栏两枚操作键做成裸图标——那是另外三张画布（R1/R2/R3）明确要的画法。"
     },
     {
       "board": "cap-A2",
@@ -208,7 +208,7 @@
       "wide": false,
       "shot": "capture-expanded.light.采集中",
       "driven": "录 8 秒后点展开全部",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -238,7 +238,7 @@
       "wide": false,
       "shot": "result.light.顶部",
       "driven": "打开结果页",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -248,8 +248,8 @@
       "wide": false,
       "shot": "result.dark.编辑原文",
       "driven": "搜「导入」后点开第 4 句",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：编辑卡右上写「改名」，稿面写「改说话人」，两者语义有细微差别。"
     },
     {
       "board": "cap-B3",
@@ -258,7 +258,7 @@
       "wide": false,
       "shot": "result.light.一键整理",
       "driven": "点会议纪要卡并等轮询",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -268,8 +268,8 @@
       "wide": false,
       "shot": "result.dark.问答已作答",
       "driven": "问一个问题并等答案流完",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：琥珀「上一问如实说明」提示条不在这一张截图里（同屏另一张证明它存在）。"
     },
     {
       "board": "cap-S1",
@@ -278,7 +278,7 @@
       "wide": false,
       "shot": "capture-live.light.采集中",
       "driven": "真录 7 秒",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -288,7 +288,7 @@
       "wide": false,
       "shot": "capture-live.light.采集中",
       "driven": "真录 7 秒",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -298,7 +298,7 @@
       "wide": false,
       "shot": "processing.light",
       "driven": "run 停在 45%",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -308,7 +308,7 @@
       "wide": false,
       "shot": "processing.light",
       "driven": "run 停在 45%",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -318,7 +318,7 @@
       "wide": false,
       "shot": "audio-done.light.顶部",
       "driven": "run 已 done、原文已加载",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -328,7 +328,7 @@
       "wide": false,
       "shot": "organizing.light.顶部",
       "driven": "原文已在、整理 run 在跑",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -338,8 +338,8 @@
       "wide": false,
       "shot": "auto-retry.light.顶部",
       "driven": "第 3 次重试排在 8 秒后",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：同 v2-S6，关键数值的字重强调。"
     },
     {
       "board": "cap-S8",
@@ -358,8 +358,8 @@
       "wide": false,
       "shot": "ai-down.dark.顶部",
       "driven": "后端回 LLM_UNAVAILABLE",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：「查看服务状态」被提到实心主按钮，稿面刻意压成幽灵按钮。"
     },
     {
       "board": "cap-S10",
@@ -368,7 +368,7 @@
       "wide": false,
       "shot": "stalled.light",
       "driven": "心跳停了一小时",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -378,8 +378,8 @@
       "wide": false,
       "shot": "bare-note.light.说话人",
       "driven": "一份没有说话人标签的原文",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：空态卡外又套了一层分区白卡，稿面是单层。"
     },
     {
       "board": "cap-S12",
@@ -388,7 +388,7 @@
       "wide": false,
       "shot": "bare-note.light.词云",
       "driven": "只有 6 句的短录音",
-      "score": null,
+      "score": 100,
       "note": ""
     },
     {
@@ -398,8 +398,8 @@
       "wide": false,
       "shot": "bare-note.light.会议纪要",
       "driven": "没有整理方式的笔记",
-      "score": null,
-      "note": ""
+      "score": 99,
+      "note": "剩 1 分：主按钮被拉到约三分之二行宽，稿面两颗按钮按内容自适应。"
     }
   ]
 }
