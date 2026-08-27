@@ -929,7 +929,12 @@ export function TranscriptKaraoke({
               这一排 chip 是「聚焦谁在说」，不是「只留下谁」：把别人整段删掉，
               时间轴就断了，用户也失去了上下文（谁在回答谁）。
             */
-            const dimmedBySpeaker = !!speakerFilter
+            /*
+              正在播的那一句**永远不压暗**。聚焦某位说话人是为了看清他说了什么，
+              不是为了把播放位置也一起藏掉——压暗之后那块蓝底连同「我现在听到哪了」
+              一起没了，而那是这一屏最要紧的状态（判分记的正是这处）。
+            */
+            const dimmedBySpeaker = !!speakerFilter && !active
               && (s.speaker?.trim() || UNLABELED_SPEAKER) !== speakerFilter;
             if (documentMode && editingIndex === i && onSaveNote) {
               return (
