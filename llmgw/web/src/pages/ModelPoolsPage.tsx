@@ -114,6 +114,29 @@ function memberFaultPhrase(member: PoolModelInfo): string {
   return `连续失败 ${member.consecutiveFailures} 次`;
 }
 
+/**
+ * 这个成员是「被人停用」而不是「被健康判定关掉」吗？
+ *
+ * 两者的下一步完全相反：真失败关掉的成员点「恢复接单」就能重新排队，
+ * 上游或模型被停用的成员点了也没用——调度侧只挑 Enabled 的上游与模型，
+ * 停用状态下永远不会有真实请求打到它，界面会永远停在「验证中」等一个不会来的结果。
+ * 所以停用态既不给恢复按钮，也不许说「恢复后即可继续承接」，
+ * 只指路去把那个具体资源重新启用。
+ *
+ * 判据只有这一份，按钮和文案共用，避免两处各自漂移（形状 3）。
+ */
+function memberBlockedByDisabled(member: PoolModelInfo): boolean {
+  return member.unavailableReason === 'upstream-disabled' || member.unavailableReason === 'model-disabled';
+}
+
+/** 坏成员的下一步：能不能救、去哪救。与 memberFaultPhrase 拼成一句完整归因。 */
+function memberNextStep(member: PoolModelInfo): string {
+  if (member.removable) return '这个顺位永远接不到调用';
+  if (member.unavailableReason === 'upstream-disabled') return '去上游页把这个上游启用才会重新接单';
+  if (member.unavailableReason === 'model-disabled') return '去模型页把这个模型启用才会重新接单';
+  return '恢复后即可继续承接';
+}
+
 function poolEvidence(pool: ModelPool): { text: string; tone: string } {
   const lead = pool.models.slice().sort((a, b) => a.priority - b.priority)[0];
   if (pool.health === 'empty') return { text: '没有成员，调用会直接失败', tone: 'var(--text-muted)' };
@@ -1526,7 +1549,7 @@ function PoolDetail({
                   {isVerifying
                     ? '已恢复接单，等下一条真实业务请求验证（不发探测请求）'
                     : member.unavailableReason
-                      ? `${memberFaultPhrase(member)} · ${member.removable ? '这个顺位永远接不到调用' : '恢复后即可继续承接'}`
+                      ? `${memberFaultPhrase(member)} · ${memberNextStep(member)}`
                       : `连续失败 ${member.consecutiveFailures} 次 · 最近失败 ${relativeTime(member.lastFailedAt)} · 最近成功 ${relativeTime(member.lastSuccessAt)}`}
                 </span>
                 <CapabilityTags labels={capabilityLabelsForMember(member)} />
@@ -1536,7 +1559,7 @@ function PoolDetail({
                     <select value={(member.priceCurrency || 'CNY').toUpperCase()} onChange={(event) => onCurrencyChange(pool.id, member, event.target.value)} style={smallSelectStyle(74)} aria-label="价格币种"><option value="CNY">CNY</option><option value="USD">USD</option></select>
                     <input value={memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities)} onChange={(event) => onParameterChange(key, event.target.value)} placeholder="字段能力，例如 seed" list="gw-parameter-capability-options" style={{ ...inputStyle, flex: '1 1 160px' }} aria-label="字段级参数能力" />
                     <span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.tight }}>
-                      {member.healthStatus === 2 && !isVerifying ? <Button size="sm" variant="secondary" disabled={busyId === key} onClick={() => void onRecoverMember(pool, member)}>恢复接单</Button> : null}
+                      {member.healthStatus === 2 && !isVerifying && !memberBlockedByDisabled(member) ? <Button size="sm" variant="secondary" disabled={busyId === key} onClick={() => void onRecoverMember(pool, member)}>恢复接单</Button> : null}
                       <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSaveMember(pool, member)}>保存</Button>
                       {removeButton}
                     </span>

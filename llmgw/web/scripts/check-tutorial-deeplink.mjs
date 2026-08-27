@@ -251,6 +251,31 @@ must(
   'ModelPoolsPage: 「验证中」必须能退出（成员健康快照变化即出结果），不能只进不出',
 );
 
+// 「停用」不是「失败」：调度侧只挑 Enabled 的上游与模型，被停用的成员永远等不到真实请求。
+// 给它一个「恢复接单」按钮，点下去只翻健康位、资源仍是停用的，界面就永久挂在「验证中」
+// 等一个不会来的结果——恰恰是上一条守卫要防的「只进不出」，换了个入口重演。
+// 所以停用态必须同时满足：不给恢复按钮 + 不许说「恢复后即可继续承接」，只指路去启用。
+must(
+  // 窗口用 [^}] 而不是 [\s\S]{0,N}：后者会越过函数的收尾大括号，一路匹配到 memberNextStep
+  // 里同名的两个字面量，把「判据被掏空」判成绿灯（形状 1：窗口开太宽，判据自己失效）。
+  /function memberBlockedByDisabled[^}]*'upstream-disabled'[^}]*'model-disabled'[^}]*\}/.test(pools),
+  'ModelPoolsPage: 「被停用」必须有独立判据（memberBlockedByDisabled），不能和真失败混作一谈',
+);
+must(
+  /healthStatus === 2 && !isVerifying && !memberBlockedByDisabled\(member\)/.test(pools),
+  'ModelPoolsPage: 上游/模型被停用的成员不得出现「恢复接单」——点了也没有请求能到它，界面会永久停在验证中',
+);
+must(
+  /function memberNextStep[^}]*'upstream-disabled'[^}]*'model-disabled'[^}]*\}/.test(pools),
+  'ModelPoolsPage: 被停用的成员必须指路去启用那个具体资源，不能沿用「恢复后即可继续承接」',
+);
+// 上一条只证明这套文案**存在**。它有没有被那句提示真的用上，是另一件事——
+// 第一版守卫就漏在这里：把提示改回旧的 removable 三元、函数原地不动，守卫照样全绿（形状 2）。
+must(
+  pools.includes('`${memberFaultPhrase(member)} · ${memberNextStep(member)}`'),
+  'ModelPoolsPage: 成员归因提示必须走 memberNextStep，不能在 JSX 里另写一份下一步文案',
+);
+
 // 详情/新建这一支不走 PageBody，而 PageShell 与 console-content 都是 overflow:hidden。
 // 不自建滚动容器，成员表下半截与「添加成员」会被裁掉、用户够不到。
 must(
