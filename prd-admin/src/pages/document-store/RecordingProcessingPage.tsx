@@ -177,7 +177,12 @@ export function RecordingProcessingPage() {
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex-1 px-4 pb-4 pt-3" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
-          <div className="mx-auto w-full max-w-[760px]">
+          {/*
+            `min-h-full` 而不是 `h-full`：内容装得下时这一列撑满，原文卡就能一直长到
+            屏底那条操作栏上方（稿面 v2-R4 的产物区就是这么占主导的）；装不下时它照常
+            往下长、由外层滚动，不会把上面的阶段块压扁。
+          */}
+          <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col">
             <TranscribeStatusCard
               currentEntryId={entryId ?? ''}
               activeRun={run?.id

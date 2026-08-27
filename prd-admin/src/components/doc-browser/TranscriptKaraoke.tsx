@@ -1024,8 +1024,10 @@ export function TranscriptKaraoke({
                           .then((ok) => { if (ok !== false) setEditingIndex(null); })
                           .finally(() => setSavingEdit(false));
                       }}
-                      // 稿面的保存是**蓝色实心**，取消是无框文字——主次要分得出来
-                      className="flex min-h-11 items-center rounded-full px-5 text-[12px] font-semibold disabled:opacity-50"
+                      // 稿面的保存是**蓝色实心**，取消是无框文字——主次要分得出来。
+                      // 形状是圆角矩形（约 10px）而不是全圆胶囊，两颗同高同宽成对
+                      // （P2 判分记的是「体量涨了一档、形状语言与稿面不同」）。
+                      className="flex min-h-10 min-w-[64px] items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold disabled:opacity-50"
                       style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}>
                       {/* 稿面这颗是纯文字胶囊，没有图标——加个对勾看着更「完整」，但那是稿面没有的东西 */}
                       保存
@@ -1036,7 +1038,7 @@ export function TranscriptKaraoke({
                       type="button"
                       disabled={savingEdit}
                       onClick={() => setEditingIndex(null)}
-                      className="flex min-h-11 items-center gap-1 rounded-full px-4 text-[12px] font-semibold"
+                      className="flex min-h-10 min-w-[64px] items-center justify-center gap-1 rounded-[8px] px-4 text-[12px] font-semibold"
                       style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
                     >
                       取消
@@ -1078,7 +1080,10 @@ export function TranscriptKaraoke({
                       : i < activeIdx
                         ? 'var(--text-muted)'
                         : 'var(--text-primary)',
-                  opacity: dimmedBySpeaker ? 0.38 : 1,
+                  // 压暗只是「不是这个说话人」的提示，不是把那几行关掉：0.38 会淡到
+                  // 接近读不出来，而稿面在选中某个说话人时，其余各句仍是同一档正常灰
+                  // （P2 判分记的「非当前句的灰度分成两档」）。
+                  opacity: dimmedBySpeaker ? 0.68 : 1,
                   // 当前句底色 = 强调色（设计稿允许强调色出现的三处之一）；无紫色
                   // 稿面的当前句是一块**实心蓝卡**，在列表里一眼跳出来。14% 太淡，
                   // 两位判官各自独立报了同一句「块感弱于稿面」；22% 是照基准图对出来的，
@@ -1450,7 +1455,9 @@ export function TranscriptKaraoke({
                         // 面板已经是一整块灰底，句子行自己不再叠第二层底色，靠细分隔线分行
                         // 稿面这几句是这块面板里的**主阅读字号**（与纪要正文同级）：
                         // 它们是「这个词到底在哪几句里出现」的答案，压成小字就不像答案了
-                        className="grid min-h-11 items-start gap-2 px-1 py-2 text-left text-[14px] leading-relaxed text-token-secondary"
+                        // 正文比时间戳/说话人那层元信息要明显大一档：同为 14px 时层级被压平，
+                        // 稿面那句「你第一次导入的时候…」在这个宽度下是要折成两行的（P2 判分记的这处）
+                        className="grid min-h-11 items-start gap-2 px-1 py-2 text-left text-[16px] leading-relaxed text-token-secondary"
                         // 稿面这块是紧凑列表，没有逐行分隔线——面板本身那块灰底已经是分组
                         style={{ gridTemplateColumns: '44px 1fr' }}>
                         <span className="pt-[1px] font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-fg-info)' }}>

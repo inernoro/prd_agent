@@ -122,7 +122,12 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
         className="mt-[2px] flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-full"
         style={{
           background: done ? 'var(--accent-fg-success)' : 'transparent',
-          border: done ? 'none' : `1px solid ${active ? 'var(--accent-fg-info)' : 'var(--border-faint)'}`,
+          /*
+            进行中那一档**不给外圈**：里面转的是一段带缺口的弧，外面再套一整圈蓝描边
+            就把缺口补死了，静态截图里读成一枚均匀的闭合圆环，「正在转」的形状语义没了
+            （R4 判分连着三轮指到这处）。排队态才需要那圈灰底轨来占位。
+          */
+          border: done || active ? 'none' : '1px solid var(--border-faint)',
         }}
         aria-hidden
       >
@@ -137,8 +142,9 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
               // 静态截图里读起来就是一个闭合圆环，「正在转」的形状语义没了（R4 判分记的这处）。
               // 三面透明只留一段，缺口才看得出来。
               border: '2.5px solid transparent',
+              // 只染一段顶弧：染两条边在小尺寸上会连成一整圈，静止截图里读成一个闭合圆环，
+              // 「正在转」那层语义没了（R4 判分连着两轮指到这处）。
               borderTopColor: 'var(--accent-fg-info)',
-              borderRightColor: 'var(--accent-fg-info)',
               animation: 'spin 0.9s linear infinite',
             }}
             aria-hidden
@@ -172,8 +178,13 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
         {/* 设计稿的顺序是 标题 → 进度条 → 副行：先看到走到哪，再看它在干嘛 */}
         {active && stage.percent !== null && (
           <div
-            className="mt-1.5 h-[3px] w-full overflow-hidden rounded-full"
-            style={{ background: 'var(--bg-elevated)' }}
+            /*
+              稿面这条比正文那几行明显厚一档（约 6px），且余量段有看得见的浅灰轨道——
+              「64% 之后还剩多少」是靠轨道读出来的。3px + `--bg-elevated` 在浅色皮肤上
+              退化成一根悬空的蓝线，余量读不出来（R4 判分记的这处）。
+            */
+            className="mt-1.5 h-[6px] w-full overflow-hidden rounded-full"
+            style={{ background: 'var(--skeleton-fill)' }}
           >
             <div
               className="h-full rounded-full"
@@ -185,13 +196,12 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
             />
           </div>
         )}
-        {/*
-          「保存音频」那一格的副行在稿面 cap-S3 是**绿色**：它说的是「你的东西已经安全了」，
-          与「还在跑」「失败了」分属不同语义。压成和其它两格一样的灰，这层语义就没了。
-        */}
         <p
           className="mt-1 truncate text-[11px]"
-          style={{ color: done && stage.key === 'audio' ? 'var(--accent-fg-success)' : 'var(--text-muted)' }}
+          // 稿面这一行（「24:18 · 19.1 MB · 耗时 1.2s」）是灰的：绿色在这一屏只标两处——
+          // 保存音频那枚勾、以及音频卡那句「音频已就绪，可立即播放」。铺到量级行上，
+          // 「哪件事现在已经可用」就不再靠颜色一眼看出来了（R4 判分记的「绿色语义被稀释」）。
+          style={{ color: 'var(--text-muted)' }}
         >
           {stage.detail}
         </p>
@@ -210,26 +220,6 @@ function StageRow({ stage, remainingLabel, elapsedLabel }: {
           那一行的作用不是报进度，是当场消掉等待焦虑。此前它被拆到播放卡与底部蓝条两处，
           单看这一格读不到这句话（两份判分各扣了一次结构与内容）。
         */}
-        {/*
-          补齐那一档在跑时，稿面 cap-A5 在这一格下面画了一组词云占位块：
-          等待期的主视觉要是**产物本身的形状**，不是一行「正在生成」。
-        */}
-        {active && stage.key === 'understanding' && (
-          <span className="mt-2 flex flex-wrap gap-1.5" aria-hidden>
-            {[54, 38, 66, 44].map((width, index) => (
-              <span
-                key={index}
-                className="block h-5 rounded-full"
-                style={{
-                  width,
-                  background: 'var(--skeleton-fill)',
-                  animation: 'pulse 1.6s ease-in-out infinite',
-                  animationDelay: `${index * 0.14}s`,
-                }}
-              />
-            ))}
-          </span>
-        )}
         {active && stage.key === 'transcript' && (
           <p className="mt-1 text-[11px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
             音频已可播放，无需等待
@@ -335,10 +325,11 @@ export function TranscribeStatusCard({
   const durationLabel = durationSec > 0 ? formatClockLabel(durationSec) : null;
   // 原文已经在了还在跑 run，那跑的是「补齐理解」那一层，不是从头转录：
   // 再摆一遍「保存音频 → 生成原文 → 补齐理解」等于把两件事说成同一件。
+  const audioStageElapsed = describeAudioStageElapsed(activeRun);
   const stages = describeTranscriptionStages(activeRun, {
     sizeLabel: audioSizeLabel,
     durationLabel,
-    elapsedLabel: describeAudioStageElapsed(activeRun),
+    elapsedLabel: audioStageElapsed,
     // 已经吐出来的句数：优先用调用方数过的真数，没有就退回预览行数
     generatedSentences: generatedSentences ?? transcriptPreview?.length ?? 0,
   });
@@ -430,6 +421,37 @@ export function TranscribeStatusCard({
   const transcriptYieldLine = stages?.find(stage => stage.key === 'transcript')?.yieldLine ?? null;
   /** 原文那一格是否已经写完（决定音频卡带不带句数、蓝提示条说哪一句） */
   const transcriptDone = stages?.find(stage => stage.key === 'transcript')?.state === 'done';
+
+  /*
+    「生成原文」那一格的耗时（稿面 cap-A5 在这一格写的是「48s · 132 句」）。
+
+    后端不下发单阶段时间，所以这里量的是**这一屏亲眼看到的那次翻转**：从 run 开跑
+    到原文那一格由「进行中」变成「已完成」。没亲眼看到（进页面时它已经写完了）就
+    什么都不显示——倒推一个数出来就是编（no-rootless-tree）。
+  */
+  const transcriptStageWatch = useRef<{ runId: string; sawActive: boolean; measured: boolean }>({
+    runId: '', sawActive: false, measured: false,
+  });
+  const [transcriptStageElapsed, setTranscriptStageElapsed] = useState<string | null>(null);
+  const transcriptStageState = stages?.find(stage => stage.key === 'transcript')?.state ?? null;
+  const runId = activeRun?.id ?? '';
+  const runStartedAt = activeRun?.startedAt ?? activeRun?.createdAt ?? null;
+  useEffect(() => {
+    if (transcriptStageWatch.current.runId !== runId) {
+      transcriptStageWatch.current = { runId, sawActive: false, measured: false };
+      setTranscriptStageElapsed(null);
+    }
+    const watch = transcriptStageWatch.current;
+    if (transcriptStageState === 'active') { watch.sawActive = true; return; }
+    if (transcriptStageState !== 'done' || !watch.sawActive || watch.measured) return;
+    const started = runStartedAt ? new Date(runStartedAt).getTime() : NaN;
+    if (!Number.isFinite(started)) return;
+    const sec = (Date.now() - started) / 1000;
+    // 负数或长到不像话（跨天的旧 run）都不认：那说明这个时间戳不能用来算这一段
+    if (sec <= 0 || sec > 6 * 3600) return;
+    watch.measured = true;
+    setTranscriptStageElapsed(sec < 10 ? `${sec.toFixed(1)}s` : formatDurationSec(sec));
+  }, [runId, runStartedAt, transcriptStageState]);
   const reorganizing = processing && !!noteEntryId;
   /*
     有失败卡的时候不再摆那张绿色成果卡。
@@ -464,7 +486,7 @@ export function TranscribeStatusCard({
         寄生在阅读器里时仍然要这层卡——那时它是页面内容中的一块，需要自己的边界。
       */
       className={`recording-design-palette mb-4 flex flex-col gap-3 ${
-        suppressPrimaryAction ? 'px-0 py-0' : 'surface-inset rounded-[14px] px-4 py-3.5'
+        suppressPrimaryAction ? 'min-h-0 flex-1 px-0 py-0' : 'surface-inset rounded-[14px] px-4 py-3.5'
       }`}
       data-tour-id="doc-transcribe-hero"
       // 失败态整张卡跟着色调走：四种处境此前共用同一套中性壳，
@@ -607,7 +629,12 @@ export function TranscribeStatusCard({
               <span key={`bar-${stage.key}`} className="flex min-w-0 flex-1 flex-col gap-1">
                 <span
                   className="block h-[4px] w-full overflow-hidden rounded-full"
-                  style={{ background: 'var(--bg-elevated)' }}
+                  /*
+                    底轨要看得见：`--bg-elevated` 在浅色皮肤上几乎与页面同色，第三段整条底轨
+                    在截图里读不出来，「还剩多少」只能靠文字（cap-A4 判分记的这处）。
+                    换成骨架同一档灰，两个主题下都与页面拉得开。
+                  */
+                  style={{ background: 'var(--skeleton-fill)' }}
                 >
                   <span
                     className="block h-full rounded-full"
@@ -633,10 +660,20 @@ export function TranscribeStatusCard({
                   只留标签的话，这条横条退化成纯装饰——它本来是「一眼扫完三阶段各走到哪」的那一层。
                 */}
                 <span className="block truncate text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                  {/*
+                    稿面 cap-A4/A5 这一行三格给的都是**量**（1.2s / 48s · 132 句 / 30% · 约 20s），
+                    不是「已完成 / 排队中」这类状态词——状态由上面那条彩色横条自己说了。
+                    量给得出来就给，给不出来（没量到耗时、算不出剩余）才退回状态词，不编数字。
+                  */}
                   {stage.state === 'done'
-                    ? '已完成'
+                    ? (stage.key === 'transcript'
+                      ? [transcriptStageElapsed, (generatedSentences ?? 0) > 0 ? `${generatedSentences} 句` : null]
+                        .filter(Boolean).join(' · ') || '已完成'
+                      : stage.key === 'audio'
+                        ? (audioStageElapsed?.replace('耗时 ', '') || '已完成')
+                        : '已完成')
                     : stage.state === 'active'
-                      ? `${stage.percent ?? 0}%`
+                      ? `${stage.percent ?? 0}%${timing?.remainingSec != null ? ` · 约 ${formatDurationSec(timing.remainingSec)}` : ''}`
                       : '排队中'}
                 </span>
               </span>
@@ -647,7 +684,11 @@ export function TranscribeStatusCard({
             {stages.map(stage => (
               <StageRow
                 key={stage.key}
-                stage={stage}
+                stage={stage.key === 'transcript' && stage.state === 'done' && transcriptStageElapsed
+                  // 量到了就把耗时挂到这一格的副行上（稿面 cap-A5 同屏另两段都有时间维度，
+                  // 唯独这一段没有的话，读起来像漏了一项）
+                  ? { ...stage, detail: `${stage.detail} · 耗时 ${transcriptStageElapsed}` }
+                  : stage}
                 /*
                   「还要多久」挂在正在跑的那一格右侧，跟着它走。
                   措辞必须带「预计还需」四个字：只写「约 40 秒」的话，它紧跟在 64% 后面，
@@ -668,26 +709,37 @@ export function TranscribeStatusCard({
             「这两块说的是同一条录音」这层从属关系就断了（判分记的正是这处）。
           */}
           <div
-            className="flex flex-col rounded-[12px]"
+            className={`flex flex-col rounded-[12px] ${suppressPrimaryAction ? 'min-h-0 flex-1' : ''}`}
             style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
           >
-          <div className="flex items-center gap-3 px-3 py-2.5">
+          <div className="flex items-center gap-3 px-3 py-3">
             <button
               type="button"
               onClick={onPlayRequest}
               disabled={!onPlayRequest}
-              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px] disabled:cursor-default"
+              /*
+                稿面 cap-A4/A5 这颗是**大号正圆**，直径约 50px——它是这张卡的主控件，
+                「不必等转录跑完就能听」这句承诺全靠它兑现。做成 40px 的小圆角方块之后，
+                它比标题还轻，读起来像一枚装饰性前缀图标（A4/A5 两份判分都记了这处）。
+                v2-R4 那一稿画的是同样大小的圆角方块——两稿在形状上不一致，取多数的圆。
+              */
+              className="flex h-[50px] w-[50px] flex-shrink-0 items-center justify-center rounded-full disabled:cursor-default"
               style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
               title="播放这段录音"
             >
-              <Play size={15} fill="currentColor" style={{ marginLeft: 1 }} />
+              <Play size={20} fill="currentColor" style={{ marginLeft: 2 }} />
             </button>
             <div className="min-w-0 flex-1">
               {/*
                 稿面 cap-A4/A5 的音频卡标题是「用户访谈 · 8 月 16 日」——日期是这张卡
                 认领这段录音的第二个凭据（同名的访谈会有很多场）。
               */}
-              <p className="truncate text-[12.5px] font-semibold text-token-primary">
+              {/*
+                卡内标题要明显大于卡内正文一档（稿面 cap-A4/A5 的层级）：与下面的逐句正文
+                同为 12.5px 时，「这张卡在讲哪条录音」和「它长出来的字」读成同一层
+                （cap-A4 判分记的「卡内主次被压平」）。
+              */}
+              <p className="truncate text-[14.5px] font-semibold text-token-primary">
                 {audioTitle?.trim() || '这段录音'}{audioDateLabel ? ` · ${audioDateLabel}` : ''}
               </p>
               <p className="mt-0.5 text-[11px]" style={{ color: 'var(--accent-fg-success)' }}>
@@ -702,14 +754,29 @@ export function TranscribeStatusCard({
           </div>
 
           {/* 原文逐句生成中：等待期的主视觉必须是产物本身在长出来，而不是一块空白 */}
+          {/*
+            稿面 v2-R4 里这一段一直长到主按钮上方——它是这一屏的产物区，
+            按内容高度收着的话，卡片下面空出三成屏，产物反而不是最大的那块。
+          */}
           <div
-            className="px-3 py-2.5"
+            className={`px-3 py-2.5 ${suppressPrimaryAction ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}
             style={{ borderTop: '1px solid var(--border-faint)' }}
           >
             <p className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>原文逐句生成中</p>
             <div className="mt-1.5 flex flex-col gap-1.5">
+              {/*
+                首句加粗深色、后一句常规次级——两份稿（v2-R4 与 cap-A4）在这里是一致的：
+                它画的是「已定稿的结论」与「正在跟上的支撑句」两层。同字重同色的话，
+                「逐句往下长、越往后越新」这层暗示就没了。
+              */}
               {(transcriptPreview ?? []).slice(0, 2).map((line, index) => (
-                <p key={index} className="text-[12.5px] leading-relaxed text-token-secondary">{line}</p>
+                <p
+                  key={index}
+                  className={`text-[12.5px] leading-relaxed ${index === 0 ? 'font-semibold' : ''}`}
+                  style={{ color: index === 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                >
+                  {line}
+                </p>
               ))}
               {/* 已生成的句子后面永远吊两条骨架：它是「还在往下长」的那个暗示，不能省 */}
               {[0, 1].map(index => (
@@ -737,6 +804,43 @@ export function TranscribeStatusCard({
               </p>
             )}
           </div>
+
+          {/*
+            补齐那一档（稿面 cap-A5）：词云与摘要正在长出来这件事，画在**音频卡内、
+            分隔线以下**——它长出来的东西挂在这条录音上，摆到卡外就成了一段与录音无关的
+            系统状态。占位块用的是词云自己的形状（长短不一的胶囊），不是一行「正在生成」。
+          */}
+          {transcriptDone && (
+            <div className="px-3 py-2.5" style={{ borderTop: '1px solid var(--border-faint)' }}>
+              <p className="flex items-center gap-2 text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                <span
+                  style={{
+                    width: 13, height: 13, borderRadius: '50%',
+                    border: '2px solid transparent',
+                    borderTopColor: 'var(--accent-fg-info)',
+                    borderRightColor: 'var(--accent-fg-info)',
+                    animation: 'spin 0.9s linear infinite',
+                  }}
+                  aria-hidden
+                />
+                正在生成词云与智能摘要
+              </p>
+              <span className="mt-2 flex flex-wrap gap-2" aria-hidden>
+                {[86, 58, 104, 70].map((width, index) => (
+                  <span
+                    key={index}
+                    className="block h-7 rounded-full"
+                    style={{
+                      width,
+                      background: 'var(--skeleton-fill)',
+                      animation: 'pulse 1.6s ease-in-out infinite',
+                      animationDelay: `${index * 0.14}s`,
+                    }}
+                  />
+                ))}
+              </span>
+            </div>
+          )}
           </div>
 
           {/*

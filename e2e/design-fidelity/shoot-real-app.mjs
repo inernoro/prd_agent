@@ -53,6 +53,8 @@ const NOTE_MD = fs.readFileSync(
  *
  * 一个 scene 就是一份补丁（字段见 scenes.json 的注释条目）：
  *   - `rules`：[{ match: 正则源码, data }] 或 { match, status, message }，
+ *     可选 `afterMs` / `beforeMs` 限定这条规则生效的时间窗（相对页面打开），
+ *     用来演一次真实的阶段推进——有些画板画的正是「刚翻过去」那一刻，
  *     按声明顺序**先于**默认链匹配，所以能覆盖任何默认应答
  *   - `noteMd`：换掉转录笔记正文（驱「没有说话人 / 没有整理结果 / 只有半篇原文」）
  *   - `audioMeta` / `noteMeta`：并进条目 metadata
@@ -236,6 +238,16 @@ function buildInit(scene) {
     );
   }
 
+  /*
+   * 场景规则的时间窗。有些画板画的是「刚翻过去的那一刻」——比如 cap-A5 的
+   * 「原文已完成、正在补齐」那一格要给出原文这一步花了多久，而那个耗时是页面
+   * **亲眼看着它翻过去**才量得到的。桩要是一上来就直接给终态，页面无从观察，
+   * 判分看到的就是一个恒缺的字段。给规则加一对时间窗，让桩能演一次真实的推进。
+   */
+  // 时钟从**第一次命中规则的请求**起算，不是从页面初始化起算：init script 在首次导航时
+  // 就跑了，而真正要看的那一屏往往还要几秒才挂上来（登录、路由、外壳）。按页面初始化
+  // 起算的话，窗口在页面还没渲染前就过完了，桩直接给终态，等于没演。
+  let STUB_T0 = null;
   const real = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -244,6 +256,11 @@ function buildInit(scene) {
     // 场景规则先于默认链：它要能覆盖任何一条默认应答，否则驱不到失败/重试/离线
     for (const rule of (SCENE.rules || [])) {
       if (!new RegExp(rule.match).test(url)) continue;
+      // afterMs / beforeMs：这条规则只在这一段时间窗里生效
+      if (STUB_T0 === null) STUB_T0 = Date.now();
+      const since = Date.now() - STUB_T0;
+      if (rule.afterMs != null && since < rule.afterMs) continue;
+      if (rule.beforeMs != null && since >= rule.beforeMs) continue;
       // delayMs：把某个接口按住不放。「打开瞬间的骨架」那一屏只有这样才截得到——
       // 真实网络里它存在几百毫秒，截图永远抢不到。
       const hold = (value) => rule.delayMs

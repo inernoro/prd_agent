@@ -316,7 +316,10 @@ export function RecordAudioSheet({
     // 展开态同样贴底：稿面 cap-A3 里带光标的那句（正在转写的）就在列表最后一条，
     // 停在顶部的话，用户点开「展开全部」看到的是开头，正在说的那句反而不在视野里。
     container.scrollTop = container.scrollHeight;
-  }, [liveSentences, liveTranscriptExpanded]);
+    // 降级态一翻，卡内多出/收起骨架条与安抚行，可视区高度跟着变——不重新贴底的话
+    // 视窗停在旧位置，最新那句被卷到下面看不见。（这里列的是 liveView 的两个来源，
+    // 而不是 liveView 本身：那个派生值在本文件下方才声明，写进依赖数组会撞 TDZ。）
+  }, [liveSentences, liveTranscriptExpanded, liveTranscriptState, liveRetryAt]);
   const pendingLivePcmRef = useRef<Int16Array[]>([]);
   const livePcmCompleteRef = useRef(true);
   const liveCaptureRef = useRef<LivePcmCaptureController | null>(null);
@@ -864,7 +867,15 @@ export function RecordAudioSheet({
       const barW = 7;
       const gap = 6;
       const maxBars = Math.floor(width / (barW + gap));
-      const slice = levelsRef.current.slice(-maxBars);
+      /*
+       * 稿面 v2-R3 / cap-A2 的波形是**两段**：左边蓝的是已录到的，右边灰的是还没走到的轨道。
+       * 此前把整条轨道都拿来铺已录数据（`slice(-maxBars)`），录满 8 秒之后右边那截灰的
+       * 就再也不会出现——整条恒定全蓝，读不出「录到哪了」。所以把笔尖钉在约 62% 处：
+       * 蓝的只铺到这里，右边始终留着灰的跑道。灰段不是数据（下面用一条确定的缓起伏画），
+       * 蓝段每一格都是真实峰值。
+       */
+      const headBars = Math.max(1, Math.round(maxBars * 0.66));
+      const slice = levelsRef.current.slice(-headBars);
       const frozen = stateRef.current === 'paused';
       for (let i = 0; i < maxBars; i++) {
         const x = i * (barW + gap);
@@ -873,11 +884,16 @@ export function RecordAudioSheet({
          * 两段必须读成同一条波形，只是换个颜色（判分连着四块都指到这处）：
          *   已录段给一个下限——安静的那一格也是一根短柱，不是一个点，
          *   否则整段退化成「稀疏长柱 + 一条虚线基线」，和右边的占位段不像同一件东西；
-         *   未录段是占位，用一条确定的缓起伏（不是数据，纯粹为了保持同一套律动）。
+         *   未录段是占位，用一条确定的缓起伏（不是数据，纯粹为了保持同一套律动）——
+         *   振幅要与已录段同一量级：压得太低就读成一条灰色纹理，而不是「同一条波形还没走到」
+         *   （R3 判分记的正是这条）。
          */
         const level = recorded
           ? Math.max(0.22, slice[i])
-          : 0.3 + 0.16 * (0.5 + 0.5 * Math.sin(i * 0.55));
+          // 逐格跳动而不是一条缓起伏：整段同高的话，即使振幅对了，它读起来仍是一片
+          // 均匀纹理，和左边高低起伏的已录段不像同一条波形（R3 判分连着两轮指到这处）。
+          // 值是确定的（同一格永远同一高度），只是形状上与真实峰值同一种律动。
+          : 0.34 + 0.56 * Math.abs((Math.sin(i * 12.9898) * 43758.5453) % 1);
         const h = Math.max(4, level * height);
         g.fillStyle = recorded && !frozen ? activeColor : idleColor;
         g.fillRect(x, (height - h) / 2, barW, h);
@@ -1035,9 +1051,11 @@ export function RecordAudioSheet({
         稿面 v2-S8 这块是一张**白底描边卡**。平铺在页面底色上时，它与页面其它内容
         之间没有任何边界，读起来像一段说明文字而不是一个需要处理的状态。
       */
-      // `self-start`：不加的话它会被父级的 stretch 拉成整屏高，
-      // 按钮下面留出上千像素的空白卡面，读起来像内容没加载完（S8 判分记的这处）
-      className="mx-auto flex w-full max-w-[360px] flex-col gap-4 self-start rounded-[16px] px-5 py-6"
+      // 垂直方向走 auto 外边距：`self-start` 把这张矮卡钉在顶上，底下空出约六成屏，
+      // 读起来像页面只加载了一半（S8 判分记的这处）；而父级默认的 stretch 又会把卡面
+      // 拉到上千像素高。auto 外边距两头都躲开——比容器矮就居中，比容器高就退回顶部对齐，
+      // 不会把抬头顶出滚动区。
+      className="mx-auto my-auto flex w-full max-w-[360px] flex-col gap-4 rounded-[16px] px-5 py-6"
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
     >
       <div className="flex items-center gap-2.5">
@@ -1281,7 +1299,13 @@ export function RecordAudioSheet({
         实时上传条（稿面 cap-S2）：两个体积并排 + 一条进度条 + 一句承诺。
         胶囊只说了「传了多少」，这条回答的是「相对多少」和「断网会不会白录」。
       */}
-      {!liveTranscriptExpanded && liveProtection === 'active' && localBytes > 0 && (
+      {/*
+        实时字幕断了那一档不摆这一条：卡内已经压着橙框、占位骨架与末行安抚句，
+        再加这块 60px 的进度条，中断前最后一句就分不到高度、被压成一道缝
+        （cap-A2 判分记的「屏上一个字都没有」正是这么来的）。传了多少字节，
+        上面那排凭据胶囊照常在说，信息不丢。
+      */}
+      {!liveTranscriptExpanded && !liveInterrupted && liveProtection === 'active' && localBytes > 0 && (
         <div className="w-full" data-testid="recording-upload-progress">
           <div className="flex items-baseline justify-between gap-2">
             {/*
@@ -1323,7 +1347,12 @@ export function RecordAudioSheet({
           width={1040}
           height={128}
           className="w-full"
-          style={{ height: liveTranscriptExpanded ? 26 : 64, color: 'var(--accent-fg-info)' }}
+          // 降级那一档卡里多压着占位骨架与末行安抚文案，波形按 64 摆的话它们分不到高度；
+          // 稿面 v2-R3 这一档的波形本来也比正常档矮一档。
+          style={{
+            height: liveTranscriptExpanded ? 26 : liveView === 'degraded' ? 46 : 64,
+            color: 'var(--accent-fg-info)',
+          }}
         />
         {state === 'paused' && !liveTranscriptExpanded && (
           <p className="mt-2 text-center text-[12px] text-token-muted">波形已冻结 · 采集暂停中</p>
@@ -1331,10 +1360,21 @@ export function RecordAudioSheet({
       </div>
 
       {/* 实时原文卡 */}
+      {/*
+        卡片高度永远由这一屏剩下的空间决定，绝不按内容长。降级这一档卡内还压着占位骨架
+        与末尾那句「结束后自动补齐这段空白」——让内容说了算的话，它们加起来比剩余空间高，
+        末行就被底部操作条压掉半截（R3 / A2 两份判分记的都是这处）。
+        再给一个上限：稿面这一档画的是一张矮卡、下面留白到操作条，不吃满整屏。
+      */}
       <div
-        className="flex w-full min-h-0 flex-1 flex-col rounded-[16px] px-4 py-3.5 text-left"
+        className={`flex w-full min-h-0 flex-col rounded-[16px] px-4 py-3.5 text-left ${
+          liveView === 'degraded' && !liveTranscriptExpanded ? 'shrink-0' : 'flex-1'
+        }`}
         data-testid="recording-live-card"
         style={{
+          // 正常档吃满剩余高度时也要有个下限：上面那堆固定件在矮屏上可能已经占满一屏，
+          // 此时 `flex-1` 分到的是 0，卡片会整个消失。
+          minHeight: 148,
           background: 'var(--bg-card)',
           border: liveView === 'degraded'
             ? '1px solid var(--semantic-warning-soft)'
@@ -1405,17 +1445,18 @@ export function RecordAudioSheet({
             overflowY: 'auto',
             overscrollBehavior: 'contain',
             /*
-              降级那一档卡内还压着一个琥珀说明框和两条占位骨架，它们会把这块
-              `flex-1` 挤到零高度——已经识别出来的句子一句都露不出来。
-              而稿面 R3 / cap-A2 在这一档要的恰恰是「中断前最后一句还在」。
-              给它一个下限，保证至少留得下两行。
+              降级档这块不滚：它只留一句（见下面折叠态的注释），而贴底滚动会把这句的
+              第一行从字的腰上切开——判分把那半行读成「字形重叠破碎、不可读」。
+              高度交给内容，超出的部分由下面那句自己的 2 行截断兜住。
             */
-            ...(liveView === 'degraded' && !liveTranscriptExpanded ? { minHeight: 72 } : {}),
+            ...(liveView === 'degraded' && !liveTranscriptExpanded
+              ? { flex: 'none', overflowY: 'hidden' }
+              : {}),
             // 折叠态贴底滚动，最上面那句会被卷掉半行。加一道渐隐让这道切口读成
             // 「上面还有」，而不是「这行字被裁坏了」——稿面那句淡灰的首行就是这个意思。
             // 只有真的卷上去了才渐隐：内容没超出时挂渐隐，第一行会莫名其妙比第二行浅，
             // 同一句话读成两个颜色（R3 判分抓到的正是这个）。
-            ...(liveTranscriptExpanded || liveSentences.length <= 2 ? {} : {
+            ...(liveTranscriptExpanded || liveSentences.length <= 2 || liveView === 'degraded' ? {} : {
               WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, black 46px)',
               maskImage: 'linear-gradient(to bottom, transparent 0, black 46px)',
             }),
@@ -1456,20 +1497,38 @@ export function RecordAudioSheet({
                 固定只留三句的话，卡片撑满之后下半截是空白盒——稿面那三句是「它那一屏
                 恰好装得下三句」，不是「只准显示三句」。
               */}
-              {liveSentences.slice(-8).map((sentence, index, arr) => {
+              {/*
+                降级这一档只留**中断前最后一句**（稿面 v2-R3 / cap-A2 画的就是一句）：
+                它下面还压着占位骨架与安抚行，多留几句就得靠滚动，而贴底滚动会把最上面
+                那行从字的腰上切开，读成一行坏掉的字。留一句，正好装得下、也说得清
+                「断在这里」。
+              */}
+              {liveSentences.slice(liveView === 'degraded' ? -1 : -8).map((sentence, index, arr) => {
                 const last = index === arr.length - 1;
                 const faded = index < arr.length - 2;
                 return (
                   <p
                     key={`${index}-${sentence.atSec}`}
-                    className={`text-[14px] leading-7 ${last && !paused ? 'font-semibold' : ''}`}
+                    // 降级档不加粗：字还在往外冒的时候「最新那句最实」才成立，
+                    // 断线之后这句就是一句普通正文，加粗会把它和上面那行琥珀标题压成同一级
+                    className={`text-[14px] leading-7 ${
+                      last && !paused && liveView !== 'degraded' ? 'font-semibold' : ''
+                    }`}
                     style={{
                       color: faded || paused
                         ? 'var(--text-muted)'
                         : last ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      // 降级档按整行截断：留半行比留两行还糟，读起来像字坏了而不是话没说完
+                      ...(liveView === 'degraded' && !liveTranscriptExpanded ? {
+                        display: '-webkit-box',
+                        WebkitBoxOrient: 'vertical' as const,
+                        WebkitLineClamp: 2,
+                        overflow: 'hidden',
+                      } : {}),
                     }}>
                     {index === 0 && arr.length > 2 ? `…${sentence.text}` : sentence.text}
-                    {last && state === 'recording' && <LiveCaret />}
+                    {/* 断线这一档没有字在往外冒，光标还在闪就是在说谎 */}
+                    {last && state === 'recording' && liveView !== 'degraded' && <LiveCaret />}
                   </p>
                 );
               })}

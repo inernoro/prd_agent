@@ -76,10 +76,10 @@
   {
     "id": "processing-stage3",
     "board": "cap-A5",
-    "note": "阶段 3：原文已经写完，正在补齐词云与整理（progress 越过 70 就进这一格）",
+    "note": "阶段 3：原文已经写完，正在补齐词云与整理（progress 越过 70 就进这一格）。桩先给 6 秒的阶段 2，再翻到阶段 3——「生成原文」那一格的耗时是页面亲眼看着它翻过去才量得到的，一上来就给终态的话，那个数永远不出现",
     "url": "/document-store/store-demo/recording/entry-audio/processing",
     "sections": false,
-    "settleMs": 14000,
+    "settleMs": 20000,
     "audioMeta": {
       "transcribe_entry_id": null
     },
@@ -90,6 +90,43 @@
     "rules": [
       {
         "match": "/entries/entry-audio/agent-runs/latest",
+        "beforeMs": 6000,
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "running",
+          "phase": "解析音频",
+          "progress": 45,
+          "transcriptText": "先说结论，导入是这一版最大的漏斗。\n我们看了 312 个新账号，第 7 天只剩 41%。",
+          "createdAt": "@ago:33",
+          "startedAt": "@ago:31",
+          "heartbeatAt": "@now"
+        }
+      },
+      {
+        "match": "/agent-runs/run-transcribe$",
+        "beforeMs": 6000,
+        "data": {
+          "id": "run-transcribe",
+          "kind": "transcribe",
+          "sourceEntryId": "entry-audio",
+          "storeId": "store-demo",
+          "userId": "u-demo",
+          "status": "running",
+          "phase": "解析音频",
+          "progress": 45,
+          "transcriptText": "先说结论，导入是这一版最大的漏斗。\n我们看了 312 个新账号，第 7 天只剩 41%。",
+          "createdAt": "@ago:33",
+          "startedAt": "@ago:31",
+          "heartbeatAt": "@now"
+        }
+      },
+      {
+        "match": "/entries/entry-audio/agent-runs/latest",
+        "afterMs": 6000,
         "data": {
           "id": "run-transcribe",
           "kind": "transcribe",
@@ -107,6 +144,7 @@
       },
       {
         "match": "/agent-runs/run-transcribe$",
+        "afterMs": 6000,
         "data": {
           "id": "run-transcribe",
           "kind": "transcribe",
