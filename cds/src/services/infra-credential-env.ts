@@ -126,7 +126,7 @@ const CREDENTIAL_SOURCES: readonly CredentialSource[] = [
     // 只发口令不发用户名，正好是本文件反复强调「不能发半套凭据」的那种坏。
     userKey: 'MEMCACHED_USER',
     passwordKey: 'MEMCACHED_PASSWORD',
-    why: 'memcached 的 -Y 认证账号（键名以 infra-catalog 预设为准）；客户端各家格式不一，只发 USER/PASSWORD',
+    why: 'memcached 的认证账号（键名以 infra-catalog 预设为准）；客户端各家格式不一，只发 USER/PASSWORD',
   },
 ];
 
@@ -193,4 +193,16 @@ export function deriveInfraCredentialEnv(
 /** 给排障与测试用：当前认得出哪几类服务的凭据，以及为什么。 */
 export function describeCredentialSources(): readonly string[] {
   return CREDENTIAL_SOURCES.map((s) => `${s.passwordKey} -> ${s.why}`);
+}
+
+/**
+ * 这张表认的键名本身，给守卫用。
+ *
+ * 键名是「本表」与「infra-catalog 预设」之间的隐式契约，两边各写一份就会漂——
+ * memcached 已经漂过一次（预设写 `MEMCACHED_USER`，这里写成了 `MEMCACHED_USERNAME`，
+ * 于是只发口令不发用户名）。守卫要能真跑一遍预设、拿它的输出对照这张表，
+ * 而不是去扫源码里的字面量；扫字面量的守卫在「改了预设、忘了改表」时照样绿。
+ */
+export function credentialSourceKeys(): readonly { userKey?: string; passwordKey: string }[] {
+  return CREDENTIAL_SOURCES.map((s) => ({ userKey: s.userKey, passwordKey: s.passwordKey }));
 }
