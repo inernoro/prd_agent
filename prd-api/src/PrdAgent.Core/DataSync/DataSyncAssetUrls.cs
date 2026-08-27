@@ -325,9 +325,9 @@ public static class DataSyncAssetUrls
             return fromField is null ? null : NormalizeKey(fromField);
         }
 
-        return fromField is not null
-            ? TryExtractContentAddressedKey(fromField, alreadyKey: true)
-            : TryExtractContentAddressedKey(currentUrl);
+        // 有 key 字段就用它（记下来的事实），没有才从地址反推。两条都走同一个抽取器：
+        // 它现在不区分「绝对地址 / 相对地址 / 裸 key」，只管把字符串变成路径段再判形状。
+        return TryExtractContentAddressedKey(fromField ?? currentUrl);
     }
 
     private static string? TryReadStringField(BsonDocument doc, string field)
@@ -342,37 +342,56 @@ public static class DataSyncAssetUrls
            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     /// <summary>
-    /// 从一个绝对地址里认出内容寻址 key。认不出返回 null——**不猜**。
+    /// 从一段地址或 key 里认出内容寻址 key。认不出返回 null——**不猜**。
     ///
     /// 源站前缀有几段我们并不知道，所以从右往左取三段试：只有整体长成
-    /// `{domain}/{type}/{base32}.{ext}` 才算认出来。
+    /// `{domain}/{type}/{内容指纹}.{ext}` 才算认出来。
+    ///
+    /// ## 为什么不再分「绝对地址 / key」两条路（Codex review 第三刀）
+    ///
+    /// 上一版把「必须是绝对地址」写成了解析的**前提**，于是源站用本地磁盘时，
+    /// `image_assets` 这种没有 key 字段的集合——地址是 `/local-assets/...`——
+    /// 一律解析失败，整批被算成「改不了」，而它们的末三段恰恰就是可用的逻辑 key。
+    ///
+    /// 这是同一个毛病的第三次冒头（前两次：把相对当成不可改、把 key 形状只写一种）。
+    /// 所以这次不再加第三种「接受形态」，而是**把这个前提删掉**：
+    /// 取路径这一步只负责「把字符串变成路径段」，绝对地址走 `AbsolutePath`，
+    /// 其余原样当路径；判形状那一步对三种来源完全一样。分支变少了，不是变多。
+    ///
+    /// 「是不是绝对地址」不再参与解析，它只在 <see cref="RebaseIncoming"/> 里
+    /// 决定**认不出来时算哪一档**（指着源站 vs 指着本站不存在的文件）——
+    /// 那才是它真正该管的事。
     /// </summary>
-    /// <param name="alreadyKey">
-    /// 传进来的已经是一个 key（不是 URL）。**物理 key 前面可能带着源站前缀**，
-    /// 所以同样走「取末三段」把它剥成逻辑 key——这正是 DS31 要的那一步。
-    /// </param>
-    internal static string? TryExtractContentAddressedKey(string absoluteUrl, bool alreadyKey = false)
+    internal static string? TryExtractContentAddressedKey(string value, bool alreadyKey = false)
     {
-        string[] segments;
-        if (alreadyKey)
+        _ = alreadyKey; // 三种来源现在走同一条路，这个参数只为调用点可读性保留
+        var raw = (value ?? string.Empty).Trim();
+        if (raw.Length == 0) return null;
+
+        string path;
+        if (Uri.TryCreate(raw, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
         {
-            segments = NormalizeKey(absoluteUrl ?? string.Empty)
-                .Split('/', StringSplitOptions.RemoveEmptyEntries);
+            path = uri.AbsolutePath;
         }
         else
         {
-            if (!Uri.TryCreate((absoluteUrl ?? string.Empty).Trim(), UriKind.Absolute, out var uri)) return null;
-            try
-            {
-                segments = uri.AbsolutePath
-                    .Split('/', StringSplitOptions.RemoveEmptyEntries)
-                    .Select(Uri.UnescapeDataString)
-                    .ToArray();
-            }
-            catch
-            {
-                return null;
-            }
+            // 相对地址与裸 key 都归这一档。带查询串或锚点的相对地址先切掉，
+            // 否则 `x.png?v=2` 会连着问号一起进形状检查、白白判不出来。
+            path = raw.Split('?', '#')[0];
+        }
+
+        string[] segments;
+        try
+        {
+            segments = NormalizeKey(path)
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Select(Uri.UnescapeDataString)
+                .ToArray();
+        }
+        catch
+        {
+            return null;
         }
         if (segments.Length < 3) return null;
         if (segments.Any(s => s is "." or ".." || s.Contains('\\'))) return null;

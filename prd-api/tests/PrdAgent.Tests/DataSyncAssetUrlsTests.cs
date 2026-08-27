@@ -492,6 +492,75 @@ public class DataSyncAssetUrlsTests
         }
     }
 
+    /// <summary>
+    /// 没有 key 字段的集合，光靠**相对地址**也要认得出来（Codex review 第三刀）。
+    ///
+    /// `image_assets` 没有登记 key 字段，只能从地址反推；而上一版把「必须是绝对地址」
+    /// 写成了解析的前提，于是源站用本地磁盘时整批算成「改不了」——可它们的末三段
+    /// 恰恰就是可用的逻辑 key。
+    ///
+    /// 这条同样不写死形状：真跑一次 `LocalAssetStorage.SaveAsync`，用**它产出的那个
+    /// 地址**（不是我编的字符串）走完整条改写。
+    /// </summary>
+    [Fact]
+    public async Task 没有_key_字段时相对地址也要认得出来()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ds-img-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var storage = new PrdAgent.Infrastructure.Services.AssetStorage.LocalAssetStorage(dir);
+            var stored = await storage.SaveAsync(
+                new byte[] { 9, 8, 7 }, "image/png", CancellationToken.None,
+                domain: "prd-agent", type: "img", extensionHint: "png");
+
+            // 前提：本地存储给的确实不是绝对 http(s) 地址。它哪天改成绝对地址，
+            // 这条的前提就变了，断言在这里说清楚，免得用例变成空跑。
+            //
+            // 判据必须连 scheme 一起判：Unix 上 `/local-assets/...` 会被
+            // `Uri.TryCreate(..., UriKind.Absolute)` 认成合法的 **file:** URI 并返回 true。
+            // 只判 `UriKind.Absolute` 的话，这句断言当场就假——第一版就是这么红的，
+            // 而生产代码那一侧恰恰判了 scheme，所以红的是断言不是代码。
+            var absoluteHttp = Uri.TryCreate(stored.Url, UriKind.Absolute, out var probe)
+                && (probe!.Scheme == Uri.UriSchemeHttp || probe.Scheme == Uri.UriSchemeHttps);
+            Assert.False(absoluteHttp, $"本地存储现在返回的是绝对 http 地址（{stored.Url}），这条守卫的前提已变");
+
+            var docs = new List<BsonDocument>
+            {
+                new() { { "_id", "i1" }, { "Url", stored.Url }, { "OriginalUrl", stored.Url } },
+            };
+            var result = DataSyncAssetUrls.RebaseIncoming(docs, "image_assets", LocalBuild).Total;
+
+            Assert.Equal(2, result.Rebased);
+            Assert.Equal(0, result.AlreadyRelative);
+            Assert.Equal($"https://cdn.local.test/local/{stored.Key}", docs[0]["Url"].AsString);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// 放宽到相对地址之后，那些**层级不同**的地址仍然不许被改坏。
+    ///
+    /// 这是上面那条的对照面：解析器不再要求绝对地址，挡住误改的就只剩形状检查了，
+    /// 所以得单独钉一下——网页托管、头像这些相对写法照样要被拒。
+    /// </summary>
+    [Theory]
+    [InlineData("/local-assets/web-hosting/sites/s1/index.html")]
+    [InlineData("/local-assets/icon/backups/head/u-0123456789ab-0123456789abcdef01234567.png")]
+    [InlineData("/uploads/a/b/c.png")]
+    [InlineData("/local-assets/prd-agent/img/notacontenthash.png")]
+    public void 相对地址放宽之后仍然只认内容寻址的形状(string relativeUrl)
+    {
+        var docs = new List<BsonDocument> { Attachment(relativeUrl) };
+        var result = DataSyncAssetUrls.RebaseIncoming(docs, "attachments", LocalBuild).Total;
+
+        Assert.Equal(0, result.Rebased);
+        Assert.Equal(1, result.AlreadyRelative);
+        Assert.Equal(relativeUrl, docs[0]["Url"].AsString);
+    }
+
     [Fact]
     public void 登记的字段必须在对应模型上真实存在()
     {
