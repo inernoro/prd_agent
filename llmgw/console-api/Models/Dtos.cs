@@ -805,6 +805,12 @@ public sealed class CreateGatewayAppCallerRequest
     public string? IngressProtocol { get; set; }
 }
 
+/// <summary>用户那句「我想做什么」。调用用途码由它推导，除此之外不接收任何字段。</summary>
+public sealed class DraftAppCallerRequest
+{
+    public string? Intent { get; set; }
+}
+
 public sealed class BulkUpdateGatewayAppCallersRequest
 {
     public string? FilterStatus { get; set; }

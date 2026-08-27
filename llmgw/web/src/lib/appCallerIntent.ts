@@ -50,6 +50,9 @@ export const INTENT_ACTORS: IntentFacet[] = [
   { code: 'agent', label: '智能体', keywords: ['智能体', '助手', '机器人', 'agent', 'bot', 'copilot'] },
   { code: 'automation', label: '自动化任务', keywords: ['脚本', '定时', '跑批', '批量', 'cron', '流水线'] },
   { code: 'internal-tool', label: '内部工具', keywords: ['内部工具', '管理后台', '运营后台', '工单系统'] },
+  // 2026-08-27 补：用户真实输入「接入小米音响，对接大模型网关指令集」两段都认不出来。
+  // 补的是**缺失的品类**（智能硬件），不是给已有词条加同义词。
+  { code: 'smart-device', label: '智能硬件', keywords: ['音响', '音箱', '智能硬件', '车机', '手表', '摄像头'] },
 ];
 
 /** 要做什么 → 码的第二段，同时决定调用类型。 */
@@ -67,6 +70,7 @@ export const INTENT_TASKS: IntentTask[] = [
   { code: 'image-understand', label: '图片理解', requestType: 'vision', keywords: ['看图', '识图', '图片理解', '图像理解', '截图', '视觉'] },
   { code: 'image-ocr', label: '图片取字', requestType: 'vision', keywords: ['ocr', '文字识别', '票据', '发票', '证件'] },
   { code: 'image-audit', label: '图片审核', requestType: 'vision', keywords: ['图片审核', '图审', '违规图'] },
+  { code: 'command-parse', label: '指令解析', requestType: 'chat', keywords: ['指令集', '指令解析', '语音指令', '命令解析'] },
 ];
 
 /**

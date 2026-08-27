@@ -701,6 +701,69 @@ export function updateGatewayAppCaller(id: string, req: UpdateGatewayAppCallerRe
 export function createGatewayAppCaller(req: CreateGatewayAppCallerRequest): Promise<ApiResponse<GatewayAppCaller>> {
   return apiRequest<GatewayAppCaller>('/app-callers', { method: 'POST', body: req });
 }
+
+/** 调用用途码草案的一帧。后端边推边吐，等待期屏幕一直在变（规则 #6）。 */
+export type IntentDraftFrame =
+  | { type: 'stage'; stage: string; text: string }
+  | { type: 'delta'; text: string }
+  | { type: 'error'; code: string; message: string }
+  | {
+      type: 'result';
+      ok: boolean;
+      app: string;
+      feature: string;
+      requestType: 'chat' | 'vision';
+      reason: string;
+      appCallerCode: string;
+      model: string;
+    };
+
+/**
+ * 把用户那句「我想做什么」交给网关自己的模型推成两段码，SSE 逐帧回调。
+ *
+ * 不走 apiRequest：那条路径把响应当 JSON 一次性读完，拿不到流。这里手写 fetch + reader，
+ * 但鉴权头、base 与它保持同一套来源，避免出现第二份会话逻辑。
+ */
+export async function draftAppCallerIntent(
+  intent: string,
+  onFrame: (frame: IntentDraftFrame) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const token = getToken();
+  const response = await fetch(`${API_BASE}/app-callers/draft`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ intent }),
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    onFrame({ type: 'error', code: 'INTENT_DRAFT_UNAVAILABLE', message: `推导服务返回 ${response.status}，已退回本地关键词判定。` });
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE 以空行分帧；最后一段可能是半帧，留在 buffer 里等下一次读取补齐。
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() ?? '';
+    for (const chunk of chunks) {
+      const line = chunk.split('\n').find((item) => item.startsWith('data:'));
+      if (!line) continue;
+      try {
+        onFrame(JSON.parse(line.slice(5).trim()) as IntentDraftFrame);
+      } catch {
+        /* 半帧或心跳，跳过 */
+      }
+    }
+  }
+}
 export function bulkUpdateGatewayAppCallers(req: BulkUpdateGatewayAppCallersRequest): Promise<ApiResponse<BulkUpdateGatewayAppCallersResult>> {
   return apiRequest<BulkUpdateGatewayAppCallersResult>('/app-callers/bulk-governance', { method: 'POST', body: req });
 }

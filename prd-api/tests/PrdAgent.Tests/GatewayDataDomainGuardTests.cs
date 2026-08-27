@@ -4392,6 +4392,18 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("analyzeAppCallerIntent", quickstart);
         Assert.Contains("buildAppCallerCode", quickstart);
         Assert.DoesNotContain(".quickstart::", quickstart);
+        // 码由模型推：控制台自己吃自己的狗粮，走 serving 的兼容端点，前端边收边渲染。
+        // 这条接线删掉不会让任何测试变红（页面会静默退回本地关键词表），所以钉成字面量。
+        var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("/gw/app-callers/draft", consoleApi);
+        Assert.Contains("LLMGW_INTENT_DRAFT_BASE_URL", consoleApi);
+        Assert.Contains("X-Gateway-App-Caller", consoleApi);
+        Assert.Contains("INTENT_DRAFT_UNAVAILABLE", consoleApi);
+        Assert.Contains("draftAppCallerIntent", quickstart);
+        // 模型推的、本地降级的、用户手改的，界面必须分得出来（推断值可见可改可追责）。
+        Assert.Contains("codeSource", quickstart);
+        // 系统提示词是给用户粘走的产物，绝不能把密钥明文写进去。
+        Assert.Contains("$LLMGW_API_KEY", quickstart);
         Assert.Contains("scopes: ['invoke', 'stream:invoke', 'route:read']", quickstart);
         Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
         Assert.Contains("type RequestType = 'chat' | 'vision'", quickstart);

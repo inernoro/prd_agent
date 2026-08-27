@@ -5090,6 +5090,151 @@ app.MapGet("/gw/app-callers", async (
     return Json(ApiEnvelope<GatewayAppCallersData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// ── 调用用途码草案：把用户那句「我想做什么」交给网关自己的模型推成 {应用}.{用途}::{类型} ──
+//
+// 为什么走网关自己：控制台和 serving 在同一个部署里，这条路等于让网关吃自己的狗粮，
+// 模型池、预算、日志全部落在既有链路上，不另起一套模型调用。
+//
+// 为什么必须能降级：这三个环境变量没配、或 serving 一时不通时，返回明确的不可用码，
+// 前端退回本地关键词表并**明说这是降级判定**——不假装模型给过意见（no-rootless-tree）。
+var intentDraftBaseUrl = (Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_BASE_URL") ?? string.Empty).Trim().TrimEnd('/');
+var intentDraftKey = (Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_KEY") ?? string.Empty).Trim();
+var intentDraftAppCaller = (Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_APP_CALLER") ?? "llmgw-console.intent-draft::chat").Trim();
+var intentDraftModel = (Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_MODEL") ?? "auto").Trim();
+var intentDraftConfigured = intentDraftBaseUrl.Length > 0 && intentDraftKey.Length > 0;
+// 推导是短任务，40s 足够；超时就降级，不把控制台请求挂住。
+var intentDraftHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
+const int IntentDraftMaxChars = 500;
+const string IntentDraftSystemPrompt = """
+你是 LLM 网关的接入助手。用户用一句话说明他要接什么、要做什么，你把它压成调用用途码的两段。
+
+app：谁在调用（哪个应用、设备或服务）。
+feature：要做什么（哪种能力或业务场景）。
+
+两段都必须是小写英文 kebab-case：只允许 a-z、0-9 和短横线，必须字母开头，各不超过 32 个字符。
+用英文表达语义，不要拼音，不要把整句话塞进去。
+requestType 只能是 chat 或 vision：涉及看图、识图、图片理解、截图、OCR 时用 vision，其余一律 chat。
+
+只输出一个 JSON 对象，不要解释，不要代码块：
+{"app":"...","feature":"...","requestType":"chat","reason":"一句中文，说明你从这句话的哪些词判出这两段"}
+
+如果这句话确实说不清楚（既看不出谁在调用，也看不出要做什么），把 app 和 feature 留空，
+并在 reason 里用一句中文说清还缺什么。不要编造。
+""";
+
+// 用户那句话 → 调用用途码草案。SSE 边推边吐，等待期屏幕一直在变（规则 #6）。
+// 只读不写：这里不落任何库，草案由用户确认后才走 POST /gw/app-callers 正式登记。
+app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAppCallerRequest body) =>
+{
+    var intent = (body?.Intent ?? string.Empty).Trim();
+    http.Response.Headers["Content-Type"] = "text/event-stream; charset=utf-8";
+    http.Response.Headers["Cache-Control"] = "no-cache";
+    http.Response.Headers["X-Accel-Buffering"] = "no";
+
+    async Task SendAsync(object frame)
+    {
+        await http.Response.WriteAsync($"data: {JsonSerializer.Serialize(frame, jsonOptions)}\n\n", http.RequestAborted);
+        await http.Response.Body.FlushAsync(http.RequestAborted);
+    }
+
+    if (intent.Length == 0 || intent.Length > IntentDraftMaxChars)
+    {
+        await SendAsync(new { type = "error", code = "INTENT_INVALID", message = $"请写一句话说明要做什么（不超过 {IntentDraftMaxChars} 字）。" });
+        return;
+    }
+    if (!intentDraftConfigured)
+    {
+        await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = "本部署还没有接通用于推导的模型，已退回本地关键词判定。" });
+        return;
+    }
+
+    await SendAsync(new { type = "stage", stage = "connecting", text = "正在把这句话交给网关自己的模型" });
+    var raw = new StringBuilder();
+    var usedModel = string.Empty;
+    try
+    {
+        using var upstream = new HttpRequestMessage(HttpMethod.Post, $"{intentDraftBaseUrl}/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                model = intentDraftModel,
+                stream = true,
+                temperature = 0,
+                messages = new object[]
+                {
+                    new { role = "system", content = IntentDraftSystemPrompt },
+                    new { role = "user", content = intent },
+                },
+            }, jsonOptions), Encoding.UTF8, "application/json"),
+        };
+        upstream.Headers.TryAddWithoutValidation("X-Gateway-Key", intentDraftKey);
+        upstream.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", intentDraftAppCaller);
+        upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", "llmgw-console");
+
+        using var response = await intentDraftHttp.SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, http.RequestAborted);
+        if (!response.IsSuccessStatusCode)
+        {
+            await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"推导模型返回 {(int)response.StatusCode}，已退回本地关键词判定。" });
+            return;
+        }
+        await SendAsync(new { type = "stage", stage = "thinking", text = "模型正在推导两段码" });
+        using var body2 = await response.Content.ReadAsStreamAsync(http.RequestAborted);
+        using var reader = new StreamReader(body2, Encoding.UTF8);
+        while (!reader.EndOfStream && !http.RequestAborted.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(http.RequestAborted);
+            if (line is null) break;
+            if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
+            var payload = line[5..].Trim();
+            if (payload.Length == 0 || payload == "[DONE]") continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(payload);
+                var root = doc.RootElement;
+                if (root.TryGetProperty("model", out var modelEl) && modelEl.ValueKind == JsonValueKind.String && usedModel.Length == 0)
+                    usedModel = modelEl.GetString() ?? string.Empty;
+                if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
+                var delta = choices[0];
+                if (!delta.TryGetProperty("delta", out var deltaEl)) continue;
+                if (!deltaEl.TryGetProperty("content", out var contentEl) || contentEl.ValueKind != JsonValueKind.String) continue;
+                var text = contentEl.GetString() ?? string.Empty;
+                if (text.Length == 0) continue;
+                raw.Append(text);
+                await SendAsync(new { type = "delta", text });
+            }
+            catch (JsonException) { /* 上游偶发非 JSON 心跳帧，跳过 */ }
+        }
+    }
+    catch (OperationCanceledException) { return; }
+    catch (Exception ex)
+    {
+        await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"推导模型调用失败（{ex.GetType().Name}），已退回本地关键词判定。" });
+        return;
+    }
+
+    var parsed = ParseIntentDraft(raw.ToString());
+    if (parsed is null)
+    {
+        await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNPARSABLE", message = "模型没有给出可用的两段码，已退回本地关键词判定。" });
+        return;
+    }
+    var draftCode = $"{parsed.Value.App}.{parsed.Value.Feature}::{parsed.Value.RequestType}";
+    var valid = parsed.Value.App.Length > 0
+                && parsed.Value.Feature.Length > 0
+                && IsValidSelfServiceAppCaller(draftCode, parsed.Value.RequestType);
+    await SendAsync(new
+    {
+        type = "result",
+        ok = valid,
+        app = parsed.Value.App,
+        feature = parsed.Value.Feature,
+        requestType = parsed.Value.RequestType,
+        reason = parsed.Value.Reason,
+        appCallerCode = valid ? draftCode : string.Empty,
+        model = usedModel,
+    });
+}).RequireAuthorization("AppCallerWrite");
+
 // 外部接入自助创建 appCaller。租户和团队边界只取服务端会话，调用方不能在请求中声明 TenantId。
 // 同一 TenantId + AppCallerCode + RequestType 已存在时只允许同团队幂等复用，禁止跨团队抢占身份。
 app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGatewayAppCallerRequest body) =>
@@ -13542,6 +13687,37 @@ static bool IsKebabCaseAppCallerSegment(string value)
     => value.Length > 0
        && value[0] is >= 'a' and <= 'z'
        && value.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+
+/// <summary>
+/// 从模型输出里取出两段码。模型被要求只输出 JSON，但仍可能裹 ```json 或带前后缀，
+/// 所以按第一个 `{` 到最后一个 `}` 截取再解析——比让模型「再输出一次」便宜且稳定。
+/// 解析不出来就返回 null，由调用方明说「模型没给出可用结果」，不猜、不兜底。
+/// </summary>
+static (string App, string Feature, string RequestType, string Reason)? ParseIntentDraft(string raw)
+{
+    if (string.IsNullOrWhiteSpace(raw)) return null;
+    var start = raw.IndexOf('{');
+    var end = raw.LastIndexOf('}');
+    if (start < 0 || end <= start) return null;
+    try
+    {
+        using var doc = JsonDocument.Parse(raw[start..(end + 1)]);
+        var root = doc.RootElement;
+        string Read(string name) => root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String
+            ? (el.GetString() ?? string.Empty).Trim()
+            : string.Empty;
+        var requestType = Read("requestType").ToLowerInvariant();
+        return (
+            Read("app").ToLowerInvariant(),
+            Read("feature").ToLowerInvariant(),
+            requestType is "chat" or "vision" ? requestType : "chat",
+            Read("reason"));
+    }
+    catch (JsonException)
+    {
+        return null;
+    }
+}
 
 static FilterDefinition<BsonDocument>? BuildAppCallerDriftFilter(string? drift)
 {

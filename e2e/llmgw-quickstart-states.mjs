@@ -50,6 +50,10 @@ const REQUEST_ID = 'quickstart-8f2c41d9ab7e4c30';
 let gatewayMode = 'pass';
 /** 浏览器真正发出的控制台写请求。 */
 const posted = [];
+/** 推导端点收到的请求体：断言送过去的就是用户写的那句话。 */
+const drafted = [];
+/** 推导桩的行为：model = 给出草案；unavailable = 模型没接通，前端应降级到本地关键词表。 */
+let draftMode = 'model';
 /** 真实调用发出的请求体：用来断言上传的内容真的进了 payload。 */
 const realBodies = [];
 
@@ -139,12 +143,46 @@ const server = http.createServer((req, res) => {
         mustChangePassword: false, tenant: { id: 't1', name: 'Miduo 平台', isInternal: false, role: 'owner', teamIds: ['team-1'] },
       } });
     }
+    // 调用用途码草案：真实后端是 SSE，桩照同一套帧协议吐，前端解析路径才是被测的那条。
+    if (api === '/app-callers/draft') {
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => {
+        drafted.push(raw ? JSON.parse(raw) : null);
+        if (draftMode === 'unavailable') {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          res.write(`data: ${JSON.stringify({ type: 'error', code: 'INTENT_DRAFT_UNAVAILABLE', message: '本部署还没有接通用于推导的模型，已退回本地关键词判定。' })}\n\n`);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        res.write(`data: ${JSON.stringify({ type: 'stage', stage: 'thinking', text: '模型正在推导两段码' })}\n\n`);
+        const frames = ['{"app":"xiaomi-', 'speaker","feature":"command-', 'intent","requestType":"chat",', '"reason":"从「小米音响」判出调用方，从「指令集」判出场景。"}'];
+        let i = 0;
+        const timer = setInterval(() => {
+          if (i < frames.length) {
+            res.write(`data: ${JSON.stringify({ type: 'delta', text: frames[i] })}\n\n`);
+            i += 1;
+            return;
+          }
+          clearInterval(timer);
+          res.write(`data: ${JSON.stringify({
+            type: 'result', ok: true, app: 'xiaomi-speaker', feature: 'command-intent', requestType: 'chat',
+            reason: '从「小米音响」判出调用方，从「指令集」判出场景。',
+            appCallerCode: 'xiaomi-speaker.command-intent::chat', model: 'demo/chat-1',
+          })}\n\n`);
+          res.end();
+        }, 90);
+      });
+      return undefined;
+    }
     if (req.method === 'POST' || req.method === 'PUT') {
       let raw = '';
       req.on('data', (chunk) => { raw += chunk; });
       req.on('end', () => {
-        posted.push({ method: req.method, api, body: raw ? JSON.parse(raw) : null });
-        if (api === '/app-callers') return json(res, 200, { success: true, error: null, data: { id: 'ac-new', appCallerCode: 'miduo-agent.quickstart::chat', requestType: 'chat' } });
+        const parsedBody = raw ? JSON.parse(raw) : null;
+        posted.push({ method: req.method, api, body: parsedBody });
+        if (api === '/app-callers') return json(res, 200, { success: true, error: null, data: { id: 'ac-new', appCallerCode: parsedBody?.appCallerCode ?? '', requestType: 'chat' } });
         if (api === '/service-keys') return json(res, 200, { success: true, error: null, data: { id: 'k-new', key: 'gwk_7f2c9a1e4b8d3f6021ca77e5db34QpZm1x9LkNvR2sT', keyPrefix: 'gwk_7f2c', name: 'miduo-agent-quickstart' } });
         return json(res, 200, { success: true, error: null, data: { id: 'ac-new' } });
       });
@@ -199,82 +237,89 @@ async function chainTones(page) {
 }
 
 const create = (page) => page.getByRole('button', { name: '创建密钥' });
-/**
- * 调用用途码只从「我想要做什么」派生：每条场景在点创建之前都得先把这句话写清楚，
- * 否则主按钮是禁用的。这正是本轮要钉死的那道门。
- */
-async function stateIntent(page, text = '桌面客户端里做售后客服问答') {
-  await page.getByLabel('我想要做什么').fill(text);
-  await page.waitForTimeout(300);
-}
-/** 第一步结论行上的码：没说清楚时这里是空的。 */
+const askInput = (page) => page.getByLabel('我想做什么');
 const issuedCode = (page) => page.locator('.lg-qs-issue code');
+
+/**
+ * 走完创建线：写那句话 → 等推导出码 → 下一步 → 到归属屏。
+ * 每条场景在点「创建密钥」之前都得走这一遍，因为码只能从那句话来。
+ */
+async function walkToOwner(page, text = '接入小米音响，对接大模型网关指令集') {
+  await askInput(page).fill(text);
+  await page.getByRole('button', { name: '生成调用用途码' }).click();
+  await page.waitForSelector('.lg-qs-issue code', { timeout: 15000 });
+  await page.getByRole('button', { name: '下一步' }).click();
+  await page.waitForTimeout(400);
+}
 
 // ── 1) 创建屏：三个决定 + 一个主按钮，一件产物都不露 ───────────────────
 gatewayMode = 'pass';
 let page = await openQuickstart();
-check('创建屏只有一个主按钮', await page.locator('.lg-qs-primary').count(), 1);
-// 本轮的核心契约：**没说要做什么，就不许拿到码，也不许创建。**
-// 改版前这里预填成 `{租户}.quickstart::chat`，用户什么都不写也能一路签出密钥，
-// 签出来的码谁也说不出是干嘛的——用户三次反馈「不要直接给一个随机的 xxxquickstart」。
-check('一个字都没写时不颁发任何码', await issuedCode(page).count(), 0);
-check('一个字都没写时主按钮禁用', await create(page).isDisabled(), true);
-check('页面上不存在 quickstart 占位码', (await page.locator('.lg-qs-create-card').innerText()).includes('quickstart::'), false);
-// 只说了「谁在调用」还不算说清楚：码有两段，缺一段就明说缺哪一段。
-await stateIntent(page, '桌面客户端要接一下');
-check('只说清谁在调用时仍不颁发', await issuedCode(page).count(), 0);
-check('只说清谁在调用时说明还差哪一段', (await page.locator('.lg-qs-issue-miss').innerText()).trim(), '还差「要做什么」这一段。');
-check('只说清一半时主按钮仍禁用', await create(page).isDisabled(), true);
-// 两段都说清楚了才颁发，而且码的每一段都指得回他自己写的那句话。
-await stateIntent(page, '桌面客户端里做售后客服问答');
-check('说清楚之后颁发的码来自这句话', (await issuedCode(page).innerText()).trim(), 'desktop-app.customer-service::chat');
-check('颁发的码符合自助格式', /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+::(chat|vision)$/.test((await issuedCode(page).innerText()).trim()), true);
-// 回显的是**真正胜出的那个词**：「客户端」比「桌面」长，最长命中优先，
-// 所以这里必须是「客户端」。写成「桌面」就是把判据说错了（形状 6：报的值不是生效的值）。
-check('两段判定都标出凭哪个词判的', await page.$$eval('.lg-qs-facet.is-ready .lg-qs-facet-head > small', (nodes) => nodes.map((n) => n.textContent.trim())), ['来自「客户端」', '来自「客服」']);
-check('说清楚之后主按钮可用', await create(page).isDisabled(), false);
-// 调用类型由「要做什么」推出来：说识图就是图片理解，码的后缀跟着变。
-await stateIntent(page, '后端服务批量做图片理解');
-check('说了识图就自动切到图片理解', (await issuedCode(page).innerText()).trim(), 'backend-service.image-understand::vision');
-// 认不出来的说法必须有出路：从有限清单里手动指定，指定完照样颁发。
-await stateIntent(page, '想做一点还没想好的事情');
-check('认不出来时不硬猜', await issuedCode(page).count(), 0);
-await page.getByRole('button', { name: '手动选' }).first().click();
-await page.getByRole('radiogroup', { name: '谁在调用' }).getByRole('radio', { name: '智能体' }).click();
+// 第一屏：整块画布只有一个输入框，没有码、没有团队、没有预算。
+check('第一屏只有一个输入框', [
+  await page.getByLabel('我想做什么').count(),
+  await page.locator('.lg-qs-issue code').count(),
+  await page.locator('.lg-qs-team-list, .lg-qs-own-row').count(),
+], [1, 0, 0]);
+check('太短的一句话不许提交', await page.getByRole('button', { name: '生成调用用途码' }).isDisabled(), true);
+check('页面上不存在 quickstart 占位码', (await page.locator('.lg-qs-flow').innerText()).includes('quickstart::'), false);
+// 示例句点一下就填进去：省掉对着空白框发呆那几秒。
+await page.locator('.lg-qs-ask-samples > button').first().click();
 await page.waitForTimeout(200);
-await page.getByRole('button', { name: '手动选' }).first().click();
-await page.getByRole('radiogroup', { name: '要做什么' }).getByRole('radio', { name: '摘要总结' }).click();
+check('点示例句直接填进输入框', (await askInput(page).inputValue()).length > 0, true);
+check('填了之后才可提交', await page.getByRole('button', { name: '生成调用用途码' }).isDisabled(), false);
+
+// 第二屏：交给模型推，边推边吐，推完把码亮出来。
+// 这句话正是关键词表认不出来的那种说法——上一版在这里判「既没看出谁在调用，也没看出要做什么」。
+drafted.length = 0;
+await askInput(page).fill('接入小米音响，对接大模型网关指令集');
+await page.getByRole('button', { name: '生成调用用途码' }).click();
+await page.waitForTimeout(180);
+check('推导中把模型吐出来的原文显示出来', (await page.locator('.lg-qs-thinking pre').innerText()).length > 0, true);
+await page.waitForSelector('.lg-qs-issue code', { timeout: 15000 });
+check('送去推导的就是用户写的那句话', drafted[0]?.intent, '接入小米音响，对接大模型网关指令集');
+check('采用模型推出来的码', (await issuedCode(page).innerText()).trim(), 'xiaomi-speaker.command-intent::chat');
+check('标明这条码是模型推的', (await page.locator('.lg-qs-draft-source').innerText()).includes('模型推导'), true);
+check('给出模型判定的依据', (await page.locator('.lg-qs-draft-reason').innerText()).includes('小米音响'), true);
+// 模型给出结果时不该再摊开本地关键词清单——那是降级路径的出口，不是常驻控件。
+check('模型给出结果时不摊开本地清单', await page.locator('.lg-qs-facets').count(), 0);
+check('第二屏还没有团队与预算', await page.locator('.lg-qs-own-row').count(), 0);
+
+// 模型没接通：必须退回本地关键词表，并且**明说这是降级**，不假装模型给过意见。
+draftMode = 'unavailable';
+await page.getByRole('button', { name: '重新生成' }).click();
+await page.waitForTimeout(1200);
+check('模型不可用时明说已降级', (await page.locator('.lg-test-result.is-error').innerText()).includes('退回本地关键词判定'), true);
+check('降级后本地关键词表接住这句话', (await issuedCode(page).innerText()).trim(), 'smart-device.command-parse::chat');
+check('降级时标明是本地判定', (await page.locator('.lg-qs-draft-source').innerText()).includes('降级'), true);
+check('降级时摊开本地清单供手动改', await page.locator('.lg-qs-facets').count(), 1);
+draftMode = 'model';
+await page.getByRole('button', { name: '重新生成' }).click();
+await page.waitForSelector('.lg-qs-draft-source', { timeout: 15000 });
 await page.waitForTimeout(300);
-check('手动指定后照样颁发', (await issuedCode(page).innerText()).trim(), 'agent.summarize::chat');
-check('手动指定的那一段标明是人指定的', await page.locator('.lg-qs-facet-head > small', { hasText: '你指定的' }).count(), 2);
-// 回到本轮验收要用的那条：客服问答。
-await page.getByRole('button', { name: '换一个' }).first().click();
-await page.getByRole('radiogroup', { name: '谁在调用' }).getByRole('radio', { name: '智能体' }).click();
-await page.waitForTimeout(200);
-await page.getByRole('button', { name: '换一个' }).first().click();
-await page.getByRole('radiogroup', { name: '要做什么' }).getByRole('radio', { name: '摘要总结' }).click();
-await page.waitForTimeout(200);
-await stateIntent(page, '桌面客户端里做售后客服问答');
-check('清掉手动指定后回到这句话的判定', (await issuedCode(page).innerText()).trim(), 'desktop-app.customer-service::chat');
-// 版面：一条从上往下读的三步向导，编号齐全；不是一排等权重的方格。
-check('创建屏是三步向导', [
-  await page.locator('.lg-qs-step').count(),
-  await page.$$eval('.lg-qs-step-no', (nodes) => nodes.map((n) => n.textContent.trim())),
-], [3, ['1', '2', '3']]);
+
+// 第三屏：算谁的。只有团队与预算两件事。
+await page.getByRole('button', { name: '下一步' }).click();
+await page.waitForTimeout(400);
+check('第三屏是归属与预算', [
+  await page.locator('.lg-qs-own-row').count(),
+  await page.getByLabel('我想做什么').count(),
+], [1, 0]);
+check('第三屏仍显示即将登记的码', (await issuedCode(page).innerText()).trim(), 'xiaomi-speaker.command-intent::chat');
+check('归属团队默认选中当前用户所在团队', await page.locator('.lg-qs-team-list button.is-active').innerText(), '核心平台组');
+check('创建屏不出现任何个人归属控件', await page.locator('.lg-qs-owner-line, .lg-qs-owner-list').count(), 0);
 check('创建屏不出现一次性密钥', await page.locator('.lg-qs-secret-code').count(), 0);
 check('创建屏不出现产物细条', await page.locator('.lg-qs-ribbon').count(), 0);
 // 主行动钉在卡片右下角（向导式的「下一步」位置）：通栏按钮或左对齐都会让这条红。
 check('主行动贴着创建卡右边缘', await page.evaluate(() => {
   const btn = document.querySelector('.lg-qs-primary');
-  const card = document.querySelector('.lg-qs-create-card');
+  const card = document.querySelector('.lg-qs-step-card');
   if (!btn || !card) return 'missing';
   const b = btn.getBoundingClientRect();
   const c = card.getBoundingClientRect();
   if (b.width > c.width * 0.5) return 'full-width';
   return Math.abs((c.right - b.right)) <= 40 ? 'right' : 'not-right';
 }), 'right');
-check('归属团队默认选中当前用户所在团队', await page.locator('.lg-qs-team-list button.is-active').innerText(), '核心平台组');
-check('创建屏不出现任何个人归属控件', await page.locator('.lg-qs-owner-line, .lg-qs-owner-list').count(), 0);
 
 // 月预算派生：极小额度时预占上限必须夹回月预算，否则后端拒收（预占 > 月预算）。
 await page.getByLabel('月预算（美元）').fill('0.3');
@@ -296,17 +341,27 @@ check('调用用途也登记在同一个团队下', posted.find((item) => item.a
 check('提交体里不存在 owner 字段', posted.some((item) => item.body && 'owner' in item.body), false);
 
 // ── 3) 产物屏：表单让位，密钥 + 地址 + 单个复制区，成功也留 requestId ────
-check('产物屏不再有创建向导', await page.locator('.lg-qs-step, .lg-qs-intent').count(), 0);
+check('产物屏不再有创建向导', await page.locator('.lg-qs-step-card, .lg-qs-ask').count(), 0);
+check('产物屏是三个页签', await page.$$eval('.lg-qs-result-tabs > button strong', (nodes) => nodes.map((n) => n.textContent.trim())), ['接入信息', 'cURL', '提示词']);
+check('默认停在接入信息页', await page.locator('.lg-qs-access-grid').count(), 1);
 check('产物屏出现签发细条', await page.locator('.lg-qs-ribbon').count(), 1);
 check('密钥明文可见', (await page.locator('.lg-qs-secret-code').innerText()).startsWith('gwk_'), true);
-check('同一时刻只渲染一份片段', await page.locator('.lg-qs-artifacts pre').count(), 1);
-check('左侧三张卡（地址 + 密钥 + 调用用途）+ 右侧片段', [
+// 页签互斥：接入信息页上不该出现请求片段，反之亦然——「一页只讲一件事」就是这条断言。
+check('接入信息页三张卡、没有片段', [
   await page.locator('.lg-qs-hero').count(),
   await page.locator('.lg-qs-code').count(),
-], [3, 1]);
-check('产物屏露出本次登记的调用用途码', (await page.locator('.lg-qs-hero.is-caller code').innerText()).trim(), 'desktop-app.customer-service::chat');
-check('提交给控制台的就是那句话派生出来的码', posted.find((item) => item.api === '/app-callers')?.body?.appCallerCode, 'desktop-app.customer-service::chat');
+], [3, 0]);
+check('产物屏露出本次登记的调用用途码', (await page.locator('.lg-qs-hero.is-caller code').innerText()).trim(), 'xiaomi-speaker.command-intent::chat');
+check('提交给控制台的就是模型推出来的码', posted.find((item) => item.api === '/app-callers')?.body?.appCallerCode, 'xiaomi-speaker.command-intent::chat');
 check('调用用途卡标出归属团队', (await page.locator('.lg-qs-hero.is-caller small').innerText()).includes('归属团队 核心平台组'), true);
+// 切到 cURL 页：测试栏与片段在这一页，接入信息卡让位。
+await page.locator('.lg-qs-result-tabs > button', { hasText: 'cURL' }).click();
+await page.waitForTimeout(300);
+check('cURL 页有片段与测试栏、没有接入信息卡', [
+  await page.locator('.lg-qs-code').count(),
+  await page.locator('.lg-qs-testbar').count(),
+  await page.locator('.lg-qs-hero').count(),
+], [1, 1, 0]);
 // 候选只能来自这条 appCaller 真正走的那个池：另一个同类型池的成员不许混进来，
 // 否则真实租户上会平铺出 200+ 个模型，且违反「可选模型必须来自获准的池」。
 check('模型候选只来自被路由到的池、且只列健康成员', await page.$$eval('#lg-qs-model-options option', (nodes) => nodes.map((n) => n.value)), ['demo/chat-1', 'demo/chat-2']);
@@ -339,6 +394,21 @@ await page.getByLabel('测试模型').fill('');
 await page.waitForTimeout(300);
 check('清空即回到 auto', (await page.locator('.lg-qs-code').innerText()).includes('"model": "auto"'), true);
 
+// 提示词页：三种取用方式，系统提示词里必须带上这条码，且**不带密钥明文**。
+await page.locator('.lg-qs-result-tabs > button', { hasText: '提示词' }).click();
+await page.waitForTimeout(300);
+check('提示词页三种取用方式', await page.$$eval('.lg-qs-snippet-card .lg-qs-type-row > button', (nodes) => nodes.map((n) => n.textContent.trim())), ['系统提示词', 'Agent Skill', '客户端配置']);
+const promptText = await page.locator('.lg-qs-code').innerText();
+check('系统提示词带上本次的调用用途码', promptText.includes('xiaomi-speaker.command-intent::chat'), true);
+// 密钥明文绝不能进提示词——用户会把提示词贴到别处，贴出去就是泄漏。
+check('系统提示词不含密钥明文', promptText.includes('gwk_7f2c9a1e4b8d3f6021ca77e5db34QpZm1x9LkNvR2sT'), false);
+check('系统提示词用环境变量占位', promptText.includes('$LLMGW_API_KEY'), true);
+await page.locator('.lg-qs-snippet-card .lg-qs-type-row > button', { hasText: '客户端配置' }).click();
+await page.waitForTimeout(300);
+check('客户端配置这一档才出现接入方式选择', await page.locator('.lg-qs-preset-list').count(), 1);
+await page.locator('.lg-qs-result-tabs > button', { hasText: 'cURL' }).click();
+await page.waitForTimeout(300);
+
 check('横向不滚动', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
 // ── 真实调用：文字必须边收边渲染，且返回内容要显示出来 ────────────────
 realBodies.length = 0;
@@ -370,7 +440,7 @@ await page.close();
 gatewayMode = 'pass';
 page = await openQuickstart();
 posted.length = 0;
-await stateIntent(page);
+await walkToOwner(page);
 await create(page).click();
 await page.waitForTimeout(2400);
 check('留空月预算时不发治理写入', posted.map((item) => `${item.method} ${item.api}`), ['POST /app-callers', 'POST /service-keys']);
@@ -379,7 +449,7 @@ await page.close();
 // ── 5) 失败：调用用途没绑模型池（最高频的一类）──────────────────────
 gatewayMode = 'fail-pool';
 page = await openQuickstart();
-await stateIntent(page);
+await walkToOwner(page);
 await create(page).click();
 await page.waitForTimeout(2400);
 check('失败块渲染出来了', await page.locator('.lg-qs-failure').count(), 1);
@@ -403,7 +473,7 @@ await page.close();
 // ── 6) 失败：作用域不匹配。没走到的环不许画成绿色 ────────────────────
 gatewayMode = 'fail-scope';
 page = await openQuickstart();
-await stateIntent(page);
+await walkToOwner(page);
 await create(page).click();
 await page.waitForTimeout(2400);
 check('作用域失败的码', (await page.locator('.lg-qs-failure-head code').innerText()).trim(), 'GATEWAY_KEY_SCOPE_DENIED');
@@ -413,7 +483,7 @@ await page.close();
 // ── 7) 失败：密钥无效。第一环就坏，后两环都是未知 ──────────────────
 gatewayMode = 'fail-key';
 page = await openQuickstart('light');
-await stateIntent(page);
+await walkToOwner(page);
 await create(page).click();
 await page.waitForTimeout(2400);
 check('密钥失败的码', (await page.locator('.lg-qs-failure-head code').innerText()).trim(), 'GATEWAY_KEY_INVALID');
@@ -423,7 +493,7 @@ await page.close();
 // ── 8) 窄屏：页面不横向滚动，但密钥串自己能滚（不能被裁掉）─────────────
 gatewayMode = 'pass';
 page = await openQuickstart('dark', 390);
-await stateIntent(page);
+await walkToOwner(page);
 check('390 创建屏不出现横向滚动', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
 await create(page).click();
 await page.waitForTimeout(2400);
