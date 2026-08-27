@@ -12,6 +12,7 @@ import { createDeploymentVersionsRouter } from './routes/deployment-versions.js'
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
 import { ReplicaSetService } from './services/replica-set.js';
 import { isRemoteExecutorOwned } from './services/executor-ownership.js';
+import { connectionTokenRequiredScope, shouldRecordConnectionUse } from './services/connection-token-routes.js';
 import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
@@ -1380,68 +1381,6 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
 }
 
 /** Check if a request is from an approved AI session */
-/**
- * 系统互联长效 token 能碰哪些端点 —— 一个 scope 对应一组「方法 + 路径」，逐条列举。
- *
- * ## 为什么是一张表而不是一串 if
- *
- * 原来这里只有一个写死的分支：路径以 `/api/bridge/` 开头且带 `instance:read`。
- * 第二个用途（MAP 定时拉验收报告）来的时候，最省事的写法是再加一个 if，
- * 而那就是判据分裂的起点——两处各自演化，谁也说不清「这个 token 到底能干什么」。
- * 收成一张表之后，回答那个问题只需要读这一个常量。
- *
- * ## 为什么必须带上方法
- *
- * 上面那个旧分支**完全不看 HTTP 方法**（Bridge 本来就要 POST 指令，所以无所谓）。
- * 验收报告这一条不一样：同一个 `/api/reports` 路径上，GET 是列表、POST 是**新建**，
- * 而 `/api/reports/:id` 上还有 DELETE。不看方法的话，一个「只读」授权顺手就能删报告。
- * 所以放行判据是 (scope, method, path) 三元组，不是路径前缀。
- *
- * ## report:read 为什么只有两条
- *
- * MAP 的导入器只用这两个端点：列表拿元信息 + 正文拿内容。`:id/download`（打包 ZIP）、
- * `:id`（单条元信息）、`:id/share`（发分享链）一律不给——它们不是这条链路需要的，
- * 而「顺手多给一点」正是最小权限最常见的破法。
- */
-const CONNECTION_TOKEN_GRANTS: ReadonlyArray<{
-  scope: string;
-  /** 人话说明，出现在授权页与审计里。 */
-  label: string;
-  allows: (method: string, path: string) => boolean;
-}> = [
-  {
-    scope: 'instance:read',
-    label: 'Page Agent Bridge（驱动预览页面）',
-    // 保持原样：Bridge 需要 POST 指令，这里不限制方法。
-    allows: (_method, path) => path.startsWith('/api/bridge/'),
-  },
-  {
-    scope: 'report:read',
-    label: '只读验收报告（列表与正文）',
-    allows: (method, path) => method === 'GET' && (
-      path === '/api/reports'
-      // `[^/]+` 而不是 `.+`：后者会让 `/api/reports/a/b/raw` 之类的路径也过关。
-      || /^\/api\/reports\/[^/]+\/raw$/.test(path)
-    ),
-  },
-];
-
-/** 这套 scope 允不允许这次请求。判据只有这一处，读它就能回答「这个 token 能干什么」。 */
-export function connectionTokenAllows(
-  scopes: readonly string[] | undefined,
-  method: string,
-  path: string,
-): boolean {
-  const owned = new Set(scopes || []);
-  const m = String(method || '').toUpperCase();
-  return CONNECTION_TOKEN_GRANTS.some((grant) => owned.has(grant.scope) && grant.allows(m, path));
-}
-
-/** 授权页与文档里展示用：scope 对应的人话说明。 */
-export function connectionScopeLabels(): Array<{ scope: string; label: string }> {
-  return CONNECTION_TOKEN_GRANTS.map((g) => ({ scope: g.scope, label: g.label }));
-}
-
 function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
   // dashboard customEnv 里的 AI_ACCESS_KEY 字段是用户在 UI 上配的另一个层面，
@@ -1463,14 +1402,25 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
     }
-    // MAP/CDS 系统互联长效 token。这是用户在 /api/cds-system/connections/authorize
-    // 里亲手批准的长期授权，**不等于 CDS 管理员权限**：它能碰什么，由
-    // CONNECTION_TOKEN_GRANTS 那张表逐条列举（见该常量的注释）。
-    if (stateService) {
+    // MAP/CDS system connection long token. This token is the user-approved,
+    // long-lived authorization handed to an external system (MAP) after
+    // /api/cds-system/connections/authorize. It is deliberately NOT equivalent
+    // to a CDS admin key: it only reaches the routes declared in
+    // connection-token-routes.ts, and each of those declares the scope it needs.
+    // Keep the list there, not here — see that file for why.
+    const connectionScope = stateService
+      ? connectionTokenRequiredScope(req.method, req.path)
+      : null;
+    if (stateService && connectionScope) {
       const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
       const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
-      if (connection && connectionTokenAllows(connection.scopes, req.method, req.path)) {
-        stateService.updateCdsConnection(connection.id, { lastUsedAt: new Date().toISOString() });
+      if (connection && connection.scopes.includes(connectionScope)) {
+        // 「最近用过」节流写：每次更新都会把整份状态存一遍，而报告只读放开之后
+        // 一轮自动刷新会打出几百个请求。判据见 connection-token-routes.ts。
+        const nowIso = new Date().toISOString();
+        if (shouldRecordConnectionUse(connection.lastUsedAt, nowIso)) {
+          stateService.updateCdsConnection(connection.id, { lastUsedAt: nowIso });
+        }
         return {
           id: `cds-connection:${connection.id}`,
           agentName: `MAP (${connection.partnerName || connection.partnerId || connection.id})`,

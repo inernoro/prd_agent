@@ -22,3 +22,22 @@
 | fix | prd-admin | 流式改写刚吐完的斜体不再被摘掉尾巴，`*斜体*` 不会退化成露出星号的 `*斜体` |
 | fix | prd-admin | 改写一个字都没吐出来就失败时，正文不再整段挂删除线，只有操作条报错 |
 | fix | prd-admin | 划词 AI 浮层「替换原文」的禁用原因文案补全，不再把两种原因说成一种 |
+| fix | prd-admin | 划词改写失败不再把上游原文（如「未提供令牌」）甩给用户，翻译成能照着做的一句话，原文留在悬停提示里 |
+| polish | prd-admin | 流式改写期间原文只压灰不划红删除线，改完待确认才是灰删除线 + 蓝新增 |
+| fix | prd-admin | 改写操作条钉在正文区右上角，不再追着选区跑砸在标题和正文上 |
+| fix | prd-admin | 流式光标不再被当成新增内容标蓝：刚换行、整行只剩光标的那几帧不再渲染成一个孤零零的蓝色小方块 |
+| fix | prd-admin | 流式改写不再一闪一闪：正文每个 token 全量重挂会把新增块的进场动画无限重启，改成流式期间不播逐元素动画，动画留给「改完」那一下 |
+| test | prd-admin | 新增 doc-diff.css 层叠守卫：按特异性 + 顺序算出最终生效值，防止同特异性覆盖靠行号成立 |
+| docs | prd-admin | 知识库台账记下「正文渲染器每个 token 重挂整棵 DOM」这笔债（选区丢失 / CPU / Mermaid 重初始化） |
+| refactor | prd-admin | 逐句修改的流式呈现改走全站统一的 StreamingText：流式期正文只放一个空锚点，正在写的那段由共享组件 portal 进去，节奏与光标不再自建一套 |
+| fix | prd-admin | 流式期正文不再逐 token 重算：正文 DOM 变更 700 次降到 30 次，ins 重建 278 次降到 10 次 |
+| test | prd-admin | 新增流式锚点守卫（含 sanitize 的 user-content- 前缀）与接线守卫（DocBrowser 必须走 StreamingText、memo 依赖不许含已吐出文字） |
+| feat | prd-admin | 共享流式组件 StreamingText 流式期也渲染 markdown：写到一半的行内标记与代码围栏自动补合法，不再让用户盯着满屏星号等到最后一刻 |
+| perf | prd-admin | MarkdownViewer 的渲染器身份改为跨 render 稳定（components 走空依赖 useMemo + 实例态收进 ref），正文不再每次重渲染就整棵重挂：流式一次改写元素重建从 108 次降到 10 次 |
+| polish | prd-admin | 就地 diff 配色从随手写的蓝红原色改为品牌暖色派生：新增是极淡暖底 + 一条细下划线，删除退成 muted 灰 + 细删除线，不再是复古 Windows 那种实心色块 |
+| test | prd-admin | 新增 closeOpenMarkdown 与流式 markdown 渲染单测、MarkdownViewer 渲染器身份守卫 |
+| docs | prd-admin | rule.frontend.streaming-text 升到 v2.1：流式期渲染 markdown，禁止项从「每 chunk 重渲染」改写为「渲染器身份不稳」 |
+| feat | prd-admin | 就地 diff 改成词级：一行只改了几个字时只标那几个字，不再整行删+整行增（行内标记整体算一个原子，不会被劈开） |
+| refactor | prd-admin | 划词改写不再流式渲染半成品：等 AI 写完 diff 一次性出现，等待期只把选区压灰 + 条子报已用时/可停止 |
+| polish | prd-admin | 新增内容去掉下划线；浮层顶部那条品牌渐变去掉（纯装饰，用户会追问它的含义就说明它在制造疑问） |
+| perf | prd-admin | 划词浮层跟随滚动改为 rAF 合帧 + 直写 DOM，不再每个 scroll 事件同步读布局并触发 React 提交；四处抄本合并成一个共享 hook |

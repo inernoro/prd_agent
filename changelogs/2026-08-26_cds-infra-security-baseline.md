@@ -82,3 +82,5 @@
 | docs | cds | debt.cds.md 新增 E68（备份路径拿不到 containerPort，本轮给 nacos 加的端口识别在这条路上没接上线）/ E69（运行时认证自检只读 Cmd 不读 Entrypoint，与创建门禁结论相反，天天发假警报），两条按 §5.5 熔断记账 |
 | docs | cds | debt.cds.md 新增 E70：nacos 的 accessToken 被拼进 URL、进了 curl 命令行——本 PR 刚把口令挪出 argv，换来的 token 又摆了回去（与 E56 同一处改动，按 §5.5 熔断记账）|
 | docs | cds | debt.cds.md 新增 E71：恢复端点按住上传流后只有前两个提前返回放开了它，redis 那条路上几处拒绝会让上传方卡住而不是收到 4xx |
+| merge | cds | 合 main 解冲突：连接凭据的放行判据两条分支各写了一遍，撞在同一段鉴权代码上。保留 main 的模块化判据（`connection-token-routes.ts`，带接线守卫）与它独有的「最近用过」节流写，删掉本分支内联在 `server.ts` 的那张表；**报告两条的范围钉回 `report:read`**，否则这次合并会把本分支线上正在用的严格语义悄悄放宽成「老授权顺手能读所有报告」 |
+| test | cds | 本分支原有的 24 条范围用例一条没删：加一个逐字复刻 `server.ts` 用法的适配器接到存活模块上，两处依赖标签表的用例改成从判据反推所需范围。两套合计 44 条全绿 |

@@ -1,0 +1,42 @@
+| fix | prd-api | 修复 MdsWriteRetiredGuardTests 从未编译过：测试工程按既有写法链入 filter 源码并补 ASP.NET Core FrameworkReference，44 条用例真正跑起来 |
+| fix | prd-api | 注册守卫改为剥掉行注释后再断言——原写法把注册行注释掉一样能匹配上，等于拿不生效的声明当证明；补一条负对照钉住剥注释这步 |
+| fix | prd-api | `api/mds` 判据改为按段匹配，不再把 `api/mdsomething-else` 一起挡掉；模板归一化后判据与白名单查表用同一口径 |
+| fix | llmgw | 死成员判定补上模型存在性：上游还在、模型已删的成员照样解析不到，原来只查平台会把它当活成员，托管池两头堵死 |
+| fix | llmgw | 死成员判定放过中继成员：`__exchange__` 与中继 id 本就不是平台 id，拿平台表查必然「查不到」，原来会把活的中继成员判成死成员 |
+| refactor | prd-admin | 清掉模型管理退场后无人调用的写包装：models 12 / platforms 3 / llmConfigs 4 / modelGroups 8 / schedulerConfig 1，整份 exchanges.ts 与 mock/impl/models.ts 一并删除，契约同步收成只读 |
+| polish | llmgw | 窄屏行操作菜单按实测抬高，避开 CDS 预览徽章（fixed 左下角、z-index 99999）的遮挡，正式环境无该元素时行为不变 |
+| fix | llmgw | 池健康统计不再把「指不到任何上游或模型」的成员算成 healthy——一次请求都发不出去的池此前在控制台显示「健康」 |
+| fix | llmgw | 成员顺位的圆点与池级徽章口径统一：指不到上游的成员在列表响应里归一成「不可用」，不再出现「池标已中断、第 1 顺位却是绿点」 |
+| refactor | llmgw | 可解析成员判定收敛成一个入口（IsResolvablePoolMemberKey），删掉运行 gate 里抄的第二份，补守卫钉住只许有一份口径 |
+| docs | doc | debt.platform.llm-gateway 记两条待清理数据：三个全失效专用池、与托管默认池重复的对话主池 |
+| ops | llmgw | 清掉四个空壳模型池（ASR 豆包 BigModel / Stream、视频 Seedance 2.0 Fast、与托管默认池重复的对话主池），剩余 13 个池一类一个、全部网关权威 |
+| fix | llmgw | 成员可解析性归一收进唯一出口，变更端点不再吐库里的原始健康值——原先改完成员卡片会当场翻绿、刷新又变回去 |
+| fix | llmgw | 不可用成员说得出为什么：新增 unavailableReason（上游没了 / 模型没了），界面不再写「不可用（连续失败 0 次）」这种自相矛盾的归因 |
+| ops | llmgw | 摘掉图片生成默认池里两个悬空成员（挂已删上游、且排在所有真实模型之前），末态 13 池 311 成员全部可用 |
+| test | prd-api | 补三条守卫：归一必须覆盖每一个吐出池的出口、不可用成员必须说得出为什么、窄屏行操作菜单必须量出遮挡再让位（前端契约守卫自动镜像，368→374 条断言） |
+| fix | prd-admin | 主题硬编码基线清掉三条指向已删页面的幽灵条目，并给棘轮加上「基线里的文件必须存在」断言 |
+| refactor | prd-admin | 再清一轮零消费方死代码：三个 adapter-info 读包装、整份 llmConfigs 服务与契约、services/mock 三个孤儿文件、api.ts 里 11 个无人引用的 mds 地址构造器 |
+| docs | prd-api | 点名两处虚的承诺：白名单守卫改名为名副其实的 AllowlistIsPinnedToExactlyTheKnownExemptions；LlmSchedulingIntegrationTests 标注为退场后永远跑不通 |
+| fix | llmgw | MAP 遗留默认池不再被当成非默认删掉：判据原先在读到 IsDefaultForType 之前就因缺 TenantId 早退，任何 MAP 默认池只要没 appCaller 绑定就能被直接删，而 ModelResolver 还在拿它当兜底 |
+| fix | llmgw | 摘除托管池成员改为定点 $pull + 版本递增：原先整数组覆写会吞掉并发改动，且不递增版本让陈旧句柄能把摘掉的成员写回来 |
+| fix | llmgw | 控制台给得出摘除死成员的入口：托管池整体只读，但指向已删上游的成员放开「移除」，否则文案在叫人做一件控制台里做不到的事 |
+| test | prd-api | 补三条守卫钉住上述三点，均已跑负对照 |
+| fix | llmgw | 不可用归因拆成四值（上游/模型 × 不存在/停用）：可解析索引按启用算、悬空判定按存在算，两者口径不同，原先会给仅仅被停用的成员长出一个点了必然 409 的摘除按钮，还把「停用」说成「已不存在」 |
+| test | prd-api | 补守卫钉住四值分类与「只对真死成员给摘除入口」，已跑三条负对照 |
+| refactor | llmgw | 「能不能摘除」收敛成唯一判据 IsDeadPoolMember：池列表下发 removable，成员删除端点用同一个函数放行，前端不再拿派生字段重建后端判断（此前三轮 review 各漏一处，每处都是「按钮亮着、点下去 409」） |
+| fix | llmgw | 摘除标记不再跟着健康状态早退——在上游被删之前就已失败到不可用的成员，此前永远拿不到标记，而后端其实允许删它 |
+| fix | llmgw | 中继成员与「仅被停用」的成员不再被误判为可摘除 |
+| refactor | llmgw | 模型匹配口径（_id / ModelName / Name 三选一）抽成 PoolMemberMatchesModelDoc 一处，两个判定共用 |
+| test | prd-api | 守卫改为钉住「唯一判据」：删除端点与列表必须调同一个函数、摘除标记不许跟健康状态早退、判据只看在不在、前端不许拿归因当按钮开关，四条负对照全部跑红 |
+| fix | llmgw | 托管池的受限说明不再和摘除按钮打架：原文一刀切写「不能移除成员」，而死成员其实可以摘，运维会以为那个按钮不该按 |
+| fix | llmgw | 修回重构引入的回归：按模型名删成员（省略 platformId）在托管池上被一律 409。改为先解析出这次覆盖到的成员，要求全都是死成员才放行，逐个判定仍走同一个原语 |
+| fix | llmgw | 摘除托管池成员的更新过滤带上 memberFilter：$pull 空转时 Set/Inc 仍生效，只按 _id 过滤会让「什么都没摘到」也算摘过了——并发第二个请求写进审计还白白 bump 版本作废别人的句柄 |
+| fix | llmgw | 中继成员的存在性判定忽略嵌套 Enabled：中继里那条模型映射只是被停用时，归因不再写成「所挂的上游已不存在」，运维的下一步从「去重建」纠正为「去启用」 |
+| fix | llmgw | 上游或模型被停用的池成员不再给「恢复接单」按钮，改为指路去启用那个资源 |
+| fix | llmgw | 中继整条停用与它里面那条模型映射停用分开归因，不再叫运维去启用一条本来就启用着的中继 |
+| fix | llmgw | 「恢复接单」的判据从「归因是哪一种」收成「有没有归因」：解析不到的成员一律不给恢复入口，四种归因各有各的下一步 |
+| fix | llmgw | 默认位交给网关池时一并退役 MAP 遗留集合的同类型默认标记——遗留侧没有写入口，标记清不掉就等于那个池永远删不掉 |
+| fix | llmgw | 池级证据句的下一步改走 memberNextStep，不再对被停用的成员说「需要摘除或重新接上上游」 |
+| docs | doc | debt.platform.llm-gateway 记下退役遗留默认位对 ModelResolver 第三步兜底的连带影响 |
+| perf | llmgw | 批量认领模型池按需建一次解析索引整批复用，不再每认领一个池就重扫三张表两侧（认领 13 个池由 156 次集合读降到 12 次）|
+| fix | llmgw | 坏成员的下一步只说「先做什么」，不再承诺「做完这一件就会接单」——同时存在多个故障时那是假话 |

@@ -2821,6 +2821,87 @@ app.MapPost("/gw/pool-types/ensure", async (HttpContext http) =>
     }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
+// ── 池成员可解析性：建索引 + 归一 ───────────────────────────────────────────────
+//
+// 「这个成员还指得到一个上游 + 模型吗」这件事，池列表要用、每个返回池的变更端点也要用。
+// 只做在列表上就会分裂：改完成员拿回来的那份响应还是库里的原始健康值，
+// 卡片当场翻绿、刷新又变回去——正是归一本身要防的自相矛盾，换条路径复现（形状 3）。
+// 所以收成一个出口，谁要吐 PoolItem 谁就过这道。
+
+async Task<PoolResolutionIndex> BuildPoolResolutionIndexAsync(HttpContext http)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var platformIds = (await gwPlatforms.Find(TenantAccess.Filter(http))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled"))
+            .ToListAsync())
+        .Where(d => d.AsNullableBool("Enabled") ?? true)
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToHashSet(StringComparer.Ordinal);
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http, fb.Ne("Enabled", false)))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+        .ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http, fb.Ne("Enabled", false)))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+        .ToListAsync();
+
+    // GW 与 MAP 两侧取并集：内部租户的池列表里两种权威来源混在一起，
+    // 只查一侧会把另一侧的活成员误判成死的。MAP 集合本就是内部租户专属，外部租户不查。
+    if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+    {
+        foreach (var d in await platforms.Find(FilterDefinition<BsonDocument>.Empty)
+                     .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Enabled")).ToListAsync())
+        {
+            if ((d.AsNullableBool("Enabled") ?? true) && !string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
+                platformIds.Add(d.GetStringOrEmpty("_id"));
+        }
+        modelDocs.AddRange(await models.Find(fb.Ne("Enabled", false))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+            .ToListAsync());
+        exchangeDocs.AddRange(await modelExchanges.Find(fb.Ne("Enabled", false))
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+            .ToListAsync());
+    }
+    // 第二套：只看存在、不看启用。用来把「被停用」和「压根没了」分开——
+    // 少了它，一个仅仅被停用的上游会被标成「已不存在」并给出摘除入口，
+    // 而后端的悬空判定查的是存在性，那个按钮点下去必然 APPEND_ONLY_POOL。
+    var existingPlatformIds = (await gwPlatforms.Find(TenantAccess.Filter(http))
+            .Project(Builders<BsonDocument>.Projection.Include("_id"))
+            .ToListAsync())
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .ToHashSet(StringComparer.Ordinal);
+    var existingModels = await gwModels.Find(TenantAccess.Filter(http))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+        .ToListAsync();
+    var existingExchanges = await gwModelExchanges.Find(TenantAccess.Filter(http))
+        .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+        .ToListAsync();
+    if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+    {
+        foreach (var d in await platforms.Find(FilterDefinition<BsonDocument>.Empty)
+                     .Project(Builders<BsonDocument>.Projection.Include("_id")).ToListAsync())
+        {
+            if (!string.IsNullOrWhiteSpace(d.GetStringOrEmpty("_id")))
+                existingPlatformIds.Add(d.GetStringOrEmpty("_id"));
+        }
+        existingModels.AddRange(await models.Find(FilterDefinition<BsonDocument>.Empty)
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("ModelName").Include("Name").Include("PlatformId"))
+            .ToListAsync());
+        existingExchanges.AddRange(await modelExchanges.Find(FilterDefinition<BsonDocument>.Empty)
+            .Project(Builders<BsonDocument>.Projection.Include("_id").Include("Name").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+            .ToListAsync());
+    }
+
+    return new PoolResolutionIndex(
+        platformIds, modelDocs, exchangeDocs,
+        existingPlatformIds, existingModels, existingExchanges);
+}
+
+/// <summary>建一次索引、映射一个池并归一。变更端点用它替代裸 MapPool。</summary>
+async Task<PoolItem> MapPoolResolvedAsync(HttpContext http, BsonDocument doc)
+    => ApplyPoolMemberResolution(MapPool(doc), await BuildPoolResolutionIndexAsync(http));
+
 app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHours) =>
 {
     var tenantId = TenantAccess.GetRequired(http).TenantId;
@@ -2832,6 +2913,9 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
     var gwDocs = await gwModelPools.Find(TenantAccess.Filter(http, filter)).Sort(Builders<BsonDocument>.Sort.Ascending("Priority")).ToListAsync();
     var gwIds = gwDocs.Select(d => d.GetStringOrEmpty("_id")).Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet(StringComparer.Ordinal);
     var docs = gwDocs.Concat(mapDocs.Where(d => !gwIds.Contains(d.GetStringOrEmpty("_id")))).ToList();
+
+    var resolutionIndex = await BuildPoolResolutionIndexAsync(http);
+
     var hours = sinceHours is > 0 and <= 24 * 90 ? sinceHours.Value : 24 * 7;
     var since = DateTime.UtcNow.AddHours(-hours);
     var appCallerDocs = await gwAppCallers.Find(TenantAccess.FilterTeamScope(http, fb.Empty))
@@ -2916,6 +3000,7 @@ app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHo
             : Math.Round(recentTen.Count(log => string.Equals(log.AsNullableString("Status"), "succeeded", StringComparison.Ordinal)) * 100m / recentTen.Count, 1, MidpointRounding.AwayFromZero);
         item.LastRequestAt = stats?.AsNullableUtcDateTime("LastRequestAt").ToIso();
 
+        ApplyPoolMemberResolution(item, resolutionIndex);
         item.HealthyMembers = item.Models.Count(model => model.HealthStatus == 0);
         item.DegradedMembers = item.Models.Count(model => model.HealthStatus == 1);
         item.UnavailableMembers = item.Models.Count(model => model.HealthStatus == 2);
@@ -4019,37 +4104,11 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             .Select(x => x.AsBsonDocument)
             .Any(member => IsResolvablePoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges));
     }
+    // 这里原本抄了一份和 IsResolvableGatewayPoolMember 一模一样的判定（连中继匹配都抄了一遍）。
+    // 两份口径必然各自漂移：池健康统计说这成员是活的、默认池校验说它是死的，谁也说不清哪个对。
+    // 收敛成一个入口，下面这两个只是薄转发。
     static bool IsResolvablePoolMember(BsonDocument member, HashSet<string> enabledPlatformIds, List<BsonDocument> enabledModels, List<BsonDocument> enabledExchanges)
-    {
-        if ((member.AsNullableInt("HealthStatus") ?? 0) == 2) return false;
-        var modelId = member.GetStringOrEmpty("ModelId");
-        var platformId = member.GetStringOrEmpty("PlatformId");
-        if (modelId.Length == 0 || platformId.Length == 0) return false;
-        if (string.Equals(platformId, "__exchange__", StringComparison.Ordinal))
-        {
-            return enabledExchanges.Any(exchange => ExchangeSupportsModel(exchange, modelId));
-        }
-        var exchangeById = enabledExchanges.FirstOrDefault(exchange => string.Equals(exchange.GetStringOrEmpty("_id"), platformId, StringComparison.Ordinal));
-        if (exchangeById is not null) return ExchangeSupportsModel(exchangeById, modelId);
-        if (!enabledPlatformIds.Contains(platformId)) return false;
-        return enabledModels.Any(model =>
-            string.Equals(model.AsNullableString("PlatformId"), platformId, StringComparison.Ordinal)
-            && (string.Equals(model.GetStringOrEmpty("_id"), modelId, StringComparison.Ordinal)
-                || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
-                || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal)));
-    }
-    static bool ExchangeSupportsModel(BsonDocument exchange, string modelId)
-    {
-        if (string.Equals(exchange.AsNullableString("ModelAlias"), modelId, StringComparison.Ordinal)) return true;
-        if (exchange.AsStringList("ModelAliases").Contains(modelId, StringComparer.Ordinal)) return true;
-        var modelsArr = exchange.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-        return modelsArr
-            .Where(x => x.IsBsonDocument)
-            .Select(x => x.AsBsonDocument)
-            .Any(m => (m.AsNullableBool("Enabled") ?? true)
-                      && (string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
-                          || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
-    }
+        => IsResolvableGatewayPoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges);
 
     var gwPoolIds = IdSet(gwPoolDocs);
     var activeAppCallers = appCallerDocs
@@ -8648,10 +8707,20 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
 // 而且平台删除要求先清模型引用，没有这个端点，那条路径根本走不通。
 app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
 {
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    var filter = TenantAccess.Filter(http, sourceFilter);
     var doc = await gwModels.Find(filter).FirstOrDefaultAsync();
+    // MAP 遗留模型清理：理由同 pools 的 MAP 分支——平台删除的阻挡清单会数 MAP 的 llmmodels，
+    // 不给一条能扫掉它们的路，上游就永远删不动（MAP 侧写接口已退场）。
+    var isMapLegacy = false;
     if (doc is null)
-        return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型；MAP 来源模型请先认领"), jsonOptions, 409);
+    {
+        if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+            doc = await models.Find(sourceFilter).FirstOrDefaultAsync();
+        if (doc is null)
+            return Json(ApiEnvelope<ModelDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型；MAP 来源模型请先认领"), jsonOptions, 409);
+        isMapLegacy = true;
+    }
 
     var blockers = await CollectModelDeleteBlockersAsync(
         http, doc, gwModelPools, modelGroups, gwModelOfferings, gwLogicalModels, internalTenantId);
@@ -8671,12 +8740,15 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
             409);
     }
 
-    await gwModels.DeleteOneAsync(filter);
+    // 先把成员从平台托管默认池里摘掉，再删模型：顺序反了会留下一条解析不到任何东西的派生成员。
+    var prunedManagedPools = await PruneManagedPoolMembersAsync(http, gwModelPools, doc);
+    if (isMapLegacy) await models.DeleteOneAsync(sourceFilter);
+    else await gwModels.DeleteOneAsync(filter);
     await WriteOperationAuditAsync(
         operationAudits,
         http,
         action: "model.delete",
-        targetType: "llmgw_model",
+        targetType: isMapLegacy ? "map_llm_model" : "llmgw_model",
         targetId: id,
         targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
         success: true,
@@ -8685,7 +8757,9 @@ app.MapDelete("/gw/models/{id}", async (HttpContext http, string id) =>
         {
             { "modelName", ToBsonAuditValue(doc.AsNullableString("ModelName")) },
             { "platformId", ToBsonAuditValue(doc.AsNullableString("PlatformId")) },
-            { "authority", "llm_gateway" },
+            { "authority", isMapLegacy ? "map" : "llm_gateway" },
+            // 顺带从哪些托管默认池里摘了成员，要留痕——否则事后看不出池成员数为什么少了
+            { "prunedManagedPools", new BsonArray(prunedManagedPools) },
         });
     return Json(ApiEnvelope<ModelDeleteBlockers>.Ok(new ModelDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -9532,7 +9606,7 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
             { "isDefaultForType", false },
         });
 
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(doc)), jsonOptions, 201);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, doc)), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池属性编辑：只允许写 GW 权威池。MAP 来源池必须先认领，避免把目标权威又写回旧集合。
@@ -9541,10 +9615,26 @@ app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest b
 //   - 还有 appCaller 绑着它    → 那些调用方会失去路由目标
 app.MapDelete("/gw/pools/{id}", async (HttpContext http, string id) =>
 {
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
+    var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
+    var filter = TenantAccess.Filter(http, sourceFilter);
     var doc = await gwModelPools.Find(filter).FirstOrDefaultAsync();
+    // MAP 遗留池清理：GW 里没有这条，就去 MAP 的 model_groups 找。
+    //
+    // 为什么必须能删：平台/模型的删除阻挡清单**会数** MAP 侧的引用
+    //（CollectPlatformDeleteBlockersAsync / CollectModelDeleteBlockersAsync 都扫 modelGroups），
+    // 但删除历来只写 GW 集合。于是出现「看得见、清不掉」——网关报着一串 MAP 遗留池挡路，
+    // 而网关自己没有任何端点能扫掉它们；MAP 那边的模型管理写接口又已整体退场（410）。
+    // 那不是保护，是死锁：debris 只能一直堆着，上游永远删不干净。
+    // 补这条 MAP 分支，等于让「谁数得出来，谁就扫得掉」重新成立。
+    var isMapLegacy = false;
     if (doc is null)
-        return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型池；MAP 来源请先认领"), jsonOptions, 409);
+    {
+        if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
+            doc = await modelGroups.Find(sourceFilter).FirstOrDefaultAsync();
+        if (doc is null)
+            return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型池；MAP 来源请先认领"), jsonOptions, 409);
+        isMapLegacy = true;
+    }
 
     var blockers = new PoolDeleteBlockers
     {
@@ -9569,17 +9659,21 @@ app.MapDelete("/gw/pools/{id}", async (HttpContext http, string id) =>
         return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("POOL_IN_USE", string.Join("；", parts), blockers), jsonOptions, 409);
     }
 
-    await gwModelPools.DeleteOneAsync(filter);
+    if (isMapLegacy) await modelGroups.DeleteOneAsync(sourceFilter);
+    else await gwModelPools.DeleteOneAsync(filter);
     await WriteOperationAuditAsync(
         operationAudits, http,
-        action: "pool.delete", targetType: "llmgw_model_pool", targetId: id,
+        action: "pool.delete",
+        targetType: isMapLegacy ? "map_model_group" : "llmgw_model_pool",
+        targetId: id,
         targetName: doc.AsNullableString("Name"), success: true, reason: null,
         changes: new BsonDocument
         {
             { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
             { "modelType", ToBsonAuditValue(doc.AsNullableString("ModelType")) },
             { "memberCount", doc.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray.Count : 0 },
-            { "authority", "llm_gateway" },
+            // 审计必须能分清扫的是哪一侧：MAP 遗留池删掉就再也回不来（MAP 写接口已退场）
+            { "authority", isMapLegacy ? "map" : "llm_gateway" },
         });
     return Json(ApiEnvelope<PoolDeleteBlockers>.Ok(new PoolDeleteBlockers()), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -9707,7 +9801,7 @@ app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] Upda
         changes: changes);
 
     var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 批量认领 MAP 模型池：把 MAP model_groups 复制到 llm_gateway，自有池默认不覆盖。
@@ -9724,6 +9818,10 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
     var claimed = 0;
     var skipped = 0;
     var changedItems = new List<PoolItem>();
+    // 索引按需建一次、整批复用。它扫的是上游/模型/中继三张表（内部租户还要各扫 GW 与 MAP 两侧，
+    // 共 12 次集合读），而认领池并不会改动这三张表——每认领一个池重建一次，
+    // 认领 13 个池就是 156 次读，全部读出同一份内容。
+    PoolResolutionIndex? resolutionIndex = null;
 
     foreach (var source in mapDocs)
     {
@@ -9777,7 +9875,8 @@ app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClai
             }
         }
         claimed++;
-        changedItems.Add(MapPool(claimedDoc));
+        resolutionIndex ??= await BuildPoolResolutionIndexAsync(http);
+        changedItems.Add(ApplyPoolMemberResolution(MapPool(claimedDoc), resolutionIndex));
     }
 
     await WriteOperationAuditAsync(
@@ -10101,7 +10200,7 @@ app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string
         SkippedExisting = skippedExisting,
         SkippedInvalid = Math.Max(0, skippedInvalid),
         CapabilityFilter = capabilityFilter,
-        Pool = MapPool(fresh),
+        Pool = await MapPoolResolvedAsync(http, fresh),
     };
 
     await WriteOperationAuditAsync(
@@ -10401,7 +10500,7 @@ app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBod
         });
 
     var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 手动恢复保持成员不可用，只授予进入原子半开的资格；下一条真实业务请求负责验证，不发送额外付费探测。
@@ -10459,7 +10558,7 @@ app.MapPost("/gw/pools/{id}/models/recover", async (HttpContext http, string id,
         });
 
     var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池成员删除：只允许从 GW 权威池删除；MAP 来源池必须先认领。
@@ -10474,9 +10573,21 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
     if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
     if (IsManagedAppendOnlyPool(pool))
     {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "APPEND_ONLY_POOL",
-            "平台托管默认池不允许删除成员；如需特殊化，请创建专用模型池。"), jsonOptions, 409);
+        // append-only 是为了防「手滑摘掉一个还在服务的成员」，不是为了把**指向已删上游的死成员**钉死。
+        // 后者是纯 debris：那条上游没了，成员按 (modelId, platformId) 永远解析不到，
+        // 留着只会让平台删除的阻挡清单一直挂着一条谁也清不掉的引用。
+        //
+        // 判据与池列表下发的 Removable 是**同一个函数**——控制台显示的那个按钮，
+        // 就是这里放行的那个条件，不存在「按钮亮着但点下去 409」。
+        // platformId 可省略（按模型名删），那样可能一次覆盖多个成员，必须全死才放行；
+        // 逐个成员走的仍是池列表下发 Removable 的同一个原语。
+        var resolutionIndex = await BuildPoolResolutionIndexAsync(http);
+        if (!AreAllTargetedPoolMembersDead(pool, normalizedModelId, normalizedPlatformId, resolutionIndex))
+        {
+            return Json(ApiEnvelope<PoolItem>.Fail(
+                "APPEND_ONLY_POOL",
+                "平台托管默认池不允许删除成员；如需特殊化，请创建专用模型池。"), jsonOptions, 409);
+        }
     }
 
     var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
@@ -10531,7 +10642,7 @@ app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, strin
         });
 
     var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 模型池默认标记：单文档原子更新类型注册表中的 DefaultPoolId。
@@ -10605,6 +10716,24 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
             .Set("UpdatedAt", now)
             .Unset("DefaultSwitchPendingUntil")
             .Inc("Version", 1));
+    // MAP 遗留默认位一并退役。
+    //
+    // model_groups 没有 TenantId，也不再有任何写入口（MAP 模型管理写接口整体退场）。
+    // 它的 IsDefaultForType 一旦为真就再也清不掉：删除阻挡清单会永远报「这是当前默认池」，
+    // 而唯一的解法「先把默认改指别的池」在遗留侧根本不存在——那个池成了死胡同。
+    // 所以「GW 池接管这个类型的默认位」必须同时落到遗留侧，这就是那条缺失的迁移路径。
+    //
+    // 连带的运行时后果要说清楚：ModelResolver 第三步（回退默认池）只读 model_groups。
+    // 清零之后，既没进 GW appCaller 注册表、也没有专属绑定的调用方不再命中这个遗留池，
+    // 按 llm-gateway 规则既定的优先级降到第四步的传统配置（IsMain / IsIntent / ...）。
+    // 这正是「接管默认位」该有的语义——在此之前控制台说默认是 A、解析器却仍在发 B，
+    // 那才是真正的不一致。
+    var retiredLegacyDefaults = tenantId == internalTenantId
+        ? (await modelGroups.UpdateManyAsync(
+            fb.And(fb.Eq("ModelType", modelType), fb.Eq("IsDefaultForType", true), fb.Ne("_id", id)),
+            Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now))).ModifiedCount
+        : 0;
+
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -10620,9 +10749,10 @@ app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleD
             { "modelType", modelType },
             { "authority", "llm_gateway" },
             { "typeVersion", updatedType.AsNullableLong("Version") ?? 0 },
+            { "retiredLegacyDefaults", retiredLegacyDefaults },
         });
     var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    var item = MapPool(fresh);
+    var item = await MapPoolResolvedAsync(http, fresh);
     item.IsDefaultForType = string.Equals(authoritativePoolId, id, StringComparison.Ordinal);
     return Json(ApiEnvelope<PoolItem>.Ok(item), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
@@ -10686,7 +10816,7 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
         });
 
     var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
+    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // ───────────────────── 快捷提 bug（Ctrl+B 全局面板，2026-07-27）─────────────────────
@@ -12594,6 +12724,124 @@ static bool ModelHasParameterCapability(BsonDocument modelDoc)
         .Any(type => type.StartsWith("parameter:", StringComparison.OrdinalIgnoreCase));
 }
 
+/// <summary>
+/// 把一个即将被删的模型，从所有「平台托管默认池」的成员里摘掉，返回被摘的池名。
+///
+/// 这类池的成员是按用途自动收进来的派生结果，所以删源模型时同步收敛属于维护而非编排改动；
+/// 非托管池不碰——那些是人手编排的，成员该不该走由 CollectModelDeleteBlockersAsync 拦下来问人。
+/// </summary>
+static async Task<List<string>> PruneManagedPoolMembersAsync(
+    HttpContext http,
+    IMongoCollection<BsonDocument> gwPools,
+    BsonDocument modelDoc)
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var platformId = modelDoc.GetStringOrEmpty("PlatformId");
+    var aliases = new[]
+        {
+            modelDoc.GetStringOrEmpty("_id"),
+            modelDoc.AsNullableString("ModelName") ?? string.Empty,
+            modelDoc.AsNullableString("Name") ?? string.Empty,
+        }
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+    if (aliases.Length == 0 || string.IsNullOrWhiteSpace(platformId)) return new List<string>();
+
+    var memberFilter = fb.ElemMatch<BsonDocument>(
+        "Models",
+        fb.And(fb.In("ModelId", aliases), fb.Eq("PlatformId", platformId)));
+    var pools = await gwPools.Find(TenantAccess.Filter(http, memberFilter)).ToListAsync();
+
+    var pruned = new List<string>();
+    foreach (var pool in pools.Where(IsManagedAppendOnlyPool))
+    {
+        // 定点摘除，不整数组覆写。
+        //
+        // 原来是「读出来、在内存里过滤、再 Set 回整个 Models」，两个问题：
+        // 一是并发的成员改动会被这次覆写吞掉（读到写之间别人加的成员直接没了）；
+        // 二是不递增 Version，于是在这次 prune 之前加载过该池的客户端，之后仍能拿着
+        // 旧版本号通过 PoolVersionGuard，把刚摘掉的成员原样写回来。
+        // 改成 $pull + Inc("Version")：摘除本身是幂等的定点操作，不需要版本守卫；
+        // 递增版本则让所有陈旧句柄的后续写入被既有守卫挡下，与其它成员改动端点同一套口径。
+        // 过滤里必须带上 memberFilter：$pull 匹配不到东西时是空操作，
+        // 但 Set/Inc 是无条件的，只用 _id 过滤会让「什么都没摘到」也算 ModifiedCount>0——
+        // 于是并发的第二个请求把自己记成「摘过了」写进审计，还白白 bump 一次版本，
+        // 把别人手里还有效的版本句柄作废掉。带上 memberFilter 后，
+        // 成员已经被别人摘走时这次更新压根不匹配，版本、时间戳、审计一起不动。
+        var pullResult = await gwPools.UpdateOneAsync(
+            TenantAccess.Filter(http, fb.And(fb.Eq("_id", pool.GetStringOrEmpty("_id")), memberFilter)),
+            Builders<BsonDocument>.Update
+                .PullFilter("Models", fb.And(
+                    fb.In("ModelId", aliases),
+                    fb.Eq("PlatformId", platformId)))
+                .Set("UpdatedAt", DateTime.UtcNow)
+                .Inc("Version", 1));
+        if (pullResult.ModifiedCount > 0)
+            pruned.Add(pool.AsNullableString("Name") ?? pool.GetStringOrEmpty("_id"));
+    }
+    return pruned;
+}
+
+/// <summary>
+/// 这条池成员是不是「死成员」——它按 (ModelId, PlatformId) 已经指不到任何东西了。
+///
+/// **这是「能不能摘除」的唯一判据。** 池列表把它算成 <c>PoolItem.Models[].Removable</c> 下发，
+/// 成员删除端点用同一个函数放行；前端不再自己拼条件去猜后端会不会答应。
+///
+/// 为什么必须唯一：此前前端拿派生的「不可用」标记去重建这个判据，连续三轮 review 抓出三处
+/// 分歧——上游只是被停用、成员挂在中继上、成员在上游被删之前就已经不健康——每一处都表现为
+/// 「控制台长出一个按钮，点下去必然 409」。补洞补不完，因为那本就是两份判据在各自漂移（形状 3）。
+///
+/// 判定刻意从严，只要有任何一条「还指得到 / 判不准」的迹象就当活成员保护住
+///（宁可拒绝，不可误删）：键为空、走中继解析（中继成员的 platformId 是 <c>__exchange__</c>
+/// 或某条中继的 id，压根不是平台 id）、平台还在且模型还在 —— 一律不算死。
+///
+/// 只看「在不在」，不看「启不启用」：停用是可逆的临时状态，启用即恢复，不该被当成 debris 摘掉。
+/// 也不看健康状态：一个在上游被删之前就已经失败到不可用的成员，照样是死成员。
+/// </summary>
+static bool IsDeadPoolMember(string modelId, string platformId, PoolResolutionIndex index)
+{
+    if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(platformId)) return false;
+
+    // 中继成员不走平台表解析，拿平台表判它必然「查不到」，会把活的中继成员误判成死成员
+    if (string.Equals(platformId, "__exchange__", StringComparison.Ordinal)) return false;
+    if (index.ExistingExchanges.Any(e => string.Equals(e.GetStringOrEmpty("_id"), platformId, StringComparison.Ordinal)))
+        return false;
+
+    // 上游还在 -> 再看这个模型还在不在；上游都没了 -> 直接是死成员
+    if (index.ExistingPlatformIds.Contains(platformId))
+    {
+        return !index.ExistingModels.Any(model => PoolMemberMatchesModelDoc(model, platformId, modelId));
+    }
+    return true;
+}
+
+/// <summary>
+/// 这次删除请求覆盖到的**所有**成员是不是都已经死了。
+///
+/// <c>platformId</c> 是可选的：只给 modelId 时按模型名删，可能一次匹配到多个成员
+///（同一个模型名挂在不同上游上）。此时必须**全都**是死成员才放行——只要还有一个活的，
+/// 这次删除就会顺带把它也摘掉。目标为空同样拒绝（判不准就保护）。
+///
+/// 逐个成员的判定复用 <see cref="IsDeadPoolMember"/>，与池列表下发 Removable 用的是同一个原语，
+/// 所以「控制台按钮亮着」和「删除端点放行」不可能分歧。
+/// </summary>
+static bool AreAllTargetedPoolMembersDead(
+    BsonDocument pool, string modelId, string platformId, PoolResolutionIndex index)
+{
+    var membersValue = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
+    var targets = membersValue
+        .Where(x => x.IsBsonDocument)
+        .Select(x => x.AsBsonDocument)
+        .Where(m => string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
+                    && (platformId.Length == 0
+                        || string.Equals(m.GetStringOrEmpty("PlatformId"), platformId, StringComparison.Ordinal)))
+        .ToList();
+    if (targets.Count == 0) return false;
+    return targets.All(m => IsDeadPoolMember(m.GetStringOrEmpty("ModelId"), m.GetStringOrEmpty("PlatformId"), index));
+}
+
 static bool IsManagedAppendOnlyPool(BsonDocument pool)
     => pool.AsNullableBool("ManagedByRegistry") == true
        && pool.AsNullableBool("AppendOnly") == true
@@ -12620,8 +12868,18 @@ static async Task<bool> IsCurrentDefaultPoolAsync(
     var tenantId = pool.AsNullableString("TenantId");
     var modelType = pool.AsNullableString("ModelType");
     var poolId = pool.AsNullableString("_id");
-    if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(modelType) || string.IsNullOrWhiteSpace(poolId))
+    if (string.IsNullOrWhiteSpace(modelType) || string.IsNullOrWhiteSpace(poolId))
         return false;
+
+    // MAP 遗留池（model_groups）压根没有 TenantId 字段，它「是不是默认」只由自身的
+    // IsDefaultForType 决定——这正是下面 `type is null` 那条兜底想覆盖的情况。
+    // 原来把 TenantId 为空也一并早退成 false，等于在读到那个标记之前就把兜底短路掉了：
+    // 于是任何 MAP 遗留默认池对删除阻挡清单都报「不是当前默认」，只要它碰巧没有
+    // appCaller 绑定就能被直接删掉，而 ModelResolver 仍在拿它当该模型类型的兜底，
+    // 删完那一类调用就没有后备了（形状 1：判据比它该管的范围窄）。
+    if (string.IsNullOrWhiteSpace(tenantId))
+        return pool.AsNullableBool("IsDefaultForType") == true;
+
     var type = await poolTypes.Find(Builders<BsonDocument>.Filter.And(
         Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
         Builders<BsonDocument>.Filter.Eq("Code", modelType))).FirstOrDefaultAsync();
@@ -12943,6 +13201,13 @@ static async Task<ModelDeleteBlockers> CollectModelDeleteBlockersAsync(
         fb.And(fb.In("ModelId", aliases), fb.Eq("PlatformId", platformId)));
     var poolDocs = await gwPools.Find(TenantAccess.Filter(http, memberFilter)).ToListAsync();
     if (isInternal) poolDocs.AddRange(await mapPools.Find(memberFilter).ToListAsync());
+
+    // 平台托管默认池不算阻挡：它的成员是**按用途自动收进来的派生结果**，不是谁手写的编排。
+    // 派生出来的引用不该反过来否决它的来源——否则退役一条上游时会死锁：
+    // 要删模型得先摘成员，而托管池又不许手工摘成员（APPEND_ONLY_POOL），两头堵死。
+    // 删除路径会同步把成员从这类池里摘掉（见 PruneManagedPoolMembersAsync），
+    // 注册表下次仍会按现存模型重新收敛，所以这里放行不会留下悬空引用。
+    poolDocs = poolDocs.Where(p => !IsManagedAppendOnlyPool(p)).ToList();
 
     return new ModelDeleteBlockers
     {
@@ -13742,8 +14007,111 @@ static bool IsResolvableGatewayPoolMember(
     List<BsonDocument> enabledExchanges)
 {
     if ((member.AsNullableInt("HealthStatus") ?? 0) == 2) return false;
-    var modelId = member.GetStringOrEmpty("ModelId");
-    var platformId = member.GetStringOrEmpty("PlatformId");
+    return IsResolvablePoolMemberKey(
+        member.GetStringOrEmpty("ModelId"),
+        member.GetStringOrEmpty("PlatformId"),
+        enabledPlatformIds,
+        enabledModels,
+        enabledExchanges);
+}
+
+/// <summary>
+/// 把「指不到任何上游 / 模型」的成员在**展示层**归一成不可用，并写明原因。
+///
+/// 只看存库的 HealthStatus 会把这种成员算成健康——它从没失败过，因为它从来没被
+/// 调用成功过一次。于是一个一次请求都发不出去的池在控制台上显示「健康」，
+/// 正好骗过要靠它做判断的人（形状 8）。
+///
+/// 归一必须发生在任何计数之前：池级徽章、成员顺位的圆点、可用/不可用三个数字读的是
+/// 同一个字段，只改其中一处就会出现「池标已中断、第 1 顺位却是绿点」的自相矛盾。
+/// 只作用于本次响应，不回写库——库里的健康状态仍由真实调用结果决定。
+/// </summary>
+static PoolItem ApplyPoolMemberResolution(PoolItem item, PoolResolutionIndex index)
+{
+    foreach (var model in item.Models)
+    {
+        // Removable 对**每个**成员都算：它只看「指向的东西还在不在」，与健康状态无关。
+        // 原来它跟着 HealthStatus==2 一起早退，于是「上游被删之前就已经失败到不可用」的成员
+        // 永远拿不到标记、控制台不给按钮，而后端其实允许删它。
+        model.Removable = IsDeadPoolMember(model.ModelId, model.PlatformId, index);
+
+        if (IsResolvablePoolMemberKey(model.ModelId, model.PlatformId, index.PlatformIds, index.Models, index.Exchanges))
+            continue;
+        // 归因是给人看的文案，不参与「能不能摘除」的判断——它算错了只影响措辞，不影响按钮
+        model.UnavailableReason = ClassifyUnavailableReason(model, index);
+        if (model.HealthStatus == 2) continue;
+        model.HealthStatus = 2;
+        model.HealthStatusLabel = HealthLabel(2);
+    }
+    return item;
+}
+
+/// <summary>
+/// 这个成员为什么不可用。四种，两两成对：
+/// <c>upstream-missing</c> / <c>model-missing</c> 是死成员，不可逆，该给摘除入口；
+/// <c>upstream-disabled</c> / <c>model-disabled</c> 只是被停用，启用即恢复，**不该**给摘除入口。
+///
+/// 必须分开的原因：可解析索引按「存在且启用」算，而后端的悬空判定只查存在性。
+/// 不分开的话，一个仅仅被停用的上游会被标成「已不存在」并在控制台长出一个摘除按钮，
+/// 点下去后端必然回 APPEND_ONLY_POOL —— 一个可预见会失败的操作，
+/// 外加一句撒谎的归因（「已不存在」其实只是停用）。
+/// </summary>
+static string ClassifyUnavailableReason(PoolModelItem model, PoolResolutionIndex index)
+{
+    // 中继成员的 PlatformId 不是平台 id，对它而言「上游」就是那条中继本身，
+    // 「模型」是中继里那条 Models 映射。两者各有独立的 Enabled，必须分开看：
+    // 合成一个结论就会叫运维去启用一个本来就启用着的中继（形状 1：判据比它该管的范围窄）。
+    var exchangeDoc = index.ExistingExchanges
+        .FirstOrDefault(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal));
+    var isAnyExchangeMember = string.Equals(model.PlatformId, "__exchange__", StringComparison.Ordinal);
+
+    if (isAnyExchangeMember)
+    {
+        // __exchange__ 没点名上游，只能问「有没有哪条中继认这个模型」。
+        // 启用着的中继里能找到这条映射，却仍解析不到 → 只可能是映射本身被停用。
+        if (index.Exchanges.Any(e => GatewayExchangeSupportsModel(e, model.ModelId, ignoreEntryDisabled: true)))
+            return "model-disabled";
+        return index.ExistingExchanges.Any(e => GatewayExchangeSupportsModel(e, model.ModelId, ignoreEntryDisabled: true))
+            ? "upstream-disabled"
+            : "upstream-missing";
+    }
+
+    if (exchangeDoc is not null)
+    {
+        // 存在性必须忽略嵌套 Enabled：映射被停用不等于上游没了。
+        // 走 IsResolvablePoolMemberKey 会连带套上「能不能用」的过滤，
+        // 于是一条只是被停用的映射被说成「上游已不存在」，给的下一步就错了。
+        if (!GatewayExchangeSupportsModel(exchangeDoc, model.ModelId, ignoreEntryDisabled: true))
+            return "model-missing";
+        // 中继在、映射也在，却解析不到：中继整条停用 → upstream-disabled；
+        // 中继启用着 → 只剩「这条映射被停用」这一种可能。
+        return index.Exchanges.Any(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal))
+            ? "model-disabled"
+            : "upstream-disabled";
+    }
+
+    var existsAtAll = IsResolvablePoolMemberKey(
+        model.ModelId, model.PlatformId,
+        index.ExistingPlatformIds, index.ExistingModels, index.ExistingExchanges);
+
+    if (existsAtAll)
+        return index.PlatformIds.Contains(model.PlatformId) ? "model-disabled" : "upstream-disabled";
+    return index.ExistingPlatformIds.Contains(model.PlatformId) ? "model-missing" : "upstream-missing";
+}
+
+/// <summary>
+/// (modelId, platformId) 这对键还指得到一个能用的成员吗——不看健康状态，只看指得到指不到。
+///
+/// 抽出来是为了让「默认池成员校验」与「池健康统计」共用同一个口径：
+/// 两处各写一份判定，就会出现一边说这成员是死的、一边把它算成 healthy（形状 3 + 形状 8）。
+/// </summary>
+static bool IsResolvablePoolMemberKey(
+    string modelId,
+    string platformId,
+    HashSet<string> enabledPlatformIds,
+    List<BsonDocument> enabledModels,
+    List<BsonDocument> enabledExchanges)
+{
     if (modelId.Length == 0 || platformId.Length == 0) return false;
     if (string.Equals(platformId, "__exchange__", StringComparison.Ordinal))
     {
@@ -13752,14 +14120,30 @@ static bool IsResolvableGatewayPoolMember(
     var exchangeById = enabledExchanges.FirstOrDefault(exchange => string.Equals(exchange.GetStringOrEmpty("_id"), platformId, StringComparison.Ordinal));
     if (exchangeById is not null) return GatewayExchangeSupportsModel(exchangeById, modelId);
     if (!enabledPlatformIds.Contains(platformId)) return false;
-    return enabledModels.Any(model =>
-        string.Equals(model.AsNullableString("PlatformId"), platformId, StringComparison.Ordinal)
-        && (string.Equals(model.GetStringOrEmpty("_id"), modelId, StringComparison.Ordinal)
-            || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
-            || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal)));
+    return enabledModels.Any(model => PoolMemberMatchesModelDoc(model, platformId, modelId));
 }
 
-static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
+/// <summary>
+/// 一条模型文档是不是池成员 (modelId, platformId) 指的那个。
+///
+/// modelId 不是单一口径：历史数据里它可能是模型文档 _id，也可能是 ModelName 或 Name，三个都要认。
+/// 抽成一处是因为「指不指得到」这件事有两个调用方（可解析判定、死成员判定），
+/// 各写一份必然漂移，然后一边说这成员死了、一边说它还活着（形状 3）。
+/// </summary>
+static bool PoolMemberMatchesModelDoc(BsonDocument model, string platformId, string modelId)
+    => string.Equals(model.AsNullableString("PlatformId"), platformId, StringComparison.Ordinal)
+    && (string.Equals(model.GetStringOrEmpty("_id"), modelId, StringComparison.Ordinal)
+        || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
+        || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal));
+
+/// <summary>
+/// 这条中继承不承接这个模型。
+///
+/// <paramref name="ignoreEntryDisabled"/> 分开两个问题：**能不能用**（默认，嵌套 Models 里
+/// <c>Enabled:false</c> 的那条不算数）与**存不存在**（判「上游没了」还是「只是被停用」时用，
+/// 此时必须忽略嵌套 Enabled）。混用会让一条只是被停用的映射被说成「上游已不存在」。
+/// </summary>
+static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId, bool ignoreEntryDisabled = false)
 {
     if (string.Equals(exchange.AsNullableString("ModelAlias"), modelId, StringComparison.Ordinal)) return true;
     if (exchange.AsStringList("ModelAliases").Contains(modelId, StringComparer.Ordinal)) return true;
@@ -13767,7 +14151,7 @@ static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
     return modelsValue.AsBsonArray
         .Where(x => x.IsBsonDocument)
         .Select(x => x.AsBsonDocument)
-        .Any(m => (m.AsNullableBool("Enabled") ?? true)
+        .Any(m => (ignoreEntryDisabled || (m.AsNullableBool("Enabled") ?? true))
                   && (string.Equals(m.AsNullableString("ModelId"), modelId, StringComparison.Ordinal)
                       || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
 }

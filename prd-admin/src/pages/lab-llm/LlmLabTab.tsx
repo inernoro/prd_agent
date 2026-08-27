@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, Clock3, Copy, Download, Expand, Eye, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Star, Tag, TimerOff, Trash2, Upload, X, XCircle, Zap } from 'lucide-react';
+import { Check, ChevronDown, Clock3, Copy, Download, Expand, Eye, ImagePlus, Layers, Maximize2, Plus, Save, ScanEye, Sparkles, Tag, TimerOff, Trash2, Upload, X, XCircle, Zap } from 'lucide-react';
 import JSZip from 'jszip';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 
@@ -16,7 +16,6 @@ import { SuccessConfettiButton } from '@/components/ui/SuccessConfettiButton';
 import type { Platform } from '@/types/admin';
 import type { Model } from '@/types/admin';
 import {
-  createModel,
   createModelLabExperiment,
   deleteModelLabExperiment,
   getModels,
@@ -27,13 +26,6 @@ import {
   planImageGen,
   generateImageGen,
   runImageGenBatchStream,
-  clearIntentModel,
-  clearVisionModel,
-  clearImageGenModel,
-  setImageGenModel,
-  setIntentModel,
-  setMainModel,
-  setVisionModel,
   updateModelLabExperiment,
   upsertModelLabModelSet,
   getAdminImageGenPlanPromptOverride,
@@ -2420,88 +2412,14 @@ export default function LlmLabTab() {
 
   const modelById = useMemo(() => new Map<string, Model>((allModels ?? []).map((m) => [m.id, m])), [allModels]);
 
-  const refreshModelsSilent = async () => {
-    const m = await getModels();
-    if (m.success) setAllModels(m.data);
-  };
-
-  const setUniqueFlagLocal = (modelId: string, flag: 'isMain' | 'isIntent' | 'isVision' | 'isImageGen') => {
-    // 同类型只允许一个为 true，避免出现多个意图/多个主模型
-    setAllModels((prev) => prev.map((m) => ({ ...m, [flag]: m.id === modelId } as any)));
-  };
-
-  const onSetMainFromRun = async (modelId: string) => {
-    setUniqueFlagLocal(modelId, 'isMain');
-    const m = modelById.get(modelId) ?? null;
-    if (!m?.platformId || !m.modelName) return await refreshModelsSilent();
-    const res = await setMainModel({ platformId: m.platformId, modelId: m.modelName });
-    if (!res.success) return await refreshModelsSilent();
-    await refreshModelsSilent();
-  };
-
-  const onSetIntentFromRun = async (modelId: string) => {
-    setUniqueFlagLocal(modelId, 'isIntent');
-    const m = modelById.get(modelId) ?? null;
-    if (!m?.platformId || !m.modelName) return await refreshModelsSilent();
-    const res = await setIntentModel({ platformId: m.platformId, modelId: m.modelName });
-    if (!res.success) return await refreshModelsSilent();
-    await refreshModelsSilent();
-  };
-
-  const onClearIntentFromRun = async () => {
-    setAllModels((prev) => prev.map((m) => ({ ...m, isIntent: false } as any)));
-    const res = await clearIntentModel();
-    if (!res.success) return await refreshModelsSilent();
-    await refreshModelsSilent();
-  };
-
-  const onClearVisionFromRun = async () => {
-    setAllModels((prev) => prev.map((m) => ({ ...m, isVision: false } as any)));
-    const res = await clearVisionModel();
-    if (!res.success) {
-      await refreshModelsSilent();
-      toast.error(res.error?.message || '取消视觉模型失败');
-      return;
-    }
-    await refreshModelsSilent();
-  };
-
-  const onClearImageGenFromRun = async () => {
-    setAllModels((prev) => prev.map((m) => ({ ...m, isImageGen: false } as any)));
-    const res = await clearImageGenModel();
-    if (!res.success) {
-      await refreshModelsSilent();
-      toast.error(res.error?.message || '取消生图模型失败');
-      return;
-    }
-    await refreshModelsSilent();
-  };
-
-  const onSetVisionFromRun = async (modelId: string) => {
-    setUniqueFlagLocal(modelId, 'isVision');
-    const m = modelById.get(modelId) ?? null;
-    if (!m?.platformId || !m.modelName) return await refreshModelsSilent();
-    const res = await setVisionModel({ platformId: m.platformId, modelId: m.modelName });
-    if (!res.success) return await refreshModelsSilent();
-    await refreshModelsSilent();
-  };
-
-  const onSetImageGenFromRun = async (modelId: string) => {
-    setUniqueFlagLocal(modelId, 'isImageGen');
-    const m = modelById.get(modelId) ?? null;
-    if (!m?.platformId || !m.modelName) return await refreshModelsSilent();
-    const res = await setImageGenModel({ platformId: m.platformId, modelId: m.modelName });
-    if (!res.success) return await refreshModelsSilent();
-    await refreshModelsSilent();
-  };
-
   const normalizeModelNameKey = (s: string) => (s || '').trim().toLowerCase();
 
+  /** 纯查询：把一条 run item 回查到它所属的平台 id，只用于展示平台标签和算移除键，不写任何配置。 */
   const getPlatformIdForRunItem = (evtModelName: string, evtModelId: string): string | null => {
     const nameKey = normalizeModelNameKey(evtModelName);
     const idKey = String(evtModelId ?? '').trim();
 
-    // 优先：从“当前实验已选择模型”里回查 platformId
+    // 优先：从「当前实验已选择模型」里回查 platformId
     const fromSelected =
       (nameKey ? selectedModelsRef.current.find((m) => normalizeModelNameKey(m.modelName) === nameKey) : undefined) ??
       (idKey ? selectedModelsRef.current.find((m) => String(m.modelId ?? '').trim() === idKey) : undefined);
@@ -2512,76 +2430,6 @@ export default function LlmLabTab() {
     if (fromAll?.platformId) return fromAll.platformId;
 
     return null;
-  };
-
-  const ensureConfigModelId = async (it: ViewRunItem): Promise<string | null> => {
-    // 以“平台 + 模型id（modelName）”为唯一键；不存在则创建后返回 id
-    const evtModelName = (it.modelName || '').trim() || String(it.modelId ?? '').trim();
-    const evtModelId = String(it.modelId ?? '').trim();
-    const platformId = getPlatformIdForRunItem(evtModelName, evtModelId);
-    if (!platformId) return null;
-
-    const nameKey = normalizeModelNameKey(evtModelName);
-    const existing =
-      allModelsRef.current.find((m) => m.platformId === platformId && normalizeModelNameKey(m.modelName) === nameKey) ??
-      null;
-    if (existing?.id) return existing.id;
-
-    const created = await createModel({
-      name: (it.displayName || evtModelName || evtModelId).trim() || evtModelName || evtModelId,
-      modelName: evtModelName,
-      platformId,
-      enabled: true,
-      enablePromptCache: true,
-    });
-    if (!created.success) {
-      await refreshModelsSilent();
-      return null;
-    }
-
-    // 刷新并回查，保证与后端一致
-    await refreshModelsSilent();
-    const now =
-      allModelsRef.current.find((m) => m.platformId === platformId && normalizeModelNameKey(m.modelName) === nameKey) ??
-      (created.data?.id ? allModelsRef.current.find((m) => m.id === created.data.id) : null);
-    return now?.id ?? created.data?.id ?? null;
-  };
-
-  const ensureAndMark = async (itemId: string): Promise<string | null> => {
-    const cur = runItems[itemId];
-    if (!cur) return null;
-    const id = await ensureConfigModelId(cur);
-    if (!id) return null;
-    setRunItems((p) => {
-      const x = p[itemId];
-      if (!x) return p;
-      return { ...p, [itemId]: { ...x, configModelId: id } };
-    });
-    return id;
-  };
-
-  const onSetMainFromItem = async (itemId: string) => {
-    const id = await ensureAndMark(itemId);
-    if (!id) return;
-    await onSetMainFromRun(id);
-  };
-
-  const onSetIntentFromItem = async (itemId: string) => {
-    const id = await ensureAndMark(itemId);
-    if (!id) return;
-    await onSetIntentFromRun(id);
-  };
-
-  const onSetVisionFromItem = async (itemId: string) => {
-    const id = await ensureAndMark(itemId);
-    if (!id) return;
-    await onSetVisionFromRun(id);
-  };
-
-  const onSetImageGenFromItem = async (itemId: string) => {
-    const id = await ensureAndMark(itemId);
-    if (!id) return;
-    await onSetImageGenFromRun(id);
   };
 
   const applyBuiltInPrompt = (p: string) => {
@@ -3679,14 +3527,6 @@ export default function LlmLabTab() {
                     </div>
 
                     {(() => {
-                      const cfgId =
-                        (it.configModelId && modelById.has(it.configModelId) ? it.configModelId : null) ??
-                        (modelById.has(it.modelId) ? it.modelId : null);
-                      const m = cfgId ? modelById.get(cfgId) : undefined;
-                      const canInferPlatform = !!getPlatformIdForRunItem((it.modelName || '').trim(), String(it.modelId ?? '').trim());
-                      const reason = !cfgId
-                        ? (canInferPlatform ? '该模型未添加到“模型管理”，点击将自动添加并执行设定' : '未能定位平台信息，无法自动添加模型')
-                        : '';
                       return (
                         <div className="mt-2 flex items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-2 min-w-0">
@@ -3699,61 +3539,12 @@ export default function LlmLabTab() {
                               </span>
                             ))}
                           </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={() => (cfgId ? onSetMainFromRun(cfgId) : onSetMainFromItem(it.itemId))}
-                              disabled={(!cfgId && !canInferPlatform) || Boolean(m?.isMain)}
-                              title={!cfgId ? reason : (m?.isMain ? '已是主模型' : '设为主模型（全局唯一）')}
-                              className={m?.isMain ? 'text-token-warning disabled:opacity-100' : 'text-token-secondary'}
-                            >
-                              <Star size={14} fill={m?.isMain ? 'currentColor' : 'none'} />
-                              主
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={() => {
-                                if (m?.isIntent) return void onClearIntentFromRun();
-                                return cfgId ? void onSetIntentFromRun(cfgId) : void onSetIntentFromItem(it.itemId);
-                              }}
-                              disabled={!cfgId && !canInferPlatform}
-                              title={!cfgId ? reason : (m?.isIntent ? '取消意图模型（将回退主模型执行）' : '设为意图模型（全局唯一）')}
-                              className={m?.isIntent ? 'text-token-success' : 'text-token-secondary'}
-                            >
-                              <Sparkles size={14} />
-                              意图
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={() => {
-                                if (m?.isVision) return void onClearVisionFromRun();
-                                return cfgId ? void onSetVisionFromRun(cfgId) : void onSetVisionFromItem(it.itemId);
-                              }}
-                              disabled={!cfgId && !canInferPlatform}
-                              title={!cfgId ? reason : (m?.isVision ? '取消视觉模型（将回退主模型执行）' : '设为视觉模型（全局唯一）')}
-                              className={m?.isVision ? 'text-token-accent' : 'text-token-secondary'}
-                            >
-                              <ScanEye size={14} />
-                              视觉
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={() => {
-                                if (m?.isImageGen) return void onClearImageGenFromRun();
-                                return cfgId ? void onSetImageGenFromRun(cfgId) : void onSetImageGenFromItem(it.itemId);
-                              }}
-                              disabled={!cfgId && !canInferPlatform}
-                              title={!cfgId ? reason : (m?.isImageGen ? '取消生图模型（将回退主模型执行）' : '设为生图模型（全局唯一）')}
-                              className={m?.isImageGen ? 'text-token-accent' : 'text-token-secondary'}
-                            >
-                              <ImagePlus size={14} />
-                              生图
-                            </Button>
-                          </div>
+                          {/* 2026-08-25：这里原来有「设为主 / 意图 / 视觉 / 生图模型」四个按钮，
+                              写的是 llmmodels 上的 IsMain/IsIntent/IsVision/IsImageGen 旧标记
+                              （llm-gateway.md 调度优先级里的第 3 档 legacy 配置）。
+                              模型用途现在由 LLM Gateway 控制台的模型池决定，这四个入口一并下线——
+                              留着就等于在 MAP 这边还开着一条改模型配置的小门，
+                              而后端 `api/mds` 的写接口已经统一 410（MdsWriteRetiredFilter）。 */}
                         </div>
                       );
                     })()}

@@ -1,5 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { connectionTokenAllows, connectionScopeLabels } from '../../src/server.js';
+import {
+  connectionTokenRequiredScope,
+  describeConnectionTokenRoutes,
+} from '../../src/services/connection-token-routes.js';
+
+/**
+ * 判据在合并 main 时收敛到了 `connection-token-routes.ts` —— 原来 server.ts 里那张
+ * 内联表被同一件事的另一份实现取代了（两条分支各写了一遍，撞在同一段鉴权代码上）。
+ *
+ * 这个适配器保住本文件全部断言：它逐字复刻 server.ts 里的用法
+ * （`const need = connectionTokenRequiredScope(...); connection.scopes.includes(need)`），
+ * 所以「测的是不是真在跑的那条路」这件事没有被削弱。写成适配器而不是改写每一条断言，
+ * 是为了让下面每个「放行/拒绝」的成对判据原样留下来。
+ */
+function connectionTokenAllows(scopes: readonly string[] | undefined, method: string, path: string): boolean {
+  const need = connectionTokenRequiredScope(method, path);
+  return need !== null && (scopes || []).includes(need);
+}
 import { DEFAULT_SCOPES, backfillReportReadScope } from '../../src/services/connection/pairing-service.js';
 
 /**
@@ -124,10 +141,17 @@ describe('新配对默认就带 report:read', () => {
     expect(connectionTokenAllows(DEFAULT_SCOPES, 'DELETE', '/api/reports/x')).toBe(false);
   });
 
-  it('每个 scope 都有人话说明，授权页不能只显示机器名', () => {
-    const labels = connectionScopeLabels();
-    expect(labels.map((l) => l.scope)).toContain('report:read');
-    for (const l of labels) expect(l.label.length).toBeGreaterThan(0);
+  it('每条放行规则都写得出「为什么给」，授权页不能只显示机器名', () => {
+    const described = describeConnectionTokenRoutes();
+    expect(described.length).toBeGreaterThan(0);
+    for (const line of described) expect(line).toMatch(/→ .+：.+/);
+    // 表里真的存在 report:read 这一档 —— 从判据反推，不是读一份可能漂移的标签表。
+    const needed = new Set(
+      [['GET', '/api/reports'], ['GET', '/api/reports/x/raw'], ['POST', '/api/bridge/command/b']]
+        .map(([m, p]) => connectionTokenRequiredScope(m, p)),
+    );
+    expect(needed).toContain('report:read');
+    expect(needed).toContain('instance:read');
   });
 });
 
