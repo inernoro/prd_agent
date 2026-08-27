@@ -138,6 +138,27 @@ public class CdsReportAutoSyncWiringGuardTests
     }
 
     [Fact]
+    public void 一台cds连不上时_本轮不再挨个去撞它()
+    {
+        var worker = ReadWorker();
+        var squashed = Squash(worker);
+
+        // 这个循环一份报告一次导入，每次先发一个列表请求、超时 60 秒。一台 CDS 掉线时，
+        // 一个存了 200 份报告的库能在它身上串行耗掉三个多小时，排在后面的库这轮根本轮不到；
+        // 等轮到时定时器早过期，下一轮立刻又开始——健康的库被永久饿死（Codex review P1）。
+        Assert.Contains("var unreachableSources = new HashSet<string>(", squashed);
+        Assert.Contains("if (unreachableSources.Contains(sourceKey)) { skippedByUnreachable++; continue; }", squashed);
+
+        // 判据只认网络层失败。别的异常（凭据不对、库没权限）立刻就抛、不耗时间，
+        // 也不代表整台机器不通，算进来会误伤同源的健康报告。
+        Assert.Contains("if (ex is HttpRequestException || ex is TaskCanceledException) { unreachableSources.Add(sourceKey);", squashed);
+
+        // 被跳掉的必须说出来，否则本轮结束那行会让人以为只有几份失败，实际是几百份没试。
+        var summary = Window(worker, "[CdsReportImportWorker] 本轮结束", "public const string CdsReportStoreAppKey");
+        Assert.Contains("{SkippedByUnreachable}", summary);
+    }
+
+    [Fact]
     public void 一条脏元数据不许掀掉整轮()
     {
         var worker = ReadWorker();

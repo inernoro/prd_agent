@@ -179,9 +179,25 @@ public class CdsReportImportWorker : BackgroundService
         var ok = 0;
         var failed = 0;
         var missing = 0;
+        // **一台 CDS 连不上，这轮就别再挨个去撞它。**
+        // 这个循环是一份报告一次 ImportAsync，每次都要先发一个列表请求，超时 60 秒。
+        // 一台 CDS 掉线时，一个存了 200 份报告的库能在它身上耗掉三个多小时——而且是**串行**的，
+        // 排在后面的库这一轮根本轮不到；等轮到时定时器早就过期，下一轮立刻又开始，
+        // 健康的库被永久饿死（Codex review P1）。
+        //
+        // 判据只认**网络层**的失败（连不上、超时）：那才是「这台机器现在不通」。
+        // 凭据不对、库没权限那类会立刻抛、不耗时间，也不代表整台 CDS 不通，不进这个名单。
+        var unreachableSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var skippedByUnreachable = 0;
         foreach (var t in targets)
         {
             if (ct.IsCancellationRequested) return;
+            var sourceKey = t.SourceBaseUrl ?? "(默认连接)";
+            if (unreachableSources.Contains(sourceKey))
+            {
+                skippedByUnreachable++;
+                continue;
+            }
             try
             {
                 var result = await importer.ImportAsync(
@@ -248,12 +264,26 @@ public class CdsReportImportWorker : BackgroundService
                 _logger.LogWarning(ex,
                     "[CdsReportImportWorker] 库 {StoreId} 的报告 {ReportId}（源 {Source}）刷新失败，跳过",
                     t.StoreId, t.ReportId, t.SourceBaseUrl ?? "(默认连接)");
+
+                // 网络层失败 = 这台 CDS 现在不通，本轮不必再挨个去撞它（每撞一次要等 60 秒超时）。
+                // 只认这两类：别的异常（凭据不对、库没权限）立刻就抛、不耗时间，
+                // 也不代表整台机器不通，把它们算进来会误伤同源的健康报告。
+                if (ex is HttpRequestException || ex is TaskCanceledException)
+                {
+                    unreachableSources.Add(sourceKey);
+                    _logger.LogWarning(
+                        "[CdsReportImportWorker] 源 {Source} 这轮判定为连不上，剩下要从它拉的报告本轮全部跳过，下一轮再试",
+                        sourceKey);
+                }
             }
         }
 
+        // 被「源不通」跳掉的必须说出来，否则本轮结束那行会让人以为只有几份失败
+        // ——实际是几百份根本没试（no-silent-caps）。
         _logger.LogInformation(
-            "[CdsReportImportWorker] 本轮结束：刷了 {Ok} 份，失败 {Failed} 份，CDS 上已找不到 {Missing} 份",
-            ok, failed, missing);
+            "[CdsReportImportWorker] 本轮结束：刷了 {Ok} 份，失败 {Failed} 份，"
+            + "CDS 上已找不到 {Missing} 份，因源不通跳过 {SkippedByUnreachable} 份",
+            ok, failed, missing, skippedByUnreachable);
     }
 
     /// <summary>
