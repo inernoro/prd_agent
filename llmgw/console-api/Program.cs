@@ -14038,11 +14038,23 @@ static string ClassifyUnavailableReason(PoolModelItem model, PoolResolutionIndex
     var isExchangeMember = string.Equals(model.PlatformId, "__exchange__", StringComparison.Ordinal)
         || index.ExistingExchanges.Any(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal));
 
+    if (isExchangeMember)
+    {
+        // 存在性必须忽略嵌套 Enabled：中继里那条模型映射被停用，不等于上游没了。
+        // 走 IsResolvablePoolMemberKey 会连带套上「能不能用」的过滤，
+        // 于是一条只是被停用的映射被说成「上游已不存在」，给的下一步就错了。
+        var exchangeHasEntry = string.Equals(model.PlatformId, "__exchange__", StringComparison.Ordinal)
+            ? index.ExistingExchanges.Any(e => GatewayExchangeSupportsModel(e, model.ModelId, ignoreEntryDisabled: true))
+            : index.ExistingExchanges
+                .Where(e => string.Equals(e.GetStringOrEmpty("_id"), model.PlatformId, StringComparison.Ordinal))
+                .Any(e => GatewayExchangeSupportsModel(e, model.ModelId, ignoreEntryDisabled: true));
+        return exchangeHasEntry ? "upstream-disabled" : "upstream-missing";
+    }
+
     var existsAtAll = IsResolvablePoolMemberKey(
         model.ModelId, model.PlatformId,
         index.ExistingPlatformIds, index.ExistingModels, index.ExistingExchanges);
 
-    if (isExchangeMember) return existsAtAll ? "upstream-disabled" : "upstream-missing";
     if (existsAtAll)
         return index.PlatformIds.Contains(model.PlatformId) ? "model-disabled" : "upstream-disabled";
     return index.ExistingPlatformIds.Contains(model.PlatformId) ? "model-missing" : "upstream-missing";
@@ -14085,7 +14097,14 @@ static bool PoolMemberMatchesModelDoc(BsonDocument model, string platformId, str
         || string.Equals(model.AsNullableString("ModelName"), modelId, StringComparison.Ordinal)
         || string.Equals(model.AsNullableString("Name"), modelId, StringComparison.Ordinal));
 
-static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
+/// <summary>
+/// 这条中继承不承接这个模型。
+///
+/// <paramref name="ignoreEntryDisabled"/> 分开两个问题：**能不能用**（默认，嵌套 Models 里
+/// <c>Enabled:false</c> 的那条不算数）与**存不存在**（判「上游没了」还是「只是被停用」时用，
+/// 此时必须忽略嵌套 Enabled）。混用会让一条只是被停用的映射被说成「上游已不存在」。
+/// </summary>
+static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId, bool ignoreEntryDisabled = false)
 {
     if (string.Equals(exchange.AsNullableString("ModelAlias"), modelId, StringComparison.Ordinal)) return true;
     if (exchange.AsStringList("ModelAliases").Contains(modelId, StringComparer.Ordinal)) return true;
@@ -14093,7 +14112,7 @@ static bool GatewayExchangeSupportsModel(BsonDocument exchange, string modelId)
     return modelsValue.AsBsonArray
         .Where(x => x.IsBsonDocument)
         .Select(x => x.AsBsonDocument)
-        .Any(m => (m.AsNullableBool("Enabled") ?? true)
+        .Any(m => (ignoreEntryDisabled || (m.AsNullableBool("Enabled") ?? true))
                   && (string.Equals(m.AsNullableString("ModelId"), modelId, StringComparison.Ordinal)
                       || string.Equals(m.AsNullableString("DisplayName"), modelId, StringComparison.Ordinal)));
 }

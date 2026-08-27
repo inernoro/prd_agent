@@ -284,6 +284,10 @@ public class GatewayLegacySweepGuardTests
         Assert.Contains("index.ExistingModels", fn);
         // 中继成员的「上游」是那条中继本身，不是平台
         Assert.Contains("isExchangeMember", fn);
+        // 中继的存在性必须忽略嵌套 Enabled：映射被停用不等于上游没了。
+        // 沿用「能不能用」那套过滤，会把只是被停用的映射说成「上游已不存在」，
+        // 给运维的下一步就从「去启用」错成「去重建」。
+        Assert.Contains("ignoreEntryDisabled: true", fn);
 
         // 归因**可以**被读来做文案（memberFaultPhrase 就该读它），
         // 不许的是拿它当摘除按钮的开关——那正是三轮分歧的来源。
