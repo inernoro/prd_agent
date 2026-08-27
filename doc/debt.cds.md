@@ -905,6 +905,72 @@ loopback——只绑回环等于全线断库。所以绑的是「消费方实际
 兜底——它自己拼发布参数，不走上面这条收窄路径，也不该被收窄。那是本仓库唯一做对了的
 暴露路径，改它只会破坏功能而不提升安全。
 
+## 2026-08-27 排查中撞见的两条（活账）
+
+### A. 项目发布门禁可以被两次 API 调用绕过（高）
+
+`cds/src/routes/releases.ts` 的 `rejectUnscopedAiMutation` 明确写着「AI 操作项目发布必须使用
+项目级 Agent Key，禁止用全局 AI key 配置或执行项目发布」，配置发布目标与触发发布都被它挡住。
+但**签发项目级 Key 的那个接口没有同样的门禁**：`POST /api/projects/:id/agent-keys`
+（`cds/src/routes/projects.ts`）只做 `assertProjectAccess`——项目级 Key 持有者只能给自己项目签，
+而**全局 AI key 不受这条限制**，可以给任意项目签一把 `cdsp_*` 再拿回来过门禁。
+
+也就是说这条门禁挡的是「没读过代码的调用方」，不是「拿着全局 key 的 AI」。要么给签发接口补上
+同一条判据（全局 AI key 不许签项目 Key，必须走页面批准），要么承认这条门禁只是提示、别当成边界。
+
+发现经过：本次要修一个发布目标脚本，用全局 key 提交被 403 拦下；顺着看签发路径时发现它没设防。
+**没有利用它**——绕过去等于把这条门禁作废。
+
+### B. prd-agent 的 redis / mongo 连接串不带凭据，新建的分支容器全崩（高，正在发生）
+
+线上 prd-agent 的 redis 跑 `redis-server --aclfile`（ACL 认证）、mongo 跑 `mongod --auth`，
+但分支容器拿到的是：
+
+```
+MongoDB__ConnectionString = mongodb://<host>:<port>
+Redis__ConnectionString   = <host>:<port>
+```
+
+一个凭据都没有，于是每个**新建**的容器启动即崩（`NOAUTH Returned - connection has not yet
+authenticated`）。已经在跑的容器没事——它们的连接是在改动之前建立的，所以面板上看着还有一半分支
+是 running，掩盖了这件事。2026-08-27 当时 18 条分支里 5 条 error，全是这个原因。
+
+根子在判据指向了一个不存在的名字：项目 build profile 里写的是
+`Redis__ConnectionString: ${CDS_REDIS_URL}` / `MongoDB__ConnectionString: ${CDS_MONGODB_URL}`，
+而 **`CDS_REDIS_URL` 与 `CDS_MONGODB_URL` 这两个名字在 CDS 源码里一次都没出现过**
+（`getCdsEnvVars` 只产 `CDS_<服务>_HOST` / `CDS_<服务>_PORT`）。当前容器里那个值是老 profile
+（`${CDS_HOST}:${CDS_REDIS_PORT}`）留下的，下一次部署会拿到空串。属于形状 8：声明了但永远不生效。
+
+**已修（2026-08-27 当天）**。原先卡在「口令必须由人给」——CDS 对基础设施凭据全链路脱敏，
+没有接口能把值交出来。真正的解法不是把口令要出来，而是**让 CDS 自己去发**：它本来就存着
+那对账号口令，只是从没往消费方容器发过。
+
+- 生产侧：`cds/src/services/infra-credential-env.ts` + `getCdsEnvVars` 接线，按镜像约定的
+  env 键名（不按服务 id，多实例改名都不受影响）派生 `CDS_<服务>_USER` / `_PASSWORD` / `_URL`，
+  URL 的 userinfo 段做百分号编码。没口令的服务一个键都不发。
+- 消费侧：三个 profile（`api-prd-agent` / `llmgw-prd-agent` / `llmgw-serve-prd-agent`）的连接串
+  改成引用凭据；`cds-compose.yml` 同步改掉，避免下次重新导入 compose 打回原样。
+  Mongo 用 `${CDS_MONGODB_URL}`；Redis 因为 StackExchange.Redis 不吃 `redis://` URI，
+  按它的格式拼 `host:port,user=,password=`。
+
+顺序上先让生产侧真的存在，再改消费侧——不能重蹈「profile 指向不存在的变量」那个覆辙。
+
+**留下的已知边界**：原始 `USER` / `PASSWORD` 交给消费方自己拼时，转义责任在消费方。口令里若出现
+StackExchange 格式的保留字符（`,` `=`），拼出来的串会被解析歪。CDS 生成的口令是十六进制不会命中，
+**用户手工改过口令的服务才有这个风险**。要根治得给 redis 也提供一个「已转义、可直接用」的形态，
+或者在 CDS 侧拒绝含保留字符的手工口令。
+
+**留下的第二条已知边界**：`CDS_<服务>_URL` 只带地址与凭据，**不带库名、不带 `authSource`**
+（Codex review P1 提的就是这条）。mongo 这一侧是有意为之——不写库名时 authSource 按 URI 规范
+默认落到 `admin`，正好是 root 账号所在的库；补 `/<库名>` 却不同时补 `?authSource=admin`
+会直接把认证打死。而且 CDS 知道的 `MONGO_INITDB_DATABASE` 是**初始化用的库**，不等于消费方
+要读写的库——当前唯一消费方 prd-agent 就是另外用 `MongoDB__DatabaseName` 指定的。
+mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按引擎补库名，不在这个 PR 里
+凭空替不存在的消费方决定语义（AGENTS.md §5.5 的 B 类）。
+
+**顺带**：把 profile 改成引用 `${CDS_REDIS_URL}` 的那次改动，从落地起就没生效过——那个名字当时
+在 CDS 里根本不存在。现在它存在了，那次改动的意图反而是对的，只是缺了生产侧那一半。
+
 ---
 
 ## 已结清（供回溯）
