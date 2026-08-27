@@ -3,6 +3,7 @@ import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useLandingAsset } from '../hooks/useLandingAssets';
 import type { LiteraryStyleKey } from '../i18n/landing';
 
 /**
@@ -405,8 +406,24 @@ function FigureSlot({
   return <InlineFigure tone={tone} caption={caption} variant={variant} />;
 }
 
+/**
+ * 右侧生成卡对应的真实照片槽位（按卡序号 1 起）。
+ * 第 3 张在这一幕里一直停在「生成中」，本来就没有产物图，所以只有两条。
+ */
+const CARD_SLOT: Record<number, string> = {
+  1: 'landing.literary.ridge',
+  2: 'landing.literary.larch',
+};
+
+/** 正文里那张配图对应的真实照片槽位。没生成就回落到手绘底图。 */
+const INLINE_FIGURE_SLOT: Record<'ridge' | 'bridge', string> = {
+  ridge: 'landing.literary.ridge',
+  bridge: 'landing.literary.bridge',
+};
+
 function InlineFigure({ tone, caption, variant }: { tone: Tone; caption: string; variant: 'ridge' | 'bridge' }) {
   const gid = `mapLitFig-${variant}`;
+  const photo = useLandingAsset(INLINE_FIGURE_SLOT[variant]);
   return (
     <div
       style={{
@@ -414,6 +431,9 @@ function InlineFigure({ tone, caption, variant }: { tone: Tone; caption: string;
         animation: 'mapSceneLand .6s cubic-bezier(.19,1,.22,1) both',
       }}
     >
+      {photo ? (
+        <StyledPhoto src={photo} tone={tone} height={variant === 'ridge' ? 132 : 112} />
+      ) : (
       <svg
         viewBox="0 0 600 132"
         preserveAspectRatio="none"
@@ -438,9 +458,55 @@ function InlineFigure({ tone, caption, variant }: { tone: Tone; caption: string;
         <path d="M0 102 L140 86 L280 108 L420 88 L600 110 L600 132 L0 132 Z" fill={tone.bg} style={{ transition: 'fill .55s ease' }} />
         {variant === 'bridge' && <rect x="238" y="96" width="124" height="6" rx="3" fill={tone.fg} opacity="0.42" style={{ transition: 'fill .55s ease' }} />}
       </svg>
+      )}
       <div style={{ padding: '7px 11px', fontFamily: 'var(--font-body)', fontSize: '11px', color: SCENE.inkDim, background: SCENE.faintFill }}>
         {caption}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 带风格色的真实照片。
+ *
+ * 这一幕演的是「切一下风格，整列配图连同正文内联图一起换色，文字不动」。手绘底图靠改
+ * SVG 的 fill 就能换色；换成真照片之后必须自己把这件事补回来，否则切风格时控件动了、
+ * 图没动，这一幕就当场失效（`miduo-review-lens` 镜头 4：变化必须可感知）。
+ *
+ * 做法是在照片上盖一层当前风格色、用 `color` 混合模式 —— 它只替换色相与饱和度、保留
+ * 原图明度，所以山脊、雾、木纹这些结构还在，只是整体转到了这一档风格的色调上。
+ * 和 SVG 那版共用同一条 .55s 过渡，切换时两种底图的节奏对得上。
+ */
+function StyledPhoto({ src, tone, height }: { src: string; tone: Tone; height: number }) {
+  return (
+    <div className="relative block w-full" style={{ height: `${height}px`, overflow: 'hidden' }}>
+      <StyledPhotoFill src={src} tone={tone} />
+    </div>
+  );
+}
+
+/** 撑满父容器的那一版，父容器负责定尺寸（内联配图给固定高，右侧卡给 4:3）。 */
+function StyledPhotoFill({ src, tone }: { src: string; tone: Tone }) {
+  return (
+    <div className="relative w-full h-full">
+      <img
+        src={src}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        className="block w-full h-full"
+        style={{ objectFit: 'cover' }}
+      />
+      <span
+        aria-hidden
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: tone.mid,
+          mixBlendMode: 'color',
+          opacity: 0.72,
+          transition: 'background-color .55s ease',
+        }}
+      />
     </div>
   );
 }
@@ -457,6 +523,7 @@ function FigureCard({
   actions: string[];
   runningLabel: string;
 }) {
+  const photo = useLandingAsset(CARD_SLOT[index] ?? '');
   const statusStyle =
     state === 'done' ? { background: pine.soft, color: pine.bright }
       : state === 'running' ? { background: amber.soft, color: amber.bright }
@@ -465,7 +532,13 @@ function FigureCard({
   return (
     <div className="relative overflow-hidden shrink-0" style={{ borderRadius: '12px', border: `1px solid ${SCENE.hair}`, background: SCENE.ghost }}>
       <div className="relative" style={{ padding: '6px 6px 0', background: SCENE.mediaWell, boxSizing: 'border-box' }}>
-        {state === 'done' && (
+        {state === 'done' && photo && (
+          <div style={{ aspectRatio: '4 / 3', borderRadius: '8px', overflow: 'hidden', animation: 'mapSceneLand .55s cubic-bezier(.19,1,.22,1) both' }}>
+            <StyledPhotoFill src={photo} tone={tone} />
+          </div>
+        )}
+
+        {state === 'done' && !photo && (
           <svg
             viewBox="0 0 372 282"
             preserveAspectRatio="none"

@@ -2,7 +2,6 @@ import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { Reveal } from '../components/Reveal';
 import { useParallax } from '../components/scrollRhythm';
 import { SCENE, SCENE_KEYFRAMES, inkTone } from './sceneTokens';
-import { SceneIllustration } from '../components/SceneIllustration';
 
 /**
  * SceneFrame —— 四幕「真实面板」场景共用的外壳。
@@ -179,12 +178,6 @@ export function SceneFrame({
         </Reveal>
         </div>
 
-        {/*
-          这一幕的配图（管理员在「系统设置 → 首页预览图」生成，没生成就什么都不渲染）。
-          slot 由 `id` 直接推出：`scene-layers` → `landing.layers`，不另开一张映射表 ——
-          多一张表就多一处会漂的地方。这条推导有守卫测试盯着（sceneIllustrationWiring）。
-        */}
-        {id?.startsWith('scene-') && <SceneIllustration slot={`landing.${id.slice('scene-'.length)}`} hue={hue} />}
 
         {note && (
           <Reveal offset={12} duration={1600} delay={240}>

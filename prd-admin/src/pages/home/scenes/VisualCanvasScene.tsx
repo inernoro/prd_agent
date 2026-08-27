@@ -4,6 +4,7 @@ import { BeatNarration, SceneIcon, SceneMono } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline, useTypewriter } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useLandingAsset } from '../hooks/useLandingAssets';
 
 /**
  * VisualCanvasStage —— 第一屏的视觉创作工作台（照 `pages/ai-chat/AdvancedVisualAgentTab.tsx` 复刻）。
@@ -67,6 +68,8 @@ const MIX_PATH = 'M9 3a6 6 0 1 0 0 12A6 6 0 0 0 9 3M15 9a6 6 0 1 0 0 12 6 6 0 0 
 
 interface TileSpec {
   id: 'a' | 'c' | 'b' | 'mix';
+  /** 真实产物图的槽位；管理员没生成时回落到手绘底图 */
+  slot: string;
   hue: number;
   at: number;          // 第几拍出现
   fog: boolean;
@@ -79,13 +82,13 @@ interface TileSpec {
  * 手机上不是把桌面这套等比缩小——那样下半屏是空的、动作条又和缩放胶囊打架，另排一套。
  */
 const TILES: TileSpec[] = [
-  { id: 'a', hue: SCENE_HUE.steel, at: B.idle, fog: false,
+  { id: 'a', slot: 'landing.visual.draft', hue: SCENE_HUE.steel, at: B.idle, fog: false,
     wide: { left: '7%', top: '11%', width: '33%' }, narrow: { left: '5%', top: '9%', width: '43%' } },
-  { id: 'c', hue: SCENE_HUE.pine, at: B.landed, fog: true,
+  { id: 'c', slot: 'landing.visual.fog', hue: SCENE_HUE.pine, at: B.landed, fog: true,
     wide: { left: '13%', top: '52%', width: '28%' }, narrow: { left: '8%', top: '48%', width: '40%' } },
-  { id: 'b', hue: SCENE_HUE.clay, at: B.warm, fog: false,
+  { id: 'b', slot: 'landing.visual.warm', hue: SCENE_HUE.clay, at: B.warm, fog: false,
     wide: { left: '45%', top: '18%', width: '25%' }, narrow: { left: '54%', top: '20%', width: '38%' } },
-  { id: 'mix', hue: SCENE_HUE.olive, at: B.mixed, fog: false,
+  { id: 'mix', slot: 'landing.visual.mixed', hue: SCENE_HUE.olive, at: B.mixed, fog: false,
     wide: { left: '46%', top: '54%', width: '27%' }, narrow: { left: '54%', top: '52%', width: '38%' } },
 ];
 
@@ -142,7 +145,7 @@ export function VisualCanvasStage() {
                   transition: 'border-color .4s ease, box-shadow .4s ease',
                 }}
               >
-                <CanvasArt id={tile.id} hue={tile.hue} fog={tile.fog} />
+                <CanvasArt id={tile.id} slot={tile.slot} hue={tile.hue} fog={tile.fog} />
                 <span
                   className="absolute inset-x-0 bottom-0 text-left"
                   style={{
@@ -597,8 +600,29 @@ function GenTile({
  * 画布上那几张「图」。不是占位灰块——画一张有山脊线、有光源、有前后景的图，
  * 才看得出「把主视觉改成雾天、山脊线保留」这句话到底改了什么。
  */
-function CanvasArt({ id, hue, fog }: { id: string; hue: number; fog: boolean }) {
+/**
+ * 画布上那张图。
+ *
+ * 管理员在「系统设置 → 首页预览图」生成过真照片就显示照片，没生成才回落到下面这张
+ * 手绘山脊。回落不是可有可无的兜底：这一幕是首屏，配图没配好也不能开天窗。
+ *
+ * 演生图的产品在自己的界面里摆手绘假图，是这一版之前的样子 —— 用户一眼就看穿了。
+ */
+function CanvasArt({ id, slot, hue, fog }: { id: string; slot: string; hue: number; fog: boolean }) {
   const gid = `mapCanvasArt-${id}`;
+  const photo = useLandingAsset(slot);
+  if (photo) {
+    return (
+      <img
+        src={photo}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        className="block w-full h-full"
+        style={{ objectFit: 'cover' }}
+      />
+    );
+  }
   return (
     <svg viewBox="0 0 300 200" preserveAspectRatio="none" className="block w-full h-full" aria-hidden="true">
       <defs>
