@@ -50,9 +50,16 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
     }
     configured = true;
   } else if (kind === 'redis') {
-    const effective = `${command} ${env.REDIS_ARGS || ''} ${env.REDIS_EXTRA_FLAGS || ''}`;
-    configured = /(?:^|\s)--requirepass(?:=|\s+)\S+/.test(effective)
-      || /(?:^|\s)--aclfile(?:=|\s+)\S+/.test(effective);
+    // **不在这里另写一份**（2026-08-27 收敛，台账 E81）：原来这里用两条正则自己判，
+    // 而运行态自检那份判据取或还认了 env，于是同一台库两处结论相反。redis 与
+    // memcached / kafka / nats 一样，只留 `detectInfraAuth` 那一份。
+    //
+    // 顺带修好一处旧漏：原来的正则只认 `--requirepass` / `--aclfile`，
+    // 漏了 ACL 的 `--user`；共用判据把它一并覆盖了。
+    configured = detectInfraAuth('redis', env, [
+      ...(Array.isArray(input.command) ? input.command : input.command ? [input.command] : []),
+      ...(Array.isArray(input.entrypoint) ? input.entrypoint : input.entrypoint ? [input.entrypoint] : []),
+    ]) === true;
   } else if (kind === 'sqlserver') {
     configured = hasValue(env, 'MSSQL_SA_PASSWORD', 'SA_PASSWORD');
   } else if (kind === 'clickhouse') {

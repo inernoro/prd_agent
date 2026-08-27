@@ -312,41 +312,37 @@ export function parsePublishedHosts(ports: string | null | undefined): string[] 
 }
 
 /**
- * 这个库现在有没有认证。
+ * 一次性把「env + 启动参数」拆成可反复提问的判据探针。
  *
- * ## 判据必须取容器自己的配置，不能取 CDS 台账
+ * ## 为什么要提到模块级
  *
- * 台账里的 env 是「CDS 建这个容器时用了什么」，不是「这个容器现在跑成什么样」。
- * 两者会分叉：compose 导入的、手工起的、密码写在**启动参数**里的（redis 的
- * `--requirepass` 就是最常见的一种），台账里都看不到。
+ * 这套分词很讲究：`sh -c "redis-server --requirepass x"` 整条是**一个** Cmd 元素、
+ * 引号本身携带语义（单引号里 `$` 不展开）、`$VAR` 要回到 env 里解析。
+ * 谁要问「启动参数里有没有认证」都得走它。
  *
- * 真实踩过：某个 redis 台账 env 为空、被判成「无认证 critical」，实际连上去
- * 是 `NOAUTH Authentication required`——它有密码。**一条说「这个库没密码」
- * 的假警报，比不报警更糟**：它会让人开始怀疑整张表，然后连真的那几条也一起忽略。
- *
- * 所以这里同时看两处：容器的 `.Config.Env` 与 `.Config.Cmd`。
- *
- * ## 「有这个 key」不等于「配了认证」
- *
- * 反过来的假阴性同样要防：`REDIS_ARGS` 是 redis-stack 用来塞启动参数的口子，
- * 里面完全可能只有 `--appendonly yes`。把「这个 env 存在」当成认证证据，
- * 一个真裸奔的公网库就会被从 critical 降级，还配上一句「已配置认证」——
- * 比不报警更糟的那种假消息，方向只是反过来（Codex review P1，2026-08-16）。
- *
- * 所以 arg 型 env 只贡献**内容**（并进有效命令行一起扫），不贡献**存在性**；
- * 认证判据一律落到「真的出现了某个生效的认证参数」上。
- *
- * ## 未知不等于没有
- *
- * 认不出镜像类型时返回 null（未知），**不返回 false**——把「我不知道」和
- * 「我确认没有」混成一个值，报表上就分不清该去查还是该去修。
+ * 原来它整个长在 `detectInfraAuth` 的闭包里，于是别处想问同一个问题只能另写一份 ——
+ * 而这个仓库反复栽在「同一件事两处判据然后各自漂」（形状 3）。凭据派生要从
+ * `--requirepass` 里取值，正是同一套分词，所以提到模块级共用一份。
  */
-export function detectInfraAuth(
-  kind: InfraKind,
+interface StartupProbe {
+  /** env 里这些键有没有非空值。 */
+  has: (...keys: string[]) => boolean;
+  /** 开关型参数出现即生效（`--auth`）。 */
+  hasFlag: (...flags: string[]) => boolean;
+  /** 取值型参数且**值非空**（`--requirepass x`）。 */
+  hasFlagValue: (...flags: string[]) => boolean;
+  /** 大小写敏感的裸 flag（`-S` 与 `-s` 语义不同）。 */
+  hasCasedFlag: (...flags: string[]) => boolean;
+  /** 取值型参数的**值本身**；取不到返回空串。 */
+  flagValue: (...flags: string[]) => string;
+  /** 整条有效命令，用于匹配跨 token 的结构。 */
+  joined: string;
+}
+
+function buildStartupProbe(
   env?: Record<string, string> | null,
-  /** 容器启动参数（`.Config.Cmd`）。密码经常藏在这里而不是 env 里。 */
   args?: readonly string[] | null,
-): boolean | null {
+): StartupProbe {
   const e = env || {};
   const has = (...keys: string[]): boolean => keys.some((k) => !!(e[k] || '').trim());
   // 有效命令行 = 容器启动参数 + 那些「本身就是一串启动参数」的 env 的值。
@@ -430,6 +426,33 @@ export function detectInfraAuth(
    * 取值型参数：`--requirepass x` / `--requirepass=x`，**值为空就不算数**。
    * `--requirepass ""` 在 redis 里等于没有密码，它不该把库判成已认证。
    */
+  /**
+   * 取值型参数的**值本身**，判定与 `hasFlagValue` 逐字一致——两者必须同源，
+   * 否则会出现「判据说这台库有口令、取值却取不到」这种自相矛盾。
+   */
+  const flagValue = (...flags: string[]): string => {
+    for (const flag of flags) {
+      // **必须走 casedTokens**：`tokens` 是全部转成小写的（那份只用来比对 flag 名），
+      // 拿它取口令会把 `P4ssW0rd` 变成 `p4ssw0rd`——发出去的凭据认证不上，
+      // 而报错只会说「密码错误」。flag 名仍按不分大小写比。
+      for (let i = 0; i < casedTokens.length; i += 1) {
+        const bare = unquote(casedTokens[i]);
+        if (bare.toLowerCase() === flag.toLowerCase()) {
+          const next = casedTokens[i + 1];
+          if (next && !unquote(next).startsWith('--')) {
+            const v = effectiveValue(next);
+            if (v.length > 0) return v;
+          }
+          continue;
+        }
+        if (bare.toLowerCase().startsWith(`${flag.toLowerCase()}=`)) {
+          const v = effectiveValue(bare.slice(flag.length + 1));
+          if (v.length > 0) return v;
+        }
+      }
+    }
+    return '';
+  };
   const hasFlagValue = (...flags: string[]): boolean => flags.some((flag) => {
     for (let i = 0; i < tokens.length; i += 1) {
       const bare = unquote(tokens[i]);
@@ -444,6 +467,61 @@ export function detectInfraAuth(
     }
     return false;
   });
+  return { has, hasFlag, hasFlagValue, hasCasedFlag, flagValue, joined };
+}
+
+/**
+ * 从启动参数里把某个取值型开关的**值**读出来（如 `--requirepass <口令>`）。
+ *
+ * 与认证判据同一套分词：谁判「有没有认证」用的是哪份 token，谁取口令就用哪份，
+ * 不会出现「判据说有、取值取不到」这种两口径。取不到返回空串。
+ */
+export function readStartupFlagValue(
+  env: Record<string, string> | null | undefined,
+  args: readonly string[] | null | undefined,
+  ...flags: string[]
+): string {
+  return buildStartupProbe(env, args).flagValue(...flags);
+}
+
+/**
+ * 这个库现在有没有认证。
+ *
+ * ## 判据必须取容器自己的配置，不能取 CDS 台账
+ *
+ * 台账里的 env 是「CDS 建这个容器时用了什么」，不是「这个容器现在跑成什么样」。
+ * 两者会分叉：compose 导入的、手工起的、密码写在**启动参数**里的（redis 的
+ * `--requirepass` 就是最常见的一种），台账里都看不到。
+ *
+ * 真实踩过：某个 redis 台账 env 为空、被判成「无认证 critical」，实际连上去
+ * 是 `NOAUTH Authentication required`——它有密码。**一条说「这个库没密码」
+ * 的假警报，比不报警更糟**：它会让人开始怀疑整张表，然后连真的那几条也一起忽略。
+ *
+ * 所以这里同时看两处：容器的 `.Config.Env` 与 `.Config.Cmd`。
+ *
+ * ## 「有这个 key」不等于「配了认证」
+ *
+ * 反过来的假阴性同样要防：`REDIS_ARGS` 是 redis-stack 用来塞启动参数的口子，
+ * 里面完全可能只有 `--appendonly yes`。把「这个 env 存在」当成认证证据，
+ * 一个真裸奔的公网库就会被从 critical 降级，还配上一句「已配置认证」——
+ * 比不报警更糟的那种假消息，方向只是反过来（Codex review P1，2026-08-16）。
+ *
+ * 所以 arg 型 env 只贡献**内容**（并进有效命令行一起扫），不贡献**存在性**；
+ * 认证判据一律落到「真的出现了某个生效的认证参数」上。
+ *
+ * ## 未知不等于没有
+ *
+ * 认不出镜像类型时返回 null（未知），**不返回 false**——把「我不知道」和
+ * 「我确认没有」混成一个值，报表上就分不清该去查还是该去修。
+ */
+export function detectInfraAuth(
+  kind: InfraKind,
+  env?: Record<string, string> | null,
+  /** 容器启动参数（`.Config.Cmd`）。密码经常藏在这里而不是 env 里。 */
+  args?: readonly string[] | null,
+): boolean | null {
+  const e = env || {};
+  const { has, hasFlag, hasFlagValue, hasCasedFlag, joined } = buildStartupProbe(env, args);
   switch (kind) {
     case 'mongo':
       return (has('MONGO_INITDB_ROOT_USERNAME', 'MONGO_USERNAME', 'MONGODB_USERNAME')
@@ -451,10 +529,23 @@ export function detectInfraAuth(
         || hasFlag('--auth')
         || hasFlagValue('--keyfile');
     case 'redis':
-      // redis 默认不设密码。`--requirepass` 写在启动命令里是最常见的配法，
-      // 只看 env 会把它误判成裸奔。
-      return has('REDIS_PASSWORD', 'REDIS_PASS', 'REDISCLI_AUTH')
-        || hasFlagValue('--requirepass', '--user', '--aclfile');
+      /**
+       * **只认启动参数，不认 env**（2026-08-27 收敛，台账 E81）。
+       *
+       * 上一版是 `env 里有 REDIS_PASSWORD` **或** `命令行上有 --requirepass`，
+       * 取或。理由写着「只看 env 会把它误判成裸奔」——防的是假阳性。
+       * 但取或让它在另一个方向变成**假阴性**：一台 env 里有口令、启动却没开
+       * 认证的 redis，会被判成「已认证」，于是每日体检压掉 `naked-internal`，
+       * 而它对同网段的任何人都是敞开的。安全结论上假阴性比假阳性贵得多。
+       *
+       * 更要命的是它当时与另外两处判据不一致：创建门禁只认命令行、凭据派生
+       * 也只认命令行。同一台库，一边说裸奔、一边说安全，对外发声的是判错的
+       * 那一边。同一个文件对 memcached / kafka / nats 明确写着「口令存在不等于
+       * 服务在校验它」，redis 这一支当时没照做。
+       *
+       * 现在这里是**唯一一份** redis 认证判据，另外两处都调它。
+       */
+      return hasFlagValue('--requirepass', '--user', '--aclfile');
     case 'mysql':
       return has('MYSQL_ROOT_PASSWORD', 'MARIADB_ROOT_PASSWORD')
         || (has('MYSQL_USER') && has('MYSQL_PASSWORD'))

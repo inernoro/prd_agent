@@ -1658,9 +1658,6 @@ public sealed class GatewayRuntimeGovernanceTests
     [Fact]
     public async Task ScopedKey_EnforcesTenantScopedPerMinuteLimit()
     {
-        // 限流窗口按墙钟分钟取键：这组请求跨过分钟边界就会插出第二条窗口、计数从头算，
-        // 下面的 SingleAsync() 与精确计数都会假红。判据见 RateWindowTiming。
-        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(5)));
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -1678,6 +1675,16 @@ public sealed class GatewayRuntimeGovernanceTests
             RateLimitPerMinute = 1,
         });
         var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
+
+        // 限流窗口按墙钟分钟取键：这组请求跨过分钟边界就会插出第二条窗口、计数从头算，
+        // 下面的 SingleAsync() 与精确计数都会假红。判据见 RateWindowTiming。
+        //
+        // **等待必须紧贴着被保护的那批请求**：原来它排在建库、插 key 之前，
+        // 那段准备工作要花多久没人知道（建库、建索引都会走网络），等于刚买到的
+        // 那点余量在真正发请求之前就被花掉了——判据取的是「等待那一刻」的时钟，
+        // 保护的却是几秒之后的请求（形状 5：判据与被判据对象的时序对不上）。
+        // 顺带：跳过用例时不再白等一次。
+        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(5)));
 
         var first = await authorizer.AuthorizeAsync(
             key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
@@ -1699,9 +1706,6 @@ public sealed class GatewayRuntimeGovernanceTests
     [Fact]
     public async Task ScopedKey_FirstMinuteConcurrentRequests_DoNotFailWithDuplicateWindow()
     {
-        // 限流窗口按墙钟分钟取键：这组请求跨过分钟边界就会插出第二条窗口、计数从头算，
-        // 下面的 SingleAsync() 与精确计数都会假红。判据见 RateWindowTiming。
-        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(10)));
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -1728,6 +1732,9 @@ public sealed class GatewayRuntimeGovernanceTests
             new CreateIndexOptions { Unique = true }));
         var authorizer = new GatewayScopedKeyAuthorizer(scope.Context);
 
+        // 等待紧贴被保护的那批请求，不排在建库建索引之前（同上，形状 5）。
+        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(10)));
+
         var results = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => authorizer.AuthorizeAsync(
             key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
             null, CancellationToken.None)));
@@ -1741,9 +1748,6 @@ public sealed class GatewayRuntimeGovernanceTests
     [Fact]
     public async Task ScopedKey_ConcurrentLimitsAreIndependentAcrossTenantsAndAuditsKeepTenantId()
     {
-        // 限流窗口按墙钟分钟取键：这组请求跨过分钟边界就会插出第二条窗口、计数从头算，
-        // 下面的 SingleAsync() 与精确计数都会假红。判据见 RateWindowTiming。
-        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(10)));
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
         await using var scope = testDatabase;
@@ -1787,6 +1791,9 @@ public sealed class GatewayRuntimeGovernanceTests
             => (tenantId, await authorizer.AuthorizeAsync(
                 key, "legacy-key", "external", "caller", "openai-compatible", "invoke",
                 null, CancellationToken.None));
+
+        // 等待紧贴被保护的那批请求，不排在建库建索引之前（同上，形状 5）。
+        await Task.Delay(RateWindowTiming.DelayUntilFreshWindow(DateTime.UtcNow, TimeSpan.FromSeconds(10)));
 
         var results = await Task.WhenAll(
             Enumerable.Range(0, 20).Select(_ => AuthorizeAsync("tenant-a", keyA))

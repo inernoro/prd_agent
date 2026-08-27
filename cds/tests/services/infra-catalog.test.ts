@@ -155,8 +155,16 @@ describe('catalog 的认证能被暴露审计认出来', () => {
     const built = entry.build({ password: 'hex0123456789' });
     const cmd = entry.command as string[];
 
-    // env 这一路（数据面板、备份探测走的也是它）
-    expect(detectInfraAuth('redis', built.env, [])).toBe(true);
+    // **只有 env、看不到启动命令时判「没认证」**（2026-08-27 收敛，台账 E81）。
+    //
+    // 这条原来断言的是 true，理由是「env 这一路也要认」。它在另一个方向是错的：
+    // env 里有 REDIS_PASSWORD、启动却没开认证的 redis 是真实存在的，判成已认证
+    // 就会压掉它的裸奔告警——安全结论上假阴性比假阳性贵得多。创建门禁一直就是
+    // 按这个口径拒绝创建的，三处判据现在收敛到同一份实现。
+    //
+    // 代价是「读不到启动命令」时会多报一次。运行态那一路读的是容器真实的
+    // Entrypoint + Cmd（见 index.ts 的 docker inspect），读不到才落到这里，从严。
+    expect(detectInfraAuth('redis', built.env, [])).toBe(false);
     // 容器的真实形状：env 有值 + Cmd 里引用它。`sh -c` 把整条语句塞进一个 Cmd
     // 元素，审计必须自己再拆一层才比得中 --requirepass。
     expect(detectInfraAuth('redis', built.env, cmd)).toBe(true);

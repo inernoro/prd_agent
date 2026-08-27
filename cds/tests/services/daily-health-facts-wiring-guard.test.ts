@@ -77,6 +77,60 @@ describe('每日体检的事实来源接线守卫', () => {
     expect(ledger).toContain('stateService.getInfraServices()');
   });
 
+  /**
+   * 台账里存的是**未展开的模板**，判据必须读展开后的值（台账 E75）。
+   *
+   * `InfraService.env` / `command` 里，值经常就是字面的 `${CDS_MYSQL_PASSWORD}`，
+   * 到启动容器那一刻才解析——线上现在就有四个项目这样存着。拿生值去判认证，
+   * 判据看到的是一串 `${...}`：它当然「有值」，于是每一台模板式配置的库都被判成
+   * 「配了认证」，而它到底配没配，这条体检从来没真的看过（形状 6）。
+   *
+   * 这条守卫钉的是「取的是哪个时刻的值」，删掉不会红——判据本身照跑，只是永远
+   * 得出好消息。
+   */
+  it('豁免判定读的是展开后的值，不是台账里的模板', () => {
+    const source = read('src/index.ts');
+    const loop = windowAfter(source, 'const exemptions: InfraExemptionFact[] = [];', 1_800);
+    expect(
+      loop,
+      'env 必须先过 resolveEnvTemplates：直接送台账里的 `${...}` 进去，'
+      + '认证判据会把每一台模板式配置的库都判成「已配认证」',
+    ).toContain('env: resolveEnvTemplates(');
+    expect(
+      loop,
+      'command / entrypoint 同理：redis 的认证判据只认启动参数，'
+      + '送进去的若是未展开模板，等于判据从来没看过真正的启动命令',
+    ).toContain('command: resolveCommandTemplate(');
+    expect(loop).toContain('entrypoint: resolveCommandTemplate(');
+    // 解析要用这台服务所属项目的变量，不是随便一份：变量是项目级的，
+    // 拿错项目的解出来是空值，等于没解析（cross-project-isolation：标识要带作用域）。
+    expect(
+      loop,
+      '模板解析要用这台服务所属项目的变量表',
+    ).toContain("stateService.getCustomEnv(service.projectId || 'default')");
+  });
+
+  /**
+   * 认证判据收敛成「只认启动参数」（台账 E81）之后，采集侧就得把启动参数**采全**。
+   *
+   * 原来只取 `.Config.Cmd`。memcached / nats 这类预设把 entrypoint 覆盖成 `sh`、
+   * 真正的认证参数在 `-c '...'` 那段里——只读 Cmd 等于只看到半条命令。
+   * 以前「env 里有口令也算认证」把这半条盖住了，现在盖不住，缺的那半条会直接
+   * 变成假警报。判据只能读真正生效的那个东西（形状 6）。
+   */
+  it('暴露面自检把 Entrypoint 和 Cmd 一起采下来', () => {
+    const source = read('src/index.ts');
+    const inspect = windowAfter(source, "docker inspect --format '{{.Name}}", 300);
+    expect(
+      inspect,
+      '只取 Cmd 会漏掉 entrypoint 被覆盖成 sh 的那批预设，认证参数全在那半条里',
+    ).toContain('{{json .Config.Entrypoint}}');
+    // 采下来还要真的并进判据的输入，不能只取不用（形状 2：建了一半）。
+    const merge = windowAfter(source, 'let args: string[] = [];', 400);
+    expect(merge, 'Entrypoint 采下来必须并进 args').toContain('...entrypoint');
+    expect(merge).toContain('...cmd');
+  });
+
   it('暴露面自检不许在「没认出容器」时早退', () => {
     const source = read('src/index.ts');
     expect(

@@ -65,6 +65,8 @@
  * 两条边界都记在 `doc/debt.cds.md`。
  */
 
+import { detectInfraAuth, readStartupFlagValue, type InfraKind } from './infra-exposure-audit.js';
+
 /**
  * 一个账号：用户名与口令分别在哪个 env 键里。
  *
@@ -89,23 +91,30 @@ interface CredentialAccount {
   userOptional?: boolean;
   /** 口令所在的 env 键。**它有值** = 这个账号成立。 */
   passwordKey: string;
+  /**
+   * 口令也可能**只写在启动参数里**（`redis-server --requirepass <口令>`、
+   * `nats-server --pass <口令>`）。这类形态认证门禁是接受的，凭据派生必须
+   * 跟着能取到值，否则会出现「门禁放行、服务真开着认证、消费方一个键都收不到」
+   * ——本模块存在的理由本身（台账 E78 / E82）。
+   *
+   * env 优先：显式写在 env 里的值更可信，命令行只是兜底。
+   */
+  passwordFlags?: readonly string[];
+  /** 用户名同理（nats 的 `--user`）。 */
+  userFlags?: readonly string[];
 }
 
 /** 一类基础设施服务：它可能用哪几个账号，以及它的 URI scheme。 */
 interface CredentialSource {
   /**
-   * 这类服务「口令存在」不足以证明「服务端在校验它」时，用它去启动参数里找真凭据。
+   * 这类服务「口令存在」不足以证明「服务端在校验它」时，用这个 kind 去问
+   * **那一份共用的认证判据**（`detectInfraAuth`）。
    *
-   * redis 是典型：env 里放着 `REDIS_PASSWORD`、但启动命令既没有 `--requirepass`
-   * 也没有 `--aclfile` 的库是真实存在的（存量/自定义部署）。这种库**不校验口令**，
-   * 而客户端带着口令连上去会被 `ERR Client sent AUTH, but no password is set` 顶回来——
-   * 也就是说发凭据反而把本来能连的消费方弄坏了。
-   *
-   * 认证门禁（`infra-auth-policy.ts`）对 redis / memcached / kafka / nats 早就是这么判的，
-   * 注释里写着「口令存在不等于服务在校验它」。这里必须同口径，否则两边对同一台库给出
-   * 相反结论。声明了这个函数的服务，**拿不到启动参数就一个键都不发**——不能证明就不发。
+   * 不在这里自己写正则：创建门禁、运行态自检、凭据派生问的是同一件事，
+   * 三处各写一份必然漂——2026-08-27 就漂过一次，redis 一边被判裸奔一边被判
+   * 已认证（台账 E81）。现在只留一份，这里只负责说「我这类要不要问它」。
    */
-  provenByStartup?: (startupText: string) => boolean;
+  provenByAuthKind?: InfraKind;
   /**
    * 账号候选，**按优先级**：取第一个「口令键有值」的。
    *
@@ -150,14 +159,20 @@ const CREDENTIAL_SOURCES: readonly CredentialSource[] = [
     // 这里**不设 defaultUser**：redis 只设口令时就是「没有用户名」，
     // 补一个 `default` 反而会让消费方拼出一个它没打算用的 ACL 用户。
     // `userOptional` 就是为这一种服务开的——别处缺用户名一律作废该候选。
-    accounts: [{ userKey: 'REDIS_USERNAME', passwordKey: 'REDIS_PASSWORD', userOptional: true }],
+    accounts: [{
+      userKey: 'REDIS_USERNAME',
+      passwordKey: 'REDIS_PASSWORD',
+      // 口令只写在 `--requirepass` 上的 redis：门禁接受，这里也必须取得到。
+      // `--aclfile` 那种取不到——ACL 文件内容不在命令行上，只能靠 env。
+      passwordFlags: ['--requirepass'],
+      userOptional: true,
+    }],
     scheme: 'redis',
     // env 里有 REDIS_PASSWORD 不代表服务端在校验它：既没 --requirepass 也没
     // --aclfile 的 redis 是真实存在的，而带着口令连过去会被
     // 「ERR Client sent AUTH, but no password is set」顶回来——发凭据反而把
-    // 本来能连的消费方弄坏。与认证门禁同一口径，只认启动参数上的真凭据。
-    provenByStartup: (startup) => /(?:^|\s)--requirepass(?:=|\s+)\S+/.test(startup)
-      || /(?:^|\s)--aclfile(?:=|\s+)\S+/.test(startup),
+    // 本来能连的消费方弄坏。问共用判据，与门禁、运行态自检同一口径。
+    provenByAuthKind: 'redis',
     why: 'redis 口令或 ACL 用户；必须由启动参数证明服务端真的在校验'
   },
   {
@@ -210,6 +225,20 @@ const CREDENTIAL_SOURCES: readonly CredentialSource[] = [
     why: 'sqlserver 的 sa 账号；用户名固定，只有口令写在 env 里',
   },
   {
+    // 直接建的 nats 常把账号口令写在 `--user` / `--pass` 上（门禁接受这种）。
+    // 预设走的是另一条路（在容器内写配置文件、不让明文进 argv），那种情况下
+    // 命令行上取不到值，只能靠 env——两条都要覆盖，缺一台就连不上。
+    accounts: [{
+      userKey: 'NATS_USER',
+      passwordKey: 'NATS_PASSWORD',
+      userFlags: ['--user'],
+      passwordFlags: ['--pass'],
+    }],
+    scheme: 'nats',
+    provenByAuthKind: 'nats',
+    why: 'nats 账号；口令可能只在 --pass 上，也可能只在 env 里',
+  },
+  {
     accounts: [{ userKey: 'CLICKHOUSE_USER', defaultUser: 'default', passwordKey: 'CLICKHOUSE_PASSWORD' }],
     why: 'clickhouse 账号；用户名不设时镜像默认是 default',
   },
@@ -235,34 +264,77 @@ function looksUnresolved(value: string): boolean {
   return /\$\{[^}]*\}/.test(value);
 }
 
-/** 把 command / entrypoint 拍平成一行，用来在启动参数里找认证开关。 */
+/**
+ * 把 command / entrypoint 拍平成 token 数组，交给共用的启动参数分词器。
+ *
+ * 传数组而不是拼好的字符串：`detectInfraAuth` / `readStartupFlagValue` 自己会分词，
+ * 而它们的分词认引号（`--requirepass "带 空格的口令"`）。先 join 再让它切一遍，
+ * 结果与真实 argv 一致；这里唯一的责任是「两处都要送进去」——memcached / nats
+ * 的认证经常写在 entrypoint 那半边，只送 command 就漏了一半形态。
+ */
 function flattenStartup(startup: {
   command?: string | string[] | null;
   entrypoint?: string | string[] | null;
-}): string {
-  const one = (v?: string | string[] | null) => (Array.isArray(v) ? v.join(' ') : String(v || ''));
-  return `${one(startup.command)} ${one(startup.entrypoint)}`;
+}): string[] {
+  const one = (v?: string | string[] | null): string[] => {
+    if (Array.isArray(v)) return v.map((x) => String(x));
+    return v ? [String(v)] : [];
+  };
+  return [...one(startup.command), ...one(startup.entrypoint)];
+}
+
+/** 一个候选账号最终解析出来的凭据；解析不出完整一对时为 null。 */
+interface ResolvedAccount {
+  user: string;
+  password: string;
 }
 
 /**
- * 这个账号候选能不能用——**在选中它之前**就要判完。
+ * 把一个账号候选解析成真凭据——**在选中它之前**就要解析完。
  *
- * 只判「口令有值」是不够的：mysql 有 `MYSQL_PASSWORD` 却没有 `MYSQL_USER` 时，
- * 那样会选中一个残缺账号并发出没有用户名的连接串，而后面那个完整的 root 候选
- * 永远轮不到。用户名是占位符时同理——那说明调用方没解析模板，这个候选不可信，
- * 但**不该因此放弃整类服务**，该继续试下一个候选。
+ * 只判「口令键有值」是不够的，两个方向都栽过：
+ *
+ * - 少判：mysql 有 `MYSQL_PASSWORD` 却没有 `MYSQL_USER` 时，只看口令会选中这个
+ *   残缺候选并发出没有用户名的连接串，而后面那个完整的 root 候选永远轮不到。
+ * - 漏找：口令可能**根本不在 env 里**（`redis-server --requirepass <口令>`、
+ *   `nats-server --pass <口令>`）。认证门禁接受这种形态，凭据派生跟不上就会出现
+ *   「门禁放行、服务真开着认证、消费方一个键都收不到」——本模块存在的理由本身。
+ *
+ * env 优先、命令行兜底：显式写在 env 里的值更可信（命令行可能是 `$REDIS_PASSWORD`
+ * 这种待 shell 展开的形态，分词器会把它当没有值）。
+ *
+ * 用户名是占位符时该候选作废，但**不放弃整类服务**——继续试下一个候选。
  */
-function accountUsable(account: CredentialAccount, env: Record<string, string>): boolean {
-  const password = env[account.passwordKey];
-  if (!password || looksUnresolved(password)) return false;
-  if (!account.userKey) return true;
-  const rawUser = env[account.userKey];
-  // 有值但没展开 = 这个候选的用户名不可信，作废它（不要退到 defaultUser：
-  // 声明了用户名就说明本意不是用默认管理员）。
-  if (rawUser && looksUnresolved(rawUser)) return false;
-  if (rawUser) return true;
-  // 用户名缺席：只有「镜像有默认管理员名」或「这类服务本来就没有用户名」才算完整。
-  return Boolean(account.defaultUser) || account.userOptional === true;
+function resolveAccount(
+  account: CredentialAccount,
+  env: Record<string, string>,
+  args: readonly string[],
+): ResolvedAccount | null {
+  const envPassword = env[account.passwordKey];
+  let password = envPassword && !looksUnresolved(envPassword) ? envPassword : '';
+  if (!password && account.passwordFlags?.length) {
+    const fromArgs = readStartupFlagValue(env, args, ...account.passwordFlags);
+    if (fromArgs && !looksUnresolved(fromArgs)) password = fromArgs;
+  }
+  if (!password) return null;
+
+  let user = '';
+  if (account.userKey) {
+    const rawUser = env[account.userKey];
+    // 有值但没展开 = 这个候选的用户名不可信，作废它（不要退到 defaultUser：
+    // 声明了用户名就说明本意不是用默认管理员）。
+    if (rawUser && looksUnresolved(rawUser)) return null;
+    user = rawUser || '';
+  }
+  if (!user && account.userFlags?.length) {
+    const fromArgs = readStartupFlagValue(env, args, ...account.userFlags);
+    if (fromArgs && !looksUnresolved(fromArgs)) user = fromArgs;
+  }
+  if (!user) user = account.defaultUser || '';
+  // 用户名缺席：只有「这类服务本来就没有用户名」才算完整（redis 的 --requirepass）。
+  if (!user && account.userOptional !== true) return null;
+
+  return { user, password };
 }
 
 /**
@@ -283,26 +355,35 @@ export function deriveInfraCredentialEnv(
   const env = serviceEnv || {};
   const out: Record<string, string> = {};
   const prefix = cdsEnvPrefix(serviceId);
-  const startupText = startup === undefined ? null : flattenStartup(startup);
+  // 调用方没传启动参数 = 「这台服务的启动命令我不知道」，与「知道且是空的」不同：
+  // 前者不能拿来证明认证（下面 provenByAuthKind 那一段），所以要分得开。
+  const args = startup === undefined ? null : flattenStartup(startup);
 
   for (const source of CREDENTIAL_SOURCES) {
+    // 「口令存在」不等于「服务端在校验它」。这类服务必须由启动参数证明，
+    // 证不了就一个键都不发——发出去会把本来能裸连的消费方弄坏
+    // （`ERR Client sent AUTH, but no password is set`）。
+    //
+    // 判据问的是那一份共用的 `detectInfraAuth`，与创建门禁、每日体检同一口径。
+    // 这里不自己写正则：三处各写一份必然漂，2026-08-27 已经漂过一次（台账 E81）。
+    if (source.provenByAuthKind) {
+      if (!args) continue;
+      if (detectInfraAuth(source.provenByAuthKind, env, args) !== true) continue;
+    }
+
     // 账号候选按优先级取第一个**完整可用**的。
     //
     // 只看口令是不够的（这里栽过）：mysql 有 MYSQL_PASSWORD 却没有 MYSQL_USER 时，
     // 只看口令会选中这个残缺候选，发出 `mysql://:口令@主机`——没有用户名的连接串，
     // 而旁边那个完整的 root 候选永远轮不到。完整性判定必须在**选之前**做。
-    const account = source.accounts.find((a) => accountUsable(a, env));
-    if (!account) continue;
+    let resolved: ResolvedAccount | null = null;
+    for (const candidate of source.accounts) {
+      resolved = resolveAccount(candidate, env, args || []);
+      if (resolved) break;
+    }
+    if (!resolved) continue;
 
-    // 「口令存在」不等于「服务端在校验它」。这类服务必须由启动参数证明，
-    // 证不了就一个键都不发——发出去会把本来能裸连的消费方弄坏。
-    if (source.provenByStartup && !(startupText && source.provenByStartup(startupText))) continue;
-
-
-    const password = env[account.passwordKey];
-    const rawUser = account.userKey ? (env[account.userKey] || '') : '';
-    // 用户名可以省（镜像有默认管理员名，或 redis 那种本来就没有），但不能是空字符串。
-    const user = rawUser || account.defaultUser || '';
+    const { user, password } = resolved;
 
     if (user) out[`CDS_${prefix}_USER`] = user;
     out[`CDS_${prefix}_PASSWORD`] = password;

@@ -64,7 +64,10 @@ describe('认证判定', () => {
       MYSQL_RANDOM_ROOT_PASSWORD: 'yes', MYSQL_USER: 'app', MYSQL_PASSWORD: 'x',
     })).toBe(true);
     expect(detectInfraAuth('postgres', { POSTGRES_PASSWORD: 'x' })).toBe(true);
-    expect(detectInfraAuth('redis', { REDIS_PASSWORD: 'x' })).toBe(true);
+    // redis 不在这一行里：它的口令写在 env 里**不代表服务端在校验**，判据只认启动
+    // 参数（见下面「redis 只认启动参数」）。这条断言原来写着 `REDIS_PASSWORD -> true`，
+    // 与创建门禁的「拒绝只声明密码变量但启动命令没有启用认证的 Redis」正好相反
+    // ——同一台库两处判据给相反结论（形状 3）。2026-08-27 收敛，台账 E81。
     expect(detectInfraAuth('sqlserver', { MSSQL_SA_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('clickhouse', { CLICKHOUSE_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('rabbitmq', {

@@ -1243,6 +1243,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         status: 'stopped',
         volumes: def.volumes || [],
         env: def.env || {},
+        // command / entrypoint 必须跟着落库。
+        //
+        // 解析器读得出、序列化器写得回，唯独这里建服务时把它俩丢了——一条只断在
+        // 中间的往返链（形状 2）。丢了之后有两件事静默坏掉：容器起来时没有那条
+        // 启动命令（`redis-server --requirepass ...` 直接退化成裸 redis），
+        // 而认证判据看不到启动参数，会把这台库判成「没配认证」。
+        // 后者更坏：它不报错，只是让凭据一个都发不出去（台账 E80）。
+        ...(def.command !== undefined ? { command: def.command } : {}),
+        ...(def.entrypoint !== undefined ? { entrypoint: def.entrypoint } : {}),
+        // restartPolicy 同理：yaml 里写了 `restart: always` 却在导入时丢掉，
+        // 容器会按兜底的 on-failure:3 跑，而 yaml 看起来明明声明过。
+        ...(def.restartPolicy !== undefined ? { restartPolicy: def.restartPolicy } : {}),
         healthCheck: def.healthCheck,
         createdAt: new Date().toISOString(),
       };

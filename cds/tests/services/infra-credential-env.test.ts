@@ -9,6 +9,8 @@ import {
   describeCredentialSources,
 } from '../../src/services/infra-credential-env.js';
 import { INFRA_CATALOG } from '../../src/services/infra-catalog.js';
+import { assertInfraAuthenticationConfigured } from '../../src/services/infra-auth-policy.js';
+import { detectInfraAuth } from '../../src/services/infra-exposure-audit.js';
 
 /**
  * 消费方容器的连接凭据。
@@ -281,6 +283,71 @@ describe('从基础设施服务派生连接凭据', () => {
     })).toEqual({});
   });
 
+  /**
+   * 口令**只写在启动参数里**的服务（台账 E78）。
+   *
+   * 认证门禁接受 `redis-server --requirepass <口令>`（它就是靠这个判「配了认证」的），
+   * 而凭据派生上一版只读 env。两边合起来是最坏的一种状态：门禁放行、服务真的开着
+   * 认证、消费方一个键都收不到——正是本模块要消灭的那个形状，却在自己身上又犯一次。
+   */
+  it('口令只写在启动参数上时也要派生得出来', () => {
+    const out = deriveInfraCredentialEnv('redis', {}, at, {
+      command: ['redis-server', '--requirepass', 'p4ss'],
+    });
+    expect(out.CDS_REDIS_PASSWORD).toBe('p4ss');
+    expect(out.CDS_REDIS_URL).toBe('redis://:p4ss@172.17.0.1:10002');
+    // 写成 `--requirepass=口令` 的等价形态同样要认（形状 1：换个写法就漏）。
+    expect(deriveInfraCredentialEnv('redis', {}, at, {
+      command: ['sh', '-c', 'exec redis-server --requirepass=p4ss'],
+    }).CDS_REDIS_PASSWORD).toBe('p4ss');
+  });
+
+  /**
+   * 命令行取值必须**逐字**保留大小写。
+   *
+   * 认证判据为了匹配开关名把 token 全转成了小写，取值若复用那份小写 token，
+   * 派生出来的就是一个大小写被抹平的口令——它长得像凭据、也确实发出去了，
+   * 消费方拿去认证必然失败，而错误只会说「认证失败」。
+   * CDS 自己生成的口令是十六进制小写，正好不会暴露这个 bug（形状 6）。
+   */
+  it('命令行上的口令要逐字保留大小写', () => {
+    const out = deriveInfraCredentialEnv('redis', {}, at, {
+      command: ['redis-server', '--requirepass', 'AbC-XyZ-123'],
+    });
+    expect(out.CDS_REDIS_PASSWORD).toBe('AbC-XyZ-123');
+  });
+
+  /** env 更可信：命令行上的值可能是待 shell 展开的形态，只当兜底。 */
+  it('env 与命令行都有口令时以 env 为准', () => {
+    const out = deriveInfraCredentialEnv('redis', { REDIS_PASSWORD: 'from-env' }, at, {
+      command: ['redis-server', '--requirepass', 'from-args'],
+    });
+    expect(out.CDS_REDIS_PASSWORD).toBe('from-env');
+  });
+
+  /**
+   * nats 的两条真实形态都要覆盖（台账 E82）。
+   *
+   * 手工建的 nats 常把账号口令直接写在 `--user` / `--pass` 上；CDS 预设走的是另一条路
+   * （在容器里写配置文件、不让明文进 argv），那种情况命令行上取不到，只能靠 env。
+   * 只覆盖一条就会有一类 nats 连不上。
+   */
+  it('nats 的账号口令在命令行上或在 env 里都要认', () => {
+    const fromArgs = deriveInfraCredentialEnv('nats', {}, at, {
+      command: ['nats-server', '--user', 'app', '--pass', 'p4ss'],
+    });
+    expect(fromArgs.CDS_NATS_USER).toBe('app');
+    expect(fromArgs.CDS_NATS_PASSWORD).toBe('p4ss');
+    expect(fromArgs.CDS_NATS_URL).toBe('nats://app:p4ss@172.17.0.1:10002');
+
+    const fromEnv = deriveInfraCredentialEnv('nats', {
+      NATS_USER: 'app', NATS_PASSWORD: 'p4ss',
+    }, at, { command: ['nats-server', '--config', '/etc/nats/nats.conf'], });
+    // 走配置文件那条路时，命令行上没有认证开关，判据看不出「服务端在校验」，
+    // 于是一个键都不发——不能证明就不发，与 redis 同一口径。
+    expect(fromEnv).toEqual({});
+  });
+
   it('每一类都写得出「为什么认这两个键」', () => {
     const described = describeCredentialSources();
     expect(described.length).toBeGreaterThan(0);
@@ -325,6 +392,71 @@ describe('与认证门禁对齐', () => {
       [...new Set(missing)],
       '门禁认这些键算「配了认证」，凭据表却认不出来 —— 这些库会门禁放行但消费方收不到凭据',
     ).toEqual([]);
+  });
+
+  /**
+   * 同一台库，三处判据必须给同一个结论（台账 E81）。
+   *
+   * 这三处问的是同一件事「这台库在校验凭据吗」，却各写了一份实现：
+   *
+   * - `assertInfraAuthenticationConfigured`：建服务时拦不拦。
+   * - `detectInfraAuth`：每日体检报不报「裸奔」。
+   * - `deriveInfraCredentialEnv`：发不发凭据给消费方。
+   *
+   * 2026-08-27 它们真的分叉过：env 里有 `REDIS_PASSWORD`、启动命令没开认证的 redis，
+   * 门禁判「拒绝创建」，体检判「已认证」（于是压掉裸奔告警），凭据派生判「不发」。
+   * 一台库同时被判成三种状态，三条结论各自都有注释解释为什么自己是对的。
+   *
+   * 收敛之后只剩一份实现（后两者委派给 `detectInfraAuth`），这条守卫钉住它别再分家。
+   */
+  it('创建门禁 / 运行态体检 / 凭据派生，对同一台库结论一致', () => {
+    const at = { host: '172.17.0.1', port: 10002 };
+    const cases: { why: string; env: Record<string, string>; command?: string[]; authed: boolean }[] = [
+      {
+        why: 'env 有口令但启动没开认证 —— 就是分叉过的那一台',
+        env: { REDIS_PASSWORD: 'p4ss' },
+        command: ['redis-server', '--appendonly', 'yes'],
+        authed: false,
+      },
+      { why: '什么都没配', env: {}, command: ['redis-server'], authed: false },
+      {
+        why: '口令只写在启动参数上',
+        env: {},
+        command: ['redis-server', '--requirepass', 'p4ss'],
+        authed: true,
+      },
+      {
+        why: 'ACL 文件 + env 口令',
+        env: { REDIS_PASSWORD: 'p4ss' },
+        command: ['redis-server', '--aclfile', '/etc/redis/users.acl'],
+        authed: true,
+      },
+    ];
+
+    for (const c of cases) {
+      const gatePassed = (() => {
+        try {
+          assertInfraAuthenticationConfigured({
+            dockerImage: 'redis:7', env: c.env, command: c.command,
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      const audited = detectInfraAuth('redis', c.env, c.command) === true;
+      const derived = Object.keys(
+        deriveInfraCredentialEnv('redis', c.env, at, { command: c.command }),
+      ).length > 0;
+
+      expect({ gate: gatePassed, audit: audited }, `${c.why}：门禁与体检不一致`)
+        .toEqual({ gate: c.authed, audit: c.authed });
+      // 凭据派生只在「真的在校验」时才发键。它可能因为别的原因不发（比如根本没口令），
+      // 所以只单向断言：判成裸奔时**一定**不发。
+      if (!c.authed) {
+        expect(derived, `${c.why}：判成没认证却还发了凭据`).toBe(false);
+      }
+    }
   });
 });
 

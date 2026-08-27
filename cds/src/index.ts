@@ -6,7 +6,12 @@ import express from 'express';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { loadConfig } from './config.js';
-import { discoverComposeFiles, parseCdsCompose } from './services/compose-parser.js';
+import {
+  discoverComposeFiles,
+  parseCdsCompose,
+  resolveEnvTemplates,
+  resolveCommandTemplate,
+} from './services/compose-parser.js';
 import fs from 'node:fs';
 import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } from './server.js';
 import type { ActivityEvent } from './server.js';
@@ -427,13 +432,20 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
       // 误报成裸奔——一条假警报会让人开始怀疑整张表。
       const authByContainer = new Map<string, { env: Record<string, string>; args: string[] }>();
       if (rows.length > 0) {
+        // Entrypoint 必须和 Cmd 一起取。
+        //
+        // 认证判据看的是「启动时到底跑了什么」，而这句话有两半：memcached / nats
+        // 这类预设把 entrypoint 覆盖成 `sh`、真正的认证参数在 `-c '...'` 那段里，
+        // 只读 Cmd 等于只看到半条命令。之前靠「env 里有口令也算认证」把这半条
+        // 盖住了；判据收敛到只认启动参数（台账 E81）之后，缺的这半条会直接变成
+        // 假警报——判据必须读真正生效的那个东西（形状 6）。
         const inspect = await shell.exec(
-          `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}' `
+          `docker inspect --format '{{.Name}}\t{{json .Config.Env}}\t{{json .Config.Cmd}}\t{{json .Config.Entrypoint}}' `
           + rows.map((r) => `'${r.name.replace(/'/g, `'"'"'`)}'`).join(' '),
           { timeout: 30_000 },
         );
         for (const line of (inspect.stdout || '').split('\n')) {
-          const [rawName, envJson, cmdJson] = line.split('\t');
+          const [rawName, envJson, cmdJson, entrypointJson] = line.split('\t');
           if (!rawName) continue;
           const name = rawName.replace(/^\//, '').trim();
           const env: Record<string, string> = {};
@@ -444,7 +456,11 @@ function startInfraExposureAudit(store: ServerEventLogSink | null): NodeJS.Timeo
             }
           } catch { /* 解析不了就当没有，下游按未知从严 */ }
           let args: string[] = [];
-          try { args = (JSON.parse(cmdJson || '[]') as string[]) || []; } catch { args = []; }
+          try {
+            const cmd = (JSON.parse(cmdJson || '[]') as string[]) || [];
+            const entrypoint = (JSON.parse(entrypointJson || '[]') as string[]) || [];
+            args = [...entrypoint, ...cmd];
+          } catch { args = []; }
           authByContainer.set(name, { env, args });
         }
       }
@@ -1102,6 +1118,14 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
       // 不会有任何提示，到期后直接起不来（Codex review P1）。
       const exemptions: InfraExemptionFact[] = [];
       for (const service of stateService.getInfraServices() || []) {
+        // 判据必须读**容器真正会拿到的那个值**，不是它在台账里的样子。
+        //
+        // `InfraService.env` / `command` 存的是未展开的模板：compose 导入和手工建的
+        // 服务里，值经常就是字面的 `${CDS_MYSQL_PASSWORD}`，到启动容器那一刻才解析
+        // （线上现在就有四个项目这样存着）。直接拿生值来判，认证判据看到的是
+        // 一串 `${...}`——它当然「有值」，于是每一台模板式配置的库都被判成
+        // 「配了认证」，而它到底配没配，这条体检从来没真的看过（形状 6，台账 E75）。
+        const projectEnv = stateService.getCustomEnv(service.projectId || 'default');
         const decision = evaluateInfraAuthentication(
           {
             dockerImage: service.dockerImage,
@@ -1110,9 +1134,9 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
             basePresetId: service.basePresetId,
             containerName: service.containerName,
             containerPort: service.containerPort,
-            env: service.env,
-            command: service.command,
-            entrypoint: service.entrypoint,
+            env: resolveEnvTemplates(service.env || {}, projectEnv),
+            command: resolveCommandTemplate(service.command, projectEnv),
+            entrypoint: resolveCommandTemplate(service.entrypoint, projectEnv),
             createdAt: service.createdAt,
           },
           { graceUntil: process.env.CDS_INFRA_AUTH_GRACE_UNTIL || null },
