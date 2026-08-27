@@ -226,7 +226,7 @@ public class DataSyncAssetUrlsTests
     }
 
     /// <summary>
-    /// 相对地址不改写，但**必须数出来**（DS30）。
+    /// 相对地址**且没有可用 key** 时不改写，但必须数出来（DS30）。
     ///
     /// 「已经是相对路径 = 天然可移植」只在两站共享同一份磁盘时成立，而跨实例同步的
     /// 前提恰恰是两台不同机器。源站用本地磁盘存附件时，每一个地址都指向本站不存在的
@@ -234,8 +234,9 @@ public class DataSyncAssetUrlsTests
     /// 一句提示都没有。
     /// </summary>
     [Fact]
-    public void 相对地址不改写但必须单独数出来()
+    public void 相对地址且认不出_key_时不改写但必须单独数出来()
     {
+        // 没有 StorageKey，地址又是相对的：文件名不是内容寻址的形状，反推不出 key。
         var docs = new List<BsonDocument> { Attachment("/local-assets/prd-agent/img/x.png") };
         var result = DataSyncAssetUrls.RebaseIncoming(docs, "attachments", LocalBuild).Total;
 
@@ -244,6 +245,76 @@ public class DataSyncAssetUrlsTests
         Assert.Equal(1, result.AlreadyRelative);
         // 不改写是因为确实无从改起：key 不在地址里，文件也没搬。能做的是别再静默。
         Assert.Equal("/local-assets/prd-agent/img/x.png", docs[0]["Url"].AsString);
+    }
+
+    /// <summary>
+    /// 相对地址**带着可用 key** 时必须照常改写（Codex review P1）。
+    ///
+    /// 源站用本地磁盘存附件，地址是 `/local-assets/...`，但 `StorageKey` 照样存着——
+    /// 那是改得了的。上一版把「不是绝对地址」当成提前退出条件放在读 key 之前，
+    /// 于是这些明明能改的地址被判成「改不了」，界面还照着说「这种地址改不了也用不了」；
+    /// 操作者按提示把文件复制过来、或两站都换成对象存储再同步，地址照样指着源站。
+    ///
+    /// 真正改不了的是「没有可用的 key」，不是「地址是相对的」——判据窄了一档（形状 1）。
+    /// </summary>
+    [Fact]
+    public void 相对地址带着_StorageKey_时照样改写()
+    {
+        var docs = new List<BsonDocument>
+        {
+            Attachment("/local-assets/prd-agent/img/abcdefghijklmnopqrstuvwxyz.png",
+                storageKey: "prd-agent/img/abcdefghijklmnopqrstuvwxyz.png"),
+        };
+        var result = DataSyncAssetUrls.RebaseIncoming(docs, "attachments", LocalBuild).Total;
+
+        Assert.Equal(1, result.Rebased);
+        Assert.Equal(0, result.AlreadyRelative);
+        Assert.Equal(
+            "https://cdn.local.test/local/prd-agent/img/abcdefghijklmnopqrstuvwxyz.png",
+            docs[0]["Url"].AsString);
+    }
+
+    /// <summary>首页 / 桌面端素材同理：地址是相对的，`RelativePath` 却完全够用。</summary>
+    [Theory]
+    [InlineData("homepage_assets")]
+    [InlineData("desktop_assets")]
+    public void 相对地址带着_RelativePath_时照样改写(string collection)
+    {
+        var docs = new List<BsonDocument>
+        {
+            new()
+            {
+                { "_id", "h1" },
+                { "Url", "/local-assets/icon/desktop/dark/bg.mp4" },
+                { "RelativePath", "icon/desktop/dark/bg.mp4" },
+            },
+        };
+        var result = DataSyncAssetUrls.RebaseIncoming(docs, collection, LocalBuild).Total;
+
+        Assert.Equal(1, result.Rebased);
+        Assert.Equal(0, result.AlreadyRelative);
+        Assert.Equal("https://cdn.local.test/icon/desktop/dark/bg.mp4", docs[0]["Url"].AsString);
+    }
+
+    /// <summary>
+    /// 有 key 但拼不出本站地址：算进缺口，不算进「相对」。
+    ///
+    /// 这一档已经不是「无从改起」了——key 是有的，是本站没配好。混进相对那一档，
+    /// 界面会让人去复制文件，而真正该做的是把本站的公网根地址配上。
+    /// </summary>
+    [Fact]
+    public void 相对地址有_key_却拼不出本站地址时算缺口()
+    {
+        var docs = new List<BsonDocument>
+        {
+            Attachment("/local-assets/prd-agent/img/abcdefghijklmnopqrstuvwxyz.png",
+                storageKey: "prd-agent/img/abcdefghijklmnopqrstuvwxyz.png"),
+        };
+        var result = DataSyncAssetUrls.RebaseIncoming(docs, "attachments", (_, _) => null).Total;
+
+        Assert.Equal(0, result.Rebased);
+        Assert.Equal(1, result.Unrecognized);
+        Assert.Equal(0, result.AlreadyRelative);
     }
 
     /// <summary>相对地址那一档不许被并进「已改写」或「认不出」——三个数各说各的事。</summary>

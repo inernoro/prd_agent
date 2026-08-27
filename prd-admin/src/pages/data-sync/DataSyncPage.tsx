@@ -1043,13 +1043,16 @@ function ProgressCard({
           */}
           {assetsRelative > 0 ? (
             <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
-              另有 <span style={{ color: 'var(--text-primary)' }}>{assetsRelative} 条是相对地址</span>
-              （形如 <code className="font-mono text-xs">/local-assets/…</code>），说明源站把附件
-              存在<span style={{ color: 'var(--text-primary)' }}>它自己那台机器的磁盘上</span>。
-              这种地址改不了也用不了：地址里没有对象位置，本站磁盘上也没有这些文件，
+              另有 <span style={{ color: 'var(--text-primary)' }}>{assetsRelative} 条是相对地址、
+              而且没有记下对象位置</span>（形如 <code className="font-mono text-xs">/local-assets/…</code>），
+              说明源站把附件存在<span style={{ color: 'var(--text-primary)' }}>它自己那台机器的磁盘上</span>，
+              而这几条又是更早期、没留下位置信息的旧记录。
+              这种地址改不了也用不了：本站磁盘上没有这些文件，
               {run.dryRun ? '真跑之后' : '现在'}点开就是 404。
               要让它们打开，得把源站那个目录里的文件复制到本站对应目录，
               或者两站都改用同一个对象存储再重新同步。
+              （同样存在本地磁盘、但<span style={{ color: 'var(--text-primary)' }}>记下了</span>
+              对象位置的那些，已经算进上面的「已改写」里了。）
             </p>
           ) : null}
         </Card>

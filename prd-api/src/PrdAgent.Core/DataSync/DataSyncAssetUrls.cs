@@ -188,15 +188,17 @@ public static class DataSyncAssetUrls
     /// <param name="Rebased">已改写成本站地址的字段数。</param>
     /// <param name="Unrecognized">是绝对地址、但认不出 key，原样留着的字段数——**这些就是搬完还打不开的候选**。</param>
     /// <param name="AlreadyRelative">
-    /// 本来就是相对地址的字段数。
+    /// 是相对地址、而且**找不到可用的 key**，因此改不了的字段数。
     ///
     /// **这一档不是「没事」，是「多半有事」**（DS30）。判据早先把「已经是相对路径」读成
     /// 「天然可移植」直接放行，既不改写也不计数——可这两件事只在两站共享同一份磁盘时才等价，
     /// 而跨实例同步的前提恰恰是两台不同的机器。源站用本地磁盘存附件时，地址就是
     /// `/local-assets/...`，搬过来每一个都指向本站不存在的文件，而且**一句提示都没有**。
     ///
-    /// 现在单独数出来、由调用方如实报出去。不改写是因为确实无从改起（key 不在地址里、
-    /// 文件也没搬），能做的是别再静默。
+    /// 「找不到可用的 key」这个限定词是后补的，且很要紧：本地磁盘存的附件同样带着
+    /// `StorageKey` / `RelativePath`，那些是**改得了的**，只是上一版在读它们之前就按
+    /// 「地址不是绝对的」提前退出了。真正落进这一档的，是既没登记 key 字段、
+    /// 又没法从地址反推的那些——地址改不了，文件也没搬，能做的只有别再静默。
     /// </param>
     public sealed record RebaseResult(int Rebased, int Unrecognized, int AlreadyRelative)
     {
@@ -250,16 +252,27 @@ public static class DataSyncAssetUrls
                 var current = value.AsString;
                 if (string.IsNullOrWhiteSpace(current)) continue;
 
-                // 相对地址不再当作「天然可移植」放行——那只在两站共享同一份磁盘时成立，
-                // 而跨实例同步的前提恰恰是两台不同机器（DS30）。数出来，由调用方报出去。
-                if (!IsAbsoluteHttp(current))
+                // **先认 key，再看地址长什么样**——顺序反过来就是一个洞。
+                //
+                // 上一版把「不是绝对地址」当成提前退出的条件放在最前面，于是源站用本地磁盘
+                // 存附件时（地址形如 `/local-assets/...`），文档里那个**完全可用**的
+                // `StorageKey` / `RelativePath` 根本没机会被读到：明明改得了的地址被判成
+                // 「改不了」，界面还照着说「这种地址改不了也用不了」。操作者按提示把文件
+                // 复制过来、或者两站都换成对象存储再同步，地址照样指着源站那台机器。
+                //
+                // 判据比它该管的范围窄了一档（形状 1）：真正改不了的是「**没有可用的 key**」，
+                // 不是「地址是相对的」。这两件事只在没登记 key 字段的集合上才重合。
+                var resolved = ResolveKey(doc, spec, current);
+                if (resolved is null)
                 {
-                    one = one.Add(new RebaseResult(0, 0, 1));
+                    // 认不出 key 的两种后果不同，分开数：
+                    // 绝对地址 = 指着源站，源站下线就打不开；
+                    // 相对地址 = 指着本站磁盘上一个不存在的文件，此刻就打不开（DS30）。
+                    one = one.Add(IsAbsoluteHttp(current)
+                        ? new RebaseResult(0, 1, 0)
+                        : new RebaseResult(0, 0, 1));
                     continue;
                 }
-
-                var resolved = ResolveKey(doc, spec, current);
-                if (resolved is null) { one = one.Add(new RebaseResult(0, 1, 0)); continue; }
 
                 var next = buildLocalUrl(resolved, spec.KeyKind);
                 // 拼不出来（本站没配公网根地址之类）就原样留着，并算进「认不出」——
