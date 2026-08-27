@@ -458,7 +458,14 @@ export function TranscribeStatusCard({
      * （与录音结果页共用同一份 recording-design-palette.css）。
      */
     <div
-      className="recording-design-palette surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
+      /*
+        整屏形态（录音处理页）是**通栏直排**：稿面 R4 / cap-A4 / cap-A5 的大标题与三阶段
+        直接落在页面底色上。再套一层白卡会把间距节奏与层级观感整体改掉（三份判分各记一次）。
+        寄生在阅读器里时仍然要这层卡——那时它是页面内容中的一块，需要自己的边界。
+      */
+      className={`recording-design-palette mb-4 flex flex-col gap-3 ${
+        suppressPrimaryAction ? 'px-0 py-0' : 'surface-inset rounded-[14px] px-4 py-3.5'
+      }`}
       data-tour-id="doc-transcribe-hero"
       // 失败态整张卡跟着色调走：四种处境此前共用同一套中性壳，
       // 用户扫一眼分不出「坏了」「在重试」「在排队」「没听到人声」
@@ -579,7 +586,14 @@ export function TranscribeStatusCard({
                 cap-A4/A5 是「正在准备结果页」。整屏那一版取后者当 H1，
                 前者落到这一行——两句都在，谁也没少（判分口径：可以多，不可以少）。
               */}
-              {headline?.trim() ? '正在整理这段录音。' : ''}音频已经安全保存，你现在就可以播放。
+              {/*
+                到了补齐那一档，这句话必须换：稿面 cap-A5 写的是「原文已完成，正在补齐词云与整理」。
+                停在上一阶段那句「音频已经安全保存，你现在就可以播放」，
+                等于这一屏的主叙述句落后了一整个阶段（判分按内容缺失记）。
+              */}
+              {transcriptDone
+                ? '原文已完成，正在补齐词云与整理。'
+                : `${headline?.trim() ? '正在整理这段录音。' : ''}音频已经安全保存，你现在就可以播放。`}
             </p>
           </div>
 
@@ -613,6 +627,17 @@ export function TranscribeStatusCard({
                   }}
                 >
                   {stage.label}
+                </span>
+                {/*
+                  每段自己的量级行（稿面 cap-A4/A5 是「标签 + 数值」两行）。
+                  只留标签的话，这条横条退化成纯装饰——它本来是「一眼扫完三阶段各走到哪」的那一层。
+                */}
+                <span className="block truncate text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                  {stage.state === 'done'
+                    ? '已完成'
+                    : stage.state === 'active'
+                      ? `${stage.percent ?? 0}%`
+                      : '排队中'}
                 </span>
               </span>
             ))}
