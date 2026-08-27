@@ -89,12 +89,7 @@ public static class DataSyncAssetUrls
             {
                 new AssetUrlField("Url", "RelativePath", AssetKeyKind.PhysicalPath),
             },
-            // 生成图没有 key 字段，只能从地址反推；它们本来就是内容寻址存的，正则认得出。
-            ["image_assets"] = new[]
-            {
-                new AssetUrlField("Url", null, AssetKeyKind.ContentAddressed),
-                new AssetUrlField("OriginalUrl", null, AssetKeyKind.ContentAddressed),
-            },
+            // image_assets 曾经登记在这里，已撤回——见下面 PendingSurvey 里的理由。
         };
 
     /// <summary>
@@ -159,6 +154,20 @@ public static class DataSyncAssetUrls
             ["daily_tips"] = "CoverImageUrl 是本站资产，ActionUrl 是外链——同一个集合两种语义，要拆开登记。",
             ["hosted_sites"] = "CoverImageUrl / PdfAssetUrl 是本站资产，SiteUrl 是站点页面地址，同上要拆开。",
             ["document_stores"] = "CoverImageUrl 是本站资产，另两个是对端实例地址，同上要拆开。",
+
+            // 这一条是**撤回**，不是「还没登记」。本轮先把它登记成内容寻址，随后发现
+            // 演讲稿配图那条路径把**外部图床的直链**原样写进这两个字段，同一个集合里
+            // 于是混着两种东西：本站生成并存下来的图，和别人家的链接。
+            //
+            // 混着就不能整列改写。最坏那一档是改坏数据：外部链接的路径万一凑巧长得像
+            // 内容寻址（有些图床就用十六进制哈希做文件名），会被改写成一个本站根本没有的
+            // 对象；一个本来打得开的链接就此打不开。次坏那一档是话说错：认不出的那些会被
+            // 报成「源站的资产、源站下线就打不开」，而它压根不是源站的东西。
+            //
+            // 逐行分辨需要一个可信的行内证据，而现在**没有**：那条路径存的 Sha256 是
+            // 「URL 的哈希」，形状和真正的内容哈希一模一样，分不出来。所以在有证据之前
+            // 一行都不改——宁可少改，不可改坏。
+            ["image_assets"] = "同一个集合里混着本站生成图与外部图床直链，且没有可信的行内证据把两者分开。",
         };
 
     public static IReadOnlyDictionary<string, AssetUrlField[]> FieldMap => UrlFields;

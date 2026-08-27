@@ -285,7 +285,10 @@ public class DataSyncScopeCoverageTests
     [Fact]
     public void 待定名单只许缩小()
     {
-        const int Baseline = 14; // 2026-08-27 落地时的条数，只减不增
+        // 2026-08-27 落地时 14 条；同日 +1 —— image_assets 从「要改写」撤回到这里
+        // （同一集合混着本站生成图与外部图床直链，没有可信的行内证据分辨）。
+        // 往上调基线必须像这样写明是哪一条、为什么；只减不增是常态。
+        const int Baseline = 15;
         Assert.True(DataSyncAssetUrls.PendingSurveyReasons.Count <= Baseline,
             $"PendingSurvey 涨到了 {DataSyncAssetUrls.PendingSurveyReasons.Count} 条（基线 {Baseline}）："
             + "新增的资产集合要么当场登记改写，要么写明为什么不改，不许挂进待定栏。"

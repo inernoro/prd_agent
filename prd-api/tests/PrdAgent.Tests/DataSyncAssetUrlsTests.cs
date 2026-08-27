@@ -183,28 +183,36 @@ public class DataSyncAssetUrlsTests
         Assert.StartsWith("https://source.example.com/", docs[0]["Url"].AsString);
     }
 
-    /// <summary>生成图没有 key 字段，但它本来就是内容寻址存的，正则认得出（DS33）。</summary>
+    /// <summary>
+    /// 生成图整列不改写：同一个集合里混着外部图床的直链（Codex review）。
+    ///
+    /// 本轮一度把它登记成内容寻址，随后发现演讲稿配图那条路径把上游图床的地址
+    /// 原样写进这两个字段。整列改写最坏的一档是**改坏数据**：外部链接的路径万一
+    /// 凑巧长得像内容寻址（有些图床就用十六进制哈希当文件名），会被改成一个本站
+    /// 根本没有的对象，一个本来打得开的链接就此打不开。
+    ///
+    /// 逐行分辨需要可信的行内证据，而那条路径存的「哈希」是 URL 的哈希，
+    /// 形状与真正的内容哈希一模一样，分不出来。所以在有证据之前一行都不动。
+    /// </summary>
     [Fact]
-    public void 生成图两个地址字段都要改写()
+    public void 生成图整列不改写_因为混着外部图床直链()
     {
+        // 这条外部地址的末三段恰好长得像内容寻址（64 位十六进制文件名）——
+        // 正是「登记了就会被改坏」的那一档，拿它当样本才测得到风险。
+        const string External =
+            "https://img.example-provider.net/private/org-abc/"
+            + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.png";
         var docs = new List<BsonDocument>
         {
-            new()
-            {
-                { "_id", "i1" },
-                { "Url", SourceUrl },
-                { "OriginalUrl", "https://source.example.com/srcprefix/prd-agent/img/zyxwvutsrqponmlkjihgfedcba.png" },
-            },
+            new() { { "_id", "i1" }, { "Url", SourceUrl }, { "OriginalUrl", External } },
         };
         var result = DataSyncAssetUrls.RebaseIncoming(docs, "image_assets", LocalBuild).Total;
 
-        Assert.Equal(2, result.Rebased);
-        Assert.Equal(
-            "https://cdn.local.test/local/prd-agent/img/abcdefghijklmnopqrstuvwxyz.png",
-            docs[0]["Url"].AsString);
-        Assert.Equal(
-            "https://cdn.local.test/local/prd-agent/img/zyxwvutsrqponmlkjihgfedcba.png",
-            docs[0]["OriginalUrl"].AsString);
+        Assert.False(DataSyncAssetUrls.HasUrlFields("image_assets"));
+        Assert.Equal(DataSyncAssetUrls.RebaseResult.Empty, result);
+        // 外部图床那条原样留着——这正是撤回登记要保住的东西。
+        Assert.Equal(External, docs[0]["OriginalUrl"].AsString);
+        Assert.Equal(SourceUrl, docs[0]["Url"].AsString);
     }
 
     [Fact]
@@ -495,9 +503,9 @@ public class DataSyncAssetUrlsTests
     /// <summary>
     /// 没有 key 字段的集合，光靠**相对地址**也要认得出来（Codex review 第三刀）。
     ///
-    /// `image_assets` 没有登记 key 字段，只能从地址反推；而上一版把「必须是绝对地址」
-    /// 写成了解析的前提，于是源站用本地磁盘时整批算成「改不了」——可它们的末三段
-    /// 恰恰就是可用的逻辑 key。
+    /// 缩略图没有登记 key 字段（它与主地址可能是两个不同的对象，不能共用 StorageKey），
+    /// 所以只能从地址反推；而上一版把「必须是绝对地址」写成了解析的前提，于是源站用
+    /// 本地磁盘时整批算成「改不了」——可它们的末三段恰恰就是可用的逻辑 key。
     ///
     /// 这条同样不写死形状：真跑一次 `LocalAssetStorage.SaveAsync`，用**它产出的那个
     /// 地址**（不是我编的字符串）走完整条改写。
@@ -524,15 +532,16 @@ public class DataSyncAssetUrlsTests
                 && (probe!.Scheme == Uri.UriSchemeHttp || probe.Scheme == Uri.UriSchemeHttps);
             Assert.False(absoluteHttp, $"本地存储现在返回的是绝对 http 地址（{stored.Url}），这条守卫的前提已变");
 
+            // 只放缩略图、不放 StorageKey：唯一能走的就是「从地址反推」那条路。
             var docs = new List<BsonDocument>
             {
-                new() { { "_id", "i1" }, { "Url", stored.Url }, { "OriginalUrl", stored.Url } },
+                new() { { "_id", "a1" }, { "ThumbnailUrl", stored.Url } },
             };
-            var result = DataSyncAssetUrls.RebaseIncoming(docs, "image_assets", LocalBuild).Total;
+            var result = DataSyncAssetUrls.RebaseIncoming(docs, "attachments", LocalBuild).Total;
 
-            Assert.Equal(2, result.Rebased);
+            Assert.Equal(1, result.Rebased);
             Assert.Equal(0, result.AlreadyRelative);
-            Assert.Equal($"https://cdn.local.test/local/{stored.Key}", docs[0]["Url"].AsString);
+            Assert.Equal($"https://cdn.local.test/local/{stored.Key}", docs[0]["ThumbnailUrl"].AsString);
         }
         finally
         {
@@ -578,7 +587,6 @@ public class DataSyncAssetUrlsTests
             // （文件本身挂在 desktop_assets 的 Skin 维度下）。第一版按「创作与素材那一组里的
             // 资产集合」凭印象把它一起登记了，是这条守卫当场查出来的——登记一个不存在的字段，
             // 改写永远命中不到而计数是 0，和「没有需要改的」长得一模一样。
-            ["image_assets"] = typeof(PrdAgent.Core.Models.ImageAsset),
         };
 
         // 登记表长出新集合而这里没跟上时要红，否则新集合的字段名从来没被查过。
