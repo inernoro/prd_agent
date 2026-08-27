@@ -38,8 +38,8 @@
       "wide": false,
       "shot": "processing.light",
       "driven": "run 停在 45%",
-      "score": 98,
-      "note": "剩 2 分：播放卡与原文卡在稿面是两张并列卡（本轮已改通栏直排，未复判）。"
+      "score": 97,
+      "note": "剩 3 分：稿面音频卡与原文卡是两张并列白卡，实现合并成一张带分隔线的；原文卡未吃满到底部按钮（稿面也没标它该长多高）。"
     },
     {
       "board": "v2-P1",
@@ -218,8 +218,8 @@
       "wide": false,
       "shot": "processing.light",
       "driven": "run 停在 45%",
-      "score": 97,
-      "note": "剩 3 分：三段条每段的量级行（本轮已补，未复判）。"
+      "score": 99,
+      "note": "剩 1 分：音频卡的播放键稿面是大号正圆，实现是圆角方块。"
     },
     {
       "board": "cap-A5",
@@ -228,8 +228,8 @@
       "wide": false,
       "shot": "processing-stage3.dark",
       "driven": "run 停在 45%",
-      "score": 93,
-      "note": "剩 7 分：阶段 3 的副标题没随阶段翻转、三段条缺量级行（两条本轮都已修，未复判）。"
+      "score": 98,
+      "note": "剩 2 分：词云骨架稿面在音频卡内、实现挪到卡外；播放键圆角方块 vs 正圆。"
     },
     {
       "board": "cap-B1",
