@@ -19,6 +19,10 @@ import { toast } from '@/lib/toast';
 import {
   LANDING_PREVIEW_SLOTS,
   buildLandingPreviewPrompt,
+  LANDING_ART_STYLES,
+  DEFAULT_LANDING_ART_STYLE,
+  landingArtStyle,
+  type LandingArtStyleKey,
   landingPreviewSlotById,
   type LandingPreviewSlot,
 } from '@/lib/landingPreviewSlots';
@@ -81,6 +85,8 @@ export default function LandingPreviewSettings() {
   const [tick, setTick] = useState(0);
   const [editing, setEditing] = useState<{ slot: LandingPreviewSlot; prompt: string } | null>(null);
   const [zoomSlotId, setZoomSlotId] = useState<string | null>(null);
+  /** 当前选的拍法。换一档再点生成，出来的就是另一种风格的同一个画面 */
+  const [artStyle, setArtStyle] = useState<LandingArtStyleKey>(DEFAULT_LANDING_ART_STYLE);
 
   const controllersRef = useRef<AbortController[]>([]);
   /** 卸载后丢弃在途 SSE 回调，避免在已卸载组件上 setState */
@@ -282,14 +288,14 @@ export default function LandingPreviewSettings() {
   const openDialog = (slot: LandingPreviewSlot) => {
     // 改过一次就回填他自己那版；没生成过才用默认词
     const stored = assets[slot.slot]?.prompt;
-    setEditing({ slot, prompt: stored && stored.trim() ? stored : buildLandingPreviewPrompt(slot) });
+    setEditing({ slot, prompt: stored && stored.trim() ? stored : buildLandingPreviewPrompt(slot, artStyle) });
   };
 
   const handleGenerateAll = () => {
     void generate(
       LANDING_PREVIEW_SLOTS.map((s) => ({
         slot: s,
-        prompt: assets[s.slot]?.prompt?.trim() || buildLandingPreviewPrompt(s),
+        prompt: assets[s.slot]?.prompt?.trim() || buildLandingPreviewPrompt(s, artStyle),
       })),
     );
   };
@@ -322,8 +328,17 @@ export default function LandingPreviewSettings() {
             {generatedCount} / {LANDING_PREVIEW_SLOTS.length} 幕已有配图
           </div>
           <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            对外首页 /home 每一幕一张示意图。提示词已按幕写好默认值，点「生成」可当场改。
+            首页两幕里的产物图。提示词已按位置写好默认值，点「生成」可当场改；换「拍法」再生成即整套换风格。
           </div>
+        </div>
+
+        {/* 拍法：换一档，下次生成的画面不变、观感全变 */}
+        <div className="shrink-0" style={{ minWidth: '190px' }}>
+          <Select value={artStyle} onChange={(e) => setArtStyle(e.target.value as LandingArtStyleKey)} uiSize="sm">
+            {LANDING_ART_STYLES.map((st) => (
+              <option key={st.key} value={st.key}>{st.label}</option>
+            ))}
+          </Select>
         </div>
 
         {/* 一个模型也没有时不摆选择器；有多个时让人能钉住起点（失败仍会自动往下试） */}
@@ -524,14 +539,14 @@ export default function LandingPreviewSettings() {
                 }}
               />
               <p className="text-[11px]" style={{ color: 'var(--text-muted)', lineHeight: 1.7 }}>
-                前半段是十幕共用的风格约束（底色、两支重音色、只写小写拉丁标注），改它会让这张图和其它幕不成套；
-                后半段是这一幕的画面描述，通常只需要改这里。
+                前半段是当前「拍法」的风格约束（现在是{landingArtStyle(artStyle).label}：{landingArtStyle(artStyle).hint}），
+                整套图共用，改它这一张就和别的不成套了；后半段是这张自己的画面描述，通常只需要改这里。
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setEditing({ ...editing, prompt: buildLandingPreviewPrompt(editing.slot) })}
+                  onClick={() => setEditing({ ...editing, prompt: buildLandingPreviewPrompt(editing.slot, artStyle) })}
                 >
                   <RotateCcw size={13} />
                   恢复默认提示词

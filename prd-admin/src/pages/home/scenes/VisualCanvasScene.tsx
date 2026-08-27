@@ -5,6 +5,7 @@ import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline, useTypewriter } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useLandingAsset } from '../hooks/useLandingAssets';
+import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 
 /**
  * VisualCanvasStage —— 第一屏的视觉创作工作台（照 `pages/ai-chat/AdvancedVisualAgentTab.tsx` 复刻）。
@@ -123,6 +124,9 @@ export function VisualCanvasStage() {
           className="absolute inset-0 pointer-events-none"
           style={{ background: `radial-gradient(360px 190px at 5% 0%, ${clay.faint} 0%, transparent 100%)` }}
         />
+
+        {/* 演示指针：手机上不画 —— 小屏本来就没有鼠标，画一枚箭头反而突兀 */}
+        {!isMobile && <SceneCursor spot={CURSOR_AT[beat] ?? null} />}
 
         {/* ── 画布可用区：宽屏时给右侧对话面板让出 444px ── */}
         <div className="absolute inset-0 lg:right-[444px]">
@@ -599,6 +603,30 @@ function GenTile({
  * 画布上那几张「图」。不是占位灰块——画一张有山脊线、有光源、有前后景的图，
  * 才看得出「把主视觉改成雾天、山脊线保留」这句话到底改了什么。
  */
+
+/**
+ * 指针走位表：这一幕里「那只手」按拍号走到哪、什么时候按下。
+ *
+ * 顺序刻意是「先走到、再发生」：`sent` 那一拍指针压在发送键上，图才在下一拍开始渲染；
+ * `selected` 那一拍指针压在雾天那张上，选中框才亮起来。反过来（东西先变、指针后到）
+ * 比没有指针更假。
+ *
+ * 宽屏下右侧对话面板占 444px，落点按整块面板的百分比给，所以对话区大约在 x>70 的位置。
+ */
+const CURSOR_AT: Record<number, CursorSpot> = {
+  [B.idle]: { x: 84, y: 88, hidden: true },
+  [B.typing]: { x: 84, y: 88 },                 // 移到输入框
+  [B.sent]: { x: 93, y: 88, press: true },      // 按下发送
+  [B.thinking]: { x: 90, y: 80 },
+  [B.replying]: { x: 88, y: 72 },
+  [B.rendering]: { x: 30, y: 40 },              // 回到画布看着它长出来
+  [B.landed]: { x: 26, y: 62 },
+  [B.warm]: { x: 46, y: 34 },
+  [B.selected]: { x: 26, y: 62, press: true },  // 按下雾天那张 → 选中框亮
+  [B.mixing]: { x: 48, y: 40, press: true },    // 再按一张，开始混合
+  [B.mixed]: { x: 52, y: 62 },
+};
+
 /** 对话里「已落在画布」那枚缩略片：直接引用雾天那张真图。 */
 function LandedThumb() {
   const photo = useLandingAsset('landing.visual.fog');

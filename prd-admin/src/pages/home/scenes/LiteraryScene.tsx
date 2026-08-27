@@ -4,6 +4,7 @@ import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useLandingAsset } from '../hooks/useLandingAssets';
+import { SceneCursor, SelectionSweep, type CursorSpot } from '../components/SceneCursor';
 import type { LiteraryStyleKey } from '../i18n/landing';
 
 /**
@@ -134,6 +135,8 @@ export function LiteraryScene() {
         </div>
 
         <div className="relative flex flex-col lg:flex-row lg:h-[680px] gap-4" style={{ padding: '14px' }}>
+          {/* 演示指针：手机端不画（小屏没有鼠标，画一枚箭头反而突兀） */}
+          <span className="hidden lg:block"><SceneCursor spot={CURSOR_AT[beat] ?? null} /></span>
           {/* ── 左：文章编辑器 ── */}
           <div
             className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden rounded-2xl"
@@ -162,7 +165,7 @@ export function LiteraryScene() {
               className="flex-1 min-h-0 overflow-hidden"
               style={{ padding: '24px 30px', fontFamily: 'var(--font-serif)', fontSize: '15.5px', lineHeight: 2.05, color: SCENE.inkSoft }}
             >
-              <Paragraph anchorAt={B.marking} beat={beat}>{s.body.p1}</Paragraph>
+              <Paragraph anchorAt={B.marking} beat={beat} sweep>{s.body.p1}</Paragraph>
 
               {/* 配图 1 落进正文 */}
               <FigureSlot beat={beat} at={B.fig1} tone={tone} caption={s.body.fig1} variant="ridge" hint={s.body.slot.replace('{n}', '1')} showHintFrom={B.marking} />
@@ -350,8 +353,8 @@ function useMarkCounter(active: boolean, total: number, durationMs: number): num
 }
 
 function Paragraph({
-  children, beat, anchorAt, delay = 0, last = false,
-}: { children: ReactNode; beat: number; anchorAt: number; delay?: number; last?: boolean }) {
+  children, beat, anchorAt, delay = 0, last = false, sweep = false,
+}: { children: ReactNode; beat: number; anchorAt: number; delay?: number; last?: boolean; sweep?: boolean }) {
   return (
     <div className="relative" style={{ marginBottom: last ? 0 : '20px' }}>
       {/* gutter 锚点：AI 通读到这一段时才点亮，逐段错峰，像有人在逐段读 */}
@@ -366,7 +369,12 @@ function Paragraph({
       >
         +
       </span>
-      {children}
+      {/* 划选：指针扫过这一段时底色跟着铺开，让「选中」这件事看得见 */}
+      {sweep ? (
+        <SelectionSweep active={beat >= anchorAt} hue={pine.soft}>{children}</SelectionSweep>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -405,6 +413,27 @@ function FigureSlot({
   }
   return <InlineFigure tone={tone} caption={caption} variant={variant} />;
 }
+
+
+/**
+ * 指针走位表：按拍号给落点（面板宽高的百分比）。
+ *
+ * 这一幕的动作顺序是「划中一句 → 按下生成 → 图逐张落位 → 换风格」，指针必须踩着
+ * 同一条顺序走，而且**先到位再发生**：`marking` 那一拍指针从句首扫到句尾，
+ * 选区底色跟着铺开；`generating` 那一拍压在「生成全部配图」上，图才开始出。
+ *
+ * 宽屏下右侧配图工作台约占 384px，所以按钮落点在 x≈78。
+ */
+const CURSOR_AT: Record<number, CursorSpot> = {
+  [B.idle]: { x: 20, y: 22, hidden: true },
+  [B.uploaded]: { x: 16, y: 18 },
+  [B.marking]: { x: 62, y: 26 },              // 从句首划到句尾
+  [B.generating]: { x: 78, y: 24, press: true }, // 按下「生成全部配图」
+  [B.fig1]: { x: 74, y: 48 },
+  [B.fig2]: { x: 74, y: 62 },
+  [B.fig3]: { x: 70, y: 70 },
+  [B.restyle]: { x: 15, y: 9, press: true },  // 回到顶部换风格
+};
 
 /**
  * 右侧生成卡对应的真实照片槽位（按卡序号 1 起）。
