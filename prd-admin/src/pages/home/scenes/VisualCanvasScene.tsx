@@ -410,13 +410,12 @@ function ChatPanel({ beat, typed, compact = false }: { beat: number; typed: stri
               ...enterAt(beat, B.landed),
             }}
           >
-            <span
-              className="shrink-0"
-              style={{
-                width: '40px', height: '28px', borderRadius: '5px',
-                background: `linear-gradient(160deg, hsl(${SCENE_HUE.pine} 26% 20%), hsl(${SCENE_HUE.pine} 20% 10%))`,
-              }}
-            />
+            {/*
+              这句话是「雾天版本已落在画布」，那么这枚缩略片就该是那张雾天图本身。
+              以前是块绿渐变——话说着已经出图了，旁边配一块色卡，等于自己拆自己的台。
+              没配图时仍回落到渐变，不开天窗。
+            */}
+            <LandedThumb />
             <span style={{ fontSize: '11.5px', color: SCENE.inkMid, lineHeight: 1.5 }}>{s.chat.landed}</span>
           </div>
         )}
@@ -600,6 +599,26 @@ function GenTile({
  * 画布上那几张「图」。不是占位灰块——画一张有山脊线、有光源、有前后景的图，
  * 才看得出「把主视觉改成雾天、山脊线保留」这句话到底改了什么。
  */
+/** 对话里「已落在画布」那枚缩略片：直接引用雾天那张真图。 */
+function LandedThumb() {
+  const photo = useLandingAsset('landing.visual.fog');
+  return (
+    <span
+      className="shrink-0 overflow-hidden block"
+      style={{
+        width: '40px', height: '28px', borderRadius: '5px',
+        background: photo
+          ? undefined
+          : `linear-gradient(160deg, hsl(${SCENE_HUE.pine} 26% 20%), hsl(${SCENE_HUE.pine} 20% 10%))`,
+      }}
+    >
+      {photo && (
+        <img src={photo} alt="" loading="lazy" decoding="async" className="block w-full h-full" style={{ objectFit: 'cover' }} />
+      )}
+    </span>
+  );
+}
+
 /**
  * 画布上那张图。
  *
