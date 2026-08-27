@@ -45,17 +45,23 @@ const RULES: readonly ConnectionRouteRule[] = [
     // **只给 GET。** 建报告、删报告、传附件仍然只有 CDS 自己的密钥能做——
     // 外部系统只是读者，不是作者。
     //
+    // 范围名是单开的 `report:read`，**没有并进上面那条 `instance:read`**。
+    // 并进去最省事，代价是所有已经签发出去的长期 token 立刻多读到一批东西，
+    // 而它们的主人上一次看授权页时那上面还没有这一项——那等于替用户点了头。
+    // 单开一项的代价是存量 token 读报告会被拒；正路是重新走一次授权跳转，
+    // 在授权页上看到新范围再点。这个代价是有意付的。
+    //
     // 报告正文里的截图走 `/api/reports/assets/`，那条本来就是匿名可读的
     //（内容寻址、不可枚举），所以不必列进来。
     methods: ['GET'],
     match: (path) => path === '/api/reports',
-    scope: 'instance:read',
+    scope: 'report:read',
     why: '验收报告列表：外部系统按 updatedSince / projectId / reportId 增量取清单',
   },
   {
     methods: ['GET'],
     match: (path) => /^\/api\/reports\/[^/]+\/raw$/.test(path),
-    scope: 'instance:read',
+    scope: 'report:read',
     why: '验收报告正文：镜像一份到外部系统的知识库',
   },
 ];

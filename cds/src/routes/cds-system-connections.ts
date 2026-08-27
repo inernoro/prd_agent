@@ -20,6 +20,7 @@ import type { StateService } from '../services/state.js';
 import type { CdsConnection, CdsConfig, Project } from '../types.js';
 import {
   CdsPairingService,
+  DEFAULT_SCOPES,
   PairingError,
 } from '../services/connection/pairing-service.js';
 
@@ -209,7 +210,7 @@ export function createCdsSystemConnectionsRouter(
     try {
       const result = pairing.issue({
         name: `authorize ${mapName}`,
-        scopes: ['shared-service:deploy', 'instance:read', 'deployment:stream'],
+        scopes: DEFAULT_SCOPES,
         ttlMinutes: 10,
         hint: { supportsSidecar: true, defaultSidecarPort: 7400 },
       });
@@ -260,7 +261,9 @@ export function createCdsSystemConnectionsRouter(
         ...result,
         cdsId: cdsIdGetter(),
         cdsName: cdsNameGetter(),
-        scopes: ['shared-service:deploy', 'instance:read', 'deployment:stream'],
+        // 报「这条连接实际拿到了什么」，而不是「默认会发什么」——issue 时可以传
+        // 自定义 scopes，那种情况下报默认值就是在对 MAP 说谎。
+        scopes: stateService.getCdsConnection(result.connectionId)?.scopes ?? DEFAULT_SCOPES,
       });
     } catch (err) {
       if (err instanceof PairingError) {
@@ -445,7 +448,9 @@ function renderAuthorizePage(input: {
       <div class="row"><dt>MAP 地址</dt><dd>${mapBaseUrl}</dd></div>
       <div class="row"><dt>回跳地址</dt><dd>${redirectHost}</dd></div>
     </dl>
-    <div class="scopes">授权范围：shared-service:deploy, instance:read, deployment:stream</div>
+    <!-- 从 DEFAULT_SCOPES 渲染，不另抄一份：抄出来的那份改一处忘一处，
+         最后就是用户点头的清单和真正签发的清单对不上。 -->
+    <div class="scopes">授权范围：${DEFAULT_SCOPES.join(', ')}</div>
     <a class="button" href="${approveUrl}">授权并返回 MAP</a>
   </main>
 </body>

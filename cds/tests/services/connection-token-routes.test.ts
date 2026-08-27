@@ -7,6 +7,7 @@ import {
   describeConnectionTokenRoutes,
   shouldRecordConnectionUse,
 } from '../../src/services/connection-token-routes.js';
+import { DEFAULT_SCOPES } from '../../src/services/connection/pairing-service.js';
 
 /**
  * 「系统互联」连接长效凭据能到达哪些路由。
@@ -24,13 +25,13 @@ describe('连接凭据的路由白名单', () => {
     });
 
     it('验收报告列表与正文可读（外部知识库镜像报告要用）', () => {
-      expect(connectionTokenRequiredScope('GET', '/api/reports')).toBe('instance:read');
-      expect(connectionTokenRequiredScope('GET', '/api/reports/rep-123/raw')).toBe('instance:read');
+      expect(connectionTokenRequiredScope('GET', '/api/reports')).toBe('report:read');
+      expect(connectionTokenRequiredScope('GET', '/api/reports/rep-123/raw')).toBe('report:read');
     });
 
     it('报告 id 里有点、连字符、编码字符也认得出来', () => {
-      expect(connectionTokenRequiredScope('GET', '/api/reports/acc-prd-agent-202608261200/raw')).toBe('instance:read');
-      expect(connectionTokenRequiredScope('GET', '/api/reports/a.b-c_d/raw')).toBe('instance:read');
+      expect(connectionTokenRequiredScope('GET', '/api/reports/acc-prd-agent-202608261200/raw')).toBe('report:read');
+      expect(connectionTokenRequiredScope('GET', '/api/reports/a.b-c_d/raw')).toBe('report:read');
     });
   });
 
@@ -79,8 +80,20 @@ describe('连接凭据的路由白名单', () => {
     });
 
     it('方法名大小写不影响判定，空方法不放行', () => {
-      expect(connectionTokenRequiredScope('get', '/api/reports')).toBe('instance:read');
+      expect(connectionTokenRequiredScope('get', '/api/reports')).toBe('report:read');
       expect(connectionTokenRequiredScope('', '/api/reports')).toBeNull();
+    });
+
+    it('报告不许挂在 Bridge 那条范围下面', () => {
+      // 这是这组用例里最要紧的一条。把报告并进 instance:read 只需要改一个字符串，
+      // 改完所有用例照样绿——因为「能不能读报告」的判定本身没坏，坏的是
+      // **一批早就发出去的 token 在主人没再看过授权页的情况下多读到了东西**。
+      // 所以这里钉的不是「能读」，是「用的是哪一把」。
+      for (const path of ['/api/reports', '/api/reports/rep-123/raw']) {
+        expect(connectionTokenRequiredScope('GET', path), path).not.toBe('instance:read');
+      }
+      // 反过来，Bridge 必须还留在 instance:read 上——顺手把它也挪走就是另一次越权。
+      expect(connectionTokenRequiredScope('POST', '/api/bridge/command/b1')).toBe('instance:read');
     });
   });
 
@@ -113,6 +126,45 @@ describe('接线', () => {
 
   it('scope 不再写死成字面量，跟着表走', () => {
     expect(serverSource).not.toContain("connection.scopes.includes('instance:read')");
+  });
+});
+
+/**
+ * 表里写了一个范围，却没有任何一次授权会授予它——那条规则从落地那天起就永远走不到，
+ * 而所有用例照样绿（predicate-and-wiring-discipline 形状 8：拿不成立的声明当证据）。
+ * 这一组把「表要求的范围」和「授权真会发的范围」钉在一起。
+ */
+describe('范围要发得出来，也要跟授权页说的一致', () => {
+  const ROUTES_TO_CHECK: ReadonlyArray<[string, string]> = [
+    ['GET', '/api/reports'],
+    ['GET', '/api/reports/rep-1/raw'],
+    ['POST', '/api/bridge/command/b1'],
+  ];
+
+  it('表里要求的每个范围，默认授权都发得出来', () => {
+    for (const [method, path] of ROUTES_TO_CHECK) {
+      const scope = connectionTokenRequiredScope(method, path);
+      expect(scope, `${method} ${path} 没被表放行`).not.toBeNull();
+      expect(DEFAULT_SCOPES, `${method} ${path} 要 ${scope}，但默认授权不发这一项`).toContain(scope);
+    }
+  });
+
+  it('授权跳转签发时用的也是 DEFAULT_SCOPES，不是手抄的数组', () => {
+    // 这一条是上一版真栽过的地方：DEFAULT_SCOPES 加了一项，而 authorize 那里
+    // 传的是自己手抄的 `scopes: [...]`，显式值盖过默认值——新加的范围对真正的
+    // 授权流程一次都没生效，所有用例照样绿（形状 6：读的不是真正生效的那个值）。
+    const source = readFileSync(join(process.cwd(), 'src/routes/cds-system-connections.ts'), 'utf8');
+    expect(source).not.toMatch(/scopes:\s*\[\s*'shared-service:deploy'/);
+  });
+
+  it('授权页展示的范围是从 DEFAULT_SCOPES 渲染的，不是另抄的一串字面量', () => {
+    // 抄一份出来的后果不是报错，是**用户点头同意的清单和真正签发的清单对不上**——
+    // 一边加了范围另一边没加，页面上永远少显示一项，没人会发现。
+    const source = readFileSync(join(process.cwd(), 'src/routes/cds-system-connections.ts'), 'utf8');
+    expect(source).toContain('DEFAULT_SCOPES.join');
+    const shown = source.match(/授权范围：([^<]*)</);
+    expect(shown, '授权页上找不到「授权范围：」那一行').not.toBeNull();
+    expect(shown![1]).not.toMatch(/instance:read|report:read|shared-service:deploy/);
   });
 });
 

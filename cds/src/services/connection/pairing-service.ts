@@ -24,7 +24,7 @@ import type { CdsConnection, Project } from '../../types.js';
 export interface IssueRequest {
   /** 给自己看的标识（如 "for noroenrn map"）。 */
   name?: string;
-  /** 默认 ['shared-service:deploy', 'instance:read', 'deployment:stream']。 */
+  /** 不传就用 `DEFAULT_SCOPES`（见本文件下方那个常量，别在这里抄清单）。 */
   scopes?: string[];
   /** 默认 10 分钟，限制 1-60。 */
   ttlMinutes?: number;
@@ -74,7 +74,21 @@ export class PairingError extends Error {
   }
 }
 
-const DEFAULT_SCOPES = ['shared-service:deploy', 'instance:read', 'deployment:stream'];
+/**
+ * 一次授权默认授予的范围。**授权页展示的就是这个常量**（不是另抄一份字符串），
+ * 否则用户点头同意的清单和真正签发出去的清单会各自漂移。
+ *
+ * `report:read` 单独一项、不并进 `instance:read`：后者开的是 Page Agent Bridge，
+ * 「能驱动预览页面」和「能读走这台 CDS 上所有验收报告」是两件事，一个已经发出去的
+ * token 不该因为我们后来加了功能就顺手多读到东西。加了新项之后，存量 token 读报告
+ * 会被拒——这是有意的，正路是让用户重新走一次授权跳转、在授权页看到新范围再点头。
+ */
+export const DEFAULT_SCOPES = [
+  'shared-service:deploy',
+  'instance:read',
+  'deployment:stream',
+  'report:read',
+];
 const PAIRING_TTL_DEFAULT_MIN = 10;
 const PAIRING_TTL_MIN = 1;
 const PAIRING_TTL_MAX = 60;
