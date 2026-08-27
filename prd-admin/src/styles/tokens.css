@@ -694,9 +694,9 @@
   --ask-dock-glass-border: rgba(89, 65, 50, 0.16);
   --ask-dock-moving-bg: rgba(252, 250, 247, 0.96);
   --ask-dock-hint-bg: rgba(252, 250, 247, 0.88);
-  --ask-dock-hint-bg-hover: rgba(255, 255, 255, 0.96);
+  --ask-dock-hint-bg-hover: rgba(255, 253, 249, 0.97);
   --ask-dock-meta-bg: rgba(252, 250, 247, 0.78);
-  --ask-dock-shadow: 0 16px 36px -18px rgba(89, 65, 50, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.70);
+  --ask-dock-shadow: 0 16px 36px -18px rgba(89, 65, 50, 0.34), inset 0 1px 0 rgba(255, 253, 249, 0.80);
   --ask-dock-hint-shadow: 0 8px 20px -10px rgba(89, 65, 50, 0.26);
   --nav-surface-bg: linear-gradient(180deg, rgba(252,250,247,0.98) 0%, rgba(248,245,239,0.96) 100%);
 
