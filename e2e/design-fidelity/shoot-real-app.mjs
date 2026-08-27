@@ -341,6 +341,19 @@ const DRIVERS = {
     await page.waitForTimeout(500);
     await snap('顶部');
 
+    /*
+     * 稿面 P2 的迷你播放条上写着 1.5×——那是一个**非默认倍速**的状态，
+     * 不点它就永远停在 1.0×，判分读到的是「倍速位在，但那一档状态没表达」。
+     * 这是取证没驱到，不是实现少了：倍速键就在展开态播放区里，点两下即到 1.5×。
+     */
+    const rate = page.getByTitle('点击切换倍速');
+    if (await rate.count()) {
+      await rate.first().click();
+      await page.waitForTimeout(150);
+      await rate.first().click();
+      await page.waitForTimeout(250);
+    }
+
     // B2：搜一个词，看命中计数与黄底高亮
     const search = page.getByPlaceholder('搜索原文关键词');
     if (await search.count()) {
