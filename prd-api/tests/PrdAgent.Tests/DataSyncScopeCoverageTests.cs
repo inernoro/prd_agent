@@ -876,23 +876,71 @@ public class DataSyncScopeCoverageTests
     {
         // 只存绝对 Url 的话，换桶 / 换公网域名 / 搬机器之后地址全部指回原处（DS1），
         // 而且没有任何东西能把它算回来。每一处建 Attachment 的地方都要带上 key。
-        var apiRoot = Path.Combine(LocateSrcRoot(), "PrdAgent.Api");
+        //
+        // ## 这条守卫自己漏过一次（2026-08-27，Codex review 抓到）
+        //
+        // 上一版有两个口子叠在一起，让 peer-sync 那处漏了整整一轮而一声不吭：
+        //
+        // 1. 作用域比它要守的规则窄 —— 只扫 PrdAgent.Api，而另一个程序集里也有一处建附件。
+        //    「只改被守文件、不碰守卫本身」的改动一路全绿（形状 7）。
+        // 2. 判据只认显式类型的对象初始化式，认不出目标类型 new 的写法。
+        //    换个等价写法就绕过去了（形状 1）。
+        //
+        // 现在扫整个 src 树，两种写法都认，并且先剥掉注释再扫。
+        var srcRoot = LocateSrcRoot();
         var offenders = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(apiRoot, "*.cs", SearchOption.AllDirectories))
+        var scanned = 0;
+        foreach (var file in Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories))
         {
-            var source = File.ReadAllText(file);
-            foreach (Match m in Regex.Matches(source, @"new Attachment\s*\{(?<body>[^}]*)\}", RegexOptions.Singleline))
+            var source = StripLineComments(File.ReadAllText(file));
+            foreach (var body in EnumerateAttachmentInitializers(source))
             {
-                var body = m.Groups["body"].Value;
                 // 只管那些从 StoredAsset 拿地址的：别处（如外部视频直链）本来就没有 key。
                 if (!body.Contains("Url = stored.Url", StringComparison.Ordinal)) continue;
+                scanned++;
                 if (!body.Contains("StorageKey", StringComparison.Ordinal))
                 {
                     offenders.Add(Path.GetFileName(file));
                 }
             }
         }
+
+        // 空跑闸：一处都没扫到就说明判据已经跟不上真实写法了，
+        // 那时候「零违规」是假绿，不是真干净。
+        Assert.True(
+            scanned >= 6,
+            $"只扫到 {scanned} 处从 StoredAsset 建附件的地方，判据多半已经跟不上真实写法了");
         Assert.True(offenders.Count == 0, $"这些地方建附件时没有存下对象 key：{string.Join("、", offenders.Distinct())}");
+    }
+
+    /// <summary>
+    /// 扫之前先把行注释剥掉 —— 判据要读<b>真正生效的代码</b>，不是读讲代码的话。
+    /// </summary>
+    /// <remarks>
+    /// 这不是洁癖：给 peer-sync 那处补 key 时，我在代码注释里举了这条判据认的写法当例子，
+    /// 判据把注释当代码扫，捕获的初始化块截在注释里那对花括号上，
+    /// 于是<b>一处已经改好的代码被报成违规</b>。一条会被自己要防的东西骗到的判据，
+    /// 说明它读的不是生效的那个值。字符串字面量里的双斜杠极少出现在这类初始化块附近，
+    /// 为保持判据简单不做处理。
+    /// </remarks>
+    private static string StripLineComments(string source)
+        => Regex.Replace(source, @"//[^\n]*", string.Empty);
+
+    /// <summary>
+    /// 建 Attachment 的两种写法都要认：显式类型的对象初始化式，
+    /// 以及返回类型为 Attachment 的成员上写的目标类型 new。
+    /// 只认前者的话，把工厂方法改成表达式体就能绕过判据。
+    /// </summary>
+    private static IEnumerable<string> EnumerateAttachmentInitializers(string source)
+    {
+        foreach (Match m in Regex.Matches(source, @"new\s+Attachment\s*\{(?<body>[^}]*)\}", RegexOptions.Singleline))
+            yield return m.Groups["body"].Value;
+
+        foreach (Match m in Regex.Matches(
+                     source,
+                     @"\bAttachment\s+\w+\s*\([^)]*\)\s*=>\s*new(?:\s+Attachment)?\s*\(?\s*\)?\s*\{(?<body>[^}]*)\}",
+                     RegexOptions.Singleline))
+            yield return m.Groups["body"].Value;
     }
 
     /// <summary>
