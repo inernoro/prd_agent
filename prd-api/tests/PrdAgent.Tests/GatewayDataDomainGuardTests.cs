@@ -4385,6 +4385,13 @@ public class GatewayDataDomainGuardTests
         Assert.True(logWriteIndex >= 0 && observationUpdateIndex > logWriteIndex);
         Assert.True(System.Text.RegularExpressions.Regex.Matches(console, "TeamId = d.AsNullableString\\(\\\"TeamId\\\"\\)").Count >= 4);
 
+        // appCallerCode 必须从用户那句「我想要做什么」派生，不许再兜底成 `xxx.quickstart` 占位码：
+        // 用户三次反馈「不要直接给一个随机的 xxxquickstart」，靠人自觉守不住，钉成字面量断言。
+        var intent = ReadRepoFile("llmgw/web/src/lib/appCallerIntent.ts");
+        Assert.Contains("MIN_INTENT_LENGTH", intent);
+        Assert.Contains("analyzeAppCallerIntent", quickstart);
+        Assert.Contains("buildAppCallerCode", quickstart);
+        Assert.DoesNotContain(".quickstart::", quickstart);
         Assert.Contains("scopes: ['invoke', 'stream:invoke', 'route:read']", quickstart);
         Assert.Contains("ingressProtocols: PROTOCOLS.map((item) => item.ingressProtocol)", quickstart);
         Assert.Contains("type RequestType = 'chat' | 'vision'", quickstart);

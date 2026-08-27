@@ -20,6 +20,8 @@ import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
 import { DetailsBlock, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
 import { invalidateOnboardingCache, markRequestCompleted } from '@/lib/onboarding';
+import { INTENT_ACTORS, INTENT_TASKS, analyzeAppCallerIntent, buildAppCallerCode } from '@/lib/appCallerIntent';
+import type { IntentFacet, IntentTask } from '@/lib/appCallerIntent';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
@@ -80,37 +82,24 @@ const PROTOCOLS: ProtocolDefinition[] = [
   { id: 'gemini', label: 'Gemini', path: '/v1beta/models/auto:generateContent', ingressProtocol: 'gemini-compatible' },
 ];
 
+/**
+ * 接入方式只决定「复制走的是哪种片段」与 clientCode，**不再预填 appCallerCode**。
+ * 以前 Cherry Studio 一档带着现成的码，点一下就能绕过「说清用途」这道门。
+ */
 const CLIENT_PRESETS: Array<{
   id: ClientPresetId;
   label: string;
   description: string;
   clientCode: string | null;
-  appCallerCode: string | null;
 }> = [
-  { id: 'api', label: 'API 与 Agent', description: '复制 cURL、环境变量或 Agent Skill。', clientCode: null, appCallerCode: null },
-  { id: 'cherry-studio', label: 'Cherry Studio', description: '生成地址、API Key 和模型三项配置。', clientCode: 'cherry-studio', appCallerCode: 'cherry-studio.desktop::chat' },
-  { id: 'openclaw', label: 'OpenClaw', description: '生成可直接粘贴的 provider 配置。', clientCode: 'openclaw-agent', appCallerCode: 'openclaw.gateway::chat' },
+  { id: 'api', label: 'API 与 Agent', description: '复制 cURL、环境变量或 Agent Skill。', clientCode: null },
+  { id: 'cherry-studio', label: 'Cherry Studio', description: '生成地址、API Key 和模型三项配置。', clientCode: 'cherry-studio' },
+  { id: 'openclaw', label: 'OpenClaw', description: '生成可直接粘贴的 provider 配置。', clientCode: 'openclaw-agent' },
 ];
 
-/**
- * 用途预设：显示中文、取值是英文段。
- *
- * 不能让用户直接把中文用途当 appCallerCode 的一段——`toAppCallerSegment` 会把 CJK
- * 全部替换掉，得到空串，于是「填了用途却仍然不合法」。这与 ServiceKeysPage 的
- * FEATURE_PRESETS 同一套解法：预设给合法取值，自定义那档才让人填英文。
- */
-const PURPOSE_PRESETS: Array<{ code: string; label: string }> = [
-  { code: 'quickstart', label: '通用接入' },
-  { code: 'desktop', label: '桌面客户端' },
-  { code: 'agent', label: 'Agent 调用' },
-  { code: 'backend', label: '后端服务' },
-  { code: 'batch', label: '批处理' },
-  { code: 'custom', label: '其他' },
-];
-
-const REQUEST_TYPES: Array<{ id: RequestType; label: string; description: string }> = [
-  { id: 'chat', label: '文字对话', description: '发送普通文字消息，适合问答、总结和 Agent 推理。' },
-  { id: 'vision', label: '图片理解', description: '发送一张内嵌测试图片，验证多模态请求与 vision 策略链。' },
+const REQUEST_TYPES: Array<{ id: RequestType; label: string }> = [
+  { id: 'chat', label: '文字对话' },
+  { id: 'vision', label: '图片理解' },
 ];
 
 /**
@@ -169,11 +158,20 @@ export function QuickstartPage() {
   const [protocol, setProtocol] = useState<Protocol>('openai');
   const [requestType, setRequestType] = useState<RequestType>('chat');
   const [baseUrl, setBaseUrl] = useState(resolveDefaultServingBaseUrl);
-  const [appCallerCode, setAppCallerCode] = useState('my-agent.quickstart::chat');
-  // 用途是这一页唯一「系统无从得知」的业务命名：调用用途码由它派生，不选不许创建。
-  const [purpose, setPurpose] = useState('quickstart');
-  const [customPurpose, setCustomPurpose] = useState('');
+  const [appCallerCode, setAppCallerCode] = useState('');
+  /**
+   * 「我想要做什么」是这一页唯一系统无从得知的东西，也是颁发调用用途码的唯一依据。
+   * 说不清楚就不颁发——这里没有默认值，也不许兜底成 `xxx.quickstart` 那种占位码。
+   */
+  const [intent, setIntent] = useState('');
+  /** 这句话里没认出来时，用户从有限清单里自己指定的那一段。 */
+  const [actorPick, setActorPick] = useState<string | null>(null);
+  const [taskPick, setTaskPick] = useState<string | null>(null);
+  /** 展开哪一段的备选清单（认出来了就收起来，别拿二十个 chip 占版面）。 */
+  const [openFacet, setOpenFacet] = useState<'actor' | 'task' | null>(null);
   const [appCallerCodeTouched, setAppCallerCodeTouched] = useState(false);
+  /** 调用类型默认跟着「要做什么」走；用户自己点过就不再自动跟。 */
+  const [requestTypeTouched, setRequestTypeTouched] = useState(false);
   const [clientCode, setClientCode] = useState('my-agent');
   const [environment, setEnvironment] = useState('test');
   const [teamId, setTeamId] = useState('');
@@ -223,14 +221,31 @@ export function QuickstartPage() {
     : poolModels.length === 0
       ? '池内暂无健康成员，走 auto。'
       : `「${poolName || '默认池'}」${poolMemberCount} 个成员中 ${poolModels.length} 个健康，可搜索。`;
-  const purposeSegment = purpose === 'custom' ? toAppCallerSegment(customPurpose) : purpose;
-  // 高级设置里手改过 appCallerCode 就以手改的为准，不再被用途覆盖（推断值可覆盖、覆盖后不回弹）。
-  const derivedAppCallerCode = appCallerCodeTouched
-    ? appCallerCode
-    : `${toAppCallerSegment(clientCode) || 'my-agent'}.${purposeSegment || 'quickstart'}::${requestType}`;
-  const purposeReady = appCallerCodeTouched
-    ? isValidAppCaller(appCallerCode.trim(), requestType)
-    : purposeSegment.length > 0;
+  /*
+    调用用途码 = 用户那句话里的「谁在调用」+「要做什么」。两段都落实了才颁发；
+    差一段就明说差哪一段，主按钮保持禁用——这比给一个谁也看不懂的占位码诚实。
+  */
+  const intentAnalysis = useMemo(() => analyzeAppCallerIntent(intent), [intent]);
+  const actorFacet: (IntentFacet & { matched?: string }) | null = actorPick
+    ? INTENT_ACTORS.find((item) => item.code === actorPick) ?? null
+    : intentAnalysis.actor;
+  const taskFacet: (IntentTask & { matched?: string }) | null = taskPick
+    ? INTENT_TASKS.find((item) => item.code === taskPick) ?? null
+    : intentAnalysis.task;
+  const intentReady = !intentAnalysis.tooShort && Boolean(actorFacet && taskFacet);
+  const issuedCode = intentReady ? buildAppCallerCode(actorFacet!.code, taskFacet!.code, requestType) : '';
+  // 高级设置里手改过 appCallerCode 就以手改的为准（推断值可覆盖、覆盖后不回弹）。
+  const derivedAppCallerCode = appCallerCodeTouched ? appCallerCode : issuedCode;
+  const purposeReady = isValidAppCaller(derivedAppCallerCode.trim(), requestType);
+  const intentMissing = intentAnalysis.tooShort
+    ? '再写具体一点：谁在调用、要做什么。'
+    : !actorFacet && !taskFacet
+      ? '这句话里既没看出谁在调用，也没看出要做什么。'
+      : !actorFacet
+        ? '还差「谁在调用」这一段。'
+        : !taskFacet
+          ? '还差「要做什么」这一段。'
+          : '';
   const identityLocked = Boolean(bundle) || creatingStage !== null;
 
   const currentUsername = user?.username ?? '';
@@ -285,7 +300,6 @@ export function QuickstartPage() {
       if (myTeam || firstTeam) setTeamId((current) => current || myTeam || firstTeam.id);
       const suggestedClient = normalizeClientCode(response.data.tenant?.slug || 'my-agent');
       setClientCode((current) => current === 'my-agent' ? suggestedClient : current);
-      setAppCallerCode((current) => current === 'my-agent.quickstart::chat' ? `${suggestedClient}.quickstart::chat` : current);
     });
     return () => { active = false; };
   }, [currentUsername]);
@@ -297,7 +311,7 @@ export function QuickstartPage() {
     appCallerId: bundle?.appCallerId ?? '',
     protocol,
     baseUrl: baseUrl.replace(/\/$/, ''),
-    appCallerCode: bundle?.appCallerCode ?? (derivedAppCallerCode.trim() || 'my-agent.quickstart::chat'),
+    appCallerCode: bundle?.appCallerCode ?? derivedAppCallerCode.trim(),
     requestType: bundle?.requestType ?? requestType,
     clientCode: bundle?.clientCode ?? (clientCode.trim() || 'my-agent'),
     environment: bundle?.environment ?? environment,
@@ -699,15 +713,14 @@ export function QuickstartPage() {
     const nextClientCode = preset.clientCode || suggestedClient;
     setClientPreset(next);
     setProtocol('openai');
-    setRequestType('chat');
     setClientCode(nextClientCode);
-    setAppCallerCode(preset.appCallerCode || `${nextClientCode}.quickstart::chat`);
     setTestMode('safe');
     setTestResult(null);
     setRoutePreview(null);
   };
 
-  const changeRequestType = (next: RequestType) => {
+  const changeRequestType = (next: RequestType, byUser = true) => {
+    if (byUser) setRequestTypeTouched(true);
     setRequestType(next);
     setAppCallerCode((current) => {
       const trimmed = current.trim();
@@ -718,6 +731,16 @@ export function QuickstartPage() {
     setTestResult(null);
     setRoutePreview(null);
   };
+
+  /*
+    调用类型跟着「要做什么」走：说了识图就是图片理解，说了客服就是文字对话。
+    推断值必须可见可改——界面上标了它是按哪个词判的，用户点过之后就不再自动跟。
+  */
+  useEffect(() => {
+    if (requestTypeTouched || identityLocked) return;
+    const next = taskFacet?.requestType;
+    if (next && next !== requestType) changeRequestType(next, false);
+  }, [taskFacet?.requestType, requestType, requestTypeTouched, identityLocked]);
 
   const changeBaseUrl = (next: string) => {
     setBaseUrl(next);
@@ -755,7 +778,7 @@ export function QuickstartPage() {
     <PageShell>
       <PageHeader
         title="Quickstart"
-        subtitle={onCreateScreen ? '三个决定，一次点击；密钥在下一屏只显示一次。' : '密钥只显示这一次，复制走再刷新。'}
+        subtitle={onCreateScreen ? '先说清要做什么，再签发；密钥在下一屏只显示一次。' : '密钥只显示这一次，复制走再刷新。'}
       />
 
       <PageBody>
@@ -771,7 +794,6 @@ export function QuickstartPage() {
             <Card style={CARD_BODY} className="lg-qs-create-card">
               <div className="lg-qs-create-head">
                 <h2 style={headingStyle}><KeyRound size={15} />创建接入密钥</h2>
-                <p style={{ ...BODY_TEXT, margin: 0 }}>不创建通配 key；默认 60 次/分钟，只授权当前调用用途与四种协议，签发后自动跑一次安全试跑。</p>
               </div>
 
               {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
@@ -798,121 +820,147 @@ export function QuickstartPage() {
                 </div>
               ) : (
                 <>
-                  <div className="lg-qs-decision">
-                    <div className="lg-qs-decision-head"><strong>接入方式</strong></div>
-                    <div className="lg-qs-preset-list" role="radiogroup" aria-label="接入方式">
-                      {CLIENT_PRESETS.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={clientPreset === item.id}
-                          className={clientPreset === item.id ? 'is-active' : ''}
-                          disabled={!canCreateAccess}
-                          onClick={() => selectClientPreset(item.id)}
-                        >
-                          <span className="lg-qs-radio" aria-hidden="true" />
-                          <strong>{item.label}</strong>
-                          <span>{item.description}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="lg-qs-decision-row">
-                  <div className="lg-qs-decision">
-                    <div className="lg-qs-decision-head"><strong>用途</strong><small>决定调用用途码</small></div>
-                    <div className="lg-qs-type-row" role="radiogroup" aria-label="用途">
-                      {PURPOSE_PRESETS.map((item) => (
-                        <button
-                          key={item.code}
-                          type="button"
-                          role="radio"
-                          aria-checked={purpose === item.code}
-                          className={purpose === item.code ? 'is-active' : ''}
-                          disabled={!canCreateAccess || identityLocked}
-                          onClick={() => { setPurpose(item.code); setAppCallerCodeTouched(false); }}
-                        >{item.label}</button>
-                      ))}
-                    </div>
-                    {purpose === 'custom' ? (
-                      <input
-                        className="lg-qs-purpose-input"
-                        aria-label="自定义用途"
-                        placeholder="英文短横线，例如 weekly-report"
-                        value={customPurpose}
+                  {/*
+                    创建屏是一条从上往下读的三步向导，不是一排等权重的方格：
+                    第一步说清要做什么（这一步决定调用用途码，说不清就不颁发），
+                    第二步选接入方式，第三步落归属与预算，主行动钉在最后的右下角。
+                  */}
+                  <ol className="lg-qs-steps">
+                    <li className="lg-qs-step">
+                      <div className="lg-qs-step-head">
+                        <span className="lg-qs-step-no">1</span>
+                        <div><strong>我想要做什么</strong><small>写清谁在调用、要做什么</small></div>
+                      </div>
+                      <textarea
+                        className="lg-qs-intent"
+                        aria-label="我想要做什么"
+                        rows={2}
+                        placeholder="例如：桌面客户端里做售后客服问答"
+                        value={intent}
                         disabled={!canCreateAccess || identityLocked}
-                        onChange={(event) => { setAppCallerCodeTouched(false); setCustomPurpose(event.target.value); }}
+                        onChange={(event) => { setAppCallerCodeTouched(false); setIntent(event.target.value); }}
                       />
-                    ) : null}
-                    <div className="lg-qs-type-row" role="radiogroup" aria-label="调用类型">
-                      {REQUEST_TYPES.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={requestType === item.id}
-                          className={requestType === item.id ? 'is-active' : ''}
+                      <div className="lg-qs-facets">
+                        <FacetRow
+                          title="谁在调用"
+                          facet={actorFacet}
+                          options={INTENT_ACTORS}
+                          picked={actorPick}
+                          open={openFacet === 'actor'}
                           disabled={!canCreateAccess || identityLocked}
-                          onClick={() => changeRequestType(item.id)}
-                        >{item.label}</button>
-                      ))}
-                    </div>
-                    <small className={`lg-qs-note${purposeReady ? '' : ' is-bad'}`}>
-                      {purposeReady ? `调用用途码：${derivedAppCallerCode}` : `格式须为 {应用}.{用途}::${requestType}，小写字母数字与短横线。`}
-                    </small>
-                  </div>
-
-                  <div className="lg-qs-decision">
-                    <div className="lg-qs-decision-head"><strong>月预算</strong><small>留空即不限</small></div>
-                    <div className="lg-qs-budget">
-                      <span>USD</span>
-                      <input
-                        aria-label="月预算（美元）"
-                        inputMode="decimal"
-                        placeholder="不限"
-                        value={budgetUsd}
-                        disabled={!canCreateAccess}
-                        onChange={(event) => setBudgetUsd(event.target.value.replace(/[^\d.]/g, ''))}
-                      />
-                      <span>/ 月</span>
-                    </div>
-                    <small className={`lg-qs-note${budgetPair.error ? ' is-bad' : ''}`}>{budgetPair.error || budgetPair.holdNote}</small>
-                  </div>
-
-                  <div className="lg-qs-decision">
-                    <div className="lg-qs-decision-head">
-                      <strong>归属团队</strong>
-                      <small>密钥与预算都记在团队名下</small>
-                    </div>
-                    {/*
-                      密钥归团队，不归个人：这里只让人选团队，不再挑「负责人」。
-                      谁点的创建由服务端记进审计（createdByUsername），不是用户要填的东西。
-                      只有一个团队时也照样显示——用户要看得见这把 key 会落到哪儿。
-                    */}
-                    <div className="lg-qs-team-list" role="radiogroup" aria-label="归属团队">
-                      {activeTeams.map((team) => (
-                        <button
-                          key={team.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={team.id === teamId}
-                          className={team.id === teamId ? 'is-active' : ''}
+                          onToggle={() => setOpenFacet((current) => current === 'actor' ? null : 'actor')}
+                          onPick={(code) => { setAppCallerCodeTouched(false); setActorPick(code); }}
+                        />
+                        <FacetRow
+                          title="要做什么"
+                          facet={taskFacet}
+                          options={INTENT_TASKS}
+                          picked={taskPick}
+                          open={openFacet === 'task'}
                           disabled={!canCreateAccess || identityLocked}
-                          onClick={() => setTeamId(team.id)}
-                        >
-                          <span className="lg-qs-radio" aria-hidden="true" />
-                          <strong>{team.name}</strong>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  </div>
+                          onToggle={() => setOpenFacet((current) => current === 'task' ? null : 'task')}
+                          onPick={(code) => { setAppCallerCodeTouched(false); setTaskPick(code); }}
+                        />
+                      </div>
+                      <div className={`lg-qs-issue${intentReady ? ' is-ready' : ''}`} role="status">
+                        <div className="lg-qs-issue-code">
+                          {intentReady
+                            ? <><span>将颁发</span><code>{derivedAppCallerCode}</code></>
+                            : <span className="lg-qs-issue-miss">{intentMissing}</span>}
+                        </div>
+                        <div className="lg-qs-type-row" role="radiogroup" aria-label="调用类型">
+                          {REQUEST_TYPES.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={requestType === item.id}
+                              className={requestType === item.id ? 'is-active' : ''}
+                              disabled={!canCreateAccess || identityLocked}
+                              onClick={() => changeRequestType(item.id)}
+                            >{item.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    </li>
+
+                    <li className="lg-qs-step">
+                      <div className="lg-qs-step-head">
+                        <span className="lg-qs-step-no">2</span>
+                        <div><strong>怎么接进去</strong><small>决定下一屏给哪种片段</small></div>
+                      </div>
+                      <div className="lg-qs-preset-list" role="radiogroup" aria-label="接入方式">
+                        {CLIENT_PRESETS.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={clientPreset === item.id}
+                            className={clientPreset === item.id ? 'is-active' : ''}
+                            disabled={!canCreateAccess}
+                            onClick={() => selectClientPreset(item.id)}
+                          >
+                            <span className="lg-qs-radio" aria-hidden="true" />
+                            <strong>{item.label}</strong>
+                            <span>{item.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </li>
+
+                    <li className="lg-qs-step">
+                      <div className="lg-qs-step-head">
+                        <span className="lg-qs-step-no">3</span>
+                        <div><strong>算谁的</strong><small>密钥与预算都记在团队名下</small></div>
+                      </div>
+                      <div className="lg-qs-own-row">
+                        {/*
+                          密钥归团队，不归个人：这里只让人选团队，不再挑「负责人」。
+                          谁点的创建由服务端记进审计（createdByUsername），不是用户要填的东西。
+                        */}
+                        <div className="lg-qs-own-col">
+                          <span className="lg-qs-field-title">归属团队</span>
+                          <div className="lg-qs-team-list" role="radiogroup" aria-label="归属团队">
+                            {activeTeams.map((team) => (
+                              <button
+                                key={team.id}
+                                type="button"
+                                role="radio"
+                                aria-checked={team.id === teamId}
+                                className={team.id === teamId ? 'is-active' : ''}
+                                disabled={!canCreateAccess || identityLocked}
+                                onClick={() => setTeamId(team.id)}
+                              >
+                                <span className="lg-qs-radio" aria-hidden="true" />
+                                <strong>{team.name}</strong>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="lg-qs-own-col">
+                          <span className="lg-qs-field-title">月预算<small>留空即不限</small></span>
+                          <div className="lg-qs-budget">
+                            <span>USD</span>
+                            <input
+                              aria-label="月预算（美元）"
+                              inputMode="decimal"
+                              placeholder="不限"
+                              value={budgetUsd}
+                              disabled={!canCreateAccess}
+                              onChange={(event) => setBudgetUsd(event.target.value.replace(/[^\d.]/g, ''))}
+                            />
+                            <span>/ 月</span>
+                          </div>
+                          <small className={`lg-qs-note${budgetPair.error ? ' is-bad' : ''}`}>{budgetPair.error || budgetPair.holdNote}</small>
+                        </div>
+                      </div>
+                    </li>
+                  </ol>
 
                   <DetailsBlock title="高级设置（已有默认值）">
                     <div className="lg-quickstart-inputs" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP.section }}>
                       <Field label="单次预占上限（USD，留空按月预算派生）" value={holdCapUsd} onChange={setHoldCapUsd} placeholder="自动" disabled={!canCreateAccess} />
-                      <Field label={`appCallerCode（以 ::${requestType} 结尾）`} value={derivedAppCallerCode} onChange={(next) => { setAppCallerCodeTouched(true); setAppCallerCode(next); }} placeholder={`my-agent.quickstart::${requestType}`} disabled={!canCreateAccess || identityLocked} />
+                      <Field label={`appCallerCode（以 ::${requestType} 结尾）`} value={derivedAppCallerCode} onChange={(next) => { setAppCallerCodeTouched(true); setAppCallerCode(next); }} placeholder={`{应用}.{用途}::${requestType}`} disabled={!canCreateAccess || identityLocked} />
                       <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="my-agent" disabled={!canCreateAccess || identityLocked} />
                       <label style={labelStyle}>环境
                         <select value={environment} disabled={!canCreateAccess || identityLocked} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}>
@@ -931,6 +979,8 @@ export function QuickstartPage() {
 
                   {canCreateAccess ? (
                     <div className="lg-qs-create-footer">
+                      {/* 密钥的默认约束写在主按钮旁边：这句话是「点下去会发生什么」，不是页顶的开场白。 */}
+                      <span style={{ ...BODY_TEXT, margin: 0 }}>不创建通配 key；默认 60 次/分钟，只授权当前调用用途与四种协议，签发后自动跑一次安全试跑。</span>
                       <Button variant="primary" className="lg-qs-primary" title={blockedByTeam ? '请先创建团队' : undefined} disabled={issueDisabled} onClick={() => void createAccessBundle()}>
                         <KeyRound size={15} />创建密钥
                       </Button>
@@ -1176,6 +1226,54 @@ export function QuickstartPage() {
   );
 }
 
+/**
+ * 码的一段：认出来了就只占一行（值 + 凭什么这么判），认不出来才摊开清单让人挑。
+ * 推断值必须可见、可改、可追责——所以匹配到的那个词原样回显，改过之后不再自动回弹。
+ */
+function FacetRow({ title, facet, options, picked, open, disabled, onToggle, onPick }: {
+  title: string;
+  facet: (IntentFacet & { matched?: string }) | null;
+  options: IntentFacet[];
+  picked: string | null;
+  open: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+  onPick: (code: string | null) => void;
+}) {
+  return (
+    <div className={`lg-qs-facet${facet ? ' is-ready' : ''}`}>
+      <div className="lg-qs-facet-head">
+        <span className="lg-qs-facet-title">{title}</span>
+        {facet ? (
+          <>
+            <strong>{facet.label}</strong>
+            <code>{facet.code}</code>
+            <small>{picked ? '你指定的' : `来自「${facet.matched}」`}</small>
+          </>
+        ) : <em>还没认出来</em>}
+        <button type="button" className="lg-text-link" disabled={disabled} onClick={onToggle}>
+          {open ? '收起' : facet ? '换一个' : '手动选'}
+        </button>
+      </div>
+      {open ? (
+        <div className="lg-qs-facet-options" role="radiogroup" aria-label={title}>
+          {options.map((item) => (
+            <button
+              key={item.code}
+              type="button"
+              role="radio"
+              aria-checked={picked === item.code}
+              className={picked === item.code ? 'is-active' : ''}
+              disabled={disabled}
+              onClick={() => { onPick(picked === item.code ? null : item.code); onToggle(); }}
+            >{item.label}</button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function resolveDefaultServingBaseUrl() {
   const configured = (import.meta.env.VITE_LLMGW_SERVING_BASE_URL || '').trim().replace(/\/$/, '');
   if (configured) return configured;
@@ -1195,10 +1293,6 @@ function isValidAppCaller(value: string, requestType: RequestType) {
   return new RegExp(`^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+::${requestType}$`).test(value) && value.length <= 200;
 }
 
-/** 把一句人话用途压成 appCallerCode 里的一段（与 ServiceKeysPage 同一套写法）。 */
-function toAppCallerSegment(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-}
 
 function requestTypeLabel(requestType: RequestType) {
   return requestType === 'vision' ? '图片理解' : '文字对话';

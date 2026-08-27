@@ -2873,29 +2873,220 @@ a:focus-visible {
   gap: 16px;
 }
 
-/* 月预算与归属团队并排：两个都是「一句话就能定」的决定，各占半屏比上下堆更好扫。 */
-.lg-qs-decision-row {
+/* 三步向导：编号在左、内容在右，步与步之间只用一条细线分隔。
+   改版前是一排等权重的方格，看不出先做哪个——「布局很混乱」正是从那儿来的。 */
+.lg-qs-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.lg-qs-step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.lg-qs-step:first-child {
+  border-top: none;
+  padding-top: 2px;
+}
+
+.lg-qs-step:last-child {
+  padding-bottom: 2px;
+}
+
+.lg-qs-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lg-qs-step-no {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-secondary);
+  font-weight: 700;
+}
+
+.lg-qs-step-head > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.lg-qs-step-head strong {
+  color: var(--text-primary);
+  font-size: var(--fs-heading);
+  font-weight: 650;
+}
+
+.lg-qs-step-head small {
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
+/* 第一步的输入框是整页的主角：它写不清楚，后面两步都不该开始。 */
+.lg-qs-intent {
+  width: 100%;
+  min-height: 72px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.lg-qs-intent:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* 两段判定：认出来了只占一行，认不出来才摊开清单。 */
+.lg-qs-facets {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 10px 24px;
+  align-items: start;
+}
+
+.lg-qs-facet {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lg-qs-facet-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lg-qs-facet-title {
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
+.lg-qs-facet-head > strong {
+  color: var(--text-primary);
+  font-size: var(--fs-secondary);
+  font-weight: 650;
+}
+
+.lg-qs-facet-head > code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-secondary);
+  color: var(--accent);
+}
+
+.lg-qs-facet-head > small,
+.lg-qs-facet-head > em {
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+  font-style: normal;
+}
+
+.lg-qs-facet-head > .lg-text-link {
+  margin-left: 2px;
+}
+
+.lg-qs-facet-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 第一步的结论行：说清楚了就把码亮出来，没说清就说还差哪一段。 */
+.lg-qs-issue {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.lg-qs-issue.is-ready {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.lg-qs-issue-code {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.lg-qs-issue-code > span {
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
+.lg-qs-issue-code > code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-metric);
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.lg-qs-issue-code > .lg-qs-issue-miss {
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+}
+
+/* 第三步：归属与预算并排，两个都是一句话就能定的决定。 */
+.lg-qs-own-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 24px;
   align-items: start;
 }
 
-/* 用途：一行文本 + 两个类型按钮。类型烙在 appCallerCode 里，必须在创建时定死。 */
-.lg-qs-purpose-input {
-  width: 100%;
-  height: 44px;
-  padding: 0 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: var(--fs-body);
+.lg-qs-own-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
 }
 
-.lg-qs-purpose-input:focus {
-  border-color: var(--accent);
-  outline: none;
+.lg-qs-field-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: var(--fs-secondary);
+  font-weight: 650;
+}
+
+.lg-qs-field-title > small {
+  color: var(--text-muted);
+  font-size: var(--fs-caption);
+  font-weight: 400;
 }
 
 .lg-qs-type-row {
@@ -2904,7 +3095,8 @@ a:focus-visible {
   flex-wrap: wrap;
 }
 
-.lg-qs-type-row > button {
+.lg-qs-type-row > button,
+.lg-qs-facet-options > button {
   padding: 7px 14px;
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
@@ -2915,13 +3107,16 @@ a:focus-visible {
 }
 
 .lg-qs-type-row > button:hover:not(:disabled),
-.lg-qs-type-row > button.is-active {
+.lg-qs-type-row > button.is-active,
+.lg-qs-facet-options > button:hover:not(:disabled),
+.lg-qs-facet-options > button.is-active {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--text-primary);
 }
 
-.lg-qs-type-row > button:disabled {
+.lg-qs-type-row > button:disabled,
+.lg-qs-facet-options > button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }
@@ -3174,21 +3369,29 @@ a:focus-visible {
 }
 
 /* 主行动区：说明句靠左、按钮靠右下，中间用一条分隔线与决定区断开。 */
+/* 主行动钉在卡片底部并常驻可见：向导长过一屏时它会贴着视口底，
+   不必先滚到底才找得到「创建密钥」。位置仍是右下角。 */
 .lg-qs-create-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
   justify-content: flex-end;
-  padding-top: 16px;
+  padding: 14px 0 2px;
   border-top: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
 }
 
 .lg-qs-create-footer > span {
   margin-right: auto;
+  flex: 1 1 320px;
   min-width: 0;
   color: var(--text-muted);
-  font-size: var(--fs-secondary);
+  font-size: var(--fs-secondary) !important;
+  line-height: 1.5;
 }
 
 /* 卡片本身不带排版：块与块之间 24px 的呼吸感在这里给，别靠各块自己加 margin。 */
@@ -3214,7 +3417,6 @@ a:focus-visible {
 }
 
 /* 决定行右侧的「换一个人」是文字动作：button 的默认底色和描边要清掉。 */
-.lg-qs-decision-head > .lg-text-link,
 .lg-qs-ribbon > .lg-text-link {
   border: 0;
   background: transparent;
@@ -3226,33 +3428,6 @@ a:focus-visible {
 }
 
 /* 一个决定 = 一个区块：标题行 + 控件 + 一句说明，块间 24px，块内 8/16px。 */
-.lg-qs-decision {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.lg-qs-decision-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.lg-qs-decision-head > strong {
-  color: var(--text-primary);
-  font-size: var(--fs-body);
-  font-weight: 650;
-}
-
-.lg-qs-decision-head > small {
-  color: var(--text-muted);
-  font-size: var(--fs-caption);
-}
-
-.lg-qs-decision-head > .lg-text-link {
-  margin-left: auto;
-}
-
 /* 接入方式：宽屏横铺三列，各自成卡；窄屏由下面的媒体查询退回竖排。 */
 .lg-qs-preset-list {
   display: grid;
@@ -3784,7 +3959,8 @@ a:focus-visible {
 /* 窄屏：三处横排退回单列，片段头的协议下拉换行不再右对齐挤成一条缝。 */
 @media (max-width: 760px) {
   .lg-qs-preset-list,
-  .lg-qs-decision-row,
+  .lg-qs-facets,
+  .lg-qs-own-row,
   .lg-qs-team-list {
     grid-template-columns: minmax(0, 1fr);
   }
