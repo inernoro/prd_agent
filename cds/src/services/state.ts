@@ -38,6 +38,7 @@ import {
   selectReleasePreflightsToPrune,
   selectReleaseRunsToPrune,
 } from './release-retention.js';
+import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -4447,6 +4448,12 @@ export class StateService {
       // Per-service host (allows future per-service host override)
       const hostKey = `CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_HOST`;
       result[hostKey] = dockerHost;
+      // 只发地址不发凭据，服务一旦开了认证，消费方容器启动即崩（NOAUTH）——
+      // 而 CDS 自己存着那对账号口令。判据与已知边界见 infra-credential-env.ts。
+      Object.assign(
+        result,
+        deriveInfraCredentialEnv(svc.id, svc.env, { host: dockerHost, port: svc.hostPort }),
+      );
     }
     return result;
   }
