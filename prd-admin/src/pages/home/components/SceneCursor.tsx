@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import { SCENE } from '../scenes/sceneTokens';
 
 /**
@@ -32,13 +32,23 @@ const ARROW = 'M3 2l14 10.2-6.1.5 3.4 6.7-2.6 1.3-3.4-6.8L3 18.6z';
 export function SceneCursor({
   spot,
   /** 走位时长；跟着这一幕的节拍走，别比它自己那一拍还长 */
-  travelMs = 620,
+  travelMs = 460,
   style,
 }: {
   spot: CursorSpot | null;
   travelMs?: number;
   style?: CSSProperties;
 }) {
+  // 这一拍有没有换落点。换了 → 波纹要等它走到再扩散，否则就成了「东西先响、
+  // 指针后到」，比没有指针更假（见文件头第 1 条约定）。
+  // 记上一拍的落点走 effect 而不是渲染期改 ref：StrictMode 会重复渲染，
+  // 渲染期写 ref 的话第二遍就把「刚才在哪」冲成了「现在在哪」，moved 恒 false。
+  const last = useRef<string | null>(null);
+  const here = spot ? `${spot.x},${spot.y}` : null;
+  const prev = last.current;
+  useEffect(() => { last.current = here; }, [here]);
+  const moved = here !== null && prev !== null && prev !== here;
+
   if (!spot) return null;
   const on = !spot.hidden;
 
@@ -66,6 +76,7 @@ export function SceneCursor({
             left: '-11px', top: '-11px', width: '30px', height: '30px',
             border: `1.5px solid ${SCENE.ink}`,
             animation: 'mapSceneCursorPress .5s cubic-bezier(.19,1,.22,1) both',
+            animationDelay: moved ? `${travelMs}ms` : '0ms',
           }}
         />
       )}

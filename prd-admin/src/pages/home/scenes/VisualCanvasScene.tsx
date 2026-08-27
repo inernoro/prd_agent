@@ -31,7 +31,7 @@ const olive = inkTone(SCENE_HUE.olive);
 const HOLDS = [
   1000, // 0 空画布
   1700, // 1 打字
-  700,  // 2 发送
+  1000, // 2 发送（要装得下「指针走到发送键 → 再按下」这两步，别把波纹截断）
   1100, // 3 思考
   1500, // 4 回话
   2300, // 5 渲染中
@@ -621,7 +621,9 @@ const CURSOR_AT: Record<number, CursorSpot> = {
   [B.replying]: { x: 88, y: 72 },
   [B.rendering]: { x: 30, y: 40 },              // 回到画布看着它长出来
   [B.landed]: { x: 26, y: 62 },
-  [B.warm]: { x: 46, y: 34 },
+  // 提前一拍就停在待会儿要点的那张上：等 selected 那拍按下时是「原地按」，
+  // 不是「一边飞过去一边已经选中了」
+  [B.warm]: { x: 26, y: 62 },
   [B.selected]: { x: 26, y: 62, press: true },  // 按下雾天那张 → 选中框亮
   [B.mixing]: { x: 48, y: 40, press: true },    // 再按一张，开始混合
   [B.mixed]: { x: 52, y: 62 },
