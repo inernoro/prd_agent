@@ -7,15 +7,14 @@
 
 import { GlassCard } from '@/components/design/GlassCard';
 import { useThemeStore } from '@/stores/themeStore';
-import { useMobileThemeStore, type MobileThemeMode } from '@/stores/mobileThemeStore';
+import { useMobileThemeStore } from '@/stores/mobileThemeStore';
 import { transitionThemeMode } from '@/lib/themeTransition';
+import { THEME_MODE_OPTIONS } from '@/lib/themeModeRegistry';
 import { MATERIAL_OPTIONS, DEFAULT_THEME_CONFIG, type MaterialMode } from '@/types/theme';
-import { Moon, Sun, Square, Save } from 'lucide-react';
+import { Sun, Square, Save } from 'lucide-react';
 
-const APPEARANCE_OPTIONS: Array<{ value: MobileThemeMode; label: string; description: string; icon: React.ReactNode }> = [
-  { value: 'dark', label: '深色', description: '夜晚与暗光环境（默认）', icon: <Moon size={14} /> },
-  { value: 'light', label: '浅色', description: '白天与明亮环境，纸感浅色', icon: <Sun size={14} /> },
-];
+// 选项来自唯一注册表（含「随系统」），不再在本文件另写一份 —— 少写一处就会和用户菜单漂移。
+const APPEARANCE_OPTIONS = THEME_MODE_OPTIONS;
 
 export function ThemeSkinEditor() {
   const { config, setConfig, saving } = useThemeStore();
@@ -48,11 +47,12 @@ export function ThemeSkinEditor() {
         <SettingSection
           icon={<Sun size={14} />}
           title="外观"
-          description="深色或浅色，全站生效"
+          description="白天、黑夜，或跟随系统，全站生效"
         >
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             {APPEARANCE_OPTIONS.map((option) => {
               const isActive = appearance === option.value;
+              const OptionIcon = option.icon;
               return (
                 <button
                   type="button"
@@ -75,7 +75,7 @@ export function ThemeSkinEditor() {
                   }}
                 >
                   <div className={`flex items-center gap-1.5 text-xs font-medium ${isActive ? 'text-token-accent' : 'text-token-primary'}`}>
-                    {option.icon}
+                    <OptionIcon size={14} />
                     {option.label}
                   </div>
                   <div className="mt-0.5 text-xs text-token-muted">

@@ -40,6 +40,15 @@ export interface InfraPresetDefinition {
   envVars?: Record<string, string>;
   /** Optional container start command (minio / kafka need one). */
   command?: string | string[];
+  /**
+   * Optional `docker --entrypoint` override.
+   *
+   * 只有一个用途：镜像的 ENTRYPOINT 是**二进制本身**（nats 就是这样）时，没有 shell
+   * 可以展开 `$VAR`，口令只能写成明文进 argv——那会摆进宿主 `ps`。覆盖成 `sh`
+   * 再 `exec` 回去，口令就只在容器内展开。docker 的 `--entrypoint` 只接一个 token，
+   * 余下部分放 command（见 types.ts BuildProfile.entrypoint 的注释）。
+   */
+  entrypoint?: string | string[];
   /** Optional docker labels (readiness hints for non-HTTP services). */
   labels?: Record<string, string>;
 }
@@ -63,6 +72,8 @@ export interface InfraCatalogEntry {
   supportsInitSql?: boolean;
   /** Optional container start command. */
   command?: string | string[];
+  /** Optional `docker --entrypoint` override. See InfraPresetDefinition.entrypoint. */
+  entrypoint?: string | string[];
   /** Optional docker labels. */
   labels?: Record<string, string>;
   /** Secret keys to generate (hex) before calling build(). */
@@ -331,13 +342,46 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     id: 'memcached',
     name: 'Memcached',
     category: 'cache',
-    description: '高速内存缓存，自动注入 MEMCACHED_URL。',
+    description: '高速内存缓存（已开启 ASCII 协议认证），自动注入 MEMCACHED_URL 与账号口令。',
     dockerImage: 'memcached:1-alpine',
     containerPort: 11211,
     volumePaths: [],
-    build: () => ({
+    secretKeys: ['password'],
+    /**
+     * memcached 默认**完全没有认证**：连上端口就能读写全部缓存。
+     *
+     * 用 `-Y <file>`（ASCII 协议认证）而不是 SASL：SASL 要在容器里装 cyrus-sasl
+     * 并用 `saslpasswd2` 建库，alpine 镜像里两样都没有，等于要换镜像；`-Y` 是标准
+     * 构建自带的，只要一个 `user:pass` 文本文件。
+     *
+     * 口令**不进命令行**：文件由容器内的 sh 从 env 里现写（`$MEMCACHED_PASSWORD`
+     * 不带花括号，才能躲过 CDS 只认 `${VAR}` 的模板替换、原样活到容器里）。
+     * 写完之后必须**再经过镜像自己的 entrypoint**：它只在 `$1 = memcached` 时才
+     * `su-exec memcache` 降权，直接 `exec memcached` 会让进程以 root 跑
+     * （redis 预设踩过同一个坑，见上面那段注释）。
+     *
+     * 权限用 644 不用 600：文件由 root 写、由降权后的 memcache 读，600 会读不到。
+     * 它只存在于容器内的 tmpfs 路径上。
+     *
+     * **已知边界**：ASCII 认证要求客户端会走这套握手，很多 memcached 客户端只实现了
+     * SASL 二进制认证。所以账号口令一并注入到项目环境变量里（MEMCACHED_USER /
+     * MEMCACHED_PASSWORD），让客户端配得上；接不上的客户端只能换库或换镜像——
+     * 这比「谁都能连」好，但不是零成本，记在 debt.cds.md E16。
+     */
+    entrypoint: 'sh',
+    command: ['-c',
+      'set -e; printf "%s:%s\\n" "$MEMCACHED_USER" "$MEMCACHED_PASSWORD" > /tmp/cds-memcached.auth;'
+      + ' chmod 644 /tmp/cds-memcached.auth;'
+      + ' exec docker-entrypoint.sh memcached -Y /tmp/cds-memcached.auth'],
+    build: (s) => ({
+      env: {
+        MEMCACHED_USER: 'app',
+        MEMCACHED_PASSWORD: s.password,
+      },
       envVars: {
         MEMCACHED_URL: 'memcached:11211',
+        MEMCACHED_USER: 'app',
+        MEMCACHED_PASSWORD: s.password,
       },
     }),
   },
@@ -365,46 +409,136 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     id: 'kafka',
     name: 'Apache Kafka',
     category: 'queue',
-    description: '分布式流处理（KRaft 单节点，无需 Zookeeper），自动注入 KAFKA_BROKERS。',
+    description: '分布式流处理（KRaft 单节点，SASL/PLAIN 认证），自动注入 KAFKA_BROKERS 与 SASL 凭据。',
     dockerImage: 'apache/kafka:3.7.0',
     containerPort: 9092,
     volumePaths: ['/var/lib/kafka/data'],
-    // KRaft single-node: the broker advertises itself on the project network as "kafka:9092".
-    build: () => ({
-      env: {
-        KAFKA_NODE_ID: '1',
-        KAFKA_PROCESS_ROLES: 'broker,controller',
-        KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093',
-        KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092',
-        KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER',
-        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT',
-        KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093',
-        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1',
-        KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '1',
-        KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '1',
-        KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: '0',
-        KAFKA_NUM_PARTITIONS: '1',
-        KAFKA_LOG_DIRS: '/var/lib/kafka/data',
-        CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk',
-      },
-      envVars: {
-        KAFKA_BROKERS: 'kafka:9092',
-        KAFKA_URL: 'kafka:9092',
-      },
-    }),
+    secretKeys: ['password'],
+    /**
+     * KRaft 单节点，客户端监听器叫 **CLIENT**，协议是 SASL_PLAINTEXT + PLAIN。
+     *
+     * 原来客户端监听器是裸 PLAINTEXT：连上 9092 就能建 topic、读全部消息。
+     *
+     * ## 监听器为什么叫 CLIENT，不叫 SASL_PLAINTEXT
+     *
+     * 2026-08-21 真容器实测抓到的：上一版把监听器**名字**也写成 `SASL_PLAINTEXT`，
+     * 于是 JAAS 那条 env 只能叫 `KAFKA_LISTENER_NAME_SASL_PLAINTEXT_PLAIN_SASL_JAAS_CONFIG`。
+     * 镜像把 env 转成配置项的规则是「去掉 KAFKA_ 前缀、剩下的下划线**全部**变成点」，
+     * 所以它得到的是 `listener.name.sasl.plaintext.plain...`，而正确的属性名是
+     * `listener.name.sasl_plaintext.plain...`（监听器名里那个下划线要保留）。
+     * 名字对不上，镜像的 configure 脚本在 SASL 分支里查不到该有的变量，
+     * 直接 `!1: unbound variable` 退出——**容器根本起不来**。
+     *
+     * 监听器名字是我们自己取的，那就取一个不带下划线的：`CLIENT`。
+     * 名字与协议解耦之后，env→属性的转换不再有歧义。
+     *
+     * ## 三处必须同时改，少一处就是「配了但没生效」（形状 8）
+     *
+     * 监听器（LISTENERS）、协议映射（SECURITY_PROTOCOL_MAP）、**自我广播地址**
+     * （ADVERTISED_LISTENERS）。广播地址是客户端真正拿去连的那一个，它指向的监听器
+     * 若在映射里是 PLAINTEXT，SASL 就等于没开。暴露面自检的判据现在是**顺着映射解析**
+     * 出广播监听器的真实协议，而不是看广播地址的字面前缀——名字可以随便取，
+     * 只看字面就又是一次「读到的不是生效的那个值」。
+     *
+     * CONTROLLER 监听器保持 PLAINTEXT：它只在 9093 上、只被本节点自己用，
+     * 从不发布到宿主；给它套 SASL 只会在单节点自举时增加失败面。
+     *
+     * JAAS 里的值**一律不加双引号**。CDS 拼 `docker run` 时 env 走 `-e "K=V"`，
+     * 值里出现 `"` 会当场把那段 shell 引用截断，容器根本起不来。账号是 `app`、
+     * 口令是 hex，都不含 JAAS 需要转义的字符，不带引号可以正常解析。
+     * 有守卫盯着这一条，免得日后有人「顺手」按文档补上引号。
+     */
+    build: (s) => {
+      // 同一个口令两处用途：broker 端声明账号（user_app=）、客户端登录（password=）。
+      const jaas = 'org.apache.kafka.common.security.plain.PlainLoginModule required'
+        + ` username=app password=${s.password} user_app=${s.password};`;
+      return {
+        env: {
+          KAFKA_NODE_ID: '1',
+          KAFKA_PROCESS_ROLES: 'broker,controller',
+          KAFKA_LISTENERS: 'CLIENT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093',
+          KAFKA_ADVERTISED_LISTENERS: 'CLIENT://kafka:9092',
+          KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER',
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,CLIENT:SASL_PLAINTEXT',
+          KAFKA_INTER_BROKER_LISTENER_NAME: 'CLIENT',
+          KAFKA_SASL_ENABLED_MECHANISMS: 'PLAIN',
+          KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: 'PLAIN',
+          KAFKA_LISTENER_NAME_CLIENT_PLAIN_SASL_JAAS_CONFIG: jaas,
+          KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093',
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: '1',
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: '1',
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: '1',
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: '0',
+          KAFKA_NUM_PARTITIONS: '1',
+          KAFKA_LOG_DIRS: '/var/lib/kafka/data',
+          CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk',
+        },
+        envVars: {
+          KAFKA_BROKERS: 'kafka:9092',
+          KAFKA_URL: 'kafka:9092',
+          KAFKA_SECURITY_PROTOCOL: 'SASL_PLAINTEXT',
+          KAFKA_SASL_MECHANISM: 'PLAIN',
+          KAFKA_SASL_USERNAME: 'app',
+          KAFKA_SASL_PASSWORD: s.password,
+        },
+      };
+    },
   },
   {
     id: 'nats',
     name: 'NATS',
     category: 'queue',
-    description: '轻量级发布订阅消息系统，自动注入 NATS_URL。',
+    description: '轻量级发布订阅消息系统（已开启账号口令认证），自动注入带口令的 NATS_URL。',
     dockerImage: 'nats:2-alpine',
     containerPort: 4222,
     volumePaths: [],
     labels: { 'cds.no-http-readiness': 'true' },
-    build: () => ({
+    secretKeys: ['password'],
+    /**
+     * NATS 默认**任何人都能连、能订阅任何主题**。开认证只要一个 authorization 块。
+     *
+     * ## 口令为什么不能走 `--pass`
+     *
+     * 2026-08-21 真容器实测抓到的：上一版写的是
+     * `sh -c 'exec /nats-server --user "$NATS_USER" --pass "$NATS_PASSWORD"'`。
+     * 那个 `sh -c` 只挡住了**宿主**这一侧（docker run 的命令行、docker inspect 的
+     * Config.Cmd 里只有变量名）——可它 `exec` 出去的那一刻，展开后的明文就成了
+     * nats-server 自己的 argv，容器里 `/proc/1/cmdline` 一读就是
+     * `nats-server --user app --pass <明文>`，宿主 `ps` 同样看得见（runc 下容器进程
+     * 就在宿主进程表里）。
+     *
+     * redis 那边同样写法之所以没事，是因为 **redis-server 会改写自己的 argv**
+     * （`set-proc-title yes`，见 debt.cds.md E34）。那是 redis 的特性，不是这套写法的
+     * 保证——我把一个特例当成了通则。nats-server 不做这件事。
+     *
+     * ## 现在怎么做
+     *
+     * 在容器里先写一份只有本进程读得到的配置（`chmod 600`），再 `-c` 加载它。
+     * argv 里只剩配置文件路径，口令留在容器内的文件里——和 memcached 的 `-Y`
+     * 同一套做法，那一条真容器实测是过的。
+     *
+     * 二进制路径两种都试：官方镜像放在 `/nats-server`，别的 tag / 派生镜像可能只在
+     * PATH 里。写死一个路径，换个 tag 就是「容器起不来」而不是「认证没生效」。
+     *
+     * **代价**：覆盖 entrypoint 之后镜像默认的 `nats-server.conf` 不再加载。那份配置
+     * 只设了默认值（4222 端口、无认证），对 CDS 的用法没有影响；真要自定义配置的项目
+     * 应该自己建服务而不是用预设。
+     */
+    entrypoint: 'sh',
+    command: ['-c',
+      'set -e;'
+      + ' printf "authorization { user: \\"%s\\", password: \\"%s\\" }\\n"'
+      + ' "$NATS_USER" "$NATS_PASSWORD" > /tmp/cds-nats.conf;'
+      + ' chmod 600 /tmp/cds-nats.conf;'
+      + ' if [ -x /nats-server ]; then exec /nats-server -c /tmp/cds-nats.conf;'
+      + ' else exec nats-server -c /tmp/cds-nats.conf; fi'],
+    build: (s) => ({
+      env: {
+        NATS_USER: 'app',
+        NATS_PASSWORD: s.password,
+      },
       envVars: {
-        NATS_URL: 'nats://nats:4222',
+        NATS_URL: `nats://app:${s.password}@nats:4222`,
       },
     }),
   },

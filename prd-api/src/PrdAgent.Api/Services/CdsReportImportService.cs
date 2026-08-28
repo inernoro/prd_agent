@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -64,11 +65,18 @@ public class CdsReportImportService
         // CDS 源，复用它会让 updatedSince 把另一作用域里更早更新的报告永久跳过 —— 例如先导项目 A
         // 把游标戳到 now，再导项目 B 时 B 的旧报告 updatedAt < now 就被漏掉（Codex P2）。
         // 故过滤/换源导入一律全量扫描，靠正文 contentHash 去重保证幂等，且**不回写**共享水位。
-        var isDefaultScopeImport =
-            string.IsNullOrWhiteSpace(opts.ProjectId)
-            && string.IsNullOrWhiteSpace(opts.ReportId)
-            && (string.IsNullOrWhiteSpace(store.PeerSyncNodeBaseUrl)
-                || string.Equals(store.PeerSyncNodeBaseUrl.TrimEnd('/'), baseUrl, StringComparison.OrdinalIgnoreCase));
+        //
+        // **库级来源与水位只归「默认全量镜像」那一路管。** 带过滤的导入（指定项目 / 指定报告）
+        // 一律不碰它们。不这么划的话会出现一种每小时自己跟自己打架的状态：库里有 A、B 两台
+        // CDS 的报告时，每小时的定点刷新一份接一份地把库级来源改成自己那台，下一份进来一看
+        // 「换源了」就把水位清一次——两台交替，水位每小时被清掉，而它同时还是跨库同步的
+        // 「上次同步时间」（Codex review P2）。条目自己记着来源之后，库级那个字段对定点刷新
+        // 本来也没用了。
+        var isTargetedImport =
+            !string.IsNullOrWhiteSpace(opts.ProjectId) || !string.IsNullOrWhiteSpace(opts.ReportId);
+        var sourceChanged = !isTargetedImport
+            && CdsReportSyncTargets.SourceChanged(store.CdsReportSourceBaseUrl, baseUrl);
+        var isDefaultScopeImport = !isTargetedImport && !sourceChanged;
         var useIncrementalCursor = isDefaultScopeImport && !opts.Full;
 
         // 2) 列表（增量水位 = 库的 PeerSyncLastAt，仅默认全量镜像启用）
@@ -128,10 +136,7 @@ public class CdsReportImportService
                 }
 
                 var hash = Sha256Hex(content.Replace("\r\n", "\n"));
-                var existFilter = Builders<DocumentEntry>.Filter.And(
-                    Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, store.Id),
-                    Builders<DocumentEntry>.Filter.Eq("Metadata.cdsReportId", r.Id));
-                var existing = await _db.DocumentEntries.Find(existFilter).FirstOrDefaultAsync(ct);
+                var existing = await FindExistingEntryAsync(store.Id, r.Id, baseUrl, ct);
                 if (existing != null && existing.ContentHash == hash)
                 {
                     // 正文未变，但元数据（verdict/title/projectSlug/updatedAt）可能改了——CDS 列表正是因
@@ -248,14 +253,40 @@ public class CdsReportImportService
         }
 
         // 4) 落同步摘要（下次只增量）
-        var updates = new List<UpdateDefinition<DocumentStore>>
+        var updates = new List<UpdateDefinition<DocumentStore>>();
+
+        // **真的改了东西才动库的「最后修改时间」。** 知识库列表按这个字段倒序排，
+        // 所以无条件更新它意味着：每小时那一轮跑完，CDS 镜像库就被顶到列表最前面，
+        // 哪怕这轮一份都没变、甚至一份都没刷到。用户手改过的库反而被挤下去
+        //（Codex review P2）。「我今天动过哪些库」是这个字段唯一的用途，
+        // 后台任务空跑一轮不算「动过」。
+        if (result.Imported > 0 || result.Updated > 0)
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
+        if (!isTargetedImport)
         {
-            Builders<DocumentStore>.Update.Set(s => s.PeerSyncStatus, "idle"),
-            Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeName, "CDS 验收中心"),
-            Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeBaseUrl, baseUrl),
-            Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastResult, $"导入 {result.Imported} 新 / {result.Updated} 更新 / {result.Skipped} 跳过 / {result.Failed} 失败"),
-            Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow),
-        };
+            // 记下这次全量镜像是从哪个 CDS 拉的，给「换没换源」判据和水位配对用。
+            // **单独一个字段，不复用 PeerSyncNodeBaseUrl**——那个归跨库同步所有，
+            // 同一个库走过 peer-sync 后它会变成对端 MAP 的地址（Codex review P2）。
+            //
+            // **定点刷新不写它。** 每份报告的来源记在条目上，库级那个字段对定点刷新没有意义；
+            // 写了反而有害：库里有两台 CDS 的报告时，每小时的定点刷新会一份接一份地把它改成
+            // 自己那台，下一份进来一看「换源了」就清一次水位——两台交替，水位每小时被清掉
+            //（Codex review P2）。
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.CdsReportSourceBaseUrl, baseUrl));
+        }
+        // 那四个 PeerSync* 展示字段归**跨库同步**所有，导入只是顺带把它们改写成「CDS 验收中心」。
+        // 人手动点一次导入时这么干还说得过去（是他刚做的事）；改成每小时自动跑之后就不行了：
+        // 一个既走 peer-sync 又存过 CDS 报告的库，其真正的对端同步状态会被每小时覆盖一次，
+        // 用户再也看不到对端同步到底成没成（Codex review P2）。所以自动刷新不碰它们。
+        if (!opts.SkipPeerSyncDisplayFields)
+        {
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncStatus, "idle"));
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeName, "CDS 验收中心"));
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncNodeBaseUrl, baseUrl));
+            updates.Add(Builders<DocumentStore>.Update.Set(
+                s => s.PeerSyncLastResult,
+                $"导入 {result.Imported} 新 / {result.Updated} 更新 / {result.Skipped} 跳过 / {result.Failed} 失败"));
+        }
         // 只有默认全量镜像才回写增量游标 PeerSyncLastAt；过滤/换源导入若回写，会污染默认镜像的
         // updatedSince 游标，使另一作用域的旧报告被永久跳过（Codex P2）。
         //
@@ -268,15 +299,62 @@ public class CdsReportImportService
             var newWatermark = watermark > DateTime.MinValue ? watermark : DateTime.UtcNow;
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastAt, newWatermark));
         }
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == store.Id,
-            Builders<DocumentStore>.Update.Combine(updates),
-            cancellationToken: ct);
+        else if (sourceChanged)
+        {
+            // **换源就必须把旧水位一起作废。** 下面那行无条件把来源改成了新的 baseUrl，
+            // 而水位是跟着源走的状态——留着它，库上就成了「源 = B、水位 = A 的游标」这种
+            // 看起来完全合法、实际对不上的组合。每小时的自动同步照着它拉，会拿 A 的游标去
+            // 列 B 的报告，**B 上更新时间早于该游标的报告被永久跳过**，一次报错都没有
+            // （Codex review P1）。清掉之后下一次全量导入从头扫一遍，自己建一条属于 B 的水位。
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.PeerSyncLastAt, (DateTime?)null));
+        }
+        // 一份没变、也没换源、还不写展示字段的那一轮，updates 会是空的——
+        // 空 Combine 会拼出一条没有操作符的更新，Mongo 直接报错。没什么要写就别写。
+        if (updates.Count > 0)
+        {
+            await _db.DocumentStores.UpdateOneAsync(
+                s => s.Id == store.Id,
+                Builders<DocumentStore>.Update.Combine(updates),
+                cancellationToken: ct);
+        }
 
         _logger.LogInformation(
             "[cds-report-import] 完成 store={StoreId} total={Total} imported={Imported} updated={Updated} skipped={Skipped} failed={Failed}",
             store.Id, result.Total, result.Imported, result.Updated, result.Skipped, result.Failed);
         return result;
+    }
+
+    /// <summary>
+    /// 库里已经镜像着的**同一份**报告是哪一条。
+    ///
+    /// 同一份 = 同一个库 + 同一个报告 id + **同一台 CDS**。少了最后一项就是本轮 P1：
+    /// 报告 id 在不同 CDS 上可以重名，只按 (库, 报告id) 认领，会让从 CDS-B 拉回来的正文
+    /// 直接盖掉那条来自 CDS-A 的条目——A 的那一份就此消失，没有任何报错
+    ///（Codex review P1）。调度那一侧已经按 (报告id, 来源) 排目标了，认领这一侧必须用同一个身份，
+    /// 否则等于「排了两份、写成一份」。
+    ///
+    /// 老条目（本改动之前存进来的）没记来源，认领它并在写回时盖上来源；不认领的话，
+    /// 每小时会给同一份报告新插一条，一份变两份。
+    /// </summary>
+    private async Task<DocumentEntry?> FindExistingEntryAsync(
+        string storeId, string reportId, string baseUrl, CancellationToken ct)
+    {
+        var f = Builders<DocumentEntry>.Filter;
+        var sameReport = f.And(
+            f.Eq(e => e.StoreId, storeId),
+            f.Eq("Metadata.cdsReportId", reportId));
+
+        var sameSource = await _db.DocumentEntries
+            .Find(f.And(sameReport, f.Eq("Metadata.cdsSourceBaseUrl", baseUrl)))
+            .FirstOrDefaultAsync(ct);
+        if (sameSource != null) return sameSource;
+
+        return await _db.DocumentEntries
+            .Find(f.And(sameReport, f.Or(
+                f.Exists("Metadata.cdsSourceBaseUrl", false),
+                f.Eq("Metadata.cdsSourceBaseUrl", BsonNull.Value),
+                f.Eq("Metadata.cdsSourceBaseUrl", string.Empty))))
+            .FirstOrDefaultAsync(ct);
     }
 
     private async Task<(string baseUrl, string key)> ResolveCdsCredentialsAsync(CdsReportImportOptions opts, CancellationToken ct)
@@ -298,12 +376,34 @@ public class CdsReportImportService
                 .ToListAsync(ct);
             conn = candidates.FirstOrDefault(c =>
                 string.Equals(c.PartnerBaseUrl?.TrimEnd('/'), normalizedSource, StringComparison.OrdinalIgnoreCase));
+            // 地址对不上，不代表那台 CDS 没了——**重新授权时地址本来就可能变**
+            //（`InfraAgentSessionService.FindActiveReplacementConnectionAsync` 那段注释举的例子就是
+            // 从带子域的地址换成裸域）。仓库里既有的「同一台 CDS」判据是 partner + projectId，
+            // 不是地址；照搬它，别让一次重新授权把所有条目永久判成孤儿（Codex review P2）。
+            //
+            // 老地址仍然认得出**那条旧连接记录**（重新授权把它置为 revoked，不删），
+            // 从它身上取 projectId 就够了。导入成功后条目上的来源会被改写成新地址，自愈一次即可。
+            conn ??= await FindReauthorizedConnectionAsync(normalizedSource, ct);
+            if (conn == null)
+                throw new InvalidOperationException(
+                    "这份报告记着的那台 CDS，在「系统互联」里已经没有对应的已授权连接了。"
+                    + "请重新授权那台 CDS，或在 CDS 报告页重新保存一次这份报告以更新来源。");
         }
         else
-            conn = await _db.InfraConnections
+        {
+            var candidates = await _db.InfraConnections
                 .Find(c => c.Partner == "cds" && c.Status == "active")
                 .SortByDescending(c => c.UpdatedAt)
-                .FirstOrDefaultAsync(ct);
+                .ToListAsync(ct);
+            // 没记来源时，「挑最近更新的那条」在只有一条连接时是确定的，在有两条时就是猜。
+            // 自动刷新不许猜——猜错会把 B 的正文写进一条来自 A 的条目，而且不响（Codex review P1）。
+            var pick = CdsReportSyncTargets.PickDefaultSource(candidates.Count, allowGuess: !opts.RejectAmbiguousSource);
+            if (pick == CdsSourcePick.Ambiguous)
+                throw new InvalidOperationException(
+                    $"这份报告没记来源，而「系统互联」里有 {candidates.Count} 条已授权的 CDS 连接——挑哪一条都是猜。"
+                    + "请在 CDS 报告页手动重新保存一次这份报告，把来源钉住之后自动刷新才会接着跑。");
+            conn = pick == CdsSourcePick.Single ? candidates[0] : null;
+        }
 
         if (conn == null)
             throw new InvalidOperationException("未找到可用的 CDS 系统互联连接。请先在「系统互联」授权 CDS，或显式传 cdsBaseUrl + cdsAccessKey。");
@@ -315,6 +415,34 @@ public class CdsReportImportService
             throw new InvalidOperationException("CDS 连接缺少 baseUrl。");
 
         return (conn.PartnerBaseUrl.TrimEnd('/'), token!);
+    }
+
+    /// <summary>
+    /// 条目记着的地址已经找不到 active 连接时，看看是不是**同一台 CDS 换了地址重新授权**。
+    ///
+    /// 判据照搬仓库里既有的那条（`InfraAgentSessionService.FindActiveReplacementConnectionAsync`）：
+    /// 同一台 = 同 partner + 同 projectId，**不看地址**——重新授权时地址本来就可能变。
+    /// 不另立一套「稳定身份」，那会是新语义 + 数据迁移；这里只是把已有的判据用在同一件事上。
+    ///
+    /// 两道收紧，防它退化成「找不到就随便挑一条」：
+    /// - 老地址必须真的对应一条记录在案的连接（重新授权把旧记录置为 revoked，不删）；
+    /// - 那条记录必须有 projectId。projectId 为空时按空值去匹配会捞到一堆不相干的连接，
+    ///   那就成了另一种形式的猜。
+    /// </summary>
+    private async Task<InfraConnection?> FindReauthorizedConnectionAsync(string normalizedSource, CancellationToken ct)
+    {
+        var known = await _db.InfraConnections
+            .Find(c => c.Partner == "cds")
+            .SortByDescending(c => c.UpdatedAt)
+            .ToListAsync(ct);
+        var previous = known.FirstOrDefault(c =>
+            string.Equals(c.PartnerBaseUrl?.TrimEnd('/'), normalizedSource, StringComparison.OrdinalIgnoreCase));
+        if (previous == null || string.IsNullOrWhiteSpace(previous.ProjectId)) return null;
+
+        return known.FirstOrDefault(c =>
+            c.Id != previous.Id
+            && string.Equals(c.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(c.ProjectId, previous.ProjectId, StringComparison.Ordinal));
     }
 
     private async Task<DocumentStore> ResolveStoreAsync(string userId, string? storeId, CancellationToken ct)
@@ -332,7 +460,7 @@ public class CdsReportImportService
         }
 
         var store = await _db.DocumentStores
-            .Find(s => s.OwnerId == userId && s.AppKey == "cds-reports")
+            .Find(s => s.OwnerId == userId && s.AppKey == CdsReportImportWorker.CdsReportStoreAppKey)
             .FirstOrDefaultAsync(ct);
         if (store != null) return store;
 
@@ -341,7 +469,7 @@ public class CdsReportImportService
             Name = "CDS 验收报告",
             Description = "从 CDS 验收中心同步的验收报告（只读镜像，按 contentHash 增量）。",
             OwnerId = userId,
-            AppKey = "cds-reports",
+            AppKey = CdsReportImportWorker.CdsReportStoreAppKey,
             Tags = new List<string> { "CDS", "验收" },
         };
         await _db.DocumentStores.InsertOneAsync(store, cancellationToken: ct);
@@ -437,6 +565,22 @@ public class CdsReportImportOptions
     public string? StoreId { get; set; }
     /// <summary>忽略增量水位，全量重拉。</summary>
     public bool Full { get; set; }
+
+    /// <summary>
+    /// 没记来源、而已授权的 CDS 连接不止一条时，宁可这一份失败，也不挑一条接着拉。
+    ///
+    /// 每小时的自动刷新走这条。手动导入维持原样：那是人当场发起的，挑错他看得见、能重来；
+    /// 自动刷新挑错则是把 CDS-B 的正文写进一条来自 CDS-A 的条目，不响，也没人会去看
+    ///（Codex review P1）。
+    /// </summary>
+    public bool RejectAmbiguousSource { get; set; }
+
+    /// <summary>
+    /// 不要动库上那四个归**跨库同步**所有的展示字段（PeerSyncStatus / NodeName / NodeBaseUrl /
+    /// LastResult）。每小时的自动刷新走这条——否则一个既走 peer-sync 又存过 CDS 报告的库，
+    /// 其真正的对端同步状态会被每小时覆盖成「CDS 验收中心」（Codex review P2）。
+    /// </summary>
+    public bool SkipPeerSyncDisplayFields { get; set; }
 }
 
 /// <summary>导入结果。</summary>

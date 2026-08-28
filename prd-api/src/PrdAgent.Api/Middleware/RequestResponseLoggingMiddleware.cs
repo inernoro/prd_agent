@@ -45,6 +45,36 @@ public class RequestResponseLoggingMiddleware
         "/swagger"
     };
 
+    /// <summary>
+    /// 这些路径的**请求体与响应体**里带着可以直接拿去用的凭据、或整批业务数据，一律不落库。
+    ///
+    /// apirequestlogs 与生产共用同一个 Mongo（cross-project-isolation 通道 4）：
+    /// 写进去等于把凭据摊给所有部署，以及任何有日志查看权限的人。
+    ///
+    /// 原来这里只有一个写死的 `/api/llm-gateway/sso/ticket` 字符串判等——那意味着
+    /// **每加一个发凭据的端点，都得有人记得回来改这一行**，而漏掉不会红、也不会报错，
+    /// 只会静默地把凭据写进共享库（形状 3：判据散在别处、靠人记得同步）。
+    /// 跨实例同步就这样漏了：`/api/instance-sync/token` 的响应体里是活着的两小时导出令牌。
+    ///
+    /// 所以改成一张具名清单，并按**前缀**收整个 instance-sync 家族——它下面每个端点
+    /// 不是带凭据就是带整批数据：
+    ///   - `authorize`     响应里是 60 秒一次性授权码
+    ///   - `token`         请求里是 PKCE verifier，响应里是两小时导出令牌
+    ///   - `export`        响应是业务文档本身；勾了「连登录凭据一起搬」时含口令散列
+    ///   - `runs/callback` 请求里是授权码
+    /// 少数不敏感的（handshake / manifest）一起收进来，代价只是日志里少一段 body。
+    /// 宁可多收，也不要再赌「下一个端点有没有人记得登记」。
+    /// </summary>
+    private static readonly string[] CredentialBearingPathPrefixes =
+    {
+        "/api/llm-gateway/sso/ticket",
+        "/api/instance-sync/",
+    };
+
+    /// <summary>这条路径的请求/响应体是不是「不许落库」的那一类。</summary>
+    private static bool CarriesCredential(string path) =>
+        CredentialBearingPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+
     public RequestResponseLoggingMiddleware(
         RequestDelegate next,
         ILogger<RequestResponseLoggingMiddleware> logger,
@@ -67,9 +97,7 @@ public class RequestResponseLoggingMiddleware
         }
 
         var path = context.Request.Path.Value ?? "";
-        var responseContainsOneTimeCredential = path.Equals(
-            "/api/llm-gateway/sso/ticket",
-            StringComparison.OrdinalIgnoreCase);
+        var carriesCredential = CarriesCredential(path);
         if (SkipLogPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
         {
             await _next(context);
@@ -123,7 +151,9 @@ public class RequestResponseLoggingMiddleware
                 shouldPersistApiLog = false;
         }
 
-        var requestBodyCapture = await TryCaptureRequestBodyAsync(context);
+        // 请求体也要一起挡。只挡响应是半个补丁：PKCE verifier、授权码这些都在**请求**里，
+        // 拿到它们同样能换出导出令牌。
+        var requestBodyCapture = carriesCredential ? null : await TryCaptureRequestBodyAsync(context);
 
         // 两阶段存储：生成唯一 logId，提取请求上下文
         var logId = Guid.NewGuid().ToString("N");
@@ -260,7 +290,7 @@ public class RequestResponseLoggingMiddleware
                         isEventStream: false,
                         apiSummary: apiSummary,
                         ctx: finalCtx,
-                        responseBodyText: responseContainsOneTimeCredential ? null : responseBody);
+                        responseBodyText: carriesCredential ? null : responseBody);
                 }
 
                 await TryUpdateDesktopPresenceAsync(context, requestId, sw.ElapsedMilliseconds);

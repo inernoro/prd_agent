@@ -2425,10 +2425,8 @@ export interface CdsConnection {
   /** 状态机；详见 interface 头部注释。 */
   status: 'pending-pairing' | 'active' | 'revoked';
   /**
-   * 这条连接被赋予的 scope 列表，例：
-   *   - 'shared-service:deploy'
-   *   - 'instance:read'
-   *   - 'deployment:stream'
+   * 这条连接被赋予的 scope 列表。默认发哪几项见 `pairing-service.ts` 的
+   * `DEFAULT_SCOPES`（这里不再抄一份清单——抄出来的那份只会越放越旧）。
    * accept 时长效 token 的鉴权按这个 scope 集做。
    */
   scopes: string[];

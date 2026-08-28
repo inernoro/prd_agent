@@ -145,6 +145,9 @@ public class AttachmentsController : ControllerBase
             MimeType = mime,
             Size = file.Length,
             Url = stored.Url,
+            // key 是不随部署变化的那一半。只存 Url 的话，换桶 / 换公网域名 / 把库搬到
+            // 另一台机器，存量地址全部指回原处（DS1）。存下 key，本站随时能重新拼地址。
+            StorageKey = stored.Key,
             Type = isImage ? AttachmentType.Image : AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText,

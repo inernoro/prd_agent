@@ -1,6 +1,6 @@
 # 流式文本动效 · 规则
 
-> **版本**：v2.0 | **日期**：2026-07-17 | **状态**：已落地
+> **版本**：v2.1 | **日期**：2026-08-25 | **状态**：已落地
 
 **一句话**：流式文本统一走共享组件，页面不许自己写打字计时器、闪烁光标或逐块渲染。
 **谁该读**：任何要展示大模型流式回复的前端工程师。
@@ -13,7 +13,10 @@
 ## 1. 强制行为
 
 - 增量正文和思考文本使用 `StreamingText`。
-- 流式期间使用轻量纯文本动效，完成后再切换完整 Markdown 渲染。
+- **流式期间也渲染 Markdown**（v2.1 改，2026-08-25 用户拍板）。传了 `markdown` + `renderMarkdown`
+  就两档都按 Markdown 渲染：正在写的那段观感必须和它定稿后一致，不能让用户盯着一屏 `**` 和 `-`
+  到最后一刻才变样。写到一半的行内标记与代码围栏由 `closeOpenMarkdown` 补合法，末尾缀一个光标字符。
+  没传 `renderMarkdown` 的调用方仍是纯文本词级动画，行为不变。
 - 一次性 AI 端点优先升级为 SSE，并使用共享预览弹窗与流式 Hook。
 - 用户取消只触发明确的取消语义，不能把页面卸载等同于服务端任务取消。
 - 错误、阶段、模型信息和最终正文分别处理，不混成文本前缀。
@@ -23,6 +26,8 @@
 | 能力 | 位置 |
 |---|---|
 | 文本动效 | `prd-admin/src/components/streaming/StreamingText.tsx` |
+| 流式中途的 Markdown 补全 | `prd-admin/src/components/streaming/streamingMarkdown.ts` |
+| 渲染器身份稳定的参考实现与守卫 | `prd-admin/src/components/file-preview/MarkdownViewer.tsx` |
 | 光标 | `prd-admin/src/components/streaming/MapCursor.tsx` |
 | AI 预览弹窗 | `prd-admin/src/components/ai-preview/AiPreviewModal.tsx` |
 | 前端流式状态 | `prd-admin/src/hooks/useAiPreviewStream.ts` |
@@ -51,7 +56,13 @@
 ## 4. 禁止事项
 
 - 用 `setInterval` 或 `setTimeout` 模拟模型输出。
-- 每个 chunk 都执行完整 Markdown 高亮和布局。
+- **渲染器身份每次 render 都变**（v2.1 改写了这一条）。原来写的是「禁止每个 chunk 都执行完整
+  Markdown 高亮和布局」，但真正让流式卡顿的不是重新解析 Markdown，而是渲染器身份不稳导致的
+  **整棵 DOM 重挂**：`ReactMarkdown` 的 `components` 若是每次 render 新建的内联函数，
+  每个 chunk 都会把正文拆了重建，进场动画无限重启、原生选区被清空、Mermaid/KaTeX 反复初始化。
+  实测一次流式改写：渲染器稳定时元素重建 10 次，不稳定时 108 次。
+  所以传给 `ReactMarkdown` 的 `components` 必须 `useMemo([], …)`，随实例变化的东西走 ref 包。
+  参考实现与守卫见上面「共享事实源」表。
 - 裸 `pre` 长时间展示静止文本。
 - 在多个页面复制 SSE parser。
 - 流结束后仍显示活动光标。
