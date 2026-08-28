@@ -64,6 +64,14 @@ public static class ModelCatalog
             Aliases: ["openai/gpt-4.1-mini"]),
         new("gpt-3.5-turbo", "GPT-3.5 Turbo", "openai", ["chat", "function_calling"],
             Aliases: ["openai/gpt-3.5-turbo"]),
+        new("gpt-4-turbo", "GPT-4 Turbo", "openai", ["chat", "vision", "function_calling"],
+            AcceptsImageInput: true, Aliases: ["openai/gpt-4-turbo"]),
+        new("o1", "o1", "openai", ["chat", "reasoning", "vision", "function_calling"],
+            AcceptsImageInput: true, Aliases: ["openai/o1", "o1-preview"]),
+        // o1-mini / o3-mini 只登记确实知道的：会推理、能对话。没把握的能力一律不写——
+        // 名录写错比不写更糟，它是被当成事实用的。
+        new("o1-mini", "o1-mini", "openai", ["chat", "reasoning"], Aliases: ["openai/o1-mini"]),
+        new("o3-mini", "o3-mini", "openai", ["chat", "reasoning", "function_calling"], Aliases: ["openai/o3-mini"]),
         new("o3", "o3", "openai", ["chat", "reasoning", "vision", "function_calling"],
             AcceptsImageInput: true, Aliases: ["openai/o3"]),
         new("o4-mini", "o4-mini", "openai", ["chat", "reasoning", "vision", "function_calling"],
