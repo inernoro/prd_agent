@@ -96,6 +96,23 @@ export function isStaleOfflineEdit(
  * 于是初次加载时条目请求偶发失败，就会拿一个 null 基线把同事的新版本静默盖掉
  * （Codex 第二十轮 P1）。停下来最多让用户多点一下，盖错了没法撤。
  */
+/**
+ * 两个时刻是不是同一个时刻——**按时刻比，不按字符串比**。
+ *
+ * 这两个值来自两条不同的路：写回响应给的是服务端内存里那个时刻，读回来的是它在库里
+ * 存过一轮之后的样子。两条路的小数位数可以不一样（库里是毫秒精度），字符串相等会把
+ * 同一个时刻判成两个，于是「我自己刚存的那一版」被当成别人改的——一条永远为真的假冲突。
+ * 后端已经把写入时刻截到毫秒对齐了库的精度；这里再按时刻比一次，是为了不把正确性
+ * 押在「后端某一处的写法不变」上（换个接口、换个字段就又栽）。
+ * 解析不出来就退回字符串比，宁可多问一次用户，也不当成没变过。
+ */
+export function isSameInstant(a: string, b: string): boolean {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return a === b;
+  return ta === tb;
+}
+
 export type OfflineFlushVerdict = 'flush' | 'remote-changed' | 'unknown-base' | 'stale';
 /** 停下来的那三种（横幅要按它选措辞） */
 export type OfflineFlushReason = Exclude<OfflineFlushVerdict, 'flush'>;
@@ -107,7 +124,7 @@ export function decideOfflineFlush(
 ): OfflineFlushVerdict {
   if (isStaleOfflineEdit(edit, now)) return 'stale';
   if (!edit?.baseUpdatedAt || !remoteUpdatedAt) return 'unknown-base';
-  if (edit.baseUpdatedAt !== remoteUpdatedAt) return 'remote-changed';
+  if (!isSameInstant(edit.baseUpdatedAt, remoteUpdatedAt)) return 'remote-changed';
   return 'flush';
 }
 

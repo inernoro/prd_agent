@@ -14,6 +14,7 @@ import {
   clearAllOfflineEdits,
   clearOfflineEdit,
   decideOfflineFlush,
+  isSameInstant,
   isStaleOfflineEdit,
   isFlushable,
   loadOfflineEdit,
@@ -231,5 +232,42 @@ describe('草稿不进 localStorage', () => {
     );
     expect(source).toContain('window.sessionStorage');
     expect(source).not.toContain('window.localStorage');
+  });
+});
+
+/*
+ * 真实缺陷（对抗审查 C1）：写回响应给的是服务端内存里那个时刻（100ns 刻度，JSON 最多
+ * 7 位小数），读回来的是它在库里存过一轮之后的样子（BSON DateTime 只有毫秒）。
+ * 按字符串比，这两个值**永远不等**，于是「我自己刚存的那一版」被判成别人改的——
+ * 一条必然发生的假冲突。这几条用真实形状的两个值跑判据，不是搜源码。
+ */
+describe('版本基线按时刻比，不按字符串比', () => {
+  const stored = '2026-08-28T13:00:00.123Z';       // 库里读回来：毫秒
+  const written = '2026-08-28T13:00:00.1234567Z';  // 写回响应：100ns 刻度
+
+  it('同一个时刻的两种写法算同一个', () => {
+    expect(isSameInstant(written, stored)).toBe(true);
+    expect(isSameInstant(stored, stored)).toBe(true);
+  });
+
+  it('真的不同的时刻仍然算不同', () => {
+    expect(isSameInstant(stored, '2026-08-28T13:00:00.124Z')).toBe(false);
+  });
+
+  it('解析不出来就退回字符串比，不当成没变过', () => {
+    expect(isSameInstant('not-a-date', 'other')).toBe(false);
+    expect(isSameInstant('not-a-date', 'not-a-date')).toBe(true);
+  });
+
+  it('自己刚存过、随后离线再改，重连时不该报冲突', () => {
+    const edit: QueuedOfflineEdit = {
+      ownerId: USER_A,
+      noteId: NOTE_A,
+      count: 1,
+      content: '离线又改了一句',
+      savedAt: Date.now(),
+      baseUpdatedAt: written,   // 令牌来自上一次写回响应
+    };
+    expect(decideOfflineFlush(edit, stored)).toBe('flush');
   });
 });

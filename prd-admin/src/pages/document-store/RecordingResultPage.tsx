@@ -706,6 +706,17 @@ export function RecordingResultPage() {
   /** 同页校对：整份 markdown 覆盖写回转录笔记条目 */
   const onSaveNote = useCallback(async (nextNoteMd: string) => {
     if (state.kind !== 'ready' || !state.noteId) return false;
+    /*
+     * 冲突还没裁决时不许写。横幅正挂着说「云端那份被改过 / 没法确认云端版本」，
+     * 而这一屏显示的是本机草稿；此时用户随手改一句正文或换个说话人名，走的是下面
+     * 那条无条件整篇 PUT，**同事那一版被静默整篇盖掉，横幅自己消失，两边都没有提示**。
+     * `decideOfflineFlush` 那道门只拦自动补传，拦不到这条路（Codex 对抗审查 B1）。
+     * 所以停在这里，把用户推回横幅上那两颗按钮——覆盖还是丢弃，由他明说。
+     */
+    if (flushConflict) {
+      toast.error('先处理上面的冲突提示', '这份原文在云端的版本还没裁决，选「覆盖」或「丢弃」之后再改');
+      return false;
+    }
     // 这次保存写的是哪条笔记：await 回来之后拿它认人，不认就会写到切走后的那一条上
     const savingNoteId = state.noteId;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -770,7 +781,7 @@ export function RecordingResultPage() {
      */
     setState(prev => (prev.kind === 'ready' && prev.noteId === savingNoteId ? { ...prev, noteMd: nextNoteMd } : prev));
     return true;
-  }, [enqueueWrite, ownerId, state]);
+  }, [enqueueWrite, flushConflict, ownerId, state]);
 
   /*
    * 换到另一条笔记时，把这一条本机存着的队列接回来——上一次离线校对可能是在

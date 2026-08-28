@@ -442,3 +442,45 @@ describe('重新拉笔记不吞掉本机草稿', () => {
     expect(source).toContain('await reloadNote(true)');
   });
 });
+
+/*
+ * 冲突还没裁决时不许写。横幅正挂着说云端那份被改过（或没法确认），而屏幕上显示的是
+ * 本机草稿；此时随手改一句走的是无条件整篇 PUT，同事那一版被静默盖掉、横幅自己消失。
+ * decideOfflineFlush 那道门只拦自动补传，拦不到这条路（对抗审查 B1）。
+ */
+describe('冲突未裁决时不许写回', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('onSaveNote 第一件事就是看冲突，早于任何写', () => {
+    const fn = source.slice(source.indexOf('const onSaveNote = useCallback'));
+    const body = fn.slice(0, fn.indexOf('}, [enqueueWrite'));
+    const gate = body.indexOf('if (flushConflict)');
+    expect(gate).toBeGreaterThan(-1);
+    for (const write of ['saveOfflineEdit(', 'updateDocumentContent(']) {
+      expect(body.indexOf(write)).toBeGreaterThan(gate);
+    }
+    // 拦下来要说清为什么，并把用户推回那两颗按钮
+    expect(body.slice(gate, gate + 400)).toContain('toast.error(');
+  });
+
+  it('flushConflict 在依赖里，拦截判据不会读到过期值', () => {
+    expect(source).toContain('}, [enqueueWrite, flushConflict, ownerId, state]);');
+  });
+});
+
+/*
+ * 后端写入时刻必须先截到毫秒，否则响应值与随后读回来的值永远对不上（BSON DateTime
+ * 只有毫秒精度）。前端那侧另有按时刻比的判据兜底，两边都要在（对抗审查 C1）。
+ */
+describe('写回时刻与库的精度对齐', () => {
+  it('EntryContentWriteService 的 now 是截过的', () => {
+    // 这个文件在另一个模块里，用现成的 fs/path（本文件顶部已经引入）从仓库根找过去
+    const repoRoot = path.resolve(__dirname, '..', '..', '..', '..', '..');
+    const source = fs.readFileSync(
+      path.join(repoRoot, 'prd-api/src/PrdAgent.Api/Services/EntryContentWriteService.cs'),
+      'utf-8',
+    );
+    expect(source).toContain('var now = TruncateToMilliseconds(DateTime.UtcNow);');
+    expect(source).toContain('TicksPerMillisecond');
+  });
+});
