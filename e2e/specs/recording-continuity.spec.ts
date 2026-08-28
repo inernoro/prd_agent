@@ -263,6 +263,18 @@ type RecordingFixtureOptions = {
   completionDelayMs?: number;
   transcriptReadyAfterMs?: number;
   archiveReadyAfterMs?: number;
+  /**
+   * 云端归档什么时候算完成。
+   *
+   * `time`：按 `archiveReadyAfterMs` 的时间窗（第二条门禁只要「已经归档好」这个终态，
+   * 时间窗最省事）。
+   * `retry`：**只有用户点了「立即重试」才完成**。第一条门禁断言的是一整条用户故事——
+   * 云端暂时不可用 → 页面照常可用 → 点立即重试 → 云端副本已保存。用时间窗表达它是错的：
+   * 那句「云端服务暂时不可用」的断言排在两张整屏截图、一次点击和 18 行原文断言之后，
+   * 机器稍慢窗口就已经自己关上，门禁红在计时器而不是产品行为上
+   * （predicate-and-wiring-discipline 形状 1：判据认的不是它要守的那件事）。
+   */
+  archiveReadyOn?: 'time' | 'retry';
 };
 
 async function installApiFixture(
@@ -273,6 +285,7 @@ async function installApiFixture(
     completionDelayMs = 900,
     transcriptReadyAfterMs = 1_200,
     archiveReadyAfterMs = 4_000,
+    archiveReadyOn = 'time',
   }: RecordingFixtureOptions = {},
 ) {
   let recordingCompleted = initiallyCompleted;
@@ -280,7 +293,15 @@ async function installApiFixture(
   let uploadedBytes = 0;
   const completionAge = () => recordingCompletedAt > 0 ? Date.now() - recordingCompletedAt : 0;
   const transcriptReady = () => completionAge() >= transcriptReadyAfterMs;
-  const archiveReady = () => completionAge() >= archiveReadyAfterMs;
+  /*
+   * 点了重试之后留一小段「已排队、还没好」：这一小段正是 05b 那张证据要拍的东西
+   * （重试不阻塞本页）。立刻转成完成的话，卡片在截图之前就没了。
+   */
+  const ARCHIVE_SETTLE_AFTER_RETRY_MS = 1_500;
+  let archiveRetriedAt = 0;
+  const archiveReady = () => (archiveReadyOn === 'retry'
+    ? archiveRetriedAt > 0 && Date.now() - archiveRetriedAt >= ARCHIVE_SETTLE_AFTER_RETRY_MS
+    : completionAge() >= archiveReadyAfterMs);
   const currentEntry = () => archiveReady()
     ? {
         ...pendingEntry,
@@ -399,6 +420,8 @@ async function installApiFixture(
       });
     }
     if (path === `/api/document-store/entries/${ENTRY_ID}/recording-archive/retry` && method === 'POST') {
+      // 归档在 retry 模式下**只有这一下**能让它完成，对应真实链路里「重试被受理」
+      if (archiveRetriedAt === 0) archiveRetriedAt = Date.now();
       return json(route, { queued: true, completed: false });
     }
     if (path === `/api/document-store/entries/${ENTRY_ID}/content` && method === 'GET') {
@@ -472,7 +495,11 @@ test.describe('录音连续性发布门禁', () => {
       maxHistoryWrites: 40,
     });
     await installRecordingBrowserFakes(page);
-    await installApiFixture(page, apiRequests);
+    /*
+     * 这条门禁要走完「云端暂时不可用 → 点立即重试 → 云端副本已保存」，
+     * 所以归档只认重试这一下，不认计时器（见 archiveReadyOn 的说明）。
+     */
+    await installApiFixture(page, apiRequests, { archiveReadyOn: 'retry' });
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     const mobileProfile = await page.evaluate(() => ({
@@ -667,7 +694,8 @@ test.describe('录音连续性发布门禁', () => {
     await expect.poll(() => apiRequests.filter(request => (
       request === `POST /api/document-store/entries/${ENTRY_ID}/recording-archive/retry`
     )).length).toBe(1);
-    await backgroundProgress.scrollIntoViewIfNeeded();
+    // 与上面那次同理：这一下只为把卡片滚进截图，而它随时可能因为归档转好而消失
+    await backgroundProgress.scrollIntoViewIfNeeded({ timeout: 1_000 }).catch(() => undefined);
     await attachViewport(page, testInfo, '05b-cloud-retry-is-non-blocking');
     const beforeManualReload = await readContinuityProbe(page);
     expect(beforeManualReload.documentBootCount).toBe(1);
