@@ -629,3 +629,31 @@ describe('设计稿取证脚本不绑死在一台机器上', () => {
     expect(from.slice(0, 600)).toContain('response.ok()');
   });
 });
+
+/*
+ * 「时长跟着录音归零」这一条在三屏各犯过一次。判据一次覆盖三处，
+ * 免得下一个人又在第四处漏掉（约定见 doc/rule.prd-admin.recording-entry-scope.md）。
+ */
+describe('时长这一格三屏都跟着录音归零', () => {
+  /*
+   * 三处的写法不同（两处是独立 effect、一处清在加载 effect 的开头），所以判据分开写，
+   * 但要求是同一条：**复位真的挂在「换录音」上，且发生在取新数据之前**。
+   */
+  it('结果页：独立 effect，依赖是 entryId', () => {
+    const source = read('pages/document-store/RecordingResultPage.tsx');
+    expect(source).toMatch(/useEffect\(\(\) => \{ setDurationSec\(0\); \}, \[entryId\]\);/);
+  });
+
+  it('转录状态卡：独立 effect，依赖是 currentEntryId', () => {
+    const source = read('components/doc-browser/TranscribeStatusCard.tsx');
+    expect(source).toMatch(/useEffect\(\(\) => \{ setDurationSec\(0\); \}, \[currentEntryId\]\);/);
+  });
+
+  it('处理页：清在取条目之前（清在后面等于没清）', () => {
+    const source = read('pages/document-store/RecordingProcessingPage.tsx');
+    const reset = source.indexOf('setDurationSec(0)');
+    const fetch_ = source.indexOf('await getDocumentEntry(');
+    expect(reset).toBeGreaterThan(-1);
+    expect(fetch_).toBeGreaterThan(reset);
+  });
+});

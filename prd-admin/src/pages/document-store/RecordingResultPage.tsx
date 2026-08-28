@@ -256,6 +256,12 @@ export function RecordingResultPage() {
   // （recordingPlayBridge 的既有通道，处理中那一屏也用它）。
   const [durationSec, setDurationSec] = useState(0);
   useEffect(() => onRecordingDuration(setDurationSec), []);
+  /*
+   * 换录音归零（见 doc/rule.prd-admin.recording-entry-scope.md）。
+   * 这是同一个毛病的**第四处**：时长由播放器广播上来，而这几屏都是「同一条路由换参数、
+   * 组件被复用」，不显式放掉就会拿上一条的值给新录音标价；新录音解不出元数据时永久留着。
+   */
+  useEffect(() => { setDurationSec(0); }, [entryId]);
 
   /*
    * `?play=1` 是「进入结果页并开始播放」那一下的后半段。
