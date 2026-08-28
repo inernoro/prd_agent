@@ -17,7 +17,7 @@
 # 1. 把设计稿目录起成静态服务（端口 8188），并生成去运行时的静态副本
 # 2. 切设计稿基准图
 node e2e/design-fidelity/extract-design-boards.mjs
-# 3. 起对照台（prd-admin 目录下 npx vite --port 8123），再取实现图
+# 3. 起对照台（prd-admin 目录下 pnpm exec vite --port 8123），再取实现图
 node e2e/design-fidelity/shoot-impl-boards.mjs
 # 4. 取**真实应用**的图（同一个 8123，走真实入口而不是对照台）
 node e2e/design-fidelity/shoot-real-app.mjs

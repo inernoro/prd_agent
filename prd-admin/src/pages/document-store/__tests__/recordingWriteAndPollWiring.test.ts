@@ -522,3 +522,30 @@ describe('写回时刻与库的精度对齐', () => {
     expect(source).toContain('TicksPerMillisecond');
   });
 });
+
+/*
+ * AI 不可用是「录音与原文都好」的另一件事，原文已经存在时这句话更成立。
+ * 原来那条 `!noteEntryId` 让「已有原文 + 重新整理失败且失败码是 AI 不可用」这一档
+ * 三块全灭：失败卡不出、横幅不出，而绿色的「全部完成」照常显示。
+ */
+describe('AI 不可用要说出来，且不同屏报「全部完成」', () => {
+  const source = read('components/doc-browser/TranscribeStatusCard.tsx');
+
+  it('横幅判据不再排除「已有原文」那一档', () => {
+    // 只取这一条语句本身（到分号为止），别把下一行的 chips 判据也算进来
+    const from = source.slice(source.indexOf('const aiDown = '));
+    const stmt = from.slice(0, from.indexOf(';') + 1);
+    expect(stmt).toContain('aiUnavailable');
+    expect(stmt).not.toContain('noteEntryId');
+  });
+
+  it('横幅在时不报完成', () => {
+    const from = source.slice(source.indexOf('const completionCopy = '));
+    const stmt = from.slice(0, from.indexOf(';') + 1);
+    expect(stmt).toContain('!aiDownVisible');
+  });
+
+  it('这张卡的时长也跟着录音归零', () => {
+    expect(source).toMatch(/useEffect\(\(\) => \{ setDurationSec\(0\); \}, \[currentEntryId\]\);/);
+  });
+});

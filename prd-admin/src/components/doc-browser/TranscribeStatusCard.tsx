@@ -336,6 +336,13 @@ export function TranscribeStatusCard({
   // 时长只有播放器知道（条目元数据没这个字段），订阅它广播的那一个数
   const [durationSec, setDurationSec] = useState(0);
   useEffect(() => onRecordingDuration(setDurationSec), []);
+  /*
+   * 换录音时归零。这张卡在阅读器里被复用、只换 props，而时长是播放器广播上来的：
+   * 不清的话，新录音的元数据到位之前，三阶段进度与失败说明里都挂着上一条的时长；
+   * 新录音没有可播地址、或元数据解不出来时，这个错时长就永久留着
+   * （处理页那一处刚修过，这张卡是同一个毛病的另一处，Codex 第二十八轮 P2）。
+   */
+  useEffect(() => { setDurationSec(0); }, [currentEntryId]);
   const durationLabel = durationSec > 0 ? formatClockLabel(durationSec) : null;
   // 原文已经在了还在跑 run，那跑的是「补齐理解」那一层，不是从头转录：
   // 再摆一遍「保存音频 → 生成原文 → 补齐理解」等于把两件事说成同一件。
@@ -506,7 +513,11 @@ export function TranscribeStatusCard({
     「全部完成 · 纪要与待办已就绪」压在「会议纪要生成失败」上面，是同屏两句互相打脸，
     而且抢走了失败卡的首位——三份判分都指到这一处。
   */
-  const completionCopy = !processing && !showFailure && completion ? describeCompletionSummary(completion) : null;
+  const aiDownVisible = aiUnavailable && !processing && !!lastFailure;
+  // 有 AI 不可用横幅时不许同屏再报「全部完成」：那两句话互相打脸
+  const completionCopy = !processing && !showFailure && !aiDownVisible && completion
+    ? describeCompletionSummary(completion)
+    : null;
   const organizeCopy = reorganizing
     ? describeOrganizeProgress({
       styleLabel: organizeStyleLabel,
@@ -515,7 +526,17 @@ export function TranscribeStatusCard({
     : null;
   // AI 整体不可用是**另一件事**：录音与原文都好好的，只是理解/整理/问答这一层没了。
   // 混进转录失败卡里说，用户会以为录音也出事了（稿面 cap-S9 专门画了一条横幅）。
-  const aiDown = aiUnavailable && !processing && !noteEntryId ? lastFailure : null;
+  /*
+   * 这里原来还带一个 `!noteEntryId`——「已经有原文了就不提 AI 不可用」。那条判据是错的，
+   * 而且错得最难发现：原文已经在、用户点「重新整理」，整理跑失败且失败码是 AI 不可用时，
+   *   showFailure 因为 aiUnavailable 被排除 → 失败卡不出；
+   *   aiDown 因为 noteEntryId 有值 → 横幅也不出；
+   *   completionCopy 只看 !showFailure → **绿色的「全部完成」照常显示**。
+   * 于是用户点了一次整理、什么都没得到，屏幕却告诉他一切完成（Codex 第二十八轮 P1）。
+   * 上面那句注释本来就说清了：AI 不可用是另一件事——录音与原文都好好的，只是理解/整理
+   * 这一层没了。原文已经存在时这句话更成立，不是更不成立。
+   */
+  const aiDown = aiUnavailable && !processing ? lastFailure : null;
   const chips = (noteEntryId && !inPlace) || subtitleEntryId || (noteEntryId && onRestyle)
     || (onEnterResult && !inPlace && !processing);
 
