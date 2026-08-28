@@ -394,6 +394,31 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void PoolDispatch_SkipsMembersWhoseModelRecordIsExplicitlyDisabled()
+    {
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 托管默认池是 append-only：成员删不掉（APPEND_ONLY_POOL）、也不许覆盖，
+        // 加成员时又有 MODEL_DISABLED 拦着「停用模型不许进池」。两条规矩合起来，
+        // 「停用模型」就是把一个已在池里的坏条目请出调度的唯一动作——它必须真的有效果。
+        Assert.Contains("平台托管默认池不允许删除成员", console);
+        Assert.Contains("停用模型不能加入平台托管默认池", console);
+        Assert.Contains("private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(", resolver);
+        Assert.Contains("await IsPoolMemberModelExplicitlyDisabledAsync(", resolver);
+        Assert.Contains("已停用，跳过该候选", resolver);
+
+        // 判据只认「库里明写着 Enabled=false」。用 Eq(Enabled,false) 查，而不是取回来再判
+        // `!model.Enabled`——bool 反序列化会把缺字段的老文档读成 false，那样会把一批
+        // 从没被人停用过的成员误判成停用。
+        Assert.Contains("Builders<LLMModel>.Filter.Eq(m => m.Enabled, false)", resolver);
+        var fetchThenTest = new Regex(@"IsPoolMemberModelExplicitlyDisabled[\s\S]{0,1600}?!\w+\.Enabled");
+        Assert.False(
+            fetchThenTest.IsMatch(resolver),
+            "别把「查回来再判 !Enabled」当停用证据：缺字段的老文档会被误判成停用，必须用 Eq(Enabled,false) 过滤");
+    }
+
+    [Fact]
     public void IntentPoolEligibility_HasExactlyOneJudgmentAndOneWayToDeclareIt()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
