@@ -105,7 +105,12 @@ describe('状态一句话', () => {
   it('三档可见性各说各的，不含糊', () => {
     expect(describeQuickShare(link({ visibility: 'public', expiresAt: at(7) }), NOW)).toContain('未登录');
     expect(describeQuickShare(link({ visibility: 'logged-in', expiresAt: at(7) }), NOW)).toContain('登录');
-    expect(describeQuickShare(link({ visibility: 'owner-only', expiresAt: at(7) }), NOW)).toContain('只有你自己');
+    // 这一条原先钉的是「只有你自己」——而后端对 owner-only 放行的是「创建者 + 站点已共享
+    // 团队的成员」。钉着一句错文案的测试比没有测试更糟：谁去修那句话，谁的 CI 就红。
+    // 改成断言行为：这一档要说清「不只是我」，具体措辞由 shareVisibility.test.ts 守。
+    const ownerOnly = describeQuickShare(link({ visibility: 'owner-only', expiresAt: at(7) }), NOW);
+    expect(ownerOnly).toMatch(/协作者|团队/);
+    expect(ownerOnly).not.toContain('只有你自己');
   });
 
   it('有密码就说要输密码', () => {

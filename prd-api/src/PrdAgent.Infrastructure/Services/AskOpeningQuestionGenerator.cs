@@ -149,8 +149,22 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         var snapshot = await snapshots.GetAsync(site, ct);
         if (!string.IsNullOrEmpty(snapshot.Unavailable) || string.IsNullOrWhiteSpace(snapshot.Text))
         {
-            // 读不出正文（纯视频/纯图包装站等）也盖版本戳：不盖的话，每个打开这个页面的人
-            // 都会再排一次生成，而结论永远是同一个「读不出来」。
+            // 「这页确实没有正文」和「这次没读回来」是两件事，盖不盖版本戳完全相反。
+            //
+            // 快照服务已经把这个区别算出来了：对象存储抖一下时它置 TransientFailure=true
+            // 并且**拒绝缓存**这份空快照（SiteContentSnapshotService 里那段注释写得很清楚）。
+            // 这里如果对所有 Unavailable 一律盖戳，就把它那半边保护当场抵消掉——存储恢复之后
+            // 没有任何人会再排一次生成，这个站点要等到正文变了或者 owner 手动点重新生成
+            // 才有开场问题。判据太窄的典型：把「暂时」和「永久」压成同一个分支。
+            if (snapshot.TransientFailure)
+            {
+                _logger.LogWarning("[AskOpeners] 站点 {SiteId} 这次没读回正文（暂时性），不盖版本戳，留给下次重试：{Reason}",
+                    siteId, snapshot.Unavailable);
+                return AskOpenerOutcome.ModelUnavailable;
+            }
+
+            // 确定读不出正文（纯视频/纯图包装站等）才盖版本戳：不盖的话，每个打开这个页面的
+            // 人都会再排一次生成，而结论永远是同一个「读不出来」。
             await StampAsync(db, siteId, version, questions: null, ct);
             _logger.LogInformation("[AskOpeners] 站点 {SiteId} 读不到正文，跳过生成：{Reason}",
                 siteId, snapshot.Unavailable ?? "正文为空");

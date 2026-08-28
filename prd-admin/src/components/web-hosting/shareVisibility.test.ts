@@ -5,7 +5,12 @@ import {
   VISIBILITY_LABEL,
   visibilityLabelOf,
 } from './shareVisibility';
-import { VISIBILITY_HINT, VISIBILITY_LABEL as QUICK_LABEL, resolveVisibility } from './quickShare';
+import {
+  describeQuickShare,
+  VISIBILITY_HINT,
+  VISIBILITY_LABEL as QUICK_LABEL,
+  resolveVisibility,
+} from './quickShare';
 
 describe('可见性档位的文案不许比后端放行范围更严', () => {
   // 后端 EnforceShareVisibilityAsync 对 owner-only 放行的是「创建者 + 该站点已共享团队的
@@ -25,6 +30,21 @@ describe('可见性档位的文案不许比后端放行范围更严', () => {
   it('owner-only 的说明必须点出协作者也能打开', () => {
     expect(VISIBILITY_ACCESS_HINT['owner-only']).toMatch(/协作者|团队/);
     expect(VISIBILITY_HINT['owner-only']).toMatch(/协作者|团队/);
+  });
+
+  it('一步分享面板顶上那句状态话也要说同一件事', () => {
+    // 同一个面板里选项标签和这句总结如果各说各的（标签「我和协作者」、总结「只有你自己」），
+    // 比两处都错还糟——用户不知道该信哪一句。上一轮改标签时正是漏了这里。
+    const summary = describeQuickShare({ visibility: 'owner-only' } as never);
+    for (const phrase of ONLY_ME_PHRASES.concat(['只有你自己', '只有你'])) {
+      expect(summary).not.toContain(phrase);
+    }
+    expect(summary).toMatch(/协作者|团队/);
+  });
+
+  it('另外两档的总结不受影响', () => {
+    expect(describeQuickShare({ visibility: 'public' } as never)).toContain('任何拿到链接的人');
+    expect(describeQuickShare({ visibility: 'logged-in' } as never)).toContain('任何登录的人');
   });
 
   it('三档都有标签与说明，不许缺一档', () => {

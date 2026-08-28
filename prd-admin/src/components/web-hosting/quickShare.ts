@@ -139,10 +139,13 @@ export function expiryLabel(expiresAt: string | undefined, now: number = Date.no
  */
 export function describeQuickShare(link: ShareLinkItem, now: number = Date.now()): string {
   const v = resolveVisibility(link);
+  // 三档的措辞必须与 ./shareVisibility 的 SSOT 同义。owner-only 这一档尤其不能写成
+  // 「只有你自己」——后端放行的是「创建者 + 站点已共享团队的成员」。上一轮改标签时
+  // 漏了这一句，同一个面板于是自相矛盾：选项写「我和协作者」，上面这句写「只有你自己」。
   const who = v === 'public'
     ? '任何拿到链接的人（含未登录）'
     : v === 'owner-only'
-      ? '只有你自己'
+      ? '你自己和这个站点的协作者'
       : '任何登录的人';
   const pwd = link.accessLevel === 'password' ? '，还需要输密码' : '';
   const life = link.expiresAt ? expiryLabel(link.expiresAt, now) : '永不过期';
