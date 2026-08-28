@@ -313,8 +313,15 @@ export function RecordingResultPage() {
       attempts += 1;
       const runRes = await getLatestAgentRun(entryId, 'transcribe');
       if (stale) return;
-      const inflight = runRes.success && isTranscriptionInflight(runRes.data?.status);
-      if (!inflight || attempts >= MAX_ATTEMPTS) { window.clearInterval(timer); return; }
+      /*
+       * **查询本身失败 ≠ 没有在途转录**。此前两者合成一个布尔：一次网络抖动就把定时器
+       * 永久清掉，笔记随后发布也不会自动装上，用户只能手动刷新（Codex 第三十二轮 P2）。
+       * 查不到就当作「还不知道」，照常等下一轮，只受上面那道次数上限约束；
+       * 只有**查成功且确认不在途**才是真的可以收手。
+       */
+      if (attempts >= MAX_ATTEMPTS) { window.clearInterval(timer); return; }
+      if (!runRes.success) return;
+      if (!isTranscriptionInflight(runRes.data?.status)) { window.clearInterval(timer); return; }
       const entryRes = await getDocumentEntry(entryId);
       if (stale || !entryRes.success) return;
       // 只认「笔记真的出现了」这一个信号：run 跑完但还没发布时重载没有意义

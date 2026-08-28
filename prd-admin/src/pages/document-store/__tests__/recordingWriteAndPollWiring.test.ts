@@ -693,3 +693,28 @@ describe('整理完成后正文没取回来要说出来', () => {
     expect(branch).toContain('isFlushable(pendingRef.current');
   });
 });
+
+/*
+ * 「等笔记出现」这个轮询：查询失败 ≠ 没有在途转录。合成一个布尔的话，一次网络抖动
+ * 就把定时器永久清掉，笔记随后发布也不会自动装上，用户只能手动刷新。
+ */
+describe('等笔记的轮询区分「查不到」与「确认没有」', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+  const fn = source.slice(source.indexOf("const runRes = await getLatestAgentRun(entryId, 'transcribe');"));
+  const body = fn.slice(0, fn.indexOf('void tick();'));
+
+  it('查询失败只是返回，不清定时器', () => {
+    const at = body.indexOf('if (!runRes.success) return;');
+    expect(at, '查询失败没有单独一条出路').toBeGreaterThan(-1);
+    // 这一行本身不许带 clearInterval
+    expect(body.slice(at, at + 60)).not.toContain('clearInterval');
+  });
+
+  it('只有确认不在途才收手', () => {
+    expect(body).toMatch(/if \(!isTranscriptionInflight\([^)]*\)\) \{ window\.clearInterval\(timer\); return; \}/);
+  });
+
+  it('次数上限仍在，不会无限等下去', () => {
+    expect(body).toContain('attempts >= MAX_ATTEMPTS');
+  });
+});
