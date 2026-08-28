@@ -243,7 +243,16 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
   }
 
   return (
-    <div data-agent-starter="true" className="flex h-[560px] max-h-[calc(100vh-190px)] min-h-[480px] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)]">
+    <div
+      data-agent-starter="true"
+      /*
+       * 展开决策卡时面板长高一档：12 段清单在 560px 里只能分到几十像素。
+       * max-h 必须按**弹窗内的可用高度**算，不是按视口：弹窗自己是 90vh，
+       * 其上还有标题、目标选择和 tab 条约 220px。原来写的 calc(100vh-190px)
+       * 根本不生效，760px 直接捅出弹窗底 74px（真机量出来的）。
+       */
+      className={`flex max-h-[calc(90vh-224px)] min-h-[420px] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)] transition-[height] duration-200 ${showDecisionCard ? 'h-[760px]' : 'h-[560px]'}`}
+    >
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-7 py-5">
         <div className="flex items-start justify-between gap-6">
           <div>
@@ -410,23 +419,37 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
               </>
             )}
 
+            {/*
+             * 完成页是「固定操作区 + 可滚预览区」，不是整页一起滚。
+             * 整页滚的时候，一展开决策卡就把标题和「复制启动提示词」顶出可视区，
+             * 用户只剩一张没有抬头、没有按钮的表格（真机撞到过）。
+             * 主操作永远钉住，滚动只发生在预览卡自己身上。
+             */}
             {step === 4 && (
-              <div className="flex h-full min-h-0 flex-col overflow-y-auto">
-                <div className="my-auto flex flex-col items-center py-2 text-center">
-                <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground text-background shadow-xl">
-                  <Check className="h-7 w-7" />
-                </motion.div>
-                <button
-                  type="button"
-                  onClick={() => setStep(3)}
-                  className="mb-3 inline-flex min-h-11 items-center gap-2 self-start rounded-xl px-3 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  返回修改
-                </button>
-                <h4 className="mt-5 text-2xl font-bold tracking-tight">你的 Agent 上手包已经配好</h4>
-                <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
-                <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+              <div className="flex h-full min-h-0 flex-col">
+                <div className={`flex shrink-0 flex-col items-center text-center ${showDecisionCard ? 'pt-1' : 'my-auto py-2'}`}>
+                {!showDecisionCard && (
+                  <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground text-background shadow-xl">
+                    <Check className="h-7 w-7" />
+                  </motion.div>
+                )}
+                {!showDecisionCard && (
+                  <button
+                    type="button"
+                    onClick={() => setStep(3)}
+                    className="mb-3 inline-flex min-h-11 items-center gap-2 self-start rounded-xl px-3 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    返回修改
+                  </button>
+                )}
+                <h4 className={showDecisionCard ? 'text-base font-bold tracking-tight' : 'mt-5 text-2xl font-bold tracking-tight'}>
+                  你的 Agent 上手包已经配好
+                </h4>
+                {!showDecisionCard && (
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
+                )}
+                <p className={`text-xs text-muted-foreground ${showDecisionCard ? 'sr-only' : 'mt-2'}`} aria-live="polite">
                   {!projectId
                     ? `还没有选定项目，角色「${roleProfile.label}」只写进项目里的长期规则，CDS 这边暂不记录。等 Agent 把项目建好，回到这一步再生成一次就会记上。`
                     : null}
@@ -447,14 +470,14 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                     boxShadow: ['0 16px 45px rgba(194,91,33,0.22)', '0 22px 60px rgba(194,91,33,0.38)', '0 16px 45px rgba(194,91,33,0.22)'],
                   }}
                   transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                  className={`mt-7 flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 py-4 text-base font-bold transition-colors ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
+                  className={`flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 font-bold transition-colors ${showDecisionCard ? 'mt-4 py-3 text-sm' : 'mt-7 py-4 text-base'} ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
                 >
                   {copied ? <Check className="h-5 w-5" /> : <ClipboardCopy className="h-5 w-5" />}
                   {copied ? '已复制，现在交给 Agent' : '复制启动提示词'}
                   {!copied && <ArrowRight className="h-5 w-5" />}
                 </motion.button>
 
-                <div className="mt-5 flex items-center gap-3">
+                <div className={`flex items-center gap-3 ${showDecisionCard ? 'mt-3' : 'mt-5'}`}>
                   <button type="button" onClick={() => downloadText('cds-agent-starter.sh', harness)} className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]">
                     <Download className="h-4 w-4" /> 下载一键脚本
                   </button>
@@ -479,8 +502,13 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                   </a>
                 </div>
 
-                {showDecisionCard && <DecisionCardPreview model={decisionCardModel} />}
                 </div>
+
+                {showDecisionCard && (
+                  <div className="mt-3 flex min-h-[220px] flex-1 justify-center overflow-hidden pb-1">
+                    <DecisionCardPreview model={decisionCardModel} />
+                  </div>
+                )}
               </div>
             )}
           </motion.section>
@@ -507,8 +535,8 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
  */
 function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
   return (
-    <div className="mt-5 w-full max-w-2xl shrink-0 overflow-hidden rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-left">
-      <div className="flex items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+    <div className="flex min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-left">
+      <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
         <span className="h-7 w-[3px] shrink-0 rounded-sm bg-warn" />
         <div className="min-w-0">
           <div className="text-sm font-semibold">{model.cardTitle}</div>
@@ -521,7 +549,7 @@ function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
         </span>
       </div>
 
-      <dl className="grid gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
+      <dl className="grid shrink-0 gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
         <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
           <dt className="font-semibold text-muted-foreground">理解方向</dt>
           <dd>{model.lens}</dd>
@@ -542,7 +570,8 @@ function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
         </div>
       </dl>
 
-      <ol className="max-h-64 overflow-y-auto">
+      {/* 段落清单是卡内唯一滚动区：卡头与前言钉住，滚多远都还知道这是哪张卡。 */}
+      <ol className="min-h-0 flex-1 overflow-y-auto">
         {model.sections.map((section, index) => (
           <li
             key={section.label}
@@ -557,7 +586,7 @@ function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
         ))}
       </ol>
 
-      <div className="flex items-start gap-2 border-t border-[hsl(var(--hairline))] bg-bad-soft px-4 py-2.5">
+      <div className="flex shrink-0 items-start gap-2 border-t border-[hsl(var(--hairline))] bg-bad-soft px-4 py-2.5">
         <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bad" />
         <div className="text-[11px] leading-relaxed">
           <span className="font-semibold text-bad">本角色额外禁止</span>
