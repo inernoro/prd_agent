@@ -164,7 +164,10 @@ export function StartScene({ onGetStarted }: StartSceneProps) {
                 <SceneIcon d="M5 12h14M13 6l6 6-6 6" size={14} strokeWidth={2} />
               </button>
               <a
-                href="#scene-roster"
+                // 锚点必须落在真实存在的 id 上。`#scene-roster` 是早期那一幕的名字，
+                // 那一幕后来被照 /ai-toolbox 重画的百宝箱取代了，锚点没跟着改——
+                // 点了只换地址栏，页面纹丝不动。守卫见 landingAnchors.test.ts
+                href="#agents"
                 className="flex items-center gap-2"
                 style={{
                   height: '38px', padding: '0 18px', borderRadius: '999px',

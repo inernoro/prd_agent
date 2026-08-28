@@ -10,27 +10,39 @@ import { useEffect, useState } from 'react';
  */
 
 let cache: Record<string, string> | null = null;
-let inflight: Promise<Record<string, string>> | null = null;
+let inflight: Promise<Record<string, string> | null> | null = null;
 
+/**
+ * 只缓存**成功**的那一次。
+ *
+ * 失败也写进缓存的话，API 刚起来时的一次 502、或者切页那一下的网络抖动，
+ * 会被记成「这个 SPA 会话里首页永远没有配图」——后端早就好了、图也早就生成了，
+ * 用户却要整页刷新才看得到。失败就不写缓存，下一次挂载重新去拉。
+ *
+ * 反过来「成功但确实一张都没配」是要缓存的：那是真实答案，不是失败。
+ */
 async function load(): Promise<Record<string, string>> {
   if (cache) return cache;
-  if (inflight) return inflight;
-  inflight = (async () => {
-    try {
-      const base = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
-      const res = await fetch(`${base}/api/v1/landing/preview-assets`, { headers: { Accept: 'application/json' } });
-      if (!res.ok) return {};
-      const body = (await res.json()) as { success?: boolean; data?: Record<string, string> | null };
-      return body?.success && body.data ? body.data : {};
-    } catch {
-      // 取不到配图不该影响首页任何其它内容，静默退化成「没有配图」→ 各幕回落到手绘底图
-      return {};
-    } finally {
-      inflight = null;
-    }
-  })();
-  cache = await inflight;
-  return cache;
+  if (!inflight) {
+    inflight = (async (): Promise<Record<string, string> | null> => {
+      try {
+        const base = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+        const res = await fetch(`${base}/api/v1/landing/preview-assets`, { headers: { Accept: 'application/json' } });
+        if (!res.ok) return null;
+        const body = (await res.json()) as { success?: boolean; data?: Record<string, string> | null };
+        return body?.success ? (body.data ?? {}) : null;
+      } catch {
+        // 取不到配图不该影响首页任何其它内容，静默退化成「没有配图」→ 各幕回落到手绘底图
+        return null;
+      }
+    })();
+  }
+  const pending = inflight;
+  const result = await pending;
+  // 只有还是自己这一轮时才清 inflight，避免把后来者的在途请求清掉
+  if (inflight === pending) inflight = null;
+  if (result) cache = result;
+  return result ?? {};
 }
 
 /**
