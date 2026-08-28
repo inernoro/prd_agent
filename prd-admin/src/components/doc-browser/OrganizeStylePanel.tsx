@@ -15,6 +15,7 @@ import { Plus } from 'lucide-react';
 import { listTranscribeStyles } from '@/services/real/documentStore';
 import {
   describeOrganizeCards,
+  CUSTOM_STYLE_KEY,
   type OrganizeStyle,
   type OrganizeCard,
 } from '@/pages/document-store/organizeStyles';
@@ -28,16 +29,20 @@ export type OrganizeState = {
   runningStyleKey?: string | null;
   /** 在途进度 0-100 */
   runningPercent?: number | null;
+  /** 刚点下、还在发起（拿到 runId 之前）的那一种 */
+  launchingStyleKey?: string | null;
 };
 
 function StyleCard({ card, onPick }: { card: OrganizeCard; onPick: (key: string) => void }) {
   const done = card.state === 'done';
-  const running = card.state === 'running';
+  // 发起中与生成中在视觉上同一档：都是「这一刻它在动」，区别在副行那句话
+  const running = card.state === 'running' || card.state === 'launching';
   return (
     <button
       type="button"
       onClick={() => onPick(card.key)}
       title={card.description}
+      aria-busy={running || undefined}
       // 稿面：已生成那张是黑底反白（当前生效的那一种，视觉最重），其余是白卡描边
       className="flex min-h-[72px] flex-col justify-center rounded-[14px] px-4 py-3 text-left"
       style={{
@@ -146,12 +151,17 @@ export function OrganizeStylePanel({
       {allowCustom && !customOpen && (
         <button
           type="button"
+          // 自定义那一条不在网格里，发起中也要有自己的说法，否则点完「开始整理」这一条会一动不动
+          disabled={state.launchingStyleKey === CUSTOM_STYLE_KEY}
+          aria-busy={state.launchingStyleKey === CUSTOM_STYLE_KEY || undefined}
           onClick={() => setCustomOpen(true)}
           // 稿面这条是虚线框：它和上面四张不是同一类——上面是选一种现成的，这条是自己描述
           className="mt-2.5 flex min-h-12 w-full cursor-pointer items-center justify-center gap-1.5 rounded-[14px] text-[13px]"
           style={{ border: '1px dashed var(--border-default)', color: 'var(--text-secondary)' }}
         >
-          <Plus size={14} /> 自定义整理要求
+          {state.launchingStyleKey === CUSTOM_STYLE_KEY
+            ? '正在发起…'
+            : <><Plus size={14} /> 自定义整理要求</>}
         </button>
       )}
 

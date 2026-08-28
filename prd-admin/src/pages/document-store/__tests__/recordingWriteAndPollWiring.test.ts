@@ -464,8 +464,12 @@ describe('换条目时把绑在上一条身上的状态放掉', () => {
     // 锁里存的是「哪条录音」，不是一个布尔
     expect(source).toContain('const launchingEntryRef = useRef<string | null>(null);');
     expect(source).toContain('launchingEntryRef.current === entryId) return;');
-    // 释放要先比这一发还是不是最新那发
-    expect(source).toMatch(/if \(launchTokenRef\.current === launchToken\) launchingEntryRef\.current = null;/);
+    // 释放要先比这一发还是不是最新那发。断的是「比过之后才放」，不锁死写成一行还是一段
+    const gate = source.indexOf('launchTokenRef.current === launchToken');
+    expect(gate, '释放没有先认这一发').toBeGreaterThan(-1);
+    const release = source.indexOf('launchingEntryRef.current = null', gate);
+    expect(release).toBeGreaterThan(gate);
+    expect(release - gate, '释放离那道门太远，中间夹了别的东西').toBeLessThan(200);
     // 不许再退回「换条目就清零」那种补救
     expect(source).not.toMatch(/launchingRef\.current = false/);
   });
@@ -999,5 +1003,37 @@ describe('在线保存不许清掉这期间新排下的草稿', () => {
     // 这一档不许落到下面那几句共享状态的清理上
     expect(branch).not.toContain('setPendingEdits(null)');
     expect(branch).not.toContain('setFlushConflict(null)');
+  });
+});
+
+
+describe('发起整理这件事要当场看得见', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+  const launch = source.slice(source.indexOf('const onPickOrganizeStyle = useCallback'), source.indexOf('const onRestyle = useCallback'));
+
+  it('屏幕上的状态与锁同刻置位，不等两个请求回来', () => {
+    const lock = launch.indexOf('launchingEntryRef.current = entryId;');
+    const visible = launch.indexOf('setLaunchingStyle(styleKey)');
+    const firstAwait = launch.indexOf('await ');
+    expect(lock).toBeGreaterThan(-1);
+    expect(visible, '锁只有 ref，屏幕上没有任何表示').toBeGreaterThan(-1);
+    expect(visible).toBeGreaterThan(lock);
+    expect(visible, '「正在发起」落在 await 之后就等于没有').toBeLessThan(firstAwait);
+  });
+
+  it('失败与成功都撤掉这一档，且只有最新那一发有资格撤', () => {
+    const at = launch.indexOf('} finally {');
+    expect(at).toBeGreaterThan(-1);
+    const block = launch.slice(at);
+    expect(block).toContain('launchTokenRef.current === launchToken');
+    expect(block).toContain('setLaunchingStyle(null)');
+  });
+
+  it('这一档跟着录音复位，不带到下一条上', () => {
+    expect(source).toMatch(/useEffect\(\(\) => \{ setRunning\(null\); setLaunchingStyle\(null\); \}, \[entryId\]\);/);
+  });
+
+  it('传给面板了，否则算完了也画不出来', () => {
+    expect(source).toContain('launchingStyleKey: launchingStyle,');
   });
 });

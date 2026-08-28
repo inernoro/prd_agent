@@ -18,14 +18,14 @@ export type OrganizeStyle = {
   description: string;
 };
 
-export type OrganizeCardState = 'done' | 'running' | 'idle';
+export type OrganizeCardState = 'done' | 'running' | 'launching' | 'idle';
 
 export type OrganizeCard = {
   key: string;
   label: string;
   description: string;
   state: OrganizeCardState;
-  /** 卡片副行：「已生成 · 12 秒前」/「生成中 40%」/「点击生成」 */
+  /** 卡片副行：「已生成 · 12 秒前」/「生成中 40%」/「正在发起…」/「点击生成」 */
   hint: string;
 };
 
@@ -58,6 +58,13 @@ export function describeOrganizeCards(
     generatedAt?: string | null;
     /** 正在跑的那一种；没有在途 run 就不传 */
     runningStyleKey?: string | null;
+    /**
+     * 刚点下、还在向服务端发起的那一种（拿到 runId 之前）。
+     * 这一档必须单独有，不能等 run 建出来才有表示：发起要先查上一条转录、再建 restyle，
+     * 慢的时候好几秒，期间卡片一动不动，而后续点击已经被锁静默吞掉——用户不知道点没点上
+     * （AGENTS.md §6：模型调用必须可视化；Codex 第三十八轮 P2）。
+     */
+    launchingStyleKey?: string | null;
     /** 在途 run 的进度 0-100 */
     runningPercent?: number | null;
     now?: number;
@@ -65,11 +72,19 @@ export function describeOrganizeCards(
 ): OrganizeCard[] {
   const now = ctx.now ?? Date.now();
   const running = ctx.runningStyleKey?.trim().toLowerCase() || '';
+  const launching = ctx.launchingStyleKey?.trim().toLowerCase() || '';
   const current = ctx.currentStyleKey?.trim().toLowerCase() || '';
 
   return styles
     .filter(style => style.key !== CUSTOM_STYLE_KEY)
     .map((style) => {
+      /*
+       * 发起中优先于其余一切：这一刻它既不是「已生成」（新的还没出来），
+       * 也还不是「生成中」（服务端还没接下这条 run），如实说「正在发起」。
+       */
+      if (launching && style.key === launching) {
+        return { ...style, state: 'launching' as const, hint: '正在发起…' };
+      }
       // 在途优先于已生成：同一种方式正在重跑时，它此刻的真实状态是「生成中」
       if (running && style.key === running) {
         const percent = Math.min(100, Math.max(0, Math.round(ctx.runningPercent ?? 0)));

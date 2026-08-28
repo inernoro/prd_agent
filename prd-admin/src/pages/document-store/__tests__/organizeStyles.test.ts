@@ -97,3 +97,28 @@ describe('formatAgo', () => {
     expect(formatAgo(undefined, NOW)).toBe('');
   });
 });
+
+
+describe('发起中的那一档（拿到 runId 之前）', () => {
+  it('说的是「正在发起」，不是「生成中 0%」——那会是编出来的进度', () => {
+    const cards = describeOrganizeCards(STYLES, { launchingStyleKey: 'meeting', now: NOW });
+    const card = cards.find(c => c.key === 'meeting');
+    expect(card?.state).toBe('launching');
+    expect(card?.hint).toBe('正在发起…');
+  });
+
+  it('压过「已生成」：这一刻新的还没出来，旧的也不再是当前状态', () => {
+    const cards = describeOrganizeCards(STYLES, {
+      currentStyleKey: 'meeting',
+      generatedAt: new Date(NOW - 60_000).toISOString(),
+      launchingStyleKey: 'meeting',
+      now: NOW,
+    });
+    expect(cards.find(c => c.key === 'meeting')?.state).toBe('launching');
+  });
+
+  it('只影响被点的那一张，其余照旧', () => {
+    const cards = describeOrganizeCards(STYLES, { launchingStyleKey: 'meeting', now: NOW });
+    expect(cards.filter(c => c.state === 'launching')).toHaveLength(1);
+  });
+});

@@ -579,7 +579,14 @@ export function RecordingResultPage() {
    * 留在下一条录音上——那一条于是显示着别人的进度条，而且因为 `running` 非空，
    * 它自己的整理点了没反应；A 跑完时轮询回调还会拿 B 的 id 去 reload（Codex P2）。
    */
-  useEffect(() => { setRunning(null); }, [entryId]);
+  /**
+   * 刚点下、还没拿到 runId 的那一种整理方式。
+   * 锁本身是 ref（必须同步，见下面那段），但 ref 不触发重渲染：只有它的话，
+   * 发起期间卡片一动不动，而后续点击已经被锁静默吞掉——慢的时候用户干等好几秒，
+   * 不知道自己点上没有（AGENTS.md §6：模型调用必须可视化）。
+   */
+  const [launchingStyle, setLaunchingStyle] = useState<string | null>(null);
+  useEffect(() => { setRunning(null); setLaunchingStyle(null); }, [entryId]);
 
   // 轮询回调里要读「当前的笔记 id」，但它不能进 effect 依赖——依赖一变轮询就重来。
   const noteIdRef = useRef('');
@@ -1121,6 +1128,8 @@ export function RecordingResultPage() {
   const onPickOrganizeStyle = useCallback((styleKey: string, customPrompt?: string) => {
     if (!entryId || running || launchingEntryRef.current === entryId) return;
     launchingEntryRef.current = entryId;
+    // 锁举起来的同一刻就让它在屏幕上现形，不等两个请求回来
+    setLaunchingStyle(styleKey);
     const launchToken = ++launchTokenRef.current;
     // 这次发起属于哪条录音：两个请求都回来之后要拿它认人（见下面 setRunning 前那一判）
     const launchedForEntryId = entryId;
@@ -1171,7 +1180,12 @@ export function RecordingResultPage() {
         setRunning({ runId: res.data.runId, styleKey, percent: 0 });
       } finally {
         // 只有「最新那一发」才有资格释放：后到的旧请求不许把别人举着的锁放掉
-        if (launchTokenRef.current === launchToken) launchingEntryRef.current = null;
+        if (launchTokenRef.current === launchToken) {
+          launchingEntryRef.current = null;
+          // 失败与成功都要撤掉「正在发起」：成功那一路 running 已经接上，失败那一路
+          // 卡片必须回到可点，否则用户被一句永远不动的「正在发起…」钉在那里
+          setLaunchingStyle(null);
+        }
       }
     })();
   }, [entryId, running]);
@@ -1415,6 +1429,7 @@ export function RecordingResultPage() {
               generatedAt: state.generatedAt,
               runningStyleKey: running?.styleKey ?? null,
               runningPercent: running?.percent ?? null,
+              launchingStyleKey: launchingStyle,
             }}
             onPickOrganizeStyle={onPickOrganizeStyle}
           />
