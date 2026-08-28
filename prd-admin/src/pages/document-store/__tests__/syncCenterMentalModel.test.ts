@@ -58,8 +58,13 @@ describe('SyncCenterDialog mental model', () => {
   });
 
   it('keeps legacy sync management as a hidden compatibility route', () => {
-    expect(documentStorePageSource).toContain("type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync'");
-    expect(documentStorePageSource).toContain("const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync']");
+    // 守的是「sync 仍是合法路由值，但不出现在可见 tab 里」。
+    // 原写法逐字要求整段联合类型，等于把「以后不许加新 tab」也一并钉死了——
+    // 加一个「最近」就会红，而那跟本用例要防的回归毫无关系。
+    const storeTabUnion = /type StoreTab =([^;]+);/.exec(documentStorePageSource)?.[1] ?? '';
+    expect(storeTabUnion).toContain("'sync'");
+    const deepLinkValidList = /const valid: StoreTab\[\] = \[([^\]]+)\]/.exec(documentStorePageSource)?.[1] ?? '';
+    expect(deepLinkValidList).toContain("'sync'");
     expect(documentStorePageSource).toContain('<SyncManagerPanel />');
     expect(documentStorePageSource).toContain('onOpenLegacySyncPanel');
     expect(documentStorePageSource).not.toContain("key: 'sync', label");

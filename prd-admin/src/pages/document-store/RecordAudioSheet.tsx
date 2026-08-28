@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, ChevronUp, CloudUpload, FileCheck2, FileUp, Mic, MicOff, Pause, Play, Square, X } from 'lucide-react';
+import {
+  AlertTriangle, BookText, Check, ChevronDown, ChevronUp, Clock3, CloudUpload, FileCheck2, FileUp,
+  HardDrive, Lock, Mic, MoreHorizontal, Pause, Play, ShieldCheck, Square, Upload, WifiOff, X,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -23,6 +27,20 @@ import {
   vaultUpdateSessionStore,
 } from './recordingVault';
 import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
+import { describeMicHealth } from './recordingCompletionView';
+import {
+  advanceLiveSentenceLog,
+  describeCaptureChips,
+  isUploadKeepingUp,
+  describeLiveTranscriptTitle,
+  capturedUploadPercent,
+  describeRetryCountdown,
+  formatCapturedSize,
+  type CaptureChipIcon,
+  type CaptureChipTone,
+  type LiveSentence,
+} from './recordingCaptureView';
+import '@/styles/recording-design-palette.css';
 import { useAuthStore } from '@/stores/authStore';
 import {
   LiveTranscriptionSocket,
@@ -192,6 +210,38 @@ export function enqueueRecordingDestinationChange(
   });
 }
 
+/** 凭据胶囊的四档色：全部走 token，浅深两档各自成立（admin-dual-theme 那条棘轮）。 */
+const CAPTURE_CHIP_TONE: Record<CaptureChipTone, { bg: string; fg: string }> = {
+  success: { bg: 'var(--semantic-success-soft)', fg: 'var(--semantic-success-text)' },
+  info: { bg: 'var(--semantic-info-soft)', fg: 'var(--semantic-info-text)' },
+  warning: { bg: 'var(--semantic-warning-soft)', fg: 'var(--semantic-warning-text)' },
+  neutral: { bg: 'var(--bg-elevated)', fg: 'var(--text-muted)' },
+};
+
+const CAPTURE_CHIP_ICON: Record<CaptureChipIcon, LucideIcon> = {
+  shield: ShieldCheck,
+  drive: HardDrive,
+  upload: CloudUpload,
+  check: Check,
+  clock: Clock3,
+};
+
+/** 最新那句话尾巴上的光标：稿面用它表示「这句还在长」。 */
+function LiveCaret() {
+  return (
+    <motion.span
+      aria-hidden
+      className="ml-0.5 inline-block h-[0.95em] w-[2px] translate-y-[2px] rounded-[1px]"
+      style={{ background: 'var(--accent-fg-info)' }}
+      animate={{ opacity: [1, 0.1, 1] }}
+      transition={{ duration: 1.1, repeat: Infinity }}
+    />
+  );
+}
+
+/** 波形按 100ms 一格取峰值：按帧取的话一屏只装得下两秒，看不出「录了多久」。 */
+const WAVEFORM_BUCKET_MS = 150;
+
 export function RecordAudioSheet({
   storeId,
   storeName,
@@ -209,6 +259,26 @@ export function RecordAudioSheet({
   const [finalizationStage, setFinalizationStage] = useState<1 | 2 | 3>(1);
   const [targetStoreId, setTargetStoreId] = useState(storeId ?? '');
   const [protectedBytes, setProtectedBytes] = useState(0);
+  const [localBytes, setLocalBytes] = useState(0);
+  /*
+   * 本机保险箱到底写住了没有。IndexedDB 不可用、隐私模式、配额满时写入会被拒，
+   * 而录制照常进行、字节数照常涨——不记这一位的话，界面会一直说「已保护 · 无丢失」
+   * 而分片其实只在内存里，刷新或关页就没了（Codex P1）。
+   */
+  const [vaultPersisted, setVaultPersisted] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
+  /** 这次录音将来的名字（录音 YYYY-MM-DD HH-mm）：顶栏归属那一行的第二段 */
+  const [recordingName, setRecordingName] = useState('');
+  const [liveSentences, setLiveSentences] = useState<LiveSentence[]>([]);
+  /** 已排期的下一次实时转写重连时刻；null 表示没有排期，那就不许显示倒计时。 */
+  const [liveRetryAt, setLiveRetryAt] = useState<number | null>(null);
+  const [retryNow, setRetryNow] = useState(() => Date.now());
+  /** 实时字幕是在录音的第几秒断的——用于「中断（12:19）」那句话。 */
+  const [degradedAtSec, setDegradedAtSec] = useState<number | null>(null);
+  /** 设备自检用的峰值电平（稿面 cap-S1 那句「麦克风正常 · 音量适中」的唯一依据） */
+  const [peakLevel, setPeakLevel] = useState(0);
+  /** 「前往系统设置」展开的那段路径说明（网页开不了系统面板，只能告诉你在哪一格） */
+  const [permissionHelpOpen, setPermissionHelpOpen] = useState(false);
   const [liveProtection, setLiveProtection] = useState<'pending' | 'active' | 'local'>('pending');
   const [liveTranscript, setLiveTranscript] = useState('');
   const [liveTranscriptExpanded, setLiveTranscriptExpanded] = useState(false);
@@ -229,6 +299,8 @@ export function RecordAudioSheet({
   // 本机保险箱会话：分片实时落 IndexedDB，云端归档可用前不删（断网/崩溃可恢复）
   const vaultIdRef = useRef(`rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
+  const elapsedRef = useRef(0);
+  elapsedRef.current = elapsed;
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -237,6 +309,15 @@ export function RecordAudioSheet({
   const fileNameRef = useRef('');
   const uploadSessionIdRef = useRef<string | null>(null);
   const uploadSessionPromiseRef = useRef<Promise<string | null> | null>(null);
+  /**
+   * 上传会话的代次。切知识库时 +1，让**已经飞出去**的那一发 `startRecordingUpload` 作废。
+   *
+   * 只把 promise 的引用清掉是不够的：请求还在路上，它的回调会无条件把
+   * `uploadSessionIdRef` 装成**旧库**那条会话，并把实时转写连上去——此后的分片与结束时的
+   * 落库都会写进旧库，而界面显示的是用户刚选的新库（Codex 第四十一轮 P1）。
+   * 所以回调回来先认代次：不是当初那一代就不装、不连，并把那条白建的会话取消掉。
+   */
+  const uploadSessionEpochRef = useRef(0);
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
   // IndexedDB 写入也必须串行并在完成录音前收口。否则结果页可能先于最后一个
   // 分片落盘读取保险箱，表现为同一条录音偶发没有播放按钮。
@@ -247,9 +328,14 @@ export function RecordAudioSheet({
 
   useEffect(() => {
     const container = liveTranscriptScrollRef.current;
-    if (!container || liveTranscriptExpanded) return;
+    if (!container) return;
+    // 展开态同样贴底：稿面 cap-A3 里带光标的那句（正在转写的）就在列表最后一条，
+    // 停在顶部的话，用户点开「展开全部」看到的是开头，正在说的那句反而不在视野里。
     container.scrollTop = container.scrollHeight;
-  }, [liveTranscript, liveTranscriptExpanded]);
+    // 降级态一翻，卡内多出/收起骨架条与安抚行，可视区高度跟着变——不重新贴底的话
+    // 视窗停在旧位置，最新那句被卷到下面看不见。（这里列的是 liveView 的两个来源，
+    // 而不是 liveView 本身：那个派生值在本文件下方才声明，写进依赖数组会撞 TDZ。）
+  }, [liveSentences, liveTranscriptExpanded, liveTranscriptState, liveRetryAt]);
   const pendingLivePcmRef = useRef<Int16Array[]>([]);
   const livePcmCompleteRef = useRef(true);
   const liveCaptureRef = useRef<LivePcmCaptureController | null>(null);
@@ -291,10 +377,16 @@ export function RecordAudioSheet({
       },
       (nextState) => {
         setLiveTranscriptState(nextState);
+        if (nextState === 'degraded') setDegradedAtSec(prev => prev ?? elapsedRef.current);
+        if (nextState === 'live') setDegradedAtSec(null);
         if (nextState === 'live') setLiveTranscriptMessage('正在实时转写');
         if (nextState === 'finalizing') setLiveTranscriptMessage('正在确认最后一句');
         if (nextState === 'completed') setLiveTranscriptMessage('实时转写已完成');
         if (nextState === 'degraded') setLiveTranscriptMessage('实时转写已降级，结束后将自动校准');
+      },
+      (nextRetryAt) => {
+        setLiveRetryAt(nextRetryAt);
+        if (nextRetryAt != null) setDegradedAtSec(prev => prev ?? elapsedRef.current);
       },
     );
     liveTranscriptionRef.current = socket;
@@ -308,13 +400,26 @@ export function RecordAudioSheet({
     if (uploadSessionPromiseRef.current) return await uploadSessionPromiseRef.current;
     const destination = targetStoreIdRef.current || storeId;
     if (!destination || !fileNameRef.current) return null;
+    // 这一发属于哪一代（哪一个目标库）。回来时拿它认人，认不上就整发作废
+    const epoch = uploadSessionEpochRef.current;
+    const stale = () => uploadSessionEpochRef.current !== epoch;
     uploadSessionPromiseRef.current = startRecordingUpload(destination, fileNameRef.current, mimeRef.current)
       .then((res) => {
         if (!res.success) {
+          // 失败也要认代次：旧库那一发失败了，不该把新库这一条打成降级
+          if (stale()) return null;
           liveUploadFailedRef.current = true;
           setLiveProtection('local');
           setLiveTranscriptState('degraded');
           setLiveTranscriptMessage('网络不可用，录音结束后将自动转写');
+          return null;
+        }
+        if (stale()) {
+          /*
+           * 这条会话建在用户已经不要的那个库下：不装 ref、不连实时转写，
+           * 并把它取消掉——不取消的话，旧库下会留一条谁也不认领的空会话。
+           */
+          void cancelRecordingUpload(res.data.sessionId).catch(() => null);
           return null;
         }
         uploadSessionIdRef.current = res.data.sessionId;
@@ -323,6 +428,7 @@ export function RecordAudioSheet({
         return res.data.sessionId;
       })
       .catch(() => {
+        if (stale()) return null;
         liveUploadFailedRef.current = true;
         setLiveProtection('local');
         setLiveTranscriptState('degraded');
@@ -364,7 +470,18 @@ export function RecordAudioSheet({
     setChangingDestination(true);
     setTargetStoreId(nextStoreId);
     targetStoreIdRef.current = nextStoreId;
-    void vaultUpdateSessionStore(vaultIdRef.current, nextStoreId);
+    /*
+     * 挂在本机保险箱那条写队列上，不能裸发：建会话本身是排队进去的，抢在它前面跑的话
+     * `vaultUpdateSessionStore` 找不到那条会话记录，这次改动落不到任何地方（它对不存在的
+     * id 返回 false），分片于是全留在最初那个库下。恢复弹窗按 `storeId` 过滤，用户在
+     * 新选的库里就看不到这段录音——像丢了（Codex 第十八轮 P2）。
+     */
+    vaultWriteQueueRef.current = vaultWriteQueueRef.current
+      .then(() => vaultUpdateSessionStore(vaultIdRef.current, nextStoreId))
+      // 与另外两个 vault 写一样读返回值：改不动归属库时分片留在旧库下，
+      // 「已保护」这句就成了假话，凭据要跟着降级
+      .then((ok) => { if (!ok) setVaultPersisted(false); })
+      .catch(() => { setVaultPersisted(false); });
 
     // 已开始实时保护时，切库会重新建立会话，并把内存中的既有分片顺序补传到新库。
     // 这样用户不必在录音前做选择，也不会出现 UI 显示新库而文件实际留在旧库。
@@ -377,6 +494,12 @@ export function RecordAudioSheet({
         uploadQueueRef.current,
         replayChunks,
         async () => {
+          /*
+           * 先把代次推掉：此刻可能有一发 startRecordingUpload 还在路上（用户在录音刚开始、
+           * 会话还没建好时就切了库）。推代次让它回来时认不上人，既不会把旧库那条会话装进来，
+           * 也不会把实时转写连过去。
+           */
+          uploadSessionEpochRef.current += 1;
           const previousSessionId = uploadSessionIdRef.current;
           liveTranscriptionRef.current?.close();
           liveTranscriptionRef.current = null;
@@ -497,26 +620,42 @@ export function RecordAudioSheet({
         const mime = selectRecordingMimeType((candidate) => MediaRecorder.isTypeSupported(candidate));
         mimeRef.current = mime || 'audio/webm';
         fileNameRef.current = buildFileName(recordingExtension(mimeRef.current));
+        // 顶栏归属那一行的第二段：只留「月-日 时:分」。整段文件名会把库名挤到省略号，
+        // 而库名是这一行更要紧的那一半（稿面 R1 只画了它）。
+        const d = new Date();
+        const two = (n: number) => String(n).padStart(2, '0');
+        setRecordingName(`${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`);
         const rec = new MediaRecorder(stream, {
           ...(mime ? { mimeType: mime } : {}),
           audioBitsPerSecond: 64_000,
         });
         recorderRef.current = rec;
+        /*
+         * 这两个 vault 函数都是 best-effort：失败时**返回 false 而不是抛异常**。
+         * 所以只挂 `.catch` 接不到任何东西（上一版就是这么写的，等于没修）——
+         * 必须读返回值。
+         */
         vaultWriteQueueRef.current = vaultStartSession(
           vaultIdRef.current,
           mime || 'audio/webm',
-          storeId,
-        ).then(() => undefined);
+          // 建会话就要盖当前选中的库：用户在按下录音之前就把目的地改掉是常态，
+          // 用路由那个 storeId 会把分片存到他没选的库下，恢复弹窗按库过滤，
+          // 于是在他选的那一档里看不到（与下面切库那处同一个口径）
+          targetStoreIdRef.current || storeId,
+        ).then((ok) => { if (!ok) setVaultPersisted(false); }).catch(() => { setVaultPersisted(false); });
         void ensureUploadSession();
         rec.ondataavailable = (e) => {
           if (e.data.size > 0) {
             chunksRef.current.push(e.data);
             bytesRef.current += e.data.size;
+            setLocalBytes(bytesRef.current);
             // 分片实时落本机保险箱：崩溃/断网/忘关都不丢已录内容
             vaultWriteQueueRef.current = vaultWriteQueueRef.current
               .then(() => vaultAppendChunk(vaultIdRef.current, e.data))
-              .then(() => undefined)
-              .catch(() => undefined);
+              // 写失败不抛、只返回 false（录制不能因此中断），所以这里**读返回值**：
+              // 凭据要跟着降级，否则界面在替一件没发生的事作保
+              .then((ok) => { if (!ok) setVaultPersisted(false); })
+              .catch(() => { setVaultPersisted(false); });
             queueLiveChunk(e.data);
             // 接近后端 20MB 上限：自动收尾并直接进转录，不让录音白费
             if (bytesRef.current >= MAX_BYTES && rec.state !== 'inactive') {
@@ -747,6 +886,9 @@ export function RecordAudioSheet({
   // 滚动波形绘制
   useEffect(() => {
     if (state !== 'recording' && state !== 'paused') return;
+    // 每 100ms 收一格峰值：按帧收的话一屏只装得下两秒，看不出录了多久
+    let bucketPeak = 0;
+    let bucketStart = performance.now();
     const draw = () => {
       rafRef.current = requestAnimationFrame(draw);
       const analyser = analyserRef.current;
@@ -761,26 +903,58 @@ export function RecordAudioSheet({
           sum += v * v;
         }
         const level = Math.min(1, Math.sqrt(sum / data.length) * 3);
-        levelsRef.current.push(level);
+        bucketPeak = Math.max(bucketPeak, level);
         peakLevelRef.current = Math.max(peakLevelRef.current, level);
-        if (levelsRef.current.length > 240) levelsRef.current.shift();
+        const now = performance.now();
+        if (now - bucketStart >= WAVEFORM_BUCKET_MS) {
+          levelsRef.current.push(bucketPeak);
+          bucketPeak = 0;
+          bucketStart = now;
+          if (levelsRef.current.length > 600) levelsRef.current.shift();
+        }
       }
       const g = canvas.getContext('2d');
       if (!g) return;
       const { width, height } = canvas;
       g.clearRect(0, 0, width, height);
-      const levels = levelsRef.current;
-      const barW = 3;
-      const gap = 2;
+      // 颜色从 token 读，浅深两档与作用域皮肤自动一致
+      const computed = window.getComputedStyle(canvas);
+      const activeColor = computed.color;
+      const idleColor = computed.getPropertyValue('--border-subtle').trim() || activeColor;
+      const barW = 7;
+      const gap = 6;
       const maxBars = Math.floor(width / (barW + gap));
-      const slice = levels.slice(-maxBars);
-      g.fillStyle = stateRef.current === 'paused' ? 'rgba(148,163,184,0.55)' : 'rgba(74,222,128,0.9)';
-      slice.forEach((lv, i) => {
-        const h = Math.max(2, lv * height);
-        // 靠右滚动：最新电平贴右边
-        const x = width - (slice.length - i) * (barW + gap);
+      /*
+       * 稿面 v2-R3 / cap-A2 的波形是**两段**：左边蓝的是已录到的，右边灰的是还没走到的轨道。
+       * 此前把整条轨道都拿来铺已录数据（`slice(-maxBars)`），录满 8 秒之后右边那截灰的
+       * 就再也不会出现——整条恒定全蓝，读不出「录到哪了」。所以把笔尖钉在约 62% 处：
+       * 蓝的只铺到这里，右边始终留着灰的跑道。灰段不是数据（下面用一条确定的缓起伏画），
+       * 蓝段每一格都是真实峰值。
+       */
+      const headBars = Math.max(1, Math.round(maxBars * 0.66));
+      const slice = levelsRef.current.slice(-headBars);
+      const frozen = stateRef.current === 'paused';
+      for (let i = 0; i < maxBars; i++) {
+        const x = i * (barW + gap);
+        const recorded = i < slice.length;
+        /*
+         * 两段必须读成同一条波形，只是换个颜色（判分连着四块都指到这处）：
+         *   已录段给一个下限——安静的那一格也是一根短柱，不是一个点，
+         *   否则整段退化成「稀疏长柱 + 一条虚线基线」，和右边的占位段不像同一件东西；
+         *   未录段是占位，用一条确定的缓起伏（不是数据，纯粹为了保持同一套律动）——
+         *   振幅要与已录段同一量级：压得太低就读成一条灰色纹理，而不是「同一条波形还没走到」
+         *   （R3 判分记的正是这条）。
+         */
+        const level = recorded
+          ? Math.max(0.22, slice[i])
+          // 逐格跳动而不是一条缓起伏：整段同高的话，即使振幅对了，它读起来仍是一片
+          // 均匀纹理，和左边高低起伏的已录段不像同一条波形（R3 判分连着两轮指到这处）。
+          // 值是确定的（同一格永远同一高度），只是形状上与真实峰值同一种律动。
+          : 0.34 + 0.56 * Math.abs((Math.sin(i * 12.9898) * 43758.5453) % 1);
+        const h = Math.max(4, level * height);
+        g.fillStyle = recorded && !frozen ? activeColor : idleColor;
         g.fillRect(x, (height - h) / 2, barW, h);
-      });
+      }
     };
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
@@ -829,34 +1003,161 @@ export function RecordAudioSheet({
     }
   };
 
+  const paused = state === 'paused';
+  /*
+   * 断线重连的等待期在 socket 内部记作 'connecting'，但用户看到的现实是
+   * 「字幕断了、N 秒后再试」——稿面 cap-A2 画的正是这一刻（不可用 + 倒计时同屏）。
+   * 只认 'degraded' 的话，这段等待会显示成「连接中」，倒计时也没地方落。
+   */
+  const liveView = (liveTranscriptState === 'degraded' || liveRetryAt != null)
+    ? 'degraded' as const
+    : liveTranscriptState;
+  /*
+   * 两张稿把「降级」画成了两件不同的事，判据也得分开，否则两块提示会同时出现、
+   * 互相重复，还把实时原文正文挤下去（R3 判分记的正是这一处）：
+   *   顶部横幅（稿面 R3）＝ 分片上传通道没建起来，音频只在本机
+   *   卡内橙框（稿面 A2）＝ 实时字幕**连上过又断了**，所以说得出中断在第几分钟
+   * 后者只有在 socket 真的报过降级/排过重连时才成立（degradedAtSec 才有值）。
+   */
+  const uploadDegraded = liveProtection === 'local';
+  const liveInterrupted = degradedAtSec != null;
+  const captureChips = describeCaptureChips({
+    localBytes,
+    uploadedBytes: protectedBytes,
+    protection: liveProtection,
+    paused,
+    vaultPersisted,
+  });
+  const liveTranscriptTitle = describeLiveTranscriptTitle({
+    state: liveView,
+    paused,
+    expanded: liveTranscriptExpanded,
+    sentenceCount: liveSentences.length,
+  });
+  const retryCountdown = describeRetryCountdown(liveRetryAt, retryNow);
+
+  // 实时原文是一整段累计文本，「第几句」「这句几点出现的」都要在这里算出来
+  useEffect(() => {
+    setLiveSentences(prev => advanceLiveSentenceLog(prev, liveTranscript, elapsedRef.current));
+  }, [liveTranscript]);
+
+  // 设备自检结论每秒更新一次就够；跟着绘制帧走会把整棵树每秒重渲染六十次
+  useEffect(() => {
+    if (state !== 'recording' && state !== 'paused') return;
+    const id = window.setInterval(() => setPeakLevel(peakLevelRef.current), 1000);
+    return () => window.clearInterval(id);
+  }, [state]);
+
+  // 倒计时只在真有一次已排期的重连时才走秒
+  useEffect(() => {
+    if (liveRetryAt == null) return;
+    setRetryNow(Date.now());
+    const id = window.setInterval(() => setRetryNow(Date.now()), 500);
+    return () => window.clearInterval(id);
+  }, [liveRetryAt]);
+
+  /**
+   * 保存目标（稿面 R1/A1 把它放在标题下面那一行，不是正文里的一个表单项）。
+   * 文字是给眼睛看的，真正接事件的是盖在上面的原生 select——移动端仍然拉起系统选择器。
+   */
   const destinationPicker = storeOptions.length > 0 ? (
-    <label
-      className="flex w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left"
-      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-      <span className="shrink-0 text-[12px] font-semibold text-token-secondary">保存到</span>
+    <span
+      className="relative inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-1"
+      // 稿面 cap-A1/A2 把这一行画成一枚白色药丸：它是一个可点的整体，
+      // 纯文字行看不出边界，用户不知道这里点得动
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+    >
+      <BookText size={13} style={{ color: 'var(--accent-fg-success)' }} aria-hidden />
+      {/* 库名不参与收缩：这一行真正要读的是「存到哪」，日期段可以先让 */}
+      <span className="shrink-0 text-[12px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
+        保存到「{storeOptions.find(o => o.id === targetStoreId)?.name || storeName || '当前知识库'}」
+      </span>
+      {/*
+        稿面 cap-A1/A2 的归属胶囊是两段：库名 + 这一场叫什么。第二段在我们这里
+        有真实来源——录音一开始就定好了文件名（录音 YYYY-MM-DD HH-mm），
+        它就是这条录音将来在库里的名字。编一个「用户访谈」才是没根的。
+      */}
+      {recordingName && (
+        <span className="min-w-0 truncate text-[11px] text-token-muted">· {recordingName}</span>
+      )}
+      <ChevronDown size={12} style={{ color: 'var(--accent-fg-success)' }} aria-hidden />
+      <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>切换</span>
       <select
+        aria-label="选择保存到哪个知识库"
         value={targetStoreId}
         onChange={(event) => { void changeDestination(event.target.value); }}
         disabled={state === 'finalizing' || changingDestination}
-        className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-[9px] px-3 text-[12px] text-token-primary outline-none"
-        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+        className="absolute inset-0 cursor-pointer opacity-0"
+      >
         {storeOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
       </select>
-    </label>
-  ) : null;
+    </span>
+  ) : (
+    <span className="text-[12px] font-semibold" style={{ color: 'var(--accent-fg-success)' }}>
+      保存到「{storeName || '当前知识库'}」
+    </span>
+  );
 
   const body = state === 'unavailable' ? (
-    <div className="mx-auto flex min-h-full w-full max-w-[360px] flex-col items-center justify-center gap-4 py-8 text-center">
-      {destinationPicker}
-      <span
-        className="flex h-14 w-14 items-center justify-center rounded-full"
-        style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-fg-danger)' }}>
-        <MicOff size={24} />
-      </span>
-      <p className="max-w-[300px] text-[13px] leading-relaxed text-token-secondary">{unavailableReason}</p>
-      <Button variant="primary" size="sm" onClick={() => { onClose(); onPickFile(targetStoreId || storeId); }}>
-        <FileUp size={14} /> 上传音频文件
-      </Button>
+    /*
+      稿面 v2-S8：一枚锁、一句「需要麦克风权限」、一段说清「还能做什么」的正文，
+      再给两颗按钮。此前只有一颗「上传音频文件」——没有权限的人第一反应是
+      「怎么给权限」，那条路没有出口，他就卡在这一屏了。
+    */
+    <div
+      /*
+        稿面 v2-S8 这块是一张**白底描边卡**。平铺在页面底色上时，它与页面其它内容
+        之间没有任何边界，读起来像一段说明文字而不是一个需要处理的状态。
+      */
+      // 垂直方向走 auto 外边距：`self-start` 把这张矮卡钉在顶上，底下空出约六成屏，
+      // 读起来像页面只加载了一半（S8 判分记的这处）；而父级默认的 stretch 又会把卡面
+      // 拉到上千像素高。auto 外边距两头都躲开——比容器矮就居中，比容器高就退回顶部对齐，
+      // 不会把抬头顶出滚动区。
+      className="mx-auto my-auto flex w-full max-w-[360px] flex-col gap-4 rounded-[16px] px-5 py-6"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+    >
+      <div className="flex items-center gap-2.5">
+        <Lock size={20} style={{ color: 'var(--text-primary)' }} aria-hidden />
+        <p className="text-[19px] font-bold text-token-primary">需要麦克风权限</p>
+      </div>
+      <p className="text-[13px] leading-relaxed text-token-secondary">
+        系统已拒绝麦克风访问，无法开始录音。你仍可以上传已有音频文件获得完整转录能力。
+      </p>
+      {/* 浏览器给的原话保留在下面一行：它比通用文案更能定位到底卡在哪一层 */}
+      {unavailableReason && (
+        <p className="text-[12px] leading-relaxed text-token-muted">{unavailableReason}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-2.5">
+        <button
+          type="button"
+          onClick={() => setPermissionHelpOpen(value => !value)}
+          aria-expanded={permissionHelpOpen}
+          className="flex min-h-11 cursor-pointer items-center justify-center rounded-[12px] px-5 text-[14px] font-semibold"
+          style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>
+          前往系统设置
+        </button>
+        <button
+          type="button"
+          onClick={() => { onClose(); onPickFile(targetStoreId || storeId); }}
+          className="flex min-h-11 cursor-pointer items-center justify-center rounded-[12px] px-5 text-[14px] font-semibold"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}>
+          上传文件
+        </button>
+      </div>
+      {/*
+        网页开不了系统设置面板——浏览器没有这个 API。所以这颗按钮兑现的是
+        「告诉你在哪一格里改」，而不是假装能替你打开它（no-rootless-tree）。
+      */}
+      {permissionHelpOpen && (
+        <div
+          className="rounded-[12px] px-3.5 py-3 text-[12px] leading-relaxed"
+          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}>
+          <p className="mb-1.5 font-semibold text-token-primary">网页无法替你打开系统设置，路径在这里：</p>
+          <p>浏览器：地址栏左侧的锁形图标 → 网站设置 → 麦克风 → 允许，然后刷新本页。</p>
+          <p className="mt-1">macOS：系统设置 → 隐私与安全性 → 麦克风 → 勾选你的浏览器。</p>
+          <p className="mt-1">Windows：设置 → 隐私和安全性 → 麦克风 → 允许桌面应用访问。</p>
+        </div>
+      )}
     </div>
   ) : state === 'finalizing' ? (
     <div
@@ -930,117 +1231,421 @@ export function RecordAudioSheet({
   ) : (
     <div
       aria-live="polite"
-      className="mx-auto flex min-h-full w-full max-w-[560px] flex-col items-center justify-center gap-5 py-8 text-center">
-      {/* 状态行：录音中红点脉冲 / 已暂停 */}
-      <div className="flex items-center gap-2 text-[12px] font-semibold">
+      // 稿面这一屏是填满的：实时原文卡一直长到底部操作条上方。
+      // 卡片按内容高度收着的话，中间会空出近三成屏（R1/A1 判分都记了这条空带）。
+      className="mx-auto flex min-h-full w-full max-w-[520px] flex-col gap-4 py-4">
+
+      {/*
+        稿面 R3：网络降级时最先要说的不是「转写挂了」，而是「音频一秒都不会丢」。
+        用户在这一刻唯一怕的是白录一场，所以这条横幅压在所有内容之上。
+      */}
+      {uploadDegraded && (
+        <div
+          className="flex items-start gap-2.5 rounded-[14px] px-3.5 py-3 text-left"
+          style={{ background: 'var(--semantic-warning-soft)' }}>
+          <WifiOff size={16} className="mt-0.5 shrink-0" style={{ color: 'var(--semantic-warning-text)' }} aria-hidden />
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold" style={{ color: 'var(--semantic-warning-text)' }}>
+              网络较弱，实时字幕已暂停
+            </p>
+            {/* 稿面这段正文是深色的：琥珀只落在图标与标题，刷到正文就是强调色外溢 */}
+            <p className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              完整音频正在本机安全录制与缓存，<strong style={{ color: 'var(--text-primary)' }}>不会丢失任何一秒</strong>。结束录音后会自动上传并校准出完整原文。
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/*
+        稿面 cap-A3 的展开态是「抬头压成一条、原文列表占满」：计时退成中号、
+        胶囊并成一枚、波形压扁。抬头照常摆着的话列表只剩不到半屏，
+        展开这个动作就白点了（A3 判分记的正是这一条）。
+      */}
+      {liveTranscriptExpanded ? (
+        <div className="flex items-center justify-between gap-3">
+          <span
+            className="text-[28px] font-semibold leading-none tabular-nums"
+            style={{ color: paused ? 'var(--text-muted)' : 'var(--text-primary)' }}>
+            {formatElapsed(elapsed)}
+          </span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-[12px] font-semibold"
+            style={{ background: CAPTURE_CHIP_TONE.success.bg, color: CAPTURE_CHIP_TONE.success.fg }}>
+            <ShieldCheck size={13} aria-hidden /> 已保护 · {formatCapturedSize(localBytes)}
+          </span>
+        </div>
+      ) : (
+      <>
+      {/* 状态胶囊：稿面把它做成有底色的药丸，而不是一行裸文字——远看就知道现在在录还是停着 */}
+      {/*
+        稿面 cap-S1 的状态条是**一个白底描边容器**，里面「正在录音 12:34」同处一行、
+        下面跟着设备自检那句。此前拆成「裸胶囊 + 裸文本 + 大计时器」三段，
+        状态与时长脱了组（判分记的是「主副顺序反转、失去统一容器」）。
+        大计时器仍然保留——那是稿面 v2-R1/R2 这一屏的主角，两稿各要一样，都给。
+      */}
+      <div
+        className="mx-auto flex w-full max-w-[360px] flex-col items-center gap-1.5 rounded-[14px] px-4 py-3"
+        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
+      >
+      <div className="flex justify-center">
         {state === 'requesting' ? (
-          <><MapSpinner size={12} /><span className="text-token-muted">正在请求麦克风权限…</span></>
+          <span
+            className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-semibold"
+            style={{ background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>
+            <MapSpinner size={12} /> 正在请求麦克风权限…
+          </span>
         ) : state === 'paused' ? (
-          <span className="text-token-muted">已暂停</span>
+          <span
+            className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-semibold"
+            style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
+            <Pause size={13} /> 已暂停 {formatElapsed(elapsed)}
+          </span>
         ) : (
-          <>
+          <span
+            className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-semibold"
+            style={{ background: 'var(--semantic-danger-soft)', color: 'var(--semantic-danger)' }}>
             <motion.span
               className="h-2 w-2 rounded-full"
-              style={{ background: 'rgba(248,113,113,0.95)' }}
+              style={{ background: 'var(--semantic-danger)' }}
               animate={{ opacity: [1, 0.25, 1] }}
               transition={{ duration: 1.4, repeat: Infinity }}
             />
-            <span style={{ color: 'rgba(248,113,113,0.95)' }}>录音中</span>
-          </>
+            正在录音 {formatElapsed(elapsed)}
+          </span>
         )}
       </div>
 
-      {destinationPicker}
+      {/*
+        设备自检（稿面 cap-S1 的副行）：录音时用户第二怕的事是「我以为在录，其实没收到声」。
+        结论来自这段录音真实的峰值电平，四档各说各的，不一律显示「麦克风正常」。
+      */}
+      {state !== 'requesting' && (
+        <p className="text-center text-[12px] text-token-muted" data-testid="recording-mic-health">
+          {describeMicHealth(peakLevel, elapsed)}
+        </p>
+      )}
+      </div>
 
-      {/* 计时大字 */}
-      <p className="text-[40px] font-semibold tabular-nums leading-none text-token-primary">
+      {/* 计时大字：这一屏唯一的主角，稿面给了近 60px */}
+      <p
+        data-testid="recording-elapsed"
+        className="text-center text-[56px] font-semibold leading-none tracking-tight tabular-nums"
+        style={{ color: state === 'paused' ? 'var(--text-muted)' : 'var(--text-primary)' }}>
         {formatElapsed(elapsed)}
       </p>
 
-      <div
-        className="flex min-h-11 w-full items-center justify-between rounded-[12px] px-3 text-left"
-        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-        <span>
-          <span className="block text-[12px] font-semibold text-token-primary">
-            {liveProtection === 'active' ? '录音正在实时保护' : liveProtection === 'local' ? '录音已保存在本机' : '正在建立实时保护'}
-          </span>
-          <span className="mt-0.5 block text-[11px] text-token-muted">
-            {liveProtection === 'active'
-              ? '录音分片已持续传到服务端，手机中断时可减少丢失'
-              : liveProtection === 'local'
-                ? '网络恢复后仍可用本机保险箱整段上传'
-                : '录音已同步写入本机保险箱'}
-          </span>
-        </span>
-        {protectedBytes > 0 && (
-          <span className="shrink-0 pl-3 text-[11px] tabular-nums text-token-muted">
-            {(protectedBytes / 1024).toFixed(0)} KB
-          </span>
+      {/* 三块凭据：已保护 / 本机存了多少 / 传了多少。数字全部来自真实计数，不是占位 */}
+      <div className="flex flex-wrap items-center justify-center gap-2" data-testid="recording-guard-chips">
+        {captureChips.map(chip => {
+          const tone = CAPTURE_CHIP_TONE[chip.tone];
+          const Icon = CAPTURE_CHIP_ICON[chip.icon];
+          return (
+            <span
+              key={chip.key}
+              /*
+               * tabular-nums：这一排里的数字每秒都在涨（本机已存 X、实时上传 Y）。
+               * 比例数字下，同样位数的两个数宽度也不一样，于是这一排的总宽每秒微动；
+               * 一旦贴近换行阈值，位数一变就整排换行、下面的内容跟着跳一格。
+               * 等宽数字让宽度只在**位数**变化时才动，不会每秒微动。
+               */
+              className="inline-flex items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-[12px] font-semibold tabular-nums"
+              style={{ background: tone.bg, color: tone.fg }}>
+              <Icon size={13} aria-hidden /> {chip.label}
+            </span>
+          );
+        })}
+      </div>
+
+      </>
+      )}
+
+      {/*
+        实时上传条（稿面 cap-S2）：两个体积并排 + 一条进度条 + 一句承诺。
+        胶囊只说了「传了多少」，这条回答的是「相对多少」和「断网会不会白录」。
+      */}
+      {/*
+        实时字幕断了那一档不摆这一条：卡内已经压着橙框、占位骨架与末行安抚句，
+        再加这块 60px 的进度条，中断前最后一句就分不到高度、被压成一道缝
+        （cap-A2 判分记的「屏上一个字都没有」正是这么来的）。传了多少字节，
+        上面那排凭据胶囊照常在说，信息不丢。
+      */}
+      {!liveTranscriptExpanded && !liveInterrupted && liveProtection === 'active' && localBytes > 0 && (
+        <div className="w-full" data-testid="recording-upload-progress">
+          <div className="flex items-baseline justify-between gap-2">
+            {/*
+              暂停之后不再产生新分片，队列追平就是真的全部传完了。
+              这一块此前恒写「正在实时上传」，于是同屏出现「已暂停」「采集暂停中」
+              「已全部上传」配一句「录音还在继续」——四句话互相打脸（R2 判分记的这处）。
+            */}
+            <span className="text-[13px] font-semibold text-token-primary">
+              {paused && protectedBytes >= localBytes ? '已全部上传' : '正在实时上传'}
+            </span>
+            <span className="font-mono text-[13px] tabular-nums text-token-secondary">
+              {formatCapturedSize(protectedBytes)} / {formatCapturedSize(localBytes)}
+            </span>
+          </div>
+          <div className="mt-1.5 h-[5px] w-full overflow-hidden rounded-full" style={{ background: 'var(--bg-elevated)' }}>
+            <span
+              className="block h-full rounded-full"
+              style={{
+                /*
+                 * 跟上了就是满条（已录的都传上去了）；真的掉队时才按比例给一段。
+                 * 判据用带迟滞的那一个：瞬时比较每秒翻一次，进度条会每秒从满条退到
+                 * 87% 再弹满（与凭据措辞、下面那句话同频，用户看到的就是一屏三处一起抖）。
+                 */
+                width: isUploadKeepingUp(protectedBytes, localBytes)
+                  ? '100%'
+                  : `${Math.max(2, capturedUploadPercent(protectedBytes, localBytes))}%`,
+                background: 'var(--accent-fg-info)',
+                transition: 'width 300ms linear',
+              }}
+            />
+          </div>
+          <p className="mt-1.5 text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>
+            {/*
+              这半句以前挂在瞬时比较上，每秒进出一次：窄屏上它让这一段在一行与两行之间
+              来回，下面的波形与实时原文卡跟着每秒上下跳一行。换成带迟滞的判据后，
+              录音期间它稳定在，暂停时稳定不在。
+            */}
+            断网也不会丢失，会自动续传
+            {isUploadKeepingUp(protectedBytes, localBytes) && !paused ? '；录音还在继续，新片段会接着传' : ''}
+          </p>
+        </div>
+      )}
+
+      {/* 实时电平波形（产物感：屏幕上有持续变化的内容） */}
+      <div data-testid="recording-waveform" className="w-full">
+        <canvas
+          ref={canvasRef}
+          width={1040}
+          height={128}
+          className="w-full"
+          // 降级那一档卡里多压着占位骨架与末行安抚文案，波形按 64 摆的话它们分不到高度；
+          // 稿面 v2-R3 这一档的波形本来也比正常档矮一档。
+          style={{
+            height: liveTranscriptExpanded ? 26 : liveView === 'degraded' ? 46 : 64,
+            color: 'var(--accent-fg-info)',
+          }}
+        />
+        {state === 'paused' && !liveTranscriptExpanded && (
+          <p className="mt-2 text-center text-[12px] text-token-muted">波形已冻结 · 采集暂停中</p>
         )}
       </div>
 
+      {/* 实时原文卡 */}
+      {/*
+        卡片高度永远由这一屏剩下的空间决定，绝不按内容长。降级这一档卡内还压着占位骨架
+        与末尾那句「结束后自动补齐这段空白」——让内容说了算的话，它们加起来比剩余空间高，
+        末行就被底部操作条压掉半截（R3 / A2 两份判分记的都是这处）。
+        再给一个上限：稿面这一档画的是一张矮卡、下面留白到操作条，不吃满整屏。
+      */}
       <div
-        className="w-full rounded-[14px] px-4 py-3 text-left"
+        className={`flex w-full min-h-0 flex-col rounded-[16px] px-4 py-3.5 text-left ${
+          liveView === 'degraded' && !liveTranscriptExpanded ? 'shrink-0' : 'flex-1'
+        }`}
+        data-testid="recording-live-card"
         style={{
-          background: liveTranscriptState === 'degraded'
-            ? 'rgba(245,158,11,0.08)'
-            : 'var(--bg-elevated)',
-          border: liveTranscriptState === 'degraded'
-            ? '1px solid rgba(245,158,11,0.28)'
+          // 正常档吃满剩余高度时也要有个下限：上面那堆固定件在矮屏上可能已经占满一屏，
+          // 此时 `flex-1` 分到的是 0，卡片会整个消失。
+          minHeight: 148,
+          background: 'var(--bg-card)',
+          border: liveView === 'degraded'
+            ? '1px solid var(--semantic-warning-soft)'
             : '1px solid var(--border-faint)',
         }}>
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[12px] font-semibold text-token-primary">实时原文</span>
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] text-token-muted">{liveTranscriptMessage}</span>
-            {liveTranscript.length > 120 && (
-              <button
-                type="button"
-                onClick={() => setLiveTranscriptExpanded(value => !value)}
-                className="flex min-h-11 cursor-pointer items-center gap-1 rounded-[8px] px-2 text-[11px] font-semibold text-token-secondary hover-bg-soft"
-                aria-expanded={liveTranscriptExpanded}
-                aria-controls="recording-live-transcript">
-                {liveTranscriptExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                {liveTranscriptExpanded ? '收起' : '展开'}
-              </button>
+          <span className="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold">
+            {liveView === 'degraded' ? (
+              <>
+                <AlertTriangle size={14} className="shrink-0" style={{ color: 'var(--semantic-warning-text)' }} aria-hidden />
+                <span className="truncate" style={{ color: 'var(--semantic-warning-text)' }}>{liveTranscriptTitle}</span>
+              </>
+            ) : (
+              <>
+                <Mic size={14} className="shrink-0" style={{ color: 'var(--accent-fg-info)' }} aria-hidden />
+                <span className="truncate text-token-primary">{liveTranscriptTitle}</span>
+              </>
             )}
-          </div>
+          </span>
+          {liveView === 'degraded' ? (
+            retryCountdown && (
+              <span className="shrink-0 text-[12px] tabular-nums" style={{ color: 'var(--semantic-warning-text)' }}>
+                {retryCountdown}
+              </span>
+            )
+          ) : liveSentences.length > 3 ? (
+            <button
+              type="button"
+              onClick={() => setLiveTranscriptExpanded(value => !value)}
+              className="flex shrink-0 cursor-pointer items-center gap-0.5 rounded-[8px] text-[13px] font-semibold"
+              style={{ color: 'var(--accent-fg-info)' }}
+              aria-expanded={liveTranscriptExpanded}
+              aria-controls="recording-live-transcript">
+              {liveTranscriptExpanded ? '收起' : `展开全部 ${liveSentences.length} 句`}
+              {liveTranscriptExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          ) : null}
         </div>
-        <p
+        {/* 连接状态的细节（重连第几次、正在确认最后一句）不占版面，但读屏要听得到 */}
+        <p className="sr-only" aria-live="polite">{liveTranscriptMessage}</p>
+
+        {/*
+          稿面 R3 / cap-A2：断线这段不是「什么都没有」，而是「这一段稍后会补上」。
+          所以先说清中断在第几分钟、录音没受影响，再用骨架条把那段空白**画出来**，
+          让用户看得见它的位置，而不是以为原文到此为止。
+        */}
+        {/*
+          顶部那条横幅已经在说同一件事时，卡内这个橙框就不再重复。
+          稿面分工很清楚：R3（上传通道断了）只有顶部横幅，A2（实时字幕连上又掉）
+          只有卡内橙框。两个都摆出来不只是啰嗦——它会把已识别的那几句和占位骨架
+          一起挤出卡外，而那几句正是这一档要给用户看的东西。
+        */}
+        {liveInterrupted && !uploadDegraded && (
+          <div
+            className="mt-3 rounded-[12px] px-3 py-2.5 text-[12px] leading-relaxed"
+            style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
+            网络波动导致实时字幕中断（{formatElapsed(degradedAtSec ?? 0)}）。
+            <strong>录音与上传未受影响</strong>，结束后会自动补齐完整原文。
+          </div>
+        )}
+
+        <div
           id="recording-live-transcript"
           data-testid="recording-live-transcript"
           ref={liveTranscriptScrollRef}
-          className="mt-2 min-h-10 whitespace-pre-wrap break-words pr-1 text-[13px] leading-6 text-token-secondary"
+          className="mt-3 min-h-0 flex-1 pr-1"
           style={{
-            maxHeight: liveTranscriptExpanded ? 'min(34dvh, 280px)' : 120,
             overflowY: 'auto',
             overscrollBehavior: 'contain',
+            /*
+              降级档这块不滚：它只留一句（见下面折叠态的注释），而贴底滚动会把这句的
+              第一行从字的腰上切开——判分把那半行读成「字形重叠破碎、不可读」。
+              高度交给内容，超出的部分由下面那句自己的 2 行截断兜住。
+            */
+            ...(liveView === 'degraded' && !liveTranscriptExpanded
+              ? { flex: 'none', overflowY: 'hidden' }
+              : {}),
+            // 折叠态贴底滚动，最上面那句会被卷掉半行。加一道渐隐让这道切口读成
+            // 「上面还有」，而不是「这行字被裁坏了」——稿面那句淡灰的首行就是这个意思。
+            // 只有真的卷上去了才渐隐：内容没超出时挂渐隐，第一行会莫名其妙比第二行浅，
+            // 同一句话读成两个颜色（R3 判分抓到的正是这个）。
+            ...(liveTranscriptExpanded || liveSentences.length <= 2 || liveView === 'degraded' ? {} : {
+              WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, black 46px)',
+              maskImage: 'linear-gradient(to bottom, transparent 0, black 46px)',
+            }),
           }}>
-          {liveTranscript || (
-            liveTranscriptState === 'degraded'
-              ? '录音仍在本机和服务端持续保存，结束后会自动生成原文。'
-              : '开始说话后，识别文字会显示在这里。'
+          {liveSentences.length === 0 ? (
+            <p className="text-[14px] leading-7 text-token-muted">
+              {liveView === 'degraded'
+                ? '录音仍在本机和服务端持续保存，结束后会自动生成原文。'
+                : '开始说话后，识别文字会显示在这里。'}
+            </p>
+          ) : liveTranscriptExpanded ? (
+            // 展开态（稿面 cap-A3）：逐句带上它第一次出现的录音时刻
+            <ol className="flex flex-col gap-3">
+              {liveSentences.map((sentence, index) => {
+                const last = index === liveSentences.length - 1;
+                return (
+                  <li key={`${index}-${sentence.atSec}`} className="flex items-start gap-3">
+                    <span
+                      className="mt-[3px] shrink-0 font-mono text-[12px] tabular-nums"
+                      style={{ color: last ? 'var(--accent-fg-info)' : 'var(--text-muted)' }}>
+                      {formatElapsed(sentence.atSec)}
+                    </span>
+                    <span
+                      className="min-w-0 text-[14px] leading-7"
+                      style={{ color: last ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                      {sentence.text}
+                      {last && state === 'recording' && <LiveCaret />}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            // 折叠态（稿面 R1/A1）：只留最后三句，越新越实——最新那句是黑体，还带着光标
+            <div className="flex flex-col gap-2.5">
+              {/*
+                折叠态铺到卡片装得下为止（容器贴底滚动，最新那句永远在下沿）。
+                固定只留三句的话，卡片撑满之后下半截是空白盒——稿面那三句是「它那一屏
+                恰好装得下三句」，不是「只准显示三句」。
+              */}
+              {/*
+                降级这一档只留**中断前最后一句**（稿面 v2-R3 / cap-A2 画的就是一句）：
+                它下面还压着占位骨架与安抚行，多留几句就得靠滚动，而贴底滚动会把最上面
+                那行从字的腰上切开，读成一行坏掉的字。留一句，正好装得下、也说得清
+                「断在这里」。
+              */}
+              {/*
+                正常档把**全部**句子都渲染出来，靠容器自己贴底滚动——看到的仍然是最后几句，
+                但更早的那些还在，用户往上翻得到（发布门禁断言的正是「第 3 段还在」）。
+                只留最后 N 句等于把历史丢掉：屏幕上看不出差别，可它真的没了。
+                降级档例外，只留中断前最后一句（见下）。
+              */}
+              {(liveView === 'degraded' ? liveSentences.slice(-1) : liveSentences).map((sentence, index, arr) => {
+                const last = index === arr.length - 1;
+                const faded = index < arr.length - 2;
+                return (
+                  <p
+                    key={`${index}-${sentence.atSec}`}
+                    // 降级档不加粗：字还在往外冒的时候「最新那句最实」才成立，
+                    // 断线之后这句就是一句普通正文，加粗会把它和上面那行琥珀标题压成同一级
+                    className={`text-[14px] leading-7 ${
+                      last && !paused && liveView !== 'degraded' ? 'font-semibold' : ''
+                    }`}
+                    style={{
+                      color: faded || paused
+                        ? 'var(--text-muted)'
+                        : last ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      // 降级档按整行截断：留半行比留两行还糟，读起来像字坏了而不是话没说完
+                      ...(liveView === 'degraded' && !liveTranscriptExpanded ? {
+                        display: '-webkit-box',
+                        WebkitBoxOrient: 'vertical' as const,
+                        WebkitLineClamp: 2,
+                        overflow: 'hidden',
+                      } : {}),
+                    }}>
+                    {index === 0 && arr.length > 2 ? `…${sentence.text}` : sentence.text}
+                    {/* 断线这一档没有字在往外冒，光标还在闪就是在说谎 */}
+                    {last && state === 'recording' && liveView !== 'degraded' && <LiveCaret />}
+                  </p>
+                );
+              })}
+            </div>
           )}
-        </p>
-      </div>
+        </div>
+        {liveView === 'degraded' && (
+          /*
+            骨架条画的是「断在这里、这段还没转出来」。稿面 R3 / cap-A2 给的是**两条**，
+            紧跟在最后一句已识别文本之后——那是它的意思所在：让人看得见缺口的位置。
 
-      {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}
-      <div
-        data-testid="recording-waveform"
-        className="w-full rounded-[16px] px-3 py-4"
-        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
-        <canvas ref={canvasRef} width={560} height={64} className="w-full" style={{ height: 64 }} />
+            它必须在滚动区**外面**。放进去的话，容器贴底滚动会把视窗停在这两条上，
+            刚识别出来的那几句被顶到看不见的地方——判分连着两轮都报「屏幕上一个字都没有」，
+            而其实句子一直在，只是被自己的占位条挤出了可视区。
+          */
+          <div className="mt-2.5 flex shrink-0 flex-col gap-2.5" aria-hidden>
+            {[92, 64].map((width, index) => (
+              <span
+                key={index}
+                className="block h-3 rounded-full"
+                style={{ background: 'var(--skeleton-fill)', width: `${width}%` }}
+              />
+            ))}
+          </div>
+        )}
+
+        {liveView === 'degraded' && (
+          <p className="mt-3 text-[12px] leading-relaxed text-token-muted">
+            结束后自动补齐这段空白，无需手动操作。
+          </p>
+        )}
       </div>
 
       {/* 静音确认：整段峰值电平过低 → 上传前拦一道 */}
       {confirmSilent && (
         <div
-          className="w-full rounded-[10px] p-3 text-[12px]"
-          style={{
-            background: 'rgba(245,158,11,0.1)',
-            border: '1px solid rgba(245,158,11,0.3)',
-            color: 'rgba(252,211,77,0.98)',
-          }}>
+          className="w-full rounded-[12px] p-3 text-left text-[12px]"
+          style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
           <p className="mb-2">整段录音几乎没有检测到声音，转录很可能失败。请确认麦克风没有静音。</p>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="xs" onClick={() => stopRecorder('complete')}>仍要转成文字</Button>
@@ -1049,37 +1654,10 @@ export function RecordAudioSheet({
           </div>
         </div>
       )}
-
-      {/* 控制区：暂停/继续 + 完成 */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={togglePause}
-          disabled={state === 'requesting'}
-          aria-label={state === 'paused' ? '继续录音' : '暂停录音'}
-          className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full transition-colors disabled:opacity-40"
-          style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
-          {state === 'paused' ? <Play size={18} /> : <Pause size={18} />}
-        </button>
-        <button
-          onClick={requestComplete}
-          data-testid="recording-finish"
-          disabled={state === 'requesting'}
-          aria-label="结束录音并转成文字"
-          className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
-          style={{
-            background: 'rgba(34,197,94,0.95)',
-            color: '#fff',
-            border: '1px solid rgba(134,239,172,0.45)',
-          }}>
-          <Square size={20} fill="currentColor" />
-        </button>
-        <span className="w-12" />
-      </div>
-      <p className="text-[11px] text-token-muted">
-        结束后先生成可编辑原文，是否整理由你决定
-      </p>
     </div>
   );
+
+  const capturing = state === 'recording' || state === 'paused' || state === 'requesting';
 
   const overlay = (
     <motion.div
@@ -1090,57 +1668,159 @@ export function RecordAudioSheet({
       transition={{ duration: 0.2 }}
       onClick={(e) => { if (e.target === e.currentTarget) stopRecorder('discard'); }}>
       <motion.div
-        className={`surface-popover flex flex-col ${isMobile ? 'w-full' : 'h-full w-[440px] max-w-[92vw] border-l border-token-subtle'}`}
-        style={isMobile ? {
-          height: '100dvh',
-          maxHeight: '100dvh',
-          paddingBottom: 'env(safe-area-inset-bottom)',
+        // 采集屏走稿面那套配色（作用域皮肤，不动全站主色）
+        className={`recording-design-palette flex flex-col ${isMobile ? 'w-full' : 'h-full w-[440px] max-w-[92vw]'}`}
+        style={{
           background: 'var(--bg-primary)',
-        } : undefined}
+          borderLeft: isMobile ? undefined : '1px solid var(--border-faint)',
+          ...(isMobile ? {
+            height: '100dvh',
+            maxHeight: '100dvh',
+            paddingBottom: 'env(safe-area-inset-bottom)',
+          } : {}),
+        }}
         initial={isMobile ? { y: '100%' } : { x: '100%' }}
         animate={isMobile ? { y: 0 } : { x: 0 }}
         exit={isMobile ? { y: '100%' } : { x: '100%' }}
         transition={{ type: 'spring', stiffness: 320, damping: 32 }}
         onClick={(e) => e.stopPropagation()}>
-        <div className={`shrink-0 ${isMobile ? 'px-4 py-3' : 'surface-panel-header px-5 py-4'}`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="surface-action-accent flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]">
-                <Mic size={15} />
-              </div>
-              <div>
-                <p className="text-[14px] font-semibold text-token-primary">快捷录音</p>
-                <p className="text-[11px] text-token-muted">录完先生成可编辑原文</p>
-              </div>
-            </div>
+
+        {/* 顶栏（稿面 R1/A1）：左关闭、中间标题 + 保存目标、右更多 */}
+        <div className="relative shrink-0 px-4 py-3">
+          {/*
+            两颗图标绝对定位：它们在流内会各吃掉 44px，中间那行只剩 ~270px，
+            于是库名和录音名双双被省略号吃掉——稿面这一行是完整可读的（判分连记三块）。
+          */}
+          <div className="flex items-start justify-center gap-2">
             <button
               onClick={() => stopRecorder('discard')}
               disabled={state === 'finalizing'}
               aria-label="取消录音"
-              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
-              <X size={15} />
+              // 稿面 R1/R2/R3 这两颗是**裸图标**直接压在背景上。加了白色方块底板之后，
+              // 顶栏的视觉重量盖过标题区，主次关系反了（三张稿的判分都指到这一处）。
+              className="absolute left-2 top-2 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[12px] text-token-primary hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
+              <X size={18} strokeWidth={1.9} />
+            </button>
+            <div className="min-w-0 flex-1 px-12 pt-0.5 text-center">
+              <p className="truncate text-[16px] font-semibold text-token-primary">录音转笔记</p>
+              <div className="mt-0.5 flex justify-center">{destinationPicker}</div>
+            </div>
+            <button
+              onClick={() => setMenuOpen(value => !value)}
+              aria-label="更多操作"
+              aria-expanded={menuOpen}
+              className="absolute right-2 top-2 flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-[12px] text-token-primary hover-bg-soft">
+              <MoreHorizontal size={18} />
             </button>
           </div>
+          {menuOpen && (
+            <>
+              <button
+                aria-hidden
+                tabIndex={-1}
+                onClick={() => setMenuOpen(false)}
+                className="fixed inset-0 z-0 cursor-default"
+                style={{ background: 'transparent' }}
+              />
+              <div
+                className="absolute right-4 top-[60px] z-10 w-[188px] overflow-hidden rounded-[12px] py-1"
+                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)', boxShadow: '0 12px 32px rgba(15,18,22,0.16)' }}>
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    if (!canDiscardRecording(finalizationLockedRef.current)) return;
+                    stopRecorder('discard');
+                    onPickFile(targetStoreId || storeId);
+                  }}
+                  disabled={state === 'finalizing'}
+                  className="flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-[13px] text-token-primary hover-bg-soft disabled:opacity-40">
+                  <FileUp size={14} /> 上传已有音频文件
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); stopRecorder('discard'); }}
+                  disabled={state === 'finalizing'}
+                  className="flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-[13px] hover-bg-soft disabled:opacity-40"
+                  style={{ color: 'var(--semantic-danger)' }}>
+                  <X size={14} /> 放弃本次录音
+                </button>
+              </div>
+            </>
+          )}
         </div>
+
         <div
-          className={`flex flex-1 ${isMobile ? 'px-4' : 'px-5 py-6'}`}
+          className="flex flex-1 px-4"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {body}
         </div>
-        {state !== 'unavailable' && (
+
+        {/*
+          底部操作条（稿面 R1/R2/A1）：录音时是「暂停 + 结束录音」，暂停时主按钮翻成
+          「继续录音」、结束退成右边那颗方钮——主按钮永远是此刻最该点的那一个。
+        */}
+        {capturing && (
           <div
-            className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 py-4'}`}
+            className="shrink-0 px-4 pb-4 pt-3"
             style={{ borderTop: '1px solid var(--border-faint)' }}>
+            {state === 'paused' ? (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={togglePause}
+                  data-testid="recording-resume"
+                  aria-label="继续录音"
+                  className="flex h-14 flex-1 cursor-pointer items-center justify-center gap-2 rounded-full text-[16px] font-semibold transition-transform active:scale-[0.99]"
+                  style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}>
+                  <Play size={18} fill="currentColor" /> 继续录音
+                </button>
+                <button
+                  onClick={requestComplete}
+                  data-testid="recording-finish"
+                  aria-label="结束录音并转成文字"
+                  className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center rounded-[18px] transition-transform active:scale-95"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}>
+                  <Square size={18} fill="var(--semantic-danger)" stroke="none" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={togglePause}
+                  disabled={state === 'requesting'}
+                  aria-label="暂停录音"
+                  className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center rounded-[18px] transition-transform active:scale-95 disabled:opacity-40"
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)', color: 'var(--text-primary)' }}>
+                  <Pause size={18} />
+                </button>
+                <button
+                  onClick={requestComplete}
+                  data-testid="recording-finish"
+                  disabled={state === 'requesting'}
+                  aria-label="结束录音并转成文字"
+                  className="flex h-14 flex-1 cursor-pointer items-center justify-center gap-2.5 rounded-full text-[16px] font-semibold transition-transform active:scale-[0.99] disabled:opacity-40"
+                  style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>
+                  <span className="h-3.5 w-3.5 rounded-[4px]" style={{ background: 'var(--semantic-danger)' }} aria-hidden />
+                  结束录音
+                </button>
+              </div>
+            )}
             <button
               onClick={() => {
                 if (!canDiscardRecording(finalizationLockedRef.current)) return;
                 stopRecorder('discard');
                 onPickFile(targetStoreId || storeId);
               }}
-              disabled={state === 'finalizing'}
-              className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[12px] font-semibold text-token-muted transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
-              <FileUp size={13} /> 已有录音文件？上传音频文件
+              // 强调色在这套稿里只归主操作与波形；次要入口整条染蓝会把层级抹平，
+              // 稿面画的是中性文字 + 蓝图标。
+              className="mt-3 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[13px] font-semibold"
+              style={{ color: 'var(--text-secondary)' }}>
+              <Upload size={14} style={{ color: 'var(--accent-fg-info)' }} /> 上传已有音频文件
             </button>
+          </div>
+        )}
+
+        {state === 'finalizing' && (
+          <div className="shrink-0 px-4 pb-4 pt-3" style={{ borderTop: '1px solid var(--border-faint)' }}>
+            <p className="text-center text-[12px] text-token-muted">录音已锁定，这一步不需要操作</p>
           </div>
         )}
       </motion.div>

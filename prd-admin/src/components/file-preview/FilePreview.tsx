@@ -252,7 +252,7 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, htmlBleedX, htmlZoom }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote, onAskRecording, onRestyleTranscript, htmlBleedX, htmlZoom }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
@@ -261,6 +261,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
   /** 打开知识库智能体，并以当前录音原文作为上下文。 */
   onAskRecording?: () => void;
+  /** 重新生成整理结果；设计稿把它放在结果页「会议纪要」标题右侧 */
+  onRestyleTranscript?: () => void;
   /** 移动端 HTML 预览左右出血像素：抵消调用方内容区的水平 padding，让报告纸面满铺卡片宽度。 */
   htmlBleedX?: number;
   /** HTML 报告字号档位（受控，由调用方工具栏持有；缺省 1 = 100%）。 */
@@ -341,7 +343,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
-      <div className={`flex min-h-full w-full flex-col items-center gap-5 ${effectiveTranscript ? 'justify-start py-2' : 'justify-center py-12'}`}>
+      /*
+        没有转录笔记时此前是 `justify-center`：播放器被顶到整块可用高度的正中间，
+        上面那张状态卡与它之间空出五百多像素——失败/无语音/排队这几屏的版式失分
+        全部出在这里（内容区没被填满，主产物也不在它该在的位置）。
+        播放器就该紧跟状态卡，那才是「这段音频还在，现在就能听」的落点。
+      */
+      <div className={`flex min-h-full w-full flex-col items-center gap-5 justify-start ${effectiveTranscript ? 'py-2' : 'py-4'}`}>
         {archivePending && (
           <RecordingArchiveProgress
             hasPlayback
@@ -354,11 +362,20 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
         {effectiveTranscript ? (
           <AudioDocumentPreview
+            /*
+             * key 认这条录音。阅读器里换一条录音只是换 props，组件被复用——
+             * 而跟读组件里压着「正在编辑第几句」和那句的草稿：A 的编辑框还开着就切到 B，
+             * 一保存写进去的是 A 的草稿、落到 B 的对应句上（Codex 第四十一轮 P1；
+             * 结果页那处早就按录音重挂了，阅读器这条路漏了）。
+             * 顺带把「原文/整理」页签也复位——那也是绑在这条录音身上的状态。
+             */
+            key={entry.id}
             src={fileUrl}
             noteMd={effectiveTranscript}
             styleKey={entry.metadata?.transcribe_style_key}
             onSaveNote={onSaveTranscriptNote}
             onAskRecording={onAskRecording}
+            onRestyleTranscript={onRestyleTranscript}
           />
         ) : <AudioWavePlayer src={fileUrl} />}
       </div>
@@ -686,12 +703,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   );
 }
 
-function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote, onAskRecording }: {
+function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote, onAskRecording, onRestyleTranscript }: {
   src: string;
   noteMd: string;
   styleKey?: string;
   onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
   onAskRecording?: () => void;
+  onRestyleTranscript?: () => void;
 }) {
   const summary = extractTranscriptSummary(noteMd);
   const [tab, setTab] = useState<'raw' | 'organized'>('raw');
@@ -739,6 +757,7 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote, onAskRecordin
           documentMode
           onSaveNote={onSaveNote}
           onAskRecording={onAskRecording}
+          onRestyle={onRestyleTranscript}
         />
       )}
     </div>

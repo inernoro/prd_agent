@@ -7,6 +7,10 @@ import {
   estimateTranscriptSegments,
   replaceEstimatedTranscriptSentenceText,
   parseSummaryModules,
+  buildSpeakerStats,
+  extractTranscriptTodos,
+  isTodoOnlyModule,
+  findTodoSource,
   activeSummaryModuleIndex,
   replaceTranscriptSegmentText,
   renameTranscriptSpeaker,
@@ -382,13 +386,24 @@ describe('estimateTranscriptSegments', () => {
 describe('parseSummaryModules', () => {
   it('按 Markdown 标题和自然段拆分，不绑定具体整理方式', () => {
     const modules = parseSummaryModules('## 结论\n\n已确认上线。\n\n## 待办\n- [ ] 补测试');
-    expect(modules).toEqual([
-      { title: '结论', markdown: '已确认上线。' },
-      { title: '待办', markdown: '- [ ] 补测试' },
+    expect(modules.map(m => [m.title, m.markdown])).toEqual([
+      ['结论', '已确认上线。'],
+      ['待办', '- [ ] 补测试'],
     ]);
   });
 
-  it('没有标题时仍可按自然段形成顺序模块', () => {
+  it('标题之下的连续段落同属一个模块——一段结论加两条要点是一块，不是两块', () => {
+    // 拆成两块的话，要点那块会被自动编一个从正文截出来的标题，既不是人写的也读不通
+    const modules = parseSummaryModules(
+      '## 结论\n\n导入是最大的漏斗。\n\n- 拆成两步\n- 展示真实进度',
+    );
+    expect(modules).toHaveLength(1);
+    expect(modules[0].title).toBe('结论');
+    expect(modules[0].markdown).toContain('导入是最大的漏斗。');
+    expect(modules[0].markdown).toContain('- 拆成两步');
+  });
+
+  it('没有标题时仍可按自然段形成顺序模块（不会被并进上一块）', () => {
     expect(parseSummaryModules('一段概述。\n\n- 要点一\n- 要点二')).toHaveLength(2);
   });
 });
@@ -435,5 +450,102 @@ describe('parseSpeakerSourceNote', () => {
     expect(parseTranscriptSegments(md)).toEqual([
       { start: 0, end: 9, speaker: '说话人1', text: '甲。' },
     ]);
+  });
+});
+
+describe('buildSpeakerStats', () => {
+  const seg = (speaker?: string) => ({ start: 0, end: 1, text: 'x', speaker });
+
+  it('按句数降序给出占比', () => {
+    const stats = buildSpeakerStats([
+      seg('主持人'), seg('受访者 A'), seg('受访者 A'), seg('受访者 A'),
+    ]);
+    expect(stats).toEqual([
+      { speaker: '受访者 A', count: 3, percent: 75 },
+      { speaker: '主持人', count: 1, percent: 25 },
+    ]);
+  });
+
+  it('无标签句子不进分母——否则每个人的占比都被无缘无故稀释', () => {
+    const stats = buildSpeakerStats([seg('主持人'), seg(undefined), seg('  ')]);
+    expect(stats).toEqual([{ speaker: '主持人', count: 1, percent: 100 }]);
+  });
+
+  it('全场都没有说话人标签时给空数组，界面据此不渲染这一栏', () => {
+    expect(buildSpeakerStats([seg(undefined), seg(undefined)])).toEqual([]);
+    expect(buildSpeakerStats([])).toEqual([]);
+  });
+});
+
+describe('extractTranscriptTodos', () => {
+  it('认的是任务列表这个结构，不是标题里的「待办」二字', () => {
+    const todos = extractTranscriptTodos('## 行动项\n- [ ] 出导入两步拆分的交互稿\n- [x] 补齐解析阶段埋点');
+    expect(todos).toEqual([
+      { text: '出导入两步拆分的交互稿', done: false },
+      { text: '补齐解析阶段埋点', done: true },
+    ]);
+  });
+
+  it('大写 X 也算完成', () => {
+    expect(extractTranscriptTodos('- [X] 已做')[0].done).toBe(true);
+  });
+
+  it('普通列表项不算待办，不能把纪要要点混进待办栏', () => {
+    expect(extractTranscriptTodos('- 这只是一个要点\n* 另一个要点')).toEqual([]);
+  });
+
+  it('没有任务列表就是空——界面据此如实说没有产出待办，不编一条', () => {
+    expect(extractTranscriptTodos('结论是导入环节有问题。')).toEqual([]);
+    expect(extractTranscriptTodos('')).toEqual([]);
+  });
+
+  it('空文本的勾选项跳过，不产出一条看不出内容的待办', () => {
+    expect(extractTranscriptTodos('- [ ]   ')).toEqual([]);
+  });
+});
+
+describe('isTodoOnlyModule', () => {
+  it('整段只有勾选项的模块判真——它归待办区，纪要不再重复列', () => {
+    expect(isTodoOnlyModule('- [ ] 出交互稿\n- [x] 复访 3 位用户')).toBe(true);
+    expect(isTodoOnlyModule('## 行动项\n- [ ] 出交互稿')).toBe(true);
+  });
+
+  it('认的是结构不是标题措辞：叫什么名字都一样', () => {
+    expect(isTodoOnlyModule('## Next steps\n- [ ] ship it')).toBe(true);
+  });
+
+  it('夹带正文的模块留在纪要里——那不是一张纯清单', () => {
+    expect(isTodoOnlyModule('结论是导入有问题。\n- [ ] 出交互稿')).toBe(false);
+    expect(isTodoOnlyModule('- 这只是要点\n- 另一个要点')).toBe(false);
+  });
+
+  it('空内容不判真，避免把空模块也吞掉', () => {
+    expect(isTodoOnlyModule('')).toBe(false);
+    expect(isTodoOnlyModule('## 只有标题')).toBe(false);
+  });
+});
+
+describe('findTodoSource', () => {
+  const segs = [
+    { start: 601, end: 610, text: '我们打算把导入拆成两步，先让他们看到结果', speaker: '主持人' },
+    { start: 862, end: 870, text: '解析阶段没有任何进度反馈，我以为它卡死了', speaker: '受访者 A' },
+    { start: 900, end: 905, text: '今天天气不错', speaker: '主持人' },
+  ];
+
+  it('挂到重合最多的那一句上，带回时间与说话人', () => {
+    expect(findTodoSource('出导入两步拆分的交互稿', segs)).toEqual({ start: 601, speaker: '主持人' });
+    expect(findTodoSource('补齐解析阶段的进度反馈埋点', segs)).toEqual({ start: 862, speaker: '受访者 A' });
+  });
+
+  it('重合不够就不给出处——宁可没有时间戳，也不伪造溯源', () => {
+    expect(findTodoSource('再约三位重度用户复访', segs)).toBeNull();
+    expect(findTodoSource('', segs)).toBeNull();
+    expect(findTodoSource('出导入两步拆分的交互稿', [])).toBeNull();
+  });
+
+  it('无时间戳的句子不作为出处（给不出「几点」这半句话）', () => {
+    expect(findTodoSource('出导入两步拆分的交互稿', [
+      { start: -1, end: -1, text: '我们打算把导入拆成两步，先让他们看到结果', speaker: '主持人' },
+    ])).toBeNull();
   });
 });

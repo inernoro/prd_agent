@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, Fragment, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { TranscribeStatusCard, type TranscribeStatusRun } from './TranscribeStatusCard';
+import { requestRecordingPlay } from './recordingPlayBridge';
+import type { FailedTranscriptionNotice } from '@/pages/document-store/recordingVault';
 import {
   FilePreview,
   HTML_ZOOM_STORAGE_KEY,
@@ -32,6 +35,8 @@ import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '
 import { useReaderChromeStore } from '@/stores/readerChromeStore';
 import { glassMobileHeader } from '@/lib/glassStyles';
 import { compareDocBrowserEntries, computeReorderUpdates, type DocBrowserReorderUpdate, type DocBrowserSortMode } from './docBrowserSort';
+import { describeTranscriptOutcome } from './transcriptSegments';
+import { useNavigate } from 'react-router-dom';
 
 export type { DocBrowserSortMode } from './docBrowserSort';
 
@@ -216,6 +221,7 @@ import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow, History, AlertTriangle } from 'lucide-react';
 import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
+import { listTranscribeStyles } from '@/services/real/documentStore';
 import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
 import { DocEmptyState } from './DocEmptyState';
@@ -410,8 +416,18 @@ export type DocBrowserProps = {
   onQuickRecord?: () => void;
   /** 音频结果区「换个整理方式」：对已完成转录的音频免重跑 ASR 重新整理摘要 */
   onRestyleTranscribe?: (entryId: string) => void;
+  /**
+   * 打开这条录音的独立结果页并开始播放。
+   *
+   * 阅读器是共享组件，三处宿主（私人知识库 / 分享只读 / 周报）各自的路由语义不同，
+   * 所以它不认识路由——由知道路由的那个页面传进来。宿主不传就没有结果页可去，
+   * 处理中那一屏自动退回「就地播放」，按钮文案跟着变。
+   */
+  onOpenRecordingResult?: (audioEntryId: string) => void;
   /** 当前选中音频最近一次转录失败的说明；有值时结果区如实写明原因并把按钮改成重试 */
-  transcribeFailure?: { reason: string; at: string | null } | null;
+  transcribeFailure?: FailedTranscriptionNotice | null;
+  /** 当前条目那条在途转录 run；有值时结果区顶部显示三阶段进度而不是手动入口 */
+  transcribeRun?: TranscribeStatusRun | null;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
   /** 音频原文页的问答入口；可预置带时间引用约束的提问。 */
@@ -637,120 +653,17 @@ function canTranscribe(entry: DocBrowserEntry): boolean {
 }
 
 /**
- * 录音/上传音频的统一结果区（音频块下方常驻，2026-07-13 用户确认交互）：
- * - 未转录 → 只生成可编辑原文，不提前强迫用户选整理方式；
- * - 已转录 → 原文留在当前录音页，整理作为用户主动选择的下一步。
+ * 体积读成人话。拿不到（旧条目没记体积、或就是 0）时返回 null，
+ * 界面据此**整段不显示**，而不是印一个「0 B」出来充数。
  */
-function TranscribeHeroCard({
-  currentEntryId,
-  noteEntryId,
-  subtitleEntryId,
-  lastFailure,
-  onStart,
-  onOpenNote,
-  onRestyle,
-}: {
-  currentEntryId: string;
-  noteEntryId?: string;
-  subtitleEntryId?: string;
-  /** 最近一次转录失败的说明；有值时卡片如实写明失败原因，按钮改为重试 */
-  lastFailure?: { reason: string; at: string | null } | null;
-  /** 发起原文转录；整理在完成后另选 */
-  onStart?: (styleKey?: string) => void;
-  onOpenNote: (entryId: string) => void;
-  /** 换个整理方式（免重跑转录，打开整理面板） */
-  onRestyle?: () => void;
-}) {
-  const inPlace = !!noteEntryId && noteEntryId === currentEntryId;
-  // 没转出笔记、且上次是失败告终 —— 这时候必须说话，不能装作从没跑过
-  const showFailure = !noteEntryId && !!lastFailure;
-  return (
-    <div
-      className="surface-inset mb-4 flex flex-col gap-3 rounded-[14px] px-4 py-3.5"
-      data-tour-id="doc-transcribe-hero">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="surface-action-accent flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]">
-            <AudioLines size={16} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-[13px] font-semibold text-token-primary">
-              {inPlace ? '录音和原文已保存在本页'
-                : noteEntryId ? '录音原文已生成'
-                : showFailure ? '上次转文字没成功'
-                : '把录音转成文字'}
-            </p>
-            <p className="truncate text-[11px] text-token-muted">
-              {inPlace ? '位置与标题保持不变，需要时再一键整理'
-                : noteEntryId ? '点下方打开原文，需要时再一键整理'
-                : showFailure ? '录音还在，没有丢；可以直接重试'
-                : '先生成可编辑原文，不自动总结或改写'}
-            </p>
-          </div>
-        </div>
-        {!noteEntryId && onStart && (
-          <button
-            onClick={() => onStart()}
-            className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
-            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}>
-            {showFailure ? '重试' : '转成文字'}
-          </button>
-        )}
-      </div>
-
-      {/* 失败原因照抄服务端，不改写成「稍后再试」那种等于没说的话 */}
-      {showFailure && (
-        <div
-          className="flex items-start gap-2 rounded-[10px] px-3 py-2 text-[11.5px] leading-relaxed"
-          style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
-          <AlertTriangle size={13} className="mt-[2px] flex-shrink-0" />
-          <span className="min-w-0 break-words">{lastFailure!.reason}</span>
-        </div>
-      )}
-
-      {/* 已转录：历史产物 chips + 换个整理方式 */}
-      {(noteEntryId || subtitleEntryId) && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {noteEntryId && !inPlace && (
-            <button
-              onClick={() => onOpenNote(noteEntryId)}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
-              style={{
-                background: 'rgba(34,197,94,0.1)',
-                border: '1px solid rgba(34,197,94,0.22)',
-                color: 'var(--accent-fg-success)',
-              }}>
-              <BookOpen size={11} /> 转录笔记 <ChevronRight size={11} />
-            </button>
-          )}
-          {subtitleEntryId && (
-            <button
-              onClick={() => onOpenNote(subtitleEntryId)}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-semibold transition-colors"
-              style={{
-                background: 'rgba(168,85,247,0.1)',
-                border: '1px solid rgba(168,85,247,0.22)',
-                color: 'var(--accent-fg-violet)',
-              }}>
-              <Sparkles size={11} /> 字幕 <ChevronRight size={11} />
-            </button>
-          )}
-          {noteEntryId && onRestyle && (
-            <button
-              onClick={onRestyle}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover-bg-soft"
-              style={{
-                background: 'var(--bg-elevated)',
-                color: 'var(--text-secondary)',
-                border: '1px solid var(--border-faint)',
-              }}>
-              <Wand2 size={11} /> 一键整理
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function formatFileSizeLabel(bytes?: number): string | null {
+  if (!bytes || !Number.isFinite(bytes) || bytes <= 0) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
 }
 
 function canReprocess(entry: DocBrowserEntry): boolean {
@@ -1714,7 +1627,9 @@ export function DocBrowser({
   onUploadAudio,
   onQuickRecord,
   onRestyleTranscribe,
+  onOpenRecordingResult,
   transcribeFailure,
+  transcribeRun,
   onReprocess,
   onAskRecording,
   onShareEntry,
@@ -1749,6 +1664,35 @@ export function DocBrowser({
   const [preview, setPreview] = useState<EntryPreview | null>(null);
   // 音频条目的转录笔记 markdown（歌词滚轮跟读数据源；无笔记为 null）
   const [transcriptNoteMd, setTranscriptNoteMd] = useState<string | null>(null);
+  // 「查看服务状态」的去处：系统告警落在通知中心，不另造一个状态页
+  const navigate = useNavigate();
+  /*
+    正在重新整理时要点名到具体那一种（稿面 cap-S6）。整理方式清单是后端注册表，
+    这里只在真的需要显示时拉一次，绝不在前端另抄一份 key → 名字的映射
+    （frontend-architecture：前端不维护业务映射表）。
+  */
+  const [transcribeStyleNames, setTranscribeStyleNames] = useState<Record<string, string>>({});
+  /*
+   * 只拉一次，用 ref 记住「拉过了」——**不能**把 `transcribeStyleNames` 放进依赖：
+   * 后端返回空清单（或字段缺失）时 `next` 是一个新的 `{}`，长度仍为 0，
+   * 于是守卫拦不住、依赖又变了，effect 立刻再跑一遍 —— 每帧一次网络请求的死循环。
+   * 发布门禁抓到的正是它：整屏被这条循环拖住，首个可用结果从 2.5 秒变成 7.7 秒，
+   * 卡片还会被反复卸载重挂（元素 detach）。
+   */
+  const transcribeStyleNamesLoadedRef = useRef(false);
+  useEffect(() => {
+    if (transcribeStyleNamesLoadedRef.current) return;
+    transcribeStyleNamesLoadedRef.current = true;
+    let stale = false;
+    void listTranscribeStyles().then((res) => {
+      if (stale || !res.success) return;
+      const next: Record<string, string> = {};
+      for (const item of res.data?.items ?? []) next[item.key] = item.label;
+      // 空清单不写回：写了也只是把一个空对象换成另一个空对象，白白多一次渲染
+      if (Object.keys(next).length > 0) setTranscribeStyleNames(next);
+    }).catch(() => undefined);
+    return () => { stale = true; };
+  }, []);
   // preview 的 ref 镜像：loadEntryContent 的「刚保存豁免」要读当前 preview.text，但不能把 preview 放进
   // 它的 deps —— 否则 setPreview(null)（切文档）会改变回调标识，触发下方 effect 二次 loadContent，大文档被下载两次（Codex P2）。
   const previewRef = useRef<EntryPreview | null>(null);
@@ -4040,9 +3984,10 @@ export function DocBrowser({
                       onClick={() => handleSelectEntry(srcId)}
                       className="mb-3 flex max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors hover-bg-soft"
                       style={{
-                        background: 'rgba(168,85,247,0.08)',
-                        border: '1px solid rgba(168,85,247,0.22)',
-                        color: 'var(--accent-fg-violet)',
+                        // 无紫色（设计稿硬约束）：来源文件与录音结果同屏，配色必须一致
+                        background: 'var(--bg-elevated)',
+                        border: '1px solid var(--border-faint)',
+                        color: 'var(--text-secondary)',
                       }}
                       title="打开来源文件">
                       {isAudioSrc ? <AudioLines size={12} className="shrink-0" /> : <FileText size={12} className="shrink-0" />}
@@ -4056,11 +4001,63 @@ export function DocBrowser({
                     未转录时给「开始转录」主按钮，已转录时给「查看转录笔记」直达 */}
                 {!contentLoading && !editMode && selectedEntryData && canTranscribe(selectedEntryData)
                   && (onTranscribe || selectedEntryData.metadata?.transcribe_entry_id) && (
-                  <TranscribeHeroCard
+                  <TranscribeStatusCard
                     currentEntryId={selectedEntryData.id}
                     noteEntryId={selectedEntryData.metadata?.transcribe_entry_id}
                     subtitleEntryId={selectedEntryData.metadata?.subtitle_entry_id}
+                    activeRun={transcribeRun}
                     lastFailure={transcribeFailure}
+                    audioTitle={selectedEntryData.title}
+                    audioSizeLabel={formatFileSizeLabel(selectedEntryData.fileSize)}
+                    /* 录制日期（稿面 cap-A4/A5 编在音频卡标题里）：条目自己的创建时刻，不另造 */
+                    audioDateLabel={selectedEntryData.createdAt
+                      ? new Date(selectedEntryData.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
+                      : null}
+                    transcriptPreview={transcribeRun?.transcriptPreview}
+                    generatedSentences={transcribeRun?.transcriptSentenceCount}
+                    /*
+                      转录跑完那条绿卡（稿面 v2-S3 / cap-S5）的口径全部数自这份原文本身：
+                      句数、说话人数、有没有纪要与待办。数不出来（还没加载到原文）就传 null，
+                      卡片不出现——不摆一个「132 句」的示例数。
+                    */
+                    completion={transcriptNoteMd ? describeTranscriptOutcome(transcriptNoteMd) : null}
+                    onOpenServiceStatus={() => navigate('/notifications')}
+                    /*
+                      正在重新整理时点名到具体那一种（稿面 cap-S6）。名字来自笔记条目上
+                      记着的整理方式，不在这里另抄一份清单——清单是后端注册表。
+                    */
+                    organizeStyleLabel={transcribeStyleNames[
+                      String(selectedEntryData.metadata?.transcribe_style_key ?? '')
+                    ] ?? null}
+                    // 「重新录制」走的就是这个库的录音入口，不另开一条路径
+                    onReRecord={onQuickRecord ?? onUploadAudio}
+                    // 「下载音频」用的是这条音频真实的下载地址；没加载到就不给按钮
+                    onDownloadAudio={preview?.fileUrl ? () => {
+                      const link = document.createElement('a');
+                      link.href = preview.fileUrl!;
+                      link.download = selectedEntryData.title || '录音';
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                    } : undefined}
+                    /*
+                      「复制原文」（稿面 cap-S8）：整理挂了但原文好好的，先把原文拿走自己整理。
+                      拿不到原文就不给这颗按钮——不给一个点了什么都不发生的出口。
+                    */
+                    onCopyTranscript={transcriptNoteMd
+                      ? () => {
+                        void navigator.clipboard?.writeText(transcriptNoteMd).then(
+                          () => toast.success('原文已复制'),
+                          () => toast.error('复制失败，请手动选中原文复制'),
+                        );
+                      }
+                      : undefined}
+                    // 「联系支持」（稿面 cap-S10）落到缺陷智能体：那是这套系统里真实的报障入口
+                    onContactSupport={() => navigate('/defect-agent')}
+                    onEnterResult={onOpenRecordingResult
+                      ? () => onOpenRecordingResult(selectedEntryData.id)
+                      : undefined}
+                    onPlayRequest={requestRecordingPlay}
                     onStart={onTranscribe ? (styleKey) => onTranscribe(selectedEntryData.id, styleKey) : undefined}
                     onOpenNote={(noteId) => handleSelectEntry(noteId)}
                     onRestyle={onRestyleTranscribe ? () => onRestyleTranscribe(selectedEntryData.id) : undefined}
@@ -4150,6 +4147,9 @@ export function DocBrowser({
                     } : undefined}
                     onAskRecording={selectedEntryData && onAskRecording
                       ? () => onAskRecording(selectedEntryData.id)
+                      : undefined}
+                    onRestyleTranscript={onRestyleTranscribe && selectedEntryData
+                      ? () => onRestyleTranscribe(selectedEntryData.id)
                       : undefined}
                   />
                 ) : (

@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   decideUploadedRecordingFollowUp,
   decideBackgroundRunLookup,
@@ -9,6 +11,9 @@ import {
   enqueueBackgroundTranscriptionRun,
   recoverableBackgroundTranscriptionRunId,
   isStalledBackgroundTranscriptionRun,
+  isTranscriptionInflight,
+  vaultAppendChunk,
+  vaultStartSession,
   selectObservedBackgroundTranscriptionRun,
   shouldRetryVaultServerCompletion,
   startSerialBackgroundPoller,
@@ -478,3 +483,87 @@ describe('recording vault server recovery decision', () => {
     })).toBe('recover-local');
   });
 });
+
+describe('describeBackgroundTranscriptionBanner · 与正文三阶段卡的分工', () => {
+  const run = (entryId: string, title: string) => ({ entryId, title });
+
+  it('当前录音的进度已由正文卡在讲时，横幅不再重复说一遍', () => {
+    expect(describeBackgroundTranscriptionBanner({
+      selectedEntryId: 'e1',
+      selectedHasFailure: false,
+      runs: [run('e1', '录音 A')],
+      currentRunHasInlineCard: true,
+    })).toBeNull();
+  });
+
+  it('但其它录音仍在跑时照说不误——那件事正文卡管不着', () => {
+    const copy = describeBackgroundTranscriptionBanner({
+      selectedEntryId: 'e1',
+      selectedHasFailure: false,
+      runs: [run('e1', '录音 A'), run('e2', '录音 B')],
+      currentRunHasInlineCard: true,
+    });
+    expect(copy?.title).toContain('其他录音');
+    expect(copy?.detail).toContain('录音 B');
+    expect(copy?.detail).not.toContain('录音 A');
+  });
+
+  it('没有正文卡时行为不变（旧路径不受影响）', () => {
+    expect(describeBackgroundTranscriptionBanner({
+      selectedEntryId: 'e1',
+      selectedHasFailure: false,
+      runs: [run('e1', '录音 A')],
+    })?.title).toBe('当前录音正在后台处理');
+  });
+});
+
+/*
+ * 三处轮询共用这一个「还在跑吗」。判据只认在途的三种状态：反过来枚举终态的话，
+ * 后端哪天加一个新的终态名，轮询就永远停不下来（形状 1），而且抄成三份必然漂移（形状 3）。
+ */
+describe('isTranscriptionInflight', () => {
+  it('后端枚举里的三种在途状态都算在跑', () => {
+    for (const s of ['publishing', 'queued', 'running']) expect(isTranscriptionInflight(s)).toBe(true);
+    expect(isTranscriptionInflight('  Running ')).toBe(true);
+  });
+
+  it('终态与未知状态都不算在跑', () => {
+    for (const s of ['done', 'failed', 'cancelled', '', '  ', 'whatever-new-terminal']) {
+      expect(isTranscriptionInflight(s)).toBe(false);
+    }
+    expect(isTranscriptionInflight(null)).toBe(false);
+    expect(isTranscriptionInflight(undefined)).toBe(false);
+  });
+
+  it('三处轮询都走这一个判定，没有第二份状态清单', () => {
+    const dir = path.resolve(__dirname, '..');
+    for (const file of ['RecordingProcessingPage.tsx', 'RecordingResultPage.tsx']) {
+      const source = fs.readFileSync(path.join(dir, file), 'utf-8');
+      expect(source).toContain('isTranscriptionInflight');
+      // 就地再列一遍状态名 = 又抄了一份判据
+      expect(source).not.toContain("=== 'publishing'");
+    }
+  });
+});
+
+/*
+ * 本机保险箱是 best-effort：**永不抛**，但必须如实汇报写没写进去。
+ * 此前它返回 void 并把异常全吞掉，调用方接的 .catch 因此永远不触发——
+ * 界面照样挂着「已保护 · 无丢失」，而分片只在内存里。
+ * 这两条钉的就是「失败说得出口」：node 环境没有 indexedDB，正好是不可用那一档。
+ */
+describe('本机保险箱失败时如实返回', () => {
+  it('indexedDB 不可用时 vaultAppendChunk 返回 false，而不是静默成功', async () => {
+    expect(typeof indexedDB).toBe('undefined');
+    await expect(vaultAppendChunk('sess-1', new Blob(['x']))).resolves.toBe(false);
+  });
+
+  it('indexedDB 不可用时 vaultStartSession 返回 false', async () => {
+    await expect(vaultStartSession('sess-1', 'audio/webm')).resolves.toBe(false);
+  });
+
+  it('失败时不抛异常——录音不能因为落盘失败而中断', async () => {
+    await expect(vaultAppendChunk('sess-2', new Blob(['y']))).resolves.not.toThrow;
+  });
+});
+
