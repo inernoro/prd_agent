@@ -308,6 +308,12 @@ export function RecordingResultPage() {
      */
     let attempts = 0;
     const MAX_ATTEMPTS = 100; // 3s × 100 ≈ 5 分钟
+    /*
+     * **串行**：一轮（两个请求）都回来了才排下一轮。定点发在后端慢或抖动时会让两轮叠着飞，
+     * 一屏最长等五分钟，攒出的并发查询正好压在已经不行的服务端上
+     * （Codex 第三十七轮 P2；另外两条轮询已经是串行的，这条落下了）。
+     */
+    const schedule = () => { timer = window.setTimeout(() => { void tick(); }, 3000); };
     const tick = async () => {
       if (stale) return;
       attempts += 1;
@@ -319,27 +325,28 @@ export function RecordingResultPage() {
        * 查不到就当作「还不知道」，照常等下一轮，只受上面那道次数上限约束；
        * 只有**查成功且确认不在途**才是真的可以收手。
        */
-      if (attempts >= MAX_ATTEMPTS) { window.clearInterval(timer); return; }
+      if (attempts >= MAX_ATTEMPTS) return;
       if (!runRes.success) {
         /*
          * 抖动照常等下一轮；**永久失败**（条目不存在、或这个账号对它只有只读权限）
          * 再等五分钟也是同一个答案，当场收手，别白问一百遍（Codex 第三十五轮 P2 同一形状）。
          */
-        if (isPermanentLookupFailure(runRes.error?.code)) window.clearInterval(timer);
+        if (!isPermanentLookupFailure(runRes.error?.code)) schedule();
         return;
       }
-      if (!isTranscriptionInflight(runRes.data?.status)) { window.clearInterval(timer); return; }
+      if (!isTranscriptionInflight(runRes.data?.status)) return;
       const entryRes = await getDocumentEntry(entryId);
-      if (stale || !entryRes.success) return;
+      if (stale) return;
+      if (!entryRes.success) { schedule(); return; }
       // 只认「笔记真的出现了」这一个信号：run 跑完但还没发布时重载没有意义
       if (entryRes.data?.metadata?.transcribe_entry_id) {
-        window.clearInterval(timer);
         setAwaitNoteTick(v => v + 1);
+        return;
       }
+      schedule();
     };
     void tick();
-    timer = window.setInterval(() => { void tick(); }, 3000);
-    return () => { stale = true; window.clearInterval(timer); };
+    return () => { stale = true; window.clearTimeout(timer); };
   }, [entryId, noteMissing]);
 
   useEffect(() => {
@@ -802,6 +809,14 @@ export function RecordingResultPage() {
     }
     // 这次保存写的是哪条笔记：await 回来之后拿它认人，不认就会写到切走后的那一条上
     const savingNoteId = state.noteId;
+    /*
+     * 发起这一发时，本机队列里压的是哪一份（没有就是 null）。PUT 回来之后要拿它比一次：
+     * 这中间可能断了网、用户又改了一句，于是排下一份**更新的**草稿。
+     * 不比就无条件清：那份更新的草稿被从本机删掉，横幅跟着消失，屏幕上的正文还被换回
+     * 这一发保存的旧内容——用户刚写的那几处三处一起没了（Codex 第三十七轮 P1）。
+     * 自动补传与「用我的版本覆盖」两条路早就按 savedAt 复核过，这条落下了。
+     */
+    const queuedBeforeSave = pendingRef.current?.savedAt ?? null;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       // 离线：收进队列并乐观落到本地。这不是「假装保存成功」——联网后真的会补传，
       // 而且横幅上明写着还有几处没上去，用户随时看得到自己欠了多少。
@@ -839,9 +854,13 @@ export function RecordingResultPage() {
       toast.error(res.error?.message || '保存失败');
       return false;
     }
-    // online 存成功 = 服务端已经拿到更新的内容，离线队列里那份旧的作废。
-    // 这一句按 savingNoteId 清——那份草稿属于 A，与现在停在哪一屏无关
-    clearOfflineEdit(savingNoteId, ownerId);
+    /*
+     * online 存成功 = 服务端已经拿到这一版，**发起时**排着的那份旧草稿作废。
+     * 但只有「队列里还是发起时那一份」才配清：期间新排下的那份比服务端这一版还新。
+     * 这一句按 savingNoteId 清——那份草稿属于 A，与现在停在哪一屏无关。
+     */
+    const queueUnchanged = (pendingRef.current?.savedAt ?? null) === queuedBeforeSave;
+    if (queueUnchanged) clearOfflineEdit(savingNoteId, ownerId);
     /*
      * 下面这几处改的都是**当前这一屏**的共享状态（版本令牌、待同步队列、冲突横幅），
      * 所以要先认笔记：PUT 回来时用户可能已经从侧栏切到 B 了，无条件写的话
@@ -854,6 +873,14 @@ export function RecordingResultPage() {
     // 服务端这一版就是最新版本：版本令牌跟着走，否则「刚存过、随后离线再改」
     // 会拿着加载时那个旧时刻当基线，重连时把自己的上一次保存误判成别人改的
     if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
+    if (!queueUnchanged) {
+      /*
+       * 期间排下了更新的草稿：队列、横幅、屏幕上的正文都属于那一份，一样都不许动。
+       * 它的基线是排队当时的 noteRevisionRef，上面刚推进过——正是它补传时该比的那个值。
+       */
+      toast.success('这一版已保存；这期间新排下的校对仍在队列里');
+      return true;
+    }
     setPendingEdits(null);
     setQueueVolatile(false);
     setFlushConflict(null);

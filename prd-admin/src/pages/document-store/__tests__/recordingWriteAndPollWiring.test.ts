@@ -722,21 +722,27 @@ describe('等笔记的轮询区分「查不到」与「确认没有」', () => {
   const fn = source.slice(source.indexOf("const runRes = await getLatestAgentRun(entryId, 'transcribe');"));
   const body = fn.slice(0, fn.indexOf('void tick();'));
 
-  it('查询失败只是返回，不清定时器（永久失败那一档除外）', () => {
-    const at = body.indexOf('if (!runRes.success) {');
-    expect(at, '查询失败没有单独一条出路').toBeGreaterThan(-1);
-    // 只截「查询失败」这一个分支：截到下一档（确认不在途）就会把它那句 clearInterval 也算进来
-    const branch = body.slice(at, body.indexOf('if (!isTranscriptionInflight', at));
-    // 只有永久失败那一档配清定时器；抖动清了，等于一次网络抖动永久停掉这一屏的等待
-    const permanent = branch.indexOf('isPermanentLookupFailure');
-    expect(permanent, '这一档没有区分永久失败').toBeGreaterThan(-1);
-    const clears = [...branch.matchAll(/clearInterval/g)].map(m => m.index ?? -1);
-    expect(clears.length, '抖动那一路不该清定时器').toBe(1);
-    expect(clears[0]).toBeGreaterThan(permanent);
+  it('这条轮询也是串行的：一轮回来了才排下一轮', () => {
+    // 这一条要连 schedule 的定义一起看，所以从整个 effect 截，而不是从 tick 内部截
+    const effect = source.slice(source.indexOf('if (!entryId || !noteMissing) return;'), source.indexOf('}, [entryId, noteMissing]);'));
+    expect(effect).not.toMatch(/window\.setInterval\(/);
+    expect(effect).toContain('window.setTimeout(() => { void tick(); }, 3000)');
+    expect(effect).toContain('window.clearTimeout(timer)');
   });
 
-  it('只有确认不在途才收手', () => {
-    expect(body).toMatch(/if \(!isTranscriptionInflight\([^)]*\)\) \{ window\.clearInterval\(timer\); return; \}/);
+  it('查询失败照常等下一轮，永久失败那一档才收手', () => {
+    const at = body.indexOf('if (!runRes.success) {');
+    expect(at, '查询失败没有单独一条出路').toBeGreaterThan(-1);
+    // 只截「查询失败」这一个分支：截到下一档会把别的出路也算进来
+    const branch = body.slice(at, body.indexOf('if (!isTranscriptionInflight', at));
+    // 串行之后「收手」= 不排下一轮。抖动必须排，永久失败必须不排
+    expect(branch).toMatch(/if \(!isPermanentLookupFailure\(runRes\.error\?\.code\)\) schedule\(\);/);
+  });
+
+  it('只有确认不在途才收手（不排下一轮）', () => {
+    const at = body.indexOf('if (!isTranscriptionInflight');
+    expect(at).toBeGreaterThan(-1);
+    expect(body.slice(at, at + 120)).toMatch(/if \(!isTranscriptionInflight\([^)]*\)\) return;/);
   });
 
   it('次数上限仍在，不会无限等下去', () => {
@@ -866,9 +872,8 @@ describe('查询失败分两种：抖动才重试，永久失败当场停下', (
     const at = result.indexOf('if (!runRes.success) {');
     expect(at).toBeGreaterThan(0);
     const block = result.slice(at, at + 600);
-    const permanent = block.indexOf('isPermanentLookupFailure(runRes.error?.code)');
-    expect(permanent).toBeGreaterThan(-1);
-    expect(block.slice(permanent, permanent + 120)).toContain('clearInterval(timer)');
+    // 串行轮询里「收手」就是不排下一轮：永久失败那一档不许调 schedule()
+    expect(block).toMatch(/if \(!isPermanentLookupFailure\(runRes\.error\?\.code\)\) schedule\(\);/);
   });
 });
 
@@ -964,5 +969,35 @@ describe('对照画板缺图必须变红', () => {
   it('产物自己也把缺的那几块点名，不能被误当成完整取证', () => {
     expect(source).toContain('renderPage(cards, DATA, missing)');
     expect(source).toContain('这份对照不完整：缺 ${missing.length} 张图');
+  });
+});
+
+
+describe('在线保存不许清掉这期间新排下的草稿', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+  const save = source.slice(source.indexOf('const onSaveNote = useCallback'), source.indexOf('const noteIdForFlush ='));
+
+  it('发起时先记下队列里是哪一份', () => {
+    expect(save).toContain('const queuedBeforeSave = pendingRef.current?.savedAt ?? null;');
+  });
+
+  it('只有队列没换过才清本机草稿', () => {
+    const clear = save.indexOf('clearOfflineEdit(savingNoteId, ownerId)');
+    expect(clear, '找不到清草稿那一句').toBeGreaterThan(-1);
+    // 清之前必须先比一次；无条件清就会把断网期间新写的那几处删掉
+    const decide = save.indexOf('const queueUnchanged =');
+    expect(decide).toBeGreaterThan(-1);
+    expect(decide).toBeLessThan(clear);
+    expect(save.slice(decide, clear + 60)).toMatch(/if \(queueUnchanged\) clearOfflineEdit/);
+  });
+
+  it('队列换过就什么都不动：不清横幅、也不把正文换回旧的', () => {
+    const at = save.indexOf('if (!queueUnchanged) {');
+    expect(at, '没有「队列换过」这一档').toBeGreaterThan(-1);
+    const branch = save.slice(at, save.indexOf('setPendingEdits(null);', at));
+    expect(branch).toContain('return true;');
+    // 这一档不许落到下面那几句共享状态的清理上
+    expect(branch).not.toContain('setPendingEdits(null)');
+    expect(branch).not.toContain('setFlushConflict(null)');
   });
 });
