@@ -1672,17 +1672,27 @@ export function DocBrowser({
     （frontend-architecture：前端不维护业务映射表）。
   */
   const [transcribeStyleNames, setTranscribeStyleNames] = useState<Record<string, string>>({});
+  /*
+   * 只拉一次，用 ref 记住「拉过了」——**不能**把 `transcribeStyleNames` 放进依赖：
+   * 后端返回空清单（或字段缺失）时 `next` 是一个新的 `{}`，长度仍为 0，
+   * 于是守卫拦不住、依赖又变了，effect 立刻再跑一遍 —— 每帧一次网络请求的死循环。
+   * 发布门禁抓到的正是它：整屏被这条循环拖住，首个可用结果从 2.5 秒变成 7.7 秒，
+   * 卡片还会被反复卸载重挂（元素 detach）。
+   */
+  const transcribeStyleNamesLoadedRef = useRef(false);
   useEffect(() => {
-    if (Object.keys(transcribeStyleNames).length > 0) return;
+    if (transcribeStyleNamesLoadedRef.current) return;
+    transcribeStyleNamesLoadedRef.current = true;
     let stale = false;
     void listTranscribeStyles().then((res) => {
       if (stale || !res.success) return;
       const next: Record<string, string> = {};
       for (const item of res.data?.items ?? []) next[item.key] = item.label;
-      setTranscribeStyleNames(next);
+      // 空清单不写回：写了也只是把一个空对象换成另一个空对象，白白多一次渲染
+      if (Object.keys(next).length > 0) setTranscribeStyleNames(next);
     }).catch(() => undefined);
     return () => { stale = true; };
-  }, [transcribeStyleNames]);
+  }, []);
   // preview 的 ref 镜像：loadEntryContent 的「刚保存豁免」要读当前 preview.text，但不能把 preview 放进
   // 它的 deps —— 否则 setPreview(null)（切文档）会改变回调标识，触发下方 effect 二次 loadContent，大文档被下载两次（Codex P2）。
   const previewRef = useRef<EntryPreview | null>(null);

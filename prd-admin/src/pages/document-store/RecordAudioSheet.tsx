@@ -1503,7 +1503,13 @@ export function RecordAudioSheet({
                 那行从字的腰上切开，读成一行坏掉的字。留一句，正好装得下、也说得清
                 「断在这里」。
               */}
-              {liveSentences.slice(liveView === 'degraded' ? -1 : -8).map((sentence, index, arr) => {
+              {/*
+                正常档把**全部**句子都渲染出来，靠容器自己贴底滚动——看到的仍然是最后几句，
+                但更早的那些还在，用户往上翻得到（发布门禁断言的正是「第 3 段还在」）。
+                只留最后 N 句等于把历史丢掉：屏幕上看不出差别，可它真的没了。
+                降级档例外，只留中断前最后一句（见下）。
+              */}
+              {(liveView === 'degraded' ? liveSentences.slice(-1) : liveSentences).map((sentence, index, arr) => {
                 const last = index === arr.length - 1;
                 const faded = index < arr.length - 2;
                 return (

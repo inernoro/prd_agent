@@ -490,9 +490,17 @@ test.describe('录音连续性发布门禁', () => {
     await attachViewport(page, testInfo, '00-quick-create-recording-entry');
     await quickRecordAction.click();
 
-    const recordingTitle = page.getByText('快捷录音').first();
+    /*
+     * 「采集面板打开了」这件事要按**行为**断言，不能盯着一句文案。
+     * 这里原本断言的是面板标题那四个字（当时叫「快捷录音」），设计稿把它改成
+     * 「录音转笔记」之后这道门就红了——门里守的东西一点没坏，坏的是判据
+     * （predicate-and-wiring-discipline 形状 4a：断言某段实现的字面存在）。
+     * 改成认面板自己的 testid：计时器与「结束录音」都在，就说明它真的开起来了。
+     */
+    const recordingElapsed = page.getByTestId('recording-elapsed');
     try {
-      await expect(recordingTitle).toBeVisible();
+      await expect(recordingElapsed).toBeVisible();
+      await expect(page.getByTestId('recording-finish')).toBeVisible();
     } catch (error) {
       await testInfo.attach('entry-diagnostics', {
         body: JSON.stringify({
@@ -553,7 +561,19 @@ test.describe('录音连续性发布门禁', () => {
       clientHeight: element.clientHeight,
       scrollHeight: element.scrollHeight,
     }));
-    expect(layout.clientHeight).toBeLessThanOrEqual(121);
+    /*
+     * 这道门守的是「长原文不把控制区顶出去」，判据在上面两行已经落地：波形可见、
+     * 「结束录音」在视口内。这里再加一层，防的是原文区**按内容长**——真发生回归时
+     * 它会长到上千像素。
+     *
+     * 但界限不能钉一个像素快照：原来写死的 121 是当时那版布局的实测值，
+     * 采集屏按设计稿重排（卡片改为按剩余空间分配、波形高度分档）之后它变成 133，
+     * 控制区一点没被挡住，门却红了——判据盯的是某一版实现的字面尺寸，不是它要守的
+     * 那件事（predicate-and-wiring-discipline 形状 4a）。改成按视口比例：
+     * 占到四分之一屏就说明它在按内容长，而正常布局远在这条线以下。
+     */
+    const viewportHeight = page.viewportSize()!.height;
+    expect(layout.clientHeight).toBeLessThanOrEqual(Math.round(viewportHeight * 0.25));
     expect(layout.scrollHeight).toBeGreaterThan(layout.clientHeight);
     await attachViewport(page, testInfo, '01-recording-controls-visible');
 
@@ -577,18 +597,48 @@ test.describe('录音连续性发布门禁', () => {
     if (await page.getByText('页面渲染出错').count()) {
       throw new Error(JSON.stringify({ consoleErrors, pageErrors, apiRequests }, null, 2));
     }
-    const backgroundProgress = page.getByTestId('recording-background-progress');
-    await expect(backgroundProgress).toBeVisible();
-    await expect(backgroundProgress).toContainText('后台只负责保存正式音频并确认原文可恢复，不会自动总结或改写');
-    await expect(backgroundProgress).toContainText('完成后本页自动更新，可以离开本页');
-    await backgroundProgress.scrollIntoViewIfNeeded();
-    await attachViewport(page, testInfo, '03-background-progress');
-    const playToggle = page.getByTestId('audio-play-toggle');
+    /*
+     * 「首个可用结果」要量的是**产品**的时间，所以在取证动作之前就量。
+     * 它此前排在「后台进度卡断言 + 滚动 + 整屏截图」之后，那两步是 Playwright 自己的
+     * 开销（截一张整屏在受限机器上要几百毫秒），机器一忙就把这个数推过 4 秒，
+     * 红的是取证成本、不是用户等待。判据本身一点没放松：仍然是 4 秒、仍然要求
+     * 播放键可见且可用。
+     */
+    const playToggle = page
+      .getByTestId('audio-play-toggle')
+      .or(page.getByTestId('recording-segment-play'))
+      .first();
     await expect(playToggle).toBeVisible();
     await expect(playToggle).toBeEnabled();
     const firstUsableResultMs = Date.now() - finalizingStartedAt;
     expect(firstUsableResultMs).toBeLessThan(4_000);
-    await expect(page.getByText('智能估算跟随，可点句跳播')).toBeVisible();
+
+    const backgroundProgress = page.getByTestId('recording-background-progress');
+    await expect(backgroundProgress).toBeVisible();
+    await expect(backgroundProgress).toContainText('后台只负责保存正式音频并确认原文可恢复，不会自动总结或改写');
+    await expect(backgroundProgress).toContainText('完成后本页自动更新，可以离开本页');
+    /*
+     * 这一下只是为了把卡片滚进截图，断言在上面两行已经做完了。
+     * 而这张卡在云端副本存完的那一刻**本来就会消失**（archivePending 转 false），
+     * 它和这次滚动是同一秒的事——撞上就抛「元素已从 DOM 移除」，让一条本来通过的
+     * 门禁红在取证动作上。滚不动就算了，证据截图照常出。
+     */
+    await backgroundProgress.scrollIntoViewIfNeeded({ timeout: 1_000 }).catch(() => undefined);
+    await attachViewport(page, testInfo, '03-background-progress');
+    /*
+     * 「可播放」有两种形态：展开的播放器，或滚过它之后那条迷你片段条——两者都带播放键，
+     * 承诺（结束后直达可播放结果）由**任意一个**兑现。这里此前只认展开态那颗，
+     * 于是上面 scrollIntoView 把播放区滚收起来之后，门禁就误判成「还不能播」
+     * （predicate-and-wiring-discipline 形状 1：判据比它该管的范围窄）。
+     */
+    /*
+     * 这里守的是「这条时间轴是估算出来的，界面要说出来」。原来钉的是那一整句文案
+     * （「智能估算跟随，可点句跳播」），设计稿把它改成「智能估算时间轴 · 可能有偏差」
+     * 之后这道门就红了，而它要守的那件事一点没变。改成认「估算」这个语义词。
+     * 句中另一半承诺（可点句跳播）在下面几行有自己的断言：
+     * `button[title="点击跳到这一句"]` 恰好 18 条，所以这里不重复钉文案。
+     */
+    await expect(page.getByText('估算', { exact: false }).first()).toBeVisible();
     await playToggle.click();
     await expect(playToggle).toHaveAttribute('title', '暂停');
     await expect(page.getByText('暂无可预览的内容')).toHaveCount(0);
@@ -638,7 +688,11 @@ test.describe('录音连续性发布门禁', () => {
     await expect(page.getByText('云端副本已保存', { exact: true })).toBeVisible();
     const stableUrl = page.url();
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('audio-play-toggle')).toBeEnabled();
+    // 同上：收起态下播放键在迷你片段条上，两者任一可用即算「这条录音现在能播」
+    await expect(page
+      .getByTestId('audio-play-toggle')
+      .or(page.getByTestId('recording-segment-play'))
+      .first()).toBeEnabled();
     await expect(page.getByTestId('recording-background-progress')).toHaveCount(0);
     await page.waitForTimeout(1_200);
     expect(page.url()).toBe(stableUrl);

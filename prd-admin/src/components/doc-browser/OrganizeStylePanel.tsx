@@ -65,14 +65,22 @@ function StyleCard({ card, onPick }: { card: OrganizeCard; onPick: (key: string)
 export function OrganizeStylePanel({
   state,
   onPick,
-  onCustom,
+  allowCustom,
   resultText,
 }: {
   state: OrganizeState;
-  /** 选了某种整理方式：宿主去发起 restyle */
-  onPick: (styleKey: string) => void;
-  /** 自定义整理要求：宿主打开输入入口 */
-  onCustom?: () => void;
+  /**
+   * 选了某种整理方式：宿主去发起 restyle。
+   * 自定义那一条会带上用户写的要求（`styleKey: 'custom'` + `customPrompt`）。
+   */
+  onPick: (styleKey: string, customPrompt?: string) => void;
+  /**
+   * 是否提供「自定义整理要求」入口。它此前是一个 `onCustom` 回调，宿主接的却是
+   * 「按当前这一种再整理一次」——点下去从不问要求，直接又跑了一遍预设风格
+   * （Codex P2）。要求本来就该在这张面板里收，所以入口收回组件内部：
+   * 展开一个输入框，写完再走同一个 `onPick`。
+   */
+  allowCustom?: boolean;
   /**
    * 结果卡正文（当前这份摘要的开头一段）；为空时不渲染结果卡。
    * 卡上那个小标签由本组件从注册表里取——宿主不必再传一份方式名，
@@ -80,6 +88,8 @@ export function OrganizeStylePanel({
    */
   resultText?: string;
 }) {
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState('');
   const [styles, setStyles] = useState<OrganizeStyle[]>([]);
   useEffect(() => {
     let stale = false;
@@ -123,16 +133,58 @@ export function OrganizeStylePanel({
         {cards.map(card => <StyleCard key={card.key} card={card} onPick={onPick} />)}
       </div>
 
-      {onCustom && (
+      {allowCustom && !customOpen && (
         <button
           type="button"
-          onClick={onCustom}
+          onClick={() => setCustomOpen(true)}
           // 稿面这条是虚线框：它和上面四张不是同一类——上面是选一种现成的，这条是自己描述
-          className="mt-2.5 flex min-h-12 w-full items-center justify-center gap-1.5 rounded-[14px] text-[13px]"
+          className="mt-2.5 flex min-h-12 w-full cursor-pointer items-center justify-center gap-1.5 rounded-[14px] text-[13px]"
           style={{ border: '1px dashed var(--border-default)', color: 'var(--text-secondary)' }}
         >
           <Plus size={14} /> 自定义整理要求
         </button>
+      )}
+
+      {allowCustom && customOpen && (
+        <div
+          className="mt-2.5 rounded-[14px] p-3"
+          style={{ border: '1px dashed var(--border-default)', background: 'var(--bg-card)' }}
+        >
+          <textarea
+            value={customPrompt}
+            onChange={(event) => setCustomPrompt(event.target.value)}
+            rows={3}
+            autoFocus
+            placeholder="想要什么样的整理？例如：按人物分段，只保留结论和待办"
+            aria-label="自定义整理要求"
+            className="w-full resize-none bg-transparent text-[13px] leading-relaxed outline-none"
+            style={{ color: 'var(--text-primary)' }}
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!customPrompt.trim()}
+              onClick={() => {
+                const prompt = customPrompt.trim();
+                if (!prompt) return;
+                setCustomOpen(false);
+                onPick('custom', prompt);
+              }}
+              className="flex min-h-9 min-w-[64px] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold disabled:opacity-50"
+              style={{ background: 'var(--accent-fg-info)', color: 'var(--bg-card)' }}
+            >
+              开始整理
+            </button>
+            <button
+              type="button"
+              onClick={() => setCustomOpen(false)}
+              className="flex min-h-9 min-w-[64px] cursor-pointer items-center justify-center rounded-[8px] px-4 text-[12px] font-semibold"
+              style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
+            >
+              取消
+            </button>
+          </div>
+        </div>
       )}
 
       {resultText && (

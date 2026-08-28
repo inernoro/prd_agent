@@ -59,6 +59,10 @@ export function RecordingSegmentBar({
       <button
         type="button"
         onClick={onPlay}
+        // 收起态里这枚就是**唯一**的播放开关。发布门禁要断言「结束后直达可播放结果」，
+        // 得认得出它——否则播放区一收起，门禁就只看得到展开态那颗、误判成不可播放。
+        data-testid="recording-segment-play"
+        aria-label="播放这段录音"
         // 稿面 P2/P3 这枚圆钮明显大过两行文字的高度——它是收起态里唯一的播放开关，
         // 36px 会让它退到和时间码同一量级，读起来像个装饰而不是主控件。
         className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full"

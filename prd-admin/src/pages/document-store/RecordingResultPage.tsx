@@ -256,13 +256,33 @@ export function RecordingResultPage() {
   useEffect(() => {
     if (!entryId || !noteMissing) return;
     let stale = false;
-    const timer = window.setInterval(() => {
-      void getDocumentEntry(entryId).then((res) => {
-        if (stale || !res.success) return;
-        // 只认「笔记真的出现了」这一个信号：run 跑完但还没发布时重载没有意义
-        if (res.data?.metadata?.transcribe_entry_id) setAwaitNoteTick(v => v + 1);
-      });
-    }, 3000);
+    let timer = 0;
+    /*
+     * 只在**真的有一条在途转录**时才等。从没转过、或者已经彻底失败的音频，
+     * 笔记永远不会出现——不判这一下的话，这个定时器会陪着标签页一直转下去，
+     * 每三秒打一次接口（Codex P2 抓到的正是这条）。
+     * 再加一道上限：即使 run 一直挂着，也不无限等下去。
+     */
+    let attempts = 0;
+    const MAX_ATTEMPTS = 100; // 3s × 100 ≈ 5 分钟
+    const tick = async () => {
+      if (stale) return;
+      attempts += 1;
+      const runRes = await getLatestAgentRun(entryId, 'transcribe');
+      if (stale) return;
+      const status = runRes.success ? (runRes.data?.status ?? '') : '';
+      const inflight = status === 'queued' || status === 'running' || status === 'publishing';
+      if (!inflight || attempts >= MAX_ATTEMPTS) { window.clearInterval(timer); return; }
+      const entryRes = await getDocumentEntry(entryId);
+      if (stale || !entryRes.success) return;
+      // 只认「笔记真的出现了」这一个信号：run 跑完但还没发布时重载没有意义
+      if (entryRes.data?.metadata?.transcribe_entry_id) {
+        window.clearInterval(timer);
+        setAwaitNoteTick(v => v + 1);
+      }
+    };
+    void tick();
+    timer = window.setInterval(() => { void tick(); }, 3000);
     return () => { stale = true; window.clearInterval(timer); };
   }, [entryId, noteMissing]);
 
@@ -306,7 +326,10 @@ export function RecordingResultPage() {
         noteMd: noteRes?.success ? (noteRes.data?.content ?? '') : '',
         noteId: noteId ?? '',
         // 整理方式盖在音频条目上（与阅读器读同一个字段，不新开一条取法）
-        styleKey: entry.metadata?.transcribe_style_key ?? null,
+        // 同上：笔记条目上的那份才是 restyle 之后的真值
+        styleKey: (noteEntryRes?.success ? noteEntryRes.data?.metadata?.transcribe_style_key : null)
+          ?? entry.metadata?.transcribe_style_key
+          ?? null,
         generatedAt: noteEntryRes?.success ? (noteEntryRes.data?.updatedAt ?? null) : null,
       });
     })().catch((error: unknown) => {
@@ -470,6 +493,12 @@ export function RecordingResultPage() {
 
   /** 在途的整理 run：选了哪一种、跑到哪了。没有在途就是 null。 */
   const [running, setRunning] = useState<{ runId: string; styleKey: string; percent: number } | null>(null);
+  /*
+   * 换录音就把在途整理摘掉。同一条路由只换 params 时组件不重挂，`running` 会跟着
+   * 留在下一条录音上——那一条于是显示着别人的进度条，而且因为 `running` 非空，
+   * 它自己的整理点了没反应；A 跑完时轮询回调还会拿 B 的 id 去 reload（Codex P2）。
+   */
+  useEffect(() => { setRunning(null); }, [entryId]);
 
   // 轮询回调里要读「当前的笔记 id」，但它不能进 effect 依赖——依赖一变轮询就重来。
   const noteIdRef = useRef('');
@@ -489,7 +518,15 @@ export function RecordingResultPage() {
         ...cur,
         noteMd: contentRes.success ? (contentRes.data?.content ?? cur.noteMd) : cur.noteMd,
         generatedAt: noteEntryRes.success ? (noteEntryRes.data?.updatedAt ?? cur.generatedAt) : cur.generatedAt,
-        styleKey: audioEntryRes.success ? (audioEntryRes.data?.metadata?.transcribe_style_key ?? cur.styleKey) : cur.styleKey,
+        /*
+         * 整理方式**先读笔记条目**：restyle 处理器把 `transcribe_style_key` 写在
+         * 输出笔记上（`SubtitleGenerationProcessor` 的 restyle 分支），只有录音与笔记
+         * 是同一篇时它才顺带落在音频条目上。旧数据里两者是两篇，光读音频条目就会
+         * 一直拿到整理之前的那一种，「重新生成」于是按旧风格再跑一次（Codex P2）。
+         */
+        styleKey: (noteEntryRes.success ? noteEntryRes.data?.metadata?.transcribe_style_key : null)
+          ?? (audioEntryRes.success ? audioEntryRes.data?.metadata?.transcribe_style_key : null)
+          ?? cur.styleKey,
       }
       : cur));
   }, [entryId]);
@@ -589,7 +626,13 @@ export function RecordingResultPage() {
       }
     });
     return () => { alive = false; };
-  }, [noteIdForFlush, offline]);
+    /*
+     * 依赖里必须带上 `pendingEdits`：本机存着的队列是上面那个 effect 恢复出来的，
+     * 而它比这里晚一拍。只依赖 noteId/offline 的话，这一轮读到的是 null，
+     * 恢复之后又不会再跑——那份校对就一直躺着不上去，直到下一次断网重连才被
+     * 当成「新的」传上去，可能盖掉更新的内容（Codex P1 抓到的正是这条）。
+     */
+  }, [noteIdForFlush, offline, pendingEdits]);
 
   /**
    * 选一种整理方式。
@@ -603,14 +646,16 @@ export function RecordingResultPage() {
    * 拿不到「已完成且有产物」的上一条 run 时（比如这条录音压根没转录成功过），
    * 才退回条目级 transcribe——那种情况下本来就必须跑 ASR。
    */
-  const onPickOrganizeStyle = useCallback((styleKey: string) => {
+  const onPickOrganizeStyle = useCallback((styleKey: string, customPrompt?: string) => {
     if (!entryId || running) return;
     void (async () => {
       const prior = await getLatestAgentRun(entryId, 'transcribe', { status: 'done', requireOutput: true });
       const priorRunId = prior.success ? (prior.data?.id ?? '') : '';
+      // 自定义那一条带着用户写的要求走同一条链路；空要求不当自定义处理
+      const style = { styleKey, customPrompt: customPrompt?.trim() || undefined };
       const res = priorRunId
-        ? await restyleTranscribeRun(priorRunId, { styleKey })
-        : await transcribeEntry(entryId, { styleKey });
+        ? await restyleTranscribeRun(priorRunId, style)
+        : await transcribeEntry(entryId, style);
       if (!res.success) {
         toast.error(res.error?.message || '发起整理失败');
         return;

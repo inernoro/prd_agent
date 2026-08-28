@@ -388,11 +388,21 @@ export function TranscribeStatusCard({
     if (Notification.permission === 'granted') { setNotifyState('armed'); return; }
     void Notification.requestPermission().then(result => setNotifyState(result === 'granted' ? 'armed' : 'denied'));
   };
-  // run 一转终态就把那条通知发出去（只发一次）
+  /*
+   * run 一转终态就把那条通知发出去（只发一次）。
+   *
+   * 「转终态」必须是**亲眼看到的那一次翻转**：先看到它在跑，之后才看到它不跑了。
+   * 光判 `!processing` 不行——「完成后通知我」这颗按钮长在失败卡上，而失败卡本来就
+   * 只在不处理时才出现，于是点下去当场就弹一条「有新进展」，其实什么都没完成
+   * （Codex P2 抓到的正是这条）。用户重试之后 processing 会再翻上去，那时这条通知
+   * 才等到它该等的那一刻。
+   */
   const notifiedRef = useRef(false);
+  const sawProcessingRef = useRef(false);
+  useEffect(() => { if (processing) sawProcessingRef.current = true; }, [processing]);
   useEffect(() => {
     if (notifyState !== 'armed' || notifiedRef.current) return;
-    if (processing) return;
+    if (processing || !sawProcessingRef.current) return;
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     notifiedRef.current = true;
     new Notification('录音处理有新进展', { body: audioTitle?.trim() || '这段录音' });

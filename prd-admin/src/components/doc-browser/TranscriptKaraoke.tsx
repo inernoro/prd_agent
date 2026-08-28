@@ -229,7 +229,7 @@ export function TranscriptKaraoke({
    */
   organize?: OrganizeState;
   /** 选了某种整理方式：宿主去发起 restyle。不传就不渲染这一块。 */
-  onPickOrganizeStyle?: (styleKey: string) => void;
+  onPickOrganizeStyle?: (styleKey: string, customPrompt?: string) => void;
 }) {
   const segments = useMemo(() => parseTranscriptSegments(noteMd), [noteMd]);
   // 摘要一直存在 noteMd 里，只是此前没有任何界面读它；纪要与待办都从这里长出来
@@ -966,7 +966,13 @@ export function TranscriptKaraoke({
                       那张卡，却找不到落点（稿面 cap-S11 的「手动标记说话人」）。这里补上入口：
                       直接给这一句指定一个人。
                     */}
-                    {!s.speaker && s.start >= 0 && (
+                    {/*
+                      估算时间轴那一档没有这个能力：`assignTranscriptSegmentSpeaker` 只改
+                      带时间戳的行，纯文本原文一行都匹配不上——输入框收了字却在保存时
+                      被静默丢掉（Codex P2）。收下用户输入却不落盘，比没有这个入口更糟，
+                      所以这一档不摆它。
+                    */}
+                    {!s.speaker && s.start >= 0 && !estimated && (
                       <input
                         value={assignSpeakerDraft}
                         onChange={(event) => setAssignSpeakerDraft(event.target.value)}
@@ -1489,7 +1495,9 @@ export function TranscriptKaraoke({
             <OrganizeStylePanel
               state={organize ?? {}}
               onPick={onPickOrganizeStyle}
-              onCustom={onRestyle}
+              // 自定义要求由面板自己收（写完走同一个 onPick）；此前这里接的是
+              // 「按当前这一种再整理一次」，点下去从不问要求（Codex P2）
+              allowCustom
               // 稿面 B3 在虚线按钮下面画了一张结果卡：小标签写着当前那一种整理方式，
               // 底下是它整理出来的开头一段。它回答的是「我刚点的那一张，产出在哪」——
               // 没有它，「已生成」这个状态就落不到任何看得见的东西上。

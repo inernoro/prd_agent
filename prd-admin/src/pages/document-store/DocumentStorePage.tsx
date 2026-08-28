@@ -1296,13 +1296,6 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     const entryId = selectedEntryId?.trim();
     // 换条目先清空，否则上一条的失败说明会挂在下一条头上
     setTranscribeFailure(null);
-    /*
-     * 在途进度同理，而且更容易被忽略：轮询那头只拦住了「不要把别的录音的 run 写进来」，
-     * 却没管**已经写进来的那一条**。于是从正在转录的 A 切到 B，B 的头上会一直挂着 A 的
-     * 阶段、百分比和原文预览，直到 A 跑完（Codex P1 抓到的正是这条）。
-     * 换条目就先摘掉；属于新选中这条的 run 会由下面的 recover 立刻接回来。
-     */
-    setActiveTranscribeRun(null);
     if (!entryId) return;
     let cancelled = false;
     let recovered = false;
@@ -2696,8 +2689,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
           transcribeFailure={transcribeFailure}
-          // 再加一道渲染期的门：state 清理漏了任何一条路径，这里都不会把别的录音的
-          // 进度画到当前这一屏上（判据只认「这条 run 的源条目就是选中的这条」）
+          /*
+           * 「别把 A 的进度画到 B 头上」这件事在**渲染期**判，不在 state 里清
+           * （Codex P1 给的两条修法里的第二条）。清 state 那条走不通：换条目时先清、
+           * 再由 recover 异步接回来，中间这张卡会卸载一次又挂回来——录音刚结束那一屏
+           * 因此闪一下，发布门禁抓到的正是这一下（元素 detach + 首个可用结果超时）。
+           * 判据只认「这条 run 的源条目就是选中的这条」，不满足就不画，state 留着无害。
+           */
           transcribeRun={activeTranscribeRun && activeTranscribeRun.sourceEntryId === selectedEntryId ? {
             ...activeTranscribeRun,
             // 后端在写入阶段才把原文落到 transcriptText；有几句给几句，
