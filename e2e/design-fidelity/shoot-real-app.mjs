@@ -775,3 +775,6 @@ fs.writeFileSync(`${OUT}/manifest.json`, JSON.stringify(manifest, null, 2));
 console.log(`\n场景 ${ACTIVE.length} 个 · 截图 ${manifest.length} 张 · 问题 ${problems.length}`);
 if (problems.length) console.log(problems.map(p => '  ! ' + p).join('\n'));
 await browser.close();
+// 问题清单写完就要影响退出码：只打印不改状态，调用方（CI / 上游脚本）会把
+// 「被踢到登录页」「期望文案没出现」当成取证成功，拿一批错证据继续往下判。
+if (problems.length) process.exitCode = 1;

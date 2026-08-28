@@ -20,17 +20,47 @@ export const RECORDING_PLAY_REQUEST_EVENT = 'map:recording-play-request';
  */
 export const RECORDING_DURATION_EVENT = 'map:recording-duration';
 
-/** 请求播放当前这段录音。没有播放器在监听时是安全的空操作。 */
+/*
+ * 「进入结果页并开始播放」这一下，请求会早于播放器挂载：发事件那一刻还没有人订阅。
+ * 此前靠 `setTimeout(120)` 等播放器挂上来，代价是把用户手势的活跃期一起等没了——
+ * 移动端 Safari 于是拒掉 play()，界面退成「无法播放 + 下载兜底」，而那段录音其实好好的。
+ *
+ * 改成一个只活 REQUEST_TTL_MS 的闩：没人在听就先记下，播放器一订阅立刻消费掉。
+ * 调用方因此可以在手势那一拍里同步发出请求，不必等。
+ */
+const REQUEST_TTL_MS = 15_000;
+let listenerCount = 0;
+let pendingRequestAt = 0;
+
+/** 请求播放当前这段录音。播放器还没挂上来时会被闩住，等它订阅时补发一次。 */
 export function requestRecordingPlay(): void {
   if (typeof window === 'undefined') return;
+  if (listenerCount === 0) pendingRequestAt = Date.now();
   window.dispatchEvent(new CustomEvent(RECORDING_PLAY_REQUEST_EVENT));
 }
 
-/** 播放器订阅播放请求；返回退订函数。 */
+/** 播放器订阅播放请求；返回退订函数。订阅时会消费掉挂载前发出的那一次请求。 */
 export function onRecordingPlayRequest(handler: () => void): () => void {
   if (typeof window === 'undefined') return () => undefined;
   window.addEventListener(RECORDING_PLAY_REQUEST_EVENT, handler);
-  return () => window.removeEventListener(RECORDING_PLAY_REQUEST_EVENT, handler);
+  listenerCount += 1;
+  // 闩只补发一次，且过期不补：十几秒前那一下再响，用户已经不记得是自己点的了
+  if (pendingRequestAt > 0 && Date.now() - pendingRequestAt <= REQUEST_TTL_MS) {
+    pendingRequestAt = 0;
+    handler();
+  } else if (pendingRequestAt > 0) {
+    pendingRequestAt = 0;
+  }
+  return () => {
+    window.removeEventListener(RECORDING_PLAY_REQUEST_EVENT, handler);
+    listenerCount = Math.max(0, listenerCount - 1);
+  };
+}
+
+/** 仅供测试：清掉闩与订阅计数，避免用例之间互相串。 */
+export function __resetRecordingPlayBridge(): void {
+  listenerCount = 0;
+  pendingRequestAt = 0;
 }
 
 /** 播放器把它读到的音频时长（秒）广播出去。 */

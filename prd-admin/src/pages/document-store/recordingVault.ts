@@ -467,6 +467,14 @@ export function splitPartialTranscript(text: string | null | undefined, max = 3)
   return (text ?? '').split('\n').map(line => line.trim()).filter(Boolean).slice(0, max);
 }
 
+/**
+ * 整篇原文有多少句。切句口径与 splitPartialTranscript 同源，只是不截断——
+ * 界面上那句「原文 N 句」数的是整篇，拿预览数组的长度去数会永远停在 2、3 句。
+ */
+export function countTranscriptSentences(text: string | null | undefined): number {
+  return splitPartialTranscript(text, Number.MAX_SAFE_INTEGER).length;
+}
+
 function openDb(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
     try {

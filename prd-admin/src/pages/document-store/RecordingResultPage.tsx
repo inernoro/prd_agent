@@ -229,20 +229,19 @@ export function RecordingResultPage() {
 
   /*
    * `?play=1` 是「进入结果页并开始播放」那一下的后半段。
-   * 起播必须发生在这一屏、并且要等播放器真的挂上来——上一屏先播会造成
-   * 「声音已经在响、画面还在旧页」。播放器订阅这条通道，没挂好时这一发是空操作，
-   * 所以要等内容就绪之后再发（依赖里带上 state.kind）。
+   * 起播必须发生在这一屏——上一屏先播会造成「声音已经在响、画面还在旧页」。
+   *
+   * 这里**不再 setTimeout 等播放器挂载**：那 120ms 把用户手势的活跃期一起等没了，
+   * 移动端 Safari 于是拒掉 play()，好好的录音被显示成「无法播放」。窄通道自己带闩
+   * （挂载前发的请求会在播放器订阅时补发），所以这一发同步发出即可。
    */
   const [searchParams, setSearchParams] = useSearchParams();
   const wantsAutoplay = searchParams.get('play') === '1';
   useEffect(() => {
     if (!wantsAutoplay || state.kind !== 'ready') return;
-    const timer = window.setTimeout(() => {
-      requestRecordingPlay();
-      // 用掉就把参数擦掉：留着的话刷新一次又会自己响一遍，那不是用户点的
-      setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('play'); return next; }, { replace: true });
-    }, 120);
-    return () => window.clearTimeout(timer);
+    requestRecordingPlay();
+    // 用掉就把参数擦掉：留着的话刷新一次又会自己响一遍，那不是用户点的
+    setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('play'); return next; }, { replace: true });
   }, [setSearchParams, state.kind, wantsAutoplay]);
 
   /*

@@ -28,6 +28,7 @@ import {
 } from '@/components/doc-browser/recordingPlayBridge';
 import {
   describeFailedTranscription,
+  countTranscriptSentences,
   splitPartialTranscript,
   type FailedTranscriptionNotice,
 } from '@/pages/document-store/recordingVault';
@@ -151,7 +152,7 @@ export function RecordingProcessingPage() {
     [run?.transcriptText],
   );
   const generatedSentences = useMemo(
-    () => splitPartialTranscript(run?.transcriptText, 9999).length,
+    () => countTranscriptSentences(run?.transcriptText),
     [run?.transcriptText],
   );
 

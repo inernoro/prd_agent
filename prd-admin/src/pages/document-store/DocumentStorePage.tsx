@@ -189,6 +189,7 @@ import {
   bindBackgroundTranscriptionSource,
   describeBackgroundTranscriptionBanner,
   stalledTranscriptionNotice,
+  countTranscriptSentences,
   splitPartialTranscript,
   type FailedTranscriptionNotice,
   decideVaultServerRecovery,
@@ -2705,6 +2706,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               .map(line => line.trim())
               .filter(Boolean)
               .slice(0, 3),
+            // 「原文 N 句」数整篇，不数上面这三句预览
+            transcriptSentenceCount: countTranscriptSentences(activeTranscribeRun.transcriptText),
           } : null}
           onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);

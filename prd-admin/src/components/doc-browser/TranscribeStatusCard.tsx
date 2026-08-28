@@ -90,6 +90,8 @@ export type TranscribeStatusRun = {
   createdAt?: string;
   /** 已经生成出来的原文前几句（有就显示，没有就渲染骨架） */
   transcriptPreview?: string[];
+  /** 整篇原文的句数。预览只截前几句，界面上的「N 句」必须数这个 */
+  transcriptSentenceCount?: number;
 };
 
 /** 秒级心跳：处理中与倒计时两档都要「持续在动」，静止超过 2 秒即体验缺陷。 */
@@ -342,8 +344,13 @@ export function TranscribeStatusCard({
     sizeLabel: audioSizeLabel,
     durationLabel,
     elapsedLabel: audioStageElapsed,
-    // 已经吐出来的句数：优先用调用方数过的真数，没有就退回预览行数
-    generatedSentences: generatedSentences ?? transcriptPreview?.length ?? 0,
+    /*
+      已经吐出来的句数只认「数过整篇」的两路：调用方直接给的 generatedSentences，
+      或 run 上带的 transcriptSentenceCount。**不退回预览行数**——预览被截到前
+      两三句，退回去等于把「原文 132 句」永远说成「原文 2 句」。数不出来给 0，
+      上面的分支会把这段省掉，不摆一个假数。
+    */
+    generatedSentences: generatedSentences ?? activeRun?.transcriptSentenceCount ?? 0,
   });
   const processing = stages !== null;
   // 失败卡只在没有在途 run 时出现：又在跑又说失败，等于同屏两句互相打脸

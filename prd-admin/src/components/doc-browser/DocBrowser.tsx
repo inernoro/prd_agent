@@ -4014,7 +4014,7 @@ export function DocBrowser({
                       ? new Date(selectedEntryData.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
                       : null}
                     transcriptPreview={transcribeRun?.transcriptPreview}
-                    generatedSentences={transcribeRun?.transcriptPreview?.length}
+                    generatedSentences={transcribeRun?.transcriptSentenceCount}
                     /*
                       转录跑完那条绿卡（稿面 v2-S3 / cap-S5）的口径全部数自这份原文本身：
                       句数、说话人数、有没有纪要与待办。数不出来（还没加载到原文）就传 null，

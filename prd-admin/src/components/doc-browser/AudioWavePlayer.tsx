@@ -138,6 +138,10 @@ export function AudioWavePlayer({
   const [duration, setDuration] = useState(0);
   const [rateIdx, setRateIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // 自动起播被拦下：不是故障，只是差一下手势。控件照常留着，旁边补一句说明
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  // 起播函数定义在下面（要读 state setter），跳播与窄通道通过这个 ref 拿到最新一份
+  const startPlaybackRef = useRef<((audio: HTMLAudioElement, fromUserGesture: boolean) => void) | null>(null);
 
   // useEffect 仅依赖 src — 避免回调引用变化导致播放器反复销毁重建
   useEffect(() => {
@@ -205,7 +209,7 @@ export function AudioWavePlayer({
     // 点歌词跳播：seek 到目标秒；暂停态下自动继续播（音乐 App 心智）
     registerSeekRef.current?.((sec) => {
       audio.currentTime = sec;
-      if (audio.paused) void audio.play().catch(() => setError('当前浏览器无法播放这段录音'));
+      if (audio.paused) startPlaybackRef.current?.(audio, true);
     });
     audio.load();
 
@@ -223,10 +227,35 @@ export function AudioWavePlayer({
     onRateChangeRef.current?.(`${PLAYBACK_RATES[rateIdx].toFixed(1)}×`);
   }, [rateIdx]);
 
+  /*
+   * play() 被拒有两种，混成一种会把能播的录音判死：
+   *   - NotAllowedError：浏览器拦下了**没有手势的**起播（移动端 Safari 的常态）。
+   *     这段录音本身好好的，点一下播放键就能响，所以控件必须留在原地，
+   *     只补一句「点播放键继续」。此前它走的是下面那条致命分支，整个播放器被换成
+   *     红底「无法播放 + 下载原录音」——用户看到的是「坏了」，其实只是没点。
+   *   - AbortError：上一次 play() 还没落地就被 pause()/load() 打断，属于正常竞态。
+   * 其余才是真的播不了（编码不支持、资源取不到），才给下载兜底。
+   */
+  const startPlayback = (audio: HTMLAudioElement, fromUserGesture: boolean) => {
+    void audio.play().then(() => setAutoplayBlocked(false)).catch((err: unknown) => {
+      const name = (err as { name?: string } | null)?.name ?? '';
+      if (name === 'AbortError') return;
+      if (name === 'NotAllowedError') {
+        // 手势里还被拦，说明是这台设备的策略问题，也不该换成下载兜底：仍旧提示点一下
+        setAutoplayBlocked(true);
+        return;
+      }
+      if (fromUserGesture) setError('当前浏览器无法播放这段录音');
+      else setAutoplayBlocked(true);
+    });
+  };
+
+  startPlaybackRef.current = startPlayback;
+
   const togglePlay = () => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) void audio.play().catch(() => setError('当前浏览器无法播放这段录音'));
+    if (audio.paused) startPlayback(audio, true);
     else audio.pause();
   };
 
@@ -237,7 +266,7 @@ export function AudioWavePlayer({
   useEffect(() => onRecordingPlayRequest(() => {
     const audio = audioRef.current;
     if (!audio || !audio.paused) return;
-    void audio.play().catch(() => setError('当前浏览器无法播放这段录音'));
+    startPlaybackRef.current?.(audio, false);
   }), []);
 
   // 加载失败时给出明确说明与可恢复的下载路径，避免一个无反应的播放按钮。
@@ -435,6 +464,11 @@ export function AudioWavePlayer({
             </div>
           </div>
           {/* 说明行跟着时间列走，与时间左对齐；摊成整行贴到最左会让它和时间脱组 */}
+          {autoplayBlocked && (
+            <p className="mt-0.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+              浏览器拦下了自动播放，点一下播放键即可继续
+            </p>
+          )}
           {caption && (
             <p className="mt-0.5 truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>{caption}</p>
           )}
