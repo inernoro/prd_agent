@@ -5622,6 +5622,16 @@
   color: hsl(var(--foreground));
 }
 
+/* 角色常用分类：排在最前之外还要看得出来，否则用户只会以为顺序随机。 */
+.cds-agent-mission-categories button[data-role-focused='true']::before {
+  width: 0.35rem;
+  height: 0.35rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  content: '';
+}
+
 .cds-agent-mission-categories button small {
   display: grid;
   min-width: 1.25rem;

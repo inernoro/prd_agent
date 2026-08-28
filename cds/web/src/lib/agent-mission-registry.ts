@@ -805,6 +805,50 @@ export function getAgentMissionsForCategory(
   return sortMissionsForRole(missions, roleId);
 }
 
+/** 判断某个分类里是否含有该角色的首屏任务。 */
+export function isRoleFocusedCategory(
+  missions: AgentMissionDefinition[],
+  roleId: AgentRoleId | undefined,
+  categoryId: AgentMissionCategoryId,
+): boolean {
+  if (!roleId) return false;
+  return missions.some(
+    (mission) => mission.categoryId === categoryId && isRoleFocusedMission(roleId, mission.id),
+  );
+}
+
+/**
+ * 按角色排序分类：含该角色首屏任务的分类排前面，并按其中排位最高的那个任务定序；
+ * 其余分类保持注册表原顺序跟在后面。不做过滤。
+ *
+ * 只排任务不排分类是不够的：任务条一次只渲染**一个**分类的内容，分类由用户所在
+ * 页面决定。若分类条不参与角色排序，产品经理从一个不含 preview-diagnostics /
+ * reports / release 的分类进来，界面会一边写着「已按产品经理把常用任务排到前面」
+ * 一边只显示旧分类——承诺与所见不符。
+ */
+export function sortCategoriesForRole(
+  categories: AgentMissionCategoryDefinition[],
+  missions: AgentMissionDefinition[],
+  roleId?: AgentRoleId,
+): AgentMissionCategoryDefinition[] {
+  if (!roleId) return categories;
+  const focus = AGENT_MISSION_ROLE_FOCUS[roleId] || [];
+  const rank = (category: AgentMissionCategoryDefinition): number => {
+    const ranks = missions
+      .filter((mission) => mission.categoryId === category.id)
+      .map((mission) => focus.indexOf(mission.id))
+      .filter((index) => index !== -1);
+    return ranks.length ? Math.min(...ranks) : Number.MAX_SAFE_INTEGER;
+  };
+  return categories
+    .map((category, index) => ({ category, index }))
+    .sort((a, b) => {
+      const diff = rank(a.category) - rank(b.category);
+      return diff !== 0 ? diff : a.index - b.index;
+    })
+    .map((entry) => entry.category);
+}
+
 /**
  * 该角色在指定作用域下的首屏任务，按角色表顺序返回。
  * 用于「按你的角色推荐」那一组，作用域不匹配的任务自动落选。

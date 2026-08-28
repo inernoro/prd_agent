@@ -125,10 +125,13 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
   // 不再是这个组件私有的一次性选择。
   const [roleSelection, setRoleSelection] = useAgentRoleSelection()
   const { experienceId, roleId } = roleSelection
+  // 只选经验时保持 declared 原样：此时 roleId 还是默认值，用户并没有选过角色。
+  // 若在这里顺手置真，第一步选完经验就关掉向导的人，会在任务清单上看到
+  // 按「产品经理」排序并标注的推荐——一个他从没做过的声明。
   const setExperienceId = (next: AgentExperienceId): void =>
     setRoleSelection({ ...roleSelection, experienceId: next })
   const setRoleId = (next: AgentRoleId): void =>
-    setRoleSelection({ ...roleSelection, roleId: next })
+    setRoleSelection({ ...roleSelection, roleId: next, declared: true })
   const [skills, setSkills] = useState<StarterSkill[]>(FALLBACK_SKILLS)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [showSkillLibrary, setShowSkillLibrary] = useState(false)

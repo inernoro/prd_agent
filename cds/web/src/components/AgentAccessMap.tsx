@@ -41,7 +41,9 @@ import {
   getAgentMissionCategoriesForScope,
   getAgentMissionDefinition,
   getAgentMissionsForCategory,
+  isRoleFocusedCategory,
   isRoleFocusedMission,
+  sortCategoriesForRole,
   sortMissionsForRole,
   PROJECT_AGENT_CONTEXT_IDS,
   SYSTEM_AGENT_CONTEXT_IDS,
@@ -161,8 +163,20 @@ export function AgentAccessMap({
   const draftSelectionCode = selectionCode(draftSelection, projects);
   const draftScope = missionScopeForSelection(draftSelection);
   const allDraftMissions = sortMissionsForRole(missionsForSelection(draftSelection), roleId);
-  const draftCategories = getAgentMissionCategoriesForScope(draftScope)
-    .filter((category) => allDraftMissions.some((mission) => mission.categoryId === category.id));
+  // 分类条也要按角色排：任务条一次只渲染一个分类，分类顺序不动的话，
+  // 角色排序只在用户恰好停在的那个分类内部生效，横幅的承诺就落空了。
+  const draftCategories = sortCategoriesForRole(
+    getAgentMissionCategoriesForScope(draftScope)
+      .filter((category) => allDraftMissions.some((mission) => mission.categoryId === category.id)),
+    allDraftMissions,
+    roleId,
+  );
+  // 声明了角色不等于这个作用域里排序真的动了：开发的首屏任务全是项目级的，
+  // 在「CDS 控制中枢」这一侧一条都命不中，此时若照样宣称「已按开发重排」，
+  // 就是横幅说了一件界面上没发生的事。没命中就不提排序。
+  const roleAffectsOrder = roleId
+    ? allDraftMissions.some((mission) => isRoleFocusedMission(roleId, mission.id))
+    : false;
   const effectiveCategoryId = draftCategories.some((category) => category.id === draftCategoryId)
     ? draftCategoryId
     : allDraftMissions[0].categoryId;
@@ -333,7 +347,9 @@ export function AgentAccessMap({
                 <span>
                   <strong>{allDraftMissions.length} 个 Agent 任务</strong>
                   <small>
-                    {roleLabel ? `已按「${roleLabel}」把常用任务排到前面；` : ''}
+                    {roleLabel && roleAffectsOrder
+                      ? `已按「${roleLabel}」重排分类与任务，常用的排在最前；`
+                      : ''}
                     Agent 会先静默检查项目凭据；已有权限时不会重复要求批准。
                   </small>
                   {/* 在这里就能设角色：否则「要用任务排序得先设角色，
@@ -364,12 +380,15 @@ export function AgentAccessMap({
                   {draftCategories.map((category) => {
                     const selected = category.id === effectiveCategoryId;
                     const count = allDraftMissions.filter((mission) => mission.categoryId === category.id).length;
+                    const roleFocused = isRoleFocusedCategory(allDraftMissions, roleId, category.id);
                     return (
                       <button
                         key={category.id}
                         type="button"
                         aria-pressed={selected}
                         data-selected={selected ? 'true' : 'false'}
+                        data-role-focused={roleFocused ? 'true' : 'false'}
+                        title={roleFocused ? `${roleLabel}常用` : undefined}
                         onClick={() => chooseCategory(category.id)}
                       >
                         <span>{category.label}</span>

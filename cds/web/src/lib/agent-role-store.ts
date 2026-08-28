@@ -55,31 +55,36 @@ export function readAgentRoleSelection(): AgentRoleSelection {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_AGENT_ROLE_SELECTION;
     const parsed = JSON.parse(raw) as Partial<AgentRoleSelection>;
-    // 能从存储里读出合法角色，就说明用户当初真的选过；脏记录退回未声明。
     if (!isRoleId(parsed?.roleId)) return DEFAULT_AGENT_ROLE_SELECTION;
     return {
       roleId: parsed.roleId,
       experienceId: isExperienceId(parsed?.experienceId)
         ? parsed.experienceId
         : DEFAULT_AGENT_ROLE_SELECTION.experienceId,
-      declared: true,
+      // 存在合法角色不等于用户选过它：只选了经验也会把默认角色一起落盘。
+      // 声明与否只认落盘时记下的那一位，读的时候不再自行推断。
+      declared: parsed.declared === true,
     };
   } catch {
     return DEFAULT_AGENT_ROLE_SELECTION;
   }
 }
 
-/** 写入并广播。存储失败不影响本次会话内的联动。 */
+/**
+ * 写入并广播。存储失败不影响本次会话内的联动。
+ *
+ * `declared` 原样落盘，不由本函数代为置真：只改经验（此时 roleId 还是默认值）
+ * 也会走这条写入，若在这里强行盖成已声明，用户没选过的默认角色就会被当成
+ * 他的选择，任务清单随即按那个角色排序并标注。声明只能由选角色的动作产生。
+ */
 export function writeAgentRoleSelection(selection: AgentRoleSelection): void {
-  // 写入即声明：调用方无论传什么 declared，落盘和广播的都是已声明。
-  const declaredSelection: AgentRoleSelection = { ...selection, declared: true };
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(declaredSelection));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(selection));
   } catch {
     // 隐私窗口 / 禁站点数据：本次会话仍要联动，只是不持久化。
   }
   try {
-    window.dispatchEvent(new CustomEvent<AgentRoleSelection>(CHANGE_EVENT, { detail: declaredSelection }));
+    window.dispatchEvent(new CustomEvent<AgentRoleSelection>(CHANGE_EVENT, { detail: selection }));
   } catch {
     // 环境不支持 CustomEvent 时退化为「本次不广播」，不抛给调用方。
   }
