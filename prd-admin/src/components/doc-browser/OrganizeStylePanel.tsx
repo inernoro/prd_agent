@@ -66,6 +66,7 @@ export function OrganizeStylePanel({
   state,
   onPick,
   allowCustom,
+  customRequestedAt,
   resultText,
 }: {
   state: OrganizeState;
@@ -82,6 +83,12 @@ export function OrganizeStylePanel({
    */
   allowCustom?: boolean;
   /**
+   * 外部也可以要求展开那个自定义输入框：空态卡上那颗「自定义」按的就是它。
+   * 传一个**每次点击都变**的值（时间戳）即可——它是一次触发，不是开关，
+   * 用布尔的话用户手动关掉输入框之后就再也触发不了第二次。
+   */
+  customRequestedAt?: number;
+  /**
    * 结果卡正文（当前这份摘要的开头一段）；为空时不渲染结果卡。
    * 卡上那个小标签由本组件从注册表里取——宿主不必再传一份方式名，
    * 传了就会和网格上那张卡的名字各自漂移（形状 3）。
@@ -90,6 +97,9 @@ export function OrganizeStylePanel({
 }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
+  useEffect(() => {
+    if (customRequestedAt) setCustomOpen(true);
+  }, [customRequestedAt]);
   const [styles, setStyles] = useState<OrganizeStyle[]>([]);
   useEffect(() => {
     let stale = false;

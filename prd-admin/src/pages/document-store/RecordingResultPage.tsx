@@ -538,11 +538,18 @@ export function RecordingResultPage() {
    */
   const reloadNoteRef = useRef(reloadNote);
   reloadNoteRef.current = reloadNote;
+  /*
+   * 依赖只能是 runId，不能是 running 这个对象：下面每收到一次进度都会 setRunning
+   * 出一个新对象，依赖对象的话这个 effect 每次响应都重建一次——重建时又立刻 tick 一发，
+   * 两秒的轮询于是退化成「以网络往返为周期」的连发（Codex 第八轮 P2，
+   * 与此前整理清单那次无限拉取是同一种形状）。
+   */
+  const runningRunId = running?.runId ?? '';
   useEffect(() => {
-    if (!running) return;
+    if (!runningRunId) return;
     let stale = false;
     const tick = async () => {
-      const res = await getAgentRun(running.runId);
+      const res = await getAgentRun(runningRunId);
       if (stale || !res.success) return;
       const run = res.data;
       if (run.status === 'done') {
@@ -552,13 +559,18 @@ export function RecordingResultPage() {
         setRunning(null);
         toast.error(run.errorMessage || '整理没有完成');
       } else {
-        setRunning(prev => (prev && prev.runId === run.id ? { ...prev, percent: run.progress ?? prev.percent } : prev));
+        // 进度没变就返回同一个对象：没变还换一个新对象，等于让所有读它的地方白重渲染一次
+        setRunning((prev) => {
+          if (!prev || prev.runId !== run.id) return prev;
+          const percent = run.progress ?? prev.percent;
+          return percent === prev.percent ? prev : { ...prev, percent };
+        });
       }
     };
     void tick();
     const timer = window.setInterval(() => { void tick(); }, 2000);
     return () => { stale = true; window.clearInterval(timer); };
-  }, [running]);
+  }, [runningRunId]);
 
   /*
    * 离线期的校对不该被丢掉。稿面 v2-S7 承诺的是「编辑内容排队等待同步，联网后自动上传，
@@ -652,19 +664,28 @@ export function RecordingResultPage() {
     if (!isFlushable(queued, noteIdForFlush, ownerId)) return;
     let alive = true;
     /*
-     * 补传是整篇覆盖写，所以传之前必须先看一眼服务端那份还是不是排队时那份：
-     * 离线期间别的设备（或同事）改过，这一发 PUT 会把他们的新内容整篇盖掉，
-     * 而两边都不会有任何提示（Codex P1）。改过就不传，把决定权交回用户——
-     * 横幅上给一颗「仍然用我的版本覆盖」，按了才覆盖。
+     * 补传是整篇覆盖写，传之前要先确认服务端那份还是不是排队时那份：离线期间别的设备
+     * （或同事）改过的话，这一发 PUT 会把他们的新内容整篇盖掉，而两边都没有任何提示。
+     * 改过就不传，把决定权交回用户——横幅上给「仍然用我的版本覆盖」与「丢弃」两颗。
+     *
+     * 「读版本 + 决定写不写」必须**整段**进写链，不能只把 PUT 放进去：读版本这一下是
+     * 异步的，期间用户在线存了新的一版，那一版会先进链先落地，而这份旧草稿随后才排进去，
+     * 照样把新内容盖掉——后面的 savedAt 判断只能拦住「盖完之后别再清队列」，
+     * 拦不住那次覆盖本身（Codex 第七、八两轮各抓到这条链的一段）。
      */
-    void (async () => {
+    const skipped = { success: false } as Awaited<ReturnType<typeof updateDocumentContent>>;
+    void enqueueWrite(async () => {
+      if (!alive) return skipped;
+      // 排到队时这份草稿可能已经被一次在线保存作废了（那次保存会清空队列）
+      if (pendingRef.current?.savedAt !== queued!.savedAt) return skipped;
       const remote = await getDocumentEntry(noteIdForFlush);
-      if (!alive) return;
+      if (!alive) return skipped;
       if (remote.success && hasRemoteChangedSince(queued, remote.data?.updatedAt)) {
         setFlushConflict(true);
-        return;
+        return skipped;
       }
-      const res = await enqueueWrite(() => updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown'));
+      return updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown');
+    }).then((res) => {
       if (!alive) return;
       if (!res.success) return;
       // 补传期间用户又在线存了新的一版：那一版已经把队列清了，这里不能再清一次
@@ -674,7 +695,7 @@ export function RecordingResultPage() {
       setPendingEdits(null);
       setQueueVolatile(false);
       toast.success(`已补传 ${queued!.count} 处离线校对`);
-    })();
+    });
     return () => { alive = false; };
     /*
      * 依赖里必须带上 `pendingEdits`：本机存着的队列是上面那个 effect 恢复出来的，

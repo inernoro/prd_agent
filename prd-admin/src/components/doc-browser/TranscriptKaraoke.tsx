@@ -95,6 +95,9 @@ const SECTION_CARD_STYLE: React.CSSProperties = {
  * 找到真正在滚的那个祖先容器。找不到就返回 null（= 用视口，那是正确的兜底：
  * 整页滚动时视口本来就是滚动容器）。
  */
+/** 折叠状态翻转之后的静默期：滚动锚定补偿 scrollTop 的那一下发生在这段时间里 */
+const COLLAPSE_SETTLE_MS = 300;
+
 function nearestScrollParent(el: HTMLElement): HTMLElement | null {
   let node = el.parentElement;
   while (node) {
@@ -262,6 +265,13 @@ export function TranscriptKaraoke({
   const [editDraft, setEditDraft] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [keyword, setKeyword] = useState('');
+  /*
+   * 空态卡上那颗「自定义」要落到整理面板里的自定义输入框上：一个是触发时刻（每点一次都变，
+   * 面板据此展开输入框），一个是面板容器的 ref（按下之后把它滚进视野，否则用户按了
+   * 只看见页面没反应——输入框在上面几屏之外）。
+   */
+  const [customRequestedAt, setCustomRequestedAt] = useState(0);
+  const organizePanelRef = useRef<HTMLDivElement | null>(null);
   const [renamingSpeaker, setRenamingSpeaker] = useState<string | null>(null);
   const [speakerDraft, setSpeakerDraft] = useState('');
   const [question, setQuestion] = useState('');
@@ -538,6 +548,20 @@ export function TranscriptKaraoke({
     同屏那一幕，那一屏根本摆不下展开态的播放区。
   */
   const playerCollapsed = scrolledPastPlayer || editingIndex !== null;
+  /*
+   * 折叠腾出播放区那一截高度，浏览器的滚动锚定会把 scrollTop 往回补同样一截，
+   * 好让用户正在读的那一段留在原处。代价是：哨兵也跟着往下挪，于是刚判完「该折叠」
+   * 立刻又读到「该展开」，展开再把内容变高、锚定又补回去——两者互为因果，无限来回。
+   *
+   * 发布门禁里量到的原始数据（同一屏、用户一下都没滚）：
+   *   展开态 哨兵 top=47 / 阈值 61 → 判折叠；折叠后锚定把 top 推到 232 → 判展开；
+   *   scrollTop 在 473 与 288 之间来回，差值 185 正是播放区的高度，周期约 0.5 秒。
+   * 用户看到的是迷你条在频闪，自动化点它则永远点不中（Playwright 判「元素不稳定」）。
+   *
+   * 判据本身没写错，错的是它读的那一拍：紧跟在**自己造成的位移**之后。所以翻过一次之后
+   * 给一小段静默期，把那一次位移让过去；用户真的再滚，观察器还会再报，不影响正常折叠。
+   */
+  const collapseSettleUntilRef = useRef(0);
   useEffect(() => {
     const sentinel = collapseSentinelRef.current;
     if (!documentMode || !sentinel || typeof IntersectionObserver === 'undefined') return;
@@ -548,7 +572,14 @@ export function TranscriptKaraoke({
         // 于是一进屏就判折叠——播放器从来没展开过。
         // 判据必须区分「滚上去了」和「还没滚到」，这两件事的 isIntersecting 都是 false。
         const rootTop = entry.rootBounds?.top ?? 0;
-        setScrolledPastPlayer(!entry.isIntersecting && entry.boundingClientRect.top < rootTop);
+        const next = !entry.isIntersecting && entry.boundingClientRect.top < rootTop;
+        setScrolledPastPlayer((prev) => {
+          if (next === prev) return prev;
+          const now = typeof performance === 'undefined' ? Date.now() : performance.now();
+          if (now < collapseSettleUntilRef.current) return prev;
+          collapseSettleUntilRef.current = now + COLLAPSE_SETTLE_MS;
+          return next;
+        });
       },
       { root: nearestScrollParent(sentinel), rootMargin: '0px', threshold: 0 },
     );
@@ -1492,9 +1523,12 @@ export function TranscriptKaraoke({
             整理方式清单来自后端注册表，不在前端另抄一份。
           */}
           {showPanel('summary') && onPickOrganizeStyle && (
+            <div ref={organizePanelRef}>
             <OrganizeStylePanel
               state={organize ?? {}}
               onPick={onPickOrganizeStyle}
+              // 空态那颗「自定义」按下去要落到这个输入框上（见下方注释）
+              customRequestedAt={customRequestedAt}
               // 自定义要求由面板自己收（写完走同一个 onPick）；此前这里接的是
               // 「按当前这一种再整理一次」，点下去从不问要求（Codex P2）
               allowCustom
@@ -1503,6 +1537,7 @@ export function TranscriptKaraoke({
               // 没有它，「已生成」这个状态就落不到任何看得见的东西上。
               resultText={organizeLede}
             />
+            </div>
           )}
           {showPanel('summary') && (
             <section style={{ scrollMarginTop: 100 }}>
@@ -1561,10 +1596,24 @@ export function TranscriptKaraoke({
                           生成智能摘要
                         </button>
                       )}
-                      {onRestyle && (
+                      {/*
+                        这颗写着「自定义」，就必须真的去问要求。此前它一律接 onRestyle——
+                        在结果页那等于「按当前这一种再跑一次」，从不问要求，按钮名不副实
+                        （Codex P2）。上面那块整理面板已经有自定义输入框，这里把它展开并滚过去；
+                        只有在没有整理面板的调用方（阅读器侧，onRestyle 打开的是完整的整理向导）
+                        才退回 onRestyle。
+                      */}
+                      {(onPickOrganizeStyle || onRestyle) && (
                         <button
                           type="button"
-                          onClick={onRestyle}
+                          onClick={() => {
+                            if (onPickOrganizeStyle) {
+                              setCustomRequestedAt(Date.now());
+                              organizePanelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                              return;
+                            }
+                            onRestyle?.();
+                          }}
                           className="flex min-h-11 cursor-pointer items-center justify-center rounded-full px-4 text-[13px] font-semibold"
                           style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
                         >

@@ -50,7 +50,9 @@ describe('结果页把回调接给了跟读组件（不接就整块消失）', (
 
   it('整理是发起真实 run 并轮询到终态，不是点完就当它成了', () => {
     expect(PAGE).toContain('transcribeEntry(entryId');
-    expect(PAGE).toContain('getAgentRun(running.runId)');
+    // 认「拿在途 run 的 id 去查」这件事，不认它此刻叫 running.runId 还是 runningRunId——
+    // 钉逐字写法的话，把依赖从对象改成 id（修那次轮询连发）就会让这条无辜变红
+    expect(PAGE).toMatch(/getAgentRun\(running/);
     expect(PAGE).toMatch(/run\.status === 'done'/);
   });
 });
