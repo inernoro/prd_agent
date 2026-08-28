@@ -318,12 +318,10 @@ public class HomepageAssetsController : ControllerBase
             return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(rec)));
         }
 
-        // 上一版是手工上传的（我们自己持有那个对象）才去删；引用生图产物的不删
-        if (!string.IsNullOrWhiteSpace(existing.RelativePath))
-        {
-            try { await _assetStorage.DeleteByKeyAsync(existing.RelativePath, ct); }
-            catch (Exception ex) { _logger.LogWarning("Failed to delete old homepage asset {Key}: {Msg}", existing.RelativePath, ex.Message); }
-        }
+        // 上一版是手工上传的（我们自己持有那个对象）才去删；引用生图产物的不删。
+        // **删除必须排在库里切换成功之后**：先删后写的话，中间一旦取消或写库失败，
+        // 记录还指着一个已经不存在的对象，首页那一格就此变成裂图，而这次认领是失败的。
+        var staleKey = existing.RelativePath;
 
         await _db.HomepageAssets.UpdateOneAsync(
             x => x.Id == existing.Id,
@@ -335,6 +333,14 @@ public class HomepageAssetsController : ControllerBase
                 .Set(x => x.Prompt, string.IsNullOrWhiteSpace(prompt) ? null : prompt)
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
+
+        // 切换已经落库，这时候删旧对象才安全；删失败也只是留个孤儿，不会让首页裂图。
+        // 用 CancellationToken.None：请求这时已经成功了，客户端断开不该把清理掐掉。
+        if (!string.IsNullOrWhiteSpace(staleKey))
+        {
+            try { await _assetStorage.DeleteByKeyAsync(staleKey, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogWarning("Failed to delete old homepage asset {Key}: {Msg}", staleKey, ex.Message); }
+        }
 
         existing.RelativePath = string.Empty;
         existing.Url = imageUrl;
@@ -464,8 +470,9 @@ public class HomepageAssetsPublicController : ControllerBase
                 Url = x.Url,
                 Mime = x.Mime,
                 SizeBytes = x.SizeBytes,
-                UpdatedAt = x.UpdatedAt,
-                Prompt = x.Prompt
+                UpdatedAt = x.UpdatedAt
+                // 不带 Prompt：这个端点只挡了登录，任何登录用户都能拉。提示词是管理员
+                // 写的，管理端自己走 /api/assets/homepage/list（带 assets.read 门）能拿到。
             });
         return Ok(ApiResponse<Dictionary<string, HomepageAssetDto>>.Ok(map));
     }

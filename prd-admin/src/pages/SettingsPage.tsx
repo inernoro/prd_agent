@@ -301,8 +301,12 @@ export default function SettingsPage() {
 
     const hasPerm = (perm: string) => isRoot || perms.includes(perm) || perms.includes('super');
     if (hasPerm('assets.read')) list.push({ key: 'assets', label: '资源管理', icon: <Image size={14} /> });
-    // 生成会写 slot，所以按写权限收口（只读的人看到一屏点不动的按钮没有意义）
-    if (hasPerm('assets.write')) list.push({ key: 'landing-preview', label: '首页预览图', icon: <ImagePlus size={14} /> });
+    // 这一屏要三样权限齐了才成立：读 slot 列表（assets.read）、写 slot（assets.write）、
+    // 调生图（visual-agent.use，ImageGenController 就是这个门）。只给写权限的话，
+    // 入口露出来了、列表拉不到、模型也拉不到，用户看到的是「没配模型」+ 一点就失败。
+    if (hasPerm('assets.read') && hasPerm('assets.write') && hasPerm('visual-agent.use')) {
+      list.push({ key: 'landing-preview', label: '首页预览图', icon: <ImagePlus size={14} /> });
+    }
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
     list.push({ key: 'infra-services', label: '基础设施服务', icon: <Server size={14} /> });
