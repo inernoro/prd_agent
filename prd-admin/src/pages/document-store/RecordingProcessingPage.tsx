@@ -119,8 +119,20 @@ export function RecordingProcessingPage() {
   useEffect(() => {
     if (!entryId) return;
     let stale = false;
+    /*
+     * 换条目时**先清空**：这一屏是同一条路由换参数，React 会复用组件而不是重挂，
+     * 旧的 audioUrl 会一直留到新的取回来为止；取不回来就永远留着。
+     * 后果不是显示错了一个数，而是**这一屏在放上一条录音的声音**，而标题与路由
+     * 已经是新的那条了（Codex 第二十三轮 P1）。
+     */
+    setAudioUrl('');
+    audioRef.current?.pause();
     void getDocumentContent(entryId).then((res) => {
-      if (stale || !res.success) return;
+      if (stale) return;
+      if (!res.success) {
+        toast.error('这段录音的音频没能取到', '可以稍后刷新这一页再试');
+        return;
+      }
       setAudioUrl(res.data?.fileUrl ?? '');
     });
     return () => { stale = true; };
@@ -201,32 +213,35 @@ export function RecordingProcessingPage() {
     let missingTicks = 0;
     const MAX_MISSING_TICKS = 60; // 2s × 60 = 2 分钟还没建出 run，就不是「马上要来」了
     /*
-     * 每一发带一个序号，回来时只认最新那一发。查询慢于两秒的间隔时两发会重叠：
-     * 后发的那份是终态、清掉了定时器，先发的那份（还在跑）随后落地又把 run 写回在途——
-     * 此后再没有下一次轮询，这一屏就永远停在一个走不完的进度上（Codex 第二十二轮 P2）。
+     * **串行**：一发回来了才排下一发，不能用 setInterval 定点发。
+     * 这里踩过两次，两次的形态相反，所以把两次都写下来：
+     *   1. 定点发 + 不认回包：查询慢于间隔时两发重叠，后发的终态清掉了定时器，
+     *      先发的随后落地又把 run 写回在途，此后再无轮询，这一屏永远停在走不完的进度上。
+     *   2. 定点发 + 按序号只认最新那发（我上一版的修法）：每一发都慢于间隔时，
+     *      新的一发总在旧的回来之前把序号顶掉，于是**每一发都被丢弃**，
+     *      这一屏永远不显示进度、失败或完成——比第 1 种更糟。
+     * 串行同时消灭这两种：任何时刻最多一发在飞，回来的那份必然是最新的。
      */
-    let seq = 0;
+    const schedule = () => { timer = window.setTimeout(() => { void tick(); }, 2000); };
     const tick = async () => {
-      const mine = ++seq;
       const res = await getLatestAgentRun(entryId, 'transcribe');
-      if (stale || !res.success) return;
-      // 更晚发出的那一发已经回来过了，这份是旧的，丢掉
-      if (mine !== seq) return;
+      if (stale) return;
+      // 这一发失败不代表要收手（可能只是一次抖动），照常排下一发
+      if (!res.success) { schedule(); return; }
       const next = (res.data ?? null) as RunLike | null;
       setRun(next);
       // describeFailedTranscription 自己会从 transcriptText 切出部分原文，这里原样交给它
       setFailure(describeFailedTranscription(next));
       if (!next) {
         missingTicks += 1;
-        if (missingTicks >= MAX_MISSING_TICKS) window.clearInterval(timer);
+        if (missingTicks < MAX_MISSING_TICKS) schedule();
         return;
       }
       missingTicks = 0;
-      if (!isTranscriptionInflight(next.status)) window.clearInterval(timer);
+      if (isTranscriptionInflight(next.status)) schedule();
     };
     void tick();
-    timer = window.setInterval(() => { void tick(); }, 2000);
-    return () => { stale = true; window.clearInterval(timer); };
+    return () => { stale = true; window.clearTimeout(timer); };
   }, [entryId, watchEpoch]);
 
   const transcriptPreview = useMemo(

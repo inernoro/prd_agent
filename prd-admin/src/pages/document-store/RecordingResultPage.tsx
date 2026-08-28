@@ -882,6 +882,12 @@ export function RecordingResultPage() {
    * 最后一个回来的那条（Codex 第九轮 P1）。
    */
   const launchingRef = useRef(false);
+  /*
+   * 这把锁只挡「同一条录音上的连点」，不该跨录音生效：A 的预检还在飞的时候切到 B，
+   * 锁还举着，B 上点任何一种整理都会**静默什么都不发生**，直到 A 那两发回来
+   * （Codex 第二十三轮 P2）。换条目即释放。
+   */
+  useEffect(() => { launchingRef.current = false; }, [entryId]);
   const onPickOrganizeStyle = useCallback((styleKey: string, customPrompt?: string) => {
     if (!entryId || running || launchingRef.current) return;
     launchingRef.current = true;

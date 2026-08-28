@@ -321,15 +321,44 @@ describe('停止看护时把进度位一起腾出来', () => {
 describe('处理页的轮询丢弃过期回包', () => {
   const source = read('pages/document-store/RecordingProcessingPage.tsx');
 
-  it('每一发带序号，回来时先认序号再动状态', () => {
+  /*
+   * 串行，不是定点发。两种坏法都栽过：定点发 + 不认回包 → 慢查询的旧回包把 run 写回在途、
+   * 此后再无轮询；定点发 + 只认最新序号 → 每一发都慢于间隔时每一发都被丢弃，屏上什么都不更新。
+   * 判据认「不存在按固定周期重复触发的定时器」+「下一发是在回包处理完之后才排的」。
+   */
+  it('轮询是串行的：一发回来了才排下一发', () => {
     const fn = source.slice(source.indexOf('const tick = async () => {'));
     const body = fn.slice(0, fn.indexOf('void tick();'));
     expect(body.length).toBeGreaterThan(200);
-    const stamp = body.indexOf('++seq');
-    const gate = body.indexOf('!== seq');
-    const write = body.indexOf('setRun(');
-    expect(stamp).toBeGreaterThan(-1);
-    expect(gate).toBeGreaterThan(stamp);
-    expect(write).toBeGreaterThan(gate);
+    // 周期性定时器一旦回来，重叠与饿死这两种形态就都回来了
+    // 认调用形态（带括号），别把注释里提到它的那句话也算进来
+    expect(source).not.toMatch(/setInterval\(/);
+    // 每条走得通的分支都要么排下一发、要么明确收手
+    expect(body).toContain('schedule();');
+    expect(body.indexOf('schedule();')).toBeGreaterThan(body.indexOf('await getLatestAgentRun'));
+  });
+});
+
+/*
+ * 这两屏都是「同一条路由换参数」——React 复用组件、不重挂，所以凡是绑在条目上的
+ * 状态都必须显式跟着 entryId 复位。漏掉的后果不是显示错一个数：
+ * 音频地址漏了就是**这一屏在放上一条录音的声音**，锁漏了就是新那条上点整理静默无反应。
+ */
+describe('换条目时把绑在上一条身上的状态放掉', () => {
+  it('处理页换条目先清空音频地址并停掉在放的那一条', () => {
+    const source = read('pages/document-store/RecordingProcessingPage.tsx');
+    const fn = source.slice(source.indexOf('const [audioUrl, setAudioUrl]'));
+    const body = fn.slice(0, fn.indexOf('}, [entryId]);'));
+    const clear = body.indexOf("setAudioUrl('')");
+    const fetch_ = body.indexOf('getDocumentContent(');
+    expect(clear).toBeGreaterThan(-1);
+    // 清空必须排在取新地址之前，否则等于没清
+    expect(fetch_).toBeGreaterThan(clear);
+    expect(body).toContain('audioRef.current?.pause()');
+  });
+
+  it('结果页发起整理的锁跟着条目释放，不跨录音卡住', () => {
+    const source = read('pages/document-store/RecordingResultPage.tsx');
+    expect(source).toMatch(/useEffect\(\(\) => \{ launchingRef\.current = false; \}, \[entryId\]\);/);
   });
 });
