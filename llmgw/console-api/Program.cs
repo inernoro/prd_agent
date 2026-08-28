@@ -5280,7 +5280,10 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             { "PredecessorRotationState", BsonNull.Value },
             { "RotatedByKeyId", BsonNull.Value },
             { "RotationState", "active" },
-            { "IssuanceState", "delivered" },
+            // 必须是 "issued"：接入密钥页的列表只取 IssuanceState 缺失或等于 issued 的文档，
+            // 写别的值（比如 "delivered"）这把 key 就在页面上彻底看不见——
+            // 而「看得到系统替你配了什么」正是这一整套设计的前提。
+            { "IssuanceState", "issued" },
             { "SystemManaged", true },
             { "ExpiresAt", BsonNull.Value },
             { "CreatedAt", keyNow },

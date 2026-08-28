@@ -4428,6 +4428,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("IsSystemCredentialFixableCode", consoleApi);
         // 系统密钥不挂在任何人名下：挂了人，那个人一离职这把 key 就跟着死。
         Assert.Contains("{ \"CreatedByUserId\", BsonNull.Value },", consoleApi);
+        // 自签的 key 必须能在接入密钥页看见：列表只收 IssuanceState 缺失或 issued，
+        // 写别的值这把 key 就成了页面上不存在的幽灵凭据。
+        Assert.Contains("{ \"IssuanceState\", \"issued\" },", consoleApi);
         // 模型推的、本地降级的、用户手改的，界面必须分得出来（推断值可见可改可追责）。
         Assert.Contains("codeSource", quickstart);
         // 系统提示词是给用户粘走的产物，绝不能把密钥明文写进去。
