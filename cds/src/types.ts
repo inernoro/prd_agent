@@ -3072,6 +3072,31 @@ export interface GitHubDeviceAuth {
  */
 export type ProjectDeliveryMode = 'managed' | 'compose';
 
+/** 上手助手支持的角色。与 cds/web/src/lib/agent-starter.ts 的 AgentRoleId 同集合。 */
+export type ProjectAgentRoleId = 'pm' | 'owner' | 'domain-expert' | 'dev' | 'qa';
+/** 上手助手支持的经验档。 */
+export type ProjectAgentExperienceId = 'newcomer' | 'experienced';
+
+/**
+ * 项目 Agent 的角色声明。由 CDS 上手助手在生成上手包时写入。
+ *
+ * 存的是「用户声明要用哪个角色」，不是「Agent 实测在用哪个角色」——
+ * 后者要等 cdscli 上报才能确认，所以字段叫 declaredAt 而不是 confirmedAt，
+ * 避免把一次声明读成一次验证。
+ */
+export interface ProjectAgentProfile {
+  role: ProjectAgentRoleId;
+  experience: ProjectAgentExperienceId;
+  /** 声明时选中的技能 key，仅作展示，不驱动任何安装行为。 */
+  skills: string[];
+  /** 该角色的决策卡标题，便于列表直接显示「验收结论卡」这类人话。 */
+  cardTitle?: string;
+  /** ISO 时间戳。 */
+  declaredAt: string;
+  /** 来源，当前只有上手助手一个写入方；预留给后续 cdscli 上报。 */
+  source: 'agent-starter' | 'cdscli';
+}
+
 export interface ManagedCapabilityBinding {
   id: string;
   kind: 'database' | 'cache' | 'assets' | 'identity' | 'secrets';
@@ -3488,6 +3513,17 @@ export interface Project {
    * repo 命名约定 / 评审流程，模板 per-project 更合理。空 body = 用默认。
    */
   commentTemplate?: CommentTemplateSettings;
+  /**
+   * 这个项目的 Agent 以什么角色在跑。
+   *
+   * 上手助手此前把角色写进仓库里的 .cds/bootstrap.json 就结束了——那个文件
+   * 全仓两个写入点、零个读取点，等于 CDS 自己也不知道某个项目的 Agent
+   * 是产品经理还是测试。这里把它记到项目上，让项目选择列表能直接显示，
+   * 排查「这个 Agent 为什么这么回话」时不用去翻仓库文件。
+   *
+   * 只是一份声明，不是权限：它不参与任何鉴权判断，改它不影响 Agent 能做什么。
+   */
+  agentProfile?: ProjectAgentProfile;
   /**
    * PR_C.1 起新增的项目级运营计数。每次部署 / 拉取 / 调试 / AI 操作时
    * 由 StateService 内部 helper 自增。所有字段 optional，未设视作 0。

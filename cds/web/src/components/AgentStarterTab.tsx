@@ -2,31 +2,40 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
   ArrowLeft,
   ArrowRight,
+  Ban,
   BriefcaseBusiness,
   Check,
   ClipboardCopy,
   Code2,
   Download,
+  FileText,
   FlaskConical,
   Layers3,
   PackageCheck,
+  RefreshCw,
   Sparkles,
   UserRound,
   WandSparkles,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AGENT_EXPERIENCE_PROFILES,
   AGENT_ROLE_PROFILES,
   buildAgentStarterHarness,
   buildAgentStarterPrompt,
+  buildRoleCardHarness,
+  buildRoleDecisionCardModel,
+  type AgentDecisionCardModel,
   type AgentExperienceId,
   type AgentRoleId,
 } from '../lib/agent-starter'
+import { useAgentRoleSelection } from '../hooks/useAgentRoleSelection'
 import { apiRequest } from '../lib/api'
 
 interface AgentStarterTabProps {
   cdsPrompt: string
+  /** 目标项目 id；为空表示还没选定既有项目，此时不上报角色。 */
+  projectId?: string
 }
 
 interface StarterSkill {
@@ -109,17 +118,33 @@ function downloadText(filename: string, content: string) {
   URL.revokeObjectURL(url)
 }
 
-export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
+export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) {
   const reduceMotion = useReducedMotion()
   const [step, setStep] = useState(0)
-  const [experienceId, setExperienceId] = useState<AgentExperienceId>('newcomer')
-  const [roleId, setRoleId] = useState<AgentRoleId>('pm')
+  // 角色和经验档走共享 store：任务地图、项目卡都读同一个值，
+  // 不再是这个组件私有的一次性选择。
+  const [roleSelection, setRoleSelection] = useAgentRoleSelection()
+  const { experienceId, roleId } = roleSelection
+  // 只选经验时保持 declared 原样：此时 roleId 还是默认值，用户并没有选过角色。
+  // 若在这里顺手置真，第一步选完经验就关掉向导的人，会在任务清单上看到
+  // 按「产品经理」排序并标注的推荐——一个他从没做过的声明。
+  const setExperienceId = (next: AgentExperienceId): void =>
+    setRoleSelection({ ...roleSelection, experienceId: next })
+  const setRoleId = (next: AgentRoleId): void =>
+    setRoleSelection({ ...roleSelection, roleId: next, declared: true })
   const [skills, setSkills] = useState<StarterSkill[]>(FALLBACK_SKILLS)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [showSkillLibrary, setShowSkillLibrary] = useState(false)
   const [activeSkillGroup, setActiveSkillGroup] = useState('foundation')
   const [includeCds, setIncludeCds] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [showDecisionCard, setShowDecisionCard] = useState(false)
+  const [profileSync, setProfileSync] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  // 记下这条状态是给哪个项目写的：完成屏上还能换项目，换掉之后
+  //「已记到项目」就不再成立，不能让它继续挂在新项目名下。
+  const [syncedProjectId, setSyncedProjectId] = useState<string | undefined>(undefined)
+  // 写入序号：只有最后一次写入的回调有权改 profileSync（防旧响应后到覆盖新结果）。
+  const profileSyncTicket = useRef(0)
   const [prdAgentOrigin, setPrdAgentOrigin] = useState(
     () => String(import.meta.env.VITE_PRD_AGENT_BASE_URL || '').trim(),
   )
@@ -181,6 +206,10 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
     cdsPrompt,
   })
 
+  const roleProfile = AGENT_ROLE_PROFILES.find((item) => item.id === roleId) ?? AGENT_ROLE_PROFILES[0]
+  const decisionCardModel = buildRoleDecisionCardModel(experienceId, roleId)
+  const roleCardHarness = buildRoleCardHarness({ experienceId, roleId })
+
   const harness = buildAgentStarterHarness({
     experienceId,
     roleId,
@@ -190,9 +219,49 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
     prdAgentOrigin,
   })
 
+  // 状态只对它当初写入的那个项目成立，换了目标就不再展示。
+  const profileMatchesTarget = Boolean(projectId) && syncedProjectId === projectId
+  // 当前目标项目还没记上角色（写失败，或换过目标之后没再写），需要给一条补写的出路。
+  const needsProfileRetry = Boolean(projectId)
+    && profileSync !== 'saving'
+    && (profileMatchesTarget ? profileSync === 'failed' : Boolean(syncedProjectId))
+
   const advance = (nextStep: number) => {
     setCopied(false)
     setStep(nextStep)
+  }
+
+  // 生成上手包 = 用户确认了这套配置，此时把角色声明记到项目上，
+  // 让 CDS 侧也知道这个项目的 Agent 以什么角色在跑（此前只写进仓库文件，无人读取）。
+  // 失败不拦流程：这只是一条展示用的声明，不该挡住用户拿提示词。
+  //
+  // 只在点「生成」这一下写，不挂 effect 跟着 projectId 变：完成屏上项目选择器
+  // 仍然可用，用 effect 的话，给项目 A 生成完再切到项目 B，就会把 A 的角色
+  // 静默盖到 B 头上——用户从没为 B 确认过任何东西。
+  const syncAgentProfile = (targetProjectId?: string): void => {
+    if (!targetProjectId) return
+    // 每次写入领一个号，回调只认自己那一号。慢网下可以「给 A 生成 → 换到 B →
+    // 再生成」，此时 A 的响应可能后于 B 落地；两个回调写同一个无主的状态位，
+    // 就会用 A 的结果报告 B 的成败。状态位只该由最后一次写入的回调来动。
+    const ticket = profileSyncTicket.current + 1
+    profileSyncTicket.current = ticket
+    setSyncedProjectId(targetProjectId)
+    setProfileSync('saving')
+    const settle = (next: 'saved' | 'failed'): void => {
+      if (profileSyncTicket.current !== ticket) return
+      setProfileSync(next)
+    }
+    apiRequest(`/api/projects/${encodeURIComponent(targetProjectId)}/agent-profile`, {
+      method: 'PUT',
+      body: {
+        role: roleId,
+        experience: experienceId,
+        skills: selectedSkillItems.map((skill) => skill.key),
+        cardTitle: roleProfile.cardTitle,
+      },
+    })
+      .then(() => settle('saved'))
+      .catch(() => settle('failed'))
   }
 
   const copyPrompt = async () => {
@@ -201,7 +270,16 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
   }
 
   return (
-    <div data-agent-starter="true" className="flex h-[560px] max-h-[calc(100vh-190px)] min-h-[480px] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)]">
+    <div
+      data-agent-starter="true"
+      /*
+       * 展开决策卡时面板长高一档：12 段清单在 560px 里只能分到几十像素。
+       * max-h 必须按**弹窗内的可用高度**算，不是按视口：弹窗自己是 90vh，
+       * 其上还有标题、目标选择和 tab 条约 220px。原来写的 calc(100vh-190px)
+       * 根本不生效，760px 直接捅出弹窗底 74px（真机量出来的）。
+       */
+      className={`flex max-h-[calc(90vh-224px)] min-h-[420px] flex-col overflow-hidden rounded-2xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-foreground shadow-[0_20px_70px_rgba(0,0,0,0.18)] transition-[height] duration-200 ${showDecisionCard ? 'h-[760px]' : 'h-[560px]'}`}
+    >
       <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-7 py-5">
         <div className="flex items-start justify-between gap-6">
           <div>
@@ -252,7 +330,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
             {step === 1 && (
               <>
                 <StepHeading number="02" title="你主要负责什么？" description="选择最接近的角色，系统会替你配置表达方式与技能起点。" />
-                <div className="mt-5 grid flex-1 grid-cols-2 gap-3 lg:grid-cols-3">
+                <div className="mt-5 grid min-h-0 flex-1 auto-rows-min grid-cols-2 gap-3 overflow-y-auto pb-14 pr-1 lg:grid-cols-3">
                   {AGENT_ROLE_PROFILES.map((profile) => {
                     const Icon = roleIcons[profile.id]
                     return (
@@ -261,6 +339,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                         selected={roleId === profile.id}
                         title={profile.label}
                         description={profile.description}
+                        chips={profile.decisionFields}
                         icon={<Icon className="h-5 w-5" />}
                         compact
                         onClick={() => { setRoleId(profile.id); advance(2) }}
@@ -362,26 +441,72 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                   </button>
                 </div>
                 <div className="mt-4 flex justify-end border-t border-[hsl(var(--hairline))] pt-4">
-                  <PrimaryNext onClick={() => advance(4)}>生成我的上手包</PrimaryNext>
+                  <PrimaryNext onClick={() => { advance(4); syncAgentProfile(projectId) }}>生成我的上手包</PrimaryNext>
                 </div>
               </>
             )}
 
+            {/*
+             * 完成页是「固定操作区 + 可滚预览区」，不是整页一起滚。
+             * 整页滚的时候，一展开决策卡就把标题和「复制启动提示词」顶出可视区，
+             * 用户只剩一张没有抬头、没有按钮的表格（真机撞到过）。
+             * 主操作永远钉住，滚动只发生在预览卡自己身上。
+             */}
             {step === 4 && (
-              <div className="flex h-full flex-col items-center justify-center text-center">
-                <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground text-background shadow-xl">
-                  <Check className="h-7 w-7" />
-                </motion.div>
-                <button
-                  type="button"
-                  onClick={() => setStep(3)}
-                  className="mb-3 inline-flex min-h-11 items-center gap-2 self-start rounded-xl px-3 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  返回修改
-                </button>
-                <h4 className="mt-5 text-2xl font-bold tracking-tight">你的 Agent 上手包已经配好</h4>
-                <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
+              <div className="flex h-full min-h-0 flex-col">
+                <div className={`flex shrink-0 flex-col items-center text-center ${showDecisionCard ? 'pt-1' : 'my-auto py-2'}`}>
+                {!showDecisionCard && (
+                  <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground text-background shadow-xl">
+                    <Check className="h-7 w-7" />
+                  </motion.div>
+                )}
+                {!showDecisionCard && (
+                  <button
+                    type="button"
+                    onClick={() => setStep(3)}
+                    className="mb-3 inline-flex min-h-11 items-center gap-2 self-start rounded-xl px-3 text-sm font-semibold text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    返回修改
+                  </button>
+                )}
+                <h4 className={showDecisionCard ? 'text-base font-bold tracking-tight' : 'mt-5 text-2xl font-bold tracking-tight'}>
+                  你的 Agent 上手包已经配好
+                </h4>
+                {!showDecisionCard && (
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
+                )}
+                <p className={`text-xs text-muted-foreground ${showDecisionCard ? 'sr-only' : 'mt-2'}`} aria-live="polite">
+                  {!projectId
+                    ? `还没有选定项目，角色「${roleProfile.label}」只写进项目里的长期规则，CDS 这边暂不记录。等 Agent 把项目建好，回到这一步再生成一次就会记上。`
+                    : null}
+                  {profileMatchesTarget && profileSync === 'saving' ? '正在把角色记到项目…' : null}
+                  {profileMatchesTarget && profileSync === 'saved'
+                    ? `已记到项目：这个项目的 Agent 角色是「${roleProfile.label}」，回复用${roleProfile.cardTitle}。`
+                    : null}
+                  {profileMatchesTarget && profileSync === 'failed'
+                    ? '角色没能记到项目（不影响使用提示词），项目列表里暂时不会显示角色。'
+                    : null}
+                  {projectId && syncedProjectId && syncedProjectId !== projectId
+                    ? '刚才换了目标项目，这个项目还没记过角色。'
+                    : null}
+                </p>
+
+                {/*
+                 * 没记上就得有条出路：写失败、或换了目标项目，这两种状态原先都是死胡同——
+                 * 复制提示词和下载脚本都不会补写，用户只能带着「这个项目没有角色」离开。
+                 * 文案更不能指一个不存在的按钮，那是凭空编一个控件让人去找。
+                 */}
+                {needsProfileRetry ? (
+                  <button
+                    type="button"
+                    onClick={() => syncAgentProfile(projectId)}
+                    className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    {profileSync === 'failed' && profileMatchesTarget ? '重试记录角色' : '把角色记到这个项目'}
+                  </button>
+                ) : null}
 
                 <motion.button
                   type="button"
@@ -391,21 +516,45 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                     boxShadow: ['0 16px 45px rgba(194,91,33,0.22)', '0 22px 60px rgba(194,91,33,0.38)', '0 16px 45px rgba(194,91,33,0.22)'],
                   }}
                   transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
-                  className={`mt-7 flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 py-4 text-base font-bold transition-colors ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
+                  className={`flex min-w-[300px] items-center justify-center gap-3 rounded-2xl px-8 font-bold transition-colors ${showDecisionCard ? 'mt-4 py-3 text-sm' : 'mt-7 py-4 text-base'} ${copied ? 'bg-ok text-status-ink' : 'agent-starter-copy bg-warn hover:bg-warn'}`}
                 >
                   {copied ? <Check className="h-5 w-5" /> : <ClipboardCopy className="h-5 w-5" />}
                   {copied ? '已复制，现在交给 Agent' : '复制启动提示词'}
                   {!copied && <ArrowRight className="h-5 w-5" />}
                 </motion.button>
 
-                <div className="mt-5 flex items-center gap-3">
+                <div className={`flex items-center gap-3 ${showDecisionCard ? 'mt-3' : 'mt-5'}`}>
                   <button type="button" onClick={() => downloadText('cds-agent-starter.sh', harness)} className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]">
                     <Download className="h-4 w-4" /> 下载一键脚本
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadText('cds-agent-role-card.sh', roleCardHarness)}
+                    title="已经装过上手包时用它：只替换角色决策卡，不重下技能、不碰 .env"
+                    className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+                  >
+                    <RefreshCw className="h-4 w-4" /> 只换角色卡
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDecisionCard((value) => !value)}
+                    aria-expanded={showDecisionCard}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+                  >
+                    <FileText className="h-4 w-4" /> {showDecisionCard ? '收起' : '预览'}「{roleProfile.cardTitle}」
                   </button>
                   <a href={`${serviceOrigin}/api/skills/bundles`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground">
                     查看技能来源 <ArrowRight className="h-4 w-4" />
                   </a>
                 </div>
+
+                </div>
+
+                {showDecisionCard && (
+                  <div className="mt-3 flex min-h-[220px] flex-1 justify-center overflow-hidden pb-1">
+                    <DecisionCardPreview model={decisionCardModel} />
+                  </div>
+                )}
               </div>
             )}
           </motion.section>
@@ -423,6 +572,77 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
   )
 }
 
+/*
+ * 决策卡预览：四层分区（卡头 / 前言 / 编号段落清单 / 禁止项）。
+ *
+ * 内容全部取自 buildRoleDecisionCardModel，与写进 AGENTS.md 的文本契约同源，
+ * 所以这里只决定「怎么排」，改不动段名和规则本身。角色专属段落染主色、
+ * 共享段落保持中性——「哪几段是这个角色独有的」变成一眼可见。
+ */
+function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
+  return (
+    <div className="flex min-h-0 w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-left">
+      <div className="flex shrink-0 items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+        <span className="h-7 w-[3px] shrink-0 rounded-sm bg-warn" />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">{model.cardTitle}</div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">
+            {model.roleLabel} · 换角色会换成另一套段落
+          </div>
+        </div>
+        <span className="ml-auto shrink-0 rounded-full bg-[hsl(var(--surface-sunken))] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+          {model.sectionCount} 段
+        </span>
+      </div>
+
+      <dl className="grid shrink-0 gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+          <dt className="font-semibold text-muted-foreground">理解方向</dt>
+          <dd>{model.lens}</dd>
+        </div>
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+          <dt className="font-semibold text-muted-foreground">先确认</dt>
+          <dd>{model.intake.join('；')}</dd>
+        </div>
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+          <dt className="font-semibold text-muted-foreground">关注点</dt>
+          <dd className="flex flex-wrap gap-1.5">
+            {model.decisionFields.map((field) => (
+              <span key={field} className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium">
+                {field}
+              </span>
+            ))}
+          </dd>
+        </div>
+      </dl>
+
+      {/* 段落清单是卡内唯一滚动区：卡头与前言钉住，滚多远都还知道这是哪张卡。 */}
+      <ol className="min-h-0 flex-1 overflow-y-auto">
+        {model.sections.map((section, index) => (
+          <li
+            key={section.label}
+            className={`grid grid-cols-[1.75rem_6rem_minmax(0,1fr)] gap-2.5 px-4 py-1.5 text-[11px] leading-relaxed ${section.roleSpecific ? 'bg-warn-soft' : ''}`}
+          >
+            <span className={`font-mono text-[10px] ${section.roleSpecific ? 'text-warn' : 'text-muted-foreground/70'}`}>
+              {String(index + 1).padStart(2, '0')}
+            </span>
+            <span className={`font-semibold ${section.roleSpecific ? 'text-warn' : ''}`}>{section.label}</span>
+            <span className="text-muted-foreground">{section.rule}</span>
+          </li>
+        ))}
+      </ol>
+
+      <div className="flex shrink-0 items-start gap-2 border-t border-[hsl(var(--hairline))] bg-bad-soft px-4 py-2.5">
+        <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bad" />
+        <div className="text-[11px] leading-relaxed">
+          <span className="font-semibold text-bad">本角色额外禁止</span>
+          <span> {model.roleForbid.join('；')}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function StepHeading({ number, title, description }: { number: string; title: string; description: string }) {
   return (
     <div className="flex items-start gap-4">
@@ -435,11 +655,12 @@ function StepHeading({ number, title, description }: { number: string; title: st
   )
 }
 
-function ChoiceCard({ selected, title, eyebrow, description, icon, compact = false, onClick }: {
+function ChoiceCard({ selected, title, eyebrow, description, chips, icon, compact = false, onClick }: {
   selected: boolean
   title: string
   eyebrow?: string
   description: string
+  chips?: readonly string[]
   icon?: React.ReactNode
   compact?: boolean
   onClick: () => void
@@ -458,8 +679,22 @@ function ChoiceCard({ selected, title, eyebrow, description, icon, compact = fal
         <h5 className={`${compact ? 'mt-3 text-base' : 'mt-5 text-xl'} font-bold text-foreground`}>{title}</h5>
         {eyebrow && <div className="mt-1 text-xs font-bold uppercase tracking-wide text-warn">{eyebrow}</div>}
         <p className={`${compact ? 'mt-2 text-xs leading-5' : 'mt-3 text-sm leading-6'} text-muted-foreground`}>{description}</p>
+        {chips && chips.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {chips.map((chip) => (
+              <span
+                key={chip}
+                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${selected ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}
+              >
+                {chip}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
-      <div className="mt-3 flex items-center gap-1 text-xs font-bold text-foreground opacity-0 transition-opacity group-hover:opacity-100">选择并继续 <ArrowRight className="h-3.5 w-3.5" /></div>
+      {!compact && (
+        <div className="mt-3 flex items-center gap-1 text-xs font-bold text-foreground opacity-0 transition-opacity group-hover:opacity-100">选择并继续 <ArrowRight className="h-3.5 w-3.5" /></div>
+      )}
     </button>
   )
 }
