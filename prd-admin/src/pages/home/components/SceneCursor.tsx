@@ -42,11 +42,15 @@ interface Pos { left: number; top: number }
 
 export function SceneCursor({
   spot,
+  /** 当前拍号。只用来给「按下」这一次手势做 key —— 连着两拍都按下时（视觉幕的
+   *  选中 → 混合就是），元素不换 key 的话动画不会重放，第二次点击看着像没发生。 */
+  beat,
   /** 走位时长；跟着这一幕的节拍走，别比它自己那一拍还长 */
   travelMs = 460,
   style,
 }: {
   spot: CursorSpot | null;
+  beat: number;
   travelMs?: number;
   style?: CSSProperties;
 }) {
@@ -100,10 +104,17 @@ export function SceneCursor({
   // 量不到目标就整枚收起来：宁可没有指针，也不要一枚指着空处的箭头
   const on = !!spot && !spot.hidden && !!pos;
 
+  const pressDelay = moved ? `${travelMs}ms` : '0ms';
+
   return (
     <span
       ref={hostRef}
       aria-hidden
+      // 整拍都挂着的机读信号。**给工具看的，不是给眼睛看的**：按下的视觉是一次
+      // 260ms 的手势，而无头浏览器在这台机器上约 400ms 才出一帧，判据挂在动画上
+      // 必然采空（第一版就是这么把「按下 0 次」测出来的）。属性不受帧率影响。
+      data-scene-press={on && spot?.press ? '1' : undefined}
+      data-scene-cursor-on={on ? '1' : '0'}
       className="absolute pointer-events-none map-scene-anim"
       style={{
         left: `${pos?.left ?? 0}px`,
@@ -111,27 +122,42 @@ export function SceneCursor({
         // z 要压过面板里的卡片，但别压过旁白条
         zIndex: 20,
         opacity: on ? 1 : 0,
-        transform: `translate(-2px, -2px) scale(${spot?.press ? 0.88 : 1})`,
+        transform: 'translate(-2px, -2px)',
         transition: `left ${travelMs}ms cubic-bezier(.32,.72,.24,1), top ${travelMs}ms cubic-bezier(.32,.72,.24,1),`
-          + ` opacity .32s ease, transform .18s ease`,
+          + ` opacity .32s ease`,
         ...style,
       }}
     >
-      {/* 按下波纹：只在 press 那一拍出现，扩散一次就没 */}
-      {on && spot?.press && (
-        <span
-          className="absolute block rounded-full"
-          style={{
-            left: '-11px', top: '-11px', width: '30px', height: '30px',
-            border: `1.5px solid ${SCENE.ink}`,
-            animation: 'mapSceneCursorPress .5s cubic-bezier(.19,1,.22,1) both',
-            animationDelay: moved ? `${travelMs}ms` : '0ms',
-          }}
-        />
-      )}
-      <svg width="20" height="22" viewBox="0 0 20 22" style={{ display: 'block', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,.55))' }}>
-        <path d={ARROW} fill={SCENE.ink} stroke={SCENE.base} strokeWidth="1.4" strokeLinejoin="round" />
-      </svg>
+      {/*
+        按下是**一次完整的手势**：按下去、弹回来。
+        上一版把 scale(0.88) 挂在整拍上，那一拍有 1-2.2 秒，看着像鼠标键被摁住不放。
+
+        key 用拍号：视觉幕的「选中 → 混合」是连着两拍都按下，元素不换 key 的话
+        CSS 动画不会重放，第二次点击在画面上等于没发生。
+      */}
+      <span
+        key={beat}
+        className="block"
+        style={on && spot?.press
+          ? { animation: 'mapSceneCursorClick .26s cubic-bezier(.32,.72,.24,1) both', animationDelay: pressDelay }
+          : undefined}
+      >
+        {/* 按下波纹：跟手势同一个延迟，扩散一次就没 */}
+        {on && spot?.press && (
+          <span
+            className="absolute block rounded-full"
+            style={{
+              left: '-11px', top: '-11px', width: '30px', height: '30px',
+              border: `1.5px solid ${SCENE.ink}`,
+              animation: 'mapSceneCursorPress .5s cubic-bezier(.19,1,.22,1) both',
+              animationDelay: pressDelay,
+            }}
+          />
+        )}
+        <svg width="20" height="22" viewBox="0 0 20 22" style={{ display: 'block', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,.55))' }}>
+          <path d={ARROW} fill={SCENE.ink} stroke={SCENE.base} strokeWidth="1.4" strokeLinejoin="round" />
+        </svg>
+      </span>
     </span>
   );
 }

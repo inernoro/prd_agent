@@ -1,6 +1,8 @@
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
 import type { CapsuleKind } from '../i18n/landing';
@@ -40,6 +42,15 @@ const firstNodeBeat = B.run;
 // 旁白说完了、画面还在转——又一处"判据与被判据对象的时序对不上"。
 const NARRATION_AT = [0, 1, 1, 2, 2, 2, 2, 3];
 
+/**
+ * 指针走位表。这一幕只有一个动作：第 1 拍按下「运行」，后面六个舱是机器在跑，
+ * 手该退开——所以从第 2 拍起指针就收起来，不要一只手悬在那儿假装还在操作。
+ */
+const CURSOR_AT: Record<number, CursorSpot> = {
+  [B.idle]: { target: 'run-button' },        // 先把手放上去
+  [B.run]: { target: 'run-button', press: true },
+};
+
 /** 四类舱各一支墨色，与舱库图例共用一份，别让画布和图例各配各的色。 */
 const KIND_HUE: Record<CapsuleKind, number> = {
   trigger: SCENE_HUE.clay,
@@ -72,6 +83,7 @@ export function WorkflowScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.workflow;
   const { beat, ref } = useSceneTimeline(HOLDS);
+  const { isDesktop } = useBreakpoint();
   const started = beat >= B.run;
   const allDone = s.nodes.every((_, i) => nodeStateAt(i, beat) === 'done');
 
@@ -87,6 +99,9 @@ export function WorkflowScene({ variant }: { variant?: SceneVariant }) {
       panelStyle={{ background: SCENE.base }}
     >
       <div ref={ref} className="relative">
+        {/* 演示指针：旁白第 1 拍写的是「点运行」，那就得真有一只手按在运行键上。
+            窄屏不画（小屏没有鼠标）。 */}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
         {/* 画布顶栏：模板名 + 运行按钮，照编辑器那一条 */}
         <div
           className="flex items-center gap-2.5 flex-wrap"
@@ -96,6 +111,7 @@ export function WorkflowScene({ variant }: { variant?: SceneVariant }) {
           <span style={{ fontSize: '12.5px', color: SCENE.ink }}>{s.templateName}</span>
           <SceneMono size={13} color={SCENE.inkGhost}>{s.nodes.length}</SceneMono>
           <span
+            data-cursor-target="run-button"
             className="ml-auto flex items-center gap-1.5"
             style={{
               height: '27px', padding: '0 12px', borderRadius: '8px', fontSize: '12px',

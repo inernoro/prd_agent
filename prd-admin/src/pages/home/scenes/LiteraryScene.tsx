@@ -129,7 +129,7 @@ export function LiteraryScene() {
       <div ref={ref} className="relative">
         {/* 演示指针：窄屏不画（小屏没有鼠标，画一枚箭头反而突兀）。
             挂在这一层是因为它要同时够得着顶栏的风格 chip 和下面正文里的段落。 */}
-        {isDesktop && <SceneCursor spot={cursorSpot} />}
+        {isDesktop && <SceneCursor spot={cursorSpot} beat={beat} />}
         {/* 风格切换：这一幕唯一的杠杆，摆在面板顶部让人一眼看见 */}
         <div className="relative flex items-center gap-2 flex-wrap" style={{ padding: '12px 14px', borderBottom: `1px solid ${SCENE.hair}` }}>
           <SceneMono style={{ letterSpacing: '0.18em', textTransform: 'uppercase' }}>{s.styleLabel}</SceneMono>

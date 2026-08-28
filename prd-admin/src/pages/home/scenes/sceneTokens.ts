@@ -124,7 +124,10 @@ export const SCENE_KEYFRAMES = `
 @keyframes mapSceneTwinkle { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @keyframes mapSceneBeatIn { from { opacity: 0; filter: blur(3px); } to { opacity: 1; filter: blur(0); } }
 @keyframes mapSceneLand { 0% { opacity: 0; transform: translateY(14px) scale(.94); } 60% { opacity: 1; } 100% { opacity: 1; transform: translateY(0) scale(1); } }
-/* 0% 必须是透明的：波纹带 animation-delay（等指针走到位再响），而 fill-mode: both
+/* 点击手势：按下去再弹回来。持续 260ms，不是挂在整拍上的状态 —— 挂整拍看着像
+   鼠标键被摁住不放。 */
+@keyframes mapSceneCursorClick { 0%,100% { transform: scale(1); } 38% { transform: scale(.82); } }
+/* 波纹的 0% 必须是透明的：它带 animation-delay（等指针走到位再响），而 fill-mode: both
    会在延迟期间就把 0% 那一帧画出来 —— 0% 若不透明，就有一枚小圆环跟着指针一路飞过去。
    所以让它从透明起步，12% 处才涨到最亮。 */
 @keyframes mapSceneCursorPress { 0% { opacity: 0; transform: scale(.42); } 12% { opacity: .85; transform: scale(.55); } 100% { opacity: 0; transform: scale(1.15); } }

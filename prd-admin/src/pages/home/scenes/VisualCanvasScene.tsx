@@ -129,7 +129,7 @@ export function VisualCanvasStage() {
         />
 
         {/* 演示指针：窄屏不画 —— 小屏本来就没有鼠标，画一枚箭头反而突兀 */}
-        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} />}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
 
         {/* ── 画布可用区：宽屏时给右侧对话面板让出 444px ── */}
         <div className="absolute inset-0 lg:right-[444px]">

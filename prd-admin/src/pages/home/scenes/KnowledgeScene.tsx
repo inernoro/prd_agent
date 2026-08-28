@@ -2,6 +2,8 @@ import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, galaxyBackdrop, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 import { useLanguage } from '../contexts/LanguageContext';
 
 /**
@@ -37,6 +39,17 @@ const TREE_SHAPE = [
 /** 每一拍停多久（ms）。 */
 const HOLDS = [1500, 1200, 900, 1300, 2300, 2000];
 const B = { reading: 0, selecting: 1, popover: 2, tapped: 3, streaming: 4, replaced: 5 } as const;
+
+/**
+ * 指针走位表。这一幕是全篇动作最密的一段，顺序必须严格照旁白走：
+ * 划中那一句（手停在句末，像刚拖完选区）→ 浮层弹出后手移到「AI 改写」上
+ * → 下一拍才按下去 → 改写在流、手退开不挡着看。
+ */
+const CURSOR_AT: Record<number, CursorSpot> = {
+  [B.selecting]: { target: 'selected-sentence', ax: 1, ay: 0.6, press: true },
+  [B.popover]: { target: 'rewrite-action' },     // 浮层出来了，手先移过去
+  [B.tapped]: { target: 'rewrite-action', press: true },
+};
 
 const BADGE_TONE: Record<string, { bg: string; fg: string }> = {
   shared: { bg: inkTone(176).soft, fg: inkTone(176).bright },
@@ -124,6 +137,7 @@ export function KnowledgeScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.scenes.knowledge;
   const { beat, ref, visible } = useSceneTimeline(HOLDS);
+  const { isDesktop } = useBreakpoint();
 
   return (
     <SceneFrame
@@ -138,6 +152,9 @@ export function KnowledgeScene({ variant }: { variant?: SceneVariant }) {
     >
       {/* ── 三栏阅读器 ── */}
       <div ref={ref} className="relative flex" style={{ height: 'clamp(460px, 58vh, 620px)' }}>
+        {/* 演示指针：这一幕旁白连写两个动作（划中一句话、点了 AI 改写），
+            之前一只手都没有 —— 看的人只会觉得浮层自己冒出来。窄屏不画。 */}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
         {/* 左：文件树 */}
         <div
           className="hidden md:flex flex-col shrink-0 relative"
@@ -341,6 +358,7 @@ export function KnowledgeScene({ variant }: { variant?: SceneVariant }) {
               {/* 选区高亮划词那一拍才亮；最后一拍整句换成改写后的文本——
                   「替换原文」不能只是浮层里点一下，正文得真的变 */}
               <span
+                data-cursor-target="selected-sentence"
                 style={{
                   background: beat >= B.selecting && beat < B.replaced ? `hsla(${SCENE_HUE.olive}, 54%, 58%, 0.26)` : 'transparent',
                   borderRadius: '3px',
@@ -392,6 +410,9 @@ export function KnowledgeScene({ variant }: { variant?: SceneVariant }) {
                     <span className="block" style={{ width: '1px', height: '16px', background: SCENE.line, margin: '0 2px' }} />
                   )}
                   <span
+                    // 旁白第 3 拍写的是「点了 AI 改写」，那就得看见手按在这一项上。
+                    // 三个动作里它是第 2 个（评论 / AI 改写 / 配图）。
+                    data-cursor-target={i === 1 ? 'rewrite-action' : undefined}
                     className="flex items-center gap-1.5 whitespace-nowrap"
                     style={{
                       height: '26px',

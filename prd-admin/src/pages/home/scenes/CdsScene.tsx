@@ -2,6 +2,8 @@ import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { useSceneTimeline } from './useSceneTimeline';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 import { useLanguage } from '../contexts/LanguageContext';
 
 /**
@@ -21,6 +23,12 @@ import { useLanguage } from '../contexts/LanguageContext';
  */
 
 const HOLDS = [2000, 1700, 1700, 1900, 2800];
+/**
+ * 五拍对着 i18n 里的五个 moment：说一句话 → 它开分支 → 推上去 → 地址就位 → 点通过。
+ * 别的幕都有这张表，这一幕原本只用 `beat >= last` 就地算 —— 结果是「哪一拍在干什么」
+ * 只存在于阅读者脑子里，机器读不到，衔接守卫也就扫不到这一幕的点击。
+ */
+const B = { ask: 0, branch: 1, push: 2, ready: 3, approve: 4 } as const;
 
 const pine = inkTone(SCENE_HUE.pine);
 const clay = inkTone(SCENE_HUE.clay);
@@ -34,7 +42,18 @@ export function CdsScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.cds;
   const { beat, ref } = useSceneTimeline(HOLDS);
+  const { isDesktop } = useBreakpoint();
   const last = s.moments.length - 1;
+
+  /**
+   * 指针走位表。这一幕的拍号跟着 moments 走，没有 B 常量表，所以直接按下标写：
+   * 倒数第二拍（地址就位）手移过去，最后一拍按下「通过」。前面三拍是机器在干活，
+   * 不该有手 —— 这一幕的卖点正是「你没动手」。
+   */
+  const cursorSpot: CursorSpot | null =
+    beat === B.ready ? { target: 'approve-button' }
+      : beat === B.approve ? { target: 'approve-button', press: true }
+        : null;
 
   /** 地址在倒数第二拍就位，最后一拍才轮到人点通过 */
   const previewReady = beat >= last - 1;
@@ -52,6 +71,9 @@ export function CdsScene({ variant }: { variant?: SceneVariant }) {
       panelStyle={{ background: SCENE.base }}
     >
       <div ref={ref} className="relative">
+        {/* 演示指针：这一幕的命题就是「你这一天只动了两次手」，那两次手就更得看得见。
+            地址就位那一拍手先移到「通过」上，最后一拍才按下去。窄屏不画。 */}
+        {isDesktop && <SceneCursor spot={cursorSpot} beat={beat} />}
         <div
           className="flex items-center gap-2.5"
           style={{ padding: '12px 16px', borderBottom: `1px solid ${SCENE.hair}` }}
@@ -168,6 +190,7 @@ export function CdsScene({ variant }: { variant?: SceneVariant }) {
               </span>
               {/* 唯一那颗按钮：最后一拍才亮，亮的时候带一圈光晕 */}
               <span
+                data-cursor-target="approve-button"
                 className="flex items-center gap-1.5"
                 style={{
                   height: '28px', padding: '0 14px', borderRadius: '8px', fontSize: '12px',

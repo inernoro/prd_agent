@@ -2,6 +2,8 @@ import { useMemo } from 'react';
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { useSceneTimeline, useTypewriter } from './useSceneTimeline';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 import { useLanguage } from '../contexts/LanguageContext';
 import type { RosterItem } from '../i18n/landing';
 
@@ -24,6 +26,17 @@ import type { RosterItem } from '../i18n/landing';
 
 const HOLDS = [1800, 1500, 2400, 1900];
 const B = { grid: 0, typing: 1, filtered: 2, pick: 3 } as const;
+
+/**
+ * 指针走位表。第 1 拍手停在搜索框上（旁白是「想干什么就搜什么」——打字不该按下去，
+ * 按下去反而是假动作）；第 2 拍筛完结果、手提前移到即将点的那张卡上；
+ * 第 3 拍才按下，卡片才被选中。
+ */
+const CURSOR_AT: Record<number, CursorSpot> = {
+  [B.typing]: { target: 'search-box', ax: 0.3 },
+  [B.filtered]: { target: 'picked-card' },
+  [B.pick]: { target: 'picked-card', press: true },
+};
 
 /** 四组各一支墨色：创作陶土 / 交付焦糖 / 沉淀橄榄 / 协同钢青。 */
 const GROUP_HUES = [SCENE_HUE.clay, 32, SCENE_HUE.olive, SCENE_HUE.steel];
@@ -75,6 +88,7 @@ export function ToolboxScene() {
   const { t } = useLanguage();
   const s = t.tail.toolbox;
   const { beat, ref } = useSceneTimeline(HOLDS);
+  const { isDesktop } = useBreakpoint();
   const typed = useTypewriter(s.searchWord, beat === B.typing, 900);
   const amber = inkTone(SCENE_HUE.amber);
 
@@ -96,7 +110,10 @@ export function ToolboxScene() {
       note={s.note}
       panelStyle={{ background: SCENE.base }}
     >
-      <div ref={ref}>
+      <div ref={ref} className="relative">
+        {/* 演示指针：打字那一拍停在搜索框上（停，不按 —— 按下去就成了假动作），
+            「选一个」那一拍才真的按在卡片上。窄屏不画。 */}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
         {/* 控制条：权属 tab + 类型 tab + 搜索 + 计数 + 展示切换，照真实那一页的顺序摆 */}
         <div
           className="relative flex items-center gap-2 flex-wrap"
@@ -136,6 +153,7 @@ export function ToolboxScene() {
           </div>
 
           <div
+            data-cursor-target="search-box"
             className="flex-1 min-w-[190px] flex items-center gap-2"
             style={{
               height: '30px', padding: '0 10px', borderRadius: '9px',
@@ -225,6 +243,9 @@ export function ToolboxScene() {
                   return (
                     <div
                       key={item.name}
+                      // 「选一个，直接开工」点的就是筛完之后剩下的第一张卡。
+                      // 命中多张时指针取第一个，确定、可复现。
+                      data-cursor-target={hit ? 'picked-card' : undefined}
                       className="flex items-start gap-2.5"
                       style={{
                         padding: '11px 12px',

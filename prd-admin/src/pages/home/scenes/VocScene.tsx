@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useBreakpoint, useIsMobile } from '@/hooks/useBreakpoint';
+import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
 import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
@@ -24,6 +25,15 @@ import type { VocLeaf } from '../i18n/landing';
 
 const HOLDS = [2000, 1500, 2200, 2400];
 const B = { sweep: 0, calm: 1, pain: 2, drill: 3 } as const;
+
+/**
+ * 指针走位表。前两拍是机器在扫、在看，没有手；第 2 拍痛点亮起来时手先移过去，
+ * 第 3 拍才按下去 —— 「先走到，再发生」。
+ */
+const CURSOR_AT: Record<number, CursorSpot> = {
+  [B.pain]: { target: 'pain-block' },
+  [B.drill]: { target: 'pain-block', press: true },
+};
 
 /**
  * 冷色平静海的模块色相：slate 214 → pine 142 之间九支等距，一区一支不重复。
@@ -112,6 +122,7 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.voc;
   const { beat, ref, visible } = useSceneTimeline(HOLDS);
+  const { isDesktop } = useBreakpoint();
   const isMobile = useIsMobile();
   const steel = inkTone(SCENE_HUE.steel);
 
@@ -160,6 +171,9 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
       panelStyle={{ background: SCENE.base }}
     >
       <div ref={ref} className="relative">
+        {/* 演示指针：旁白最后一拍写的是「点进去，直接落到痛点榜」——那就得看见
+            手按在那块痛点上，痛点榜才滑出来。窄屏不画。 */}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
         <div
           className="flex items-center gap-2.5 flex-wrap"
           style={{ padding: '12px 16px', borderBottom: `1px solid ${SCENE.hair}` }}
@@ -220,7 +234,9 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
                   const showLabel = leaf.rect.w > 52 && leaf.rect.h > 20;
                   const tiny = leaf.rect.w < 88 || leaf.rect.h < 30;
                   return (
-                    <g key={leaf.label}>
+                    // 痛点块就是最后一拍要点的那个东西。多个痛点块共用一个落点名，
+                    // 指针取第一个 —— 确定、可复现，不必再挑「哪一个才算」。
+                    <g key={leaf.label} data-cursor-target={lit ? 'pain-block' : undefined}>
                       <rect
                         x={leaf.rect.x + 1}
                         y={leaf.rect.y + 1}
