@@ -1190,3 +1190,21 @@ describe('补传失败的两种都要再试，且状态跟着笔记走', () => {
     expect(effect.indexOf('setFlushStalled(null);')).toBeLessThan(effect.indexOf('if (!noteIdForFlush || !ownerId)'));
   });
 });
+
+
+describe('原文还没出来时不给「导出」', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('按钮本身不渲染，而不是渲染一颗点了给空文件的', () => {
+    const at = source.indexOf('const headerActions = ');
+    expect(at).toBeGreaterThan(-1);
+    expect(source.slice(at, at + 160)).toContain("state.noteMd.trim()");
+  });
+
+  it('导出函数自己也挡一道，防别处调它', () => {
+    const at = source.indexOf('const exportNote = useCallback(');
+    const body = source.slice(at, source.indexOf('const blob = new Blob(', at));
+    expect(body).toContain("!state.noteMd.trim()");
+    expect(body).toContain('return;');
+  });
+});

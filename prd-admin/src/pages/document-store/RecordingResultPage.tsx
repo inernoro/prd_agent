@@ -562,7 +562,13 @@ export function RecordingResultPage() {
    * 不做「导出为 PDF/Word」那一摊——稿面只画了一个按钮，多出来的格式没有依据。
    */
   const exportNote = useCallback(() => {
-    if (state.kind !== 'ready') return;
+    /*
+     * 没有原文就没什么可导的。从处理页可以在笔记发布之前就进到这一屏（那颗按钮一直可点，
+     * 稿面就是这么定的），此时 `ready` 里的 noteMd 是空串——照导会给用户一个 0 字节的 .md，
+     * 看上去像「转录出来就是空的」（Codex 第四十三轮 P2）。
+     * 这里再挡一道：按钮本身在没有原文时就不渲染，这一层是防以后有人从别处调它。
+     */
+    if (state.kind !== 'ready' || !state.noteMd.trim()) return;
     const blob = new Blob([state.noteMd], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -575,7 +581,8 @@ export function RecordingResultPage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }, [state]);
 
-  const headerActions = state.kind === 'ready' ? (
+  // 原文还没出来时不摆这颗：能点却只会给一份空文件的按钮，比没有按钮更误导
+  const headerActions = state.kind === 'ready' && state.noteMd.trim() ? (
     <button
       type="button"
       onClick={exportNote}
