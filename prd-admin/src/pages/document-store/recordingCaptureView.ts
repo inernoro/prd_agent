@@ -78,6 +78,35 @@ export function capturedUploadPercent(uploadedBytes: number, localBytes: number)
   return Math.max(0, Math.min(99, pct));
 }
 
+/**
+ * 上传「跟上了没有」——**带迟滞**的判定。
+ *
+ * 录音每秒产生一个分片，`localBytes` 每秒往上跳一格，上传随即追平。
+ * 直接用 `uploadedBytes >= localBytes` 这个瞬时比较去选文案、选进度条宽度，
+ * 它就会每秒翻一次；而这个判据在采集屏被消费了三处（凭据 chip 的措辞、
+ * 进度条是满条还是百分比、那句「录音还在继续，新片段会接着传」出不出现），
+ * 于是同一屏每秒抖三下——窄屏上那句话进出还会把下面整块顶上顶下一行
+ * （用户报的就是这个）。
+ *
+ * 迟滞的意思：**追平后要落后得足够多才算「没跟上」**。落后不到一个分片的量
+ * （或占比很小）仍然算跟上——那本来就是「刚录下来的这一秒还在路上」，
+ * 不是真的掉队。这样录音期间它稳定为 true，只有真的堆积了才翻成 false。
+ */
+/*
+ * 容忍量按**分片**定，不按比例。录制是 64kbps、每秒一个分片，也就是约 8KB/秒；
+ * 32KB 约等于四个分片，足够吸收「刚录下来的这一两秒还在路上」，又不会把真正的堆积
+ * 说成跟上了。
+ * 按比例定是错的：19MB 的录音里落后 700KB 只有 3.7%，听着很小，其实落后一分半——
+ * 那时候界面绝不该说「已跟上录音进度」（这条是既有用例替我挡下来的）。
+ */
+export const UPLOAD_LAG_TOLERANCE_BYTES = 32 * 1024;
+
+export function isUploadKeepingUp(uploadedBytes: number, localBytes: number): boolean {
+  if (localBytes <= 0) return true;
+  if (uploadedBytes >= localBytes) return true;
+  return localBytes - uploadedBytes <= UPLOAD_LAG_TOLERANCE_BYTES;
+}
+
 export function describeCaptureChips(input: {
   localBytes: number;
   uploadedBytes: number;
@@ -128,7 +157,7 @@ export function describeCaptureChips(input: {
     两处口径互相打脸（cap-S2 判分记的正是这处）。99% 那个上限本意是不许在录音期间
     宣称「全部完成」——换成一句「已跟上录音进度」既守住了这条，又不再自相矛盾。
   */
-  if (input.uploadedBytes >= input.localBytes) {
+  if (isUploadKeepingUp(input.uploadedBytes, input.localBytes)) {
     chips.push({
       key: 'upload',
       label: `实时上传 ${formatCapturedSize(input.uploadedBytes)} · 已跟上录音进度`,

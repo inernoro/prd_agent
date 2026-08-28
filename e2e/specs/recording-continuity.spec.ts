@@ -855,3 +855,79 @@ test.describe('录音结果返回上下文门禁', () => {
     await attachViewport(page, testInfo, '07-recording-return-context');
   });
 });
+
+/*
+ * 布局稳定性门禁。
+ *
+ * 为什么要单独一条：设计稿还原那套取证是「录几秒 → 截一张静帧」，而用户报的那个抖动
+ * 只存在于**两帧之间**——每一帧单看都正常、都贴稿，静态比对在原理上看不见它。
+ * 40 块画板判到 99 分也照样漏。
+ *
+ * 判据只有一句：录音进行中，采集屏上几个地标的纵向位置**不许动**。
+ * 这里不采样「此刻长什么样」，而是采样一段时间里的位置集合——位置只要出现过两个值，
+ * 就是抖了（predicate-and-wiring-discipline 形状 1：别去钉一个正在动的中间值）。
+ */
+test.describe('采集屏布局稳定性门禁', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('录音期间波形与凭据行不上下跳', async ({ page }, testInfo) => {
+    const apiRequests: string[] = [];
+    await installRecordingBrowserFakes(page);
+    await installApiFixture(page, apiRequests, {});
+    await page.goto(`/document-store?store=${STORE_ID}&record=1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('recording-elapsed')).toBeVisible({ timeout: 20_000 });
+
+    const SAMPLE_MS = 9_000;
+    const samples: Array<{ t: number; wave: number; chipsHeight: number; label: string; promise: boolean }> = [];
+    const started = Date.now();
+    while (Date.now() - started < SAMPLE_MS) {
+      samples.push({
+        t: Date.now() - started,
+        ...(await page.evaluate(() => {
+          const chips = document.querySelector('[data-testid="recording-guard-chips"]');
+          const wave = document.querySelector('[data-testid="recording-waveform"]');
+          const upload = document.querySelector('[data-testid="recording-upload-progress"]');
+          return {
+            wave: wave ? Math.round(wave.getBoundingClientRect().top) : -1,
+            chipsHeight: chips ? Math.round(chips.getBoundingClientRect().height) : -1,
+            label: chips ? (chips as HTMLElement).innerText.replace(/\s+/g, ' ') : '',
+            // 那句承诺在不在——它以前挂在瞬时比较上，每秒进出一次
+            promise: upload ? (upload as HTMLElement).innerText.includes('新片段会接着传') : false,
+          };
+        })),
+      });
+      await page.waitForTimeout(200);
+    }
+
+    const waveTops = [...new Set(samples.map((s) => s.wave))];
+    const chipsHeights = [...new Set(samples.map((s) => s.chipsHeight))];
+    await testInfo.attach('layout-stability', {
+      body: JSON.stringify({ samples: samples.length, waveTops, chipsHeights }, null, 2),
+      contentType: 'application/json',
+    });
+
+    // 采样本身要有效：地标必须真的找到了，且采到了足够多帧
+    expect(samples.length).toBeGreaterThan(20);
+    expect(waveTops.every((top) => top > 0)).toBe(true);
+
+    /*
+     * 幅度判据，不是「只许一个值」。留 1px 是因为分数像素取整——布局本身没动，
+     * 相邻两帧的 getBoundingClientRect 也可能一个 421.4、一个 421.6，取整就差 1。
+     * 这个余量不会放过任何一类真问题：用户报的那次是 18px（一整行），
+     * 跟读吸顶条那类是 10px，滚动留白那类是 92px。
+     * 行数变化则一像素都不留：凭据行的高度由行数决定，多一行就是多 30px。
+     */
+    const waveSpread = Math.max(...waveTops) - Math.min(...waveTops);
+    expect(waveSpread, `波形顶部在 ${SAMPLE_MS}ms 内移动了 ${waveSpread}px：${waveTops.join(' / ')}`)
+      .toBeLessThanOrEqual(1);
+    expect(chipsHeights, `凭据行高度变过：${chipsHeights.join(' / ')}`).toHaveLength(1);
+
+    /*
+     * 再加一条**认行为**的：那句「录音还在继续，新片段会接着传」在录音期间不许一会儿
+     * 出现一会儿消失。像素判据在这个桩里只体现为 2px（桩的分片是几十字节，那句话短到
+     * 不换行），真机上是一整行 18px——判据不该依赖桩恰好把幅度放大到多少。
+     */
+    const promiseStates = [...new Set(samples.map((s) => s.promise))];
+    expect(promiseStates, '那句承诺在录音期间反复进出（每秒翻一次）').toHaveLength(1);
+  });
+});

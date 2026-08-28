@@ -3,6 +3,8 @@ import {
   advanceLiveSentenceLog,
   capturedUploadPercent,
   describeCaptureChips,
+  isUploadKeepingUp,
+  UPLOAD_LAG_TOLERANCE_BYTES,
   describeLiveTranscriptTitle,
   describeRetryCountdown,
   formatCapturedSize,
@@ -179,3 +181,32 @@ describe('本机保险箱写不进去时的凭据', () => {
   });
 });
 
+
+/*
+ * 真实缺陷（用户在真机上报的）：录音每秒产生一个分片，localBytes 每秒跳一格、上传随即追平，
+ * 于是 `uploadedBytes >= localBytes` 这个**瞬时**比较每秒翻一次。它在采集屏被消费三处
+ * （凭据措辞、进度条满条还是百分比、那句「录音还在继续，新片段会接着传」出不出现），
+ * 一屏每秒抖三下；窄屏上那句话进出还会把下面整块顶上顶下一行。
+ * 判据必须带迟滞：落后不到几个分片仍算跟上，真的堆积了才翻。
+ */
+describe('上传「跟上了没有」带迟滞', () => {
+  it('刚落下一个分片、还没传完，仍然算跟上（否则每秒翻一次）', () => {
+    const local = 5 * 1024 * 1024;
+    expect(isUploadKeepingUp(local - 8 * 1024, local)).toBe(true);
+    expect(isUploadKeepingUp(local, local)).toBe(true);
+  });
+
+  it('真的堆积了就不算跟上——不许按比例判', () => {
+    // 19MB 里落后 700KB 只有 3.7%，听着很小，其实落后约一分半
+    expect(isUploadKeepingUp(18.4 * 1024 * 1024, 19.1 * 1024 * 1024)).toBe(false);
+  });
+
+  it('容忍量是分片量级，不是随手一个大数', () => {
+    expect(UPLOAD_LAG_TOLERANCE_BYTES).toBeGreaterThanOrEqual(16 * 1024);
+    expect(UPLOAD_LAG_TOLERANCE_BYTES).toBeLessThanOrEqual(64 * 1024);
+  });
+
+  it('还没开始录时不该判成掉队', () => {
+    expect(isUploadKeepingUp(0, 0)).toBe(true);
+  });
+});

@@ -31,6 +31,7 @@ import { describeMicHealth } from './recordingCompletionView';
 import {
   advanceLiveSentenceLog,
   describeCaptureChips,
+  isUploadKeepingUp,
   describeLiveTranscriptTitle,
   capturedUploadPercent,
   describeRetryCountdown,
@@ -1312,7 +1313,13 @@ export function RecordAudioSheet({
           return (
             <span
               key={chip.key}
-              className="inline-flex items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-[12px] font-semibold"
+              /*
+               * tabular-nums：这一排里的数字每秒都在涨（本机已存 X、实时上传 Y）。
+               * 比例数字下，同样位数的两个数宽度也不一样，于是这一排的总宽每秒微动；
+               * 一旦贴近换行阈值，位数一变就整排换行、下面的内容跟着跳一格。
+               * 等宽数字让宽度只在**位数**变化时才动，不会每秒微动。
+               */
+              className="inline-flex items-center gap-1.5 rounded-[10px] px-2.5 py-1.5 text-[12px] font-semibold tabular-nums"
               style={{ background: tone.bg, color: tone.fg }}>
               <Icon size={13} aria-hidden /> {chip.label}
             </span>
@@ -1352,8 +1359,12 @@ export function RecordAudioSheet({
             <span
               className="block h-full rounded-full"
               style={{
-                // 追平时就是满条（已录的都传上去了）；还在追时才按真实比例给一段
-                width: protectedBytes >= localBytes
+                /*
+                 * 跟上了就是满条（已录的都传上去了）；真的掉队时才按比例给一段。
+                 * 判据用带迟滞的那一个：瞬时比较每秒翻一次，进度条会每秒从满条退到
+                 * 87% 再弹满（与凭据措辞、下面那句话同频，用户看到的就是一屏三处一起抖）。
+                 */
+                width: isUploadKeepingUp(protectedBytes, localBytes)
                   ? '100%'
                   : `${Math.max(2, capturedUploadPercent(protectedBytes, localBytes))}%`,
                 background: 'var(--accent-fg-info)',
@@ -1362,8 +1373,13 @@ export function RecordAudioSheet({
             />
           </div>
           <p className="mt-1.5 text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>
+            {/*
+              这半句以前挂在瞬时比较上，每秒进出一次：窄屏上它让这一段在一行与两行之间
+              来回，下面的波形与实时原文卡跟着每秒上下跳一行。换成带迟滞的判据后，
+              录音期间它稳定在，暂停时稳定不在。
+            */}
             断网也不会丢失，会自动续传
-            {protectedBytes >= localBytes && !paused ? '；录音还在继续，新片段会接着传' : ''}
+            {isUploadKeepingUp(protectedBytes, localBytes) && !paused ? '；录音还在继续，新片段会接着传' : ''}
           </p>
         </div>
       )}

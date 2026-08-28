@@ -90,7 +90,17 @@ export function RecordingSegmentBar({
       <span className="flex min-w-0 flex-1 flex-col">
         <span
           className="min-w-0 text-[13px] font-medium leading-snug text-token-primary"
-          style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+          /*
+           * 锁两行：clamp 只封上限、不封下限，短句（「对。」「嗯，好的。」）占一行、
+           * 长句占两行，跟读时每换一句这条吸顶条就变一次高度，下面的搜索行与整份原文
+           * 跟着上下动约 10px。展开态那张当前句卡早就配了 minHeight，这里漏了
+           * （同 doc/rule.prd-admin.recording-entry-scope 之外的另一类：
+           *   「只封上限没封下限」不等于高度稳定）。
+           */
+          style={{
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+            overflow: 'hidden', minHeight: '2.75em',
+          }}
         >
           {text}
         </span>

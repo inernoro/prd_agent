@@ -415,7 +415,13 @@ export function AudioWavePlayer({
             */}
             {transportMeta && (
               // 不 truncate：句序被切成「第 52 / 13…」比换一行更糟
-              <span className="ml-1 whitespace-nowrap text-[12px] text-token-muted">{transportMeta}</span>
+              /*
+               * tabular-nums：这一段是「第 N / M 句」，播到第 10 句、第 100 句时各多一位。
+               * 这一行本来就贴着行宽上限（下面那条注释记的就是它被裁过），位数一变就把
+               * 这一段挤到第二行，播放区长高一行、下面整份原文跟着被顶下去。
+               * 等宽数字至少让宽度只在位数变化时才动，且每位宽度一致、可预期。
+               */
+              <span className="ml-1 whitespace-nowrap text-[12px] tabular-nums text-token-muted">{transportMeta}</span>
             )}
           </div>
           {/*
