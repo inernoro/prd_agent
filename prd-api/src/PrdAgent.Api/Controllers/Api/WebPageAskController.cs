@@ -165,6 +165,15 @@ public class WebPageAskController : ControllerBase
         if (reason != null)
             return BadRequest(ApiResponse<object>.Fail("ASK_UNSUPPORTED", reason));
 
+        // 先记下原样。下面那两笔清除是「重新生成」的前提，但这一发**可能一个字都不写**
+        // （模型不通 / 已经有一次在跑 / 算完发现被顶掉）。那时如果不把标记还回去，
+        // owner 手写的那份题还躺在库里、却已经没了保护：NeedsGeneration 随即判 true，
+        // 网关一恢复，下一次读配置或访客打开分享页就把它静默覆盖掉——
+        // 而他收到的回复明明是「这次没成功」。本功能声明的不变量是「手写过的永不被自动
+        // 覆盖」，在这条路径上等于自己开了个后门。
+        var priorSource = site.AskQuestionsSource;
+        var priorStamp = site.AskQuestionsGeneratedFor;
+
         // 清掉 manual 标记与版本戳，否则 NeedsGeneration 会判「这一版算过了」直接返回。
         // 这两笔就是「重新生成」这个动作的全部语义，判据仍只有 NeedsGeneration 一处。
         await _db.HostedSites.UpdateOneAsync(
@@ -176,6 +185,22 @@ public class WebPageAskController : ControllerBase
         // CancellationToken.None：owner 关掉抽屉不该取消这次生成（server-authority）。
         // 真正的兜底是生成器内部那 45 秒超时，而不是这条 HTTP 连接活不活着。
         var outcome = await _askOpeners.EnsureAsync(siteId, CancellationToken.None);
+
+        // 只有这三种真的落库了（都走 StampAsync 且匹配上了）；其余都没写，把标记还回去。
+        // 还原带条件：版本戳仍为空才动手——并发的另一发如果已经写好了，别把它盖掉。
+        if (outcome is not (AskOpenerOutcome.Generated
+            or AskOpenerOutcome.NoContent
+            or AskOpenerOutcome.ModelUnusable))
+        {
+            var restore = Builders<HostedSite>.Update.Set(s => s.AskQuestionsSource, priorSource);
+            restore = priorStamp.HasValue
+                ? restore.Set(s => s.AskQuestionsGeneratedFor, priorStamp.Value)
+                : restore.Unset(s => s.AskQuestionsGeneratedFor);
+            await _db.HostedSites.UpdateOneAsync(
+                s => s.Id == siteId && s.AskQuestionsGeneratedFor == null,
+                restore);
+        }
+
         var latest = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync();
 
         // 四种「没生成出来」的下一步各不相同，压成一句「失败了」等于把已经知道的信息又丢了：

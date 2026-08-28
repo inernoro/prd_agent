@@ -401,4 +401,31 @@ public class AskOpeningQuestionWiringTests
         var branch = ctrl.Substring(emptyAt, Math.Max(0, doneAt - emptyAt));
         Assert.Contains("RefundIfNothingProducedAsync", branch);
     }
+
+    [Fact]
+    public void 重新生成没写成时_必须把手写标记还回去()
+    {
+        // 「重新生成」的前提是先清掉 manual 标记与版本戳，否则 NeedsGeneration 直接返回。
+        // 但这一发可能一个字都不写（模型不通 / 已有一次在跑 / 算完发现被顶掉）。
+        // 不还原的话，owner 手写的题还躺在库里、却没了保护：网关一恢复，下一次读配置或
+        // 访客打开分享页就把它静默覆盖——而他收到的回复明明是「这次没成功」。
+        var ctrl = ReadSrc(Path.Combine(
+            "src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
+
+        // 清除之前必须先记下原样
+        var priorAt = ctrl.IndexOf("var priorSource = site.AskQuestionsSource;", StringComparison.Ordinal);
+        var clearAt = ctrl.IndexOf("Unset(s => s.AskQuestionsGeneratedFor)", StringComparison.Ordinal);
+        Assert.True(priorAt > -1, "没有先记下原来的 source，还原就无从谈起");
+        Assert.True(clearAt > priorAt, "记原样必须排在清除之前");
+
+        // 只有真的落库的那三种结局不还原，其余都要还
+        Assert.Contains("AskOpenerOutcome.Generated", ctrl);
+        Assert.Contains("priorStamp.HasValue", ctrl);
+
+        // 还原要带条件，别把并发那一发刚写好的结果盖掉
+        var restoreAt = ctrl.IndexOf("restore);", StringComparison.Ordinal);
+        Assert.True(restoreAt > -1);
+        var restoreCall = ctrl.Substring(Math.Max(0, restoreAt - 260), Math.Min(260, restoreAt));
+        Assert.Contains("s.AskQuestionsGeneratedFor == null", restoreCall);
+    }
 }
