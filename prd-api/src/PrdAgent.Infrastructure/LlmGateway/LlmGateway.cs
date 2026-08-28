@@ -108,8 +108,37 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             && !string.Equals(modelType, ModelTypes.Intent, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// GPT-5 家族在 OpenAI 协议的 chat 请求里不认 max_tokens，只认 max_completion_tokens。
+    /// 这里把前者收编成后者——**唯一一份**，两个调用方共用：
+    ///   - <see cref="ApplyGpt56ChatCompletionsCompatibility"/>：chat 路径的兼容改写
+    ///   - <see cref="ApplyResolvedMaxTokensCap"/>：所有路径都会经过它
+    ///
+    /// 为什么不能只放在前者里：Exchange 的两条原始请求路径（请求体透传，不做 chat 兼容改写）
+    /// 只调 cap 那一个。cap 于是往 max_completion_tokens 里写，而调用方原来的 max_tokens
+    /// 原样留着——两个字段一起发出去，OpenAI 兼容上游直接拒。顺带治掉第二个后果：cap 看的是
+    /// 目标字段，看不见 max_tokens，会把「调用方明明只要 500」按「目标字段不存在」处理，
+    /// 直接塞成上限值发出去。
+    /// </summary>
+    private static void NormalizeGpt5TokenField(JsonObject requestBody, ModelResolutionResult resolution)
+    {
+        if (!UsesOpenAiProtocol(resolution)
+            || requestBody["messages"] is not JsonArray
+            || !IsGpt5FamilyModel(resolution.ActualModel))
+            return;
+        if (!requestBody.TryGetPropertyValue(MaxTokensField, out var maxTokens))
+            return;
+        if (!requestBody.ContainsKey(MaxCompletionTokensField))
+            requestBody[MaxCompletionTokensField] = maxTokens?.DeepClone();
+        requestBody.Remove(MaxTokensField);
+    }
+
     internal static int? ApplyResolvedMaxTokensCap(JsonObject requestBody, ModelResolutionResult resolution)
     {
+        // 先收编再限流：顺序反过来的话，cap 已经按目标字段写完了，收编再把 max_tokens
+        // 搬过来会把刚限好的值又盖回去。
+        NormalizeGpt5TokenField(requestBody, resolution);
+
         var cap = resolution.MaxTokens;
         if (cap is not > 0)
             return null;
@@ -3764,13 +3793,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             requestBody["reasoning_effort"] = "none";
 
         // 字段改名整个 GPT-5 家族都要：OpenAI 对全家族都拒收 max_tokens。
-        if (IsGpt5FamilyModel(resolution.ActualModel)
-            && requestBody.TryGetPropertyValue(MaxTokensField, out var maxTokens))
-        {
-            if (!requestBody.ContainsKey(MaxCompletionTokensField))
-                requestBody[MaxCompletionTokensField] = maxTokens?.DeepClone();
-            requestBody.Remove(MaxTokensField);
-        }
+        // 走共用的那一份，别在这里再写一遍（两份必然漂移，而漂移的表现是上游 400）。
+        NormalizeGpt5TokenField(requestBody, resolution);
     }
 
     private static bool UsesOpenAiProtocol(ModelResolutionResult resolution)

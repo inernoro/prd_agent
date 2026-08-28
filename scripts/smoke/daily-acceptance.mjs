@@ -142,7 +142,13 @@ async function login() {
 
 /** 找到（或建出）这一形态的验收站点。复用已有的，避免每天堆一堆垃圾站点。 */
 async function ensureSite(token, form) {
-  const list = await api('/api/web-pages?pageSize=200', { token });
+  // 按标题让服务端筛，不要拉一页回来自己找。
+  // 这里原先写的是 `?pageSize=200`——而这个端点的参数叫 `limit`，`pageSize` 被直接忽略，
+  // 实际只拿回默认的 50 条最新站点。等验收站点被新站点挤出这 50 条，这里就找不到它，
+  // 于是每天再建一个同名的：账号越攒越脏，而且验收的是随便哪一个重名副本。
+  // keyword 走服务端正则匹配 Title，不受窗口大小影响。
+  const q = new URLSearchParams({ keyword: form.title, limit: '200' });
+  const list = await api(`/api/web-pages?${q}`, { token });
   const hit = (list.json?.data?.items || []).find((s) => s.title === form.title);
   if (hit) return hit;
 
@@ -158,7 +164,8 @@ async function ensureSite(token, form) {
 
 /** 找到（或建出）一条**公开**分享链接：验收要覆盖匿名访客真正走的那条路。 */
 async function ensureShare(token, site) {
-  const mine = await api('/api/web-pages/shares?pageSize=200', { token });
+  // 这个端点不分页（只认 includeRevoked），原先带的 pageSize 是句空话，去掉免得误导下一个人。
+  const mine = await api('/api/web-pages/shares', { token });
   const hit = (mine.json?.data?.items || []).find(
     (l) => l.siteId === site.id && l.visibility === 'public' && !l.isRevoked && !l.isExpired,
   );
