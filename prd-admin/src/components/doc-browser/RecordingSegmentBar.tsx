@@ -62,12 +62,18 @@ export function RecordingSegmentBar({
         // 收起态里这枚就是**唯一**的播放开关。发布门禁要断言「结束后直达可播放结果」，
         // 得认得出它——否则播放区一收起，门禁就只看得到展开态那颗、误判成不可播放。
         data-testid="recording-segment-play"
-        aria-label="播放这段录音"
+        /*
+          图标已经跟着 playing 翻了，title 与 aria-label 也必须跟着翻：正在播的时候
+          图标是暂停、提示语却写「播放」，读屏用户听到的和看得见的是两回事，
+          鼠标停上去也在说假话。发布门禁里那句「点完之后 title 变暂停」在收起态
+          一直不成立，根因就是这里（CI 红）。
+        */
+        aria-label={playing ? '暂停这段录音' : '播放这段录音'}
         // 稿面 P2/P3 这枚圆钮明显大过两行文字的高度——它是收起态里唯一的播放开关，
         // 36px 会让它退到和时间码同一量级，读起来像个装饰而不是主控件。
         className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full"
         style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
-        title="播放"
+        title={playing ? '暂停' : '播放'}
       >
         {playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" style={{ marginLeft: 1 }} />}
       </button>

@@ -550,8 +550,20 @@ test.describe('录音连续性发布门禁', () => {
     const transcript = page.getByTestId('recording-live-transcript');
     const waveform = page.getByTestId('recording-waveform');
     const finish = page.getByTestId('recording-finish');
+    /*
+     * 这一段守的是「实时原文是**逐段长出来**的，不是跑完一次性全量出现」，
+     * 顺带守住长原文不遮挡波形与结束键。
+     *
+     * 但判据不能去采样「此刻恰好是第几段」：桩把六批 partial 排在 30~910ms 内推完，
+     * 而测试自己走到这里要花更久，于是「最后一批 == 9」在慢机器上永远等不到
+     * （CI 实测 Expected 9 / Received 18），「此刻还没有第 18 段」同理
+     * （predicate-and-wiring-discipline 形状 1：判据钉的是一个正在动的中间值）。
+     *
+     * 逐段增长这件事有一个**确定**的判据：所有 partial 事件都被记下来了，
+     * 下面 `liveEventsBeforeFinish` 断言的正是完整序列 [3,6,9,12,15,18]。
+     * 所以这里只等「已经长到第 9 段这一档」，把「有没有分批」交给那条序列断言。
+     */
     await expect(transcript).toContainText('验收注入第 3 段');
-    await expect(transcript).not.toContainText('验收注入第 18 段');
     await expect(waveform).toBeVisible();
     await expect(finish).toBeInViewport();
 
@@ -562,9 +574,8 @@ test.describe('录音连续性发布门禁', () => {
       return acceptanceWindow.__recordingAcceptanceLiveEvents
         ?.filter(event => event.kind === 'partial')
         .at(-1)?.segmentCount ?? 0;
-    })).toBe(9);
+    })).toBeGreaterThanOrEqual(9);
     await expect(transcript).toContainText('验收注入第 9 段');
-    await expect(transcript).not.toContainText('验收注入第 18 段');
     await expect(waveform).toBeVisible();
     await expect(finish).toBeInViewport();
 
