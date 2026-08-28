@@ -684,9 +684,36 @@ export function RecordingResultPage() {
   useEffect(() => {
     if (!runningRunId) return;
     let stale = false;
+    let timer = 0;
+    /*
+     * **串行**：一发回来了才排下一发。定点发（setInterval）在后端慢或抖动时会让请求叠着飞，
+     * 一屏挂久了就攒出一堆并发的状态查询，正好在服务端已经不行的时候再加一把火
+     * （Codex 第三十六轮 P2）。处理页那条轮询早就是串行的，这一条落下了。
+     */
+    const schedule = () => { timer = window.setTimeout(() => { void tick(); }, 2000); };
+    let watchFailures = 0;
+    const MAX_WATCH_FAILURES = 5; // 约 10 秒的抖动容忍
     const tick = async () => {
       const res = await getAgentRun(runningRunId);
-      if (stale || !res.success) return;
+      if (stale) return;
+      if (!res.success) {
+        /*
+         * 同样分两种（判定与另外两条轮询共用一份）：
+         *   - 永久失败（这条 run 不存在，或它不是这个账号发起的、查不到）：再问也是同一个答案，
+         *     此前会串行地问到标签页关掉为止，屏幕上还挂着一根永远不动的进度条。
+         *   - 抖动：照常再试，但也有上限，免得无限空转。
+         * 两种都要把进度条摘掉并说一句——挂着不动的进度条比没有进度条更误导。
+         */
+        watchFailures += 1;
+        if (isPermanentLookupFailure(res.error?.code) || watchFailures >= MAX_WATCH_FAILURES) {
+          setRunning(null);
+          toast.error('跟不到这条整理的进度了', '整理仍在服务端继续，刷新这一页看结果');
+          return;
+        }
+        schedule();
+        return;
+      }
+      watchFailures = 0;
       const run = res.data;
       if (run.status === 'done') {
         setRunning(null);
@@ -712,11 +739,13 @@ export function RecordingResultPage() {
           const percent = run.progress ?? prev.percent;
           return percent === prev.percent ? prev : { ...prev, percent };
         });
+        // 终态那两支各自收手（setRunning(null) 之后这个 effect 会被新的 runId 重建），
+        // 只有「还在跑」才继续排下一发
+        schedule();
       }
     };
     void tick();
-    const timer = window.setInterval(() => { void tick(); }, 2000);
-    return () => { stale = true; window.clearInterval(timer); };
+    return () => { stale = true; window.clearTimeout(timer); };
   // ownerId 进依赖：上面判「是不是本机草稿有意让位」时要用当前账号
   }, [ownerId, runningRunId]);
 

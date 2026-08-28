@@ -67,12 +67,23 @@ for (const item of DATA.boards) {
 
 const bytes = cards.reduce((sum, c) => sum + (c.design?.length ?? 0) + (c.impl?.length ?? 0), 0);
 console.log(`\n内联图片约 ${(bytes / 1024 / 1024).toFixed(1)} MB`);
-if (missing.length) console.log(missing.map(m => '  ! ' + m).join('\n'));
 
-const html = renderPage(cards, DATA);
+const html = renderPage(cards, DATA, missing);
 fs.writeFileSync(`${OUT_DIR}/index.html`, html);
 console.log(`\n写出 ${OUT_DIR}/index.html （${(html.length / 1024 / 1024).toFixed(1)} MB）`);
 await browser.close();
+/*
+ * 缺图必须让这条命令**变红**。此前缺了一侧也照样写出画板、照样 exit 0：
+ * 自动跑的还原度流水线于是会把一份半截证据当成完整证据收下，判官照着它打分
+ * （closed-loop-acceptance：不会红的证据比没有证据更糟；Codex 第三十六轮 P1）。
+ * 文件仍然写出来——迭代时要看哪块缺了——但退出码非零，并且画板顶部把缺的那几块点名，
+ * 这样命令行和产物两头都不会被误当成完整取证。
+ */
+if (missing.length) {
+  console.error(`\n缺 ${missing.length} 张图，这份对照画板不完整，不能当作取证结果：`);
+  console.error(missing.map(m => '  ! ' + m).join('\n'));
+  process.exitCode = 1;
+}
 
 function esc(text) {
   return String(text ?? '').replace(/[&<>"]/g, (c) => (
@@ -80,7 +91,7 @@ function esc(text) {
   ));
 }
 
-function renderPage(cards, data) {
+function renderPage(cards, data, missing = []) {
   const canvases = [...new Set(cards.map(c => c.canvas))];
   const passed = cards.filter(c => c.score >= 99).length;
   const scored = cards.filter(c => typeof c.score === 'number').length;
@@ -195,6 +206,9 @@ function renderPage(cards, data) {
             overflow-x:auto;white-space:nowrap;}
   dialog{border:none;background:transparent;max-width:96vw;max-height:96vh;padding:0;}
   dialog::backdrop{background:rgba(0,0,0,.86);}
+  .incomplete{margin:0 0 22px;padding:14px 16px;border-radius:12px;background:var(--wip-soft);
+    border:1px solid var(--wip);color:var(--ink2);font-size:14px;line-height:1.7;}
+  .incomplete strong{color:var(--wip);}
   dialog img{max-width:96vw;max-height:96vh;border-radius:10px;display:block;}
   @media (max-width:760px){ .pair{grid-template-columns:1fr;} .wrap{padding:28px 16px 56px;} }
 </style>
@@ -202,6 +216,7 @@ function renderPage(cards, data) {
   <p class="eyebrow">MAP 录音转录 · 设计稿还原度</p>
   <h1>四十块画板，逐块对照</h1>
   <p class="lede">左边是设计稿画板，右边是同一时刻真实应用里的那一屏——走真实路由、真实组件、真实判据，只有网络是桩。分数由审查智能体按内容完整性、结构层级、状态表达、交互可达、视觉样式、版式留白六维加权给出，99 分为达标线。</p>
+  ${missing.length ? `<p class="incomplete" role="status"><strong>这份对照不完整：缺 ${missing.length} 张图。</strong>缺图的画板下面标着「没有基准图」或「未取证」，不能拿来判分。<br>${missing.map(esc).join('<br>')}</p>` : ''}
   <dl class="tally">
     <div><dt>画板总数</dt><dd>${cards.length}</dd></div>
     <div><dt>已判分</dt><dd>${scored}</dd></div>

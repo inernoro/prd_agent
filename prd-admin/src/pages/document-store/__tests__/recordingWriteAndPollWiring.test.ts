@@ -910,3 +910,59 @@ describe('在线补传卡住时会自己再试，而且看得见', () => {
     expect(around).toContain('flushRetryRef.current = { savedAt: 0, attempts: 0 }');
   });
 });
+
+
+describe('结果页看整理进度的轮询也是串行的', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+  const at = source.indexOf('const runningRunId = ');
+  const body = source.slice(at, source.indexOf('}, [ownerId, runningRunId]);', at));
+
+  it('一发回来了才排下一发，不是定点发', () => {
+    // 注释里为了讲清楚踩过的坑会写到这个词，判据只看真正的调用
+    expect(body).not.toMatch(/window\.setInterval\(/);
+    expect(body).not.toMatch(/clearInterval\(/);
+    expect(body).toContain('window.setTimeout(() => { void tick(); }, 2000)');
+    // 还在跑那一支要自己排下一发，否则轮询只跑一次就停了
+    const inflight = body.lastIndexOf('setRunning((prev)');
+    expect(body.indexOf('schedule();', inflight)).toBeGreaterThan(inflight);
+  });
+
+  it('终态那两支不再排下一发', () => {
+    for (const marker of ['run.status === \'done\'', "run.status === 'failed'"]) {
+      const at2 = body.indexOf(marker);
+      expect(at2, `找不到 ${marker} 这一支`).toBeGreaterThan(-1);
+    }
+    // done / failed 两支各自 setRunning(null) 收手，schedule 只出现在失败重试与还在跑那两处
+    expect([...body.matchAll(/schedule\(\);/g)].length).toBe(2);
+  });
+
+  it('查询失败也分两种，且都不会留下一根不动的进度条', () => {
+    const at2 = body.indexOf('if (!res.success) {');
+    expect(at2).toBeGreaterThan(-1);
+    const branch = body.slice(at2, body.indexOf('watchFailures = 0;', at2));
+    expect(branch).toContain('isPermanentLookupFailure(res.error?.code)');
+    expect(branch).toContain('watchFailures >= MAX_WATCH_FAILURES');
+    // 收手那一路要把进度条摘掉并说一句
+    const stop = branch.indexOf('setRunning(null)');
+    expect(stop).toBeGreaterThan(-1);
+    expect(branch.slice(stop)).toContain('toast.error(');
+  });
+});
+
+describe('对照画板缺图必须变红', () => {
+  const source = read('../../e2e/design-fidelity/build-compare-artifact.mjs');
+
+  it('缺一侧就非零退出，不静默交出半截证据', () => {
+    const at = source.indexOf('if (missing.length) {');
+    expect(at, '缺图没有任何出路').toBeGreaterThan(0);
+    const block = source.slice(at, at + 400);
+    expect(block).toContain('process.exitCode = 1');
+    // 只 console.log 一行不算：自动跑的流水线读的是退出码
+    expect(source).not.toMatch(/if \(missing\.length\) console\.log/);
+  });
+
+  it('产物自己也把缺的那几块点名，不能被误当成完整取证', () => {
+    expect(source).toContain('renderPage(cards, DATA, missing)');
+    expect(source).toContain('这份对照不完整：缺 ${missing.length} 张图');
+  });
+});

@@ -261,6 +261,13 @@ async function installRecordingBrowserFakes(page: Page) {
 type RecordingFixtureOptions = {
   initiallyCompleted?: boolean;
   completionDelayMs?: number;
+  /**
+   * 每片上传的往返延迟。默认 0（片一发出去就算传上去了，两种判据在桩里完全重合，
+   * 于是「承诺不许反复进出」那条断言无论实现怎么写都绿）。
+   * 布局门禁把它调到一片的产生间隔以上，让「本机已存」在大部分时刻领先「已上传」一片，
+   * 与真机同形：迟滞判据稳定为真，瞬时判据每秒翻一次。
+   */
+  chunkLatencyMs?: number;
   transcriptReadyAfterMs?: number;
   archiveReadyAfterMs?: number;
   /**
@@ -283,6 +290,7 @@ async function installApiFixture(
   {
     initiallyCompleted = false,
     completionDelayMs = 900,
+    chunkLatencyMs = 0,
     transcriptReadyAfterMs = 1_200,
     archiveReadyAfterMs = 4_000,
     archiveReadyOn = 'time',
@@ -379,7 +387,16 @@ async function installApiFixture(
     }
     if (path.startsWith(`/api/document-store/recording-uploads/${SESSION_ID}/chunks/`) && method === 'POST') {
       const chunkIndex = Number(path.split('/').at(-1));
-      uploadedBytes += 64;
+      /*
+       * 收多少就记多少：此前每片固定记 64 字节，于是「已上传」永远远远落后于「本机已存」，
+       * 那句续传承诺在桩里从头到尾不出现——布局门禁里那条「承诺不许反复进出」的断言
+       * 因此永远绿，连把判据改回瞬时比较都照绿（形状 8：拿一份不成立的证据当证明）。
+       * 按真实体积累计之后，桩里的上传是「追平 → 落后一片 → 再追平」，
+       * 与真机同形：迟滞判据稳定为真，瞬时判据每秒翻一次。
+       */
+      const chunkBytes = route.request().postDataBuffer()?.byteLength ?? 64;
+      if (chunkLatencyMs > 0) await new Promise(resolve => setTimeout(resolve, chunkLatencyMs));
+      uploadedBytes += chunkBytes;
       return json(route, {
         accepted: true,
         duplicate: false,
@@ -873,12 +890,35 @@ test.describe('采集屏布局稳定性门禁', () => {
   test('录音期间波形与凭据行不上下跳', async ({ page }, testInfo) => {
     const apiRequests: string[] = [];
     await installRecordingBrowserFakes(page);
-    await installApiFixture(page, apiRequests, {});
+    await installApiFixture(page, apiRequests, { chunkLatencyMs: 1_400 });
     await page.goto(`/document-store?store=${STORE_ID}&record=1`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('recording-elapsed')).toBeVisible({ timeout: 20_000 });
 
+    /*
+     * 先等抽屉的入场动效落定，再开始量。
+     * 这一屏是滑上来的：`recording-elapsed` 可见的那一刻动画还在跑，第一帧可能截在半路，
+     * 于是量到几百 px 的「位移」——那不是录音期间的抖动，是取证起点没站稳
+     * （本轮这道门就这么随机红过一次：1089 / 442 / 421，后两个是动画尾巴）。
+     * 判据是「连续两次读到同一个位置」，且必须在 5 秒内落定；落不定就直接判失败，
+     * 不许悄悄跳过——一个会空跑的门禁比没有门禁更糟。
+     */
+    const readWaveTop = () => page.evaluate(() => {
+      const wave = document.querySelector('[data-testid="recording-waveform"]');
+      return wave ? Math.round(wave.getBoundingClientRect().top) : -1;
+    });
+    let settledTop = -1;
+    let lastTop = await readWaveTop();
+    const settleDeadline = Date.now() + 5_000;
+    while (Date.now() < settleDeadline) {
+      await page.waitForTimeout(120);
+      const top = await readWaveTop();
+      if (top > 0 && top === lastTop) { settledTop = top; break; }
+      lastTop = top;
+    }
+    expect(settledTop, '抽屉入场 5 秒内没有落定，后面的采样不成立').toBeGreaterThan(0);
+
     const SAMPLE_MS = 9_000;
-    const samples: Array<{ t: number; wave: number; chipsHeight: number; label: string; promise: boolean }> = [];
+    const samples: Array<{ t: number; wave: number; chipsHeight: number; label: string; promise: boolean; uploadH: number; micText: string; micH: number }> = [];
     const started = Date.now();
     while (Date.now() - started < SAMPLE_MS) {
       samples.push({
@@ -893,6 +933,9 @@ test.describe('采集屏布局稳定性门禁', () => {
             label: chips ? (chips as HTMLElement).innerText.replace(/\s+/g, ' ') : '',
             // 那句承诺在不在——它以前挂在瞬时比较上，每秒进出一次
             promise: upload ? (upload as HTMLElement).innerText.includes('新片段会接着传') : false,
+            uploadH: upload ? Math.round(upload.getBoundingClientRect().height) : -1,
+            micText: (document.querySelector('[data-testid="recording-mic-health"]') as HTMLElement | null)?.innerText ?? '',
+            micH: Math.round(document.querySelector('[data-testid="recording-mic-health"]')?.getBoundingClientRect().height ?? -1),
           };
         })),
       });
@@ -902,7 +945,7 @@ test.describe('采集屏布局稳定性门禁', () => {
     const waveTops = [...new Set(samples.map((s) => s.wave))];
     const chipsHeights = [...new Set(samples.map((s) => s.chipsHeight))];
     await testInfo.attach('layout-stability', {
-      body: JSON.stringify({ samples: samples.length, waveTops, chipsHeights }, null, 2),
+      body: JSON.stringify({ samples: samples.length, waveTops, chipsHeights, raw: samples }, null, 2),
       contentType: 'application/json',
     });
 
@@ -928,6 +971,8 @@ test.describe('采集屏布局稳定性门禁', () => {
      * 不换行），真机上是一整行 18px——判据不该依赖桩恰好把幅度放大到多少。
      */
     const promiseStates = [...new Set(samples.map((s) => s.promise))];
-    expect(promiseStates, '那句承诺在录音期间反复进出（每秒翻一次）').toHaveLength(1);
+    // 断的是「一直在」，不只是「一直没变」：桩里如果那句话从头到尾不出现，
+    // 「没变过」同样成立，判据就退化成永远绿（形状 8）。
+    expect(promiseStates, '那句承诺在录音期间反复进出（每秒翻一次）').toEqual([true]);
   });
 });
