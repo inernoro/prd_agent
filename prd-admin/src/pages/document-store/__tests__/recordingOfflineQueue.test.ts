@@ -18,6 +18,7 @@ import {
   isStaleOfflineEdit,
   isFlushable,
   loadOfflineEdit,
+  rebaseOfflineEditAfterOwnSave,
   saveOfflineEdit,
   type QueuedOfflineEdit,
 } from '../recordingOfflineQueue';
@@ -269,5 +270,55 @@ describe('版本基线按时刻比，不按字符串比', () => {
       baseUpdatedAt: written,   // 令牌来自上一次写回响应
     };
     expect(decideOfflineFlush(edit, stored)).toBe('flush');
+  });
+});
+
+
+/*
+ * 「在线保存还在飞 → 断网 → 又改一句 → 那发保存成功」之后，压在队列里的草稿
+ * 拿的是保存前的基线。不把它搬到这一发产生的新版本上，重连时就会把**本页自己**
+ * 造成的版本变化判成「别人改过」，弹一个假冲突把自动补传拦住（Codex 第四十轮 P2）。
+ */
+describe('本页自己保存之后，队列里那份草稿的基线', () => {
+  const R0 = '2026-08-28T00:00:00.000Z';
+  const R1 = '2026-08-28T00:00:05.000Z';
+  const draft = (baseUpdatedAt: string | null): QueuedOfflineEdit => ({
+    ownerId: USER_A,
+    noteId: NOTE_A,
+    count: 1,
+    content: '断网期间又改的一句',
+    savedAt: Date.now(),
+    baseUpdatedAt,
+  });
+
+  it('基线正是保存前那个令牌 → 搬到保存后的新版本，重连时判为可补传', () => {
+    const rebased = rebaseOfflineEditAfterOwnSave(draft(R0), R0, R1);
+    expect(rebased?.baseUpdatedAt).toBe(R1);
+    // 搬完之后这份草稿对着服务端的新版本应当是「可以传」，不再是假冲突
+    expect(decideOfflineFlush(rebased, R1)).toBe('flush');
+    // 不搬的话正是那个假冲突
+    expect(decideOfflineFlush(draft(R0), R1)).toBe('remote-changed');
+  });
+
+  it('正文与计数一个字都不动，只换基线', () => {
+    const original = draft(R0);
+    const rebased = rebaseOfflineEditAfterOwnSave(original, R0, R1);
+    expect(rebased?.content).toBe(original.content);
+    expect(rebased?.count).toBe(original.count);
+    expect(rebased?.savedAt).toBe(original.savedAt);
+  });
+
+  it('基线不是保存前那个令牌 → 不许搬：中间有别人写过，那是真冲突', () => {
+    expect(rebaseOfflineEditAfterOwnSave(draft('2026-08-27T00:00:00.000Z'), R0, R1)).toBeNull();
+  });
+
+  it('保存前后都没有已知版本 / 没有草稿 / 拿不到新版本 → 什么都不动', () => {
+    expect(rebaseOfflineEditAfterOwnSave(draft(null), null, R1)?.baseUpdatedAt).toBe(R1);
+    expect(rebaseOfflineEditAfterOwnSave(null, R0, R1)).toBeNull();
+    expect(rebaseOfflineEditAfterOwnSave(draft(R0), R0, null)).toBeNull();
+  });
+
+  it('已经是新基线了就不必再搬（毫秒精度对齐，不按字符串比）', () => {
+    expect(rebaseOfflineEditAfterOwnSave(draft(R1), R0, '2026-08-28T00:00:05Z')).toBeNull();
   });
 });

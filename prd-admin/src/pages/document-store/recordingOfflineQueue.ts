@@ -129,6 +129,33 @@ export function decideOfflineFlush(
 }
 
 /**
+ * 本标签页自己的一次在线保存落地之后，压在队列里的那份草稿要不要换基线。
+ *
+ * 场景：在线保存还在飞 → 断网 → 用户又改一句（这份草稿拿的是保存前的令牌）→
+ * 先前那发保存成功，把服务端推到了新版本。此时不换基线的话，重连补传时
+ * `decideOfflineFlush` 会拿旧基线比新版本，判成「云端被别人改过」——改它的正是本页自己，
+ * 于是弹一个假冲突，把承诺好的自动补传拦住。
+ *
+ * 只换「基线确实等于保存前那个令牌」的那一份：不等于就说明中间还有别人写过，
+ * 那是真冲突，不许被这一换抹掉。返回 null 表示**不要动它**。
+ */
+export function rebaseOfflineEditAfterOwnSave(
+  edit: QueuedOfflineEdit | null | undefined,
+  revisionBeforeSave: string | null | undefined,
+  revisionAfterSave: string | null | undefined,
+): QueuedOfflineEdit | null {
+  if (!edit || !revisionAfterSave) return null;
+  const base = edit.baseUpdatedAt ?? null;
+  const before = revisionBeforeSave ?? null;
+  // 两边都有值就按时刻比（毫秒精度对齐，见 isSameInstant）；都没有值也算「同一个基线」——
+  // 那是「这条笔记还没有已知版本」的处境，本页这一发保存正好给了它第一个版本
+  const sameBase = base && before ? isSameInstant(base, before) : base === before;
+  if (!sameBase) return null;
+  if (base && isSameInstant(base, revisionAfterSave)) return null; // 已经是新基线，不必换
+  return { ...edit, baseUpdatedAt: revisionAfterSave };
+}
+
+/**
  * 落盘这份草稿。**返回它到底有没有落住**——调用方据此决定怎么跟用户说话：
  * 落住了才配说「刷新也不用重做」；没落住（隐私模式、站点数据被禁、配额满）
  * 只能说「这次改动留在本页，刷新会丢」。此前这里把异常吞掉、调用方照样报成功，

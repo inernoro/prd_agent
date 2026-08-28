@@ -1080,3 +1080,27 @@ describe('处理页跑完之后要把原文接上，而不是请用户再转一�
     expect(source).toContain('if (publishGrace <= MAX_PUBLISH_GRACE) schedule();');
   });
 });
+
+
+describe('在线保存落地后，队列里那份新草稿要跟着换基线', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+  const save = source.slice(source.indexOf('const onSaveNote = useCallback'), source.indexOf('const noteIdForFlush ='));
+
+  it('发起时记下当时的版本令牌', () => {
+    expect(save).toContain('const revisionBeforeSave = noteRevisionRef.current;');
+  });
+
+  it('队列换过那一档里真的调了换基线，并且落盘', () => {
+    const at = save.indexOf('if (!queueUnchanged) {');
+    expect(at).toBeGreaterThan(-1);
+    const branch = save.slice(at, save.indexOf('return true;', at));
+    expect(branch).toContain('rebaseOfflineEditAfterOwnSave(');
+    // 只改内存不落盘的话，刷新之后接回来的还是旧基线那一份
+    expect(branch).toContain('saveOfflineEdit(rebased)');
+    expect(branch).toContain('setPendingEdits(rebased)');
+  });
+
+  it('判据在队列模块里，页面不另算一套', () => {
+    expect(save).not.toContain('baseUpdatedAt: nextRevision');
+  });
+});

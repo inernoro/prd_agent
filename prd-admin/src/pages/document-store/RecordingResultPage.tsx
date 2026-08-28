@@ -40,6 +40,7 @@ import {
   decideOfflineFlush,
   isFlushable,
   loadOfflineEdit,
+  rebaseOfflineEditAfterOwnSave,
   saveOfflineEdit,
   type OfflineFlushReason,
   type QueuedOfflineEdit,
@@ -845,6 +846,12 @@ export function RecordingResultPage() {
      * 自动补传与「用我的版本覆盖」两条路早就按 savedAt 复核过，这条落下了。
      */
     const queuedBeforeSave = pendingRef.current?.savedAt ?? null;
+    /*
+     * 发起这一发时的版本令牌。存成功之后，**这中间新排下的那份草稿**的基线正是这个值——
+     * 它是在这一发落地之前排的，服务端那时还没变。下面要拿它认一次，决定要不要把
+     * 那份草稿的基线搬到这一发产生的新版本上。
+     */
+    const revisionBeforeSave = noteRevisionRef.current;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       // 离线：收进队列并乐观落到本地。这不是「假装保存成功」——联网后真的会补传，
       // 而且横幅上明写着还有几处没上去，用户随时看得到自己欠了多少。
@@ -903,9 +910,26 @@ export function RecordingResultPage() {
     if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
     if (!queueUnchanged) {
       /*
-       * 期间排下了更新的草稿：队列、横幅、屏幕上的正文都属于那一份，一样都不许动。
-       * 它的基线是排队当时的 noteRevisionRef，上面刚推进过——正是它补传时该比的那个值。
+       * 期间排下了更新的草稿：它的正文比服务端这一版还新，队列、横幅、屏幕上的字都属于它，
+       * 一样都不许动。
+       *
+       * 但**基线要跟着走**。那份草稿排队时拿的是这一发保存之前的令牌，而这一发把服务端
+       * 推到了新版本；不搬基线的话，重连补传时 `decideOfflineFlush` 会拿旧基线比新版本，
+       * 判成「云端被别人改过」——改它的正是本标签页自己，于是弹出一个假冲突，
+       * 把承诺好的自动补传拦住，要用户手动裁决（Codex 第四十轮 P2）。
+       * 只搬「基线确实等于这一发保存前那个令牌」的那一份：不等于就说明中间还有别人写过，
+       * 那是真冲突，不许被这一搬抹掉。
        */
+      const rebased = rebaseOfflineEditAfterOwnSave(
+        pendingRef.current,
+        revisionBeforeSave,
+        res.data?.updatedAt ?? null,
+      );
+      if (rebased) {
+        // 落盘也要跟着改：只改内存的话，刷新之后接回来的还是旧基线那一份
+        setQueueVolatile(!saveOfflineEdit(rebased));
+        setPendingEdits(rebased);
+      }
       toast.success('这一版已保存；这期间新排下的校对仍在队列里');
       return true;
     }
