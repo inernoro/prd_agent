@@ -190,6 +190,17 @@ export function isTranscriptionInflight(status: string | null | undefined): bool
 }
 
 /**
+ * 这条 run 成功跑完了吗。
+ *
+ * 终态有三种（done / failed / cancelled），只有 done 会产出笔记——「不在途」不等于
+ * 「有东西可取」。两处都要这一档：处理页据此把「已生成」接上（否则那张卡退回
+ * 「把录音转成文字」，点下去重跑一整轮 ASR），结果页据此在停下之前再看一眼笔记出没出来。
+ */
+export function isTranscriptionSucceeded(status: string | null | undefined): boolean {
+  return status?.trim().toLowerCase() === 'done';
+}
+
+/**
  * 这次查询失败还值不值得再问一遍。
  *
  * 「查不到」有两种，混成一种就会一直空转：条目不存在、或者这个账号对它只有只读权限

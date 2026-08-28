@@ -439,20 +439,25 @@ export function TranscribeStatusCard({
     new Notification('录音处理有新进展', { body: audioTitle?.trim() || '这段录音' });
   }, [audioTitle, notifyState, processing]);
 
+  /**
+   * 「重试」到底重跑什么：**只有一处判定**。
+   *
+   * 原文已经在了还报失败，挂的必然是衍生产物那一层（整理/词云/纪要），重试就该重跑整理；
+   * 落到 `onStart` 走的是条目级 transcribe——从头再跑一整轮 ASR，既多花模型钱，
+   * 又会用新一轮识别结果覆盖用户已经逐句校对过的原文（Codex 第二十九轮 P1）。
+   * 卡上有两处「重试」（失败卡底部、AI 不可用那张横幅），此前只有前者做了这个判断，
+   * 后者仍然直接调 onStart——同一个判据抄成两份，改了一处漏了另一处
+   * （predicate-and-wiring-discipline 形状 3；Codex 第三十九轮 P1）。现在两处共用这一个。
+   */
+  const rerunAction = noteEntryId && onRestyle ? onRestyle : onStart;
+
   /** 失败卡底部那组出口。顺序由判据给，这里只负责把每一种接到真实的处理函数上。 */
   const failureActions = (failureCopy?.actions ?? []).flatMap((action): {
     key: string; label: string; icon: React.ReactNode; run: () => void; disabled?: boolean;
   }[] => {
     switch (action) {
       case 'retry': {
-        /*
-         * 原文已经在了还报失败，挂的必然是**衍生产物**那一层（整理/词云/纪要）——
-         * 那这颗「重试」就该重跑整理，不能落到 onStart。onStart 走的是条目级 transcribe，
-         * 也就是**从头再跑一整轮 ASR**：既多花模型钱，又会用新一轮识别结果覆盖用户
-         * 已经逐句校对过的原文（Codex 第二十九轮 P1；结果页那颗「一键整理」早就改走
-         * restyle 了，抽屉这条路漏了）。
-         */
-        const rerun = noteEntryId && onRestyle ? onRestyle : onStart;
+        const rerun = rerunAction;
         return rerun ? [{ key: 'retry', label: '重试', icon: <RefreshCw size={12} />, run: () => rerun() }] : [];
       }
       case 'play':
@@ -614,10 +619,11 @@ export function TranscribeStatusCard({
                 查看服务状态
               </button>
             )}
-            {onStart && (
+            {rerunAction && (
               <button
                 type="button"
-                onClick={() => onStart()}
+                // 与失败卡底部那颗同一个判据：有原文就重跑整理，不重跑 ASR
+                onClick={() => rerunAction()}
                 className="flex min-h-10 w-full cursor-pointer items-center justify-center rounded-[10px] px-4 text-[13px] font-semibold"
                 style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
               >

@@ -45,7 +45,7 @@ import {
   type QueuedOfflineEdit,
 } from '@/pages/document-store/recordingOfflineQueue';
 import { describeOfflineFlushBlock } from '@/pages/document-store/recordingCompletionView';
-import { isPermanentLookupFailure, isTranscriptionInflight } from '@/pages/document-store/recordingVault';
+import { isPermanentLookupFailure, isTranscriptionInflight, isTranscriptionSucceeded } from '@/pages/document-store/recordingVault';
 import { canGoBackInApp } from '@/hooks/useSmartBack';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
@@ -308,6 +308,8 @@ export function RecordingResultPage() {
      */
     let attempts = 0;
     const MAX_ATTEMPTS = 100; // 3s × 100 ≈ 5 分钟
+    let doneGrace = 0;
+    const MAX_DONE_GRACE = 5; // run 已 done、笔记还没读到时再等 5 轮（约 15 秒）
     /*
      * **串行**：一轮（两个请求）都回来了才排下一轮。定点发在后端慢或抖动时会让两轮叠着飞，
      * 一屏最长等五分钟，攒出的并发查询正好压在已经不行的服务端上
@@ -334,7 +336,17 @@ export function RecordingResultPage() {
         if (!isPermanentLookupFailure(runRes.error?.code)) schedule();
         return;
       }
-      if (!isTranscriptionInflight(runRes.data?.status)) return;
+      /*
+       * 「不在途」有两种，收手之前要分开：
+       *   - failed / cancelled / 压根没有 run：笔记不会出现，停。
+       *   - done：**笔记多半已经在了**（worker 先写笔记与 metadata，再把 run 标成 done），
+       *     此前这一档直接返回，于是「跑完那一刻恰好落在两次查询之间」时这一屏一直空着，
+       *     要用户自己刷新（Codex 第三十九轮 P2）。所以 done 也往下走，去看一眼笔记。
+       */
+      const status = runRes.data?.status;
+      const inflight = isTranscriptionInflight(status);
+      const succeeded = isTranscriptionSucceeded(status);
+      if (!inflight && !succeeded) return;
       const entryRes = await getDocumentEntry(entryId);
       if (stale) return;
       if (!entryRes.success) { schedule(); return; }
@@ -342,6 +354,15 @@ export function RecordingResultPage() {
       if (entryRes.data?.metadata?.transcribe_entry_id) {
         setAwaitNoteTick(v => v + 1);
         return;
+      }
+      /*
+       * run 已经 done 但笔记还没露面：给几轮宽限（发布与读到之间有时差），
+       * 不无限等——真发布不出来的话，等到天亮也不会有（跟在途那一档不同，
+       * 在途那边有 worker 在跑，宽限没有意义）。
+       */
+      if (!inflight) {
+        doneGrace += 1;
+        if (doneGrace > MAX_DONE_GRACE) return;
       }
       schedule();
     };

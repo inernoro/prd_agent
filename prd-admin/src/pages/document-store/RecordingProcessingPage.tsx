@@ -32,6 +32,7 @@ import {
   countTranscriptSentences,
   isPermanentLookupFailure,
   isTranscriptionInflight,
+  isTranscriptionSucceeded,
   splitPartialTranscript,
   type FailedTranscriptionNotice,
 } from '@/pages/document-store/recordingVault';
@@ -112,6 +113,14 @@ export function RecordingProcessingPage() {
    * 「查不到（已删除或只读）」与「网络不行」要给两句不同的话，也各有不同的下一步。
    */
   const [watchError, setWatchError] = useState<string | null>(null);
+  /**
+   * 这条录音的原文笔记（`transcribe_entry_id`）。
+   *
+   * 不接这一格的话，卡片按「还没有原文」画：抬头写「把录音转成文字」，底下那颗按钮
+   * 走的是 `onStart` → 完整转录。于是转录刚跑完（或者回头再打开这个地址）时，
+   * 屏幕上请用户做的事，正是**把刚生成的原文重跑一轮 ASR 盖掉**（Codex 第三十九轮 P1）。
+   */
+  const [noteEntryId, setNoteEntryId] = useState('');
   const [durationSec, setDurationSec] = useState(0);
   useEffect(() => onRecordingDuration(setDurationSec), []);
   /*
@@ -186,11 +195,14 @@ export function RecordingProcessingPage() {
     setSizeLabel(null);
     setDateLabel(null);
     setOwningStoreId(storeId ?? '');
+    setNoteEntryId('');
     void (async () => {
       const entryRes = await getDocumentEntry(entryId);
       if (stale) return;
       if (entryRes.success && entryRes.data) {
         setTitle(entryRes.data.title ?? '');
+        // 回头再打开这个地址时，原文可能早就在了：这一格决定卡片是「已生成」还是「去转录」
+        setNoteEntryId(entryRes.data.metadata?.transcribe_entry_id ?? '');
         setSizeLabel(formatSizeLabel(entryRes.data.fileSize));
         setDateLabel(entryRes.data.createdAt
           ? new Date(entryRes.data.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
@@ -258,6 +270,8 @@ export function RecordingProcessingPage() {
      */
     let failureStreak = 0;
     const MAX_FAILURE_STREAK = 5; // 约 10 秒的抖动容忍
+    let publishGrace = 0;
+    const MAX_PUBLISH_GRACE = 5; // run 已 done、笔记还没读到时再等 5 轮（约 10 秒）
     const MAX_MISSING_TICKS = 60; // 2s × 60 = 2 分钟还没建出 run，就不是「马上要来」了
     /*
      * **串行**：一发回来了才排下一发，不能用 setInterval 定点发。
@@ -298,7 +312,22 @@ export function RecordingProcessingPage() {
         return;
       }
       missingTicks = 0;
-      if (isTranscriptionInflight(next.status)) schedule();
+      if (isTranscriptionInflight(next.status)) { schedule(); return; }
+      /*
+       * 跑完了就把笔记接上再收手。只把 run 标成 done、不去取条目的话，卡片仍然按
+       * 「还没有原文」画，请用户点的那颗按钮会重跑一整轮 ASR，把刚出炉的原文盖掉。
+       * 只有 done 才去取：failed / cancelled 不会有笔记，取了也是白取。
+       */
+      if (!isTranscriptionSucceeded(next.status)) return;
+      const entryRes = await getDocumentEntry(entryId);
+      if (stale) return;
+      const publishedNoteId = entryRes.success ? (entryRes.data?.metadata?.transcribe_entry_id ?? '') : '';
+      if (publishedNoteId) { setNoteEntryId(publishedNoteId); return; }
+      /*
+       * done 了但笔记还没读到（发布与读到之间有时差）：再等几轮，不无限等。
+       */
+      publishGrace += 1;
+      if (publishGrace <= MAX_PUBLISH_GRACE) schedule();
     };
     void tick();
     return () => { stale = true; window.clearTimeout(timer); };
@@ -380,6 +409,7 @@ export function RecordingProcessingPage() {
                   transcriptPreview,
                 }
                 : null}
+              noteEntryId={noteEntryId || undefined}
               lastFailure={failure}
               audioTitle={title}
               audioSizeLabel={sizeLabel}

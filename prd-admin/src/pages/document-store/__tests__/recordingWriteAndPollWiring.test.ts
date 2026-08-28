@@ -615,10 +615,15 @@ describe('拉回来的正文与版本令牌绑在一起', () => {
 describe('衍生产物失败的「重试」不重跑 ASR', () => {
   const source = read('components/doc-browser/TranscribeStatusCard.tsx');
 
-  it('原文已经在时，重试走整理那条路', () => {
-    const from = source.slice(source.indexOf("case 'retry': {"));
-    const block = from.slice(0, from.indexOf('case \'play\''));
-    expect(block).toContain('noteEntryId && onRestyle ? onRestyle : onStart');
+  it('原文已经在时，重试走整理那条路，而且卡上两处「重试」共用同一个判据', () => {
+    // 判据只许有一份：抄成两份就会像 Codex 抓到的那样改一处漏一处（形状 3）
+    const decisions = [...source.matchAll(/noteEntryId && onRestyle \? onRestyle : onStart/g)];
+    expect(decisions, '「重试」重跑什么的判据不是唯一一份').toHaveLength(1);
+    expect(source).toContain('const rerunAction = noteEntryId && onRestyle ? onRestyle : onStart;');
+    // AI 不可用那张横幅上的重试也走它，不再直接调 onStart
+    const banner = source.slice(source.indexOf('{aiDown && ('), source.indexOf('{completionCopy && ('));
+    expect(banner).toContain('rerunAction()');
+    expect(banner).not.toMatch(/onClick=\{\(\) => onStart\(\)\}/);
   });
 });
 
@@ -743,10 +748,19 @@ describe('等笔记的轮询区分「查不到」与「确认没有」', () => {
     expect(branch).toMatch(/if \(!isPermanentLookupFailure\(runRes\.error\?\.code\)\) schedule\(\);/);
   });
 
-  it('只有确认不在途才收手（不排下一轮）', () => {
-    const at = body.indexOf('if (!isTranscriptionInflight');
-    expect(at).toBeGreaterThan(-1);
-    expect(body.slice(at, at + 120)).toMatch(/if \(!isTranscriptionInflight\([^)]*\)\) return;/);
+  it('收手分两档：done 先看一眼笔记，failed/cancelled 才是真的没戏', () => {
+    // 「不在途」不等于「没东西可取」：done 也不在途，但笔记多半已经发布了
+    expect(body).toContain('const inflight = isTranscriptionInflight(status);');
+    expect(body).toContain('const succeeded = isTranscriptionSucceeded(status);');
+    const stop = body.indexOf('if (!inflight && !succeeded) return;');
+    expect(stop, '没有把 done 与 failed 分开').toBeGreaterThan(-1);
+    // 取条目那一发必须在这道门之后：门写反了就会对 failed 也去白取一次
+    expect(body.indexOf('await getDocumentEntry(entryId)')).toBeGreaterThan(stop);
+  });
+
+  it('done 之后笔记还没读到时给几轮宽限，但不无限等', () => {
+    expect(body).toContain('doneGrace += 1;');
+    expect(body).toContain('if (doneGrace > MAX_DONE_GRACE) return;');
   });
 
   it('次数上限仍在，不会无限等下去', () => {
@@ -1035,5 +1049,34 @@ describe('发起整理这件事要当场看得见', () => {
 
   it('传给面板了，否则算完了也画不出来', () => {
     expect(source).toContain('launchingStyleKey: launchingStyle,');
+  });
+});
+
+
+describe('处理页跑完之后要把原文接上，而不是请用户再转一遍', () => {
+  const source = read('pages/document-store/RecordingProcessingPage.tsx');
+
+  it('done 之后去取条目，把 transcribe_entry_id 接进卡片', () => {
+    const at = source.indexOf('if (!isTranscriptionSucceeded(next.status)) return;');
+    expect(at, '跑完之后没有去接原文').toBeGreaterThan(-1);
+    const after = source.slice(at, at + 700);
+    expect(after).toContain('await getDocumentEntry(entryId)');
+    expect(after).toContain("metadata?.transcribe_entry_id");
+    expect(after).toContain('setNoteEntryId(publishedNoteId)');
+  });
+
+  it('这一格真的传给了卡片——不传的话卡片仍按「还没有原文」画', () => {
+    expect(source).toContain('noteEntryId={noteEntryId || undefined}');
+  });
+
+  it('回头再打开这个地址时，从条目上直接取原文', () => {
+    expect(source).toContain("setNoteEntryId(entryRes.data.metadata?.transcribe_entry_id ?? '')");
+    // 换条目要先清，否则上一条的原文会挂在下一条身上
+    expect(source).toContain("setNoteEntryId('');");
+  });
+
+  it('发布还没读到时给几轮宽限，failed/cancelled 不白取', () => {
+    expect(source).toContain('publishGrace += 1;');
+    expect(source).toContain('if (publishGrace <= MAX_PUBLISH_GRACE) schedule();');
   });
 });
