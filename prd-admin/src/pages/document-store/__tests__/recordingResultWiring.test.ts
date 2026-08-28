@@ -33,15 +33,31 @@ describe('录音结果页挂在全屏层，不是平台外壳里', () => {
 });
 
 describe('结果页把回调接给了跟读组件（不接就整块消失）', () => {
-  const karaoke = PAGE.slice(PAGE.indexOf('<TranscriptKaraoke'));
+  /*
+   * 判据只截**这一个标签**，并且要求每个 prop 有真值。
+   * 此前两处都松：切片一路切到文件尾（后面别处的同名 prop 也算数），
+   * 而且只要求 `prop=` 出现——写成 `onSaveNote={undefined}` 照样绿，类型上还合法，
+   * 于是逐句校对整块静默消失也没人拦（对抗审查 A3）。
+   */
+  const tagStart = PAGE.indexOf('<TranscriptKaraoke');
+  const karaoke = PAGE.slice(tagStart, PAGE.indexOf('/>', tagStart));
+
+  it('切到的确实是这一个标签，不是半个文件', () => {
+    expect(tagStart).toBeGreaterThanOrEqual(0);
+    expect(karaoke.length).toBeGreaterThan(200);
+    expect(karaoke.length).toBeLessThan(4000);
+  });
 
   it.each([
     ['onSaveNote', '逐句校对 / 词典 / 改说话人'],
     ['onRestyle', '会议纪要标题右侧的「重新生成」'],
     ['organize', '一键整理四张卡的状态'],
     ['onPickOrganizeStyle', '一键整理这一整块'],
-  ])('传了 %s（缺了就没有：%s）', (prop) => {
-    expect(karaoke).toContain(`${prop}=`);
+  ])('传了 %s 且不是 undefined（缺了就没有：%s）', (prop) => {
+    const at = karaoke.indexOf(`${prop}=`);
+    expect(at, `${prop} 根本没传`).toBeGreaterThanOrEqual(0);
+    const value = karaoke.slice(at + prop.length + 1, at + prop.length + 40);
+    expect(value, `${prop} 传成了 undefined，整块会静默消失`).not.toMatch(/^\{\s*undefined\s*\}/);
   });
 
   it('保存写的是转录笔记条目，不是音频条目', () => {

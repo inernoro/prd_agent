@@ -32,7 +32,12 @@ describe('采集屏的每个判据都真的有人在调用', () => {
 
 describe('倒计时由真实排期驱动，不是面板自己拍的数', () => {
   it('socket 在排下一次重连时把时刻回调出去', () => {
-    expect(SOCKET).toContain('onRetryScheduled');
+    /*
+     * 判据要认「真的调了」，不能认「这个名字出现过」：它是构造器参数属性，
+     * 声明那一行本身就含这个词，删光所有调用点用例照样绿（对抗审查 A6）。
+     */
+    const calls = SOCKET.match(/this\.onRetryScheduled\(/g) ?? [];
+    expect(calls.length, 'socket 里没有任何一处真的回调重连时刻').toBeGreaterThanOrEqual(2);
     // 退避时长走共享判据，不在 socket 里再写一份常量
     expect(SOCKET).toContain('liveTranscriptionRetryDelayMs(');
   });
@@ -45,7 +50,14 @@ describe('倒计时由真实排期驱动，不是面板自己拍的数', () => {
   });
 
   it('没有排期时不显示倒计时——这条由纯函数兜底，面板不许自己造一个默认值', () => {
-    expect(SHEET).not.toContain('后重试`');
+    /*
+     * 此前钉的是「反引号」这一种写法，换成 JSX 文本就绕开了（对抗审查 A5）。
+     * 改为认「面板里有没有自己算秒数」：倒计时只能来自共享判据。
+     */
+    expect(SHEET).toContain('describeRetryCountdown(');
+    // 自己拿排期时刻做减法再除以 1000 —— 那就是在面板里另造一份倒计时
+    expect(SHEET).not.toMatch(/liveRetryAt[^\n]*-[^\n]*\/\s*1000/);
+    expect(SHEET).not.toMatch(/Math\.ceil\([^\n]*1000\)[^\n]*秒后/);
   });
 });
 
@@ -65,12 +77,21 @@ describe('本机保险箱失败要接到凭据上', () => {
    * 它绿着，而 setVaultPersisted 从来没被调用过（形状 8：拿一份不成立的声明当证据）。
    * 判据必须认「读了返回值」。
    */
-  it('写分片失败时读返回值把状态翻掉，而不是只挂一个接不到的 catch', () => {
-    expect(sheet).toContain('.then((ok) => { if (!ok) setVaultPersisted(false); })');
-  });
-
-  it('建会话失败同样读返回值', () => {
-    expect(sheet).toContain('.then((ok) => { if (!ok) setVaultPersisted(false); }).catch(');
+  /*
+   * 判据必须**分别定位到各自的调用点**。此前两条都是全文件搜同一句字面串，而那句
+   * 在文件里出现三次（切库 / 建会话 / 写分片）——删掉写分片那一处，用例照样绿
+   * （对抗审查 A2：一条命中就够，等于谁都没守住）。
+   */
+  it.each([
+    ['写分片', 'vaultAppendChunk('],
+    ['建会话', 'vaultStartSession('],
+    ['切归属库', 'vaultUpdateSessionStore('],
+  ])('%s 失败时读返回值把凭据翻掉，而不是只挂一个接不到的 catch', (_name, callee) => {
+    const at = sheet.indexOf(callee);
+    expect(at, `找不到 ${callee} 的调用点`).toBeGreaterThanOrEqual(0);
+    // 只看这一处调用之后的一小段：降级必须挂在它自己的链上
+    const chain = sheet.slice(at, at + 420);
+    expect(chain).toMatch(/if \(!ok\) setVaultPersisted\(false\)/);
   });
 
   it('这个状态真的传给了 describeCaptureChips', () => {

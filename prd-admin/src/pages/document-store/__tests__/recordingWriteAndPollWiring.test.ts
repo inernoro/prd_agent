@@ -317,12 +317,26 @@ describe('库归属以条目为准', () => {
 describe('停止看护时把进度位一起腾出来', () => {
   const source = read('pages/document-store/DocumentStorePage.tsx');
 
+  /*
+   * 标题说的是两条分支，判据也必须真的看两条。此前切片在「终态分支开始」那一行截断，
+   * 于是终态那一半根本不在被检查的范围里——把它的清理删掉，用例照样绿
+   * （对抗审查 A1：守住一半，标题却写着两条）。
+   */
   it('退役分支与终态分支都清 activeTranscribeRun', () => {
+    const clear = /setActiveTranscribeRun\(current => \(current\?\.id === runId \? null : current\)\)/g;
     const retire = source.indexOf("if (decision.kind === 'retire-watcher')");
+    const terminalHead = source.indexOf('const observedRun = decision.run;', retire);
     expect(retire).toBeGreaterThan(0);
-    const branch = source.slice(retire, source.indexOf('const observedRun = decision.run;', retire));
-    expect(branch.length).toBeGreaterThan(400);
-    expect(branch).toMatch(/setActiveTranscribeRun\(current => \(current\?\.id === runId \? null : current\)\)/);
+    expect(terminalHead).toBeGreaterThan(retire);
+
+    const retireBranch = source.slice(retire, terminalHead);
+    expect(retireBranch.length).toBeGreaterThan(400);
+    expect(retireBranch, '退役分支没清进度位').toMatch(clear);
+
+    // 终态分支：从它开头到这一轮循环结束
+    const terminalBranch = source.slice(terminalHead, source.indexOf('void loadEntries();', terminalHead) + 40);
+    expect(terminalBranch.length).toBeGreaterThan(200);
+    expect(terminalBranch, '终态分支没清进度位').toMatch(clear);
   });
 });
 
