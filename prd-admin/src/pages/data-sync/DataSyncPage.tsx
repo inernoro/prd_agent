@@ -1004,6 +1004,13 @@ function ProgressCard({
               「改写了 N 条」这一句要 N>0 才说。源站用本地磁盘存附件时 N 恒为 0，
               照说会得到「已把 0 条地址改写成本站地址…附件现在就能打开」——
               一句既没信息量又把人往反方向带的话（DS30）。
+
+              **补救建议里只许点名真的被改写过的那几类资产。** 这段话教运维「文件该往哪复制」，
+              前提是那条记录的地址**已经**改成本站的了；没改写的记录仍然指着源站，复制到本站
+              任何位置都打不开。生成图（image_assets）就属于没改写的那一类——那个集合里混着
+              外部图床直链，整列不登记（见后端 `DataSyncAssetUrls.PendingSurvey` 与台账 DS36），
+              所以**不得**把它和附件并列写进「复制到本站前缀底下」。同理，将来把哪个集合迁进
+              登记表，才允许在这里点它的名。
             */}
             {run.dryRun ? (
               <>
@@ -1013,7 +1020,7 @@ function ProgressCard({
                 。到时候也<span style={{ color: 'var(--text-primary)' }}>只搬记录，不搬文件本身</span>——
                 两站用同一个桶、且对象前缀也一样时，附件才直接打得开；其余情况都要自己把文件搬过来，
                 否则会看到图片裂开。<span style={{ color: 'var(--text-primary)' }}>搬到哪要分两类看</span>：
-                附件、生成图这类按内容存的，地址会带上本站配置的前缀，所以要复制到<span style={{ color: 'var(--text-primary)' }}>本站前缀底下</span>
+                附件这类按内容存的，地址会带上本站配置的前缀，所以要复制到<span style={{ color: 'var(--text-primary)' }}>本站前缀底下</span>
                 （桶相同但前缀不同也打不开，就是这个原因）；首页、桌面端素材那类按固定路径存的<span style={{ color: 'var(--text-primary)' }}>不带前缀</span>，
                 复制到原样的路径即可——它们在同桶不同前缀时本来就打得开。
               </>
@@ -1024,7 +1031,7 @@ function ProgressCard({
                 。注意：<span style={{ color: 'var(--text-primary)' }}>这次只搬了记录，没有搬文件本身</span>。
                 两站用同一个桶、且对象前缀也一样时，附件现在就能打开；其余情况都要自己把文件搬过来，
                 否则会看到图片裂开。<span style={{ color: 'var(--text-primary)' }}>搬到哪要分两类看</span>：
-                附件、生成图这类按内容存的，地址带着本站配置的前缀，所以要复制到<span style={{ color: 'var(--text-primary)' }}>本站前缀底下</span>
+                附件这类按内容存的，地址带着本站配置的前缀，所以要复制到<span style={{ color: 'var(--text-primary)' }}>本站前缀底下</span>
                 （桶相同但前缀不同也打不开，就是这个原因）；首页、桌面端素材那类按固定路径存的<span style={{ color: 'var(--text-primary)' }}>不带前缀</span>，
                 复制到原样的路径即可——它们在同桶不同前缀时本来就打得开。
               </>
