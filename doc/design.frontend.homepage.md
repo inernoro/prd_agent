@@ -293,22 +293,11 @@
 
 ## 实现来源
 
-给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+给要跳去看代码的人指个方向；只读这篇文档的人可以整块跳过。这里只给入口，不列改法——细节读源码。
 
-| 位置 | 文件 | 作用 |
-|---|---|---|
-| 一、现状诊断 | `prd-admin/src/pages/home/LandingPage.tsx` | 十一幕骨架与顶栏 |
-| 一、现状诊断 | `prd-admin/src/pages/home/i18n/landing.ts` | 全部对外文案与写死的统计数字 |
-| 一、现状诊断 | `prd-admin/src/pages/home/sections/StatsStrip.tsx` | 四个大数字区块 |
-| 一、现状诊断 | `prd-admin/src/pages/home/sections/CommunityPulse.tsx` | 硬编码的「实时脉搏」与排行榜 |
-| 一、现状诊断 | `prd-admin/src/pages/home/sections/SignatureCinema.tsx` | 缺视频源时的「即将上线」降级 |
-| 一、现状诊断 | `prd-admin/src/pages/home/sections/MinimalFooter.tsx` | 现有页脚 |
-| 二、产品理解 | `prd-admin/src/stores/toolboxStore.ts` | Agent 与工具注册表，Agent 数量的真实来源 |
-| 五、视觉语言 | `prd-admin/src/pages/home/sections/HeroSection.tsx` | 签名渐变与前景色常量 |
-| 五、视觉语言 | `prd-admin/src/lib/__tests__/inkPalette.test.ts` | 墨系配色守卫测试 |
-| 六、素材清单 | `prd-admin/src/lib/homepageAssetSlots.ts` | 首页素材槽位注册表，可用于替换默认视觉 |
-| 十、落地记录 | `prd-admin/src/pages/home/scenes/` | 四幕场景与它们共用的暗色皮肤对象 |
-| 九、关联文档 | `.claude/rules/chief-designer-usability.md` | 好用四原则 |
-| 九、关联文档 | `.claude/rules/conclusion-before-numbers.md` | 先给结论再给数字 |
-| 九、关联文档 | `.claude/rules/no-rootless-tree.md` | 无根之木禁令 |
-| 九、关联文档 | `.claude/rules/mobile-first-density.md` | 移动端密度优先 |
+- 首页本体（页面骨架、各幕、对外文案与写死的统计数字、签名渐变）：`prd-admin/src/pages/home/`
+- Agent 与工具的真实数量来源：`prd-admin/src/stores/toolboxStore.ts`
+- 首页素材槽位注册表（替换默认视觉从这里进）：`prd-admin/src/lib/homepageAssetSlots.ts`
+- 墨系配色的 CI 守卫：`prd-admin/src/lib/__tests__/inkPalette.test.ts`
+
+本文引用的规则：`chief-designer-usability`（好用四原则）、`conclusion-before-numbers`（先给结论再给数字）、`no-rootless-tree`（无根之木禁令）、`mobile-first-density`（移动端密度优先），均在 `.claude/rules/` 下。

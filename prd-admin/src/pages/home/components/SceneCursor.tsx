@@ -38,7 +38,28 @@ export interface CursorSpot {
 /** 指针本体的箭头路径（macOS 风格实心箭头 + 描边，深浅底上都看得见）。 */
 const ARROW = 'M3 2l14 10.2-6.1.5 3.4 6.7-2.6 1.3-3.4-6.8L3 18.6z';
 
-interface Pos { left: number; top: number }
+/** 量出来的落点。带上它是**为哪个目标**量的 —— 换了目标但还没量到新位置的那一帧，
+ *  旧坐标不能拿来当「已到位」用（见下面到位通知那段）。 */
+export interface Pos { left: number; top: number; target: string }
+
+/**
+ * 「该报一次到位了吗」的判据，抽成纯函数只为一件事：**它能被测**。
+ * 组件本身要跑浏览器才能量落点，而这里坏掉的从来不是坐标算得对不对，
+ * 是**什么时候重新判一次**。
+ *
+ * 返回一个键：键变了就该重新报一次到位，键没变就不重报，返回 null 就是这一轮不报。
+ *
+ * 两件事必须同时进键，缺一个就是一种真实发生过的缺陷：
+ *  · 拍号 —— 节拍器扣住某一拍时传进来的是 armed 拍号，而它的目标常常和上一拍是
+ *    同一个（走到发送键 → 按下发送键）。只看落点的话键不变、不重判，那一拍只能
+ *    等 1.4s 保险丝，用户看到「手停在按钮上，一秒多之后才发生」。
+ *  · 落点连同它是为谁量的 —— 目标换了但新落点还没量出来时不能报，否则拿着上一拍的
+ *    坐标提前放行，又变回「还没走到就发生了」。
+ */
+export function arrivalKey(beat: number, pos: Pos | null): string | null {
+  if (!pos) return null;
+  return `${beat}@${pos.target}@${Math.round(pos.left)},${Math.round(pos.top)}`;
+}
 
 export function SceneCursor({
   spot,
@@ -62,7 +83,7 @@ export function SceneCursor({
   style?: CSSProperties;
 }) {
   const hostRef = useRef<HTMLSpanElement | null>(null);
-  const [pos, setPos] = useState<Pos | null>(null);
+  const [measured, setMeasured] = useState<Pos | null>(null);
   const prevPos = useRef<Pos | null>(null);
 
   const target = spot?.target ?? null;
@@ -80,15 +101,15 @@ export function SceneCursor({
     let raf = 0;
     const measure = () => {
       const el = host.querySelector<HTMLElement>(`[data-cursor-target="${CSS.escape(target)}"]`);
-      if (!el) { setPos(null); return; }
+      if (!el) { setMeasured(null); return; }
       // 目标是跨行的行内内容（比如被划中的那一段文字）时，getBoundingClientRect 给的是
       // 整个段落块 —— 落在它的 94% 宽处就是最后一行右边的空白里，看着像指针飘着。
       // 取**最后一个行框**，`ax:1` 才真的落在「划到的那个字」后面。
       const rects = el.getClientRects();
       const t = rects.length > 1 ? rects[rects.length - 1] : el.getBoundingClientRect();
       const h = host.getBoundingClientRect();
-      if (t.width === 0 || t.height === 0) { setPos(null); return; }
-      setPos({ left: t.left - h.left + t.width * ax, top: t.top - h.top + t.height * ay });
+      if (t.width === 0 || t.height === 0) { setMeasured(null); return; }
+      setMeasured({ left: t.left - h.left + t.width * ax, top: t.top - h.top + t.height * ay, target });
     };
 
     measure();
@@ -104,8 +125,12 @@ export function SceneCursor({
   // 指针后到」，比没有指针更假（见上面第 1 条约定）。
   // 记上一拍的落点走 effect 而不是渲染期改 ref：StrictMode 会重复渲染，
   // 渲染期写 ref 的话第二遍就把「刚才在哪」冲成了「现在在哪」，moved 恒 false。
+  // 换了目标、但还没量到新落点的那一帧：旧坐标既不能拿来画，更不能拿来报「到位」。
+  const pos = measured && measured.target === target ? measured : null;
   const prev = prevPos.current;
-  useEffect(() => { prevPos.current = pos; }, [pos]);
+  // 只记有效落点：目标切换时的空档若把 prev 冲成 null，下一次量到会被当成「首次出现」
+  // 直接就位，走位过渡就没了。
+  useEffect(() => { if (pos) prevPos.current = pos; }, [pos]);
   const moved = !!pos && !!prev && (Math.abs(prev.left - pos.left) > 2 || Math.abs(prev.top - pos.top) > 2);
   /*
    * 第一次量到落点的那一帧不能有过渡。没量到时 left/top 兜底写 0，一旦量到就会从
@@ -124,17 +149,21 @@ export function SceneCursor({
    * 到位通知。不用 transitionend：目标和上一拍同一个位置时压根不会有 transition，
    * 事件永远不来，那一拍就卡死了。改成「落点定下来之后按走位时长报一次」——
    * 没动就立刻报，动了就等它走完。
+   *
+   * 什么时候重新报一次，由上面的 `arrivalKey` 定（它带着拍号，所以「同一个目标上的
+   * 那次点击」也会重新判一次，不必等保险丝）。
    */
   const arriveRef = useRef(onArrive);
   arriveRef.current = onArrive;
+  const arriveKey = arrivalKey(beat, pos);
   useEffect(() => {
-    if (!pos) return undefined;
+    if (!arriveKey) return undefined;
     const wait = moved ? travelMs : 0;
     const id = setTimeout(() => arriveRef.current?.(), wait);
     return () => clearTimeout(id);
     // moved 故意不进依赖：它由 pos 推出来，进了会因为 prev 的更新多跑一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pos?.left, pos?.top, travelMs]);
+  }, [arriveKey, travelMs]);
 
   return (
     <span

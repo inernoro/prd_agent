@@ -261,8 +261,13 @@ public class HomepageAssetsController : ControllerBase
             .FirstOrDefaultAsync(ct);
         if (item == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图结果不存在"));
-        if (item.Status != ImageGenRunItemStatus.Done || string.IsNullOrWhiteSpace(item.Url))
+        if (item.Status != ImageGenRunItemStatus.Done)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "这张图还没生成完成，不能挂到首页"));
+        // 出图了却没有地址：调用方按 b64_json 发的、又没有 workspace 落资产，产物只在 base64 里。
+        // 这里引用的是 URL，认领不了——说清楚是哪一步的问题，别报成「还没生成完成」。
+        if (string.IsNullOrWhiteSpace(item.Url))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "这张图只有 base64、没有可引用的地址，挂不到首页。发起生图时请用 responseFormat=url"));
 
         // 尺寸/MIME 从资产记录取；取不到就按 URL 后缀猜，缺这两个字段不该挡住认领
         var imageUrl = item.Url!;

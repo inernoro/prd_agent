@@ -91,7 +91,7 @@
 - [涌现探索器 · 设计](./design.emergence.explorer.md) `design.emergence.explorer`
 - [系统涌现：从基础组件到协同智能 · 设计](./design.emergence.system.md) `design.emergence.system`
 - [总裁面板 · 设计](./design.executive-dashboard.md) `design.executive-dashboard`
-- [MAP 首页重构 · 设计思路与元素清单 · 设计](./design.frontend.homepage.md) `design.frontend.homepage`
+- [MAP 首页重构 · 设计思路与元素清单](./design.frontend.homepage.md) `design.frontend.homepage`
 - [应用模型配置左右布局 · 设计](./design.frontend.left-right-layout.md) `design.frontend.left-right-layout`
 - [手机端整体重构调研 · 设计](./design.frontend.mobile-refactor.md) `design.frontend.mobile-refactor`
 - [可复用组件产品 · 设计](./design.frontend.reusable-patterns.md) `design.frontend.reusable-patterns`

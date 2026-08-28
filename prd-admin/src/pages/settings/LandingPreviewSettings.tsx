@@ -193,7 +193,10 @@ export default function LandingPreviewSettings() {
         modelId: model.modelId,
         platformId: model.platformId,
         items: targets.map((t) => ({ prompt: t.prompt, count: 1, size: t.slot.size })),
-        responseFormat: 'b64_json',
+        // 必须要 url：这条 run 不带 workspaceId，Worker 不会把 base64 落成资产，
+        // 而挂到首页槽位（adopt-image-run）引用的正是产物的 URL。要 b64_json 的话
+        // 图生出来了、item.Url 却是空的，adopt 一律被拒。
+        responseFormat: 'url',
         maxConcurrency: 3,
       },
       idempotencyKey: `landing_${now}_${Math.random().toString(16).slice(2)}`,
@@ -266,21 +269,26 @@ export default function LandingPreviewSettings() {
 
     let pending = targets;
     let lastModel = '';
-    for (let i = 0; i < MODEL_FALLBACK_LIMIT && pending.length > 0; i++) {
+    // 上限取「还剩几个没试过的模型」，不是死的 MODEL_FALLBACK_LIMIT —— 取模会绕回去
+    // 把同一个模型再跑一遍：只配了 1 个模型时，同一次昂贵的生图要白跑三遍，
+    // 而失败文案还说「换了 3 个模型」。
+    const rounds = Math.min(MODEL_FALLBACK_LIMIT, modelChain.length);
+    let tried = 0;
+    for (let i = 0; i < rounds && pending.length > 0; i++) {
       const model = modelChain[(startIndex + i) % modelChain.length];
       if (!model) break;
       lastModel = model.modelId;
+      tried = i + 1;
       pending = await runOnce(pending, model, i + 1);
       if (!aliveRef.current) return;
     }
 
     if (pending.length === 0) return;
     // 试穿了还是不行：如实说试了几个、最后一个是谁，别只丢一句"生成失败"
-    const tried = Math.min(MODEL_FALLBACK_LIMIT, modelChain.length);
     pending.forEach((t) =>
       patchState(t.slot.slot, {
         status: 'error',
-        error: `换了 ${tried} 个模型都没出图（最后一个：${lastModel}）。多半是模型池本身有问题，去「模型中心 → 模型池」看一眼。`,
+        error: `试了 ${tried} 个模型都没出图（最后一个：${lastModel}）。多半是模型池本身有问题，去「模型中心 → 模型池」看一眼。`,
       }),
     );
   };
