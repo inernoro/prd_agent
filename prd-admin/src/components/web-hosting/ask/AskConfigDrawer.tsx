@@ -99,8 +99,11 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
       return;
     }
     setQuestions(res.data?.suggestedQuestions ?? []);
-    setQuestionsSource('auto');
-    // 这份是系统刚写进库的，不是他动的手：保存时不要再送回去把站点钉成 manual。
+    // 用后端回的那个值，别一律写死 'auto'。这一次未必真写进去了——别人在这几秒里
+    // 把题库改成手写，后端会回 Superseded 加上库里最新的 questionsSource='manual'，
+    // 而这里如果硬标成 auto，面板就会把别人手写的那份说成「系统读正文生成」。
+    setQuestionsSource(res.data?.questionsSource === 'manual' ? 'manual' : 'auto');
+    // 这份是从库里读回来的，不是他在这个抽屉里动的手：保存时不要再送回去把站点钉成 manual。
     setQuestionsDirty(false);
     // 没生成出来就把后端的原话摆出来（这一页读不出正文 / 模型没给出可用问题），
     // 不假装成功，也不自己换一套说法（no-rootless-tree）

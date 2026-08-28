@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json;
 
 namespace PrdAgent.Core.Models;
@@ -13,6 +14,34 @@ namespace PrdAgent.Core.Models;
 /// </summary>
 public static class AskOpeningQuestions
 {
+    /// <summary>系统读正文生成的。</summary>
+    public const string SourceAuto = "auto";
+
+    /// <summary>owner 自己写的，自动生成永不覆盖。</summary>
+    public const string SourceManual = "manual";
+
+    /// <summary>
+    /// 这批题到底是谁写的——**唯一**判定源。
+    ///
+    /// 判据本身只有一句「有题但没有 source 就是存量手写」，麻烦在于它有三个消费方：
+    /// 决定要不要生成（NeedsGeneration）、读配置端点回给面板的标签、重新生成端点回的标签。
+    /// 三处各写一遍的后果不是不一致那么轻——写那一侧判成 manual（不覆盖，对的），
+    /// 读那一侧兜底成 auto，于是面板把 owner 精心写的题标成「系统读正文生成」，还配一句
+    /// 「你改过之后就不再被自动覆盖」的解释，等于**主动劝他点重新生成**把自己那份冲掉。
+    /// 保护写入却在读出时劝人自毁，比两边都不保护更糟。
+    /// </summary>
+    public static string ResolveSource(HostedSite site)
+    {
+        if (string.Equals(site.AskQuestionsSource, SourceManual, StringComparison.OrdinalIgnoreCase))
+            return SourceManual;
+        // AskQuestionsSource 是自动生成这个功能才引入的字段。在它之前建的站点里根本不存在，
+        // 而那时候题库里的每一条都只可能是 owner 自己填的。
+        if (string.IsNullOrEmpty(site.AskQuestionsSource)
+            && (site.AskSuggestedQuestions?.Count ?? 0) > 0)
+            return SourceManual;
+        return SourceAuto;
+    }
+
     /// <summary>面板最多展示几条（多了会把提问框挤出首屏）。这是**展示**上限，不是存储上限。</summary>
     public const int MaxDisplay = 4;
 

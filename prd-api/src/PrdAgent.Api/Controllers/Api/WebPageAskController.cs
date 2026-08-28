@@ -81,7 +81,9 @@ public class WebPageAskController : ControllerBase
             suggestedQuestions = site.AskSuggestedQuestions ?? new List<string>(),
             // 这批题是系统读正文写的还是 owner 自己写的。自动填的值必须看得出来、可改、
             // 说得出依据（minimal-user-input 第 3 条）——否则就是个黑箱。
-            questionsSource = site.AskQuestionsSource ?? "auto",
+            // 走 ResolveSource 而不是 `?? "auto"`：存量站点没有这个字段，兜底成 auto 会把
+            // owner 手写的题标成「系统读正文生成」，还配一句劝他重新生成的解释。
+            questionsSource = AskOpeningQuestions.ResolveSource(site),
             questionsGeneratedAt = site.AskQuestionsGeneratedFor,
             allowAnonymous = site.AskAllowAnonymous,
             dailyLimit = site.AskDailyLimit,
@@ -168,7 +170,7 @@ public class WebPageAskController : ControllerBase
         await _db.HostedSites.UpdateOneAsync(
             s => s.Id == siteId,
             Builders<HostedSite>.Update
-                .Set(s => s.AskQuestionsSource, "auto")
+                .Set(s => s.AskQuestionsSource, AskOpeningQuestions.SourceAuto)
                 .Unset(s => s.AskQuestionsGeneratedFor));
 
         // CancellationToken.None：owner 关掉抽屉不该取消这次生成（server-authority）。
@@ -197,7 +199,9 @@ public class WebPageAskController : ControllerBase
             generated = outcome == AskOpenerOutcome.Generated,
             outcome = outcome.ToString(),
             suggestedQuestions = latest?.AskSuggestedQuestions ?? new List<string>(),
-            questionsSource = latest?.AskQuestionsSource ?? "auto",
+            questionsSource = latest == null
+                ? AskOpeningQuestions.SourceAuto
+                : AskOpeningQuestions.ResolveSource(latest),
             message,
         }));
     }

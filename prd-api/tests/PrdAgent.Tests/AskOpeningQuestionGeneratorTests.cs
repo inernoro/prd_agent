@@ -134,6 +134,29 @@ public class AskOpeningQuestionGeneratorTests
     }
 
     [Fact]
+    public void 读出来的来源标签必须与要不要生成同一个答案()
+    {
+        // 写那一侧判成 manual（不覆盖，对的）、读那一侧兜底成 auto，面板就会把 owner 手写的题
+        // 标成「系统读正文生成」，还配一句「你改过之后就不再被自动覆盖」的解释——等于主动
+        // 劝他点重新生成把自己那份冲掉。保护写入却在读出时劝人自毁，比两边都不保护更糟。
+        var cases = new[]
+        {
+            SiteWithAsk(s => { s.AskQuestionsSource = null; s.AskSuggestedQuestions = new List<string> { "存量手写" }; }),
+            SiteWithAsk(s => { s.AskQuestionsSource = ""; s.AskSuggestedQuestions = new List<string> { "存量手写" }; }),
+            SiteWithAsk(s => s.AskQuestionsSource = "manual"),
+            SiteWithAsk(s => { s.AskQuestionsSource = null; s.AskSuggestedQuestions = new List<string>(); }),
+            SiteWithAsk(s => { s.AskQuestionsSource = "auto"; s.AskSuggestedQuestions = new List<string> { "系统写的" }; }),
+        };
+
+        foreach (var site in cases)
+        {
+            var manualBySource = AskOpeningQuestions.ResolveSource(site) == AskOpeningQuestions.SourceManual;
+            // 判成手写 = 不生成；判成系统生成 = 该不该生成由版本戳决定，这里的站点都还没盖过戳
+            Assert.Equal(!manualBySource, AskOpeningQuestionGenerator.NeedsGeneration(site));
+        }
+    }
+
+    [Fact]
     public void 存量站点没有题就没有东西要保护_照常生成()
     {
         // 上一条的边界：不能因为「没有 source」就一律不生成，那样新上传的站点永远拿不到题。
@@ -338,5 +361,17 @@ public class AskOpeningQuestionWiringTests
     {
         var program = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Program.cs"));
         Assert.Matches(@"AddSingleton<[^>]*IAskOpeningQuestionGenerator[^>]*>", program);
+    }
+
+    [Fact]
+    public void 回给面板的来源标签不许再自己兜底成_auto()
+    {
+        // 判据只有 AskOpeningQuestions.ResolveSource 一处。谁在读端点里写 `?? "auto"`，
+        // 谁就把存量站点 owner 手写的题标成了系统生成——而那正是上一轮刚保护住的数据。
+        var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
+
+        Assert.DoesNotContain("AskQuestionsSource ?? \"auto\"", ctrl);
+        Assert.Contains("AskOpeningQuestions.ResolveSource(site)", ctrl);
+        Assert.Contains("AskOpeningQuestions.ResolveSource(latest)", ctrl);
     }
 }
