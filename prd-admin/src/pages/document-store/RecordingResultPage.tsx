@@ -568,6 +568,10 @@ export function RecordingResultPage() {
    * （Codex 第九轮 P2）。
    */
   const noteRevisionRef = useRef<string | null>(null);
+  /** 本机压着的离线草稿；reloadNote 要用它判「正文该不该让位」，所以声明在它之前 */
+  const pendingRef = useRef<QueuedOfflineEdit | null>(null);
+  /** 草稿按账号存：共享浏览器上换个人登录就不该恢复上一位的稿子 */
+  const ownerId = useAuthStore(state => state.user?.userId ?? '');
   entryIdRef.current = entryId ?? '';
 
   /**
@@ -577,7 +581,13 @@ export function RecordingResultPage() {
    * 装不上就不能清掉草稿，否则屏幕上留着的还是那份草稿，而本机唯一的副本已经删了
    * （Codex 第十五轮 P1）。
    */
-  const reloadNote = useCallback(async (): Promise<boolean> => {
+  /**
+   * 重新拉这条笔记。
+   *
+   * `discardLocalDraft`：用户在冲突横幅上明说「丢弃我的离线草稿」时传 true——
+   * 那一路要的正是「用云端那份把屏幕上的草稿换掉」。默认 false，正文让位给本机草稿。
+   */
+  const reloadNote = useCallback(async (discardLocalDraft = false): Promise<boolean> => {
     const noteId = noteIdRef.current;
     if (!noteId || !entryId) return false;
     const [contentRes, noteEntryRes, audioEntryRes] = await Promise.all([
@@ -592,10 +602,20 @@ export function RecordingResultPage() {
      * 所以完成时先认一遍「我是不是还在当初那条笔记上」，不是就整段丢弃。
      */
     if (noteIdRef.current !== noteId) return false;
+    /*
+     * 本机还压着这条笔记的离线草稿时，**不许拿服务端那份盖掉屏幕上的正文**。
+     * 盖掉之后草稿仍留在队列里没补传，用户再改一句，onSaveNote 是在服务端那份上
+     * 重建整篇的——那几处离线校对就此永久消失，而且屏幕上从没提示过
+     * （Codex 第二十六轮 P1）。正文留着，其余元信息照常更新；
+     * 传不传、覆盖还是丢弃，交给冲突横幅那两颗按钮。
+     */
+    const keepLocalDraft = !discardLocalDraft && isFlushable(pendingRef.current, noteId, ownerId);
     setState(cur => (cur.kind === 'ready' && cur.noteId === noteId
       ? {
         ...cur,
-        noteMd: contentRes.success ? (contentRes.data?.content ?? cur.noteMd) : cur.noteMd,
+        noteMd: keepLocalDraft
+          ? cur.noteMd
+          : (contentRes.success ? (contentRes.data?.content ?? cur.noteMd) : cur.noteMd),
         generatedAt: noteEntryRes.success ? (noteEntryRes.data?.updatedAt ?? cur.generatedAt) : cur.generatedAt,
         /*
          * 整理方式**先读笔记条目**：restyle 处理器把 `transcribe_style_key` 写在
@@ -617,7 +637,8 @@ export function RecordingResultPage() {
     if (noteEntryRes.success && noteEntryRes.data?.updatedAt) noteRevisionRef.current = noteEntryRes.data.updatedAt;
     // 正文这一路成功才算「换上了」——条目元数据失败只影响生成时间与整理方式的展示
     return contentRes.success && typeof contentRes.data?.content === 'string';
-  }, [entryId]);
+    // ownerId 进依赖：本机草稿按账号存，判「要不要让位给草稿」时不能拿旧账号
+  }, [entryId, ownerId]);
 
   /*
    * run 状态轮询。这里不订 SSE：这一屏只需要「跑完了没有、跑到哪了」两个数，
@@ -673,10 +694,7 @@ export function RecordingResultPage() {
    * 混成一句就会在「其实没人改过、只是版本没查着」时对用户说假话（Codex 第二十轮 P1）。
    */
   const [flushConflict, setFlushConflict] = useState<OfflineFlushReason | null>(null);
-  const pendingRef = useRef<QueuedOfflineEdit | null>(null);
   pendingRef.current = pendingEdits;
-  /** 草稿按账号存：共享浏览器上换个人登录就不该恢复上一位的稿子 */
-  const ownerId = useAuthStore(state => state.user?.userId ?? '');
   /** 所有对笔记的写共用一条串行链，避免旧内容后到覆盖新内容 */
   const writeChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const enqueueWrite = useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
@@ -1037,7 +1055,7 @@ export function RecordingResultPage() {
                  * 两头都丢（第十五轮 P1）。所以拉取失败就什么都不动，草稿留着、冲突态留着。
                  */
                 void (async () => {
-                  const installed = await reloadNote();
+                  const installed = await reloadNote(true);
                   if (!installed) {
                     toast.error('云端最新版本没能取回来，离线草稿先留着，请稍后再试');
                     return;
@@ -1132,6 +1150,17 @@ export function RecordingResultPage() {
       {state.kind === 'ready' && (
         <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3 lg:h-full lg:min-h-0 lg:pb-0">
           <TranscriptKaraoke
+            /*
+             * key 认这条录音：换一条就整块重挂，而不是复用同一个实例。
+             * 这是把「路由复用组件」那一族一次性收口——此前是一条条被指出来补
+             * （音频地址、run、失败说明、通知追踪、时长…每次都漏几格）。
+             * 跟读组件里绑在录音身上的状态最多：在飞的问答流、上一条的回答、
+             * 正在编辑的第几句与它的草稿。不重挂的话，A 的问答回答会落成 B 的答案；
+             * 更糟的是 A 那个还开着的编辑框一保存，走的是 B 的 onSaveNote、
+             * 写进去的是 A 的草稿——**直接改坏 B 的原文**（Codex 第二十六轮 P1）。
+             * 重挂的代价只是播放位置回到开头，而换录音本来就该从头开始。
+             */
+            key={state.noteId || state.audioUrl}
             src={state.audioUrl}
             noteMd={state.noteMd}
             documentMode

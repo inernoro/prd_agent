@@ -214,17 +214,19 @@ describe('离线草稿与屏幕一致', () => {
   it('丢弃草稿是「先装上远端正文，装上了才删」，不是发出去就不管', () => {
     const discard = source.slice(source.indexOf('if (!noteIdForFlush) return;'));
     const block = discard.slice(0, 1600);
-    // 必须等它回来并看结果——fire-and-forget 会在拉取失败时把草稿删了却留着旧内容在屏上
-    expect(block).toContain('const installed = await reloadNote();');
+    // 必须等它回来并看结果——fire-and-forget 会在拉取失败时把草稿删了却留着旧内容在屏上。
+    // 判据不钉参数列表：这一路后来要传「丢弃本机草稿」的标志，钉死写法会让正确实现误红
+    expect(block).toMatch(/const installed = await reloadNote\(/);
     expect(block).toContain('if (!installed)');
     // 清草稿必须排在装上之后
-    expect(block.indexOf('const installed = await reloadNote();'))
+    expect(block.search(/const installed = await reloadNote\(/))
       .toBeLessThan(block.indexOf('clearOfflineEdit(noteIdForFlush, ownerId);'));
     expect(block).not.toContain('void reloadNote();');
   });
 
   it('reloadNote 汇报正文到底装上了没有，不是只返回 void', () => {
-    expect(source).toContain('const reloadNote = useCallback(async (): Promise<boolean> => {');
+    // 只认「返回的是成败」，不认参数列表
+    expect(source).toMatch(/const reloadNote = useCallback\(async \([^)]*\): Promise<boolean> => \{/);
     expect(source).toContain("return contentRes.success && typeof contentRes.data?.content === 'string';");
   });
 });
@@ -404,5 +406,39 @@ describe('换条目时把绑在上一条身上的状态放掉', () => {
   it('结果页发起整理的锁跟着条目释放，不跨录音卡住', () => {
     const source = read('pages/document-store/RecordingResultPage.tsx');
     expect(source).toMatch(/useEffect\(\(\) => \{ launchingRef\.current = false; \}, \[entryId\]\);/);
+  });
+});
+
+/*
+ * 「路由复用组件」这一族的收口：与其一格一格地补复位，不如让跟读组件按录音重挂。
+ * 不重挂的话，A 在飞的问答流会把回答落成 B 的答案；A 那个还开着的编辑框一保存，
+ * 走的是 B 的 onSaveNote、写进去的是 A 的草稿——直接改坏 B 的原文。
+ */
+describe('跟读组件按录音重挂', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('TranscriptKaraoke 带上认这条录音的 key', () => {
+    const tag = source.slice(source.indexOf('<TranscriptKaraoke'));
+    const props = tag.slice(0, tag.indexOf('/>'));
+    expect(props).toMatch(/key=\{state\.noteId/);
+  });
+});
+
+/*
+ * 本机压着离线草稿时，重新拉回来的服务端正文不许盖掉屏幕上那份：盖掉之后草稿仍在队列里
+ * 没补传，用户再改一句就是在服务端那份上重建整篇，几处离线校对永久消失且全程无提示。
+ * 唯一的例外是用户自己点「丢弃」——那一路要的正是换成云端版本。
+ */
+describe('重新拉笔记不吞掉本机草稿', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('有可补传的本机草稿时正文让位给草稿', () => {
+    expect(source).toContain('const keepLocalDraft = !discardLocalDraft && isFlushable(pendingRef.current, noteId, ownerId);');
+    const setter = source.slice(source.indexOf('setState(cur => (cur.kind === \'ready\' && cur.noteId === noteId'));
+    expect(setter.slice(0, 400)).toContain('keepLocalDraft');
+  });
+
+  it('只有用户点「丢弃」那一路才允许覆盖', () => {
+    expect(source).toContain('await reloadNote(true)');
   });
 });
