@@ -3317,6 +3317,130 @@
     max-width: var(--workspace-wide, 1440px);
   }
 
+  /* ══ 项目设置页：贴边导航 + 铺满内容区（方向 A）══════════════════════
+   *
+   * 改之前是 workspace 1240 居中 + 导航白卡 + 内容白卡：1680 视口下左右各空
+   * 170px，页面像两张便签贴在全屏外壳上；而卡片内部的输入框又拉到 770px 装
+   * 一个项目名，「缩在中间」和「内部空旷」同时成立。
+   *
+   * 方向 A 不再靠 workspace 的宽度上限做可读性，而是把可读宽度下沉给表单列
+   * 自己（--settings-form-max），外壳走既有的 --bleed + --fill 满铺词汇表。
+   */
+  .cds-settings-shell {
+    display: flex;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
+  }
+
+  .cds-settings-layout {
+    display: grid;
+    min-height: 0;
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  @media (min-width: 901px) {
+    .cds-settings-layout {
+      grid-template-columns: 244px minmax(0, 1fr);
+    }
+
+    /* 导航贴边：不是卡片，只有右侧一条 hairline，从顶通到底，自身内滚。 */
+    .cds-settings-rail {
+      min-height: 0;
+      height: 100%;
+      flex-direction: column;
+      justify-content: flex-start;
+      gap: 0;
+      overflow-y: auto;
+      border-right: 1px solid hsl(var(--hairline));
+      background: hsl(var(--surface-base));
+      padding: 1.25rem 0.75rem 1.5rem 1.25rem;
+    }
+
+    .cds-settings-rail-head {
+      display: grid;
+      gap: 0.125rem;
+      padding: 0 0.5rem 1rem;
+    }
+  }
+
+  /* 窄屏保持既有的横向 tab 条兜底（mobile-layout-fallback），
+     所以 rail 的竖排样式整条收在 min-width: 901px 里。 */
+  @media (max-width: 900px) {
+    .cds-settings-rail-head {
+      display: none;
+    }
+  }
+
+  .cds-settings-content {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 分区页头：钉在内容区顶部，标题 + 一句话说明 + 右侧动作。 */
+  .cds-settings-section-head {
+    display: flex;
+    flex-shrink: 0;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1.5rem;
+    border-bottom: 1px solid hsl(var(--hairline));
+    padding: 1.25rem 1.5rem 1rem;
+  }
+
+  .cds-settings-section-body {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 1.25rem 1.5rem 2.5rem;
+  }
+
+  /*
+   * 表单列锁可读宽度，右列放「当前生效 / 改动影响 / 相关设置」——把宽屏的
+   * 富余变成信息而不是留白。没有副列内容的分区自然退化成单列，不留空槽。
+   */
+  .cds-settings-columns {
+    display: grid;
+    align-items: start;
+    gap: 1.5rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cds-settings-form-col {
+    min-width: 0;
+    max-width: var(--settings-form-max, 620px);
+  }
+
+  /*
+   * 表单列必须是**被定尺的那一轨**，不能是 1fr 里再套 max-width：
+   * 后者在 1680 视口下让 1fr 轨道拿到 1004px、里面的表单只占 620px，
+   * 中间空出 384px 的洞——「把富余变成信息」反而变成了一条更显眼的留白带。
+   * 真机量出来才看见（设计稿按 1440 画，差额小到看不出）。
+   */
+  @media (min-width: 1280px) {
+    .cds-settings-columns:has(> .cds-settings-aside-col) {
+      grid-template-columns: minmax(0, var(--settings-form-max, 620px)) minmax(280px, 360px);
+      justify-content: start;
+      gap: 2.5rem;
+    }
+  }
+
+  /* 超宽屏把可读上限抬一档，剩余空间用在字段上而不是继续摊成留白。 */
+  @media (min-width: 1600px) {
+    .cds-settings-columns:has(> .cds-settings-aside-col) {
+      --settings-form-max: 760px;
+    }
+  }
+
+  .cds-settings-aside-col {
+    display: grid;
+    gap: 0.875rem;
+    min-width: 0;
+  }
+
   .cds-project-card {
     --project-node-size: 3.5rem;
     --project-node-icon-size: 1.75rem;
