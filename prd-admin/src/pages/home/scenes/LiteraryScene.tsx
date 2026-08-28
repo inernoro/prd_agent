@@ -38,17 +38,25 @@ const STYLE_PALETTE: Record<LiteraryStyleKey, [number, number, number]> = {
 };
 const STYLE_ORDER: LiteraryStyleKey[] = ['calm', 'warm', 'forest', 'night'];
 
+/**
+ * 第 3 拍是**只让手走过去**的空拍，不发生任何事。理由同视觉幕：效果在一拍的第 0
+ * 毫秒发生，而指针飞过来要走位时长，挤在同一拍就成了「还没点到就已经生成了」。
+ */
 const HOLDS = [
   1100, // 0 只有文字
   900,  // 1 文档就位
   2400, // 2 通读打锚点
-  1100, // 3 点生成
-  1600, // 4 配图 1 落位
-  1600, // 5 配图 2 落位
-  1500, // 6 配图 3 还在跑
-  2200, // 7 换风格
+  560,  // 3 手移到「生成全部配图」（空拍，只走位）
+  1100, // 4 点生成
+  1600, // 5 配图 1 落位
+  1600, // 6 配图 2 落位
+  1500, // 7 配图 3 还在跑
+  2200, // 8 换风格
 ];
-const B = { idle: 0, uploaded: 1, marking: 2, generating: 3, fig1: 4, fig2: 5, fig3: 6, restyle: 7 } as const;
+const B = { idle: 0, uploaded: 1, marking: 2, reachGen: 3, generating: 4, fig1: 5, fig2: 6, fig3: 7, restyle: 8 } as const;
+
+/** 拍号 → 旁白第几句。走位空拍不换句，沿用上一拍那句。 */
+const NARRATION_AT = [0, 1, 2, 2, 3, 4, 5, 6, 7];
 
 interface Tone { bg: string; mid: string; fg: string }
 
@@ -351,7 +359,7 @@ export function LiteraryScene() {
           </div>
         </div>
 
-        <BeatNarration beats={s.beats} beat={beat} hue={SCENE_HUE.pine} />
+        <BeatNarration beats={s.beats} beat={NARRATION_AT[beat] ?? s.beats.length - 1} hue={SCENE_HUE.pine} />
       </div>
     </SceneFrame>
   );
@@ -452,7 +460,8 @@ const CURSOR_AT: Record<number, CursorSpot> = {
   [B.uploaded]: { target: 'doc-title' },
   // 落在被划中那段的句尾：选区从左铺到右，手停在右下角，跟真的划完一句一样
   [B.marking]: { target: 'para-1', ax: 1, ay: 0.6 },
-  [B.generating]: { target: 'generate-all', press: true }, // 按下「生成全部配图」
+  [B.reachGen]: { target: 'generate-all' },                // 空拍：手走到按钮上
+  [B.generating]: { target: 'generate-all', press: true }, // 原地按下，配图才开始出
   [B.fig1]: { target: 'card-1' },
   [B.fig2]: { target: 'card-2' },
 };

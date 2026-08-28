@@ -47,6 +47,10 @@ interface SceneFacts {
   beats: Record<string, number>;
   /** 走位表里声明了按下的拍号 */
   pressedAt: Set<number>;
+  /** 拍号 → 这一拍指针指着谁 */
+  targetAt: Map<number, string>;
+  /** 旁白第 i 句 → 哪几拍在念它。插了走位空拍之后拍号 ≠ 句号，必须走这张映射。 */
+  beatsOfLine: Map<number, number[]>;
 }
 
 function readScenes(): SceneFacts[] {
@@ -66,11 +70,30 @@ function readScenes(): SceneFacts[] {
     // 两种写法都认：走位表里的 `[B.x]: { press: true }`，
     // 和内联的 `beat === B.x ? { ..., press: true }`
     const pressedAt = new Set<number>();
-    for (const m of src.matchAll(/(?:\[B\.(\w+)\]|beat === B\.(\w+))\s*[?:]\s*\{[^{}]*press:\s*true/g)) {
+    const targetAt = new Map<number, string>();
+    for (const m of src.matchAll(/(?:\[B\.(\w+)\]|beat === B\.(\w+))\s*[?:]\s*\{([^{}]*)\}/g)) {
       const key = m[1] ?? m[2];
-      if (key in beats) pressedAt.add(beats[key]);
+      if (!(key in beats)) continue;
+      const body = m[3];
+      if (/press:\s*true/.test(body)) pressedAt.add(beats[key]);
+      // 目标可能是常量 'x' 或模板 `style-${aim}` —— 模板取它的静态前缀，
+      // 前缀相同就算「指着同一个东西」（换风格那两拍就是同一枚 chip）
+      const lit = /target:\s*'([a-z0-9-]+)'/.exec(body)?.[1]
+        ?? /target:\s*`([a-z0-9-]+)\$\{/.exec(body)?.[1];
+      if (lit) targetAt.set(beats[key], lit);
     }
-    out.push({ file: name, i18nPath: i18n, beats, pressedAt });
+    // 有 NARRATION_AT 就按它映射；没有就是拍号与句号一一对应
+    const beatsOfLine = new Map<number, number[]>();
+    const nar = /const NARRATION_AT = \[([^\]]*)\]/.exec(src)?.[1];
+    if (nar) {
+      nar.split(',').map((x) => Number(x.trim())).forEach((line, beat) => {
+        if (!Number.isFinite(line)) return;
+        beatsOfLine.set(line, [...(beatsOfLine.get(line) ?? []), beat]);
+      });
+    } else {
+      Object.values(beats).forEach((b) => beatsOfLine.set(b, [b]));
+    }
+    out.push({ file: name, i18nPath: i18n, beats, pressedAt, targetAt, beatsOfLine });
   }
   return out;
 }
@@ -100,8 +123,11 @@ describe('首页衔接契约（旁白说点了，就得真有手点）', () => {
       lines.forEach((line, i) => {
         const verb = CLICK_VERBS.find(([re]) => re.test(line))?.[1];
         if (!verb) return;
-        if (s.pressedAt.has(i)) return;
-        missing.push(`${s.file} 第 ${i} 拍「${line}」含动作词「${verb}」，但这一拍没有按下`);
+        // 一句旁白可能横跨几拍（走位空拍沿用上一句），其中任意一拍按下即可
+        const owning = s.beatsOfLine.get(i) ?? [i];
+        if (owning.some((b) => s.pressedAt.has(b))) return;
+        missing.push(`${s.file} 旁白第 ${i} 句「${line}」含动作词「${verb}」，`
+          + `对应第 ${owning.join('/')} 拍，都没有按下`);
       });
     }
     expect(
@@ -109,6 +135,39 @@ describe('首页衔接契约（旁白说点了，就得真有手点）', () => {
       '旁白宣称有人点了，画面上却没有任何东西被点 —— 看的人只会觉得「东西自己在变」。\n'
         + '要么给这一拍补一个指针按下，要么把旁白改成不宣称动作的写法。\n'
         + missing.join('\n'),
+    ).toEqual([]);
+  });
+
+  /**
+   * 「先走到，再发生」的机械判据。
+   *
+   * 上一版只延迟了波纹，**没延迟事情本身** —— 视觉幕第 2 拍消息在第 0 毫秒就发出去了，
+   * 指针才刚从输入框起步，看的人一眼就看见「还没点到就发送了」。
+   * 波纹晚响救不了这个：晚响的是反馈，早发生的是结果。
+   *
+   * 唯一靠谱的形态是**上一拍指针就已经停在那个目标上**，到点这一拍是原地按下。
+   * 于是「效果和按下同时发生」也不再有问题 —— 因为手本来就在那儿。
+   *
+   * 连着两次点不同目标时，中间必须插一拍让手走过去，不能靠「按下时顺便飞过去」。
+   */
+  it('每一次按下，上一拍指针就已经停在同一个目标上', () => {
+    const late: string[] = [];
+    for (const s of scenes) {
+      for (const at of [...s.pressedAt].sort((a, b) => a - b)) {
+        const here = s.targetAt.get(at);
+        const before = s.targetAt.get(at - 1);
+        if (here && before === here) continue;
+        const name = Object.keys(s.beats).find((k) => s.beats[k] === at) ?? String(at);
+        late.push(`${s.file} 第 ${at} 拍(${name}) 按 [${here ?? '?'}]，`
+          + `上一拍指针在 [${before ?? '没有指针'}] —— 手还在路上，事已经发生了`);
+      }
+    }
+    expect(
+      late,
+      '「先走到，再发生」不成立。指针从上一拍的位置飞向目标要走位时长，'
+        + '而这一拍的效果在第 0 毫秒就发生 —— 观众看到的是「还没点到就已经生效」。\n'
+        + '修法：把上一拍的指针提前停到同一个目标上；两次点击挨着时，中间插一拍让手走过去。\n'
+        + late.join('\n'),
     ).toEqual([]);
   });
 });

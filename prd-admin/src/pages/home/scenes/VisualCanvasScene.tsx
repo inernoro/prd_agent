@@ -27,24 +27,40 @@ const pine = inkTone(SCENE_HUE.pine);
 const amber = inkTone(SCENE_HUE.amber);
 const olive = inkTone(SCENE_HUE.olive);
 
-/** 节拍表。索引即拍号，值是这一拍停多久（ms）。 */
+/**
+ * 节拍表。索引即拍号，值是这一拍停多久（ms）。
+ *
+ * 里面有两拍是**只让手走过去**的空拍（reachSend / reachWarm），不发生任何事。
+ * 为什么必须有：一拍里的效果是在第 0 毫秒发生的，而指针从上一个位置飞过来要
+ * 走位时长 —— 两件事挤在同一拍，观众看到的必然是「还没点到就已经生效」。
+ * 上一版试图靠「波纹晚响」补救，那救不了：晚响的是反馈，早发生的是结果。
+ * 唯一成立的形态是**按下那一拍手已经在那儿了**，所以把走位单独占一拍。
+ */
 const HOLDS = [
-  1000, // 0 空画布
-  1700, // 1 打字
-  1000, // 2 发送（要装得下「指针走到发送键 → 再按下」这两步，别把波纹截断）
-  1100, // 3 思考
-  1500, // 4 回话
-  2300, // 5 渲染中
-  1500, // 6 落回画布
-  1700, // 7 再出一张
-  1500, // 8 选中
-  2100, // 9 混合计算中
-  1800, // 10 混合结果落地
+  1000, // 0  空画布
+  1700, // 1  打字
+  560,  // 2  手移到发送键（空拍，只走位）
+  1000, // 3  发送
+  1100, // 4  思考
+  1500, // 5  回话
+  2300, // 6  渲染中
+  1500, // 7  落回画布
+  1700, // 8  再出一张
+  1500, // 9  选中
+  560,  // 10 手移到暖调那张（空拍，只走位）
+  2100, // 11 混合计算中
+  1800, // 12 混合结果落地
 ];
 const B = {
-  idle: 0, typing: 1, sent: 2, thinking: 3, replying: 4,
-  rendering: 5, landed: 6, warm: 7, selected: 8, mixing: 9, mixed: 10,
+  idle: 0, typing: 1, reachSend: 2, sent: 3, thinking: 4, replying: 5,
+  rendering: 6, landed: 7, warm: 8, selected: 9, reachWarm: 10, mixing: 11, mixed: 12,
 } as const;
+
+/**
+ * 拍号 → 旁白第几句。两个走位空拍不换句（手在移动，事还没发生），
+ * 沿用上一拍那句；不写这张表的话 BeatNarration 会索引越界。
+ */
+const NARRATION_AT = [0, 1, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 10];
 
 /** 左侧竖向工具条：选择 / 上传图片 / 形状 / 文字 / 图像生成器 / 手绘板 / 删除 */
 const TOOL_PATHS = [
@@ -356,7 +372,7 @@ export function VisualCanvasStage() {
         className="mt-3 rounded-[14px]"
         style={{ background: SCENE.panel, border: `1px solid ${SCENE.edge}` }}
       >
-        <BeatNarration beats={s.beats} beat={beat} hue={SCENE_HUE.clay} />
+        <BeatNarration beats={s.beats} beat={NARRATION_AT[beat] ?? s.beats.length - 1} hue={SCENE_HUE.clay} />
       </div>
     </div>
   );
@@ -623,16 +639,16 @@ function GenTile({
 const CURSOR_AT: Record<number, CursorSpot> = {
   [B.idle]: { target: 'chat-input', hidden: true },
   [B.typing]: { target: 'chat-input', ax: 0.42 },   // 停在正在吐字的那行上
-  [B.sent]: { target: 'chat-send', press: true },   // 按下发送
+  [B.reachSend]: { target: 'chat-send' },           // 空拍：手走到发送键
+  [B.sent]: { target: 'chat-send', press: true },   // 原地按下，消息才发出去
   [B.thinking]: { target: 'chat-send' },
   [B.replying]: { target: 'tile-c', ay: 0.25 },     // 手往画布挪，等图长出来
   [B.rendering]: { target: 'tile-c' },              // 就在它自己的位置上长出来
   [B.landed]: { target: 'tile-c' },
-  // 提前一拍就停在待会儿要点的那张上：等 selected 那拍按下时是「原地按」，
-  // 不是「一边飞过去一边已经选中了」
-  [B.warm]: { target: 'tile-c' },
-  [B.selected]: { target: 'tile-c', press: true },  // 按下雾天那张 → 选中框亮
-  [B.mixing]: { target: 'tile-b', press: true },    // 再按暖调那张 → 两张都选中，混合计算亮起
+  [B.warm]: { target: 'tile-c' },                   // 提前一拍就位
+  [B.selected]: { target: 'tile-c', press: true },  // 原地按下雾天那张 → 选中框亮
+  [B.reachWarm]: { target: 'tile-b' },              // 空拍：手走到暖调那张
+  [B.mixing]: { target: 'tile-b', press: true },    // 原地按下 → 两张都选中，混合计算亮起
   [B.mixed]: { target: 'tile-mix' },                // 看着结果落地
 };
 

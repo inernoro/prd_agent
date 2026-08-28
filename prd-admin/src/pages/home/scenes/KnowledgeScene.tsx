@@ -46,6 +46,8 @@ const B = { reading: 0, selecting: 1, popover: 2, tapped: 3, streaming: 4, repla
  * → 下一拍才按下去 → 改写在流、手退开不挡着看。
  */
 const CURSOR_AT: Record<number, CursorSpot> = {
+  // 读的时候手就搭在这句话上，下一拍才划中它 —— 不能等到按下那一拍才飞过来
+  [B.reading]: { target: 'selected-sentence', ax: 1, ay: 0.6 },
   [B.selecting]: { target: 'selected-sentence', ax: 1, ay: 0.6, press: true },
   [B.popover]: { target: 'rewrite-action' },     // 浮层出来了，手先移过去
   [B.tapped]: { target: 'rewrite-action', press: true },
