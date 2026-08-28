@@ -367,12 +367,34 @@ check('cURL 页有片段与测试栏、没有接入信息卡', [
 // 候选只能来自这条 appCaller 真正走的那个池：另一个同类型池的成员不许混进来，
 // 否则真实租户上会平铺出 200+ 个模型，且违反「可选模型必须来自获准的池」。
 check('模型候选只来自被路由到的池、且只列健康成员', await page.$$eval('#lg-qs-model-options option', (nodes) => nodes.map((n) => n.value)), ['demo/chat-1', 'demo/chat-2']);
-// 产物屏必须一屏装下：内容区不许出现纵向滚动（片段太长时在它自己的框里滚）。
-check('产物屏 1440x900 不出现纵向滚动', await page.evaluate(() => {
+/*
+  产物屏「一屏装下」的口径，2026-08-28 随试跑区改版收窄了一档，写清为什么：
+  cURL 页多出了「上输入 / 下输出」这一对（各 88px），1440x900 下再要求整页零滚动，
+  就只能把这一对压扁或把片段压成两行——两者都会毁掉用户要的对照效果。
+  所以拆成两条判据：**接入信息页仍必须零滚动**（它是打开产物屏的第一眼），
+  cURL 页改判**首屏必须装得下这一对与两个按钮**，片段可以落到折线以下。
+  这不是放宽成「随便多高都行」：一旦这一对被挤出首屏，下面这条就会红。
+*/
+check('接入信息页 1440x900 零滚动', await page.evaluate(() => {
+  const tabs = [...document.querySelectorAll('.lg-qs-result-tabs > button')];
+  tabs.find((node) => node.textContent.includes('接入信息'))?.click();
+  return true;
+}), true);
+await page.waitForTimeout(300);
+check('接入信息页不出现纵向滚动', await page.evaluate(() => {
   const body = document.querySelector('.lg-page-body');
   if (!body) return 'missing';
   return body.scrollHeight <= body.clientHeight + 1 ? 'fits' : `overflow:${body.scrollHeight - body.clientHeight}`;
 }), 'fits');
+await page.locator('.lg-qs-result-tabs > button', { hasText: 'cURL' }).click();
+await page.waitForTimeout(300);
+check('cURL 页：输入、输出与两个按钮都在首屏内', await page.evaluate(() => {
+  const output = document.querySelector('.lg-qs-output');
+  const buttons = document.querySelector('.lg-qs-io-buttons');
+  if (!output || !buttons) return 'missing';
+  const bottom = Math.max(output.getBoundingClientRect().bottom, buttons.getBoundingClientRect().bottom);
+  return bottom <= window.innerHeight ? 'above-fold' : `below-fold:${Math.round(bottom - window.innerHeight)}`;
+}), 'above-fold');
 const okBox = await page.locator('.lg-test-result.is-ok').boundingBox();
 const artifactsBox = await page.locator('.lg-qs-artifacts').boundingBox();
 check('试跑结果块渲染出来了', Boolean(okBox), true);
@@ -380,7 +402,9 @@ check('试跑结果块渲染出来了', Boolean(okBox), true);
 // 真正的判据是它离产物区顶端多远：排到密钥与片段之后就会被推下去 200px 以上。
 check('试跑结果块紧贴产物区顶部', Boolean(okBox && artifactsBox && okBox.y - artifactsBox.y < 120), true);
 check('成功态留下 requestId 回查深链', await page.locator(`.lg-test-result.is-ok a[href*="requestId=${REQUEST_ID}"]`).count(), 1);
-check('候选提示写明健康数与总数', (await page.locator('.lg-qs-testbar-models').innerText()).trim(), '「对话默认池」4 个成员中 2 个健康，可搜索。');
+// 候选提示与计费提示已合成一句（改版后它们同属「按下去会发生什么」），所以断言的是它包含健康数与总数。
+check('候选提示写明健康数与总数', (await page.locator('.lg-qs-testbar-models').innerText()).includes('「对话默认池」4 个成员中 2 个健康，可搜索。'), true);
+check('同一句里说清两个按钮的计费差别', (await page.locator('.lg-qs-testbar-models').innerText()).includes('安全试跑不打上游、不计费；真实调用会计入用量与费用。'), true);
 // 填一个不在健康清单里的模型：执行必须被挡住，否则那一次试跑注定白跑。
 await page.getByLabel('测试模型').fill('demo/chat-down');
 await page.waitForTimeout(300);
@@ -412,6 +436,26 @@ await page.locator('.lg-qs-result-tabs > button', { hasText: 'cURL' }).click();
 await page.waitForTimeout(300);
 
 check('横向不滚动', await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true);
+
+/*
+  ── 上输入下输出：这一对的「对照」不是版式偏好，是三条可判的约束 ──────
+  用户 2026-08-28 要的是「上面输入下面输出，有个对照效果」。三件事成立它才成立：
+  ① 输入是能直接写的框（不是只能上传文件）；② 空态也占住高度，跑起来页面不往下跳；
+  ③ 两块同宽——不同宽就不是一对。任一条退化，页面看着还「有那些元素」，
+  但对照关系就没了，所以逐条断言真实几何，不断言 class 存在。
+*/
+check('输入是能直接写的框', await page.locator('textarea.lg-qs-io-input').count(), 1);
+const emptyOutBox = await page.locator('.lg-qs-output').boundingBox();
+check('还没跑时输出块也占住 88px（页面不会往下跳）', Boolean(emptyOutBox && emptyOutBox.height >= 88), true);
+const inputBox = await page.locator('.lg-qs-io-input').boundingBox();
+check('输入与输出同宽', Boolean(inputBox && emptyOutBox && Math.abs(inputBox.width - emptyOutBox.width) <= 1), true);
+check('输出块排在输入框下方', Boolean(inputBox && emptyOutBox && emptyOutBox.y > inputBox.y), true);
+
+// 用户写进框里的那句，必须同时进 cURL 片段与真实请求体——两边是同一次请求。
+await page.locator('.lg-qs-io-input').fill('用三句话说明什么是模型网关');
+await page.waitForTimeout(300);
+check('输入内容进了 cURL 片段', (await page.locator('.lg-qs-code').innerText()).includes('用三句话说明什么是模型网关'), true);
+
 // ── 真实调用：文字必须边收边渲染，且返回内容要显示出来 ────────────────
 realBodies.length = 0;
 await page.getByRole('button', { name: '真实调用' }).click();
@@ -419,20 +463,28 @@ await page.waitForTimeout(260);
 // 第一帧到了、最后一帧还没到的那个瞬间：面板里已经有字，且还挂着「正在接收」。
 const midway = await page.locator('.lg-qs-output pre').innerText();
 check('流式：第一帧就已经渲染出来', midway.length > 0 && midway.length < '你好，这是流式输出'.length, true);
-check('流式：未收完时标着正在接收', await page.locator('.lg-qs-output-head em').count(), 1);
+check('流式：未收完时头部在跳「已用 X.Xs」', /^已用 \d+\.\ds$/.test((await page.locator('.lg-qs-io-meta').last().innerText()).trim()), true);
+check('流式：未收完时三点在动', await page.locator('.lg-qs-io-dots').count(), 1);
+check('流式：未收完时输出块左侧竖线是 accent', await page.locator('.lg-qs-output.is-streaming').count(), 1);
 await page.waitForTimeout(1200);
 check('流式：收完后是完整文本', (await page.locator('.lg-qs-output pre').innerText()).trim(), '你好，这是流式输出');
-check('流式：收完后不再标正在接收', await page.locator('.lg-qs-output-head em').count(), 0);
-check('返回内容标出类型', (await page.locator('.lg-qs-output-head span').innerText()).trim(), '文字');
+check('流式：收完后三点撤掉', await page.locator('.lg-qs-io-dots').count(), 0);
+check('流式：收完后输出块左侧竖线转成完成色', await page.locator('.lg-qs-output.is-done').count(), 1);
+check('返回内容标出类型', (await page.locator('.lg-qs-io-chip').innerText()).trim(), '文字');
+check('输出头写明耗时与实际执行的模型', /\d+\.\ds · 实际执行 /.test(await page.locator('.lg-qs-io-meta').last().innerText()), true);
+check('输出头留下 requestId 回查深链', await page.locator(`.lg-qs-io-link[href*="requestId=${REQUEST_ID}"]`).count(), 1);
+check('跑完之后主按钮变成再跑一次', await page.getByRole('button', { name: '再跑一次' }).count(), 1);
+check('框里写的那句进了真实请求体', realBodies[0]?.messages?.[0]?.content, '用三句话说明什么是模型网关');
 check('真实调用请求体带 stream:true', realBodies[0]?.stream, true);
 check('真实调用不带 dry-run 头（桩已按此分流）', realBodies.length, 1);
 
-// ── 上传：上传的文本必须真的进请求体，也要进 cURL ─────────────────────
+// ── 上传：上传的文本要填进那个输入框（用户看得见、能改），再进请求体与 cURL ──
 await page.getByLabel('上传测试输入').setInputFiles({ name: 'prompt.txt', mimeType: 'text/plain', buffer: Buffer.from('用三个字回答：你好吗') });
 await page.waitForTimeout(400);
+check('上传的文本填进了输入框', (await page.locator('.lg-qs-io-input').inputValue()).trim(), '用三个字回答：你好吗');
 check('cURL 用上了上传的文本', (await page.locator('.lg-qs-code').innerText()).includes('用三个字回答：你好吗'), true);
 realBodies.length = 0;
-await page.getByRole('button', { name: '真实调用' }).click();
+await page.getByRole('button', { name: '再跑一次' }).click();
 await page.waitForTimeout(1400);
 check('上传的文本进了真实请求体', realBodies[0]?.messages?.[0]?.content, '用三个字回答：你好吗');
 

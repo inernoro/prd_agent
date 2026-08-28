@@ -1,0 +1,120 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+  <style>
+    body {
+      /* 取自 llmgw/web/src/theme.css 深色档，逐字对齐 */
+      --bg-page: #03080a; --bg-surface: #0c1114; --bg-elevated: #11181d; --bg-base: #030608;
+      --text-primary: #fcfcfe; --text-secondary: #c4c4cc; --text-muted: #a1a1aa;
+      --border-subtle: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.16);
+      --accent: #a78bfa; --accent-soft: rgba(167,139,250,0.14);
+      --ok: #22c55e; --warn: #eab308;
+      --radius: 8px; --radius-sm: 6px;
+      margin: 0; background: var(--bg-page); color: var(--text-primary);
+      font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      font-size: 14px; font-weight: 450; line-height: 1.625; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: #c4b5fd; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</helmet>
+
+<div style="padding: 24px 28px; display: flex; flex-direction: column; gap: 28px;">
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.4;">Quickstart</div>
+    <div style="font-size: 13px; color: var(--text-muted);">密钥只显示这一次，复制走再刷新。</div>
+  </div>
+
+  <!--
+    摘要条：把原来两条通栏绿条合并成一条。
+    不用纯色通栏（那是 toast 的语言），改成卡片底 + 左侧 2px 成功色竖线；
+    验证结果收成第二行一个状态点 + requestId 链接。
+  -->
+  <div style="border: 1px solid var(--border-subtle); border-left: 2px solid var(--ok); border-radius: var(--radius); background: var(--bg-surface); padding: 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#22c55e" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><circle cx="8" cy="8" r="6.25"/><path d="M5.4 8.2l1.8 1.8 3.5-3.7"/></svg>
+      <strong style="font-size: 14px; font-weight: 650;">已签发</strong>
+      <span class="mono" style="font-size: 13px; color: var(--text-secondary); word-break: break-all;">xiaomi-speaker.command-intent::chat</span>
+      <span style="font-size: 13px; color: var(--text-muted);">团队 核心平台组 · 200 USD/月</span>
+      <a href="#" style="margin-left: auto; font-size: 13px;">更改</a>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-left: 24px;">
+      <span style="width: 6px; height: 6px; border-radius: 999px; background: var(--ok); flex: none;"></span>
+      <span style="font-size: 13px; color: var(--text-muted);">文字对话 · 团队边界 · 密钥鉴权 均通过，未访问上游</span>
+      <a href="#" class="mono" style="font-size: 13px;">打开 requestId 请求记录</a>
+    </div>
+  </div>
+
+  <!--
+    密钥主区 —— 这一屏的重心，也是最重要的结构改动：
+    它**不再属于任何一个页签**。原来密钥在「接入信息」页签里，切到 cURL 页签它就消失了，
+    而这是全屏唯一取不回来的东西。现在常驻在页签之上，切页签不会把它切走。
+    视觉语言与第 2 步的结果块一致（accent 描边 + accent-soft 底），首尾呼应。
+  -->
+  <div style="border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); padding: 24px; display: flex; align-items: center; gap: 28px; flex-wrap: wrap;">
+    <div style="flex: 1 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 12px; color: var(--accent); letter-spacing: 0.06em; font-weight: 500;">一次性密钥</span>
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(234,179,8,0.32); background: rgba(234,179,8,0.12); color: var(--warn); font-size: 12px; font-weight: 500;">只显示一次</span>
+      </div>
+      <div class="mono" style="font-size: 17px; font-weight: 650; color: var(--text-primary); line-height: 1.5; word-break: break-all;">gwk_7f2c9a1e4b8d3f6021ca77e5db34QpZm1x9LkNvR2sT</div>
+      <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7;">离开或刷新即不可再取；不要进仓库、截图或日志。</span>
+    </div>
+    <button type="button" style="flex: none; height: 44px; padding: 0 24px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent); color: #09090b; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5v-1a1.5 1.5 0 0 0-1.5-1.5H4a1.5 1.5 0 0 0-1.5 1.5V9A1.5 1.5 0 0 0 4 10.5h1"/></svg>
+      复制密钥
+    </button>
+  </div>
+
+  <!-- 分段控件：导航降级，不再是三张和内容同重的大卡 -->
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    <div style="display: inline-flex; align-self: flex-start; gap: 3px; padding: 3px; background: var(--bg-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+      <button type="button" style="height: 36px; padding: 0 18px; border: 1px solid var(--accent); border-radius: 4px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;">接入信息</button>
+      <button type="button" style="height: 36px; padding: 0 18px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">cURL</button>
+      <button type="button" style="height: 36px; padding: 0 18px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--text-muted); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;">提示词</button>
+    </div>
+
+    <!-- 内容区给 min-height，治「上半屏满、下半屏空」 -->
+    <div style="min-height: 320px; display: flex; flex-direction: column; gap: 20px;">
+      <!-- 两张配角卡等高：align-items 默认 stretch，两卡底边必齐 -->
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px;">
+        <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; flex-direction: column; gap: 8px; min-width: 0;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">接入地址</span>
+            <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer;">复制</button>
+          </div>
+          <div class="mono" style="font-size: 14px; color: var(--text-primary); line-height: 1.6; word-break: break-all;">http://localhost:5627/v1/chat/completions</div>
+          <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7; margin-top: auto;">协议在 cURL 页签可切。</span>
+        </div>
+
+        <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; flex-direction: column; gap: 8px; min-width: 0;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em;">调用用途</span>
+            <button type="button" style="margin-left: auto; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: none; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer;">复制</button>
+          </div>
+          <div class="mono" style="font-size: 14px; color: var(--text-primary); line-height: 1.6; word-break: break-all;">xiaomi-speaker.command-intent::chat</div>
+          <span style="font-size: 13px; color: var(--text-muted); line-height: 1.7; margin-top: auto;">归属团队 核心平台组；这把 key 只授权了它一条，兼容协议下请求头可省略。</span>
+        </div>
+      </div>
+
+      <!-- 「再测一次 / 排障」收进内容区，不再孤悬在页面最底 -->
+      <div style="border: 1px solid var(--border-subtle); border-radius: var(--radius); background: var(--bg-surface); padding: 24px; display: flex; align-items: center; gap: 8px;">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted);"><path d="M6 4l4 4-4 4"/></svg>
+        <span style="font-size: 13px; color: var(--text-secondary);">再测一次 / 真实路由与排障</span>
+        <span style="margin-left: auto; font-size: 12px; color: var(--text-muted);">三环归因：密钥鉴权 · 团队与作用域 · 调用用途到模型池</span>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

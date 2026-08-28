@@ -234,8 +234,15 @@ export function QuickstartPage() {
   const [poolName, setPoolName] = useState('');
   const [poolMemberCount, setPoolMemberCount] = useState(0);
   const [modelQuery, setModelQuery] = useState('');
-  /** 用户上传的测试输入：图片理解用图片，文字对话用一段文本文件。 */
-  const [attachment, setAttachment] = useState<{ name: string; kind: 'image' | 'text'; dataUrl?: string; text?: string } | null>(null);
+  /** 用户上传的测试图片（图片理解用）；文字一律走下面那个可直接编辑的输入框。 */
+  const [attachment, setAttachment] = useState<{ name: string; kind: 'image'; dataUrl: string } | null>(null);
+  /** 试跑要发的正文：用户自己写，上传文本也填进这里，cURL 片段与真实请求都读它。 */
+  const [testPrompt, setTestPrompt] = useState('');
+  /** 上一次试跑真实耗时（毫秒）：输出块要给出「多久回来的」，不是只给一段文字。 */
+  const [testElapsedMs, setTestElapsedMs] = useState<number | null>(null);
+  /** 本次试跑的起点 + 一个 100ms 的心跳：等待期间「已用 X.Xs」要真的在跳，不是一个静止的字。 */
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [, setHeartbeat] = useState(0);
   /** 真实调用的返回：文字边收边渲染，图片/音频收完再渲染。 */
   const [liveOutput, setLiveOutput] = useState<{ kind: 'text' | 'image' | 'audio'; text: string; url?: string; done: boolean } | null>(null);
   const [binding, setBinding] = useState(false);
@@ -243,6 +250,12 @@ export function QuickstartPage() {
   // 月预算是本页唯一要用户想的数字；单次预占上限由它派生（成对约束见 budgetPair）。
   const [budgetUsd, setBudgetUsd] = useState('');
   const [holdCapUsd, setHoldCapUsd] = useState('');
+
+  useEffect(() => {
+    if (!testing) return undefined;
+    const timer = window.setInterval(() => setHeartbeat((value) => value + 1), 100);
+    return () => window.clearInterval(timer);
+  }, [testing]);
 
   const selectedProtocol = protocolDefinition(protocol);
   const activeTeams = organization?.teams.filter((team) => team.status === 'active') ?? [];
@@ -364,10 +377,10 @@ export function QuickstartPage() {
   const snippetMode: TestMode = testMode === 'real' && realRouteReady ? 'real' : 'safe';
   const snippets = useMemo(() => ({
     client: clientSetupSnippet(displayBundle),
-    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel, attachment),
+    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel, attachment, testPrompt),
     env: environmentSnippet(displayBundle),
     skill: agentSkillSnippet(displayBundle, snippetMode),
-  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel, attachment]);
+  }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel, attachment, testPrompt]);
 
   const copyText = async (name: string, value: string) => {
     await navigator.clipboard.writeText(value);
@@ -672,6 +685,8 @@ export function QuickstartPage() {
     const definition = protocolDefinition(protocol);
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     const requestId = createRequestId();
+    const startedAt = Date.now();
+    setRunStartedAt(startedAt);
     try {
       const headers: Record<string, string> = {
         Authorization: `Bearer ${target.key}`,
@@ -684,7 +699,7 @@ export function QuickstartPage() {
       const response = await fetch(new URL(definition.path, `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
         headers,
-        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment)),
+        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, false, testPrompt)),
         credentials: 'omit',
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
@@ -708,6 +723,7 @@ export function QuickstartPage() {
     } catch (error) {
       setTestResult({ ok: false, message: error instanceof Error ? `无法访问 Gateway：${error.message}` : '无法访问 Gateway。' });
     } finally {
+      setTestElapsedMs(Date.now() - startedAt);
       setTesting(false);
     }
   };
@@ -726,6 +742,8 @@ export function QuickstartPage() {
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     const requestId = createRequestId();
     const canStream = protocol === 'openai';
+    const startedAt = Date.now();
+    setRunStartedAt(startedAt);
     setTesting(true);
     setTestResult(null);
     setActionError(null);
@@ -740,7 +758,7 @@ export function QuickstartPage() {
           'X-Gateway-App-Caller': target.appCallerCode,
           'X-Request-Id': requestId,
         },
-        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, canStream)),
+        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, canStream, testPrompt)),
         credentials: 'omit',
       });
       if (!response.ok) {
@@ -784,11 +802,12 @@ export function QuickstartPage() {
       setLiveOutput(null);
       setTestResult({ ok: false, message: error instanceof Error ? `真实调用失败：${error.message}` : '真实调用失败。' });
     } finally {
+      setTestElapsedMs(Date.now() - startedAt);
       setTesting(false);
     }
   };
 
-  /** 读上传的文件：图片转 data URL 进请求体，文本直接当提示词。不上传后端。 */
+  /** 读上传的文件：图片转 data URL 进请求体，文本填进输入框当正文。不上传后端。 */
   const pickAttachment = async (file: File | null) => {
     if (!file) return;
     setTestResult(null);
@@ -807,8 +826,8 @@ export function QuickstartPage() {
       setAttachment({ name: file.name, kind: 'image', dataUrl });
       return;
     }
-    const text = (await file.text()).slice(0, 4000);
-    setAttachment({ name: file.name, kind: 'text', text });
+    // 文本不做成附件——直接填进输入框，用户能看见、能改，发出去的就是他看到的那段。
+    setTestPrompt((await file.text()).slice(0, 4000));
   };
 
   const editIdentity = async () => {
@@ -1293,50 +1312,88 @@ export function QuickstartPage() {
                             {poolModels.map((modelId) => <option key={modelId} value={modelId} />)}
                           </datalist>
                         </label>
-                        <label className="lg-qs-upload">
-                          <Upload size={13} />
-                          {attachment ? attachment.name : displayBundle.requestType === 'vision' ? '上传图片' : '上传文本'}
-                          <input
-                            type="file"
-                            aria-label="上传测试输入"
-                            accept={displayBundle.requestType === 'vision' ? 'image/*' : '.txt,.md,.json,text/*'}
-                            onChange={(event) => { void pickAttachment(event.target.files?.[0] ?? null); event.target.value = ''; }}
-                          />
-                        </label>
-                        {attachment ? <button type="button" className="lg-text-link" onClick={() => { setAttachment(null); setTestResult(null); }}>移除</button> : null}
-                        {canCreateAccess ? (
-                          <>
-                            <Button size="sm" variant="secondary" disabled={testing || !modelValid} onClick={() => void runTest(bundle, 'safe')}>
-                              <Play size={14} />{testing ? '执行中' : '安全试跑'}
-                            </Button>
-                            <Button size="sm" variant="primary" disabled={testing || !modelValid} onClick={() => void runRealTest()}>
-                              <Play size={14} />真实调用
-                            </Button>
-                          </>
-                        ) : null}
                       </div>
-                      <div className="lg-qs-testbar-hints">
-                        <small className={`lg-qs-testbar-models${modelValid ? '' : ' is-bad'}`}>{modelHint}</small>
-                        <small className="lg-qs-testbar-cost">安全试跑不打上游、不计费；真实调用会计入用量与费用。</small>
+
+                      {/*
+                        上输入下输出：两块同宽、同圆角、上下相邻，中间只隔一条动作行，
+                        读起来就是一对。空态也占满 88px，跑起来页面不往下跳。
+                        输入框里的内容同时进下面的 cURL 片段——两边永远是同一次请求。
+                      */}
+                      <div className="lg-qs-io">
+                        <div className="lg-qs-io-block">
+                          <div className="lg-qs-io-head">
+                            <span className="lg-qs-field-title">你要发什么</span>
+                            <label className="lg-qs-upload">
+                              <Upload size={13} />
+                              {attachment ? attachment.name : displayBundle.requestType === 'vision' ? '上传图片' : '或上传文本'}
+                              <input
+                                type="file"
+                                aria-label="上传测试输入"
+                                accept={displayBundle.requestType === 'vision' ? 'image/*' : '.txt,.md,.json,text/*'}
+                                onChange={(event) => { void pickAttachment(event.target.files?.[0] ?? null); event.target.value = ''; }}
+                              />
+                            </label>
+                            {attachment ? <button type="button" className="lg-text-link" onClick={() => { setAttachment(null); setTestResult(null); }}>移除图片</button> : null}
+                          </div>
+                          <textarea
+                            className="lg-qs-io-input"
+                            aria-label="试跑要发送的内容"
+                            placeholder="写一句要发给模型的话，例如：用三句话说明什么是模型网关。留空发 Reply with OK。"
+                            value={testPrompt}
+                            onChange={(event) => { setTestPrompt(event.target.value); setTestResult(null); }}
+                          />
+                        </div>
+
+                        <div className="lg-qs-io-actions">
+                          <small className={`lg-qs-testbar-models${modelValid ? '' : ' is-bad'}`}>
+                            {modelHint}安全试跑不打上游、不计费；真实调用会计入用量与费用。
+                          </small>
+                          {canCreateAccess ? (
+                            <div className="lg-qs-io-buttons">
+                              <Button size="sm" variant="secondary" disabled={testing || !modelValid} onClick={() => void runTest(bundle, 'safe')}>
+                                <Play size={14} />{testing ? '执行中' : '安全试跑'}
+                              </Button>
+                              <Button size="sm" variant="primary" disabled={testing || !modelValid} onClick={() => void runRealTest()}>
+                                <Play size={14} />{liveOutput?.done ? '再跑一次' : '真实调用'}
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <div className="lg-qs-io-block">
+                          <div className="lg-qs-io-head">
+                            <span className="lg-qs-field-title">模型返回</span>
+                            {liveOutput && !liveOutput.done ? <span className="lg-qs-io-dots" aria-hidden="true"><i /><i /><i /></span> : null}
+                            {liveOutput?.done ? <span className="lg-qs-io-chip">{liveOutput.kind === 'image' ? '图片' : liveOutput.kind === 'audio' ? '音频' : '文字'}</span> : null}
+                            {liveOutput ? (
+                              <small className="lg-qs-io-meta">
+                                {liveOutput.done
+                                  ? `${testElapsedMs === null ? '已返回' : `${(testElapsedMs / 1000).toFixed(1)}s`} · 实际执行 ${testModel === 'auto' ? currentRoutePreview?.actualModel || '由池调度' : testModel}`
+                                  : `已用 ${((Date.now() - (runStartedAt ?? Date.now())) / 1000).toFixed(1)}s`}
+                              </small>
+                            ) : null}
+                            {liveOutput?.done && testResult?.requestId ? (
+                              <a className="lg-qs-io-link" href={`/llmgw/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>requestId</a>
+                            ) : null}
+                            {liveOutput ? <button type="button" className="lg-text-link" onClick={() => setLiveOutput(null)}>清除</button> : null}
+                          </div>
+                          <div
+                            className={`lg-qs-output${liveOutput ? (liveOutput.done ? ' is-done' : ' is-streaming') : ''}`}
+                            role="status"
+                            aria-live="polite"
+                          >
+                            {!liveOutput ? <span className="lg-qs-io-empty">跑一次就出现在这里</span> : null}
+                            {liveOutput?.kind === 'image' && liveOutput.url ? <img src={liveOutput.url} alt="模型返回的图片" /> : null}
+                            {liveOutput?.kind === 'audio' && liveOutput.url ? <audio controls src={liveOutput.url} /> : null}
+                            {liveOutput?.kind === 'text' ? (
+                              <pre>{liveOutput.text || (liveOutput.done ? '（上游返回了空内容）' : '')}<span className={liveOutput.done ? 'lg-qs-caret is-done' : 'lg-qs-caret'} /></pre>
+                            ) : null}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    {liveOutput ? (
-                      <div className="lg-qs-output" role="status" aria-live="polite">
-                        <div className="lg-qs-output-head">
-                          <strong>模型返回</strong>
-                          <span>{liveOutput.kind === 'image' ? '图片' : liveOutput.kind === 'audio' ? '音频' : '文字'}</span>
-                          {!liveOutput.done ? <em>正在接收…</em> : null}
-                          <button type="button" className="lg-text-link" onClick={() => setLiveOutput(null)}>清除</button>
-                        </div>
-                        {liveOutput.kind === 'image' && liveOutput.url ? <img src={liveOutput.url} alt="模型返回的图片" /> : null}
-                        {liveOutput.kind === 'audio' && liveOutput.url ? <audio controls src={liveOutput.url} /> : null}
-                        {liveOutput.kind === 'text' ? (
-                          <pre>{liveOutput.text || (liveOutput.done ? '（上游返回了空内容）' : '')}<span className={liveOutput.done ? 'lg-qs-caret is-done' : 'lg-qs-caret'} /></pre>
-                        ) : null}
-                      </div>
-                    ) : null}
-
+                    {/* 复制按钮从代码块右上角浮层收进 header 行：块本身干净，不再被按钮压着。 */}
                     <div className="lg-qs-snippet-head">
                       <span className="lg-qs-field-title">请求片段</span>
                       <select
@@ -1347,11 +1404,9 @@ export function QuickstartPage() {
                       >
                         {PROTOCOLS.map((item) => <option key={item.id} value={item.id}>{`${item.label} ${item.path}`}</option>)}
                       </select>
+                      <Button size="sm" className="lg-qs-snippet-copy" onClick={() => void copyText('curl', snippets.curl)}>{copied === 'curl' ? <Check size={14} /> : <Copy size={14} />}{copied === 'curl' ? '已复制' : '复制'}</Button>
                     </div>
-                    <div className="lg-qs-code-wrap">
-                      <pre style={preStyle} className="lg-qs-code"><code>{snippets.curl}</code></pre>
-                      <Button size="sm" style={{ position: 'absolute', top: 9, right: 9 }} onClick={() => void copyText('curl', snippets.curl)}>{copied === 'curl' ? <Check size={14} /> : <Copy size={14} />}{copied === 'curl' ? '已复制' : '复制'}</Button>
-                    </div>
+                    <pre style={preStyle} className="lg-qs-code"><code>{snippets.curl}</code></pre>
                     <small className="lg-qs-note">{snippetMode === 'safe' ? '示例默认带 X-Gateway-Dry-Run: quickstart，不产生上游费用。' : '示例不带 dry-run，会真实调用模型。'}</small>
                   </Card>
                 ) : null}
@@ -1588,14 +1643,18 @@ function createRequestId() {
   return `quickstart-${suffix.slice(0, 24)}`;
 }
 
-type TestAttachment = { name: string; kind: 'image' | 'text'; dataUrl?: string; text?: string } | null;
+type TestAttachment = { name: string; kind: 'image'; dataUrl: string } | null;
 
-function userContentFor(requestType: RequestType, attachment: TestAttachment, flavor: 'openai' | 'claude' | 'gemini') {
-  // 上传了图片就用上传的那张，没传才用内嵌的 1x1 测试图；上传文本就用文本当提示词。
-  const prompt = attachment?.kind === 'text' && attachment.text ? attachment.text : 'Reply with OK';
+function userContentFor(requestType: RequestType, attachment: TestAttachment, flavor: 'openai' | 'claude' | 'gemini', typedPrompt = '') {
+  /*
+    正文一律取用户在输入框里写的那句（上传文本会填进同一个框，所以只有这一个来源，
+    输入框、cURL 片段、真正发出去的请求永远是同一份内容）；空着才退回 Reply with OK。
+    图片仍走附件：上传了就用上传的那张，没传才用内嵌的 1x1 测试图。
+  */
+  const prompt = typedPrompt.trim() || 'Reply with OK';
   if (requestType !== 'vision') return flavor === 'gemini' ? [{ text: prompt }] : prompt;
   // 没上传图片就沿用内嵌的 1x1 测试图：那三个 vision*Content 仍是各协议形状的唯一来源。
-  if (!(attachment?.kind === 'image' && attachment.dataUrl)) {
+  if (!attachment) {
     if (flavor === 'claude') return visionClaudeContent();
     if (flavor === 'gemini') return visionGeminiParts();
     return visionOpenAiContent();
@@ -1617,18 +1676,18 @@ function userContentFor(requestType: RequestType, attachment: TestAttachment, fl
   ];
 }
 
-function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string, model = 'auto', attachment: TestAttachment = null, stream = false) {
+function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string, model = 'auto', attachment: TestAttachment = null, stream = false, prompt = '') {
   // model=auto 表示交给模型池调度；选了具体成员就把它发出去，由网关按池规则校验。
   const policy = model === 'auto' ? 'auto' : 'pool';
   if (protocol === 'native') return {
     appCallerCode,
     modelType: requestType,
-    requestBody: { model, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai') }] },
+    requestBody: { model, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai', prompt) }] },
     context: { requestId, sourceSystem: 'external', modelPolicy: policy },
   };
-  if (protocol === 'claude') return { model, model_policy: policy, max_tokens: 64, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'claude') }] };
-  if (protocol === 'gemini') return { model, model_policy: policy, contents: [{ role: 'user', parts: userContentFor(requestType, attachment, 'gemini') }] };
-  return { model, model_policy: policy, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai') }], stream };
+  if (protocol === 'claude') return { model, model_policy: policy, max_tokens: 64, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'claude', prompt) }] };
+  if (protocol === 'gemini') return { model, model_policy: policy, contents: [{ role: 'user', parts: userContentFor(requestType, attachment, 'gemini', prompt) }] };
+  return { model, model_policy: policy, messages: [{ role: 'user', content: userContentFor(requestType, attachment, 'openai', prompt) }], stream };
 }
 
 function visionOpenAiContent() {
@@ -1939,14 +1998,14 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 - 401 时轮换密钥；403 时检查 team、appCaller、协议和 scope，禁止通过扩大到通配 key 绕过。`;
 }
 
-function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode, model = 'auto', attachment: TestAttachment = null) {
+function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode, model = 'auto', attachment: TestAttachment = null, prompt = '') {
   const definition = protocolDefinition(protocol);
   const requestIdToken = '__LLMGW_REQUEST_ID__';
   const common = `-H "Authorization: Bearer \$LLMGW_API_KEY" \\
   -H "X-Gateway-Source: external" \\
   -H "X-Gateway-App-Caller: ${appCaller}" \\${mode === 'safe' ? '\n  -H "X-Gateway-Dry-Run: quickstart" \\' : ''}
   -H "X-Request-Id: \$REQUEST_ID"`;
-  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model, attachment), null, 2)
+  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model, attachment, false, prompt), null, 2)
     .replace(requestIdToken, `'"$REQUEST_ID"'`);
   const extra = protocol === 'claude' ? ' \\\n  -H "anthropic-version: 2023-06-01"' : '';
   return `REQUEST_ID="quickstart-\$(date +%s)-\$RANDOM"
