@@ -1771,6 +1771,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           revealCompletedTranscribeRunsRef.current.delete(runId);
           setBgTranscribeRunIds(current => current.filter(id => id !== runId));
           if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
+          /*
+           * 停止看护也要把这条 run 从进度位上摘掉。留着的话状态卡照旧按「处理中」渲染，
+           * 进度条冻在最后一个百分比，而下面刚刚 setTranscribeFailure 出来的失败卡与重试
+           * 按钮被它压住不显示——界面上是一条永远走不完的进度，用户连重试的入口都看不见
+           * （终态那一路早就摘了，退役这一路漏了，Codex 第十九轮 P1）。
+           */
+          setActiveTranscribeRun(current => (current?.id === runId ? null : current));
 
           const replacementRunId = recoverableBackgroundTranscriptionRunId(decision.replacementRun);
           if (replacementRunId && recordingSource) {

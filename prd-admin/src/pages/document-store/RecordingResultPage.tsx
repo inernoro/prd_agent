@@ -689,11 +689,21 @@ export function RecordingResultPage() {
       toast.error(res.error?.message || '保存失败');
       return false;
     }
+    // online 存成功 = 服务端已经拿到更新的内容，离线队列里那份旧的作废。
+    // 这一句按 savingNoteId 清——那份草稿属于 A，与现在停在哪一屏无关
+    clearOfflineEdit(savingNoteId, ownerId);
+    /*
+     * 下面这几处改的都是**当前这一屏**的共享状态（版本令牌、待同步队列、冲突横幅），
+     * 所以要先认笔记：PUT 回来时用户可能已经从侧栏切到 B 了，无条件写的话
+     *   - B 的版本令牌会被换成 A 的时刻，B 之后一次离线编辑就带着错基线，
+     *     重连时要么误判冲突、要么反过来盖掉别人真的改过的那一版；
+     *   - B 刚恢复出来的待同步与冲突横幅被一并清掉，一个真实的冲突就此消失在界面上。
+     * 覆盖那一路早就有这道门，在线保存这一路只守住了最后的正文替换（Codex 第十九轮 P1）。
+     */
+    if (noteIdRef.current !== savingNoteId) return true;
     // 服务端这一版就是最新版本：版本令牌跟着走，否则「刚存过、随后离线再改」
     // 会拿着加载时那个旧时刻当基线，重连时把自己的上一次保存误判成别人改的
     if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
-    // online 存成功 = 服务端已经拿到更新的内容，离线队列里那份旧的作废
-    clearOfflineEdit(state.noteId, ownerId);
     setPendingEdits(null);
     setQueueVolatile(false);
     setFlushConflict(false);
@@ -806,6 +816,13 @@ export function RecordingResultPage() {
      */
     clearOfflineEdit(overwritingNoteId, ownerId);
     if (noteIdRef.current !== overwritingNoteId) return;
+    /*
+     * 覆盖成功之后服务端那一版就是用户自己认下的这一版，令牌必须跟着走。
+     * 漏了的话，同一次停留里再断网改一次，草稿仍带着覆盖之前的基线，
+     * 重连时把「自己刚刚明确接受的那次覆盖」判成别人改的——又一条假冲突
+     * （在线保存、自动补传、重新拉取三路都刷了，这一路漏了，Codex 第十九轮 P2）。
+     */
+    if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
     setPendingEdits(null);
     setQueueVolatile(false);
     setFlushConflict(false);

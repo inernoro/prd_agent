@@ -536,9 +536,15 @@ export async function vaultStartSession(id: string, mime: string, storeId?: stri
 }
 
 /** 录音中切换目标知识库时同步更新保险箱归属，崩溃恢复不会回到旧库。 */
-export async function vaultUpdateSessionStore(id: string, storeId: string): Promise<void> {
+/**
+ * 改这条会话的归属知识库。**返回成败**而不是吞掉：写不进去的话分片留在原来那个库下，
+ * 恢复弹窗按库过滤就找不到它——界面上那句「已保护」这时是假话，调用方要据此降级
+ * （与 vaultStartSession / vaultAppendChunk 同一口径，Codex 第十九轮 P2）。
+ * 会话记录还不存在时同样算失败：这次改动没落到任何地方。
+ */
+export async function vaultUpdateSessionStore(id: string, storeId: string): Promise<boolean> {
   const db = await openDb();
-  if (!db) return;
+  if (!db) return false;
   try {
     const tx = db.transaction(META_STORE, 'readwrite');
     const store = tx.objectStore(META_STORE);
@@ -547,10 +553,14 @@ export async function vaultUpdateSessionStore(id: string, storeId: string): Prom
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => resolve(null);
     });
-    if (current) store.put({ ...current, storeId });
-    await txDone(tx);
-  } catch { /* best-effort */ }
-  db.close();
+    if (!current) { await txDone(tx); return false; }
+    store.put({ ...current, storeId });
+    return await txDone(tx);
+  } catch {
+    return false;
+  } finally {
+    db.close();
+  }
 }
 
 /**

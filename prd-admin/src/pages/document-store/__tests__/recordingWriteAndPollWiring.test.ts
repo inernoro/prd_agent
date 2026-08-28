@@ -85,6 +85,30 @@ describe('离线草稿的版本令牌', () => {
    * 一条假的冲突横幅。删掉这一行不会有任何测试变红，所以要这条守卫
    * （Codex 第十八轮 P2）。
    */
+  /*
+   * 三条「认笔记」的门都守同一件事：await 回来时用户可能已经切到 B，
+   * 这时候还去改这一屏的共享状态（令牌 / 待同步 / 冲突横幅）就是把 A 的结果写进 B。
+   * 删掉任何一道门都不会有测试变红——切条目要真人操作才能撞上。
+   */
+  it('在线保存回来后先认笔记，再动这一屏的共享状态', () => {
+    const fn = source.slice(source.indexOf('const onSaveNote = useCallback'));
+    const body = fn.slice(0, fn.indexOf('}, [enqueueWrite'));
+    expect(body.length).toBeGreaterThan(400);
+    const gate = body.indexOf('noteIdRef.current !== savingNoteId');
+    expect(gate).toBeGreaterThan(0);
+    // 令牌与三处清场都必须排在这道门之后
+    for (const after of ['noteRevisionRef.current = res.data.updatedAt', 'setFlushConflict(false)']) {
+      expect(body.indexOf(after)).toBeGreaterThan(gate);
+    }
+  });
+
+  it('用户明说覆盖之后也刷令牌', () => {
+    const fn = source.slice(source.indexOf('const overwriteWithOfflineDraft = useCallback'));
+    const body = fn.slice(0, fn.indexOf('}, [enqueueWrite'));
+    expect(body.length).toBeGreaterThan(200);
+    expect(body).toContain('noteRevisionRef.current = res.data.updatedAt');
+  });
+
   it('重新拉回笔记之后也刷令牌', () => {
     const body = source.slice(source.indexOf('const reloadNote = useCallback'));
     const scope = body.slice(0, body.indexOf('}, [entryId]);'));
@@ -271,3 +295,20 @@ describe('库归属以条目为准', () => {
   });
 });
 
+/*
+ * 停止看护（stalled / 查不到 / 权限没了）与走到终态是两条不同的分支，但都必须
+ * 把这条 run 从进度位上摘掉。退役那一路漏摘的话，状态卡照旧按「处理中」渲染，
+ * 进度冻在最后一个百分比，把同一时刻刚设出来的失败卡与重试按钮压住不显示——
+ * 界面上是一条永远走不完的进度，用户连重试入口都看不见（Codex 第十九轮 P1）。
+ */
+describe('停止看护时把进度位一起腾出来', () => {
+  const source = read('pages/document-store/DocumentStorePage.tsx');
+
+  it('退役分支与终态分支都清 activeTranscribeRun', () => {
+    const retire = source.indexOf("if (decision.kind === 'retire-watcher')");
+    expect(retire).toBeGreaterThan(0);
+    const branch = source.slice(retire, source.indexOf('const observedRun = decision.run;', retire));
+    expect(branch.length).toBeGreaterThan(400);
+    expect(branch).toMatch(/setActiveTranscribeRun\(current => \(current\?\.id === runId \? null : current\)\)/);
+  });
+});

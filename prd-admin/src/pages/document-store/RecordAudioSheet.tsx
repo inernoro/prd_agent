@@ -448,13 +448,16 @@ export function RecordAudioSheet({
     targetStoreIdRef.current = nextStoreId;
     /*
      * 挂在本机保险箱那条写队列上，不能裸发：建会话本身是排队进去的，抢在它前面跑的话
-     * `vaultUpdateSessionStore` 找不到那条会话记录、**静默什么都不做**（它对不存在的
-     * id 是 no-op），分片于是全留在最初那个库下。恢复弹窗按 `storeId` 过滤，用户在
+     * `vaultUpdateSessionStore` 找不到那条会话记录，这次改动落不到任何地方（它对不存在的
+     * id 返回 false），分片于是全留在最初那个库下。恢复弹窗按 `storeId` 过滤，用户在
      * 新选的库里就看不到这段录音——像丢了（Codex 第十八轮 P2）。
      */
     vaultWriteQueueRef.current = vaultWriteQueueRef.current
       .then(() => vaultUpdateSessionStore(vaultIdRef.current, nextStoreId))
-      .catch(() => undefined);
+      // 与另外两个 vault 写一样读返回值：改不动归属库时分片留在旧库下，
+      // 「已保护」这句就成了假话，凭据要跟着降级
+      .then((ok) => { if (!ok) setVaultPersisted(false); })
+      .catch(() => { setVaultPersisted(false); });
 
     // 已开始实时保护时，切库会重新建立会话，并把内存中的既有分片顺序补传到新库。
     // 这样用户不必在录音前做选择，也不会出现 UI 显示新库而文件实际留在旧库。

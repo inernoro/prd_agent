@@ -104,7 +104,28 @@ describe('本机保险箱的分片存进用户选的那个库', () => {
     expect(body.length).toBeGreaterThan(200);
     expect(body).not.toMatch(/(void|await)\s+vaultUpdateSessionStore\(/);
     const chained = body.slice(body.indexOf('vaultWriteQueueRef.current'));
-    expect(chained.slice(0, 400)).toContain('vaultUpdateSessionStore(');
+    expect(chained.slice(0, 500)).toContain('vaultUpdateSessionStore(');
+  });
+
+  /*
+   * 三个 vault 写口径必须一致：都返回成败、调用方都读返回值。改归属库这一路此前
+   * 返回 void，写失败被吞掉，凭据仍然说「已保护」——而分片其实留在旧库下
+   * （Codex 第十九轮 P2）。
+   */
+  it('改归属库失败同样读返回值，凭据跟着降级', () => {
+    const fn = sheet.slice(sheet.indexOf('const changeDestination = useCallback'));
+    const body = fn.slice(0, fn.indexOf('\n  }, ['));
+    const call = body.indexOf('vaultUpdateSessionStore(');
+    expect(call).toBeGreaterThan(0);
+    expect(body.slice(call)).toContain('if (!ok) setVaultPersisted(false);');
+  });
+
+  it('vault 那一侧真的把成败报出来了（不是 Promise<void>）', () => {
+    const vault = fs.readFileSync(
+      path.resolve(__dirname, '../recordingVault.ts'),
+      'utf-8',
+    );
+    expect(vault).toContain('vaultUpdateSessionStore(id: string, storeId: string): Promise<boolean>');
   });
 });
 
