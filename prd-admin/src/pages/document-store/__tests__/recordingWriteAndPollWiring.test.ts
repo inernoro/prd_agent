@@ -192,3 +192,16 @@ describe('离线草稿与屏幕一致', () => {
   });
 });
 
+describe('发起整理也要认笔记', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('两个请求回来后先认「还是当初那条录音吗」，不是就丢弃', () => {
+    expect(source).toContain('const launchedForEntryId = entryId;');
+    expect(source).toContain('if (entryIdRef.current !== launchedForEntryId) return;');
+    const launch = source.slice(source.indexOf('const launchedForEntryId = entryId;'));
+    // 认人必须排在 setRunning 之前
+    expect(launch.indexOf('if (entryIdRef.current !== launchedForEntryId) return;'))
+      .toBeLessThan(launch.indexOf('setRunning({ runId: res.data.runId'));
+  });
+});
+

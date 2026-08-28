@@ -116,6 +116,24 @@ export function replaceTranscriptSegmentText(md: string, index: number, nextText
 }
 
 /**
+ * 说话人名字写进 Markdown 标记之前的规范化。
+ *
+ * 标记的形状是 `**[00:00 - 00:03]** [名字] 正文`，所以名字里出现 `[` `]` 或换行
+ * 都会把这一行拆坏：重新解析时 `TS_LINE_RE` 只把第一个 `]` 之前当名字，剩下的挤进正文，
+ * 严重时整行不再被认成一句（Codex P2）。改名那一路早就规范化了，指派这一路没有——
+ * 同一件事两份写法必然漂移（形状 3），所以抽成这一个，两处共用。
+ */
+export function normalizeSpeakerName(raw: string): string {
+  return raw
+    .replaceAll('[', ' ')
+    .replaceAll(']', ' ')
+    .replace(/[\r\n]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 30);
+}
+
+/**
  * 给第 index 条句子指定说话人（设计稿 cap-S11「手动标记说话人」的落点）。
  *
  * 上游没能区分说话人时，原文里那一段是「时间戳 + 正文」，中间没有 `[名字]`。
@@ -129,7 +147,7 @@ export function assignTranscriptSegmentSpeaker(md: string, index: number, speake
   const bodyStart = markerIdx >= 0 ? markerIdx + marker.length : 0;
   const head = md.slice(0, bodyStart);
   const lines = md.slice(bodyStart).split('\n');
-  const name = speaker.trim();
+  const name = normalizeSpeakerName(speaker);
   let cursor = -1;
 
   const updated = lines.map((raw) => {
@@ -173,13 +191,7 @@ export function parseSpeakerSourceNote(md: string): SpeakerSourceNote | null {
 /** 批量修改说话人显示名，保留时间戳和正文。 */
 export function renameTranscriptSpeaker(md: string, currentName: string, nextName: string): string {
   const current = currentName.trim();
-  const next = nextName
-    .replaceAll('[', ' ')
-    .replaceAll(']', ' ')
-    .replace(/[\r\n]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 30);
+  const next = normalizeSpeakerName(nextName);
   if (!current || !next || current === next) return md;
   return md.split('\n').map((raw) => {
     const match = TS_LINE_RE.exec(raw.trim());

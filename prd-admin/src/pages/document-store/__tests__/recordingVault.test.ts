@@ -12,6 +12,8 @@ import {
   recoverableBackgroundTranscriptionRunId,
   isStalledBackgroundTranscriptionRun,
   isTranscriptionInflight,
+  vaultAppendChunk,
+  vaultStartSession,
   selectObservedBackgroundTranscriptionRun,
   shouldRetryVaultServerCompletion,
   startSerialBackgroundPoller,
@@ -543,3 +545,25 @@ describe('isTranscriptionInflight', () => {
     }
   });
 });
+
+/*
+ * 本机保险箱是 best-effort：**永不抛**，但必须如实汇报写没写进去。
+ * 此前它返回 void 并把异常全吞掉，调用方接的 .catch 因此永远不触发——
+ * 界面照样挂着「已保护 · 无丢失」，而分片只在内存里。
+ * 这两条钉的就是「失败说得出口」：node 环境没有 indexedDB，正好是不可用那一档。
+ */
+describe('本机保险箱失败时如实返回', () => {
+  it('indexedDB 不可用时 vaultAppendChunk 返回 false，而不是静默成功', async () => {
+    expect(typeof indexedDB).toBe('undefined');
+    await expect(vaultAppendChunk('sess-1', new Blob(['x']))).resolves.toBe(false);
+  });
+
+  it('indexedDB 不可用时 vaultStartSession 返回 false', async () => {
+    await expect(vaultStartSession('sess-1', 'audio/webm')).resolves.toBe(false);
+  });
+
+  it('失败时不抛异常——录音不能因为落盘失败而中断', async () => {
+    await expect(vaultAppendChunk('sess-2', new Blob(['y']))).resolves.not.toThrow;
+  });
+});
+

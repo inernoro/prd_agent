@@ -597,15 +597,27 @@ export async function vaultClearServerCompletion(id: string): Promise<void> {
 }
 
 /** 追加一个音频分片（逐条插入，不重写既有数据） */
-export async function vaultAppendChunk(sessionId: string, blob: Blob): Promise<void> {
+/**
+ * 追加一片到本机保险箱。**返回它到底写没写进去**。
+ *
+ * 仍然是 best-effort（永不抛，录音不能因为落盘失败而中断），但「失败」这件事必须
+ * 说出来：调用方要靠它决定界面还能不能挂「已保护 · 无丢失」。此前它返回 void 并把
+ * 异常全吞掉，于是调用方接的 `.catch` 根本不会触发——凭据照样是绿的，而分片
+ * 只在内存里（Codex 连续两轮指到这里：先是吞异常，再是「你那个 catch 接不到」）。
+ */
+export async function vaultAppendChunk(sessionId: string, blob: Blob): Promise<boolean> {
   const db = await openDb();
-  if (!db) return;
+  if (!db) return false;
   try {
     const tx = db.transaction(CHUNK_STORE, 'readwrite');
     tx.objectStore(CHUNK_STORE).add({ sessionId, blob });
-    await txDone(tx);
-  } catch { /* best-effort */ }
-  db.close();
+    const ok = await txDone(tx);
+    return ok;
+  } catch {
+    return false;
+  } finally {
+    db.close();
+  }
 }
 
 /** 列出所有滞留的录音会话（按开始时间倒序） */

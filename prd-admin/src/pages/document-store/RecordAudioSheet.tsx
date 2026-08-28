@@ -589,11 +589,16 @@ export function RecordAudioSheet({
           audioBitsPerSecond: 64_000,
         });
         recorderRef.current = rec;
+        /*
+         * 这两个 vault 函数都是 best-effort：失败时**返回 false 而不是抛异常**。
+         * 所以只挂 `.catch` 接不到任何东西（上一版就是这么写的，等于没修）——
+         * 必须读返回值。
+         */
         vaultWriteQueueRef.current = vaultStartSession(
           vaultIdRef.current,
           mime || 'audio/webm',
           storeId,
-        ).then(() => undefined).catch(() => { setVaultPersisted(false); });
+        ).then((ok) => { if (!ok) setVaultPersisted(false); }).catch(() => { setVaultPersisted(false); });
         void ensureUploadSession();
         rec.ondataavailable = (e) => {
           if (e.data.size > 0) {
@@ -603,9 +608,9 @@ export function RecordAudioSheet({
             // 分片实时落本机保险箱：崩溃/断网/忘关都不丢已录内容
             vaultWriteQueueRef.current = vaultWriteQueueRef.current
               .then(() => vaultAppendChunk(vaultIdRef.current, e.data))
-              .then(() => undefined)
-              // 吞掉异常可以（录制不能因此中断），但不能连「写失败了」这件事一起吞：
+              // 写失败不抛、只返回 false（录制不能因此中断），所以这里**读返回值**：
               // 凭据要跟着降级，否则界面在替一件没发生的事作保
+              .then((ok) => { if (!ok) setVaultPersisted(false); })
               .catch(() => { setVaultPersisted(false); });
             queueLiveChunk(e.data);
             // 接近后端 20MB 上限：自动收尾并直接进转录，不让录音白费

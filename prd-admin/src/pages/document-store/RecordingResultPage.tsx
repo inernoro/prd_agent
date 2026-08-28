@@ -505,6 +505,9 @@ export function RecordingResultPage() {
   // 轮询回调里要读「当前的笔记 id」，但它不能进 effect 依赖——依赖一变轮询就重来。
   const noteIdRef = useRef('');
   noteIdRef.current = state.kind === 'ready' ? state.noteId : '';
+  /** 当前这一屏是哪条录音。异步回调回来时拿它认人，别把结果落到已经切走的那条上 */
+  const entryIdRef = useRef('');
+  entryIdRef.current = entryId ?? '';
 
   /**
    * 重新拉一次笔记正文与生成时间（整理跑完之后，界面得换成新的那一份）。
@@ -795,6 +798,8 @@ export function RecordingResultPage() {
   const onPickOrganizeStyle = useCallback((styleKey: string, customPrompt?: string) => {
     if (!entryId || running || launchingRef.current) return;
     launchingRef.current = true;
+    // 这次发起属于哪条录音：两个请求都回来之后要拿它认人（见下面 setRunning 前那一判）
+    const launchedForEntryId = entryId;
     void (async () => {
       try {
         const prior = await getLatestAgentRun(entryId, 'transcribe', { status: 'done', requireOutput: true });
@@ -808,6 +813,12 @@ export function RecordingResultPage() {
           toast.error(res.error?.message || '发起整理失败');
           return;
         }
+        /*
+         * 两个请求回来时用户可能已经切到另一条录音了：换条目的 effect 已经把 running 清掉，
+         * 这里再无条件塞进去，B 就会显示 A 的进度条，而且因为 running 非空，
+         * B 自己的整理点了没反应（Codex P2）。不是当初那条就丢弃这次结果。
+         */
+        if (entryIdRef.current !== launchedForEntryId) return;
         setRunning({ runId: res.data.runId, styleKey, percent: 0 });
       } finally {
         launchingRef.current = false;

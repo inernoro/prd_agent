@@ -59,8 +59,18 @@ describe('本机保险箱失败要接到凭据上', () => {
     'utf-8',
   );
 
-  it('写分片失败时把状态翻掉，不是静默吞掉', () => {
-    expect(sheet).toContain('.catch(() => { setVaultPersisted(false); })');
+  /*
+   * 注意判据取的是什么：vault 那两个函数失败时**返回 false 而不是抛**，
+   * 所以「有没有挂 .catch」证明不了任何事——上一版守卫钉的正是那句 catch，
+   * 它绿着，而 setVaultPersisted 从来没被调用过（形状 8：拿一份不成立的声明当证据）。
+   * 判据必须认「读了返回值」。
+   */
+  it('写分片失败时读返回值把状态翻掉，而不是只挂一个接不到的 catch', () => {
+    expect(sheet).toContain('.then((ok) => { if (!ok) setVaultPersisted(false); })');
+  });
+
+  it('建会话失败同样读返回值', () => {
+    expect(sheet).toContain('.then((ok) => { if (!ok) setVaultPersisted(false); }).catch(');
   });
 
   it('这个状态真的传给了 describeCaptureChips', () => {
