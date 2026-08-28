@@ -16,6 +16,7 @@ import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { toast } from '@/lib/toast';
+import { invalidateLandingAssets } from '@/pages/home/hooks/useLandingAssets';
 import {
   LANDING_PREVIEW_SLOTS,
   applyArtStyleToPrompt,
@@ -150,6 +151,10 @@ export default function LandingPreviewSettings() {
   const hasModel = modelChain.length > 0;
 
   const reload = useCallback(async () => {
+    // 管理端这一屏是首页配图的唯一改动入口，改完就把 `/home` 那份模块级缓存丢掉。
+    // 不丢的话，同一个 SPA 会话里换完图再回首页，看到的还是换之前那一份——
+    // 而他刚刚才亲手换过，只能整页刷新才看得见。
+    invalidateLandingAssets();
     const res = await listHomepageAssets();
     if (!aliveRef.current) return;
     if (res.success) {

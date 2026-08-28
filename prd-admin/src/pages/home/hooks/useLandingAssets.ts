@@ -46,6 +46,17 @@ async function load(): Promise<Record<string, string>> {
 }
 
 /**
+ * 丢掉缓存，下一次挂载重新去拉。
+ *
+ * 管理端换过图之后必须调一次：这份缓存是模块级的，同一个 SPA 会话里
+ * 生成/替换/删除完再回 `/home`，各幕拿到的还是换之前那一份，
+ * 非得整页刷新才看得见——而他刚刚才亲手换过。
+ */
+export function invalidateLandingAssets(): void {
+  cache = null;
+}
+
+/**
  * 取某个槽位的图片地址。没有配、或这次没拉到，返回 null —— 调用方**必须**能在
  * null 时照常渲染（回落到原来的手绘底图），配图是替换不是前提。
  */

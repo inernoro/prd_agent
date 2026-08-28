@@ -326,6 +326,19 @@ export default function SettingsPage() {
     }
   }, [activeTab, searchParams]);
 
+  /*
+   * 渲染的那一屏必须也在**这个人能看的清单**里。
+   *
+   * 上面按权限筛的是 tab 条，地址栏没经过这道筛：`?tab=landing-preview` 直接打开，
+   * 组件照样挂。首页预览图那一屏尤其亏——生图只要 visual-agent.use，
+   * 于是没有 assets 权限的人也能按下「全部重新生成」，七次计费的生图跑起来，
+   * 最后卡在挂槽位那一步全部失败。
+   *
+   * 兜底就落在这里：认不出的 / 没权限的 tab 一律退回第一屏。
+   * 后端每个端点自己也有权限门，这一层是省掉「点了才发现不行」和那七次白花的钱。
+   */
+  const visibleTab = tabs.some((t) => t.key === activeTab) ? activeTab : tabs[0].key;
+
   const handleTabChange = (key: string) => {
     setActiveTab(key);
     // tab 切换用 replace：不往 history 堆条目，浏览器/手势返回直接离开本页回真正的上一页
@@ -337,18 +350,18 @@ export default function SettingsPage() {
       <TabBar items={tabs} activeKey={activeTab} onChange={handleTabChange} />
 
       <div className="flex-1 min-h-0">
-        {activeTab === 'user-space' && <UserSpaceSettings />}
-        {activeTab === 'account' && <AccountSettings />}
-        {activeTab === 'skin' && <SkinSettings />}
-        {activeTab === 'nav-order' && <NavOrderSettings />}
-        {activeTab === 'assets' && <AssetsManagePage />}
-        {activeTab === 'landing-preview' && <LandingPreviewSettings />}
-        {activeTab === 'authz' && <AuthzPage />}
-        {activeTab === 'data' && <DataManagePage />}
-        {activeTab === 'infra-services' && <InfraServicesPage />}
-        {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
-        {activeTab === 'short-links' && <ShortLinksAdminSettings />}
-        {activeTab === 'peer-sync' && <PeerNodesSettings />}
+        {visibleTab === 'user-space' && <UserSpaceSettings />}
+        {visibleTab === 'account' && <AccountSettings />}
+        {visibleTab === 'skin' && <SkinSettings />}
+        {visibleTab === 'nav-order' && <NavOrderSettings />}
+        {visibleTab === 'assets' && <AssetsManagePage />}
+        {visibleTab === 'landing-preview' && <LandingPreviewSettings />}
+        {visibleTab === 'authz' && <AuthzPage />}
+        {visibleTab === 'data' && <DataManagePage />}
+        {visibleTab === 'infra-services' && <InfraServicesPage />}
+        {visibleTab === 'update-accel' && <UpdateAccelerationSettings />}
+        {visibleTab === 'short-links' && <ShortLinksAdminSettings />}
+        {visibleTab === 'peer-sync' && <PeerNodesSettings />}
       </div>
     </div>
   );
