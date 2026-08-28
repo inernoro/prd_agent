@@ -1662,9 +1662,13 @@ public class DataSyncProtocolTests
         // 断言里不许写死缩进：原来那一版把换行加一长串空格逐字写进期望串，结果调用点
         // 被包进一层 lambda、整体缩进变了一次，守卫就红了——它盯的其实是排版，
         // 不是接线（形状 4：断言实现的字面形状而非行为）。改成先压掉空白再比。
+        //
+        // 断言也不许写死**这一句的整体拼法**：下标那一段被抽成局部变量之后（DS34 要按
+        // 同一批下标回冲改写计数，两处得用同一份），逐字比对的期望串同样会红——
+        // 它盯的还是写法，不是接线。所以拆成两段：下标来自写错误，且下标喂给了剔除判据。
         var worker = Regex.Replace(ReadWorkerSource(), @"\s+", " ");
-        worker.ShouldContain(
-            "DataSyncApply .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))");
+        worker.ShouldContain("var failedIndexes = ex.WriteErrors.Select(e => e.Index).ToList();");
+        worker.ShouldContain("DataSyncApply .SurvivingInserts(decision.ToInsert, failedIndexes)");
         // 砍末尾那种写法不许回来。
         worker.ShouldNotContain("decision.ToInsert.Count - conflicts).ToList()");
     }

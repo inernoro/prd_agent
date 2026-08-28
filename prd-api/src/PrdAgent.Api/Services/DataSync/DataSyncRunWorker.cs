@@ -77,11 +77,22 @@ public sealed class DataSyncRunWorker : BackgroundService
     /// 存储实现抛异常时返回 null 而不是让整条同步炸掉：拼不出地址只是这一条附件
     /// 打不开，而调用方会把它算进「认不出」如实报出来；为此中断一次几千条的迁移不划算。
     /// </summary>
-    private string? BuildLocalAssetUrl(string key)
+    /// <summary>
+    /// 把 key 拼成本站地址。两类 key 走两条路，**不能混用**：
+    ///
+    /// - 内容寻址：传进来的是剥掉源站前缀的**逻辑** key，要由本站套上自己的前缀，
+    ///   所以走 <c>BuildUrlForLogicalKey</c>。用 <c>BuildUrlForKey</c> 会拼成
+    ///   `{本站根}/{domain}/...`，少了本站前缀（DS31）。
+    /// - 完整物理路径：首页/桌面端素材那种，两侧原样使用、不涉及前缀，
+    ///   套前缀反而拼错，所以走 <c>BuildUrlForKey</c>。
+    /// </summary>
+    private string? BuildLocalAssetUrl(string key, DataSyncAssetUrls.AssetKeyKind kind)
     {
         try
         {
-            var url = _assetStorage.BuildUrlForKey(key);
+            var url = kind == DataSyncAssetUrls.AssetKeyKind.ContentAddressed
+                ? _assetStorage.BuildUrlForLogicalKey(key)
+                : _assetStorage.BuildUrlForKey(key);
             return string.IsNullOrWhiteSpace(url) ? null : url;
         }
         catch (Exception ex)
@@ -411,12 +422,18 @@ public sealed class DataSyncRunWorker : BackgroundService
                 // 「已把 N 条地址改写成本站的」里就掺着一批**从未落库**的条数——用户照着这个
                 // 数字判断附件还有没有问题，而它比真相大（Codex review P2）。
                 // 这条和本 PR 那三处话术修复是同一条纪律：打算做的事不能记成做过的事。
+                //
+                // **插入排在前面**：下面撞唯一索引时要按下标回冲这一批的计数（见 DS34 那一段），
+                // 而冲突只会落在插入这一侧。顺序变了回冲就会算到替换头上。
                 var willWrite = new List<BsonDocument>(decision.ToInsert.Count + decision.ToReplace.Count);
                 willWrite.AddRange(decision.ToInsert);
                 willWrite.AddRange(decision.ToReplace);
                 var rebase = DataSyncAssetUrls.RebaseIncoming(willWrite, collection.Name, BuildLocalAssetUrl);
-                progress.AssetUrlsRebased += rebase.Rebased;
-                progress.AssetUrlsUnresolved += rebase.Unrecognized;
+                progress.AssetUrlsRebased += rebase.Total.Rebased;
+                progress.AssetUrlsUnresolved += rebase.Total.Unrecognized;
+                // 相对地址单独报：源站用本地磁盘存附件时，搬过来每一条都指向本站不存在的文件。
+                // 早先这一档既不改写也不计数，于是那种部署下附件卡整个不出现（DS30）。
+                progress.AssetUrlsRelative += rebase.Total.AlreadyRelative;
 
                 // 覆盖写是整份替换，所以「目标站本地执行历史」这类字段必须在替换前接回来，
                 // 否则源站那台机器跑过哪些迁移会变成本站的账：本站没跑过的被当成跑过而跳过，
@@ -527,10 +544,31 @@ public sealed class DataSyncRunWorker : BackgroundService
                                     collection.Name, conflicts, decision.ToInsert.Count - conflicts);
                                 // 按**失败的下标**剔除，不是砍掉末尾 N 条：IsOrdered=false 时
                                 // 冲突可以落在任意位置。判据抽在 DataSyncApply.SurvivingInserts。
+                                var failedIndexes = ex.WriteErrors.Select(e => e.Index).ToList();
+
+                                // 被剔掉的那几条**一个字节都没落库**，它们的地址改写数不能算进
+                                // 「已把 N 条改写成本站地址」——改写只发生在内存里，改完就随对象丢掉。
+                                //
+                                // 上一轮把改写挪到 Decide 之后、只作用于写库集合，治的是「目标站已有、
+                                // 被判成跳过」那一档；这一档是「落库时才撞索引」，当时的说法盖不住它（DS34）。
+                                // 误差方向是偏大，且偏大的条数恰好等于冲突数——而冲突数本身已经如实
+                                // 记进 Skipped 单独报出来了，所以不会把「没搬」说成「搬了」，
+                                // 只会让附件那个数字虚高。现在按下标回冲，报出去的就等于真正落库的。
+                                //
+                                // willWrite 是「先插入、后替换」拼的，所以插入侧的下标可以直接用。
+                                foreach (var idx in failedIndexes)
+                                {
+                                    if (idx < 0 || idx >= rebase.ByDocument.Count) continue;
+                                    var dropped = rebase.ByDocument[idx];
+                                    progress.AssetUrlsRebased -= dropped.Rebased;
+                                    progress.AssetUrlsUnresolved -= dropped.Unrecognized;
+                                    progress.AssetUrlsRelative -= dropped.AlreadyRelative;
+                                }
+
                                 decision = decision with
                                 {
                                     ToInsert = DataSyncApply
-                                        .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))
+                                        .SurvivingInserts(decision.ToInsert, failedIndexes)
                                         .ToList(),
                                 };
                             }

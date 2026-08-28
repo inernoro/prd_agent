@@ -489,6 +489,16 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return BuildPublicUrl(key);
     }
 
+    /// <summary>
+    /// 逻辑 key 套上**本桶**的前缀再拼地址。跨站搬来的 key 带的是源站前缀，
+    /// 调用方已经剥掉，这里补本站那一份（DS31）。
+    /// </summary>
+    public string BuildUrlForLogicalKey(string logicalKey)
+    {
+        var k = (logicalKey ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        return BuildPublicUrl(string.IsNullOrWhiteSpace(_prefix) ? k : $"{_prefix}/{k}");
+    }
+
     public async Task DeleteByKeyAsync(string key, CancellationToken ct)
     {
         await DeleteAsync(key, ct).ConfigureAwait(false);
