@@ -118,3 +118,32 @@ describe('处理页重新发起', () => {
   });
 });
 
+/*
+ * 第十一轮两条：都是「写错数据」型，且都在已有代码里补齐，不新增任何面。
+ */
+describe('版本查不到时不写', () => {
+  it('查询失败即放弃这一次补传，不落到无条件覆盖', () => {
+    const source = read('pages/document-store/RecordingResultPage.tsx');
+    const flush = source.slice(
+      source.indexOf('/** 恢复联网就把队列补传上去'),
+      source.indexOf('/** 冲突时用户明说「用我的版本」'),
+    );
+    expect(flush).toContain('if (!remote.success) return skipped;');
+    // 「查到了且变过」不能再是唯一的拦截条件
+    expect(flush).not.toContain('if (remote.success && hasRemoteChangedSince');
+  });
+});
+
+describe('说话人草稿按行清空', () => {
+  const source = read('components/doc-browser/TranscriptKaraoke.tsx');
+
+  it('开始编辑另一行时清掉上一行填过的名字', () => {
+    const open = source.slice(source.indexOf('if (documentMode && onSaveNote) {'));
+    expect(open.slice(0, 400)).toContain("setAssignSpeakerDraft('')");
+  });
+
+  it('取消编辑时也清掉', () => {
+    expect(source).toContain("onClick={() => { setEditingIndex(null); setAssignSpeakerDraft(''); }}");
+  });
+});
+

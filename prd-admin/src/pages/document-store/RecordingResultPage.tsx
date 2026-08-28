@@ -693,7 +693,14 @@ export function RecordingResultPage() {
       if (pendingRef.current?.savedAt !== queued!.savedAt) return skipped;
       const remote = await getDocumentEntry(noteIdForFlush);
       if (!alive) return skipped;
-      if (remote.success && hasRemoteChangedSince(queued, remote.data?.updatedAt)) {
+      /*
+       * 版本查不到就**不写**。此前只有「查到了且变过」才拦，于是这条请求偶发失败时
+       * 直接落到无条件覆盖上——那正是这道门要防的事（Codex 第十一轮 P1）。
+       * 查不到不等于冲突：不弹冲突横幅，草稿原样留在队列里（横幅照常显示欠了几处），
+       * 下一次联网翻转或重进这一屏会再试一次。宁可晚传，不可盖掉别人的新版本。
+       */
+      if (!remote.success) return skipped;
+      if (hasRemoteChangedSince(queued, remote.data?.updatedAt)) {
         setFlushConflict(true);
         return skipped;
       }

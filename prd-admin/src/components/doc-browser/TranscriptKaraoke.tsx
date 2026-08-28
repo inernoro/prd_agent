@@ -1074,7 +1074,7 @@ export function TranscriptKaraoke({
                     <button
                       type="button"
                       disabled={savingEdit}
-                      onClick={() => setEditingIndex(null)}
+                      onClick={() => { setEditingIndex(null); setAssignSpeakerDraft(''); }}
                       className="flex min-h-10 min-w-[64px] items-center justify-center gap-1 rounded-[8px] px-4 text-[12px] font-semibold"
                       style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}
                     >
@@ -1097,6 +1097,9 @@ export function TranscriptKaraoke({
                   if (documentMode && onSaveNote) {
                     setEditingIndex(i);
                     setEditDraft(s.text);
+                    // 说话人草稿是**按行**的：不清的话，在上一句填过又取消的名字会跟着
+                    // 落到这一句头上，写进用户没填过的元数据（Codex 第十一轮 P2）
+                    setAssignSpeakerDraft('');
                     return;
                   }
                   if (followEnabled && s.start >= 0) seekRef.current?.(s.start);
