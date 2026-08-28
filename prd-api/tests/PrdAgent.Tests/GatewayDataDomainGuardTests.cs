@@ -394,6 +394,32 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void IntentPoolEligibility_HasExactlyOneJudgmentAndOneWayToDeclareIt()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var registry = ReadRepoFile("llmgw/console-api/ModelPools/GatewayModelPoolTypeRegistry.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+
+        // 判据只许有一份。Program.cs 曾抄过一份只认布尔位的拷贝，与注册表分别演进，
+        // 同一个模型在 PUT 池成员与 bulk-import 两条路上判出不同结果。
+        Assert.Contains("public static bool IsIntentCapable(BsonDocument model)", registry);
+        Assert.Contains("GatewayModelPoolTypeRegistry.IsIntentCapable(modelDoc)", console);
+        var legacyIntentJudgment = new Regex(
+            @"IsIntent""\)\s*==\s*true\s*\|\|[^\n]*IsMain",
+            RegexOptions.None);
+        Assert.False(
+            legacyIntentJudgment.IsMatch(console),
+            "Program.cs 里不许再出现只认 IsIntent/IsMain 布尔位的 intent 判据，走 GatewayModelPoolTypeRegistry.IsIntentCapable");
+
+        // 判据认 Capabilities 里的 intent，就必须有一条只改这一个模型的能力维护路径；
+        // 否则想给单个模型补一条能力，只能连同平台上几百个模型一起刷。
+        Assert.Contains("HasCapability(model, \"intent\")", registry);
+        Assert.Contains("public List<string>? ModelIds { get; set; }", dtos);
+        Assert.Contains("必须选择平台或指定 modelIds", console);
+        Assert.Contains("fb.In(\"_id\", modelIds)", console);
+    }
+
+    [Fact]
     public void Console_ExposesProtocolCoverageFromGatewayLogsAndRegistry()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");

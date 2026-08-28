@@ -440,6 +440,64 @@ public sealed class GatewayConfigurationProvisioningTests
         GatewayModelPoolTypeRegistry.IsCompatible(model, modelType).ShouldBeTrue();
     }
 
+    // intent 池成员资格：判据必须读运维真正能改的那个面。
+    //
+    // 这三条钉的是一次真实事故：上游批量导入的模型 IsIntent/IsMain 恒为 false（那两位只在建模型
+    // 那一刻由能力勾选写入），而控制台唯一能维护的能力面是 Capabilities 数组——判据不读它，于是
+    // intent 默认池对全部批量导入模型永久关闭，没有任何一条控制台路径能往里放模型。
+    [Fact]
+    public void IntentPool_AcceptsExplicitlyDeclaredIntentCapability_NotOnlyLegacyFlags()
+    {
+        var bulkImported = new BsonDocument
+        {
+            ["ModelName"] = "gpt-5.6-sol",
+            ["PlatformId"] = "platform-1",
+            ["IsIntent"] = false,
+            ["IsMain"] = false,
+            ["Capabilities"] = new BsonArray
+            {
+                new BsonDocument { ["Type"] = "chat", ["Source"] = "inferred", ["Value"] = true },
+            },
+        };
+
+        // 只有 chat 能力时不算 intent 可用：默认池会在建模型时自动追加所有兼容模型，
+        // 认了 chat 就等于把几百个对话模型无差别灌进 intent 池。
+        GatewayModelPoolTypeRegistry.IsCompatible(bulkImported, "intent").ShouldBeFalse();
+
+        bulkImported["Capabilities"].AsBsonArray.Add(
+            new BsonDocument { ["Type"] = "intent", ["Source"] = "user", ["Value"] = true });
+
+        GatewayModelPoolTypeRegistry.IsCompatible(bulkImported, "intent").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IntentPool_StillAcceptsLegacyFlagsWrittenAtModelCreation()
+    {
+        var byIntentFlag = new BsonDocument { ["IsIntent"] = true, ["IsMain"] = false };
+        var byMainFlag = new BsonDocument { ["IsIntent"] = false, ["IsMain"] = true };
+        var neither = new BsonDocument { ["IsIntent"] = false, ["IsMain"] = false };
+
+        GatewayModelPoolTypeRegistry.IsCompatible(byIntentFlag, "intent").ShouldBeTrue();
+        GatewayModelPoolTypeRegistry.IsCompatible(byMainFlag, "intent").ShouldBeTrue();
+        GatewayModelPoolTypeRegistry.IsCompatible(neither, "intent").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IntentPool_CapabilityValueFalseDoesNotCount()
+    {
+        var declaredThenRevoked = new BsonDocument
+        {
+            ["IsIntent"] = false,
+            ["IsMain"] = false,
+            ["Capabilities"] = new BsonArray
+            {
+                new BsonDocument { ["Type"] = "intent", ["Source"] = "user", ["Value"] = false },
+            },
+        };
+
+        GatewayModelPoolTypeRegistry.IsCompatible(declaredThenRevoked, "intent").ShouldBeFalse();
+    }
+
     [Fact]
     public void FalImageLayeringBlueprint_PublishesGenericLogicalCapabilityWithoutBusinessBinding()
     {
