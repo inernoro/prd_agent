@@ -423,13 +423,18 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                 </button>
                 <h4 className="mt-5 text-2xl font-bold tracking-tight">你的 Agent 上手包已经配好</h4>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
-                {projectId ? (
-                  <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
-                    {profileSync === 'saving' ? '正在把角色记到项目…' : null}
-                    {profileSync === 'saved' ? `已记到项目：这个项目的 Agent 角色是「${roleProfile.label}」，回复用${roleProfile.cardTitle}。` : null}
-                    {profileSync === 'failed' ? '角色没能记到项目（不影响使用提示词），项目列表里暂时不会显示角色。' : null}
-                  </p>
-                ) : null}
+                <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+                  {!projectId
+                    ? `还没有选定项目，角色「${roleProfile.label}」只写进项目里的长期规则，CDS 这边暂不记录。等 Agent 把项目建好，回到这一步再生成一次就会记上。`
+                    : null}
+                  {projectId && profileSync === 'saving' ? '正在把角色记到项目…' : null}
+                  {projectId && profileSync === 'saved'
+                    ? `已记到项目：这个项目的 Agent 角色是「${roleProfile.label}」，回复用${roleProfile.cardTitle}。`
+                    : null}
+                  {projectId && profileSync === 'failed'
+                    ? '角色没能记到项目（不影响使用提示词），项目列表里暂时不会显示角色。'
+                    : null}
+                </p>
 
                 <motion.button
                   type="button"

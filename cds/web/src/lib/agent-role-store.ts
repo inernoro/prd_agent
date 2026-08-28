@@ -22,11 +22,20 @@ const CHANGE_EVENT = 'cds:agent-role-selection-changed';
 export interface AgentRoleSelection {
   roleId: AgentRoleId;
   experienceId: AgentExperienceId;
+  /**
+   * 用户是否真的选过角色。
+   *
+   * 没有这个字段就分不清「他选了产品经理」和「他还没选，我们默认填了产品经理」——
+   * 两者在界面上会长成同一个样子，于是一个开发第一次打开面板，会看到按产品经理
+   * 排序的任务并标着「产品经理常用」，而他从没这么声明过。默认值不得冒充声明。
+   */
+  declared: boolean;
 }
 
 export const DEFAULT_AGENT_ROLE_SELECTION: AgentRoleSelection = {
   roleId: AGENT_ROLE_PROFILES[0].id,
   experienceId: AGENT_EXPERIENCE_PROFILES[0].id,
+  declared: false,
 };
 
 function isRoleId(value: unknown): value is AgentRoleId {
@@ -46,11 +55,14 @@ export function readAgentRoleSelection(): AgentRoleSelection {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_AGENT_ROLE_SELECTION;
     const parsed = JSON.parse(raw) as Partial<AgentRoleSelection>;
+    // 能从存储里读出合法角色，就说明用户当初真的选过；脏记录退回未声明。
+    if (!isRoleId(parsed?.roleId)) return DEFAULT_AGENT_ROLE_SELECTION;
     return {
-      roleId: isRoleId(parsed?.roleId) ? parsed.roleId : DEFAULT_AGENT_ROLE_SELECTION.roleId,
+      roleId: parsed.roleId,
       experienceId: isExperienceId(parsed?.experienceId)
         ? parsed.experienceId
         : DEFAULT_AGENT_ROLE_SELECTION.experienceId,
+      declared: true,
     };
   } catch {
     return DEFAULT_AGENT_ROLE_SELECTION;
@@ -59,13 +71,15 @@ export function readAgentRoleSelection(): AgentRoleSelection {
 
 /** 写入并广播。存储失败不影响本次会话内的联动。 */
 export function writeAgentRoleSelection(selection: AgentRoleSelection): void {
+  // 写入即声明：调用方无论传什么 declared，落盘和广播的都是已声明。
+  const declaredSelection: AgentRoleSelection = { ...selection, declared: true };
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(selection));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(declaredSelection));
   } catch {
     // 隐私窗口 / 禁站点数据：本次会话仍要联动，只是不持久化。
   }
   try {
-    window.dispatchEvent(new CustomEvent<AgentRoleSelection>(CHANGE_EVENT, { detail: selection }));
+    window.dispatchEvent(new CustomEvent<AgentRoleSelection>(CHANGE_EVENT, { detail: declaredSelection }));
   } catch {
     // 环境不支持 CustomEvent 时退化为「本次不广播」，不抛给调用方。
   }

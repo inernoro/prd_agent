@@ -141,8 +141,13 @@ export function AgentAccessMap({
   const [draftSelection, setDraftSelection] = useState<AgentAccessMapSelection>(selection);
   const [draftMissionId, setDraftMissionId] = useState<AgentPageContextId>(context.id);
   const [draftCategoryId, setDraftCategoryId] = useState<AgentMissionCategoryId>(context.categoryId);
-  const [{ roleId }] = useAgentRoleSelection();
-  const roleLabel = AGENT_ROLE_PROFILES.find((profile) => profile.id === roleId)?.label || '';
+  const [roleSelection, setRoleSelection] = useAgentRoleSelection();
+  // 只有用户真的声明过角色才排序和标注。没声明就保持注册表原顺序——
+  // 默认值不许冒充声明，否则开发第一次进来会看到「产品经理常用」。
+  const roleId = roleSelection.declared ? roleSelection.roleId : undefined;
+  const roleLabel = roleId
+    ? AGENT_ROLE_PROFILES.find((profile) => profile.id === roleId)?.label || ''
+    : '';
 
   useEffect(() => {
     if (!open) return;
@@ -331,6 +336,26 @@ export function AgentAccessMap({
                     {roleLabel ? `已按「${roleLabel}」把常用任务排到前面；` : ''}
                     Agent 会先静默检查项目凭据；已有权限时不会重复要求批准。
                   </small>
+                  {/* 在这里就能设角色：否则「要用任务排序得先设角色，
+                      要设角色得走完上手助手五步」会形成一个死循环。 */}
+                  <span className="cds-agent-role-picker">
+                    <small>{roleId ? '换个角色排序：' : '按角色排序（还没选过）：'}</small>
+                    {AGENT_ROLE_PROFILES.map((profile) => (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        aria-pressed={roleId === profile.id}
+                        data-selected={roleId === profile.id ? 'true' : 'false'}
+                        onClick={() => setRoleSelection({
+                          ...roleSelection,
+                          roleId: profile.id,
+                          declared: true,
+                        })}
+                      >
+                        {profile.label}
+                      </button>
+                    ))}
+                  </span>
                 </span>
                 <ShieldCheck aria-hidden="true" />
               </div>
