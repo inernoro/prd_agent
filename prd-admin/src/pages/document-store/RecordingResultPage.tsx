@@ -33,6 +33,13 @@ import {
   transcribeEntry,
   updateDocumentContent,
 } from '@/services/real/documentStore';
+import {
+  clearOfflineEdit,
+  isFlushable,
+  loadOfflineEdit,
+  saveOfflineEdit,
+  type QueuedOfflineEdit,
+} from '@/pages/document-store/recordingOfflineQueue';
 import { toast } from '@/lib/toast';
 import '@/styles/recording-design-palette.css';
 
@@ -521,8 +528,8 @@ export function RecordingResultPage() {
    * 队列很薄：同一条笔记以最后一次内容为准（覆盖写语义本来就是最后一次赢），
    * 但计数记的是**用户改了几次**，因为那才是他关心的「我有多少东西还没上去」。
    */
-  const [pendingEdits, setPendingEdits] = useState<{ count: number; content: string } | null>(null);
-  const pendingRef = useRef<{ count: number; content: string } | null>(null);
+  const [pendingEdits, setPendingEdits] = useState<QueuedOfflineEdit | null>(null);
+  const pendingRef = useRef<QueuedOfflineEdit | null>(null);
   pendingRef.current = pendingEdits;
 
   /** 同页校对：整份 markdown 覆盖写回转录笔记条目 */
@@ -531,7 +538,17 @@ export function RecordingResultPage() {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       // 离线：收进队列并乐观落到本地。这不是「假装保存成功」——联网后真的会补传，
       // 而且横幅上明写着还有几处没上去，用户随时看得到自己欠了多少。
-      setPendingEdits(prev => ({ count: (prev?.count ?? 0) + 1, content: nextNoteMd }));
+      // 队列**认笔记**并落本机存储：不认的话从侧栏切到另一条录音就会把这一条的内容
+      // 写进那一条；不落盘的话刷新一次承诺就落空（两条都是 Codex P1 抓到的）。
+      const noteId = state.noteId;
+      const queued: QueuedOfflineEdit = {
+        noteId,
+        count: (pendingRef.current?.noteId === noteId ? pendingRef.current.count : 0) + 1,
+        content: nextNoteMd,
+        savedAt: Date.now(),
+      };
+      saveOfflineEdit(queued);
+      setPendingEdits(queued);
       setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: nextNoteMd } : prev));
       return true;
     }
@@ -545,18 +562,30 @@ export function RecordingResultPage() {
     return true;
   }, [state]);
 
-  /** 恢复联网就把队列补传上去；失败就留着，横幅继续显示欠了多少 */
+  /*
+   * 换到另一条笔记时，把这一条本机存着的队列接回来——上一次离线校对可能是在
+   * 刷新之前、甚至上一次打开这个标签页时排下的。接不回来的话，横幅不会提，
+   * 那几处校对就永远躺在本机没人补传。
+   */
   const noteIdForFlush = state.kind === 'ready' ? state.noteId : '';
+  useEffect(() => {
+    if (!noteIdForFlush) { setPendingEdits(null); return; }
+    setPendingEdits(loadOfflineEdit(noteIdForFlush));
+  }, [noteIdForFlush]);
+
+  /** 恢复联网就把队列补传上去；失败就留着，横幅继续显示欠了多少 */
   useEffect(() => {
     if (offline || !noteIdForFlush) return;
     const queued = pendingRef.current;
-    if (!queued) return;
+    // 只补传属于**这一条**笔记、且还没放过期的内容
+    if (!isFlushable(queued, noteIdForFlush)) return;
     let alive = true;
-    void updateDocumentContent(noteIdForFlush, queued.content, 'text/markdown').then((res) => {
+    void updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown').then((res) => {
       if (!alive) return;
       if (res.success) {
+        clearOfflineEdit(noteIdForFlush);
         setPendingEdits(null);
-        toast.success(`已补传 ${queued.count} 处离线校对`);
+        toast.success(`已补传 ${queued!.count} 处离线校对`);
       }
     });
     return () => { alive = false; };

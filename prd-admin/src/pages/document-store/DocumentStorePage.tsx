@@ -1296,6 +1296,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     const entryId = selectedEntryId?.trim();
     // 换条目先清空，否则上一条的失败说明会挂在下一条头上
     setTranscribeFailure(null);
+    /*
+     * 在途进度同理，而且更容易被忽略：轮询那头只拦住了「不要把别的录音的 run 写进来」，
+     * 却没管**已经写进来的那一条**。于是从正在转录的 A 切到 B，B 的头上会一直挂着 A 的
+     * 阶段、百分比和原文预览，直到 A 跑完（Codex P1 抓到的正是这条）。
+     * 换条目就先摘掉；属于新选中这条的 run 会由下面的 recover 立刻接回来。
+     */
+    setActiveTranscribeRun(null);
     if (!entryId) return;
     let cancelled = false;
     let recovered = false;
@@ -2689,7 +2696,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
           transcribeFailure={transcribeFailure}
-          transcribeRun={activeTranscribeRun && {
+          // 再加一道渲染期的门：state 清理漏了任何一条路径，这里都不会把别的录音的
+          // 进度画到当前这一屏上（判据只认「这条 run 的源条目就是选中的这条」）
+          transcribeRun={activeTranscribeRun && activeTranscribeRun.sourceEntryId === selectedEntryId ? {
             ...activeTranscribeRun,
             // 后端在写入阶段才把原文落到 transcriptText；有几句给几句，
             // 一句都没有时状态卡自己渲染骨架，不在这里造句
@@ -2698,7 +2707,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               .map(line => line.trim())
               .filter(Boolean)
               .slice(0, 3),
-          }}
+          } : null}
           onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {
@@ -2709,6 +2718,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             }
           }}
           onOpenRecordingResult={(audioEntryId) => {
+            /*
+             * 原文还在跑的时候，这一下该去的是**处理页**，不是结果页：稿面 v2-R4 /
+             * cap-A4/A5 画的就是那一屏（三阶段 + 音频卡 + 屏底「进入结果页并开始播放」），
+             * 而结果页在这一刻只有一份空原文。此前这条路由建好、登记好、却没有任何地方
+             * 走进去——用户只能靠手敲 URL 到达（predicate-and-wiring-discipline 形状 2：
+             * 建了一半的接线，删掉也不会红）。
+             */
+            const inflight = activeTranscribeRun
+              && activeTranscribeRun.sourceEntryId === audioEntryId
+              && activeTranscribeRun.status !== 'done'
+              && activeTranscribeRun.status !== 'failed'
+              && activeTranscribeRun.status !== 'cancelled';
+            if (inflight) {
+              navigate(`/document-store/${storeId}/recording/${audioEntryId}/processing`);
+              return;
+            }
             // 设计稿这一下是「进入结果页并开始播放」：跳转与起播是同一个动作。
             // play=1 交给结果页在挂载后发一次播放请求——起播必须发生在那一屏，
             // 在这里先播会造成「声音已经在响、画面还在旧页」。
