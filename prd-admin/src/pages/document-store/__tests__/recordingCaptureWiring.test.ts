@@ -48,3 +48,24 @@ describe('倒计时由真实排期驱动，不是面板自己拍的数', () => {
     expect(SHEET).not.toContain('后重试`');
   });
 });
+
+/*
+ * 接线：判据有了「落没落住」这一路，但没人把真实的失败喂给它，它就永远是 true——
+ * 界面照样替一件没发生的事作保（predicate-and-wiring-discipline 形状 2）。
+ */
+describe('本机保险箱失败要接到凭据上', () => {
+  const sheet = fs.readFileSync(
+    path.resolve(__dirname, '../RecordAudioSheet.tsx'),
+    'utf-8',
+  );
+
+  it('写分片失败时把状态翻掉，不是静默吞掉', () => {
+    expect(sheet).toContain('.catch(() => { setVaultPersisted(false); })');
+  });
+
+  it('这个状态真的传给了 describeCaptureChips', () => {
+    const call = sheet.slice(sheet.indexOf('describeCaptureChips({'));
+    expect(call.slice(0, 260)).toContain('vaultPersisted,');
+  });
+});
+

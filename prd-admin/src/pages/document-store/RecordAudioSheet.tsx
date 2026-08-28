@@ -259,6 +259,12 @@ export function RecordAudioSheet({
   const [targetStoreId, setTargetStoreId] = useState(storeId ?? '');
   const [protectedBytes, setProtectedBytes] = useState(0);
   const [localBytes, setLocalBytes] = useState(0);
+  /*
+   * 本机保险箱到底写住了没有。IndexedDB 不可用、隐私模式、配额满时写入会被拒，
+   * 而录制照常进行、字节数照常涨——不记这一位的话，界面会一直说「已保护 · 无丢失」
+   * 而分片其实只在内存里，刷新或关页就没了（Codex P1）。
+   */
+  const [vaultPersisted, setVaultPersisted] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   /** 这次录音将来的名字（录音 YYYY-MM-DD HH-mm）：顶栏归属那一行的第二段 */
   const [recordingName, setRecordingName] = useState('');
@@ -587,7 +593,7 @@ export function RecordAudioSheet({
           vaultIdRef.current,
           mime || 'audio/webm',
           storeId,
-        ).then(() => undefined);
+        ).then(() => undefined).catch(() => { setVaultPersisted(false); });
         void ensureUploadSession();
         rec.ondataavailable = (e) => {
           if (e.data.size > 0) {
@@ -598,7 +604,9 @@ export function RecordAudioSheet({
             vaultWriteQueueRef.current = vaultWriteQueueRef.current
               .then(() => vaultAppendChunk(vaultIdRef.current, e.data))
               .then(() => undefined)
-              .catch(() => undefined);
+              // 吞掉异常可以（录制不能因此中断），但不能连「写失败了」这件事一起吞：
+              // 凭据要跟着降级，否则界面在替一件没发生的事作保
+              .catch(() => { setVaultPersisted(false); });
             queueLiveChunk(e.data);
             // 接近后端 20MB 上限：自动收尾并直接进转录，不让录音白费
             if (bytesRef.current >= MAX_BYTES && rec.state !== 'inactive') {
@@ -969,6 +977,7 @@ export function RecordAudioSheet({
     uploadedBytes: protectedBytes,
     protection: liveProtection,
     paused,
+    vaultPersisted,
   });
   const liveTranscriptTitle = describeLiveTranscriptTitle({
     state: liveView,

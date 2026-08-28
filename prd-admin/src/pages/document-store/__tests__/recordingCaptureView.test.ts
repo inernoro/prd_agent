@@ -143,3 +143,39 @@ describe('describeRetryCountdown', () => {
     expect(describeRetryCountdown(1_000, 1_200)).toBe('正在重连');
   });
 });
+
+/*
+ * 「已保护 · 无丢失」是拿本机保险箱换来的凭据。写不进去时它就是假话——
+ * 分片只在内存里，刷新、崩溃、关标签页全没（Codex P1）。
+ */
+describe('本机保险箱写不进去时的凭据', () => {
+  const base = {
+    localBytes: 5 * 1024 * 1024,
+    uploadedBytes: 1 * 1024 * 1024,
+    protection: 'active' as const,
+    paused: false,
+  };
+
+  it('落不住盘就不说「无丢失」，改成让用户别关页', () => {
+    const chips = describeCaptureChips({ ...base, vaultPersisted: false });
+    expect(chips[0].tone).toBe('warning');
+    expect(chips[0].label).toContain('请勿关闭本页');
+    expect(chips.map(c => c.label).join('')).not.toContain('无丢失');
+  });
+
+  it('落不住盘就不摆「本机已存 X」——那份「已存」并不存在', () => {
+    const chips = describeCaptureChips({ ...base, vaultPersisted: false });
+    expect(chips.some(c => c.key === 'local')).toBe(false);
+  });
+
+  it('上传那条链路照常展示：这一档里它才是真正的活路', () => {
+    const chips = describeCaptureChips({ ...base, vaultPersisted: false });
+    expect(chips.some(c => c.key === 'upload')).toBe(true);
+  });
+
+  it('拿不到这个信号时行为与此前一致（按落住处理）', () => {
+    expect(describeCaptureChips(base)[0].label).toContain('无丢失');
+    expect(describeCaptureChips({ ...base, vaultPersisted: true })[0].label).toContain('无丢失');
+  });
+});
+

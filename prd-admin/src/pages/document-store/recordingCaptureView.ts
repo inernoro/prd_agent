@@ -83,12 +83,24 @@ export function describeCaptureChips(input: {
   uploadedBytes: number;
   protection: 'pending' | 'active' | 'local';
   paused: boolean;
+  /**
+   * 本机保险箱**写成功过吗**。IndexedDB 不可用、隐私模式、配额满时写入会被拒，
+   * 而录制照常进行、字节数照常涨——此时「已保护 · 无丢失」「本机已存 X」两块凭据
+   * 都是假的：分片只在内存里，刷新、崩溃、关标签页就没了（Codex P1）。
+   * 拿不到这个信号（旧调用方）按 true 处理，行为与此前一致。
+   */
+  vaultPersisted?: boolean;
 }): CaptureChip[] {
-  const chips: CaptureChip[] = [
+  const persisted = input.vaultPersisted !== false;
+  const chips: CaptureChip[] = persisted
     // 本机保险箱在录音开始那一刻就生效，所以「无丢失」不依赖网络是否可用。
-    { key: 'guarded', label: '已保护 · 无丢失', tone: 'success', icon: 'shield' },
-  ];
-  if (input.localBytes > 0) {
+    ? [{ key: 'guarded', label: '已保护 · 无丢失', tone: 'success', icon: 'shield' }]
+    /*
+      落不住盘就不许说「无丢失」。这一档只承诺「还在录」，并把用户唯一能做的事说清楚：
+      别关这一页。上传那条链路仍然照常展示——它是这一档里真正的活路。
+    */
+    : [{ key: 'guarded', label: '本机存不下 · 请勿关闭本页', tone: 'warning', icon: 'shield' }];
+  if (input.localBytes > 0 && persisted) {
     chips.push({
       key: 'local',
       label: `本机已存 ${formatCapturedSize(input.localBytes)}`,
