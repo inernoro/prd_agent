@@ -61,3 +61,34 @@ describe('如实说明「原文里没有」', () => {
     expect(isUnansweredByTranscript('解析等待 40 秒且无进度反馈，被判断为卡死。')).toBe(false);
   });
 });
+
+/*
+ * 引用落在两句交界处时该算后面那一句。提示词要求模型用既有时间戳引用，所以
+ * 「引用起点 == 某句起点」是常态；判据两端都闭时会稳定选中前一句，卡片显示与跳播
+ * 都落在被引用那句的上一句（Codex P2）。
+ */
+describe('引用落在两句交界处', () => {
+  const ADJACENT = [
+    { start: 0, end: 5, text: '上一句。', speaker: '主持人' },
+    { start: 5, end: 10, text: '被引用的这一句。', speaker: '受访者 A' },
+  ];
+
+  it('00:05 认后面那一句，不认上一句的结尾', () => {
+    const { citations } = resolveAnswerCitations('结论。[00:05]', ADJACENT);
+    expect(citations).toHaveLength(1);
+    expect(citations[0].start).toBe(5);
+    expect(citations[0].text).toBe('被引用的这一句。');
+  });
+
+  it('落在句子中间照常认这一句', () => {
+    const { citations } = resolveAnswerCitations('结论。[00:07]', ADJACENT);
+    expect(citations[0].start).toBe(5);
+  });
+
+  it('落在最后一句结尾仍然认得出来，不退化成「时间轴里没有这个位置」', () => {
+    const { citations } = resolveAnswerCitations('结论。[00:10]', ADJACENT);
+    expect(citations).toHaveLength(1);
+    expect(citations[0].start).toBe(5);
+  });
+});
+

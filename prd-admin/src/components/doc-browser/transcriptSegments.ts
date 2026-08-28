@@ -582,9 +582,21 @@ export function resolveAnswerCitations(
 
   for (const part of parts) {
     if (part.kind === 'text') { conclusionPieces.push(part.text); continue; }
-    const hit = segments.find(seg => (
-      seg.start >= 0 && part.start >= seg.start && part.start <= Math.max(seg.start, seg.end)
-    ));
+    /*
+     * 引用落在两句的交界处（`0-5` 与 `5-10`，引用写 00:05）时该算**后面那一句**。
+     * 提示词本来就要求模型用既有时间戳来引用，所以「引用起点 == 某句起点」是常态，
+     * 而原来的判据两端都闭、又取 find 的第一个命中，于是稳定地选中前一句——
+     * 卡片显示的和点下去播的都是被引用那句的**上一句**（Codex P2）。
+     * 判据改成三档：先认起点完全对上的那一句；再认左闭右开的区间（交界那一刻归下一句）；
+     * 都没有才退回原来的两端闭规则，保住「引用落在最后一句结尾」这类既有命中。
+     */
+    const hit = segments.find(seg => seg.start >= 0 && seg.start === part.start)
+      ?? segments.find(seg => (
+        seg.start >= 0 && part.start > seg.start && part.start < Math.max(seg.start, seg.end)
+      ))
+      ?? segments.find(seg => (
+        seg.start >= 0 && part.start >= seg.start && part.start <= Math.max(seg.start, seg.end)
+      ));
     // 找不到对应句子的引用留在正文里，由既有的「时间轴中没有这个位置」分支处理
     if (!hit) { conclusionPieces.push(part.label); continue; }
     if (seen.has(hit.start)) continue;

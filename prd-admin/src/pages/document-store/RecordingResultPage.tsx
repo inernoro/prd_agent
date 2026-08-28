@@ -748,6 +748,10 @@ export function RecordingResultPage() {
       // 补传期间用户又在线存了新的一版：那一版已经把队列清了，这里不能再清一次
       // （清了等于承认这份旧内容是最终态），也不再报「已补传」
       if (pendingRef.current?.savedAt !== queued!.savedAt) return;
+      // 补传成功 = 服务端这一版就是最新版本，令牌跟着走。不推进的话，用户再断网改一次，
+      // 那份草稿仍带着补传之前的基线，重连时会把**自己刚补上去的那一版**判成别人改的
+      // （在线保存那一路已经推进了，这一路漏了，Codex P2）
+      if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
       clearOfflineEdit(noteIdForFlush, ownerId);
       setPendingEdits(null);
       setQueueVolatile(false);
@@ -899,7 +903,9 @@ export function RecordingResultPage() {
           <p className="text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
             这份原文在你离线期间被改过（可能是另一台设备或同事）。
             自动覆盖会把那边的新内容整篇盖掉，所以先停在这里：
-            你本机还留着 {pendingEdits?.count ?? 0} 处校对，页面上显示的是服务端最新那一版。
+            你本机还留着 {pendingEdits?.count ?? 0} 处校对，
+            <strong style={{ color: 'var(--text-primary)' }}>页面上现在显示的就是这份本机草稿</strong>
+            ；服务端那一版要等你点下面「丢弃」才会取回来显示。
           </p>
           <div className="flex flex-wrap gap-2">
             <button
