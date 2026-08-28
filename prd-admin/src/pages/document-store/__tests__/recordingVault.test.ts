@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   decideUploadedRecordingFollowUp,
   decideBackgroundRunLookup,
@@ -9,6 +11,7 @@ import {
   enqueueBackgroundTranscriptionRun,
   recoverableBackgroundTranscriptionRunId,
   isStalledBackgroundTranscriptionRun,
+  isTranscriptionInflight,
   selectObservedBackgroundTranscriptionRun,
   shouldRetryVaultServerCompletion,
   startSerialBackgroundPoller,
@@ -509,5 +512,34 @@ describe('describeBackgroundTranscriptionBanner · 与正文三阶段卡的分�
       selectedHasFailure: false,
       runs: [run('e1', '录音 A')],
     })?.title).toBe('当前录音正在后台处理');
+  });
+});
+
+/*
+ * 三处轮询共用这一个「还在跑吗」。判据只认在途的三种状态：反过来枚举终态的话，
+ * 后端哪天加一个新的终态名，轮询就永远停不下来（形状 1），而且抄成三份必然漂移（形状 3）。
+ */
+describe('isTranscriptionInflight', () => {
+  it('后端枚举里的三种在途状态都算在跑', () => {
+    for (const s of ['publishing', 'queued', 'running']) expect(isTranscriptionInflight(s)).toBe(true);
+    expect(isTranscriptionInflight('  Running ')).toBe(true);
+  });
+
+  it('终态与未知状态都不算在跑', () => {
+    for (const s of ['done', 'failed', 'cancelled', '', '  ', 'whatever-new-terminal']) {
+      expect(isTranscriptionInflight(s)).toBe(false);
+    }
+    expect(isTranscriptionInflight(null)).toBe(false);
+    expect(isTranscriptionInflight(undefined)).toBe(false);
+  });
+
+  it('三处轮询都走这一个判定，没有第二份状态清单', () => {
+    const dir = path.resolve(__dirname, '..');
+    for (const file of ['RecordingProcessingPage.tsx', 'RecordingResultPage.tsx']) {
+      const source = fs.readFileSync(path.join(dir, file), 'utf-8');
+      expect(source).toContain('isTranscriptionInflight');
+      // 就地再列一遍状态名 = 又抄了一份判据
+      expect(source).not.toContain("=== 'publishing'");
+    }
   });
 });

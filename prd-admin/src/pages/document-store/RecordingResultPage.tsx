@@ -35,11 +35,13 @@ import {
 } from '@/services/real/documentStore';
 import {
   clearOfflineEdit,
+  hasRemoteChangedSince,
   isFlushable,
   loadOfflineEdit,
   saveOfflineEdit,
   type QueuedOfflineEdit,
 } from '@/pages/document-store/recordingOfflineQueue';
+import { isTranscriptionInflight } from '@/pages/document-store/recordingVault';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import '@/styles/recording-design-palette.css';
@@ -270,8 +272,7 @@ export function RecordingResultPage() {
       attempts += 1;
       const runRes = await getLatestAgentRun(entryId, 'transcribe');
       if (stale) return;
-      const status = runRes.success ? (runRes.data?.status ?? '') : '';
-      const inflight = status === 'queued' || status === 'running' || status === 'publishing';
+      const inflight = runRes.success && isTranscriptionInflight(runRes.data?.status);
       if (!inflight || attempts >= MAX_ATTEMPTS) { window.clearInterval(timer); return; }
       const entryRes = await getDocumentEntry(entryId);
       if (stale || !entryRes.success) return;
@@ -566,6 +567,10 @@ export function RecordingResultPage() {
    * 但计数记的是**用户改了几次**，因为那才是他关心的「我有多少东西还没上去」。
    */
   const [pendingEdits, setPendingEdits] = useState<QueuedOfflineEdit | null>(null);
+  /** 队列没落住本机存储（隐私模式 / 站点数据被禁 / 配额满）：承诺要跟着降级 */
+  const [queueVolatile, setQueueVolatile] = useState(false);
+  /** 服务端那份笔记在离线期间被改过：不许静默覆盖，交给用户定 */
+  const [flushConflict, setFlushConflict] = useState(false);
   const pendingRef = useRef<QueuedOfflineEdit | null>(null);
   pendingRef.current = pendingEdits;
   /** 草稿按账号存：共享浏览器上换个人登录就不该恢复上一位的稿子 */
@@ -593,8 +598,16 @@ export function RecordingResultPage() {
         count: (pendingRef.current?.noteId === noteId ? pendingRef.current.count : 0) + 1,
         content: nextNoteMd,
         savedAt: Date.now(),
+        /*
+         * 基线沿用**第一次**排队时那份，不是每次改都刷新：中间这几次改都是离线发生的，
+         * 服务端那份自始至终没动过。generatedAt 就是笔记条目的 updatedAt。
+         */
+        baseUpdatedAt: pendingRef.current?.noteId === noteId
+          ? pendingRef.current.baseUpdatedAt
+          : state.generatedAt,
       };
-      saveOfflineEdit(queued);
+      // 落不住盘就别说「刷新也不会丢」——横幅文案跟着降级（Codex P1）
+      setQueueVolatile(!saveOfflineEdit(queued));
       setPendingEdits(queued);
       setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: nextNoteMd } : prev));
       return true;
@@ -612,6 +625,8 @@ export function RecordingResultPage() {
     // online 存成功 = 服务端已经拿到更新的内容，离线队列里那份旧的作废
     clearOfflineEdit(state.noteId, ownerId);
     setPendingEdits(null);
+    setQueueVolatile(false);
+    setFlushConflict(false);
     // 乐观落到本地：等下一次拉取会让这行字先消失再出现，那是「凭空消失」
     setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: nextNoteMd } : prev));
     return true;
@@ -625,17 +640,31 @@ export function RecordingResultPage() {
   const noteIdForFlush = state.kind === 'ready' ? state.noteId : '';
   useEffect(() => {
     if (!noteIdForFlush || !ownerId) { setPendingEdits(null); return; }
+    setFlushConflict(false);
     setPendingEdits(loadOfflineEdit(noteIdForFlush, ownerId));
   }, [noteIdForFlush, ownerId]);
 
   /** 恢复联网就把队列补传上去；失败就留着，横幅继续显示欠了多少 */
   useEffect(() => {
-    if (offline || !noteIdForFlush) return;
+    if (offline || !noteIdForFlush || flushConflict) return;
     const queued = pendingRef.current;
     // 只补传属于**这一条笔记、这个账号**、且还没放过期的内容
     if (!isFlushable(queued, noteIdForFlush, ownerId)) return;
     let alive = true;
-    void enqueueWrite(() => updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown')).then((res) => {
+    /*
+     * 补传是整篇覆盖写，所以传之前必须先看一眼服务端那份还是不是排队时那份：
+     * 离线期间别的设备（或同事）改过，这一发 PUT 会把他们的新内容整篇盖掉，
+     * 而两边都不会有任何提示（Codex P1）。改过就不传，把决定权交回用户——
+     * 横幅上给一颗「仍然用我的版本覆盖」，按了才覆盖。
+     */
+    void (async () => {
+      const remote = await getDocumentEntry(noteIdForFlush);
+      if (!alive) return;
+      if (remote.success && hasRemoteChangedSince(queued, remote.data?.updatedAt)) {
+        setFlushConflict(true);
+        return;
+      }
+      const res = await enqueueWrite(() => updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown'));
       if (!alive) return;
       if (!res.success) return;
       // 补传期间用户又在线存了新的一版：那一版已经把队列清了，这里不能再清一次
@@ -643,8 +672,9 @@ export function RecordingResultPage() {
       if (pendingRef.current?.savedAt !== queued!.savedAt) return;
       clearOfflineEdit(noteIdForFlush, ownerId);
       setPendingEdits(null);
+      setQueueVolatile(false);
       toast.success(`已补传 ${queued!.count} 处离线校对`);
-    });
+    })();
     return () => { alive = false; };
     /*
      * 依赖里必须带上 `pendingEdits`：本机存着的队列是上面那个 effect 恢复出来的，
@@ -652,7 +682,21 @@ export function RecordingResultPage() {
      * 恢复之后又不会再跑——那份校对就一直躺着不上去，直到下一次断网重连才被
      * 当成「新的」传上去，可能盖掉更新的内容（Codex P1 抓到的正是这条）。
      */
-  }, [enqueueWrite, noteIdForFlush, offline, ownerId, pendingEdits]);
+  }, [enqueueWrite, flushConflict, noteIdForFlush, offline, ownerId, pendingEdits]);
+
+  /** 冲突时用户明说「用我的版本」：这一下才覆盖，覆盖完照常清队列 */
+  const overwriteWithOfflineDraft = useCallback(async () => {
+    const queued = pendingRef.current;
+    if (!noteIdForFlush || !isFlushable(queued, noteIdForFlush, ownerId)) return;
+    const res = await enqueueWrite(() => updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown'));
+    if (!res.success) { toast.error(res.error?.message || '覆盖失败'); return; }
+    clearOfflineEdit(noteIdForFlush, ownerId);
+    setPendingEdits(null);
+    setQueueVolatile(false);
+    setFlushConflict(false);
+    setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: queued!.content } : prev));
+    toast.success(`已用离线版本覆盖，共 ${queued!.count} 处校对`);
+  }, [enqueueWrite, noteIdForFlush, ownerId]);
 
   /**
    * 选一种整理方式。
@@ -716,9 +760,62 @@ export function RecordingResultPage() {
             <strong style={{ color: 'var(--text-primary)' }}>本机音频与已下载原文照常播放、阅读、编辑</strong>
             。
             {pendingEdits
-              ? `编辑内容排队等待同步（${pendingEdits.count} 处待同步），联网后自动上传，无需重做。`
-              : '这期间的校对会先存在本机，联网后自动上传，无需重做。'}
+              ? `编辑内容排队等待同步（${pendingEdits.count} 处待同步），联网后自动上传${queueVolatile ? '' : '，无需重做'}。`
+              : `这期间的校对会先存在本机，联网后自动上传${queueVolatile ? '' : '，无需重做'}。`}
+            {/*
+              队列没落住本机存储时，「无需重做」这句就不成立了——刷新或关掉标签页
+              这份校对确实会丢。承诺兑现不了就不许写（no-rootless-tree），改成如实相告。
+            */}
+            {queueVolatile && (
+              <strong style={{ color: 'var(--semantic-warning-text)' }}>
+                这台设备不允许本页存草稿，刷新或关掉标签页会丢，请先别关。
+              </strong>
+            )}
           </p>
+        </div>
+      ) : flushConflict ? (
+        /*
+          离线校对没能自动补传：服务端那份在离线期间被改过。这里既不静默覆盖
+          （会吞掉别人的新内容），也不静默丢弃（会吞掉用户自己的校对），
+          把这两条路摆出来让他选（expectation-management：不许让人以为已经同步了）。
+        */
+        <div
+          className="mx-auto flex w-full max-w-[760px] flex-col gap-2 rounded-[14px] px-3.5 py-3"
+          style={{ background: 'var(--semantic-warning-soft)' }}
+          role="status"
+        >
+          <p className="flex items-center gap-2 text-[14px] font-bold" style={{ color: 'var(--semantic-warning-text)' }}>
+            <WifiOff size={16} aria-hidden /> 离线校对没有自动上传
+          </p>
+          <p className="text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            这份原文在你离线期间被改过（可能是另一台设备或同事）。
+            自动覆盖会把那边的新内容整篇盖掉，所以先停在这里：
+            你本机还留着 {pendingEdits?.count ?? 0} 处校对，页面上显示的是服务端最新那一版。
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => { void overwriteWithOfflineDraft(); }}
+              className="rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
+              style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+            >
+              仍然用我的离线版本覆盖
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!noteIdForFlush) return;
+                clearOfflineEdit(noteIdForFlush, ownerId);
+                setPendingEdits(null);
+                setFlushConflict(false);
+                toast.success('已丢弃这份离线校对');
+              }}
+              className="rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
+              style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}
+            >
+              丢弃离线草稿
+            </button>
+          </div>
         </div>
       ) : undefined}
     >

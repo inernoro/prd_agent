@@ -171,10 +171,22 @@ export function recoverableBackgroundTranscriptionRunId(
   nowMs = Date.now(),
 ): string | null {
   const runId = run?.id?.trim();
-  const status = run?.status?.trim().toLowerCase();
-  if (!runId || (status !== 'publishing' && status !== 'queued' && status !== 'running')) return null;
+  if (!runId || !isTranscriptionInflight(run?.status)) return null;
   if (isStalledBackgroundTranscriptionRun(run, nowMs)) return null;
   return runId;
+}
+
+/**
+ * 这条 run 还在跑吗。
+ *
+ * 后端的枚举是 publishing / queued / running / done / failed / cancelled，
+ * 「跑完了」有三种写法，判据只认「还在跑」那三种——反过来枚举终态，
+ * 一旦后端加一个新的终态名，轮询就会永远停不下来（形状 1：判据比它该管的范围窄）。
+ * 三处轮询共用这一个判定：抄第二份就会各自漂移（形状 3）。
+ */
+export function isTranscriptionInflight(status: string | null | undefined): boolean {
+  const s = status?.trim().toLowerCase();
+  return s === 'publishing' || s === 'queued' || s === 'running';
 }
 
 export const BACKGROUND_TRANSCRIPTION_STALLED_MS = 60 * 60 * 1000;

@@ -8,6 +8,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearOfflineEdit,
+  hasRemoteChangedSince,
   isFlushable,
   loadOfflineEdit,
   saveOfflineEdit,
@@ -102,5 +103,71 @@ describe('离线校对队列', () => {
     saveOfflineEdit(edit(NOTE_A, now, '无主稿子', ''));
     expect(loadOfflineEdit(NOTE_A, '', now)).toBeNull();
     expect(loadOfflineEdit(NOTE_A, USER_A, now)).toBeNull();
+  });
+
+  /*
+   * 补传是整篇覆盖写：服务端那份在离线期间被改过就不能直接盖，否则另一台设备
+   * （或同事）的新内容整篇消失，两边都不会有提示（Codex 第七轮 P1）。
+   */
+  describe('补传前的版本基线', () => {
+    const base: QueuedOfflineEdit = {
+      ownerId: USER_A,
+      noteId: NOTE_A,
+      count: 1,
+      content: '离线改的内容',
+      savedAt: Date.now(),
+      baseUpdatedAt: '2026-08-28T00:00:00Z',
+    };
+
+    it('服务端那份变过就算冲突', () => {
+      expect(hasRemoteChangedSince(base, '2026-08-28T01:00:00Z')).toBe(true);
+    });
+
+    it('没变就照常补传', () => {
+      expect(hasRemoteChangedSince(base, '2026-08-28T00:00:00Z')).toBe(false);
+    });
+
+    it('比不了就不判冲突：旧草稿没有基线、或服务端没给更新时刻', () => {
+      expect(hasRemoteChangedSince({ ...base, baseUpdatedAt: null }, '2026-08-28T01:00:00Z')).toBe(false);
+      expect(hasRemoteChangedSince(base, null)).toBe(false);
+      expect(hasRemoteChangedSince(base, undefined)).toBe(false);
+      expect(hasRemoteChangedSince(null, '2026-08-28T01:00:00Z')).toBe(false);
+    });
+
+    it('基线跟着草稿一起存下来，重开页面还认得', () => {
+      saveOfflineEdit(base);
+      expect(loadOfflineEdit(NOTE_A, USER_A)?.baseUpdatedAt).toBe('2026-08-28T00:00:00Z');
+      clearOfflineEdit(NOTE_A, USER_A);
+    });
+  });
+
+  /*
+   * 存不住就不许报存住了：横幅那句「无需重做」是拿落盘换来的（Codex 第七轮 P1）。
+   */
+  describe('落盘结果如实返回', () => {
+    it('存住返回 true', () => {
+      expect(saveOfflineEdit({
+        ownerId: USER_A, noteId: NOTE_A, count: 1, content: 'x', savedAt: Date.now(),
+      })).toBe(true);
+      clearOfflineEdit(NOTE_A, USER_A);
+    });
+
+    it('存不住返回 false：写入抛异常（隐私模式 / 配额满）', () => {
+      const store = (globalThis as unknown as { window: { localStorage: Storage } }).window.localStorage;
+      const original = store.setItem;
+      store.setItem = () => { throw new Error('QuotaExceededError'); };
+      try {
+        expect(saveOfflineEdit({
+          ownerId: USER_A, noteId: NOTE_A, count: 1, content: 'x', savedAt: Date.now(),
+        })).toBe(false);
+      } finally {
+        store.setItem = original;
+      }
+    });
+
+    it('缺账号或缺笔记时不落盘，也如实返回 false', () => {
+      expect(saveOfflineEdit({ ownerId: '', noteId: NOTE_A, count: 1, content: 'x', savedAt: Date.now() })).toBe(false);
+      expect(saveOfflineEdit({ ownerId: USER_A, noteId: '', count: 1, content: 'x', savedAt: Date.now() })).toBe(false);
+    });
   });
 });

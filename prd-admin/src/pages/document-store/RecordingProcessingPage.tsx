@@ -29,6 +29,7 @@ import {
 import {
   describeFailedTranscription,
   countTranscriptSentences,
+  isTranscriptionInflight,
   splitPartialTranscript,
   type FailedTranscriptionNotice,
 } from '@/pages/document-store/recordingVault';
@@ -134,6 +135,15 @@ export function RecordingProcessingPage() {
   useEffect(() => {
     if (!entryId) return;
     let stale = false;
+    let timer = 0;
+    /*
+     * run 跑到终态就不再有下一次翻转，继续问下去是白打接口——这一屏开着不动，
+     * 旧代码会两秒一次问到标签页关闭（Codex P2）。
+     * 但「这一刻还没有 run」不能立刻收手：用户多半是刚录完过来的，run 晚一两拍才建出来。
+     * 所以没有 run 时限次数地等，有了 run 就只等它走到终态。
+     */
+    let missingTicks = 0;
+    const MAX_MISSING_TICKS = 60; // 2s × 60 = 2 分钟还没建出 run，就不是「马上要来」了
     const tick = async () => {
       const res = await getLatestAgentRun(entryId, 'transcribe');
       if (stale || !res.success) return;
@@ -141,9 +151,16 @@ export function RecordingProcessingPage() {
       setRun(next);
       // describeFailedTranscription 自己会从 transcriptText 切出部分原文，这里原样交给它
       setFailure(describeFailedTranscription(next));
+      if (!next) {
+        missingTicks += 1;
+        if (missingTicks >= MAX_MISSING_TICKS) window.clearInterval(timer);
+        return;
+      }
+      missingTicks = 0;
+      if (!isTranscriptionInflight(next.status)) window.clearInterval(timer);
     };
     void tick();
-    const timer = window.setInterval(() => { void tick(); }, 2000);
+    timer = window.setInterval(() => { void tick(); }, 2000);
     return () => { stale = true; window.clearInterval(timer); };
   }, [entryId]);
 

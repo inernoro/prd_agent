@@ -39,6 +39,12 @@ export interface QueuedOfflineEdit {
   content: string;
   /** 入队时刻，用于过期判定 */
   savedAt: number;
+  /**
+   * 排这份草稿时，服务端那份笔记的最后更新时刻。补传前拿它和服务端当前值比一下：
+   * 不一样就说明这条笔记在别处被改过，直接 PUT 会把别人的新内容整篇盖掉。
+   * 旧版本存下的草稿没有这个字段（`undefined`），那时按「比不了」处理，不阻断补传。
+   */
+  baseUpdatedAt?: string | null;
 }
 
 function storage(): Storage | null {
@@ -48,6 +54,20 @@ function storage(): Storage | null {
     // 隐私模式 / 站点数据被禁时读写本身就会抛，此时退化成「只在内存里排队」
     return null;
   }
+}
+
+/**
+ * 服务端那份笔记，在草稿排下之后有没有被别人（或自己在另一台设备上）改过。
+ *
+ * 只在**两边都知道**更新时刻时才判冲突：旧版本存下的草稿没有基线，
+ * 或服务端这次没给出 updatedAt，那都是「比不了」，不能当成冲突把补传卡死。
+ */
+export function hasRemoteChangedSince(
+  edit: QueuedOfflineEdit | null | undefined,
+  remoteUpdatedAt: string | null | undefined,
+): boolean {
+  if (!edit?.baseUpdatedAt || !remoteUpdatedAt) return false;
+  return edit.baseUpdatedAt !== remoteUpdatedAt;
 }
 
 /** 队列里那份内容是不是这条笔记的、且还没过期。两个条件缺一都不该补传。 */
@@ -64,13 +84,21 @@ export function isFlushable(
   return now - edit.savedAt <= MAX_AGE_MS;
 }
 
-export function saveOfflineEdit(edit: QueuedOfflineEdit): void {
+/**
+ * 落盘这份草稿。**返回它到底有没有落住**——调用方据此决定怎么跟用户说话：
+ * 落住了才配说「联网后自动上传，无需重做」；没落住（隐私模式、站点数据被禁、配额满）
+ * 只能说「这次改动留在本页，刷新会丢」。此前这里把异常吞掉、调用方照样报成功，
+ * 承诺就成了空头支票（Codex P1）。
+ */
+export function saveOfflineEdit(edit: QueuedOfflineEdit): boolean {
   const store = storage();
-  if (!store || !edit.noteId || !edit.ownerId) return;
+  if (!store || !edit.noteId || !edit.ownerId) return false;
   try {
     store.setItem(storageKey(edit.ownerId, edit.noteId), JSON.stringify(edit));
+    return true;
   } catch {
     // 配额满：内存里的队列仍在，横幅照常显示欠了多少，不因为存不下就假装没排队
+    return false;
   }
 }
 
@@ -96,6 +124,7 @@ export function loadOfflineEdit(
       count: typeof parsed.count === 'number' && parsed.count > 0 ? parsed.count : 1,
       content: typeof parsed.content === 'string' ? parsed.content : '',
       savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
+      baseUpdatedAt: typeof parsed.baseUpdatedAt === 'string' ? parsed.baseUpdatedAt : null,
     };
     if (!isFlushable(edit, noteId, ownerId, now)) {
       clearOfflineEdit(noteId, ownerId);
