@@ -13,6 +13,6 @@ const p = await ctx.newPage();
 await p.goto('file:///tmp/preview.html', { waitUntil: 'load' });
 await p.waitForTimeout(2500);
 const box = await p.evaluate(() => ({ h: document.body.scrollHeight }));
-console.log(file, '内容高度', box.h, '/ 画框', h, box.h > h ? '⚠ 超框' : 'ok');
+console.log(file, '内容高度', box.h, '/ 画框', h, box.h > h ? '警告：超框' : 'ok');
 await p.screenshot({ path: out, fullPage: true });
 await b.close();

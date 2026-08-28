@@ -275,13 +275,15 @@ export async function uploadSite(input: {
   });
 }
 
-export async function reuploadSite(id: string, file: File): Promise<ApiResponse<HostedSite>> {
+export async function reuploadSite(id: string, file: File, uploadId?: string): Promise<ApiResponse<HostedSite>> {
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const fd = new FormData();
   fd.append('file', file);
+  // 解包进度是按这个键存的，不带上的话换 ZIP 时那块面板一直停在「等待中」
+  if (uploadId) fd.append('uploadId', uploadId);
 
   const url = joinUrl(getApiBaseUrl(), api.webPages.reupload(encodeURIComponent(id)));
   const res = await fetch(url, { method: 'POST', headers, body: fd });

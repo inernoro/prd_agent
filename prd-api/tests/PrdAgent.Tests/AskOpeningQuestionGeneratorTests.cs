@@ -213,6 +213,38 @@ public class AskOpeningQuestionWiringTests
     }
 
     [Fact]
+    public void 流中途报错要算调用失败_不能把残句当正常回答()
+    {
+        // 网关把失败报成 error chunk 而不是抛异常。只读 delta 的话「先吐几个字再断」
+        // 会被当成正常回答：callFailed 仍是 false、raw 非空，残句拿去解析，解析不出就盖戳。
+        var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
+        var loopStart = gen.IndexOf("await foreach (var chunk in client.StreamGenerateAsync(", StringComparison.Ordinal);
+        Assert.True(loopStart > 0, "找不到流式消费循环");
+        var deltaAt = gen.IndexOf("chunk.Type == \"delta\"", loopStart, StringComparison.Ordinal);
+        Assert.True(deltaAt > loopStart, "找不到 delta 分支");
+        var beforeDelta = gen[loopStart..deltaAt];
+        // error 必须在 delta 之前就被判掉，且要真的翻 callFailed——只记日志不算
+        Assert.Contains("chunk.Type == \"error\"", beforeDelta);
+        Assert.Contains("callFailed = true", beforeDelta);
+    }
+
+    [Fact]
+    public void 这一版得不出题就要清空题库_不许留着上一版内容写的题()
+    {
+        // 站点重传成不相干的内容后，版本戳指向新正文，而分享页还在展示按旧正文写的问题——
+        // 那是在拿旧内容的口径描述新页面。owner 手写的那份不受影响（过滤器有 manual 判据）。
+        var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
+        var idx = gen.IndexOf("private static async Task StampAsync(", StringComparison.Ordinal);
+        Assert.True(idx > 0);
+        // 这是文件最后一个方法，取窗必须夹紧，否则切到文件尾之外直接抛异常
+        var body = gen[idx..Math.Min(idx + 900, gen.Length)];
+        Assert.Contains("questions ?? new List<string>()", body);
+        // 不许退回「为 null 就不写这个字段」的老写法
+        Assert.DoesNotContain("if (questions != null)", body);
+        Assert.Contains("AskQuestionsSource != \"manual\"", body);
+    }
+
+    [Fact]
     public void 一个字都没生成出来的失败必须退配额_两条失败出口都要走()
     {
         // 用户报的：界面显示「回答失败了」，右上角剩余次数照样减一。网关没配模型池那阵子
@@ -225,6 +257,30 @@ public class AskOpeningQuestionWiringTests
         var body = ctrl.Substring(idx, Math.Min(320, ctrl.Length - idx));
         Assert.Contains("answer.Length > 0", body);
         Assert.Contains("RefundAsync", body);
+    }
+
+    [Fact]
+    public void 提问配置的写路径必须过角色门_可见不等于可写()
+    {
+        // GetByIdAsync 答的是「看不看得见」，对任一共享团队成员（含 viewer）都放行。
+        // 而排队生成 / 重新生成都是写库 + 一次算在 owner 头上的模型调用。拿可见性当写权限，
+        // viewer 打开设置面板就能替 owner 烧钱并覆盖他手写的题库。
+        var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
+        var svc = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "HostedSiteService.cs"));
+
+        // 判据只有一份：SetAskConfigAsync 与两条新路径共用 CanMaintainAskAsync
+        Assert.Contains("public async Task<bool> CanMaintainAskAsync(string siteId, string userId", svc);
+        Assert.Contains("if (!await CanMaintainAskAsync(site, userId, ct)) return null;", svc);
+        Assert.Equal(2, Regex.Matches(ctrl, @"CanMaintainAskAsync\(siteId, this\.GetRequiredUserId\(\)\)").Count);
+
+        // 排队那处必须是「有权才排」，不是排完再说
+        Assert.Contains("if (await _siteService.CanMaintainAskAsync(siteId, this.GetRequiredUserId()))\n            _askOpeners.QueueEnsure(site);", ctrl.Replace("\r\n", "\n"));
+        // 重新生成那处必须在任何写库之前就挡下
+        var regenAt = ctrl.IndexOf("public async Task<IActionResult> RegenerateAskQuestions", StringComparison.Ordinal);
+        Assert.True(regenAt > 0);
+        var gateAt = ctrl.IndexOf("CanMaintainAskAsync", regenAt, StringComparison.Ordinal);
+        var writeAt = ctrl.IndexOf("UpdateOneAsync", regenAt, StringComparison.Ordinal);
+        Assert.True(gateAt > 0 && gateAt < writeAt, "角色门必须排在清 manual 标记那笔写之前");
     }
 
     [Fact]

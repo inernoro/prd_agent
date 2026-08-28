@@ -179,6 +179,16 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
                 new List<LLMMessage> { new() { Role = "user", Content = userContent } },
                 cts.Token))
             {
+                // 网关把失败报成 error chunk 而不是抛异常（GatewayLLMClient / HttpLlmClient
+                // 都是这么发的）。只读 delta 的话，「先吐了几个字再断」会被当成正常回答：
+                // callFailed 仍是 false、raw 非空，于是残句被拿去解析，解析不出就盖戳——
+                // 正是下面那段注释说的「把一次网关故障固化成这一版正文的永久结论」。
+                if (chunk.Type == "error")
+                {
+                    callFailed = true;
+                    _logger.LogWarning("[AskOpeners] 站点 {SiteId} 流中途报错：{Error}", siteId, chunk.ErrorMessage);
+                    break;
+                }
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                     raw.Append(chunk.Content);
             }
@@ -229,11 +239,13 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
     private static async Task StampAsync(
         MongoDbContext db, string siteId, DateTime version, List<string>? questions, CancellationToken ct)
     {
+        // questions 为 null 表示「这一版正文得不出题」（读不出正文 / 模型答的没法用）。
+        // 那也得把题库清空，不能原样留着：站点重传成不相干的内容之后，版本戳指向新正文，
+        // 而分享出去的页面还在展示按旧正文写的问题——那是在拿旧内容的口径描述新页面。
         var update = Builders<HostedSite>.Update
             .Set(s => s.AskQuestionsGeneratedFor, version)
-            .Set(s => s.AskQuestionsSource, "auto");
-        if (questions != null)
-            update = update.Set(s => s.AskSuggestedQuestions, questions);
+            .Set(s => s.AskQuestionsSource, "auto")
+            .Set(s => s.AskSuggestedQuestions, questions ?? new List<string>());
 
         await db.HostedSites.UpdateOneAsync(
             s => s.Id == siteId && s.AskQuestionsSource != "manual",

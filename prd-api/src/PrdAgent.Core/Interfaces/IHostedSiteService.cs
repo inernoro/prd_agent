@@ -220,6 +220,12 @@ public interface IHostedSiteService
     /// 写入站点的「向我提问」配置（仅 owner / editor 可调，与评论开关同一套角色门）。
     /// 返回更新后的站点；无权或不存在返回 null。
     /// </summary>
+    /// <summary>
+    /// 能不能维护该站点的提问配置（owner / editor）。与「站点可见」是两件事：
+    /// GetByIdAsync 对任一共享团队成员（含 viewer）都放行，写路径不能拿它当权限。
+    /// </summary>
+    Task<bool> CanMaintainAskAsync(string siteId, string userId, CancellationToken ct = default);
+
     Task<HostedSite?> SetAskConfigAsync(string siteId, string userId, AskConfigUpdate update, CancellationToken ct = default);
 
     /// <summary>

@@ -43,8 +43,8 @@ public class AskQuotaService : IAskQuotaService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "提问配额：Redis 不可用，本次放行 site={SiteId}", siteId);
-            return AskQuotaDecision.Ok();
+            _logger.LogWarning(ex, "提问配额：Redis 不可用，本次放行但未扣计数 site={SiteId}", siteId);
+            return AskQuotaDecision.FailOpen();
         }
 
         try
@@ -90,8 +90,8 @@ public class AskQuotaService : IAskQuotaService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "提问配额：判定异常，本次放行 site={SiteId}", siteId);
-            return AskQuotaDecision.Ok();
+            _logger.LogWarning(ex, "提问配额：判定异常，本次放行但未必扣上 site={SiteId}", siteId);
+            return AskQuotaDecision.FailOpen();
         }
     }
 

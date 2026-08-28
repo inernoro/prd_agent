@@ -81,7 +81,7 @@ export function SharePreviewPane({
   const copy = GATE_COPY[gate];
   const GateIcon = gate === 'open' ? Globe : gate === 'password' ? Lock : visibility === 'owner-only' ? User : Users;
 
-  // 三条核对清单：能确定的用 ✓，跟着别处走的用 ? —— 后者不是「没设置」，
+  // 三条核对清单：能确定的画对勾，跟着别处走的画问号 —— 后者不是「没设置」，
   // 是「这条链接不自己定，随站点题库变」，两者语义不同不能同一个图标
   const checks: Array<{ ok: boolean; text: string }> = [
     { ok: true, text: VISIBILITY_LABEL[visibility] },

@@ -73,5 +73,16 @@ public class AskQuotaDecision
     /// <summary>命中的是哪一层闸：visitor | site-daily</summary>
     public string? Scope { get; set; }
 
-    public static AskQuotaDecision Ok() => new() { Allowed = true };
+    /// <summary>
+    /// 这一次是不是**真的**扣了计数。Redis 不可用时判定会「放行但没扣」（fail-open），
+    /// 此时不能退：退的是别人已经扣进去的那一格，并发几个 fail-open 请求还会反复退，
+    /// 等于白送额度。退款方必须看这个位，不能只看 Allowed。
+    /// </summary>
+    public bool Consumed { get; set; }
+
+    /// <summary>放行且已扣计数（正常路径）。</summary>
+    public static AskQuotaDecision Ok() => new() { Allowed = true, Consumed = true };
+
+    /// <summary>放行但没扣成（Redis 不可用等），后续失败不许退款。</summary>
+    public static AskQuotaDecision FailOpen() => new() { Allowed = true, Consumed = false };
 }

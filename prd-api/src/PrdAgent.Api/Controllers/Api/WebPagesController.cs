@@ -476,18 +476,37 @@ public class WebPagesController : ControllerBase
     /// 一次聚合把整页站点数完，不按站点逐个查（列表一页最多 200 个站点）。
     /// 站点没有任何访问记录时不出现在返回里，前端据此显示 0 而不是编一个数。
     /// </summary>
+    /// <summary>
+    /// 每个站点的独立访客数。
+    ///
+    /// 必须并两个来源：站内访问记在 SiteViewEvents（登录用户直接打开或团队内访问），
+    /// 而公开分享链接的访问记在 ShareViewLogs、按分享而不是按站点存。只数前者的话，
+    /// 一个只通过分享链接传播的站点在卡片上永远是「0 访客」——那不是「没人看」，
+    /// 是我们没去数。两边的身份口径一样（登录用 ViewerUserId，匿名退回 IP），
+    /// 所以可以先各自取出「站点 → 访客键集合」再求并，避免同一个人被数两次。
+    /// </summary>
     private async Task<Dictionary<string, long>> BuildVisitorCountsAsync(IEnumerable<string> siteIds)
     {
         var ids = siteIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
         if (ids.Count == 0) return new Dictionary<string, long>();
 
+        // 登录用户按用户去重，匿名退回 IP；两端用同一把尺子，否则并集会把同一个人算两次
         var visitorKey = new BsonDocument("$ifNull", new BsonArray
         {
             "$ViewerUserId",
             new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "anonymous" }),
         });
 
-        var pipeline = new[]
+        var buckets = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        void Add(string siteId, string visitor)
+        {
+            if (!buckets.TryGetValue(siteId, out var set))
+                buckets[siteId] = set = new HashSet<string>(StringComparer.Ordinal);
+            set.Add(visitor);
+        }
+
+        // 来源一：站内访问，本来就带 SiteId
+        var sitePipeline = new[]
         {
             new BsonDocument("$match", new BsonDocument("SiteId", new BsonDocument("$in", new BsonArray(ids)))),
             new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
@@ -495,20 +514,55 @@ public class WebPagesController : ControllerBase
                 { "site", "$SiteId" },
                 { "visitor", visitorKey },
             })),
-            new BsonDocument("$group", new BsonDocument
-            {
-                { "_id", "$_id.site" },
-                { "n", new BsonDocument("$sum", 1) },
-            }),
         };
+        foreach (var row in await _db.SiteViewEvents.Aggregate<BsonDocument>(sitePipeline).ToListAsync())
+        {
+            var key = row["_id"].AsBsonDocument;
+            if (key["site"].IsBsonNull) continue;
+            Add(key["site"].AsString, key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString);
+        }
 
-        var rows = await _db.SiteViewEvents
-            .Aggregate<BsonDocument>(pipeline)
+        // 来源二：分享访问。ShareViewLog 只认分享，得先把分享映回它包含的站点。
+        // 一条分享可以带多个站点，访客算给这条分享里的每个站点——这是这份日志能支持的最细粒度，
+        // 比整列显示 0 诚实得多；真要做到「他到底点开了哪一个」得在分享阅读页按站点埋点，另记一笔账。
+        var shares = await _db.WebPageShareLinks
+            .Find(Builders<WebPageShareLink>.Filter.AnyIn(x => x.SiteIds, ids))
+            .Project<BsonDocument>(Builders<WebPageShareLink>.Projection.Include(x => x.Id).Include(x => x.SiteIds))
             .ToListAsync();
+        var shareToSites = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var doc in shares)
+        {
+            var shareId = doc.Contains("_id") && !doc["_id"].IsBsonNull ? doc["_id"].AsString : null;
+            if (shareId == null || !doc.Contains("SiteIds") || !doc["SiteIds"].IsBsonArray) continue;
+            var hit = doc["SiteIds"].AsBsonArray
+                .Where(v => !v.IsBsonNull && ids.Contains(v.AsString))
+                .Select(v => v.AsString).ToList();
+            if (hit.Count > 0) shareToSites[shareId] = hit;
+        }
 
-        return rows
-            .Where(r => r.Contains("_id") && !r["_id"].IsBsonNull)
-            .ToDictionary(r => r["_id"].AsString, r => r["n"].ToInt64());
+        if (shareToSites.Count > 0)
+        {
+            var sharePipeline = new[]
+            {
+                new BsonDocument("$match", new BsonDocument("ShareId",
+                    new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
+                new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
+                {
+                    { "share", "$ShareId" },
+                    { "visitor", visitorKey },
+                })),
+            };
+            foreach (var row in await _db.ShareViewLogs.Aggregate<BsonDocument>(sharePipeline).ToListAsync())
+            {
+                var key = row["_id"].AsBsonDocument;
+                if (key["share"].IsBsonNull) continue;
+                if (!shareToSites.TryGetValue(key["share"].AsString, out var sites)) continue;
+                var visitor = key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString;
+                foreach (var siteId in sites) Add(siteId, visitor);
+            }
+        }
+
+        return buckets.ToDictionary(kv => kv.Key, kv => (long)kv.Value.Count);
     }
 
     /// <summary>获取站点列表。scope=team + teamId 时返回该团队共享的站点（含创建者头像昵称），默认返回我的</summary>
@@ -1025,7 +1079,7 @@ public class WebPagesController : ControllerBase
     [HttpPost("{id}/reupload")]
     [RequestSizeLimit(MaxSingleFileSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
-    public async Task<IActionResult> Reupload(string id, IFormFile file)
+    public async Task<IActionResult> Reupload(string id, IFormFile file, [FromForm] string? uploadId = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
@@ -1052,7 +1106,12 @@ public class WebPagesController : ControllerBase
         {
             // 显式传 wrappedAssetType，普通 HTML/ZIP 传 null 会清空旧 marker（避免站点
             // 从 PDF 包装改成 HTML 后前端还在渲染 PDF 占位，Codex P2 #612 抓到）
-            var updated = await _siteService.ReuploadAsync(id, GetUserId(), fileBytes, uploadName, wrappedAssetType);
+            // uploadId 要一路传到解包那层，否则前端轮询的那个键下面永远没有进度：
+            // 换 ZIP 时解包面板会一直停在「等待中」，而服务层其实早就支持这个参数了，
+            // 断的只是控制器这一跳（线只建了一半）。
+            var updated = await _siteService.ReuploadAsync(
+                id, GetUserId(), fileBytes, uploadName, wrappedAssetType, uploadId: uploadId);
+            await _uploadProgress.CompleteAsync(uploadId);
             return Ok(ApiResponse<object>.Ok(updated));
         }
         catch (KeyNotFoundException)

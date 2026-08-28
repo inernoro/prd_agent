@@ -2945,15 +2945,34 @@ public class HostedSiteService : IHostedSiteService
         return a.Count == b.Count && a.SequenceEqual(b, StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// 这个用户能不能维护该站点的提问配置。与评论开关同一套角色门：仅 owner / editor。
+    /// 提问要烧钱，viewer 更不能碰。
+    ///
+    /// 抽成唯一判定源，是因为「站点可见」与「可以在站点上写」是两件事，而
+    /// <see cref="GetByIdAsync"/> 只答前者（owner 或任一共享团队的成员，含 viewer）。
+    /// 拿它当写权限用过一次：提问配置读端点与「重新生成」端点都只判了可见性，
+    /// 于是 viewer 能触发一次算在 owner 头上的模型调用、并覆盖掉 owner 手写的题库。
+    /// </summary>
+    public async Task<bool> CanMaintainAskAsync(string siteId, string userId, CancellationToken ct = default)
+    {
+        var site = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync(ct);
+        return site != null && await CanMaintainAskAsync(site, userId, ct);
+    }
+
+    private async Task<bool> CanMaintainAskAsync(HostedSite site, string userId, CancellationToken ct)
+    {
+        var role = site.OwnerUserId == userId ? WebHostingRoles.Owner : await ResolveSiteRoleAsync(site, userId, ct);
+        return role == WebHostingRoles.Owner || role == WebHostingRoles.Editor;
+    }
+
     public async Task<HostedSite?> SetAskConfigAsync(
         string siteId, string userId, AskConfigUpdate update, CancellationToken ct = default)
     {
         var site = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null) return null;
 
-        // 与评论开关同一套角色门：仅 owner / editor 可改。提问要烧钱，viewer 更不能碰。
-        var role = site.OwnerUserId == userId ? "owner" : await ResolveSiteRoleAsync(site, userId, ct);
-        if (role != "owner" && role != "editor") return null;
+        if (!await CanMaintainAskAsync(site, userId, ct)) return null;
 
         var questions = AskOpeningQuestions.Normalize(update.SuggestedQuestions);
         // owner 提交的题库与库里那份不一样 = 他动过手，此后自动生成不再覆盖它。

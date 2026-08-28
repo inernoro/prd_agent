@@ -2844,7 +2844,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       if (isEdit) {
         if (file) {
           // Reupload
-          const res = await reuploadSite(item.id, file);
+          const res = await reuploadSite(item.id, file, uploadIdRef.current);
           if (!res.success) {
             toast.error('重新上传失败', res.error?.message || '请稍后重试');
             return;

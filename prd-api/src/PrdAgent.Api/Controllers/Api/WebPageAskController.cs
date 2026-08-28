@@ -66,7 +66,12 @@ public class WebPageAskController : ControllerBase
 
         // owner 打开设置面板时兜一次：存量站点（本功能上线前就开着提问的）走不到
         // 「刚开启」「刚重传」那两个钩子，题库会一直是空的。排队立刻返回，不拖慢这次读取。
-        _askOpeners.QueueEnsure(site);
+        //
+        // 但只对能写的人兜。GetByIdAsync 答的是「看不看得见」，对任一共享团队的成员
+        // （含 viewer）都放行；排队生成却是一次写库 + 一次算在 owner 头上的模型调用。
+        // 拿可见性当写权限，viewer 打开这一屏就能替 owner 烧钱并改掉他的题库。
+        if (await _siteService.CanMaintainAskAsync(siteId, this.GetRequiredUserId()))
+            _askOpeners.QueueEnsure(site);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -148,6 +153,11 @@ public class WebPageAskController : ControllerBase
         var site = await _siteService.GetByIdAsync(siteId, this.GetRequiredUserId());
         if (site == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+
+        // 这条会清掉 owner 的手写标记、覆盖他的题库，还会同步烧一次模型调用。
+        // 与 SetAskConfigAsync 同一道门：仅 owner / editor。
+        if (!await _siteService.CanMaintainAskAsync(siteId, this.GetRequiredUserId()))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有站点的所有者或编辑者可以重新生成开场问题"));
 
         var reason = AskAccessPolicy.UnsupportedReason(site.WrappedAssetType);
         if (reason != null)
@@ -382,7 +392,11 @@ public class WebPageAskController : ControllerBase
             // 这一条根本没碰上游、没花钱，配额得退回去。
             // 尤其是对象存储暂时读不到的时候：用户会反复重试，不退的话额度先被烧光，
             // 等存储恢复了反而问不了了——用一次故障换掉一整个窗口的可用性。
-            await _quota.RefundAsync(site.Id, userId, clientIp);
+            //
+            // 只退自己真扣过的那一格：Redis 不可用时判定是「放行但没扣」，这时候退
+            // 减掉的是别人已经扣进去的计数，并发几个 fail-open 请求还会反复减。
+            if (decision.Consumed)
+                await _quota.RefundAsync(site.Id, userId, clientIp);
             await WriteJsonErrorAsync(422, "ASK_NO_CONTENT", snapshot.Unavailable);
             return;
         }
@@ -491,6 +505,8 @@ public class WebPageAskController : ControllerBase
         async Task RefundIfNothingProducedAsync()
         {
             if (answer.Length > 0) return;
+            // 同上：没扣成就没什么可退，退了反而是从别人的计数里扣。
+            if (!decision.Consumed) return;
             await _quota.RefundAsync(site.Id, userId, clientIp);
         }
 
