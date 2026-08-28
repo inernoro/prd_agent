@@ -1011,20 +1011,22 @@ function ProgressCard({
                 {assetsRebased > 0 ? `真跑时会把 ${assetsRebased} 条附件地址改写成本站地址` : '真跑时不会有任何一条附件地址能改写成本站地址'}
                 {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、会保留源站地址` : ''}
                 。到时候也<span style={{ color: 'var(--text-primary)' }}>只搬记录，不搬文件本身</span>——
-                只有两站<span style={{ color: 'var(--text-primary)' }}>用同一个桶、且对象前缀也一样</span>时，
-                附件才直接打得开。桶相同但前缀不同同样打不开：改写会按本站的前缀拼地址，
-                而文件还在源站那个前缀底下。其余情况都要先把文件复制到本站的前缀下，
-                否则会看到图片裂开。
+                两站用同一个桶、且对象前缀也一样时，附件才直接打得开；其余情况都要自己把文件搬过来，
+                否则会看到图片裂开。<span style={{ color: 'var(--text-primary)' }}>搬到哪要分两类看</span>：
+                附件、生成图这类按内容存的，地址会带上本站配置的前缀，所以要复制到<span style={{ color: 'var(--text-primary)' }}>本站前缀底下</span>
+                （桶相同但前缀不同也打不开，就是这个原因）；首页、桌面端素材那类按固定路径存的<span style={{ color: 'var(--text-primary)' }}>不带前缀</span>，
+                复制到原样的路径即可——它们在同桶不同前缀时本来就打得开。
               </>
             ) : (
               <>
                 {assetsRebased > 0 ? `已把 ${assetsRebased} 条附件地址改写成本站地址` : '没有任何一条附件地址能改写成本站地址'}
                 {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、保留了源站地址` : ''}
                 。注意：<span style={{ color: 'var(--text-primary)' }}>这次只搬了记录，没有搬文件本身</span>。
-                只有两站<span style={{ color: 'var(--text-primary)' }}>用同一个桶、且对象前缀也一样</span>时，
-                附件现在就能打开。桶相同但前缀不同同样打不开：改写按本站的前缀拼地址，
-                而文件还在源站那个前缀底下。其余情况都要先把文件复制到本站的前缀下，
-                否则会看到图片裂开。
+                两站用同一个桶、且对象前缀也一样时，附件现在就能打开；其余情况都要自己把文件搬过来，
+                否则会看到图片裂开。<span style={{ color: 'var(--text-primary)' }}>搬到哪要分两类看</span>：
+                附件、生成图这类按内容存的，地址带着本站配置的前缀，所以要复制到<span style={{ color: 'var(--text-primary)' }}>本站前缀底下</span>
+                （桶相同但前缀不同也打不开，就是这个原因）；首页、桌面端素材那类按固定路径存的<span style={{ color: 'var(--text-primary)' }}>不带前缀</span>，
+                复制到原样的路径即可——它们在同桶不同前缀时本来就打得开。
               </>
             )}
           </p>
