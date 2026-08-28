@@ -98,14 +98,22 @@ export default function LandingPreviewSettings() {
    * 挑代表那种写法在这里是错的：池里 15 个模型全报 Healthy，实测只有两个能出图。
    * 只挑优先级最高的那个 = 每次都稳定挑中同一个坏的，用户点一次错一次。
    * 摊平之后，第一个失败就能顺着往下试。
+   *
+   * 摊平之后必须**按上游去重**：候选的身份对我们来说是 `(platformId, modelId)`——
+   * 生图请求就只带这两样。同一个模型挂在两个池里就会摊出两条，兜底顺着往下试时
+   * 等于把刚失败的那个上游原样再打一次，钱花两遍、结果注定一样。
    */
   const modelChain = useMemo(() => {
     const list: { key: string; label: string; poolName: string; modelId: string; platformId: string }[] = [];
+    const seen = new Set<string>();
     pools.forEach((pool, pi) => {
       const sorted = [...(pool.models ?? [])].sort((a, b) => (a.priority ?? 50) - (b.priority ?? 50));
       sorted.forEach((m) => {
         // 明确标记不可用的直接不进候选；其余（含 Healthy 与降级）都留着，靠真实调用淘汰
         if (m.healthStatus === ModelHealthStatus.Unavailable) return;
+        const upstream = `${m.platformId}::${m.modelId}`;
+        if (seen.has(upstream)) return;   // 同一个上游只留优先级最高的那次出现
+        seen.add(upstream);
         list.push({
           key: `${pi}:${pool.name}:${m.modelId}`,
           label: m.modelId,

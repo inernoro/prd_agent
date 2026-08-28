@@ -1,6 +1,6 @@
 import { ArrowRight, Play, Sparkles } from 'lucide-react';
 import { InkOrb } from '@/components/backgrounds/InkOrb';
-import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { cn } from '@/lib/cn';
 import { Reveal } from '../components/Reveal';
 import { VisualCanvasStage } from '../scenes/VisualCanvasScene';
@@ -66,7 +66,10 @@ interface HeroSectionProps {
 
 export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectionProps) {
   const { t } = useLanguage();
-  const isMobile = useIsMobile();
+  // 用 isDesktop（≥1024）而不是「非手机」（≥768）：墨滴的可见性由 `lg:block` 决定，
+  // 挂载条件必须跟它同一个断点。差着的那 256px 正好是平板——那一档它挂上了、
+  // 起了个 WebGL 上下文、一直在渲染，却因为 display:none 一眼都看不见。
+  const { isDesktop } = useBreakpoint();
   return (
     <section
       className={cn('relative overflow-hidden', className)}
@@ -312,9 +315,12 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           * 这里必须**条件挂载**，不能只写 `hidden lg:block`：display:none 只是不显示，
           * React 照样把 InkOrb 挂上、照样 new 一个 WebGL 上下文。手机端体检时
           * canvas 数是 2 就是这么来的 —— 一个看不见的上下文白占着显存。
-          * 换成 useIsMobile 之后手机端只剩墨场那一个 canvas。
+          *
+          * 挂载断点必须**和可见性断点同一个**（都是 lg / 1024）。第一版按「非手机」
+          * （768）挂，768–1023 这一档平板照样白起一个上下文 —— 条件挂载对了、
+          * 断点错了，等于只修了一半。
           */}
-        {!isMobile && (
+        {isDesktop && (
           <div className="relative hidden lg:block" style={{ aspectRatio: '1 / 1' }}>
             <InkOrb className="absolute inset-0" colors={HERO_ORB_COLORS} amplitude={0.22} />
           </div>

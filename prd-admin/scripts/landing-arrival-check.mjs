@@ -84,8 +84,15 @@ async function watch(sceneSel, effectText, wantTarget, label, secs) {
  *   · **点击之后的后果**（配图一张张落位）→ 手应该还在刚才点的按钮上，
  *     不该跑到结果上去 —— 跑过去反而是在假装「这张图是点出来的」。
  * 一轮 20.9s，给 52s 保证至少完整看到两次。
+ *
+ * 下面这些期望值是**照着 VisualCanvasScene 的 CURSOR_AT 写死的**，幕一改就会漂。
+ * 已经漂过一次：第二条消息原本紧跟在「按下暖调那张」之后出现，所以这里写的是
+ * `tile-b`；后来补了 typing2 / sent2 两拍（那条消息现在是自己被发送出来的），
+ * 落点变成 `chat-send`，而这行没跟着改 —— 于是一条因果完全正确的运行会被报成
+ * 「没到位」。**这类假失败比没有检查更糟**：它会让下一个人以为衔接坏了。
+ * 改幕时记得回来对一遍这三行。
  */
 await watch('#hero', '把主视觉改成雾天', 'chat-send', '视觉创作 · 消息发出的那一刻', 52);
-await watch('#hero', '把这两张混一下', 'tile-b', '视觉创作 · 混合那句发出的那一刻', 52);
+await watch('#hero', '把这两张混一下', 'chat-send', '视觉创作 · 混合那句发出的那一刻', 52);
 await watch('#literary', '配图 1 · 雾压山谷', 'generate-all', '文学创作 · 第一张配图落位时手应还在按钮上', 40);
 await b.close();
