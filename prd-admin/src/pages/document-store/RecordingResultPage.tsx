@@ -40,6 +40,7 @@ import {
   saveOfflineEdit,
   type QueuedOfflineEdit,
 } from '@/pages/document-store/recordingOfflineQueue';
+import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import '@/styles/recording-design-palette.css';
 
@@ -568,6 +569,15 @@ export function RecordingResultPage() {
   const [pendingEdits, setPendingEdits] = useState<QueuedOfflineEdit | null>(null);
   const pendingRef = useRef<QueuedOfflineEdit | null>(null);
   pendingRef.current = pendingEdits;
+  /** 草稿按账号存：共享浏览器上换个人登录就不该恢复上一位的稿子 */
+  const ownerId = useAuthStore(state => state.user?.userId ?? '');
+  /** 所有对笔记的写共用一条串行链，避免旧内容后到覆盖新内容 */
+  const writeChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueueWrite = useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
+    const next = writeChainRef.current.then(run, run);
+    writeChainRef.current = next.catch(() => undefined);
+    return next;
+  }, []);
 
   /** 同页校对：整份 markdown 覆盖写回转录笔记条目 */
   const onSaveNote = useCallback(async (nextNoteMd: string) => {
@@ -579,6 +589,7 @@ export function RecordingResultPage() {
       // 写进那一条；不落盘的话刷新一次承诺就落空（两条都是 Codex P1 抓到的）。
       const noteId = state.noteId;
       const queued: QueuedOfflineEdit = {
+        ownerId,
         noteId,
         count: (pendingRef.current?.noteId === noteId ? pendingRef.current.count : 0) + 1,
         content: nextNoteMd,
@@ -589,15 +600,23 @@ export function RecordingResultPage() {
       setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: nextNoteMd } : prev));
       return true;
     }
-    const res = await updateDocumentContent(state.noteId, nextNoteMd, 'text/markdown');
+    /*
+     * 联网保存与「补传离线队列」必须排队，不能同时在飞：两个 PUT 谁先到服务端不确定，
+     * 旧的那份后到就会把新的盖掉，而队列随后被清空——用户刚改的那一版无声消失
+     * （Codex P1）。所有写都挂在同一条链上，后一个等前一个落地。
+     */
+    const res = await enqueueWrite(() => updateDocumentContent(state.noteId, nextNoteMd, 'text/markdown'));
     if (!res.success) {
       toast.error(res.error?.message || '保存失败');
       return false;
     }
+    // online 存成功 = 服务端已经拿到更新的内容，离线队列里那份旧的作废
+    clearOfflineEdit(state.noteId, ownerId);
+    setPendingEdits(null);
     // 乐观落到本地：等下一次拉取会让这行字先消失再出现，那是「凭空消失」
     setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: nextNoteMd } : prev));
     return true;
-  }, [state]);
+  }, [enqueueWrite, ownerId, state]);
 
   /*
    * 换到另一条笔记时，把这一条本机存着的队列接回来——上一次离线校对可能是在
@@ -606,24 +625,26 @@ export function RecordingResultPage() {
    */
   const noteIdForFlush = state.kind === 'ready' ? state.noteId : '';
   useEffect(() => {
-    if (!noteIdForFlush) { setPendingEdits(null); return; }
-    setPendingEdits(loadOfflineEdit(noteIdForFlush));
-  }, [noteIdForFlush]);
+    if (!noteIdForFlush || !ownerId) { setPendingEdits(null); return; }
+    setPendingEdits(loadOfflineEdit(noteIdForFlush, ownerId));
+  }, [noteIdForFlush, ownerId]);
 
   /** 恢复联网就把队列补传上去；失败就留着，横幅继续显示欠了多少 */
   useEffect(() => {
     if (offline || !noteIdForFlush) return;
     const queued = pendingRef.current;
-    // 只补传属于**这一条**笔记、且还没放过期的内容
-    if (!isFlushable(queued, noteIdForFlush)) return;
+    // 只补传属于**这一条笔记、这个账号**、且还没放过期的内容
+    if (!isFlushable(queued, noteIdForFlush, ownerId)) return;
     let alive = true;
-    void updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown').then((res) => {
+    void enqueueWrite(() => updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown')).then((res) => {
       if (!alive) return;
-      if (res.success) {
-        clearOfflineEdit(noteIdForFlush);
-        setPendingEdits(null);
-        toast.success(`已补传 ${queued!.count} 处离线校对`);
-      }
+      if (!res.success) return;
+      // 补传期间用户又在线存了新的一版：那一版已经把队列清了，这里不能再清一次
+      // （清了等于承认这份旧内容是最终态），也不再报「已补传」
+      if (pendingRef.current?.savedAt !== queued!.savedAt) return;
+      clearOfflineEdit(noteIdForFlush, ownerId);
+      setPendingEdits(null);
+      toast.success(`已补传 ${queued!.count} 处离线校对`);
     });
     return () => { alive = false; };
     /*
@@ -632,7 +653,7 @@ export function RecordingResultPage() {
      * 恢复之后又不会再跑——那份校对就一直躺着不上去，直到下一次断网重连才被
      * 当成「新的」传上去，可能盖掉更新的内容（Codex P1 抓到的正是这条）。
      */
-  }, [noteIdForFlush, offline, pendingEdits]);
+  }, [enqueueWrite, noteIdForFlush, offline, ownerId, pendingEdits]);
 
   /**
    * 选一种整理方式。

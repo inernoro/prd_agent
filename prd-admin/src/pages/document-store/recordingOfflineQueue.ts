@@ -15,11 +15,23 @@
  * 静默覆盖比丢掉更糟；过期时如实丢弃，不假装还能补。
  */
 
+/*
+ * 键里必须带**用户**：共享浏览器上只按笔记 id 存，A 排下的草稿会被 B 打开同一篇时
+ * 恢复出来，并且用 B 的凭据传上去——既泄露 A 的内容，又覆盖共享笔记（Codex P1）。
+ * 拿不到用户 id 时干脆不落盘（队列只留在内存里），宁可这一次刷新丢掉，
+ * 也不留一份不知道属于谁的草稿。
+ */
 const KEY_PREFIX = 'recording-offline-edit:';
 /** 三天。再久的离线校对补传回去多半是在覆盖别人（或自己在别处）的新版本 */
 const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 
+function storageKey(ownerId: string, noteId: string): string {
+  return `${KEY_PREFIX}${ownerId}:${noteId}`;
+}
+
 export interface QueuedOfflineEdit {
+  /** 这份草稿属于哪个账号——共享浏览器上换个人登录就不该再认它 */
+  ownerId: string;
   /** 这份内容属于哪条转录笔记——队列必须**认笔记**，否则切到另一条录音会把 A 的内容写进 B */
   noteId: string;
   /** 用户改了几次（覆盖写语义下内容以最后一次为准，但「欠了多少」按次数说才是他关心的） */
@@ -42,30 +54,36 @@ function storage(): Storage | null {
 export function isFlushable(
   edit: QueuedOfflineEdit | null | undefined,
   noteId: string,
+  ownerId: string,
   now: number = Date.now(),
 ): boolean {
-  if (!edit || !noteId) return false;
+  if (!edit || !noteId || !ownerId) return false;
   if (edit.noteId !== noteId) return false;
+  if (edit.ownerId !== ownerId) return false;
   if (!edit.content) return false;
   return now - edit.savedAt <= MAX_AGE_MS;
 }
 
 export function saveOfflineEdit(edit: QueuedOfflineEdit): void {
   const store = storage();
-  if (!store || !edit.noteId) return;
+  if (!store || !edit.noteId || !edit.ownerId) return;
   try {
-    store.setItem(KEY_PREFIX + edit.noteId, JSON.stringify(edit));
+    store.setItem(storageKey(edit.ownerId, edit.noteId), JSON.stringify(edit));
   } catch {
     // 配额满：内存里的队列仍在，横幅照常显示欠了多少，不因为存不下就假装没排队
   }
 }
 
-export function loadOfflineEdit(noteId: string, now: number = Date.now()): QueuedOfflineEdit | null {
+export function loadOfflineEdit(
+  noteId: string,
+  ownerId: string,
+  now: number = Date.now(),
+): QueuedOfflineEdit | null {
   const store = storage();
-  if (!store || !noteId) return null;
+  if (!store || !noteId || !ownerId) return null;
   let raw: string | null = null;
   try {
-    raw = store.getItem(KEY_PREFIX + noteId);
+    raw = store.getItem(storageKey(ownerId, noteId));
   } catch {
     return null;
   }
@@ -73,27 +91,28 @@ export function loadOfflineEdit(noteId: string, now: number = Date.now()): Queue
   try {
     const parsed = JSON.parse(raw) as Partial<QueuedOfflineEdit>;
     const edit: QueuedOfflineEdit = {
+      ownerId: typeof parsed.ownerId === 'string' ? parsed.ownerId : '',
       noteId: typeof parsed.noteId === 'string' ? parsed.noteId : '',
       count: typeof parsed.count === 'number' && parsed.count > 0 ? parsed.count : 1,
       content: typeof parsed.content === 'string' ? parsed.content : '',
       savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
     };
-    if (!isFlushable(edit, noteId, now)) {
-      clearOfflineEdit(noteId);
+    if (!isFlushable(edit, noteId, ownerId, now)) {
+      clearOfflineEdit(noteId, ownerId);
       return null;
     }
     return edit;
   } catch {
-    clearOfflineEdit(noteId);
+    clearOfflineEdit(noteId, ownerId);
     return null;
   }
 }
 
-export function clearOfflineEdit(noteId: string): void {
+export function clearOfflineEdit(noteId: string, ownerId: string): void {
   const store = storage();
-  if (!store || !noteId) return;
+  if (!store || !noteId || !ownerId) return;
   try {
-    store.removeItem(KEY_PREFIX + noteId);
+    store.removeItem(storageKey(ownerId, noteId));
   } catch {
     // 删不掉就算了：下一次 load 的过期判定还会再兜一层
   }
