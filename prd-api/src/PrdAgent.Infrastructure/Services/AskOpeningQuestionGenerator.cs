@@ -78,6 +78,16 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         if (!site.AskEnabled) return false;
         // owner 动过手就永不覆盖：他改的几句被静默冲掉是最难查的一类缺陷
         if (string.Equals(site.AskQuestionsSource, "manual", StringComparison.OrdinalIgnoreCase)) return false;
+        // 存量站点也算他动过手。AskQuestionsSource 是本功能才引入的字段，在它之前建的站点里
+        // 根本不存在，反序列化出来是 null；而那时候题库里的每一条都只可能是 owner 自己填的
+        // （当时没有任何自动生成）。按「不是 manual 就当 auto」判，等于把这批人精心写的题
+        // 在他打开一次设置面板、或者访客打开一次分享页的时候静默冲掉——本功能自己声明的
+        // 不变量就是「owner 手写过的永不被自动覆盖」，漏掉存量这一半等于没守住。
+        //
+        // 判据只看「有没有题」：自动生成写题时一定同时写 source=auto，所以「有题 + 没有 source」
+        // 只可能是存量手写。没题的存量站点没有东西要保护，照常生成。
+        if (string.IsNullOrEmpty(site.AskQuestionsSource)
+            && (site.AskSuggestedQuestions?.Count ?? 0) > 0) return false;
         // 这一版正文已经算过（哪怕算出来是空）就不重算。一次上传一次调用，正文没变不重跑。
         var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
         return site.AskQuestionsGeneratedFor != version;

@@ -111,6 +111,54 @@ public class AskOpeningQuestionGeneratorTests
     }
 
     [Fact]
+    public void 存量站点手写的题也算动过手_没有_source_字段时不许当成系统生成的()
+    {
+        // AskQuestionsSource 是本功能才引入的字段。在它之前建的站点里根本没有这个字段，
+        // 反序列化出来是 null，而那时候题库里的每一条都只可能是 owner 自己填的。
+        // 按「不是 manual 就当 auto」判，他打开一次设置面板、或者访客打开一次分享页，
+        // 精心写的几句就被静默冲掉了——本功能声明的不变量正是「手写过的永不被覆盖」。
+        var legacy = SiteWithAsk(s =>
+        {
+            s.AskQuestionsSource = null;
+            s.AskSuggestedQuestions = new List<string> { "这份方案的取舍是什么？" };
+        });
+        Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(legacy));
+
+        // 空串（有些写路径会落成空串而不是缺字段）同样按存量手写处理
+        var legacyBlankSource = SiteWithAsk(s =>
+        {
+            s.AskQuestionsSource = "";
+            s.AskSuggestedQuestions = new List<string> { "这份方案的取舍是什么？" };
+        });
+        Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(legacyBlankSource));
+    }
+
+    [Fact]
+    public void 存量站点没有题就没有东西要保护_照常生成()
+    {
+        // 上一条的边界：不能因为「没有 source」就一律不生成，那样新上传的站点永远拿不到题。
+        var emptyLegacy = SiteWithAsk(s =>
+        {
+            s.AskQuestionsSource = null;
+            s.AskSuggestedQuestions = new List<string>();
+        });
+        Assert.True(AskOpeningQuestionGenerator.NeedsGeneration(emptyLegacy));
+    }
+
+    [Fact]
+    public void 系统生成过的题不受存量判据影响_正文换了还要重算()
+    {
+        // 自动生成写题时一定同时写 source=auto，所以它不会被上面那条存量判据挡住。
+        var generated = SiteWithAsk(s =>
+        {
+            s.AskQuestionsSource = "auto";
+            s.AskSuggestedQuestions = new List<string> { "系统写的一条" };
+            s.AskQuestionsGeneratedFor = s.ContentVersion.AddDays(-1);
+        });
+        Assert.True(AskOpeningQuestionGenerator.NeedsGeneration(generated));
+    }
+
+    [Fact]
     public void 这一版正文算过就不重算_一次上传一次调用()
     {
         var site = SiteWithAsk();

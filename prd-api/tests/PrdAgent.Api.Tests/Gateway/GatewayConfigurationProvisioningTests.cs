@@ -518,4 +518,56 @@ public sealed class GatewayConfigurationProvisioningTests
         offering["UpstreamModelId"].AsString.ShouldBe("fal-qwen-image-layered");
         offering.Contains("AppCallerCode").ShouldBeFalse();
     }
+
+    // ── 批量能力维护的 modelIds ──
+
+    [Fact]
+    public void 传了_modelIds_但一项都不合法_必须拒绝而不是改整个平台()
+    {
+        // 最危险的失效形态：不报错，只是改多了。带 platformId、modelIds 全是空白或超长串的
+        // 请求，如果只是「归一化后为空就不加这个过滤条件」，本该精确到几个模型的写入
+        // 会静默扩成整个平台上几百个模型全刷一遍。
+        var supplied = new List<string?> { "  ", "", null, new string('x', 301) };
+        var ok = GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            supplied, out var modelIds, out var error);
+
+        Assert.False(ok);
+        Assert.Empty(modelIds);
+        Assert.Contains("不会据此改动整个平台", error);
+    }
+
+    [Fact]
+    public void 一个都没传是合法的_那是按平台整片刷()
+    {
+        // 上一条的边界：不能把「没传」也拒掉，按平台整片刷是这个接口本来就支持的用法。
+        Assert.True(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            null, out var fromNull, out _));
+        Assert.Empty(fromNull);
+
+        Assert.True(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            new List<string?>(), out var fromEmpty, out _));
+        Assert.Empty(fromEmpty);
+    }
+
+    [Fact]
+    public void 混着无效项时_保留有效项并去重去空白()
+    {
+        var ok = GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            new List<string?> { " gpt-5.6-sol ", "", "gpt-5.6-sol", null, "claude-opus-5" },
+            out var modelIds,
+            out var error);
+
+        Assert.True(ok);
+        Assert.Equal(string.Empty, error);
+        Assert.Equal(new[] { "gpt-5.6-sol", "claude-opus-5" }, modelIds);
+    }
+
+    [Fact]
+    public void 超过_200_项要拒()
+    {
+        var supplied = Enumerable.Range(0, 201).Select(i => (string?)$"model-{i}").ToList();
+        Assert.False(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            supplied, out _, out var error));
+        Assert.Contains("最多 200 项", error);
+    }
 }

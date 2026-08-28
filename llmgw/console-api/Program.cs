@@ -8895,13 +8895,10 @@ app.MapPost("/gw/models/capabilities/bulk-update", async (HttpContext http, [Fro
     var platformId = (body.PlatformId ?? string.Empty).Trim();
     // 精确到模型的能力维护：控制台此前只能按平台整片刷能力，想给单个模型补一条能力
     // （例如把某个模型标成 intent 可用）就只能连同平台上几百个模型一起改。
-    var modelIds = (body.ModelIds ?? new List<string>())
-        .Select(item => (item ?? string.Empty).Trim())
-        .Where(item => item.Length is > 0 and <= 300)
-        .Distinct(StringComparer.Ordinal)
-        .ToList();
-    if (modelIds.Count > 200)
-        return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "modelIds 最多 200 项"), jsonOptions, 400);
+    // 归一化与「传了但全无效」的判据在 GatewayConfigurationProvisioning 里，可被直接测。
+    if (!GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            body.ModelIds, out var modelIds, out var modelIdsError))
+        return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", modelIdsError), jsonOptions, 400);
     if (platformId.Length == 0 && modelIds.Count == 0 && body.AllGwOwned != true)
     {
         return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "批量能力维护必须选择平台或指定 modelIds，或显式设置 allGwOwned=true"), jsonOptions, 400);
