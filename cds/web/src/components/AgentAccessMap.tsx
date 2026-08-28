@@ -41,6 +41,8 @@ import {
   getAgentMissionCategoriesForScope,
   getAgentMissionDefinition,
   getAgentMissionsForCategory,
+  isRoleFocusedMission,
+  sortMissionsForRole,
   PROJECT_AGENT_CONTEXT_IDS,
   SYSTEM_AGENT_CONTEXT_IDS,
   type AgentPageContext,
@@ -50,6 +52,13 @@ import {
   type AgentMissionIconKey,
   type AgentMissionScope,
 } from '@/lib/agent-onboarding';
+import { useAgentRoleSelection } from '@/hooks/useAgentRoleSelection';
+import { AGENT_ROLE_PROFILES } from '@/lib/agent-starter';
+
+/** 角色 id 转中文名；不认识的取值原样返回，不猜。 */
+function roleLabelOf(role: string): string {
+  return AGENT_ROLE_PROFILES.find((profile) => profile.id === role)?.label || role;
+}
 
 export type AgentAccessMapSelection =
   | { kind: 'system' }
@@ -132,6 +141,8 @@ export function AgentAccessMap({
   const [draftSelection, setDraftSelection] = useState<AgentAccessMapSelection>(selection);
   const [draftMissionId, setDraftMissionId] = useState<AgentPageContextId>(context.id);
   const [draftCategoryId, setDraftCategoryId] = useState<AgentMissionCategoryId>(context.categoryId);
+  const [{ roleId }] = useAgentRoleSelection();
+  const roleLabel = AGENT_ROLE_PROFILES.find((profile) => profile.id === roleId)?.label || '';
 
   useEffect(() => {
     if (!open) return;
@@ -144,7 +155,7 @@ export function AgentAccessMap({
   const draftSelectionLabel = selectionName(draftSelection, projects);
   const draftSelectionCode = selectionCode(draftSelection, projects);
   const draftScope = missionScopeForSelection(draftSelection);
-  const allDraftMissions = missionsForSelection(draftSelection);
+  const allDraftMissions = sortMissionsForRole(missionsForSelection(draftSelection), roleId);
   const draftCategories = getAgentMissionCategoriesForScope(draftScope)
     .filter((category) => allDraftMissions.some((mission) => mission.categoryId === category.id));
   const effectiveCategoryId = draftCategories.some((category) => category.id === draftCategoryId)
@@ -152,7 +163,7 @@ export function AgentAccessMap({
     : allDraftMissions[0].categoryId;
   const draftMissions = draftSelection.kind === 'new'
     ? allDraftMissions
-    : getAgentMissionsForCategory(draftScope, effectiveCategoryId);
+    : getAgentMissionsForCategory(draftScope, effectiveCategoryId, roleId);
   const draftMission = allDraftMissions.find((mission) => mission.id === draftMissionId)
     || draftMissions[0]
     || allDraftMissions[0];
@@ -175,7 +186,11 @@ export function AgentAccessMap({
       selection: { kind: 'project', projectId: project.id } as AgentAccessMapSelection,
       name: project.name,
       code: project.slug,
-      metric: `${project.branchCount || 0} 条分支`,
+      // 角色是这个项目的 Agent 已声明的身份，读自 /api/projects。
+      // 没声明过就只显示分支数，不编一个默认角色顶上。
+      metric: project.agentProfile
+        ? `${project.branchCount || 0} 条分支 · ${roleLabelOf(project.agentProfile.role)}`
+        : `${project.branchCount || 0} 条分支`,
     })),
     {
       key: 'new',
@@ -196,7 +211,7 @@ export function AgentAccessMap({
 
   const chooseCategory = (categoryId: AgentMissionCategoryId): void => {
     if (categoryId === effectiveCategoryId) return;
-    const firstMission = getAgentMissionsForCategory(draftScope, categoryId)[0];
+    const firstMission = getAgentMissionsForCategory(draftScope, categoryId, roleId)[0];
     if (!firstMission) return;
     setDraftCategoryId(categoryId);
     setDraftMissionId(firstMission.id);
@@ -312,7 +327,10 @@ export function AgentAccessMap({
               <div className="cds-agent-mission-list-meta">
                 <span>
                   <strong>{allDraftMissions.length} 个 Agent 任务</strong>
-                  <small>Agent 会先静默检查项目凭据；已有权限时不会重复要求批准。</small>
+                  <small>
+                    {roleLabel ? `已按「${roleLabel}」把常用任务排到前面；` : ''}
+                    Agent 会先静默检查项目凭据；已有权限时不会重复要求批准。
+                  </small>
                 </span>
                 <ShieldCheck aria-hidden="true" />
               </div>
@@ -365,7 +383,13 @@ export function AgentAccessMap({
                       </span>
                       <span className="cds-agent-mission-card-copy">
                         <strong>{mission.shortLabel}</strong>
-                        <small>{fromCurrentPage ? '当前页面入口' : mission.cardDescription}</small>
+                        <small>
+                          {fromCurrentPage
+                            ? '当前页面入口'
+                            : isRoleFocusedMission(roleId, mission.id)
+                              ? `${roleLabel}常用 · ${mission.cardDescription}`
+                              : mission.cardDescription}
+                        </small>
                       </span>
                       <Check className="cds-agent-mission-card-check" aria-hidden="true" />
                     </button>

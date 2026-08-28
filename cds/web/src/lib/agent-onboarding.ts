@@ -17,6 +17,7 @@ import type {
 export {
   AGENT_MISSION_CATEGORY_DEFINITIONS,
   AGENT_MISSION_CAPABILITY_BINDINGS,
+  AGENT_MISSION_ROLE_FOCUS,
   AGENT_MISSION_DEFINITIONS,
   CDS_AGENT_CAPABILITY_DEFINITIONS,
   CDS_AGENT_SKILL_DEFINITIONS,
@@ -26,6 +27,9 @@ export {
   getAgentMissionDefinition,
   getAgentMissionsForCategory,
   getAgentMissionsForScope,
+  getRoleFocusedMissions,
+  isRoleFocusedMission,
+  sortMissionsForRole,
   PROJECT_AGENT_CONTEXT_IDS,
   SYSTEM_AGENT_CONTEXT_IDS,
 } from './agent-mission-registry';

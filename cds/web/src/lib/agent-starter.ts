@@ -316,6 +316,58 @@ function shellQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
+/**
+ * 受管区块替换例程的唯一来源。
+ *
+ * 完整上手脚本和只换卡片的脚本都嵌入这一段，任何一方另写一份都会让
+ * 「标记不完整时怎么办」「原有规则怎么保留」出现两种行为。
+ * 调用方需自备 say / fail / TMP_DIR。
+ */
+export function buildAgentContractInstaller(decisionContract: string): string {
+  return `install_agent_contract() {
+  target="$1"
+  clean="$TMP_DIR/$(basename "$target").rules"
+  if [ -f "$target" ]; then
+    if ! awk '
+      /<!-- CDS_AGENT_DECISION_CARD:START -->/ {
+        if (managed || seen) invalid = 1
+        managed = 1
+        seen = 1
+        next
+      }
+      /<!-- CDS_AGENT_DECISION_CARD:END -->/ {
+        if (!managed) invalid = 1
+        managed = 0
+        next
+      }
+      END {
+        if (managed) invalid = 1
+        exit invalid
+      }
+    ' "$target"; then
+      fail "$target 中的角色决策受管标记不完整或重复，已保留原文件。请修复标记后重试。"
+    fi
+    awk '
+      /<!-- CDS_AGENT_DECISION_CARD:START -->/ { managed = 1; next }
+      /<!-- CDS_AGENT_DECISION_CARD:END -->/ { managed = 0; next }
+      !managed { print }
+    ' "$target" > "$clean"
+  else
+    : > "$clean"
+  fi
+  [ ! -s "$clean" ] || printf '\\n' >> "$clean"
+  cat >> "$clean" <<'AGENT_RULES'
+${decisionContract}
+AGENT_RULES
+  cat "$clean" > "$target" || fail "无法更新 $target，已保留原文件路径。"
+}
+
+install_agent_contract AGENTS.md
+if [ -d .claude ] || [ -f CLAUDE.md ]; then
+  install_agent_contract CLAUDE.md
+fi`;
+}
+
 export function buildAgentStarterHarness(input: AgentStarterHarnessInput): string {
   const safeSkills = [...new Set(input.selectedSkillKeys)].filter((key) => /^[a-z0-9-]+$/.test(key));
   const origin = input.cdsOrigin.replace(/\/+$/, '');
@@ -420,50 +472,47 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
   grep -qxF '/.cds/credentials.json' "$exclude_file" 2>/dev/null || printf '%s\n' '/.cds/credentials.json' >> "$exclude_file"
 fi
 
-install_agent_contract() {
-  target="$1"
-  clean="$TMP_DIR/$(basename "$target").rules"
-  if [ -f "$target" ]; then
-    if ! awk '
-      /<!-- CDS_AGENT_DECISION_CARD:START -->/ {
-        if (managed || seen) invalid = 1
-        managed = 1
-        seen = 1
-        next
-      }
-      /<!-- CDS_AGENT_DECISION_CARD:END -->/ {
-        if (!managed) invalid = 1
-        managed = 0
-        next
-      }
-      END {
-        if (managed) invalid = 1
-        exit invalid
-      }
-    ' "$target"; then
-      fail "$target 中的角色决策受管标记不完整或重复，已保留原文件。请修复标记后重试。"
-    fi
-    awk '
-      /<!-- CDS_AGENT_DECISION_CARD:START -->/ { managed = 1; next }
-      /<!-- CDS_AGENT_DECISION_CARD:END -->/ { managed = 0; next }
-      !managed { print }
-    ' "$target" > "$clean"
-  else
-    : > "$clean"
-  fi
-  [ ! -s "$clean" ] || printf '\n' >> "$clean"
-  cat >> "$clean" <<'AGENT_RULES'
-${decisionContract}
-AGENT_RULES
-  cat "$clean" > "$target" || fail "无法更新 $target，已保留原文件路径。"
-}
-
-install_agent_contract AGENTS.md
-if [ -d .claude ] || [ -f CLAUDE.md ]; then
-  install_agent_contract CLAUDE.md
-fi
+${buildAgentContractInstaller(decisionContract)}
 
 say "安装完成。已写入角色决策规则，没有写入任何 CDS 凭据。"
 echo "下一步: 把 CDS 页面生成的启动提示词交给当前项目里的 Agent。"
+`;
+}
+
+export interface AgentRoleCardHarnessInput {
+  experienceId: AgentExperienceId;
+  roleId: AgentRoleId;
+}
+
+/**
+ * 只换角色决策卡的最小脚本。
+ *
+ * 换角色此前要重跑整个上手向导：重下技能、重写 .env、重建 .cds/bootstrap.json。
+ * 这个脚本只做受管区块替换——不联网、不下技能、不碰 .env、不碰任何凭据文件——
+ * 所以既能用来换角色，也能用来把落后的卡片刷成当前定义。
+ *
+ * 受管区块的识别与替换逻辑与完整安装脚本共用 buildAgentContractInstaller，
+ * 不允许各写一份（一份改了另一份没改，就会出现两种替换行为）。
+ */
+export function buildRoleCardHarness(input: AgentRoleCardHarnessInput): string {
+  const role = roleProfile(input.roleId);
+  const decisionContract = buildRoleDecisionContract(input.experienceId, input.roleId);
+
+  return `#!/bin/sh
+# CDS 角色决策卡更新脚本。只替换受管区块，不下载技能、不写凭据、不联网。
+set -eu
+
+say() { echo "[角色决策卡] $1"; }
+fail() { echo "[角色决策卡] 失败: $1" >&2; exit 1; }
+
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+say "目标角色：${role.label}（${role.cardTitle}）"
+
+${buildAgentContractInstaller(decisionContract)}
+
+say "已更新角色决策卡。项目原有规则保持不变，未写入任何凭据。"
+echo "下一步: 让当前项目里的 Agent 重新读取长期规则，之后的回复会改用${role.cardTitle}。"
 `;
 }

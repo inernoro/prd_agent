@@ -5,8 +5,10 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   AGENT_ROLE_PROFILES,
+  buildAgentContractInstaller,
   buildAgentStarterHarness,
   buildAgentStarterPrompt,
+  buildRoleCardHarness,
   buildRoleDecisionContract,
   type AgentRoleId,
 } from '../../web/src/lib/agent-starter';
@@ -162,6 +164,53 @@ describe('Agent 上手助手角色决策协议', () => {
 
     expect(fs.lstatSync(agentRulesPath).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(sharedRulesPath, 'utf8')).toContain('当前角色：产品经理');
+  });
+
+  it('只换卡片的脚本只改受管区块，不碰技能、.env 和凭据', () => {
+    const projectDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-role-card-'));
+    temporaryDirectories.push(projectDirectory);
+    fs.writeFileSync(path.join(projectDirectory, 'AGENTS.md'), '# 项目原有规则\n');
+
+    // 先用完整脚本装成产品经理，再用最小脚本换成测试与验收。
+    runHarness(projectDirectory, 'newcomer', 'pm');
+    const envBefore = fs.readFileSync(path.join(projectDirectory, '.env'), 'utf8');
+
+    const cardScript = path.join(projectDirectory, 'card.sh');
+    fs.writeFileSync(cardScript, buildRoleCardHarness({ experienceId: 'experienced', roleId: 'qa' }), { mode: 0o700 });
+    execFileSync('sh', [cardScript], { cwd: projectDirectory, stdio: 'pipe' });
+
+    const rules = fs.readFileSync(path.join(projectDirectory, 'AGENTS.md'), 'utf8');
+    expect(rules).toContain('# 项目原有规则');
+    expect(rules).toContain('当前角色：测试与验收');
+    expect(rules).not.toContain('当前角色：产品经理');
+    expect(rules.match(/CDS_AGENT_DECISION_CARD:START/g)).toHaveLength(1);
+    // 最小脚本不得动这些：.env 内容不变，凭据文件仍不存在。
+    expect(fs.readFileSync(path.join(projectDirectory, '.env'), 'utf8')).toBe(envBefore);
+    expect(fs.existsSync(path.join(projectDirectory, '.cds', 'credentials.json'))).toBe(false);
+  });
+
+  it('只换卡片的脚本不联网、不下载技能', () => {
+    const script = buildRoleCardHarness({ experienceId: 'newcomer', roleId: 'dev' });
+    expect(script).not.toContain('curl');
+    expect(script).not.toContain('/api/skills/');
+    expect(script).not.toContain('bootstrap.json');
+    expect(script).toContain('工程交付卡');
+  });
+
+  it('两个脚本共用同一份受管区块替换例程', () => {
+    const contract = buildRoleDecisionContract('newcomer', 'pm');
+    const installer = buildAgentContractInstaller(contract);
+    const full = buildAgentStarterHarness({
+      cdsOrigin: 'https://cds.example.test',
+      experienceId: 'newcomer',
+      roleId: 'pm',
+      selectedSkillKeys: [],
+      includeCds: false,
+    });
+    const cardOnly = buildRoleCardHarness({ experienceId: 'newcomer', roleId: 'pm' });
+
+    expect(full).toContain(installer);
+    expect(cardOnly).toContain(installer);
   });
 
   it('受管标记不完整时停止安装并保留全部原规则', () => {

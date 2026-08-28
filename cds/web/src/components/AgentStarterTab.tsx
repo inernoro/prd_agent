@@ -11,6 +11,7 @@ import {
   FlaskConical,
   Layers3,
   PackageCheck,
+  RefreshCw,
   Sparkles,
   UserRound,
   WandSparkles,
@@ -21,14 +22,18 @@ import {
   AGENT_ROLE_PROFILES,
   buildAgentStarterHarness,
   buildAgentStarterPrompt,
+  buildRoleCardHarness,
   buildRoleDecisionContract,
   type AgentExperienceId,
   type AgentRoleId,
 } from '../lib/agent-starter'
+import { useAgentRoleSelection } from '../hooks/useAgentRoleSelection'
 import { apiRequest } from '../lib/api'
 
 interface AgentStarterTabProps {
   cdsPrompt: string
+  /** 目标项目 id；为空表示还没选定既有项目，此时不上报角色。 */
+  projectId?: string
 }
 
 interface StarterSkill {
@@ -111,11 +116,17 @@ function downloadText(filename: string, content: string) {
   URL.revokeObjectURL(url)
 }
 
-export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
+export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) {
   const reduceMotion = useReducedMotion()
   const [step, setStep] = useState(0)
-  const [experienceId, setExperienceId] = useState<AgentExperienceId>('newcomer')
-  const [roleId, setRoleId] = useState<AgentRoleId>('pm')
+  // 角色和经验档走共享 store：任务地图、项目卡都读同一个值，
+  // 不再是这个组件私有的一次性选择。
+  const [roleSelection, setRoleSelection] = useAgentRoleSelection()
+  const { experienceId, roleId } = roleSelection
+  const setExperienceId = (next: AgentExperienceId): void =>
+    setRoleSelection({ ...roleSelection, experienceId: next })
+  const setRoleId = (next: AgentRoleId): void =>
+    setRoleSelection({ ...roleSelection, roleId: next })
   const [skills, setSkills] = useState<StarterSkill[]>(FALLBACK_SKILLS)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [showSkillLibrary, setShowSkillLibrary] = useState(false)
@@ -123,6 +134,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
   const [includeCds, setIncludeCds] = useState(true)
   const [copied, setCopied] = useState(false)
   const [showDecisionCard, setShowDecisionCard] = useState(false)
+  const [profileSync, setProfileSync] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const [prdAgentOrigin, setPrdAgentOrigin] = useState(
     () => String(import.meta.env.VITE_PRD_AGENT_BASE_URL || '').trim(),
   )
@@ -186,6 +198,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
 
   const roleProfile = AGENT_ROLE_PROFILES.find((item) => item.id === roleId) ?? AGENT_ROLE_PROFILES[0]
   const decisionCard = buildRoleDecisionContract(experienceId, roleId)
+  const roleCardHarness = buildRoleCardHarness({ experienceId, roleId })
 
   const harness = buildAgentStarterHarness({
     experienceId,
@@ -200,6 +213,27 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
     setCopied(false)
     setStep(nextStep)
   }
+
+  // 生成上手包 = 用户确认了这套配置，此时把角色声明记到项目上，
+  // 让 CDS 侧也知道这个项目的 Agent 以什么角色在跑（此前只写进仓库文件，无人读取）。
+  // 失败不拦流程：这只是一条展示用的声明，不该挡住用户拿提示词。
+  useEffect(() => {
+    if (step !== 4 || !projectId) return
+    let active = true
+    setProfileSync('saving')
+    apiRequest(`/api/projects/${encodeURIComponent(projectId)}/agent-profile`, {
+      method: 'PUT',
+      body: {
+        role: roleId,
+        experience: experienceId,
+        skills: selectedSkillItems.map((skill) => skill.key),
+        cardTitle: roleProfile.cardTitle,
+      },
+    })
+      .then(() => { if (active) setProfileSync('saved') })
+      .catch(() => { if (active) setProfileSync('failed') })
+    return () => { active = false }
+  }, [step, projectId, roleId, experienceId, selectedSkills.join(','), roleProfile.cardTitle])
 
   const copyPrompt = async () => {
     await navigator.clipboard.writeText(prompt)
@@ -389,6 +423,13 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                 </button>
                 <h4 className="mt-5 text-2xl font-bold tracking-tight">你的 Agent 上手包已经配好</h4>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">{selectedSkills.length} 项工作方法{includeCds ? '，另含 CDS 接入与真实预览能力' : ''}。复制后直接发给项目里的 Agent。</p>
+                {projectId ? (
+                  <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+                    {profileSync === 'saving' ? '正在把角色记到项目…' : null}
+                    {profileSync === 'saved' ? `已记到项目：这个项目的 Agent 角色是「${roleProfile.label}」，回复用${roleProfile.cardTitle}。` : null}
+                    {profileSync === 'failed' ? '角色没能记到项目（不影响使用提示词），项目列表里暂时不会显示角色。' : null}
+                  </p>
+                ) : null}
 
                 <motion.button
                   type="button"
@@ -408,6 +449,14 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                 <div className="mt-5 flex items-center gap-3">
                   <button type="button" onClick={() => downloadText('cds-agent-starter.sh', harness)} className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]">
                     <Download className="h-4 w-4" /> 下载一键脚本
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadText('cds-agent-role-card.sh', roleCardHarness)}
+                    title="已经装过上手包时用它：只替换角色决策卡，不重下技能、不碰 .env"
+                    className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+                  >
+                    <RefreshCw className="h-4 w-4" /> 只换角色卡
                   </button>
                   <button
                     type="button"

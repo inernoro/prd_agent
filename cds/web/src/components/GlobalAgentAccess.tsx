@@ -19,6 +19,13 @@ type AgentProjectsResponse = {
     branchCount?: number;
     runningBranchCount?: number;
     runningServiceCount?: number;
+    agentProfile?: {
+      role: string;
+      experience: string;
+      skills?: string[];
+      cardTitle?: string;
+      declaredAt?: string;
+    };
   }>;
 };
 
@@ -68,6 +75,7 @@ export function GlobalAgentAccess(): JSX.Element {
           branchCount: project.branchCount,
           runningBranchCount: project.runningBranchCount,
           runningServiceCount: project.runningServiceCount,
+          agentProfile: project.agentProfile,
         })));
       })
       .catch((err: unknown) => {
