@@ -206,4 +206,32 @@ describe('项目 Agent 角色声明', () => {
     const lastFn = before.lastIndexOf('const syncAgentProfile');
     expect(lastFn).toBeGreaterThan(lastEffect);
   });
+
+  /**
+   * 旧响应不许覆盖新结果。
+   *
+   * 慢网下可以「给 A 生成 → 换到 B → 再生成」，A 的响应可能后于 B 落地。
+   * 两个回调若写同一个无主的状态位，就会用 A 的成败报告 B 的成败——
+   * 界面上是一句确定的「已记到项目」或「没能记到」，而它说的是另一次写入的事。
+   * 判据盯住：两个回调都必须经过带序号的 settle，而不是直接 setProfileSync。
+   */
+  it('前端的写入回调认序号，旧响应不覆盖新结果', () => {
+    const source = readFileSync(
+      new URL('../../web/src/components/AgentStarterTab.tsx', import.meta.url),
+      'utf8',
+    );
+    const fnStart = source.indexOf('const syncAgentProfile');
+    const fnEnd = source.indexOf('const copyPrompt', fnStart);
+    expect(fnStart).toBeGreaterThan(-1);
+    expect(fnEnd).toBeGreaterThan(fnStart);
+    const body = source.slice(fnStart, fnEnd);
+    // 领号 + 回调里先比对再落地
+    expect(body).toMatch(/profileSyncTicket\.current \+ 1/);
+    expect(body).toMatch(/if \(profileSyncTicket\.current !== ticket\) return/);
+    // then/catch 必须走 settle，不许直接写状态位
+    expect(body).toMatch(/\.then\(\(\) => settle\('saved'\)\)/);
+    expect(body).toMatch(/\.catch\(\(\) => settle\('failed'\)\)/);
+    expect(body).not.toMatch(/\.then\(\(\) => setProfileSync\(/);
+    expect(body).not.toMatch(/\.catch\(\(\) => setProfileSync\(/);
+  });
 });

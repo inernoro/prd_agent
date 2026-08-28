@@ -17,7 +17,7 @@ import {
   UserRound,
   WandSparkles,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AGENT_EXPERIENCE_PROFILES,
   AGENT_ROLE_PROFILES,
@@ -143,6 +143,8 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
   // 记下这条状态是给哪个项目写的：完成屏上还能换项目，换掉之后
   //「已记到项目」就不再成立，不能让它继续挂在新项目名下。
   const [syncedProjectId, setSyncedProjectId] = useState<string | undefined>(undefined)
+  // 写入序号：只有最后一次写入的回调有权改 profileSync（防旧响应后到覆盖新结果）。
+  const profileSyncTicket = useRef(0)
   const [prdAgentOrigin, setPrdAgentOrigin] = useState(
     () => String(import.meta.env.VITE_PRD_AGENT_BASE_URL || '').trim(),
   )
@@ -234,8 +236,17 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
   // 静默盖到 B 头上——用户从没为 B 确认过任何东西。
   const syncAgentProfile = (targetProjectId?: string): void => {
     if (!targetProjectId) return
+    // 每次写入领一个号，回调只认自己那一号。慢网下可以「给 A 生成 → 换到 B →
+    // 再生成」，此时 A 的响应可能后于 B 落地；两个回调写同一个无主的状态位，
+    // 就会用 A 的结果报告 B 的成败。状态位只该由最后一次写入的回调来动。
+    const ticket = profileSyncTicket.current + 1
+    profileSyncTicket.current = ticket
     setSyncedProjectId(targetProjectId)
     setProfileSync('saving')
+    const settle = (next: 'saved' | 'failed'): void => {
+      if (profileSyncTicket.current !== ticket) return
+      setProfileSync(next)
+    }
     apiRequest(`/api/projects/${encodeURIComponent(targetProjectId)}/agent-profile`, {
       method: 'PUT',
       body: {
@@ -245,8 +256,8 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
         cardTitle: roleProfile.cardTitle,
       },
     })
-      .then(() => setProfileSync('saved'))
-      .catch(() => setProfileSync('failed'))
+      .then(() => settle('saved'))
+      .catch(() => settle('failed'))
   }
 
   const copyPrompt = async () => {
