@@ -594,3 +594,8 @@ processed:
   - 2026-08-26_cds-report-auto-sync.md
   - 2026-08-26_entropy-cleanup.md
   - 2026-08-26_map-cross-instance-data-sync.md
+  - 2026-08-27_attachment-key-guard-debt.md
+  - 2026-08-27_attachment-key-guard-registry.md
+  - 2026-08-27_attachment-storage-key-guard.md
+  - 2026-08-27_cds-compose-credentials.md
+  - 2026-08-27_data-sync-asset-url-contract.md
