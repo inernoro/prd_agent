@@ -15,7 +15,7 @@ import { getSystemSettings, saveSystemSettings, testSystemSettings } from '@/lib
 import type { SystemGatewaySettings, SystemGatewayTestResult } from '@/lib/types';
 import { Button, Card, InlineAlert, SectionLoader } from '@/components/ui';
 import { PageBody, PageHeader, PageShell, Prose } from '@/components/PageShell';
-import { CARD_BODY, GAP } from '@/lib/surface';
+import { GAP } from '@/lib/surface';
 import { FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE } from '@/lib/typography';
 
 type ModelSource = 'auto' | 'pool' | 'model';
@@ -98,7 +98,7 @@ export function GatewaySettingsPage() {
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
         {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
 
-        <Card style={CARD_BODY}>
+        <Card className="lg-gws-card">
           <div style={SECTION_TITLE}>系统级模型</div>
           <div className="lg-gws-sources" role="radiogroup" aria-label="系统级模型来源">
             {SOURCES.map((item) => {
@@ -147,11 +147,12 @@ export function GatewaySettingsPage() {
           ) : null}
 
           <div className="lg-gws-actions">
-            <Button variant="primary" disabled={saving || !dirty} onClick={() => void save()}>
-              {saving ? '正在保存' : '保存设置'}
-            </Button>
+            <span className="lg-gws-actions-hint">测试连接会真发一次极短对话，回报耗时与实际执行的模型。</span>
             <Button disabled={testing} onClick={() => void runTest()}>
               <PlugZap size={15} />{testing ? '正在测试' : '测试连接'}
+            </Button>
+            <Button variant="primary" disabled={saving || !dirty} onClick={() => void save()}>
+              {saving ? '正在保存' : '保存设置'}
             </Button>
           </div>
           {testResult ? (
@@ -163,7 +164,7 @@ export function GatewaySettingsPage() {
           系统替你配了什么：少填不等于少知道。这一块把地址、用途码、密钥状态、归属团队
           全部端出来，用户一眼能核对，出问题时也知道该去哪一页。
         */}
-        <Card style={CARD_BODY}>
+        <Card className="lg-gws-card">
           <div style={SECTION_TITLE}>系统替你配好的</div>
           <div className="lg-gws-facts">
             <div>
@@ -193,7 +194,7 @@ export function GatewaySettingsPage() {
           </div>
         </Card>
 
-        <Card style={CARD_BODY}>
+        <Card className="lg-gws-card">
           <div style={SECTION_TITLE}>谁在用它</div>
           <Prose>改上面那一项会影响下列功能。</Prose>
           <ul className="lg-gws-consumers" style={{ display: 'grid', gap: GAP.normal, margin: 0, padding: 0, listStyle: 'none' }}>

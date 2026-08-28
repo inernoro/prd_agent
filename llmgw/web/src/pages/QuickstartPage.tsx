@@ -893,7 +893,7 @@ export function QuickstartPage() {
           */
           <div className="lg-qs-flow">
             {phase === 'issuing' ? (
-              <Card style={CARD_BODY} className="lg-qs-step-card">
+              <Card className="lg-qs-step-card">
                 <div className="lg-qs-issuing">
                   <div className="lg-qs-issuing-head">
                     <strong>正在签发</strong>
@@ -951,13 +951,21 @@ export function QuickstartPage() {
                 第二屏：模型边推边吐，推完把码亮出来。
                 这条码是谁给的（模型 / 本地降级 / 手改）必须写在脸上，用户才敢信它。
               */
-              <Card style={CARD_BODY} className="lg-qs-step-card">
+              <Card className="lg-qs-step-card">
                 <div className="lg-qs-step-head">
-                  <span className="lg-qs-step-no">2</span>
-                  <div><strong>颁发调用用途码</strong><small>按你写的那句话推导</small></div>
-                  <button type="button" className="lg-text-link" onClick={() => setStage('intent')}>改那句话</button>
+                  <div className="lg-qs-step-head-row">
+                    <span className="lg-qs-step-no">2</span>
+                    <div><strong>颁发调用用途码</strong></div>
+                    <button type="button" className="lg-text-link" onClick={() => setStage('intent')}>改那句话</button>
+                  </div>
+                  {/* 副标题落第二行：和右上角的「改那句话」共处一条基线时，长一点就会撞上。 */}
+                  <small className="lg-qs-step-sub">按你写的那句话推导</small>
                 </div>
-                <blockquote className="lg-qs-quote">{intent}</blockquote>
+                {/* 层 1 · 你说的那句话 */}
+                <div className="lg-qs-labeled">
+                  <span className="lg-qs-label">你写的</span>
+                  <blockquote className="lg-qs-quote">{intent}</blockquote>
+                </div>
 
                 {drafting ? (
                   <div className="lg-qs-thinking" role="status" aria-live="polite">
@@ -968,32 +976,42 @@ export function QuickstartPage() {
 
                 {!drafting && draftNotice ? <div className="lg-test-result is-error" role="status">{draftNotice}</div> : null}
 
+                {/*
+                  层 2 · 系统推出来的结果。
+                  码、来源、理由同属「系统给的结论」，收进同一个块里纵向叙述；
+                  调用类型是「你要做的选择」，拆成下面那个独立字段。
+                  旧版把两者塞进同一行 space-between，于是左右拉开、中间空着。
+                */}
                 {!drafting && derivedAppCallerCode ? (
-                  <div className="lg-qs-issue is-ready">
-                    <div className="lg-qs-issue-code">
-                      <span>将颁发</span>
-                      <code>{derivedAppCallerCode}</code>
+                  <div className="lg-qs-layer">
+                    <div className="lg-qs-issue is-ready">
+                      <div className="lg-qs-issue-code">
+                        <span>将颁发</span>
+                        <code>{derivedAppCallerCode}</code>
+                      </div>
+                      {codeSourceLabel || draftReason ? (
+                        <div className="lg-qs-draft-meta">
+                          {codeSourceLabel ? <span className="lg-qs-draft-source">{codeSourceLabel}</span> : null}
+                          {draftReason ? <span className="lg-qs-draft-reason">{draftReason}</span> : null}
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="lg-qs-type-row" role="radiogroup" aria-label="调用类型">
-                      {REQUEST_TYPES.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={requestType === item.id}
-                          className={requestType === item.id ? 'is-active' : ''}
-                          disabled={!canCreateAccess || identityLocked}
-                          onClick={() => changeRequestType(item.id)}
-                        >{item.label}</button>
-                      ))}
+                    <div className="lg-qs-labeled">
+                      <span className="lg-qs-label">调用类型</span>
+                      <div className="lg-qs-type-row" role="radiogroup" aria-label="调用类型">
+                        {REQUEST_TYPES.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={requestType === item.id}
+                            className={requestType === item.id ? 'is-active' : ''}
+                            disabled={!canCreateAccess || identityLocked}
+                            onClick={() => changeRequestType(item.id)}
+                          >{item.label}</button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-
-                {!drafting && derivedAppCallerCode ? (
-                  <div className="lg-qs-draft-meta">
-                    {codeSourceLabel ? <span className="lg-qs-draft-source">{codeSourceLabel}</span> : null}
-                    {draftReason ? <span className="lg-qs-draft-reason">{draftReason}</span> : null}
                   </div>
                 ) : null}
 
@@ -1036,18 +1054,21 @@ export function QuickstartPage() {
                 </DetailsBlock>
 
                 <div className="lg-qs-create-footer">
-                  <span style={{ ...BODY_TEXT, margin: 0 }}>码登记后跟着团队走，先确认它说的是你要做的事。</span>
+                  <span style={{ ...BODY_TEXT, margin: 0 }}>先确认这条码说的是你要做的事。</span>
                   <Button variant="secondary" disabled={drafting} onClick={() => void submitIntent()}>重新生成</Button>
                   <Button variant="primary" className="lg-qs-primary" disabled={!purposeReady || drafting} onClick={() => setStage('owner')}>下一步</Button>
                 </div>
               </Card>
             ) : (
               /* 第三屏：算谁的。只有两个字段，一屏放完。 */
-              <Card style={CARD_BODY} className="lg-qs-step-card">
+              <Card className="lg-qs-step-card">
                 <div className="lg-qs-step-head">
-                  <span className="lg-qs-step-no">3</span>
-                  <div><strong>算谁的</strong><small>密钥与预算都记在团队名下</small></div>
-                  <button type="button" className="lg-text-link" onClick={() => setStage('draft')}>回上一步</button>
+                  <div className="lg-qs-step-head-row">
+                    <span className="lg-qs-step-no">3</span>
+                    <div><strong>算谁的</strong></div>
+                    <button type="button" className="lg-text-link" onClick={() => setStage('draft')}>回上一步</button>
+                  </div>
+                  <small className="lg-qs-step-sub">密钥与预算都记在团队名下</small>
                 </div>
                 <div className="lg-qs-issue is-ready">
                   <div className="lg-qs-issue-code"><span>即将登记</span><code>{derivedAppCallerCode}</code></div>
