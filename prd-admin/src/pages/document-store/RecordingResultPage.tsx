@@ -16,7 +16,8 @@
  * 阅读器改了取法这里不会静默走旧路。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { BookText, Check, ChevronLeft, Download, FileText, Mic, MoreHorizontal, WifiOff } from 'lucide-react';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import { buildSpeakerStats, parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
@@ -232,6 +233,22 @@ export function RecordingResultShell({
 
 export function RecordingResultPage() {
   const { storeId, entryId } = useParams<{ storeId: string; entryId: string }>();
+  const location = useLocation();
+  /*
+   * 这一屏挂在全屏层、不在 AppShell 里，而壳层卸载时会把自己设的 <html data-theme> 清掉。
+   * 不自己落一次的话，录音那套作用域配色里 [data-theme='dark'] 这一档永远不匹配——
+   * 深色（含跟随系统解析成深色）的用户会拿到浅色版（Codex 第二十二轮 P1）。
+   * 用共享 hook，不自己写 effect：偏好是 'system' 时 store 里的 mode 不变，
+   * 只依赖 mode 的 effect 不会重跑，DOM 会停在旧主题。
+   */
+  useApplyDocumentTheme(location.pathname);
+  /*
+   * 这一屏挂在全屏层、不在 AppShell 里，而壳层卸载时会把自己设的 <html data-theme> 清掉。
+   * 不自己落一次的话，录音那套作用域配色里 [data-theme='dark'] 这一档永远不匹配——
+   * 深色（含跟随系统解析成深色）的用户会拿到浅色版（Codex 第二十二轮 P1）。
+   * 用共享 hook，不自己写 effect：偏好是 'system' 时 store 里的 mode 不变，
+   * 只依赖 mode 的 effect 不会重跑，DOM 会停在旧主题。
+   */
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   // 时长只有加载完音频的播放器知道，条目元数据里没有这个字段。

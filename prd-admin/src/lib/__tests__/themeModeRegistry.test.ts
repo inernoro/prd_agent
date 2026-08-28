@@ -127,6 +127,9 @@ describe('AppShell 之外的独立全屏页必须走共享 hook 落主题', () =
     ['分享阅读页', 'pages/library/LibraryShareViewPage.tsx'],
     ['数据同步授权页', 'pages/data-sync/DataSyncAuthorizePage.tsx'],
     ['数据同步回调页', 'pages/data-sync/DataSyncCallbackPage.tsx'],
+    // 录音两屏也挂在全屏层：它们各自带一套作用域配色，不落 data-theme 就只有浅色档生效
+    ['录音结果页', 'pages/document-store/RecordingResultPage.tsx'],
+    ['录音处理页', 'pages/document-store/RecordingProcessingPage.tsx'],
   ])('%s 用 useApplyDocumentTheme', (_name, relative) => {
     expect(read(relative)).toContain('useApplyDocumentTheme(');
   });

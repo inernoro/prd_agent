@@ -312,3 +312,24 @@ describe('停止看护时把进度位一起腾出来', () => {
     expect(branch).toMatch(/setActiveTranscribeRun\(current => \(current\?\.id === runId \? null : current\)\)/);
   });
 });
+
+/*
+ * 处理页两秒一发地问「这条转录跑到哪了」。查询慢于间隔时两发会重叠：后发的那份是终态、
+ * 清掉了定时器，先发的那份随后落地又把 run 写回在途——此后再没有下一次轮询，
+ * 这一屏永远停在一个走不完的进度上。判据认「回来时只认最新那一发」这件事本身。
+ */
+describe('处理页的轮询丢弃过期回包', () => {
+  const source = read('pages/document-store/RecordingProcessingPage.tsx');
+
+  it('每一发带序号，回来时先认序号再动状态', () => {
+    const fn = source.slice(source.indexOf('const tick = async () => {'));
+    const body = fn.slice(0, fn.indexOf('void tick();'));
+    expect(body.length).toBeGreaterThan(200);
+    const stamp = body.indexOf('++seq');
+    const gate = body.indexOf('!== seq');
+    const write = body.indexOf('setRun(');
+    expect(stamp).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(stamp);
+    expect(write).toBeGreaterThan(gate);
+  });
+});

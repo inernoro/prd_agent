@@ -16,7 +16,8 @@
  * 同一个路由上写这句话说不通。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { Play } from 'lucide-react';
 import { RecordingResultShell } from '@/pages/document-store/RecordingResultPage';
 import { TranscribeStatusCard } from '@/components/doc-browser/TranscribeStatusCard';
@@ -74,6 +75,22 @@ type RunLike = {
 
 export function RecordingProcessingPage() {
   const { storeId, entryId } = useParams<{ storeId: string; entryId: string }>();
+  const location = useLocation();
+  /*
+   * 这一屏挂在全屏层、不在 AppShell 里，而壳层卸载时会把自己设的 <html data-theme> 清掉。
+   * 不自己落一次的话，录音那套作用域配色里 [data-theme='dark'] 这一档永远不匹配——
+   * 深色（含跟随系统解析成深色）的用户会拿到浅色版（Codex 第二十二轮 P1）。
+   * 用共享 hook，不自己写 effect：偏好是 'system' 时 store 里的 mode 不变，
+   * 只依赖 mode 的 effect 不会重跑，DOM 会停在旧主题。
+   */
+  useApplyDocumentTheme(location.pathname);
+  /*
+   * 这一屏挂在全屏层、不在 AppShell 里，而壳层卸载时会把自己设的 <html data-theme> 清掉。
+   * 不自己落一次的话，录音那套作用域配色里 [data-theme='dark'] 这一档永远不匹配——
+   * 深色（含跟随系统解析成深色）的用户会拿到浅色版（Codex 第二十二轮 P1）。
+   * 用共享 hook，不自己写 effect：偏好是 'system' 时 store 里的 mode 不变，
+   * 只依赖 mode 的 effect 不会重跑，DOM 会停在旧主题。
+   */
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [storeName, setStoreName] = useState('');
@@ -183,9 +200,18 @@ export function RecordingProcessingPage() {
      */
     let missingTicks = 0;
     const MAX_MISSING_TICKS = 60; // 2s × 60 = 2 分钟还没建出 run，就不是「马上要来」了
+    /*
+     * 每一发带一个序号，回来时只认最新那一发。查询慢于两秒的间隔时两发会重叠：
+     * 后发的那份是终态、清掉了定时器，先发的那份（还在跑）随后落地又把 run 写回在途——
+     * 此后再没有下一次轮询，这一屏就永远停在一个走不完的进度上（Codex 第二十二轮 P2）。
+     */
+    let seq = 0;
     const tick = async () => {
+      const mine = ++seq;
       const res = await getLatestAgentRun(entryId, 'transcribe');
       if (stale || !res.success) return;
+      // 更晚发出的那一发已经回来过了，这份是旧的，丢掉
+      if (mine !== seq) return;
       const next = (res.data ?? null) as RunLike | null;
       setRun(next);
       // describeFailedTranscription 自己会从 transcriptText 切出部分原文，这里原样交给它
