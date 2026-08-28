@@ -852,7 +852,14 @@ export async function updateSiteAskConfig(
   config: {
     enabled: boolean;
     welcome?: string | null;
-    suggestedQuestions: string[];
+    /**
+     * 只在用户**真的编辑过题库**时才传。省略（undefined）= 「这次不动题库」。
+     *
+     * 为什么不能每次都带上：打开抽屉会顺手排一次后台生成，而抽屉里那份题是打开那一刻
+     * 读到的旧值。只改了别的开关就保存时把旧值一起送上去，会盖掉这期间生成好的题，
+     * 还会被后端判成「owner 手写过」从此钉成 manual，自动生成再也补不回来。
+     */
+    suggestedQuestions?: string[];
     allowAnonymous: boolean;
     dailyLimit: number;
   },
@@ -869,7 +876,7 @@ export interface AskQuestionRegenResult {
    * 这次的结局。四种「没生成出来」的下一步不同，界面上不要压成同一句「失败了」：
    * NoContent 重试没用、ModelUnavailable 值得过会儿再点、ModelUnusable 该自己加一条。
    */
-  outcome?: 'Generated' | 'NoContent' | 'ModelUnusable' | 'ModelUnavailable' | 'Skipped';
+  outcome?: 'Generated' | 'NoContent' | 'ModelUnusable' | 'ModelUnavailable' | 'Skipped' | 'Busy';
   suggestedQuestions: string[];
   questionsSource?: 'auto' | 'manual';
   /** generated=false 时的原话，直接展示，不要自己编一句 */

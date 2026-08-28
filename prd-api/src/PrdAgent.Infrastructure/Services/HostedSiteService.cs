@@ -2990,11 +2990,21 @@ public class HostedSiteService : IHostedSiteService
 
         if (!await CanMaintainAskAsync(site, userId, ct)) return null;
 
-        var questions = AskOpeningQuestions.Normalize(update.SuggestedQuestions);
+        // SuggestedQuestions 为 null = 「这次没动题库」，整个题库字段连同 source 一起不写。
+        //
+        // 为什么必须能表达「不写」而不是每次都写一遍：打开设置抽屉会顺手排一次后台生成，
+        // 而抽屉里那份题是**打开那一刻**读到的旧值（多半是空）。owner 在抽屉里只改了个
+        // 无关开关就保存，如果无条件回写，他手上那份旧值会盖掉这期间生成好的题；更糟的是
+        // 下面的 ownerEdited 会把「旧值 ≠ 新生成的值」判成「他动过手」，从此钉成 manual，
+        // 自动生成再也不会补回来。前端因此只在用户真的编辑过题库时才带上这个字段。
+        var questions = update.SuggestedQuestions == null
+            ? null
+            : AskOpeningQuestions.Normalize(update.SuggestedQuestions);
         // owner 提交的题库与库里那份不一样 = 他动过手，此后自动生成不再覆盖它。
         // 相同就保持原样（多半是他只改了别的开关，把面板上原样回显的那份又提交了一遍）——
         // 每次保存都判 manual 的话，自动生成第一次写完就永远不会再更新了。
-        var ownerEdited = !questions.SequenceEqual(site.AskSuggestedQuestions ?? new List<string>(), StringComparer.Ordinal);
+        var ownerEdited = questions != null
+            && !questions.SequenceEqual(site.AskSuggestedQuestions ?? new List<string>(), StringComparer.Ordinal);
         var questionsSource = ownerEdited ? "manual" : site.AskQuestionsSource;
         var dailyLimit = update.DailyLimit < 0 ? 0 : update.DailyLimit;
         // 欢迎语要落库、而且随**每一次公开分享视图**返回，不设上限的话一段几 MB 的粘贴
@@ -3004,24 +3014,30 @@ public class HostedSiteService : IHostedSiteService
             ? null
             : AskAccessPolicy.TrimWelcome(update.Welcome);
 
-        await _db.HostedSites.UpdateOneAsync(
-            s => s.Id == siteId,
-            Builders<HostedSite>.Update
-                .Set(s => s.AskEnabled, update.Enabled)
-                .Set(s => s.AskWelcome, welcome)
+        var updateDef = Builders<HostedSite>.Update
+            .Set(s => s.AskEnabled, update.Enabled)
+            .Set(s => s.AskWelcome, welcome)
+            .Set(s => s.AskAllowAnonymous, update.AllowAnonymous)
+            .Set(s => s.AskDailyLimit, dailyLimit)
+            .Set(s => s.AskConfigUpdatedAt, DateTime.UtcNow)
+            .Set(s => s.AskConfigUpdatedBy, userId)
+            .Set(s => s.UpdatedAt, DateTime.UtcNow);
+        if (questions != null)
+        {
+            updateDef = updateDef
                 .Set(s => s.AskSuggestedQuestions, questions)
-                .Set(s => s.AskQuestionsSource, questionsSource)
-                .Set(s => s.AskAllowAnonymous, update.AllowAnonymous)
-                .Set(s => s.AskDailyLimit, dailyLimit)
-                .Set(s => s.AskConfigUpdatedAt, DateTime.UtcNow)
-                .Set(s => s.AskConfigUpdatedBy, userId)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+                .Set(s => s.AskQuestionsSource, questionsSource);
+        }
+
+        await _db.HostedSites.UpdateOneAsync(s => s.Id == siteId, updateDef, cancellationToken: ct);
 
         site.AskEnabled = update.Enabled;
         site.AskWelcome = welcome;
-        site.AskSuggestedQuestions = questions;
-        site.AskQuestionsSource = questionsSource;
+        if (questions != null)
+        {
+            site.AskSuggestedQuestions = questions;
+            site.AskQuestionsSource = questionsSource;
+        }
         site.AskAllowAnonymous = update.AllowAnonymous;
         site.AskDailyLimit = dailyLimit;
         site.AskConfigUpdatedAt = DateTime.UtcNow;

@@ -108,8 +108,29 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         });
     }
 
+    /// <summary>
+    /// owner 明确点「重新生成」走这条：同步等结果，不像 <see cref="QueueEnsure"/> 那样甩到后台。
+    ///
+    /// 但它必须和后台那条抢**同一把** <c>_inFlight</c> 锁。不抢的话有两种真实撞法：
+    /// 连点两次重新生成、或者重新生成正好撞上一次后台生成——两次执行都会读到刚被清掉的
+    /// 版本戳、各自完整烧一次模型调用，owner 被计两次费，最后谁写完算谁的。类注释里
+    /// 「同一站点同时只跑一次」的不变量，只有 QueueEnsure 守着就是形状 2：门只装了一半。
+    ///
+    /// 抢不到就如实返回 <see cref="AskOpenerOutcome.Busy"/>，不排队等：让 owner 知道
+    /// 「已经在跑了」比让他对着转圈等一次别人的调用更清楚（expectation-management）。
+    /// </summary>
     public async Task<AskOpenerOutcome> EnsureAsync(string siteId, CancellationToken ct = default)
-        => await RunAsync(siteId, ct);
+    {
+        if (!_inFlight.TryAdd(siteId, 0)) return AskOpenerOutcome.Busy;
+        try
+        {
+            return await RunAsync(siteId, ct);
+        }
+        finally
+        {
+            _inFlight.TryRemove(siteId, out _);
+        }
+    }
 
     private async Task<AskOpenerOutcome> RunAsync(string siteId, CancellationToken ct)
     {

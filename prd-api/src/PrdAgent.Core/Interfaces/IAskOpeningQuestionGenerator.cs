@@ -45,4 +45,10 @@ public enum AskOpenerOutcome
 
     /// <summary>不该生成（提问没开 / owner 手写过 / 这一版正文已经算过）</summary>
     Skipped,
+
+    /// <summary>
+    /// 这个站点已经有一次生成在跑，本次没有另起一次模型调用。
+    /// 等那一次写完就有结果，重复点不会更快，也不会重复计费。
+    /// </summary>
+    Busy,
 }

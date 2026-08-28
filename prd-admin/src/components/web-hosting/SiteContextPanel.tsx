@@ -5,12 +5,7 @@ import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { buildSiteConclusion, daysUntil, linksOfSite } from './siteConclusion';
 import { fmtSize, relativeTime } from './siteFormat';
 import type { PulseItem } from './weeklyPulse';
-
-const VISIBILITY_LABELS: Record<string, string> = {
-  'owner-only': '仅我可见',
-  'logged-in': '登录可见',
-  public: '公开',
-};
+import { normalizeVisibility, VISIBILITY_ACCESS_HINT, visibilityLabelOf } from './shareVisibility';
 
 const PULSE_DOT: Record<PulseItem['tone'], string> = {
   success: 'var(--accent-fg-success)',
@@ -484,7 +479,10 @@ export function SiteContextPanel({
                 <Link2 size={13} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate" style={{ fontSize: 12, color: 'var(--text-primary)' }}>
-                    {(l.title || '未命名链接')} · {VISIBILITY_LABELS[l.visibility ?? 'owner-only'] ?? l.visibility}
+                    {(l.title || '未命名链接')} ·{' '}
+                    <span title={VISIBILITY_ACCESS_HINT[normalizeVisibility(l.visibility)]}>
+                      {visibilityLabelOf(l.visibility)}
+                    </span>
                   </div>
                   <div style={{
                     fontFamily: 'var(--font-code)',

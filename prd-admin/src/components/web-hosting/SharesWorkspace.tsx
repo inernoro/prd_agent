@@ -6,12 +6,7 @@ import { toast } from '@/lib/toast';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { buildLedgerConclusion, buildShareLedger, filterShareLinks, type ShareTier } from './shareLedger';
 import { daysUntil } from './siteConclusion';
-
-const VISIBILITY_LABELS: Record<string, string> = {
-  'owner-only': '仅我可见',
-  'logged-in': '登录可见',
-  public: '公开',
-};
+import { normalizeVisibility, VISIBILITY_ACCESS_HINT, visibilityLabelOf } from './shareVisibility';
 
 /**
  * 三层的表头分隔说明。设计稿在每个分段的右侧写一句「这一层还能做什么」——
@@ -379,8 +374,11 @@ function TierSection({
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 <span className="truncate font-mono" style={{ maxWidth: 190 }}>{sharePath(l)}</span>
                 <Dot />
-                <span style={{ color: visibilityColor(l.visibility) }}>
-                  {VISIBILITY_LABELS[l.visibility ?? 'public'] ?? '公开'}
+                <span
+                  style={{ color: visibilityColor(l.visibility) }}
+                  title={VISIBILITY_ACCESS_HINT[normalizeVisibility(l.visibility)]}
+                >
+                  {visibilityLabelOf(l.visibility)}
                 </span>
                 {l.accessLevel === 'password' && (
                   <>

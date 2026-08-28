@@ -41,7 +41,9 @@ aside .flex-col.hidden.overflow-y-auto.shrink-0.xl:flex {gap:12px;overscroll-beh
       svg .shrink-0
       div .flex-1.min-w-0
         div .truncate
-          "多租户架构设计 · 仅我可见"
+          "多租户架构设计 ·"
+          span
+            "仅我和协作者"
         div
           "9 次 · 剩 7 天 · 有密码"
       button .shrink-0 [type=button]

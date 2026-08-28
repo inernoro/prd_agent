@@ -1,7 +1,11 @@
 import { Check, Copy, Eye, Globe, HelpCircle, Lock, User, Users } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
-export type ShareVisibility = 'owner-only' | 'logged-in' | 'public';
+import { VISIBILITY_ACCESS_HINT, VISIBILITY_LABEL, type ShareVisibility } from './shareVisibility';
+
+// 文案与放行范围的 SSOT 在 ./shareVisibility；这里只做再导出，避免既有 import 路径全改一遍。
+export { VISIBILITY_ACCESS_HINT, VISIBILITY_LABEL };
+export type { ShareVisibility };
 
 /**
  * 访客会先撞上哪道门 —— 由可见性与密码共同决定，两者是「与」的关系：
@@ -26,8 +30,8 @@ const GATE_COPY: Record<VisitorGate, { title: string; hint: string }> = {
     hint: '输对密码后才进入正文。密码可以口述，也可以连着链接一起复制。',
   },
   login: {
-    title: '别人打开只看到「无权限」',
-    hint: '仅我可见是默认档：链接可以先建好自己核对，确认无误再改成登录可见或公开。',
+    title: '团队外的人打开只看到「无权限」',
+    hint: '这一档放行的是我自己和这个站点已共享团队的成员——不是只有我。要真正谁都打不开，先把站点的团队共享撤掉。',
   },
   'login-then-password': {
     title: '访客先登录，再输密码',
@@ -37,12 +41,6 @@ const GATE_COPY: Record<VisitorGate, { title: string; hint: string }> = {
     title: '访客直接看到正文',
     hint: '任何拿到链接的人都能打开，没有任何拦截。',
   },
-};
-
-export const VISIBILITY_LABEL: Record<ShareVisibility, string> = {
-  'owner-only': '仅我可见',
-  'logged-in': '登录可见',
-  public: '公开',
 };
 
 /**

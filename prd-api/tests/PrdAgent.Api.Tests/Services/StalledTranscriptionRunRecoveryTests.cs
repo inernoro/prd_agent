@@ -1216,14 +1216,25 @@ public sealed class StalledTranscriptionRunRecoveryTests
         await fixture.Db.DocumentEntries.InsertOneAsync(entry);
         await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
 
+        // 租期给足、续期定时器长到本用例跑不到：这把租约什么时候失效由下面那行显式改
+        // expiresAt 决定，不靠掐表。
+        //
+        // 原来这里写的是 150ms 租期 + 一句 Task.Delay(250)，指望「finalize 被卡住的那会儿
+        // 租约自然过期」。但 RequeueExistingAsync 在进 finalize 之前要打四次 Mongo
+        // （EnsureHeldAsync → 写 marker → EnsureHeldAsync → FindOneAndUpdate），而
+        // EnsureHeldAsync 每次只把租期续 150ms。这四次往返里任何一次超过 150ms，租约就在
+        // **进 finalize 之前**丢掉、当场抛 DocumentStoreRunLeaseLostException，finalizeEntered
+        // 永远不会被 set，下面那句 WaitAsync(5s) 于是抛 TimeoutException。CI 上跑得慢一点
+        // 就会撞上——同一个 commit 在 25 秒跑完的那次全绿，35 秒和 40 秒的两次都红。
+        // 用例要验的是「finalize 期间租约被接管」，与这四次往返有多快无关。
         await using var staleLease = await DocumentStoreRunOutputLease.AcquireAsync(
             fixture.Db,
             entry.Id,
             run.Kind,
             CancellationToken.None,
-            leaseDuration: TimeSpan.FromMilliseconds(150),
-            renewalInterval: TimeSpan.FromSeconds(5),
-            acquireTimeout: TimeSpan.FromSeconds(1));
+            leaseDuration: TimeSpan.FromSeconds(30),
+            renewalInterval: TimeSpan.FromMinutes(5),
+            acquireTimeout: TimeSpan.FromSeconds(5));
         var finalizeEntered = new TaskCompletionSource<bool>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFinalize = new TaskCompletionSource<bool>(
@@ -1244,8 +1255,12 @@ public sealed class StalledTranscriptionRunRecoveryTests
                 return false;
             });
 
-        await finalizeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Task.Delay(TimeSpan.FromMilliseconds(250));
+        await finalizeEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // finalize 已经进去并卡住了，现在才让这把租约失效——直接把 expiresAt 推到过去，
+        // 而不是等墙上时钟。这一笔就是「旧 holder 的租期到了」这件事本身。
+        await ExpireOutputLeaseAsync(fixture, entry.Id, run.Kind);
+
         await using var replacementLease = await DocumentStoreRunOutputLease.AcquireAsync(
             fixture.Db,
             entry.Id,
@@ -1726,6 +1741,28 @@ public sealed class StalledTranscriptionRunRecoveryTests
             StartedAt = status == DocumentStoreRunStatus.Running ? createdAt : null,
             HeartbeatAt = heartbeatAt,
         };
+
+    /// <summary>
+    /// 把某个条目的输出租约当场判为过期。
+    ///
+    /// 键与 <c>DocumentStoreRunOutputLease.AcquireAsync</c> 同一套构造（kind:entryId，
+    /// 两段都 Trim + 转小写）；这里只改 expiresAt，owner 原样留着，所以下一次
+    /// EnsureHeldAsync 会因为 expiresAt &gt; now 不成立而 fail-closed —— 与真的等到租期
+    /// 走完是同一条路径，只是不必真的去等。
+    /// </summary>
+    private static async Task ExpireOutputLeaseAsync(
+        RecordingRunMongoFixture fixture, string entryId, string kind)
+    {
+        var key = $"{(kind ?? string.Empty).Trim().ToLowerInvariant()}:"
+                  + $"{(entryId ?? string.Empty).Trim().ToLowerInvariant()}";
+        var leases = fixture.Db.Database.GetCollection<BsonDocument>("document_store_run_output_leases");
+        var result = await leases.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", key),
+            Builders<BsonDocument>.Update.Set("expiresAt", DateTime.UtcNow.AddMinutes(-1)));
+        // 改不到就说明键算错了——租约还好好活着，用例后面会以一个看不懂的形式失败。
+        // 在这里当场判红，比让人去猜 finalize 为什么没丢租约要省事。
+        result.MatchedCount.ShouldBe(1, $"没找到输出租约 {key}，键的构造与 AcquireAsync 不一致");
+    }
 
     private sealed class RecordingRunMongoFixture : IAsyncDisposable
     {

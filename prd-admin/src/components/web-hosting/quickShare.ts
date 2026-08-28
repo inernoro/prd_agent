@@ -12,7 +12,8 @@ import type { ShareLinkItem } from '@/services/real/webPages';
  * 不必先把整个面板挂起来。
  */
 
-export type ShareVisibility = 'owner-only' | 'logged-in' | 'public';
+export type { ShareVisibility } from './shareVisibility';
+import { normalizeVisibility, type ShareVisibility } from './shareVisibility';
 
 /**
  * 下拉面板一键生成用的默认值。
@@ -30,15 +31,17 @@ export const QUICK_SHARE_DEFAULTS = {
   expiresInDays: 7,
 };
 
+// 短语域：下拉里每行只有一个词的宽度。语义必须与 ./shareVisibility 的 SSOT 一致——
+// owner-only 放行的是「创建者 + 站点已共享团队的成员」，不是字面上的「只有我」。
 export const VISIBILITY_LABEL: Record<ShareVisibility, string> = {
-  'owner-only': '只有我',
+  'owner-only': '我和协作者',
   'logged-in': '登录的人',
   public: '任何人',
 };
 
 /** 每一档「选了它会发生什么」——面板展开时显示在选项右边，用户不必去猜三个词的差别 */
 export const VISIBILITY_HINT: Record<ShareVisibility, string> = {
-  'owner-only': '别人打开是「无权限」，适合先自己核一遍',
+  'owner-only': '我和站点协作者能打开，其他人是「无权限」',
   'logged-in': '登录后可打开，能看到谁看过',
   public: '不登录也能打开，含站外的人',
 };
@@ -60,9 +63,7 @@ export const EXPIRY_OPTIONS: { days: number; label: string }[] = [
  * 而真相是任何拿到链接的人都能打开。往「更安全」的方向猜，在这里恰恰是最危险的猜法。
  */
 export function resolveVisibility(link: { visibility?: string | null }): ShareVisibility {
-  const v = link.visibility;
-  if (v === 'owner-only' || v === 'logged-in' || v === 'public') return v;
-  return 'public';
+  return normalizeVisibility(link.visibility);
 }
 
 /** 这条链接现在还打得开吗（未撤销、未过期） */

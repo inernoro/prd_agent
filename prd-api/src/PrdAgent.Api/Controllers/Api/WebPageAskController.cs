@@ -185,6 +185,7 @@ public class WebPageAskController : ControllerBase
             AskOpenerOutcome.NoContent => "这一页读不出可提问的正文（比如纯视频、纯图的包装站），重试也不会有结果。",
             AskOpenerOutcome.ModelUnusable => "模型读完这一页没写出能用的问题。可以先自己加一条，或者换一版正文再试。",
             AskOpenerOutcome.ModelUnavailable => "模型这会儿调不通（网关没有可用模型池或暂时不可达）。这是暂时的，过一会儿再点一次。",
+            AskOpenerOutcome.Busy => "这个站点已经有一次生成在跑了，等它写完就会出现，不用重复点。",
             _ => "这个站点现在不需要生成（提问没开，或题库已经是你自己写的）。",
         };
 

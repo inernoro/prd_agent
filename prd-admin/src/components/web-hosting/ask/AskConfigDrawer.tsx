@@ -36,6 +36,15 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   const [unsupportedReason, setUnsupportedReason] = useState<string | null>(null);
   /** 这批题是系统读正文写的（auto）还是 owner 自己写的（manual） */
   const [questionsSource, setQuestionsSource] = useState<'auto' | 'manual'>('auto');
+  /**
+   * 这次开着抽屉的期间，用户有没有真的动过题库。
+   *
+   * 保存时只有它为 true 才把题库送上去。抽屉里那份题是**打开那一刻**读到的旧值，而打开
+   * 这一下会顺手排一次后台生成；只改了别的开关就保存却把旧值一起送上去，会盖掉这期间
+   * 生成好的题，还会被后端判成「owner 手写过」从此钉成 manual，自动生成再也补不回来。
+   * 「重新生成」写回的那份也不算动手——那是系统写的，不该把站点钉成 manual。
+   */
+  const [questionsDirty, setQuestionsDirty] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   /** 重新生成没生成出东西时，后端的原话。不自己编一句「失败了」 */
   const [regenNote, setRegenNote] = useState<string | null>(null);
@@ -75,6 +84,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     // 界面上立刻改口径：他一动手，这批题就归他了，之后重新上传不会再被自动覆盖。
     // 与后端判据同义（后端按提交的列表与库里那份是否相同来判），这里只是提前说出来。
     setQuestionsSource('manual');
+    setQuestionsDirty(true);
     setRegenNote(null);
     setDraft('');
   }, [draft, maxLength, maxQuestions]);
@@ -90,6 +100,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     }
     setQuestions(res.data?.suggestedQuestions ?? []);
     setQuestionsSource('auto');
+    // 这份是系统刚写进库的，不是他动的手：保存时不要再送回去把站点钉成 manual。
+    setQuestionsDirty(false);
     // 没生成出来就把后端的原话摆出来（这一页读不出正文 / 模型没给出可用问题），
     // 不假装成功，也不自己换一套说法（no-rootless-tree）
     if (!res.data?.generated) setRegenNote(res.data?.message ?? '这一页没能读出可提问的正文。');
@@ -101,7 +113,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     const res = await updateSiteAskConfig(siteId, {
       enabled,
       welcome: welcome.trim() || null,
-      suggestedQuestions: questions,
+      ...(questionsDirty ? { suggestedQuestions: questions } : {}),
       allowAnonymous,
       dailyLimit,
     });
@@ -112,7 +124,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     }
     onSaved?.(res.data);
     onClose();
-  }, [allowAnonymous, dailyLimit, enabled, onClose, onSaved, questions, siteId, welcome]);
+  }, [allowAnonymous, dailyLimit, enabled, onClose, onSaved, questions, questionsDirty, siteId, welcome]);
 
   const body = (
     // z-index 必须高于 SitePreviewModal 的 z-[100]：本抽屉唯一的入口就在那个弹窗的顶栏里，
@@ -239,6 +251,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
                       onClick={() => {
                         setQuestions((prev) => prev.filter((_, idx) => idx !== i));
                         setQuestionsSource('manual');
+                        setQuestionsDirty(true);
                         setRegenNote(null);
                       }}
                       aria-label={`删除「${q}」`}
