@@ -47,11 +47,18 @@ export function SceneCursor({
   beat,
   /** 走位时长；跟着这一幕的节拍走，别比它自己那一拍还长 */
   travelMs = 460,
+  /**
+   * 手落到目标上时回调一次 —— 这就是「上一个扳手扣下」。
+   * 节拍器拿它来放行 gated 的那一拍，于是「事情发生」永远排在「手到位」之后，
+   * 不靠任何人去调毫秒数对齐。
+   */
+  onArrive,
   style,
 }: {
   spot: CursorSpot | null;
   beat: number;
   travelMs?: number;
+  onArrive?: () => void;
   style?: CSSProperties;
 }) {
   const hostRef = useRef<HTMLSpanElement | null>(null);
@@ -112,6 +119,22 @@ export function SceneCursor({
   const on = !!spot && !spot.hidden && !!pos;
 
   const pressDelay = moved ? `${travelMs}ms` : '0ms';
+
+  /*
+   * 到位通知。不用 transitionend：目标和上一拍同一个位置时压根不会有 transition，
+   * 事件永远不来，那一拍就卡死了。改成「落点定下来之后按走位时长报一次」——
+   * 没动就立刻报，动了就等它走完。
+   */
+  const arriveRef = useRef(onArrive);
+  arriveRef.current = onArrive;
+  useEffect(() => {
+    if (!pos) return undefined;
+    const wait = moved ? travelMs : 0;
+    const id = setTimeout(() => arriveRef.current?.(), wait);
+    return () => clearTimeout(id);
+    // moved 故意不进依赖：它由 pos 推出来，进了会因为 prev 的更新多跑一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pos?.left, pos?.top, travelMs]);
 
   return (
     <span

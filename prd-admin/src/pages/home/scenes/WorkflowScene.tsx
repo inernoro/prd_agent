@@ -42,6 +42,9 @@ const firstNodeBeat = B.run;
 // 旁白说完了、画面还在转——又一处"判据与被判据对象的时序对不上"。
 const NARRATION_AT = [0, 1, 1, 2, 2, 2, 2, 3];
 
+/** 要等手真的落到目标上才开始的拍（理由见 useSceneTimeline 的 gates 说明）。 */
+const GATED = new Set<number>([B.run]);
+
 /**
  * 指针走位表。这一幕只有一个动作：第 1 拍按下「运行」，后面六个舱是机器在跑，
  * 手该退开——所以从第 2 拍起指针就收起来，不要一只手悬在那儿假装还在操作。
@@ -82,8 +85,9 @@ function nodeStateAt(index: number, beat: number): NodeState {
 export function WorkflowScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.workflow;
-  const { beat, ref } = useSceneTimeline(HOLDS);
+  // 必须在节拍器之前取：gates 要用它决定启不启用（不画指针就没人 release）
   const { isDesktop } = useBreakpoint();
+  const { beat, ref, armed, release } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
   const started = beat >= B.run;
   const allDone = s.nodes.every((_, i) => nodeStateAt(i, beat) === 'done');
 
@@ -101,7 +105,7 @@ export function WorkflowScene({ variant }: { variant?: SceneVariant }) {
       <div ref={ref} className="relative">
         {/* 演示指针：旁白第 1 拍写的是「点运行」，那就得真有一只手按在运行键上。
             窄屏不画（小屏没有鼠标）。 */}
-        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[armed ?? beat] ?? null} beat={armed ?? beat} onArrive={release} />}
         {/* 画布顶栏：模板名 + 运行按钮，照编辑器那一条 */}
         <div
           className="flex items-center gap-2.5 flex-wrap"

@@ -26,6 +26,9 @@ import type { VocLeaf } from '../i18n/landing';
 const HOLDS = [2000, 1500, 2200, 2400];
 const B = { sweep: 0, calm: 1, pain: 2, drill: 3 } as const;
 
+/** 要等手真的落到目标上才开始的拍（理由见 useSceneTimeline 的 gates 说明）。 */
+const GATED = new Set<number>([B.drill]);
+
 /**
  * 指针走位表。前两拍是机器在扫、在看，没有手；第 2 拍痛点亮起来时手先移过去，
  * 第 3 拍才按下去 —— 「先走到，再发生」。
@@ -121,8 +124,9 @@ function leafFill(status: VocLeaf['status'], hue: number, depth: number): string
 export function VocScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.voc;
-  const { beat, ref, visible } = useSceneTimeline(HOLDS);
+  // 必须在节拍器之前取：gates 要用它决定启不启用（不画指针就没人 release）
   const { isDesktop } = useBreakpoint();
+  const { beat, ref, armed, release, visible } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
   const isMobile = useIsMobile();
   const steel = inkTone(SCENE_HUE.steel);
 
@@ -173,7 +177,7 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
       <div ref={ref} className="relative">
         {/* 演示指针：旁白最后一拍写的是「点进去，直接落到痛点榜」——那就得看见
             手按在那块痛点上，痛点榜才滑出来。窄屏不画。 */}
-        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[armed ?? beat] ?? null} beat={armed ?? beat} onArrive={release} />}
         <div
           className="flex items-center gap-2.5 flex-wrap"
           style={{ padding: '12px 16px', borderBottom: `1px solid ${SCENE.hair}` }}

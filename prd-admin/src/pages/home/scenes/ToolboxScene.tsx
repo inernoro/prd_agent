@@ -27,6 +27,9 @@ import type { RosterItem } from '../i18n/landing';
 const HOLDS = [1800, 1500, 2400, 1900];
 const B = { grid: 0, typing: 1, filtered: 2, pick: 3 } as const;
 
+/** 要等手真的落到目标上才开始的拍（理由见 useSceneTimeline 的 gates 说明）。 */
+const GATED = new Set<number>([B.pick]);
+
 /**
  * 指针走位表。第 1 拍手停在搜索框上（旁白是「想干什么就搜什么」——打字不该按下去，
  * 按下去反而是假动作）；第 2 拍筛完结果、手提前移到即将点的那张卡上；
@@ -87,8 +90,9 @@ function matchesQuery(item: RosterItem, query: string): boolean {
 export function ToolboxScene() {
   const { t } = useLanguage();
   const s = t.tail.toolbox;
-  const { beat, ref } = useSceneTimeline(HOLDS);
+  // 必须在节拍器之前取：gates 要用它决定启不启用（不画指针就没人 release）
   const { isDesktop } = useBreakpoint();
+  const { beat, ref, armed, release } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
   const typed = useTypewriter(s.searchWord, beat === B.typing, 900);
   const amber = inkTone(SCENE_HUE.amber);
 
@@ -113,7 +117,7 @@ export function ToolboxScene() {
       <div ref={ref} className="relative">
         {/* 演示指针：打字那一拍停在搜索框上（停，不按 —— 按下去就成了假动作），
             「选一个」那一拍才真的按在卡片上。窄屏不画。 */}
-        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[armed ?? beat] ?? null} beat={armed ?? beat} onArrive={release} />}
         {/* 控制条：权属 tab + 类型 tab + 搜索 + 计数 + 展示切换，照真实那一页的顺序摆 */}
         <div
           className="relative flex items-center gap-2 flex-wrap"

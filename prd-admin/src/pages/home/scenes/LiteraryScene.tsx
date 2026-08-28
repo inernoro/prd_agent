@@ -38,25 +38,20 @@ const STYLE_PALETTE: Record<LiteraryStyleKey, [number, number, number]> = {
 };
 const STYLE_ORDER: LiteraryStyleKey[] = ['calm', 'warm', 'forest', 'night'];
 
-/**
- * 第 3 拍是**只让手走过去**的空拍，不发生任何事。理由同视觉幕：效果在一拍的第 0
- * 毫秒发生，而指针飞过来要走位时长，挤在同一拍就成了「还没点到就已经生成了」。
- */
 const HOLDS = [
   1100, // 0 只有文字
   900,  // 1 文档就位
   2400, // 2 通读打锚点
-  560,  // 3 手移到「生成全部配图」（空拍，只走位）
-  1100, // 4 点生成
-  1600, // 5 配图 1 落位
-  1600, // 6 配图 2 落位
-  1500, // 7 配图 3 还在跑
-  2200, // 8 换风格
+  1100, // 3 点生成
+  1600, // 4 配图 1 落位
+  1600, // 5 配图 2 落位
+  1500, // 6 配图 3 还在跑
+  2200, // 7 换风格
 ];
-const B = { idle: 0, uploaded: 1, marking: 2, reachGen: 3, generating: 4, fig1: 5, fig2: 6, fig3: 7, restyle: 8 } as const;
+const B = { idle: 0, uploaded: 1, marking: 2, generating: 3, fig1: 4, fig2: 5, fig3: 6, restyle: 7 } as const;
 
-/** 拍号 → 旁白第几句。走位空拍不换句，沿用上一拍那句。 */
-const NARRATION_AT = [0, 1, 2, 2, 3, 4, 5, 6, 7];
+/** 要等手真的落到目标上才开始的拍（理由见 useSceneTimeline 的 gates 说明）。 */
+const GATED = new Set<number>([B.generating, B.restyle]);
 
 interface Tone { bg: string; mid: string; fg: string }
 
@@ -92,7 +87,10 @@ const CONFIG_ICONS = [
 export function LiteraryScene() {
   const { t } = useLanguage();
   const s = t.scenes.literary;
-  const { beat, ref } = useSceneTimeline(HOLDS);
+  // 指针只在 lg 以上画：窄屏下左右两栏摞成上下，配图卡不在指针那套坐标系里。
+  // 必须在节拍器之前取 —— gates 要用它决定启不启用。
+  const { isDesktop } = useBreakpoint();
+  const { beat, ref, armed, release } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
   const [style, setStyle] = useState<LiteraryStyleKey>('calm');
   const tone = toneOf(style);
   const marked = useMarkCounter(beat === B.marking, 6, HOLDS[B.marking]);
@@ -106,23 +104,8 @@ export function LiteraryScene() {
     if (beat === B.idle) touched.current = false;
   }, [beat]);
 
-  // 指针只在 lg 以上画：窄屏下左右两栏摞成上下，配图卡不在指针那套坐标系里
-  const { isDesktop } = useBreakpoint();
-
-  /**
-   * 换风格那两拍的落点：指针要**提前一拍**停在即将被点亮的那枚 chip 上，
-   * 到 restyle 那拍才原地按下 —— 否则又是「颜色先变、指针后到」。
-   * fig3 拍时 style 还是旧值，算出来的下一档正好就是 restyle 会切到的那档。
-   */
-  const [aimStyle, setAimStyle] = useState<LiteraryStyleKey>(() => STYLE_ORDER[1]);
-  useEffect(() => {
-    if (beat === B.fig3) setAimStyle(STYLE_ORDER[(STYLE_ORDER.indexOf(style) + 1) % STYLE_ORDER.length]);
-  }, [beat, style]);
-
-  const cursorSpot: CursorSpot | null =
-    beat === B.fig3 ? { target: `style-${aimStyle}` }
-      : beat === B.restyle ? { target: `style-${aimStyle}`, press: true }
-        : CURSOR_AT[beat] ?? null;
+  // 正在等手到位时，指针先按**下一拍**的落点走 —— 这就是「先走到」
+  const cursorSpot = CURSOR_AT[armed ?? beat] ?? null;
 
   return (
     <SceneFrame
@@ -135,36 +118,14 @@ export function LiteraryScene() {
       panelStyle={{ background: SCENE.base }}
     >
       <div ref={ref} className="relative">
-        {/* 演示指针：窄屏不画（小屏没有鼠标，画一枚箭头反而突兀）。
-            挂在这一层是因为它要同时够得着顶栏的风格 chip 和下面正文里的段落。 */}
-        {isDesktop && <SceneCursor spot={cursorSpot} beat={beat} />}
-        {/* 风格切换：这一幕唯一的杠杆，摆在面板顶部让人一眼看见 */}
-        <div className="relative flex items-center gap-2 flex-wrap" style={{ padding: '12px 14px', borderBottom: `1px solid ${SCENE.hair}` }}>
-          <SceneMono style={{ letterSpacing: '0.18em', textTransform: 'uppercase' }}>{s.styleLabel}</SceneMono>
-          {STYLE_ORDER.map((key) => {
-            const on = key === style;
-            return (
-              <button
-                key={key}
-                type="button"
-                data-cursor-target={`style-${key}`}
-                onClick={() => { touched.current = true; setStyle(key); }}
-                aria-pressed={on}
-                style={{
-                  height: '26px', padding: '0 11px', borderRadius: '7px', fontSize: '12px', cursor: 'pointer',
-                  background: on ? pine.soft : SCENE.ghost,
-                  border: `1px solid ${on ? pine.border : SCENE.line}`,
-                  color: on ? pine.bright : SCENE.inkDim,
-                  transition: 'background .3s ease, border-color .3s ease, color .3s ease',
-                }}
-              >
-                {s.styles[key]}
-              </button>
-            );
-          })}
-          <span className="ml-auto hidden sm:block" style={{ fontSize: '11.5px', color: SCENE.inkFaint }}>{s.styleHint}</span>
-        </div>
-
+        {/* 演示指针：窄屏不画（小屏没有鼠标，画一枚箭头反而突兀） */}
+        {isDesktop && <SceneCursor spot={cursorSpot} beat={armed ?? beat} onArrive={release} />}
+        {/*
+          这里原来有一条「风格 沉静/暖光/林间/夜航」的顶栏 —— 是我凭空加的。
+          真实的文学创作编辑器顶部只有「返回 + 文件名 + 模型切换器」，
+          风格是右侧配置行里的一枚 pill（自动风格 / 风格图 / 水印），点开是弹窗。
+          顶栏既不存在、又和下面那行配置重复，已拆掉；换风格的动作回到那枚 pill 上。
+        */}
         <div className="relative flex flex-col lg:flex-row lg:h-[680px] gap-4" style={{ padding: '14px' }}>
           {/* ── 左：文章编辑器 ── */}
           <div
@@ -284,6 +245,8 @@ export function LiteraryScene() {
                   return (
                     <span
                       key={label}
+                      // 换风格就点这一枚 —— 产品里风格本来就在这行，不在顶栏
+                      data-cursor-target={i === 1 ? 'style-pill' : undefined}
                       className="flex-1 min-w-0 flex items-center gap-1.5 overflow-hidden"
                       style={{
                         height: '26px', borderRadius: '7px', padding: '0 8px',
@@ -359,7 +322,7 @@ export function LiteraryScene() {
           </div>
         </div>
 
-        <BeatNarration beats={s.beats} beat={NARRATION_AT[beat] ?? s.beats.length - 1} hue={SCENE_HUE.pine} />
+        <BeatNarration beats={s.beats} beat={beat} hue={SCENE_HUE.pine} />
       </div>
     </SceneFrame>
   );
@@ -460,10 +423,11 @@ const CURSOR_AT: Record<number, CursorSpot> = {
   [B.uploaded]: { target: 'doc-title' },
   // 落在被划中那段的句尾：选区从左铺到右，手停在右下角，跟真的划完一句一样
   [B.marking]: { target: 'para-1', ax: 1, ay: 0.6 },
-  [B.reachGen]: { target: 'generate-all' },                // 空拍：手走到按钮上
-  [B.generating]: { target: 'generate-all', press: true }, // 原地按下，配图才开始出
+  [B.generating]: { target: 'generate-all', press: true }, // gated：手落到按钮上，配图才开始出
   [B.fig1]: { target: 'card-1' },
   [B.fig2]: { target: 'card-2' },
+  [B.fig3]: { target: 'style-pill' },                       // 看完了，手移到风格那枚 pill
+  [B.restyle]: { target: 'style-pill', press: true },       // gated：按下去，整列才重配
 };
 
 /**

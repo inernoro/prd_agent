@@ -30,6 +30,9 @@ const HOLDS = [2000, 1700, 1700, 1900, 2800];
  */
 const B = { ask: 0, branch: 1, push: 2, ready: 3, approve: 4 } as const;
 
+/** 要等手真的落到「通过」上才开始的拍（理由见 useSceneTimeline 的 gates 说明）。 */
+const GATED = new Set<number>([B.approve]);
+
 const pine = inkTone(SCENE_HUE.pine);
 const clay = inkTone(SCENE_HUE.clay);
 
@@ -41,8 +44,9 @@ function actorTone(actor: 'you' | 'it') {
 export function CdsScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.tail.cds;
-  const { beat, ref } = useSceneTimeline(HOLDS);
+  // 必须在节拍器之前取：gates 要用它决定启不启用（不画指针就没人 release）
   const { isDesktop } = useBreakpoint();
+  const { beat, ref, armed, release } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
   const last = s.moments.length - 1;
 
   /**
@@ -50,10 +54,10 @@ export function CdsScene({ variant }: { variant?: SceneVariant }) {
    * 倒数第二拍（地址就位）手移过去，最后一拍按下「通过」。前面三拍是机器在干活，
    * 不该有手 —— 这一幕的卖点正是「你没动手」。
    */
-  const cursorSpot: CursorSpot | null =
-    beat === B.ready ? { target: 'approve-button' }
-      : beat === B.approve ? { target: 'approve-button', press: true }
-        : null;
+  const cursorSpot: CursorSpot | null = ((at: number) =>
+    at === B.ready ? { target: 'approve-button' }
+      : at === B.approve ? { target: 'approve-button', press: true }
+        : null)(armed ?? beat);
 
   /** 地址在倒数第二拍就位，最后一拍才轮到人点通过 */
   const previewReady = beat >= last - 1;
@@ -73,7 +77,7 @@ export function CdsScene({ variant }: { variant?: SceneVariant }) {
       <div ref={ref} className="relative">
         {/* 演示指针：这一幕的命题就是「你这一天只动了两次手」，那两次手就更得看得见。
             地址就位那一拍手先移到「通过」上，最后一拍才按下去。窄屏不画。 */}
-        {isDesktop && <SceneCursor spot={cursorSpot} beat={beat} />}
+        {isDesktop && <SceneCursor spot={cursorSpot} beat={armed ?? beat} onArrive={release} />}
         <div
           className="flex items-center gap-2.5"
           style={{ padding: '12px 16px', borderBottom: `1px solid ${SCENE.hair}` }}

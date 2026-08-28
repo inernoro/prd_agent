@@ -49,8 +49,10 @@ interface SceneFacts {
   pressedAt: Set<number>;
   /** 拍号 → 这一拍指针指着谁 */
   targetAt: Map<number, string>;
-  /** 旁白第 i 句 → 哪几拍在念它。插了走位空拍之后拍号 ≠ 句号，必须走这张映射。 */
+  /** 旁白第 i 句 → 哪几拍在念它（NARRATION_AT 不为空时才会不等于恒等映射）。 */
   beatsOfLine: Map<number, number[]>;
+  /** GATED 里声明的拍号：这些拍要等「手真的到位」才开始 */
+  gatedAt: Set<number>;
 }
 
 function readScenes(): SceneFacts[] {
@@ -71,7 +73,7 @@ function readScenes(): SceneFacts[] {
     // 和内联的 `beat === B.x ? { ..., press: true }`
     const pressedAt = new Set<number>();
     const targetAt = new Map<number, string>();
-    for (const m of src.matchAll(/(?:\[B\.(\w+)\]|beat === B\.(\w+))\s*[?:]\s*\{([^{}]*)\}/g)) {
+    for (const m of src.matchAll(/(?:\[B\.(\w+)\]|\w+ === B\.(\w+))\s*[?:]\s*\{([^{}]*)\}/g)) {
       const key = m[1] ?? m[2];
       if (!(key in beats)) continue;
       const body = m[3];
@@ -93,7 +95,11 @@ function readScenes(): SceneFacts[] {
     } else {
       Object.values(beats).forEach((b) => beatsOfLine.set(b, [b]));
     }
-    out.push({ file: name, i18nPath: i18n, beats, pressedAt, targetAt, beatsOfLine });
+    const gatedAt = new Set<number>();
+    const g = /const GATED = new Set<number>\(\[([^\]]*)\]\)/.exec(src)?.[1] ?? '';
+    for (const m of g.matchAll(/B\.(\w+)/g)) if (m[1] in beats) gatedAt.add(beats[m[1]]);
+
+    out.push({ file: name, i18nPath: i18n, beats, pressedAt, targetAt, beatsOfLine, gatedAt });
   }
   return out;
 }
@@ -150,24 +156,35 @@ describe('首页衔接契约（旁白说点了，就得真有手点）', () => {
    *
    * 连着两次点不同目标时，中间必须插一拍让手走过去，不能靠「按下时顺便飞过去」。
    */
-  it('每一次按下，上一拍指针就已经停在同一个目标上', () => {
-    const late: string[] = [];
+  it('每一次按下的那一拍，都必须是 gated（等手真的到位才开始）', () => {
+    const ungated: string[] = [];
     for (const s of scenes) {
       for (const at of [...s.pressedAt].sort((a, b) => a - b)) {
-        const here = s.targetAt.get(at);
-        const before = s.targetAt.get(at - 1);
-        if (here && before === here) continue;
+        if (s.gatedAt.has(at)) continue;
         const name = Object.keys(s.beats).find((k) => s.beats[k] === at) ?? String(at);
-        late.push(`${s.file} 第 ${at} 拍(${name}) 按 [${here ?? '?'}]，`
-          + `上一拍指针在 [${before ?? '没有指针'}] —— 手还在路上，事已经发生了`);
+        ungated.push(`${s.file} 第 ${at} 拍(${name}) 按 [${s.targetAt.get(at) ?? '?'}]，但不在 GATED 里`);
       }
     }
     expect(
-      late,
-      '「先走到，再发生」不成立。指针从上一拍的位置飞向目标要走位时长，'
-        + '而这一拍的效果在第 0 毫秒就发生 —— 观众看到的是「还没点到就已经生效」。\n'
-        + '修法：把上一拍的指针提前停到同一个目标上；两次点击挨着时，中间插一拍让手走过去。\n'
-        + late.join('\n'),
+      ungated,
+      '按下那一拍如果由时钟直接进入，「手开始走」和「事情发生」就是同一毫秒 —— '
+        + '指针飞过去要走位时长，观众必然看到「还没点到就已经生效」。\n'
+        + '曾经试过插「走位空拍」错开，但那把正确性挂在手调的毫秒数上：'
+        + '走位时长一改，空拍就不够了，bug 悄悄回来。\n'
+        + '正解是把这一拍放进 GATED —— 手真的落到目标上才开始，时序由结构保证。\n'
+        + ungated.join('\n'),
     ).toEqual([]);
+  });
+
+  it('GATED 里的每一拍都真的有按下（别把不点击的拍也拦住）', () => {
+    const idle: string[] = [];
+    for (const s of scenes) {
+      for (const at of s.gatedAt) {
+        if (s.pressedAt.has(at)) continue;
+        const name = Object.keys(s.beats).find((k) => s.beats[k] === at) ?? String(at);
+        idle.push(`${s.file} 第 ${at} 拍(${name}) 在 GATED 里，却没有按下 —— 白等一次到位`);
+      }
+    }
+    expect(idle, idle.join('\n')).toEqual([]);
   });
 });

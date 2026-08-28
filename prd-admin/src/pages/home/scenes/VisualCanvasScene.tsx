@@ -27,40 +27,33 @@ const pine = inkTone(SCENE_HUE.pine);
 const amber = inkTone(SCENE_HUE.amber);
 const olive = inkTone(SCENE_HUE.olive);
 
-/**
- * 节拍表。索引即拍号，值是这一拍停多久（ms）。
- *
- * 里面有两拍是**只让手走过去**的空拍（reachSend / reachWarm），不发生任何事。
- * 为什么必须有：一拍里的效果是在第 0 毫秒发生的，而指针从上一个位置飞过来要
- * 走位时长 —— 两件事挤在同一拍，观众看到的必然是「还没点到就已经生效」。
- * 上一版试图靠「波纹晚响」补救，那救不了：晚响的是反馈，早发生的是结果。
- * 唯一成立的形态是**按下那一拍手已经在那儿了**，所以把走位单独占一拍。
- */
+/** 节拍表。索引即拍号，值是这一拍停多久（ms）。 */
 const HOLDS = [
-  1000, // 0  空画布
-  1700, // 1  打字
-  560,  // 2  手移到发送键（空拍，只走位）
-  1000, // 3  发送
-  1100, // 4  思考
-  1500, // 5  回话
-  2300, // 6  渲染中
-  1500, // 7  落回画布
-  1700, // 8  再出一张
-  1500, // 9  选中
-  560,  // 10 手移到暖调那张（空拍，只走位）
-  2100, // 11 混合计算中
-  1800, // 12 混合结果落地
+  1000, // 0 空画布
+  1700, // 1 打字
+  1000, // 2 发送
+  1100, // 3 思考
+  1500, // 4 回话
+  2300, // 5 渲染中
+  1500, // 6 落回画布
+  1700, // 7 再出一张
+  1500, // 8 选中
+  2100, // 9 混合计算中
+  1800, // 10 混合结果落地
 ];
 const B = {
-  idle: 0, typing: 1, reachSend: 2, sent: 3, thinking: 4, replying: 5,
-  rendering: 6, landed: 7, warm: 8, selected: 9, reachWarm: 10, mixing: 11, mixed: 12,
+  idle: 0, typing: 1, sent: 2, thinking: 3, replying: 4,
+  rendering: 5, landed: 6, warm: 7, selected: 8, mixing: 9, mixed: 10,
 } as const;
 
 /**
- * 拍号 → 旁白第几句。两个走位空拍不换句（手在移动，事还没发生），
- * 沿用上一拍那句；不写这张表的话 BeatNarration 会索引越界。
+ * 要等「手真的落到目标上」才能开始的拍。
+ *
+ * 上一版是给每次点击插一个 560ms 的走位空拍把两者错开 —— 能用，但正确性挂在
+ * 我手调的毫秒数上：谁把走位时长改长，空拍就不够了，bug 悄悄回来。
+ * 现在交给节拍器：进这几拍之前先把手派过去，落地了才开始，时序由结构保证。
  */
-const NARRATION_AT = [0, 1, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 10];
+const GATED = new Set<number>([B.sent, B.selected, B.mixing]);
 
 /** 左侧竖向工具条：选择 / 上传图片 / 形状 / 文字 / 图像生成器 / 手绘板 / 删除 */
 const TOOL_PATHS = [
@@ -116,7 +109,10 @@ export function VisualCanvasStage() {
   // 指针只在 lg 以上画：对话面板在 lg 以下会挪到面板外面，
   // 「发送键」就不在指针能量到的坐标系里了
   const { isDesktop } = useBreakpoint();
-  const { beat, ref } = useSceneTimeline(HOLDS);
+  // gates 只在真的会画指针时启用；不画指针就没人 release，靠保险丝放行等于白等一轮
+  const { beat, ref, armed, release } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
+  // 正在等手到位时，指针先按**下一拍**的落点走 —— 这就是「先走到」
+  const cursorSpot = CURSOR_AT[armed ?? beat] ?? null;
   const typed = useTypewriter(s.chat.user, beat === B.typing, 1500);
 
   /** 这一拍谁被选中：先选雾天，混合时雾天 + 暖调两张都亮 */
@@ -145,7 +141,7 @@ export function VisualCanvasStage() {
         />
 
         {/* 演示指针：窄屏不画 —— 小屏本来就没有鼠标，画一枚箭头反而突兀 */}
-        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
+        {isDesktop && <SceneCursor spot={cursorSpot} beat={armed ?? beat} onArrive={release} />}
 
         {/* ── 画布可用区：宽屏时给右侧对话面板让出 444px ── */}
         <div className="absolute inset-0 lg:right-[444px]">
@@ -372,7 +368,7 @@ export function VisualCanvasStage() {
         className="mt-3 rounded-[14px]"
         style={{ background: SCENE.panel, border: `1px solid ${SCENE.edge}` }}
       >
-        <BeatNarration beats={s.beats} beat={NARRATION_AT[beat] ?? s.beats.length - 1} hue={SCENE_HUE.clay} />
+        <BeatNarration beats={s.beats} beat={beat} hue={SCENE_HUE.clay} />
       </div>
     </div>
   );
@@ -639,16 +635,14 @@ function GenTile({
 const CURSOR_AT: Record<number, CursorSpot> = {
   [B.idle]: { target: 'chat-input', hidden: true },
   [B.typing]: { target: 'chat-input', ax: 0.42 },   // 停在正在吐字的那行上
-  [B.reachSend]: { target: 'chat-send' },           // 空拍：手走到发送键
-  [B.sent]: { target: 'chat-send', press: true },   // 原地按下，消息才发出去
+  [B.sent]: { target: 'chat-send', press: true },   // gated：手落到发送键上，消息才发出去
   [B.thinking]: { target: 'chat-send' },
   [B.replying]: { target: 'tile-c', ay: 0.25 },     // 手往画布挪，等图长出来
   [B.rendering]: { target: 'tile-c' },              // 就在它自己的位置上长出来
   [B.landed]: { target: 'tile-c' },
   [B.warm]: { target: 'tile-c' },                   // 提前一拍就位
   [B.selected]: { target: 'tile-c', press: true },  // 原地按下雾天那张 → 选中框亮
-  [B.reachWarm]: { target: 'tile-b' },              // 空拍：手走到暖调那张
-  [B.mixing]: { target: 'tile-b', press: true },    // 原地按下 → 两张都选中，混合计算亮起
+  [B.mixing]: { target: 'tile-b', press: true },    // gated：手落到暖调那张，两张才都选中
   [B.mixed]: { target: 'tile-mix' },                // 看着结果落地
 };
 

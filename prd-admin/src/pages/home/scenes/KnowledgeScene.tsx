@@ -40,6 +40,9 @@ const TREE_SHAPE = [
 const HOLDS = [1500, 1200, 900, 1300, 2300, 2000];
 const B = { reading: 0, selecting: 1, popover: 2, tapped: 3, streaming: 4, replaced: 5 } as const;
 
+/** 要等手真的落到目标上才开始的拍（理由见 useSceneTimeline 的 gates 说明）。 */
+const GATED = new Set<number>([B.selecting, B.tapped]);
+
 /**
  * 指针走位表。这一幕是全篇动作最密的一段，顺序必须严格照旁白走：
  * 划中那一句（手停在句末，像刚拖完选区）→ 浮层弹出后手移到「AI 改写」上
@@ -138,8 +141,9 @@ const SELECTION_ICONS = [
 export function KnowledgeScene({ variant }: { variant?: SceneVariant }) {
   const { t } = useLanguage();
   const s = t.scenes.knowledge;
-  const { beat, ref, visible } = useSceneTimeline(HOLDS);
+  // 必须在节拍器之前取：gates 要用它决定启不启用（不画指针就没人 release）
   const { isDesktop } = useBreakpoint();
+  const { beat, ref, armed, release, visible } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
 
   return (
     <SceneFrame
@@ -156,7 +160,7 @@ export function KnowledgeScene({ variant }: { variant?: SceneVariant }) {
       <div ref={ref} className="relative flex" style={{ height: 'clamp(460px, 58vh, 620px)' }}>
         {/* 演示指针：这一幕旁白连写两个动作（划中一句话、点了 AI 改写），
             之前一只手都没有 —— 看的人只会觉得浮层自己冒出来。窄屏不画。 */}
-        {isDesktop && <SceneCursor spot={CURSOR_AT[beat] ?? null} beat={beat} />}
+        {isDesktop && <SceneCursor spot={CURSOR_AT[armed ?? beat] ?? null} beat={armed ?? beat} onArrive={release} />}
         {/* 左：文件树 */}
         <div
           className="hidden md:flex flex-col shrink-0 relative"
