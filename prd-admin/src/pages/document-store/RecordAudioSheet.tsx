@@ -309,6 +309,15 @@ export function RecordAudioSheet({
   const fileNameRef = useRef('');
   const uploadSessionIdRef = useRef<string | null>(null);
   const uploadSessionPromiseRef = useRef<Promise<string | null> | null>(null);
+  /**
+   * 上传会话的代次。切知识库时 +1，让**已经飞出去**的那一发 `startRecordingUpload` 作废。
+   *
+   * 只把 promise 的引用清掉是不够的：请求还在路上，它的回调会无条件把
+   * `uploadSessionIdRef` 装成**旧库**那条会话，并把实时转写连上去——此后的分片与结束时的
+   * 落库都会写进旧库，而界面显示的是用户刚选的新库（Codex 第四十一轮 P1）。
+   * 所以回调回来先认代次：不是当初那一代就不装、不连，并把那条白建的会话取消掉。
+   */
+  const uploadSessionEpochRef = useRef(0);
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
   // IndexedDB 写入也必须串行并在完成录音前收口。否则结果页可能先于最后一个
   // 分片落盘读取保险箱，表现为同一条录音偶发没有播放按钮。
@@ -391,13 +400,26 @@ export function RecordAudioSheet({
     if (uploadSessionPromiseRef.current) return await uploadSessionPromiseRef.current;
     const destination = targetStoreIdRef.current || storeId;
     if (!destination || !fileNameRef.current) return null;
+    // 这一发属于哪一代（哪一个目标库）。回来时拿它认人，认不上就整发作废
+    const epoch = uploadSessionEpochRef.current;
+    const stale = () => uploadSessionEpochRef.current !== epoch;
     uploadSessionPromiseRef.current = startRecordingUpload(destination, fileNameRef.current, mimeRef.current)
       .then((res) => {
         if (!res.success) {
+          // 失败也要认代次：旧库那一发失败了，不该把新库这一条打成降级
+          if (stale()) return null;
           liveUploadFailedRef.current = true;
           setLiveProtection('local');
           setLiveTranscriptState('degraded');
           setLiveTranscriptMessage('网络不可用，录音结束后将自动转写');
+          return null;
+        }
+        if (stale()) {
+          /*
+           * 这条会话建在用户已经不要的那个库下：不装 ref、不连实时转写，
+           * 并把它取消掉——不取消的话，旧库下会留一条谁也不认领的空会话。
+           */
+          void cancelRecordingUpload(res.data.sessionId).catch(() => null);
           return null;
         }
         uploadSessionIdRef.current = res.data.sessionId;
@@ -406,6 +428,7 @@ export function RecordAudioSheet({
         return res.data.sessionId;
       })
       .catch(() => {
+        if (stale()) return null;
         liveUploadFailedRef.current = true;
         setLiveProtection('local');
         setLiveTranscriptState('degraded');
@@ -471,6 +494,12 @@ export function RecordAudioSheet({
         uploadQueueRef.current,
         replayChunks,
         async () => {
+          /*
+           * 先把代次推掉：此刻可能有一发 startRecordingUpload 还在路上（用户在录音刚开始、
+           * 会话还没建好时就切了库）。推代次让它回来时认不上人，既不会把旧库那条会话装进来，
+           * 也不会把实时转写连过去。
+           */
+          uploadSessionEpochRef.current += 1;
           const previousSessionId = uploadSessionIdRef.current;
           liveTranscriptionRef.current?.close();
           liveTranscriptionRef.current = null;

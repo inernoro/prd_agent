@@ -362,6 +362,14 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
         {effectiveTranscript ? (
           <AudioDocumentPreview
+            /*
+             * key 认这条录音。阅读器里换一条录音只是换 props，组件被复用——
+             * 而跟读组件里压着「正在编辑第几句」和那句的草稿：A 的编辑框还开着就切到 B，
+             * 一保存写进去的是 A 的草稿、落到 B 的对应句上（Codex 第四十一轮 P1；
+             * 结果页那处早就按录音重挂了，阅读器这条路漏了）。
+             * 顺带把「原文/整理」页签也复位——那也是绑在这条录音身上的状态。
+             */
+            key={entry.id}
             src={fileUrl}
             noteMd={effectiveTranscript}
             styleKey={entry.metadata?.transcribe_style_key}

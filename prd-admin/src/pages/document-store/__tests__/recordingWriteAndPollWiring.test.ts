@@ -1104,3 +1104,49 @@ describe('在线保存落地后，队列里那份新草稿要跟着换基线', (
     expect(save).not.toContain('baseUpdatedAt: nextRevision');
   });
 });
+
+
+describe('切知识库时，已经飞出去的那一发建会话必须作废', () => {
+  const source = read('pages/document-store/RecordAudioSheet.tsx');
+
+  it('建会话时记下代次，回来先认代次', () => {
+    expect(source).toContain('const uploadSessionEpochRef = useRef(0);');
+    const at = source.indexOf('uploadSessionPromiseRef.current = startRecordingUpload(');
+    expect(at).toBeGreaterThan(-1);
+    const epoch = source.lastIndexOf('const epoch = uploadSessionEpochRef.current;', at);
+    expect(epoch, '发起时没有记代次').toBeGreaterThan(-1);
+    expect(epoch).toBeLessThan(at);
+  });
+
+  it('认不上就不装 ref、不连实时转写，并把白建的会话取消掉', () => {
+    const at = source.indexOf('uploadSessionPromiseRef.current = startRecordingUpload(');
+    const body = source.slice(at, source.indexOf('return await uploadSessionPromiseRef.current;', at));
+    const guard = body.indexOf('if (stale()) {');
+    expect(guard, '成功分支没有认代次').toBeGreaterThan(-1);
+    const install = body.indexOf('uploadSessionIdRef.current = res.data.sessionId;');
+    expect(install).toBeGreaterThan(guard);
+    expect(body.slice(guard, install)).toContain('cancelRecordingUpload(res.data.sessionId)');
+    // 连实时转写也在这道门之后
+    expect(body.indexOf('connectLiveTranscription(res.data.sessionId)')).toBeGreaterThan(guard);
+    // 失败两支也认代次：旧库那一发失败不该把新库这一条打成降级
+    expect([...body.matchAll(/if \(stale\(\)\) return null;/g)]).toHaveLength(2);
+  });
+
+  it('切库那一步先推代次，再动别的', () => {
+    const at = source.indexOf('const previousSessionId = uploadSessionIdRef.current;');
+    expect(at).toBeGreaterThan(-1);
+    const before = source.slice(Math.max(0, at - 600), at);
+    expect(before, '推代次没有排在切库动作最前面').toContain('uploadSessionEpochRef.current += 1;');
+  });
+});
+
+describe('阅读器里换一条录音也要重挂跟读组件', () => {
+  const source = read('components/file-preview/FilePreview.tsx');
+
+  it('AudioDocumentPreview 带上认这条录音的 key', () => {
+    const at = source.indexOf('<AudioDocumentPreview');
+    expect(at).toBeGreaterThan(-1);
+    const tag = source.slice(at, source.indexOf('/>', at));
+    expect(tag, '不重挂的话，A 的编辑草稿会保存进 B').toContain('key={entry.id}');
+  });
+});
