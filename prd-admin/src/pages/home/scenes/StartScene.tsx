@@ -119,6 +119,23 @@ export function StartScene({ onGetStarted }: StartSceneProps) {
                     <span className="block" style={{ marginTop: '4px', fontSize: '11.5px', lineHeight: 1.65, color: SCENE.inkDim }}>
                       {surface.desc}
                     </span>
+                    {/*
+                      * 说「可用」就得给得到它的路。桌面端不像网页那样打开就用，
+                      * 原来那条「去下载」随旧的下载幕一起被删了，卡片却还挂着「可用」——
+                      * 顺着导航「开始」进来的人看到一个拿不到的承诺。这条链接补回那一步。
+                      */}
+                    {surface.href && (
+                      <a
+                        href={surface.href}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="inline-flex items-center gap-1"
+                        style={{ marginTop: '6px', fontSize: '11px', color: pine.bright, textDecoration: 'none' }}
+                      >
+                        {surface.hrefLabel}
+                        <SceneIcon d="M7 17L17 7M9 7h8v8" size={11} strokeWidth={1.9} />
+                      </a>
+                    )}
                   </span>
                 </div>
               </Reveal>

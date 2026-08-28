@@ -321,7 +321,7 @@ export interface TailTranslation {
     description: string;
     note: string;
     steps: Array<{ title: string; desc: string }>;
-    surfaces: Array<{ name: string; desc: string; state: string }>;
+    surfaces: Array<{ name: string; desc: string; state: string; href?: string; hrefLabel?: string }>;
   };
   closing: {
     eyebrow: string;
@@ -872,30 +872,30 @@ const zh: TranslationShape = {
       eyebrow: 'LLMGW · /pools',
       title: '一套配置连上所有模型，坏了自动换下一个',
       description:
-        '不是一排 logo。网关控制台里真实的那张表：每一行是一个模型池，池里成员按顺位排队，谁挂了后面的自动顶上——业务代码只认池名，看不见这些。',
-      note: '池内成员换人由网关决定，跨池代选默认禁止；单个成员坏了只更新它自己的健康，不会把整个目录清空。',
+        '不是一排 logo。照着网关控制台那张表画的：每一行是一个模型池，池里成员按顺位排队，谁挂了后面的自动顶上——业务代码只认池名，看不见这些。',
+      note: '池内成员换人由网关决定，跨池代选默认禁止；单个成员坏了只更新它自己的健康，不会把整个目录清空。表里的数字是示意，用来说明顺位与兜底怎么工作，不是线上实测——真实指标在网关观测台看。',
       counts: [
         { value: '3', label: '接入平台' },
         { value: '17', label: '可调用模型' },
         { value: '6', label: '模型池' },
       ],
-      windowText: '近 24h',
+      windowText: '示意',
       countSuffix: '个池',
       columns: {
-        status: '状态', pool: '池 / 类型', evidence: '证据', members: '成员顺位',
+        status: '状态', pool: '池 / 类型', evidence: '口径', members: '成员顺位',
         success: '成功率', duration: '平均耗时', requests: '请求',
       },
       statusLabels: { ok: '正常', watch: '观察' },
       pools: [
         {
-          name: 'chat-default', type: '对话', evidence: '真实请求',
+          name: 'chat-default', type: '对话', evidence: '示意数据',
           members: ['Claude 4.6', 'Kimi K2', 'GPT-5'],
           success: '99.4%', successDegraded: '96.1%', duration: '1.1s', requests: '18.3k',
           acting: true,
         },
-        { name: 'vision-main', type: '视觉', evidence: '真实请求', members: ['GPT-5', 'Qwen3-VL'], success: '99.8%', duration: '2.3s', requests: '4.1k' },
-        { name: 'image-gen', type: '生图', evidence: '真实请求', members: ['Seedream 4', 'FLUX.1'], success: '98.9%', duration: '9.7s', requests: '2.6k' },
-        { name: 'intent-fast', type: '意图', evidence: '真实请求', members: ['Qwen3-Turbo', 'DeepSeek V3'], success: '99.9%', duration: '0.4s', requests: '31.7k' },
+        { name: 'vision-main', type: '视觉', evidence: '示意数据', members: ['GPT-5', 'Qwen3-VL'], success: '99.8%', duration: '2.3s', requests: '4.1k' },
+        { name: 'image-gen', type: '生图', evidence: '示意数据', members: ['Seedream 4', 'FLUX.1'], success: '98.9%', duration: '9.7s', requests: '2.6k' },
+        { name: 'intent-fast', type: '意图', evidence: '示意数据', members: ['Qwen3-Turbo', 'DeepSeek V3'], success: '99.9%', duration: '0.4s', requests: '31.7k' },
       ],
       downTag: '已隔离',
       promotedTag: '顶上',
@@ -917,7 +917,7 @@ const zh: TranslationShape = {
       ],
       surfaces: [
         { name: '网页', desc: '打开就用，主力形态', state: '可用' },
-        { name: '桌面端', desc: 'Tauri 打包，本地文件直连', state: '可用' },
+        { name: '桌面端', desc: 'Tauri 打包，本地文件直连', state: '可用', href: 'https://github.com/inernoro/prd_agent/releases', hrefLabel: '去下载' },
         { name: '移动端', desc: '看进度、审阅、回一句', state: '可用' },
       ],
     },
@@ -1439,30 +1439,30 @@ const en: TranslationShape = {
       eyebrow: 'LLMGW · /pools',
       title: 'One config reaches every model, and failover is automatic',
       description:
-        'Not a row of logos. This is the real table in the gateway console: one row per model pool, members queued by priority, and whoever is next takes over when one breaks — product code only ever names the pool.',
-      note: 'Swapping members inside a pool is the gateway’s call; picking across pools is off by default. One member failing updates only its own health — it never wipes the catalogue.',
+        'Not a row of logos. Drawn after the real table in the gateway console: one row per model pool, members queued by priority, and whoever is next takes over when one breaks — product code only ever names the pool.',
+      note: 'Swapping members inside a pool is the gateway’s call; picking across pools is off by default. One member failing updates only its own health — it never wipes the catalogue. The figures here are illustrative — they show how ranking and failover behave, not measured production traffic; live metrics live in the gateway console.',
       counts: [
         { value: '3', label: 'Providers' },
         { value: '17', label: 'Callable models' },
         { value: '6', label: 'Pools' },
       ],
-      windowText: '24h',
+      windowText: 'sample',
       countSuffix: 'pools',
       columns: {
-        status: 'State', pool: 'Pool / type', evidence: 'Evidence', members: 'Member order',
+        status: 'State', pool: 'Pool / type', evidence: 'Basis', members: 'Member order',
         success: 'Success', duration: 'Avg', requests: 'Requests',
       },
       statusLabels: { ok: 'Healthy', watch: 'Watching' },
       pools: [
         {
-          name: 'chat-default', type: 'Chat', evidence: 'Real traffic',
+          name: 'chat-default', type: 'Chat', evidence: 'Illustrative',
           members: ['Claude 4.6', 'Kimi K2', 'GPT-5'],
           success: '99.4%', successDegraded: '96.1%', duration: '1.1s', requests: '18.3k',
           acting: true,
         },
-        { name: 'vision-main', type: 'Vision', evidence: 'Real traffic', members: ['GPT-5', 'Qwen3-VL'], success: '99.8%', duration: '2.3s', requests: '4.1k' },
-        { name: 'image-gen', type: 'Image', evidence: 'Real traffic', members: ['Seedream 4', 'FLUX.1'], success: '98.9%', duration: '9.7s', requests: '2.6k' },
-        { name: 'intent-fast', type: 'Intent', evidence: 'Real traffic', members: ['Qwen3-Turbo', 'DeepSeek V3'], success: '99.9%', duration: '0.4s', requests: '31.7k' },
+        { name: 'vision-main', type: 'Vision', evidence: 'Illustrative', members: ['GPT-5', 'Qwen3-VL'], success: '99.8%', duration: '2.3s', requests: '4.1k' },
+        { name: 'image-gen', type: 'Image', evidence: 'Illustrative', members: ['Seedream 4', 'FLUX.1'], success: '98.9%', duration: '9.7s', requests: '2.6k' },
+        { name: 'intent-fast', type: 'Intent', evidence: 'Illustrative', members: ['Qwen3-Turbo', 'DeepSeek V3'], success: '99.9%', duration: '0.4s', requests: '31.7k' },
       ],
       downTag: 'Isolated',
       promotedTag: 'Took over',
@@ -1484,7 +1484,7 @@ const en: TranslationShape = {
       ],
       surfaces: [
         { name: 'Web', desc: 'Open and go — the primary surface', state: 'Available' },
-        { name: 'Desktop', desc: 'Packaged with Tauri, direct access to local files', state: 'Available' },
+        { name: 'Desktop', desc: 'Packaged with Tauri, direct access to local files', state: 'Available', href: 'https://github.com/inernoro/prd_agent/releases', hrefLabel: 'Download' },
         { name: 'Mobile', desc: 'Check progress, review, reply in a line', state: 'Available' },
       ],
     },
