@@ -4509,6 +4509,21 @@ public class GatewayDataDomainGuardTests
         var mapSso = consoleApi[ssoStart..ssoEnd];
         Assert.DoesNotContain("SecurityVersion, 1", mapSso);
 
+        // 撤销计数器有**两个**：用户 SecurityVersion 与成员 Version，token 里两个都带、
+        // 每个请求都比对。只修掉一个，用户看到的仍然是「每次打开链接都要重新 SSO」——
+        // 这正是第一轮修完之后实测仍然 401 的原因。所以两条都要钉。
+        //
+        // 成员那条不能简单地断言「不出现 Inc(Version, 1)」：真的有变化（首次进来、
+        // 角色或状态被改过）时该自增是对的。判据是「必须先有一条不动版本的路」——
+        // 角色与状态都已就位时只刷 UpdatedAt，落不到那条才走带 Inc 的 upsert。
+        Assert.Contains("Builders<LlmGwMembership>.Update.Set(x => x.UpdatedAt, now)", mapSso);
+        var unchangedPathIndex = mapSso.IndexOf("Builders<LlmGwMembership>.Update.Set(x => x.UpdatedAt, now)", StringComparison.Ordinal);
+        var incPathIndex = mapSso.IndexOf(".Inc(x => x.Version, 1)", StringComparison.Ordinal);
+        Assert.True(incPathIndex > 0, "成员变更路径仍应保留版本自增");
+        Assert.True(
+            mapSso.IndexOf("if (membership is null)", unchangedPathIndex, StringComparison.Ordinal) > unchangedPathIndex,
+            "带 Inc 的 upsert 必须只在「不动版本那条路没命中」时才走");
+
         // 真正撤销会话的三处仍必须自增，否则改密/停用成员就形同虚设。
         Assert.Contains(".Inc(u => u.SecurityVersion, 1)", consoleApi);
 

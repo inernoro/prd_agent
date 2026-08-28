@@ -879,24 +879,40 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
             .Set(x => x.Status, "active")
             .Set(x => x.UpdatedAt, now)
             .Inc(x => x.Version, 1);
-        LlmGwMembership? membership;
-        try
-        {
-            membership = await memberships.FindOneAndUpdateAsync(
+        // 成员版本同样是撤销计数器（token 里带 membership_version，每个请求都比对），
+        // 所以**没有实质变化时一律不许 +1**。先走「角色与状态都已就位」这条路：只刷一下
+        // UpdatedAt，版本不动，这个人手上别处的会话继续有效。
+        //
+        // 这是 SecurityVersion 那处的同一个坑的第二个入口：上一版两处都在每次 SSO 时自增，
+        // 只修掉一处，用户看到的仍然是「每次打开你给的链接都要重新 SSO」。
+        // 真的变了（首次进来、角色或状态被改过）才落到下面那条路，那时旧会话本就该失效。
+        LlmGwMembership? membership = await memberships.FindOneAndUpdateAsync(
+            Builders<LlmGwMembership>.Filter.And(
                 membershipFilter,
-                membershipUpdate,
-                new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership>
-                {
-                    IsUpsert = true,
-                    ReturnDocument = ReturnDocument.After,
-                });
-        }
-        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                Builders<LlmGwMembership>.Filter.Eq(x => x.Role, LlmGwTenantRoles.Admin),
+                Builders<LlmGwMembership>.Filter.Eq(x => x.Status, "active")),
+            Builders<LlmGwMembership>.Update.Set(x => x.UpdatedAt, now),
+            new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+        if (membership is null)
         {
-            membership = await memberships.FindOneAndUpdateAsync(
-                membershipFilter,
-                membershipUpdate,
-                new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+            try
+            {
+                membership = await memberships.FindOneAndUpdateAsync(
+                    membershipFilter,
+                    membershipUpdate,
+                    new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership>
+                    {
+                        IsUpsert = true,
+                        ReturnDocument = ReturnDocument.After,
+                    });
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                membership = await memberships.FindOneAndUpdateAsync(
+                    membershipFilter,
+                    membershipUpdate,
+                    new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership> { ReturnDocument = ReturnDocument.After });
+            }
         }
         if (membership is null) throw new InvalidOperationException("MAP_SSO_MEMBERSHIP_UPDATE_CONFLICT");
 
@@ -910,8 +926,10 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
                 .Set("CompletedAt", DateTime.UtcNow));
         await WriteLoginAuditAsync(loginAudits, http, tenant.Id, mapUsername, gwUser.Id, true, null);
 
-        // MAP 联邦会话默认与普通会话同为 7 天（LlmGwJwt:MapSsoLifetimeMinutes 可收紧）；
-        // 再次从 MAP 点击仍会原子吊销该用户旧 Gateway 会话。
+        // MAP 联邦会话默认与普通会话同为一个月（LlmGwJwt:MapSsoLifetimeMinutes 可收紧）。
+        // 再次从 MAP 点进来**不吊销**旧会话：登录不是撤销事件，两个撤销计数器
+        //（用户 SecurityVersion、成员 Version）在这条路径上都不自增。撤销走改密、
+        // 禁用、成员变更那几条，它们各自有自己的自增，语义正确。
         var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, mapSsoLifetime, federatedSession: true);
         return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
         {
