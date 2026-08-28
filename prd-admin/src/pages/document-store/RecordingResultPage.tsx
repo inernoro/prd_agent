@@ -285,6 +285,8 @@ export function RecordingResultPage() {
    * 所以：笔记还没有、但确实有一条在途的转录 run 时，继续等它，等到就重新加载。
    */
   const [awaitNoteTick, setAwaitNoteTick] = useState(0);
+  /** 加载失败那一屏的「重试」：不给控件就别在文案里许重试（expectation-management） */
+  const [loadTick, setLoadTick] = useState(0);
   const noteMissing = state.kind === 'ready' && !state.noteId;
   /** 与库有关的一切都读这个：加载完成后是条目真正的归属库，加载中才退回路由参数 */
   const activeStoreId = state.kind === 'ready' ? state.storeId : (storeId ?? '');
@@ -354,6 +356,17 @@ export function RecordingResultPage() {
         setState({ kind: 'error', message: '这条录音的音频文件不可用' });
         return;
       }
+      /*
+       * 笔记条目明明在（entry 上有 transcribe_entry_id），正文却没取回来——这是**取失败**，
+       * 不是「这段录音没有原文」。此前这里退成空串照常进 ready：屏上一片空白，
+       * 而等笔记那个轮询因为 noteId 已经有值不会跑，用户只能手动刷新；更糟的是
+       * 「导出」这时会导出一份空原文（Codex 第二十四轮 P2）。
+       * 取失败就报错并给重试，不假装这条录音没有原文。
+       */
+      if (noteId && !noteRes?.success) {
+        setState({ kind: 'error', message: '这条录音的原文没能取回来，请重试' });
+        return;
+      }
       setState({
         kind: 'ready',
         title: entry.title,
@@ -375,7 +388,7 @@ export function RecordingResultPage() {
     });
     return () => { stale = true; };
     // awaitNoteTick：上面那个等待器发现笔记发布了，就靠它把这次加载再跑一遍
-  }, [awaitNoteTick, entryId, storeId]);
+  }, [awaitNoteTick, entryId, loadTick, storeId]);
 
   const goBack = useCallback(() => {
     // 优先退回来路（多半是知识库里那条录音），没有来路才落到知识库首页——
@@ -1099,9 +1112,21 @@ export function RecordingResultPage() {
       {state.kind === 'error' && (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
           <p className="text-[14px]" style={{ color: 'var(--text-primary)' }}>{state.message}</p>
-          <button type="button" onClick={goBack} className="min-h-11 text-[13px]" style={{ color: 'var(--accent-fg-info)' }}>
-            返回知识库
-          </button>
+          <div className="flex items-center gap-3">
+            {/* 有条目 id 才谈得上重试；「缺少录音标识」那一档重试多少次都一样 */}
+            {entryId && (
+              <button
+                type="button"
+                onClick={() => setLoadTick(v => v + 1)}
+                className="min-h-11 rounded-[10px] px-4 text-[13px] font-semibold"
+                style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>
+                重试
+              </button>
+            )}
+            <button type="button" onClick={goBack} className="min-h-11 text-[13px]" style={{ color: 'var(--accent-fg-info)' }}>
+              返回知识库
+            </button>
+          </div>
         </div>
       )}
       {state.kind === 'ready' && (

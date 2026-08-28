@@ -357,6 +357,28 @@ describe('换条目时把绑在上一条身上的状态放掉', () => {
     expect(body).toContain('audioRef.current?.pause()');
   });
 
+  it('处理页换条目把标题/库名/大小/日期一起清回加载态', () => {
+    const source = read('pages/document-store/RecordingProcessingPage.tsx');
+    // 从「取条目」那一句往回看：这一格之前必须已经把五格清掉
+    const call = source.indexOf('await getDocumentEntry(');
+    expect(call).toBeGreaterThan(-1);
+    const head = source.slice(0, call);
+    // 五格都要在发请求之前清掉，清在后面等于没清
+    for (const reset of ["setTitle('')", "setStoreName('')", 'setSizeLabel(null)', 'setDateLabel(null)', 'setOwningStoreId(']) {
+      expect(head).toContain(reset);
+    }
+  });
+
+  it('结果页原文取失败不当成「没有原文」，并给得出重试', () => {
+    const source = read('pages/document-store/RecordingResultPage.tsx');
+    // 有笔记 id 却没取回正文 = 取失败，必须落到 error 而不是空串
+    expect(source).toContain("if (noteId && !noteRes?.success) {");
+    const err = source.slice(source.indexOf("{state.kind === 'error' && ("));
+    expect(err.slice(0, 900)).toContain('setLoadTick(');
+    // 重试要真的能让加载再跑一遍
+    expect(source).toContain('[awaitNoteTick, entryId, loadTick, storeId]');
+  });
+
   it('结果页发起整理的锁跟着条目释放，不跨录音卡住', () => {
     const source = read('pages/document-store/RecordingResultPage.tsx');
     expect(source).toMatch(/useEffect\(\(\) => \{ launchingRef\.current = false; \}, \[entryId\]\);/);

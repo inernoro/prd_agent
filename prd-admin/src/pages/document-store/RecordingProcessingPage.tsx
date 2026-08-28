@@ -166,6 +166,17 @@ export function RecordingProcessingPage() {
   useEffect(() => {
     if (!entryId) return;
     let stale = false;
+    /*
+     * 换条目先把这几格清回加载态。同一条路由换参数、组件被复用，不清的话：
+     * B 的条目请求失败 → 屏上整套还是 A 的标题、库名、大小、日期；
+     * 只有库请求失败 → B 的标题配 A 的库名，返回也回到 A 那个库
+     * （音频那一格上一轮清了，这几格漏了，Codex 第二十四轮 P2）。
+     */
+    setTitle('');
+    setStoreName('');
+    setSizeLabel(null);
+    setDateLabel(null);
+    setOwningStoreId(storeId ?? '');
     void (async () => {
       const entryRes = await getDocumentEntry(entryId);
       if (stale) return;
