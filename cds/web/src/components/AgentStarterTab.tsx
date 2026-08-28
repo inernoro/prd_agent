@@ -140,6 +140,9 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
   const [copied, setCopied] = useState(false)
   const [showDecisionCard, setShowDecisionCard] = useState(false)
   const [profileSync, setProfileSync] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  // 记下这条状态是给哪个项目写的：完成屏上还能换项目，换掉之后
+  //「已记到项目」就不再成立，不能让它继续挂在新项目名下。
+  const [syncedProjectId, setSyncedProjectId] = useState<string | undefined>(undefined)
   const [prdAgentOrigin, setPrdAgentOrigin] = useState(
     () => String(import.meta.env.VITE_PRD_AGENT_BASE_URL || '').trim(),
   )
@@ -214,6 +217,9 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
     prdAgentOrigin,
   })
 
+  // 状态只对它当初写入的那个项目成立，换了目标就不再展示。
+  const profileMatchesTarget = Boolean(projectId) && syncedProjectId === projectId
+
   const advance = (nextStep: number) => {
     setCopied(false)
     setStep(nextStep)
@@ -222,11 +228,15 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
   // 生成上手包 = 用户确认了这套配置，此时把角色声明记到项目上，
   // 让 CDS 侧也知道这个项目的 Agent 以什么角色在跑（此前只写进仓库文件，无人读取）。
   // 失败不拦流程：这只是一条展示用的声明，不该挡住用户拿提示词。
-  useEffect(() => {
-    if (step !== 4 || !projectId) return
-    let active = true
+  //
+  // 只在点「生成」这一下写，不挂 effect 跟着 projectId 变：完成屏上项目选择器
+  // 仍然可用，用 effect 的话，给项目 A 生成完再切到项目 B，就会把 A 的角色
+  // 静默盖到 B 头上——用户从没为 B 确认过任何东西。
+  const syncAgentProfile = (targetProjectId?: string): void => {
+    if (!targetProjectId) return
+    setSyncedProjectId(targetProjectId)
     setProfileSync('saving')
-    apiRequest(`/api/projects/${encodeURIComponent(projectId)}/agent-profile`, {
+    apiRequest(`/api/projects/${encodeURIComponent(targetProjectId)}/agent-profile`, {
       method: 'PUT',
       body: {
         role: roleId,
@@ -235,10 +245,9 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
         cardTitle: roleProfile.cardTitle,
       },
     })
-      .then(() => { if (active) setProfileSync('saved') })
-      .catch(() => { if (active) setProfileSync('failed') })
-    return () => { active = false }
-  }, [step, projectId, roleId, experienceId, selectedSkills.join(','), roleProfile.cardTitle])
+      .then(() => setProfileSync('saved'))
+      .catch(() => setProfileSync('failed'))
+  }
 
   const copyPrompt = async () => {
     await navigator.clipboard.writeText(prompt)
@@ -417,7 +426,7 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                   </button>
                 </div>
                 <div className="mt-4 flex justify-end border-t border-[hsl(var(--hairline))] pt-4">
-                  <PrimaryNext onClick={() => advance(4)}>生成我的上手包</PrimaryNext>
+                  <PrimaryNext onClick={() => { advance(4); syncAgentProfile(projectId) }}>生成我的上手包</PrimaryNext>
                 </div>
               </>
             )}
@@ -456,12 +465,15 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                   {!projectId
                     ? `还没有选定项目，角色「${roleProfile.label}」只写进项目里的长期规则，CDS 这边暂不记录。等 Agent 把项目建好，回到这一步再生成一次就会记上。`
                     : null}
-                  {projectId && profileSync === 'saving' ? '正在把角色记到项目…' : null}
-                  {projectId && profileSync === 'saved'
+                  {profileMatchesTarget && profileSync === 'saving' ? '正在把角色记到项目…' : null}
+                  {profileMatchesTarget && profileSync === 'saved'
                     ? `已记到项目：这个项目的 Agent 角色是「${roleProfile.label}」，回复用${roleProfile.cardTitle}。`
                     : null}
-                  {projectId && profileSync === 'failed'
+                  {profileMatchesTarget && profileSync === 'failed'
                     ? '角色没能记到项目（不影响使用提示词），项目列表里暂时不会显示角色。'
+                    : null}
+                  {projectId && syncedProjectId && syncedProjectId !== projectId
+                    ? '刚才换了目标项目，这个项目还没记过角色。点一次「重新生成」就会记上。'
                     : null}
                 </p>
 

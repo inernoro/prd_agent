@@ -7,6 +7,7 @@
  * 最后一条是关键：带不出去，项目列表就还是显示不了角色，等于白写。
  */
 
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import http from 'node:http';
@@ -179,5 +180,30 @@ describe('项目 Agent 角色声明', () => {
     const entry = (list.body.projects || []).find((item: any) => item.id === 'proj-a');
     expect(entry?.agentProfile?.role).toBe('owner');
     expect(entry?.agentProfile?.cardTitle).toBe('规则交付卡');
+  });
+
+  /**
+   * 写入时机的守卫。
+   *
+   * 这条 PUT 一旦挂进以 projectId 为依赖的 useEffect，就会跟着目标项目变化
+   * 自动重发：给项目 A 生成完上手包，完成屏上把目标切成项目 B，B 立刻被盖上
+   * A 的角色——用户从没为 B 确认过任何东西。接口这边看不出异常（两次都是合法
+   * 请求），只有从调用侧才拦得住，所以守卫放在这里。
+   */
+  it('前端只在点「生成」时写角色，不跟着 projectId 自动重发', () => {
+    const source = readFileSync(
+      new URL('../../web/src/components/AgentStarterTab.tsx', import.meta.url),
+      'utf8',
+    );
+    const putIndex = source.indexOf('/agent-profile');
+    expect(putIndex).toBeGreaterThan(-1);
+    // 这个 PUT 必须在一个显式函数里，由生成按钮调用，而不是 effect 的副作用。
+    expect(source).toMatch(/const syncAgentProfile = \(targetProjectId\?: string\)/);
+    expect(source).toMatch(/onClick=\{\(\) => \{ advance\(4\); syncAgentProfile\(projectId\) \}\}/);
+    // 从 PUT 往前找最近的 useEffect(，中间若没有函数定义就说明它又挂回 effect 了。
+    const before = source.slice(0, putIndex);
+    const lastEffect = before.lastIndexOf('useEffect(');
+    const lastFn = before.lastIndexOf('const syncAgentProfile');
+    expect(lastFn).toBeGreaterThan(lastEffect);
   });
 });
