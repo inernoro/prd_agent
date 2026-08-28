@@ -882,6 +882,16 @@ export function RecordingResultPage() {
     const res = await enqueueWrite(() => updateDocumentContent(overwritingNoteId, queued!.content, 'text/markdown'));
     if (!res.success) { toast.error(res.error?.message || '覆盖失败'); return; }
     /*
+     * 覆盖期间用户可能又断网改了一句：那一下会把**更新的**草稿排进队列并落盘。
+     * 这时候再无条件清掉，等于把他刚写的那几处删了，而屏幕还换回这次覆盖用的旧内容
+     * （自动补传那一路早就按 savedAt 复核过，这一路漏了，Codex 第二十七轮 P1）。
+     * 所以先认「队列里还是不是我覆盖的那一份」：不是就什么都不动，让新草稿照常走它的流程。
+     */
+    if (pendingRef.current?.savedAt !== queued!.savedAt) {
+      toast.success('已用离线版本覆盖；这期间新排下的校对仍在队列里');
+      return;
+    }
+    /*
      * 排队的 PUT 回来时用户可能已经从侧栏切到另一条录音了。此前这里的几处状态更新都是
      * 无条件的：A 的正文会装进 B 的屏幕，B 刚恢复出来的待同步/冲突提示也被一并清掉，
      * 随后 B 一次编辑就把 A 的原文存成了 B 的内容（Codex P1）。
@@ -923,16 +933,21 @@ export function RecordingResultPage() {
    * 于是并发建出两条 run——两条都花模型钱，还会抢着覆盖同一篇输出笔记，而界面只跟踪
    * 最后一个回来的那条（Codex 第九轮 P1）。
    */
-  const launchingRef = useRef(false);
   /*
-   * 这把锁只挡「同一条录音上的连点」，不该跨录音生效：A 的预检还在飞的时候切到 B，
-   * 锁还举着，B 上点任何一种整理都会**静默什么都不发生**，直到 A 那两发回来
-   * （Codex 第二十三轮 P2）。换条目即释放。
+   * 发起整理的锁**认录音、也认这一发**，不是一个全局布尔。
+   * 全局布尔踩过两次，两次方向相反，都记在这里：
+   *   1. 不认录音：A 的预检还在飞时切到 B，锁还举着，B 上点任何整理都静默无反应。
+   *   2. 认录音但靠「换条目就清零」补救（我上一版的修法）：A 的 finally 后到，
+   *      会把 B 刚举起来的锁清掉——B 再点一下就并发起第二条 restyle，
+   *      两条都花模型钱，还抢着覆盖同一篇输出笔记（Codex 第二十七轮 P1）。
+   * 现在锁里存「哪条录音」，释放时再比一次「这一发还是不是最新那发」，两种都堵死。
    */
-  useEffect(() => { launchingRef.current = false; }, [entryId]);
+  const launchingEntryRef = useRef<string | null>(null);
+  const launchTokenRef = useRef(0);
   const onPickOrganizeStyle = useCallback((styleKey: string, customPrompt?: string) => {
-    if (!entryId || running || launchingRef.current) return;
-    launchingRef.current = true;
+    if (!entryId || running || launchingEntryRef.current === entryId) return;
+    launchingEntryRef.current = entryId;
+    const launchToken = ++launchTokenRef.current;
     // 这次发起属于哪条录音：两个请求都回来之后要拿它认人（见下面 setRunning 前那一判）
     const launchedForEntryId = entryId;
     void (async () => {
@@ -966,7 +981,8 @@ export function RecordingResultPage() {
         if (entryIdRef.current !== launchedForEntryId) return;
         setRunning({ runId: res.data.runId, styleKey, percent: 0 });
       } finally {
-        launchingRef.current = false;
+        // 只有「最新那一发」才有资格释放：后到的旧请求不许把别人举着的锁放掉
+        if (launchTokenRef.current === launchToken) launchingEntryRef.current = null;
       }
     })();
   }, [entryId, running]);

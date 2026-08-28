@@ -118,11 +118,21 @@ describe('离线草稿的版本令牌', () => {
 });
 
 describe('发起整理的去重', () => {
-  it('同步置位，不等两个请求回来', () => {
+  /*
+   * 判据认「同步置位」这件事本身，不认锁长什么样：它从布尔换成「哪条录音 + 这一发」之后，
+   * 原来那三条逐字断言全部误红，而行为一点没坏（对抗审查点名的形状 4a）。
+   */
+  it('置位发生在任何 await 之前，不等两个请求回来', () => {
     const source = read('pages/document-store/RecordingResultPage.tsx');
-    expect(source).toContain('running || launchingRef.current) return;');
-    expect(source).toContain('launchingRef.current = true;');
-    expect(source).toContain('launchingRef.current = false;');
+    const fn = source.slice(source.indexOf('const onPickOrganizeStyle = useCallback'));
+    const body = fn.slice(0, fn.indexOf('}, [entryId, running]);'));
+    expect(body.length).toBeGreaterThan(200);
+    const guard = body.search(/if \([^)]*running[^)]*\) return;/);
+    const acquire = body.search(/launching\w*Ref\.current = /);
+    const firstAwait = body.indexOf('await ');
+    expect(guard).toBeGreaterThan(-1);
+    expect(acquire).toBeGreaterThan(guard);
+    expect(firstAwait).toBeGreaterThan(acquire);
   });
 });
 
@@ -403,9 +413,37 @@ describe('换条目时把绑在上一条身上的状态放掉', () => {
     expect(source).toContain('[awaitNoteTick, entryId, loadTick, storeId]');
   });
 
-  it('结果页发起整理的锁跟着条目释放，不跨录音卡住', () => {
+  /*
+   * 发起整理的锁认录音、也认这一发。全局布尔踩过两次、方向相反：不认录音会跨录音卡住；
+   * 认录音但靠「换条目清零」补救，A 的 finally 后到会把 B 刚举起的锁清掉，B 再点一下
+   * 就并发起第二条 restyle（两条都花钱、抢着覆盖同一篇笔记）。
+   */
+  it('结果页发起整理的锁认录音、也认这一发', () => {
     const source = read('pages/document-store/RecordingResultPage.tsx');
-    expect(source).toMatch(/useEffect\(\(\) => \{ launchingRef\.current = false; \}, \[entryId\]\);/);
+    // 锁里存的是「哪条录音」，不是一个布尔
+    expect(source).toContain('const launchingEntryRef = useRef<string | null>(null);');
+    expect(source).toContain('launchingEntryRef.current === entryId) return;');
+    // 释放要先比这一发还是不是最新那发
+    expect(source).toMatch(/if \(launchTokenRef\.current === launchToken\) launchingEntryRef\.current = null;/);
+    // 不许再退回「换条目就清零」那种补救
+    expect(source).not.toMatch(/launchingRef\.current = false/);
+  });
+
+  it('覆盖成功后先认队列里还是不是那一份，再清', () => {
+    const source = read('pages/document-store/RecordingResultPage.tsx');
+    const fn = source.slice(source.indexOf('const overwriteWithOfflineDraft = useCallback'));
+    const body = fn.slice(0, fn.indexOf('}, [enqueueWrite'));
+    const gate = body.indexOf("pendingRef.current?.savedAt !== queued!.savedAt");
+    expect(gate).toBeGreaterThan(-1);
+    // 这道门必须排在清草稿与替换正文之前
+    expect(body.indexOf('clearOfflineEdit(')).toBeGreaterThan(gate);
+    expect(body.indexOf('setPendingEdits(null)')).toBeGreaterThan(gate);
+  });
+
+  it('处理页换条目把时长也归零', () => {
+    const source = read('pages/document-store/RecordingProcessingPage.tsx');
+    const call = source.indexOf('await getDocumentEntry(');
+    expect(source.slice(0, call)).toContain('setDurationSec(0)');
   });
 });
 

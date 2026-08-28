@@ -173,6 +173,9 @@ export function RecordingProcessingPage() {
      * （音频那一格上一轮清了，这几格漏了，Codex 第二十四轮 P2）。
      */
     setTitle('');
+    // 时长也归零：它由播放器广播上来，不清的话新录音的元数据到位之前，
+    // 顶栏会用上一条的时长给它标价；新录音取不到音频时这个错时长永久留着
+    setDurationSec(0);
     setStoreName('');
     setSizeLabel(null);
     setDateLabel(null);
