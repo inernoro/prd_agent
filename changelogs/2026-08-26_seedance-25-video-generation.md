@@ -3,3 +3,4 @@
 | fix | prd-api | 视频生成调用统一切换到 LLMGW 权威路由 |
 | fix | llmgw | appCaller 自助创建支持 video-gen 等全部网关模型类型 |
 | fix | prd-api | HTTP LLMGW 发送阶段锁定首次解析的视频模型，避免二次解析漂移到其他 Provider |
+| fix | prd-api | 视频下载在 HTTP LLMGW 模式下通过网关安全注入密钥并返回成片 |
