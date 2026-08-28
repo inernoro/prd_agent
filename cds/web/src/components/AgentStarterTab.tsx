@@ -292,7 +292,7 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
             {step === 1 && (
               <>
                 <StepHeading number="02" title="你主要负责什么？" description="选择最接近的角色，系统会替你配置表达方式与技能起点。" />
-                <div className="mt-5 grid flex-1 grid-cols-2 gap-3 lg:grid-cols-3">
+                <div className="mt-5 grid min-h-0 flex-1 auto-rows-min grid-cols-2 gap-3 overflow-y-auto pb-14 pr-1 lg:grid-cols-3">
                   {AGENT_ROLE_PROFILES.map((profile) => {
                     const Icon = roleIcons[profile.id]
                     return (
@@ -409,7 +409,8 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
             )}
 
             {step === 4 && (
-              <div className="flex h-full min-h-0 flex-col items-center justify-center overflow-y-auto text-center">
+              <div className="flex h-full min-h-0 flex-col overflow-y-auto">
+                <div className="my-auto flex flex-col items-center py-2 text-center">
                 <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground text-background shadow-xl">
                   <Check className="h-7 w-7" />
                 </motion.div>
@@ -483,9 +484,10 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                     </div>
                     <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-foreground">
                       {decisionCard.replace(/<!-- CDS_AGENT_DECISION_CARD:(START|END) -->\n?/g, '')}
-                    </pre>
-                  </div>
-                )}
+                      </pre>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </motion.section>
@@ -552,7 +554,9 @@ function ChoiceCard({ selected, title, eyebrow, description, chips, icon, compac
           </div>
         )}
       </div>
-      <div className="mt-3 flex items-center gap-1 text-xs font-bold text-foreground opacity-0 transition-opacity group-hover:opacity-100">选择并继续 <ArrowRight className="h-3.5 w-3.5" /></div>
+      {!compact && (
+        <div className="mt-3 flex items-center gap-1 text-xs font-bold text-foreground opacity-0 transition-opacity group-hover:opacity-100">选择并继续 <ArrowRight className="h-3.5 w-3.5" /></div>
+      )}
     </button>
   )
 }
