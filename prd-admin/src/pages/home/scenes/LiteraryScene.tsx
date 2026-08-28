@@ -5,7 +5,7 @@ import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useLandingAsset } from '../hooks/useLandingAssets';
-import { SceneCursor, SelectionSweep, type CursorSpot } from '../components/SceneCursor';
+import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 import type { LiteraryStyleKey } from '../i18n/landing';
 
 /**
@@ -19,6 +19,14 @@ import type { LiteraryStyleKey } from '../i18n/landing';
  * 照真实面板复刻的结构：段落左侧 gutter 可打锚点；右侧是竖列而不是网格
  * （步骤条 → 主按钮 → 配置行 → 工具行 → 流式状态条 → 一列 4:3 配图卡）。
  */
+
+/**
+ * 这一幕复刻的是哪个真实页面。**不是注释，是判据**：
+ * 守卫会拿它去核对「demo 里演的功能，真实页面到底有没有」——
+ * 我先后编过一条不存在的顶部风格条、和一个文学创作根本没有的划词选区，
+ * 两次都是用户一眼看出来的，源码里没有任何东西拦得住。
+ */
+export const MIRRORS = 'src/pages/literary-agent/ArticleIllustrationEditorPage.tsx';
 
 const pine = inkTone(SCENE_HUE.pine);
 const amber = inkTone(SCENE_HUE.amber);
@@ -155,7 +163,7 @@ export function LiteraryScene() {
               className="flex-1 min-h-0 overflow-hidden"
               style={{ padding: '24px 30px', fontFamily: 'var(--font-serif)', fontSize: '15.5px', lineHeight: 2.05, color: SCENE.inkSoft }}
             >
-              <Paragraph anchorAt={B.marking} beat={beat} sweep>{s.body.p1}</Paragraph>
+              <Paragraph anchorAt={B.marking} beat={beat}>{s.body.p1}</Paragraph>
 
               {/* 配图 1 落进正文 */}
               <FigureSlot beat={beat} at={B.fig1} tone={tone} caption={s.body.fig1} variant="ridge" hint={s.body.slot.replace('{n}', '1')} showHintFrom={B.marking} />
@@ -346,8 +354,8 @@ function useMarkCounter(active: boolean, total: number, durationMs: number): num
 }
 
 function Paragraph({
-  children, beat, anchorAt, delay = 0, last = false, sweep = false,
-}: { children: ReactNode; beat: number; anchorAt: number; delay?: number; last?: boolean; sweep?: boolean }) {
+  children, beat, anchorAt, delay = 0, last = false,
+}: { children: ReactNode; beat: number; anchorAt: number; delay?: number; last?: boolean }) {
   return (
     <div className="relative" style={{ marginBottom: last ? 0 : '20px' }}>
       {/* gutter 锚点：AI 通读到这一段时才点亮，逐段错峰，像有人在逐段读 */}
@@ -362,12 +370,14 @@ function Paragraph({
       >
         +
       </span>
-      {/* 划选：指针扫过这一段时底色跟着铺开，让「选中」这件事看得见 */}
-      {sweep ? (
-        <SelectionSweep active={beat >= anchorAt} hue={pine.soft} targetId="para-1">{children}</SelectionSweep>
-      ) : (
-        children
-      )}
+      {/*
+        这里曾经有一道「鼠标划中这一句」的选区底色 —— 是我照搬知识库的。
+        真实的文学创作编辑器（ArticleIllustrationEditorPage）里 getSelection 一处都没有，
+        划词是知识库 DocBrowser 的功能。这一幕的第 2 拍旁白本来就写着
+        「AI 正在通读全文并打配图锚点」：读文章的是 AI，不是人在拖选区。
+        那道扫过已经挪到它真正属于的那一幕（知识库）。
+      */}
+      {children}
     </div>
   );
 }
@@ -421,8 +431,8 @@ function FigureSlot({
 const CURSOR_AT: Record<number, CursorSpot> = {
   [B.idle]: { target: 'doc-title', hidden: true },
   [B.uploaded]: { target: 'doc-title' },
-  // 落在被划中那段的句尾：选区从左铺到右，手停在右下角，跟真的划完一句一样
-  [B.marking]: { target: 'para-1', ax: 1, ay: 0.6 },
+  // AI 在通读全文，手不该在正文里 —— 停在待会儿要按的那颗按钮上等着
+  [B.marking]: { target: 'generate-all' },
   [B.generating]: { target: 'generate-all', press: true }, // gated：手落到按钮上，配图才开始出
   [B.fig1]: { target: 'card-1' },
   [B.fig2]: { target: 'card-2' },

@@ -3,7 +3,7 @@ import type { SceneVariant } from './SceneFrame';
 import { SCENE, SCENE_HUE, galaxyBackdrop, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
+import { SceneCursor, SelectionSweep, type CursorSpot } from '../components/SceneCursor';
 import { useLanguage } from '../contexts/LanguageContext';
 
 /**
@@ -20,6 +20,14 @@ import { useLanguage } from '../contexts/LanguageContext';
  * 下半段是知识星系（DocumentGalaxyView）：根 → 分类 → 文档的二次贝塞尔弧线，
  * 横向引用是拱高更大的能量弧。坐标全部手排，不用 Math.random——这一屏必须每次都一样。
  */
+
+/**
+ * 这一幕复刻的是哪个真实页面。**不是注释，是判据**：
+ * 守卫会拿它去核对「demo 里演的功能，真实页面到底有没有」——
+ * 我先后编过一条不存在的顶部风格条、和一个文学创作根本没有的划词选区，
+ * 两次都是用户一眼看出来的，源码里没有任何东西拦得住。
+ */
+export const MIRRORS = 'src/components/doc-browser/DocBrowser.tsx';
 
 const olive = inkTone(SCENE_HUE.olive);
 
@@ -363,19 +371,20 @@ export function KnowledgeScene({ variant }: { variant?: SceneVariant }) {
               {s.doc.p2before}
               {/* 选区高亮划词那一拍才亮；最后一拍整句换成改写后的文本——
                   「替换原文」不能只是浮层里点一下，正文得真的变 */}
-              <span
-                data-cursor-target="selected-sentence"
-                style={{
-                  background: beat >= B.selecting && beat < B.replaced ? `hsla(${SCENE_HUE.olive}, 54%, 58%, 0.26)` : 'transparent',
-                  borderRadius: '3px',
-                  padding: '1px 2px',
-                  boxShadow: beat >= B.selecting && beat < B.replaced ? `0 0 0 1px ${olive.border}` : 'none',
-                  color: beat >= B.replaced ? SCENE.ink : 'inherit',
-                  transition: 'background .45s ease, box-shadow .45s ease, color .45s ease',
-                }}
+              {/*
+                划词是这一幕的真实功能（DocBrowser 里有 getSelection），所以底色
+                **从左扫到右**，跟手拖出来一样，而不是整块瞬间变色。
+                这道扫过原本被我放在文学创作那一幕 —— 那边的编辑器根本没有划词。
+              */}
+              <SelectionSweep
+                active={beat >= B.selecting && beat < B.replaced}
+                hue={`hsla(${SCENE_HUE.olive}, 54%, 58%, 0.26)`}
+                targetId="selected-sentence"
               >
-                {beat >= B.replaced ? s.rewrite.after : s.doc.selected}
-              </span>
+                <span style={{ color: beat >= B.replaced ? SCENE.ink : 'inherit', transition: 'color .45s ease' }}>
+                  {beat >= B.replaced ? s.rewrite.after : s.doc.selected}
+                </span>
+              </SelectionSweep>
               {s.doc.p2after}
             </p>
 

@@ -21,6 +21,14 @@ import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
  * 顺带一个性能收益：扫光只在「渲染中」那一拍存在，不再是常驻的无限循环。
  */
 
+/**
+ * 这一幕复刻的是哪个真实页面。**不是注释，是判据**：
+ * 守卫会拿它去核对「demo 里演的功能，真实页面到底有没有」——
+ * 我先后编过一条不存在的顶部风格条、和一个文学创作根本没有的划词选区，
+ * 两次都是用户一眼看出来的，源码里没有任何东西拦得住。
+ */
+export const MIRRORS = 'src/pages/ai-chat/AdvancedVisualAgentTab.tsx';
+
 const clay = inkTone(SCENE_HUE.clay);
 const steel = inkTone(SCENE_HUE.steel);
 const pine = inkTone(SCENE_HUE.pine);
