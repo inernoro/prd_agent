@@ -510,6 +510,15 @@ export function buildSizeCappedCommand(
 
 export interface BackupOutcome {
   id: string;
+  /**
+   * 它属于哪个项目。**报错时必须带**：infra id 只在项目内唯一。
+   *
+   * 真机一轮里同时有**六个**叫 `redis` 的目标（各项目一个），其中一个因为拿不到
+   * 认证凭据一直备不成。只报裸 id 的告警会说「redis 没备成」，运维面对六个 redis
+   * 无从下手——一条路由不到人的告警，等于没有这条告警
+   * （cross-project-isolation：标识要带作用域）。
+   */
+  projectId?: string;
   ok: boolean;
   fileName?: string;
   bytes?: number;
