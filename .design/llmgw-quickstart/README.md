@@ -5,6 +5,16 @@
 画布（在线可看、可改、可导出 PNG/PDF）：
 <https://claude.ai/code/artifact/dac088db-f60e-488b-b1e0-8119d3fa4f73>
 
+## 落地状态
+
+已实现（`fab3f45` 版式 + `020f697` 三处未生效声明的修复），预览域名上双主题 + 390
+真实触控验收 20 条全过。稿子与实现如有出入，以实现为准、并回来改这里的源文件。
+
+部署后验收抓到的三处「读得到却不生效」值得记住：
+`.lg-qs-step-card` 少了 `display:flex`（gap 只对 flex/grid 生效，但 computed style
+照样报得出 rowGap=28px）；窄屏覆盖块排在被覆盖规则之前，同特异性下被压掉；
+`<button class="lg-text-link">` 没有背景重置，顶着浏览器默认按钮底渲染成灰方块。
+
 ## 目录里是什么
 
 每个 `.dc.html` 是画布上的一个画板，`canvas.json` 定位置与分页。它们是**源文件**；
