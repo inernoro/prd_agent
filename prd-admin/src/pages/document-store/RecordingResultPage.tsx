@@ -506,10 +506,16 @@ export function RecordingResultPage() {
   const noteIdRef = useRef('');
   noteIdRef.current = state.kind === 'ready' ? state.noteId : '';
 
-  /** 重新拉一次笔记正文与生成时间（整理跑完之后，界面得换成新的那一份） */
-  const reloadNote = useCallback(async () => {
+  /**
+   * 重新拉一次笔记正文与生成时间（整理跑完之后，界面得换成新的那一份）。
+   *
+   * 返回「**远端正文有没有真的装上**」：丢弃离线草稿那条路要拿它当前提——
+   * 装不上就不能清掉草稿，否则屏幕上留着的还是那份草稿，而本机唯一的副本已经删了
+   * （Codex 第十五轮 P1）。
+   */
+  const reloadNote = useCallback(async (): Promise<boolean> => {
     const noteId = noteIdRef.current;
-    if (!noteId || !entryId) return;
+    if (!noteId || !entryId) return false;
     const [contentRes, noteEntryRes, audioEntryRes] = await Promise.all([
       getDocumentContent(noteId),
       getDocumentEntry(noteId),
@@ -521,7 +527,7 @@ export function RecordingResultPage() {
      * 落到 B 的屏幕上，B 随后一次编辑就把它存成 B 的内容（Codex 第十二轮 P1）。
      * 所以完成时先认一遍「我是不是还在当初那条笔记上」，不是就整段丢弃。
      */
-    if (noteIdRef.current !== noteId) return;
+    if (noteIdRef.current !== noteId) return false;
     setState(cur => (cur.kind === 'ready' && cur.noteId === noteId
       ? {
         ...cur,
@@ -538,6 +544,8 @@ export function RecordingResultPage() {
           ?? cur.styleKey,
       }
       : cur));
+    // 正文这一路成功才算「换上了」——条目元数据失败只影响生成时间与整理方式的展示
+    return contentRes.success && typeof contentRes.data?.content === 'string';
   }, [entryId]);
 
   /*
@@ -884,16 +892,26 @@ export function RecordingResultPage() {
               type="button"
               onClick={() => {
                 if (!noteIdForFlush) return;
-                clearOfflineEdit(noteIdForFlush, ownerId);
-                setPendingEdits(null);
-                setFlushConflict(false);
                 /*
+                 * 顺序很讲究：**先把远端正文装上，装上了才允许删草稿**。
+                 *
                  * 屏幕上此刻还是那份离线草稿（离线保存时乐观落过一次）。只清队列不换正文，
-                 * 「已丢弃」就成了假话：下一次改一句，写回服务端的仍然是这份草稿，
-                 * 把同事的新版本盖掉（Codex 第十二轮 P1）。所以丢弃之后立刻把服务端那版拉回来。
+                 * 「已丢弃」就是假话：下一次改一句，写回服务端的仍然是这份草稿，
+                 * 把同事的新版本盖掉（第十二轮 P1）。而上一版把 reloadNote 发出去就不管了，
+                 * 拉取失败或用户抢在它之前改一句，同样会盖——那时本机唯一的副本已经删掉，
+                 * 两头都丢（第十五轮 P1）。所以拉取失败就什么都不动，草稿留着、冲突态留着。
                  */
-                void reloadNote();
-                toast.success('已丢弃这份离线校对，正文已换回云端最新版本');
+                void (async () => {
+                  const installed = await reloadNote();
+                  if (!installed) {
+                    toast.error('云端最新版本没能取回来，离线草稿先留着，请稍后再试');
+                    return;
+                  }
+                  clearOfflineEdit(noteIdForFlush, ownerId);
+                  setPendingEdits(null);
+                  setFlushConflict(false);
+                  toast.success('已丢弃这份离线校对，正文已换回云端最新版本');
+                })();
               }}
               className="rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
               style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}

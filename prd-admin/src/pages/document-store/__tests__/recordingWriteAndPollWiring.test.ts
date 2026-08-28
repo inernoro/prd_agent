@@ -155,7 +155,8 @@ describe('异步完成认笔记', () => {
   const source = read('pages/document-store/RecordingResultPage.tsx');
 
   it('reloadNote 回来时先认「还在不在当初那条笔记上」', () => {
-    expect(source).toContain('if (noteIdRef.current !== noteId) return;');
+    // 认「切走了就不落地」这件事，不认它 return 的是 void 还是 false
+    expect(source).toMatch(/if \(noteIdRef\.current !== noteId\) return( false)?;/);
     expect(source).toContain("cur.kind === 'ready' && cur.noteId === noteId");
   });
 
@@ -173,9 +174,21 @@ describe('离线草稿与屏幕一致', () => {
     expect(restore.slice(0, 700)).toContain('noteMd: restored.content');
   });
 
-  it('丢弃草稿之后把服务端那版拉回来，不把「已丢弃」说成假话', () => {
-    const discard = source.slice(source.indexOf("toast.success('已丢弃这份离线校对") - 800);
-    expect(discard.slice(0, 900)).toContain('void reloadNote();');
+  it('丢弃草稿是「先装上远端正文，装上了才删」，不是发出去就不管', () => {
+    const discard = source.slice(source.indexOf('if (!noteIdForFlush) return;'));
+    const block = discard.slice(0, 1600);
+    // 必须等它回来并看结果——fire-and-forget 会在拉取失败时把草稿删了却留着旧内容在屏上
+    expect(block).toContain('const installed = await reloadNote();');
+    expect(block).toContain('if (!installed)');
+    // 清草稿必须排在装上之后
+    expect(block.indexOf('const installed = await reloadNote();'))
+      .toBeLessThan(block.indexOf('clearOfflineEdit(noteIdForFlush, ownerId);'));
+    expect(block).not.toContain('void reloadNote();');
+  });
+
+  it('reloadNote 汇报正文到底装上了没有，不是只返回 void', () => {
+    expect(source).toContain('const reloadNote = useCallback(async (): Promise<boolean> => {');
+    expect(source).toContain("return contentRes.success && typeof contentRes.data?.content === 'string';");
   });
 });
 
