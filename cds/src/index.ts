@@ -929,11 +929,33 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
       const allCoverageGaps = [...coverageGaps, ...backupScopeGaps(outcomes)];
       if (outcomes.length > 0 || allCoverageGaps.length > 0) {
         const completedAt = new Date().toISOString();
+        // 「这一轮什么时候跑完的」和「这一轮备全了没有」是**两个事实**，必须分开存。
+        //
+        // 原来两个时间戳都写成 `coverageComplete ? completedAt : null`，于是只要有一个
+        // 目标没成，完成时间就被抹成空。真机上恰好长期有两个目标失败，每一轮都把时间
+        // 抹掉，读它的两处判据只能说「读不到上一轮周期备份的结果」——**备份明明每 6 小时
+        // 跑一轮、还留着完整的成败清单**（形状 1：判据把两件事混成一件）。
+        //
+        // 更糟的是它把这盏灯烧了：备份哪天真的整个停掉，报出来的还是同一句话。一条
+        // 既不能证明有问题、也不能证明没问题的 critical，就是常亮的灯，而常亮的灯没人看
+        // ——这正是这套体检当初要治的病。
+        //
+        // 所以：completedAt 只回答「跑没跑」，覆盖是否齐全交给 coverageComplete 与
+        // coverageGaps 单独说；哪几个目标失败了另立 failedTargets，让读者说得出名字。
+        const remoteVerifiedThisRound = outcomes.some((outcome) => Boolean(outcome.remoteObjectKey));
         const health = {
           coverageComplete,
-          completedAt: coverageComplete ? completedAt : null,
-          remoteVerifiedAt: coverageComplete ? completedAt : null,
+          completedAt,
+          // 离机时间戳只回答「离机通道这一轮活着吗」：本轮真有副本上传并校验通过才刷新。
+          // 一个都没上去时**保留上一轮的值**而不是抹成 null——「离机是 3 天前」比
+          // 「离机时间未知」可行动得多，而抹成 null 会把已知的陈旧退化成未知。
+          remoteVerifiedAt: remoteVerifiedThisRound
+            ? completedAt
+            : readPreviousRemoteVerifiedAt(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`),
           coverageGaps: allCoverageGaps,
+          // 失败目标要留名字。拆开两个事实之后，「有目标一直备不成」这件事不再顺带被
+          // 那条假 critical 遮着，必须自己有一条真判据接住它，否则就是把假警报换成沉默。
+          failedTargets: failed.map((outcome) => outcome.id),
           objects: outcomes.map((outcome) => ({
             id: outcome.id,
             fileName: outcome.fileName,
@@ -1070,6 +1092,20 @@ function startExternalPortAuditWatchdog(store: ServerEventLogSink | null): NodeJ
   return timer;
 }
 
+/**
+ * 上一轮记下的离机校验时刻。本轮一个离机副本都没上去时用它续上，
+ * 好让「离机是 N 小时前」这个已知事实不至于退化成「时间未知」。
+ * 读不出来（首轮 / 文件损坏）才是真的 null。
+ */
+function readPreviousRemoteVerifiedAt(healthFilePath: string): string | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(healthFilePath, 'utf8')) as { remoteVerifiedAt?: string | null };
+    return value.remoteVerifiedAt || null;
+  } catch {
+    return null;
+  }
+}
+
 function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Date | null } {
   const candidates = backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot });
   for (const dir of candidates) {
@@ -1077,9 +1113,12 @@ function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Dat
       const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
         coverageComplete?: boolean; completedAt?: string; remoteVerifiedAt?: string;
       };
-      if (value.coverageComplete === false) {
-        return { completedAt: null, remoteVerifiedAt: null };
-      }
+      // **这里曾经还有一次抹空**：`coverageComplete === false` 就把两个时间戳一起归零。
+      // 同一个「把跑没跑和备没备全混成一件事」的判据被抄了两份（形状 3：判据分裂后各自
+      // 漂移），只修落盘那一处不够——基础设施健康那两条仍会报「本地/离机备份时间未知，
+      // 可能没有可恢复副本」，而备份每 6 小时就在跑。
+      //
+      // 覆盖是否齐全由 coverageComplete / coverageGaps 自己回答，时间戳只回答新鲜度。
       return {
         completedAt: value.completedAt ? new Date(value.completedAt) : null,
         remoteVerifiedAt: value.remoteVerifiedAt ? new Date(value.remoteVerifiedAt) : null,
@@ -1194,14 +1233,20 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
       // 「覆盖不全」压成了「完全没备份过」，两件事在体检里要分开报。
       let lastCompletedAt: string | null = null;
       let coverageGaps: string[] = [];
+      let failedTargets: string[] = [];
       for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
         try {
           const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
             completedAt?: string | null;
             coverageGaps?: Array<{ id?: string }>;
+            failedTargets?: string[];
           };
+          // completedAt **只**回答「跑没跑」。不要在这里按 coverageComplete 再抹一次空——
+          // 那正是这条链路上被抄了两份、又各自漂移的那个判据（见落盘处与 readBackupHealth
+          // 的注释）。备没备全走 coverageGaps，谁没备成走 failedTargets。
           lastCompletedAt = value.completedAt ?? null;
           coverageGaps = (value.coverageGaps || []).map((g) => String(g?.id || '')).filter(Boolean);
+          failedTargets = (value.failedTargets || []).map((id) => String(id || '')).filter(Boolean);
           break;
         } catch { /* 换下一个候选目录 */ }
       }
@@ -1214,7 +1259,7 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
         infra,
         infraExemptions: exemptions,
         platformStores,
-        backup: { lastCompletedAt, coverageGaps },
+        backup: { lastCompletedAt, coverageGaps, failedTargets },
         lastRestoreDrillAt: null,
       });
 
