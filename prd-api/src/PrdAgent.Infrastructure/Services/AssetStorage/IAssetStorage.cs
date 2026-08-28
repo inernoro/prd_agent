@@ -146,7 +146,26 @@ public interface IAssetStorage
     /// <summary>
     /// 根据 key 构建公开访问 URL。
     /// </summary>
+    /// <remarks>
+    /// 这里的 key 是**完整物理 key**：本实现原样使用，不会替你补上自己配置的前缀。
+    /// 内容寻址对象的物理 key 由 <c>SaveAsync</c> 生成、已经含前缀，所以这个方法拼得对；
+    /// 但**跨站搬来的 key 带的是源站前缀**，那种场景要用
+    /// <see cref="BuildUrlForLogicalKey"/>。
+    /// </remarks>
     string BuildUrlForKey(string key);
+
+    /// <summary>
+    /// 根据**不带前缀的逻辑 key**（`{domain}/{type}/{文件名}`）构建本站地址：先套本站前缀，再拼公网根。
+    /// </summary>
+    /// <remarks>
+    /// 跨实例同步专用。搬过来的对象 key 带的是**源站**前缀，两站前缀不一致时，
+    /// 拿它直接走 <see cref="BuildUrlForKey"/> 会拼出 `{本站根}/{源站前缀}/...`——
+    /// 一个谁家都不是的路径（DS31）。调用方先把 key 剥成逻辑 key，前缀交给本方法套。
+    ///
+    /// 默认实现等同 <see cref="BuildUrlForKey"/>：没有前缀概念的实现（本地磁盘）本就一致，
+    /// 测试替身也不必为此改签名。真正带前缀的实现（R2 / COS）必须覆写。
+    /// </remarks>
+    string BuildUrlForLogicalKey(string logicalKey) => BuildUrlForKey(logicalKey);
 
     /// <summary>
     /// 删除指定 key 的对象。

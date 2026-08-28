@@ -827,6 +827,7 @@ public sealed class DataSyncConsumerController : ControllerBase
             // 界面上就只剩一句好消息，缺口被藏起来——那正是 DS1 当初的样子。
             assetUrlsRebased = kv.Value.AssetUrlsRebased,
             assetUrlsUnresolved = kv.Value.AssetUrlsUnresolved,
+            assetUrlsRelative = kv.Value.AssetUrlsRelative,
             done = kv.Value.Done,
         }),
     };
