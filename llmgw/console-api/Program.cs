@@ -5247,12 +5247,16 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
         // 存量迁移：上一版把系统 appCaller 挂在了租户第一个业务团队上。留着不动有两个后果——
         // 消耗继续记在别人头上；而且 serving 会拿 key.TeamId 与 appCaller.TeamId 比对，
         // 对不上直接 403 GATEWAY_KEY_TEAM_MISMATCH。所以搬到系统团队，幂等。
-        if (!string.Equals(existingCaller.AsNullableString("TeamId"), effectiveTeamId, StringComparison.Ordinal))
-        {
-            await gwAppCallers.UpdateOneAsync(
-                callerFilter,
-                Builders<BsonDocument>.Update.Set("TeamId", effectiveTeamId).Set("UpdatedAt", DateTime.UtcNow));
-        }
+        //
+        // 搬的范围按 **AppCallerCode** 而不是「code + requestType」：serving 那条比对
+        // 查的是同租户下这个码的**全部**文档，只要有一条团队不一致就整个拒绝。
+        // 按更窄的条件搬，会留下一条搬不到的漏网文档把整条链路卡死（判据比它该管的范围窄）。
+        await gwAppCallers.UpdateManyAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                Builders<BsonDocument>.Filter.Eq("AppCallerCode", SystemIntentDraftAppCaller),
+                Builders<BsonDocument>.Filter.Ne("TeamId", effectiveTeamId)),
+            Builders<BsonDocument>.Update.Set("TeamId", effectiveTeamId).Set("UpdatedAt", DateTime.UtcNow));
     }
     else
     {
