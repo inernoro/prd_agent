@@ -412,6 +412,18 @@ export function TranscribeStatusCard({
   const notifiedRef = useRef(false);
   const sawProcessingRef = useRef(false);
   useEffect(() => { if (processing) sawProcessingRef.current = true; }, [processing]);
+  /*
+   * 换录音时把这三格清零。这张卡在同一处挂着、只换 props，不清的话两种都会出事
+   * （Codex 第二十五轮 P2）：
+   *   A 处理过 → 切到一条卡住的 B，点「完成后通知我」当场就弹一条「有新进展」，
+   *     因为「亲眼看到它在跑」那一格还留着 A 的 true；
+   *   A 已经通知过 → B 再也通知不了，因为「已通知」那一格也还留着。
+   */
+  useEffect(() => {
+    notifiedRef.current = false;
+    sawProcessingRef.current = false;
+    setNotifyState('idle');
+  }, [currentEntryId]);
   useEffect(() => {
     if (notifyState !== 'armed' || notifiedRef.current) return;
     if (processing || !sawProcessingRef.current) return;

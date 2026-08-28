@@ -221,6 +221,13 @@ export function RecordingProcessingPage() {
      * 但「这一刻还没有 run」不能立刻收手：用户多半是刚录完过来的，run 晚一两拍才建出来。
      * 所以没有 run 时限次数地等，有了 run 就只等它走到终态。
      */
+    /*
+     * 换录音先清掉上一条的 run 与失败说明。不清的话 B 的第一发查询失败只会排下一发，
+     * 这期间屏上照常显示 A 的进度、部分原文与失败出口——网络不好时能持续一整段
+     * （Codex 第二十五轮 P2）。
+     */
+    setRun(null);
+    setFailure(null);
     let missingTicks = 0;
     const MAX_MISSING_TICKS = 60; // 2s × 60 = 2 分钟还没建出 run，就不是「马上要来」了
     /*

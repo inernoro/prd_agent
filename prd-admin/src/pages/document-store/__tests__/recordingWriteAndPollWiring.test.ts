@@ -369,6 +369,28 @@ describe('换条目时把绑在上一条身上的状态放掉', () => {
     }
   });
 
+  it('处理页换条目把上一条的 run 与失败说明也清掉', () => {
+    const source = read('pages/document-store/RecordingProcessingPage.tsx');
+    const call = source.indexOf('await getLatestAgentRun(');
+    expect(call).toBeGreaterThan(-1);
+    const head = source.slice(0, call);
+    expect(head).toContain('setRun(null)');
+    expect(head).toContain('setFailure(null)');
+  });
+
+  /*
+   * 「完成后通知我」的三格状态跟着录音走。不清的话：上一条处理过 → 这一条点通知当场
+   * 弹一条假的「有新进展」；上一条通知过 → 这一条永远通知不了。
+   */
+  it('转录状态卡的通知追踪跟着录音条目复位', () => {
+    const source = read('components/doc-browser/TranscribeStatusCard.tsx');
+    const eff = source.slice(source.indexOf('notifiedRef.current = false;'));
+    const scope = eff.slice(0, eff.indexOf('}, [') + 40);
+    expect(scope).toContain('sawProcessingRef.current = false;');
+    expect(scope).toContain("setNotifyState('idle')");
+    expect(scope).toContain('[currentEntryId]');
+  });
+
   it('结果页原文取失败不当成「没有原文」，并给得出重试', () => {
     const source = read('pages/document-store/RecordingResultPage.tsx');
     // 有笔记 id 却没取回正文 = 取失败，必须落到 error 而不是空串

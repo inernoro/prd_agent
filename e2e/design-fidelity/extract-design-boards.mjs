@@ -8,6 +8,17 @@
  */
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/*
+ * 仓库根从**这个脚本自己的位置**推出来（e2e/design-fidelity/ 往上两级），
+ * 不写死作者机器上的绝对路径——换一台机器 / 换一个 checkout 目录，
+ * 按 README 里那条命令跑就会在 Playwright 起来之前先抛「缺 React UMD」
+ * （Codex 第二十五轮 P2）。REPO_ROOT 仍然保留为显式覆盖。
+ */
+const REPO_ROOT = process.env.REPO_ROOT
+  || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const OUT = process.env.OUT_DIR || '/tmp/claude-0/-home-user-prd-agent/e94f0ca4-fb88-51cb-95f1-831ce61d00ee/scratchpad/design-boards';
 fs.mkdirSync(OUT, { recursive: true });
@@ -32,9 +43,9 @@ const REACT_UMD = [
   'prd-admin/node_modules/react/umd/react.production.min.js',
   'prd-admin/node_modules/react-dom/umd/react-dom.production.min.js',
 ].map((rel) => {
-  const path = `${process.env.REPO_ROOT || '/home/user/prd_agent'}/${rel}`;
-  if (!fs.existsSync(path)) throw new Error(`缺 React UMD：${path}（先在 prd-admin 装依赖）`);
-  return fs.readFileSync(path, 'utf8');
+  const full = path.join(REPO_ROOT, rel);
+  if (!fs.existsSync(full)) throw new Error(`缺 React UMD：${full}（先在 prd-admin 装依赖）`);
+  return fs.readFileSync(full, 'utf8');
 });
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
