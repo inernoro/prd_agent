@@ -34,10 +34,24 @@ fs.mkdirSync(OUT, { recursive: true });
  * 正解是把**本地的** React UMD 喂给它自己的运行时，让设计稿按它自己的逻辑渲染。
  * 于是这里改回加载带脚本的原稿，React 从 node_modules 注入。
  */
-const PAGES = [
-  { file: 'delivery-v2.html', prefix: 'v2' },
-  { file: 'capture-and-result.html', prefix: 'cap' },
-];
+/*
+ * 设计稿画布是**外部交付物，不在本仓库里**——它由设计方给出，跑之前要自己起一个
+ * 静态服务把它暴露出来。这两件事以前是隐式的：脚本写死端口 8188 与两个文件名，
+ * 于是从一个干净 checkout 按 README 跑，第一次 goto 就落到一个不存在的资源上，
+ * 而流程照样往下走、照样出分数——「不会红的证据比没有证据更糟」（Codex 第三十轮 P2）。
+ * 现在把它变成显式契约：地址与文件名都可用环境变量给，且**先探一次可达性**，
+ * 不可达就当场报错说清缺什么，绝不静默切出一批空白基准图。
+ */
+const DESIGN_BASE = (process.env.DESIGN_BASE_URL || 'http://localhost:8188').replace(/\/$/, '');
+const PAGES = (process.env.DESIGN_PAGES
+  ? process.env.DESIGN_PAGES.split(',').map((item) => {
+    const [file, prefix] = item.split(':').map((part) => part.trim());
+    return { file, prefix: prefix || file.replace(/\.html$/, '') };
+  })
+  : [
+    { file: 'delivery-v2.html', prefix: 'v2' },
+    { file: 'capture-and-result.html', prefix: 'cap' },
+  ]).filter((item) => item.file);
 
 const REACT_UMD = [
   'prd-admin/node_modules/react/umd/react.production.min.js',
@@ -48,7 +62,15 @@ const REACT_UMD = [
   return fs.readFileSync(full, 'utf8');
 });
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+/*
+ * 浏览器可执行文件让 Playwright 自己找（PLAYWRIGHT_BROWSERS_PATH 那套本来就管这件事）。
+ * 写死某个容器镜像里的绝对路径，等于把这条流水线绑死在一台机器上：别人装好了
+ * Playwright 也跑不起来，而且是在 launch 那一步才炸（Codex 第三十轮 P2）。
+ * 真要指定就给 CHROMIUM_PATH。
+ */
+const browser = await chromium.launch(
+  process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {},
+);
 const manifest = [];
 
 for (const { file, prefix } of PAGES) {
@@ -57,7 +79,16 @@ for (const { file, prefix } of PAGES) {
   for (const source of REACT_UMD) await page.addInitScript({ content: source });
   // 拦掉原稿里指向 unpkg 的那两个 script：网络打不通，networkidle 会白等到超时
   await page.route('**://unpkg.com/**', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
-  await page.goto(`http://localhost:8188/${file}`, { waitUntil: 'networkidle' });
+  const url = `${DESIGN_BASE}/${file}`;
+  const response = await page.goto(url, { waitUntil: 'networkidle' });
+  // 先认「这一页真的取到了」：404/连不上时下面切出来的会是一批空白基准图
+  if (!response || !response.ok()) {
+    throw new Error(
+      `取不到设计稿画布：${url}（HTTP ${response ? response.status() : '连接失败'}）。`
+      + '设计稿不在本仓库里，请先把设计方给的画布目录起成静态服务，'
+      + '并用 DESIGN_BASE_URL / DESIGN_PAGES 指过去。',
+    );
+  }
   await page.waitForTimeout(2500);
 
   // 判据不能是「脚本加载了没有」，要看**渲染结果**：还留着未解析的 {{ }} 就是没渲染成功。

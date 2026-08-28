@@ -586,3 +586,32 @@ describe('估算时间轴不给做不到的说话人入口', () => {
     expect(source).toContain('这份原文没有真实时间轴，暂时存不下说话人标注。');
   });
 });
+
+/*
+ * 取证流水线要能在别人的机器上跑起来。此前两处把它绑死在我这台机器上：
+ * 设计稿地址与文件名写死、浏览器可执行文件写死某个容器镜像的绝对路径。
+ * 更糟的是取不到设计稿时不报错——照样切图、照样出分数，那是一批空白基准图
+ * （「不会红的证据比没有证据更糟」，Codex 第三十轮 P2）。
+ */
+describe('设计稿取证脚本不绑死在一台机器上', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', '..', '..', '..', 'e2e/design-fidelity/extract-design-boards.mjs'),
+    'utf-8',
+  );
+
+  it('设计稿地址与画布清单可由环境变量给', () => {
+    expect(source).toContain('process.env.DESIGN_BASE_URL');
+    expect(source).toContain('process.env.DESIGN_PAGES');
+  });
+
+  it('浏览器让 Playwright 自己找，不写死容器里的绝对路径', () => {
+    expect(source).not.toContain('/opt/pw-browsers/');
+    expect(source).toContain('process.env.CHROMIUM_PATH');
+  });
+
+  it('取不到设计稿当场报错，不静默切出空白基准图', () => {
+    const from = source.slice(source.indexOf('const response = await page.goto('));
+    expect(from.slice(0, 600)).toContain('throw new Error(');
+    expect(from.slice(0, 600)).toContain('response.ok()');
+  });
+});

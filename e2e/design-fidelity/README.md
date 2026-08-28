@@ -13,8 +13,17 @@
 
 ## 跑法
 
+**先说清一件事：设计稿画布不在本仓库里。** 它是设计方的交付物，跑这条流水线之前
+要自己把那个目录起成静态服务，再用环境变量指过去。不指就用默认值
+（`http://localhost:8188`，两块画布 `delivery-v2.html` / `capture-and-result.html`）。
+取不到时脚本会当场报错说清缺什么，不会静默切出一批空白基准图。
+
 ```bash
-# 1. 把设计稿目录起成静态服务（端口 8188），并生成去运行时的静态副本
+# 1. 把设计稿目录起成静态服务，并生成去运行时的静态副本
+#    默认地址 http://localhost:8188；换地址或换文件名用：
+#      DESIGN_BASE_URL=http://localhost:9000 \
+#      DESIGN_PAGES='delivery-v2.html:v2,capture-and-result.html:cap' \
+#    浏览器默认让 Playwright 自己找，要指定就给 CHROMIUM_PATH
 # 2. 切设计稿基准图
 node e2e/design-fidelity/extract-design-boards.mjs
 # 3. 起对照台（prd-admin 目录下 pnpm exec vite --port 8123），再取实现图
