@@ -165,10 +165,10 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
 
             // 确定读不出正文（纯视频/纯图包装站等）才盖版本戳：不盖的话，每个打开这个页面的
             // 人都会再排一次生成，而结论永远是同一个「读不出来」。
-            await StampAsync(db, siteId, version, questions: null, ct);
+            var stampedEmpty = await StampAsync(db, siteId, version, questions: null, ct);
             _logger.LogInformation("[AskOpeners] 站点 {SiteId} 读不到正文，跳过生成：{Reason}",
                 siteId, snapshot.Unavailable ?? "正文为空");
-            return AskOpenerOutcome.NoContent;
+            return stampedEmpty ? AskOpenerOutcome.NoContent : AskOpenerOutcome.Superseded;
         }
 
         var text = snapshot.Text.Length > PromptTextBudget ? snapshot.Text[..PromptTextBudget] : snapshot.Text;
@@ -252,14 +252,22 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
             // 模型确实答了、只是答的没法用 —— 这个是盖戳的：同一份正文再问同一个模型
             // 不会有别的结果，只会按访客数重复烧钱。正文换了（版本变了）自然会再试一次，
             // owner 也随时可以点「重新生成」破掉这个戳。
-            await StampAsync(db, siteId, version, questions: null, ct);
+            var stampedUnusable = await StampAsync(db, siteId, version, questions: null, ct);
             _logger.LogInformation("[AskOpeners] 站点 {SiteId} 模型没给出可用问题，这一栏保持为空", siteId);
-            return AskOpenerOutcome.ModelUnusable;
+            return stampedUnusable ? AskOpenerOutcome.ModelUnusable : AskOpenerOutcome.Superseded;
         }
 
         _cooldownUntil.TryRemove(siteId, out _);
 
-        await StampAsync(db, siteId, version, questions, ct);
+        if (!await StampAsync(db, siteId, version, questions, ct))
+        {
+            // 这几秒里站点被重传、或者别人把题库改成手写了。整笔没写是对的（这批题按旧口径算），
+            // 但不能报 Generated——那会让端点回 generated=true、抽屉把手上这批标成系统生成的。
+            _logger.LogInformation("[AskOpeners] 站点 {SiteId} 生成期间被顶掉，这一批 {Count} 条题未落库",
+                siteId, questions.Count);
+            return AskOpenerOutcome.Superseded;
+        }
+
         _logger.LogInformation("[AskOpeners] 站点 {SiteId} 生成了 {Count} 条开场问题", siteId, questions.Count);
         return AskOpenerOutcome.Generated;
     }
@@ -271,7 +279,14 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
     /// 自己的题库，那一瞬间的写入不能被这次后台生成盖掉（读-改-写的经典竞态，
     /// 判据必须落在 filter 上，而不是只在内存里判过一次就算数）。
     /// </summary>
-    private static async Task StampAsync(
+    /// <summary>
+    /// 落库并盖版本戳。返回**这一笔到底写没写进去**。
+    ///
+    /// 过滤器有可能一条都不匹配（下面注释说的那两种情况），那时整笔不写是对的，但调用方
+    /// 必须知道——不然它会接着返回 Generated，端点回 generated=true，抽屉把手上这批题
+    /// 标成「系统读正文生成」，而库里一个字都没变。判据挡住了坏写入，结论却在撒谎。
+    /// </summary>
+    private static async Task<bool> StampAsync(
         MongoDbContext db, string siteId, DateTime version, List<string>? questions, CancellationToken ct)
     {
         // questions 为 null 表示「这一版正文得不出题」（读不出正文 / 模型答的没法用）。
@@ -287,11 +302,12 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         // 盖上去等于用旧内容的口径描述新页面，还会把版本戳推到新版、堵住下一次自动生成。
         // 版本对不上就整笔不写——NeedsGeneration 随即判「这一版没算过」，下一次
         // QueueEnsure（重传、改配置、访客打开分享）会重新按新正文生成。
-        await db.HostedSites.UpdateOneAsync(
+        var result = await db.HostedSites.UpdateOneAsync(
             s => s.Id == siteId
                  && s.AskQuestionsSource != "manual"
                  && (s.ContentVersion == version || (s.ContentVersion == default && s.CreatedAt == version)),
             update,
             cancellationToken: ct);
+        return result.MatchedCount > 0;
     }
 }

@@ -525,19 +525,21 @@ public class WebPagesController : ControllerBase
         // 来源二：分享访问。ShareViewLog 只认分享，得先把分享映回它包含的站点。
         // 一条分享可以带多个站点，访客算给这条分享里的每个站点——这是这份日志能支持的最细粒度，
         // 比整列显示 0 诚实得多；真要做到「他到底点开了哪一个」得在分享阅读页按站点埋点，另记一笔账。
+        // 两个字段都要认：合集分享写 SiteIds，存量单站点分享只写 SiteId。只查 SiteIds 的话，
+        // 单站点分享整条被漏掉，而那正是「纯靠分享访问的站点显示 0 访客」最常见的形态——
+        // 修了一半等于没修。字段口径走 WebPageShareLink.TargetSiteIds() 这一个来源。
+        var fb = Builders<WebPageShareLink>.Filter;
         var shares = await _db.WebPageShareLinks
-            .Find(Builders<WebPageShareLink>.Filter.AnyIn(x => x.SiteIds, ids))
-            .Project<BsonDocument>(Builders<WebPageShareLink>.Projection.Include(x => x.Id).Include(x => x.SiteIds))
+            .Find(fb.Or(fb.AnyIn(x => x.SiteIds, ids), fb.In(x => x.SiteId, ids)))
+            .Project<WebPageShareLink>(Builders<WebPageShareLink>.Projection
+                .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds))
             .ToListAsync();
         var shareToSites = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var doc in shares)
+        foreach (var share in shares)
         {
-            var shareId = doc.Contains("_id") && !doc["_id"].IsBsonNull ? doc["_id"].AsString : null;
-            if (shareId == null || !doc.Contains("SiteIds") || !doc["SiteIds"].IsBsonArray) continue;
-            var hit = doc["SiteIds"].AsBsonArray
-                .Where(v => !v.IsBsonNull && ids.Contains(v.AsString))
-                .Select(v => v.AsString).ToList();
-            if (hit.Count > 0) shareToSites[shareId] = hit;
+            if (string.IsNullOrEmpty(share.Id)) continue;
+            var hit = share.TargetSiteIds().Where(ids.Contains).ToList();
+            if (hit.Count > 0) shareToSites[share.Id] = hit;
         }
 
         if (shareToSites.Count > 0)

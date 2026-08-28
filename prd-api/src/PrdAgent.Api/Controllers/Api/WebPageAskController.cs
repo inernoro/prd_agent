@@ -186,6 +186,7 @@ public class WebPageAskController : ControllerBase
             AskOpenerOutcome.ModelUnusable => "模型读完这一页没写出能用的问题。可以先自己加一条，或者换一版正文再试。",
             AskOpenerOutcome.ModelUnavailable => "模型这会儿调不通（网关没有可用模型池或暂时不可达）。这是暂时的，过一会儿再点一次。",
             AskOpenerOutcome.Busy => "这个站点已经有一次生成在跑了，等它写完就会出现，不用重复点。",
+            AskOpenerOutcome.Superseded => "生成期间这个站点的内容被换过（或题库被改成手写），这一批题按旧内容算的，没有保存。可以再点一次按最新内容生成。",
             _ => "这个站点现在不需要生成（提问没开，或题库已经是你自己写的）。",
         };
 

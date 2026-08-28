@@ -51,4 +51,10 @@ public enum AskOpenerOutcome
     /// 等那一次写完就有结果，重复点不会更快，也不会重复计费。
     /// </summary>
     Busy,
+
+    /// <summary>
+    /// 题算出来了，但落库时发现站点已经被顶掉——正文在这几秒里被重传，或者别人把题库
+    /// 改成了手写。这一批按旧口径算的题整笔没写。区别于 Generated：那边是真写进去了。
+    /// </summary>
+    Superseded,
 }

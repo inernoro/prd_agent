@@ -227,7 +227,7 @@ public class AskOpeningQuestionWiringTests
         // 站点重传成不相干的内容后，版本戳指向新正文，而分享页还在展示按旧正文写的问题——
         // 那是在拿旧内容的口径描述新页面。owner 手写的那份不受影响（过滤器有 manual 判据）。
         var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
-        var body = SourceSlice.Member(gen, "private static async Task StampAsync(");
+        var body = SourceSlice.Member(gen, "private static async Task<bool> StampAsync(");
         Assert.Contains("questions ?? new List<string>()", body);
         // 不许退回「为 null 就不写这个字段」的老写法
         Assert.DoesNotContain("if (questions != null)", body);
@@ -279,7 +279,7 @@ public class AskOpeningQuestionWiringTests
         // 生成要跑几秒，这期间站点可能被重传。按旧正文算出来的题盖到新版本上，
         // 等于用旧内容的口径描述新页面，还会把版本戳推到新版、堵住下一次自动生成。
         var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
-        var body = SourceSlice.Member(gen, "private static async Task StampAsync(");
+        var body = SourceSlice.Member(gen, "private static async Task<bool> StampAsync(");
         Assert.Contains("s.ContentVersion == version", body);
         // 版本口径必须与 NeedsGeneration 那处一致（存量站点没有 ContentVersion，回退 CreatedAt）
         Assert.Contains("s.ContentVersion == default && s.CreatedAt == version", body);

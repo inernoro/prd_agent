@@ -233,6 +233,27 @@ public class WebPageShareLink
     /// <summary>关联的站点 ID 列表（合集分享时）</summary>
     public List<string> SiteIds { get; set; } = new();
 
+    /// <summary>
+    /// 这条分享到底指向哪几个站点 —— 合集分享看 SiteIds，存量单站点分享只有 SiteId。
+    ///
+    /// 抽出来是因为「两个字段一起认」这件事在读路径上被各写了一遍（鉴权、阅读、另存、
+    /// 分享列表…），少认一个字段的表现是**存量单站点分享整条被漏掉**，而且不报错：
+    /// 访客数一栏就因此对这类分享一直显示 0。判据分裂成多份然后各自漂移的典型
+    /// （predicate-and-wiring-discipline 形状 3），新代码一律走这一个。
+    ///
+    /// SiteId 排在前面：单站点分享的语义主体就是它。
+    /// </summary>
+    public List<string> TargetSiteIds()
+    {
+        var ids = new List<string>();
+        if (!string.IsNullOrEmpty(SiteId)) ids.Add(SiteId);
+        foreach (var id in SiteIds)
+        {
+            if (!string.IsNullOrEmpty(id) && !ids.Contains(id)) ids.Add(id);
+        }
+        return ids;
+    }
+
     /// <summary>分享类型：single = 单站点, collection = 合集</summary>
     public string ShareType { get; set; } = "single";
 
