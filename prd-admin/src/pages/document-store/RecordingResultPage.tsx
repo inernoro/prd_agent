@@ -515,7 +515,14 @@ export function RecordingResultPage() {
       getDocumentEntry(noteId),
       getDocumentEntry(entryId),
     ]);
-    setState(cur => (cur.kind === 'ready'
+    /*
+     * 这一发回来时用户可能已经从侧栏切到另一条录音了（同一条路由只换 params，
+     * 组件不重挂）。只判 `cur.kind === 'ready'` 拦不住这种情况——那样 A 的正文会
+     * 落到 B 的屏幕上，B 随后一次编辑就把它存成 B 的内容（Codex 第十二轮 P1）。
+     * 所以完成时先认一遍「我是不是还在当初那条笔记上」，不是就整段丢弃。
+     */
+    if (noteIdRef.current !== noteId) return;
+    setState(cur => (cur.kind === 'ready' && cur.noteId === noteId
       ? {
         ...cur,
         noteMd: contentRes.success ? (contentRes.data?.content ?? cur.noteMd) : cur.noteMd,
@@ -608,6 +615,8 @@ export function RecordingResultPage() {
   /** 同页校对：整份 markdown 覆盖写回转录笔记条目 */
   const onSaveNote = useCallback(async (nextNoteMd: string) => {
     if (state.kind !== 'ready' || !state.noteId) return false;
+    // 这次保存写的是哪条笔记：await 回来之后拿它认人，不认就会写到切走后的那一条上
+    const savingNoteId = state.noteId;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       // 离线：收进队列并乐观落到本地。这不是「假装保存成功」——联网后真的会补传，
       // 而且横幅上明写着还有几处没上去，用户随时看得到自己欠了多少。
@@ -631,7 +640,8 @@ export function RecordingResultPage() {
       // 落不住盘就别说「刷新也不会丢」——横幅文案跟着降级（Codex P1）
       setQueueVolatile(!saveOfflineEdit(queued));
       setPendingEdits(queued);
-      setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: nextNoteMd } : prev));
+      // 认笔记：这一下是同步的，但保持与下面那处同一口径，别给「切走之后落回来」留门
+      setState(prev => (prev.kind === 'ready' && prev.noteId === noteId ? { ...prev, noteMd: nextNoteMd } : prev));
       return true;
     }
     /*
@@ -652,8 +662,12 @@ export function RecordingResultPage() {
     setPendingEdits(null);
     setQueueVolatile(false);
     setFlushConflict(false);
-    // 乐观落到本地：等下一次拉取会让这行字先消失再出现，那是「凭空消失」
-    setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: nextNoteMd } : prev));
+    /*
+     * 乐观落到本地：等下一次拉取会让这行字先消失再出现，那是「凭空消失」。
+     * 但要认笔记——这一发是 await 回来的，期间用户可能已经从侧栏切到另一条录音，
+     * 不认的话 A 的正文会落到 B 的屏幕上（Codex 第十二轮 P1）。
+     */
+    setState(prev => (prev.kind === 'ready' && prev.noteId === savingNoteId ? { ...prev, noteMd: nextNoteMd } : prev));
     return true;
   }, [enqueueWrite, ownerId, state]);
 
@@ -666,7 +680,19 @@ export function RecordingResultPage() {
   useEffect(() => {
     if (!noteIdForFlush || !ownerId) { setPendingEdits(null); return; }
     setFlushConflict(false);
-    setPendingEdits(loadOfflineEdit(noteIdForFlush, ownerId));
+    const restored = loadOfflineEdit(noteIdForFlush, ownerId);
+    setPendingEdits(restored);
+    /*
+     * 队列接回来的同时，**正文也要接回来**。只接元数据的话，屏幕上还是服务端那份旧的，
+     * 用户看不见自己上次改过什么；更糟的是他随手再改一句，排进队列的是这份旧正文，
+     * 把本机存着的那版校对整个盖掉（Codex 第十二轮 P1）。
+     * 只在这条笔记确实还没同步时装回去——`loadOfflineEdit` 已经核过笔记、账号与过期。
+     */
+    if (restored?.content) {
+      setState(prev => (prev.kind === 'ready' && prev.noteId === noteIdForFlush
+        ? { ...prev, noteMd: restored.content }
+        : prev));
+    }
   }, [noteIdForFlush, ownerId]);
 
   /** 恢复联网就把队列补传上去；失败就留着，横幅继续显示欠了多少 */
@@ -861,7 +887,13 @@ export function RecordingResultPage() {
                 clearOfflineEdit(noteIdForFlush, ownerId);
                 setPendingEdits(null);
                 setFlushConflict(false);
-                toast.success('已丢弃这份离线校对');
+                /*
+                 * 屏幕上此刻还是那份离线草稿（离线保存时乐观落过一次）。只清队列不换正文，
+                 * 「已丢弃」就成了假话：下一次改一句，写回服务端的仍然是这份草稿，
+                 * 把同事的新版本盖掉（Codex 第十二轮 P1）。所以丢弃之后立刻把服务端那版拉回来。
+                 */
+                void reloadNote();
+                toast.success('已丢弃这份离线校对，正文已换回云端最新版本');
               }}
               className="rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
               style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}

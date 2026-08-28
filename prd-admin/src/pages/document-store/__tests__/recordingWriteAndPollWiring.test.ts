@@ -147,3 +147,35 @@ describe('说话人草稿按行清空', () => {
   });
 });
 
+/*
+ * 第十二轮三条 P1，都是「A 的正文落到 B 头上 / 草稿与屏幕不一致」这一族：
+ * 界面照常渲染、测试照常绿，只有真人切换录音或断网重开才会撞上。
+ */
+describe('异步完成认笔记', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('reloadNote 回来时先认「还在不在当初那条笔记上」', () => {
+    expect(source).toContain('if (noteIdRef.current !== noteId) return;');
+    expect(source).toContain("cur.kind === 'ready' && cur.noteId === noteId");
+  });
+
+  it('在线保存落地时认这次保存写的那条笔记', () => {
+    expect(source).toContain('const savingNoteId = state.noteId;');
+    expect(source).toContain("prev.noteId === savingNoteId");
+  });
+});
+
+describe('离线草稿与屏幕一致', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('接回队列时把草稿正文也装回编辑器', () => {
+    const restore = source.slice(source.indexOf('const restored = loadOfflineEdit('));
+    expect(restore.slice(0, 700)).toContain('noteMd: restored.content');
+  });
+
+  it('丢弃草稿之后把服务端那版拉回来，不把「已丢弃」说成假话', () => {
+    const discard = source.slice(source.indexOf("toast.success('已丢弃这份离线校对") - 800);
+    expect(discard.slice(0, 900)).toContain('void reloadNote();');
+  });
+});
+
