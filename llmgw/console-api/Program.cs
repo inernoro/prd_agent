@@ -5258,8 +5258,14 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             { "Name", SystemServiceKeyName },
             { "KeyPrefix", keyPrefix },
             { "KeyHash", keyHash },
-            { "CreatedByUserId", "system" },
-            { "CreatedByUsername", actorUsername.Length > 0 ? actorUsername : "system" },
+            // CreatedByUserId 必须留空：serving 的生命周期门在这个字段非空时会去查
+            // 「这个人的成员资格还活着吗」，活不了就 GATEWAY_KEY_OWNER_INACTIVE。
+            // 这把 key 属于系统、不属于任何人——挂到某个人名下就等于把「这个人还在不在职」
+            // 变成系统功能能不能用的前提，正是本次要消除的那类脆弱依赖。
+            // 触发者只记进 TriggeredByUsername 供审计追溯，不参与鉴权。
+            { "CreatedByUserId", BsonNull.Value },
+            { "CreatedByUsername", "system" },
+            { "TriggeredByUsername", actorUsername.Length > 0 ? actorUsername : "system" },
             { "Enabled", true },
             { "SourceSystem", SystemServiceKeySource },
             { "ClientCode", SystemServiceKeyClientCode },
@@ -5316,6 +5322,33 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
         Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
 
     return (true, baseUrl, plainKey, SystemIntentDraftAppCaller, poolId, model, string.Empty);
+}
+
+/// <summary>
+/// 把存量系统密钥作废：清掉 settings 里的引用并停用那把 key，下一次 Ensure 会重签。
+///
+/// 只在「重签能修好」的失败码上调用（见 IsSystemCredentialFixableCode）——
+/// 租户停用、池没绑这类原因重签一万次也修不好，那样就成了自己修不好自己的循环。
+/// </summary>
+async Task InvalidateSystemCredentialAsync(string tenantId)
+{
+    var settings = await LoadSystemSettingsAsync(tenantId);
+    var staleKeyId = settings.AsNullableString("ServiceKeyId");
+    if (!string.IsNullOrWhiteSpace(staleKeyId))
+    {
+        await serviceKeys.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", staleKeyId),
+                Builders<BsonDocument>.Filter.Eq("TenantId", tenantId)),
+            Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
+    }
+    await systemSettings.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.Eq("_id", tenantId),
+        Builders<BsonDocument>.Update
+            .Unset("ServiceKeyId")
+            .Unset("ServiceKeyEncrypted")
+            .Unset("ServiceKeyPrefix")
+            .Set("UpdatedAt", DateTime.UtcNow));
 }
 
 // ── 调用用途码草案：把用户那句「我想做什么」交给网关自己的模型推成 {应用}.{用途}::{类型} ──
@@ -5478,10 +5511,14 @@ app.MapPost("/gw/system-settings/test", async (HttpContext http) =>
 {
     var tenant = TenantAccess.GetRequired(http);
     var startedAt = DateTime.UtcNow;
-    var access = await EnsureSystemGatewayAccessAsync(
-        tenant.TenantId,
-        tenant.TeamIds.Count == 1 ? tenant.TeamIds[0] : null,
-        tenant.Username);
+    var teamHint = tenant.TeamIds.Count == 1 ? tenant.TeamIds[0] : null;
+
+    // 「测试连接」必须是**一键修好**，不是「一键告诉你再点一次」：
+    // 第一次被网关以凭据类原因拒绝时，就地作废那把 key、重签一把、立刻重试。
+    // 最多两轮——第二轮还败就是重签修不好的原因，如实报出来。
+    async Task<IResult> RunAsync(bool allowReissue)
+    {
+    var access = await EnsureSystemGatewayAccessAsync(tenant.TenantId, teamHint, tenant.Username);
     if (!access.Ok)
     {
         return Json(ApiEnvelope<object>.Ok(new
@@ -5514,7 +5551,12 @@ app.MapPost("/gw/system-settings/test", async (HttpContext http) =>
         var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
         if (!response.IsSuccessStatusCode)
         {
-            var detail = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
+            var (detail, failureCode) = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
+            if (allowReissue && IsSystemCredentialFixableCode(failureCode))
+            {
+                await InvalidateSystemCredentialAsync(tenant.TenantId);
+                return await RunAsync(false);
+            }
             return Json(ApiEnvelope<object>.Ok(new { ok = false, stage = "invoke", elapsedMs, message = detail }), jsonOptions);
         }
         var payload = await response.Content.ReadAsStringAsync(http.RequestAborted);
@@ -5545,6 +5587,9 @@ app.MapPost("/gw/system-settings/test", async (HttpContext http) =>
             message = $"连不上网关服务（{ex.GetType().Name}）。确认 llmgw-serve 容器在运行，且 {access.BaseUrl} 在容器网络内可达。",
         }), jsonOptions);
     }
+    }
+
+    return await RunAsync(true);
 }).RequireAuthorization("ConfigWrite");
 
 // 用户那句话 → 调用用途码草案。SSE 边推边吐，等待期屏幕一直在变（规则 #6）。
@@ -5607,7 +5652,10 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
         if (!response.IsSuccessStatusCode)
         {
             // 裸状态码对用户毫无意义（他会问「系统就是网关，还 401?」），所以翻译成能行动的一句话。
-            var detail = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
+            var (detail, failureCode) = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
+            // 凭据类失败当场作废那把 key：下一次点「准备接入」就会用新签的，不必等人来修。
+            if (IsSystemCredentialFixableCode(failureCode))
+                await InvalidateSystemCredentialAsync(tenantAccess.TenantId);
             await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"{detail}已退回本地关键词判定。" });
             return;
         }
@@ -14129,7 +14177,7 @@ static bool IsKebabCaseAppCallerSegment(string value)
 /// 用户会问「系统就是服务网关，还有 401 问题?」。所以这里按 serving 的结构化错误码分类，
 /// 每一类都给出「哪里坏了 + 去哪修」；认不出来的才退回带状态码的通用句（不编造原因）。
 /// </summary>
-static async Task<string> ReadGatewayFailureDetailAsync(HttpResponseMessage response, CancellationToken ct)
+static async Task<(string Detail, string Code)> ReadGatewayFailureDetailAsync(HttpResponseMessage response, CancellationToken ct)
 {
     var status = (int)response.StatusCode;
     var code = string.Empty;
@@ -14149,7 +14197,7 @@ static async Task<string> ReadGatewayFailureDetailAsync(HttpResponseMessage resp
     catch (JsonException) { /* serving 偶发非 JSON 错误体，走通用句 */ }
     catch (OperationCanceledException) { /* 调用方已取消，走通用句 */ }
 
-    return code switch
+    var detail = code switch
     {
         "GATEWAY_KEY_REQUIRED" or "GATEWAY_KEY_INVALID" =>
             "网关拒绝了系统自己的密钥（已失效或被撤销）。下次请求会自动重签一把；连续出现请在「服务网关设置」点一次「测试连接」看详情。",
@@ -14157,6 +14205,10 @@ static async Task<string> ReadGatewayFailureDetailAsync(HttpResponseMessage resp
             "系统密钥的授权范围与本次调用对不上（来源、用途码或协议不一致）。去「服务网关设置」点「测试连接」重建这把密钥。",
         "GATEWAY_KEY_PURPOSE_DENIED" =>
             "系统密钥的用途不允许发业务请求。去「服务网关设置」点「测试连接」重建这把密钥。",
+        "GATEWAY_KEY_OWNER_INACTIVE" or "GATEWAY_KEY_OWNER_ROLE_DENIED" =>
+            "系统密钥被判成了「某个人名下的密钥」，而那个人的成员资格不满足。这把 key 应当属于系统本身——去「服务网关设置」点「测试连接」重建一把。",
+        "GATEWAY_KEY_TENANT_INACTIVE" =>
+            "当前租户不是 active 状态，网关拒绝一切调用。先去「团队与成员」确认租户状态。",
         "APPCALLER_POOL_UNBOUND" or "GATEWAY_CONFIG_UNAVAILABLE" =>
             "系统级用途码还没绑上可用的模型池。去「服务网关设置」选一个对话池或指定一个模型。",
         "LLM_ERROR" =>
@@ -14165,7 +14217,23 @@ static async Task<string> ReadGatewayFailureDetailAsync(HttpResponseMessage resp
         _ when status >= 500 => $"网关服务内部错误（{status}）。",
         _ => $"网关返回 {status}{(code.Length > 0 ? $"（{code}）" : string.Empty)}。",
     };
+    return (detail, code);
 }
+
+/// <summary>
+/// 这个失败码，重签一把系统密钥能不能修好？
+///
+/// 只列「凭据本身有问题」的码。租户停用、池没绑、上游报错都**不在**列内——
+/// 那些重签一万次也修不好，重试只会白烧一次调用（predicate-and-wiring-discipline
+/// 形状 5：别造一个自己修不好自己的循环）。
+/// </summary>
+static bool IsSystemCredentialFixableCode(string code) => code is
+    "GATEWAY_KEY_REQUIRED"
+    or "GATEWAY_KEY_INVALID"
+    or "GATEWAY_KEY_SCOPE_DENIED"
+    or "GATEWAY_KEY_PURPOSE_DENIED"
+    or "GATEWAY_KEY_OWNER_INACTIVE"
+    or "GATEWAY_KEY_OWNER_ROLE_DENIED";
 
 /// <summary>
 /// 从模型输出里取出两段码。模型被要求只输出 JSON，但仍可能裹 ```json 或带前后缀，

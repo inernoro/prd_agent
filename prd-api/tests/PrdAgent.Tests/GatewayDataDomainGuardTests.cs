@@ -4422,6 +4422,12 @@ public class GatewayDataDomainGuardTests
         // 系统密钥明文永不下发到浏览器：设置页只认前缀字段。
         Assert.DoesNotContain("credentialPlaintext", gatewaySettings);
         Assert.Contains("credentialPrefix", gatewaySettings);
+        // 自愈必须真的闭环：被网关以凭据类原因拒绝时要作废重签，而不是让用户再点一次。
+        // 且只对「重签能修好」的码作废——否则就成了自己修不好自己的循环（形状 5）。
+        Assert.Contains("InvalidateSystemCredentialAsync", consoleApi);
+        Assert.Contains("IsSystemCredentialFixableCode", consoleApi);
+        // 系统密钥不挂在任何人名下：挂了人，那个人一离职这把 key 就跟着死。
+        Assert.Contains("{ \"CreatedByUserId\", BsonNull.Value },", consoleApi);
         // 模型推的、本地降级的、用户手改的，界面必须分得出来（推断值可见可改可追责）。
         Assert.Contains("codeSource", quickstart);
         // 系统提示词是给用户粘走的产物，绝不能把密钥明文写进去。
