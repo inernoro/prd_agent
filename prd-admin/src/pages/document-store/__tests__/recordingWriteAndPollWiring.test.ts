@@ -34,10 +34,17 @@ describe('离线补传的写序', () => {
 describe('整理进度轮询', () => {
   const source = read('pages/document-store/RecordingResultPage.tsx');
 
+  /*
+   * 判据认「依赖里有 runId、没有 running 这个对象」，不逐字钉整个依赖数组：
+   * 这个 effect 后来还要加别的依赖（比如判账号的 ownerId），钉死会让正确实现误红。
+   */
   it('依赖的是 runId，不是每次响应都新建的 running 对象', () => {
-    expect(source).toContain('}, [runningRunId]);');
+    const at = source.indexOf('const tick = async () => {\n      const res = await getAgentRun(runningRunId);');
+    expect(at, '找不到整理进度轮询').toBeGreaterThan(-1);
+    const deps = source.slice(source.indexOf('}, [', at), source.indexOf(');', source.indexOf('}, [', at)) + 2);
+    expect(deps).toContain('runningRunId');
     // 依赖对象的话，每收到一次进度就重建 effect 并立刻再发一次请求
-    expect(source).not.toContain('}, [running]);');
+    expect(deps).not.toMatch(/[[,]\s*running\s*[,\]]/);
   });
 
   it('进度没变就返回同一个对象，不制造无意义的新引用', () => {
@@ -655,5 +662,34 @@ describe('时长这一格三屏都跟着录音归零', () => {
     const fetch_ = source.indexOf('await getDocumentEntry(');
     expect(reset).toBeGreaterThan(-1);
     expect(fetch_).toBeGreaterThan(reset);
+  });
+});
+
+describe('在途状态的两处判据用同一条', () => {
+  const source = read('pages/document-store/DocumentStorePage.tsx');
+
+  /*
+   * 「这条录音已经有内嵌进度卡了」与「真的渲染那张卡」必须同一条判据。不一致时，
+   * 横幅按前者把它过滤掉、渲染按后者拒掉它——两处都看不到这条录音在跑。
+   */
+  it('横幅拿到的 currentRunHasInlineCard 也认 sourceEntryId', () => {
+    const at = source.indexOf('currentRunHasInlineCard:');
+    expect(at).toBeGreaterThan(-1);
+    expect(source.slice(at, at + 200)).toContain('sourceEntryId === selectedEntryId');
+  });
+});
+
+describe('整理完成后正文没取回来要说出来', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('done 分支读 reloadNote 的返回值，并在真失败时报错', () => {
+    const at = source.indexOf("if (run.status === 'done')");
+    expect(at).toBeGreaterThan(-1);
+    const branch = source.slice(at, source.indexOf("} else if (run.status === 'failed'", at));
+    expect(branch).toContain('const installed = await reloadNoteRef.current();');
+    expect(branch).toContain('if (!installed');
+    expect(branch).toContain('toast.error(');
+    // 「本机草稿有意让位」不算失败，不能在那一档也报错
+    expect(branch).toContain('isFlushable(pendingRef.current');
   });
 });

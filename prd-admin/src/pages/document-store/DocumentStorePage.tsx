@@ -2307,7 +2307,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const backgroundTranscriptionBanner = describeBackgroundTranscriptionBanner({
     selectedEntryId,
     selectedHasFailure: Boolean(transcribeFailure),
-    currentRunHasInlineCard: Boolean(activeTranscribeRun),
+    /*
+     * 判据必须和下面真正渲染那张内嵌卡时用的是同一条：`activeTranscribeRun` 可能还挂着
+     * 上一条录音的 run（sourceEntryId 不等于当前这条），渲染那边会拒掉它，而这里若只判
+     * 「有没有」，就会告诉横幅「这条录音已经有内嵌进度卡了」——于是横幅把它过滤掉，
+     * 内嵌卡也不显示：这条录音的在途状态两处都看不到，直到下一次成功轮询才恢复
+     * （Codex 第三十一轮 P2；同 rule.prd-admin.recording-entry-scope 第 1 条）。
+     */
+    currentRunHasInlineCard: Boolean(activeTranscribeRun && activeTranscribeRun.sourceEntryId === selectedEntryId),
     runs: bgTranscribeRunIds.map((runId) => {
       const source = recordingRunSourceRef.current.get(runId);
       return {

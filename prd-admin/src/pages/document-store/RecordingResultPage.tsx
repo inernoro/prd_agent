@@ -676,7 +676,18 @@ export function RecordingResultPage() {
       const run = res.data;
       if (run.status === 'done') {
         setRunning(null);
-        await reloadNoteRef.current();
+        /*
+         * 整理跑完了，但正文这一发可能没取回来。此前这里把返回值丢掉：进度条消失、
+         * 没有任何错误、屏幕上还是整理前那份原文——用户以为「整理完了却什么都没变」，
+         * 而导出与继续编辑用的也仍是旧正文（Codex 第三十一轮 P2）。
+         * 说出来并给一条出路：这一屏的加载重跑一次就能把新正文取下来。
+         * 「本机压着草稿所以正文有意让位」不算失败，那一档 keepLocalDraft 已经拦在前面，
+         * 界面上有冲突横幅在说话，这里不再重复报错。
+         */
+        const installed = await reloadNoteRef.current();
+        if (!installed && !isFlushable(pendingRef.current, noteIdRef.current, ownerId)) {
+          toast.error('整理已完成，但新原文没能取回来', '点一下「重试」或刷新这一页');
+        }
       } else if (run.status === 'failed' || run.status === 'cancelled') {
         setRunning(null);
         toast.error(run.errorMessage || '整理没有完成');
@@ -692,7 +703,8 @@ export function RecordingResultPage() {
     void tick();
     const timer = window.setInterval(() => { void tick(); }, 2000);
     return () => { stale = true; window.clearInterval(timer); };
-  }, [runningRunId]);
+  // ownerId 进依赖：上面判「是不是本机草稿有意让位」时要用当前账号
+  }, [ownerId, runningRunId]);
 
   /*
    * 离线期的校对不该被丢掉。稿面 v2-S7 承诺的是「编辑内容排队等待同步，联网后自动上传，
