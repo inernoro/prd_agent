@@ -294,16 +294,3 @@ Review 在产生新语义类别，而不是在收敛。判据是「多位独立�
    `B1`、`D1`、`A1` 这类「整屏」画板要还原到 99，必须给录音结果开一个独立全屏路由，
    而不是继续寄生在阅读器里。这是波次 3、4 无法开工的直接原因。
 
----
-
-## 实现来源
-
-| 用途 | 位置 |
-|---|---|
-| 审查智能体规则 | `.claude/agents/design-fidelity-judge.md` |
-| 设计稿切图与索引 | `e2e/design-fidelity/extract-design-boards.mjs` |
-| 实现侧取证 | `e2e/design-fidelity/shoot-impl-boards.mjs` |
-| 对照台（开发期，无后端可跑） | `prd-admin/mock.html`、`prd-admin/src/dev/recordingConsistencyMock.tsx` |
-| 录音结果区状态卡 | `prd-admin/src/components/doc-browser/TranscribeStatusCard.tsx` |
-| 转录跟读与理解分区 | `prd-admin/src/components/doc-browser/TranscriptKaraoke.tsx` |
-| 处理阶段与失败判据 | `prd-admin/src/pages/document-store/transcriptionStages.ts`、`prd-admin/src/pages/document-store/recordingVault.ts` |

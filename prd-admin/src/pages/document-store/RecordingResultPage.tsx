@@ -24,10 +24,12 @@ import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-brow
 import { useIsDesktop } from '@/hooks/useBreakpoint';
 import {
   getAgentRun,
+  getLatestAgentRun,
   listDocumentEntriesReal,
   getDocumentEntry,
   getDocumentContent,
   getDocumentStoreReal,
+  restyleTranscribeRun,
   transcribeEntry,
   updateDocumentContent,
 } from '@/services/real/documentStore';
@@ -100,6 +102,7 @@ export function RecordingResultShell({
   children: React.ReactNode;
 }) {
   const isDesktop = useIsDesktop();
+  const [moreOpen, setMoreOpen] = useState(false);
   return (
     <div
       // 作用域皮肤：这一屏整棵子树读设计稿自己那组 token，不影响全站
@@ -153,14 +156,45 @@ export function RecordingResultShell({
           </p>
         )}
         {isDesktop && actions}
-        <button
-          type="button"
-          aria-label="更多"
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
-          style={{ color: 'var(--text-primary)' }}
-        >
-          <MoreHorizontal size={20} />
-        </button>
+        {/*
+          「更多」必须真的能点开。窄屏下 `actions`（导出）根本不渲染，这颗又没有
+          任何 handler——于是手机上导出无路可达，而这颗按钮在所有视口都是个假控件
+          （Codex P2 抓到）。让它收纳同一批 actions：窄屏是它们唯一的出口，
+          宽屏是重复入口（「更多」菜单重复陈列主操作是常见做法，不构成歧义）。
+          没有任何 action 可放时（加载中/出错）就不摆这颗——按钮存在但点了没反应，
+          比没有按钮更糟。
+        */}
+        {actions && (
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              aria-label="更多"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen(v => !v)}
+              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              <MoreHorizontal size={20} />
+            </button>
+            {moreOpen && (
+              <>
+                {/* 点空白处收起：菜单自己不接管整屏，只借一层透明遮罩接这一下 */}
+                <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
+                <div
+                  className="absolute right-0 top-full z-[61] mt-1 flex min-w-[160px] flex-col gap-1 rounded-[12px] p-1.5"
+                  style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border-subtle)',
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+                  }}
+                  onClick={() => setMoreOpen(false)}
+                >
+                  {actions}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </header>
 
       {banner && <div className="shrink-0 px-4 pt-3">{banner}</div>}
@@ -202,6 +236,28 @@ export function RecordingResultPage() {
     }, 120);
     return () => window.clearTimeout(timer);
   }, [setSearchParams, state.kind, wantsAutoplay]);
+
+  /*
+   * 处理页那颗「进入结果页并开始播放」是**一直可点**的（稿面就是这么画的：不必等转录跑完
+   * 就能先去听）。于是用户可能在 `transcribe_entry_id` 还没落到音频条目上时就进到这一屏。
+   * 只加载一次的话，这一屏会永远停在空原文——转录几秒后完成了它也不知道，
+   * 直到用户手动刷新（Codex P1 抓到的正是这条）。
+   * 所以：笔记还没有、但确实有一条在途的转录 run 时，继续等它，等到就重新加载。
+   */
+  const [awaitNoteTick, setAwaitNoteTick] = useState(0);
+  const noteMissing = state.kind === 'ready' && !state.noteId;
+  useEffect(() => {
+    if (!entryId || !noteMissing) return;
+    let stale = false;
+    const timer = window.setInterval(() => {
+      void getDocumentEntry(entryId).then((res) => {
+        if (stale || !res.success) return;
+        // 只认「笔记真的出现了」这一个信号：run 跑完但还没发布时重载没有意义
+        if (res.data?.metadata?.transcribe_entry_id) setAwaitNoteTick(v => v + 1);
+      });
+    }, 3000);
+    return () => { stale = true; window.clearInterval(timer); };
+  }, [entryId, noteMissing]);
 
   useEffect(() => {
     if (!entryId || !storeId) {
@@ -250,7 +306,8 @@ export function RecordingResultPage() {
       if (!stale) setState({ kind: 'error', message: error instanceof Error ? error.message : '这条录音打不开' });
     });
     return () => { stale = true; };
-  }, [entryId, storeId]);
+    // awaitNoteTick：上面那个等待器发现笔记发布了，就靠它把这次加载再跑一遍
+  }, [awaitNoteTick, entryId, storeId]);
 
   const goBack = useCallback(() => {
     // 优先退回来路（多半是知识库里那条录音），没有来路才落到知识库首页——
@@ -506,18 +563,31 @@ export function RecordingResultPage() {
   }, [noteIdForFlush, offline]);
 
   /**
-   * 选一种整理方式。走的是条目级的 transcribe 端点：它会复用已完成的 ASR，
-   * 只重新生成摘要那一节，不会把音频重转一遍（`reused` 就是这个意思）。
+   * 选一种整理方式。
+   *
+   * 必须走 **restyle** 端点：只有带 `RestyleOfRunId` 的 run 会命中处理器里那条
+   * 跳过 ASR 的分支（`SubtitleGenerationProcessor.ProcessTranscribeAsync` 开头），
+   * 拿上一次的转录文本按新风格重生成摘要。条目级的 transcribe 端点建的是一条
+   * 普通转录 run——它会把整段音频**重新转一遍**，既慢又会用新一轮 ASR 结果
+   * 覆盖用户可能已经校对过的原文。此前这里调的正是后者（Codex P1 抓到）。
+   *
+   * 拿不到「已完成且有产物」的上一条 run 时（比如这条录音压根没转录成功过），
+   * 才退回条目级 transcribe——那种情况下本来就必须跑 ASR。
    */
   const onPickOrganizeStyle = useCallback((styleKey: string) => {
     if (!entryId || running) return;
-    void transcribeEntry(entryId, { styleKey }).then((res) => {
+    void (async () => {
+      const prior = await getLatestAgentRun(entryId, 'transcribe', { status: 'done', requireOutput: true });
+      const priorRunId = prior.success ? (prior.data?.id ?? '') : '';
+      const res = priorRunId
+        ? await restyleTranscribeRun(priorRunId, { styleKey })
+        : await transcribeEntry(entryId, { styleKey });
       if (!res.success) {
         toast.error(res.error?.message || '发起整理失败');
         return;
       }
       setRunning({ runId: res.data.runId, styleKey, percent: 0 });
-    });
+    })();
   }, [entryId, running]);
 
   /** 重新生成：就是按当前这一种再整理一次（当前那一种未知时退回默认的智能摘要） */

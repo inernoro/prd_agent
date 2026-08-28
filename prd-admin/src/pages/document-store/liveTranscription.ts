@@ -282,8 +282,17 @@ export class LiveTranscriptionSocket {
       try {
         const event = JSON.parse(message.data) as LiveTranscriptionEvent;
         if (!event?.type) return;
-        // 收到服务端的第一条事件才算这条连接真的可用，此时退避归零
-        this.reconnectAttempts = 0;
+        /*
+         * 只有**证明这条连接真的可用**的事件才把退避归零：`ready` 是上游 ASR 握手
+         * 成功之后才发的，`partial`/`final` 更是已经有转写结果。
+         * `status` 不算——服务端在挑选/连接上游的过程中就会发它（「正在连接实时转写」），
+         * 一收到就归零的话，弱网下「连上→发 status→掉线」这一圈可以无限循环：
+         * 退避永远停在第一档、计数永远到不了上限，稿面要的那一档降级态永远不出现
+         * （Codex P1 抓到的正是这条）。
+         */
+        if (event.type === 'ready' || event.type === 'partial' || event.type === 'final') {
+          this.reconnectAttempts = 0;
+        }
         if (event.type === 'ready' || event.type === 'partial') this.setState('live');
         if (event.type === 'final') this.setState('completed');
         if (event.type === 'degraded' || event.type === 'error') this.setState('degraded');
