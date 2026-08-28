@@ -199,36 +199,98 @@ const SHARED_CARD_TAIL: readonly string[] = [
   '【登录方式】写无需登录、安全获取方式或当前阻塞；不得把密码写入仓库、PR、报告或公开日志。',
 ] as const;
 
-export function buildRoleDecisionContract(
+/** 决策卡的一段：段名 + 填写规则 + 是不是这个角色专属。 */
+export interface AgentDecisionCardSection {
+  label: string;
+  rule: string;
+  /** true = 角色专属段落；false = 五个角色共享的不变量。 */
+  roleSpecific: boolean;
+}
+
+/**
+ * 决策卡的结构化模型 —— 文本契约与界面预览的**唯一内容来源**。
+ *
+ * 之前界面预览是把生成好的契约整段丢进 <pre>，想改排版就只能在预览侧另写一份
+ * 文案，于是「微调样式」很容易滑成「顺手改了措辞」。改成一个模型两个渲染器：
+ * buildRoleDecisionContract 渲染成文本写进 AGENTS.md，界面按同一批字符串排版。
+ * 两边的段名与规则必然逐字一致，样式怎么调都不会动到约束本身。
+ */
+export interface AgentDecisionCardModel {
+  roleLabel: string;
+  cardTitle: string;
+  /** 卡片抬头那句「当前角色：…」。 */
+  headline: string;
+  lens: string;
+  intake: readonly string[];
+  decisionFields: readonly string[];
+  depthRule: string;
+  sections: readonly AgentDecisionCardSection[];
+  /** 段落总数，与「固定 N 段」同源。 */
+  sectionCount: number;
+  /** 全角色共享的禁止项。 */
+  sharedForbid: string;
+  /** 本角色额外禁止项。 */
+  roleForbid: readonly string[];
+}
+
+function parseSharedSection(line: string, roleSpecific: boolean): AgentDecisionCardSection {
+  const match = /^【(.+?)】([\s\S]*)$/.exec(line);
+  return { label: match?.[1] ?? line, rule: match?.[2] ?? '', roleSpecific };
+}
+
+export function buildRoleDecisionCardModel(
   experienceId: AgentExperienceId,
   roleId: AgentRoleId,
-): string {
+): AgentDecisionCardModel {
   const experience = experienceProfile(experienceId);
   const role = roleProfile(roleId);
   const depthRule = experience.id === 'newcomer'
     ? '少用术语，必须解释结果对用户的影响；不要要求用户理解 Git、构建、部署或接口细节。'
     : '保持简洁，可保留关键技术证据和风险，但仍只给一个默认推荐动作。';
-  const roleLines = role.fields.map((field) => `【${field.label}】${field.rule}`);
-  const sectionCount = SHARED_CARD_HEAD.length + roleLines.length + SHARED_CARD_TAIL.length;
+  const sections: AgentDecisionCardSection[] = [
+    ...SHARED_CARD_HEAD.map((line) => parseSharedSection(line, false)),
+    ...role.fields.map((field) => ({ label: field.label, rule: field.rule, roleSpecific: true })),
+    ...SHARED_CARD_TAIL.map((line) => parseSharedSection(line, false)),
+  ];
+
+  return {
+    roleLabel: role.label,
+    cardTitle: role.cardTitle,
+    headline: `当前角色：${role.label}。每次最终回复必须以「${role.cardTitle}」收尾，不得只给执行日志，也不得换用其他角色的卡片格式。`,
+    lens: role.lens,
+    intake: role.intake,
+    decisionFields: role.decisionFields,
+    depthRule,
+    sections,
+    sectionCount: sections.length,
+    sharedForbid:
+      '禁止使用“基本完成”“应该可以”“大概没问题”。没有真实验证证据时，不得标记“已完成，可使用”或“已完成，待验收”。',
+    roleForbid: role.forbid,
+  };
+}
+
+export function buildRoleDecisionContract(
+  experienceId: AgentExperienceId,
+  roleId: AgentRoleId,
+): string {
+  const model = buildRoleDecisionCardModel(experienceId, roleId);
 
   return [
     '<!-- CDS_AGENT_DECISION_CARD:START -->',
     '## 角色决策回复（强制）',
     '',
-    `当前角色：${role.label}。每次最终回复必须以「${role.cardTitle}」收尾，不得只给执行日志，也不得换用其他角色的卡片格式。`,
-    `理解方向：${role.lens}`,
-    `接到任务先确认：${role.intake.join('；')}。以上问题没答清之前，不要直接开工。`,
-    `角色关注点：${role.decisionFields.join('、')}。与这三项无关的细节不进卡片正文。`,
-    depthRule,
+    model.headline,
+    `理解方向：${model.lens}`,
+    `接到任务先确认：${model.intake.join('；')}。以上问题没答清之前，不要直接开工。`,
+    `角色关注点：${model.decisionFields.join('、')}。与这三项无关的细节不进卡片正文。`,
+    model.depthRule,
     '',
-    `### ${role.cardTitle}`,
-    ...SHARED_CARD_HEAD,
-    ...roleLines,
-    ...SHARED_CARD_TAIL,
+    `### ${model.cardTitle}`,
+    ...model.sections.map((section) => `【${section.label}】${section.rule}`),
     '',
-    `${role.cardTitle}固定 ${sectionCount} 段，按上面顺序逐段填写，不得增删、合并或改名段落。`,
-    '禁止使用“基本完成”“应该可以”“大概没问题”。没有真实验证证据时，不得标记“已完成，可使用”或“已完成，待验收”。',
-    `本角色额外禁止：${role.forbid.join('；')}。`,
+    `${model.cardTitle}固定 ${model.sectionCount} 段，按上面顺序逐段填写，不得增删、合并或改名段落。`,
+    model.sharedForbid,
+    `本角色额外禁止：${model.roleForbid.join('；')}。`,
     '<!-- CDS_AGENT_DECISION_CARD:END -->',
   ].join('\n');
 }

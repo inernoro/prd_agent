@@ -9,6 +9,7 @@ import {
   buildAgentStarterHarness,
   buildAgentStarterPrompt,
   buildRoleCardHarness,
+  buildRoleDecisionCardModel,
   buildRoleDecisionContract,
   type AgentRoleId,
 } from '../../web/src/lib/agent-starter';
@@ -211,6 +212,52 @@ describe('Agent 上手助手角色决策协议', () => {
 
     expect(full).toContain(installer);
     expect(cardOnly).toContain(installer);
+  });
+
+  it('界面预览与文本契约同源：段名和规则逐字一致，不许各写一份', () => {
+    for (const profile of AGENT_ROLE_PROFILES) {
+      const model = buildRoleDecisionCardModel('newcomer', profile.id);
+      const contract = buildRoleDecisionContract('newcomer', profile.id);
+
+      // 每一段都必须以完全相同的字符串出现在写进 AGENTS.md 的契约里。
+      for (const section of model.sections) {
+        expect(contract, `${profile.label} 的【${section.label}】在契约里对不上`).toContain(
+          `【${section.label}】${section.rule}`,
+        );
+      }
+      // 前言三项、禁止项同样逐字。
+      expect(contract).toContain(model.headline);
+      expect(contract).toContain(`理解方向：${model.lens}`);
+      for (const question of model.intake) expect(contract).toContain(question);
+      for (const field of model.decisionFields) expect(contract).toContain(field);
+      expect(contract).toContain(model.sharedForbid);
+      for (const forbidden of model.roleForbid) expect(contract).toContain(forbidden);
+
+      // 段落数、顺序与「固定 N 段」三者同源。
+      expect(sectionLabels(contract)).toEqual(model.sections.map((section) => section.label));
+      expect(contract).toContain(`固定 ${model.sectionCount} 段`);
+    }
+  });
+
+  it('模型区分角色专属段与共享段，且共享段五个角色完全一致', () => {
+    const sharedByRole = AGENT_ROLE_PROFILES.map((profile) =>
+      buildRoleDecisionCardModel('newcomer', profile.id)
+        .sections.filter((section) => !section.roleSpecific)
+        .map((section) => `${section.label}|${section.rule}`)
+        .join('\n'),
+    );
+    // 共享不变量：五个角色逐字相同。
+    expect(new Set(sharedByRole).size).toBe(1);
+
+    for (const profile of AGENT_ROLE_PROFILES) {
+      const model = buildRoleDecisionCardModel('newcomer', profile.id);
+      const roleOwned = model.sections.filter((section) => section.roleSpecific);
+      expect(roleOwned.length, `${profile.label} 没有角色专属段`).toBeGreaterThanOrEqual(5);
+      // 角色专属段必须逐字来自该角色的 fields，不是预览侧另写的转述。
+      expect(roleOwned.map((section) => `${section.label}|${section.rule}`)).toEqual(
+        profile.fields.map((field) => `${field.label}|${field.rule}`),
+      );
+    }
   });
 
   it('受管标记不完整时停止安装并保留全部原规则', () => {

@@ -2,6 +2,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import {
   ArrowLeft,
   ArrowRight,
+  Ban,
   BriefcaseBusiness,
   Check,
   ClipboardCopy,
@@ -23,7 +24,8 @@ import {
   buildAgentStarterHarness,
   buildAgentStarterPrompt,
   buildRoleCardHarness,
-  buildRoleDecisionContract,
+  buildRoleDecisionCardModel,
+  type AgentDecisionCardModel,
   type AgentExperienceId,
   type AgentRoleId,
 } from '../lib/agent-starter'
@@ -197,7 +199,7 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
   })
 
   const roleProfile = AGENT_ROLE_PROFILES.find((item) => item.id === roleId) ?? AGENT_ROLE_PROFILES[0]
-  const decisionCard = buildRoleDecisionContract(experienceId, roleId)
+  const decisionCardModel = buildRoleDecisionCardModel(experienceId, roleId)
   const roleCardHarness = buildRoleCardHarness({ experienceId, roleId })
 
   const harness = buildAgentStarterHarness({
@@ -477,16 +479,7 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                   </a>
                 </div>
 
-                {showDecisionCard && (
-                  <div className="mt-5 w-full max-w-2xl shrink-0 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-left">
-                    <div className="text-xs font-bold text-muted-foreground">
-                      {roleProfile.label} 专属回复格式，换角色会换成另一套段落
-                    </div>
-                    <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-foreground">
-                      {decisionCard.replace(/<!-- CDS_AGENT_DECISION_CARD:(START|END) -->\n?/g, '')}
-                      </pre>
-                    </div>
-                  )}
+                {showDecisionCard && <DecisionCardPreview model={decisionCardModel} />}
                 </div>
               </div>
             )}
@@ -501,6 +494,76 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
           </button>
         </div>
       )}
+    </div>
+  )
+}
+
+/*
+ * 决策卡预览：四层分区（卡头 / 前言 / 编号段落清单 / 禁止项）。
+ *
+ * 内容全部取自 buildRoleDecisionCardModel，与写进 AGENTS.md 的文本契约同源，
+ * 所以这里只决定「怎么排」，改不动段名和规则本身。角色专属段落染主色、
+ * 共享段落保持中性——「哪几段是这个角色独有的」变成一眼可见。
+ */
+function DecisionCardPreview({ model }: { model: AgentDecisionCardModel }) {
+  return (
+    <div className="mt-5 w-full max-w-2xl shrink-0 overflow-hidden rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-left">
+      <div className="flex items-center gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+        <span className="h-7 w-[3px] shrink-0 rounded-sm bg-warn" />
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">{model.cardTitle}</div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">
+            {model.roleLabel} · 换角色会换成另一套段落
+          </div>
+        </div>
+        <span className="ml-auto shrink-0 rounded-full bg-[hsl(var(--surface-sunken))] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+          {model.sectionCount} 段
+        </span>
+      </div>
+
+      <dl className="grid gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+          <dt className="font-semibold text-muted-foreground">理解方向</dt>
+          <dd>{model.lens}</dd>
+        </div>
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+          <dt className="font-semibold text-muted-foreground">先确认</dt>
+          <dd>{model.intake.join('；')}</dd>
+        </div>
+        <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2.5 text-[11px] leading-relaxed">
+          <dt className="font-semibold text-muted-foreground">关注点</dt>
+          <dd className="flex flex-wrap gap-1.5">
+            {model.decisionFields.map((field) => (
+              <span key={field} className="rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-medium">
+                {field}
+              </span>
+            ))}
+          </dd>
+        </div>
+      </dl>
+
+      <ol className="max-h-64 overflow-y-auto">
+        {model.sections.map((section, index) => (
+          <li
+            key={section.label}
+            className={`grid grid-cols-[1.75rem_6rem_minmax(0,1fr)] gap-2.5 px-4 py-1.5 text-[11px] leading-relaxed ${section.roleSpecific ? 'bg-warn-soft' : ''}`}
+          >
+            <span className={`font-mono text-[10px] ${section.roleSpecific ? 'text-warn' : 'text-muted-foreground/70'}`}>
+              {String(index + 1).padStart(2, '0')}
+            </span>
+            <span className={`font-semibold ${section.roleSpecific ? 'text-warn' : ''}`}>{section.label}</span>
+            <span className="text-muted-foreground">{section.rule}</span>
+          </li>
+        ))}
+      </ol>
+
+      <div className="flex items-start gap-2 border-t border-[hsl(var(--hairline))] bg-bad-soft px-4 py-2.5">
+        <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bad" />
+        <div className="text-[11px] leading-relaxed">
+          <span className="font-semibold text-bad">本角色额外禁止</span>
+          <span> {model.roleForbid.join('；')}</span>
+        </div>
+      </div>
     </div>
   )
 }
