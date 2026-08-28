@@ -247,8 +247,15 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
             .Set(s => s.AskQuestionsSource, "auto")
             .Set(s => s.AskSuggestedQuestions, questions ?? new List<string>());
 
+        // 过滤器还要求「正文版本没变过」。生成要跑几秒，这期间站点可能被重传：
+        // 那时 ContentVersion 已经翻到新的一版，而这一发算出来的题是按旧正文写的，
+        // 盖上去等于用旧内容的口径描述新页面，还会把版本戳推到新版、堵住下一次自动生成。
+        // 版本对不上就整笔不写——NeedsGeneration 随即判「这一版没算过」，下一次
+        // QueueEnsure（重传、改配置、访客打开分享）会重新按新正文生成。
         await db.HostedSites.UpdateOneAsync(
-            s => s.Id == siteId && s.AskQuestionsSource != "manual",
+            s => s.Id == siteId
+                 && s.AskQuestionsSource != "manual"
+                 && (s.ContentVersion == version || (s.ContentVersion == default && s.CreatedAt == version)),
             update,
             cancellationToken: ct);
     }

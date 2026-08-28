@@ -201,13 +201,9 @@ public class AskOpeningQuestionWiringTests
         // 真栽过：验收当天这套部署 model_groups 是空的，第一次自动生成就把版本戳盖死了，
         // 池子配好之后它再也不会自己重试。判据是「模型有没有给出任何输出」。
         var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
-        var idx = gen.IndexOf("if (callFailed || raw.Length == 0)", StringComparison.Ordinal);
-        Assert.True(idx > 0, "找不到「模型没有任何输出」那一档，判据可能被改掉了");
-        // 取窗必须停在这一档自己的出口。原来固定取 700 字符，一路读进了下一档
-        // （「答了但没法用」），而那一档本来就该盖戳——守卫于是对着正确实现常红。
-        var branchEnd = gen.IndexOf("return AskOpenerOutcome.ModelUnavailable;", idx, StringComparison.Ordinal);
-        Assert.True(branchEnd > idx, "这一档必须以 ModelUnavailable 收口");
-        var branch = gen[idx..branchEnd];
+        // 取窗停在这一档自己的出口：整段方法体会读进下一档（「答了但没法用」），
+        // 而那一档本来就该盖戳——守卫会对着正确实现常红。
+        var branch = SourceSlice.Between(gen, "if (callFailed || raw.Length == 0)", "return AskOpenerOutcome.ModelUnavailable;");
         Assert.DoesNotContain("StampAsync", branch);
         Assert.Contains("_cooldownUntil", branch);
     }
@@ -218,11 +214,8 @@ public class AskOpeningQuestionWiringTests
         // 网关把失败报成 error chunk 而不是抛异常。只读 delta 的话「先吐几个字再断」
         // 会被当成正常回答：callFailed 仍是 false、raw 非空，残句拿去解析，解析不出就盖戳。
         var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
-        var loopStart = gen.IndexOf("await foreach (var chunk in client.StreamGenerateAsync(", StringComparison.Ordinal);
-        Assert.True(loopStart > 0, "找不到流式消费循环");
-        var deltaAt = gen.IndexOf("chunk.Type == \"delta\"", loopStart, StringComparison.Ordinal);
-        Assert.True(deltaAt > loopStart, "找不到 delta 分支");
-        var beforeDelta = gen[loopStart..deltaAt];
+        // error 必须在 delta 之前就被判掉
+        var beforeDelta = SourceSlice.Between(gen, "await foreach (var chunk in client.StreamGenerateAsync(", "chunk.Type == \"delta\"");
         // error 必须在 delta 之前就被判掉，且要真的翻 callFailed——只记日志不算
         Assert.Contains("chunk.Type == \"error\"", beforeDelta);
         Assert.Contains("callFailed = true", beforeDelta);
@@ -234,10 +227,7 @@ public class AskOpeningQuestionWiringTests
         // 站点重传成不相干的内容后，版本戳指向新正文，而分享页还在展示按旧正文写的问题——
         // 那是在拿旧内容的口径描述新页面。owner 手写的那份不受影响（过滤器有 manual 判据）。
         var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
-        var idx = gen.IndexOf("private static async Task StampAsync(", StringComparison.Ordinal);
-        Assert.True(idx > 0);
-        // 这是文件最后一个方法，取窗必须夹紧，否则切到文件尾之外直接抛异常
-        var body = gen[idx..Math.Min(idx + 900, gen.Length)];
+        var body = SourceSlice.Member(gen, "private static async Task StampAsync(");
         Assert.Contains("questions ?? new List<string>()", body);
         // 不许退回「为 null 就不写这个字段」的老写法
         Assert.DoesNotContain("if (questions != null)", body);
@@ -281,6 +271,18 @@ public class AskOpeningQuestionWiringTests
         var gateAt = ctrl.IndexOf("CanMaintainAskAsync", regenAt, StringComparison.Ordinal);
         var writeAt = ctrl.IndexOf("UpdateOneAsync", regenAt, StringComparison.Ordinal);
         Assert.True(gateAt > 0 && gateAt < writeAt, "角色门必须排在清 manual 标记那笔写之前");
+    }
+
+    [Fact]
+    public void 盖戳要求正文版本没变过_跑一半被重传就整笔不写()
+    {
+        // 生成要跑几秒，这期间站点可能被重传。按旧正文算出来的题盖到新版本上，
+        // 等于用旧内容的口径描述新页面，还会把版本戳推到新版、堵住下一次自动生成。
+        var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
+        var body = SourceSlice.Member(gen, "private static async Task StampAsync(");
+        Assert.Contains("s.ContentVersion == version", body);
+        // 版本口径必须与 NeedsGeneration 那处一致（存量站点没有 ContentVersion，回退 CreatedAt）
+        Assert.Contains("s.ContentVersion == default && s.CreatedAt == version", body);
     }
 
     [Fact]

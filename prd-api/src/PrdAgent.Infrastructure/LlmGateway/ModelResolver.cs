@@ -2161,8 +2161,13 @@ public class ModelResolver : IModelResolver
         CancellationToken ct,
         bool allowMapFallback = true)
     {
+        // 三个别名都要认。池成员的 ModelId 是按 `ModelName ?? Name ?? _id` 存下来的
+        // （见 console-api 追加成员那两处），所以一个缺 ModelName 的模型文档，成员里存的
+        // 就是它的 Name。少认这一个别名的后果不是「少查到一条」，而是**这类模型停用了也照发**——
+        // 而托管默认池删不掉成员，停用是唯一的处置手段，等于这道闸对它们整类失效。
         var idMatch = Builders<LLMModel>.Filter.Or(
             Builders<LLMModel>.Filter.Eq(m => m.ModelName, modelId),
+            Builders<LLMModel>.Filter.Eq(m => m.Name, modelId),
             Builders<LLMModel>.Filter.Eq(m => m.Id, modelId));
 
         if (_gatewayDb is not null)

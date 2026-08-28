@@ -2536,6 +2536,16 @@ public class HostedSiteService : IHostedSiteService
         return plan;
     }
 
+    /// <summary>
+    /// 挑站点入口文件。唯一判定源：解包前定「等会儿哪个是入口」和解包后定「最终入口」
+    /// 必须用同一条，否则幻灯片检测会对着一个和最终入口不同的文件跑（或者干脆不跑）。
+    /// 优先级：根 index.html → 根 index.htm → 第一个 HTML；都没有返回 null 由调用方兜底。
+    /// </summary>
+    private static string? SelectEntryPath(IReadOnlyList<(string Path, string MimeType)> items)
+        => items.FirstOrDefault(i => i.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase)).Path
+           ?? items.FirstOrDefault(i => i.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase)).Path
+           ?? items.FirstOrDefault(i => i.MimeType == "text/html").Path;
+
     private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes, string? uploadId = null)
     {
         var isSlideDeck = false;
@@ -2557,18 +2567,26 @@ public class HostedSiteService : IHostedSiteService
             // 不等循环跑完——那样前端要等到最后一刻才看到「识别到入口」，等于没提示。
             var totalCount = plan.Items.Count;
             var doneCount = 0;
-            string? entrySoFar = null;
+
+            // 入口文件在循环**之前**就按与最终选择完全相同的优先级定下来。
+            //
+            // 原来是循环里一边扫一边认，且只认根目录下精确的 index.html，其它情况
+            // entrySoFar 全程为 null——而下面挑最终入口时明明还支持 index.htm 与
+            // 「第一个 HTML」。后果是幻灯片检测对这两种包装**根本不跑**：一份用
+            // index.htm 或 slides.html 打包的 reveal.js 稿子会被存成 IsSlideDeck=false，
+            // 当普通网页渲染。判据比它该镜像的那个窄，两处必须用同一条。
+            // 顺带把「识别到入口」的提示提前到第一帧，不必等扫到那一个才显示。
+            var plannedEntry = SelectEntryPath(
+                plan.Items.Select(i => (i.RelativePath, i.Mime)).ToList());
 
             foreach (var (entry, relativePath, mimeType) in plan.Items)
             {
-                if (entrySoFar == null && relativePath.Equals("index.html", StringComparison.OrdinalIgnoreCase))
-                    entrySoFar = relativePath;
 
                 await _uploadProgress.ReportAsync(uploadId, new UploadProgressSnapshot
                 {
                     DoneFiles = doneCount,
                     TotalFiles = totalCount,
-                    EntryFile = entrySoFar,
+                    EntryFile = plannedEntry,
                     CurrentPath = relativePath,
                     CurrentSize = entry.Length,
                 });
@@ -2582,7 +2600,7 @@ public class HostedSiteService : IHostedSiteService
                 {
                     entryBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(entryBytes, relativePath));
                     // 只认入口文件的签名：ZIP 里可能夹着别人的 deck 示例，那不代表这个站是幻灯片
-                    if (string.Equals(relativePath, entrySoFar, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(relativePath, plannedEntry, StringComparison.OrdinalIgnoreCase))
                         isSlideDeck = DetectSlideDeck(entryBytes);
                 }
 
@@ -2601,10 +2619,8 @@ public class HostedSiteService : IHostedSiteService
                 doneCount++;
             }
 
-            var entryFile = files.FirstOrDefault(f => f.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase))?.Path
-                ?? files.FirstOrDefault(f => f.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase))?.Path
-                ?? files.FirstOrDefault(f => f.MimeType == "text/html")?.Path
-                ?? files[0].Path;
+            // 与上面 plannedEntry 同一条判据，避免两处各挑各的
+            var entryFile = SelectEntryPath(files.Select(f => (f.Path, f.MimeType)).ToList()) ?? files[0].Path;
 
             return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize, IsSlideDeck = isSlideDeck };
         }

@@ -412,6 +412,14 @@ public class GatewayDataDomainGuardTests
         // `!model.Enabled`——bool 反序列化会把缺字段的老文档读成 false，那样会把一批
         // 从没被人停用过的成员误判成停用。
         Assert.Contains("Builders<LLMModel>.Filter.Eq(m => m.Enabled, false)", resolver);
+        // 三个别名都要认：池成员的 ModelId 按 `ModelName ?? Name ?? _id` 存，
+        // 少认 Name 的话，缺 ModelName 的那类模型停用了也照发——而托管池删不掉成员，
+        // 停用是唯一处置手段，等于这道闸对它们整类失效。
+        // 取的必须是**定义**而不是调用点：按签名配对大括号，别再手写固定长度窗口
+        var lookupBody = SourceSlice.Member(resolver, "private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(");
+        Assert.Contains("Eq(m => m.ModelName, modelId)", lookupBody);
+        Assert.Contains("Eq(m => m.Name, modelId)", lookupBody);
+        Assert.Contains("Eq(m => m.Id, modelId)", lookupBody);
         var fetchThenTest = new Regex(@"IsPoolMemberModelExplicitlyDisabled[\s\S]{0,1600}?!\w+\.Enabled");
         Assert.False(
             fetchThenTest.IsMatch(resolver),

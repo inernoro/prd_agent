@@ -37,9 +37,7 @@ public class UploadProgressWiringTests
         var api = ReadRepoFile("prd-admin/src/services/real/webPages.ts");
 
         // 控制器：收得到、传得下、收得了尾
-        var reuploadAt = ctrl.IndexOf("public async Task<IActionResult> Reupload(", System.StringComparison.Ordinal);
-        Assert.True(reuploadAt > 0, "找不到重传端点");
-        var body = ctrl[reuploadAt..System.Math.Min(reuploadAt + 2600, ctrl.Length)];
+        var body = SourceSlice.Member(ctrl, "public async Task<IActionResult> Reupload(");
         Assert.Contains("[FromForm] string? uploadId", body);
         Assert.Contains("uploadId: uploadId", body);
         Assert.Contains("_uploadProgress.CompleteAsync(uploadId)", body);
@@ -48,10 +46,28 @@ public class UploadProgressWiringTests
         Assert.Contains("ExtractAndUploadZip(siteId, fileBytes, uploadId)", svc);
 
         // 前端：表单里真的带上了
-        var reuploadFn = api.IndexOf("export async function reuploadSite(", System.StringComparison.Ordinal);
-        Assert.True(reuploadFn > 0);
-        var fnBody = api[reuploadFn..System.Math.Min(reuploadFn + 900, api.Length)];
+        var fnBody = SourceSlice.Member(api, "export async function reuploadSite(");
         Assert.Matches(new Regex(@"reuploadSite\(id: string, file: File, uploadId\?: string\)"), fnBody);
         Assert.Contains("fd.append('uploadId', uploadId)", fnBody);
+    }
+
+    [Fact]
+    public void 入口文件判据只许有一份_否则幻灯片检测会对着别的文件跑()
+    {
+        // 原来解包中途只认根目录精确的 index.html，而最终选入口时还支持 index.htm
+        // 与「第一个 HTML」。后果是用 index.htm / slides.html 打包的 reveal.js 稿子
+        // 检测根本不跑，被存成普通网页。两处必须用同一条判据。
+        var svc = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/HostedSiteService.cs");
+
+        Assert.Contains("private static string? SelectEntryPath(", svc);
+        // 解包前定的入口与解包后定的最终入口，都走这一条
+        Assert.Equal(2, Regex.Matches(svc, @"SelectEntryPath\(").Count - 1); // 1 处定义 + 2 处调用
+        Assert.Contains("var plannedEntry = SelectEntryPath(", svc);
+        Assert.Contains("var entryFile = SelectEntryPath(", svc);
+        // 检测必须对着那个入口跑
+        Assert.Contains("string.Equals(relativePath, plannedEntry, System.StringComparison.OrdinalIgnoreCase)"
+            .Replace("System.", ""), svc);
+        // 不许退回「循环里一边扫一边认，且只认 index.html」的老写法
+        Assert.DoesNotContain("string? entrySoFar = null;", svc);
     }
 }
