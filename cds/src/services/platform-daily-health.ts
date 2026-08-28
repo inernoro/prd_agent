@@ -106,10 +106,18 @@ export interface DailyHealthInput {
   infraExemptions: readonly InfraExemptionFact[];
   platformStores: readonly HealthPlatformStoreFact[];
   backup: {
-    /** 上一轮周期备份完成时间；null = 读不到（不等于没问题）。 */
+    /**
+     * 上一轮周期备份**跑完**的时间；null = 真的读不到结果（不等于没问题）。
+     *
+     * 只回答「跑没跑、多久前跑的」。这一轮备没备全**不许**影响它——那是
+     * coverageGaps 与 failedTargets 的职责。混在一起的后果见落盘处的长注释：
+     * 一个长期部分失败的部署会天天报「读不到」，而备份其实每 6 小时就在跑。
+     */
     lastCompletedAt: string | null;
-    /** 上一轮没被覆盖到的目标。 */
+    /** 上一轮没被覆盖到的目标（按服务类型压根备不了的那批）。 */
     coverageGaps: readonly string[];
+    /** 上一轮**尝试了但失败**的目标。与 coverageGaps 不同：这些本该能备，只是没成。 */
+    failedTargets?: readonly string[];
   };
   /** 最近一次「把备份真的灌回去读通了」的时间；null = 从来没演练过。 */
   lastRestoreDrillAt: string | null;
@@ -331,11 +339,32 @@ export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict
       message: `上一轮周期备份是 ${Math.floor(backupAge / 3_600_000)} 小时前，已经陈旧`,
     });
   }
+  // 「本该能备、但一直没备成」必须自己有一条判据。
+  //
+  // 拆开「跑没跑」和「备全没备全」之前，这件事是被那条**假**的
+  // 「读不到上一轮结果」顺带遮着的——只要有目标失败，完成时间就被抹空，体检就报
+  // critical。现在时间戳不再被绑架，如果不在这里补一条，长期失败的目标会从
+  // 「假警报」直接变成**沉默**：那是把一个坏判据换成一个更坏的洞。
+  const failedTargets = input.backup.failedTargets ?? [];
+  if (failedTargets.length > 0) {
+    findings.push({
+      id: 'backup.failed-targets',
+      severity: 'critical',
+      message: `上一轮周期备份有 ${failedTargets.length} 个目标没备成：${failedTargets.join('、')}`
+        + '——这些是本该能备的，手上没有它们的新副本',
+    });
+  }
   if (input.backup.coverageGaps.length > 0) {
     findings.push({
       id: 'backup.coverage-gaps',
       severity: 'warn',
-      message: `${input.backup.coverageGaps.length} 个正在跑的服务没有被周期备份覆盖：`
+      // 措辞要容得下这一栏的**两种**来源，否则同一份报文会自相矛盾：
+      // 一种是按服务类型压根备不了（minio / kafka），另一种是**备成功了、但导出脚本
+      // 自报只覆盖到一部分**（rabbitmq 只有定义没有消息、nacos 只有配置没有注册表）。
+      // 后者说成「没有被周期备份覆盖」，读者去查备份历史会看到它明明每轮都在备，
+      // 于是整份报文的可信度一起掉——这正是这条体检要避免的事。
+      // 两者需要的动作确实不同，真要分开报得让缺口带上类型，那是另一件事（台账 E83）。
+      message: `${input.backup.coverageGaps.length} 个正在跑的服务备份不完整（没备到，或只备到一部分）：`
         + input.backup.coverageGaps.join('、'),
     });
   }
