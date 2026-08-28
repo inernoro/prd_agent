@@ -5111,12 +5111,20 @@ const string IntentDraftSystemPrompt = """
 app：谁在调用（哪个应用、设备或服务）。
 feature：要做什么（哪种能力或业务场景）。
 
-两段都必须是小写英文 kebab-case：只允许 a-z、0-9 和短横线，必须字母开头，各不超过 32 个字符。
-用英文表达语义，不要拼音，不要把整句话塞进去。
+app 和 feature 两段都必须是小写英文 kebab-case：只允许 a-z、0-9 和短横线，必须字母开头，
+各不超过 32 个字符。**这两段里出现任何中文字符都是错的**，即使用户那句话是中文——
+你要做的是把中文语义翻成英文，不是照抄。也不要用拼音，不要把整句话塞进去。
 requestType 只能是 chat 或 vision：涉及看图、识图、图片理解、截图、OCR 时用 vision，其余一律 chat。
+reason 用中文写，这是唯一允许出现中文的字段。
 
 只输出一个 JSON 对象，不要解释，不要代码块：
 {"app":"...","feature":"...","requestType":"chat","reason":"一句中文，说明你从这句话的哪些词判出这两段"}
+
+示例一，输入「接入小米音响，对接大模型网关指令集」，输出：
+{"app":"xiaomi-speaker","feature":"command-parse","requestType":"chat","reason":"「小米音响」是调用方，「指令集」说明要把语音指令解析成结构化命令"}
+
+示例二，输入「我们的运营后台要自动读发票图片上的金额」，输出：
+{"app":"internal-tool","feature":"invoice-ocr","requestType":"vision","reason":"「运营后台」是调用方，「读发票图片」属于图片取字，所以判 vision"}
 
 如果这句话确实说不清楚（既看不出谁在调用，也看不出要做什么），把 app 和 feature 留空，
 并在 reason 里用一句中文说清还缺什么。不要编造。
@@ -5159,7 +5167,9 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
             {
                 model = intentDraftModel,
                 stream = true,
-                temperature = 0,
+                // 不发 temperature：池里选到的模型可能只接受默认值，实测发 0 会被上游 400
+                // 回「temperature does not support 0 with this model」。推导要的确定性靠
+                // 提示词里的「只输出 JSON」约束，不靠采样参数。
                 messages = new object[]
                 {
                     new { role = "system", content = IntentDraftSystemPrompt },
