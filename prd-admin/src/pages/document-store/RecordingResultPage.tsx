@@ -241,9 +241,12 @@ export function RecordingResultPage() {
    * `?play=1` 是「进入结果页并开始播放」那一下的后半段。
    * 起播必须发生在这一屏——上一屏先播会造成「声音已经在响、画面还在旧页」。
    *
-   * 这里**不再 setTimeout 等播放器挂载**：那 120ms 把用户手势的活跃期一起等没了，
-   * 移动端 Safari 于是拒掉 play()，好好的录音被显示成「无法播放」。窄通道自己带闩
-   * （挂载前发的请求会在播放器订阅时补发），所以这一发同步发出即可。
+   * 这里**不再 setTimeout 等播放器挂载**：窄通道自己带闩，挂载前发的请求会在播放器
+   * 订阅时补发，那 120ms 白等。
+   * 但闩留住的是**这个请求**，不是浏览器的手势活跃期——播放器要等这一屏加载完
+   * （一次网络往返）才挂得上来，真正调 play() 已经在活跃期之外。所以移动端 Safari
+   * 拒掉这一发是可能的，那不是缺陷：播放器把 NotAllowedError 单独认出来，控件留在
+   * 原地并补一句「点播放键继续」，不会把能播的录音判成「无法播放」。
    */
   const [searchParams, setSearchParams] = useSearchParams();
   const wantsAutoplay = searchParams.get('play') === '1';
@@ -521,6 +524,15 @@ export function RecordingResultPage() {
   noteIdRef.current = state.kind === 'ready' ? state.noteId : '';
   /** 当前这一屏是哪条录音。异步回调回来时拿它认人，别把结果落到已经切走的那条上 */
   const entryIdRef = useRef('');
+  /*
+   * 笔记条目的 updatedAt，当**版本令牌**用：离线草稿拿它当基线，补传前比一次。
+   * 单独存一份、不借用 state.generatedAt——那个值是展示用的「这份整理生成于」，
+   * 用户手改一次正文并不代表摘要是那时生成的，两个含义共用一个字段迟早读错
+   * （predicate-and-wiring-discipline 形状 6）。
+   * 在线保存成功后要跟着刷新，否则「自己刚存过、随后离线再改」会被误判成别人改过
+   * （Codex 第九轮 P2）。
+   */
+  const noteRevisionRef = useRef<string | null>(null);
   entryIdRef.current = entryId ?? '';
 
   /**
@@ -561,6 +573,13 @@ export function RecordingResultPage() {
           ?? cur.styleKey,
       }
       : cur));
+    /*
+     * 版本令牌跟着这份新拉回来的一起走。漏了的话：整理重跑或丢弃草稿之后服务端那份
+     * 已经换了新时刻，而令牌还停在进页面时那一刻——用户下一次断网校对拿它当基线，
+     * 重连时就会被判成「云端有更新」，冲突横幅是假的（在线保存与补传两路都刷了，
+     * 这一路漏了，Codex 第十八轮 P2）。
+     */
+    if (noteEntryRes.success && noteEntryRes.data?.updatedAt) noteRevisionRef.current = noteEntryRes.data.updatedAt;
     // 正文这一路成功才算「换上了」——条目元数据失败只影响生成时间与整理方式的展示
     return contentRes.success && typeof contentRes.data?.content === 'string';
   }, [entryId]);
@@ -612,15 +631,6 @@ export function RecordingResultPage() {
    * 但计数记的是**用户改了几次**，因为那才是他关心的「我有多少东西还没上去」。
    */
   const [pendingEdits, setPendingEdits] = useState<QueuedOfflineEdit | null>(null);
-  /*
-   * 笔记条目的 updatedAt，当**版本令牌**用：离线草稿拿它当基线，补传前比一次。
-   * 单独存一份、不借用 state.generatedAt——那个值是展示用的「这份整理生成于」，
-   * 用户手改一次正文并不代表摘要是那时生成的，两个含义共用一个字段迟早读错
-   * （predicate-and-wiring-discipline 形状 6）。
-   * 在线保存成功后要跟着刷新，否则「自己刚存过、随后离线再改」会被误判成别人改过
-   * （Codex 第九轮 P2）。
-   */
-  const noteRevisionRef = useRef<string | null>(null);
   /** 队列没落住本机存储（隐私模式 / 站点数据被禁 / 配额满）：承诺要跟着降级 */
   const [queueVolatile, setQueueVolatile] = useState(false);
   /** 服务端那份笔记在离线期间被改过：不许静默覆盖，交给用户定 */

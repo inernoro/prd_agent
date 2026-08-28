@@ -44,3 +44,20 @@ describe('录音全屏路由的接线', () => {
     expect(hits.length).toBeGreaterThan(0);
   });
 });
+
+/*
+ * 路由上那个 storeId 只是「从哪一屏点进来的」，不等于条目的归属库（换库保存、
+ * 从「最近」进来、深链被转发都会让两者不同）。拿它查库名会把「已保存到「某库」」
+ * 写成另一个库，返回和「去看结果」也会把人送错地方。结果页上一轮已经改成认条目，
+ * 处理页当时漏了（Codex 第十八轮 P2）——两屏都得认条目，所以判据一次覆盖两屏。
+ */
+describe('归属库认条目，不认路由参数', () => {
+  const pages = ['RecordingResultPage.tsx', 'RecordingProcessingPage.tsx'];
+  it.each(pages)('%s 用条目自己说的库去查库名与导航', (name) => {
+    const src = readFileSync(join(SRC, 'pages', 'document-store', name), 'utf-8');
+    // 条目的 storeId 参与推导（路由参数只做加载完成前的退路）
+    expect(src).toMatch(/(entry|entryRes\.data)\??\.?storeId/);
+    // 导航目标不再直接插路由参数
+    expect(src).not.toMatch(/navigate\(`\/document-store\/\$\{storeId/);
+  });
+});

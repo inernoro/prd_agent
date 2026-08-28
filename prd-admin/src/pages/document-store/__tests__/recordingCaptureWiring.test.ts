@@ -79,3 +79,32 @@ describe('本机保险箱失败要接到凭据上', () => {
   });
 });
 
+/*
+ * 本机保险箱里的分片存在哪个库下，决定了恢复弹窗会不会把这段录音端到用户面前
+ * （它按 storeId 过滤）。两处都容易存错，而且错了全程静默：
+ *   - 建会话时盖的是路由那个库，可用户在按录音之前就把目的地改掉是常态；
+ *   - 切库时裸发更新，抢在建会话前面跑就找不到那条会话记录，静默 no-op。
+ * 两种都表现为「用户在自己选的库里看不到刚录的那段」——像丢了（Codex 第十八轮 P2）。
+ */
+describe('本机保险箱的分片存进用户选的那个库', () => {
+  const sheet = fs.readFileSync(
+    path.resolve(__dirname, '../RecordAudioSheet.tsx'),
+    'utf-8',
+  );
+
+  it('建会话盖的是当前选中的库，不是路由参数', () => {
+    const call = sheet.slice(sheet.indexOf('vaultStartSession('));
+    const args = call.slice(0, call.indexOf(')'));
+    expect(args).toContain('targetStoreIdRef.current');
+  });
+
+  it('切库的更新排在写队列上，不是裸发', () => {
+    const fn = sheet.slice(sheet.indexOf('const changeDestination = useCallback'));
+    const body = fn.slice(0, fn.indexOf('\n  }, ['));
+    expect(body.length).toBeGreaterThan(200);
+    expect(body).not.toMatch(/(void|await)\s+vaultUpdateSessionStore\(/);
+    const chained = body.slice(body.indexOf('vaultWriteQueueRef.current'));
+    expect(chained.slice(0, 400)).toContain('vaultUpdateSessionStore(');
+  });
+});
+

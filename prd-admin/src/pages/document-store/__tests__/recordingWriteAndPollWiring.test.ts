@@ -78,6 +78,19 @@ describe('离线草稿的版本令牌', () => {
   it('在线保存成功后刷新令牌，否则自己上一次保存会被当成别人改的', () => {
     expect(source).toContain('if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;');
   });
+
+  /*
+   * 重新拉笔记也要刷令牌：整理重跑、丢弃草稿之后服务端那份已经换了新时刻，
+   * 令牌不跟着走，用户下一次断网校对就带着过期基线，重连时被判成「云端有更新」——
+   * 一条假的冲突横幅。删掉这一行不会有任何测试变红，所以要这条守卫
+   * （Codex 第十八轮 P2）。
+   */
+  it('重新拉回笔记之后也刷令牌', () => {
+    const body = source.slice(source.indexOf('const reloadNote = useCallback'));
+    const scope = body.slice(0, body.indexOf('}, [entryId]);'));
+    expect(scope.length).toBeGreaterThan(200);
+    expect(scope).toMatch(/noteRevisionRef\.current = noteEntryRes\.data\.updatedAt/);
+  });
 });
 
 describe('发起整理的去重', () => {

@@ -76,6 +76,14 @@ export function RecordingProcessingPage() {
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [storeName, setStoreName] = useState('');
+  /*
+   * 这条录音真正归属的库。路由上那个 storeId 只是「从哪一屏点进来的」，
+   * 换库保存、从「最近」进来、深链被转发这几种情况下它并不等于条目的归属库——
+   * 拿它去查库名会把「已保存到「某库」」写成另一个库的名字，返回与「去看结果」
+   * 也会把人送错地方（结果页那一屏上一轮已经改成认条目，这一屏漏了，
+   * Codex 第十八轮 P2）。加载完成前退回路由参数。
+   */
+  const [owningStoreId, setOwningStoreId] = useState(storeId ?? '');
   const [sizeLabel, setSizeLabel] = useState<string | null>(null);
   const [dateLabel, setDateLabel] = useState<string | null>(null);
   const [run, setRun] = useState<RunLike | null>(null);
@@ -107,13 +115,10 @@ export function RecordingProcessingPage() {
   }), []);
 
   useEffect(() => {
-    if (!entryId || !storeId) return;
+    if (!entryId) return;
     let stale = false;
     void (async () => {
-      const [entryRes, storeRes] = await Promise.all([
-        getDocumentEntry(entryId),
-        getDocumentStoreReal(storeId),
-      ]);
+      const entryRes = await getDocumentEntry(entryId);
       if (stale) return;
       if (entryRes.success && entryRes.data) {
         setTitle(entryRes.data.title ?? '');
@@ -122,6 +127,12 @@ export function RecordingProcessingPage() {
           ? new Date(entryRes.data.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
           : null);
       }
+      // 库名必须查条目自己说的那个库，不是路由上那个
+      const resolvedStoreId = (entryRes.success ? entryRes.data?.storeId : '') || storeId || '';
+      if (!resolvedStoreId) return;
+      setOwningStoreId(resolvedStoreId);
+      const storeRes = await getDocumentStoreReal(resolvedStoreId);
+      if (stale) return;
       if (storeRes?.success) setStoreName(storeRes.data?.name ?? '');
     })();
     return () => { stale = true; };
@@ -184,13 +195,13 @@ export function RecordingProcessingPage() {
   const goResult = useCallback(() => {
     // `?play=1` 让结果页在播放器真的挂上来之后再起播——在这一屏先播会变成
     // 「声音已经在响、画面还在旧页」
-    navigate(`/document-store/${storeId ?? ''}/recording/${entryId ?? ''}?play=1`);
-  }, [entryId, navigate, storeId]);
+    navigate(`/document-store/${owningStoreId}/recording/${entryId ?? ''}?play=1`);
+  }, [entryId, navigate, owningStoreId]);
 
   const goBack = useCallback(() => {
     if (window.history.length > 1) navigate(-1);
-    else navigate(`/document-store?store=${storeId ?? ''}`);
-  }, [navigate, storeId]);
+    else navigate(`/document-store?store=${owningStoreId}`);
+  }, [navigate, owningStoreId]);
 
   const durationLabel = durationSec > 0 ? formatDuration(durationSec) : '';
   const subtitle = [storeName ? `已保存到「${storeName}」` : '', durationLabel].filter(Boolean).join(' · ');
