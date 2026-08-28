@@ -9,6 +9,11 @@ export interface AgentExperienceProfile {
   promptRule: string;
 }
 
+export interface AgentRoleCardField {
+  label: string;
+  rule: string;
+}
+
 export interface AgentRoleProfile {
   id: AgentRoleId;
   label: string;
@@ -16,6 +21,16 @@ export interface AgentRoleProfile {
   defaultBundleKey: 'pm-starter' | 'dev-starter' | 'qa-starter';
   promptRule: string;
   decisionFields: readonly string[];
+  /** 理解方向：这个角色把需求读成什么。 */
+  lens: string;
+  /** 接到任务先确认的问题，决定 Agent 的提问方向。 */
+  intake: readonly string[];
+  /** 决策卡标题，角色之间不得重名。 */
+  cardTitle: string;
+  /** 角色专属段落，替换掉此前所有角色共用的一套字段。 */
+  fields: readonly AgentRoleCardField[];
+  /** 角色专属禁止项。 */
+  forbid: readonly string[];
 }
 
 export const AGENT_EXPERIENCE_PROFILES: readonly AgentExperienceProfile[] = [
@@ -43,6 +58,21 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     defaultBundleKey: 'pm-starter',
     promptRule: '我的角色是产品经理。默认用产品语言说明用户价值、范围、验收和风险，不要把技术选型题直接丢给我。',
     decisionFields: ['用户价值', '范围变化', '验收结果'],
+    lens: '把每个需求读成「哪一类用户、在什么场景、原来卡在哪、现在能多做哪个动作」，实现方式不是需要我确认的内容。',
+    intake: [
+      '这次要解决的是哪一类用户的什么问题',
+      '做完之后用户能多做哪一个动作',
+      '这次明确不做什么',
+    ],
+    cardTitle: '产品交付卡',
+    fields: [
+      { label: '用户能做什么', rule: '用用户动作描述本次产出，禁止用模块名、接口名、表名代替。' },
+      { label: '影响面', rule: '说明谁会看到变化、牵动哪些既有流程；判断不了写「影响面未确认」。' },
+      { label: '范围变化', rule: '对照最初需求写清增加、缩减、挂起了什么；没变化写「与原需求一致」。' },
+      { label: '验收结果', rule: '写清哪条用户路径被真实走通、在哪个环境走的；没走通直说未验证。' },
+      { label: '需要你拍板', rule: '写「无」，或只提一个产品取舍问题：做不做、先做哪个、按哪种口径。' },
+    ],
+    forbid: ['把技术方案讲成交付内容', '范围缩水时仍写「已完成」'],
   },
   {
     id: 'owner',
@@ -50,7 +80,22 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     description: '负责把业务目标、需求规则、例外情况和验收标准讲清楚。',
     defaultBundleKey: 'pm-starter',
     promptRule: '我的角色是业务专家或需求专家。优先把业务目标、需求规则、例外情况和验收标准讲清楚，技术实现由你负责。',
-    decisionFields: ['业务目标', '规则覆盖', '待确认规则'],
+    decisionFields: ['规则覆盖', '业务假设', '待确认规则'],
+    lens: '把每个需求读成「一组业务规则加例外分支」，先对齐规则口径，再谈怎么实现。',
+    intake: [
+      '这条业务的正常流程是什么',
+      '有哪些例外情况和禁止情况',
+      '判定标准由谁定、以哪份口径为准',
+    ],
+    cardTitle: '规则交付卡',
+    fields: [
+      { label: '已覆盖规则', rule: '逐条列出本次真正实现的业务规则，最多五条，一条一行。' },
+      { label: '未覆盖或按默认处理', rule: '列出没做的规则和例外分支；没有写「无」，不得省略这一段。' },
+      { label: '我做的业务假设', rule: '列出你在口径不明时自行选择的判断，一条都不许只留在实现里。' },
+      { label: '验证证据', rule: '写清用哪组真实业务数据或场景验过、结果是什么；没验直说。' },
+      { label: '需要你确认的规则', rule: '写「无」，或只提一条口径不明的规则。' },
+    ],
+    forbid: ['用技术术语代替规则表述', '把自行假设的口径当成用户已确认'],
   },
   {
     id: 'domain-expert',
@@ -58,7 +103,22 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     description: '关注业务规则、例外情况和专业准确性。',
     defaultBundleKey: 'pm-starter',
     promptRule: '我的角色是领域专家。优先确认专业规则、例外条件和结果准确性；技术实现由你负责，并用业务流程解释。',
-    decisionFields: ['专业结论', '判断依据', '不确定项与业务风险'],
+    decisionFields: ['专业结论', '判断依据', '不确定项'],
+    lens: '把每个需求读成「一个专业判断题」，先问结论是否成立、依据能否追溯，再谈功能做成什么样。',
+    intake: [
+      '这次要给出的专业结论是什么',
+      '判断依据来自哪份数据或口径',
+      '哪些边界条件会推翻这个结论',
+    ],
+    cardTitle: '专业结论卡',
+    fields: [
+      { label: '专业结论', rule: '一句话说明本次产出在专业上是否成立、成立到什么程度。' },
+      { label: '判断依据', rule: '写清依据的数据、口径或来源；来源不明必须写「依据不足」，不得补一个看似合理的说法。' },
+      { label: '不确定项', rule: '列出可能推翻结论的边界条件和数据缺口；没有写「无」。' },
+      { label: '验证证据', rule: '写清用哪份真实数据或案例核对过、核对结果是什么。' },
+      { label: '需要你复核', rule: '写「无」，或只提一个必须由你判定的专业问题。' },
+    ],
+    forbid: ['没有依据就下结论', '用「应该没问题」替代依据'],
   },
   {
     id: 'dev',
@@ -66,7 +126,22 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     description: '关注架构、实现、验证和可维护性。',
     defaultBundleKey: 'dev-starter',
     promptRule: '我的角色是开发。可以使用必要的技术术语，但结论必须关联真实代码、运行证据和部署路径。',
-    decisionFields: ['工程状态', '核心改动与验证证据', '技术风险'],
+    decisionFields: ['核心改动', '验证证据', '影响面与技术风险'],
+    lens: '把每个需求读成「改哪几处代码、怎么证明它对、会牵动谁」，实现细节自己负责，不把技术选型反问给我。',
+    intake: [
+      '入口和数据流经过哪几层',
+      '现有实现里有没有同类写法可以复用',
+      '这次改动会牵动哪些调用方和共享状态',
+    ],
+    cardTitle: '工程交付卡',
+    fields: [
+      { label: '核心改动', rule: '按模块或文件一句话一条，最多五条，写改了什么行为而不是改了哪个文件名。' },
+      { label: '验证方式与结果', rule: '写清跑了哪些命令、测试或真实路径以及结果；没跑的必须写「未运行」。' },
+      { label: '影响面与回归风险', rule: '列出受牵连的调用方、数据、部署或共享状态；没有写「无」。' },
+      { label: '未做的部分', rule: '列出本次留下的技术债、临时方案或跳过的分支；没有写「无」。' },
+      { label: '需要你决定', rule: '写「无」，或只提一个业务取舍问题；技术选型自己拍板。' },
+    ],
+    forbid: ['把编译通过当作功能验收', '把没运行的检查写成已运行'],
   },
   {
     id: 'qa',
@@ -74,7 +149,23 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     description: '关注场景、断言、证据和回归。',
     defaultBundleKey: 'qa-starter',
     promptRule: '我的角色是测试与验收。优先说明场景、行为断言、证据和回归范围，不把接口成功等同于用户验收通过。',
-    decisionFields: ['验收结论', '覆盖范围', '失败或未覆盖项与发布建议'],
+    decisionFields: ['验收结论', '场景与断言', '未覆盖项与发布建议'],
+    lens: '把每个需求读成「一组可断言的场景」，只认真实运行过的证据，不认实现描述。',
+    intake: [
+      '这次要验的用户路径有哪几条',
+      '每条路径的通过判据是什么',
+      '哪些旧功能可能被这次改动打到',
+    ],
+    cardTitle: '验收结论卡',
+    fields: [
+      { label: '验收结论', rule: '只能写通过、有条件通过、未通过三选一，并给出一句话理由。' },
+      { label: '已验场景与断言', rule: '按「场景 → 断言 → 实际结果」写，最多五条；产物类功能必须等产物真的出现才算通过。' },
+      { label: '未覆盖或阻塞', rule: '列出没验到的场景和原因；没有写「无」。' },
+      { label: '回归范围', rule: '说明这次改动可能影响的旧功能验没验、结论是什么。' },
+      { label: '缺陷与严重级', rule: '逐条写缺陷和严重级；没有写「无」，不得用「整体正常」概括。' },
+      { label: '需要你决定', rule: '写「无」，或只提一个放行与否的业务问题。' },
+    ],
+    forbid: ['把接口返回成功当作验收通过', '把加载中或超时的截图当作产物已生成'],
   },
 ] as const;
 
@@ -94,6 +185,20 @@ function roleProfile(id: AgentRoleId): AgentRoleProfile {
   return AGENT_ROLE_PROFILES.find((item) => item.id === id) || AGENT_ROLE_PROFILES[0];
 }
 
+/** 所有角色共享的开头段落：状态枚举与进度位置，防止阶段完成冒充整体完成。 */
+const SHARED_CARD_HEAD: readonly string[] = [
+  '【任务状态】只能使用：已完成，可使用 / 已完成，待验收 / 部分完成，待决策 / 执行中 / 被阻塞，需提供信息 / 未通过，已停止。',
+  '【当前阶段】说明本阶段是否结束，以及产出了什么。',
+  '【整体任务】说明整体是否结束；未结束时明确还差什么。阶段完成不得冒充整体完成。',
+] as const;
+
+/** 所有角色共享的结尾段落：一个动作、一个可点击入口、一种登录方式。 */
+const SHARED_CARD_TAIL: readonly string[] = [
+  '【下一步】只给一个默认推荐动作，并写明由 Agent 还是用户执行。',
+  '【验收入口】给真实可点击的最终深链；没有或不适用时直说，不得猜测地址。',
+  '【登录方式】写无需登录、安全获取方式或当前阻塞；不得把密码写入仓库、PR、报告或公开日志。',
+] as const;
+
 export function buildRoleDecisionContract(
   experienceId: AgentExperienceId,
   roleId: AgentRoleId,
@@ -103,27 +208,27 @@ export function buildRoleDecisionContract(
   const depthRule = experience.id === 'newcomer'
     ? '少用术语，必须解释结果对用户的影响；不要要求用户理解 Git、构建、部署或接口细节。'
     : '保持简洁，可保留关键技术证据和风险，但仍只给一个默认推荐动作。';
+  const roleLines = role.fields.map((field) => `【${field.label}】${field.rule}`);
+  const sectionCount = SHARED_CARD_HEAD.length + roleLines.length + SHARED_CARD_TAIL.length;
 
   return [
     '<!-- CDS_AGENT_DECISION_CARD:START -->',
     '## 角色决策回复（强制）',
     '',
-    `当前角色：${role.label}。每次最终回复必须以简短决策卡收尾，不得只给执行日志。`,
-    `角色重点：${role.decisionFields.join('、')}。`,
+    `当前角色：${role.label}。每次最终回复必须以「${role.cardTitle}」收尾，不得只给执行日志，也不得换用其他角色的卡片格式。`,
+    `理解方向：${role.lens}`,
+    `接到任务先确认：${role.intake.join('；')}。以上问题没答清之前，不要直接开工。`,
+    `角色关注点：${role.decisionFields.join('、')}。与这三项无关的细节不进卡片正文。`,
     depthRule,
     '',
-    '【任务状态】只能使用：已完成，可使用 / 已完成，待验收 / 部分完成，待决策 / 执行中 / 被阻塞，需提供信息 / 未通过，已停止。',
-    '【当前阶段】说明本阶段是否结束，以及产出了什么。',
-    '【整体任务】说明整体是否结束；未结束时明确还差什么。阶段完成不得冒充整体完成。',
-    '【角色结论】围绕当前角色重点，用一到三句话说明结果和影响。',
-    '【完成边界】明确本次做了什么、没有做什么。',
-    '【验证证据】只写实际运行或验收过的内容；未验证必须直说。',
-    '【需要你决定】写“无”，或只提出一个必须由用户决定的业务问题；技术实现默认由 Agent 负责。',
-    '【下一步】只给一个默认推荐动作，并写明由 Agent 还是用户执行。',
-    '【验收入口】给真实可点击的最终深链；没有或不适用时直说，不得猜测地址。',
-    '【登录方式】写无需登录、安全获取方式或当前阻塞；不得把密码写入仓库、PR、报告或公开日志。',
+    `### ${role.cardTitle}`,
+    ...SHARED_CARD_HEAD,
+    ...roleLines,
+    ...SHARED_CARD_TAIL,
     '',
-    '决策卡默认不超过 10 行。禁止使用“基本完成”“应该可以”“大概没问题”。没有真实验证证据时，不得标记“已完成，可使用”或“已完成，待验收”。',
+    `${role.cardTitle}固定 ${sectionCount} 段，按上面顺序逐段填写，不得增删、合并或改名段落。`,
+    '禁止使用“基本完成”“应该可以”“大概没问题”。没有真实验证证据时，不得标记“已完成，可使用”或“已完成，待验收”。',
+    `本角色额外禁止：${role.forbid.join('；')}。`,
     '<!-- CDS_AGENT_DECISION_CARD:END -->',
   ].join('\n');
 }
@@ -156,7 +261,9 @@ export function buildAgentStarterPrompt(input: AgentStarterPromptInput): string 
     '一、我的使用方式',
     experience.promptRule,
     role.promptRule,
-    '回复默认使用：一句话结论、对业务意味着什么、当前进度、需要我决定、风险和边界、下一步。只有我要求时才展开技术附录。',
+    `理解方向：${role.lens}`,
+    `接到任务先确认：${role.intake.join('；')}。`,
+    `回复格式以第八节的「${role.cardTitle}」为准，不要另外套一份通用回复模板；只有我要求时才展开技术附录。`,
     '',
     '二、先识别项目，不要套模板重建',
     '开始前先只读判断项目属于哪种形态：静态网页、成熟软件、开发中的半成品、包含多服务或复制集的复杂产物。',

@@ -7,6 +7,7 @@ import {
   ClipboardCopy,
   Code2,
   Download,
+  FileText,
   FlaskConical,
   Layers3,
   PackageCheck,
@@ -20,6 +21,7 @@ import {
   AGENT_ROLE_PROFILES,
   buildAgentStarterHarness,
   buildAgentStarterPrompt,
+  buildRoleDecisionContract,
   type AgentExperienceId,
   type AgentRoleId,
 } from '../lib/agent-starter'
@@ -120,6 +122,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
   const [activeSkillGroup, setActiveSkillGroup] = useState('foundation')
   const [includeCds, setIncludeCds] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [showDecisionCard, setShowDecisionCard] = useState(false)
   const [prdAgentOrigin, setPrdAgentOrigin] = useState(
     () => String(import.meta.env.VITE_PRD_AGENT_BASE_URL || '').trim(),
   )
@@ -180,6 +183,9 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
     includeCds,
     cdsPrompt,
   })
+
+  const roleProfile = AGENT_ROLE_PROFILES.find((item) => item.id === roleId) ?? AGENT_ROLE_PROFILES[0]
+  const decisionCard = buildRoleDecisionContract(experienceId, roleId)
 
   const harness = buildAgentStarterHarness({
     experienceId,
@@ -261,6 +267,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                         selected={roleId === profile.id}
                         title={profile.label}
                         description={profile.description}
+                        chips={profile.decisionFields}
                         icon={<Icon className="h-5 w-5" />}
                         compact
                         onClick={() => { setRoleId(profile.id); advance(2) }}
@@ -368,7 +375,7 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
             )}
 
             {step === 4 && (
-              <div className="flex h-full flex-col items-center justify-center text-center">
+              <div className="flex h-full min-h-0 flex-col items-center justify-center overflow-y-auto text-center">
                 <motion.div initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="grid h-14 w-14 place-items-center rounded-2xl bg-foreground text-background shadow-xl">
                   <Check className="h-7 w-7" />
                 </motion.div>
@@ -402,10 +409,29 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                   <button type="button" onClick={() => downloadText('cds-agent-starter.sh', harness)} className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]">
                     <Download className="h-4 w-4" /> 下载一键脚本
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowDecisionCard((value) => !value)}
+                    aria-expanded={showDecisionCard}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-2.5 text-sm font-semibold text-foreground hover:border-[hsl(var(--hairline-strong))]"
+                  >
+                    <FileText className="h-4 w-4" /> {showDecisionCard ? '收起' : '预览'}「{roleProfile.cardTitle}」
+                  </button>
                   <a href={`${serviceOrigin}/api/skills/bundles`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground">
                     查看技能来源 <ArrowRight className="h-4 w-4" />
                   </a>
                 </div>
+
+                {showDecisionCard && (
+                  <div className="mt-5 w-full max-w-2xl shrink-0 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-left">
+                    <div className="text-xs font-bold text-muted-foreground">
+                      {roleProfile.label} 专属回复格式，换角色会换成另一套段落
+                    </div>
+                    <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-foreground">
+                      {decisionCard.replace(/<!-- CDS_AGENT_DECISION_CARD:(START|END) -->\n?/g, '')}
+                    </pre>
+                  </div>
+                )}
               </div>
             )}
           </motion.section>
@@ -435,11 +461,12 @@ function StepHeading({ number, title, description }: { number: string; title: st
   )
 }
 
-function ChoiceCard({ selected, title, eyebrow, description, icon, compact = false, onClick }: {
+function ChoiceCard({ selected, title, eyebrow, description, chips, icon, compact = false, onClick }: {
   selected: boolean
   title: string
   eyebrow?: string
   description: string
+  chips?: readonly string[]
   icon?: React.ReactNode
   compact?: boolean
   onClick: () => void
@@ -458,6 +485,18 @@ function ChoiceCard({ selected, title, eyebrow, description, icon, compact = fal
         <h5 className={`${compact ? 'mt-3 text-base' : 'mt-5 text-xl'} font-bold text-foreground`}>{title}</h5>
         {eyebrow && <div className="mt-1 text-xs font-bold uppercase tracking-wide text-warn">{eyebrow}</div>}
         <p className={`${compact ? 'mt-2 text-xs leading-5' : 'mt-3 text-sm leading-6'} text-muted-foreground`}>{description}</p>
+        {chips && chips.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {chips.map((chip) => (
+              <span
+                key={chip}
+                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${selected ? 'bg-warn text-status-ink' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}
+              >
+                {chip}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="mt-3 flex items-center gap-1 text-xs font-bold text-foreground opacity-0 transition-opacity group-hover:opacity-100">选择并继续 <ArrowRight className="h-3.5 w-3.5" /></div>
     </button>
