@@ -7,6 +7,7 @@
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  clearAllOfflineEdits,
   clearOfflineEdit,
   hasRemoteChangedSince,
   isFlushable,
@@ -168,6 +169,29 @@ describe('离线校对队列', () => {
     it('缺账号或缺笔记时不落盘，也如实返回 false', () => {
       expect(saveOfflineEdit({ ownerId: '', noteId: NOTE_A, count: 1, content: 'x', savedAt: Date.now() })).toBe(false);
       expect(saveOfflineEdit({ ownerId: USER_A, noteId: '', count: 1, content: 'x', savedAt: Date.now() })).toBe(false);
+    });
+  });
+
+  /*
+   * 草稿是用户的正文。键里带账号只决定「恢复谁的草稿」，挡不住同一台设备上的下一个人
+   * 去翻本地存储——所以人一登出就得清干净（Codex 第九轮 P1）。
+   */
+  describe('登出清场', () => {
+    it('清掉本机所有账号的草稿，不只清当前这个', () => {
+      saveOfflineEdit({ ownerId: USER_A, noteId: NOTE_A, count: 1, content: 'A 的稿子', savedAt: Date.now() });
+      saveOfflineEdit({ ownerId: USER_B, noteId: NOTE_B, count: 1, content: 'B 的稿子', savedAt: Date.now() });
+      clearAllOfflineEdits();
+      expect(loadOfflineEdit(NOTE_A, USER_A)).toBeNull();
+      expect(loadOfflineEdit(NOTE_B, USER_B)).toBeNull();
+    });
+
+    it('只动自己的键，别人的本地存储不受牵连', () => {
+      const store = (globalThis as unknown as { window: { localStorage: Storage } }).window.localStorage;
+      store.setItem('unrelated-key', '别人的东西');
+      saveOfflineEdit({ ownerId: USER_A, noteId: NOTE_A, count: 1, content: 'x', savedAt: Date.now() });
+      clearAllOfflineEdits();
+      expect(store.getItem('unrelated-key')).toBe('别人的东西');
+      store.removeItem('unrelated-key');
     });
   });
 });

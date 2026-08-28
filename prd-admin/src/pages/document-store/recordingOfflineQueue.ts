@@ -137,6 +137,29 @@ export function loadOfflineEdit(
   }
 }
 
+/**
+ * 退出登录时把本机所有离线草稿清掉（不分账号）。
+ *
+ * 键里带账号只决定「恢复谁的草稿」，挡不住同一台设备上的下一个人翻本地存储看内容。
+ * 草稿是用户的正文，不该在人已经登出之后还躺在盘上——所以登出即清，
+ * 由 `authStore.logout` 调用（Codex P1）。代价是「登出前排下的离线校对，登出后不再补传」，
+ * 这条边界写在这里：要补传就先联网、别先登出。
+ */
+export function clearAllOfflineEdits(): void {
+  const store = storage();
+  if (!store) return;
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < store.length; i += 1) {
+      const key = store.key(i);
+      if (key && key.startsWith(KEY_PREFIX)) doomed.push(key);
+    }
+    for (const key of doomed) store.removeItem(key);
+  } catch {
+    // 存储不可用时本来也没落下任何草稿
+  }
+}
+
 export function clearOfflineEdit(noteId: string, ownerId: string): void {
   const store = storage();
   if (!store || !noteId || !ownerId) return;

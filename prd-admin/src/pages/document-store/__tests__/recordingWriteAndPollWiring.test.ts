@@ -58,3 +58,40 @@ describe('空态的「自定义」', () => {
     expect(panel).toContain('if (customRequestedAt) setCustomOpen(true);');
   });
 });
+
+/*
+ * 第九轮的三条同样是「删掉不会红」的接线：版本令牌不刷新只会表现为「偶尔多问一次冲突」，
+ * 去重不同步只会表现为「偶尔多跑一条 run」，登出不清场则永远不会有任何报错。
+ */
+describe('离线草稿的版本令牌', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('用单独的令牌，不借用「这份整理生成于」那个展示值', () => {
+    expect(source).toContain('noteRevisionRef');
+    // 只看入队那一段：state.generatedAt 本身照常给面板做展示，不该被这条守卫误伤
+    const queued = source.slice(source.indexOf('const queued: QueuedOfflineEdit = {'));
+    const block = queued.slice(0, queued.indexOf('};'));
+    expect(block).toContain('noteRevisionRef.current');
+    expect(block).not.toContain('state.generatedAt');
+  });
+
+  it('在线保存成功后刷新令牌，否则自己上一次保存会被当成别人改的', () => {
+    expect(source).toContain('if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;');
+  });
+});
+
+describe('发起整理的去重', () => {
+  it('同步置位，不等两个请求回来', () => {
+    const source = read('pages/document-store/RecordingResultPage.tsx');
+    expect(source).toContain('running || launchingRef.current) return;');
+    expect(source).toContain('launchingRef.current = true;');
+    expect(source).toContain('launchingRef.current = false;');
+  });
+});
+
+describe('登出清掉离线草稿', () => {
+  it('authStore 的 logout 真的调了清场', () => {
+    const source = read('stores/authStore.ts');
+    expect(source).toContain('clearAllOfflineEdits()');
+  });
+});

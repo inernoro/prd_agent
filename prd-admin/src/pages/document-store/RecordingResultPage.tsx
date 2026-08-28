@@ -333,6 +333,7 @@ export function RecordingResultPage() {
           ?? null,
         generatedAt: noteEntryRes?.success ? (noteEntryRes.data?.updatedAt ?? null) : null,
       });
+      noteRevisionRef.current = noteEntryRes?.success ? (noteEntryRes.data?.updatedAt ?? null) : null;
     })().catch((error: unknown) => {
       if (!stale) setState({ kind: 'error', message: error instanceof Error ? error.message : '这条录音打不开' });
     });
@@ -579,6 +580,15 @@ export function RecordingResultPage() {
    * 但计数记的是**用户改了几次**，因为那才是他关心的「我有多少东西还没上去」。
    */
   const [pendingEdits, setPendingEdits] = useState<QueuedOfflineEdit | null>(null);
+  /*
+   * 笔记条目的 updatedAt，当**版本令牌**用：离线草稿拿它当基线，补传前比一次。
+   * 单独存一份、不借用 state.generatedAt——那个值是展示用的「这份整理生成于」，
+   * 用户手改一次正文并不代表摘要是那时生成的，两个含义共用一个字段迟早读错
+   * （predicate-and-wiring-discipline 形状 6）。
+   * 在线保存成功后要跟着刷新，否则「自己刚存过、随后离线再改」会被误判成别人改过
+   * （Codex 第九轮 P2）。
+   */
+  const noteRevisionRef = useRef<string | null>(null);
   /** 队列没落住本机存储（隐私模式 / 站点数据被禁 / 配额满）：承诺要跟着降级 */
   const [queueVolatile, setQueueVolatile] = useState(false);
   /** 服务端那份笔记在离线期间被改过：不许静默覆盖，交给用户定 */
@@ -616,7 +626,7 @@ export function RecordingResultPage() {
          */
         baseUpdatedAt: pendingRef.current?.noteId === noteId
           ? pendingRef.current.baseUpdatedAt
-          : state.generatedAt,
+          : noteRevisionRef.current,
       };
       // 落不住盘就别说「刷新也不会丢」——横幅文案跟着降级（Codex P1）
       setQueueVolatile(!saveOfflineEdit(queued));
@@ -634,6 +644,9 @@ export function RecordingResultPage() {
       toast.error(res.error?.message || '保存失败');
       return false;
     }
+    // 服务端这一版就是最新版本：版本令牌跟着走，否则「刚存过、随后离线再改」
+    // 会拿着加载时那个旧时刻当基线，重连时把自己的上一次保存误判成别人改的
+    if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
     // online 存成功 = 服务端已经拿到更新的内容，离线队列里那份旧的作废
     clearOfflineEdit(state.noteId, ownerId);
     setPendingEdits(null);
@@ -731,21 +744,33 @@ export function RecordingResultPage() {
    * 拿不到「已完成且有产物」的上一条 run 时（比如这条录音压根没转录成功过），
    * 才退回条目级 transcribe——那种情况下本来就必须跑 ASR。
    */
+  /*
+   * 「已经在发起了」必须**同步**记下来：`running` 要等 getLatestAgentRun + restyle 两个
+   * 请求回来才置上，这中间双击一下、或者先点一种再点另一种，两次都能过这道门，
+   * 于是并发建出两条 run——两条都花模型钱，还会抢着覆盖同一篇输出笔记，而界面只跟踪
+   * 最后一个回来的那条（Codex 第九轮 P1）。
+   */
+  const launchingRef = useRef(false);
   const onPickOrganizeStyle = useCallback((styleKey: string, customPrompt?: string) => {
-    if (!entryId || running) return;
+    if (!entryId || running || launchingRef.current) return;
+    launchingRef.current = true;
     void (async () => {
-      const prior = await getLatestAgentRun(entryId, 'transcribe', { status: 'done', requireOutput: true });
-      const priorRunId = prior.success ? (prior.data?.id ?? '') : '';
-      // 自定义那一条带着用户写的要求走同一条链路；空要求不当自定义处理
-      const style = { styleKey, customPrompt: customPrompt?.trim() || undefined };
-      const res = priorRunId
-        ? await restyleTranscribeRun(priorRunId, style)
-        : await transcribeEntry(entryId, style);
-      if (!res.success) {
-        toast.error(res.error?.message || '发起整理失败');
-        return;
+      try {
+        const prior = await getLatestAgentRun(entryId, 'transcribe', { status: 'done', requireOutput: true });
+        const priorRunId = prior.success ? (prior.data?.id ?? '') : '';
+        // 自定义那一条带着用户写的要求走同一条链路；空要求不当自定义处理
+        const style = { styleKey, customPrompt: customPrompt?.trim() || undefined };
+        const res = priorRunId
+          ? await restyleTranscribeRun(priorRunId, style)
+          : await transcribeEntry(entryId, style);
+        if (!res.success) {
+          toast.error(res.error?.message || '发起整理失败');
+          return;
+        }
+        setRunning({ runId: res.data.runId, styleKey, percent: 0 });
+      } finally {
+        launchingRef.current = false;
       }
-      setRunning({ runId: res.data.runId, styleKey, percent: 0 });
     })();
   }, [entryId, running]);
 
