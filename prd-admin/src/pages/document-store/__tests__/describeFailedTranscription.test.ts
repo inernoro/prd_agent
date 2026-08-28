@@ -33,6 +33,31 @@ describe('describeFailedTranscription', () => {
     expect(describeFailedTranscription({ status: 'failed', errorMessage: '   ' })?.reason).toBe('转录失败，原因未知');
   });
 
+  it('失败码原样透出，上游没给就是 null（不许编一个出来）', () => {
+    expect(describeFailedTranscription({
+      status: 'failed', errorMessage: '音频编码不受支持', failureCode: 'ERR_CODEC',
+    })?.code).toBe('ERR_CODEC');
+    expect(describeFailedTranscription({ status: 'failed', errorMessage: 'x' })?.code).toBeNull();
+    expect(describeFailedTranscription({
+      status: 'failed', errorMessage: 'x', failureCode: '   ',
+    })?.code).toBeNull();
+  });
+
+  it('自动重试是结构化事实：次数与下一次时刻分开给，界面据此说「第几次、还要多久」', () => {
+    const r = describeFailedTranscription({
+      status: 'failed', errorMessage: 'x',
+      automaticRetryCount: 2, automaticRetryNextAt: '2026-08-25T10:00:08Z',
+    });
+    expect(r?.automaticRetryCount).toBe(2);
+    expect(r?.automaticRetryNextAt).toBe('2026-08-25T10:00:08Z');
+  });
+
+  it('没有重试信息时按 0 次 / 无下次计，不是 undefined（界面据此转手动重试卡）', () => {
+    const r = describeFailedTranscription({ status: 'failed', errorMessage: 'x' });
+    expect(r?.automaticRetryCount).toBe(0);
+    expect(r?.automaticRetryNextAt).toBeNull();
+  });
+
   it('在途与成功都不算失败——这两种另有归宿，重复提示等于误报', () => {
     for (const status of ['publishing', 'queued', 'running', 'done']) {
       expect(describeFailedTranscription({ status, errorMessage: 'x' })).toBeNull();

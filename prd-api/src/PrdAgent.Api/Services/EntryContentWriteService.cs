@@ -102,8 +102,17 @@ public class EntryContentWriteService
         var indexable = ToIndexableText(content, contentTypeOverride ?? entry.ContentType);
         var summary = indexable.Length > 200 ? indexable[..200] : indexable;
         var contentIndex = indexable.Length > 2000 ? indexable[..2000] : indexable;
-        // 单一时间戳：DB 写入与响应必须用同一个 now（否则前端 loadedContentKey 缓存键不一致 → 多余重拉）
-        var now = DateTime.UtcNow;
+        /*
+         * 单一时间戳：DB 写入与响应必须用同一个 now（否则前端 loadedContentKey 缓存键不一致 → 多余重拉）。
+         *
+         * **必须先截到毫秒**：BSON 的 DateTime 只有毫秒精度，而 DateTime.UtcNow 带 100ns 刻度、
+         * 序列化成 JSON 最多 7 位小数。不截的话，响应里的值与随后任何一次 GET 读回来的值
+         * 永远对不上（要正好落在整毫秒才相等，约万分之一）。前端把「上一次写入返回的时刻」
+         * 当版本令牌、下一次读回来比一比，于是必然误判——离线校对每次重连都会弹一句
+         * 「这份原文在你离线期间被改过」，其实没有任何人改过。
+         * 上面那句「DB 与响应同值」的承诺，截到毫秒才算真的兑现。
+         */
+        var now = TruncateToMilliseconds(DateTime.UtcNow);
 
         var contentUpdate = Builders<DocumentEntry>.Update
             .Set(e => e.DocumentId, entry.DocumentId)
@@ -176,6 +185,10 @@ public class EntryContentWriteService
                 DerivedMarkerPersisted: markerPersisted);
         }
     }
+
+    /// <summary>截到毫秒：与 BSON DateTime 的存储精度对齐，让响应里的值与随后读回来的值可比。</summary>
+    private static DateTime TruncateToMilliseconds(DateTime value)
+        => new(value.Ticks - (value.Ticks % TimeSpan.TicksPerMillisecond), value.Kind);
 
     private async Task<bool> TrySetDerivedStateAsync(
         string entryId,

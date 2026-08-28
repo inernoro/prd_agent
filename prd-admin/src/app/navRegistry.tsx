@@ -28,6 +28,8 @@ const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ 
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const RecordingResultPage = lazy(() => import('@/pages/document-store/RecordingResultPage').then(m => ({ default: m.RecordingResultPage })));
+const RecordingProcessingPage = lazy(() => import('@/pages/document-store/RecordingProcessingPage').then(m => ({ default: m.RecordingProcessingPage })));
 const UniverseGraphPage = lazy(() => import('@/pages/document-store/UniverseGraphPage').then(m => ({ default: m.UniverseGraphPage })));
 const GalaxyStandalonePage = lazy(() => import('@/pages/document-store/GalaxyStandalonePage').then(m => ({ default: m.GalaxyStandalonePage })));
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
@@ -755,6 +757,28 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'infra',
       tags: ['文档', '知识', '知识库', 'docs'],
     },
+  },
+  {
+    // 录音交付页走独立全屏路由：设计稿这批「整屏」画板自带顶部栏与屏底主操作，
+    // 套在平台外壳里还原不到位（结构与版式的失分大半在这一层）。
+    // 它是从知识库某条录音点进来的深页，不进导航目录——nav 留空即不登记。
+    path: '/document-store/:storeId/recording/:entryId',
+    // `placement` 不写就默认 shell，条目会被挂进 AppShell——外面套着平台顶栏与底部
+    // TabBar，稿面自己那条顶栏被挤到屏幕中段，整屏和设计稿差得最远。
+    // 这一条漏了半天没人发现：`fullscreenGuarded` 只管鉴权，不决定挂在哪；
+    // 编译过、测试绿、路由也能进，只有真的打开那一屏才看得出来。
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingResultPage />),
+  },
+  {
+    // 录音处理页：稿面 R4 / cap-A4 / cap-A5 画的是**整屏接管**，屏底压着主操作。
+    // 与结果页分成两条路由而不是同一屏的两个状态——那颗按钮写的就是「进入结果页」，
+    // 同一个地址上说这句话说不通。
+    path: '/document-store/:storeId/recording/:entryId/processing',
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingProcessingPage />),
   },
   {
     path: '/document-store/:storeId/universe',

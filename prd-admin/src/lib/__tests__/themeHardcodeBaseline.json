@@ -2411,6 +2411,12 @@
     "lightFg": 15,
     "whiteAlpha": 43
   },
+  "/styles/recording-design-palette.css": {
+    "darkHex": 11,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
   "/styles/surface.css": {
     "darkHex": 2,
     "darkRgbaBg": 24,
