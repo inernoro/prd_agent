@@ -100,6 +100,13 @@ export function SceneCursor({
   const prev = prevPos.current;
   useEffect(() => { prevPos.current = pos; }, [pos]);
   const moved = !!pos && !!prev && (Math.abs(prev.left - pos.left) > 2 || Math.abs(prev.top - pos.top) > 2);
+  /*
+   * 第一次量到落点的那一帧不能有过渡。没量到时 left/top 兜底写 0，一旦量到就会从
+   * 面板左上角滑过来 —— 那一拍要是正好要按下（知识库「划中一句话」就是），
+   * 波纹会在半路上响，衔接录像机也会把它记成「按在空处」。
+   * 首次出现直接就位，之后的走位才走过渡。
+   */
+  const appearing = !!pos && prev === null;
 
   // 量不到目标就整枚收起来：宁可没有指针，也不要一枚指着空处的箭头
   const on = !!spot && !spot.hidden && !!pos;
@@ -123,8 +130,10 @@ export function SceneCursor({
         zIndex: 20,
         opacity: on ? 1 : 0,
         transform: 'translate(-2px, -2px)',
-        transition: `left ${travelMs}ms cubic-bezier(.32,.72,.24,1), top ${travelMs}ms cubic-bezier(.32,.72,.24,1),`
-          + ` opacity .32s ease`,
+        transition: appearing
+          ? 'opacity .32s ease'
+          : `left ${travelMs}ms cubic-bezier(.32,.72,.24,1), top ${travelMs}ms cubic-bezier(.32,.72,.24,1),`
+            + ` opacity .32s ease`,
         ...style,
       }}
     >
