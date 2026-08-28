@@ -101,7 +101,7 @@ builder.Services.AddSingleton(mapMongoClient);
 builder.Services.AddSingleton(mapDatabase);
 
 // ── JWT 签发器（独立密钥）──
-// 会话默认 7 天且用后自动续期（响应头 X-Gw-Token 换发），只要在用就不会掉登录。
+// 会话默认 30 天且用后自动续期（响应头 X-Gw-Token 换发），只要在用就不会掉登录。
 // 撤销不依赖 token 过期：每个已鉴权请求都会重新校验 SecurityVersion / 成员版本 / 租户状态。
 var jwtLifetimeDays = config.GetValue<int>("LlmGwJwt:LifetimeDays", GwJwt.DefaultLifetimeDays);
 var jwtRenewAfterHours = config.GetValue<int>("LlmGwJwt:RenewAfterHours", GwJwt.DefaultRenewAfterHours);
@@ -842,6 +842,16 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
             }
         }
 
+        // 这里**不许**自增 SecurityVersion。
+        //
+        // SecurityVersion 是撤销计数器：每个已鉴权请求都会拿 token 里的版本与库里比对，
+        // 对不上就整条会话作废。登录不是撤销事件——一次 SSO 把它 +1，等于把这个人
+        // 在**其它所有地方**的登录全部踢掉：另一个标签页、手机上那个、昨天开着的那个，
+        // 全部当场变成「租户会话无效，请重新登录」。
+        //
+        // 真实症状（2026-08-28 用户）：「为什么登录总是失效，我都不知道 sso 多少次了」。
+        // 根因就是这一行——验收脚本每跑一轮就 SSO 一次，每次都把用户手上的会话打掉。
+        // 需要撤销时走改密、禁用、成员变更那几条路径，它们各自有自己的自增，语义正确。
         gwUser = await users.FindOneAndUpdateAsync(
             Builders<LlmGwUser>.Filter.Eq(x => x.Id, gwUser.Id),
             Builders<LlmGwUser>.Update
@@ -853,8 +863,7 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
                 .Set(x => x.DefaultTenantId, tenant.Id)
                 .AddToSet(x => x.TenantIds, tenant.Id)
                 .Set(x => x.LastLoginAt, now)
-                .Set(x => x.UpdatedAt, now)
-                .Inc(x => x.SecurityVersion, 1),
+                .Set(x => x.UpdatedAt, now),
             new FindOneAndUpdateOptions<LlmGwUser, LlmGwUser> { ReturnDocument = ReturnDocument.After });
         if (gwUser is null) throw new InvalidOperationException("MAP_SSO_USER_UPDATE_CONFLICT");
 
@@ -5110,6 +5119,11 @@ const string SystemServiceKeyName = "llmgw-system-internal";
 const string SystemServiceKeyClientCode = "llmgw-console";
 // 与 serving 的 X-Gateway-Source 判据对齐：key 上写什么，请求头就带什么，否则 403 scope-mismatch。
 const string SystemServiceKeySource = "llmgw-console";
+// 系统内部消耗单独归一个团队。用户 2026-08-28 的原话：「系统内部的，按照系统内部的团队，
+// 消耗，权限……并且计费方式是单独计费，系统团队的」。
+// 借用「租户里第一个 active 团队」是不行的：那把系统自己的用量记进了某个业务团队的预算，
+// 而且这个团队随建库顺序变化——同一套系统功能在不同部署会记到不同人头上。
+const string SystemTeamName = "系统内部";
 var systemModelSources = new HashSet<string>(StringComparer.Ordinal) { "auto", "pool", "model" };
 
 // serving 的内网地址。这不是「用户该填的东西」——同一个部署里它是确定的，
@@ -5143,11 +5157,65 @@ async Task<BsonDocument> LoadSystemSettingsAsync(string tenantId)
 }
 
 /// <summary>
-/// 系统级网关访问凭据的自愈入口：确保 appCaller 已登记、确保有一把可用的 key。
+/// 找到（没有就建）本租户的「系统内部」团队。系统自己的 appCaller 与 key 一律挂在它名下，
+/// 于是系统消耗与任何业务团队的预算、权限、账单彻底分开——这是「单独计费」的落点。
+///
+/// id 用 {tenantId}_system 这种确定值而不是随机 Guid：多容器并发时各自算出同一个 id，
+/// 而 (TenantId, NormalizedName) 上还有唯一索引兜底，两层都撞不出第二个系统团队。
+/// </summary>
+async Task<string> EnsureSystemTeamAsync(string tenantId)
+{
+    var systemTeamId = $"{tenantId}_system";
+    var normalized = SystemTeamName.ToUpperInvariant();
+    var now = DateTime.UtcNow;
+
+    var existing = await teams.Find(x => x.Id == systemTeamId && x.TenantId == tenantId).FirstOrDefaultAsync();
+    if (existing is not null)
+    {
+        // 团队被停用会让 serving 在生命周期门上回 GATEWAY_KEY_TEAM_INACTIVE。
+        // 系统团队不是业务团队，没有「停用它」的合法语义，撞见就掰回来。
+        if (!string.Equals(existing.Status, "active", StringComparison.Ordinal))
+        {
+            await teams.UpdateOneAsync(
+                x => x.Id == systemTeamId,
+                Builders<LlmGwTeam>.Update.Set(x => x.Status, "active").Set(x => x.UpdatedAt, now));
+        }
+        return systemTeamId;
+    }
+
+    try
+    {
+        await teams.InsertOneAsync(new LlmGwTeam
+        {
+            Id = systemTeamId,
+            TenantId = tenantId,
+            Name = SystemTeamName,
+            NormalizedName = normalized,
+            Status = "active",
+            CreatedAt = now,
+            UpdatedAt = now,
+        });
+        return systemTeamId;
+    }
+    catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+    {
+        // 要么另一个容器刚建好，要么早就有人手建了一个同名团队（唯一索引在 租户+名字 上）。
+        // 两种都按「已经有了」处理，认名字不认 id，避免在同一个租户里分裂出两个系统团队。
+        var byName = await teams
+            .Find(x => x.TenantId == tenantId && x.NormalizedName == normalized)
+            .FirstOrDefaultAsync();
+        return byName?.Id ?? systemTeamId;
+    }
+}
+
+/// <summary>
+/// 系统级网关访问凭据的自愈入口：确保系统团队在、appCaller 已登记、有一把当下真的能过门的 key。
 /// 任何一步失败都返回**说得出原因**的错误，绝不把裸 HTTP 状态码丢给用户。
+///
+/// 归属团队不接受调用方传入：系统内部的消耗按系统团队记，跟当前是谁点的按钮无关。
 /// </summary>
 async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolId, string Model, string Error)>
-    EnsureSystemGatewayAccessAsync(string tenantId, string? teamId, string actorUsername)
+    EnsureSystemGatewayAccessAsync(string tenantId, string actorUsername)
 {
     var baseUrl = ResolveServingBaseUrl();
     if (baseUrl.Length == 0)
@@ -5164,18 +5232,9 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
     if (string.Equals(modelSource, "model", StringComparison.Ordinal) && string.IsNullOrWhiteSpace(settings.AsNullableString("ModelName")))
         return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model, "系统级模型来源选了「指定模型」，但没有选中任何模型。去「服务网关设置」选一个。");
 
-    // 归属团队：设置里钉住的优先，否则落到系统团队（租户里第一个 active 团队）。
-    var effectiveTeamId = settings.AsNullableString("TeamId") ?? teamId;
-    if (string.IsNullOrWhiteSpace(effectiveTeamId))
-    {
-        var fallbackTeam = await teams
-            .Find(x => x.TenantId == tenantId && x.Status == "active")
-            .SortBy(x => x.CreatedAt)
-            .FirstOrDefaultAsync();
-        effectiveTeamId = fallbackTeam?.Id;
-    }
-    if (string.IsNullOrWhiteSpace(effectiveTeamId))
-        return (false, baseUrl, "", SystemIntentDraftAppCaller, poolId, model, "当前租户下还没有可用团队，系统级 appCaller 无处归属。先去「团队与成员」建一个团队。");
+    // 归属团队恒为系统团队。这里不再读设置里的 TeamId、也不再看调用者属于哪个团队——
+    // 系统消耗只记在系统团队，才谈得上「单独计费」。
+    var effectiveTeamId = await EnsureSystemTeamAsync(tenantId);
 
     // 1. appCaller 自动登记（幂等）：没有它 serving 会以「未注册用途」拒绝。
     var callerFilter = Builders<BsonDocument>.Filter.And(
@@ -5183,7 +5242,19 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
         Builders<BsonDocument>.Filter.Eq("AppCallerCode", SystemIntentDraftAppCaller),
         Builders<BsonDocument>.Filter.Eq("RequestType", "chat"));
     var existingCaller = await gwAppCallers.Find(callerFilter).FirstOrDefaultAsync();
-    if (existingCaller is null)
+    if (existingCaller is not null)
+    {
+        // 存量迁移：上一版把系统 appCaller 挂在了租户第一个业务团队上。留着不动有两个后果——
+        // 消耗继续记在别人头上；而且 serving 会拿 key.TeamId 与 appCaller.TeamId 比对，
+        // 对不上直接 403 GATEWAY_KEY_TEAM_MISMATCH。所以搬到系统团队，幂等。
+        if (!string.Equals(existingCaller.AsNullableString("TeamId"), effectiveTeamId, StringComparison.Ordinal))
+        {
+            await gwAppCallers.UpdateOneAsync(
+                callerFilter,
+                Builders<BsonDocument>.Update.Set("TeamId", effectiveTeamId).Set("UpdatedAt", DateTime.UtcNow));
+        }
+    }
+    else
     {
         var callerNow = DateTime.UtcNow;
         try
@@ -5226,7 +5297,9 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
         var stored = await serviceKeys.Find(Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("_id", keyId),
             Builders<BsonDocument>.Filter.Eq("TenantId", tenantId))).FirstOrDefaultAsync();
-        if (stored is not null && stored.AsNullableBool("Enabled") == true)
+        if (stored is not null
+            && stored.AsNullableBool("Enabled") == true
+            && SystemKeyStillPassesTheGate(stored, effectiveTeamId, SystemServiceKeySource, SystemIntentDraftAppCaller))
         {
             // 存量归一：早期自签的 key 写过一个列表不认的 IssuanceState，那批 key 在接入密钥页
             // 是隐形的。这里顺手把它掰回 issued——幂等，且不必等下一次重签才让运维看见它。
@@ -5309,7 +5382,8 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             Builders<BsonDocument>.Filter.Eq("_id", tenantId),
             Builders<BsonDocument>.Update
                 .SetOnInsert("TenantId", tenantId)
-                .Set("TeamId", effectiveTeamId)
+                // 不再往设置里写 TeamId：归属团队由 EnsureSystemTeamAsync 现算，
+                // 留一份可能过期的拷贝在库里，下一个人就会分不清哪份才作数。
                 .Set("ServiceKeyId", newKeyId)
                 .Set("ServiceKeyEncrypted", encrypted)
                 .Set("ServiceKeyPrefix", keyPrefix)
@@ -5426,18 +5500,20 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
         : await serviceKeys.Find(Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("_id", keyId),
             Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId))).FirstOrDefaultAsync();
-    var teamId = settings.AsNullableString("TeamId");
-    var teamDoc = string.IsNullOrWhiteSpace(teamId)
-        ? await teams.Find(x => x.TenantId == tenant.TenantId && x.Status == "active").SortBy(x => x.CreatedAt).FirstOrDefaultAsync()
-        : await teams.Find(x => x.Id == teamId && x.TenantId == tenant.TenantId).FirstOrDefaultAsync();
+    // 归属团队不是「设置里选的」，是系统团队，读这一页时顺手把它建好——
+    // 于是用户在页面上看到的名字，就是下一次真实调用会记账的那个团队。
+    var systemTeamId = await EnsureSystemTeamAsync(tenant.TenantId);
+    var teamDoc = await teams.Find(x => x.Id == systemTeamId && x.TenantId == tenant.TenantId).FirstOrDefaultAsync();
 
     return Json(ApiEnvelope<object>.Ok(new
     {
         modelSource = settings.AsNullableString("ModelSource") ?? "auto",
         modelGroupId = settings.AsNullableString("ModelGroupId"),
         modelName = settings.AsNullableString("ModelName"),
-        teamId = teamDoc?.Id,
-        teamName = teamDoc?.Name,
+        teamId = teamDoc?.Id ?? systemTeamId,
+        teamName = teamDoc?.Name ?? SystemTeamName,
+        // 这个团队是系统自己的，不由用户挑：消耗、权限、账单都单独记在它名下。
+        teamIsSystemOwned = true,
         servingBaseUrl = baseUrl,
         servingReachable = baseUrl.Length > 0,
         appCallerCode = SystemIntentDraftAppCaller,
@@ -5487,14 +5563,8 @@ app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSyst
     if (modelSource == "model" && modelName.Length == 0)
         return Json(ApiEnvelope<object>.Fail("MODEL_NAME_REQUIRED", "选择「指定模型」时必须选一个模型"), jsonOptions, 400);
 
-    var teamId = (body?.TeamId ?? string.Empty).Trim();
-    if (teamId.Length > 0)
-    {
-        var teamOk = await teams.CountDocumentsAsync(x => x.Id == teamId && x.TenantId == tenant.TenantId && x.Status == "active") == 1;
-        if (!teamOk)
-            return Json(ApiEnvelope<object>.Fail("TEAM_NOT_FOUND", "指定的团队不在当前租户下"), jsonOptions, 404);
-    }
-
+    // 归属团队不接受写入：系统消耗恒记在系统团队（EnsureSystemTeamAsync）。
+    // 留一个能改归属的字段，等于留一条把系统账单混进业务团队的路。
     var now = DateTime.UtcNow;
     var update = Builders<BsonDocument>.Update
         .SetOnInsert("TenantId", tenant.TenantId)
@@ -5503,7 +5573,6 @@ app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSyst
         .Set("ModelName", modelSource == "model" ? (BsonValue)modelName : BsonNull.Value)
         .Set("UpdatedAt", now)
         .Set("UpdatedByUsername", tenant.Username);
-    if (teamId.Length > 0) update = update.Set("TeamId", teamId);
     await systemSettings.UpdateOneAsync(
         Builders<BsonDocument>.Filter.Eq("_id", tenant.TenantId),
         update,
@@ -5522,14 +5591,13 @@ app.MapPost("/gw/system-settings/test", async (HttpContext http) =>
 {
     var tenant = TenantAccess.GetRequired(http);
     var startedAt = DateTime.UtcNow;
-    var teamHint = tenant.TeamIds.Count == 1 ? tenant.TeamIds[0] : null;
 
     // 「测试连接」必须是**一键修好**，不是「一键告诉你再点一次」：
     // 第一次被网关以凭据类原因拒绝时，就地作废那把 key、重签一把、立刻重试。
     // 最多两轮——第二轮还败就是重签修不好的原因，如实报出来。
     async Task<IResult> RunAsync(bool allowReissue)
     {
-    var access = await EnsureSystemGatewayAccessAsync(tenant.TenantId, teamHint, tenant.Username);
+    var access = await EnsureSystemGatewayAccessAsync(tenant.TenantId, tenant.Username);
     if (!access.Ok)
     {
         return Json(ApiEnvelope<object>.Ok(new
@@ -5625,7 +5693,7 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
     }
     // 凭据与模型选择都来自系统级设置；缺什么就说缺什么，不把裸状态码丢给用户。
     var tenantAccess = TenantAccess.GetRequired(http);
-    var access = await EnsureSystemGatewayAccessAsync(tenantAccess.TenantId, tenantAccess.TeamIds.Count == 1 ? tenantAccess.TeamIds[0] : null, tenantAccess.Username);
+    var access = await EnsureSystemGatewayAccessAsync(tenantAccess.TenantId, tenantAccess.Username);
     if (!access.Ok)
     {
         await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"{access.Error}已退回本地关键词判定。" });
@@ -5637,65 +5705,83 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
     var usedModel = string.Empty;
     try
     {
-        using var upstream = new HttpRequestMessage(HttpMethod.Post, $"{access.BaseUrl}/v1/chat/completions")
+        // 两轮：第一轮撞上凭据类拒绝就地重签、原样再来一次，第二轮才允许把失败告诉用户。
+        // 用户要的是「系统内部永远不会出现 401」——不能让他先看见一次降级判定再说。
+        for (var attempt = 1; ; attempt++)
         {
-            Content = new StringContent(JsonSerializer.Serialize(new
+            using var upstream = new HttpRequestMessage(HttpMethod.Post, $"{access.BaseUrl}/v1/chat/completions")
             {
-                model = access.Model,
-                stream = true,
-                // 不发 temperature：池里选到的模型可能只接受默认值，实测发 0 会被上游 400
-                // 回「temperature does not support 0 with this model」。推导要的确定性靠
-                // 提示词里的「只输出 JSON」约束，不靠采样参数。
-                messages = new object[]
+                Content = new StringContent(JsonSerializer.Serialize(new
                 {
-                    new { role = "system", content = IntentDraftSystemPrompt },
-                    new { role = "user", content = intent },
-                },
-            }, jsonOptions), Encoding.UTF8, "application/json"),
-        };
-        upstream.Headers.TryAddWithoutValidation("X-Gateway-Key", access.Key);
-        upstream.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", access.AppCaller);
-        upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", SystemServiceKeySource);
-        if (!string.IsNullOrWhiteSpace(access.PoolId))
-            upstream.Headers.TryAddWithoutValidation("X-Gateway-Model-Pool-Id", access.PoolId);
+                    model = access.Model,
+                    stream = true,
+                    // 不发 temperature：池里选到的模型可能只接受默认值，实测发 0 会被上游 400
+                    // 回「temperature does not support 0 with this model」。推导要的确定性靠
+                    // 提示词里的「只输出 JSON」约束，不靠采样参数。
+                    messages = new object[]
+                    {
+                        new { role = "system", content = IntentDraftSystemPrompt },
+                        new { role = "user", content = intent },
+                    },
+                }, jsonOptions), Encoding.UTF8, "application/json"),
+            };
+            upstream.Headers.TryAddWithoutValidation("X-Gateway-Key", access.Key);
+            upstream.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", access.AppCaller);
+            upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", SystemServiceKeySource);
+            if (!string.IsNullOrWhiteSpace(access.PoolId))
+                upstream.Headers.TryAddWithoutValidation("X-Gateway-Model-Pool-Id", access.PoolId);
 
-        using var response = await intentDraftHttp.SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, http.RequestAborted);
-        if (!response.IsSuccessStatusCode)
-        {
-            // 裸状态码对用户毫无意义（他会问「系统就是网关，还 401?」），所以翻译成能行动的一句话。
-            var (detail, failureCode) = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
-            // 凭据类失败当场作废那把 key：下一次点「准备接入」就会用新签的，不必等人来修。
-            if (IsSystemCredentialFixableCode(failureCode))
-                await InvalidateSystemCredentialAsync(tenantAccess.TenantId);
-            await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"{detail}已退回本地关键词判定。" });
-            return;
-        }
-        await SendAsync(new { type = "stage", stage = "thinking", text = "模型正在推导两段码" });
-        using var body2 = await response.Content.ReadAsStreamAsync(http.RequestAborted);
-        using var reader = new StreamReader(body2, Encoding.UTF8);
-        while (!reader.EndOfStream && !http.RequestAborted.IsCancellationRequested)
-        {
-            var line = await reader.ReadLineAsync(http.RequestAborted);
-            if (line is null) break;
-            if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
-            var payload = line[5..].Trim();
-            if (payload.Length == 0 || payload == "[DONE]") continue;
-            try
+            using var response = await intentDraftHttp.SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, http.RequestAborted);
+            if (!response.IsSuccessStatusCode)
             {
-                using var doc = JsonDocument.Parse(payload);
-                var root = doc.RootElement;
-                if (root.TryGetProperty("model", out var modelEl) && modelEl.ValueKind == JsonValueKind.String && usedModel.Length == 0)
-                    usedModel = modelEl.GetString() ?? string.Empty;
-                if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
-                var delta = choices[0];
-                if (!delta.TryGetProperty("delta", out var deltaEl)) continue;
-                if (!deltaEl.TryGetProperty("content", out var contentEl) || contentEl.ValueKind != JsonValueKind.String) continue;
-                var text = contentEl.GetString() ?? string.Empty;
-                if (text.Length == 0) continue;
-                raw.Append(text);
-                await SendAsync(new { type = "delta", text });
+                // 裸状态码对用户毫无意义（他会问「系统就是网关，还 401?」），所以翻译成能行动的一句话。
+                var (detail, failureCode) = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
+                // 凭据类失败当场作废那把 key，并在同一次请求里重签、重试，用户那侧看不见这次失败。
+                if (IsSystemCredentialFixableCode(failureCode))
+                {
+                    await InvalidateSystemCredentialAsync(tenantAccess.TenantId);
+                    if (attempt == 1)
+                    {
+                        var reissued = await EnsureSystemGatewayAccessAsync(tenantAccess.TenantId, tenantAccess.Username);
+                        if (reissued.Ok)
+                        {
+                            access = reissued;
+                            await SendAsync(new { type = "stage", stage = "connecting", text = "系统凭据已自动重签，正在重试" });
+                            continue;
+                        }
+                    }
+                }
+                await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"{detail}已退回本地关键词判定。" });
+                return;
             }
-            catch (JsonException) { /* 上游偶发非 JSON 心跳帧，跳过 */ }
+            await SendAsync(new { type = "stage", stage = "thinking", text = "模型正在推导两段码" });
+            using var body2 = await response.Content.ReadAsStreamAsync(http.RequestAborted);
+            using var reader = new StreamReader(body2, Encoding.UTF8);
+            while (!reader.EndOfStream && !http.RequestAborted.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(http.RequestAborted);
+                if (line is null) break;
+                if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
+                var payload = line[5..].Trim();
+                if (payload.Length == 0 || payload == "[DONE]") continue;
+                try
+                {
+                    using var doc = JsonDocument.Parse(payload);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("model", out var modelEl) && modelEl.ValueKind == JsonValueKind.String && usedModel.Length == 0)
+                        usedModel = modelEl.GetString() ?? string.Empty;
+                    if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
+                    var delta = choices[0];
+                    if (!delta.TryGetProperty("delta", out var deltaEl)) continue;
+                    if (!deltaEl.TryGetProperty("content", out var contentEl) || contentEl.ValueKind != JsonValueKind.String) continue;
+                    var text = contentEl.GetString() ?? string.Empty;
+                    if (text.Length == 0) continue;
+                    raw.Append(text);
+                    await SendAsync(new { type = "delta", text });
+                }
+                catch (JsonException) { /* 上游偶发非 JSON 心跳帧，跳过 */ }
+            }
+            break;
         }
     }
     catch (OperationCanceledException) { return; }
@@ -14244,7 +14330,47 @@ static bool IsSystemCredentialFixableCode(string code) => code is
     or "GATEWAY_KEY_SCOPE_DENIED"
     or "GATEWAY_KEY_PURPOSE_DENIED"
     or "GATEWAY_KEY_OWNER_INACTIVE"
-    or "GATEWAY_KEY_OWNER_ROLE_DENIED";
+    or "GATEWAY_KEY_OWNER_ROLE_DENIED"
+    // 这两个是「key 与 appCaller 归属团队对不上 / 团队被停用」。重签修得好，因为重签走
+    // EnsureSystemTeamAsync：它会把系统团队重新激活，并让 key 与 appCaller 落到同一个团队。
+    or "GATEWAY_KEY_TEAM_MISMATCH"
+    or "GATEWAY_KEY_TEAM_INACTIVE";
+
+/// <summary>
+/// 这把存量系统 key，按 serving 现在的门禁还过得去吗？
+///
+/// 为什么要提前判而不是等它被拒：用户要的是「系统内部永远不会出现 401」。
+/// 只在被拒之后才自愈，意味着每次门禁口径变化都要先让用户吃一次失败——
+/// 所以复用前先对着门禁的判据把这把 key 过一遍，对不上就地重签，用户那一侧看不见失败。
+///
+/// 这里列的每一条都对应 serving 侧一个真实的拒绝分支（`GatewayRuntimeGovernance`）：
+/// 停用/过期 → GATEWAY_KEY_INVALID；来源、用途码、协议、scope 任一不匹配 →
+/// GATEWAY_KEY_SCOPE_DENIED；挂在某个人名下 → 那个人一离职就 GATEWAY_KEY_OWNER_INACTIVE；
+/// 团队与 appCaller 不一致 → GATEWAY_KEY_TEAM_MISMATCH。
+/// 判据故意写宽（有疑问就重签）：重签的代价是一次写库，判错的代价是用户看见 401。
+/// </summary>
+static bool SystemKeyStillPassesTheGate(BsonDocument key, string expectedTeamId, string expectedSource, string expectedAppCaller)
+{
+    static bool Has(BsonDocument doc, string field, string expected) =>
+        doc.TryGetValue(field, out var raw)
+        && raw.IsBsonArray
+        && raw.AsBsonArray.Any(x => x.IsString && string.Equals(x.AsString, expected, StringComparison.Ordinal));
+
+    if (key.AsNullableString("RotationState") is "revoked") return false;
+    if (key.TryGetValue("ExpiresAt", out var expiresAt) && expiresAt.IsValidDateTime && expiresAt.ToUniversalTime() <= DateTime.UtcNow)
+        return false;
+    // CreatedByUserId 非空 = serving 会去查「这个人的成员资格还活着吗」。
+    // 系统凭据不该有主人，早期版本写过 "system" 字符串，那批必须重签。
+    if (!string.IsNullOrWhiteSpace(key.AsNullableString("CreatedByUserId"))) return false;
+    if (!string.Equals(key.AsNullableString("TeamId"), expectedTeamId, StringComparison.Ordinal)) return false;
+    // 来源与用途码由调用方传进来，不在这里再写一份字面量——签发时用的是哪个常量，
+    // 校验时就必须是同一个常量，否则改了签发忘了改校验，这条判据会安静地失效。
+    if (!string.Equals(key.AsNullableString("SourceSystem"), expectedSource, StringComparison.Ordinal)) return false;
+    if (!Has(key, "AppCallerCodes", expectedAppCaller)) return false;
+    if (!Has(key, "IngressProtocols", "openai-compatible")) return false;
+    if (!Has(key, "Scopes", "invoke")) return false;
+    return true;
+}
 
 /// <summary>
 /// 从模型输出里取出两段码。模型被要求只输出 JSON，但仍可能裹 ```json 或带前后缀，

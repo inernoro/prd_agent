@@ -52,8 +52,10 @@ const server = http.createServer((req, res) => {
     if (api === '/system-settings' && req.method === 'GET') {
       return json(res, 200, { success: true, error: null, data: {
         ...settings,
-        teamId: 'team-1',
-        teamName: '核心平台组',
+        // 归属团队恒为系统自己的团队，不是登录者所属的业务团队——系统消耗单独计费。
+        teamId: 't1_system',
+        teamName: '系统内部',
+        teamIsSystemOwned: true,
         servingBaseUrl: 'http://llmgw-serve-prd-agent:8091',
         servingReachable: true,
         appCallerCode: 'llmgw-console.intent-draft::chat',
@@ -144,6 +146,10 @@ const bodyText = await page.locator('body').innerText();
 check('页面出现密钥前缀', bodyText.includes('gwk_2X2lc7Ob'), true);
 check('页面没有完整密钥形状', /gwk_[A-Za-z0-9_-]{30,}/.test(bodyText), false);
 check('系统替你配好的四项都在', await page.locator('.lg-gws-facts > div').count(), 4);
+// 归属团队要说清是系统自己的团队 + 单独计费，否则用户无从判断这笔消耗记在谁头上。
+const teamFact = await page.locator('.lg-gws-facts > div').last().innerText();
+check('归属团队是系统内部', teamFact.includes('系统内部'), true);
+check('归属团队说明了单独计费', teamFact.includes('单独计费'), true);
 check('谁在用它列出了消费方', (await page.locator('.lg-gws-consumers > li').innerText()).includes('llmgw-console.intent-draft::chat'), true);
 
 // 1a. 选池：提交体必须带 modelGroupId，且不带 modelName。

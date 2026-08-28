@@ -183,8 +183,12 @@ export function GatewaySettingsPage() {
             </div>
             <div>
               <span style={FIELD_LABEL}>归属团队</span>
-              <code style={MONO_META}>{data.teamName ?? '未确定'}</code>
-              <small style={HINT_TEXT}>系统功能的用量与预算记在这个团队名下。</small>
+              <code style={MONO_META}>{data.teamName ?? '系统内部'}</code>
+              <small style={HINT_TEXT}>
+                {data.teamIsSystemOwned
+                  ? '系统自己的团队，单独计费：这些消耗不进任何业务团队的预算，也不随谁在操作而变。'
+                  : '系统功能的用量与预算记在这个团队名下。'}
+              </small>
             </div>
           </div>
         </Card>

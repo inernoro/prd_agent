@@ -821,8 +821,7 @@ public sealed class UpdateSystemSettingsRequest
     public string? ModelSource { get; set; }
     public string? ModelGroupId { get; set; }
     public string? ModelName { get; set; }
-    /// <summary>归属团队，留空则落到租户里第一个 active 团队（系统团队）。</summary>
-    public string? TeamId { get; set; }
+    // 刻意不接受归属团队字段：系统消耗恒记在「系统内部」团队，单独计费，不由请求体改写。
 }
 
 public sealed class BulkUpdateGatewayAppCallersRequest

@@ -14,11 +14,20 @@ namespace PrdAgent.LlmGw.Auth;
 /// </summary>
 public sealed class GwJwt
 {
-    /// <summary>默认会话时长（天）。可用 LlmGwJwt:LifetimeDays 覆盖。</summary>
-    public const int DefaultLifetimeDays = 7;
+    /// <summary>
+    /// 默认会话时长：一个月，滑动续期。可用 LlmGwJwt:LifetimeDays 覆盖。
+    ///
+    /// 用户 2026-08-28 定死：「系统默认登录时间为一个月，滑动更新，不允许短效，
+    /// 不允许打开链接就失效登录」。所以这里不是「够用就行」的经验值，是产品约束。
+    /// 只要一个月内用过一次，就永远不会掉登录。
+    /// </summary>
+    public const int DefaultLifetimeDays = 30;
 
-    /// <summary>默认续期间隔（小时）：token 用满这个时长后，下一次请求即自动换发新 token。</summary>
-    public const int DefaultRenewAfterHours = 12;
+    /// <summary>
+    /// 默认续期间隔（小时）：token 用满这个时长后，下一次请求即自动换发新 token。
+    /// 一小时一续——够稀疏，不至于每个请求都换发；也够密，隔夜再打开必然拿到崭新的一个月。
+    /// </summary>
+    public const int DefaultRenewAfterHours = 1;
 
     private readonly byte[] _key;
     private readonly string _issuer;

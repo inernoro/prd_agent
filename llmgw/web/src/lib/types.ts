@@ -1390,6 +1390,8 @@ export type SystemGatewaySettings = {
   modelName: string | null;
   teamId: string | null;
   teamName: string | null;
+  /** true = 归属团队是系统自己的「系统内部」团队，消耗单独计费、不可改。 */
+  teamIsSystemOwned: boolean;
   servingBaseUrl: string;
   servingReachable: boolean;
   appCallerCode: string;
@@ -1406,7 +1408,7 @@ export type UpdateSystemSettingsRequest = {
   modelSource: 'auto' | 'pool' | 'model';
   modelGroupId?: string;
   modelName?: string;
-  teamId?: string;
+  // 没有 teamId：归属团队由后端钉死在「系统内部」团队上，单独计费。
 };
 
 export type UpdateSystemSettingsResult = {

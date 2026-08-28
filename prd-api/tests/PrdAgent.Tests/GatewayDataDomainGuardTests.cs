@@ -4431,6 +4431,24 @@ public class GatewayDataDomainGuardTests
         // 自签的 key 必须能在接入密钥页看见：列表只收 IssuanceState 缺失或 issued，
         // 写别的值这把 key 就成了页面上不存在的幽灵凭据。
         Assert.Contains("{ \"IssuanceState\", \"issued\" },", consoleApi);
+
+        // ── 系统内部消耗单独计费：凭据与用途码必须挂在专属的「系统内部」团队上 ──
+        // 用户 2026-08-28：「系统内部的，按照系统内部的团队，消耗，权限……计费方式是单独计费」。
+        // 借用「租户第一个 active 团队」会把系统用量记进某个业务团队的预算，且这个团队随
+        // 建库顺序变化。删掉这条归属不会让任何测试变红（调用照常成功，只是记错账），故钉字面量。
+        Assert.Contains("EnsureSystemTeamAsync", consoleApi);
+        Assert.Contains("const string SystemTeamName = \"系统内部\";", consoleApi);
+        // 归属不许由请求体写入——留一个可写字段就等于留一条把系统账单混进业务团队的路。
+        Assert.DoesNotContain("TeamId", MethodBody(
+            ReadRepoFile("llmgw/console-api/Models/Dtos.cs"),
+            "public sealed class UpdateSystemSettingsRequest"));
+        // 「系统内部永远不会出现 401」要靠**事前**核对，不能只等被拒之后再自愈：
+        // 复用存量 key 前先按 serving 的门禁判据过一遍，对不上就地重签。
+        Assert.Contains("SystemKeyStillPassesTheGate", consoleApi);
+        // key 与 appCaller 归属团队对不上时 serving 回 GATEWAY_KEY_TEAM_MISMATCH，
+        // 而重签走 EnsureSystemTeamAsync 能让两边落到同一个团队——所以它必须在可自愈码里。
+        Assert.Contains("GATEWAY_KEY_TEAM_MISMATCH", consoleApi);
+        Assert.Contains("GATEWAY_KEY_TEAM_INACTIVE", consoleApi);
         // 模型推的、本地降级的、用户手改的，界面必须分得出来（推断值可见可改可追责）。
         Assert.Contains("codeSource", quickstart);
         // 系统提示词是给用户粘走的产物，绝不能把密钥明文写进去。
@@ -4465,6 +4483,46 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("llmgw-serve:", devCompose);
         Assert.Contains("dockerfile: llmgw/serving/Dockerfile", devCompose);
         Assert.Contains("- llmgw-serve", devCompose);
+    }
+
+    /// <summary>
+    /// 登录一个月、滑动续期，且一次 SSO 不得踢掉这个人别处的会话。
+    ///
+    /// 用户 2026-08-28：「为什么登录总是失效，我都不知道 sso 多少次了……系统默认登录时间为
+    /// 一个月，滑动更新，不允许短效，不允许打开链接就失效登录」。
+    ///
+    /// 根因是 map-sso 无条件 `.Inc(SecurityVersion, 1)`：SecurityVersion 是撤销计数器，
+    /// 每个已鉴权请求都拿 token 里的版本与库里比对，对不上整条会话作废。于是**登录**成了
+    /// 撤销事件——每 SSO 一次，之前发出去的所有链接同时失效。
+    ///
+    /// 这两处改动删掉都不会让任何测试变红（登录照样成功，只是会话又开始随机掉），
+    /// 所以按「删掉仍全绿就需要一条守卫」钉成字面量。
+    /// </summary>
+    [Fact]
+    public void GatewaySession_LastsAMonthSlidesAndIsNotRevokedByLoggingInAgain()
+    {
+        var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
+        var ssoStart = consoleApi.IndexOf("app.MapPost(\"/gw/auth/map-sso\"", StringComparison.Ordinal);
+        Assert.True(ssoStart > 0, "找不到 map-sso 端点");
+        var ssoEnd = consoleApi.IndexOf("}).AllowAnonymous();", ssoStart, StringComparison.Ordinal);
+        Assert.True(ssoEnd > ssoStart, "map-sso 端点没有收尾声明");
+        var mapSso = consoleApi[ssoStart..ssoEnd];
+        Assert.DoesNotContain("SecurityVersion, 1", mapSso);
+
+        // 真正撤销会话的三处仍必须自增，否则改密/停用成员就形同虚设。
+        Assert.Contains(".Inc(u => u.SecurityVersion, 1)", consoleApi);
+
+        // 时长：常量与 appsettings 两处都要是 30 天。只改常量不改配置文件不会生效——
+        // 配置里的值覆盖常量，那正是「改了却没生效」这一类问题的常见形状。
+        var jwt = ReadRepoFile("llmgw/console-api/Auth/GwJwt.cs");
+        Assert.Contains("DefaultLifetimeDays = 30", jwt);
+        Assert.Contains("X-Gw-Token-Expires-At", ReadRepoFile("llmgw/console-api/Auth/GwSessionHeaders.cs"));
+        var appSettings = ReadRepoFile("llmgw/console-api/appsettings.json");
+        Assert.Contains("\"LifetimeDays\": 30", appSettings);
+
+        // 滑动续期要真的接到浏览器上：后端发续期头、前端收下并覆写本地会话，缺一条就退化成硬过期。
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        Assert.Contains("x-gw-token", webApi.ToLowerInvariant());
     }
 
     [Fact]
