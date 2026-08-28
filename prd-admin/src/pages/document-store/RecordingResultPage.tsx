@@ -45,7 +45,7 @@ import {
   type QueuedOfflineEdit,
 } from '@/pages/document-store/recordingOfflineQueue';
 import { describeOfflineFlushBlock } from '@/pages/document-store/recordingCompletionView';
-import { isTranscriptionInflight } from '@/pages/document-store/recordingVault';
+import { isPermanentLookupFailure, isTranscriptionInflight } from '@/pages/document-store/recordingVault';
 import { canGoBackInApp } from '@/hooks/useSmartBack';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
@@ -320,7 +320,14 @@ export function RecordingResultPage() {
        * 只有**查成功且确认不在途**才是真的可以收手。
        */
       if (attempts >= MAX_ATTEMPTS) { window.clearInterval(timer); return; }
-      if (!runRes.success) return;
+      if (!runRes.success) {
+        /*
+         * 抖动照常等下一轮；**永久失败**（条目不存在、或这个账号对它只有只读权限）
+         * 再等五分钟也是同一个答案，当场收手，别白问一百遍（Codex 第三十五轮 P2 同一形状）。
+         */
+        if (isPermanentLookupFailure(runRes.error?.code)) window.clearInterval(timer);
+        return;
+      }
       if (!isTranscriptionInflight(runRes.data?.status)) { window.clearInterval(timer); return; }
       const entryRes = await getDocumentEntry(entryId);
       if (stale || !entryRes.success) return;
@@ -727,6 +734,20 @@ export function RecordingResultPage() {
    * 混成一句就会在「其实没人改过、只是版本没查着」时对用户说假话（Codex 第二十轮 P1）。
    */
   const [flushConflict, setFlushConflict] = useState<OfflineFlushReason | null>(null);
+  /**
+   * 在线补传卡在「版本没查着」这一步。
+   *
+   * 这一档必须**看得见**：横幅原本只在离线时出现，而这时用户已经联网了——屏幕上
+   * 什么都不说，他会以为那句「联网后自动上传」已经兑现，关掉标签页草稿就随
+   * sessionStorage 一起没了（Codex 第三十五轮 P1）。
+   * 存三态而不是布尔：还在自动重试、和重试次数用完了，是两句不同的话，
+   * 后者再说「会自动再试」就是假话。
+   */
+  const [flushStalled, setFlushStalled] = useState<null | 'retrying' | 'exhausted'>(null);
+  /** 重试的节拍：补传这个 effect 只认依赖变化，靠它把「过一会儿再试一次」接回去 */
+  const [flushRetryTick, setFlushRetryTick] = useState(0);
+  /** 按草稿版本记重试次数：换了一份新草稿就重新计数，不继承上一份的额度 */
+  const flushRetryRef = useRef<{ savedAt: number; attempts: number }>({ savedAt: 0, attempts: 0 });
   pendingRef.current = pendingEdits;
   /** 所有对笔记的写共用一条串行链，避免旧内容后到覆盖新内容 */
   const writeChainRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -882,6 +903,23 @@ export function RecordingResultPage() {
     // 只补传属于**这一条笔记、这个账号**、且还没放过期的内容
     if (!isFlushable(queued, noteIdForFlush, ownerId)) return;
     let alive = true;
+    let retryTimer = 0;
+    /** 这一发是不是卡在「版本没查着」——只有这一种才该自己排下一次重试 */
+    let lookupFailed = false;
+    /*
+     * 退避：5s → 10s → 20s → 40s → 60s，共五次。用完就停在「重试次数用完」那一档，
+     * 横幅上那颗「立即重试」仍然可用——自动停下来不等于把人扔在那儿。
+     */
+    const RETRY_DELAYS = [5000, 10000, 20000, 40000, 60000];
+    const scheduleRetry = () => {
+      const savedAt = queued!.savedAt;
+      if (flushRetryRef.current.savedAt !== savedAt) flushRetryRef.current = { savedAt, attempts: 0 };
+      const attempts = flushRetryRef.current.attempts;
+      if (attempts >= RETRY_DELAYS.length) { setFlushStalled('exhausted'); return; }
+      flushRetryRef.current = { savedAt, attempts: attempts + 1 };
+      setFlushStalled('retrying');
+      retryTimer = window.setTimeout(() => setFlushRetryTick(v => v + 1), RETRY_DELAYS[attempts]);
+    };
     /*
      * 补传是整篇覆盖写，传之前要先确认服务端那份还是不是排队时那份：离线期间别的设备
      * （或同事）改过的话，这一发 PUT 会把他们的新内容整篇盖掉，而两边都没有任何提示。
@@ -905,7 +943,7 @@ export function RecordingResultPage() {
        * 查不到不等于冲突：不弹冲突横幅，草稿原样留在队列里（横幅照常显示欠了几处），
        * 下一次联网翻转或重进这一屏会再试一次。宁可晚传，不可盖掉别人的新版本。
        */
-      if (!remote.success) return skipped;
+      if (!remote.success) { lookupFailed = true; return skipped; }
       /*
        * 三种「不确定」都停下来问用户，不再「比不了就当没冲突照传」：
        * 初次加载时条目请求偶发失败会让基线为 null，照传就是拿一个空基线把同事的
@@ -919,7 +957,15 @@ export function RecordingResultPage() {
       return updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown');
     }).then((res) => {
       if (!alive) return;
-      if (!res.success) return;
+      if (!res.success) {
+        /*
+         * 版本没查着：草稿还躺在队列里，而这个 effect 的依赖一个都没变——不自己排一次
+         * 重试的话，它要等到下一次断网重连或重开这一屏才会再试，而在线期间横幅不出现，
+         * 用户以为已经传上去了（Codex 第三十五轮 P1）。冲突那一档不走这里，它有自己的横幅。
+         */
+        if (lookupFailed) scheduleRetry();
+        return;
+      }
       // 补传期间用户又在线存了新的一版：那一版已经把队列清了，这里不能再清一次
       // （清了等于承认这份旧内容是最终态），也不再报「已补传」
       if (pendingRef.current?.savedAt !== queued!.savedAt) return;
@@ -930,16 +976,20 @@ export function RecordingResultPage() {
       clearOfflineEdit(noteIdForFlush, ownerId);
       setPendingEdits(null);
       setQueueVolatile(false);
+      // 传上去了，卡住那一档跟着散掉，重试额度也还给下一份草稿
+      flushRetryRef.current = { savedAt: 0, attempts: 0 };
+      setFlushStalled(null);
       toast.success(`已补传 ${queued!.count} 处离线校对`);
     });
-    return () => { alive = false; };
+    return () => { alive = false; window.clearTimeout(retryTimer); };
     /*
      * 依赖里必须带上 `pendingEdits`：本机存着的队列是上面那个 effect 恢复出来的，
      * 而它比这里晚一拍。只依赖 noteId/offline 的话，这一轮读到的是 null，
      * 恢复之后又不会再跑——那份校对就一直躺着不上去，直到下一次断网重连才被
      * 当成「新的」传上去，可能盖掉更新的内容（Codex P1 抓到的正是这条）。
      */
-  }, [enqueueWrite, flushConflict, noteIdForFlush, offline, ownerId, pendingEdits]);
+    // flushRetryTick：上面那次退避到点了就靠它把这个 effect 再跑一遍
+  }, [enqueueWrite, flushConflict, flushRetryTick, noteIdForFlush, offline, ownerId, pendingEdits]);
 
   /** 冲突时用户明说「用我的版本」：这一下才覆盖，覆盖完照常清队列 */
   const overwriteWithOfflineDraft = useCallback(async () => {
@@ -1182,6 +1232,33 @@ export function RecordingResultPage() {
               丢弃离线草稿
             </button>
           </div>
+        </div>
+      ) : (pendingEdits && flushStalled) ? (
+        /*
+          联网了、但这几处校对还没上去。在线时原本不出横幅——于是「联网后自动上传」
+          兑现没兑现，用户是看不出来的；草稿又只活在 sessionStorage 里，关掉标签页就没了。
+          所以这一档照实说三件事：欠了几处、为什么卡着、接下来会怎样，并给一颗立即重试。
+        */
+        <div
+          className="mx-auto flex w-full max-w-[760px] flex-wrap items-center gap-2 rounded-[14px] px-3.5 py-3"
+          style={{ background: 'var(--semantic-warning-soft)' }}
+          role="status"
+        >
+          <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            <strong style={{ color: 'var(--semantic-warning-text)' }}>{pendingEdits.count} 处离线校对还没上去</strong>
+            ：没能确认云端那一版有没有被改过，为了不盖掉别人的内容先停下了。
+            {flushStalled === 'retrying' ? '正在自动重试。' : '自动重试已用完，可以手动再试一次。'}
+            <strong style={{ color: 'var(--text-primary)' }}>这一页先别关</strong>
+            ——草稿只存在本机{queueVolatile ? '，而且这台设备连刷新都保不住' : ''}。
+          </p>
+          <button
+            type="button"
+            onClick={() => { flushRetryRef.current = { savedAt: 0, attempts: 0 }; setFlushRetryTick(v => v + 1); }}
+            className="shrink-0 rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
+            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+          >
+            立即重试
+          </button>
         </div>
       ) : undefined}
     >

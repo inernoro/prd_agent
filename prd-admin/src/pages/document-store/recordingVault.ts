@@ -189,6 +189,22 @@ export function isTranscriptionInflight(status: string | null | undefined): bool
   return s === 'publishing' || s === 'queued' || s === 'running';
 }
 
+/**
+ * 这次查询失败还值不值得再问一遍。
+ *
+ * 「查不到」有两种，混成一种就会一直空转：条目不存在、或者这个账号对它只有只读权限
+ * （后端两种都回 `NOT_FOUND`，`LoadWritableEntryAsync` 故意不区分，免得拿错误码探测
+ * 别人库里有什么）——这两种再问一万遍也是同一个答案；网络抖动才配重试。
+ * 两处轮询共用这一个判定，抄第二份就会各自漂移（形状 3）。
+ */
+export function isPermanentLookupFailure(code: string | null | undefined): boolean {
+  const c = code?.trim().toUpperCase();
+  return c === 'NOT_FOUND'
+    || c === 'DOCUMENT_NOT_FOUND'
+    || c === 'PERMISSION_DENIED'
+    || c === 'FORBIDDEN';
+}
+
 export const BACKGROUND_TRANSCRIPTION_STALLED_MS = 60 * 60 * 1000;
 
 /** Worker 超过一小时没有心跳，不能继续向用户保证它仍会自行完成。 */

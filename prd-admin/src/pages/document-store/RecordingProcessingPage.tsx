@@ -30,6 +30,7 @@ import {
 import {
   describeFailedTranscription,
   countTranscriptSentences,
+  isPermanentLookupFailure,
   isTranscriptionInflight,
   splitPartialTranscript,
   type FailedTranscriptionNotice,
@@ -106,6 +107,11 @@ export function RecordingProcessingPage() {
   const [dateLabel, setDateLabel] = useState<string | null>(null);
   const [run, setRun] = useState<RunLike | null>(null);
   const [failure, setFailure] = useState<FailedTranscriptionNotice | null>(null);
+  /**
+   * 看护这条 run 的查询自己失败了。存的是**给用户看的那句话**，不是一个布尔——
+   * 「查不到（已删除或只读）」与「网络不行」要给两句不同的话，也各有不同的下一步。
+   */
+  const [watchError, setWatchError] = useState<string | null>(null);
   const [durationSec, setDurationSec] = useState(0);
   useEffect(() => onRecordingDuration(setDurationSec), []);
   /*
@@ -242,7 +248,16 @@ export function RecordingProcessingPage() {
      */
     setRun(null);
     setFailure(null);
+    setWatchError(null);
     let missingTicks = 0;
+    /*
+     * 连续失败的次数。查询失败不等于要收手（可能只是一次抖动），但也不能无限试：
+     * 永久失败（条目不存在 / 这个账号对它只有只读权限，后端两种都回 NOT_FOUND）
+     * 再问一万遍还是同一个答案，而此前这一路每 2 秒一发问到标签页关掉为止，
+     * 屏幕上还什么都不说（Codex 第三十五轮 P2）。
+     */
+    let failureStreak = 0;
+    const MAX_FAILURE_STREAK = 5; // 约 10 秒的抖动容忍
     const MAX_MISSING_TICKS = 60; // 2s × 60 = 2 分钟还没建出 run，就不是「马上要来」了
     /*
      * **串行**：一发回来了才排下一发，不能用 setInterval 定点发。
@@ -258,8 +273,21 @@ export function RecordingProcessingPage() {
     const tick = async () => {
       const res = await getLatestAgentRun(entryId, 'transcribe');
       if (stale) return;
-      // 这一发失败不代表要收手（可能只是一次抖动），照常排下一发
-      if (!res.success) { schedule(); return; }
+      if (!res.success) {
+        // 永久失败当场停下并说出来；抖动照常再试，但受上面那道上限约束
+        if (isPermanentLookupFailure(res.error?.code)) {
+          setWatchError('查不到这条录音的转录状态：它可能已被删除，或者你对这条录音只有只读权限。');
+          return;
+        }
+        failureStreak += 1;
+        if (failureStreak >= MAX_FAILURE_STREAK) {
+          setWatchError(res.error?.message || '暂时查不到转录状态，网络恢复后点「重新查询」再试。');
+          return;
+        }
+        schedule();
+        return;
+      }
+      failureStreak = 0;
       const next = (res.data ?? null) as RunLike | null;
       setRun(next);
       // describeFailedTranscription 自己会从 transcriptText 切出部分原文，这里原样交给它
@@ -315,6 +343,30 @@ export function RecordingProcessingPage() {
             往下长、由外层滚动，不会把上面的阶段块压扁。
           */}
           <div className="mx-auto flex min-h-full w-full max-w-[760px] flex-col">
+            {/*
+              看护停下来了就必须说出来，并给得出下一步（expectation-management：
+              不许让人对着一屏不动的进度猜是不是卡了）。这条只讲「查询这件事失败了」，
+              run 自身的失败仍由下面那张卡的 lastFailure 负责，两者不混为一句。
+            */}
+            {watchError && (
+              <div
+                className="mb-3 flex flex-wrap items-center gap-2 rounded-[14px] px-3.5 py-3"
+                style={{ background: 'var(--semantic-warning-soft)' }}
+                role="status"
+              >
+                <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                  {watchError}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => { setWatchError(null); setWatchEpoch(v => v + 1); }}
+                  className="shrink-0 rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
+                  style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}
+                >
+                  重新查询
+                </button>
+              </div>
+            )}
             <TranscribeStatusCard
               currentEntryId={entryId ?? ''}
               activeRun={run?.id

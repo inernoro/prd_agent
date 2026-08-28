@@ -193,7 +193,13 @@ describe('版本查不到时不写', () => {
       source.indexOf('/** 恢复联网就把队列补传上去'),
       source.indexOf('/** 冲突时用户明说「用我的版本」'),
     );
-    expect(flush).toContain('if (!remote.success) return skipped;');
+    // 断的是行为：查不到就走 skipped 那条出路、不落到覆盖写。逐字锁死写法的话，
+    // 这一档一旦要多记一件事（比如「是不是该重试」）就会被自己的守卫拦住（形状 4a）。
+    const at = flush.indexOf('if (!remote.success)');
+    expect(at, '版本查不到没有单独一条出路').toBeGreaterThan(-1);
+    const branch = flush.slice(at, at + 160);
+    expect(branch).toContain('return skipped;');
+    expect(branch).not.toContain('updateDocumentContent(');
     // 「查到了且变过」不能再是唯一的拦截条件
     expect(flush).not.toContain('if (remote.success && hasRemoteChangedSince');
   });
@@ -716,11 +722,17 @@ describe('等笔记的轮询区分「查不到」与「确认没有」', () => {
   const fn = source.slice(source.indexOf("const runRes = await getLatestAgentRun(entryId, 'transcribe');"));
   const body = fn.slice(0, fn.indexOf('void tick();'));
 
-  it('查询失败只是返回，不清定时器', () => {
-    const at = body.indexOf('if (!runRes.success) return;');
+  it('查询失败只是返回，不清定时器（永久失败那一档除外）', () => {
+    const at = body.indexOf('if (!runRes.success) {');
     expect(at, '查询失败没有单独一条出路').toBeGreaterThan(-1);
-    // 这一行本身不许带 clearInterval
-    expect(body.slice(at, at + 60)).not.toContain('clearInterval');
+    // 只截「查询失败」这一个分支：截到下一档（确认不在途）就会把它那句 clearInterval 也算进来
+    const branch = body.slice(at, body.indexOf('if (!isTranscriptionInflight', at));
+    // 只有永久失败那一档配清定时器；抖动清了，等于一次网络抖动永久停掉这一屏的等待
+    const permanent = branch.indexOf('isPermanentLookupFailure');
+    expect(permanent, '这一档没有区分永久失败').toBeGreaterThan(-1);
+    const clears = [...branch.matchAll(/clearInterval/g)].map(m => m.index ?? -1);
+    expect(clears.length, '抖动那一路不该清定时器').toBe(1);
+    expect(clears[0]).toBeGreaterThan(permanent);
   });
 
   it('只有确认不在途才收手', () => {
@@ -811,5 +823,90 @@ describe('回到还在整理的录音，把在途那一发接回来', () => {
     const tail = source.slice(at, source.indexOf('}, [entryId, noteIdForFlush]);', at) + 40);
     expect(tail).toContain('}, [entryId, noteIdForFlush]);');
     expect(source.slice(Math.max(0, at - 400), at)).toContain('!noteIdForFlush) return;');
+  });
+});
+
+describe('查询失败分两种：抖动才重试，永久失败当场停下', () => {
+  const processing = read('pages/document-store/RecordingProcessingPage.tsx');
+  const result = read('pages/document-store/RecordingResultPage.tsx');
+  const vault = read('pages/document-store/recordingVault.ts');
+
+  it('判定只有一处定义，两处轮询共用', () => {
+    expect(vault).toContain('export function isPermanentLookupFailure(');
+    // 只读权限与「条目不存在」后端都回 NOT_FOUND，两种都得认
+    for (const code of ['NOT_FOUND', 'PERMISSION_DENIED']) {
+      expect(vault).toContain(`'${code}'`);
+    }
+    expect(processing).not.toMatch(/function isPermanentLookupFailure/);
+    expect(result).not.toMatch(/function isPermanentLookupFailure/);
+  });
+
+  it('处理页：永久失败不再排下一发，而是说出来', () => {
+    const tick = processing.lastIndexOf("const res = await getLatestAgentRun(entryId, 'transcribe');");
+    expect(tick, '找不到看护这条 run 的轮询').toBeGreaterThan(0);
+    const at = processing.indexOf('if (!res.success) {', tick);
+    expect(at).toBeGreaterThan(0);
+    const block = processing.slice(at, processing.indexOf('const next =', at));
+    const permanent = block.indexOf('isPermanentLookupFailure(res.error?.code)');
+    expect(permanent, '处理页没有区分永久失败').toBeGreaterThan(-1);
+    // 永久那一档要在任何 schedule() 之前就返回
+    expect(permanent).toBeLessThan(block.indexOf('schedule();'));
+    expect(block.slice(permanent, block.indexOf('schedule();'))).toContain('setWatchError(');
+    // 抖动也不能无限试
+    expect(block).toContain('failureStreak >= MAX_FAILURE_STREAK');
+  });
+
+  it('处理页：停下来这件事出现在屏幕上，并给得出下一步', () => {
+    expect(processing).toContain('{watchError && (');
+    const banner = processing.slice(processing.indexOf('{watchError && ('), processing.indexOf('<TranscribeStatusCard'));
+    expect(banner).toContain('setWatchEpoch(v => v + 1)');
+  });
+
+  it('结果页等笔记：永久失败当场收手，不白问一百遍', () => {
+    const at = result.indexOf('if (!runRes.success) {');
+    expect(at).toBeGreaterThan(0);
+    const block = result.slice(at, at + 600);
+    const permanent = block.indexOf('isPermanentLookupFailure(runRes.error?.code)');
+    expect(permanent).toBeGreaterThan(-1);
+    expect(block.slice(permanent, permanent + 120)).toContain('clearInterval(timer)');
+  });
+});
+
+describe('在线补传卡住时会自己再试，而且看得见', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('版本没查着就排一次退避重试，不是等下一次断网重连', () => {
+    const at = source.indexOf('if (!remote.success) {');
+    expect(at, '找不到版本查询那一档').toBeGreaterThan(0);
+    // 卡住的原因要被记下来，回到 then 里才分得清「该重试」和「冲突/被作废」
+    expect(source.slice(at, at + 120)).toContain('lookupFailed = true');
+    expect(source).toMatch(/if \(lookupFailed\) scheduleRetry\(\);/);
+    expect(source).toContain('const RETRY_DELAYS = [');
+  });
+
+  it('重试的节拍进了依赖，否则退避到点了也不会再跑一遍', () => {
+    expect(source).toMatch(/\}, \[enqueueWrite, flushConflict, flushRetryTick, noteIdForFlush, offline, ownerId, pendingEdits\]\);/);
+  });
+
+  it('退避到点前先清掉定时器，别让切走的那一屏把 tick 打回来', () => {
+    expect(source).toMatch(/return \(\) => \{ alive = false; window\.clearTimeout\(retryTimer\); \};/);
+  });
+
+  it('在线也出横幅：欠了几处、还试不试、能不能手动再来一次', () => {
+    const at = source.indexOf('(pendingEdits && flushStalled) ? (');
+    expect(at, '在线卡住时没有任何横幅').toBeGreaterThan(0);
+    const banner = source.slice(at, source.indexOf(') : undefined}', at));
+    expect(banner).toContain('{pendingEdits.count} 处离线校对还没上去');
+    // 两档给两句话：还在自动重试 / 次数用完了。合成一句就会在用完之后继续说假话
+    expect(banner).toContain("flushStalled === 'retrying'");
+    expect(banner).toContain('立即重试');
+  });
+
+  it('传上去之后卡住那一档散掉，重试额度还给下一份草稿', () => {
+    const at = source.indexOf('已补传 ${queued!.count} 处离线校对');
+    expect(at).toBeGreaterThan(0);
+    const around = source.slice(at - 400, at);
+    expect(around).toContain('setFlushStalled(null)');
+    expect(around).toContain('flushRetryRef.current = { savedAt: 0, attempts: 0 }');
   });
 });
