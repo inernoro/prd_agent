@@ -1,0 +1,29 @@
+{
+  "artboards": [
+    { "file": "Step1.dc.html",         "x": 0,    "y": 0,    "w": 1160, "h": 700,  "page": "page-1", "title": "第 1 步 · 说清要做什么" },
+    { "file": "Main.dc.html",          "x": 1280, "y": 0,    "w": 1160, "h": 860,  "page": "page-1", "title": "第 2 步 · 模型推导成功（主稿）" },
+    { "file": "Step2Streaming.dc.html","x": 2560, "y": 0,    "w": 1160, "h": 860,  "page": "page-1", "title": "第 2 步 · 推导流式过程" },
+    { "file": "Step2Fallback.dc.html", "x": 0,    "y": 1000, "w": 1160, "h": 1180, "page": "page-1", "title": "第 2 步 · 降级需手选" },
+    { "file": "Step3.dc.html",         "x": 1280, "y": 1000, "w": 1160, "h": 700,  "page": "page-1", "title": "第 3 步 · 算谁的" },
+
+    { "file": "Settings.dc.html",      "x": 0,    "y": 0,    "w": 1160, "h": 900,  "page": "page-2", "title": "服务网关设置 · 深色" },
+    { "file": "SettingsLight.dc.html", "x": 1280, "y": 0,    "w": 1160, "h": 900,  "page": "page-2", "title": "服务网关设置 · 浅色核对" },
+    { "file": "Step2Light.dc.html",    "x": 2560, "y": 0,    "w": 1160, "h": 860,  "page": "page-2", "title": "第 2 步 · 浅色核对" },
+
+    { "file": "Step2Mobile.dc.html",   "x": 0,    "y": 0,    "w": 390,  "h": 900,  "page": "page-3", "title": "第 2 步 · 390 宽" },
+    { "file": "SettingsMobile.dc.html","x": 510,  "y": 0,    "w": 390,  "h": 1180, "page": "page-3", "title": "设置页 · 390 宽" },
+    { "file": "SpacingSpec.dc.html",   "x": 1020, "y": 0,    "w": 1000, "h": 1560, "page": "page-3", "title": "间距与字号规范" }
+  ],
+  "annotations": [
+    { "id": "note-scope", "page": "page-1", "x": 0, "y": -180, "w": 620, "text": "画的是内容区（1440 视口减去 280 侧栏 ≈ 1160），侧栏不在本次改动范围内。\n三步在同一张卡里纵向推进，一次只展开当前步——与现有实现一致。" },
+    { "id": "note-core", "page": "page-1", "x": 1280, "y": -180, "w": 620, "text": "主稿在这里。第 2 步分三层：你说的那句话 / 系统推出来的结果 / 你要做的决定。\n最大的改动是把「文字对话 · 图片理解」从结果条里拆出来单独成字段——旧版那条左右拉开、中间空着的横条就是这么来的。" },
+    { "id": "note-theme", "page": "page-2", "x": 1280, "y": -140, "w": 620, "text": "浅色档不是换个色号那么简单：theme.css 里 --bg-elevated 与 --bg-surface 在浅色下同为 #ffffff，\n嵌套块用它等于没有底色。这两张浅色稿里所有内嵌底一律改用 --bg-base。" },
+    { "id": "note-spec", "page": "page-3", "x": 1020, "y": -140, "w": 620, "text": "右边这张是改 CSS 时的取值表：间距尺度、第 2 步的三层、七档字号各用在哪，\n外加两个既有问题（浅色嵌套块隐形、窄屏命中区不足）。" }
+  ],
+  "pages": [
+    { "id": "page-1", "name": "接入流程（深色）" },
+    { "id": "page-2", "name": "设置页与双主题核对" },
+    { "id": "page-3", "name": "移动端与规范" }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}
