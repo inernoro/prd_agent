@@ -387,7 +387,12 @@ export function TranscribeStatusCard({
     「完成后通知我」（稿面 cap-S10）。
     它必须真的会通知，否则就是一句空承诺——用的是浏览器自己的通知权限：
     授权后，这一屏观察到 run 转成终态时发一条系统通知。授权被拒就如实说拒了，
-    不假装已经订阅上。关掉这一页就通知不了，所以按钮下面写明了这个前提。
+    不假装已经订阅上。
+
+    边界：通知由**这一屏**发出，没有 service worker、也没有服务端订阅，
+    所以关掉页面就没人看着了。这个前提必须写在用户看得见的地方——按钮进入
+    已订阅态之后的文案里带着它（下面的 label），失败卡的说明句里也写了
+    （`describeFailedTranscription` 的 RUN_STALLED 那一档）。
   */
   const [notifyState, setNotifyState] = useState<'idle' | 'armed' | 'denied'>('idle');
   const armNotify = () => {
@@ -433,7 +438,9 @@ export function TranscribeStatusCard({
       case 'notify':
         return [{
           key: 'notify',
-          label: notifyState === 'armed' ? '完成后会通知你' : notifyState === 'denied' ? '通知权限被拒绝' : '完成后通知我',
+          label: notifyState === 'armed'
+            ? '完成后会通知你（这一页先别关）'
+            : notifyState === 'denied' ? '通知权限被拒绝' : '完成后通知我',
           icon: <BellRing size={12} />,
           run: armNotify,
           disabled: notifyState !== 'idle',

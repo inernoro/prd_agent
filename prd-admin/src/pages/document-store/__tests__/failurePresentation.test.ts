@@ -29,7 +29,15 @@ describe('describeFailurePresentation', () => {
     const p = describeFailurePresentation(notice({ code: 'RUN_STALLED' }), { waitingAutoRetry: false });
     expect(p.title).toBe('处理已超过一小时');
     expect(p.subtitle).toContain('还在排队');
-    expect(p.nextStep).toContain('关掉这一页');
+    /*
+     * 「可以走开」要保留，但不能承诺「关掉这一页也行」：通知是这一屏观察到 run 转终态
+     * 时发的，没有 service worker 也没有服务端订阅，页面一关就没人看着了
+     * （Codex 第十三轮 P1）。此前这条断言逐字钉着那句兑现不了的承诺——
+     * 它把缺陷锁死成了「改就变红」（predicate-and-wiring-discipline 形状 4a）。
+     */
+    expect(p.nextStep).toContain('走开');
+    expect(p.nextStep).toContain('先别关');
+    expect(p.nextStep).not.toContain('就可以关掉这一页');
     // 产品方裁定：重试仍是唯一恢复出口，文案不能把它拿掉
     expect(p.nextStep).toContain('重试');
   });
