@@ -95,3 +95,26 @@ describe('登出清掉离线草稿', () => {
     expect(source).toContain('clearAllOfflineEdits()');
   });
 });
+
+/*
+ * 上一轮为「轮询停不下来」加的终态清定时器，自己带出了一个回归：重新发起之后没人
+ * 把观察器重起，页面永远停在旧的失败说明上（Codex 第十轮 P1）。这条钉住重启这一环。
+ */
+describe('处理页重新发起', () => {
+  const source = read('pages/document-store/RecordingProcessingPage.tsx');
+
+  it('重发成功后重起观察器，并撤掉旧的失败说明', () => {
+    expect(source).toContain('setWatchEpoch(v => v + 1)');
+    expect(source).toContain('}, [entryId, watchEpoch]);');
+    const restart = source.slice(source.indexOf('onStart={entryId ?'));
+    const block = restart.slice(0, restart.indexOf('} : undefined}'));
+    expect(block).toContain('setFailure(null)');
+    expect(block).toContain('setWatchEpoch');
+  });
+
+  it('重试按钮连点两下不并发建两条 run', () => {
+    expect(source).toContain('if (restartingRef.current) return;');
+    expect(source).toContain('restartingRef.current = true;');
+  });
+});
+

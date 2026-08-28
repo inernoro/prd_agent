@@ -132,6 +132,14 @@ export function RecordingProcessingPage() {
    * 两秒一次已经足够（稿面这一屏的进度条本来就是秒级刷新），而 SSE 在这里要多养一条
    * 连接与一套重连逻辑，换不来任何一个用户看得见的差别。
    */
+  /*
+   * 重新发起之后要把观察器**重新起一遍**：上一条 run 走到终态时定时器已经被清掉了
+   * （那是上一轮为「轮询停不下来」加的），不重启的话这一屏会一直停在旧的失败说明上，
+   * 新 run 跑完也不知道——用户只能刷新。这是那次修复自己带出来的回归。
+   */
+  const [watchEpoch, setWatchEpoch] = useState(0);
+  /** 「已经在发起了」同步置位：重试按钮仍然在屏上，连点两下不该并发建两条 run */
+  const restartingRef = useRef(false);
   useEffect(() => {
     if (!entryId) return;
     let stale = false;
@@ -162,7 +170,7 @@ export function RecordingProcessingPage() {
     void tick();
     timer = window.setInterval(() => { void tick(); }, 2000);
     return () => { stale = true; window.clearInterval(timer); };
-  }, [entryId]);
+  }, [entryId, watchEpoch]);
 
   const transcriptPreview = useMemo(
     () => splitPartialTranscript(run?.transcriptText, 2),
@@ -227,9 +235,15 @@ export function RecordingProcessingPage() {
               onPlayRequest={requestRecordingPlay}
               onEnterResult={goResult}
               onStart={entryId ? () => {
+                if (restartingRef.current) return;
+                restartingRef.current = true;
                 void transcribeEntry(entryId).then((res) => {
-                  if (!res.success) toast.error(res.error?.message || '重新发起失败');
-                });
+                  if (!res.success) { toast.error(res.error?.message || '重新发起失败'); return; }
+                  // 旧的失败说明当场撤掉，观察器重起一遍去跟新的这条 run
+                  setFailure(null);
+                  setRun(null);
+                  setWatchEpoch(v => v + 1);
+                }).finally(() => { restartingRef.current = false; });
               } : undefined}
               onOpenNote={() => goResult()}
             />
