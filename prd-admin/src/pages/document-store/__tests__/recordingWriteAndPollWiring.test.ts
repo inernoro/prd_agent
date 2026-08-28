@@ -223,3 +223,38 @@ describe('冲突覆盖也要认笔记', () => {
   });
 });
 
+describe('发起整理的前置查询失败时不许退回全量重转', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('查失败当场停下，不把失败当成「没有可复用的转录」', () => {
+    const launch = source.slice(source.indexOf('const launchedForEntryId = entryId;'));
+    const body = launch.slice(0, launch.indexOf('launchingRef.current = false;'));
+    expect(body).toContain('if (!prior.success) {');
+    // 只有查成功才允许取 id，再据此决定走 restyle 还是全量
+    expect(body).toContain('const priorRunId = prior.data?.id ?? \'\';');
+    expect(body).not.toContain("prior.success ? (prior.data?.id ?? '') : ''");
+    expect(body.indexOf('if (!prior.success) {')).toBeLessThan(body.indexOf('transcribeEntry(entryId, style)'));
+  });
+
+  it('默认整理方式用共享常量，不就地写死', () => {
+    expect(source).toContain('onPickOrganizeStyle(state.styleKey || DEFAULT_ORGANIZE_STYLE_KEY)');
+    expect(source).not.toContain("state.styleKey || 'general'");
+  });
+});
+
+describe('库归属以条目为准', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('加载时用条目自己的 storeId 取库，不用路由参数', () => {
+    expect(source).toContain('const owningStoreId = entry.storeId || storeId;');
+    expect(source).toContain('getDocumentStoreReal(owningStoreId)');
+  });
+
+  it('侧栏与导航都读真实归属库', () => {
+    expect(source).toContain("const activeStoreId = state.kind === 'ready' ? state.storeId : (storeId ?? '');");
+    expect(source).toContain('listDocumentEntriesReal(activeStoreId)');
+    expect(source).toContain('`/document-store/${activeStoreId}/recording/${item.id}`');
+    expect(source).toContain('`/document-store?store=${activeStoreId}&record=1`');
+  });
+});
+

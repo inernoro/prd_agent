@@ -23,6 +23,7 @@ import { buildSpeakerStats, parseTranscriptSegments } from '@/components/doc-bro
 import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
 import { useIsDesktop } from '@/hooks/useBreakpoint';
 import {
+  DEFAULT_ORGANIZE_STYLE_KEY,
   getAgentRun,
   getLatestAgentRun,
   listDocumentEntriesReal,
@@ -69,6 +70,13 @@ type LoadState =
   | {
       kind: 'ready';
       title: string;
+      /**
+       * 这条录音**真正属于**哪个知识库。深链上的 storeId 只是路由参数，可能与条目实际
+       * 归属不一致（两个都能访问时更是如此）：那样页面会一边显示 A 的原文、一边说它存在
+       * B 里，侧栏与「新录音」也都在操作 B（Codex 第十七轮 P2）。所以一切与库有关的地方
+       * 都读这个值，不读路由参数。
+       */
+      storeId: string;
       storeName: string;
       audioUrl: string;
       noteMd: string;
@@ -255,6 +263,8 @@ export function RecordingResultPage() {
    */
   const [awaitNoteTick, setAwaitNoteTick] = useState(0);
   const noteMissing = state.kind === 'ready' && !state.noteId;
+  /** 与库有关的一切都读这个：加载完成后是条目真正的归属库，加载中才退回路由参数 */
+  const activeStoreId = state.kind === 'ready' ? state.storeId : (storeId ?? '');
   useEffect(() => {
     if (!entryId || !noteMissing) return;
     let stale = false;
@@ -307,11 +317,13 @@ export function RecordingResultPage() {
       // 笔记还没生成时不是错误——那是「还在处理」，交给下面的空态说清楚。
       // 笔记**条目**也要拉：它的 updatedAt 就是「这份整理是什么时候生成的」，
       // 「一键整理」那张已生成卡上的「12 秒前」读的正是它。
+      // 库以**条目自己说的**为准；条目没带就退回路由参数
+      const owningStoreId = entry.storeId || storeId;
       const [audioRes, noteRes, noteEntryRes, storeRes] = await Promise.all([
         getDocumentContent(entry.id),
         noteId ? getDocumentContent(noteId) : Promise.resolve(null),
         noteId ? getDocumentEntry(noteId) : Promise.resolve(null),
-        getDocumentStoreReal(storeId),
+        getDocumentStoreReal(owningStoreId),
       ]);
       if (stale) return;
       const audioUrl = audioRes.success ? (audioRes.data?.fileUrl ?? '') : '';
@@ -322,6 +334,7 @@ export function RecordingResultPage() {
       setState({
         kind: 'ready',
         title: entry.title,
+        storeId: owningStoreId,
         storeName: storeRes?.success ? (storeRes.data?.name ?? '') : '',
         audioUrl,
         noteMd: noteRes?.success ? (noteRes.data?.content ?? '') : '',
@@ -345,8 +358,9 @@ export function RecordingResultPage() {
     // 优先退回来路（多半是知识库里那条录音），没有来路才落到知识库首页——
     // 独立全屏页最容易出的问题就是「进得来出不去」。
     if (window.history.length > 1) navigate(-1);
-    else navigate(`/document-store?store=${storeId ?? ''}`);
-  }, [navigate, storeId]);
+    // 退回列表也要落到真实归属的那个库，别把人送到深链里写错的那个
+    else navigate(`/document-store?store=${activeStoreId}`);
+  }, [activeStoreId, navigate]);
 
   /*
    * 左栏那份文档清单（设计稿 D1/D2）。只在宽屏挂出来，所以也只在宽屏拉——
@@ -368,9 +382,9 @@ export function RecordingResultPage() {
   const isDesktop = useIsDesktop();
   const [siblings, setSiblings] = useState<{ id: string; title: string; isAudio: boolean }[]>([]);
   useEffect(() => {
-    if (!isDesktop || !storeId) return;
+    if (!isDesktop || !activeStoreId) return;
     let alive = true;
-    void listDocumentEntriesReal(storeId).then((res) => {
+    void listDocumentEntriesReal(activeStoreId).then((res) => {
       if (!alive || !res.success) return;
       const items = (res.data as { items?: DocumentEntryLike[] } | null)?.items ?? [];
       setSiblings(items
@@ -382,13 +396,13 @@ export function RecordingResultPage() {
         })));
     });
     return () => { alive = false; };
-  }, [isDesktop, storeId]);
+  }, [isDesktop, activeStoreId]);
 
   const openSibling = useCallback((item: { id: string; isAudio: boolean }) => {
     if (item.id === entryId) return;
-    if (item.isAudio) navigate(`/document-store/${storeId}/recording/${item.id}`);
-    else navigate(`/document-store?store=${storeId}&entry=${item.id}`);
-  }, [entryId, navigate, storeId]);
+    if (item.isAudio) navigate(`/document-store/${activeStoreId}/recording/${item.id}`);
+    else navigate(`/document-store?store=${activeStoreId}&entry=${item.id}`);
+  }, [activeStoreId, entryId, navigate]);
 
   const sidebar = state.kind === 'ready' ? (
     <nav
@@ -408,7 +422,7 @@ export function RecordingResultPage() {
       </div>
       <button
         type="button"
-        onClick={() => navigate(`/document-store?store=${storeId}&record=1`)}
+        onClick={() => navigate(`/document-store?store=${activeStoreId}&record=1`)}
         className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-[12px] text-[14px] font-semibold"
         style={{ background: 'var(--recording-cta-bg)', color: 'var(--recording-cta-fg)' }}
       >
@@ -817,8 +831,18 @@ export function RecordingResultPage() {
     const launchedForEntryId = entryId;
     void (async () => {
       try {
+        /*
+         * 这一查失败（网络抖动、后端 5xx）**不等于**「这条录音没有可复用的转录」。
+         * 把失败也当成「没有」的话，下面就会退回条目级 transcribe——那是一整轮 ASR：
+         * 既多花模型钱，又会用新一轮识别结果覆盖用户已经校对过的原文（Codex 第十七轮 P1）。
+         * 所以只有**查成功、且确实没有已完成产物**时才允许退回；查不到就当场停下。
+         */
         const prior = await getLatestAgentRun(entryId, 'transcribe', { status: 'done', requireOutput: true });
-        const priorRunId = prior.success ? (prior.data?.id ?? '') : '';
+        if (!prior.success) {
+          toast.error(prior.error?.message || '查不到这条录音的转录记录，请稍后再试');
+          return;
+        }
+        const priorRunId = prior.data?.id ?? '';
         // 自定义那一条带着用户写的要求走同一条链路；空要求不当自定义处理
         const style = { styleKey, customPrompt: customPrompt?.trim() || undefined };
         const res = priorRunId
@@ -841,10 +865,14 @@ export function RecordingResultPage() {
     })();
   }, [entryId, running]);
 
-  /** 重新生成：就是按当前这一种再整理一次（当前那一种未知时退回默认的智能摘要） */
+  /**
+   * 重新生成：按当前这一种再整理一次；当前那一种未知时退回默认整理方式。
+   * 默认那一种用**共享常量**，不再就地写 'general'——后端默认改了而这里没跟，
+   * 注册表一致性测试照样绿，这条路却一直在跑旧的那一种（Codex 第十七轮 P2）。
+   */
   const onRestyle = useCallback(() => {
     if (state.kind !== 'ready') return;
-    onPickOrganizeStyle(state.styleKey || 'general');
+    onPickOrganizeStyle(state.styleKey || DEFAULT_ORGANIZE_STYLE_KEY);
   }, [onPickOrganizeStyle, state]);
 
   return (
