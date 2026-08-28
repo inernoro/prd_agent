@@ -166,9 +166,20 @@ describe('处理页重新发起', () => {
     expect(block).toContain('setWatchEpoch');
   });
 
+  /*
+   * 认「置位发生在发请求之前」，不认锁长什么样：它从布尔换成「哪条录音 + 这一发」之后，
+   * 逐字断言会全部误红而行为一点没坏（形状 4a，这类旧守卫这一轮已换掉多条）。
+   */
   it('重试按钮连点两下不并发建两条 run', () => {
-    expect(source).toContain('if (restartingRef.current) return;');
-    expect(source).toContain('restartingRef.current = true;');
+    const at = source.indexOf('onStart={entryId ? () => {');
+    expect(at).toBeGreaterThan(-1);
+    const body = source.slice(at, at + 1200);
+    const guard = body.search(/if \(restarting\w*Ref\.current/);
+    const acquire = body.search(/restarting\w*Ref\.current = /);
+    const request = body.indexOf('transcribeEntry(');
+    expect(guard).toBeGreaterThan(-1);
+    expect(acquire).toBeGreaterThan(guard);
+    expect(request).toBeGreaterThan(acquire);
   });
 });
 
@@ -716,5 +727,34 @@ describe('等笔记的轮询区分「查不到」与「确认没有」', () => {
 
   it('次数上限仍在，不会无限等下去', () => {
     expect(body).toContain('attempts >= MAX_ATTEMPTS');
+  });
+});
+
+/*
+ * 处理页「重新发起」的锁与结果页那把是同一种形状（rule.prd-admin.recording-entry-scope 第 3 条）：
+ * 布尔锁会跨录音卡住，而 A 的成功回调还会清掉 B 正在显示的 run 与失败说明、重起 B 的观察器。
+ */
+describe('处理页重新发起的锁认录音、也认这一发', () => {
+  const source = read('pages/document-store/RecordingProcessingPage.tsx');
+
+  it('锁里存的是哪条录音，不是布尔', () => {
+    expect(source).toContain('const restartingEntryRef = useRef<string | null>(null);');
+    expect(source).toContain('restartingEntryRef.current === entryId) return;');
+    expect(source).not.toMatch(/restartingRef\.current = (true|false)/);
+  });
+
+  it('回包先认录音再动这一屏的状态', () => {
+    const at = source.indexOf('void transcribeEntry(restartedFor)');
+    expect(at).toBeGreaterThan(-1);
+    const body = source.slice(at, at + 900);
+    const gate = body.indexOf('entryIdRef.current !== restartedFor');
+    expect(gate).toBeGreaterThan(-1);
+    for (const write of ['setFailure(null)', 'setRun(null)', 'setWatchEpoch(']) {
+      expect(body.indexOf(write)).toBeGreaterThan(gate);
+    }
+  });
+
+  it('只有最新那一发释放锁', () => {
+    expect(source).toMatch(/if \(restartTokenRef\.current === token\) restartingEntryRef\.current = null;/);
   });
 });

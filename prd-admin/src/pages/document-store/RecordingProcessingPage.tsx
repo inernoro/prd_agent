@@ -213,7 +213,18 @@ export function RecordingProcessingPage() {
    */
   const [watchEpoch, setWatchEpoch] = useState(0);
   /** 「已经在发起了」同步置位：重试按钮仍然在屏上，连点两下不该并发建两条 run */
-  const restartingRef = useRef(false);
+  /*
+   * 重新发起的锁**认录音、也认这一发**（doc/rule.prd-admin.recording-entry-scope 第 3 条）。
+   * 结果页那把锁刚因为同样的问题改过两次，这一处是同一种形状：
+   *   布尔锁在 A 的请求还在飞时切到 B，B 上点重试静默无反应；
+   *   而 A 的成功回调还会清掉 B 正在显示的 run 与失败说明、把 B 的观察器重起一遍
+   *   ——那份响应根本不属于 B（Codex 第三十三轮 P2）。
+   */
+  /** 当前这一屏是哪条录音：await 回来之后拿它认人 */
+  const entryIdRef = useRef('');
+  entryIdRef.current = entryId ?? '';
+  const restartingEntryRef = useRef<string | null>(null);
+  const restartTokenRef = useRef(0);
   useEffect(() => {
     if (!entryId) return;
     let stale = false;
@@ -330,15 +341,22 @@ export function RecordingProcessingPage() {
               onPlayRequest={requestRecordingPlay}
               onEnterResult={goResult}
               onStart={entryId ? () => {
-                if (restartingRef.current) return;
-                restartingRef.current = true;
-                void transcribeEntry(entryId).then((res) => {
+                if (restartingEntryRef.current === entryId) return;
+                const restartedFor = entryId;
+                restartingEntryRef.current = restartedFor;
+                const token = ++restartTokenRef.current;
+                void transcribeEntry(restartedFor).then((res) => {
                   if (!res.success) { toast.error(res.error?.message || '重新发起失败'); return; }
+                  // 回来时可能已经切到另一条录音了：这份响应属于 restartedFor，不属于现在这一屏
+                  if (entryIdRef.current !== restartedFor) return;
                   // 旧的失败说明当场撤掉，观察器重起一遍去跟新的这条 run
                   setFailure(null);
                   setRun(null);
                   setWatchEpoch(v => v + 1);
-                }).finally(() => { restartingRef.current = false; });
+                }).finally(() => {
+                  // 只有最新那一发有资格释放，后到的旧请求不许放掉别人举着的锁
+                  if (restartTokenRef.current === token) restartingEntryRef.current = null;
+                });
               } : undefined}
               onOpenNote={() => goResult()}
             />
