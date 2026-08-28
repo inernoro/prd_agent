@@ -1320,20 +1320,49 @@ export function QuickstartPage() {
                         输入框里的内容同时进下面的 cURL 片段——两边永远是同一次请求。
                       */}
                       <div className="lg-qs-io">
+                        {/*
+                          按调用类型区分输入：看图这一类没有图片就不成立，所以图片是独立的一格，
+                          不是藏在「或上传文本」后面的一个可选动作。没给图时如实说清用的是内置测试图
+                          （只证明链路通，证明不了模型识图对不对），而不是静默塞一张 1x1 让人以为测过了。
+                        */}
+                        {displayBundle.requestType === 'vision' ? (
+                          <div className="lg-qs-io-block">
+                            <div className="lg-qs-io-head">
+                              <span className="lg-qs-field-title">要看的图</span>
+                              <label className="lg-qs-upload">
+                                <Upload size={13} />
+                                {attachment ? attachment.name : '上传图片'}
+                                <input
+                                  type="file"
+                                  aria-label="上传要看的图"
+                                  accept="image/*"
+                                  onChange={(event) => { void pickAttachment(event.target.files?.[0] ?? null); event.target.value = ''; }}
+                                />
+                              </label>
+                              {attachment ? <button type="button" className="lg-text-link" onClick={() => { setAttachment(null); setTestResult(null); }}>移除</button> : null}
+                            </div>
+                            <div className={`lg-qs-io-image${attachment ? ' is-ready' : ''}`}>
+                              {attachment
+                                ? <img src={attachment.dataUrl} alt="要发给模型看的图" />
+                                : <span className="lg-qs-io-empty">没给图就发一张 1x1 测试图：只能证明链路通，证明不了模型识图对不对。</span>}
+                            </div>
+                          </div>
+                        ) : null}
+
                         <div className="lg-qs-io-block">
                           <div className="lg-qs-io-head">
-                            <span className="lg-qs-field-title">你要发什么</span>
-                            <label className="lg-qs-upload">
-                              <Upload size={13} />
-                              {attachment ? attachment.name : displayBundle.requestType === 'vision' ? '上传图片' : '或上传文本'}
-                              <input
-                                type="file"
-                                aria-label="上传测试输入"
-                                accept={displayBundle.requestType === 'vision' ? 'image/*' : '.txt,.md,.json,text/*'}
-                                onChange={(event) => { void pickAttachment(event.target.files?.[0] ?? null); event.target.value = ''; }}
-                              />
-                            </label>
-                            {attachment ? <button type="button" className="lg-text-link" onClick={() => { setAttachment(null); setTestResult(null); }}>移除图片</button> : null}
+                            <span className="lg-qs-field-title">{displayBundle.requestType === 'vision' ? '要问什么' : '你要发什么'}</span>
+                            {displayBundle.requestType === 'vision' ? null : (
+                              <label className="lg-qs-upload">
+                                <Upload size={13} />或上传文本
+                                <input
+                                  type="file"
+                                  aria-label="上传测试输入"
+                                  accept=".txt,.md,.json,text/*"
+                                  onChange={(event) => { void pickAttachment(event.target.files?.[0] ?? null); event.target.value = ''; }}
+                                />
+                              </label>
+                            )}
                           </div>
                           <textarea
                             className="lg-qs-io-input"

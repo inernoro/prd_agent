@@ -8616,11 +8616,24 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         var modelId = (obj["id"] as System.Text.Json.Nodes.JsonValue)?.ToString();
         if (string.IsNullOrWhiteSpace(modelId)) continue;
         var pricing = ProviderPresets.ReadPricing(obj);
+        // 用途优先查内置名录，查不到才退回上游声明 / 关键词猜测，并把来源如实带给前端：
+        // 「猜出来的用途」曾经和「查出来的用途」长得一模一样，用户没有任何办法分辨该不该信。
+        var declared = (obj["capabilities"] as System.Text.Json.Nodes.JsonArray)?
+            .Select(n => (n as System.Text.Json.Nodes.JsonValue)?.ToString() ?? string.Empty)
+            .Where(x => x.Length > 0).ToList();
+        var resolved = ModelCatalog.ResolveCapabilities(modelId, declared);
+        var catalogEntry = ModelCatalog.Find(modelId);
         items.Add(new UpstreamModelItem
         {
             ModelId = modelId,
             DisplayName = (obj["name"] as System.Text.Json.Nodes.JsonValue)?.ToString(),
-            InferredCapabilities = ProviderPresets.InferCapabilities(modelId).ToList(),
+            InferredCapabilities = resolved.Capabilities.ToList(),
+            CapabilitySource = resolved.Source,
+            InCatalog = catalogEntry is not null,
+            CatalogDisplayName = catalogEntry?.DisplayName,
+            CatalogVendor = catalogEntry?.Vendor,
+            AcceptsImageInput = catalogEntry?.AcceptsImageInput ?? false,
+            RequiresImageInput = catalogEntry?.RequiresImageInput ?? false,
             InputPricePerMillion = pricing?.InputPricePerMillion,
             OutputPricePerMillion = pricing?.OutputPricePerMillion,
             PricePerCall = pricing?.PricePerCall,
@@ -8696,7 +8709,19 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             continue;
         }
 
-        var caps = (entry.Capabilities ?? ProviderPresets.InferCapabilities(modelId).ToList())
+        // 白名单：名录外的模型必须由管理员显式放行才准入库。
+        // 拦在这里而不是拦在请求时，是因为请求只会打到池成员——进不了库就进不了池，
+        // 「不允许请求白名单之外的模型」这件事由此成立，且用户在导入那一刻就知道，
+        // 而不是等某次真实调用炸了才发现。
+        if (!ModelCatalog.Contains(modelId) && !entry.AllowOutsideCatalog)
+        {
+            result.Skipped++;
+            result.BlockedOutsideCatalog.Add(modelId);
+            continue;
+        }
+
+        // 与发现端点同源：名录 > 上游声明 > 猜。用户在界面上勾过的用途仍然最优先。
+        var caps = (entry.Capabilities ?? ModelCatalog.ResolveCapabilities(modelId, null).Capabilities.ToList())
             // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
             // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
             // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
@@ -8789,6 +8814,17 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         }
     }
 
+    // 被白名单拦下的要给可执行的下一步，不能只报一个数字。
+    // 池同步失败那条更严重，已经占了 Message 就不覆盖它——两件事都发生时先说没进池那件。
+    if (result.BlockedOutsideCatalog.Count > 0 && result.Message is null)
+    {
+        result.Message = $"有 {result.BlockedOutsideCatalog.Count} 个模型不在内置名录里，已拦下未导入："
+            + $"{string.Join("、", result.BlockedOutsideCatalog.Take(5))}"
+            + (result.BlockedOutsideCatalog.Count > 5 ? " 等" : string.Empty)
+            + "。名录外的模型没人说得清它能吃什么、吐什么，入池后会被调度到、一请求就报错；"
+            + "确实要用就在勾选时打开「放行名录外模型」，这个动作会记进审计。";
+    }
+
     await WriteOperationAuditAsync(
         operationAudits, http,
         action: "platform.models.import",
@@ -8802,6 +8838,14 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             { "requested", result.Requested },
             { "created", result.Created },
             { "skipped", result.Skipped },
+            // 名录外放行是「有人拍板」的动作，必须落到审计上：日后排查「这个怪模型谁放进来的」
+            // 要查得到人，否则白名单就退化成一个谁都能绕的提示。
+            { "blockedOutsideCatalog", result.BlockedOutsideCatalog.Count },
+            { "allowedOutsideCatalog", new BsonArray(entries
+                .Where(e => e.AllowOutsideCatalog && !string.IsNullOrWhiteSpace(e.ModelId)
+                    && !ModelCatalog.Contains(e.ModelId))
+                .Select(e => e.ModelId!.Trim())
+                .Where(m => result.CreatedModelIds.Contains(m, StringComparer.OrdinalIgnoreCase))) },
         });
 
     return Json(ApiEnvelope<ImportUpstreamModelsResult>.Ok(result), jsonOptions, 201);

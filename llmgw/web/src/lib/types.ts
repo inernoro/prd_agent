@@ -720,6 +720,14 @@ export type UpstreamModelItem = {
   priceCurrency?: string | null;
   priceSource?: string | null;
   alreadyImported: boolean;
+  /** 用途来源：catalog = 内置名录查到的、upstream = 上游声明的、guess = 按标识猜的。 */
+  capabilitySource: string;
+  /** 是否在内置名录里。不在名录的要显式放行才准导入。 */
+  inCatalog: boolean;
+  catalogDisplayName?: string | null;
+  catalogVendor?: string | null;
+  acceptsImageInput: boolean;
+  requiresImageInput: boolean;
 };
 export type UpstreamModelsData = {
   probedUrl: string;
@@ -736,6 +744,8 @@ export type UpstreamModelsData = {
 export type ImportUpstreamModelEntry = {
   modelId: string;
   capabilities?: string[];
+  /** 管理员对名录外模型的显式放行；会进审计。 */
+  allowOutsideCatalog?: boolean;
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
   pricePerCall?: number | null;
@@ -747,6 +757,8 @@ export type ImportUpstreamModelsResult = {
   skipped: number;
   skippedModelIds: string[];
   createdModelIds: string[];
+  /** 因为不在名录、又没显式放行被拦下的模型（与「已存在」分开列）。 */
+  blockedOutsideCatalog?: string[];
   /** 模型已入库但没进默认池：池路由选不到它们，必须如实告知 */
   poolSyncFailed?: boolean;
   message?: string;
