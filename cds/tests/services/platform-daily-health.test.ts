@@ -170,6 +170,106 @@ describe('备份新鲜度与恢复演练', () => {
     expect(v.findings.some((f) => f.id === 'backup.stale')).toBe(true);
   });
 
+  /**
+   * 真机事故（2026-08-28）：备份每 6 小时跑一轮、每轮 14 成功 2 失败，体检却天天报
+   * 「读不到上一轮周期备份的结果」。根因在落盘那一行——只要有目标没成，完成时间就被
+   * 抹成 null，于是「跑没跑」被「备没备全」绑架（形状 1）。
+   *
+   * 下面两条把修好之后的契约钉死：**有失败不影响新鲜度判定**，失败自己有一条判据。
+   */
+  it('有目标失败也不影响「跑没跑」的判定——不许再报读不到', () => {
+    const v = evaluateDailyHealth(input({
+      backup: {
+        lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
+        coverageGaps: [],
+        failedTargets: [{ id: 'redis', projectId: 'alpha' }, { id: 'cds-state-mongo', projectId: null }],
+      },
+    }));
+    expect(
+      v.findings.some((f) => f.id === 'backup.unknown'),
+      '一轮跑完了、只是有目标失败，就不该说「读不到结果、不确定备份有没有在跑」',
+    ).toBe(false);
+    expect(v.findings.some((f) => f.id === 'backup.stale')).toBe(false);
+  });
+
+  it('有目标失败 → critical 并点名，不许因为拆开两个事实就变成沉默', () => {
+    const v = evaluateDailyHealth(input({
+      backup: {
+        lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
+        coverageGaps: [],
+        failedTargets: [{ id: 'redis', projectId: 'alpha' }, { id: 'cds-state-mongo', projectId: null }],
+      },
+    }));
+    const failed = v.findings.find((f) => f.id === 'backup.failed-targets');
+    expect(
+      failed,
+      '拆开「跑没跑」和「备全没备全」之后，长期失败的目标原来是被那条假 critical 顺带'
+      + '遮着的。这里没有一条真判据接住它，就是把假警报换成了沉默',
+    ).toBeTruthy();
+    expect(failed!.severity).toBe('critical');
+    // 带项目说清是哪一台。真机一轮里有**六个**叫 redis 的目标（各项目一个），
+    // 只报裸 id 的告警路由不到人，等于没有这条告警（Codex review P2）。
+    expect(failed!.message).toContain('alpha 项目的 redis');
+    expect(failed!.message).toContain('cds-state-mongo');
+    expect(v.severity).toBe('critical');
+  });
+
+  /**
+   * `BackupOutcome.localOnly` 的注释早就写着：本地副本已落地并验过、只是离机那一程
+   * 没成，这类和「什么都没备成」是两码事。上一版把两者一起塞进 failedTargets 并说
+   * 「手上没有它们的新副本」——直接违反了那条契约，会把运维支去找一份其实存在的
+   * 本地备份，而真正该修的离机通道没人管（Codex review P2）。
+   */
+  it('本地备成了、只是离机没上去 → 单独一条 warn，不许说成「没有新副本」', () => {
+    const v = evaluateDailyHealth(input({
+      backup: {
+        lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
+        coverageGaps: [],
+        offsiteOnlyTargets: [{ id: 'mysql', projectId: 'beta' }],
+      },
+    }));
+    expect(v.findings.some((f) => f.id === 'backup.failed-targets')).toBe(false);
+    const offsite = v.findings.find((f) => f.id === 'backup.offsite-only-failed');
+    expect(offsite, '离机没上去必须自己有一条，不能静默').toBeTruthy();
+    expect(offsite!.severity, '同机副本还在，丢的是异地冗余，不该和「一份都没有」同一档').toBe('warn');
+    expect(offsite!.message).toContain('beta 项目的 mysql');
+    expect(offsite!.message).not.toContain('手上没有');
+  });
+
+  it('两类失败同时存在时各报各的，措辞不串', () => {
+    const v = evaluateDailyHealth(input({
+      backup: {
+        lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
+        coverageGaps: [],
+        failedTargets: [{ id: 'redis', projectId: 'alpha' }],
+        offsiteOnlyTargets: [{ id: 'mysql', projectId: 'beta' }],
+      },
+    }));
+    const failed = v.findings.find((f) => f.id === 'backup.failed-targets')!;
+    const offsite = v.findings.find((f) => f.id === 'backup.offsite-only-failed')!;
+    expect(failed.message).toContain('alpha 项目的 redis');
+    expect(failed.message).not.toContain('mysql');
+    expect(offsite.message).toContain('beta 项目的 mysql');
+    expect(offsite.message).not.toContain('redis');
+  });
+
+  it('失败目标和覆盖缺口是两件事，各报各的', () => {
+    const v = evaluateDailyHealth(input({
+      backup: {
+        lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
+        coverageGaps: ['minio', 'kafka'],
+        failedTargets: [{ id: 'redis', projectId: 'alpha' }],
+      },
+    }));
+    const ids = v.findings.map((f) => f.id);
+    // 「本该能备但没备成」和「按类型压根备不了」需要的动作完全不同：前者去查为什么失败，
+    // 后者去补一种导出手段。合成一条就等于把两种行动指引揉成一句谁也照做不了的话。
+    expect(ids).toContain('backup.failed-targets');
+    expect(ids).toContain('backup.coverage-gaps');
+    expect(v.findings.find((f) => f.id === 'backup.failed-targets')!.message).not.toContain('minio');
+    expect(v.findings.find((f) => f.id === 'backup.coverage-gaps')!.message).not.toContain('redis');
+  });
+
   it('有覆盖缺口 → warn，并点名是哪几个', () => {
     const v = evaluateDailyHealth(input({
       backup: { lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(), coverageGaps: ['nacos', 'kafka'] },

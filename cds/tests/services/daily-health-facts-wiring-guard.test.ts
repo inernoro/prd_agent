@@ -38,6 +38,21 @@ function windowAfter(source: string, anchor: string, size: number): string {
   return source.slice(at, at + size);
 }
 
+/**
+ * 剥掉注释再断言。**「这段代码里不许出现 X」这类负向断言必须用它。**
+ *
+ * 否则守卫会被自己要防的那段事故写法的**说明文字**触发：修好之后，注释里通常正要
+ * 写清楚「原来错在 `X`」，于是守卫永远红，下一个人只好把断言删掉或改宽——一条会
+ * 误报的守卫最后一定被拆掉。这本身就是形状 6 的缩影：判据读的不是真正生效的那个东西。
+ */
+function codeOnly(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .map((line) => line.replace(/(^|\s)\/\/.*$/, '$1'))
+    .join('\n');
+}
+
 describe('每日体检的事实来源接线守卫', () => {
   it('事实映射把防火墙状态一起带过去了', () => {
     const source = read('src/index.ts');
@@ -129,6 +144,109 @@ describe('每日体检的事实来源接线守卫', () => {
     const merge = windowAfter(source, 'let args: string[] = [];', 400);
     expect(merge, 'Entrypoint 采下来必须并进 args').toContain('...entrypoint');
     expect(merge).toContain('...cmd');
+  });
+
+  /**
+   * 「这一轮跑完了」与「这一轮备全了」必须分开存（真机事故，2026-08-28）。
+   *
+   * 落盘那一行原来是 `completedAt: coverageComplete ? completedAt : null`：只要有一个
+   * 目标没成，完成时间就被抹空。线上恰好长期有两个目标失败（redis / cds-state-mongo），
+   * 于是每一轮都把时间抹掉，读它的两处判据只能说「读不到上一轮周期备份的结果——不确定
+   * 备份到底有没有在跑」，而备份**每 6 小时就在跑、还留着完整的成败清单**。
+   *
+   * 一个字段回答两个问题，就必然在某一端说假话（形状 1）。更糟的是这盏灯从此废了：
+   * 备份哪天真的整个停掉，报出来的还是同一句话——既不能证明有问题、也不能证明没问题。
+   *
+   * 这两条守卫钉源码，因为落盘与读盘都跑在定时器里、依赖 docker 与真实文件系统，
+   * 纯函数用例够不着。红绿闭环验过：改回事故写法，对应用例会红。
+   */
+  it('落盘时完成时间不被「备全没备全」绑架', () => {
+    const source = read('src/index.ts');
+    const write = codeOnly(windowAfter(source, 'const allCoverageGaps = [...coverageGaps,', 2_400));
+    expect(
+      /completedAt:\s*coverageComplete\s*\?/.test(write),
+      '完成时间只回答「跑没跑」。按 coverageComplete 抹空，会让一个长期部分失败的部署'
+      + '天天被报成「读不到备份结果」，而它其实每轮都在跑',
+    ).toBe(false);
+    expect(write, '失败目标要留名字，否则拆开两个事实之后没人接住「一直没备成」').toContain('failedTargets:');
+  });
+
+  it('读盘时不许再抹一次空（同一个判据别抄两份）', () => {
+    const source = read('src/index.ts');
+    const reader = codeOnly(windowAfter(source, 'function readBackupHealth()', 1_600));
+    expect(
+      /coverageComplete\s*===\s*false/.test(reader),
+      '同一个「把跑没跑和备没备全混成一件事」的判据曾经被抄了两份（形状 3）。'
+      + '只修落盘那一处不够——基础设施健康那两条仍会报「备份时间未知，可能没有可恢复副本」',
+    ).toBe(false);
+  });
+
+  it('体检的事实里带上两类失败目标', () => {
+    const source = read('src/index.ts');
+    const facts = windowAfter(source, "// 事实三：备份。", 2_400);
+    expect(facts, '失败目标要从落盘结果读出来').toContain('value.failedTargets');
+    expect(
+      facts,
+      '「本地备成了、只是离机没上去」要单独读。合进 failedTargets 会说成「手上没有新副本」，'
+      + '把运维支去找一份其实存在的本地备份',
+    ).toContain('value.offsiteOnlyTargets');
+    expect(
+      source,
+      '读出来还要真的喂进判定（形状 2：建了一半）',
+    ).toContain('backup: { lastCompletedAt, coverageGaps, failedTargets, offsiteOnlyTargets }');
+  });
+
+  /**
+   * 「本地备份最近一次成功」这个看门狗信号不许被同轮其它目标的成功刷绿（Codex review P1）。
+   *
+   * 上一轮把落盘的 completedAt 改成「每轮都写」是对的——每日体检要的就是「还在跑吗」。
+   * 但基础设施看门狗读的是同一个值、渲染成「本地备份」，于是一个本地导出连续失败
+   * 几天的目标（真机上那个拿不到认证凭据的 redis）会被刷成绿灯。治好一个消费者的
+   * 假警报、同时给另一个造了假绿灯，不叫修好。
+   *
+   * 所以落盘必须有第三个时间戳 localVerifiedAt，且看门狗必须读它。
+   */
+  /**
+   * 落盘时两类失败必须分开装（Codex review P2）。
+   *
+   * 这条守卫是被红绿闭环逼出来的：把 `localFailures` 改回 `failed`（两类又合成一类），
+   * 纯函数用例和其它守卫**全绿**——因为拆分发生在落盘那一步，跑在定时器里、依赖真实
+   * 文件系统，用例够不着。判据「改动删掉后测试仍全绿就需要一条守卫」正是说这个。
+   */
+  it('落盘时把「本地就没成」和「只是离机没上去」分开装', () => {
+    const source = read('src/index.ts');
+    const write = codeOnly(windowAfter(source, 'const allCoverageGaps = [...coverageGaps,', 3_000));
+    expect(
+      /localFailures\s*=\s*failed\.filter\(\(outcome\)\s*=>\s*!outcome\.localOnly\)/.test(write),
+      '本地失败要把 localOnly 那批排掉：它们的本地副本已过校验并转正，就在盘上',
+    ).toBe(true);
+    expect(
+      /offsiteOnlyFailures\s*=\s*failed\.filter\(\(outcome\)\s*=>\s*outcome\.localOnly\)/.test(write),
+      '离机没上去的那批要单独成一列，否则它们要么被说成「没有新副本」、要么彻底消失',
+    ).toBe(true);
+    expect(write, '两列都要落盘').toContain('offsiteOnlyTargets:');
+    // 身份带项目：真机一轮里有六个叫 redis 的目标，裸 id 的告警路由不到人。
+    expect(write, '失败目标要带 projectId').toContain('projectId: outcome.projectId');
+  });
+
+  it('看门狗的「本地备份」读 localVerifiedAt，不读每轮都前进的 completedAt', () => {
+    const source = read('src/index.ts');
+    const write = codeOnly(windowAfter(source, 'const allCoverageGaps = [...coverageGaps,', 2_800));
+    expect(write, '落盘要单独记「本地全成」的时刻').toContain('localVerifiedAt:');
+    expect(
+      /localVerifiedAt:\s*localFailures\.length === 0/.test(write),
+      '它只有在本轮本地一个都没失败时才前进；离机没上去（localOnly）不算本地失败',
+    ).toBe(true);
+
+    const reader = codeOnly(windowAfter(source, 'function readBackupHealth()', 1_800));
+    expect(
+      /localVerifiedAt:\s*value\.localVerifiedAt/.test(reader),
+      '看门狗这一路必须取 localVerifiedAt。取 completedAt 会让本地连续失败的目标被刷绿',
+    ).toBe(true);
+    expect(
+      source,
+      '取到了还要真的接进看门狗的输入（形状 2）',
+    ).toContain('backupCompletedAt: backup.localVerifiedAt');
   });
 
   it('暴露面自检不许在「没认出容器」时早退', () => {
