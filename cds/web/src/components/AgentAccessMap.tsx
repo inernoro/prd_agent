@@ -41,6 +41,10 @@ import {
   getAgentMissionCategoriesForScope,
   getAgentMissionDefinition,
   getAgentMissionsForCategory,
+  isRoleFocusedCategory,
+  isRoleFocusedMission,
+  sortCategoriesForRole,
+  sortMissionsForRole,
   PROJECT_AGENT_CONTEXT_IDS,
   SYSTEM_AGENT_CONTEXT_IDS,
   type AgentPageContext,
@@ -50,6 +54,13 @@ import {
   type AgentMissionIconKey,
   type AgentMissionScope,
 } from '@/lib/agent-onboarding';
+import { useAgentRoleSelection } from '@/hooks/useAgentRoleSelection';
+import { AGENT_ROLE_PROFILES } from '@/lib/agent-starter';
+
+/** 角色 id 转中文名；不认识的取值原样返回，不猜。 */
+function roleLabelOf(role: string): string {
+  return AGENT_ROLE_PROFILES.find((profile) => profile.id === role)?.label || role;
+}
 
 export type AgentAccessMapSelection =
   | { kind: 'system' }
@@ -132,6 +143,13 @@ export function AgentAccessMap({
   const [draftSelection, setDraftSelection] = useState<AgentAccessMapSelection>(selection);
   const [draftMissionId, setDraftMissionId] = useState<AgentPageContextId>(context.id);
   const [draftCategoryId, setDraftCategoryId] = useState<AgentMissionCategoryId>(context.categoryId);
+  const [roleSelection, setRoleSelection] = useAgentRoleSelection();
+  // 只有用户真的声明过角色才排序和标注。没声明就保持注册表原顺序——
+  // 默认值不许冒充声明，否则开发第一次进来会看到「产品经理常用」。
+  const roleId = roleSelection.declared ? roleSelection.roleId : undefined;
+  const roleLabel = roleId
+    ? AGENT_ROLE_PROFILES.find((profile) => profile.id === roleId)?.label || ''
+    : '';
 
   useEffect(() => {
     if (!open) return;
@@ -144,15 +162,27 @@ export function AgentAccessMap({
   const draftSelectionLabel = selectionName(draftSelection, projects);
   const draftSelectionCode = selectionCode(draftSelection, projects);
   const draftScope = missionScopeForSelection(draftSelection);
-  const allDraftMissions = missionsForSelection(draftSelection);
-  const draftCategories = getAgentMissionCategoriesForScope(draftScope)
-    .filter((category) => allDraftMissions.some((mission) => mission.categoryId === category.id));
+  const allDraftMissions = sortMissionsForRole(missionsForSelection(draftSelection), roleId);
+  // 分类条也要按角色排：任务条一次只渲染一个分类，分类顺序不动的话，
+  // 角色排序只在用户恰好停在的那个分类内部生效，横幅的承诺就落空了。
+  const draftCategories = sortCategoriesForRole(
+    getAgentMissionCategoriesForScope(draftScope)
+      .filter((category) => allDraftMissions.some((mission) => mission.categoryId === category.id)),
+    allDraftMissions,
+    roleId,
+  );
+  // 声明了角色不等于这个作用域里排序真的动了：开发的首屏任务全是项目级的，
+  // 在「CDS 控制中枢」这一侧一条都命不中，此时若照样宣称「已按开发重排」，
+  // 就是横幅说了一件界面上没发生的事。没命中就不提排序。
+  const roleAffectsOrder = roleId
+    ? allDraftMissions.some((mission) => isRoleFocusedMission(roleId, mission.id))
+    : false;
   const effectiveCategoryId = draftCategories.some((category) => category.id === draftCategoryId)
     ? draftCategoryId
     : allDraftMissions[0].categoryId;
   const draftMissions = draftSelection.kind === 'new'
     ? allDraftMissions
-    : getAgentMissionsForCategory(draftScope, effectiveCategoryId);
+    : getAgentMissionsForCategory(draftScope, effectiveCategoryId, roleId);
   const draftMission = allDraftMissions.find((mission) => mission.id === draftMissionId)
     || draftMissions[0]
     || allDraftMissions[0];
@@ -175,7 +205,11 @@ export function AgentAccessMap({
       selection: { kind: 'project', projectId: project.id } as AgentAccessMapSelection,
       name: project.name,
       code: project.slug,
-      metric: `${project.branchCount || 0} 条分支`,
+      // 角色是这个项目的 Agent 已声明的身份，读自 /api/projects。
+      // 没声明过就只显示分支数，不编一个默认角色顶上。
+      metric: project.agentProfile
+        ? `${project.branchCount || 0} 条分支 · ${roleLabelOf(project.agentProfile.role)}`
+        : `${project.branchCount || 0} 条分支`,
     })),
     {
       key: 'new',
@@ -196,7 +230,7 @@ export function AgentAccessMap({
 
   const chooseCategory = (categoryId: AgentMissionCategoryId): void => {
     if (categoryId === effectiveCategoryId) return;
-    const firstMission = getAgentMissionsForCategory(draftScope, categoryId)[0];
+    const firstMission = getAgentMissionsForCategory(draftScope, categoryId, roleId)[0];
     if (!firstMission) return;
     setDraftCategoryId(categoryId);
     setDraftMissionId(firstMission.id);
@@ -312,7 +346,32 @@ export function AgentAccessMap({
               <div className="cds-agent-mission-list-meta">
                 <span>
                   <strong>{allDraftMissions.length} 个 Agent 任务</strong>
-                  <small>Agent 会先静默检查项目凭据；已有权限时不会重复要求批准。</small>
+                  <small>
+                    {roleLabel && roleAffectsOrder
+                      ? `已按「${roleLabel}」重排分类与任务，常用的排在最前；`
+                      : ''}
+                    Agent 会先静默检查项目凭据；已有权限时不会重复要求批准。
+                  </small>
+                  {/* 在这里就能设角色：否则「要用任务排序得先设角色，
+                      要设角色得走完上手助手五步」会形成一个死循环。 */}
+                  <span className="cds-agent-role-picker">
+                    <small>{roleId ? '换个角色排序：' : '按角色排序（还没选过）：'}</small>
+                    {AGENT_ROLE_PROFILES.map((profile) => (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        aria-pressed={roleId === profile.id}
+                        data-selected={roleId === profile.id ? 'true' : 'false'}
+                        onClick={() => setRoleSelection({
+                          ...roleSelection,
+                          roleId: profile.id,
+                          declared: true,
+                        })}
+                      >
+                        {profile.label}
+                      </button>
+                    ))}
+                  </span>
                 </span>
                 <ShieldCheck aria-hidden="true" />
               </div>
@@ -321,12 +380,15 @@ export function AgentAccessMap({
                   {draftCategories.map((category) => {
                     const selected = category.id === effectiveCategoryId;
                     const count = allDraftMissions.filter((mission) => mission.categoryId === category.id).length;
+                    const roleFocused = isRoleFocusedCategory(allDraftMissions, roleId, category.id);
                     return (
                       <button
                         key={category.id}
                         type="button"
                         aria-pressed={selected}
                         data-selected={selected ? 'true' : 'false'}
+                        data-role-focused={roleFocused ? 'true' : 'false'}
+                        title={roleFocused ? `${roleLabel}常用` : undefined}
                         onClick={() => chooseCategory(category.id)}
                       >
                         <span>{category.label}</span>
@@ -365,7 +427,13 @@ export function AgentAccessMap({
                       </span>
                       <span className="cds-agent-mission-card-copy">
                         <strong>{mission.shortLabel}</strong>
-                        <small>{fromCurrentPage ? '当前页面入口' : mission.cardDescription}</small>
+                        <small>
+                          {fromCurrentPage
+                            ? '当前页面入口'
+                            : isRoleFocusedMission(roleId, mission.id)
+                              ? `${roleLabel}常用 · ${mission.cardDescription}`
+                              : mission.cardDescription}
+                        </small>
                       </span>
                       <Check className="cds-agent-mission-card-check" aria-hidden="true" />
                     </button>
