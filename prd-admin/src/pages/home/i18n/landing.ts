@@ -734,8 +734,8 @@ const zh: TranslationShape = {
       title: '整个系统哪里在被用、哪里在硌人，摊成一张图',
       description:
         '每一块是一个接口，面积是被调用的次数，颜色是健康。绝大多数时候它是一片安静的冷色海；报错和变慢会自己从平静里跳出来，点一下直接下钻到那条痛点。',
-      note: '数据来自真实的请求日志，不是埋点问卷——没人填表，图自己就画出来了。',
-      windowLabel: '近 7 天 · 共 41.2 万次请求',
+      note: '真实那一页是请求日志自己画出来的，不用埋点问卷、没人填表。这里画的分区与接口取自真实的接口清单，面积与数字是示意——线上的实际分布去体验地图那一页看。',
+      windowLabel: '示意数据 · 分区取自真实接口清单',
       legend: { ok: '正常', slow: '偏慢', error: '报错' },
       // 分区名取自后端 TeamActivityController.ModuleLabels，块名取自同文件 SegmentLabels。
       // 从 5 区 18 块扩到 9 区 38 块：treemap 的说服力就在"密"——块少了看着像示意图，
@@ -873,7 +873,7 @@ const zh: TranslationShape = {
       title: '一套配置连上所有模型，坏了自动换下一个',
       description:
         '不是一排 logo。照着网关控制台那张表画的：每一行是一个模型池，池里成员按顺位排队，谁挂了后面的自动顶上——业务代码只认池名，看不见这些。',
-      note: '池内成员换人由网关决定，跨池代选默认禁止；单个成员坏了只更新它自己的健康，不会把整个目录清空。表里的数字是示意，用来说明顺位与兜底怎么工作，不是线上实测——真实指标在网关观测台看。',
+      note: '池内成员换人由网关决定，跨池代选默认禁止；单个成员坏了只更新它自己的健康，不会把整个目录清空。这一屏的数字是示意，用来说明顺位与兜底怎么工作，不是线上实测——真实指标在网关观测台看。',
       counts: [
         { value: '3', label: '接入平台' },
         { value: '17', label: '可调用模型' },
@@ -1304,8 +1304,8 @@ const en: TranslationShape = {
       title: 'Where the system gets used, and where it hurts — on one map',
       description:
         'Every block is one endpoint, its area is how often it was called, its colour is health. Most of the time this is a quiet cold-coloured sea; errors and slowdowns push themselves out of the calm, and one click drills into that pain point.',
-      note: 'This comes from real request logs, not a survey — nobody fills anything in, the map draws itself.',
-      windowLabel: 'Last 7 days · 412k requests',
+      note: 'On the real page this map draws itself from request logs — no survey, nobody fills anything in. The groups and endpoints here are taken from the real endpoint list; the areas and numbers are illustrative — see the live page for the actual distribution.',
+      windowLabel: 'Illustrative · groups taken from the real endpoint list',
       legend: { ok: 'Healthy', slow: 'Slow', error: 'Errors' },
       groups: [
         {
@@ -1440,7 +1440,7 @@ const en: TranslationShape = {
       title: 'One config reaches every model, and failover is automatic',
       description:
         'Not a row of logos. Drawn after the real table in the gateway console: one row per model pool, members queued by priority, and whoever is next takes over when one breaks — product code only ever names the pool.',
-      note: 'Swapping members inside a pool is the gateway’s call; picking across pools is off by default. One member failing updates only its own health — it never wipes the catalogue. The figures here are illustrative — they show how ranking and failover behave, not measured production traffic; live metrics live in the gateway console.',
+      note: 'Swapping members inside a pool is the gateway’s call; picking across pools is off by default. One member failing updates only its own health — it never wipes the catalogue. The figures on this panel are illustrative — they show how ranking and failover behave, not measured production traffic; live metrics live in the gateway console.',
       counts: [
         { value: '3', label: 'Providers' },
         { value: '17', label: 'Callable models' },

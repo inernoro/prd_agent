@@ -242,6 +242,34 @@ export function buildLandingPreviewPrompt(slot: LandingPreviewSlot, styleKey?: s
   return `${landingArtStyle(styleKey).prefix}\n\n${slot.subject}`;
 }
 
+/**
+ * 把一段**已经存过的**提示词换到当前拍法上：前缀替成新拍法的，画面描述原样留着。
+ *
+ * 为什么要这个：槽位一旦生成过，库里存的就是「上一次那个拍法的前缀 + 画面描述」。
+ * 重新生成时如果直接拿它去跑，换拍法这件事就不会发生——用户切了拍法、点了
+ * 「全部重新生成」、七次生图的钱花掉了，出来还是老样子，而按钮旁边写着的是
+ * 「整套换一遍」。
+ *
+ * 反过来也不能一律重建：画面描述可能被人手工调过（「这次别要雾」），
+ * 重建会把他的修改一起冲掉。所以只换前缀那一段。
+ *
+ * 认不出结构（没有空行分隔）时退回重建——那说明它已不是我们生成的格式，
+ * 猜不出哪里是前缀哪里是描述，宁可给一个干净的当前拍法版本。
+ */
+export function applyArtStyleToPrompt(
+  stored: string | null | undefined,
+  slot: LandingPreviewSlot,
+  styleKey?: string | null,
+): string {
+  const text = (stored ?? '').trim();
+  if (!text) return buildLandingPreviewPrompt(slot, styleKey);
+  const split = text.indexOf('\n\n');
+  if (split < 0) return buildLandingPreviewPrompt(slot, styleKey);
+  const body = text.slice(split + 2).trim();
+  if (!body) return buildLandingPreviewPrompt(slot, styleKey);
+  return `${landingArtStyle(styleKey).prefix}\n\n${body}`;
+}
+
 export function landingPreviewSlotById(id: string): LandingPreviewSlot | undefined {
   return LANDING_PREVIEW_SLOTS.find((s) => s.id === id);
 }

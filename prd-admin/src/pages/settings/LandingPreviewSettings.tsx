@@ -18,6 +18,7 @@ import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { toast } from '@/lib/toast';
 import {
   LANDING_PREVIEW_SLOTS,
+  applyArtStyleToPrompt,
   buildLandingPreviewPrompt,
   LANDING_ART_STYLES,
   DEFAULT_LANDING_ART_STYLE,
@@ -337,16 +338,18 @@ export default function LandingPreviewSettings() {
   };
 
   const openDialog = (slot: LandingPreviewSlot) => {
-    // 改过一次就回填他自己那版；没生成过才用默认词
-    const stored = assets[slot.slot]?.prompt;
-    setEditing({ slot, prompt: stored && stored.trim() ? stored : buildLandingPreviewPrompt(slot, artStyle) });
+    // 回填他自己改过的那版画面描述，但前缀换成**当前选中的拍法**——
+    // 弹窗里那行说明写的就是「前半段是当前拍法的风格约束」，回填旧拍法会自相矛盾
+    setEditing({ slot, prompt: applyArtStyleToPrompt(assets[slot.slot]?.prompt, slot, artStyle) });
   };
 
   const handleGenerateAll = () => {
     void generate(
       LANDING_PREVIEW_SLOTS.map((s) => ({
         slot: s,
-        prompt: assets[s.slot]?.prompt?.trim() || buildLandingPreviewPrompt(s, artStyle),
+        // 换拍法之后点「全部重新生成」，必须真的换成新拍法：直接拿库里存的那段跑，
+        // 前缀还是上一次那个拍法，七次生图的钱花了、出来还是老样子
+        prompt: applyArtStyleToPrompt(assets[s.slot]?.prompt, s, artStyle),
       })),
     );
   };
