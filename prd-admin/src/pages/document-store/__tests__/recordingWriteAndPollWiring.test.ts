@@ -237,7 +237,8 @@ describe('离线草稿与屏幕一致', () => {
   it('reloadNote 汇报正文到底装上了没有，不是只返回 void', () => {
     // 只认「返回的是成败」，不认参数列表
     expect(source).toMatch(/const reloadNote = useCallback\(async \([^)]*\): Promise<boolean> => \{/);
-    expect(source).toContain("return contentRes.success && typeof contentRes.data?.content === 'string';");
+    // 判据认「返回的就是那个『装上了没有』的判定」，不认它写成表达式还是变量
+    expect(source).toMatch(/return (installed|contentRes\.success && typeof contentRes\.data\?\.content === 'string');/);
   });
 });
 
@@ -547,5 +548,41 @@ describe('AI 不可用要说出来，且不同屏报「全部完成」', () => {
 
   it('这张卡的时长也跟着录音归零', () => {
     expect(source).toMatch(/useEffect\(\(\) => \{ setDurationSec\(0\); \}, \[currentEntryId\]\);/);
+  });
+});
+
+describe('拉回来的正文与版本令牌绑在一起', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  /*
+   * 条目查到了、正文这一发失败（或正文让位给了本机草稿），屏幕上还是旧文字，
+   * 而令牌已经指向服务端的新版本——用户接着离线改这段旧文字，基线一比「一样」，
+   * 补传就把刚整理出来的新内容整篇盖掉，全程没有冲突提示。
+   */
+  it('只有正文真的换上了才推进令牌', () => {
+    expect(source).toContain("const installed = contentRes.success && typeof contentRes.data?.content === 'string' && !keepLocalDraft;");
+    const from = source.slice(source.indexOf('if (installed && noteEntryRes.success'));
+    expect(from.slice(0, 160)).toContain('noteRevisionRef.current = noteEntryRes.data.updatedAt;');
+    // 返回值与令牌用的是同一个判据，不许再各算一套
+    expect(source).toContain('return installed;');
+  });
+});
+
+describe('衍生产物失败的「重试」不重跑 ASR', () => {
+  const source = read('components/doc-browser/TranscribeStatusCard.tsx');
+
+  it('原文已经在时，重试走整理那条路', () => {
+    const from = source.slice(source.indexOf("case 'retry': {"));
+    const block = from.slice(0, from.indexOf('case \'play\''));
+    expect(block).toContain('noteEntryId && onRestyle ? onRestyle : onStart');
+  });
+});
+
+describe('估算时间轴不给做不到的说话人入口', () => {
+  const source = read('components/doc-browser/TranscriptKaraoke.tsx');
+
+  it('这一档不渲染「手动标记说话人」，并说明原因', () => {
+    expect(source).toContain('{onSaveNote && !estimated && (');
+    expect(source).toContain('这份原文没有真实时间轴，暂时存不下说话人标注。');
   });
 });

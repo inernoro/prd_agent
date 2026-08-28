@@ -1724,9 +1724,17 @@ export function TranscriptKaraoke({
                   <p className="text-[13px] font-semibold text-token-primary">未能区分说话人</p>
                   <p className="mt-1 text-[12px] leading-relaxed text-token-muted">
                     上游没有区分出说话人（常见于单声道录音或多人抢话）。原文按时间分句展示，
-                    你可以手动为句子指定说话人。
+                    {estimated
+                      ? '这份原文没有真实时间轴，暂时存不下说话人标注。'
+                      : '你可以手动为句子指定说话人。'}
                   </p>
-                  {onSaveNote && (
+                  {/*
+                    估算时间轴的原文存不下说话人：行内编辑器本来就把说话人输入藏起来了
+                    （那种 markdown 没有可写回的位置）。这颗按钮却照常渲染，点下去只会打开
+                    第一行的文本编辑框，没有任何地方能填说话人——一句做不到的承诺
+                    （Codex 第二十九轮 P2）。所以这一档不给按钮，上面那句话如实说明原因。
+                  */}
+                  {onSaveNote && !estimated && (
                     <button
                       type="button"
                       onClick={() => {

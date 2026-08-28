@@ -628,15 +628,23 @@ export function RecordingResultPage() {
           ?? cur.styleKey,
       }
       : cur));
+    // 正文这一路成功才算「换上了」——条目元数据失败只影响生成时间与整理方式的展示
+    const installed = contentRes.success && typeof contentRes.data?.content === 'string' && !keepLocalDraft;
     /*
      * 版本令牌跟着这份新拉回来的一起走。漏了的话：整理重跑或丢弃草稿之后服务端那份
      * 已经换了新时刻，而令牌还停在进页面时那一刻——用户下一次断网校对拿它当基线，
      * 重连时就会被判成「云端有更新」，冲突横幅是假的（在线保存与补传两路都刷了，
      * 这一路漏了，Codex 第十八轮 P2）。
+     *
+     * **但只有正文真的换上了才准推进**：条目查到了、正文这一发失败（或正文让位给了本机草稿），
+     * 屏幕上还是旧文字，而令牌已经指向服务端的新版本——用户接着离线改这段旧文字，
+     * 基线一比「一样」，补传就把刚整理出来的新内容整篇盖掉，全程没有任何冲突提示
+     * （Codex 第二十九轮 P1）。这两件事必须绑在一起：装上了才认它的版本。
      */
-    if (noteEntryRes.success && noteEntryRes.data?.updatedAt) noteRevisionRef.current = noteEntryRes.data.updatedAt;
-    // 正文这一路成功才算「换上了」——条目元数据失败只影响生成时间与整理方式的展示
-    return contentRes.success && typeof contentRes.data?.content === 'string';
+    if (installed && noteEntryRes.success && noteEntryRes.data?.updatedAt) {
+      noteRevisionRef.current = noteEntryRes.data.updatedAt;
+    }
+    return installed;
     // ownerId 进依赖：本机草稿按账号存，判「要不要让位给草稿」时不能拿旧账号
   }, [entryId, ownerId]);
 

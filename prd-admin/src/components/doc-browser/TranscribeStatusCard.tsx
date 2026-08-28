@@ -444,8 +444,17 @@ export function TranscribeStatusCard({
     key: string; label: string; icon: React.ReactNode; run: () => void; disabled?: boolean;
   }[] => {
     switch (action) {
-      case 'retry':
-        return onStart ? [{ key: 'retry', label: '重试', icon: <RefreshCw size={12} />, run: () => onStart() }] : [];
+      case 'retry': {
+        /*
+         * 原文已经在了还报失败，挂的必然是**衍生产物**那一层（整理/词云/纪要）——
+         * 那这颗「重试」就该重跑整理，不能落到 onStart。onStart 走的是条目级 transcribe，
+         * 也就是**从头再跑一整轮 ASR**：既多花模型钱，又会用新一轮识别结果覆盖用户
+         * 已经逐句校对过的原文（Codex 第二十九轮 P1；结果页那颗「一键整理」早就改走
+         * restyle 了，抽屉这条路漏了）。
+         */
+        const rerun = noteEntryId && onRestyle ? onRestyle : onStart;
+        return rerun ? [{ key: 'retry', label: '重试', icon: <RefreshCw size={12} />, run: () => rerun() }] : [];
+      }
       case 'play':
         return onPlayRequest ? [{ key: 'play', label: '播放确认', icon: <Play size={12} fill="currentColor" />, run: onPlayRequest }] : [];
       case 'rerecord':
