@@ -3399,6 +3399,17 @@
   }
 
   /*
+   * 窄屏不叠两层横向内边距：`.cds-settings-content` 在 max-width:900px 那一档
+   * 已经用 `padding: 1rem !important` 给了 16px 边距，这里再加 24px 就变成每侧
+   * 40px——320px 的屏只剩 240px 装表单。横向留给外层，这里只保留纵向节奏。
+   */
+  @media (max-width: 900px) {
+    .cds-settings-section-body {
+      padding: 1rem 0 2rem;
+    }
+  }
+
+  /*
    * 表单列锁可读宽度，右列放「当前生效 / 改动影响 / 相关设置」——把宽屏的
    * 富余变成信息而不是留白。没有副列内容的分区自然退化成单列，不留空槽。
    */
