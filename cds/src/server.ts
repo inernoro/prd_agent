@@ -1177,6 +1177,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/infra\/(.+)\/backup$/, '下载数据库备份'],
     [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
     [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
+    [/^GET \/projects\/[^/]+\/backup-health$/, '查看周期备份'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
     [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],

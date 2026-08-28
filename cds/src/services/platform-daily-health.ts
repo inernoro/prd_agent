@@ -253,6 +253,104 @@ function svcRef(s: { id: string; projectId?: string | null }): { key: string; la
 }
 
 /**
+ * 备份与恢复演练这几条结论。
+ *
+ * **单独抽出来，是因为它有第二个消费者**：项目设置里的「周期备份」面板要在页脚
+ * 直接摆出这几句话。把它们留在 evaluateDailyHealth 里、面板那边照着再写一遍，
+ * 就是同一个判据分裂成两份、然后各自漂移（形状 3）——这套体检自己已经在
+ * 「跑没跑 vs 备没备全」上栽过一次，不再重复。
+ *
+ * 每日体检调它，面板也调它，措辞与严重级只有这一处定义。
+ */
+export function backupHealthFindings(input: {
+  now: Date;
+  backup: DailyHealthInput['backup'];
+  lastRestoreDrillAt: string | null;
+}): HealthFinding[] {
+  const findings: HealthFinding[] = [];
+  // ---- 5. 备份新鲜度 ----
+  const backupAge = ageMs(input.now, input.backup.lastCompletedAt);
+  if (backupAge === null) {
+    findings.push({
+      id: 'backup.unknown',
+      severity: 'critical',
+      // 「读不到」不能当成「没问题」：一份从没跑成过的备份和一份跑得好好的备份，
+      // 在「没有结果文件」这件事上长得一模一样。
+      message: '读不到上一轮周期备份的结果——不确定备份到底有没有在跑，按没有处理',
+    });
+  } else if (backupAge > BACKUP_STALE_AFTER_MS) {
+    findings.push({
+      id: 'backup.stale',
+      severity: 'critical',
+      message: `上一轮周期备份是 ${Math.floor(backupAge / 3_600_000)} 小时前，已经陈旧`,
+    });
+  }
+  // 「本该能备、但一直没备成」必须自己有一条判据。
+  //
+  // 拆开「跑没跑」和「备全没备全」之前，这件事是被那条**假**的
+  // 「读不到上一轮结果」顺带遮着的——只要有目标失败，完成时间就被抹空，体检就报
+  // critical。现在时间戳不再被绑架，如果不在这里补一条，长期失败的目标会从
+  // 「假警报」直接变成**沉默**：那是把一个坏判据换成一个更坏的洞。
+  //
+  // 两类分开报，因为**需要的动作完全不同**：本地就没导出来的，手上一份新副本都没有；
+  // 只是离机没上去的，同机那份已经过校验、就在盘上，该修的是离机通道。
+  // 合成一句「没有它们的新副本」，会把运维支去找一份其实存在的备份（Codex review P2）。
+  const failedTargets = input.backup.failedTargets ?? [];
+  if (failedTargets.length > 0) {
+    findings.push({
+      id: 'backup.failed-targets',
+      severity: 'critical',
+      message: `上一轮周期备份有 ${failedTargets.length} 个目标本地就没导出来：`
+        + `${failedTargets.map((t) => svcRef(t).label).join('、')}`
+        + '——手上没有它们的新副本',
+    });
+  }
+  const offsiteOnly = input.backup.offsiteOnlyTargets ?? [];
+  if (offsiteOnly.length > 0) {
+    findings.push({
+      id: 'backup.offsite-only-failed',
+      // 比上一条轻一档：同机副本在，丢的是异地冗余，不是全部退路。
+      severity: 'warn',
+      message: `上一轮有 ${offsiteOnly.length} 个目标只备到了本机、离机副本没上去：`
+        + `${offsiteOnly.map((t) => svcRef(t).label).join('、')}`
+        + '——本机那份已验证可用，要修的是离机通道',
+    });
+  }
+  if (input.backup.coverageGaps.length > 0) {
+    findings.push({
+      id: 'backup.coverage-gaps',
+      severity: 'warn',
+      // 措辞要容得下这一栏的**两种**来源，否则同一份报文会自相矛盾：
+      // 一种是按服务类型压根备不了（minio / kafka），另一种是**备成功了、但导出脚本
+      // 自报只覆盖到一部分**（rabbitmq 只有定义没有消息、nacos 只有配置没有注册表）。
+      // 后者说成「没有被周期备份覆盖」，读者去查备份历史会看到它明明每轮都在备，
+      // 于是整份报文的可信度一起掉——这正是这条体检要避免的事。
+      // 两者需要的动作确实不同，真要分开报得让缺口带上类型，那是另一件事（台账 E83）。
+      message: `${input.backup.coverageGaps.length} 个正在跑的服务备份不完整（没备到，或只备到一部分）：`
+        + input.backup.coverageGaps.join('、'),
+    });
+  }
+
+  // ---- 6. 恢复演练：没演练过的备份不算备份 ----
+  const drillAge = ageMs(input.now, input.lastRestoreDrillAt);
+  if (drillAge === null) {
+    findings.push({
+      id: 'restore-drill.never',
+      severity: 'critical',
+      message: '从来没有做过一次恢复演练——现在手上这些备份能不能真的读回来，谁也不知道',
+    });
+  } else if (drillAge > RESTORE_DRILL_STALE_AFTER_MS) {
+    findings.push({
+      id: 'restore-drill.stale',
+      severity: 'warn',
+      message: `上一次恢复演练是 ${Math.floor(drillAge / 86_400_000)} 天前，该再做一次了`,
+    });
+  }
+
+  return findings;
+}
+
+/**
  * 跑一次体检。纯函数：给什么事实就得什么结论，同样的输入永远同样的输出。
  */
 export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict {
@@ -341,84 +439,7 @@ export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict
     }
   }
 
-  // ---- 5. 备份新鲜度 ----
-  const backupAge = ageMs(input.now, input.backup.lastCompletedAt);
-  if (backupAge === null) {
-    findings.push({
-      id: 'backup.unknown',
-      severity: 'critical',
-      // 「读不到」不能当成「没问题」：一份从没跑成过的备份和一份跑得好好的备份，
-      // 在「没有结果文件」这件事上长得一模一样。
-      message: '读不到上一轮周期备份的结果——不确定备份到底有没有在跑，按没有处理',
-    });
-  } else if (backupAge > BACKUP_STALE_AFTER_MS) {
-    findings.push({
-      id: 'backup.stale',
-      severity: 'critical',
-      message: `上一轮周期备份是 ${Math.floor(backupAge / 3_600_000)} 小时前，已经陈旧`,
-    });
-  }
-  // 「本该能备、但一直没备成」必须自己有一条判据。
-  //
-  // 拆开「跑没跑」和「备全没备全」之前，这件事是被那条**假**的
-  // 「读不到上一轮结果」顺带遮着的——只要有目标失败，完成时间就被抹空，体检就报
-  // critical。现在时间戳不再被绑架，如果不在这里补一条，长期失败的目标会从
-  // 「假警报」直接变成**沉默**：那是把一个坏判据换成一个更坏的洞。
-  //
-  // 两类分开报，因为**需要的动作完全不同**：本地就没导出来的，手上一份新副本都没有；
-  // 只是离机没上去的，同机那份已经过校验、就在盘上，该修的是离机通道。
-  // 合成一句「没有它们的新副本」，会把运维支去找一份其实存在的备份（Codex review P2）。
-  const failedTargets = input.backup.failedTargets ?? [];
-  if (failedTargets.length > 0) {
-    findings.push({
-      id: 'backup.failed-targets',
-      severity: 'critical',
-      message: `上一轮周期备份有 ${failedTargets.length} 个目标本地就没导出来：`
-        + `${failedTargets.map((t) => svcRef(t).label).join('、')}`
-        + '——手上没有它们的新副本',
-    });
-  }
-  const offsiteOnly = input.backup.offsiteOnlyTargets ?? [];
-  if (offsiteOnly.length > 0) {
-    findings.push({
-      id: 'backup.offsite-only-failed',
-      // 比上一条轻一档：同机副本在，丢的是异地冗余，不是全部退路。
-      severity: 'warn',
-      message: `上一轮有 ${offsiteOnly.length} 个目标只备到了本机、离机副本没上去：`
-        + `${offsiteOnly.map((t) => svcRef(t).label).join('、')}`
-        + '——本机那份已验证可用，要修的是离机通道',
-    });
-  }
-  if (input.backup.coverageGaps.length > 0) {
-    findings.push({
-      id: 'backup.coverage-gaps',
-      severity: 'warn',
-      // 措辞要容得下这一栏的**两种**来源，否则同一份报文会自相矛盾：
-      // 一种是按服务类型压根备不了（minio / kafka），另一种是**备成功了、但导出脚本
-      // 自报只覆盖到一部分**（rabbitmq 只有定义没有消息、nacos 只有配置没有注册表）。
-      // 后者说成「没有被周期备份覆盖」，读者去查备份历史会看到它明明每轮都在备，
-      // 于是整份报文的可信度一起掉——这正是这条体检要避免的事。
-      // 两者需要的动作确实不同，真要分开报得让缺口带上类型，那是另一件事（台账 E83）。
-      message: `${input.backup.coverageGaps.length} 个正在跑的服务备份不完整（没备到，或只备到一部分）：`
-        + input.backup.coverageGaps.join('、'),
-    });
-  }
-
-  // ---- 6. 恢复演练：没演练过的备份不算备份 ----
-  const drillAge = ageMs(input.now, input.lastRestoreDrillAt);
-  if (drillAge === null) {
-    findings.push({
-      id: 'restore-drill.never',
-      severity: 'critical',
-      message: '从来没有做过一次恢复演练——现在手上这些备份能不能真的读回来，谁也不知道',
-    });
-  } else if (drillAge > RESTORE_DRILL_STALE_AFTER_MS) {
-    findings.push({
-      id: 'restore-drill.stale',
-      severity: 'warn',
-      message: `上一次恢复演练是 ${Math.floor(drillAge / 86_400_000)} 天前，该再做一次了`,
-    });
-  }
+  findings.push(...backupHealthFindings(input));
 
   const severity = worst(findings);
   return { severity, headline: buildHeadline(severity, findings), findings };

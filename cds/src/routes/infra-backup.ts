@@ -44,7 +44,14 @@ import {
   buildRedisRdbPathScript,
   isLegacyUnscopedBackupFile,
   isProjectBackupFile,
+  INFRA_BACKUP_HEALTH_FILE,
 } from '../services/infra-backup-schedule.js';
+import {
+  buildBackupPanel,
+  type BackupFileEntry,
+  type BackupHealthRecord,
+} from '../services/backup-panel.js';
+import { backupHealthFindings } from '../services/platform-daily-health.js';
 
 export interface InfraBackupRouterDeps {
   stateService: StateService;
@@ -696,6 +703,84 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       directory: backupDir,
       /** false = 目录都还不存在，也就是一份备份都没有过；别把它读成「暂无匹配」。 */
       directoryExists: dirExists,
+    });
+  });
+
+  /**
+   * GET /api/projects/:id/backup-health
+   *
+   * 项目设置里「周期备份」面板的数据源。回答四件事：上一轮什么时候跑的、
+   * 每个目标现在什么处境、这个项目在盘上占了多少份备份、每日体检对备份怎么说。
+   *
+   * 判定全在 services/backup-panel.ts（纯函数、可回归），体检那几句话直接调
+   * `backupHealthFindings`——**不在这里照着再写一遍**：同一个判据分裂成两份、
+   * 然后各自漂移，正是这条链路上刚栽过的那个坑（形状 3）。
+   */
+  router.get('/projects/:id/backup-health', async (req, res) => {
+    const projectId = String(req.params.id || '');
+    const project = stateService.getProject(projectId);
+    // 对外允许用 slug，但盘上的文件名用的是规范 id。这里必须先解析成规范 id，
+    // 否则用 slug 打开面板会一个目标都筛不出来，看起来像「这个项目没有备份」。
+    const canonicalId = project?.id ?? projectId;
+    const mismatch = assertProjectAccess(req, canonicalId);
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body as Record<string, unknown>);
+      return;
+    }
+    if (!project) {
+      res.status(404).json({ error: `项目不存在: ${projectId}` });
+      return;
+    }
+
+    const backupDir = await resolveBackupDir({ create: false });
+    const probe = await shell.exec(`test -d ${shq(backupDir)} && echo yes || echo no`);
+    const directoryExists = (probe.stdout || '').includes('yes');
+
+    // 健康文件与备份文件在同一个目录。读不到就把 health 传 null——
+    // 面板会如实说「读不到上一轮的结果」，不会说成「没问题」。
+    let health: BackupHealthRecord | null = null;
+    if (directoryExists) {
+      const raw = await shell.exec(`cat ${shq(`${backupDir}/${INFRA_BACKUP_HEALTH_FILE}`)} 2>/dev/null || true`);
+      try {
+        const parsed = JSON.parse((raw.stdout || '').trim());
+        if (parsed && typeof parsed === 'object') health = parsed as BackupHealthRecord;
+      } catch { /* 没有或解析不了，就是读不到 */ }
+    }
+
+    const listing = directoryExists
+      ? await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null || true`)
+      : { stdout: '' } as { stdout: string };
+    const files: BackupFileEntry[] = (listing.stdout || '').split('\n').filter(Boolean).map((line) => {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 9) return null;
+      return { name: parts.slice(8).join(' '), bytes: parseInt(parts[4], 10) || 0 };
+    }).filter((f): f is BackupFileEntry => Boolean(f));
+
+    const now = new Date();
+    const view = buildBackupPanel({ projectId: canonicalId, health, files, now });
+    // 页脚那一行「每日体检怎么说」。喂进去的是**这个项目的**失败与缺口，
+    // 时间戳与恢复演练是全平台的——面板不该替某个项目编一份自己的演练记录。
+    const findings = backupHealthFindings({
+      now,
+      backup: {
+        lastCompletedAt: view.lastRoundAt,
+        coverageGaps: view.targets
+          .filter((t) => t.status === 'partial' || t.status === 'unsupported')
+          .map((t) => t.id),
+        failedTargets: view.targets.filter((t) => t.status === 'failed').map((t) => ({ id: t.id, projectId: canonicalId })),
+        offsiteOnlyTargets: view.targets.filter((t) => t.status === 'offsite-only').map((t) => ({ id: t.id, projectId: canonicalId })),
+      },
+      // 恢复演练目前没有任何地方记录，恒为 null——体检会如实报「从来没演练过」。
+      // 这不是占位符：在补上记录之前，「能不能真的恢复」的答案就是「不知道」。
+      lastRestoreDrillAt: null,
+    });
+
+    res.json({
+      ...view,
+      directory: backupDir,
+      /** false = 目录都还不存在，也就是一份备份都没有过；别把它读成「暂无匹配」。 */
+      directoryExists,
+      findings,
     });
   });
 

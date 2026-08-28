@@ -595,10 +595,13 @@ describe('查历史不许创建备份目录', () => {
     expect(SRC).toMatch(/: await shell\.exec\(`test -d \$\{shq\(c\)\} && test -w \$\{shq\(c\)\} && echo ok`\)/);
   });
 
-  it('backup-history 走只读档，备份/恢复仍可创建', () => {
-    expect(SRC).toContain('resolveBackupDir({ create: false })');
-    // 只有一处只读调用（历史），其余保持默认可创建。
-    expect(SRC.match(/resolveBackupDir\(\{ create: false \}\)/g) || []).toHaveLength(1);
+  it('两条只读路径都走只读档，备份/恢复仍可创建', () => {
+    // 只读路径有两条：备份历史，和项目设置里的「周期备份」面板。两条都不许建目录，
+    // 否则「一份都没有过」会被自己刚建出来的空目录报成「目录在、只是没有匹配项」。
+    //
+    // 断言按**条数**而不是按行号：新增第三条只读路径时，这里必须一起改，
+    // 逼着人回来确认它也走了只读档（写盘那档仍然只有一处）。
+    expect(SRC.match(/resolveBackupDir\(\{ create: false \}\)/g) || []).toHaveLength(2);
     expect(SRC.match(/await resolveBackupDir\(\)/g) || []).toHaveLength(1);
   });
 });

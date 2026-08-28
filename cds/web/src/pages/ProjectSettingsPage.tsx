@@ -49,6 +49,7 @@ import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
+import { BackupTab } from '@/pages/project-settings/BackupTab';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 interface ProjectSummary {
@@ -286,6 +287,7 @@ type TabValue =
   | 'compose'
   | 'infra'
   | 'storage'
+  | 'backup'
   | 'migration'
   | 'cache'
   | 'stats'
@@ -321,6 +323,7 @@ const tabGroups: TabGroup[] = [
       { value: 'compose', label: '项目配置', icon: FileText },
       { value: 'infra', label: '基础设施', icon: Plug },
       { value: 'storage', label: '存储', icon: Database },
+      { value: 'backup', label: '周期备份', icon: ShieldCheck },
       { value: 'migration', label: '迁移', icon: Send },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
       { value: 'stats', label: '统计', icon: BarChart3 },
@@ -557,6 +560,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="storage">
                   <ProjectStorageTab projectId={project.id} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="backup">
+                  <BackupTab projectId={project.id} />
                 </TabsContent>
                 <TabsContent value="migration">
                   <ProjectMigrationTab projectId={project.id} onToast={setToast} />
