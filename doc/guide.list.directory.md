@@ -107,6 +107,7 @@
 - [Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计](./design.page-agent.bridge.md) `design.page-agent.bridge`
 - [账户数据共享 · 设计](./design.platform.account-data-sharing.md) `design.platform.account-data-sharing`
 - [MAP 核心业务稳定基线 · 设计](./design.platform.core-business-stability.md) `design.platform.core-business-stability`
+- [跨 MAP 实例数据同步（动态授权） · 设计](./design.platform.cross-instance-data-sync.md) `design.platform.cross-instance-data-sync`
 - [通用对话智能体 · 设计](./design.platform.chat-agent.md) `design.platform.chat-agent`
 - [模型中继虚拟平台设计 · 设计](./design.platform.exchange-virtual-platform.md) `design.platform.exchange-virtual-platform`
 - [CDS 部署架构与冲突分析 · 设计](./design.platform.exec-bt-deployment.md) `design.platform.exec-bt-deployment`
@@ -311,6 +312,7 @@
 - [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
 - [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
+- [跨 MAP 实例数据同步 · 债务台账](./debt.platform.cross-instance-data-sync.md) `debt.platform.cross-instance-data-sync`
 - [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
 - [MD 转网页 PPT · 债务台账](./debt.md-to-ppt.md) `debt.md-to-ppt`
 - [开放平台 Open API · 债务台账](./debt.open-platform.open-api.md) `debt.open-platform.open-api`
@@ -361,6 +363,7 @@
 - [周报 2026-W31 (2026-07-27 ~ 2026-08-02)](./report.2026-W31.md) `report.2026-W31`
 - [周报 2026-W32 (2026-08-03 ~ 2026-08-09)](./report.2026-W32.md) `report.2026-W32`
 - [周报 2026-W33 (2026-08-10 ~ 2026-08-16)](./report.2026-W33.md) `report.2026-W33`
+- [周报 2026-W34 (2026-08-17 ~ 2026-08-23)](./report.2026-W34.md) `report.2026-W34`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`

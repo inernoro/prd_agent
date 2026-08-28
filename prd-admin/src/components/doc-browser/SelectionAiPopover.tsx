@@ -5,17 +5,20 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming';
 import { toast } from '@/lib/toast';
 import { computeLineDiff, type DiffLine } from '@/lib/lineDiff';
+import { streamSelectionRewrite } from '@/services/real/documentStore';
+import { useScrollFollowTransform } from './useOverlayFollow';
+import { stripOuterFence } from './selectionEdit';
+import { useSelectionRewriteActions } from './useSelectionRewriteActions';
 import {
-  listSelectionRewriteActions,
-  streamSelectionRewrite,
-  type SelectionRewriteActionItem,
-} from '@/services/real/documentStore';
+  SELECTION_OVERLAY_CHIP,
+  SELECTION_OVERLAY_FIELD,
+  SELECTION_OVERLAY_LABEL,
+  SELECTION_OVERLAY_PANEL,
+  SELECTION_OVERLAY_PRIMARY,
+} from './selectionOverlayStyle';
 
 // 划词「AI 改写」就地浮层：选动作 → SSE 流式生成 → diff 预览 → 替换原文 / 插到原文后。
 // 布局遵 frontend-modal.md：createPortal 到 body + inline style 定位/高度 + min-h-0 滚动区。
-
-// 动作清单是后端 SSOT（selection-rewrite/actions），模块级缓存一次拉取
-let cachedActions: SelectionRewriteActionItem[] | null = null;
 
 export interface SelectionAiAnchor {
   selectedText: string;
@@ -51,7 +54,7 @@ export function SelectionAiPopover({
   onApply: (mode: 'replace' | 'insert-after', newText: string) => Promise<boolean>;
   onClose: () => void;
 }) {
-  const [actions, setActions] = useState<SelectionRewriteActionItem[]>(cachedActions ?? []);
+  const actions = useSelectionRewriteActions();
   const [phase, setPhase] = useState<Phase>('pick');
   const [activeAction, setActiveAction] = useState<string | null>(null);
   const [customInstruction, setCustomInstruction] = useState('');
@@ -62,33 +65,12 @@ export function SelectionAiPopover({
   const [errorMsg, setErrorMsg] = useState('');
   const [showDiff, setShowDiff] = useState(false);
   const [applying, setApplying] = useState<'replace' | 'insert-after' | null>(null);
-  const [scrollDy, setScrollDy] = useState(0);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // 跟随滚动走直写 DOM，不走 state——走 state 浮层会慢内容一帧，看着就是「跟不上手」
+  useScrollFollowTransform(panelRef, scrollRef);
   const abortRef = useRef<(() => void) | null>(null);
   const outputBoxRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (cachedActions) return;
-    (async () => {
-      const res = await listSelectionRewriteActions();
-      if (res.success) {
-        cachedActions = res.data.items;
-        setActions(res.data.items);
-      }
-    })();
-  }, []);
-
-  // 跟随正文滚动平移（与 InlineCommentComposer 同一套 scrollDy 逻辑）
-  useEffect(() => {
-    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
-    const start = read();
-    const onScroll = () => setScrollDy(read() - start);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    return () => {
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
-  }, [scrollRef]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -162,26 +144,22 @@ export function SelectionAiPopover({
 
   const node = (
     <div
+      ref={panelRef}
       className="fixed z-[120] flex flex-col"
       style={{
         top,
         left,
         width,
         maxHeight: Math.min(480, window.innerHeight - 16),
-        transform: `translateY(${-scrollDy}px)`,
-        borderRadius: 14,
         padding: 12,
-        background: 'var(--overlay-panel-bg)',
-        border: '1px solid rgba(168,85,247,0.4)',
-        boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)',
-        backdropFilter: 'blur(40px)',
+        ...SELECTION_OVERLAY_PANEL,
       }}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       {/* 头部：标题 + 模型可见性（ai-model-visibility）+ 关闭 */}
       <div className="flex items-center justify-between mb-2 shrink-0">
-        <span className="text-[10px] font-semibold flex items-center gap-1.5" style={{ color: 'var(--accent-fg-violet)' }}>
+        <span className="text-[10px] font-semibold flex items-center gap-1.5" style={{ color: SELECTION_OVERLAY_LABEL }}>
           <Sparkles size={11} />
           划词 AI 改写
           {model && (
@@ -200,17 +178,16 @@ export function SelectionAiPopover({
 
       {/* 选中片段引用块 */}
       <div className="flex items-center gap-1 mb-1 shrink-0">
-        <Quote size={9} style={{ color: 'var(--accent-fg-violet)' }} />
-        <span className="text-[10px] font-semibold" style={{ color: 'var(--accent-fg-violet)' }}>你选中的内容</span>
+        <Quote size={9} style={{ color: SELECTION_OVERLAY_LABEL }} />
+        <span className="text-[10px] font-semibold" style={{ color: SELECTION_OVERLAY_LABEL }}>你选中的内容</span>
       </div>
       <div
         className="px-2.5 py-1.5 rounded-[8px] text-[12px] mb-2 overflow-y-auto shrink-0"
         style={{
           maxHeight: 72,
-          background: 'rgba(168,85,247,0.12)',
-          border: '1px solid rgba(168,85,247,0.22)',
-          borderLeft: '3px solid rgba(168,85,247,0.7)',
-          color: 'var(--accent-fg-violet-strong)',
+          ...SELECTION_OVERLAY_CHIP,
+          borderLeft: '3px solid var(--accent-gold)',
+          color: 'var(--text-primary)',
           lineHeight: 1.5,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
@@ -230,11 +207,15 @@ export function SelectionAiPopover({
               onClick={() => run(a.key)}
               title={a.description}
               className="h-6 px-2.5 rounded-full text-[11px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              style={{
-                background: active ? 'rgba(168,85,247,0.28)' : 'var(--nested-block-bg)',
-                border: `1px solid ${active ? 'rgba(168,85,247,0.55)' : 'var(--border-subtle)'}`,
-                color: active ? 'var(--accent-fg-violet-strong)' : 'var(--text-secondary)',
-              }}
+              style={
+                active
+                  ? SELECTION_OVERLAY_CHIP
+                  : {
+                      background: 'var(--nested-block-bg)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-secondary)',
+                    }
+              }
             >
               {a.label}
             </button>
@@ -253,14 +234,14 @@ export function SelectionAiPopover({
           }}
           disabled={busy}
           placeholder="或输入自定义指令，如：改成表格 / 翻译成英文…"
-          className="flex-1 h-7 px-2.5 rounded-[8px] text-[12px] outline-none bg-token-nested border border-token-subtle"
-          style={{ color: 'var(--text-primary)' }}
+          className="flex-1 h-7 px-2.5 rounded-[8px] text-[12px] outline-none"
+          style={SELECTION_OVERLAY_FIELD}
         />
         <button
           onClick={() => customInstruction.trim() && run('custom', customInstruction.trim())}
           disabled={busy || !customInstruction.trim()}
           className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
+          style={SELECTION_OVERLAY_PRIMARY}
           title="执行自定义指令"
         >
           <Send size={12} />
@@ -312,9 +293,14 @@ export function SelectionAiPopover({
           <button
             onClick={() => handleApply('replace')}
             disabled={!canReplace || !!applying}
-            title={canReplace ? '用 AI 结果替换选中片段' : '选区在原文中出现多处且无法唯一定位，为避免替换错位置已禁用；可改用「插入」或复制'}
+            /* 这个浮层只在「整段替换不安全」时才会打开，所以 canReplace 开局必为 false。
+               文案不能只说其中一个原因——定位不唯一与选区卡在标记中间都会走到这里
+               （2026-08-21 code review：提示把另一半原因说成了唯一原因）。 */
+            title={canReplace
+              ? '用 AI 结果替换选中片段'
+              : '这段选区在原文里指认不到唯一位置，或者它卡在链接 / 加粗 / 行内代码的标记中间；直接替换会写错地方或破坏格式，所以禁用。可改用「插到原文后」或复制'}
             className="h-7 px-3 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: 'rgba(168,85,247,0.22)', border: '1px solid rgba(168,85,247,0.45)', color: 'var(--accent-fg-violet-strong)' }}
+            style={SELECTION_OVERLAY_PRIMARY}
           >
             {applying === 'replace' ? <MapSpinner size={11} /> : <Replace size={11} />}
             替换原文
@@ -371,7 +357,7 @@ export function SelectionAiPopover({
           <button
             onClick={() => activeAction && run(activeAction, activeAction === 'custom' ? customInstruction.trim() : undefined)}
             className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-            style={{ background: 'rgba(168,85,247,0.18)', border: '1px solid rgba(168,85,247,0.35)', color: 'var(--accent-fg-violet)' }}
+            style={SELECTION_OVERLAY_CHIP}
           >
             <RotateCcw size={11} /> 重试
           </button>
@@ -381,13 +367,6 @@ export function SelectionAiPopover({
   );
 
   return createPortal(node, document.body);
-}
-
-/** 模型偶发把整段输出包进 ``` 围栏；只剥最外层成对围栏，不动内部代码块 */
-function stripOuterFence(text: string): string {
-  const t = text.trim();
-  const m = t.match(/^```[a-zA-Z-]*\r?\n([\s\S]*?)\r?\n```$/);
-  return m ? m[1] : t;
 }
 
 /** 轻量行级 diff 渲染（绿增红删），复用 lib/lineDiff 的纯函数 */

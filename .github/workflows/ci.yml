@@ -113,6 +113,10 @@ jobs:
               - 'scripts/gw-smoke.py'
               - 'scripts/llmgw-rollout-ledger.py'
               - 'scripts/tests/test_*.py'
+              # cdscli 的冒烟覆盖守卫盯的是这个脚本本身：不把它登记进来，
+              # 只改 cdscli 的 PR 就完全跳过这道闸，而假绿恰恰是在那里回潮的
+              # （形状 7：守卫自己没接上线）。
+              - '.claude/skills/cds/cli/cdscli.py'
               # 守卫的**被测文件**也必须登记，否则这道闸只在「守卫自己被改」时开，
               # 而它要防的漂移恰恰发生在被测文件那边：只改模板/规则的 PR 一路全绿，
               # 守卫从头到尾没跑过（predicate-and-wiring-discipline 形状 2）。

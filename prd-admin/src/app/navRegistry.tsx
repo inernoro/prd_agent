@@ -56,7 +56,8 @@ const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').t
 const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
 const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
-const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
+// 2026-08-25：MAP 侧模型管理整套下线，`/mds` 只剩一块指向 LLM Gateway 控制台的墓碑页。
+const ModelManageMovedPage = lazy(() => import('@/pages/ModelManageMovedPage').then(m => ({ default: m.ModelManageMovedPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
 const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
@@ -73,6 +74,7 @@ const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m =
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
 const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
+const DataSyncPage = lazy(() => import('@/pages/data-sync/DataSyncPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -723,6 +725,25 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
 
   // ╔══════════════ 基础设施（9）═══════════════════════════
   {
+    // 跨 MAP 实例数据同步。后端只放行管理员（真人会话），这里用通用 access 守卫，
+    // 非管理员进来会看到端点返回的「只有管理员可以发起」而不是一个空白页。
+    path: '/data-sync',
+    permission: 'access',
+    element: shellGuarded('access', <DataSyncPage />),
+    nav: {
+      label: '数据同步',
+      shortLabel: '数据同步',
+      description: '从另一台 MAP 拉一次数据：跳过去让对方管理员当场同意，回来执行一次',
+      icon: 'ArrowRightLeft',
+      // 归 infra 而不是 toolbox：百宝箱那一格是智能体卡片，契约要求每张卡有独占的
+      // 主题插画素材（AgentCardArtwork.test.ts 会红）；数据同步是平台运维入口，
+      // 和知识库、学习中心同类。
+      section: 'infra',
+      wip: true,
+      tags: ['同步', '迁移', '恢复', '跨实例', 'data sync'],
+    },
+  },
+  {
     path: '/document-store',
     permission: ['document-store.read', 'document-store.write'],
     element: shellGuarded(['document-store.read', 'document-store.write'], <DocumentStorePage />),
@@ -805,14 +826,16 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   {
     path: '/mds',
     permission: 'mds.read',
-    element: shellGuarded('mds.read', <ModelManageTabsPage />),
+    element: shellGuarded('mds.read', <ModelManageMovedPage />),
     nav: {
-      label: '模型中心',
+      // 保留在目录里而不是直接摘掉：搜「模型」的人得撞上这块路牌，而不是撞上 404
+      // 或者退回去在别处再配一遍（navigation-registry：路由必须登记，且不能是 phantom）。
+      label: '模型管理（已迁移）',
       shortLabel: '模型',
-      description: '大模型与模型池配置、健康监控',
+      description: '上游、模型、模型池已统一到 LLM Gateway 控制台，这里只剩入口',
       icon: 'Cpu',
       section: 'infra',
-      tags: ['模型', 'LLM', '模型池', '调度', 'mds'],
+      tags: ['模型', 'LLM', '模型池', '调度', 'mds', '网关', 'gateway'],
     },
   },
   {

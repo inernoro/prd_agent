@@ -68,8 +68,11 @@ function NavigationBridge() {
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
 const SyntheticLoginPage = lazy(() => import('@/pages/SyntheticLoginPage'));
 const ConsoleSsoAuthorizePage = lazy(() => import('@/pages/ConsoleSsoAuthorizePage'));
+const DataSyncAuthorizePage = lazy(() => import('@/pages/data-sync/DataSyncAuthorizePage'));
+const DataSyncCallbackPage = lazy(() => import('@/pages/data-sync/DataSyncCallbackPage'));
 const InlineCommentBubbleMockupPage = lazy(() => import('@/pages/_mockup/InlineCommentBubbleMockupPage'));
 const InlineCommentOverlayProbe = lazy(() => import('@/pages/_mockup/InlineCommentOverlayProbe'));
+const SelectionDiffProbe = lazy(() => import('@/pages/_mockup/SelectionDiffProbe'));
 const JoinTeamPage = lazy(() => import('@/pages/JoinTeamPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
@@ -233,11 +236,31 @@ export default function App() {
             </RequireAuth>
           }
         />
+        {/* 跨 MAP 实例数据同步：源站同意页 / 目标站回跳落地页。
+            两者都不在 AppShell 里——它们是授权链路的中转屏，套上导航反而让人以为还在原来那一页。 */}
+        <Route
+          path="/data-sync/authorize"
+          element={
+            <RequireAuth>
+              <DataSyncAuthorizePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/data-sync/callback"
+          element={
+            <RequireAuth>
+              <DataSyncCallbackPage />
+            </RequireAuth>
+          }
+        />
 
         {/* 静态 mockup（无需登录），仅供评审样式 */}
         <Route path="/_mockup/inline-comment-bubble" element={<InlineCommentBubbleMockupPage />} />
         {/* 真实 InlineCommentOverlay 自测页（Playwright 取头像 img 尺寸断言） */}
         <Route path="/_mockup/inline-comment-overlay-probe" element={<InlineCommentOverlayProbe />} />
+        {/* 真实就地 diff 渲染链自测页（Playwright 断言 ins/del 着色与结构，双主题） */}
+        <Route path="/_mockup/selection-diff-probe" element={<SelectionDiffProbe />} />
 
         {/* 公开分享页面 - 无需登录 */}
         <Route path="/s/wp/:token" element={<ShareViewPage />} />

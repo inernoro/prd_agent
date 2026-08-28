@@ -1,1 +1,28 @@
 @import "tailwindcss";
+
+/*
+ * 全站正文字体链（2026-08-21）。
+ *
+ * 在此之前，index.html 花流量加载了 Inter / Space Grotesk / Source Serif 4，
+ * 但全仓**没有任何一处**把它们写进 font-family（除 mono 与邮件模板）。
+ * Tailwind 兜底到 system-ui，Windows 上就是 Segoe UI；而 Segoe UI 不含中文字形，
+ * 中文再落一层到系统默认——这就是用户说的「有一种老 Windows 的字体感」的确切来源。
+ *
+ * 这里覆盖 --font-sans，Tailwind v4 会把它接进 --default-font-family，
+ * 再由 preflight 的 html 规则铺到全站（theme.css:446 + preflight.css:32）。
+ * 判据不能只看「这个文件里写没写」——构建产物里 html 规则的实际值才算数，
+ * 由 styles/__tests__/fontChain.test.ts 编译真实 CSS 后断言
+ * （predicate-and-wiring-discipline.md 形状 6：扫源码只能证明零件都在）。
+ *
+ * 中文一段是显式排序，不交给浏览器兜底：
+ *   苹方（macOS/iOS）→ 鸿蒙（国产系统）→ 思源 / Noto（Linux 与装了字体的 Windows）
+ *   → 雅黑 UI（Win 10+ 的较新一档）→ 雅黑（老机器最后的底线）
+ * 拉丁一段 Inter 打头，index.html 已经在加载它，零新增网络体积。
+ */
+@theme {
+  --font-sans:
+    Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI',
+    'PingFang SC', 'HarmonyOS Sans SC', 'Source Han Sans SC', 'Noto Sans SC',
+    'Microsoft YaHei UI', 'Microsoft YaHei', ui-sans-serif, system-ui, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+}

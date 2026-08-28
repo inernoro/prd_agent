@@ -1,5 +1,6 @@
 import { ok, type ApiResponse } from '@/types/api';
 import type {
+  ChangePasswordContract,
   GetSsoOptionsContract,
   LoginContract,
   LoginResponse,
@@ -89,5 +90,26 @@ export const resetPasswordReal: ResetPasswordContract = async (userId, newPasswo
     auth: !accessToken,
     headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     body: { userId, newPassword, confirmPassword },
+  });
+};
+
+export const changePasswordReal: ChangePasswordContract = async (
+  currentPassword,
+  newPassword,
+  confirmPassword,
+): Promise<ApiResponse<LoginResponse>> => {
+  const res = await apiRequest<BackendLoginResponse>(api.auth.changePassword(), {
+    method: 'POST',
+    body: { currentPassword, newPassword, confirmPassword },
+  });
+
+  if (!res.success) return res;
+
+  return ok({
+    user: res.data.user,
+    accessToken: res.data.accessToken,
+    refreshToken: res.data.refreshToken,
+    sessionKey: res.data.sessionKey,
+    mustResetPassword: false,
   });
 };

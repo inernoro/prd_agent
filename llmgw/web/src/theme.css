@@ -7100,3 +7100,91 @@ a:focus-visible {
 .lg-log-footer-error {
   color: var(--err);
 }
+
+/* ── 表格行操作收纳（RowActions）────────────────────────────────────────────
+ * Provider 表原来一行平铺八个操作，横向排成一堵墙、主次不分。
+ * 主操作留在行内，其余进「更多」菜单。触发器与浮层沿用 lg-log-table-settings 的
+ * 尺寸与 token，保证两处收纳器长得像同一个东西。 */
+.lg-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lg-row-actions-trigger {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.lg-row-actions-trigger:hover,
+.lg-row-actions-trigger[aria-expanded='true'] {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.lg-row-actions-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.lg-row-actions-popover {
+  position: fixed;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-drawer);
+}
+
+.lg-row-actions-item {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.lg-row-actions-item:hover:not(:disabled) {
+  background: var(--bg-input);
+}
+
+.lg-row-actions-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.lg-row-actions-item:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* 不可逆动作单独一档配色，且在菜单里排最后，别和日常操作混成一片。
+   走主题自带的 --err / --err-bg，双主题自动跟随，不硬编码红色。 */
+.lg-row-actions-item.is-danger:not(:disabled) {
+  color: var(--err);
+}
+
+.lg-row-actions-item.is-danger:hover:not(:disabled) {
+  background: var(--err-bg);
+}

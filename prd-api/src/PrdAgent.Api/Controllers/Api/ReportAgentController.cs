@@ -1839,6 +1839,7 @@ public class ReportAgentController : ControllerBase
             MimeType = mimeType,
             Size = file.Length,
             Url = stored.Url,
+            StorageKey = stored.Key,
             Type = AttachmentType.Image,
             UploadedAt = DateTime.UtcNow
         };
@@ -2592,6 +2593,7 @@ public class ReportAgentController : ControllerBase
             MimeType = mimeType,
             Size = file.Length,
             Url = stored.Url,
+            StorageKey = stored.Key,
             Type = AttachmentType.Image,
             UploadedAt = DateTime.UtcNow
         };
@@ -3936,6 +3938,7 @@ public class ReportAgentController : ControllerBase
             MimeType = mimeType,
             Size = file.Length,
             Url = stored.Url,
+            StorageKey = stored.Key,
             Type = AttachmentType.Image,
             UploadedAt = DateTime.UtcNow
         };

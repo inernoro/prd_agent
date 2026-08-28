@@ -3,13 +3,13 @@
 @import './surface.css';
 @import './legacy.css';
 @import './media-card.css';
+@import './doc-diff.css';
 @import './home-launcher.css';
 
-/* CDS preview compatibility: the injected branch badge starts at the lower-left
-   corner. Reserve its compact height so account and avatar controls remain usable
-   before the platform-side collision-safe badge position reaches every CDS host. */
-@media (min-width: 641px) {
-  body:has(> [data-cds-widget-root]) [data-app-sidebar-account] {
-    padding-bottom: 52px;
-  }
-}
+/* CDS preview compatibility: this used to reserve 52px at the bottom of the sidebar
+   account block, back when the injected branch badge sat in the lower-LEFT corner.
+   cds/src/widget-script.ts `defaultWidgetLeft()` now anchors the desktop badge in the
+   right-side safe area (innerWidth-492), so that reserve no longer avoids anything —
+   it just floated the avatar 52px off the bottom of the rail. Removed 2026-08-25.
+   If the widget ever goes back to a left-rail anchor, bring the reserve back; the
+   guard in AppShell.cdsCompatibility.test.ts watches that anchor and will go red. */

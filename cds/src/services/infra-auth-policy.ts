@@ -1,4 +1,4 @@
-import { detectInfraKind } from './infra-exposure-audit.js';
+import { detectInfraAuth, detectInfraKind } from './infra-exposure-audit.js';
 
 export interface InfraAuthInput {
   dockerImage: string;
@@ -50,9 +50,16 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
     }
     configured = true;
   } else if (kind === 'redis') {
-    const effective = `${command} ${env.REDIS_ARGS || ''} ${env.REDIS_EXTRA_FLAGS || ''}`;
-    configured = /(?:^|\s)--requirepass(?:=|\s+)\S+/.test(effective)
-      || /(?:^|\s)--aclfile(?:=|\s+)\S+/.test(effective);
+    // **不在这里另写一份**（2026-08-27 收敛，台账 E81）：原来这里用两条正则自己判，
+    // 而运行态自检那份判据取或还认了 env，于是同一台库两处结论相反。redis 与
+    // memcached / kafka / nats 一样，只留 `detectInfraAuth` 那一份。
+    //
+    // 顺带修好一处旧漏：原来的正则只认 `--requirepass` / `--aclfile`，
+    // 漏了 ACL 的 `--user`；共用判据把它一并覆盖了。
+    configured = detectInfraAuth('redis', env, [
+      ...(Array.isArray(input.command) ? input.command : input.command ? [input.command] : []),
+      ...(Array.isArray(input.entrypoint) ? input.entrypoint : input.entrypoint ? [input.entrypoint] : []),
+    ]) === true;
   } else if (kind === 'sqlserver') {
     configured = hasValue(env, 'MSSQL_SA_PASSWORD', 'SA_PASSWORD');
   } else if (kind === 'clickhouse') {
@@ -68,6 +75,25 @@ export function assertInfraAuthenticationConfigured(input: InfraAuthInput): void
   } else if (kind === 'minio') {
     configured = hasValue(env, 'MINIO_ROOT_USER', 'MINIO_ACCESS_KEY')
       && hasValue(env, 'MINIO_ROOT_PASSWORD', 'MINIO_SECRET_KEY');
+  } else if (kind === 'memcached' || kind === 'kafka' || kind === 'nats') {
+    /**
+     * 这三类**不在这里另写一份判据**，直接问运行态自检那一份。
+     *
+     * 原因是第一版真的分裂过：门禁这边顺手认了「env 里有 MEMCACHED_PASSWORD」，
+     * 自检那边只认「命令行上真的启用了 -Y」。于是同一台库，门禁放行、自检报
+     * critical——**口令存在不等于服务在校验它**，自检那一版才是对的。
+     * 两个判据判同一件事就必然漂移（形状 3），所以只留一份。
+     *
+     * `detectInfraAuth` 只接 env + 启动参数，把 command 与 entrypoint 一起送进去：
+     * 这三个预设的认证恰恰写在「entrypoint 覆盖成 sh 之后再 exec 回去」的那条命令里。
+     *
+     * 返回 null（认不出类型）在这里不可能发生——kind 已经是这三个之一；
+     * 真出现也按「证明不了」处理，与自检同向。
+     */
+    configured = detectInfraAuth(kind, env, [
+      ...(Array.isArray(input.command) ? input.command : input.command ? [input.command] : []),
+      ...(Array.isArray(input.entrypoint) ? input.entrypoint : input.entrypoint ? [input.entrypoint] : []),
+    ]) === true;
   }
 
   if (!configured) {

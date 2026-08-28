@@ -445,6 +445,28 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void RowActions_KeepsOverflowMenuClearOfTheCdsPreviewWidget()
+    {
+        // 窄屏行操作菜单贴视口底部，而 CDS 注入的预览徽章 #cds-widget 是
+        // fixed / 左下角 / z-index 99999 —— 层级上永远压过菜单。做法是**量出真实遮挡**
+        // 再让位，而不是拍一个固定留白：预览环境自动抬高，正式环境没有这个元素就还是贴底。
+        //
+        // 这段逻辑删掉之后编译照过、llmgw/web 又整包没有单测，属于「改动删掉测试仍全绿」，
+        // 所以必须有一条会红的守卫（predicate-and-wiring-discipline 形状 2）。
+        var rowActions = ReadRepoFile("llmgw/web/src/components/RowActions.tsx");
+
+        Assert.Contains("function bottomObstructionHeight", rowActions);
+        Assert.Contains("document.getElementById('cds-widget')", rowActions);
+        // 判据要求它真的贴在视口底部才算数，别的地方出现同名元素不该跟着抬高
+        Assert.Contains("rect.bottom < viewportHeight - 160", rowActions);
+        // 查不到就是 0：正式环境必须原样退回贴底
+        Assert.Contains("if (!widget) return 0;", rowActions);
+        Assert.Contains("Math.max(10, bottomObstructionHeight(vh) + 8)", rowActions);
+        // 抬高之后还要重算可用高度，否则菜单会从顶部溢出去
+        Assert.Contains("maxHeight: Math.max(120, vh - bottom - 16)", rowActions);
+    }
+
+    [Fact]
     public void Console_ExposesProtocolCoverageFromGatewayLogsAndRegistry()
     {
         var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");

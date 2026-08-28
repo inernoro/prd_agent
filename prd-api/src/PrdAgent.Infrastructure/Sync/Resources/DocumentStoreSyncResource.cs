@@ -1203,6 +1203,15 @@ public class DocumentStoreSyncResource : ISyncableResource
             MimeType = string.IsNullOrWhiteSpace(pa.MimeType) ? stored.Mime : pa.MimeType!,
             Size = pa.Size > 0 ? pa.Size : stored.SizeBytes,
             Url = stored.Url,
+            // key 必须跟着落库。只存 Url 的话，换桶 / 换公网域名 / 把库搬到另一台机器，
+            // 存量地址全部指回原处，而且没有任何东西能把它算回来（DS1）。
+            //
+            // 这一处**在 peer-sync 这条路上**，和另外几处建附件的地方不在同一个程序集里，
+            // 于是守卫扫不到它：那条守卫只扫 PrdAgent.Api，而且只认 `new Attachment {`
+            // 这个写法，这里是 `=> new() { }`——两道口子叠在一起，漏了它一声不吭。
+            // 本地磁盘存储时最难受：Url 是 `/local-assets/...` 这种相对地址，
+            // 跨实例同步会把它当成可搬运的，既给不出可用路径，也不报「认不出对象位置」。
+            StorageKey = stored.Key,
             Type = pa.Type,
             ExtractedText = pa.ExtractedText,
         };

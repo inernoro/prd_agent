@@ -1,0 +1,1057 @@
+using System.Security.Cryptography;
+using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
+using MongoDB.Bson;
+using MongoDB.Driver;
+using PrdAgent.Api.Authentication;
+using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Models.Responses;
+using PrdAgent.Api.Services.DataSync;
+using PrdAgent.Core.DataSync;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+
+namespace PrdAgent.Api.Controllers.Api;
+
+/// <summary>
+/// 本站作为「目标站」：向另一台 MAP 申请授权，然后把数据拉过来一次。
+///
+/// 流程和界面一一对应：
+/// 1. `POST prepare` —— 填源站地址，拿到跳转链接（本站生成 PKCE verifier 留在内存）
+/// 2. 人在源站点同意，浏览器带着授权码回到本站 `/data-sync/callback`
+/// 3. `POST callback` —— 本站服务端换取导出令牌，建一条 Run，并给出同步前对照表
+/// 4. `POST runs/{id}/start` —— 确认对照表之后才真写库；DryRun 只统计
+/// 5. `GET runs/{id}/stream` —— SSE 推进度，直到终态
+///
+/// 第 3 步和第 4 步分开是有意的：拿到令牌不等于开始写。中间那一屏是操作者最后一次
+/// 看清「要往哪个库写、要写多少条、本地现在有多少」的机会。
+/// </summary>
+[ApiController]
+[Route("api/instance-sync")]
+[Authorize]
+public sealed class DataSyncConsumerController : ControllerBase
+{
+    /// <summary>SSE 心跳间隔。10 秒是 server-authority #4 定的下限。</summary>
+    private static readonly TimeSpan KeepAliveInterval = TimeSpan.FromSeconds(10);
+
+    private readonly MongoDbContext _db;
+    private readonly DataSyncTokenVault _vault;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IConfiguration _configuration;
+    private readonly ILogger<DataSyncConsumerController> _logger;
+
+    public DataSyncConsumerController(
+        MongoDbContext db,
+        DataSyncTokenVault vault,
+        IHttpClientFactory httpClientFactory,
+        IConfiguration configuration,
+        ILogger<DataSyncConsumerController> logger)
+    {
+        _db = db;
+        _vault = vault;
+        _httpClientFactory = httpClientFactory;
+        _configuration = configuration;
+        _logger = logger;
+    }
+
+    /// <summary>生成跳转链接。verifier 留在本站内存，只把它的散列送出去。</summary>
+    [HttpPost("runs/prepare")]
+    public async Task<IActionResult> Prepare([FromBody] DataSyncPrepareRequest request, CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+        if (!TryNormalizeOrigin(request.SourceOrigin, out var origin))
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_SOURCE_INVALID", "源站地址必须是 https 的站点根地址"));
+        }
+
+        // 跳转之前先握一次手：版本对不上、或者对方压根没开对外同步，
+        // 在这里当场说清楚，而不是让人跳过去勾一遍、回来才发现跑不了。
+        var probe = await ProbeSourceAsync(origin, ct);
+        if (probe.Error is not null)
+        {
+            return BadRequest(ApiResponse<object>.Fail(probe.Code!, probe.Error));
+        }
+
+        var state = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        var verifier = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(48));
+        _vault.StashVerifier(state, verifier, DateTime.UtcNow.AddMinutes(15));
+
+        var callback = $"{SelfOrigin()}/data-sync/callback";
+        var authorizeUrl = QueryHelpers.AddQueryString($"{origin}/api/instance-sync/authorize", new Dictionary<string, string?>
+        {
+            ["redirect_uri"] = callback,
+            ["state"] = state,
+            ["code_challenge"] = DataSyncProviderController.Sha256Base64Url(verifier),
+        });
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            authorizeUrl, state, sourceOrigin = origin, callback,
+            sourceLabel = probe.SiteLabel,
+            sourceBuild = probe.Build,
+        }));
+    }
+
+    /// <summary>浏览器回跳后由前端把 code/state 交给本站服务端，这里去源站换令牌并建 Run。</summary>
+    [HttpPost("runs/callback")]
+    public async Task<IActionResult> Callback([FromBody] DataSyncCallbackRequest request, CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+        if (string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.State)
+            || !TryNormalizeOrigin(request.SourceOrigin, out var origin))
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_CALLBACK_INVALID", "回调参数不完整"));
+        }
+
+        var verifier = _vault.PeekVerifier(request.State!);
+        if (verifier is null)
+        {
+            // 拿不到 verifier 的两种情况都不该继续：state 不是本站发的（可能是别人塞给
+            // 管理员的链接），或者进程重启了。两种都要求重新走一次跳转。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_STATE_UNKNOWN", "这次授权已失效，请重新发起跳转"));
+        }
+
+        // 源站地址是管理员填进来的，必须走 SafeOutbound：它禁自动重定向、并在建连时把
+        // 解析出的每个地址过一遍内网/保留段校验。默认客户端会让「https://127.0.0.1」
+        // 或者一个公网地址 302 跳内网，把 API 服务器变成打自己内网的跳板。
+        // 从这里开始一律 CancellationToken.None，不再看浏览器还连不连着。
+        //
+        // 换票是**双方各自改状态**的一步：源站收到请求就把授权码原子地标成已消费，
+        // 并签出一张两小时的导出令牌，本站这边的一次性状态也随之作废。
+        // 所以只要请求发出去了，这一段就必须跑完——
+        // 管理员在等待期间关掉标签页而把 ct 取消的话，PostAsJsonAsync 当场抛，
+        // 本站既没存下也没作废那张令牌，它在源站眼里照样有效整整两小时，
+        // 而任何人都不再持有它、也无从交还。这正是 server-authority 第 1 条
+        // 「状态变更不得挂在 RequestAborted 上」要防的。
+        var client = _httpClientFactory.CreateClient("SafeOutbound");
+        client.Timeout = TimeSpan.FromSeconds(30);
+
+        HttpResponseMessage response;
+        string payload;
+        try
+        {
+            response = await client.PostAsJsonAsync($"{origin}/api/instance-sync/token", new
+            {
+                code = request.Code,
+                redirectUri = $"{SelfOrigin()}/data-sync/callback",
+                codeVerifier = verifier,
+            }, CancellationToken.None);
+            payload = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 请求没走到源站（DNS / TLS / 连不上 / 超时）：授权码一条都没被消费，
+            // verifier 也就必须留着——这是**唯一**还能重试的失败，前端那个「重试」
+            // 按钮为它而存在。给一个专门的错误码，让前端只在这一档亮重试。
+            _logger.LogWarning(ex, "[data-sync] 换取导出令牌时没能连上源站 {Origin}", origin);
+            return StatusCode(StatusCodes.Status502BadGateway, ApiResponse<object>.Fail(
+                "DATA_SYNC_SOURCE_UNREACHABLE",
+                "没能连上源站，这次授权还没被消费，可以直接重试。"));
+        }
+
+        // 源站已经应答——授权码无论成败都在那边作废了，手里的 verifier 再换不出东西。
+        // 从这里往下的每一条返回路径都不该再被重试，所以在这里统一作废。
+        _vault.ForgetVerifier(request.State!);
+
+        using var _ = response;
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogWarning("[data-sync] 换取导出令牌失败 {Status}", (int)response.StatusCode);
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_REJECTED",
+                $"源站拒绝了这次换取（HTTP {(int)response.StatusCode}）"));
+        }
+
+        var token = ReadTokenPayload(payload);
+        if (token is null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_MALFORMED", "源站返回的内容无法解析"));
+        }
+
+        var run = new DataSyncRun
+        {
+            OperatorUserId = this.GetRequiredUserId(),
+            SourceOrigin = origin,
+            SourceLabel = token.SiteLabel,
+            Groups = token.Groups,
+            Collections = token.Collections,
+            ExportTokenHash = "",
+            ExportTokenExpiresAt = token.ExpiresAt,
+            Status = "pending",
+        };
+        try
+        {
+            await _db.DataSyncRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+            _vault.PutExportToken(run.Id, token.ExportToken, token.ExpiresAt);
+        }
+        catch (Exception ex)
+        {
+            // 票已经在手上、Run 却没建成：这张令牌从此没有任何人会用它，也没有任何人
+            // 会交还它，就这么在源站有效两小时。当场还回去，别留一个谁都不认领的凭据。
+            _logger.LogError(ex, "[data-sync] 已换到导出令牌但建立同步记录失败，正在交还源站作废");
+            await RevokeAtSourceAsync(origin, token.ExportToken);
+            return StatusCode(StatusCodes.Status500InternalServerError, ApiResponse<object>.Fail(
+                "DATA_SYNC_RUN_CREATE_FAILED",
+                "已从源站取得导出令牌，但本站建立同步记录失败；令牌已交还作废，请重新发起授权。"));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, run.SourceLabel, run.Groups, run.Collections }));
+    }
+
+    /// <summary>
+    /// 把一张还没落到任何 Run 上的导出令牌交还源站作废。
+    ///
+    /// 与 worker 收尾时那次交还是同一个端点、同一套判据（拿票即可作废，与源站当前
+    /// 的对外开关无关）；区别只是这里还没有 Run，所以单独走一份。
+    /// 尽力而为：还不掉就留日志等它自然过期，不为此把已经给出的错误再改一个说法。
+    /// 一律 CancellationToken.None——这本身就是补偿动作，浏览器早就不在了。
+    /// </summary>
+    private async Task RevokeAtSourceAsync(string origin, string exportToken)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("SafeOutbound");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{origin}/api/instance-sync/revoke");
+            request.Headers.TryAddWithoutValidation("X-Data-Sync-Token", exportToken);
+            using var response = await client.SendAsync(request, CancellationToken.None);
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[data-sync] 交还未落地的导出令牌失败 HTTP {Status}，票据将等待自然过期",
+                    (int)response.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[data-sync] 交还未落地的导出令牌异常，票据将等待自然过期");
+        }
+    }
+
+    /// <summary>
+    /// 同步前对照表：源站每个集合多少条、本地现在多少条、要写进哪个数据库。
+    ///
+    /// 「要写进哪个数据库」这一行不是装饰：分支预览共享同一个库，在任何一个分支上跑
+    /// 同步，同库的其它分支立刻看得见。让操作者在按下开始之前看见库名，是唯一能挡住
+    /// 「以为只影响自己这条分支」的手段。
+    /// </summary>
+    [HttpGet("runs/{id}/plan")]
+    public async Task<IActionResult> Plan(string id, CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
+        var run = await FindRunAsync(id, ct);
+        if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
+
+        var token = _vault.GetExportToken(run.Id);
+        if (token is null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_EXPIRED", "导出令牌已失效，请重新授权"));
+        }
+
+        var client = _httpClientFactory.CreateClient("SafeOutbound");
+        client.Timeout = TimeSpan.FromSeconds(60);
+        client.DefaultRequestHeaders.Add("X-Data-Sync-Token", token);
+        using var response = await client.GetAsync($"{run.SourceOrigin}/api/instance-sync/manifest", ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_MANIFEST_FAILED",
+                $"源站清单读取失败（HTTP {(int)response.StatusCode}）"));
+        }
+
+        List<ManifestItem> manifest;
+        try
+        {
+            manifest = ReadManifest(await response.Content.ReadAsStringAsync(ct));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 解析不出来就别让人往下走：对照表是操作者唯一一次看清「要写什么」的机会。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_MANIFEST_MALFORMED",
+                $"源站清单读不懂，多半是两边版本不一致：{ex.Message}"));
+        }
+        // 源站没报告、但在授权清单里的集合，也要出现在对照表上并写明「不会同步」。
+        // 藏起来等于让人以为它同步了。
+        var reported = manifest.Select(x => x.Collection).ToHashSet(StringComparer.Ordinal);
+        var missing = run.Collections.Where(c => !reported.Contains(c)).ToList();
+
+        var rows = new List<object>();
+        // 源站报了、但本站白名单不认识的集合（源站升级后新增、而本站还没跟上）：
+        // 必须当场说清楚「不会同步」，并且**不能进执行清单**。
+        // 原来这两件事都没做：它带着真实条数出现在对照表上，看着就是要同步的，
+        // worker 到了跟前 TryResolve 失败、记条日志跳过，整条 Run 照样报成功——
+        // 人确认过的清单里有它，终态却是「成功」，而它一条都没搬。
+        var unsupported = new List<string>();
+        foreach (var item in manifest)
+        {
+            if (!DataSyncScope.TryResolve(item.Collection, out _))
+            {
+                unsupported.Add(item.Collection);
+                rows.Add(new
+                {
+                    collection = item.Collection,
+                    group = (string?)null,
+                    sourceReported = true,
+                    sourceTotal = item.Total,
+                    localTotal = -1L,
+                    redactFields = Array.Empty<string>(),
+                    supportedHere = false,
+                });
+                continue;
+            }
+            var local = await _db.Database.GetCollection<BsonDocument>(item.Collection)
+                .CountDocumentsAsync(Builders<BsonDocument>.Filter.Empty, cancellationToken: ct);
+            rows.Add(new
+            {
+                collection = item.Collection,
+                group = DataSyncScope.GroupOf(item.Collection),
+                sourceReported = true,
+                sourceTotal = item.Total,
+                localTotal = local,
+                redactFields = item.RedactFields,
+                supportedHere = true,
+            });
+        }
+
+        foreach (var name in missing)
+        {
+            rows.Add(new
+            {
+                collection = name,
+                group = DataSyncScope.GroupOf(name),
+                sourceTotal = -1L,
+                localTotal = -1L,
+                redactFields = Array.Empty<string>(),
+                sourceReported = false,
+                supportedHere = true,
+            });
+        }
+
+        // 把「对照表上真实展示过、且源站确实提供」的这一份落到 Run 上，执行只认它。
+        //
+        // 过滤带上 pending：Start 会把状态原子地改成 running，之后这份清单就必须冻住。
+        // 否则另一个标签页（或另一个管理员）在 Start 之后、worker 认领之前再调一次
+        // Plan，就能把清单换掉——人按下开始时看的是一份，worker 执行的是另一份。
+        // 已经 running 的 Run 这里不报错：调用方只是想再看一眼对照表，读到什么给什么，
+        // 只是不再允许它改写执行范围。
+        // 执行清单只收「源站报了 + 本站认识」的那些。对照表上照样列出不认识的那几个，
+        // 但它们不会进 PlannedCollections，worker 也就不会遇到「计划里有、却跑不了」。
+        var planned = manifest.Where(x => DataSyncScope.TryResolve(x.Collection, out _)).ToList();
+        // 源站报的总条数与脱敏契约一起固化。这两样只有源站知道，对照表上刚显示过，
+        // 渲染完就丢掉的话下游只能瞎猜：进度里的 sourceTotal 永远 0，脱敏处理退回按
+        // 本站白名单算，只被源站列为敏感的字段就此隐身。与执行清单同一次条件更新写入。
+        var plannedManifest = planned.ToDictionary(
+            x => x.Collection,
+            x => new DataSyncPlannedCollection { SourceTotal = x.Total, RedactFields = x.RedactFields },
+            StringComparer.Ordinal);
+        await _db.DataSyncRuns.UpdateOneAsync(
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
+            Builders<DataSyncRun>.Update
+                .Set(x => x.PlannedCollections, planned.Select(x => x.Collection).ToList())
+                .Set(x => x.PlannedManifest, plannedManifest)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            runId = run.Id,
+            notReportedBySource = missing,
+            notSupportedHere = unsupported,
+            run.SourceLabel,
+            run.SourceOrigin,
+            targetDatabase = _db.Database.DatabaseNamespace.DatabaseName,
+            rows,
+        }));
+    }
+
+    /// <summary>确认对照表后开始执行。真正干活的是 DataSyncRunWorker。</summary>
+    [HttpPost("runs/{id}/start")]
+    public async Task<IActionResult> Start(string id, [FromBody] DataSyncStartRequest request, CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
+        var run = await FindRunAsync(id, ct);
+        if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
+        if (run.Status != "pending")
+        {
+            // 一次授权一条 Run、一条 Run 跑一次。重复点开始不该叠加执行。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_PENDING", $"这条同步已经是 {run.Status} 状态"));
+        }
+        if (_vault.GetExportToken(run.Id) is null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_EXPIRED", "导出令牌已失效，请重新授权"));
+        }
+        if (run.PlannedCollections.Count == 0)
+        {
+            // 「先看对照表」不是建议而是关口：没看过就没有「屏幕上展示过的清单」，
+            // 也就无从保证「看到的等于会写的」。界面本来就会先拉对照表，
+            // 这里挡的是绕过界面直接打接口的路径。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PLAN_REQUIRED",
+                "开始之前要先读一次对照表（GET runs/{id}/plan），确认要往哪个库写什么"));
+        }
+
+        // 上面那次 Status 检查和这次写入之间有窗口。只按 _id 更新的话，两个并发的
+        // Start 都会「成功」，后到的那个还能把 DryRun 从 true 改成 false——
+        // 用户点的是「只试跑」，worker 认领到的却是真写库。所以把 pending 放进过滤条件，
+        // 让「认领」由数据库一次原子完成，没改到任何文档就说明别人已经抢先了。
+        var claimed = await _db.DataSyncRuns.UpdateOneAsync(
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
+            Builders<DataSyncRun>.Update
+                .Set(x => x.Status, "running")
+                .Set(x => x.DryRun, request.DryRun)
+                .Set(x => x.OverwriteExisting, request.Overwrite)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        if (claimed.ModifiedCount == 0)
+        {
+            return Conflict(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_PENDING",
+                "这条同步刚刚已经被启动了，请刷新查看当前状态"));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = "running", dryRun = request.DryRun }));
+    }
+
+    /// <summary>
+    /// 试跑确认无误之后，就地转正成一次真跑。
+    ///
+    /// ## 为什么需要这个端点
+    ///
+    /// 原来一条 Run 跑一次、跑完票就交还，于是「先看一眼会搬什么」要花掉一次源站批准，
+    /// 真搬得让人再去点一次同意。2026-08-21 的两次真实迁移都卡死在这一步：
+    /// 4 万多条数据读得出来，写不进去。而试跑本来就不写任何东西。
+    ///
+    /// ## 转正不等于「批准可复用」
+    ///
+    /// 三条边界把它和长期凭据区分开，缺一条都不行：
+    ///
+    /// 1. **范围不重新询问源站**：真跑照抄试跑那一屏冻结下来的 Collections /
+    ///    PlannedCollections / PlannedManifest。源站清单在这中间变了也不影响，
+    ///    跑的仍然是操作者亲眼确认过的那一份。
+    /// 2. **至多一次**：靠「PromotedToRunId 还是空的」做条件更新来保证。两个标签页
+    ///    同时点、或者手快点两下，都只会有一条真跑；重复请求返回同一个 runId。
+    /// 3. **票据没有续命**：还是原来那张，带着原来的两小时硬过期；过期了就老老实实
+    ///    要求重新授权。
+    /// </summary>
+    [HttpPost("runs/{id}/promote")]
+    public async Task<IActionResult> Promote(string id, [FromBody] DataSyncPromoteRequest request, CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
+        var run = await FindRunAsync(id, ct);
+        if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
+
+        // 已经转正过就直接把那条还回去。用户手快点了两下不该收到一个错误，
+        // 更不该产生第二条真跑。
+        if (!string.IsNullOrEmpty(run.PromotedToRunId))
+        {
+            return Ok(ApiResponse<object>.Ok(new { runId = run.PromotedToRunId, status = "running", dryRun = false }));
+        }
+        if (!run.DryRun || run.Status != "succeeded")
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_NOT_ELIGIBLE",
+                "只有跑完并且成功的试跑才能转正成真跑"));
+        }
+        if (run.PlannedCollections.Count == 0)
+        {
+            // 理论上跑成功过就一定有；真为空说明这条记录不完整，宁可要求重来。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PLAN_REQUIRED",
+                "这次试跑没有留下对照表清单，无法转正，请重新授权跑一次"));
+        }
+        var token = _vault.GetExportToken(run.Id);
+        if (token is null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_EXPIRED",
+                "这次授权已经过期（或本站进程重启过），请重新授权后再跑一次"));
+        }
+        // **覆盖策略也是被冻结的那一部分，改了就不能直接转正。**
+        //
+        // 对照表里的「预计新增 / 预计更新」和跳过数，全是按试跑那次的
+        // `run.OverwriteExisting` 算出来的。试跑说「这些已存在、会跳过」，转正时若
+        // 换成覆盖，那批记录会被真的写掉——而这些破坏性写入**一次都没被预览过**，
+        // 「确认无误再搬」这句话也就落了空（Codex review P1）。
+        //
+        // 不静默照抄，是因为那对用户同样是撒谎：他明明改了开关，系统当没看见。
+        // 所以说清楚为什么不行、以及怎么才行。
+        if (request.Overwrite != run.OverwriteExisting)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_POLICY_CHANGED",
+                $"这次试跑是按「{DataSyncOverwriteWording.Describe(run.OverwriteExisting)}」预览的，"
+                + $"你现在选的是「{DataSyncOverwriteWording.Describe(request.Overwrite)}」。"
+                + "对照表里的预计条数是按试跑那次的策略算的，直接换策略等于让一批没被预览过的写入发生。"
+                + "要改策略请带着新策略重新试跑一次，看过新的对照表再转正"));
+        }
+
+        var child = new DataSyncRun
+        {
+            OperatorUserId = run.OperatorUserId,
+            SourceOrigin = run.SourceOrigin,
+            SourceLabel = run.SourceLabel,
+            Groups = new List<string>(run.Groups),
+            // 范围一律照抄，**不重新问源站要清单**：真跑的集合与计划必须是操作者刚才看过的那一份。
+            // 注意这只冻结**范围**，不冻结**数据**——worker 会重新调源站 /export 拉内容，
+            // 游标从头开始。期间源站改了的记录，搬过来的是改之后的值。想真冻结数据得给导出
+            // 加快照或版本边界，见 doc/debt.platform.cross-instance-data-sync.md；界面上已如实说明。
+            Collections = new List<string>(run.Collections),
+            PlannedCollections = new List<string>(run.PlannedCollections),
+            PlannedManifest = new Dictionary<string, DataSyncPlannedCollection>(run.PlannedManifest),
+            ExportTokenHash = run.ExportTokenHash,
+            ExportTokenExpiresAt = run.ExportTokenExpiresAt,
+            DryRun = false,
+            // **照抄试跑那次的策略，不用请求里带的那个。** 界面上的 plannedInsert /
+            // plannedUpdate / 跳过数全是按 run.OverwriteExisting 算出来的：试跑说
+            // 「这 300 条已存在、会跳过」，转正时若换成覆盖，那 300 条会被真的写掉——
+            // 而这些破坏性写入**从来没被预览过**（Codex review P1）。
+            // 策略不一致时上面已经拒了，走到这里两者必然相同，这里取冻结的那一份。
+            OverwriteExisting = run.OverwriteExisting,
+            PromotedFromRunId = run.Id,
+            Status = "pending",
+        };
+        // 先落子记录再认领父记录：反过来的话，中间崩一下就会留下一个「已转正、
+        // 但那条真跑不存在」的父记录，而它再也转正不了了。这个顺序下最坏结果是
+        // 一条没人认领的 pending，由既有的过期清扫收走。
+        //
+        // 从这里往下的每一次写库都用 CancellationToken.None，**不跟 HTTP 连接绑死**。
+        // 原来传的是请求的取消令牌，于是浏览器一关（或代理超时）就可能停在
+        // 「父记录已认领、子记录还是 pending」这一步：worker 只认领 running，
+        // 而父记录的 PromotedToRunId 已经被占住，那唯一一次转正机会就永久作废了
+        // ——接口还照样回「status: running」，是句假话（Codex review P1）。
+        // 这也正是 server-authority 那条规则的原文要求：状态变更一律用 None。
+        await _db.DataSyncRuns.InsertOneAsync(child, cancellationToken: CancellationToken.None);
+
+        var claimed = await _db.DataSyncRuns.UpdateOneAsync(
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                // 「还没转正过」放进过滤条件，让唯一性由数据库一次原子完成。
+                Builders<DataSyncRun>.Filter.Or(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.PromotedToRunId, null),
+                    Builders<DataSyncRun>.Filter.Eq(x => x.PromotedToRunId, string.Empty))),
+            Builders<DataSyncRun>.Update
+                .Set(x => x.PromotedToRunId, child.Id)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        if (claimed.ModifiedCount == 0)
+        {
+            // 有人抢先了。把刚插进去的这条撤掉，返回抢赢的那一条。
+            await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, CancellationToken.None);
+            var latest = await FindRunAsync(run.Id, ct);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                runId = latest?.PromotedToRunId ?? run.Id,
+                status = "running",
+                dryRun = false,
+            }));
+        }
+
+        // 票据转到子记录名下再从父记录摘掉：worker 只认领「本进程握着令牌」的 Run，
+        // 顺序反了会有一瞬间谁都拿不到它。
+        _vault.PutExportToken(child.Id, token, run.ExportTokenExpiresAt);
+        _vault.Forget(run.Id);
+
+        // 最后这一步是**激活**：worker 只跑 running 的 Run。
+        //
+        // 不可取消已经不够——这次写库还可能因为网络抖动、副本切换直接抛异常。
+        // 一旦它没成，父记录已经认领、票也转走了，而子记录停在 pending：
+        // 谁都不会去跑它，重试又会被开头那句「已经转正过」原样挡回来，
+        // **那唯一一次转正机会就此作废**，接口却回过「running」（Codex review P1 第二轮）。
+        //
+        // 所以失败要补偿回可重试的状态：票还回父记录、清掉父记录的认领、删掉子记录，
+        // 然后如实报错。
+        //
+        // **补偿本身也会失败**，而且最可能就败在同一次数据库抖动上（Codex review P1
+        // 第三轮）。那时候唯一还能做对的事是**别说自己回滚成功了**：原来无论补偿成没成
+        // 都回同一句「已回滚到可重试状态，请再点一次」，用户照着再点一次只会撞回
+        // 「已经转正过」，而父记录还占着认领、票已经在内存里还回去了——比不回滚更难查。
+        // 所以这里把补偿结果记下来，两种情况说两句不同的话。
+        // 补偿抽成一处：**激活失败有两种形态**，两边必须走同一套回滚，否则改一处
+        // 忘一处就是下一个「看着回滚了其实没有」（形状 3：判据分裂后各自漂移）。
+        async Task<IActionResult> CompensateAsync(string why)
+        {
+            var rolledBack = false;
+            try
+            {
+                _vault.PutExportToken(run.Id, token, run.ExportTokenExpiresAt);
+                _vault.Forget(child.Id);
+                await _db.DataSyncRuns.UpdateOneAsync(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                    Builders<DataSyncRun>.Update
+                        .Set(x => x.PromotedToRunId, (string?)null)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, CancellationToken.None);
+                rolledBack = true;
+            }
+            catch (Exception rollbackEx)
+            {
+                // 补偿也失败了。这时候唯一还能做对的事就是说实话——而不是照旧回一句
+                // 「已回滚，请再点一次」，那会把人骗去按一个必然撞回「已经转正过」的按钮。
+                _logger.LogError(rollbackEx,
+                    "[data-sync] Run {RunId} 回滚也失败（{Why}）：父记录可能仍占着认领、子记录 {ChildId} 仍是 pending，需要人工检查",
+                    run.Id, why, child.Id);
+            }
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                rolledBack
+                    ? ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_FAILED",
+                        "转正没能启动，已回滚到可重试状态，请再点一次；若反复失败请检查数据库连接")
+                    // 回滚也没成：不许说「请再点一次」。把要人工看什么说清楚，
+                    // 两个 id 都给出来，否则运维只能对着一句「失败了」翻库。
+                    : ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_STUCK",
+                        $"转正没能启动，回滚也失败了，这条试跑现在卡在中间状态、再点也没用。"
+                        + $"请让人工检查数据库连接，并核对这两条记录：试跑 {run.Id}（PromotedToRunId 可能仍指向下面这条）、"
+                        + $"真跑 {child.Id}（可能仍是 pending）"));
+        }
+
+        UpdateResult activated;
+        try
+        {
+            activated = await _db.DataSyncRuns.UpdateOneAsync(
+                Builders<DataSyncRun>.Filter.And(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Id, child.Id),
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
+                Builders<DataSyncRun>.Update
+                    .Set(x => x.Status, "running")
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[data-sync] Run {RunId} 转正后激活子记录 {ChildId} 抛异常，回滚到可重试状态", run.Id, child.Id);
+            return await CompensateAsync("激活抛异常");
+        }
+
+        // **一行都没改到也是失败，而且不抛异常。** 票据在最初那次查库之后过期的话，
+        // 清扫器会把刚转过去的子记录票撤掉、把这条 pending 标成失败或直接删掉；
+        // 这次条件更新于是匹配不到任何文档，`ModifiedCount == 0`，一声不吭。
+        // 上一版把返回值整个丢掉，接口照样回「status: running」——而父记录已经永久
+        // 转正到一条**永远不会被执行**的子记录上，那唯一一次机会就此作废
+        //（Codex review P1）。所以这里和抛异常走同一条补偿。
+        if (activated.ModifiedCount == 0)
+        {
+            _logger.LogError(
+                "[data-sync] Run {RunId} 转正后激活子记录 {ChildId} 没改到任何行（多半是票据过期后被清扫），回滚到可重试状态",
+                run.Id, child.Id);
+            return await CompensateAsync("条件更新没匹配到 pending 子记录");
+        }
+
+        _logger.LogInformation("[data-sync] Run {RunId} 试跑转正为真跑 {ChildId}", run.Id, child.Id);
+        return Ok(ApiResponse<object>.Ok(new { runId = child.Id, status = "running", dryRun = false }));
+    }
+
+    [HttpGet("runs/{id}")]
+    public async Task<IActionResult> Get(string id, CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
+        var run = await FindRunAsync(id, ct);
+        if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
+        return Ok(ApiResponse<object>.Ok(Describe(run)));
+    }
+
+    [HttpGet("runs")]
+    public async Task<IActionResult> List(CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
+        var runs = await _db.DataSyncRuns
+            .Find(Builders<DataSyncRun>.Filter.Empty)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(20)
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(runs.Select(Describe)));
+    }
+
+    /// <summary>
+    /// SSE 进度流。每秒读一次 Run 文档，只在内容变化时推送，终态后收尾。
+    ///
+    /// 之所以不是让前端轮询：同步动辄几分钟，屏幕上必须一直有东西在动（禁止空白等待）。
+    /// 推的是每个集合的真实条数，不是一个假装精确的百分比。
+    /// </summary>
+    [HttpGet("runs/{id}/stream")]
+    public async Task Stream(string id, CancellationToken ct)
+    {
+        // SSE 不能靠返回 IActionResult 表达 403（响应体已经是事件流了），所以在写头之前判。
+        if (!await IsAdminAsync(ct))
+        {
+            Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+
+        Response.Headers.Append("Content-Type", "text/event-stream");
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("X-Accel-Buffering", "no");
+
+        var lastPayload = "";
+        var lastWriteAt = DateTime.UtcNow;
+        var deadline = DateTime.UtcNow.AddHours(2);
+        // 关标签页 / 代理掐连接是这条流最常见的结束方式，不是异常。
+        // 断开会把 ct 取消，于是 Mongo 查询和 Task.Delay 都会抛 OperationCanceled；
+        // 不接住的话，一次再普通不过的离开会变成端点异常终止（server-authority #2）。
+        // 只接「确实是本请求被取消」这一种，别的取消照旧抛出去。
+        //
+        // 写入侧另有一套抛法（Kestrel 的 IOException / InvalidOperationException /
+        // ObjectDisposed），交给 TryWriteEventAsync 用共享判据处理——那条判据不能在这里
+        // 重写一遍（形状 3）。这个端点是纯观察者，同步本身跑在 Worker 里，
+        // 所以对端走了就干净收摊，没有「必须继续做完」的服务端任务（server-authority #3）。
+        try
+        {
+            while (!ct.IsCancellationRequested && DateTime.UtcNow < deadline)
+            {
+                var run = await FindRunAsync(id, ct);
+                if (run is null)
+                {
+                    await TryWriteEventAsync("error", "{\"message\":\"同步记录不存在\"}", ct);
+                    return;
+                }
+                var payload = SerializeRunForStream(run);
+                if (payload != lastPayload)
+                {
+                    lastPayload = payload;
+                    lastWriteAt = DateTime.UtcNow;
+                    if (!await TryWriteEventAsync("progress", payload, ct)) return;
+                }
+                if (run.Status is "succeeded" or "failed" or "cancelled")
+                {
+                    await TryWriteEventAsync("done", payload, ct);
+                    return;
+                }
+                // 心跳（server-authority #4）：一次慢导出或一批慢写入期间，进度可能几十秒
+                // 一动不动。中间任何一层 ingress 的空闲超时都会把这条流掐掉，而前端把
+                // 「流结束了」当成正常收尾、不重连——同步还在跑，屏幕却永远停在那一刻。
+                // 所以不管有没有变化，至少每 10 秒写一次。
+                if (DateTime.UtcNow - lastWriteAt >= KeepAliveInterval)
+                {
+                    lastWriteAt = DateTime.UtcNow;
+                    if (!await TryWriteEventAsync("keepalive", "{}", ct)) return;
+                }
+                await Task.Delay(1000, ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 对端走了，正常收尾。
+        }
+    }
+
+    /// <summary>
+    /// 写一个 SSE 事件。返回 false = 对端已经不在了，调用方该收摊。
+    ///
+    /// 连接层的失败一律不往外抛：判据复用 <see cref="SseEventWriter.IsClientDisconnect"/>，
+    /// 因为 Kestrel 对「socket 没了」有好几种抛法（IOException / InvalidOperationException /
+    /// ObjectDisposed / OperationCanceled），在这里另写一份迟早漏掉其中一种。
+    /// </summary>
+    private async Task<bool> TryWriteEventAsync(string name, string data, CancellationToken ct)
+    {
+        try
+        {
+            await Response.WriteAsync($"event: {name}\ndata: {data}\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+            return true;
+        }
+        catch (Exception ex) when (SseEventWriter.IsClientDisconnect(ex))
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Run 的对外形状。
+    ///
+    /// 每个字段名都显式写成 camelCase，**不要**用 `run.Status` 这种简写。原因：这个对象
+    /// 走两条路出去——`ApiResponse` 那条经 MVC 的 JSON 配置（camelCase），SSE 那条是自己
+    /// 调 JsonSerializer（默认 PascalCase）。用简写的话两条路吐出的键名不一样，前端从
+    /// GET 拿到 `status`、从 SSE 拿到 `Status`，页面在同步跑起来的那一刻突然读不到值。
+    /// </summary>
+    private static object Describe(DataSyncRun run) => new
+    {
+        runId = run.Id,
+        status = run.Status,
+        sourceLabel = run.SourceLabel,
+        sourceOrigin = run.SourceOrigin,
+        groups = run.Groups,
+        collections = run.Collections,
+        plannedCollections = run.PlannedCollections,
+        dryRun = run.DryRun,
+        overwriteExisting = run.OverwriteExisting,
+        error = run.Error,
+        createdAt = run.CreatedAt,
+        finishedAt = run.FinishedAt,
+        pendingSecretFields = run.PendingSecretFields,
+        // 转正关系要送出去：界面靠它决定「确认无误，开始真的搬」这个按钮画不画、
+        // 以及跳到哪条真跑。只留在库里等于没做。
+        promotedToRunId = run.PromotedToRunId,
+        promotedFromRunId = run.PromotedFromRunId,
+        progress = run.Progress.Select(kv => new
+        {
+            collection = kv.Key,
+            sourceTotal = kv.Value.SourceTotal,
+            fetched = kv.Value.Fetched,
+            inserted = kv.Value.Inserted,
+            skipped = kv.Value.Skipped,
+            updated = kv.Value.Updated,
+            plannedInsert = kv.Value.PlannedInsert,
+            plannedUpdate = kv.Value.PlannedUpdate,
+            // 资产地址改写的两个数字必须一起出去。只送「改了几条」而不送「还有几条没救」，
+            // 界面上就只剩一句好消息，缺口被藏起来——那正是 DS1 当初的样子。
+            assetUrlsRebased = kv.Value.AssetUrlsRebased,
+            assetUrlsUnresolved = kv.Value.AssetUrlsUnresolved,
+            assetUrlsRelative = kv.Value.AssetUrlsRelative,
+            done = kv.Value.Done,
+        }),
+    };
+
+    /// <summary>SSE payload 的序列化口径。导出给测试，确保断言的就是真发出去的那份。</summary>
+    internal static string SerializeRunForStream(DataSyncRun run) => JsonSerializer.Serialize(Describe(run));
+
+    private sealed record SourceProbe(string? Code, string? Error, string? SiteLabel, string? Build);
+
+    /// <summary>
+    /// 跳转前的握手。三件事：对方在不在、协议版本对不对、对外同步开没开。
+    /// 探测失败一律给可执行的下一步，不给「操作失败」。
+    /// </summary>
+    private async Task<SourceProbe> ProbeSourceAsync(string origin, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("SafeOutbound");
+            client.Timeout = TimeSpan.FromSeconds(15);
+            using var response = await client.GetAsync($"{origin}/api/instance-sync/handshake", ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new SourceProbe("DATA_SYNC_SOURCE_UNREACHABLE",
+                    $"连不上对方的同步接口（HTTP {(int)response.StatusCode}）。确认地址没写错，"
+                    + "并且对方跑的是带「数据同步」功能的版本。", null, null);
+            }
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            if (!doc.RootElement.TryGetProperty("data", out var data))
+            {
+                return new SourceProbe("DATA_SYNC_SOURCE_UNREADABLE", "对方返回的内容读不懂，多半不是一台 MAP。", null, null);
+            }
+
+            var remoteVersion = data.TryGetProperty("protocolVersion", out var pv) && pv.TryGetInt32(out var v) ? v : -1;
+            if (remoteVersion != DataSyncProviderController.ProtocolVersionForHandshake)
+            {
+                return new SourceProbe("DATA_SYNC_PROTOCOL_MISMATCH",
+                    $"两端的同步协议版本对不上（本站 {DataSyncProviderController.ProtocolVersionForHandshake}，"
+                    + $"对方 {(remoteVersion < 0 ? "未知" : remoteVersion.ToString())}）。先把两边升到同一版再同步。",
+                    null, null);
+            }
+
+            var providerEnabled = data.TryGetProperty("providerEnabled", out var pe) && pe.ValueKind == JsonValueKind.True;
+            var label = data.TryGetProperty("siteLabel", out var sl) ? sl.GetString() : null;
+            var build = data.TryGetProperty("build", out var b) ? b.GetString() : null;
+            if (!providerEnabled)
+            {
+                // 不拦：对方管理员可以在同意页上当场打开。这里只是把话说在前面。
+                _logger.LogInformation("[data-sync] 源站 {Origin} 当前未开启对外同步，仍允许跳转由对方管理员当场决定", origin);
+            }
+            return new SourceProbe(null, null, label, build);
+        }
+        catch (Exception ex)
+        {
+            // 不把异常原文回给前端。DNS / TLS / 代理 / 连接建立失败的消息里可能带内网地址、
+            // 证书主体名、代理主机这类只有本站该知道的东西，而它对操作者也给不出可执行的
+            // 下一步。原文进日志并带上一个可对照的短 id，界面给固定文案 + 这个 id。
+            var trace = Guid.NewGuid().ToString("N")[..8];
+            _logger.LogWarning(ex, "[data-sync] 握手失败 trace={Trace} origin={Origin}", trace, origin);
+            return new SourceProbe("DATA_SYNC_SOURCE_UNREACHABLE",
+                $"连不上对方（诊断号 {trace}）。确认这个地址能在浏览器里直接打开，"
+                + "并且它是一台已经部署好的 MAP。", null, null);
+        }
+    }
+
+    private Task<DataSyncRun?> FindRunAsync(string id, CancellationToken ct) =>
+        _db.DataSyncRuns.Find(x => x.Id == id).FirstOrDefaultAsync(ct)!;
+
+    private async Task<bool> IsAdminAsync(CancellationToken ct)
+    {
+        if (FederatedConsoleSessionPolicy.IsSynthetic(User)) return false;
+        if (string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal)) return true;
+        var userId = this.GetRequiredUserId();
+        var user = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
+        return user is not null && user.Status == UserStatus.Active && user.Role == UserRole.ADMIN;
+    }
+
+    /// <summary>
+    /// 本站对外的根地址。回跳地址由它拼出来，所以它错了整条链路第一步就断。
+    ///
+    /// 不能直接用 `Request.Scheme`：真实部署里 TLS 终结在反向代理上，进程收到的是明文
+    /// http，而本项目的 `Program.cs` **没有** `UseForwardedHeaders`。于是这里会算出
+    /// `http://<公网域名>`，源站的回跳形状校验只认 https（非回环一律拒），
+    /// 授权跳转在第一步就被拒掉——本地怎么测都好好的，一上真站必炸。
+    ///
+    /// 判据顺序刻意排成「越稳定越靠前」：
+    /// 1. 显式配置——运维说了算，最稳；
+    /// 2. 反向代理的 `X-Forwarded-Proto/Host`——由代理写入，浏览器改不了；
+    /// 3. 兜底才用请求本身。
+    ///
+    /// **刻意不收 `X-Client-Base-Url`**（本仓库另一处的 `ResolveServerUrl` 把它排第一）。
+    /// 两个原因：它是浏览器传上来的，而这个值最终会变成「源站该把数据回跳给谁」的一部分；
+    /// 而且 prepare 与 callback 是两次独立请求，只要有一次没带上，两边算出的回跳地址
+    /// 就会不一致，换票会以 redirect 不匹配失败——一个只在偶发条件下出现的坏。
+    /// </summary>
+    private string SelfOrigin()
+    {
+        var configured = _configuration["DataSync:SelfOrigin"] ?? _configuration["PUBLIC_BASE_URL"];
+        if (!string.IsNullOrWhiteSpace(configured)) return configured!.TrimEnd('/');
+
+        var forwardedHost = Request.Headers["X-Forwarded-Host"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedHost))
+        {
+            // 代理链上可能叠了多跳，第一个才是最外层那个面向用户的 host。
+            var host = forwardedHost.Split(',')[0].Trim();
+            var scheme = (Request.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? "https")
+                .Split(',')[0].Trim();
+            if (host.Length > 0) return $"{scheme}://{host}";
+        }
+
+        return $"{Request.Scheme}://{Request.Host.Value}";
+    }
+
+    internal static bool TryNormalizeOrigin(string? raw, out string origin)
+    {
+        origin = "";
+        if (!Uri.TryCreate((raw ?? "").Trim().TrimEnd('/'), UriKind.Absolute, out var uri)) return false;
+        // 只收 https。这里曾经给 http + loopback 开过口子，但出站一律走 SafeOutbound，
+        // 而它按解析出来的地址挡掉回环段——于是 http://localhost:5001 这种地址在这道门
+        // 「通过」、到握手那一步必然连不上，错误信息还完全指不到原因。两处判据必须一致：
+        // 与其让它过了再炸，不如在这里就说「不支持」。
+        if (uri.Scheme != Uri.UriSchemeHttps) return false;
+        if (uri.IsLoopback) return false;
+        // 只收站点根地址：带路径的地址意味着调用方在猜端点位置，猜错了错误信息会很难懂。
+        if (uri.AbsolutePath.TrimEnd('/').Length > 0) return false;
+        origin = uri.GetLeftPart(UriPartial.Authority).TrimEnd('/');
+        return true;
+    }
+
+    private sealed record TokenPayload(
+        string ExportToken, DateTime ExpiresAt, string SiteLabel, List<string> Groups, List<string> Collections);
+
+    private static TokenPayload? ReadTokenPayload(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data)) return null;
+            var token = data.GetProperty("exportToken").GetString();
+            if (string.IsNullOrWhiteSpace(token)) return null;
+            return new TokenPayload(
+                token!,
+                data.GetProperty("expiresAt").GetDateTime(),
+                data.TryGetProperty("siteLabel", out var label) ? label.GetString() ?? "" : "",
+                data.TryGetProperty("groups", out var g)
+                    ? g.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+                    : new List<string>(),
+                data.TryGetProperty("collections", out var c)
+                    ? c.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+                    : new List<string>());
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private sealed record ManifestItem(string Collection, long Total, List<string> RedactFields);
+
+    /// <summary>
+    /// 解析源站清单。解析不出来必须抛，不能退回空列表——空列表会让对照表显示「0 个集合」，
+    /// 而 Start 照样能按，worker 随后按 Run 里固化的集合名把每一个都同步一遍。
+    /// 那等于绕过了对照表这道确认关口：人看到的是「什么都不会写」，实际全写。
+    /// </summary>
+    private static List<ManifestItem> ReadManifest(string json)
+    {
+        var items = new List<ManifestItem>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data)
+                || !data.TryGetProperty("collections", out var collections)
+                || collections.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidOperationException("源站清单缺少 data.collections");
+            }
+            foreach (var element in collections.EnumerateArray())
+            {
+                var name = element.GetProperty("collection").GetString();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                items.Add(new ManifestItem(
+                    name!,
+                    element.TryGetProperty("total", out var total) ? total.GetInt64() : 0,
+                    element.TryGetProperty("redactFields", out var rf)
+                        ? rf.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+                        : new List<string>()));
+            }
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException)
+        {
+            throw new InvalidOperationException($"源站清单无法解析：{ex.Message}", ex);
+        }
+        return items;
+    }
+}
+
+public sealed class DataSyncPrepareRequest
+{
+    public string? SourceOrigin { get; set; }
+}
+
+public sealed class DataSyncCallbackRequest
+{
+    public string? SourceOrigin { get; set; }
+    public string? Code { get; set; }
+    public string? State { get; set; }
+}
+
+public sealed class DataSyncStartRequest
+{
+    public bool DryRun { get; set; }
+    public bool Overwrite { get; set; }
+}
+
+/// <summary>
+/// 试跑转正成真跑。
+///
+/// 这里**只有** Overwrite 一个字段，没有 DryRun：转正的定义就是「跑真的」，
+/// 给它一个可以传 true 的开关，等于让调用方把这次转正又变成一次试跑、
+/// 白白吃掉唯一那次机会。
+///
+/// 范围也不在这里传：真跑照抄试跑冻结的那一份，调用方无从改动。
+/// </summary>
+public sealed class DataSyncPromoteRequest
+{
+    public bool Overwrite { get; set; }
+}

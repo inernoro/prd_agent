@@ -303,12 +303,10 @@ services:
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
-      # 注意：共享 Mongo 已开鉴权（main 663afa22 安全基线那批），这串**没有凭据**，
-      # 容器一重启就是 "Command find requires authentication"。试过换成 ${CDS_MONGODB_URL}，
-      # CDS 直接拒绝部署：「环境变量模板缺少值」——那个变量只对**项目自建 infra 服务**存在，
-      # prd-agent 连的是共享实例，CDS 只注入 host/port，不注入凭据。留原样是为了不让整个项目
-      # 卡在模板展开阶段（那比运行时失败更糟）。真修法归安全基线那条线，见 debt.web-hosting #61。
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
+      # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
+      # 口令里一个 @ 就能把主机名解析歪。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__DatabaseName: llm_gateway
       # CDS 预览虽使用 ASPNETCORE_ENVIRONMENT=Production，但不是正式生产；显式钉 inproc，
@@ -323,8 +321,10 @@ services:
       LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
-      # 同上：Redis 也已开鉴权，无密码连上去是 NOAUTH；${CDS_REDIS_URL} 同样取不到值。
-      Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
+      # redis 跑 --aclfile，只给地址会 NOAUTH 崩在启动阶段。StackExchange.Redis 不吃 redis:// URI，
+      # 必须是 host:port,user=,password= 这个格式，所以这里用原始 USER/PASSWORD 自己拼，
+      # 不用 CDS_REDIS_URL。已知边界：口令若含 , 或 = 会把这个串解析歪（CDS 生成的是十六进制，不会）。
+      Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT},user=${CDS_REDIS_USER},password=${CDS_REDIS_PASSWORD}"
       # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
       # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
       # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
@@ -407,12 +407,10 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      # 注意：共享 Mongo 已开鉴权（main 663afa22 安全基线那批），这串**没有凭据**，
-      # 容器一重启就是 "Command find requires authentication"。试过换成 ${CDS_MONGODB_URL}，
-      # CDS 直接拒绝部署：「环境变量模板缺少值」——那个变量只对**项目自建 infra 服务**存在，
-      # prd-agent 连的是共享实例，CDS 只注入 host/port，不注入凭据。留原样是为了不让整个项目
-      # 卡在模板展开阶段（那比运行时失败更糟）。真修法归安全基线那条线，见 debt.web-hosting #61。
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
+      # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
+      # 口令里一个 @ 就能把主机名解析歪。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
@@ -455,12 +453,10 @@ services:
       mongodb: { condition: service_healthy }
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      # 注意：共享 Mongo 已开鉴权（main 663afa22 安全基线那批），这串**没有凭据**，
-      # 容器一重启就是 "Command find requires authentication"。试过换成 ${CDS_MONGODB_URL}，
-      # CDS 直接拒绝部署：「环境变量模板缺少值」——那个变量只对**项目自建 infra 服务**存在，
-      # prd-agent 连的是共享实例，CDS 只注入 host/port，不注入凭据。留原样是为了不让整个项目
-      # 卡在模板展开阶段（那比运行时失败更糟）。真修法归安全基线那条线，见 debt.web-hosting #61。
-      MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
+      # mongo 跑 --auth，只给地址会被拒（Unauthorized）。CDS_MONGODB_URL 由 CDS 从 mongo 容器自己的
+      # MONGO_INITDB_ROOT_* 派生，userinfo 段已做百分号编码——别改回手拼 user:pass@host，
+      # 口令里一个 @ 就能把主机名解析歪。
+      MongoDB__ConnectionString: "${CDS_MONGODB_URL}"
       MongoDB__DatabaseName: prdagent
       LlmGateway__MongoConnectionString: "${LLMGW_MONGO_CONNECTION_STRING:-}"
       LlmGateway__DatabaseName: llm_gateway
