@@ -221,6 +221,10 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
 
   // 状态只对它当初写入的那个项目成立，换了目标就不再展示。
   const profileMatchesTarget = Boolean(projectId) && syncedProjectId === projectId
+  // 当前目标项目还没记上角色（写失败，或换过目标之后没再写），需要给一条补写的出路。
+  const needsProfileRetry = Boolean(projectId)
+    && profileSync !== 'saving'
+    && (profileMatchesTarget ? profileSync === 'failed' : Boolean(syncedProjectId))
 
   const advance = (nextStep: number) => {
     setCopied(false)
@@ -484,9 +488,25 @@ export function AgentStarterTab({ cdsPrompt, projectId }: AgentStarterTabProps) 
                     ? '角色没能记到项目（不影响使用提示词），项目列表里暂时不会显示角色。'
                     : null}
                   {projectId && syncedProjectId && syncedProjectId !== projectId
-                    ? '刚才换了目标项目，这个项目还没记过角色。点一次「重新生成」就会记上。'
+                    ? '刚才换了目标项目，这个项目还没记过角色。'
                     : null}
                 </p>
+
+                {/*
+                 * 没记上就得有条出路：写失败、或换了目标项目，这两种状态原先都是死胡同——
+                 * 复制提示词和下载脚本都不会补写，用户只能带着「这个项目没有角色」离开。
+                 * 文案更不能指一个不存在的按钮，那是凭空编一个控件让人去找。
+                 */}
+                {needsProfileRetry ? (
+                  <button
+                    type="button"
+                    onClick={() => syncAgentProfile(projectId)}
+                    className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    {profileSync === 'failed' && profileMatchesTarget ? '重试记录角色' : '把角色记到这个项目'}
+                  </button>
+                ) : null}
 
                 <motion.button
                   type="button"

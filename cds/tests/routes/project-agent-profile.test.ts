@@ -234,4 +234,37 @@ describe('项目 Agent 角色声明', () => {
     expect(body).not.toMatch(/\.then\(\(\) => setProfileSync\(/);
     expect(body).not.toMatch(/\.catch\(\(\) => setProfileSync\(/);
   });
+
+  /**
+   * 文案里点名的控件必须真的存在，且「没记上」不能是死胡同。
+   *
+   * 真实事故：换目标项目后的提示写「点一次『重新生成』就会记上」，而完成屏上
+   * 从来没有叫这个名字的按钮——凭空编了一个控件让用户去找。同时写失败与换目标
+   * 这两种状态都没有补写入口，复制提示词和下载脚本都不会补写，用户只能带着
+   * 「这个项目没有角色」离开。
+   *
+   * 判据分两层：文案里用「」点名的控件，必须能在同文件的按钮文本里找到；
+   * 以及必须存在一个调用 syncAgentProfile 的补写按钮。
+   */
+  it('完成屏文案点名的控件真实存在，且没记上时有补写入口', () => {
+    const source = readFileSync(
+      new URL('../../web/src/components/AgentStarterTab.tsx', import.meta.url),
+      'utf8',
+    );
+    // 完成屏 aria-live 状态段里，中文书名号点名的控件
+    const statusBlock = source.slice(
+      source.indexOf('aria-live="polite"'),
+      source.indexOf('const copyPrompt') > 0 ? source.length : source.length,
+    );
+    const named = [...statusBlock.matchAll(/点一次「([^」]+)」/g)].map((m) => m[1]);
+    for (const label of named) {
+      expect(
+        source.includes(`>${label}<`) || source.includes(`'${label}'`) || source.includes(`${label}<`),
+        `文案点名了「${label}」，但界面上没有这个控件`,
+      ).toBe(true);
+    }
+    // 补写入口：必须有按钮真的调 syncAgentProfile，而不只是 onClick 里 advance
+    expect(source).toMatch(/onClick=\{\(\) => syncAgentProfile\(projectId\)\}/);
+    expect(source).toMatch(/const needsProfileRetry = /);
+  });
 });
