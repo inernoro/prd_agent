@@ -840,6 +840,41 @@ export function RecordingResultPage() {
     }
   }, [noteIdForFlush, ownerId]);
 
+  /*
+   * 回到一条**还在整理**的录音时，把在途的那一发接回来。
+   * 上面那句「换录音就把在途整理摘掉」摘掉的只是这一屏的显示，服务端那条 run 照跑：
+   * 从 A 切到 B 再切回 A（刷新同理——`running` 初值就是 null），A 这一屏看起来完全空闲，
+   * 进度不动、也不提示它正在被改写，用户还能再点一次整理，给同一篇笔记并排第二条 run：
+   * 两条都花模型钱，还抢着覆盖同一份输出（Codex 第三十四轮 P1）。
+   *
+   * 三条判据各有原因，都不能省：
+   *   - 只认**在途**那一档：done/failed 的历史 run 不该在这里复活成一根进度条。
+   *   - 只在**笔记已经加载出来**之后认（`noteIdForFlush` 有值）：还没有笔记的那一档由
+   *     等笔记的轮询负责，接过来反而会在它跑完时走 reloadNote 的空笔记分支，
+   *     报一句「新原文没能取回来」的假错。
+   *   - 已经有在途就不许被顶掉：那是用户刚点的那一发，比这条查询结果新。
+   */
+  useEffect(() => {
+    if (!entryId || !noteIdForFlush) return;
+    let stale = false;
+    void (async () => {
+      const res = await getLatestAgentRun(entryId, 'transcribe');
+      if (stale || !res.success) return;
+      const run = res.data;
+      if (!run?.id || !isTranscriptionInflight(run.status)) return;
+      // 回包晚于切走时，不许落到别人那一屏
+      if (entryIdRef.current !== entryId) return;
+      setRunning(prev => prev ?? {
+        runId: run.id,
+        // 没写 templateKey 的 run，后端落地时用的就是注册表里的默认那一种，
+        // 这里跟着它，不另编一个（no-rootless-tree）
+        styleKey: run.templateKey || DEFAULT_ORGANIZE_STYLE_KEY,
+        percent: run.progress ?? 0,
+      });
+    })();
+    return () => { stale = true; };
+  }, [entryId, noteIdForFlush]);
+
   /** 恢复联网就把队列补传上去；失败就留着，横幅继续显示欠了多少 */
   useEffect(() => {
     if (offline || !noteIdForFlush || flushConflict) return;
@@ -997,6 +1032,21 @@ export function RecordingResultPage() {
           return;
         }
         const priorRunId = prior.data?.id ?? '';
+        /*
+         * 查成功、却没有可复用的转录 run，有两种情形，退回全量重转只对其中一种成立：
+         *   - 屏幕上还没有原文：本来就该跑一轮 ASR，退回条目级 transcribe 是对的。
+         *   - 屏幕上已经有原文，只是 run 记录不在了：跨实例同步就会造出这种数据——
+         *     `document_entries` 会带过去，`document_store_agent_runs` 是显式不导出的
+         *     运行时数据（DataSyncScope.Excluded）。此时退回 transcribe 会重跑一轮 ASR，
+         *     新识别结果**原地写回同一篇笔记**（SubtitleGenerationProcessor 的
+         *     `SaveContentAsync(entry, ...)`），把用户已经校对过的原文冲掉
+         *     （Codex 第三十四轮 P1）。
+         * 后一种当场停下：宁可这次整理做不成，也不拿现有原文去赌一轮新识别。
+         */
+        if (!priorRunId && noteIdRef.current) {
+          toast.error('这条录音的转录记录已经不在了', '再整理要重跑一遍识别、会覆盖现在这份原文，所以停下了');
+          return;
+        }
         // 自定义那一条带着用户写的要求走同一条链路；空要求不当自定义处理
         const style = { styleKey, customPrompt: customPrompt?.trim() || undefined };
         const res = priorRunId

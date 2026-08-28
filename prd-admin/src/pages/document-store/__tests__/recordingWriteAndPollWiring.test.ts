@@ -296,7 +296,9 @@ describe('发起整理的前置查询失败时不许退回全量重转', () => {
 
   it('查失败当场停下，不把失败当成「没有可复用的转录」', () => {
     const launch = source.slice(source.indexOf('const launchedForEntryId = entryId;'));
-    const body = launch.slice(0, launch.indexOf('launchingRef.current = false;'));
+    const end = launch.indexOf('launchingEntryRef.current = null;');
+    expect(end, '发起整理那段的终点找不到了，下面的作用域会退化成整份文件').toBeGreaterThan(0);
+    const body = launch.slice(0, end);
     expect(body).toContain('if (!prior.success) {');
     // 只有查成功才允许取 id，再据此决定走 restyle 还是全量
     expect(body).toContain('const priorRunId = prior.data?.id ?? \'\';');
@@ -756,5 +758,58 @@ describe('处理页重新发起的锁认录音、也认这一发', () => {
 
   it('只有最新那一发释放锁', () => {
     expect(source).toMatch(/if \(restartTokenRef\.current === token\) restartingEntryRef\.current = null;/);
+  });
+});
+
+
+describe('转录记录不在了，不许拿全量重转顶上', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+  const launch = source.slice(source.indexOf('const launchedForEntryId = entryId;'));
+  const body = launch.slice(0, launch.indexOf('launchingEntryRef.current = null;'));
+
+  it('屏幕上已经有原文时当场停下，不落到重跑 ASR 那一路', () => {
+    const fallback = body.indexOf('transcribeEntry(entryId, style)');
+    expect(fallback, '找不到全量重转那条兜底').toBeGreaterThan(0);
+    // 守卫要同时认「没有可复用的 run」和「已经有一篇原文」，缺一条都会误伤另一档
+    const guard = body.search(/if \(!priorRunId && note[A-Za-z]*(Ref\.current|Id)\)/);
+    expect(guard, '没有「有原文就别重转」这道守卫').toBeGreaterThanOrEqual(0);
+    expect(guard).toBeLessThan(fallback);
+    // 而且这道守卫必须真的**停下**，不是提示一句继续往下走
+    expect(body.slice(guard, fallback)).toContain('return;');
+  });
+
+  it('还没有原文的那一档仍然走全量转录', () => {
+    // 反向断言：兜底本身没被删掉——这条录音压根没转录成功过时，跑 ASR 才是对的
+    expect(body).toContain('transcribeEntry(entryId, style)');
+  });
+});
+
+describe('回到还在整理的录音，把在途那一发接回来', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+  const at = source.indexOf("const res = await getLatestAgentRun(entryId, 'transcribe');");
+  const body = source.slice(at, at + 1200);
+
+  it('查到的 run 还在途才接，历史 run 不复活成进度条', () => {
+    expect(at, '结果页没有「接回在途整理」这一段').toBeGreaterThan(0);
+    const gate = body.indexOf('isTranscriptionInflight(run.status)');
+    const adopt = body.indexOf('setRunning(');
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(adopt);
+  });
+
+  it('接之前先认这一屏还是不是当初那条录音', () => {
+    const gate = body.indexOf('entryIdRef.current !== entryId');
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(body.indexOf('setRunning('));
+  });
+
+  it('已经有在途的不许被这条查询顶掉', () => {
+    expect(body).toMatch(/setRunning\(prev => prev \?\?/);
+  });
+
+  it('笔记加载出来之后才认，依赖里带着它', () => {
+    const tail = source.slice(at, source.indexOf('}, [entryId, noteIdForFlush]);', at) + 40);
+    expect(tail).toContain('}, [entryId, noteIdForFlush]);');
+    expect(source.slice(Math.max(0, at - 400), at)).toContain('!noteIdForFlush) return;');
   });
 });
