@@ -42,6 +42,16 @@ export function useAskStream(source: AskSource) {
     sessionIdRef.current = null;
   }, [abort]);
 
+  /**
+   * 只清掉这道门，不动消息与状态。
+   *
+   * 额度那几档拒绝是**有有效期**的（每小时 / 每天），窗口一过就该能再问。而 gateError
+   * 只在 ask() 开头清一次、submit() 又不许在 blocked 时调 ask()，于是这道门一旦落下就
+   * 只能刷新页面才起得来——卡片上写着「过一会儿再来」，过一会儿回来却还是发不出去。
+   * reset() 能清但它连消息一起清了，用户刚才问过的几轮会凭空消失。
+   */
+  const clearGateError = useCallback(() => setGateError(null), []);
+
   const ask = useCallback(
     async (question: string) => {
       const q = question.trim();
@@ -205,6 +215,7 @@ export function useAskStream(source: AskSource) {
     phaseMessage,
     model,
     gateError,
+    clearGateError,
     isBusy: status === 'connecting' || status === 'answering',
     ask,
     abort,

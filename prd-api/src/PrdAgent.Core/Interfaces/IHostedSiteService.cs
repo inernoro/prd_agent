@@ -137,7 +137,14 @@ public interface IHostedSiteService
     /// 撤销不可逆，但用户仍需要看到「哪条被我撤了、什么时候撤的」并能重新分享，
     /// 直接从列表里消失等于这段历史无处可查）。
     /// </summary>
-    Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct = default, bool includeRevoked = false);
+    /// <summary>
+    /// 我建的分享链接。<paramref name="siteId"/> 非空时只返回指向该站点的（两个字段都认）。
+    ///
+    /// 不带 siteId 时结果按时间取最近 100 条。想判断「某个站点有没有活着的链接」必须带上
+    /// siteId：否则它的链接落在这 100 条之外时会被判成「没有」，调用方据此再建一条重复的。
+    /// </summary>
+    Task<List<WebPageShareLink>> ListSharesAsync(
+        string userId, CancellationToken ct = default, bool includeRevoked = false, string? siteId = null);
 
     /// <summary>
     /// 批量取站点标题（id → title）。分享列表的「指向的站点」一列要用。

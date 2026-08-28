@@ -3,7 +3,7 @@ import { Check, ChevronRight, Copy, Eye, Globe, Loader2, Lock, QrCode, Settings2
 import { QRCodeSVG } from 'qrcode.react';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { toast } from '@/lib/toast';
-import { createSiteShareLink, revokeSiteShare, updateSiteShareSettings } from '@/services';
+import { createSiteShareLink, listSiteShares, revokeSiteShare, updateSiteShareSettings } from '@/services';
 import type { ShareLinkItem } from '@/services/real/webPages';
 import {
   EXPIRY_OPTIONS,
@@ -77,6 +77,19 @@ export function QuickSharePopover({
   const handleCreate = async () => {
     setBusy('create');
     try {
+      // 建之前按站点再问一次服务端。外层那份 links 是全局最近 100 条，这个站点的链接
+      // 落在窗口外时它是空的，直接 forceNew 就会给一个其实已经分享过的站点再建一条，
+      // 而卡片上还一直显示未分享。带 siteId 的查询不受那个窗口影响。
+      const scoped = await listSiteShares(false, site.id);
+      if (scoped.success) {
+        const existing = pickQuickShareLink(scoped.data?.items ?? [], site.id);
+        if (existing) {
+          setLocalLink(existing);
+          onLinksChanged();
+          return;
+        }
+      }
+
       const res = await createSiteShareLink({
         siteId: site.id,
         shareType: 'single',

@@ -164,8 +164,10 @@ async function ensureSite(token, form) {
 
 /** 找到（或建出）一条**公开**分享链接：验收要覆盖匿名访客真正走的那条路。 */
 async function ensureShare(token, site) {
-  // 这个端点不分页（只认 includeRevoked），原先带的 pageSize 是句空话，去掉免得误导下一个人。
-  const mine = await api('/api/web-pages/shares', { token });
+  // 必须按站点问。这个端点不带 siteId 时按时间只返回最近 100 条（服务端 Limit(100)），
+  // 这个站点的分享落在窗口外就会被当成「没有」，下面 forceNew 每天再建一条公开链接：
+  // 账号越攒越脏，而且验的是随便哪一条重复链接。原先还带了个 pageSize，那个端点根本不认。
+  const mine = await api(`/api/web-pages/shares?siteId=${encodeURIComponent(site.id)}`, { token });
   const hit = (mine.json?.data?.items || []).find(
     (l) => l.siteId === site.id && l.visibility === 'public' && !l.isRevoked && !l.isExpired,
   );

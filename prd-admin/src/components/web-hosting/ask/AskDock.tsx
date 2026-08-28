@@ -9,7 +9,7 @@ import {
   askDockGeometry, askHintsBottom, askMetaBottom,
   type AskDockBox, type AskDockState, type AskDockViewport,
 } from './askDockGeometry';
-import { ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
+import { ASK_ERROR_CODES, ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
 import { useAskQuota } from './useAskQuota';
 import { useAskStream } from './useAskStream';
 import './askDock.css';
@@ -70,7 +70,7 @@ export default function AskDock({
   source, title, welcome, openingQuestions, allowAnonymous, isMobile, safeBottom, hidden, onStateChange,
 }: Props) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const { messages, status, phaseMessage, model, gateError, isBusy, ask } = useAskStream(source);
+  const { messages, status, phaseMessage, model, gateError, clearGateError, isBusy, ask } = useAskStream(source);
 
   const [state, setState] = useState<AskDockState>('collapsed');
   const [moving, setMoving] = useState(false);
@@ -111,6 +111,20 @@ export default function AskDock({
   useEffect(() => {
     if (status === 'done' || status === 'error') void refreshQuota();
   }, [status, refreshQuota]);
+
+  // 额度窗口过了就把那道门收起来。
+  //
+  // 每小时 / 每天这两档拒绝是有有效期的，卡片上也写着「过一会儿再来」。但 gateError 只在
+  // ask() 开头清，而 blocked 时又不许调 ask()——门一落下就只能刷新页面才起得来，
+  // 与卡片上那句话直接矛盾。这里以服务端的额度读数为准：它说还有余量，那道门就是过期的。
+  const quotaCode = gateError?.code;
+  const quotaBlocked = quotaCode === ASK_ERROR_CODES.quotaVisitor
+    || quotaCode === ASK_ERROR_CODES.quotaSiteDaily
+    || quotaCode === ASK_ERROR_CODES.quotaExceeded;
+  useEffect(() => {
+    if (!quotaBlocked || !quota) return;
+    if (quota.visitorRemaining > 0 && quota.siteRemaining > 0) clearGateError();
+  }, [quotaBlocked, quota, clearGateError]);
 
   const applyStatic = useCallback((next: AskDockState) => {
     const el = morphRef.current;

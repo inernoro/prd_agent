@@ -539,9 +539,22 @@ export async function createShareLink(data: {
  * @param includeRevoked 一并取回已撤销的链接（分享管理面板的「已撤销」一层要用）。
  *   默认 false —— 后端也默认排除，两边口径一致。
  */
-export async function listShares(includeRevoked = false): Promise<ApiResponse<{ items: ShareLinkItem[] }>> {
-  const q = includeRevoked ? '?includeRevoked=true' : '';
-  return apiRequest(`${api.webPages.shares()}${q}`, { method: 'GET' });
+/**
+ * 我建的分享链接。
+ *
+ * `siteId` 非空时只返回指向该站点的。判断「这个站点有没有活着的链接」必须带上它——
+ * 不带时服务端按时间只返回最近 100 条，该站点的链接落在窗口外就会被当成「没有」，
+ * 调用方据此再建一条，于是每次都多出一条重复链接、卡片上还显示未分享。
+ */
+export async function listShares(
+  includeRevoked = false,
+  siteId?: string,
+): Promise<ApiResponse<{ items: ShareLinkItem[] }>> {
+  const q = new URLSearchParams();
+  if (includeRevoked) q.set('includeRevoked', 'true');
+  if (siteId) q.set('siteId', siteId);
+  const qs = q.toString();
+  return apiRequest(`${api.webPages.shares()}${qs ? `?${qs}` : ''}`, { method: 'GET' });
 }
 
 /**

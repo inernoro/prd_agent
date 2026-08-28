@@ -1282,15 +1282,18 @@ public class WebPagesController : ControllerBase
     /// 默认 false，既有调用方行为不变。
     /// </summary>
     [HttpGet("shares")]
-    public async Task<IActionResult> ListShares([FromQuery] bool includeRevoked = false)
+    public async Task<IActionResult> ListShares(
+        [FromQuery] bool includeRevoked = false, [FromQuery] string? siteId = null)
     {
-        var items = await _siteService.ListSharesAsync(GetUserId(), default, includeRevoked);
+        // siteId 是给「这个站点到底有没有活着的链接」这种问法准备的：不带它时列表按时间
+        // 取最近 100 条，某个站点的链接落在窗口外就会被判成「没有」，然后再建一条重复的。
+        var items = await _siteService.ListSharesAsync(GetUserId(), default, includeRevoked, siteId);
         var now = DateTime.UtcNow;
 
         // 「指向的站点」这一列要的是标题，而链接上只有 siteId。一次批量查完，
         // 不在 Select 里逐条查（100 条链接就是 100 次往返）。
         var siteIds = items
-            .SelectMany(x => x.SiteIds.Count > 0 ? x.SiteIds : (x.SiteId != null ? new List<string> { x.SiteId } : new List<string>()))
+            .SelectMany(x => x.TargetSiteIds())
             .Distinct()
             .ToList();
         var titleById = await _siteService.GetTitlesByIdsAsync(siteIds);

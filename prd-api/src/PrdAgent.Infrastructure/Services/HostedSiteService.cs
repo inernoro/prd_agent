@@ -1145,7 +1145,8 @@ public class HostedSiteService : IHostedSiteService
         return share.ShortSeq;
     }
 
-    public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct, bool includeRevoked = false)
+    public async Task<List<WebPageShareLink>> ListSharesAsync(
+        string userId, CancellationToken ct, bool includeRevoked = false, string? siteId = null)
     {
         // 排除 visit 便捷链（自动创建，非用户主动分享，不应污染分享管理列表）；
         // 时间过滤：未设过期 / 未过期 / 过期 ≤ 7 天（宽限期，允许续期，避免链接突然失效）；
@@ -1164,6 +1165,13 @@ public class HostedSiteService : IHostedSiteService
             & (includeRevoked
                 ? liveWindow | fb.Eq(x => x.IsRevoked, true)
                 : liveWindow);
+
+        // 指定站点时把过滤下推到库里。下面那个 Limit(100) 是全局按时间排的：调用方想问
+        // 「这个站点有没有活着的链接」，却只拿到最近 100 条里碰巧属于它的那些——一旦它的
+        // 链接落在窗口外，调用方会判成「没有」，然后 forceNew 再建一条。表现是每次都多出
+        // 一条重复链接，而卡片上还显示未分享。两个字段都要认（存量单站点分享只写 SiteId）。
+        if (!string.IsNullOrWhiteSpace(siteId))
+            filter &= fb.Eq(x => x.SiteId, siteId) | fb.AnyEq(x => x.SiteIds, siteId);
 
         var items = await _db.WebPageShareLinks
             .Find(filter)

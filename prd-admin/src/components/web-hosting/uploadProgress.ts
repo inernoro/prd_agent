@@ -90,7 +90,13 @@ export function buildUploadProgress(
 ): UploadProgressView {
   // 字节已经全部送达（或者压根拿不到进度事件但请求还没回来）→ 服务端在解包。
   // 这一段没有任何进度信号，报百分比就是编，只能如实报已用时。
-  if (total > 0 && loaded >= total) {
+  //
+  // 「服务端已经在报解包进度」本身就是字节送完了的证据，所以它单独也算数：重传走的是
+  // 不带上传进度事件的 fetch，loaded 恒为 0，只看 loaded >= total 的话那一屏会从头到尾
+  // 停在「正在建立上传连接」——服务端明明已经在一个个吐文件名了，界面一个字都不显示。
+  const serverStarted = (unpack?.totalFiles ?? 0) > 0 || (unpack?.doneFiles ?? 0) > 0
+    || !!unpack?.currentPath || !!unpack?.entryFile;
+  if ((total > 0 && loaded >= total) || serverStarted) {
     const done = unpack?.doneFiles ?? 0;
     const all = unpack?.totalFiles ?? 0;
     // 服务端报得出「第几个 / 共几个」时就用真实比例；报不出来（Redis 不可用、

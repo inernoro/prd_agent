@@ -90,3 +90,31 @@ describe('服务端解包那一段的分步清单', () => {
     expect(sent({ doneFiles: 0, totalFiles: 0 }).steps).toEqual([]);
   });
 });
+
+describe('重传：拿不到上传进度事件时也要把界面推进去', () => {
+  // 重传走的是不带 progress 事件的 fetch，loaded 恒为 0。只看 loaded >= total 的话，
+  // 服务端明明已经在一个个吐文件名了，那一屏还停在「正在建立上传连接」——
+  // 进度通道接上了，界面一个字都不显示，等于没接。
+  it('服务端报出解包帧就进入处理中，哪怕 loaded 还是 0', () => {
+    const v = buildUploadProgress(0, 1024 * 1024, 3000, {
+      doneFiles: 3,
+      totalFiles: 10,
+      currentPath: 'assets/app.js',
+    });
+    expect(v.phase).toBe('processing');
+    expect(v.steps.some((s) => s.text.includes('3'))).toBe(true);
+  });
+
+  it('只报出入口文件也算服务端已经开工', () => {
+    const v = buildUploadProgress(0, 1024 * 1024, 1000, { entryFile: 'index.html' });
+    expect(v.phase).toBe('processing');
+  });
+
+  it('没有任何解包信号时不许假装已经在处理', () => {
+    // 边界：不能因为「有个 unpack 对象」就一律判处理中，否则真正的上传阶段被跳过。
+    const v = buildUploadProgress(0, 1024 * 1024, 1000, null);
+    expect(v.phase).not.toBe('processing');
+    const empty = buildUploadProgress(0, 1024 * 1024, 1000, { doneFiles: 0, totalFiles: 0 });
+    expect(empty.phase).not.toBe('processing');
+  });
+});
