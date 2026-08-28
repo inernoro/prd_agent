@@ -51,7 +51,18 @@ function tick() {
   const frame: ScrollFrame = { y, damped, lag: y - damped, vh };
   subscribers.forEach((fn) => fn(frame));
 
-  if (subscribers.size > 0) raf = requestAnimationFrame(tick);
+  /*
+   * 追上了就停。
+   *
+   * 以前只要还有订阅者就无条件排下一帧 —— 而 `/home` 一打开就挂着二十来个订阅，
+   * 于是人不动、页面也不动的时候，每秒仍有几十帧在给一屏之外的元素写样式。
+   * 白烧 CPU 和电，看不出来，也没人会报。
+   *
+   * 停下之后由 scroll / resize / 切回本页三个信号重新拉起来（见下面的监听），
+   * 所以「停」不会让它错过下一次滚动。
+   */
+  const settled = damped === y;
+  if (subscribers.size > 0 && !settled) raf = requestAnimationFrame(tick);
   else running = false;
 }
 
@@ -70,6 +81,12 @@ if (typeof document !== 'undefined') {
       ensureRunning();
     }
   });
+}
+
+if (typeof window !== 'undefined') {
+  // 循环停在「已追上」那一帧，靠这两个信号重新起步。passive：只读不拦，不影响滚动性能
+  window.addEventListener('scroll', ensureRunning, { passive: true });
+  window.addEventListener('resize', ensureRunning, { passive: true });
 }
 
 export function subscribeScroll(fn: Subscriber): () => void {

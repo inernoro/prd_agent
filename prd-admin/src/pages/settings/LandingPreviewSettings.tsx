@@ -115,7 +115,10 @@ export default function LandingPreviewSettings() {
         if (seen.has(upstream)) return;   // 同一个上游只留优先级最高的那次出现
         seen.add(upstream);
         list.push({
-          key: `${pi}:${pool.name}:${m.modelId}`,
+          // key 必须带 platformId：同一个模型名挂在两个平台下是常事，只按池 + 模型名
+          // 做 key 会撞成同一个值，下拉里选第二条、findIndex 认回第一条，
+          // 管理员根本挑不中他想要的那个平台
+          key: `${pi}:${pool.name}:${m.platformId}:${m.modelId}`,
           label: m.modelId,
           poolName: pool.name,
           modelId: m.modelId,
@@ -125,6 +128,17 @@ export default function LandingPreviewSettings() {
     });
     return list;
   }, [pools]);
+
+  /** 同一个模型名出现在多个平台下 —— 这些在下拉里必须把平台也显出来才分得清 */
+  const ambiguousModelIds = useMemo(() => {
+    const byModel = new Map<string, Set<string>>();
+    for (const o of modelChain) {
+      const set = byModel.get(o.modelId) ?? new Set<string>();
+      set.add(o.platformId);
+      byModel.set(o.modelId, set);
+    }
+    return new Set([...byModel].filter(([, platforms]) => platforms.size > 1).map(([id]) => id));
+  }, [modelChain]);
 
   /** 用户选中的起点；没选就是链头 */
   const startIndex = useMemo(() => {
@@ -218,7 +232,7 @@ export default function LandingPreviewSettings() {
     const settled = new Set<string>();
     const adoptions: Promise<void>[] = [];
 
-    await streamImageGenRunWithRetry({
+    const streamed = await streamImageGenRunWithRetry({
       runId,
       afterSeq: 0,
       maxAttempts: 20,
@@ -262,7 +276,28 @@ export default function LandingPreviewSettings() {
     await Promise.all(adoptions);
     if (!aliveRef.current) return [];
     await reload();
-    return targets.filter((t) => !settled.has(t.slot.slot));
+
+    const remaining = targets.filter((t) => !settled.has(t.slot.slot));
+
+    /*
+     * 连接断了 ≠ 模型不行。
+     *
+     * 事件流重试 20 次仍连不上时，服务端那条 run 很可能还在跑、甚至已经跑完了；
+     * 我们只是没看见 imageDone。这时把剩下的槽位交给下一个模型重跑，等于为同一批图
+     * 再付一次钱，而且最后还可能报「都没出图」——实际第一次就成了。
+     * 所以：流本身失败时如实说断了，并且**不往下换模型**（返回空的剩余清单）。
+     */
+    if (!streamed.success && remaining.length > 0) {
+      remaining.forEach((t) =>
+        patchState(t.slot.slot, {
+          status: 'error',
+          error: '连接断了，没能看到出图结果。服务端那次生成可能已经完成——刷新这一屏看看，别急着重生成（会重复计费）。',
+        }),
+      );
+      return [];
+    }
+
+    return remaining;
   };
 
   /**
@@ -366,7 +401,10 @@ export default function LandingPreviewSettings() {
               uiSize="sm"
             >
               {modelChain.map((o) => (
-                <option key={o.key} value={o.key}>{o.label}</option>
+                // 同名模型来自不同平台时，标签也要带上平台，否则下拉里两条长得一模一样
+                <option key={o.key} value={o.key}>
+                  {ambiguousModelIds.has(o.modelId) ? `${o.label} · ${o.platformId}` : o.label}
+                </option>
               ))}
             </Select>
           </div>
