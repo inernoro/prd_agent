@@ -2989,6 +2989,10 @@ a:focus-visible {
 */
 .lg-qs-step-card {
   width: 100%;
+  /* 必须显式声明 flex：gap 只对 flex/grid 生效，block 容器上写了也不起作用，
+     而 computed style 照样报得出 rowGap=28px——一个读得到却不生效的声明。 */
+  display: flex;
+  flex-direction: column;
   /* 层与层之间 28px：步骤头 / 你说的那句话 / 系统推出来的结果 / 你要做的决定 */
   gap: 28px;
   padding: 24px;
@@ -3211,6 +3215,9 @@ a:focus-visible {
   align-items: center;
   height: 32px;
   padding: 0 4px;
+  /* 它是 <button>，不重置就顶着浏览器默认按钮底渲染成一个灰方块。 */
+  border: none;
+  background: none;
 }
 
 .lg-qs-step-no {
@@ -8508,36 +8515,6 @@ a:focus-visible {
   }
 }
 
-/*
-  窄屏：24px 内边距在 390 宽下会把码挤成三行，降一档到 16；
-  按钮改 44px 高、纵向铺满，主操作在下（拇指区）——桌面的 32px 直接搬过来偏小。
-*/
-@media (max-width: 480px) {
-  .lg-qs-step-card,
-  .lg-qs-issue,
-  .lg-qs-facet,
-  .lg-gws-sources > button,
-  .lg-gws-facts > div {
-    padding: 16px;
-  }
-
-  /* 码降一档到 --fs-heading：390 宽下 17px 会换到第三行。完整可见优先于大。 */
-  .lg-qs-issue-code > code {
-    font-size: var(--fs-heading);
-  }
-
-  .lg-qs-create-footer > button,
-  .lg-gws-actions > button {
-    flex: 1 1 100%;
-    min-height: 44px;
-  }
-
-  .lg-qs-type-row > button,
-  .lg-qs-facet-options > button {
-    min-height: 44px;
-  }
-}
-
 @media (max-width: 430px) {
   .lg-console-brand > span:last-child,
   .lg-tenant-switcher summary > svg:first-child,
@@ -8762,4 +8739,34 @@ a:focus-visible {
 [data-theme='light'] .lg-gws-facts > div,
 [data-theme='light'] .lg-gws-consumers > li {
   background: var(--bg-base);
+}
+
+/*
+  窄屏：24px 内边距在 390 宽下会把码挤成三行，降一档到 16；
+  按钮改 44px 高、纵向铺满，主操作在下（拇指区）——桌面的 32px 直接搬过来偏小。
+*/
+@media (max-width: 480px) {
+  .lg-qs-step-card,
+  .lg-qs-issue,
+  .lg-qs-facet,
+  .lg-gws-sources > button,
+  .lg-gws-facts > div {
+    padding: 16px;
+  }
+
+  /* 码降一档到 --fs-heading：390 宽下 17px 会换到第三行。完整可见优先于大。 */
+  .lg-qs-issue-code > code {
+    font-size: var(--fs-heading);
+  }
+
+  .lg-qs-create-footer > button,
+  .lg-gws-actions > button {
+    flex: 1 1 100%;
+    min-height: 44px;
+  }
+
+  .lg-qs-type-row > button,
+  .lg-qs-facet-options > button {
+    min-height: 44px;
+  }
 }
