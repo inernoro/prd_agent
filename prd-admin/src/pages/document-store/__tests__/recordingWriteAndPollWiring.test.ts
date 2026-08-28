@@ -205,3 +205,21 @@ describe('发起整理也要认笔记', () => {
   });
 });
 
+describe('冲突覆盖也要认笔记', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+
+  it('PUT 回来后先认笔记，切走了就不动这一屏的状态', () => {
+    const block = source.slice(source.indexOf('const overwriteWithOfflineDraft'));
+    const body = block.slice(0, block.indexOf('}, [enqueueWrite'));
+    expect(body).toContain('const overwritingNoteId = noteIdForFlush;');
+    expect(body).toContain('if (noteIdRef.current !== overwritingNoteId) return;');
+    // 认人必须排在几处状态清理之前
+    expect(body.indexOf('if (noteIdRef.current !== overwritingNoteId) return;'))
+      .toBeLessThan(body.indexOf('setPendingEdits(null);'));
+    // 本机草稿按写入的那条笔记清，与现在停在哪一屏无关
+    expect(body.indexOf('clearOfflineEdit(overwritingNoteId, ownerId);'))
+      .toBeLessThan(body.indexOf('if (noteIdRef.current !== overwritingNoteId) return;'));
+    expect(body).toContain("prev.noteId === overwritingNoteId");
+  });
+});
+

@@ -766,13 +766,24 @@ export function RecordingResultPage() {
   const overwriteWithOfflineDraft = useCallback(async () => {
     const queued = pendingRef.current;
     if (!noteIdForFlush || !isFlushable(queued, noteIdForFlush, ownerId)) return;
-    const res = await enqueueWrite(() => updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown'));
+    // 这次覆盖写的是哪条笔记：PUT 回来之后拿它认人（下面每一处状态更新都要过这道门）
+    const overwritingNoteId = noteIdForFlush;
+    const res = await enqueueWrite(() => updateDocumentContent(overwritingNoteId, queued!.content, 'text/markdown'));
     if (!res.success) { toast.error(res.error?.message || '覆盖失败'); return; }
-    clearOfflineEdit(noteIdForFlush, ownerId);
+    /*
+     * 排队的 PUT 回来时用户可能已经从侧栏切到另一条录音了。此前这里的几处状态更新都是
+     * 无条件的：A 的正文会装进 B 的屏幕，B 刚恢复出来的待同步/冲突提示也被一并清掉，
+     * 随后 B 一次编辑就把 A 的原文存成了 B 的内容（Codex P1）。
+     * 本机那份草稿仍然按 overwritingNoteId 清——它属于 A，与现在停在哪一屏无关。
+     */
+    clearOfflineEdit(overwritingNoteId, ownerId);
+    if (noteIdRef.current !== overwritingNoteId) return;
     setPendingEdits(null);
     setQueueVolatile(false);
     setFlushConflict(false);
-    setState(prev => (prev.kind === 'ready' ? { ...prev, noteMd: queued!.content } : prev));
+    setState(prev => (prev.kind === 'ready' && prev.noteId === overwritingNoteId
+      ? { ...prev, noteMd: queued!.content }
+      : prev));
     toast.success(`已用离线版本覆盖，共 ${queued!.count} 处校对`);
   }, [enqueueWrite, noteIdForFlush, ownerId]);
 
