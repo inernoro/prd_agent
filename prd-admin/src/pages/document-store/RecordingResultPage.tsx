@@ -45,6 +45,7 @@ import {
 } from '@/pages/document-store/recordingOfflineQueue';
 import { describeOfflineFlushBlock } from '@/pages/document-store/recordingCompletionView';
 import { isTranscriptionInflight } from '@/pages/document-store/recordingVault';
+import { canGoBackInApp } from '@/hooks/useSmartBack';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import '@/styles/recording-design-palette.css';
@@ -362,7 +363,9 @@ export function RecordingResultPage() {
   const goBack = useCallback(() => {
     // 优先退回来路（多半是知识库里那条录音），没有来路才落到知识库首页——
     // 独立全屏页最容易出的问题就是「进得来出不去」。
-    if (window.history.length > 1) navigate(-1);
+    // 判据是**站内**历史标记：window.history.length 会把「深链之前在同一标签页看过的外站」
+    // 也算进去，那样 navigate(-1) 是把人送出 MAP（Codex 第二十一轮 P2）。
+    if (canGoBackInApp()) navigate(-1);
     // 退回列表也要落到真实归属的那个库，别把人送到深链里写错的那个
     else navigate(`/document-store?store=${activeStoreId}`);
   }, [activeStoreId, navigate]);

@@ -61,3 +61,39 @@ describe('归属库认条目，不认路由参数', () => {
     expect(src).not.toMatch(/navigate\(`\/document-store\/\$\{storeId/);
   });
 });
+
+/*
+ * 两条全屏路由都会被深链直接打开。返回判据用 window.history.length 是错的：
+ * 深链之前在同一个标签页看过外站的话它照样 > 1，navigate(-1) 把人送出 MAP。
+ * 站内历史标记（react-router 写进 history.state 的 idx）才是判据，仓库里已有
+ * canGoBackInApp 一份，不许各页再造一个（Codex 第二十一轮 P2）。
+ */
+describe('返回按钮认站内历史，不认 history.length', () => {
+  const pages = ['RecordingResultPage.tsx', 'RecordingProcessingPage.tsx'];
+  it.each(pages)('%s 用共享的 canGoBackInApp', (name) => {
+    const src = readFileSync(join(SRC, 'pages', 'document-store', name), 'utf-8');
+    expect(src).toContain('canGoBackInApp()');
+    expect(src).not.toMatch(/if \(window\.history\.length/);
+  });
+});
+
+/*
+ * 处理页的音频元素是隐藏的，也没有播放器那套错误态。把 play() 的拒绝吞掉，
+ * 稿面那颗主按钮点下去就什么都不发生——用户既不知道为什么，也不知道下一步
+ * 能干什么（Codex 第二十一轮 P2）。
+ */
+describe('处理页播放失败要说出来', () => {
+  const src = readFileSync(join(SRC, 'pages', 'document-store', 'RecordingProcessingPage.tsx'), 'utf-8');
+
+  it('不再把 play() 的拒绝吞掉', () => {
+    expect(src).not.toContain('audio.play().catch(() => undefined)');
+  });
+
+  it('三种处境分开说，且都给了下一步', () => {
+    const handler = src.slice(src.indexOf('onRecordingPlayRequest('));
+    const body = handler.slice(0, handler.indexOf('}), []);'));
+    expect(body).toContain("NotAllowedError");
+    // 地址没取到 / 被拦下 / 真的播不了，三条各有一句话
+    expect(body.match(/toast\.error\(/g)?.length).toBe(3);
+  });
+});

@@ -40,6 +40,7 @@ import {
   getLatestAgentRun,
   transcribeEntry,
 } from '@/services/real/documentStore';
+import { canGoBackInApp } from '@/hooks/useSmartBack';
 import { toast } from '@/lib/toast';
 import '@/styles/recording-design-palette.css';
 
@@ -107,11 +108,30 @@ export function RecordingProcessingPage() {
     });
     return () => { stale = true; };
   }, [entryId]);
+  /*
+   * 播放失败要说出来。这一屏的音频元素是隐藏的、也没有播放器那套错误态，
+   * 把 play() 的拒绝吞掉的话，稿面那颗主按钮点下去**什么都不发生**——用户既不知道
+   * 为什么，也不知道下一步能干什么（Codex 第二十一轮 P2）。
+   * 三种处境分开说：还没拿到地址 / 浏览器拦下了没有手势的起播（再点一次就行）/
+   * 真的播不了（给下载原录音这条出路，那是结果页播放器已有的兜底）。
+   */
   useEffect(() => onRecordingPlayRequest(() => {
     const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) void audio.play().catch(() => undefined);
-    else audio.pause();
+    if (!audio) {
+      toast.error('这段录音还没准备好', '音频地址还没取到，稍等一下或刷新这一页再试');
+      return;
+    }
+    if (!audio.paused) { audio.pause(); return; }
+    void audio.play().catch((err: unknown) => {
+      const name = (err as { name?: string } | null)?.name ?? '';
+      // 起播被新的一次播放打断，不是失败
+      if (name === 'AbortError') return;
+      if (name === 'NotAllowedError') {
+        toast.error('浏览器拦下了这次播放', '再点一次「立即播放」就可以了');
+        return;
+      }
+      toast.error('这段录音暂时播不了', '可以进结果页下载原录音，或稍后再试');
+    });
   }), []);
 
   useEffect(() => {
@@ -199,7 +219,9 @@ export function RecordingProcessingPage() {
   }, [entryId, navigate, owningStoreId]);
 
   const goBack = useCallback(() => {
-    if (window.history.length > 1) navigate(-1);
+    // 用站内历史标记判，不用 window.history.length：深链之前在同一个标签页看过外站的话，
+    // length 照样 > 1，navigate(-1) 会把人送出 MAP（与结果页共用同一个判据）
+    if (canGoBackInApp()) navigate(-1);
     else navigate(`/document-store?store=${owningStoreId}`);
   }, [navigate, owningStoreId]);
 
