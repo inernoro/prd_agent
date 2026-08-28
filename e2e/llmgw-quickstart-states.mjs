@@ -501,6 +501,42 @@ check('上传的文本进了真实请求体', realBodies[0]?.messages?.[0]?.cont
 
 await page.close();
 
+/*
+  ── 按调用类型区分输入：看图这一类必须把「图」摆到明面上 ────────────────
+  文字对话那条路上不该出现图片格；切成图片理解之后，图必须是独立一格
+  （不是藏在「或上传文本」后面的一个可选动作），且空态要如实说明「没给图就发 1x1 测试图」——
+  静默塞一张测试图会让人以为识图能力已经验过了。
+*/
+gatewayMode = 'pass';
+page = await openQuickstart();
+check('文字对话不出现图片格', await page.locator('.lg-qs-io-image').count(), 0);
+// 调用类型在第 2 步（颁码那一屏），必须在点「下一步」之前改
+await askInput(page).fill('接入小米音响，让它看图识物');
+await page.getByRole('button', { name: '准备接入' }).click();
+await page.waitForSelector('.lg-qs-issue code', { timeout: 15000 });
+await page.locator('.lg-qs-type-row > button', { hasText: '图片理解' }).first().click();
+await page.waitForTimeout(500);
+await page.getByRole('button', { name: '下一步' }).click();
+await page.waitForTimeout(400);
+await create(page).click();
+await page.waitForTimeout(2400);
+await page.locator('.lg-qs-result-tabs > button', { hasText: 'cURL' }).click();
+await page.waitForTimeout(400);
+check('图片理解把图提成独立一格', await page.locator('.lg-qs-io-image').count(), 1);
+check('图片格空态说清用的是测试图', (await page.locator('.lg-qs-io-image').innerText()).includes('1x1 测试图'), true);
+check('图片格排在问题框上方', await page.evaluate(() => {
+  const img = document.querySelector('.lg-qs-io-image');
+  const input = document.querySelector('.lg-qs-io-input');
+  if (!img || !input) return 'missing';
+  return img.getBoundingClientRect().top < input.getBoundingClientRect().top ? 'above' : 'below';
+}), 'above');
+check('图片格与问题框同宽', await page.evaluate(() => {
+  const img = document.querySelector('.lg-qs-io-image').getBoundingClientRect();
+  const input = document.querySelector('.lg-qs-io-input').getBoundingClientRect();
+  return Math.abs(img.width - input.width) <= 1;
+}), true);
+await page.close();
+
 // ── 4) 月预算留空 = 不限：连治理写入本身都不该发生 ─────────────────────
 gatewayMode = 'pass';
 page = await openQuickstart();
