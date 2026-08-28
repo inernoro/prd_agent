@@ -1380,3 +1380,45 @@ export type ShadowSummary = {
   coverageHours?: number;
 };
 export type ShadowData = { summary: ShadowSummary; recent: ShadowItem[] };
+
+// ── 服务网关设置（系统级模型）──
+// 系统自己知道的值（serving 地址、appCaller、密钥前缀）只读回展示，不做输入。
+export type SystemGatewaySettings = {
+  /** auto：网关自己挑；pool：钉一个模型池；model：钉一个模型。 */
+  modelSource: 'auto' | 'pool' | 'model';
+  modelGroupId: string | null;
+  modelName: string | null;
+  teamId: string | null;
+  teamName: string | null;
+  servingBaseUrl: string;
+  servingReachable: boolean;
+  appCallerCode: string;
+  /** ready 已就绪 / will-issue 首次调用时自动签发 / will-reissue 旧的失效了会自动重签。 */
+  credentialState: 'ready' | 'will-issue' | 'will-reissue';
+  credentialPrefix: string | null;
+  credentialIssuedAt: string | null;
+  pools: Array<{ id: string; name: string; isDefault: boolean }>;
+  models: Array<{ id: string; name: string }>;
+  consumers: Array<{ feature: string; appCallerCode: string }>;
+};
+
+export type UpdateSystemSettingsRequest = {
+  modelSource: 'auto' | 'pool' | 'model';
+  modelGroupId?: string;
+  modelName?: string;
+  teamId?: string;
+};
+
+export type UpdateSystemSettingsResult = {
+  modelSource: string;
+  modelGroupId: string;
+  modelName: string;
+};
+
+export type SystemGatewayTestResult = {
+  ok: boolean;
+  stage: 'credential' | 'invoke' | 'done';
+  elapsedMs: number;
+  servedModel?: string;
+  message: string;
+};

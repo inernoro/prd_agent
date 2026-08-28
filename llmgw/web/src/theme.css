@@ -3196,19 +3196,27 @@ a:focus-visible {
   outline: none;
 }
 
-/* 两段判定：认出来了只占一行，认不出来才摊开清单。 */
+/* 两段判定：认出来了只占一行，认不出来才摊开清单。
+   降级态下这两块是用户唯一的自救出口，所以各自成块——用户反馈上一版
+   「样式拥挤」正是因为标题、命中值、来源、按钮全挤在同一条基线上，
+   两列并排时读起来是一堵墙。现在标题独占一行，值和操作在下一行。 */
 .lg-qs-facets {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 10px 24px;
+  /* 380 起才允许并排：低于这个宽度两块挤在一起就是上一版那个样子。 */
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 12px;
   align-items: start;
 }
 
 .lg-qs-facet {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
 }
 
 .lg-qs-facet-head {
@@ -3216,11 +3224,20 @@ a:focus-visible {
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
+  /* 标题那一行结束后强制换行，值与操作落到第二行，不再和标题抢同一条基线。 */
+  row-gap: 6px;
 }
 
 .lg-qs-facet-title {
+  flex: 0 0 100%;
   color: var(--text-muted);
-  font-size: var(--fs-secondary);
+  font-size: var(--fs-caption);
+  letter-spacing: 0.04em;
+}
+
+/* 「换一个 / 手动选」推到行尾，和命中值之间留出真实间距，不再贴着字。 */
+.lg-qs-facet-head > .lg-text-link {
+  margin-left: auto;
 }
 
 .lg-qs-facet-head > strong {
@@ -3242,9 +3259,6 @@ a:focus-visible {
   font-style: normal;
 }
 
-.lg-qs-facet-head > .lg-text-link {
-  margin-left: 2px;
-}
 
 .lg-qs-facet-options {
   display: flex;
@@ -8476,4 +8490,115 @@ a:focus-visible {
    和「已全部加载」那种终态不是一回事。 */
 .lg-log-footer-error {
   color: var(--err);
+}
+
+/* ── 服务网关设置 ── */
+/* 三种模型来源做成并排大按钮：选择成本要低到「看一眼就点」，不是下拉里翻。 */
+.lg-gws-sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+
+.lg-gws-sources > button {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: 'icon title' 'icon hint';
+  align-items: center;
+  gap: 2px 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.lg-gws-sources > button > svg { grid-area: icon; color: var(--text-muted); }
+.lg-gws-sources > button > strong {
+  grid-area: title;
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+.lg-gws-sources > button > small {
+  grid-area: hint;
+  color: var(--text-muted);
+  /* 一句短提示按 caption 档排，行高留在 1.4 以内——超过就变成「小字号承载正文」，
+     字体阶梯守卫会红（成句解释一律 --fs-body）。 */
+  font-size: var(--fs-caption);
+  line-height: 1.4;
+}
+
+.lg-gws-sources > button:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.lg-gws-sources > button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.lg-gws-sources > button.is-active > svg,
+.lg-gws-sources > button.is-active > strong { color: var(--accent); }
+
+.lg-gws-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 520px;
+  margin-top: 4px;
+}
+
+.lg-gws-field > select {
+  padding: 9px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+}
+
+.lg-gws-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+/* 「系统替你配好的」：少填不等于少知道，四项各自成块摆开。 */
+.lg-gws-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.lg-gws-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  min-width: 0;
+}
+
+.lg-gws-facts code {
+  overflow-wrap: anywhere;
+}
+
+.lg-gws-consumers > li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
 }

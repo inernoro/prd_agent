@@ -151,7 +151,7 @@ const server = http.createServer((req, res) => {
         drafted.push(raw ? JSON.parse(raw) : null);
         if (draftMode === 'unavailable') {
           res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-          res.write(`data: ${JSON.stringify({ type: 'error', code: 'INTENT_DRAFT_UNAVAILABLE', message: '本部署还没有接通用于推导的模型，已退回本地关键词判定。' })}\n\n`);
+          res.write(`data: ${JSON.stringify({ type: 'error', code: 'INTENT_DRAFT_UNAVAILABLE', message: '系统级用途码还没绑上可用的模型池。去「服务网关设置」选一个对话池或指定一个模型。已退回本地关键词判定。' })}\n\n`);
           res.end();
           return;
         }
@@ -246,7 +246,7 @@ const issuedCode = (page) => page.locator('.lg-qs-issue code');
  */
 async function walkToOwner(page, text = '接入小米音响，对接大模型网关指令集') {
   await askInput(page).fill(text);
-  await page.getByRole('button', { name: '生成调用用途码' }).click();
+  await page.getByRole('button', { name: '准备接入' }).click();
   await page.waitForSelector('.lg-qs-issue code', { timeout: 15000 });
   await page.getByRole('button', { name: '下一步' }).click();
   await page.waitForTimeout(400);
@@ -261,19 +261,19 @@ check('第一屏只有一个输入框', [
   await page.locator('.lg-qs-issue code').count(),
   await page.locator('.lg-qs-team-list, .lg-qs-own-row').count(),
 ], [1, 0, 0]);
-check('太短的一句话不许提交', await page.getByRole('button', { name: '生成调用用途码' }).isDisabled(), true);
+check('太短的一句话不许提交', await page.getByRole('button', { name: '准备接入' }).isDisabled(), true);
 check('页面上不存在 quickstart 占位码', (await page.locator('.lg-qs-flow').innerText()).includes('quickstart::'), false);
 // 示例句点一下就填进去：省掉对着空白框发呆那几秒。
 await page.locator('.lg-qs-ask-samples > button').first().click();
 await page.waitForTimeout(200);
 check('点示例句直接填进输入框', (await askInput(page).inputValue()).length > 0, true);
-check('填了之后才可提交', await page.getByRole('button', { name: '生成调用用途码' }).isDisabled(), false);
+check('填了之后才可提交', await page.getByRole('button', { name: '准备接入' }).isDisabled(), false);
 
 // 第二屏：交给模型推，边推边吐，推完把码亮出来。
 // 这句话正是关键词表认不出来的那种说法——上一版在这里判「既没看出谁在调用，也没看出要做什么」。
 drafted.length = 0;
 await askInput(page).fill('接入小米音响，对接大模型网关指令集');
-await page.getByRole('button', { name: '生成调用用途码' }).click();
+await page.getByRole('button', { name: '准备接入' }).click();
 await page.waitForTimeout(180);
 check('推导中把模型吐出来的原文显示出来', (await page.locator('.lg-qs-thinking pre').innerText()).length > 0, true);
 await page.waitForSelector('.lg-qs-issue code', { timeout: 15000 });
@@ -290,6 +290,8 @@ draftMode = 'unavailable';
 await page.getByRole('button', { name: '重新生成' }).click();
 await page.waitForTimeout(1200);
 check('模型不可用时明说已降级', (await page.locator('.lg-test-result.is-error').innerText()).includes('退回本地关键词判定'), true);
+// 裸状态码对用户没有意义（他会问「系统就是网关，还 401?」），失败必须指出去哪一页自救。
+check('降级消息指出自救入口', (await page.locator('.lg-test-result.is-error').innerText()).includes('服务网关设置'), true);
 check('降级后本地关键词表接住这句话', (await issuedCode(page).innerText()).trim(), 'smart-device.command-parse::chat');
 check('降级时标明是本地判定', (await page.locator('.lg-qs-draft-source').innerText()).includes('降级'), true);
 check('降级时摊开本地清单供手动改', await page.locator('.lg-qs-facets').count(), 1);

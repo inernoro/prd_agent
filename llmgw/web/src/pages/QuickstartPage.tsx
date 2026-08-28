@@ -941,7 +941,7 @@ export function QuickstartPage() {
                       className="lg-qs-primary"
                       disabled={!canCreateAccess || intent.trim().length < MIN_INTENT_LENGTH}
                       onClick={() => void submitIntent()}
-                    >生成调用用途码</Button>
+                    >准备接入</Button>
                   </div>
                   {!canCreateAccess ? <ReadOnlyNotice>当前角色不能创建 appCaller、签发密钥或执行安全直测。</ReadOnlyNotice> : null}
                 </div>

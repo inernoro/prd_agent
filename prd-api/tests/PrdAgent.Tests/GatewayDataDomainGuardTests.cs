@@ -4396,10 +4396,32 @@ public class GatewayDataDomainGuardTests
         // 这条接线删掉不会让任何测试变红（页面会静默退回本地关键词表），所以钉成字面量。
         var consoleApi = ReadRepoFile("llmgw/console-api/Program.cs");
         Assert.Contains("/gw/app-callers/draft", consoleApi);
-        Assert.Contains("LLMGW_INTENT_DRAFT_BASE_URL", consoleApi);
         Assert.Contains("X-Gateway-App-Caller", consoleApi);
         Assert.Contains("INTENT_DRAFT_UNAVAILABLE", consoleApi);
         Assert.Contains("draftAppCallerIntent", quickstart);
+
+        // 系统级凭据必须自愈：手签一把 key 塞环境变量的做法在真实部署上出过
+        // 「网关对自己回 401」——env 与网关库的密钥目录一旦对不上就没人能自救。
+        // 这四条接线删掉都不会让别的测试变红（推导会静默退回本地关键词表），所以钉成字面量。
+        Assert.Contains("EnsureSystemGatewayAccessAsync", consoleApi);
+        Assert.Contains("llmgw_system_settings", consoleApi);
+        Assert.Contains("/gw/system-settings", consoleApi);
+        Assert.Contains("/gw/system-settings/test", consoleApi);
+        // 推导端点必须走自愈入口取凭据，不许再直接读密钥类环境变量。
+        Assert.DoesNotContain("LLMGW_INTENT_DRAFT_KEY", consoleApi);
+        // 裸状态码对用户毫无意义（他会问「系统就是网关，还 401?」），必须翻译成能行动的一句话。
+        Assert.Contains("ReadGatewayFailureDetailAsync", consoleApi);
+        Assert.Contains("GATEWAY_KEY_INVALID", consoleApi);
+        // 设置页存在、接进路由与侧栏，并且只让用户做「用哪个模型」这一个决定。
+        var gatewaySettings = ReadRepoFile("llmgw/web/src/pages/GatewaySettingsPage.tsx");
+        Assert.Contains("getSystemSettings", gatewaySettings);
+        Assert.Contains("testSystemSettings", gatewaySettings);
+        Assert.Contains("gatewaySettings", ReadRepoFile("llmgw/web/src/lib/access.ts"));
+        Assert.Contains("/gateway-settings", ReadRepoFile("llmgw/web/src/App.tsx"));
+        Assert.Contains("服务网关设置", ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx"));
+        // 系统密钥明文永不下发到浏览器：设置页只认前缀字段。
+        Assert.DoesNotContain("credentialPlaintext", gatewaySettings);
+        Assert.Contains("credentialPrefix", gatewaySettings);
         // 模型推的、本地降级的、用户手改的，界面必须分得出来（推断值可见可改可追责）。
         Assert.Contains("codeSource", quickstart);
         // 系统提示词是给用户粘走的产物，绝不能把密钥明文写进去。

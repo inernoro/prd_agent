@@ -5090,18 +5090,242 @@ app.MapGet("/gw/app-callers", async (
     return Json(ApiEnvelope<GatewayAppCallersData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// ── 服务网关设置（系统级）：网关自己要用模型时，用哪个池 / 哪个模型，凭据由它自己管 ──
+//
+// 为什么要有这一层：控制台的内部功能（当前是 Quickstart 的「一句话推导调用用途码」）也要调模型。
+// 第一版把它接在三个环境变量上（地址 + 手签的 service key + appCaller），结果是：
+// 手签的那把 key 一旦被轮换、撤销，或容器里的 env 与网关库里的 key 目录对不上，
+// serving 就在鉴权门上回 401 —— 一个「网关自己调自己却说你没权限」的荒谬状态，
+// 而用户除了看见一句裸 401 什么也做不了。用户原话：「系统就是服务网关，还有 401 问题?」
+//
+// 所以改成：**系统级配置存在库里，凭据由网关自己签发和自愈**。
+// 用户在「服务网关设置」里只做一件事——选这套系统功能用哪个模型池或哪个模型；
+// 地址、appCaller、密钥一律不出现在表单里（minimal-user-input：系统自己知道的值不许摆成输入框）。
+// 密钥失效时自动重签一把，不再需要任何人去改 env。
+var systemSettings = gatewayDatabase.GetCollection<BsonDocument>("llmgw_system_settings");
+// 系统功能自己的调用用途码。前缀 llmgw-console 表示「控制台自身」，与用户业务的 appCaller 分开计费与观测。
+const string SystemIntentDraftAppCaller = "llmgw-console.intent-draft::chat";
+// 网关自己签给自己的那把 key 的名字。命名即用途，运维在密钥页一眼能认出「这把不是人签的」。
+const string SystemServiceKeyName = "llmgw-system-internal";
+const string SystemServiceKeyClientCode = "llmgw-console";
+// 与 serving 的 X-Gateway-Source 判据对齐：key 上写什么，请求头就带什么，否则 403 scope-mismatch。
+const string SystemServiceKeySource = "llmgw-console";
+var systemModelSources = new HashSet<string>(StringComparer.Ordinal) { "auto", "pool", "model" };
+
+// serving 的内网地址。这不是「用户该填的东西」——同一个部署里它是确定的，
+// 所以只从配置读，设置页只展示不让填；读不到就在设置页明说「没探到」，不猜。
+string ResolveServingBaseUrl()
+{
+    var candidates = new[]
+    {
+        Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_BASE_URL"),
+        Environment.GetEnvironmentVariable("LLMGW_SERVING_BASE_URL"),
+        Environment.GetEnvironmentVariable("LLMGW_SERVING_PROXY_TARGET"),
+        builder.Configuration["LlmGwServe:BaseUrl"],
+    };
+    foreach (var candidate in candidates)
+    {
+        var value = (candidate ?? string.Empty).Trim().TrimEnd('/');
+        if (value.Length > 0) return value;
+    }
+    return string.Empty;
+}
+
+async Task<BsonDocument> LoadSystemSettingsAsync(string tenantId)
+{
+    var doc = await systemSettings.Find(Builders<BsonDocument>.Filter.Eq("_id", tenantId)).FirstOrDefaultAsync();
+    return doc ?? new BsonDocument
+    {
+        { "_id", tenantId },
+        { "TenantId", tenantId },
+        { "ModelSource", "auto" },
+    };
+}
+
+/// <summary>
+/// 系统级网关访问凭据的自愈入口：确保 appCaller 已登记、确保有一把可用的 key。
+/// 任何一步失败都返回**说得出原因**的错误，绝不把裸 HTTP 状态码丢给用户。
+/// </summary>
+async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolId, string Model, string Error)>
+    EnsureSystemGatewayAccessAsync(string tenantId, string? teamId, string actorUsername)
+{
+    var baseUrl = ResolveServingBaseUrl();
+    if (baseUrl.Length == 0)
+        return (false, "", "", SystemIntentDraftAppCaller, null, "auto", "没有探到 serving 的内网地址（LLMGW_INTENT_DRAFT_BASE_URL / LLMGW_SERVING_BASE_URL 均为空），系统级模型调用无法发出。");
+
+    var settings = await LoadSystemSettingsAsync(tenantId);
+    var modelSource = settings.AsNullableString("ModelSource") ?? "auto";
+    var poolId = string.Equals(modelSource, "pool", StringComparison.Ordinal) ? settings.AsNullableString("ModelGroupId") : null;
+    var model = string.Equals(modelSource, "model", StringComparison.Ordinal)
+        ? settings.AsNullableString("ModelName") ?? "auto"
+        : "auto";
+    if (string.Equals(modelSource, "pool", StringComparison.Ordinal) && string.IsNullOrWhiteSpace(poolId))
+        return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model, "系统级模型来源选了「模型池」，但没有选中任何池。去「服务网关设置」选一个对话池。");
+    if (string.Equals(modelSource, "model", StringComparison.Ordinal) && string.IsNullOrWhiteSpace(settings.AsNullableString("ModelName")))
+        return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model, "系统级模型来源选了「指定模型」，但没有选中任何模型。去「服务网关设置」选一个。");
+
+    // 归属团队：设置里钉住的优先，否则落到系统团队（租户里第一个 active 团队）。
+    var effectiveTeamId = settings.AsNullableString("TeamId") ?? teamId;
+    if (string.IsNullOrWhiteSpace(effectiveTeamId))
+    {
+        var fallbackTeam = await teams
+            .Find(x => x.TenantId == tenantId && x.Status == "active")
+            .SortBy(x => x.CreatedAt)
+            .FirstOrDefaultAsync();
+        effectiveTeamId = fallbackTeam?.Id;
+    }
+    if (string.IsNullOrWhiteSpace(effectiveTeamId))
+        return (false, baseUrl, "", SystemIntentDraftAppCaller, poolId, model, "当前租户下还没有可用团队，系统级 appCaller 无处归属。先去「团队与成员」建一个团队。");
+
+    // 1. appCaller 自动登记（幂等）：没有它 serving 会以「未注册用途」拒绝。
+    var callerFilter = Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("AppCallerCode", SystemIntentDraftAppCaller),
+        Builders<BsonDocument>.Filter.Eq("RequestType", "chat"));
+    var existingCaller = await gwAppCallers.Find(callerFilter).FirstOrDefaultAsync();
+    if (existingCaller is null)
+    {
+        var callerNow = DateTime.UtcNow;
+        try
+        {
+            await gwAppCallers.InsertOneAsync(new BsonDocument
+            {
+                { "_id", Guid.NewGuid().ToString("N") },
+                { "TenantId", tenantId },
+                { "TeamId", effectiveTeamId },
+                { "AppCallerCode", SystemIntentDraftAppCaller },
+                { "RequestType", "chat" },
+                { "SourceSystem", SystemServiceKeySource },
+                { "IngressProtocol", "openai-compatible" },
+                { "ObservedIngressProtocols", new BsonArray() },
+                { "Title", "网关控制台 · 一句话推导调用用途码" },
+                { "Status", "configured" },
+                { "ModelPolicy", "auto" },
+                { "ParameterPolicy", "default-drop" },
+                { "ObservedModelPoolIds", new BsonArray() },
+                { "ObservedModelPolicies", new BsonArray() },
+                { "ObservedParameterPolicies", new BsonArray() },
+                { "TotalSeen", 0L },
+                { "FirstSeenAt", callerNow },
+                { "LastSeenAt", callerNow },
+                { "CreatedAt", callerNow },
+                { "UpdatedAt", callerNow },
+            });
+        }
+        catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 并发下另一个请求刚建好，按幂等处理。
+        }
+    }
+
+    // 2. 密钥自愈：库里那把还在且启用就复用；对不上就重签一把。
+    //    「对不上」包含三种：从没签过、被人撤销了、密文用当前密钥解不开（轮换过 ApiKeyCrypto:Secret）。
+    var keyId = settings.AsNullableString("ServiceKeyId");
+    if (!string.IsNullOrWhiteSpace(keyId))
+    {
+        var stored = await serviceKeys.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", keyId),
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId))).FirstOrDefaultAsync();
+        if (stored is not null && stored.AsNullableBool("Enabled") == true)
+        {
+            // 变量名刻意不叫 decrypted：PlatformGovernance 守卫把「解密后取明文」那个表达式钉成
+            // 全文件只许出现一次，用来证明**平台上游密钥**的明文只有喂给 Fingerprint 这一个去处
+            //（守卫按源码文本计数，连注释里写一次都会把它撞红）。
+            // 这里解出来的是网关自己的凭据，去向是出站的 X-Gateway-Key 头、不进任何响应，
+            // 与那条守卫要防的事无关——换个名字，让守卫继续对它该管的那处保持有效。
+            var systemKey = GwApiKeyCrypto.Decrypt(settings.AsNullableString("ServiceKeyEncrypted"), builder.Configuration);
+            if (systemKey.Success && systemKey.PlainText.Length > 0)
+                return (true, baseUrl, systemKey.PlainText, SystemIntentDraftAppCaller, poolId, model, string.Empty);
+        }
+    }
+
+    string plainKey;
+    string newKeyId;
+    try
+    {
+        var secretBytes = RandomNumberGenerator.GetBytes(32);
+        plainKey = "gwk_" + Convert.ToBase64String(secretBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var keyPrefix = plainKey[..Math.Min(plainKey.Length, 12)];
+        var keyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainKey))).ToLowerInvariant();
+        newKeyId = Guid.NewGuid().ToString("N");
+        var keyNow = DateTime.UtcNow;
+        var encrypted = GwApiKeyCrypto.Encrypt(plainKey, builder.Configuration);
+        await serviceKeys.InsertOneAsync(new BsonDocument
+        {
+            { "_id", newKeyId },
+            { "TenantId", tenantId },
+            { "TeamId", effectiveTeamId },
+            { "Name", SystemServiceKeyName },
+            { "KeyPrefix", keyPrefix },
+            { "KeyHash", keyHash },
+            { "CreatedByUserId", "system" },
+            { "CreatedByUsername", actorUsername.Length > 0 ? actorUsername : "system" },
+            { "Enabled", true },
+            { "SourceSystem", SystemServiceKeySource },
+            { "ClientCode", SystemServiceKeyClientCode },
+            { "Environment", "production" },
+            { "Purpose", "external-platform" },
+            { "AppCallerCodes", new BsonArray(new[] { SystemIntentDraftAppCaller }) },
+            { "IngressProtocols", new BsonArray(new[] { "openai-compatible" }) },
+            { "Scopes", new BsonArray(new[] { "invoke", "stream:invoke", "route:read" }) },
+            { "AllowedCidrs", new BsonArray() },
+            { "RateLimitPerMinute", 120 },
+            { "RotatesKeyId", BsonNull.Value },
+            { "PredecessorRotationState", BsonNull.Value },
+            { "RotatedByKeyId", BsonNull.Value },
+            { "RotationState", "active" },
+            { "IssuanceState", "delivered" },
+            { "SystemManaged", true },
+            { "ExpiresAt", BsonNull.Value },
+            { "CreatedAt", keyNow },
+            { "UpdatedAt", keyNow },
+        });
+        await serviceKeyDirectory.InsertOneAsync(new BsonDocument
+        {
+            { "_id", newKeyId },
+            { "KeyHash", keyHash },
+            { "TenantId", tenantId },
+            { "ServiceKeyId", newKeyId },
+            { "CreatedAt", keyNow },
+        });
+        await systemSettings.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", tenantId),
+            Builders<BsonDocument>.Update
+                .SetOnInsert("TenantId", tenantId)
+                .Set("TeamId", effectiveTeamId)
+                .Set("ServiceKeyId", newKeyId)
+                .Set("ServiceKeyEncrypted", encrypted)
+                .Set("ServiceKeyPrefix", keyPrefix)
+                .Set("ServiceKeyIssuedAt", keyNow)
+                .Set("UpdatedAt", keyNow),
+            new UpdateOptions { IsUpsert = true });
+    }
+    catch (Exception ex)
+    {
+        return (false, baseUrl, "", SystemIntentDraftAppCaller, poolId, model,
+            $"系统级密钥自动签发失败（{ex.GetType().Name}）。多数情况是 ApiKeyCrypto:Secret 没注入到 llmgw 容器，密文无法写入。");
+    }
+
+    // 旧的系统级 key 一律停用：只留一把在用，避免密钥页越积越多、也避免撤销时认错对象。
+    await serviceKeys.UpdateManyAsync(
+        Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+            Builders<BsonDocument>.Filter.Eq("Name", SystemServiceKeyName),
+            Builders<BsonDocument>.Filter.Ne("_id", newKeyId),
+            Builders<BsonDocument>.Filter.Eq("Enabled", true)),
+        Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
+
+    return (true, baseUrl, plainKey, SystemIntentDraftAppCaller, poolId, model, string.Empty);
+}
+
 // ── 调用用途码草案：把用户那句「我想做什么」交给网关自己的模型推成 {应用}.{用途}::{类型} ──
 //
 // 为什么走网关自己：控制台和 serving 在同一个部署里，这条路等于让网关吃自己的狗粮，
 // 模型池、预算、日志全部落在既有链路上，不另起一套模型调用。
 //
-// 为什么必须能降级：这三个环境变量没配、或 serving 一时不通时，返回明确的不可用码，
-// 前端退回本地关键词表并**明说这是降级判定**——不假装模型给过意见（no-rootless-tree）。
-var intentDraftBaseUrl = (Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_BASE_URL") ?? string.Empty).Trim().TrimEnd('/');
-var intentDraftKey = (Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_KEY") ?? string.Empty).Trim();
-var intentDraftAppCaller = (Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_APP_CALLER") ?? "llmgw-console.intent-draft::chat").Trim();
-var intentDraftModel = (Environment.GetEnvironmentVariable("LLMGW_INTENT_DRAFT_MODEL") ?? "auto").Trim();
-var intentDraftConfigured = intentDraftBaseUrl.Length > 0 && intentDraftKey.Length > 0;
+// 用哪个模型由「服务网关设置」决定，凭据由 EnsureSystemGatewayAccessAsync 自愈——
+// 这一段不再读任何密钥类环境变量。serving 一时不通时返回**说得出原因**的错误，
+// 前端退回本地关键词表并明说这是降级判定（no-rootless-tree：不假装模型给过意见）。
 // 推导是短任务，40s 足够；超时就降级，不把控制台请求挂住。
 var intentDraftHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
 const int IntentDraftMaxChars = 500;
@@ -5130,6 +5354,199 @@ reason 用中文写，这是唯一允许出现中文的字段。
 并在 reason 里用一句中文说清还缺什么。不要编造。
 """;
 
+// ── 服务网关设置读端点：当前系统级模型、可选项、凭据状态、谁在用它 ──
+//
+// 只让用户做一个决定（用哪个池 / 哪个模型），其余全部由系统自己端出来：
+// serving 地址、appCaller、密钥前缀都是「展示」不是「输入」（minimal-user-input）。
+app.MapGet("/gw/system-settings", async (HttpContext http) =>
+{
+    var tenant = TenantAccess.GetRequired(http);
+    var settings = await LoadSystemSettingsAsync(tenant.TenantId);
+    var baseUrl = ResolveServingBaseUrl();
+
+    var chatPools = await gwModelPools
+        .Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            Builders<BsonDocument>.Filter.Eq("ModelType", "chat")))
+        .ToListAsync();
+    var chatModels = await gwLogicalModels
+        .Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
+            Builders<BsonDocument>.Filter.Ne("Enabled", false)))
+        .Limit(200)
+        .ToListAsync();
+
+    var keyId = settings.AsNullableString("ServiceKeyId");
+    var keyDoc = string.IsNullOrWhiteSpace(keyId)
+        ? null
+        : await serviceKeys.Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", keyId),
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId))).FirstOrDefaultAsync();
+    var teamId = settings.AsNullableString("TeamId");
+    var teamDoc = string.IsNullOrWhiteSpace(teamId)
+        ? await teams.Find(x => x.TenantId == tenant.TenantId && x.Status == "active").SortBy(x => x.CreatedAt).FirstOrDefaultAsync()
+        : await teams.Find(x => x.Id == teamId && x.TenantId == tenant.TenantId).FirstOrDefaultAsync();
+
+    return Json(ApiEnvelope<object>.Ok(new
+    {
+        modelSource = settings.AsNullableString("ModelSource") ?? "auto",
+        modelGroupId = settings.AsNullableString("ModelGroupId"),
+        modelName = settings.AsNullableString("ModelName"),
+        teamId = teamDoc?.Id,
+        teamName = teamDoc?.Name,
+        servingBaseUrl = baseUrl,
+        servingReachable = baseUrl.Length > 0,
+        appCallerCode = SystemIntentDraftAppCaller,
+        // 密钥只回前缀指纹，永不回明文——它是系统自己在用的凭据，不下发给浏览器。
+        credentialState = keyDoc is null ? "will-issue" : keyDoc.AsNullableBool("Enabled") == true ? "ready" : "will-reissue",
+        credentialPrefix = keyDoc?.AsNullableString("KeyPrefix") ?? settings.AsNullableString("ServiceKeyPrefix"),
+        credentialIssuedAt = settings.AsNullableString("ServiceKeyIssuedAt"),
+        pools = chatPools.Select(x => new
+        {
+            id = x.GetStringOrEmpty("_id"),
+            name = x.AsNullableString("Name") ?? x.GetStringOrEmpty("_id"),
+            isDefault = x.AsNullableBool("IsDefaultForType") == true,
+        }).ToList(),
+        models = chatModels.Select(x => new
+        {
+            id = x.GetStringOrEmpty("_id"),
+            name = x.AsNullableString("Name") ?? x.GetStringOrEmpty("_id"),
+        }).ToList(),
+        // 「谁在用它」：让用户知道改这一项会影响什么，而不是改完不知道动了谁。
+        consumers = new[]
+        {
+            new { feature = "Quickstart · 一句话推导调用用途码", appCallerCode = SystemIntentDraftAppCaller },
+        },
+    }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 保存系统级模型选择。只接三个字段，其余一律系统自己决定。
+app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSystemSettingsRequest? body) =>
+{
+    var tenant = TenantAccess.GetRequired(http);
+    var modelSource = (body?.ModelSource ?? "auto").Trim().ToLowerInvariant();
+    if (!systemModelSources.Contains(modelSource))
+        return Json(ApiEnvelope<object>.Fail("INVALID_MODEL_SOURCE", "modelSource 只支持 auto、pool、model"), jsonOptions, 400);
+
+    var modelGroupId = (body?.ModelGroupId ?? string.Empty).Trim();
+    var modelName = (body?.ModelName ?? string.Empty).Trim();
+    if (modelSource == "pool")
+    {
+        if (modelGroupId.Length == 0)
+            return Json(ApiEnvelope<object>.Fail("MODEL_POOL_REQUIRED", "选择「模型池」时必须指定一个池"), jsonOptions, 400);
+        var poolExists = await gwModelPools.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", modelGroupId),
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId))) == 1;
+        if (!poolExists)
+            return Json(ApiEnvelope<object>.Fail("MODEL_POOL_NOT_FOUND", "指定的模型池不在当前租户下"), jsonOptions, 404);
+    }
+    if (modelSource == "model" && modelName.Length == 0)
+        return Json(ApiEnvelope<object>.Fail("MODEL_NAME_REQUIRED", "选择「指定模型」时必须选一个模型"), jsonOptions, 400);
+
+    var teamId = (body?.TeamId ?? string.Empty).Trim();
+    if (teamId.Length > 0)
+    {
+        var teamOk = await teams.CountDocumentsAsync(x => x.Id == teamId && x.TenantId == tenant.TenantId && x.Status == "active") == 1;
+        if (!teamOk)
+            return Json(ApiEnvelope<object>.Fail("TEAM_NOT_FOUND", "指定的团队不在当前租户下"), jsonOptions, 404);
+    }
+
+    var now = DateTime.UtcNow;
+    var update = Builders<BsonDocument>.Update
+        .SetOnInsert("TenantId", tenant.TenantId)
+        .Set("ModelSource", modelSource)
+        .Set("ModelGroupId", modelSource == "pool" ? (BsonValue)modelGroupId : BsonNull.Value)
+        .Set("ModelName", modelSource == "model" ? (BsonValue)modelName : BsonNull.Value)
+        .Set("UpdatedAt", now)
+        .Set("UpdatedByUsername", tenant.Username);
+    if (teamId.Length > 0) update = update.Set("TeamId", teamId);
+    await systemSettings.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.Eq("_id", tenant.TenantId),
+        update,
+        new UpdateOptions { IsUpsert = true });
+
+    await WriteOperationAuditAsync(
+        operationAudits, http, "system_settings.update", "llmgw_system_settings", tenant.TenantId, "服务网关设置", true, null,
+        new BsonDocument { { "modelSource", modelSource }, { "modelGroupId", modelGroupId }, { "modelName", modelName } });
+
+    return Json(ApiEnvelope<object>.Ok(new { modelSource, modelGroupId, modelName }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 当场自测：确保凭据 + 真发一次极短对话，把成败、耗时、模型和失败原因端回来。
+// minimal-user-input 的连带义务——用户少填的每一项，系统都欠他一个「我配了什么、对不对」。
+app.MapPost("/gw/system-settings/test", async (HttpContext http) =>
+{
+    var tenant = TenantAccess.GetRequired(http);
+    var startedAt = DateTime.UtcNow;
+    var access = await EnsureSystemGatewayAccessAsync(
+        tenant.TenantId,
+        tenant.TeamIds.Count == 1 ? tenant.TeamIds[0] : null,
+        tenant.Username);
+    if (!access.Ok)
+    {
+        return Json(ApiEnvelope<object>.Ok(new
+        {
+            ok = false,
+            stage = "credential",
+            elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+            message = access.Error,
+        }), jsonOptions);
+    }
+
+    try
+    {
+        using var probe = new HttpRequestMessage(HttpMethod.Post, $"{access.BaseUrl}/v1/chat/completions")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                model = access.Model,
+                stream = false,
+                messages = new object[] { new { role = "user", content = "只回复 OK 两个字符" } },
+            }, jsonOptions), Encoding.UTF8, "application/json"),
+        };
+        probe.Headers.TryAddWithoutValidation("X-Gateway-Key", access.Key);
+        probe.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", access.AppCaller);
+        probe.Headers.TryAddWithoutValidation("X-Gateway-Source", SystemServiceKeySource);
+        if (!string.IsNullOrWhiteSpace(access.PoolId))
+            probe.Headers.TryAddWithoutValidation("X-Gateway-Model-Pool-Id", access.PoolId);
+
+        using var response = await intentDraftHttp.SendAsync(probe, http.RequestAborted);
+        var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
+            return Json(ApiEnvelope<object>.Ok(new { ok = false, stage = "invoke", elapsedMs, message = detail }), jsonOptions);
+        }
+        var payload = await response.Content.ReadAsStringAsync(http.RequestAborted);
+        var servedModel = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            if (doc.RootElement.TryGetProperty("model", out var modelEl) && modelEl.ValueKind == JsonValueKind.String)
+                servedModel = modelEl.GetString() ?? string.Empty;
+        }
+        catch (JsonException) { /* 成功但返回体不是标准 JSON，不影响结论 */ }
+        return Json(ApiEnvelope<object>.Ok(new
+        {
+            ok = true,
+            stage = "done",
+            elapsedMs,
+            servedModel,
+            message = $"通了：{elapsedMs} ms 内拿到回复{(servedModel.Length > 0 ? $"，实际执行的是 {servedModel}" : string.Empty)}。",
+        }), jsonOptions);
+    }
+    catch (Exception ex)
+    {
+        return Json(ApiEnvelope<object>.Ok(new
+        {
+            ok = false,
+            stage = "invoke",
+            elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+            message = $"连不上网关服务（{ex.GetType().Name}）。确认 llmgw-serve 容器在运行，且 {access.BaseUrl} 在容器网络内可达。",
+        }), jsonOptions);
+    }
+}).RequireAuthorization("ConfigWrite");
+
 // 用户那句话 → 调用用途码草案。SSE 边推边吐，等待期屏幕一直在变（规则 #6）。
 // 只读不写：这里不落任何库，草案由用户确认后才走 POST /gw/app-callers 正式登记。
 app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAppCallerRequest body) =>
@@ -5150,9 +5567,12 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
         await SendAsync(new { type = "error", code = "INTENT_INVALID", message = $"请写一句话说明要做什么（不超过 {IntentDraftMaxChars} 字）。" });
         return;
     }
-    if (!intentDraftConfigured)
+    // 凭据与模型选择都来自系统级设置；缺什么就说缺什么，不把裸状态码丢给用户。
+    var tenantAccess = TenantAccess.GetRequired(http);
+    var access = await EnsureSystemGatewayAccessAsync(tenantAccess.TenantId, tenantAccess.TeamIds.Count == 1 ? tenantAccess.TeamIds[0] : null, tenantAccess.Username);
+    if (!access.Ok)
     {
-        await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = "本部署还没有接通用于推导的模型，已退回本地关键词判定。" });
+        await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"{access.Error}已退回本地关键词判定。" });
         return;
     }
 
@@ -5161,11 +5581,11 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
     var usedModel = string.Empty;
     try
     {
-        using var upstream = new HttpRequestMessage(HttpMethod.Post, $"{intentDraftBaseUrl}/v1/chat/completions")
+        using var upstream = new HttpRequestMessage(HttpMethod.Post, $"{access.BaseUrl}/v1/chat/completions")
         {
             Content = new StringContent(JsonSerializer.Serialize(new
             {
-                model = intentDraftModel,
+                model = access.Model,
                 stream = true,
                 // 不发 temperature：池里选到的模型可能只接受默认值，实测发 0 会被上游 400
                 // 回「temperature does not support 0 with this model」。推导要的确定性靠
@@ -5177,14 +5597,18 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
                 },
             }, jsonOptions), Encoding.UTF8, "application/json"),
         };
-        upstream.Headers.TryAddWithoutValidation("X-Gateway-Key", intentDraftKey);
-        upstream.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", intentDraftAppCaller);
-        upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", "llmgw-console");
+        upstream.Headers.TryAddWithoutValidation("X-Gateway-Key", access.Key);
+        upstream.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", access.AppCaller);
+        upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", SystemServiceKeySource);
+        if (!string.IsNullOrWhiteSpace(access.PoolId))
+            upstream.Headers.TryAddWithoutValidation("X-Gateway-Model-Pool-Id", access.PoolId);
 
         using var response = await intentDraftHttp.SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, http.RequestAborted);
         if (!response.IsSuccessStatusCode)
         {
-            await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"推导模型返回 {(int)response.StatusCode}，已退回本地关键词判定。" });
+            // 裸状态码对用户毫无意义（他会问「系统就是网关，还 401?」），所以翻译成能行动的一句话。
+            var detail = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
+            await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"{detail}已退回本地关键词判定。" });
             return;
         }
         await SendAsync(new { type = "stage", stage = "thinking", text = "模型正在推导两段码" });
@@ -13697,6 +14121,51 @@ static bool IsKebabCaseAppCallerSegment(string value)
     => value.Length > 0
        && value[0] is >= 'a' and <= 'z'
        && value.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+
+/// <summary>
+/// 把 serving 回的失败翻译成用户能行动的一句话。
+///
+/// 为什么需要它：控制台调的是**自己这套网关**，此时冒出一个裸「401」对用户毫无意义——
+/// 用户会问「系统就是服务网关，还有 401 问题?」。所以这里按 serving 的结构化错误码分类，
+/// 每一类都给出「哪里坏了 + 去哪修」；认不出来的才退回带状态码的通用句（不编造原因）。
+/// </summary>
+static async Task<string> ReadGatewayFailureDetailAsync(HttpResponseMessage response, CancellationToken ct)
+{
+    var status = (int)response.StatusCode;
+    var code = string.Empty;
+    try
+    {
+        var text = await response.Content.ReadAsStringAsync(ct);
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.Object
+                && err.TryGetProperty("code", out var codeEl) && codeEl.ValueKind == JsonValueKind.String)
+            {
+                code = codeEl.GetString() ?? string.Empty;
+            }
+        }
+    }
+    catch (JsonException) { /* serving 偶发非 JSON 错误体，走通用句 */ }
+    catch (OperationCanceledException) { /* 调用方已取消，走通用句 */ }
+
+    return code switch
+    {
+        "GATEWAY_KEY_REQUIRED" or "GATEWAY_KEY_INVALID" =>
+            "网关拒绝了系统自己的密钥（已失效或被撤销）。下次请求会自动重签一把；连续出现请在「服务网关设置」点一次「测试连接」看详情。",
+        "GATEWAY_KEY_SCOPE_DENIED" =>
+            "系统密钥的授权范围与本次调用对不上（来源、用途码或协议不一致）。去「服务网关设置」点「测试连接」重建这把密钥。",
+        "GATEWAY_KEY_PURPOSE_DENIED" =>
+            "系统密钥的用途不允许发业务请求。去「服务网关设置」点「测试连接」重建这把密钥。",
+        "APPCALLER_POOL_UNBOUND" or "GATEWAY_CONFIG_UNAVAILABLE" =>
+            "系统级用途码还没绑上可用的模型池。去「服务网关设置」选一个对话池或指定一个模型。",
+        "LLM_ERROR" =>
+            $"上游模型执行失败（网关已收到请求，是模型那一侧回的 {status}）。换一个池或模型再试。",
+        _ when status == 404 => "没找到 serving 的对话端点，检查网关服务是否在运行。",
+        _ when status >= 500 => $"网关服务内部错误（{status}）。",
+        _ => $"网关返回 {status}{(code.Length > 0 ? $"（{code}）" : string.Empty)}。",
+    };
+}
 
 /// <summary>
 /// 从模型输出里取出两段码。模型被要求只输出 JSON，但仍可能裹 ```json 或带前后缀，

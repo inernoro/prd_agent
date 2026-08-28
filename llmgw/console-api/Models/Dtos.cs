@@ -811,6 +811,20 @@ public sealed class DraftAppCallerRequest
     public string? Intent { get; set; }
 }
 
+/// <summary>
+/// 服务网关设置的唯一可写面：系统级功能用哪个模型。
+/// 地址、appCaller、密钥都由系统自管，不在这里接收——它们不是用户该知道的值。
+/// </summary>
+public sealed class UpdateSystemSettingsRequest
+{
+    /// <summary>auto（网关自己挑）/ pool（钉一个模型池）/ model（钉一个模型）。</summary>
+    public string? ModelSource { get; set; }
+    public string? ModelGroupId { get; set; }
+    public string? ModelName { get; set; }
+    /// <summary>归属团队，留空则落到租户里第一个 active 团队（系统团队）。</summary>
+    public string? TeamId { get; set; }
+}
+
 public sealed class BulkUpdateGatewayAppCallersRequest
 {
     public string? FilterStatus { get; set; }

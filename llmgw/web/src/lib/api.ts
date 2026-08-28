@@ -16,6 +16,10 @@
 import type {
   AccountProfile,
   ApiResponse,
+  SystemGatewaySettings,
+  SystemGatewayTestResult,
+  UpdateSystemSettingsRequest,
+  UpdateSystemSettingsResult,
   ChangePasswordRequest,
   ChangePasswordResult,
   LoginRequest,
@@ -1009,4 +1013,16 @@ export function removePoolModel(id: string, modelId: string, platformId?: string
     method: 'DELETE',
     query: { modelId, platformId },
   });
+}
+
+// ── 服务网关设置：系统级功能（当前是 Quickstart 的一句话推导）用哪个模型 ──
+// 地址、appCaller、密钥都由后端自管，这里只读展示、只写模型选择。
+export function getSystemSettings(): Promise<ApiResponse<SystemGatewaySettings>> {
+  return apiRequest<SystemGatewaySettings>('/system-settings');
+}
+export function saveSystemSettings(req: UpdateSystemSettingsRequest): Promise<ApiResponse<UpdateSystemSettingsResult>> {
+  return apiRequest<UpdateSystemSettingsResult>('/system-settings', { method: 'PUT', body: req });
+}
+export function testSystemSettings(): Promise<ApiResponse<SystemGatewayTestResult>> {
+  return apiRequest<SystemGatewayTestResult>('/system-settings/test', { method: 'POST' });
 }
