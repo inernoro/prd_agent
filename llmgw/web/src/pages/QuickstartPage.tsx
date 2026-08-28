@@ -1289,7 +1289,7 @@ export function QuickstartPage() {
                 ) : null}
 
                 {resultTab === 'curl' ? (
-                  <Card style={CARD_BODY} className="lg-qs-snippet-card">
+                  <Card style={CARD_BODY} className="lg-qs-snippet-card lg-qs-curl-card">
                     {/*
                       一键测试：类型是这把 key 的调用用途本身携带的（appCallerCode 以 ::chat / ::vision
                       结尾，签发后不可改），所以这里只读展示；能选的是模型——且只列该类型模型池里的

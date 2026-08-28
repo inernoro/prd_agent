@@ -388,6 +388,17 @@ check('接入信息页不出现纵向滚动', await page.evaluate(() => {
 }), 'fits');
 await page.locator('.lg-qs-result-tabs > button', { hasText: 'cURL' }).click();
 await page.waitForTimeout(300);
+/*
+  片段是自然高度，所以卡片不能再被 flex 压缩：`.lg-qs-artifacts` 是 flex 列，
+  卡片默认会被压成比内容矮的盒子，而它 overflow 是 visible——片段就直接画到
+  下面那块「再测一次 / 排障」上。这条判的是「盒子装得下自己的内容」，
+  比对着截图看更硬：一旦有人把 flex: none 拿掉，它立刻红。
+*/
+check('cURL 卡片装得下片段，不会盖住下面的排障块', await page.evaluate(() => {
+  const card = document.querySelector('.lg-qs-curl-card');
+  if (!card) return 'missing';
+  return card.scrollHeight <= card.clientHeight + 2 ? 'no-spill' : `spill:${card.scrollHeight - card.clientHeight}`;
+}), 'no-spill');
 check('cURL 页：输入、输出与两个按钮都在首屏内', await page.evaluate(() => {
   const output = document.querySelector('.lg-qs-output');
   const buttons = document.querySelector('.lg-qs-io-buttons');

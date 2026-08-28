@@ -3779,6 +3779,16 @@ a:focus-visible {
   max-height: none;
 }
 
+/*
+  片段一旦是自然高度，卡片就不能再被 flex 压缩：`.lg-qs-artifacts` 是
+  `flex: 1; min-height: 0` 的列，卡片默认 `flex-shrink: 1` 会被压成比内容矮的盒子，
+  而卡片 overflow 是 visible —— 于是片段直接画到下面那块「再测一次 / 排障」上，
+  两段文字叠在一起。这一处只有在真实部署的整页截图里才看得见，元素截图看不出来。
+*/
+.lg-qs-curl-card {
+  flex: none;
+}
+
 .lg-qs-hero.is-caller {
   border-color: var(--border-subtle);
 }
