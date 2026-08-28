@@ -21,6 +21,15 @@ describe('一步分享的建链接前置检查', () => {
     expect(src).toContain('listSiteShares(false, site.id)');
   });
 
+  it('查不通时必须停手，不许 fall through 去建', () => {
+    // 这次点击的前提是「这个站点还没有链接」。前提没能确认就照建，等于这道前置检查
+    // 在最需要它的时候（网络抖动）恰好不生效——而那正是它要防的重复链接。
+    const lookupAt = src.indexOf('listSiteShares(false, site.id)');
+    const createAt = src.indexOf('createSiteShareLink({');
+    const between = src.slice(lookupAt, createAt);
+    expect(between).toContain('!scoped.success');
+  });
+
   it('查到已有链接就不许再 forceNew', () => {
     // 顺序必须是「先查、命中就 return」再走 createSiteShareLink
     const lookupAt = src.indexOf('listSiteShares(false, site.id)');

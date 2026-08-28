@@ -81,13 +81,18 @@ export function QuickSharePopover({
       // 落在窗口外时它是空的，直接 forceNew 就会给一个其实已经分享过的站点再建一条，
       // 而卡片上还一直显示未分享。带 siteId 的查询不受那个窗口影响。
       const scoped = await listSiteShares(false, site.id);
-      if (scoped.success) {
-        const existing = pickQuickShareLink(scoped.data?.items ?? [], site.id);
-        if (existing) {
-          setLocalLink(existing);
-          onLinksChanged();
-          return;
-        }
+      if (!scoped.success) {
+        // 查不通就停手，不要往下走 forceNew。这次点击的前提是「这个站点还没有链接」，
+        // 而这个前提刚刚没能确认——照建就会给一个其实已经分享过的站点再建一条，
+        // 正是这道前置检查要防的那件事。让他重试一次，比默默留下一条重复链接好。
+        toast.error('没能确认这个站点有没有链接', scoped.error?.message ?? '请稍后重试');
+        return;
+      }
+      const existing = pickQuickShareLink(scoped.data?.items ?? [], site.id);
+      if (existing) {
+        setLocalLink(existing);
+        onLinksChanged();
+        return;
       }
 
       const res = await createSiteShareLink({

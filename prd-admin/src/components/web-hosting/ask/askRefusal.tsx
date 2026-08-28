@@ -1,4 +1,5 @@
 import { BookX, Clock, LogIn, MessageCircleOff, RotateCw, Wallet } from 'lucide-react';
+import { useAuthStore } from '@/stores/authStore';
 import type { LucideIcon } from 'lucide-react';
 import { ASK_ERROR_CODES } from './askTypes';
 
@@ -30,8 +31,14 @@ export interface AskRefusalConfig {
   body: string;
   /** 语气：blocked=用户能自己解决；exhausted=等或找作者；dead=这个站点就是不能问 */
   tone: 'blocked' | 'exhausted' | 'dead';
-  /** 用户能点的动作 */
-  action?: 'login' | 'retry';
+  /**
+   * 用户能点的动作。
+   *
+   * `login-if-anonymous`：只对匿名访客给「去登录」。已登录的人撞的是自己账号那一档，
+   * 送他去登录一圈回来还是同一个额度——一个按了没用的按钮比没有按钮更像功能坏了。
+   * 具体给不给由 AskRefusalCard 按 isAuthenticated 解析成 'login' 或者不给。
+   */
+  action?: 'login' | 'retry' | 'login-if-anonymous';
   /** 动作按钮上的字——每一档的下一步不同，措辞也不该一样 */
   actionLabel?: string;
   /** 输入框被禁用时的占位文案——不能都写「暂不可用」，那等于把拒绝理由又藏回去 */
@@ -53,7 +60,10 @@ export const ASK_REFUSAL_REGISTRY: Record<AskRefusalKey, AskRefusalConfig> = {
     title: '访客维度：你这一小时问得太多',
     body: '你这一小时的提问次数已用完，等一会儿会自己恢复。匿名访客按 IP 计数，登录后按账号计，额度更宽。',
     tone: 'exhausted',
-    action: 'login',
+    // 只有匿名访客才该看到「去登录」：他登录之后计数口径从 IP 换成账号，额度确实更宽。
+    // 已登录的人撞的就是自己账号那一档，把他送去登录一圈回来还是同一个额度——
+    // 给一个按了没用的按钮，比不给按钮更让人觉得这功能坏了。
+    action: 'login-if-anonymous',
     actionLabel: '登录换更宽的额度',
     placeholder: '这一小时问得太多了，等一会儿',
   },
@@ -132,10 +142,19 @@ export function AskRefusalCard({
   onLogin: () => void;
   onRetry: () => void;
 }) {
+  // 直接读登录态，不做成 prop：这张卡现在挂在 AskThread 下面，而 AskThread 有两个宿主
+  // （坞与内嵌面板）。做成 prop 就要求两个宿主都记得传，而「有个宿主忘了传」在这个 PR 里
+  // 已经发生过好几次了——判据自己去取，谁也漏不掉。
+  const isAuthenticated = useAuthStore((st) => st.isAuthenticated);
   const cfg = ASK_REFUSAL_REGISTRY[refusal];
   const tone = TONE_STYLE[cfg.tone];
   const Icon = cfg.icon;
   const body = serverMessage?.trim() || cfg.body;
+  // 解析成一个值，别把这个条件散进下面五处 cfg.action === 'login' 判断里——
+  // 散开就是同一个判据抄五份，改一处漏四处。
+  const action: 'login' | 'retry' | undefined = cfg.action === 'login-if-anonymous'
+    ? (isAuthenticated ? undefined : 'login')
+    : cfg.action;
 
   return (
     <div
@@ -150,22 +169,22 @@ export function AskRefusalCard({
         <span style={{ fontSize: 13, fontWeight: 600, color: tone.fg }}>{cfg.title}</span>
       </div>
       <p style={{ fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-secondary)', margin: 0 }}>{body}</p>
-      {cfg.action && (
+      {action && (
         <button
           type="button"
-          onClick={cfg.action === 'login' ? onLogin : onRetry}
+          onClick={action === 'login' ? onLogin : onRetry}
           style={{
             alignSelf: 'flex-start', marginTop: 2,
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '7px 14px', borderRadius: 9, cursor: 'pointer',
             // 主动作（登录）用实心，重试是次动作用描边——两者不该长得一样重
-            border: cfg.action === 'login' ? 'none' : `1px solid ${tone.border}`,
-            background: cfg.action === 'login' ? 'var(--button-primary-bg)' : 'transparent',
-            color: cfg.action === 'login' ? 'var(--button-primary-fg)' : tone.fg,
+            border: action === 'login' ? 'none' : `1px solid ${tone.border}`,
+            background: action === 'login' ? 'var(--button-primary-bg)' : 'transparent',
+            color: action === 'login' ? 'var(--button-primary-fg)' : tone.fg,
             fontSize: 12.5, fontWeight: 500,
           }}
         >
-          {cfg.action === 'login' ? <LogIn size={13} /> : <RotateCw size={13} />}
+          {action === 'login' ? <LogIn size={13} /> : <RotateCw size={13} />}
           {cfg.actionLabel}
         </button>
       )}
