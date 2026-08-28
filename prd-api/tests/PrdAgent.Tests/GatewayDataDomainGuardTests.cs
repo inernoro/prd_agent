@@ -1129,7 +1129,11 @@ public class GatewayDataDomainGuardTests
             "重复 appCaller 必须先完整归档再删除");
         Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
 
-        Assert.Contains("LlmGateway__HttpAppCallerAllowlist: \"transcript-agent.transcribe::asr\"", cdsCompose);
+        // 名单是逐个毕业的，每切一个调用方就会增删一次——钉死整串会让那种正确改动误红。
+        // 守的是两条不变量：值是字面量（下一行那条），且既有的 asr 调用方没在增删中掉队。
+        var cdsAllowlist = Regex.Match(cdsCompose, "LlmGateway__HttpAppCallerAllowlist:\\s*\"([^\"]*)\"");
+        Assert.True(cdsAllowlist.Success, "cds-compose.yml 必须显式声明 LlmGateway__HttpAppCallerAllowlist");
+        Assert.Contains("transcript-agent.transcribe::asr", cdsAllowlist.Groups[1].Value);
         Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${", cdsCompose);

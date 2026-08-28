@@ -47,13 +47,23 @@ public class AskOpeningQuestionGeneratorTests
         // 宁可这一栏整块不出现，也不摆几句放到任何页面都成立的空话（no-rootless-tree）
         Assert.Empty(AskOpeningQuestions.ParseGenerated("这一页没有实质内容。"));
         Assert.Empty(AskOpeningQuestions.ParseGenerated("[\"没闭合的数组"));
-        Assert.Empty(AskOpeningQuestions.ParseGenerated("{\"questions\":[\"这是对象不是数组\"]}"));
         Assert.Empty(AskOpeningQuestions.ParseGenerated(""));
         Assert.Empty(AskOpeningQuestions.ParseGenerated(null));
     }
 
     [Fact]
-    public void 去重_去空_截断_限量_全都走同一套 Normalize()
+    public void 对象包裹的数组要捞出来_不算认不出来()
+    {
+        // 解析器有意只认最外层的 [...]，围栏、前言、对象包裹一刀切掉——模型把清单裹进
+        // {"questions": [...]} 是最常见的输出形状之一，那是一份**真实的**清单，扔掉它
+        // 才是丢信息。这条与上面那条不矛盾：上面守的是「认不出来时不许硬凑」，
+        // 这条守的是「认得出来时不许装作认不出来」。
+        var got = AskOpeningQuestions.ParseGenerated("{\"questions\":[\"这是对象包着的\"]}");
+        Assert.Equal(new[] { "这是对象包着的" }, got);
+    }
+
+    [Fact]
+    public void 去重_去空_截断_限量_全都走同一套Normalize()
     {
         var raw = "[\"重复的\",\"重复的\",\"  \",\"" + new string('长', 80) + "\",\"a\",\"b\",\"c\",\"d\",\"e\",\"f\"]";
         var got = AskOpeningQuestions.ParseGenerated(raw);
@@ -94,7 +104,7 @@ public class AskOpeningQuestionGeneratorTests
     }
 
     [Fact]
-    public void owner 动过手就永不覆盖()
+    public void owner_动过手就永不覆盖()
     {
         var site = SiteWithAsk(s => s.AskQuestionsSource = "manual");
         Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(site));
@@ -124,7 +134,7 @@ public class AskOpeningQuestionGeneratorTests
     }
 
     [Fact]
-    public void 存量站点没有 ContentVersion 时回退到 CreatedAt_而不是每次都判成要重算()
+    public void 存量站点没有ContentVersion时回退到CreatedAt_而不是每次都判成要重算()
     {
         var site = SiteWithAsk(s =>
         {
@@ -165,7 +175,7 @@ public class AskOpeningQuestionWiringTests
     }
 
     [Fact]
-    public void owner 打开设置面板时也兜一次_并且有重新生成的入口()
+    public void owner_打开设置面板时也兜一次_并且有重新生成的入口()
     {
         var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
         Assert.Contains("_askOpeners.QueueEnsure(site)", ctrl);
@@ -193,7 +203,11 @@ public class AskOpeningQuestionWiringTests
         var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
         var idx = gen.IndexOf("if (callFailed || raw.Length == 0)", StringComparison.Ordinal);
         Assert.True(idx > 0, "找不到「模型没有任何输出」那一档，判据可能被改掉了");
-        var branch = gen.Substring(idx, Math.Min(700, gen.Length - idx));
+        // 取窗必须停在这一档自己的出口。原来固定取 700 字符，一路读进了下一档
+        // （「答了但没法用」），而那一档本来就该盖戳——守卫于是对着正确实现常红。
+        var branchEnd = gen.IndexOf("return AskOpenerOutcome.ModelUnavailable;", idx, StringComparison.Ordinal);
+        Assert.True(branchEnd > idx, "这一档必须以 ModelUnavailable 收口");
+        var branch = gen[idx..branchEnd];
         Assert.DoesNotContain("StampAsync", branch);
         Assert.Contains("_cooldownUntil", branch);
     }
@@ -214,7 +228,7 @@ public class AskOpeningQuestionWiringTests
     }
 
     [Fact]
-    public void 生成器已注册进 DI_否则每个消费方启动即炸()
+    public void 生成器已注册进DI_否则每个消费方启动即炸()
     {
         var program = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Program.cs"));
         Assert.Matches(@"AddSingleton<[^>]*IAskOpeningQuestionGenerator[^>]*>", program);
