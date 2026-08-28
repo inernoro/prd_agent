@@ -378,7 +378,7 @@ function Paragraph({
   children, beat, anchorAt, delay = 0, last = false, sweep = false,
 }: { children: ReactNode; beat: number; anchorAt: number; delay?: number; last?: boolean; sweep?: boolean }) {
   return (
-    <div data-cursor-target={sweep ? 'para-1' : undefined} className="relative" style={{ marginBottom: last ? 0 : '20px' }}>
+    <div className="relative" style={{ marginBottom: last ? 0 : '20px' }}>
       {/* gutter 锚点：AI 通读到这一段时才点亮，逐段错峰，像有人在逐段读 */}
       <span
         className="absolute hidden xl:block text-center"
@@ -393,7 +393,7 @@ function Paragraph({
       </span>
       {/* 划选：指针扫过这一段时底色跟着铺开，让「选中」这件事看得见 */}
       {sweep ? (
-        <SelectionSweep active={beat >= anchorAt} hue={pine.soft}>{children}</SelectionSweep>
+        <SelectionSweep active={beat >= anchorAt} hue={pine.soft} targetId="para-1">{children}</SelectionSweep>
       ) : (
         children
       )}
@@ -451,7 +451,7 @@ const CURSOR_AT: Record<number, CursorSpot> = {
   [B.idle]: { target: 'doc-title', hidden: true },
   [B.uploaded]: { target: 'doc-title' },
   // 落在被划中那段的句尾：选区从左铺到右，手停在右下角，跟真的划完一句一样
-  [B.marking]: { target: 'para-1', ax: 0.94, ay: 0.82 },
+  [B.marking]: { target: 'para-1', ax: 1, ay: 0.6 },
   [B.generating]: { target: 'generate-all', press: true }, // 按下「生成全部配图」
   [B.fig1]: { target: 'card-1' },
   [B.fig2]: { target: 'card-2' },

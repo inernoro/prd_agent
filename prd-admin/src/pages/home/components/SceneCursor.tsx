@@ -70,7 +70,11 @@ export function SceneCursor({
     const measure = () => {
       const el = host.querySelector<HTMLElement>(`[data-cursor-target="${CSS.escape(target)}"]`);
       if (!el) { setPos(null); return; }
-      const t = el.getBoundingClientRect();
+      // 目标是跨行的行内内容（比如被划中的那一段文字）时，getBoundingClientRect 给的是
+      // 整个段落块 —— 落在它的 94% 宽处就是最后一行右边的空白里，看着像指针飘着。
+      // 取**最后一个行框**，`ax:1` 才真的落在「划到的那个字」后面。
+      const rects = el.getClientRects();
+      const t = rects.length > 1 ? rects[rects.length - 1] : el.getBoundingClientRect();
       const h = host.getBoundingClientRect();
       if (t.width === 0 || t.height === 0) { setPos(null); return; }
       setPos({ left: t.left - h.left + t.width * ax, top: t.top - h.top + t.height * ay });
@@ -143,11 +147,15 @@ export function SelectionSweep({
   /** 从 0 到 1 的展开进度；给动画用，不给它就一次铺满 */
   progress = 1,
   hue,
+  /** 给指针当落点用的名字。标在**行内内容**上，不是外面的块级容器 ——
+   *  指针要停在划到的那个字后面，而不是段落框右边的空白里 */
+  targetId,
   children,
 }: {
   active: boolean;
   progress?: number;
   hue: string;
+  targetId?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -164,7 +172,7 @@ export function SelectionSweep({
           opacity: active ? 1 : 0,
         }}
       />
-      <span className="relative">{children}</span>
+      <span data-cursor-target={targetId} className="relative">{children}</span>
     </span>
   );
 }

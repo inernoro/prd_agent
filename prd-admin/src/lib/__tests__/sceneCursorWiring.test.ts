@@ -37,15 +37,17 @@ function readSceneSources(): string {
 }
 
 /**
- * 把 `data-cursor-target` 的值摊平成静态名字。
- * 三种写法：常量 `"doc-title"`、模板 `` {`tile-${tile.id}`} ``、
+ * 把落点声明摊平成静态名字。两种声明入口：
+ *   · 直接标在元素上的 `data-cursor-target`；
+ *   · 转交给共享组件的 `targetId`（SelectionSweep 就是这样把标记落到行内内容上的）。
+ * 值的写法有三种：常量 `"doc-title"`、模板 `` {`tile-${tile.id}`} ``、
  * 条件 `{sweep ? 'para-1' : undefined}`。模板的变量部分展开成通配。
  */
 function declaredTargets(source: string): { exact: Set<string>; prefixes: string[] } {
   const exact = new Set<string>();
   const prefixes: string[] = [];
   // 花括号形态只吃到**第一个**配平的 `}`，别让它越过属性边界把后面 style 里的字面量也吞进来
-  for (const m of source.matchAll(/data-cursor-target=(?:"([^"]+)"|\{((?:[^{}]|\{[^{}]*\})*)\})/g)) {
+  for (const m of source.matchAll(/(?:data-cursor-target|targetId)=(?:"([^"]+)"|\{((?:[^{}]|\{[^{}]*\})*)\})/g)) {
     if (m[1]) { exact.add(m[1]); continue; }
     const expr = m[2] ?? '';
     for (const lit of expr.matchAll(/'([a-z0-9-]+)'/g)) exact.add(lit[1]);
