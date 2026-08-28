@@ -952,6 +952,14 @@ export function RecordingResultPage() {
    */
   const noteIdForFlush = state.kind === 'ready' ? state.noteId : '';
   useEffect(() => {
+    /*
+     * 补传的状态全都是**绑在这条笔记身上**的，换一条就得一起放掉：
+     * A 的自动重试用完了，切到 B 时若把 'exhausted' 留着，B 的第一次查询还没回来
+     * 就先对用户说「自动重试已用完」——一句凭空的假话，而且 B 之后真失败时它还赖着不走
+     * （Codex 第四十二轮 P2）。重试额度同理，B 不该继承 A 用掉的次数。
+     */
+    setFlushStalled(null);
+    flushRetryRef.current = { savedAt: 0, attempts: 0 };
     if (!noteIdForFlush || !ownerId) { setPendingEdits(null); return; }
     setFlushConflict(null);
     const restored = loadOfflineEdit(noteIdForFlush, ownerId);
@@ -1012,8 +1020,16 @@ export function RecordingResultPage() {
     if (!isFlushable(queued, noteIdForFlush, ownerId)) return;
     let alive = true;
     let retryTimer = 0;
-    /** 这一发是不是卡在「版本没查着」——只有这一种才该自己排下一次重试 */
-    let lookupFailed = false;
+    /**
+     * 这一发失败之后该不该自己再试。
+     *
+     * 两种要试：版本没查着、以及**版本查到了但 PUT 自己失败**——后者此前不算数，
+     * 于是「重连之后写这一发正好抖了一下」就再也没有下文：依赖一个都没变、
+     * 在线时横幅又不出现，用户以为传上去了，关掉标签页草稿随 sessionStorage 一起没
+     * （Codex 第四十二轮 P1，与第三十五轮那条是同一形状的另一半）。
+     * 冲突那一档不算：它有自己的横幅，等用户裁决，重试只会把同一个问题再问一遍。
+     */
+    let retryOnFailure = false;
     /*
      * 退避：5s → 10s → 20s → 40s → 60s，共五次。用完就停在「重试次数用完」那一档，
      * 横幅上那颗「立即重试」仍然可用——自动停下来不等于把人扔在那儿。
@@ -1051,7 +1067,7 @@ export function RecordingResultPage() {
        * 查不到不等于冲突：不弹冲突横幅，草稿原样留在队列里（横幅照常显示欠了几处），
        * 下一次联网翻转或重进这一屏会再试一次。宁可晚传，不可盖掉别人的新版本。
        */
-      if (!remote.success) { lookupFailed = true; return skipped; }
+      if (!remote.success) { retryOnFailure = true; return skipped; }
       /*
        * 三种「不确定」都停下来问用户，不再「比不了就当没冲突照传」：
        * 初次加载时条目请求偶发失败会让基线为 null，照传就是拿一个空基线把同事的
@@ -1062,16 +1078,19 @@ export function RecordingResultPage() {
         setFlushConflict(verdict);
         return skipped;
       }
+      // 走到这一步就是真的要写了：这一发失败属于「值得再试」那一类
+      retryOnFailure = true;
       return updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown');
     }).then((res) => {
       if (!alive) return;
       if (!res.success) {
         /*
-         * 版本没查着：草稿还躺在队列里，而这个 effect 的依赖一个都没变——不自己排一次
-         * 重试的话，它要等到下一次断网重连或重开这一屏才会再试，而在线期间横幅不出现，
-         * 用户以为已经传上去了（Codex 第三十五轮 P1）。冲突那一档不走这里，它有自己的横幅。
+         * 版本没查着、或者写这一发自己失败了：草稿还躺在队列里，而这个 effect 的依赖
+         * 一个都没变——不自己排一次重试的话，它要等到下一次断网重连或重开这一屏才会再试，
+         * 而在线期间横幅不出现，用户以为已经传上去了（Codex 第三十五、四十二两轮 P1）。
+         * 冲突那一档不走这里，它有自己的横幅。
          */
-        if (lookupFailed) scheduleRetry();
+        if (retryOnFailure) scheduleRetry();
         return;
       }
       // 补传期间用户又在线存了新的一版：那一版已经把队列清了，这里不能再清一次

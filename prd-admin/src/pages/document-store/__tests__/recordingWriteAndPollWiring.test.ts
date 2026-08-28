@@ -902,8 +902,8 @@ describe('在线补传卡住时会自己再试，而且看得见', () => {
     const at = source.indexOf('if (!remote.success) {');
     expect(at, '找不到版本查询那一档').toBeGreaterThan(0);
     // 卡住的原因要被记下来，回到 then 里才分得清「该重试」和「冲突/被作废」
-    expect(source.slice(at, at + 120)).toContain('lookupFailed = true');
-    expect(source).toMatch(/if \(lookupFailed\) scheduleRetry\(\);/);
+    expect(source.slice(at, at + 120)).toContain('retryOnFailure = true');
+    expect(source).toMatch(/if \(retryOnFailure\) scheduleRetry\(\);/);
     expect(source).toContain('const RETRY_DELAYS = [');
   });
 
@@ -1148,5 +1148,45 @@ describe('阅读器里换一条录音也要重挂跟读组件', () => {
     expect(at).toBeGreaterThan(-1);
     const tag = source.slice(at, source.indexOf('/>', at));
     expect(tag, '不重挂的话，A 的编辑草稿会保存进 B').toContain('key={entry.id}');
+  });
+});
+
+
+describe('补传失败的两种都要再试，且状态跟着笔记走', () => {
+  const source = read('pages/document-store/RecordingResultPage.tsx');
+  const flush = source.slice(
+    source.indexOf('/** 恢复联网就把队列补传上去'),
+    source.indexOf('/** 冲突时用户明说「用我的版本」'),
+  );
+
+  it('写这一发自己失败了也算「值得再试」，不只是版本没查着', () => {
+    const put = flush.indexOf('return updateDocumentContent(noteIdForFlush');
+    expect(put).toBeGreaterThan(-1);
+    /*
+     * 置位必须落在**冲突判定之后、PUT 之前**这一段里。
+     * 只找「PUT 之前的最后一处」是不够的：版本没查着那一处也在 PUT 之前，
+     * 把写这一发的置位删掉，判据照样能找到它——守卫就永远不会红（形状 6：取值口径太宽）。
+     */
+    const verdictAt = flush.indexOf('const verdict = decideOfflineFlush(');
+    expect(verdictAt).toBeGreaterThan(-1);
+    expect(verdictAt).toBeLessThan(put);
+    expect(flush.slice(verdictAt, put), '写这一发没有被算进重试').toContain('retryOnFailure = true;');
+  });
+
+  it('冲突那一档不进重试：它等的是用户裁决，不是网络', () => {
+    const at = flush.indexOf('if (verdict !== ');
+    expect(at).toBeGreaterThan(-1);
+    const branch = flush.slice(at, flush.indexOf('return skipped;', at));
+    expect(branch).toContain('setFlushConflict(verdict)');
+    expect(branch).not.toContain('retryOnFailure = true');
+  });
+
+  it('换一条笔记时把「重试用完了」和重试额度一起放掉', () => {
+    const at = source.indexOf('const noteIdForFlush = ');
+    const effect = source.slice(at, source.indexOf('}, [noteIdForFlush, ownerId]);', at));
+    expect(effect, '换笔记没有复位补传状态').toContain('setFlushStalled(null);');
+    expect(effect).toContain('flushRetryRef.current = { savedAt: 0, attempts: 0 };');
+    // 复位要排在早退之前，否则「没有笔记」那一路会把上一条的状态留着
+    expect(effect.indexOf('setFlushStalled(null);')).toBeLessThan(effect.indexOf('if (!noteIdForFlush || !ownerId)'));
   });
 });
