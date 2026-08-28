@@ -5228,6 +5228,14 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             Builders<BsonDocument>.Filter.Eq("TenantId", tenantId))).FirstOrDefaultAsync();
         if (stored is not null && stored.AsNullableBool("Enabled") == true)
         {
+            // 存量归一：早期自签的 key 写过一个列表不认的 IssuanceState，那批 key 在接入密钥页
+            // 是隐形的。这里顺手把它掰回 issued——幂等，且不必等下一次重签才让运维看见它。
+            if (stored.AsNullableString("IssuanceState") is not (null or "issued"))
+            {
+                await serviceKeys.UpdateOneAsync(
+                    Builders<BsonDocument>.Filter.Eq("_id", keyId),
+                    Builders<BsonDocument>.Update.Set("IssuanceState", "issued").Set("UpdatedAt", DateTime.UtcNow));
+            }
             // 变量名刻意不叫 decrypted：PlatformGovernance 守卫把「解密后取明文」那个表达式钉成
             // 全文件只许出现一次，用来证明**平台上游密钥**的明文只有喂给 Fingerprint 这一个去处
             //（守卫按源码文本计数，连注释里写一次都会把它撞红）。
