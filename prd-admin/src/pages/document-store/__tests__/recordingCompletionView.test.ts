@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeCompletionSummary,
+  describeOfflineFlushBlock,
   describeMicHealth,
   describeOrganizeProgress,
   isAiUnavailableFailure,
@@ -64,5 +65,36 @@ describe('describeMicHealth', () => {
 
   it('刚开录还没听够两秒就不下结论', () => {
     expect(describeMicHealth(0, 1)).toBe('正在检测麦克风');
+  });
+});
+
+/*
+ * 自动补传停下来的三种理由处境完全不同，措辞不能合并：只有真比对到不一样才配说
+ * 「被别人改过」，否则在「只是没查到版本」的情况下是在给同事扣一件没做过的事。
+ */
+describe('离线校对没能补传时的措辞', () => {
+  it('三种理由给三句不同的话，都带上欠了几处', () => {
+    const seen = new Set<string>();
+    for (const reason of ['remote-changed', 'unknown-base', 'stale'] as const) {
+      const copy = describeOfflineFlushBlock(reason, 3);
+      seen.add(copy.title);
+      expect(copy.detail).toContain('3 处校对');
+    }
+    expect(seen.size).toBe(3);
+  });
+
+  /*
+   * 断的是「有没有把猜测说成事实」，不是某几个字在不在：unknown-base 里出现
+   * 「有没有被改过」是可以的（那是在说不知道），但不许出现那句断言。
+   */
+  it('版本没查着时只说不确定，不断言有人改过', () => {
+    const copy = describeOfflineFlushBlock('unknown-base', 2);
+    expect(copy.detail).not.toContain('在你离线期间被改过');
+    expect(copy.detail).toContain('不确定');
+    expect(copy.detail).toContain('不等于有人改了');
+  });
+
+  it('真比对到不一样时才断言被改过', () => {
+    expect(describeOfflineFlushBlock('remote-changed', 1).detail).toContain('在你离线期间被改过');
   });
 });

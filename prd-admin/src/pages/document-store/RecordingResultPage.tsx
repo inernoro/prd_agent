@@ -36,12 +36,14 @@ import {
 } from '@/services/real/documentStore';
 import {
   clearOfflineEdit,
-  hasRemoteChangedSince,
+  decideOfflineFlush,
   isFlushable,
   loadOfflineEdit,
   saveOfflineEdit,
+  type OfflineFlushReason,
   type QueuedOfflineEdit,
 } from '@/pages/document-store/recordingOfflineQueue';
+import { describeOfflineFlushBlock } from '@/pages/document-store/recordingCompletionView';
 import { isTranscriptionInflight } from '@/pages/document-store/recordingVault';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
@@ -633,8 +635,11 @@ export function RecordingResultPage() {
   const [pendingEdits, setPendingEdits] = useState<QueuedOfflineEdit | null>(null);
   /** 队列没落住本机存储（隐私模式 / 站点数据被禁 / 配额满）：承诺要跟着降级 */
   const [queueVolatile, setQueueVolatile] = useState(false);
-  /** 服务端那份笔记在离线期间被改过：不许静默覆盖，交给用户定 */
-  const [flushConflict, setFlushConflict] = useState(false);
+  /**
+   * 自动补传停下来了，等用户裁决。存的是**为什么**停：三种理由给三句不同的话，
+   * 混成一句就会在「其实没人改过、只是版本没查着」时对用户说假话（Codex 第二十轮 P1）。
+   */
+  const [flushConflict, setFlushConflict] = useState<OfflineFlushReason | null>(null);
   const pendingRef = useRef<QueuedOfflineEdit | null>(null);
   pendingRef.current = pendingEdits;
   /** 草稿按账号存：共享浏览器上换个人登录就不该恢复上一位的稿子 */
@@ -706,7 +711,7 @@ export function RecordingResultPage() {
     if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
     setPendingEdits(null);
     setQueueVolatile(false);
-    setFlushConflict(false);
+    setFlushConflict(null);
     /*
      * 乐观落到本地：等下一次拉取会让这行字先消失再出现，那是「凭空消失」。
      * 但要认笔记——这一发是 await 回来的，期间用户可能已经从侧栏切到另一条录音，
@@ -724,7 +729,7 @@ export function RecordingResultPage() {
   const noteIdForFlush = state.kind === 'ready' ? state.noteId : '';
   useEffect(() => {
     if (!noteIdForFlush || !ownerId) { setPendingEdits(null); return; }
-    setFlushConflict(false);
+    setFlushConflict(null);
     const restored = loadOfflineEdit(noteIdForFlush, ownerId);
     setPendingEdits(restored);
     /*
@@ -771,8 +776,14 @@ export function RecordingResultPage() {
        * 下一次联网翻转或重进这一屏会再试一次。宁可晚传，不可盖掉别人的新版本。
        */
       if (!remote.success) return skipped;
-      if (hasRemoteChangedSince(queued, remote.data?.updatedAt)) {
-        setFlushConflict(true);
+      /*
+       * 三种「不确定」都停下来问用户，不再「比不了就当没冲突照传」：
+       * 初次加载时条目请求偶发失败会让基线为 null，照传就是拿一个空基线把同事的
+       * 新版本静默盖掉（Codex 第二十轮 P1）。
+       */
+      const verdict = decideOfflineFlush(queued, remote.data?.updatedAt);
+      if (verdict !== 'flush') {
+        setFlushConflict(verdict);
         return skipped;
       }
       return updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown');
@@ -825,7 +836,7 @@ export function RecordingResultPage() {
     if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
     setPendingEdits(null);
     setQueueVolatile(false);
-    setFlushConflict(false);
+    setFlushConflict(null);
     setState(prev => (prev.kind === 'ready' && prev.noteId === overwritingNoteId
       ? { ...prev, noteMd: queued!.content }
       : prev));
@@ -928,24 +939,28 @@ export function RecordingResultPage() {
             <strong style={{ color: 'var(--text-primary)' }}>本机音频与已下载原文照常播放、阅读、编辑</strong>
             。
             {pendingEdits
-              ? `编辑内容排队等待同步（${pendingEdits.count} 处待同步），联网后自动上传${queueVolatile ? '' : '，无需重做'}。`
-              : `这期间的校对会先存在本机，联网后自动上传${queueVolatile ? '' : '，无需重做'}。`}
+              ? `编辑内容排队等待同步（${pendingEdits.count} 处待同步），联网后自动上传${queueVolatile ? '' : '，刷新也不用重做'}。`
+              : `这期间的校对会先存在本机，联网后自动上传${queueVolatile ? '' : '，刷新也不用重做'}。`}
             {/*
-              队列没落住本机存储时，「无需重做」这句就不成立了——刷新或关掉标签页
-              这份校对确实会丢。承诺兑现不了就不许写（no-rootless-tree），改成如实相告。
+              承诺只能许到存储真做得到的那一格（no-rootless-tree）。草稿落在 sessionStorage：
+              刷新、切走再回来都还在，**关掉标签页就没了**——正文是敏感内容，按
+              no-localstorage.md 不许进 localStorage，所以这条边界不藏着，写在脸上。
+              队列连 sessionStorage 都没落住时（隐私模式 / 站点数据被禁 / 配额满）更糟，
+              连刷新都保不住，那句话再降一档。
             */}
-            {queueVolatile && (
-              <strong style={{ color: 'var(--semantic-warning-text)' }}>
-                这台设备不允许本页存草稿，刷新或关掉标签页会丢，请先别关。
-              </strong>
-            )}
+            <strong style={{ color: 'var(--semantic-warning-text)' }}>
+              {queueVolatile
+                ? ' 这台设备不允许本页存草稿，刷新或关掉标签页都会丢，请先别关。'
+                : ' 这一页先别关——关掉标签页草稿不会保留。'}
+            </strong>
           </p>
         </div>
       ) : flushConflict ? (
         /*
-          离线校对没能自动补传：服务端那份在离线期间被改过。这里既不静默覆盖
-          （会吞掉别人的新内容），也不静默丢弃（会吞掉用户自己的校对），
-          把这两条路摆出来让他选（expectation-management：不许让人以为已经同步了）。
+          离线校对没能自动补传。这里既不静默覆盖（会吞掉别人的新内容），也不静默丢弃
+          （会吞掉用户自己的校对），把这两条路摆出来让他选
+          （expectation-management：不许让人以为已经同步了）。
+          停下来的理由有三种，措辞按理由走——「被改过」这句只有真比对到不一样才配说。
         */
         <div
           className="mx-auto flex w-full max-w-[760px] flex-col gap-2 rounded-[14px] px-3.5 py-3"
@@ -953,14 +968,12 @@ export function RecordingResultPage() {
           role="status"
         >
           <p className="flex items-center gap-2 text-[14px] font-bold" style={{ color: 'var(--semantic-warning-text)' }}>
-            <WifiOff size={16} aria-hidden /> 离线校对没有自动上传
+            <WifiOff size={16} aria-hidden /> {describeOfflineFlushBlock(flushConflict, pendingEdits?.count ?? 0).title}
           </p>
           <p className="text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            这份原文在你离线期间被改过（可能是另一台设备或同事）。
-            自动覆盖会把那边的新内容整篇盖掉，所以先停在这里：
-            你本机还留着 {pendingEdits?.count ?? 0} 处校对，
+            {describeOfflineFlushBlock(flushConflict, pendingEdits?.count ?? 0).detail}
             <strong style={{ color: 'var(--text-primary)' }}>页面上现在显示的就是这份本机草稿</strong>
-            ；服务端那一版要等你点下面「丢弃」才会取回来显示。
+            ；云端那一版要等你点下面「丢弃」才会取回来显示。
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -992,7 +1005,7 @@ export function RecordingResultPage() {
                   }
                   clearOfflineEdit(noteIdForFlush, ownerId);
                   setPendingEdits(null);
-                  setFlushConflict(false);
+                  setFlushConflict(null);
                   toast.success('已丢弃这份离线校对，正文已换回云端最新版本');
                 })();
               }}

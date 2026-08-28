@@ -97,7 +97,7 @@ describe('离线草稿的版本令牌', () => {
     const gate = body.indexOf('noteIdRef.current !== savingNoteId');
     expect(gate).toBeGreaterThan(0);
     // 令牌与三处清场都必须排在这道门之后
-    for (const after of ['noteRevisionRef.current = res.data.updatedAt', 'setFlushConflict(false)']) {
+    for (const after of ['noteRevisionRef.current = res.data.updatedAt', 'setFlushConflict(null)']) {
       expect(body.indexOf(after)).toBeGreaterThan(gate);
     }
   });

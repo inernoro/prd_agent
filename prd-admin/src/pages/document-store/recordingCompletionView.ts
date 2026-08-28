@@ -66,3 +66,34 @@ export function describeMicHealth(peakLevel: number, elapsedSec: number): string
   if (peakLevel > 0.97) return '麦克风正常 · 音量偏高，可能削波';
   return '麦克风正常 · 音量适中';
 }
+
+/**
+ * 离线校对没能自动补传时，横幅该说哪一句。
+ *
+ * 三种理由的处境完全不同，措辞不能合并：说「被别人改过」时必须真的比对到不一样，
+ * 否则在「只是没查到版本」的情况下就是在给同事扣一件他没做过的事
+ * （no-rootless-tree：宁可说不确定，不编一个原因）。三条路给的两颗按钮是同一对，
+ * 但为什么停在这里必须讲清楚。
+ */
+export function describeOfflineFlushBlock(
+  reason: 'remote-changed' | 'unknown-base' | 'stale',
+  pendingCount: number,
+): { title: string; detail: string } {
+  const mine = `你本机还留着 ${pendingCount} 处校对`;
+  if (reason === 'remote-changed') {
+    return {
+      title: '离线校对没有自动上传',
+      detail: `这份原文在你离线期间被改过（可能是另一台设备或同事）。自动覆盖会把那边的新内容整篇盖掉，所以先停在这里：${mine}。`,
+    };
+  }
+  if (reason === 'stale') {
+    return {
+      title: '这份离线校对放得有点久了',
+      detail: `它排下来已经超过三天，这期间原文很可能已经在别处改过。直接覆盖风险太大，所以先停在这里：${mine}。`,
+    };
+  }
+  return {
+    title: '暂时没法确认云端版本',
+    detail: `没能取到这份原文在云端的当前版本，所以不确定它有没有被改过——这不等于有人改了。宁可先不传：${mine}。`,
+  };
+}

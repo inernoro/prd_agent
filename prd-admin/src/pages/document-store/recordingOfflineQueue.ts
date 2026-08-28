@@ -1,18 +1,23 @@
 /**
  * 离线校对队列的持久化。
  *
- * 为什么要它：结果页离线时把校对收进队列，横幅对用户承诺「联网后自动上传，无需重做」。
+ * 为什么要它：结果页离线时把校对收进队列，横幅对用户承诺「联网后自动上传，刷新也不用重做」。
  * 那个队列此前只活在 React state 里——刷新一次、关掉标签页、或者从侧栏切到另一条录音
  * 把这一屏换掉，队列就没了，而承诺还写在屏幕上（Codex P1 抓到的正是这条）。
  * 承诺要么兑现要么别写，所以把它落到本机存储。
  *
- * 为什么用 localStorage 而不是默认的 sessionStorage（`no-localstorage.md` 的例外判定）：
- * 这条承诺覆盖的正是「关掉再回来」，sessionStorage 关标签页即丢，物理上兑现不了。
- * 它同时满足那条规则允许的三个前提——非敏感、设备本地、发版后拿到旧值也不会出错
- * （内容按笔记 id 绑定，只在同一条笔记上补传）。
+ * 为什么是 sessionStorage：`no-localstorage.md` 的例外只给「非敏感 + 设备本地 +
+ * 发版后用旧值无害」的那一类（纯 UI 偏好），而这里存的是**用户录音的正文全文**——
+ * 会议、访谈、商务沟通的原话都在里面，不满足「非敏感」这一条。会话 token 那条例外
+ * 是用户明确要求的超长登录期，且靠服务端每请求校验撤销兜底，不能类推到正文。
+ * 早先这里用了 localStorage，理由是「承诺覆盖关掉再回来」——那是拿承诺去挑存储，
+ * 顺序反了：存储由规则定，承诺跟着存储说实话（Codex 第二十轮 P1）。
+ * 代价写明白：草稿只在**这个标签页**里活着，刷新、组件卸载、切走再回来都还在，
+ * 关掉标签页就没了；横幅文案照这个边界写，不许再许「关掉也不丢」。
  *
- * 陈旧兜底：超过 `MAX_AGE_MS` 的队列不再补传。放太久的稿子多半已经在别处被改过，
- * 静默覆盖比丢掉更糟；过期时如实丢弃，不假装还能补。
+ * 陈旧兜底：超过 `MAX_AGE_MS` 的草稿**不自动补传**，但也**不静默删**——放太久的稿子
+ * 多半已经在别处被改过，直接盖是错的，而悄悄删掉用户几处校对同样是错的
+ * （此前这里是后者，Codex 第二十轮 P1）。过期就走冲突横幅，覆盖还是丢弃由用户定。
  */
 
 /*
@@ -49,7 +54,7 @@ export interface QueuedOfflineEdit {
 
 function storage(): Storage | null {
   try {
-    return typeof window === 'undefined' ? null : window.localStorage;
+    return typeof window === 'undefined' ? null : window.sessionStorage;
   } catch {
     // 隐私模式 / 站点数据被禁时读写本身就会抛，此时退化成「只在内存里排队」
     return null;
@@ -57,36 +62,58 @@ function storage(): Storage | null {
 }
 
 /**
- * 服务端那份笔记，在草稿排下之后有没有被别人（或自己在另一台设备上）改过。
+ * 队列里那份内容是不是**这条笔记、这个账号**的，且非空。
  *
- * 只在**两边都知道**更新时刻时才判冲突：旧版本存下的草稿没有基线，
- * 或服务端这次没给出 updatedAt，那都是「比不了」，不能当成冲突把补传卡死。
+ * 这里不再判年龄：过期是「要不要自动传」的问题（见 `isStaleOfflineEdit`），
+ * 不是「这份草稿归不归这一屏」的问题。混在一起会让用户在冲突横幅上点
+ * 「仍然用我的版本覆盖」时**什么都不发生**——那颗按钮走的也是这道门。
  */
-export function hasRemoteChangedSince(
-  edit: QueuedOfflineEdit | null | undefined,
-  remoteUpdatedAt: string | null | undefined,
-): boolean {
-  if (!edit?.baseUpdatedAt || !remoteUpdatedAt) return false;
-  return edit.baseUpdatedAt !== remoteUpdatedAt;
-}
-
-/** 队列里那份内容是不是这条笔记的、且还没过期。两个条件缺一都不该补传。 */
 export function isFlushable(
   edit: QueuedOfflineEdit | null | undefined,
   noteId: string,
   ownerId: string,
-  now: number = Date.now(),
 ): boolean {
   if (!edit || !noteId || !ownerId) return false;
   if (edit.noteId !== noteId) return false;
   if (edit.ownerId !== ownerId) return false;
-  if (!edit.content) return false;
-  return now - edit.savedAt <= MAX_AGE_MS;
+  return Boolean(edit.content);
+}
+
+/** 放得太久，不能再自动覆盖服务端那份——交给用户裁决，不是删掉 */
+export function isStaleOfflineEdit(
+  edit: QueuedOfflineEdit | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!edit) return false;
+  return now - edit.savedAt > MAX_AGE_MS;
+}
+
+/**
+ * 自动补传前的裁决：能传，还是必须停下来问用户（问的理由是哪一种）。
+ *
+ * 三种「不确定」一律停：基线未知（排队时没拿到服务端版本，或旧草稿没这个字段）、
+ * 服务端这次没给出 updatedAt、草稿放过期了。此前前两种被当成「比不了 → 当没冲突 → 照传」,
+ * 于是初次加载时条目请求偶发失败，就会拿一个 null 基线把同事的新版本静默盖掉
+ * （Codex 第二十轮 P1）。停下来最多让用户多点一下，盖错了没法撤。
+ */
+export type OfflineFlushVerdict = 'flush' | 'remote-changed' | 'unknown-base' | 'stale';
+/** 停下来的那三种（横幅要按它选措辞） */
+export type OfflineFlushReason = Exclude<OfflineFlushVerdict, 'flush'>;
+
+export function decideOfflineFlush(
+  edit: QueuedOfflineEdit | null | undefined,
+  remoteUpdatedAt: string | null | undefined,
+  now: number = Date.now(),
+): OfflineFlushVerdict {
+  if (isStaleOfflineEdit(edit, now)) return 'stale';
+  if (!edit?.baseUpdatedAt || !remoteUpdatedAt) return 'unknown-base';
+  if (edit.baseUpdatedAt !== remoteUpdatedAt) return 'remote-changed';
+  return 'flush';
 }
 
 /**
  * 落盘这份草稿。**返回它到底有没有落住**——调用方据此决定怎么跟用户说话：
- * 落住了才配说「联网后自动上传，无需重做」；没落住（隐私模式、站点数据被禁、配额满）
+ * 落住了才配说「刷新也不用重做」；没落住（隐私模式、站点数据被禁、配额满）
  * 只能说「这次改动留在本页，刷新会丢」。此前这里把异常吞掉、调用方照样报成功，
  * 承诺就成了空头支票（Codex P1）。
  */
@@ -105,7 +132,6 @@ export function saveOfflineEdit(edit: QueuedOfflineEdit): boolean {
 export function loadOfflineEdit(
   noteId: string,
   ownerId: string,
-  now: number = Date.now(),
 ): QueuedOfflineEdit | null {
   const store = storage();
   if (!store || !noteId || !ownerId) return null;
@@ -126,7 +152,8 @@ export function loadOfflineEdit(
       savedAt: typeof parsed.savedAt === 'number' ? parsed.savedAt : 0,
       baseUpdatedAt: typeof parsed.baseUpdatedAt === 'string' ? parsed.baseUpdatedAt : null,
     };
-    if (!isFlushable(edit, noteId, ownerId, now)) {
+    // 过期的草稿照样接回来：它是用户的正文，删不得。传不传由 `decideOfflineFlush` 裁决
+    if (!isFlushable(edit, noteId, ownerId)) {
       clearOfflineEdit(noteId, ownerId);
       return null;
     }
