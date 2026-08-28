@@ -29,6 +29,7 @@ import {
 } from './services/infra-exposure-audit.js';
 import {
   evaluateDailyHealth,
+  type BackupTargetRef,
   type HealthInfraFact,
   type HealthPlatformStoreFact,
   type InfraExemptionFact,
@@ -703,8 +704,10 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         // 前一个目标可能刚写掉几个 GiB，这个目标的前提要重新确认一次。
         const pressure = await diskGate();
         if (pressure) {
-          const remaining = plan.targets.slice(plan.targets.indexOf(t)).map((r) => r.id);
-          for (const id of remaining) outcomes.push({ id, ok: false, error: `磁盘不足，未执行：${pressure}` });
+          const remaining = plan.targets.slice(plan.targets.indexOf(t));
+          for (const r of remaining) {
+            outcomes.push({ id: r.id, projectId: r.projectId, ok: false, error: `磁盘不足，未执行：${pressure}` });
+          }
           break;
         }
         const out = `${tmpDir}/${t.fileName}`;
@@ -894,6 +897,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           }
           outcomes.push({
             id: t.id,
+            projectId: t.projectId,
             // 离机没上去就不算成功：健康状态、coverageComplete 一概不刷新。
             ok: offsiteError === null,
             localOnly: offsiteError !== null,
@@ -912,7 +916,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           // 走到这里说明**本地这份就没成**（导出失败/空文件/gzip 校验不过），
           // 那才是真残骸，删掉；离机失败已经在上面单独处理，不会落到这条路径。
           await shell.exec(`rm -f ${shq(out)}`, { timeout: 10_000 }).catch(() => undefined);
-          outcomes.push({ id: t.id, ok: false, error: (err as Error).message });
+          outcomes.push({ id: t.id, projectId: t.projectId, ok: false, error: (err as Error).message });
         }
       }
 
@@ -940,22 +944,41 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
         // 既不能证明有问题、也不能证明没问题的 critical，就是常亮的灯，而常亮的灯没人看
         // ——这正是这套体检当初要治的病。
         //
-        // 所以：completedAt 只回答「跑没跑」，覆盖是否齐全交给 coverageComplete 与
-        // coverageGaps 单独说；哪几个目标失败了另立 failedTargets，让读者说得出名字。
-        const remoteVerifiedThisRound = outcomes.some((outcome) => Boolean(outcome.remoteObjectKey));
+        // 所以要**三个**时间戳，各回答一个问题，谁也别替谁回答：
+        //
+        //   completedAt      这一轮什么时候跑完的      → 每日体检的「备份还在跑吗」
+        //   localVerifiedAt  本地副本最近一次全都成    → 基础设施看门狗的「本地备份」
+        //   remoteVerifiedAt 离机副本最近一次全都成    → 基础设施看门狗的「离机备份」
+        //
+        // **第二个是补上来的，补的是我自己刚捅的窟窿**（Codex review P1）：上一版只拆出
+        // completedAt 一个，而看门狗那条「本地备份」读的就是它。于是一个本地导出连续
+        // 失败几天的目标（真机上那个 redis 拿不到认证凭据），会因为同一轮里别的目标成功、
+        // 时间戳照常前进，把看门狗刷成绿的——比原来的假「未知」更糟：假未知至少还亮着。
+        // 治好一个消费者的假警报，同时给另一个消费者造了假绿灯，那不叫修好。
+        //
+        // 三个都遵守同一条：本轮没资格前进就**保留上一轮的值**，不抹成 null。
+        // 「本地备份是 3 天前」可行动，「本地备份时间未知」只会让人怀疑监控本身。
+        const previous = readPreviousBackupStamps(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`);
+        // 本地这一份成没成，只看它是不是「本地就没导出来」。离机没上去（localOnly）
+        // 不算本地失败——那份本地副本已经过 gzip 校验并转正，就在盘上。
+        const localFailures = failed.filter((outcome) => !outcome.localOnly);
+        const offsiteOnlyFailures = failed.filter((outcome) => outcome.localOnly);
         const health = {
           coverageComplete,
           completedAt,
-          // 离机时间戳只回答「离机通道这一轮活着吗」：本轮真有副本上传并校验通过才刷新。
-          // 一个都没上去时**保留上一轮的值**而不是抹成 null——「离机是 3 天前」比
-          // 「离机时间未知」可行动得多，而抹成 null 会把已知的陈旧退化成未知。
-          remoteVerifiedAt: remoteVerifiedThisRound
-            ? completedAt
-            : readPreviousRemoteVerifiedAt(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`),
+          localVerifiedAt: localFailures.length === 0 ? completedAt : previous.localVerifiedAt,
+          remoteVerifiedAt: failed.length === 0 ? completedAt : previous.remoteVerifiedAt,
           coverageGaps: allCoverageGaps,
-          // 失败目标要留名字。拆开两个事实之后，「有目标一直备不成」这件事不再顺带被
-          // 那条假 critical 遮着，必须自己有一条真判据接住它，否则就是把假警报换成沉默。
-          failedTargets: failed.map((outcome) => outcome.id),
+          // 失败目标要留名字，而且要**分成两类**、**带上项目**。
+          //
+          // 分两类：`localOnly` 的那批手上有一份验过的本地副本，只是离机没上去。
+          // 和「什么都没备成」混在一起报「没有它们的新副本」，会把运维支去找一份
+          // 其实存在的本地备份，而真正该修的离机通道没人管——BackupOutcome.localOnly
+          // 的注释早就写明这两者不能混，我上一版自己违反了它（Codex review P2）。
+          //
+          // 带项目：真机一轮里有六个叫 redis 的目标，裸 id 的告警谁也路由不到。
+          failedTargets: localFailures.map((outcome) => ({ id: outcome.id, projectId: outcome.projectId })),
+          offsiteOnlyTargets: offsiteOnlyFailures.map((outcome) => ({ id: outcome.id, projectId: outcome.projectId })),
           objects: outcomes.map((outcome) => ({
             id: outcome.id,
             fileName: outcome.fileName,
@@ -1093,25 +1116,43 @@ function startExternalPortAuditWatchdog(store: ServerEventLogSink | null): NodeJ
 }
 
 /**
- * 上一轮记下的离机校验时刻。本轮一个离机副本都没上去时用它续上，
- * 好让「离机是 N 小时前」这个已知事实不至于退化成「时间未知」。
+ * 上一轮记下的「本地全成」与「离机全成」时刻。本轮没资格前进时用它们续上，
+ * 好让「本地备份是 N 小时前」这个已知事实不至于退化成「时间未知」。
  * 读不出来（首轮 / 文件损坏）才是真的 null。
+ *
+ * `localVerifiedAt` 对**旧格式文件**退回读 `completedAt`：老版本只在整轮都健康时
+ * 才写 completedAt，所以旧文件里 completedAt 非空就等价于本地全成，语义对得上。
  */
-function readPreviousRemoteVerifiedAt(healthFilePath: string): string | null {
+/** 落盘的失败目标读回来。空 id 丢掉，projectId 缺失保留 null（旧格式文件就是这样）。 */
+function toBackupTargetRefs(list?: Array<{ id?: string; projectId?: string | null }>): BackupTargetRef[] {
+  return (list || [])
+    .map((t) => ({ id: String(t?.id || ''), projectId: t?.projectId ?? null }))
+    .filter((t) => Boolean(t.id));
+}
+
+function readPreviousBackupStamps(healthFilePath: string): {
+  localVerifiedAt: string | null;
+  remoteVerifiedAt: string | null;
+} {
   try {
-    const value = JSON.parse(fs.readFileSync(healthFilePath, 'utf8')) as { remoteVerifiedAt?: string | null };
-    return value.remoteVerifiedAt || null;
+    const value = JSON.parse(fs.readFileSync(healthFilePath, 'utf8')) as {
+      localVerifiedAt?: string | null; remoteVerifiedAt?: string | null; completedAt?: string | null;
+    };
+    return {
+      localVerifiedAt: value.localVerifiedAt || value.completedAt || null,
+      remoteVerifiedAt: value.remoteVerifiedAt || null,
+    };
   } catch {
-    return null;
+    return { localVerifiedAt: null, remoteVerifiedAt: null };
   }
 }
 
-function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Date | null } {
+function readBackupHealth(): { localVerifiedAt?: Date | null; remoteVerifiedAt?: Date | null } {
   const candidates = backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot });
   for (const dir of candidates) {
     try {
       const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
-        coverageComplete?: boolean; completedAt?: string; remoteVerifiedAt?: string;
+        coverageComplete?: boolean; completedAt?: string; localVerifiedAt?: string; remoteVerifiedAt?: string;
       };
       // **这里曾经还有一次抹空**：`coverageComplete === false` 就把两个时间戳一起归零。
       // 同一个「把跑没跑和备没备全混成一件事」的判据被抄了两份（形状 3：判据分裂后各自
@@ -1119,13 +1160,21 @@ function readBackupHealth(): { completedAt?: Date | null; remoteVerifiedAt?: Dat
       // 可能没有可恢复副本」，而备份每 6 小时就在跑。
       //
       // 覆盖是否齐全由 coverageComplete / coverageGaps 自己回答，时间戳只回答新鲜度。
+      //
+      // **这个消费者要的是 `localVerifiedAt`，不是 `completedAt`**：它把这个值渲染成
+      // 看门狗上的「本地备份最近一次成功」。喂 completedAt 进去，一个本地导出连续
+      // 失败几天的目标会被同轮其它目标的成功刷成绿灯（Codex review P1）。
+      // 旧格式文件没有这个字段，退回 completedAt——老版本只在整轮健康时才写它，
+      // 语义正好等价。
       return {
-        completedAt: value.completedAt ? new Date(value.completedAt) : null,
+        localVerifiedAt: value.localVerifiedAt
+          ? new Date(value.localVerifiedAt)
+          : value.completedAt ? new Date(value.completedAt) : null,
         remoteVerifiedAt: value.remoteVerifiedAt ? new Date(value.remoteVerifiedAt) : null,
       };
     } catch { /* 继续检查下一个实际落盘目录 */ }
   }
-  return { completedAt: null, remoteVerifiedAt: null };
+  return { localVerifiedAt: null, remoteVerifiedAt: null };
 }
 
 /**
@@ -1233,20 +1282,24 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
       // 「覆盖不全」压成了「完全没备份过」，两件事在体检里要分开报。
       let lastCompletedAt: string | null = null;
       let coverageGaps: string[] = [];
-      let failedTargets: string[] = [];
+      let failedTargets: BackupTargetRef[] = [];
+      let offsiteOnlyTargets: BackupTargetRef[] = [];
       for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
         try {
           const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
             completedAt?: string | null;
             coverageGaps?: Array<{ id?: string }>;
-            failedTargets?: string[];
+            failedTargets?: Array<{ id?: string; projectId?: string | null }>;
+            offsiteOnlyTargets?: Array<{ id?: string; projectId?: string | null }>;
           };
           // completedAt **只**回答「跑没跑」。不要在这里按 coverageComplete 再抹一次空——
           // 那正是这条链路上被抄了两份、又各自漂移的那个判据（见落盘处与 readBackupHealth
           // 的注释）。备没备全走 coverageGaps，谁没备成走 failedTargets。
           lastCompletedAt = value.completedAt ?? null;
           coverageGaps = (value.coverageGaps || []).map((g) => String(g?.id || '')).filter(Boolean);
-          failedTargets = (value.failedTargets || []).map((id) => String(id || '')).filter(Boolean);
+          // 两类各自读。**不许合并**：它们要的运维动作不同，合起来那条告警就没法照做。
+          failedTargets = toBackupTargetRefs(value.failedTargets);
+          offsiteOnlyTargets = toBackupTargetRefs(value.offsiteOnlyTargets);
           break;
         } catch { /* 换下一个候选目录 */ }
       }
@@ -1259,7 +1312,7 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
         infra,
         infraExemptions: exemptions,
         platformStores,
-        backup: { lastCompletedAt, coverageGaps, failedTargets },
+        backup: { lastCompletedAt, coverageGaps, failedTargets, offsiteOnlyTargets },
         lastRestoreDrillAt: null,
       });
 
@@ -1310,7 +1363,7 @@ function startInfrastructureHealthWatchdog(store: ServerEventLogSink | null): No
       .map((service) => ({ name: service.containerName }));
     const report = evaluateInfrastructureHealth({
       now: new Date(),
-      backupCompletedAt: backup.completedAt,
+      backupCompletedAt: backup.localVerifiedAt,
       remoteBackupVerifiedAt: backup.remoteVerifiedAt,
       disk: defaultDiskUsage(config.repoRoot),
       certificates,

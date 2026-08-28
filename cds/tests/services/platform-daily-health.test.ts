@@ -182,7 +182,7 @@ describe('备份新鲜度与恢复演练', () => {
       backup: {
         lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
         coverageGaps: [],
-        failedTargets: ['redis', 'cds-state-mongo'],
+        failedTargets: [{ id: 'redis', projectId: 'alpha' }, { id: 'cds-state-mongo', projectId: null }],
       },
     }));
     expect(
@@ -197,7 +197,7 @@ describe('备份新鲜度与恢复演练', () => {
       backup: {
         lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
         coverageGaps: [],
-        failedTargets: ['redis', 'cds-state-mongo'],
+        failedTargets: [{ id: 'redis', projectId: 'alpha' }, { id: 'cds-state-mongo', projectId: null }],
       },
     }));
     const failed = v.findings.find((f) => f.id === 'backup.failed-targets');
@@ -207,9 +207,50 @@ describe('备份新鲜度与恢复演练', () => {
       + '遮着的。这里没有一条真判据接住它，就是把假警报换成了沉默',
     ).toBeTruthy();
     expect(failed!.severity).toBe('critical');
-    expect(failed!.message).toContain('redis');
+    // 带项目说清是哪一台。真机一轮里有**六个**叫 redis 的目标（各项目一个），
+    // 只报裸 id 的告警路由不到人，等于没有这条告警（Codex review P2）。
+    expect(failed!.message).toContain('alpha 项目的 redis');
     expect(failed!.message).toContain('cds-state-mongo');
     expect(v.severity).toBe('critical');
+  });
+
+  /**
+   * `BackupOutcome.localOnly` 的注释早就写着：本地副本已落地并验过、只是离机那一程
+   * 没成，这类和「什么都没备成」是两码事。上一版把两者一起塞进 failedTargets 并说
+   * 「手上没有它们的新副本」——直接违反了那条契约，会把运维支去找一份其实存在的
+   * 本地备份，而真正该修的离机通道没人管（Codex review P2）。
+   */
+  it('本地备成了、只是离机没上去 → 单独一条 warn，不许说成「没有新副本」', () => {
+    const v = evaluateDailyHealth(input({
+      backup: {
+        lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
+        coverageGaps: [],
+        offsiteOnlyTargets: [{ id: 'mysql', projectId: 'beta' }],
+      },
+    }));
+    expect(v.findings.some((f) => f.id === 'backup.failed-targets')).toBe(false);
+    const offsite = v.findings.find((f) => f.id === 'backup.offsite-only-failed');
+    expect(offsite, '离机没上去必须自己有一条，不能静默').toBeTruthy();
+    expect(offsite!.severity, '同机副本还在，丢的是异地冗余，不该和「一份都没有」同一档').toBe('warn');
+    expect(offsite!.message).toContain('beta 项目的 mysql');
+    expect(offsite!.message).not.toContain('手上没有');
+  });
+
+  it('两类失败同时存在时各报各的，措辞不串', () => {
+    const v = evaluateDailyHealth(input({
+      backup: {
+        lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
+        coverageGaps: [],
+        failedTargets: [{ id: 'redis', projectId: 'alpha' }],
+        offsiteOnlyTargets: [{ id: 'mysql', projectId: 'beta' }],
+      },
+    }));
+    const failed = v.findings.find((f) => f.id === 'backup.failed-targets')!;
+    const offsite = v.findings.find((f) => f.id === 'backup.offsite-only-failed')!;
+    expect(failed.message).toContain('alpha 项目的 redis');
+    expect(failed.message).not.toContain('mysql');
+    expect(offsite.message).toContain('beta 项目的 mysql');
+    expect(offsite.message).not.toContain('redis');
   });
 
   it('失败目标和覆盖缺口是两件事，各报各的', () => {
@@ -217,7 +258,7 @@ describe('备份新鲜度与恢复演练', () => {
       backup: {
         lastCompletedAt: new Date(NOW.getTime() - 3_600_000).toISOString(),
         coverageGaps: ['minio', 'kafka'],
-        failedTargets: ['redis'],
+        failedTargets: [{ id: 'redis', projectId: 'alpha' }],
       },
     }));
     const ids = v.findings.map((f) => f.id);

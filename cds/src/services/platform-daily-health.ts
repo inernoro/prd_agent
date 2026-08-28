@@ -87,6 +87,12 @@ export interface InfraExemptionFact {
   expiresAt: string;
 }
 
+/** 一个备份目标的身份。**必须带项目**：infra id 只在项目内唯一。 */
+export interface BackupTargetRef {
+  id: string;
+  projectId?: string | null;
+}
+
 /** 平台自身的存储（不是项目基础设施，门禁管不到）。 */
 export interface HealthPlatformStoreFact {
   /** 展示名，如「CDS 状态库」。 */
@@ -116,8 +122,21 @@ export interface DailyHealthInput {
     lastCompletedAt: string | null;
     /** 上一轮没被覆盖到的目标（按服务类型压根备不了的那批）。 */
     coverageGaps: readonly string[];
-    /** 上一轮**尝试了但失败**的目标。与 coverageGaps 不同：这些本该能备，只是没成。 */
-    failedTargets?: readonly string[];
+    /**
+     * 上一轮**本地就没导出来**的目标。与 coverageGaps 不同：这些本该能备，只是没成；
+     * 手上**没有**它们的新副本。
+     *
+     * 带 projectId：infra id 只在项目内唯一，真机一轮里有六个叫 `redis` 的目标，
+     * 裸 id 的告警谁也路由不到（Codex review P2）。格式化统一走 `svcRef`。
+     */
+    failedTargets?: readonly BackupTargetRef[];
+    /**
+     * 上一轮**本地备成了、只是离机没上去**的目标。
+     *
+     * 必须与 failedTargets 分开：这批手上有一份验过的同机副本，该修的是离机通道。
+     * 混进「没有新副本」里，会把运维支去找一份其实存在的备份（Codex review P2）。
+     */
+    offsiteOnlyTargets?: readonly BackupTargetRef[];
   };
   /** 最近一次「把备份真的灌回去读通了」的时间；null = 从来没演练过。 */
   lastRestoreDrillAt: string | null;
@@ -345,13 +364,29 @@ export function evaluateDailyHealth(input: DailyHealthInput): DailyHealthVerdict
   // 「读不到上一轮结果」顺带遮着的——只要有目标失败，完成时间就被抹空，体检就报
   // critical。现在时间戳不再被绑架，如果不在这里补一条，长期失败的目标会从
   // 「假警报」直接变成**沉默**：那是把一个坏判据换成一个更坏的洞。
+  //
+  // 两类分开报，因为**需要的动作完全不同**：本地就没导出来的，手上一份新副本都没有；
+  // 只是离机没上去的，同机那份已经过校验、就在盘上，该修的是离机通道。
+  // 合成一句「没有它们的新副本」，会把运维支去找一份其实存在的备份（Codex review P2）。
   const failedTargets = input.backup.failedTargets ?? [];
   if (failedTargets.length > 0) {
     findings.push({
       id: 'backup.failed-targets',
       severity: 'critical',
-      message: `上一轮周期备份有 ${failedTargets.length} 个目标没备成：${failedTargets.join('、')}`
-        + '——这些是本该能备的，手上没有它们的新副本',
+      message: `上一轮周期备份有 ${failedTargets.length} 个目标本地就没导出来：`
+        + `${failedTargets.map((t) => svcRef(t).label).join('、')}`
+        + '——手上没有它们的新副本',
+    });
+  }
+  const offsiteOnly = input.backup.offsiteOnlyTargets ?? [];
+  if (offsiteOnly.length > 0) {
+    findings.push({
+      id: 'backup.offsite-only-failed',
+      // 比上一条轻一档：同机副本在，丢的是异地冗余，不是全部退路。
+      severity: 'warn',
+      message: `上一轮有 ${offsiteOnly.length} 个目标只备到了本机、离机副本没上去：`
+        + `${offsiteOnly.map((t) => svcRef(t).label).join('、')}`
+        + '——本机那份已验证可用，要修的是离机通道',
     });
   }
   if (input.backup.coverageGaps.length > 0) {
