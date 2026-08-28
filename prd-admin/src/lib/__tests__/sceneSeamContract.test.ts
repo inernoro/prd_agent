@@ -176,6 +176,37 @@ describe('首页衔接契约（旁白说点了，就得真有手点）', () => {
     ).toEqual([]);
   });
 
+  /**
+   * 产物必须有作者。
+   *
+   * 前面几条守的都是「点击」这一侧：有没有手、指着谁、来不来得及。守不到的是另一侧 ——
+   * **一个本该由用户产出的东西，凭空出现了**。视觉幕第二条用户消息就是这样：
+   * 没人打字、没人按发送，「把这两张混一下」自己浮在对话里。用户一眼看出来，
+   * 而三条守卫全绿 —— 因为那一拍的旁白里没有点击动词，判据根本不看它。
+   *
+   * 所以换一个提问方式：**先数产物，再问谁做的**。对话里每出现一条用户消息，
+   * 就必须有一次发送键上的按下与之配对。多出来的那条就是没有作者的那条。
+   */
+  it('每一条用户消息都要有一次发送与之配对', () => {
+    const orphan: string[] = [];
+    for (const name of fs.readdirSync(SCENES_DIR)) {
+      if (!name.endsWith('.tsx')) continue;
+      const src = fs.readFileSync(path.join(SCENES_DIR, name), 'utf8');
+      const bubbles = [...src.matchAll(/<Bubble\s+side="user"/g)].length;
+      if (!bubbles) continue;
+      const sends = [...src.matchAll(/target:\s*'chat-send',[^}]*press:\s*true/g)].length;
+      if (bubbles === sends) continue;
+      orphan.push(`${name}: ${bubbles} 条用户消息，只有 ${sends} 次发送 —— `
+        + `多出来的消息没有作者，是凭空淡入的`);
+    }
+    expect(
+      orphan,
+      '对话里出现一条用户消息，就意味着「有人打了字、按了发送」。'
+        + '少一次发送就有一条消息是自己冒出来的 —— 看的人一眼就看出来了。\n'
+        + orphan.join('\n'),
+    ).toEqual([]);
+  });
+
   it('GATED 里的每一拍都真的有按下（别把不点击的拍也拦住）', () => {
     const idle: string[] = [];
     for (const s of scenes) {

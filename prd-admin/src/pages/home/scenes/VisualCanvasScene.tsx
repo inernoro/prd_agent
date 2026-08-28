@@ -29,22 +29,36 @@ const olive = inkTone(SCENE_HUE.olive);
 
 /** 节拍表。索引即拍号，值是这一拍停多久（ms）。 */
 const HOLDS = [
-  1000, // 0 空画布
-  1700, // 1 打字
-  1000, // 2 发送
-  1100, // 3 思考
-  1500, // 4 回话
-  2300, // 5 渲染中
-  1500, // 6 落回画布
-  1700, // 7 再出一张
-  1500, // 8 选中
-  2100, // 9 混合计算中
-  1800, // 10 混合结果落地
+  1000, // 0  空画布
+  1700, // 1  打字
+  1000, // 2  发送
+  1100, // 3  思考
+  1500, // 4  回话
+  2300, // 5  渲染中
+  1500, // 6  落回画布
+  1700, // 7  再出一张
+  1500, // 8  选中第一张
+  1300, // 9  选中第二张
+  1600, // 10 又打一句
+  1000, // 11 再次发送
+  2100, // 12 混合计算中
+  1800, // 13 混合结果落地
 ];
 const B = {
   idle: 0, typing: 1, sent: 2, thinking: 3, replying: 4,
-  rendering: 5, landed: 6, warm: 7, selected: 8, mixing: 9, mixed: 10,
+  rendering: 5, landed: 6, warm: 7, selected: 8, pickWarm: 9,
+  typing2: 10, sent2: 11, mixing: 12, mixed: 13,
 } as const;
+
+/**
+ * 拍号 → 旁白第几句。
+ *
+ * 第二条用户消息原本是**凭空淡入**的 —— 没人打字、没人按发送，
+ * 却在对话里冒出一句「把这两张混一下」。用户一眼就看出来了。
+ * 拆成「选第二张 → 打字 → 发送」三拍之后，拍数超过了旁白句数，
+ * 这几拍沿用第 8 句（点图那句），第 9 句只在真的开始算的时候才念。
+ */
+const NARRATION_AT = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 10, 11];
 
 /**
  * 要等「手真的落到目标上」才能开始的拍。
@@ -53,7 +67,7 @@ const B = {
  * 我手调的毫秒数上：谁把走位时长改长，空拍就不够了，bug 悄悄回来。
  * 现在交给节拍器：进这几拍之前先把手派过去，落地了才开始，时序由结构保证。
  */
-const GATED = new Set<number>([B.sent, B.selected, B.mixing]);
+const GATED = new Set<number>([B.sent, B.selected, B.pickWarm, B.sent2]);
 
 /** 左侧竖向工具条：选择 / 上传图片 / 形状 / 文字 / 图像生成器 / 手绘板 / 删除 */
 const TOOL_PATHS = [
@@ -113,11 +127,13 @@ export function VisualCanvasStage() {
   const { beat, ref, armed, release } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
   // 正在等手到位时，指针先按**下一拍**的落点走 —— 这就是「先走到」
   const cursorSpot = CURSOR_AT[armed ?? beat] ?? null;
-  const typed = useTypewriter(s.chat.user, beat === B.typing, 1500);
+  // 两条用户消息各自要被「打出来」。共用输入框，谁在打就显示谁。
+  const typed1 = useTypewriter(s.chat.user, beat === B.typing, 1500);
+  const typed2 = useTypewriter(s.chat.user2, beat === B.typing2, 1400);
 
   /** 这一拍谁被选中：先选雾天，混合时雾天 + 暖调两张都亮 */
   const isPicked = (id: TileSpec['id']) =>
-    (beat >= B.selected && id === 'c') || (beat >= B.mixing && beat < B.mixed && id === 'b');
+    (beat >= B.selected && id === 'c') || (beat >= B.pickWarm && beat < B.mixed && id === 'b');
 
   const barAnchor = TILES[1]; // 动作条永远挂在「雾天版本」那张上
   const showBar = beat >= B.selected;
@@ -273,10 +289,10 @@ export function VisualCanvasStage() {
                   padding: '6px 10px',
                   borderRadius: '7px',
                   marginLeft: '3px',
-                  background: beat >= B.mixing ? olive.soft : 'transparent',
-                  border: `1px solid ${beat >= B.mixing ? olive.border : 'transparent'}`,
-                  color: beat >= B.mixing ? olive.bright : SCENE.inkGhost,
-                  maxWidth: beat >= B.mixing ? '160px' : '0px',
+                  background: beat >= B.pickWarm ? olive.soft : 'transparent',
+                  border: `1px solid ${beat >= B.pickWarm ? olive.border : 'transparent'}`,
+                  color: beat >= B.pickWarm ? olive.bright : SCENE.inkGhost,
+                  maxWidth: beat >= B.pickWarm ? '160px' : '0px',
                   overflow: 'hidden',
                   transition: 'max-width .45s cubic-bezier(.19,1,.22,1), background .3s ease, color .3s ease',
                 }}
@@ -351,7 +367,7 @@ export function VisualCanvasStage() {
             background: SCENE.panel, border: `1px solid ${SCENE.edge}`, boxShadow: SCENE.liftLg,
           }}
         >
-          <ChatPanel beat={beat} typed={typed} />
+          <ChatPanel beat={beat} typed={beat === B.typing2 ? typed2 : typed1} />
         </div>
       </div>
 
@@ -360,7 +376,7 @@ export function VisualCanvasStage() {
         className="lg:hidden mt-3 flex flex-col rounded-[14px]"
         style={{ padding: '12px', background: SCENE.panel, border: `1px solid ${SCENE.edge}`, boxShadow: SCENE.liftMd }}
       >
-        <ChatPanel beat={beat} typed={typed} compact />
+        <ChatPanel beat={beat} typed={beat === B.typing2 ? typed2 : typed1} compact />
       </div>
 
       {/* 旁白：此刻在发生什么 */}
@@ -368,7 +384,7 @@ export function VisualCanvasStage() {
         className="mt-3 rounded-[14px]"
         style={{ background: SCENE.panel, border: `1px solid ${SCENE.edge}` }}
       >
-        <BeatNarration beats={s.beats} beat={beat} hue={SCENE_HUE.clay} />
+        <BeatNarration beats={s.beats} beat={NARRATION_AT[beat] ?? s.beats.length - 1} hue={SCENE_HUE.clay} />
       </div>
     </div>
   );
@@ -378,7 +394,7 @@ export function VisualCanvasStage() {
 function ChatPanel({ beat, typed, compact = false }: { beat: number; typed: string; compact?: boolean }) {
   const { t } = useLanguage();
   const s = t.scenes.visual;
-  const composing = beat === B.typing;
+  const composing = beat === B.typing || beat === B.typing2;
 
   return (
     <>
@@ -440,7 +456,7 @@ function ChatPanel({ beat, typed, compact = false }: { beat: number; typed: stri
           </div>
         )}
 
-        {!compact && beat >= B.warm && beat < B.mixing && (
+        {!compact && beat >= B.warm && beat < B.sent2 && (
           <Bubble side="agent" style={enterAt(beat, B.warm)}>
             {s.chat.streaming}
             <span
@@ -454,8 +470,10 @@ function ChatPanel({ beat, typed, compact = false }: { beat: number; typed: stri
           </Bubble>
         )}
 
-        {beat >= B.mixing && (
-          <Bubble side="user" style={enterAt(beat, B.mixing)}>{s.chat.user2}</Bubble>
+        {/* 第二条消息和第一条同一条链路：先在输入框打出来，按下发送才出现在对话里。
+            上一版它是 enterAt(beat, B.mixing) 凭空淡入的 —— 没有作者。 */}
+        {beat >= B.sent2 && (
+          <Bubble side="user" style={enterAt(beat, B.sent2)}>{s.chat.user2}</Bubble>
         )}
       </div>
 
@@ -501,8 +519,8 @@ function ChatPanel({ beat, typed, compact = false }: { beat: number; typed: stri
               height: '28px', padding: '0 14px', borderRadius: '8px',
               background: SCENE.brand, color: SCENE.brandFg, fontSize: '12.5px',
               // 发送那一拍按钮自己有反应，不是文字凭空跳走
-              transform: beat === B.sent ? 'scale(0.94)' : 'scale(1)',
-              boxShadow: beat === B.sent ? `0 0 0 4px ${clay.soft}` : 'none',
+              transform: beat === B.sent || beat === B.sent2 ? 'scale(0.94)' : 'scale(1)',
+              boxShadow: beat === B.sent || beat === B.sent2 ? `0 0 0 4px ${clay.soft}` : 'none',
               transition: 'transform .28s cubic-bezier(.19,1,.22,1), box-shadow .28s ease',
             }}
           >
@@ -642,7 +660,10 @@ const CURSOR_AT: Record<number, CursorSpot> = {
   [B.landed]: { target: 'tile-c' },
   [B.warm]: { target: 'tile-c' },                   // 提前一拍就位
   [B.selected]: { target: 'tile-c', press: true },  // 原地按下雾天那张 → 选中框亮
-  [B.mixing]: { target: 'tile-b', press: true },    // gated：手落到暖调那张，两张才都选中
+  [B.pickWarm]: { target: 'tile-b', press: true },  // gated：手落到暖调那张，两张才都选中
+  [B.typing2]: { target: 'chat-input', ax: 0.42 },  // 回到输入框，把第二句打出来
+  [B.sent2]: { target: 'chat-send', press: true },  // gated：按下发送，第二条消息才出现
+  [B.mixing]: { target: 'chat-send' },              // 手离开，看它算
   [B.mixed]: { target: 'tile-mix' },                // 看着结果落地
 };
 
