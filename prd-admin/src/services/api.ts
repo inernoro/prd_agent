@@ -1326,6 +1326,8 @@ export const api = {
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      /** 跨知识库的「最近」时间线（我的空间 ∪ 团队空间） */
+      recent: (limit: number) => `/api/document-store/entries/recent?limit=${limit}`,
       add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
       folders: (storeId: string) => `/api/document-store/stores/${storeId}/folders`,
       upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,

@@ -2025,6 +2025,7 @@ export {
   unfavoriteDocumentStore,
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
+  listRecentDocumentEntries,
   createShareLink as createDocStoreShareLink,
   listShareLinks as listDocStoreShareLinks,
   revokeShareLink as revokeDocStoreShareLink,
