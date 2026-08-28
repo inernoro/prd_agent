@@ -306,13 +306,17 @@ public class AskOpeningQuestionWiringTests
     }
 
     [Fact]
-    public void 一个字都没生成出来的失败必须退配额_两条失败出口都要走()
+    public void 一个字都没生成出来的失败必须退配额_三条失败出口都要走()
     {
         // 用户报的：界面显示「回答失败了」，右上角剩余次数照样减一。网关没配模型池那阵子
         // 每问一次白烧一次额度。判据是「有没有产出」而不是「有没有报错」——答到一半断掉的
-        // token 已经花了，不该退。两条失败出口（网关 Error chunk / 外层 catch）都得走同一个判据。
+        // token 已经花了，不该退。
+        //
+        // 三条失败出口都得走同一个判据：网关 Error chunk、外层 catch、以及「流正常收尾但
+        // 一个字都没吐」。第三条是后加的——它长得最不像失败（上游没报错、流也正常结束），
+        // 正因如此最容易在加新出口时被漏掉，所以这里钉的是**出口总数**而不只是「有调用」。
         var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
-        Assert.Equal(3, Regex.Matches(ctrl, @"RefundIfNothingProducedAsync\(\)").Count); // 1 处定义 + 2 处调用
+        Assert.Equal(4, Regex.Matches(ctrl, @"RefundIfNothingProducedAsync\(\)").Count); // 1 处定义 + 3 处调用
         var idx = ctrl.IndexOf("async Task RefundIfNothingProducedAsync()", StringComparison.Ordinal);
         Assert.True(idx > 0);
         var body = ctrl.Substring(idx, Math.Min(320, ctrl.Length - idx));
@@ -373,5 +377,28 @@ public class AskOpeningQuestionWiringTests
         Assert.DoesNotContain("AskQuestionsSource ?? \"auto\"", ctrl);
         Assert.Contains("AskOpeningQuestions.ResolveSource(site)", ctrl);
         Assert.Contains("AskOpeningQuestions.ResolveSource(latest)", ctrl);
+    }
+
+    [Fact]
+    public void 流正常结束但一个字没有_必须走退款与报错_不许报成功()
+    {
+        // 上游允许「正常收尾但空响应」这种形状（LlmGateway.StreamAsync 对空响应只记
+        // 一条 warning 就放行）。落到端点如果照旧报 done，访客看到的是一个空气泡被标成
+        // 「答完了」，而额度已经扣掉且不会退——扣了钱、没给东西、还告诉他成功了。
+        var ctrl = ReadSrc(Path.Combine(
+            "src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
+
+        Assert.Contains("answer.Length == 0", ctrl);
+        Assert.Contains("ASK_EMPTY_ANSWER", ctrl);
+
+        // 这一支必须排在写 done 之前，否则先报成功再判空等于没判
+        var emptyAt = ctrl.IndexOf("answer.Length == 0", StringComparison.Ordinal);
+        var doneAt = ctrl.IndexOf("WriteSseAsync(\"done\"", StringComparison.Ordinal);
+        Assert.True(emptyAt > -1 && doneAt > emptyAt,
+            "空答案判定必须排在 done 之前");
+
+        // 且这一支要退款：只报错不退款，等于用户为一个空答案付了钱
+        var branch = ctrl.Substring(emptyAt, Math.Max(0, doneAt - emptyAt));
+        Assert.Contains("RefundIfNothingProducedAsync", branch);
     }
 }

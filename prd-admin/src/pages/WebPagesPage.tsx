@@ -47,6 +47,7 @@ import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
+import { toOpenableUrl } from '@/components/web-hosting/siteFormat';
 import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
 import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/components/web-hosting/SiteContextPanel';
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
@@ -2948,13 +2949,13 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
             <div className="-mt-2 flex items-center gap-2">
               <input
                 type="text"
-                value={`${window.location.origin}${created.siteUrl}`}
+                value={toOpenableUrl(created.siteUrl, window.location.origin)}
                 readOnly
                 className="flex-1 px-3 py-2 rounded-lg text-sm outline-none font-mono"
                 style={inputStyle}
               />
               <Button size="sm" variant="secondary" onClick={() => {
-                navigator.clipboard.writeText(`${window.location.origin}${created.siteUrl}`);
+                navigator.clipboard.writeText(toOpenableUrl(created.siteUrl, window.location.origin));
                 toast.success('地址已复制');
               }}>
                 <Copy size={14} />

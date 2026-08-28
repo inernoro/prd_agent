@@ -548,6 +548,21 @@ public class WebPageAskController : ControllerBase
                 }
             }
 
+            // 流正常收尾、却一个字都没吐出来。这不是成功——上游允许这种形状
+            // （LlmGateway.StreamAsync 对空响应只记一条 warning 就放行），落到这里如果照旧
+            // 报 done，访客看到的是一个空气泡被标成「答完了」，而额度已经扣掉且不会退。
+            // 与「网关报错」同样处置：退额度、把失败原因落进消息记录、回 error。
+            if (answer.Length == 0)
+            {
+                const string emptyReason = "上游流正常结束但没有产出任何内容";
+                _logger.LogWarning("网页托管提问 空答案 site={SiteId}: {Reason}", site.Id, emptyReason);
+                await RefundIfNothingProducedAsync();
+                await PersistMessageAsync(session, site, "assistant", string.Empty,
+                    snapshot.Text.Length, model, platform, Elapsed(startedAt), emptyReason);
+                await WriteSseAsync("error", new { code = "ASK_EMPTY_ANSWER", message = PublicErrorMessage });
+                return;
+            }
+
             await PersistMessageAsync(session, site, "assistant", answer.ToString(),
                 snapshot.Text.Length, model, platform, Elapsed(startedAt), null);
 

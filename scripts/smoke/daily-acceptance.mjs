@@ -168,6 +168,11 @@ async function ensureShare(token, site) {
   // 这个站点的分享落在窗口外就会被当成「没有」，下面 forceNew 每天再建一条公开链接：
   // 账号越攒越脏，而且验的是随便哪一条重复链接。原先还带了个 pageSize，那个端点根本不认。
   const mine = await api(`/api/web-pages/shares?siteId=${encodeURIComponent(site.id)}`, { token });
+  // 查不通就停手，别把「没查到」和「没查成」混成一件事：后者往下走 forceNew 会每天
+  // 多建一条公开链接，而这正是上面按站点查要防的。一步分享面板那边是同样的处置。
+  if (!mine.json?.success) {
+    throw new Error(`查分享链接失败：${mine.json?.error?.message || mine.status}`);
+  }
   const hit = (mine.json?.data?.items || []).find(
     (l) => l.siteId === site.id && l.visibility === 'public' && !l.isRevoked && !l.isExpired,
   );

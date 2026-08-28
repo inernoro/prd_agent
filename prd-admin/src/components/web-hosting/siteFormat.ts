@@ -29,3 +29,23 @@ export function relativeTime(iso: string | null | undefined, now: number = Date.
   if (day < 30) return `${day} 天前`;
   return new Date(iso).toLocaleDateString('zh-CN');
 }
+
+/**
+ * 把站点地址变成「贴到别处也能打开」的完整地址。
+ *
+ * `site.siteUrl` 有两种形状，取决于这套部署用的对象存储：
+ *   - R2 / COS：`BuildUrlForKey` 回的是**绝对**地址（https://storage.../xxx）
+ *   - 本地磁盘：回的是**相对**路径（/local-assets/xxx）
+ *
+ * 所以既不能一律拼 origin（绝对地址会被拼成 `https://admin.xxxhttps://storage.xxx/...`，
+ * 那是个打不开的串，而界面上还写着「可打开的地址」、复制按钮复制的也是它），
+ * 也不能一律不拼（本地磁盘那档会给出一个离开本站就打不开的相对路径）。
+ * 判据只有一条：已经带协议的就别动它。
+ */
+export function toOpenableUrl(url: string | null | undefined, origin: string): string {
+  const u = (url ?? '').trim();
+  if (!u) return '';
+  // 认协议前缀与协议相对地址（//host/path）；其余按站内相对路径处理
+  if (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.startsWith('//')) return u;
+  return `${origin}${u.startsWith('/') ? '' : '/'}${u}`;
+}

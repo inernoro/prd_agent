@@ -55,3 +55,20 @@ describe('额度窗口过期后要能再问', () => {
     expect(dock).toMatch(/siteRemaining\s*>\s*0/);
   });
 });
+
+describe('每日验收脚本也要在查不通时停手', () => {
+  // 与一步分享面板同一处置。上一轮我只修了面板那一处，脚本这边是同样的形状——
+  // 「没查到」和「没查成」混成一件事，后者往下走 forceNew 会每天多建一条公开链接。
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', '..', 'scripts', 'smoke', 'daily-acceptance.mjs'),
+    'utf8',
+  );
+
+  it('ensureShare 查不通就抛，不许 fall through 去建', () => {
+    const fnAt = script.indexOf('async function ensureShare(');
+    const createAt = script.indexOf("api('/api/web-pages/share'", fnAt);
+    expect(fnAt).toBeGreaterThan(-1);
+    expect(createAt).toBeGreaterThan(fnAt);
+    expect(script.slice(fnAt, createAt)).toContain('!mine.json?.success');
+  });
+});
