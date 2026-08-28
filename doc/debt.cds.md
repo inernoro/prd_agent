@@ -917,6 +917,25 @@ loopback——只绑回环等于全线断库。所以绑的是「消费方实际
 兜底——它自己拼发布参数，不走上面这条收窄路径，也不该被收窄。那是本仓库唯一做对了的
 暴露路径，改它只会破坏功能而不提升安全。
 
+## 2026-08-28 Agent 角色声明（活账）
+
+### C. 角色偏好没有按登录用户隔离（中）
+
+`cds.agent.role-selection.v1` 存在浏览器的 localStorage 里，key 固定、不带用户标识，
+登出也不清。同一台浏览器上两个账号轮流用同一个 CDS 域名时，后登录的人会继承前一个人
+声明的角色与经验档：任务地图按一个他从没选过的身份排序并标注「某某常用」。
+
+影响面限于**排序与标注**——角色不是权限边界，不影响能选到哪些任务、也不影响任何服务端状态。
+项目级的 `Project.agentProfile` 是服务端记录，不受这条影响。
+
+**为什么没在引入它的那个 PR 里修**：修法要引入新语义类别——按登录用户命名空间、登出时清理、
+存量 key 的迁移或作废，三件事都超出「让五个角色的决策卡不一样」这个目标（规则 5.5 的 B 类）。
+
+**可选修法**（择一）：key 拼上当前用户 id；或登出流程里清掉这个 key；或改用 sessionStorage
+（代价是每次开新标签页都要重选角色，与「记住偏好」的初衷冲突）。倾向第一种 + 第二种同时做。
+
+来源：PR #1441 Codex review 第七条（P2）。涉及文件见文末「实现来源」。
+
 ## 2026-08-27 排查中撞见的两条（活账）
 
 ### A. 项目发布门禁可以被两次 API 调用绕过（高）
@@ -1053,3 +1072,4 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 | 周期备份 | `cds/src/services/infra-backup-schedule.ts`（判定）、`cds/src/index.ts`（`startInfraAutoBackup` 执行）、`cds/src/routes/infra-backup.ts`（同目录的手工备份与历史） |
 | 自检与备份回归 | `cds/tests/services/infra-exposure-audit.test.ts`、`cds/tests/services/infra-backup-schedule.test.ts` |
 | 有意的对外暴露（不受收窄影响） | `cds/src/routes/branches.ts`（`applyResourceExternalFirewall`，allowlist + 防火墙兜底） |
+| 角色偏好存储（债务 C） | `cds/web/src/lib/agent-role-store.ts`（读写与 declared 语义）、`cds/web/src/hooks/useAgentRoleSelection.ts`（订阅） |
