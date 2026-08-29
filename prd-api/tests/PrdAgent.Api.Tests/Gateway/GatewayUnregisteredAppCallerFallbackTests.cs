@@ -46,11 +46,33 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
     /// 生产的真实形状：MAP 侧每条登记都绑着同一个早已消失的模型组——模型管理写接口下线时，
     /// 启动同步自动绑的那个组跟着没了。这种悬空绑定是退场残留，不是「配错了」，
     /// 不能让它把功能判死。
+    ///
+    /// MAP 库里同时留着一条 legacy 直连模型（IsMain 的 enabled 行），这是关键：
+    /// 已迁移的部署往往两样都有。GW 默认池必须赢——它才是配置权威；
+    /// 顺序写反的话这类部署会永远绕过自己的权威配置走老路（Codex 第四十九轮 P1）。
+    /// 空 MAP 库测不出这一条，所以这里必须把 legacy 行摆上。
     /// </summary>
     [Fact]
-    public async Task DanglingMapBinding_ShouldStillFallBackToGatewayDefaultPool()
+    public async Task DanglingMapBinding_ShouldPreferGatewayDefaultPoolOverLegacyDirectModel()
     {
         await using var env = await GatewayFixture.CreateAsync();
+        await env.MapData.LLMPlatforms.InsertOneAsync(new LLMPlatform
+        {
+            Id = "legacy-platform",
+            Name = "老平台",
+            PlatformType = "openai",
+            ApiUrl = "https://legacy.example.test/v1",
+            Enabled = true,
+        });
+        await env.MapData.LLMModels.InsertOneAsync(new LLMModel
+        {
+            Id = "legacy-main-model",
+            Name = "legacy-main",
+            ModelName = "legacy-main",
+            PlatformId = "legacy-platform",
+            IsMain = true,
+            Enabled = true,
+        });
         await env.MapData.LLMAppCallers.InsertOneAsync(new LLMAppCaller
         {
             AppCode = "document-store.selection-rewrite::chat",
@@ -72,6 +94,7 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
         result.Success.ShouldBeTrue(result.ErrorMessage);
         result.ModelGroupId.ShouldBe(GatewayFixture.DefaultChatPoolId);
         result.ActualModel.ShouldBe(ChatModel);
+        result.ActualModel.ShouldNotBe("legacy-main");
     }
 
     /// <summary>

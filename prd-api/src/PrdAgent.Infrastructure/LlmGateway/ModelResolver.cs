@@ -318,34 +318,14 @@ public class ModelResolver : IModelResolver
             }
         }
 
-        // ========== 第五步：无 dedicated/default 池 → legacy 直连兜底 ==========
-        // 未迁移到 ModelGroups 的部署仍可能有 IsMain/IsIntent/IsVision/IsImageGen 标记的 enabled 模型、
-        // 但无默认池。直接 NotFound 会让这类部署全链解析失败（Codex P1）。NotFound 前先查 legacy 直连，
-        // 迁移自动化前保留向后兼容；已迁移部署有池故不会走到这里，零影响。
+        // ========== 第五步：一个池都没解析出来 → 先 GW 默认池，再 legacy 直连 ==========
+        // 顺序是有讲究的：配置权威在 GW，所以只要该类型有 GW 默认池就该走它；
+        // legacy 直连（IsMain/IsIntent/IsVision/IsImageGen 标记的 enabled 模型）是给
+        // 「还没迁到模型池」的部署留的向后兼容，只在 GW 那边确实拿不出池时才轮到它。
+        // 两者顺序写反的话，一个既有 GW 默认池、又留着 legacy 存量行的已迁移部署，
+        // 会永远绕过它自己的权威配置走老路（Codex 第四十九轮 P1）。
         if (candidateGroups == null || candidateGroups.Count == 0)
         {
-            var legacyModel = await FindLegacyModelAsync(modelType, ct);
-            if (legacyModel != null)
-            {
-                var legacyPlatform = await _db.LLMPlatforms
-                    .Find(p => p.Id == legacyModel.PlatformId && p.Enabled)
-                    .FirstOrDefaultAsync(ct);
-                if (legacyPlatform != null)
-                {
-                    var legacyApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(legacyPlatform.ApiKeyEncrypted, _config);
-                    _logger.LogInformation(
-                        "[ModelResolver] 无池，使用 legacy 直连模型: ModelType={Type}, Model={Model}, Platform={Platform}",
-                        modelType, legacyModel.ModelName, legacyPlatform.Name);
-                    return ModelResolutionResult.FromLegacy(expectedModel, legacyModel, legacyPlatform, legacyApiKey);
-                }
-            }
-
-            var legacyConfig = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
-            if (legacyConfig != null)
-            {
-                return legacyConfig;
-            }
-
             // 走到这里意味着「一个池都没解析出来」：要么没有任何绑定，要么 MAP 侧那条绑定指向的池
             // 已经不存在了。后者在本仓库不是「配错了」而是退场残留——MAP 的模型管理写接口下线后，
             // 启动同步给每个 chat 调用方自动绑的那个组已经随之消失，于是全部 200 条 MAP 登记
@@ -364,6 +344,28 @@ public class ModelResolver : IModelResolver
                 gatewayRegistry, appCallerCode, modelType, gatewayConfigRequired, ct);
             if (candidateGroups.Count == 0)
             {
+                var legacyModel = await FindLegacyModelAsync(modelType, ct);
+                if (legacyModel != null)
+                {
+                    var legacyPlatform = await _db.LLMPlatforms
+                        .Find(p => p.Id == legacyModel.PlatformId && p.Enabled)
+                        .FirstOrDefaultAsync(ct);
+                    if (legacyPlatform != null)
+                    {
+                        var legacyApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(legacyPlatform.ApiKeyEncrypted, _config);
+                        _logger.LogInformation(
+                            "[ModelResolver] 无池，使用 legacy 直连模型: ModelType={Type}, Model={Model}, Platform={Platform}",
+                            modelType, legacyModel.ModelName, legacyPlatform.Name);
+                        return ModelResolutionResult.FromLegacy(expectedModel, legacyModel, legacyPlatform, legacyApiKey);
+                    }
+                }
+
+                var legacyConfig = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
+                if (legacyConfig != null)
+                {
+                    return legacyConfig;
+                }
+
                 _logger.LogWarning(
                     "[ModelResolver] 未找到可用模型（无池且 legacy 未命中）: AppCallerCode={Code}, ModelType={Type}",
                     appCallerCode, modelType);
