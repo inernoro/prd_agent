@@ -48,6 +48,7 @@ import {
 } from '../services/infra-backup-schedule.js';
 import {
   buildBackupPanel,
+  nothingNeedsBackup,
   type BackupFileEntry,
   type BackupHealthRecord,
 } from '../services/backup-panel.js';
@@ -818,7 +819,12 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     const view = buildBackupPanel({ projectId: canonicalId, health, files, now, infra });
     // 页脚那一行「每日体检怎么说」。喂进去的是**这个项目的**失败与缺口，
     // 时间戳与恢复演练是全平台的——面板不该替某个项目编一份自己的演练记录。
-    const findings = backupHealthFindings({
+    //
+    // 压根没有需要备份的东西时，这几条一条都不该出（Codex review 第七轮 P2）：
+    // 没有备份可言，「读不到上一轮结果」与「从来没做过恢复演练」都无从谈起，
+    // 而它们会以 critical 出现在一个头条写着「没有需要周期备份的服务」的页面上。
+    // 判据问 `nothingNeedsBackup` 那一份，不在这里另写一遍（形状 3）。
+    const findings = nothingNeedsBackup(view.targets) ? [] : backupHealthFindings({
       now,
       backup: {
         lastCompletedAt: view.lastRoundAt,

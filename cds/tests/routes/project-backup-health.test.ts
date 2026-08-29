@@ -191,6 +191,33 @@ describe('GET /api/projects/:id/backup-health', () => {
     expect(gaps.message).not.toContain('stateless-cache');
   });
 
+  it('压根没有需要备份的东西时，页脚一条体检结论都不出', async () => {
+    // 头条写着「没有需要周期备份的服务」，页脚同时喊 critical 的「读不到上一轮结果」
+    // 和「从来没做过恢复演练」——同一屏自相矛盾（Codex review 第七轮 P2）。
+    const ts = new Date().toISOString();
+    stateService.addProject({ id: 'proj-c', slug: 'c', name: 'C', kind: 'git', createdAt: ts, updatedAt: ts });
+    stateService.addInfraService({
+      id: 'cache', projectId: 'proj-c', name: 'cache', dockerImage: 'memcached:1.6',
+      containerPort: 11211, hostPort: 11211, containerName: 'cds-infra-proj-c-cache',
+      status: 'running', volumes: [], env: {}, createdAt: ts,
+    } as any);
+    // 这种部署压根不写结果文件（排程没有目标、也没有阻塞缺口），读不到是常态。
+    const bare = new MockShellExecutor();
+    bare.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+    const app = express();
+    app.use('/api', createInfraBackupRouter({ stateService, shell: bare, assertProjectAccess: assertProjectAccess as any }));
+    const local = await new Promise<http.Server>((resolve) => {
+      const s = app.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    try {
+      const res = await get(local, '/api/projects/proj-c/backup-health');
+      expect(res.body.verdict.headline).toBe('这个项目没有需要周期备份的服务');
+      expect(res.body.findings).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve) => local.close(() => resolve()));
+    }
+  });
+
   it('只读路径不许把备份目录建出来', async () => {
     await get(server, '/api/projects/proj-a/backup-health');
     // 用 executor 自己记的那份命令流水（string[]），不自己再攒一份。

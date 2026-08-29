@@ -102,13 +102,25 @@ function since(iso: string | null): string | null {
   return `${Math.floor(hours / 24)} 天前`;
 }
 
-/** 「约 3 小时后」。给不出就返回 null——不编一个时间出来。 */
+/**
+ * 「约 3 小时后」。给不出就返回 null——不编一个时间出来。
+ *
+ * 时间已经过去时**不许说「就在这一会儿」**（Codex review 第七轮 P2）：这个时间戳只是
+ * 「上一轮 + 一个周期」的推算，它过去了恰恰说明该跑的那一轮没跑。调度器死掉时，
+ * 第一屏在说「已经 99 小时没跑了」，右上角同时承诺「马上就跑」——同一屏自相矛盾，
+ * 而且承诺的那一半没有任何依据。改成如实说逾期了多久，不做没有依据的承诺。
+ */
 function until(iso: string | null): string | null {
   if (!iso) return null;
   const at = Date.parse(iso);
   if (!Number.isFinite(at)) return null;
   const minutes = Math.round((at - Date.now()) / 60_000);
-  if (minutes <= 0) return '就在这一会儿';
+  if (minutes <= 0) {
+    const overdue = -minutes;
+    if (overdue < 60) return '已逾期';
+    const hours = Math.floor(overdue / 60);
+    return hours < 48 ? `已逾期 ${hours} 小时` : `已逾期 ${Math.floor(hours / 24)} 天`;
+  }
   if (minutes < 60) return `约 ${minutes} 分钟后`;
   return `约 ${Math.round(minutes / 60)} 小时后`;
 }

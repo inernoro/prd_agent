@@ -99,6 +99,17 @@ describe('周期备份面板：渲染出来的东西', () => {
     expect(html).not.toContain('备份不完整');
   });
 
+  it('推算的下一轮时间已经过去时，说逾期，不承诺「就在这一会儿」', () => {
+    // 这个时间戳只是「上一轮 + 一个周期」的推算，它过去了恰恰说明该跑的那一轮没跑。
+    // 原来会渲染成「就在这一会儿」——第一屏说「已经 99 小时没跑了」，右上角同时承诺
+    // 马上就跑，同一屏自相矛盾，而承诺那一半没有任何依据（Codex review 第七轮 P2）。
+    const html = render(panelData({
+      nextRoundEstimatedAt: new Date(Date.now() - 5 * 3600_000).toISOString(),
+    }));
+    expect(html).toContain('已逾期 5 小时');
+    expect(html).not.toContain('就在这一会儿');
+  });
+
   it('一条记录都没有时给出下一步，不是一句「暂无数据」', () => {
     const html = render(panelData({
       targets: [],

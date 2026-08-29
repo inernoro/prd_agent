@@ -369,6 +369,21 @@ export function buildBackupPanel(input: {
 }
 
 /**
+ * 这个项目**压根没有需要周期备份的东西**吗？
+ *
+ * 判据收得很紧：必须**有目标**，且**每一个**都是「没有需要备份的状态」（memcached
+ * 重启即空、没开 JetStream 的 nats）。只要有一个该备的目标，答案就是否。
+ *
+ * 导出是为了让**页脚那几条体检结论问同一个问题**。第六轮只把这一档接进了第一屏，
+ * 页脚照旧无条件跑：一台只跑 memcached 的部署于是头条说「没有需要周期备份的服务」，
+ * 页脚同时喊 critical 的「读不到上一轮结果」和「从来没做过恢复演练」——同一屏自相
+ * 矛盾，而这正是这个面板要消灭的东西（Codex review 第七轮 P2，形状 2：只接了一半）。
+ */
+export function nothingNeedsBackup(targets: readonly BackupPanelTarget[]): boolean {
+  return targets.length > 0 && targets.every((t) => t.status === 'unsupported');
+}
+
+/**
  * 第一屏那句话。
  *
  * 只回答一件事：**要不要我管**。所以按严重度取一句，不把五个数字并排摆出来让人自己算
@@ -396,13 +411,15 @@ function buildVerdict(
   const subline = rest.length > 0 ? rest.join(' · ') : null;
 
   // 全是「没有需要备份的状态」的项目，判在读不到之前（Codex review 第六轮 P2）。
+  // 判据本身抽成了 `nothingNeedsBackup`：页脚那几条体检结论要问同一个问题，
+  // 各写一份就会出现「头条说不用管、页脚喊 critical」（Codex review 第七轮 P2）。
   // 一台只跑 memcached 的部署，排程压根没有目标、也没有阻塞缺口，于是**从来不写**
   // 那份结果文件；读不到是这种部署的常态，不是故障。判在后面的话，它会永远挂着
   // 一句「不确定这个项目备份过没有」——一盏永远亮着、又永远不用管的灯。
   //
   // 判据收得很紧：必须**有目标**且**每一个**都是「没有需要备份的状态」。只要有一个
   // 该备的目标，读不到结果就仍然是坏消息。
-  if (targets.length > 0 && targets.every((t) => t.status === 'unsupported')) {
+  if (nothingNeedsBackup(targets)) {
     return { tone: 'ok', headline: '这个项目没有需要周期备份的服务', subline: null };
   }
   if (!health) {
