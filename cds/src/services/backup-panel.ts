@@ -601,9 +601,18 @@ function buildVerdict(
 
   const age = relativeAge(now, health.completedAt ?? null);
   if (ok === 0) {
-    // 走到这里说明剩下的目标全是「没有需要备份的状态」那一类。原来这句会写成
-    // 「0 个能备的目标都有 3 小时前的副本」——一句自己都不通的话。
-    return { tone: 'ok', headline: '这个项目没有需要周期备份的服务', subline: null };
+    // 走到这里，`nothingToBackUp` **必定为假**——真的话上面第一档早就返回了。
+    // 所以这不是「没有需要备份的服务」，而是「有，但上一轮一个都没备到」：最典型的
+    // 就是那台唯一的数据库此刻停着（停着的服务不进目标清单），屏幕上只剩一行无状态服务。
+    //
+    // 这一句原来写成和第一档**一模一样的绿色结论**，等于给同一个说法开了第二道门，
+    // 而这道门不问 `nothingToBackUp`（Codex review 第十一轮 P2）。上一轮我修了第一道门，
+    // 混合台账的用例只喂了 `health: null`，走不到这里，于是没照出来。
+    return {
+      tone: 'warn',
+      headline: '这个项目有需要备份的服务，但上一轮备份里一个都没有',
+      subline,
+    };
   }
   return {
     tone: 'ok',

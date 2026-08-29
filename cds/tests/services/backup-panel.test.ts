@@ -755,6 +755,26 @@ describe('升级与无状态部署不许喊狼来了', () => {
     expect(view.verdict.headline).toContain('读不到');
   });
 
+  it('同样的台账，换成「有一份正常的上一轮记录」也不许报绿', () => {
+    // 上一轮我只堵了第一道门（早返回那一档），而绿色结论还有第二道门：ok === 0 时
+    // 会说同一句「这个项目没有需要周期备份的服务」，且不问 nothingToBackUp。
+    // 上一轮的混合台账用例只喂了 health: null，走不到这里（Codex review 第十一轮 P2）。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health(),
+      files: [],
+      infra: [
+        { id: 'cache', dockerImage: 'memcached:1.6' },
+        { id: 'mysql', dockerImage: 'mysql:8', running: false },
+      ],
+    });
+    expect(view.nothingToBackUp).toBe(false);
+    expect(view.verdict.tone).not.toBe('ok');
+    expect(view.verdict.headline).not.toContain('没有需要周期备份的服务');
+    expect(view.verdict.headline).toContain('上一轮备份里一个都没有');
+  });
+
   it('停机的 MinIO 同样算「有数据要备」，哪怕这套备份接不了它', () => {
     // 「接不了」不等于「没有数据」——这两件事上一轮刚拆开过，判据这一侧也得跟上。
     const view = buildBackupPanel({
