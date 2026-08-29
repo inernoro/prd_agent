@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { translations } from '@/pages/home/i18n/landing';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
@@ -13,7 +15,11 @@ import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
  * 首页还在用旧的说法，几个月后就变成另一种谎。所以这条守卫盯两件事：
  *
  * 1. 列出来的名字必须真在注册表里（改名即红），**一个例外都不许有**；
- * 2. 「预览」标记必须等于注册表的 `wip`（转正或退回预览，两边必须一起动）。
+ * 2. 「预览」标记必须等于注册表的 `wip`（转正或退回预览，两边必须一起动）；
+ * 3. 图标必须等于注册表那条的图标，**而且那一幕真的画得出来**——那一幕为了不给未登录页
+ *    拉进整个图标库，自己维护了一小份路径表，查不到就退成一个通用方块。文案说的是
+ *    「名字、一句话、图标都照着注册表来」，画成方块就没照着；而这条退化是静默的，
+ *    页面照常渲染、类型照常通过，只有人真的看那一屏才发现。
  *
  * 第 1 条没有例外，是刻意的：只要留一个「这条不算」的口子，文案里那句「都照着注册表来」
  * 就又变成部分成立的话，而守卫照样绿——这正是要防的形状。原来的名单里「知识库」是导航
@@ -33,6 +39,13 @@ const enItems = en.groups.flatMap((g) => g.items);
 
 const registry = new Map(BUILTIN_TOOLS.map((t) => [t.name, t]));
 
+/** 那一幕自带的图标路径表，只取 key —— 有没有路径决定画出来是图标还是方块 */
+const sceneIconKeys = new Set(
+  [...readFileSync(join(__dirname, '..', '..', 'pages/home/scenes/ToolboxScene.tsx'), 'utf8')
+    .match(/const ICON_PATHS[^=]*=\s*\{([\s\S]*?)\n\};/)![1]
+    .matchAll(/^\s{2}(\w+):/gm)].map((m) => m[1]),
+);
+
 describe('首页百宝箱那一幕的名单', () => {
   it('确实有名单可查（否则下面几条恒真）', () => {
     expect(zhItems.length).toBeGreaterThanOrEqual(12);
@@ -50,6 +63,20 @@ describe('首页百宝箱那一幕的名单', () => {
       .filter((i) => Boolean(i.preview) !== Boolean(registry.get(i.name)?.wip))
       .map((i) => `${i.name}: 首页 preview=${Boolean(i.preview)} / 注册表 wip=${Boolean(registry.get(i.name)?.wip)}`);
     expect(mismatched).toEqual([]);
+  });
+
+  it('图标必须等于注册表那条的图标', () => {
+    const mismatched = zhItems
+      .filter((i) => registry.has(i.name))
+      .filter((i) => i.icon !== registry.get(i.name)?.icon)
+      .map((i) => `${i.name}: 首页 ${i.icon} / 注册表 ${registry.get(i.name)?.icon}`);
+    expect(mismatched).toEqual([]);
+  });
+
+  it('每个图标那一幕都画得出来，不会退成方块', () => {
+    expect(sceneIconKeys.size).toBeGreaterThanOrEqual(10);
+    const unpaintable = zhItems.map((i) => i.icon).filter((icon) => !sceneIconKeys.has(icon));
+    expect(unpaintable).toEqual([]);
   });
 
   it('中英两份名单的预览标记逐位一致', () => {
