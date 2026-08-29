@@ -158,11 +158,18 @@ public class WebPageAskController : ControllerBase
     /// null 与字段缺失在 Mongo 里都匹配 `{field: null}`，存量没有这个字段的站点因此照常通过。
     /// </summary>
     public static FilterDefinition<HostedSite> ResetAskSourceFilter(
-        string siteId, string? expectedSource, DateTime? expectedStamp)
+        string siteId, string? expectedSource, DateTime? expectedStamp, DateTime? expectedConfigAt)
     {
         var fb = Builders<HostedSite>.Filter;
         return fb.Eq(s => s.Id, siteId)
+               // 配置修订号。前两个字段只认「来源变了」与「生成盖戳了」，漏掉一整类改动：
+               // owner 已经是 manual，另一个 editor 又改了一版手写题——来源仍是 manual、
+               // 戳仍是空，两个都对得上，于是这一笔照样把他刚写下的那版换成 auto 再覆盖掉。
+               // 逐个补字段是补不完的（下一次换成改欢迎语、改额度…），所以这里认修订号本身：
+               // SetAskConfigAsync 每次保存都会推它，任何一次配置改动都拦得住。
+               & fb.Eq(s => s.AskConfigUpdatedAt, expectedConfigAt)
                & fb.Eq(s => s.AskQuestionsSource, expectedSource)
+               // 生成器盖戳不走 SetAskConfigAsync、不推修订号，所以它得单列一条
                & fb.Eq(s => s.AskQuestionsGeneratedFor, expectedStamp);
     }
 
@@ -212,7 +219,7 @@ public class WebPageAskController : ControllerBase
         // 随后 EnsureAsync 就名正言顺地把他的题覆盖掉——和还原那一笔是同一个洞，只是发生在
         // 更早一步。窗口比还原那边小得多（毫秒级 vs 45 秒），但同样会丢数据，判据成本一样。
         var reset = await _db.HostedSites.UpdateOneAsync(
-            ResetAskSourceFilter(siteId, priorSource, priorStamp),
+            ResetAskSourceFilter(siteId, priorSource, priorStamp, site.AskConfigUpdatedAt),
             Builders<HostedSite>.Update
                 .Set(s => s.AskQuestionsSource, AskOpeningQuestions.SourceAuto)
                 .Unset(s => s.AskQuestionsGeneratedFor));

@@ -393,10 +393,15 @@ export default function WebPagesPage() {
   useEffect(() => { writePref(PREF_KEYS.cardSize, cardSize); }, [cardSize]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
-  const [sharedSiteIds, setSharedSiteIds] = useState<Set<string>>(new Set());
-  // 分享链接原始列表（loadShares 同批取回），用于按站点聚合「有效链接数 / 最近访问」
+  // 分享链接原始列表：这一份是唯一事实源，「已分享」标记从它算出来。
   const [shareLinks, setShareLinks] = useState<ShareLinkItem[]>([]);
+  // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心。
+  //
+  // 必须是**算出来的**，不能是另一份并行 state。此前两份各自 set，而分享工作台撤销链接时
+  // 只回吐 shareLinks——于是链接已经撤了、卡片上还挂着「已分享」，拖拽目标还在给「取消分享」，
+  // 要整页重拉才对得上。一个列表只由一个源驱动（frontend-architecture 的 SSOT 条款），
+  // 派生之后任何一处改了 shareLinks，标记自动跟上，不会再漏更新第二份。
+  const sharedSiteIds = useMemo(() => buildSharedSiteIds(shareLinks), [shareLinks]);
 
   const [folders, setFolders] = useState<string[]>([]);
   const [tags, setTags] = useState<TagCount[]>([]);
@@ -500,8 +505,7 @@ export default function WebPagesPage() {
   const loadShares = useCallback(async () => {
     const res = await listSiteShares();
     if (res.success) {
-      setSharedSiteIds(buildSharedSiteIds(res.data.items));
-      // 原始链接也留一份：卡片的「有效链接 N / 最近访问」要按站点聚合，
+      // 只写这一份；「已分享」标记由它派生。卡片的「有效链接 N / 最近访问」也要按站点聚合，
       // 只留一个 Set 就只能回答「有没有分享过」，回答不了「还有几条有效、上次谁打开的」
       setShareLinks(res.data.items);
     }
