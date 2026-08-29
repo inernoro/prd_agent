@@ -19,4 +19,16 @@ public sealed class GatewayRouteFailureException : Exception
     {
         FailureCode = failureCode;
     }
+
+    /// <summary>
+    /// 把一个 error 流块转成异常，**把码一起带上**。
+    ///
+    /// 三处业务 Worker 都要做同一件事，各写各的就会像 Codex 第四十六轮 P1 抓到的那样：
+    /// 一处带了码、另一处还在 `new InvalidOperationException($"...{chunk.ErrorMessage}")`，
+    /// 于是那条链路上的配置失败照旧被判成暂时故障，而据此写的文案分支永远走不到
+    /// （predicate-and-wiring-discipline 形状 2：建了一半，删掉不会红）。
+    /// </summary>
+    /// <param name="prefix">给用户/日志看的场景前缀，如「LLM 调用失败」。</param>
+    public static GatewayRouteFailureException FromChunk(Interfaces.LLMStreamChunk chunk, string prefix)
+        => new(chunk.ErrorCode, $"{prefix}: {chunk.ErrorMessage}");
 }

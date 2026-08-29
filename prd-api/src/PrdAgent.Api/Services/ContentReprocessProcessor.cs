@@ -2,6 +2,7 @@ using System.Text;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -191,7 +192,8 @@ public class ContentReprocessProcessor
             }
             else if (chunk.Type == "error")
             {
-                throw new InvalidOperationException($"LLM 调用失败: {chunk.ErrorMessage}");
+                // 带着结构化码抛：配置问题与上游抖动的文案、要不要自动重试都按它判
+                throw GatewayRouteFailureException.FromChunk(chunk, "LLM 调用失败");
             }
         }
 
