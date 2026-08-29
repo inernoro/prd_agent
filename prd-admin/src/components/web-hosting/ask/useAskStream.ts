@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useDeadline } from './useDeadline';
+import { useCallback, useRef, useState } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { api } from '@/services/api';
 import { buildApiUrl } from '@/services/real/webPages';
@@ -27,7 +28,6 @@ export function useAskStream(source: AskSource) {
     { code: string; message: string; retryAfterMs?: number | null } | null
   >(null);
   // 额度窗口分段等待用的心跳：等待超过一小时时靠它重排下一段（见下面那个 effect）
-  const [clearTick, setClearTick] = useState(0);
 
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -65,24 +65,8 @@ export function useAskStream(source: AskSource) {
   //
   // Retry-After 是服务端自己说的「几点可以再来」，到点清掉即可；真要还没恢复，
   // 下一次提问会拿到新的 429，不会放行到后端之外。
-  useEffect(() => {
-    const at = gateError?.retryAfterMs;
-    if (!at) return;
-    // 不许截断等待时长。原先写的是 Math.min(..., 3_600_000)——本意是防一个离谱的
-    // 服务端值把定时器挂死，实际后果是：站点日上限给出的 Retry-After 常常超过一小时，
-    // 定时器却在一小时就把门收起来，用户重新写一段话发出去，再吃一个同样的 429。
-    // 提前解锁比锁着更伤人：他为此白写了一遍。
-    //
-    // 改成分段续期：一次最多等一小时，到点如果还没到服务端给的时刻，就再排一段，
-    // 直到真的到点才清门。既不截断，也不会因为一个超大值而挂一个几十天的定时器。
-    const remaining = Math.max(at - Date.now(), 0);
-    const chunk = Math.min(remaining, 3_600_000);
-    const timer = window.setTimeout(() => {
-      if (Date.now() >= at) setGateError(null);
-      else setClearTick((n) => n + 1); // 还没到点，重排下一段
-    }, chunk + 500);
-    return () => window.clearTimeout(timer);
-  }, [gateError?.retryAfterMs, clearTick]);
+  // 到点解开提交闸门。分段睡 + 自己重排，走与额度快照同一份判据（见 useDeadline）。
+  useDeadline(gateError?.retryAfterMs ?? null, () => setGateError(null));
 
   const ask = useCallback(
     async (question: string) => {

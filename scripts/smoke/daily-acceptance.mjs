@@ -83,6 +83,10 @@ const FORMS = [
     // 跨源存储返回的 403/404 错误文档也有字，字数够不能证明托管站点还活着。
     marker: '这一段文字就是判据',
     minChars: 30,
+    // 文本形态：必须真的读出那句话才算数，不许退到像素证据蒙混过关。
+    // 像素兜底是给 PDF / 视频这类插件渲染的包装站留的（innerText 本来就是空的），
+    // 用在文本形态上等于把「一张彩色的 200 占位页」也判成健康。
+    textual: true,
   },
   {
     key: 'markdown',
@@ -93,6 +97,7 @@ const FORMS = [
       + '> 如果这里是空的，说明包装站的取正文链路又断了。\n',
     marker: '这一段文字就是判据',
     minChars: 30,
+    textual: true,
   },
 ];
 
@@ -114,9 +119,16 @@ const FORMS = [
 // 所以锚点必须是「这一屏自己渲染成功才会出现」的字样，且不能出现在外壳里
 // （外壳只有告警条与导航：首页/百宝箱/工作流/统计/市场/资源/涌现/模型/团队/
 // 知识库/网页/设置/海报/VOC —— 下面这些都不在其中）。
+//
+// 锚点还必须是**这条路由自己的**字样，不能与外壳导航重名。/web-pages 原先用「网页托管」，
+// 而 navRegistry 里这一项的 label 逐字就是「网页托管」——左侧导航常驻渲染，
+// 于是路由渲不渲染这条锚点都命中，80 字门槛也由外壳独自满足。判据换成路由内才有的
+// 「资产库」，并把取证范围收进 scope 里（见下面 checkPageAlive）。
+// 同类交叉核对由 scripts/tests/daily-acceptance-anchors.test.mjs 机械保证。
 const PAGES = [
   { key: 'shell',      route: '/',               anchor: '选一个智能体开始创作',   minChars: 60, label: '导航与应用外壳' },
-  { key: 'web-pages',  route: '/web-pages',      anchor: '网页托管',             minChars: 80, label: '网页托管主控台' },
+  { key: 'web-pages',  route: '/web-pages',      anchor: '资产库',               minChars: 80, label: '网页托管主控台',
+    scope: '[data-acceptance-scope="web-pages"]' },
   { key: 'doc-store',  route: '/document-store', anchor: '新建知识库',           minChars: 60, label: '知识库 / 文件解析' },
   { key: 'defect',     route: '/defect-agent',   anchor: '提交缺陷',             minChars: 60, label: '缺陷管理' },
   { key: 'visual',     route: '/visual-agent',   anchor: 'AI 驱动的设计助手',     minChars: 60, label: '视觉创作' },
@@ -262,7 +274,7 @@ async function checkShareArtifact(ctx, form, token4Url) {
   // 假红几次之后没人再看这份报告）。所以退到像素证据：把 iframe 那块截下来，
   // 看它是不是一整片同色。白屏 = 一种颜色；真渲染出东西 = 必然有多种颜色。
   let pixels = null;
-  if (typeof chars !== 'number' || chars < form.minChars) {
+  if (!form.textual && (typeof chars !== 'number' || chars < form.minChars)) {
     const el = await page.$('iframe');
     if (el) pixels = await distinctColorCount(el);
   }
@@ -272,7 +284,10 @@ async function checkShareArtifact(ctx, form, token4Url) {
   await page.close();
 
   const textOk = markerHit && typeof chars === 'number' && chars >= form.minChars;
-  const pixelOk = typeof pixels === 'number' && pixels >= 8;
+  // 像素兜底只对**非文本形态**开放。文本形态的正文本来就该读得出来，一旦读不出就是坏了；
+  // 允许它退到「有 8 种颜色」会让一张彩色的 HTTP 200 占位页、客户端错误页、甚至别人的文档
+  // 都判成健康——那正是这条验收要防的形态。
+  const pixelOk = !form.textual && typeof pixels === 'number' && pixels >= 8;
   const ok = mode !== 'about:blank' && mode !== 'no-iframe' && (textOk || pixelOk);
   record(
     `分享页产物可见 · ${form.key}`,
@@ -452,18 +467,26 @@ async function checkPageAlive(ctx, page4) {
   // 等锚点真的出现，而不是干等固定秒数。
   // 固定 9 秒有两种坏法：慢的路由还没渲染完就被判（/document-store 就是 9 秒时空的、
   // 20 秒才出来），快的路由白等。等锚点则「慢就多等一会儿、真没有才红」。
+  //
+  // scope 声明了「这一屏自己那块 DOM」。声明了就只在那里面找锚点、只数那里面的字：
+  // 外壳（导航 + 告警条）本身有上百字，在 body 上数等于路由渲不渲染都够。
+  // 没声明 scope 的路由退回整页——那是明确的降级，只在锚点确实为路由独有时才成立。
   const needle = page4.anchor.replace(/\s+/g, '');
+  const readScoped = (sel) => (n) => {
+    const root = sel ? document.querySelector(sel) : document.body;
+    if (!root) return null;
+    const t = root.innerText.replace(/\s+/g, '');
+    return { chars: t.length, hit: n ? t.includes(n) : false };
+  };
   let appeared = false;
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline) {
-    const hit = await page.evaluate(
-      (n) => document.body.innerText.replace(/\s+/g, '').includes(n),
-      needle,
-    );
-    if (hit) { appeared = true; break; }
+    const read = await page.evaluate(readScoped(page4.scope || null), needle);
+    if (read?.hit) { appeared = true; break; }
     await page.waitForTimeout(500);
   }
-  const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ''));
+  const final = await page.evaluate(readScoped(page4.scope || null), null);
+  const text = { length: final?.chars ?? 0 };
   await page.close();
 
   const enough = text.length >= page4.minChars;

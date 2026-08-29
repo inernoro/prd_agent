@@ -1552,6 +1552,10 @@ export default function WebPagesPage() {
       {/* 屏框（设计稿屏 1·A）：顶栏通栏 52px，其下三列贴边——左栏 212 / 中列（工具条 56 + 内容）/ 右栏 300。
           三列之间用竖分隔线而不是间隙，工具条属于中列、不横跨左右栏。 */}
       <div
+        /* 每日验收的取证范围。判据必须只看这一屏自己渲染出来的东西：
+           应用外壳（左侧导航那一排 + 顶部告警条）本身就有上百字、也含「网页托管」四个字，
+           在整个 body 上数字数或找锚点，路由渲不渲染都能通过。 */
+        data-acceptance-scope="web-pages"
         className={!isMobile ? 'flex-1 min-h-0 flex flex-col overflow-hidden' : 'contents'}
         style={!isMobile ? { border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', background: 'var(--bg-base)' } : undefined}
       >

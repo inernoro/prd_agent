@@ -46,14 +46,26 @@ describe('额度窗口等待时长', () => {
     // 原先写的是 Math.min(..., 3_600_000)：本意防一个离谱的值把定时器挂死，实际后果是
     // 站点日上限那档（Retry-After 常常超过一小时）在一小时就把门收起来，用户重新写一段
     // 话发出去，再吃一个同样的 429。提前解锁比锁着更伤人——他为此白写了一遍。
-    const src = readFileSync(new URL('./ask/useAskStream.ts', import.meta.url), 'utf-8');
+    //
+    // 2026-08-29 第三十八轮：同一个判断此前在两处各写了一遍，只有提交闸门那处做了分段重排；
+    // 额度快照那处仍是「最多睡一小时就拉一次」，于是按天的窗口离现在还有几小时时，
+    // 闸门到点解开了、头上的剩余次数却一直写着 0，直到下一次请求才对上（形状 3）。
+    // 现在收敛成 useDeadline 一份，判据也跟着钉到那一份上，而不是钉某个调用方的写法。
+    const deadline = readFileSync(new URL('./ask/useDeadline.ts', import.meta.url), 'utf-8');
+    const stream = readFileSync(new URL('./ask/useAskStream.ts', import.meta.url), 'utf-8');
+    const quota = readFileSync(new URL('./ask/useAskQuota.ts', import.meta.url), 'utf-8');
 
-    // 不许把「还要等多久」整体夹到一个上限里
-    expect(src).not.toMatch(/Math\.min\(Math\.max\(at - Date\.now\(\)[^)]*\), 3_600_000\)/);
-    // 到点才清门：清空前必须确认真的到了服务端给的时刻
-    expect(src).toMatch(/Date\.now\(\) >= at/);
-    // 没到点要重排下一段，而不是放弃
-    expect(src).toMatch(/setClearTick/);
+    // 分段是手段，不是终点：睡够一段之后没到点必须重排，否则「最多一小时」会退化成
+    // 「一小时后执行一次」——那正是这条守卫要防的提前解锁。
+    expect(deadline).toMatch(/Math\.min\(remaining, MAX_CHUNK_MS\)/);
+    expect(deadline).toMatch(/Date\.now\(\) >= deadline/);
+    expect(deadline).toMatch(/setTick\(\(n\) => n \+ 1\)/);
+
+    // 两个消费方都必须走这一份，不许谁再就地写一遍
+    for (const [name, src] of [['useAskStream', stream], ['useAskQuota', quota]] as const) {
+      expect(src, `${name} 没有走 useDeadline`).toMatch(/useDeadline\(/);
+      expect(src, `${name} 又就地夹了一个一小时上限`).not.toMatch(/3_600_000/);
+    }
   });
 });
 

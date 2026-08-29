@@ -239,3 +239,7 @@
 | fix | scripts | 设计稿切图按画板自己的横向边界裁——并排画板此前会截出三张逐字节相同的图却挂三个文件名 |
 | fix | scripts | fixture 漂移守卫在一次比对都没做成时判红，不再拿「零证据」当「没有漂移」 |
 | ci | scripts | 把 extract-design.mjs 与 fixture-drift.mjs 登记进守卫 job 的 path filter |
+| fix | scripts | 每日验收 /web-pages 的锚点换成路由自有文案，并把锚点与字数收进取证范围——原锚点「网页托管」与左侧导航重名，路由不渲染也判绿 |
+| fix | scripts | 文本形态的分享页验收不许退到像素证据，避免彩色 200 占位页被判成健康 |
+| fix | prd-admin | 额度快照与提交闸门共用一份到点判据（useDeadline），修掉按天窗口下「闸门解开但剩余次数仍写 0」 |
+| ci | scripts | 把 daily-acceptance.mjs 与 navRegistry.tsx 登记进守卫 job 的 path filter |

@@ -3,6 +3,7 @@ import { api } from '@/services/api';
 import { buildApiUrl } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import type { AskSource } from './askTypes';
+import { useDeadline } from './useDeadline';
 
 /**
  * 「还能问几次」。
@@ -90,13 +91,12 @@ export function useAskQuota(source: AskSource, enabled: boolean, blockedUntil?: 
   // 或者刷新页面才发现其实又能问了。他等的那段时间是白等的。
   //
   // blockedUntil 由调用方从 Retry-After 算出（毫秒时间戳）；没有拒绝时传空，不装定时器。
-  useEffect(() => {
-    if (!enabled || !blockedUntil) return;
-    const delay = blockedUntil - Date.now();
-    // 已经过点就立刻拉；还没到就等到点。上限一小时，防止后端给个离谱的值把定时器挂死。
-    const timer = window.setTimeout(() => { void refresh(); }, Math.min(Math.max(delay, 0), 3_600_000) + 500);
-    return () => window.clearTimeout(timer);
-  }, [enabled, blockedUntil, refresh]);
+  //
+  // 分段睡到**真正的**那一刻，走与提交闸门同一份 useDeadline。
+  // 原先这里是「最多睡一小时就拉一次」：按天的窗口离现在还有几小时时，那一次拉到的仍是 0，
+  // blockedUntil 又不会再变，于是不会有第二次——闸门到点解开了，头上却一直写着剩余 0，
+  // 直到用户又发一次请求才对上。两处同一个判断，只改了一处，正是形状 3。
+  useDeadline(blockedUntil, () => { void refresh(); }, enabled);
 
   return { quota, refresh };
 }

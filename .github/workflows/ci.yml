@@ -144,6 +144,9 @@ jobs:
               # 守卫只在自己被改时才跑的话，真正会引入漂移的那种 PR（只改被守文件）一路全绿。
               - '.claude/skills/design-replication/scripts/extract-design.mjs'
               - '.claude/skills/design-replication/scripts/fixture-drift.mjs'
+              # 每日验收的锚点与导航 label 的交叉核对：被守的是脚本与 navRegistry 两侧
+              - 'scripts/smoke/daily-acceptance.mjs'
+              - 'prd-admin/src/app/navRegistry.tsx'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
             acceptance_report:
