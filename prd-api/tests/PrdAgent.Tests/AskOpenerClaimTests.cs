@@ -41,7 +41,7 @@ public class AskOpenerClaimTests
     public void 认领是原子CAS且带租约()
     {
         var src = Source();
-        var head = MemberBody(src, "private static async Task<bool> TryClaimAsync");
+        var head = MemberBody(src, "TryClaimAsync");
 
         Assert.Contains("AskOpenerClaimedAt == null", head);
         Assert.Contains("staleBefore", head);
@@ -69,7 +69,7 @@ public class AskOpenerClaimTests
     public void 冷却表读的时候清过期项()
     {
         var src = Source();
-        var head = MemberBody(src, "private bool InCooldown");
+        var head = MemberBody(src, "InCooldown");
 
         Assert.Contains("TryRemove", head);
         // 不只是删自己那条，还要扫掉别人留下的过期条目
@@ -88,7 +88,7 @@ public class AskOpenerClaimTests
     public void 认领要重查提问开关与手写标记与正文版本()
     {
         var src = Source();
-        var head = MemberBody(src, "private static async Task<bool> TryClaimAsync");
+        var head = MemberBody(src, "TryClaimAsync");
 
         Assert.Contains("AskQuestionsSource != AskOpeningQuestions.SourceManual", head);
         Assert.Contains("AskEnabled != false", head);
@@ -101,16 +101,64 @@ public class AskOpenerClaimTests
     /// 不用「从起点截固定字数」那种写法：过滤器一加条件方法就变长，断言会因为
     /// 窗口不够而红——那是判据自己坏了，不是被测代码坏了，最费排查时间。
     /// </summary>
-    private static string MemberBody(string src, string signature)
+    /// <summary>
+    /// 取某个成员的方法体。
+    ///
+    /// 定位只认**方法名**，不许把返回类型写进判据：这一轮把 TryClaimAsync 的返回类型
+    /// 从 Task&lt;bool&gt; 改成 Task&lt;DateTime?&gt;（认领要把自己盖的时刻交回去），
+    /// 写死签名的旧判据当场定位不到、方法体取成空串，三条断言一起假红——
+    /// 看着像修复坏了，其实是守卫依赖了被测代码的偶然形状。今天第三次同类了
+    /// （前两次：只找 public 边界漏了 private、截固定 1200 字符）。
+    /// </summary>
+    private static string MemberBody(string src, string methodName)
     {
-        var start = src.IndexOf(signature, StringComparison.Ordinal);
-        Assert.True(start > 0, $"找不到 {signature}，测试该跟着改");
+        // 锚定**定义**那一行：private/内部修饰符 + 任意返回类型 + 方法名 + 左括号。
+        // 只按方法名找会命中调用处（RunAsync 里那句），方法体就取错了；
+        // 把返回类型写进判据又会在改签名时假红。两个坑今天都踩过，所以用正则只钉
+        // 「这是一处定义」这件事本身。
+        var m = Regex.Match(src, @"\n\s+(private|internal|public)[^\n(]*\b" + Regex.Escape(methodName) + @"\s*\(");
+        Assert.True(m.Success, $"找不到 {methodName} 的定义，测试该跟着改");
+
+        var start = m.Index + 1;
+        var rest = src[(start + m.Length)..];
         var ends = new[] { "\n    public ", "\n    private ", "\n    internal ", "\n    protected " }
-            .Select(m => src.IndexOf(m, start + 10, StringComparison.Ordinal))
-            .Where(i => i > start)
-            .DefaultIfEmpty(src.Length)
+            .Select(x => rest.IndexOf(x, StringComparison.Ordinal))
+            .Where(i => i > 0)
+            .DefaultIfEmpty(rest.Length)
             .Min();
-        return src[start..ends];
+        return src[start..(start + m.Length + ends)];
+    }
+
+    /// <summary>
+    /// 释放认领必须**认主**：条件里带上自己盖的那个时刻。
+    ///
+    /// 原先是无条件清空 AskOpenerClaimedAt，注释还说「只清自己那一笔的语义由租约兜底」。
+    /// 租约兜不住这条路径：A 卡过五分钟、B 接手重新认领之后，A 的 finally 迟到执行，
+    /// 一把清掉 B 刚盖的认领；C 于是能在 B 还跑着的时候再调一次模型——重复计费又回来了。
+    /// </summary>
+    [Fact]
+    public void 释放认领只清自己盖的那一笔()
+    {
+        var src = Source();
+        var release = src[src.IndexOf("private static async Task ReleaseClaimAsync", StringComparison.Ordinal)..];
+        var ends = new[] { "\n    public ", "\n    private ", "\n    internal " }
+            .Select(m => release.IndexOf(m, 10, StringComparison.Ordinal))
+            .Where(i => i > 0)
+            .DefaultIfEmpty(release.Length)
+            .Min();
+        var body = release[..ends];
+
+        Assert.Contains("myClaim", body);
+        Assert.Contains("s.AskOpenerClaimedAt == myClaim", body);
+    }
+
+    /// <summary>认领要把自己盖的时刻交回给调用方，否则释放无从认主。</summary>
+    [Fact]
+    public void 认领返回自己盖的时刻()
+    {
+        var src = Source();
+        Assert.Contains("private static async Task<DateTime?> TryClaimAsync", src);
+        Assert.Contains("? now : null", src);
     }
 
     private static string LocateSrcRoot()

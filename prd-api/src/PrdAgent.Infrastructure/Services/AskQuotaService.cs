@@ -73,7 +73,13 @@ public class AskQuotaService : IAskQuotaService
             // 第 2 层：站点日上限，保护 owner 的账单。
             var effectiveDaily = siteDailyLimit > 0 ? siteDailyLimit : DefaultSiteDailyLimit;
             var siteKey = SiteKey(siteId);
-            var siteCount = await IncrWithTtlAsync(db, siteKey, TimeSpan.FromDays(1));
+            // TTL 必须对齐**键自己的轮转时刻**，不能想当然给 24 小时。
+            //
+            // 站点键带 UTC 日期（...:{yyyyMMdd}），零点一到就换成新键、计数自然归零。
+            // 而 TTL 给 24 小时的话，当天第一次提问发生在 10:00 时这个键活到次日 10:00,
+            // 于是 Retry-After（取自 TTL）比真正的重置时刻晚了 10 小时。前端照着它等，
+            // 额度早就恢复了，用户还被锁着——最坏能白等将近一整天。
+            var siteCount = await IncrWithTtlAsync(db, siteKey, TimeUntilNextUtcMidnight());
             if (siteCount > effectiveDaily)
             {
                 var ttl = await db.KeyTimeToLiveAsync(siteKey);
@@ -177,6 +183,18 @@ public class AskQuotaService : IAskQuotaService
     private static string VisitorKey(bool isAnonymous, string? userId, string? clientIp)
         => DeploymentScope.ScopeIdempotencyKey(
             isAnonymous ? $"ask-quota:anon:{HashIp(clientIp)}" : $"ask-quota:user:{userId}");
+
+    /// <summary>
+    /// 距离下一个 UTC 零点还有多久——站点日配额键的真实存活期。
+    ///
+    /// 键名里编了 UTC 日期，零点换键即归零；所以 TTL 和据此算出的 Retry-After
+    /// 都必须以零点为准，而不是「从现在起 24 小时」。
+    /// </summary>
+    private static TimeSpan TimeUntilNextUtcMidnight()
+    {
+        var now = DateTime.UtcNow;
+        return now.Date.AddDays(1) - now;
+    }
 
     private static string SiteKey(string siteId)
         => DeploymentScope.ScopeIdempotencyKey($"ask-quota:site:{siteId}:{DateTime.UtcNow:yyyyMMdd}");

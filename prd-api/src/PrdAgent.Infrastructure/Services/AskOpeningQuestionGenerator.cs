@@ -184,7 +184,8 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         // 跨进程认领：抢不到就说明别的进程/别的部署正在为这一版生成，直接让路。
         // 必须排在调模型之前——进程内的 _inFlight 挡不住另一个进程，两边都往下走
         // 就是同一版正文付两次钱。
-        if (!await TryClaimAsync(db, siteId, version, ct)) return AskOpenerOutcome.Busy;
+        var myClaim = await TryClaimAsync(db, siteId, version, ct);
+        if (myClaim is null) return AskOpenerOutcome.Busy;
 
         try
         {
@@ -319,12 +320,15 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         finally
         {
             // 无论成败都要放开认领：失败时留着会让这个站点白等一个租约周期才有人再试。
-            await ReleaseClaimAsync(db, siteId, ct);
+            await ReleaseClaimAsync(db, siteId, myClaim, ct);
         }
     }
 
-    /// <summary>认领这一版的生成权。抢到返回 true；已有他人持有且租约未过期返回 false。</summary>
-    private static async Task<bool> TryClaimAsync(
+    /// <summary>
+    /// 认领这一版的生成权。抢到返回**自己盖上的那个时刻**（用作释放时的凭据）；
+    /// 已有他人持有且租约未过期返回 null。
+    /// </summary>
+    private static async Task<DateTime?> TryClaimAsync(
         MongoDbContext db, string siteId, DateTime version, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
@@ -352,14 +356,24 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
             Builders<HostedSite>.Update.Set(s => s.AskOpenerClaimedAt, now),
             cancellationToken: ct);
 
-        return claimed.MatchedCount > 0;
+        return claimed.MatchedCount > 0 ? now : null;
     }
 
-    /// <summary>放开认领。只清自己那一笔的语义由租约兜底，这里无条件清空即可。</summary>
-    private static async Task ReleaseClaimAsync(MongoDbContext db, string siteId, CancellationToken ct)
+    /// <summary>
+    /// 放开认领——**只清自己盖的那一笔**。
+    ///
+    /// 原先是无条件清空，还在注释里说「语义由租约兜底」。那句话是含糊其辞：租约兜不住
+    /// 这条路径——A 卡过五分钟、B 接手重新认领之后，A 的 finally 迟到执行，一把清掉了
+    /// B 刚盖的认领；此时 C 就能立刻抢到同一个站点，在 B 还跑着的时候再调一次模型。
+    /// 想拦重复计费，释放这一步也得是有主的：条件里带上自己那个时刻，不是我的就不动。
+    /// </summary>
+    private static async Task ReleaseClaimAsync(
+        MongoDbContext db, string siteId, DateTime? myClaim, CancellationToken ct)
     {
+        if (myClaim is null) return;
+
         await db.HostedSites.UpdateOneAsync(
-            s => s.Id == siteId,
+            s => s.Id == siteId && s.AskOpenerClaimedAt == myClaim,
             Builders<HostedSite>.Update.Set(s => s.AskOpenerClaimedAt, (DateTime?)null),
             cancellationToken: ct);
     }

@@ -69,6 +69,26 @@ public class AskQuotaRefundKeyTests
         Assert.Matches(new Regex(@"ConsumedSiteKey\s*=\s*siteKey"), head);
     }
 
+    /// <summary>
+    /// 站点日配额的 TTL 必须对齐 UTC 零点，不能想当然给 24 小时。
+    ///
+    /// 键名里编了 UTC 日期（...:{yyyyMMdd}），零点一到就换新键、计数自然归零。
+    /// TTL 给 24 小时的话，当天第一次提问发生在 10:00 时这个键活到次日 10:00，
+    /// 而 Retry-After 取自 TTL——于是前端被告知的重置时刻比真实的晚 10 小时，
+    /// 用户额度早就恢复了却还锁着，最坏白等将近一整天。
+    /// </summary>
+    [Fact]
+    public void 站点日配额TTL对齐UTC零点()
+    {
+        var src = Service();
+        var consume = src[src.IndexOf("public async Task<AskQuotaDecision> TryConsumeAsync", StringComparison.Ordinal)..];
+        var head = consume[..Math.Min(consume.Length, 4000)];
+
+        // 站点键那一笔不许再用「从现在起 24 小时」
+        Assert.DoesNotContain("IncrWithTtlAsync(db, siteKey, TimeSpan.FromDays(1))", head);
+        Assert.Contains("TimeUntilNextUtcMidnight()", head);
+    }
+
     private static string LocateSrcRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
