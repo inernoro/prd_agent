@@ -398,7 +398,7 @@ export function buildBackupPanel(input: {
   });
 
   const lastRoundMs = Date.parse(String(health?.completedAt || ''));
-  const nothingToBackUp = computeNothingToBackUp(targets, input.infra ? infraAll.length : null);
+  const nothingToBackUp = computeNothingToBackUp(targets, input.infra ? infraAll : null);
 
   return {
     lastRoundAt: health?.completedAt ?? null,
@@ -433,14 +433,30 @@ export function buildBackupPanel(input: {
  * 算出来的结果**挂在 view 上**给页脚用，不导出一个让调用方各跑一遍的函数：第七轮
  * 页脚与第一屏各写一份语义，就是第六轮那条漂移的成因；一处算、一处读，才没有第二个口径。
  */
+function serviceNeedsBackup(fact: BackupInfraFact): boolean {
+  const image = String(fact.dockerImage || '');
+  const hints = { id: fact.id, containerName: fact.containerName };
+  // 两种都算「有数据要备」：这套备份接得了的类型（mysql / mongo / redis…），
+  // 以及接不了但确实有持久状态的（MinIO / Kafka / 认不出的类型）。
+  return Boolean(backupKindOf(image, hints))
+    || classifyBackupCoverage(detectInfraKind(image, hints)).blocksHealthy;
+}
+
 function computeNothingToBackUp(
   targets: readonly BackupPanelTarget[],
-  infraCount: number | null,
+  infra: readonly BackupInfraFact[] | null,
 ): boolean {
-  // `infraCount` 为 null = 调用方没给台账，也就是**不知道**这个项目有没有数据服务。
-  // 不知道不等于没有：这种时候不下「没有需要备份的东西」这个结论（读不到就说读不到，
-  // 是这套体检的第一条纪律）。只有台账真的报了「零台」才算。
-  if (targets.length === 0) return infraCount === 0;
+  // `infra` 为 null = 调用方没给台账，也就是**不知道**这个项目有没有数据服务。
+  // 不知道不等于没有：这种时候不下结论（读不到就说读不到，是这套体检的第一条纪律）。
+  if (!infra) return false;
+  // **台账里只要有一台「有数据要备」的服务，哪怕此刻停着，就不能说没有**
+  // （Codex review 第十轮 P2）。上一轮我只判了目标清单，而停着的服务不进目标清单：
+  // 一个「停机 mysql + 在跑 memcached」的项目，目标里只剩那台 memcached，
+  // 于是判成「没有需要周期备份的服务」并把页脚整段关掉——那台 mysql 可能装着
+  // 从没备过的数据。上一轮的用例只覆盖了「只有停机 mysql」（目标为空那一支），
+  // 混着一台无状态服务就从另一支溜过去了（形状 1：判据比它该管的范围窄）。
+  if (infra.some(serviceNeedsBackup)) return false;
+  if (targets.length === 0) return true;
   return targets.every((t) => t.status === 'unsupported');
 }
 

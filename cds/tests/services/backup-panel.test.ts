@@ -736,6 +736,40 @@ describe('升级与无状态部署不许喊狼来了', () => {
     expect(view.verdict.headline).toContain('读不到');
   });
 
+  it('停机的库 + 在跑的缓存：不许因为只剩缓存那一行就说「没有需要备份的服务」', () => {
+    // 上一轮的用例只覆盖了「只有停机 mysql」（目标为空那一支）。混进一台无状态服务，
+    // 目标里就剩那台 memcached，判据从另一支溜过去，第一屏报绿、页脚整段关掉——
+    // 而那台 mysql 可能装着从没备过的数据（Codex review 第十轮 P2）。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: null,
+      files: [],
+      infra: [
+        { id: 'cache', dockerImage: 'memcached:1.6' },
+        { id: 'mysql', dockerImage: 'mysql:8', running: false },
+      ],
+    });
+    expect(view.nothingToBackUp).toBe(false);
+    expect(view.verdict.tone).toBe('bad');
+    expect(view.verdict.headline).toContain('读不到');
+  });
+
+  it('停机的 MinIO 同样算「有数据要备」，哪怕这套备份接不了它', () => {
+    // 「接不了」不等于「没有数据」——这两件事上一轮刚拆开过，判据这一侧也得跟上。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: null,
+      files: [],
+      infra: [
+        { id: 'cache', dockerImage: 'memcached:1.6' },
+        { id: 'oss', dockerImage: 'minio/minio:latest', running: false },
+      ],
+    });
+    expect(view.nothingToBackUp).toBe(false);
+  });
+
   it('只要有一个该备的目标，读不到结果就仍然是坏消息', () => {
     const view = buildBackupPanel({
       projectId: 'web',
