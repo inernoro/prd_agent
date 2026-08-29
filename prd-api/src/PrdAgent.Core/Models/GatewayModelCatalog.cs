@@ -129,11 +129,11 @@ public static class GatewayModelCatalog
             AcceptsImageInput: true, Aliases: ["doubao-vision-pro"]),
     };
 
-    private static readonly Dictionary<string, CatalogModel> ByKey = BuildIndex();
+    private static readonly Dictionary<string, GatewayCatalogModel> ByKey = BuildIndex();
 
-    private static Dictionary<string, CatalogModel> BuildIndex()
+    private static Dictionary<string, GatewayCatalogModel> BuildIndex()
     {
-        var index = new Dictionary<string, CatalogModel>(StringComparer.OrdinalIgnoreCase);
+        var index = new Dictionary<string, GatewayCatalogModel>(StringComparer.OrdinalIgnoreCase);
         foreach (var model in All)
         {
             index[Normalize(model.CanonicalId)] = model;
@@ -150,6 +150,9 @@ public static class GatewayModelCatalog
     ///
     /// 刻意**不**做模糊匹配（不做前缀包含、不做编辑距离）：名录是白名单，
     /// 「差不多像」不能等于「就是它」——那正是关键词猜测出问题的地方。
+    ///
+    /// 与写入侧 <c>ModelCatalog.Normalize</c> 逐字相同：两道门共用这一个判据，
+    /// 差一处就会出现「导入时判成名录内、请求时判成名录外」。守卫测试比对两份实现的输出。
     /// </summary>
     public static string Normalize(string? modelId)
     {
@@ -162,44 +165,6 @@ public static class GatewayModelCatalog
         id = id.Replace('.', '-').Replace('_', '-');
 
         // 日期快照后缀：-20240806 / -2024-08-06
-        id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{4}-\d{2}-\d{2}$", string.Empty);
-        id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{8}$", string.Empty);
-        if (id.EndsWith("-latest", StringComparison.Ordinal)) id = id[..^"-latest".Length];
-
-        return id;
-    }
-
-    /// <summary>查名录。命中返回登记，未命中返回 null——**不猜**。</summary>
-    public static CatalogModel? Find(string? modelId)
-        => ByKey.TryGetValue(Normalize(modelId), out var model) ? model : null;
-
-    public static bool Contains(string? modelId) => Find(modelId) is not null;
-
-    private static readonly Dictionary<string, GatewayCatalogModel> ByKey = BuildIndex();
-
-    private static Dictionary<string, GatewayCatalogModel> BuildIndex()
-    {
-        var index = new Dictionary<string, GatewayCatalogModel>(StringComparer.OrdinalIgnoreCase);
-        foreach (var model in All)
-        {
-            index[Normalize(model.CanonicalId)] = model;
-            foreach (var alias in model.Aliases ?? Array.Empty<string>())
-                index[Normalize(alias)] = model;
-        }
-        return index;
-    }
-
-    /// <summary>与写入侧 <c>ModelCatalog.Normalize</c> 逐字相同的归一化；守卫测试比对两份实现的输出。</summary>
-    public static string Normalize(string? modelId)
-    {
-        var id = (modelId ?? string.Empty).Trim().ToLowerInvariant();
-        if (id.Length == 0) return string.Empty;
-
-        var slash = id.LastIndexOf('/');
-        if (slash >= 0 && slash < id.Length - 1) id = id[(slash + 1)..];
-
-        id = id.Replace('.', '-').Replace('_', '-');
-
         id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{4}-\d{2}-\d{2}$", string.Empty);
         id = System.Text.RegularExpressions.Regex.Replace(id, @"-\d{8}$", string.Empty);
         if (id.EndsWith("-latest", StringComparison.Ordinal)) id = id[..^"-latest".Length];
