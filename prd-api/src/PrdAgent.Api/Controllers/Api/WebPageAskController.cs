@@ -151,6 +151,22 @@ public class WebPageAskController : ControllerBase
     /// </summary>
 
     /// <summary>
+    /// 「重新生成」开头那一笔清除该不该落下去：这两个字段还得是我刚读到的样子。
+    ///
+    /// 与 <see cref="RestoreAskSourceFilter"/> 成对——一个守进场、一个守退场。少了这个，
+    /// 读与清之间的空隙里别人写的手写题会被悄悄改回 auto，随后被自动生成覆盖。
+    /// null 与字段缺失在 Mongo 里都匹配 `{field: null}`，存量没有这个字段的站点因此照常通过。
+    /// </summary>
+    public static FilterDefinition<HostedSite> ResetAskSourceFilter(
+        string siteId, string? expectedSource, DateTime? expectedStamp)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        return fb.Eq(s => s.Id, siteId)
+               & fb.Eq(s => s.AskQuestionsSource, expectedSource)
+               & fb.Eq(s => s.AskQuestionsGeneratedFor, expectedStamp);
+    }
+
+    /// <summary>
     /// 还原「手写标记」的条件：上面清掉的两笔**都**还是我离开时的样子。
     ///
     /// 单独抽出来是因为它错一个条件不会有任何东西变红。只看版本戳的话，另一个 editor 在
@@ -190,11 +206,30 @@ public class WebPageAskController : ControllerBase
 
         // 清掉 manual 标记与版本戳，否则 NeedsGeneration 会判「这一版算过了」直接返回。
         // 这两笔就是「重新生成」这个动作的全部语义，判据仍只有 NeedsGeneration 一处。
-        await _db.HostedSites.UpdateOneAsync(
-            s => s.Id == siteId,
+        //
+        // 这一笔同样要带 CAS，条件是「这两个字段还是我上面读到的样子」。只按 siteId 清的话，
+        // 从上面那次读到这一笔之间的空隙里，另一个 editor 保存的手写题会被这一笔改回 auto，
+        // 随后 EnsureAsync 就名正言顺地把他的题覆盖掉——和还原那一笔是同一个洞，只是发生在
+        // 更早一步。窗口比还原那边小得多（毫秒级 vs 45 秒），但同样会丢数据，判据成本一样。
+        var reset = await _db.HostedSites.UpdateOneAsync(
+            ResetAskSourceFilter(siteId, priorSource, priorStamp),
             Builders<HostedSite>.Update
                 .Set(s => s.AskQuestionsSource, AskOpeningQuestions.SourceAuto)
                 .Unset(s => s.AskQuestionsGeneratedFor));
+        if (reset.MatchedCount == 0)
+        {
+            // 有人在这个空隙里动过这个站点。这一发什么都没做，也不该继续——
+            // 继续就等于拿一份过期的读数去覆盖别人刚写下的东西。
+            var current = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                generated = false,
+                questions = current?.AskSuggestedQuestions ?? new List<string>(),
+                questionsSource = current is null ? AskOpeningQuestions.SourceAuto
+                    : AskOpeningQuestions.ResolveSource(current),
+                message = "生成期间这个站点的提问设置被别人改过，这一发没有执行。刷新看一眼最新的题，需要的话再点一次。",
+            }));
+        }
 
         // CancellationToken.None：owner 关掉抽屉不该取消这次生成（server-authority）。
         // 真正的兜底是生成器内部那 45 秒超时，而不是这条 HTTP 连接活不活着。

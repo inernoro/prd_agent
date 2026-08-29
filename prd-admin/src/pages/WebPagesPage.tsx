@@ -2853,8 +2853,17 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
           if (!res.success) {
             // 用户自己按的中止不是故障，不弹红字；也不能继续往下走去改元信息，
             // 否则「已中止」之后站点还是被换掉了。
+            //
+            // 但也不能让他以为「点了中止 = 这次替换没发生」。中止掐断的是浏览器这一端的
+            // 传输：字节还没传完时它确实会让这次替换落空；可要是整个包已经送达、服务端
+            // 正在解包，那边会照常做完——本仓库的 server-authority 规则明令写库不许跟着
+            // 客户端断开走。所以这里如实说清「停的是这一端」，让他自己去核站点内容，
+            // 而不是拿一声不响的关闭暗示它没发生。
             if (res.error?.code !== 'ABORTED') {
               toast.error('重新上传失败', res.error?.message || '请稍后重试');
+            } else {
+              toast.info('已停止上传',
+                '如果文件已经全部送达，服务端可能仍会把这次替换做完。稍后刷新看一眼站点内容再决定要不要重传。');
             }
             return;
           }

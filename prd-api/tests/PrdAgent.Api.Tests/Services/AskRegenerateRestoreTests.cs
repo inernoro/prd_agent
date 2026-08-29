@@ -64,6 +64,56 @@ public sealed class AskRegenerateRestoreTests
         stored.AskQuestionsGeneratedFor.ShouldNotBeNull();
     }
 
+    [Fact]
+    public async Task 读与清之间没人动过_开头那笔清除照常落下去()
+    {
+        await using var fixture = await RestoreMongoFixture.CreateAsync();
+        var stamp = DateTime.UtcNow;
+        var id = await SeedAsync(fixture, source: AskOpeningQuestions.SourceManual, stamp: stamp);
+
+        var stored = await fixture.Db.HostedSites.Find(s => s.Id == id).SingleAsync();
+        var matched = await ApplyResetAsync(
+            fixture, id, stored.AskQuestionsSource, stored.AskQuestionsGeneratedFor);
+
+        matched.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task 读与清之间另一个editor改了来源_开头那笔必须停手()
+    {
+        await using var fixture = await RestoreMongoFixture.CreateAsync();
+        // 我读到的是 auto；别人在这个空隙里保存了手写题，库里已经是 manual
+        var id = await SeedAsync(fixture, source: AskOpeningQuestions.SourceManual, stamp: null);
+
+        var matched = await ApplyResetAsync(fixture, id, AskOpeningQuestions.SourceAuto, null);
+
+        matched.ShouldBe(0);
+        var stored = await fixture.Db.HostedSites.Find(s => s.Id == id).SingleAsync();
+        // 他刚写下的 manual 必须原样还在，没被这一笔改回 auto
+        stored.AskQuestionsSource.ShouldBe(AskOpeningQuestions.SourceManual);
+    }
+
+    [Fact]
+    public async Task 存量站点没有来源字段_照常放行()
+    {
+        await using var fixture = await RestoreMongoFixture.CreateAsync();
+        // 这个字段是本功能才加的，存量文档里压根没有；不能因此把老站点整类挡在门外
+        var id = await SeedAsync(fixture, source: null, stamp: null);
+
+        var matched = await ApplyResetAsync(fixture, id, null, null);
+
+        matched.ShouldBe(1);
+    }
+
+    private static async Task<long> ApplyResetAsync(
+        RestoreMongoFixture fixture, string siteId, string? expectedSource, DateTime? expectedStamp)
+    {
+        var result = await fixture.Db.HostedSites.UpdateOneAsync(
+            WebPageAskController.ResetAskSourceFilter(siteId, expectedSource, expectedStamp),
+            Builders<HostedSite>.Update.Set(s => s.AskQuestionsSource, AskOpeningQuestions.SourceAuto));
+        return result.MatchedCount;
+    }
+
     private static async Task<long> ApplyRestoreAsync(
         RestoreMongoFixture fixture, string siteId, string restoreTo)
     {
