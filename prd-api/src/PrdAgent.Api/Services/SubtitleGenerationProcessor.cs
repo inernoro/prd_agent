@@ -591,9 +591,7 @@ public class SubtitleGenerationProcessor
             else if (chunk.Type == "error")
             {
                 // 带着结构化原因抛：失败文案与「要不要自动重试」都按它判，不去猜这句话怎么写的
-                throw new GatewayRouteFailureException(
-                    chunk.ErrorCode,
-                    $"摘要生成失败: {chunk.ErrorMessage}");
+                throw GatewayRouteFailureException.FromChunk(chunk, "摘要生成失败");
             }
         }
         return sb.ToString().Trim();
@@ -1810,7 +1808,7 @@ public class SubtitleGenerationProcessor
             }
             else if (chunk.Type == "error")
             {
-                throw new InvalidOperationException($"Vision 调用失败: {chunk.ErrorMessage}");
+                throw GatewayRouteFailureException.FromChunk(chunk, "Vision 调用失败");
             }
         }
         return sb.ToString().Trim();

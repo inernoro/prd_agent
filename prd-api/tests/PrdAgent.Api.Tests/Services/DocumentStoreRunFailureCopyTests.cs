@@ -1,4 +1,5 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using Xunit;
@@ -206,5 +207,65 @@ public class DocumentStoreRunFailureCopyRouteCodeTests
             new GatewayRouteFailureException(GatewayRouteFailure.ModelPoolEmpty, "池空"));
 
         Assert.Contains("录音与原文都在", copy.UserMessage);
+    }
+}
+
+
+/// <summary>
+/// 错误流块转异常这件事只许有一处实现，且必须把码带上。
+/// Codex 第四十六轮 P1：`reprocess` 那一路仍在自己 new InvalidOperationException，
+/// 只搬了文案、丢了码——于是为它写的那条文案分支在生产里永远走不到
+/// （形状 2：建了一半，删掉不会红）。
+/// </summary>
+public class GatewayRouteFailureFromChunkTests
+{
+    [Fact]
+    public void FromChunk_CarriesTheStructuredCode()
+    {
+        var ex = GatewayRouteFailureException.FromChunk(
+            new LLMStreamChunk
+            {
+                Type = "error",
+                ErrorMessage = "AppCallerCode=document-store.reprocess::chat 未配置",
+                ErrorCode = GatewayRouteFailure.AppCallerPoolUnbound,
+            },
+            "LLM 调用失败");
+
+        Assert.Equal(GatewayRouteFailure.AppCallerPoolUnbound, ex.FailureCode);
+        Assert.StartsWith("LLM 调用失败: ", ex.Message);
+        Assert.Contains("未配置", ex.Message);
+    }
+
+    [Fact]
+    public void FromChunk_WithoutCode_StillProducesUsableMessage()
+    {
+        var ex = GatewayRouteFailureException.FromChunk(
+            new LLMStreamChunk { Type = "error", ErrorMessage = "上游 502" },
+            "Vision 调用失败");
+
+        Assert.Null(ex.FailureCode);
+        Assert.Equal("Vision 调用失败: 上游 502", ex.Message);
+    }
+
+    [Fact]
+    public void ReprocessConfigFault_ReachesTheConfiguredCopy()
+    {
+        // 走真实形状：处理器把 error 块转成异常 → 文案判定读它的码
+        var ex = GatewayRouteFailureException.FromChunk(
+            new LLMStreamChunk
+            {
+                Type = "error",
+                ErrorMessage = "所选模型池不在该 appCaller 的允许范围内",
+                ErrorCode = GatewayRouteFailure.RouteConfigIncompatible,
+            },
+            "LLM 调用失败");
+
+        var copy = DocumentStoreRunFailureCopy.Resolve(
+            new DocumentStoreAgentRun { Kind = DocumentStoreAgentRunKind.Reprocess },
+            ex);
+
+        Assert.Equal(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
+        Assert.False(copy.AutomaticRetryAllowed);
+        Assert.DoesNotContain("录音", copy.UserMessage);
     }
 }
