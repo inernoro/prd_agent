@@ -26,13 +26,26 @@ services:
     environment:
       PORT: "3000"
       KAFKA_BROKERS: ${KAFKA_BROKERS}
+      # broker 的客户端监听器是 SASL_PLAINTEXT/PLAIN，这两个必须显式注进容器。
+      # `x-cds-env` 只是插值输入，**不会**自动出现在每个服务的环境里——漏了这两行，
+      # server.js 会走「没配凭据就退回无认证」那条分支，连不上 broker，
+      # /api/health 永远起不来（Codex review P1）。
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD}
     labels:
       cds.path-prefix: /api/
       cds.readiness-path: /api/health
 
-  # Single-node Kafka in KRaft mode (no Zookeeper). The KAFKA_* values below
-  # are non-secret broker tuning, so literals are fine. The broker is both
-  # controller and broker; internal clients reach it at kafka:9092.
+  # Single-node Kafka in KRaft mode (no Zookeeper). The broker is both
+  # controller and broker; internal clients reach it at kafka:9092 and must
+  # authenticate with SASL/PLAIN — CDS 的基础设施认证门禁不再接受裸 PLAINTEXT
+  # 的客户端监听器（见 doc/debt.cds.md E49）。客户端监听器叫 CLIENT 而不是
+  # SASL_PLAINTEXT：镜像把 env 名里的下划线全部转成点，监听器名带下划线时
+  # JAAS 那条 env 表达不出正确的属性名，容器会以 `!1: unbound variable` 起不来。
+  # CONTROLLER 监听器保持 PLAINTEXT：
+  # 它只在 9093 上、只被本节点自己用，从不对外发布。
+  # JAAS 里的值一律不加双引号：CDS 拼 docker run 时 env 走 -e "K=V" 且不转义
+  # 值里的双引号，加了引号容器起不来（见 E50）。
   kafka:
     image: apache/kafka:3.7.0
     ports:
@@ -41,11 +54,14 @@ services:
       KAFKA_NODE_ID: "1"
       KAFKA_PROCESS_ROLES: "broker,controller"
       KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
-      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_LISTENERS: "CLIENT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "CLIENT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CLIENT:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "CLIENT"
+      KAFKA_SASL_ENABLED_MECHANISMS: "PLAIN"
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: "PLAIN"
+      KAFKA_LISTENER_NAME_CLIENT_PLAIN_SASL_JAAS_CONFIG: "org.apache.kafka.common.security.plain.PlainLoginModule required username=app password=demokafkapw user_app=demokafkapw;"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
@@ -63,8 +79,24 @@ x-cds-project:
 
 x-cds-env:
   KAFKA_BROKERS: kafka:9092
+  KAFKA_SECURITY_PROTOCOL: SASL_PLAINTEXT
+  KAFKA_SASL_MECHANISM: PLAIN
+  KAFKA_SASL_USERNAME: app
+  KAFKA_SASL_PASSWORD: demokafkapw
 
 x-cds-env-meta:
   KAFKA_BROKERS:
     kind: infra-derived
     hint: 后端连接的 Kafka broker 地址（容器网络内通过服务名 kafka 访问）。
+  KAFKA_SECURITY_PROTOCOL:
+    kind: infra-derived
+    hint: 客户端要用的安全协议，与 broker 的监听器一致。
+  KAFKA_SASL_MECHANISM:
+    kind: infra-derived
+    hint: SASL 机制，固定 PLAIN。
+  KAFKA_SASL_USERNAME:
+    kind: infra-derived
+    hint: Kafka SASL 账号。
+  KAFKA_SASL_PASSWORD:
+    kind: infra-derived
+    hint: Kafka SASL 口令。示例工程用固定值方便复现；真实项目应让 CDS 生成随机值。

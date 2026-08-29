@@ -1,2438 +1,2426 @@
 {
   "/app/App.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/app/RouteGuards.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/agent-shell/agent-cards.css": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/agent-shell/AgentFullscreenLayout.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/ai-news/aiNewsShared.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 21
-  },
-  "/components/ai-news/AiNewsTimeline.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 9
-  },
-  "/components/ai-news/UpdateCenterNewsTeaser.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/components/assistant/AssistantAttachments.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 0
   },
   "/components/BranchBadge.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/changelog/ChangelogBell.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/config-management/MarketplaceWatermarkCard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/components/daily-tips/AvatarProgressRing.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/daily-tips/SpotlightOverlay.tsx": {
-    "whiteAlpha": 11,
-    "darkHex": 0,
-    "darkRgbaBg": 6,
-    "lightFg": 20
-  },
-  "/components/daily-tips/TipCard.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/daily-tips/TipsDrawer.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/design/Card.tsx": {
-    "whiteAlpha": 4,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/design/GlassCard.tsx": {
-    "whiteAlpha": 10,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/design/GlassSwitch.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/design/KpiCard.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/components/design/PageHeader.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/design/SegmentedTabs.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/doc-browser/AcceptanceEvidenceGraph.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 3,
-    "darkRgbaBg": 4,
-    "lightFg": 8
-  },
-  "/components/doc-browser/AudioWavePlayer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/doc-browser/BulkActionBar.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/doc-browser/CreatePaletteFab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 1
-  },
-  "/components/doc-browser/DocBrowser.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 4
-  },
-  "/components/doc-browser/DocumentStoreBrowser.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/doc-browser/InlineCommentOverlay.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/doc-browser/InteractiveTranscriptDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/doc-browser/TranscriptKaraoke.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/doc-browser/VersionHistoryModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/components/effects/BlackHoleVortex.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/effects/CssRainBackground.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/components/effects/GlowingCard.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/effects/HomeAmbientBackdrop.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/effects/NeonButton.tsx": {
-    "whiteAlpha": 4,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/effects/NightSkyBackground.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 5,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/effects/OrbitLoader.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/effects/RippleImageTransition.css": {
-    "whiteAlpha": 2,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/effects/SliceFlipTransition.css": {
-    "whiteAlpha": 7,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 3
-  },
-  "/components/file-preview/FilePreview.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/components/file-preview/MarkdownViewer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/components/itemSearchCombobox.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/components/llm-logs/GenerationDetailsDrawer.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 2,
-    "darkRgbaBg": 1,
-    "lightFg": 7
-  },
-  "/components/llm-logs/LlmGenerationsView.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/components/llm-logs/llmLogsView.helpers.ts": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 16
-  },
-  "/components/llm/LlmRequestDetailDialog.tsx": {
-    "whiteAlpha": 5,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/login/ConvergingBeamsBackdrop.tsx": {
-    "whiteAlpha": 4,
-    "darkHex": 3,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/login/XAiBackdrop.tsx": {
-    "whiteAlpha": 20,
-    "darkHex": 3,
-    "darkRgbaBg": 3,
-    "lightFg": 0
-  },
-  "/components/marketplace/MarketplaceCard.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/components/marketplace/SkillDetailModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/components/marketplace/SkillShareDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/components/mobile/appStore.tsx": {
-    "whiteAlpha": 3,
-    "darkHex": 5,
-    "darkRgbaBg": 6,
-    "lightFg": 2
-  },
-  "/components/mobile/MobileBottomSheet.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/components/mobile/MobileFab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/mobile/MobileOverflowMenu.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 0
   },
   "/components/MobileCompatGate.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 1
   },
   "/components/MobileSafeBoundary.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/components/model/PlatformAvailableModelsDialog.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/components/model/PoolHealthOverview.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/PdfThumbnail.tsx": {
-    "whiteAlpha": 2,
     "darkHex": 3,
     "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/components/prd-preview/PrdPreviewPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/components/reactbits/SpotlightCard.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 2,
+    "whiteAlpha": 2
   },
   "/components/RichComposer/ImageChipNode.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 1
   },
   "/components/RichComposer/ImageMentionPlugin.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/RichComposer/ReadOnlyImageChip.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/components/agent-shell/AgentFullscreenLayout.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/agent-shell/agent-cards.css": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/components/ai-news/AiNewsTimeline.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 9,
+    "whiteAlpha": 2
+  },
+  "/components/ai-news/UpdateCenterNewsTeaser.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/ai-news/aiNewsShared.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 21,
+    "whiteAlpha": 0
+  },
+  "/components/assistant/AssistantAttachments.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/components/changelog/ChangelogBell.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/components/config-management/MarketplaceWatermarkCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/components/daily-tips/AvatarProgressRing.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/components/daily-tips/SpotlightOverlay.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 6,
+    "lightFg": 20,
+    "whiteAlpha": 11
+  },
+  "/components/daily-tips/TipCard.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/components/daily-tips/TipsDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/components/design/Card.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 4
+  },
+  "/components/design/GlassCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 10
+  },
+  "/components/design/GlassSwitch.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/components/design/KpiCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 1
+  },
+  "/components/design/PageHeader.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 2
+  },
+  "/components/design/SegmentedTabs.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/components/doc-browser/AcceptanceEvidenceGraph.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 4,
+    "lightFg": 8,
+    "whiteAlpha": 2
+  },
+  "/components/doc-browser/AudioWavePlayer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/components/doc-browser/BulkActionBar.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/components/doc-browser/CreatePaletteFab.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/components/doc-browser/DocBrowser.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 3,
+    "lightFg": 4,
+    "whiteAlpha": 1
+  },
+  "/components/doc-browser/DocumentStoreBrowser.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/doc-browser/InlineCommentOverlay.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/doc-browser/InteractiveTranscriptDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/components/doc-browser/TranscriptKaraoke.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/components/doc-browser/VersionHistoryModal.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/effects/BlackHoleVortex.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/effects/CssRainBackground.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/effects/GlowingCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/components/effects/HomeAmbientBackdrop.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/components/effects/NeonButton.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 4
+  },
+  "/components/effects/NightSkyBackground.tsx": {
+    "darkHex": 5,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/components/effects/OrbitLoader.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/components/effects/RippleImageTransition.css": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 2
+  },
+  "/components/effects/SliceFlipTransition.css": {
+    "darkHex": 1,
+    "darkRgbaBg": 1,
+    "lightFg": 3,
+    "whiteAlpha": 7
+  },
+  "/components/file-preview/FilePreview.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/components/file-preview/MarkdownViewer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/components/itemSearchCombobox.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/components/llm-logs/GenerationDetailsDrawer.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 1,
+    "lightFg": 7,
+    "whiteAlpha": 1
+  },
+  "/components/llm-logs/LlmGenerationsView.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 1
+  },
+  "/components/llm-logs/llmLogsView.helpers.ts": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 16,
+    "whiteAlpha": 0
+  },
+  "/components/llm/LlmRequestDetailDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 5
+  },
+  "/components/login/ConvergingBeamsBackdrop.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 4
+  },
+  "/components/login/XAiBackdrop.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 3,
+    "lightFg": 0,
+    "whiteAlpha": 20
+  },
+  "/components/marketplace/MarketplaceCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/components/marketplace/SkillDetailModal.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/marketplace/SkillShareDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/mobile/MobileBottomSheet.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/mobile/MobileFab.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/components/mobile/MobileOverflowMenu.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/components/mobile/appStore.tsx": {
+    "darkHex": 5,
+    "darkRgbaBg": 6,
+    "lightFg": 2,
+    "whiteAlpha": 3
+  },
+  "/components/model/PlatformAvailableModelsDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/components/model/PoolHealthOverview.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/components/prd-preview/PrdPreviewPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/reactbits/SpotlightCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
   },
   "/components/share-dock/ShareDock.css": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 1
   },
   "/components/share-dock/useDockDrag.ts": {
-    "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 2
   },
   "/components/showcase/LiteraryCard.tsx": {
-    "whiteAlpha": 4,
     "darkHex": 8,
     "darkRgbaBg": 5,
-    "lightFg": 5
+    "lightFg": 5,
+    "whiteAlpha": 4
   },
   "/components/showcase/ShowcaseGallery.tsx": {
-    "whiteAlpha": 10,
     "darkHex": 7,
     "darkRgbaBg": 5,
-    "lightFg": 6
+    "lightFg": 6,
+    "whiteAlpha": 10
   },
   "/components/showcase/SubmissionCard.tsx": {
-    "whiteAlpha": 4,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 4
   },
   "/components/showcase/SubmissionDetailModal.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 2,
     "darkRgbaBg": 4,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 1
   },
   "/components/skills/SystemPromptsPanel.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 3,
+    "whiteAlpha": 1
   },
   "/components/sse/SsePhaseBar.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 1
   },
   "/components/streaming/AiPreviewModal.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 0
   },
   "/components/sync/SendToPeerDialog.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 9,
-    "lightFg": 17
+    "lightFg": 17,
+    "whiteAlpha": 0
   },
   "/components/team/GroupAccessDialog.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/team/TeamManagerPanel.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/three/AttentionLandscape.tsx": {
-    "whiteAlpha": 2,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 2
   },
   "/components/ui/DesktopDownloadDialog.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 0
   },
   "/components/ui/Dialog.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/ui/GenSweepLoader.tsx": {
-    "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 3
+    "lightFg": 3,
+    "whiteAlpha": 5
   },
   "/components/ui/GlobalDefectSubmitDialog.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 20
+    "lightFg": 20,
+    "whiteAlpha": 1
   },
   "/components/ui/ImageLightbox.tsx": {
-    "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 7,
-    "lightFg": 5
+    "lightFg": 5,
+    "whiteAlpha": 5
   },
   "/components/ui/ImagePreviewDialog.tsx": {
-    "whiteAlpha": 3,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 3
   },
   "/components/ui/MarkdownContent.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 3,
+    "whiteAlpha": 0
   },
   "/components/ui/MermaidDiagram.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/ui/MobileTabBar.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 8
+    "lightFg": 8,
+    "whiteAlpha": 0
   },
   "/components/ui/SystemDialogHost.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/ui/UpdateTimeline.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 5
+    "lightFg": 5,
+    "whiteAlpha": 0
   },
   "/components/ui/UserProfilePopover.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 4
+    "lightFg": 4,
+    "whiteAlpha": 0
   },
   "/components/ui/VideoLoader.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 7,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 1
   },
   "/components/ui/WorkflowProgressBar.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 0
   },
   "/components/visual-agent/DrawingBoardDialog.tsx": {
-    "whiteAlpha": 39,
     "darkHex": 3,
     "darkRgbaBg": 2,
-    "lightFg": 23
+    "lightFg": 23,
+    "whiteAlpha": 39
   },
   "/components/visual-agent/ImageQuickActionBar.tsx": {
-    "whiteAlpha": 8,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 8
+    "lightFg": 8,
+    "whiteAlpha": 8
   },
   "/components/visual-agent/ImageQuickEditInput.tsx": {
-    "whiteAlpha": 3,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 3
   },
   "/components/visual-agent/MaskPaintCanvas.tsx": {
-    "whiteAlpha": 17,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 11
+    "lightFg": 11,
+    "whiteAlpha": 17
   },
   "/components/visual-agent/QuickActionConfigPanel.tsx": {
-    "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 5
   },
   "/components/visual-agent/SizePickerPanel.tsx": {
-    "whiteAlpha": 10,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 6
+    "lightFg": 6,
+    "whiteAlpha": 10
   },
   "/components/visual-creation/VisualCreationMiniPanel.tsx": {
-    "whiteAlpha": 21,
     "darkHex": 0,
     "darkRgbaBg": 5,
-    "lightFg": 10
+    "lightFg": 10,
+    "whiteAlpha": 21
   },
   "/components/watermark/WatermarkSettingsPanel.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 4,
     "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/components/web-hosting/ask/AskConfigDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 5,
+    "whiteAlpha": 0
   },
   "/components/web-hosting/FolderManager.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/web-hosting/ShareAnalyticsDrawer.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 4
+    "lightFg": 4,
+    "whiteAlpha": 0
   },
   "/components/web-hosting/SitePreviewModal.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 5,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/web-hosting/SiteViewersDrawer.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/components/web-hosting/ask/AskConfigDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/components/weekly-poster/AutoPublishDialog.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 2,
     "darkRgbaBg": 2,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 0
   },
   "/components/weekly-poster/WeeklyPosterModal.tsx": {
-    "whiteAlpha": 47,
     "darkHex": 16,
     "darkRgbaBg": 19,
-    "lightFg": 17
+    "lightFg": 17,
+    "whiteAlpha": 47
   },
   "/layouts/AppShell.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 3,
     "darkRgbaBg": 4,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 1
   },
   "/lib/appStoreTokens.ts": {
-    "whiteAlpha": 3,
     "darkHex": 5,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 3
   },
   "/lib/avatar.ts": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/lib/fileTypeRegistry.ts": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 8
+    "lightFg": 8,
+    "whiteAlpha": 0
   },
   "/lib/glassStyles.ts": {
-    "whiteAlpha": 19,
     "darkHex": 0,
     "darkRgbaBg": 11,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 19
   },
   "/lib/marketplaceTypes.tsx": {
-    "whiteAlpha": 2,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 10
+    "lightFg": 10,
+    "whiteAlpha": 2
   },
   "/lib/platformColors.ts": {
-    "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 3,
+    "whiteAlpha": 2
   },
   "/lib/protocolRegistry.ts": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 6
+    "lightFg": 6,
+    "whiteAlpha": 0
   },
   "/pages/AdminWebPagesPage.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/ai-chat/AdvancedVisualAgentTab.tsx": {
-    "whiteAlpha": 73,
-    "darkHex": 2,
-    "darkRgbaBg": 10,
-    "lightFg": 48
-  },
-  "/pages/ai-chat/components/ChatMessageItem.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 1
-  },
-  "/pages/ai-toolbox/components/PaAgentCardArt.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 3,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/ai-toolbox/components/PaSecretaryHeroArt.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 3,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/ai-toolbox/components/PmAgentCardArt.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/ai-toolbox/components/ProductAgentCardArt.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 3,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/ai-toolbox/components/ProjectRouteAgentCardArt.tsx": {
-    "whiteAlpha": 27,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/ai-toolbox/components/QuickCreateWizard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/ai-toolbox/components/ReviewAgentCardArt.tsx": {
-    "whiteAlpha": 10,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/ai-toolbox/components/SpotlightEffect.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/ai-toolbox/components/ToolCard.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/ai-toolbox/components/ToolDetail.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 8
-  },
-  "/pages/ai-toolbox/components/ToolEditor.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/ai-toolbox/components/ToolRunner.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/ai-toolbox/MobileToolboxView.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/ai-toolbox/SharedConversation.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 5,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/arena/ArenaPage.tsx": {
-    "whiteAlpha": 39,
-    "darkHex": 2,
-    "darkRgbaBg": 12,
-    "lightFg": 9
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/pages/AssetsManagePage.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 2
-  },
-  "/pages/authz/MenuPermissionDialog.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/authz/PermissionMatrix.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/authz/PermissionPopover.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
+    "lightFg": 2,
+    "whiteAlpha": 0
   },
   "/pages/AuthzPage.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 4,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/pages/AutomationRulesPage.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 4
-  },
-  "/pages/ccas-agent/CcasAgentPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/ccas-agent/CcasFlowTab.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/ccas-agent/CcasKnowledgePickerDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/ccas-agent/sql/CcasSqlDeduper.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/ccas-agent/sql/CcasSqlSnippets.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/cds-agent/CdsAgentPage.tsx": {
-    "whiteAlpha": 178,
-    "darkHex": 5,
-    "darkRgbaBg": 97,
-    "lightFg": 52
-  },
-  "/pages/changelog/changelog-dynamic.css": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/changelog/ChangelogPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/channel-trace-agent/ImportPasswordModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/channels/ChannelsPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/channels/components/TaskDetailDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/channels/components/WhitelistEditDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 2
-  },
-  "/pages/channels/IdentityMappingsPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/chat/chat.css": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 7
+    "lightFg": 4,
+    "whiteAlpha": 0
   },
   "/pages/DataManagePage.tsx": {
-    "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 4
+    "lightFg": 4,
+    "whiteAlpha": 2
   },
   "/pages/DataTransferPage.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 4,
-    "lightFg": 11
-  },
-  "/pages/defect-agent/components/DefectCard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 7
-  },
-  "/pages/defect-agent/components/DefectDetailPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 7
-  },
-  "/pages/defect-agent/components/DefectFixReportPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/defect-agent/components/DefectListRow.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/defect-agent/components/DefectSubmitPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 5
-  },
-  "/pages/defect-agent/components/KanbanBoard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/defect-agent/components/StatsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/defect-agent/components/TemplateDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 11,
+    "whiteAlpha": 1
   },
   "/pages/DesktopAssetsPage.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 1
-  },
-  "/pages/document-store/DocApplyDiffModal.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 4,
-    "lightFg": 7
-  },
-  "/pages/document-store/DocumentGalaxyView.tsx": {
-    "whiteAlpha": 49,
-    "darkHex": 9,
-    "darkRgbaBg": 13,
-    "lightFg": 56
-  },
-  "/pages/document-store/DocumentStorePage.tsx": {
-    "whiteAlpha": 4,
-    "darkHex": 4,
-    "darkRgbaBg": 2,
-    "lightFg": 7
-  },
-  "/pages/document-store/GalaxyStandalonePage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/document-store/InlineCommentDrawer.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 2
-  },
-  "/pages/document-store/ReaderPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/document-store/RecordAudioSheet.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 5
-  },
-  "/pages/document-store/ReprocessChatDrawer.tsx": {
-    "whiteAlpha": 4,
-    "darkHex": 0,
-    "darkRgbaBg": 7,
-    "lightFg": 9
-  },
-  "/pages/document-store/ShortVideoMaterialDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/document-store/SubscriptionDetailDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 3
-  },
-  "/pages/document-store/SubtitleGenerationDrawer.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 3
-  },
-  "/pages/document-store/SyncCenterDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 14,
-    "lightFg": 25
-  },
-  "/pages/document-store/TeamWebPagesSection.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/document-store/TranscribeFlowDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 3
-  },
-  "/pages/document-store/UniverseGraphPage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 2,
-    "darkRgbaBg": 7,
-    "lightFg": 26
-  },
-  "/pages/document-store/ViewersDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 9
-  },
-  "/pages/email-agent/EmailAgentPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/email-agent/EmailAiDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/email-agent/EmailTemplateEditorModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/emergence/emergence.css": {
-    "whiteAlpha": 3,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/emergence/EmergenceCanvas.tsx": {
-    "whiteAlpha": 5,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/emergence/EmergenceIntroPage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/emergence/EmergenceNode.tsx": {
-    "whiteAlpha": 7,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 0
   },
   "/pages/ExecutiveDashboardPage.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
-  },
-  "/pages/front-end-agent/front-end-agent.css": {
-    "whiteAlpha": 6,
-    "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 5
-  },
-  "/pages/front-end-agent/FrontEndAgentPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/front-end-agent/FrontEndPdaGuide.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/front-end-agent/FrontEndProjectTable.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 3,
+    "whiteAlpha": 1
   },
   "/pages/GroupsPage.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 7
-  },
-  "/pages/home/components/LanguageToggle.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/home/components/ProductMockup.tsx": {
-    "whiteAlpha": 11,
-    "darkHex": 11,
-    "darkRgbaBg": 1,
-    "lightFg": 2
-  },
-  "/pages/home/components/StaticBackdrop.tsx": {
-    "whiteAlpha": 3,
-    "darkHex": 2,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/home/LandingPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 3,
-    "lightFg": 0
-  },
-  "/pages/home/sections/AgentGrid.tsx": {
-    "whiteAlpha": 5,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/home/sections/CommunityPulse.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/home/sections/DesktopDownload.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/home/sections/FeatureDeepDive.tsx": {
-    "whiteAlpha": 9,
-    "darkHex": 9,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/home/sections/FinalCta.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/home/sections/HeroSection.tsx": {
-    "whiteAlpha": 5,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/home/sections/HowItWorks.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/home/sections/SignatureCinema.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 3,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/home/sections/StatsStrip.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/home/sections/ThreePillars.tsx": {
-    "whiteAlpha": 17,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/home/sections/WorkflowCanvas.tsx": {
-    "whiteAlpha": 10,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 4
-  },
-  "/pages/lab-llm/LlmLabTab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 3
-  },
-  "/pages/lab-showcase/ShowcaseLabTab.tsx": {
-    "whiteAlpha": 5,
-    "darkHex": 8,
-    "darkRgbaBg": 5,
-    "lightFg": 3
-  },
-  "/pages/lab-tools/ToolsLabTab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/lab-workshop/WorkshopLabTab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 5
-  },
-  "/pages/labs/liquid-glass-demo.css": {
-    "whiteAlpha": 32,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/labs/MySharesPage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 6
-  },
-  "/pages/labs/ShareLinkTesterPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/learning-center/LearningCenterPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/library/ClayButton.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 3,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/library/LibraryDocReader.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 45,
-    "darkRgbaBg": 0,
-    "lightFg": 7
-  },
-  "/pages/library/LibraryLandingPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 66,
-    "darkRgbaBg": 0,
-    "lightFg": 3
-  },
-  "/pages/library/LibraryShareViewPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/library/LibraryStoreDetailPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 19,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/literary-agent/ArticleIllustrationEditorPage.tsx": {
-    "whiteAlpha": 32,
-    "darkHex": 0,
-    "darkRgbaBg": 8,
-    "lightFg": 43
-  },
-  "/pages/literary-agent/LiteraryAgentWorkspaceListPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 13,
-    "darkRgbaBg": 5,
-    "lightFg": 3
+    "lightFg": 7,
+    "whiteAlpha": 1
   },
   "/pages/LlmLogsPage.tsx": {
-    "whiteAlpha": 5,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 17
+    "lightFg": 17,
+    "whiteAlpha": 5
   },
   "/pages/LoginPage.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/marketplace/skillOpenApi/statusBadge.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/md-to-ppt-agent/MdToPptAgentPage.tsx": {
-    "whiteAlpha": 5,
-    "darkHex": 18,
-    "darkRgbaBg": 2,
-    "lightFg": 3
-  },
-  "/pages/mobile-home/DailyPostPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/model-manage/DataTransferDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 3
-  },
-  "/pages/ModelAppGroupPage.tsx": {
-    "whiteAlpha": 3,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 3
-  },
-  "/pages/ModelManagePage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 4
-  },
-  "/pages/ModelPoolManagePage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/open-platform/AppsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 2
-  },
-  "/pages/open-platform/ChannelsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/open-platform/OpenApiPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 3,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/open-platform/TutorialEmailPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/open-platform/WebhookConfigDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/open-platform/WorkflowsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/pa-agent/paAgent.css": {
-    "whiteAlpha": 14,
-    "darkHex": 8,
-    "darkRgbaBg": 1,
-    "lightFg": 10
-  },
-  "/pages/pa-agent/PaAgentPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/pa-agent/PaAssistantChat.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 6
-  },
-  "/pages/pa-agent/PaProfilePanel.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 5,
-    "darkRgbaBg": 1,
-    "lightFg": 6
-  },
-  "/pages/pa-agent/PaReviewDrawer.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 9
-  },
-  "/pages/pa-agent/PaTaskBoard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 8
-  },
-  "/pages/pm-agent/AuditLogView.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/BriefingManagePanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/pm-agent/BurndownPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/pm-agent/ClosureReportPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/pm-agent/DashboardView.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 6
-  },
-  "/pages/pm-agent/DecisionsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/pm-agent/EvaluatePanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 6
-  },
-  "/pages/pm-agent/GanttChart.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/GlobalView.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/pm-agent/GoalDecomposePanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/pm-agent/goals-canvas/GoalDetailDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 8
-  },
-  "/pages/pm-agent/goals-canvas/GoalFlowNode.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/goals-canvas/GoalsDashboard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/pm-agent/GoalsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 8
-  },
-  "/pages/pm-agent/ImportPersonalReportModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/KanbanBoard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/MembersPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/MilestoneDetailDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 8
-  },
-  "/pages/pm-agent/MilestoneDetailPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/pm-agent/MilestonesBar.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/pm-agent/MilestonesPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/pm-agent/MilestoneSuggestPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/PmAgentPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/PmAssistantPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/pm-agent/PmBriefingSection.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/pmConstants.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 23
-  },
-  "/pages/pm-agent/PmQuickActionsCard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/pm-agent/PmReportsSection.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/PmTodosCard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/ProjectDetailView.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/StakeholderPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/TaskDetailDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/TaskDetailPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/TaskWorkLogPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/pm-agent/WeeklyReportsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 4,
+    "whiteAlpha": 1
   },
   "/pages/PortfolioShowcasePage.tsx": {
-    "whiteAlpha": 31,
     "darkHex": 3,
     "darkRgbaBg": 5,
-    "lightFg": 22
-  },
-  "/pages/pr-review/PrRawContentModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/pr-review/PrReviewPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/ActivityTimeline.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/product-agent/CustomerSearchSelect.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/DetailRecordActions.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/FeatureCatalogTab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 4,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/FeatureImportDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/GlobalSearch.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/KanbanBoard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/knowledge/knowledge.css": {
-    "whiteAlpha": 10,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 2
-  },
-  "/pages/product-agent/knowledge/KnowledgeListTab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/knowledge/OverviewKnowledgeList.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/knowledge/RichKnowledgeEditor.tsx": {
-    "whiteAlpha": 3,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/product-agent/knowledge/shared.ts": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 13
-  },
-  "/pages/product-agent/knowledge/VersionKnowledgeCard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/knowledge/VersionLinkDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/listFilter.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/OverviewShell.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 7
-  },
-  "/pages/product-agent/ProductAssistantPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/product-agent/ProductDefectDetail.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/ProductGraphCanvas.tsx": {
-    "whiteAlpha": 13,
-    "darkHex": 2,
-    "darkRgbaBg": 1,
-    "lightFg": 12
-  },
-  "/pages/product-agent/ProductHistoryImportDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/ProductImportDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/ProductObjectDetailPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/product-agent/ProductRelationModals.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/QuickActionsCard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/ReportsTab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/product-agent/RequirementCreateForm.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 6,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/RequirementRtfImportDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/RtmMatrix.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/SettingsSection.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/SingleProductView.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/product-agent/TapdPropertyPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/UpgradeRequestsTab.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/product-agent/VersionWorkflowImportDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/VersionWorkflowTab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 4,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/WorkflowBar.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/product-agent/WorkflowTemplateSection.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/product-agent/WorkflowTransitionDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/product-agent/WorkflowTransitionRuleModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/project-route-agent/ProjectRouteAgentPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/public-profile/OwnerDecorator.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/public-profile/PlazaCard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 8,
-    "darkRgbaBg": 4,
-    "lightFg": 1
-  },
-  "/pages/public-profile/profileBackgrounds.ts": {
-    "whiteAlpha": 1,
-    "darkHex": 8,
-    "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 22,
+    "whiteAlpha": 31
   },
   "/pages/PublicProfilePage.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 3,
     "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/report-agent/components/DailyLogPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 6
-  },
-  "/pages/report-agent/components/DataSourceManager.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/report-agent/components/HistoryTrendsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 7
-  },
-  "/pages/report-agent/components/MarkdownImportModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/report-agent/components/MyRecordsListPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 4,
-    "lightFg": 1
-  },
-  "/pages/report-agent/components/PersonalSourcesPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 3
-  },
-  "/pages/report-agent/components/ReportCommentComposer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 1
-  },
-  "/pages/report-agent/components/ReportEditor.tsx": {
-    "whiteAlpha": 4,
-    "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 5
-  },
-  "/pages/report-agent/components/ReportMainView.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 5,
-    "lightFg": 4
-  },
-  "/pages/report-agent/components/ReportTableSectionView.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/report-agent/components/RichTextMarkdownContent.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/report-agent/components/RightRailPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/report-agent/components/SettingsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/report-agent/components/ShareTeamWeekDialog.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/report-agent/components/StatsCardPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/report-agent/components/TeamDashboard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 5
-  },
-  "/pages/report-agent/components/TeamIssuesPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/report-agent/components/TeamWorkflowPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/report-agent/components/TemplateManager.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/report-agent/components/WebhookSettingsPanel.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/report-agent/components/WeekNavRail.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/report-agent/ReportDetailPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 1
   },
   "/pages/ReportTeamShareViewPage.tsx": {
-    "whiteAlpha": 14,
     "darkHex": 3,
     "darkRgbaBg": 2,
-    "lightFg": 26
-  },
-  "/pages/review-agent/components/AppealHistoryDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/review-agent/components/AppealSubmitDialog.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/review-agent/ReviewAgentDimensionsModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/review-agent/ReviewAgentWebhookModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 6
-  },
-  "/pages/settings/PeerNodesSettings.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/settings/ShortLinksAdminSettings.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/settings/UpdateAccelerationSettings.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 26,
+    "whiteAlpha": 14
   },
   "/pages/ShareViewPage.tsx": {
-    "whiteAlpha": 18,
     "darkHex": 4,
     "darkRgbaBg": 6,
-    "lightFg": 24
-  },
-  "/pages/shitu-agent/ShituHelpDrawer.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/shortcuts-agent/ShortcutInstallPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 2,
-    "darkRgbaBg": 0,
-    "lightFg": 7
-  },
-  "/pages/shortcuts-agent/ShortcutsPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 3
+    "lightFg": 24,
+    "whiteAlpha": 18
   },
   "/pages/ShortLinkRouter.tsx": {
-    "whiteAlpha": 2,
     "darkHex": 3,
     "darkRgbaBg": 2,
-    "lightFg": 4
+    "lightFg": 4,
+    "whiteAlpha": 2
   },
   "/pages/SkillAgentPage.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 23
+    "lightFg": 23,
+    "whiteAlpha": 0
   },
   "/pages/SkillShareViewPage.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 3,
     "darkRgbaBg": 0,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 1
   },
   "/pages/SkillsPage.tsx": {
-    "whiteAlpha": 4,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 19
-  },
-  "/pages/speech-agent/SpeechAgentPlayPage.tsx": {
-    "whiteAlpha": 8,
-    "darkHex": 10,
-    "darkRgbaBg": 0,
-    "lightFg": 6
-  },
-  "/pages/system-logs/SystemLogsTab.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
-  },
-  "/pages/tapd-bug-agent/TapdBugReportPage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/task-tree/taskTree.css": {
-    "whiteAlpha": 4,
-    "darkHex": 4,
-    "darkRgbaBg": 1,
-    "lightFg": 1
-  },
-  "/pages/task-tree/TaskTreePage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 5
-  },
-  "/pages/team-activity/ExperienceBoard.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/team-activity/ExperienceDrill.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/team-activity/ExperienceMap.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/team-activity/RequirementConvertModal.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/team-activity/StatsPanels.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 2
-  },
-  "/pages/team-activity/TimeRangePicker.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/tutorial-email/TutorialEmailPage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 5
+    "lightFg": 19,
+    "whiteAlpha": 4
   },
   "/pages/UsersPage.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 3
-  },
-  "/pages/video-agent/videoConsole.css": {
-    "whiteAlpha": 0,
-    "darkHex": 23,
-    "darkRgbaBg": 9,
-    "lightFg": 47
-  },
-  "/pages/video-agent/VideoGenDirectPanel.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 4,
-    "darkRgbaBg": 1,
-    "lightFg": 3
-  },
-  "/pages/video-agent/VideoStoryboardEditor.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 8
-  },
-  "/pages/video-agent/videoStudioRegistry.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 8
-  },
-  "/pages/visual-agent/MobileVisualAgentEditor.tsx": {
-    "whiteAlpha": 40,
-    "darkHex": 2,
-    "darkRgbaBg": 2,
-    "lightFg": 23
-  },
-  "/pages/visual-agent/VisualAgentFullscreenPage.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 1,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/visual-agent/VisualAgentWorkspaceEditorPage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 1
-  },
-  "/pages/visual-agent/VisualAgentWorkspaceListPage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 2,
-    "darkRgbaBg": 5,
-    "lightFg": 7
-  },
-  "/pages/visual-storyboard/VisualStoryboardPage.tsx": {
-    "whiteAlpha": 14,
-    "darkHex": 1,
-    "darkRgbaBg": 6,
-    "lightFg": 9
+    "lightFg": 3,
+    "whiteAlpha": 0
   },
   "/pages/WebPagesPage.tsx": {
-    "whiteAlpha": 3,
     "darkHex": 0,
     "darkRgbaBg": 7,
-    "lightFg": 16
+    "lightFg": 16,
+    "whiteAlpha": 3
+  },
+  "/pages/ai-chat/AdvancedVisualAgentTab.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 10,
+    "lightFg": 48,
+    "whiteAlpha": 73
+  },
+  "/pages/ai-chat/components/ChatMessageItem.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/pages/ai-toolbox/MobileToolboxView.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/ai-toolbox/SharedConversation.tsx": {
+    "darkHex": 5,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/ai-toolbox/components/PaAgentCardArt.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/ai-toolbox/components/PaSecretaryHeroArt.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/ai-toolbox/components/PmAgentCardArt.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/pages/ai-toolbox/components/ProductAgentCardArt.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/pages/ai-toolbox/components/ProjectRouteAgentCardArt.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 27
+  },
+  "/pages/ai-toolbox/components/QuickCreateWizard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/ai-toolbox/components/ReviewAgentCardArt.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 10
+  },
+  "/pages/ai-toolbox/components/SpotlightEffect.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/ai-toolbox/components/ToolCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 1
+  },
+  "/pages/ai-toolbox/components/ToolDetail.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 8,
+    "whiteAlpha": 1
+  },
+  "/pages/ai-toolbox/components/ToolEditor.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/ai-toolbox/components/ToolRunner.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/arena/ArenaPage.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 12,
+    "lightFg": 9,
+    "whiteAlpha": 39
+  },
+  "/pages/authz/MenuPermissionDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/authz/PermissionMatrix.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/pages/authz/PermissionPopover.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/ccas-agent/CcasAgentPage.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/ccas-agent/CcasFlowTab.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/ccas-agent/CcasKnowledgePickerDrawer.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/ccas-agent/sql/CcasSqlDeduper.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/ccas-agent/sql/CcasSqlSnippets.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/cds-agent/CdsAgentPage.tsx": {
+    "darkHex": 5,
+    "darkRgbaBg": 97,
+    "lightFg": 52,
+    "whiteAlpha": 178
+  },
+  "/pages/changelog/ChangelogPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/changelog/changelog-dynamic.css": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/pages/channel-trace-agent/ImportPasswordModal.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/channels/ChannelsPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/channels/IdentityMappingsPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/channels/components/TaskDetailDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/channels/components/WhitelistEditDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/chat/chat.css": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 7,
+    "whiteAlpha": 0
+  },
+  "/pages/defect-agent/components/DefectCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 7,
+    "whiteAlpha": 0
+  },
+  "/pages/defect-agent/components/DefectDetailPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 7,
+    "whiteAlpha": 0
+  },
+  "/pages/defect-agent/components/DefectFixReportPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/defect-agent/components/DefectListRow.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/defect-agent/components/DefectSubmitPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/defect-agent/components/KanbanBoard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/defect-agent/components/StatsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/defect-agent/components/TemplateDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/DocApplyDiffModal.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 4,
+    "lightFg": 7,
+    "whiteAlpha": 2
+  },
+  "/pages/document-store/DocumentGalaxyView.tsx": {
+    "darkHex": 9,
+    "darkRgbaBg": 13,
+    "lightFg": 56,
+    "whiteAlpha": 49
+  },
+  "/pages/document-store/DocumentStorePage.tsx": {
+    "darkHex": 4,
+    "darkRgbaBg": 2,
+    "lightFg": 7,
+    "whiteAlpha": 4
+  },
+  "/pages/document-store/GalaxyStandalonePage.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/InlineCommentDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 2,
+    "whiteAlpha": 1
+  },
+  "/pages/document-store/ReaderPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/RecordAudioSheet.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 3,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/ReprocessChatDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 7,
+    "lightFg": 9,
+    "whiteAlpha": 4
+  },
+  "/pages/document-store/ShortVideoMaterialDialog.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/SubscriptionDetailDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 3,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/SubtitleGenerationDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 3,
+    "lightFg": 3,
+    "whiteAlpha": 1
+  },
+  "/pages/document-store/SyncCenterDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 14,
+    "lightFg": 25,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/TeamWebPagesSection.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/TranscribeFlowDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 3,
+    "lightFg": 3,
+    "whiteAlpha": 0
+  },
+  "/pages/document-store/UniverseGraphPage.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 7,
+    "lightFg": 26,
+    "whiteAlpha": 1
+  },
+  "/pages/document-store/ViewersDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 9,
+    "whiteAlpha": 0
+  },
+  "/pages/email-agent/EmailAgentPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/email-agent/EmailAiDrawer.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/email-agent/EmailTemplateEditorModal.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/emergence/EmergenceCanvas.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 5
+  },
+  "/pages/emergence/EmergenceIntroPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/emergence/EmergenceNode.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 7
+  },
+  "/pages/emergence/emergence.css": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 3
+  },
+  "/pages/front-end-agent/FrontEndAgentPage.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/front-end-agent/FrontEndPdaGuide.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/front-end-agent/FrontEndProjectTable.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/front-end-agent/front-end-agent.css": {
+    "darkHex": 0,
+    "darkRgbaBg": 3,
+    "lightFg": 5,
+    "whiteAlpha": 6
+  },
+  "/pages/home/LandingPage.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 3,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/home/components/LanguageToggle.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/home/components/ProductMockup.tsx": {
+    "darkHex": 11,
+    "darkRgbaBg": 1,
+    "lightFg": 2,
+    "whiteAlpha": 11
+  },
+  "/pages/home/components/StaticBackdrop.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 3
+  },
+  "/pages/home/sections/AgentGrid.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 5
+  },
+  "/pages/home/sections/CommunityPulse.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/home/sections/DesktopDownload.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/home/sections/FeatureDeepDive.tsx": {
+    "darkHex": 9,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 9
+  },
+  "/pages/home/sections/FinalCta.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 2
+  },
+  "/pages/home/sections/HeroSection.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 5
+  },
+  "/pages/home/sections/HowItWorks.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/home/sections/SignatureCinema.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/home/sections/StatsStrip.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/home/sections/ThreePillars.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 17
+  },
+  "/pages/home/sections/WorkflowCanvas.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 4,
+    "whiteAlpha": 10
+  },
+  "/pages/lab-llm/LlmLabTab.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 3,
+    "whiteAlpha": 0
+  },
+  "/pages/lab-showcase/ShowcaseLabTab.tsx": {
+    "darkHex": 8,
+    "darkRgbaBg": 5,
+    "lightFg": 3,
+    "whiteAlpha": 5
+  },
+  "/pages/lab-tools/ToolsLabTab.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/lab-workshop/WorkshopLabTab.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/labs/MySharesPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 6,
+    "whiteAlpha": 1
+  },
+  "/pages/labs/ShareLinkTesterPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/labs/liquid-glass-demo.css": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 32
+  },
+  "/pages/learning-center/LearningCenterPage.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/library/ClayButton.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/library/LibraryDocReader.tsx": {
+    "darkHex": 45,
+    "darkRgbaBg": 0,
+    "lightFg": 7,
+    "whiteAlpha": 0
+  },
+  "/pages/library/LibraryLandingPage.tsx": {
+    "darkHex": 66,
+    "darkRgbaBg": 0,
+    "lightFg": 3,
+    "whiteAlpha": 0
+  },
+  "/pages/library/LibraryShareViewPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/library/LibraryStoreDetailPage.tsx": {
+    "darkHex": 19,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/literary-agent/ArticleIllustrationEditorPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 8,
+    "lightFg": 43,
+    "whiteAlpha": 32
+  },
+  "/pages/literary-agent/LiteraryAgentWorkspaceListPage.tsx": {
+    "darkHex": 13,
+    "darkRgbaBg": 5,
+    "lightFg": 3,
+    "whiteAlpha": 0
+  },
+  "/pages/marketplace/skillOpenApi/statusBadge.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/md-to-ppt-agent/MdToPptAgentPage.tsx": {
+    "darkHex": 18,
+    "darkRgbaBg": 2,
+    "lightFg": 3,
+    "whiteAlpha": 5
+  },
+  "/pages/mobile-home/DailyPostPage.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/model-manage/DataTransferDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 3,
+    "whiteAlpha": 0
+  },
+  "/pages/open-platform/AppsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/open-platform/ChannelsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/open-platform/OpenApiPanel.tsx": {
+    "darkHex": 3,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/open-platform/TutorialEmailPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/open-platform/WebhookConfigDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/open-platform/WorkflowsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/pa-agent/PaAgentPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/pa-agent/PaAssistantChat.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 6,
+    "whiteAlpha": 1
+  },
+  "/pages/pa-agent/PaProfilePanel.tsx": {
+    "darkHex": 5,
+    "darkRgbaBg": 1,
+    "lightFg": 6,
+    "whiteAlpha": 1
+  },
+  "/pages/pa-agent/PaReviewDrawer.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 1,
+    "lightFg": 9,
+    "whiteAlpha": 1
+  },
+  "/pages/pa-agent/PaTaskBoard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 8,
+    "whiteAlpha": 0
+  },
+  "/pages/pa-agent/paAgent.css": {
+    "darkHex": 8,
+    "darkRgbaBg": 1,
+    "lightFg": 10,
+    "whiteAlpha": 14
+  },
+  "/pages/pm-agent/AuditLogView.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/BriefingManagePanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/BurndownPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/ClosureReportPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/DashboardView.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 6,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/DecisionsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/EvaluatePanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 6,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/GanttChart.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/GlobalView.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/GoalDecomposePanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/GoalsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 8,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/ImportPersonalReportModal.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/KanbanBoard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/MembersPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/MilestoneDetailDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 8,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/MilestoneDetailPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/MilestoneSuggestPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/MilestonesBar.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/MilestonesPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/PmAgentPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/PmAssistantPanel.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/PmBriefingSection.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/PmQuickActionsCard.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/PmReportsSection.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/PmTodosCard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/ProjectDetailView.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/StakeholderPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/TaskDetailDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/TaskDetailPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/TaskWorkLogPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/WeeklyReportsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/goals-canvas/GoalDetailDrawer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 8,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/goals-canvas/GoalFlowNode.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/goals-canvas/GoalsDashboard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/pm-agent/pmConstants.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 23,
+    "whiteAlpha": 0
+  },
+  "/pages/pr-review/PrRawContentModal.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/pr-review/PrReviewPage.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/ActivityTimeline.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/CustomerSearchSelect.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/DetailRecordActions.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/FeatureCatalogTab.tsx": {
+    "darkHex": 4,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/FeatureImportDialog.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/GlobalSearch.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/KanbanBoard.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/OverviewShell.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 7,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/ProductAssistantPanel.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/ProductDefectDetail.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/ProductGraphCanvas.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 1,
+    "lightFg": 12,
+    "whiteAlpha": 13
+  },
+  "/pages/product-agent/ProductHistoryImportDialog.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/ProductImportDialog.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/ProductObjectDetailPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/ProductRelationModals.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/QuickActionsCard.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/ReportsTab.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/RequirementCreateForm.tsx": {
+    "darkHex": 6,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/RequirementRtfImportDialog.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/RtmMatrix.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/SettingsSection.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/SingleProductView.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/TapdPropertyPanel.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/UpgradeRequestsTab.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/pages/product-agent/VersionWorkflowImportDialog.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/VersionWorkflowTab.tsx": {
+    "darkHex": 4,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/WorkflowBar.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/WorkflowTemplateSection.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/WorkflowTransitionDialog.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/WorkflowTransitionRuleModal.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/knowledge/KnowledgeListTab.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/knowledge/OverviewKnowledgeList.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/knowledge/RichKnowledgeEditor.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 3
+  },
+  "/pages/product-agent/knowledge/VersionKnowledgeCard.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/knowledge/VersionLinkDialog.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/knowledge/knowledge.css": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 2,
+    "whiteAlpha": 10
+  },
+  "/pages/product-agent/knowledge/shared.ts": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 13,
+    "whiteAlpha": 0
+  },
+  "/pages/product-agent/listFilter.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/project-route-agent/ProjectRouteAgentPage.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/public-profile/OwnerDecorator.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/public-profile/PlazaCard.tsx": {
+    "darkHex": 8,
+    "darkRgbaBg": 4,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/public-profile/profileBackgrounds.ts": {
+    "darkHex": 8,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 1
+  },
+  "/pages/report-agent/ReportDetailPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/DailyLogPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 6,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/DataSourceManager.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/HistoryTrendsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 7,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/MarkdownImportModal.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/MyRecordsListPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 4,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/PersonalSourcesPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 3,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/ReportCommentComposer.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/ReportEditor.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 3,
+    "lightFg": 5,
+    "whiteAlpha": 4
+  },
+  "/pages/report-agent/components/ReportMainView.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 5,
+    "lightFg": 4,
+    "whiteAlpha": 2
+  },
+  "/pages/report-agent/components/ReportTableSectionView.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/RichTextMarkdownContent.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/pages/report-agent/components/RightRailPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/SettingsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/ShareTeamWeekDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/StatsCardPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/TeamDashboard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/TeamIssuesPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/TeamWorkflowPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/TemplateManager.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/WebhookSettingsPanel.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/report-agent/components/WeekNavRail.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/review-agent/ReviewAgentDimensionsModal.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/review-agent/ReviewAgentWebhookModal.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 6,
+    "whiteAlpha": 0
+  },
+  "/pages/review-agent/components/AppealHistoryDrawer.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/review-agent/components/AppealSubmitDialog.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/pages/settings/PeerNodesSettings.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/settings/ShortLinksAdminSettings.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/settings/UpdateAccelerationSettings.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/shitu-agent/ShituHelpDrawer.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 1,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/shortcuts-agent/ShortcutInstallPage.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 0,
+    "lightFg": 7,
+    "whiteAlpha": 0
+  },
+  "/pages/shortcuts-agent/ShortcutsPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 3,
+    "whiteAlpha": 0
+  },
+  "/pages/speech-agent/SpeechAgentPlayPage.tsx": {
+    "darkHex": 10,
+    "darkRgbaBg": 0,
+    "lightFg": 6,
+    "whiteAlpha": 8
+  },
+  "/pages/system-logs/SystemLogsTab.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 4,
+    "whiteAlpha": 0
+  },
+  "/pages/tapd-bug-agent/TapdBugReportPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/task-tree/TaskTreePage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 5,
+    "whiteAlpha": 0
+  },
+  "/pages/task-tree/taskTree.css": {
+    "darkHex": 4,
+    "darkRgbaBg": 1,
+    "lightFg": 1,
+    "whiteAlpha": 4
+  },
+  "/pages/team-activity/ExperienceBoard.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 1,
+    "whiteAlpha": 0
+  },
+  "/pages/team-activity/ExperienceDrill.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/team-activity/ExperienceMap.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/pages/team-activity/RequirementConvertModal.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/team-activity/StatsPanels.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 2,
+    "whiteAlpha": 0
+  },
+  "/pages/team-activity/TimeRangePicker.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 2,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
+  "/pages/tutorial-email/TutorialEmailPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 5,
+    "whiteAlpha": 1
+  },
+  "/pages/video-agent/VideoGenDirectPanel.tsx": {
+    "darkHex": 4,
+    "darkRgbaBg": 1,
+    "lightFg": 3,
+    "whiteAlpha": 1
+  },
+  "/pages/video-agent/VideoStoryboardEditor.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 8,
+    "whiteAlpha": 0
+  },
+  "/pages/video-agent/videoConsole.css": {
+    "darkHex": 23,
+    "darkRgbaBg": 9,
+    "lightFg": 47,
+    "whiteAlpha": 0
+  },
+  "/pages/video-agent/videoStudioRegistry.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 8,
+    "whiteAlpha": 0
+  },
+  "/pages/visual-agent/MobileVisualAgentEditor.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 2,
+    "lightFg": 23,
+    "whiteAlpha": 40
+  },
+  "/pages/visual-agent/VisualAgentFullscreenPage.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 2
+  },
+  "/pages/visual-agent/VisualAgentWorkspaceEditorPage.tsx": {
+    "darkHex": 0,
+    "darkRgbaBg": 1,
+    "lightFg": 1,
+    "whiteAlpha": 1
+  },
+  "/pages/visual-agent/VisualAgentWorkspaceListPage.tsx": {
+    "darkHex": 2,
+    "darkRgbaBg": 5,
+    "lightFg": 7,
+    "whiteAlpha": 1
+  },
+  "/pages/visual-storyboard/VisualStoryboardPage.tsx": {
+    "darkHex": 1,
+    "darkRgbaBg": 6,
+    "lightFg": 9,
+    "whiteAlpha": 14
   },
   "/pages/weekly-poster/PosterDesignerPage.tsx": {
-    "whiteAlpha": 97,
     "darkHex": 16,
     "darkRgbaBg": 16,
-    "lightFg": 8
+    "lightFg": 8,
+    "whiteAlpha": 97
   },
   "/pages/weekly-poster/WeeklyPosterEditorPage.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 1,
-    "lightFg": 5
+    "lightFg": 5,
+    "whiteAlpha": 0
   },
   "/pages/weekly-poster/WeeklyPosterWizardPage.tsx": {
-    "whiteAlpha": 7,
     "darkHex": 2,
     "darkRgbaBg": 4,
-    "lightFg": 6
+    "lightFg": 6,
+    "whiteAlpha": 7
   },
   "/pages/workflow-agent/ArtifactPreviewModal.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 1
   },
   "/pages/workflow-agent/CapsuleNode.tsx": {
-    "whiteAlpha": 1,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 6
-  },
-  "/pages/workflow-agent/committeeMonthlyHtmlTemplate.ts": {
-    "whiteAlpha": 0,
-    "darkHex": 4,
-    "darkRgbaBg": 2,
-    "lightFg": 19
+    "lightFg": 6,
+    "whiteAlpha": 1
   },
   "/pages/workflow-agent/ExecutionDetailPanel.tsx": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 1
-  },
-  "/pages/workflow-agent/qualityMonthlyTemplate.ts": {
-    "whiteAlpha": 2,
-    "darkHex": 4,
-    "darkRgbaBg": 2,
-    "lightFg": 49
-  },
-  "/pages/workflow-agent/tapdHtmlTemplate.ts": {
-    "whiteAlpha": 4,
-    "darkHex": 4,
-    "darkRgbaBg": 0,
-    "lightFg": 20
-  },
-  "/pages/workflow-agent/workflow-canvas.css": {
-    "whiteAlpha": 6,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 1,
+    "whiteAlpha": 0
   },
   "/pages/workflow-agent/WorkflowCanvas.tsx": {
-    "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 1,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 2
   },
   "/pages/workflow-agent/WorkflowChatPanel.tsx": {
-    "whiteAlpha": 2,
     "darkHex": 0,
     "darkRgbaBg": 2,
-    "lightFg": 8
+    "lightFg": 8,
+    "whiteAlpha": 2
+  },
+  "/pages/workflow-agent/committeeMonthlyHtmlTemplate.ts": {
+    "darkHex": 4,
+    "darkRgbaBg": 2,
+    "lightFg": 19,
+    "whiteAlpha": 0
+  },
+  "/pages/workflow-agent/qualityMonthlyTemplate.ts": {
+    "darkHex": 4,
+    "darkRgbaBg": 2,
+    "lightFg": 49,
+    "whiteAlpha": 2
+  },
+  "/pages/workflow-agent/tapdHtmlTemplate.ts": {
+    "darkHex": 4,
+    "darkRgbaBg": 0,
+    "lightFg": 20,
+    "whiteAlpha": 4
+  },
+  "/pages/workflow-agent/workflow-canvas.css": {
+    "darkHex": 0,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 6
   },
   "/pages/workflow-agent/workflowTemplates.ts": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 12
+    "lightFg": 12,
+    "whiteAlpha": 0
   },
   "/stores/agentSwitcherStore.ts": {
-    "whiteAlpha": 0,
     "darkHex": 0,
     "darkRgbaBg": 0,
-    "lightFg": 9
+    "lightFg": 9,
+    "whiteAlpha": 0
   },
   "/styles/base.css": {
-    "whiteAlpha": 10,
     "darkHex": 1,
     "darkRgbaBg": 2,
-    "lightFg": 1
+    "lightFg": 1,
+    "whiteAlpha": 10
   },
   "/styles/home-launcher.css": {
-    "whiteAlpha": 0,
     "darkHex": 1,
     "darkRgbaBg": 0,
-    "lightFg": 0
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/styles/legacy.css": {
-    "whiteAlpha": 19,
     "darkHex": 2,
     "darkRgbaBg": 8,
-    "lightFg": 2
+    "lightFg": 2,
+    "whiteAlpha": 19
   },
   "/styles/motion.css": {
-    "whiteAlpha": 43,
     "darkHex": 4,
     "darkRgbaBg": 10,
-    "lightFg": 15
+    "lightFg": 15,
+    "whiteAlpha": 43
+  },
+  "/styles/recording-design-palette.css": {
+    "darkHex": 11,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/styles/surface.css": {
-    "whiteAlpha": 69,
     "darkHex": 2,
     "darkRgbaBg": 24,
-    "lightFg": 16
+    "lightFg": 16,
+    "whiteAlpha": 69
   }
 }

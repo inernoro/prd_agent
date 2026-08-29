@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { buildInlineDiffBody, closeDanglingInlineMarks, markLine } from '../selectionDiffMarkup';
+import { buildInlineDiffBody, markLine } from '../selectionDiffMarkup';
 import { DOC_REMARK_PLUGINS, DOC_REHYPE_PLUGINS } from '@/components/file-preview/MarkdownViewer';
 
 /**
@@ -52,29 +52,38 @@ describe('buildInlineDiffBody：只改选区，前后文逐字保留', () => {
     const r = buildInlineDiffBody(body, range, '新句子。');
     expect(r.body.startsWith('开头段落。\n\n')).toBe(true);
     expect(r.body.endsWith('\n\n结尾段落。\n')).toBe(true);
-    expect(r.body).toContain('<del>旧句子。</del>');
-    expect(r.body).toContain('<ins>新句子。</ins>');
+    // 词级 diff：只标真正变了的那个字，「句子。」是两边共有的，不该被标
+    expect(r.body).toContain('<del>旧</del><ins>新</ins>句子。');
     expect(r.added).toBe(1);
     expect(r.removed).toBe(1);
     expect(r.codeChangeUnmarked).toBe(false);
   });
 
-  it('流式期间的半截结果也能标注（增量就是产物本身在生长）', () => {
+  it('半截结果也能标注（错误档拿原文当结果时同理）', () => {
+    // 「新句」与「旧句子。」只共用一个「句」字，相似度不到门槛，退回整行标注
     const r = buildInlineDiffBody(body, range, '新句');
-    expect(r.body).toContain('<ins>新句</ins>');
     expect(r.body).toContain('<del>旧句子。</del>');
+    expect(r.body).toContain('<ins>新句</ins>');
   });
 
-  it('结果与原文逐行相同的部分不标注（只标真正变了的行）', () => {
+  it('没变的行一个标记都不加；变了的那行只标变了的词（2026-08-25 用户：diff 要精准）', () => {
     const multi = '第一行\n第二行\n第三行';
     const b = `前言\n\n${multi}\n\n后记`;
     const rg = { start: b.indexOf(multi), end: b.indexOf(multi) + multi.length };
     const r = buildInlineDiffBody(b, rg, '第一行\n改过的第二行\n第三行');
     expect(r.body).toContain('第一行\n');
-    expect(r.body).toContain('<del>第二行</del>');
-    expect(r.body).toContain('<ins>改过的第二行</ins>');
+    expect(r.body).toContain('第三行');
+    // 「第二行」三个字两边都有，只有「改过的」是新增的
+    expect(r.body).toContain('<ins>改过的</ins>第二行');
+    expect(r.body).not.toContain('<del>第二行</del>');
     expect(r.added).toBe(1);
     expect(r.removed).toBe(1);
+  });
+
+  it('两行完全不相干时不硬凑词级 diff，老实整行标（碎成一地反而看不懂）', () => {
+    const r = buildInlineDiffBody(body, range, '这是一句毫不相干的全新表述内容。');
+    expect(r.body).toContain('<del>旧句子。</del>');
+    expect(r.body).toContain('<ins>这是一句毫不相干的全新表述内容。</ins>');
   });
 
   it('代码围栏内的改动不标色，改后代码保持合法围栏并明说这一点', () => {
@@ -130,16 +139,19 @@ describe('渲染契约：标记必须活到正文渲染器输出的 HTML 里', (
       '1. 新条目',
     ).body;
     const html = render(md);
+    // 序号留在标记外面，列表结构不塌；条目内部走词级 diff，只标变了的那个字
     expect(html).toContain('<li>');
-    expect(html).toContain('<del>旧条目</del>');
-    expect(html).toContain('<ins>新条目</ins>');
+    expect(html).toContain('<del>旧</del>');
+    expect(html).toContain('<ins>新</ins>');
+    expect(html).toContain('条目');
   });
 
   it('删除的列表与新增的列表分成两个 ol，新条目从 1 重新编号', () => {
     const original = '1. 旧一\n2. 旧二';
     const body = `前言\n\n${original}\n\n结尾`;
     const range = { start: body.indexOf(original), end: body.indexOf(original) + original.length };
-    const md = buildInlineDiffBody(body, range, '1. 新一\n2. 新二\n3. 新三').body;
+    // 用完全不相干的条目，逼出「整块删 + 整块增」那条路径（相似的条目会走词级 diff 合成一行）
+    const md = buildInlineDiffBody(body, range, '1. 完全不同的第一项\n2. 完全不同的第二项\n3. 完全不同的第三项').body;
     const html = render(md);
     // 不分开的话六条会连成一个列表，新条目从 3. 开始编号，读起来像「原来有五条」
     expect((html.match(/<ol/g) ?? []).length).toBe(2);
@@ -174,50 +186,5 @@ describe('渲染契约：标记必须活到正文渲染器输出的 HTML 里', (
     expect(html).toContain('<table>');
     expect(html).toContain('<ins>名称</ins>');
     expect(html).toContain('<del>说明</del>');
-  });
-});
-
-describe('closeDanglingInlineMarks：流式半截的行内标记不许露脸', () => {
-  it('打到一半的加粗补上闭合，星号不作为文字渲染', () => {
-    const out = closeDanglingInlineMarks('1. **《标准》V0.1');
-    expect(out).toBe('1. **《标准》V0.1**');
-    expect(render(out)).toContain('<strong>');
-    expect(render('1. **《标准》V0.1')).toContain('**'); // 反证：不处理就会漏星号
-  });
-
-  it('末尾刚敲出半截标记时先摘掉，不会补成三颗星', () => {
-    expect(closeDanglingInlineMarks('这是 **')).toBe('这是 ');
-    expect(closeDanglingInlineMarks('这是 *')).toBe('这是 ');
-  });
-
-  it('行内代码与删除线同样补齐', () => {
-    expect(closeDanglingInlineMarks('调用 `apiRequest')).toBe('调用 `apiRequest`');
-    expect(closeDanglingInlineMarks('这段 ~~作废')).toBe('这段 ~~作废~~');
-  });
-
-  it('已经闭合的不动', () => {
-    expect(closeDanglingInlineMarks('**加粗** 与 `代码`')).toBe('**加粗** 与 `代码`');
-  });
-
-  it('刚吐完的斜体不许被摘掉尾巴（2026-08-21 code review）', () => {
-    // 上一版无条件摘末尾标记再补，而补齐清单里没有单个星号，
-    // 于是完成态的 `*斜体*` 被摘成 `*斜体`，星号反倒露了出来
-    expect(closeDanglingInlineMarks('*斜体*')).toBe('*斜体*');
-    expect(render(closeDanglingInlineMarks('*斜体*'))).toContain('<em>');
-    expect(closeDanglingInlineMarks('前面 *斜体*')).toBe('前面 *斜体*');
-    expect(closeDanglingInlineMarks('`代码`')).toBe('`代码`');
-    expect(closeDanglingInlineMarks('~~删~~')).toBe('~~删~~');
-    // 粗斜体：末尾三颗星是闭合的一部分，摘一颗再补两颗会少掉一颗
-    expect(closeDanglingInlineMarks('***粗斜***')).toBe('***粗斜***');
-  });
-
-  it('打到一半的斜体补上单个星号', () => {
-    expect(closeDanglingInlineMarks('这是 *斜的')).toBe('这是 *斜的*');
-    expect(render(closeDanglingInlineMarks('这是 *斜的'))).toContain('<em>');
-  });
-
-  it('代码围栏里的星号是代码，不参与闭合判断', () => {
-    const t = '```js\nconst a = b ** 2;\n```';
-    expect(closeDanglingInlineMarks(t)).toBe(t);
   });
 });

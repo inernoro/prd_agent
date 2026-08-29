@@ -335,15 +335,22 @@ export function CdsSettingsPage(): JSX.Element {
         />
       }
     >
-      <Workspace className="cds-workspace-settings">
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
-          <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-            <TabsList
-              aria-label="CDS 系统设置分区"
-              className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-0 lg:self-start"
-            >
+      {/* 与项目设置页同一套满铺外壳：两个设置页此前一个 1440 居中、一个 1240 居中，
+          宽度本来就不一致；项目设置改成满铺后若只搬一半，反而更割裂。 */}
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as TabValue)}
+          className="cds-settings-shell"
+        >
+          <div className="cds-settings-layout">
+            <TabsList aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
+              <div className="cds-settings-rail-head">
+                <div className="text-sm font-semibold">CDS 系统设置</div>
+                <div className="truncate font-mono text-[11px] text-muted-foreground">system</div>
+              </div>
               {visibleTabGroups.map((group, groupIdx) => (
-                <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
+                <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
                   <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
                     {group.label}
                   </div>
@@ -360,7 +367,8 @@ export function CdsSettingsPage(): JSX.Element {
               ))}
             </TabsList>
 
-            <div className="cds-settings-content cds-surface-raised cds-hairline min-w-0 p-5">
+            <div className="cds-settings-content min-w-0">
+              <div className="cds-settings-section-body">
               <Suspense fallback={<SettingsTabFallback />}>
                 <TabsContent value="overview">
                   {activeTab === 'overview' ? <OverviewTab /> : null}
@@ -450,6 +458,7 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'danger' ? <DangerOperationsTab onToast={setToast} /> : null}
                 </TabsContent>
               </Suspense>
+              </div>
             </div>
           </div>
         </Tabs>

@@ -123,6 +123,18 @@ public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeIn
         return _inner.BuildUrlForKey(key);
     }
 
+    /// <summary>
+    /// 必须显式转发给内层。
+    ///
+    /// 接口上那个默认实现会退回到本类的 <see cref="BuildUrlForKey"/>，而它只是把 key 原样
+    /// 递给内层——**本站前缀就在这一步丢了**，跨站搬来的地址又会落在错误的对象路径上。
+    /// 包装器不转发新方法是最典型的「建了一半」：编译过、测试过，只在真实跨站时才现形。
+    /// </summary>
+    public string BuildUrlForLogicalKey(string logicalKey)
+    {
+        return _inner.BuildUrlForLogicalKey(logicalKey);
+    }
+
     public async Task DeleteByKeyAsync(string key, CancellationToken ct)
     {
         await _inner.DeleteByKeyAsync(key, ct);

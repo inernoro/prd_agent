@@ -7,44 +7,76 @@
  * 双皮肤：暗色写在 :root，浅色在同文件用 [data-theme="light"] 覆盖（admin-dual-theme.md）。
  */
 
+/*
+ * 配色一律从品牌 token 派生，不再自带一套蓝红（2026-08-25 用户："太过于复古 windows 的感觉"）。
+ *
+ * 上一版是 #3b82f6 蓝底块 + #f87171 红底块，两个都是随手写的原色，和 tokens.css 毫无关系
+ *（也正是 admin-dual-theme.md 反复要治的那种绕过 token 的硬编码）。饱和整块底色 + 硬边下划线
+ * 就是「Windows 选中高亮 / Word 修订」的观感，跟本系统暖赤陶 + 细描边的语言完全不搭。
+ *
+ * 现在：新增用品牌暖色（暖字 + 极淡暖底，不描边不加线），删除退成 muted 灰 + 同色细删除线，
+ * 不再用红色喊。所有值走 --accent-primary-rgb / --text-* ，双主题自动跟随。
+ */
 :root {
-  --doc-diff-ins-fg: #bfdbfe;
-  --doc-diff-ins-bg: rgba(59, 130, 246, 0.22);
-  --doc-diff-ins-edge: rgba(96, 165, 250, 0.55);
-  --doc-diff-del-fg: rgba(248, 113, 113, 0.85);
-  --doc-diff-del-bg: rgba(248, 113, 113, 0.12);
-  --doc-diff-del-line: rgba(248, 113, 113, 0.75);
+  --doc-diff-ins-fg: var(--accent-gold-2);
+  --doc-diff-ins-bg: rgba(var(--accent-primary-rgb), 0.10);
+  --doc-diff-ins-edge: rgba(var(--accent-primary-rgb), 0.42);
+  --doc-diff-del-fg: var(--text-muted);
+  --doc-diff-del-bg: transparent;
 }
 
 [data-theme='light'] {
-  --doc-diff-ins-fg: #1d4ed8;
-  --doc-diff-ins-bg: rgba(59, 130, 246, 0.16);
-  --doc-diff-ins-edge: rgba(37, 99, 235, 0.45);
-  --doc-diff-del-fg: #b91c1c;
-  --doc-diff-del-bg: rgba(185, 28, 28, 0.09);
-  --doc-diff-del-line: rgba(185, 28, 28, 0.7);
+  /* 浅底上暖色要压深才够对比（accent-primary-solid 就是为「实心底/正文字」备的那一档） */
+  --doc-diff-ins-fg: var(--accent-primary-solid);
+  --doc-diff-ins-bg: rgba(var(--accent-primary-rgb), 0.12);
+  --doc-diff-ins-edge: rgba(var(--accent-primary-rgb), 0.38);
+  --doc-diff-del-fg: var(--text-muted);
+  --doc-diff-del-bg: transparent;
 }
 
 .doc-inline-diff ins {
   color: var(--doc-diff-ins-fg);
   background: var(--doc-diff-ins-bg);
-  box-shadow: inset 0 -1px 0 var(--doc-diff-ins-edge);
+  /* 不加下划线（2026-08-25 用户）：暖色字 + 极淡暖底已经足够说明「这段是新写的」，
+     再压一条线只是给每一段新内容都描个边，读起来更吵。 */
   text-decoration: none;
-  border-radius: 3px;
-  padding: 0 2px;
+  border-radius: 4px;
+  padding: 0 3px;
 }
 
 .doc-inline-diff del {
   color: var(--doc-diff-del-fg);
   background: var(--doc-diff-del-bg);
   text-decoration: line-through;
-  text-decoration-color: var(--doc-diff-del-line);
+  /* 删除线跟着 muted 文字色走，不用品牌色——品牌暖色在这套配色里代表「新写的」，
+     删除线也染成暖色会让删掉的和新加的看起来是一类东西，一眼分不出增删。 */
+  text-decoration-color: currentColor;
   text-decoration-thickness: 1px;
-  border-radius: 3px;
-  padding: 0 2px;
+  /* 删掉的内容退到背景里，不用红色喊——它已经带删除线了，再加底色是双重强调 */
+  padding: 0;
 }
 
-/* 新增内容进场：不是「有东西在动」，是产物本身在长出来（artifact-is-experience.md） */
+/*
+ * 等 AI 写完那段时间：原文只是「正在被替换」，还没被删掉，所以整体压灰、不划删除线。
+ * 这一档正文里**没有** ins —— 半成品一个字都不渲染，等结果齐了 diff 一次性出现
+ *（2026-08-25 用户："一次性完成，不然最后一闪，用户不知道哪些内容发生了变更"）。
+ */
+/* 两个类都写上不是啰嗦：`.doc-inline-diff--streaming del` 与 `.doc-inline-diff del`
+ * 特异性一模一样（各一个类 + 一个标签），谁赢只看谁写在后面——这种「靠行号成立」的覆盖
+ * 是下一次漂移的温床（predicate-and-wiring-discipline.md 形状 6）。写成两个类就与顺序无关。 */
+.doc-inline-diff.doc-inline-diff--streaming del {
+  color: var(--text-muted);
+  background: transparent;
+  text-decoration: none;
+  opacity: 0.55;
+  transition: opacity 200ms ease-out;
+}
+
+/*
+ * 改动出现时浮现一次。
+ * 这是整条链上唯一的动效，也是它存在的理由：diff 是一次性出现的，
+ * 一起浮现能让用户的眼睛抓住「刚刚变的是这些地方」（expectation-management.md：变化必须可感知）。
+ */
 .doc-inline-diff ins {
   animation: doc-diff-ins-in 260ms ease-out both;
 }
@@ -59,9 +91,6 @@
     background: var(--doc-diff-ins-bg);
   }
 }
-
-/* 流式期间正文末尾的 ▌ 是写进 markdown 的真字符（DocBrowser 的 rewriteDiff），不是伪元素——
- * 伪元素只能选到「每个父元素里最后一个 ins」，跨段落的新内容会同时冒出好几个光标。 */
 
 @media (prefers-reduced-motion: reduce) {
   .doc-inline-diff ins {

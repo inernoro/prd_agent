@@ -1456,6 +1456,18 @@ db.data_sync_grants.createIndex(
 )
 // end collection: data_sync_grants
 
+// collection: document_entries
+// 知识库「最近」时间线（GET /api/document-store/entries/recent）按「可见库集合 + 非文件夹」
+// 取最近更新的若干条。没有这条索引时，每次打开「最近」都要扫遍全部文档条目再整体排序——
+// 条目数是全系统里增长最快的之一，扫描成本只会越来越高。
+// StoreId 在前支撑 $in 定位，UpdatedAt 倒序直接供排序，避免内存排序。
+db.document_entries.createIndex(
+  { "StoreId": 1, "UpdatedAt": -1 },
+  { name: "idx_document_entries_store_updated" }
+)
+// 卡片预览（每库最近 3 条）走的是同一条索引，不另建。
+// end collection: document_entries
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

@@ -28,6 +28,8 @@ const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ 
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
 const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const RecordingResultPage = lazy(() => import('@/pages/document-store/RecordingResultPage').then(m => ({ default: m.RecordingResultPage })));
+const RecordingProcessingPage = lazy(() => import('@/pages/document-store/RecordingProcessingPage').then(m => ({ default: m.RecordingProcessingPage })));
 const UniverseGraphPage = lazy(() => import('@/pages/document-store/UniverseGraphPage').then(m => ({ default: m.UniverseGraphPage })));
 const GalaxyStandalonePage = lazy(() => import('@/pages/document-store/GalaxyStandalonePage').then(m => ({ default: m.GalaxyStandalonePage })));
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
@@ -56,7 +58,8 @@ const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').t
 const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
 const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
-const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
+// 2026-08-25：MAP 侧模型管理整套下线，`/mds` 只剩一块指向 LLM Gateway 控制台的墓碑页。
+const ModelManageMovedPage = lazy(() => import('@/pages/ModelManageMovedPage').then(m => ({ default: m.ModelManageMovedPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
 const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
@@ -756,6 +759,28 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    // 录音交付页走独立全屏路由：设计稿这批「整屏」画板自带顶部栏与屏底主操作，
+    // 套在平台外壳里还原不到位（结构与版式的失分大半在这一层）。
+    // 它是从知识库某条录音点进来的深页，不进导航目录——nav 留空即不登记。
+    path: '/document-store/:storeId/recording/:entryId',
+    // `placement` 不写就默认 shell，条目会被挂进 AppShell——外面套着平台顶栏与底部
+    // TabBar，稿面自己那条顶栏被挤到屏幕中段，整屏和设计稿差得最远。
+    // 这一条漏了半天没人发现：`fullscreenGuarded` 只管鉴权，不决定挂在哪；
+    // 编译过、测试绿、路由也能进，只有真的打开那一屏才看得出来。
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingResultPage />),
+  },
+  {
+    // 录音处理页：稿面 R4 / cap-A4 / cap-A5 画的是**整屏接管**，屏底压着主操作。
+    // 与结果页分成两条路由而不是同一屏的两个状态——那颗按钮写的就是「进入结果页」，
+    // 同一个地址上说这句话说不通。
+    path: '/document-store/:storeId/recording/:entryId/processing',
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingProcessingPage />),
+  },
+  {
     path: '/document-store/:storeId/universe',
     permission: ['document-store.read', 'document-store.write'],
     element: shellGuarded(['document-store.read', 'document-store.write'], <UniverseGraphPage />),
@@ -825,14 +850,16 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   {
     path: '/mds',
     permission: 'mds.read',
-    element: shellGuarded('mds.read', <ModelManageTabsPage />),
+    element: shellGuarded('mds.read', <ModelManageMovedPage />),
     nav: {
-      label: '模型中心',
+      // 保留在目录里而不是直接摘掉：搜「模型」的人得撞上这块路牌，而不是撞上 404
+      // 或者退回去在别处再配一遍（navigation-registry：路由必须登记，且不能是 phantom）。
+      label: '模型管理（已迁移）',
       shortLabel: '模型',
-      description: '大模型与模型池配置、健康监控',
+      description: '上游、模型、模型池已统一到 LLM Gateway 控制台，这里只剩入口',
       icon: 'Cpu',
       section: 'infra',
-      tags: ['模型', 'LLM', '模型池', '调度', 'mds'],
+      tags: ['模型', 'LLM', '模型池', '调度', 'mds', '网关', 'gateway'],
     },
   },
   {

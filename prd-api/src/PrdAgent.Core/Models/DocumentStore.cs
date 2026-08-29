@@ -111,6 +111,18 @@ public class DocumentStore
     public string? PeerSyncLastResult { get; set; }
 
     /// <summary>
+    /// 这个库上一次「CDS 验收报告导入」是从哪个 CDS 拉的。
+    ///
+    /// **单独一个字段，不复用 `PeerSyncNodeBaseUrl`。** 那个字段归「知识库跨库同步」
+    /// 那套功能所有：同一个库若同时走过 peer-sync，`MarkPeerSyncAsync` 会把它改写成
+    /// 对端 MAP 的地址；每小时的 CDS 报告同步再拿它当 CDS 源去解析凭据，必然找不到
+    /// 对应的 active 连接，于是这个库每小时被静默跳过一次（Codex review P2）。
+    /// 两套功能各记各的来源，谁也别动谁的状态。
+    /// </summary>
+    public string? CdsReportSourceBaseUrl { get; set; }
+
+
+    /// <summary>
     /// 是否开启后台自动同步（用户在「同步中心」显式开启）。开启后 PeerSyncScheduleWorker 按
     /// PeerSyncIntervalMinutes 周期复用最近一次同步的对端 + 方向，自动 push/pull/both（非破坏性，绝不删条目）。
     /// 默认 false —— 历史上手动同步过一次的库不会被动开始发流量，避免「意料之外」的对端请求。

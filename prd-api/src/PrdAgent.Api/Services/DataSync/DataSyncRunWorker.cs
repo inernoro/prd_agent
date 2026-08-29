@@ -5,6 +5,7 @@ using PrdAgent.Api.Services.DataSync;
 using PrdAgent.Core.DataSync;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services.DataSync;
 
@@ -53,18 +54,52 @@ public sealed class DataSyncRunWorker : BackgroundService
     private readonly IServiceProvider _services;
     private readonly DataSyncTokenVault _vault;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IAssetStorage _assetStorage;
     private readonly ILogger<DataSyncRunWorker> _logger;
 
     public DataSyncRunWorker(
         IServiceProvider services,
         DataSyncTokenVault vault,
         IHttpClientFactory httpClientFactory,
+        IAssetStorage assetStorage,
         ILogger<DataSyncRunWorker> logger)
     {
         _services = services;
         _vault = vault;
         _httpClientFactory = httpClientFactory;
+        _assetStorage = assetStorage;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 把 key 拼成**本站**的资产地址。前缀怎么拼是存储实现自己的事，这里不另写一份。
+    ///
+    /// 存储实现抛异常时返回 null 而不是让整条同步炸掉：拼不出地址只是这一条附件
+    /// 打不开，而调用方会把它算进「认不出」如实报出来；为此中断一次几千条的迁移不划算。
+    /// </summary>
+    /// <summary>
+    /// 把 key 拼成本站地址。两类 key 走两条路，**不能混用**：
+    ///
+    /// - 内容寻址：传进来的是剥掉源站前缀的**逻辑** key，要由本站套上自己的前缀，
+    ///   所以走 <c>BuildUrlForLogicalKey</c>。用 <c>BuildUrlForKey</c> 会拼成
+    ///   `{本站根}/{domain}/...`，少了本站前缀（DS31）。
+    /// - 完整物理路径：首页/桌面端素材那种，两侧原样使用、不涉及前缀，
+    ///   套前缀反而拼错，所以走 <c>BuildUrlForKey</c>。
+    /// </summary>
+    private string? BuildLocalAssetUrl(string key, DataSyncAssetUrls.AssetKeyKind kind)
+    {
+        try
+        {
+            var url = kind == DataSyncAssetUrls.AssetKeyKind.ContentAddressed
+                ? _assetStorage.BuildUrlForLogicalKey(key)
+                : _assetStorage.BuildUrlForKey(key);
+            return string.IsNullOrWhiteSpace(url) ? null : url;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[data-sync] 资产地址改写失败，保留源站地址：{Key}", key);
+            return null;
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -261,12 +296,30 @@ public sealed class DataSyncRunWorker : BackgroundService
                     "[data-sync] Run {RunId} 跑完时发现终态已被其它部署写过（多半是被判成无心跳收了尸），保留先落的那个结局",
                     run.Id);
             }
-            // 交还令牌一律用 None，和失败/丢租约那两条路径一致。
-            // 用 ct 的话：宿主正在关停时 ct 已取消，这一句立刻失败并把取消咽掉，
-            // 下一行又把本地唯一那份令牌忘了——界面显示「成功」，而源站那张票在剩下的
-            // 两小时里仍然能导数据。作废是收尾动作，不该跟着请求生命周期一起死。
-            await ReturnExportTokenAsync(run, token, CancellationToken.None);
-            _vault.Forget(run.Id);
+            // 试跑成功之后**不作废这张票**：它还要留给「确认无误，开始真的搬」那一步。
+            //
+            // 原来试跑一跑完就交还，于是真搬必须让人再点一次源站的同意——而「看一眼
+            // 会搬什么」本来就不写任何东西，把它算成一次消耗是当初没想清楚。
+            // 2026-08-21 的两次真实迁移都卡死在这里：数据读得出来，写不进去。
+            //
+            // 留着的窗口不是新开的口子：它与「callback 建好 Run、管理员一直没点开始」
+            // 完全同形，上界同样是票据自己的两小时硬过期，源站每次请求还会重对一遍
+            // 允许名单。真跑（或试跑失败）照旧立刻交还。
+            if (run.DryRun && finished.ModifiedCount > 0)
+            {
+                _logger.LogInformation(
+                    "[data-sync] Run {RunId} 试跑完成，票据保留到转正或过期（{ExpiresAt:u}）",
+                    run.Id, run.ExportTokenExpiresAt);
+            }
+            else
+            {
+                // 交还令牌一律用 None，和失败/丢租约那两条路径一致。
+                // 用 ct 的话：宿主正在关停时 ct 已取消，这一句立刻失败并把取消咽掉，
+                // 下一行又把本地唯一那份令牌忘了——界面显示「成功」，而源站那张票在剩下的
+                // 两小时里仍然能导数据。作废是收尾动作，不该跟着请求生命周期一起死。
+                await ReturnExportTokenAsync(run, token, CancellationToken.None);
+                _vault.Forget(run.Id);
+            }
             _logger.LogInformation("[data-sync] Run {RunId} 完成（dryRun={DryRun}）", run.Id, run.DryRun);
         }
         catch (RunLeaseLostException ex)
@@ -357,6 +410,30 @@ public sealed class DataSyncRunWorker : BackgroundService
 
                 var decision = DataSyncApply.Decide(documents, existingIdsByKey, run.OverwriteExisting);
                 progress.Skipped += decision.SkippedIds.Count;
+
+                // 资产地址改写要在**入库之前**做：写进去再回头批量改，中间那一段时间
+                // 界面上的图片全是指回源站的死链，而且一旦崩在中间就没人知道改到哪了。
+                // 只改地址、不搬字节——两站不共用同一个桶时，改完是「指向自己家的空位」，
+                // 所以下面把认不出的条数如实累进 Run 里，由界面照实说。
+                //
+                // 但只改**这一批真会写进去的那些**，不是整页拉回来的文档。
+                // 不覆盖模式下，目标站已经有的那些会被 Decide 判成跳过、一个字节都不入库；
+                // 对它们改写只发生在内存里，改完就随对象一起丢掉。整页一起数的话，界面上
+                // 「已把 N 条地址改写成本站的」里就掺着一批**从未落库**的条数——用户照着这个
+                // 数字判断附件还有没有问题，而它比真相大（Codex review P2）。
+                // 这条和本 PR 那三处话术修复是同一条纪律：打算做的事不能记成做过的事。
+                //
+                // **插入排在前面**：下面撞唯一索引时要按下标回冲这一批的计数（见 DS34 那一段），
+                // 而冲突只会落在插入这一侧。顺序变了回冲就会算到替换头上。
+                var willWrite = new List<BsonDocument>(decision.ToInsert.Count + decision.ToReplace.Count);
+                willWrite.AddRange(decision.ToInsert);
+                willWrite.AddRange(decision.ToReplace);
+                var rebase = DataSyncAssetUrls.RebaseIncoming(willWrite, collection.Name, BuildLocalAssetUrl);
+                progress.AssetUrlsRebased += rebase.Total.Rebased;
+                progress.AssetUrlsUnresolved += rebase.Total.Unrecognized;
+                // 相对地址单独报：源站用本地磁盘存附件时，搬过来每一条都指向本站不存在的文件。
+                // 早先这一档既不改写也不计数，于是那种部署下附件卡整个不出现（DS30）。
+                progress.AssetUrlsRelative += rebase.Total.AlreadyRelative;
 
                 // 覆盖写是整份替换，所以「目标站本地执行历史」这类字段必须在替换前接回来，
                 // 否则源站那台机器跑过哪些迁移会变成本站的账：本站没跑过的被当成跑过而跳过，
@@ -467,10 +544,31 @@ public sealed class DataSyncRunWorker : BackgroundService
                                     collection.Name, conflicts, decision.ToInsert.Count - conflicts);
                                 // 按**失败的下标**剔除，不是砍掉末尾 N 条：IsOrdered=false 时
                                 // 冲突可以落在任意位置。判据抽在 DataSyncApply.SurvivingInserts。
+                                var failedIndexes = ex.WriteErrors.Select(e => e.Index).ToList();
+
+                                // 被剔掉的那几条**一个字节都没落库**，它们的地址改写数不能算进
+                                // 「已把 N 条改写成本站地址」——改写只发生在内存里，改完就随对象丢掉。
+                                //
+                                // 上一轮把改写挪到 Decide 之后、只作用于写库集合，治的是「目标站已有、
+                                // 被判成跳过」那一档；这一档是「落库时才撞索引」，当时的说法盖不住它（DS34）。
+                                // 误差方向是偏大，且偏大的条数恰好等于冲突数——而冲突数本身已经如实
+                                // 记进 Skipped 单独报出来了，所以不会把「没搬」说成「搬了」，
+                                // 只会让附件那个数字虚高。现在按下标回冲，报出去的就等于真正落库的。
+                                //
+                                // willWrite 是「先插入、后替换」拼的，所以插入侧的下标可以直接用。
+                                foreach (var idx in failedIndexes)
+                                {
+                                    if (idx < 0 || idx >= rebase.ByDocument.Count) continue;
+                                    var dropped = rebase.ByDocument[idx];
+                                    progress.AssetUrlsRebased -= dropped.Rebased;
+                                    progress.AssetUrlsUnresolved -= dropped.Unrecognized;
+                                    progress.AssetUrlsRelative -= dropped.AlreadyRelative;
+                                }
+
                                 decision = decision with
                                 {
                                     ToInsert = DataSyncApply
-                                        .SurvivingInserts(decision.ToInsert, ex.WriteErrors.Select(e => e.Index))
+                                        .SurvivingInserts(decision.ToInsert, failedIndexes)
                                         .ToList(),
                                 };
                             }

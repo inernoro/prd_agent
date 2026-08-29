@@ -432,6 +432,236 @@ public sealed class DataSyncConsumerController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = "running", dryRun = request.DryRun }));
     }
 
+    /// <summary>
+    /// 试跑确认无误之后，就地转正成一次真跑。
+    ///
+    /// ## 为什么需要这个端点
+    ///
+    /// 原来一条 Run 跑一次、跑完票就交还，于是「先看一眼会搬什么」要花掉一次源站批准，
+    /// 真搬得让人再去点一次同意。2026-08-21 的两次真实迁移都卡死在这一步：
+    /// 4 万多条数据读得出来，写不进去。而试跑本来就不写任何东西。
+    ///
+    /// ## 转正不等于「批准可复用」
+    ///
+    /// 三条边界把它和长期凭据区分开，缺一条都不行：
+    ///
+    /// 1. **范围不重新询问源站**：真跑照抄试跑那一屏冻结下来的 Collections /
+    ///    PlannedCollections / PlannedManifest。源站清单在这中间变了也不影响，
+    ///    跑的仍然是操作者亲眼确认过的那一份。
+    /// 2. **至多一次**：靠「PromotedToRunId 还是空的」做条件更新来保证。两个标签页
+    ///    同时点、或者手快点两下，都只会有一条真跑；重复请求返回同一个 runId。
+    /// 3. **票据没有续命**：还是原来那张，带着原来的两小时硬过期；过期了就老老实实
+    ///    要求重新授权。
+    /// </summary>
+    [HttpPost("runs/{id}/promote")]
+    public async Task<IActionResult> Promote(string id, [FromBody] DataSyncPromoteRequest request, CancellationToken ct)
+    {
+        if (!await IsAdminAsync(ct))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("DATA_SYNC_ADMIN_REQUIRED", "只有管理员可以发起跨实例同步"));
+        }
+
+        var run = await FindRunAsync(id, ct);
+        if (run is null) return NotFound(ApiResponse<object>.Fail("DATA_SYNC_RUN_NOT_FOUND", "同步记录不存在"));
+
+        // 已经转正过就直接把那条还回去。用户手快点了两下不该收到一个错误，
+        // 更不该产生第二条真跑。
+        if (!string.IsNullOrEmpty(run.PromotedToRunId))
+        {
+            return Ok(ApiResponse<object>.Ok(new { runId = run.PromotedToRunId, status = "running", dryRun = false }));
+        }
+        if (!run.DryRun || run.Status != "succeeded")
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_NOT_ELIGIBLE",
+                "只有跑完并且成功的试跑才能转正成真跑"));
+        }
+        if (run.PlannedCollections.Count == 0)
+        {
+            // 理论上跑成功过就一定有；真为空说明这条记录不完整，宁可要求重来。
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PLAN_REQUIRED",
+                "这次试跑没有留下对照表清单，无法转正，请重新授权跑一次"));
+        }
+        var token = _vault.GetExportToken(run.Id);
+        if (token is null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_TOKEN_EXPIRED",
+                "这次授权已经过期（或本站进程重启过），请重新授权后再跑一次"));
+        }
+        // **覆盖策略也是被冻结的那一部分，改了就不能直接转正。**
+        //
+        // 对照表里的「预计新增 / 预计更新」和跳过数，全是按试跑那次的
+        // `run.OverwriteExisting` 算出来的。试跑说「这些已存在、会跳过」，转正时若
+        // 换成覆盖，那批记录会被真的写掉——而这些破坏性写入**一次都没被预览过**，
+        // 「确认无误再搬」这句话也就落了空（Codex review P1）。
+        //
+        // 不静默照抄，是因为那对用户同样是撒谎：他明明改了开关，系统当没看见。
+        // 所以说清楚为什么不行、以及怎么才行。
+        if (request.Overwrite != run.OverwriteExisting)
+        {
+            return BadRequest(ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_POLICY_CHANGED",
+                $"这次试跑是按「{DataSyncOverwriteWording.Describe(run.OverwriteExisting)}」预览的，"
+                + $"你现在选的是「{DataSyncOverwriteWording.Describe(request.Overwrite)}」。"
+                + "对照表里的预计条数是按试跑那次的策略算的，直接换策略等于让一批没被预览过的写入发生。"
+                + "要改策略请带着新策略重新试跑一次，看过新的对照表再转正"));
+        }
+
+        var child = new DataSyncRun
+        {
+            OperatorUserId = run.OperatorUserId,
+            SourceOrigin = run.SourceOrigin,
+            SourceLabel = run.SourceLabel,
+            Groups = new List<string>(run.Groups),
+            // 范围一律照抄，**不重新问源站要清单**：真跑的集合与计划必须是操作者刚才看过的那一份。
+            // 注意这只冻结**范围**，不冻结**数据**——worker 会重新调源站 /export 拉内容，
+            // 游标从头开始。期间源站改了的记录，搬过来的是改之后的值。想真冻结数据得给导出
+            // 加快照或版本边界，见 doc/debt.platform.cross-instance-data-sync.md；界面上已如实说明。
+            Collections = new List<string>(run.Collections),
+            PlannedCollections = new List<string>(run.PlannedCollections),
+            PlannedManifest = new Dictionary<string, DataSyncPlannedCollection>(run.PlannedManifest),
+            ExportTokenHash = run.ExportTokenHash,
+            ExportTokenExpiresAt = run.ExportTokenExpiresAt,
+            DryRun = false,
+            // **照抄试跑那次的策略，不用请求里带的那个。** 界面上的 plannedInsert /
+            // plannedUpdate / 跳过数全是按 run.OverwriteExisting 算出来的：试跑说
+            // 「这 300 条已存在、会跳过」，转正时若换成覆盖，那 300 条会被真的写掉——
+            // 而这些破坏性写入**从来没被预览过**（Codex review P1）。
+            // 策略不一致时上面已经拒了，走到这里两者必然相同，这里取冻结的那一份。
+            OverwriteExisting = run.OverwriteExisting,
+            PromotedFromRunId = run.Id,
+            Status = "pending",
+        };
+        // 先落子记录再认领父记录：反过来的话，中间崩一下就会留下一个「已转正、
+        // 但那条真跑不存在」的父记录，而它再也转正不了了。这个顺序下最坏结果是
+        // 一条没人认领的 pending，由既有的过期清扫收走。
+        //
+        // 从这里往下的每一次写库都用 CancellationToken.None，**不跟 HTTP 连接绑死**。
+        // 原来传的是请求的取消令牌，于是浏览器一关（或代理超时）就可能停在
+        // 「父记录已认领、子记录还是 pending」这一步：worker 只认领 running，
+        // 而父记录的 PromotedToRunId 已经被占住，那唯一一次转正机会就永久作废了
+        // ——接口还照样回「status: running」，是句假话（Codex review P1）。
+        // 这也正是 server-authority 那条规则的原文要求：状态变更一律用 None。
+        await _db.DataSyncRuns.InsertOneAsync(child, cancellationToken: CancellationToken.None);
+
+        var claimed = await _db.DataSyncRuns.UpdateOneAsync(
+            Builders<DataSyncRun>.Filter.And(
+                Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                // 「还没转正过」放进过滤条件，让唯一性由数据库一次原子完成。
+                Builders<DataSyncRun>.Filter.Or(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.PromotedToRunId, null),
+                    Builders<DataSyncRun>.Filter.Eq(x => x.PromotedToRunId, string.Empty))),
+            Builders<DataSyncRun>.Update
+                .Set(x => x.PromotedToRunId, child.Id)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        if (claimed.ModifiedCount == 0)
+        {
+            // 有人抢先了。把刚插进去的这条撤掉，返回抢赢的那一条。
+            await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, CancellationToken.None);
+            var latest = await FindRunAsync(run.Id, ct);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                runId = latest?.PromotedToRunId ?? run.Id,
+                status = "running",
+                dryRun = false,
+            }));
+        }
+
+        // 票据转到子记录名下再从父记录摘掉：worker 只认领「本进程握着令牌」的 Run，
+        // 顺序反了会有一瞬间谁都拿不到它。
+        _vault.PutExportToken(child.Id, token, run.ExportTokenExpiresAt);
+        _vault.Forget(run.Id);
+
+        // 最后这一步是**激活**：worker 只跑 running 的 Run。
+        //
+        // 不可取消已经不够——这次写库还可能因为网络抖动、副本切换直接抛异常。
+        // 一旦它没成，父记录已经认领、票也转走了，而子记录停在 pending：
+        // 谁都不会去跑它，重试又会被开头那句「已经转正过」原样挡回来，
+        // **那唯一一次转正机会就此作废**，接口却回过「running」（Codex review P1 第二轮）。
+        //
+        // 所以失败要补偿回可重试的状态：票还回父记录、清掉父记录的认领、删掉子记录，
+        // 然后如实报错。
+        //
+        // **补偿本身也会失败**，而且最可能就败在同一次数据库抖动上（Codex review P1
+        // 第三轮）。那时候唯一还能做对的事是**别说自己回滚成功了**：原来无论补偿成没成
+        // 都回同一句「已回滚到可重试状态，请再点一次」，用户照着再点一次只会撞回
+        // 「已经转正过」，而父记录还占着认领、票已经在内存里还回去了——比不回滚更难查。
+        // 所以这里把补偿结果记下来，两种情况说两句不同的话。
+        // 补偿抽成一处：**激活失败有两种形态**，两边必须走同一套回滚，否则改一处
+        // 忘一处就是下一个「看着回滚了其实没有」（形状 3：判据分裂后各自漂移）。
+        async Task<IActionResult> CompensateAsync(string why)
+        {
+            var rolledBack = false;
+            try
+            {
+                _vault.PutExportToken(run.Id, token, run.ExportTokenExpiresAt);
+                _vault.Forget(child.Id);
+                await _db.DataSyncRuns.UpdateOneAsync(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Id, run.Id),
+                    Builders<DataSyncRun>.Update
+                        .Set(x => x.PromotedToRunId, (string?)null)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+                await _db.DataSyncRuns.DeleteOneAsync(x => x.Id == child.Id, CancellationToken.None);
+                rolledBack = true;
+            }
+            catch (Exception rollbackEx)
+            {
+                // 补偿也失败了。这时候唯一还能做对的事就是说实话——而不是照旧回一句
+                // 「已回滚，请再点一次」，那会把人骗去按一个必然撞回「已经转正过」的按钮。
+                _logger.LogError(rollbackEx,
+                    "[data-sync] Run {RunId} 回滚也失败（{Why}）：父记录可能仍占着认领、子记录 {ChildId} 仍是 pending，需要人工检查",
+                    run.Id, why, child.Id);
+            }
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                rolledBack
+                    ? ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_FAILED",
+                        "转正没能启动，已回滚到可重试状态，请再点一次；若反复失败请检查数据库连接")
+                    // 回滚也没成：不许说「请再点一次」。把要人工看什么说清楚，
+                    // 两个 id 都给出来，否则运维只能对着一句「失败了」翻库。
+                    : ApiResponse<object>.Fail("DATA_SYNC_PROMOTE_STUCK",
+                        $"转正没能启动，回滚也失败了，这条试跑现在卡在中间状态、再点也没用。"
+                        + $"请让人工检查数据库连接，并核对这两条记录：试跑 {run.Id}（PromotedToRunId 可能仍指向下面这条）、"
+                        + $"真跑 {child.Id}（可能仍是 pending）"));
+        }
+
+        UpdateResult activated;
+        try
+        {
+            activated = await _db.DataSyncRuns.UpdateOneAsync(
+                Builders<DataSyncRun>.Filter.And(
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Id, child.Id),
+                    Builders<DataSyncRun>.Filter.Eq(x => x.Status, "pending")),
+                Builders<DataSyncRun>.Update
+                    .Set(x => x.Status, "running")
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[data-sync] Run {RunId} 转正后激活子记录 {ChildId} 抛异常，回滚到可重试状态", run.Id, child.Id);
+            return await CompensateAsync("激活抛异常");
+        }
+
+        // **一行都没改到也是失败，而且不抛异常。** 票据在最初那次查库之后过期的话，
+        // 清扫器会把刚转过去的子记录票撤掉、把这条 pending 标成失败或直接删掉；
+        // 这次条件更新于是匹配不到任何文档，`ModifiedCount == 0`，一声不吭。
+        // 上一版把返回值整个丢掉，接口照样回「status: running」——而父记录已经永久
+        // 转正到一条**永远不会被执行**的子记录上，那唯一一次机会就此作废
+        //（Codex review P1）。所以这里和抛异常走同一条补偿。
+        if (activated.ModifiedCount == 0)
+        {
+            _logger.LogError(
+                "[data-sync] Run {RunId} 转正后激活子记录 {ChildId} 没改到任何行（多半是票据过期后被清扫），回滚到可重试状态",
+                run.Id, child.Id);
+            return await CompensateAsync("条件更新没匹配到 pending 子记录");
+        }
+
+        _logger.LogInformation("[data-sync] Run {RunId} 试跑转正为真跑 {ChildId}", run.Id, child.Id);
+        return Ok(ApiResponse<object>.Ok(new { runId = child.Id, status = "running", dryRun = false }));
+    }
+
     [HttpGet("runs/{id}")]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
@@ -579,6 +809,10 @@ public sealed class DataSyncConsumerController : ControllerBase
         createdAt = run.CreatedAt,
         finishedAt = run.FinishedAt,
         pendingSecretFields = run.PendingSecretFields,
+        // 转正关系要送出去：界面靠它决定「确认无误，开始真的搬」这个按钮画不画、
+        // 以及跳到哪条真跑。只留在库里等于没做。
+        promotedToRunId = run.PromotedToRunId,
+        promotedFromRunId = run.PromotedFromRunId,
         progress = run.Progress.Select(kv => new
         {
             collection = kv.Key,
@@ -589,6 +823,11 @@ public sealed class DataSyncConsumerController : ControllerBase
             updated = kv.Value.Updated,
             plannedInsert = kv.Value.PlannedInsert,
             plannedUpdate = kv.Value.PlannedUpdate,
+            // 资产地址改写的两个数字必须一起出去。只送「改了几条」而不送「还有几条没救」，
+            // 界面上就只剩一句好消息，缺口被藏起来——那正是 DS1 当初的样子。
+            assetUrlsRebased = kv.Value.AssetUrlsRebased,
+            assetUrlsUnresolved = kv.Value.AssetUrlsUnresolved,
+            assetUrlsRelative = kv.Value.AssetUrlsRelative,
             done = kv.Value.Done,
         }),
     };
@@ -800,5 +1039,19 @@ public sealed class DataSyncCallbackRequest
 public sealed class DataSyncStartRequest
 {
     public bool DryRun { get; set; }
+    public bool Overwrite { get; set; }
+}
+
+/// <summary>
+/// 试跑转正成真跑。
+///
+/// 这里**只有** Overwrite 一个字段，没有 DryRun：转正的定义就是「跑真的」，
+/// 给它一个可以传 true 的开关，等于让调用方把这次转正又变成一次试跑、
+/// 白白吃掉唯一那次机会。
+///
+/// 范围也不在这里传：真跑照抄试跑冻结的那一份，调用方无从改动。
+/// </summary>
+public sealed class DataSyncPromoteRequest
+{
     public bool Overwrite { get; set; }
 }

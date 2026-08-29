@@ -10,7 +10,7 @@
 // 不能靠人肉回归。渲染侧的契约（<ins>/<del> 能穿过 rehypeRaw + rehypeSanitize 活下来）
 // 由 __tests__/selectionDiffMarkup.test.ts 用 MarkdownViewer 的真实插件链断言。
 
-import { computeLineDiff } from '@/lib/lineDiff';
+import { computeInlineDiff, computeLineDiff, lineSimilarity } from '@/lib/lineDiff';
 import type { ResolvedRange } from './selectionEdit';
 
 export interface InlineDiffMarkup {
@@ -87,6 +87,83 @@ export function markLine(line: string, tag: 'del' | 'ins'): string {
   return `${lead}<${tag}>${rest}</${tag}>`;
 }
 
+/**
+ * 一对「被改写的行」：只把真正变了的那几个词标出来，其余原样。
+ *
+ * 行级 diff 判的是「这一行变了没有」，改一个词也会标成「删一整行 + 加一整行」，
+ * 用户得自己逐字比对才知道改了哪儿（2026-08-25 用户："diff 不够精准"）。
+ * 这里对配对上的两行再算一次原子级 diff，产出一行里混着 <del>/<ins> 的标记。
+ *
+ * 前提由 pairChangedLines 保证：两行的块级前缀（`1. ` / `- ` / `## `）相同，
+ * 且相似到值得逐词比。前缀留在标记外面，与 markLine 同一口径。
+ */
+function markPairedLine(delLine: string, addLine: string): string {
+  const dm = LEAD_MARKER_RE.exec(delLine);
+  const am = LEAD_MARKER_RE.exec(addLine);
+  const lead = am ? am[1] : '';
+  const delRest = dm ? dm[2] : delLine;
+  const addRest = am ? am[2] : addLine;
+  const segs = computeInlineDiff(delRest, addRest);
+  const body = segs.map((s) => {
+    if (s.type === 'eq') return s.text;
+    // 纯空白的增删是噪音（多一个空格少一个空格），原样输出不标色
+    if (!s.text.trim()) return s.type === 'del' ? '' : s.text;
+    return `<${s.type === 'del' ? 'del' : 'ins'}>${s.text}</${s.type === 'del' ? 'del' : 'ins'}>`;
+  }).join('');
+  return `${lead}${body}`;
+}
+
+/** 两行能不能做行内 diff：块级前缀相同 + 相似度够高 + 都不是表格/分隔线 */
+function canPairInline(delLine: string, addLine: string): boolean {
+  if (FENCE_RE.test(delLine) || FENCE_RE.test(addLine)) return false;
+  if (TABLE_ROW_RE.test(delLine) || TABLE_ROW_RE.test(addLine)) return false;
+  if (THEMATIC_BREAK_RE.test(delLine) || THEMATIC_BREAK_RE.test(addLine)) return false;
+  if (!delLine.trim() || !addLine.trim()) return false;
+  const dm = LEAD_MARKER_RE.exec(delLine);
+  const am = LEAD_MARKER_RE.exec(addLine);
+  // 前缀不同（段落改成列表项、列表符号变了）就不是「同一行的修订」，老实分开标
+  if ((dm ? dm[1] : '') !== (am ? am[1] : '')) return false;
+  // 相似度太低说明是两句不相干的话，逐词标出来只会碎成一地
+  return lineSimilarity(dm ? dm[2] : delLine, am ? am[2] : addLine) >= 0.4;
+}
+
+type DiffOp =
+  | { kind: 'eq' | 'del' | 'add'; text: string }
+  /** 一行被改写：同一行里既有删也有增，只标真正变了的那几个词 */
+  | { kind: 'pair'; del: string; add: string };
+
+/**
+ * 把「连着的一批删除行 + 紧跟着的一批新增行」按顺序配对。
+ * 配得上的合成 pair（行内 diff），配不上的仍然各标各的整行。
+ */
+function pairChangedLines(lines: { type: 'eq' | 'add' | 'del'; text: string }[]): DiffOp[] {
+  const out: DiffOp[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].type !== 'del') {
+      out.push({ kind: lines[i].type, text: lines[i].text });
+      i += 1;
+      continue;
+    }
+    // 收一段连续的删除行，再收紧跟其后的一段连续新增行
+    const dels: string[] = [];
+    while (i < lines.length && lines[i].type === 'del') dels.push(lines[i++].text);
+    const adds: string[] = [];
+    while (i < lines.length && lines[i].type === 'add') adds.push(lines[i++].text);
+
+    // 逐位配对：第 k 条被删的行对第 k 条新增的行。配不上就退回整行标注。
+    const paired = Math.min(dels.length, adds.length);
+    let k = 0;
+    for (; k < paired; k++) {
+      if (canPairInline(dels[k], adds[k])) out.push({ kind: 'pair', del: dels[k], add: adds[k] });
+      else break; // 一旦配不上，后面的对齐关系也就不可信了，剩下的老实分开标
+    }
+    for (let d = k; d < dels.length; d++) out.push({ kind: 'del', text: dels[d] });
+    for (let a = k; a < adds.length; a++) out.push({ kind: 'add', text: adds[a] });
+  }
+  return out;
+}
+
 /** 统计一段文本结束时是否停在代码围栏内部 */
 function endsInsideFence(text: string, initial = false): boolean {
   let inside = initial;
@@ -98,58 +175,6 @@ function endsInsideFence(text: string, initial = false): boolean {
 
 
 /**
- * 流式期间把「还没闭合的行内标记」补齐再渲染。
- *
- * 模型逐字吐出 `**加粗**` 时，中途一定会经过 `**加粗` 这个状态——markdown 见到落单的 `**`
- * 就当普通字符渲染，于是用户眼睁睁看着两颗星号冒出来又消失（2026-08-20 本地取证截图实拍）。
- * 产物在生长，不该让语法碎片露脸（artifact-is-experience.md）。
- *
- * 只在流式期间用：末尾残缺的标记字符先去掉，再按奇偶补上闭合标记。
- * 完成态的文本是模型的完整输出，一个字都不动。
- */
-export function closeDanglingInlineMarks(text: string): string {
-  if (!text) return text;
-  // 代码围栏内的星号反引号都是代码，不参与闭合判断
-  const lines = text.split('\n');
-  let inFence = false;
-  const scanned: string[] = [];
-  for (const line of lines) {
-    if (FENCE_RE.test(line)) { inFence = !inFence; continue; }
-    if (!inFence) scanned.push(line);
-  }
-  // 正好停在围栏里 / 停在围栏行上：末尾那几个反引号是围栏本身，一个都不能动
-  if (inFence || FENCE_RE.test(lines[lines.length - 1] ?? '')) return text;
-  const body = scanned.join('\n');
-
-  // 顺序很关键（2026-08-21 code review 抓到）：先判「本来就是闭合的吗」。
-  // 上一版无条件把末尾的 `*` / `` ` `` / `~` 摘掉再补，于是刚刚吐完的 `*斜体*`
-  // 被摘成 `*斜体` —— 而单个星号又不在补齐清单里，星号就这么露了出来，
-  // 正是这个函数存在的意义被它自己破坏掉。
-  if (!missingMarks(body)) return text;
-  // 末尾是刚敲出来的半截标记（`这是 **`）：摘掉即闭合，不能补，补了会变成 `****`
-  const stripped = text.replace(/[*`~]+$/, '');
-  const strippedBody = body.replace(/[*`~]+$/, '');
-  if (!missingMarks(strippedBody)) return stripped;
-  // 前文确有没闭合的标记：补在末尾
-  // 围栏没闭合交给 buildInlineDiffBody 收尾，这里不重复处理
-  return stripped + missingMarks(strippedBody);
-}
-
-/** 把一段文本补齐所需的收尾标记拼出来；已经闭合则返回空串。 */
-function missingMarks(text: string): string {
-  let out = '';
-  const backticksOdd = ((text.match(/`/g) ?? []).length) % 2 === 1;
-  if (backticksOdd) out += '`';
-  // 反引号里的星号是代码，不参与配对；落单的那个反引号后面全算代码，一并排除
-  const noCode = (backticksOdd ? `${text}\`` : text).replace(/`[^`]*`/g, '');
-  if (((noCode.match(/~~/g) ?? []).length) % 2 === 1) out += '~~';
-  const noStrike = noCode.replace(/~~/g, '');
-  if (((noStrike.match(/\*\*/g) ?? []).length) % 2 === 1) out += '**';
-  else if (((noStrike.replace(/\*\*/g, '').match(/\*/g) ?? []).length) % 2 === 1) out += '*';
-  return out;
-}
-
-/**
  * 生成「原选区 → newText」的就地 diff 正文。
  *
  * @param body   当前正文（已剥 frontmatter，与选区 offset 同一坐标系）
@@ -158,7 +183,7 @@ function missingMarks(text: string): string {
  */
 export function buildInlineDiffBody(body: string, range: ResolvedRange, newText: string): InlineDiffMarkup {
   const original = body.slice(range.start, range.end);
-  const lines = computeLineDiff(original, newText);
+  const lines = pairChangedLines(computeLineDiff(original, newText));
 
   // 选区本身可能落在一个代码围栏内部（用户选了代码块里的几行）——
   // 围栏状态必须从正文开头算起，否则会把代码当普通文字标注、把 <del> 渲染成代码。
@@ -187,7 +212,21 @@ export function buildInlineDiffBody(body: string, range: ResolvedRange, newText:
     lastEmitted = { type, isTableRow };
   };
 
-  for (const l of lines) {
+  for (const op of lines) {
+    // 一行被改写：删增合成一行，行内只标变了的那几个词
+    if (op.kind === 'pair') {
+      removed += 1;
+      added += 1;
+      if (outFence) {
+        // 围栏内的一切都是代码，标签会被原样显示成代码文本
+        codeChangeUnmarked = true;
+        emit(op.add, 'add');
+        continue;
+      }
+      emit(markPairedLine(op.del, op.add), 'add');
+      continue;
+    }
+    const l = { type: op.kind, text: op.text };
     if (l.type === 'del') {
       removed += 1;
       const isFence = FENCE_RE.test(l.text);

@@ -98,6 +98,53 @@ function nextTailPriority(members: PoolModelInfo[]): number {
   return max + 10;
 }
 
+/**
+ * 一个坏掉的成员为什么坏。
+ *
+ * 「连续失败 N 次」只解释得了**真的被调用过并失败**的成员。指向已删上游 / 已删模型的
+ * 成员从来没被调用过，consecutiveFailures 恒为 0，照那个模板印就会写出
+ * 「不可用（连续失败 0 次）」——状态对了、归因在说谎，运维拿不到任何下一步。
+ * 所以先看后端给的 unavailableReason，它有值就说真正的原因。
+ */
+function memberFaultPhrase(member: PoolModelInfo): string {
+  if (member.unavailableReason === 'upstream-missing') return '所挂的上游已不存在';
+  if (member.unavailableReason === 'model-missing') return '上游还在，但这个模型已不存在';
+  if (member.unavailableReason === 'upstream-disabled') return '所挂的上游被停用了';
+  if (member.unavailableReason === 'model-disabled') return '这个模型被停用了';
+  return `连续失败 ${member.consecutiveFailures} 次`;
+}
+
+/**
+ * 「恢复接单」对这个成员有没有用。
+ *
+ * 后端只对**解析不到**的成员给 unavailableReason（指不到上游 / 指不到模型，
+ * 无论是没了还是被停用）。解析不到就意味着调度侧永远不会把真实请求发给它，
+ * 而「恢复接单」只翻健康位——点下去界面会永久停在「验证中」等一个不会来的结果。
+ * 所以判据是「有没有归因」，不是「归因是哪一种」：后者每加一个归因就得改一次，
+ * 迟早漏掉某一种（形状 1：判据比它该管的范围窄）。
+ */
+function memberCanRecover(member: PoolModelInfo): boolean {
+  return !member.unavailableReason;
+}
+
+/**
+ * 坏成员的下一步：能不能救、先动哪一步。与 memberFaultPhrase 拼成一句完整归因。
+ *
+ * 措辞一律是「先……」而不是「……之后就会接单」：归因只报**一个**故障，
+ * 而故障可以同时有好几个（上游被停用、同时那个模型也被删了，归因只会说后者）。
+ * 承诺「做完这一件就恢复」在多重故障下就是假话，而判定「还有没有别的毛病」
+ * 要把四种归因两两组合地摊开——那是给自己再加一族语义类别。
+ * 只说下一步、不承诺充分性，既诚实又不用扩枚举。
+ */
+function memberNextStep(member: PoolModelInfo): string {
+  if (member.removable) return '这个顺位永远接不到调用';
+  if (member.unavailableReason === 'upstream-disabled') return '先把这个上游重新启用';
+  if (member.unavailableReason === 'model-disabled') return '先把这个模型重新启用';
+  if (member.unavailableReason === 'upstream-missing') return '先重新接上上游';
+  if (member.unavailableReason === 'model-missing') return '先把这个模型接回来';
+  return '恢复后即可继续承接';
+}
+
 function poolEvidence(pool: ModelPool): { text: string; tone: string } {
   const lead = pool.models.slice().sort((a, b) => a.priority - b.priority)[0];
   if (pool.health === 'empty') return { text: '没有成员，调用会直接失败', tone: 'var(--text-muted)' };
@@ -105,7 +152,11 @@ function poolEvidence(pool: ModelPool): { text: string; tone: string } {
   const failed = relativeTime(lead.lastFailedAt);
   const ok = relativeTime(lead.lastSuccessAt);
   if (pool.health === 'unavailable') {
-    return { text: `第1顺位连续失败 ${lead.consecutiveFailures} 次 · 最近失败 ${failed} · 最近成功 ${ok}`, tone: '#f85149' };
+    return lead.unavailableReason
+      // 下一步走 memberNextStep，不在这里另写一句：池级证据句原来一律说「需要摘除或重新接上上游」，
+      // 而被停用的成员既摘不掉、也不用重接（去启用就行），模型被停用时更是指错了资源。
+      ? { text: `第1顺位「${lead.modelId}」${memberFaultPhrase(lead)} · ${memberNextStep(lead)}`, tone: '#f85149' }
+      : { text: `第1顺位连续失败 ${lead.consecutiveFailures} 次 · 最近失败 ${failed} · 最近成功 ${ok}`, tone: '#f85149' };
   }
   if (pool.health === 'degraded') {
     // degraded = 有健康的也有不健康的。归因必须落到**真正坏掉的那一个**：
@@ -114,7 +165,9 @@ function poolEvidence(pool: ModelPool): { text: string; tone: string } {
     const worst = pool.models.slice().sort((a, b) => (b.healthStatus - a.healthStatus) || (a.priority - b.priority))[0];
     if (worst && worst.healthStatus !== 0) {
       return {
-        text: `第${worst.priority}顺位「${worst.modelId}」连续失败 ${worst.consecutiveFailures} 次（${relativeTime(worst.lastFailedAt)}起）· 池仍在承接`,
+        text: worst.unavailableReason
+          ? `第${worst.priority}顺位「${worst.modelId}」${memberFaultPhrase(worst)} · 池仍在承接`
+          : `第${worst.priority}顺位「${worst.modelId}」连续失败 ${worst.consecutiveFailures} 次（${relativeTime(worst.lastFailedAt)}起）· 池仍在承接`,
         tone: '#d29922',
       };
     }
@@ -1108,7 +1161,7 @@ function poolVerdict(pool: ModelPool): string {
   if (pool.health === 'degraded') {
     const bad = members.find((m) => m.healthStatus !== 0) || lead;
     const tail = healthy ? `，第${healthy.priority}顺位 ${healthy.modelId} 在承接` : '';
-    return `第${bad.priority}顺位 ${bad.modelId} ${(MEMBER_STATUS[String(bad.healthStatus)] || MEMBER_STATUS['1']).label}（连续失败 ${bad.consecutiveFailures} 次）${tail}；建议处理但未中断。`;
+    return `第${bad.priority}顺位 ${bad.modelId} ${(MEMBER_STATUS[String(bad.healthStatus)] || MEMBER_STATUS['1']).label}（${memberFaultPhrase(bad)}）${tail}；建议处理但未中断。`;
   }
   if (pool.recentRequests === 0) return `状态正常，但最近调用是 ${relativeTime(pool.lastRequestAt)}，指标为最后一次结果。`;
   return `全部顺位可用，最近一次失败是 ${relativeTime(lead.lastFailedAt)}。`;
@@ -1470,7 +1523,7 @@ function PoolDetail({
       {locked || isExternal ? (
         <div style={{ ...INSET_BLOCK, border: '1px solid var(--border-subtle)', ...BODY_TEXT }}>
           {locked
-            ? '平台托管池：可以追加成员，但顺位、币种、字段能力由平台维护，也不能移除成员。'
+            ? '平台托管池：可以追加成员，顺位、币种、字段能力由平台维护。成员一般不能移除，指向已删上游或模型的死成员除外。'
             : '外部来源池：配置由上游系统同步，接管配置后才能编辑成员。'}
         </div>
       ) : null}
@@ -1484,6 +1537,18 @@ function PoolDetail({
             const isVerifying = verifying.has(key);
             const chip = MEMBER_STATUS[isVerifying ? 'verify' : String(member.healthStatus)] || MEMBER_STATUS['0'];
             const editable = canWrite && !isExternal && !locked;
+            // 托管池整体只读（顺位与字段由平台维护），但**死成员**是例外：它指向的上游或模型
+            // 已经不存在，永远接不到调用，后端也专门为它开了摘除口子。
+            // 只读到底会让上面那句「建议摘除」变成一句做不到的建议——用户在控制台找不到任何按钮，
+            // 只能去打 API（我自己清那两个 stub 成员时就是这么绕的）。所以这一种放开「移除」。
+            // 用后端下发的 removable，不自己拼条件：它与成员删除端点是同一个判据，
+            // 按钮亮着就一定删得掉。此前用「不可用」重建这个判断，三轮 review 各漏一处。
+            const removableDebris = canWrite && !isExternal && locked && member.removable === true;
+            // 只写一次：可编辑池与「托管池里的死成员」共用同一个按钮，
+            // 避免两处抄本各自漂移（也让文字预算守卫只数到一处标签）。
+            const removeButton = (
+              <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDeleteMember(pool, member)}>移除</Button>
+            );
             return (
               <div key={key} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', ...INSET_BLOCK, fontSize: 'var(--fs-secondary)' }}>
                 <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-caption)', flexShrink: 0 }}>第{member.priority}顺位</span>
@@ -1493,7 +1558,9 @@ function PoolDetail({
                 <span style={{ flexBasis: '100%', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>
                   {isVerifying
                     ? '已恢复接单，等下一条真实业务请求验证（不发探测请求）'
-                    : `连续失败 ${member.consecutiveFailures} 次 · 最近失败 ${relativeTime(member.lastFailedAt)} · 最近成功 ${relativeTime(member.lastSuccessAt)}`}
+                    : member.unavailableReason
+                      ? `${memberFaultPhrase(member)} · ${memberNextStep(member)}`
+                      : `连续失败 ${member.consecutiveFailures} 次 · 最近失败 ${relativeTime(member.lastFailedAt)} · 最近成功 ${relativeTime(member.lastSuccessAt)}`}
                 </span>
                 <CapabilityTags labels={capabilityLabelsForMember(member)} />
                 {editable ? (
@@ -1502,13 +1569,16 @@ function PoolDetail({
                     <select value={(member.priceCurrency || 'CNY').toUpperCase()} onChange={(event) => onCurrencyChange(pool.id, member, event.target.value)} style={smallSelectStyle(74)} aria-label="价格币种"><option value="CNY">CNY</option><option value="USD">USD</option></select>
                     <input value={memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities)} onChange={(event) => onParameterChange(key, event.target.value)} placeholder="字段能力，例如 seed" list="gw-parameter-capability-options" style={{ ...inputStyle, flex: '1 1 160px' }} aria-label="字段级参数能力" />
                     <span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.tight }}>
-                      {member.healthStatus === 2 && !isVerifying ? <Button size="sm" variant="secondary" disabled={busyId === key} onClick={() => void onRecoverMember(pool, member)}>恢复接单</Button> : null}
+                      {member.healthStatus === 2 && !isVerifying && memberCanRecover(member) ? <Button size="sm" variant="secondary" disabled={busyId === key} onClick={() => void onRecoverMember(pool, member)}>恢复接单</Button> : null}
                       <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSaveMember(pool, member)}>保存</Button>
-                      <Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDeleteMember(pool, member)}>移除</Button>
+                      {removeButton}
                     </span>
                   </>
                 ) : (
-                  <span style={{ marginLeft: 'auto', ...HINT_TEXT }}>{locked ? '顺位与字段由平台维护' : isExternal ? '接管配置后可编辑' : ''}</span>
+                  <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: GAP.tight }}>
+                    <span style={HINT_TEXT}>{locked ? '顺位与字段由平台维护' : isExternal ? '接管配置后可编辑' : ''}</span>
+                    {removableDebris ? removeButton : null}
+                  </span>
                 )}
               </div>
             );

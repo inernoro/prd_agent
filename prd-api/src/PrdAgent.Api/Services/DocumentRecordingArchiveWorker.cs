@@ -205,6 +205,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     MimeType = session.MimeType,
                     Size = bytes.LongLength,
                     Url = stored.Url,
+                    StorageKey = stored.Key,
                     Type = AttachmentType.Document,
                     UploadedAt = DateTime.UtcNow,
                 };

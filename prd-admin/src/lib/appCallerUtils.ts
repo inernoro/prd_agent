@@ -38,7 +38,8 @@ export interface ParsedAppCallerCode {
 /**
  * 将后端/历史/别名的 modelType 归一到“期望值枚举”（固定值，前端 UI 按此设定图标与展示名）
  *
- * 期望值来自 ModelAppGroupPage 的固定枚举：
+ * 期望值枚举的 SSOT 是网关侧的模型池类型表（LLM Gateway 控制台「模型池」按这套分类）。
+ * （原注释指向 ModelAppGroupPage，该页随 2026-08-25 模型管理退场已删除。）
  * - chat / intent / vision / generation / code / long-context / embedding / rerank
  */
 export type ExpectedModelType =

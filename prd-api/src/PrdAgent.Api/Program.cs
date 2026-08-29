@@ -91,6 +91,9 @@ builder.Services.AddControllers(options =>
     {
         // 团队动态：全局白名单审计（白名单外的动作一次字典查找即逃逸）
         options.Filters.Add<PrdAgent.Api.Filters.ActivityLogActionFilter>();
+        // 模型管理退场：api/mds 下的写操作一律 410，配置改由 LLM Gateway 控制台承担。
+        // 挂在 ActivityLog 之后：被挡下的请求本来就没发生写入，不该留一条动态。
+        options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -160,6 +163,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.PeerSync.IPeerSyncTransferServi
     PrdAgent.Api.Services.PeerSync.PeerSyncTransferService>();
 // 知识库后台自动同步 worker（双向同步从「点一次跑一次」变「定期保持一致」；防风暴见 PeerSyncScheduleWorker）。
 builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncScheduleWorker>();
+// CDS 验收报告每小时自动同步（此前只有手动入口，于是镜像库长期是陈的）。
+// 只在权威部署上跑：同项目所有分支预览共用一个库，多份同时写会互相打架。
+builder.Services.AddHostedService<PrdAgent.Api.Services.CdsReportImportWorker>();
 
 // 跨 MAP 实例数据同步（动态授权，一次授权跑一次；详见 doc/design.platform.cross-instance-data-sync.md）。
 // Vault 必须是单例：导出令牌只活在内存里，换成 Scoped 就等于每个请求一个空保险箱。

@@ -1026,6 +1026,7 @@ public class ReviewAgentController : ControllerBase
             MimeType = mimeType,
             Size = file.Length,
             Url = stored.Url,
+            StorageKey = stored.Key,
             Type = AttachmentType.Image,
             UploadedAt = DateTime.UtcNow,
         };

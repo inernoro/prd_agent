@@ -55,7 +55,7 @@ import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, Project, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
+import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -839,6 +839,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       env: built.env,
       envVars: built.envVars,
       command: entry.command,
+      entrypoint: entry.entrypoint,
       labels: entry.labels,
     };
   }
@@ -907,6 +908,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         ...(dbName ? { dbName } : {}),
         ...(initSql ? { initSql } : {}),
         ...(preset.command ? { command: preset.command } : {}),
+        // entrypoint 与 command 必须一起落库。只落 command 的话，nats / memcached 这类
+        // 「命令是 sh 片段、entrypoint 被覆盖成 sh」的预设会把 `-c '...'` 直接交给
+        // 镜像原本的 ENTRYPOINT（nats 那个是二进制），容器起都起不来——
+        // 而这在 catalog 里完全看不出来（建了一半，形状 2）。
+        ...(preset.entrypoint ? { entrypoint: preset.entrypoint } : {}),
         createdAt: new Date().toISOString(),
       };
       stateService.addInfraService(service);
@@ -1237,6 +1243,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         status: 'stopped',
         volumes: def.volumes || [],
         env: def.env || {},
+        // command / entrypoint 必须跟着落库。
+        //
+        // 解析器读得出、序列化器写得回，唯独这里建服务时把它俩丢了——一条只断在
+        // 中间的往返链（形状 2）。丢了之后有两件事静默坏掉：容器起来时没有那条
+        // 启动命令（`redis-server --requirepass ...` 直接退化成裸 redis），
+        // 而认证判据看不到启动参数，会把这台库判成「没配认证」。
+        // 后者更坏：它不报错，只是让凭据一个都发不出去（台账 E80）。
+        ...(def.command !== undefined ? { command: def.command } : {}),
+        ...(def.entrypoint !== undefined ? { entrypoint: def.entrypoint } : {}),
+        // restartPolicy 同理：yaml 里写了 `restart: always` 却在导入时丢掉，
+        // 容器会按兜底的 on-failure:3 跑，而 yaml 看起来明明声明过。
+        ...(def.restartPolicy !== undefined ? { restartPolicy: def.restartPolicy } : {}),
         healthCheck: def.healthCheck,
         createdAt: new Date().toISOString(),
       };
@@ -1665,6 +1683,63 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     stateService.save();
     const labels: Record<string, string> = { simple: '简洁', port: '端口直连', multi: '子域名' };
     res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
+  });
+
+  // ── 项目 Agent 角色声明 ──
+  //
+  // 上手助手生成上手包时把角色写到这里，项目选择列表再读回来显示。
+  // 纯展示用途，不参与鉴权；写入受本文件顶部的 /projects/:id 路由级门卫保护。
+
+  router.get('/projects/:id/agent-profile', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    res.json({ ok: true, profile: stateService.getProjectAgentProfile(req.params.id) });
+  });
+
+  router.put('/projects/:id/agent-profile', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const body = (req.body || {}) as Partial<ProjectAgentProfile>;
+    const roles: ProjectAgentProfile['role'][] = ['pm', 'owner', 'domain-expert', 'dev', 'qa'];
+    const experiences: ProjectAgentProfile['experience'][] = ['newcomer', 'experienced'];
+    if (!roles.includes(body.role as ProjectAgentProfile['role'])) {
+      res.status(400).json({ error: 'invalid_role', message: `role 必须是：${roles.join(' | ')}` });
+      return;
+    }
+    if (!experiences.includes(body.experience as ProjectAgentProfile['experience'])) {
+      res.status(400).json({
+        error: 'invalid_experience',
+        message: `experience 必须是：${experiences.join(' | ')}`,
+      });
+      return;
+    }
+    // 技能只作展示，长度和内容都设上限，避免一次声明把项目记录撑大。
+    const skills = Array.isArray(body.skills)
+      ? body.skills
+        .filter((key): key is string => typeof key === 'string' && /^[a-z0-9-]{1,64}$/.test(key))
+        .slice(0, 40)
+      : [];
+    const cardTitle = typeof body.cardTitle === 'string' ? body.cardTitle.slice(0, 40) : undefined;
+    const profile: ProjectAgentProfile = {
+      role: body.role as ProjectAgentProfile['role'],
+      experience: body.experience as ProjectAgentProfile['experience'],
+      skills,
+      ...(cardTitle ? { cardTitle } : {}),
+      declaredAt: new Date().toISOString(),
+      source: 'agent-starter',
+    };
+    if (!stateService.setProjectAgentProfile(req.params.id, profile)) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    stateService.save();
+    res.json({ ok: true, profile });
   });
 
   router.get('/projects/:id/comment-template', (req, res) => {
