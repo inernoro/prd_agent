@@ -191,6 +191,41 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
     public async Task DanglingMapBinding_ShouldStayFailClosedForEmbedding()
     {
         await using var env = await GatewayFixture.CreateAsync();
+        // MAP 侧同时摆满两条 legacy 退路，这是这条用例的关键：
+        // 兜底助手对受保护类型返回空列表之后，控制流会继续走到「候选为空」那一段，
+        // 那里依次试 FindLegacyModelAsync 与 TryResolveLegacyConfigFallbackAsync。
+        // 只有把这两条都喂饱、断言仍然失败，才谈得上证明了「失败关闭」——
+        // 原来的用例 MAP 库全空，顺序写错照样绿（Codex 第五十二轮 P1 指出的盲区）。
+        await env.MapData.LLMPlatforms.InsertOneAsync(new LLMPlatform
+        {
+            Id = "legacy-platform",
+            Name = "老平台",
+            PlatformType = "openai",
+            ApiUrl = "https://legacy.example.test/v1",
+            Enabled = true,
+        });
+        await env.MapData.LLMModels.InsertOneAsync(new LLMModel
+        {
+            Id = "legacy-any-model",
+            Name = "legacy-any",
+            ModelName = "legacy-any",
+            PlatformId = "legacy-platform",
+            // 四个 legacy 标记全部打开：将来谁给 FindLegacyModelAsync 补一条
+            // embedding 分支，无论挂在哪个标记上，这条用例都会立刻变红。
+            IsMain = true,
+            IsIntent = true,
+            IsVision = true,
+            IsImageGen = true,
+            Enabled = true,
+        });
+        await env.MapData.LLMConfigs.InsertOneAsync(new LLMConfig
+        {
+            Id = "legacy-active-config",
+            Provider = "OpenAI",
+            Model = "legacy-config-model",
+            ApiEndpoint = "https://legacy-config.example.test/v1",
+            IsActive = true,
+        });
         await env.MapData.LLMAppCallers.InsertOneAsync(new LLMAppCaller
         {
             AppCode = "some-agent.index::embedding",
@@ -233,6 +268,11 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
             ModelTypes.Embedding);
 
         result.Success.ShouldBeFalse();
+        // 不止「没成功」：不能是悄悄换了个模型给回来。两条 legacy 退路的产物都点名排除。
+        result.ActualModel.ShouldNotBe("legacy-any");
+        result.ActualModel.ShouldNotBe("legacy-config-model");
+        // 也不能是 GW 默认池里那个 chat 模型——受保护类型宁可失败也不换模型。
+        result.ActualModel.ShouldNotBe(ChatModel);
     }
 
     /// <summary>

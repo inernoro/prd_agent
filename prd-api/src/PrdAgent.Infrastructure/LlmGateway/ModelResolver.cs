@@ -351,6 +351,26 @@ public class ModelResolver : IModelResolver
             usedGatewayDefaultFallback = candidateGroups.Count > 0;
             if (candidateGroups.Count == 0)
             {
+                // 受保护类型（embedding / asr / video-gen）绑定还在、池没了：上面的兜底助手
+                // 已经按失败关闭拒绝给默认池，这里必须把话说完——否则控制流会接着去试两条
+                // legacy 退路，等于从背面绕开刚拒绝掉的那条边界（Codex 第五十二轮 P1）。
+                //
+                // 今天这两条退路对这三类恰好都返回 null（FindLegacyModelAsync 的 switch 没有
+                // 它们的分支，TryResolveLegacyConfigFallbackAsync 只认 chat / intent），
+                // 所以这里不改变任何现有行为。写出来是因为「靠另一个方法碰巧没写某个分支」
+                // 不是不变量：谁哪天给那个 switch 补一条 embedding，边界就会无声消失。
+                if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+                {
+                    _logger.LogWarning(
+                        "[ModelResolver] {ModelType} 专属池已不存在，按失败关闭处理，拒绝降级 legacy: AppCallerCode={Code}",
+                        modelType, appCallerCode);
+                    return ModelResolutionResult.NotFound(expectedModel,
+                        $"专属模型池不存在且该类型禁止降级: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                        GatewayRouteFailure.ModelPoolEmpty,
+                        "dedicated-pool-missing",
+                        appCallerCode);
+                }
+
                 var legacyModel = await FindLegacyModelAsync(modelType, ct);
                 if (legacyModel != null)
                 {

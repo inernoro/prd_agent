@@ -4,3 +4,4 @@
 | fix | prd-api | 上游流正常结束却零输出（内容过滤/空补全）同样算降级，不再退回静默 |
 | test | prd-api | 补 Mongo 实测用例：未登记回落、悬空绑定压过 legacy、兜底不扩搜索范围、embedding 仍 fail closed、登记但绑的池不存在仍 fail closed |
 | docs | prd-api | 台账记下摘要静默为空的真因、当日生产配置动作与仍欠的三笔 |
+| docs | prd-admin | 录音交付与纪要网页方案预览：A 到 Z 全部 26 屏、架构、数据流、验收判据与范围契约 |
