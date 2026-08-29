@@ -48,9 +48,23 @@ const enItems = en.groups.flatMap((g) => g.items);
 const registry = new Map(BUILTIN_TOOLS.map((t) => [t.name, t]));
 
 describe('首页百宝箱那一幕的名单', () => {
-  it('确实有名单可查（否则下面几条恒真）', () => {
-    expect(zhItems.length).toBeGreaterThanOrEqual(12);
-    expect(registry.size).toBeGreaterThanOrEqual(20);
+  /**
+   * 文案里报了三个数，这里按数断言，不用「不小于」糊过去：
+   *   「不是六个 Agent，是三十几个」 → 注册表 30-39 条
+   *   「这里列了 16 个」            → 名单正好 16 条
+   *   「注册表里还有十几个」        → 注册表减去这 16 条，余 10-19
+   * 三条合起来把注册表钉在 30-35。下限式的写法（≥12 / ≥20）在名单缩到 12 条、
+   * 或注册表掉到 20 条时照样绿，而页面还在说十六个、三十几个——这一支从头到尾
+   * 防的就是这种「守卫绿着、文案已经不成立」。
+   *
+   * 加到第 36 个工具时这条会红：那时「还有十几个」变成二十来个，文案确实该改。
+   */
+  it('文案报的三个数与真实数据对得上（也保证下面几条不恒真）', () => {
+    expect(zhItems.length).toBe(16);
+    expect(registry.size).toBeGreaterThanOrEqual(30);
+    expect(registry.size).toBeLessThanOrEqual(39);
+    expect(registry.size - zhItems.length).toBeGreaterThanOrEqual(10);
+    expect(registry.size - zhItems.length).toBeLessThanOrEqual(19);
   });
 
   it('每个列出的名字都在注册表里，一个例外都没有', () => {
