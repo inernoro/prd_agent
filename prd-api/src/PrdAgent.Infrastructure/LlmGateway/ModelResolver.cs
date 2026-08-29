@@ -584,12 +584,20 @@ public class ModelResolver : IModelResolver
                 // 判据只认「库里明写着 Enabled=false」这一种证据：查不到不算（可能是纯池
                 // 快照成员、跨租户、或 MAP fallback 被关掉），字段缺失也不算（Mongo 的
                 // Eq(false) 不匹配缺字段的文档，正好挡住把「老数据没写这个字段」误判成停用）。
-                if (modelConfig is null
-                    && await IsPoolMemberModelExplicitlyDisabledAsync(
+                // 这道闸**不能**拿 `modelConfig is null` 当前置条件。上面那次查找开着 MAP
+                // 兜底：GW 里这条模型明写着 Enabled=false，它会跳过、转而捞出 MAP 里那份还
+                // 启用着的旧副本，于是 modelConfig 非空、闸门整条被短路——运维在网关里点了
+                // 停用，模型照发。判据本身没写错，错在拿一个「找到了可用配置」的结果去证明
+                // 「它没被停用」，而这两件事有两个数据源时并不等价。
+                //
+                // 反过来也要防：GW 里启用着、MAP 里躺着一份过期的停用副本时，不能被误判成
+                // 停用。所以 MAP 侧的停用记录只在「GW 压根没有权威记录」（modelConfig 为空）
+                // 时才算数；GW 有话说的时候一律以 GW 为准。
+                if (await IsPoolMemberModelExplicitlyDisabledAsync(
                         selectedModel.PlatformId,
                         selectedModel.ModelId,
                         ct,
-                        allowMapFallback: !gatewayConfigRequired))
+                        allowMapFallback: !gatewayConfigRequired && modelConfig is null))
                 {
                     _logger.LogWarning(
                         "[ModelResolver] 模型池 {PoolName} 中的模型 {ModelId} 已停用，跳过该候选: PlatformId={PlatformId}",

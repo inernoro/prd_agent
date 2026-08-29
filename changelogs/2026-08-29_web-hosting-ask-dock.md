@@ -178,3 +178,5 @@
 | fix | prd-api | 重新生成失败的还原判据补齐第二个条件：并发 editor 保存的手写题不再被改回 auto（判据抽成 RestoreAskSourceFilter 唯一定义，打真库三条用例） |
 | fix | prd-admin | 重传站点时进度屏接上：判据抽成 showsUploadProgress，重传（编辑+选文件）放行，纯改元信息仍不占这一屏 |
 | chore | docs | 本 PR 的 42 个 changelog 碎片按 AGENTS.md 规则 #4 合并为一个文件（177 行原样保留） |
+| fix | prd-api | 网关「跳过停用成员」不再被 MAP 旧副本短路：停用判定不由 modelConfig 把门，MAP 侧只在 GW 无权威记录时参与 |
+| docs | doc | 提问坞交接清单按当前状态重写：导读与表格不再打架、预览给三条真实深链、按 §10 去掉逐文件源码清单 |

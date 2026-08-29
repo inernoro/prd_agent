@@ -424,6 +424,24 @@ public class GatewayDataDomainGuardTests
         Assert.False(
             fetchThenTest.IsMatch(resolver),
             "别把「查回来再判 !Enabled」当停用证据：缺字段的老文档会被误判成停用，必须用 Eq(Enabled,false) 过滤");
+
+        // 这道闸不许拿「找到了可用配置」当「它没被停用」的证据。
+        //
+        // 上面那次 FindGatewayOwnedOrMapModelAsync 开着 MAP 兜底：GW 里明写着停用时它会
+        // 跳过、改捞 MAP 里那份还启用着的旧副本，结果非空。谁要是拿 `modelConfig is null`
+        // 给这道闸当前置条件，运维在网关点的停用就整条被短路，模型照发——两个数据源时
+        // 「查得到可用配置」并不能证明「没被停用」。
+        var dispatchGuard = SourceSlice.Member(
+            resolver, "await IsPoolMemberModelExplicitlyDisabledAsync(");
+        Assert.False(
+            new Regex(@"if \(\s*modelConfig is null\s*&&\s*await IsPoolMemberModelExplicitlyDisabledAsync")
+                .IsMatch(resolver),
+            "停用判定不许由 modelConfig 是否为空来把门：GW 停用 + MAP 有启用旧副本时会被整条短路");
+
+        // 反向也要钉住：GW 有权威记录时不许再拿 MAP 的停用旧副本说事，否则会把
+        // GW 里启用着的模型误判成停用。所以 MAP 侧只在 modelConfig 为空时才参与。
+        Assert.Contains("allowMapFallback: !gatewayConfigRequired && modelConfig is null", resolver);
+        Assert.Contains("已停用，跳过该候选", dispatchGuard);
     }
 
     [Fact]
