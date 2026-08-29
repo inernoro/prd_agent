@@ -52,7 +52,8 @@ describe('首页百宝箱那一幕的名单', () => {
    * 文案里报了三个数，这里按数断言，不用「不小于」糊过去：
    *   「不是六个 Agent，是三十几个」 → 注册表 30-39 条
    *   「这里列了 16 个」            → 名单正好 16 条
-   *   「注册表里还有十几个」        → 注册表减去这 16 条，余 10-19
+   *   「注册表里还有十几个」        → 注册表减去这 16 条，余 12-19
+   *     （英文那句是 "another dozen-odd"，比中文的「十几」起点高一点，取两者的交集）
    * 三条合起来把注册表钉在 30-35。下限式的写法（≥12 / ≥20）在名单缩到 12 条、
    * 或注册表掉到 20 条时照样绿，而页面还在说十六个、三十几个——这一支从头到尾
    * 防的就是这种「守卫绿着、文案已经不成立」。
@@ -63,7 +64,7 @@ describe('首页百宝箱那一幕的名单', () => {
     expect(zhItems.length).toBe(16);
     expect(registry.size).toBeGreaterThanOrEqual(30);
     expect(registry.size).toBeLessThanOrEqual(39);
-    expect(registry.size - zhItems.length).toBeGreaterThanOrEqual(10);
+    expect(registry.size - zhItems.length).toBeGreaterThanOrEqual(12);
     expect(registry.size - zhItems.length).toBeLessThanOrEqual(19);
   });
 

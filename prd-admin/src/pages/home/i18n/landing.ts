@@ -1261,7 +1261,7 @@ const en: TranslationShape = {
           ],
         },
       ],
-      footer: 'Sixteen shown here; the registry holds a dozen more — search beats paging.',
+      footer: 'Sixteen shown here; the registry holds another dozen-odd — search beats paging.',
     },
     workflow: {
       eyebrow: 'Workflows · /workflow-agent',
