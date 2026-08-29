@@ -53,8 +53,14 @@ export interface HostedSite {
   publishedAt?: string | null;
   /** 是否允许被评论（默认 true，owner 可关闭） */
   commentsEnabled?: boolean;
-  /** 是否开放「向我提问」。默认 false —— 提问烧 token，存量站点不会被顺带打开 */
-  askEnabled?: boolean;
+  /**
+   * 是否开放「向我提问」。**三态**，别当 boolean 用：
+   * null / 缺字段 = owner 从没表过态（含全部存量站点与新上传）→ 视为**开**；
+   * true = 明确打开；false = 明确关掉。
+   * 所以判断一律用 `!== false`，写 `=== true` 会把「没表过态」误判成关。
+   * 后端唯一判定源是 AskAccessPolicy.IsAskOn（还要叠加形态是否支持）。
+   */
+  askEnabled?: boolean | null;
   /** 站点级开场问题题库（分享时可从中挑几条） */
   askSuggestedQuestions?: string[];
   askAllowAnonymous?: boolean;

@@ -132,7 +132,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   const body = (
     // z-index 必须高于 SitePreviewModal 的 z-[100]：本抽屉唯一的入口就在那个弹窗的顶栏里，
     // 两者又是并列的 portal（都挂 body）。80 < 100 意味着抽屉永远被弹窗盖住点不到，
-    // 而提问默认关闭、这里是唯一的开启入口——等于整个功能没人打得开。
+    // 而这里是唯一能改提问开关的地方——提问现在默认开着，盖住它就等于
+    // owner 想关也关不掉（还在持续烧额度），比打不开更糟。
     <div style={{ position: 'fixed', inset: 0, zIndex: 110 }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'var(--overlay-scrim, rgba(0,0,0,0.45))' }} />
       <aside
@@ -161,7 +162,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
             <Row
               label="开放提问"
-              hint="访客可以对着这个页面向 AI 提问，回答只依据页面内容。每次提问都会消耗模型额度，所以默认关闭。"
+              hint="访客可以对着这个页面向 AI 提问，回答只依据页面内容。默认是开着的；每次提问都会消耗模型额度，不想让访客问就在这里关掉。"
             >
               {/* 只挡「关 → 开」，永远保留「开 → 关」这条退路。
                   两个方向一起挡会造成一种没法自救的状态：HTML 站重传成视频之后形态变成不支持，
