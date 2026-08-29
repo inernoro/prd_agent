@@ -2895,7 +2895,8 @@ export interface ResourceCloneTask {
   branchId: string;
   resourceId: string;
   runtime: 'mysql' | 'postgres' | 'mongodb' | 'redis' | 'unknown';
-  mode: 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
+  /** reset：先 DROP 再重建分支独立空库，用于迁移失败留下脏状态时把可丢弃分支库推倒重来。 */
+  mode: 'empty' | 'reset' | 'clone-main' | 'restore-backup' | 'connect-existing';
   strategy: 'branch-database' | 'mysqldump' | 'mysqlpump' | 'background-copy' | 'backup-restore' | 'external-connection';
   status: 'pending' | 'running' | 'completed' | 'failed';
   progress: number;
