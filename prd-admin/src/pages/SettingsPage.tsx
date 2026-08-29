@@ -13,6 +13,7 @@ import { AccountSettings } from '@/pages/settings/AccountSettings';
 import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
 import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
 import { PeerNodesSettings } from '@/pages/settings/PeerNodesSettings';
+import LandingPreviewSettings from '@/pages/settings/LandingPreviewSettings';
 import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -23,6 +24,7 @@ import { getMenuGroupedDefaultOrder } from '@/lib/unifiedNavCatalog';
 import {
   Palette,
   Image,
+  ImagePlus,
   UserCog,
   UserCircle2,
   Database,
@@ -299,6 +301,12 @@ export default function SettingsPage() {
 
     const hasPerm = (perm: string) => isRoot || perms.includes(perm) || perms.includes('super');
     if (hasPerm('assets.read')) list.push({ key: 'assets', label: '资源管理', icon: <Image size={14} /> });
+    // 这一屏要三样权限齐了才成立：读 slot 列表（assets.read）、写 slot（assets.write）、
+    // 调生图（visual-agent.use，ImageGenController 就是这个门）。只给写权限的话，
+    // 入口露出来了、列表拉不到、模型也拉不到，用户看到的是「没配模型」+ 一点就失败。
+    if (hasPerm('assets.read') && hasPerm('assets.write') && hasPerm('visual-agent.use')) {
+      list.push({ key: 'landing-preview', label: '首页预览图', icon: <ImagePlus size={14} /> });
+    }
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
     list.push({ key: 'infra-services', label: '基础设施服务', icon: <Server size={14} /> });
@@ -318,6 +326,19 @@ export default function SettingsPage() {
     }
   }, [activeTab, searchParams]);
 
+  /*
+   * 渲染的那一屏必须也在**这个人能看的清单**里。
+   *
+   * 上面按权限筛的是 tab 条，地址栏没经过这道筛：`?tab=landing-preview` 直接打开，
+   * 组件照样挂。首页预览图那一屏尤其亏——生图只要 visual-agent.use，
+   * 于是没有 assets 权限的人也能按下「全部重新生成」，七次计费的生图跑起来，
+   * 最后卡在挂槽位那一步全部失败。
+   *
+   * 兜底就落在这里：认不出的 / 没权限的 tab 一律退回第一屏。
+   * 后端每个端点自己也有权限门，这一层是省掉「点了才发现不行」和那七次白花的钱。
+   */
+  const visibleTab = tabs.some((t) => t.key === activeTab) ? activeTab : tabs[0].key;
+
   const handleTabChange = (key: string) => {
     setActiveTab(key);
     // tab 切换用 replace：不往 history 堆条目，浏览器/手势返回直接离开本页回真正的上一页
@@ -329,17 +350,18 @@ export default function SettingsPage() {
       <TabBar items={tabs} activeKey={activeTab} onChange={handleTabChange} />
 
       <div className="flex-1 min-h-0">
-        {activeTab === 'user-space' && <UserSpaceSettings />}
-        {activeTab === 'account' && <AccountSettings />}
-        {activeTab === 'skin' && <SkinSettings />}
-        {activeTab === 'nav-order' && <NavOrderSettings />}
-        {activeTab === 'assets' && <AssetsManagePage />}
-        {activeTab === 'authz' && <AuthzPage />}
-        {activeTab === 'data' && <DataManagePage />}
-        {activeTab === 'infra-services' && <InfraServicesPage />}
-        {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
-        {activeTab === 'short-links' && <ShortLinksAdminSettings />}
-        {activeTab === 'peer-sync' && <PeerNodesSettings />}
+        {visibleTab === 'user-space' && <UserSpaceSettings />}
+        {visibleTab === 'account' && <AccountSettings />}
+        {visibleTab === 'skin' && <SkinSettings />}
+        {visibleTab === 'nav-order' && <NavOrderSettings />}
+        {visibleTab === 'assets' && <AssetsManagePage />}
+        {visibleTab === 'landing-preview' && <LandingPreviewSettings />}
+        {visibleTab === 'authz' && <AuthzPage />}
+        {visibleTab === 'data' && <DataManagePage />}
+        {visibleTab === 'infra-services' && <InfraServicesPage />}
+        {visibleTab === 'update-accel' && <UpdateAccelerationSettings />}
+        {visibleTab === 'short-links' && <ShortLinksAdminSettings />}
+        {visibleTab === 'peer-sync' && <PeerNodesSettings />}
       </div>
     </div>
   );

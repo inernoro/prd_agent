@@ -14,77 +14,336 @@ export interface StatItem {
   label: string;
 }
 
-export interface FeatureItem {
-  id: string;
-  eyebrow: string;
-  title: string;
-  description: string;
-  bullets: string[];
-}
 
-export interface HowStep {
-  n: string;
-  title: string;
-  description: string;
-  demo: string;
-}
 
-export interface AgentItem {
-  id: string;
-  name: string;
-  description: string;
-}
 
-export interface PulseStat {
-  id: string;
-  label: string;
-  trend: string;
-}
 
-export interface LeaderboardRow {
-  id: string;
-  name: string;
-  delta: string;
-}
 
-export interface PlatformItem {
-  id: string;
-  name: string;
-  arch: string;
-}
 
-export interface ProductMockupTranslation {
-  newConversation: string;
-  conversations: Array<{ title: string; meta: string }>;
-  header: {
+
+
+/** 文学创作那一幕的四个配图风格（对应墨系色带的钢青 / 陶土 / 松绿 / 钢蓝）。 */
+export type LiteraryStyleKey = 'calm' | 'warm' | 'forest' | 'night';
+
+/**
+ * 四幕「真实面板」场景的文案。
+ *
+ * 这些不是营销辞令，是**照真实产品面板抄下来的界面文字**——面板里写什么，
+ * 这里就写什么。改产品面板的措辞时，这里要跟着改，否则首页会开始说假话。
+ */
+export interface ScenesTranslation {
+  visual: {
+    eyebrow: string;
     title: string;
-    meta: string;
+    description: string;
+    /** 每一拍的旁白：告诉观众此刻在发生什么 */
+    beats: string[];
+    mixAction: string;
+    tiles: { a: string; b: string; c: string; mix: string };
+    genRunning: { label: string; status: string };
+    genOvertime: { label: string; status: string };
+    generator: { title: string; body: string };
+    actions: string[];
+    gesture: { before: string; after: string };
+    chat: {
+      title: string;
+      subtitle: string;
+      submit: string;
+      user: string;
+      user2: string;
+      thinking: string;
+      reply: string;
+      landed: string;
+      streaming: string;
+      model: string;
+      pool: string;
+      placeholder: string;
+      send: string;
+    };
   };
-  actions: {
-    share: string;
-    continue: string;
+  literary: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    beats: string[];
+    /** 打锚点那一拍的模板，{n} 会被替换成已识别的位置数 */
+    marking: string;
+    styleLabel: string;
+    styleHint: string;
+    styles: Record<LiteraryStyleKey, string>;
+    fileName: string;
+    model: string;
+    pool: string;
+    body: { p1: string; p2: string; p3: string; p4: string; fig1: string; fig2: string; slot: string };
+    summary: { words: string; paragraphs: string; figures: string; currentStyle: string };
+    steps: string[];
+    primaryAction: string;
+    configPills: string[];
+    tools: { generate: string; size: string; pack: string };
+    streaming: string;
+    runningLabel: string;
+    status: { done: string; running: string; idle: string };
+    cards: Array<{ size: string; prompt: string }>;
+    cardActions: string[];
   };
-  chat: {
-    userMessage: string;
-    agentReply: string;
-    progress: string;
+  knowledge: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    beats: string[];
+    more: string;
+    search: string;
+    badges: { shared: string; redo: string; pass: string; tag: string };
+    tree: Array<{ name: string; time: string }>;
+    doc: {
+      title: string;
+      meta: string;
+      p1: string;
+      p2before: string;
+      selected: string;
+      p2after: string;
+      p3: string;
+      p4: string;
+    };
+    readerTools: string[];
+    selectionActions: string[];
+    rewrite: {
+      status: string;
+      before: string;
+      after: string;
+      replace: string;
+      insert: string;
+      guard: string;
+    };
+    tocTitle: string;
+    toc: Array<{ label: string; depth: number }>;
+    galaxy: {
+      hovered: string;
+      legendTitle: string;
+      legend: string[];
+      hint: string;
+      stats: string;
+    };
   };
-  input: string;
+  layers: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    /** 五拍旁白：同一条请求依次穿过三层 */
+    beats: string[];
+    /**
+     * 三层各画一种**形状不同**的拓扑，同一条请求穿过它们：
+     * MAP 横向工位流 → LLMGW 纵向调度栈 → CDS 分支拓扑。
+     * 三块同拍播放，读起来才是"一层一层接着的"，而不是三张同款卡并排。
+     */
+    map: {
+      role: string;
+      meta: string;
+      lead: string;
+      /** 横向流水：你 → Agent → Agent → 产物 */
+      lane: Array<{ kind: 'you' | 'agent' | 'artifact'; label: string; detail: string }>;
+      footnote: string;
+    };
+    gateway: {
+      role: string;
+      meta: string;
+      lead: string;
+      /** 纵向调度栈：调用方 → 模型池 → 成员顺位 → 上游，逐层往下落 */
+      stack: Array<{ label: string; detail: string }>;
+      footnote: string;
+    };
+    cds: {
+      role: string;
+      meta: string;
+      lead: string;
+      baseBranch: string;
+      branch: string;
+      branchMeta: string;
+      /** 四个服务，照用户给的那张拓扑图：api / admin / mongo / redis */
+      services: Array<{ name: string; detail: string; port?: string }>;
+      previewLabel: string;
+      /** 域名只给形状 —— 每个人的 CDS 域名不一样 */
+      previewShape: string;
+      terminal: string;
+      footnote: string;
+    };
+  };
 }
 
-export interface Pillar {
-  id: string;
-  figLabel: string;
-  title: string;
-  description: string;
+/** 尾部四幕的一个 Agent 条目（名字与一句话都取自 toolboxStore 的真实注册表）。 */
+export interface RosterItem {
+  name: string;
+  desc: string;
+  /** ICON 注册表里的图标名 */
+  icon: string;
+  /** 未转正的标记（真实注册表里的 wip） */
+  preview?: boolean;
 }
+
+/** 工作流舱的四种分类，与 `pages/workflow-agent/capsuleRegistry.tsx` 的 CapsuleCategory 同名。 */
+export type CapsuleKind = 'trigger' | 'processor' | 'control' | 'output';
+
+/** 体验地图的一块：面积按 weight 分，颜色按健康。与 ExperienceMapLeaf 的 status 同枚举。 */
+export interface VocLeaf {
+  label: string;
+  weight: number;
+  status: 'ok' | 'slow' | 'error';
+}
+
+/**
+ * 尾部五幕：百宝箱 / 工作流 / 体验地图 / 模型池 / 从这里开始。
+ *
+ * 每一幕都照一张**真实存在的页面**画缩微版，页面在哪写在各自组件的注释里。
+ * 上一版这几幕是「样式对、内容编」——卡片网格、自造的四列表，看着像产品截图
+ * 其实系统里没有那个界面。用户的原话是「不够真实，首先得需要我们的真实页面」。
+ */
+export interface TailTranslation {
+  /** 百宝箱，照 `/ai-toolbox`（AiToolboxPage）——权属 tab + 类型 tab + 搜索 + 计数 + 最近使用 + 网格 */
+  toolbox: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    /** 权属维度 tab，取自 AiToolboxPage 的 CATEGORY_TABS */
+    tabs: string[];
+    /** 功能类型 tab，取自同页的 KIND_TABS */
+    kindTabs: string[];
+    /** 真实 placeholder，与那一页逐字一致 */
+    searchPlaceholder: string;
+    /** 演到「搜一下」那一拍时，输入框里逐字打出来的词 */
+    searchWord: string;
+    countSuffix: string;
+    recentLabel: string;
+    recent: string[];
+    emptyHint: string;
+    previewTag: string;
+    beats: string[];
+    groups: Array<{ label: string; items: RosterItem[] }>;
+    footer: string;
+  };
+  /** 工作流画布，照 `/workflow-agent/:id/canvas`——左舱库 + 画布上的舱链 + 执行态 */
+  workflow: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    /** 真实模板名，取自 workflowTemplates.ts */
+    templateName: string;
+    libraryLabel: string;
+    /** 舱库四类与真实舱数，取自 capsuleRegistry 的 CAPSULE_CATEGORIES */
+    categories: Array<{ label: string; kind: CapsuleKind; count: number }>;
+    runLabel: string;
+    runningLabel: string;
+    doneLabel: string;
+    waitingLabel: string;
+    runPanelLabel: string;
+    /** 执行日志的两条模板，措辞照 ExecutionDetailPanel 里真实打出来的那行 */
+    logStart: string;
+    logDone: string;
+    /** 这条链上的舱，逐个取自那份模板；secs/artifacts 喂给右侧执行日志 */
+    nodes: Array<{ name: string; kind: CapsuleKind; detail: string; secs: string; artifacts: number }>;
+    beats: string[];
+  };
+  /** 体验地图，照 `/team-activity` 的体验全景热力图（ExperienceMap 的 squarified treemap） */
+  voc: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    windowLabel: string;
+    legend: { ok: string; slow: string; error: string };
+    /** 分区名取自后端 ModuleLabels，块名取自 SegmentLabels */
+    groups: Array<{ label: string; leaves: VocLeaf[] }>;
+    painTitle: string;
+    pains: Array<{ label: string; metric: string; note: string; status: 'slow' | 'error' }>;
+    beats: string[];
+  };
+  /**
+   * CDS —— 这一幕不摆日志、不摆表，只讲一天：早上说一句话，下午能打开看，
+   * 中间那段人不在。上一版把真实部署日志十三行全端上来，用户的原话是
+   * 「太复杂了，可以抽象一点」——证据不是故事，日志留在部署页就好。
+   */
+  cds: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    dayLabel: string;
+    /** 一天里的五个时刻。两头是人，中间全是机器——这个形状本身就是结论 */
+    moments: Array<{ time: string; actor: 'you' | 'it'; text: string }>;
+    actorLabels: { you: string; it: string };
+    /** 中间那段人不在，横在轨道下面 */
+    awayLabel: string;
+    previewLabel: string;
+    /** 预览地址只给形状不给域名——每个人的 CDS 域名不一样，编一个就是假的 */
+    previewShape: string;
+    approve: string;
+    reject: string;
+    /** 一天下来的账：人碰了几次，机器跑了多久 */
+    tally: Array<{ label: string; value: string }>;
+    footer: string;
+    beats: string[];
+  };
+  /** 模型池，照 LLMGW 控制台的 `/pools` 列表——列名与 ModelPoolsPage 的表头逐字一致 */
+  models: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    counts: Array<{ value: string; label: string }>;
+    windowText: string;
+    countSuffix: string;
+    columns: { status: string; pool: string; evidence: string; members: string; success: string; duration: string; requests: string };
+    statusLabels: { ok: string; watch: string };
+    /** 演出只动第一池：它的第二顺位成员挂掉、第三顺位顶上 */
+    pools: Array<{
+      name: string;
+      type: string;
+      evidence: string;
+      members: string[];
+      success: string;
+      successDegraded?: string;
+      duration: string;
+      requests: string;
+      /** 该池是否参与演出（挂人 → 顶上） */
+      acting?: boolean;
+    }>;
+    downTag: string;
+    promotedTag: string;
+    beats: string[];
+  };
+  start: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    note: string;
+    steps: Array<{ title: string; desc: string }>;
+    surfaces: Array<{ name: string; desc: string; state: string; href?: string; hrefLabel?: string }>;
+  };
+  closing: {
+    eyebrow: string;
+    title: string;
+    description: string;
+    primary: string;
+    secondary: string;
+    footnote: string;
+  };
+}
+
+/** 三层一体三块各自的数据形状 —— 组件直接引这三个别名，不要去 typeof import 整棵树 */
+export type MapLaneData = TranslationShape['scenes']['layers']['map']['lane'];
+export type GatewayStackData = TranslationShape['scenes']['layers']['gateway']['stack'];
+export type CdsTopologyData = TranslationShape['scenes']['layers']['cds'];
 
 export interface TranslationShape {
   nav: {
     products: string;
     agents: string;
-    cinema: string;
-    community: string;
+    workflow: string;
+    models: string;
     download: string;
     docs: string;
     login: string;
@@ -100,126 +359,20 @@ export interface TranslationShape {
     techItems: string[];
   };
   stats: StatItem[];
-  productMockup: ProductMockupTranslation;
-  pillars: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    items: Pillar[];
-  };
-  features: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    learnMore: string;
-    chapterLabel: string;
-    items: FeatureItem[];
-  };
-  workflow: {
-    eyebrow: string;
-    title: string;
-    description: string;
-    chapterMarker: string;
-    canvasTitle: string;
-    runLabel: string;
-    nodes: Array<{ title: string; subtitle: string }>;
-    status: {
-      running: string;
-      elapsed: string;
-      eta: string;
-      trace: string;
-    };
-  };
-  cinema: {
-    eyebrow: string;
-    title: string;
-    tail: string;
-    caption: string;
-    comingSoon: string;
-  };
-  how: {
-    eyebrow: string;
-    title: string;
-    steps: HowStep[];
-  };
-  agents: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    dedicated: string;
-    assistant: string;
-    items: AgentItem[];
-  };
-  compat: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    footer: string;
-    action: string;
-  };
-  pulse: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    leaderboard: string;
-    stats: PulseStat[];
-    rows: LeaderboardRow[];
-  };
-  download: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    bullets: string[];
-    platforms: PlatformItem[];
-  };
-  cta: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
-    primary: string;
-    secondary: string;
-  };
+  /** 四幕「真实面板」场景（视觉创作 / 文学创作 / 知识库 / 三层一体） */
+  scenes: ScenesTranslation;
+  /** 尾部四幕（Agent 全家福 / 模型这一层 / 从这里开始 / 收口） */
+  tail: TailTranslation;
+  /**
+   * 两页幕间换气。九幕连排会读麻，这两页什么都不给看，只承上启下。
+   * 摆放位置见 `LandingPage` 的节奏表。
+   */
+  interludes: Array<{ kicker: string; title: string; note: string }>;
   footer: {
     brand: string;
     github: string;
     backToTop: string;
     copyright: string;
-  };
-  /** FeatureDeepDive 内各 mockup 的示意文案 */
-  mockups: {
-    visual: {
-      header: string;
-      status: string;
-    };
-    literary: {
-      header: string;
-      progress: string;
-      added: string;
-      deleted: string;
-      diffView: string;
-    };
-    prd: {
-      header: string;
-      sections: Array<{ title: string; note?: string }>;
-    };
-    video: {
-      header: string;
-      status: string;
-    };
-    defect: {
-      header: string;
-      items: Array<{ sev: string; title: string }>;
-      assigned: string;
-      newThisWeek: string;
-      fixed: string;
-      fixRate: string;
-    };
-    report: {
-      header: string;
-      plan: string;
-      actual: string;
-      days: string[];
-    };
   };
 }
 
@@ -229,9 +382,9 @@ const zh: TranslationShape = {
   nav: {
     products: '产品',
     agents: 'Agent',
-    cinema: '片花',
-    community: '社区',
-    download: '下载',
+    workflow: '工作流',
+    models: '模型',
+    download: '开始',
     docs: '文档',
     login: '登录 / 注册',
   },
@@ -239,10 +392,14 @@ const zh: TranslationShape = {
     status: 'SYSTEM ONLINE',
     brand: 'MAP · 米多智能体生态平台',
     title: '让创造，自由呼吸',
+    // 原文是一百字企业话术（"碳硅共生的深度融合、人机共治、价值共创、共同进化"）。
+    // 这种句子放到任何一家公司的首页都成立，等于没说；居中三行排下来也是首屏最难看的一块。
+    // 换成这一页接下来真的会演给你看的东西。
     subtitle:
-      'MAP（Midoo Agentic Platform）· 米多智能体生态平台是企业级数字劳动力平台，致力于将 AI 从辅助工具升级为具备端到端作业能力的数字劳动力，强调碳硅共生的深度融合、人机共治、价值共创、共同进化，赋能企业进化为碳硅共生的智能型组织。',
+      '三十几个 Agent 在同一个台面上干活，模型调度和交付环境都在下面接着。你说一句话，产物落在画布或文档里，不是聊天记录里。',
     primaryCta: '进入 MAP',
-    secondaryCta: '观看片花',
+    // 原来是「观看片花」，指向的 #cinema 那一幕早就撤了 —— 一颗点下去什么也不发生的按钮
+    secondaryCta: '看它怎么干活',
     techBarLabel: 'POWERED BY',
     techItems: [
       'GPT-5',
@@ -263,322 +420,533 @@ const zh: TranslationShape = {
     { value: '98', label: 'MongoDB 集合' },
     { value: '99.9%', label: '服务可用性' },
   ],
-  productMockup: {
-    newConversation: '新对话',
-    conversations: [
-      { title: '未来科技城市海报', meta: '视觉创作智能体 · 刚刚' },
-      { title: '品牌 VI 设计提案', meta: '视觉创作智能体 · 2h' },
-      { title: 'PRD v3 补全', meta: 'PRD 解读智能体 · 昨天' },
-      { title: '产品发布文案润色', meta: '文学创作智能体 · 2 天前' },
-      { title: 'Bug 根因分析', meta: '缺陷管理智能体 · 3 天前' },
-    ],
-    header: {
-      title: '未来科技城市海报',
-      meta: '视觉创作智能体 · 生成中 · 2 / 4 已完成',
+  scenes: {
+    visual: {
+      eyebrow: '视觉创作智能体 · 画布与对话同屏',
+      title: '涂涂改改，又是一天',
+      description:
+        '左边是无限画布，图散在上面；右边是设计师，一直在。说一句话，新图落回画布；点一张图，动作条浮出来。',
+      beats: [
+        '空画布 · 只有一张初稿',
+        '正在输入…',
+        '已发送',
+        '模型在想 · 2.1s',
+        '正在回话',
+        '开始渲染 · 产物就在画布上长出来',
+        '雾天版本已落回画布 · 没压住已有图',
+        '顺手再出一张暖调变体',
+        '点一张图，动作条就浮出来',
+        '选中两张 · 再跟它说一句',
+        '混合计算中 · 取雾天的天、暖调的光',
+        '混合结果已落回画布',
+      ],
+      mixAction: '混合计算',
+      tiles: { a: '主视觉 · 初稿', b: '暖调变体', c: '雾天版本', mix: '混合结果' },
+      genRunning: { label: 'HD 放大', status: '4.2s / 预计 ~6s' },
+      genOvertime: { label: 'AI 分层', status: '即将完成 · 8.4s' },
+      generator: { title: '图像生成器', body: '选中它，画布上就出现快捷输入。参考图拖进来即可。' },
+      actions: ['HD 放大', '移除背景', '扩展', '局部重绘', 'AI 分层', '下载'],
+      gesture: { before: '两指拖动平移 ·', after: '+滚轮缩放 · Space 临时平移 · 双击空白不缩放' },
+      chat: {
+        title: 'Hi，我是你的 AI 设计师',
+        subtitle: '点画板图片即可选中，可作为图生图的首帧。',
+        submit: '投稿当前',
+        user: '把主视觉改成雾天，山脊线保留',
+        user2: '把这两张混一下，取雾天的天、暖调的光',
+        thinking: '思考 · 2.1s',
+        reply: '只动天气层，山脊线的路径不变。给你出一张。',
+        landed: '雾天版本已落在画布 · 未压住已有图',
+        streaming: '要不要我把前景主体单独拆一层',
+        model: 'seedream-4',
+        pool: '模型池 vision-default',
+        placeholder: '描述你想要的画面，或把参考图拖进画布…',
+        send: '发送',
+      },
     },
-    actions: {
-      share: '分享',
-      continue: '继续生成',
+    literary: {
+      eyebrow: '文学创作智能体 · 左文右图',
+      title: '上传一个文档，回来时它已经配好了一篮子图',
+      description:
+        '左边是你的文章，逐段成稿；右边是配图工作台，一张张竖着落位。整篇读完，按段落语义一次配齐，换个风格整列重配，正文不动。',
+      note: '换风格只换图，正文一个字都不动——风格是 AI 生成时的参照，不是事后给图套一层滤镜。',
+      beats: [
+        '只有文字 · 还没有一张图',
+        '文档已就位',
+        'AI 正在通读全文并打配图锚点',
+        '一次生成全部配图',
+        '配图 1 完成 · 落进正文对应段落',
+        '配图 2 完成 · 继续往下落',
+        '配图 3 还在跑 · 给的是已耗时与预计',
+        '换个风格 · 整列重配，正文一个字不动',
+      ],
+      marking: 'AI 正在分析文章并生成配图标记…已识别 {n} 个位置',
+      styleLabel: '风格',
+      styleHint: '切一下试试：整列配图连同正文内联图一起换色，文字不动。',
+      styles: { calm: '沉静', warm: '暖光', forest: '林间', night: '夜航' },
+      fileName: '秋日随笔.docx',
+      model: 'gemini-2.5-flash',
+      pool: '模型池 literary-default',
+      body: {
+        p1: '十月的第一个清晨，山谷里还压着一层没散的雾。我沿着旧路往上走，脚下的碎石被露水浸得发暗，每一步都能听见细小的塌陷声。',
+        p2: '雾在坡顶忽然薄了。远处那排落叶松站得笔直，针叶已经黄透，风一过就簌簌地掉，落在肩上像有人轻轻拍了一下。',
+        p3: '我在半山腰的石头上坐了很久。太阳一点点把雾推下去，谷底的屋顶先露出来，然后是那条被水泡得发白的木桥。',
+        p4: '回程时天已经很亮了。同一条路，来时看不清的东西，这会儿全都在了——原来不是路变了，是雾散了。',
+        fig1: '配图 1 · 雾压山谷的清晨旧路',
+        fig2: '配图 4 · 谷底被水泡得发白的木桥',
+        slot: '[插图 {n}] · 右侧出图后自动落进这里',
+      },
+      summary: { words: '正文 1,284 字', paragraphs: '段落 12', figures: '配图 6', currentStyle: '当前风格' },
+      steps: ['上传', '标记', '配图'],
+      primaryAction: '生成全部配图',
+      configPills: ['自动风格', '风格', '水印开'],
+      tools: { generate: '生成', size: '批量尺寸 1024×1024', pack: '打包' },
+      streaming: 'AI 正在分析文章并生成配图标记…已识别 6 个位置',
+      runningLabel: '生成中 · 12.4s / 预计 ~20s',
+      status: { done: '已完成', running: '生成中', idle: '待生成' },
+      cards: [
+        { size: '1024×1024', prompt: '雾压山谷的清晨旧路，碎石被露水浸暗' },
+        { size: '1024×768', prompt: '坡顶雾薄，一排落叶松针叶黄透' },
+        { size: '1024×1024', prompt: '半山腰石上远望，谷底屋顶与发白木桥' },
+      ],
+      cardActions: ['改这句', '重新生成'],
     },
-    chat: {
-      userMessage: '帮我生成一张"未来科技城市夜景"海报，16:9 宽屏，赛博朋克质感',
-      agentReply: '好的，为你准备了 4 个方向：赛博霓虹、霓虹雨夜、金属科幻、极光穹顶。',
-      progress: '生成中 · 预计 12s 完成',
+    knowledge: {
+      eyebrow: '知识库 · 三栏阅读器',
+      title: '划一句话，就能让它改一句话',
+      description:
+        '左边是文件树，中间是正文，右边是本页章节。选中任意一段，浮层就在选区上方——评论、AI 改写、配图，三件事，就地做完。',
+      note: 'AI 改写走流式 + diff 预览，确认才落库、原文不动。下半段是知识星系：根到分类到文档的层级弧线，拱得更高的那几条是文档之间的横向引用。',
+      beats: [
+        '安静地读一篇文档',
+        '划中一句话',
+        '浮层出现 · 评论 / AI 改写 / 配图',
+        '点了 AI 改写',
+        '流式生成 · 红绿 diff 当场可比',
+        '替换原文 · 确认才落库，浮层退场',
+      ],
+      more: '更多',
+      search: '搜索文档…',
+      badges: { shared: '已分享', redo: '再加工中', pass: '通过 L1', tag: '规则' },
+      tree: [
+        { name: '架构规则', time: '今天' },
+        { name: '规则 · 验收必须闭环', time: '2h' },
+        { name: '规则 · 判据与接线纪律', time: '昨天' },
+        { name: '规则 · 跨项目隔离', time: '昨天' },
+        { name: '验收报告', time: '3d' },
+        { name: '报告 · MD 转 PPT', time: '3d' },
+        { name: '报告 · 网关剥离波 2.5', time: '5d' },
+        { name: '设计文档', time: '1w' },
+        { name: '设计 · 首页重构', time: '1w' },
+      ],
+      doc: {
+        title: '规则 · 验收必须闭环',
+        meta: '陈默 更新于 2 小时前 · 1,902 字 · 引用 7',
+        p1: '验收的终点是「用户的最终产物可见且正确」，不是「流程走了一半截图收工」。',
+        p2before: '任何',
+        selected: '流程跑完、产物还没出来就判 pass 的验收，都是断头验收',
+        p2after: '，直接不合格。',
+        p3: '判定口诀：截图上能看到最终产物吗？不能，就是断头，返工。',
+        p4: '等待超时必须基于功能的实际 P95 耗时，不是一个随便写的数字。LLM 生成类最少 300s，图片生成最少 60s。',
+      },
+      readerTools: ['评论', 'AI 改写', '配图', '分享', '订阅'],
+      selectionActions: ['评论', 'AI 改写', '配图'],
+      rewrite: {
+        status: 'AI 改写 · 流式生成中 3.1s',
+        before: '流程跑完、产物还没出来就判 pass 的验收，都是断头验收',
+        after: '凡是流程跑完、产物尚未出现即判定通过的验收，均属断头验收',
+        replace: '替换原文',
+        insert: '插到下方',
+        guard: '确认才落库，原文不动',
+      },
+      tocTitle: '本页章节',
+      toc: [
+        { label: '什么是断头验收', depth: 0 },
+        { label: '强制规则', depth: 0 },
+        { label: '产物可见截图', depth: 1 },
+        { label: 'timeout 不等于通过', depth: 1 },
+        { label: '等待时间必须足够', depth: 1 },
+        { label: '对存量报告的影响', depth: 0 },
+      ],
+      galaxy: {
+        hovered: 'rule.doc.readability',
+        legendTitle: '类型筛选',
+        legend: ['规则', '设计', '报告', '计划'],
+        hint: '点任意一颗，右侧就地打开正文',
+        stats: '128 篇 · 双链 214 条',
+      },
     },
-    input: '输入指令，或拖入文件…',
-  },
-  pillars: {
-    eyebrow: 'What We Deliver',
-    title: '为真正在用 AI 工作的团队，\n而不是为了"像 AI"而造',
-    subtitle:
-      '一个工作台装下整个团队、任何模型共用一套配置、Web 与桌面原生体验无缝衔接 —— 这是我们设计 MAP 的三块基石。',
-    items: [
-      {
-        id: 'one-workbench',
-        figLabel: 'fig 01.1',
-        title: '一个工作台，无限协同',
-        description:
-          '15+ 专业 Agent 在同一个空间里互相调用、共享上下文、互补能力，像一支真正的团队而不是一堆独立的小工具。',
-      },
-      {
-        id: 'any-model',
-        figLabel: 'fig 01.2',
-        title: '任何模型，同一套配置',
-        description:
-          '通过统一的 ILlmGateway 接入 12+ 家主流大模型，按任务类型动态路由，支持健康度监控、配额管理与失败回退。',
-      },
-      {
-        id: 'native-everywhere',
-        figLabel: 'fig 01.3',
-        title: '全平台原生体验',
-        description:
-          '同一套账号体系覆盖 Web、macOS、Windows 与 Linux 桌面客户端，系统托盘常驻、快捷键唤醒、离线缓存全都有。',
-      },
-    ],
-  },
-  features: {
-    eyebrow: 'Core Capabilities',
-    title: '六个专业 Agent，\n一个工作台',
-    subtitle:
-      '每一个 Agent 都是一个独立的领域专家，在 MAP 里它们共享上下文、互相调用，像一个真正的团队。',
-    learnMore: '了解更多',
-    chapterLabel: 'CHAPTER',
-    items: [
-      {
-        id: 'visual',
-        eyebrow: 'VISUAL · 视觉设计师',
-        title: '从一句话到一组完整视觉',
-        description:
-          '文生图、图生图、多图组合、局部重绘、风格迁移。配合参考图池与水印预设，让品牌视觉在一次对话中成型。',
-        bullets: [
-          '文生图 / 图生图 / 多图组合',
-          '参考图池 + 风格迁移 + 局部重绘',
-          '可绑定水印配置，一键导出品牌成图',
+    layers: {
+      eyebrow: '三层一体',
+      title: '上面三块能成立，是因为下面这三层',
+      beats: [
+        '三层就位 —— 各干各的那一段',
+        'MAP：你说一句话，第一个 Agent 接住',
+        'LLMGW：这次调用落进哪个池、排第几；CDS：容器起来了',
+        'MAP：产物成形；LLMGW：打到上游；CDS：依赖也就位',
+        '一条请求穿完三层：产物落地，域名下发',
+      ],
+      description: '每一层都是能打开的真实界面，不是三句口号。下面三块画的就是各自那一屏的样子。',
+      note: '三层各自独立可用，合在一起才是一条完整的链路：在 MAP 里干活，算力从 LLMGW 调度，做完的东西由 CDS 变成一个能打开的地址。',
+      map: {
+        role: '工位与团队',
+        meta: '/home',
+        lead: '一句话进来，几个 Agent 接力干完，产物落在文档或画布里。',
+        lane: [
+          { kind: 'you', label: '你', detail: '说一句话' },
+          { kind: 'agent', label: '文学创作', detail: '起草与润色' },
+          { kind: 'agent', label: '视觉创作', detail: '按段落配图' },
+          { kind: 'artifact', label: '一篇带图的稿子', detail: '落进知识库' },
         ],
+        footnote: '接力发生在同一个空间里，上下文不用你转述。',
       },
-      {
-        id: 'literary',
-        eyebrow: 'LITERARY · 文学创作者',
-        title: '让文字在工作台里流淌',
-        description:
-          '从命题写作、段落润色到自动配图，文学创作者把写作流程拆成可感知的阶段。每一次调整都能看到上一版的差异。',
-        bullets: [
-          '多风格命题写作与续写',
-          '按段润色 + 差异对比视图',
-          '自动为段落生成配图',
+      gateway: {
+        role: '人事与算力',
+        meta: '/pools',
+        lead: '每一次调用往下落四层：谁在调、准用哪个池、池里排第几、最后打到哪个上游。',
+        stack: [
+          { label: '调用方', detail: 'literary-agent.chat' },
+          { label: '模型池', detail: 'chat-default' },
+          { label: '成员顺位', detail: 'Claude 4.6 · 第 1 顺位' },
+          { label: '上游', detail: 'OpenRouter' },
         ],
+        footnote: '这四层业务代码一层都看不见，它只认池名。',
       },
-      {
-        id: 'prd',
-        eyebrow: 'PRD · 产品分析师',
-        title: '读懂 PRD 的第二双眼睛',
-        description:
-          '把 PRD 文档丢进来，PRD 分析师会识别需求缺口、回答产品问题、生成评审意见，在方案落地前就找到那些被忽略的角落。',
-        bullets: [
-          '需求缺口自动识别',
-          '对话式产品答疑',
-          '正式评审前的 AI 预审',
+      cds: {
+        role: '交付与验收',
+        meta: '/branches',
+        lead: '一条分支拉出去，就是一整套自己的容器和一个能打开的地址。',
+        baseBranch: 'main',
+        branch: 'feature/auth-flow',
+        branchMeta: '3 commits · 已推送',
+        services: [
+          { name: 'api', detail: '.NET 8 service', port: ':5000' },
+          { name: 'admin', detail: 'React · Vite', port: ':5500' },
+          { name: 'mongo', detail: 'replica · 1' },
+          { name: 'redis', detail: 'cache' },
         ],
+        previewLabel: '预览 · 自动分配',
+        previewShape: '<分支>.<你自己的域名>',
+        terminal: 'cds > detect stack · .NET 8 + React + mongo + redis',
+        footnote: '技术栈是它自己认出来的，端口是它自己分的。',
       },
-      {
-        id: 'video',
-        eyebrow: 'VIDEO · 视频创作者',
-        title: '文章直接生成分镜与预览',
-        description:
-          '上传一篇文章，视频创作者会拆出分镜脚本、逐帧预览图，甚至帮你拼好草稿时间线。适合教程、产品讲解、短视频场景。',
-        bullets: [
-          '文章 → 分镜脚本自动拆解',
-          '每一镜生成预览图',
-          '草稿时间线可以直接导入 Remotion',
-        ],
-      },
-      {
-        id: 'defect',
-        eyebrow: 'DEFECT · 缺陷管理员',
-        title: '让每一个 Bug 都能被看见',
-        description:
-          '从截图、录屏、用户反馈里自动提取关键信息，分类、指派、跟进。外部 Agent 还能接入，做复现 + 根因分析 + 修复报告。',
-        bullets: [
-          '截图 / 录屏自动提取信息',
-          '严重度分类 + 优先级指派',
-          '外部 Agent 复现 + 修复报告闭环',
-        ],
-      },
-      {
-        id: 'report',
-        eyebrow: 'REPORT · 周报管理员',
-        title: '周五不再凑字数',
-        description:
-          '从 Git 提交、任务流水、日报碎片自动汇总一份结构化周报，团队 Leader 还能用"计划 vs 实际"的比对视图审阅。',
-        bullets: [
-          '从 Git / 任务 / 日报自动合成',
-          '团队汇总 + 计划对比视图',
-          '一键导出 Markdown / PDF',
-        ],
-      },
-    ],
-  },
-  workflow: {
-    eyebrow: 'Workflow · 编排',
-    title: '把 Agent 串成一条工作流',
-    description:
-      '工作流引擎把重复的多步骤操作串成可视化节点图：一个触发器、多个 Agent 协作、条件分支、错误回退与定时调度，重复的流程变成一次配置终身受益。',
-    chapterMarker: '2.0 Orchestrate →',
-    canvasTitle: 'daily-content-pipeline.workflow',
-    runLabel: 'Run',
-    nodes: [
-      { title: '触发器', subtitle: '定时 · 每日 09:00' },
-      { title: 'PRD 分析师', subtitle: '读需求' },
-      { title: '视觉设计师', subtitle: '出海报' },
-      { title: '文学创作者', subtitle: '写文案' },
-      { title: '发布', subtitle: '多平台' },
-    ],
-    status: {
-      running: '执行中 · step 3 / 5',
-      elapsed: '已用时 · 00:12',
-      eta: '预计剩余 · 00:28',
-      trace: 'trace · wf-4e9ed6f',
     },
   },
-  cinema: {
-    eyebrow: 'Signature · 一镜到底',
-    title: '看 AI 如何成为',
-    tail: ' 你的第二颗大脑',
-    caption: 'MAP · 产品片花',
-    comingSoon: 'Coming soon · 即将上线',
-  },
-  how: {
-    eyebrow: 'How It Works',
-    title: '三步，从想法到产物',
-    steps: [
-      {
-        n: '01',
-        title: '提出需求',
-        description:
-          '用自然语言描述你想做的事 —— 不用选模型，不用挑 Agent，直接说。',
-        demo: '帮我生成一张"未来科技城市"的海报',
+  tail: {
+    toolbox: {
+      eyebrow: '百宝箱 · /ai-toolbox',
+      title: '不是六个 Agent，是三十几个，都在同一个台面上',
+      description:
+        '这就是登录后「百宝箱」那一页：权属、类型、搜索、最近使用，一个不少。名字、一句话、图标都取自同一份注册表——加一个新 Agent，这里自动多一个。',
+      note: '带「预览」标的是还没通过完整验收的，摆在这里而不是藏起来：能用到什么程度就说到什么程度。',
+      tabs: ['全部', '我的', '别人的', '收藏'],
+      kindTabs: ['全部类型', '智能体', '工具'],
+      searchPlaceholder: '搜索工具名称、描述或标签...',
+      searchWord: '配图',
+      countSuffix: '个工具',
+      recentLabel: '最近使用',
+      recent: ['视觉创作智能体', '周报智能体', 'CDS Agent'],
+      emptyHint: '搜「配图」，跟配图相关的都浮上来',
+      previewTag: '预览',
+      beats: [
+        '三十几个 Agent，按干的活分四组',
+        '想干什么就搜什么',
+        '跟「配图」相关的浮上来，其余淡下去',
+        '选一个，直接开工',
+      ],
+      groups: [
+        {
+          label: '创作',
+          items: [
+            { name: '视觉创作智能体', desc: '文生图、图生图、多图组合，画布与对话同屏', icon: 'Palette' },
+            { name: '文学创作智能体', desc: '写作、润色，整篇读完按段落语义一次配图', icon: 'PenTool' },
+            { name: '视觉分镜台', desc: '一句话拆成电影分镜，关键帧实时生长、逐镜精修', icon: 'Clapperboard', preview: true },
+            { name: '视频创作智能体', desc: '文章转视频教程，AI 驱动分镜脚本与预览图', icon: 'Video' },
+          ],
+        },
+        {
+          label: '交付',
+          items: [
+            { name: '缺陷管理智能体', desc: '缺陷提交与跟踪，信息提取、分类、生成报告', icon: 'Bug' },
+            { name: 'PR 审查智能体', desc: '用你自己的 GitHub 账号审查任意有权访问的 PR', icon: 'GitPullRequest' },
+            { name: '前端搭档智能体', desc: '给后端同事用：接 API、写组件、修报错、看截图现象', icon: 'FolderKanban', preview: true },
+            { name: 'CDS Agent', desc: '远程跑 Claude Code / Codex 类沙箱任务，流式对话', icon: 'Terminal' },
+          ],
+        },
+        {
+          label: '沉淀',
+          items: [
+            { name: '知识库', desc: '划词就能让 AI 改一句话，确认才落库', icon: 'BookOpen' },
+            { name: '周报智能体', desc: '创建、提交、审阅，AI 生成、团队汇总、计划比对', icon: 'FileBarChart' },
+            { name: 'MD 转网页 PPT', desc: '粘一段 Markdown，出一份 reveal.js 网页演示', icon: 'FileText' },
+            { name: '转录工作台', desc: '多模型 ASR 转写、时间戳编辑、模板转文案', icon: 'AudioLines' },
+          ],
+        },
+        {
+          label: '协同',
+          items: [
+            { name: '项目管理', desc: '立项、看板、甘特图，AI 自动把需求拆成任务', icon: 'FolderKanban', preview: true },
+            { name: '产品管理', desc: '产品到缺陷全链路串联，版本化管理与分级追溯', icon: 'Blocks', preview: true },
+            { name: 'AI 竞技场智能体', desc: '多模型盲测对战，匿名 PK 后揭晓真实身份', icon: 'Swords' },
+            { name: '毒舌秘书', desc: '把模糊想法转成 MECE 执行清单', icon: 'PaSecretary', preview: true },
+          ],
+        },
+      ],
+      footer: '这里列了 16 个，注册表里还有十几个——搜索框比翻页快。',
+    },
+    workflow: {
+      eyebrow: '工作流 · /workflow-agent',
+      title: '把这些 Agent 串成一条自己跑的流水线',
+      description:
+        '画布上一个「舱」就是一步。三十几种舱分触发、处理、流程控制、输出四类，连起来就是一条能定时跑、能被 Webhook 叫醒的流水线。下面这条是模板库里现成的一条。',
+      note: '每个舱单独可测：不必跑完整条链，点一下就能只试这一步，拿到真实输入输出再往下接。',
+      templateName: 'TAPD 缺陷采集与分析',
+      libraryLabel: '舱库',
+      categories: [
+        { label: '触发', kind: 'trigger', count: 5 },
+        { label: '处理', kind: 'processor', count: 19 },
+        { label: '流程控制', kind: 'control', count: 2 },
+        { label: '输出', kind: 'output', count: 7 },
+      ],
+      runLabel: '运行',
+      runningLabel: '运行中...',
+      doneLabel: '完成',
+      waitingLabel: '等待',
+      runPanelLabel: '本次执行',
+      logStart: '开始执行',
+      logDone: '完成 ({d})，产出 {n} 个产物',
+      nodes: [
+        { name: '手动触发', kind: 'trigger', detail: '点一下就跑，也可以换成定时器或 Webhook', secs: '0.1s', artifacts: 1 },
+        { name: 'TAPD 数据采集', kind: 'processor', detail: '按项目与时间窗拉缺陷', secs: '4.7s', artifacts: 1 },
+        { name: '缺陷统计报告生成', kind: 'processor', detail: 'JS 脚本，确定性统计', secs: '0.3s', artifacts: 1 },
+        { name: 'HTML 网页渲染', kind: 'processor', detail: '确定性排版，不让模型画版式', secs: '0.2s', artifacts: 1 },
+        { name: '导出 HTML 网页', kind: 'output', detail: '产物落成可分享的文件', secs: '0.6s', artifacts: 1 },
+        { name: '完成通知', kind: 'output', detail: '站内通知，带产物直达链接', secs: '0.2s', artifacts: 1 },
+      ],
+      beats: [
+        '一条现成的流水线：六个舱，从触发到通知',
+        '点运行 —— 逐舱往下走，每一步的产物喂给下一步',
+        '统计与排版都走确定性脚本，模型只在需要判断的那一步进来',
+        '跑完了：产物导出、通知发出，全程没人守着',
+      ],
+    },
+    voc: {
+      eyebrow: '体验地图 · /team-activity',
+      title: '整个系统哪里在被用、哪里在硌人，摊成一张图',
+      description:
+        '每一块是一个接口，面积是被调用的次数，颜色是健康。绝大多数时候它是一片安静的冷色海；报错和变慢会自己从平静里跳出来，点一下直接下钻到那条痛点。',
+      note: '真实那一页是请求日志自己画出来的，不用埋点问卷、没人填表。这里画的分区与接口取自真实的接口清单，面积与数字是示意——线上的实际分布去体验地图那一页看。',
+      windowLabel: '示意数据 · 分区取自真实接口清单',
+      legend: { ok: '正常', slow: '偏慢', error: '报错' },
+      // 分区名取自后端 TeamActivityController.ModuleLabels，块名取自同文件 SegmentLabels。
+      // 从 5 区 18 块扩到 9 区 38 块：treemap 的说服力就在"密"——块少了看着像示意图，
+      // 密起来才像真的把整个接口面摊开了。
+      groups: [
+        {
+          label: '视觉创作',
+          leaves: [
+            { label: '工作区', weight: 30, status: 'ok' },
+            { label: '生成', weight: 22, status: 'ok' },
+            { label: '附件上传', weight: 14, status: 'slow' },
+            { label: '预览', weight: 9, status: 'ok' },
+            { label: '收藏', weight: 5, status: 'ok' },
+            { label: '水印', weight: 4, status: 'ok' },
+            { label: '分享', weight: 3, status: 'ok' },
+          ],
+        },
+        {
+          label: '知识库',
+          leaves: [
+            { label: '条目', weight: 20, status: 'ok' },
+            { label: '空间', weight: 12, status: 'ok' },
+            { label: '行内评论', weight: 7, status: 'ok' },
+            { label: '发布', weight: 4, status: 'ok' },
+            { label: '附件', weight: 3, status: 'ok' },
+          ],
+        },
+        {
+          label: '缺陷管理',
+          leaves: [
+            { label: '列表', weight: 16, status: 'ok' },
+            { label: '详情', weight: 9, status: 'ok' },
+            { label: '批量导出', weight: 6, status: 'error' },
+            { label: '统计', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: '周报管理',
+          leaves: [
+            { label: '本周', weight: 11, status: 'ok' },
+            { label: '汇总', weight: 6, status: 'ok' },
+            { label: '审阅', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: 'LLM 网关',
+          leaves: [
+            { label: '流式', weight: 13, status: 'ok' },
+            { label: '模型池', weight: 5, status: 'ok' },
+            { label: '日志', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: '文学创作',
+          leaves: [
+            { label: '工作区', weight: 12, status: 'ok' },
+            { label: '配图', weight: 8, status: 'ok' },
+            { label: '导出', weight: 3, status: 'slow' },
+          ],
+        },
+        {
+          label: '工作流',
+          leaves: [
+            { label: '运行记录', weight: 9, status: 'ok' },
+            { label: '定义', weight: 5, status: 'ok' },
+            { label: '事件', weight: 3, status: 'ok' },
+          ],
+        },
+        {
+          label: '认证',
+          leaves: [
+            { label: '登录', weight: 14, status: 'ok' },
+            { label: '刷新令牌', weight: 10, status: 'ok' },
+            { label: '当前用户', weight: 7, status: 'ok' },
+          ],
+        },
+        {
+          label: '开放接口',
+          leaves: [
+            { label: '调用', weight: 8, status: 'ok' },
+            { label: '统计', weight: 4, status: 'ok' },
+            { label: '密钥', weight: 2, status: 'ok' },
+          ],
+        },
+      ],
+      painTitle: '痛点榜',
+      pains: [
+        { label: '缺陷管理 · 批量导出', metric: '报错 4.7%', note: '超过 500 条时网关超时，环比突增 3.1 倍', status: 'error' },
+        { label: '视觉创作 · 附件上传', metric: 'P95 6.2s', note: '大图直传没走分片，移动端尤其慢', status: 'slow' },
+        { label: '文学创作 · 导出', metric: 'P95 4.1s', note: '带配图的长文整篇同步渲染，篇幅一长就顶到超时线', status: 'slow' },
+      ],
+      beats: [
+        '扫一遍：每块一个接口，面积就是它被用了多少',
+        '大部分是安静的冷色 —— 这一片没人喊疼',
+        '三块跳出来了：一块在报错，两块在变慢',
+        '点进去，直接落到痛点榜对应那一行',
+      ],
+    },
+    cds: {
+      eyebrow: 'CDS · 分支即环境',
+      title: '早上说一句话，下午就能打开看',
+      description:
+        '每一句话都长成一条自己的分支，而一条分支就是一整套自己的环境：自己的地址、自己的容器、自己的数据。你不用管它建在哪、什么时候回收——说完就有，合并或者丢掉就没。',
+      note: '中间那几个小时你不在也没关系。它不需要你盯着，只需要你最后点一下。',
+      dayLabel: '同一天',
+      moments: [
+        { time: '09:12', actor: 'you', text: '说一句话：首页尾部太长，砍掉一半' },
+        { time: '10:30', actor: 'it', text: '开一条分支，照着改' },
+        { time: '12:40', actor: 'it', text: '改完推上去，环境自己起来' },
+        { time: '15:05', actor: 'it', text: '地址就位，自己先跑了一遍' },
+        { time: '15:40', actor: 'you', text: '打开看一眼，点「通过」' },
+      ],
+      actorLabels: { you: '你', it: '它' },
+      awayLabel: '这段时间你在忙别的',
+      previewLabel: '可以看了',
+      previewShape: '<分支>-<项目>.<你自己的域名>',
+      approve: '通过',
+      reject: '打回',
+      tally: [
+        { label: '你动手', value: '两次' },
+        { label: '它在跑', value: '6 小时' },
+        { label: '你要配的', value: '零' },
+      ],
+      footer: '人类需要做的只有两件事：把想要什么说清楚，以及点一下审核。',
+      beats: [
+        '早上，你只说了一句话',
+        '它开了一条属于这句话的分支，开始改',
+        '中午改完推上去 —— 环境跟着分支自己起来了',
+        '下午地址就位，它自己先跑过一遍',
+        '你打开看一眼，点「通过」。这一天你动了两次手',
+      ],
+    },
+    models: {
+      eyebrow: 'LLMGW · /pools',
+      title: '一套配置连上所有模型，坏了自动换下一个',
+      description:
+        '不是一排 logo。照着网关控制台那张表画的：每一行是一个模型池，池里成员按顺位排队，谁挂了后面的自动顶上——业务代码只认池名，看不见这些。',
+      note: '池内成员换人由网关决定，跨池代选默认禁止；单个成员坏了只更新它自己的健康，不会把整个目录清空。这一屏的数字是示意，用来说明顺位与兜底怎么工作，不是线上实测——真实指标在网关观测台看。',
+      counts: [
+        { value: '3', label: '接入平台' },
+        { value: '17', label: '可调用模型' },
+        { value: '6', label: '模型池' },
+      ],
+      windowText: '示意',
+      countSuffix: '个池',
+      columns: {
+        status: '状态', pool: '池 / 类型', evidence: '口径', members: '成员顺位',
+        success: '成功率', duration: '平均耗时', requests: '请求',
       },
-      {
-        n: '02',
-        title: 'Agent 自动选型',
-        description:
-          'MAP 会根据意图路由到最合适的 Agent + 模型组合，必要时多个 Agent 协作。',
-        demo: '→ 视觉设计师 · GPT-image-1 · 16:9',
-      },
-      {
-        n: '03',
-        title: '流式输出',
-        description:
-          '实时看到思考过程、中间产物、进度，随时可以打断、分支、继续。',
-        demo: '生成中 · 2 / 4 已完成 · 预计 12s',
-      },
-    ],
+      statusLabels: { ok: '正常', watch: '观察' },
+      pools: [
+        {
+          name: 'chat-default', type: '对话', evidence: '示意数据',
+          members: ['Claude 4.6', 'Kimi K2', 'GPT-5'],
+          success: '99.4%', successDegraded: '96.1%', duration: '1.1s', requests: '18.3k',
+          acting: true,
+        },
+        { name: 'vision-main', type: '视觉', evidence: '示意数据', members: ['GPT-5', 'Qwen3-VL'], success: '99.8%', duration: '2.3s', requests: '4.1k' },
+        { name: 'image-gen', type: '生图', evidence: '示意数据', members: ['Seedream 4', 'FLUX.1'], success: '98.9%', duration: '9.7s', requests: '2.6k' },
+        { name: 'intent-fast', type: '意图', evidence: '示意数据', members: ['Qwen3-Turbo', 'DeepSeek V3'], success: '99.9%', duration: '0.4s', requests: '31.7k' },
+      ],
+      downTag: '已隔离',
+      promotedTag: '顶上',
+      beats: [
+        '六个池，每池成员按顺位排队 —— 第一顺位优先，往后依次兜底',
+        'chat-default 的第二顺位挂了：成功率掉到 96.1%，池转「观察」',
+        '第三顺位自动顶上，成功率回到 99.4% —— 调用方全程没改一行代码',
+      ],
+    },
+    start: {
+      eyebrow: '从这里开始',
+      title: '登录，挑一个，说一句话',
+      description: '没有安装、没有配置向导、不用先建项目。三步之内你会拿到第一个产物。',
+      note: '桌面端与移动端和网页版是同一套账号、同一份数据，换个地方接着干。',
+      steps: [
+        { title: '登录', desc: '一个账号进整个台面，权限跟着角色走' },
+        { title: '挑一个 Agent', desc: '不知道挑哪个就搜你要干的事' },
+        { title: '说一句话', desc: '产物落在画布或文档里，不是聊天记录里' },
+      ],
+      surfaces: [
+        { name: '网页', desc: '打开就用，主力形态', state: '可用' },
+        { name: '桌面端', desc: 'Tauri 打包，本地文件直连', state: '可用', href: 'https://github.com/inernoro/prd_agent/releases', hrefLabel: '去下载' },
+        { name: '移动端', desc: '看进度、审阅、回一句', state: '可用' },
+      ],
+    },
+    closing: {
+      eyebrow: '轮到你了',
+      title: '先挑一个 Agent，干成一件小事',
+      description: '不用整套流程都跑一遍。挑一个离你今天工作最近的，让它替你做完一件事——好不好用，一次就知道。',
+      primary: '进入 MAP',
+      secondary: '看看有哪些 Agent',
+      footnote: '需要私有部署或想聊聊怎么接进你们的流程，也可以直接找我们。',
+    },
   },
-  agents: {
-    eyebrow: 'The Roster',
-    title: '十五位 Agent，\n随时可以派工',
-    subtitle:
-      '11 位深度定制 + 4 位通用对话助手。每一位都能独立上岗，也能被别的 Agent 调用。',
-    dedicated: 'Dedicated',
-    assistant: 'Assistant',
-    items: [
-      { id: 'visual', name: '视觉创作智能体', description: '文生图 · 图生图 · 多图组合 · 局部重绘' },
-      { id: 'literary', name: '文学创作智能体', description: '命题写作 · 段落润色 · 自动配图' },
-      { id: 'prd', name: 'PRD 解读智能体', description: '需求缺口识别 · 对话答疑 · AI 预审' },
-      { id: 'video', name: '视频创作智能体', description: '文章 → 分镜 → 预览 → 时间线' },
-      { id: 'defect', name: '缺陷管理智能体', description: '信息提取 · 严重度分类 · 修复闭环' },
-      { id: 'report', name: '周报智能体', description: 'Git 合成 · 计划对比 · 团队汇总' },
-      { id: 'arena', name: 'AI 竞技场智能体', description: '多模型盲测 PK · 揭晓真实身份' },
-      { id: 'workflow', name: '工作流引擎', description: '可视化编排 · 多步骤串联' },
-      { id: 'shortcuts', name: '快捷指令', description: '一键执行 · 自定义 · 可分享' },
-      { id: 'review', name: '产品评审智能体', description: '方案多维度打分 · 问题清单' },
-      { id: 'transcript', name: '转录工作台', description: '多模型 ASR · 时间戳编辑 · 转文案' },
-      { id: 'code-review', name: '代码审查员', description: '代码质量审查 · Bug · 性能' },
-      { id: 'translator', name: '多语言翻译', description: '专业级翻译 · 中英日韩' },
-      { id: 'summarizer', name: '内容摘要师', description: '长文本要点提取 · 关键数据' },
-      { id: 'data-analyst', name: '数据分析师', description: '趋势分析 · 图表建议 · 洞察' },
-    ],
-  },
-  compat: {
-    eyebrow: 'Compatible With',
-    title: '一套配置，\n连接你用过的所有大模型',
-    subtitle:
-      '通过统一的 ILlmGateway 接入 12 家主流平台，按任务类型动态路由，支持健康度监控、配额管理、失败回退。',
-    footer: '以及任何兼容 OpenAI 接口规范的自建 / 第三方服务',
-    action: '打开模型网关控制台',
-  },
-  pulse: {
-    eyebrow: 'Live · Pulse',
-    title: '整个平台，\n此时此刻在做什么',
-    subtitle: '实时数据脉搏 + 本周 Agent 使用排行。参与越多，你的 Agent 越聪明。',
-    leaderboard: 'Weekly Leaderboard',
-    stats: [
-      { id: 'active', label: 'ACTIVE AGENTS', trend: 'all online' },
-      { id: 'convos', label: 'CONVERSATIONS · 24H', trend: '+18% ↑' },
-      { id: 'tokens', label: 'TOKENS PROCESSED', trend: 'p95 · 62ms' },
-      { id: 'media', label: 'MEDIA GENERATED', trend: 'last 7d' },
-    ],
-    rows: [
-      { id: 'visual', name: '视觉设计师', delta: '+32%' },
-      { id: 'prd', name: 'PRD 分析师', delta: '+14%' },
-      { id: 'literary', name: '文学创作者', delta: '+8%' },
-      { id: 'defect', name: '缺陷管理员', delta: '+22%' },
-      { id: 'report', name: '周报管理员', delta: '+5%' },
-    ],
-  },
-  download: {
-    eyebrow: 'Desktop Client',
-    title: '把整个 Agent 平台\n带到你的桌面',
-    subtitle:
-      '基于 Tauri 2.0 的原生桌面客户端，系统托盘常驻、快捷键唤醒、离线缓存、全局剪贴板注入。和 Web 端共享同一套账号体系。',
-    bullets: [
-      '系统托盘常驻 · 快捷键 Cmd+Shift+M 唤醒',
-      '自动更新 · Tauri updater 签名校验',
-      '所有平台共 134 MB · 零 Node runtime',
-    ],
-    platforms: [
-      { id: 'macos', name: 'macOS', arch: 'Apple Silicon · Intel' },
-      { id: 'windows', name: 'Windows', arch: 'x64 · ARM64' },
-      { id: 'linux', name: 'Linux', arch: 'AppImage · .deb' },
-    ],
-  },
-  cta: {
-    eyebrow: 'Ready Player One',
-    title: '现在，轮到你了。',
-    subtitle: '十五位 Agent 已经就位。你的第一个任务是什么？',
-    primary: '进入 MAP',
-    secondary: '联系我们',
-  },
+  interludes: [
+    {
+      kicker: '底座讲完了',
+      title: '接下来是你每天真正会碰到的东西',
+      note: '以下每一幕，都是登录后打得开的一张真实页面 —— 不是示意图。',
+    },
+    {
+      kicker: '那么这些是怎么跑起来的',
+      title: '每一次生成，背后都要挑一个模型、起一套环境',
+      note: '这两件事都不该由业务代码操心。下面两幕就是它们各自那一层。',
+    },
+  ],
   footer: {
     brand: '米多智能体生态平台',
     github: 'GitHub',
     backToTop: '回到顶部',
     copyright: '© 2026 MAP',
-  },
-  mockups: {
-    visual: {
-      header: 'visual-agent · 4 张候选',
-      status: '生成中 · 2 / 4 已完成',
-    },
-    literary: {
-      header: 'literary-agent · 润色中',
-      progress: '段 3 / 7',
-      added: '+ 12 字',
-      deleted: '删除 3 字',
-      diffView: '差异视图',
-    },
-    prd: {
-      header: 'prd-agent · v3.0 需求分析',
-      sections: [
-        { title: '§ 用户故事' },
-        { title: '§ 核心流程', note: '缺少异常分支' },
-        { title: '§ 数据模型' },
-        { title: '§ 权限矩阵', note: '未定义角色边界' },
-        { title: '§ 测试用例', note: '缺少失败场景' },
-      ],
-    },
-    video: {
-      header: 'video-agent · 6 分镜',
-      status: '渲染中 · 72%',
-    },
-    defect: {
-      header: 'defect-agent · 3 个待处理',
-      items: [
-        { sev: 'P0', title: '对话消息在刷新后丢失' },
-        { sev: 'P1', title: '图像生成超时未释放' },
-        { sev: 'P2', title: '深色模式下描边消失' },
-      ],
-      assigned: '已分派',
-      newThisWeek: '本周新增 · 27',
-      fixed: '已修复 · 19',
-      fixRate: '修复率 · 70%',
-    },
-    report: {
-      header: 'report-agent · W15',
-      plan: '计划',
-      actual: '实际',
-      days: ['周一', '周二', '周三', '周四', '周五'],
-    },
   },
 };
 
@@ -588,9 +956,9 @@ const en: TranslationShape = {
   nav: {
     products: 'Product',
     agents: 'Agents',
-    cinema: 'Showcase',
-    community: 'Community',
-    download: 'Download',
+    workflow: 'Workflows',
+    models: 'Models',
+    download: 'Start',
     docs: 'Docs',
     login: 'Sign In',
   },
@@ -599,9 +967,9 @@ const en: TranslationShape = {
     brand: 'MAP · MIDOO AGENTIC PLATFORM',
     title: 'Create, freely.',
     subtitle:
-      'MAP (Midoo Agentic Platform) is an enterprise-grade digital workforce platform — upgrading AI from an assistant into a workforce with end-to-end execution, built on deep carbon-silicon symbiosis, human-AI co-governance, shared value creation, and continuous co-evolution.',
+      'Thirty-odd agents working on one desk, with model routing and delivery environments underneath. Say a sentence — the artifact lands on a canvas or in a document, not in a chat log.',
     primaryCta: 'Enter MAP',
-    secondaryCta: 'Watch Trailer',
+    secondaryCta: 'See it work',
     techBarLabel: 'POWERED BY',
     techItems: [
       'GPT-5',
@@ -622,325 +990,530 @@ const en: TranslationShape = {
     { value: '98', label: 'Mongo Collections' },
     { value: '99.9%', label: 'Uptime' },
   ],
-  productMockup: {
-    newConversation: 'New conversation',
-    conversations: [
-      { title: 'Future city night poster', meta: 'Visual · just now' },
-      { title: 'Brand VI proposal', meta: 'Visual · 2h' },
-      { title: 'PRD v3 completion', meta: 'PRD · yesterday' },
-      { title: 'Launch copy polish', meta: 'Writing · 2d ago' },
-      { title: 'Bug root cause', meta: 'Defect · 3d ago' },
-    ],
-    header: {
-      title: 'Future city night poster',
-      meta: 'Visual Agent · generating · 2 / 4 done',
+  scenes: {
+    visual: {
+      eyebrow: 'Visual agent · canvas and chat on one screen',
+      title: 'Tweak, redraw, and another day is gone',
+      description:
+        'An infinite canvas on the left with your images spread across it; a designer on the right who never leaves. Say a sentence and a new image lands on the canvas; click an image and the action bar floats up.',
+      beats: [
+        'Empty canvas · one draft only',
+        'Typing…',
+        'Sent',
+        'Thinking · 2.1s',
+        'Replying',
+        'Rendering · the artifact grows on the canvas itself',
+        'Foggy version landed · nothing covered',
+        'One warm variant while we are here',
+        'Click an image and the action bar floats up',
+        'Two selected · now say what to do',
+        'Blending · foggy sky, warm light',
+        'Blended result landed on the canvas',
+      ],
+      mixAction: 'Blend',
+      tiles: { a: 'Key visual · draft', b: 'Warm variant', c: 'Foggy version', mix: 'Blended result' },
+      genRunning: { label: 'HD upscale', status: '4.2s / est. ~6s' },
+      genOvertime: { label: 'AI layers', status: 'Almost done · 8.4s' },
+      generator: { title: 'Image generator', body: 'Select it and a quick prompt appears on the canvas. Drop reference images in.' },
+      actions: ['HD upscale', 'Remove bg', 'Expand', 'Inpaint', 'AI layers', 'Download'],
+      gesture: { before: 'Two-finger drag to pan ·', after: '+wheel to zoom · Space to pan · double-click never zooms' },
+      chat: {
+        title: 'Hi, I am your AI designer',
+        subtitle: 'Click any image on the canvas to select it, then use it as the first frame.',
+        submit: 'Publish',
+        user: 'Make the key visual foggy, keep the ridgeline',
+        user2: 'Blend these two — fog from one, light from the other',
+        thinking: 'Thinking · 2.1s',
+        reply: 'Only the weather layer changes; the ridgeline path stays. Here is one.',
+        landed: 'Foggy version landed on the canvas · nothing covered',
+        streaming: 'Want me to split the foreground into its own layer',
+        model: 'seedream-4',
+        pool: 'Pool vision-default',
+        placeholder: 'Describe the image you want, or drop a reference onto the canvas…',
+        send: 'Send',
+      },
     },
-    actions: {
-      share: 'Share',
-      continue: 'Continue',
+    literary: {
+      eyebrow: 'Writing agent · text left, images right',
+      title: 'Upload a document; come back to a basket of illustrations',
+      description:
+        'Your article on the left, drafted paragraph by paragraph. The illustration bench on the right, one image per slot. It reads the whole piece, then fills every slot by paragraph meaning.',
+      note: 'Switching style repaints the images only — not one word of the text moves. Style is what the model draws from, not a filter applied afterwards.',
+      beats: [
+        'Text only · not one image yet',
+        'Document in place',
+        'Reading the whole piece and marking illustration points',
+        'Generating every illustration at once',
+        'Figure 1 done · dropped into its paragraph',
+        'Figure 2 done · next one lands',
+        'Figure 3 still running · elapsed and estimate, not a fake percentage',
+        'Switch style · the column repaints, the text stays put',
+      ],
+      marking: 'Reading the article and marking illustration points… {n} found so far',
+      styleLabel: 'Style',
+      styleHint: 'Try it: every illustration recolours, inline ones included. The text stays put.',
+      styles: { calm: 'Calm', warm: 'Warm', forest: 'Forest', night: 'Night' },
+      fileName: 'autumn-notes.docx',
+      model: 'gemini-2.5-flash',
+      pool: 'Pool literary-default',
+      body: {
+        p1: 'On the first morning of October a layer of fog still sat in the valley. I walked up the old path; the gravel underfoot was dark with dew, and each step gave a small collapsing sound.',
+        p2: 'The fog thinned suddenly at the crest. The larches stood straight in the distance, needles gone fully yellow, dropping at every gust like a hand on your shoulder.',
+        p3: 'I sat a long while on a rock halfway up. The sun pushed the fog down bit by bit: first the valley roofs, then the wooden bridge bleached pale by water.',
+        p4: 'It was bright by the time I walked back. Same path — everything I could not see on the way up was simply there. The path had not changed; the fog had lifted.',
+        fig1: 'Figure 1 · the old path under valley fog',
+        fig2: 'Figure 4 · the water-bleached wooden bridge',
+        slot: '[Figure {n}] · it will drop in here once the right side finishes',
+      },
+      summary: { words: '1,284 words', paragraphs: '12 paragraphs', figures: '6 figures', currentStyle: 'Style' },
+      steps: ['Upload', 'Mark', 'Illustrate'],
+      primaryAction: 'Generate every illustration',
+      configPills: ['Auto style', 'Style', 'Watermark on'],
+      tools: { generate: 'Generate', size: 'Batch 1024×1024', pack: 'Export' },
+      streaming: 'Reading the article and marking illustration points… 6 found so far',
+      runningLabel: 'Generating · 12.4s / est. ~20s',
+      status: { done: 'Done', running: 'Running', idle: 'Queued' },
+      cards: [
+        { size: '1024×1024', prompt: 'Old path at dawn under valley fog, gravel dark with dew' },
+        { size: '1024×768', prompt: 'Thin fog at the crest, a row of larches gone yellow' },
+        { size: '1024×1024', prompt: 'From a rock halfway up: valley roofs and the pale bridge' },
+      ],
+      cardActions: ['Edit prompt', 'Regenerate'],
     },
-    chat: {
-      userMessage:
-        'Generate a "future city night" poster — 16:9 widescreen, cyberpunk aesthetic',
-      agentReply:
-        'Sure — four directions prepared: Cyber Neon, Neon Rain, Metal Sci-Fi, Aurora Dome.',
-      progress: 'Generating · ETA 12s',
+    knowledge: {
+      eyebrow: 'Knowledge base · three-pane reader',
+      title: 'Select one sentence, rewrite that one sentence',
+      description:
+        'File tree on the left, the document in the middle, this page’s outline on the right. Select any passage and the popover appears right above it — comment, AI rewrite, illustrate. Three things, done in place.',
+      note: 'The rewrite streams in with a diff preview, and nothing is written until you confirm. Below is the knowledge galaxy: root to category to document, with the higher arcs being cross-references between documents.',
+      beats: [
+        'Reading a document, quietly',
+        'One sentence selected',
+        'Popover appears · comment / AI rewrite / illustrate',
+        'AI rewrite tapped',
+        'Streaming · red-green diff you can compare on the spot',
+        'Replaced · saved only on confirm, popovers dismissed',
+      ],
+      more: 'More',
+      search: 'Search documents…',
+      badges: { shared: 'Shared', redo: 'Reworking', pass: 'Passed L1', tag: 'Rule' },
+      tree: [
+        { name: 'Architecture rules', time: 'today' },
+        { name: 'Rule · acceptance must close the loop', time: '2h' },
+        { name: 'Rule · predicate & wiring discipline', time: 'yest.' },
+        { name: 'Rule · cross-project isolation', time: 'yest.' },
+        { name: 'Acceptance reports', time: '3d' },
+        { name: 'Report · Markdown to slides', time: '3d' },
+        { name: 'Report · gateway split wave 2.5', time: '5d' },
+        { name: 'Design docs', time: '1w' },
+        { name: 'Design · homepage rebuild', time: '1w' },
+      ],
+      doc: {
+        title: 'Rule · acceptance must close the loop',
+        meta: 'Chen Mo updated 2 hours ago · 1,902 words · 7 references',
+        p1: 'Acceptance ends when the user’s final artifact is visible and correct — not when the flow is halfway through and someone takes a screenshot.',
+        p2before: 'Any ',
+        selected: 'acceptance that passes while the artifact has not appeared yet is a beheaded acceptance',
+        p2after: ', and fails outright.',
+        p3: 'The test is one question: can you see the finished artifact in the screenshot? If not, it is beheaded. Redo it.',
+        p4: 'Timeouts must be based on the feature’s real P95, not a number someone picked. At least 300s for LLM generation, at least 60s for images.',
+      },
+      readerTools: ['Comment', 'AI rewrite', 'Illustrate', 'Share', 'Subscribe'],
+      selectionActions: ['Comment', 'AI rewrite', 'Illustrate'],
+      rewrite: {
+        status: 'AI rewrite · streaming 3.1s',
+        before: 'acceptance that passes while the artifact has not appeared yet is a beheaded acceptance',
+        after: 'any acceptance marked as passing before the artifact appears counts as beheaded',
+        replace: 'Replace',
+        insert: 'Insert below',
+        guard: 'Nothing is saved until you confirm',
+      },
+      tocTitle: 'On this page',
+      toc: [
+        { label: 'What beheaded acceptance is', depth: 0 },
+        { label: 'Hard rules', depth: 0 },
+        { label: 'Artifact-visible screenshot', depth: 1 },
+        { label: 'Timeout is not a pass', depth: 1 },
+        { label: 'Waits must be long enough', depth: 1 },
+        { label: 'Effect on existing reports', depth: 0 },
+      ],
+      galaxy: {
+        hovered: 'rule.doc.readability',
+        legendTitle: 'Filter by type',
+        legend: ['Rule', 'Design', 'Report', 'Plan'],
+        hint: 'Click any star to open the document in place',
+        stats: '128 docs · 214 backlinks',
+      },
     },
-    input: 'Enter a command, or drop a file…',
-  },
-  pillars: {
-    eyebrow: 'What We Deliver',
-    title: 'Built for teams actually shipping AI,\nnot for "looking like AI"',
-    subtitle:
-      'One workbench for the whole team, any model on the same config, seamless Web × desktop — these are the three foundations MAP is built on.',
-    items: [
-      {
-        id: 'one-workbench',
-        figLabel: 'fig 01.1',
-        title: 'One workbench, infinite collaboration',
-        description:
-          '15+ specialized Agents call each other, share context, and cover each other in the same space — a real team, not a pile of isolated tools.',
-      },
-      {
-        id: 'any-model',
-        figLabel: 'fig 01.2',
-        title: 'Any model, one config',
-        description:
-          'A unified ILlmGateway connects 12+ major LLM providers, routes by task type, with health monitoring, quota management, and automatic fallback.',
-      },
-      {
-        id: 'native-everywhere',
-        figLabel: 'fig 01.3',
-        title: 'Native everywhere',
-        description:
-          'The same account covers Web, macOS, Windows, and Linux native clients — system tray, hotkey wake, offline cache, all included.',
-      },
-    ],
-  },
-  features: {
-    eyebrow: 'Core Capabilities',
-    title: 'Six specialized Agents,\none workbench.',
-    subtitle:
-      'Each Agent is an independent domain expert. Inside MAP they share context and call each other, like a real team.',
-    learnMore: 'Learn more',
-    chapterLabel: 'CHAPTER',
-    items: [
-      {
-        id: 'visual',
-        eyebrow: 'VISUAL · Visual Designer',
-        title: 'From one sentence to a full visual set',
-        description:
-          'Text-to-image, image-to-image, compositions, inpainting, style transfer. Paired with reference pools and watermark presets — shape a brand look in a single conversation.',
-        bullets: [
-          'Text-to-image / image-to-image / compositions',
-          'Reference pool + style transfer + inpainting',
-          'Bind watermark presets, export branded output in one click',
+    layers: {
+      eyebrow: 'Three layers, one system',
+      title: 'The three above work because of the three below',
+      beats: [
+        'Three layers in place — each doing its own stretch',
+        'MAP: you say one sentence, the first agent picks it up',
+        'LLMGW: which pool, which position; CDS: containers coming up',
+        'MAP: the artifact takes shape; LLMGW: it hits the upstream; CDS: dependencies ready',
+        'One request through all three: artifact lands, URL issued',
+      ],
+      description: 'Every layer is a real screen you can open, not a slogan. Each card below is a slice of that screen.',
+      note: 'Each layer stands on its own; together they are one chain: you work in MAP, LLMGW schedules the compute, and CDS turns what you built into an address you can open.',
+      map: {
+        role: 'Desk & team',
+        meta: '/home',
+        lead: 'One sentence goes in, a few agents hand it along, the artifact lands in a document or on a canvas.',
+        lane: [
+          { kind: 'you', label: 'You', detail: 'say one sentence' },
+          { kind: 'agent', label: 'Writing', detail: 'draft and polish' },
+          { kind: 'agent', label: 'Visual', detail: 'illustrate by paragraph' },
+          { kind: 'artifact', label: 'An illustrated draft', detail: 'lands in the knowledge base' },
         ],
+        footnote: 'The hand-off happens in one space — you never re-explain the context.',
       },
-      {
-        id: 'literary',
-        eyebrow: 'LITERARY · Writing Studio',
-        title: 'Make text flow through the workbench',
-        description:
-          'From prompted writing to paragraph polishing to auto-illustration, the Writing Agent breaks the drafting loop into perceivable stages. Every revision shows a diff from the last.',
-        bullets: [
-          'Multi-style prompted writing and continuation',
-          'Per-paragraph polish + side-by-side diff view',
-          'Auto-generate artwork for each paragraph',
+      gateway: {
+        role: 'People & compute',
+        meta: '/pools',
+        lead: 'Every call falls through four layers: who is calling, which pool they may use, where in the queue, and which upstream it lands on.',
+        stack: [
+          { label: 'Caller', detail: 'literary-agent.chat' },
+          { label: 'Pool', detail: 'chat-default' },
+          { label: 'Member order', detail: 'Claude 4.6 · first' },
+          { label: 'Upstream', detail: 'OpenRouter' },
         ],
+        footnote: 'Product code sees none of these four. It only ever names the pool.',
       },
-      {
-        id: 'prd',
-        eyebrow: 'PRD · Spec Analyst',
-        title: 'A second pair of eyes for your spec',
-        description:
-          'Drop a PRD in. The Spec Agent finds requirement gaps, answers product questions, drafts review notes — catching the corners that always get skipped before ship time.',
-        bullets: [
-          'Automatic gap detection',
-          'Conversational product Q&A',
-          'AI pre-review before the stakeholder meeting',
+      cds: {
+        role: 'Delivery & acceptance',
+        meta: '/branches',
+        lead: 'Pull one branch and you have a whole set of containers and a URL you can open.',
+        baseBranch: 'main',
+        branch: 'feature/auth-flow',
+        branchMeta: '3 commits · pushed',
+        services: [
+          { name: 'api', detail: '.NET 8 service', port: ':5000' },
+          { name: 'admin', detail: 'React · Vite', port: ':5500' },
+          { name: 'mongo', detail: 'replica · 1' },
+          { name: 'redis', detail: 'cache' },
         ],
+        previewLabel: 'Preview · auto-assigned',
+        previewShape: '<branch>.<your own domain>',
+        terminal: 'cds > detect stack · .NET 8 + React + mongo + redis',
+        footnote: 'It works the stack out itself, and allocates the ports itself.',
       },
-      {
-        id: 'video',
-        eyebrow: 'VIDEO · Video Studio',
-        title: 'Article → storyboard → preview in one pass',
-        description:
-          'Upload an article. The Video Agent splits it into shots, renders a preview frame per shot, and assembles a draft timeline ready for teaching, product walkthroughs, and shorts.',
-        bullets: [
-          'Article → shot list auto-decomposition',
-          'Preview frame generated per shot',
-          'Draft timeline exports straight to Remotion',
-        ],
-      },
-      {
-        id: 'defect',
-        eyebrow: 'DEFECT · Defect Manager',
-        title: 'Every bug, seen and triaged',
-        description:
-          'Pull signals out of screenshots, screen recordings, and user feedback. Classify, assign, follow up. External Agents can even reproduce, diagnose, and write the fix report.',
-        bullets: [
-          'Auto-extract info from screenshots / recordings',
-          'Severity classification + owner assignment',
-          'External Agent repro + fix-report closed loop',
-        ],
-      },
-      {
-        id: 'report',
-        eyebrow: 'REPORT · Weekly Report',
-        title: 'No more Friday word-padding',
-        description:
-          'Auto-compose a structured weekly report from Git commits, task activity, and daily notes. Leaders get a plan-vs-actual review view with a click.',
-        bullets: [
-          'Synthesize from Git / tasks / daily notes',
-          'Team roll-up + plan-vs-actual comparison',
-          'One-click export to Markdown / PDF',
-        ],
-      },
-    ],
-  },
-  workflow: {
-    eyebrow: 'Workflow · Orchestration',
-    title: 'Chain Agents into a workflow',
-    description:
-      'The Workflow Engine turns repeated multi-step operations into a visual node graph: one trigger, multiple Agents collaborating, conditional branches, error fallbacks, and scheduled runs. Configure once, benefit forever.',
-    chapterMarker: '2.0 Orchestrate →',
-    canvasTitle: 'daily-content-pipeline.workflow',
-    runLabel: 'Run',
-    nodes: [
-      { title: 'Trigger', subtitle: 'Scheduled · 09:00 daily' },
-      { title: 'Spec Analyst', subtitle: 'reads spec' },
-      { title: 'Visual Designer', subtitle: 'makes poster' },
-      { title: 'Writing Studio', subtitle: 'drafts copy' },
-      { title: 'Publish', subtitle: 'multi-channel' },
-    ],
-    status: {
-      running: 'Running · step 3 / 5',
-      elapsed: 'Elapsed · 00:12',
-      eta: 'ETA · 00:28',
-      trace: 'trace · wf-4e9ed6f',
     },
   },
-  cinema: {
-    eyebrow: 'Signature · One Take',
-    title: 'See how AI becomes',
-    tail: ' your second brain',
-    caption: 'MAP · Trailer',
-    comingSoon: 'Coming soon',
-  },
-  how: {
-    eyebrow: 'How It Works',
-    title: 'Three steps, from idea to artifact',
-    steps: [
-      {
-        n: '01',
-        title: 'Describe',
-        description:
-          'Say what you want in plain language. No model picking, no Agent picking — just talk.',
-        demo: 'Make me a "future city" poster',
+  tail: {
+    toolbox: {
+      eyebrow: 'Toolbox · /ai-toolbox',
+      title: 'Not six agents. Thirty-odd, all on the same desk',
+      description:
+        'This is the Toolbox page you land on after logging in — ownership tabs, kind tabs, search, count, recents, all of it. Names, one-liners and icons come from the same registry: add an agent and one more appears here.',
+      note: 'The ones tagged Preview have not passed full acceptance yet. They sit here rather than being hidden: we say exactly how far each one goes.',
+      tabs: ['All', 'Mine', 'Shared', 'Starred'],
+      kindTabs: ['All kinds', 'Agents', 'Tools'],
+      searchPlaceholder: 'Search by name, description or tag...',
+      searchWord: 'illustrate',
+      countSuffix: 'tools',
+      recentLabel: 'Recent',
+      recent: ['Visual agent', 'Weekly report agent', 'CDS agent'],
+      emptyHint: 'Search "illustrate" and everything related floats up',
+      previewTag: 'Preview',
+      beats: [
+        'Thirty-odd agents, grouped by the work they do',
+        'Search for whatever you need to do',
+        'Anything about illustration floats up; the rest fades back',
+        'Pick one and start',
+      ],
+      groups: [
+        {
+          label: 'Create',
+          items: [
+            { name: 'Visual agent', desc: 'Text-to-image, image-to-image, composites — canvas and chat on one screen', icon: 'Palette' },
+            { name: 'Writing agent', desc: 'Draft and polish, then illustrate every paragraph by meaning', icon: 'PenTool' },
+            { name: 'Storyboard bench', desc: 'One sentence becomes film shots; keyframes grow live, refined shot by shot', icon: 'Clapperboard', preview: true },
+            { name: 'Video agent', desc: 'Turns an article into a tutorial video with AI-driven shots and previews', icon: 'Video' },
+          ],
+        },
+        {
+          label: 'Deliver',
+          items: [
+            { name: 'Defect agent', desc: 'File and track defects, with extraction, triage and generated reports', icon: 'Bug' },
+            { name: 'PR review agent', desc: 'Reviews any PR you can access, using your own GitHub account', icon: 'GitPullRequest' },
+            { name: 'Frontend partner', desc: 'For backend folks: wire APIs, write components, fix errors, read screenshots', icon: 'FolderKanban', preview: true },
+            { name: 'CDS agent', desc: 'Runs Claude Code / Codex sandbox tasks remotely, streaming', icon: 'Terminal' },
+          ],
+        },
+        {
+          label: 'Retain',
+          items: [
+            { name: 'Knowledge base', desc: 'Select a sentence and let AI rewrite it; saved only on confirm', icon: 'BookOpen' },
+            { name: 'Weekly report agent', desc: 'Create, submit, review — AI drafts, the team rolls up, plans compare', icon: 'FileBarChart' },
+            { name: 'Markdown to slides', desc: 'Paste Markdown, get a reveal.js deck', icon: 'FileText' },
+            { name: 'Transcription bench', desc: 'Multi-model ASR, timestamp editing, templates into copy', icon: 'AudioLines' },
+          ],
+        },
+        {
+          label: 'Coordinate',
+          items: [
+            { name: 'Project management', desc: 'Kickoff, boards, Gantt — AI breaks requirements into tasks', icon: 'FolderKanban', preview: true },
+            { name: 'Product management', desc: 'Product to defect end to end, versioned and traceable by tier', icon: 'Blocks', preview: true },
+            { name: 'AI arena', desc: 'Blind multi-model duels; identities revealed after the vote', icon: 'Swords' },
+            { name: 'Blunt secretary', desc: 'Turns a vague idea into a MECE action list', icon: 'PaSecretary', preview: true },
+          ],
+        },
+      ],
+      footer: 'Sixteen shown here; the registry holds a dozen more — search beats paging.',
+    },
+    workflow: {
+      eyebrow: 'Workflows · /workflow-agent',
+      title: 'Chain those agents into a pipeline that runs itself',
+      description:
+        'One "capsule" on the canvas is one step. Thirty-odd capsule types split across trigger, process, control and output — wire them up and you have a pipeline that can run on a timer or wake on a webhook. Below is one straight from the template library.',
+      note: 'Every capsule is testable on its own: no need to run the whole chain — fire one step, see its real input and output, then wire the next.',
+      templateName: 'TAPD defect collection and analysis',
+      libraryLabel: 'Capsules',
+      categories: [
+        { label: 'Trigger', kind: 'trigger', count: 5 },
+        { label: 'Process', kind: 'processor', count: 19 },
+        { label: 'Control', kind: 'control', count: 2 },
+        { label: 'Output', kind: 'output', count: 7 },
+      ],
+      runLabel: 'Run',
+      runningLabel: 'Running...',
+      doneLabel: 'Done',
+      waitingLabel: 'Waiting',
+      runPanelLabel: 'This run',
+      logStart: 'Started',
+      logDone: 'Done ({d}), {n} artifact(s)',
+      nodes: [
+        { name: 'Manual trigger', kind: 'trigger', detail: 'Click to run; swap for a timer or webhook any time', secs: '0.1s', artifacts: 1 },
+        { name: 'TAPD collector', kind: 'processor', detail: 'Pulls defects by project and time window', secs: '4.7s', artifacts: 1 },
+        { name: 'Defect stats report', kind: 'processor', detail: 'JS script, deterministic aggregation', secs: '0.3s', artifacts: 1 },
+        { name: 'HTML render', kind: 'processor', detail: 'Deterministic layout — the model never draws the page', secs: '0.2s', artifacts: 1 },
+        { name: 'Export HTML', kind: 'output', detail: 'The artifact becomes a shareable file', secs: '0.6s', artifacts: 1 },
+        { name: 'Completion notice', kind: 'output', detail: 'In-app notice with a direct link to the artifact', secs: '0.2s', artifacts: 1 },
+      ],
+      beats: [
+        'One ready-made pipeline: six capsules, trigger to notice',
+        'Hit Run — each capsule hands its artifact to the next',
+        'Stats and layout are deterministic scripts; the model only enters where judgement is needed',
+        'Done: artifact exported, notice sent, nobody watching',
+      ],
+    },
+    voc: {
+      eyebrow: 'Experience map · /team-activity',
+      title: 'Where the system gets used, and where it hurts — on one map',
+      description:
+        'Every block is one endpoint, its area is how often it was called, its colour is health. Most of the time this is a quiet cold-coloured sea; errors and slowdowns push themselves out of the calm, and one click drills into that pain point.',
+      note: 'On the real page this map draws itself from request logs — no survey, nobody fills anything in. The groups and endpoints here are taken from the real endpoint list; the areas and numbers are illustrative — see the live page for the actual distribution.',
+      windowLabel: 'Illustrative · groups taken from the real endpoint list',
+      legend: { ok: 'Healthy', slow: 'Slow', error: 'Errors' },
+      groups: [
+        {
+          label: 'Visual',
+          leaves: [
+            { label: 'Workspace', weight: 30, status: 'ok' },
+            { label: 'Generate', weight: 22, status: 'ok' },
+            { label: 'Upload', weight: 14, status: 'slow' },
+            { label: 'Preview', weight: 9, status: 'ok' },
+            { label: 'Favorites', weight: 5, status: 'ok' },
+            { label: 'Watermark', weight: 4, status: 'ok' },
+            { label: 'Share', weight: 3, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Knowledge',
+          leaves: [
+            { label: 'Entries', weight: 20, status: 'ok' },
+            { label: 'Spaces', weight: 12, status: 'ok' },
+            { label: 'Comments', weight: 7, status: 'ok' },
+            { label: 'Publish', weight: 4, status: 'ok' },
+            { label: 'Files', weight: 3, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Defects',
+          leaves: [
+            { label: 'List', weight: 16, status: 'ok' },
+            { label: 'Detail', weight: 9, status: 'ok' },
+            { label: 'Bulk export', weight: 6, status: 'error' },
+            { label: 'Stats', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Weekly',
+          leaves: [
+            { label: 'This week', weight: 11, status: 'ok' },
+            { label: 'Roll-up', weight: 6, status: 'ok' },
+            { label: 'Review', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Gateway',
+          leaves: [
+            { label: 'Stream', weight: 13, status: 'ok' },
+            { label: 'Pools', weight: 5, status: 'ok' },
+            { label: 'Logs', weight: 4, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Writing',
+          leaves: [
+            { label: 'Workspace', weight: 12, status: 'ok' },
+            { label: 'Illustrate', weight: 8, status: 'ok' },
+            { label: 'Export', weight: 3, status: 'slow' },
+          ],
+        },
+        {
+          label: 'Workflows',
+          leaves: [
+            { label: 'Runs', weight: 9, status: 'ok' },
+            { label: 'Definitions', weight: 5, status: 'ok' },
+            { label: 'Events', weight: 3, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Auth',
+          leaves: [
+            { label: 'Login', weight: 14, status: 'ok' },
+            { label: 'Refresh', weight: 10, status: 'ok' },
+            { label: 'Me', weight: 7, status: 'ok' },
+          ],
+        },
+        {
+          label: 'Open API',
+          leaves: [
+            { label: 'Calls', weight: 8, status: 'ok' },
+            { label: 'Stats', weight: 4, status: 'ok' },
+            { label: 'Keys', weight: 2, status: 'ok' },
+          ],
+        },
+      ],
+      painTitle: 'Pain points',
+      pains: [
+        { label: 'Defects · Bulk export', metric: '4.7% errors', note: 'Gateway times out past 500 rows, 3.1× week over week', status: 'error' },
+        { label: 'Visual · Upload', metric: 'P95 6.2s', note: 'Large images skip chunking — worst on mobile', status: 'slow' },
+        { label: 'Writing · Export', metric: 'P95 4.1s', note: 'Illustrated long-form renders synchronously; length pushes it to the timeout', status: 'slow' },
+      ],
+      beats: [
+        'One sweep: each block an endpoint, its area how much it gets used',
+        'Most of it is quiet cold colour — nothing hurting over here',
+        'Three blocks push out: one throwing errors, two going slow',
+        'Click through and you land on that row in the pain list',
+      ],
+    },
+    cds: {
+      eyebrow: 'CDS · a branch is an environment',
+      title: 'Say it in the morning, open it in the afternoon',
+      description:
+        'Every request grows its own branch, and a branch is a whole environment: its own URL, its own containers, its own data. You never think about where it lives or when to reclaim it — say the word and it exists, merge or drop it and it is gone.',
+      note: 'It does not matter that you were away for those hours. It does not need you watching; it needs you once, at the end.',
+      dayLabel: 'One day',
+      moments: [
+        { time: '09:12', actor: 'you', text: 'One sentence: the homepage tail is too long, cut it in half' },
+        { time: '10:30', actor: 'it', text: 'Opens a branch and starts working' },
+        { time: '12:40', actor: 'it', text: 'Pushes the change — the environment comes up on its own' },
+        { time: '15:05', actor: 'it', text: 'URL is live; it walks through the page itself first' },
+        { time: '15:40', actor: 'you', text: 'You take a look and hit Approve' },
+      ],
+      actorLabels: { you: 'You', it: 'It' },
+      awayLabel: 'You were busy with something else',
+      previewLabel: 'Ready to look at',
+      previewShape: '<branch>-<project>.<your own domain>',
+      approve: 'Approve',
+      reject: 'Send back',
+      tally: [
+        { label: 'Your moves', value: 'Two' },
+        { label: 'It ran for', value: '6 hours' },
+        { label: 'You configured', value: 'Nothing' },
+      ],
+      footer: 'A human does exactly two things: say clearly what they want, and click approve.',
+      beats: [
+        'In the morning, you said one sentence',
+        'It opened a branch for that sentence and got to work',
+        'By noon it pushed — and the environment came up with the branch',
+        'By afternoon the URL was live; it had already walked the page itself',
+        'You look once and hit Approve. Two moves, all day',
+      ],
+    },
+    models: {
+      eyebrow: 'LLMGW · /pools',
+      title: 'One config reaches every model, and failover is automatic',
+      description:
+        'Not a row of logos. Drawn after the real table in the gateway console: one row per model pool, members queued by priority, and whoever is next takes over when one breaks — product code only ever names the pool.',
+      note: 'Swapping members inside a pool is the gateway’s call; picking across pools is off by default. One member failing updates only its own health — it never wipes the catalogue. The figures on this panel are illustrative — they show how ranking and failover behave, not measured production traffic; live metrics live in the gateway console.',
+      counts: [
+        { value: '3', label: 'Providers' },
+        { value: '17', label: 'Callable models' },
+        { value: '6', label: 'Pools' },
+      ],
+      windowText: 'sample',
+      countSuffix: 'pools',
+      columns: {
+        status: 'State', pool: 'Pool / type', evidence: 'Basis', members: 'Member order',
+        success: 'Success', duration: 'Avg', requests: 'Requests',
       },
-      {
-        n: '02',
-        title: 'Agent picks itself',
-        description:
-          'MAP routes intent to the best Agent + model combination. Multiple Agents collaborate when needed.',
-        demo: '→ Visual Designer · GPT-image-1 · 16:9',
-      },
-      {
-        n: '03',
-        title: 'Streaming output',
-        description:
-          'Watch thinking, interim artifacts, and progress live. Interrupt, branch, or resume at any moment.',
-        demo: 'Generating · 2 / 4 done · ETA 12s',
-      },
-    ],
+      statusLabels: { ok: 'Healthy', watch: 'Watching' },
+      pools: [
+        {
+          name: 'chat-default', type: 'Chat', evidence: 'Illustrative',
+          members: ['Claude 4.6', 'Kimi K2', 'GPT-5'],
+          success: '99.4%', successDegraded: '96.1%', duration: '1.1s', requests: '18.3k',
+          acting: true,
+        },
+        { name: 'vision-main', type: 'Vision', evidence: 'Illustrative', members: ['GPT-5', 'Qwen3-VL'], success: '99.8%', duration: '2.3s', requests: '4.1k' },
+        { name: 'image-gen', type: 'Image', evidence: 'Illustrative', members: ['Seedream 4', 'FLUX.1'], success: '98.9%', duration: '9.7s', requests: '2.6k' },
+        { name: 'intent-fast', type: 'Intent', evidence: 'Illustrative', members: ['Qwen3-Turbo', 'DeepSeek V3'], success: '99.9%', duration: '0.4s', requests: '31.7k' },
+      ],
+      downTag: 'Isolated',
+      promotedTag: 'Took over',
+      beats: [
+        'Six pools, members queued by priority — first choice, then the fallbacks in order',
+        'chat-default loses its second: success drops to 96.1%, the pool goes to Watching',
+        'The third takes over, success back to 99.4% — callers never changed a line',
+      ],
+    },
+    start: {
+      eyebrow: 'Start here',
+      title: 'Log in, pick one, say a sentence',
+      description: 'No install, no setup wizard, no project to create first. You will have your first artifact within three steps.',
+      note: 'Desktop and mobile share the same account and the same data as the web — pick up where you left off.',
+      steps: [
+        { title: 'Log in', desc: 'One account for the whole desk; permissions follow your role' },
+        { title: 'Pick an agent', desc: 'Not sure which? Search for the thing you need done' },
+        { title: 'Say a sentence', desc: 'The artifact lands on a canvas or in a document, not in a chat log' },
+      ],
+      surfaces: [
+        { name: 'Web', desc: 'Open and go — the primary surface', state: 'Available' },
+        { name: 'Desktop', desc: 'Packaged with Tauri, direct access to local files', state: 'Available', href: 'https://github.com/inernoro/prd_agent/releases', hrefLabel: 'Download' },
+        { name: 'Mobile', desc: 'Check progress, review, reply in a line', state: 'Available' },
+      ],
+    },
+    closing: {
+      eyebrow: 'Your turn',
+      title: 'Pick one agent and finish one small thing',
+      description: 'You do not need to run the whole pipeline. Pick whichever agent sits closest to today’s work and let it finish one thing — one round tells you whether this is for you.',
+      primary: 'Enter MAP',
+      secondary: 'See the agents',
+      footnote: 'Want it self-hosted, or want to talk about fitting it into your workflow? Just reach out.',
+    },
   },
-  agents: {
-    eyebrow: 'The Roster',
-    title: 'Fifteen Agents,\nready on demand',
-    subtitle:
-      '11 dedicated domain experts + 4 general assistants. Each can operate solo or be invoked by another.',
-    dedicated: 'Dedicated',
-    assistant: 'Assistant',
-    items: [
-      { id: 'visual', name: 'Visual Designer', description: 'T2I · I2I · compositions · inpainting' },
-      { id: 'literary', name: 'Writing Studio', description: 'Prompted writing · polish · auto-illustration' },
-      { id: 'prd', name: 'Spec Analyst', description: 'Gap detection · Q&A · AI pre-review' },
-      { id: 'video', name: 'Video Studio', description: 'Article → storyboard → preview → timeline' },
-      { id: 'defect', name: 'Defect Manager', description: 'Signal extraction · triage · fix loop' },
-      { id: 'report', name: 'Weekly Report', description: 'Git synthesis · plan-vs-actual · team roll-up' },
-      { id: 'arena', name: 'AI Arena', description: 'Blind multi-model duels · reveal after' },
-      { id: 'workflow', name: 'Workflow Engine', description: 'Visual orchestration · multi-step chains' },
-      { id: 'shortcuts', name: 'Shortcuts', description: 'One-tap ops · custom · shareable' },
-      { id: 'review', name: 'Plan Reviewer', description: 'Multi-axis scoring · issue checklist' },
-      { id: 'transcript', name: 'Transcript Studio', description: 'Multi-model ASR · timestamp edit · templating' },
-      { id: 'code-review', name: 'Code Reviewer', description: 'Quality audit · bugs · performance' },
-      { id: 'translator', name: 'Translator', description: 'Pro CN/EN/JA/KO translation' },
-      { id: 'summarizer', name: 'Summarizer', description: 'Long-text key points · data extract' },
-      { id: 'data-analyst', name: 'Data Analyst', description: 'Trends · chart advice · insights' },
-    ],
-  },
-  compat: {
-    eyebrow: 'Compatible With',
-    title: 'One config,\nall the LLMs you have ever used',
-    subtitle:
-      'Through a unified ILlmGateway, MAP connects 12 major platforms with task-type routing, health monitoring, quota management, and automatic fallback.',
-    footer: 'Plus any OpenAI-compatible self-hosted or third-party service',
-    action: 'Open LLM Gateway Console',
-  },
-  pulse: {
-    eyebrow: 'Live · Pulse',
-    title: 'The platform,\nat this very moment',
-    subtitle:
-      'Live data pulse + weekly Agent usage leaderboard. The more you use them, the smarter they get.',
-    leaderboard: 'Weekly Leaderboard',
-    stats: [
-      { id: 'active', label: 'ACTIVE AGENTS', trend: 'all online' },
-      { id: 'convos', label: 'CONVERSATIONS · 24H', trend: '+18% ↑' },
-      { id: 'tokens', label: 'TOKENS PROCESSED', trend: 'p95 · 62ms' },
-      { id: 'media', label: 'MEDIA GENERATED', trend: 'last 7d' },
-    ],
-    rows: [
-      { id: 'visual', name: 'Visual Designer', delta: '+32%' },
-      { id: 'prd', name: 'Spec Analyst', delta: '+14%' },
-      { id: 'literary', name: 'Writing Studio', delta: '+8%' },
-      { id: 'defect', name: 'Defect Manager', delta: '+22%' },
-      { id: 'report', name: 'Weekly Report', delta: '+5%' },
-    ],
-  },
-  download: {
-    eyebrow: 'Desktop Client',
-    title: 'Bring the whole platform\nto your desktop',
-    subtitle:
-      'Native desktop client built on Tauri 2.0. System tray, keyboard wake, offline cache, global clipboard injection. Shares the same account with the Web app.',
-    bullets: [
-      'Tray-resident · Cmd+Shift+M to summon',
-      'Auto-update · Tauri signed updater',
-      '134 MB total across platforms · zero Node runtime',
-    ],
-    platforms: [
-      { id: 'macos', name: 'macOS', arch: 'Apple Silicon · Intel' },
-      { id: 'windows', name: 'Windows', arch: 'x64 · ARM64' },
-      { id: 'linux', name: 'Linux', arch: 'AppImage · .deb' },
-    ],
-  },
-  cta: {
-    eyebrow: 'Ready Player One',
-    title: "Now it's your turn.",
-    subtitle: 'Fifteen Agents are standing by. What is your first task?',
-    primary: 'Enter MAP',
-    secondary: 'Contact us',
-  },
+  interludes: [
+    {
+      kicker: 'That is the foundation',
+      title: 'Now the things you actually touch every day',
+      note: 'Every act below is a real page you can open after logging in — not an illustration.',
+    },
+    {
+      kicker: 'So how does any of it run',
+      title: 'Every generation has to pick a model and raise an environment',
+      note: 'Neither should be product code’s problem. The next two acts are those layers.',
+    },
+  ],
   footer: {
     brand: 'Midoo Agentic Platform',
     github: 'GitHub',
     backToTop: 'Back to top',
     copyright: '© 2026 MAP',
-  },
-  mockups: {
-    visual: {
-      header: 'visual-agent · 4 candidates',
-      status: 'Generating · 2 / 4 done',
-    },
-    literary: {
-      header: 'literary-agent · polishing',
-      progress: 'Para 3 / 7',
-      added: '+12 chars',
-      deleted: '-3 chars',
-      diffView: 'Diff view',
-    },
-    prd: {
-      header: 'prd-agent · v3.0 spec analysis',
-      sections: [
-        { title: '§ User Stories' },
-        { title: '§ Core Flow', note: 'Missing edge cases' },
-        { title: '§ Data Model' },
-        { title: '§ Permission Matrix', note: 'Undefined role boundaries' },
-        { title: '§ Test Cases', note: 'Missing failure scenarios' },
-      ],
-    },
-    video: {
-      header: 'video-agent · 6 shots',
-      status: 'Rendering · 72%',
-    },
-    defect: {
-      header: 'defect-agent · 3 open',
-      items: [
-        { sev: 'P0', title: 'Messages lost on refresh' },
-        { sev: 'P1', title: 'Image gen timeout unreleased' },
-        { sev: 'P2', title: 'Strokes disappear in dark mode' },
-      ],
-      assigned: 'Assigned',
-      newThisWeek: 'New this week · 27',
-      fixed: 'Fixed · 19',
-      fixRate: 'Fix rate · 70%',
-    },
-    report: {
-      header: 'report-agent · W15',
-      plan: 'Plan',
-      actual: 'Actual',
-      days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-    },
   },
 };
 

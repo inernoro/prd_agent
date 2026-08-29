@@ -1,7 +1,9 @@
 import { ArrowRight, Play, Sparkles } from 'lucide-react';
+import { InkOrb } from '@/components/backgrounds/InkOrb';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { cn } from '@/lib/cn';
-import { ProductMockup } from '../components/ProductMockup';
 import { Reveal } from '../components/Reveal';
+import { VisualCanvasStage } from '../scenes/VisualCanvasScene';
 import { TechLogoBar } from '../components/TechLogoBar';
 import { useLanguage } from '../contexts/LanguageContext';
 
@@ -28,6 +30,12 @@ import { useLanguage } from '../contexts/LanguageContext';
  * 产品预览发送键、导航 Logo），每一份都各自漂移、各自配错前景色。
  * 想用它就 import，不要再抄一遍色值。
  */
+/**
+ * 墨滴的两支色：鼓起来的地方走品牌赭红，凹下去的地方走钢青。
+ * 和 HERO_GRADIENT_STOPS 同源不同用途 —— 那三支是按钮/文字的实心渐变，这两支是 3D 的光。
+ */
+export const HERO_ORB_COLORS: [string, string] = ['#D97757', '#6AB6D2'];
+
 export const HERO_GRADIENT_STOPS = ['#CE6B41', '#D97757', '#E0A06B'] as const;
 export const HERO_GRADIENT = `linear-gradient(135deg, ${HERO_GRADIENT_STOPS[0]} 0%, ${HERO_GRADIENT_STOPS[1]} 48%, ${HERO_GRADIENT_STOPS[2]} 100%)`;
 /**
@@ -58,6 +66,10 @@ interface HeroSectionProps {
 
 export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectionProps) {
   const { t } = useLanguage();
+  // 用 isDesktop（≥1024）而不是「非手机」（≥768）：墨滴的可见性由 `lg:block` 决定，
+  // 挂载条件必须跟它同一个断点。差着的那 256px 正好是平板——那一档它挂上了、
+  // 起了个 WebGL 上下文、一直在渲染，却因为 display:none 一眼都看不见。
+  const { isDesktop } = useBreakpoint();
   return (
     <section
       className={cn('relative overflow-hidden', className)}
@@ -133,9 +145,18 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
       </div>
 
       {/* ── 第一屏内容（居中标题 + CTA） ── */}
+      {/*
+        * 版式：左文右物的不对称两栏，不再是居中堆叠。
+        *
+        * 原来 badge / 大标题 / 副标题 / 两个按钮 / logo 墙全部居中竖着摞 —— 那是 2015 年的
+        * SaaS 模板骨架，配什么字体、什么颜色都救不回来，用户的评价是"单调、丑陋"。
+        * 换成两栏之后右边空出一块，正好给那颗会呼吸的墨滴 —— 整页第一个能转的实体。
+        */}
       <div
-        className="relative z-10 min-h-[82vh] flex flex-col items-center justify-center px-6 pt-32 pb-16"
+        className="relative z-10 min-h-[82vh] flex flex-col justify-center px-6 pt-32 pb-16"
       >
+        <div className="w-full max-w-[1280px] mx-auto grid lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] gap-8 lg:gap-14 items-center">
+        <div className="flex flex-col items-start">
         {/*
          * 呼吸设计 — 学习 Linear.app 的节奏
          *
@@ -152,7 +173,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         {/* ── Phase 2 · HUD 状态条 — 装饰性，比核心信息晚出 ── */}
         <Reveal delay={1200} duration={2000} offset={6}>
           <div
-            className="inline-flex items-center gap-3 px-4 py-2 mb-12 rounded-md"
+            className="inline-flex items-center gap-3 px-4 py-2 mb-9 rounded-md"
             style={{
               background: 'rgba(10, 14, 22, 0.72)',
               border: '1px solid rgba(203, 213, 225, 0.22)',
@@ -194,10 +215,11 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         {/* ★ 主标题 — 4s duration，前 600ms 可读，后 3.4s 雾慢慢散 */}
         <Reveal delay={0} blur={10} duration={4000} offset={30}>
           <h1
-            className="text-center font-medium"
+            className="font-medium"
             style={{
               fontFamily: 'var(--font-display)',
-              fontSize: 'clamp(2.75rem, 7.5vw, 6.5rem)',
+              // 从 7.5vw / 6.5rem 收下来：现在只占左半栏，原尺寸会把两栏挤散
+              fontSize: 'clamp(2.6rem, 5.2vw, 4.7rem)',
               lineHeight: 1.08,
               letterSpacing: '-0.035em',
               maxWidth: '16ch',
@@ -224,7 +246,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
         {/* 容器放宽到 max-w-3xl、字号收到 clamp(13.6,0.95vw,16px)，承载 100 字中文定义 */}
         <Reveal delay={500} duration={2000} offset={20}>
           <p
-            className="mt-8 text-center text-white/62 max-w-2xl mx-auto"
+            className="mt-7 text-white/62 max-w-xl"
             style={{
               fontFamily: 'var(--font-body)',
               fontSize: 'clamp(0.85rem, 0.95vw, 1rem)',
@@ -238,7 +260,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
 
         {/* CTA — 和副标题同时出发，2s duration */}
         <Reveal delay={500} duration={2000} offset={20}>
-          <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <div className="mt-10 flex flex-col sm:flex-row items-start sm:items-center gap-4">
             {/* 主 CTA */}
             <button
               onClick={onGetStarted}
@@ -285,19 +307,75 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
           </div>
         </Reveal>
 
-        {/* ── Phase 2 · Powered by — 装饰性 ── */}
+        </div>
+
+        {/*
+          * 右栏：那颗墨滴。
+          *
+          * 这里必须**条件挂载**，不能只写 `hidden lg:block`：display:none 只是不显示，
+          * React 照样把 InkOrb 挂上、照样 new 一个 WebGL 上下文。手机端体检时
+          * canvas 数是 2 就是这么来的 —— 一个看不见的上下文白占着显存。
+          *
+          * 挂载断点必须**和可见性断点同一个**（都是 lg / 1024）。第一版按「非手机」
+          * （768）挂，768–1023 这一档平板照样白起一个上下文 —— 条件挂载对了、
+          * 断点错了，等于只修了一半。
+          */}
+        {isDesktop && (
+          <div className="relative hidden lg:block" style={{ aspectRatio: '1 / 1' }}>
+            <InkOrb className="absolute inset-0" colors={HERO_ORB_COLORS} amplitude={0.22} />
+          </div>
+        )}
+        </div>
+
+        {/* ── Phase 2 · Powered by — 装饰性，独占一行压在两栏底下 ── */}
         <Reveal delay={1400} duration={2000} offset={6}>
-          <div className="mt-20 md:mt-24 w-full">
+          <div className="mt-16 md:mt-20 w-full max-w-[1280px] mx-auto">
             <TechLogoBar />
           </div>
         </Reveal>
       </div>
 
-      {/* ── Phase 3 · 产品壳 mockup — 核心信息就位后，视觉证据最后浮出 ── */}
-      {/* 不带 blur：对 ~1000px 宽的大块做 3s 滤镜动画 = 大面积逐帧重绘，只保留 fade + rise */}
+      {/* ── Phase 3 · 第一屏的产品证据：视觉创作工作台 ──
+          这里原来是一个通用的「对话壳」mockup，任何 AI 产品都能套。
+          换成照真实面板复刻、还能点的视觉创作画布：第一屏必须是本系统的核心，
+          而不是一张谁都能画的示意图。
+          不带 blur：对 ~1000px 宽的大块做 3s 滤镜动画 = 大面积逐帧重绘，只保留 fade + rise */}
       <Reveal delay={1800} offset={60} duration={3000}>
-        <div className="relative z-10 pb-32 md:pb-40 px-4 md:px-8">
-          <ProductMockup />
+        <div className="relative z-10 pb-20 md:pb-28 px-4 md:px-8">
+          <div className="max-w-[1280px] mx-auto">
+            <div className="flex flex-col lg:flex-row lg:items-end gap-4 lg:gap-10 mb-5">
+              <div className="shrink-0">
+                <div
+                  className="flex items-center gap-2 uppercase text-white/42"
+                  style={{ fontFamily: 'var(--font-terminal)', fontSize: '15px', letterSpacing: '0.18em' }}
+                >
+                  <span
+                    className="block w-[5px] h-[5px] rounded-full shrink-0"
+                    style={{ background: 'hsl(16 54% 62%)' }}
+                  />
+                  {t.scenes.visual.eyebrow}
+                </div>
+                <h2
+                  className="mt-2.5 font-medium text-white"
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: 'clamp(1.6rem, 2.8vw, 2.1rem)',
+                    lineHeight: 1.34,
+                    letterSpacing: '-0.02em',
+                  }}
+                >
+                  {t.scenes.visual.title}
+                </h2>
+              </div>
+              <p
+                className="text-white/62 lg:pb-1.5"
+                style={{ fontSize: '13.5px', lineHeight: 1.8, maxWidth: '29em' }}
+              >
+                {t.scenes.visual.description}
+              </p>
+            </div>
+            <VisualCanvasStage />
+          </div>
         </div>
       </Reveal>
     </section>

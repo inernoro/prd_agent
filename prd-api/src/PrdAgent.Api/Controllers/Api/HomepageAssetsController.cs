@@ -114,7 +114,8 @@ public class HomepageAssetsController : ControllerBase
         Url = x.Url,
         Mime = x.Mime,
         SizeBytes = x.SizeBytes,
-        UpdatedAt = x.UpdatedAt
+        UpdatedAt = x.UpdatedAt,
+        Prompt = x.Prompt
     };
 
     /// <summary>
@@ -207,9 +208,12 @@ public class HomepageAssetsController : ControllerBase
                 .Set(x => x.Url, url)
                 .Set(x => x.Mime, mime)
                 .Set(x => x.SizeBytes, bytes.LongLength)
+                // 手工上传覆盖掉 AI 生成的那版时，旧提示词就不再描述这张图了，一并清掉
+                .Set(x => x.Prompt, (string?)null)
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
 
+        existing.Prompt = null;
         existing.RelativePath = objectKey;
         existing.Url = url;
         existing.Mime = mime;
@@ -217,6 +221,135 @@ public class HomepageAssetsController : ControllerBase
         existing.UpdatedAt = now;
 
         _logger.LogInformation("Replaced homepage asset: slot={Slot} ext={Ext} size={Size}", slotNorm, ext, bytes.LongLength);
+        return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(existing)));
+    }
+
+    /// <summary>
+    /// 认领：把一次生图任务的产物挂到某个 slot 上（管理端「首页预览图」的生成落地口）。
+    ///
+    /// 这里**不复制字节**，直接引用生图产物已有的 CDN URL：
+    /// 生图 Worker 保存的是内容寻址对象（同一张图 URL 恒定、不会被覆盖或过期），
+    /// 再拷一份到 `icon/homepage/*` 只会多一份同样的字节和一条会漂的路径。
+    /// 代价是这类记录的 `RelativePath` 为空——删除/替换时不去删那个对象（它属于
+    /// 生图任务，不属于本 slot），下面两处删除逻辑都判了空。
+    /// </summary>
+    [HttpPost("adopt-image-run")]
+    [ProducesResponseType(typeof(ApiResponse<HomepageAssetDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> AdoptImageRun([FromBody] AdoptImageRunRequest req, CancellationToken ct)
+    {
+        var adminId = this.GetRequiredUserId();
+
+        var (ok, err, slotNorm) = NormalizeSlot(req?.Slot ?? string.Empty);
+        if (!ok) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, err ?? "slot 不合法"));
+
+        var runId = (req?.RunId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(runId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "runId 不能为空"));
+
+        var run = await _db.ImageGenRuns.Find(x => x.Id == runId).Limit(1).FirstOrDefaultAsync(ct);
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图任务不存在"));
+        // 只有任务发起人能把它的产物挂到首页 slot 上，避免拿到别人的 runId 就能改首页
+        if (!string.Equals(run.OwnerAdminId, adminId, StringComparison.Ordinal))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图任务不存在"));
+
+        var itemIndex = req?.ItemIndex ?? 0;
+        var imageIndex = req?.ImageIndex ?? 0;
+        var item = await _db.ImageGenRunItems
+            .Find(x => x.RunId == runId && x.ItemIndex == itemIndex && x.ImageIndex == imageIndex)
+            .Limit(1)
+            .FirstOrDefaultAsync(ct);
+        if (item == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "生图结果不存在"));
+        if (item.Status != ImageGenRunItemStatus.Done)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "这张图还没生成完成，不能挂到首页"));
+        // 出图了却没有地址：调用方按 b64_json 发的、又没有 workspace 落资产，产物只在 base64 里。
+        // 这里引用的是 URL，认领不了——说清楚是哪一步的问题，别报成「还没生成完成」。
+        if (string.IsNullOrWhiteSpace(item.Url))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "这张图只有 base64、没有可引用的地址，挂不到首页。发起生图时请用 responseFormat=url"));
+
+        // 尺寸/MIME 从资产记录取；取不到就按 URL 后缀猜，缺这两个字段不该挡住认领
+        var imageUrl = item.Url!;
+        var mime = string.Empty;
+        long sizeBytes = 0;
+        var displaySha = item.DisplaySha256;
+        if (!string.IsNullOrWhiteSpace(displaySha))
+        {
+            var asset = await _db.ImageAssets
+                .Find(x => x.DisplaySha256 == displaySha)
+                .Limit(1)
+                .FirstOrDefaultAsync(ct);
+            if (asset != null)
+            {
+                mime = asset.Mime;
+                sizeBytes = asset.SizeBytes;
+            }
+        }
+        if (string.IsNullOrWhiteSpace(mime))
+        {
+            // 从 URL 猜后缀：先切掉 query/fragment，否则 `.png?v=1` 会被当成扩展名 `.png?v=1`
+            var pathOnly = imageUrl.Split('?', '#')[0];
+            mime = GuessMimeByExt(Path.GetExtension(pathOnly));
+        }
+
+        var prompt = (req?.Prompt ?? item.Prompt ?? string.Empty).Trim();
+        if (prompt.Length > 4000) prompt = prompt[..4000];
+
+        var now = DateTime.UtcNow;
+        var existing = await _db.HomepageAssets.Find(x => x.Slot == slotNorm).Limit(1).FirstOrDefaultAsync(ct);
+        if (existing == null)
+        {
+            var rec = new HomepageAsset
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Slot = slotNorm,
+                RelativePath = string.Empty,
+                Url = imageUrl,
+                Mime = mime,
+                SizeBytes = sizeBytes,
+                Prompt = string.IsNullOrWhiteSpace(prompt) ? null : prompt,
+                CreatedByAdminId = adminId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            await _db.HomepageAssets.InsertOneAsync(rec, cancellationToken: ct);
+            _logger.LogInformation("Adopted image-gen result into homepage slot={Slot} run={Run}", slotNorm, runId);
+            return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(rec)));
+        }
+
+        // 上一版是手工上传的（我们自己持有那个对象）才去删；引用生图产物的不删。
+        // **删除必须排在库里切换成功之后**：先删后写的话，中间一旦取消或写库失败，
+        // 记录还指着一个已经不存在的对象，首页那一格就此变成裂图，而这次认领是失败的。
+        var staleKey = existing.RelativePath;
+
+        await _db.HomepageAssets.UpdateOneAsync(
+            x => x.Id == existing.Id,
+            Builders<HomepageAsset>.Update
+                .Set(x => x.RelativePath, string.Empty)
+                .Set(x => x.Url, imageUrl)
+                .Set(x => x.Mime, mime)
+                .Set(x => x.SizeBytes, sizeBytes)
+                .Set(x => x.Prompt, string.IsNullOrWhiteSpace(prompt) ? null : prompt)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        // 切换已经落库，这时候删旧对象才安全；删失败也只是留个孤儿，不会让首页裂图。
+        // 用 CancellationToken.None：请求这时已经成功了，客户端断开不该把清理掐掉。
+        if (!string.IsNullOrWhiteSpace(staleKey))
+        {
+            try { await _assetStorage.DeleteByKeyAsync(staleKey, CancellationToken.None); }
+            catch (Exception ex) { _logger.LogWarning("Failed to delete old homepage asset {Key}: {Msg}", staleKey, ex.Message); }
+        }
+
+        existing.RelativePath = string.Empty;
+        existing.Url = imageUrl;
+        existing.Mime = mime;
+        existing.SizeBytes = sizeBytes;
+        existing.Prompt = string.IsNullOrWhiteSpace(prompt) ? null : prompt;
+        existing.UpdatedAt = now;
+
+        _logger.LogInformation("Replaced homepage slot={Slot} with image-gen result run={Run}", slotNorm, runId);
         return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(existing)));
     }
 
@@ -234,13 +367,75 @@ public class HomepageAssetsController : ControllerBase
         if (existing == null)
             return Ok(ApiResponse<object>.Ok(new { deleted = false, reason = "not found" }));
 
-        try { await _assetStorage.DeleteByKeyAsync(existing.RelativePath, ct); }
-        catch (Exception ex) { _logger.LogWarning("Failed to delete homepage asset object {Key}: {Msg}", existing.RelativePath, ex.Message); }
+        // RelativePath 为空 = 这条只是引用了生图产物的 URL，对象不归本 slot 所有，不能删
+        if (!string.IsNullOrWhiteSpace(existing.RelativePath))
+        {
+            try { await _assetStorage.DeleteByKeyAsync(existing.RelativePath, ct); }
+            catch (Exception ex) { _logger.LogWarning("Failed to delete homepage asset object {Key}: {Msg}", existing.RelativePath, ex.Message); }
+        }
 
         var res = await _db.HomepageAssets.DeleteOneAsync(x => x.Id == existing.Id, ct);
         _logger.LogWarning("Admin deleted homepage asset slot={Slot}", slotNorm);
         return Ok(ApiResponse<object>.Ok(new { deleted = res.DeletedCount > 0 }));
     }
+}
+
+/// <summary>
+/// 对外首页（`/home`）的配图读取 —— **匿名可读**。
+///
+/// 为什么不复用 `api/homepage/assets`：那个端点是 `[Authorize]`，服务的是登录后的
+/// 首页；而 `/home` 是不登录就能打开的宣传页，拿不到 token。
+///
+/// 只暴露 `landing.` 前缀这一族，不是整张表：这里是公网无鉴权面，把全部 slot
+/// （含内部卡片背景、Agent 封面）一并吐出去等于白送一份资源清单。
+/// </summary>
+[ApiController]
+[Route("api/v1/landing/preview-assets")]
+[AllowAnonymous]
+public class LandingPreviewAssetsController : ControllerBase
+{
+    private const string SlotPrefix = "landing.";
+    private readonly MongoDbContext _db;
+
+    public LandingPreviewAssetsController(MongoDbContext db)
+    {
+        _db = db;
+    }
+
+    /// <summary>返回 slot → url 的字典；没有配图的幕不出现在结果里。</summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(ApiResponse<Dictionary<string, string>>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetAll(CancellationToken ct)
+    {
+        var list = await _db.HomepageAssets
+            .Find(x => x.Slot.StartsWith(SlotPrefix))
+            .ToListAsync(ct);
+
+        // 只给 slot 与 url：提示词、体积、上传者都是内部信息，公网面不该带
+        var map = list
+            .Where(x => !string.IsNullOrWhiteSpace(x.Url))
+            .ToDictionary(x => x.Slot, x => x.Url);
+        return Ok(ApiResponse<Dictionary<string, string>>.Ok(map));
+    }
+}
+
+/// <summary>把一次生图任务的某张产物挂到首页 slot 上。</summary>
+public class AdoptImageRunRequest
+{
+    /// <summary>目标槽位，如 `landing.layers`</summary>
+    public string Slot { get; set; } = string.Empty;
+
+    /// <summary>生图任务 Id（必须是调用者本人发起的）</summary>
+    public string RunId { get; set; } = string.Empty;
+
+    /// <summary>任务内第几条计划项（一次「全部重新生成」会有多条）</summary>
+    public int ItemIndex { get; set; }
+
+    /// <summary>该计划项里的第几张图（当前每项只生一张，恒为 0）</summary>
+    public int ImageIndex { get; set; }
+
+    /// <summary>本次实际用的提示词；留空则回落到生图结果自带的那条</summary>
+    public string? Prompt { get; set; }
 }
 
 /// <summary>
@@ -276,6 +471,8 @@ public class HomepageAssetsPublicController : ControllerBase
                 Mime = x.Mime,
                 SizeBytes = x.SizeBytes,
                 UpdatedAt = x.UpdatedAt
+                // 不带 Prompt：这个端点只挡了登录，任何登录用户都能拉。提示词是管理员
+                // 写的，管理端自己走 /api/assets/homepage/list（带 assets.read 门）能拿到。
             });
         return Ok(ApiResponse<Dictionary<string, HomepageAssetDto>>.Ok(map));
     }
