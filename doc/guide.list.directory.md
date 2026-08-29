@@ -33,6 +33,7 @@
 - [LLM 网关测试矩阵 · 规格](./spec.platform.llm-gateway.test-matrix.md) `spec.platform.llm-gateway.test-matrix`
 - [统一短链系统 · 规格](./spec.platform.short-links.md) `spec.platform.short-links`
 - [PRD Agent 产品需求文档 · 规格](./spec.prd.md) `spec.prd`
+- [给设计方的画板请求（录音交付页）](./spec.prd-admin.recording-design-demo-request.md) `spec.prd-admin.recording-design-demo-request`
 - [毒舌秘书（PA Agent）产品规格 · 规格](./spec.product-agent.pa.md) `spec.product-agent.pa`
 - [项目愿景与背景 · 规格](./spec.project-vision.md) `spec.project-vision`
 - [周报 Agent Phase 5 — 用户故事 · 规格](./spec.report-agent.phase5.md) `spec.report-agent.phase5`
@@ -244,6 +245,7 @@
 - [首页与登录页视觉语言 · 规则](./rule.frontend.landing-visual-style.md) `rule.frontend.landing-visual-style`
 - [移动端视觉检查矩阵 · 规则](./rule.frontend.mobile-visual-check-matrix.md) `rule.frontend.mobile-visual-check-matrix`
 - [流式文本动效 · 规则](./rule.frontend.streaming-text.md) `rule.frontend.streaming-text`
+- [录音链路：换一条录音要放掉什么 · 规则](./rule.prd-admin.recording-entry-scope.md) `rule.prd-admin.recording-entry-scope`
 - [Agent 开发交付流程 · 规则](./rule.platform.agent-development.md) `rule.platform.agent-development`
 - [Agent 权限分类 · 规则](./rule.platform.agent-permissions.md) `rule.platform.agent-permissions`
 - [AI 模型可见性原则 · 规则](./rule.platform.ai-model-visibility.md) `rule.platform.ai-model-visibility`
@@ -264,6 +266,7 @@
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
+- [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
 - [CDS 多项目剩余交付 · 计划](./plan.cds.multi-project-phases.md) `plan.cds.multi-project-phases`
 - [CDS 发布系统改进 · 计划](./plan.cds.release-system.md) `plan.cds.release-system`

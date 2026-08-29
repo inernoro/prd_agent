@@ -57,6 +57,8 @@ interface ProjectSummary {
   name: string;
   aliasName?: string;
   aliasSlug?: string;
+  /** 项目声明的 Agent 角色（GET /api/projects 带出）；未声明时缺省。 */
+  agentProfile?: { role: string; experience: string; cardTitle?: string };
   resourceChipDisplay?: ResourceChipDisplay;
   description?: string;
   kind?: string;
@@ -341,6 +343,19 @@ const monoInputClass = `${inputClass} font-mono`;
 const textareaClass =
   'min-h-24 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring';
 
+/** 角色 id 转中文名。项目未声明角色时右列不显示这一行，不猜。 */
+const AGENT_ROLE_LABELS: Record<string, string> = {
+  pm: '产品经理',
+  owner: '业务专家 / 需求专家',
+  'domain-expert': '领域专家',
+  dev: '开发',
+  qa: '测试与验收',
+};
+
+function agentRoleLabel(role: string): string {
+  return AGENT_ROLE_LABELS[role] || role;
+}
+
 function displayName(project: ProjectSummary): string {
   return project.aliasName || project.name || project.slug || project.id;
 }
@@ -494,10 +509,14 @@ export function ProjectSettingsPage(): JSX.Element {
         />
       }
     >
-      <Workspace>
-        {state.status === 'loading' ? <LoadingBlock label="加载项目设置" /> : null}
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        {state.status === 'loading' ? (
+          <div className="p-6">
+            <LoadingBlock label="加载项目设置" />
+          </div>
+        ) : null}
         {state.status === 'error' ? (
-          <div className="space-y-4">
+          <div className="space-y-4 p-6">
             <ErrorBlock message={state.message} />
             <Button asChild variant="outline">
               <Link to="/project-list">
@@ -509,14 +528,25 @@ export function ProjectSettingsPage(): JSX.Element {
         ) : null}
 
         {project ? (
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
-            <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-              <TabsList
-                aria-label="项目设置分区"
-                className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-0 lg:self-start"
-              >
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => setActiveTab(value as TabValue)}
+            className="cds-settings-shell"
+          >
+            {/*
+             * 方向 A：设置页属于全屏外壳，而不是浮在页面中间的两张白卡。
+             * 导航贴左边成为固定栏（只留一条 hairline，从顶通到底），内容区
+             * 铺满剩余宽度；可读宽度由内容区自己的表单列负责，不再靠
+             * workspace 的 1240 上限把整页缩到中间。
+             */}
+            <div className="cds-settings-layout">
+              <TabsList aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
+                <div className="cds-settings-rail-head">
+                  <div className="text-sm font-semibold">项目设置</div>
+                  <div className="truncate font-mono text-[11px] text-muted-foreground">{project.slug || project.id}</div>
+                </div>
                 {tabGroups.map((group, groupIdx) => (
-                  <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
+                  <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
                     <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
                       {group.label}
                     </div>
@@ -533,7 +563,8 @@ export function ProjectSettingsPage(): JSX.Element {
                 ))}
               </TabsList>
 
-              <div className="cds-settings-content cds-surface-raised cds-hairline min-w-0 p-5">
+              <div className="cds-settings-content min-w-0">
+                <div className="cds-settings-section-body">
                 <TabsContent value="general">
                   <GeneralTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
@@ -576,6 +607,7 @@ export function ProjectSettingsPage(): JSX.Element {
                 <TabsContent value="danger">
                   <DangerZoneTab project={project} onToast={setToast} />
                 </TabsContent>
+                </div>
               </div>
             </div>
           </Tabs>
@@ -1166,7 +1198,13 @@ function GeneralTab({
         title="项目基础信息"
         description="这些字段只影响项目展示、仓库来源和项目级自动冒烟测试，不会改写项目 ID 或 Docker 网络。"
       >
-        <form className="max-w-3xl space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+        {/*
+         * 方向 A：表单列锁可读宽度（620px），右列放这一组设置的「当前生效 /
+         * 改动影响」。宽屏下富余的横向空间变成信息，而不是留白；窄屏与中屏
+         * 自动退回单列（.cds-settings-columns 的 1280px 断点）。
+         */}
+        <div className="cds-settings-columns">
+        <form className="cds-settings-form-col space-y-4" onSubmit={(event) => void handleSubmit(event)}>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">项目名称</span>
             <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} maxLength={60} />
@@ -1263,6 +1301,45 @@ function GeneralTab({
             保存修改
           </Button>
         </form>
+
+          <aside className="cds-settings-aside-col">
+            <div className="cds-surface-raised cds-hairline rounded-lg p-4">
+              <div className="pb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                当前生效
+              </div>
+              <dl className="grid gap-2.5 text-xs">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">项目 ID</dt>
+                  <dd className="truncate font-mono">{project.id}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">项目 slug</dt>
+                  <dd className="truncate font-mono">{project.slug}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">Docker 网络</dt>
+                  <dd className="truncate font-mono">{project.dockerNetwork}</dd>
+                </div>
+                {project.agentProfile ? (
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Agent 角色</dt>
+                    <dd className="truncate">{agentRoleLabel(project.agentProfile.role)}</dd>
+                  </div>
+                ) : null}
+              </dl>
+            </div>
+
+            <div className="rounded-lg border border-warn/35 bg-warn-soft p-4">
+              <div className="flex items-center gap-1.5 pb-1.5 text-xs font-semibold text-warn">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                改动影响
+              </div>
+              <p className="text-xs leading-relaxed">
+                改名只影响展示。项目 ID、slug 前缀和已存在分支的预览域名不会变，旧地址继续可用。
+              </p>
+            </div>
+          </aside>
+        </div>
       </Section>
 
       <Section title="项目标识">

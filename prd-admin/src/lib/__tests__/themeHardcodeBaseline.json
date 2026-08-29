@@ -2357,6 +2357,12 @@
     "darkRgbaBg": 10,
     "lightFg": 15
   },
+  "/styles/recording-design-palette.css": {
+    "darkHex": 11,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
+  },
   "/styles/surface.css": {
     "whiteAlpha": 69,
     "darkHex": 2,

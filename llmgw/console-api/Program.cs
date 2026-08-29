@@ -19,6 +19,7 @@ using Microsoft.IdentityModel.Tokens;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.LlmGw.Auth;
+using PrdAgent.LlmGw.AppCallers;
 using PrdAgent.LlmGw.Costs;
 using PrdAgent.LlmGw.Governance;
 using PrdAgent.LlmGw.ModelPools;
@@ -5161,11 +5162,11 @@ app.MapPost("/gw/app-callers", async (HttpContext http, [FromBody] CreateGateway
     var requestType = (body.RequestType ?? string.Empty).Trim().ToLowerInvariant();
     var title = (body.Title ?? string.Empty).Trim();
     var ingressProtocol = NormalizeIngressProtocol(body.IngressProtocol ?? string.Empty);
-    if (!IsValidSelfServiceAppCaller(appCallerCode, requestType))
+    if (!GatewayAppCallerCodePolicy.IsValidSelfService(appCallerCode, requestType))
     {
         return Json(ApiEnvelope<GatewayAppCallerItem>.Fail(
             "INVALID_APP_CALLER",
-            "appCallerCode 必须使用小写 {app-key}.{feature}::chat 或 ::vision 格式，且后缀与 requestType 一致"), jsonOptions, 400);
+            "appCallerCode 必须使用小写 {app-key}.{feature}::{requestType} 格式，且后缀与受支持的 requestType 一致"), jsonOptions, 400);
     }
     if (title.Length > 160)
         return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", "title 最多 160 字符"), jsonOptions, 400);
@@ -13791,22 +13792,6 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
     UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
 };
-
-static bool IsValidSelfServiceAppCaller(string appCallerCode, string requestType)
-{
-    if (appCallerCode.Length is 0 or > 200 || requestType is not ("chat" or "vision")) return false;
-    var separator = appCallerCode.IndexOf("::", StringComparison.Ordinal);
-    if (separator <= 0 || separator != appCallerCode.LastIndexOf("::", StringComparison.Ordinal)) return false;
-    var declaredType = appCallerCode[(separator + 2)..];
-    if (!string.Equals(declaredType, requestType, StringComparison.Ordinal)) return false;
-    var segments = appCallerCode[..separator].Split('.', StringSplitOptions.None);
-    return segments.Length >= 2 && segments.All(IsKebabCaseAppCallerSegment) && IsKebabCaseAppCallerSegment(declaredType);
-}
-
-static bool IsKebabCaseAppCallerSegment(string value)
-    => value.Length > 0
-       && value[0] is >= 'a' and <= 'z'
-       && value.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
 static FilterDefinition<BsonDocument>? BuildAppCallerDriftFilter(string? drift)
 {

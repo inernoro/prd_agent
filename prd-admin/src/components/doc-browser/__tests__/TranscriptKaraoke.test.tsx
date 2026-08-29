@@ -10,6 +10,7 @@ import {
   recordingCitationMatchesTimeline,
   TranscriptKaraoke,
 } from '../TranscriptKaraoke';
+import { describeWordCloudEmptyState } from '../transcriptSegments';
 
 describe('TranscriptKaraoke unified playback', () => {
   it('renders one direct player with follow-along guidance and no playback mode switch', () => {
@@ -21,7 +22,9 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    expect(html).toContain('精准时间轴，播放时逐句高亮');
+    // 这句现在归播放器主体（稿面就画在时间行正下方），文案照稿改成「精准时间轴 · 逐句对齐」。
+    // 断言的是「有一句话交代时间轴精度」，不是它此刻的逐字写法。
+    expect(html).toMatch(/精准时间轴[^<]*逐句/);
     expect(html).not.toContain('普通播放');
     expect(html).not.toContain('交互式播放');
     expect(html.match(/title="播放"/g)).toHaveLength(1);
@@ -31,21 +34,42 @@ describe('TranscriptKaraoke unified playback', () => {
     const html = renderToStaticMarkup(
       <TranscriptKaraoke
         src="/recording.m4a"
-        noteMd={'## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 客户认为报价合理，报价还要再谈。\n**[00:03 - 00:06]** [说话人2] 交付质量需要保证，报价我们再看。'}
+        // 词频要拉开档次这条断言才有意义：导入 4 次 / 等待 2 次，
+        // 否则云里只有一个词，「多种字号」根本无从谈起。
+        noteMd={'## 转录全文\n\n**[00:00 - 00:03]** [说话人1] 导入的时候要等待，导入很慢。\n**[00:03 - 00:06]** [说话人2] 导入失败要等待重来，导入这块最痛。\n**[00:06 - 00:09]** [说话人1] 客户认为报价合理，报价还要再谈。'}
         documentMode
         onSaveNote={async () => true}
         onAskRecording={() => undefined}
       />,
     );
 
-    expect(html).toContain('录音理解');
-    expect(html).toContain('搜索录音里的关键词');
+    // 窄屏（这里的静态渲染按窄屏走）：设计稿 P3 是四块同屏并置
+    //（词云 / 会议纪要 / 待办 / 提问），不是可切换的分区。
+    // 宽屏才收成 D1/D2 那四个分页签——那一档由取证截图证明，不在这里断言。
+    expect(html).toContain('词云');
+    expect(html).toContain('会议纪要');
+    expect(html).toContain('待办事项');
+    expect(html).toContain('问这场录音');
+    expect(html).not.toContain('role="tab"');
+    // 并置形态里不该出现分页签抬头，否则就是宽屏形态漏到了窄屏
+    expect(html).not.toContain('aria-pressed="true">理解');
+    // 断言的是「有一个搜关键词的输入口」，不是它此刻的 placeholder 原文——
+    // 稿面把它排在原文列表上方（B1），文案随之从「搜索录音里的关键词」变成
+    // 「搜索原文关键词」；逐字比对会让这类合规改动无端变红（形状 4a）。
+    expect(html).toMatch(/aria-label="搜索[^"]*关键词"/);
     expect(html).toContain('整场录音词云');
     // 词云的权重按频次映射，不按排名。断言的是行为不是某个字面尺寸：
     // 云里必须出现**多种**字号（旧写法 15 - index*0.2 也会多种，所以还要下一条），
     // 且最大的那一档必须落在频次最高的词上。
-    expect(html).toContain('这场反复提到的是');
-    const cloudHtml = html.slice(html.indexOf('整场录音词云'));
+    // 稿面 B3 的开场结论：一句挂着**真实百分比**的话（含最高频词的句子 ÷ 总句数），
+    // 不是从稿面抄一个数字过来。断言口径而不是具体数值——换个样本数值就变。
+    expect(html).toContain('最高频主题');
+    expect(html).toMatch(/这场有 \d+% 的句子提到/);
+    // 只切词云那一块。此前切到文末，把**原文列表**的行内字号也算了进去——
+    // 于是「云里有多种字号」这条断言其实在测原文，词云只有一个词也照样绿
+    // （形状 6：判据读到的不是它要判的那个值）。原文一挪到词云前面就露馅了。
+    const cloudStart = html.indexOf('整场录音词云');
+    const cloudHtml = html.slice(cloudStart, html.indexOf('少了某个词', cloudStart));
     const sizes = [...cloudHtml.matchAll(/font-size:([\d.]+)px/g)].map(m => Number(m[1]));
     expect(sizes.length).toBeGreaterThan(1);
     expect(new Set(sizes).size).toBeGreaterThan(1);
@@ -53,7 +77,14 @@ describe('TranscriptKaraoke unified playback', () => {
     // 次数直接写在词上，不再只藏在 title 里
     expect(cloudHtml).toMatch(/报价<span[^>]*>\d+<\/span>/);
     expect(html).toContain('说话人1');
-    expect(html).toContain('问这场录音');
+    // 说话人不只给名字，还要给「说了几句、占多少」——光有名字看不出这场是谁在说
+    expect(html).toMatch(/说话人1<\/span>\s*<span[^>]*>\s*2 句 · 占 67%/);
+    // 词频压成三档，最高频那个词要能一眼跳出来：它用反白大字，和其余两档不同量级。
+    // 断言「最大那一档明显大于次档」而不是某个具体像素——稿面的台阶宽度调过一次，
+    // 逐字钉死尺寸只会让下次合规调整无端变红。
+    // 稿面相邻两档大约差 1.25 倍（24 / 19 / 15），按这个下限卡
+    expect(Math.max(...sizes) / Math.min(...sizes)).toBeGreaterThanOrEqual(1.25);
+    expect(cloudHtml).toContain('font-weight:700');
   });
 
   it('没有任何词被重复提到时不出词云——「反复提到的是 X（1 次）」是句假话', () => {
@@ -65,9 +96,18 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    expect(html).toContain('录音理解');
+    // 区块还在（产品方定的名字就叫「词云」），只是里面没有词条云、也没有那句结论
+    expect(html).toContain('>词云<');
     expect(html).not.toContain('整场录音词云');
-    expect(html).not.toContain('这场反复提到的是');
+    expect(html).not.toContain('的句子提到');
+    expect(html).not.toContain('最高频主题');
+    /*
+     * 但**不许是一张空卡**：没有词的时候恰恰最需要说清为什么没有、怎么补。
+     * 这里断言的是「给了解释」这件事本身，不是某一句的字面量——
+     * 具体给哪一句由 describeWordCloudEmptyState 按原文长短分档
+     * （它自己有单测），把文案钉死在这里会让改文案的人莫名其妙地红。
+     */
+    expect(html).toContain(describeWordCloudEmptyState(1));
   });
 
   it('问答提示保留超过四万字录音的开头和结尾，不偷偷截成局部', () => {

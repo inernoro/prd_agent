@@ -11,6 +11,7 @@ export const OPENROUTER_VIDEO_MODELS = [
   { id: 'bytedance/seedance-1-5-pro', label: 'Seedance 1.5 Pro（字节，1080p 含音频）', defaultDuration: 5 },
   { id: 'bytedance/seedance-2.0-fast', label: 'Seedance 2.0 Fast（字节，速度优先）', defaultDuration: 5 },
   { id: 'bytedance/seedance-2.0', label: 'Seedance 2.0（字节，精品版）', defaultDuration: 5 },
+  { id: 'bytedance/seedance-2.5', label: 'Seedance 2.5（字节，长叙事/多模态，最长 30 秒）', defaultDuration: 5 },
   { id: 'google/veo-3.1', label: 'Veo 3.1（Google，1080p/4K，含音频）', defaultDuration: 8 },
   { id: 'openai/sora-2-pro', label: 'Sora 2 Pro（OpenAI，~$0.30/秒，最贵最强）', defaultDuration: 5 },
 ] as const;

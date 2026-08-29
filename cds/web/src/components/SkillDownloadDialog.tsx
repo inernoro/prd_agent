@@ -24,6 +24,14 @@ import {
 
 const MARKETPLACE_URL = String(import.meta.env.VITE_SKILL_MARKETPLACE_URL || '').trim();
 
+export interface AgentProjectAgentProfile {
+  role: string;
+  experience: string;
+  skills?: string[];
+  cardTitle?: string;
+  declaredAt?: string;
+}
+
 export interface AgentProjectOption {
   id: string;
   name: string;
@@ -31,6 +39,8 @@ export interface AgentProjectOption {
   branchCount?: number;
   runningBranchCount?: number;
   runningServiceCount?: number;
+  /** 项目已声明的 Agent 角色。由 /api/projects 带出，仅作展示。 */
+  agentProfile?: AgentProjectAgentProfile;
 }
 
 interface Props {
@@ -217,7 +227,9 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
         </nav>
 
         <div className="min-h-[260px]">
-          {active === 'starter' ? <AgentStarterTab cdsPrompt={prompt} /> : null}
+          {active === 'starter'
+            ? <AgentStarterTab cdsPrompt={prompt} projectId={targetKind === 'existing' ? effectiveProjectId : ''} />
+            : null}
           {active === 'init' ? <ProjectInitTab /> : null}
           {active === 'connect' ? <ConnectTab prompt={prompt} /> : null}
           {active === 'manual' ? <ManualTab /> : null}
