@@ -94,6 +94,38 @@ public class DocumentStoreRunFailureCopyTests
         Assert.Null(copy.Code);
         Assert.Contains("内容处理暂时失败", copy.UserMessage);
     }
+
+    /// <summary>
+    /// 转写成功、整理失败这一档，绝不能说成语音转写失败——原文好好地躺在笔记里，
+    /// 「不需要重新录制」这种话只会把人往重录上引。
+    /// </summary>
+    [Fact]
+    public void ResolveSummarySkipped_ShouldNotClaimTranscriptionFailed()
+    {
+        var copy = DocumentStoreRunFailureCopy.ResolveSummarySkipped(
+            Transcribe(),
+            new InvalidOperationException("摘要生成失败: 上游返回 500"));
+
+        Assert.Equal(DocumentStoreRunFailureCopy.SummarySkipped, copy.Code);
+        Assert.DoesNotContain("转写", copy.UserMessage);
+        Assert.DoesNotContain("重新录制", copy.UserMessage);
+        Assert.Contains("原文", copy.UserMessage);
+    }
+
+    /// <summary>整理这一步的模型没配好，同样要如实说是配置问题，而不是「稍后重试」。</summary>
+    [Fact]
+    public void ResolveSummarySkipped_ShouldStillRecognizeConfigurationFault()
+    {
+        var copy = DocumentStoreRunFailureCopy.ResolveSummarySkipped(
+            Transcribe(),
+            new GatewayRouteFailureException(
+                GatewayRouteFailure.AppCallerPoolUnbound,
+                "摘要生成失败: 未绑定模型池"));
+
+        Assert.Equal(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
+        Assert.False(copy.AutomaticRetryAllowed);
+        Assert.Contains("原文", copy.UserMessage);
+    }
 }
 
 
@@ -269,35 +301,4 @@ public class GatewayRouteFailureFromChunkTests
         Assert.DoesNotContain("录音", copy.UserMessage);
     }
 
-    /// <summary>
-    /// 转写成功、整理失败这一档，绝不能说成语音转写失败——原文好好地躺在笔记里，
-    /// 「不需要重新录制」这种话只会把人往重录上引。
-    /// </summary>
-    [Fact]
-    public void ResolveSummarySkipped_ShouldNotClaimTranscriptionFailed()
-    {
-        var copy = DocumentStoreRunFailureCopy.ResolveSummarySkipped(
-            Transcribe(),
-            new InvalidOperationException("摘要生成失败: 上游返回 500"));
-
-        Assert.Equal(DocumentStoreRunFailureCopy.SummarySkipped, copy.Code);
-        Assert.DoesNotContain("转写", copy.UserMessage);
-        Assert.DoesNotContain("重新录制", copy.UserMessage);
-        Assert.Contains("原文", copy.UserMessage);
-    }
-
-    /// <summary>整理这一步的模型没配好，同样要如实说是配置问题，而不是「稍后重试」。</summary>
-    [Fact]
-    public void ResolveSummarySkipped_ShouldStillRecognizeConfigurationFault()
-    {
-        var copy = DocumentStoreRunFailureCopy.ResolveSummarySkipped(
-            Transcribe(),
-            new GatewayRouteFailureException(
-                GatewayRouteFailure.AppCallerPoolUnbound,
-                "摘要生成失败: 未绑定模型池"));
-
-        Assert.Equal(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
-        Assert.False(copy.AutomaticRetryAllowed);
-        Assert.Contains("原文", copy.UserMessage);
-    }
 }
