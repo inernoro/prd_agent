@@ -105,7 +105,12 @@ export default function AskDock({
   const blocked = refusal !== null;
   const rounds = messages.filter((m) => m.role === 'user').length;
 
-  const { quota, refresh: refreshQuota } = useAskQuota(source, !hidden && state !== 'collapsed');
+  // 第三个参数：额度窗口几点到期。传进去之后 hook 会在到点时自己重拉一次快照，
+  // 下面那个 effect 才有机会把门收起来——否则窗口过了面板还锁着。
+  const quotaRetryAt = gateError?.retryAfterMs ?? null;
+  const { quota, refresh: refreshQuota } = useAskQuota(
+    source, !hidden && state !== 'collapsed', quotaRetryAt,
+  );
   // 每问完一次（成功或失败）都重算：失败里含「读不到正文」那档，后端会把额度退回来，
   // 只在成功时减一会让用户看到一个偏小的数，而他并没有被扣。
   useEffect(() => {

@@ -32,6 +32,7 @@
  */
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -99,12 +100,22 @@ const FORMS = [
  * anchor 是这一屏「渲染成功才会出现」的字样。选常驻文案，不要选依赖数据的字段：
  * 数据一变判据就假红，假红几次之后没人再看这份报告。
  */
+//
+// anchor 一律不许为 null。原先这三条写 null + minChars 60，判据数的又是整个
+// document.body —— 而常驻外壳（顶部告警条 + 左侧那一排导航）本身就远超 60 字，
+// 于是这三项**无论路由自己渲没渲染出来都是绿的**。
+// 采样坐实过：/document-store 在等待 9 秒时 main 里只有 6 个字（工作区还没出来），
+// 整页 103 字照样判通过；/visual-agent 连 main 元素都没有，也照样通过。
+//
+// 所以锚点必须是「这一屏自己渲染成功才会出现」的字样，且不能出现在外壳里
+// （外壳只有告警条与导航：首页/百宝箱/工作流/统计/市场/资源/涌现/模型/团队/
+// 知识库/网页/设置/海报/VOC —— 下面这些都不在其中）。
 const PAGES = [
-  { key: 'shell',      route: '/',               anchor: null,     minChars: 60, label: '导航与应用外壳' },
-  { key: 'web-pages',  route: '/web-pages',      anchor: '网页托管', minChars: 80, label: '网页托管主控台' },
-  { key: 'doc-store',  route: '/document-store', anchor: null,     minChars: 60, label: '知识库 / 文件解析' },
-  { key: 'defect',     route: '/defect-agent',   anchor: null,     minChars: 60, label: '缺陷管理' },
-  { key: 'visual',     route: '/visual-agent',   anchor: null,     minChars: 60, label: '视觉创作' },
+  { key: 'shell',      route: '/',               anchor: '选一个智能体开始创作',   minChars: 60, label: '导航与应用外壳' },
+  { key: 'web-pages',  route: '/web-pages',      anchor: '网页托管',             minChars: 80, label: '网页托管主控台' },
+  { key: 'doc-store',  route: '/document-store', anchor: '新建知识库',           minChars: 60, label: '知识库 / 文件解析' },
+  { key: 'defect',     route: '/defect-agent',   anchor: '提交缺陷',             minChars: 60, label: '缺陷管理' },
+  { key: 'visual',     route: '/visual-agent',   anchor: 'AI 驱动的设计助手',     minChars: 60, label: '视觉创作' },
 ];
 
 const results = [];
@@ -197,22 +208,51 @@ async function checkShareArtifact(ctx, form, token4Url) {
   await page.goto(`${BASE}/s/wp/${token4Url}`, { waitUntil: 'domcontentloaded' });
   // LLM 无关的静态站点，但服务端要去 COS 取原文；给足时间，别用超时假装成失败
   await page.waitForTimeout(12000);
-  const probe = await page.evaluate(() => {
+  const mode = await page.evaluate(() => {
     const f = document.querySelector('iframe');
-    if (!f) return { mode: 'no-iframe', chars: 0 };
-    const mode = f.getAttribute('srcdoc') != null ? 'srcDoc' : (f.getAttribute('src') ? 'direct' : 'about:blank');
-    let chars = null;
-    try { chars = f.contentDocument?.body?.innerText?.replace(/\s+/g, '').length ?? null; } catch { chars = 'cross-origin'; }
-    return { mode, chars };
+    if (!f) return 'no-iframe';
+    return f.getAttribute('srcdoc') != null ? 'srcDoc' : (f.getAttribute('src') ? 'direct' : 'about:blank');
   });
+
+  // 正文字数**必须**真的数出来，两种 mode 都一样。
+  //
+  // 原先走 iframe.contentDocument：直连（跨源）那一支必然抛异常、被记成 'cross-origin'，
+  // 而判据把「mode === 'direct'」本身当成通过——于是这个脚本要防的那条回归
+  // （直连 iframe 白屏）它自己永远抓不到：只要没有同源请求报错就是绿的。
+  // 拿一份不成立的证据当成了「已渲染」的证明。
+  //
+  // Playwright 的 frame 是跨源可进的（和页面里的 JS 不同），所以直接问那一帧要正文，
+  // 两种 mode 同一个判据，不再有「这一支免检」的后门。
+  const inner = page.frames().find((f) => f !== page.mainFrame());
+  let chars = null;
+  if (inner) {
+    try {
+      chars = await inner.evaluate(() => document.body.innerText.replace(/\s+/g, '').length);
+    } catch (e) {
+      chars = `读不到(${String(e.message).slice(0, 40)})`;
+    }
+  }
+
+  // 文字够了就算数；一个字都取不到时**不能直接判绿，也不能直接判红**——
+  // direct 这一支用于 PDF / 视频这类包装站，它们在 iframe 里是插件渲染，
+  // innerText 本来就是空的。对它们要求文字会造成假红（比漏判更烦人：
+  // 假红几次之后没人再看这份报告）。所以退到像素证据：把 iframe 那块截下来，
+  // 看它是不是一整片同色。白屏 = 一种颜色；真渲染出东西 = 必然有多种颜色。
+  let pixels = null;
+  if (typeof chars !== 'number' || chars < form.minChars) {
+    const el = await page.$('iframe');
+    if (el) pixels = await distinctColorCount(el);
+  }
+  const probe = { mode, chars, pixels };
   await page.close();
 
-  const ok = probe.mode !== 'about:blank' && probe.mode !== 'no-iframe'
-    && (typeof probe.chars === 'number' ? probe.chars >= form.minChars : probe.mode === 'direct');
+  const textOk = typeof chars === 'number' && chars >= form.minChars;
+  const pixelOk = typeof pixels === 'number' && pixels >= 8;
+  const ok = mode !== 'about:blank' && mode !== 'no-iframe' && (textOk || pixelOk);
   record(
     `分享页产物可见 · ${form.key}`,
     ok && bad.length === 0,
-    `mode=${probe.mode} 正文字数=${probe.chars}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
+    `mode=${probe.mode} 正文字数=${probe.chars}${probe.pixels != null ? ` 像素色数=${probe.pixels}` : ''}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
   );
 }
 
@@ -295,6 +335,85 @@ async function checkSharePopover(ctx) {
  * 只断言三件事：正文有字、自家域名没有 4xx、没有 pageerror。
  * 不断言具体数字或条数 —— 那些随数据变，会制造假红。
  */
+/**
+ * 一块区域到底渲染出东西没有——真解出像素，数有多少种不同颜色。
+ *
+ * 用途：给「取不到文字」的内容（PDF / 视频这类插件渲染，innerText 本来就是空的）
+ * 当证据，替代原先「跨源读不到就当它是对的」那条免检后门。
+ *
+ * 为什么必须真解像素：先前写过一版偷懒的——在 PNG 压缩字节上取样数不同字节值。
+ * 那是假判据：空白图压缩后的字节同样杂乱，照样会判成「有内容」，
+ * 等于把这一轮要修的毛病原样又犯一次。所以这里老老实实解 zlib + 反滤波。
+ *
+ * 只回答「是不是一整片同色」，不做像素级比对——阈值取得很松。
+ */
+function distinctColors(png) {
+  // IHDR 固定在文件头之后：宽高各 4 字节，随后位深、颜色类型
+  const width = png.readUInt32BE(16);
+  const height = png.readUInt32BE(20);
+  const bitDepth = png[24];
+  const colorType = png[25];
+  const interlace = png[28];
+  // Playwright 截图恒为 8 位、非隔行；不是这个形状就明说不支持，不猜
+  if (bitDepth !== 8 || interlace !== 0) return { error: `不支持的PNG(bit=${bitDepth} interlace=${interlace})` };
+  const channels = colorType === 6 ? 4 : colorType === 2 ? 3 : colorType === 0 ? 1 : -1;
+  if (channels < 0) return { error: `不支持的颜色类型(${colorType})` };
+
+  // 把所有 IDAT 块拼起来再解压
+  const chunks = [];
+  let off = 8;
+  while (off + 8 <= png.length) {
+    const len = png.readUInt32BE(off);
+    const type = png.toString('ascii', off + 4, off + 8);
+    if (type === 'IDAT') chunks.push(png.subarray(off + 8, off + 8 + len));
+    if (type === 'IEND') break;
+    off += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(chunks));
+
+  // 逐扫描线反滤波（PNG 五种滤波器）
+  const stride = width * channels;
+  const out = Buffer.alloc(height * stride);
+  let pos = 0;
+  for (let y = 0; y < height; y++) {
+    const filter = raw[pos++];
+    const line = raw.subarray(pos, pos + stride);
+    pos += stride;
+    const cur = out.subarray(y * stride, (y + 1) * stride);
+    const prev = y > 0 ? out.subarray((y - 1) * stride, y * stride) : null;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? cur[x - channels] : 0;
+      const b = prev ? prev[x] : 0;
+      const c = prev && x >= channels ? prev[x - channels] : 0;
+      let v = line[x];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
+        v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
+      }
+      cur[x] = v & 0xff;
+    }
+  }
+
+  // 抽样数颜色：每隔若干像素取一个，够区分「纯色」与「有内容」即可
+  const seen = new Set();
+  const step = Math.max(1, Math.floor((width * height) / 20000));
+  for (let i = 0; i < width * height; i += step) {
+    const o = i * channels;
+    seen.add(channels === 1 ? out[o] : (out[o] << 16) | (out[o + 1] << 8) | out[o + 2]);
+    if (seen.size >= 256) break;
+  }
+  return { colors: seen.size, width, height };
+}
+
+async function distinctColorCount(elementHandle) {
+  const buf = await elementHandle.screenshot({ type: 'png' });
+  const r = distinctColors(buf);
+  return r.error ? r.error : r.colors;
+}
+
 async function checkPageAlive(ctx, page4) {
   const page = await ctx.newPage();
   const bad = [];
@@ -304,16 +423,30 @@ async function checkPageAlive(ctx, page4) {
   });
   page.on('pageerror', (e) => bad.push(`pageerror: ${e.message.slice(0, 50)}`));
   await page.goto(`${BASE}${page4.route}`, { waitUntil: 'domcontentloaded' });
-  await page.waitForTimeout(9000);
+
+  // 等锚点真的出现，而不是干等固定秒数。
+  // 固定 9 秒有两种坏法：慢的路由还没渲染完就被判（/document-store 就是 9 秒时空的、
+  // 20 秒才出来），快的路由白等。等锚点则「慢就多等一会儿、真没有才红」。
+  const needle = page4.anchor.replace(/\s+/g, '');
+  let appeared = false;
+  const deadline = Date.now() + 25000;
+  while (Date.now() < deadline) {
+    const hit = await page.evaluate(
+      (n) => document.body.innerText.replace(/\s+/g, '').includes(n),
+      needle,
+    );
+    if (hit) { appeared = true; break; }
+    await page.waitForTimeout(500);
+  }
   const text = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ''));
   await page.close();
 
   const enough = text.length >= page4.minChars;
-  const anchored = !page4.anchor || text.includes(page4.anchor.replace(/\s+/g, ''));
+  const anchored = appeared;
   record(
     `页面产物可见 · ${page4.label}`,
     enough && anchored && bad.length === 0,
-    `正文${text.length}字${page4.anchor ? ` 锚点${anchored ? '命中' : '缺失'}` : ''}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
+    `正文${text.length}字 锚点「${page4.anchor}」${anchored ? '命中' : '缺失（等了 25 秒）'}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
   );
 }
 

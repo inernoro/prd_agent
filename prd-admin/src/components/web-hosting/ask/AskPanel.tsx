@@ -52,7 +52,8 @@ export default function AskPanel({
   const blocked = refusal !== null;
 
   // 剩余额度。面板收起时不拉——藏起来的面板照样发请求是白烧一次。
-  const { quota, refresh: refreshQuota } = useAskQuota(source, !hidden);
+  // 同 AskDock：把额度窗口到期时间传下去，到点自动重拉，别让面板在窗口过后还锁着
+  const { quota, refresh: refreshQuota } = useAskQuota(source, !hidden, gateError?.retryAfterMs ?? null);
   // 每问完一次（成功或失败）都重算：失败里含「读不到正文」那档，后端会把额度退回来，
   // 只在成功时减一会让用户看到一个偏小的数，而他并没有被扣。
   useEffect(() => {

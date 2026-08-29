@@ -23,7 +23,9 @@ export function useAskStream(source: AskSource) {
   const [phaseMessage, setPhaseMessage] = useState('');
   const [model, setModel] = useState<{ model: string; platform?: string } | null>(null);
   /** 门禁类失败：不是"答错了"，而是"没资格问"，UI 要给引导而不是重试按钮 */
-  const [gateError, setGateError] = useState<{ code: string; message: string } | null>(null);
+  const [gateError, setGateError] = useState<
+    { code: string; message: string; retryAfterMs?: number | null } | null
+  >(null);
 
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -123,7 +125,13 @@ export function useAskStream(source: AskSource) {
           const payload = await res.json().catch(() => null);
           const code = payload?.error?.code ?? `HTTP_${res.status}`;
           const message = payload?.error?.message ?? `请求失败（${res.status}）`;
-          setGateError({ code, message });
+          // 429 带着 Retry-After（秒）。接住它算出「几点能再问」——额度那几档拒绝是有
+          // 有效期的，窗口一过就该自动恢复；没有这个值的话，面板只能等用户折叠重开或
+          // 刷新页面才发现其实又能问了，他等的那段时间是白等的。
+          const raw = res.headers.get('Retry-After');
+          const sec = raw != null ? Number(raw) : NaN;
+          const retryAfterMs = Number.isFinite(sec) && sec >= 0 ? Date.now() + sec * 1000 : null;
+          setGateError({ code, message, retryAfterMs });
           setStatus('error');
           failAssistant(message);
           return;
