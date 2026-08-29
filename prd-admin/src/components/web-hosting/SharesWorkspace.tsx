@@ -150,7 +150,8 @@ export function SharesWorkspace({
   };
 
   const tiers: ShareTier[] = only ? [only] : ['active', 'expired', 'revoked'];
-  const visible = (t: ShareTier) => filterShareLinks(ledger[t], keyword);
+  // 传 siteLabel 进去：搜的就是行里显示的那个站点名，显示与搜索不会各自漂
+  const visible = (t: ShareTier) => filterShareLinks(ledger[t], keyword, siteLabel);
   const totalVisible = tiers.reduce((n, t) => n + visible(t).length, 0);
 
   return (

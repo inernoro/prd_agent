@@ -121,12 +121,33 @@ export function buildLedgerConclusion(links: ShareLinkItem[], now: number = Date
   return segs;
 }
 
-/** 按关键词过滤（标题 / token / 短链号），空关键词原样返回 */
-export function filterShareLinks(links: ShareLinkItem[], keyword: string): ShareLinkItem[] {
+/**
+ * 按关键词过滤，空关键词原样返回。
+ *
+ * 搜的必须是**用户看得见的那几个字**：行里「指向的站点」一列显示的是站点名，
+ * 输入框也承诺「搜索链接或站点」，而这里原先只比 title / token / 短链号——
+ * 于是照着屏幕上的站点名去搜，明明那一行就在眼前，结果却是空的。
+ *
+ * 所以站点名不自己另取一个值，而是把行里那个标签解析器传进来（siteTitles[0]，
+ * 拿不到才回退本页 sites）：显示什么就搜什么，两边不会各自漂。
+ * siteTitles 整份也一起纳入——合集行的标签是「合集 · N 个站点」，
+ * 但用户很可能是照着其中某个成员站的名字来搜的。
+ */
+export function filterShareLinks(
+  links: ShareLinkItem[],
+  keyword: string,
+  labelOf?: (l: ShareLinkItem) => string,
+): ShareLinkItem[] {
   const kw = keyword.trim().toLowerCase();
   if (!kw) return links;
   return links.filter((l) =>
-    [l.title, l.token, l.shortSeq ? String(l.shortSeq) : '']
+    [
+      l.title,
+      l.token,
+      l.shortSeq ? String(l.shortSeq) : '',
+      labelOf ? labelOf(l) : '',
+      ...(l.siteTitles ?? []),
+    ]
       .filter(Boolean)
       .some((v) => String(v).toLowerCase().includes(kw)),
   );

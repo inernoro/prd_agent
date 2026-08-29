@@ -118,4 +118,23 @@ describe('分享档账本', () => {
     expect(filterShareLinks(links, '41830').map((l) => l.id)).toEqual(['b']);
     expect(filterShareLinks(links, '  ').map((l) => l.id)).toEqual(['a', 'b']);
   });
+
+  it('照着行里显示的站点名也能搜到', () => {
+    // 输入框承诺「搜索链接或站点」，行里「指向的站点」一列显示的就是站点名。
+    // 谓词原先只比 title / token / 短链号，于是照着屏幕上那个名字去搜，
+    // 明明那一行就在眼前，结果却是空的。
+    const links = [
+      link({ id: 'a', title: '给客户的', token: 'aaa', siteTitles: ['季度复盘 PPT'] }),
+      link({ id: 'b', title: '内部评审', token: 'bbb', siteTitles: ['接口设计稿'] }),
+    ];
+
+    // 站点名与分享标题不同名——这正是原先漏掉的那种
+    expect(filterShareLinks(links, '季度复盘').map((l) => l.id)).toEqual(['a']);
+    expect(filterShareLinks(links, '接口设计').map((l) => l.id)).toEqual(['b']);
+
+    // 搜的是「显示什么就搜什么」：标签解析器给出的那个名字必须能命中，
+    // 哪怕它来自本页 sites 的回退（siteTitles 为空时）
+    const noTitles = [link({ id: 'c', title: '外发', token: 'ccc' })];
+    expect(filterShareLinks(noTitles, '回退站点', () => '回退站点名').map((l) => l.id)).toEqual(['c']);
+  });
 });

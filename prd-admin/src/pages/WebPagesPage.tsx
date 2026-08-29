@@ -46,6 +46,7 @@ import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
+import { isAskSupported } from '@/components/web-hosting/askAvailability';
 import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { toOpenableUrl } from '@/components/web-hosting/siteFormat';
 import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
@@ -2983,18 +2984,29 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               </Button>
             </div>
 
-            {/* 提问默认关闭：这是最容易被误以为「功能坏了」的一处，
-                所以在用户刚上传完、还记得这个站点时就说清楚，而不是等他去预览里找按钮 */}
+            {/* 提问的默认态要在这里说清楚：用户刚上传完、还记得这个站点，
+                等他去预览里自己发现就晚了。
+                口径 2026-08-29 起是「默认全开」，所以这段话的重点从「怎么打开」
+                变成「它已经开着、会花钱、想关去哪关」——照旧写「默认关闭」等于
+                让在意花钱的人放着不管。视频站另说：形态不支持时压过默认全开。 */}
             <div
               className="flex items-start gap-2.5 rounded-xl p-3 text-xs leading-relaxed"
               style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
             >
               <MessageCircleQuestion size={14} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
-              <span>
-                这个站点的「向我提问」<span style={{ color: 'var(--text-primary)' }}>默认是关闭的</span>
-                （开启后访客每次提问都会消耗模型额度）。要让访客能问，在卡片菜单的
-                <span style={{ color: 'var(--text-primary)' }}>「提问设置」</span>里打开。
-              </span>
+              {isAskSupported(created) ? (
+                <span>
+                  这个站点的「向我提问」<span style={{ color: 'var(--text-primary)' }}>默认已经开着</span>
+                  ，分享出去之后访客就能问（每次提问都会消耗模型额度）。不想开的话，在卡片菜单的
+                  <span style={{ color: 'var(--text-primary)' }}>「提问设置」</span>里关掉。
+                </span>
+              ) : (
+                <span>
+                  这个站点是视频，没有可供阅读的正文，
+                  <span style={{ color: 'var(--text-primary)' }}>不支持提问</span>
+                  ，访客不会看到提问入口，也不会产生模型消耗。
+                </span>
+              )}
             </div>
 
             {/* 主次分明：立即分享是满宽主按钮，另两个是次操作。
