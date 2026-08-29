@@ -20,50 +20,74 @@ namespace PrdAgent.Tests;
 public class GatewayErrorChunkCodeGuardTests
 {
     /// <summary>
-    /// 手工把错误块文案塞进异常的形状：`new XxxException(...chunk.ErrorMessage...)`。
+    /// 手工把上游错误文案塞进异常的形状：`new XxxException(... 某个东西.ErrorMessage ...)`。
     /// 插值写法与 `?? 兜底` 写法都算——两种都把码丢了。
+    ///
+    /// **不认变量名**：此前判据写成 `\w*[Cc]hunk\.ErrorMessage`，于是同样的循环换个变量名
+    /// （`response` / `part` / `item`）写就照样绿——判据比它该管的范围窄
+    /// （形状 1；Codex 第四十七轮 P1）。代价是会扫到 `.ErrorMessage` 的非网关对象，
+    /// 那种逐条记进下面的台账并写明为什么。
     /// </summary>
     private static readonly Regex HandRolled = new(
-        @"new\s+\w*Exception\s*\([^;]{0,200}?\w*[Cc]hunk\.ErrorMessage",
+        @"new\s+\w*Exception\s*\([^;]{0,200}?\w+\??\.ErrorMessage",
         RegexOptions.Compiled);
 
     /// <summary>
-    /// 缓迁清单：这些调用点也丢码，但它们的失败文案链路目前**不读**结构化码，
-    /// 改造前要先确认各自下游怎么用这句话（贸然改会动到用户可见文案）。
-    /// 记在这里而不是把判据放宽——放宽了，新写的调用点就再也不会红。
+    /// 存量台账：文件 + **这个文件现在有几处**。
+    ///
+    /// 记数而不是记文件名：只记文件名的话，这些文件后来新增的同类写法会被整片豁免，
+    /// 而「清单里的文件仍然违规」那条用例照样绿——豁免就成了免死金牌
+    /// （Codex 第四十七轮 P2）。记了数，多一处、少一处都会红，逼着人来更新这张表。
+    ///
+    /// 两类，理由不同：
+    /// - 「待迁」：确实是网关的流块 / 解析结果 / 响应，码就在手边却没带上。
+    ///   它们的失败文案链路目前不读这个码，改造前要逐个确认下游怎么用这句话。
+    /// - 「非网关」：`.ErrorMessage` 属于别的领域对象，判据靠文本分不出来，如实记着。
     /// 对应台账：doc/debt.knowledge-base.md「错误码在转异常时被丢掉」。
     /// </summary>
-    private static readonly string[] PendingMigration =
+    private static readonly (string Path, int Count, string Why)[] Ledger =
     [
-        "prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs",
-        "prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs",
-        "prd-api/src/PrdAgent.Api/Controllers/Api/PlatformsController.cs",
-        "prd-api/src/PrdAgent.Api/Services/ArenaRunWorker.cs",
-        "prd-api/src/PrdAgent.Infrastructure/Services/ModelDomainService.cs",
-        "prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs",
-        "prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs",
+        ("prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs", 1, "待迁：流块"),
+        ("prd-api/src/PrdAgent.Api/Controllers/Api/ModelLabController.cs", 1, "待迁：流块"),
+        ("prd-api/src/PrdAgent.Api/Controllers/Api/PlatformsController.cs", 1, "待迁：流块"),
+        ("prd-api/src/PrdAgent.Api/Controllers/Api/ProjectRouteAgentController.cs", 1, "待迁：网关响应"),
+        ("prd-api/src/PrdAgent.Api/Services/ArenaRunWorker.cs", 1, "待迁：流块"),
+        ("prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs", 1, "待迁：解析结果"),
+        ("prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs", 2, "待迁：解析结果 + 网关响应"),
+        ("prd-api/src/PrdAgent.Api/Services/ReportAgent/WorkflowExecutionService.cs", 1, "非网关：工作流执行记录自己的错误"),
+        ("prd-api/src/PrdAgent.Infrastructure/Services/ModelDomainService.cs", 1, "待迁：流块"),
+        ("prd-api/src/PrdAgent.Infrastructure/Services/Poster/PosterAutopilotService.cs", 1, "待迁：网关响应"),
+        ("prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/ImageDescriptionService.cs", 1, "待迁：流块"),
+        ("prd-api/src/PrdAgent.Infrastructure/Services/VisualAgent/MultiImageComposeService.cs", 1, "待迁：流块"),
     ];
 
     [Fact]
     public void 错误块转异常必须走统一工厂()
     {
         var root = RepoRoot();
-        var offenders = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(
-                     Path.Combine(root, "prd-api", "src"), "*.cs", SearchOption.AllDirectories))
+        var actual = ScanCounts(root);
+        var expected = Ledger.ToDictionary(e => e.Path, e => e.Count);
+        var complaints = new List<string>();
+
+        foreach (var (path, count) in actual)
         {
-            var text = StripComments(File.ReadAllText(file));
-            if (!HandRolled.IsMatch(text)) continue;
-            var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
-            if (Array.Exists(PendingMigration, p => p == rel)) continue;
-            offenders.Add(rel);
+            var allowed = expected.TryGetValue(path, out var n) ? n : 0;
+            if (count > allowed)
+                complaints.Add($"{path}: 现有 {count} 处，台账只认 {allowed} 处");
+        }
+        foreach (var (path, n) in expected)
+        {
+            var count = actual.TryGetValue(path, out var c) ? c : 0;
+            if (count < n)
+                complaints.Add($"{path}: 已减到 {count} 处，把台账改小（或删掉这一行）");
         }
 
         Assert.True(
-            offenders.Count == 0,
-            "这些地方把 error 流块的文案拼进异常却丢了 ErrorCode，改用 "
-                + "GatewayRouteFailureException.FromChunk(chunk, \"场景前缀\")："
-                + string.Join(", ", offenders));
+            complaints.Count == 0,
+            "把上游错误文案拼进异常却丢了 ErrorCode。新写的改用 "
+                + "GatewayRouteFailureException.FromChunk(chunk, \"场景前缀\")；"
+                + "存量在 Ledger 里按文件记数，动了就要更新：\n  "
+                + string.Join("\n  ", complaints));
     }
 
     [Fact]
@@ -76,18 +100,11 @@ public class GatewayErrorChunkCodeGuardTests
     }
 
     [Fact]
-    public void 缓迁清单不许含已经改好的文件()
+    public void 判据不认变量名()
     {
-        // 清单是欠账，不是免死金牌：文件改好了却留在清单里，下次退回去也不会红
-        var root = RepoRoot();
-        foreach (var rel in PendingMigration)
-        {
-            var full = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
-            Assert.True(File.Exists(full), $"缓迁清单里的文件不存在，清理它：{rel}");
-            Assert.True(
-                HandRolled.IsMatch(StripComments(File.ReadAllText(full))),
-                $"{rel} 已经不丢码了，把它从缓迁清单里删掉");
-        }
+        // 换个变量名写同样的东西，判据一样要认——否则「全仓不变式」只是嘴上说说
+        Assert.Matches(HandRolled, "throw new InvalidOperationException(response.ErrorMessage ?? \"LLM_ERROR\");");
+        Assert.Matches(HandRolled, "throw new InvalidOperationException($\"失败: {part?.ErrorMessage}\");");
     }
 
     /// <summary>
@@ -98,6 +115,20 @@ public class GatewayErrorChunkCodeGuardTests
     {
         var withoutBlock = Regex.Replace(source, @"/\*.*?\*/", string.Empty, RegexOptions.Singleline);
         return Regex.Replace(withoutBlock, @"^\s*//.*$", string.Empty, RegexOptions.Multiline);
+    }
+
+    /// <summary>扫出每个文件现在有几处（剃掉注释之后再数）。</summary>
+    private static Dictionary<string, int> ScanCounts(string root)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(
+                     Path.Combine(root, "prd-api", "src"), "*.cs", SearchOption.AllDirectories))
+        {
+            var n = HandRolled.Matches(StripComments(File.ReadAllText(file))).Count;
+            if (n == 0) continue;
+            counts[Path.GetRelativePath(root, file).Replace('\\', '/')] = n;
+        }
+        return counts;
     }
 
     private static string RepoRoot()
