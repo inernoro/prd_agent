@@ -234,11 +234,23 @@ async function checkShareArtifact(ctx, form, token4Url) {
   //
   // Playwright 的 frame 是跨源可进的（和页面里的 JS 不同），所以直接问那一帧要正文，
   // 两种 mode 同一个判据，不再有「这一支免检」的后门。
+  //
+  // 字数与标记**一次读完**：认的是「我上传的那句话」，不是「有多少字」——错误文档、
+  // 占位页、别人的内容都可能字数够，只有这句话出现才证明我传上去的那份正文被渲染了。
+  // 两件事读同一帧、同一时刻，就不会出现「字数是这一帧的、标记是另一时刻的」这种错位；
+  // 分两次读还多一个必须自己守住的顺序（上一版就是把第二次读排到了 page.close() 之后，
+  // 于是它必然抛异常、markerHit 恒为 false，每条文本形态的验收永远红）。
   const inner = page.frames().find((f) => f !== page.mainFrame());
   let chars = null;
+  let markerHit = false;
   if (inner) {
     try {
-      chars = await inner.evaluate(() => document.body.innerText.replace(/\s+/g, '').length);
+      const read = await inner.evaluate((m) => {
+        const t = document.body.innerText.replace(/\s+/g, '');
+        return { chars: t.length, markerHit: m ? t.includes(m) : false };
+      }, form.marker ? form.marker.replace(/\s+/g, '') : null);
+      chars = read.chars;
+      markerHit = read.markerHit;
     } catch (e) {
       chars = `读不到(${String(e.message).slice(0, 40)})`;
     }
@@ -255,19 +267,10 @@ async function checkShareArtifact(ctx, form, token4Url) {
     if (el) pixels = await distinctColorCount(el);
   }
   const probe = { mode, chars, pixels };
+  // 关页必须排在**所有**取证之后：页一关，帧就没了，之后任何 evaluate 都只会抛异常，
+  // 而那种异常长得跟「页面真的没内容」一模一样，判据会永远红。
   await page.close();
 
-  // 认的是「我上传的那句话」，不是「有多少字」。错误文档、占位页、别人的内容
-  // 都可能字数够，只有这句话出现才证明我传上去的那份正文真的被渲染出来了。
-  let markerHit = false;
-  if (inner && form.marker) {
-    try {
-      markerHit = await inner.evaluate(
-        (m) => document.body.innerText.replace(/\s+/g, '').includes(m),
-        form.marker.replace(/\s+/g, ''),
-      );
-    } catch { markerHit = false; }
-  }
   const textOk = markerHit && typeof chars === 'number' && chars >= form.minChars;
   const pixelOk = typeof pixels === 'number' && pixels >= 8;
   const ok = mode !== 'about:blank' && mode !== 'no-iframe' && (textOk || pixelOk);

@@ -72,3 +72,38 @@ describe('每日验收脚本也要在查不通时停手', () => {
     expect(script.slice(fnAt, createAt)).toContain('!mine.json?.success');
   });
 });
+
+describe('分享页取证必须在关页之前收齐', () => {
+  const script = fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', '..', 'scripts', 'smoke', 'daily-acceptance.mjs'),
+    'utf8',
+  );
+
+  it('checkShareArtifact 里 page.close() 排在所有取证之后', () => {
+    // 页一关，帧就没了：之后任何 frame.evaluate 只会抛
+    // 「Target page, context or browser has been closed」——实测过。
+    // 而那种异常长得跟「页面真的没渲染」一模一样，于是判据会**永远红**：
+    // 上一版把标记探测排在了 page.close() 之后，markerHit 恒为 false；
+    // 文本形态字数达标又不会去取像素证据，两条路一起断，每条 HTML / Markdown
+    // 验收永久假红。假红比漏判更糟——几次之后没人再看这份报告，回归信号就没了。
+    //
+    // 判据钉的是**顺序**，不是某一处写法：取证语句将来还会增加，扫的是整段函数体。
+    const fnAt = script.indexOf('async function checkShareArtifact(');
+    const fnEnd = script.indexOf('\nasync function ', fnAt + 10);
+    expect(fnAt).toBeGreaterThan(-1);
+    expect(fnEnd).toBeGreaterThan(fnAt);
+    const body = script.slice(fnAt, fnEnd);
+
+    const closeAt = body.indexOf('await page.close()');
+    expect(closeAt).toBeGreaterThan(-1);
+
+    // 每一处取证都必须排在关页之前
+    for (const probe of ['inner.evaluate(', 'distinctColorCount(', 'page.$(\'iframe\')']) {
+      const at = body.indexOf(probe);
+      expect(at, `取证语句 ${probe} 没找到，测试该跟着改`).toBeGreaterThan(-1);
+      expect(at, `${probe} 排到了 page.close() 之后，它只会抛异常`).toBeLessThan(closeAt);
+    }
+    // 关页之后不许再出现任何一次帧读取
+    expect(body.slice(closeAt)).not.toContain('inner.evaluate(');
+  });
+});
