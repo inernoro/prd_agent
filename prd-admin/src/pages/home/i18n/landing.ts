@@ -636,7 +636,7 @@ const zh: TranslationShape = {
       eyebrow: '百宝箱 · /ai-toolbox',
       title: '不是六个 Agent，是三十几个，都在同一个台面上',
       description:
-        '这就是登录后「百宝箱」那一页：权属、类型、搜索、最近使用，一个不少。下面这十六个的名字、一句话、图标都照着百宝箱那份注册表来，是从三十几个里挑出来的一屏。',
+        '这就是登录后「百宝箱」那一页：权属、类型、搜索、最近使用，一个不少。下面这十六个是从三十几个里挑出来的一屏，名字和图标取自百宝箱那份注册表；一句话是为这一屏改短的，完整那版在百宝箱里。',
       note: '带「预览」标的是还没通过完整验收的，摆在这里而不是藏起来：能用到什么程度就说到什么程度。',
       tabs: ['全部', '我的', '别人的', '收藏'],
       kindTabs: ['全部类型', '智能体', '工具'],
@@ -1206,7 +1206,7 @@ const en: TranslationShape = {
       eyebrow: 'Toolbox · /ai-toolbox',
       title: 'Not six agents. Thirty-odd, all on the same desk',
       description:
-        'This is the Toolbox page you land on after logging in — ownership tabs, kind tabs, search, count, recents, all of it. The sixteen below take their names, one-liners and icons from that registry: one screenful picked out of thirty-odd.',
+        'This is the Toolbox page you land on after logging in — ownership tabs, kind tabs, search, count, recents, all of it. The sixteen below are one screenful picked out of thirty-odd: names and icons come from that registry, the one-liners are trimmed to fit here.',
       note: 'The ones tagged Preview have not passed full acceptance yet. They sit here rather than being hidden: we say exactly how far each one goes.',
       tabs: ['All', 'Mine', 'Shared', 'Starred'],
       kindTabs: ['All kinds', 'Agents', 'Tools'],
