@@ -60,6 +60,19 @@ import {
  */
 const MODEL_FALLBACK_LIMIT = 3;
 
+/**
+ * 给预览图加一个跟着更新时间走的版本参数，换完图这一屏能立刻看到新的。
+ *
+ * 分隔符必须看着办：认领进来的地址可能自带 query（供应商的签名地址就是这样），
+ * 无脑拼 `?` 会拼出 `...?sig=x?v=1`——query 被拼坏，签名跟着失效，于是
+ * 公开页（用原始地址）好好的，管理端这一屏反而是裂的。
+ */
+function withCacheBust(url: string, updatedAt?: string | null): string {
+  const v = updatedAt ? Date.parse(updatedAt) : NaN;
+  if (!Number.isFinite(v)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}v=${v}`;
+}
+
 type SlotState = {
   status: 'idle' | 'running' | 'error';
   startedAt?: number;
@@ -374,9 +387,7 @@ export default function LandingPreviewSettings() {
   const generatedCount = LANDING_PREVIEW_SLOTS.filter((s) => assets[s.slot]?.url).length;
   const zoomSlot = zoomSlotId ? landingPreviewSlotById(zoomSlotId) : undefined;
   const zoomAsset = zoomSlot ? assets[zoomSlot.slot] : undefined;
-  const zoomSrc = zoomAsset?.url
-    ? (zoomAsset.updatedAt ? `${zoomAsset.url}?v=${Date.parse(zoomAsset.updatedAt) || ''}` : zoomAsset.url)
-    : null;
+  const zoomSrc = zoomAsset?.url ? withCacheBust(zoomAsset.url, zoomAsset.updatedAt) : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -451,9 +462,7 @@ export default function LandingPreviewSettings() {
           const elapsed = running && st.startedAt ? Math.max(0, Math.round((Date.now() - st.startedAt) / 1000)) : 0;
           // tick 只为让上面这个秒数每秒重算一次；读一下它，避免被当成未使用
           void tick;
-          const src = asset?.url
-            ? (asset.updatedAt ? `${asset.url}?v=${Date.parse(asset.updatedAt) || ''}` : asset.url)
-            : null;
+          const src = asset?.url ? withCacheBust(asset.url, asset.updatedAt) : null;
 
           return (
             <div
