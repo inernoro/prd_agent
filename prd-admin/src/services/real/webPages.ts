@@ -275,7 +275,16 @@ export async function uploadSite(input: {
   });
 }
 
-export async function reuploadSite(id: string, file: File, uploadId?: string): Promise<ApiResponse<HostedSite>> {
+/**
+ * 重传（替换既有站点的文件）。
+ *
+ * `signal` 是给「中止」那颗按钮用的：这条路径走 `fetch`（FormData 不能过 apiRequest），
+ * 拿不到 XHR，所以中止必须靠 AbortController。没有它的话按钮点下去只是把进度屏藏起来，
+ * 请求照跑、站点照换 —— 界面说停了，实际没停，比没有这颗按钮更糟。
+ */
+export async function reuploadSite(
+  id: string, file: File, uploadId?: string, signal?: AbortSignal,
+): Promise<ApiResponse<HostedSite>> {
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -286,7 +295,16 @@ export async function reuploadSite(id: string, file: File, uploadId?: string): P
   if (uploadId) fd.append('uploadId', uploadId);
 
   const url = joinUrl(getApiBaseUrl(), api.webPages.reupload(encodeURIComponent(id)));
-  const res = await fetch(url, { method: 'POST', headers, body: fd });
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers, body: fd, signal });
+  } catch (e) {
+    // 用户自己按的中止不是故障，给它独立的 code，让调用方能不弹「上传失败」
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      return { success: false, data: null as never, error: { code: 'ABORTED', message: '已中止' } };
+    }
+    throw e;
+  }
   const text = await res.text();
   try {
     return JSON.parse(text) as ApiResponse<HostedSite>;

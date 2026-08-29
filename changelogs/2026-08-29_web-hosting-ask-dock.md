@@ -180,3 +180,4 @@
 | chore | docs | 本 PR 的 42 个 changelog 碎片按 AGENTS.md 规则 #4 合并为一个文件（177 行原样保留） |
 | fix | prd-api | 网关「跳过停用成员」不再被 MAP 旧副本短路：停用判定不由 modelConfig 把门，MAP 侧只在 GW 无权威记录时参与 |
 | docs | doc | 提问坞交接清单按当前状态重写：导读与表格不再打架、预览给三条真实深链、按 §10 去掉逐文件源码清单 |
+| fix | prd-admin | 重传时「中止」按钮真的能中止：reuploadSite 接 AbortSignal，中止不再只是把进度屏藏起来而请求照跑 |

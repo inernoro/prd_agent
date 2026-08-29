@@ -2793,6 +2793,8 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   const uploadIdRef = useRef<string>('');
   /** 在飞的 XHR，用户点「中止」时 abort 它 */
   const xhrRef = useRef<XMLHttpRequest | null>(null);
+  // 重传走 fetch（FormData 不能过 apiRequest），拿不到 XHR，中止只能靠这个
+  const abortRef = useRef<AbortController | null>(null);
   // 用户点了「转到后台」→ 本窗关掉但 XHR 不中断，完成后由页面 toast + 刷新兜底
   const backgroundedRef = useRef(false);
   const [created, setCreated] = useState<HostedSite | null>(null);
@@ -2839,15 +2841,21 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
     setSent({ loaded: 0, total: file?.size ?? 0 });
     setUnpack(null);
     uploadIdRef.current = crypto.randomUUID();
+    abortRef.current = new AbortController();
     setSaving(true);
 
     try {
       if (isEdit) {
         if (file) {
           // Reupload
-          const res = await reuploadSite(item.id, file, uploadIdRef.current);
+          const res = await reuploadSite(
+            item.id, file, uploadIdRef.current, abortRef.current.signal);
           if (!res.success) {
-            toast.error('重新上传失败', res.error?.message || '请稍后重试');
+            // 用户自己按的中止不是故障，不弹红字；也不能继续往下走去改元信息，
+            // 否则「已中止」之后站点还是被换掉了。
+            if (res.error?.code !== 'ABORTED') {
+              toast.error('重新上传失败', res.error?.message || '请稍后重试');
+            }
             return;
           }
         }
@@ -3086,9 +3094,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               <button
                 type="button"
                 onClick={() => {
-                  // 中止走 xhr.abort()，服务层把它翻成 ABORTED 而不是「网络异常」——
-                  // 这是用户自己按的，不该报成故障
+                  // 两条路径各有各的中止手柄：新建走 XHR、重传走 fetch + AbortController。
+                  // 只调其中一个的话，另一条路径上这颗按钮就只是把进度屏藏起来——
+                  // 请求照跑、站点照换，而用户被告知「已中止」。
                   xhrRef.current?.abort();
+                  abortRef.current?.abort();
                   setSaving(false);
                 }}
                 className="rounded-lg py-2 text-[13px]"
