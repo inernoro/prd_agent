@@ -125,8 +125,13 @@ export function InkFieldBackdrop({ colors, intensity = 0.22, className }: InkFie
     try {
       renderer = new Renderer({ alpha: true, antialias: false, dpr: Math.min(window.devicePixelRatio || 1, 1.5) });
     } catch {
-      return; // 拿不到 WebGL：什么都不画，底下的 StaticBackdrop 就是降级形态
+      return; // 完全没有 WebGL：什么都不画，底下的 StaticBackdrop 就是降级形态
     }
+    // 只有 WebGL1 的设备也要走同一条降级路。ogl 拿不到 webgl2 会**静默退回** webgl1：
+    // 构造函数照样成功、不抛异常，但下面两段 shader 是 GLSL ES 3（`#version 300 es`），
+    // 在 webgl1 上编译失败——而 ogl 的 Program 只把编译错误打进 console，不抛。
+    // 于是 canvas 挂上了、rAF 循环转起来了、一个像素都不画。这里挡住，回到静态底。
+    if (!renderer.isWebgl2) return;
     const gl = renderer.gl;
     gl.clearColor(0, 0, 0, 0);
     host.appendChild(gl.canvas);

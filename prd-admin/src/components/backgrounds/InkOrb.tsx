@@ -154,8 +154,11 @@ export function InkOrb({ colors, amplitude = 0.22, opacity = 1, className }: Ink
     try {
       renderer = new Renderer({ alpha: true, antialias: true, dpr: Math.min(window.devicePixelRatio || 1, 1.5) });
     } catch {
-      return; // 没有 WebGL：这块就是空的，首屏文案本身不依赖它
+      return; // 完全没有 WebGL：这块就是空的，首屏文案本身不依赖它
     }
+    // 只有 WebGL1 的设备同样得空着：ogl 会静默退回 webgl1，而这里的 shader 是 GLSL ES 3，
+    // 编译失败只进 console 不抛异常 —— 不挡的话就是「转着一个什么都不画的渲染循环」
+    if (!renderer.isWebgl2) return;
     const gl = renderer.gl;
     gl.clearColor(0, 0, 0, 0);
     gl.enable(gl.BLEND);
