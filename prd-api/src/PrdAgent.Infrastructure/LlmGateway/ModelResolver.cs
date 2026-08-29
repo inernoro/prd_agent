@@ -234,14 +234,23 @@ public class ModelResolver : IModelResolver
 
         if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller == null)
         {
-            _logger.LogWarning(
-                "[ModelResolver] AppCallerCode 未在 MAP/GW 中配置: {Code}，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
-                appCallerCode);
-            return ModelResolutionResult.NotFound(expectedModel,
-                $"AppCallerCode '{appCallerCode}' 未在 MAP/GW 中配置，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
-                GatewayRouteFailure.AppCallerPoolUnbound,
-                "appcaller-registry-missing",
-                appCallerCode);
+            candidateGroups = await TryFallbackToGatewayDefaultPoolsAsync(
+                gatewayRegistry, appCallerCode, modelType, gatewayConfigRequired, ct);
+            if (candidateGroups.Count > 0)
+            {
+                resolutionType = "GatewayRegistryPool";
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "[ModelResolver] AppCallerCode 未在 MAP/GW 中配置: {Code}，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
+                    appCallerCode);
+                return ModelResolutionResult.NotFound(expectedModel,
+                    $"AppCallerCode '{appCallerCode}' 未在 MAP/GW 中配置，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
+                    GatewayRouteFailure.AppCallerPoolUnbound,
+                    "appcaller-registry-missing",
+                    appCallerCode);
+            }
         }
 
         if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller != null)
@@ -337,15 +346,26 @@ public class ModelResolver : IModelResolver
                 return legacyConfig;
             }
 
-            _logger.LogWarning(
-                "[ModelResolver] 未找到可用模型（无池且 legacy 未命中）: AppCallerCode={Code}, ModelType={Type}",
-                appCallerCode, modelType);
+            // MAP 侧写了专属绑定却查不到那些池，属于「显式池未知」，按 llm-gateway 规则 #3 结构化失败，
+            // 不能拿默认池顶上去——那会让一条配错的绑定看起来像配对了。
+            candidateGroups = hasDedicatedBinding
+                ? []
+                : await TryFallbackToGatewayDefaultPoolsAsync(
+                    gatewayRegistry, appCallerCode, modelType, gatewayConfigRequired, ct);
+            if (candidateGroups.Count == 0)
+            {
+                _logger.LogWarning(
+                    "[ModelResolver] 未找到可用模型（无池且 legacy 未命中）: AppCallerCode={Code}, ModelType={Type}",
+                    appCallerCode, modelType);
 
-            return ModelResolutionResult.NotFound(expectedModel,
-                $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}",
-                GatewayRouteFailure.ModelPoolEmpty,
-                "pool-candidates-empty",
-                appCallerCode);
+                return ModelResolutionResult.NotFound(expectedModel,
+                    $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                    GatewayRouteFailure.ModelPoolEmpty,
+                    "pool-candidates-empty",
+                    appCallerCode);
+            }
+
+            resolutionType = "GatewayRegistryPool";
         }
 
         // ========== 第 5.5 步：旧契约若调用方指定了 expectedModel，优先尊重 ==========
@@ -1936,6 +1956,47 @@ public class ModelResolver : IModelResolver
         => string.Equals(modelType, ModelTypes.VideoGen, StringComparison.OrdinalIgnoreCase)
            || string.Equals(modelType, ModelTypes.Asr, StringComparison.OrdinalIgnoreCase)
            || string.Equals(modelType, ModelTypes.Embedding, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// GW 里查无这条 appCaller 时，回落到该 ModelType 的 GW 默认池。
+    ///
+    /// 为什么需要：配置权威已经全部搬到 GW，MAP 侧 model_groups 自模型管理写接口退场后恒为空。
+    /// 于是「registry 里没有登记过」的 appCaller 会一路穿过 MAP 兼容分支、legacy 直连，最后落到
+    /// NotFound——用户看到的是「功能第一次被人用就报未找到可用模型」，而同类型的默认池明明是满的。
+    /// 已登记但没绑池的 appCaller 走的正是同一个默认池（见 TryGetGatewayRegistryGroupsAsync 末尾），
+    /// 「没登记」不该比「登记了但没绑」拿到更差的结果。
+    ///
+    /// 只在「记录确实不存在」这一种情况下兜底，其余三种仍然 fail closed，不能被这里悄悄放行：
+    ///   - 记录存在但被阻挡（绑的池不存在 / 默认池不在允许集合内）→ BlockReason 非空
+    ///   - 配置面读不到（基础设施故障）                          → ConfigPlaneUnavailable
+    ///   - 状态不允许真实流量                                     → 调用点更早就返回了
+    /// 另外要求 gatewayConfigRequired == false：外部租户与已切断 MAP fallback 的部署维持严格契约，
+    /// 未登记就是未授权，不给默认池。
+    /// </summary>
+    private async Task<List<ModelGroup>> TryFallbackToGatewayDefaultPoolsAsync(
+        GatewayRegistryLookup gatewayRegistry,
+        string appCallerCode,
+        string modelType,
+        bool gatewayConfigRequired,
+        CancellationToken ct)
+    {
+        if (gatewayConfigRequired
+            || _gatewayDb is null
+            || gatewayRegistry.Groups.Count > 0
+            || gatewayRegistry.BlockReason is not null
+            || gatewayRegistry.ConfigPlaneUnavailable)
+        {
+            return [];
+        }
+
+        var defaults = await FindGatewayOwnedDefaultModelPoolsAsync(modelType, ct);
+        if (defaults.Count == 0) return [];
+
+        _logger.LogInformation(
+            "[ModelResolver] appCaller 未在 GW 登记，回落到 GW 默认模型池: AppCallerCode={Code}, ModelType={Type}, PoolNames={Names}",
+            appCallerCode, modelType, string.Join(", ", defaults.Select(g => g.Name)));
+        return defaults;
+    }
 
     private async Task<GatewayRegistryLookup> TryGetGatewayRegistryGroupsAsync(
         string appCallerCode,
