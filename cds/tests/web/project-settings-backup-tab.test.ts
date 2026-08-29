@@ -35,6 +35,7 @@ function panelData(overrides: Record<string, unknown> = {}): any {
       { id: 'mongo', status: 'ok', reason: null, bytes: 4096, offsite: true, lastSuccessAt: threeHoursAgo, fileCount: 7 },
       { id: 'postgres', status: 'ok', reason: null, bytes: 8192, offsite: true, lastSuccessAt: threeHoursAgo, fileCount: 7 },
       { id: 'minio', status: 'unsupported', reason: '需要桶到桶复制，不是一份 dump', bytes: null, offsite: false, lastSuccessAt: null, fileCount: 0 },
+      { id: 'fresh-pg', status: 'not-in-last-round', reason: '上一轮备份里没有它，盘上也没有任何副本——它可能是上一轮之后才建的，等下一轮；也可能一直没被备份到', bytes: null, offsite: false, lastSuccessAt: null, fileCount: 0 },
       { id: 'nacos', status: 'artifact-missing', reason: '上一轮导出的产物 demo--nacos-auto-20260828T090000Z.tar.gz 现在不在备份目录里——被删了、被移走了，或者盘出了问题', bytes: 1024, offsite: true, lastSuccessAt: threeHoursAgo, fileCount: 0 },
     ],
     files: { count: 21, bytes: 1024 * 1024 * 12 },
@@ -67,6 +68,8 @@ describe('周期备份面板：渲染出来的东西', () => {
     // 后端新加的一档必须自动落进这一组，而不是从界面上凭空消失（形状 2）。
     expect(html).toContain('产物不在了');
     expect(html).toContain('nacos');
+    expect(html).toContain('上轮没备到');
+    expect(html).toContain('fresh-pg');
     // 需要处理的两个直接可见。
     expect(html).toContain('redis');
     expect(html).toContain('mysql');

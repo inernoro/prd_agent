@@ -170,16 +170,35 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       slug: stateService.projectSlug,
       repoRoot: deps.repoRoot,
     });
-    for (const c of candidates) {
-      // 只读路径（备份历史）**不许建目录**。建了之后紧跟着的 `test -d` 必然为真，
-      // 「一份备份都没有过」就被报成「目录在、只是没有匹配项」——刚加的那个区分
-      // 当场作废，而它要防的正是零备份长期不被发现。写盘路径才允许创建。
-      const probe = create
-        ? await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`)
-        : await shell.exec(`test -d ${shq(c)} && test -w ${shq(c)} && echo ok`);
-      if (probe.exitCode === 0 && (probe.stdout || '').includes('ok')) return c;
+    const ok = (r: { exitCode: number; stdout?: string }): boolean =>
+      r.exitCode === 0 && (r.stdout || '').includes('ok');
+
+    if (create) {
+      // 写盘路径：要的是「能写进去的那个目录」，所以判据就是可写。
+      for (const c of candidates) {
+        if (ok(await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`))) return c;
+      }
+      return candidates[0];
     }
-    return candidates[0];
+
+    // 只读路径（备份历史、周期备份面板）有两条不一样的纪律：
+    //
+    // 1. **不许建目录**。建了之后紧跟着的 `test -d` 必然为真，「一份备份都没有过」
+    //    就被报成「目录在、只是没有匹配项」——那个区分要防的正是零备份长期不被发现。
+    // 2. **不许拿「可写」当判据**（Codex review P2）。盘变只读的那一刻，真正存着
+    //    备份的那个目录会被跳过，于是面板去读一个空的候选，报出「一份周期备份都没
+    //    产出过」——偏偏是在存储出事、最需要看清手上有什么的时候说这种话。
+    //
+    // 但也不能简单地「去掉 -w」：候选是有优先级的，一个存量的、写不进去的旧目录
+    // 排在前面时，裸看「存在」会读到陈旧数据，那是同一个错的镜像。所以判据取
+    // **数据在哪**：优先选真的存着结果文件的那个目录，都没有再退回第一个存在的。
+    const existing: string[] = [];
+    for (const c of candidates) {
+      if (!ok(await shell.exec(`test -d ${shq(c)} && echo ok`))) continue;
+      if (ok(await shell.exec(`test -f ${shq(`${c}/${INFRA_BACKUP_HEALTH_FILE}`)} && echo ok`))) return c;
+      existing.push(c);
+    }
+    return existing[0] ?? candidates[0];
   }
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：备份/恢复直接 spawn docker，
@@ -757,7 +776,14 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     }).filter((f): f is BackupFileEntry => Boolean(f));
 
     const now = new Date();
-    const view = buildBackupPanel({ projectId: canonicalId, health, files, now });
+    // 台账里此刻真实存在的数据服务。**必须传**：只看上一轮的记录，新建的库和当时
+    // 停着的服务会从清单上整个消失，而第一屏还在说一切正常（Codex review 第二轮 P1）。
+    const infra = stateService.getInfraServicesForProject(canonicalId).map((s) => ({
+      id: s.id,
+      dockerImage: s.dockerImage,
+      containerName: s.containerName,
+    }));
+    const view = buildBackupPanel({ projectId: canonicalId, health, files, now, infra });
     // 页脚那一行「每日体检怎么说」。喂进去的是**这个项目的**失败与缺口，
     // 时间戳与恢复演练是全平台的——面板不该替某个项目编一份自己的演练记录。
     const findings = backupHealthFindings({

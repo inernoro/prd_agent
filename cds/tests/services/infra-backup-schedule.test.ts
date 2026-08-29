@@ -589,10 +589,16 @@ describe('备份不许静默成功', () => {
 describe('查历史不许创建备份目录', () => {
   const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/routes/infra-backup.ts'), 'utf8');
 
-  it('解析器分读写两档，只有写盘那档 mkdir', () => {
+  it('解析器分读写两档，只有写盘那档 mkdir，只读那档也不许拿「可写」当判据', () => {
     expect(SRC).toContain('async function resolveBackupDir(opts?: { create?: boolean })');
-    // 只读档探测的是「目录已存在且可写」，一个 mkdir 都不许有。
-    expect(SRC).toMatch(/: await shell\.exec\(`test -d \$\{shq\(c\)\} && test -w \$\{shq\(c\)\} && echo ok`\)/);
+    // 只读档探测的是「目录在不在、结果文件在不在」，既不 mkdir，也不看可写：
+    // 盘变只读时，真正存着备份的那个目录会被 `test -w` 跳过，面板于是报出
+    // 「一份周期备份都没产出过」——偏偏是在存储出事时说这种话（Codex review P2）。
+    expect(SRC).toContain('`test -d ${shq(c)} && echo ok`');
+    expect(SRC).toContain('`test -f ${shq(`${c}/${INFRA_BACKUP_HEALTH_FILE}`)} && echo ok`');
+    const readPath = SRC.slice(SRC.indexOf('const existing: string[] = []'), SRC.indexOf('return existing[0]'));
+    expect(readPath).not.toContain('test -w');
+    expect(readPath).not.toContain('mkdir');
   });
 
   it('两条只读路径都走只读档，备份/恢复仍可创建', () => {

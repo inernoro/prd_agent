@@ -17,13 +17,14 @@
  *    取数在路由层。
  */
 
-import { backupKey, isAutoBackupFile, INFRA_BACKUP_INTERVAL_MS } from './infra-backup-schedule.js';
+import { backupKey, isAutoBackupFile, backupKindOf, INFRA_BACKUP_INTERVAL_MS } from './infra-backup-schedule.js';
 
 /**
  * 一个目标这一轮的处境。**五档不能合并**——每一档要人做的事都不一样：
  *
  * - `failed`      本地就没导出来，手上没有它的新副本 → 得去修这台服务
  * - `artifact-missing` 那一轮导出成功了，但**产物此刻不在盘上** → 得去查文件哪去了
+ * - `not-in-last-round` 这台服务现在跑着，但**上一轮备份里压根没有它** → 见下
  * - `offsite-only` 本地那份已过校验、就在盘上，只是离机没上去 → 得去修离机通道
  * - `partial`     备成功了，但导出脚本自报只覆盖到一部分（如 postgres 只导了一个库）
  * - `unsupported` 这个类型压根还备不了（如 MinIO 要桶到桶复制，不是一份 dump）
@@ -36,8 +37,14 @@ import { backupKey, isAutoBackupFile, INFRA_BACKUP_INTERVAL_MS } from './infra-b
  * 健康文件说「这一轮导出成功了」，而那个文件已经被删掉/移走/盘坏了——只读健康记录
  * 就会把它报成「正常」，**等到真要恢复的那天才发现产物不在**。落盘记录只能证明
  * 当时产出过，证明不了此刻还在，所以要拿盘上的实际文件再核一遍。
+ *
+ * `not-in-last-round` 是同一个病的另一面（Codex review 第二轮 P1）：清单只从上一轮的
+ * 记录来，于是**上一轮之后才建的库**、以及**当时容器停着的服务**，在这一屏上压根不存在，
+ * 而第一屏还在宣布「N 个能备的目标都有 3 小时前的副本」。一台从没备过的库看不见，
+ * 比看见它红着更危险。所以目标清单要并上**这个项目此刻真实跑着的数据服务**。
  */
-export type BackupTargetStatus = 'failed' | 'artifact-missing' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
+export type BackupTargetStatus =
+  | 'failed' | 'artifact-missing' | 'not-in-last-round' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
 
 export interface BackupPanelTarget {
   id: string;
@@ -75,6 +82,18 @@ export interface BackupHealthRecord {
 export interface BackupFileEntry {
   name: string;
   bytes: number;
+}
+
+/**
+ * 这个项目此刻真实存在的一台数据服务（取自基础设施台账）。
+ *
+ * 面板不能只看上一轮的记录：上一轮之后才建的库、当时容器停着的服务，在记录里
+ * 一个字都没有，于是从清单上消失——而消失的东西没人会去管它。
+ */
+export interface BackupInfraFact {
+  id: string;
+  dockerImage?: string;
+  containerName?: string;
 }
 
 export interface BackupPanelView {
@@ -173,6 +192,11 @@ export function buildBackupPanel(input: {
   health: BackupHealthRecord | null;
   files: readonly BackupFileEntry[];
   now: Date;
+  /**
+   * 这个项目此刻跑着的数据服务。**要传**：不传的话清单只有上一轮记录里的那些，
+   * 新建的库和当时停着的服务会从面板上整个消失（Codex review 第二轮 P1）。
+   */
+  infra?: readonly BackupInfraFact[];
   /** 备份周期。默认取真实排程的那个常量，用例可以覆盖。 */
   intervalMs?: number;
 }): BackupPanelView {
@@ -190,11 +214,15 @@ export function buildBackupPanel(input: {
   const offsiteById = new Map(offsiteOnly.map((t) => [String(t.id), t]));
   const gapById = new Map(gaps.map((g) => [String(g.id), g]));
 
+  // 台账里此刻真实存在的服务。它和上一轮的记录**取并集**——只取记录会漏掉新建的库，
+  // 只取台账会漏掉已经删掉、但盘上还留着备份的服务。
+  const infraById = new Map((input.infra || []).filter((s) => s?.id).map((s) => [String(s.id), s]));
   const ids = [...new Set([
     ...objectById.keys(),
     ...failedById.keys(),
     ...offsiteById.keys(),
     ...gapById.keys(),
+    ...infraById.keys(),
   ])].sort();
 
   // 盘上到底有哪些文件。**判据要拿这个再核一遍产物**，不能只信健康记录：
@@ -215,20 +243,40 @@ export function buildBackupPanel(input: {
     // 告警没人会看，正是这套体检要避免的。
     const recordedFile = String(object?.fileName || '').trim();
     const artifactMissing = Boolean(recordedFile) && !present.has(recordedFile);
+    // 上一轮的记录里一个字都没提到它。分两种：本来就备不了的类型（归「还备不了」，
+    // 不必惊动人），和本该能备却没出现的（新建的库、当时容器停着的）——后者手上
+    // 可能一份副本都没有，必须说出来。能不能备走 backupKindOf 这一份判据，
+    // 不在这里另猜一套（形状 3）。
+    const onlyInInventory = !object && !failedById.has(id) && !offsiteById.has(id) && !gap;
+    const infraFact = infraById.get(id);
+    const backupCapable = onlyInInventory
+      ? Boolean(backupKindOf(String(infraFact?.dockerImage || ''), {
+        id,
+        containerName: infraFact?.containerName,
+      }))
+      : false;
     const status: BackupTargetStatus = failedById.has(id)
       ? 'failed'
       : artifactMissing
         ? 'artifact-missing'
-        : offsiteById.has(id)
-          ? 'offsite-only'
-          : gap
-            ? (object ? 'partial' : 'unsupported')
-            : 'ok';
+        : onlyInInventory
+          ? (backupCapable ? 'not-in-last-round' : 'unsupported')
+          : offsiteById.has(id)
+            ? 'offsite-only'
+            : gap
+              ? (object ? 'partial' : 'unsupported')
+              : 'ok';
     const reason = status === 'failed'
       ? cleanReason(failedById.get(id)?.reason)
       : status === 'artifact-missing'
         ? `上一轮导出的产物 ${recordedFile} 现在不在备份目录里——被删了、被移走了，或者盘出了问题`
-        : status === 'offsite-only'
+        : status === 'not-in-last-round'
+          ? (stamps.length > 0
+            ? '上一轮备份里没有它：可能当时容器没跑。盘上还留着更早的副本，但不是最新的'
+            : '上一轮备份里没有它，盘上也没有任何副本——它可能是上一轮之后才建的，等下一轮；也可能一直没被备份到')
+          : onlyInInventory
+            ? `这个类型（${String(infraFact?.dockerImage || '未知镜像')}）目前还没有周期备份手段`
+            : status === 'offsite-only'
           ? cleanReason(offsiteById.get(id)?.reason)
           : (status === 'partial' || status === 'unsupported')
             ? cleanReason(gap?.reason)
@@ -275,6 +323,7 @@ function buildVerdict(
   const count = (s: BackupTargetStatus): number => targets.filter((t) => t.status === s).length;
   const failed = count('failed');
   const missing = count('artifact-missing');
+  const uncovered = count('not-in-last-round');
   const offsite = count('offsite-only');
   const partial = count('partial');
   const unsupported = count('unsupported');
@@ -308,6 +357,14 @@ function buildVerdict(
       // 与 failed 同一档：两者的结果一样——真要恢复的时候手上没有那份文件。
       tone: 'bad',
       headline: `${missing} 个目标上一轮备出来的产物，现在不在盘上了`,
+      subline,
+    };
+  }
+  if (uncovered > 0) {
+    return {
+      // 比「离机没上去」重：那类手上还有一份本地副本，这类可能一份都没有。
+      tone: 'warn',
+      headline: `${uncovered} 个正在跑的服务，上一轮备份里没有它们`,
       subline,
     };
   }

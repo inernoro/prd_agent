@@ -83,6 +83,12 @@ describe('GET /api/projects/:id/backup-health', () => {
     const now = new Date().toISOString();
     stateService.addProject({ id: 'proj-a', slug: 'a', name: 'A', kind: 'git', createdAt: now, updatedAt: now });
     stateService.addProject({ id: 'proj-b', slug: 'b', name: 'B', kind: 'git', createdAt: now, updatedAt: now });
+    // 台账里有一台上一轮记录里完全没提到的库（比如上一轮之后才建的）。
+    stateService.addInfraService({
+      id: 'fresh-pg', projectId: 'proj-a', name: 'fresh-pg', dockerImage: 'postgres:16',
+      containerPort: 5432, hostPort: 15432, containerName: 'cds-infra-proj-a-fresh-pg',
+      status: 'running', volumes: [], env: {}, createdAt: now,
+    } as any);
 
     shell = new MockShellExecutor();
     // handler 拿到的是**匹配结果**不是命令字符串（`match.input` 才是原命令）。
@@ -93,7 +99,12 @@ describe('GET /api/projects/:id/backup-health', () => {
       const cmd = match.input ?? '';
       if (/^cat /.test(cmd)) return { stdout: `${JSON.stringify(HEALTH)}\n`, stderr: '', exitCode: 0 };
       if (/^ls -la /.test(cmd)) return { stdout: LISTING, stderr: '', exitCode: 0 };
-      if (/^test -d /.test(cmd)) return { stdout: 'yes\n', stderr: '', exitCode: 0 };
+      // 回应命令自己 echo 的那个词，而不是一律回 'yes'：只读档的判据是
+      // `test -d … && echo ok`，一律回 'yes' 会让它一个候选都选不中，
+      // 用例就测不到真正跑的那条路。
+      if (/^test -[dfw] /.test(cmd)) {
+        return { stdout: /echo ok/.test(cmd) ? 'ok\n' : 'yes\n', stderr: '', exitCode: 0 };
+      }
       return { stdout: '', stderr: '', exitCode: 0 };
     });
 
@@ -113,7 +124,10 @@ describe('GET /api/projects/:id/backup-health', () => {
     const res = await get(server, '/api/projects/proj-a/backup-health');
     expect(res.status).toBe(200);
     const byId = new Map(res.body.targets.map((t: any) => [t.id, t]));
-    expect([...byId.keys()].sort()).toEqual(['minio', 'mongo', 'mysql', 'nacos', 'redis']);
+    expect([...byId.keys()].sort()).toEqual(['fresh-pg', 'minio', 'mongo', 'mysql', 'nacos', 'redis']);
+    // 上一轮的记录里没有它，但它此刻真跑着——必须出现，否则一台从没备过的库
+    // 在这一屏上根本不存在（Codex review 第二轮 P1）。
+    expect(byId.get('fresh-pg').status).toBe('not-in-last-round');
     // proj-b 的 redis 这一轮是成功的；如果筛错了，这里的 redis 会变成 ok。
     expect(byId.get('redis').status).toBe('failed');
   });

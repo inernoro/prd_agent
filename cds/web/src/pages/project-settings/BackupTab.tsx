@@ -18,7 +18,8 @@ import { apiUrl } from '@/lib/api';
  * 前端只负责把它们摆好——同一个判据前后端各写一份，就是下一次漂移的起点。
  */
 
-type BackupTargetStatus = 'failed' | 'artifact-missing' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
+type BackupTargetStatus =
+  | 'failed' | 'artifact-missing' | 'not-in-last-round' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
 
 interface BackupPanelTarget {
   id: string;
@@ -54,6 +55,8 @@ const STATUS_META: Record<BackupTargetStatus, { label: string; tone: 'ok' | 'war
   failed: { label: '没备出来', tone: 'bad' },
   // 备出来了、文件却不在盘上——和「没备出来」同一档：真要恢复时手上都没有那份文件。
   'artifact-missing': { label: '产物不在了', tone: 'bad' },
+  // 服务在跑，上一轮却没备到它——可能是刚建的，也可能当时容器停着。
+  'not-in-last-round': { label: '上轮没备到', tone: 'warn' },
   'offsite-only': { label: '仅本机', tone: 'warn' },
   partial: { label: '范围有限', tone: 'warn' },
   unsupported: { label: '还备不了', tone: 'muted' },

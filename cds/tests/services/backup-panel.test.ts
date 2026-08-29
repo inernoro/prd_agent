@@ -307,6 +307,73 @@ describe('产物不在盘上（健康记录说成功，文件却没了）', () =
   });
 });
 
+describe('清单要并上台账里此刻真实跑着的服务', () => {
+  /**
+   * Codex review 第二轮 P1。清单只从上一轮记录来的话，上一轮之后才建的库、以及
+   * 当时容器停着的服务，在这一屏上压根不存在——而第一屏还在宣布一切正常。
+   * 一台从没备过的库看不见，比看见它红着更危险。
+   */
+  it('上一轮之后才建的库要出现，且不许被算进「正常」', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ objects: [{ id: 'mongo', projectId: 'web', bytes: 1 }] }),
+      files: [],
+      infra: [
+        { id: 'mongo', dockerImage: 'mongo:7' },
+        { id: 'brand-new-pg', dockerImage: 'postgres:16' },
+      ],
+    });
+    const byId = new Map(view.targets.map((t) => [t.id, t]));
+    expect(byId.get('brand-new-pg')!.status).toBe('not-in-last-round');
+    expect(byId.get('brand-new-pg')!.reason).toContain('盘上也没有任何副本');
+    // 第一屏不许再说「都有副本」。
+    expect(view.verdict.tone).toBe('warn');
+    expect(view.verdict.headline).toContain('上一轮备份里没有它们');
+    expect(view.verdict.subline).toContain('正常 1 个');
+  });
+
+  it('容器停着但盘上有旧副本时，说得出「还留着更早的副本」', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health(),
+      files: [{ name: backupFileName('web', 'redis', 'redis', '2026-08-25T09:00:00.000Z'), bytes: 11 }],
+      infra: [{ id: 'redis', dockerImage: 'redis:7-alpine' }],
+    });
+    expect(view.targets[0].status).toBe('not-in-last-round');
+    expect(view.targets[0].lastSuccessAt).toBe('2026-08-25T09:00:00.000Z');
+    expect(view.targets[0].reason).toContain('更早的副本');
+  });
+
+  it('台账里那台本来就备不了的，归「这类还备不了」，不惊动人', () => {
+    // 能不能备走 backupKindOf 这一份判据，不在面板里另猜一套。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ objects: [{ id: 'mongo', projectId: 'web', bytes: 1 }] }),
+      files: [],
+      infra: [{ id: 'mongo', dockerImage: 'mongo:7' }, { id: 'minio', dockerImage: 'minio/minio:latest' }],
+    });
+    const byId = new Map(view.targets.map((t) => [t.id, t]));
+    expect(byId.get('minio')!.status).toBe('unsupported');
+    expect(byId.get('minio')!.reason).toContain('minio/minio:latest');
+    expect(view.verdict.tone).toBe('ok');
+  });
+
+  it('台账里没有、但盘上还留着备份的服务，照样列出来', () => {
+    // 服务被删了，备份还在。取并集才不会把它弄丢。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ failedTargets: [{ id: 'gone', projectId: 'web', reason: 'x' }] }),
+      files: [],
+      infra: [],
+    });
+    expect(view.targets.map((t) => t.id)).toEqual(['gone']);
+  });
+});
+
 describe('相对时间', () => {
   it('按「隔了多久」说，不按日历说', () => {
     expect(relativeAge(NOW, '2026-08-28T11:59:30.000Z')).toBe('刚刚');
