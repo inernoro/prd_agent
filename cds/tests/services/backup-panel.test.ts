@@ -362,8 +362,8 @@ describe('清单要并上台账里此刻真实跑着的服务', () => {
     expect(view.verdict.tone).toBe('ok');
   });
 
-  it('台账里没有、但盘上还留着备份的服务，照样列出来', () => {
-    // 服务被删了，备份还在。取并集才不会把它弄丢。
+  it('上一轮记录里有、台账里已经没有的，照样列出来', () => {
+    // 取并集才不会把它弄丢：服务删了，但上一轮跑的时候它还在，那一轮的结论仍然要说得出。
     const view = buildBackupPanel({
       projectId: 'web',
       now: NOW,
@@ -372,6 +372,35 @@ describe('清单要并上台账里此刻真实跑着的服务', () => {
       infra: [],
     });
     expect(view.targets.map((t) => t.id)).toEqual(['gone']);
+  });
+
+  /**
+   * 这条钉的是**现状**，不是期望（Codex review 第四轮 P2）。
+   *
+   * 上面那条原先叫「台账里没有、但盘上还留着备份的服务，照样列出来」，可它喂的是一条
+   * `failedTargets` 记录——id 是从健康记录来的，跟盘上的文件没有关系。名字说的是一件事，
+   * 断言证明的是另一件事：一个只以「盘上还留着文件」形式存在的目标（服务删了，之后又跑过
+   * 一轮，记录被重写、里面已经没有它），并集的三个来源一个都命中不了。
+   *
+   * 所以把真实现状写成断言：那种目标**没有行**，而它的文件**照样进页脚的份数**。
+   * 真去做「从文件名反推历史目标」的时候，这条会红——那正是它的用途：逼人回来一起把
+   * 「哪些目标该出现在这一屏」重新想一遍（台账 E86），而不是再补第四块补丁。
+   */
+  it('只以盘上文件形式存在的目标，此刻没有行——但文件算进了页脚（已知边界 E86）', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ objects: [{ id: 'mongo', projectId: 'web', bytes: 1 }] }),
+      files: [
+        { name: backupFileName('web', 'mongo', 'mongo', '2026-08-28T09:00:00.000Z'), bytes: 7 },
+        // 这台服务已经被删了，上一轮的记录里没有它，台账里也没有——只剩这份文件。
+        { name: backupFileName('web', 'removed-pg', 'postgres', '2026-08-25T09:00:00.000Z'), bytes: 9 },
+      ],
+      infra: [{ id: 'mongo', dockerImage: 'mongo:7' }],
+    });
+    expect(view.targets.map((t) => t.id)).toEqual(['mongo']);
+    // 文件在、行不在：页脚数得出两份，用户却对不上其中一份是谁的。
+    expect(view.files.count).toBe(2);
   });
 });
 
