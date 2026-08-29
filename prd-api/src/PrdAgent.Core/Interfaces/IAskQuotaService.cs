@@ -41,8 +41,11 @@ public interface IAskQuotaService
     /// 仍然保留「先占后退」而不是「后占」：快照构建要读对象存储，本身有成本，
     /// 先占额度才挡得住匿名连打。
     /// </summary>
+    ///
+    /// 传当初那个 <see cref="AskQuotaDecision"/> 进来：退的是它记下的那两个键，
+    /// 不是退款此刻重算的键（见 <see cref="AskQuotaDecision.ConsumedVisitorKey"/>）。
     Task RefundAsync(
-        string siteId, string? userId, string? clientIp, CancellationToken ct = default);
+        AskQuotaDecision decision, string siteId, CancellationToken ct = default);
 }
 
 /// <summary>还剩多少的只读快照。已用数可能超过上限（拒绝之后计数仍在窗口里），故剩余数要夹到 0。</summary>
@@ -72,6 +75,19 @@ public class AskQuotaDecision
 
     /// <summary>命中的是哪一层闸：visitor | site-daily</summary>
     public string? Scope { get; set; }
+
+    /// <summary>
+    /// 这一次**实际扣在哪两个键**上。退款必须原样退回这两个键，不能到时候再算一遍。
+    ///
+    /// 站点键里编了 UTC 日期（ask-quota:site:{id}:{yyyyMMdd}），访客键靠 TTL 划窗口。
+    /// 失败请求若跨过 UTC 零点、或访客窗口刚好到期被别的请求重建，退款时重算出来的
+    /// 就是**下一个窗口**的键：减掉的是别人刚攒的那一格，而超额的那一格原封不动留着。
+    /// 两头都错——共用的站点闸被凭空放宽，用户自己那格却没退回去。
+    /// </summary>
+    public string? ConsumedVisitorKey { get; set; }
+
+    /// <inheritdoc cref="ConsumedVisitorKey"/>
+    public string? ConsumedSiteKey { get; set; }
 
     /// <summary>
     /// 这一次是不是**真的**扣了计数。Redis 不可用时判定会「放行但没扣」（fail-open），

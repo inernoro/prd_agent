@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 const askDock = read('./ask/AskDock.tsx');
@@ -52,5 +53,24 @@ describe('加载态用统一组件', () => {
   it('三处加载态都换过来了', () => {
     const hits = popover.match(/<MapSpinner /g) ?? [];
     expect(hits.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('整个 web-hosting 目录都不许自己拿图标转圈', () => {
+    // 这条守卫原先只读 popover 一个文件——于是后来新写的 SharesWorkspace 里
+    // 又冒出一个 `<RefreshCw className="animate-spin" />`，规则明明已经立过，
+    // 守卫却看不见它。作用域比规则窄的守卫，等于没守：漏掉的正是「新增的那个文件」。
+    // 所以这里按规则本身的范围扫全目录。
+    const dir = fileURLToPath(new URL('.', import.meta.url));
+    const files = readdirSync(dir, { recursive: true } as never) as string[];
+    const offenders: string[] = [];
+    for (const rel of files) {
+      if (!/\.tsx?$/.test(rel) || /\.test\./.test(rel)) continue;
+      const src = readFileSync(`${dir}${rel}`, 'utf-8');
+      // 判据是「图标 + 自转」同时出现在一处：单独 import 图标不算违规
+      for (const m of src.matchAll(/<(\w+)[^>]*className="[^"]*animate-spin/g)) {
+        if (m[1] !== 'MapSpinner') offenders.push(`${rel}: <${m[1]} animate-spin>`);
+      }
+    }
+    expect(offenders, `这些地方该用 MapSpinner：\n${offenders.join('\n')}`).toEqual([]);
   });
 });

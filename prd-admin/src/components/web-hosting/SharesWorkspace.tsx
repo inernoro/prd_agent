@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Copy, Lock, RefreshCw, Search, Share2, X } from 'lucide-react';
+import { BarChart3, Copy, Lock, Search, Share2, X } from 'lucide-react';
 import type { HostedSite, ShareLinkItem } from '@/services/real/webPages';
 import { listSiteShares, renewSiteShare, revokeSiteShare } from '@/services';
 import { toast } from '@/lib/toast';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { buildLedgerConclusion, buildShareLedger, filterShareLinks, type ShareTier } from './shareLedger';
 import { daysUntil } from './siteConclusion';
 import { normalizeVisibility, VISIBILITY_ACCESS_HINT, visibilityLabelOf } from './shareVisibility';
@@ -433,7 +433,8 @@ function TierSection({
               ) : (
                 <>
                   <RowButton onClick={() => onRenew(l)} disabled={busy} accent={expiringSoon}>
-                    {busy ? <RefreshCw size={11} className="animate-spin" /> : '续期'}
+                    {/* 加载态一律用 MapSpinner：自己拿图标转圈会让品牌色与动效语言各处发散 */}
+                    {busy ? <MapSpinner size={11} /> : '续期'}
                   </RowButton>
                   {tier === 'active' && (
                     <>

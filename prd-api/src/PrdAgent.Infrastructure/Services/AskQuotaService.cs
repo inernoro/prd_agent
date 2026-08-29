@@ -86,7 +86,13 @@ public class AskQuotaService : IAskQuotaService
                 };
             }
 
-            return AskQuotaDecision.Ok();
+            // 记下**这一次真正扣在哪两个键**上。退款时原样退回去，不重算——
+            // 重算会在跨 UTC 零点 / 访客窗口翻篇时算出下一个窗口的键，
+            // 减掉别人刚攒的那格，而超额那格留着不动。
+            var ok = AskQuotaDecision.Ok();
+            ok.ConsumedVisitorKey = visitorKey;
+            ok.ConsumedSiteKey = siteKey;
+            return ok;
         }
         catch (Exception ex)
         {
@@ -128,18 +134,24 @@ public class AskQuotaService : IAskQuotaService
     }
 
     public async Task RefundAsync(
-        string siteId, string? userId, string? clientIp, CancellationToken ct = default)
+        AskQuotaDecision decision, string siteId, CancellationToken ct = default)
     {
+        // 没扣成就没什么可退（FailOpen / 被拒的那两条路都不带键）。
+        // 这里也不兜底去重算键——算不出「当初扣的是哪个窗口」时，宁可不退：
+        // 退错窗口是把别人的用量抹掉，比这个用户少一格额度严重得多。
+        if (string.IsNullOrEmpty(decision.ConsumedVisitorKey) && string.IsNullOrEmpty(decision.ConsumedSiteKey))
+        {
+            return;
+        }
+
         try
         {
             var db = _redis.GetDatabase();
-            var isAnonymous = string.IsNullOrWhiteSpace(userId);
-            var visitorKey = VisitorKey(isAnonymous, userId, clientIp);
-            var siteKey = SiteKey(siteId);
 
-            // 只在计数为正时回退，避免窗口刚好翻篇后把计数减成负数
-            await DecrIfPositiveAsync(db, visitorKey);
-            await DecrIfPositiveAsync(db, siteKey);
+            // 只在计数为正时回退，避免窗口刚好翻篇后把计数减成负数。
+            // 键取自 decision——就是 TryConsumeAsync 当初 INCR 的那两个。
+            if (!string.IsNullOrEmpty(decision.ConsumedVisitorKey)) await DecrIfPositiveAsync(db, decision.ConsumedVisitorKey);
+            if (!string.IsNullOrEmpty(decision.ConsumedSiteKey)) await DecrIfPositiveAsync(db, decision.ConsumedSiteKey);
         }
         catch (Exception ex)
         {

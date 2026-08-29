@@ -2738,18 +2738,40 @@ public class HostedSiteService : IHostedSiteService
     /// 只看前 200KB —— 签名都在 head 与首屏结构里，整页扫大文件不划算。
     /// 与前端 slideDeck.ts 是同一份签名表，改一处要同步改另一处。
     /// </summary>
+    /// <summary>
+    /// 各家幻灯框架在 HTML 里留下的痕迹。**唯一口径在前端 slideDeck.ts**，这里是它的
+    /// 后端对应实现；两边由 slideDeckParity.test.ts 钉住，改一边不改另一边就会红。
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex[] SlideDeckSignatures =
+    {
+        // reveal.js：容器 class="reveal" + 内层 .slides，两者同时出现才算
+        new(@"class\s*=\s*[""'][^""']*\breveal\b[^""']*[""'][\s\S]{0,4000}class\s*=\s*[""'][^""']*\bslides\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        new(@"\breveal(?:\.min)?\.js\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        new(@"\bReveal\.initialize\s*\(", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        // impress.js
+        new(@"\bid\s*=\s*[""']impress[""']", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        new(@"\bimpress(?:\.min)?\.js\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        // remark / remarkjs
+        new(@"\bremark\.create\s*\(", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        // deck.js
+        new(@"\bdeck(?:\.min)?\.js\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+    };
+
     private static bool DetectSlideDeck(byte[] htmlBytes)
     {
         if (htmlBytes.Length == 0) return false;
         var take = Math.Min(htmlBytes.Length, 200 * 1024);
         var head = System.Text.Encoding.UTF8.GetString(htmlBytes, 0, take);
-        string[] signatures =
-        {
-            "reveal.js", "reveal.min.js", "class=\"reveal\"", "Reveal.initialize",
-            "impress.js", "impress().init", "id=\"impress\"",
-            "remark.min.js", "remark.create", "deck.core.js", "deck.js",
-        };
-        return signatures.Any(sig => head.Contains(sig, StringComparison.OrdinalIgnoreCase));
+        // 判据必须与阅读页那份**等价**：前端 slideDeck.ts 的 DECK_SIGNATURES 是唯一口径，
+        // 这里是它在后端的对应实现（跨语言，没法共用一份代码，所以用守卫钉住两边一致：
+        // prd-admin/src/components/web-hosting/slideDeckParity.test.ts）。
+        //
+        // 原先是裸子串匹配，两处对不上：
+        //   - `class="reveal"` 单独就算 deck，而 reveal 是很常见的动画 class 名；
+        //     前端刻意要求**同时**出现内层 .slides 容器才算。
+        //   - 子串写死了双引号，`class='reveal'` 或 `class="a reveal b"` 都漏。
+        // 后果是同一个页面：卡片标「幻灯片」，阅读页却当普通网页——两种说法都来自我们自己。
+        return SlideDeckSignatures.Any(re => re.IsMatch(head));
     }
 
     private static byte[] InjectSlideNavCompat(byte[] htmlBytes)

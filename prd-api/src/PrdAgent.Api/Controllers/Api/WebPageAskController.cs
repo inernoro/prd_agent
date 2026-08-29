@@ -517,7 +517,7 @@ public class WebPageAskController : ControllerBase
             // 只退自己真扣过的那一格：Redis 不可用时判定是「放行但没扣」，这时候退
             // 减掉的是别人已经扣进去的计数，并发几个 fail-open 请求还会反复减。
             if (decision.Consumed)
-                await _quota.RefundAsync(site.Id, userId, clientIp);
+                await _quota.RefundAsync(decision, site.Id);
             await WriteJsonErrorAsync(422, "ASK_NO_CONTENT", snapshot.Unavailable);
             return;
         }
@@ -637,7 +637,7 @@ public class WebPageAskController : ControllerBase
             // 先置位再退：RefundAsync 自己抛出时，宁可这一次没退成（用户少一次额度），
             // 也不能让下一条出口再退一遍（那是把别人的用量抹掉，坏的是共用计数）。
             refunded = true;
-            await _quota.RefundAsync(site.Id, userId, clientIp);
+            await _quota.RefundAsync(decision, site.Id);
         }
 
         try
