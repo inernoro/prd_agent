@@ -161,8 +161,11 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
             var client = new MongoClient(settings);
             await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
 
-            var gatewayDatabaseName = $"gateway_unregistered_caller_{Guid.NewGuid():N}";
-            var mapDatabaseName = $"gateway_unregistered_caller_map_{Guid.NewGuid():N}";
+            // 库名必须短：Mongo 的上限是 63 字符，而 32 位 guid 已经吃掉一半。
+            // 起初用的 "gateway_unregistered_caller_map_" + guid 正好 64，
+            // 断言全过、DisposeAsync 里 dropDatabase 才炸，看着像功能坏了（实际不是）。
+            var gatewayDatabaseName = $"gw_unreg_caller_{Guid.NewGuid():N}";
+            var mapDatabaseName = $"gw_unreg_caller_map_{Guid.NewGuid():N}";
             var gatewayData = new LlmGatewayDataContext(connectionString, gatewayDatabaseName);
             var mapData = new MongoDbContext(connectionString, mapDatabaseName);
             var configuration = new ConfigurationBuilder()
