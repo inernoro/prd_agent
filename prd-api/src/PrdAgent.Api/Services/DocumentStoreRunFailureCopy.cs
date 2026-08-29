@@ -26,6 +26,12 @@ public static class DocumentStoreRunFailureCopy
     /// <summary>「换个整理方式」失败：录音与原文都没动，只是这次整理没生成出来。</summary>
     public const string RestyleFailed = "RESTYLE_FAILED";
 
+    /// <summary>
+    /// 转写成功、但用户点的那种整理没生成出来。这条 run 是 done，不是 failed——
+    /// 原文完整落库了，只是摘要那一节空着。
+    /// </summary>
+    public const string SummarySkipped = "SUMMARY_SKIPPED";
+
     /// <param name="Code">写进 run.FailureCode 的机器可判定分类；没有分类时为 null。</param>
     /// <param name="AutomaticRetryAllowed">这一类值不值得自动重试（配额另由 Worker 判）。</param>
     /// <param name="RetryingMessage">确定会自动重试时改说的那句；为 null 表示两种情形同一句话。</param>
@@ -86,6 +92,36 @@ public static class DocumentStoreRunFailureCopy
             AudioTranscriptionUserError.ForRetryOutcome(failure, willRetry: false),
             failure.AutomaticRetryAllowed,
             RetryingMessage: AudioTranscriptionUserError.ForRetryOutcome(failure, willRetry: true));
+    }
+
+    /// <summary>
+    /// 转录那一路的**降级**说法：ASR 成功、整理失败。
+    ///
+    /// 这一档必须和 <see cref="Resolve"/> 分开：那边会按「这是 Transcribe run」判成语音转写失败，
+    /// 对着一篇原文好好躺在那里的笔记说「语音转写暂时失败，原始音频已保留，不需要重新录制」——
+    /// 又是一句把人往重录上引的假话。
+    ///
+    /// 这句话会写进笔记的「摘要」小节。此前那一节是**整个不渲染**的：转录笔记落库、摘要为空、
+    /// 页面上没有任何提示，用户根本不知道自己点的整理失败过（2026-08-29 用户两条录音就是这么丢的）。
+    /// 静默降级比失败更伤——失败至少还告诉你发生了什么。
+    /// </summary>
+    public static Copy ResolveSummarySkipped(DocumentStoreAgentRun run, Exception ex)
+    {
+        var routeFailureCode = ExtractRouteFailureCode(ex);
+        if (GatewayRouteFailure.IsConfigurationFault(routeFailureCode)
+            || (routeFailureCode == null && LooksLikeMissingModel(ex)))
+        {
+            return new Copy(
+                ModelNotConfigured,
+                GatewayRouteFailure.UserMessage(routeFailureCode ?? GatewayRouteFailure.ModelPoolEmpty)
+                    + "转录原文已完整保存，配好之后在这条笔记上重新整理即可。",
+                AutomaticRetryAllowed: false);
+        }
+
+        return new Copy(
+            SummarySkipped,
+            "这次整理没有生成出来。转录原文已完整保存，可以在这条笔记上重新整理。",
+            AutomaticRetryAllowed: false);
     }
 
     /// <summary>

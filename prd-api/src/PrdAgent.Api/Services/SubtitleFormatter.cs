@@ -37,7 +37,16 @@ public static class SubtitleFormatter
     /// <summary>
     /// 录音转录笔记：AI 摘要在上、转录全文在下（移动端 Notion 式录音流程的最终产物）。
     /// </summary>
-    public static string FormatTranscriptNote(string sourceTitle, string summary, IReadOnlyList<SubtitleSegment> segments)
+    /// <param name="summaryUnavailableNote">
+    /// 用户点了整理、但整理没生成出来时要说的那句话。此前这种情况是整个不渲染「摘要」小节：
+    /// 笔记照样落库、摘要空着、页面上没有任何提示，用户不知道自己点的整理失败过。
+    /// 静默降级比失败更伤——失败至少还告诉你发生了什么。
+    /// </param>
+    public static string FormatTranscriptNote(
+        string sourceTitle,
+        string summary,
+        IReadOnlyList<SubtitleSegment> segments,
+        string? summaryUnavailableNote = null)
     {
         var sb = new StringBuilder();
         var baseName = System.IO.Path.GetFileNameWithoutExtension(sourceTitle);
@@ -54,6 +63,13 @@ public static class SubtitleFormatter
             sb.AppendLine("## 摘要");
             sb.AppendLine();
             sb.AppendLine(summary.Trim());
+            sb.AppendLine();
+        }
+        else if (!string.IsNullOrWhiteSpace(summaryUnavailableNote))
+        {
+            sb.AppendLine("## 摘要");
+            sb.AppendLine();
+            sb.AppendLine(summaryUnavailableNote.Trim());
             sb.AppendLine();
         }
 
