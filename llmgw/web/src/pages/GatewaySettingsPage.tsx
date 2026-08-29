@@ -138,8 +138,9 @@ export function GatewaySettingsPage() {
               <span style={FIELD_LABEL}>逻辑模型</span>
               <select value={modelName} onChange={(event) => setModelName(event.target.value)}>
                 <option value="">请选择一个模型</option>
+                {/* 提交 publicId、显示 name：解析器按 publicId 匹配，拿显示名去存会匹配不上 */}
                 {data.models.map((model) => (
-                  <option key={model.id} value={model.name}>{model.name}</option>
+                  <option key={model.id} value={model.publicId}>{model.name}</option>
                 ))}
               </select>
               {data.models.length === 0 ? <small style={HINT_TEXT}>当前没有启用的对话类逻辑模型，先去「逻辑模型」启用一个。</small> : null}
@@ -147,8 +148,13 @@ export function GatewaySettingsPage() {
           ) : null}
 
           <div className="lg-gws-actions">
-            <span className="lg-gws-actions-hint">测试连接会真发一次极短对话，回报耗时与实际执行的模型。</span>
-            <Button disabled={testing} onClick={() => void runTest()}>
+            <span className="lg-gws-actions-hint">
+              {dirty
+                ? '测试连接测的是已保存的那一份配置，先保存再测，否则会拿旧配置报成功。'
+                : '测试连接会真发一次极短对话，回报耗时与实际执行的模型。'}
+            </span>
+            {/* 改了还没保存时禁用：测试端点读的是库里那份，此时测出来的成功与屏幕上选的不是同一件事 */}
+            <Button disabled={testing || dirty} onClick={() => void runTest()}>
               <PlugZap size={15} />{testing ? '正在测试' : '测试连接'}
             </Button>
             <Button variant="primary" disabled={saving || !dirty} onClick={() => void save()}>

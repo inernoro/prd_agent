@@ -83,6 +83,8 @@ export function ServiceKeysPage() {
   const { tenant } = useAuth();
   const { confirm } = useDialogs();
   const isInternalTenant = tenant?.isInternal === true;
+  // Developer 的密钥必须绑团队（服务端硬性要求），Owner/Admin 留空则是租户级密钥。
+  const isDeveloper = tenant?.role === 'developer';
   const canManageLegacyCutover = canUseCapability(tenant?.role, 'configWrite');
   const [items, setItems] = useState<ServiceKeyItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -189,7 +191,12 @@ export function ServiceKeysPage() {
       appCallerCodes: effectiveAppCallerCodes,
       ingressProtocols: splitValues(ingressProtocols),
       scopes: splitValues(scopes),
-      teamId: teamId.trim() || undefined,
+      // 留空 = 租户级密钥，这是有意的语义，对 Owner/Admin 保持不变。
+      // 唯独 Developer 不允许租户级：服务端只在「刚好一个团队」时替他推断，
+      // 多团队的 Developer 留空会被 TEAM_SCOPE_REQUIRED 挡在这一步，而上面那条
+      // 调用用途已经登记出去了——留下一条没有密钥的孤儿登记。所以这里替他补上
+      // 与登记用途同一个团队，两个请求落在同一个归属上。
+      teamId: teamId.trim() || (isDeveloper ? appCallerTeamId : '') || undefined,
       allowedCidrs: splitValues(allowedCidrs),
       rateLimitPerMinute: rateLimitPerMinute ? Number(rateLimitPerMinute) : undefined,
       rotatesKeyId,

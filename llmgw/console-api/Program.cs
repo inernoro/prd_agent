@@ -5595,8 +5595,11 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
             Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
             Builders<BsonDocument>.Filter.Eq("ModelType", "chat")))
         .ToListAsync();
+    // 逻辑模型库是跨租户共用一个集合的，所以这里必须和上面的池查询一样带上 TenantId：
+    // 少这一条谓词，任何管理员打开这一页就会看到别的租户的模型名，还能选中它。
     var chatModels = await gwLogicalModels
         .Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
             Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
             Builders<BsonDocument>.Filter.Ne("Enabled", false)))
         .Limit(200)
@@ -5635,10 +5638,14 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
             name = x.AsNullableString("Name") ?? x.GetStringOrEmpty("_id"),
             isDefault = x.AsNullableBool("IsDefaultForType") == true,
         }).ToList(),
+        // publicId 才是调用时真正要提交的标识：解析器只认 PublicId / PublicIdNormalized，
+        // Name 只是给人看的显示名。两者可以不同，所以必须分成两个字段回，
+        // 否则页面把显示名当模型名存下去，解析时匹配不上、悄悄落到别的默认模型。
         models = chatModels.Select(x => new
         {
             id = x.GetStringOrEmpty("_id"),
-            name = x.AsNullableString("Name") ?? x.GetStringOrEmpty("_id"),
+            publicId = x.AsNullableString("PublicId") ?? x.GetStringOrEmpty("_id"),
+            name = x.AsNullableString("Name") ?? x.AsNullableString("PublicId") ?? x.GetStringOrEmpty("_id"),
         }).ToList(),
         // 「谁在用它」：让用户知道改这一项会影响什么，而不是改完不知道动了谁。
         consumers = new[]
@@ -5668,8 +5675,21 @@ app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSyst
         if (!poolExists)
             return Json(ApiEnvelope<object>.Fail("MODEL_POOL_NOT_FOUND", "指定的模型池不在当前租户下"), jsonOptions, 404);
     }
-    if (modelSource == "model" && modelName.Length == 0)
-        return Json(ApiEnvelope<object>.Fail("MODEL_NAME_REQUIRED", "选择「指定模型」时必须选一个模型"), jsonOptions, 400);
+    if (modelSource == "model")
+    {
+        if (modelName.Length == 0)
+            return Json(ApiEnvelope<object>.Fail("MODEL_NAME_REQUIRED", "选择「指定模型」时必须选一个模型"), jsonOptions, 400);
+        // 和池一样按租户校验，并且认的是 PublicId：读端点只列本租户的模型，
+        // 写端点也必须自己判一次，否则直接构造请求就能把别的租户的模型钉进来；
+        // 认 PublicId 也保证存下去的值就是解析器会去匹配的那个值。
+        var modelExists = await gwLogicalModels.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("TenantId", tenant.TenantId),
+            Builders<BsonDocument>.Filter.Or(
+                Builders<BsonDocument>.Filter.Eq("PublicId", modelName),
+                Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", modelName.ToLowerInvariant())))) > 0;
+        if (!modelExists)
+            return Json(ApiEnvelope<object>.Fail("MODEL_NOT_FOUND", "指定的逻辑模型不在当前租户下"), jsonOptions, 404);
+    }
 
     // 归属团队不接受写入：系统消耗恒记在系统团队（EnsureSystemTeamAsync）。
     // 留一个能改归属的字段，等于留一条把系统账单混进业务团队的路。

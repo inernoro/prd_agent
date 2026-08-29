@@ -67,7 +67,11 @@ const server = http.createServer((req, res) => {
           { id: 'pool-1', name: '对话默认池', isDefault: true },
           { id: 'pool-2', name: '实验池', isDefault: false },
         ],
-        models: [{ id: 'lm-1', name: 'demo/chat-1' }, { id: 'lm-2', name: 'demo/chat-2' }],
+        // 显示名故意与 publicId 不同：页面若把显示名当模型名提交，下面那条断言立刻红。
+        models: [
+          { id: 'lm-1', publicId: 'demo/chat-1', name: '对话主力' },
+          { id: 'lm-2', publicId: 'demo/chat-2', name: '实验模型' },
+        ],
         consumers: [{ feature: 'Quickstart · 一句话推导调用用途码', appCallerCode: 'llmgw-console.intent-draft::chat' }],
       } });
     }
@@ -164,10 +168,14 @@ check('选池的提交体', posted.at(-1), { method: 'PUT /system-settings', bod
 // 1b. 选模型：提交体必须带 modelName，且不带 modelGroupId。
 await page.locator('.lg-gws-sources > button', { hasText: '钉一个模型' }).last().click();
 await page.waitForTimeout(400);
-await page.locator('.lg-gws-field select').selectOption('demo/chat-2');
+// 按显示名去选，提交体里应该出现的是 publicId——解析器只认它，显示名匹配不上会静默落到别的模型。
+await page.locator('.lg-gws-field select').selectOption({ label: '实验模型' });
+// 改完还没保存时，「测试连接」测的是库里那份旧配置，必须禁用，不能让人拿旧配置的成功当新配置的证明。
+check('未保存时测试连接禁用', await page.getByRole('button', { name: '测试连接' }).isDisabled(), true);
 await page.getByRole('button', { name: '保存设置' }).click();
 await page.waitForTimeout(900);
-check('选模型的提交体', posted.at(-1), { method: 'PUT /system-settings', body: { modelSource: 'model', modelName: 'demo/chat-2' } });
+check('选模型提交的是 publicId 不是显示名', posted.at(-1), { method: 'PUT /system-settings', body: { modelSource: 'model', modelName: 'demo/chat-2' } });
+check('保存后测试连接恢复可点', await page.getByRole('button', { name: '测试连接' }).isDisabled(), false);
 
 // 当场自测：成功时要说清耗时与真正执行的模型，不是一句「操作成功」。
 await page.getByRole('button', { name: '测试连接' }).click();

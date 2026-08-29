@@ -66,6 +66,10 @@ const json = (res, status, body) => {
 /** 浏览器真的发出来的写请求，逐条留档给断言用。 */
 const posted = [];
 
+// 登录身份可切：Owner 留空 teamId 是有意的租户级密钥，而 Developer 必须绑团队，
+// 两档的正确行为不一样，所以要用同一套页面分别跑一遍。
+let session = { role: 'owner', teamIds: ['team-1'] };
+
 const server = http.createServer((req, res) => {
   const p = new URL(req.url, `http://localhost:${PORT}`).pathname;
   if (p.startsWith('/llmgw/gw/')) {
@@ -74,7 +78,7 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { success: true, error: null, data: {
         token: 'stub', username: 'demo', displayName: 'Demo',
         expiresAt: new Date(Date.now() + 3600_000).toISOString(), mustChangePassword: false,
-        tenant: { id: 't1', name: '演示租户', isInternal: false, role: 'owner', teamIds: ['team-1'] },
+        tenant: { id: 't1', name: '演示租户', isInternal: false, role: session.role, teamIds: session.teamIds },
       } });
     }
     if (req.method === 'POST') {
@@ -194,6 +198,32 @@ await page.getByRole('button', { name: '生成 API Key' }).click();
 await page.waitForTimeout(1200);
 check('复用已有 code 时不再登记 appCaller', posted.map((item) => item.api), ['/service-keys']);
 check('复用的 code 原样提交', posted[0]?.body?.appCallerCodes, ['ai-toolbox.agent::generation']);
+
+// 7) 多团队 Developer：留空团队时，服务端不会替他推断（只有「刚好一个团队」才推），
+//    Developer 又不允许租户级密钥，于是密钥这一步会被 TEAM_SCOPE_REQUIRED 挡回来——
+//    而上一步的调用用途已经登记出去了，留下一条没有密钥的孤儿登记。
+//    所以页面必须替他把两个请求落在同一个团队上。
+posted.length = 0;
+session = { role: 'developer', teamIds: ['team-9', 'team-1'] };
+const devPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await devPage.goto(`${base}/service-keys`);
+await devPage.waitForSelector('#llmgw-username');
+await devPage.fill('#llmgw-username', 'dev');
+await devPage.fill('#llmgw-password', 'dev');
+await devPage.click('button[type=submit]');
+await devPage.waitForURL('**/llmgw/service-keys');
+await devPage.waitForTimeout(600);
+await devPage.getByRole('button', { name: '新建密钥' }).click();
+await devPage.waitForSelector('.lg-service-key-form');
+await devPage.locator('.lg-service-key-fast-fields input').first().fill('dev-multi-team');
+await devPage.locator('input[aria-label="调用用途"]').fill('desktop');
+await devPage.waitForTimeout(120);
+await devPage.getByRole('button', { name: '生成 API Key' }).click();
+await devPage.waitForTimeout(1200);
+const devCaller = posted.find((item) => item.api === '/app-callers')?.body ?? {};
+const devKey = posted.find((item) => item.api === '/service-keys')?.body ?? {};
+check('多团队 Developer 的用途登记落在身份自己的团队', devCaller.teamId, 'team-9');
+check('多团队 Developer 的密钥与用途落在同一个团队', devKey.teamId, devCaller.teamId);
 
 await browser.close();
 server.close();

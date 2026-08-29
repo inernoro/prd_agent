@@ -1427,7 +1427,8 @@ export type SystemGatewaySettings = {
   credentialPrefix: string | null;
   credentialIssuedAt: string | null;
   pools: Array<{ id: string; name: string; isDefault: boolean }>;
-  models: Array<{ id: string; name: string }>;
+  // publicId 是提交给后端的值（解析器只认它），name 只做显示。
+  models: Array<{ id: string; publicId: string; name: string }>;
   consumers: Array<{ feature: string; appCallerCode: string }>;
 };
 
