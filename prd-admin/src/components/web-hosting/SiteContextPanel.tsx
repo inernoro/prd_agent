@@ -1,8 +1,10 @@
 import { Eye, Link2, Plus, Share2, Trash2 } from 'lucide-react';
+
 import type { HostedSite, ShareLinkItem } from '@/services/real/webPages';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
 import { buildSiteConclusion, daysUntil, linksOfSite } from './siteConclusion';
+import { isLinkActive } from './shareStatus';
 import { fmtSize, relativeTime } from './siteFormat';
 import type { PulseItem } from './weeklyPulse';
 import { normalizeVisibility, VISIBILITY_ACCESS_HINT, visibilityLabelOf } from './shareVisibility';
@@ -106,7 +108,7 @@ export function SiteSelectionPanel({
   onClearSelection: () => void;
 }) {
   const siteLinks = linksOfSite(links, site.id);
-  const active = siteLinks.filter((l) => !l.isRevoked && !l.isExpired);
+  const active = siteLinks.filter((l) => isLinkActive(l));
   const views = active.reduce((sum, l) => sum + (l.viewCount ?? 0), 0);
   // 没有任何有效链接时，「以访客身份预览这条链接」指着一条不存在的链接，
   // 「管理分享」也没东西可管 —— 这一屏对用户就是空转。这种时候该做的事只有一件：先建一条。
@@ -378,7 +380,7 @@ export function SiteContextPanel({
   const siteLinks = linksOfSite(links, site.id);
   const now = Date.now();
   const conclusion = buildSiteConclusion(siteLinks, now, visitorCount);
-  const activeLinks = siteLinks.filter((l) => !l.isRevoked && !l.isExpired);
+  const activeLinks = siteLinks.filter((l) => isLinkActive(l, now));
 
   return (
     <RailShell>

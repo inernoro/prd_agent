@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildLedgerConclusion, buildShareLedger, filterShareLinks, tierOf } from './shareLedger';
+import { isLinkActive, isLinkExpired } from './shareStatus';
 import type { ShareLinkItem } from '@/services/real/webPages';
 
 const NOW = new Date('2026-08-21T00:00:00.000Z').getTime();
@@ -179,5 +180,54 @@ describe('分享档账本', () => {
     // 哪怕它来自本页 sites 的回退（siteTitles 为空时）
     const noTitles = [link({ id: 'c', title: '外发', token: 'ccc' })];
     expect(filterShareLinks(noTitles, '回退站点', () => '回退站点名').map((l) => l.id)).toEqual(['c']);
+  });
+});
+
+describe('过期判据以时钟为准，且全站只有一份', () => {
+  it('到期时刻一过就该判过期，不等服务端那次快照', () => {
+    // 服务端返回的 isExpired 是**上一次请求时**的结论。面板开着不动、到期时刻过去，
+    // 那条死链原先仍被算进「有效」——顶栏计数、结论句、复制按钮跟着一起错。
+    const dying = link({ id: 'a', token: 'a1', expiresAt: inDays(1), isExpired: false });
+
+    expect(tierOf(dying, NOW)).toBe('active');
+    // 时钟往前推两天，同一份数据（isExpired 仍是服务端那个 false）
+    expect(tierOf(dying, NOW + 2 * 86400000)).toBe('expired');
+
+    const later = buildShareLedger([dying], NOW + 2 * 86400000);
+    expect(later.active).toHaveLength(0);
+    expect(later.expired.map((l) => l.id)).toEqual(['a']);
+
+    // 结论句读同一个时钟，不会一边说「1 条有效」一边把它排进过期层
+    expect(text([dying])).toContain('1 条有效链接');
+    expect(buildLedgerConclusion([dying], NOW + 2 * 86400000).map((s) => s.text).join(''))
+      .toContain('已经没有生效中的链接');
+  });
+
+  it('没有到期时间的永久链，仍以服务端快照兜底', () => {
+    expect(isLinkExpired(link({ expiresAt: undefined, isExpired: false }), NOW)).toBe(false);
+    expect(isLinkExpired(link({ expiresAt: undefined, isExpired: true }), NOW)).toBe(true);
+    // 时间串解析不出来时同样退回快照，而不是当成「已过期」把活链接判死
+    expect(isLinkExpired(link({ expiresAt: '不是时间', isExpired: false }), NOW)).toBe(false);
+  });
+
+  it('撤销优先于过期', () => {
+    const both = link({ expiresAt: inDays(-1), isRevoked: true });
+    expect(tierOf(both, NOW)).toBe('revoked');
+    expect(isLinkActive(both, NOW)).toBe(false);
+  });
+
+  it('「有效」这句判断全仓只有 shareStatus 一处在写', () => {
+    // 这句判断此前散在八处，每处都手写 `!l.isRevoked && !l.isExpired`。
+    // 判据分裂就会漂移：这次「过期看时钟」的改动，漏掉任何一处就会一半新一半旧
+    // （predicate-and-wiring-discipline 形状 3）。守卫扫的是「还有没有人另写一份」。
+    const files = import.meta.glob('/src/**/*.{ts,tsx}', { eager: true, query: '?raw', import: 'default' }) as Record<string, string>;
+    const offenders = Object.entries(files)
+      .filter(([path]) => !path.includes('shareStatus') && !path.includes('.test.'))
+      .filter(([, src]) => /!\w+\.isRevoked\s*&&\s*!\w+\.isExpired|\w+\.isRevoked\s*\|\|\s*\w+\.isExpired/.test(src))
+      .map(([path]) => path);
+
+    expect(offenders).toEqual([]);
+    // 扫不到任何文件说明 glob 失效了，这条守卫会静默全绿——先证明它真的在扫
+    expect(Object.keys(files).length).toBeGreaterThan(100);
   });
 });

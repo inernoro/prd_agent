@@ -302,7 +302,12 @@ public class AskOpeningQuestionWiringTests
         Assert.Contains("questions ?? new List<string>()", body);
         // 不许退回「为 null 就不写这个字段」的老写法
         Assert.DoesNotContain("if (questions != null)", body);
-        Assert.Contains("AskQuestionsSource != \"manual\"", body);
+        // 判据写成「不管用 LINQ 还是 filter builder，manual 这条都得在过滤器里」：
+        // 上一版钉的是 `AskQuestionsSource != "manual"` 这串字面量，过滤器一改成
+        // Builders 写法就假红——守卫钉住了被测代码的偶然形状，不是它的不变量。
+        Assert.Matches(
+            new Regex("AskQuestionsSource\\s*!=\\s*\"manual\"|Ne\\([^)]*AskQuestionsSource\\s*,\\s*\"manual\""),
+            body);
     }
 
     [Fact]
@@ -359,9 +364,16 @@ public class AskOpeningQuestionWiringTests
         // 等于用旧内容的口径描述新页面，还会把版本戳推到新版、堵住下一次自动生成。
         var gen = ReadSrc(Path.Combine("src", "PrdAgent.Infrastructure", "Services", "AskOpeningQuestionGenerator.cs"));
         var body = SourceSlice.Member(gen, "private static async Task<bool> StampAsync(");
-        Assert.Contains("s.ContentVersion == version", body);
-        // 版本口径必须与 NeedsGeneration 那处一致（存量站点没有 ContentVersion，回退 CreatedAt）
-        Assert.Contains("s.ContentVersion == default && s.CreatedAt == version", body);
+        // 正文版本判据已收敛成认领与盖戳共用的那一份；这里钉「盖戳有没有过这道判据」，
+        // 判据本身对不对由真打 Mongo 的 AskOpenerLegacyContentVersionTests 证明。
+        Assert.Contains("ContentVersionIs(version)", body);
+        // 版本口径必须与 NeedsGeneration 那处一致：存量站点没有 ContentVersion，回退 CreatedAt。
+        // 而「没有这个字段」在 Mongo 里有两种形状——存了零值、与字段压根不存在；只认前者
+        // 会让所有老站点认领必然落空且不报错，所以 $exists:false 那一支也必须在。
+        var versionPredicate = SourceSlice.Member(
+            gen, "internal static FilterDefinition<HostedSite> ContentVersionIs(");
+        Assert.Contains("s.CreatedAt, version", versionPredicate);
+        Assert.Contains("Exists(s => s.ContentVersion, false)", versionPredicate);
     }
 
     [Fact]

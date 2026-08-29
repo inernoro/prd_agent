@@ -1,4 +1,6 @@
 import type { HostedSite, ShareLinkItem } from '@/services/real/webPages';
+
+import { isLinkActive } from './shareStatus';
 import { daysUntil } from './siteConclusion';
 
 /**
@@ -46,7 +48,7 @@ export function buildWeeklyPulse(
   }
 
   const soon = links
-    .filter((l) => !l.isRevoked && !l.isExpired)
+    .filter((l) => isLinkActive(l, now))
     .map((l) => daysUntil(l.expiresAt, now))
     .filter((d): d is number => d !== null && d <= windowDays)
     .sort((a, b) => a - b);

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
@@ -106,10 +107,17 @@ public class AskDefaultOnPolicyTests
         // 换回支持的形态后，没表过态就该恢复成开——这正是被 false 覆盖掉的那件事
         Assert.True(AskAccessPolicy.IsAskOn(null, "html"));
 
-        // 源码：全仓不许再出现「把不支持写成 owner 拒绝」的那一笔
+        // 源码：全仓不许再出现「把不支持写成 owner 拒绝」的那一笔。
+        //
+        // 抓的是**写入**，不是读取。原先判据是裸的 "AskEnabled, false"，把
+        // `Ne(s => s.AskEnabled, false)`（过滤器里的「owner 没明确关掉」）也一起抓了——
+        // 那正是三态语义要的读法，抓它等于禁止正确写法（形状 1：判据比它该管的范围宽）。
+        // 写入只有两种形状：对象初始化/赋值的 `AskEnabled = false`，与更新定义的
+        // `Set(... AskEnabled, false)`。
         var src = LocateSrcRoot();
+        var writesFalse = new Regex(@"AskEnabled\s*=\s*false|Set\([^)]*AskEnabled\s*,\s*false");
         var offenders = Directory.GetFiles(src, "*.cs", SearchOption.AllDirectories)
-            .Where(f => File.ReadAllText(f).Contains("AskEnabled, false"))
+            .Where(f => writesFalse.IsMatch(File.ReadAllText(f)))
             .Select(f => Path.GetFileName(f))
             .ToList();
         Assert.True(offenders.Count == 0,

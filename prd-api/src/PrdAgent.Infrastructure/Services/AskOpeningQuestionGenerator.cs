@@ -346,17 +346,48 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         //
         // 正文版本也在这里锁住：重传后 ContentVersion 变了，这一发算的是旧正文，
         // 不该再往下走。
+        var f = Builders<HostedSite>.Filter;
         var claimed = await db.HostedSites.UpdateOneAsync(
-            s => s.Id == siteId
-                 && s.AskQuestionsGeneratedFor != version
-                 && s.AskQuestionsSource != AskOpeningQuestions.SourceManual
-                 && s.AskEnabled != false
-                 && (s.ContentVersion == version || (s.ContentVersion == default && s.CreatedAt == version))
-                 && (s.AskOpenerClaimedAt == null || s.AskOpenerClaimedAt < staleBefore),
+            f.And(
+                f.Eq(s => s.Id, siteId),
+                f.Ne(s => s.AskQuestionsGeneratedFor, version),
+                f.Ne(s => s.AskQuestionsSource, AskOpeningQuestions.SourceManual),
+                f.Ne(s => s.AskEnabled, false),
+                ContentVersionIs(version),
+                f.Or(
+                    f.Eq(s => s.AskOpenerClaimedAt, (DateTime?)null),
+                    f.Lt(s => s.AskOpenerClaimedAt, staleBefore))),
             Builders<HostedSite>.Update.Set(s => s.AskOpenerClaimedAt, now),
             cancellationToken: ct);
 
         return claimed.MatchedCount > 0 ? now : null;
+    }
+
+
+    /// <summary>
+    /// 「这条站点此刻的正文版本正好是 version」的**唯一** Mongo 判据。
+    ///
+    /// 存量站点的文档里根本没有 ContentVersion 这个字段——`WebPage.ContentVersion` 的注释
+    /// 明确禁止给它加初始化器，就是为了让老文档反序列化后停在 default，读取侧再回退到
+    /// CreatedAt。C# 那边写成 `ContentVersion == default ? CreatedAt : ContentVersion` 没问题，
+    /// 但同一句话翻译成 Mongo 谓词时，`{ContentVersion: ISODate("0001-01-01")}` 只匹配
+    /// **显式存了零值**的文档，字段缺失的一条都匹配不到（Mongo 里只有 null 才匹配缺失）。
+    /// 于是认领对所有老站点必然落空，自动与手动生成对它们永远不触发，而且不会报错。
+    /// 缺失分支必须单独用 $exists:false 认。
+    ///
+    /// 认领与盖戳共用这一份：两处曾各写一遍同一个判断，漏改一处就会一边认得到、一边写不进去
+    /// （predicate-and-wiring-discipline 形状 3）。
+    /// </summary>
+    internal static FilterDefinition<HostedSite> ContentVersionIs(DateTime version)
+    {
+        var f = Builders<HostedSite>.Filter;
+        return f.Or(
+            f.Eq(s => s.ContentVersion, version),
+            f.And(
+                f.Or(
+                    f.Eq(s => s.ContentVersion, default(DateTime)),
+                    f.Exists(s => s.ContentVersion, false)),
+                f.Eq(s => s.CreatedAt, version)));
     }
 
     /// <summary>
@@ -408,15 +439,17 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         // 盖上去等于用旧内容的口径描述新页面，还会把版本戳推到新版、堵住下一次自动生成。
         // 版本对不上就整笔不写——NeedsGeneration 随即判「这一版没算过」，下一次
         // QueueEnsure（重传、改配置、访客打开分享）会重新按新正文生成。
+        var f = Builders<HostedSite>.Filter;
         var result = await db.HostedSites.UpdateOneAsync(
-            s => s.Id == siteId
-                 && s.AskQuestionsSource != "manual"
-                 // 这一版还没被别人盖过。少了这条，两个进程（两个 CDS 分支部署、
-                 // 或同一部署的两个副本）同时为同一站点同一版生成时，两笔都能匹配，
-                 // 后到的那笔会覆盖先到的结果——而模型已经被调了两次。
-                 // 计费拦不住要靠下面 TryClaim 的原子认领，这里挡住的是「覆盖」。
-                 && s.AskQuestionsGeneratedFor != version
-                 && (s.ContentVersion == version || (s.ContentVersion == default && s.CreatedAt == version)),
+            f.And(
+                f.Eq(s => s.Id, siteId),
+                f.Ne(s => s.AskQuestionsSource, "manual"),
+                // 这一版还没被别人盖过。少了这条，两个进程（两个 CDS 分支部署、
+                // 或同一部署的两个副本）同时为同一站点同一版生成时，两笔都能匹配，
+                // 后到的那笔会覆盖先到的结果——而模型已经被调了两次。
+                // 计费拦不住要靠下面 TryClaim 的原子认领，这里挡住的是「覆盖」。
+                f.Ne(s => s.AskQuestionsGeneratedFor, version),
+                ContentVersionIs(version)),
             update,
             cancellationToken: ct);
         return result.MatchedCount > 0;

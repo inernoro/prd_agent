@@ -43,7 +43,11 @@ public class AskOpenerClaimTests
         var src = Source();
         var head = MemberBody(src, "TryClaimAsync");
 
-        Assert.Contains("AskOpenerClaimedAt == null", head);
+        // 判据不钉写法：LINQ 的 `== null` 与 filter builder 的 `Eq(..., null)` 是同一件事，
+        // 钉住其中一种就会在换写法时假红（守卫依赖被测代码的偶然形状，今天已第四次）。
+        Assert.Matches(
+            new Regex(@"AskOpenerClaimedAt\s*==\s*null|Eq\([^;]*AskOpenerClaimedAt[^;]*null"),
+            head);
         Assert.Contains("staleBefore", head);
         // 抢不到时必须让路，而不是继续往下跑
         Assert.Contains("MatchedCount > 0", head);
@@ -56,7 +60,9 @@ public class AskOpenerClaimTests
         var src = Source();
         var stamp = src[src.IndexOf("private static async Task<bool> StampAsync", StringComparison.Ordinal)..];
 
-        Assert.Contains("s.AskQuestionsGeneratedFor != version", stamp);
+        Assert.Matches(
+            new Regex(@"AskQuestionsGeneratedFor\s*!=\s*version|Ne\([^)]*AskQuestionsGeneratedFor\s*,\s*version"),
+            stamp);
     }
 
     /// <summary>
@@ -90,9 +96,16 @@ public class AskOpenerClaimTests
         var src = Source();
         var head = MemberBody(src, "TryClaimAsync");
 
-        Assert.Contains("AskQuestionsSource != AskOpeningQuestions.SourceManual", head);
-        Assert.Contains("AskEnabled != false", head);
-        Assert.Contains("ContentVersion == version", head);
+        Assert.Matches(
+            new Regex(@"AskQuestionsSource\s*!=\s*AskOpeningQuestions\.SourceManual|Ne\([^)]*AskQuestionsSource\s*,\s*AskOpeningQuestions\.SourceManual"),
+            head);
+        Assert.Matches(
+            new Regex(@"AskEnabled\s*!=\s*false|Ne\([^)]*AskEnabled\s*,\s*false"),
+            head);
+        // 正文版本这条现在走共用判据（认领与盖戳同一份），钉的是「有没有过这道判据」。
+        // 它本身对不对由真打 Mongo 的 AskOpenerLegacyContentVersionTests 证明——
+        // 那才是能证伪「缺字段的老站点认不出来」的证据，源码扫描证不了。
+        Assert.Contains("ContentVersionIs(version)", head);
     }
 
     /// <summary>

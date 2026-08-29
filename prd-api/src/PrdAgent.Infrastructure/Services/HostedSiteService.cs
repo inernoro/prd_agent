@@ -1242,14 +1242,27 @@ public class HostedSiteService : IHostedSiteService
     {
         // 盖上撤销时刻：分享管理面板的已撤销一层要显示「8 月 11 日撤销」。
         // 没有这个字段就只能拿 CreatedAt 顶替，那是创建时间不是撤销时间，会直接误导人。
+        //
+        // 过滤器必须带上「还没撤销」：这两个字段在面板上被当作**撤销这件事的历史记录**读，
+        // 而 DELETE 会被重发——网关超时后客户端重试、两个标签页同时点撤销都算。原先的
+        // 过滤器照样匹配一条已撤销的链接，于是第二次调用把撤销时刻改成"现在"，
+        // 不带 reason 的那次还会把第一次写下的理由抹成 null。第一笔审计是唯一那笔，
+        // 之后的重发只该是空操作。`$ne: true` 同时认得下缺这个字段的存量文档。
         var result = await _db.WebPageShareLinks.UpdateOneAsync(
-            x => x.Id == shareId && x.CreatedBy == userId,
+            x => x.Id == shareId && x.CreatedBy == userId && x.IsRevoked != true,
             Builders<WebPageShareLink>.Update
                 .Set(x => x.IsRevoked, true)
                 .Set(x => x.RevokedAt, DateTime.UtcNow)
                 .Set(x => x.RevokedReason, string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()),
             cancellationToken: ct);
-        return result.MatchedCount > 0;
+        if (result.MatchedCount > 0) return true;
+
+        // 一条都没匹配上有两种可能：这条不是他的 / 不存在（该回 false，端点转 404），
+        // 或者他已经撤销过了（该回 true——用户要的结果已经达成，重试不该看到报错）。
+        // 分不清就会把「重试成功」显示成失败，用户以为没撤销掉，再点一次。
+        return await _db.WebPageShareLinks
+            .Find(x => x.Id == shareId && x.CreatedBy == userId)
+            .AnyAsync(ct);
     }
 
     /// <summary>

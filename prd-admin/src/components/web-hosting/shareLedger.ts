@@ -1,5 +1,6 @@
 import type { ShareLinkItem } from '@/services/real/webPages';
 import { daysUntil } from './siteConclusion';
+import { isLinkExpired } from './shareStatus';
 
 /**
  * 分享档的三层账本 —— 有效 / 已过期 / 已撤销。
@@ -17,9 +18,9 @@ export interface ShareLedger {
 }
 
 /** 撤销优先于过期：一条既撤销又过期的链接，用户能做的只有「重新分享」。 */
-export function tierOf(link: ShareLinkItem): ShareTier {
+export function tierOf(link: ShareLinkItem, now: number = Date.now()): ShareTier {
   if (link.isRevoked) return 'revoked';
-  if (link.isExpired) return 'expired';
+  if (isLinkExpired(link, now)) return 'expired';
   return 'active';
 }
 
@@ -28,7 +29,7 @@ export function tierOf(link: ShareLinkItem): ShareTier {
  *  （`.claude/rules/predicate-and-wiring-discipline.md` 形状 6：判据读的不是真正生效的那个值）。 */
 export function buildShareLedger(links: ShareLinkItem[], now: number = Date.now()): ShareLedger {
   const ledger: ShareLedger = { active: [], expired: [], revoked: [] };
-  for (const l of links) ledger[tierOf(l)].push(l);
+  for (const l of links) ledger[tierOf(l, now)].push(l);
   // 有效层按「快到期的排前面」——用户在这一屏最该先处理的就是快断的链接
   ledger.active.sort((a, b) => {
     const da = daysUntil(a.expiresAt, now);

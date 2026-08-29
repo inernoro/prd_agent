@@ -58,6 +58,7 @@ import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
 import { QuickSharePopover } from '@/components/web-hosting/QuickSharePopover';
 import { buildShareLedger } from '@/components/web-hosting/shareLedger';
+import { isLinkActive } from '@/components/web-hosting/shareStatus';
 import { buildWeeklyPulse } from '@/components/web-hosting/weeklyPulse';
 import { SITE_SOURCE_LABELS } from '@/components/web-hosting/siteFormRegistry';
 import {
@@ -176,10 +177,10 @@ function fmtSize(bytes: number) {
  * 合集链接（一条链接指向多个站点）对它命中的每个站点都计一次——用户问的是
  * 「这个站点还有几条对外链接活着」，合集链接对该站点同样活着。
  */
-function buildSiteShareStats(items: ShareLinkItem[]): Map<string, SiteShareStats> {
+function buildSiteShareStats(items: ShareLinkItem[], now: number = Date.now()): Map<string, SiteShareStats> {
   const map = new Map<string, SiteShareStats>();
   for (const it of items) {
-    if (it.isRevoked || it.isExpired) continue;
+    if (!isLinkActive(it, now)) continue;
     const siteIds = it.siteId ? [it.siteId] : (it.siteIds ?? []);
     for (const sid of siteIds) {
       const prev = map.get(sid);
@@ -1826,7 +1827,7 @@ export default function WebPagesPage() {
       {showShareDialog && (
         <ShareDialog
           site={shareTargetId ? (sites.find(x => x.id === shareTargetId) ?? null) : null}
-          existingShareCount={shareTargetId ? shareLinks.filter(l => !l.isRevoked && !l.isExpired && (l.siteId === shareTargetId || l.siteIds?.includes(shareTargetId))).length : 0}
+          existingShareCount={shareTargetId ? shareLinks.filter(l => isLinkActive(l) && (l.siteId === shareTargetId || l.siteIds?.includes(shareTargetId))).length : 0}
           siteId={shareTargetId}
           siteIds={shareTargetId ? undefined : [...selectedIds]}
           onClose={() => { setShowShareDialog(false); setShareTargetId(null); loadShares(); }}
@@ -4370,7 +4371,7 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
             <ShareDialog
               siteId={scopedSiteId}
               site={scopedSite ?? null}
-              existingShareCount={shares.filter(l => !l.isRevoked && !l.isExpired && (l.siteId === scopedSiteId || l.siteIds?.includes(scopedSiteId))).length}
+              existingShareCount={shares.filter(l => isLinkActive(l) && (l.siteId === scopedSiteId || l.siteIds?.includes(scopedSiteId))).length}
               onClose={() => { setShowCreate(false); }}
               onCreated={refreshShares}
             />

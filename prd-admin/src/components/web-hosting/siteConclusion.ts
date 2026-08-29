@@ -1,4 +1,5 @@
 import type { ShareLinkItem } from '@/services/real/webPages';
+import { isLinkActive } from './shareStatus';
 
 /** 结论句的一段：纯文本，或一个挂着数字、可点进明细的片段 */
 export interface ConclusionSegment {
@@ -47,7 +48,7 @@ export function buildSiteConclusion(
   /** 该站点的去重访客数（页面从列表接口的 visitors 映射取）；拿不到就不写这半句 */
   visitorCount?: number,
 ): SiteConclusion {
-  const active = links.filter((l) => !l.isRevoked && !l.isExpired);
+  const active = links.filter((l) => isLinkActive(l, now));
   if (active.length === 0) {
     const hadLinks = links.length > 0;
     return {
