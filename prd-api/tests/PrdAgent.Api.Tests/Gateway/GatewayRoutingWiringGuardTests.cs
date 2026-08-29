@@ -105,6 +105,66 @@ public sealed class GatewayRoutingWiringGuardTests
         source.ShouldContain("scenario-capability");
     }
 
+    /// <summary>
+    /// 名录门必须罩住 <c>IModelResolver</c> 的**每一个**解析入口。
+    ///
+    /// 这条接线删掉之后编译照过、全量测试照绿——只是白名单在数据面静默失效，
+    /// 名录外的模型又能被打出去，而唯一的症状是「本该被拦的请求成功了」（形状 2）。
+    ///
+    /// 判据从接口反推而不是写死两个方法名：日后接口新增第三个解析入口时，
+    /// 它要么也走这道门，要么这条用例红——不会像现在这样悄悄多出一条没设防的路。
+    /// </summary>
+    [Fact]
+    public void 每个解析入口都必须过名录门()
+    {
+        var contract = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Core", "LlmGateway", "IModelResolver.cs"));
+        var source = ResolverSource();
+
+        var entryPoints = System.Text.RegularExpressions.Regex
+            .Matches(contract, @"Task<ModelResolutionResult>\s+(\w+)\s*\(")
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        // 判据不是恒真：接口被掏空或正则失配时这里先红。
+        entryPoints.Count.ShouldBeGreaterThanOrEqualTo(2, "IModelResolver 的解析入口数量异常，守卫可能没扫到真实契约");
+
+        foreach (var entry in entryPoints)
+        {
+            var signature = $"public async Task<ModelResolutionResult> {entry}(";
+            var start = source.IndexOf(signature, StringComparison.Ordinal);
+            start.ShouldBeGreaterThanOrEqualTo(0, $"ModelResolver 里找不到 {entry} 的实现，守卫扫错文件或方法被改名");
+
+            // 薄壳的边界：下一个 private 声明。壳体内必须出现名录门的调用。
+            var end = source.IndexOf("\n    private ", start, StringComparison.Ordinal);
+            var body = end > start ? source[start..end] : source[start..];
+
+            body.ShouldContain(
+                "ApplyCatalogGateAsync(",
+                customMessage: $"{entry} 没有经过名录门：白名单在数据面会静默失效，名录外的模型照样能被打出去");
+        }
+    }
+
+    /// <summary>
+    /// 门内的两件事同样「删掉不会红」：拒绝要用专属错误码（否则退化成又一个「服务不可用」），
+    /// 重试候选要一起过门（否则主选被拦下、第一次失败后换条路照样打出去）。
+    /// </summary>
+    [Fact]
+    public void 名录门拒绝时点名错误码且重试候选一并过门()
+    {
+        var source = ResolverSource();
+        var start = source.IndexOf("private async Task<ModelResolutionResult> ApplyCatalogGateAsync(", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "找不到名录门本体");
+
+        var end = source.IndexOf("\n    private async Task<bool> IsModelAllowedAsync(", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, "名录门与放行判定的相邻关系变了，守卫的取值范围需要跟着改");
+        var gate = source[start..end];
+
+        gate.ShouldContain("GatewayRouteFailure.ModelNotInCatalog");
+        gate.ShouldContain("RetryCandidates");
+    }
+
     [Fact]
     public void 历史别名兼容不得被静默撤销()
     {

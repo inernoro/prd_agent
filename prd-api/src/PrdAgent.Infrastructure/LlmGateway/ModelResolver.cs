@@ -24,6 +24,17 @@ public class ModelResolver : IModelResolver
     private readonly ILLMRequestContextAccessor? _requestContext;
     private readonly string _internalTenantId;
 
+    /// <summary>
+    /// 名录门的执行档。默认 enforce（拦下并结构化失败）。
+    ///
+    /// 之所以要有 observe 档：这道门是**后加的**，而库里可能已经躺着名录外的模型
+    /// （在这道门存在之前导入的，那时还没有放行标记这回事）。一上来就 enforce，
+    /// 那些池会在下一次请求时集体开始失败，而管理员从错误码里才第一次得知这件事——
+    /// 用「变更前就存在的状态」去判定，正是 predicate-and-wiring-discipline 形状 5 的场景。
+    /// observe 档只记日志不拦，用来先看清楚「到底有多少存量会被拦」，再决定什么时候收紧。
+    /// </summary>
+    private readonly bool _catalogGateEnforces;
+
     public ModelResolver(
         MongoDbContext db,
         IConfiguration config,
@@ -39,10 +50,124 @@ public class ModelResolver : IModelResolver
         _internalTenantId = config["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
+        // 只认 "observe" 这一个降档值；拼错、留空、写别的都落回 enforce——
+        // 一道安全门不该因为配置写错就悄悄敞开。
+        _catalogGateEnforces = !string.Equals(
+            config["LlmGateway:ModelCatalogGate"]?.Trim(), "observe", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <inheritdoc />
     public async Task<ModelResolutionResult> ResolveAsync(
+        string appCallerCode,
+        string modelType,
+        string? expectedModel = null,
+        string? pinnedPlatformId = null,
+        string? pinnedModelId = null,
+        CancellationToken ct = default)
+    {
+        /*
+          白名单第二道门。刻意做成「罩住整个解析」而不是「在每个 return 前判一次」——
+          下面那个方法有十几个成功出口（池 / 逻辑模型 / Offering / pinned / legacy 降级），
+          逐个补判据必然漏，而漏掉的那条正好是没人走过的分支（形状 2：链路只建到一半）。
+          薄壳只有一个出口，新增分支自动被罩住。
+        */
+        var resolved = await ResolveCoreAsync(appCallerCode, modelType, expectedModel, pinnedPlatformId, pinnedModelId, ct);
+        return await ApplyCatalogGateAsync(resolved, appCallerCode, ct);
+    }
+
+    /// <summary>
+    /// 名录门（白名单的第二道，也是最后一道）。
+    ///
+    /// 第一道在控制台导入那一步：名录外模型要管理员显式放行才准入库，用户在那一刻就知道
+    /// 被拦了、为什么、怎么放行。这一道兜住**绕过控制台的路径**——直接写库、历史遗留数据、
+    /// 别的写入方——因为请求最终只认「库里有什么」，不认「它是怎么进来的」。
+    ///
+    /// 判定顺序刻意是「先查名录，查不到才读库」：名录命中零额外开销（绝大多数请求），
+    /// 只有名录外的模型才多一次带索引的文档读，用来看它有没有被放行过的戳。
+    ///
+    /// 重试候选一并过门：把主选拦下却把同样越界的候选留在重试链上，等于换条路照样打出去。
+    /// </summary>
+    private async Task<ModelResolutionResult> ApplyCatalogGateAsync(
+        ModelResolutionResult resolved,
+        string appCallerCode,
+        CancellationToken ct)
+    {
+        if (!resolved.Success) return resolved;
+
+        if (await IsModelAllowedAsync(resolved.ActualModel, resolved.ActualPlatformId, ct))
+        {
+            // 主选放行；重试链里越界的成员要摘掉，否则第一次失败后照样会打出去。
+            if (resolved.RetryCandidates is { Count: > 0 })
+            {
+                var kept = new List<ModelResolutionResult>();
+                foreach (var candidate in resolved.RetryCandidates)
+                {
+                    if (await IsModelAllowedAsync(candidate.ActualModel, candidate.ActualPlatformId, ct))
+                    {
+                        kept.Add(candidate);
+                        continue;
+                    }
+                    _logger.LogWarning(
+                        "[ModelResolver] 重试候选不在名录且未放行（名录门={Gate}）: AppCallerCode={Code}, Model={Model}, PlatformId={PlatformId}",
+                        _catalogGateEnforces ? "enforce/已摘除" : "observe/仍保留",
+                        appCallerCode, candidate.ActualModel ?? "(空)", candidate.ActualPlatformId ?? "(空)");
+                    if (!_catalogGateEnforces) kept.Add(candidate);
+                }
+                resolved.RetryCandidates = kept;
+            }
+            return resolved;
+        }
+
+        _logger.LogError(
+            "[ModelResolver] 选中的模型不在内置名录且没有放行标记（名录门={Gate}）: "
+            + "AppCallerCode={Code}, Model={Model}, PlatformId={PlatformId}, ResolutionType={Type}, Pool={Pool}",
+            _catalogGateEnforces ? "enforce/已拒绝" : "observe/仅记录未拦截",
+            appCallerCode,
+            resolved.ActualModel ?? "(空)",
+            resolved.ActualPlatformId ?? "(空)",
+            resolved.ResolutionType,
+            resolved.ModelGroupId ?? "(无)");
+
+        // observe 档：日志已经把该点名的都点了，请求照常放行——这一档存在的意义就是
+        // 「先看清存量有多少会被拦」，拦下来就看不成了。
+        if (!_catalogGateEnforces) return resolved;
+
+        return ModelResolutionResult.NotFound(
+            resolved.ExpectedModel,
+            $"模型「{resolved.ActualModel}」不在内置名录里，也没有被管理员显式放行；"
+            + "正常从控制台导入的模型不会出现这种状态，请确认它是怎么进库的",
+            GatewayRouteFailure.ModelNotInCatalog,
+            "model-catalog",
+            appCallerCode,
+            modelPoolId: resolved.ModelGroupId);
+    }
+
+    /// <summary>名录命中，或库里有管理员放行过的戳，才算允许。两者都没有就是越界。</summary>
+    private async Task<bool> IsModelAllowedAsync(string? modelName, string? platformId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return true; // 没解析出模型名的路径不归这道门管
+        if (GatewayModelCatalog.Contains(modelName)) return true;
+        if (_gatewayDb is null) return false;
+
+        var models = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_models");
+        var fb = Builders<BsonDocument>.Filter;
+        var trimmed = modelName.Trim();
+        // 两个名字字段都认：`ModelNameNormalized` 是控制台导入路径写的，但不是每条模型
+        // 文档都有它（更早的写入、别的写入方只写了 ModelName）。只认归一化字段，
+        // 那些文档就永远查不到放行标记、被判成越界——同一个模型换个写法得到相反结论，
+        // 正是 predicate-and-wiring-discipline 形状 1。
+        var filter = fb.And(
+            fb.Eq("TenantId", CurrentTenantId),
+            fb.Or(
+                fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
+                fb.Eq("ModelName", trimmed)),
+            fb.Eq("AllowedOutsideCatalog", true));
+        if (!string.IsNullOrWhiteSpace(platformId)) filter = fb.And(filter, fb.Eq("PlatformId", platformId));
+
+        return await models.Find(filter).AnyAsync(ct);
+    }
+
+    private async Task<ModelResolutionResult> ResolveCoreAsync(
         string appCallerCode,
         string modelType,
         string? expectedModel = null,
@@ -694,6 +819,16 @@ public class ModelResolver : IModelResolver
 
     /// <inheritdoc />
     public async Task<ModelResolutionResult> ResolveOfferingAsync(
+        string appCallerCode,
+        string modelType,
+        string offeringId,
+        CancellationToken ct = default)
+    {
+        var resolved = await ResolveOfferingCoreAsync(appCallerCode, modelType, offeringId, ct);
+        return await ApplyCatalogGateAsync(resolved, appCallerCode, ct);
+    }
+
+    private async Task<ModelResolutionResult> ResolveOfferingCoreAsync(
         string appCallerCode,
         string modelType,
         string offeringId,

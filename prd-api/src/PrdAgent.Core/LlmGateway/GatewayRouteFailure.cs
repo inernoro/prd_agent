@@ -44,6 +44,15 @@ public static class GatewayRouteFailure
     /// <summary>网关配置面本身读不到（Mongo 不可达 / 配置权威缺失），与「配置错了」区分开。</summary>
     public const string GatewayConfigUnavailable = "GATEWAY_CONFIG_UNAVAILABLE";
 
+    /// <summary>
+    /// 选中的模型既不在内置名录里，也没有被管理员显式放行。
+    ///
+    /// 与「池空 / 全熔断」分开是有意的：那两个说的是「没有可用成员」，这个说的是
+    /// **「这个成员不该被用」**——它绕过了控制台的白名单门（例如有人直接往库里写模型文档），
+    /// 处置动作完全不同：不是等恢复、不是补成员，是去确认这个模型该不该存在。
+    /// </summary>
+    public const string ModelNotInCatalog = "MODEL_NOT_IN_CATALOG";
+
     /// <summary>全部结构化原因，供守卫测试与前端映射表对齐使用。</summary>
     public static readonly IReadOnlyList<string> All =
     [
@@ -57,6 +66,7 @@ public static class GatewayRouteFailure
         ProviderUnavailable,
         ProviderQuotaExceeded,
         GatewayConfigUnavailable,
+        ModelNotInCatalog,
     ];
 
     /// <summary>
@@ -75,7 +85,8 @@ public static class GatewayRouteFailure
                 or ModelPoolEmpty
                 or LogicalModelCapabilityMismatch
                 or OfferingUnresolvable
-                or PlatformDisabled => "该功能的模型配置尚未就绪，重试无法解决，请联系管理员处理。",
+                or PlatformDisabled
+                or ModelNotInCatalog => "该功能的模型配置尚未就绪，重试无法解决，请联系管理员处理。",
             _ => "当前服务暂时不可用，请稍后重试。若持续出现，请联系管理员。",
         };
 
@@ -96,6 +107,9 @@ public static class GatewayRouteFailure
             ProviderUnavailable => "上游 Provider 故障，查看该 Offering 的失败率与上游状态页。",
             ProviderQuotaExceeded => "上游配额或速率限制耗尽，调整配额或降低并发。",
             GatewayConfigUnavailable => "网关配置面不可读，先恢复配置数据库连通性，再复查路由。",
+            ModelNotInCatalog =>
+                "选中的模型不在内置名录里，也没有被管理员显式放行——正常从控制台导入的模型不会出现这种状态，"
+                + "先确认它是怎么进库的（直接写库？旧数据？），再决定是从池里移除，还是到 Provider 页重新导入并显式放行。",
             _ => "未分类的路由失败，请补充错误码分类后再处理。",
         };
 
@@ -106,5 +120,6 @@ public static class GatewayRouteFailure
             or ModelPoolEmpty
             or LogicalModelCapabilityMismatch
             or OfferingUnresolvable
-            or PlatformDisabled;
+            or PlatformDisabled
+            or ModelNotInCatalog;
 }

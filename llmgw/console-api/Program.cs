@@ -511,6 +511,32 @@ await gwModels.Indexes.CreateManyAsync(new[]
         new CreateIndexOptions { Name = "idx_llmgw_model_tenant_platform_updated" }),
 });
 
+/*
+  存量放行（一次性，幂等）。
+
+  名录门是后加的：在它存在之前导入的模型没有「放行标记」这回事，而数据面那道门
+  只认标记不认来历。不补这一手，升级的那一刻所有名录外的存量模型会集体开始被拒——
+  用「变更前就有的状态」去卡变更本身，正是 predicate-and-wiring-discipline 形状 5。
+
+  所以这里把**已经在库里**的模型一律补成「已放行」，并把放行人记成迁移而不是某个管理员：
+  它们确实没被任何人审过，这一点必须如实写在审计字段里，不许伪装成有人点过头。
+  从此往后，新导入的名录外模型只能由管理员在导入时显式放行（Program 的导入路径盖戳）。
+
+  幂等靠过滤条件：只改「没有这个字段」的文档，跑第二遍匹配数为 0。
+*/
+var grandfatherResult = await gwModels.UpdateManyAsync(
+    Builders<BsonDocument>.Filter.Exists("AllowedOutsideCatalog", false),
+    Builders<BsonDocument>.Update
+        .Set("AllowedOutsideCatalog", true)
+        .Set("AllowedOutsideCatalogBy", "存量迁移（名录门上线前已入库，未经人工审阅）")
+        .Set("AllowedOutsideCatalogAt", DateTime.UtcNow));
+if (grandfatherResult.ModifiedCount > 0)
+{
+    app.Logger.LogInformation(
+        "[ModelCatalog] 名录门上线：已为 {Count} 条存量模型补上放行标记（未经人工审阅，来历见审计字段）",
+        grandfatherResult.ModifiedCount);
+}
+
 app.Use(async (http, next) =>
 {
     if (http.User.Identity?.IsAuthenticated != true
@@ -8766,6 +8792,20 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
                     { "Value", true },
                 })) },
         };
+        /*
+          白名单第二道门要用的持久标记。
+          审计记了「谁放行了哪几个」，但审计是给人查的、不在请求路径上；
+          数据面拦截需要在**模型文档本身**看得出「这条是被人放行过的」，
+          否则运行时分不清「管理员显式放行的名录外模型」与「有人直接写库塞进来的」——
+          两者在库里长得一模一样，那道门就只能一刀切，要么放过所有、要么拦死所有。
+        */
+        if (!ModelCatalog.Contains(modelId))
+        {
+            doc["AllowedOutsideCatalog"] = true;
+            doc["AllowedOutsideCatalogBy"] = TenantAccess.GetRequired(http).Username;
+            doc["AllowedOutsideCatalogAt"] = now;
+        }
+
         if (entry.InputPricePerMillion is not null) doc["InputPricePerMillion"] = entry.InputPricePerMillion.Value;
         if (entry.OutputPricePerMillion is not null) doc["OutputPricePerMillion"] = entry.OutputPricePerMillion.Value;
         if (entry.PricePerCall is not null) doc["PricePerCall"] = entry.PricePerCall.Value;
@@ -8892,6 +8932,19 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
     var id = $"gw-model-{Guid.NewGuid():N}";
     var now = DateTime.UtcNow;
     var document = GatewayConfigurationProvisioning.BuildModelDocument(draft, tenantId, id, encryptedApiKey, now);
+    /*
+      手工新增这条路径同样要盖放行戳，否则它就是名录门的一个盲区：
+      管理员一个字一个字敲进来的名录外模型，会被同步进托管默认池，然后在第一次真实请求时
+      被数据面拦下——库里看得见、池里也在、就是调不通，而管理员没做错任何事。
+      批量导入那边拦是因为「上游给了一整页、用户是在勾选」，这边是管理员亲手指名的，
+      指名本身就是显式放行；如实记成他放行的，而不是留空让运行时去猜。
+    */
+    if (!ModelCatalog.Contains(draft.ModelName))
+    {
+        document["AllowedOutsideCatalog"] = true;
+        document["AllowedOutsideCatalogBy"] = TenantAccess.GetRequired(http).Username;
+        document["AllowedOutsideCatalogAt"] = now;
+    }
     try
     {
         await gwModels.InsertOneAsync(document);
@@ -9498,6 +9551,14 @@ app.MapPut("/gw/models/{id}/claim", async (HttpContext http, string id) =>
     claimed["Authority"] = "llm_gateway";
     claimed["ClaimedAt"] = now;
     claimed["UpdatedAt"] = now;
+    // 认领是把一条**早就在跑**的 MAP 模型收编过来，它不该因为换了归属就突然被名录门拦下。
+    // 与手工新增同理：认领这个动作本身就是显式放行，如实记成认领人放的。
+    if (!ModelCatalog.Contains(claimed.AsNullableString("ModelName")))
+    {
+        claimed["AllowedOutsideCatalog"] = true;
+        claimed["AllowedOutsideCatalogBy"] = $"{TenantAccess.GetRequired(http).Username}（认领 MAP 模型）";
+        claimed["AllowedOutsideCatalogAt"] = now;
+    }
 
     var modelContractError = await ValidateAsrModelMutationAsync(
         http, claimed, gwPlatforms, gwModelOfferings, gwLogicalModels);
@@ -14374,6 +14435,8 @@ static async Task<(string Detail, string Code)> ReadGatewayFailureDetailAsync(Ht
             "当前租户不是 active 状态，网关拒绝一切调用。先去「团队与成员」确认租户状态。",
         "APPCALLER_POOL_UNBOUND" or "GATEWAY_CONFIG_UNAVAILABLE" =>
             "系统级用途码还没绑上可用的模型池。去「服务网关设置」选一个对话池或指定一个模型。",
+        "MODEL_NOT_IN_CATALOG" =>
+            "选中的模型不在内置名录里，也没有被管理员放行。去 Provider 页重新导入这个模型（名录外的要勾「放行」），或从池里换一个名录内的模型。",
         "LLM_ERROR" =>
             $"上游模型执行失败（网关已收到请求，是模型那一侧回的 {status}）。换一个池或模型再试。",
         _ when status == 404 => "没找到 serving 的对话端点，检查网关服务是否在运行。",
