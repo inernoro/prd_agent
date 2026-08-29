@@ -1,4 +1,5 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using Xunit;
 
@@ -43,7 +44,8 @@ public class DocumentStoreRunFailureCopyTests
     {
         var copy = DocumentStoreRunFailureCopy.Resolve(
             Restyle(),
-            new InvalidOperationException(
+            new GatewayRouteFailureException(
+                GatewayRouteFailure.ModelPoolEmpty,
                 "摘要生成失败: 未找到可用模型: AppCallerCode=document-store.transcribe-summary::chat, ModelType=chat"));
 
         Assert.Equal(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
@@ -90,5 +92,119 @@ public class DocumentStoreRunFailureCopyTests
 
         Assert.Null(copy.Code);
         Assert.Contains("内容处理暂时失败", copy.UserMessage);
+    }
+}
+
+
+/// <summary>
+/// 配置类失败必须按网关给的**结构化码**判，不是照文案猜。
+/// 这几条对应 Codex 第四十五轮 P2：appCaller 未绑池、池空、平台被关，
+/// 三种措辞各不相同，照文案匹配一条都认不出来，于是全都落进了「暂时失败，自动重试」。
+/// </summary>
+public class DocumentStoreRunFailureCopyRouteCodeTests
+{
+    private static DocumentStoreAgentRun Transcribe() => new()
+    {
+        Kind = DocumentStoreAgentRunKind.Transcribe,
+    };
+
+    [Theory]
+    [InlineData(GatewayRouteFailure.AppCallerPoolUnbound)]
+    [InlineData(GatewayRouteFailure.ModelPoolEmpty)]
+    [InlineData(GatewayRouteFailure.RouteConfigIncompatible)]
+    [InlineData(GatewayRouteFailure.PlatformDisabled)]
+    [InlineData(GatewayRouteFailure.OfferingUnresolvable)]
+    [InlineData(GatewayRouteFailure.LogicalModelCapabilityMismatch)]
+    public void ConfigurationFaults_AreRecognisedByCodeNotWording(string code)
+    {
+        // 文案里一个「未找到可用模型」都没有：只有结构化码能认出它
+        var copy = DocumentStoreRunFailureCopy.Resolve(
+            Transcribe(),
+            new GatewayRouteFailureException(code, "AppCallerCode=document-store.subtitle::asr 未配置"));
+
+        Assert.Equal(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
+        Assert.False(copy.AutomaticRetryAllowed);
+        Assert.DoesNotContain("请点击重试", copy.UserMessage);
+    }
+
+    [Theory]
+    [InlineData(GatewayRouteFailure.ProviderUnavailable)]
+    [InlineData(GatewayRouteFailure.ProviderQuotaExceeded)]
+    [InlineData(GatewayRouteFailure.ModelPoolAllUnavailable)]
+    [InlineData(GatewayRouteFailure.GatewayConfigUnavailable)]
+    public void TemporaryFaults_KeepRetrying(string code)
+    {
+        // 这几种会自愈，不该被当成配置问题判死
+        var copy = DocumentStoreRunFailureCopy.Resolve(
+            Transcribe(),
+            new GatewayRouteFailureException(code, "上游炸了"));
+
+        Assert.NotEqual(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
+        Assert.True(copy.AutomaticRetryAllowed);
+    }
+
+    [Fact]
+    public void AsrChain_ReadsCodesFromDiagnostics()
+    {
+        var ex = new SubtitleAsrException(
+            "ASR 模型调度失败: transcript-agent.transcribe::asr 未配置",
+            new Dictionary<string, object?>
+            {
+                ["stage"] = "调度失败",
+                [SubtitleAsrException.FailureCodesKey] = new List<string>
+                {
+                    GatewayRouteFailure.AppCallerPoolUnbound,
+                    GatewayRouteFailure.ModelPoolEmpty,
+                },
+            });
+
+        var copy = DocumentStoreRunFailureCopy.Resolve(Transcribe(), ex);
+
+        Assert.Equal(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
+        Assert.False(copy.AutomaticRetryAllowed);
+    }
+
+    [Fact]
+    public void AsrChain_KeepsRetryingWhenAnyCandidateFailedTemporarily()
+    {
+        // 链上还有一个是「上游故障」：那一路会自愈，不许按配置问题收手
+        var ex = new SubtitleAsrException(
+            "ASR 模型调度失败",
+            new Dictionary<string, object?>
+            {
+                [SubtitleAsrException.FailureCodesKey] = new List<string>
+                {
+                    GatewayRouteFailure.ModelPoolEmpty,
+                    GatewayRouteFailure.ProviderUnavailable,
+                },
+            });
+
+        var copy = DocumentStoreRunFailureCopy.Resolve(Transcribe(), ex);
+
+        Assert.NotEqual(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
+        Assert.True(copy.AutomaticRetryAllowed);
+    }
+
+    [Fact]
+    public void ReprocessRun_DoesNotClaimTheRecordingIsIntact()
+    {
+        // reprocess 跑的可能是一篇普通文档，压根没有录音（Codex 第四十五轮 P2）
+        var copy = DocumentStoreRunFailureCopy.Resolve(
+            new DocumentStoreAgentRun { Kind = DocumentStoreAgentRunKind.Reprocess },
+            new GatewayRouteFailureException(GatewayRouteFailure.ModelPoolEmpty, "池空"));
+
+        Assert.Equal(DocumentStoreRunFailureCopy.ModelNotConfigured, copy.Code);
+        Assert.DoesNotContain("录音", copy.UserMessage);
+        Assert.Contains("没有改动", copy.UserMessage);
+    }
+
+    [Fact]
+    public void RecordingRun_StillSaysTheRecordingAndTranscriptAreIntact()
+    {
+        var copy = DocumentStoreRunFailureCopy.Resolve(
+            Transcribe(),
+            new GatewayRouteFailureException(GatewayRouteFailure.ModelPoolEmpty, "池空"));
+
+        Assert.Contains("录音与原文都在", copy.UserMessage);
     }
 }

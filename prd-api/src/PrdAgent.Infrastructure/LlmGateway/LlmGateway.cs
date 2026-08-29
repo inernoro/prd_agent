@@ -769,7 +769,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // 向请求失败的用户发送故障通知
                 _ = TryNotifyUserFailureAsync(request, resolution);
 
-                yield return GatewayStreamChunk.Fail(resolution.ErrorMessage ?? "未找到可用模型");
+                yield return GatewayStreamChunk.Fail(
+                    resolution.ErrorMessage ?? "未找到可用模型",
+                    resolution.FailureCode);
                 yield break;
             }
 

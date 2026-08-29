@@ -458,6 +458,17 @@ public class GatewayStreamChunk
     public string? Error { get; init; }
 
     /// <summary>
+    /// 结构化失败原因（<see cref="GatewayRouteFailure"/> 的常量；仅 Error 类型，未分类时为 null）。
+    ///
+    /// 为什么必须带着走：`GatewayRouteFailure` 的约定是「判据只此一份，应用层只做展示映射，
+    /// 禁止再对错误文案做字符串匹配来猜原因」。而此前 Fail() 只带一句话，
+    /// 调用方要区分「配置没配好」与「上游暂时抖动」就只能去猜文案——
+    /// 于是 MODEL_POOL_EMPTY 这类重试一万次也好不了的配置问题，
+    /// 被当成暂时故障排进了自动重试（2026-08-29 正式环境实测到的正是这一条）。
+    /// </summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>
     /// 原始 SSE 数据
     /// </summary>
     public string? RawData { get; init; }
@@ -484,7 +495,8 @@ public class GatewayStreamChunk
     public static GatewayStreamChunk Thinking(string content) => new() { Type = GatewayChunkType.Thinking, Content = content };
     public static GatewayStreamChunk Start(GatewayModelResolution resolution) => new() { Type = GatewayChunkType.Start, Resolution = resolution };
     public static GatewayStreamChunk Done(string? finishReason, GatewayTokenUsage? usage) => new() { Type = GatewayChunkType.Done, FinishReason = finishReason, TokenUsage = usage };
-    public static GatewayStreamChunk Fail(string error) => new() { Type = GatewayChunkType.Error, Error = error };
+    public static GatewayStreamChunk Fail(string error, string? errorCode = null)
+        => new() { Type = GatewayChunkType.Error, Error = error, ErrorCode = errorCode };
     public static GatewayStreamChunk ToolCallChunk(JsonArray delta) => new() { Type = GatewayChunkType.ToolCall, ToolCallDelta = delta };
 }
 
