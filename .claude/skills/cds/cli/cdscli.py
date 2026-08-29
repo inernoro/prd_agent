@@ -456,6 +456,27 @@ def _maybe_warn_version_drift(headers: dict[str, str]) -> None:
         )
 
 
+def _describe_trigger_failure(trigger: dict[str, Any]) -> str:
+    """把 `_request_stream_safe` 的触发失败结果转成给人看的原因。
+
+    issue #1433：423（如 project_paused）等结构化错误服务端其实已经在
+    body 里给出了 error/message（例如"项目已暂停，部署被拦截...不建议重试"），
+    但调用方一直只用裸 `http_<status>` 报错，把这条关键信息扔在地上——
+    Agent 只能瞎猜是不是排队锁，空转重试。body 已经被 `_request_stream_safe`
+    解析过，这里只是把它捞出来用，不需要额外请求。
+    """
+    status = trigger.get("status")
+    body = trigger.get("body")
+    if isinstance(body, dict):
+        message = body.get("message")
+        error = body.get("error")
+        if message:
+            return f"{error}: {message}" if error else str(message)
+        if error:
+            return str(error)
+    return trigger.get("error") or (f"http_{status}" if status is not None else "unknown")
+
+
 def _call(method: str, path: str, body: Any = None, timeout: int = 15,
           quiet: bool = False) -> Any:
     """High-level HTTP: returns parsed body on 2xx, exits with code on error."""
@@ -1017,7 +1038,7 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
     trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
     trigger_timed_out = (not trigger["triggered"]) and str(trigger.get("error") or "").startswith("timeout_")
     if trigger_http_error or (not trigger["triggered"] and not trigger_timed_out):
-        die(f"deploy 触发失败: {trigger.get('error') or f'http_{trigger_status}' or 'unknown'}",
+        die(f"deploy 触发失败: {_describe_trigger_failure(trigger)}",
             code=2 if trigger_status and trigger_status < 500 else 3,
             extra={
                 "data": {
@@ -8147,7 +8168,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     trigger_status = trigger.get("status")
     trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
     if trigger_http_error or (not trigger["triggered"] and not str(trigger.get("error") or "").startswith("timeout_")):
-        trigger_error = trigger.get("error") or (f"http_{trigger_status}" if trigger_status is not None else "unknown")
+        trigger_error = _describe_trigger_failure(trigger)
         die(f"deploy 触发失败: {trigger_error}",
             code=2 if trigger_status and trigger_status < 500 else 3,
             extra={
