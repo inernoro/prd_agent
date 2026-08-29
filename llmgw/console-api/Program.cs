@@ -523,18 +523,52 @@ await gwModels.Indexes.CreateManyAsync(new[]
   它们确实没被任何人审过，这一点必须如实写在审计字段里，不许伪装成有人点过头。
   从此往后，新导入的名录外模型只能由管理员在导入时显式放行（Program 的导入路径盖戳）。
 
-  幂等靠过滤条件：只改「没有这个字段」的文档，跑第二遍匹配数为 0。
+  **只许跑一次，靠库里的迁移标记记住，不能靠「没有这个字段」当判据。**
+  那个判据太窄：它认的是「此刻缺标记」，而要表达的是「名录门上线前就已入库」。
+  两者在第一次启动时恰好重合，之后就分道扬镳——绕过控制台直接写库塞进来的模型
+  （正是这道门要拦的那一种）同样缺标记，下一次重启就会被这段代码自动放行，
+  门相当于每重启一次自己开一道缝。所以标记记在库里，跑过就永不再跑。
 */
-var grandfatherResult = await gwModels.UpdateManyAsync(
-    Builders<BsonDocument>.Filter.Exists("AllowedOutsideCatalog", false),
-    Builders<BsonDocument>.Update
-        .Set("AllowedOutsideCatalog", true)
-        .Set("AllowedOutsideCatalogBy", "存量迁移（名录门上线前已入库，未经人工审阅）")
-        .Set("AllowedOutsideCatalogAt", DateTime.UtcNow));
-if (grandfatherResult.ModifiedCount > 0)
+var gwMigrations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_migrations");
+const string ModelCatalogGrandfatherMigrationId = "model-catalog-grandfather-v1";
+var grandfatherClaimedAt = DateTime.UtcNow;
+var grandfatherClaimed = false;
+try
 {
+    // 抢占式认领：_id 唯一索引保证多副本同时启动时只有一个能插进去。
+    // 认领后崩溃的情况用 ClaimedAt 兜底——超过 10 分钟没写完成时间，允许下一个进程接手。
+    await gwMigrations.InsertOneAsync(new BsonDocument
+    {
+        { "_id", ModelCatalogGrandfatherMigrationId },
+        { "ClaimedAt", grandfatherClaimedAt },
+    });
+    grandfatherClaimed = true;
+}
+catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+{
+    var takeover = await gwMigrations.FindOneAndUpdateAsync(
+        Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", ModelCatalogGrandfatherMigrationId),
+            Builders<BsonDocument>.Filter.Exists("CompletedAt", false),
+            Builders<BsonDocument>.Filter.Lt("ClaimedAt", grandfatherClaimedAt.AddMinutes(-10))),
+        Builders<BsonDocument>.Update.Set("ClaimedAt", grandfatherClaimedAt));
+    grandfatherClaimed = takeover is not null;
+}
+if (grandfatherClaimed)
+{
+    var grandfatherResult = await gwModels.UpdateManyAsync(
+        Builders<BsonDocument>.Filter.Exists("AllowedOutsideCatalog", false),
+        Builders<BsonDocument>.Update
+            .Set("AllowedOutsideCatalog", true)
+            .Set("AllowedOutsideCatalogBy", "存量迁移（名录门上线前已入库，未经人工审阅）")
+            .Set("AllowedOutsideCatalogAt", grandfatherClaimedAt));
+    await gwMigrations.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.Eq("_id", ModelCatalogGrandfatherMigrationId),
+        Builders<BsonDocument>.Update
+            .Set("CompletedAt", DateTime.UtcNow)
+            .Set("StampedCount", grandfatherResult.ModifiedCount));
     app.Logger.LogInformation(
-        "[ModelCatalog] 名录门上线：已为 {Count} 条存量模型补上放行标记（未经人工审阅，来历见审计字段）",
+        "[ModelCatalog] 名录门上线迁移已执行（一次性）：为 {Count} 条存量模型补上放行标记（未经人工审阅，来历见审计字段）",
         grandfatherResult.ModifiedCount);
 }
 
@@ -5430,15 +5464,18 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
 
     string plainKey;
     string newKeyId;
+    // 提到 try 外：并发落败时要用它们把设置改回指向自己这把（见函数末尾的胜者判定）。
+    string keyPrefix;
+    string encrypted;
     try
     {
         var secretBytes = RandomNumberGenerator.GetBytes(32);
         plainKey = "gwk_" + Convert.ToBase64String(secretBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var keyPrefix = plainKey[..Math.Min(plainKey.Length, 12)];
+        keyPrefix = plainKey[..Math.Min(plainKey.Length, 12)];
         var keyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainKey))).ToLowerInvariant();
         newKeyId = Guid.NewGuid().ToString("N");
         var keyNow = DateTime.UtcNow;
-        var encrypted = GwApiKeyCrypto.Encrypt(plainKey, builder.Configuration);
+        encrypted = GwApiKeyCrypto.Encrypt(plainKey, builder.Configuration);
         await serviceKeys.InsertOneAsync(new BsonDocument
         {
             { "_id", newKeyId },
@@ -5506,15 +5543,47 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
     }
 
     // 旧的系统级 key 一律停用：只留一把在用，避免密钥页越积越多、也避免撤销时认错对象。
+    //
+    // 留哪一把，认的是**设置里此刻指着的那把**，不是「我刚签的这把」。两个请求并发首用/自愈时，
+    // 各自都写过一次设置、又各自去停用「除自己以外」的 key，就会出现设置指着一把已被对方停用的
+    // 密钥，而两个调用方都被告知签发成功。改成回读设置取胜者，无论谁最后写入，
+    // 「设置指向的那把一定是启用的」这条不变量都成立；输掉的那一方手里的 key 被停用后
+    // 会在下次调用拿到凭据类失败，走既有的作废重签自愈路径，不会卡死。
+    var settledSettings = await LoadSystemSettingsAsync(tenantId);
+    var winnerKeyId = settledSettings.AsNullableString("ServiceKeyId") ?? newKeyId;
+    var effectiveKey = plainKey;
+    if (!string.Equals(winnerKeyId, newKeyId, StringComparison.Ordinal))
+    {
+        // 输了这一轮：设置指向对方那把。密文就在设置里，解出来直接用对方的，
+        // 别把一把马上要被停用的 key 交出去——那样调用方还得先失败一次才自愈。
+        var winnerKey = GwApiKeyCrypto.Decrypt(settledSettings.AsNullableString("ServiceKeyEncrypted"), builder.Configuration);
+        if (winnerKey.Success && winnerKey.PlainText.Length > 0)
+        {
+            effectiveKey = winnerKey.PlainText;
+        }
+        else
+        {
+            // 对方的密文解不开（多半是 ApiKeyCrypto:Secret 轮换过），那就把设置改回指向自己这把，
+            // 保住「设置指向的那把一定是启用的」这条不变量，别留下两把都不可用的状态。
+            winnerKeyId = newKeyId;
+            await systemSettings.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", tenantId),
+                Builders<BsonDocument>.Update
+                    .Set("ServiceKeyId", newKeyId)
+                    .Set("ServiceKeyEncrypted", encrypted)
+                    .Set("ServiceKeyPrefix", keyPrefix)
+                    .Set("UpdatedAt", DateTime.UtcNow));
+        }
+    }
     await serviceKeys.UpdateManyAsync(
         Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
             Builders<BsonDocument>.Filter.Eq("Name", SystemServiceKeyName),
-            Builders<BsonDocument>.Filter.Ne("_id", newKeyId),
+            Builders<BsonDocument>.Filter.Ne("_id", winnerKeyId),
             Builders<BsonDocument>.Filter.Eq("Enabled", true)),
         Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
 
-    return (true, baseUrl, plainKey, SystemIntentDraftAppCaller, poolId, model, string.Empty);
+    return (true, baseUrl, effectiveKey, SystemIntentDraftAppCaller, poolId, model, string.Empty);
 }
 
 /// <summary>

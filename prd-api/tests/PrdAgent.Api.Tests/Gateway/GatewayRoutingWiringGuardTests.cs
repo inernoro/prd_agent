@@ -167,6 +167,35 @@ public sealed class GatewayRoutingWiringGuardTests
         gate.ShouldContain("CatalogVerdict.Blocked");
     }
 
+    /// <summary>
+    /// 存量放行迁移只许跑一次，且必须由库里的迁移标记记住跑没跑过。
+    ///
+    /// 「只改没有这个字段的文档」看着幂等，其实判据太窄（形状 1）：它认的是「此刻缺标记」，
+    /// 要表达的却是「名录门上线前就已入库」。两者只在第一次启动时重合——此后绕过控制台
+    /// 直接写库塞进来的模型（正是这道门要拦的那一种）同样缺标记，下次重启就被自动放行，
+    /// 门每重启一次自己开一道缝，而且全程不会有任何测试变红。
+    /// </summary>
+    [Fact]
+    public void 存量放行迁移必须由持久标记守住只跑一次()
+    {
+        var console = File.ReadAllText(Path.Combine(RepoRoot(), "llmgw", "console-api", "Program.cs"));
+
+        console.ShouldContain("llmgw_migrations", customMessage: "迁移标记要落库，跑过就永不再跑");
+        console.ShouldContain("model-catalog-grandfather-v1");
+
+        // 补标记的那次写入必须落在「认领成功」的分支里，不能挂在启动路径上无条件执行。
+        const string stamp = "\"AllowedOutsideCatalogBy\", \"存量迁移（名录门上线前已入库，未经人工审阅）\"";
+        var stampAt = console.IndexOf(stamp, StringComparison.Ordinal);
+        stampAt.ShouldBeGreaterThanOrEqualTo(0, "找不到存量放行的盖戳写入，守卫的取值范围需要跟着改");
+
+        var claimAt = console.IndexOf("if (grandfatherClaimed)", StringComparison.Ordinal);
+        claimAt.ShouldBeGreaterThanOrEqualTo(0, "存量放行迁移没有认领判断，等于每次启动都跑一遍");
+        claimAt.ShouldBeLessThan(stampAt, "盖戳写入必须在认领判断之内，否则每次重启都会把新塞进来的模型一并放行");
+
+        // 只许有这一处盖戳：再抄一份出去，标记守卫就形同虚设。
+        console.Split(stamp).Length.ShouldBe(2, "存量放行的盖戳只允许出现在迁移这一处");
+    }
+
     [Fact]
     public void 历史别名兼容不得被静默撤销()
     {
