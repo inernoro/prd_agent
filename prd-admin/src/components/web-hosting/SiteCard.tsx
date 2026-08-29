@@ -262,11 +262,12 @@ export function SiteCard({
          于是同一行的卡片下边缘参差（标题一行/两行、有无标签都会差几十像素）。
          设计稿的 grid 是默认 stretch，卡片在行内等高——这条链把高度真正传下去。 */
       className={['group relative flex h-full w-full flex-col cursor-grab touch-none active:cursor-grabbing', fresh ? 'site-card-fresh' : ''].join(' ')}
-      style={{
-        borderRadius: 20,
-        outline: selected ? '2px solid var(--accent-primary)' : '1px solid transparent',
-        outlineOffset: selected ? 3 : 0,
-      }}
+      /* 半径必须跟内框同一个值：`.site-card-fresh::before` 的光环是 border-radius:inherit，
+         这里写死 20 而内框是 SPEC.radius(10/11/12)，光环就会比卡片圆一大圈、错开成两条边。
+         选中态也**不在这一层画圈**——外层 outline(半径 20 + offset 3) 叠上内框自己的
+         accent 边框，就是用户看到的「两条线」：两个不同半径的硬轮廓套在一起。
+         选中只由内框那一个圆角矩形表达。 */
+      style={{ borderRadius: SPEC.radius }}
       onPointerDown={onPointerDown}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -290,6 +291,9 @@ export function SiteCard({
         style={{
           borderRadius: SPEC.radius,
           background: 'var(--bg-site-card)',
+          // 选中就是这一条边加粗变色 + 一圈同半径的柔光；不再往外面套第二个轮廓。
+          // box-sizing 是 border-box，加粗不推动布局。
+          borderWidth: selected ? 2 : 1,
           borderColor: fileDragOver || selected ? 'var(--accent-primary)' : 'var(--border-subtle)',
           boxShadow: selected ? 'var(--ring-focus)' : 'var(--shadow-site-card)',
         }}

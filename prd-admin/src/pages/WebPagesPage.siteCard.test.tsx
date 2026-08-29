@@ -33,12 +33,13 @@ function renderSiteCard(
   shared = false,
   size: SiteCardSize = 'medium',
   shareStats?: SiteShareStats,
+  selected = false,
 ) {
   return renderToStaticMarkup(
     <SiteCard
       site={site}
       size={size}
-      selected={false}
+      selected={selected}
       shared={shared}
       shareStats={shareStats}
       caps={caps}
@@ -192,6 +193,20 @@ describe('WebPagesPage SiteCard', () => {
     // 平时透明、hover / focus 才显形；触屏没有 hover，必须常显，
     // 否则小卡（不渲染 hover 条）在触屏上一个操作入口都没有。
     expect(html).toContain('[@media(hover:none)]:opacity-100');
+  });
+
+  it('选中态只有一个圆角矩形，不套第二个轮廓', () => {
+    const html = renderSiteCard(baseSite, ownerCaps, false, 'small', undefined, true);
+
+    // 曾经：根节点 outline(2px, 半径 20, offset 3) + 内框 accent 边框(半径 10)，
+    // 两个不同半径的硬轮廓套在一起 = 用户看到的「两条线」。
+    expect(html).not.toContain('outline:');
+
+    // 半径必须处处一致：`.site-card-fresh::before` 的光环走 border-radius:inherit，
+    // 根节点与内框不同半径时，那圈光环也会错开。
+    const radii = [...html.matchAll(/border-radius:\s*([0-9]+)px/g)].map((m) => m[1]);
+    expect(radii.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(radii).size).toBe(1);
   });
 
   it('大卡的成果数据不把体积当 KPI', () => {

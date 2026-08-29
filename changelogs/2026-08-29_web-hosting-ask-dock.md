@@ -201,3 +201,4 @@
 | fix | prd-admin | 访客过期页不再无条件承诺「点一下续期就能重新打开」——过期超窗或已撤销时作者根本续不了，改成续期与重新分享并列 |
 | feat | prd-api | 提问改为默认全开：AskEnabled 改三态（null 未表态=开 / true 明确开 / false 明确关），判定收成 AskAccessPolicy.IsAskOn 唯一来源 |
 | feat | prd-admin | 站点弹窗的提问开关跟随默认全开口径，不再把「没表过态」显示成关 |
+| fix | prd-admin | 站点卡选中态去掉外层 outline，只留内框那一个圆角矩形；根节点半径改跟内框一致，顺带修掉新上传光环也偏圆一圈 |
