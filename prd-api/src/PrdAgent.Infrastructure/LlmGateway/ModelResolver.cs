@@ -346,12 +346,22 @@ public class ModelResolver : IModelResolver
                 return legacyConfig;
             }
 
-            // MAP 侧写了专属绑定却查不到那些池，属于「显式池未知」，按 llm-gateway 规则 #3 结构化失败，
-            // 不能拿默认池顶上去——那会让一条配错的绑定看起来像配对了。
-            candidateGroups = hasDedicatedBinding
-                ? []
-                : await TryFallbackToGatewayDefaultPoolsAsync(
-                    gatewayRegistry, appCallerCode, modelType, gatewayConfigRequired, ct);
+            // 走到这里意味着「一个池都没解析出来」：要么没有任何绑定，要么 MAP 侧那条绑定指向的池
+            // 已经不存在了。后者在本仓库不是「配错了」而是退场残留——MAP 的模型管理写接口下线后，
+            // 启动同步给每个 chat 调用方自动绑的那个组已经随之消失，于是全部 200 条 MAP 登记
+            // 都指着同一个查不到的 id。把这种悬空绑定当成「显式池未知」去 fail closed，
+            // 等于让残留数据把所有功能一起判死。
+            //
+            // 这不放宽 llm-gateway 规则 #3：那条管的是「池找得到但不该给你/给不出候选」——
+            // 越权选池、类型不符、池内候选耗尽，各自有自己的失败码，都不经过这里。
+            if (hasDedicatedBinding)
+            {
+                _logger.LogWarning(
+                    "[ModelResolver] MAP 专属绑定指向的模型池都不存在（退场残留），改用 GW 默认池: AppCallerCode={Code}, ModelType={Type}",
+                    appCallerCode, modelType);
+            }
+            candidateGroups = await TryFallbackToGatewayDefaultPoolsAsync(
+                gatewayRegistry, appCallerCode, modelType, gatewayConfigRequired, ct);
             if (candidateGroups.Count == 0)
             {
                 _logger.LogWarning(

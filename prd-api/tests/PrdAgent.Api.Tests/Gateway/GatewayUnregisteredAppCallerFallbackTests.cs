@@ -43,6 +43,38 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
     }
 
     /// <summary>
+    /// 生产的真实形状：MAP 侧每条登记都绑着同一个早已消失的模型组——模型管理写接口下线时，
+    /// 启动同步自动绑的那个组跟着没了。这种悬空绑定是退场残留，不是「配错了」，
+    /// 不能让它把功能判死。
+    /// </summary>
+    [Fact]
+    public async Task DanglingMapBinding_ShouldStillFallBackToGatewayDefaultPool()
+    {
+        await using var env = await GatewayFixture.CreateAsync();
+        await env.MapData.LLMAppCallers.InsertOneAsync(new LLMAppCaller
+        {
+            AppCode = "document-store.selection-rewrite::chat",
+            DisplayName = "知识库划词局部改写",
+            ModelRequirements =
+            [
+                new AppModelRequirement
+                {
+                    ModelType = ModelTypes.Chat,
+                    ModelGroupIds = ["model-group-that-no-longer-exists"],
+                },
+            ],
+        });
+
+        var result = await env.Resolver.ResolveAsync(
+            "document-store.selection-rewrite::chat",
+            ModelTypes.Chat);
+
+        result.Success.ShouldBeTrue(result.ErrorMessage);
+        result.ModelGroupId.ShouldBe(GatewayFixture.DefaultChatPoolId);
+        result.ActualModel.ShouldBe(ChatModel);
+    }
+
+    /// <summary>
     /// 边界：登记了、但绑的池不存在。这是「显式池未知」，必须结构化失败，
     /// 不能被上面那条兜底顺手放行——否则一条配错的绑定会看起来像配对了。
     /// </summary>
@@ -78,6 +110,7 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
         private readonly string _mapDatabaseName;
 
         public LlmGatewayDataContext GatewayData { get; }
+        public MongoDbContext MapData { get; }
         public ModelResolver Resolver { get; }
 
         private GatewayFixture(
@@ -85,12 +118,14 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
             string gatewayDatabaseName,
             string mapDatabaseName,
             LlmGatewayDataContext gatewayData,
+            MongoDbContext mapData,
             ModelResolver resolver)
         {
             _client = client;
             _gatewayDatabaseName = gatewayDatabaseName;
             _mapDatabaseName = mapDatabaseName;
             GatewayData = gatewayData;
+            MapData = mapData;
             Resolver = resolver;
         }
 
@@ -175,7 +210,7 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
                 NullLogger<ModelResolver>.Instance,
                 gatewayData);
 
-            return new GatewayFixture(client, gatewayDatabaseName, mapDatabaseName, gatewayData, resolver);
+            return new GatewayFixture(client, gatewayDatabaseName, mapDatabaseName, gatewayData, mapData, resolver);
         }
 
         private static async Task InsertTenantDocumentAsync<T>(
