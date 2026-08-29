@@ -78,6 +78,22 @@ public static class AskAccessPolicy
     public static bool IsAskOn(bool? askEnabled, string? wrappedAssetType)
         => UnsupportedReason(wrappedAssetType) == null && (askEnabled ?? true);
 
+    /// <summary>
+    /// 这一次失败该不该退配额。三个条件缺一不可，抽出来是为了**可测**——
+    /// 埋在控制器的局部函数里时，把幂等那一条删掉全量测试照样绿。
+    ///
+    /// <paramref name="alreadyRefunded"/> 是最容易漏的那条：两条内层失败出口退完款之后
+    /// 都要写一条 SSE error，而那两处的写入没有吞 ObjectDisposedException——访客此时
+    /// 已断开的话它就抛出来、落到外层 catch，退款逻辑第二次执行，而「没有产出」和
+    /// 「扣成过」两个条件照旧成立。站点那个计数是所有访客共用的，多退一次就是把
+    /// 别人的用量抹掉，配额闸从此漏。
+    /// </summary>
+    /// <param name="alreadyRefunded">这一次请求是否已经退过。</param>
+    /// <param name="producedLength">已经产出的答案长度；&gt; 0 表示 token 已经花了，不退。</param>
+    /// <param name="consumed">进场时到底扣成没有；没扣成就没什么可退。</param>
+    public static bool ShouldRefundQuota(bool alreadyRefunded, int producedLength, bool consumed)
+        => !alreadyRefunded && producedLength == 0 && consumed;
+
     /// <summary>面板欢迎语的存储上限。展示文案，超长截断而不是拒绝。</summary>
     public const int MaxWelcomeLength = 200;
 

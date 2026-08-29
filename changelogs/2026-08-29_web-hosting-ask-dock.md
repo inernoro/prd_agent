@@ -202,3 +202,5 @@
 | feat | prd-api | 提问改为默认全开：AskEnabled 改三态（null 未表态=开 / true 明确开 / false 明确关），判定收成 AskAccessPolicy.IsAskOn 唯一来源 |
 | feat | prd-admin | 站点弹窗的提问开关跟随默认全开口径，不再把「没表过态」显示成关 |
 | fix | prd-admin | 站点卡选中态去掉外层 outline，只留内框那一个圆角矩形；根节点半径改跟内框一致，顺带修掉新上传光环也偏圆一圈 |
+| fix | prd-api | 重新生成失败抛异常时也把 owner 手写标记还回去，否则手写题会失去「永不被自动覆盖」的保护 |
+| fix | prd-api | 提问配额退款改为只退一次，修掉访客断开时经外层 catch 二次退款、抹掉共用计数里别人用量的路径 |

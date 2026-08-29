@@ -180,6 +180,22 @@ public class WebPageAskController : ControllerBase
     /// 这 45 秒里保存的手写题会被这一笔改回 auto——SetAskConfigAsync 写 source 但不动戳，
     /// 于是「戳仍为空」照样成立。判据只许有这一处定义，测试直接拿它打真库。
     /// </summary>
+    /// <summary>
+    /// 把「重新生成」进场时清掉的那两笔（source + 版本戳）还回去。
+    ///
+    /// 正常出口与异常出口共用这一处：抄两遍就会改一处忘一处，而这两条路要还的是同一件东西。
+    /// 还原条件由 <see cref="RestoreAskSourceFilter"/> 把关——只在「这两笔都还是我离开时的
+    /// 样子」时才动手，否则会把另一个 editor 在这 45 秒里保存的手写题改回 auto。
+    /// </summary>
+    private async Task RestorePriorAskSourceAsync(string siteId, string priorSource, DateTime? priorStamp)
+    {
+        var restore = Builders<HostedSite>.Update.Set(s => s.AskQuestionsSource, priorSource);
+        restore = priorStamp.HasValue
+            ? restore.Set(s => s.AskQuestionsGeneratedFor, priorStamp.Value)
+            : restore.Unset(s => s.AskQuestionsGeneratedFor);
+        await _db.HostedSites.UpdateOneAsync(RestoreAskSourceFilter(siteId), restore);
+    }
+
     public static FilterDefinition<HostedSite> RestoreAskSourceFilter(string siteId) =>
         Builders<HostedSite>.Filter.Where(
             s => s.Id == siteId
@@ -244,7 +260,22 @@ public class WebPageAskController : ControllerBase
 
         // CancellationToken.None：owner 关掉抽屉不该取消这次生成（server-authority）。
         // 真正的兜底是生成器内部那 45 秒超时，而不是这条 HTTP 连接活不活着。
-        var outcome = await _askOpeners.EnsureAsync(siteId, CancellationToken.None);
+        //
+        // 必须包在 try 里：上面已经把 source 与版本戳**两笔都清掉了**，还原却写在 await 之后。
+        // EnsureAsync 只要在返回结果之前抛出（首次查库、取快照、末尾盖戳任一处失败），
+        // 还原就永远不执行——站点停在「source=auto、戳为空」，owner 手写的题当场失去保护，
+        // 之后任何一次自动生成（配置读取、分享首访）都能把它覆盖掉。而接口只回一个错误，
+        // 没人知道保护已经没了。这正是本功能声明要守的不变量，不能从异常出口漏掉。
+        AskOpenerOutcome outcome;
+        try
+        {
+            outcome = await _askOpeners.EnsureAsync(siteId, CancellationToken.None);
+        }
+        catch
+        {
+            await RestorePriorAskSourceAsync(siteId, priorSource, priorStamp);
+            throw;
+        }
 
         // 只有这三种真的落库了（都走 StampAsync 且匹配上了）；其余都没写，把标记还回去。
         //
@@ -257,11 +288,7 @@ public class WebPageAskController : ControllerBase
             or AskOpenerOutcome.NoContent
             or AskOpenerOutcome.ModelUnusable))
         {
-            var restore = Builders<HostedSite>.Update.Set(s => s.AskQuestionsSource, priorSource);
-            restore = priorStamp.HasValue
-                ? restore.Set(s => s.AskQuestionsGeneratedFor, priorStamp.Value)
-                : restore.Unset(s => s.AskQuestionsGeneratedFor);
-            await _db.HostedSites.UpdateOneAsync(RestoreAskSourceFilter(siteId), restore);
+            await RestorePriorAskSourceAsync(siteId, priorSource, priorStamp);
         }
 
         var latest = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync();
@@ -596,11 +623,20 @@ public class WebPageAskController : ControllerBase
         // 判据是**有没有产出**，不是有没有报错：答到一半断掉的那种 token 已经花了，不退。
         // 抽成一个本地函数是因为两条失败出口（网关 Error chunk、外层 catch）都要走它，
         // 抄两遍就会改一处忘一处。
+        //
+        // 还必须**只退一次**。两条内层出口（网关 Error chunk、空答案）退完之后都要写一条
+        // SSE error，而那两处的 WriteSse 没有像 typing 那样吞 ObjectDisposedException：
+        // 访客此时已经断开的话它就抛出来，落到外层 catch，退款函数第二次执行——
+        // 而 answer 仍是空、decision.Consumed 仍是 true，两个条件照旧成立，于是退了两次。
+        // 站点那个计数是**所有访客共用**的，多退一次就是把别人的用量抹掉，配额闸就漏了。
+        var refunded = false;
         async Task RefundIfNothingProducedAsync()
         {
-            if (answer.Length > 0) return;
-            // 同上：没扣成就没什么可退，退了反而是从别人的计数里扣。
-            if (!decision.Consumed) return;
+            // 三个条件的唯一判定源在 AskAccessPolicy.ShouldRefundQuota，这里不重写一遍。
+            if (!AskAccessPolicy.ShouldRefundQuota(refunded, answer.Length, decision.Consumed)) return;
+            // 先置位再退：RefundAsync 自己抛出时，宁可这一次没退成（用户少一次额度），
+            // 也不能让下一条出口再退一遍（那是把别人的用量抹掉，坏的是共用计数）。
+            refunded = true;
             await _quota.RefundAsync(site.Id, userId, clientIp);
         }
 

@@ -319,8 +319,12 @@ public class AskOpeningQuestionWiringTests
         Assert.Equal(4, Regex.Matches(ctrl, @"RefundIfNothingProducedAsync\(\)").Count); // 1 处定义 + 3 处调用
         var idx = ctrl.IndexOf("async Task RefundIfNothingProducedAsync()", StringComparison.Ordinal);
         Assert.True(idx > 0);
-        var body = ctrl.Substring(idx, Math.Min(320, ctrl.Length - idx));
-        Assert.Contains("answer.Length > 0", body);
+        var body = ctrl.Substring(idx, Math.Min(420, ctrl.Length - idx));
+        // 三个条件（没产出 / 扣成过 / 还没退过）的唯一判定源是 AskAccessPolicy.ShouldRefundQuota，
+        // 它在 AskQuotaRefundGateTests 里逐条验过。这里钉的是「这条线还接在那个判定源上」——
+        // 谁要是在这里就地又写一遍条件，那些行为用例就会变成空转（改坏了也不红）。
+        // 原先这里断言的是字面量 `answer.Length > 0`，判据一抽走它就红，钉的是写法不是不变量。
+        Assert.Contains("AskAccessPolicy.ShouldRefundQuota(", body);
         Assert.Contains("RefundAsync", body);
     }
 
@@ -414,8 +418,11 @@ public class AskOpeningQuestionWiringTests
 
         // 清除之前必须先记下原样
         var priorAt = ctrl.IndexOf("var priorSource = site.AskQuestionsSource;", StringComparison.Ordinal);
-        var clearAt = ctrl.IndexOf("Unset(s => s.AskQuestionsGeneratedFor)", StringComparison.Ordinal);
         Assert.True(priorAt > -1, "没有先记下原来的 source，还原就无从谈起");
+        // 清除那一笔要在「记原样」**之后**。这里必须从 priorAt 往后找：还原已抽成
+        // RestorePriorAskSourceAsync，它排在文件更靠前的位置、里面同样有这个 Unset，
+        // 用 IndexOf 取全文首次出现会命中那个辅助方法，把顺序判成反的。
+        var clearAt = ctrl.IndexOf("Unset(s => s.AskQuestionsGeneratedFor)", priorAt, StringComparison.Ordinal);
         Assert.True(clearAt > priorAt, "记原样必须排在清除之前");
 
         // 只有真的落库的那三种结局不还原，其余都要还
