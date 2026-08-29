@@ -6,7 +6,7 @@
 
 版本：v1.0.0 · 2026-08-29 · 状态：待拍板
 
-可点击的预览包：`assets/prototypes/recording-meeting-note-preview.html`（A 到 Z 全部 26 屏）。
+配套有一份可点击的预览包，把 A 到 Z 全部 26 屏逐屏画了出来（路径见文末「实现来源」）。
 
 ---
 
@@ -78,6 +78,10 @@
 
 ## 相关
 
+- 债务台账：[debt.knowledge-base.md](./debt.knowledge-base.md)
+- 约束这件事的三条规则：产物可见才算完成、等待期与最小惊讶、系统知道的别问用户。
+
+## 实现来源
+
 - 预览包：`assets/prototypes/recording-meeting-note-preview.html`
-- 债务台账：[doc/debt.knowledge-base.md](./debt.knowledge-base.md)
-- 规则：`.claude/rules/closed-loop-acceptance.md`（产物可见才算完成）、`.claude/rules/expectation-management.md`（等待期与最小惊讶）、`.claude/rules/minimal-user-input.md`（系统知道的别问用户）
+- 规则：`.claude/rules/closed-loop-acceptance.md`、`.claude/rules/expectation-management.md`、`.claude/rules/minimal-user-input.md`
