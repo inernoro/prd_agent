@@ -131,11 +131,15 @@ public class HostedSite
     /// <summary>
     /// 是否开放「向我提问」。默认 **false** —— 与 CommentsEnabled 刻意相反。
     ///
-    /// 评论是纯存储、零边际成本，所以默认开；提问每一次都要烧 token 和钱，
-    /// 存量站点绝不能因为 Mongo 反序列化老文档（无此字段）就"顺带被打开"。
-    /// 初始化器为 false，老文档反序列化后恒为关闭，owner 必须显式打开。
+    /// 三态，不是 bool：null = owner 从没表过态（含存量站点与新上传），
+    /// true = 明确打开，false = 明确关掉。
+    ///
+    /// 口径 2026-08-29 起是「默认全开，除非明确拒绝」（用户决定），所以 null 视为开。
+    /// 之所以留成可空而不是把存量刷成 true：bool 里「没表过态」和「特意关掉」长得
+    /// 一模一样，一把刷会把 owner 关过的站点也打开。判定一律走
+    /// <see cref="AskAccessPolicy.IsAskOn"/>，不要在别处自己 ?? true。
     /// </summary>
-    public bool AskEnabled { get; set; }
+    public bool? AskEnabled { get; set; }
 
     /// <summary>提问面板的欢迎语；空则前端用站点标题兜底</summary>
     public string? AskWelcome { get; set; }

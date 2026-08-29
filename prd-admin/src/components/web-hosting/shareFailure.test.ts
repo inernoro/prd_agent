@@ -8,11 +8,20 @@ describe('访客打不开链接时该说哪一句', () => {
     expect(resolveShareFailure('visibility_denied')).toBe('visibility-denied');
   });
 
-  it('过期与失效分开——一个能续期复活，一个只能重新分享', () => {
+  it('过期与失效分开，且过期页不无条件承诺续期', () => {
     expect(resolveShareFailure('EXPIRED')).toBe('expired');
     expect(resolveShareFailure('NOT_FOUND')).toBe('not-found');
-    expect(SHARE_FAILURE_REGISTRY.expired.body).toContain('续期');
     expect(SHARE_FAILURE_REGISTRY['not-found'].body).toContain('新链接');
+
+    // 访客侧只有 EXPIRED 一个错误码，拿不到宽限期信息。曾经这里写死「分享者点一下
+    // 续期，这个地址立刻就能重新打开」——过期超窗或链接已撤销时续期端点会拒绝，
+    // 作者根本点不动，等于让访客去要一个对方给不了的东西。
+    // 这句话必须两种情况都成立：续期与重新分享并列，且不许出现「立刻就能重新打开」
+    // 这种无条件承诺。
+    const body = SHARE_FAILURE_REGISTRY.expired.body;
+    expect(body).toContain('续期');
+    expect(body).toContain('重新分享');
+    expect(body).not.toContain('立刻就能重新打开');
   });
 
   it('密码试太频繁是「等一会儿」，不能和「链接没救了」同一种语气', () => {

@@ -76,7 +76,7 @@ public class WebPageAskController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             siteId = site.Id,
-            enabled = site.AskEnabled,
+            enabled = AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType),
             welcome = site.AskWelcome,
             suggestedQuestions = site.AskSuggestedQuestions ?? new List<string>(),
             // 这批题是系统读正文写的还是 owner 自己写的。自动填的值必须看得出来、可改、
@@ -134,7 +134,7 @@ public class WebPageAskController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             siteId = site.Id,
-            enabled = site.AskEnabled,
+            enabled = AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType),
             welcome = site.AskWelcome,
             suggestedQuestions = site.AskSuggestedQuestions,
             allowAnonymous = site.AskAllowAnonymous,
@@ -326,7 +326,7 @@ public class WebPageAskController : ControllerBase
             await WriteJsonErrorAsync(404, ErrorCodes.NOT_FOUND, "站点不存在或无权访问");
             return;
         }
-        if (!site.AskEnabled)
+        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType))
         {
             await WriteJsonErrorAsync(403, "ASK_DISABLED", "这个页面没有开启提问");
             return;
@@ -360,7 +360,7 @@ public class WebPageAskController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail("ASK_DISABLED", "合集分享暂不支持提问"));
 
         var site = resolved.Site!;
-        if (!site.AskEnabled)
+        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType))
             return StatusCode(403, ApiResponse<object>.Fail("ASK_DISABLED", "这个页面没有开启提问"));
         if (viewerUserId == null && !site.AskAllowAnonymous)
             return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "这个页面需要登录后才能提问"));
@@ -415,7 +415,7 @@ public class WebPageAskController : ControllerBase
         }
 
         var site = resolved.Site!;
-        if (!site.AskEnabled)
+        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType))
         {
             await WriteJsonErrorAsync(403, "ASK_DISABLED", "这个页面没有开启提问");
             return;

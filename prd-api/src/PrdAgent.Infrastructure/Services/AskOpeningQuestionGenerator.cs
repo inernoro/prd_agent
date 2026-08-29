@@ -73,9 +73,13 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
     /// </summary>
     public static bool NeedsGeneration(HostedSite site)
     {
-        // 提问没开就不生成：AskEnabled 默认 false，为所有上传都跑一遍模型是纯浪费。
-        // 代价是 owner 开启提问的那一刻才开始算，几秒后才到位——这几秒他正在配置面板里。
-        if (!site.AskEnabled) return false;
+        // 提问没开就不生成。判据走 IsAskOn，与「阅读页给不给提问入口」同一个来源——
+        // 两处若各判各的，就会出现「访客看得见提问坞、却永远没有开场问题」这种半截状态。
+        //
+        // 口径 2026-08-29 翻转为默认全开之后，这条的代价随之变了：以前只有 owner 显式
+        // 打开的站点才生成，现在每个支持提问的上传都会跑一次模型。这是默认全开的必然
+        // 成本，不是意外——要收窄就收窄 IsAskOn，别在这里单独加一层判据。
+        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType)) return false;
         // owner 动过手就永不覆盖：他改的几句被静默冲掉是最难查的一类缺陷。
         // 「算不算他动过手」的判据在 AskOpeningQuestions.ResolveSource 一处——读端点回给
         // 面板的标签走的也是它，两边必须给同一个答案。

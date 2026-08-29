@@ -53,7 +53,10 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   /** 提问面板打开过至少一次；之后常驻挂载，切走只藏不卸（见渲染处注释） */
   const [askEverOpened, setAskEverOpened] = useState(false);
   /** 站点提问开关的本地镜像：配置抽屉保存后即时回填，不必等父级刷新列表 */
-  const [askEnabled, setAskEnabled] = useState(site.askEnabled === true);
+  // 三态：undefined = owner 从没表过态（默认开），true = 明确开，false = 明确关。
+  // 曾经写的是 === true，于是「没表过态」被当成关——默认全开的口径下这会让
+  // 弹窗里的开关和阅读页的真实状态对不上。
+  const [askEnabled, setAskEnabled] = useState(site.askEnabled !== false);
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);

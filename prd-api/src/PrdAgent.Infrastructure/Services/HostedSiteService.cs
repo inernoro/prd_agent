@@ -1474,7 +1474,9 @@ public class HostedSiteService : IHostedSiteService
             ? rawSites.FirstOrDefault(s => s.Id == sites[0].Id)
             : null;
         var exposeAsk = !isCollection
-            && AskAccessPolicy.ShouldExposeAskOnShare(sites.Count, askSite?.AskEnabled ?? false);
+            && AskAccessPolicy.ShouldExposeAskOnShare(
+                sites.Count,
+                askSite is not null && AskAccessPolicy.IsAskOn(askSite.AskEnabled, askSite.WrappedAssetType));
 
         // 兜底一次：本功能上线之前就已经开着提问的站点，既不会走「刚开启」也不会走「刚重传」，
         // 光靠那两个钩子它们永远是空题库。这里排一次，第一个访客看不到词条、下一个就有了。
