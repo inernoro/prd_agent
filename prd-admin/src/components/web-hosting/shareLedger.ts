@@ -82,9 +82,14 @@ export function buildLedgerConclusion(links: ShareLinkItem[], now: number = Date
     .filter((x): x is { link: ShareLinkItem; days: number } => x.days !== null && x.days <= 7);
   const hottest = [...active].sort((a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0))[0];
 
-  // 访客数用 uniqueIpCount 之和。它是 per-link 的 distinct IP，跨链接会重复计数
-  // （同一个人打开两条链接算两位），所以措辞是「次访问、N 位访客」而不是「N 个人」。
+  // uniqueIpCount 是**每条链接各自**去重的 IP 数，跨链接不去重：同一个人打开两条
+  // 链接，在两条里各算一次。所以这个和只有在「只有一条有效链接」时才等于人数。
+  //
+  // 原先这里照样渲染成「N 位访客」，并在注释里自我安慰「措辞是位访客不是个人」——
+  // 对读者来说这两个词是一回事，链接一多这个数就明显虚高。数据撑不住的话不能说：
+  // 一条链接时说人数，多条时改说「人次」，并点明同一人开多条会重复计。
   const visitors = active.reduce((sum, l) => sum + (l.uniqueIpCount ?? 0), 0);
+  const visitorsAreDistinct = active.length === 1;
 
   const segs: LedgerSegment[] = [
     { text: String(active.length), drillTo: 'active', tone: 'strong' },
@@ -97,7 +102,11 @@ export function buildLedgerConclusion(links: ShareLinkItem[], now: number = Date
 
   if (visitors > 0) {
     segs.push({ text: '、' });
-    segs.push({ text: `${visitors} 位访客`, tone: 'strong' });
+    segs.push({
+      text: visitorsAreDistinct ? `${visitors} 位访客` : `${visitors} 人次访客`,
+      tone: 'strong',
+    });
+    if (!visitorsAreDistinct) segs.push({ text: '（同一人开多条链接会重复计）' });
   }
 
   if (expiringSoon.length > 0) {

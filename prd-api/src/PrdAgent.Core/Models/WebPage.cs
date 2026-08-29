@@ -171,6 +171,18 @@ public class HostedSite
     /// </summary>
     public DateTime? AskQuestionsGeneratedFor { get; set; }
 
+    /// <summary>
+    /// 开场问题生成的**跨进程认领**时间（租约）。null = 没人在做。
+    ///
+    /// 进程内的 _inFlight 只挡得住同一个进程。同一个站点可能被两个 CDS 分支部署、
+    /// 或同一部署的两个副本同时排上生成（它们共用一个 Mongo），两边都过了进程内那道门，
+    /// 就会各调一次模型——owner 为同一版正文付两次钱，而后写的那份还会盖掉先写的。
+    ///
+    /// 所以认领必须落在库里，且要在**调模型之前**：CAS 抢到才做。带租约是为了容错——
+    /// 进程崩在中间时没人来清，租约过期后自动可被重新认领，不会把这个站点永久锁死。
+    /// </summary>
+    public DateTime? AskOpenerClaimedAt { get; set; }
+
     /// <summary>是否允许未登录访客提问。false = 只有登录用户能问（默认，防白嫖 token）</summary>
     public bool AskAllowAnonymous { get; set; }
 

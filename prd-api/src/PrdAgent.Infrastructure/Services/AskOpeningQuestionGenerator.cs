@@ -89,10 +89,40 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         return site.AskQuestionsGeneratedFor != version;
     }
 
+    /// <summary>认领租约：生成本身有 45 秒上限，留足余量；进程崩了也最多锁这么久。</summary>
+    private static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// 这个站点还在失败冷却里吗——顺手把过期的条目清掉。
+    ///
+    /// 冷却表原先只在「后来生成成功」时才删条目。模型长时间不可用时每个站点都会进表，
+    /// 而那些之后再没被访问、或者已经被删掉的站点，条目就永远留着——这是个单例服务，
+    /// 于是它随时间单调增长。默认全开之后进表的站点更多，涨得更快。
+    /// 读的时候顺便扫一遍过期项，成本和条目数同阶，且只在真的有过期项时才动表。
+    /// </summary>
+    private bool InCooldown(string siteId)
+    {
+        var now = DateTime.UtcNow;
+
+        if (_cooldownUntil.TryGetValue(siteId, out var until))
+        {
+            if (now < until) return true;
+            _cooldownUntil.TryRemove(siteId, out _);
+        }
+
+        // 顺带清掉别人留下的过期条目，防止这张表随时间单调增长
+        foreach (var kv in _cooldownUntil)
+        {
+            if (now >= kv.Value) _cooldownUntil.TryRemove(kv.Key, out _);
+        }
+
+        return false;
+    }
+
     public void QueueEnsure(HostedSite site)
     {
         if (!NeedsGeneration(site)) return;
-        if (_cooldownUntil.TryGetValue(site.Id, out var until) && DateTime.UtcNow < until) return;
+        if (InCooldown(site.Id)) return;
         if (!_inFlight.TryAdd(site.Id, 0)) return;
 
         // 刻意不 await：调用方全在请求路径上。异常在里面就地吞掉并记日志——
@@ -150,6 +180,14 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         if (site == null || !NeedsGeneration(site)) return AskOpenerOutcome.Skipped;
 
         var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
+
+        // 跨进程认领：抢不到就说明别的进程/别的部署正在为这一版生成，直接让路。
+        // 必须排在调模型之前——进程内的 _inFlight 挡不住另一个进程，两边都往下走
+        // 就是同一版正文付两次钱。
+        if (!await TryClaimAsync(db, siteId, version, ct)) return AskOpenerOutcome.Busy;
+
+        try
+        {
 
         var snapshots = sp.GetRequiredService<ISiteContentSnapshotService>();
         var snapshot = await snapshots.GetAsync(site, ct);
@@ -276,6 +314,42 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
 
         _logger.LogInformation("[AskOpeners] 站点 {SiteId} 生成了 {Count} 条开场问题", siteId, questions.Count);
         return AskOpenerOutcome.Generated;
+
+        }
+        finally
+        {
+            // 无论成败都要放开认领：失败时留着会让这个站点白等一个租约周期才有人再试。
+            await ReleaseClaimAsync(db, siteId, ct);
+        }
+    }
+
+    /// <summary>认领这一版的生成权。抢到返回 true；已有他人持有且租约未过期返回 false。</summary>
+    private static async Task<bool> TryClaimAsync(
+        MongoDbContext db, string siteId, DateTime version, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var staleBefore = now - ClaimLease;
+
+        // CAS：没人持有、或持有者的租约已过期，才轮得到我。
+        // 同时再确认一次这一版还没被盖过戳——两个进程一前一后进来时，
+        // 后者应当在这里就止步，而不是白跑一趟模型再被 StampAsync 拒绝。
+        var claimed = await db.HostedSites.UpdateOneAsync(
+            s => s.Id == siteId
+                 && s.AskQuestionsGeneratedFor != version
+                 && (s.AskOpenerClaimedAt == null || s.AskOpenerClaimedAt < staleBefore),
+            Builders<HostedSite>.Update.Set(s => s.AskOpenerClaimedAt, now),
+            cancellationToken: ct);
+
+        return claimed.MatchedCount > 0;
+    }
+
+    /// <summary>放开认领。只清自己那一笔的语义由租约兜底，这里无条件清空即可。</summary>
+    private static async Task ReleaseClaimAsync(MongoDbContext db, string siteId, CancellationToken ct)
+    {
+        await db.HostedSites.UpdateOneAsync(
+            s => s.Id == siteId,
+            Builders<HostedSite>.Update.Set(s => s.AskOpenerClaimedAt, (DateTime?)null),
+            cancellationToken: ct);
     }
 
     /// <summary>
@@ -311,6 +385,11 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         var result = await db.HostedSites.UpdateOneAsync(
             s => s.Id == siteId
                  && s.AskQuestionsSource != "manual"
+                 // 这一版还没被别人盖过。少了这条，两个进程（两个 CDS 分支部署、
+                 // 或同一部署的两个副本）同时为同一站点同一版生成时，两笔都能匹配，
+                 // 后到的那笔会覆盖先到的结果——而模型已经被调了两次。
+                 // 计费拦不住要靠下面 TryClaim 的原子认领，这里挡住的是「覆盖」。
+                 && s.AskQuestionsGeneratedFor != version
                  && (s.ContentVersion == version || (s.ContentVersion == default && s.CreatedAt == version)),
             update,
             cancellationToken: ct);

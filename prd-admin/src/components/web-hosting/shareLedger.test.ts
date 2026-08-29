@@ -71,7 +71,9 @@ describe('分享档账本', () => {
       link({ id: 'l2', viewCount: 320, uniqueIpCount: 18 }),
     ];
     expect(text(links)).toContain('2 条有效链接累计带来 418 次访问');
-    expect(text(links)).toContain('26 位访客');
+    // 两条链接：8 + 18 只是「每条各自去重」的和，跨链接同一个人会被算两次，
+    // 所以这里只敢说人次。这条断言原先钉的是「26 位访客」——把虚高的说法钉死了。
+    expect(text(links)).toContain('26 人次访客');
   });
 
   it('不把累计访问说成「近 7 天」—— 这一屏只有累计值，近 7 天要访问日志聚合', () => {
@@ -118,6 +120,23 @@ describe('分享档账本', () => {
     expect(filterShareLinks(links, 'abcdef').map((l) => l.id)).toEqual(['a']);
     expect(filterShareLinks(links, '41830').map((l) => l.id)).toEqual(['b']);
     expect(filterShareLinks(links, '  ').map((l) => l.id)).toEqual(['a', 'b']);
+  });
+
+  it('多条链接时访客数只敢说人次，不冒充人数', () => {
+    // uniqueIpCount 是每条链接各自去重的，跨链接不去重：同一个人开两条，两条里各算
+    // 一次。求和后渲染成「N 位访客」就是虚高——链接越多越离谱。
+    const two = [
+      link({ id: 'a', token: 'a1', viewCount: 10, uniqueIpCount: 3, expiresAt: '2026-12-31T00:00:00.000Z' }),
+      link({ id: 'b', token: 'b1', viewCount: 5, uniqueIpCount: 2, expiresAt: '2026-12-31T00:00:00.000Z' }),
+    ];
+    const multi = text(two);
+    expect(multi).toContain('5 人次访客');
+    expect(multi).toContain('重复计');
+    expect(multi).not.toContain('5 位访客');
+
+    // 只有一条时，这个和确实等于人数，可以照说
+    const one = [link({ id: 'a', token: 'a1', viewCount: 10, uniqueIpCount: 3, expiresAt: '2026-12-31T00:00:00.000Z' })];
+    expect(text(one)).toContain('3 位访客');
   });
 
   it('永久有效的链接不摆「续期」入口', () => {
