@@ -66,7 +66,18 @@ const ICON_PATHS: Record<string, string> = {
   Swords: 'M14 4h6v6M20 4l-8 8M4 14l6 6M4 20h6v-6M10 4H4v6M20 20h-6v-6',
   PaSecretary: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8M4 21a8 8 0 0 1 16 0',
 };
-const FALLBACK_ICON = 'M4 4h16v16H4z';
+export const FALLBACK_ICON = 'M4 4h16v16H4z';
+
+/**
+ * 名字 → 图标路径。查不到就落到通用方块，不留空。
+ *
+ * 导出这一个函数、而不是导出上面那张表，是为了让守卫**跑一次真值**而不是扫源码：
+ * 键存在不等于画得出来（值可能是空串、可能就等于兜底方块），而换个写法（加引号的键、
+ * 展开一张共享表）又会让扫源码的判据无谓地红。判据要读的是这里的返回值。
+ */
+export function toolboxIconPath(icon: string): string {
+  return ICON_PATHS[icon] ?? FALLBACK_ICON;
+}
 
 /** 权属 / 类型 tab 的图标，对齐 AiToolboxPage 里 CATEGORY_TABS、KIND_TABS 的 lucide 选型。 */
 const TAB_ICONS = [
@@ -275,7 +286,7 @@ export function ToolboxScene() {
                           background: tone.faint, color: tone.solid,
                         }}
                       >
-                        <SceneIcon d={ICON_PATHS[item.icon] ?? FALLBACK_ICON} size={15} />
+                        <SceneIcon d={toolboxIconPath(item.icon)} size={15} />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-1.5">
