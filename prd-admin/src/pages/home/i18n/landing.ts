@@ -1206,7 +1206,7 @@ const en: TranslationShape = {
       eyebrow: 'Toolbox · /ai-toolbox',
       title: 'Not six agents. Thirty-odd, all on the same desk',
       description:
-        'This is the Toolbox page you land on after logging in — ownership tabs, kind tabs, search, count, recents, all of it. The sixteen below are one screenful picked out of thirty-odd: names and icons come from that registry, the one-liners are trimmed to fit here.',
+        'This is the Toolbox page you land on after logging in — ownership tabs, kind tabs, search, count, recents, all of it. The sixteen below are one screenful picked out of thirty-odd: the icons come straight from that registry, the names are its entries rendered in English, and the one-liners are trimmed to fit here.',
       note: 'The ones tagged Preview have not passed full acceptance yet. They sit here rather than being hidden: we say exactly how far each one goes.',
       tabs: ['All', 'Mine', 'Shared', 'Starred'],
       kindTabs: ['All kinds', 'Agents', 'Tools'],
