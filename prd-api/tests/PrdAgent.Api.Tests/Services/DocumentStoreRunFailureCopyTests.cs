@@ -112,6 +112,22 @@ public class DocumentStoreRunFailureCopyTests
         Assert.Contains("原文", copy.UserMessage);
     }
 
+    /// <summary>
+    /// 上游一个字都没回来时也算这一档：用户看到的结果与「报错了」完全一样，
+    /// 不能因为没有异常可抛就退回静默。
+    /// </summary>
+    [Fact]
+    public void SummarySkippedOnEmptyResult_ShouldUseTheSameDegradedCode()
+    {
+        var copy = DocumentStoreRunFailureCopy.SummarySkippedOnEmptyResult();
+
+        Assert.Equal(DocumentStoreRunFailureCopy.SummarySkipped, copy.Code);
+        Assert.False(copy.AutomaticRetryAllowed);
+        Assert.Contains("原文", copy.UserMessage);
+        Assert.DoesNotContain("转写", copy.UserMessage);
+        Assert.DoesNotContain("重新录制", copy.UserMessage);
+    }
+
     /// <summary>整理这一步的模型没配好，同样要如实说是配置问题，而不是「稍后重试」。</summary>
     [Fact]
     public void ResolveSummarySkipped_ShouldStillRecognizeConfigurationFault()

@@ -125,6 +125,17 @@ public static class DocumentStoreRunFailureCopy
     }
 
     /// <summary>
+    /// 上游流正常结束、却一个字都没回来（内容过滤、空补全）。没有异常可抛，
+    /// 所以 <see cref="ResolveSummarySkipped"/> 那条路根本走不到——而结果对用户完全一样：
+    /// 笔记里没有摘要，也没有任何解释。归进同一档，用同一个码，只是把「模型没返回内容」说出来。
+    /// </summary>
+    public static Copy SummarySkippedOnEmptyResult()
+        => new(
+            SummarySkipped,
+            "这次整理没有生成出来（模型没有返回内容）。转录原文已完整保存，可以在这条笔记上重新整理。",
+            AutomaticRetryAllowed: false);
+
+    /// <summary>
     /// 「你的东西还在」这句要按这条 run 处理的是什么来说。
     /// 录音链路的人最怕的是「我校对过的原文没了」，所以点名录音与原文；
     /// 而 reprocess 跑的可能是一篇普通文档，压根没有录音——对它说「录音都在」是句空话

@@ -293,6 +293,25 @@ public class SubtitleGenerationProcessor
             try
             {
                 summary = await SummarizeTranscriptAsync(run, runStore, entry.Title, transcriptPlain);
+                if (string.IsNullOrWhiteSpace(summary))
+                {
+                    // 流正常结束却零 delta（内容过滤 / 空补全）：没有异常可抛，下面那个 catch 走不到，
+                    // 于是笔记又变回「没有摘要小节、也没有任何解释」——正是这次要消灭的那种静默降级
+                    // （Codex 第五十一轮 P2）。当作同一档处理。
+                    var emptyResult = DocumentStoreRunFailureCopy.SummarySkippedOnEmptyResult();
+                    summaryUnavailableNote = emptyResult.MessageFor(willRetry: false);
+                    _logger.LogWarning(
+                        "[doc-store-agent] 转录整理返回空内容，降级为仅保存原文 run={RunId}, Code={Code}",
+                        run.Id, emptyResult.Code);
+                    try
+                    {
+                        await runStore.AppendEventAsync(
+                            DocumentStoreRunKinds.Transcribe, run.Id, "summaryError",
+                            new { code = emptyResult.Code, message = summaryUnavailableNote, detail = "empty-completion" },
+                            ct: CancellationToken.None);
+                    }
+                    catch { /* ignore */ }
+                }
             }
             catch (Exception ex)
             {
