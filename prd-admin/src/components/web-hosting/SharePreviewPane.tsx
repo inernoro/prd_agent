@@ -12,34 +12,68 @@ export type { ShareVisibility };
  * 登录可见 + 有密码 = 先要登录，再要密码。
  * 抽成纯函数是为了这条组合逻辑可以被测红：写在 JSX 里只能靠断言文案字面量。
  */
-export type VisitorGate = 'password' | 'login' | 'login-then-password' | 'open';
+export type VisitorGate =
+  /** public 无密码：全开 */
+  | 'open'
+  /** public + 密码：只有密码这一道 */
+  | 'password'
+  /** logged-in 无密码：任何登录用户都进得来，**不看团队** */
+  | 'any-login'
+  /** logged-in + 密码：登录 + 密码，团队成员免密 */
+  | 'any-login-then-password'
+  /** owner-only 无密码：只有我和这个站点已共享团队的成员 */
+  | 'team-only'
+  /** owner-only + 密码：团队外的人在密码之前就被挡住了 */
+  | 'team-only-with-password';
 
 export function resolveVisitorGate(visibility: ShareVisibility, hasPassword: boolean): VisitorGate {
-  if (visibility === 'owner-only') return hasPassword ? 'login-then-password' : 'login';
-  if (visibility === 'logged-in') return hasPassword ? 'login-then-password' : 'login';
+  // 三档各自不同，**不能把 owner-only 与 logged-in 合成同一个门**。
+  // 后端 EnforceShareVisibilityAsync 里 logged-in 那一支只判「有没有登录」，
+  // 一个团队外的陌生人只要登录了就照样进得来；把它说成「团队外打不开」是
+  // 往更安全的方向谎报——owner 会以为外人进不来而放心发出去。
+  if (visibility === 'owner-only') return hasPassword ? 'team-only-with-password' : 'team-only';
+  if (visibility === 'logged-in') return hasPassword ? 'any-login-then-password' : 'any-login';
   return hasPassword ? 'password' : 'open';
 }
 
 /**
- * 门的文案。owner-only 那两档要单独说「无权限」而不是「要登录」——
- * 团队外的人就算登录了也进不去，说成「登录就能看」是错误引导。
+ * 这个地址是不是「还没生成」的示意串。
+ *
+ * 抽成导出的函数是为了能被直接测：判据写在 JSX 里只能靠渲染断言，
+ * 而这条判据的后果（扫出一个 404）恰恰是渲染断言最看不出来的那种。
+ */
+export function isPlaceholderShareUrl(url: string): boolean {
+  return /[{}]/.test(url);
+}
+
+/**
+ * 门的文案。每一条都对着后端真实行为写：可见性先判、密码后判，
+ * 且团队内部人免密（IsTeamInsiderForShareAsync）。
  */
 const GATE_COPY: Record<VisitorGate, { title: string; hint: string }> = {
-  password: {
-    title: '访客先看到密码门',
-    hint: '输对密码后才进入正文。密码可以口述，也可以连着链接一起复制。',
-  },
-  login: {
-    title: '团队外的人打开只看到「无权限」',
-    hint: '这一档放行的是我自己和这个站点已共享团队的成员——不是只有我。要真正谁都打不开，先把站点的团队共享撤掉。',
-  },
-  'login-then-password': {
-    title: '访客先登录，再输密码',
-    hint: '两道门都过了才进入正文；团队成员免密码，直接进。',
-  },
   open: {
     title: '访客直接看到正文',
     hint: '任何拿到链接的人都能打开，没有任何拦截。',
+  },
+  password: {
+    title: '访客先看到密码门',
+    hint: '输对密码后才进入正文；团队成员免密码，直接进。密码可以口述，也可以连着链接一起复制。',
+  },
+  'any-login': {
+    title: '任何登录用户都能打开',
+    hint: '这一档只挡未登录的人——团队外的陌生人只要登录了同样看得到正文。要限定在团队内，改选「仅我和协作者」。',
+  },
+  'any-login-then-password': {
+    title: '访客先登录，再输密码',
+    hint: '未登录进不来；登录之后团队外的人还要输对密码，团队成员免密码直接进。',
+  },
+  'team-only': {
+    title: '团队外的人打开只看到「无权限」',
+    hint: '这一档放行的是我自己和这个站点已共享团队的成员——不是只有我。要真正谁都打不开，先把站点的团队共享撤掉。',
+  },
+  'team-only-with-password': {
+    title: '团队外的人打开只看到「无权限」',
+    hint: '团队外的人在密码之前就被挡住了，密码拦不到额外的人；能进来的团队成员又免密码。要靠密码控制范围，改选「登录可见」或「公开」。',
   },
 };
 
@@ -76,6 +110,7 @@ export function SharePreviewPane({
   onCopy: () => void;
 }) {
   const gate = resolveVisitorGate(visibility, hasPassword);
+  const urlIsPlaceholder = isPlaceholderShareUrl(shareUrl);
   const copy = GATE_COPY[gate];
   const GateIcon = gate === 'open' ? Globe : gate === 'password' ? Lock : visibility === 'owner-only' ? User : Users;
 
@@ -144,7 +179,22 @@ export function SharePreviewPane({
         style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
       >
         <div className="shrink-0 rounded bg-white p-1">
-          <QRCodeSVG value={shareUrl} size={56} level="M" />
+          {/*
+            链接还没生成时父组件给的是**示意地址**（带 {} 占位段）。那种串扫出来是一条
+            不存在的路由——扫的人拿到 404，比没有二维码更糟。所以只有拿到真地址才画可扫的码，
+            否则画一个明确「还没有」的占位块。判据认花括号：URL 的路径段里不会有它，
+            而它正是父组件标注占位的写法。
+          */}
+          {urlIsPlaceholder ? (
+            <div
+              className="flex h-[56px] w-[56px] items-center justify-center rounded text-center text-[9px] leading-tight"
+              style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }}
+            >
+              生成后<br />出现二维码
+            </div>
+          ) : (
+            <QRCodeSVG value={shareUrl} size={56} level="M" />
+          )}
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="truncate font-mono text-[10.5px]" style={{ color: 'var(--text-secondary)' }}>{shareUrl}</div>
