@@ -964,6 +964,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
     'GET /projects/:id/comment-template': '获取项目评论模板',
     'PUT /projects/:id/comment-template': '更新项目评论模板',
+    'GET /projects/:id/agent-profile': '获取项目 Agent 角色',
+    'PUT /projects/:id/agent-profile': '更新项目 Agent 角色',
     'POST /projects/:id/align-deploy-modes': '对齐全部分支运行模式',
     'GET /projects/:id/agent-sessions': '列出项目 Agent 会话',
     // 调度 / 集群
@@ -1215,6 +1217,11 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/detect-preview$/, '预览栈检测'],
     [/^POST \/projects\/(.+)\/detect-apply$/, '应用栈检测'],
     [/^GET \/projects\/(.+)\/storage$/, '获取项目存储'],
+    // Agent 角色：staticMap 里的 `:id` 条目只够 auditApiLabels 拿 express 路由原样比对，
+    // 真实请求带的是具体 id，会一路落到下面的 `^GET|PUT /projects/(.+)$` 被吞成
+    // 「查询项目 / 更新项目」。必须在通配条目之前给出 segment-safe pattern。
+    [/^GET \/projects\/[^/]+\/agent-profile$/, '获取项目 Agent 角色'],
+    [/^PUT \/projects\/[^/]+\/agent-profile$/, '更新项目 Agent 角色'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],

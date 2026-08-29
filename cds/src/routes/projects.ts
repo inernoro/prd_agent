@@ -55,7 +55,7 @@ import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
-import type { IShellExecutor, Project, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
+import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -1683,6 +1683,63 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     stateService.save();
     const labels: Record<string, string> = { simple: '简洁', port: '端口直连', multi: '子域名' };
     res.json({ message: `预览模式已切换为：${labels[mode]}`, mode });
+  });
+
+  // ── 项目 Agent 角色声明 ──
+  //
+  // 上手助手生成上手包时把角色写到这里，项目选择列表再读回来显示。
+  // 纯展示用途，不参与鉴权；写入受本文件顶部的 /projects/:id 路由级门卫保护。
+
+  router.get('/projects/:id/agent-profile', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    res.json({ ok: true, profile: stateService.getProjectAgentProfile(req.params.id) });
+  });
+
+  router.put('/projects/:id/agent-profile', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const body = (req.body || {}) as Partial<ProjectAgentProfile>;
+    const roles: ProjectAgentProfile['role'][] = ['pm', 'owner', 'domain-expert', 'dev', 'qa'];
+    const experiences: ProjectAgentProfile['experience'][] = ['newcomer', 'experienced'];
+    if (!roles.includes(body.role as ProjectAgentProfile['role'])) {
+      res.status(400).json({ error: 'invalid_role', message: `role 必须是：${roles.join(' | ')}` });
+      return;
+    }
+    if (!experiences.includes(body.experience as ProjectAgentProfile['experience'])) {
+      res.status(400).json({
+        error: 'invalid_experience',
+        message: `experience 必须是：${experiences.join(' | ')}`,
+      });
+      return;
+    }
+    // 技能只作展示，长度和内容都设上限，避免一次声明把项目记录撑大。
+    const skills = Array.isArray(body.skills)
+      ? body.skills
+        .filter((key): key is string => typeof key === 'string' && /^[a-z0-9-]{1,64}$/.test(key))
+        .slice(0, 40)
+      : [];
+    const cardTitle = typeof body.cardTitle === 'string' ? body.cardTitle.slice(0, 40) : undefined;
+    const profile: ProjectAgentProfile = {
+      role: body.role as ProjectAgentProfile['role'],
+      experience: body.experience as ProjectAgentProfile['experience'],
+      skills,
+      ...(cardTitle ? { cardTitle } : {}),
+      declaredAt: new Date().toISOString(),
+      source: 'agent-starter',
+    };
+    if (!stateService.setProjectAgentProfile(req.params.id, profile)) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    stateService.save();
+    res.json({ ok: true, profile });
   });
 
   router.get('/projects/:id/comment-template', (req, res) => {

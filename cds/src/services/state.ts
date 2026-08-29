@@ -3411,6 +3411,28 @@ export class StateService {
     }
   }
 
+  /**
+   * 写入项目的 Agent 角色声明。项目不存在时返回 false，调用方据此回 404。
+   *
+   * 整条记录覆盖写：角色声明是一次性快照，不做字段级合并——半新半旧的
+   * 组合（新角色配旧技能列表）比整体过期更难排查。
+   */
+  setProjectAgentProfile(
+    projectId: string,
+    profile: import('../types.js').ProjectAgentProfile,
+  ): boolean {
+    const project = this.getProject(projectId);
+    if (!project) return false;
+    project.agentProfile = profile;
+    project.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  /** 读取项目的 Agent 角色声明；从未声明过返回 null。 */
+  getProjectAgentProfile(projectId: string): import('../types.js').ProjectAgentProfile | null {
+    return this.getProject(projectId)?.agentProfile ?? null;
+  }
+
   // ── GitHub PR preview comment template ──
   //
   // The settings panel edits this; postOrUpdatePrComment reads it.

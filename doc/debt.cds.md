@@ -923,6 +923,44 @@ loopback——只绑回环等于全线断库。所以绑的是「消费方实际
 兜底——它自己拼发布参数，不走上面这条收窄路径，也不该被收窄。那是本仓库唯一做对了的
 暴露路径，改它只会破坏功能而不提升安全。
 
+## 2026-08-28 Agent 角色声明（活账）
+
+### C. 角色偏好没有按登录用户隔离（中）
+
+`cds.agent.role-selection.v1` 存在浏览器的 localStorage 里，key 固定、不带用户标识，
+登出也不清。同一台浏览器上两个账号轮流用同一个 CDS 域名时，后登录的人会继承前一个人
+声明的角色与经验档：任务地图按一个他从没选过的身份排序并标注「某某常用」。
+
+影响面限于**排序与标注**——角色不是权限边界，不影响能选到哪些任务、也不影响任何服务端状态。
+项目级的 `Project.agentProfile` 是服务端记录，不受这条影响。
+
+**为什么没在引入它的那个 PR 里修**：修法要引入新语义类别——按登录用户命名空间、登出时清理、
+存量 key 的迁移或作废，三件事都超出「让五个角色的决策卡不一样」这个目标（规则 5.5 的 B 类）。
+
+**可选修法**（择一）：key 拼上当前用户 id；或登出流程里清掉这个 key；或改用 sessionStorage
+（代价是每次开新标签页都要重选角色，与「记住偏好」的初衷冲突）。倾向第一种 + 第二种同时做。
+
+来源：PR #1441 Codex review 第七条（P2）。涉及文件见文末「实现来源」。
+
+### D. 角色写进项目后，同一次弹窗里的缓存不刷新（中）
+
+「接入 Agent」弹窗打开时抓一次项目列表并持有到关闭。生成上手包会把角色写到项目上，
+但那份快照不会更新——生成完立刻切到任务地图那一栏，项目条上显示的仍是旧角色或没有角色；
+弹窗背后的项目设置页同样是旧值。关掉重开就正常。
+
+服务端已经写对了（`PUT /projects/:id/agent-profile` 成功、`GET /api/projects` 能读回），
+坏的只是同一次会话里的展示时效。
+
+**为什么没在引入它的那个 PR 里修**：修法要在三个组件之间穿一条失效通知
+（持有列表的那层暴露重取、经由弹窗传给上手助手、成功后回调），属于跨组件缓存失效这个
+新语义类别，超出「让五个角色的决策卡不一样」这个目标（规则 5.5 的 B 类）。此时已是
+第五轮 review、第八条意见，且每修一条都在同一段代码上引出新的变体——按规则停在这里。
+
+**可选修法**：持有项目列表的那层暴露一个重取函数往下传，写入成功后调用；或让写入接口
+返回更新后的项目记录，就地替换列表里的那一条（省一次往返，但要保证字段齐全）。
+
+来源：PR #1441 Codex review 第八条（P2）。涉及文件见文末「实现来源」。
+
 ## 2026-08-27 排查中撞见的两条（活账）
 
 ### A. 项目发布门禁可以被两次 API 调用绕过（高）
@@ -1059,3 +1097,5 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 | 周期备份 | `cds/src/services/infra-backup-schedule.ts`（判定）、`cds/src/index.ts`（`startInfraAutoBackup` 执行）、`cds/src/routes/infra-backup.ts`（同目录的手工备份与历史） |
 | 自检与备份回归 | `cds/tests/services/infra-exposure-audit.test.ts`、`cds/tests/services/infra-backup-schedule.test.ts` |
 | 有意的对外暴露（不受收窄影响） | `cds/src/routes/branches.ts`（`applyResourceExternalFirewall`，allowlist + 防火墙兜底） |
+| 角色偏好存储（债务 C） | `cds/web/src/lib/agent-role-store.ts`（读写与 declared 语义）、`cds/web/src/hooks/useAgentRoleSelection.ts`（订阅） |
+| 弹窗内项目缓存（债务 D） | `cds/web/src/components/GlobalAgentAccess.tsx`（持有并只在打开时抓一次）、`cds/web/src/components/AgentStarterTab.tsx`（写入点）、`cds/web/src/components/AgentAccessMap.tsx`（展示角色的那一栏） |

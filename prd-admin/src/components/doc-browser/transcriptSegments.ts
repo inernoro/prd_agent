@@ -20,6 +20,8 @@ export type SummaryModule = {
   title: string;
   /** 保留模块内 Markdown，交互播放器可复用知识库正文渲染。 */
   markdown: string;
+  /** 标题是原文里真有的（而不是按内容截出来的）；决定后续段落能否并入本模块 */
+  fromHeading?: boolean;
 };
 
 export type RecordingAnswerPart =
@@ -114,6 +116,53 @@ export function replaceTranscriptSegmentText(md: string, index: number, nextText
 }
 
 /**
+ * 说话人名字写进 Markdown 标记之前的规范化。
+ *
+ * 标记的形状是 `**[00:00 - 00:03]** [名字] 正文`，所以名字里出现 `[` `]` 或换行
+ * 都会把这一行拆坏：重新解析时 `TS_LINE_RE` 只把第一个 `]` 之前当名字，剩下的挤进正文，
+ * 严重时整行不再被认成一句（Codex P2）。改名那一路早就规范化了，指派这一路没有——
+ * 同一件事两份写法必然漂移（形状 3），所以抽成这一个，两处共用。
+ */
+export function normalizeSpeakerName(raw: string): string {
+  return raw
+    .replaceAll('[', ' ')
+    .replaceAll(']', ' ')
+    .replace(/[\r\n]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 30);
+}
+
+/**
+ * 给第 index 条句子指定说话人（设计稿 cap-S11「手动标记说话人」的落点）。
+ *
+ * 上游没能区分说话人时，原文里那一段是「时间戳 + 正文」，中间没有 `[名字]`。
+ * 这个函数把名字补进去；传空名字则是把已有的标签去掉。只动那一行，
+ * 时间戳与全文之外的摘要一个字都不碰（与 replaceTranscriptSegmentText 同一套口径）。
+ */
+export function assignTranscriptSegmentSpeaker(md: string, index: number, speaker: string): string {
+  if (index < 0) return md;
+  const marker = '## 转录全文';
+  const markerIdx = md.indexOf(marker);
+  const bodyStart = markerIdx >= 0 ? markerIdx + marker.length : 0;
+  const head = md.slice(0, bodyStart);
+  const lines = md.slice(bodyStart).split('\n');
+  const name = normalizeSpeakerName(speaker);
+  let cursor = -1;
+
+  const updated = lines.map((raw) => {
+    const line = raw.trim();
+    const timed = TS_LINE_RE.exec(line);
+    if (!timed) return raw;
+    cursor += 1;
+    if (cursor !== index) return raw;
+    const label = name ? ` [${name}]` : '';
+    return `**[${timed[1]} - ${timed[2]}]**${label} ${timed[4].trim()}`;
+  });
+  return head + updated.join('\n');
+}
+
+/**
  * 说话人来源（后端 SubtitleFormatter.FormatSpeakerSourceNote 写进笔记的那一行）。
  * key 用来决定展示口吻，text 直接来自笔记——文案只有后端一份，前端不再抄一遍。
  */
@@ -142,13 +191,7 @@ export function parseSpeakerSourceNote(md: string): SpeakerSourceNote | null {
 /** 批量修改说话人显示名，保留时间戳和正文。 */
 export function renameTranscriptSpeaker(md: string, currentName: string, nextName: string): string {
   const current = currentName.trim();
-  const next = nextName
-    .replaceAll('[', ' ')
-    .replaceAll(']', ' ')
-    .replace(/[\r\n]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 30);
+  const next = normalizeSpeakerName(nextName);
   if (!current || !next || current === next) return md;
   return md.split('\n').map((raw) => {
     const match = TS_LINE_RE.exec(raw.trim());
@@ -320,6 +363,108 @@ export function extractTranscriptSummary(md: string): string {
   return md.slice(start, transcriptIdx >= 0 ? transcriptIdx : undefined).trim();
 }
 
+/**
+ * 每位说话人说了多少句、占全场多大比例（设计稿 P3/D1 的「71 句 · 占 58%」）。
+ * 只给句数与占比这两件**数得出来**的事；「谁更重要」之类的判断不在这里编。
+ *
+ * 占比按有说话人标签的句子算，不按总句数——没标签的句子既不属于任何人，
+ * 拿它当分母会让所有人的占比都无缘无故变小，加起来也凑不满 100%。
+ */
+export type TranscriptSpeakerStat = {
+  speaker: string;
+  count: number;
+  /** 0-100 的整数百分比；无标签句子不计入分母 */
+  percent: number;
+};
+
+export function buildSpeakerStats(segments: TranscriptSegment[]): TranscriptSpeakerStat[] {
+  const counts = new Map<string, number>();
+  for (const segment of segments) {
+    const speaker = segment.speaker?.trim();
+    if (!speaker) continue;
+    counts.set(speaker, (counts.get(speaker) ?? 0) + 1);
+  }
+  const labelled = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  if (labelled === 0) return [];
+  return [...counts.entries()]
+    .map(([speaker, count]) => ({ speaker, count, percent: Math.round((count / labelled) * 100) }))
+    .sort((a, b) => b.count - a.count || a.speaker.localeCompare(b.speaker, 'zh'));
+}
+
+/**
+ * 纪要里那些「整段就是一张任务清单」的模块要摘出去。
+ * 待办已经单独成区渲染，纪要再原样列一遍，同一份内容就在同屏出现了两次——
+ * 用户会以为那是两批不同的事。判据是**结构**（这一段除了勾选项没有别的内容），
+ * 不是标题里有没有「待办」二字：换个模板叫「行动项」「Next steps」照样成立。
+ */
+export function isTodoOnlyModule(markdown: string): boolean {
+  const lines = markdown.split('\n').map(line => line.trim()).filter(Boolean);
+  if (lines.length === 0) return false;
+  const meaningful = lines.filter(line => !/^#{1,6}\s/.test(line));
+  if (meaningful.length === 0) return false;
+  return meaningful.every(line => /^[-*+]\s+\[[ xX]\]\s+/.test(line));
+}
+
+/** 整理结果里的一条待办。 */
+export type TranscriptTodo = {
+  text: string;
+  done: boolean;
+};
+
+/**
+ * 从整理结果里提取待办（设计稿 P3「待办事项」）。
+ * 判据是 Markdown 任务列表 `- [ ]` / `- [x]`——那是**结构**，不是措辞；
+ * 靠「标题里有没有『待办』两个字」去猜，换一套整理模板就失灵。
+ * 没有任务列表就返回空数组，界面据此如实说「这次整理没有产出待办」，不编。
+ */
+/**
+ * 给待办找它的出处（设计稿每条待办下面那行「14:22 · 主持人」，以及标题右侧的
+ * 「来自 N 处原文」）。
+ *
+ * 整理结果本身不带出处，只能回到原文里找。判据是**双字词重合**：
+ * 待办文本与某句原文共享的双字片段最多的那一句，且至少要重合两个片段才算数。
+ * 一个都不够就**不给出处**——宁可这条待办没有时间戳，也不能随便挂一句原文上去，
+ * 那等于伪造溯源（no-rootless-tree）。
+ */
+export type TodoSource = { start: number; speaker?: string };
+
+function bigrams(text: string): Set<string> {
+  const clean = text.replace(/[\s\p{P}]/gu, '');
+  const out = new Set<string>();
+  for (let i = 0; i + 2 <= clean.length; i++) out.add(clean.slice(i, i + 2));
+  return out;
+}
+
+export function findTodoSource(
+  todoText: string,
+  segments: TranscriptSegment[],
+): TodoSource | null {
+  const needle = bigrams(todoText);
+  if (needle.size === 0) return null;
+  let best: { overlap: number; segment: TranscriptSegment } | null = null;
+  for (const segment of segments) {
+    if (segment.start < 0) continue;
+    let overlap = 0;
+    for (const gram of bigrams(segment.text)) if (needle.has(gram)) overlap++;
+    if (overlap > (best?.overlap ?? 0)) best = { overlap, segment };
+  }
+  if (!best || best.overlap < 2) return null;
+  return { start: best.segment.start, speaker: best.segment.speaker };
+}
+
+export function extractTranscriptTodos(summaryMd: string): TranscriptTodo[] {
+  if (!summaryMd) return [];
+  const todos: TranscriptTodo[] = [];
+  for (const raw of summaryMd.split('\n')) {
+    const m = /^\s*[-*+]\s+\[([ xX])\]\s+(.+?)\s*$/.exec(raw);
+    if (!m) continue;
+    const text = m[2].trim();
+    if (!text) continue;
+    todos.push({ text, done: m[1].toLowerCase() === 'x' });
+  }
+  return todos;
+}
+
 /** 是否具备可用于播放跟随的时间戳（至少两句、且时间在涨） */
 export function hasUsableTimestamps(segments: TranscriptSegment[]): boolean {
   const timed = segments.filter(s => s.start >= 0);
@@ -375,8 +520,16 @@ export function parseSummaryModules(md: string): SummaryModule[] {
     const heading = /^(#{1,6})\s+(.+?)(?:\n([\s\S]*))?$/.exec(block);
     if (heading) {
       const body = heading[3]?.trim();
-      if (body) modules.push({ title: heading[2].trim(), markdown: body });
+      if (body) modules.push({ title: heading[2].trim(), markdown: body, fromHeading: true });
       else pendingTitle = heading[2].trim();
+      return;
+    }
+    // 标题之下的连续段落同属这个标题：一段结论加两条要点是**一个**模块。
+    // 各自成模块的话，要点那块会被自动编一个截断出来的标题
+    //（「拆分导入为「上传 / 解析」两步，解」），既不是人写的也读不通。
+    if (pendingTitle === null && modules.length > 0 && modules[modules.length - 1].fromHeading) {
+      const last = modules[modules.length - 1];
+      last.markdown = `${last.markdown}\n\n${block}`;
       return;
     }
     const fallbackTitle = block
@@ -389,6 +542,7 @@ export function parseSummaryModules(md: string): SummaryModule[] {
     modules.push({
       title: (pendingTitle ?? fallbackTitle.slice(0, 18)) || `第 ${modules.length + 1} 段`,
       markdown: block,
+      fromHeading: pendingTitle !== null,
     });
     pendingTitle = null;
   });
@@ -402,4 +556,138 @@ export function activeSummaryModuleIndex(moduleCount: number, currentSec: number
   if (moduleCount <= 1 || durationSec <= 0) return 0;
   const ratio = Math.min(0.999999, Math.max(0, currentSec / durationSec));
   return Math.floor(ratio * moduleCount);
+}
+
+/**
+ * 把问答的回答拆成「结论 + 引用」两块（稿面 B4）。
+ *
+ * 稿面把引用从正文里**提出来**做成卡片：一句原文 + 时间 + 说话人 + 一个播放键。
+ * 之前的做法是在正文里内联一颗时间药丸——点得到，但读者看不出被引用的那句话是什么，
+ * 得自己跳过去看。提出来之后「凭什么这么说」和「结论」并排摆着。
+ *
+ * 引用必须能在时间轴上找到对应句子才算数：模型报了一个原文里没有的时间，
+ * 那是幻觉，不能给它做一张像模像样的卡（no-rootless-tree）。找不到的原样留在正文里。
+ */
+export function resolveAnswerCitations(
+  answer: string,
+  segments: Array<{ start: number; end: number; text: string; speaker?: string }>,
+): {
+  conclusion: string;
+  citations: Array<{ label: string; start: number; text: string; speaker?: string }>;
+} {
+  const parts = parseRecordingAnswerParts(answer);
+  const citations: Array<{ label: string; start: number; text: string; speaker?: string }> = [];
+  const conclusionPieces: string[] = [];
+  const seen = new Set<number>();
+
+  for (const part of parts) {
+    if (part.kind === 'text') { conclusionPieces.push(part.text); continue; }
+    /*
+     * 引用落在两句的交界处（`0-5` 与 `5-10`，引用写 00:05）时该算**后面那一句**。
+     * 提示词本来就要求模型用既有时间戳来引用，所以「引用起点 == 某句起点」是常态，
+     * 而原来的判据两端都闭、又取 find 的第一个命中，于是稳定地选中前一句——
+     * 卡片显示的和点下去播的都是被引用那句的**上一句**（Codex P2）。
+     * 判据改成三档：先认起点完全对上的那一句；再认左闭右开的区间（交界那一刻归下一句）；
+     * 都没有才退回原来的两端闭规则，保住「引用落在最后一句结尾」这类既有命中。
+     */
+    const hit = segments.find(seg => seg.start >= 0 && seg.start === part.start)
+      ?? segments.find(seg => (
+        seg.start >= 0 && part.start > seg.start && part.start < Math.max(seg.start, seg.end)
+      ))
+      ?? segments.find(seg => (
+        seg.start >= 0 && part.start >= seg.start && part.start <= Math.max(seg.start, seg.end)
+      ));
+    // 找不到对应句子的引用留在正文里，由既有的「时间轴中没有这个位置」分支处理
+    if (!hit) { conclusionPieces.push(part.label); continue; }
+    if (seen.has(hit.start)) continue;
+    seen.add(hit.start);
+    citations.push({ label: part.label, start: hit.start, text: hit.text, speaker: hit.speaker });
+  }
+
+  return { conclusion: conclusionPieces.join('').trim(), citations };
+}
+
+/**
+ * 这次回答是不是「原文里没有」。
+ *
+ * 判据来自我们自己给模型的硬约束——提示词写明「如果原文不足以回答，明确说无法从录音确认」，
+ * 所以这里认的是那句话的几种说法，不是去猜模型的语气。
+ * 稿面 B4 顶部那条琥珀提示要的就是这件事：**上一问没答上来，而且是如实说的**。
+ * 把它显式记下来，用户才知道系统没有替他编一个答案。
+ */
+export function isUnansweredByTranscript(answer: string): boolean {
+  const text = answer.replace(/\s+/g, '');
+  return ['无法从录音确认', '原文无相关内容', '原文中没有', '录音中没有提到', '未提及']
+    .some(phrase => text.includes(phrase.replace(/\s+/g, '')));
+}
+
+/** 琥珀提示条的状态：记着哪一问没答上来，以及它是否已经露过面。 */
+export type UnansweredNotice = {
+  /** 上一问「原文里没有」的那个问题；空串表示现在没有这种情况 */
+  question: string;
+  /** 已经陪着一轮「答得上来」的问答同屏露过面了 */
+  shown: boolean;
+};
+
+export const NO_UNANSWERED_NOTICE: UnansweredNotice = { question: '', shown: false };
+
+/**
+ * 一问答完之后，琥珀提示条该变成什么样。
+ *
+ * 抽成纯函数是因为**留多久**这件事只有驱到「先问一个答不上来的、再问一个答得上来的」
+ * 才看得出来：早先的写法在后一问答完时顺手把它清掉，于是它只存在于两次提问之间的空档，
+ * 屏幕上永远等不到——代码在、界面上没有，测试也不会红。稿面 B4 画的正是
+ * 「琥珀条 + 一条答得上来的问答」同屏，所以它必须陪满下一轮再退场。
+ */
+export function advanceUnansweredNotice(
+  prev: UnansweredNotice,
+  input: { question: string; answer: string },
+): UnansweredNotice {
+  // 又一次没答上来：换成最近这一条，重新开始计它的寿命
+  if (isUnansweredByTranscript(input.answer)) return { question: input.question, shown: false };
+  // 这一轮答得上来：让它跟着露一次面；已经露过就退场
+  if (!prev.question) return NO_UNANSWERED_NOTICE;
+  return prev.shown ? NO_UNANSWERED_NOTICE : { question: prev.question, shown: true };
+}
+
+/**
+ * 词云为空时该说哪一句 —— 稿面 cap-S12 要求把「太短」和「词没被认出来」分开说。
+ *
+ * 一个诚实性约束：稿面写的是「超过 50 句时会自动出现主题与关键词」，
+ * 但实现的门槛从来不是句数，是**同一个词出现两次以上**（buildTranscriptWordCloud 的
+ * count>=2）。照抄稿面那句就是承诺一条不存在的规则——录满 60 句但没有任何重复词时
+ * 词云照样是空的，那句话当场变成谎话（no-rootless-tree）。
+ *
+ * 所以这里只用句数判「哪一句更可能是真原因」，措辞回到真实门槛上：
+ * 短到没机会重复 → 说太短；够长却仍为空 → 说词没被分词器认出来。
+ */
+export const WORD_CLOUD_SHORT_SENTENCES = 50;
+
+export function describeWordCloudEmptyState(sentenceCount: number): string {
+  if (sentenceCount > 0 && sentenceCount < WORD_CLOUD_SHORT_SENTENCES) {
+    return `这段录音只有 ${sentenceCount} 句，还太短。一个词要在原文里出现两次以上才会进词云，录长一点自然就有了。`;
+  }
+  return '没有反复出现的词。人名、产品名、团队黑话通用分词器不认识，会被切成单字丢掉——补进词典后就能统计到。';
+}
+
+/**
+ * 一份转录笔记「产出了什么」的清点（设计稿 v2-S3 / cap-S5 那条绿卡的口径）。
+ *
+ * 四个数全部数自这份 markdown 本身：句数、区分出来的说话人数、有没有整理出纪要、
+ * 有没有待办。没有第五个来源，也不接受调用方传一个「示例值」进来。
+ */
+export function describeTranscriptOutcome(noteMd: string): {
+  sentences: number;
+  speakers: number;
+  hasSummary: boolean;
+  hasTodos: boolean;
+} {
+  const segments = parseTranscriptSegments(noteMd);
+  const summary = extractTranscriptSummary(noteMd);
+  return {
+    sentences: segments.length,
+    speakers: buildSpeakerStats(segments).length,
+    hasSummary: summary.trim().length > 0,
+    hasTodos: extractTranscriptTodos(summary).length > 0,
+  };
 }

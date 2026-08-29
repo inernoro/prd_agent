@@ -83,7 +83,17 @@ public class VideoAgentController : ControllerBase
             .Select(group => group.First())
             .ToList();
         if (poolItems.Count == 0)
-            return Ok(ApiResponse<List<VideoModelOption>>.Ok([]));
+        {
+            // 直出模式允许显式指定 OpenRouter 视频模型。旧版 MDS 尚未同步视频目录时，
+            // 保留已在 LLMGW 注册的 Seedance 2.5 入口，避免配置完成后页面仍无模型可选。
+            var seedance = BuildVideoModelOption(
+                "bytedance/seedance-2.5",
+                "bytedance/seedance-2.5",
+                "Seedance 2.5",
+                "Healthy",
+                null);
+            return Ok(ApiResponse<List<VideoModelOption>>.Ok([seedance]));
+        }
 
         var modelIds = poolItems.Select(item => item.ModelId).ToList();
         var models = await _db.LLMModels.Find(model =>
@@ -113,7 +123,8 @@ public class VideoAgentController : ControllerBase
         ModelGroupItem? pricing)
     {
         var key = $"{id} {providerModelName}".ToLowerInvariant();
-        var isSeedance20 = key.Contains("seedance-2");
+        var isSeedance25 = key.Contains("seedance-2.5");
+        var isSeedance2X = key.Contains("seedance-2");
         var isSeedance15 = key.Contains("seedance-1-5") || key.Contains("seedance-1.5");
         var isSeedance = key.Contains("seedance");
         var isWan = key.Contains("wan-") || key.Contains("wan2");
@@ -123,12 +134,16 @@ public class VideoAgentController : ControllerBase
             Id = id,
             Name = string.IsNullOrWhiteSpace(displayName) ? id : displayName,
             HealthStatus = healthStatus,
-            SupportsAudio = isSeedance15 || isSeedance20 || isVeo,
+            SupportsAudio = isSeedance15 || isSeedance2X || isVeo,
             SupportsFirstFrame = true,
             SupportsLastFrame = isSeedance || isWan,
-            SupportsReferenceAssets = isSeedance20,
+            SupportsReferenceAssets = isSeedance2X,
             AspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-            Resolutions = isSeedance || isWan || isVeo ? ["720p", "1080p"] : ["720p"],
+            Resolutions = isSeedance25
+                ? ["480p", "720p"]
+                : isSeedance || isWan || isVeo
+                    ? ["720p", "1080p"]
+                    : ["720p"],
             Durations = VideoModelCapabilities.GetSupportedDurations(key).ToList(),
             PricePerCall = pricing?.PricePerCall,
             PriceCurrency = pricing?.PriceCurrency,

@@ -352,6 +352,25 @@ export type DocumentStoreWithPreview = DocumentStore & {
   ownerAvatarFileName?: string;
 };
 
+/**
+ * 「最近」标签的一条文档（跨知识库时间线，GET /api/document-store/entries/recent）。
+ * storeId + id 一起构成知识库深链，点一条就能落到那篇内容本身。
+ */
+export type RecentDocumentEntry = {
+  id: string;
+  storeId: string;
+  /** 所属知识库名称，后端联表带出——「最近」里最要紧的一句上下文就是「它存哪儿了」 */
+  storeName: string;
+  title: string;
+  contentType: string;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  /** 服务端判定的「这是新增而不是改动」，前端不再自己比时间戳 */
+  isNew: boolean;
+  createdByName?: string;
+};
+
 /** 我收藏/点赞的知识库（用于 DocumentStorePage 的"我的收藏"/"我的点赞"标签） */
 export type InteractionStoreCard = DocumentStoreWithPreview & {
   ownerName: string;

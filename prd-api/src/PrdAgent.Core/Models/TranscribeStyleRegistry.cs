@@ -23,6 +23,8 @@ public static class TranscribeStyleRegistry
     public const string DefaultKey = "general";
     public const string CustomKey = "custom";
 
+    // 顺序即前端「一键整理」网格的排布顺序（设计稿 B3 的 2×2：智能摘要 / 会议纪要 / 待办清单 / 访谈整理）。
+    // custom 不进网格，前端把它单独做成一条虚线按钮。
     public static readonly IReadOnlyList<TranscribeStyle> All = new List<TranscribeStyle>
     {
         new("general", "智能摘要",
@@ -41,14 +43,14 @@ public static class TranscribeStyleRegistry
                 "可粘贴会议邀请、主题、时间、参会人或已有纪要。系统会补齐背景，不会覆盖录音原文。",
                 "粘贴会议主题、时间、地点、参会人或相关资料地址",
                 "主题：客户方案讨论\n时间：2026.8.4 下午 4:00\n参与人员：张三、李四\n资料：https://example.com")),
-        new("interview", "访谈整理",
-            "按问答对整理，保留关键原话，适合访谈/用户调研",
-            "把内容整理成访谈记录：按提问-回答的问答对组织，每个问答一个小节；" +
-            "回答中的关键表述尽量保留原话（可用引号标出）；结尾用「要点提炼」小节归纳 3-5 条洞察。"),
         new("todo", "待办清单",
             "只提取行动项，输出可勾选的待办列表",
             "只提取其中的行动项，输出 Markdown 任务列表（- [ ] 事项）；" +
             "转录中提到负责人或期限时一并标注在事项后；没有行动项时输出「本段录音未提及待办事项」。"),
+        new("interview", "访谈整理",
+            "按问答对整理，保留关键原话，适合访谈/用户调研",
+            "把内容整理成访谈记录：按提问-回答的问答对组织，每个问答一个小节；" +
+            "回答中的关键表述尽量保留原话（可用引号标出）；结尾用「要点提炼」小节归纳 3-5 条洞察。"),
         new("custom", "自定义",
             "自己描述想要的整理方式",
             null),

@@ -25,6 +25,7 @@ import {
   Pencil,
   Heart,
   Bookmark,
+  Clock,
   Users,
   ArrowUpRight,
   Wand2,
@@ -65,6 +66,7 @@ import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { TeamWebPagesSection } from '@/pages/document-store/TeamWebPagesSection';
 import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
+import { RecentEntriesList } from './RecentEntriesList';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
@@ -83,6 +85,8 @@ import {
 } from './downloadFormats';
 import {
   hasQuickRecordRequest,
+  hasRecordInStoreRequest,
+  withoutRecordInStoreRequest,
   parseDocumentStoreDeepLink,
   withDocumentStoreEntry,
   withoutDocumentStoreTabRequest,
@@ -133,6 +137,7 @@ import {
   ensureDocStoreShareLinkShortSeq,
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
+  listRecentDocumentEntries,
   setStoreTeams,
   getStoresAnalyticsSummary,
   getUserPreferences,
@@ -164,6 +169,8 @@ import type {
   DocumentEntry,
   DocumentStoreShareLink,
   InteractionStoreCard,
+  RecentDocumentEntry,
+  DocumentStoreAgentRun,
   DocumentStoreAccountSummary,
   TutorialLinkGraphSnapshot,
 } from '@/services/contracts/documentStore';
@@ -181,6 +188,10 @@ import {
   decideBackgroundRunLookup,
   bindBackgroundTranscriptionSource,
   describeBackgroundTranscriptionBanner,
+  stalledTranscriptionNotice,
+  countTranscriptSentences,
+  splitPartialTranscript,
+  type FailedTranscriptionNotice,
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
@@ -1268,7 +1279,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, []);
 
   // 最近一次转录失败的说明（按当前选中条目）。null = 没失败过或已被新一轮覆盖。
-  const [transcribeFailure, setTranscribeFailure] = useState<{ reason: string; at: string | null } | null>(null);
+  const [transcribeFailure, setTranscribeFailure] = useState<FailedTranscriptionNotice | null>(null);
+  /**
+   * 当前选中条目那条**在途**转录 run。轮询本来就把完整 run 拿到了手里，
+   * 却在非终局时直接丢掉——于是「正在做什么、到哪一步了、还要多久」全屏无处可看，
+   * 只剩一句没有进度的横幅。这里接住它，交给结果区渲染三阶段（设计稿 R4）。
+   */
+  const [activeTranscribeRun, setActiveTranscribeRun] = useState<DocumentStoreAgentRun | null>(null);
   // 在途轮询的 effect 只依赖 runId 列表（不能把选中项塞进 deps，否则每次切条目都重建定时器），
   // 所以「这条失败 run 是不是当前这篇的」得靠 ref 取当下值，闭包里的旧值会张冠李戴。
   const selectedEntryIdRef = useRef<string | undefined>(selectedEntryId);
@@ -1291,10 +1308,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       // 其他协作者，不能把它加入当前用户的轮询队列，否则 404 会让提示永久不消失。
       if (!currentUserId || res.data?.userId !== currentUserId) return;
       if (isStalledBackgroundTranscriptionRun(res.data)) {
-        setTranscribeFailure({
-          reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
-          at: res.data.heartbeatAt ?? res.data.startedAt ?? res.data.createdAt ?? null,
-        });
+        setTranscribeFailure(stalledTranscriptionNotice(
+          res.data.heartbeatAt ?? res.data.startedAt ?? res.data.createdAt ?? null,
+          // 排队久了不等于什么都没产出：已经生成的那几句现在就能读，稿面 cap-S10 的核心承诺
+          splitPartialTranscript(res.data.transcriptText),
+        ));
         return;
       }
       // 失败态在这里落地：在途 run 有下面的看护、成功 run 会长出笔记，
@@ -1753,6 +1771,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           revealCompletedTranscribeRunsRef.current.delete(runId);
           setBgTranscribeRunIds(current => current.filter(id => id !== runId));
           if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
+          /*
+           * 停止看护也要把这条 run 从进度位上摘掉。留着的话状态卡照旧按「处理中」渲染，
+           * 进度条冻在最后一个百分比，而下面刚刚 setTranscribeFailure 出来的失败卡与重试
+           * 按钮被它压住不显示——界面上是一条永远走不完的进度，用户连重试的入口都看不见
+           * （终态那一路早就摘了，退役这一路漏了，Codex 第十九轮 P1）。
+           */
+          setActiveTranscribeRun(current => (current?.id === runId ? null : current));
 
           const replacementRunId = recoverableBackgroundTranscriptionRunId(decision.replacementRun);
           if (replacementRunId && recordingSource) {
@@ -1770,10 +1795,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           } else if (decision.reason === 'stalled-run') {
             if (recordingSource?.entryId === selectedEntryIdRef.current) {
               const staleRun = decision.replacementRun ?? (res.success ? res.data : latestRun);
-              setTranscribeFailure({
-                reason: '后台转录超过一小时未报告状态，不能确认仍会自行完成。请点击重试，录音仍然保留。',
-                at: staleRun?.heartbeatAt ?? staleRun?.startedAt ?? staleRun?.createdAt ?? null,
-              });
+              setTranscribeFailure(stalledTranscriptionNotice(
+                staleRun?.heartbeatAt ?? staleRun?.startedAt ?? staleRun?.createdAt ?? null,
+                splitPartialTranscript(staleRun?.transcriptText),
+              ));
             }
             toast.error('录音任务超过一小时未报告状态', '已停止等待旧任务；录音仍保留，可以点击重试');
           }
@@ -1782,7 +1807,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         }
         const observedRun = decision.run;
         const st = observedRun.status;
-        if (st !== 'done' && st !== 'failed' && st !== 'cancelled') continue;
+        if (st !== 'done' && st !== 'failed' && st !== 'cancelled') {
+          // 在途：只有「这条 run 正是当前这一屏的录音」才往界面上放，
+          // 否则会把别的录音的进度画到用户正看着的这条上（同屏多录音时的串台）。
+          if (observedRun.sourceEntryId === selectedEntryIdRef.current) {
+            setActiveTranscribeRun(observedRun);
+          }
+          continue;
+        }
+        // 走到终局：这条 run 不该再占着进度条
+        setActiveTranscribeRun(current => (current?.id === runId ? null : current));
         handledRunIds.add(runId);
         const recordingSource = recordingRunSourceRef.current.get(runId);
         recordingRunSourceRef.current.delete(runId);
@@ -2273,6 +2307,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const backgroundTranscriptionBanner = describeBackgroundTranscriptionBanner({
     selectedEntryId,
     selectedHasFailure: Boolean(transcribeFailure),
+    /*
+     * 判据必须和下面真正渲染那张内嵌卡时用的是同一条：`activeTranscribeRun` 可能还挂着
+     * 上一条录音的 run（sourceEntryId 不等于当前这条），渲染那边会拒掉它，而这里若只判
+     * 「有没有」，就会告诉横幅「这条录音已经有内嵌进度卡了」——于是横幅把它过滤掉，
+     * 内嵌卡也不显示：这条录音的在途状态两处都看不到，直到下一次成功轮询才恢复
+     * （Codex 第三十一轮 P2；同 rule.prd-admin.recording-entry-scope 第 1 条）。
+     */
+    currentRunHasInlineCard: Boolean(activeTranscribeRun && activeTranscribeRun.sourceEntryId === selectedEntryId),
     runs: bgTranscribeRunIds.map((runId) => {
       const source = recordingRunSourceRef.current.get(runId);
       return {
@@ -2662,6 +2704,25 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             if (entry) setSubtitleTarget({ id, title: entry.title });
           }}
           transcribeFailure={transcribeFailure}
+          /*
+           * 「别把 A 的进度画到 B 头上」这件事在**渲染期**判，不在 state 里清
+           * （Codex P1 给的两条修法里的第二条）。清 state 那条走不通：换条目时先清、
+           * 再由 recover 异步接回来，中间这张卡会卸载一次又挂回来——录音刚结束那一屏
+           * 因此闪一下，发布门禁抓到的正是这一下（元素 detach + 首个可用结果超时）。
+           * 判据只认「这条 run 的源条目就是选中的这条」，不满足就不画，state 留着无害。
+           */
+          transcribeRun={activeTranscribeRun && activeTranscribeRun.sourceEntryId === selectedEntryId ? {
+            ...activeTranscribeRun,
+            // 后端在写入阶段才把原文落到 transcriptText；有几句给几句，
+            // 一句都没有时状态卡自己渲染骨架，不在这里造句
+            transcriptPreview: (activeTranscribeRun.transcriptText ?? '')
+              .split('\n')
+              .map(line => line.trim())
+              .filter(Boolean)
+              .slice(0, 3),
+            // 「原文 N 句」数整篇，不数上面这三句预览
+            transcriptSentenceCount: countTranscriptSentences(activeTranscribeRun.transcriptText),
+          } : null}
           onTranscribe={(id, styleKey) => {
             const entry = entries.find(e => e.id === id);
             if (entry) {
@@ -2670,6 +2731,28 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setTranscribeFlow({ entryId: id, title: entry.title, style: styleKey ? { styleKey } : undefined });
               transcribeFlowOpenRef.current = true;
             }
+          }}
+          onOpenRecordingResult={(audioEntryId) => {
+            /*
+             * 原文还在跑的时候，这一下该去的是**处理页**，不是结果页：稿面 v2-R4 /
+             * cap-A4/A5 画的就是那一屏（三阶段 + 音频卡 + 屏底「进入结果页并开始播放」），
+             * 而结果页在这一刻只有一份空原文。此前这条路由建好、登记好、却没有任何地方
+             * 走进去——用户只能靠手敲 URL 到达（predicate-and-wiring-discipline 形状 2：
+             * 建了一半的接线，删掉也不会红）。
+             */
+            const inflight = activeTranscribeRun
+              && activeTranscribeRun.sourceEntryId === audioEntryId
+              && activeTranscribeRun.status !== 'done'
+              && activeTranscribeRun.status !== 'failed'
+              && activeTranscribeRun.status !== 'cancelled';
+            if (inflight) {
+              navigate(`/document-store/${storeId}/recording/${audioEntryId}/processing`);
+              return;
+            }
+            // 设计稿这一下是「进入结果页并开始播放」：跳转与起播是同一个动作。
+            // play=1 交给结果页在挂载后发一次播放请求——起播必须发生在那一屏，
+            // 在这里先播会造成「声音已经在响、画面还在旧页」。
+            navigate(`/document-store/${storeId}/recording/${audioEntryId}?play=1`);
           }}
           onRestyleTranscribe={(id) => {
             const entry = entries.find(e => e.id === id);
@@ -3305,7 +3388,14 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
-type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync';
+type StoreTab = 'mine' | 'team' | 'recent' | 'favorites' | 'likes' | 'sync';
+
+/**
+ * 「最近」等不走库列表管线的 tab 的占位空列表。
+ * 必须是模块级常量：写成行内 `[]` 每次渲染都是新引用，
+ * 会让下游 useMemo 的依赖每帧都变（eslint react-hooks/exhaustive-deps 会直接报出来）。
+ */
+const EMPTY_STORE_LIST: DocumentStoreWithPreview[] = [];
 
 type StoreSort = 'updated-desc' | 'created-desc' | 'name-asc' | 'docs-desc';
 const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
@@ -3330,11 +3420,12 @@ export function DocumentStorePage() {
   );
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
-    return saved === 'team' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
+    return saved === 'team' || saved === 'recent' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
   });
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
   const [likes, setLikes] = useState<InteractionStoreCard[]>([]);
+  const [recentEntries, setRecentEntries] = useState<RecentDocumentEntry[]>([]);
   const [loading, setLoading] = useState(true);
   // 我的 / 团队 作用域（默认我的；仅 mine 标签生效）
   const [teamScope, setTeamScope] = useState<TeamScope>(() => useTeamStore.getState().getScope('document-store'));
@@ -3372,6 +3463,30 @@ export function DocumentStorePage() {
   const quickCaptureRequestRef = useRef<QuickCaptureRequestHolder<QuickCaptureResponse>>({ current: null });
   const cdsImportRequestRef = useRef<string | null>(null);
   const tutorialRouteRequestRef = useRef<string | null>(null);
+
+  /*
+   * `?store=X&record=1`：直接在 X 库里开录音（结果页左栏那颗「新录音」走这条）。
+   * 与 quickRecord 不同，它不去创建快捷库——用户是在某个库里点的，就录进那个库。
+   * 消费一次就把参数抹掉，否则返回这一页会再弹一次录音面板。
+   */
+  const recordInStoreConsumedRef = useRef(false);
+  useEffect(() => {
+    if (recordInStoreConsumedRef.current) return;
+    if (!hasRecordInStoreRequest(location.search)) return;
+    const target = initialDeepLinkRef.current.storeId ?? selectedStoreId;
+    if (!target) return;
+    recordInStoreConsumedRef.current = true;
+    setDetailInitialAction({
+      id: ++detailInitialActionSequenceRef.current,
+      storeId: target,
+      action: 'record',
+    });
+    navigate({
+      pathname: location.pathname,
+      search: withoutRecordInStoreRequest(location.search),
+      hash: location.hash,
+    }, { replace: true });
+  }, [location.search, location.pathname, location.hash, navigate, selectedStoreId]);
 
   // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
   // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。
@@ -3427,7 +3542,7 @@ export function DocumentStorePage() {
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
   useEffect(() => {
     const t = new URLSearchParams(location.search).get('tab');
-    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
+    const valid: StoreTab[] = ['mine', 'team', 'recent', 'favorites', 'likes', 'sync'];
     if (t && (valid as string[]).includes(t)) {
       setTab(t as StoreTab);
       const deepLink = parseDocumentStoreDeepLink(location.search);
@@ -3708,6 +3823,21 @@ export function DocumentStorePage() {
     setLoading(false);
   }, []);
 
+  const loadRecent = useCallback(async () => {
+    const mySeq = ++listFetchSeq.current;
+    setLoading(true);
+    const res = await listRecentDocumentEntries(50);
+    if (listFetchSeq.current !== mySeq) return;
+    if (res.success) {
+      setRecentEntries(res.data.items);
+    } else {
+      // 与其他 loader 同口径：失败必须清空，否则上一个 tab 的数据卡在屏上让人误判
+      setRecentEntries([]);
+      toast.error('加载最近内容失败', res.error?.message);
+    }
+    setLoading(false);
+  }, []);
+
   const loadLikes = useCallback(async () => {
     const mySeq = ++listFetchSeq.current;
     setLoading(true);
@@ -3790,6 +3920,8 @@ export function DocumentStorePage() {
       const effectiveTeamId = teamScope.teamId
         ?? (remembered.scope === 'team' ? remembered.teamId : null);
       loadStores('team', effectiveTeamId);
+    } else if (tab === 'recent') {
+      loadRecent();
     } else if (tab === 'favorites') {
       loadFavorites();
     } else if (tab === 'likes') {
@@ -3798,7 +3930,7 @@ export function DocumentStorePage() {
       ++listFetchSeq.current;
       setLoading(false);
     }
-  }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes]);
+  }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes, loadRecent]);
 
   // 持久化选中的 storeId / tab 到 sessionStorage
   useEffect(() => {
@@ -3838,17 +3970,29 @@ export function DocumentStorePage() {
     setPendingEntryId(null);
     setSelectedStoreId(sid);
   }, []);
+  /**
+   * 「最近」点一条直接落到那篇内容本身：storeId 决定进哪个库，entryId 决定打开哪篇。
+   * 与 openStore 同一条路径（StoreDetailView 的 initialEntryId），不另建第二套打开逻辑。
+   */
+  const openRecentEntry = useCallback((entry: RecentDocumentEntry) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(entry.id);
+    setSelectedStoreId(entry.storeId);
+  }, []);
 
   const tabs: { key: StoreTab; label: string; icon: typeof Library; dataTourId?: string }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '团队空间', icon: Users },
+    // 「最近」在收藏左侧：用户找的是「我刚存进来的那篇」，按库分组的卡片答不了这个问题
+    { key: 'recent', label: '最近', icon: Clock },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
   ];
 
   const isStoreTab = tab === 'mine' || tab === 'team';
+  // 「最近」渲染的是文档条目而不是库卡片，走独立分支，不进这条库列表管线
   const rawList: InteractionStoreCard[] | DocumentStoreWithPreview[] =
-    isStoreTab ? stores : tab === 'favorites' ? favorites : likes;
+    isStoreTab ? stores : tab === 'favorites' ? favorites : tab === 'likes' ? likes : EMPTY_STORE_LIST;
 
   // 搜索 + 标签 + 排序（仅 store tab 生效；收藏/点赞页签不参与本页 toolbar 状态以避免混淆）
   const currentList = useMemo(() => {
@@ -3935,6 +4079,7 @@ export function DocumentStorePage() {
           if (teamScope.teamId) loadStores('team', teamScope.teamId);
           else { ++listFetchSeq.current; setStores([]); setLoading(false); }
         }
+        else if (tab === 'recent') loadRecent();
         else if (tab === 'favorites') loadFavorites();
         else if (tab === 'likes') loadLikes();
         else setLoading(false);
@@ -4448,6 +4593,9 @@ export function DocumentStorePage() {
           <SyncManagerPanel />
         ) : loading ? (
           <MapSectionLoader text="加载中..." />
+        ) : tab === 'recent' ? (
+          /* 「最近」：跨库的内容时间线（自带空态引导，不落到下面的库列表管线） */
+          <RecentEntriesList items={recentEntries} onOpen={openRecentEntry} />
         ) : isFilteredOut ? (
           /* 筛选无结果 */
           <div className="flex flex-col items-center justify-center py-16">

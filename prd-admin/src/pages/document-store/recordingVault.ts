@@ -171,10 +171,49 @@ export function recoverableBackgroundTranscriptionRunId(
   nowMs = Date.now(),
 ): string | null {
   const runId = run?.id?.trim();
-  const status = run?.status?.trim().toLowerCase();
-  if (!runId || (status !== 'publishing' && status !== 'queued' && status !== 'running')) return null;
+  if (!runId || !isTranscriptionInflight(run?.status)) return null;
   if (isStalledBackgroundTranscriptionRun(run, nowMs)) return null;
   return runId;
+}
+
+/**
+ * 这条 run 还在跑吗。
+ *
+ * 后端的枚举是 publishing / queued / running / done / failed / cancelled，
+ * 「跑完了」有三种写法，判据只认「还在跑」那三种——反过来枚举终态，
+ * 一旦后端加一个新的终态名，轮询就会永远停不下来（形状 1：判据比它该管的范围窄）。
+ * 三处轮询共用这一个判定：抄第二份就会各自漂移（形状 3）。
+ */
+export function isTranscriptionInflight(status: string | null | undefined): boolean {
+  const s = status?.trim().toLowerCase();
+  return s === 'publishing' || s === 'queued' || s === 'running';
+}
+
+/**
+ * 这条 run 成功跑完了吗。
+ *
+ * 终态有三种（done / failed / cancelled），只有 done 会产出笔记——「不在途」不等于
+ * 「有东西可取」。两处都要这一档：处理页据此把「已生成」接上（否则那张卡退回
+ * 「把录音转成文字」，点下去重跑一整轮 ASR），结果页据此在停下之前再看一眼笔记出没出来。
+ */
+export function isTranscriptionSucceeded(status: string | null | undefined): boolean {
+  return status?.trim().toLowerCase() === 'done';
+}
+
+/**
+ * 这次查询失败还值不值得再问一遍。
+ *
+ * 「查不到」有两种，混成一种就会一直空转：条目不存在、或者这个账号对它只有只读权限
+ * （后端两种都回 `NOT_FOUND`，`LoadWritableEntryAsync` 故意不区分，免得拿错误码探测
+ * 别人库里有什么）——这两种再问一万遍也是同一个答案；网络抖动才配重试。
+ * 两处轮询共用这一个判定，抄第二份就会各自漂移（形状 3）。
+ */
+export function isPermanentLookupFailure(code: string | null | undefined): boolean {
+  const c = code?.trim().toUpperCase();
+  return c === 'NOT_FOUND'
+    || c === 'DOCUMENT_NOT_FOUND'
+    || c === 'PERMISSION_DENIED'
+    || c === 'FORBIDDEN';
 }
 
 export const BACKGROUND_TRANSCRIPTION_STALLED_MS = 60 * 60 * 1000;
@@ -302,9 +341,25 @@ export function describeBackgroundTranscriptionBanner(args: {
   selectedEntryId?: string | null;
   selectedHasFailure: boolean;
   runs: Array<{ entryId?: string | null; title?: string | null }>;
+  /**
+   * 当前这条录音的进度是否已经由正文里的三阶段卡在讲。
+   * 是的话横幅就不该再说一遍——同屏两处讲同一件事，还各讲一半
+   * （横幅只有一句话、卡里有阶段和百分比），用户不知道该信哪个。
+   * 此时横幅只负责「**其它**录音也在跑」，一条都没有就整个消失。
+   */
+  currentRunHasInlineCard?: boolean;
 }): BackgroundTranscriptionBannerCopy | null {
   if (args.runs.length === 0) return null;
   const selectedId = args.selectedEntryId?.trim();
+  if (args.currentRunHasInlineCard && selectedId) {
+    const others = args.runs.filter((run) => run.entryId !== selectedId);
+    if (others.length === 0) return null;
+    return describeBackgroundTranscriptionBanner({
+      selectedEntryId: args.selectedEntryId,
+      selectedHasFailure: args.selectedHasFailure,
+      runs: others,
+    });
+  }
   const currentIsRunning = !args.selectedHasFailure
     && Boolean(selectedId)
     && args.runs.some((run) => run.entryId === selectedId);
@@ -367,6 +422,59 @@ export function startSerialBackgroundPoller(
  *
  * 只认失败态；诊断块（后端追加的 [diagnostic] JSON）给的是排障细节，不是给用户看的，截掉。
  */
+/**
+ * 失败说明的四个字段，对齐设计稿 S5/S6 的硬约束「失败对象必须含
+ * code / 时间 / 仍可用能力 / 重试方式，UI 逐条渲染」。
+ *
+ * 「仍可用能力」不进这个结构：它是**恒真**的一句（音频已经安全落库，播放和下载
+ * 从来不受转录失败影响），由 UI 直接写死更诚实——放进判据会让人以为它有条件。
+ * 这里只给机器判定得出来的三项，外加自动重试的结构化事实。
+ */
+export type FailedTranscriptionNotice = {
+  reason: string;
+  at: string | null;
+  /** 机器可判定的失败类别（如 ERR_CODEC）；上游没给就为 null，UI 此时不编一个出来 */
+  code: string | null;
+  /** 已自动重试次数；后端没下发按 0 计 */
+  automaticRetryCount: number;
+  /** 下一次自动重试的时刻；为 null 表示自动重试已耗尽，轮到用户手动重试 */
+  automaticRetryNextAt: string | null;
+  /**
+   * 已经生成出来的那几句原文。
+   *
+   * 稿面 cap-S10 对「排队超过一小时」这一档的核心承诺是「原文完成的部分现在就能读」——
+   * 那是把「等太久」从焦虑变成「我还能干点什么」的唯一落点。此前这条说明只带
+   * 原因/时间/次数三样，正文里那半篇原文明明在 run 上，却在这里被丢掉了，
+   * 于是界面只能说「播放、下载音频」，那句承诺没有兑现处。
+   */
+  partialTranscript: string[];
+  /**
+   * 挂掉的是哪一样。空表示整条转录失败；给了名字（「词云」「会议纪要」）表示
+   * 只有这一样衍生产物失败——那一档原文与播放都还在，界面不该讲成全盘失败
+   * （稿面 v2-S6 / cap-S7 / cap-S8 画的都是这一种）。
+   */
+  target?: string | null;
+};
+
+/** 后台失联（心跳停了）不是上游报的失败，是我们自己判出来的一类；
+ *  它同样要凑齐四个字段，否则这条路径上的界面又退回「只有一句话」。
+ *  code 用我们自己的分类 RUN_STALLED —— 这是判据算出来的，不是替上游编的。 */
+export function stalledTranscriptionNotice(
+  at: string | null,
+  partialTranscript: string[] = [],
+): FailedTranscriptionNotice {
+  return {
+    // 措辞是安抚不是报错：这一档多半是排队久了，不是坏了。旧文案「不能确认仍会
+    // 自行完成。请点击重试」把等待叙述成故障，判分与产品方都点了这一处。
+    reason: '后台转录已经排队超过一小时还没轮到。录音与音频都在，等不及可以点重试重新排队。',
+    at,
+    code: 'RUN_STALLED',
+    automaticRetryCount: 0,
+    automaticRetryNextAt: null,
+    partialTranscript,
+  };
+}
+
 export function describeFailedTranscription(
   run: {
     status?: string | null;
@@ -375,14 +483,35 @@ export function describeFailedTranscription(
     endedAt?: string | null;
     updatedAt?: string | null;
     createdAt?: string | null;
+    automaticRetryCount?: number | null;
+    automaticRetryNextAt?: string | null;
+    transcriptText?: string | null;
   } | null | undefined,
-): { reason: string; at: string | null } | null {
+): FailedTranscriptionNotice | null {
   if (run?.status?.trim().toLowerCase() !== 'failed') return null;
   const raw = (run.errorMessage ?? '').split('[diagnostic]')[0].trim();
+  const code = run.failureCode?.trim();
   return {
     reason: raw || '转录失败，原因未知',
     at: (run.endedAt ?? run.updatedAt ?? run.createdAt ?? null),
+    code: code ? code : null,
+    automaticRetryCount: Math.max(0, run.automaticRetryCount ?? 0),
+    automaticRetryNextAt: run.automaticRetryNextAt?.trim() || null,
+    partialTranscript: splitPartialTranscript(run.transcriptText),
   };
+}
+
+/** run 上的原文是一整块文本；界面只摆前几句，多了会把失败说明淹掉。 */
+export function splitPartialTranscript(text: string | null | undefined, max = 3): string[] {
+  return (text ?? '').split('\n').map(line => line.trim()).filter(Boolean).slice(0, max);
+}
+
+/**
+ * 整篇原文有多少句。切句口径与 splitPartialTranscript 同源，只是不截断——
+ * 界面上那句「原文 N 句」数的是整篇，拿预览数组的长度去数会永远停在 2、3 句。
+ */
+export function countTranscriptSentences(text: string | null | undefined): number {
+  return splitPartialTranscript(text, Number.MAX_SAFE_INTEGER).length;
 }
 
 function openDb(): Promise<IDBDatabase | null> {
@@ -434,9 +563,15 @@ export async function vaultStartSession(id: string, mime: string, storeId?: stri
 }
 
 /** 录音中切换目标知识库时同步更新保险箱归属，崩溃恢复不会回到旧库。 */
-export async function vaultUpdateSessionStore(id: string, storeId: string): Promise<void> {
+/**
+ * 改这条会话的归属知识库。**返回成败**而不是吞掉：写不进去的话分片留在原来那个库下，
+ * 恢复弹窗按库过滤就找不到它——界面上那句「已保护」这时是假话，调用方要据此降级
+ * （与 vaultStartSession / vaultAppendChunk 同一口径，Codex 第十九轮 P2）。
+ * 会话记录还不存在时同样算失败：这次改动没落到任何地方。
+ */
+export async function vaultUpdateSessionStore(id: string, storeId: string): Promise<boolean> {
   const db = await openDb();
-  if (!db) return;
+  if (!db) return false;
   try {
     const tx = db.transaction(META_STORE, 'readwrite');
     const store = tx.objectStore(META_STORE);
@@ -445,10 +580,14 @@ export async function vaultUpdateSessionStore(id: string, storeId: string): Prom
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => resolve(null);
     });
-    if (current) store.put({ ...current, storeId });
-    await txDone(tx);
-  } catch { /* best-effort */ }
-  db.close();
+    if (!current) { await txDone(tx); return false; }
+    store.put({ ...current, storeId });
+    return await txDone(tx);
+  } catch {
+    return false;
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -495,15 +634,27 @@ export async function vaultClearServerCompletion(id: string): Promise<void> {
 }
 
 /** 追加一个音频分片（逐条插入，不重写既有数据） */
-export async function vaultAppendChunk(sessionId: string, blob: Blob): Promise<void> {
+/**
+ * 追加一片到本机保险箱。**返回它到底写没写进去**。
+ *
+ * 仍然是 best-effort（永不抛，录音不能因为落盘失败而中断），但「失败」这件事必须
+ * 说出来：调用方要靠它决定界面还能不能挂「已保护 · 无丢失」。此前它返回 void 并把
+ * 异常全吞掉，于是调用方接的 `.catch` 根本不会触发——凭据照样是绿的，而分片
+ * 只在内存里（Codex 连续两轮指到这里：先是吞异常，再是「你那个 catch 接不到」）。
+ */
+export async function vaultAppendChunk(sessionId: string, blob: Blob): Promise<boolean> {
   const db = await openDb();
-  if (!db) return;
+  if (!db) return false;
   try {
     const tx = db.transaction(CHUNK_STORE, 'readwrite');
     tx.objectStore(CHUNK_STORE).add({ sessionId, blob });
-    await txDone(tx);
-  } catch { /* best-effort */ }
-  db.close();
+    const ok = await txDone(tx);
+    return ok;
+  } catch {
+    return false;
+  } finally {
+    db.close();
+  }
 }
 
 /** 列出所有滞留的录音会话（按开始时间倒序） */
@@ -584,4 +735,193 @@ export async function vaultDeleteSession(id: string): Promise<void> {
     await txDone(tx);
   } catch { /* best-effort */ }
   db.close();
+}
+
+/**
+ * 失败卡该说什么 —— 按失败类别分档。
+ *
+ * 为什么要分档：同一张「上次转文字没成功」把三种完全不同的处境说成了一句话。
+ *   - 后台失联一小时：任务多半还在排队，用户需要的是「可以走开」，
+ *     而旧文案说「不能确认仍会自行完成」，读起来像坏了（稿面 cap-S10）。
+ *   - 整段没有人声：重试同一段音频不会有别的结果，用户需要的是先播一遍确认，
+ *     而旧文案让他「点重试」（稿面 v2-S4）。
+ *   - 编码不支持等真失败：旧文案本来就对（稿面 v2-S5）。
+ *
+ * 抽成纯函数而不是写在卡里：这三档的差别是**判据**，判据要能被单测钉住；
+ * 写在 JSX 里只能靠肉眼看截图，而截图看不出「换一个 failureCode 会不会走错档」。
+ *
+ * 产品方 2026-08-26 裁定：一小时那一档**保留重试按钮**（它是用户唯一的恢复出口），
+ * 只改文案与陪伴，不动「超时判失败」的判定逻辑，也不新增完成通知订阅。
+ */
+export type FailurePresentation = {
+  title: string;
+  /** 抬头第二行：一句话说清什么没丢 */
+  subtitle: string;
+  /** 「下一步」那一行 */
+  nextStep: string;
+  /**
+   * 卡面的语义色调。稿面给四种处境各画了一种面孔：真失败是红/粉错误面、
+   * 自动重试与排队是暖琥珀的「在动，别急」、没听到人声是克制的中性白。
+   * 此前四张卡共用同一套中性壳 + 同一枚警告三角，用户**看不出这是哪一种**——
+   * 四份独立判分都各自指到了这同一处根因。
+   */
+  tone: 'danger' | 'retrying' | 'queued' | 'neutral';
+  /** 图标语义：转圈箭头代表「后台在动」，闹钟代表「在排队」，划掉的麦克风代表「没听到人声」 */
+  icon: 'alert' | 'retry' | 'clock' | 'mic-off';
+  /**
+   * 「仍可用」那一行的枚举。
+   *
+   * 它此前是卡里写死的一句「播放、下载音频」——于是**衍生产物**失败（词云/纪要挂了、
+   * 原文好好的）时，界面把「局部失败」讲成了「全盘失败」：用户读不到原文、编辑、搜索
+   * 其实一样能用（稿面 v2-S6 / cap-S7 / cap-S8 都把这几项点了名）。
+   * 现在按真实可用性算：有没有原文、有没有纪要，决定这一行列几项。
+   */
+  stillWorks: string;
+  /**
+   * 这一档该给哪些出口，**第一项是主操作**。
+   * 稿面把主操作画在底部按钮组的首位；此前实现把「重试」固定钉在卡头右上，
+   * 于是「没人声」那一档的主操作成了一个自己文案都说没用的重试
+   * （v2-S4 / v2-S5 / cap-S10 三份判分各自指到这处）。
+   */
+  actions: FailureAction[];
+};
+
+/**
+ * 失败卡的出口种类。
+ * `notify` / `support` 是稿面 cap-S10「排队超一小时」那一档的两颗；
+ * `copyTranscript` 是 cap-S8 的兜底自救（纪要没生成出来，先把原文拿走自己整理）。
+ */
+export type FailureAction =
+  | 'retry' | 'download' | 'play' | 'rerecord' | 'copyTranscript' | 'notify' | 'support';
+
+/** 后端把「整段没有有效语音」分成两个 code，UI 该给同一档 */
+const NO_SPEECH_CODES = new Set(['ASR_NO_SPEECH', 'ASR_ALL_CANDIDATES_NO_SPEECH']);
+
+/**
+ * 后端每条 run 的自动重试预算。
+ *
+ * 它在后端是 `DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries`，
+ * 接口里没有下发，所以这里只能存一份副本——**同一个判断存两份就会漂**
+ * （predicate-and-wiring-discipline 形状 3）。守卫在
+ * `__tests__/automaticRetryLimit.test.ts`：它直接读那个 .cs 文件，两边对不上就红。
+ */
+export const AUTOMATIC_RETRY_LIMIT = 3;
+
+/**
+ * 「仍可用」那一行：按**这一刻真实存在的东西**算，不照抄稿面的枚举。
+ * 没有原文时说「原文不受影响」是一句假话——那正是把用户骗一次的成本最高的地方。
+ */
+function describeStillWorks(opts: {
+  hasTranscript?: boolean;
+  hasSummary?: boolean;
+  /** 这一刻挂掉的那一样。它**必须**从可用清单里剔掉，否则就是自己打自己的脸 */
+  target?: string;
+}): string {
+  if (!opts.hasTranscript) return '播放、下载音频（音频不受转录失败影响）';
+  const abilities = ['播放', '原文', '编辑', '搜索', '跳播', '词云', '问答'];
+  if (opts.hasSummary) abilities.push('纪要');
+  /*
+    挂掉的那一样不能出现在「仍可用」里。
+    上一版把「纪要」写死进清单，于是「会议纪要生成失败」的卡上紧跟着一句
+    「纪要都不受影响」——三份判分各记了一次「状态表达自相矛盾」。
+    整理与纪要是同一件事的两个说法，所以两个词都要过滤。
+  */
+  const failed = (opts.target ?? '').trim();
+  const aliases = failed
+    ? [failed, ...(/纪要|整理|摘要/.test(failed) ? ['纪要'] : []), ...(/词云/.test(failed) ? ['词云'] : [])]
+    : [];
+  const usable = abilities.filter(item => !aliases.some(alias => alias.includes(item) || item.includes(alias)));
+  return `${usable.join('、')}都不受影响`;
+}
+
+export function describeFailurePresentation(
+  notice: FailedTranscriptionNotice,
+  opts: {
+    waitingAutoRetry: boolean;
+    retryLabel?: string;
+    hasPartialTranscript?: boolean;
+    /**
+     * 挂掉的是哪一样。为空表示整条转录失败；给了名字（如「词云」「会议纪要」）表示
+     * 只有这一样衍生产物失败，原文与播放都还在——稿面 v2-S6 / cap-S7 / cap-S8
+     * 画的都是这一种，而不是整段转录失败。
+     */
+    target?: string | null;
+    /** 这一刻原文在不在（决定「仍可用」怎么写，也决定给不给「复制原文」这个出口） */
+    hasTranscript?: boolean;
+    /** 纪要在不在 */
+    hasSummary?: boolean;
+    /** 这段录音有多长（稿面 v2-S4 / cap-S10 都把它编进正文，让用户判断值不值得等） */
+    durationLabel?: string | null;
+  } = { waitingAutoRetry: false },
+): FailurePresentation {
+  const target = opts.target?.trim() || '';
+  const stillWorks = describeStillWorks({ ...opts, target });
+  // 自动重试还没耗尽：这一档压过所有类别——正在自愈的时候不该让用户做任何事
+  if (opts.waitingAutoRetry) {
+    return {
+      title: target ? `${target}生成失败，正在自动重试` : '转录失败，正在自动重试',
+      subtitle: '录音还在，没有丢',
+      stillWorks,
+      actions: [],
+      // 分母是后端那条自动重试预算：没有它，用户读不出「还剩几次机会」
+      // （稿面 v2-S6 / cap-S7 写的是「第 2 / 3 次」）。
+      nextStep: `第 ${notice.automaticRetryCount + 1} / ${AUTOMATIC_RETRY_LIMIT} 次自动重试将在 ${opts.retryLabel ?? '稍后'}开始，无需操作`,
+      tone: 'retrying',
+      icon: 'retry',
+    };
+  }
+  const code = (notice.code ?? '').trim().toUpperCase();
+  if (code === 'RUN_STALLED') {
+    return {
+      title: '处理已超过一小时',
+      subtitle: '录音已经安全保存，任务还在排队',
+      /*
+        稿面 cap-S10 这一档的主张是「你可以走开，好了会叫你」，而且必须有一颗真的按钮
+        兜着（见 actions 里的 notify）。但兜得住的只有「这一页开着」这一档——通知是这一屏
+        观察到 run 转终态时用浏览器通知发的，没有 service worker、也没有服务端订阅，
+        页面一关就没人再看着了。所以这句话只能承诺到这里：**可以走开，但别关这一页**。
+        此前它写的是「就可以关掉这一页」，那是一句兑现不了的承诺（Codex 第十三轮 P1）。
+        录音时长也编进来：等三个小时和等三分钟，用户的决定完全不同。
+      */
+      nextStep: `${opts.durationLabel ? `这段 ${opts.durationLabel} 的录音仍在排队。` : ''}${
+        opts.hasPartialTranscript ? '已经生成的部分原文可以先读；' : ''
+      }点「完成后通知我」就可以走开，完成时会弹一条系统通知（这一页先别关）；等不及就点「重试」重新排队`,
+      tone: 'queued',
+      icon: 'clock',
+      stillWorks,
+      // 稿面 cap-S10 的主操作是「完成后通知我」——这一档用户要的不是再排一次队，
+      // 是「我可以走开，好了叫我」。重试降为第三顺位。
+      actions: ['notify', 'support', 'retry'],
+    };
+  }
+  if (NO_SPEECH_CODES.has(code)) {
+    return {
+      title: '没有检测到有效语音',
+      /*
+        稿面 v2-S4 在这里给了两样：**这段录音有多长**、以及**里面到底是什么**。
+        前者让用户判断值不值得重录，后者让「为什么判成没有语音」落地。
+        措辞写成「常见于」而不是断言环境噪声——上游只告诉我们「没识别到人声」，
+        没告诉我们那段声音是什么，照抄稿面那句断言就是编一个我们不知道的事实。
+      */
+      subtitle: `${opts.durationLabel ? `这段 ${opts.durationLabel} 的录音` : '这段录音'}里几乎没有可识别的人声（常见于环境噪声或音量过低）。音频已保留，可以直接播放确认`,
+      nextStep: '先播一遍确认这段录音里有没有人声。确实没有就重新录一次——同一段音频重试不会有别的结果',
+      tone: 'neutral',
+      icon: 'mic-off',
+      stillWorks,
+      // 这一档**不给重试**：同一段音频重试不会有别的结果，摆一颗重试就是自相矛盾
+      actions: ['play', 'rerecord'],
+    };
+  }
+  return {
+    title: target ? `${target}生成失败` : '转录失败',
+    subtitle: '录音还在，没有丢',
+    nextStep: opts.hasTranscript
+      ? '点「重试」；若反复失败，可转码后重新上传，或先复制原文自行整理'
+      : '点「重试」；若反复失败，可转码后重新上传',
+    tone: 'danger',
+    icon: 'alert',
+    stillWorks,
+    // 有原文时兜底出口是「复制原文」（自己整理去），没有原文才退回「下载音频」
+    actions: opts.hasTranscript ? ['retry', 'copyTranscript'] : ['retry', 'download'],
+  };
 }
