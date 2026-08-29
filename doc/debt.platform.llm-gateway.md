@@ -12,7 +12,7 @@
 
 ## 总览
 
-当前 open: 34 / in-progress: 8 / paid: 25 / 总计: 67
+当前 open: 35 / in-progress: 8 / paid: 25 / 总计: 68
 
 本台账记录"LLM 网关与模型池统一"迁移过程中已识别、但尚未在代码中偿还的边界与风险。详细方案见 [design.platform.llm-gateway.unification.md](./design.platform.llm-gateway.unification.md)。
 
@@ -759,6 +759,7 @@
 | `2026-08-11-delete-check-to-delete-race` | P2 | open | 删模型（及同形状的删交换所 / 删池 / **删逻辑模型时级联删它名下的 offering**）是「先查引用、再删」两步非原子：查完阻挡清单之后、`DeleteOneAsync` 之前，若并发有人新建 offering 或 upsert 池成员正好指到这个模型，那次写入会成功，随后删除照常执行，留下一条指向已不存在对象的引用——正是本 PR 花了几轮堵的那类静默残留，只不过发生在时间窗里。<br>**为什么本 PR 不修**：三条候选修法（Mongo 事务 / 删前先打 `Deleting` 标记再扫 / 把引用创建与删除串行化）都要引入这条链路上从未有过的新语义（分布式事务或两阶段删除状态机），且会牵动所有写引用的端点一起认那个中间态。按规则 5.5 属 B 类。当前控制台是低并发管理面（管理员手工操作），撞上这个窗口需要两个管理员同秒操作同一个模型，因此优先级定 P2 而非 P1。<br>逻辑模型那一路是同一形状的镜像：建 offering 会先校验父逻辑模型存在，若这次校验落在删逻辑模型的 `DeleteManyAsync` 之后、父文档删除之前，插进来的 offering 就永久成孤儿。修法与上同（事务 / 删除中标记 / 串行化），故合并记在这一条，不另开条目。（2026-08-11 PR #1359 Review 十一轮提出，十二轮补入逻辑模型镜像）|
 | `2026-08-12-preset-load-failure-silent` | P2 | open | Provider 预设清单（`ProviderPresetPicker`）拉取失败时界面不说话：既没有加载态、也没有错误提示与重试，用户看到的是一个空的预设区，分不清「这个部署没有预设」还是「刚才那次请求挂了」——违反 `expectation-management.md` 第一条（任何等待都要给「在做什么」）。<br>**为什么本 PR 不修**：要补的是 loading / error / retry 三个新 UI 状态 + 一条重试路径，属规则 5.5 的 B 类（建议合理但引入新语义类别）。本 PR 的单一目标是「预设导入 + 上游模型发现」的正确性，这条不证伪那个目标。修的时候要连带确认：预设是打包在前端还是从后端拉的，若是前者则本条不成立、直接结清。（2026-08-12 PR #1362 Review 提出，范围熔断后记账）|
 | `2026-08-12-probe-duration-excludes-body` | P2 | open | 「测试连通性」返回的耗时只算到**响应头到达**为止：`sw.Stop()` 排在 `ReadUpstreamBodyAsync` 之前，而探测本身是 `ResponseHeadersRead` 模式，body 是后面才流完的。上游先回头、再慢慢吐 body 时，界面上会显示一个明显偏小的毫秒数，用户据此判断「这家很快」是错的。<br>**为什么本 PR 不修**：`sw` 的读数同时喂给成功与失败两条返回路径，把 `Stop()` 挪到 body 读完之后会改变失败分支（非 2xx 不读 body）的口径，等于要重新定义「探测耗时」是「到头」还是「到全文」并同步前端文案——是新语义类别而非缺陷修复，按规则 5.5 属 B 类。当前读数偏小但单调、可比，不会导致错误配置落库。（2026-08-12 PR #1362 Review 提出，范围熔断后记账）|
+| `2026-08-29-tenant-rate-limit-test-straddles-minute` | P2 | open | `GatewayKeyGateContractTests.ConcurrentTenantRateLimit_AggregatesAppCallersAndEmitsBothLimitLayers` 会在分钟边界上假红。测试并发发 40 个请求（每租户 20，租户限额 4/分钟）后断言恰好 8 个 200；而 `CheckTenantRateLimitAsync` 的窗口键取的是**每个请求各自求值**的 `DateTime.UtcNow` 截到分钟。若这 40 个请求跨过 UTC 整分，每个租户会开出两个窗口、各自放行 4 个，OK 数上界变成 16，`windows.Count.ShouldBe(2)` 也会变成 4。<br>**证据**：2026-08-29 PR #1439 的 CI run 33258243774 第一次跑失败，`responses.Count(OK) should be 8 but was 15`，而该断言的日志时间戳是 `14:44:00.2529061Z`——前一条用例在 `14:43:59.74` 结束、本条耗时 426ms，请求正好压在 `14:44:00.000` 上。同一 commit 原样重跑即通过（14:57 全绿），本分支此前 29 次运行该用例均通过。<br>**不是本 PR 的问题**：PR #1439 的 diff 既不含 serving 侧的租户限流实现，也不含该测试文件；末次提交只动了 `AskOpeningQuestionGenerator` / `AskQuotaService` 及其单测。按规则 5.5 属 B 类（真实但扩范围），故只记账不在当前 PR 修。<br>**建议修法**（测试侧，两行）：发请求前先判断当前分钟剩余时间，不足约 3 秒就等到下一分钟起点再开跑；这样窗口口径与断言口径一致，且不改动生产限流逻辑。不要改成放宽断言（那会把「限流放行多少」这条真判据变成不设防）。产品侧是否要把窗口改成请求批内共用一个 `windowStart`，属另一个话题，本条不含。 |
 | `2026-07-17-cds-dataprotection-persistence` | P2 | open | CDS main 的 Console API 启动日志提示 `/root/.aspnet/DataProtection-Keys` 不持久且未配置 XML encryptor。当前 Gateway JWT 使用独立 `LlmGwJwt__Secret`，尚未发现会话故障；但若后续引入 ASP.NET DataProtection cookie、临时令牌或受保护载荷，容器替换会使旧数据失效。收口前应先盘点真实消费点，再决定挂载受限 volume 或显式禁用未使用能力，不能仅为消除 warning 保存明文 key。 |
 
 测试环境“真实数据”已经通过控制台正常链路形成，不能把密钥明文、生产租户快照或前端硬编码示例当作修复。若 CDS Mongo 被重建，恢复方式是使用独立测试租户从 Quickstart 创建 appCaller 和 tenant-scoped key，再对公开假上游发送请求；禁止复用生产 key，禁止批量调用付费模型。
