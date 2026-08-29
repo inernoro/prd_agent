@@ -12,6 +12,16 @@ public static class TranscribeNoteText
     private const string SummaryMarker = "## 摘要";
 
     /// <summary>
+    /// 「这次整理没生成出来」那一节的固定标题。
+    ///
+    /// 为什么不复用「## 摘要」：前端 <c>describeTranscriptOutcome</c> 判「有没有整理出纪要」
+    /// 的唯一依据就是摘要节非空。把失败说明写进那一节，绿色的「纪要已就绪」完成卡会照常亮起，
+    /// 而同一篇笔记正文写着没生成——比原来的静默更糟，因为它在明确地说错话
+    /// （Codex 第五十二轮 P2）。所以另起一节：用户看得见，成功判据看不见。
+    /// </summary>
+    public const string SummaryUnavailableMarker = "## 整理未生成";
+
+    /// <summary>
     /// 说话人来源说明行的前缀（SubtitleFormatter.FormatSpeakerSourceNote 产出，唯一字面量在这里）。
     /// 它是**元信息不是转录内容**：反解原文时要剔掉，替换原文时要留住——
     /// 用户只是把某句话改对了字，说话人标签的来源并没有因此变化。
@@ -101,9 +111,14 @@ public static class TranscribeNoteText
             // 结构外的笔记（被用户改过）：摘要前置，原文整体保留
             return SummaryMarker + "\n\n" + newSummary.Trim() + "\n\n" + noteMd;
         }
+
         var head = noteMd[..fullIdx];
         var summaryIdx = head.IndexOf(SummaryMarker, StringComparison.Ordinal);
         var prefix = summaryIdx >= 0 ? head[..summaryIdx] : head;
+        // 上一次失败留下的「整理未生成」节要一并清掉，否则重整成功后笔记里会同时挂着
+        // 「没生成出来」和一份真摘要，自相矛盾。
+        var unavailableIdx = prefix.IndexOf(SummaryUnavailableMarker, StringComparison.Ordinal);
+        if (unavailableIdx >= 0) prefix = prefix[..unavailableIdx];
         var trimmedPrefix = prefix.TrimEnd();
         var glue = trimmedPrefix.Length > 0 ? "\n\n" : "";
         return trimmedPrefix + glue + SummaryMarker + "\n\n" + newSummary.Trim() + "\n\n" + noteMd[fullIdx..];
