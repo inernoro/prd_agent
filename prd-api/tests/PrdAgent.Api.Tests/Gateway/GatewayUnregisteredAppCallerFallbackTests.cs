@@ -98,6 +98,101 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
     }
 
     /// <summary>
+    /// 兜底必须是边界，不是入场券。
+    ///
+    /// 未登记的调用方带着 expectedModel 进来（视觉创作那条路就是把用户选的 ModelId 当
+    /// expectedModel 传的），如果只是把默认池塞进候选、不关掉后面 expectedModel 的
+    /// 「全量池搜索」与「LLMModels 直连」，它就能顺着这两档走到该类型的任意池、任意同名模型上——
+    /// 「只回落到默认池」这句话就作废了（Codex 第五十轮 P1）。
+    ///
+    /// 这里在 MAP 库里埋一个同名的 legacy 模型：解析必须留在 GW 默认池里，不许命中它。
+    /// </summary>
+    [Fact]
+    public async Task UnregisteredFallback_ShouldNotWidenSearchForExpectedModel()
+    {
+        await using var env = await GatewayFixture.CreateAsync();
+        await env.MapData.LLMPlatforms.InsertOneAsync(new LLMPlatform
+        {
+            Id = "outside-platform",
+            Name = "范围外平台",
+            PlatformType = "openai",
+            ApiUrl = "https://outside.example.test/v1",
+            Enabled = true,
+        });
+        await env.MapData.LLMModels.InsertOneAsync(new LLMModel
+        {
+            Id = "outside-model",
+            Name = "outside-model",
+            ModelName = "outside-model",
+            PlatformId = "outside-platform",
+            Enabled = true,
+        });
+
+        var result = await env.Resolver.ResolveAsync(
+            "document-store.transcribe-summary::chat",
+            ModelTypes.Chat,
+            expectedModel: "outside-model");
+
+        result.Success.ShouldBeTrue(result.ErrorMessage);
+        result.ModelGroupId.ShouldBe(GatewayFixture.DefaultChatPoolId);
+        result.ActualModel.ShouldBe(ChatModel);
+        result.ActualModel.ShouldNotBe("outside-model");
+    }
+
+    /// <summary>
+    /// embedding / asr / video-gen 三类不吃这条兜底：绑定还在、池没了，换个模型出来的东西
+    /// 根本不能用（向量维度对不上，写进库就是一批认不出来的垃圾）。这正是
+    /// HasDedicatedBinding 那段注释点名要拦的情形，继续失败关闭。
+    /// </summary>
+    [Fact]
+    public async Task DanglingMapBinding_ShouldStayFailClosedForEmbedding()
+    {
+        await using var env = await GatewayFixture.CreateAsync();
+        await env.MapData.LLMAppCallers.InsertOneAsync(new LLMAppCaller
+        {
+            AppCode = "some-agent.index::embedding",
+            DisplayName = "向量索引",
+            ModelRequirements =
+            [
+                new AppModelRequirement
+                {
+                    ModelType = ModelTypes.Embedding,
+                    ModelGroupIds = ["model-group-that-no-longer-exists"],
+                },
+            ],
+        });
+        var embeddingPool = new ModelGroup
+        {
+            Id = "gw-default-embedding-pool",
+            Name = "向量默认池",
+            Code = "default-embedding",
+            ModelType = ModelTypes.Embedding,
+            IsDefaultForType = true,
+            Priority = 10,
+            Models =
+            [
+                new ModelGroupItem
+                {
+                    PlatformId = PlatformId,
+                    ModelId = ChatModel,
+                    Priority = 0,
+                    HealthStatus = ModelHealthStatus.Healthy,
+                    ConsecutiveSuccesses = 10,
+                },
+            ],
+        };
+        var doc = embeddingPool.ToBsonDocument();
+        doc["TenantId"] = GatewayTenantDefaults.InternalTenantId;
+        await env.GatewayData.Database.GetCollection<BsonDocument>("llmgw_model_pools").InsertOneAsync(doc);
+
+        var result = await env.Resolver.ResolveAsync(
+            "some-agent.index::embedding",
+            ModelTypes.Embedding);
+
+        result.Success.ShouldBeFalse();
+    }
+
+    /// <summary>
     /// 边界：登记了、但绑的池不存在。这是「显式池未知」，必须结构化失败，
     /// 不能被上面那条兜底顺手放行——否则一条配错的绑定会看起来像配对了。
     /// </summary>

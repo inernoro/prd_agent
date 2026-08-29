@@ -60,6 +60,11 @@ public class ModelResolver : IModelResolver
         List<ModelGroup>? candidateGroups = null;
         var hasDedicatedBinding = false;
         string resolutionType = "NotFound";
+        // 候选是不是「GW 默认池兜底」给的。给了就必须当边界用：
+        // 下面 expectedModel 的档 2（MAP 全量池）与档 3（LLMModels 直连）会把范围撑开到
+        // 该类型的任意池、乃至任意同名模型，那等于把「只回落到默认池」这句话作废
+        // （Codex 第五十轮 P1：ImageMasterController 会把用户选的 ModelId 当 expectedModel 传进来）。
+        var usedGatewayDefaultFallback = false;
 
         var gatewayConfigRequired = !string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal)
                                     || DisableMapConfigFallbackForRegisteredAppCallers();
@@ -235,10 +240,11 @@ public class ModelResolver : IModelResolver
         if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller == null)
         {
             candidateGroups = await TryFallbackToGatewayDefaultPoolsAsync(
-                gatewayRegistry, appCallerCode, modelType, gatewayConfigRequired, ct);
+                gatewayRegistry, appCallerCode, modelType, hasDedicatedBinding, gatewayConfigRequired, ct);
             if (candidateGroups.Count > 0)
             {
                 resolutionType = "GatewayRegistryPool";
+                usedGatewayDefaultFallback = true;
             }
             else
             {
@@ -341,7 +347,8 @@ public class ModelResolver : IModelResolver
                     appCallerCode, modelType);
             }
             candidateGroups = await TryFallbackToGatewayDefaultPoolsAsync(
-                gatewayRegistry, appCallerCode, modelType, gatewayConfigRequired, ct);
+                gatewayRegistry, appCallerCode, modelType, hasDedicatedBinding, gatewayConfigRequired, ct);
+            usedGatewayDefaultFallback = candidateGroups.Count > 0;
             if (candidateGroups.Count == 0)
             {
                 var legacyModel = await FindLegacyModelAsync(modelType, ct);
@@ -403,7 +410,7 @@ public class ModelResolver : IModelResolver
             else
             {
                 // 档 2：该 ModelType 下的所有池（包括未绑定到 AppCaller 的）
-                if (gatewayConfigRequired)
+                if (gatewayConfigRequired || usedGatewayDefaultFallback)
                 {
                     _logger.LogInformation(
                             "[ModelResolver] GW appCaller 已禁止 MAP fallback，跳过 expectedModel 的 MAP 全量池搜索: AppCallerCode={Code}, Expected={Expected}",
@@ -435,7 +442,7 @@ public class ModelResolver : IModelResolver
                 // 档 3：LLMModels 直连（按 ModelName 查）
                 if (preferredGroup == null)
                 {
-                    if (gatewayConfigRequired)
+                    if (gatewayConfigRequired || usedGatewayDefaultFallback)
                     {
                         _logger.LogInformation(
                                 "[ModelResolver] GW appCaller 已禁止 MAP fallback，跳过 expectedModel 的 LLMModels 直连兜底: AppCallerCode={Code}, Expected={Expected}",
@@ -1989,6 +1996,7 @@ public class ModelResolver : IModelResolver
         GatewayRegistryLookup gatewayRegistry,
         string appCallerCode,
         string modelType,
+        bool hasDedicatedBinding,
         bool gatewayConfigRequired,
         CancellationToken ct)
     {
@@ -1998,6 +2006,18 @@ public class ModelResolver : IModelResolver
             || gatewayRegistry.BlockReason is not null
             || gatewayRegistry.ConfigPlaneUnavailable)
         {
+            return [];
+        }
+
+        // embedding / asr / video-gen 三类：绑定还在、池没了，正是 HasDedicatedBinding 那段注释
+        // 点名要拦的情形——换一个模型出来的东西根本不能用（向量维度对不上，写进库就是一批
+        // 认不出来的垃圾）。这条兜底救的是「功能被残留数据整片判死」，不该把这三类一起放行。
+        // 它们继续走原有的失败关闭，由人去把绑定改对（Codex 第五十轮 P1）。
+        if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+        {
+            _logger.LogWarning(
+                "[ModelResolver] {ModelType} 绑定的专属池已不存在，按失败关闭处理，不回落默认池: AppCallerCode={Code}",
+                modelType, appCallerCode);
             return [];
         }
 
