@@ -149,6 +149,20 @@ public class WebPageAskController : ControllerBase
     /// 面板转个圈就好，比让他保存完再刷新猜有没有到位清楚得多）；而且它会先把
     /// 「owner 动过手」的标记清掉——他点这个按钮就是在说「不要我那份了，重读一遍」。
     /// </summary>
+
+    /// <summary>
+    /// 还原「手写标记」的条件：上面清掉的两笔**都**还是我离开时的样子。
+    ///
+    /// 单独抽出来是因为它错一个条件不会有任何东西变红。只看版本戳的话，另一个 editor 在
+    /// 这 45 秒里保存的手写题会被这一笔改回 auto——SetAskConfigAsync 写 source 但不动戳，
+    /// 于是「戳仍为空」照样成立。判据只许有这一处定义，测试直接拿它打真库。
+    /// </summary>
+    public static FilterDefinition<HostedSite> RestoreAskSourceFilter(string siteId) =>
+        Builders<HostedSite>.Filter.Where(
+            s => s.Id == siteId
+                 && s.AskQuestionsGeneratedFor == null
+                 && s.AskQuestionsSource == AskOpeningQuestions.SourceAuto);
+
     [HttpPost("{siteId}/ask/questions/regenerate")]
     public async Task<IActionResult> RegenerateAskQuestions(string siteId)
     {
@@ -187,7 +201,12 @@ public class WebPageAskController : ControllerBase
         var outcome = await _askOpeners.EnsureAsync(siteId, CancellationToken.None);
 
         // 只有这三种真的落库了（都走 StampAsync 且匹配上了）；其余都没写，把标记还回去。
-        // 还原带条件：版本戳仍为空才动手——并发的另一发如果已经写好了，别把它盖掉。
+        //
+        // 还原的条件必须把上面清掉的**两笔都**盖住，只看版本戳会漏掉一种人：
+        // 另一个 editor 在这 45 秒里保存了他手写的题。SetAskConfigAsync 会把 source 写成
+        // manual，却**不动版本戳**——于是「戳仍为空」照样成立，这一笔就把他刚写下的 manual
+        // 改回 auto，他的题当场失去保护。这正是本功能声明要守的那条不变量，不能自己从
+        // 后门破掉。所以还原只在「这两笔都还是我离开时的样子」时才动手。
         if (outcome is not (AskOpenerOutcome.Generated
             or AskOpenerOutcome.NoContent
             or AskOpenerOutcome.ModelUnusable))
@@ -196,9 +215,7 @@ public class WebPageAskController : ControllerBase
             restore = priorStamp.HasValue
                 ? restore.Set(s => s.AskQuestionsGeneratedFor, priorStamp.Value)
                 : restore.Unset(s => s.AskQuestionsGeneratedFor);
-            await _db.HostedSites.UpdateOneAsync(
-                s => s.Id == siteId && s.AskQuestionsGeneratedFor == null,
-                restore);
+            await _db.HostedSites.UpdateOneAsync(RestoreAskSourceFilter(siteId), restore);
         }
 
         var latest = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync();

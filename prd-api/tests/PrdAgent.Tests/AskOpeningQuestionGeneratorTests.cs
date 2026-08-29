@@ -422,10 +422,16 @@ public class AskOpeningQuestionWiringTests
         Assert.Contains("AskOpenerOutcome.Generated", ctrl);
         Assert.Contains("priorStamp.HasValue", ctrl);
 
-        // 还原要带条件，别把并发那一发刚写好的结果盖掉
-        var restoreAt = ctrl.IndexOf("restore);", StringComparison.Ordinal);
-        Assert.True(restoreAt > -1);
-        var restoreCall = ctrl.Substring(Math.Max(0, restoreAt - 260), Math.Min(260, restoreAt));
-        Assert.Contains("s.AskQuestionsGeneratedFor == null", restoreCall);
+        // 还原要带条件，别把并发那一发刚写好的结果盖掉。
+        //
+        // 条件本身**不在这里断**：它已经由 AskRegenerateRestoreTests 打真库逐种并发状态验过，
+        // 那是行为，比在源码里找字符串可靠得多。这里只钉这条线还接在唯一那个判据上——
+        // 谁要是在这里就地又写一遍过滤条件，那些行为用例就会变成空转（改坏了也不红）。
+        Assert.Contains("UpdateOneAsync(RestoreAskSourceFilter(siteId), restore)", ctrl);
+        var condCount = System.Text.RegularExpressions.Regex
+            .Matches(ctrl, @"AskQuestionsGeneratedFor == null").Count;
+        Assert.True(condCount == 1,
+            $"还原条件只许有 RestoreAskSourceFilter 这一处定义，实际出现 {condCount} 次——"
+            + "抄第二份就会各自漂移，打真库的那几条用例也会变成空转");
     }
 }

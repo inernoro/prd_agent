@@ -159,3 +159,23 @@ export function buildUploadProgress(
     steps: [],
   };
 }
+
+/**
+ * 这一发该不该显示上传进度那一屏。
+ *
+ * 抽出来的理由与本文件其余部分一致：它此前写在组件的三元条件里，写成了 `saving && !isEdit`
+ * ——把重传整个挡在门外。轮询照跑、解包帧照收、`buildUploadProgress` 也照算，
+ * 只有渲染这一段没接上，屏幕上从头到尾是一个不动的「处理中...」。这种「链路只建一半」
+ * 删掉不会红，所以判据必须有个能被直接调用的落点。
+ *
+ * @param saving  正在提交
+ * @param isEdit  编辑既有站点（重传或改元信息），而非新建
+ * @param hasFile 这一发挑了文件
+ */
+export function showsUploadProgress(
+  { saving, isEdit, hasFile }: { saving: boolean; isEdit: boolean; hasFile: boolean },
+): boolean {
+  if (!saving) return false;
+  // 纯改元信息没有文件要传，这一屏无从谈起；其余（新建、重传）都要显示。
+  return !isEdit || hasFile;
+}

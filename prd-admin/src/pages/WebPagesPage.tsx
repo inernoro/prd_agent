@@ -51,7 +51,7 @@ import { toOpenableUrl } from '@/components/web-hosting/siteFormat';
 import { ToolbarPopover } from '@/components/web-hosting/ToolbarPopover';
 import { SiteContextPanel, SiteSelectionPanel, SiteBatchPanel } from '@/components/web-hosting/SiteContextPanel';
 import { SharePreviewPane, VISIBILITY_LABEL as SHARE_VISIBILITY_LABEL } from '@/components/web-hosting/SharePreviewPane';
-import { buildUploadProgress, fmtDuration, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
+import { buildUploadProgress, fmtDuration, showsUploadProgress, type UnpackFrame } from '@/components/web-hosting/uploadProgress';
 import { resolveSiteForm } from '@/components/web-hosting/siteFormRegistry';
 import { getUploadProgress } from '@/services/real/webPages';
 import { SharesWorkspace } from '@/components/web-hosting/SharesWorkspace';
@@ -3005,8 +3005,12 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               </Button>
             </div>
           </div>
-        ) : saving && !isEdit ? (
-          /* ── 上传中：屏幕上必须有真实在动的东西，且说得出「还要多久」 ── */
+        ) : showsUploadProgress({ saving, isEdit, hasFile: file !== null }) ? (
+          /* ── 上传中：屏幕上必须有真实在动的东西，且说得出「还要多久」 ──
+             重传（isEdit 且选了文件）走的是同一条解包通道、同一份进度帧，只是拿不到
+             XHR 的 progress 事件。之前这里写 `!isEdit`，等于把它挡在门外：轮询照跑、
+             帧照收、屏幕上却只有一个不动的「处理中...」——正是本仓库禁止的静止等待。
+             纯改元信息（isEdit 且没选文件）没有文件要传，仍旧不走这一屏。 */
           <div className="flex flex-col gap-4 py-1">
             {/* 文件行 */}
             <div className="flex items-center gap-2">
