@@ -231,7 +231,11 @@ public class WebPageAskController : ControllerBase
             return Ok(ApiResponse<object>.Ok(new
             {
                 generated = false,
-                questions = current?.AskSuggestedQuestions ?? new List<string>(),
+                // 字段名必须与正常那条返回一致（suggestedQuestions）。抽屉读的是那个名字，
+                // 这里写成 questions 它就读到 undefined，`?? []` 把界面上的题清空——
+                // 接着 owner 随手加一条保存，就拿这份「空 + 1」覆盖掉另一个 editor 刚写的整份。
+                // 我为了堵住并发丢数据才加的这条分支，用一个字段名又开了另一条丢数据的路。
+                suggestedQuestions = current?.AskSuggestedQuestions ?? new List<string>(),
                 questionsSource = current is null ? AskOpeningQuestions.SourceAuto
                     : AskOpeningQuestions.ResolveSource(current),
                 message = "生成期间这个站点的提问设置被别人改过，这一发没有执行。刷新看一眼最新的题，需要的话再点一次。",

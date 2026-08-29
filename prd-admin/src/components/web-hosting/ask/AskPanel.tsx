@@ -177,7 +177,9 @@ export default function AskPanel({
         onLogin={() => {
           // 带 redirect 回到当前这一页：登录完还得让他自己找回来就白做了
           const back = encodeURIComponent(window.location.pathname + window.location.search);
-          window.location.href = `/login?redirect=${back}`;
+          // 参数名必须是 returnUrl——LoginPage 只认这一个，传别的读不到就回首页。
+          // 访客本来是冲着「登录完接着在这一页问」来的，落到首页等于让他自己找回来。
+          window.location.href = `/login?returnUrl=${back}`;
         }}
         onRetry={() => {
           // 读不到正文时后端会 RefundAsync 把额度退回来，所以重试是安全的、不烧额度。

@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronRight, Copy, Eye, Globe, Loader2, Lock, QrCode, Settings2, Share2, Timer, Trash2, Users } from 'lucide-react';
+import { Check, ChevronRight, Copy, Eye, Globe, Lock, QrCode, Settings2, Share2, Timer, Trash2, Users } from 'lucide-react';
+
+// 加载态一律走 MapSpinner（frontend-architecture 的强制规则）：品牌色与动效语言要统一，
+// 各处自己拿个图标转圈就会散。这个文件此前三处都是自己转的。
 import { QRCodeSVG } from 'qrcode.react';
+
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { toast } from '@/lib/toast';
 import { createSiteShareLink, listSiteShares, revokeSiteShare, updateSiteShareSettings } from '@/services';
@@ -317,7 +322,7 @@ export function QuickSharePopover({
               className="hover-bg-soft flex h-9 w-full cursor-pointer items-center gap-2 px-2.5 text-left disabled:opacity-60"
               style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--semantic-danger-text)' }}
             >
-              {busy === 'revoke' ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              {busy === 'revoke' ? <MapSpinner size={12} /> : <Trash2 size={12} />}
               <span className="text-[11.5px] font-medium">撤销这条链接</span>
             </button>
           </div>
@@ -336,7 +341,7 @@ export function QuickSharePopover({
             className="flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-[9px] text-[12.5px] font-semibold disabled:opacity-70"
             style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }}
           >
-            {busy === 'create' ? <Loader2 size={13} className="animate-spin" /> : <Share2 size={13} />}
+            {busy === 'create' ? <MapSpinner size={13} /> : <Share2 size={13} />}
             {busy === 'create' ? '正在生成…' : '生成链接并复制'}
           </button>
           <button
@@ -378,7 +383,7 @@ function SettingRow({
         {busy ? '正在改…' : value}
       </span>
       {busy
-        ? <Loader2 size={11} className="shrink-0 animate-spin" style={{ color: 'var(--text-muted)' }} />
+        ? <MapSpinner size={11} />
         : <ChevronRight size={12} className="shrink-0 transition-transform" style={{ color: 'var(--text-muted)', transform: open ? 'rotate(90deg)' : undefined }} />}
     </button>
   );
