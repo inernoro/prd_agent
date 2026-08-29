@@ -221,3 +221,6 @@
 | fix | prd-admin | 多条链接时访客数改说「人次」并点明会重复计——per-link 去重的和不是人数 |
 | fix | prd-admin | 额度窗口等待不再截断到一小时——站点日上限的 Retry-After 常超一小时，提前解锁会让用户白写一遍再吃 429；改为分段续期到点才清门 |
 | fix | prd-api | 池成员别名判据收敛为唯一来源 PoolMemberIdMatch，补上「GW 有没有权威记录」那处漏掉的 Name 别名 |
+| fix | scripts | 每日验收改认 fixture 标记而不是字数，并记录跨源主文档失败——错误文档也有字，字数够证明不了托管站点还活着 |
+| fix | prd-api | 开场问题认领补齐 NeedsGeneration 三条不变量，防 owner 中途关提问/写手写题/重传后仍白花一次模型钱 |
+| fix | prd-admin | 分享列表加载失败改出错误态与重试，不再渲染成「你还没有创建过任何分享链接」 |

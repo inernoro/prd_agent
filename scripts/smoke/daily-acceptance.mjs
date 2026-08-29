@@ -79,6 +79,9 @@ const FORMS = [
     body: '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>验收 HTML</title></head>'
       + '<body><h1>每日验收 · HTML 站</h1><p>这一段文字就是判据：它必须出现在分享页的 iframe 里。</p>'
       + '<p>如果这里是空的，说明托管站点的渲染链断了。</p></body></html>',
+    // 判据从「字数够」升级为「我上传的那句话真的出现在里面」——
+    // 跨源存储返回的 403/404 错误文档也有字，字数够不能证明托管站点还活着。
+    marker: '这一段文字就是判据',
     minChars: 30,
   },
   {
@@ -88,6 +91,7 @@ const FORMS = [
     body: '# 每日验收 · Markdown 站\n\n这一段文字就是判据：它必须出现在分享页的 iframe 里。\n\n'
       + '- MD 站会被后端包装成一层 HTML 壳子\n- 这层壳子曾经被判据一刀切排除，导致整页白屏\n\n'
       + '> 如果这里是空的，说明包装站的取正文链路又断了。\n',
+    marker: '这一段文字就是判据',
     minChars: 30,
   },
 ];
@@ -202,7 +206,14 @@ async function checkShareArtifact(ctx, form, token4Url) {
   const bad = [];
   page.on('response', (r) => {
     const u = r.url();
-    if (u.startsWith(BASE) && r.status() >= 400) bad.push(`${r.status()} ${u.slice(BASE.length).slice(0, 60)}`);
+    if (r.status() < 400) return;
+    // 本站的失败照记；**跨源的也要记**，只要它是某个 frame 的主文档。
+    // 原先只认 u.startsWith(BASE)：直连 iframe 指向 COS，那边回 403/404 错误文档时
+    // 这里视而不见，而错误文档本身也有字、字数还能超过下限——于是托管站点明明打不开，
+    // 这条验收照样绿。把「不是我们家的响应」等同于「与我们无关」是错的。
+    const isFrameDoc = r.request().resourceType() === 'document';
+    if (u.startsWith(BASE)) bad.push(`${r.status()} ${u.slice(BASE.length).slice(0, 60)}`);
+    else if (isFrameDoc) bad.push(`${r.status()} 跨源文档 ${u.slice(0, 60)}`);
   });
   page.on('pageerror', (e) => bad.push(`pageerror: ${e.message.slice(0, 60)}`));
   await page.goto(`${BASE}/s/wp/${token4Url}`, { waitUntil: 'domcontentloaded' });
@@ -246,13 +257,24 @@ async function checkShareArtifact(ctx, form, token4Url) {
   const probe = { mode, chars, pixels };
   await page.close();
 
-  const textOk = typeof chars === 'number' && chars >= form.minChars;
+  // 认的是「我上传的那句话」，不是「有多少字」。错误文档、占位页、别人的内容
+  // 都可能字数够，只有这句话出现才证明我传上去的那份正文真的被渲染出来了。
+  let markerHit = false;
+  if (inner && form.marker) {
+    try {
+      markerHit = await inner.evaluate(
+        (m) => document.body.innerText.replace(/\s+/g, '').includes(m),
+        form.marker.replace(/\s+/g, ''),
+      );
+    } catch { markerHit = false; }
+  }
+  const textOk = markerHit && typeof chars === 'number' && chars >= form.minChars;
   const pixelOk = typeof pixels === 'number' && pixels >= 8;
   const ok = mode !== 'about:blank' && mode !== 'no-iframe' && (textOk || pixelOk);
   record(
     `分享页产物可见 · ${form.key}`,
     ok && bad.length === 0,
-    `mode=${probe.mode} 正文字数=${probe.chars}${probe.pixels != null ? ` 像素色数=${probe.pixels}` : ''}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
+    `mode=${probe.mode} 正文字数=${probe.chars} 标记${markerHit ? '命中' : '缺失'}${probe.pixels != null ? ` 像素色数=${probe.pixels}` : ''}${bad.length ? ` 异常=${bad.slice(0, 2).join(' / ')}` : ''}`,
   );
 }
 

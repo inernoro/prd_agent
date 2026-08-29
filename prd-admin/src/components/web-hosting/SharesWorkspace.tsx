@@ -64,6 +64,8 @@ export function SharesWorkspace({
   onCreateShare: () => void;
 }) {
   const [loading, setLoading] = useState(links.length === 0);
+  // 加载失败要留痕：空列表 + 加载失败 ≠ 这个账号没有分享链接
+  const [loadError, setLoadError] = useState<string | null>(null);
   /** null = 三层全看（默认）；选中某层 = 只看那一层 */
   const [only, setOnly] = useState<ShareTier | null>(null);
   const [keyword, setKeyword] = useState('');
@@ -78,7 +80,16 @@ export function SharesWorkspace({
       // 这一层会永远是空的——判据在、数据不在。
       const res = await listSiteShares(true);
       if (myId !== fetchIdRef.current) return; // 慢响应不覆盖新结果
-      if (res.success) onLinksChange(res.data.items);
+      if (res.success) {
+        onLinksChange(res.data.items);
+        setLoadError(null);
+      } else {
+        // 加载失败**不能**当成「这个账号没有分享链接」。
+        // 原先这里静默跳过，links 保持为空，界面就渲染出那句斩钉截铁的
+        // 「你还没有创建过任何分享链接」并请他去建一条——而他的链接明明都在，
+        // 只是这次没取回来。把一次网络抖动说成事实，比不显示更糟。
+        setLoadError(res.error?.message || '没能取回分享列表');
+      }
     } finally {
       if (myId === fetchIdRef.current) setLoading(false);
     }
@@ -231,6 +242,25 @@ export function SharesWorkspace({
 
       {loading && links.length === 0 ? (
         <MapSectionLoader text="正在读取分享链接…" />
+      ) : loadError && links.length === 0 ? (
+        // 取不回来 ≠ 没有。这一支必须排在空态之前，否则一次网络抖动就被
+        // 渲染成「你还没有创建过任何分享链接」——把失败说成事实。
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          <div className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+            没能取回分享列表
+          </div>
+          <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            {loadError}——你的链接还在，只是这次没读到
+          </div>
+          <button
+            type="button"
+            onClick={() => { void refresh(); }}
+            className="mt-1 rounded-lg px-4 py-2 text-[12.5px]"
+            style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }}
+          >
+            重试
+          </button>
+        </div>
       ) : links.length === 0 ? (
         <EmptyState onCreateShare={onCreateShare} />
       ) : totalVisible === 0 ? (

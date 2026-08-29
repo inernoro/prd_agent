@@ -333,9 +333,21 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         // CAS：没人持有、或持有者的租约已过期，才轮得到我。
         // 同时再确认一次这一版还没被盖过戳——两个进程一前一后进来时，
         // 后者应当在这里就止步，而不是白跑一趟模型再被 StampAsync 拒绝。
+        // 认领时必须把 NeedsGeneration 的不变量一并重查一遍。
+        //
+        // 上一版只查了「这一版没盖过戳 + 租约」，漏掉另外两条：owner 在 RunAsync 开头
+        // 那次读之后、这次 CAS 之前，可能刚好关掉了提问、或自己写了几条题、或重传了正文。
+        // 那时认领照样成功，模型照样被调——StampAsync 最后确实会拒绝落库，但钱已经花了。
+        // 「拦住写入」和「拦住花钱」是两件事，认领这一步管的是后者。
+        //
+        // 正文版本也在这里锁住：重传后 ContentVersion 变了，这一发算的是旧正文，
+        // 不该再往下走。
         var claimed = await db.HostedSites.UpdateOneAsync(
             s => s.Id == siteId
                  && s.AskQuestionsGeneratedFor != version
+                 && s.AskQuestionsSource != AskOpeningQuestions.SourceManual
+                 && s.AskEnabled != false
+                 && (s.ContentVersion == version || (s.ContentVersion == default && s.CreatedAt == version))
                  && (s.AskOpenerClaimedAt == null || s.AskOpenerClaimedAt < staleBefore),
             Builders<HostedSite>.Update.Set(s => s.AskOpenerClaimedAt, now),
             cancellationToken: ct);

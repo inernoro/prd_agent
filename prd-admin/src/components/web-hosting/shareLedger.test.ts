@@ -122,6 +122,19 @@ describe('分享档账本', () => {
     expect(filterShareLinks(links, '  ').map((l) => l.id)).toEqual(['a', 'b']);
   });
 
+  it('加载失败不许被渲染成「你还没有创建过任何分享链接」', () => {
+    // 取不回来 ≠ 没有。原先 res.success 为 false 时静默跳过，links 保持为空，
+    // 界面就渲染那句斩钉截铁的空态并请他去建一条——而他的链接明明都在。
+    // 判据：错误态那一支必须排在空态之前，且 refresh 失败时要留下 loadError。
+    const src = readFileSync(new URL('./SharesWorkspace.tsx', import.meta.url), 'utf-8');
+    expect(src).toContain('setLoadError(');
+    const errBranch = src.indexOf('loadError && links.length === 0');
+    const emptyBranch = src.indexOf('links.length === 0 ? (\n        <EmptyState');
+    expect(errBranch, '没有错误态分支').toBeGreaterThan(0);
+    expect(emptyBranch, '找不到空态分支，测试该跟着改').toBeGreaterThan(0);
+    expect(errBranch, '错误态必须排在空态之前，否则失败会被渲染成「没有链接」').toBeLessThan(emptyBranch);
+  });
+
   it('多条链接时访客数只敢说人次，不冒充人数', () => {
     // uniqueIpCount 是每条链接各自去重的，跨链接不去重：同一个人开两条，两条里各算
     // 一次。求和后渲染成「N 位访客」就是虚高——链接越多越离谱。

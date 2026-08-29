@@ -41,8 +41,7 @@ public class AskOpenerClaimTests
     public void 认领是原子CAS且带租约()
     {
         var src = Source();
-        var claim = src[src.IndexOf("private static async Task<bool> TryClaimAsync", StringComparison.Ordinal)..];
-        var head = claim[..Math.Min(claim.Length, 1200)];
+        var head = MemberBody(src, "private static async Task<bool> TryClaimAsync");
 
         Assert.Contains("AskOpenerClaimedAt == null", head);
         Assert.Contains("staleBefore", head);
@@ -70,12 +69,48 @@ public class AskOpenerClaimTests
     public void 冷却表读的时候清过期项()
     {
         var src = Source();
-        var inCooldown = src[src.IndexOf("private bool InCooldown", StringComparison.Ordinal)..];
-        var head = inCooldown[..Math.Min(inCooldown.Length, 900)];
+        var head = MemberBody(src, "private bool InCooldown");
 
         Assert.Contains("TryRemove", head);
         // 不只是删自己那条，还要扫掉别人留下的过期条目
         Assert.Matches(new Regex(@"foreach[\s\S]{0,200}TryRemove"), head);
+    }
+
+    /// <summary>
+    /// 认领必须把 NeedsGeneration 的不变量一并重查。
+    ///
+    /// 只查「这一版没盖过戳 + 租约」是不够的：owner 在 RunAsync 开头那次读之后、CAS
+    /// 之前，可能刚关掉提问、或自己写了几条题、或重传了正文。那时认领照样成功、模型
+    /// 照样被调——StampAsync 最后确实拒绝落库，但钱已经花了。
+    /// 「拦住写入」和「拦住花钱」是两件事，认领这一步管的是后者。
+    /// </summary>
+    [Fact]
+    public void 认领要重查提问开关与手写标记与正文版本()
+    {
+        var src = Source();
+        var head = MemberBody(src, "private static async Task<bool> TryClaimAsync");
+
+        Assert.Contains("AskQuestionsSource != AskOpeningQuestions.SourceManual", head);
+        Assert.Contains("AskEnabled != false", head);
+        Assert.Contains("ContentVersion == version", head);
+    }
+
+    /// <summary>
+    /// 取某个方法的完整方法体（到下一个成员为止）。
+    ///
+    /// 不用「从起点截固定字数」那种写法：过滤器一加条件方法就变长，断言会因为
+    /// 窗口不够而红——那是判据自己坏了，不是被测代码坏了，最费排查时间。
+    /// </summary>
+    private static string MemberBody(string src, string signature)
+    {
+        var start = src.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start > 0, $"找不到 {signature}，测试该跟着改");
+        var ends = new[] { "\n    public ", "\n    private ", "\n    internal ", "\n    protected " }
+            .Select(m => src.IndexOf(m, start + 10, StringComparison.Ordinal))
+            .Where(i => i > start)
+            .DefaultIfEmpty(src.Length)
+            .Min();
+        return src[start..ends];
     }
 
     private static string LocateSrcRoot()
