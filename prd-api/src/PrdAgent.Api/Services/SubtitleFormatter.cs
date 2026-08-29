@@ -67,7 +67,9 @@ public static class SubtitleFormatter
         }
         else if (!string.IsNullOrWhiteSpace(summaryUnavailableNote))
         {
-            sb.AppendLine("## 摘要");
+            // 不写进「## 摘要」：那一节非空就会被前端判成「纪要已就绪」，
+            // 绿色完成卡与正文里的「没生成出来」互相打脸（Codex 第五十二轮 P2）。
+            sb.AppendLine(TranscribeNoteText.SummaryUnavailableMarker);
             sb.AppendLine();
             sb.AppendLine(summaryUnavailableNote.Trim());
             sb.AppendLine();

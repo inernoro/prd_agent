@@ -1,4 +1,5 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Models;
 using Shouldly;
 using Xunit;
 
@@ -29,9 +30,33 @@ public class TranscriptNoteDegradedSummaryTests
             Segments,
             summaryUnavailableNote: "这次整理没有生成出来。转录原文已完整保存，可以在这条笔记上重新整理。");
 
-        note.ShouldContain("## 摘要");
+        note.ShouldContain(TranscribeNoteText.SummaryUnavailableMarker);
         note.ShouldContain("这次整理没有生成出来");
         note.ShouldContain("一开始就有那个协议。");
+        // 关键：不能落进「## 摘要」——前端判「纪要已就绪」只看那一节非不非空，
+        // 写进去就会让绿色完成卡和正文里的「没生成出来」互相打脸。
+        note.ShouldNotContain("## 摘要");
+    }
+
+    /// <summary>
+    /// 失败之后重新整理成功，笔记里不能同时挂着「整理未生成」和一份真摘要。
+    /// </summary>
+    [Fact]
+    public void RestyleAfterFailure_ShouldClearTheUnavailableSection()
+    {
+        var failed = SubtitleFormatter.FormatTranscriptNote(
+            "录音 2026-08-29 15-34.m4a",
+            summary: "",
+            Segments,
+            summaryUnavailableNote: "这次整理没有生成出来。转录原文已完整保存，可以在这条笔记上重新整理。");
+
+        var retried = TranscribeNoteText.ReplaceSummarySection(failed, "# 会议纪要\n\n## 关键结论\n- 共同遵循协议");
+
+        retried.ShouldContain("## 摘要");
+        retried.ShouldContain("关键结论");
+        retried.ShouldNotContain(TranscribeNoteText.SummaryUnavailableMarker);
+        retried.ShouldNotContain("这次整理没有生成出来");
+        retried.ShouldContain("一开始就有那个协议。");
     }
 
     /// <summary>没点整理的录音（默认只转写）不该凭空多出一个摘要小节。</summary>
