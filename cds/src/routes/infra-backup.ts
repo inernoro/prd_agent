@@ -131,6 +131,22 @@ export function scriptedDump(kind: BackupKind | 'generic'): (typeof SCRIPTED_DUM
   return (SCRIPTED_DUMP_KINDS as Record<string, (typeof SCRIPTED_DUMP_KINDS)[ScriptedDumpKind]>)[kind] ?? null;
 }
 
+/**
+ * 一份结果文件里的 `completedAt`，转成毫秒；读不出来返回 null。
+ *
+ * 只用来在多个候选目录之间比新旧——**不做任何业务判定**，那些都在
+ * services/backup-panel.ts 里。
+ */
+function healthRecordCompletedAt(raw: string): number | null {
+  if (!raw) return null;
+  try {
+    const at = Date.parse(String((JSON.parse(raw) as { completedAt?: string }).completedAt || ''));
+    return Number.isFinite(at) ? at : null;
+  } catch {
+    return null;
+  }
+}
+
 function shq(s: string): string {
   return `'${String(s).replace(/'/g, `'"'"'`)}'`;
 }
@@ -190,15 +206,28 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     //    产出过」——偏偏是在存储出事、最需要看清手上有什么的时候说这种话。
     //
     // 但也不能简单地「去掉 -w」：候选是有优先级的，一个存量的、写不进去的旧目录
-    // 排在前面时，裸看「存在」会读到陈旧数据，那是同一个错的镜像。所以判据取
-    // **数据在哪**：优先选真的存着结果文件的那个目录，都没有再退回第一个存在的。
+    // 排在前面时，裸看「存在」会读到陈旧数据，那是同一个错的镜像。
+    //
+    // 也**不能取「第一个有结果文件的」**（Codex review 第三轮 P2，打脸我上一版的说法）：
+    // 高优先级目录变只读、写入端切到后面的候选之后，前面那个目录**照样留着一份旧的
+    // 结果文件**，第一个命中的就是它——读到的是几天前的快照，而且看不出来。
+    //
+    // 判据只能取**哪一份最新**：把每个存在的候选的结果文件都读一遍，比 completedAt，
+    // 取最大的那个。候选最多三个、文件都很小，这点代价换掉一个静默读旧数据的坑。
+    let freshest: { dir: string; at: number } | null = null;
     const existing: string[] = [];
     for (const c of candidates) {
       if (!ok(await shell.exec(`test -d ${shq(c)} && echo ok`))) continue;
-      if (ok(await shell.exec(`test -f ${shq(`${c}/${INFRA_BACKUP_HEALTH_FILE}`)} && echo ok`))) return c;
       existing.push(c);
+      const raw = await shell.exec(`cat ${shq(`${c}/${INFRA_BACKUP_HEALTH_FILE}`)} 2>/dev/null || true`);
+      const at = healthRecordCompletedAt((raw.stdout || '').trim());
+      // 读得到文件但认不出时间（旧格式 / 半截写坏），当成「最老」参与排序：
+      // 有总比没有强，但不许压过一个时间明确的候选。
+      if (at === null && !(raw.stdout || '').trim()) continue;
+      const score = at ?? Number.NEGATIVE_INFINITY;
+      if (!freshest || score > freshest.at) freshest = { dir: c, at: score };
     }
-    return existing[0] ?? candidates[0];
+    return freshest?.dir ?? existing[0] ?? candidates[0];
   }
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：备份/恢复直接 spawn docker，
@@ -778,11 +807,14 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     const now = new Date();
     // 台账里此刻真实存在的数据服务。**必须传**：只看上一轮的记录，新建的库和当时
     // 停着的服务会从清单上整个消失，而第一屏还在说一切正常（Codex review 第二轮 P1）。
-    const infra = stateService.getInfraServicesForProject(canonicalId).map((s) => ({
-      id: s.id,
-      dockerImage: s.dockerImage,
-      containerName: s.containerName,
-    }));
+    //
+    // **只并「正在跑的」**（Codex review 第三轮 P2）：周期备份对停着的容器本来就
+    // 记的是「不阻塞健康」的跳过——那是有意为之，不是缺口。把停着的服务也算进来，
+    // 面板会为一台运维故意停掉的库天天报一次「上轮没备到」，而那正是一盏没人会看的灯。
+    // 判据用台账的 status，和 planInfraBackups 里 `running: s.status === 'running'` 同一口径。
+    const infra = stateService.getInfraServicesForProject(canonicalId)
+      .filter((s) => s.status === 'running')
+      .map((s) => ({ id: s.id, dockerImage: s.dockerImage, containerName: s.containerName }));
     const view = buildBackupPanel({ projectId: canonicalId, health, files, now, infra });
     // 页脚那一行「每日体检怎么说」。喂进去的是**这个项目的**失败与缺口，
     // 时间戳与恢复演练是全平台的——面板不该替某个项目编一份自己的演练记录。

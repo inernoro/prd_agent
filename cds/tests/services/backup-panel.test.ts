@@ -7,6 +7,7 @@ import {
   type BackupHealthRecord,
 } from '../../src/services/backup-panel.js';
 import { backupFailureReason, backupFileName } from '../../src/services/infra-backup-schedule.js';
+import { BACKUP_STALE_AFTER_MS } from '../../src/services/platform-daily-health.js';
 
 const NOW = new Date('2026-08-28T12:00:00.000Z');
 
@@ -371,6 +372,52 @@ describe('清单要并上台账里此刻真实跑着的服务', () => {
       infra: [],
     });
     expect(view.targets.map((t) => t.id)).toEqual(['gone']);
+  });
+});
+
+describe('排程停摆要在第一屏说', () => {
+  /**
+   * Codex review 第三轮 P1。上一轮里每个目标都成了，但「那一轮」是几天前——
+   * 调度器死了、机器关了都会这样。只看目标状态就给绿色大字，而页脚的每日体检
+   * 同时在喊「已经陈旧」：同一屏自己打自己，而面板要回答的正是「要不要你管」。
+   */
+  it('上一轮是好几天前时，第一屏不许是绿的', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        completedAt: '2026-08-24T09:00:00.000Z', // 4 天前，远超 13 小时阈值
+        objects: [{ id: 'a', projectId: 'web', bytes: 1, remoteObjectKey: 'k' }],
+      }),
+      files: [],
+    });
+    expect(view.verdict.tone).toBe('bad');
+    expect(view.verdict.headline).toContain('没跑了');
+    expect(view.verdict.headline).toContain('99 小时');
+  });
+
+  it('刚跑过的那一轮照旧是绿的', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ objects: [{ id: 'a', projectId: 'web', bytes: 1, remoteObjectKey: 'k' }] }),
+      files: [],
+    });
+    expect(view.verdict.tone).toBe('ok');
+  });
+
+  it('阈值与每日体检共用一个数，不在面板里另定', () => {
+    // 两处各写一个数字，页脚说「已经陈旧」而第一屏还是绿的——同一屏自相矛盾。
+    const justUnder = new Date(NOW.getTime() - BACKUP_STALE_AFTER_MS + 60_000).toISOString();
+    const justOver = new Date(NOW.getTime() - BACKUP_STALE_AFTER_MS - 60_000).toISOString();
+    const of = (completedAt: string): string => buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ completedAt, objects: [{ id: 'a', projectId: 'web', bytes: 1 }] }),
+      files: [],
+    }).verdict.tone;
+    expect(of(justUnder)).toBe('ok');
+    expect(of(justOver)).toBe('bad');
   });
 });
 

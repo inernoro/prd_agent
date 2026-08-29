@@ -594,9 +594,19 @@ describe('查历史不许创建备份目录', () => {
     // 只读档探测的是「目录在不在、结果文件在不在」，既不 mkdir，也不看可写：
     // 盘变只读时，真正存着备份的那个目录会被 `test -w` 跳过，面板于是报出
     // 「一份周期备份都没产出过」——偏偏是在存储出事时说这种话（Codex review P2）。
+    // 两条探测命令逐字钉住：目录存不存在（test -d），以及把结果文件读回来比新旧
+    // （cat）。第二条从「test -f 存在即取」改成读内容，是因为存在性只能选出「第一个
+    // 有结果文件的」，而那个可能是几天前写下、之后被写入端抛弃的旧目录。
     expect(SRC).toContain('`test -d ${shq(c)} && echo ok`');
-    expect(SRC).toContain('`test -f ${shq(`${c}/${INFRA_BACKUP_HEALTH_FILE}`)} && echo ok`');
-    const readPath = SRC.slice(SRC.indexOf('const existing: string[] = []'), SRC.indexOf('return existing[0]'));
+    expect(SRC).toContain('`cat ${shq(`${c}/${INFRA_BACKUP_HEALTH_FILE}`)} 2>/dev/null || true`');
+    // 取「只读档」那一段的窗口。两个锚点都必须真的命中：indexOf 找不到会返回 -1，
+    // slice(start, -1) 于是把整份文件（含写盘档的 mkdir）都卷进来，断言变成对着
+    // 一个错窗口做——不是红，就是绿得没有意义。所以先把锚点本身钉死。
+    const readStart = SRC.indexOf('const existing: string[] = []');
+    const readEnd = SRC.indexOf('return freshest?.dir ?? existing[0]');
+    expect(readStart).toBeGreaterThan(0);
+    expect(readEnd).toBeGreaterThan(readStart);
+    const readPath = SRC.slice(readStart, readEnd);
     expect(readPath).not.toContain('test -w');
     expect(readPath).not.toContain('mkdir');
   });

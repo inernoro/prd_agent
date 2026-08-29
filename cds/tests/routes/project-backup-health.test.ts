@@ -208,6 +208,59 @@ describe('GET /api/projects/:id/backup-health', () => {
    * Activity Monitor 上每一条 /api/* 都要有中文 label（cds/CLAUDE.md §0.1）。
    * 没有的话面板上只显示一串裸 URL，用户看不出 AI 在干什么。
    */
+  /**
+   * Codex review 第三轮 P2 两条，都是「读到的不是真正生效的那份」（形状 6）。
+   */
+  it('多个候选目录都有结果文件时，读最新的那一份', async () => {
+    // 高优先级目录变只读、写入端切到后面的候选之后，前面那个目录照样留着一份旧结果
+    // 文件。取「第一个有结果文件的」会静默读到几天前的快照。
+    const stale = { ...HEALTH, completedAt: '2026-08-20T09:00:00.000Z' };
+    const fresh = { ...HEALTH, completedAt: '2026-08-28T09:00:00.000Z' };
+    const local = new MockShellExecutor();
+    local.addResponsePattern(/.*/, (match) => {
+      const cmd = match.input ?? '';
+      // 第一个候选（CDS_BACKUP_DIR 未设时是 /data/cds/<slug>/backups）存着旧的那份。
+      if (/^cat /.test(cmd)) {
+        const body = /\/data\/cds\//.test(cmd) ? stale : fresh;
+        return { stdout: `${JSON.stringify(body)}\n`, stderr: '', exitCode: 0 };
+      }
+      if (/^ls -la /.test(cmd)) return { stdout: LISTING, stderr: '', exitCode: 0 };
+      if (/^test -[dfw] /.test(cmd)) {
+        return { stdout: /echo ok/.test(cmd) ? 'ok\n' : 'yes\n', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    const app = express();
+    app.use('/api', createInfraBackupRouter({
+      stateService, shell: local, assertProjectAccess: assertProjectAccess as any, repoRoot: '/srv/cds/repo',
+    }));
+    const srv = await new Promise<http.Server>((resolve) => {
+      const x = app.listen(0, '127.0.0.1', () => resolve(x));
+    });
+    try {
+      const res = await get(srv, '/api/projects/proj-a/backup-health');
+      expect(res.body.lastRoundAt).toBe('2026-08-28T09:00:00.000Z');
+      expect(res.body.directory).not.toMatch(/^\/data\/cds\//);
+    } finally {
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+    }
+  });
+
+  it('运维故意停掉的服务不进「需要你管的」', async () => {
+    // 周期备份对停着的容器记的是「不阻塞健康」的跳过，那是有意为之。把它也算进来，
+    // 面板会为一台故意停掉的库天天报一次「上轮没备到」——一盏没人会看的灯。
+    stateService.addInfraService({
+      id: 'stopped-mysql', projectId: 'proj-a', name: 'stopped-mysql', dockerImage: 'mysql:8',
+      containerPort: 3306, hostPort: 13306, containerName: 'cds-infra-proj-a-stopped-mysql',
+      status: 'stopped', volumes: [], env: {}, createdAt: new Date().toISOString(),
+    } as any);
+    const res = await get(server, '/api/projects/proj-a/backup-health');
+    const ids: string[] = res.body.targets.map((t: any) => t.id);
+    expect(ids).not.toContain('stopped-mysql');
+    // 正在跑的那台照样在。
+    expect(ids).toContain('fresh-pg');
+  });
+
   it('在活动面板上有中文名字，不是一串裸 URL', () => {
     expect(resolveApiLabel('GET', '/projects/proj-a/backup-health')).toBe('查看周期备份');
   });

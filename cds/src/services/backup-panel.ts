@@ -18,6 +18,9 @@
  */
 
 import { backupKey, isAutoBackupFile, backupKindOf, INFRA_BACKUP_INTERVAL_MS } from './infra-backup-schedule.js';
+// 陈旧阈值走每日体检那一份，不在这里另定一个数：两处各写一个数字，页脚说「已经陈旧」
+// 而第一屏还是绿的，就是同一屏自相矛盾（形状 3）。
+import { BACKUP_STALE_AFTER_MS } from './platform-daily-health.js';
 
 /**
  * 一个目标这一轮的处境。**五档不能合并**——每一档要人做的事都不一样：
@@ -382,6 +385,20 @@ function buildVerdict(
       subline,
     };
   }
+  // **排程停摆要在第一屏说**（Codex review 第三轮 P1）。走到这里说明上一轮里每个目标
+  // 都成了，但「那一轮」可能是几天前——调度器死了、容器没起来、机器关了都会这样。
+  // 只看目标状态就会给出绿色大字，而页脚的每日体检同时在喊「已经陈旧」：同一屏
+  // 自己打自己。判据与页脚共用 BACKUP_STALE_AFTER_MS，不另定一个数。
+  const roundAt = Date.parse(String(health.completedAt || ''));
+  const staleBy = Number.isFinite(roundAt) ? now.getTime() - roundAt : null;
+  if (staleBy !== null && staleBy > BACKUP_STALE_AFTER_MS) {
+    return {
+      tone: 'bad',
+      headline: `周期备份已经 ${Math.floor(staleBy / 3_600_000)} 小时没跑了，手上最新的副本就停在那一轮`,
+      subline,
+    };
+  }
+
   const age = relativeAge(now, health.completedAt ?? null);
   return {
     tone: 'ok',
