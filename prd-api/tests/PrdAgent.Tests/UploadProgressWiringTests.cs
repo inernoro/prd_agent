@@ -45,9 +45,13 @@ public class UploadProgressWiringTests
         // 服务层：这个参数真的往下走到解包，不是收了就丢
         Assert.Contains("ExtractAndUploadZip(siteId, fileBytes, uploadId)", svc);
 
-        // 前端：表单里真的带上了
+        // 前端：表单里真的带上了。
+        //
+        // 断的是「这个函数收得到 uploadId 并且真的塞进了表单」，不是它的完整位置参数列表——
+        // 原先钉整串签名，后来给它加了个 `signal` 参数（中止用）就当场判红，而它要防的那件事
+        // 一个字没变。钉签名字面量属于形状 4a：改坏了不一定红，改对了反而红。
         var fnBody = SourceSlice.Member(api, "export async function reuploadSite(");
-        Assert.Matches(new Regex(@"reuploadSite\(id: string, file: File, uploadId\?: string\)"), fnBody);
+        Assert.Matches(new Regex(@"uploadId\?: string"), fnBody);
         Assert.Contains("fd.append('uploadId', uploadId)", fnBody);
     }
 
