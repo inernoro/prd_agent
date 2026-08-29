@@ -104,4 +104,19 @@ describe('首页百宝箱那一幕的名单', () => {
     expect(enItems.length).toBe(zhItems.length);
     expect(enItems.map((i) => Boolean(i.preview))).toEqual(zhItems.map((i) => Boolean(i.preview)));
   });
+
+  /**
+   * 英文那份的图标也得验。名字在两边不是同一套（英文是意译，不是注册表里的名字），
+   * 所以对不上注册表；但**图标必须逐位与中文那份相同**——同一条目、同一枚图标，
+   * 只是文案换了语言。少了这条，英文名单里打错一个图标名，中文那几条照样绿，
+   * 而英文那一屏画的是方块。
+   */
+  it('英文那份的图标逐位与中文相同，且同样画得出来', () => {
+    expect(enItems.map((i) => i.icon)).toEqual(zhItems.map((i) => i.icon));
+    const unpaintable = enItems
+      .map((i) => ({ icon: i.icon, d: toolboxIconPath(i.icon) }))
+      .filter(({ d }) => d === FALLBACK_ICON || d.trim().length === 0)
+      .map(({ icon }) => icon);
+    expect(unpaintable).toEqual([]);
+  });
 });
