@@ -15,7 +15,7 @@
 1. 直出模式：提示词或首帧图片经 LLM Gateway 路由到视频模型，异步提交、轮询、下载并保存到资产存储。
 2. 分镜模式：文学稿经聊天模型拆分为镜头，用户在制作台逐镜编辑、批量生成、保留历史版本，最后由 ffmpeg 统一画幅和编码并合成为完整 MP4。
 
-火山方舟 Seedance 通过 `volcengine-video` Exchange 转换器适配原生异步任务协议。OpenRouter 兼容协议仍由原视频客户端处理，两者共用 `video-agent.videogen::video-gen` 调用方和模型池治理。
+火山方舟 Seedance 通过 `volcengine-video` Exchange 转换器适配原生异步任务协议。OpenRouter 兼容协议仍由原视频客户端处理，两者共用 `video-agent.videogen::video-gen` 调用方和模型池治理。视频生成调用已统一切换到 LLMGW 权威路由（HTTP 模式）：发送阶段锁定首次解析出的模型，避免二次解析漂移到其他 Provider；下载在该模式下经网关安全注入密钥后取回成片。
 
 ## 已完成
 
@@ -27,6 +27,7 @@
 | full-export | paid | ffmpeg 统一画幅、帧率和编码，合成后上传资产存储 |
 | export-recovery | paid | 导出失败回到编辑态，可修改和重试；导出后继续编辑会使旧成片失效 |
 | seedance-protocol | paid | 火山 Seedance submit、status、download 协议转换已有自动化回归 |
+| seedance-2.5-openrouter | paid | 视频创作高级模型列表新增 OpenRouter Seedance 2.5，时长与分辨率按实时能力约束；appCaller 自助创建已支持 video-gen 等全部网关模型类型 |
 
 ## 未完成边界
 
