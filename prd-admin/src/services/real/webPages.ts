@@ -137,8 +137,12 @@ export interface ShareAnalyticsResult {
   totalShares: number;
   activeShares: number;
   expiredShares: number;
+  /** 已过期之中续期真的救得回来的条数（未撤销且还在 7 天宽限窗内） */
+  renewableExpiredShares: number;
   totalViews: number;
   uniqueIpCount: number;
+  /** 独立访客数取自被截断的样本时为 true——此时它只是下界，不得据它算人均 */
+  visitorSampleCapped: boolean;
   commentCount?: number;
   timeline: ShareAnalyticsTimelineEntry[];
   topLinks: ShareAnalyticsLinkSummary[];

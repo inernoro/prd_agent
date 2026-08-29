@@ -117,7 +117,6 @@ export function SiteViewersDrawer({
           {buildViewersConclusion({
             totalViews: total,
             uniqueViewers,
-            namedViewers: new Set(items.filter((v) => Boolean(v.viewerName)).map((v) => v.viewerUserId)).size,
             siteTitle,
           }).map((seg, i) => (
             <span

@@ -7,8 +7,10 @@ function data(over: Partial<ShareAnalyticsResult> = {}): ShareAnalyticsResult {
     totalShares: 3,
     activeShares: 2,
     expiredShares: 0,
+    renewableExpiredShares: 0,
     totalViews: 0,
     uniqueIpCount: 0,
+    visitorSampleCapped: false,
     timeline: [],
     topLinks: [],
     ...over,
@@ -62,9 +64,38 @@ describe('数据抽屉结论句', () => {
   });
 
   it('有过期链接时提示可续期复活', () => {
-    const t = text(data({ totalViews: 12, uniqueIpCount: 2, expiredShares: 2 }));
+    const t = text(data({ totalViews: 12, uniqueIpCount: 2, expiredShares: 2, renewableExpiredShares: 2 }));
     expect(t).toContain('另有 2 条已过期');
     expect(t).toContain('续期即可复活');
+  });
+
+  it('过期里只有一部分救得回来时，不对救不回来的那部分许诺续期', () => {
+    // 后端 expiredShares 只看 ExpiresAt <= now，已撤销和过期超 7 天的都算在里面，
+    // 而续期端点会当场拒绝这两种。这句话必须只对 renewableExpiredShares 承诺。
+    const t = text(data({ totalViews: 12, uniqueIpCount: 2, expiredShares: 5, renewableExpiredShares: 2 }));
+    expect(t).toContain('另有 5 条已过期');
+    expect(t).toContain('其中 2 条');
+    expect(t).toContain('已撤销或过期太久');
+  });
+
+  it('过期的一条都救不回来时直说救不回来', () => {
+    const t = text(data({ totalViews: 12, uniqueIpCount: 2, expiredShares: 3, renewableExpiredShares: 0 }));
+    expect(t).toContain('续期救不回来了');
+    expect(t).not.toContain('续期即可复活');
+  });
+
+  it('访客样本被截断时不算人均，并把访客数标成下界', () => {
+    // totalViews 走无上限聚合，uniqueIpCount 只在取回的那批日志上去重；
+    // 命中上限时两者人口不同，相除会显著高估人均。
+    const t = text(data({ totalViews: 90000, uniqueIpCount: 5000, visitorSampleCapped: true }));
+    expect(t).toContain('至少 5000');
+    expect(t).not.toContain('平均每人');
+  });
+
+  it('样本没被截断时人均照常给', () => {
+    const t = text(data({ totalViews: 90, uniqueIpCount: 3, visitorSampleCapped: false }));
+    expect(t).toContain('平均每人看了 30 次');
+    expect(t).not.toContain('至少');
   });
 
   it('时间窗跟着用户选的档走，不写死 7 天', () => {
@@ -78,24 +109,25 @@ const vtext = (a: Parameters<typeof buildViewersConclusion>[0]) =>
 
 describe('访客抽屉结论句', () => {
   it('没人打开过时说清下一步，不写「暂无记录」', () => {
-    const t = vtext({ totalViews: 0, uniqueViewers: 0, namedViewers: 0, siteTitle: 'X' });
+    const t = vtext({ totalViews: 0, uniqueViewers: 0, siteTitle: 'X' });
     expect(t).toContain('还没有人打开过');
     expect(t).not.toContain('暂无');
   });
 
-  it('全是匿名访客时告诉用户怎么才能拿到名单', () => {
-    const t = vtext({ totalViews: 23, uniqueViewers: 5, namedViewers: 0, siteTitle: 'X' });
-    expect(t).toContain('这些访客都是匿名的');
+  it('一个登录访客都没有时才说全是匿名，并给出拿名单的办法', () => {
+    // uniqueViewers 是后端在整个集合上去重的登录访客数，它为 0 才真的等于「全匿名」。
+    const t = vtext({ totalViews: 23, uniqueViewers: 0, siteTitle: 'X' });
+    expect(t).toContain('都是匿名访客');
     expect(t).toContain('登录可见');
   });
 
-  it('部分实名时说清有几位认得出', () => {
-    const t = vtext({ totalViews: 42, uniqueViewers: 6, namedViewers: 2, siteTitle: 'X' });
-    expect(t).toContain('其中 2 位能认出身份');
-  });
-
-  it('全部实名时直接给名单', () => {
-    const t = vtext({ totalViews: 42, uniqueViewers: 3, namedViewers: 3, siteTitle: 'X' });
-    expect(t).toContain('都是登录访客');
+  it('有登录访客时如实说有几位，不把分页截断说成匿名', () => {
+    // 曾经这里拿名单首页（最多 200 条）里认得出身份的条数去减 uniqueViewers，
+    // 把差额说成「其余是匿名访客」——那个差额是分页截断，按构造全是登录用户。
+    // 匿名有几位后端没给，所以一个字都不许提。
+    const t = vtext({ totalViews: 42, uniqueViewers: 6, siteTitle: 'X' });
+    expect(t).toContain('6 位登录访客');
+    expect(t).not.toContain('匿名');
+    expect(t).not.toContain('其余');
   });
 });

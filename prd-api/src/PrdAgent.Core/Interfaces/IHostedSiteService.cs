@@ -416,13 +416,42 @@ public class UpdateShareSettingsResult
     public DateTime? ExpiresAt { get; set; }
 }
 
+/// <summary>
+/// 分享链接「还能不能续期」的唯一判定源。
+///
+/// 这条判据原先在三处各写了一遍 <c>AddDays(-7)</c>（续期端点的拒绝分支、分享列表的
+/// inGracePeriod、数据抽屉的可续条数），改一处忘一处就会让界面承诺一件后端会拒绝的事。
+/// </summary>
+public static class ShareRenewPolicy
+{
+    /// <summary>过期之后仍然允许续期的宽限天数。</summary>
+    public const int GraceDays = 7;
+
+    /// <summary>早于这个时刻过期的链接就出了宽限窗。</summary>
+    public static DateTime GraceCutoff(DateTime now) => now.AddDays(-GraceDays);
+
+    /// <summary>
+    /// 这条链接现在能不能续期。与 RenewShareAsync 的两个拒绝分支同源：
+    /// 已撤销不可续；过期超过宽限窗不可续（没有过期时间的一直可续）。
+    /// </summary>
+    public static bool CanRenew(bool isRevoked, DateTime? expiresAt, DateTime now)
+        => !isRevoked && (!expiresAt.HasValue || expiresAt.Value >= GraceCutoff(now));
+}
+
 public class ShareAnalyticsResult
 {
     public int TotalShares { get; set; }
     public int ActiveShares { get; set; }
     public int ExpiredShares { get; set; }
+    /// <summary>已过期之中，续期真的能救回来的条数（未撤销且还在宽限窗内）。</summary>
+    public int RenewableExpiredShares { get; set; }
     public long TotalViews { get; set; }
     public int UniqueIpCount { get; set; }
+    /// <summary>
+    /// 独立访客数是不是取自被截断的样本。TotalViews 走无上限聚合，而去重访客只能在
+    /// 取回的那一批日志上算；命中上限时这个数只是下界，界面不得据它算人均。
+    /// </summary>
+    public bool VisitorSampleCapped { get; set; }
     public long CommentCount { get; set; }
     public List<ShareAnalyticsTimelineEntry> Timeline { get; set; } = new();
     public List<ShareAnalyticsLinkSummary> TopLinks { get; set; } = new();

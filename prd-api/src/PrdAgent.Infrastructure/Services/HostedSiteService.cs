@@ -1156,7 +1156,7 @@ public class HostedSiteService : IHostedSiteService
         // 撤销不可逆，可「哪条被撤了、什么时候撤的」是用户要查的历史，
         // 从列表里直接消失等于这段历史无处可查。撤销的链接不受 7 天宽限窗约束：
         // 它的时间锚点是 RevokedAt 不是 ExpiresAt，用过期窗去筛会把刚撤的也筛掉。
-        var graceCutoff = DateTime.UtcNow.AddDays(-7);
+        var graceCutoff = ShareRenewPolicy.GraceCutoff(DateTime.UtcNow);
         var fb = Builders<WebPageShareLink>.Filter;
         var liveWindow = fb.Eq(x => x.IsRevoked, false)
             & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, graceCutoff));
@@ -1847,9 +1847,8 @@ public class HostedSiteService : IHostedSiteService
             return new RenewShareResult { Error = "链接已撤销，无法续期" };
 
         var now = DateTime.UtcNow;
-        var graceCutoff = now.AddDays(-7);
-        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < graceCutoff)
-            return new RenewShareResult { Error = "链接已过期超过 7 天，请新建分享" };
+        if (!ShareRenewPolicy.CanRenew(share.IsRevoked, share.ExpiresAt, now))
+            return new RenewShareResult { Error = $"链接已过期超过 {ShareRenewPolicy.GraceDays} 天，请新建分享" };
 
         // 续期基准：未过期时从当前 ExpiresAt 累加；过期 ≤ 7d 时以 now 为起点
         var basis = share.ExpiresAt.HasValue && share.ExpiresAt.Value > now ? share.ExpiresAt.Value : now;
@@ -1947,6 +1946,9 @@ public class HostedSiteService : IHostedSiteService
         return new UpdateShareSettingsResult { Ok = true, Visibility = effVisibility, ExpiresAt = effExpiresAt };
     }
 
+    /// <summary>数据抽屉一次最多取回多少条访问日志用于去重访客统计。</summary>
+    private const int WindowLogSampleCap = 5000;
+
     public async Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, string? siteId = null, CancellationToken ct = default)
     {
         if (rangeDays <= 0 || rangeDays > 365) rangeDays = 7;
@@ -1965,6 +1967,10 @@ public class HostedSiteService : IHostedSiteService
         var totalShares = allShares.Count;
         var activeShares = allShares.Count(s => !s.IsRevoked && (!s.ExpiresAt.HasValue || s.ExpiresAt.Value > now));
         var expiredShares = allShares.Count(s => s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now);
+        // 「续期即可复活」只对这一批成立：已撤销的和过期超出宽限窗的，续期端点会当场拒绝。
+        var renewableExpiredShares = allShares.Count(s =>
+            s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now
+            && ShareRenewPolicy.CanRenew(s.IsRevoked, s.ExpiresAt, now));
 
         var tokens = allShares.Select(s => s.Token).ToList();
         var shareSiteIds = string.IsNullOrWhiteSpace(siteId)
@@ -1988,8 +1994,11 @@ public class HostedSiteService : IHostedSiteService
             : await _db.ShareViewLogs
                 .Find(logFilter)
                 .SortByDescending(x => x.ViewedAt)
-                .Limit(5000)
+                .Limit(WindowLogSampleCap)
                 .ToListAsync(ct);
+        // 命中上限时去重访客数只是下界：TotalViews 是无上限聚合出来的，两者人口不同，
+        // 相除得到的「人均看了几次」会被显著高估。把这件事如实带给前端，由它决定不出那句。
+        var visitorSampleCapped = windowLogs.Count >= WindowLogSampleCap;
         var recentLogs = windowLogs.Take(500).ToList();
 
         var tokenViewStats = tokens.Count == 0
@@ -2176,8 +2185,10 @@ public class HostedSiteService : IHostedSiteService
             TotalShares = totalShares,
             ActiveShares = activeShares,
             ExpiredShares = expiredShares,
+            RenewableExpiredShares = renewableExpiredShares,
             TotalViews = totalViews,
             UniqueIpCount = uniqueVisitors,
+            VisitorSampleCapped = visitorSampleCapped,
             CommentCount = comments.Count,
             Timeline = timeline,
             TopLinks = topLinks,

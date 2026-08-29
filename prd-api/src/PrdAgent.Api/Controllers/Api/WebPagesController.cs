@@ -1321,7 +1321,7 @@ public class WebPagesController : ControllerBase
             x.RevokedAt,
             x.RevokedReason,
             isExpired = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now,
-            inGracePeriod = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now && x.ExpiresAt.Value > now.AddDays(-7),
+            inGracePeriod = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now && x.ExpiresAt.Value > ShareRenewPolicy.GraceCutoff(now),
             // 只数真的续期。RenewalHistory 是「过期时间为什么变了」的审计账，里面还躺着
             // created / reused / reset —— 全量 Count 会让一条从没续过期的链接显示「续期历史 1 次」
             // （创建那条也算进去了），列表上那句话就是假的。

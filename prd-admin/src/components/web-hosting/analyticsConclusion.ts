@@ -37,10 +37,13 @@ export function buildAnalyticsConclusion(data: ShareAnalyticsResult, days: numbe
 
   if (data.uniqueIpCount > 0) {
     segs.push({ text: '来自 ' });
-    segs.push({ text: String(data.uniqueIpCount), tone: 'strong' });
+    // 样本被截断时这个数只是下界，说成确数就是把「至少 N」讲成「正好 N」
+    segs.push({ text: `${data.visitorSampleCapped ? '至少 ' : ''}${data.uniqueIpCount}`, tone: 'strong' });
     segs.push({ text: ' 位独立访客' });
-    // 人少而访问多 = 同一批人反复看；这是「谁在看」这一屏最该点破的事
-    if (data.totalViews >= data.uniqueIpCount * 3) {
+    // 人少而访问多 = 同一批人反复看；这是「谁在看」这一屏最该点破的事。
+    // 但 totalViews 是无上限聚合、uniqueIpCount 只在取回的那批日志上去重，
+    // 命中上限时两者人口不同，相除会显著高估人均——那种情况下宁可不出这句。
+    if (!data.visitorSampleCapped && data.totalViews >= data.uniqueIpCount * 3) {
       segs.push({ text: '，平均每人看了 ' });
       segs.push({ text: `${Math.round(data.totalViews / data.uniqueIpCount)} 次`, tone: 'strong' });
     }
@@ -58,7 +61,18 @@ export function buildAnalyticsConclusion(data: ShareAnalyticsResult, days: numbe
   if (data.expiredShares > 0) {
     segs.push({ text: '。另有 ' });
     segs.push({ text: `${data.expiredShares} 条已过期`, tone: 'warn' });
-    segs.push({ text: '，内容还在，续期即可复活。' });
+    // 「续期即可复活」只对未撤销且还在宽限窗内的那批成立——已撤销的和过期太久的，
+    // 续期端点会当场拒绝。把救得回来的条数如实分开说，不对救不回来的部分许诺。
+    const renewable = data.renewableExpiredShares;
+    if (renewable >= data.expiredShares) {
+      segs.push({ text: '，内容还在，续期即可复活。' });
+    } else if (renewable > 0) {
+      segs.push({ text: '，其中 ' });
+      segs.push({ text: `${renewable} 条`, tone: 'strong' });
+      segs.push({ text: '续期就能复活，其余的已撤销或过期太久，只能新建分享。' });
+    } else {
+      segs.push({ text: '，都已撤销或过期太久，续期救不回来了，只能新建分享。' });
+    }
   } else {
     segs.push({ text: '。' });
   }
@@ -74,12 +88,11 @@ export function buildAnalyticsConclusion(data: ShareAnalyticsResult, days: numbe
  */
 export function buildViewersConclusion(args: {
   totalViews: number;
+  /** 后端在**整个集合**上去重出来的登录访客数（匿名访问 ViewerUserId 为空，不计入） */
   uniqueViewers: number;
-  /** 名单里有几条是能认出身份的登录访客 */
-  namedViewers: number;
   siteTitle: string;
 }): AnalyticsSegment[] {
-  const { totalViews, uniqueViewers, namedViewers } = args;
+  const { totalViews, uniqueViewers } = args;
 
   if (totalViews === 0) {
     return [{ text: '还没有人打开过这个站点。把链接发出去之后，谁在什么时候看了会记在这里。' }];
@@ -91,17 +104,16 @@ export function buildViewersConclusion(args: {
     { text: ' 次' },
   ];
 
-  if (uniqueViewers > 0) {
-    segs.push({ text: '，来自 ' });
-    segs.push({ text: `${uniqueViewers} 位访客`, tone: 'strong' });
-  }
-
-  if (namedViewers === 0) {
-    segs.push({ text: '。这些访客都是匿名的——想拿到名单，把分享链接的可见性改成「登录可见」。' });
-  } else if (namedViewers < uniqueViewers) {
-    segs.push({ text: `。其中 ${namedViewers} 位能认出身份，其余是匿名访客（只留脱敏 IP）。` });
+  // uniqueViewers 是后端在整个集合上去重的**登录**访客数，所以它为 0 才真的等于
+  // 「一个登录访客都没有」。曾经这里拿它当总访客数，再减去名单首页（最多 200 条）里
+  // 认得出身份的条数，把差额说成「其余是匿名访客」——那个差额其实是分页截断，
+  // 按构造他们全都是登录用户。匿名访问有几位后端根本没给，算不出来就不出这句。
+  if (uniqueViewers === 0) {
+    segs.push({ text: '，都是匿名访客（只留脱敏 IP）——想拿到名单，把分享链接的可见性改成「登录可见」。' });
   } else {
-    segs.push({ text: '，都是登录访客，名单如下。' });
+    segs.push({ text: '，其中 ' });
+    segs.push({ text: `${uniqueViewers} 位登录访客`, tone: 'strong' });
+    segs.push({ text: ' 能认出身份，名单如下。' });
   }
 
   return segs;
