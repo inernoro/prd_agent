@@ -9,19 +9,24 @@
  *   node render.mjs --url <地址> --out <目录> --tag design \
  *     [--width 1440] [--themes dark,light] \
  *     [--state 'id=要点击的按钮文案'] ... \
- *     [--vendor <目录>] [--storage <storageState.json>] [--full]
+ *     [--vendor <目录>] [--storage <storageState.json>] [--full] \
+ *     [--fixtures <目录> | --record-fixtures <目录>]
+ *
+ * --fixtures 回放设计样例数据（让实现页渲染出设计稿那套内容，覆盖率才可读）；
+ * --record-fixtures 先录一份真机响应当模板，再手改里面的**值**。见 fixtures.mjs。
  *
  * --state 可以给多次。不给则只截默认那一屏（id=default）。
  * --vendor 指向本地 React UMD 缓存（见 prefetch.sh）；设计稿画布从 unpkg 取
  *   React，容器网络直连不通，必须由 route 从本地喂进去。
  */
 import { pathToFileURL } from 'node:url';
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
+import { installFixtures } from './fixtures.mjs';
 
 // 脚本住在技能目录里，依赖装在工作目录里：必须从 cwd 解析，不能按脚本位置解析。
-const { chromium } = createRequire(path.join(process.cwd(), 'noop.js'))('playwright');
+// 用 playwright-core + 容器预装浏览器；解析顺序与失败提示收在 browser.mjs
+import { launch } from './browser.mjs';
 
 function parseArgs(argv) {
   const out = { states: [], themes: ['dark', 'light'], width: 1440, full: true };
@@ -38,6 +43,8 @@ function parseArgs(argv) {
     else if (a === '--theme-click') out.themeClick = next();
     else if (a === '--storage') out.storage = next();
     else if (a === '--viewport-only') out.full = false;
+    else if (a === '--fixtures') out.fixtures = next();
+    else if (a === '--record-fixtures') { out.fixtures = next(); out.recordFixtures = true; }
   }
   return out;
 }
@@ -57,8 +64,6 @@ const states = opts.states.length
   : [{ id: 'default', click: null }];
 
 const target = /^https?:/.test(opts.url) ? opts.url : pathToFileURL(path.resolve(opts.url)).href;
-const CHROME = process.env.CHROME_BIN
-  || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => fs.existsSync(p));
 
 /*
  * 无头 Chromium 默认走纯软件光栅，**不渲染 backdrop-filter**：毛玻璃浮层会截成
@@ -72,10 +77,7 @@ const DEFAULT_ARGS = ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-an
 const extraArgs = process.env.PW_CHROME_ARGS === undefined
   ? DEFAULT_ARGS
   : process.env.PW_CHROME_ARGS.split(/\s+/).filter(Boolean);
-const browser = await chromium.launch({
-  ...(CHROME ? { executablePath: CHROME } : {}),
-  args: extraArgs,
-});
+const browser = await launch({ args: extraArgs });
 const problems = [];
 const manifest = [];
 const themeBg = new Map();
@@ -90,6 +92,13 @@ for (const theme of opts.themes) {
   const page = await ctx.newPage();
   page.on('console', (m) => { if (m.type() === 'error') problems.push(`[${theme}] console: ${m.text()}`); });
   page.on('pageerror', (e) => problems.push(`[${theme}] pageerror: ${e.message}`));
+
+  // fixture 要先于 vendor 装：Playwright 的 route 后注册的先匹配，
+  // 装反了会让 vendor 那条 '**/*' 之外的规则抢在前面，接口请求就穿透过去了。
+  let fixtures = null;
+  if (opts.fixtures) {
+    fixtures = await installFixtures(page, { dir: opts.fixtures, mode: opts.recordFixtures ? 'record' : 'replay' });
+  }
 
   if (opts.vendor) {
     await page.route('**/unpkg.com/**', async (route) => {
@@ -133,6 +142,19 @@ for (const theme of opts.themes) {
     if (chars < 40) problems.push(`[${theme}] 画板 ${state.id} 正文只有 ${chars} 个字符，多半没渲染`);
     manifest.push({ tag: opts.tag, state: state.id, theme, width: opts.width, file, chars });
     console.log(`${file}  text=${chars}`);
+  }
+  if (fixtures) {
+    const r = fixtures.report();
+    if (opts.recordFixtures) console.log(`[${theme}] 录到 ${r.recorded.length} 条接口响应 → ${opts.fixtures}`);
+    else {
+      console.log(`[${theme}] 样例数据命中 ${r.served.length} 条`);
+      // 穿透到真网络的那些请求，页面上显示的是真实数据 —— 这一屏是混合态，
+      // 覆盖率读不出信号。必须报出来，不许当成「大部分用了 fixture 就算数」。
+      if (r.missed.length) {
+        problems.push(`[${theme}] ${r.missed.length} 条接口没有样例数据、走了真网络：`
+          + `${r.missed.slice(0, 5).join(' / ')}${r.missed.length > 5 ? ' …' : ''}`);
+      }
+    }
   }
   await ctx.close();
 }

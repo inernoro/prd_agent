@@ -8894,9 +8894,15 @@ app.MapPost("/gw/models/capabilities/bulk-update", async (HttpContext http, [Fro
 {
     if (body is null) return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
     var platformId = (body.PlatformId ?? string.Empty).Trim();
-    if (platformId.Length == 0 && body.AllGwOwned != true)
+    // 精确到模型的能力维护：控制台此前只能按平台整片刷能力，想给单个模型补一条能力
+    // （例如把某个模型标成 intent 可用）就只能连同平台上几百个模型一起改。
+    // 归一化与「传了但全无效」的判据在 GatewayConfigurationProvisioning 里，可被直接测。
+    if (!GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            body.ModelIds, out var modelIds, out var modelIdsError))
+        return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", modelIdsError), jsonOptions, 400);
+    if (platformId.Length == 0 && modelIds.Count == 0 && body.AllGwOwned != true)
     {
-        return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "批量能力维护必须选择平台，或显式设置 allGwOwned=true"), jsonOptions, 400);
+        return Json(ApiEnvelope<BulkUpdateModelCapabilitiesResult>.Fail("INVALID_INPUT", "批量能力维护必须选择平台或指定 modelIds，或显式设置 allGwOwned=true"), jsonOptions, 400);
     }
 
     var capabilityPatches = new List<BsonDocument>();
@@ -8932,7 +8938,15 @@ app.MapPost("/gw/models/capabilities/bulk-update", async (HttpContext http, [Fro
         filters.Add(fb.Eq("PlatformId", platformId));
         filterParts.Add($"platformId={platformId}");
     }
-    else
+    if (modelIds.Count > 0)
+    {
+        filters.Add(fb.Or(
+            fb.In("_id", modelIds),
+            fb.In("ModelName", modelIds),
+            fb.In("Name", modelIds)));
+        filterParts.Add($"modelIds={modelIds.Count}");
+    }
+    if (platformId.Length == 0 && modelIds.Count == 0)
     {
         filterParts.Add("allGwOwned=true");
     }
@@ -8993,13 +9007,14 @@ app.MapPost("/gw/models/capabilities/bulk-update", async (HttpContext http, [Fro
         http,
         action: "model.capabilities.bulk_update",
         targetType: "llmgw_model",
-        targetId: platformId.Length == 0 ? "all" : platformId,
-        targetName: platformId.Length == 0 ? "all gw models" : platformId,
+        targetId: platformId.Length > 0 ? platformId : (modelIds.Count > 0 ? string.Join(",", modelIds.Take(10)) : "all"),
+        targetName: platformId.Length > 0 ? platformId : (modelIds.Count > 0 ? $"{modelIds.Count} 个指定模型" : "all gw models"),
         success: true,
         reason: null,
         changes: new BsonDocument
         {
             { "platformId", platformId },
+            { "modelIds", new BsonArray(modelIds.Take(50)) },
             { "enabledOnly", body.EnabledOnly == true },
             { "onlyMissing", body.OnlyMissing == true },
             { "capabilityCount", capabilityPatches.Count },
@@ -12699,7 +12714,9 @@ static bool IsModelCompatibleWithPool(BsonDocument modelDoc, string poolModelTyp
     var type = (poolModelType ?? string.Empty).ToLowerInvariant();
     if (type.Contains("vision")) return modelDoc.AsNullableBool("IsVision") == true || ModelHasCapability(modelDoc, "vision", "image_input", "multimodal");
     if (type.Contains("image") || type.Contains("generation")) return modelDoc.AsNullableBool("IsImageGen") == true || ModelHasCapability(modelDoc, "image_generation", "text_to_image", "image");
-    if (type.Contains("intent")) return modelDoc.AsNullableBool("IsIntent") == true || modelDoc.AsNullableBool("IsMain") == true;
+    // intent 判据只有一份：注册表的 IsIntentCapable。此处曾抄过一份只认布尔位的拷贝，
+    // 与注册表分别演进，导致同一个模型在 PUT 池成员与 bulk-import 两条路上判据不一致。
+    if (type.Contains("intent")) return GatewayModelPoolTypeRegistry.IsIntentCapable(modelDoc);
     if (type.Contains("chat") || type.Contains("code")) return modelDoc.AsNullableBool("IsMain") == true || modelDoc.AsNullableBool("IsIntent") == true || modelDoc.AsNullableBool("IsImageGen") != true;
     if (type.Contains("asr") || type.Contains("speech")) return ModelHasCapability(modelDoc, "asr", "speech_to_text", "audio");
     if (type.Contains("video")) return ModelHasCapability(modelDoc, "video_generation", "video");

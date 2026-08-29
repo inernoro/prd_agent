@@ -5,6 +5,7 @@ import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { listSiteViewers, type SiteViewer } from '@/services/real/webAnalytics';
+import { buildViewersConclusion } from './analyticsConclusion';
 
 /**
  * 站点访客痕迹抽屉 —— 站点 owner / 共享团队成员查看「谁看过这个站点」（防文档泄密）。
@@ -108,19 +109,23 @@ export function SiteViewersDrawer({
           </button>
         </div>
 
-        {/* Stats */}
+        {/* 结论先行：一句判断代替「访问 N 次 · M 位访客」两个裸数字 */}
         <div
-          className="shrink-0 flex items-center gap-5 px-5 py-3 text-xs border-b border-token-subtle"
+          className="shrink-0 border-b border-token-subtle px-5 py-3 text-[12.5px] leading-relaxed"
           style={{ color: 'var(--text-secondary)' }}
         >
-          <span className="inline-flex items-center gap-1.5">
-            <Eye size={13} />
-            访问 {total} 次
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <Users size={13} />
-            {uniqueViewers} 位访客
-          </span>
+          {buildViewersConclusion({
+            totalViews: total,
+            uniqueViewers,
+            siteTitle,
+          }).map((seg, i) => (
+            <span
+              key={i}
+              style={seg.tone === 'strong' ? { color: 'var(--text-primary)', fontWeight: 600 } : undefined}
+            >
+              {seg.text}
+            </span>
+          ))}
         </div>
 
         {/* List (scroll area) */}

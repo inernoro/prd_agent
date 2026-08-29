@@ -33,9 +33,17 @@ function isHtmlEntry(siteUrl: string, entryFile?: string) {
  * 前端不看这个字段就会去问、拿回一个预期之内的拒绝，然后在一个本来显示得好好的
  * 直链预览上盖一条错误角标——用户看到的是「这页出错了」，其实什么事都没有。
  *
- * 判据故意宽松：只要声明了任何包装类型就跳过，而不是逐个列举 pdf/video/markdown。
- * 后端将来多一种包装形态，这里不用跟着改（形状 1：判据别比它该管的范围窄）。
+ * 但「任何包装类型一律跳过」又宽过头了：Markdown 包装站的壳子**就是**正文
+ * （服务端把 .md 渲染成完整 HTML、样式内联、无外部引用），它拿得回来、也最适合 srcDoc。
+ * 一刀切跳过的后果是 MD 站在分享页只能走直链 iframe，而直链正是那条会白屏的路径
+ * —— 用户看到的就是标题栏下面一片白（2026-08-25 反馈）。
+ *
+ * 所以改成 default-deny 的白名单：只有确认「壳子即正文」的包装类型才放行，
+ * 后端将来多一种包装形态时保持今天的行为，确认自包含之后才加进来。
+ * 两侧判据必须同步 —— 后端 WebPagesController.SrcDocReadableWrappers 是同一份名单。
  */
+const SRCDOC_READABLE_WRAPPERS = new Set(['markdown']);
+
 export function hasFetchableHtml(site: {
   siteUrl: string;
   entryFile?: string;
@@ -43,7 +51,7 @@ export function hasFetchableHtml(site: {
   wrappedAssetType?: string | null;
 }): boolean {
   if (site.pdfAssetUrl) return false;
-  if (site.wrappedAssetType) return false;
+  if (site.wrappedAssetType && !SRCDOC_READABLE_WRAPPERS.has(site.wrappedAssetType)) return false;
   return isHtmlEntry(site.siteUrl, site.entryFile);
 }
 
@@ -63,7 +71,36 @@ export function hasFetchableHtml(site: {
  */
 export function canUseSrcDocPreview(html: string): boolean {
   if (!html) return false;
-  return !hasModuleScript(html);
+  return !hasModuleScript(stripInjectedTelemetry(html));
+}
+
+/**
+ * 剥掉**传输途中被注入的**遥测脚本。
+ *
+ * 托管域名前面挂着 CDN，它会往每一份 HTML 里塞一条
+ * `<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/...">`。
+ * 那不是用户上传的内容，却是 `type="module"` —— 于是 canUseSrcDocPreview 一律判否，
+ * **每一个**经过该 CDN 的托管站点都被踢出 srcDoc、落到会白屏的直链路径上。
+ * （2026-08-25 每日验收脚本第一次跑就抓到：自己传的 200 字节纯 HTML，取回来 9336 字节、
+ * 带着这条 beacon，于是 mode=direct、正文 0 字。）
+ *
+ * 判据刻意窄：只认「已知的第三方遥测端点」，逐条列出。
+ * 不做「凡是跨域 module 一律剥」——那种页面可能真的靠 CDN 上的 ESM 依赖跑，
+ * 剥掉等于把内容也剥了；它们留在直链路径上是对的。
+ */
+const INJECTED_TELEMETRY_HOSTS = [
+  'static.cloudflareinsights.com',
+];
+
+export function stripInjectedTelemetry(html: string): string {
+  if (!html) return html;
+  let out = html;
+  for (const host of INJECTED_TELEMETRY_HOSTS) {
+    // 只删「开标签里 src 指向该 host」的那一对 script，不碰别的
+    const re = new RegExp(`<script\\b[^>]*\\bsrc\\s*=\\s*["']?[^"'>]*${host.replace(/\./g, '\\.')}[^"'>]*["']?[^>]*>\\s*</script>`, 'gi');
+    out = out.replace(re, '');
+  }
+  return out;
 }
 
 /**
@@ -128,6 +165,9 @@ function isAbsoluteBaseHref(href: string): boolean {
 }
 
 export function withPreviewBase(html: string, siteUrl: string) {
+  // 同一处剥干净：srcDoc 里留着一条注定加载不了的第三方 beacon 没有意义，
+  // 还会在访客的控制台里刷一条 CORS 报错，让真问题更难被看见。
+  html = stripInjectedTelemetry(html);
   const baseHref = new URL('.', siteUrl).toString();
 
   // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。

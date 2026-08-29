@@ -1201,3 +1201,21 @@
     animation: none;
   }
 }
+
+/* 站点缩略图占位的扫光（设计稿 omShimmer）：正在取正文时让占位有「在动」的产物感，
+   而不是一块死掉的斜纹。尊重 prefers-reduced-motion。 */
+@keyframes sitePreviewShimmer {
+  0% { transform: translateX(-60%); }
+  100% { transform: translateX(160%); }
+}
+.site-preview-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, var(--border-faint), transparent);
+  animation: sitePreviewShimmer 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-preview-shimmer::after { animation: none; }
+}

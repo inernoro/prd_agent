@@ -440,6 +440,64 @@ public sealed class GatewayConfigurationProvisioningTests
         GatewayModelPoolTypeRegistry.IsCompatible(model, modelType).ShouldBeTrue();
     }
 
+    // intent 池成员资格：判据必须读运维真正能改的那个面。
+    //
+    // 这三条钉的是一次真实事故：上游批量导入的模型 IsIntent/IsMain 恒为 false（那两位只在建模型
+    // 那一刻由能力勾选写入），而控制台唯一能维护的能力面是 Capabilities 数组——判据不读它，于是
+    // intent 默认池对全部批量导入模型永久关闭，没有任何一条控制台路径能往里放模型。
+    [Fact]
+    public void IntentPool_AcceptsExplicitlyDeclaredIntentCapability_NotOnlyLegacyFlags()
+    {
+        var bulkImported = new BsonDocument
+        {
+            ["ModelName"] = "gpt-5.6-sol",
+            ["PlatformId"] = "platform-1",
+            ["IsIntent"] = false,
+            ["IsMain"] = false,
+            ["Capabilities"] = new BsonArray
+            {
+                new BsonDocument { ["Type"] = "chat", ["Source"] = "inferred", ["Value"] = true },
+            },
+        };
+
+        // 只有 chat 能力时不算 intent 可用：默认池会在建模型时自动追加所有兼容模型，
+        // 认了 chat 就等于把几百个对话模型无差别灌进 intent 池。
+        GatewayModelPoolTypeRegistry.IsCompatible(bulkImported, "intent").ShouldBeFalse();
+
+        bulkImported["Capabilities"].AsBsonArray.Add(
+            new BsonDocument { ["Type"] = "intent", ["Source"] = "user", ["Value"] = true });
+
+        GatewayModelPoolTypeRegistry.IsCompatible(bulkImported, "intent").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IntentPool_StillAcceptsLegacyFlagsWrittenAtModelCreation()
+    {
+        var byIntentFlag = new BsonDocument { ["IsIntent"] = true, ["IsMain"] = false };
+        var byMainFlag = new BsonDocument { ["IsIntent"] = false, ["IsMain"] = true };
+        var neither = new BsonDocument { ["IsIntent"] = false, ["IsMain"] = false };
+
+        GatewayModelPoolTypeRegistry.IsCompatible(byIntentFlag, "intent").ShouldBeTrue();
+        GatewayModelPoolTypeRegistry.IsCompatible(byMainFlag, "intent").ShouldBeTrue();
+        GatewayModelPoolTypeRegistry.IsCompatible(neither, "intent").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IntentPool_CapabilityValueFalseDoesNotCount()
+    {
+        var declaredThenRevoked = new BsonDocument
+        {
+            ["IsIntent"] = false,
+            ["IsMain"] = false,
+            ["Capabilities"] = new BsonArray
+            {
+                new BsonDocument { ["Type"] = "intent", ["Source"] = "user", ["Value"] = false },
+            },
+        };
+
+        GatewayModelPoolTypeRegistry.IsCompatible(declaredThenRevoked, "intent").ShouldBeFalse();
+    }
+
     [Fact]
     public void FalImageLayeringBlueprint_PublishesGenericLogicalCapabilityWithoutBusinessBinding()
     {
@@ -459,5 +517,57 @@ public sealed class GatewayConfigurationProvisioningTests
         offering["TargetId"].AsString.ShouldBe("exchange-a");
         offering["UpstreamModelId"].AsString.ShouldBe("fal-qwen-image-layered");
         offering.Contains("AppCallerCode").ShouldBeFalse();
+    }
+
+    // ── 批量能力维护的 modelIds ──
+
+    [Fact]
+    public void 传了_modelIds_但一项都不合法_必须拒绝而不是改整个平台()
+    {
+        // 最危险的失效形态：不报错，只是改多了。带 platformId、modelIds 全是空白或超长串的
+        // 请求，如果只是「归一化后为空就不加这个过滤条件」，本该精确到几个模型的写入
+        // 会静默扩成整个平台上几百个模型全刷一遍。
+        var supplied = new List<string?> { "  ", "", null, new string('x', 301) };
+        var ok = GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            supplied, out var modelIds, out var error);
+
+        Assert.False(ok);
+        Assert.Empty(modelIds);
+        Assert.Contains("不会据此改动整个平台", error);
+    }
+
+    [Fact]
+    public void 一个都没传是合法的_那是按平台整片刷()
+    {
+        // 上一条的边界：不能把「没传」也拒掉，按平台整片刷是这个接口本来就支持的用法。
+        Assert.True(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            null, out var fromNull, out _));
+        Assert.Empty(fromNull);
+
+        Assert.True(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            new List<string?>(), out var fromEmpty, out _));
+        Assert.Empty(fromEmpty);
+    }
+
+    [Fact]
+    public void 混着无效项时_保留有效项并去重去空白()
+    {
+        var ok = GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            new List<string?> { " gpt-5.6-sol ", "", "gpt-5.6-sol", null, "claude-opus-5" },
+            out var modelIds,
+            out var error);
+
+        Assert.True(ok);
+        Assert.Equal(string.Empty, error);
+        Assert.Equal(new[] { "gpt-5.6-sol", "claude-opus-5" }, modelIds);
+    }
+
+    [Fact]
+    public void 超过_200_项要拒()
+    {
+        var supplied = Enumerable.Range(0, 201).Select(i => (string?)$"model-{i}").ToList();
+        Assert.False(GatewayConfigurationProvisioning.TryNormalizeBulkModelIds(
+            supplied, out _, out var error));
+        Assert.Contains("最多 200 项", error);
     }
 }

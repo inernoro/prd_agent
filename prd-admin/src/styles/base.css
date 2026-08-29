@@ -10,6 +10,15 @@ html, body {
   overscroll-behavior-x: none;
 }
 
+/* 正文字族。index.html 早就加载了 Inter、tokens.css 也早就有 --font-body，
+   但从来没有人把它落到 body 上 —— 于是全站正文一直吃 Tailwind preflight 的
+   ui-sans-serif 兜底，Inter 加载了却一个字都没用上（2026-08-23 用 design-replication
+   的档位表量出来：设计稿 Inter，实现 ui-sans-serif）。
+   放在 body 而不是 :root：让页面局部仍能用 --font-display / --font-code 覆盖。 */
+body {
+  font-family: var(--font-body);
+}
+
 /* CDS 同款主题水波：快照期间冻结普通 CSS transition，避免新旧主题在截图时串色。 */
 .theme-transition-snapshotting,
 .theme-transition-snapshotting *,

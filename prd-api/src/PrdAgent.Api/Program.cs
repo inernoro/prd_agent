@@ -338,6 +338,12 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.
 // 网页托管「向我提问」：站点正文快照（喂给模型的上下文）+ 配额闸（保护 owner 的 token 预算）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteContentSnapshotService, PrdAgent.Infrastructure.Services.SiteContentSnapshotService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAskQuotaService, PrdAgent.Infrastructure.Services.AskQuotaService>();
+// 单例：它要在请求结束后继续跑（调用方全在请求路径上，谁都不该为几句开场问题多等一次模型调用），
+// 所以自己持 IServiceScopeFactory 开 scope，而不是蹭调用方那个即将被释放的 scope。
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAskOpeningQuestionGenerator, PrdAgent.Infrastructure.Services.AskOpeningQuestionGenerator>();
+// 上传解包进度：Singleton —— 节流用的 _lastWrite 字典必须跨请求存活，
+// Scoped 的话每次请求一个新实例，节流形同虚设（每个文件都写一次 Redis）
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IUploadProgressService, PrdAgent.Infrastructure.Services.UploadProgressService>();
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();

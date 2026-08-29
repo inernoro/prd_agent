@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.RegularExpressions;
+using MongoDB.Bson;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -18,6 +19,8 @@ public class HostedSiteService : IHostedSiteService
     private readonly ISharePasswordService _sharePwd;
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
+    private readonly IUploadProgressService _uploadProgress;
+    private readonly IAskOpeningQuestionGenerator _askOpeners;
     private readonly ILogger<HostedSiteService> _logger;
 
     // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
@@ -86,6 +89,8 @@ public class HostedSiteService : IHostedSiteService
         ISharePasswordService sharePwd,
         ITeamService teams,
         ITeamActivityService teamActivity,
+        IUploadProgressService uploadProgress,
+        IAskOpeningQuestionGenerator askOpeners,
         ILogger<HostedSiteService> logger)
     {
         _db = db;
@@ -94,6 +99,8 @@ public class HostedSiteService : IHostedSiteService
         _sharePwd = sharePwd;
         _teams = teams;
         _teamActivity = teamActivity;
+        _uploadProgress = uploadProgress;
+        _askOpeners = askOpeners;
         _logger = logger;
     }
 
@@ -206,6 +213,7 @@ public class HostedSiteService : IHostedSiteService
             Folder = folder?.Trim(),
             OwnerUserId = userId,
             SlideNavCompatVersion = SlideNavVersion, // 上传即注入当前版垫片
+            IsSlideDeck = DetectSlideDeck(rewritten),
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -219,11 +227,12 @@ public class HostedSiteService : IHostedSiteService
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? uploadId = null)
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var result = await ExtractAndUploadZip(siteId, zipBytes);
+        var result = await ExtractAndUploadZip(siteId, zipBytes, uploadId);
         if (result.Error != null)
             throw new InvalidOperationException(result.Error);
 
@@ -249,6 +258,7 @@ public class HostedSiteService : IHostedSiteService
             OwnerUserId = userId,
             WrappedAssetType = string.IsNullOrWhiteSpace(wrappedAssetType) ? null : wrappedAssetType.Trim().ToLowerInvariant(),
             SlideNavCompatVersion = SlideNavVersion, // 上传即注入当前版垫片（ZIP 内 HTML 条目已注入）
+            IsSlideDeck = result.IsSlideDeck,
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -293,6 +303,7 @@ public class HostedSiteService : IHostedSiteService
                 new() { Path = "index.html", CosKey = cosKey, Size = htmlBytes.Length, MimeType = "text/html" }
             },
             TotalSize = htmlBytes.Length,
+            IsSlideDeck = DetectSlideDeck(htmlBytes),
             Tags = tags ?? new(),
             Folder = folder?.Trim(),
             OwnerUserId = userId,
@@ -314,7 +325,8 @@ public class HostedSiteService : IHostedSiteService
         string siteId, string userId,
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? uploadId = null)
     {
         // 角色门控：editor / owner / 站点创建者可重传内容；viewer 与非成员一律拒绝
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
@@ -334,6 +346,7 @@ public class HostedSiteService : IHostedSiteService
         List<HostedSiteFile> siteFiles;
         string entryFile;
         long totalSize;
+        var replacedIsSlideDeck = false;
 
         if (ext == ".zip")
         {
@@ -341,16 +354,18 @@ public class HostedSiteService : IHostedSiteService
             if (validationError != null)
                 throw new InvalidOperationException(validationError);
             // 校验已通过，此处仅可能因基础设施异常失败（与改动前行为一致）
-            var result = await ExtractAndUploadZip(siteId, fileBytes);
+            var result = await ExtractAndUploadZip(siteId, fileBytes, uploadId);
             if (result.Error != null)
                 throw new InvalidOperationException(result.Error);
             siteFiles = result.Files;
             entryFile = result.EntryFile;
             totalSize = result.TotalSize;
+            replacedIsSlideDeck = result.IsSlideDeck;
         }
         else if (ext is ".html" or ".htm")
         {
             var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes, "index.html"));
+            replacedIsSlideDeck = DetectSlideDeck(rewritten);
             var cosKey = _storage.BuildSiteKey(siteId, "index.html");
             await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
             siteFiles = new List<HostedSiteFile>
@@ -386,13 +401,18 @@ public class HostedSiteService : IHostedSiteService
             .Set(x => x.WrappedAssetType, normalizedType)
             .Set(x => x.UpdatedAt, now)
             .Set(x => x.ContentVersion, now)
-            .Set(x => x.SlideNavCompatVersion, SlideNavVersion); // 重传内容已注入当前版垫片
+            .Set(x => x.SlideNavCompatVersion, SlideNavVersion) // 重传内容已注入当前版垫片
+            // 换了内容就要重判形态：HTML 站换成 deck 要变、deck 换成普通页也要变回去
+            .Set(x => x.IsSlideDeck, replacedIsSlideDeck);
 
-        // 重传把站点换成了不支持提问的形态（如 HTML 站换成视频），提问开关必须一起关掉。
-        // 留着不管的话，已经发出去的分享还挂着提问入口，而每次提问都必定 422 ——
-        // 站点内容变了，基于旧内容开的能力就不该继续声称可用。
-        if (AskAccessPolicy.UnsupportedReason(normalizedType) != null)
-            update = update.Set(x => x.AskEnabled, false);
+        // 重传成不支持提问的形态（如 HTML 站换成视频）时，**不要**去改 AskEnabled。
+        //
+        // 能力已经被 AskAccessPolicy.IsAskOn 压住了——它先看 UnsupportedReason，
+        // 不支持就一律 false，与开关无关。所以这里再写一次是多余的，而且有害：
+        // AskEnabled 现在是三态，false 的含义是「owner 明确拒绝」。把系统强制的停用
+        // 写成 false，就等于替 owner 做了一个他没做过的决定——之后重传回 HTML，
+        // 形态恢复支持了，这个 false 却留在库里，提问永久关闭，而他从没关过。
+        // 「系统当前不支持」和「主人不想开」是两件事，不能共用一个格子。
 
         await _db.HostedSites.UpdateOneAsync(x => x.Id == siteId, update, cancellationToken: ct);
 
@@ -406,7 +426,13 @@ public class HostedSiteService : IHostedSiteService
             catch (Exception ex) { _logger.LogWarning(ex, "删除旧文件失败: {CosKey}", f.CosKey); }
         }
 
-        return AttachDerivedFields((await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!)!;
+        var reloaded = (await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!;
+
+        // 正文换了，旧那批开场问题就是对着旧内容写的。ContentVersion 变了 →
+        // NeedsGeneration 自然成立 → 重算一批。owner 手写过的（source=manual）不动。
+        _askOpeners.QueueEnsure(reloaded);
+
+        return AttachDerivedFields(reloaded)!;
     }
 
     // ─────────────────────────────────────────────
@@ -1123,18 +1149,33 @@ public class HostedSiteService : IHostedSiteService
         return share.ShortSeq;
     }
 
-    public async Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct)
+    public async Task<List<WebPageShareLink>> ListSharesAsync(
+        string userId, CancellationToken ct, bool includeRevoked = false, string? siteId = null)
     {
         // 排除 visit 便捷链（自动创建，非用户主动分享，不应污染分享管理列表）；
-        // 排除已撤销链接（用户主动取消后立即从列表消失）；
         // 时间过滤：未设过期 / 未过期 / 过期 ≤ 7 天（宽限期，允许续期，避免链接突然失效）；
         // 过期 > 7 天的链接保留 DB 行用于审计 (diagnostics)，但不返回给用户列表。
-        var graceCutoff = DateTime.UtcNow.AddDays(-7);
+        //
+        // 已撤销链接：默认仍然排除（既有调用方行为不变）。includeRevoked=true 时一并返回——
+        // 撤销不可逆，可「哪条被撤了、什么时候撤的」是用户要查的历史，
+        // 从列表里直接消失等于这段历史无处可查。撤销的链接不受 7 天宽限窗约束：
+        // 它的时间锚点是 RevokedAt 不是 ExpiresAt，用过期窗去筛会把刚撤的也筛掉。
+        var graceCutoff = ShareRenewPolicy.GraceCutoff(DateTime.UtcNow);
         var fb = Builders<WebPageShareLink>.Filter;
-        var filter = fb.Eq(x => x.CreatedBy, userId)
-            & fb.Eq(x => x.IsRevoked, false)
-            & fb.Ne(x => x.Purpose, "visit")
+        var liveWindow = fb.Eq(x => x.IsRevoked, false)
             & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, graceCutoff));
+        var filter = fb.Eq(x => x.CreatedBy, userId)
+            & fb.Ne(x => x.Purpose, "visit")
+            & (includeRevoked
+                ? liveWindow | fb.Eq(x => x.IsRevoked, true)
+                : liveWindow);
+
+        // 指定站点时把过滤下推到库里。下面那个 Limit(100) 是全局按时间排的：调用方想问
+        // 「这个站点有没有活着的链接」，却只拿到最近 100 条里碰巧属于它的那些——一旦它的
+        // 链接落在窗口外，调用方会判成「没有」，然后 forceNew 再建一条。表现是每次都多出
+        // 一条重复链接，而卡片上还显示未分享。两个字段都要认（存量单站点分享只写 SiteId）。
+        if (!string.IsNullOrWhiteSpace(siteId))
+            filter &= fb.Eq(x => x.SiteId, siteId) | fb.AnyEq(x => x.SiteIds, siteId);
 
         var items = await _db.WebPageShareLinks
             .Find(filter)
@@ -1184,13 +1225,45 @@ public class HostedSiteService : IHostedSiteService
         }
     }
 
-    public async Task<bool> RevokeShareAsync(string shareId, string userId, CancellationToken ct)
+    public async Task<Dictionary<string, string>> GetTitlesByIdsAsync(IEnumerable<string> siteIds, CancellationToken ct)
     {
+        var ids = siteIds.Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<string, string>();
+
+        // 只投影 Id + Title：分享列表一次可能问 100 个站点，把整份 Files 清单拉回来纯属浪费
+        var docs = await _db.HostedSites
+            .Find(x => ids.Contains(x.Id))
+            .Project(x => new { x.Id, x.Title })
+            .ToListAsync(ct);
+
+        return docs.ToDictionary(x => x.Id, x => x.Title ?? string.Empty);
+    }
+
+    public async Task<bool> RevokeShareAsync(string shareId, string userId, string? reason, CancellationToken ct)
+    {
+        // 盖上撤销时刻：分享管理面板的已撤销一层要显示「8 月 11 日撤销」。
+        // 没有这个字段就只能拿 CreatedAt 顶替，那是创建时间不是撤销时间，会直接误导人。
+        //
+        // 过滤器必须带上「还没撤销」：这两个字段在面板上被当作**撤销这件事的历史记录**读，
+        // 而 DELETE 会被重发——网关超时后客户端重试、两个标签页同时点撤销都算。原先的
+        // 过滤器照样匹配一条已撤销的链接，于是第二次调用把撤销时刻改成"现在"，
+        // 不带 reason 的那次还会把第一次写下的理由抹成 null。第一笔审计是唯一那笔，
+        // 之后的重发只该是空操作。`$ne: true` 同时认得下缺这个字段的存量文档。
         var result = await _db.WebPageShareLinks.UpdateOneAsync(
-            x => x.Id == shareId && x.CreatedBy == userId,
-            Builders<WebPageShareLink>.Update.Set(x => x.IsRevoked, true),
+            x => x.Id == shareId && x.CreatedBy == userId && x.IsRevoked != true,
+            Builders<WebPageShareLink>.Update
+                .Set(x => x.IsRevoked, true)
+                .Set(x => x.RevokedAt, DateTime.UtcNow)
+                .Set(x => x.RevokedReason, string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()),
             cancellationToken: ct);
-        return result.MatchedCount > 0;
+        if (result.MatchedCount > 0) return true;
+
+        // 一条都没匹配上有两种可能：这条不是他的 / 不存在（该回 false，端点转 404），
+        // 或者他已经撤销过了（该回 true——用户要的结果已经达成，重试不该看到报错）。
+        // 分不清就会把「重试成功」显示成失败，用户以为没撤销掉，再点一次。
+        return await _db.WebPageShareLinks
+            .Find(x => x.Id == shareId && x.CreatedBy == userId)
+            .AnyAsync(ct);
     }
 
     /// <summary>
@@ -1418,7 +1491,14 @@ public class HostedSiteService : IHostedSiteService
             ? rawSites.FirstOrDefault(s => s.Id == sites[0].Id)
             : null;
         var exposeAsk = !isCollection
-            && AskAccessPolicy.ShouldExposeAskOnShare(sites.Count, askSite?.AskEnabled ?? false);
+            && AskAccessPolicy.ShouldExposeAskOnShare(
+                sites.Count,
+                askSite is not null && AskAccessPolicy.IsAskOn(askSite.AskEnabled, askSite.WrappedAssetType));
+
+        // 兜底一次：本功能上线之前就已经开着提问的站点，既不会走「刚开启」也不会走「刚重传」，
+        // 光靠那两个钩子它们永远是空题库。这里排一次，第一个访客看不到词条、下一个就有了。
+        // 不会按访客数烧钱：生成器自己按站点去重，且算过一版正文就盖戳不再重算。
+        if (exposeAsk && askSite != null) _askOpeners.QueueEnsure(askSite);
 
         return new ShareViewResult
         {
@@ -1786,12 +1866,19 @@ public class HostedSiteService : IHostedSiteService
             return new RenewShareResult { Error = "链接已撤销，无法续期" };
 
         var now = DateTime.UtcNow;
-        var graceCutoff = now.AddDays(-7);
-        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < graceCutoff)
-            return new RenewShareResult { Error = "链接已过期超过 7 天，请新建分享" };
+        if (!ShareRenewPolicy.CanRenew(share.IsRevoked, share.ExpiresAt, now))
+            return new RenewShareResult { Error = $"链接已过期超过 {ShareRenewPolicy.GraceDays} 天，请新建分享" };
+
+        // 永久有效（没有 ExpiresAt）的链接：续期是个空动作，直接原样返回。
+        //
+        // 不能往下走：下面那行 basis 在 ExpiresAt 为 null 时取 now，于是「续期」会给一条
+        // 本来永不过期的链接**盖上**一个 7 天后的期限——用户点的按钮写着「续期」，
+        // 实际把永久变成了会过期，比不点还糟。做的事和说的相反，是最坏的一种。
+        if (!share.ExpiresAt.HasValue)
+            return new RenewShareResult { Ok = true, NewExpiresAt = null };
 
         // 续期基准：未过期时从当前 ExpiresAt 累加；过期 ≤ 7d 时以 now 为起点
-        var basis = share.ExpiresAt.HasValue && share.ExpiresAt.Value > now ? share.ExpiresAt.Value : now;
+        var basis = share.ExpiresAt.Value > now ? share.ExpiresAt.Value : now;
         var newExpiresAt = basis.AddDays(extendDays);
 
         var renewEvent = new ShareRenewalEvent
@@ -1814,6 +1901,81 @@ public class HostedSiteService : IHostedSiteService
         return new RenewShareResult { Ok = true, NewExpiresAt = newExpiresAt };
     }
 
+    public async Task<UpdateShareSettingsResult> UpdateShareSettingsAsync(
+        string shareId, string userId, string? visibility, int? expiresInDays, CancellationToken ct = default)
+    {
+        // 白名单与 CreateShareAsync 同一份口径。这里不复用那边的 `_ => "owner-only"` 兜底：
+        // 创建时缺省回退到最安全档是对的，改设置时把一个拼错的档位**静默降级**成 owner-only，
+        // 用户会以为自己设成了「登录可见」，实际谁都打不开——宁可整笔拒绝。
+        string? normalizedVisibility = null;
+        if (visibility != null)
+        {
+            normalizedVisibility = visibility.ToLowerInvariant() switch
+            {
+                "public" => "public",
+                "logged-in" => "logged-in",
+                "owner-only" => "owner-only",
+                _ => null,
+            };
+            if (normalizedVisibility == null)
+                return new UpdateShareSettingsResult { Error = "可见性只能是 owner-only / logged-in / public" };
+        }
+
+        if (expiresInDays is < 0 or > 365)
+            return new UpdateShareSettingsResult { Error = "有效期必须在 0（永久）到 365 天之间" };
+
+        if (normalizedVisibility == null && expiresInDays == null)
+            return new UpdateShareSettingsResult { Error = "没有要改的设置" };
+
+        var share = await _db.WebPageShareLinks.Find(x => x.Id == shareId && x.CreatedBy == userId)
+            .FirstOrDefaultAsync(ct);
+        if (share == null)
+            return new UpdateShareSettingsResult { Error = "分享不存在或无权操作" };
+        if (share.IsRevoked)
+            return new UpdateShareSettingsResult { Error = "链接已撤销，无法修改，请重新分享" };
+
+        var ups = new List<UpdateDefinition<WebPageShareLink>>();
+        var effVisibility = normalizedVisibility ?? share.Visibility;
+        var effExpiresAt = share.ExpiresAt;
+
+        if (normalizedVisibility != null && normalizedVisibility != share.Visibility)
+            ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.Visibility, normalizedVisibility));
+
+        if (expiresInDays != null)
+        {
+            // 重设而非累加：面板选「7 天」= 从现在起 7 天，0 = 永久。
+            effExpiresAt = expiresInDays.Value > 0 ? DateTime.UtcNow.AddDays(expiresInDays.Value) : null;
+            ups.Add(Builders<WebPageShareLink>.Update.Set(x => x.ExpiresAt, effExpiresAt));
+            // 过期时间被谁改成什么，与续期走同一本账——排查「莫名其妙过期」时两类改动要在一处看得见
+            ups.Add(Builders<WebPageShareLink>.Update.Push(x => x.RenewalHistory, new ShareRenewalEvent
+            {
+                Action = "reset",
+                ByUserId = userId,
+                OldExpiresAt = share.ExpiresAt,
+                NewExpiresAt = effExpiresAt,
+                Note = expiresInDays.Value > 0
+                    ? $"panel reset expiry to +{expiresInDays.Value}d"
+                    : "panel reset expiry to never",
+            }));
+        }
+
+        if (ups.Count > 0)
+        {
+            await _db.WebPageShareLinks.UpdateOneAsync(
+                x => x.Id == shareId,
+                Builders<WebPageShareLink>.Update.Combine(ups),
+                cancellationToken: ct);
+            _logger.LogInformation("用户 {UserId} 改分享设置 {ShareId}: visibility={Visibility} expiresAt={ExpiresAt}",
+                userId, shareId, effVisibility, effExpiresAt);
+        }
+
+        // ups 为空（选的就是当前值）也回 Ok：用户点了一下没变化不是错误，面板照常显示当前值。
+        return new UpdateShareSettingsResult { Ok = true, Visibility = effVisibility, ExpiresAt = effExpiresAt };
+    }
+
+    /// <summary>数据抽屉一次最多取回多少条访问日志用于去重访客统计。</summary>
+    private const int WindowLogSampleCap = 5000;
+
     public async Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, string? siteId = null, CancellationToken ct = default)
     {
         if (rangeDays <= 0 || rangeDays > 365) rangeDays = 7;
@@ -1832,6 +1994,10 @@ public class HostedSiteService : IHostedSiteService
         var totalShares = allShares.Count;
         var activeShares = allShares.Count(s => !s.IsRevoked && (!s.ExpiresAt.HasValue || s.ExpiresAt.Value > now));
         var expiredShares = allShares.Count(s => s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now);
+        // 「续期即可复活」只对这一批成立：已撤销的和过期超出宽限窗的，续期端点会当场拒绝。
+        var renewableExpiredShares = allShares.Count(s =>
+            s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now
+            && ShareRenewPolicy.CanRenew(s.IsRevoked, s.ExpiresAt, now));
 
         var tokens = allShares.Select(s => s.Token).ToList();
         var shareSiteIds = string.IsNullOrWhiteSpace(siteId)
@@ -1855,8 +2021,11 @@ public class HostedSiteService : IHostedSiteService
             : await _db.ShareViewLogs
                 .Find(logFilter)
                 .SortByDescending(x => x.ViewedAt)
-                .Limit(5000)
+                .Limit(WindowLogSampleCap)
                 .ToListAsync(ct);
+        // 命中上限时去重访客数只是下界：TotalViews 是无上限聚合出来的，两者人口不同，
+        // 相除得到的「人均看了几次」会被显著高估。把这件事如实带给前端，由它决定不出那句。
+        var visitorSampleCapped = windowLogs.Count >= WindowLogSampleCap;
         var recentLogs = windowLogs.Take(500).ToList();
 
         var tokenViewStats = tokens.Count == 0
@@ -1958,21 +2127,62 @@ public class HostedSiteService : IHostedSiteService
                 .SortByDescending(c => c.CreatedAt)
                 .ToListAsync(ct);
 
+        // 日趋势与时段分布**一次聚合**出来，按「哪天的第几个小时」分桶，两张图各自求和。
+        //
+        // 原先趋势是每天一次 CountDocuments：7 天看不出来，端点却收 365 天——一次抽屉加载
+        // 就是 365 次串行往返。而时段分布更糟，它是拿封顶 5000 条的样本在内存里数的：
+        // 高流量账号看到的「几点最热」只反映最近那 5000 次访问，是被时间近因带偏的结论，
+        // 界面上却写着「近 N 天」。两个问题同一个解——让数据库按全窗口分桶。
+        //
+        // 时区口径与 rangeStart 一致（UTC 自然日），与原先 date/nextDate 那对边界逐字相同。
+        var bucketed = tokens.Count == 0
+            ? new List<BsonDocument>()
+            : await _db.ShareViewLogs.Aggregate()
+                .Match(logFilter)
+                .AppendStage<BsonDocument>(new BsonDocument("$group", new BsonDocument
+                {
+                    { "_id", new BsonDocument
+                        {
+                            { "d", new BsonDocument("$dateToString", new BsonDocument
+                                {
+                                    { "format", "%Y-%m-%d" },
+                                    { "date", "$ViewedAt" },
+                                    { "timezone", "UTC" },
+                                }) },
+                            { "h", new BsonDocument("$hour", new BsonDocument
+                                {
+                                    { "date", "$ViewedAt" },
+                                    { "timezone", "UTC" },
+                                }) },
+                        } },
+                    { "views", new BsonDocument("$sum", 1) },
+                }))
+                .ToListAsync(ct);
+
+        var viewsByDay = new Dictionary<string, long>();
+        var viewsByHour = new long[24];
+        foreach (var doc in bucketed)
+        {
+            var id = doc["_id"].AsBsonDocument;
+            var day = id["d"].AsString;
+            var hour = id["h"].ToInt32();
+            var count = doc["views"].ToInt64();
+            viewsByDay[day] = viewsByDay.TryGetValue(day, out var prev) ? prev + count : count;
+            if (hour >= 0 && hour < 24) viewsByHour[hour] += count;
+        }
+
         var trend = new List<ShareAnalyticsTrendPoint>();
         for (var offset = 0; offset < rangeDays; offset++)
         {
             var date = rangeStart.Date.AddDays(offset);
             var nextDate = date.AddDays(1);
             var key = date.ToString("yyyy-MM-dd");
-            var views = tokens.Count == 0
-                ? 0
-                : await _db.ShareViewLogs.CountDocumentsAsync(
-                    logFilter & fbLog.Gte(x => x.ViewedAt, date) & fbLog.Lt(x => x.ViewedAt, nextDate),
-                    cancellationToken: ct);
             trend.Add(new ShareAnalyticsTrendPoint
             {
                 Date = key,
-                Views = views,
+                // 没有访问的那天聚合里根本不会出现，要补 0——缺一天会让折线图少一个点、
+                // 把两天连成一段，看上去像那天没统计而不是没人来。
+                Views = viewsByDay.TryGetValue(key, out var dayViews) ? dayViews : 0,
                 Comments = comments.LongCount(c => c.CreatedAt >= date && c.CreatedAt < nextDate),
             });
         }
@@ -1981,7 +2191,7 @@ public class HostedSiteService : IHostedSiteService
             .Select(hour => new ShareAnalyticsHourlyPoint
             {
                 Hour = hour,
-                Views = windowLogs.LongCount(l => l.ViewedAt.Hour == hour),
+                Views = viewsByHour[hour],
             })
             .ToList();
 
@@ -2043,8 +2253,10 @@ public class HostedSiteService : IHostedSiteService
             TotalShares = totalShares,
             ActiveShares = activeShares,
             ExpiredShares = expiredShares,
+            RenewableExpiredShares = renewableExpiredShares,
             TotalViews = totalViews,
             UniqueIpCount = uniqueVisitors,
+            VisitorSampleCapped = visitorSampleCapped,
             CommentCount = comments.Count,
             Timeline = timeline,
             TopLinks = topLinks,
@@ -2411,8 +2623,20 @@ public class HostedSiteService : IHostedSiteService
         return plan;
     }
 
-    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes)
+    /// <summary>
+    /// 挑站点入口文件。唯一判定源：解包前定「等会儿哪个是入口」和解包后定「最终入口」
+    /// 必须用同一条，否则幻灯片检测会对着一个和最终入口不同的文件跑（或者干脆不跑）。
+    /// 优先级：根 index.html → 根 index.htm → 第一个 HTML；都没有返回 null 由调用方兜底。
+    /// </summary>
+    private static string? SelectEntryPath(IReadOnlyList<(string Path, string MimeType)> items)
+        => items.FirstOrDefault(i => i.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase)).Path
+           ?? items.FirstOrDefault(i => i.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase)).Path
+           ?? items.FirstOrDefault(i => i.MimeType == "text/html").Path;
+
+    private async Task<ZipExtractResult> ExtractAndUploadZip(string siteId, byte[] zipBytes, string? uploadId = null)
     {
+        var isSlideDeck = false;
+
         try
         {
             using var zipStream = new MemoryStream(zipBytes);
@@ -2425,15 +2649,47 @@ public class HostedSiteService : IHostedSiteService
             var files = new List<HostedSiteFile>();
             long totalSize = 0;
 
+            // 进度用的：总数一开始就从 ZIP 条目表读得出来，是真实值不是估的。
+            // 入口文件在循环里一边扫一边认（第一个 index.html 就算），
+            // 不等循环跑完——那样前端要等到最后一刻才看到「识别到入口」，等于没提示。
+            var totalCount = plan.Items.Count;
+            var doneCount = 0;
+
+            // 入口文件在循环**之前**就按与最终选择完全相同的优先级定下来。
+            //
+            // 原来是循环里一边扫一边认，且只认根目录下精确的 index.html，其它情况
+            // entrySoFar 全程为 null——而下面挑最终入口时明明还支持 index.htm 与
+            // 「第一个 HTML」。后果是幻灯片检测对这两种包装**根本不跑**：一份用
+            // index.htm 或 slides.html 打包的 reveal.js 稿子会被存成 IsSlideDeck=false，
+            // 当普通网页渲染。判据比它该镜像的那个窄，两处必须用同一条。
+            // 顺带把「识别到入口」的提示提前到第一帧，不必等扫到那一个才显示。
+            var plannedEntry = SelectEntryPath(
+                plan.Items.Select(i => (i.RelativePath, i.Mime)).ToList());
+
             foreach (var (entry, relativePath, mimeType) in plan.Items)
             {
+
+                await _uploadProgress.ReportAsync(uploadId, new UploadProgressSnapshot
+                {
+                    DoneFiles = doneCount,
+                    TotalFiles = totalCount,
+                    EntryFile = plannedEntry,
+                    CurrentPath = relativePath,
+                    CurrentSize = entry.Length,
+                });
+
                 using var entryStream = entry.Open();
                 using var entryMs = new MemoryStream();
                 await entryStream.CopyToAsync(entryMs);
                 var entryBytes = entryMs.ToArray();
 
                 if (mimeType == "text/html")
+                {
                     entryBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(entryBytes, relativePath));
+                    // 只认入口文件的签名：ZIP 里可能夹着别人的 deck 示例，那不代表这个站是幻灯片
+                    if (string.Equals(relativePath, plannedEntry, StringComparison.OrdinalIgnoreCase))
+                        isSlideDeck = DetectSlideDeck(entryBytes);
+                }
 
                 var cosKey = _storage.BuildSiteKey(siteId, relativePath);
                 await _storage.UploadToKeyAsync(cosKey, entryBytes,
@@ -2447,14 +2703,13 @@ public class HostedSiteService : IHostedSiteService
                     MimeType = mimeType,
                 });
                 totalSize += entryBytes.Length;
+                doneCount++;
             }
 
-            var entryFile = files.FirstOrDefault(f => f.Path.Equals("index.html", StringComparison.OrdinalIgnoreCase))?.Path
-                ?? files.FirstOrDefault(f => f.Path.Equals("index.htm", StringComparison.OrdinalIgnoreCase))?.Path
-                ?? files.FirstOrDefault(f => f.MimeType == "text/html")?.Path
-                ?? files[0].Path;
+            // 与上面 plannedEntry 同一条判据，避免两处各挑各的
+            var entryFile = SelectEntryPath(files.Select(f => (f.Path, f.MimeType)).ToList()) ?? files[0].Path;
 
-            return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize };
+            return new ZipExtractResult { Files = files, EntryFile = entryFile, TotalSize = totalSize, IsSlideDeck = isSlideDeck };
         }
         catch (InvalidDataException)
         {
@@ -2543,6 +2798,48 @@ public class HostedSiteService : IHostedSiteService
     ///   因此垫片代码升级后重跑会把旧块换成新块，而不是被旧 marker 幂等跳过。
     /// - 上传路径即时注入；startup backfill 对存量站点补注入（HostedSiteBackfillService）。
     /// </summary>
+
+    /// <summary>
+    /// 扫入口 HTML 判断是不是一套幻灯片。只认真实签名（框架脚本名 / 约定类名），
+    /// 只看前 200KB —— 签名都在 head 与首屏结构里，整页扫大文件不划算。
+    /// 与前端 slideDeck.ts 是同一份签名表，改一处要同步改另一处。
+    /// </summary>
+    /// <summary>
+    /// 各家幻灯框架在 HTML 里留下的痕迹。**唯一口径在前端 slideDeck.ts**，这里是它的
+    /// 后端对应实现；两边由 slideDeckParity.test.ts 钉住，改一边不改另一边就会红。
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex[] SlideDeckSignatures =
+    {
+        // reveal.js：容器 class="reveal" + 内层 .slides，两者同时出现才算
+        new(@"class\s*=\s*[""'][^""']*\breveal\b[^""']*[""'][\s\S]{0,4000}class\s*=\s*[""'][^""']*\bslides\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        new(@"\breveal(?:\.min)?\.js\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        new(@"\bReveal\.initialize\s*\(", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        // impress.js
+        new(@"\bid\s*=\s*[""']impress[""']", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        new(@"\bimpress(?:\.min)?\.js\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        // remark / remarkjs
+        new(@"\bremark\.create\s*\(", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+        // deck.js
+        new(@"\bdeck(?:\.min)?\.js\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+    };
+
+    private static bool DetectSlideDeck(byte[] htmlBytes)
+    {
+        if (htmlBytes.Length == 0) return false;
+        var take = Math.Min(htmlBytes.Length, 200 * 1024);
+        var head = System.Text.Encoding.UTF8.GetString(htmlBytes, 0, take);
+        // 判据必须与阅读页那份**等价**：前端 slideDeck.ts 的 DECK_SIGNATURES 是唯一口径，
+        // 这里是它在后端的对应实现（跨语言，没法共用一份代码，所以用守卫钉住两边一致：
+        // prd-admin/src/components/web-hosting/slideDeckParity.test.ts）。
+        //
+        // 原先是裸子串匹配，两处对不上：
+        //   - `class="reveal"` 单独就算 deck，而 reveal 是很常见的动画 class 名；
+        //     前端刻意要求**同时**出现内层 .slides 容器才算。
+        //   - 子串写死了双引号，`class='reveal'` 或 `class="a reveal b"` 都漏。
+        // 后果是同一个页面：卡片标「幻灯片」，阅读页却当普通网页——两种说法都来自我们自己。
+        return SlideDeckSignatures.Any(re => re.IsMatch(head));
+    }
+
     private static byte[] InjectSlideNavCompat(byte[] htmlBytes)
     {
         var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
@@ -2773,17 +3070,51 @@ public class HostedSiteService : IHostedSiteService
         return a.Count == b.Count && a.SequenceEqual(b, StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// 这个用户能不能维护该站点的提问配置。与评论开关同一套角色门：仅 owner / editor。
+    /// 提问要烧钱，viewer 更不能碰。
+    ///
+    /// 抽成唯一判定源，是因为「站点可见」与「可以在站点上写」是两件事，而
+    /// <see cref="GetByIdAsync"/> 只答前者（owner 或任一共享团队的成员，含 viewer）。
+    /// 拿它当写权限用过一次：提问配置读端点与「重新生成」端点都只判了可见性，
+    /// 于是 viewer 能触发一次算在 owner 头上的模型调用、并覆盖掉 owner 手写的题库。
+    /// </summary>
+    public async Task<bool> CanMaintainAskAsync(string siteId, string userId, CancellationToken ct = default)
+    {
+        var site = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync(ct);
+        return site != null && await CanMaintainAskAsync(site, userId, ct);
+    }
+
+    private async Task<bool> CanMaintainAskAsync(HostedSite site, string userId, CancellationToken ct)
+    {
+        var role = site.OwnerUserId == userId ? WebHostingRoles.Owner : await ResolveSiteRoleAsync(site, userId, ct);
+        return role == WebHostingRoles.Owner || role == WebHostingRoles.Editor;
+    }
+
     public async Task<HostedSite?> SetAskConfigAsync(
         string siteId, string userId, AskConfigUpdate update, CancellationToken ct = default)
     {
         var site = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null) return null;
 
-        // 与评论开关同一套角色门：仅 owner / editor 可改。提问要烧钱，viewer 更不能碰。
-        var role = site.OwnerUserId == userId ? "owner" : await ResolveSiteRoleAsync(site, userId, ct);
-        if (role != "owner" && role != "editor") return null;
+        if (!await CanMaintainAskAsync(site, userId, ct)) return null;
 
-        var questions = AskOpeningQuestions.Normalize(update.SuggestedQuestions);
+        // SuggestedQuestions 为 null = 「这次没动题库」，整个题库字段连同 source 一起不写。
+        //
+        // 为什么必须能表达「不写」而不是每次都写一遍：打开设置抽屉会顺手排一次后台生成，
+        // 而抽屉里那份题是**打开那一刻**读到的旧值（多半是空）。owner 在抽屉里只改了个
+        // 无关开关就保存，如果无条件回写，他手上那份旧值会盖掉这期间生成好的题；更糟的是
+        // 下面的 ownerEdited 会把「旧值 ≠ 新生成的值」判成「他动过手」，从此钉成 manual，
+        // 自动生成再也不会补回来。前端因此只在用户真的编辑过题库时才带上这个字段。
+        var questions = update.SuggestedQuestions == null
+            ? null
+            : AskOpeningQuestions.Normalize(update.SuggestedQuestions);
+        // owner 提交的题库与库里那份不一样 = 他动过手，此后自动生成不再覆盖它。
+        // 相同就保持原样（多半是他只改了别的开关，把面板上原样回显的那份又提交了一遍）——
+        // 每次保存都判 manual 的话，自动生成第一次写完就永远不会再更新了。
+        var ownerEdited = questions != null
+            && !questions.SequenceEqual(site.AskSuggestedQuestions ?? new List<string>(), StringComparer.Ordinal);
+        var questionsSource = ownerEdited ? "manual" : site.AskQuestionsSource;
         var dailyLimit = update.DailyLimit < 0 ? 0 : update.DailyLimit;
         // 欢迎语要落库、而且随**每一次公开分享视图**返回，不设上限的话一段几 MB 的粘贴
         // 既能撑爆这次更新，也会让之后每个访客都多下载一遍。截断而不是拒绝：
@@ -2792,26 +3123,39 @@ public class HostedSiteService : IHostedSiteService
             ? null
             : AskAccessPolicy.TrimWelcome(update.Welcome);
 
-        await _db.HostedSites.UpdateOneAsync(
-            s => s.Id == siteId,
-            Builders<HostedSite>.Update
-                .Set(s => s.AskEnabled, update.Enabled)
-                .Set(s => s.AskWelcome, welcome)
+        var updateDef = Builders<HostedSite>.Update
+            .Set(s => s.AskEnabled, update.Enabled)
+            .Set(s => s.AskWelcome, welcome)
+            .Set(s => s.AskAllowAnonymous, update.AllowAnonymous)
+            .Set(s => s.AskDailyLimit, dailyLimit)
+            .Set(s => s.AskConfigUpdatedAt, DateTime.UtcNow)
+            .Set(s => s.AskConfigUpdatedBy, userId)
+            .Set(s => s.UpdatedAt, DateTime.UtcNow);
+        if (questions != null)
+        {
+            updateDef = updateDef
                 .Set(s => s.AskSuggestedQuestions, questions)
-                .Set(s => s.AskAllowAnonymous, update.AllowAnonymous)
-                .Set(s => s.AskDailyLimit, dailyLimit)
-                .Set(s => s.AskConfigUpdatedAt, DateTime.UtcNow)
-                .Set(s => s.AskConfigUpdatedBy, userId)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+                .Set(s => s.AskQuestionsSource, questionsSource);
+        }
+
+        await _db.HostedSites.UpdateOneAsync(s => s.Id == siteId, updateDef, cancellationToken: ct);
 
         site.AskEnabled = update.Enabled;
         site.AskWelcome = welcome;
-        site.AskSuggestedQuestions = questions;
+        if (questions != null)
+        {
+            site.AskSuggestedQuestions = questions;
+            site.AskQuestionsSource = questionsSource;
+        }
         site.AskAllowAnonymous = update.AllowAnonymous;
         site.AskDailyLimit = dailyLimit;
         site.AskConfigUpdatedAt = DateTime.UtcNow;
         site.AskConfigUpdatedBy = userId;
+
+        // 打开提问的那一刻才排生成：AskEnabled 默认关闭，给每个上传都跑一遍模型是纯浪费。
+        // 排队立刻返回，owner 不用为这几句题多等；他下次打开设置面板就能看见。
+        _askOpeners.QueueEnsure(site);
+
         return AttachDerivedFields(site);
     }
 
@@ -3076,6 +3420,9 @@ public class HostedSiteService : IHostedSiteService
 
     private sealed class ZipExtractResult
     {
+        /// <summary>入口 HTML 是不是一套幻灯片（只看入口，不看包里其它 HTML）</summary>
+        public bool IsSlideDeck { get; set; }
+
         public List<HostedSiteFile> Files { get; set; } = new();
         public string EntryFile { get; set; } = "index.html";
         public long TotalSize { get; set; }

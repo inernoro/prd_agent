@@ -7,8 +7,11 @@ import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
+import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-hosting/shareFailure';
+import { detectSlideDeck } from '@/components/web-hosting/slideDeck';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
 import AskWidget from '@/components/web-hosting/ask/AskWidget';
+import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   DIRECT_PREVIEW_SANDBOX,
@@ -17,6 +20,58 @@ import {
   hasFetchableHtml,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
+
+/**
+ * 幻灯片邀请条：告诉访客这一页能用键盘翻。
+ *
+ * 为什么要有：deck 的翻页控件通常是右下角两个很淡的箭头，很多人从头到尾用鼠标点，
+ * 甚至以为这就是一张长图。一句「方向键翻页」省掉这整段试错。
+ *
+ * 为什么会自己消失：它是邀请不是控件，说完就该让开——内容才是主角
+ * （content-fills-canvas：产物占主导，chrome 压到最少）。
+ */
+function SlideKeyboardInvite({ yield: stepAside }: { yield?: boolean }) {
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setGone(true), 6000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const key: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    minWidth: 20, height: 20, padding: '0 5px', borderRadius: 5,
+    background: 'var(--bg-tertiary)', border: '1px solid var(--border-default)',
+    fontSize: 11, fontFamily: 'ui-monospace, monospace', lineHeight: 1,
+  };
+
+  return (
+    // surface-tone-dark：这一条永远浮在托管内容之上，两个主题下都必须是深色药丸，
+    // 走 token 而不是写死颜色（admin-dual-theme 的暗岛机制）
+    <div
+      className="surface-tone-dark"
+      style={{
+        position: 'absolute', left: '50%', bottom: 18, transform: 'translateX(-50%)',
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '7px 14px', borderRadius: 999,
+        background: 'var(--panel-solid)', color: 'var(--text-primary)',
+        backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+        fontSize: 12.5, whiteSpace: 'nowrap',
+        // 邀请条永远不该拦住底下 deck 的点击
+        pointerEvents: 'none',
+        // 邀请条和提问坞的额度小条都站在底部正中。这一条是邀请不是控件，
+        // 用户一展开提问长条它就该让开——不然两枚药丸直接叠在一起，看着像渲染坏了。
+        opacity: gone || stepAside ? 0 : 1,
+        transition: 'opacity 600ms ease',
+      }}
+    >
+      {/* 只写方向键：四种 deck 框架都绑了它。F 全屏之类各家不一，
+          与其猜一个按下去没反应的快捷键，不如让顶栏那个全屏按钮去负责。 */}
+      <span style={key}>←</span>
+      <span style={key}>→</span>
+      <span>方向键翻页，点一下页面再按</span>
+    </div>
+  );
+}
 
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;
@@ -33,6 +88,29 @@ function fmtSize(b: number) {
  * 的页面）——在自己新加的遮罩上重犯一次就说不过去了。所以给它一个短窗口，到点必让位。
  */
 export const PREVIEW_MASK_TIMEOUT_MS = 1500;
+/**
+ * 迟到多久之后就不再换文档了。
+ *
+ * 遮罩 1.5s 让位之后，这几秒里访客还没来得及攒下滚动位置/输入/翻页，此时原文回来照换，
+ * 优先把内容显示出来（直链白屏时这是唯一的救场机会）。超过这个时长才保他的现场。
+ */
+export const LATE_SWAP_GUARD_MS = 6000;
+
+/**
+ * 盖在预览之上的浮层小片（角落里的一行字 / 一个按钮）共用同一套观感。
+ * 抽出来是为了让这两处永远长得一样——两份各写一遍时，改了一处忘一处就会一深一浅。
+ */
+const OVERLAY_CHIP: React.CSSProperties = {
+  position: 'absolute',
+  padding: '7px 11px',
+  borderRadius: 8,
+  background: 'rgba(17,17,17,0.82)',
+  color: 'rgba(255,255,255,0.86)',
+  fontSize: 12,
+  lineHeight: 1.5,
+  backdropFilter: 'blur(8px)',
+  WebkitBackdropFilter: 'blur(8px)',
+};
 
 /**
  * 该不该用遮罩盖住直链 iframe。抽成纯函数是为了能被测到「加载永远不结束时遮罩必须让位」。
@@ -64,6 +142,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [loading, setLoading] = useState(true);
   const [needPassword, setNeedPassword] = useState(false);
   const [password, setPassword] = useState('');
+  /**
+   * 密码试太频繁被 429 挡下时的提示（后端文案自带「请 N 秒后再试」）。
+   * 之前这一档会掉进整屏的「出错了」，把人踢出密码表单——他刚才输的密码没了，
+   * 也看不出来是被限流还是链接坏了。现在留在原地，只在表单上方多一条提示。
+   */
+  const [rateLimitedHint, setRateLimitedHint] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [wrongPassword, setWrongPassword] = useState(false);
@@ -73,16 +157,41 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'already'>('idle');
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
+  /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
+  const [askState, setAskState] = useState<AskDockState>('collapsed');
   // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
   const [commentCount, setCommentCount] = useState<number | null>(null);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
   const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
   /** 遮罩的短窗口是否已到点。到点后不再遮挡底下的直链 iframe，见 PREVIEW_MASK_TIMEOUT_MS */
   const [previewMaskExpired, setPreviewMaskExpired] = useState(false);
+  /** 直链 iframe 是否**真的加载出了内容**（有真实 src 且 load 事件到过）。
+   *  丢弃迟到 srcDoc 的前提是「用户已经在用底下那一页」——如果底下那页压根没加载
+   *  （站点没有入口地址、或直链本身就白屏），丢掉迟到的 srcDoc 等于让用户一直盯着空白。 */
+  // 这一发原文是什么时候开始取的——迟到多久由它算，不再拿 iframe 的 load 当证据
+  const fetchStartedAtRef = useRef(0);
   /** 直链 iframe 是否已经露给用户看过（遮罩到点即为真）。异步回调读它，不读 state */
   const exposedDirectRef = useRef(false);
   /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
   const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
+  /**
+   * 迟到的原文——**不自动换上去，但也绝不丢掉**。
+   *
+   * 「该不该换」需要两个我们都拿不到的答案：直链那一帧到底画出东西没有（跨源，读不了），
+   * 以及访客攒了多少状态（滚动发生在那一帧里，同样看不到）。上一版拿 iframe 的 load
+   * 当「画出来了」，那是形状 8；改成按已过时间判，同样证明不了白屏没白屏——它只是把
+   * 一个不成立的证据换成了另一个。
+   *
+   * 两个判据都不可知时，正确的做法不是替用户猜，而是把这份能救场的原文留在手里，
+   * 给他一个看得见的出口。丢掉它就意味着：直链白屏 + 原文回得慢 = 这个人永远停在一片白，
+   * 而那正是这条兜底本来要修的页面。
+   */
+  const [lateHtml, setLateHtml] = useState<{ siteUrl: string; html: string } | null>(null);
+  /**
+   * 这份托管内容是不是一套幻灯片（决定要不要出键盘邀请条）。
+   * 取回原文时立刻判、单独存：它不能跟着 embeddedHtml 走，那个值在遮罩让位后会被丢弃。
+   */
+  const [isDeck, setIsDeck] = useState(false);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -111,6 +220,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     setLoading(true);
     setError(null);
     setWrongPassword(false);
+    setRateLimitedHint(null);
     const res = await viewSiteShare(token, pwd?.trim());
     setLoading(false);
     if (res.success) {
@@ -118,6 +228,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       setNeedPassword(false);
     } else if (res.error?.code === 'UNAUTHORIZED') {
       setNeedPassword(true);
+      setRateLimitedHint(null);
       // 如果是带密码重试的，说明密码错误
       if (pwd !== undefined) {
         setWrongPassword(true);
@@ -125,6 +236,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         // 选中输入框内容方便重新输入
         setTimeout(() => inputRef.current?.select(), 100);
       }
+    } else if (res.error?.code === 'RATE_LIMITED') {
+      // 留在密码屏：这不是链接坏了，是他自己试太快，等一会儿还能进
+      setNeedPassword(true);
+      setWrongPassword(false);
+      setShakeKey(k => k + 1);
+      setRateLimitedHint(res.error.message || SHARE_FAILURE_REGISTRY['rate-limited'].body);
     } else {
       setError(res.error || { code: 'UNKNOWN', message: '加载失败' });
     }
@@ -179,7 +296,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
 
     let alive = true;
     setEmbeddedHtml(null);
+    setIsDeck(false);
     setEmbeddedHtmlError(null);
+    setLateHtml(null);
     setEmbeddedHtmlLoading(true);
     // 遮罩只挡一小会儿。到点后即便原文还没回来，也把底下的直链 iframe 露出来——
     // 它多半已经把页面画好了，继续盖着就是拿「可能更好的预览」换「确定看不见」。
@@ -187,6 +306,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     // 同一个「到点了」要被两处读：渲染读 state，异步回调读 ref。
     // 回调闭包里的 state 是发起那一刻的旧值，永远看不到超时后的 true。
     exposedDirectRef.current = false;
+    fetchStartedAtRef.current = Date.now();
     const maskTimer = window.setTimeout(() => {
       if (!alive) return;
       exposedDirectRef.current = true;
@@ -196,12 +316,31 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       .then((res) => {
         if (!alive) return;
         if (res.success && res.data?.html) {
-          // 遮罩已经让位 = 直链 iframe 已经在用户眼前跑起来了。此时再换成 srcDoc，
-          // 对浏览器就是换一个文档：滚动位置、表单里敲的字、PPT 翻到第几页全部清零。
-          // 代理最慢可以拖到 20s 才回来，那时候用户早就在用这个页面了——
-          // 「可能更好的预览」不值一次当面重载，迟到就直接丢弃。
-          if (exposedDirectRef.current) return;
-          setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) });
+          // 「是不是幻灯片」必须在这里就判掉，不能等 embeddedHtml。
+          // 下面那条早退（遮罩已让位就丢弃原文）会让 embeddedHtml 永远是 null，
+          // 于是 deck 邀请条在「原文回得比 1.5s 慢」的每一次都静默消失——
+          // 判据挂在一个会被丢弃的中间产物上，正是形状 2（链路只建到一半）。
+          setIsDeck(detectSlideDeck(res.data.html));
+          // 丢弃迟到原文的理由，从头到尾只有一个：**用户已经在这一页上攒下了状态**
+          // （滚到哪、输了什么、PPT 翻到第几页），换 srcDoc 等于换一个文档，全部清零。
+          //
+          // 所以判据必须冲着「攒了多少状态」去，而 iframe 的 load 事件不是它的证据：
+          // 直链白屏时 load 照样会触发，两个条件双双成立，于是把唯一能救场的原文丢掉，
+          // 访客就永远停在那一片白——正是这条兜底本来要修的那种页面。
+          // 「文档加载完了」证明不了「画出了东西」，拿它当证据是形状 8。
+          //
+          // 换成按已过时间判：这几秒里用户还没来得及攒下什么，宁可换文档也要把内容显示出来；
+          // 拖到很久之后才回来，人多半已经在用了，才保他的现场。两种误判的代价不对等——
+          // 丢错了是「什么都看不到」，换错了只是「滚动位置没了」。
+          const elapsed = Date.now() - fetchStartedAtRef.current;
+          const ready = { siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) };
+          if (exposedDirectRef.current && elapsed > LATE_SWAP_GUARD_MS) {
+            // 迟到了：不自动换（他可能已经滚到一半），但留着并给出口。
+            // 直接 return 会让「直链白屏 + 原文迟到」变成一片永远的白。
+            setLateHtml(ready);
+            return;
+          }
+          setEmbeddedHtml(ready);
           return;
         }
         // 取不回原文时仍回退直链 iframe（多数情况仍能显示），但把原因显式说出来，
@@ -235,23 +374,20 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
 
   // ── Error: Not Found / Expired / Visibility Denied ──
   if (error) {
-    const isNotFound = error.code === 'NOT_FOUND';
-    const isExpired = error.code === 'EXPIRED';
-    const isVisibilityDenied = error.code === 'visibility_denied' || error.code === 'VISIBILITY_DENIED';
-    const titleText = isNotFound
-      ? '链接不存在'
-      : isExpired
-        ? '链接已过期'
-        : isVisibilityDenied
-          ? '需要权限访问'
-          : '出错了';
-    const detailText = isNotFound
-      ? '该分享链接不存在或已被撤销'
-      : isExpired
-        ? '该分享链接已超过有效期，请联系分享者重新创建或续期'
-        : isVisibilityDenied
-          ? (error.message || '此链接仅限创建者或团队成员访问')
-          : error.message;
+    // 失败态判定收在 resolveShareFailure（有守卫）：后端两层给的可见性拒绝码大小写不同，
+    // 写在这儿的三元一定会漏掉其中一种
+    const failure = resolveShareFailure(error.code);
+    const cfg = SHARE_FAILURE_REGISTRY[failure];
+    const isVisibilityDenied = failure === 'visibility-denied';
+    const titleText = cfg.title;
+    const detailText = cfg.body;
+    // 认不出的码才把后端原文露出来——认得出的那几档，我们自己的话说得更清楚。
+    //
+    // 例外是可见性拒绝：后端把两种完全不同的策略压成同一个码回来——「登录可见」只是
+    // 没登录（登录一下就能看），「仅我和协作者」是团队外真进不去。注册表里只能放一段话，
+    // 于是一个只差登录的访客被告知「可能还需要团队成员身份」，照着这句话他会放弃。
+    // 这一档后端那句原文恰恰把两者分得清清楚楚，所以在这里显式保留它。
+    const serverDetail = failure === 'unknown' || isVisibilityDenied ? error.message : null;
     const currentPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/';
     return (
       <div style={styles.fullScreen}>
@@ -260,7 +396,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         <div style={{ ...styles.glassCard, textAlign: 'center', padding: '40px 32px' }}>
           <div style={{
             width: 64, height: 64, borderRadius: '50%',
-            background: isVisibilityDenied ? 'rgba(96, 165, 250, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+            background: cfg.tone === 'auth'
+              ? 'rgba(96, 165, 250, 0.15)'
+              : cfg.tone === 'wait'
+                ? 'var(--semantic-warning-soft)'
+                : 'rgba(239, 68, 68, 0.15)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             margin: '0 auto 20px',
           }}>
@@ -271,9 +411,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
             {titleText}
           </h2>
-          <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14, lineHeight: 1.6 }}>
+          <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14, lineHeight: 1.7 }}>
             {detailText}
           </p>
+          {serverDetail && (
+            <p className="surface-tone-dark" style={{ color: 'var(--text-muted)', margin: '8px 0 0', fontSize: 12.5, lineHeight: 1.6 }}>
+              {serverDetail}
+            </p>
+          )}
           {isVisibilityDenied && !isAuthenticated && (
             <button
               type="button"
@@ -365,6 +510,23 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               stepDuration={0.3}
             />
           </div>
+
+          {/* 限流不是「链接坏了」，所以留在这一屏，只多一条提示 + 说清口径 */}
+          {rateLimitedHint && (
+            <div
+              className="surface-tone-dark"
+              style={{
+                margin: '0 0 20px', padding: '10px 14px', borderRadius: 10, textAlign: 'left',
+                background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)',
+                color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.65,
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--accent-fg-warning)' }}>{rateLimitedHint}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {SHARE_FAILURE_REGISTRY['rate-limited'].body}
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handlePasswordSubmit} style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
             <div style={{ position: 'relative' }}>
@@ -591,6 +753,25 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             allow="fullscreen"
             allowFullScreen
           />
+          {/* 既没有取回的正文、也没有入口地址 —— iframe 会停在 about:blank，
+              用户看到的就是标题栏下面一片白、控制台一条错都没有，无从判断发生了什么。
+              这种时候必须把「为什么是空的」说出来（no-rootless-tree / expectation-management）。 */}
+          {!iframeHtml && !site.siteUrl && (
+            <div style={{
+              position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: 8,
+              background: '#fff', color: '#475569', fontSize: 14, padding: 24, textAlign: 'center',
+            }}>
+              <div style={{ fontWeight: 600 }}>这个站点没有可加载的入口地址</div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.7, maxWidth: 460 }}>
+                它的托管地址是空的，浏览器没有东西可以打开。多半是上传中断或内容已被清理，
+                请让分享者重新上传一次。
+              </div>
+              <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, opacity: 0.65 }}>
+                站点 ID {site.id}
+              </div>
+            </div>
+          )}
           {/* 遮罩是为了避免「先闪直链、再跳 srcDoc」的跳变，但它不透明且全屏：代理慢或不可达时
               会把底下那个其实已经渲染好的直链页面白屏盖住整个 HTTP 超时。所以只挡一小会儿，
               到点让位——判据抽在 shouldMaskDirectPreview，守卫见 ShareViewPage.preview.test.ts。 */}
@@ -612,23 +793,27 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               正在准备预览...
             </div>
           )}
+          {/* 幻灯片邀请条：这是一套 deck，告诉访客键盘能翻页，几秒后自己淡出不挡内容 */}
+          {isDeck && <SlideKeyboardInvite yield={askState === 'bar'} />}
+
           {/* 取回原文失败：不遮住 iframe（页面多半仍能直接加载出来），只在角落把原因说清楚。
               静默吞掉失败正是「明明打不开、却不知道为什么」的来源。 */}
+          {/* 迟到的原文没自动换上去时，给一个看得见的出口。
+              直链那一帧到底画出东西没有，我们跨源读不到；访客攒了多少状态，同样看不到。
+              两个判据都不可知，就不该替他猜——把手里这份能救场的原文摆出来，他自己点。
+              没有这个出口时，「直链白屏 + 原文迟到」就是一片永远的白。 */}
+          {lateHtml && !iframeHtml && (
+            <button
+              className="border border-token-subtle"
+              onClick={() => { setEmbeddedHtml(lateHtml); setLateHtml(null); }}
+              style={{ ...OVERLAY_CHIP, right: 12, bottom: 12, cursor: 'pointer' }}
+            >
+              这一页没显示出来？用原文重新加载
+            </button>
+          )}
+
           {embeddedHtmlError && !iframeHtml && !embeddedHtmlLoading && (
-            <div style={{
-              position: 'absolute',
-              left: 12,
-              bottom: 12,
-              maxWidth: 'min(420px, calc(100% - 24px))',
-              padding: '6px 10px',
-              borderRadius: 8,
-              background: 'rgba(17,17,17,0.82)',
-              color: 'rgba(255,255,255,0.86)',
-              fontSize: 12,
-              lineHeight: 1.5,
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-            }}>
+            <div style={{ ...OVERLAY_CHIP, left: 12, bottom: 12, maxWidth: 'min(420px, calc(100% - 24px))' }}>
               {embeddedHtmlError}
             </div>
           )}
@@ -677,6 +862,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             openingQuestions={data.ask.openingQuestions ?? []}
             allowAnonymous={data.ask.allowAnonymous}
             hidden={isFullscreen || showComments}
+            onStateChange={setAskState}
           />
         )}
       </div>

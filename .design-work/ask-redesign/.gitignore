@@ -1,0 +1,14 @@
+# 种出来的画布有 2.5 MB（编辑器代码占绝大部分），每次重种都不一样，
+# 进仓库只会让 diff 不可读。它随时能从下面那几个源文件重新种出来。
+ask-me-redesign.html
+# 取证截图与本地依赖
+*.png
+node_modules
+
+# 联系表是取证产物，随时能重生成
+motion-frames.png
+
+# demo 不进仓库：motion-demo 由 build-motion-demo.py 从 Motion.dc.html 重新生成；
+# prototype 是一次性的交互草稿，真实现落地后它就该退场，别留一份会漂的第二真相。
+motion-demo.html
+prototype.html

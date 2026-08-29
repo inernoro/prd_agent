@@ -47,14 +47,41 @@ describe('分享页预览接线', () => {
    * 表单里敲的字、PPT 翻到第几页全部清零。这条接线删掉之后没有任何单测会红（它藏在 effect
    * 的异步回调里），所以在这里按源码守住：ref 要存在，且必须在写 srcDoc 之前真的拦一道。
    */
-  it('遮罩让位之后到的原文要丢弃，不能当面把页面重载一次', () => {
+  it('迟到的原文要不要丢，判据必须冲着「用户攒了多少状态」去', () => {
     expect(source).toContain('exposedDirectRef');
-    expect(source).toMatch(/if\s*\(\s*exposedDirectRef\.current\s*\)\s*return;/);
-    // 光记下来不用等于没接线：拦截必须出现在 setEmbeddedHtml 之前
-    const guard = source.search(/if\s*\(\s*exposedDirectRef\.current\s*\)\s*return;/);
-    const apply = source.indexOf('setEmbeddedHtml({ siteUrl');
-    expect(guard).toBeGreaterThan(-1);
+
+    // 2026-08-25 这条曾收紧成「遮罩已让位 **且** 直链真的加载过」，用 iframe 的 onLoad 记账。
+    // 2026-08-29 第十九轮 review 推翻了后半条：直链白屏时 load 照样触发，两条双双成立，
+    // 于是把唯一能救场的原文丢掉——正是这条兜底本来要修的那种页面。
+    // 「文档加载完了」证明不了「画出了东西」。这条断言当时钉的就是那个不成立的证据，
+    // 改成钉真正的不变量：丢弃要有第二个条件，且那个条件不许再是 load 事件。
+    // 2026-08-29 第三十七轮又推翻了半条：按已过时间同样证明不了「直链画出东西没有」，
+    // 它只是把一个不成立的证据换成了另一个。真正不可知的是两件事——那一帧跨源读不到，
+    // 访客攒了多少状态也看不到。所以判据从「丢不丢」改成「换不换」：时间窗只决定
+    // **要不要自动换**，原文一律留着并给出可见出口，由人自己点。
+    const guard = source.search(
+      /if\s*\(\s*exposedDirectRef\.current\s*&&\s*elapsed\s*>\s*LATE_SWAP_GUARD_MS\s*\)/);
+    expect(guard, '自动换的门槛要按已过时间判，不能只看遮罩是否让位').toBeGreaterThan(-1);
+
+    // 这一支必须是「存起来」而不是丢掉——丢掉会让「直链白屏 + 原文迟到」成为永远的白
+    const branch = source.slice(guard, guard + 400);
+    expect(branch, '迟到分支把原文丢了').toContain('setLateHtml(ready)');
+
+    // 光记下来不用等于没接线：自动换要排在门槛之后
+    const apply = source.indexOf('setEmbeddedHtml(ready)');
     expect(apply).toBeGreaterThan(guard);
+
+    // 不许再拿 iframe 的 load 当「已经画出来了」的证据
+    expect(source).not.toContain('directLoadedRef');
+
+    // 每次重新取原文都要重置起点，否则第二次进来一开始就被算成迟到
+    expect(source).toContain('fetchStartedAtRef.current = Date.now();');
+  });
+
+  it('既没有原文也没有入口地址时，页面要说清为什么是空的，而不是摆一个空 iframe', () => {
+    // about:blank 的 iframe 在控制台一条错都没有，用户无从判断发生了什么
+    expect(source).toContain('!iframeHtml && !site.siteUrl');
+    expect(source).toContain('这个站点没有可加载的入口地址');
   });
 
   it('加载超时不产生「失败」文案——超时只是慢，不是坏', () => {
@@ -287,7 +314,14 @@ describe('hasFetchableHtml', () => {
     expect(hasFetchableHtml(html)).toBe(true);
   });
 
-  it.each(['pdf', 'video', 'markdown', 'PDF', 'audio'])('包装站一律不取正文：%s', (type) => {
+  // 2026-08-25 收紧：不再「一律不取」。Markdown 壳子就是服务端渲染好的完整正文，
+  // 它取得回来、也最适合 srcDoc；一刀切排除会让 MD 站永远走直链，那正是白屏那条路。
+  // 其余包装类型（含将来新增的）保持默认不取。
+  it('Markdown 包装站要取正文', () => {
+    expect(hasFetchableHtml({ ...html, wrappedAssetType: 'markdown' })).toBe(true);
+  });
+
+  it.each(['pdf', 'video', 'PDF', 'audio'])('壳子里没有正文的包装站不取：%s', (type) => {
     expect(hasFetchableHtml({ ...html, wrappedAssetType: type })).toBe(false);
   });
 

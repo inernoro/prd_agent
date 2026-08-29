@@ -377,3 +377,4 @@ docs:
   report.cds.self-update-timing-audit: "CDS Self-Update 时间体系审视（grandfather 保留） · 报告"
   report.gw-test-matrix: "网关测试矩阵全量报告（grandfather 保留） · 报告"
   report.platform.llm-gateway.resilience-acceptance: "LLM Gateway 故障隔离与恢复 · 测试环境验收报告"
+  report.web-hosting.ask-dock-handoff: "「向我提问」形变坞 · 交接清单"

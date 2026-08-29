@@ -394,6 +394,100 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void PoolDispatch_SkipsMembersWhoseModelRecordIsExplicitlyDisabled()
+    {
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 托管默认池是 append-only：成员删不掉（APPEND_ONLY_POOL）、也不许覆盖，
+        // 加成员时又有 MODEL_DISABLED 拦着「停用模型不许进池」。两条规矩合起来，
+        // 「停用模型」就是把一个已在池里的坏条目请出调度的唯一动作——它必须真的有效果。
+        Assert.Contains("平台托管默认池不允许删除成员", console);
+        Assert.Contains("停用模型不能加入平台托管默认池", console);
+        Assert.Contains("private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(", resolver);
+        Assert.Contains("await IsPoolMemberModelExplicitlyDisabledAsync(", resolver);
+        Assert.Contains("已停用，跳过该候选", resolver);
+
+        // 判据只认「库里明写着 Enabled=false」。用 Eq(Enabled,false) 查，而不是取回来再判
+        // `!model.Enabled`——bool 反序列化会把缺字段的老文档读成 false，那样会把一批
+        // 从没被人停用过的成员误判成停用。
+        Assert.Contains("Builders<LLMModel>.Filter.Eq(m => m.Enabled, false)", resolver);
+        // 三个别名都要认：池成员的 ModelId 按 `ModelName ?? Name ?? _id` 存，
+        // 少认 Name 的话，缺 ModelName 的那类模型停用了也照发——而托管池删不掉成员，
+        // 停用是唯一处置手段，等于这道闸对它们整类失效。
+        //
+        // 判据现在收敛在 PoolMemberIdMatch 一处。这条守卫原先断言的是
+        // IsPoolMemberModelExplicitlyDisabledAsync **函数体内**含三个别名——那把判据的
+        // 位置也钉死了，而真正要守的是「三个别名」和「只有一份」。事实上正是因为判据被
+        // 抄成两份，FindGatewayOwnedOrMapModelAsync 那份漏了 Name：GW 里启用着、只填了
+        // Name 的模型查不到，就被当成「GW 没有权威记录」，放行 MAP 侧的过期停用副本，
+        // 把可用候选跳过。所以这里改成钉判定源本身 + 钉「没人再手写第二份」。
+        var idMatch = SourceSlice.Member(resolver, "private static FilterDefinition<LLMModel> PoolMemberIdMatch(");
+        Assert.Contains("Eq(m => m.ModelName, modelId)", idMatch);
+        Assert.Contains("Eq(m => m.Name, modelId)", idMatch);
+        Assert.Contains("Eq(m => m.Id, modelId)", idMatch);
+
+        // 两处查询都必须走它：停用检查 + 「GW 有没有权威记录」
+        Assert.True(
+            Regex.Matches(resolver, @"PoolMemberIdMatch\(modelId\)").Count >= 2,
+            "有查询没走 PoolMemberIdMatch——判据一旦被抄第二份就会各自漂移");
+
+        // 谁也不许在别处再手写一遍别名表：ModelName/Id 的 Or 组合只应出现在判定源里
+        var handRolled = Regex.Matches(
+            resolver,
+            @"Filter\.Or\(\s*Builders<LLMModel>\.Filter\.Eq\(m => m\.ModelName, modelId\)").Count;
+        Assert.True(handRolled <= 1, $"别名表被手写了 {handRolled} 份，应当只有 PoolMemberIdMatch 一处");
+        var fetchThenTest = new Regex(@"IsPoolMemberModelExplicitlyDisabled[\s\S]{0,1600}?!\w+\.Enabled");
+        Assert.False(
+            fetchThenTest.IsMatch(resolver),
+            "别把「查回来再判 !Enabled」当停用证据：缺字段的老文档会被误判成停用，必须用 Eq(Enabled,false) 过滤");
+
+        // 这道闸不许拿「找到了可用配置」当「它没被停用」的证据。
+        //
+        // 上面那次 FindGatewayOwnedOrMapModelAsync 开着 MAP 兜底：GW 里明写着停用时它会
+        // 跳过、改捞 MAP 里那份还启用着的旧副本，结果非空。谁要是拿 `modelConfig is null`
+        // 给这道闸当前置条件，运维在网关点的停用就整条被短路，模型照发——两个数据源时
+        // 「查得到可用配置」并不能证明「没被停用」。
+        var dispatchGuard = SourceSlice.Member(
+            resolver, "await IsPoolMemberModelExplicitlyDisabledAsync(");
+        Assert.False(
+            new Regex(@"if \(\s*modelConfig is null\s*&&\s*await IsPoolMemberModelExplicitlyDisabledAsync")
+                .IsMatch(resolver),
+            "停用判定不许由 modelConfig 是否为空来把门：GW 停用 + MAP 有启用旧副本时会被整条短路");
+
+        // 反向也要钉住：GW 有权威记录时不许再拿 MAP 的停用旧副本说事，否则会把
+        // GW 里启用着的模型误判成停用。所以 MAP 侧只在 modelConfig 为空时才参与。
+        Assert.Contains("allowMapFallback: !gatewayConfigRequired && modelConfig is null", resolver);
+        Assert.Contains("已停用，跳过该候选", dispatchGuard);
+    }
+
+    [Fact]
+    public void IntentPoolEligibility_HasExactlyOneJudgmentAndOneWayToDeclareIt()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var registry = ReadRepoFile("llmgw/console-api/ModelPools/GatewayModelPoolTypeRegistry.cs");
+        var dtos = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+
+        // 判据只许有一份。Program.cs 曾抄过一份只认布尔位的拷贝，与注册表分别演进，
+        // 同一个模型在 PUT 池成员与 bulk-import 两条路上判出不同结果。
+        Assert.Contains("public static bool IsIntentCapable(BsonDocument model)", registry);
+        Assert.Contains("GatewayModelPoolTypeRegistry.IsIntentCapable(modelDoc)", console);
+        var legacyIntentJudgment = new Regex(
+            @"IsIntent""\)\s*==\s*true\s*\|\|[^\n]*IsMain",
+            RegexOptions.None);
+        Assert.False(
+            legacyIntentJudgment.IsMatch(console),
+            "Program.cs 里不许再出现只认 IsIntent/IsMain 布尔位的 intent 判据，走 GatewayModelPoolTypeRegistry.IsIntentCapable");
+
+        // 判据认 Capabilities 里的 intent，就必须有一条只改这一个模型的能力维护路径；
+        // 否则想给单个模型补一条能力，只能连同平台上几百个模型一起刷。
+        Assert.Contains("HasCapability(model, \"intent\")", registry);
+        Assert.Contains("public List<string>? ModelIds { get; set; }", dtos);
+        Assert.Contains("必须选择平台或指定 modelIds", console);
+        Assert.Contains("fb.In(\"_id\", modelIds)", console);
+    }
+
+    [Fact]
     public void RowActions_KeepsOverflowMenuClearOfTheCdsPreviewWidget()
     {
         // 窄屏行操作菜单贴视口底部，而 CDS 注入的预览徽章 #cds-widget 是
@@ -1100,7 +1194,11 @@ public class GatewayDataDomainGuardTests
             "重复 appCaller 必须先完整归档再删除");
         Assert.Contains("LlmGateway__HttpAppCallerAllowlist=${LLMGW_HTTP_APP_CALLER_ALLOWLIST:-}", dockerCompose);
 
-        Assert.Contains("LlmGateway__HttpAppCallerAllowlist: \"transcript-agent.transcribe::asr\"", cdsCompose);
+        // 名单是逐个毕业的，每切一个调用方就会增删一次——钉死整串会让那种正确改动误红。
+        // 守的是两条不变量：值是字面量（下一行那条），且既有的 asr 调用方没在增删中掉队。
+        var cdsAllowlist = Regex.Match(cdsCompose, "LlmGateway__HttpAppCallerAllowlist:\\s*\"([^\"]*)\"");
+        Assert.True(cdsAllowlist.Success, "cds-compose.yml 必须显式声明 LlmGateway__HttpAppCallerAllowlist");
+        Assert.Contains("transcript-agent.transcribe::asr", cdsAllowlist.Groups[1].Value);
         Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${", cdsCompose);

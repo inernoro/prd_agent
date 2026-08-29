@@ -8,6 +8,11 @@
   --bg-card-hover: rgba(255, 255, 255, 0.11);
   --bg-input: rgba(255, 255, 255, 0.07);
   --bg-input-hover: rgba(255, 255, 255, 0.10);
+  /* 凹陷井：输入框、胶囊未选中态等「比卡片更低一层」的表面。
+     全仓 40+ 处早就在写 var(--bg-sunken)，但两个主题档都没定义过它 ——
+     未定义的 var 在 background 上会解析成 transparent，于是那些控件一直是"没有底"的。
+     它与 --bg-input 同语义，这里对齐取值，两档一起补齐。 */
+  --bg-sunken: rgba(255, 255, 255, 0.07);
 
   /* 面板层：用于页面分区容器（比 bg-card 更”实”，避免在动效背景上文字不清） */
   --panel: linear-gradient(180deg, rgba(30, 30, 36, 0.92) 0%, rgba(30, 30, 36, 0.78) 100%);
@@ -101,6 +106,18 @@
   --tooltip-bg: rgba(20, 20, 24, 0.95);
   --tooltip-border: rgba(255, 255, 255, 0.12);
   --glass-noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.5'/%3E%3C/svg%3E");
+
+  /* 「向我提问」浮层坞的玻璃。与 --overlay-panel-solid 的区别：那一族是近实心的浮层面板，
+     而起手长条是**浮在托管正文之上**的一件东西——正文要透着看得见，所以 alpha 停在 0.78。
+     形变途中 blur 要关掉（跨帧合成会掉帧），那一档单独给一个不透明些的底顶上。 */
+  --ask-dock-glass-bg: rgba(24, 24, 30, 0.78);
+  --ask-dock-glass-border: rgba(255, 255, 255, 0.16);
+  --ask-dock-moving-bg: rgba(26, 26, 32, 0.92);
+  --ask-dock-hint-bg: rgba(24, 24, 30, 0.76);
+  --ask-dock-hint-bg-hover: rgba(38, 38, 46, 0.90);
+  --ask-dock-meta-bg: rgba(24, 24, 30, 0.62);
+  --ask-dock-shadow: 0 20px 48px -14px rgba(10, 10, 14, 0.60), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  --ask-dock-hint-shadow: 0 8px 24px -8px rgba(10, 10, 14, 0.50);
 
   /* Glass 组件变量（与 prd-desktop 对齐） */
   --glass-bg: rgba(15, 23, 42, 0.55);
@@ -429,6 +446,98 @@
   --viz-label-muted: rgba(247, 247, 251, 0.60);
   --viz-label-halo: rgba(0, 0, 0, 0.62);
 
+  /* ──────────────────────────────────────────────────────────────
+     设计稿规格 token（网页托管信息架构改版，2026-08）
+     值全部取自设计稿源码字面量，不是估的。深浅两档同批双写。
+     没有这一层，组件里会出现 300+ 处硬编码 px / hex，直接撞主题棘轮。
+     ────────────────────────────────────────────────────────────── */
+
+  /* 文字：设计稿用得最多的一档是 .55（元信息、mono 眉标、计数），token 体系原来断在 .68 */
+  --text-tertiary: rgba(247, 247, 251, 0.55);
+  --text-disabled: rgba(247, 247, 251, 0.45);
+
+  /* 底色第三、四层：侧栏比内容区更暗一档，缩略图井比侧栏更暗 */
+  --bg-rail: #17171c;
+  --bg-well: #0f0f13;
+  --bg-toolbar: #141418;
+  --bg-row: rgba(255, 255, 255, 0.04);
+  --bg-site-card: rgba(255, 255, 255, 0.045);
+
+  /* 描边：控件档（比 subtle 重、比 default 轻），以及一直被消费却从未定义的 border-strong */
+  --border-control: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.24);
+
+  /* 实心强调底上的字与描边。设计稿深色是 #D97757 底 + 纯白字 + #B0523A 描边；
+     浅色改为无描边 + 纸面阴影（见 --button-primary-shadow） */
+  --accent-on-primary: #ffffff;
+  --accent-primary-edge: #B0523A;
+
+  /* 浮在缩略图上的角标与按钮：深色是暗色蒙版，浅色是浅底深字（设计稿 1·B 明确标注） */
+  --scrim-badge-bg: rgba(11, 11, 14, 0.78);
+  --scrim-badge-border: rgba(255, 255, 255, 0.18);
+  --scrim-badge-shadow: none;
+  --scrim-button-bg: rgba(20, 20, 24, 0.8);
+  --scrim-fade: linear-gradient(0deg, rgba(11, 11, 14, 0.92), rgba(11, 11, 14, 0));
+
+  /* 头像底三色（中性 / 暖 / 冷），堆叠时的分隔环恒等于所在容器底色 */
+  --avatar-bg-neutral: #3f3f4a;
+  --avatar-bg-warm: #4a3a34;
+  --avatar-bg-cool: #33404a;
+
+  /* 站点缩略图的假页面渐变 */
+  --thumb-gradient: linear-gradient(160deg, #20222b, #141620);
+
+  /* 焦点/选中环与输入内凹（浅色档才有纸面内凹） */
+  --ring-focus: 0 0 0 3px rgba(217, 119, 87, 0.16);
+  --shadow-input-inset: none;
+  --shadow-site-card: none;
+
+  /* 圆角阶梯：设计稿骨干是 7 / 9 / 10（合计 176 次），原来只有 8/12/14/16 四档 */
+  --radius-2xs: 4px;
+  --radius-xs: 5px;
+  --radius-chip: 6px;
+  --radius-pill: 7px;
+  --radius-control: 9px;
+  --radius-field: 10px;
+  --radius-card: 12px;
+
+  /* mono 字族：设计稿所有眉标 / 尺寸 / 时间 / ID 走 JetBrains Mono。
+     不能叫 --font-mono（会被 Tailwind v4 的 font-mono 工具类劫持，见上文 --font-terminal 的注释）。 */
+  --font-code: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* 字距阶梯（量自设计稿：mono 一律正字距、Inter/Space Grotesk 一律负字距）。
+     写成 em 而不是 px：同一档在不同字号上等比缩放，px 值会在 9.5px 与 13px 上表现成两档。
+       眉标 mono 10px = 0.12em · 徽标 mono 9~9.5px = 0.04em · meta mono 10px = 0.02em
+       卡片标题 Inter 13px = -0.005em · 分组标题 Space Grotesk 15px = -0.01em
+       结论数字 Space Grotesk 16px = -0.02em
+     两个主题同值——字距是排印规格，不随明暗变。 */
+  --tracking-eyebrow: 0.12em;
+  --tracking-badge: 0.04em;
+  --tracking-meta: 0.02em;
+  --tracking-title: -0.005em;
+  --tracking-display: -0.01em;
+  --tracking-number: -0.02em;
+
+  /* 结论块（站点上下文里那条蓝色 callout）。与 --semantic-info-soft/-border 不是同一档：
+     设计稿用的是更亮一档的 info 蓝（#60a5fa = --accent-fg-info）且透明度更低，
+     直接套 semantic-info 会比稿子重一档。 */
+  --info-callout-bg: rgba(96, 165, 250, 0.08);
+  --info-callout-border: rgba(96, 165, 250, 0.22);
+  /* 同族但更重一档：info 语义的**实心动作按钮**（如「以访客身份预览这条链接」），
+     比 callout 的底更实、描边更亮，才压得住主按钮的分量 */
+  --info-action-bg: rgba(96, 165, 250, 0.16);
+  --info-action-border: rgba(147, 197, 253, 0.5);
+
+  /* 这几个原来只在 [data-material="solid"] 与浅色档定义，默认「暗色 + 玻璃」下解析为无效值。
+     补进基线，避免又一次「消费方拿到 transparent」的事故（同 --nested-block-bg 那次）。 */
+  --nested-block-border: rgba(255, 255, 255, 0.09);
+  --list-item-bg: rgba(255, 255, 255, 0.045);
+  --list-item-border: rgba(255, 255, 255, 0.08);
+  --list-item-hover-bg: rgba(255, 255, 255, 0.08);
+  --table-header-bg: rgba(255, 255, 255, 0.045);
+  --table-row-border: rgba(255, 255, 255, 0.08);
+  --table-row-hover-bg: rgba(255, 255, 255, 0.05);
+
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 14px;
@@ -540,6 +649,39 @@
 }
 /* 浅色模式是全站 token 的唯一覆盖层。运行时只设置 data-theme，不写颜色。 */
 [data-theme="light"] {
+
+  /* ── 设计稿规格 token · 浅色档（暖纸）。与深色档同批双写，见 :root 同名注释 ── */
+  --text-tertiary: rgba(15, 23, 42, 0.60);
+  --text-disabled: rgba(15, 23, 42, 0.45);
+  --bg-rail: #E9E4DB;
+  --bg-well: #E7E2D9;
+  --bg-toolbar: #F3EFE8;
+  --bg-row: #F8F5EF;
+  --bg-site-card: #F8F5EF;
+  --border-control: rgba(26, 26, 31, 0.14);
+  --border-strong: rgba(26, 26, 31, 0.28);
+  /* 浅色实心底上的字是暖白，不是纯白 */
+  --accent-on-primary: #FBF8F2;
+  --accent-primary-edge: transparent;
+  --scrim-badge-bg: #FBF8F3;
+  --scrim-badge-border: rgba(26, 26, 31, 0.16);
+  --scrim-badge-shadow: 0 1px 3px rgba(26, 26, 31, 0.12);
+  --scrim-button-bg: #FBF8F3;
+  --scrim-fade: linear-gradient(0deg, rgba(26, 26, 31, 0.28), rgba(26, 26, 31, 0));
+  --avatar-bg-neutral: #E4DED5;
+  --avatar-bg-warm: #EADFD6;
+  --avatar-bg-cool: #DCE2EA;
+  --thumb-gradient: linear-gradient(160deg, #FFFFFF, #F1EDE6);
+  --ring-focus: 0 0 0 3px rgba(166, 75, 53, 0.12);
+  --shadow-input-inset: inset 0 1px 2px rgba(26, 26, 31, 0.05);
+  /* 浅色档改用纸面阴影替代描边（设计稿 1·B 的原话） */
+  --shadow-site-card: 0 2px 6px rgba(26, 26, 31, 0.07);
+  /* 结论块在浅色档换成同族的深蓝（浅色的品牌交互是暖赤陶，蓝只留给 semantic-info）；
+     字距不在这里重定义——它是排印规格，两个主题同值。 */
+  --info-callout-bg: rgba(29, 78, 216, 0.06);
+  --info-callout-border: rgba(29, 78, 216, 0.22);
+  --info-action-bg: rgba(29, 78, 216, 0.07);
+  --info-action-border: rgba(29, 78, 216, 0.45);
   color-scheme: light;
 
   --bg-base: #EEEAE3;
@@ -549,6 +691,7 @@
   --bg-card-hover: rgba(26, 26, 31, 0.04);
   --bg-input: #FBF8F3;
   --bg-input-hover: #F4F0E9;
+  --bg-sunken: #FBF8F3;
 
   --panel: linear-gradient(180deg, #F8F5EF 0%, #F1ECE4 100%);
   --panel-solid: #F8F5EF;
@@ -572,6 +715,16 @@
   --shadow-glass-drawer: 0 16px 36px -24px rgba(89, 65, 50, 0.28), inset 0 0 0 1px rgba(89, 65, 50, 0.06);
   --shadow-glass-dropdown: 0 10px 28px -18px rgba(89, 65, 50, 0.24), inset 0 0 0 1px rgba(89, 65, 50, 0.06);
   --shadow-glass-bottom-sheet: 0 -10px 28px -18px rgba(89, 65, 50, 0.22), inset 0 0 0 1px rgba(89, 65, 50, 0.06);
+  /* 「向我提问」浮层坞（浅色档）。托管正文本身多半就是白纸，深色玻璃会显得像个补丁，
+     所以浅色下换成暖纸玻璃 + 棕调描边，仍靠 blur 让正文透出来。 */
+  --ask-dock-glass-bg: rgba(252, 250, 247, 0.86);
+  --ask-dock-glass-border: rgba(89, 65, 50, 0.16);
+  --ask-dock-moving-bg: rgba(252, 250, 247, 0.96);
+  --ask-dock-hint-bg: rgba(252, 250, 247, 0.88);
+  --ask-dock-hint-bg-hover: rgba(255, 253, 249, 0.97);
+  --ask-dock-meta-bg: rgba(252, 250, 247, 0.78);
+  --ask-dock-shadow: 0 16px 36px -18px rgba(89, 65, 50, 0.34), inset 0 1px 0 rgba(255, 253, 249, 0.80);
+  --ask-dock-hint-shadow: 0 8px 20px -10px rgba(89, 65, 50, 0.26);
   --nav-surface-bg: linear-gradient(180deg, rgba(252,250,247,0.98) 0%, rgba(248,245,239,0.96) 100%);
 
   --border-faint: rgba(26, 26, 31, 0.08);
@@ -903,11 +1056,15 @@
 /* 固定暗色可视化表面：容器声明一次，嵌套卡片沿上下文继承。
    仅用于热力图、趋势图等需要稳定暗色画布的创作型区域。 */
 .surface-tone-dark {
+  /* 与 :root 同批新增：岛内也要有值，否则浅色页里的暗岛会退回浅色档的描边 */
+  --border-strong: rgba(255, 255, 255, 0.24);
+  --nested-block-border: rgba(255, 255, 255, 0.09);
   color-scheme: dark;
   --bg-card: rgba(255, 255, 255, 0.08);
   --bg-card-hover: rgba(255, 255, 255, 0.11);
   --bg-input: rgba(255, 255, 255, 0.07);
   --bg-input-hover: rgba(255, 255, 255, 0.10);
+  --bg-sunken: rgba(255, 255, 255, 0.07);
   --bg-nested: rgba(255, 255, 255, 0.025);
   --glass-bg-start: rgb(30, 30, 36);
   --glass-bg-end: rgb(25, 25, 30);

@@ -4,6 +4,7 @@ using System.Text;
 using Markdig;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -22,6 +23,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class WebPagesController : ControllerBase
 {
     private readonly IHostedSiteService _siteService;
+    private readonly IUploadProgressService _uploadProgress;
 
     // 500MB —— 视频 / PDF 等媒体文件比 HTML 大几个量级
     private const long MaxSingleFileSize = 500L * 1024 * 1024;
@@ -43,11 +45,13 @@ public class WebPagesController : ControllerBase
 
     public WebPagesController(
         IHostedSiteService siteService,
+        IUploadProgressService uploadProgress,
         PrdAgent.Infrastructure.Database.MongoDbContext db,
         ITeamService teams,
         IHttpClientFactory httpClientFactory)
     {
         _siteService = siteService;
+        _uploadProgress = uploadProgress;
         _db = db;
         _teams = teams;
         _httpClientFactory = httpClientFactory;
@@ -87,7 +91,8 @@ public class WebPagesController : ControllerBase
         [FromForm] string? title,
         [FromForm] string? description,
         [FromForm] string? folder,
-        [FromForm] string? tags)
+        [FromForm] string? tags,
+        [FromForm] string? uploadId)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
@@ -111,7 +116,7 @@ public class WebPagesController : ControllerBase
             HostedSite site;
             if (ext == ".zip")
             {
-                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList);
+                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList, uploadId: uploadId);
             }
             else if (ext is ".html" or ".htm")
             {
@@ -131,7 +136,7 @@ public class WebPagesController : ControllerBase
                     : VideoExtensions.Contains(ext) ? "video"
                     : MarkdownExtensions.Contains(ext) ? "markdown"
                     : null;
-                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType);
+                site = await _siteService.CreateFromZipAsync(userId, zipBytes, effectiveTitle, description, folder, tagList, assetType, uploadId: uploadId);
             }
             else
             {
@@ -146,6 +151,37 @@ public class WebPagesController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+        finally
+        {
+            // 成功和失败都要收尾：不收的话前端那一路轮询会一直转到 TTL 到期，
+            // 用户看到的是「解包中」永远不结束——比没有进度还糟
+            await _uploadProgress.CompleteAsync(uploadId);
+        }
+    }
+
+    /// <summary>
+    /// 查一次上传解包进度。
+    ///
+    /// 为什么不是 SSE：上传本身是一次同步 POST，前端在等那个响应，这条只是旁路查询，
+    /// 秒级粒度足够，轮询比再拉一条长连接简单得多。
+    /// uploadId 由前端生成，跟着上传表单一起发过来；查不到就是还没开始或者已过期。
+    /// </summary>
+    [HttpGet("upload-progress/{uploadId}")]
+    public async Task<IActionResult> GetUploadProgress(string uploadId)
+    {
+        var snap = await _uploadProgress.GetAsync(uploadId);
+        if (snap == null)
+            return Ok(ApiResponse<object>.Ok(new { pending = true }));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            snap.DoneFiles,
+            snap.TotalFiles,
+            snap.EntryFile,
+            snap.CurrentPath,
+            snap.CurrentSize,
+            snap.Finished,
+        }));
     }
 
     // ─────────────────────────────────────────────
@@ -432,6 +468,105 @@ public class WebPagesController : ControllerBase
     // CRUD
     // ─────────────────────────────────────────────
 
+
+    /// <summary>
+    /// 每个站点的独立访客数（卡片上的「N 访客」）。
+    ///
+    /// 去重键：登录访客用 ViewerUserId，匿名访客退回 IP —— 与访客抽屉同一口径。
+    /// 一次聚合把整页站点数完，不按站点逐个查（列表一页最多 200 个站点）。
+    /// 站点没有任何访问记录时不出现在返回里，前端据此显示 0 而不是编一个数。
+    /// </summary>
+    /// <summary>
+    /// 每个站点的独立访客数。
+    ///
+    /// 必须并两个来源：站内访问记在 SiteViewEvents（登录用户直接打开或团队内访问），
+    /// 而公开分享链接的访问记在 ShareViewLogs、按分享而不是按站点存。只数前者的话，
+    /// 一个只通过分享链接传播的站点在卡片上永远是「0 访客」——那不是「没人看」，
+    /// 是我们没去数。两边的身份口径一样（登录用 ViewerUserId，匿名退回 IP），
+    /// 所以可以先各自取出「站点 → 访客键集合」再求并，避免同一个人被数两次。
+    /// </summary>
+    private async Task<Dictionary<string, long>> BuildVisitorCountsAsync(IEnumerable<string> siteIds)
+    {
+        var ids = siteIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        if (ids.Count == 0) return new Dictionary<string, long>();
+
+        // 登录用户按用户去重，匿名退回 IP；两端用同一把尺子，否则并集会把同一个人算两次
+        var visitorKey = new BsonDocument("$ifNull", new BsonArray
+        {
+            "$ViewerUserId",
+            new BsonDocument("$ifNull", new BsonArray { "$IpAddress", "anonymous" }),
+        });
+
+        var buckets = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        void Add(string siteId, string visitor)
+        {
+            if (!buckets.TryGetValue(siteId, out var set))
+                buckets[siteId] = set = new HashSet<string>(StringComparer.Ordinal);
+            set.Add(visitor);
+        }
+
+        // 来源一：站内访问，本来就带 SiteId
+        var sitePipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument("SiteId", new BsonDocument("$in", new BsonArray(ids)))),
+            new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
+            {
+                { "site", "$SiteId" },
+                { "visitor", visitorKey },
+            })),
+        };
+        foreach (var row in await _db.SiteViewEvents.Aggregate<BsonDocument>(sitePipeline).ToListAsync())
+        {
+            var key = row["_id"].AsBsonDocument;
+            if (key["site"].IsBsonNull) continue;
+            Add(key["site"].AsString, key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString);
+        }
+
+        // 来源二：分享访问。ShareViewLog 只认分享，得先把分享映回它包含的站点。
+        // 一条分享可以带多个站点，访客算给这条分享里的每个站点——这是这份日志能支持的最细粒度，
+        // 比整列显示 0 诚实得多；真要做到「他到底点开了哪一个」得在分享阅读页按站点埋点，另记一笔账。
+        // 两个字段都要认：合集分享写 SiteIds，存量单站点分享只写 SiteId。只查 SiteIds 的话，
+        // 单站点分享整条被漏掉，而那正是「纯靠分享访问的站点显示 0 访客」最常见的形态——
+        // 修了一半等于没修。字段口径走 WebPageShareLink.TargetSiteIds() 这一个来源。
+        var fb = Builders<WebPageShareLink>.Filter;
+        var shares = await _db.WebPageShareLinks
+            .Find(fb.Or(fb.AnyIn(x => x.SiteIds, ids), fb.In(x => x.SiteId, ids)))
+            .Project<WebPageShareLink>(Builders<WebPageShareLink>.Projection
+                .Include(x => x.Id).Include(x => x.SiteId).Include(x => x.SiteIds))
+            .ToListAsync();
+        var shareToSites = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var share in shares)
+        {
+            if (string.IsNullOrEmpty(share.Id)) continue;
+            var hit = share.TargetSiteIds().Where(ids.Contains).ToList();
+            if (hit.Count > 0) shareToSites[share.Id] = hit;
+        }
+
+        if (shareToSites.Count > 0)
+        {
+            var sharePipeline = new[]
+            {
+                new BsonDocument("$match", new BsonDocument("ShareId",
+                    new BsonDocument("$in", new BsonArray(shareToSites.Keys)))),
+                new BsonDocument("$group", new BsonDocument("_id", new BsonDocument
+                {
+                    { "share", "$ShareId" },
+                    { "visitor", visitorKey },
+                })),
+            };
+            foreach (var row in await _db.ShareViewLogs.Aggregate<BsonDocument>(sharePipeline).ToListAsync())
+            {
+                var key = row["_id"].AsBsonDocument;
+                if (key["share"].IsBsonNull) continue;
+                if (!shareToSites.TryGetValue(key["share"].AsString, out var sites)) continue;
+                var visitor = key["visitor"].IsBsonNull ? "anonymous" : key["visitor"].AsString;
+                foreach (var siteId in sites) Add(siteId, visitor);
+            }
+        }
+
+        return buckets.ToDictionary(kv => kv.Key, kv => (long)kv.Value.Count);
+    }
+
     /// <summary>获取站点列表。scope=team + teamId 时返回该团队共享的站点（含创建者头像昵称），默认返回我的</summary>
     [HttpGet]
     public async Task<IActionResult> List(
@@ -449,6 +584,10 @@ public class WebPagesController : ControllerBase
         var (items, total) = await _siteService.ListAsync(
             userId, keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
 
+        // 卡片要展示「N 访客」（设计稿屏 2 中卡与大卡都有这一格），浏览数是累计次数、访客是去重人数，
+        // 两个数不是一回事，所以必须单独算，不能拿 ViewCount 冒充。
+        var visitors = await BuildVisitorCountsAsync(items.Select(s => s.Id));
+
         // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
         //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
         // teamId 为空 = 跨团队聚合视图（知识库团队空间消费），无单团队角色概念，仅附带 owners。
@@ -461,12 +600,12 @@ public class WebPagesController : ControllerBase
             {
                 var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
                 var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
-                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
+                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole, visitors }));
             }
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners }));
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, visitors }));
         }
 
-        return Ok(ApiResponse<object>.Ok(new { items, total }));
+        return Ok(ApiResponse<object>.Ok(new { items, total, visitors }));
     }
 
     /// <summary>设置站点分享到的团队（仅 owner 可调）</summary>
@@ -837,10 +976,24 @@ public class WebPagesController : ControllerBase
     /// 保证「什么算可读、多大算超限、失败怎么报」只有一份判定（判据分裂会随时间漂移）。
     /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。
     /// </summary>
+    /// <summary>
+    /// 壳子本身就是完整正文、可以直接当 HTML 读回去的包装类型。
+    /// 默认拒绝、这里显式放行：将来新增包装形态时保持今天的行为，
+    /// 确认它自包含之后才加进来（default-deny，不靠「忘了排除」来放行）。
+    /// </summary>
+    private static readonly HashSet<string> SrcDocReadableWrappers =
+        new(StringComparer.OrdinalIgnoreCase) { "markdown" };
+
     private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site)
     {
-        if (!string.IsNullOrEmpty(site.WrappedAssetType))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频/Markdown 包装站，不支持以 HTML 读取"));
+        // 只拒「壳子里没有正文」的那几类：PDF / 视频壳本身只是一个指向同目录资产的容器，
+        // 取回它的 HTML 没有意义，而且它必须以托管域名为文档源才能加载那份资产。
+        // Markdown 包装站不同 —— 它的壳子**就是**正文：服务端把 .md 渲染成完整 HTML、
+        // 样式内联、没有任何外部引用，恰恰是最适合 srcDoc 的那种页面。
+        // 此前一刀切拒绝，导致 MD 站在分享页拿不到原文、只能退回直链 iframe，
+        // 而直链正是那条「Chrome 只绘制空白」的路径 —— 用户看到的就是标题栏下面一片白。
+        if (!string.IsNullOrEmpty(site.WrappedAssetType) && !SrcDocReadableWrappers.Contains(site.WrappedAssetType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该站点是 PDF/视频包装站，不支持以 HTML 读取"));
         if (string.IsNullOrWhiteSpace(site.SiteUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点没有可读取的入口文件"));
 
@@ -928,7 +1081,7 @@ public class WebPagesController : ControllerBase
     [HttpPost("{id}/reupload")]
     [RequestSizeLimit(MaxSingleFileSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
-    public async Task<IActionResult> Reupload(string id, IFormFile file)
+    public async Task<IActionResult> Reupload(string id, IFormFile file, [FromForm] string? uploadId = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
@@ -955,7 +1108,12 @@ public class WebPagesController : ControllerBase
         {
             // 显式传 wrappedAssetType，普通 HTML/ZIP 传 null 会清空旧 marker（避免站点
             // 从 PDF 包装改成 HTML 后前端还在渲染 PDF 占位，Codex P2 #612 抓到）
-            var updated = await _siteService.ReuploadAsync(id, GetUserId(), fileBytes, uploadName, wrappedAssetType);
+            // uploadId 要一路传到解包那层，否则前端轮询的那个键下面永远没有进度：
+            // 换 ZIP 时解包面板会一直停在「等待中」，而服务层其实早就支持这个参数了，
+            // 断的只是控制器这一跳（线只建了一半）。
+            var updated = await _siteService.ReuploadAsync(
+                id, GetUserId(), fileBytes, uploadName, wrappedAssetType, uploadId: uploadId);
+            await _uploadProgress.CompleteAsync(uploadId);
             return Ok(ApiResponse<object>.Ok(updated));
         }
         catch (KeyNotFoundException)
@@ -1117,12 +1275,29 @@ public class WebPagesController : ControllerBase
         }
     }
 
-    /// <summary>获取当前用户的分享链接列表（含未过期 + 过期 ≤ 7 天宽限期）</summary>
+    /// <summary>
+    /// 获取当前用户的分享链接列表（含未过期 + 过期 ≤ 7 天宽限期）。
+    ///
+    /// includeRevoked=true 时把已撤销的一并返回，供分享管理面板的「已撤销」一层展示。
+    /// 默认 false，既有调用方行为不变。
+    /// </summary>
     [HttpGet("shares")]
-    public async Task<IActionResult> ListShares()
+    public async Task<IActionResult> ListShares(
+        [FromQuery] bool includeRevoked = false, [FromQuery] string? siteId = null)
     {
-        var items = await _siteService.ListSharesAsync(GetUserId());
+        // siteId 是给「这个站点到底有没有活着的链接」这种问法准备的：不带它时列表按时间
+        // 取最近 100 条，某个站点的链接落在窗口外就会被判成「没有」，然后再建一条重复的。
+        var items = await _siteService.ListSharesAsync(GetUserId(), default, includeRevoked, siteId);
         var now = DateTime.UtcNow;
+
+        // 「指向的站点」这一列要的是标题，而链接上只有 siteId。一次批量查完，
+        // 不在 Select 里逐条查（100 条链接就是 100 次往返）。
+        var siteIds = items
+            .SelectMany(x => x.TargetSiteIds())
+            .Distinct()
+            .ToList();
+        var titleById = await _siteService.GetTitlesByIdsAsync(siteIds);
+
         var enriched = items.Select(x => new
         {
             x.Id,
@@ -1142,9 +1317,20 @@ public class WebPagesController : ControllerBase
             x.ViewCount,
             x.UniqueIpCount,
             x.LastViewedAt,
+            x.IsRevoked,
+            x.RevokedAt,
+            x.RevokedReason,
             isExpired = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now,
-            inGracePeriod = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now && x.ExpiresAt.Value > now.AddDays(-7),
-            renewalCount = x.RenewalHistory?.Count ?? 0,
+            inGracePeriod = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now && x.ExpiresAt.Value > ShareRenewPolicy.GraceCutoff(now),
+            // 只数真的续期。RenewalHistory 是「过期时间为什么变了」的审计账，里面还躺着
+            // created / reused / reset —— 全量 Count 会让一条从没续过期的链接显示「续期历史 1 次」
+            // （创建那条也算进去了），列表上那句话就是假的。
+            renewalCount = x.RenewalHistory?.Count(e => e.Action == "renewed") ?? 0,
+            // 指向的站点标题；站点已删时该 id 查不到，跳过而不是塞一个占位符
+            siteTitles = (x.SiteIds.Count > 0 ? x.SiteIds : (x.SiteId != null ? new List<string> { x.SiteId } : new List<string>()))
+                .Where(titleById.ContainsKey)
+                .Select(id => titleById[id])
+                .ToList(),
         }).ToList();
         return Ok(ApiResponse<object>.Ok(new { items = enriched }));
     }
@@ -1168,6 +1354,22 @@ public class WebPagesController : ControllerBase
     }
 
     /// <summary>
+    /// 就地改一条分享链接的设置（分享下拉面板的「谁能打开 / 有效期」两行）。
+    ///
+    /// 与续期分开：续期是在现有到期日上累加，这里是从现在起重设。面板上选「7 天」
+    /// 期待的是「还剩 7 天」，走续期会得到「原来剩的 + 7 天」，两者不能共用一个端点。
+    /// </summary>
+    [HttpPatch("shares/{shareId}")]
+    public async Task<IActionResult> UpdateShareSettings(string shareId, [FromBody] UpdateShareSettingsRequest req)
+    {
+        var result = await _siteService.UpdateShareSettingsAsync(
+            shareId, GetUserId(), req.Visibility, req.ExpiresInDays);
+        if (!result.Ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "修改失败"));
+        return Ok(ApiResponse<object>.Ok(new { visibility = result.Visibility, expiresAt = result.ExpiresAt }));
+    }
+
+    /// <summary>
     /// 用户分享统计聚合（参考 Cloudflare 简化版）。
     /// 可选 ?siteId=xxx 把统计范围收窄到单个站点（用于站点卡上的「本站点统计」按钮）。
     /// </summary>
@@ -1178,11 +1380,16 @@ public class WebPagesController : ControllerBase
         return Ok(ApiResponse<object>.Ok(result));
     }
 
-    /// <summary>撤销分享链接</summary>
+    /// <summary>
+    /// 撤销分享链接。
+    ///
+    /// reason 可选：撤销不可逆，几周后回头看列表时这句话是唯一能想起当初为什么撤的线索。
+    /// 不传就没有，列表那一行只显示撤销时间。
+    /// </summary>
     [HttpDelete("shares/{shareId}")]
-    public async Task<IActionResult> RevokeShare(string shareId)
+    public async Task<IActionResult> RevokeShare(string shareId, [FromQuery] string? reason = null)
     {
-        var ok = await _siteService.RevokeShareAsync(shareId, GetUserId());
+        var ok = await _siteService.RevokeShareAsync(shareId, GetUserId(), reason);
         if (!ok) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在"));
         return Ok(ApiResponse<object>.Ok(new { revoked = true }));
     }
@@ -1501,6 +1708,19 @@ public class RenewShareRequest
 {
     /// <summary>续期天数（1-365）</summary>
     public int ExtendDays { get; set; } = 30;
+}
+
+public class UpdateShareSettingsRequest
+{
+    /// <summary>可见性：owner-only / logged-in / public。null = 不改这一项</summary>
+    public string? Visibility { get; set; }
+
+    /// <summary>
+    /// 从现在起的有效天数（0 = 永久，上限 365）。null = 不改这一项。
+    /// 注意 0 与 null 是两回事：0 是「改成永久」，null 是「别动它」——用不可空 int 接
+    /// 就会把「没传」读成「改成永久」，一次误传把限期链接变永久。
+    /// </summary>
+    public int? ExpiresInDays { get; set; }
 }
 
 public class SetCommentsEnabledRequest

@@ -102,6 +102,15 @@ public class HostedSite
 
     // ── 公开可见性 ──
 
+    /// <summary>
+    /// 入口文件是不是一套幻灯片（reveal.js / impress.js / remark / deck.js）。
+    ///
+    /// 上传/替换时扫一次入口 HTML 的真实签名落库，不是运行时猜的——设计稿把「幻灯片」
+    /// 列为五种内容形态之一，而 SlideNavCompatVersion 是无条件盖在所有站点上的垫片版本号，
+    /// 不能当 deck 标记用（那是「不成立的证据」）。老数据没有这个字段，前端按 false 处理。
+    /// </summary>
+    public bool IsSlideDeck { get; set; }
+
     /// <summary>可见性：private = 仅自己可见 | public = 出现在个人公开页 /u/:username</summary>
     public string Visibility { get; set; } = "private";
 
@@ -122,11 +131,15 @@ public class HostedSite
     /// <summary>
     /// 是否开放「向我提问」。默认 **false** —— 与 CommentsEnabled 刻意相反。
     ///
-    /// 评论是纯存储、零边际成本，所以默认开；提问每一次都要烧 token 和钱，
-    /// 存量站点绝不能因为 Mongo 反序列化老文档（无此字段）就"顺带被打开"。
-    /// 初始化器为 false，老文档反序列化后恒为关闭，owner 必须显式打开。
+    /// 三态，不是 bool：null = owner 从没表过态（含存量站点与新上传），
+    /// true = 明确打开，false = 明确关掉。
+    ///
+    /// 口径 2026-08-29 起是「默认全开，除非明确拒绝」（用户决定），所以 null 视为开。
+    /// 之所以留成可空而不是把存量刷成 true：bool 里「没表过态」和「特意关掉」长得
+    /// 一模一样，一把刷会把 owner 关过的站点也打开。判定一律走
+    /// <see cref="AskAccessPolicy.IsAskOn"/>，不要在别处自己 ?? true。
     /// </summary>
-    public bool AskEnabled { get; set; }
+    public bool? AskEnabled { get; set; }
 
     /// <summary>提问面板的欢迎语；空则前端用站点标题兜底</summary>
     public string? AskWelcome { get; set; }
@@ -137,6 +150,38 @@ public class HostedSite
     /// 没挑的链接直接用这里的全量（截前 N 条）。
     /// </summary>
     public List<string> AskSuggestedQuestions { get; set; } = new();
+
+    /// <summary>
+    /// 这批开场问题是谁写的。
+    ///
+    ///   null / "auto" —— 系统读正文自动生成的，内容一换就重算
+    ///   "manual"      —— owner 在提问设置里动过手，此后自动生成不再覆盖它
+    ///
+    /// 没有这个标记的话，owner 精心改的几句会在下次重新上传时被静默冲掉，
+    /// 而他根本不知道发生过（改动消失是最难查的一类缺陷）。
+    /// </summary>
+    public string? AskQuestionsSource { get; set; }
+
+    /// <summary>
+    /// 上一次自动生成是针对哪个 ContentVersion 算的。
+    ///
+    /// 与 ContentVersion 相等就不重跑——一次上传一次调用，正文没变不重算。
+    /// 读不出正文（纯视频包装站等）时也会盖上这个戳，否则每次有人打开页面
+    /// 都要为一个永远读不出正文的站点重试一遍。
+    /// </summary>
+    public DateTime? AskQuestionsGeneratedFor { get; set; }
+
+    /// <summary>
+    /// 开场问题生成的**跨进程认领**时间（租约）。null = 没人在做。
+    ///
+    /// 进程内的 _inFlight 只挡得住同一个进程。同一个站点可能被两个 CDS 分支部署、
+    /// 或同一部署的两个副本同时排上生成（它们共用一个 Mongo），两边都过了进程内那道门，
+    /// 就会各调一次模型——owner 为同一版正文付两次钱，而后写的那份还会盖掉先写的。
+    ///
+    /// 所以认领必须落在库里，且要在**调模型之前**：CAS 抢到才做。带租约是为了容错——
+    /// 进程崩在中间时没人来清，租约过期后自动可被重新认领，不会把这个站点永久锁死。
+    /// </summary>
+    public DateTime? AskOpenerClaimedAt { get; set; }
 
     /// <summary>是否允许未登录访客提问。false = 只有登录用户能问（默认，防白嫖 token）</summary>
     public bool AskAllowAnonymous { get; set; }
@@ -204,6 +249,27 @@ public class WebPageShareLink
     /// <summary>关联的站点 ID 列表（合集分享时）</summary>
     public List<string> SiteIds { get; set; } = new();
 
+    /// <summary>
+    /// 这条分享到底指向哪几个站点 —— 合集分享看 SiteIds，存量单站点分享只有 SiteId。
+    ///
+    /// 抽出来是因为「两个字段一起认」这件事在读路径上被各写了一遍（鉴权、阅读、另存、
+    /// 分享列表…），少认一个字段的表现是**存量单站点分享整条被漏掉**，而且不报错：
+    /// 访客数一栏就因此对这类分享一直显示 0。判据分裂成多份然后各自漂移的典型
+    /// （predicate-and-wiring-discipline 形状 3），新代码一律走这一个。
+    ///
+    /// SiteId 排在前面：单站点分享的语义主体就是它。
+    /// </summary>
+    public List<string> TargetSiteIds()
+    {
+        var ids = new List<string>();
+        if (!string.IsNullOrEmpty(SiteId)) ids.Add(SiteId);
+        foreach (var id in SiteIds)
+        {
+            if (!string.IsNullOrEmpty(id) && !ids.Contains(id)) ids.Add(id);
+        }
+        return ids;
+    }
+
     /// <summary>分享类型：single = 单站点, collection = 合集</summary>
     public string ShareType { get; set; } = "single";
 
@@ -258,6 +324,18 @@ public class WebPageShareLink
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }
     public bool IsRevoked { get; set; }
+
+    /// <summary>
+    /// 撤销时刻。存量已撤销的链接没有这个字段（为 null），列表会退回「已撤销」四个字不带日期——
+    /// 不拿 CreatedAt 顶替：那是创建时间，冒充成撤销时间会直接误导人。
+    /// </summary>
+    public DateTime? RevokedAt { get; set; }
+
+    /// <summary>
+    /// 撤销原因（可选，用户撤销时自己填的一句话，如「误发已收回」）。
+    /// 撤销不可逆，几周后回头看列表时这句话是唯一能想起当初为什么撤的线索。
+    /// </summary>
+    public string? RevokedReason { get; set; }
 
     /// <summary>
     /// 链接可见性：

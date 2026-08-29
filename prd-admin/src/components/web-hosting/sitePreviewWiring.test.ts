@@ -60,3 +60,30 @@ describe('托管预览接线', () => {
     expect(source).not.toMatch(/\{\s*!visible\s*&&/);
   });
 });
+
+/**
+ * 分享下拉的接线守卫（形状 2）。
+ *
+ * 组件写好了、单测全绿，但只要 WebPagesPage 里没有那段 JSX，或者卡片的「分享」按钮
+ * 还指向旧的两层弹窗，用户点下去看到的就还是原来那套——而所有测试照样全绿。
+ */
+describe('分享下拉接线', () => {
+  it('主控台真的渲染了分享下拉，不只是把组件建出来', () => {
+    const source = read('pages/WebPagesPage.tsx');
+    expect(source).toContain('<QuickSharePopover');
+  });
+
+  it('卡片上的「分享」进的是下拉，不是直接开分享管理弹窗', () => {
+    const source = read('pages/WebPagesPage.tsx');
+    const at = source.indexOf('const handleShare');
+    expect(at, 'handleShare 改名了，守卫要同步').toBeGreaterThan(-1);
+    const body = source.slice(at, at + 260);
+    expect(body).toContain('setQuickShareAnchor');
+    expect(body, '点分享又开回旧的管理弹窗了').not.toContain('setShowSharesPanel(true)');
+  });
+
+  it('下拉要拿到锚点才能就地展开：分享回调必须带上被点的那枚按钮', () => {
+    const source = read('components/web-hosting/SiteCard.tsx');
+    expect(source).toMatch(/onShare:\s*\(anchor: HTMLElement\)/);
+  });
+});

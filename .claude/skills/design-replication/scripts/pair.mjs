@@ -8,12 +8,12 @@
  * 用法：node pair.mjs --design <目录> --impl <目录> --out <目录>
  * 两个目录里的 *.manifest.json 决定配对关系（state + theme + width 三者相同才配）。
  */
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 
 // 同 render.mjs：依赖装在工作目录，从 cwd 解析。
-const { chromium } = createRequire(path.join(process.cwd(), 'noop.js'))('playwright');
+// 用 playwright-core + 容器预装浏览器；解析顺序与失败提示收在 browser.mjs
+import { launch } from './browser.mjs';
 
 function arg(name, dflt) {
   const i = process.argv.indexOf(name);
@@ -37,9 +37,8 @@ const impl = load(implDir);
 const key = (r) => `${r.state}|${r.theme}|${r.width}`;
 const implBy = new Map(impl.map((r) => [key(r), r]));
 
-const CHROME = process.env.CHROME_BIN
-  || ['/opt/pw-browsers/chromium-1194/chrome-linux/chrome'].find((p) => fs.existsSync(p));
-const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
+// 同 render.mjs：按目录名探测，不写死版本号
+const browser = await launch();
 const page = await browser.newPage({ deviceScaleFactor: 1 });
 
 const unmatched = [];

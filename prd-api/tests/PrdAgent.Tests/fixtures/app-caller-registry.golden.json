@@ -570,6 +570,12 @@
     ]
   },
   {
+    "code": "prd-agent-web.web-hosting.ask-openers::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
     "code": "prd-agent-web.web-hosting.ask::chat",
     "modelTypes": [
       "chat"

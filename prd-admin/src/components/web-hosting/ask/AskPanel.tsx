@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { LogIn, Send, Sparkles, X } from 'lucide-react';
-import { StreamingText } from '@/components/streaming/StreamingText';
-import { AskMarkdown } from './AskMarkdown';
+import { useCallback, useEffect, useState } from 'react';
+import { Send, Sparkles, X } from 'lucide-react';
+import { ASK_REFUSAL_REGISTRY, resolveAskRefusal } from './askRefusal';
+import AskThread from './AskThread';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
-import { ASK_ERROR_CODES, ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
+import { ASK_MAX_QUESTION_LENGTH, type AskSource } from './askTypes';
+import { useAskQuota } from './useAskQuota';
 import { useAskStream } from './useAskStream';
 
 interface Props {
@@ -44,36 +45,40 @@ export default function AskPanel({
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const { messages, status, phaseMessage, model, gateError, isBusy, ask } = useAskStream(source);
   const [draft, setDraft] = useState('');
-  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const needLogin = !isAuthenticated && !allowAnonymous;
+  // 几种「问不了」各有各的下一步，判定收在 resolveAskRefusal 里（有守卫）
+  const refusal = resolveAskRefusal({ isAuthenticated, allowAnonymous, gateErrorCode: gateError?.code });
+  // 被拒时输入区一并禁用：留一个能打字却发不出去的输入框，只会让人白写一段
+  const blocked = refusal !== null;
 
-  // 新内容进来时贴住底部；用户正在往上翻看历史时不抢滚动
+  // 剩余额度。面板收起时不拉——藏起来的面板照样发请求是白烧一次。
+  // 同 AskDock：把额度窗口到期时间传下去，到点自动重拉，别让面板在窗口过后还锁着
+  const { quota, refresh: refreshQuota } = useAskQuota(source, !hidden, gateError?.retryAfterMs ?? null);
+  // 每问完一次（成功或失败）都重算：失败里含「读不到正文」那档，后端会把额度退回来，
+  // 只在成功时减一会让用户看到一个偏小的数，而他并没有被扣。
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    if (status === 'done' || status === 'error') void refreshQuota();
+  }, [status, refreshQuota]);
 
   const submit = useCallback(
     (text: string) => {
       const q = text.trim();
-      if (!q || isBusy || needLogin) return;
+      if (!q || isBusy || blocked) return;
       setDraft('');
       void ask(q);
     },
-    [ask, isBusy, needLogin],
+    [ask, isBusy, blocked],
   );
-
-  const showOpening = messages.length === 0 && openingQuestions.length > 0 && !needLogin;
 
   return (
     <div
       style={{
         display: hidden ? 'none' : 'flex',
         flexDirection: 'column',
-        background: 'var(--panel-solid, var(--bg-elevated))',
+        // 浮层模式必须**不透明**：--panel-solid 只有 92% 不透明度，抽屉压在访客页顶栏上时，
+        // 「全屏演示 / 评论」那几个按钮会隔着面板幽幽透出来，看着像渲染坏了。
+        // 嵌入模式由父容器给底，保留原来的半透观感。
+        background: embedded ? 'var(--panel-solid, var(--bg-elevated))' : 'var(--bg-elevated)',
         color: 'var(--text-primary)',
         // 嵌入模式由父容器定位；浮层模式自己 fixed（移动端全屏、桌面端右侧抽屉）
         ...(embedded
@@ -120,6 +125,23 @@ export default function AskPanel({
             {model ? `${model.model}${model.platform ? ` · ${model.platform}` : ''}` : title}
           </div>
         </div>
+        {/* 还剩几次。放顶栏而不是消息区顶部：消息区会随对话滚走，而「还能问几次」
+            恰恰是问到第三条时最需要看见的。读不到就整块不渲染——宁可不说，
+            也不给一个编的数（no-rootless-tree）。 */}
+        {quota && (
+          <div
+            title="两层独立计数：站点每日总量 + 你这一小时的额度"
+            style={{
+              flexShrink: 0, textAlign: 'right', lineHeight: 1.45,
+              fontFamily: 'var(--font-code, ui-monospace, monospace)', fontSize: 9.5,
+              color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            本页今日剩 {quota.siteRemaining} / {quota.siteLimit}
+            <br />
+            你这小时剩 {quota.visitorRemaining} / {quota.visitorLimit}
+          </div>
+        )}
         {!embedded && (
           <button
             onClick={onClose}
@@ -135,100 +157,40 @@ export default function AskPanel({
         )}
       </div>
 
-      {/* 消息区。
-          minHeight:0 不能省——flex 子元素的默认 min-height 是 auto，内容一多它就不肯收缩，
-          overflow 没机会触发，输入区被顶出面板（frontend-modal.md 第 3 条硬约束）。 */}
-      <div
-        ref={scrollRef}
-        style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 14 }}
-      >
-        {messages.length === 0 && (
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-            {welcome?.trim() || `关于「${title}」，有什么想了解的？`}
-            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-muted)' }}>
-              回答只依据这个页面的内容。
-            </div>
-          </div>
-        )}
-
-        {showOpening && (
-          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {openingQuestions.map((q) => (
-              <button
-                key={q}
-                onClick={() => submit(q)}
-                style={{
-                  textAlign: 'left', padding: '9px 12px', borderRadius: 10,
-                  border: '1px solid var(--border-subtle)', background: 'var(--bg-card)',
-                  color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer', lineHeight: 1.5,
-                }}
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {needLogin && (
-          <div
-            style={{
-              marginTop: 14, padding: 12, borderRadius: 10,
-              border: '1px solid var(--border-subtle)', background: 'var(--bg-card)',
-              fontSize: 13, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8,
-            }}
-          >
-            <LogIn size={15} style={{ flexShrink: 0 }} />
-            这个页面需要登录后才能提问。
-          </div>
-        )}
-
-        {messages.map((m) => (
-          <div key={m.id} style={{ marginTop: 16 }}>
-            {m.role === 'user' ? (
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <div
-                  style={{
-                    maxWidth: '85%', padding: '8px 12px', borderRadius: 12,
-                    background: 'var(--bg-tertiary)', color: 'var(--text-primary)',
-                    fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  }}
-                >
-                  {m.content}
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
-                {m.error ? (
-                  <span style={{ color: 'var(--accent-primary)' }}>{m.error}</span>
-                ) : (
-                  <StreamingText
-                    text={m.content}
-                    streaming={!!m.streaming}
-                    markdown
-                    // 没有 renderMarkdown 的话 StreamingText 不会切到 markdown 视图，
-                    // 完成后的答案会把 **加粗**、列表、链接的原始语法裸露出来
-                    renderMarkdown={(c) => <AskMarkdown content={c} />}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* 等待期不能静止（CLAUDE.md 规则 #6）：还没有第一个字时给阶段文案 + 转圈 */}
-        {isBusy && !messages.some((m) => m.streaming && m.content) && (
-          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)' }}>
-            <MapSpinner size={14} />
-            {phaseMessage || '正在思考…'}
-          </div>
-        )}
-
-        {gateError && gateError.code === ASK_ERROR_CODES.quotaExceeded && (
-          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
-            {gateError.message}
-          </div>
-        )}
-      </div>
+      {/* 消息区由 AskThread 承担（浮层坞与嵌入面板共用同一份渲染）。
+          minHeight:0 在它内部——flex 子元素默认 min-height 是 auto，内容一多就不肯收缩，
+          overflow 没机会触发，输入区会被顶出面板（frontend-modal.md 第 3 条硬约束）。 */}
+      <AskThread
+        messages={messages}
+        welcome={welcome}
+        title={title}
+        openingQuestions={openingQuestions}
+        onPick={submit}
+        refusal={refusal}
+        // 后端这几档的原话带着真实数字（每小时几次、还剩多久），优先于注册表兜底文案。
+        // 但只在错误码确实对应当前这一档时才用——未登录压过服务端错误码那条优先级里，
+        // gateError 可能是上一次会话的残留，拿它的文案去配「需要登录」的标题就串了。
+        refusalServerMessage={
+          resolveAskRefusal({ isAuthenticated, allowAnonymous: true, gateErrorCode: gateError?.code }) === refusal
+            ? gateError?.message
+            : null
+        }
+        onLogin={() => {
+          // 带 redirect 回到当前这一页：登录完还得让他自己找回来就白做了
+          const back = encodeURIComponent(window.location.pathname + window.location.search);
+          // 参数名必须是 returnUrl——LoginPage 只认这一个，传别的读不到就回首页。
+          // 访客本来是冲着「登录完接着在这一页问」来的，落到首页等于让他自己找回来。
+          window.location.href = `/login?returnUrl=${back}`;
+        }}
+        onRetry={() => {
+          // 读不到正文时后端会 RefundAsync 把额度退回来，所以重试是安全的、不烧额度。
+          // 重问最后一句用户问过的话；一句都还没问过就什么都不做。
+          const lastAsked = [...messages].reverse().find((m) => m.role === 'user');
+          if (lastAsked) void ask(lastAsked.content);
+        }}
+        isBusy={isBusy}
+        phaseMessage={phaseMessage}
+      />
 
       {/* 输入区。
           手机端面板铺满视口，而 app 开了 viewport-fit=cover——不补安全区内边距的话，
@@ -252,8 +214,10 @@ export default function AskPanel({
                 submit(draft);
               }
             }}
-            placeholder={needLogin ? '登录后即可提问' : '问点什么…'}
-            disabled={needLogin}
+            // 「问点什么…」没说清能问什么，用户会拿它当通用聊天框问页面外的事然后吃一句
+            // 「页面里没有提到」。把范围写进 placeholder，问之前就知道边界。
+            placeholder={refusal ? ASK_REFUSAL_REGISTRY[refusal].placeholder : '就这一页提个问题'}
+            disabled={blocked}
             rows={1}
             // 与后端同一个上限。后端超长直接 400（不静默截断），这里把边界前移到打字时，
             // 用户不会写完一大段才被拒。
@@ -270,14 +234,14 @@ export default function AskPanel({
           />
           <button
             onClick={() => submit(draft)}
-            disabled={!draft.trim() || isBusy || needLogin}
+            disabled={!draft.trim() || isBusy || blocked}
             aria-label="发送"
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: 38, height: 38, borderRadius: 10, border: 'none', flexShrink: 0,
-              background: !draft.trim() || isBusy || needLogin ? 'var(--bg-tertiary)' : 'var(--button-primary-bg)',
-              color: !draft.trim() || isBusy || needLogin ? 'var(--text-muted)' : 'var(--button-primary-fg)',
-              cursor: !draft.trim() || isBusy || needLogin ? 'default' : 'pointer',
+              background: !draft.trim() || isBusy || blocked ? 'var(--bg-tertiary)' : 'var(--button-primary-bg)',
+              color: !draft.trim() || isBusy || blocked ? 'var(--text-muted)' : 'var(--button-primary-fg)',
+              cursor: !draft.trim() || isBusy || blocked ? 'default' : 'pointer',
             }}
           >
             {isBusy ? <MapSpinner size={14} /> : <Send size={15} />}
@@ -285,7 +249,7 @@ export default function AskPanel({
         </div>
         <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--text-muted)' }}>
           <span style={{ flex: 1, minWidth: 0 }}>
-            {status === 'error' && gateError && gateError.code !== ASK_ERROR_CODES.quotaExceeded
+            {status === 'error' && gateError && !blocked
               ? gateError.message
               : '回答由 AI 生成，仅依据本页内容'}
           </span>

@@ -315,6 +315,37 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
      * 会被误配成同一块面（实测误报 3 处，全是隔着标签的邻居）。所以按标签边界切——
      * 底色和前景色写在同一个开标签上才算一块面。`=>` 里的 `>` 不当标签结束。
      */
+    /**
+     * 三元分支里的样式对象：`primary ? {底A, 字A} : {底B, 字B}` 写在同一个开标签上，
+     * 按标签取范围会把 A 的底和 B 的字配成一对（实测误报 SiteCardActions 的主按钮：
+     * accent 底配的是 --accent-on-primary，被隔壁分支的 --text-primary 顶了包）。
+     * 所以底色若落在某个 `{...}` 对象字面量里，就先按那个对象取范围——同一个对象里的
+     * 底与字才真是同一块面。取不到对象（底色写在 class 上等）再退回开标签。
+     */
+    const objectLiteralAround = (content: string, at: number): string | null => {
+      let depth = 0;
+      let start = -1;
+      for (let i = at; i >= 0 && at - i < 400; i -= 1) {
+        const ch = content[i];
+        if (ch === '}') depth += 1;
+        else if (ch === '{') {
+          if (depth === 0) { start = i; break; }
+          depth -= 1;
+        }
+      }
+      if (start < 0) return null;
+      depth = 0;
+      for (let i = start + 1; i < content.length && i - start < 800; i += 1) {
+        const ch = content[i];
+        if (ch === '{') depth += 1;
+        else if (ch === '}') {
+          if (depth === 0) return content.slice(start, i + 1);
+          depth -= 1;
+        }
+      }
+      return null;
+    };
+
     const openingTagAround = (content: string, at: number): string => {
       let start = at;
       while (start > 0) {
@@ -361,17 +392,24 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     const offendingLines = (content: string, checkLiterals = false): number[] => {
       const lines: number[] = [];
       /** (值, 位置) 两路底色的统一入口 */
-      const backgrounds: Array<[string, number]> = [];
+      // fromStyle 决定判据取多大范围：写在 style 对象里的底色按对象取（同一分支才算一块面），
+      // 写在 class 里的按开标签取（class 里没有对象边界可依）。
+      const backgrounds: Array<[string, number, boolean]> = [];
       for (const match of content.matchAll(BG_KEY)) {
         const at = (match.index ?? 0) + match[0].length;
-        backgrounds.push([readValue(content, at), at]);
+        backgrounds.push([readValue(content, at), at, true]);
       }
       for (const match of content.matchAll(CLASS_BG)) {
-        backgrounds.push([match[1].replace(/_/g, ' '), match.index ?? 0]);
+        backgrounds.push([match[1].replace(/_/g, ' '), match.index ?? 0, false]);
       }
-      for (const [value, at] of backgrounds) {
+      for (const [value, at, fromStyle] of backgrounds) {
         if (!ACCENT_IN_VALUE.test(value) && !(checkLiterals && literalStopFails(value))) continue;
-        if (!LIGHT_FG.test(openingTagAround(content, at))) continue;
+        // 只有「这个 style 对象自己就写了 color」时才收窄到对象——那说明底与字在这一支里成对。
+        // 对象里没写 color（前景在 className 或别处）仍按开标签判，否则 class 白字那一路会漏。
+        const objectScope = fromStyle ? objectLiteralAround(content, at) : null;
+        const scope = objectScope && COLOR_KEY.test(objectScope) ? objectScope : openingTagAround(content, at);
+        COLOR_KEY.lastIndex = 0; // 带 g 标志的正则 test 会记住位置，用完必须归零
+        if (!LIGHT_FG.test(scope)) continue;
         lines.push(content.slice(0, at).split('\n').length);
       }
       return lines.sort((a, b) => a - b);
@@ -390,6 +428,8 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     const SAFE_SIBLING = `<div style={{ color: 'var(--text-primary)' }}><span style={{ background: 'var(--accent-primary)' }} /></div>`;
 
     const TERNARY_FG = `<button style={{ background: active ? 'var(--accent-primary)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}>x</button>`;
+    // 分支各自成对：accent 底配的是深墨字，隔壁分支的浅色字不该算到它头上
+    const SAFE_BRANCHED_PAIR = `<button style={ primary ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' } : { background: 'var(--bg-tertiary)', color: 'var(--text-primary)' } }>x</button>`;
     const COPIED_GRADIENT = `<div className="text-token-primary" style={{ background: 'linear-gradient(135deg, #C8623A 0%, #D97757 48%, #E0A06B 100%)' }}>x</div>`;
     const SAFE_PALE_LITERAL = `<div className="text-token-primary" style={{ background: '#141418' }}>x</div>`;
 
@@ -413,6 +453,7 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
       ['按钮 token 对', SAFE_TOKEN_PAIR], ['accent 底 + 深墨字', SAFE_DARK_FG], ['accent 透明底', SAFE_ALPHA_TINT],
       ['兄弟元素的文字色', SAFE_SIBLING], ['深底配浅字（本来就该这样）', SAFE_PALE_LITERAL],
       ['class 底 + 深墨字', SAFE_CLASS_BG_DARK_FG], ['非 accent 的 class 底', SAFE_CLASS_BG_TOKEN],
+      ['三元分支各自成对', SAFE_BRANCHED_PAIR],
     ] as const) {
       expect(offendingLines(snippet, true), `判据误报了「${name}」`).toEqual([]);
     }

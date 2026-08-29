@@ -1,0 +1,47 @@
+/*
+ * 「向我提问」浮层坞的样式补丁。
+ *
+ * 绝大部分样式仍走 inline style（几何要跟着 WAAPI 逐帧改，写在 CSS 里反而要打架），
+ * 这里只放三类 inline style 表达不了的东西：
+ *   1. 弹簧曲线常量（贝塞尔画不出过冲再回弹，必须用 linear() 烘一条采样出来的）
+ *   2. 伪元素与子选择器（::placeholder、提示条的 nth-child 错峰）
+ *   3. prefers-reduced-motion 的整体降级
+ */
+
+.ask-dock-root {
+  /* response .36 / ζ .82，过冲 1.1% —— 形变主曲线 */
+  --ask-spring: linear(0,.1055,.3144,.5281,.7045,.8326,.9171,.9677,.9948,1.0071,1.0109,1.0105,1.0084,1.006,1.0039,1.0023,1.0012,1.0005,1.0001,1,.9999,.9999,.9999,.9999,1,1,1);
+  /* response .30 / ζ .70，过冲 4.6% —— 提示条弹出，要比形变更跳一点 */
+  --ask-pop: linear(0,.1095,.3349,.5715,.7673,.9057,.9898,1.0317,1.0455,1.0431,1.0336,1.0226,1.0129,1.0058,1.0013,.9989,.998,.9979,.9983,.9988,.9993,.9997,.9999,1,1.0001,1.0001,1.0001);
+  --ask-ease: cubic-bezier(.2,0,0,1);
+}
+
+/* 提示条：从长条里弹出来，不是淡入。错峰 60ms，一颗一颗冒出来 */
+.ask-dock-hint {
+  opacity: 0;
+  transform: translateY(26px) scale(0.7);
+  transition: opacity 0.2s var(--ask-ease), transform 0.48s var(--ask-pop);
+}
+.ask-dock-hints[data-on='true'] .ask-dock-hint {
+  opacity: 1;
+  transform: none;
+}
+.ask-dock-hints[data-on='true'] .ask-dock-hint:nth-child(2) { transition-delay: 0.06s; }
+.ask-dock-hints[data-on='true'] .ask-dock-hint:nth-child(3) { transition-delay: 0.12s; }
+.ask-dock-hints[data-on='true'] .ask-dock-hint:nth-child(4) { transition-delay: 0.18s; }
+.ask-dock-hints[data-on='true'] .ask-dock-hint:nth-child(5) { transition-delay: 0.24s; }
+.ask-dock-hint:hover { background: var(--ask-dock-hint-bg-hover); }
+
+.ask-dock-root input::placeholder,
+.ask-dock-root textarea::placeholder { color: var(--text-tertiary); }
+
+.ask-dock-icon-btn:hover { background: var(--bg-card); }
+
+/* 关掉动效时，四态之间是瞬时切换 —— 位置照旧正确，只是不再有中间帧 */
+@media (prefers-reduced-motion: reduce) {
+  .ask-dock-hint,
+  .ask-dock-layer,
+  .ask-dock-hints,
+  .ask-dock-meta,
+  .ask-dock-history { transition: none !important; }
+}

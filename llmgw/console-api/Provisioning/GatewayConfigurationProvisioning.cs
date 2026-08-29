@@ -532,6 +532,32 @@ public static class GatewayConfigurationProvisioning
         return true;
     }
 
+    /// <summary>
+    /// 批量能力维护的 modelIds 归一化。
+    ///
+    /// 关键在于把「一个都没传」和「传了但全被丢掉」分成两种结局：前者是合法请求（按平台
+    /// 整片刷），后者必须拒。合并处理的话，一个带 platformId、modelIds 全是空白或超长串的
+    /// 请求会一路通过校验，而后面的过滤条件因为 modelIds 为空不会被加上——这次本该精确到
+    /// 几个模型的写入，静默扩成整个平台上几百个模型全刷一遍。批量写的过滤条件被悄悄放宽，
+    /// 是这类接口最危险的失效形态：它不报错，只是改多了。
+    /// </summary>
+    public static bool TryNormalizeBulkModelIds(
+        IReadOnlyList<string?>? supplied,
+        out List<string> modelIds,
+        out string error)
+    {
+        error = string.Empty;
+        modelIds = (supplied ?? new List<string?>())
+            .Select(item => (item ?? string.Empty).Trim())
+            .Where(item => item.Length is > 0 and <= 300)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (modelIds.Count > 200) return Fail("modelIds 最多 200 项", out error);
+        if ((supplied?.Count ?? 0) > 0 && modelIds.Count == 0)
+            return Fail("modelIds 里没有一项是有效的（空白或超过 300 字符），不会据此改动整个平台", out error);
+        return true;
+    }
+
     public static IReadOnlyList<BsonDocument> BuildImageSizeCapabilityDocuments(string mode, string? fieldFormat)
     {
         var types = new List<string>();

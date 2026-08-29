@@ -1189,6 +1189,7 @@ export const api = {
   // ============ Web Hosting 网页托管 ============
   webPages: {
     upload: () => '/api/web-pages/upload',
+    uploadProgress: (uploadId: string) => `/api/web-pages/upload-progress/${uploadId}`,
     fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
@@ -1223,8 +1224,12 @@ export const api = {
     shareContent: (token: string) => `/api/web-pages/shares/view/${token}/content`,
     // 「向我提问」
     askConfig: (siteId: string) => `/api/web-pages/${siteId}/ask/config`,
+    // 重新按正文生成开场问题（owner 明确要的那一次，同步等结果）
+    askRegenerateQuestions: (siteId: string) => `/api/web-pages/${siteId}/ask/questions/regenerate`,
     askStream: (siteId: string) => `/api/web-pages/${siteId}/ask/stream`,
     askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
+    // 剩余额度旁路：与提问走同一套门禁与同一个计数桶，但只读不加一
+    askQuotaByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/quota`,
   },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {

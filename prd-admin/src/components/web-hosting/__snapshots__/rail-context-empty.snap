@@ -1,0 +1,5 @@
+aside .flex-col.hidden.overflow-y-auto.shrink-0.xl:flex {gap:12px;overscroll-behavior:contain;padding:14px;width:300px}
+  div
+    "站点上下文"
+  p
+    "选中一张卡片，这里会告诉你它对外是什么样：还有几条链接活着、快过期了没、有没有人在看。"

@@ -128,6 +128,25 @@ jobs:
               - 'cds/src/scheduler/nginx-template.ts'
               - 'scripts/tests/validate-static-dist.test.sh'
               - 'scripts/validate-static-dist.sh'
+              # 同一个坑的第二批：scripts/tests/ 下 14 个 *.test.mjs（稳定冒烟的编排、
+              # 结果归并、视觉闸、通知分流，共 150 条断言）也从来没有任何 workflow 引用过。
+              # 它们今天全绿，说明不是坏的——只是没人跑。连同各自的被测脚本一起登记。
+              - 'scripts/tests/*.test.mjs'
+              - 'scripts/stable-smoke*.mjs'
+              - 'scripts/compose-stable-smoke-supervisor-report.mjs'
+              - 'scripts/prepare-stable-smoke-archive-report.mjs'
+              - 'scripts/split-stable-smoke-report.mjs'
+              # 设计复刻工具里被守卫盯着的判据函数（样例数据键、档位导出与比对）
+              - '.claude/skills/design-replication/scripts/fixtures.mjs'
+              - '.claude/skills/design-replication/scripts/spec-export.mjs'
+              - '.claude/skills/design-replication/scripts/spec-diff.mjs'
+              # 切图的横向裁剪边界与漂移守卫的零比对判红。登记在这里是形状 7 的补课：
+              # 守卫只在自己被改时才跑的话，真正会引入漂移的那种 PR（只改被守文件）一路全绿。
+              - '.claude/skills/design-replication/scripts/extract-design.mjs'
+              - '.claude/skills/design-replication/scripts/fixture-drift.mjs'
+              # 每日验收的锚点与导航 label 的交叉核对：被守的是脚本与 navRegistry 两侧
+              - 'scripts/smoke/daily-acceptance.mjs'
+              - 'prd-admin/src/app/navRegistry.tsx'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
             acceptance_report:
@@ -241,6 +260,21 @@ jobs:
             echo "--- $t"
             python3 "$t"
           done
+
+      # scripts/tests/ 下的 *.test.mjs 此前没有任何 workflow 引用（写了等于没写）。
+      # 用 node --test 一次跑完；shopt -s nullglob 保证「一个都没有」时是空跑而不是
+      # 把字面量 '*.test.mjs' 当文件名传进去炸掉。
+      - name: Script guards (node --test)
+        shell: bash
+        run: |
+          set -e
+          shopt -s nullglob
+          files=(scripts/tests/*.test.mjs)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "没有 *.test.mjs —— 这道步骤本该有东西可跑，请检查是不是被误删了"
+            exit 1
+          fi
+          node --test "${files[@]}"
 
   acceptance-report-gate:
     name: Acceptance Report Gate

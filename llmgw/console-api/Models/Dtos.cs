@@ -725,6 +725,8 @@ public sealed class BulkImportPoolModelsResult
 public sealed class BulkUpdateModelCapabilitiesRequest
 {
     public string? PlatformId { get; set; }
+    /// <summary>按 _id / ModelName / Name 精确圈定要维护的模型；与 PlatformId 同时给则取交集。</summary>
+    public List<string>? ModelIds { get; set; }
     public bool? EnabledOnly { get; set; }
     public bool? OnlyMissing { get; set; }
     public bool? AllGwOwned { get; set; }

@@ -572,6 +572,39 @@ public class ModelResolver : IModelResolver
                     ct,
                     allowMapFallback: !gatewayConfigRequired);
 
+                // 上面这次查找本来就带 Enabled==true，却只把结果当 MaxConcurrency 的来源，
+                // 空值直接丢掉——于是「模型已停用」这个它明明查得到的事实从来没被用上：
+                // 平台停用会被 platform==null 挡下，模型停用却照发不误。
+                //
+                // 后果不只是少一道闸。托管默认池是 append-only（成员删不掉、也不许覆盖），
+                // 加成员时又有 MODEL_DISABLED 拦着「停用模型不许进池」；两条规矩合起来，
+                // 池里一旦混进一个不可调用的条目（批量导入很容易），控制台就再没有任何
+                // 一条路能让它别再被选中——停用模型是唯一剩下的动作，而它在这里没效果。
+                //
+                // 判据只认「库里明写着 Enabled=false」这一种证据：查不到不算（可能是纯池
+                // 快照成员、跨租户、或 MAP fallback 被关掉），字段缺失也不算（Mongo 的
+                // Eq(false) 不匹配缺字段的文档，正好挡住把「老数据没写这个字段」误判成停用）。
+                // 这道闸**不能**拿 `modelConfig is null` 当前置条件。上面那次查找开着 MAP
+                // 兜底：GW 里这条模型明写着 Enabled=false，它会跳过、转而捞出 MAP 里那份还
+                // 启用着的旧副本，于是 modelConfig 非空、闸门整条被短路——运维在网关里点了
+                // 停用，模型照发。判据本身没写错，错在拿一个「找到了可用配置」的结果去证明
+                // 「它没被停用」，而这两件事有两个数据源时并不等价。
+                //
+                // 反过来也要防：GW 里启用着、MAP 里躺着一份过期的停用副本时，不能被误判成
+                // 停用。所以 MAP 侧的停用记录只在「GW 压根没有权威记录」（modelConfig 为空）
+                // 时才算数；GW 有话说的时候一律以 GW 为准。
+                if (await IsPoolMemberModelExplicitlyDisabledAsync(
+                        selectedModel.PlatformId,
+                        selectedModel.ModelId,
+                        ct,
+                        allowMapFallback: !gatewayConfigRequired && modelConfig is null))
+                {
+                    _logger.LogWarning(
+                        "[ModelResolver] 模型池 {PoolName} 中的模型 {ModelId} 已停用，跳过该候选: PlatformId={PlatformId}",
+                        group.Name, selectedModel.ModelId, selectedModel.PlatformId);
+                    continue;
+                }
+
                 resolvedPoolCandidates.Add(ModelResolutionResult.FromPool(
                     resolutionType, expectedModel, selectedModel, group, platform, apiKey, modelConfig));
                 if (!allowProviderRetryCandidates)
@@ -2122,6 +2155,64 @@ public class ModelResolver : IModelResolver
             .FirstOrDefaultAsync(ct);
     }
 
+    /// <summary>
+    /// 这条池成员对应的模型记录，是不是**明确**被停用了。
+    ///
+    /// 只回答「有证据说它停用」，不回答「它是不是可用」：查不到记录、或文档根本没写
+    /// Enabled 字段，一律返回 false。用 Eq(Enabled,false) 而不是「取回来再判」，
+    /// 就是为了让缺字段的老文档天然不匹配——bool 反序列化会把缺字段读成 false，
+    /// 那样会把一批从没被人停用过的成员误判成停用。
+    /// </summary>
+    /// <summary>
+    /// 「池成员里存的这个 ModelId，对应哪一条模型文档」——**唯一判定源**。
+    ///
+    /// 三个别名都要认：池成员的 ModelId 是按 `ModelName ?? Name ?? _id` 存下来的
+    /// （见 console-api 追加成员那两处），所以一个缺 ModelName 的模型文档，成员里存的
+    /// 就是它的 Name。
+    ///
+    /// 这个判据曾经被抄成两份、各自漂移：停用检查认三个别名，而「GW 有没有权威记录」
+    /// 那处只认两个。后果不是「少查到一条」——GW 里明明启用着、只填了 Name 的模型
+    /// 查不到，就被当成「GW 没有权威记录」，于是放行 MAP 侧的停用判定；MAP 里若躺着
+    /// 一份过期的停用副本，这个本来可用的候选就被跳过，整个池可能因此无路可走。
+    /// 所以收敛成一处，谁也别再单独写一遍。
+    /// </summary>
+    private static FilterDefinition<LLMModel> PoolMemberIdMatch(string modelId)
+        => Builders<LLMModel>.Filter.Or(
+            Builders<LLMModel>.Filter.Eq(m => m.ModelName, modelId),
+            Builders<LLMModel>.Filter.Eq(m => m.Name, modelId),
+            Builders<LLMModel>.Filter.Eq(m => m.Id, modelId));
+
+    private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(
+        string platformId,
+        string modelId,
+        CancellationToken ct,
+        bool allowMapFallback = true)
+    {
+        var idMatch = PoolMemberIdMatch(modelId);
+
+        if (_gatewayDb is not null)
+        {
+            var gatewayModels = _gatewayDb.Context.Database.GetCollection<LLMModel>("llmgw_models");
+            var disabled = await gatewayModels
+                .Find(Builders<LLMModel>.Filter.And(
+                    Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
+                    Builders<LLMModel>.Filter.Eq(m => m.PlatformId, platformId),
+                    Builders<LLMModel>.Filter.Eq(m => m.Enabled, false),
+                    idMatch))
+                .AnyAsync(ct);
+            if (disabled) return true;
+        }
+
+        if (!allowMapFallback) return false;
+
+        return await _db.LLMModels
+            .Find(Builders<LLMModel>.Filter.And(
+                Builders<LLMModel>.Filter.Eq(m => m.PlatformId, platformId),
+                Builders<LLMModel>.Filter.Eq(m => m.Enabled, false),
+                idMatch))
+            .AnyAsync(ct);
+    }
+
     private async Task<LLMModel?> FindGatewayOwnedOrMapModelAsync(
         string platformId,
         string modelId,
@@ -2136,9 +2227,7 @@ public class ModelResolver : IModelResolver
                     Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
                     Builders<LLMModel>.Filter.Eq(m => m.Enabled, true),
                     Builders<LLMModel>.Filter.Eq(m => m.PlatformId, platformId),
-                    Builders<LLMModel>.Filter.Or(
-                        Builders<LLMModel>.Filter.Eq(m => m.ModelName, modelId),
-                        Builders<LLMModel>.Filter.Eq(m => m.Id, modelId))))
+                    PoolMemberIdMatch(modelId)))
                 .FirstOrDefaultAsync(ct);
             if (gatewayModel is not null)
             {
