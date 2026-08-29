@@ -157,12 +157,14 @@ public sealed class GatewayRoutingWiringGuardTests
         var start = source.IndexOf("private async Task<ModelResolutionResult> ApplyCatalogGateAsync(", StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0, "找不到名录门本体");
 
-        var end = source.IndexOf("\n    private async Task<bool> IsModelAllowedAsync(", start, StringComparison.Ordinal);
-        end.ShouldBeGreaterThan(start, "名录门与放行判定的相邻关系变了，守卫的取值范围需要跟着改");
+        var end = source.IndexOf("\n    private enum CatalogVerdict", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, "名录门与裁决枚举的相邻关系变了，守卫的取值范围需要跟着改");
         var gate = source[start..end];
 
         gate.ShouldContain("GatewayRouteFailure.ModelNotInCatalog");
         gate.ShouldContain("RetryCandidates");
+        // 「管不着」必须与「拦下」分开：合成一档就会把运维配的应急兜底一起判死。
+        gate.ShouldContain("CatalogVerdict.Blocked");
     }
 
     [Fact]

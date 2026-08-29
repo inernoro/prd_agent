@@ -94,7 +94,7 @@ public class ModelResolver : IModelResolver
     {
         if (!resolved.Success) return resolved;
 
-        if (await IsModelAllowedAsync(resolved.ActualModel, resolved.ActualPlatformId, ct))
+        if (await JudgeAsync(resolved.ActualModel, resolved.ActualPlatformId, ct) != CatalogVerdict.Blocked)
         {
             // 主选放行；重试链里越界的成员要摘掉，否则第一次失败后照样会打出去。
             if (resolved.RetryCandidates is { Count: > 0 })
@@ -102,7 +102,7 @@ public class ModelResolver : IModelResolver
                 var kept = new List<ModelResolutionResult>();
                 foreach (var candidate in resolved.RetryCandidates)
                 {
-                    if (await IsModelAllowedAsync(candidate.ActualModel, candidate.ActualPlatformId, ct))
+                    if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct) != CatalogVerdict.Blocked)
                     {
                         kept.Add(candidate);
                         continue;
@@ -142,30 +142,64 @@ public class ModelResolver : IModelResolver
             modelPoolId: resolved.ModelGroupId);
     }
 
-    /// <summary>名录命中，或库里有管理员放行过的戳，才算允许。两者都没有就是越界。</summary>
-    private async Task<bool> IsModelAllowedAsync(string? modelName, string? platformId, CancellationToken ct)
+    /// <summary>
+    /// 这道门对一次解析结果的三种裁决。
+    ///
+    /// 有「管不着」这一档，是因为门的判据只有一个来源：网关模型库里那条文档上的放行标记。
+    /// 解析结果里的模型如果压根不是从那个库来的（主站自己的 legacy 模型、运维在主站配置或
+    /// 环境变量里写死的应急兜底），库里就没有任何一条文档可查——**查不到不等于越界**。
+    /// 把「查不到」和「查到了但没放行」混成一档，就会把运维亲手配的应急退路判死，
+    /// 而那条退路恰恰是网关配置面出问题时唯一还能用的东西。
+    ///
+    /// 判据刻意问「这条模型是不是网关模型库里的」，而不是列一串 ResolutionType 字符串：
+    /// 后者改个枚举名就悄悄失效，且每新增一条解析路径都得记得回来加一行（形状 1 / 形状 3）。
+    /// </summary>
+    private enum CatalogVerdict
     {
-        if (string.IsNullOrWhiteSpace(modelName)) return true; // 没解析出模型名的路径不归这道门管
-        if (GatewayModelCatalog.Contains(modelName)) return true;
-        if (_gatewayDb is null) return false;
+        /// <summary>名录内，或库里有放行标记。</summary>
+        Allowed,
+        /// <summary>是网关模型库里的模型，但既不在名录、也没有放行标记——这才是这道门要拦的。</summary>
+        Blocked,
+        /// <summary>不是网关模型库里的模型，这道门无从裁决。</summary>
+        OutOfJurisdiction,
+    }
+
+    private async Task<CatalogVerdict> JudgeAsync(string? modelName, string? platformId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) return CatalogVerdict.OutOfJurisdiction;
+        // 名录命中零额外开销（绝大多数请求走到这里就结束），只有名录外的才多一次带索引的读。
+        if (GatewayModelCatalog.Contains(modelName)) return CatalogVerdict.Allowed;
+        if (_gatewayDb is null) return CatalogVerdict.OutOfJurisdiction;
 
         var models = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_models");
         var fb = Builders<BsonDocument>.Filter;
         var trimmed = modelName.Trim();
-        // 两个名字字段都认：`ModelNameNormalized` 是控制台导入路径写的，但不是每条模型
-        // 文档都有它（更早的写入、别的写入方只写了 ModelName）。只认归一化字段，
-        // 那些文档就永远查不到放行标记、被判成越界——同一个模型换个写法得到相反结论，
-        // 正是 predicate-and-wiring-discipline 形状 1。
-        var filter = fb.And(
-            fb.Eq("TenantId", CurrentTenantId),
-            fb.Or(
-                fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
-                fb.Eq("ModelName", trimmed)),
-            fb.Eq("AllowedOutsideCatalog", true));
-        if (!string.IsNullOrWhiteSpace(platformId)) filter = fb.And(filter, fb.Eq("PlatformId", platformId));
+        // 两个名字字段都认：`ModelNameNormalized` 是控制台导入路径写的，但不是每条模型文档
+        // 都有它（更早的写入、别的写入方只写了 ModelName）。只认归一化字段，那些文档就永远
+        // 查不到、被判成「管不着」而放过去——同一个模型换个写法得到相反结论（形状 1）。
+        var docs = await models
+            .Find(fb.And(
+                fb.Eq("TenantId", CurrentTenantId),
+                fb.Or(
+                    fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
+                    fb.Eq("ModelName", trimmed))))
+            .Limit(20)
+            .ToListAsync(ct);
 
-        return await models.Find(filter).AnyAsync(ct);
+        if (docs.Count == 0) return CatalogVerdict.OutOfJurisdiction;
+
+        // 同名模型可能挂在多个 Provider 下，各自的放行状态可以不同。知道是哪个 Provider
+        // 就只认那一条；不知道（解析没给出 PlatformId）才退回「任意一条放行过就算放行」。
+        var scoped = string.IsNullOrWhiteSpace(platformId)
+            ? docs
+            : docs.Where(d => d.TryGetValue("PlatformId", out var p) && p.IsString && p.AsString == platformId).ToList();
+        if (scoped.Count == 0) return CatalogVerdict.OutOfJurisdiction;
+
+        return scoped.Any(IsAllowedOutsideCatalog) ? CatalogVerdict.Allowed : CatalogVerdict.Blocked;
     }
+
+    private static bool IsAllowedOutsideCatalog(BsonDocument doc)
+        => doc.TryGetValue("AllowedOutsideCatalog", out var value) && value.IsBoolean && value.AsBoolean;
 
     private async Task<ModelResolutionResult> ResolveCoreAsync(
         string appCallerCode,
