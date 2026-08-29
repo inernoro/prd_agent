@@ -353,14 +353,22 @@ export function ShareAnalyticsDrawer({
                     </ChartCard>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <ChartCard title="访客排行">
+                    <ChartCard
+                      title="访客排行"
+                      note={data.visitorSampleCapped ? '基于最近 5000 次访问的样本，排名可能不全' : undefined}
+                    >
                       <TopVisitorsList visitors={data.topVisitors ?? []} fmtTime={fmtTime} />
                     </ChartCard>
                     <ChartCard title={`互动动态${data.commentCount ? ` · ${data.commentCount}` : ''}`}>
                       <RecentCommentsList comments={data.recentComments ?? []} fmtTime={fmtTime} />
                     </ChartCard>
                   </div>
-                  <TopLinksTable links={data.topLinks ?? []} visibilityBadge={visibilityBadge} fmtTime={fmtTime} />
+                  <TopLinksTable
+                    links={data.topLinks ?? []}
+                    visibilityBadge={visibilityBadge}
+                    fmtTime={fmtTime}
+                    visitorSampleCapped={data.visitorSampleCapped}
+                  />
                 </div>
               )}
             </>
@@ -421,7 +429,15 @@ function TabButton({
   );
 }
 
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * `note` 是给「这块数据是怎么来的」留的位置。
+ *
+ * 访客维度的统计（排行、每条链接的访客数）是从封顶 5000 条的访问日志样本里算的，
+ * 而卡片标题写的是「近 N 天」——高流量账号看到的排行其实只覆盖最近那一批访问。
+ * 数据撑不住的话不能默不作声地当成全量：说清它是样本，读者才知道该不该照着它下结论
+ * （conclusion-before-numbers：结论要能归因；no-rootless-tree：算不出来就说算不出来）。
+ */
+function ChartCard({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
     <div
       className="rounded-lg border p-3 border-token-subtle"
@@ -430,6 +446,11 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
       <div className="mb-2 text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
         {title}
       </div>
+      {note && (
+        <div className="mb-2 text-[11px] leading-snug" style={{ color: 'var(--text-tertiary)' }}>
+          {note}
+        </div>
+      )}
       {children}
     </div>
   );
@@ -555,10 +576,13 @@ function TopLinksTable({
   links,
   visibilityBadge,
   fmtTime,
+  visitorSampleCapped,
 }: {
   links: ShareAnalyticsResult['topLinks'];
   visibilityBadge: (v: string) => React.ReactNode;
   fmtTime: (iso: string) => string;
+  /** 「访客」这一列来自封顶 5000 条的日志样本；PV 那列是无上限聚合。两列人口不同，要说清 */
+  visitorSampleCapped?: boolean;
 }) {
   if (links.length === 0) return null;
   return (
@@ -567,6 +591,11 @@ function TopLinksTable({
         <Link2 size={12} />
         Top 链接 (按 PV 排序)
       </div>
+      {visitorSampleCapped && (
+        <div className="text-[11px] mb-2 leading-snug" style={{ color: 'var(--text-tertiary)' }}>
+          * 访客列基于最近 5000 次访问的样本，实际人数只多不少；PV 是全窗口精确值
+        </div>
+      )}
       <div
         className="flex flex-col rounded-lg overflow-hidden border border-token-subtle"
 
@@ -579,7 +608,9 @@ function TopLinksTable({
           <span>可见性</span>
           <span>用户</span>
           <span className="text-right">PV</span>
-          <span className="text-right">访客</span>
+          <span className="text-right" title={visitorSampleCapped ? '基于最近 5000 次访问的样本，可能偏少' : undefined}>
+            {visitorSampleCapped ? '访客*' : '访客'}
+          </span>
           <span className="text-right">最后访问</span>
         </div>
         {links.map((link) => (

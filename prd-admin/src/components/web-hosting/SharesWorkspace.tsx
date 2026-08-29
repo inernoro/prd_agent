@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import { BarChart3, Copy, Lock, Search, Share2, X } from 'lucide-react';
 import type { HostedSite, ShareLinkItem } from '@/services/real/webPages';
 import { listSiteShares, renewSiteShare, revokeSiteShare } from '@/services';
@@ -58,7 +59,14 @@ export function SharesWorkspace({
 }: {
   sites: HostedSite[];
   links: ShareLinkItem[];
-  onLinksChange: (next: ShareLinkItem[]) => void;
+  /**
+   * 必须收得下**函数式更新**（React 的 SetStateAction）。
+   *
+   * 只收整份数组时，每个行内操作都会闭包住自己那一次渲染看到的 links：两行同时在跑
+   * （行禁用只按 busyId 挡住其中一行），后回来的那次拿旧数组一 map，把先回来的那次
+   * 续期/撤销的结果原样抹掉——计数、分层、可用操作与服务端不一致，直到刷新为止。
+   */
+  onLinksChange: Dispatch<SetStateAction<ShareLinkItem[]>>;
   onOpenAnalytics: () => void;
   /** 没有任何链接时的引导按钮：回资产库挑一个站点分享 */
   onCreateShare: () => void;
@@ -114,14 +122,27 @@ export function SharesWorkspace({
     [sites],
   );
 
+  /**
+   * 就地改一行。走函数式更新读**当前**列表，不读这次渲染闭包里那份。
+   * 两个行内操作共用这一份，免得一处改成函数式、另一处还留着旧写法。
+   */
+  const patchRow = useCallback(
+    (id: string, patch: (l: ShareLinkItem) => Partial<ShareLinkItem>) =>
+      onLinksChange((current) => current.map((l) => (l.id === id ? { ...l, ...patch(l) } : l))),
+    [onLinksChange],
+  );
+
   const handleRenew = async (link: ShareLinkItem) => {
     setBusyId(link.id);
     try {
       const res = await renewSiteShare(link.id, 7);
       if (res.success) {
-        onLinksChange(links.map((l) => (l.id === link.id
-          ? { ...l, expiresAt: res.data.newExpiresAt, isExpired: false, inGracePeriod: false, renewalCount: (l.renewalCount ?? 0) + 1 }
-          : l)));
+        patchRow(link.id, (l) => ({
+          expiresAt: res.data.newExpiresAt,
+          isExpired: false,
+          inGracePeriod: false,
+          renewalCount: (l.renewalCount ?? 0) + 1,
+        }));
         toast.success('已续期 7 天');
       } else {
         toast.error(res.error?.message ?? '续期失败');
@@ -138,9 +159,7 @@ export function SharesWorkspace({
     try {
       const res = await revokeSiteShare(link.id);
       if (res.success) {
-        onLinksChange(links.map((l) => (l.id === link.id
-          ? { ...l, isRevoked: true, revokedAt: new Date().toISOString() }
-          : l)));
+        patchRow(link.id, () => ({ isRevoked: true, revokedAt: new Date().toISOString() }));
         toast.success('已撤销');
       } else {
         toast.error(res.error?.message ?? '撤销失败');

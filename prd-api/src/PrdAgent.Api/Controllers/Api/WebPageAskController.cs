@@ -527,82 +527,10 @@ public class WebPageAskController : ControllerBase
         Response.Headers.CacheControl = "no-cache";
         Response.Headers.Connection = "keep-alive";
 
-        var session = await EnsureSessionAsync(site, userId, shareToken, req?.SessionId);
-        await WriteSseAsync("session", new { sessionId = session.Id });
-        await WriteSseAsync("phase", new
-        {
-            phase = "preparing",
-            message = snapshot.Truncated
-                ? $"已读取本页前 {snapshot.Text.Length} 字内容，正在思考…"
-                : "已读取本页内容，正在思考…",
-        });
-
-        // 历史由客户端提交，且分享路径是匿名可达的——只限条数不限长度等于没限：
-        // 直接打端点的人可以塞几条几 MB 的字符串，一次就把站点主的额度啃掉一大块。
-        // 配额闸数的是「请求次数」，拦不住「单次超大」，所以这里必须按字符预算裁剪。
-        // 先滤掉 null 元素再取字段：`{"history":[null]}` 是合法 JSON，System.Text.Json
-        // 会照样放一个 null 进列表（元素上的非空标注不是运行时约束）。不滤就在这里 NRE，
-        // 而此刻配额已经扣了、快照已经建了、会话已经落库了，用户拿到的是一条断掉的 SSE。
-        var history = AskHistoryBudget.Trim(
-            (req?.History ?? new List<AskHistoryItem>())
-                .Where(h => h != null)
-                .Select(h => (h.Role, h.Content)));
-
-        var messages = new JsonArray
-        {
-            new JsonObject { ["role"] = "system", ["content"] = BuildSystemPrompt(site, snapshot) },
-        };
-        foreach (var (role, content) in history)
-            messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
-        messages.Add(new JsonObject { ["role"] = "user", ["content"] = question });
-
-        // 匿名访客没有 userId：记在站点 owner 账上。提问烧的本来就是 owner 的额度，
-        // 账单归属也是对的。这个身份要同时给到 Context（跨进程）与 LlmRequestContext（进程内）。
-        var billingUserId = userId ?? site.OwnerUserId;
-        var requestId = Guid.NewGuid().ToString("N");
-
-        var gatewayRequest = new GatewayRequest
-        {
-            AppCallerCode = AppCallerRegistry.Admin.WebHosting.Ask,
-            ModelType = ModelTypes.Chat,
-            Stream = true,
-            IncludeThinking = false,
-            // Context 必须显式填。网关跑在 http 模式（生产主路径）时请求要跨进程，
-            // 进程内的 LlmRequestContext 过不去——serving 侧拿不到 UserId，
-            // 访问控制会以 "User not found" 的形式拒掉整条请求（llm-gateway 规则记着这个坑）。
-            // 只 BeginScope 不填 Context，在 inproc 下能跑、切到 http 就整个功能挂掉。
-            Context = new GatewayRequestContext
-            {
-                RequestId = requestId,
-                SessionId = session.Id,
-                UserId = billingUserId,
-            },
-            RequestBody = new JsonObject
-            {
-                ["messages"] = messages,
-                // 这是"照着这一页回答"，不是创作：温度压低，减少发散编造
-                ["temperature"] = 0.2,
-                ["max_tokens"] = 2048,
-            },
-        };
-
-        // 网关取不到 UserId 会以 "User not found" 的形式炸在运行时（llm-gateway 规则）。
-        // 匿名访客没有 userId，这里退到站点 owner —— 提问烧的本来就是 owner 的额度，
-        // 记在 owner 账上既能通过访问控制，账单归属也是对的。
-        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: requestId,
-            GroupId: null,
-            SessionId: session.Id,
-            UserId: billingUserId,
-            ViewRole: null,
-            DocumentChars: snapshot.Text.Length,
-            DocumentHash: null,
-            SystemPromptRedacted: $"[WEB_HOSTING_ASK:site={site.Id}:anon={userId == null}]",
-            RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.Admin.WebHosting.Ask));
-
-        await PersistMessageAsync(session, site, "user", question, snapshot.Text.Length, null, null, null, null);
-
+        // 会话在 try 里建：EnsureSessionAsync 要读写 Mongo，它抛出来的时候配额已经扣了、
+        // 一个字都还没生成——退款守卫必须罩得住这一段，否则一次数据库抖动就白吃一次额度，
+        // 反复抖动能把站点当天的额度耗光。所以退款函数与它依赖的状态都提到 try 之前声明。
+        HostedSiteAskSession? session = null;
         var answer = new StringBuilder();
         var startedAt = DateTime.UtcNow;
         string? model = null;
@@ -642,6 +570,82 @@ public class WebPageAskController : ControllerBase
 
         try
         {
+            session = await EnsureSessionAsync(site, userId, shareToken, req?.SessionId);
+            await WriteSseAsync("session", new { sessionId = session.Id });
+            await WriteSseAsync("phase", new
+            {
+                phase = "preparing",
+                message = snapshot.Truncated
+                    ? $"已读取本页前 {snapshot.Text.Length} 字内容，正在思考…"
+                    : "已读取本页内容，正在思考…",
+            });
+
+            // 历史由客户端提交，且分享路径是匿名可达的——只限条数不限长度等于没限：
+            // 直接打端点的人可以塞几条几 MB 的字符串，一次就把站点主的额度啃掉一大块。
+            // 配额闸数的是「请求次数」，拦不住「单次超大」，所以这里必须按字符预算裁剪。
+            // 先滤掉 null 元素再取字段：`{"history":[null]}` 是合法 JSON，System.Text.Json
+            // 会照样放一个 null 进列表（元素上的非空标注不是运行时约束）。不滤就在这里 NRE，
+            // 而此刻配额已经扣了、快照已经建了、会话已经落库了，用户拿到的是一条断掉的 SSE。
+            var history = AskHistoryBudget.Trim(
+                (req?.History ?? new List<AskHistoryItem>())
+                    .Where(h => h != null)
+                    .Select(h => (h.Role, h.Content)));
+
+            var messages = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = BuildSystemPrompt(site, snapshot) },
+            };
+            foreach (var (role, content) in history)
+                messages.Add(new JsonObject { ["role"] = role, ["content"] = content });
+            messages.Add(new JsonObject { ["role"] = "user", ["content"] = question });
+
+            // 匿名访客没有 userId：记在站点 owner 账上。提问烧的本来就是 owner 的额度，
+            // 账单归属也是对的。这个身份要同时给到 Context（跨进程）与 LlmRequestContext（进程内）。
+            var billingUserId = userId ?? site.OwnerUserId;
+            var requestId = Guid.NewGuid().ToString("N");
+
+            var gatewayRequest = new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.Admin.WebHosting.Ask,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                IncludeThinking = false,
+                // Context 必须显式填。网关跑在 http 模式（生产主路径）时请求要跨进程，
+                // 进程内的 LlmRequestContext 过不去——serving 侧拿不到 UserId，
+                // 访问控制会以 "User not found" 的形式拒掉整条请求（llm-gateway 规则记着这个坑）。
+                // 只 BeginScope 不填 Context，在 inproc 下能跑、切到 http 就整个功能挂掉。
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId,
+                    SessionId = session.Id,
+                    UserId = billingUserId,
+                },
+                RequestBody = new JsonObject
+                {
+                    ["messages"] = messages,
+                    // 这是"照着这一页回答"，不是创作：温度压低，减少发散编造
+                    ["temperature"] = 0.2,
+                    ["max_tokens"] = 2048,
+                },
+            };
+
+            // 网关取不到 UserId 会以 "User not found" 的形式炸在运行时（llm-gateway 规则）。
+            // 匿名访客没有 userId，这里退到站点 owner —— 提问烧的本来就是 owner 的额度，
+            // 记在 owner 账上既能通过访问控制，账单归属也是对的。
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: requestId,
+                GroupId: null,
+                SessionId: session.Id,
+                UserId: billingUserId,
+                ViewRole: null,
+                DocumentChars: snapshot.Text.Length,
+                DocumentHash: null,
+                SystemPromptRedacted: $"[WEB_HOSTING_ASK:site={site.Id}:anon={userId == null}]",
+                RequestType: "chat",
+                AppCallerCode: AppCallerRegistry.Admin.WebHosting.Ask));
+
+            await PersistMessageAsync(session, site, "user", question, snapshot.Text.Length, null, null, null, null);
+
             // CancellationToken.None：客户端断开不取消服务端任务（server-authority 规则）。
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
@@ -704,8 +708,11 @@ public class WebPageAskController : ControllerBase
         {
             _logger.LogError(ex, "网页托管提问失败 site={SiteId}", site.Id);
             await RefundIfNothingProducedAsync();
-            await PersistMessageAsync(session, site, "assistant", answer.ToString(),
-                snapshot.Text.Length, model, platform, Elapsed(startedAt), ex.Message);
+            // 会话还没建起来就炸的那种（EnsureSessionAsync 自己抛）没有可落库的对象——
+            // 这时候仍要退款、仍要给用户一条 error，只是这条消息无处可挂。
+            if (session != null)
+                await PersistMessageAsync(session, site, "assistant", answer.ToString(),
+                    snapshot.Text.Length, model, platform, Elapsed(startedAt), ex.Message);
             await WriteSseAsync("error", new { code = "ASK_FAILED", message = PublicErrorMessage });
         }
         finally

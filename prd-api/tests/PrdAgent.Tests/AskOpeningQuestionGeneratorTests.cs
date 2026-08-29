@@ -333,6 +333,31 @@ public class AskOpeningQuestionWiringTests
         Assert.Contains("RefundAsync", body);
     }
 
+    /// <summary>
+    /// 退款守卫必须罩住**会话建立**那一段。
+    ///
+    /// 配额是在门禁那一步就扣掉的，而会话建立要读写 Mongo。它抛出来的时候：钱扣了、
+    /// 一个字都没生成、退款守卫的 try 还没进——这一次就白吃一格额度。数据库反复抖动
+    /// 能把站点当天的额度耗光，而用户一个答案都没拿到（Codex 第三十五轮 P2）。
+    ///
+    /// 判据是**顺序**：EnsureSessionAsync 的调用点必须排在退款函数定义之后、且在那条
+    /// try 里面。只断言「有 try」没有意义——原先也有 try，只是起点晚了几十行。
+    /// </summary>
+    [Fact]
+    public void 退款守卫必须罩住会话建立()
+    {
+        var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
+        var define = ctrl.IndexOf("async Task RefundIfNothingProducedAsync()", StringComparison.Ordinal);
+        var call = ctrl.IndexOf("await EnsureSessionAsync(", StringComparison.Ordinal);
+        Assert.True(define > 0 && call > 0, "找不到退款函数或会话建立，测试该跟着改");
+        Assert.True(define < call, "会话建立排在了退款守卫之前，它抛出时配额退不回来");
+
+        // 而且中间只能隔着那一个 try——不许把 EnsureSessionAsync 留在 try 外面
+        var between = ctrl[define..call];
+        Assert.Contains("try", between);
+        Assert.DoesNotContain("catch", between);
+    }
+
     [Fact]
     public void 提问配置的写路径必须过角色门_可见不等于可写()
     {

@@ -231,3 +231,18 @@ describe('过期判据以时钟为准，且全站只有一份', () => {
     expect(Object.keys(files).length).toBeGreaterThan(100);
   });
 });
+
+describe('行内操作必须读当前列表', () => {
+  it('两行同时操作时后回来的那次不许抹掉先回来的结果', () => {
+    // 行禁用只按 busyId 挡住其中一行，所以用户完全可以在 A 还没回来时就点 B。
+    // 两个 handler 若各自闭包住自己那次渲染看到的 links，后回来的一 map 就把先回来的
+    // 结果原样抹掉——计数、分层、可用操作与服务端不一致，直到刷新。
+    const src = readFileSync(new URL('./SharesWorkspace.tsx', import.meta.url), 'utf-8');
+
+    // 判据钉的是「不许再拿渲染闭包里那份 links 去 map 后回写」这件事本身，
+    // 不是某一处的写法：两个 handler 将来还会增加第三个，扫的是全文。
+    expect(src).not.toMatch(/onLinksChange\(\s*links\.map/);
+    // 而且确实走了函数式更新（读当前值），不是把回写整个删了了事
+    expect(src).toMatch(/onLinksChange\(\s*\(current\)\s*=>/);
+  });
+});

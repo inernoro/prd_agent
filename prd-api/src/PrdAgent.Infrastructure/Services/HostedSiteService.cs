@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.RegularExpressions;
+using MongoDB.Bson;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -2126,21 +2127,62 @@ public class HostedSiteService : IHostedSiteService
                 .SortByDescending(c => c.CreatedAt)
                 .ToListAsync(ct);
 
+        // 日趋势与时段分布**一次聚合**出来，按「哪天的第几个小时」分桶，两张图各自求和。
+        //
+        // 原先趋势是每天一次 CountDocuments：7 天看不出来，端点却收 365 天——一次抽屉加载
+        // 就是 365 次串行往返。而时段分布更糟，它是拿封顶 5000 条的样本在内存里数的：
+        // 高流量账号看到的「几点最热」只反映最近那 5000 次访问，是被时间近因带偏的结论，
+        // 界面上却写着「近 N 天」。两个问题同一个解——让数据库按全窗口分桶。
+        //
+        // 时区口径与 rangeStart 一致（UTC 自然日），与原先 date/nextDate 那对边界逐字相同。
+        var bucketed = tokens.Count == 0
+            ? new List<BsonDocument>()
+            : await _db.ShareViewLogs.Aggregate()
+                .Match(logFilter)
+                .AppendStage<BsonDocument>(new BsonDocument("$group", new BsonDocument
+                {
+                    { "_id", new BsonDocument
+                        {
+                            { "d", new BsonDocument("$dateToString", new BsonDocument
+                                {
+                                    { "format", "%Y-%m-%d" },
+                                    { "date", "$ViewedAt" },
+                                    { "timezone", "UTC" },
+                                }) },
+                            { "h", new BsonDocument("$hour", new BsonDocument
+                                {
+                                    { "date", "$ViewedAt" },
+                                    { "timezone", "UTC" },
+                                }) },
+                        } },
+                    { "views", new BsonDocument("$sum", 1) },
+                }))
+                .ToListAsync(ct);
+
+        var viewsByDay = new Dictionary<string, long>();
+        var viewsByHour = new long[24];
+        foreach (var doc in bucketed)
+        {
+            var id = doc["_id"].AsBsonDocument;
+            var day = id["d"].AsString;
+            var hour = id["h"].ToInt32();
+            var count = doc["views"].ToInt64();
+            viewsByDay[day] = viewsByDay.TryGetValue(day, out var prev) ? prev + count : count;
+            if (hour >= 0 && hour < 24) viewsByHour[hour] += count;
+        }
+
         var trend = new List<ShareAnalyticsTrendPoint>();
         for (var offset = 0; offset < rangeDays; offset++)
         {
             var date = rangeStart.Date.AddDays(offset);
             var nextDate = date.AddDays(1);
             var key = date.ToString("yyyy-MM-dd");
-            var views = tokens.Count == 0
-                ? 0
-                : await _db.ShareViewLogs.CountDocumentsAsync(
-                    logFilter & fbLog.Gte(x => x.ViewedAt, date) & fbLog.Lt(x => x.ViewedAt, nextDate),
-                    cancellationToken: ct);
             trend.Add(new ShareAnalyticsTrendPoint
             {
                 Date = key,
-                Views = views,
+                // 没有访问的那天聚合里根本不会出现，要补 0——缺一天会让折线图少一个点、
+                // 把两天连成一段，看上去像那天没统计而不是没人来。
+                Views = viewsByDay.TryGetValue(key, out var dayViews) ? dayViews : 0,
                 Comments = comments.LongCount(c => c.CreatedAt >= date && c.CreatedAt < nextDate),
             });
         }
@@ -2149,7 +2191,7 @@ public class HostedSiteService : IHostedSiteService
             .Select(hour => new ShareAnalyticsHourlyPoint
             {
                 Hour = hour,
-                Views = windowLogs.LongCount(l => l.ViewedAt.Hour == hour),
+                Views = viewsByHour[hour],
             })
             .ToList();
 
