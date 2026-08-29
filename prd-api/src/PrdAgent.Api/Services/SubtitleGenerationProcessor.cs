@@ -283,21 +283,53 @@ public class SubtitleGenerationProcessor
         // 2) 可选整理。默认录音链路不调用 LLM，先把原文最快交给用户；
         // 只有用户显式选择了整理方式（TemplateKey 非空）才生成整理结果。
         var summary = "";
+        // 整理失败时对用户说的那句话。必须落进笔记：这条 run 会以 done 收尾（原文是好的），
+        // 而 SSE 上那个 summaryError 事件只有「此刻正盯着页面」的人收得到——
+        // 用户离开再回来，看到的就是一篇没有摘要、也没有任何解释的笔记。
+        string? summaryUnavailableNote = null;
         if (!string.IsNullOrWhiteSpace(run.TemplateKey))
         {
             await UpdateProgressAsync(db, runStore, run, 70, "生成摘要");
             try
             {
                 summary = await SummarizeTranscriptAsync(run, runStore, entry.Title, transcriptPlain);
+                if (string.IsNullOrWhiteSpace(summary))
+                {
+                    // 流正常结束却零 delta（内容过滤 / 空补全）：没有异常可抛，下面那个 catch 走不到，
+                    // 于是笔记又变回「没有摘要小节、也没有任何解释」——正是这次要消灭的那种静默降级
+                    // （Codex 第五十一轮 P2）。当作同一档处理。
+                    var emptyResult = DocumentStoreRunFailureCopy.SummarySkippedOnEmptyResult();
+                    summaryUnavailableNote = emptyResult.MessageFor(willRetry: false);
+                    _logger.LogWarning(
+                        "[doc-store-agent] 转录整理返回空内容，降级为仅保存原文 run={RunId}, Code={Code}",
+                        run.Id, emptyResult.Code);
+                    try
+                    {
+                        await runStore.AppendEventAsync(
+                            DocumentStoreRunKinds.Transcribe, run.Id, "summaryError",
+                            new { code = emptyResult.Code, message = summaryUnavailableNote, detail = "empty-completion" },
+                            ct: CancellationToken.None);
+                    }
+                    catch { /* ignore */ }
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[doc-store-agent] 转录整理生成失败，降级为仅保存原文 run={RunId}", run.Id);
+                var degraded = DocumentStoreRunFailureCopy.ResolveSummarySkipped(run, ex);
+                summaryUnavailableNote = degraded.MessageFor(willRetry: false);
+                _logger.LogWarning(ex,
+                    "[doc-store-agent] 转录整理生成失败，降级为仅保存原文 run={RunId}, Code={Code}",
+                    run.Id, degraded.Code);
                 try
                 {
                     await runStore.AppendEventAsync(
                         DocumentStoreRunKinds.Transcribe, run.Id, "summaryError",
-                        new { message = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message },
+                        new
+                        {
+                            code = degraded.Code,
+                            message = summaryUnavailableNote,
+                            detail = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message,
+                        },
                         ct: CancellationToken.None);
                 }
                 catch { /* ignore */ }
@@ -326,7 +358,7 @@ public class SubtitleGenerationProcessor
 
         // 3) 落库：转录全文原地写回源音频 entry；整理结果存在时才附加。
         // DocumentEntry 允许 AttachmentId + DocumentId 并存：前者继续负责播放，后者承载正文。
-        var noteMd = SubtitleFormatter.FormatTranscriptNote(entry.Title, summary, segments);
+        var noteMd = SubtitleFormatter.FormatTranscriptNote(entry.Title, summary, segments, summaryUnavailableNote);
         await _applyService.SaveContentAsync(
             entry,
             noteMd,

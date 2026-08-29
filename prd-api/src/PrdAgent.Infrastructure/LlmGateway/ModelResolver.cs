@@ -60,6 +60,11 @@ public class ModelResolver : IModelResolver
         List<ModelGroup>? candidateGroups = null;
         var hasDedicatedBinding = false;
         string resolutionType = "NotFound";
+        // 候选是不是「GW 默认池兜底」给的。给了就必须当边界用：
+        // 下面 expectedModel 的档 2（MAP 全量池）与档 3（LLMModels 直连）会把范围撑开到
+        // 该类型的任意池、乃至任意同名模型，那等于把「只回落到默认池」这句话作废
+        // （Codex 第五十轮 P1：ImageMasterController 会把用户选的 ModelId 当 expectedModel 传进来）。
+        var usedGatewayDefaultFallback = false;
 
         var gatewayConfigRequired = !string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal)
                                     || DisableMapConfigFallbackForRegisteredAppCallers();
@@ -234,14 +239,24 @@ public class ModelResolver : IModelResolver
 
         if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller == null)
         {
-            _logger.LogWarning(
-                "[ModelResolver] AppCallerCode 未在 MAP/GW 中配置: {Code}，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
-                appCallerCode);
-            return ModelResolutionResult.NotFound(expectedModel,
-                $"AppCallerCode '{appCallerCode}' 未在 MAP/GW 中配置，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
-                GatewayRouteFailure.AppCallerPoolUnbound,
-                "appcaller-registry-missing",
-                appCallerCode);
+            candidateGroups = await TryFallbackToGatewayDefaultPoolsAsync(
+                gatewayRegistry, appCallerCode, modelType, hasDedicatedBinding, gatewayConfigRequired, ct);
+            if (candidateGroups.Count > 0)
+            {
+                resolutionType = "GatewayRegistryPool";
+                usedGatewayDefaultFallback = true;
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "[ModelResolver] AppCallerCode 未在 MAP/GW 中配置: {Code}，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
+                    appCallerCode);
+                return ModelResolutionResult.NotFound(expectedModel,
+                    $"AppCallerCode '{appCallerCode}' 未在 MAP/GW 中配置，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
+                    GatewayRouteFailure.AppCallerPoolUnbound,
+                    "appcaller-registry-missing",
+                    appCallerCode);
+            }
         }
 
         if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller != null)
@@ -309,43 +324,87 @@ public class ModelResolver : IModelResolver
             }
         }
 
-        // ========== 第五步：无 dedicated/default 池 → legacy 直连兜底 ==========
-        // 未迁移到 ModelGroups 的部署仍可能有 IsMain/IsIntent/IsVision/IsImageGen 标记的 enabled 模型、
-        // 但无默认池。直接 NotFound 会让这类部署全链解析失败（Codex P1）。NotFound 前先查 legacy 直连，
-        // 迁移自动化前保留向后兼容；已迁移部署有池故不会走到这里，零影响。
+        // ========== 第五步：一个池都没解析出来 → 先 GW 默认池，再 legacy 直连 ==========
+        // 顺序是有讲究的：配置权威在 GW，所以只要该类型有 GW 默认池就该走它；
+        // legacy 直连（IsMain/IsIntent/IsVision/IsImageGen 标记的 enabled 模型）是给
+        // 「还没迁到模型池」的部署留的向后兼容，只在 GW 那边确实拿不出池时才轮到它。
+        // 两者顺序写反的话，一个既有 GW 默认池、又留着 legacy 存量行的已迁移部署，
+        // 会永远绕过它自己的权威配置走老路（Codex 第四十九轮 P1）。
         if (candidateGroups == null || candidateGroups.Count == 0)
         {
-            var legacyModel = await FindLegacyModelAsync(modelType, ct);
-            if (legacyModel != null)
+            // 走到这里意味着「一个池都没解析出来」：要么没有任何绑定，要么 MAP 侧那条绑定指向的池
+            // 已经不存在了。后者在本仓库不是「配错了」而是退场残留——MAP 的模型管理写接口下线后，
+            // 启动同步给每个 chat 调用方自动绑的那个组已经随之消失，于是全部 200 条 MAP 登记
+            // 都指着同一个查不到的 id。把这种悬空绑定当成「显式池未知」去 fail closed，
+            // 等于让残留数据把所有功能一起判死。
+            //
+            // 这不放宽 llm-gateway 规则 #3：那条管的是「池找得到但不该给你/给不出候选」——
+            // 越权选池、类型不符、池内候选耗尽，各自有自己的失败码，都不经过这里。
+            if (hasDedicatedBinding)
             {
-                var legacyPlatform = await _db.LLMPlatforms
-                    .Find(p => p.Id == legacyModel.PlatformId && p.Enabled)
-                    .FirstOrDefaultAsync(ct);
-                if (legacyPlatform != null)
+                _logger.LogWarning(
+                    "[ModelResolver] MAP 专属绑定指向的模型池都不存在（退场残留），改用 GW 默认池: AppCallerCode={Code}, ModelType={Type}",
+                    appCallerCode, modelType);
+            }
+            candidateGroups = await TryFallbackToGatewayDefaultPoolsAsync(
+                gatewayRegistry, appCallerCode, modelType, hasDedicatedBinding, gatewayConfigRequired, ct);
+            usedGatewayDefaultFallback = candidateGroups.Count > 0;
+            if (candidateGroups.Count == 0)
+            {
+                // 受保护类型（embedding / asr / video-gen）绑定还在、池没了：上面的兜底助手
+                // 已经按失败关闭拒绝给默认池，这里必须把话说完——否则控制流会接着去试两条
+                // legacy 退路，等于从背面绕开刚拒绝掉的那条边界（Codex 第五十二轮 P1）。
+                //
+                // 今天这两条退路对这三类恰好都返回 null（FindLegacyModelAsync 的 switch 没有
+                // 它们的分支，TryResolveLegacyConfigFallbackAsync 只认 chat / intent），
+                // 所以这里不改变任何现有行为。写出来是因为「靠另一个方法碰巧没写某个分支」
+                // 不是不变量：谁哪天给那个 switch 补一条 embedding，边界就会无声消失。
+                if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
                 {
-                    var legacyApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(legacyPlatform.ApiKeyEncrypted, _config);
-                    _logger.LogInformation(
-                        "[ModelResolver] 无池，使用 legacy 直连模型: ModelType={Type}, Model={Model}, Platform={Platform}",
-                        modelType, legacyModel.ModelName, legacyPlatform.Name);
-                    return ModelResolutionResult.FromLegacy(expectedModel, legacyModel, legacyPlatform, legacyApiKey);
+                    _logger.LogWarning(
+                        "[ModelResolver] {ModelType} 专属池已不存在，按失败关闭处理，拒绝降级 legacy: AppCallerCode={Code}",
+                        modelType, appCallerCode);
+                    return ModelResolutionResult.NotFound(expectedModel,
+                        $"专属模型池不存在且该类型禁止降级: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                        GatewayRouteFailure.ModelPoolEmpty,
+                        "dedicated-pool-missing",
+                        appCallerCode);
                 }
+
+                var legacyModel = await FindLegacyModelAsync(modelType, ct);
+                if (legacyModel != null)
+                {
+                    var legacyPlatform = await _db.LLMPlatforms
+                        .Find(p => p.Id == legacyModel.PlatformId && p.Enabled)
+                        .FirstOrDefaultAsync(ct);
+                    if (legacyPlatform != null)
+                    {
+                        var legacyApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(legacyPlatform.ApiKeyEncrypted, _config);
+                        _logger.LogInformation(
+                            "[ModelResolver] 无池，使用 legacy 直连模型: ModelType={Type}, Model={Model}, Platform={Platform}",
+                            modelType, legacyModel.ModelName, legacyPlatform.Name);
+                        return ModelResolutionResult.FromLegacy(expectedModel, legacyModel, legacyPlatform, legacyApiKey);
+                    }
+                }
+
+                var legacyConfig = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
+                if (legacyConfig != null)
+                {
+                    return legacyConfig;
+                }
+
+                _logger.LogWarning(
+                    "[ModelResolver] 未找到可用模型（无池且 legacy 未命中）: AppCallerCode={Code}, ModelType={Type}",
+                    appCallerCode, modelType);
+
+                return ModelResolutionResult.NotFound(expectedModel,
+                    $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}",
+                    GatewayRouteFailure.ModelPoolEmpty,
+                    "pool-candidates-empty",
+                    appCallerCode);
             }
 
-            var legacyConfig = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
-            if (legacyConfig != null)
-            {
-                return legacyConfig;
-            }
-
-            _logger.LogWarning(
-                "[ModelResolver] 未找到可用模型（无池且 legacy 未命中）: AppCallerCode={Code}, ModelType={Type}",
-                appCallerCode, modelType);
-
-            return ModelResolutionResult.NotFound(expectedModel,
-                $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}",
-                GatewayRouteFailure.ModelPoolEmpty,
-                "pool-candidates-empty",
-                appCallerCode);
+            resolutionType = "GatewayRegistryPool";
         }
 
         // ========== 第 5.5 步：旧契约若调用方指定了 expectedModel，优先尊重 ==========
@@ -371,7 +430,7 @@ public class ModelResolver : IModelResolver
             else
             {
                 // 档 2：该 ModelType 下的所有池（包括未绑定到 AppCaller 的）
-                if (gatewayConfigRequired)
+                if (gatewayConfigRequired || usedGatewayDefaultFallback)
                 {
                     _logger.LogInformation(
                             "[ModelResolver] GW appCaller 已禁止 MAP fallback，跳过 expectedModel 的 MAP 全量池搜索: AppCallerCode={Code}, Expected={Expected}",
@@ -403,7 +462,7 @@ public class ModelResolver : IModelResolver
                 // 档 3：LLMModels 直连（按 ModelName 查）
                 if (preferredGroup == null)
                 {
-                    if (gatewayConfigRequired)
+                    if (gatewayConfigRequired || usedGatewayDefaultFallback)
                     {
                         _logger.LogInformation(
                                 "[ModelResolver] GW appCaller 已禁止 MAP fallback，跳过 expectedModel 的 LLMModels 直连兜底: AppCallerCode={Code}, Expected={Expected}",
@@ -657,10 +716,15 @@ public class ModelResolver : IModelResolver
                 modelPoolId: originalPool?.Id);
         }
 
-        if (hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+        // usedGatewayDefaultFallback：候选是「只回落到默认池」给的，那这就是硬边界的第三个出口。
+        // 前两个（expectedModel 的全量池搜索与 LLMModels 直连）已经关掉了，这里是池选完之后
+        // 「一个成员都用不了」的退路——不挡的话，它照样会掉到下面的 legacy IsMain 直连，
+        // 把承诺过的边界从背面绕开（Codex 第五十一轮 P1）。池用不了就如实报池的失败码。
+        if ((hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+            || usedGatewayDefaultFallback)
         {
             _logger.LogWarning(
-                "[ModelResolver] {ModelType} 专属模型池全部不可用，拒绝降级 legacy 直连: AppCallerCode={Code}, Pool={Pool}",
+                "[ModelResolver] {ModelType} 模型池全部不可用，拒绝降级 legacy 直连: AppCallerCode={Code}, Pool={Pool}",
                 modelType, appCallerCode, originalPool?.Name);
             return ModelResolutionResult.NotFound(expectedModel,
                 $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}",
@@ -1936,6 +2000,60 @@ public class ModelResolver : IModelResolver
         => string.Equals(modelType, ModelTypes.VideoGen, StringComparison.OrdinalIgnoreCase)
            || string.Equals(modelType, ModelTypes.Asr, StringComparison.OrdinalIgnoreCase)
            || string.Equals(modelType, ModelTypes.Embedding, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// GW 里查无这条 appCaller 时，回落到该 ModelType 的 GW 默认池。
+    ///
+    /// 为什么需要：配置权威已经全部搬到 GW，MAP 侧 model_groups 自模型管理写接口退场后恒为空。
+    /// 于是「registry 里没有登记过」的 appCaller 会一路穿过 MAP 兼容分支、legacy 直连，最后落到
+    /// NotFound——用户看到的是「功能第一次被人用就报未找到可用模型」，而同类型的默认池明明是满的。
+    /// 已登记但没绑池的 appCaller 走的正是同一个默认池（见 TryGetGatewayRegistryGroupsAsync 末尾），
+    /// 「没登记」不该比「登记了但没绑」拿到更差的结果。
+    ///
+    /// 只在「记录确实不存在」这一种情况下兜底，其余三种仍然 fail closed，不能被这里悄悄放行：
+    ///   - 记录存在但被阻挡（绑的池不存在 / 默认池不在允许集合内）→ BlockReason 非空
+    ///   - 配置面读不到（基础设施故障）                          → ConfigPlaneUnavailable
+    ///   - 状态不允许真实流量                                     → 调用点更早就返回了
+    /// 另外要求 gatewayConfigRequired == false：外部租户与已切断 MAP fallback 的部署维持严格契约，
+    /// 未登记就是未授权，不给默认池。
+    /// </summary>
+    private async Task<List<ModelGroup>> TryFallbackToGatewayDefaultPoolsAsync(
+        GatewayRegistryLookup gatewayRegistry,
+        string appCallerCode,
+        string modelType,
+        bool hasDedicatedBinding,
+        bool gatewayConfigRequired,
+        CancellationToken ct)
+    {
+        if (gatewayConfigRequired
+            || _gatewayDb is null
+            || gatewayRegistry.Groups.Count > 0
+            || gatewayRegistry.BlockReason is not null
+            || gatewayRegistry.ConfigPlaneUnavailable)
+        {
+            return [];
+        }
+
+        // embedding / asr / video-gen 三类：绑定还在、池没了，正是 HasDedicatedBinding 那段注释
+        // 点名要拦的情形——换一个模型出来的东西根本不能用（向量维度对不上，写进库就是一批
+        // 认不出来的垃圾）。这条兜底救的是「功能被残留数据整片判死」，不该把这三类一起放行。
+        // 它们继续走原有的失败关闭，由人去把绑定改对（Codex 第五十轮 P1）。
+        if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+        {
+            _logger.LogWarning(
+                "[ModelResolver] {ModelType} 绑定的专属池已不存在，按失败关闭处理，不回落默认池: AppCallerCode={Code}",
+                modelType, appCallerCode);
+            return [];
+        }
+
+        var defaults = await FindGatewayOwnedDefaultModelPoolsAsync(modelType, ct);
+        if (defaults.Count == 0) return [];
+
+        _logger.LogInformation(
+            "[ModelResolver] appCaller 未在 GW 登记，回落到 GW 默认模型池: AppCallerCode={Code}, ModelType={Type}, PoolNames={Names}",
+            appCallerCode, modelType, string.Join(", ", defaults.Select(g => g.Name)));
+        return defaults;
+    }
 
     private async Task<GatewayRegistryLookup> TryGetGatewayRegistryGroupsAsync(
         string appCallerCode,
