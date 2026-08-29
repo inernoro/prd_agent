@@ -44,6 +44,11 @@ function windowAfter(source: string, anchor: string, size: number): string {
  * 否则守卫会被自己要防的那段事故写法的**说明文字**触发：修好之后，注释里通常正要
  * 写清楚「原来错在 `X`」，于是守卫永远红，下一个人只好把断言删掉或改宽——一条会
  * 误报的守卫最后一定被拆掉。这本身就是形状 6 的缩影：判据读的不是真正生效的那个东西。
+ *
+ * **顺序是 `windowAfter(codeOnly(src), …)`，不是 `codeOnly(windowAfter(src, …))`。**
+ * 后者把注释也算进窗口长度：给被守的那段多写几行说明，窗口就在同样的字符数里
+ * 装不下那么多代码，守卫当场报「少了 failedTargets」——而代码一个字都没改。
+ * 先剥注释再取窗口，窗口量的才是真代码。
  */
 function codeOnly(source: string): string {
   return source
@@ -162,7 +167,7 @@ describe('每日体检的事实来源接线守卫', () => {
    */
   it('落盘时完成时间不被「备全没备全」绑架', () => {
     const source = read('src/index.ts');
-    const write = codeOnly(windowAfter(source, 'const allCoverageGaps = [...coverageGaps,', 2_400));
+    const write = windowAfter(codeOnly(source), 'const allCoverageGaps = [...coverageGaps,', 2_400);
     expect(
       /completedAt:\s*coverageComplete\s*\?/.test(write),
       '完成时间只回答「跑没跑」。按 coverageComplete 抹空，会让一个长期部分失败的部署'
@@ -173,7 +178,7 @@ describe('每日体检的事实来源接线守卫', () => {
 
   it('读盘时不许再抹一次空（同一个判据别抄两份）', () => {
     const source = read('src/index.ts');
-    const reader = codeOnly(windowAfter(source, 'function readBackupHealth()', 1_600));
+    const reader = windowAfter(codeOnly(source), 'function readBackupHealth()', 1_600);
     expect(
       /coverageComplete\s*===\s*false/.test(reader),
       '同一个「把跑没跑和备没备全混成一件事」的判据曾经被抄了两份（形状 3）。'
@@ -215,7 +220,7 @@ describe('每日体检的事实来源接线守卫', () => {
    */
   it('落盘时把「本地就没成」和「只是离机没上去」分开装', () => {
     const source = read('src/index.ts');
-    const write = codeOnly(windowAfter(source, 'const allCoverageGaps = [...coverageGaps,', 3_000));
+    const write = windowAfter(codeOnly(source), 'const allCoverageGaps = [...coverageGaps,', 3_000);
     expect(
       /localFailures\s*=\s*failed\.filter\(\(outcome\)\s*=>\s*!outcome\.localOnly\)/.test(write),
       '本地失败要把 localOnly 那批排掉：它们的本地副本已过校验并转正，就在盘上',
@@ -225,20 +230,30 @@ describe('每日体检的事实来源接线守卫', () => {
       '离机没上去的那批要单独成一列，否则它们要么被说成「没有新副本」、要么彻底消失',
     ).toBe(true);
     expect(write, '两列都要落盘').toContain('offsiteOnlyTargets:');
+    // 失败原因要留给用户点开看，但**必须过一遍脱敏**：原文是 docker exec 的合并输出，
+    // 可能带着容器 env 打出来的口令，而这份文件会经备份面板端点回到浏览器。
+    expect(
+      /reason: backupFailureReason\(outcome\.error\)/.test(write),
+      '失败原因要走 backupFailureReason（脱敏 + 截尾），不许把 outcome.error 原样落盘',
+    ).toBe(true);
+    expect(
+      /reason: outcome\.error/.test(write),
+      '原样落盘等于把口令换个地方泄漏',
+    ).toBe(false);
     // 身份带项目：真机一轮里有六个叫 redis 的目标，裸 id 的告警路由不到人。
     expect(write, '失败目标要带 projectId').toContain('projectId: outcome.projectId');
   });
 
   it('看门狗的「本地备份」读 localVerifiedAt，不读每轮都前进的 completedAt', () => {
     const source = read('src/index.ts');
-    const write = codeOnly(windowAfter(source, 'const allCoverageGaps = [...coverageGaps,', 2_800));
+    const write = windowAfter(codeOnly(source), 'const allCoverageGaps = [...coverageGaps,', 2_800);
     expect(write, '落盘要单独记「本地全成」的时刻').toContain('localVerifiedAt:');
     expect(
       /localVerifiedAt:\s*localFailures\.length === 0/.test(write),
       '它只有在本轮本地一个都没失败时才前进；离机没上去（localOnly）不算本地失败',
     ).toBe(true);
 
-    const reader = codeOnly(windowAfter(source, 'function readBackupHealth()', 1_800));
+    const reader = windowAfter(codeOnly(source), 'function readBackupHealth()', 1_800);
     expect(
       /localVerifiedAt:\s*value\.localVerifiedAt/.test(reader),
       '看门狗这一路必须取 localVerifiedAt。取 completedAt 会让本地连续失败的目标被刷绿',
