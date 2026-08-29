@@ -137,7 +137,9 @@ describe('GET /api/projects/:id/backup-health', () => {
     const byId = new Map(res.body.targets.map((t: any) => [t.id, t]));
     expect(byId.get('mongo')).toMatchObject({ status: 'ok', bytes: 4096, offsite: true });
     expect(byId.get('mysql')).toMatchObject({ status: 'offsite-only', bytes: 2048, offsite: false });
-    expect(byId.get('minio').status).toBe('unsupported');
+    // MinIO 有满桶对象、这套 dump 式备份接不了它，落盘记的是一条拉低整轮健康的缺口——
+    // 不能和「没有需要备份的状态」混成一档，那会让第一屏在数据没保护时报绿。
+    expect(byId.get('minio').status).toBe('unprotected');
     // 健康记录说 nacos 这一轮成功了，可 ls 里没有那个文件——不许报成「正常」，
     // 否则真要恢复的那天才发现产物不在（Codex review P1）。
     expect(byId.get('nacos').status).toBe('artifact-missing');

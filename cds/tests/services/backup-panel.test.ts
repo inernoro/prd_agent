@@ -100,9 +100,9 @@ describe('周期备份面板：每个目标的处境', () => {
     expect(byId.get('ok-one')!.status).toBe('ok');
     expect(byId.get('failed-one')!.status).toBe('failed');
     expect(byId.get('offsite-one')!.status).toBe('offsite-only');
-    // 备成功了、只是范围有限 → partial；这一轮压根没有产物 → 这个类型还备不了。
+    // 备成功了、只是范围有限 → partial；这一轮压根没有产物、又记了缺口 → 有数据没被保护。
     expect(byId.get('partial-one')!.status).toBe('partial');
-    expect(byId.get('minio-one')!.status).toBe('unsupported');
+    expect(byId.get('minio-one')!.status).toBe('unprotected');
   });
 
   it('失败原因要留给用户点开看，不用他自己去翻容器日志', () => {
@@ -347,19 +347,36 @@ describe('清单要并上台账里此刻真实跑着的服务', () => {
     expect(view.targets[0].reason).toContain('更早的副本');
   });
 
-  it('台账里那台本来就备不了的，归「这类还备不了」，不惊动人', () => {
-    // 能不能备走 backupKindOf 这一份判据，不在面板里另猜一套。
+  it('台账里那台没有持久状态的，归「没有需要备份的状态」，不惊动人', () => {
+    // 能不能备走 backupKindOf 这一份判据，有没有数据走 classifyBackupCoverage 那一份，
+    // 都不在面板里另猜一套。memcached 重启即空，是真的不需要人管。
     const view = buildBackupPanel({
       projectId: 'web',
       now: NOW,
       health: health({ objects: [{ id: 'mongo', projectId: 'web', bytes: 1 }] }),
       files: [],
-      infra: [{ id: 'mongo', dockerImage: 'mongo:7' }, { id: 'minio', dockerImage: 'minio/minio:latest' }],
+      infra: [{ id: 'mongo', dockerImage: 'mongo:7' }, { id: 'cache', dockerImage: 'memcached:1.6' }],
     });
     const byId = new Map(view.targets.map((t) => [t.id, t]));
-    expect(byId.get('minio')!.status).toBe('unsupported');
-    expect(byId.get('minio')!.reason).toContain('minio/minio:latest');
+    expect(byId.get('cache')!.status).toBe('unsupported');
+    expect(byId.get('cache')!.reason).toContain('没有持久化');
     expect(view.verdict.tone).toBe('ok');
+  });
+
+  it('台账里那台有数据却备不了的，要说「没有备份保护」而不是不出声', () => {
+    // 上一轮之后才建的 MinIO：它还没进过任何一轮，所以只能现算——现算也必须
+    // 得出「有数据没被保护」，不能因为「这一轮没记它」就当没有。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ objects: [{ id: 'mongo', projectId: 'web', bytes: 1 }] }),
+      files: [],
+      infra: [{ id: 'mongo', dockerImage: 'mongo:7' }, { id: 'oss', dockerImage: 'minio/minio:latest' }],
+    });
+    const byId = new Map(view.targets.map((t) => [t.id, t]));
+    expect(byId.get('oss')!.status).toBe('unprotected');
+    expect(byId.get('oss')!.reason).toContain('桶到桶');
+    expect(view.verdict.tone).toBe('warn');
   });
 
   it('上一轮记录里有、台账里已经没有的，照样列出来', () => {
@@ -477,5 +494,57 @@ describe('落进健康文件的失败原因', () => {
   it('没有原因就是没有，不要一个空字符串', () => {
     expect(backupFailureReason(undefined)).toBeUndefined();
     expect(backupFailureReason('   ')).toBeUndefined();
+  });
+});
+
+/**
+ * Codex review 第五轮 P1 两条，都是同一种病的不同长相：**第一屏报绿，页脚同时在报红**。
+ * 这一整批改动就是为治这个病写的，不能自己先犯。
+ */
+describe('第一屏不许在这两种情况下报绿', () => {
+  it('有数据却没被保护的服务，不能被算进「都有副本」', () => {
+    // 一台跑着的 MinIO：满桶对象，这套 dump 式备份接不了它，落盘时记的是一条
+    // blocksHealthy 的缺口——页脚的每日体检据此喊「覆盖不全」。原来它和 memcached
+    // 归成一句「这类还备不了」，第一屏照样报绿。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{ id: 'mongo', projectId: 'web', bytes: 1, remoteObjectKey: 'k' }],
+        coverageGaps: [{ id: 'oss', projectId: 'web', reason: 'MinIO 里是对象文件，要的是桶到桶复制' }],
+      }),
+      files: [],
+    });
+    expect(view.verdict.tone).toBe('warn');
+    expect(view.verdict.headline).toContain('这套周期备份接不了');
+    // 正常那一个仍然要在副标题里说得出来，别把好消息一起吞掉。
+    expect(view.verdict.subline).toContain('正常 1 个');
+  });
+
+  it('一个能备的目标都没有时，不说「0 个目标都有副本」', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health(),
+      files: [],
+      infra: [{ id: 'cache', dockerImage: 'memcached:1.6' }],
+    });
+    expect(view.verdict.headline).toBe('这个项目没有需要周期备份的服务');
+    expect(view.verdict.headline).not.toContain('0 个');
+  });
+
+  it('上一轮没记下完成时间时，说不出年龄就不许说「最近一轮」', () => {
+    // 字段缺了或写坏了，Date.parse 得到 NaN。原来的陈旧判据只在时间有效时才生效，
+    // 无效就直接落到绿色分支——而绿的那句话恰恰在说「都拿到了最近一轮的副本」。
+    for (const completedAt of [undefined, '', 'not-a-date']) {
+      const view = buildBackupPanel({
+        projectId: 'web',
+        now: NOW,
+        health: health({ completedAt, objects: [{ id: 'a', projectId: 'web', bytes: 1, remoteObjectKey: 'k' }] }),
+        files: [],
+      });
+      expect(view.verdict.tone).toBe('bad');
+      expect(view.verdict.headline).toContain('没有记下完成时间');
+    }
   });
 });

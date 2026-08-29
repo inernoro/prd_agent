@@ -17,7 +17,10 @@
  *    取数在路由层。
  */
 
-import { backupKey, isAutoBackupFile, backupKindOf, INFRA_BACKUP_INTERVAL_MS } from './infra-backup-schedule.js';
+import {
+  backupKey, isAutoBackupFile, backupKindOf, classifyBackupCoverage, INFRA_BACKUP_INTERVAL_MS,
+} from './infra-backup-schedule.js';
+import { detectInfraKind } from './infra-exposure-audit.js';
 // 陈旧阈值走每日体检那一份，不在这里另定一个数：两处各写一个数字，页脚说「已经陈旧」
 // 而第一屏还是绿的，就是同一屏自相矛盾（形状 3）。
 import { BACKUP_STALE_AFTER_MS } from './platform-daily-health.js';
@@ -30,7 +33,8 @@ import { BACKUP_STALE_AFTER_MS } from './platform-daily-health.js';
  * - `not-in-last-round` 这台服务现在跑着，但**上一轮备份里压根没有它** → 见下
  * - `offsite-only` 本地那份已过校验、就在盘上，只是离机没上去 → 得去修离机通道
  * - `partial`     备成功了，但导出脚本自报只覆盖到一部分（如 postgres 只导了一个库）
- * - `unsupported` 这个类型压根还备不了（如 MinIO 要桶到桶复制，不是一份 dump）
+ * - `unprotected` 这台服务**有数据**，而这套周期备份接不了它 → 得另想办法，等于没有备份
+ * - `unsupported` 这类**没有需要备份的状态**（memcached 重启即空、没开 JetStream 的 nats）
  * - `ok`          正常
  *
  * `failed` 与 `offsite-only` 合并过一次，后果是把运维支去找一份其实存在的备份
@@ -45,9 +49,20 @@ import { BACKUP_STALE_AFTER_MS } from './platform-daily-health.js';
  * 记录来，于是**上一轮之后才建的库**、以及**当时容器停着的服务**，在这一屏上压根不存在，
  * 而第一屏还在宣布「N 个能备的目标都有 3 小时前的副本」。一台从没备过的库看不见，
  * 比看见它红着更危险。所以目标清单要并上**这个项目此刻真实跑着的数据服务**。
+ *
+ * `unprotected` 与 `unsupported` 原来是同一档，那是**假绿灯**（Codex review 第五轮 P1）：
+ * 一台跑着的 MinIO 有满桶对象、这套 dump 式备份接不了它，落盘时记的是一条 `blocksHealthy`
+ * 的缺口——它拉低整轮健康，页脚的每日体检据此喊「覆盖不全」，而第一屏当时把它和
+ * memcached 归成一句「这类还备不了」，然后照样报绿。同一屏自己打自己，而绿的那一半
+ * 是错的：一个只有 MinIO 的项目，数据一份副本都没有，头条却写着「都有副本」。
+ *
+ * 分开的判据**不用新猜**：`classifyBackupCoverage` 早就把这件事算出来了（`blocksHealthy`
+ * 为真 = 有数据没被保护，为假 = 本来就没有需要备份的状态）。这里之前是把那一位丢掉了
+ * （形状 6：读到的不是真正生效的那个值）。
  */
 export type BackupTargetStatus =
-  | 'failed' | 'artifact-missing' | 'not-in-last-round' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
+  | 'failed' | 'artifact-missing' | 'not-in-last-round' | 'offsite-only' | 'partial'
+  | 'unprotected' | 'unsupported' | 'ok';
 
 export interface BackupPanelTarget {
   id: string;
@@ -258,22 +273,32 @@ export function buildBackupPanel(input: {
     // 不在这里另猜一套（形状 3）。
     const onlyInInventory = !object && !failedById.has(id) && !offsiteById.has(id) && !gap;
     const infraFact = infraById.get(id);
-    const backupCapable = onlyInInventory
-      ? Boolean(backupKindOf(String(infraFact?.dockerImage || ''), {
-        id,
-        containerName: infraFact?.containerName,
-      }))
+    const hints = { id, containerName: infraFact?.containerName };
+    const image = String(infraFact?.dockerImage || '');
+    const backupCapable = onlyInInventory ? Boolean(backupKindOf(image, hints)) : false;
+    // 备不了的类型还要再分一次：**有数据没被保护** vs **本来就没有需要备份的状态**。
+    // 判据不在这里另猜，问 classifyBackupCoverage 那一份（形状 3）。
+    //
+    // 落盘的 coverageGaps 已经被 `backupCoverageGaps` 按 `blocksHealthy` 筛过一遍，
+    // 所以「上一轮记了缺口、又没有产物」这种目标**按构造就是有数据没被保护**，
+    // 不必再判一次。台账里那些上一轮压根没出现的，才需要现算。
+    //
+    // 已知边界：现算时手上只有镜像名与 id/容器名，没有 env 与启动命令，于是一台
+    // 开了 JetStream 的 nats 会被算成「没有持久状态」而不出声。只在「它还没进过任何
+    // 一轮」的窗口里成立——进过一轮之后就走上面那条按构造的路。记在台账 E88。
+    const inventoryBlocks = onlyInInventory && !backupCapable
+      ? classifyBackupCoverage(detectInfraKind(image, hints)).blocksHealthy
       : false;
     const status: BackupTargetStatus = failedById.has(id)
       ? 'failed'
       : artifactMissing
         ? 'artifact-missing'
         : onlyInInventory
-          ? (backupCapable ? 'not-in-last-round' : 'unsupported')
+          ? (backupCapable ? 'not-in-last-round' : (inventoryBlocks ? 'unprotected' : 'unsupported'))
           : offsiteById.has(id)
             ? 'offsite-only'
             : gap
-              ? (object ? 'partial' : 'unsupported')
+              ? (object ? 'partial' : 'unprotected')
               : 'ok';
     const reason = status === 'failed'
       ? cleanReason(failedById.get(id)?.reason)
@@ -284,10 +309,11 @@ export function buildBackupPanel(input: {
             ? '上一轮备份里没有它：可能当时容器没跑。盘上还留着更早的副本，但不是最新的'
             : '上一轮备份里没有它，盘上也没有任何副本——它可能是上一轮之后才建的，等下一轮；也可能一直没被备份到')
           : onlyInInventory
-            ? `这个类型（${String(infraFact?.dockerImage || '未知镜像')}）目前还没有周期备份手段`
+            ? cleanReason(classifyBackupCoverage(detectInfraKind(image, hints)).reason)
+              ?? `这个类型（${image || '未知镜像'}）目前还没有周期备份手段`
             : status === 'offsite-only'
           ? cleanReason(offsiteById.get(id)?.reason)
-          : (status === 'partial' || status === 'unsupported')
+          : (status === 'partial' || status === 'unprotected')
             ? cleanReason(gap?.reason)
             : null;
     return {
@@ -335,12 +361,14 @@ function buildVerdict(
   const uncovered = count('not-in-last-round');
   const offsite = count('offsite-only');
   const partial = count('partial');
+  const unprotected = count('unprotected');
   const unsupported = count('unsupported');
   const ok = count('ok');
 
   const rest: string[] = [];
   if (ok > 0) rest.push(`正常 ${ok} 个`);
-  if (unsupported > 0) rest.push(`这类还备不了 ${unsupported} 个`);
+  if (unprotected > 0) rest.push(`没有备份保护 ${unprotected} 个`);
+  if (unsupported > 0) rest.push(`没有需要备份的状态 ${unsupported} 个`);
   const subline = rest.length > 0 ? rest.join(' · ') : null;
 
   if (!health) {
@@ -396,21 +424,46 @@ function buildVerdict(
   // 只看目标状态就会给出绿色大字，而页脚的每日体检同时在喊「已经陈旧」：同一屏
   // 自己打自己。判据与页脚共用 BACKUP_STALE_AFTER_MS，不另定一个数。
   const roundAt = Date.parse(String(health.completedAt || ''));
-  const staleBy = Number.isFinite(roundAt) ? now.getTime() - roundAt : null;
-  if (staleBy !== null && staleBy > BACKUP_STALE_AFTER_MS) {
+  // 时间读不出来（字段缺了、写坏了）**不能当没这回事**（Codex review 第五轮 P1）。
+  // 上一版只在时间有效时才判陈旧，无效就直接落到绿色分支——而绿的那句话恰恰在说
+  // 「都拿到了最近一轮的副本」，一个说不出年龄的轮次凭什么叫「最近」。每日体检对
+  // 同一份记录报的是 critical 的 `backup.unknown`，这里必须同调。
+  if (!Number.isFinite(roundAt)) {
+    return {
+      tone: 'bad',
+      headline: '上一轮备份没有记下完成时间，说不出手上这批副本是什么时候的',
+      subline,
+    };
+  }
+  const staleBy = now.getTime() - roundAt;
+  if (staleBy > BACKUP_STALE_AFTER_MS) {
     return {
       tone: 'bad',
       headline: `周期备份已经 ${Math.floor(staleBy / 3_600_000)} 小时没跑了，手上最新的副本就停在那一轮`,
       subline,
     };
   }
+  // 排在陈旧之后：调度器死了是「这一轮出事了」，这条是「这台服务从来就不在保护范围里」，
+  // 后者急不到前面去。但它必须在绿色之前——有数据没被保护，就不能报绿。
+  if (unprotected > 0) {
+    return {
+      tone: 'warn',
+      headline: `${unprotected} 个服务有数据，这套周期备份接不了它们，等于没有备份`,
+      subline,
+    };
+  }
 
   const age = relativeAge(now, health.completedAt ?? null);
+  if (ok === 0) {
+    // 走到这里说明剩下的目标全是「没有需要备份的状态」那一类。原来这句会写成
+    // 「0 个能备的目标都有 3 小时前的副本」——一句自己都不通的话。
+    return { tone: 'ok', headline: '这个项目没有需要周期备份的服务', subline: null };
+  }
   return {
     tone: 'ok',
     headline: age
       ? `${ok} 个能备的目标都有 ${age}的副本`
       : `${ok} 个能备的目标都拿到了最近一轮的副本`,
-    subline: unsupported > 0 ? `这类还备不了 ${unsupported} 个` : null,
+    subline: unsupported > 0 ? `没有需要备份的状态 ${unsupported} 个` : null,
   };
 }

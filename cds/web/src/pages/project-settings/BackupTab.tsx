@@ -19,7 +19,8 @@ import { apiUrl } from '@/lib/api';
  */
 
 type BackupTargetStatus =
-  | 'failed' | 'artifact-missing' | 'not-in-last-round' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
+  | 'failed' | 'artifact-missing' | 'not-in-last-round' | 'offsite-only' | 'partial'
+  | 'unprotected' | 'unsupported' | 'ok';
 
 interface BackupPanelTarget {
   id: string;
@@ -59,7 +60,10 @@ const STATUS_META: Record<BackupTargetStatus, { label: string; tone: 'ok' | 'war
   'not-in-last-round': { label: '上轮没备到', tone: 'warn' },
   'offsite-only': { label: '仅本机', tone: 'warn' },
   partial: { label: '范围有限', tone: 'warn' },
-  unsupported: { label: '还备不了', tone: 'muted' },
+  // 有数据、这套备份接不了它：等于没有备份，得另想办法，所以进「需要你管的」那一组。
+  unprotected: { label: '没有保护', tone: 'warn' },
+  // 与上一档的差别是**有没有数据**：memcached 重启即空，没有需要备份的状态，不必惊动人。
+  unsupported: { label: '没有需要备份的状态', tone: 'muted' },
   ok: { label: '正常', tone: 'ok' },
 };
 
@@ -212,8 +216,10 @@ export function BackupPanel({
   busy?: boolean;
   onRefresh?: () => void;
 }): JSX.Element {
-  // 「需要你管的」= 除了正常与「这类还备不了」之外的全部。写成排除法而不是逐个列举：
+  // 「需要你管的」= 除了正常与「没有需要备份的状态」之外的全部。写成排除法而不是逐个列举：
   // 后端再加一档时，它会自动落进这一组，而不是从界面上凭空消失（形状 2）。
+  // 这条排除法当场兑现过一次：后端把「有数据却备不了」从 unsupported 里拆出来之后，
+  // 这里一个字没改，MinIO 自己就从收起来的那一行挪进了「需要你管的」。
   const needsAttention = data.targets.filter((t) => t.status !== 'ok' && t.status !== 'unsupported');
   const normal = data.targets.filter((t) => t.status === 'ok');
   const unsupported = data.targets.filter((t) => t.status === 'unsupported');
@@ -271,7 +277,7 @@ export function BackupPanel({
 
       <div className="flex flex-col gap-1.5">
         <CollapsedGroup label={`${normal.length} 个目标正常，最近一轮都有副本`} targets={normal} tone="ok" />
-        <CollapsedGroup label={`${unsupported.length} 个服务这类还备不了`} targets={unsupported} tone="muted" sunken />
+        <CollapsedGroup label={`${unsupported.length} 个服务没有需要备份的状态`} targets={unsupported} tone="muted" sunken />
       </div>
 
       {data.targets.length === 0 ? (

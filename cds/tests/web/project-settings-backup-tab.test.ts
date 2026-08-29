@@ -20,7 +20,7 @@ import { BackupPanel } from '../../web/src/pages/project-settings/BackupTab.js';
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-/** 真机形状：一个拿不到口令的 redis、一个离机没上去的 mysql、一台 MinIO 备不了。 */
+/** 真机形状：拿不到口令的 redis、离机没上去的 mysql、有数据却备不了的 MinIO、无状态的 memcached。 */
 function panelData(overrides: Record<string, unknown> = {}): any {
   const threeHoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
   return {
@@ -28,13 +28,14 @@ function panelData(overrides: Record<string, unknown> = {}): any {
     nextRoundEstimatedAt: new Date(Date.now() + 3 * 3600_000).toISOString(),
     localVerifiedAt: threeHoursAgo,
     remoteVerifiedAt: threeHoursAgo,
-    verdict: { tone: 'bad', headline: '1 个目标本地就没备出来，手上没有它们的新副本', subline: '正常 2 个 · 这类还备不了 1 个' },
+    verdict: { tone: 'bad', headline: '1 个目标本地就没备出来，手上没有它们的新副本', subline: '正常 2 个 · 没有备份保护 1 个' },
     targets: [
       { id: 'redis', status: 'failed', reason: 'NOAUTH Authentication required', bytes: null, offsite: false, lastSuccessAt: null, fileCount: 0 },
       { id: 'mysql', status: 'offsite-only', reason: '离机副本缺失：连接超时', bytes: 2048, offsite: false, lastSuccessAt: threeHoursAgo, fileCount: 7 },
       { id: 'mongo', status: 'ok', reason: null, bytes: 4096, offsite: true, lastSuccessAt: threeHoursAgo, fileCount: 7 },
       { id: 'postgres', status: 'ok', reason: null, bytes: 8192, offsite: true, lastSuccessAt: threeHoursAgo, fileCount: 7 },
-      { id: 'minio', status: 'unsupported', reason: '需要桶到桶复制，不是一份 dump', bytes: null, offsite: false, lastSuccessAt: null, fileCount: 0 },
+      { id: 'minio', status: 'unprotected', reason: '需要桶到桶复制，不是一份 dump', bytes: null, offsite: false, lastSuccessAt: null, fileCount: 0 },
+      { id: 'cache', status: 'unsupported', reason: 'memcached 没有持久化功能，重启即空是它的设计', bytes: null, offsite: false, lastSuccessAt: null, fileCount: 0 },
       { id: 'fresh-pg', status: 'not-in-last-round', reason: '上一轮备份里没有它，盘上也没有任何副本——它可能是上一轮之后才建的，等下一轮；也可能一直没被备份到', bytes: null, offsite: false, lastSuccessAt: null, fileCount: 0 },
       { id: 'nacos', status: 'artifact-missing', reason: '上一轮导出的产物 demo--nacos-auto-20260828T090000Z.tar.gz 现在不在备份目录里——被删了、被移走了，或者盘出了问题', bytes: 1024, offsite: true, lastSuccessAt: threeHoursAgo, fileCount: 0 },
     ],
@@ -75,7 +76,10 @@ describe('周期备份面板：渲染出来的东西', () => {
     expect(html).toContain('mysql');
     // 收起来的那两组只露一句话，目标名不在第一屏（点开才有）。
     expect(html).toContain('2 个目标正常，最近一轮都有副本');
-    expect(html).toContain('1 个服务这类还备不了');
+    expect(html).toContain('1 个服务没有需要备份的状态');
+    // 「有数据却备不了」不属于收起来的那一档：它得留在第一屏让人看见。
+    expect(html).toContain('没有保护');
+    expect(html).toContain('minio');
     expect(html).not.toContain('postgres');
   });
 
