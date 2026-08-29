@@ -311,8 +311,25 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             return await DownloadSignedVideoUrlAsync(status.VideoUrl, ct);
         }
 
+        return await DownloadOpenRouterVideoBytesWithResolutionAsync(
+            appCallerCode,
+            jobId,
+            urlIndex,
+            offeringId,
+            resolution,
+            ct);
+    }
+
+    private async Task<OpenRouterVideoDownload> DownloadOpenRouterVideoBytesWithResolutionAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex,
+        string? offeringId,
+        GatewayModelResolution resolution,
+        CancellationToken ct)
+    {
         // OpenRouter 视频下载端点：GET /videos/{jobId}/content?index={i}
-        // 通过 Gateway 走，自动注入 ApiKey + base URL
+        // 通过 Gateway 走，自动注入 ApiKey + base URL。
         var rawResp = await _gateway.SendRawWithResolutionAsync(new GatewayRawRequest
         {
             RequiredOfferingId = offeringId,
@@ -381,7 +398,26 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         }
 
         if (string.IsNullOrWhiteSpace(resolution.ApiUrl) || string.IsNullOrWhiteSpace(resolution.ApiKey))
-            return OpenRouterVideoStream.Fail("视频下载服务配置不完整，请联系管理员检查模型配置");
+        {
+            // HTTP LLMGW 拓扑不会把上游 ApiKey 回传给 MAP。复用已经解析好的 resolution
+            // 让 Serving 注入密钥并获取二进制，避免下载阶段再次解析或要求 MAP 持有明文 Key。
+            var downloaded = await DownloadOpenRouterVideoBytesWithResolutionAsync(
+                appCallerCode,
+                jobId,
+                urlIndex,
+                offeringId,
+                resolution,
+                ct);
+            if (!downloaded.Success || downloaded.Bytes is not { Length: > 0 })
+                return OpenRouterVideoStream.Fail(downloaded.ErrorMessage ?? VideoGenerationUserError.DownloadUnavailable());
+
+            var buffered = new MemoryStream(downloaded.Bytes, writable: false);
+            return OpenRouterVideoStream.Ok(
+                buffered,
+                downloaded.ContentType ?? "video/mp4",
+                downloaded.Bytes.LongLength,
+                buffered);
+        }
 
         var endpoint = BuildEndpointFromPath(
             resolution.ApiUrl,

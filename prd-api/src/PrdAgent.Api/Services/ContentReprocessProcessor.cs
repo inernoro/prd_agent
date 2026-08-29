@@ -191,7 +191,10 @@ public class ContentReprocessProcessor
             }
             else if (chunk.Type == "error")
             {
-                throw new InvalidOperationException($"LLM 调用失败: {chunk.ErrorMessage}");
+                // 带着结构化码抛：配置问题与上游抖动的文案、要不要自动重试都按它判
+                // 全限定：本文件同时引了 PrdAgent.Core.Interfaces.LlmGateway，
+                // 再 using PrdAgent.Core.LlmGateway 会让 ILlmGateway 变成歧义引用（CS0104）
+                throw PrdAgent.Core.LlmGateway.GatewayRouteFailureException.FromChunk(chunk, "LLM 调用失败");
             }
         }
 

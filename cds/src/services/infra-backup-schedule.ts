@@ -16,6 +16,25 @@
  */
 
 import { detectInfraKind, type InfraKindHints } from './infra-exposure-audit.js';
+import { maskSecrets } from './secret-masker.js';
+
+/**
+ * 每一轮周期备份的结果文件，落在备份目录里。
+ *
+ * 放在这里是因为它已经有**三个**消费者：写它的 index.ts、每日体检读它、项目设置的
+ * 备份面板读它。各写各的字面量的话，谁改一个字母，其余两处会静默读不到——
+ * 而「读不到」和「没备份过」长得一模一样，正是这条链路上最不该再犯的错。
+ */
+export const INFRA_BACKUP_HEALTH_FILE = '.cds-backup-health.json';
+
+/**
+ * 基础设施自动备份间隔。手工备份的实际含义是「出事那天正好没人点」。
+ * 6 小时一轮：mongodump 有成本，但一天四份 + 保留策略的磁盘占用是可控的。
+ *
+ * 放在这里是因为它有第二个消费者：备份面板要按它推「下一轮大概什么时候」。
+ * 两边各写一个 6，改一处忘一处，面板就会给出一个与实际节奏对不上的预估。
+ */
+export const INFRA_BACKUP_INTERVAL_MS = 6 * 60 * 60_000;
 
 export type BackupKind = 'mongo' | 'redis' | 'mysql' | 'postgres' | 'rabbitmq' | 'nacos';
 
@@ -53,8 +72,13 @@ export interface BackupTarget extends BackupCandidate {
 
 export interface BackupPlan {
   targets: BackupTarget[];
-  /** 跳过的原因，逐条可解释——「这次没备份什么」和「备份了什么」同样重要。 */
-  skipped: Array<{ id: string; reason: string; blocksHealthy: boolean }>;
+  /**
+   * 跳过的原因，逐条可解释——「这次没备份什么」和「备份了什么」同样重要。
+   *
+   * 带 projectId：infra id 只在项目内唯一。项目设置里的备份面板要按项目筛，
+   * 不带作用域就会把别的项目的 minio 摆到这个项目的清单里（同 BackupOutcome）。
+   */
+  skipped: Array<{ id: string; projectId?: string; reason: string; blocksHealthy: boolean }>;
 }
 
 /** 默认保留：每个服务最近 7 份，且不超过 14 天。 */
@@ -291,6 +315,25 @@ const BACKUP_EXT: Record<BackupKind, string> = {
  *
  * 首轮实跑的输出里就有这个形状（四条同名 `redis`），当时没看出来。
  */
+/**
+ * 一条能写进健康文件、也能端到用户面前的失败原因。
+ *
+ * 两件事必须做，缺一件都不该落盘：
+ *
+ * - **脱敏**：原文是 `docker exec` 的合并输出，里面可能带着容器 env 打出来的口令。
+ *   健康文件是 0600，但它会经备份面板端点回到浏览器——换个地方泄漏还是泄漏。
+ * - **截尾不截头**：失败原因永远在输出末尾，`slice(0, N)` 会把它整段切掉，
+ *   只留一堆启动噪音（本仓库同一个口径分散过七处，见 infra-backup 路由的 outputTail）。
+ *
+ * 空字符串返回 undefined：「没有原因」和「原因是空字符串」在界面上是两种东西，
+ * 前者该什么都不显示，后者会渲染出一个空的展开区。
+ */
+export function backupFailureReason(error: string | undefined | null): string | undefined {
+  const masked = maskSecrets(String(error || '').trim(), { mask: true }).trim();
+  if (!masked) return undefined;
+  return masked.length > 300 ? `…（前文截断）${masked.slice(-300)}` : masked;
+}
+
 export function backupKey(projectId: string, id: string): string {
   const safe = (v: string): string => String(v || '').replace(/[^a-zA-Z0-9._-]/g, '-');
   return `${safe(projectId)}--${safe(id)}`;
@@ -357,7 +400,7 @@ export function planInfraBackups(
   const iso = opts.now.toISOString();
   for (const c of candidates) {
     if (c.running === false) {
-      skipped.push({ id: c.id, reason: '容器未运行', blocksHealthy: false });
+      skipped.push({ id: c.id, projectId: c.projectId, reason: '容器未运行', blocksHealthy: false });
       continue;
     }
     // id / 容器名一起交给判据：私有仓库或摘要镜像的名字里可能一个产品名都没有，
@@ -374,6 +417,7 @@ export function planInfraBackups(
       });
       skipped.push({
         id: c.id,
+        projectId: c.projectId,
         reason: `${verdict.reason}（${c.dockerImage}）`,
         blocksHealthy: verdict.blocksHealthy,
       });
@@ -410,7 +454,7 @@ export function backupScopeGaps(outcomes: readonly BackupOutcome[]): BackupPlan[
     // 只认 gapNote。**不能读 note**：那是纯说明，而 rabbitmq 与 nacos 每轮都会
     // 无条件报一行，读它等于让任何装了这两者的部署健康位永远刷不新（见 gapNote 的注释）。
     if (!o.ok || !o.gapNote) continue;
-    gaps.push({ id: o.id, reason: o.gapNote, blocksHealthy: true });
+    gaps.push({ id: o.id, projectId: o.projectId, reason: o.gapNote, blocksHealthy: true });
   }
   return gaps;
 }

@@ -8477,6 +8477,10 @@ function safeChart(canvasId, config) {
                     .Set(x => x.Url, url)
                     .Set(x => x.Mime, mime)
                     .Set(x => x.SizeBytes, mediaBytes.LongLength)
+                    // Prompt 记的是「这张图是用哪段提示词生成的」。这条路发布的是工作流产物，
+                    // 不留着上一张 AI 配图的提示词——否则管理端会把它显示成这张新图的来历，
+                    // 下次「重新生成」还会照着它跑（手工上传那条路同样清空，两处口径一致）
+                    .Set(x => x.Prompt, (string?)null)
                     .Set(x => x.UpdatedAt, now),
                 cancellationToken: CancellationToken.None);
             sb.AppendLine("[HomepagePublisher] 覆盖更新 HomepageAsset 记录");

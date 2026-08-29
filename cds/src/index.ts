@@ -43,7 +43,8 @@ import {
   redisAuthFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups, selectExpiredBackups,
   backupCoverageGaps, isBackupRoundHealthy, shouldSkipForDiskPressure, summarizeBackupRound,
-  shouldSkipOffsiteThisRound, type BackupOutcome,
+  shouldSkipOffsiteThisRound, INFRA_BACKUP_HEALTH_FILE, INFRA_BACKUP_INTERVAL_MS, backupFailureReason,
+  type BackupOutcome,
 } from './services/infra-backup-schedule.js';
 import { r2BackupConfigFromEnv, uploadAndVerifyR2Backup } from './services/infra-backup-r2.js';
 import { evaluateInfrastructureHealth, infrastructureContainerHealth } from './services/infrastructure-health.js';
@@ -275,16 +276,12 @@ const ENTRYPOINT_SELF_CHECK_INTERVAL_MS = 30 * 60_000;
 // 启动后延迟首检：等 CDS 自己起来并且 nginx reload 完，否则首检必然误报。
 const ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS = 90_000;
 
-// 基础设施自动备份间隔。手工备份的实际含义是「出事那天正好没人点」。
-// 6 小时一轮：mongodump 有成本，但一天四份 + 保留策略的磁盘占用是可控的。
-const INFRA_BACKUP_INTERVAL_MS = 6 * 60 * 60_000;
 // 启动后延迟首备：等 infra 起齐，也避开自更新重启时的资源尖峰。
 const INFRA_BACKUP_STARTUP_DELAY_MS = 10 * 60_000;
 // 单个库的导出超时。大库慢，但卡住不放会拖住后面所有目标。
 const INFRA_BACKUP_TIMEOUT_MS = 20 * 60_000;
 const INFRA_HEALTH_INTERVAL_MS = 15 * 60_000;
 const INFRA_HEALTH_STARTUP_DELAY_MS = 2 * 60_000;
-const INFRA_BACKUP_HEALTH_FILE = '.cds-backup-health.json';
 const EXTERNAL_PORT_AUDIT_STARTUP_DELAY_MS = 30_000;
 
 /**
@@ -977,10 +974,26 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           // 的注释早就写明这两者不能混，我上一版自己违反了它（Codex review P2）。
           //
           // 带项目：真机一轮里有六个叫 redis 的目标，裸 id 的告警谁也路由不到。
-          failedTargets: localFailures.map((outcome) => ({ id: outcome.id, projectId: outcome.projectId })),
-          offsiteOnlyTargets: offsiteOnlyFailures.map((outcome) => ({ id: outcome.id, projectId: outcome.projectId })),
+          //
+          // 带 reason：项目设置里的「周期备份」面板要能让人点开看「为什么没备成」。
+          // 只留一个 id 的话，面板只能说「它失败了」，看的人还得自己去翻容器日志——
+          // 那等于把诊断又推回给用户。原文过一遍脱敏再截尾：失败原因在输出末尾，
+          // 取头只会拿到一堆启动噪音。
+          failedTargets: localFailures.map((outcome) => ({
+            id: outcome.id,
+            projectId: outcome.projectId,
+            reason: backupFailureReason(outcome.error),
+          })),
+          offsiteOnlyTargets: offsiteOnlyFailures.map((outcome) => ({
+            id: outcome.id,
+            projectId: outcome.projectId,
+            reason: backupFailureReason(outcome.error),
+          })),
+          // objects 是「这一轮尝试过的全部目标」，面板靠它算出「哪些是正常的」。
+          // 同样要带 projectId，否则按项目筛不出来。
           objects: outcomes.map((outcome) => ({
             id: outcome.id,
+            projectId: outcome.projectId,
             fileName: outcome.fileName,
             remoteObjectKey: outcome.remoteObjectKey,
             sha256: outcome.sha256,

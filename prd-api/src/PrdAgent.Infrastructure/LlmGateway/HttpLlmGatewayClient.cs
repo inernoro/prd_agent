@@ -295,6 +295,11 @@ public sealed class HttpLlmGatewayClient
                 && !string.IsNullOrWhiteSpace(resolution.ModelGroupId)
                 ? resolution.ModelGroupId
                 : string.IsNullOrWhiteSpace(resolution.ActualModel) ? request.ExpectedModel : resolution.ActualModel;
+        var shouldPinResolvedPoolMember =
+            string.Equals(resolution.ResolutionType, "GatewayRegistryPool", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(resolution.LogicalModelPublicId)
+            && !string.IsNullOrWhiteSpace(resolution.ActualPlatformId)
+            && !string.IsNullOrWhiteSpace(resolution.ActualModel);
         var httpTaggedContext = GatewayRequestContext.WithTransport(request.Context, GatewayTransports.Http);
         // GatewayRawRequest 是普通类（init-only 属性，非 record），用对象初始化器建副本。
         var outboundRequest = new GatewayRawRequest
@@ -308,8 +313,10 @@ public sealed class HttpLlmGatewayClient
             ModelType = request.ModelType,
             EndpointPath = request.EndpointPath,
             ExpectedModel = outboundExpectedModel,
-            PinnedPlatformId = request.PinnedPlatformId,
-            PinnedModelId = request.PinnedModelId,
+            // Serving 只负责按池身份恢复 ApiKey，不得重新选择池成员；否则首次命中的
+            // OpenRouter Seedance 可能在发送阶段被池优先级改选成 OpenAI Sora。
+            PinnedPlatformId = shouldPinResolvedPoolMember ? resolution.ActualPlatformId : request.PinnedPlatformId,
+            PinnedModelId = shouldPinResolvedPoolMember ? resolution.ActualModel : request.PinnedModelId,
             RequestBody = request.RequestBody,
             IsMultipart = request.IsMultipart,
             MultipartFields = request.MultipartFields,

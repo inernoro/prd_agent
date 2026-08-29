@@ -267,6 +267,45 @@ public class OpenRouterVideoClientGatewayTests
     }
 
     [Fact]
+    public async Task DirectDownload_WithoutResolvedApiKey_ShouldUseGatewayBinaryResponse()
+    {
+        var gateway = new CapturingGateway(new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = "GatewayRegistryPool",
+            ActualModel = "openrouter/test-video",
+            ActualPlatformId = "openrouter",
+            ActualPlatformName = "OpenRouter",
+            PlatformType = "openrouter",
+            ApiUrl = "https://openrouter.ai/api/v1",
+            ApiKey = null,
+        });
+        var client = new OpenRouterVideoClient(
+            gateway,
+            new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            new AllowingUrlValidator(),
+            NullLogger<OpenRouterVideoClient>.Instance);
+
+        await using var opened = await client.OpenVideoStreamForOfferingAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            "job-123",
+            0,
+            "openrouter/test-video",
+            null);
+
+        opened.Success.ShouldBeTrue(opened.ErrorMessage);
+        opened.ContentType.ShouldBe("video/mp4");
+        opened.ContentLength.ShouldBe(4);
+        using var copy = new MemoryStream();
+        await opened.Content!.CopyToAsync(copy);
+        copy.ToArray().ShouldBe([1, 2, 3, 4]);
+        gateway.ResolveCalls.Count.ShouldBe(1);
+        gateway.RawCalls.Count.ShouldBe(1);
+        gateway.RawCalls[0].Request.EndpointPath.ShouldBe("/videos/job-123/content?index=0");
+        gateway.RawCalls[0].Request.ExpectBinaryResponse.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task RestartedPollingClient_ShouldResolveStatusAndDownloadWithRecordedModel()
     {
         var gateway = new CapturingGateway();

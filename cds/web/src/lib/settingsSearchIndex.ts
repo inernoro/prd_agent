@@ -75,6 +75,10 @@ export const PROJECT_TAB_LABELS: Record<string, string> = {
   storage: '存储',
   migration: '迁移',
   cache: '缓存诊断',
+  backup: '周期备份',
+  // 「交付模式」是这条守卫落地时才发现漏登记的（它比周期备份早）。补的是名字，
+  // 让命令面板显示得出路径；它还缺 PROJECT_SETTINGS_INDEX 条目，记在台账 E89。
+  delivery: '交付模式',
   stats: '统计',
   activity: '活动日志',
   danger: '删除项目',
@@ -387,6 +391,18 @@ export const PROJECT_SETTINGS_INDEX: SettingsIndexEntry[] = [
       'readiness', 'readiness timeout', 'readiness-timeout', 'health', 'healthcheck',
       '端口探测', 'tcp 探活', 'probe', '超时', '180', '180s', '240', '240s',
       '探测超时', '启动探测', 'cds.readiness-timeout',
+    ],
+  },
+  {
+    id: 'proj:backup:health',
+    label: '周期备份',
+    hint: '周期备份 · 每 6 小时一轮的结果：哪些目标成了、哪些没成、盘上还留着几份',
+    tab: 'backup',
+    scope: 'project',
+    keywords: [
+      '周期备份', '备份', '自动备份', '定时备份', '备份状态', '备份健康', '备份记录',
+      '离机备份', '异地备份', '恢复演练', '副本', '快照',
+      'backup', 'backups', 'auto backup', 'offsite', 'restore drill', 'dump',
     ],
   },
   {

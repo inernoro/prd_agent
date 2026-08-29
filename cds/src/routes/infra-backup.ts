@@ -44,7 +44,14 @@ import {
   buildRedisRdbPathScript,
   isLegacyUnscopedBackupFile,
   isProjectBackupFile,
+  INFRA_BACKUP_HEALTH_FILE,
 } from '../services/infra-backup-schedule.js';
+import {
+  buildBackupPanel,
+  type BackupFileEntry,
+  type BackupHealthRecord,
+} from '../services/backup-panel.js';
+import { backupHealthFindings } from '../services/platform-daily-health.js';
 
 export interface InfraBackupRouterDeps {
   stateService: StateService;
@@ -124,6 +131,22 @@ export function scriptedDump(kind: BackupKind | 'generic'): (typeof SCRIPTED_DUM
   return (SCRIPTED_DUMP_KINDS as Record<string, (typeof SCRIPTED_DUMP_KINDS)[ScriptedDumpKind]>)[kind] ?? null;
 }
 
+/**
+ * 一份结果文件里的 `completedAt`，转成毫秒；读不出来返回 null。
+ *
+ * 只用来在多个候选目录之间比新旧——**不做任何业务判定**，那些都在
+ * services/backup-panel.ts 里。
+ */
+function healthRecordCompletedAt(raw: string): number | null {
+  if (!raw) return null;
+  try {
+    const at = Date.parse(String((JSON.parse(raw) as { completedAt?: string }).completedAt || ''));
+    return Number.isFinite(at) ? at : null;
+  } catch {
+    return null;
+  }
+}
+
 function shq(s: string): string {
   return `'${String(s).replace(/'/g, `'"'"'`)}'`;
 }
@@ -163,16 +186,48 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       slug: stateService.projectSlug,
       repoRoot: deps.repoRoot,
     });
-    for (const c of candidates) {
-      // 只读路径（备份历史）**不许建目录**。建了之后紧跟着的 `test -d` 必然为真，
-      // 「一份备份都没有过」就被报成「目录在、只是没有匹配项」——刚加的那个区分
-      // 当场作废，而它要防的正是零备份长期不被发现。写盘路径才允许创建。
-      const probe = create
-        ? await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`)
-        : await shell.exec(`test -d ${shq(c)} && test -w ${shq(c)} && echo ok`);
-      if (probe.exitCode === 0 && (probe.stdout || '').includes('ok')) return c;
+    const ok = (r: { exitCode: number; stdout?: string }): boolean =>
+      r.exitCode === 0 && (r.stdout || '').includes('ok');
+
+    if (create) {
+      // 写盘路径：要的是「能写进去的那个目录」，所以判据就是可写。
+      for (const c of candidates) {
+        if (ok(await shell.exec(`mkdir -p ${shq(c)} && test -w ${shq(c)} && echo ok`))) return c;
+      }
+      return candidates[0];
     }
-    return candidates[0];
+
+    // 只读路径（备份历史、周期备份面板）有两条不一样的纪律：
+    //
+    // 1. **不许建目录**。建了之后紧跟着的 `test -d` 必然为真，「一份备份都没有过」
+    //    就被报成「目录在、只是没有匹配项」——那个区分要防的正是零备份长期不被发现。
+    // 2. **不许拿「可写」当判据**（Codex review P2）。盘变只读的那一刻，真正存着
+    //    备份的那个目录会被跳过，于是面板去读一个空的候选，报出「一份周期备份都没
+    //    产出过」——偏偏是在存储出事、最需要看清手上有什么的时候说这种话。
+    //
+    // 但也不能简单地「去掉 -w」：候选是有优先级的，一个存量的、写不进去的旧目录
+    // 排在前面时，裸看「存在」会读到陈旧数据，那是同一个错的镜像。
+    //
+    // 也**不能取「第一个有结果文件的」**（Codex review 第三轮 P2，打脸我上一版的说法）：
+    // 高优先级目录变只读、写入端切到后面的候选之后，前面那个目录**照样留着一份旧的
+    // 结果文件**，第一个命中的就是它——读到的是几天前的快照，而且看不出来。
+    //
+    // 判据只能取**哪一份最新**：把每个存在的候选的结果文件都读一遍，比 completedAt，
+    // 取最大的那个。候选最多三个、文件都很小，这点代价换掉一个静默读旧数据的坑。
+    let freshest: { dir: string; at: number } | null = null;
+    const existing: string[] = [];
+    for (const c of candidates) {
+      if (!ok(await shell.exec(`test -d ${shq(c)} && echo ok`))) continue;
+      existing.push(c);
+      const raw = await shell.exec(`cat ${shq(`${c}/${INFRA_BACKUP_HEALTH_FILE}`)} 2>/dev/null || true`);
+      const at = healthRecordCompletedAt((raw.stdout || '').trim());
+      // 读得到文件但认不出时间（旧格式 / 半截写坏），当成「最老」参与排序：
+      // 有总比没有强，但不许压过一个时间明确的候选。
+      if (at === null && !(raw.stdout || '').trim()) continue;
+      const score = at ?? Number.NEGATIVE_INFINITY;
+      if (!freshest || score > freshest.at) freshest = { dir: c, at: score };
+    }
+    return freshest?.dir ?? existing[0] ?? candidates[0];
   }
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：备份/恢复直接 spawn docker，
@@ -696,6 +751,111 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       directory: backupDir,
       /** false = 目录都还不存在，也就是一份备份都没有过；别把它读成「暂无匹配」。 */
       directoryExists: dirExists,
+    });
+  });
+
+  /**
+   * GET /api/projects/:id/backup-health
+   *
+   * 项目设置里「周期备份」面板的数据源。回答四件事：上一轮什么时候跑的、
+   * 每个目标现在什么处境、这个项目在盘上占了多少份备份、每日体检对备份怎么说。
+   *
+   * 判定全在 services/backup-panel.ts（纯函数、可回归），体检那几句话直接调
+   * `backupHealthFindings`——**不在这里照着再写一遍**：同一个判据分裂成两份、
+   * 然后各自漂移，正是这条链路上刚栽过的那个坑（形状 3）。
+   */
+  router.get('/projects/:id/backup-health', async (req, res) => {
+    const projectId = String(req.params.id || '');
+    const project = stateService.getProject(projectId);
+    // 对外允许用 slug，但盘上的文件名用的是规范 id。这里必须先解析成规范 id，
+    // 否则用 slug 打开面板会一个目标都筛不出来，看起来像「这个项目没有备份」。
+    const canonicalId = project?.id ?? projectId;
+    const mismatch = assertProjectAccess(req, canonicalId);
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body as Record<string, unknown>);
+      return;
+    }
+    if (!project) {
+      res.status(404).json({ error: `项目不存在: ${projectId}` });
+      return;
+    }
+
+    const backupDir = await resolveBackupDir({ create: false });
+    const probe = await shell.exec(`test -d ${shq(backupDir)} && echo yes || echo no`);
+    const directoryExists = (probe.stdout || '').includes('yes');
+
+    // 健康文件与备份文件在同一个目录。读不到就把 health 传 null——
+    // 面板会如实说「读不到上一轮的结果」，不会说成「没问题」。
+    let health: BackupHealthRecord | null = null;
+    if (directoryExists) {
+      const raw = await shell.exec(`cat ${shq(`${backupDir}/${INFRA_BACKUP_HEALTH_FILE}`)} 2>/dev/null || true`);
+      try {
+        const parsed = JSON.parse((raw.stdout || '').trim());
+        if (parsed && typeof parsed === 'object') health = parsed as BackupHealthRecord;
+      } catch { /* 没有或解析不了，就是读不到 */ }
+    }
+
+    const listing = directoryExists
+      ? await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null || true`)
+      : { stdout: '' } as { stdout: string };
+    const files: BackupFileEntry[] = (listing.stdout || '').split('\n').filter(Boolean).map((line) => {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 9) return null;
+      return { name: parts.slice(8).join(' '), bytes: parseInt(parts[4], 10) || 0 };
+    }).filter((f): f is BackupFileEntry => Boolean(f));
+
+    const now = new Date();
+    // 台账里此刻真实存在的数据服务。**必须传**：只看上一轮的记录，新建的库和当时
+    // 停着的服务会从清单上整个消失，而第一屏还在说一切正常（Codex review 第二轮 P1）。
+    //
+    // **停着的也照传，带上 running 标记**（Codex review 第八轮 P2）。
+    //
+    // 第三轮起「目标清单只并正在跑的」这条不变——周期备份对停着的容器记的本就是
+    // 「不阻塞健康」的跳过，把它算进目标会为一台运维故意停掉的库天天报一次
+    // 「上轮没备到」，那是一盏没人会看的灯。但**过滤不能发生在这里**：判定那一侧
+    // 还要回答另一个问题——「这个项目是不是一台数据服务都没有」。只收到正在跑的，
+    // 它就分不清「一台都没有」和「有、但都停着」，于是会对一个只有停机数据库的项目
+    // 说「没有需要周期备份的服务」，那是假绿灯。过滤挪进判定模块，这里如实报台账。
+    // running 的口径与 planInfraBackups 的 `s.status === 'running'` 一致。
+    const infra = stateService.getInfraServicesForProject(canonicalId)
+      .map((s) => ({
+        id: s.id, dockerImage: s.dockerImage, containerName: s.containerName,
+        running: s.status === 'running',
+      }));
+    const view = buildBackupPanel({ projectId: canonicalId, health, files, now, infra });
+    // 页脚那一行「每日体检怎么说」。喂进去的是**这个项目的**失败与缺口，
+    // 时间戳与恢复演练是全平台的——面板不该替某个项目编一份自己的演练记录。
+    //
+    // 压根没有需要备份的东西时，这几条一条都不该出（Codex review 第七轮 P2）：
+    // 没有备份可言，「读不到上一轮结果」与「从来没做过恢复演练」都无从谈起，
+    // 而它们会以 critical 出现在一个头条写着「没有需要周期备份的服务」的页面上。
+    // 结论由判定那一侧算好挂在 `view.nothingToBackUp` 上，这里只读，不另判一遍（形状 3）。
+    const findings = view.nothingToBackUp ? [] : backupHealthFindings({
+      now,
+      backup: {
+        lastCompletedAt: view.lastRoundAt,
+        // 「覆盖不全」= 备到一部分（partial）+ 有数据却没被保护（unprotected）。
+        // **不能收 unsupported**：那一档现在的意思是「没有需要备份的状态」（memcached
+        // 重启即空），把它算进缺口等于给一台本来就不用备的服务天天报一次不完整；
+        // 而漏掉 unprotected 会让真正没被保护的 MinIO 从页脚消失。两处判据必须跟着
+        // 同一份语义走（Codex review 第六轮 P2，形状 3：判据分裂后漂移）。
+        coverageGaps: view.targets
+          .filter((t) => t.status === 'partial' || t.status === 'unprotected')
+          .map((t) => t.id),
+        failedTargets: view.targets.filter((t) => t.status === 'failed').map((t) => ({ id: t.id, projectId: canonicalId })),
+        offsiteOnlyTargets: view.targets.filter((t) => t.status === 'offsite-only').map((t) => ({ id: t.id, projectId: canonicalId })),
+      },
+      // 恢复演练目前没有任何地方记录，恒为 null——体检会如实报「从来没演练过」。
+      // 这不是占位符：在补上记录之前，「能不能真的恢复」的答案就是「不知道」。
+      lastRestoreDrillAt: null,
+    });
+
+    res.json({
+      ...view,
+      directory: backupDir,
+      /** false = 目录都还不存在，也就是一份备份都没有过；别把它读成「暂无匹配」。 */
+      directoryExists,
+      findings,
     });
   });
 
