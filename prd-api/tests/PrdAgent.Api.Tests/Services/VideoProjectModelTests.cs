@@ -72,6 +72,9 @@ public class VideoProjectModelTests
     [InlineData("alibaba/wan-2.6", 6, 5)]
     [InlineData("alibaba/wan-2.6", 8, 10)]
     [InlineData("seedance-2.0", 14, 15)]
+    [InlineData("bytedance/seedance-2.5", 4, 4)]
+    [InlineData("bytedance/seedance-2.5", 29, 29)]
+    [InlineData("bytedance/seedance-2.5", 31, 30)]
     [InlineData("seedance-1.5", 7, 8)]
     public void Duration_ShouldMatchActualVideoModelCapabilities(
         string modelId,

@@ -123,11 +123,14 @@ public class GatewayMultipartHttpTests
                 Success = true,
                 ResolutionType = "GatewayRegistryPool",
                 ModelGroupId = "pool-selected-by-appcaller",
+                ActualPlatformId = "platform-selected-by-appcaller",
                 ActualModel = "provider-image-model",
             });
 
         captured.ShouldNotBeNull();
         captured!.ExpectedModel.ShouldBe("pool-selected-by-appcaller");
+        captured.PinnedPlatformId.ShouldBe("platform-selected-by-appcaller");
+        captured.PinnedModelId.ShouldBe("provider-image-model");
     }
 
     [Fact]

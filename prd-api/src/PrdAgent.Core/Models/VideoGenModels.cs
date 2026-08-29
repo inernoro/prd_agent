@@ -16,6 +16,7 @@ public static class VideoModelCapabilities
     public static IReadOnlyList<int> GetSupportedDurations(string? modelId)
     {
         var key = (modelId ?? string.Empty).ToLowerInvariant();
+        if (key.Contains("seedance-2.5")) return Enumerable.Range(4, 27).ToArray();
         if (key.Contains("seedance-2")) return [5, 10, 15];
         if (key.Contains("seedance-1-5") || key.Contains("seedance-1.5")) return [4, 5, 8, 10, 12];
         if (key.Contains("wan-") || key.Contains("wan2")) return [5, 10];
