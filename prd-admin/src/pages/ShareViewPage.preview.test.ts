@@ -47,19 +47,27 @@ describe('分享页预览接线', () => {
    * 表单里敲的字、PPT 翻到第几页全部清零。这条接线删掉之后没有任何单测会红（它藏在 effect
    * 的异步回调里），所以在这里按源码守住：ref 要存在，且必须在写 srcDoc 之前真的拦一道。
    */
-  it('直链已经在用户眼前跑起来之后，迟到的原文要丢弃，不能当面把页面重载一次', () => {
+  it('迟到的原文要不要丢，判据必须冲着「用户攒了多少状态」去', () => {
     expect(source).toContain('exposedDirectRef');
-    // 2026-08-25 收紧：光看「遮罩到点」不够。直链本身也可能是一片白
-    // （站点没有入口地址、或直链就是那条会白屏的路径），这时丢掉迟到的 srcDoc
-    // 等于把唯一能救场的那一份也扔了，用户永远盯着空白。
-    // 所以判据是两条并列：遮罩已让位 **且** 直链真的加载出了内容。
-    const guard = source.search(/if\s*\(\s*exposedDirectRef\.current\s*&&\s*directLoadedRef\.current\s*\)\s*return;/);
-    expect(guard, '丢弃判据必须同时要求「直链真的加载过」').toBeGreaterThan(-1);
-    // 光记下来不用等于没接线：拦截必须出现在 setEmbeddedHtml 之前
+
+    // 2026-08-25 这条曾收紧成「遮罩已让位 **且** 直链真的加载过」，用 iframe 的 onLoad 记账。
+    // 2026-08-29 第十九轮 review 推翻了后半条：直链白屏时 load 照样触发，两条双双成立，
+    // 于是把唯一能救场的原文丢掉——正是这条兜底本来要修的那种页面。
+    // 「文档加载完了」证明不了「画出了东西」。这条断言当时钉的就是那个不成立的证据，
+    // 改成钉真正的不变量：丢弃要有第二个条件，且那个条件不许再是 load 事件。
+    const guard = source.search(
+      /if\s*\(\s*exposedDirectRef\.current\s*&&\s*elapsed\s*>\s*LATE_SWAP_GUARD_MS\s*\)\s*return;/);
+    expect(guard, '丢弃判据要按已过时间判，不能只看遮罩是否让位').toBeGreaterThan(-1);
+
+    // 光记下来不用等于没接线：拦截必须出现在写 srcDoc 之前
     const apply = source.indexOf('setEmbeddedHtml({ siteUrl');
     expect(apply).toBeGreaterThan(guard);
-    // directLoadedRef 只能由「直链 + 有真实地址」的 onLoad 置真，about:blank 不算
-    expect(source).toMatch(/if\s*\(!iframeHtml\s*&&\s*site\.siteUrl\)\s*directLoadedRef\.current\s*=\s*true;/);
+
+    // 不许再拿 iframe 的 load 当「已经画出来了」的证据
+    expect(source).not.toContain('directLoadedRef');
+
+    // 每次重新取原文都要重置起点，否则第二次进来一开始就被算成迟到
+    expect(source).toContain('fetchStartedAtRef.current = Date.now();');
   });
 
   it('既没有原文也没有入口地址时，页面要说清为什么是空的，而不是摆一个空 iframe', () => {

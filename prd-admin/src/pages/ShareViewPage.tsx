@@ -88,6 +88,13 @@ function fmtSize(b: number) {
  * 的页面）——在自己新加的遮罩上重犯一次就说不过去了。所以给它一个短窗口，到点必让位。
  */
 export const PREVIEW_MASK_TIMEOUT_MS = 1500;
+/**
+ * 迟到多久之后就不再换文档了。
+ *
+ * 遮罩 1.5s 让位之后，这几秒里访客还没来得及攒下滚动位置/输入/翻页，此时原文回来照换，
+ * 优先把内容显示出来（直链白屏时这是唯一的救场机会）。超过这个时长才保他的现场。
+ */
+export const LATE_SWAP_GUARD_MS = 6000;
 
 /**
  * 该不该用遮罩盖住直链 iframe。抽成纯函数是为了能被测到「加载永远不结束时遮罩必须让位」。
@@ -145,7 +152,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   /** 直链 iframe 是否**真的加载出了内容**（有真实 src 且 load 事件到过）。
    *  丢弃迟到 srcDoc 的前提是「用户已经在用底下那一页」——如果底下那页压根没加载
    *  （站点没有入口地址、或直链本身就白屏），丢掉迟到的 srcDoc 等于让用户一直盯着空白。 */
-  const directLoadedRef = useRef(false);
+  // 这一发原文是什么时候开始取的——迟到多久由它算，不再拿 iframe 的 load 当证据
+  const fetchStartedAtRef = useRef(0);
   /** 直链 iframe 是否已经露给用户看过（遮罩到点即为真）。异步回调读它，不读 state */
   const exposedDirectRef = useRef(false);
   /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
@@ -268,7 +276,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     // 同一个「到点了」要被两处读：渲染读 state，异步回调读 ref。
     // 回调闭包里的 state 是发起那一刻的旧值，永远看不到超时后的 true。
     exposedDirectRef.current = false;
-    directLoadedRef.current = false;
+    fetchStartedAtRef.current = Date.now();
     const maskTimer = window.setTimeout(() => {
       if (!alive) return;
       exposedDirectRef.current = true;
@@ -283,13 +291,19 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           // 于是 deck 邀请条在「原文回得比 1.5s 慢」的每一次都静默消失——
           // 判据挂在一个会被丢弃的中间产物上，正是形状 2（链路只建到一半）。
           setIsDeck(detectSlideDeck(res.data.html));
-          // 遮罩已经让位 = 直链 iframe 已经在用户眼前跑起来了。此时再换成 srcDoc，
-          // 对浏览器就是换一个文档：滚动位置、表单里敲的字、PPT 翻到第几页全部清零。
-          // 代理最慢可以拖到 20s 才回来，那时候用户早就在用这个页面了——
-          // 「可能更好的预览」不值一次当面重载，迟到就直接丢弃。
-          // 两个条件都成立才丢：遮罩已让位**且**直链真的加载出了东西。
-          // 只判前者会在「直链本来就白屏」时把唯一能救场的 srcDoc 也丢掉。
-          if (exposedDirectRef.current && directLoadedRef.current) return;
+          // 丢弃迟到原文的理由，从头到尾只有一个：**用户已经在这一页上攒下了状态**
+          // （滚到哪、输了什么、PPT 翻到第几页），换 srcDoc 等于换一个文档，全部清零。
+          //
+          // 所以判据必须冲着「攒了多少状态」去，而 iframe 的 load 事件不是它的证据：
+          // 直链白屏时 load 照样会触发，两个条件双双成立，于是把唯一能救场的原文丢掉，
+          // 访客就永远停在那一片白——正是这条兜底本来要修的那种页面。
+          // 「文档加载完了」证明不了「画出了东西」，拿它当证据是形状 8。
+          //
+          // 换成按已过时间判：这几秒里用户还没来得及攒下什么，宁可换文档也要把内容显示出来；
+          // 拖到很久之后才回来，人多半已经在用了，才保他的现场。两种误判的代价不对等——
+          // 丢错了是「什么都看不到」，换错了只是「滚动位置没了」。
+          const elapsed = Date.now() - fetchStartedAtRef.current;
+          if (exposedDirectRef.current && elapsed > LATE_SWAP_GUARD_MS) return;
           setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) });
           return;
         }
@@ -331,8 +345,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     const isVisibilityDenied = failure === 'visibility-denied';
     const titleText = cfg.title;
     const detailText = cfg.body;
-    // 认不出的码才把后端原文露出来——认得出的那几档，我们自己的话说得更清楚
-    const serverDetail = failure === 'unknown' ? error.message : null;
+    // 认不出的码才把后端原文露出来——认得出的那几档，我们自己的话说得更清楚。
+    //
+    // 例外是可见性拒绝：后端把两种完全不同的策略压成同一个码回来——「登录可见」只是
+    // 没登录（登录一下就能看），「仅我和协作者」是团队外真进不去。注册表里只能放一段话，
+    // 于是一个只差登录的访客被告知「可能还需要团队成员身份」，照着这句话他会放弃。
+    // 这一档后端那句原文恰恰把两者分得清清楚楚，所以在这里显式保留它。
+    const serverDetail = failure === 'unknown' || isVisibilityDenied ? error.message : null;
     const currentPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/';
     return (
       <div style={styles.fullScreen}>
@@ -697,11 +716,6 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             // invalid sandbox flag." 并忽略它——写了两个月，deck 自带的全屏按钮一天没生效过。
             allow="fullscreen"
             allowFullScreen
-            onLoad={() => {
-              // 只有「直链 + 有真实地址」这一种组合才算「用户已经在看底下那一页」。
-              // srcDoc 分支与 about:blank（没有入口地址时的空 iframe）都不记账。
-              if (!iframeHtml && site.siteUrl) directLoadedRef.current = true;
-            }}
           />
           {/* 既没有取回的正文、也没有入口地址 —— iframe 会停在 about:blank，
               用户看到的就是标题栏下面一片白、控制台一条错都没有，无从判断发生了什么。

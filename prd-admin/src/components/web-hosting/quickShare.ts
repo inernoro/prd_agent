@@ -147,7 +147,11 @@ export function describeQuickShare(link: ShareLinkItem, now: number = Date.now()
     : v === 'owner-only'
       ? '你自己和这个站点的协作者'
       : '任何登录的人';
-  const pwd = link.accessLevel === 'password' ? '，还需要输密码' : '';
+  // 密码这句要看档：owner-only 能进来的人（创建者 + 站点已共享团队的成员）在后端
+  // 都走 IsTeamInsiderForShareAsync 免密，进不来的人则在密码之前就被可见性挡掉——
+  // 也就是说这一档里**没有任何人真的会被密码拦一次**，说「还需要输密码」是句假话。
+  // 与 SharePreviewPane 那六种门同一口径（那边刚修过，这里是同一个错的第二份）。
+  const pwd = link.accessLevel === 'password' && v !== 'owner-only' ? '，还需要输密码' : '';
   const life = link.expiresAt ? expiryLabel(link.expiresAt, now) : '永不过期';
   return `${who}都能打开这个站点${pwd}；${life}。`;
 }
