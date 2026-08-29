@@ -5337,12 +5337,50 @@ async Task<string> EnsureSystemTeamAsync(string tenantId)
     }
     catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
     {
-        // 要么另一个容器刚建好，要么早就有人手建了一个同名团队（唯一索引在 租户+名字 上）。
-        // 两种都按「已经有了」处理，认名字不认 id，避免在同一个租户里分裂出两个系统团队。
+        // 撞唯一索引有两种可能，处置完全不同，不能一律认名字：
+        //
+        // a) 另一个容器刚把**同一个 id** 建好 —— 并发，按幂等处理，直接用它。
+        // b) 早就有人手建了一个**同名的业务团队** —— 认名字就等于把系统的消耗、预算和账单
+        //    挂到别人的团队上；那个团队要是停用状态，系统签出来的每一把 key 还会在
+        //    生命周期门上被判死。系统身份不去占用户的团队，另起一个带后缀的名字，
+        //    id 仍然是确定值，账单照旧单独记。
         var byName = await teams
             .Find(x => x.TenantId == tenantId && x.NormalizedName == normalized)
             .FirstOrDefaultAsync();
-        return byName?.Id ?? systemTeamId;
+        if (byName is not null && string.Equals(byName.Id, systemTeamId, StringComparison.Ordinal))
+            return systemTeamId;
+
+        for (var suffix = 2; suffix <= 20; suffix++)
+        {
+            var fallbackName = $"{SystemTeamName}（网关自建 {suffix}）";
+            try
+            {
+                await teams.InsertOneAsync(new LlmGwTeam
+                {
+                    Id = systemTeamId,
+                    TenantId = tenantId,
+                    Name = fallbackName,
+                    NormalizedName = fallbackName.ToUpperInvariant(),
+                    Status = "active",
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                });
+                return systemTeamId;
+            }
+            catch (MongoWriteException retry) when (retry.WriteError.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // 这个后缀也被占了（或者并发把同 id 建出来了）：同 id 就是并发，直接用。
+                var byId = await teams.Find(x => x.Id == systemTeamId && x.TenantId == tenantId).FirstOrDefaultAsync();
+                if (byId is not null) return systemTeamId;
+            }
+        }
+
+        // 二十个后缀全被占：返回空串而不是抛异常，让两个调用方各自给出说得出原因的失败——
+        // 抛上去只会变成一个裸 500，而这一整套设计的前提就是「不许把裸状态码丢给用户」。
+        app.Logger.LogWarning(
+            "[SystemTeam] 租户 {TenantId} 下「{Name}」及其备用名均被业务团队占用，系统团队无法建立",
+            tenantId, SystemTeamName);
+        return string.Empty;
     }
 }
 
@@ -5373,6 +5411,9 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
     // 归属团队恒为系统团队。这里不再读设置里的 TeamId、也不再看调用者属于哪个团队——
     // 系统消耗只记在系统团队，才谈得上「单独计费」。
     var effectiveTeamId = await EnsureSystemTeamAsync(tenantId);
+    if (effectiveTeamId.Length == 0)
+        return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
+            $"建不出系统团队：本租户下「{SystemTeamName}」这个名字已被业务团队占用，备用名也都被占。去「团队与成员」把那个同名团队改个名字，系统消耗才能单独记账。");
 
     // 1. appCaller 自动登记（幂等）：没有它 serving 会以「未注册用途」拒绝。
     var callerFilter = Builders<BsonDocument>.Filter.And(
@@ -5544,11 +5585,18 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
 
     // 旧的系统级 key 一律停用：只留一把在用，避免密钥页越积越多、也避免撤销时认错对象。
     //
-    // 留哪一把，认的是**设置里此刻指着的那把**，不是「我刚签的这把」。两个请求并发首用/自愈时，
-    // 各自都写过一次设置、又各自去停用「除自己以外」的 key，就会出现设置指着一把已被对方停用的
-    // 密钥，而两个调用方都被告知签发成功。改成回读设置取胜者，无论谁最后写入，
-    // 「设置指向的那把一定是启用的」这条不变量都成立；输掉的那一方手里的 key 被停用后
-    // 会在下次调用拿到凭据类失败，走既有的作废重签自愈路径，不会卡死。
+    // 两条约束合起来才挡得住并发，缺一条都不够：
+    //
+    // 1) 留哪一把认的是**设置里此刻指着的那把**，不是「我刚签的这把」。
+    // 2) 只停用**够老的**（5 分钟前就存在的）key。
+    //
+    // 只做第 1 条仍然会翻车：A 回读到 A、B 回读到 B，接着 B 把 A 停了、A 把 B 停了，
+    // 最后两把都停用、设置还指着其中一把——回读与停用之间没有原子性，这正是上一版漏掉的。
+    // 加上第 2 条之后就不需要锁了：设置指向的那把永远是刚签出来的（秒级新），
+    // 而并发对手的 key 同样新，谁也够不着谁；真正的陈旧 key 会在下一次签发时被扫掉。
+    // 代价是并发落败的那把会多留 5 分钟（页面上多一行、且它不被任何人引用），
+    // 比「两把都停用、系统对自己回 401」这种状态好得多。
+    var retireBefore = DateTime.UtcNow.AddMinutes(-5);
     var settledSettings = await LoadSystemSettingsAsync(tenantId);
     var winnerKeyId = settledSettings.AsNullableString("ServiceKeyId") ?? newKeyId;
     var effectiveKey = plainKey;
@@ -5580,6 +5628,7 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
             Builders<BsonDocument>.Filter.Eq("Name", SystemServiceKeyName),
             Builders<BsonDocument>.Filter.Ne("_id", winnerKeyId),
+            Builders<BsonDocument>.Filter.Lt("CreatedAt", retireBefore),
             Builders<BsonDocument>.Filter.Eq("Enabled", true)),
         Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
 
@@ -5683,6 +5732,10 @@ app.MapGet("/gw/system-settings", async (HttpContext http) =>
     // 归属团队不是「设置里选的」，是系统团队，读这一页时顺手把它建好——
     // 于是用户在页面上看到的名字，就是下一次真实调用会记账的那个团队。
     var systemTeamId = await EnsureSystemTeamAsync(tenant.TenantId);
+    if (systemTeamId.Length == 0)
+        return Json(ApiEnvelope<object>.Fail(
+            "SYSTEM_TEAM_NAME_TAKEN",
+            $"「{SystemTeamName}」这个名字已被业务团队占用，备用名也都被占，系统团队建不出来。去「团队与成员」把那个同名团队改个名字再回来。"), jsonOptions, 409);
     var teamDoc = await teams.Find(x => x.Id == systemTeamId && x.TenantId == tenant.TenantId).FirstOrDefaultAsync();
 
     return Json(ApiEnvelope<object>.Ok(new

@@ -196,6 +196,28 @@ public sealed class GatewayRoutingWiringGuardTests
         console.Split(stamp).Length.ShouldBe(2, "存量放行的盖戳只允许出现在迁移这一处");
     }
 
+    /// <summary>
+    /// 系统级密钥的「退役旧 key」必须同时带两个条件：不碰设置指向的胜者、也不碰刚签出来的新 key。
+    ///
+    /// 只判胜者不够：两个并发请求各自回读到自己那把当胜者，接着互相把对方停用，
+    /// 最后两把都是停用的、设置还指着其中一把——回读与停用之间没有原子性。
+    /// 加上「只停用够老的」之后，谁也够不着对方那把刚签出来的 key，不需要锁。
+    /// 删掉任一条件，这条用例都该红。
+    /// </summary>
+    [Fact]
+    public void 系统密钥退役必须避开胜者与新签的那把()
+    {
+        var console = File.ReadAllText(Path.Combine(RepoRoot(), "llmgw", "console-api", "Program.cs"));
+        var start = console.IndexOf("var settledSettings = await LoadSystemSettingsAsync(tenantId);", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "找不到系统密钥的胜者回读，守卫的取值范围需要跟着改");
+        var end = console.IndexOf("return (true, baseUrl, effectiveKey", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, "胜者回读与返回之间的结构变了，守卫的取值范围需要跟着改");
+        var retire = console[start..end];
+
+        retire.ShouldContain("Ne(\"_id\", winnerKeyId)", customMessage: "必须放过设置指向的那把，否则设置会指着一把已停用的密钥");
+        retire.ShouldContain("Lt(\"CreatedAt\", retireBefore)", customMessage: "必须放过刚签出来的 key，否则两个并发请求会互相把对方停用");
+    }
+
     [Fact]
     public void 历史别名兼容不得被静默撤销()
     {
