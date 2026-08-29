@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -25,6 +26,7 @@ public class HomepageAssetsController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<HomepageAssetsController> _logger;
     private readonly IAssetStorage _assetStorage;
+    private readonly HomepageAssetCopier _copier;
 
     // 允许 a-z0-9._- ，首字符必须字母/数字；点号用于分段（card.marketplace / agent.prd-agent.image）
     private static readonly Regex SlotRegex = new(@"^[a-z0-9][a-z0-9._\-]{0,127}$", RegexOptions.Compiled);
@@ -35,11 +37,16 @@ public class HomepageAssetsController : ControllerBase
     private static readonly Regex HeroSlotRegex = new(@"^hero\.(.+)$", RegexOptions.Compiled);
     private const long MaxUploadBytes = 20 * 1024 * 1024; // 20MB：图片 + 短视频
 
-    public HomepageAssetsController(MongoDbContext db, ILogger<HomepageAssetsController> logger, IAssetStorage assetStorage)
+    public HomepageAssetsController(
+        MongoDbContext db,
+        ILogger<HomepageAssetsController> logger,
+        IAssetStorage assetStorage,
+        HomepageAssetCopier copier)
     {
         _db = db;
         _logger = logger;
         _assetStorage = assetStorage;
+        _copier = copier;
     }
 
     private static (bool ok, string? error, string normalized) NormalizeSlot(string slot)
@@ -227,11 +234,12 @@ public class HomepageAssetsController : ControllerBase
     /// <summary>
     /// 认领：把一次生图任务的产物挂到某个 slot 上（管理端「首页预览图」的生成落地口）。
     ///
-    /// 这里**不复制字节**，直接引用生图产物已有的 CDN URL：
-    /// 生图 Worker 保存的是内容寻址对象（同一张图 URL 恒定、不会被覆盖或过期），
-    /// 再拷一份到 `icon/homepage/*` 只会多一份同样的字节和一条会漂的路径。
-    /// 代价是这类记录的 `RelativePath` 为空——删除/替换时不去删那个对象（它属于
-    /// 生图任务，不属于本 slot），下面两处删除逻辑都判了空。
+    /// **先把字节复制进我们自己的存储，再写槽位**。早先这里是直接引用生图产物的地址，
+    /// 理由是「Worker 存的是内容寻址对象，地址恒定」——但那只在 run 绑了工作区时成立。
+    /// 首页配图这条 run 没有工作区，Worker 的落存整段跳过，`Url` 就是供应商返回的地址，
+    /// 常带签名、有有效期：生成当天首页正常，等它过期，未登录访客看到的是一排裂图，
+    /// 而管理端不报错。复制的代价是七张图多存一份，换来一条能一句话说清的不变量：
+    /// 首页槽位引用的对象一定是我们自己存的。
     /// </summary>
     [HttpPost("adopt-image-run")]
     [ProducesResponseType(typeof(ApiResponse<HomepageAssetDto>), StatusCodes.Status200OK)]
@@ -269,29 +277,21 @@ public class HomepageAssetsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 "这张图只有 base64、没有可引用的地址，挂不到首页。发起生图时请用 responseFormat=url"));
 
-        // 尺寸/MIME 从资产记录取；取不到就按 URL 后缀猜，缺这两个字段不该挡住认领
-        var imageUrl = item.Url!;
-        var mime = string.Empty;
-        long sizeBytes = 0;
-        var displaySha = item.DisplaySha256;
-        if (!string.IsNullOrWhiteSpace(displaySha))
+        // 把字节取回来存进我们自己的存储。mime / 大小都以真正存下来的那份为准——
+        // 不再从资产记录或 URL 后缀去猜：猜错只是标签不对，而这里拿到的是实物。
+        HomepageAssetCopier.Copied copied;
+        try
         {
-            var asset = await _db.ImageAssets
-                .Find(x => x.DisplaySha256 == displaySha)
-                .Limit(1)
-                .FirstOrDefaultAsync(ct);
-            if (asset != null)
-            {
-                mime = asset.Mime;
-                sizeBytes = asset.SizeBytes;
-            }
+            copied = await _copier.CopyAsync(item.Url!, ext => BuildObjectKey(slotNorm, ext), ct);
         }
-        if (string.IsNullOrWhiteSpace(mime))
+        catch (HomepageAssetCopier.CopyFailedException ex)
         {
-            // 从 URL 猜后缀：先切掉 query/fragment，否则 `.png?v=1` 会被当成扩展名 `.png?v=1`
-            var pathOnly = imageUrl.Split('?', '#')[0];
-            mime = GuessMimeByExt(Path.GetExtension(pathOnly));
+            _logger.LogWarning("Adopt copy failed: slot={Slot} run={Run} msg={Msg}", slotNorm, runId, ex.Message);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+        var imageUrl = copied.Url;
+        var mime = copied.Mime;
+        var sizeBytes = copied.SizeBytes;
 
         var prompt = (req?.Prompt ?? item.Prompt ?? string.Empty).Trim();
         if (prompt.Length > 4000) prompt = prompt[..4000];
@@ -304,7 +304,7 @@ public class HomepageAssetsController : ControllerBase
             {
                 Id = Guid.NewGuid().ToString("N"),
                 Slot = slotNorm,
-                RelativePath = string.Empty,
+                RelativePath = copied.ObjectKey,
                 Url = imageUrl,
                 Mime = mime,
                 SizeBytes = sizeBytes,
@@ -318,15 +318,18 @@ public class HomepageAssetsController : ControllerBase
             return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(rec)));
         }
 
-        // 上一版是手工上传的（我们自己持有那个对象）才去删；引用生图产物的不删。
-        // **删除必须排在库里切换成功之后**：先删后写的话，中间一旦取消或写库失败，
+        // 旧对象只在「确实换了一个 key」时才删。扩展名没变时新旧 key 相同，此刻那个 key 上
+        // 躺着的已经是刚上传的新图——照删就是把自己刚存的东西删掉，首页当场裂。
+        // **删除还必须排在库里切换成功之后**：先删后写的话，中间一旦取消或写库失败，
         // 记录还指着一个已经不存在的对象，首页那一格就此变成裂图，而这次认领是失败的。
-        var staleKey = existing.RelativePath;
+        var staleKey = string.Equals(existing.RelativePath, copied.ObjectKey, StringComparison.Ordinal)
+            ? string.Empty
+            : existing.RelativePath;
 
         await _db.HomepageAssets.UpdateOneAsync(
             x => x.Id == existing.Id,
             Builders<HomepageAsset>.Update
-                .Set(x => x.RelativePath, string.Empty)
+                .Set(x => x.RelativePath, copied.ObjectKey)
                 .Set(x => x.Url, imageUrl)
                 .Set(x => x.Mime, mime)
                 .Set(x => x.SizeBytes, sizeBytes)
@@ -342,7 +345,7 @@ public class HomepageAssetsController : ControllerBase
             catch (Exception ex) { _logger.LogWarning("Failed to delete old homepage asset {Key}: {Msg}", staleKey, ex.Message); }
         }
 
-        existing.RelativePath = string.Empty;
+        existing.RelativePath = copied.ObjectKey;
         existing.Url = imageUrl;
         existing.Mime = mime;
         existing.SizeBytes = sizeBytes;
