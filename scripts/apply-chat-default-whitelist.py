@@ -59,6 +59,10 @@ WHITELIST = [
     ("gpt-5.6-terra", OPENAI_PLATFORM_ID, 10, "30 天真实流量 3/3 成功（含 openai/ 前缀路径）"),
     ("gpt-5.6-sol", OPENAI_PLATFORM_ID, 20, "30 天真实流量 10/10 成功，样本最多"),
     ("gpt-5.6-luna", OPENAI_PLATFORM_ID, 30, "30 天真实流量 4/4 成功"),
+    # 兜底位。精选池里原本就有这一条（prio 10，已声明 16384 上限），不动它就会和 terra 撞在同一档，
+    # 违背「统一用最新的」。压到 900 而不是删掉：上面三档同属一个平台一个家族，那个平台一挂对话就全停，
+    # 留一个已验证可用的异代成员当最后一道保险。要彻底只留 5.6，把这一行删掉即可。
+    ("gpt-4.1-mini", OPENAI_PLATFORM_ID, 900, "兜底：精选池既有成员，已声明 16384 上限，仅在 5.6 三档全挂时才轮到"),
 ]
 
 
@@ -67,6 +71,10 @@ def request(method: str, base: str, path: str, token: str, body: dict | None = N
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {token}")
+    # 边缘防护按 UA 拦默认的 python-urllib（返回 HTTP 403 + error code 1010），
+    # 所以显式声明一个正常 UA。鉴权仍然只靠上面那个 Bearer token，这里不绕过任何校验。
+    req.add_header("User-Agent", "prd-agent-ops-script/1.0")
+    req.add_header("Accept", "application/json")
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
