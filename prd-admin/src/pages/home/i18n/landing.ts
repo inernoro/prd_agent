@@ -675,7 +675,7 @@ const zh: TranslationShape = {
         {
           label: '沉淀',
           items: [
-            { name: '知识库', desc: '划词就能让 AI 改一句话，确认才落库', icon: 'BookOpen' },
+            { name: '我的分享', desc: '网页托管 / 周报 / 知识库 / 工作流的分享，统一在一处管', icon: 'Share2' },
             { name: '周报智能体', desc: '创建、提交、审阅，AI 生成、团队汇总、计划比对', icon: 'FileBarChart' },
             { name: 'MD 转网页 PPT', desc: '粘一段 Markdown，出一份 reveal.js 网页演示', icon: 'FileText' },
             { name: '转录工作台', desc: '多模型 ASR 转写、时间戳编辑、模板转文案', icon: 'AudioLines' },
@@ -1245,7 +1245,7 @@ const en: TranslationShape = {
         {
           label: 'Retain',
           items: [
-            { name: 'Knowledge base', desc: 'Select a sentence and let AI rewrite it; saved only on confirm', icon: 'BookOpen' },
+            { name: 'My shares', desc: 'Every share link — hosted pages, weeklies, docs, workflows — in one place', icon: 'Share2' },
             { name: 'Weekly report agent', desc: 'Create, submit, review — AI drafts, the team rolls up, plans compare', icon: 'FileBarChart' },
             { name: 'Markdown to slides', desc: 'Paste Markdown, get a reveal.js deck', icon: 'FileText' },
             { name: 'Transcription bench', desc: 'Multi-model ASR, timestamp editing, templates into copy', icon: 'AudioLines' },
