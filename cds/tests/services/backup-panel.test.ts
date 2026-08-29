@@ -73,7 +73,7 @@ describe('周期备份面板：项目归属', () => {
 });
 
 describe('周期备份面板：每个目标的处境', () => {
-  it('五档分开，且「本地没成」优先于「只备到一部分」', () => {
+  it('各档分开，且「本地没成」优先于「只备到一部分」', () => {
     const view = buildBackupPanel({
       projectId: 'web',
       now: NOW,
@@ -228,6 +228,82 @@ describe('下一轮什么时候', () => {
   it('连上一轮都读不到时，不编一个下一轮出来', () => {
     const view = buildBackupPanel({ projectId: 'web', now: NOW, health: null, files: [] });
     expect(view.nextRoundEstimatedAt).toBeNull();
+  });
+});
+
+describe('产物不在盘上（健康记录说成功，文件却没了）', () => {
+  /**
+   * Codex review P1。这一档防的正是这批改动要治的病：落盘记录只能证明
+   * 「那一轮产出过」，证明不了「此刻还在」。只读记录就会把一个产物已经被删掉的
+   * 目标报成「正常」，等到真要恢复那天才发现手上什么都没有。
+   */
+  const NAME = backupFileName('web', 'mongo', 'mongo', '2026-08-28T09:00:00.000Z');
+
+  it('记录说成功、盘上却没有这个文件时，不许报「正常」', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{ id: 'mongo', projectId: 'web', fileName: NAME, bytes: 4096, remoteObjectKey: 'k' }],
+      }),
+      files: [],
+    });
+    expect(view.targets[0].status).toBe('artifact-missing');
+    expect(view.targets[0].reason).toContain(NAME);
+    // 结果和「没备出来」一样严重：真要恢复时手上没有那份文件。
+    expect(view.verdict.tone).toBe('bad');
+    expect(view.verdict.headline).toContain('现在不在盘上了');
+  });
+
+  it('文件在盘上就照常算正常', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{ id: 'mongo', projectId: 'web', fileName: NAME, bytes: 4096, remoteObjectKey: 'k' }],
+      }),
+      files: [{ name: NAME, bytes: 4096 }],
+    });
+    expect(view.targets[0].status).toBe('ok');
+    expect(view.verdict.tone).toBe('ok');
+  });
+
+  it('「本地就没备成」优先于「产物不在了」——它本来就没有产物', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{ id: 'redis', projectId: 'web', fileName: NAME, bytes: 1 }],
+        failedTargets: [{ id: 'redis', projectId: 'web', reason: 'NOAUTH' }],
+      }),
+      files: [],
+    });
+    expect(view.targets[0].status).toBe('failed');
+  });
+
+  it('离机没上去的那份，本地文件也没了 → 先说产物不在了', () => {
+    // 「仅本机」这句话的全部价值就在于「本机那份还在」。它不在了，这句话就是假的。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{ id: 'mysql', projectId: 'web', fileName: NAME, bytes: 2048 }],
+        offsiteOnlyTargets: [{ id: 'mysql', projectId: 'web', reason: '离机超时' }],
+      }),
+      files: [],
+    });
+    expect(view.targets[0].status).toBe('artifact-missing');
+  });
+
+  it('存量记录没有 fileName 时不下这个结论——证明不了它不在', () => {
+    // 一响就响一片的告警没人会看。宁可这一档漏报，也不误报一整批存量数据。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ objects: [{ id: 'mongo', projectId: 'web', bytes: 4096 }] }),
+      files: [],
+    });
+    expect(view.targets[0].status).toBe('ok');
   });
 });
 

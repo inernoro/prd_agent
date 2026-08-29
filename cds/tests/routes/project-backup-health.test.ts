@@ -40,6 +40,8 @@ const HEALTH = {
     // 只属于 proj-b 的一台。它一旦出现在 proj-a 的面板里，就是筛漏了——
     // 光靠同名的 redis 看不出来（两边 id 一样，混进来也不改变 id 清单）。
     { id: 'postgres', projectId: 'proj-b', fileName: 'proj-b--postgres-auto-20260828T090000Z.sql.gz', bytes: 8192 },
+    // 记录说这一轮导出成功了，但下面的 ls 输出里没有这个文件——产物被删/被移走了。
+    { id: 'nacos', projectId: 'proj-a', fileName: 'proj-a--nacos-auto-20260828T090000Z.tar.gz', bytes: 1024, remoteObjectKey: 'k3' },
   ],
 };
 
@@ -111,7 +113,7 @@ describe('GET /api/projects/:id/backup-health', () => {
     const res = await get(server, '/api/projects/proj-a/backup-health');
     expect(res.status).toBe(200);
     const byId = new Map(res.body.targets.map((t: any) => [t.id, t]));
-    expect([...byId.keys()].sort()).toEqual(['minio', 'mongo', 'mysql', 'redis']);
+    expect([...byId.keys()].sort()).toEqual(['minio', 'mongo', 'mysql', 'nacos', 'redis']);
     // proj-b 的 redis 这一轮是成功的；如果筛错了，这里的 redis 会变成 ok。
     expect(byId.get('redis').status).toBe('failed');
   });
@@ -122,6 +124,10 @@ describe('GET /api/projects/:id/backup-health', () => {
     expect(byId.get('mongo')).toMatchObject({ status: 'ok', bytes: 4096, offsite: true });
     expect(byId.get('mysql')).toMatchObject({ status: 'offsite-only', bytes: 2048, offsite: false });
     expect(byId.get('minio').status).toBe('unsupported');
+    // 健康记录说 nacos 这一轮成功了，可 ls 里没有那个文件——不许报成「正常」，
+    // 否则真要恢复的那天才发现产物不在（Codex review P1）。
+    expect(byId.get('nacos').status).toBe('artifact-missing');
+    expect(byId.get('nacos').reason).toContain('proj-a--nacos-auto-20260828T090000Z.tar.gz');
     // 失败原因要能点开看，不用用户自己去翻容器日志。
     expect(byId.get('redis').reason).toContain('NOAUTH');
     // 这一轮没备成，但盘上还有三天前那一份——答「三天前」可行动，答「未知」不行。

@@ -18,7 +18,7 @@ import { apiUrl } from '@/lib/api';
  * 前端只负责把它们摆好——同一个判据前后端各写一份，就是下一次漂移的起点。
  */
 
-type BackupTargetStatus = 'failed' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
+type BackupTargetStatus = 'failed' | 'artifact-missing' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
 
 interface BackupPanelTarget {
   id: string;
@@ -52,6 +52,8 @@ interface BackupPanelResponse {
 /** 每一档在界面上叫什么、用哪个语义色。措辞与后端那套判据一一对应。 */
 const STATUS_META: Record<BackupTargetStatus, { label: string; tone: 'ok' | 'warn' | 'bad' | 'muted' }> = {
   failed: { label: '没备出来', tone: 'bad' },
+  // 备出来了、文件却不在盘上——和「没备出来」同一档：真要恢复时手上都没有那份文件。
+  'artifact-missing': { label: '产物不在了', tone: 'bad' },
   'offsite-only': { label: '仅本机', tone: 'warn' },
   partial: { label: '范围有限', tone: 'warn' },
   unsupported: { label: '还备不了', tone: 'muted' },
@@ -207,7 +209,9 @@ export function BackupPanel({
   busy?: boolean;
   onRefresh?: () => void;
 }): JSX.Element {
-  const needsAttention = data.targets.filter((t) => t.status === 'failed' || t.status === 'offsite-only' || t.status === 'partial');
+  // 「需要你管的」= 除了正常与「这类还备不了」之外的全部。写成排除法而不是逐个列举：
+  // 后端再加一档时，它会自动落进这一组，而不是从界面上凭空消失（形状 2）。
+  const needsAttention = data.targets.filter((t) => t.status !== 'ok' && t.status !== 'unsupported');
   const normal = data.targets.filter((t) => t.status === 'ok');
   const unsupported = data.targets.filter((t) => t.status === 'unsupported');
   const VerdictIcon = data.verdict.tone === 'ok' ? ShieldCheck : data.verdict.tone === 'warn' ? TriangleAlert : ShieldAlert;

@@ -23,15 +23,21 @@ import { backupKey, isAutoBackupFile, INFRA_BACKUP_INTERVAL_MS } from './infra-b
  * 一个目标这一轮的处境。**五档不能合并**——每一档要人做的事都不一样：
  *
  * - `failed`      本地就没导出来，手上没有它的新副本 → 得去修这台服务
+ * - `artifact-missing` 那一轮导出成功了，但**产物此刻不在盘上** → 得去查文件哪去了
  * - `offsite-only` 本地那份已过校验、就在盘上，只是离机没上去 → 得去修离机通道
  * - `partial`     备成功了，但导出脚本自报只覆盖到一部分（如 postgres 只导了一个库）
  * - `unsupported` 这个类型压根还备不了（如 MinIO 要桶到桶复制，不是一份 dump）
  * - `ok`          正常
  *
- * 前两档合并过一次，后果是把运维支去找一份其实存在的备份（见 platform-daily-health
- * 里那两条 finding 的注释）。这里不再重犯。
+ * `failed` 与 `offsite-only` 合并过一次，后果是把运维支去找一份其实存在的备份
+ * （见 platform-daily-health 里那两条 finding 的注释）。这里不再重犯。
+ *
+ * `artifact-missing` 是 Codex review P1 补的一档，它防的正是这一整批改动要治的病：
+ * 健康文件说「这一轮导出成功了」，而那个文件已经被删掉/移走/盘坏了——只读健康记录
+ * 就会把它报成「正常」，**等到真要恢复的那天才发现产物不在**。落盘记录只能证明
+ * 当时产出过，证明不了此刻还在，所以要拿盘上的实际文件再核一遍。
  */
-export type BackupTargetStatus = 'failed' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
+export type BackupTargetStatus = 'failed' | 'artifact-missing' | 'offsite-only' | 'partial' | 'unsupported' | 'ok';
 
 export interface BackupPanelTarget {
   id: string;
@@ -191,6 +197,10 @@ export function buildBackupPanel(input: {
     ...gapById.keys(),
   ])].sort();
 
+  // 盘上到底有哪些文件。**判据要拿这个再核一遍产物**，不能只信健康记录：
+  // 记录只证明「那一轮产出过」，证明不了「此刻还在」（Codex review P1）。
+  const present = new Set(mine.map((f) => f.name));
+
   const targets: BackupPanelTarget[] = ids.map((id) => {
     const object = objectById.get(id);
     const own = mine.filter((f) => isAutoBackupFile(f.name, projectId, id));
@@ -199,20 +209,30 @@ export function buildBackupPanel(input: {
     // 优先级不能乱：一个目标同时出现在「失败」和「缺口」里时，要先说它没备成——
     // 「备到一部分」是成功之后才谈得上的事。
     const gap = gapById.get(id);
+    // 产物不见了，只对「这一轮真的产出过一个文件」的目标才谈得上。
+    // 记录里没有 fileName（早期格式）时**不下这个结论**：证明不了它不在，
+    // 而把一整批存量记录误报成「产物不在了」，比漏报更糟——那种一响就响一片的
+    // 告警没人会看，正是这套体检要避免的。
+    const recordedFile = String(object?.fileName || '').trim();
+    const artifactMissing = Boolean(recordedFile) && !present.has(recordedFile);
     const status: BackupTargetStatus = failedById.has(id)
       ? 'failed'
-      : offsiteById.has(id)
-        ? 'offsite-only'
-        : gap
-          ? (object ? 'partial' : 'unsupported')
-          : 'ok';
+      : artifactMissing
+        ? 'artifact-missing'
+        : offsiteById.has(id)
+          ? 'offsite-only'
+          : gap
+            ? (object ? 'partial' : 'unsupported')
+            : 'ok';
     const reason = status === 'failed'
       ? cleanReason(failedById.get(id)?.reason)
-      : status === 'offsite-only'
-        ? cleanReason(offsiteById.get(id)?.reason)
-        : (status === 'partial' || status === 'unsupported')
-          ? cleanReason(gap?.reason)
-          : null;
+      : status === 'artifact-missing'
+        ? `上一轮导出的产物 ${recordedFile} 现在不在备份目录里——被删了、被移走了，或者盘出了问题`
+        : status === 'offsite-only'
+          ? cleanReason(offsiteById.get(id)?.reason)
+          : (status === 'partial' || status === 'unsupported')
+            ? cleanReason(gap?.reason)
+            : null;
     return {
       id,
       status,
@@ -254,6 +274,7 @@ function buildVerdict(
 ): BackupPanelView['verdict'] {
   const count = (s: BackupTargetStatus): number => targets.filter((t) => t.status === s).length;
   const failed = count('failed');
+  const missing = count('artifact-missing');
   const offsite = count('offsite-only');
   const partial = count('partial');
   const unsupported = count('unsupported');
@@ -279,6 +300,14 @@ function buildVerdict(
     return {
       tone: 'bad',
       headline: `${failed} 个目标本地就没备出来，手上没有它们的新副本`,
+      subline,
+    };
+  }
+  if (missing > 0) {
+    return {
+      // 与 failed 同一档：两者的结果一样——真要恢复的时候手上没有那份文件。
+      tone: 'bad',
+      headline: `${missing} 个目标上一轮备出来的产物，现在不在盘上了`,
       subline,
     };
   }
