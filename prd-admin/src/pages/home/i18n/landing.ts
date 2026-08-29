@@ -636,7 +636,7 @@ const zh: TranslationShape = {
       eyebrow: '百宝箱 · /ai-toolbox',
       title: '不是六个 Agent，是三十几个，都在同一个台面上',
       description:
-        '这就是登录后「百宝箱」那一页：权属、类型、搜索、最近使用，一个不少。名字、一句话、图标都取自同一份注册表——加一个新 Agent，这里自动多一个。',
+        '这就是登录后「百宝箱」那一页：权属、类型、搜索、最近使用，一个不少。下面这十六个的名字、一句话、图标都照着百宝箱那份注册表来，是从三十几个里挑出来的一屏。',
       note: '带「预览」标的是还没通过完整验收的，摆在这里而不是藏起来：能用到什么程度就说到什么程度。',
       tabs: ['全部', '我的', '别人的', '收藏'],
       kindTabs: ['全部类型', '智能体', '工具'],
@@ -669,7 +669,7 @@ const zh: TranslationShape = {
             { name: '缺陷管理智能体', desc: '缺陷提交与跟踪，信息提取、分类、生成报告', icon: 'Bug' },
             { name: 'PR 审查智能体', desc: '用你自己的 GitHub 账号审查任意有权访问的 PR', icon: 'GitPullRequest' },
             { name: '前端搭档智能体', desc: '给后端同事用：接 API、写组件、修报错、看截图现象', icon: 'FolderKanban', preview: true },
-            { name: 'CDS Agent', desc: '远程跑 Claude Code / Codex 类沙箱任务，流式对话', icon: 'Terminal' },
+            { name: 'CDS Agent', desc: '远程跑 Claude Code / Codex 类沙箱任务，流式对话', icon: 'Terminal', preview: true },
           ],
         },
         {
@@ -1206,7 +1206,7 @@ const en: TranslationShape = {
       eyebrow: 'Toolbox · /ai-toolbox',
       title: 'Not six agents. Thirty-odd, all on the same desk',
       description:
-        'This is the Toolbox page you land on after logging in — ownership tabs, kind tabs, search, count, recents, all of it. Names, one-liners and icons come from the same registry: add an agent and one more appears here.',
+        'This is the Toolbox page you land on after logging in — ownership tabs, kind tabs, search, count, recents, all of it. The sixteen below take their names, one-liners and icons from that registry: one screenful picked out of thirty-odd.',
       note: 'The ones tagged Preview have not passed full acceptance yet. They sit here rather than being hidden: we say exactly how far each one goes.',
       tabs: ['All', 'Mine', 'Shared', 'Starred'],
       kindTabs: ['All kinds', 'Agents', 'Tools'],
@@ -1239,7 +1239,7 @@ const en: TranslationShape = {
             { name: 'Defect agent', desc: 'File and track defects, with extraction, triage and generated reports', icon: 'Bug' },
             { name: 'PR review agent', desc: 'Reviews any PR you can access, using your own GitHub account', icon: 'GitPullRequest' },
             { name: 'Frontend partner', desc: 'For backend folks: wire APIs, write components, fix errors, read screenshots', icon: 'FolderKanban', preview: true },
-            { name: 'CDS agent', desc: 'Runs Claude Code / Codex sandbox tasks remotely, streaming', icon: 'Terminal' },
+            { name: 'CDS agent', desc: 'Runs Claude Code / Codex sandbox tasks remotely, streaming', icon: 'Terminal', preview: true },
           ],
         },
         {
