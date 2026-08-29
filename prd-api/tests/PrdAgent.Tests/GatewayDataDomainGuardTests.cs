@@ -415,11 +415,28 @@ public class GatewayDataDomainGuardTests
         // 三个别名都要认：池成员的 ModelId 按 `ModelName ?? Name ?? _id` 存，
         // 少认 Name 的话，缺 ModelName 的那类模型停用了也照发——而托管池删不掉成员，
         // 停用是唯一处置手段，等于这道闸对它们整类失效。
-        // 取的必须是**定义**而不是调用点：按签名配对大括号，别再手写固定长度窗口
-        var lookupBody = SourceSlice.Member(resolver, "private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(");
-        Assert.Contains("Eq(m => m.ModelName, modelId)", lookupBody);
-        Assert.Contains("Eq(m => m.Name, modelId)", lookupBody);
-        Assert.Contains("Eq(m => m.Id, modelId)", lookupBody);
+        //
+        // 判据现在收敛在 PoolMemberIdMatch 一处。这条守卫原先断言的是
+        // IsPoolMemberModelExplicitlyDisabledAsync **函数体内**含三个别名——那把判据的
+        // 位置也钉死了，而真正要守的是「三个别名」和「只有一份」。事实上正是因为判据被
+        // 抄成两份，FindGatewayOwnedOrMapModelAsync 那份漏了 Name：GW 里启用着、只填了
+        // Name 的模型查不到，就被当成「GW 没有权威记录」，放行 MAP 侧的过期停用副本，
+        // 把可用候选跳过。所以这里改成钉判定源本身 + 钉「没人再手写第二份」。
+        var idMatch = SourceSlice.Member(resolver, "private static FilterDefinition<LLMModel> PoolMemberIdMatch(");
+        Assert.Contains("Eq(m => m.ModelName, modelId)", idMatch);
+        Assert.Contains("Eq(m => m.Name, modelId)", idMatch);
+        Assert.Contains("Eq(m => m.Id, modelId)", idMatch);
+
+        // 两处查询都必须走它：停用检查 + 「GW 有没有权威记录」
+        Assert.True(
+            Regex.Matches(resolver, @"PoolMemberIdMatch\(modelId\)").Count >= 2,
+            "有查询没走 PoolMemberIdMatch——判据一旦被抄第二份就会各自漂移");
+
+        // 谁也不许在别处再手写一遍别名表：ModelName/Id 的 Or 组合只应出现在判定源里
+        var handRolled = Regex.Matches(
+            resolver,
+            @"Filter\.Or\(\s*Builders<LLMModel>\.Filter\.Eq\(m => m\.ModelName, modelId\)").Count;
+        Assert.True(handRolled <= 1, $"别名表被手写了 {handRolled} 份，应当只有 PoolMemberIdMatch 一处");
         var fetchThenTest = new Regex(@"IsPoolMemberModelExplicitlyDisabled[\s\S]{0,1600}?!\w+\.Enabled");
         Assert.False(
             fetchThenTest.IsMatch(resolver),

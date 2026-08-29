@@ -2163,20 +2163,32 @@ public class ModelResolver : IModelResolver
     /// 就是为了让缺字段的老文档天然不匹配——bool 反序列化会把缺字段读成 false，
     /// 那样会把一批从没被人停用过的成员误判成停用。
     /// </summary>
+    /// <summary>
+    /// 「池成员里存的这个 ModelId，对应哪一条模型文档」——**唯一判定源**。
+    ///
+    /// 三个别名都要认：池成员的 ModelId 是按 `ModelName ?? Name ?? _id` 存下来的
+    /// （见 console-api 追加成员那两处），所以一个缺 ModelName 的模型文档，成员里存的
+    /// 就是它的 Name。
+    ///
+    /// 这个判据曾经被抄成两份、各自漂移：停用检查认三个别名，而「GW 有没有权威记录」
+    /// 那处只认两个。后果不是「少查到一条」——GW 里明明启用着、只填了 Name 的模型
+    /// 查不到，就被当成「GW 没有权威记录」，于是放行 MAP 侧的停用判定；MAP 里若躺着
+    /// 一份过期的停用副本，这个本来可用的候选就被跳过，整个池可能因此无路可走。
+    /// 所以收敛成一处，谁也别再单独写一遍。
+    /// </summary>
+    private static FilterDefinition<LLMModel> PoolMemberIdMatch(string modelId)
+        => Builders<LLMModel>.Filter.Or(
+            Builders<LLMModel>.Filter.Eq(m => m.ModelName, modelId),
+            Builders<LLMModel>.Filter.Eq(m => m.Name, modelId),
+            Builders<LLMModel>.Filter.Eq(m => m.Id, modelId));
+
     private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(
         string platformId,
         string modelId,
         CancellationToken ct,
         bool allowMapFallback = true)
     {
-        // 三个别名都要认。池成员的 ModelId 是按 `ModelName ?? Name ?? _id` 存下来的
-        // （见 console-api 追加成员那两处），所以一个缺 ModelName 的模型文档，成员里存的
-        // 就是它的 Name。少认这一个别名的后果不是「少查到一条」，而是**这类模型停用了也照发**——
-        // 而托管默认池删不掉成员，停用是唯一的处置手段，等于这道闸对它们整类失效。
-        var idMatch = Builders<LLMModel>.Filter.Or(
-            Builders<LLMModel>.Filter.Eq(m => m.ModelName, modelId),
-            Builders<LLMModel>.Filter.Eq(m => m.Name, modelId),
-            Builders<LLMModel>.Filter.Eq(m => m.Id, modelId));
+        var idMatch = PoolMemberIdMatch(modelId);
 
         if (_gatewayDb is not null)
         {
@@ -2215,9 +2227,7 @@ public class ModelResolver : IModelResolver
                     Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
                     Builders<LLMModel>.Filter.Eq(m => m.Enabled, true),
                     Builders<LLMModel>.Filter.Eq(m => m.PlatformId, platformId),
-                    Builders<LLMModel>.Filter.Or(
-                        Builders<LLMModel>.Filter.Eq(m => m.ModelName, modelId),
-                        Builders<LLMModel>.Filter.Eq(m => m.Id, modelId))))
+                    PoolMemberIdMatch(modelId)))
                 .FirstOrDefaultAsync(ct);
             if (gatewayModel is not null)
             {

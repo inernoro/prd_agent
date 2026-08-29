@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,6 +40,22 @@ function declaredRoutes(): { verb: string; template: string }[] {
 
 /** 把 ASP.NET 的 {token} 段变成可匹配任意一段的正则 */
 const asRegex = (t: string) => new RegExp(`^${t.replace(/\{[^}]+\}/g, '[^/]+')}$`);
+
+describe('额度窗口等待时长', () => {
+  it('不许截断服务端给的 Retry-After', () => {
+    // 原先写的是 Math.min(..., 3_600_000)：本意防一个离谱的值把定时器挂死，实际后果是
+    // 站点日上限那档（Retry-After 常常超过一小时）在一小时就把门收起来，用户重新写一段
+    // 话发出去，再吃一个同样的 429。提前解锁比锁着更伤人——他为此白写了一遍。
+    const src = readFileSync(new URL('./ask/useAskStream.ts', import.meta.url), 'utf-8');
+
+    // 不许把「还要等多久」整体夹到一个上限里
+    expect(src).not.toMatch(/Math\.min\(Math\.max\(at - Date\.now\(\)[^)]*\), 3_600_000\)/);
+    // 到点才清门：清空前必须确认真的到了服务端给的时刻
+    expect(src).toMatch(/Date\.now\(\) >= at/);
+    // 没到点要重排下一段，而不是放弃
+    expect(src).toMatch(/setClearTick/);
+  });
+});
 
 describe('提问剩余额度端点', () => {
   it('后端路由表读得出来（读不出说明守卫在空转，不是「没问题」）', () => {

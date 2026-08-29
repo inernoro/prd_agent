@@ -26,6 +26,8 @@ export function useAskStream(source: AskSource) {
   const [gateError, setGateError] = useState<
     { code: string; message: string; retryAfterMs?: number | null } | null
   >(null);
+  // 额度窗口分段等待用的心跳：等待超过一小时时靠它重排下一段（见下面那个 effect）
+  const [clearTick, setClearTick] = useState(0);
 
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -66,12 +68,21 @@ export function useAskStream(source: AskSource) {
   useEffect(() => {
     const at = gateError?.retryAfterMs;
     if (!at) return;
-    const timer = window.setTimeout(
-      () => setGateError(null),
-      Math.min(Math.max(at - Date.now(), 0), 3_600_000) + 500,
-    );
+    // 不许截断等待时长。原先写的是 Math.min(..., 3_600_000)——本意是防一个离谱的
+    // 服务端值把定时器挂死，实际后果是：站点日上限给出的 Retry-After 常常超过一小时，
+    // 定时器却在一小时就把门收起来，用户重新写一段话发出去，再吃一个同样的 429。
+    // 提前解锁比锁着更伤人：他为此白写了一遍。
+    //
+    // 改成分段续期：一次最多等一小时，到点如果还没到服务端给的时刻，就再排一段，
+    // 直到真的到点才清门。既不截断，也不会因为一个超大值而挂一个几十天的定时器。
+    const remaining = Math.max(at - Date.now(), 0);
+    const chunk = Math.min(remaining, 3_600_000);
+    const timer = window.setTimeout(() => {
+      if (Date.now() >= at) setGateError(null);
+      else setClearTick((n) => n + 1); // 还没到点，重排下一段
+    }, chunk + 500);
     return () => window.clearTimeout(timer);
-  }, [gateError?.retryAfterMs]);
+  }, [gateError?.retryAfterMs, clearTick]);
 
   const ask = useCallback(
     async (question: string) => {
