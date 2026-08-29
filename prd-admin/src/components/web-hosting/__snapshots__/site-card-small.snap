@@ -6,6 +6,9 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
       span .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20 {height:20px;padding:0 6px}
         svg
         "HTML"
+      div .[@media(hover:none)]:opacity-100.absolute.group-focus-within:opacity-100.group-hover:opacity-100.opacity-0.right-[7px].top-[7px].z-20
+        button .h-7.inline-flex.items-center.justify-center.pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
+          svg
       span .absolute.bottom-2.inline-flex.items-center.right-2.z-20 {height:20px;padding:0 6px}
         "单页"
       button .absolute.bottom-[7px].group-hover:opacity-100.inline-flex.items-center.justify-center.left-[7px].z-20 {height:20px;opacity:0.5;width:20px} [data-no-drag=true aria-label=选择 type=button]
@@ -23,6 +26,3 @@ div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
           "·"
         span
           "9 浏览"
-      div .flex.group-focus-within:opacity-100.group-hover:opacity-100.justify-end.opacity-0
-        button .h-7.inline-flex.items-center.justify-center.pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
-          svg

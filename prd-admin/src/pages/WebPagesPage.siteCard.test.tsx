@@ -176,6 +176,24 @@ describe('WebPagesPage SiteCard', () => {
     expect(html).toContain('已分享 1 条链接');
   });
 
+  it('小卡的 kebab 压在缩略图上，不在正文里占一行（下巴）', () => {
+    const html = renderSiteCard(baseSite, ownerCaps, true, 'small', { activeLinks: 1 });
+
+    const infoLayerAt = html.indexOf('flex flex-1 flex-col');
+    const kebabAt = html.indexOf('aria-label="更多设置"');
+    expect(infoLayerAt).toBeGreaterThanOrEqual(0);
+    expect(kebabAt).toBeGreaterThanOrEqual(0);
+
+    // 信息层是卡片的最后一段，所以「kebab 在信息层之前」等价于「kebab 不是正文的流内子节点」。
+    // 一旦有人把它挪回正文（哪怕仍然是 opacity-0），它就会永久占掉 28px 一行、
+    // 在每张小卡正文底下留一截空白——这条断言当场变红。
+    expect(kebabAt).toBeLessThan(infoLayerAt);
+
+    // 平时透明、hover / focus 才显形；触屏没有 hover，必须常显，
+    // 否则小卡（不渲染 hover 条）在触屏上一个操作入口都没有。
+    expect(html).toContain('[@media(hover:none)]:opacity-100');
+  });
+
   it('大卡的成果数据不把体积当 KPI', () => {
     const html = renderSiteCard(baseSite, ownerCaps, true, 'large', { activeLinks: 2, lastViewedAt: baseSite.updatedAt });
 

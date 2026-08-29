@@ -356,6 +356,21 @@ export function SiteCard({
             </span>
           )}
 
+          {/* 右上（小卡）：唯一一枚 kebab。小卡不渲染 hover 条，这颗就是全部操作入口。
+              必须**绝对定位压在缩略图上**：放进信息层的常规流会永久吃掉 28px 一行，而它平时
+              是透明的，于是每张小卡的正文底下都挂着一截空白（用户原话「下巴」）。中/大卡的
+              同一颗 kebab 本来就在 hover 条里绝对定位，这里是把小卡对齐到同一条规矩。
+              hover / focus 才显形（几十张卡时不留灰框噪点）；触屏没有 hover，必须常显，
+              否则小卡在触屏上一个操作入口都没有。 */}
+          {isSmall && (
+            <div
+              className="absolute right-[7px] top-[7px] z-20 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CardMoreButton actions={menuActions} touchActions={hoverActions.length} onScrim />
+            </div>
+          )}
+
           {/* 右下：形态量（单页 / N 文件 / N 页 / 时长） */}
           {formBadge && (
             <span
@@ -554,12 +569,6 @@ export function SiteCard({
             </div>
           )}
 
-          {/* 小卡只有一枚 kebab（hover 才显形，几十张卡时不留灰框噪点） */}
-          {isSmall && (
-            <div className="flex justify-end opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-              <CardMoreButton actions={menuActions} touchActions={hoverActions.length} />
-            </div>
-          )}
         </div>
       </div>
     </div>
