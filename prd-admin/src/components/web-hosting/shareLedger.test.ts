@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildLedgerConclusion, buildShareLedger, filterShareLinks, tierOf } from './shareLedger';
 import type { ShareLinkItem } from '@/services/real/webPages';
@@ -117,6 +118,16 @@ describe('分享档账本', () => {
     expect(filterShareLinks(links, 'abcdef').map((l) => l.id)).toEqual(['a']);
     expect(filterShareLinks(links, '41830').map((l) => l.id)).toEqual(['b']);
     expect(filterShareLinks(links, '  ').map((l) => l.id)).toEqual(['a', 'b']);
+  });
+
+  it('永久有效的链接不摆「续期」入口', () => {
+    // 后端在 ExpiresAt 为 null 时以 now 为基准，「续期」会给永不过期的链接盖上
+    // 7 天期限——点了比不点还糟。后端已改成空动作，界面也不该再给这个入口。
+    const src = readFileSync(
+      new URL('./SharesWorkspace.tsx', import.meta.url), 'utf-8',
+    );
+    // 续期按钮必须包在「有 expiresAt」的条件里
+    expect(src).toMatch(/\{l\.expiresAt && \([\s\S]{0,400}onRenew/);
   });
 
   it('照着行里显示的站点名也能搜到', () => {

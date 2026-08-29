@@ -1855,8 +1855,16 @@ public class HostedSiteService : IHostedSiteService
         if (!ShareRenewPolicy.CanRenew(share.IsRevoked, share.ExpiresAt, now))
             return new RenewShareResult { Error = $"链接已过期超过 {ShareRenewPolicy.GraceDays} 天，请新建分享" };
 
+        // 永久有效（没有 ExpiresAt）的链接：续期是个空动作，直接原样返回。
+        //
+        // 不能往下走：下面那行 basis 在 ExpiresAt 为 null 时取 now，于是「续期」会给一条
+        // 本来永不过期的链接**盖上**一个 7 天后的期限——用户点的按钮写着「续期」，
+        // 实际把永久变成了会过期，比不点还糟。做的事和说的相反，是最坏的一种。
+        if (!share.ExpiresAt.HasValue)
+            return new RenewShareResult { Ok = true, NewExpiresAt = null };
+
         // 续期基准：未过期时从当前 ExpiresAt 累加；过期 ≤ 7d 时以 now 为起点
-        var basis = share.ExpiresAt.HasValue && share.ExpiresAt.Value > now ? share.ExpiresAt.Value : now;
+        var basis = share.ExpiresAt.Value > now ? share.ExpiresAt.Value : now;
         var newExpiresAt = basis.AddDays(extendDays);
 
         var renewEvent = new ShareRenewalEvent

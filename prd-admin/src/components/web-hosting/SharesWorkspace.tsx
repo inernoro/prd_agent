@@ -432,10 +432,16 @@ function TierSection({
                 <RowButton onClick={onReshare}><Share2 size={11} className="mr-1" />重新分享</RowButton>
               ) : (
                 <>
-                  <RowButton onClick={() => onRenew(l)} disabled={busy} accent={expiringSoon}>
-                    {/* 加载态一律用 MapSpinner：自己拿图标转圈会让品牌色与动效语言各处发散 */}
-                    {busy ? <MapSpinner size={11} /> : '续期'}
-                  </RowButton>
+                  {/* 永久有效的链接不给「续期」：它没有期限可延。
+                      这里曾经照给不误，而后端在 ExpiresAt 为 null 时以 now 为基准，
+                      于是点一下就把「永久」写成了「7 天后过期」——按钮做的事和它写的
+                      正好相反。后端现在对这种链接是空动作，这里也不该再摆出这个入口。 */}
+                  {l.expiresAt && (
+                    <RowButton onClick={() => onRenew(l)} disabled={busy} accent={expiringSoon}>
+                      {/* 加载态一律用 MapSpinner：自己拿图标转圈会让品牌色与动效语言各处发散 */}
+                      {busy ? <MapSpinner size={11} /> : '续期'}
+                    </RowButton>
+                  )}
                   {tier === 'active' && (
                     <>
                       <RowButton onClick={onAnalytics}><BarChart3 size={11} className="mr-1" />数据</RowButton>

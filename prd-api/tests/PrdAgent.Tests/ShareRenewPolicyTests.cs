@@ -63,4 +63,45 @@ public class ShareRenewPolicyTests
     {
         Assert.Equal(ShareRenewPolicy.GraceCutoff(Now), Now.AddDays(-ShareRenewPolicy.GraceDays));
     }
+
+    /// <summary>
+    /// 永久有效的链接（没有 ExpiresAt）不许被「续期」写上一个期限。
+    ///
+    /// 续期基准原先是 `ExpiresAt.HasValue && > now ? ExpiresAt : now`——null 落进 now 那一支，
+    /// 于是一条永不过期的链接点一下「续期」，变成 7 天后过期。按钮写着续期，做的却是
+    /// 加上期限：做的事和说的相反，比不点还糟。
+    ///
+    /// CanRenew 对 null 仍返回 true（它答的是「这条链接死没死」，永久链接当然没死），
+    /// 危害出在续期**动作**里，所以判据钉在那一段源码上：永久链接必须提前返回，
+    /// 不许走到写 ExpiresAt 那一步。
+    /// </summary>
+    [Fact]
+    public void 永久链接续期是空动作_不许被盖上期限()
+    {
+        var src = File.ReadAllText(Path.Combine(LocateSrcRoot(),
+            "PrdAgent.Infrastructure", "Services", "HostedSiteService.cs"));
+        var i = src.IndexOf("public async Task<RenewShareResult> RenewShareAsync", StringComparison.Ordinal);
+        Assert.True(i > 0, "找不到 RenewShareAsync，测试该跟着改");
+        var body = src[i..];
+        var head = body[..Math.Min(body.Length, 2500)];
+
+        var guard = head.IndexOf("!share.ExpiresAt.HasValue", StringComparison.Ordinal);
+        var write = head.IndexOf(".Set(x => x.ExpiresAt", StringComparison.Ordinal);
+        Assert.True(guard > 0, "永久链接没有被提前挡住，点续期会给它盖上一个期限");
+        Assert.True(write < 0 || guard < write, "挡永久链接那一步必须排在写 ExpiresAt 之前");
+    }
+
+    private static string LocateSrcRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, "prd-api", "src");
+            if (Directory.Exists(candidate)) return candidate;
+            candidate = Path.Combine(dir.FullName, "src");
+            if (Directory.Exists(candidate) && File.Exists(Path.Combine(dir.FullName, "PrdAgent.sln"))) return candidate;
+            dir = dir.Parent;
+        }
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src"));
+    }
 }

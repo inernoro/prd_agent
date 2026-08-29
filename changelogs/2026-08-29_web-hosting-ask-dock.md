@@ -214,3 +214,5 @@
 | fix | prd-admin | 分享档续期加载态换 MapSpinner；加载态守卫作用域从单文件扩到整个 web-hosting 目录 |
 | fix | prd-api | 重传成不支持形态时不再把 AskEnabled 写成 false——三态下 false 是「owner 明确拒绝」，写它会让换回 HTML 后提问永久关闭 |
 | fix | prd-admin | 额度窗口到点自动收门下沉到 useAskStream，站内预览面板（mode:site 拿不到额度快照）也能自动恢复 |
+| fix | prd-api | 永久有效的分享链接续期改为空动作——原先以 now 为基准会把「永不过期」写成 7 天后过期 |
+| fix | prd-admin | 永久有效的链接不再显示「续期」入口，它没有期限可延 |
