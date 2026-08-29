@@ -822,8 +822,13 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       now,
       backup: {
         lastCompletedAt: view.lastRoundAt,
+        // 「覆盖不全」= 备到一部分（partial）+ 有数据却没被保护（unprotected）。
+        // **不能收 unsupported**：那一档现在的意思是「没有需要备份的状态」（memcached
+        // 重启即空），把它算进缺口等于给一台本来就不用备的服务天天报一次不完整；
+        // 而漏掉 unprotected 会让真正没被保护的 MinIO 从页脚消失。两处判据必须跟着
+        // 同一份语义走（Codex review 第六轮 P2，形状 3：判据分裂后漂移）。
         coverageGaps: view.targets
-          .filter((t) => t.status === 'partial' || t.status === 'unsupported')
+          .filter((t) => t.status === 'partial' || t.status === 'unprotected')
           .map((t) => t.id),
         failedTargets: view.targets.filter((t) => t.status === 'failed').map((t) => ({ id: t.id, projectId: canonicalId })),
         offsiteOnlyTargets: view.targets.filter((t) => t.status === 'offsite-only').map((t) => ({ id: t.id, projectId: canonicalId })),

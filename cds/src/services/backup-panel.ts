@@ -169,9 +169,31 @@ export function isProjectOwnedBackupFile(name: string, projectId: string): boole
 }
 
 function sameProject(entry: { projectId?: string | null }, projectId: string): boolean {
-  // 存量文件里可能没有 projectId（这个字段是 2026-08-28 才补的）。**不许当成命中**：
+  // 存量文件里可能没有 projectId（这个字段是 2026-08-28 才补的）。**不许猜**：
   // 猜错的后果是把别的项目的服务摆进这个项目的清单，而那正是要防的事。
   return String(entry.projectId || '') === projectId;
+}
+
+/**
+ * 成功记录的项目归属。比 `sameProject` 多一条**证据**级的兜底（Codex review 第六轮 P2）。
+ *
+ * 升级后的第一次打开面板时，盘上那份健康文件还是旧代码写的：`objects[]` 有 `fileName`、
+ * 没有 `projectId`。只按 `projectId` 筛的话，上一轮**所有成功的目标**会被整批丢掉，而清单
+ * 又从台账把这些库原样加回来——于是每个项目在升级后的头一轮里，都会看到一屏「上一轮备份里
+ * 没有它」。备份明明好好地跑着，面板张口就说没备到，这是升级即触发的假警报。
+ *
+ * 但也不能退回「没有 projectId 就当是我的」——那正是上面那条注释在防的事。所以这里用的不是
+ * 猜测而是证据：`fileName` 从来就是带项目段的（`{project}--{id}-auto-{时间}.{ext}`，写入端
+ * 一直如此），文件名自己说明了归属。只在 `projectId` **缺失**时才看它；`projectId` 明确写着
+ * 别的项目时一律以它为准，文件名不许翻案。两条都无从判断的记录仍然丢弃。
+ */
+function ownedObject(
+  entry: { id?: string; projectId?: string | null; fileName?: string },
+  projectId: string,
+): boolean {
+  if (String(entry.projectId || '')) return sameProject(entry, projectId);
+  const file = String(entry.fileName || '').trim();
+  return Boolean(file) && isAutoBackupFile(file, projectId, String(entry.id || ''));
 }
 
 function cleanReason(value: unknown): string | null {
@@ -222,7 +244,9 @@ export function buildBackupPanel(input: {
   const intervalMs = input.intervalMs ?? INFRA_BACKUP_INTERVAL_MS;
   const mine = files.filter((f) => isProjectOwnedBackupFile(f.name, projectId));
 
-  const objects = (health?.objects || []).filter((o) => o?.id && sameProject(o, projectId));
+  // 成功记录多一条按文件名认领的兜底：升级后的第一轮里，旧格式的成功记录不能被整批
+  // 丢掉，否则清单会把这些库当成「上一轮没备到」（见 ownedObject 的注释）。
+  const objects = (health?.objects || []).filter((o) => o?.id && ownedObject(o, projectId));
   const failed = (health?.failedTargets || []).filter((t) => t?.id && sameProject(t, projectId));
   const offsiteOnly = (health?.offsiteOnlyTargets || []).filter((t) => t?.id && sameProject(t, projectId));
   const gaps = (health?.coverageGaps || []).filter((g) => g?.id && sameProject(g, projectId));
@@ -371,6 +395,16 @@ function buildVerdict(
   if (unsupported > 0) rest.push(`没有需要备份的状态 ${unsupported} 个`);
   const subline = rest.length > 0 ? rest.join(' · ') : null;
 
+  // 全是「没有需要备份的状态」的项目，判在读不到之前（Codex review 第六轮 P2）。
+  // 一台只跑 memcached 的部署，排程压根没有目标、也没有阻塞缺口，于是**从来不写**
+  // 那份结果文件；读不到是这种部署的常态，不是故障。判在后面的话，它会永远挂着
+  // 一句「不确定这个项目备份过没有」——一盏永远亮着、又永远不用管的灯。
+  //
+  // 判据收得很紧：必须**有目标**且**每一个**都是「没有需要备份的状态」。只要有一个
+  // 该备的目标，读不到结果就仍然是坏消息。
+  if (targets.length > 0 && targets.every((t) => t.status === 'unsupported')) {
+    return { tone: 'ok', headline: '这个项目没有需要周期备份的服务', subline: null };
+  }
   if (!health) {
     return {
       tone: 'bad',

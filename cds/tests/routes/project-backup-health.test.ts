@@ -89,6 +89,12 @@ describe('GET /api/projects/:id/backup-health', () => {
       containerPort: 5432, hostPort: 15432, containerName: 'cds-infra-proj-a-fresh-pg',
       status: 'running', volumes: [], env: {}, createdAt: now,
     } as any);
+    // 一台没有需要备份状态的服务：它不该进页脚的「覆盖不全」，也不该被算成缺口。
+    stateService.addInfraService({
+      id: 'stateless-cache', projectId: 'proj-a', name: 'stateless-cache', dockerImage: 'memcached:1.6',
+      containerPort: 11211, hostPort: 11211, containerName: 'cds-infra-proj-a-stateless-cache',
+      status: 'running', volumes: [], env: {}, createdAt: now,
+    } as any);
 
     shell = new MockShellExecutor();
     // handler 拿到的是**匹配结果**不是命令字符串（`match.input` 才是原命令）。
@@ -124,7 +130,7 @@ describe('GET /api/projects/:id/backup-health', () => {
     const res = await get(server, '/api/projects/proj-a/backup-health');
     expect(res.status).toBe(200);
     const byId = new Map(res.body.targets.map((t: any) => [t.id, t]));
-    expect([...byId.keys()].sort()).toEqual(['fresh-pg', 'minio', 'mongo', 'mysql', 'nacos', 'redis']);
+    expect([...byId.keys()].sort()).toEqual(['fresh-pg', 'minio', 'mongo', 'mysql', 'nacos', 'redis', 'stateless-cache']);
     // 上一轮的记录里没有它，但它此刻真跑着——必须出现，否则一台从没备过的库
     // 在这一屏上根本不存在（Codex review 第二轮 P1）。
     expect(byId.get('fresh-pg').status).toBe('not-in-last-round');
@@ -172,6 +178,17 @@ describe('GET /api/projects/:id/backup-health', () => {
     const failed = res.body.findings.find((f: any) => f.id === 'backup.failed-targets');
     // 带项目的称呼：六个同名 redis 里，运维要看得出是哪一个。
     expect(failed.message).toContain('proj-a 项目的 redis');
+  });
+
+  it('「覆盖不全」收的是有数据却没被保护的那些，不是没数据要备的那些', async () => {
+    // 两处判据必须跟着同一份语义走：把 unsupported（memcached 这类没有需要备份的状态）
+    // 算进缺口，页脚会给一台本来就不用备的服务天天报一次不完整；漏掉 unprotected，
+    // 真正没被保护的 MinIO 会从页脚消失（Codex review 第六轮 P2）。
+    const res = await get(server, '/api/projects/proj-a/backup-health');
+    const gaps = res.body.findings.find((f: any) => f.id === 'backup.coverage-gaps');
+    expect(gaps).toBeTruthy();
+    expect(gaps.message).toContain('minio');
+    expect(gaps.message).not.toContain('stateless-cache');
   });
 
   it('只读路径不许把备份目录建出来', async () => {

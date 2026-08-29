@@ -548,3 +548,90 @@ describe('第一屏不许在这两种情况下报绿', () => {
     }
   });
 });
+
+/**
+ * Codex review 第六轮 P2 两条。共同点：都是**升级/部署形态**引发的假警报——
+ * 面板在没出事的时候喊出事，而这套体检最怕的就是没人再看它。
+ */
+describe('升级与无状态部署不许喊狼来了', () => {
+  it('旧格式的成功记录按文件名认领，不被当成「上一轮没备到」', () => {
+    // 升级后的第一次打开：盘上那份健康文件还是旧代码写的，objects 有 fileName、
+    // 没有 projectId。整批丢掉的话，清单会从台账把这些库原样加回来，一屏
+    // 「上一轮备份里没有它」——而备份明明好好地跑着。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{
+          id: 'mongo',
+          fileName: backupFileName('web', 'mongo', 'mongo', '2026-08-28T09:00:00.000Z'),
+          bytes: 4096,
+          remoteObjectKey: 'k',
+        }],
+      }),
+      files: [{ name: backupFileName('web', 'mongo', 'mongo', '2026-08-28T09:00:00.000Z'), bytes: 4096 }],
+      infra: [{ id: 'mongo', dockerImage: 'mongo:7' }],
+    });
+    expect(view.targets[0].status).toBe('ok');
+    expect(view.verdict.tone).toBe('ok');
+  });
+
+  it('文件名说是别的项目的，就不是我的', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{
+          id: 'mongo',
+          fileName: backupFileName('crm', 'mongo', 'mongo', '2026-08-28T09:00:00.000Z'),
+          bytes: 4096,
+        }],
+      }),
+      files: [],
+    });
+    expect(view.targets).toHaveLength(0);
+  });
+
+  it('projectId 写着别的项目时，文件名不许翻案', () => {
+    // 显式作用域优先。两者打架时以 projectId 为准，否则文件名就成了绕过作用域的后门。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{
+          id: 'mongo',
+          projectId: 'crm',
+          fileName: backupFileName('web', 'mongo', 'mongo', '2026-08-28T09:00:00.000Z'),
+          bytes: 4096,
+        }],
+      }),
+      files: [],
+    });
+    expect(view.targets).toHaveLength(0);
+  });
+
+  it('只跑无状态服务的部署，读不到结果文件是常态，不是故障', () => {
+    // 排程对这种部署压根没有目标、也没有阻塞缺口，于是从来不写那份文件。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: null,
+      files: [],
+      infra: [{ id: 'cache', dockerImage: 'memcached:1.6' }],
+    });
+    expect(view.verdict.tone).toBe('ok');
+    expect(view.verdict.headline).toBe('这个项目没有需要周期备份的服务');
+  });
+
+  it('只要有一个该备的目标，读不到结果就仍然是坏消息', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: null,
+      files: [],
+      infra: [{ id: 'cache', dockerImage: 'memcached:1.6' }, { id: 'mongo', dockerImage: 'mongo:7' }],
+    });
+    expect(view.verdict.tone).toBe('bad');
+    expect(view.verdict.headline).toContain('读不到');
+  });
+});
