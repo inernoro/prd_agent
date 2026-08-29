@@ -95,6 +95,10 @@ export const ASK_ERROR_CODES = {
   disabled: 'ASK_DISABLED',
   unauthorized: 'UNAUTHORIZED',
   quotaExceeded: 'QUOTA_EXCEEDED',
+  /** 访客维度：这一小时问得太多。等一会儿或登录换更宽的额度 */
+  quotaVisitor: 'ASK_QUOTA_VISITOR',
+  /** 站点维度：这一页今天的额度（所有访客共用）用完了。等明天或去评论区 */
+  quotaSiteDaily: 'ASK_QUOTA_SITE_DAILY',
   noContent: 'ASK_NO_CONTENT',
 } as const;
 

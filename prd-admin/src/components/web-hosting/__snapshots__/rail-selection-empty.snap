@@ -1,0 +1,21 @@
+aside .flex-col.hidden.overflow-y-auto.shrink-0.xl:flex {gap:11px;overscroll-behavior:contain;padding:14px;width:300px}
+  div
+    "选中的站点"
+  div
+    "多租户架构设计"
+  button .gap-2.inline-flex.items-center.justify-center {height:38px} [type=button]
+    svg
+    "创建分享链接"
+  div
+    "它现在只有你自己能打开。建一条链接，才能把它发给别人，也才会开始有访问数据。"
+  div {height:1px}
+  button .gap-2.inline-flex.items-center.justify-center {height:34px} [type=button]
+    svg
+    "先自己看一眼"
+  div
+    "这条站点的链接：还没有"
+    br
+    "建一条之后，这里会显示访问次数与访客数"
+  div .flex-1
+  button {height:32px} [type=button]
+    "取消选择"

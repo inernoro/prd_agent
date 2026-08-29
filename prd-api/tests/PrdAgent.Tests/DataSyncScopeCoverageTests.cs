@@ -212,6 +212,96 @@ public class DataSyncScopeCoverageTests
             + string.Join("\n  ", stale));
     }
 
+    /// <summary>
+    /// 反方向的闸：导出清单里带地址字段的集合，一个都不许没交代（DS33）。
+    ///
+    /// 原来只有单向闸——「登记的字段必须真实存在」。它挡得住「登记了一个拼错的名字」，
+    /// 挡不住「压根没登记」：新增一个存资产地址的集合，`RebaseIncoming` 对它直接返回
+    /// 空，地址原样落库，而三个计数全是 0——**连附件卡都不出现**，一个字都不说
+    /// （predicate-and-wiring-discipline 形状 2：反方向那半没接）。
+    ///
+    /// 三个去处，必须占且只占一个：改写（UrlFields）／想清楚了不改（NotRebased）／
+    /// 该改但方式没定（PendingSurvey，只许缩小）。
+    /// </summary>
+    [Fact]
+    public void 导出的带地址集合必须三选一有交代()
+    {
+        var collectionToType = ReadCollectionTypeMap();
+        var propsByType = ReadModelProperties();
+
+        var withUrlFields = new List<string>();
+        foreach (var collection in DataSyncScope.AllExportableCollections.OrderBy(x => x, StringComparer.Ordinal))
+        {
+            if (!collectionToType.TryGetValue(collection, out var typeName)) continue;
+            if (!propsByType.TryGetValue(typeName, out var properties)) continue;
+            if (properties.Keys.Any(p => p.EndsWith("Url", StringComparison.Ordinal)
+                                      || p.EndsWith("Urls", StringComparison.Ordinal)))
+            {
+                withUrlFields.Add(collection);
+            }
+        }
+
+        // 一个都没扫到时下面每条断言都天然成立——先把「确实扫到了东西」本身断言掉。
+        Assert.True(withUrlFields.Count > 20,
+            $"只扫到 {withUrlFields.Count} 个带地址字段的可导出集合，解析多半失效了");
+
+        var rebased = DataSyncAssetUrls.FieldMap.Keys.ToHashSet(StringComparer.Ordinal);
+        var declined = DataSyncAssetUrls.NotRebasedReasons.Keys.ToHashSet(StringComparer.Ordinal);
+        var pending = DataSyncAssetUrls.PendingSurveyReasons.Keys.ToHashSet(StringComparer.Ordinal);
+
+        var unclassified = withUrlFields
+            .Where(c => !rebased.Contains(c) && !declined.Contains(c) && !pending.Contains(c))
+            .ToList();
+        Assert.True(unclassified.Count == 0,
+            "下列集合会被导出、模型上带着地址字段，却既没登记改写、也没写明为什么不改：\n  "
+            + string.Join("\n  ", unclassified)
+            + "\n（该改 -> 登记进 DataSyncAssetUrls.UrlFields；指向别人家 -> 加进 NotRebased 并写明理由；"
+            + "该改但 key 形态还没想清楚 -> 加进 PendingSurvey，那一栏只许缩小）");
+
+        foreach (var c in withUrlFields)
+        {
+            var hits = new[] { rebased.Contains(c), declined.Contains(c), pending.Contains(c) }.Count(x => x);
+            Assert.True(hits <= 1, $"{c} 同时出现在多个去处，判据自相矛盾");
+        }
+
+        // 三份名单都不许留死条目：集合被移出导出清单之后，留着的那条会让人以为
+        // 「这个看过了」，实际它早就不在扫描范围里。
+        var surface = withUrlFields.ToHashSet(StringComparer.Ordinal);
+        var stale = rebased.Concat(declined).Concat(pending)
+            .Where(c => !surface.Contains(c))
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+        Assert.True(stale.Count == 0,
+            "下列条目已经扫不到了（集合不再导出，或模型上的地址字段被改名），请删除：\n  "
+            + string.Join("\n  ", stale));
+    }
+
+    /// <summary>
+    /// 「还没想清楚」那一栏是棘轮：只许缩小。
+    ///
+    /// 没有这条，PendingSurvey 就退化成兜底口袋——新增的资产集合往里一塞，
+    /// 反向闸照样绿，而 DS33 要挡的正是这种静默。
+    /// </summary>
+    [Fact]
+    public void 待定名单只许缩小()
+    {
+        // 2026-08-27 落地时 14 条；同日 +1 —— image_assets 从「要改写」撤回到这里
+        // （同一集合混着本站生成图与外部图床直链，没有可信的行内证据分辨）。
+        // 往上调基线必须像这样写明是哪一条、为什么；只减不增是常态。
+        const int Baseline = 15;
+        Assert.True(DataSyncAssetUrls.PendingSurveyReasons.Count <= Baseline,
+            $"PendingSurvey 涨到了 {DataSyncAssetUrls.PendingSurveyReasons.Count} 条（基线 {Baseline}）："
+            + "新增的资产集合要么当场登记改写，要么写明为什么不改，不许挂进待定栏。"
+            + "清空了条目请把基线一起调小。");
+
+        var blank = DataSyncAssetUrls.PendingSurveyReasons
+            .Concat(DataSyncAssetUrls.NotRebasedReasons)
+            .Where(kv => string.IsNullOrWhiteSpace(kv.Value))
+            .Select(kv => kv.Key)
+            .ToList();
+        Assert.True(blank.Count == 0, "下列集合交代了却没写理由：" + string.Join("、", blank));
+    }
+
     [Fact]
     public void 登记的脱敏字段必须在实体顶层真实存在()
     {
@@ -731,6 +821,287 @@ public class DataSyncScopeCoverageTests
         Assert.False(DataSyncScope.TryResolve("", out _));
         Assert.False(DataSyncScope.TryResolve(null, out _));
     }
+
+    [Fact]
+    public void 试跑转正必须至多一次_且不重新问源站要范围()
+    {
+        // 「一次授权 = 一条 Run」原来把试跑也算成一次消耗，于是真搬要人再点一次同意——
+        // 两次真实迁移都卡死在这里。放开之后，三条边界一条都不能松，
+        // 否则它就退化成「一次批准可以反复用」，和长期凭据没区别。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var source = File.ReadAllText(path);
+
+        var promote = Regex.Match(
+            source,
+            @"HttpPost\(""runs/\{id\}/promote""\)(?<body>.*?)(?=
+    \[HttpGet)",
+            RegexOptions.Singleline);
+        Assert.True(promote.Success, "找不到转正端点了，这条守卫的前提已变");
+        var body = promote.Groups["body"].Value;
+        var flat = Regex.Replace(body, @"\s+", " ");
+
+        // 1) 至多一次：唯一性必须由数据库的条件更新保证，不能只在内存里判一下
+        //    （两个标签页同时点会各自读到「还没转正」）。
+        Assert.Contains("Filter.Eq(x => x.PromotedToRunId, null)", flat, StringComparison.Ordinal);
+        Assert.Contains(".Set(x => x.PromotedToRunId, child.Id)", flat, StringComparison.Ordinal);
+        Assert.Contains("claimed.ModifiedCount == 0", flat, StringComparison.Ordinal);
+
+        // 2) 范围照抄，**这一步根本不联系源站**。判据取「端点里没有任何出站调用」
+        //    而不是「没出现 manifest 这个词」——后者会被 PlannedManifest 这个
+        //    正是我们要照抄的字段命中，是一条自相矛盾的断言（第一版就这么红的）。
+        Assert.DoesNotContain("_httpClientFactory", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("/api/instance-sync/export", body, StringComparison.Ordinal);
+        foreach (var copied in new[] { "PlannedCollections =", "PlannedManifest =", "Collections =" })
+        {
+            Assert.Contains(copied, flat, StringComparison.Ordinal);
+        }
+
+        // 3) 只有跑完并且成功的试跑才配转正。少了这一条，一次失败的、甚至正在跑的
+        //    试跑也能转正，跑的就是一份没被确认过的清单。
+        Assert.Contains("!run.DryRun || run.Status != \"succeeded\"", flat, StringComparison.Ordinal);
+
+        // 4) 票据不续命：过期就要求重新授权，不许在这里重签。
+        Assert.Contains("_vault.GetExportToken(run.Id)", flat, StringComparison.Ordinal);
+        Assert.Contains("ExportTokenExpiresAt = run.ExportTokenExpiresAt", flat, StringComparison.Ordinal);
+
+        // 5) 转正请求里不许有 DryRun 开关——给了它，调用方就能把唯一那次转正
+        //    又变成一次试跑，白白吃掉机会。
+        var promoteRequest = Regex.Match(
+            source, @"class DataSyncPromoteRequest\s*\{(?<body>[^}]*)\}", RegexOptions.Singleline);
+        Assert.True(promoteRequest.Success, "找不到转正请求类型了");
+        Assert.DoesNotContain("DryRun", promoteRequest.Groups["body"].Value, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 试跑成功不许交还票据_真跑和失败必须交还()
+    {
+        // 票留着，「确认无误，开始真的搬」才点得动。这一条删掉之后转正端点会一直报
+        // 「授权已过期」，而那句话听起来像环境问题，没人会想到是这里把票还回去了。
+        var path = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Services", "DataSync", "DataSyncRunWorker.cs");
+        var worker = File.ReadAllText(path);
+        var flat = Regex.Replace(worker, @"\s+", " ");
+
+        Assert.Contains("if (run.DryRun && finished.ModifiedCount > 0)", flat, StringComparison.Ordinal);
+        // 失败那条路径照旧立刻交还——试跑没成功就没有可确认的清单，票不该留着。
+        Assert.Contains("_vault.Forget(run.Id);", worker, StringComparison.Ordinal);
+        Assert.Contains("ReturnExportTokenAsync", worker, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 资产地址改写必须接在入库之前()
+    {
+        // 这是一条**接线**守卫，不是行为守卫：把 RebaseIncoming 整个删掉，
+        // DataSyncAssetUrlsTests 全绿、编译也过——坏掉的只是「没人调它」，
+        // 而后果要等一次真迁移之后才看得见（图片全指回源站）。
+        //
+        // 顺序同样要钉：先入库再回头批量改的话，中间那一段时间界面上全是死链，
+        // 崩在中间还没人知道改到哪了。
+        var workerPath = Path.Combine(LocateSrcRoot(), "PrdAgent.Api", "Services", "DataSync", "DataSyncRunWorker.cs");
+        var worker = File.ReadAllText(workerPath);
+
+        var rebaseAt = worker.IndexOf("DataSyncAssetUrls.RebaseIncoming(", StringComparison.Ordinal);
+        Assert.True(rebaseAt >= 0, "同步执行端没有任何一处调用资产地址改写，DS1 的修复没接上线");
+
+        // 锚在**真正写库的那两句**上，不是锚在 Decide 上。
+        //
+        // 上一版写的是 `rebaseAt < decideAt`。Decide 只是把这一页在内存里分成
+        // 「插 / 替 / 跳过」三堆，一个字节都没落库——拿它当「入库」的替身，等于用一个
+        // 不是那件事的东西去证明那件事（形状 6）。代价很实在：改写为了满足这条守卫
+        // 必须排在分堆之前，于是**整页**文档都被改写并计数，其中被判成跳过的那些
+        // 改完就丢，界面却把它们算进「已改写 N 条」（Codex review P2）。
+        var insertAt = worker.IndexOf("InsertManyAsync(", StringComparison.Ordinal);
+        var replaceAt = worker.IndexOf("ReplaceOneAsync(", StringComparison.Ordinal);
+        Assert.True(insertAt >= 0, "找不到插入写库那一句了，这条守卫的前提已变");
+        Assert.True(replaceAt >= 0, "找不到覆盖写库那一句了，这条守卫的前提已变");
+        Assert.True(rebaseAt < insertAt && rebaseAt < replaceAt,
+            "资产地址改写排在了写库之后：中间那段时间界面上的图全是指回源站的死链");
+
+        // 而且只改**这一批真会写进去的**。不覆盖模式下目标站已有的那些会被判成跳过、
+        // 一个字节都不入库，把它们一起数进「已改写」就是把没做的事记成做过的。
+        var decideAt = worker.IndexOf("DataSyncApply.Decide(", StringComparison.Ordinal);
+        Assert.True(decideAt >= 0, "找不到落库决策了，这条守卫的前提已变");
+        Assert.True(decideAt < rebaseAt, "改写排在了分堆之前：那样整页都会被改写并计数");
+        var rebaseCallEnd = worker.IndexOf(')', rebaseAt);
+        Assert.True(rebaseCallEnd > rebaseAt, "读不出改写那一句的参数，守卫已失效");
+        var rebaseArgs = worker[rebaseAt..rebaseCallEnd];
+        Assert.DoesNotContain("RebaseIncoming(documents", rebaseArgs, StringComparison.Ordinal);
+        Assert.Contains("decision.ToInsert", worker, StringComparison.Ordinal);
+        Assert.Contains("decision.ToReplace", worker, StringComparison.Ordinal);
+
+        // 三个数字都要落进进度，界面才说得出「改了几条 / 还有几条没救 / 还有几条本来就是
+        // 相对路径」。少送第三个就是 DS30 那种彻底静默：本地磁盘存附件的源站，
+        // 前两个数恒为 0，附件卡整个不出现。
+        Assert.Contains("progress.AssetUrlsRebased +=", worker, StringComparison.Ordinal);
+        Assert.Contains("progress.AssetUrlsUnresolved +=", worker, StringComparison.Ordinal);
+        Assert.Contains("progress.AssetUrlsRelative +=", worker, StringComparison.Ordinal);
+
+        // 并且真的送到前端。只算不送等于没算。
+        var controllerPath = Path.Combine(
+            LocateSrcRoot(), "PrdAgent.Api", "Controllers", "Api", "DataSyncConsumerController.cs");
+        var controller = File.ReadAllText(controllerPath);
+        Assert.Contains("assetUrlsRebased = kv.Value.AssetUrlsRebased", controller, StringComparison.Ordinal);
+        Assert.Contains("assetUrlsUnresolved = kv.Value.AssetUrlsUnresolved", controller, StringComparison.Ordinal);
+        Assert.Contains("assetUrlsRelative = kv.Value.AssetUrlsRelative", controller, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 撞唯一索引被剔掉的那几条，改写计数要按**同一批下标**回冲（DS34）。
+    ///
+    /// 改写发生在内存里、写库之前；插入撞索引会被整条剔除，而计数在那之前就加过了。
+    /// 不回冲的话，「已改写 N 条」里混着从没落库的几条。
+    ///
+    /// 这条同时钉住回冲成立的**前提**：`willWrite` 必须先插入后替换拼起来，
+    /// 插入侧的下标才等于 `rebase.ByDocument` 的下标。顺序一反，回冲就冲到别人头上——
+    /// 那比不回冲更糟，而且照样全绿。
+    /// </summary>
+    [Fact]
+    public void 没落库的那几条要从改写计数里回冲()
+    {
+        var worker = ReadApiServiceSource("DataSync", "DataSyncRunWorker.cs");
+
+        var insertAt = worker.IndexOf("willWrite.AddRange(decision.ToInsert);", StringComparison.Ordinal);
+        var replaceAt = worker.IndexOf("willWrite.AddRange(decision.ToReplace);", StringComparison.Ordinal);
+        Assert.True(insertAt >= 0 && replaceAt > insertAt,
+            "willWrite 不再是「先插入、后替换」拼的，按插入下标回冲会冲到替换那一批身上");
+
+        // 逐文档结果要真的被用上：只算不冲，等于 DataSyncAssetUrls 那半白做了（形状 2）。
+        Assert.Contains("rebase.ByDocument[idx]", worker, StringComparison.Ordinal);
+        foreach (var counter in new[] { "AssetUrlsRebased -=", "AssetUrlsUnresolved -=", "AssetUrlsRelative -=" })
+        {
+            Assert.Contains($"progress.{counter}", worker, StringComparison.Ordinal);
+        }
+
+        // 回冲用的下标必须和剔除用的是同一份。各取各的就是判据分裂（形状 3）：
+        // 两处迟早对不上，而对不上的表现只是一个数字偏了几条，没人会发现。
+        var branch = worker[worker.IndexOf("var failedIndexes =", StringComparison.Ordinal)..];
+        branch = branch[..branch.IndexOf("SurvivingInserts", StringComparison.Ordinal)];
+        Assert.Contains("foreach (var idx in failedIndexes)", branch, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 存储实现必须回填对象_key()
+    {
+        // StoredAsset.Key 是可空带默认值的——「忘了传」编译不会报错，
+        // 而后果是附件没有 key、只能靠猜 URL（形状 2）。
+        var root = Path.Combine(LocateSrcRoot(), "PrdAgent.Infrastructure", "Services", "AssetStorage");
+        foreach (var file in new[] { "CloudflareR2Storage.cs", "TencentCosStorage.cs", "LocalAssetStorage.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(root, file));
+            var save = Regex.Match(
+                source,
+                @"public async Task<StoredAsset> SaveAsync\((?<body>.*?)
+    \}",
+                RegexOptions.Singleline);
+            Assert.True(save.Success, $"{file} 里找不到 SaveAsync 了，这条守卫的前提已变");
+            Assert.Matches(
+                new Regex(@"return new StoredAsset\([^)]*,\s*key\)"),
+                save.Groups["body"].Value);
+        }
+    }
+
+    [Fact]
+    public void 附件落库时必须存下对象_key()
+    {
+        // 只存绝对 Url 的话，换桶 / 换公网域名 / 搬机器之后地址全部指回原处（DS1），
+        // 而且没有任何东西能把它算回来。每一处建 Attachment 的地方都要带上 key。
+        //
+        // ## 这条守卫自己漏过一次（2026-08-27，Codex review 抓到）
+        //
+        // 上一版有两个口子叠在一起，让 peer-sync 那处漏了整整一轮而一声不吭：
+        //
+        // 1. 作用域比它要守的规则窄 —— 只扫 PrdAgent.Api，而另一个程序集里也有一处建附件。
+        //    「只改被守文件、不碰守卫本身」的改动一路全绿（形状 7）。
+        // 2. 判据只认显式类型的对象初始化式，认不出目标类型 new 的写法。
+        //    换个等价写法就绕过去了（形状 1）。
+        //
+        // 现在扫整个 src 树，两种写法都认，并且先剥掉注释再扫。
+        var srcRoot = LocateSrcRoot();
+        var offenders = new List<string>();
+        var found = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories))
+        {
+            var source = StripLineComments(File.ReadAllText(file));
+            foreach (var body in EnumerateAttachmentInitializers(source))
+            {
+                // 只管那些从 StoredAsset 拿地址的：别处（如外部视频直链）本来就没有 key。
+                if (!body.Contains("Url = stored.Url", StringComparison.Ordinal)) continue;
+                var name = Path.GetFileName(file);
+                found[name] = found.GetValueOrDefault(name) + 1;
+                if (!body.Contains("StorageKey", StringComparison.Ordinal))
+                {
+                    offenders.Add(name);
+                }
+            }
+        }
+
+        // 站点清单必须**逐一对上**，不是「够多就行」。
+        //
+        // 上一版用的是 `扫到的处数 >= 6`。那个阈值挡不住「悄悄少一处」：把某个工厂方法
+        // 从表达式体改成块体（`return new() { ... };` —— 一样合法的写法），判据就认不出它了，
+        // 同时把那处的 StorageKey 去掉，处数从 9 掉到 8，仍然 >= 6，于是这个真实回归一路绿。
+        //
+        // 所以判据不再问「够不够多」，改问「是不是正好这几处」：少一处、多一处都红。
+        // 少了 = 要么真被删了、要么判据认不出它的新写法，两种都必须有人看一眼；
+        // 多了 = 新增了建附件的地方，必须显式登记进来（顺带被这条守卫盯上）。
+        //
+        // 这是第三次在同一条判据上被 review 挑出「换个等价写法就绕过去」。
+        // 前两次的应对都是给正则加一种写法，第三次不再那么做——按 AGENTS.md §5.5，
+        // 同一个文本判据反复被要求加格式时，正解是换成有限枚举，而不是加第四个正则。
+        var expected = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["AttachmentsController.cs"] = 1,
+            ["DocumentRecordingArchiveWorker.cs"] = 1,
+            ["DocumentStoreController.cs"] = 2,
+            ["DocumentStoreSyncResource.cs"] = 1,
+            ["ReportAgentController.cs"] = 3,
+            ["ReviewAgentController.cs"] = 1,
+        };
+        Assert.True(
+            found.Count == expected.Count && found.All(kv => expected.GetValueOrDefault(kv.Key) == kv.Value),
+            "从 StoredAsset 建附件的站点清单和登记的对不上。\n"
+            + $"登记：{Render(expected)}\n实际：{Render(found)}\n"
+            + "少了就去看那处是被删了还是判据认不出它的新写法；多了就把新站点登记进来。");
+        Assert.True(offenders.Count == 0, $"这些地方建附件时没有存下对象 key：{string.Join("、", offenders.Distinct())}");
+
+        static string Render(Dictionary<string, int> d)
+            => string.Join("、", d.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"{kv.Key}×{kv.Value}"));
+    }
+
+    /// <summary>
+    /// 扫之前先把行注释剥掉 —— 判据要读<b>真正生效的代码</b>，不是读讲代码的话。
+    /// </summary>
+    /// <remarks>
+    /// 这不是洁癖：给 peer-sync 那处补 key 时，我在代码注释里举了这条判据认的写法当例子，
+    /// 判据把注释当代码扫，捕获的初始化块截在注释里那对花括号上，
+    /// 于是<b>一处已经改好的代码被报成违规</b>。一条会被自己要防的东西骗到的判据，
+    /// 说明它读的不是生效的那个值。字符串字面量里的双斜杠极少出现在这类初始化块附近，
+    /// 为保持判据简单不做处理。
+    /// </remarks>
+    private static string StripLineComments(string source)
+        => Regex.Replace(source, @"//[^\n]*", string.Empty);
+
+    /// <summary>
+    /// 建 Attachment 的两种写法都要认：显式类型的对象初始化式，
+    /// 以及返回类型为 Attachment 的成员上写的目标类型 new。
+    /// 只认前者的话，把工厂方法改成表达式体就能绕过判据。
+    /// </summary>
+    private static IEnumerable<string> EnumerateAttachmentInitializers(string source)
+    {
+        foreach (Match m in Regex.Matches(source, @"new\s+Attachment\s*\{(?<body>[^}]*)\}", RegexOptions.Singleline))
+            yield return m.Groups["body"].Value;
+
+        foreach (Match m in Regex.Matches(
+                     source,
+                     @"\bAttachment\s+\w+\s*\([^)]*\)\s*=>\s*new(?:\s+Attachment)?\s*\(?\s*\)?\s*\{(?<body>[^}]*)\}",
+                     RegexOptions.Singleline))
+            yield return m.Groups["body"].Value;
+    }
+
+    /// <summary>
+    /// 给同目录的其它守卫用。原来是 private，第二个守卫要用就得复制一份找根目录的逻辑，
+    /// 而那是最典型的「判据分裂后各自漂移」。
+    /// </summary>
+    internal static string LocateSrcRootForTests() => LocateSrcRoot();
 
     private static string LocateSrcRoot()
     {

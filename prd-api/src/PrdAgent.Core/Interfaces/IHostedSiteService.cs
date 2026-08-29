@@ -17,11 +17,16 @@ public interface IHostedSiteService
         CancellationToken ct = default);
 
     /// <summary>从 ZIP 文件字节创建站点；wrappedAssetType 由调用方在生成"壳子+资产"包装 ZIP 时显式传入</summary>
+    /// <param name="uploadId">
+    /// 可选。传了就把解包进度写进 <see cref="IUploadProgressService"/>，
+    /// 供前端另开一路轮询展示「已解包 N / M 个文件」。不传 = 不记录，老调用方零影响。
+    /// </param>
     Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? uploadId = null);
 
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
     Task<HostedSite> CreateFromContentAsync(
@@ -34,11 +39,13 @@ public interface IHostedSiteService
     // ── 替换内容 ──
 
     /// <summary>重新上传站点文件（HTML 或 ZIP），替换原有内容；wrappedAssetType 由调用方按原始资产类型显式传入（"pdf"/"video"/"markdown"），普通 HTML/ZIP 传 null 会清空 marker</summary>
+    /// <param name="uploadId">可选，同 <see cref="CreateFromZipAsync"/>。</param>
     Task<HostedSite> ReuploadAsync(
         string siteId, string userId,
         byte[] fileBytes, string fileName,
         string? wrappedAssetType = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? uploadId = null);
 
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
     Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);
@@ -123,9 +130,27 @@ public interface IHostedSiteService
 
     /// <summary>
     /// 列出分享：默认包含未过期 + 过期 ≤ 7 天（允许续期）的链接。
-    /// 已撤销 / 过期 > 7 天的链接不返回，但保留 DB 行用于审计。
+    /// 过期 > 7 天的链接不返回，但保留 DB 行用于审计。
+    ///
+    /// <paramref name="includeRevoked"/> 默认 false —— 保持既有调用方行为不变。
+    /// 传 true 时把已撤销的链接一并返回（分享管理面板的「已撤销」一层要用：
+    /// 撤销不可逆，但用户仍需要看到「哪条被我撤了、什么时候撤的」并能重新分享，
+    /// 直接从列表里消失等于这段历史无处可查）。
     /// </summary>
-    Task<List<WebPageShareLink>> ListSharesAsync(string userId, CancellationToken ct = default);
+    /// <summary>
+    /// 我建的分享链接。<paramref name="siteId"/> 非空时只返回指向该站点的（两个字段都认）。
+    ///
+    /// 不带 siteId 时结果按时间取最近 100 条。想判断「某个站点有没有活着的链接」必须带上
+    /// siteId：否则它的链接落在这 100 条之外时会被判成「没有」，调用方据此再建一条重复的。
+    /// </summary>
+    Task<List<WebPageShareLink>> ListSharesAsync(
+        string userId, CancellationToken ct = default, bool includeRevoked = false, string? siteId = null);
+
+    /// <summary>
+    /// 批量取站点标题（id → title）。分享列表的「指向的站点」一列要用。
+    /// 查不到的 id（站点已删）不会出现在结果里，调用方自己决定怎么显示。
+    /// </summary>
+    Task<Dictionary<string, string>> GetTitlesByIdsAsync(IEnumerable<string> siteIds, CancellationToken ct = default);
 
     /// <summary>
     /// 续期某条分享链接。仅创建者可调用。
@@ -136,7 +161,23 @@ public interface IHostedSiteService
     /// </summary>
     Task<RenewShareResult> RenewShareAsync(string shareId, string userId, int extendDays, CancellationToken ct = default);
 
-    Task<bool> RevokeShareAsync(string shareId, string userId, CancellationToken ct = default);
+    /// <summary>
+    /// 就地改一条已存在分享链接的设置（分享下拉面板里的「谁能打开 / 有效期」）。
+    ///
+    /// 与 <see cref="RenewShareAsync"/> 的区别：续期是**累加**（在现有到期日上加 N 天），
+    /// 这里是**重设**（从现在起算 N 天，0 = 永久）——用户在面板里选「7 天」，期待的是
+    /// 「这条链接还有 7 天」，不是「在原来剩的 3 天上再加 7 天」。
+    ///
+    /// 两个参数都是 null 表示不动该项（局部更新）。已撤销的链接一律拒绝：撤销不可逆，
+    /// 允许改设置等于把死链复活。
+    /// </summary>
+    Task<UpdateShareSettingsResult> UpdateShareSettingsAsync(
+        string shareId, string userId, string? visibility, int? expiresInDays, CancellationToken ct = default);
+
+    /// <summary>
+    /// 撤销分享链接（不可逆）。<paramref name="reason"/> 可选，记一句「为什么撤」。
+    /// </summary>
+    Task<bool> RevokeShareAsync(string shareId, string userId, string? reason = null, CancellationToken ct = default);
 
     Task<ShareViewResult?> ViewShareAsync(string token, string? password,
         string? viewerUserId = null, string? viewerName = null,
@@ -186,6 +227,12 @@ public interface IHostedSiteService
     /// 写入站点的「向我提问」配置（仅 owner / editor 可调，与评论开关同一套角色门）。
     /// 返回更新后的站点；无权或不存在返回 null。
     /// </summary>
+    /// <summary>
+    /// 能不能维护该站点的提问配置（owner / editor）。与「站点可见」是两件事：
+    /// GetByIdAsync 对任一共享团队成员（含 viewer）都放行，写路径不能拿它当权限。
+    /// </summary>
+    Task<bool> CanMaintainAskAsync(string siteId, string userId, CancellationToken ct = default);
+
     Task<HostedSite?> SetAskConfigAsync(string siteId, string userId, AskConfigUpdate update, CancellationToken ct = default);
 
     /// <summary>
@@ -356,13 +403,55 @@ public class RenewShareResult
     public DateTime? NewExpiresAt { get; set; }
 }
 
+/// <summary>
+/// 就地改分享设置的结果。回传**改完之后的实际值**而不是「改成功了」——
+/// 面板那几行显示的就是这两个值，让前端拿请求参数去乐观更新，等于把服务端的规范化
+/// （白名单回退、天数夹取）绕过去，界面会显示一个后端根本没存的值。
+/// </summary>
+public class UpdateShareSettingsResult
+{
+    public bool Ok { get; set; }
+    public string? Error { get; set; }
+    public string Visibility { get; set; } = string.Empty;
+    public DateTime? ExpiresAt { get; set; }
+}
+
+/// <summary>
+/// 分享链接「还能不能续期」的唯一判定源。
+///
+/// 这条判据原先在三处各写了一遍 <c>AddDays(-7)</c>（续期端点的拒绝分支、分享列表的
+/// inGracePeriod、数据抽屉的可续条数），改一处忘一处就会让界面承诺一件后端会拒绝的事。
+/// </summary>
+public static class ShareRenewPolicy
+{
+    /// <summary>过期之后仍然允许续期的宽限天数。</summary>
+    public const int GraceDays = 7;
+
+    /// <summary>早于这个时刻过期的链接就出了宽限窗。</summary>
+    public static DateTime GraceCutoff(DateTime now) => now.AddDays(-GraceDays);
+
+    /// <summary>
+    /// 这条链接现在能不能续期。与 RenewShareAsync 的两个拒绝分支同源：
+    /// 已撤销不可续；过期超过宽限窗不可续（没有过期时间的一直可续）。
+    /// </summary>
+    public static bool CanRenew(bool isRevoked, DateTime? expiresAt, DateTime now)
+        => !isRevoked && (!expiresAt.HasValue || expiresAt.Value >= GraceCutoff(now));
+}
+
 public class ShareAnalyticsResult
 {
     public int TotalShares { get; set; }
     public int ActiveShares { get; set; }
     public int ExpiredShares { get; set; }
+    /// <summary>已过期之中，续期真的能救回来的条数（未撤销且还在宽限窗内）。</summary>
+    public int RenewableExpiredShares { get; set; }
     public long TotalViews { get; set; }
     public int UniqueIpCount { get; set; }
+    /// <summary>
+    /// 独立访客数是不是取自被截断的样本。TotalViews 走无上限聚合，而去重访客只能在
+    /// 取回的那一批日志上算；命中上限时这个数只是下界，界面不得据它算人均。
+    /// </summary>
+    public bool VisitorSampleCapped { get; set; }
     public long CommentCount { get; set; }
     public List<ShareAnalyticsTimelineEntry> Timeline { get; set; } = new();
     public List<ShareAnalyticsLinkSummary> TopLinks { get; set; } = new();

@@ -91,6 +91,9 @@ builder.Services.AddControllers(options =>
     {
         // 团队动态：全局白名单审计（白名单外的动作一次字典查找即逃逸）
         options.Filters.Add<PrdAgent.Api.Filters.ActivityLogActionFilter>();
+        // 模型管理退场：api/mds 下的写操作一律 410，配置改由 LLM Gateway 控制台承担。
+        // 挂在 ActivityLog 之后：被挡下的请求本来就没发生写入，不该留一条动态。
+        options.Filters.Add<PrdAgent.Api.Filters.MdsWriteRetiredFilter>();
     })
     .AddJsonOptions(options =>
     {
@@ -160,6 +163,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.PeerSync.IPeerSyncTransferServi
     PrdAgent.Api.Services.PeerSync.PeerSyncTransferService>();
 // 知识库后台自动同步 worker（双向同步从「点一次跑一次」变「定期保持一致」；防风暴见 PeerSyncScheduleWorker）。
 builder.Services.AddHostedService<PrdAgent.Api.Services.PeerSync.PeerSyncScheduleWorker>();
+// CDS 验收报告每小时自动同步（此前只有手动入口，于是镜像库长期是陈的）。
+// 只在权威部署上跑：同项目所有分支预览共用一个库，多份同时写会互相打架。
+builder.Services.AddHostedService<PrdAgent.Api.Services.CdsReportImportWorker>();
 
 // 跨 MAP 实例数据同步（动态授权，一次授权跑一次；详见 doc/design.platform.cross-instance-data-sync.md）。
 // Vault 必须是单例：导出令牌只活在内存里，换成 Scoped 就等于每个请求一个空保险箱。
@@ -239,6 +245,10 @@ var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] 
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))
     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+// 视频模型与 Provider 已迁到独立 LLMGW 配置域；继续走旧 MDS inproc 解析会在空池时
+// 提交前失败，也会绕过控制台中已配置的 video-gen 默认池。
+httpAllowlist.Add(AppCallerRegistry.VideoAgent.VideoGen.Generate);
+httpAllowlist.Add(AppCallerRegistry.VisualAgent.VideoGen.Generate);
 var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -328,6 +338,12 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.
 // 网页托管「向我提问」：站点正文快照（喂给模型的上下文）+ 配额闸（保护 owner 的 token 预算）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteContentSnapshotService, PrdAgent.Infrastructure.Services.SiteContentSnapshotService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAskQuotaService, PrdAgent.Infrastructure.Services.AskQuotaService>();
+// 单例：它要在请求结束后继续跑（调用方全在请求路径上，谁都不该为几句开场问题多等一次模型调用），
+// 所以自己持 IServiceScopeFactory 开 scope，而不是蹭调用方那个即将被释放的 scope。
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAskOpeningQuestionGenerator, PrdAgent.Infrastructure.Services.AskOpeningQuestionGenerator>();
+// 上传解包进度：Singleton —— 节流用的 _lastWrite 字典必须跨请求存活，
+// Scoped 的话每次请求一个新实例，节流形同虚设（每个文件都写一次 Redis）
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IUploadProgressService, PrdAgent.Infrastructure.Services.UploadProgressService>();
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();

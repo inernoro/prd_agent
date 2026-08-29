@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AdminMenuItem } from '@/services/contracts/authz';
 import type { UserRole } from '@/types/admin';
+// 这个模块自身零依赖，直接 import 不会造成上面那条注释里说的循环引用
+import { clearAllOfflineEdits } from '@/pages/document-store/recordingOfflineQueue';
 
 const AUTH_STORAGE_KEY = 'prd-admin-auth';
 
@@ -117,6 +119,12 @@ export const useAuthStore = create<AuthState>()(
           }
         }
         sessionStorage.clear();
+        /*
+         * 录音的离线校对草稿存在 localStorage 里（sessionStorage 兑现不了「关掉再回来还在」
+         * 那句承诺）。键里带账号只决定恢复谁的草稿，挡不住同一台设备上的下一个人去翻，
+         * 所以登出这一下必须把它们清掉——正文不该在人已经走了之后还留在盘上。
+         */
+        clearAllOfflineEdits();
         set({ ...INITIAL_STATE });
       },
     }),

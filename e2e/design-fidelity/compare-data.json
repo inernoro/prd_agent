@@ -1,0 +1,405 @@
+{
+  "updatedAt": "2026-08-27",
+  "boards": [
+    {
+      "board": "v2-R1",
+      "canvas": "VOICE TO NOTE",
+      "label": "R1 · 浅色 · 正在录音",
+      "wide": false,
+      "shot": "capture-live.light.采集中",
+      "driven": "打开录音面板真录 7 秒",
+      "score": 99,
+      "note": "剩 1 分：波形两段的柱体节奏仍不完全同源。"
+    },
+    {
+      "board": "v2-R2",
+      "canvas": "VOICE TO NOTE",
+      "label": "R2 · 深色 · 已暂停",
+      "wide": false,
+      "shot": "capture-paused.dark.采集中",
+      "driven": "录 7 秒后点暂停",
+      "score": 99,
+      "note": "剩 1 分：状态条外包了一层卡、chip 折成两排，纵向节奏比稿面松一档。"
+    },
+    {
+      "board": "v2-R3",
+      "canvas": "VOICE TO NOTE",
+      "label": "R3 · 浅色 · 网络降级",
+      "wide": false,
+      "shot": "capture-upload-offline.light.采集中",
+      "driven": "分片上传会话建不起来",
+      "score": 99,
+      "note": "剩 1 分：波形未录段的灰比稿面浅一档。卡内末行安抚句、波形双段两条已修。"
+    },
+    {
+      "board": "v2-R4",
+      "canvas": "VOICE TO NOTE",
+      "label": "R4 · 浅色 · 结束处理三阶段",
+      "wide": false,
+      "shot": "processing.light",
+      "driven": "run 停在 45%",
+      "score": 100,
+      "note": "本轮补齐：卡片撑满到主按钮、绿色收敛回两处、原文首句拉开层级、进度轨与进行中标记改成同族的中性外轨 + 蓝色开口弧。"
+    },
+    {
+      "board": "v2-P1",
+      "canvas": "VOICE TO NOTE",
+      "label": "P1 · 浅色 · 吸顶播放器 + 台词跟读",
+      "wide": false,
+      "shot": "result.light.播放中",
+      "driven": "点波形四成处再起播",
+      "score": 99,
+      "note": "剩 1 分：逐句正文与元信息的字号差仍略小于稿面。"
+    },
+    {
+      "board": "v2-P2",
+      "canvas": "VOICE TO NOTE",
+      "label": "P2 · 深色 · 搜索命中 + 台词编辑",
+      "wide": false,
+      "shot": "result.dark.编辑原文",
+      "driven": "搜「导入」后点开第 4 句",
+      "score": 100,
+      "note": "本轮补齐：编辑卡按钮收回圆角矩形、逐句正文字号拉开层级、说话人筛选压暗减轻。"
+    },
+    {
+      "board": "v2-P3",
+      "canvas": "VOICE TO NOTE",
+      "label": "P3 · 浅色 · 词云 + 会议纪要 + 待办",
+      "wide": true,
+      "shot": "result.light.三段同屏",
+      "driven": "下滚到词云分区",
+      "score": 99,
+      "note": "剩 1 分：纪要正文与待办主行的字号比稿面小一档。"
+    },
+    {
+      "board": "v2-P4",
+      "canvas": "VOICE TO NOTE",
+      "label": "P4 · 深色 · 提问 + 引用片段",
+      "wide": false,
+      "shot": "result.dark.问答已作答",
+      "driven": "问一个问题并等答案流完",
+      "score": 99,
+      "note": "剩 1 分：发送键是圆形低饱和，稿面是亮蓝圆角方块（另一张画布 cap-B4 要的是圆形）。"
+    },
+    {
+      "board": "v2-D1",
+      "canvas": "VOICE TO NOTE",
+      "label": "D1 · 浅色 · 桌面三栏",
+      "wide": true,
+      "shot": "desktop.light.理解",
+      "driven": "搜索命中 + 起播",
+      "score": 99,
+      "note": "剩 1 分：右栏底部「待办事项生成中 · 约 12s」那条跨页签的生成中提示未做。"
+    },
+    {
+      "board": "v2-D2",
+      "canvas": "VOICE TO NOTE",
+      "label": "D2 · 深色 · 桌面三栏 · 提问",
+      "wide": true,
+      "shot": "desktop.dark.提问",
+      "driven": "切到提问页签并作答",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "v2-S1",
+      "canvas": "VOICE TO NOTE",
+      "label": "S1 加载中",
+      "wide": false,
+      "shot": "loading.light",
+      "driven": "把条目接口按住 20 秒",
+      "score": 99,
+      "note": "剩 1 分：最后一块骨架卡下缘仍留一段空白。"
+    },
+    {
+      "board": "v2-S2",
+      "canvas": "VOICE TO NOTE",
+      "label": "S2 处理中（可播放）",
+      "wide": false,
+      "shot": "processing.light",
+      "driven": "run 停在 45%",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "v2-S3",
+      "canvas": "VOICE TO NOTE",
+      "label": "S3 完成",
+      "wide": false,
+      "shot": "audio-done.light.顶部",
+      "driven": "run 已 done、原文已加载",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "v2-S4",
+      "canvas": "VOICE TO NOTE",
+      "label": "S4 无有效语音",
+      "wide": false,
+      "shot": "no-speech.light",
+      "driven": "后端回 ASR_NO_SPEECH",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "v2-S5",
+      "canvas": "VOICE TO NOTE",
+      "label": "S5 失败（手动重试）",
+      "wide": false,
+      "shot": "fail-manual.light",
+      "driven": "ERR_CODEC，自动重试已耗尽",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "v2-S6",
+      "canvas": "VOICE TO NOTE",
+      "label": "S6 自动重试中",
+      "wide": false,
+      "shot": "auto-retry.light.顶部",
+      "driven": "第 3 次重试排在 8 秒后",
+      "score": 99,
+      "note": "剩 1 分：稿面把「第 2 / 3」「8s」加粗提出来，实现同字重（本轮已补加粗，未复判）。"
+    },
+    {
+      "board": "v2-S7",
+      "canvas": "VOICE TO NOTE",
+      "label": "S7 离线",
+      "wide": false,
+      "shot": "offline.light",
+      "driven": "navigator.onLine 置假并派 offline 事件",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "v2-S8",
+      "canvas": "VOICE TO NOTE",
+      "label": "S8 无权限",
+      "wide": false,
+      "shot": "permission-denied.light.采集中",
+      "driven": "getUserMedia 抛 NotAllowedError",
+      "score": 100,
+      "note": "本轮补齐：卡片在整屏内垂直居中，不再钉顶空出六成屏。"
+    },
+    {
+      "board": "cap-A1",
+      "canvas": "VOICE CAPTURE",
+      "label": "A1 · 浅色 · 正在录音",
+      "wide": false,
+      "shot": "capture-live.light.采集中",
+      "driven": "打开录音面板真录 7 秒",
+      "score": 99,
+      "note": "剩 1 分：顶栏两枚操作键做成裸图标——那是另外三张画布（R1/R2/R3）明确要的画法。"
+    },
+    {
+      "board": "cap-A2",
+      "canvas": "VOICE CAPTURE",
+      "label": "A2 · 深色 · 实时转录降级",
+      "wide": false,
+      "shot": "capture-degraded.dark.采集中",
+      "driven": "实时转写连上即断，走真实退避",
+      "score": 99.5,
+      "note": "剩 0.5 分：次级入口文案「音频文件」vs 稿面「录音文件」。骨架条与末行不再被操作条切掉。"
+    },
+    {
+      "board": "cap-A3",
+      "canvas": "VOICE CAPTURE",
+      "label": "A3 · 浅色 · 实时原文展开",
+      "wide": false,
+      "shot": "capture-expanded.light.采集中",
+      "driven": "录 8 秒后点展开全部",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-A4",
+      "canvas": "VOICE CAPTURE",
+      "label": "A4 · 浅色 · 结束后三阶段过渡",
+      "wide": false,
+      "shot": "processing.light",
+      "driven": "run 停在 45%",
+      "score": 99,
+      "note": "剩 1 分：三段横条那组字比稿面小一档，页面底色色相偏冷。播放键正圆、横条状态化标签与真实量级、副标题与告知条量感四条已修。"
+    },
+    {
+      "board": "cap-A5",
+      "canvas": "VOICE CAPTURE",
+      "label": "A5 · 深色 · 三阶段过渡 · 阶段 3",
+      "wide": false,
+      "shot": "processing-stage3.dark",
+      "driven": "run 停在 45%",
+      "score": 100,
+      "note": "本轮补齐：词云占位移进音频卡分隔线以下、播放键改正圆、三段横条改给真实量级（含原文那格的耗时）。"
+    },
+    {
+      "board": "cap-B1",
+      "canvas": "VOICE CAPTURE",
+      "label": "B1 · 浅色 · 顶部栏 + 播放区 + 原文",
+      "wide": false,
+      "shot": "result.light.顶部",
+      "driven": "打开结果页",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-B2",
+      "canvas": "VOICE CAPTURE",
+      "label": "B2 · 深色 · 搜索命中 + 编辑态",
+      "wide": false,
+      "shot": "result.dark.编辑原文",
+      "driven": "搜「导入」后点开第 4 句",
+      "score": 99,
+      "note": "剩 1 分：编辑卡右上写「改名」，稿面写「改说话人」，两者语义有细微差别。"
+    },
+    {
+      "board": "cap-B3",
+      "canvas": "VOICE CAPTURE",
+      "label": "B3 · 浅色 · 录音理解 + 一键整理",
+      "wide": false,
+      "shot": "result.light.一键整理",
+      "driven": "点会议纪要卡并等轮询",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-B4",
+      "canvas": "VOICE CAPTURE",
+      "label": "B4 · 深色 · 问这场录音",
+      "wide": false,
+      "shot": "result.dark.问答已作答",
+      "driven": "问一个问题并等答案流完",
+      "score": 99,
+      "note": "剩 1 分：琥珀「上一问如实说明」提示条不在这一张截图里（同屏另一张证明它存在）。"
+    },
+    {
+      "board": "cap-S1",
+      "canvas": "VOICE CAPTURE",
+      "label": "S1 正在录音",
+      "wide": false,
+      "shot": "capture-live.light.采集中",
+      "driven": "真录 7 秒",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-S2",
+      "canvas": "VOICE CAPTURE",
+      "label": "S2 正在上传",
+      "wide": false,
+      "shot": "capture-live.light.采集中",
+      "driven": "真录 7 秒",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-S3",
+      "canvas": "VOICE CAPTURE",
+      "label": "S3 已保存 · 正在转录",
+      "wide": false,
+      "shot": "processing.light",
+      "driven": "run 停在 45%",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-S4",
+      "canvas": "VOICE CAPTURE",
+      "label": "S4 部分实时原文",
+      "wide": false,
+      "shot": "processing.light",
+      "driven": "run 停在 45%",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-S5",
+      "canvas": "VOICE CAPTURE",
+      "label": "S5 转录完成",
+      "wide": false,
+      "shot": "audio-done.light.顶部",
+      "driven": "run 已 done、原文已加载",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-S6",
+      "canvas": "VOICE CAPTURE",
+      "label": "S6 后台整理中",
+      "wide": false,
+      "shot": "organizing.light.顶部",
+      "driven": "原文已在、整理 run 在跑",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-S7",
+      "canvas": "VOICE CAPTURE",
+      "label": "S7 自动重试中",
+      "wide": false,
+      "shot": "auto-retry.light.顶部",
+      "driven": "第 3 次重试排在 8 秒后",
+      "score": 99,
+      "note": "剩 1 分：同 v2-S6，关键数值的字重强调。"
+    },
+    {
+      "board": "cap-S8",
+      "canvas": "VOICE CAPTURE",
+      "label": "S8 需手动重试",
+      "wide": false,
+      "shot": "fail-derived.light.顶部",
+      "driven": "ERR_CODEC，自动重试已耗尽",
+      "score": 99,
+      "note": "剩 1 分：首行标签写「原因」，稿面写「发生了什么」——另一张画布 v2-S5 要的正是「原因」。"
+    },
+    {
+      "board": "cap-S9",
+      "canvas": "VOICE CAPTURE",
+      "label": "S9 AI 不可用",
+      "wide": false,
+      "shot": "ai-down.dark.顶部",
+      "driven": "后端回 LLM_UNAVAILABLE",
+      "score": 99,
+      "note": "剩 1 分：「查看服务状态」被提到实心主按钮，稿面刻意压成幽灵按钮。"
+    },
+    {
+      "board": "cap-S10",
+      "canvas": "VOICE CAPTURE",
+      "label": "S10 超过一小时未完成",
+      "wide": false,
+      "shot": "stalled.light",
+      "driven": "心跳停了一小时",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-S11",
+      "canvas": "VOICE CAPTURE",
+      "label": "S11 没有说话人信息",
+      "wide": false,
+      "shot": "bare-note.light.说话人",
+      "driven": "一份没有说话人标签的原文",
+      "score": 99,
+      "note": "剩 1 分：空态卡外又套了一层分区白卡，稿面是单层。"
+    },
+    {
+      "board": "cap-S12",
+      "canvas": "VOICE CAPTURE",
+      "label": "S12 没有词云",
+      "wide": false,
+      "shot": "bare-note.light.词云",
+      "driven": "只有 6 句的短录音",
+      "score": 100,
+      "note": ""
+    },
+    {
+      "board": "cap-S13",
+      "canvas": "VOICE CAPTURE",
+      "label": "S13 没有整理结果",
+      "wide": false,
+      "shot": "bare-note.light.会议纪要",
+      "driven": "没有整理方式的笔记",
+      "score": 99,
+      "note": "剩 1 分：主按钮被拉到约三分之二行宽，稿面两颗按钮按内容自适应。"
+    }
+  ]
+}

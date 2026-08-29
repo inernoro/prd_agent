@@ -64,7 +64,10 @@ describe('认证判定', () => {
       MYSQL_RANDOM_ROOT_PASSWORD: 'yes', MYSQL_USER: 'app', MYSQL_PASSWORD: 'x',
     })).toBe(true);
     expect(detectInfraAuth('postgres', { POSTGRES_PASSWORD: 'x' })).toBe(true);
-    expect(detectInfraAuth('redis', { REDIS_PASSWORD: 'x' })).toBe(true);
+    // redis 不在这一行里：它的口令写在 env 里**不代表服务端在校验**，判据只认启动
+    // 参数（见下面「redis 只认启动参数」）。这条断言原来写着 `REDIS_PASSWORD -> true`，
+    // 与创建门禁的「拒绝只声明密码变量但启动命令没有启用认证的 Redis」正好相反
+    // ——同一台库两处判据给相反结论（形状 3）。2026-08-27 收敛，台账 E81。
     expect(detectInfraAuth('sqlserver', { MSSQL_SA_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('clickhouse', { CLICKHOUSE_PASSWORD: 'x' })).toBe(true);
     expect(detectInfraAuth('rabbitmq', {
@@ -455,5 +458,75 @@ describe('认证判定：有这个 key 不等于配了认证', () => {
     expect(detectInfraAuth('mongo', {}, ['mongod', '--auth'])).toBe(true);
     expect(detectInfraAuth('mongo', {}, ['mongod', '--keyfile', '/etc/key'])).toBe(true);
     expect(detectInfraAuth('mongo', {}, ['mongod', '--keyfile'])).toBe(false);
+  });
+});
+
+describe('memcached 的 -S 必须区分大小写', () => {
+  it('小写 -s 是 unix socket，不是认证', () => {
+    // tokens 在上游被统一转成了小写，于是 `hasFlag('-s')` 把 `-s <file>`
+    // 也当成了启用 SASL。一台走 unix socket、根本没配认证的 memcached
+    // 会被判成「已认证」，还能过认证门禁（Codex review P2）。
+    expect(detectInfraAuth('memcached', {}, ['memcached', '-s', '/tmp/memcached.sock'])).toBe(false);
+  });
+
+  it('大写 -S 才算启用 SASL', () => {
+    expect(detectInfraAuth('memcached', {}, ['memcached', '-S'])).toBe(true);
+  });
+
+  it('-Y 认证文件照旧算', () => {
+    expect(detectInfraAuth('memcached', {}, ['sh', '-c', 'exec memcached -Y /tmp/cds-memcached.auth'])).toBe(true);
+  });
+
+  it('env 里有口令但命令行没启用，不算（口令存在不等于服务在校验它）', () => {
+    expect(detectInfraAuth('memcached', { MEMCACHED_PASSWORD: 'x' }, ['memcached'])).toBe(false);
+  });
+});
+
+describe('跑着但一个端口都没发布的服务：不算暴露面，但要留下来', () => {
+  // 2026-08-25 Codex review P1。第一版直接 `continue` 丢掉，于是每日体检把
+  // findings 当完整台账用时，「内网但无口令」那一整档对这类服务永远不会响。
+  const svc = {
+    id: 'legacy-mongo',
+    projectId: 'proj-a',
+    containerName: 'cds-proj-a-legacy-mongo',
+    dockerImage: 'mongo:6',
+    env: {},
+    runtimePorts: '27017/tcp',   // 只暴露给容器网络，没有 -> 宿主映射
+    running: true,
+  };
+
+  it('不进 findings——它确实不构成暴露面', () => {
+    const report = auditInfraExposure([svc]);
+    expect(report.findings).toHaveLength(0);
+    expect(report.criticalCount).toBe(0);
+    expect(report.warnCount).toBe(0);
+  });
+
+  it('但要出现在 internalOnly 里，带着「有没有认证」这个结论', () => {
+    const report = auditInfraExposure([svc]);
+    expect(report.internalOnly).toHaveLength(1);
+    expect(report.internalOnly[0]).toMatchObject({
+      id: 'legacy-mongo',
+      projectId: 'proj-a',
+      kind: 'mongo',
+      authenticated: false,   // 没有 MONGO_INITDB_ROOT_USERNAME
+    });
+  });
+
+  it('停着的容器不算——它既不暴露也不在跑', () => {
+    const report = auditInfraExposure([{ ...svc, running: false }]);
+    expect(report.internalOnly).toHaveLength(0);
+  });
+
+  it('反面对照：发布了端口的走 findings，不进 internalOnly', () => {
+    const report = auditInfraExposure([{ ...svc, runtimePorts: '0.0.0.0:27017->27017/tcp' }]);
+    expect(report.internalOnly).toHaveLength(0);
+    expect(report.findings).toHaveLength(1);
+  });
+
+  it('读不到端口映射时按「对外」从严处理，同样不进 internalOnly', () => {
+    const report = auditInfraExposure([{ ...svc, runtimePorts: null }]);
+    expect(report.internalOnly).toHaveLength(0);
+    expect(report.findings).toHaveLength(1);
   });
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2, ShieldCheck, X } from 'lucide-react';
+import { ArrowRightLeft, Database, KeyRound, ExternalLink, AlertTriangle, CheckCircle2, ImageOff, PlayCircle, ShieldCheck, X } from 'lucide-react';
 
 import { PageHeader } from '@/components/design/PageHeader';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -48,6 +48,9 @@ type ProgressRow = {
   updated: number;
   plannedInsert: number;
   plannedUpdate: number;
+  assetUrlsRebased?: number;
+  assetUrlsUnresolved?: number;
+  assetUrlsRelative?: number;
   done: boolean;
 };
 type RunView = {
@@ -62,6 +65,8 @@ type RunView = {
   overwriteExisting: boolean;
   error: string | null;
   pendingSecretFields: Record<string, string[]>;
+  promotedToRunId?: string | null;
+  promotedFromRunId?: string | null;
   progress: ProgressRow[];
   createdAt?: string;
   finishedAt?: string | null;
@@ -371,6 +376,32 @@ export default function DataSyncPage() {
     setRun((prev) => (prev ? { ...prev, status: 'running', dryRun, overwriteExisting: overwrite } : prev));
   }
 
+  /**
+   * 试跑确认无误之后，就地转正成一次真跑。
+   *
+   * 原来这一步要人再跑一遍「跳过去让对方同意」——而试跑什么都没写，
+   * 让它吃掉一次批准是没道理的。转正跑的是刚才那一屏冻结下来的**范围**，
+   * 用的是同一张票，至多一次。**数据不冻结**：worker 会重新去源站拉，
+   * 界面上那两段话如实说明了这一点，改这里记得一起改。
+   */
+  async function promote() {
+    setBusy(true);
+    setError('');
+    const res = await apiRequest<{ runId: string }>(
+      `/api/instance-sync/runs/${encodeURIComponent(runId)}/promote`,
+      // 送**冻结的那个值**，不是页面上当前的勾选状态：转正执行的必须是刚才
+      // 预览过的那一份。后端也会拒不一致的请求，这里对齐是为了别让用户撞那个错。
+      { method: 'POST', body: { overwrite: run?.overwriteExisting ?? false } },
+    );
+    setBusy(false);
+    if (!res.success) {
+      setError(res.error?.message || '开始真的搬失败');
+      return;
+    }
+    // 换到那条真跑上去看进度。
+    setSearchParams({ run: res.data.runId });
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
       <PageHeader
@@ -426,7 +457,13 @@ export default function DataSyncPage() {
             <MapSectionLoader text="正在向源站清点数据…" />
           )
         ) : (
-          <ProgressCard run={run} totals={totals} onBack={() => setSearchParams({})} />
+          <ProgressCard
+            run={run}
+            totals={totals}
+            busy={busy}
+            onPromote={promote}
+            onBack={() => setSearchParams({})}
+          />
         )}
         </div>
       </div>
@@ -857,6 +894,8 @@ function PlanCard({
 function ProgressCard({
   run,
   totals,
+  busy,
+  onPromote,
   onBack,
 }: {
   run: RunView;
@@ -864,10 +903,20 @@ function ProgressCard({
     fetched: number; inserted: number; skipped: number; updated: number;
     plannedInsert: number; plannedUpdate: number; total: number; doneCount: number;
   };
+  busy: boolean;
+  onPromote: () => void;
   onBack: () => void;
 }) {
   const finished = TERMINAL.has(run.status);
+  // 试跑跑完且成功、还没转正过 —— 这时候才该出现「开始真的搬」。
+  const canPromote = finished && run.status === 'succeeded' && run.dryRun && !run.promotedToRunId;
   const pendingSecrets = Object.entries(run.pendingSecretFields || {});
+  // 资产地址：改写了几条、几条认不出、几条本来就是相对路径。
+  // 三个数字一起看才说得清「附件能不能打开」——少看第三个的后果是**整张卡不出现**：
+  // 源站用本地磁盘存附件时，地址全是 `/local-assets/...`，前两个数恒为 0（DS30）。
+  const assetsRebased = run.progress.reduce((n, row) => n + (row.assetUrlsRebased || 0), 0);
+  const assetsUnresolved = run.progress.reduce((n, row) => n + (row.assetUrlsUnresolved || 0), 0);
+  const assetsRelative = run.progress.reduce((n, row) => n + (row.assetUrlsRelative || 0), 0);
   return (
     <div className="space-y-4">
       <Card>
@@ -931,6 +980,101 @@ function ProgressCard({
         </div>
       </Card>
 
+      {assetsRebased + assetsUnresolved + assetsRelative > 0 ? (
+        <Card>
+          <div className="flex items-center gap-2">
+            <ImageOff size={18} style={{ color: 'var(--accent-primary)' }} />
+            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+              附件地址
+            </h2>
+          </div>
+          {/*
+            这一段必须同时说三件事，缺一件就变成误导：
+            这次到底写没写库、地址改成了本站的（否则图片会指回源站）、**文件本身没有搬过来**。
+            两站不共用同一个对象存储时，改完地址只是从「指回别人家」变成「指向自己家的空位」。
+
+            **试跑必须用将来时。** 改写发生在入库之前、计数也在那时累加，但真正的写入整段
+            包在 `if (!run.DryRun)` 里——试跑一条都没落库。原来这段话不分试跑真跑，一律写
+            「已把 N 条改写成本站地址」「这次只搬了记录」，于是运维会以为附件此刻已经指向本站、
+            点开就能看（Codex review P2）。这和上一轮修的密钥卡是同一条纪律的同一处漏网：
+            打算做的事不能记成做过的事。
+          */}
+          <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            {/*
+              「改写了 N 条」这一句要 N>0 才说。源站用本地磁盘存附件时 N 恒为 0，
+              照说会得到「已把 0 条地址改写成本站地址…附件现在就能打开」——
+              一句既没信息量又把人往反方向带的话（DS30）。
+
+              **补救建议里只许点名真的被改写过的那几类资产。** 这段话教运维「文件该往哪复制」，
+              前提是那条记录的地址**已经**改成本站的了；没改写的记录仍然指着源站，复制到本站
+              任何位置都打不开。生成图（image_assets）就属于没改写的那一类——那个集合里混着
+              外部图床直链，整列不登记（见后端 `DataSyncAssetUrls.PendingSurvey` 与台账 DS36），
+              所以**不得**把它和附件并列写进「复制到本站前缀底下」。同理，将来把哪个集合迁进
+              登记表，才允许在这里点它的名。
+            */}
+            {run.dryRun ? (
+              <>
+                这是一次试跑，<span style={{ color: 'var(--text-primary)' }}>一条记录都没有写进来</span>。
+                {assetsRebased > 0 ? `真跑时会把 ${assetsRebased} 条附件地址改写成本站地址` : '真跑时不会有任何一条附件地址能改写成本站地址'}
+                {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、会保留源站地址` : ''}
+                。到时候也<span style={{ color: 'var(--text-primary)' }}>只搬记录，不搬文件本身</span>——
+                两站用同一个桶、且对象前缀也一样时，附件才直接打得开；其余情况都要自己把文件搬过来，
+                否则会看到图片裂开。<span style={{ color: 'var(--text-primary)' }}>搬到哪要分两类看</span>：
+                附件这类按内容存的，地址会带上本站配置的前缀，所以要复制到<span style={{ color: 'var(--text-primary)' }}>本站前缀底下</span>
+                （桶相同但前缀不同也打不开，就是这个原因）；首页、桌面端素材那类按固定路径存的<span style={{ color: 'var(--text-primary)' }}>不带前缀</span>，
+                复制到原样的路径即可——它们在同桶不同前缀时本来就打得开。
+              </>
+            ) : (
+              <>
+                {assetsRebased > 0 ? `已把 ${assetsRebased} 条附件地址改写成本站地址` : '没有任何一条附件地址能改写成本站地址'}
+                {assetsUnresolved > 0 ? `，另有 ${assetsUnresolved} 条认不出对象位置、保留了源站地址` : ''}
+                。注意：<span style={{ color: 'var(--text-primary)' }}>这次只搬了记录，没有搬文件本身</span>。
+                两站用同一个桶、且对象前缀也一样时，附件现在就能打开；其余情况都要自己把文件搬过来，
+                否则会看到图片裂开。<span style={{ color: 'var(--text-primary)' }}>搬到哪要分两类看</span>：
+                附件这类按内容存的，地址带着本站配置的前缀，所以要复制到<span style={{ color: 'var(--text-primary)' }}>本站前缀底下</span>
+                （桶相同但前缀不同也打不开，就是这个原因）；首页、桌面端素材那类按固定路径存的<span style={{ color: 'var(--text-primary)' }}>不带前缀</span>，
+                复制到原样的路径即可——它们在同桶不同前缀时本来就打得开。
+              </>
+            )}
+          </p>
+          {assetsUnresolved > 0 ? (
+            <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+              那 {assetsUnresolved} 条多半是更早期、不带对象位置信息的旧附件——
+              {run.dryRun ? '真跑之后它们的地址会仍然指向源站' : '它们的地址仍然指向源站'}，
+              源站一旦下线就打不开。
+            </p>
+          ) : null}
+          {/*
+            相对地址这一档单独说，而且必须说得比另外两档更重。
+
+            早先的判据把「已经是相对路径」读成「天然可移植」直接放行：既不改写、也不计数。
+            可这两件事只在两站共享同一份磁盘时才等价，而跨实例同步的前提恰恰是两台不同的
+            机器。源站用本地磁盘存附件的部署里，每一个附件链接都指向本站不存在的文件，
+            而附件卡因为三个数全是 0 整个不出现——**一句提示都没有**（DS30）。
+
+            这里不改写是因为确实无从改起：key 不在地址里，文件也没搬。能做的是别再静默。
+          */}
+          {assetsRelative > 0 ? (
+            <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+              另有 <span style={{ color: 'var(--text-primary)' }}>{assetsRelative} 条是相对地址、
+              而且没有记下对象位置</span>（形如 <code className="font-mono text-xs">/local-assets/…</code>），
+              说明源站把附件存在<span style={{ color: 'var(--text-primary)' }}>它自己那台机器的磁盘上</span>，
+              而这几条又是更早期、没留下位置信息的旧记录。
+              这种地址改不了也用不了：本站磁盘上没有这些文件，
+              {run.dryRun ? '真跑之后' : '现在'}点开就是 404。
+              要让它们打开，只有一条路：<span style={{ color: 'var(--text-primary)' }}>把源站那个目录里的
+              文件复制到本站对应目录</span>（地址是相对的，路径对上就能读到）。
+              改对象存储配置<span style={{ color: 'var(--text-primary)' }}>救不了这几条</span>——
+              换配置只影响以后新存的文件，源站这些旧记录的地址和文件都不会跟着变，
+              再同步一次还是同样的结果。真要换到对象存储，得源站先把这些文件迁上去、
+              把自己的记录改写掉，然后才轮到同步。
+              （同样存在本地磁盘、但<span style={{ color: 'var(--text-primary)' }}>记下了</span>
+              对象位置的那些，已经算进上面的「已改写」里了。）
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
+
       {pendingSecrets.length > 0 ? (
         <Card>
           <div className="flex items-center gap-2">
@@ -957,6 +1101,81 @@ function ProgressCard({
               </li>
             ))}
           </ul>
+        </Card>
+      ) : null}
+
+      {canPromote ? (
+        <Card>
+          <div className="flex items-center gap-2">
+            <PlayCircle size={18} style={{ color: 'var(--accent-primary)' }} />
+            <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
+              试跑完了，要真的搬吗
+            </h2>
+          </div>
+          {/*
+            这一步以前要人再去源站点一次同意——而试跑什么都没写，让它吃掉一次批准
+            是没道理的，真实迁移两次卡死在这里。现在同一次同意里就能接着搬。
+
+            这段话原来写的是「真的搬只会照着它执行，不会重新去源站取一份新的」，
+            **那是假的**：真跑复用的是试跑冻结下来的**范围**（哪些集合、多少条），
+            数据本身由 worker 重新调源站的 /export 取，游标从头开始。试跑到转正之间
+            源站改了的记录，搬过来的是改之后的值。系统没有存快照，也就给不出那个承诺
+            （Codex review P1 第四轮）。
+
+            改法是把话说回事实：承诺范围不变、授权不用再来一次，但明说数据是现取的。
+            要做到「真的冻结」得给导出加快照或版本边界，那是另一件事，记在
+            doc/debt.platform.cross-instance-data-sync.md。
+          */}
+          <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            上面这份定的是<span style={{ color: 'var(--text-primary)' }}>搬哪些内容</span>
+            ——真的搬只按这个范围执行，不会多搬别的，用的还是刚才那次授权，不需要再跳过去同意一遍，
+            这次授权只能这么用一次。
+          </p>
+          <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            但<span style={{ color: 'var(--text-primary)' }}>数据是现取的</span>：
+            真的搬会重新去源站拉一遍这些集合。刚才到现在源站要是改过某条记录，搬过来的就是改之后的值，
+            上面那些条数也可能对不上。要求两边完全一致的话，请确认这段时间源站没人在写。
+          </p>
+          {/*
+            **这里不再给可改的勾选框。** 上面那些「预计新增 / 预计更新」和跳过数，
+            全是按试跑那次的策略算出来的。转正时换成覆盖，那批「本来会跳过」的记录
+            会被真的写掉，而这些写入一次都没被预览过——「确认无误再搬」就落了空
+            （Codex review P1）。所以这里只把冻结的那个策略读出来，要改就重新试跑。
+          */}
+          <p className="mt-3 text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            这次会沿用试跑时的策略：
+            <span style={{ color: 'var(--text-primary)' }}>
+              {run.overwriteExisting
+                ? '本地已有的同一条记录，用源站的覆盖掉'
+                : '本地已有的同一条记录跳过，只补新的'}
+            </span>
+            。上面的预计条数就是按它算的；要换策略，请带着新策略重新试跑一次，看过新的对照表再来。
+          </p>
+          <button
+            type="button"
+            onClick={onPromote}
+            disabled={busy}
+            className="mt-4 rounded-lg px-4 py-2 text-sm font-medium"
+            // 主按钮走 button-primary 这对 token，不要拿 accent 底自己配前景色。
+            // 原来写的是 `--accent-primary` 配 `var(--accent-on-primary, #fff)`：
+            // 那个 fallback 的 `#fff` 是写死的浅色，accent 底上对比度只有 3.12:1，
+            // 而且一旦这块翻成浅色主题，字直接消失——双皮肤棘轮拦下的就是这个。
+            style={{
+              background: 'var(--button-primary-bg)',
+              color: 'var(--button-primary-fg)',
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? '正在开始…' : '确认无误，开始真的搬'}
+          </button>
+        </Card>
+      ) : null}
+
+      {run.promotedToRunId ? (
+        <Card>
+          <p className="text-sm leading-6" style={{ color: 'var(--text-muted)' }}>
+            这次试跑已经转正成一次真的搬。
+          </p>
         </Card>
       ) : null}
 

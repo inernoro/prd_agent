@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); }
+    .screen { overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; height: 800px; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .spacer { flex-grow: 1; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .scroll { height: 756px; overflow: hidden; background: #0f0f13; }
+    .paper { background: #FAFAF8; color: #17171c; padding: 26px 0 30px; }
+    .paper-in { width: 720px; margin: 0 auto; }
+    .paper h2 { font-size: 15px; margin: 0 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .sec { width: 720px; margin: 0 auto; padding: 22px 0; }
+    .sec-head { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
+    .sec-title { font-size: 15px; font-weight: 600; color: #f7f7fb; }
+    .sec-sub { font-size: 11.5px; color: rgba(247,247,251,0.55); }
+    .srclabel { display: flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); margin-bottom: 9px; }
+    .qgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+    .qcard { display: flex; flex-direction: column; gap: 8px; padding: 13px; border-radius: 11px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); min-height: 74px; }
+    .qcard .n { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.9); }
+    .qcard .t { font-size: 13px; line-height: 1.5; color: rgba(247,247,251,0.86); }
+    .field { display: flex; align-items: center; gap: 10px; height: 46px; margin-top: 10px; padding: 0 6px 0 14px; border-radius: 12px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .field span { flex-grow: 1; font-size: 13.5px; color: rgba(247,247,251,0.55); }
+    .send-sm { width: 34px; height: 34px; border-radius: 9px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); }
+    .divider { height: 1px; background: rgba(255,255,255,0.08); }
+    .cmt { display: flex; gap: 10px; padding: 11px 0; }
+    .av { width: 26px; height: 26px; border-radius: 13px; background: rgba(217,119,87,0.22); border: 1px solid rgba(217,119,87,0.32); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #f7f7fb; flex-shrink: 0; }
+    .cmt-b .who { font-size: 11.5px; color: rgba(247,247,251,0.55); margin-bottom: 3px; }
+    .cmt-b .txt { font-size: 13px; line-height: 1.65; color: rgba(247,247,251,0.80); }
+    .why { display: flex; gap: 26px; padding: 2px 2px 0; }
+    .why div { flex-grow: 1; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .why b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .why .good b { color: #4ade80; }
+    .why .bad b { color: #D97757; }
+  </style>
+</helmet>
+
+<div class="board">
+  <div class="eyebrow">方向 C · 内联问答区（不是浮层：正文之后、评论之前，三段同在一条滚动流里）</div>
+  <div class="screen">
+    <div class="topbar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
+      <div class="tb-title">客户端首页改版 · 视觉验收</div>
+      <div class="spacer"></div>
+      <div class="tb-btn">全屏演示</div>
+      <div class="tb-btn">新窗口打开</div>
+    </div>
+    <div class="scroll">
+      <div class="paper">
+        <div class="paper-in">
+          <h2>二、搜索入口</h2>
+          <p>搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</p>
+          <p style="color:#8a8a92; margin:0">走查人：视觉组 · 复核：产品组</p>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+          <div class="sec-title">向我提问</div>
+          <div class="sec-sub">回答只依据本页正文 · qwen3.6-plus</div>
+          <div class="spacer"></div>
+          <div class="quota">本页今日剩 18 / 20 · 你这小时剩 4 / 5</div>
+        </div>
+        <div class="srclabel">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
+          上传时从正文自动读出的 5 个问题
+        </div>
+        <div class="qgrid">
+          <div class="qcard"><div class="n">01</div><div class="t">这份验收报告的结论是什么？</div></div>
+          <div class="qcard"><div class="n">02</div><div class="t">哪些问题还没修完？</div></div>
+          <div class="qcard"><div class="n">03</div><div class="t">搜索入口为什么算未通过？</div></div>
+          <div class="qcard"><div class="n">04</div><div class="t">34 项走查里通过了多少？</div></div>
+          <div class="qcard"><div class="n">05</div><div class="t">导航从 7 项收敛到 4 项，剩下的去哪了？</div></div>
+          <div class="qcard" style="align-items:flex-start; justify-content:center; color:rgba(247,247,251,0.55); font-size:12.5px; line-height:1.6">或者直接在下面输入你自己的问题</div>
+        </div>
+        <div class="field">
+          <span>就这一页提个问题</span>
+          <div class="send-sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+        </div>
+      </div>
+
+      <div style="width:720px; margin:0 auto"><div class="divider"></div></div>
+
+      <div class="sec" style="padding-top:18px">
+        <div class="sec-head">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(247,247,251,0.68)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z"></path></svg>
+          <div class="sec-title">评论</div>
+          <div class="sec-sub">3 条 · 单层平铺 · 未登录可读，登录后可写</div>
+        </div>
+        <div class="cmt">
+          <div class="av">周</div>
+          <div class="cmt-b"><div class="who">周 · 昨天 16:22</div><div class="txt">首屏那版卡片间距我们这边看着偏紧，能不能给 20px？</div></div>
+        </div>
+        <div class="cmt">
+          <div class="av" style="background:rgba(255,255,255,0.08); border-color:rgba(255,255,255,0.12)">匿</div>
+          <div class="cmt-b"><div class="who">匿名访客 · 今天 09:10</div><div class="txt">搜索那条我同意，移动端确实不好点。</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="why">
+    <div class="good"><b>为什么选它</b>提问与评论并列成两段，谁也不遮谁 —— 用户当前最大的抱怨直接消失；没有浮层就没有移动端特例，也能被锚点链接直接指到。</div>
+    <div class="bad"><b>代价</b>长文要滚到底才能问，「读到一半有疑问」这条主路径变长；不适合 PPT 类站点（那种页面本身不滚动）。</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

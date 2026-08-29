@@ -108,14 +108,43 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             && !string.Equals(modelType, ModelTypes.Intent, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// GPT-5 家族在 OpenAI 协议的 chat 请求里不认 max_tokens，只认 max_completion_tokens。
+    /// 这里把前者收编成后者——**唯一一份**，两个调用方共用：
+    ///   - <see cref="ApplyGpt56ChatCompletionsCompatibility"/>：chat 路径的兼容改写
+    ///   - <see cref="ApplyResolvedMaxTokensCap"/>：所有路径都会经过它
+    ///
+    /// 为什么不能只放在前者里：Exchange 的两条原始请求路径（请求体透传，不做 chat 兼容改写）
+    /// 只调 cap 那一个。cap 于是往 max_completion_tokens 里写，而调用方原来的 max_tokens
+    /// 原样留着——两个字段一起发出去，OpenAI 兼容上游直接拒。顺带治掉第二个后果：cap 看的是
+    /// 目标字段，看不见 max_tokens，会把「调用方明明只要 500」按「目标字段不存在」处理，
+    /// 直接塞成上限值发出去。
+    /// </summary>
+    private static void NormalizeGpt5TokenField(JsonObject requestBody, ModelResolutionResult resolution)
+    {
+        if (!UsesOpenAiProtocol(resolution)
+            || requestBody["messages"] is not JsonArray
+            || !IsGpt5FamilyModel(resolution.ActualModel))
+            return;
+        if (!requestBody.TryGetPropertyValue(MaxTokensField, out var maxTokens))
+            return;
+        if (!requestBody.ContainsKey(MaxCompletionTokensField))
+            requestBody[MaxCompletionTokensField] = maxTokens?.DeepClone();
+        requestBody.Remove(MaxTokensField);
+    }
+
     internal static int? ApplyResolvedMaxTokensCap(JsonObject requestBody, ModelResolutionResult resolution)
     {
+        // 先收编再限流：顺序反过来的话，cap 已经按目标字段写完了，收编再把 max_tokens
+        // 搬过来会把刚限好的值又盖回去。
+        NormalizeGpt5TokenField(requestBody, resolution);
+
         var cap = resolution.MaxTokens;
         if (cap is not > 0)
             return null;
 
         var tokenField = UsesOpenAiProtocol(resolution)
-                         && IsGpt56FamilyModel(resolution.ActualModel)
+                         && IsGpt5FamilyModel(resolution.ActualModel)
                          && requestBody["messages"] is JsonArray
             ? MaxCompletionTokensField
             : MaxTokensField;
@@ -769,7 +798,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // 向请求失败的用户发送故障通知
                 _ = TryNotifyUserFailureAsync(request, resolution);
 
-                yield return GatewayStreamChunk.Fail(resolution.ErrorMessage ?? "未找到可用模型");
+                yield return GatewayStreamChunk.Fail(
+                    resolution.ErrorMessage ?? "未找到可用模型",
+                    resolution.FailureCode);
                 yield break;
             }
 
@@ -3756,22 +3787,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
     private static void ApplyGpt56ChatCompletionsCompatibility(JsonObject requestBody, ModelResolutionResult resolution)
     {
-        if (!UsesOpenAiProtocol(resolution)
-            || !IsGpt56FamilyModel(resolution.ActualModel)
-            || requestBody["messages"] is not JsonArray)
-        {
+        if (!UsesOpenAiProtocol(resolution) || requestBody["messages"] is not JsonArray)
             return;
-        }
 
-        if (!requestBody.ContainsKey("reasoning_effort"))
+        // reasoning_effort: "none" 只有 5.6 认，别往 5.0–5.5 上塞。
+        if (IsGpt56FamilyModel(resolution.ActualModel) && !requestBody.ContainsKey("reasoning_effort"))
             requestBody["reasoning_effort"] = "none";
 
-        if (requestBody.TryGetPropertyValue(MaxTokensField, out var maxTokens))
-        {
-            if (!requestBody.ContainsKey(MaxCompletionTokensField))
-                requestBody[MaxCompletionTokensField] = maxTokens?.DeepClone();
-            requestBody.Remove(MaxTokensField);
-        }
+        // 字段改名整个 GPT-5 家族都要：OpenAI 对全家族都拒收 max_tokens。
+        // 走共用的那一份，别在这里再写一遍（两份必然漂移，而漂移的表现是上游 400）。
+        NormalizeGpt5TokenField(requestBody, resolution);
     }
 
     private static bool UsesOpenAiProtocol(ModelResolutionResult resolution)
@@ -3783,12 +3808,32 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     private static bool IsGpt56FamilyModel(string? model)
+        => NormalizeModelLeaf(model) is var normalized
+           && (normalized == "gpt-5.6" || normalized.StartsWith("gpt-5.6-", StringComparison.Ordinal));
+
+    /// <summary>
+    /// 整个 GPT-5 家族（5、5.1、5.2、5.4、5.5、5.6…，含 -mini/-nano/日期快照）。
+    ///
+    /// 与 <see cref="IsGpt56FamilyModel"/> 分开是因为两件事的适用范围本来就不同：
+    /// `max_tokens` → `max_completion_tokens` 是**整个 GPT-5 家族**都要求的（OpenAI 对
+    /// 全家族都返回 "Unsupported parameter: 'max_tokens' is not supported with this model"），
+    /// 而注入 `reasoning_effort: "none"` 只有 5.6 认。此前两件事共用 5.6 那一个判据，
+    /// 于是 5.0–5.5 全部拿着 max_tokens 发出去，逐个 400——实测对话默认池里有 18 个成员
+    /// 因此永远调不通，而「向我提问」恰恰固定发 max_tokens=2048。
+    /// </summary>
+    private static bool IsGpt5FamilyModel(string? model)
+        => NormalizeModelLeaf(model) is var normalized
+           && (normalized == "gpt-5" || normalized.StartsWith("gpt-5-", StringComparison.Ordinal)
+               || normalized.StartsWith("gpt-5.", StringComparison.Ordinal));
+
+    /// <summary>去掉 `openai/` 这类 provider 前缀，只留模型名本身。</summary>
+    private static string NormalizeModelLeaf(string? model)
     {
         var normalized = (model ?? string.Empty).Trim().ToLowerInvariant();
         var slash = normalized.LastIndexOf('/');
         if (slash >= 0 && slash < normalized.Length - 1)
             normalized = normalized[(slash + 1)..];
-        return normalized == "gpt-5.6" || normalized.StartsWith("gpt-5.6-", StringComparison.Ordinal);
+        return normalized;
     }
 
     private static bool IsChatCompletionsEndpoint(string? endpointPath)

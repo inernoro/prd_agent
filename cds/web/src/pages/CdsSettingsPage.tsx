@@ -135,10 +135,122 @@ const tabGroups: TabGroup[] = [
 
 const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
 
-// 这两个 tab 由 auth-local 路由(仅在 authMode==='github' 时挂载)支撑。
-// basic / disabled 模式下后端根本没注册 /api/auth/users、/api/auth/activity,
-// 无条件渲染会直接 404。按运行时 authMode 门控,非 github 模式一律隐藏。
-const AUTH_GATED_TABS = new Set<TabValue>(['users', 'activity']);
+const AUTH_MODE_LABELS: Record<string, string> = {
+  github: 'GitHub OAuth',
+  basic: '账号密码（单账号）',
+  sso: 'SSO',
+  disabled: '未启用',
+};
+
+/**
+ * 用户管理 / 用户痕迹两个 tab 由 auth-local 路由支撑,而该路由**只在
+ * authMode==='github' 时挂载**;basic / disabled 部署上 /api/auth/users、
+ * /api/auth/activity 根本没注册,直接渲染必然 404。
+ *
+ * 2026-08-25 改法修正:此前是「非 github 模式整条 tab 从导航里消失」。用户在
+ * basic 部署上看到的现象是「用户管理不见了」,分不清是被砍了、坏了还是被藏了
+ * (expectation-management:功能不许无声消失)。现在 tab 永远在,
+ * 只是把会 404 的子组件换成这块说明:当前是什么模式、为什么用不了、怎么开。
+ */
+export function AuthModeGatedNotice({
+  feature,
+  mode,
+  onGoToAuth,
+  probeError,
+  onRetryProbe,
+}: {
+  feature: string;
+  mode: CdsAuthPublicStatus['mode'] | 'probe-failed' | null;
+  onGoToAuth: () => void;
+  probeError?: string;
+  onRetryProbe?: () => void;
+}): JSX.Element {
+  if (!mode) return <SettingsTabFallback />;
+  if (mode === 'probe-failed') {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-base font-semibold">{feature}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            没能读到这台 CDS 的当前认证模式，所以现在<strong className="text-foreground">无法判断</strong>
+            {feature}是否可用——这是探测失败，不是「认证未启用」。请稍后重试；持续失败通常说明 CDS 正在重启，或前面有网关在拦。
+          </p>
+        </div>
+        {/* 原始报错里带着方法、内部端点、状态码、requestId 和服务端返回体——那是排障
+            要用的东西，但不该是运维打开这一屏第一眼看到的内容。收进折叠区，并截断，
+            上面那句固定文案才是给人看的结论。 */}
+        {probeError ? (
+          <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs">
+            <summary className="cursor-pointer text-muted-foreground">诊断详情（排障用）</summary>
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all text-muted-foreground">
+              {probeError.slice(0, 400)}
+            </pre>
+          </details>
+        ) : null}
+        <div className="flex gap-2">
+          {onRetryProbe ? (
+            <button
+              type="button"
+              onClick={onRetryProbe}
+              className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+            >
+              重新探测
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onGoToAuth}
+            className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+          >
+            去「登录与认证」查看当前状态
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="text-base font-semibold">{feature}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          当前认证模式是 <strong className="text-foreground">{AUTH_MODE_LABELS[mode] || mode}</strong>，
+          {feature}未启用——不是被隐藏，是这个模式下后端没有多用户账号体系
+          （<code className="rounded bg-[hsl(var(--surface-sunken))] px-1 py-0.5 text-xs">/api/auth/users</code> 仅在 GitHub OAuth 模式挂载）。
+        </p>
+      </div>
+      {/* SSO 部署的账号在上游身份源里，让他们「改成 github 模式」等于劝人关掉 SSO —— 分开说。 */}
+      {mode === 'sso' ? (
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
+          <div className="font-medium">这台 CDS 的账号在上游身份源里管理</div>
+          <p className="mt-2 text-muted-foreground">
+            用户的新增、停用与密码都归发起 SSO 的那套系统管，CDS 侧不再维护第二份账号表，所以本页没有可管理的对象。
+            要在 CDS 自己这一层管账号，只有改用 GitHub OAuth 模式——那会替换掉当前的 SSO 登录方式，属于认证方案变更，请先确认是否真要这么做。
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
+          <div className="font-medium">要启用多用户</div>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>
+              给 CDS 设置 <code className="text-foreground">CDS_AUTH_MODE=github</code>，并配好{' '}
+              <code className="text-foreground">CDS_GITHUB_CLIENT_ID</code> /{' '}
+              <code className="text-foreground">CDS_GITHUB_CLIENT_SECRET</code>
+            </li>
+            <li>重启 CDS；首个登录者可通过 bootstrap 成为系统所有者（需持久化存储后端）</li>
+            <li>回到本页即可创建账号、禁用账号、重置密码，并查看用户痕迹</li>
+          </ol>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onGoToAuth}
+        className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium hover:border-[hsl(var(--hairline-strong))]"
+      >
+        去「登录与认证」查看当前状态
+      </button>
+    </div>
+  );
+}
 
 function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
@@ -164,34 +276,32 @@ function SettingsTabFallback(): JSX.Element {
 export function CdsSettingsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
-  // null = 认证模式探测中;非 github 时隐藏用户管理/用户痕迹 tab(其后端未挂载)。
-  const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | null>(null);
+  // null = 探测中;'probe-failed' = 没问出来。**探测失败不等于「认证未启用」**:
+  // 把失败当成 disabled，会让一台其实跑在 GitHub 模式的实例被告知「认证没开、去改
+  // CDS_AUTH_MODE 再重启」——拿推断出来的模式当权威结论，正是 expectation-management
+  // 要治的那种失控。所以失败单列一态，给可重试的诊断而不是编一个模式。
+  const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | 'probe-failed' | null>(null);
+  const [authProbeError, setAuthProbeError] = useState('');
+  const [authProbeSeq, setAuthProbeSeq] = useState(0);
   const authTabsVisible = authMode === 'github';
 
   useEffect(() => {
     let alive = true;
     // /api/auth/public-status 在所有认证模式下都挂载(server.ts:1802,早于 github-only 块),
-    // 是判定当前模式的权威且安全入口。探测失败按最保守处理:隐藏 auth 相关 tab。
+    // 是判定当前模式的权威且安全入口。
+    setAuthMode(null);
     fetchAuthPublicStatus()
-      .then((status) => { if (alive) setAuthMode(status.mode); })
-      .catch(() => { if (alive) setAuthMode('disabled'); });
+      .then((status) => { if (alive) { setAuthMode(status.mode); setAuthProbeError(''); } })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setAuthMode('probe-failed');
+        setAuthProbeError(err instanceof Error ? err.message : String(err));
+      });
     return () => { alive = false; };
-  }, []);
+  }, [authProbeSeq]);
 
-  // 认证模式确定后,若当前停在被隐藏的 tab(如 #hash 直链到 users),回退到默认 tab,
-  // 避免右侧内容区空白 + 触发 404。
-  useEffect(() => {
-    if (authMode && authMode !== 'github' && AUTH_GATED_TABS.has(activeTab)) {
-      setActiveTab('maintenance');
-    }
-  }, [authMode, activeTab]);
-
-  const visibleTabGroups = tabGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((tab) => authTabsVisible || !AUTH_GATED_TABS.has(tab.value)),
-    }))
-    .filter((group) => group.items.length > 0);
+  // tab 不再按模式隐藏:#hash 直链到 users 仍然落在 users,只是内容换成说明面板。
+  const visibleTabGroups = tabGroups;
 
   useEffect(() => {
     window.history.replaceState(null, '', `#${activeTab}`);
@@ -225,15 +335,22 @@ export function CdsSettingsPage(): JSX.Element {
         />
       }
     >
-      <Workspace className="cds-workspace-settings">
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
-          <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-            <TabsList
-              aria-label="CDS 系统设置分区"
-              className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-0 lg:self-start"
-            >
+      {/* 与项目设置页同一套满铺外壳：两个设置页此前一个 1440 居中、一个 1240 居中，
+          宽度本来就不一致；项目设置改成满铺后若只搬一半，反而更割裂。 */}
+      <Workspace fluid className="cds-workspace--fill cds-workspace--bleed">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as TabValue)}
+          className="cds-settings-shell"
+        >
+          <div className="cds-settings-layout">
+            <TabsList aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
+              <div className="cds-settings-rail-head">
+                <div className="text-sm font-semibold">CDS 系统设置</div>
+                <div className="truncate font-mono text-[11px] text-muted-foreground">system</div>
+              </div>
               {visibleTabGroups.map((group, groupIdx) => (
-                <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
+                <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
                   <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
                     {group.label}
                   </div>
@@ -250,7 +367,8 @@ export function CdsSettingsPage(): JSX.Element {
               ))}
             </TabsList>
 
-            <div className="cds-settings-content cds-surface-raised cds-hairline min-w-0 p-5">
+            <div className="cds-settings-content min-w-0">
+              <div className="cds-settings-section-body">
               <Suspense fallback={<SettingsTabFallback />}>
                 <TabsContent value="overview">
                   {activeTab === 'overview' ? <OverviewTab /> : null}
@@ -259,10 +377,30 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'auth' ? <AuthTab /> : null}
                 </TabsContent>
                 <TabsContent value="users">
-                  {activeTab === 'users' && authTabsVisible ? <UsersTab onToast={setToast} /> : null}
+                  {activeTab !== 'users' ? null : authTabsVisible ? (
+                    <UsersTab onToast={setToast} />
+                  ) : (
+                    <AuthModeGatedNotice
+                      feature="用户管理"
+                      mode={authMode}
+                      probeError={authProbeError}
+                      onRetryProbe={() => setAuthProbeSeq((n) => n + 1)}
+                      onGoToAuth={() => setActiveTab('auth')}
+                    />
+                  )}
                 </TabsContent>
                 <TabsContent value="activity">
-                  {activeTab === 'activity' && authTabsVisible ? <ActivityTab /> : null}
+                  {activeTab !== 'activity' ? null : authTabsVisible ? (
+                    <ActivityTab />
+                  ) : (
+                    <AuthModeGatedNotice
+                      feature="用户痕迹"
+                      mode={authMode}
+                      probeError={authProbeError}
+                      onRetryProbe={() => setAuthProbeSeq((n) => n + 1)}
+                      onGoToAuth={() => setActiveTab('auth')}
+                    />
+                  )}
                 </TabsContent>
                 <TabsContent value="access-keys">
                   {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}
@@ -320,6 +458,7 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'danger' ? <DangerOperationsTab onToast={setToast} /> : null}
                 </TabsContent>
               </Suspense>
+              </div>
             </div>
           </div>
         </Tabs>

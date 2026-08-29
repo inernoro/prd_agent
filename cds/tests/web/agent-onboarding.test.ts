@@ -14,6 +14,7 @@ import {
   getAgentMissionsForCategory,
   getAgentMissionScope,
   PROJECT_SKILL_PATHS,
+  resolveAgentConnectTarget,
   resolveAgentPageContext,
   resolveAgentMissionContextForTarget,
 } from '../../web/src/lib/agent-onboarding.js';
@@ -61,9 +62,60 @@ describe('CDS Agent 接入口令', () => {
       target: { kind: 'new' },
     });
     expect(prompt).toContain('--new-project');
+    // 建项目与换钥必须压在同一条命令里：一次性钥匙建完项目就被吊销、明文只发一次，
+    // 拆成两步等模型接力，就多了一次「少跑一步即不可逆」的机会。
+    expect(prompt).toContain('--create-project');
+    expect(prompt).toContain('不要拆成两步、也不要自己保存任何密钥');
     expect(prompt).toContain('一次性创建权限会自动吊销并换成该项目的长期项目级凭据');
     expect(prompt).toContain('仓库根、规范化 remote、当前分支和候选项目名');
     expect(prompt).toContain('project show <返回的 projectId>');
+  });
+
+  it('零凭据起步：技能包走匿名端点，不把没有 Key 的 Agent 指向要登录的 export-skill', () => {
+    // 「没有密钥建不了项目、没有项目用不上密钥」那个环，后端已经解开了：
+    // 匿名技能包 + bootstrap-access-requests 页面批准 + 一次性 create-only key
+    // （建成项目后自动换成项目级 key 并吊销）。口令必须把这条路写全，否则
+    // Agent 会卡在第一步：装 cdscli 时打到需要登录的 /api/export-skill 拿 401。
+    const prompt = buildCdsAgentPrompt({
+      cdsOrigin: 'https://cds.example',
+      target: { kind: 'new' },
+    });
+    expect(prompt).toContain('https://cds.example/api/skills/cds-pack/download');
+    expect(prompt).toContain('还没有任何 CDS 凭据时使用匿名端点');
+    expect(prompt).toContain('没有任何密钥也能起步');
+    expect(prompt).toContain('不需要先有项目、也不需要先有 Key');
+    // export-skill 仍可提，但必须标明它是「已登录」那一档
+    expect(prompt).toContain('已经登录或已有凭据时也可用 https://cds.example/api/export-skill');
+  });
+
+  it('上手助手页签不落到 system 目标，口令始终带得上 connect --new-project', () => {
+    // 从 /project-list 打开时 mapSelection 默认是 system（该页 mission scope 即 system）。
+    // 若原样传给上手助手，口令走的是「不运行 connect --project、不创建项目」那一支，
+    // 零基础用户复制到的口令恰好缺了解环的那一步。
+    const fromProjectList = resolveAgentConnectTarget({
+      tab: 'starter',
+      selection: { kind: 'system' },
+      effectiveProjectId: '',
+    });
+    expect(fromProjectList).toEqual({ kind: 'new' });
+    expect(
+      buildCdsAgentPrompt({ cdsOrigin: 'https://cds.example', target: fromProjectList }),
+    ).toContain('--new-project');
+
+    // cds-self 这类系统项目也不能顶替上手助手的接入目标
+    expect(
+      resolveAgentConnectTarget({ tab: 'starter', selection: { kind: 'system' }, effectiveProjectId: 'cds-self' }),
+    ).toEqual({ kind: 'new' });
+
+    // 用户在上手助手上主动选「连接已有项目」时仍然尊重选择
+    expect(
+      resolveAgentConnectTarget({ tab: 'starter', selection: { kind: 'project', projectId: 'proj-a' }, effectiveProjectId: 'proj-a' }),
+    ).toEqual({ kind: 'existing', projectId: 'proj-a' });
+
+    // 自动接入页签的语义不变：system 选择仍走系统任务口令
+    expect(
+      resolveAgentConnectTarget({ tab: 'connect', selection: { kind: 'system' }, effectiveProjectId: '' }),
+    ).toEqual({ kind: 'system' });
   });
 
   it('从登录与认证页面生成 SSO 专属上下文，并禁止密钥进入对话', () => {

@@ -662,6 +662,17 @@ export async function listMyFavoriteDocumentStores() {
   );
 }
 
+/**
+ * 跨知识库的「最近」文档时间线。
+ * 作用域（我的 ∪ 团队）与 isNew 判据都在后端算好，前端只渲染。
+ */
+export async function listRecentDocumentEntries(limit = 50) {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').RecentDocumentEntry[] }>(
+    api.documentStore.entries.recent(limit),
+    { method: 'GET' },
+  );
+}
+
 /** 列出我点赞的知识库（含最近文档预览 + 店主信息） */
 export async function listMyLikedDocumentStores() {
   return await apiRequest<{ items: import('@/services/contracts/documentStore').InteractionStoreCard[] }>(
@@ -801,6 +812,13 @@ export type TranscribeStyleParams = {
   /** styleKey === 'custom' 时的自定义整理要求 */
   customPrompt?: string;
 };
+
+/**
+ * 默认整理方式的 key。SSOT 是后端 `TranscribeStyleRegistry.DefaultKey`，
+ * 这里是它的镜像——`transcriptDefaultStyleKey.test.ts` 直接读那份 C# 源码比对，
+ * 后端改了这边不跟着改，测试会红（形状 3：判据抄成两份然后各自漂移）。
+ */
+export const DEFAULT_ORGANIZE_STYLE_KEY = 'general';
 
 /** 发起录音转录。默认只保存 ASR 原文；显式传 styleKey 时才继续生成对应整理结果。 */
 export async function transcribeEntry(entryId: string, style?: TranscribeStyleParams) {

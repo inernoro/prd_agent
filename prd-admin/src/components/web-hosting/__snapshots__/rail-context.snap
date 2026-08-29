@@ -1,0 +1,66 @@
+aside .flex-col.hidden.overflow-y-auto.shrink-0.xl:flex {gap:12px;overscroll-behavior:contain;padding:14px;width:300px}
+  div
+    "站点上下文 · 最近动过"
+  div {overflow:hidden}
+    div {aspect-ratio:16 / 10}
+      div .h-full.w-full {overflow:hidden;position:relative}
+        div .absolute.flex.flex-col.gap-1.inset-0.items-center.justify-center
+          svg
+    div {padding:10px}
+      div .line-clamp-2
+        "多租户架构设计"
+      div {margin-top:3px}
+        "11.0 KB · 更新于 12 小时前"
+  div {padding:10px}
+    span
+      "这个站点有"
+    button [type=button]
+      "1"
+    span
+      "条有效链接"
+    span
+      "，其中 1 条"
+    button [type=button]
+      "7 天后过期"
+    span
+      "；累计"
+    button [type=button]
+      "9"
+    span
+      "次访问"
+    span
+      "来自"
+    button [type=button]
+      "4"
+    span
+      "位访客。"
+  div .flex.flex-col {gap:6px}
+    div
+      "这条站点的链接"
+    div .flex.items-center {gap:8px;padding:8px 9px}
+      svg .shrink-0
+      div .flex-1.min-w-0
+        div .truncate
+          "多租户架构设计 ·"
+          span
+            "仅我和协作者"
+        div
+          "9 次 · 剩 7 天 · 有密码"
+      button .shrink-0 [type=button]
+        "数据"
+  button .inline-flex.items-center.justify-center {height:32px} [type=button]
+    "再建一条链接"
+  div .flex.flex-col {gap:6px}
+    div
+      "本周分享动态"
+    div
+      div .flex.items-baseline {gap:7px}
+        span
+          "·"
+        span
+          "本周新增 2 个站点"
+      div .flex.items-baseline {gap:7px}
+        span
+          "·"
+        span
+          "本周新建 4 条分享链接"

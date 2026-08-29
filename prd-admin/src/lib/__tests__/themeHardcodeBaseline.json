@@ -152,8 +152,8 @@
   "/components/doc-browser/DocBrowser.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,
-    "darkRgbaBg": 3,
-    "lightFg": 4
+    "darkRgbaBg": 2,
+    "lightFg": 3
   },
   "/components/doc-browser/DocumentStoreBrowser.tsx": {
     "whiteAlpha": 0,
@@ -1169,12 +1169,6 @@
     "darkRgbaBg": 0,
     "lightFg": 1
   },
-  "/pages/home/components/ProductMockup.tsx": {
-    "whiteAlpha": 11,
-    "darkHex": 11,
-    "darkRgbaBg": 1,
-    "lightFg": 2
-  },
   "/pages/home/components/StaticBackdrop.tsx": {
     "whiteAlpha": 3,
     "darkHex": 2,
@@ -1187,51 +1181,15 @@
     "darkRgbaBg": 3,
     "lightFg": 0
   },
-  "/pages/home/sections/AgentGrid.tsx": {
-    "whiteAlpha": 5,
-    "darkHex": 0,
+  "/pages/home/scenes/sceneTokens.ts": {
+    "whiteAlpha": 11,
+    "darkHex": 6,
     "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/home/sections/CommunityPulse.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 2,
     "lightFg": 0
-  },
-  "/pages/home/sections/DesktopDownload.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/home/sections/FeatureDeepDive.tsx": {
-    "whiteAlpha": 9,
-    "darkHex": 9,
-    "darkRgbaBg": 2,
-    "lightFg": 0
-  },
-  "/pages/home/sections/FinalCta.tsx": {
-    "whiteAlpha": 2,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
   },
   "/pages/home/sections/HeroSection.tsx": {
     "whiteAlpha": 5,
     "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 0
-  },
-  "/pages/home/sections/HowItWorks.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 0
-  },
-  "/pages/home/sections/SignatureCinema.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 3,
     "darkRgbaBg": 1,
     "lightFg": 0
   },
@@ -1240,18 +1198,6 @@
     "darkHex": 0,
     "darkRgbaBg": 0,
     "lightFg": 0
-  },
-  "/pages/home/sections/ThreePillars.tsx": {
-    "whiteAlpha": 17,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 1
-  },
-  "/pages/home/sections/WorkflowCanvas.tsx": {
-    "whiteAlpha": 10,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 4
   },
   "/pages/lab-llm/LlmLabTab.tsx": {
     "whiteAlpha": 0,
@@ -1378,24 +1324,6 @@
     "darkHex": 0,
     "darkRgbaBg": 0,
     "lightFg": 3
-  },
-  "/pages/ModelAppGroupPage.tsx": {
-    "whiteAlpha": 3,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 3
-  },
-  "/pages/ModelManagePage.tsx": {
-    "whiteAlpha": 1,
-    "darkHex": 1,
-    "darkRgbaBg": 1,
-    "lightFg": 4
-  },
-  "/pages/ModelPoolManagePage.tsx": {
-    "whiteAlpha": 0,
-    "darkHex": 0,
-    "darkRgbaBg": 0,
-    "lightFg": 4
   },
   "/pages/open-platform/AppsPanel.tsx": {
     "whiteAlpha": 0,
@@ -2428,6 +2356,12 @@
     "darkHex": 4,
     "darkRgbaBg": 10,
     "lightFg": 15
+  },
+  "/styles/recording-design-palette.css": {
+    "darkHex": 11,
+    "darkRgbaBg": 0,
+    "lightFg": 0,
+    "whiteAlpha": 0
   },
   "/styles/surface.css": {
     "whiteAlpha": 69,

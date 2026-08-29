@@ -74,6 +74,9 @@ export default {
 
         // 主色的两个补充档：soft 是低饱和底（选中态/徽章底），
         // ink 是「主色文字」——见下方 textColor 的说明。
+        // 落在 ok/warn/bad/info 实色填充上的文字墨色（暗色主题深墨、白天白字）。
+        // 直接写 text-white 在暗色主题的亮黄/亮绿底上读不出来。
+        'status-ink': 'hsl(var(--status-ink) / <alpha-value>)',
         'primary-soft': 'hsl(var(--primary-soft) / <alpha-value>)',
         'primary-ink': 'hsl(var(--primary-ink) / <alpha-value>)',
         'foreground-muted': 'hsl(var(--foreground-muted) / <alpha-value>)',

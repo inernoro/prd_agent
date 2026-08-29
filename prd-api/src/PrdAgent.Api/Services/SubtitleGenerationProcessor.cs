@@ -590,7 +590,8 @@ public class SubtitleGenerationProcessor
             }
             else if (chunk.Type == "error")
             {
-                throw new InvalidOperationException($"摘要生成失败: {chunk.ErrorMessage}");
+                // 带着结构化原因抛：失败文案与「要不要自动重试」都按它判，不去猜这句话怎么写的
+                throw GatewayRouteFailureException.FromChunk(chunk, "摘要生成失败");
             }
         }
         return sb.ToString().Trim();
@@ -659,13 +660,20 @@ public class SubtitleGenerationProcessor
         // 专属池不可用或调用失败时再走 document-store.subtitle::asr 通用池，保证原文不丢。
         var plans = new List<RecordingAsrPlan>();
         var resolutionErrors = new List<string>();
+        // 结构化原因单独收一份：ASR 这一路同样分得清「模型池没配」与「上游抖了一下」，
+        // 前者说「请点击重试」是骗人的
+        var resolutionFailureCodes = new List<string>();
         foreach (var appCallerCode in RecordingAsrCallerChain)
         {
             var candidate = await _modelResolver.ResolveAsync(appCallerCode, ModelTypes.Asr);
             if (candidate.Success)
                 plans.Add(new RecordingAsrPlan(appCallerCode, candidate));
             else
+            {
                 resolutionErrors.Add($"{appCallerCode}: {candidate.ErrorMessage ?? "未找到可用模型"}");
+                if (!string.IsNullOrEmpty(candidate.FailureCode))
+                    resolutionFailureCodes.Add(candidate.FailureCode);
+            }
         }
 
         if (plans.Count == 0)
@@ -676,6 +684,7 @@ public class SubtitleGenerationProcessor
                     ["stage"] = "调度失败",
                     ["appCallers"] = RecordingAsrCallerChain,
                     ["errors"] = resolutionErrors,
+                    [SubtitleAsrException.FailureCodesKey] = resolutionFailureCodes,
                 });
 
         foreach (var plan in plans)
@@ -1799,7 +1808,7 @@ public class SubtitleGenerationProcessor
             }
             else if (chunk.Type == "error")
             {
-                throw new InvalidOperationException($"Vision 调用失败: {chunk.ErrorMessage}");
+                throw GatewayRouteFailureException.FromChunk(chunk, "Vision 调用失败");
             }
         }
         return sb.ToString().Trim();
@@ -1879,6 +1888,9 @@ public static class SpeakerSources
 /// </summary>
 public class SubtitleAsrException : Exception
 {
+    /// <summary>诊断字典里存放结构化路由失败码列表的键（`GatewayRouteFailure` 常量）。</summary>
+    public const string FailureCodesKey = "failureCodes";
+
     public IDictionary<string, object?> Diagnostic { get; }
 
     public SubtitleAsrException(string message, IDictionary<string, object?> diagnostic)

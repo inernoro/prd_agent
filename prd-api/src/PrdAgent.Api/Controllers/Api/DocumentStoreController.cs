@@ -1009,6 +1009,76 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { folders }));
     }
 
+    /// <summary>
+    /// 跨知识库的「最近」文档流：把刚新增/刚改过的内容平铺成一条时间线。
+    /// 用户诉求原话是「我总是找不到我刚刚新增的内容」——按库分组的卡片列表答不了这个问题，
+    /// 因为新内容藏在某一张卡片的第二层里，得先想起来它当时存进了哪个库。
+    ///
+    /// 作用域与「我的空间 + 团队空间」两个 tab 的并集一致，不多给也不少给：
+    /// 自己拥有的普通库（排除项目/产品/识途三类专用库，与 ListStoresWithPreview 的 mine 口径同源）
+    /// ∪ 我所在团队被共享进来的库。没有任何可见库时直接返回空，不落到全表扫描。
+    /// </summary>
+    [HttpGet("entries/recent")]
+    public async Task<IActionResult> ListRecentEntries([FromQuery] int limit = 50)
+    {
+        var userId = GetUserId();
+        limit = Math.Clamp(limit, 1, 200);
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        // 没有团队时不拼一条恒假分支：驱动对常量谓词的翻译没有保证，
+        // 少一个分支比多一个「看着对但可能翻译不出去」的分支安全。
+        var visibleStoreBranches = new List<FilterDefinition<DocumentStore>>
+        {
+            Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
+                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null)),
+        };
+        if (myTeamIds.Count > 0)
+            visibleStoreBranches.Add(Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds));
+        var visibleStoreFilter = Builders<DocumentStore>.Filter.Or(visibleStoreBranches);
+
+        var visibleStores = await _db.DocumentStores.Find(visibleStoreFilter)
+            .Project(s => new { s.Id, s.Name })
+            .ToListAsync();
+        if (visibleStores.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = new List<object>() }));
+
+        var storeNameById = visibleStores
+            .GroupBy(s => s.Id)
+            .ToDictionary(g => g.Key, g => g.First().Name);
+        var visibleStoreIds = storeNameById.Keys.ToList();
+
+        // 文件夹本身不是「内容」，GitHub 目录订阅节点同理（与卡片预览口径一致）。
+        var entries = await _db.DocumentEntries
+            .Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.In(e => e.StoreId, visibleStoreIds),
+                Builders<DocumentEntry>.Filter.Eq(e => e.IsFolder, false),
+                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+            .SortByDescending(e => e.UpdatedAt)
+            .Limit(limit)
+            .ToListAsync();
+
+        var items = entries.Select(e => new
+        {
+            id = e.Id,
+            storeId = e.StoreId,
+            storeName = storeNameById.GetValueOrDefault(e.StoreId, string.Empty),
+            title = e.Title,
+            contentType = e.ContentType,
+            tags = e.Tags ?? new List<string>(),
+            createdAt = e.CreatedAt,
+            updatedAt = e.UpdatedAt,
+            // 「新增」和「改过」要分开说：用户找的通常是前者，前端据此打不同的标。
+            // 判据放服务端，避免前端各算一遍再漂移（frontend-architecture.md 单一数据源）。
+            isNew = (e.UpdatedAt - e.CreatedAt) < TimeSpan.FromMinutes(1),
+            createdByName = e.CreatedByName,
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
     /// <summary>获取文档条目详情</summary>
     [HttpGet("entries/{entryId}")]
     public async Task<IActionResult> GetEntry(string entryId)
@@ -3643,7 +3713,8 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = bytes.LongLength,
             Url = stored.Url,
-            StorageKey = storedUpload.StorageKey,
+            // `_it/` 那条受控路径自己带 key（它还牵着回收账），其余走存储回填的真实 key。
+            StorageKey = storedUpload.StorageKey ?? storedUpload.Asset.Key,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
@@ -3768,7 +3839,7 @@ public class DocumentStoreController : ControllerBase
                     await _assetStorage.UploadToKeyAsync(key, bytes, mime, cancellationToken);
                     var sha256 = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                     return new StoredUploadAsset(
-                        new StoredAsset(sha256, _assetStorage.BuildUrlForKey(key), bytes.LongLength, mime),
+                        new StoredAsset(sha256, _assetStorage.BuildUrlForKey(key), bytes.LongLength, mime, key),
                         key);
                 }
 
@@ -3856,7 +3927,8 @@ public class DocumentStoreController : ControllerBase
             MimeType = mime,
             Size = file.Length,
             Url = stored.Url,
-            StorageKey = storedUpload.StorageKey,
+            // `_it/` 那条受控路径自己带 key（它还牵着回收账），其余走存储回填的真实 key。
+            StorageKey = storedUpload.StorageKey ?? storedUpload.Asset.Key,
             Type = AttachmentType.Document,
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,

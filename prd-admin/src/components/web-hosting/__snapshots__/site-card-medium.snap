@@ -1,0 +1,58 @@
+div .flex.flex-col.h-full.relative.w-full [data-tour-id=webpages-card]
+  input .hidden [type=file]
+  div .flex.flex-col.h-full.overflow-hidden.relative
+    div .overflow-hidden.relative {height:140px}
+      img .absolute.h-full.inset-0.w-full
+      span .absolute.gap-1.inline-flex.items-center.left-2.top-2.z-20 {height:20px;padding:0 6px}
+        svg
+        "HTML"
+      span .absolute.gap-1.inline-flex.items-center.right-2.top-2.z-20 {height:20px;padding:0 6px}
+        "手动上传"
+      span .absolute.bottom-2.inline-flex.items-center.right-2.z-20 {height:20px;padding:0 6px}
+        "单页"
+      button .absolute.bottom-[7px].group-hover:opacity-100.inline-flex.items-center.justify-center.left-[7px].z-20 {height:20px;opacity:0.5;width:20px} [data-no-drag=true aria-label=选择 type=button]
+      div .[@media(hover:hover)]:flex.absolute.bottom-0.gap-[5px].group-focus-within:opacity-100.group-focus-within:translate-y-0.group-hover:opacity-100.group-hover:translate-y-0.hidden.inset-x-0.items-center.opacity-0.pointer-events-none.translate-y-[6px].z-20 {padding:7px 7px 7px 33px} [data-hoverbar=true]
+        button .gap-1.h-7.inline-flex.items-center.justify-center.pointer-events-auto.px-[9px].shrink-0 [data-no-drag=true aria-label=预览 type=button]
+          svg
+          span .truncate
+            "预览"
+        button .gap-1.h-7.inline-flex.items-center.justify-center.pointer-events-auto.px-[9px].shrink-0 [data-no-drag=true aria-label=管理分享 · 1 type=button]
+          svg
+          span .truncate
+            "管理分享 · 1"
+        div .flex.gap-[5px].items-center.ml-auto
+          button .gap-1.h-7.inline-flex.items-center.justify-center.pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=编辑信息 type=button]
+            svg
+          button .gap-1.h-7.inline-flex.items-center.justify-center.pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=替换内容 type=button]
+            svg
+          button .gap-1.h-7.inline-flex.items-center.justify-center.pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=二维码 type=button]
+            svg
+          button .h-7.inline-flex.items-center.justify-center.pointer-events-auto.shrink-0.w-[26px] [data-no-drag=true aria-label=更多设置 type=button]
+            svg
+    div .flex.flex-1.flex-col {gap:5px;padding:10px 11px 11px}
+      div .flex.gap-1.items-center.min-w-0 {height:20px}
+        div .flex.flex-1.flex-wrap.gap-1.items-center.min-w-0
+          span .inline-flex.items-center.shrink-0 {padding:2px 6px}
+            "已分享 1"
+        span .shrink-0
+          span .h-[18px].inline-flex.items-center.justify-center.w-[18px]
+            "我"
+      h3 .truncate
+        "多租户架构设计"
+      div .flex.flex-wrap.gap-x-1.5.items-center
+        span
+          "11.0 KB"
+        span .opacity-40
+          "·"
+        span
+          "9 浏览"
+        span .opacity-40
+          "·"
+        span
+          "— 访客"
+      div .flex.gap-1.items-center.min-w-0.mt-auto {min-height:18px}
+        div .flex.flex-1.flex-wrap.gap-1.items-center.min-w-0
+          span {padding:2px 6px}
+            "架构"
+        span .shrink-0
+          "5 天前"

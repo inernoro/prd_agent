@@ -1,5 +1,10 @@
 # Dependencies
+# 尾斜杠只匹配目录，匹配不到同名的**软链**（软链在 git 眼里是文件）。
+# 2026-08-27 在临时 worktree 里软链依赖目录跑测试，`git add -A` 把
+# cds/node_modules 与 cds/web/node_modules 两个软链提交了进去，四条 CI 全红。
+# 两条都写，目录与软链一起挡。
 node_modules/
+node_modules
 .pnpm-store/
 
 # Build outputs

@@ -8,6 +8,7 @@ import type { CreatePlatformRequest, PlatformItem, PlatformTestResult, ProviderP
 import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
 import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
+import { RowActions } from '@/components/RowActions';
 import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
@@ -586,54 +587,48 @@ export function PlatformsPage() {
                           </Button>
                         </>
                       ) : (
-                        <>
-                          {p.authority === 'llm_gateway' ? (
+                        /*
+                         * 主操作留在行内，其余收进「更多」。原来八个操作平铺一行，
+                         * 横向排成一堵墙、主次不分，删除这种不可逆动作还和日常操作等权并排。
+                         * 留在外面的判据：这条上游刚配好密钥时，用户下一步会点的是什么。
+                         *   - GW 自有：测试连接（当场验证）→ 查看模型（拉清单导入），正是控制台
+                         *     自己在测试结果里写的「下一步」；
+                         *   - MAP 来源：只有「导入到平台」一个动作，本来就该是主操作。
+                         */
+                        <RowActions
+                          primary={p.authority === 'llm_gateway' ? (
                             <>
-                              {/* 加了密钥之后必须能当场验证、能看到上游有什么模型，
-                                  否则用户只知道「存下了」，不知道「对不对、下一步干嘛」。 */}
                               <Button size="sm" variant="ghost" disabled={busyId === p.id || !p.hasKey} onClick={() => void runTest(p)} title={p.hasKey ? '用已保存的密钥打一次上游' : '先配置密钥'}>
                                 测试连接
                               </Button>
                               <Button size="sm" variant="ghost" disabled={busyId === p.id || !p.hasKey || p.platformType === 'claude'} onClick={() => void openDiscovery(p)} title={p.platformType === 'claude' ? 'Claude 原生协议没有模型列表接口' : '从上游拉取模型清单并勾选导入'}>
                                 查看模型
                               </Button>
-                              <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => { setKeyEditId(p.id); setKeyValue(''); }}>
-                                更新密钥
-                              </Button>
-                              {p.hasKey ? (
-                                <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void clearApiKey(p)}>
-                                  清除密钥
-                                </Button>
-                              ) : null}
                             </>
                           ) : (
                             <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void claimPlatform(p)}>
                               {busyId === p.id ? '处理中…' : '导入到平台'}
                             </Button>
                           )}
-                          {p.authority === 'llm_gateway' ? (
-                            <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => beginEdit(p)}>
-                              编辑
-                            </Button>
-                          ) : null}
-                          <Button size="sm" variant={p.enabled ? 'ghost' : 'primary'} disabled={busyId === p.id} onClick={() => void toggle(p)}>
-                            {busyId === p.id ? '处理中…' : p.enabled ? '停用' : '启用'}
-                          </Button>
-                          {/* 这条上游到底有没有在被调、报什么错——不看日志答不上来 */}
-                          <Link
-                            className="lg-secondary-action"
-                            style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
-                            to={`/logs?platformId=${encodeURIComponent(p.id)}`}>
-                            查看日志
-                          </Link>
-                          {p.authority === 'llm_gateway' ? (
-                            <>
-                              <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => void removePlatform(p)}>
-                                删除
-                              </Button>
-                            </>
-                          ) : null}
-                        </>
+                          actions={[
+                            ...(p.authority === 'llm_gateway' ? [
+                              { key: 'rotate', label: '更新密钥', disabled: busyId === p.id, onSelect: () => { setKeyEditId(p.id); setKeyValue(''); } },
+                              ...(p.hasKey ? [{ key: 'clear', label: '清除密钥', disabled: busyId === p.id, onSelect: () => void clearApiKey(p) }] : []),
+                              { key: 'edit', label: '编辑', disabled: busyId === p.id, onSelect: () => beginEdit(p) },
+                            ] : []),
+                            {
+                              key: 'toggle',
+                              label: busyId === p.id ? '处理中…' : p.enabled ? '停用' : '启用',
+                              disabled: busyId === p.id,
+                              onSelect: () => void toggle(p),
+                            },
+                            // 这条上游到底有没有在被调、报什么错——不看日志答不上来
+                            { key: 'logs', label: '查看日志', to: `/logs?platformId=${encodeURIComponent(p.id)}` },
+                            ...(p.authority === 'llm_gateway' ? [
+                              { key: 'delete', label: '删除', danger: true, disabled: busyId === p.id, onSelect: () => void removePlatform(p) },
+                            ] : []),
+                          ]}
+                        />
                       )}
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>

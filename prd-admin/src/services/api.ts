@@ -83,16 +83,6 @@ export const api = {
   mds: {
     models: () => '/api/mds',
     model: (id: string) => `/api/mds/${id}`,
-    test: (id: string) => `/api/mds/${id}/test`,
-    priorities: () => '/api/mds/priorities',
-    mainModel: () => '/api/mds/main-model',
-    intentModel: () => '/api/mds/intent-model',
-    visionModel: () => '/api/mds/vision-model',
-    imageGenModel: () => '/api/mds/image-gen-model',
-    adapterInfoBatch: () => '/api/mds/adapter-info/batch',
-    adapterInfo: (modelId: string) => `/api/mds/${modelId}/adapter-info`,
-    /** 根据平台侧模型ID（modelName）直接获取适配信息，无需查询数据库 */
-    adapterInfoByModelName: (modelName: string) => `/api/mds/adapter-info?modelId=${encodeURIComponent(modelName)}`,
 
     // 平台
     platforms: {
@@ -115,27 +105,6 @@ export const api = {
         `/api/mds/model-groups/${groupId}/reset-model-health?modelId=${encodeURIComponent(modelId)}`,
       resetAllHealth: (groupId: string) =>
         `/api/mds/model-groups/${groupId}/reset-all-health`,
-    },
-
-    // LLM 配置
-    llmConfigs: {
-      list: () => '/api/mds/llm-configs',
-      byId: (id: string) => `/api/mds/llm-configs/${id}`,
-      activate: (id: string) => `/api/mds/llm-configs/${id}/activate`,
-    },
-
-    // 模型中继 (Exchange)
-    exchanges: {
-      list: () => '/api/mds/exchanges',
-      byId: (id: string) => `/api/mds/exchanges/${id}`,
-      test: (id: string) => `/api/mds/exchanges/${id}/test`,
-      testStreamAsrSse: (id: string) => `/api/mds/exchanges/${id}/test-stream-asr/sse`,
-      transformerTypes: () => '/api/mds/exchanges/transformer-types',
-      forPool: () => '/api/mds/exchanges/for-pool',
-      templates: () => '/api/mds/exchanges/templates',
-      importFromTemplate: () => '/api/mds/exchanges/import-from-template',
-      tryModel: (id: string, modelId: string) =>
-        `/api/mds/exchanges/${id}/models/${encodeURIComponent(modelId)}/try-it`,
     },
 
     // 调度器配置
@@ -225,7 +194,6 @@ export const api = {
     byKey: (skillKey: string) => `/api/skills/${encodeURIComponent(skillKey)}`,
   },
 
-
   // ============ Skill Agent 技能引导创建 ============
   skillAgent: {
     createSession: () => '/api/skill-agent/sessions',
@@ -309,6 +277,7 @@ export const api = {
       list: () => '/api/assets/homepage/list',
       upload: () => '/api/assets/homepage/upload',
       bySlot: (slot: string) => `/api/assets/homepage/${encodeURIComponent(slot)}`,
+      adoptImageRun: () => '/api/assets/homepage/adopt-image-run',
     },
   },
 
@@ -1220,6 +1189,7 @@ export const api = {
   // ============ Web Hosting 网页托管 ============
   webPages: {
     upload: () => '/api/web-pages/upload',
+    uploadProgress: (uploadId: string) => `/api/web-pages/upload-progress/${uploadId}`,
     fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',
     byId: (id: string) => `/api/web-pages/${id}`,
@@ -1254,8 +1224,12 @@ export const api = {
     shareContent: (token: string) => `/api/web-pages/shares/view/${token}/content`,
     // 「向我提问」
     askConfig: (siteId: string) => `/api/web-pages/${siteId}/ask/config`,
+    // 重新按正文生成开场问题（owner 明确要的那一次，同步等结果）
+    askRegenerateQuestions: (siteId: string) => `/api/web-pages/${siteId}/ask/questions/regenerate`,
     askStream: (siteId: string) => `/api/web-pages/${siteId}/ask/stream`,
     askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
+    // 剩余额度旁路：与提问走同一套门禁与同一个计数桶，但只读不加一
+    askQuotaByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/quota`,
   },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {
@@ -1353,6 +1327,8 @@ export const api = {
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
+      /** 跨知识库的「最近」时间线（我的空间 ∪ 团队空间） */
+      recent: (limit: number) => `/api/document-store/entries/recent?limit=${limit}`,
       add: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,
       folders: (storeId: string) => `/api/document-store/stores/${storeId}/folders`,
       upload: (storeId: string) => `/api/document-store/stores/${storeId}/upload`,

@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0b0b0e; font-family: Inter, -apple-system, 'PingFang SC', sans-serif; }
+    a { color: #D97757; } a:hover { color: #B0523A; }
+    .board { padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+    .eyebrow { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; color: rgba(247,247,251,0.55); }
+    .screen { overflow: hidden; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); background: #141418; height: 620px; }
+    .topbar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .tb-title { font-size: 12.5px; color: #f7f7fb; font-weight: 500; }
+    .spacer { flex-grow: 1; }
+    .tb-btn { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.12); color: rgba(247,247,251,0.68); font-size: 11.5px; }
+    .tb-btn.on { background: rgba(217,119,87,0.14); border-color: rgba(217,119,87,0.32); color: #f7f7fb; }
+    .split { display: flex; height: 576px; }
+    .paper { flex-grow: 1; background: #FAFAF8; color: #17171c; padding: 26px 0; overflow: hidden; }
+    .paper-in { width: 640px; margin: 0 auto; }
+    .paper h1 { font-size: 24px; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .paper .sub { font-size: 12.5px; color: #6b6b75; margin-bottom: 20px; }
+    .paper h2 { font-size: 15px; margin: 18px 0 8px; }
+    .paper p { font-size: 13.5px; line-height: 1.85; color: #33333c; margin: 0 0 10px; }
+    .hl { background: rgba(217,119,87,0.20); box-shadow: 0 0 0 3px rgba(217,119,87,0.20); border-radius: 3px; }
+    .aside { width: 380px; flex-shrink: 0; border-left: 1px solid rgba(255,255,255,0.12); background: #1e1e24; display: flex; flex-direction: column; }
+    .a-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+    .a-title { font-size: 13.5px; font-weight: 600; color: #f7f7fb; }
+    .quota { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(247,247,251,0.55); text-align: right; line-height: 1.45; }
+    .a-body { flex-grow: 1; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .lead { font-size: 12.5px; line-height: 1.7; color: rgba(247,247,251,0.68); margin: 0; }
+    .lead b { color: rgba(247,247,251,0.86); font-weight: 600; }
+    .srclabel { display: flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.04em; color: rgba(247,247,251,0.55); }
+    .q { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: rgba(247,247,251,0.86); font-size: 12.5px; line-height: 1.45; }
+    .qnum { flex-shrink: 0; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: rgba(217,119,87,0.9); }
+    .a-foot { padding: 12px 14px; border-top: 1px solid rgba(255,255,255,0.08); }
+    .field { display: flex; align-items: center; gap: 9px; height: 42px; padding: 0 5px 0 12px; border-radius: 11px; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); }
+    .field span { flex-grow: 1; font-size: 13px; color: rgba(247,247,251,0.55); }
+    .send-sm { width: 32px; height: 32px; border-radius: 9px; background: #B0523A; display: flex; align-items: center; justify-content: center; }
+    .why { display: flex; gap: 26px; padding: 2px 2px 0; }
+    .why div { flex-grow: 1; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68); }
+    .why b { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .why .good b { color: #4ade80; }
+    .why .bad b { color: #D97757; }
+  </style>
+</helmet>
+
+<div class="board">
+  <div class="eyebrow">方向 D · 推挤式右栏（不覆盖，把正文压窄 —— Gemini in Docs / Cursor 一路）</div>
+  <div class="screen">
+    <div class="topbar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.4-3 8-7 9-4-1-7-4.6-7-9V6z"></path><path d="M9.2 12l2 2 3.6-4"></path></svg>
+      <div class="tb-title">客户端首页改版 · 视觉验收</div>
+      <div class="spacer"></div>
+      <div class="tb-btn">全屏演示</div>
+      <div class="tb-btn">评论 3</div>
+      <div class="tb-btn on">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+        向我提问
+      </div>
+    </div>
+    <div class="split">
+      <div class="paper">
+        <div class="paper-in">
+          <h1>客户端首页改版 · 视觉验收</h1>
+          <div class="sub">2026-08-14 · 走查 34 项 · 通过 29 · 待修 5</div>
+          <h2>一、首屏与信息层级</h2>
+          <p>首屏改为单栏卡片流，主标题字重与行高按规范执行；<span class="hl">导航从 7 项收敛到 4 项，二级项进入抽屉</span>。走查结论为通过。</p>
+          <h2>二、搜索入口</h2>
+          <p>搜索从抽屉提到常驻，但移动端触达仍偏低，待二轮走查。</p>
+        </div>
+      </div>
+      <div class="aside">
+        <div class="a-head">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#D97757" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+          <div class="a-title">向我提问</div>
+          <div class="spacer"></div>
+          <div class="quota">本页今日剩 18 / 20<br>你这小时剩 4 / 5</div>
+        </div>
+        <div class="a-body">
+          <p class="lead">回答<b>只依据本页正文</b>。问到正文没写的，它会直接说「页面里没有提到」，不会替作者猜。</p>
+          <div class="srclabel">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"></path></svg>
+            上传时从正文自动读出的 5 个问题
+          </div>
+          <div class="q"><span class="qnum">01</span>这份验收报告的结论是什么？</div>
+          <div class="q"><span class="qnum">02</span>哪些问题还没修完？</div>
+          <div class="q"><span class="qnum">03</span>搜索入口为什么算未通过？</div>
+          <div class="q"><span class="qnum">04</span>34 项走查里通过了多少？</div>
+          <div class="q"><span class="qnum">05</span>导航从 7 项收敛到 4 项，剩下的去哪了？</div>
+        </div>
+        <div class="a-foot">
+          <div class="field">
+            <span>就这一页提个问题</span>
+            <div class="send-sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"></path></svg></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="why">
+    <div class="good"><b>为什么选它</b>答案与正文并排同屏，引用能当场高亮左边那一段 —— 四个方向里唯一做得到「一边看一边问」；正文没有被盖住，只是变窄。</div>
+    <div class="bad"><b>代价</b>窄于约 1100px 就用不了，必须退化成另一套形态；正文被压窄会改变托管页自己的排版（PPT、宽表格类站点会当场破相）。</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

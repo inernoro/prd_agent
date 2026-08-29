@@ -50,9 +50,8 @@ import type {
 } from '@/services/contracts/adminUsers';
 import type { GetActiveGroupsContract, GetGapStatsContract, GetMessageTrendContract, GetOverviewStatsContract, GetTokenUsageContract } from '@/services/contracts/adminStats';
 import type { GetExecutiveOverviewContract, GetExecutiveTrendsContract, GetExecutiveTeamContract, GetExecutiveAgentsContract, GetExecutiveModelsContract, GetExecutiveLeaderboardContract, GetTeamInsightsContract } from '@/services/contracts/executive';
-import type { CreatePlatformContract, DeletePlatformContract, GetPlatformsContract, UpdatePlatformContract } from '@/services/contracts/platforms';
-import type { ClearImageGenModelContract, ClearIntentModelContract, ClearVisionModelContract, CreateModelContract, DeleteModelContract, GetModelsContract, SetImageGenModelContract, SetIntentModelContract, SetMainModelContract, SetVisionModelContract, TestModelContract, UpdateModelContract, UpdateModelPrioritiesContract, GetModelAdapterInfoContract, GetModelsAdapterInfoBatchContract, GetAdapterInfoByModelNameContract } from '@/services/contracts/models';
-import type { ActivateLLMConfigContract, CreateLLMConfigContract, DeleteLLMConfigContract, GetLLMConfigsContract, UpdateLLMConfigContract } from '@/services/contracts/llmConfigs';
+import type { GetPlatformsContract } from '@/services/contracts/platforms';
+import type { GetModelsContract } from '@/services/contracts/models';
 import type { GetLlmLogDetailContract, GetLlmLogsContract, GetLlmLogsMetaContract, GetLlmModelStatsContract, GetReplayCurlContract, GetLlmLogsTimeseriesContract, GetLlmLogsSessionsContract, GetLlmLogsAppSummaryContract, RestoreLlmLogTextContract } from '@/services/contracts/llmLogs';
 import type { GetTeamActivityEndpointDetailContract, GetTeamActivityExperienceMapContract, GetTeamActivityExperienceTrendContract, GetTeamActivityInsightsContract, GetTeamActivityLogsContract, GetTeamActivityModulesContract, GetTeamActivityStatsContract, InsightToRequirementContract, SetTeamActivityInsightStateContract } from '@/services/contracts/teamActivity';
 import type { GetAdminDocumentContentContract } from '@/services/contracts/adminDocuments';
@@ -143,6 +142,7 @@ import type {
 } from '@/services/contracts/desktopAssets';
 import type { GetDesktopBrandingSettingsContract, UpdateDesktopBrandingSettingsContract } from '@/services/contracts/desktopBranding';
 import type {
+  AdoptHomepageAssetContract,
   DeleteHomepageAssetContract,
   GetHomepageAssetsPublicContract,
   ListHomepageAssetsContract,
@@ -343,9 +343,8 @@ import {
 } from '@/services/real/adminUsers';
 import { getActiveGroupsReal, getGapStatsReal, getMessageTrendReal, getOverviewStatsReal, getTokenUsageReal } from '@/services/real/adminStats';
 import { getExecutiveOverviewReal, getExecutiveTrendsReal, getExecutiveTeamReal, getExecutiveAgentsReal, getExecutiveModelsReal, getExecutiveLeaderboardReal, getTeamInsightsReal } from '@/services/real/executive';
-import { createPlatformReal, deletePlatformReal, getPlatformsReal, updatePlatformReal } from '@/services/real/platforms';
-import { clearImageGenModelReal, clearIntentModelReal, clearVisionModelReal, createModelReal, deleteModelReal, getModelsReal, setImageGenModelReal, setIntentModelReal, setMainModelReal, setVisionModelReal, testModelReal, updateModelReal, updateModelPrioritiesReal, getModelAdapterInfoReal, getModelsAdapterInfoBatchReal, getAdapterInfoByModelNameReal } from '@/services/real/models';
-import { activateLLMConfigReal, createLLMConfigReal, deleteLLMConfigReal, getLLMConfigsReal, updateLLMConfigReal } from '@/services/real/llmConfigs';
+import { getPlatformsReal } from '@/services/real/platforms';
+import { getModelsReal } from '@/services/real/models';
 import { getLlmLogDetailReal, getLlmLogsMetaReal, getLlmLogsReal, getLlmModelStatsReal, getBatchModelStatsReal, getReplayCurlReal, getLlmLogsTimeseriesReal, getLlmLogsSessionsReal, getLlmLogsAppSummaryReal, restoreLlmLogTextReal } from '@/services/real/llmLogs';
 import { getTeamActivityEndpointDetailReal, getTeamActivityExperienceMapReal, getTeamActivityExperienceTrendReal, getTeamActivityInsightsReal, getTeamActivityLogsReal, getTeamActivityModulesReal, getTeamActivityStatsReal, insightToRequirementReal, setTeamActivityInsightStateReal } from '@/services/real/teamActivity';
 import { getAdminDocumentContentReal } from '@/services/real/adminDocuments';
@@ -488,6 +487,7 @@ import {
   uploadHomepageAsset as uploadHomepageAssetReal,
   deleteHomepageAsset as deleteHomepageAssetReal,
   getHomepageAssetsPublic as getHomepageAssetsPublicReal,
+  adoptHomepageAssetFromRun as adoptHomepageAssetFromRunReal,
 } from '@/services/real/homepageAssets';
 import { listRecentWork as listRecentWorkReal } from '@/services/real/homeRecentWork';
 import {
@@ -917,33 +917,11 @@ export const getAdminGroupMessages: GetAdminGroupMessagesContract = withAuth(get
 export const simulateMessage: SimulateMessageContract = withAuth(simulateMessageReal);
 export const simulateStreamMessages: SimulateStreamMessagesContract = withAuth(simulateStreamMessagesReal);
 
+// 2026-08-25 模型管理退场：上游 / 模型 / 旧 LLM 配置的写操作全部改由 LLM Gateway 控制台承担，
+// MAP 侧 `api/mds` 的写端点已由 MdsWriteRetiredFilter 统一 410，这里只保留仍有活消费方的读。
 export const getPlatforms: GetPlatformsContract = withAuth(getPlatformsReal);
-export const createPlatform: CreatePlatformContract = withAuth(createPlatformReal);
-export const updatePlatform: UpdatePlatformContract = withAuth(updatePlatformReal);
-export const deletePlatform: DeletePlatformContract = withAuth(deletePlatformReal);
 
 export const getModels: GetModelsContract = withAuth(getModelsReal);
-export const createModel: CreateModelContract = withAuth(createModelReal);
-export const updateModel: UpdateModelContract = withAuth(updateModelReal);
-export const deleteModel: DeleteModelContract = withAuth(deleteModelReal);
-export const testModel: TestModelContract = withAuth(testModelReal);
-export const updateModelPriorities: UpdateModelPrioritiesContract = withAuth(updateModelPrioritiesReal);
-export const setMainModel: SetMainModelContract = withAuth(setMainModelReal);
-export const setIntentModel: SetIntentModelContract = withAuth(setIntentModelReal);
-export const clearIntentModel: ClearIntentModelContract = withAuth(clearIntentModelReal);
-export const setVisionModel: SetVisionModelContract = withAuth(setVisionModelReal);
-export const clearVisionModel: ClearVisionModelContract = withAuth(clearVisionModelReal);
-export const setImageGenModel: SetImageGenModelContract = withAuth(setImageGenModelReal);
-export const clearImageGenModel: ClearImageGenModelContract = withAuth(clearImageGenModelReal);
-export const getModelAdapterInfo: GetModelAdapterInfoContract = withAuth(getModelAdapterInfoReal);
-export const getModelsAdapterInfoBatch: GetModelsAdapterInfoBatchContract = withAuth(getModelsAdapterInfoBatchReal);
-export const getAdapterInfoByModelName: GetAdapterInfoByModelNameContract = withAuth(getAdapterInfoByModelNameReal);
-
-export const getLLMConfigs: GetLLMConfigsContract = withAuth(getLLMConfigsReal);
-export const createLLMConfig: CreateLLMConfigContract = withAuth(createLLMConfigReal);
-export const updateLLMConfig: UpdateLLMConfigContract = withAuth(updateLLMConfigReal);
-export const deleteLLMConfig: DeleteLLMConfigContract = withAuth(deleteLLMConfigReal);
-export const activateLLMConfig: ActivateLLMConfigContract = withAuth(activateLLMConfigReal);
 
 export const getTeamActivityLogs: GetTeamActivityLogsContract = withAuth(getTeamActivityLogsReal);
 export const getTeamActivityModules: GetTeamActivityModulesContract = withAuth(getTeamActivityModulesReal);
@@ -1041,6 +1019,7 @@ export const listHomepageAssets: ListHomepageAssetsContract = withAuth(listHomep
 export const uploadHomepageAsset: UploadHomepageAssetContract = withAuth(uploadHomepageAssetReal);
 export const deleteHomepageAsset: DeleteHomepageAssetContract = withAuth(deleteHomepageAssetReal);
 export const getHomepageAssetsPublic: GetHomepageAssetsPublicContract = withAuth(getHomepageAssetsPublicReal);
+export const adoptHomepageAssetFromRun: AdoptHomepageAssetContract = withAuth(adoptHomepageAssetFromRunReal);
 export const listRecentWork: ListRecentWorkContract = withAuth(listRecentWorkReal);
 
 export const createVisualAgentSession: CreateVisualAgentSessionContract = withAuth(createVisualAgentSessionReal);
@@ -1371,22 +1350,6 @@ export const getModelGroupHealthOverview = async (days?: number) => {
   }
   throw new Error(response.error?.message || '获取模型池健康总览失败');
 };
-export const createModelGroup = (data: Parameters<IModelGroupsService['createModelGroup']>[0]) => modelGroupsService.createModelGroup(data);
-export const updateModelGroup = (id: string, data: Parameters<IModelGroupsService['updateModelGroup']>[1]) => modelGroupsService.updateModelGroup(id, data);
-export const deleteModelGroup = (id: string) => modelGroupsService.deleteModelGroup(id);
-export const getModelGroupUsage = (id: string) => modelGroupsService.getModelGroupUsage(id);
-export const unbindModelGroup = (id: string, appIds?: string[]) => modelGroupsService.unbindModelGroup(id, appIds);
-export const getGroupMonitoring = async (groupId: string) => {
-  const response = await modelGroupsService.getGroupMonitoring(groupId);
-  if (response.success && response.data) {
-    return response.data;
-  }
-  throw new Error(response.error?.message || '获取监控数据失败');
-};
-export const simulateDowngrade = (groupId: string, modelId: string, platformId: string, failureCount: number) => modelGroupsService.simulateDowngrade(groupId, modelId, platformId, failureCount);
-export const simulateRecover = (groupId: string, modelId: string, platformId: string, successCount: number) => modelGroupsService.simulateRecover(groupId, modelId, platformId, successCount);
-export const resetModelHealth = (groupId: string, modelId: string) => modelGroupsService.resetModelHealth(groupId, modelId);
-export const resetAllModelsHealth = (groupId: string) => modelGroupsService.resetAllModelsHealth(groupId);
 
 export const getAppCallers = async () => {
   const response = await appCallersService.getAppCallers(1, 500);
@@ -1407,7 +1370,6 @@ export const getSchedulerConfig = async () => {
   }
   throw new Error(response.error?.message || '获取系统配置失败');
 };
-export const updateSchedulerConfig = (config: Parameters<ISchedulerConfigService['updateSchedulerConfig']>[0]) => schedulerConfigService.updateSchedulerConfig(config);
 
 export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPreferencesReal);
 export const updateNavLayout: UpdateNavLayoutContract = withAuth(updateNavLayoutReal);
@@ -1800,6 +1762,7 @@ export {
   saveSharedSite,
   listShareViewLogs,
   renewShare as renewSiteShare,
+  updateShareSettings as updateSiteShareSettings,
   getShareAnalytics as getSiteShareAnalytics,
   listSiteGroups,
   createSiteGroup,
@@ -2065,6 +2028,7 @@ export {
   unfavoriteDocumentStore,
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
+  listRecentDocumentEntries,
   createShareLink as createDocStoreShareLink,
   listShareLinks as listDocStoreShareLinks,
   revokeShareLink as revokeDocStoreShareLink,

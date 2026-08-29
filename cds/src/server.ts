@@ -12,6 +12,7 @@ import { createDeploymentVersionsRouter } from './routes/deployment-versions.js'
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
 import { ReplicaSetService } from './services/replica-set.js';
 import { isRemoteExecutorOwned } from './services/executor-ownership.js';
+import { connectionTokenRequiredScope, shouldRecordConnectionUse } from './services/connection-token-routes.js';
 import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
@@ -963,6 +964,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
     'GET /projects/:id/comment-template': '获取项目评论模板',
     'PUT /projects/:id/comment-template': '更新项目评论模板',
+    'GET /projects/:id/agent-profile': '获取项目 Agent 角色',
+    'PUT /projects/:id/agent-profile': '更新项目 Agent 角色',
     'POST /projects/:id/align-deploy-modes': '对齐全部分支运行模式',
     'GET /projects/:id/agent-sessions': '列出项目 Agent 会话',
     // 调度 / 集群
@@ -1176,6 +1179,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/infra\/(.+)\/backup$/, '下载数据库备份'],
     [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
     [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
+    [/^GET \/projects\/[^/]+\/backup-health$/, '查看周期备份'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
     [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
@@ -1213,6 +1217,11 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/detect-preview$/, '预览栈检测'],
     [/^POST \/projects\/(.+)\/detect-apply$/, '应用栈检测'],
     [/^GET \/projects\/(.+)\/storage$/, '获取项目存储'],
+    // Agent 角色：staticMap 里的 `:id` 条目只够 auditApiLabels 拿 express 路由原样比对，
+    // 真实请求带的是具体 id，会一路落到下面的 `^GET|PUT /projects/(.+)$` 被吞成
+    // 「查询项目 / 更新项目」。必须在通配条目之前给出 segment-safe pattern。
+    [/^GET \/projects\/[^/]+\/agent-profile$/, '获取项目 Agent 角色'],
+    [/^PUT \/projects\/[^/]+\/agent-profile$/, '更新项目 Agent 角色'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -1401,15 +1410,25 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     if ((processKey && headerKey === processKey) || (customKey && headerKey === customKey)) {
       return { id: 'static', agentName: 'AI (static key)', token: headerKey, approvedAt: '', expiresAt: '' };
     }
-    // MAP/CDS system connection long token: only allow it on Bridge routes.
-    // This token is the user-approved, long-lived authorization used by MAP
-    // after /api/cds-system/connections/authorize, so it must be able to drive
-    // Page Agent Bridge without granting broad CDS admin access.
-    if (stateService && req.path.startsWith('/api/bridge/')) {
+    // MAP/CDS system connection long token. This token is the user-approved,
+    // long-lived authorization handed to an external system (MAP) after
+    // /api/cds-system/connections/authorize. It is deliberately NOT equivalent
+    // to a CDS admin key: it only reaches the routes declared in
+    // connection-token-routes.ts, and each of those declares the scope it needs.
+    // Keep the list there, not here — see that file for why.
+    const connectionScope = stateService
+      ? connectionTokenRequiredScope(req.method, req.path)
+      : null;
+    if (stateService && connectionScope) {
       const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
       const connection = stateService.findActiveCdsConnectionByLongTokenHash(hash);
-      if (connection && connection.scopes.includes('instance:read')) {
-        stateService.updateCdsConnection(connection.id, { lastUsedAt: new Date().toISOString() });
+      if (connection && connection.scopes.includes(connectionScope)) {
+        // 「最近用过」节流写：每次更新都会把整份状态存一遍，而报告只读放开之后
+        // 一轮自动刷新会打出几百个请求。判据见 connection-token-routes.ts。
+        const nowIso = new Date().toISOString();
+        if (shouldRecordConnectionUse(connection.lastUsedAt, nowIso)) {
+          stateService.updateCdsConnection(connection.id, { lastUsedAt: nowIso });
+        }
         return {
           id: `cds-connection:${connection.id}`,
           agentName: `MAP (${connection.partnerName || connection.partnerId || connection.id})`,

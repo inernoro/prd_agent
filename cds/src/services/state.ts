@@ -38,6 +38,8 @@ import {
   selectReleasePreflightsToPrune,
   selectReleaseRunsToPrune,
 } from './release-retention.js';
+import { deriveInfraCredentialEnv } from './infra-credential-env.js';
+import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -3409,6 +3411,28 @@ export class StateService {
     }
   }
 
+  /**
+   * 写入项目的 Agent 角色声明。项目不存在时返回 false，调用方据此回 404。
+   *
+   * 整条记录覆盖写：角色声明是一次性快照，不做字段级合并——半新半旧的
+   * 组合（新角色配旧技能列表）比整体过期更难排查。
+   */
+  setProjectAgentProfile(
+    projectId: string,
+    profile: import('../types.js').ProjectAgentProfile,
+  ): boolean {
+    const project = this.getProject(projectId);
+    if (!project) return false;
+    project.agentProfile = profile;
+    project.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  /** 读取项目的 Agent 角色声明；从未声明过返回 null。 */
+  getProjectAgentProfile(projectId: string): import('../types.js').ProjectAgentProfile | null {
+    return this.getProject(projectId)?.agentProfile ?? null;
+  }
+
   // ── GitHub PR preview comment template ──
   //
   // The settings panel edits this; postOrUpdatePrComment reads it.
@@ -4447,6 +4471,33 @@ export class StateService {
       // Per-service host (allows future per-service host override)
       const hostKey = `CDS_${svc.id.toUpperCase().replace(/-/g, '_')}_HOST`;
       result[hostKey] = dockerHost;
+      // 只发地址不发凭据，服务一旦开了认证，消费方容器启动即崩（NOAUTH）——
+      // 而 CDS 自己存着那对账号口令。判据与已知边界见 infra-credential-env.ts。
+      //
+      // svc.env 存的是**未展开的模板**（compose 导入的服务里 MYSQL_USER 常常就是
+      // 字面的 `${CDS_MYSQL_USER}`）。容器启动、数据工作台、数据操作三处都是先解析
+      // 再用，这里必须走同一套，否则会把占位符当口令发出去。解析器对解不出来的模板
+      // 返回空字符串，正好落到派生函数「没口令就什么都不发」那条路上。
+      const resolvedSvcEnv = resolveEnvTemplates(
+        svc.env || {},
+        this.getCustomEnv(svc.projectId || 'default'),
+      );
+      // 启动参数也要一起送进去，并且同样先解析模板：redis 这类服务「env 里有口令」
+      // 不等于「服务端在校验它」，判据要看命令行上有没有 --requirepass / --aclfile。
+      // 与认证门禁同一口径；证不出来就不发凭据，免得把本来能裸连的消费方弄坏。
+      const svcCustomEnv = this.getCustomEnv(svc.projectId || 'default');
+      Object.assign(
+        result,
+        deriveInfraCredentialEnv(
+          svc.id,
+          resolvedSvcEnv,
+          { host: dockerHost, port: svc.hostPort },
+          {
+            command: resolveCommandTemplate(svc.command, svcCustomEnv),
+            entrypoint: resolveCommandTemplate(svc.entrypoint, svcCustomEnv),
+          },
+        ),
+      );
     }
     return result;
   }

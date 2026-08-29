@@ -1,0 +1,2814 @@
+{
+  "design": "web-hosting-v2",
+  "source": {
+    "file": "offline.html",
+    "sha256": "78546eb281414df76bfce939dc126a48313a7d7b00003f3c5e68820f45440e82",
+    "bytes": 857038
+  },
+  "tool": {
+    "script": "spec-export.mjs",
+    "skillVersion": null
+  },
+  "extractedAt": "2026-08-25T15:43:55.246Z",
+  "minCount": 2,
+  "boards": [
+    {
+      "id": "00-01-主控台-深",
+      "label": "01 主控台-深",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"01 主控台-深\"]"
+      },
+      "elements": 854,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 430
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 130
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.8)",
+              "count": 67
+            },
+            {
+              "value": "rgb(255, 255, 255)",
+              "count": 45
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.68)",
+              "count": 42
+            },
+            {
+              "value": "rgb(147, 197, 253)",
+              "count": 21
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.82)",
+              "count": 16
+            },
+            {
+              "value": "rgb(232, 168, 124)",
+              "count": 14
+            },
+            {
+              "value": "rgb(34, 197, 94)",
+              "count": 12
+            },
+            {
+              "value": "rgb(251, 146, 60)",
+              "count": 7
+            },
+            {
+              "value": "rgb(251, 191, 36)",
+              "count": 5
+            },
+            {
+              "value": "rgb(52, 211, 153)",
+              "count": 5
+            },
+            {
+              "value": "rgb(96, 165, 250)",
+              "count": 5
+            },
+            {
+              "value": "rgb(196, 181, 253)",
+              "count": 4
+            },
+            {
+              "value": "rgb(248, 113, 113)",
+              "count": 3
+            }
+          ],
+          "background": [
+            {
+              "value": "rgba(20, 20, 24, 0.8)",
+              "count": 32
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.06)",
+              "count": 31
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.1)",
+              "count": 21
+            },
+            {
+              "value": "rgba(11, 11, 14, 0.7)",
+              "count": 16
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.22)",
+              "count": 14
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.07)",
+              "count": 13
+            },
+            {
+              "value": "rgb(217, 119, 87)",
+              "count": 12
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.14)",
+              "count": 10
+            },
+            {
+              "value": "rgb(63, 63, 74)",
+              "count": 9
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.043)",
+              "count": 8
+            },
+            {
+              "value": "rgb(15, 15, 19)",
+              "count": 8
+            },
+            {
+              "value": "rgba(11, 11, 14, 0.78)",
+              "count": 8
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 5
+            },
+            {
+              "value": "rgba(34, 197, 94, 0.1)",
+              "count": 5
+            },
+            {
+              "value": "rgb(196, 181, 253)",
+              "count": 3
+            },
+            {
+              "value": "rgba(217, 119, 87, 0.12)",
+              "count": 3
+            },
+            {
+              "value": "rgba(147, 197, 253, 0.1)",
+              "count": 3
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.5)",
+              "count": 3
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.04)",
+              "count": 3
+            },
+            {
+              "value": "rgb(74, 58, 52)",
+              "count": 2
+            },
+            {
+              "value": "rgb(23, 23, 28)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 36
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.24)",
+              "count": 33
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.18)",
+              "count": 9
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.14)",
+              "count": 8
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.3)",
+              "count": 8
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.06)",
+              "count": 5
+            },
+            {
+              "value": "rgba(34, 197, 94, 0.35)",
+              "count": 5
+            },
+            {
+              "value": "rgb(30, 30, 36)",
+              "count": 3
+            },
+            {
+              "value": "rgba(217, 119, 87, 0.4)",
+              "count": 3
+            },
+            {
+              "value": "rgba(147, 197, 253, 0.35)",
+              "count": 3
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 120
+            }
+          ],
+          "radius": [
+            {
+              "value": "7px",
+              "count": 48
+            },
+            {
+              "value": "6px",
+              "count": 38
+            },
+            {
+              "value": "pill",
+              "count": 34
+            },
+            {
+              "value": "2px",
+              "count": 29
+            },
+            {
+              "value": "5px",
+              "count": 28
+            },
+            {
+              "value": "9px",
+              "count": 12
+            },
+            {
+              "value": "12px",
+              "count": 9
+            },
+            {
+              "value": "8px",
+              "count": 6
+            },
+            {
+              "value": "3px",
+              "count": 5
+            },
+            {
+              "value": "10px",
+              "count": 4
+            },
+            {
+              "value": "4px",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 253
+            },
+            {
+              "value": "10px",
+              "count": 129
+            },
+            {
+              "value": "13.3333px",
+              "count": 124
+            },
+            {
+              "value": "12.5px",
+              "count": 75
+            },
+            {
+              "value": "10.5px",
+              "count": 59
+            },
+            {
+              "value": "11.5px",
+              "count": 59
+            },
+            {
+              "value": "9px",
+              "count": 39
+            },
+            {
+              "value": "13px",
+              "count": 29
+            },
+            {
+              "value": "9.5px",
+              "count": 18
+            },
+            {
+              "value": "12px",
+              "count": 10
+            },
+            {
+              "value": "11px",
+              "count": 5
+            },
+            {
+              "value": "14px",
+              "count": 4
+            },
+            {
+              "value": "15px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 719
+            },
+            {
+              "value": "600",
+              "count": 72
+            },
+            {
+              "value": "700",
+              "count": 15
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 512
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 161
+            },
+            {
+              "value": "Arial",
+              "count": 124
+            },
+            {
+              "value": "Space Grotesk",
+              "count": 9
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "0.2px",
+              "count": 72
+            },
+            {
+              "value": "0.38px",
+              "count": 16
+            },
+            {
+              "value": "0.36px",
+              "count": 16
+            },
+            {
+              "value": "-0.065px",
+              "count": 16
+            },
+            {
+              "value": "-0.1px",
+              "count": 14
+            },
+            {
+              "value": "1.2px",
+              "count": 8
+            },
+            {
+              "value": "-0.14px",
+              "count": 4
+            },
+            {
+              "value": "-0.32px",
+              "count": 3
+            },
+            {
+              "value": "-0.15px",
+              "count": 2
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "17.55px",
+              "count": 16
+            },
+            {
+              "value": "13px",
+              "count": 15
+            },
+            {
+              "value": "20.4px",
+              "count": 7
+            },
+            {
+              "value": "25.6px",
+              "count": 3
+            },
+            {
+              "value": "20px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "5px",
+              "count": 41
+            },
+            {
+              "value": "4px",
+              "count": 25
+            },
+            {
+              "value": "7px",
+              "count": 23
+            },
+            {
+              "value": "8px",
+              "count": 11
+            },
+            {
+              "value": "6px",
+              "count": 11
+            },
+            {
+              "value": "3px",
+              "count": 9
+            },
+            {
+              "value": "2px",
+              "count": 3
+            },
+            {
+              "value": "14px",
+              "count": 2
+            },
+            {
+              "value": "9px",
+              "count": 2
+            },
+            {
+              "value": "10px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "1px 6px 1px 6px",
+              "count": 35
+            },
+            {
+              "value": "2px 6px 2px 6px",
+              "count": 26
+            },
+            {
+              "value": "0px 6px 0px 6px",
+              "count": 17
+            },
+            {
+              "value": "0px 9px 0px 9px",
+              "count": 16
+            },
+            {
+              "value": "0px 11px 0px 11px",
+              "count": 10
+            },
+            {
+              "value": "7px 7px 7px 33px",
+              "count": 8
+            },
+            {
+              "value": "10px 11px 11px 11px",
+              "count": 8
+            },
+            {
+              "value": "3px 7px 3px 7px",
+              "count": 7
+            },
+            {
+              "value": "0px 5px 0px 5px",
+              "count": 7
+            },
+            {
+              "value": "22px 10px 9px 10px",
+              "count": 7
+            },
+            {
+              "value": "7px 8px 7px 8px",
+              "count": 6
+            },
+            {
+              "value": "3px 3px 3px 3px",
+              "count": 3
+            },
+            {
+              "value": "0px 18px 0px 18px",
+              "count": 2
+            },
+            {
+              "value": "8px 8px 8px 8px",
+              "count": 2
+            },
+            {
+              "value": "14px 8px 6px 8px",
+              "count": 2
+            },
+            {
+              "value": "10px 10px 10px 10px",
+              "count": 2
+            },
+            {
+              "value": "8px 9px 8px 9px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 225
+    },
+    {
+      "id": "01-01-主控台-浅",
+      "label": "01 主控台-浅",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"01 主控台-浅\"]"
+      },
+      "elements": 553,
+      "scales": {
+        "light": {
+          "color": [
+            {
+              "value": "rgb(15, 23, 42)",
+              "count": 239
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.6)",
+              "count": 97
+            },
+            {
+              "value": "rgb(251, 248, 242)",
+              "count": 37
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.78)",
+              "count": 37
+            },
+            {
+              "value": "rgb(29, 78, 216)",
+              "count": 18
+            },
+            {
+              "value": "rgb(154, 52, 18)",
+              "count": 16
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.8)",
+              "count": 16
+            },
+            {
+              "value": "rgb(22, 101, 52)",
+              "count": 15
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.7)",
+              "count": 13
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.68)",
+              "count": 10
+            },
+            {
+              "value": "rgb(166, 75, 53)",
+              "count": 10
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.55)",
+              "count": 6
+            },
+            {
+              "value": "rgb(109, 40, 217)",
+              "count": 4
+            },
+            {
+              "value": "rgb(185, 28, 28)",
+              "count": 3
+            }
+          ],
+          "background": [
+            {
+              "value": "rgb(251, 248, 243)",
+              "count": 29
+            },
+            {
+              "value": "rgb(248, 245, 239)",
+              "count": 13
+            },
+            {
+              "value": "rgb(166, 75, 53)",
+              "count": 10
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.18)",
+              "count": 10
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.14)",
+              "count": 9
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.05)",
+              "count": 8
+            },
+            {
+              "value": "rgb(228, 222, 213)",
+              "count": 7
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.12)",
+              "count": 7
+            },
+            {
+              "value": "rgb(231, 226, 217)",
+              "count": 6
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.08)",
+              "count": 6
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.06)",
+              "count": 4
+            },
+            {
+              "value": "rgba(22, 101, 52, 0.08)",
+              "count": 4
+            },
+            {
+              "value": "rgba(29, 78, 216, 0.07)",
+              "count": 3
+            },
+            {
+              "value": "rgb(109, 40, 217)",
+              "count": 3
+            },
+            {
+              "value": "rgb(238, 234, 227)",
+              "count": 2
+            },
+            {
+              "value": "rgb(234, 223, 214)",
+              "count": 2
+            },
+            {
+              "value": "rgb(233, 228, 219)",
+              "count": 2
+            },
+            {
+              "value": "rgba(166, 75, 53, 0.08)",
+              "count": 2
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.17)",
+              "count": 2
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.45)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(26, 26, 31, 0.16)",
+              "count": 18
+            },
+            {
+              "value": "rgba(26, 26, 31, 0.12)",
+              "count": 16
+            },
+            {
+              "value": "rgba(26, 26, 31, 0.14)",
+              "count": 11
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.07)",
+              "count": 4
+            },
+            {
+              "value": "rgba(22, 101, 52, 0.32)",
+              "count": 4
+            },
+            {
+              "value": "rgb(251, 248, 243)",
+              "count": 3
+            },
+            {
+              "value": "rgba(166, 75, 53, 0.35)",
+              "count": 3
+            },
+            {
+              "value": "rgba(29, 78, 216, 0.28)",
+              "count": 2
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 69
+            }
+          ],
+          "radius": [
+            {
+              "value": "pill",
+              "count": 26
+            },
+            {
+              "value": "6px",
+              "count": 23
+            },
+            {
+              "value": "2px",
+              "count": 21
+            },
+            {
+              "value": "7px",
+              "count": 20
+            },
+            {
+              "value": "5px",
+              "count": 12
+            },
+            {
+              "value": "9px",
+              "count": 10
+            },
+            {
+              "value": "12px",
+              "count": 7
+            },
+            {
+              "value": "8px",
+              "count": 6
+            },
+            {
+              "value": "10px",
+              "count": 4
+            },
+            {
+              "value": "3px",
+              "count": 4
+            },
+            {
+              "value": "4px",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 203
+            },
+            {
+              "value": "10px",
+              "count": 100
+            },
+            {
+              "value": "12.5px",
+              "count": 60
+            },
+            {
+              "value": "11.5px",
+              "count": 45
+            },
+            {
+              "value": "9px",
+              "count": 31
+            },
+            {
+              "value": "10.5px",
+              "count": 26
+            },
+            {
+              "value": "13px",
+              "count": 25
+            },
+            {
+              "value": "9.5px",
+              "count": 14
+            },
+            {
+              "value": "12px",
+              "count": 10
+            },
+            {
+              "value": "14px",
+              "count": 4
+            },
+            {
+              "value": "11px",
+              "count": 4
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 463
+            },
+            {
+              "value": "600",
+              "count": 49
+            },
+            {
+              "value": "700",
+              "count": 11
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 389
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 126
+            },
+            {
+              "value": "Space Grotesk",
+              "count": 8
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "0.38px",
+              "count": 12
+            },
+            {
+              "value": "0.36px",
+              "count": 12
+            },
+            {
+              "value": "1.2px",
+              "count": 6
+            },
+            {
+              "value": "-0.14px",
+              "count": 4
+            },
+            {
+              "value": "-0.32px",
+              "count": 3
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "17.55px",
+              "count": 12
+            },
+            {
+              "value": "13px",
+              "count": 11
+            },
+            {
+              "value": "20.4px",
+              "count": 7
+            },
+            {
+              "value": "25.6px",
+              "count": 3
+            },
+            {
+              "value": "20px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "4px",
+              "count": 19
+            },
+            {
+              "value": "7px",
+              "count": 18
+            },
+            {
+              "value": "5px",
+              "count": 13
+            },
+            {
+              "value": "8px",
+              "count": 11
+            },
+            {
+              "value": "6px",
+              "count": 8
+            },
+            {
+              "value": "3px",
+              "count": 7
+            },
+            {
+              "value": "2px",
+              "count": 3
+            },
+            {
+              "value": "14px",
+              "count": 2
+            },
+            {
+              "value": "9px",
+              "count": 2
+            },
+            {
+              "value": "10px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "0px 6px 0px 6px",
+              "count": 13
+            },
+            {
+              "value": "0px 9px 0px 9px",
+              "count": 12
+            },
+            {
+              "value": "2px 6px 2px 6px",
+              "count": 10
+            },
+            {
+              "value": "0px 11px 0px 11px",
+              "count": 8
+            },
+            {
+              "value": "7px 8px 7px 8px",
+              "count": 6
+            },
+            {
+              "value": "3px 7px 3px 7px",
+              "count": 6
+            },
+            {
+              "value": "10px 11px 11px 11px",
+              "count": 6
+            },
+            {
+              "value": "0px 5px 0px 5px",
+              "count": 5
+            },
+            {
+              "value": "22px 10px 9px 10px",
+              "count": 5
+            },
+            {
+              "value": "3px 3px 3px 3px",
+              "count": 3
+            },
+            {
+              "value": "0px 18px 0px 18px",
+              "count": 2
+            },
+            {
+              "value": "8px 8px 8px 8px",
+              "count": 2
+            },
+            {
+              "value": "14px 8px 6px 8px",
+              "count": 2
+            },
+            {
+              "value": "10px 10px 10px 10px",
+              "count": 2
+            },
+            {
+              "value": "8px 9px 8px 9px",
+              "count": 2
+            }
+          ],
+          "boxShadow": [
+            {
+              "value": "rgba(26, 26, 31, 0.12) 0px 1px 3px 0px",
+              "count": 12
+            },
+            {
+              "value": "rgba(26, 26, 31, 0.07) 0px 2px 6px 0px",
+              "count": 7
+            },
+            {
+              "value": "rgba(26, 26, 31, 0.06) 0px 1px 2px 0px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 175
+    },
+    {
+      "id": "02-05-分享弹窗-深",
+      "label": "05 分享弹窗-深",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"05 分享弹窗-深\"]"
+      },
+      "elements": 144,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 71
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.8)",
+              "count": 22
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 9
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.68)",
+              "count": 7
+            },
+            {
+              "value": "rgb(34, 197, 94)",
+              "count": 7
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.6)",
+              "count": 6
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.82)",
+              "count": 6
+            },
+            {
+              "value": "rgb(196, 181, 253)",
+              "count": 4
+            },
+            {
+              "value": "rgb(147, 197, 253)",
+              "count": 3
+            },
+            {
+              "value": "rgb(0, 0, 0)",
+              "count": 2
+            },
+            {
+              "value": "rgb(232, 168, 124)",
+              "count": 2
+            }
+          ],
+          "background": [
+            {
+              "value": "rgb(20, 20, 24)",
+              "count": 10
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.06)",
+              "count": 7
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.04)",
+              "count": 3
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.03)",
+              "count": 3
+            },
+            {
+              "value": "rgb(217, 119, 87)",
+              "count": 2
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.24)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 17
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 23
+            }
+          ],
+          "radius": [
+            {
+              "value": "7px",
+              "count": 5
+            },
+            {
+              "value": "10px",
+              "count": 4
+            },
+            {
+              "value": "11px",
+              "count": 4
+            },
+            {
+              "value": "pill",
+              "count": 3
+            },
+            {
+              "value": "8px",
+              "count": 3
+            },
+            {
+              "value": "9px",
+              "count": 3
+            },
+            {
+              "value": "4px",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 49
+            },
+            {
+              "value": "12px",
+              "count": 21
+            },
+            {
+              "value": "13px",
+              "count": 14
+            },
+            {
+              "value": "11px",
+              "count": 13
+            },
+            {
+              "value": "11.5px",
+              "count": 13
+            },
+            {
+              "value": "12.5px",
+              "count": 9
+            },
+            {
+              "value": "13.3333px",
+              "count": 9
+            },
+            {
+              "value": "10px",
+              "count": 5
+            },
+            {
+              "value": "10.5px",
+              "count": 3
+            },
+            {
+              "value": "14px",
+              "count": 2
+            },
+            {
+              "value": "9.5px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 122
+            },
+            {
+              "value": "600",
+              "count": 19
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 115
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 19
+            },
+            {
+              "value": "Arial",
+              "count": 6
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "0.56px",
+              "count": 2
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "17.6px",
+              "count": 3
+            },
+            {
+              "value": "18.4px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "8px",
+              "count": 11
+            },
+            {
+              "value": "6px",
+              "count": 5
+            },
+            {
+              "value": "9px",
+              "count": 2
+            },
+            {
+              "value": "7px",
+              "count": 2
+            },
+            {
+              "value": "12px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "4px 9px 4px 9px",
+              "count": 5
+            },
+            {
+              "value": "10px 11px 10px 11px",
+              "count": 3
+            },
+            {
+              "value": "0px 4px 0px 4px",
+              "count": 2
+            },
+            {
+              "value": "12px 12px 12px 12px",
+              "count": 2
+            },
+            {
+              "value": "1px 6px 1px 6px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 44
+    },
+    {
+      "id": "03-05-分享弹窗-浅",
+      "label": "05 分享弹窗-浅",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"05 分享弹窗-浅\"]"
+      },
+      "elements": 86,
+      "scales": {
+        "light": {
+          "color": [
+            {
+              "value": "rgb(15, 23, 42)",
+              "count": 55
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.6)",
+              "count": 9
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.8)",
+              "count": 7
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.72)",
+              "count": 5
+            }
+          ],
+          "background": [
+            {
+              "value": "rgb(15, 23, 42)",
+              "count": 8
+            },
+            {
+              "value": "rgb(248, 245, 239)",
+              "count": 7
+            },
+            {
+              "value": "rgb(251, 248, 243)",
+              "count": 5
+            },
+            {
+              "value": "rgb(166, 75, 53)",
+              "count": 2
+            },
+            {
+              "value": "rgb(255, 255, 255)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(26, 26, 31, 0.12)",
+              "count": 10
+            },
+            {
+              "value": "rgba(26, 26, 31, 0.14)",
+              "count": 5
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 20
+            }
+          ],
+          "radius": [
+            {
+              "value": "10px",
+              "count": 4
+            },
+            {
+              "value": "11px",
+              "count": 4
+            },
+            {
+              "value": "7px",
+              "count": 4
+            },
+            {
+              "value": "9px",
+              "count": 3
+            },
+            {
+              "value": "4px",
+              "count": 2
+            },
+            {
+              "value": "8px",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 44
+            },
+            {
+              "value": "13px",
+              "count": 13
+            },
+            {
+              "value": "11px",
+              "count": 5
+            },
+            {
+              "value": "11.5px",
+              "count": 5
+            },
+            {
+              "value": "12.5px",
+              "count": 4
+            },
+            {
+              "value": "10px",
+              "count": 4
+            },
+            {
+              "value": "10.5px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 63
+            },
+            {
+              "value": "600",
+              "count": 18
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 71
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 9
+            }
+          ],
+          "gap": [
+            {
+              "value": "8px",
+              "count": 8
+            },
+            {
+              "value": "6px",
+              "count": 3
+            },
+            {
+              "value": "12px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "4px 9px 4px 9px",
+              "count": 4
+            },
+            {
+              "value": "10px 11px 10px 11px",
+              "count": 3
+            },
+            {
+              "value": "12px 12px 12px 12px",
+              "count": 3
+            },
+            {
+              "value": "0px 4px 0px 4px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 29
+    },
+    {
+      "id": "04-11-阅读页-深",
+      "label": "11 阅读页-深",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"11 阅读页-深\"]"
+      },
+      "elements": 82,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 42
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 12
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.68)",
+              "count": 6
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.5)",
+              "count": 3
+            },
+            {
+              "value": "rgb(255, 255, 255)",
+              "count": 2
+            },
+            {
+              "value": "rgb(232, 168, 124)",
+              "count": 2
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.8)",
+              "count": 2
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.4)",
+              "count": 2
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.86)",
+              "count": 2
+            }
+          ],
+          "background": [
+            {
+              "value": "rgb(217, 119, 87)",
+              "count": 4
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.06)",
+              "count": 3
+            },
+            {
+              "value": "rgb(20, 20, 24)",
+              "count": 2
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.1)",
+              "count": 2
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.05)",
+              "count": 2
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.04)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 9
+            },
+            {
+              "value": "rgb(176, 82, 58)",
+              "count": 2
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.1)",
+              "count": 2
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 15
+            }
+          ],
+          "radius": [
+            {
+              "value": "9px",
+              "count": 6
+            },
+            {
+              "value": "8px",
+              "count": 2
+            },
+            {
+              "value": "10px",
+              "count": 2
+            },
+            {
+              "value": "pill",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 31
+            },
+            {
+              "value": "12.5px",
+              "count": 11
+            },
+            {
+              "value": "10px",
+              "count": 8
+            },
+            {
+              "value": "11.5px",
+              "count": 8
+            },
+            {
+              "value": "9.5px",
+              "count": 7
+            },
+            {
+              "value": "13px",
+              "count": 5
+            },
+            {
+              "value": "13.5px",
+              "count": 2
+            },
+            {
+              "value": "14px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 69
+            },
+            {
+              "value": "600",
+              "count": 8
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 62
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 14
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "1px",
+              "count": 2
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "18.4px",
+              "count": 6
+            },
+            {
+              "value": "24.7px",
+              "count": 3
+            },
+            {
+              "value": "20px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "8px",
+              "count": 5
+            },
+            {
+              "value": "10px",
+              "count": 4
+            },
+            {
+              "value": "12px",
+              "count": 2
+            },
+            {
+              "value": "6px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "0px 14px 0px 14px",
+              "count": 3
+            },
+            {
+              "value": "9px 11px 9px 11px",
+              "count": 3
+            }
+          ]
+        }
+      },
+      "textCount": 39
+    },
+    {
+      "id": "05-11-阅读页-浅",
+      "label": "11 阅读页-浅",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"11 阅读页-浅\"]"
+      },
+      "elements": 44,
+      "scales": {
+        "light": {
+          "color": [
+            {
+              "value": "rgb(15, 23, 42)",
+              "count": 27
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.55)",
+              "count": 5
+            },
+            {
+              "value": "rgba(15, 23, 42, 0.6)",
+              "count": 4
+            },
+            {
+              "value": "rgb(251, 248, 242)",
+              "count": 3
+            }
+          ],
+          "background": [
+            {
+              "value": "rgb(251, 248, 243)",
+              "count": 4
+            },
+            {
+              "value": "rgb(166, 75, 53)",
+              "count": 4
+            },
+            {
+              "value": "rgb(248, 245, 239)",
+              "count": 3
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(26, 26, 31, 0.12)",
+              "count": 3
+            },
+            {
+              "value": "rgba(26, 26, 31, 0.14)",
+              "count": 2
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 7
+            }
+          ],
+          "radius": [
+            {
+              "value": "9px",
+              "count": 4
+            },
+            {
+              "value": "12px 12px 12px 4px",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 24
+            },
+            {
+              "value": "12.5px",
+              "count": 6
+            },
+            {
+              "value": "13px",
+              "count": 4
+            },
+            {
+              "value": "12px",
+              "count": 2
+            },
+            {
+              "value": "9.5px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 35
+            },
+            {
+              "value": "600",
+              "count": 6
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 37
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 4
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "21.875px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "10px",
+              "count": 2
+            },
+            {
+              "value": "8px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "0px 11px 0px 11px",
+              "count": 2
+            },
+            {
+              "value": "10px 12px 10px 12px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 17
+    },
+    {
+      "id": "06-03-上传-待选",
+      "label": "03 上传-待选",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"03 上传-待选\"]"
+      },
+      "elements": 45,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 23
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.8)",
+              "count": 7
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 5
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.5)",
+              "count": 2
+            }
+          ],
+          "background": [
+            {
+              "value": "rgba(255, 255, 255, 0.06)",
+              "count": 4
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.08)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 6
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 9
+            }
+          ],
+          "radius": [
+            {
+              "value": "9px",
+              "count": 6
+            },
+            {
+              "value": "5px",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 17
+            },
+            {
+              "value": "12.5px",
+              "count": 9
+            },
+            {
+              "value": "12px",
+              "count": 5
+            },
+            {
+              "value": "10.5px",
+              "count": 3
+            },
+            {
+              "value": "10px",
+              "count": 3
+            },
+            {
+              "value": "11px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 37
+            },
+            {
+              "value": "600",
+              "count": 3
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 33
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 6
+            }
+          ],
+          "gap": [
+            {
+              "value": "10px",
+              "count": 3
+            },
+            {
+              "value": "9px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "16px 18px 16px 18px",
+              "count": 2
+            },
+            {
+              "value": "0px 11px 0px 11px",
+              "count": 2
+            },
+            {
+              "value": "2px 6px 2px 6px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 20
+    },
+    {
+      "id": "07-03-上传中",
+      "label": "03 上传中",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"03 上传中\"]"
+      },
+      "elements": 37,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 23
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.8)",
+              "count": 3
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 2
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.68)",
+              "count": 2
+            },
+            {
+              "value": "rgb(34, 197, 94)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 2
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 4
+            }
+          ],
+          "radius": [
+            {
+              "value": "9px",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "11px",
+              "count": 14
+            },
+            {
+              "value": "16px",
+              "count": 13
+            },
+            {
+              "value": "12.5px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 32
+            },
+            {
+              "value": "600",
+              "count": 2
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 16
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 15
+            },
+            {
+              "value": "Space Grotesk",
+              "count": 3
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "17.6px",
+              "count": 13
+            }
+          ],
+          "gap": [
+            {
+              "value": "9px",
+              "count": 3
+            },
+            {
+              "value": "8px",
+              "count": 3
+            }
+          ],
+          "padding": [
+            {
+              "value": "1px 6px 1px 6px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 18
+    },
+    {
+      "id": "08-03-上传完成",
+      "label": "03 上传完成",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"03 上传完成\"]"
+      },
+      "elements": 32,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 22
+            },
+            {
+              "value": "rgb(255, 255, 255)",
+              "count": 6
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 2
+            }
+          ],
+          "background": [
+            {
+              "value": "rgba(255, 255, 255, 0.06)",
+              "count": 4
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 4
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 9
+            }
+          ],
+          "radius": [
+            {
+              "value": "9px",
+              "count": 3
+            },
+            {
+              "value": "2px",
+              "count": 2
+            },
+            {
+              "value": "10px",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 16
+            },
+            {
+              "value": "13.5px",
+              "count": 6
+            },
+            {
+              "value": "12.5px",
+              "count": 3
+            },
+            {
+              "value": "10px",
+              "count": 2
+            },
+            {
+              "value": "11px",
+              "count": 2
+            },
+            {
+              "value": "11.5px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 23
+            },
+            {
+              "value": "600",
+              "count": 8
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 28
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 3
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "18.4px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "8px",
+              "count": 3
+            }
+          ],
+          "padding": [
+            {
+              "value": "1px 6px 1px 6px",
+              "count": 3
+            }
+          ]
+        }
+      },
+      "textCount": 12
+    },
+    {
+      "id": "09-06-分享管理",
+      "label": "06 分享管理",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"06 分享管理\"]"
+      },
+      "elements": 130,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 49
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.5)",
+              "count": 15
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 9
+            },
+            {
+              "value": "rgb(248, 113, 113)",
+              "count": 9
+            },
+            {
+              "value": "rgb(34, 197, 94)",
+              "count": 8
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.45)",
+              "count": 6
+            },
+            {
+              "value": "rgb(251, 146, 60)",
+              "count": 5
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.68)",
+              "count": 4
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.8)",
+              "count": 4
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.6)",
+              "count": 4
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.7)",
+              "count": 3
+            },
+            {
+              "value": "rgb(232, 168, 124)",
+              "count": 2
+            }
+          ],
+          "background": [
+            {
+              "value": "rgba(255, 255, 255, 0.06)",
+              "count": 8
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.04)",
+              "count": 3
+            },
+            {
+              "value": "rgba(248, 113, 113, 0.08)",
+              "count": 3
+            },
+            {
+              "value": "rgba(251, 146, 60, 0.12)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 17
+            },
+            {
+              "value": "rgba(248, 113, 113, 0.35)",
+              "count": 3
+            },
+            {
+              "value": "rgba(251, 146, 60, 0.4)",
+              "count": 2
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 29
+            }
+          ],
+          "radius": [
+            {
+              "value": "8px",
+              "count": 14
+            },
+            {
+              "value": "10px",
+              "count": 6
+            },
+            {
+              "value": "5px",
+              "count": 5
+            },
+            {
+              "value": "7px",
+              "count": 3
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 38
+            },
+            {
+              "value": "10px",
+              "count": 24
+            },
+            {
+              "value": "11.5px",
+              "count": 12
+            },
+            {
+              "value": "13.3333px",
+              "count": 9
+            },
+            {
+              "value": "11px",
+              "count": 7
+            },
+            {
+              "value": "18px",
+              "count": 6
+            },
+            {
+              "value": "9.5px",
+              "count": 6
+            },
+            {
+              "value": "13px",
+              "count": 5
+            },
+            {
+              "value": "12px",
+              "count": 5
+            },
+            {
+              "value": "12.5px",
+              "count": 4
+            },
+            {
+              "value": "26px",
+              "count": 3
+            },
+            {
+              "value": "10.5px",
+              "count": 2
+            },
+            {
+              "value": "15px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 118
+            },
+            {
+              "value": "600",
+              "count": 5
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 73
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 32
+            },
+            {
+              "value": "Space Grotesk",
+              "count": 9
+            },
+            {
+              "value": "Arial",
+              "count": 9
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "1px",
+              "count": 8
+            },
+            {
+              "value": "-0.54px",
+              "count": 5
+            },
+            {
+              "value": "-0.78px",
+              "count": 3
+            },
+            {
+              "value": "1.2px",
+              "count": 2
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "15px",
+              "count": 11
+            },
+            {
+              "value": "44.2px",
+              "count": 3
+            },
+            {
+              "value": "25.5px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "10px",
+              "count": 7
+            },
+            {
+              "value": "6px",
+              "count": 5
+            },
+            {
+              "value": "9px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "0px 10px 0px 10px",
+              "count": 11
+            },
+            {
+              "value": "11px 12px 11px 12px",
+              "count": 5
+            },
+            {
+              "value": "2px 7px 2px 7px",
+              "count": 5
+            },
+            {
+              "value": "0px 11px 0px 11px",
+              "count": 4
+            },
+            {
+              "value": "1px 6px 1px 6px",
+              "count": 3
+            }
+          ]
+        }
+      },
+      "textCount": 72
+    },
+    {
+      "id": "10-07-数据抽屉",
+      "label": "07 数据抽屉",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"07 数据抽屉\"]"
+      },
+      "elements": 80,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 45
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 10
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.5)",
+              "count": 7
+            },
+            {
+              "value": "rgb(232, 168, 124)",
+              "count": 4
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.6)",
+              "count": 4
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.68)",
+              "count": 3
+            },
+            {
+              "value": "rgb(251, 146, 60)",
+              "count": 2
+            }
+          ],
+          "background": [
+            {
+              "value": "rgba(255, 255, 255, 0.03)",
+              "count": 4
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.06)",
+              "count": 2
+            },
+            {
+              "value": "rgb(217, 119, 87)",
+              "count": 2
+            },
+            {
+              "value": "rgba(217, 119, 87, 0.55)",
+              "count": 2
+            },
+            {
+              "value": "rgba(255, 255, 255, 0.04)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 7
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 10
+            }
+          ],
+          "radius": [
+            {
+              "value": "4px 4px 0px 0px",
+              "count": 6
+            },
+            {
+              "value": "10px",
+              "count": 4
+            },
+            {
+              "value": "6px",
+              "count": 3
+            },
+            {
+              "value": "9px",
+              "count": 3
+            },
+            {
+              "value": "pill",
+              "count": 3
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 41
+            },
+            {
+              "value": "9.5px",
+              "count": 7
+            },
+            {
+              "value": "9px",
+              "count": 7
+            },
+            {
+              "value": "24px",
+              "count": 6
+            },
+            {
+              "value": "11.5px",
+              "count": 3
+            },
+            {
+              "value": "10px",
+              "count": 3
+            },
+            {
+              "value": "11px",
+              "count": 3
+            },
+            {
+              "value": "12.5px",
+              "count": 3
+            },
+            {
+              "value": "18px",
+              "count": 3
+            },
+            {
+              "value": "15px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 77
+            },
+            {
+              "value": "600",
+              "count": 2
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 51
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 17
+            },
+            {
+              "value": "Space Grotesk",
+              "count": 11
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "-0.72px",
+              "count": 3
+            },
+            {
+              "value": "-0.96px",
+              "count": 3
+            },
+            {
+              "value": "-0.54px",
+              "count": 3
+            },
+            {
+              "value": "-0.32px",
+              "count": 2
+            },
+            {
+              "value": "1.2px",
+              "count": 2
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "42px",
+              "count": 3
+            },
+            {
+              "value": "24px",
+              "count": 3
+            },
+            {
+              "value": "26.25px",
+              "count": 2
+            },
+            {
+              "value": "19.2px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "5px",
+              "count": 7
+            },
+            {
+              "value": "10px",
+              "count": 4
+            },
+            {
+              "value": "8px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "11px 11px 11px 11px",
+              "count": 4
+            },
+            {
+              "value": "0px 9px 0px 9px",
+              "count": 3
+            },
+            {
+              "value": "9px 10px 9px 10px",
+              "count": 3
+            },
+            {
+              "value": "16px 18px 16px 18px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 40
+    },
+    {
+      "id": "11-08-访客抽屉",
+      "label": "08 访客抽屉",
+      "range": {
+        "yFrom": 0,
+        "yTo": null,
+        "scope": "[data-screen-label=\"08 访客抽屉\"]"
+      },
+      "elements": 18,
+      "scales": {
+        "dark": {
+          "color": [
+            {
+              "value": "rgb(247, 247, 251)",
+              "count": 10
+            },
+            {
+              "value": "rgba(247, 247, 251, 0.55)",
+              "count": 2
+            }
+          ],
+          "background": [
+            {
+              "value": "rgba(255, 255, 255, 0.04)",
+              "count": 2
+            }
+          ],
+          "borderColor": [
+            {
+              "value": "rgba(255, 255, 255, 0.12)",
+              "count": 2
+            }
+          ],
+          "borderWidth": [
+            {
+              "value": "1px",
+              "count": 3
+            }
+          ],
+          "radius": [
+            {
+              "value": "9px",
+              "count": 2
+            },
+            {
+              "value": "pill",
+              "count": 2
+            }
+          ],
+          "fontSize": [
+            {
+              "value": "16px",
+              "count": 7
+            },
+            {
+              "value": "20px",
+              "count": 2
+            },
+            {
+              "value": "10px",
+              "count": 2
+            },
+            {
+              "value": "12px",
+              "count": 2
+            },
+            {
+              "value": "9.5px",
+              "count": 2
+            }
+          ],
+          "fontWeight": [
+            {
+              "value": "400",
+              "count": 17
+            }
+          ],
+          "fontFamily": [
+            {
+              "value": "Inter",
+              "count": 13
+            },
+            {
+              "value": "Space Grotesk",
+              "count": 3
+            },
+            {
+              "value": "JetBrains Mono",
+              "count": 2
+            }
+          ],
+          "letterSpacing": [
+            {
+              "value": "-0.6px",
+              "count": 2
+            }
+          ],
+          "lineHeight": [
+            {
+              "value": "34px",
+              "count": 2
+            }
+          ],
+          "gap": [
+            {
+              "value": "10px",
+              "count": 2
+            }
+          ],
+          "padding": [
+            {
+              "value": "14px 16px 14px 16px",
+              "count": 2
+            },
+            {
+              "value": "9px 10px 9px 10px",
+              "count": 2
+            }
+          ]
+        }
+      },
+      "textCount": 11
+    }
+  ]
+}

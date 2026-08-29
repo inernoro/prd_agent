@@ -106,21 +106,40 @@ describe('addAskPick / toggleAskPick', () => {
  * 只传 `markdown` 会静默退回纯文本，`**加粗**`、列表、链接以原始语法裸露在气泡里。
  *
  * 这条接线删掉之后没有任何行为测试会红——它是形状 2（建了一半的接线），
- * 所以按源码守住：AskPanel 里的 StreamingText 必须带 renderMarkdown。
+ * 所以按源码守住。
+ *
+ * 扫整个 ask 目录而不是钉死某个文件：渲染从 AskPanel 挪进 AskThread（浮层坞与嵌入面板
+ * 共用）那次，钉死文件名的旧写法直接判到 -1 才被发现——守卫本身也会因为搬家而失效
+ * （predicate-and-wiring-discipline 形状 7）。现在的判据是「目录里每一处 StreamingText
+ * 都带齐两个属性，且至少有一处」。
  */
 describe('提问答案的 markdown 接线', () => {
-  const source = fs.readFileSync(
-    path.join(path.dirname(fileURLToPath(import.meta.url)), 'AskPanel.tsx'),
-    'utf8',
-  );
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const calls = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.tsx'))
+    .flatMap((f) => {
+      const src = fs.readFileSync(path.join(dir, f), 'utf8');
+      const out: { file: string; props: string }[] = [];
+      let at = src.indexOf('<StreamingText');
+      while (at !== -1) {
+        const end = src.indexOf('/>', at);
+        out.push({ file: f, props: end === -1 ? '' : src.slice(at, end) });
+        at = src.indexOf('<StreamingText', at + 1);
+      }
+      return out;
+    });
 
-  it('StreamingText 必须同时给 markdown 与 renderMarkdown', () => {
-    const call = source.slice(source.indexOf('<StreamingText'));
-    const end = call.indexOf('/>');
-    expect(end).toBeGreaterThan(-1);
-    const props = call.slice(0, end);
-    expect(props).toMatch(/\bmarkdown\b/);
-    expect(props).toMatch(/renderMarkdown=/);
+  it('答案渲染没被整块删掉（至少有一处 StreamingText）', () => {
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
+  it('每一处 StreamingText 都同时给 markdown 与 renderMarkdown', () => {
+    for (const c of calls) {
+      expect(c.props, `${c.file} 里的 StreamingText 没闭合`).not.toBe('');
+      expect(c.props, `${c.file}`).toMatch(/\bmarkdown\b/);
+      expect(c.props, `${c.file}`).toMatch(/renderMarkdown=/);
+    }
   });
 
   it('渲染器不放行原始 HTML —— 答案的输入里有用户上传的网页正文，等于间接可控', () => {

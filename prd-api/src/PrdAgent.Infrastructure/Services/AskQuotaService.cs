@@ -43,8 +43,8 @@ public class AskQuotaService : IAskQuotaService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "提问配额：Redis 不可用，本次放行 site={SiteId}", siteId);
-            return AskQuotaDecision.Ok();
+            _logger.LogWarning(ex, "提问配额：Redis 不可用，本次放行但未扣计数 site={SiteId}", siteId);
+            return AskQuotaDecision.FailOpen();
         }
 
         try
@@ -73,7 +73,13 @@ public class AskQuotaService : IAskQuotaService
             // 第 2 层：站点日上限，保护 owner 的账单。
             var effectiveDaily = siteDailyLimit > 0 ? siteDailyLimit : DefaultSiteDailyLimit;
             var siteKey = SiteKey(siteId);
-            var siteCount = await IncrWithTtlAsync(db, siteKey, TimeSpan.FromDays(1));
+            // TTL 必须对齐**键自己的轮转时刻**，不能想当然给 24 小时。
+            //
+            // 站点键带 UTC 日期（...:{yyyyMMdd}），零点一到就换成新键、计数自然归零。
+            // 而 TTL 给 24 小时的话，当天第一次提问发生在 10:00 时这个键活到次日 10:00,
+            // 于是 Retry-After（取自 TTL）比真正的重置时刻晚了 10 小时。前端照着它等，
+            // 额度早就恢复了，用户还被锁着——最坏能白等将近一整天。
+            var siteCount = await IncrWithTtlAsync(db, siteKey, TimeUntilNextUtcMidnight());
             if (siteCount > effectiveDaily)
             {
                 var ttl = await db.KeyTimeToLiveAsync(siteKey);
@@ -86,28 +92,72 @@ public class AskQuotaService : IAskQuotaService
                 };
             }
 
-            return AskQuotaDecision.Ok();
+            // 记下**这一次真正扣在哪两个键**上。退款时原样退回去，不重算——
+            // 重算会在跨 UTC 零点 / 访客窗口翻篇时算出下一个窗口的键，
+            // 减掉别人刚攒的那格，而超额那格留着不动。
+            var ok = AskQuotaDecision.Ok();
+            ok.ConsumedVisitorKey = visitorKey;
+            ok.ConsumedSiteKey = siteKey;
+            return ok;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "提问配额：判定异常，本次放行 site={SiteId}", siteId);
-            return AskQuotaDecision.Ok();
+            _logger.LogWarning(ex, "提问配额：判定异常，本次放行但未必扣上 site={SiteId}", siteId);
+            return AskQuotaDecision.FailOpen();
         }
     }
 
-    public async Task RefundAsync(
-        string siteId, string? userId, string? clientIp, CancellationToken ct = default)
+    public async Task<AskQuotaSnapshot?> PeekAsync(
+        string siteId, string? userId, string? clientIp, int siteDailyLimit, CancellationToken ct = default)
     {
         try
         {
             var db = _redis.GetDatabase();
             var isAnonymous = string.IsNullOrWhiteSpace(userId);
+            // 键与阈值都复用 TryConsumeAsync 那一套，不另写一份 —— 两份迟早对不上，
+            // 而对不上的表现是「面板说还剩 5 次，第 1 次就被拒」，比不显示更伤信任。
             var visitorKey = VisitorKey(isAnonymous, userId, clientIp);
             var siteKey = SiteKey(siteId);
 
-            // 只在计数为正时回退，避免窗口刚好翻篇后把计数减成负数
-            await DecrIfPositiveAsync(db, visitorKey);
-            await DecrIfPositiveAsync(db, siteKey);
+            // StringGet 不存在时返回 null，转成 0：窗口还没开始就是一次都没用
+            var visitorUsed = (int?)await db.StringGetAsync(visitorKey) ?? 0;
+            var siteUsed = (int?)await db.StringGetAsync(siteKey) ?? 0;
+
+            return new AskQuotaSnapshot
+            {
+                VisitorUsed = visitorUsed,
+                VisitorLimit = isAnonymous ? AnonymousHourlyLimit : VisitorHourlyLimit,
+                SiteUsed = siteUsed,
+                SiteLimit = siteDailyLimit > 0 ? siteDailyLimit : DefaultSiteDailyLimit,
+            };
+        }
+        catch (Exception ex)
+        {
+            // 读不到就**不显示**，不是显示一个猜的数（no-rootless-tree）
+            _logger.LogWarning(ex, "提问配额：读取快照失败，本次不显示剩余数 site={SiteId}", siteId);
+            return null;
+        }
+    }
+
+    public async Task RefundAsync(
+        AskQuotaDecision decision, string siteId, CancellationToken ct = default)
+    {
+        // 没扣成就没什么可退（FailOpen / 被拒的那两条路都不带键）。
+        // 这里也不兜底去重算键——算不出「当初扣的是哪个窗口」时，宁可不退：
+        // 退错窗口是把别人的用量抹掉，比这个用户少一格额度严重得多。
+        if (string.IsNullOrEmpty(decision.ConsumedVisitorKey) && string.IsNullOrEmpty(decision.ConsumedSiteKey))
+        {
+            return;
+        }
+
+        try
+        {
+            var db = _redis.GetDatabase();
+
+            // 只在计数为正时回退，避免窗口刚好翻篇后把计数减成负数。
+            // 键取自 decision——就是 TryConsumeAsync 当初 INCR 的那两个。
+            if (!string.IsNullOrEmpty(decision.ConsumedVisitorKey)) await DecrIfPositiveAsync(db, decision.ConsumedVisitorKey);
+            if (!string.IsNullOrEmpty(decision.ConsumedSiteKey)) await DecrIfPositiveAsync(db, decision.ConsumedSiteKey);
         }
         catch (Exception ex)
         {
@@ -133,6 +183,18 @@ public class AskQuotaService : IAskQuotaService
     private static string VisitorKey(bool isAnonymous, string? userId, string? clientIp)
         => DeploymentScope.ScopeIdempotencyKey(
             isAnonymous ? $"ask-quota:anon:{HashIp(clientIp)}" : $"ask-quota:user:{userId}");
+
+    /// <summary>
+    /// 距离下一个 UTC 零点还有多久——站点日配额键的真实存活期。
+    ///
+    /// 键名里编了 UTC 日期，零点换键即归零；所以 TTL 和据此算出的 Retry-After
+    /// 都必须以零点为准，而不是「从现在起 24 小时」。
+    /// </summary>
+    private static TimeSpan TimeUntilNextUtcMidnight()
+    {
+        var now = DateTime.UtcNow;
+        return now.Date.AddDays(1) - now;
+    }
 
     private static string SiteKey(string siteId)
         => DeploymentScope.ScopeIdempotencyKey($"ask-quota:site:{siteId}:{DateTime.UtcNow:yyyyMMdd}");

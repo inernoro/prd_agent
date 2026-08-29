@@ -1,3 +1,4 @@
+import { useDeadline } from './useDeadline';
 import { useCallback, useRef, useState } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { api } from '@/services/api';
@@ -23,7 +24,10 @@ export function useAskStream(source: AskSource) {
   const [phaseMessage, setPhaseMessage] = useState('');
   const [model, setModel] = useState<{ model: string; platform?: string } | null>(null);
   /** 门禁类失败：不是"答错了"，而是"没资格问"，UI 要给引导而不是重试按钮 */
-  const [gateError, setGateError] = useState<{ code: string; message: string } | null>(null);
+  const [gateError, setGateError] = useState<
+    { code: string; message: string; retryAfterMs?: number | null } | null
+  >(null);
+  // 额度窗口分段等待用的心跳：等待超过一小时时靠它重排下一段（见下面那个 effect）
 
   const sessionIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -41,6 +45,28 @@ export function useAskStream(source: AskSource) {
     setGateError(null);
     sessionIdRef.current = null;
   }, [abort]);
+
+  /**
+   * 只清掉这道门，不动消息与状态。
+   *
+   * 额度那几档拒绝是**有有效期**的（每小时 / 每天），窗口一过就该能再问。而 gateError
+   * 只在 ask() 开头清一次、submit() 又不许在 blocked 时调 ask()，于是这道门一旦落下就
+   * 只能刷新页面才起得来——卡片上写着「过一会儿再来」，过一会儿回来却还是发不出去。
+   * reset() 能清但它连消息一起清了，用户刚才问过的几轮会凭空消失。
+   */
+  const clearGateError = useCallback(() => setGateError(null), []);
+
+  // 额度窗口到点就自己把门收起来。
+  //
+  // 放在这里而不是各个宿主里：gateError 归 useAskStream 持有，两个宿主（右下角的坞、
+  // 预览弹窗里的面板）都从它拿。上一轮只给坞接了「按额度快照收门」那条路，而面板走的是
+  // mode:'site'、拿不到额度快照（useAskQuota 无 token 直接返回 null），于是那条路对它
+  // 完全不生效——owner 在站内预览吃一次 429 就锁到弹窗销毁为止。
+  //
+  // Retry-After 是服务端自己说的「几点可以再来」，到点清掉即可；真要还没恢复，
+  // 下一次提问会拿到新的 429，不会放行到后端之外。
+  // 到点解开提交闸门。分段睡 + 自己重排，走与额度快照同一份判据（见 useDeadline）。
+  useDeadline(gateError?.retryAfterMs ?? null, () => setGateError(null));
 
   const ask = useCallback(
     async (question: string) => {
@@ -113,7 +139,13 @@ export function useAskStream(source: AskSource) {
           const payload = await res.json().catch(() => null);
           const code = payload?.error?.code ?? `HTTP_${res.status}`;
           const message = payload?.error?.message ?? `请求失败（${res.status}）`;
-          setGateError({ code, message });
+          // 429 带着 Retry-After（秒）。接住它算出「几点能再问」——额度那几档拒绝是有
+          // 有效期的，窗口一过就该自动恢复；没有这个值的话，面板只能等用户折叠重开或
+          // 刷新页面才发现其实又能问了，他等的那段时间是白等的。
+          const raw = res.headers.get('Retry-After');
+          const sec = raw != null ? Number(raw) : NaN;
+          const retryAfterMs = Number.isFinite(sec) && sec >= 0 ? Date.now() + sec * 1000 : null;
+          setGateError({ code, message, retryAfterMs });
           setStatus('error');
           failAssistant(message);
           return;
@@ -205,6 +237,7 @@ export function useAskStream(source: AskSource) {
     phaseMessage,
     model,
     gateError,
+    clearGateError,
     isBusy: status === 'connecting' || status === 'answering',
     ask,
     abort,

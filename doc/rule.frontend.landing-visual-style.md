@@ -33,9 +33,9 @@
 
 用途：主 CTA 背景、顶栏登录按钮、Logo 内底色、标题渐变文字、FinalCta 大字、登录页 RetroHorizon 装饰与主 CTA 投影（2026-07-07 起登录页同步收敛到同一渐变，不再自造独立配色）。
 
-### R2 · 背景只能用 `StaticBackdrop`
+### R2 · 背景的底必须是 `StaticBackdrop`，其上只允许一层受控动态层
 
-全站背景**零动画、零 canvas、零 JS**。由 `prd-admin/src/pages/home/components/StaticBackdrop.tsx` 提供的 6 层 CSS 合成（深色底 + 点阵网格 + 冷白径向光晕 + CRT 扫描线 + 噪点 + 顶栏阴影）。
+**底层（必须有，且必须能独立成立）**：`prd-admin/src/pages/home/components/StaticBackdrop.tsx` 的 6 层 CSS 合成（深色底 + 点阵网格 + 冷白径向光晕 + CRT 扫描线 + 噪点 + 顶栏阴影），零动画、零 canvas、零 JS。
 
 两种挂载模式：
 
@@ -44,10 +44,27 @@
 | 独立全屏页（/home、/login 等不走 AppShell 的路由） | `<StaticBackdrop />` | 默认 `mode="fixed"`，`fixed inset-0` 覆盖整个视口 |
 | AppShell 内 Outlet 页（/arena、/dashboard 等有左侧栏/顶栏的路由） | `<div className="relative"><StaticBackdrop mode="absolute" />…</div>` | `absolute inset-0` 仅填满当前容器，不会穿透 AppShell 的侧边栏/顶栏 |
 
-- 否 禁止：粒子 canvas、鼠标视差、Three.js 着色器、mesh gradient 连续动画
+**上层（2026-08-29 起放开，仅限 `/home`）**：允许在静态底之上叠**一层**受控的 WebGL 背景，条件是下面六条**全部**成立，缺一条即违规：
+
+1. **拿不到就不画**：WebGL 上下文创建失败时静默什么都不渲染，页面回落到纯 `StaticBackdrop` 的样子，不许开天窗、不许弹错误。
+2. **尊重减少动效**：`prefers-reduced-motion: reduce` 时只渲染**一帧静态画面**——降级成静止的图，不是降级成空白。
+3. **不可见就停**：标签页隐藏时暂停 rAF，回到前台再续。
+4. **算力封顶**：DPR 上限 1.5，不开抗锯齿，噪声阶数够用即止。
+5. **只做底噪不做主角**：强度压到正文之下（当前值 0.30），不抢内容注意力；`pointer-events: none`，不吃任何点击。
+6. **只有一层**：全页最多一层动态背景。焦点物（如首屏的墨球）另算，且必须在 `lg` 以下断点整个不挂载。
+
+依然禁止的：
+
+- 否 禁止：粒子场、鼠标视差位移、mesh gradient 连续动画——它们放到任何站上都成立，等于没有品牌
+- 否 禁止：为了这一层引入 `three`（约 150KB）。公开页的预算只够一个全屏三角形 + 一段 shader，用 `ogl`（约 10KB）
+- 否 禁止：把动态层当**唯一**背景（底下没垫 `StaticBackdrop`），那样 WebGL 一挂就是黑屏
 - 否 禁止：任何 `fixed` 定位的亮带（地平线/太阳/地板），会穿透下方 section 产生"银光"伪影
 - 否 禁止：在 AppShell 内 Outlet 页使用默认 `mode="fixed"`——会遮住左侧导航
 - 是 允许：局部化（`absolute`）的 retro 装饰，且只限 Hero 段内部（参考 `HeroSection.tsx` 前 100 行）
+
+**为什么改这一条**：原条款写的是"零动画、零 canvas、零 JS"，理由是历史上首页被一堆粒子背景拖垮过——那次的问题是**装饰喧宾夺主 + 性能失控**，不是"canvas 这个技术本身有罪"。2026-08-28 首页改版时用户看完的判断是"太单调了，丑陋"：十幕内容压在一块死黑板上，静态背景把页面压平了。所以这里放开的不是"可以上特效"，而是"可以上**一层**背景，代价是它必须自己扛住降级、动效偏好、后台暂停和算力封顶"。上面六条就是当初那次事故真正该写下来的东西——它们管住的是失控，不是技术选型。
+
+
 
 ### R3 · 三套字体各司其职
 
@@ -167,7 +184,8 @@ emerald   (#34d399)  ← 状态 / 存活 / 成功（不变）
 
 | 否 Don't | 是 Do |
 |---------|------|
-| 画一个 canvas 粒子背景 | 用 `StaticBackdrop` |
+| 画一个 canvas 粒子背景 | 底层 `StaticBackdrop`；要动态就上 R2 那六条约束下的单层墨场 |
+| 把 WebGL 层当唯一背景（下面不垫静态底） | 静态底必须能独立成立，动态层挂了就回落到它 |
 | 造新的 `linear-gradient(...)` 当品牌色 | 引入 `HERO_GRADIENT` |
 | 在 section 里硬写 `<h2 className="text-5xl ...">` | 用 `<SectionHeader>` |
 | 用 framer-motion 做入场动画 | 用 `<Reveal>` |
@@ -182,7 +200,8 @@ emerald   (#34d399)  ← 状态 / 存活 / 成功（不变）
 
 ## 六、审计清单（新页面上线前自查）
 
-- [ ] 背景是 `StaticBackdrop`，没有 canvas / 粒子 / mesh 动画
+- [ ] 背景底层是 `StaticBackdrop`，且它单独存在时页面也成立
+- [ ] 若叠了动态背景：只有一层、拿不到 WebGL 静默降级、reduced-motion 只渲一帧、后台暂停、DPR ≤1.5、`pointer-events: none`、强度压在正文之下
 - [ ] 所有渐变高亮色都是 `HERO_GRADIENT` 的引用，没有其他写法
 - [ ] 字体全部走 `var(--font-display)` / `var(--font-body)` / `var(--font-mono)`
 - [ ] 所有"小标签"是 HUD chip 规格（mono + UPPERCASE + accent 发光边）

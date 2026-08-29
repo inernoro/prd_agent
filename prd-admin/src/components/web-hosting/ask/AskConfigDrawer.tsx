@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Trash2, X } from 'lucide-react';
+import { Plus, RotateCw, Trash2, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { getSiteAskConfig, updateSiteAskConfig, type SiteAskConfig } from '@/services/real/webPages';
+import { getSiteAskConfig, regenerateSiteAskQuestions, updateSiteAskConfig, type SiteAskConfig } from '@/services/real/webPages';
 import { ASK_MAX_WELCOME_LENGTH } from './askTypes';
 
 interface Props {
@@ -34,6 +34,20 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   const [maxQuestions, setMaxQuestions] = useState(12);
   /** 站点形态不支持提问时的原因；非空则开关灰掉（服务端同一判定源，前端不自己判） */
   const [unsupportedReason, setUnsupportedReason] = useState<string | null>(null);
+  /** 这批题是系统读正文写的（auto）还是 owner 自己写的（manual） */
+  const [questionsSource, setQuestionsSource] = useState<'auto' | 'manual'>('auto');
+  /**
+   * 这次开着抽屉的期间，用户有没有真的动过题库。
+   *
+   * 保存时只有它为 true 才把题库送上去。抽屉里那份题是**打开那一刻**读到的旧值，而打开
+   * 这一下会顺手排一次后台生成；只改了别的开关就保存却把旧值一起送上去，会盖掉这期间
+   * 生成好的题，还会被后端判成「owner 手写过」从此钉成 manual，自动生成再也补不回来。
+   * 「重新生成」写回的那份也不算动手——那是系统写的，不该把站点钉成 manual。
+   */
+  const [questionsDirty, setQuestionsDirty] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  /** 重新生成没生成出东西时，后端的原话。不自己编一句「失败了」 */
+  const [regenNote, setRegenNote] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -45,6 +59,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
         setAllowAnonymous(res.data.allowAnonymous);
         setDailyLimit(res.data.dailyLimit ?? 0);
         setQuestions(res.data.suggestedQuestions ?? []);
+        setQuestionsSource(res.data.questionsSource === 'manual' ? 'manual' : 'auto');
         setMaxLength(res.data.maxQuestionLength ?? 60);
         setMaxQuestions(res.data.maxQuestions ?? 12);
         setUnsupportedReason(res.data.supported === false ? (res.data.unsupportedReason ?? '这个站点暂不支持提问。') : null);
@@ -66,8 +81,34 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     setQuestions((prev) =>
       prev.includes(q) || prev.length >= maxQuestions ? prev : [...prev, q.slice(0, maxLength)],
     );
+    // 界面上立刻改口径：他一动手，这批题就归他了，之后重新上传不会再被自动覆盖。
+    // 与后端判据同义（后端按提交的列表与库里那份是否相同来判），这里只是提前说出来。
+    setQuestionsSource('manual');
+    setQuestionsDirty(true);
+    setRegenNote(null);
     setDraft('');
   }, [draft, maxLength, maxQuestions]);
+
+  const regenerate = useCallback(async () => {
+    setRegenerating(true);
+    setRegenNote(null);
+    const res = await regenerateSiteAskQuestions(siteId);
+    setRegenerating(false);
+    if (!res.success) {
+      setRegenNote(res.error?.message ?? '重新生成失败');
+      return;
+    }
+    setQuestions(res.data?.suggestedQuestions ?? []);
+    // 用后端回的那个值，别一律写死 'auto'。这一次未必真写进去了——别人在这几秒里
+    // 把题库改成手写，后端会回 Superseded 加上库里最新的 questionsSource='manual'，
+    // 而这里如果硬标成 auto，面板就会把别人手写的那份说成「系统读正文生成」。
+    setQuestionsSource(res.data?.questionsSource === 'manual' ? 'manual' : 'auto');
+    // 这份是从库里读回来的，不是他在这个抽屉里动的手：保存时不要再送回去把站点钉成 manual。
+    setQuestionsDirty(false);
+    // 没生成出来就把后端的原话摆出来（这一页读不出正文 / 模型没给出可用问题），
+    // 不假装成功，也不自己换一套说法（no-rootless-tree）
+    if (!res.data?.generated) setRegenNote(res.data?.message ?? '这一页没能读出可提问的正文。');
+  }, [siteId]);
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -75,7 +116,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     const res = await updateSiteAskConfig(siteId, {
       enabled,
       welcome: welcome.trim() || null,
-      suggestedQuestions: questions,
+      ...(questionsDirty ? { suggestedQuestions: questions } : {}),
       allowAnonymous,
       dailyLimit,
     });
@@ -86,12 +127,13 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     }
     onSaved?.(res.data);
     onClose();
-  }, [allowAnonymous, dailyLimit, enabled, onClose, onSaved, questions, siteId, welcome]);
+  }, [allowAnonymous, dailyLimit, enabled, onClose, onSaved, questions, questionsDirty, siteId, welcome]);
 
   const body = (
     // z-index 必须高于 SitePreviewModal 的 z-[100]：本抽屉唯一的入口就在那个弹窗的顶栏里，
     // 两者又是并列的 portal（都挂 body）。80 < 100 意味着抽屉永远被弹窗盖住点不到，
-    // 而提问默认关闭、这里是唯一的开启入口——等于整个功能没人打得开。
+    // 而这里是唯一能改提问开关的地方——提问现在默认开着，盖住它就等于
+    // owner 想关也关不掉（还在持续烧额度），比打不开更糟。
     <div style={{ position: 'fixed', inset: 0, zIndex: 110 }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'var(--overlay-scrim, rgba(0,0,0,0.45))' }} />
       <aside
@@ -120,7 +162,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
             <Row
               label="开放提问"
-              hint="访客可以对着这个页面向 AI 提问，回答只依据页面内容。每次提问都会消耗模型额度，所以默认关闭。"
+              hint="访客可以对着这个页面向 AI 提问，回答只依据页面内容。默认是开着的；每次提问都会消耗模型额度，不想让访客问就在这里关掉。"
             >
               {/* 只挡「关 → 开」，永远保留「开 → 关」这条退路。
                   两个方向一起挡会造成一种没法自救的状态：HTML 站重传成视频之后形态变成不支持，
@@ -166,17 +208,56 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
             </div>
 
             <div>
-              <div style={{ fontSize: 13, marginBottom: 4 }}>开场问题题库</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <div style={{ fontSize: 13 }}>开场问题题库</div>
+                {/* 来源标签：自动填的东西不能是黑箱，用户得看得出这几句是谁写的 */}
+                <span
+                  style={{
+                    fontSize: 10.5, padding: '2px 7px', borderRadius: 5, flexShrink: 0,
+                    fontFamily: 'var(--font-code, ui-monospace, monospace)',
+                    background: questionsSource === 'manual' ? 'var(--bg-tertiary)' : 'var(--semantic-info-soft)',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  {questionsSource === 'manual' ? '你自己写的' : '系统读正文生成'}
+                </span>
+                <button
+                  onClick={() => void regenerate()}
+                  disabled={regenerating || !!unsupportedReason}
+                  title="重新读一遍这一页的正文，写一批新的开场问题；会覆盖现在这几条"
+                  style={{
+                    marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                    height: 26, padding: '0 9px', borderRadius: 7,
+                    border: '1px solid var(--border-subtle)', background: 'transparent',
+                    color: 'var(--text-muted)', fontSize: 11.5,
+                    cursor: regenerating || unsupportedReason ? 'default' : 'pointer',
+                  }}
+                >
+                  {regenerating ? <MapSpinner size={12} /> : <RotateCw size={12} />}
+                  {regenerating ? '正在读正文…' : '重新生成'}
+                </button>
+              </div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.6 }}>
                 访客打开面板时可以一点即问。分享的时候还能从这个题库里给每条链接单独挑几条——
                 发给客户和发给同事，开场问题可以不一样。
+                {questionsSource === 'auto' && '这几条是开启提问时系统读你上传的正文写的，你改过之后就不再被自动覆盖。'}
               </div>
+              {regenNote && (
+                <div style={{ fontSize: 12, color: 'var(--accent-primary)', marginBottom: 8, lineHeight: 1.6 }}>
+                  {regenNote}
+                </div>
+              )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {questions.map((q, i) => (
                   <div key={q} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}>
                     <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)', wordBreak: 'break-word' }}>{q}</span>
                     <button
-                      onClick={() => setQuestions((prev) => prev.filter((_, idx) => idx !== i))}
+                      onClick={() => {
+                        setQuestions((prev) => prev.filter((_, idx) => idx !== i));
+                        setQuestionsSource('manual');
+                        setQuestionsDirty(true);
+                        setRegenNote(null);
+                      }}
                       aria-label={`删除「${q}」`}
                       style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', flexShrink: 0 }}
                     >

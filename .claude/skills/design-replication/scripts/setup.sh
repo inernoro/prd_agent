@@ -12,8 +12,11 @@ PORT="${3:-8899}"
 
 mkdir -p "$WORK/vendor" "$WORK/shots/design" "$WORK/shots/impl" "$WORK/shots/pair"
 
-if [ ! -d "$WORK/node_modules/playwright" ]; then
-  (cd "$WORK" && npm i playwright --no-save --silent)
+# 装 playwright-core 而不是 playwright：后者会连带下载浏览器二进制，在这个容器里
+# 要么很慢、要么被 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 跳过（装完也没浏览器可用）。
+# 真正要用的浏览器是预装在 /opt/pw-browsers 的那个，脚本走 browser.mjs 找它。
+if [ ! -d "$WORK/node_modules/playwright-core" ] && [ ! -d "$WORK/node_modules/playwright" ]; then
+  (cd "$WORK" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm i playwright-core --no-save --silent)
 fi
 
 for u in "react@18.3.1/umd/react.production.min.js" \

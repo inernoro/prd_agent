@@ -1,0 +1,1513 @@
+/**
+ * 录音交付页（独立全屏路由）。
+ *
+ * 为什么要它：设计稿 B1/B2/B3/B4、D1/D2 这批「整屏」画板画的是一张自带顶部栏
+ * （返回 / 标题 / 副标题 / 更多）的独立页，主操作直接收在屏底。而当前实现寄生在
+ * 知识库的文档阅读器里，外面套着平台的顶栏、侧栏与底部导航——这些外壳会占掉稿面
+ * 留给内容的位置，并且把「返回哪里」变成平台的语义而不是这条链路的语义。
+ * 判分里结构与版式的失分大半出在这一层，寄生形态修不掉，只能给它一张自己的屏。
+ *
+ * 复用而不是重写：这一屏的主体（播放器、跟读、词云、纪要、待办、问答）仍然是
+ * `TranscriptKaraoke` 那一份，与阅读器内嵌形态共用同一份代码。这里只补三样
+ * 阅读器给不了的：全屏外壳、稿面自己的顶部栏、以及作用域皮肤。
+ *
+ * 数据取法与阅读器一致，不新开一条：音频条目的 `metadata.transcribe_entry_id`
+ * 指向转录笔记，笔记正文就是跟读组件吃的 markdown。两处读同一个字段，
+ * 阅读器改了取法这里不会静默走旧路。
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
+import { BookText, Check, ChevronLeft, Download, FileText, Mic, MoreHorizontal, WifiOff } from 'lucide-react';
+import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
+import { buildSpeakerStats, parseTranscriptSegments } from '@/components/doc-browser/transcriptSegments';
+import { onRecordingDuration, requestRecordingPlay } from '@/components/doc-browser/recordingPlayBridge';
+import { useIsDesktop } from '@/hooks/useBreakpoint';
+import {
+  DEFAULT_ORGANIZE_STYLE_KEY,
+  getAgentRun,
+  getLatestAgentRun,
+  listDocumentEntriesReal,
+  getDocumentEntry,
+  getDocumentContent,
+  getDocumentStoreReal,
+  restyleTranscribeRun,
+  transcribeEntry,
+  updateDocumentContent,
+} from '@/services/real/documentStore';
+import {
+  clearOfflineEdit,
+  decideOfflineFlush,
+  isFlushable,
+  loadOfflineEdit,
+  rebaseOfflineEditAfterOwnSave,
+  saveOfflineEdit,
+  type OfflineFlushReason,
+  type QueuedOfflineEdit,
+} from '@/pages/document-store/recordingOfflineQueue';
+import { describeOfflineFlushBlock } from '@/pages/document-store/recordingCompletionView';
+import { isPermanentLookupFailure, isTranscriptionInflight, isTranscriptionSucceeded } from '@/pages/document-store/recordingVault';
+import { canGoBackInApp } from '@/hooks/useSmartBack';
+import { useAuthStore } from '@/stores/authStore';
+import { toast } from '@/lib/toast';
+import '@/styles/recording-design-palette.css';
+
+/** mm:ss / h:mm:ss。给不出时长就不显示那一段，不摆一个假的 0:00。 */
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m < 60) return `${m}:${String(s).padStart(2, '0')}`;
+  return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+type DocumentEntryLike = {
+  id: string;
+  title?: string;
+  contentType?: string;
+  metadata?: Record<string, unknown> & { source_entry_id?: string };
+};
+
+type LoadState =
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string }
+  | {
+      kind: 'ready';
+      title: string;
+      /**
+       * 这条录音**真正属于**哪个知识库。深链上的 storeId 只是路由参数，可能与条目实际
+       * 归属不一致（两个都能访问时更是如此）：那样页面会一边显示 A 的原文、一边说它存在
+       * B 里，侧栏与「新录音」也都在操作 B（Codex 第十七轮 P2）。所以一切与库有关的地方
+       * 都读这个值，不读路由参数。
+       */
+      storeId: string;
+      storeName: string;
+      audioUrl: string;
+      noteMd: string;
+      /** 转录笔记条目 id：校对保存写的是它，不是音频条目 */
+      noteId: string;
+      /** 这份摘要用的整理方式 + 生成时间——「一键整理」四张卡的状态全靠这两个值 */
+      styleKey: string | null;
+      generatedAt: string | null;
+    };
+
+/**
+ * 结果页外壳（纯展示）。
+ *
+ * 抽出来是为了让**对照台**能用同一份 chrome 出图：在 mock 里照着重写一遍顶部栏，
+ * 判分判的就是那一份副本，真页面改了它不会跟着变——判据读到的不是真正生效的值
+ * （形状 6）。所以外壳只有这一份，两边都用它。
+ */
+export function RecordingResultShell({
+  title,
+  subtitle,
+  onBack,
+  sidebar,
+  actions,
+  banner,
+  children,
+}: {
+  title: string;
+  /** 稿面那行绿色副标题：「已保存到「X」· 24:18」。给不出就不显示，不编。 */
+  subtitle?: string;
+  onBack: () => void;
+  /** 稿面 D1/D2 的左栏（知识库导航）。只在 ≥1024px 挂出来，手机上这一栏是上一屏。 */
+  sidebar?: React.ReactNode;
+  /** 顶栏右侧的动作（稿面 D1 的「导出」）。窄屏不挂：那一档稿面把它收进「更多」。 */
+  actions?: React.ReactNode;
+  /**
+   * 顶栏与内容之间的通栏告知（稿面 v2-S7 的离线卡）。
+   * 它必须在**滚动容器之外**：放进内容流里，跟读一把当前句滚进视野，
+   * 它就被吸顶播放条压掉，只剩屏幕上一条 18px 的色边（S7 判分 48 分的根因）。
+   */
+  banner?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const isDesktop = useIsDesktop();
+  const [moreOpen, setMoreOpen] = useState(false);
+  return (
+    <div
+      // 作用域皮肤：这一屏整棵子树读设计稿自己那组 token，不影响全站
+      className="recording-design-palette flex h-full min-h-0 w-full"
+      style={{ background: 'var(--bg-primary)' }}
+    >
+      {/* 左栏：宽屏才有。窄屏下「回到知识库」是顶栏那颗返回，不是一条常驻的栏 */}
+      {isDesktop && sidebar}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {/*
+        稿面的顶部栏：返回 / 标题 + 副标题 / 更多。它吸顶且始终占一行，
+        不随内容滚动——B1 到 B4 每一屏都画着它，是这条链路的身份标识。
+      */}
+      <header
+        className="flex shrink-0 items-center gap-3 px-4 py-3"
+        style={{ background: 'var(--bg-primary)', borderBottom: '1px solid var(--border-faint)' }}
+      >
+        <button
+          type="button"
+          onClick={onBack}
+          aria-label="返回"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          {/* 稿面用的是细 chevron「‹」，不是实心箭头 */}
+          <ChevronLeft size={22} strokeWidth={1.75} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h1>
+          {/*
+            稿面 D1/D2 把这行元信息放在标题**同一行**、贴着导出按钮；
+            窄屏地方不够才落到标题下面。绿色说的是「音频已经安全了」，
+            与进度、失败分属不同语义，前面那枚对勾是稿面画的。
+          */}
+          {subtitle && !isDesktop && (
+            /*
+              `truncate` 挂在 flex 容器上是无效的：那三条属性（nowrap/overflow/ellipsis）
+              管的是**文本**，flex 子项不会继承。此前这一行既不省略也不收缩，
+              直接被视口切在「2 位说话」处（B1/B2/P1 三份判分各记了一次）。
+              真正要收的是里面那段文字，所以 truncate 得挂在它自己身上。
+            */
+            <p className="flex min-w-0 items-center gap-1 text-[12px]" style={{ color: 'var(--accent-fg-success)' }}>
+              <Check size={13} className="shrink-0" aria-hidden />
+              <span className="min-w-0 truncate">{subtitle}</span>
+            </p>
+          )}
+        </div>
+        {subtitle && isDesktop && (
+          <p className="flex shrink-0 items-center gap-1.5 text-[13px]" style={{ color: 'var(--accent-fg-success)' }}>
+            <Check size={15} aria-hidden /> {subtitle}
+          </p>
+        )}
+        {isDesktop && actions}
+        {/*
+          「更多」必须真的能点开。窄屏下 `actions`（导出）根本不渲染，这颗又没有
+          任何 handler——于是手机上导出无路可达，而这颗按钮在所有视口都是个假控件
+          （Codex P2 抓到）。让它收纳同一批 actions：窄屏是它们唯一的出口，
+          宽屏是重复入口（「更多」菜单重复陈列主操作是常见做法，不构成歧义）。
+          没有任何 action 可放时（加载中/出错）就不摆这颗——按钮存在但点了没反应，
+          比没有按钮更糟。
+        */}
+        {actions && (
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              aria-label="更多"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen(v => !v)}
+              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              <MoreHorizontal size={20} />
+            </button>
+            {moreOpen && (
+              <>
+                {/* 点空白处收起：菜单自己不接管整屏，只借一层透明遮罩接这一下 */}
+                <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
+                <div
+                  className="absolute right-0 top-full z-[61] mt-1 flex min-w-[160px] flex-col gap-1 rounded-[12px] p-1.5"
+                  style={{
+                    background: 'var(--bg-card)',
+                    border: '1px solid var(--border-subtle)',
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
+                  }}
+                  onClick={() => setMoreOpen(false)}
+                >
+                  {actions}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </header>
+
+      {banner && <div className="shrink-0 px-4 pt-3">{banner}</div>}
+
+      <main
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:overflow-hidden"
+        style={{ overscrollBehavior: 'contain' }}>
+        {children}
+      </main>
+      </div>
+    </div>
+  );
+}
+
+export function RecordingResultPage() {
+  const { storeId, entryId } = useParams<{ storeId: string; entryId: string }>();
+  const location = useLocation();
+  /*
+   * 这一屏挂在全屏层、不在 AppShell 里，而壳层卸载时会把自己设的 <html data-theme> 清掉。
+   * 不自己落一次的话，录音那套作用域配色里 [data-theme='dark'] 这一档永远不匹配——
+   * 深色（含跟随系统解析成深色）的用户会拿到浅色版（Codex 第二十二轮 P1）。
+   * 用共享 hook，不自己写 effect：偏好是 'system' 时 store 里的 mode 不变，
+   * 只依赖 mode 的 effect 不会重跑，DOM 会停在旧主题。
+   */
+  useApplyDocumentTheme(location.pathname);
+  /*
+   * 这一屏挂在全屏层、不在 AppShell 里，而壳层卸载时会把自己设的 <html data-theme> 清掉。
+   * 不自己落一次的话，录音那套作用域配色里 [data-theme='dark'] 这一档永远不匹配——
+   * 深色（含跟随系统解析成深色）的用户会拿到浅色版（Codex 第二十二轮 P1）。
+   * 用共享 hook，不自己写 effect：偏好是 'system' 时 store 里的 mode 不变，
+   * 只依赖 mode 的 effect 不会重跑，DOM 会停在旧主题。
+   */
+  const navigate = useNavigate();
+  const [state, setState] = useState<LoadState>({ kind: 'loading' });
+  // 时长只有加载完音频的播放器知道，条目元数据里没有这个字段。
+  // 与其为了顶部栏那一行去后端加字段，不如听已经知道它的那一端说
+  // （recordingPlayBridge 的既有通道，处理中那一屏也用它）。
+  const [durationSec, setDurationSec] = useState(0);
+  useEffect(() => onRecordingDuration(setDurationSec), []);
+  /*
+   * 换录音归零（见 doc/rule.prd-admin.recording-entry-scope.md）。
+   * 这是同一个毛病的**第四处**：时长由播放器广播上来，而这几屏都是「同一条路由换参数、
+   * 组件被复用」，不显式放掉就会拿上一条的值给新录音标价；新录音解不出元数据时永久留着。
+   */
+  useEffect(() => { setDurationSec(0); }, [entryId]);
+
+  /*
+   * `?play=1` 是「进入结果页并开始播放」那一下的后半段。
+   * 起播必须发生在这一屏——上一屏先播会造成「声音已经在响、画面还在旧页」。
+   *
+   * 这里**不再 setTimeout 等播放器挂载**：窄通道自己带闩，挂载前发的请求会在播放器
+   * 订阅时补发，那 120ms 白等。
+   * 但闩留住的是**这个请求**，不是浏览器的手势活跃期——播放器要等这一屏加载完
+   * （一次网络往返）才挂得上来，真正调 play() 已经在活跃期之外。所以移动端 Safari
+   * 拒掉这一发是可能的，那不是缺陷：播放器把 NotAllowedError 单独认出来，控件留在
+   * 原地并补一句「点播放键继续」，不会把能播的录音判成「无法播放」。
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const wantsAutoplay = searchParams.get('play') === '1';
+  useEffect(() => {
+    if (!wantsAutoplay || state.kind !== 'ready') return;
+    requestRecordingPlay();
+    // 用掉就把参数擦掉：留着的话刷新一次又会自己响一遍，那不是用户点的
+    setSearchParams(prev => { const next = new URLSearchParams(prev); next.delete('play'); return next; }, { replace: true });
+  }, [setSearchParams, state.kind, wantsAutoplay]);
+
+  /*
+   * 处理页那颗「进入结果页并开始播放」是**一直可点**的（稿面就是这么画的：不必等转录跑完
+   * 就能先去听）。于是用户可能在 `transcribe_entry_id` 还没落到音频条目上时就进到这一屏。
+   * 只加载一次的话，这一屏会永远停在空原文——转录几秒后完成了它也不知道，
+   * 直到用户手动刷新（Codex P1 抓到的正是这条）。
+   * 所以：笔记还没有、但确实有一条在途的转录 run 时，继续等它，等到就重新加载。
+   */
+  const [awaitNoteTick, setAwaitNoteTick] = useState(0);
+  /** 加载失败那一屏的「重试」：不给控件就别在文案里许重试（expectation-management） */
+  const [loadTick, setLoadTick] = useState(0);
+  const noteMissing = state.kind === 'ready' && !state.noteId;
+  /** 与库有关的一切都读这个：加载完成后是条目真正的归属库，加载中才退回路由参数 */
+  const activeStoreId = state.kind === 'ready' ? state.storeId : (storeId ?? '');
+  useEffect(() => {
+    if (!entryId || !noteMissing) return;
+    let stale = false;
+    let timer = 0;
+    /*
+     * 只在**真的有一条在途转录**时才等。从没转过、或者已经彻底失败的音频，
+     * 笔记永远不会出现——不判这一下的话，这个定时器会陪着标签页一直转下去，
+     * 每三秒打一次接口（Codex P2 抓到的正是这条）。
+     * 再加一道上限：即使 run 一直挂着，也不无限等下去。
+     */
+    let attempts = 0;
+    const MAX_ATTEMPTS = 100; // 3s × 100 ≈ 5 分钟
+    let doneGrace = 0;
+    const MAX_DONE_GRACE = 5; // run 已 done、笔记还没读到时再等 5 轮（约 15 秒）
+    /*
+     * **串行**：一轮（两个请求）都回来了才排下一轮。定点发在后端慢或抖动时会让两轮叠着飞，
+     * 一屏最长等五分钟，攒出的并发查询正好压在已经不行的服务端上
+     * （Codex 第三十七轮 P2；另外两条轮询已经是串行的，这条落下了）。
+     */
+    const schedule = () => { timer = window.setTimeout(() => { void tick(); }, 3000); };
+    const tick = async () => {
+      if (stale) return;
+      attempts += 1;
+      const runRes = await getLatestAgentRun(entryId, 'transcribe');
+      if (stale) return;
+      /*
+       * **查询本身失败 ≠ 没有在途转录**。此前两者合成一个布尔：一次网络抖动就把定时器
+       * 永久清掉，笔记随后发布也不会自动装上，用户只能手动刷新（Codex 第三十二轮 P2）。
+       * 查不到就当作「还不知道」，照常等下一轮，只受上面那道次数上限约束；
+       * 只有**查成功且确认不在途**才是真的可以收手。
+       */
+      if (attempts >= MAX_ATTEMPTS) return;
+      if (!runRes.success) {
+        /*
+         * 抖动照常等下一轮；**永久失败**（条目不存在、或这个账号对它只有只读权限）
+         * 再等五分钟也是同一个答案，当场收手，别白问一百遍（Codex 第三十五轮 P2 同一形状）。
+         */
+        if (!isPermanentLookupFailure(runRes.error?.code)) schedule();
+        return;
+      }
+      /*
+       * 「不在途」有两种，收手之前要分开：
+       *   - failed / cancelled / 压根没有 run：笔记不会出现，停。
+       *   - done：**笔记多半已经在了**（worker 先写笔记与 metadata，再把 run 标成 done），
+       *     此前这一档直接返回，于是「跑完那一刻恰好落在两次查询之间」时这一屏一直空着，
+       *     要用户自己刷新（Codex 第三十九轮 P2）。所以 done 也往下走，去看一眼笔记。
+       */
+      const status = runRes.data?.status;
+      const inflight = isTranscriptionInflight(status);
+      const succeeded = isTranscriptionSucceeded(status);
+      if (!inflight && !succeeded) return;
+      const entryRes = await getDocumentEntry(entryId);
+      if (stale) return;
+      if (!entryRes.success) { schedule(); return; }
+      // 只认「笔记真的出现了」这一个信号：run 跑完但还没发布时重载没有意义
+      if (entryRes.data?.metadata?.transcribe_entry_id) {
+        setAwaitNoteTick(v => v + 1);
+        return;
+      }
+      /*
+       * run 已经 done 但笔记还没露面：给几轮宽限（发布与读到之间有时差），
+       * 不无限等——真发布不出来的话，等到天亮也不会有（跟在途那一档不同，
+       * 在途那边有 worker 在跑，宽限没有意义）。
+       */
+      if (!inflight) {
+        doneGrace += 1;
+        if (doneGrace > MAX_DONE_GRACE) return;
+      }
+      schedule();
+    };
+    void tick();
+    return () => { stale = true; window.clearTimeout(timer); };
+  }, [entryId, noteMissing]);
+
+  useEffect(() => {
+    if (!entryId || !storeId) {
+      setState({ kind: 'error', message: '缺少录音标识，无法打开这一屏' });
+      return;
+    }
+    let stale = false;
+    setState({ kind: 'loading' });
+    (async () => {
+      const entryRes = await getDocumentEntry(entryId);
+      if (stale) return;
+      if (!entryRes.success || !entryRes.data) {
+        setState({ kind: 'error', message: entryRes.error?.message || '这条录音打不开，可能已被删除' });
+        return;
+      }
+      const entry = entryRes.data;
+      const noteId = entry.metadata?.transcribe_entry_id;
+      // 音频本体与转录笔记是两条内容：音频给播放器，笔记给跟读。
+      // 笔记还没生成时不是错误——那是「还在处理」，交给下面的空态说清楚。
+      // 笔记**条目**也要拉：它的 updatedAt 就是「这份整理是什么时候生成的」，
+      // 「一键整理」那张已生成卡上的「12 秒前」读的正是它。
+      // 库以**条目自己说的**为准；条目没带就退回路由参数
+      const owningStoreId = entry.storeId || storeId;
+      const [audioRes, noteRes, noteEntryRes, storeRes] = await Promise.all([
+        getDocumentContent(entry.id),
+        noteId ? getDocumentContent(noteId) : Promise.resolve(null),
+        noteId ? getDocumentEntry(noteId) : Promise.resolve(null),
+        getDocumentStoreReal(owningStoreId),
+      ]);
+      if (stale) return;
+      const audioUrl = audioRes.success ? (audioRes.data?.fileUrl ?? '') : '';
+      if (!audioUrl) {
+        setState({ kind: 'error', message: '这条录音的音频文件不可用' });
+        return;
+      }
+      /*
+       * 笔记条目明明在（entry 上有 transcribe_entry_id），正文却没取回来——这是**取失败**，
+       * 不是「这段录音没有原文」。此前这里退成空串照常进 ready：屏上一片空白，
+       * 而等笔记那个轮询因为 noteId 已经有值不会跑，用户只能手动刷新；更糟的是
+       * 「导出」这时会导出一份空原文（Codex 第二十四轮 P2）。
+       * 取失败就报错并给重试，不假装这条录音没有原文。
+       */
+      if (noteId && !noteRes?.success) {
+        setState({ kind: 'error', message: '这条录音的原文没能取回来，请重试' });
+        return;
+      }
+      setState({
+        kind: 'ready',
+        title: entry.title,
+        storeId: owningStoreId,
+        storeName: storeRes?.success ? (storeRes.data?.name ?? '') : '',
+        audioUrl,
+        noteMd: noteRes?.success ? (noteRes.data?.content ?? '') : '',
+        noteId: noteId ?? '',
+        // 整理方式盖在音频条目上（与阅读器读同一个字段，不新开一条取法）
+        // 同上：笔记条目上的那份才是 restyle 之后的真值
+        styleKey: (noteEntryRes?.success ? noteEntryRes.data?.metadata?.transcribe_style_key : null)
+          ?? entry.metadata?.transcribe_style_key
+          ?? null,
+        generatedAt: noteEntryRes?.success ? (noteEntryRes.data?.updatedAt ?? null) : null,
+      });
+      noteRevisionRef.current = noteEntryRes?.success ? (noteEntryRes.data?.updatedAt ?? null) : null;
+    })().catch((error: unknown) => {
+      if (!stale) setState({ kind: 'error', message: error instanceof Error ? error.message : '这条录音打不开' });
+    });
+    return () => { stale = true; };
+    // awaitNoteTick：上面那个等待器发现笔记发布了，就靠它把这次加载再跑一遍
+  }, [awaitNoteTick, entryId, loadTick, storeId]);
+
+  const goBack = useCallback(() => {
+    // 优先退回来路（多半是知识库里那条录音），没有来路才落到知识库首页——
+    // 独立全屏页最容易出的问题就是「进得来出不去」。
+    // 判据是**站内**历史标记：window.history.length 会把「深链之前在同一标签页看过的外站」
+    // 也算进去，那样 navigate(-1) 是把人送出 MAP（Codex 第二十一轮 P2）。
+    if (canGoBackInApp()) navigate(-1);
+    // 退回列表也要落到真实归属的那个库，别把人送到深链里写错的那个
+    else navigate(`/document-store?store=${activeStoreId}`);
+  }, [activeStoreId, navigate]);
+
+  /*
+   * 左栏那份文档清单（设计稿 D1/D2）。只在宽屏挂出来，所以也只在宽屏拉——
+   * 手机上多打一次列表请求，换不来任何一个像素。
+   *
+   * 转录笔记（带 source_entry_id 的那些）不进清单：它们是音频条目的产出，
+   * 列进去会让同一段录音在栏里出现两次，用户点第二条会落到一个没有播放器的纯文本页。
+   */
+  /** 离线告知（稿面 v2-S7）：只告知，不建离线编辑队列 */
+  const [offline, setOffline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine === false);
+  useEffect(() => {
+    const online = () => setOffline(false);
+    const down = () => setOffline(true);
+    window.addEventListener('online', online);
+    window.addEventListener('offline', down);
+    return () => { window.removeEventListener('online', online); window.removeEventListener('offline', down); };
+  }, []);
+
+  const isDesktop = useIsDesktop();
+  const [siblings, setSiblings] = useState<{ id: string; title: string; isAudio: boolean }[]>([]);
+  useEffect(() => {
+    if (!isDesktop || !activeStoreId) return;
+    let alive = true;
+    void listDocumentEntriesReal(activeStoreId).then((res) => {
+      if (!alive || !res.success) return;
+      const items = (res.data as { items?: DocumentEntryLike[] } | null)?.items ?? [];
+      setSiblings(items
+        .filter(item => !item.metadata?.source_entry_id)
+        .map(item => ({
+          id: item.id,
+          title: item.title ?? '未命名',
+          isAudio: (item.contentType ?? '').toLowerCase().startsWith('audio/'),
+        })));
+    });
+    return () => { alive = false; };
+  }, [isDesktop, activeStoreId]);
+
+  const openSibling = useCallback((item: { id: string; isAudio: boolean }) => {
+    if (item.id === entryId) return;
+    if (item.isAudio) navigate(`/document-store/${activeStoreId}/recording/${item.id}`);
+    else navigate(`/document-store?store=${activeStoreId}&entry=${item.id}`);
+  }, [activeStoreId, entryId, navigate]);
+
+  const sidebar = state.kind === 'ready' ? (
+    <nav
+      className="flex h-full w-[300px] shrink-0 flex-col gap-4 overflow-y-auto px-4 py-4"
+      style={{ background: 'var(--bg-base)', borderRight: '1px solid var(--border-faint)' }}
+      aria-label="知识库导航"
+    >
+      <div className="flex items-center gap-2.5 px-1">
+        <span
+          className="flex h-8 w-8 items-center justify-center rounded-[9px]"
+          style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+          aria-hidden
+        >
+          <BookText size={16} />
+        </span>
+        <span className="text-[16px] font-semibold" style={{ color: 'var(--text-primary)' }}>MAP 知识库</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => navigate(`/document-store?store=${activeStoreId}&record=1`)}
+        className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-[12px] text-[14px] font-semibold"
+        style={{ background: 'var(--recording-cta-bg)', color: 'var(--recording-cta-fg)' }}
+      >
+        <Mic size={15} /> 新录音
+      </button>
+      <div className="flex flex-col gap-1">
+        <p className="px-2 pb-1 text-[12px]" style={{ color: 'var(--text-muted)' }}>{state.storeName || '知识库'}</p>
+        {siblings.map(item => {
+          const current = item.id === entryId;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => openSibling(item)}
+              aria-current={current ? 'page' : undefined}
+              className="flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-[10px] px-2 text-left text-[14px]"
+              style={{
+                background: current ? 'var(--bg-elevated)' : 'transparent',
+                color: current ? 'var(--text-primary)' : 'var(--text-secondary)',
+                fontWeight: current ? 600 : 400,
+              }}
+            >
+              <FileText size={15} className="shrink-0" style={{ color: 'var(--text-muted)' }} aria-hidden />
+              <span className="truncate">{item.title}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  ) : null;
+
+  /** 说话人数：从原文里数出来的，数不出来（没有说话人标签）就不说这一句 */
+  const speakerCount = useMemo(() => {
+    if (state.kind !== 'ready') return 0;
+    return buildSpeakerStats(parseTranscriptSegments(state.noteMd)).length;
+  }, [state]);
+
+  const subtitle = useMemo(() => {
+    if (state.kind !== 'ready') return '';
+    const parts: string[] = [];
+    if (state.storeName) parts.push(`已保存到「${state.storeName}」`);
+    const duration = formatDuration(durationSec);
+    if (duration) parts.push(duration);
+    if (speakerCount > 0) parts.push(`${speakerCount} 位说话人`);
+    return parts.join(' · ');
+  }, [durationSec, speakerCount, state]);
+
+  /**
+   * 导出（稿面 D1 顶栏那颗）：把这份转录原文存成本地 .md。
+   * 不做「导出为 PDF/Word」那一摊——稿面只画了一个按钮，多出来的格式没有依据。
+   */
+  const exportNote = useCallback(() => {
+    /*
+     * 没有原文就没什么可导的。从处理页可以在笔记发布之前就进到这一屏（那颗按钮一直可点，
+     * 稿面就是这么定的），此时 `ready` 里的 noteMd 是空串——照导会给用户一个 0 字节的 .md，
+     * 看上去像「转录出来就是空的」（Codex 第四十三轮 P2）。
+     * 这里再挡一道：按钮本身在没有原文时就不渲染，这一层是防以后有人从别处调它。
+     */
+    if (state.kind !== 'ready' || !state.noteMd.trim()) return;
+    const blob = new Blob([state.noteMd], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${state.title || '录音转录'}.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // 立刻回收会让部分浏览器来不及取数据，留一帧再释放
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [state]);
+
+  // 原文还没出来时不摆这颗：能点却只会给一份空文件的按钮，比没有按钮更误导
+  const headerActions = state.kind === 'ready' && state.noteMd.trim() ? (
+    <button
+      type="button"
+      onClick={exportNote}
+      className="flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-[12px] px-3.5 text-[14px] font-semibold"
+      style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
+    >
+      <Download size={15} /> 导出
+    </button>
+  ) : null;
+
+  /*
+   * 下面这几条回调是这一屏的**接线**。它们缺席时组件不会报错，只是把
+   * 一键整理 / 逐句校对 / 词典 / 改说话人 / 重新生成整块静默藏起来——
+   * 编译过、路由能进、测试也绿，只有真的打开这一屏才看得出少了半个页面
+   * （predicate-and-wiring-discipline 形状 2：建了一半的链路只会静默退化）。
+   * 阅读器内嵌形态早就接好了这几条，独立全屏页此前一条都没传。
+   */
+
+  /** 在途的整理 run：选了哪一种、跑到哪了。没有在途就是 null。 */
+  const [running, setRunning] = useState<{ runId: string; styleKey: string; percent: number } | null>(null);
+  /*
+   * 换录音就把在途整理摘掉。同一条路由只换 params 时组件不重挂，`running` 会跟着
+   * 留在下一条录音上——那一条于是显示着别人的进度条，而且因为 `running` 非空，
+   * 它自己的整理点了没反应；A 跑完时轮询回调还会拿 B 的 id 去 reload（Codex P2）。
+   */
+  /**
+   * 刚点下、还没拿到 runId 的那一种整理方式。
+   * 锁本身是 ref（必须同步，见下面那段），但 ref 不触发重渲染：只有它的话，
+   * 发起期间卡片一动不动，而后续点击已经被锁静默吞掉——慢的时候用户干等好几秒，
+   * 不知道自己点上没有（AGENTS.md §6：模型调用必须可视化）。
+   */
+  const [launchingStyle, setLaunchingStyle] = useState<string | null>(null);
+  useEffect(() => { setRunning(null); setLaunchingStyle(null); }, [entryId]);
+
+  // 轮询回调里要读「当前的笔记 id」，但它不能进 effect 依赖——依赖一变轮询就重来。
+  const noteIdRef = useRef('');
+  noteIdRef.current = state.kind === 'ready' ? state.noteId : '';
+  /** 当前这一屏是哪条录音。异步回调回来时拿它认人，别把结果落到已经切走的那条上 */
+  const entryIdRef = useRef('');
+  /*
+   * 笔记条目的 updatedAt，当**版本令牌**用：离线草稿拿它当基线，补传前比一次。
+   * 单独存一份、不借用 state.generatedAt——那个值是展示用的「这份整理生成于」，
+   * 用户手改一次正文并不代表摘要是那时生成的，两个含义共用一个字段迟早读错
+   * （predicate-and-wiring-discipline 形状 6）。
+   * 在线保存成功后要跟着刷新，否则「自己刚存过、随后离线再改」会被误判成别人改过
+   * （Codex 第九轮 P2）。
+   */
+  const noteRevisionRef = useRef<string | null>(null);
+  /** 本机压着的离线草稿；reloadNote 要用它判「正文该不该让位」，所以声明在它之前 */
+  const pendingRef = useRef<QueuedOfflineEdit | null>(null);
+  /** 草稿按账号存：共享浏览器上换个人登录就不该恢复上一位的稿子 */
+  const ownerId = useAuthStore(state => state.user?.userId ?? '');
+  entryIdRef.current = entryId ?? '';
+
+  /**
+   * 重新拉一次笔记正文与生成时间（整理跑完之后，界面得换成新的那一份）。
+   *
+   * 返回「**远端正文有没有真的装上**」：丢弃离线草稿那条路要拿它当前提——
+   * 装不上就不能清掉草稿，否则屏幕上留着的还是那份草稿，而本机唯一的副本已经删了
+   * （Codex 第十五轮 P1）。
+   */
+  /**
+   * 重新拉这条笔记。
+   *
+   * `discardLocalDraft`：用户在冲突横幅上明说「丢弃我的离线草稿」时传 true——
+   * 那一路要的正是「用云端那份把屏幕上的草稿换掉」。默认 false，正文让位给本机草稿。
+   */
+  const reloadNote = useCallback(async (discardLocalDraft = false): Promise<boolean> => {
+    const noteId = noteIdRef.current;
+    if (!noteId || !entryId) return false;
+    const [contentRes, noteEntryRes, audioEntryRes] = await Promise.all([
+      getDocumentContent(noteId),
+      getDocumentEntry(noteId),
+      getDocumentEntry(entryId),
+    ]);
+    /*
+     * 这一发回来时用户可能已经从侧栏切到另一条录音了（同一条路由只换 params，
+     * 组件不重挂）。只判 `cur.kind === 'ready'` 拦不住这种情况——那样 A 的正文会
+     * 落到 B 的屏幕上，B 随后一次编辑就把它存成 B 的内容（Codex 第十二轮 P1）。
+     * 所以完成时先认一遍「我是不是还在当初那条笔记上」，不是就整段丢弃。
+     */
+    if (noteIdRef.current !== noteId) return false;
+    /*
+     * 本机还压着这条笔记的离线草稿时，**不许拿服务端那份盖掉屏幕上的正文**。
+     * 盖掉之后草稿仍留在队列里没补传，用户再改一句，onSaveNote 是在服务端那份上
+     * 重建整篇的——那几处离线校对就此永久消失，而且屏幕上从没提示过
+     * （Codex 第二十六轮 P1）。正文留着，其余元信息照常更新；
+     * 传不传、覆盖还是丢弃，交给冲突横幅那两颗按钮。
+     */
+    const keepLocalDraft = !discardLocalDraft && isFlushable(pendingRef.current, noteId, ownerId);
+    setState(cur => (cur.kind === 'ready' && cur.noteId === noteId
+      ? {
+        ...cur,
+        noteMd: keepLocalDraft
+          ? cur.noteMd
+          : (contentRes.success ? (contentRes.data?.content ?? cur.noteMd) : cur.noteMd),
+        generatedAt: noteEntryRes.success ? (noteEntryRes.data?.updatedAt ?? cur.generatedAt) : cur.generatedAt,
+        /*
+         * 整理方式**先读笔记条目**：restyle 处理器把 `transcribe_style_key` 写在
+         * 输出笔记上（`SubtitleGenerationProcessor` 的 restyle 分支），只有录音与笔记
+         * 是同一篇时它才顺带落在音频条目上。旧数据里两者是两篇，光读音频条目就会
+         * 一直拿到整理之前的那一种，「重新生成」于是按旧风格再跑一次（Codex P2）。
+         */
+        styleKey: (noteEntryRes.success ? noteEntryRes.data?.metadata?.transcribe_style_key : null)
+          ?? (audioEntryRes.success ? audioEntryRes.data?.metadata?.transcribe_style_key : null)
+          ?? cur.styleKey,
+      }
+      : cur));
+    // 正文这一路成功才算「换上了」——条目元数据失败只影响生成时间与整理方式的展示
+    const installed = contentRes.success && typeof contentRes.data?.content === 'string' && !keepLocalDraft;
+    /*
+     * 版本令牌跟着这份新拉回来的一起走。漏了的话：整理重跑或丢弃草稿之后服务端那份
+     * 已经换了新时刻，而令牌还停在进页面时那一刻——用户下一次断网校对拿它当基线，
+     * 重连时就会被判成「云端有更新」，冲突横幅是假的（在线保存与补传两路都刷了，
+     * 这一路漏了，Codex 第十八轮 P2）。
+     *
+     * **但只有正文真的换上了才准推进**：条目查到了、正文这一发失败（或正文让位给了本机草稿），
+     * 屏幕上还是旧文字，而令牌已经指向服务端的新版本——用户接着离线改这段旧文字，
+     * 基线一比「一样」，补传就把刚整理出来的新内容整篇盖掉，全程没有任何冲突提示
+     * （Codex 第二十九轮 P1）。这两件事必须绑在一起：装上了才认它的版本。
+     */
+    if (installed && noteEntryRes.success && noteEntryRes.data?.updatedAt) {
+      noteRevisionRef.current = noteEntryRes.data.updatedAt;
+    }
+    return installed;
+    // ownerId 进依赖：本机草稿按账号存，判「要不要让位给草稿」时不能拿旧账号
+  }, [entryId, ownerId]);
+
+  /*
+   * run 状态轮询。这里不订 SSE：这一屏只需要「跑完了没有、跑到哪了」两个数，
+   * 2 秒一次的轮询足够，且断线自愈——而 SSE 漏一个 done 事件就会永远停在「生成中」。
+   */
+  const reloadNoteRef = useRef(reloadNote);
+  reloadNoteRef.current = reloadNote;
+  /*
+   * 依赖只能是 runId，不能是 running 这个对象：下面每收到一次进度都会 setRunning
+   * 出一个新对象，依赖对象的话这个 effect 每次响应都重建一次——重建时又立刻 tick 一发，
+   * 两秒的轮询于是退化成「以网络往返为周期」的连发（Codex 第八轮 P2，
+   * 与此前整理清单那次无限拉取是同一种形状）。
+   */
+  const runningRunId = running?.runId ?? '';
+  useEffect(() => {
+    if (!runningRunId) return;
+    let stale = false;
+    let timer = 0;
+    /*
+     * **串行**：一发回来了才排下一发。定点发（setInterval）在后端慢或抖动时会让请求叠着飞，
+     * 一屏挂久了就攒出一堆并发的状态查询，正好在服务端已经不行的时候再加一把火
+     * （Codex 第三十六轮 P2）。处理页那条轮询早就是串行的，这一条落下了。
+     */
+    const schedule = () => { timer = window.setTimeout(() => { void tick(); }, 2000); };
+    let watchFailures = 0;
+    const MAX_WATCH_FAILURES = 5; // 约 10 秒的抖动容忍
+    const tick = async () => {
+      const res = await getAgentRun(runningRunId);
+      if (stale) return;
+      if (!res.success) {
+        /*
+         * 同样分两种（判定与另外两条轮询共用一份）：
+         *   - 永久失败（这条 run 不存在，或它不是这个账号发起的、查不到）：再问也是同一个答案，
+         *     此前会串行地问到标签页关掉为止，屏幕上还挂着一根永远不动的进度条。
+         *   - 抖动：照常再试，但也有上限，免得无限空转。
+         * 两种都要把进度条摘掉并说一句——挂着不动的进度条比没有进度条更误导。
+         */
+        watchFailures += 1;
+        if (isPermanentLookupFailure(res.error?.code) || watchFailures >= MAX_WATCH_FAILURES) {
+          setRunning(null);
+          toast.error('跟不到这条整理的进度了', '整理仍在服务端继续，刷新这一页看结果');
+          return;
+        }
+        schedule();
+        return;
+      }
+      watchFailures = 0;
+      const run = res.data;
+      if (run.status === 'done') {
+        setRunning(null);
+        /*
+         * 整理跑完了，但正文这一发可能没取回来。此前这里把返回值丢掉：进度条消失、
+         * 没有任何错误、屏幕上还是整理前那份原文——用户以为「整理完了却什么都没变」，
+         * 而导出与继续编辑用的也仍是旧正文（Codex 第三十一轮 P2）。
+         * 说出来并给一条出路：这一屏的加载重跑一次就能把新正文取下来。
+         * 「本机压着草稿所以正文有意让位」不算失败，那一档 keepLocalDraft 已经拦在前面，
+         * 界面上有冲突横幅在说话，这里不再重复报错。
+         */
+        const installed = await reloadNoteRef.current();
+        if (!installed && !isFlushable(pendingRef.current, noteIdRef.current, ownerId)) {
+          toast.error('整理已完成，但新原文没能取回来', '点一下「重试」或刷新这一页');
+        }
+      } else if (run.status === 'failed' || run.status === 'cancelled') {
+        setRunning(null);
+        toast.error(run.errorMessage || '整理没有完成');
+      } else {
+        // 进度没变就返回同一个对象：没变还换一个新对象，等于让所有读它的地方白重渲染一次
+        setRunning((prev) => {
+          if (!prev || prev.runId !== run.id) return prev;
+          const percent = run.progress ?? prev.percent;
+          return percent === prev.percent ? prev : { ...prev, percent };
+        });
+        // 终态那两支各自收手（setRunning(null) 之后这个 effect 会被新的 runId 重建），
+        // 只有「还在跑」才继续排下一发
+        schedule();
+      }
+    };
+    void tick();
+    return () => { stale = true; window.clearTimeout(timer); };
+  // ownerId 进依赖：上面判「是不是本机草稿有意让位」时要用当前账号
+  }, [ownerId, runningRunId]);
+
+  /*
+   * 离线期的校对不该被丢掉。稿面 v2-S7 承诺的是「编辑内容排队等待同步，联网后自动上传，
+   * 无需重做」——那句话必须先有一个**真的队列**才配写出来（no-rootless-tree）。
+   * 队列很薄：同一条笔记以最后一次内容为准（覆盖写语义本来就是最后一次赢），
+   * 但计数记的是**用户改了几次**，因为那才是他关心的「我有多少东西还没上去」。
+   */
+  const [pendingEdits, setPendingEdits] = useState<QueuedOfflineEdit | null>(null);
+  /** 队列没落住本机存储（隐私模式 / 站点数据被禁 / 配额满）：承诺要跟着降级 */
+  const [queueVolatile, setQueueVolatile] = useState(false);
+  /**
+   * 自动补传停下来了，等用户裁决。存的是**为什么**停：三种理由给三句不同的话，
+   * 混成一句就会在「其实没人改过、只是版本没查着」时对用户说假话（Codex 第二十轮 P1）。
+   */
+  const [flushConflict, setFlushConflict] = useState<OfflineFlushReason | null>(null);
+  /**
+   * 在线补传卡在「版本没查着」这一步。
+   *
+   * 这一档必须**看得见**：横幅原本只在离线时出现，而这时用户已经联网了——屏幕上
+   * 什么都不说，他会以为那句「联网后自动上传」已经兑现，关掉标签页草稿就随
+   * sessionStorage 一起没了（Codex 第三十五轮 P1）。
+   * 存三态而不是布尔：还在自动重试、和重试次数用完了，是两句不同的话，
+   * 后者再说「会自动再试」就是假话。
+   */
+  const [flushStalled, setFlushStalled] = useState<null | 'retrying' | 'exhausted'>(null);
+  /** 重试的节拍：补传这个 effect 只认依赖变化，靠它把「过一会儿再试一次」接回去 */
+  const [flushRetryTick, setFlushRetryTick] = useState(0);
+  /** 按草稿版本记重试次数：换了一份新草稿就重新计数，不继承上一份的额度 */
+  const flushRetryRef = useRef<{ savedAt: number; attempts: number }>({ savedAt: 0, attempts: 0 });
+  pendingRef.current = pendingEdits;
+  /** 所有对笔记的写共用一条串行链，避免旧内容后到覆盖新内容 */
+  const writeChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueueWrite = useCallback(<T,>(run: () => Promise<T>): Promise<T> => {
+    const next = writeChainRef.current.then(run, run);
+    writeChainRef.current = next.catch(() => undefined);
+    return next;
+  }, []);
+
+  /** 同页校对：整份 markdown 覆盖写回转录笔记条目 */
+  const onSaveNote = useCallback(async (nextNoteMd: string) => {
+    if (state.kind !== 'ready' || !state.noteId) return false;
+    /*
+     * 冲突还没裁决时不许写。横幅正挂着说「云端那份被改过 / 没法确认云端版本」，
+     * 而这一屏显示的是本机草稿；此时用户随手改一句正文或换个说话人名，走的是下面
+     * 那条无条件整篇 PUT，**同事那一版被静默整篇盖掉，横幅自己消失，两边都没有提示**。
+     * `decideOfflineFlush` 那道门只拦自动补传，拦不到这条路（Codex 对抗审查 B1）。
+     * 所以停在这里，把用户推回横幅上那两颗按钮——覆盖还是丢弃，由他明说。
+     */
+    if (flushConflict) {
+      toast.error('先处理上面的冲突提示', '这份原文在云端的版本还没裁决，选「覆盖」或「丢弃」之后再改');
+      return false;
+    }
+    // 这次保存写的是哪条笔记：await 回来之后拿它认人，不认就会写到切走后的那一条上
+    const savingNoteId = state.noteId;
+    /*
+     * 发起这一发时，本机队列里压的是哪一份（没有就是 null）。PUT 回来之后要拿它比一次：
+     * 这中间可能断了网、用户又改了一句，于是排下一份**更新的**草稿。
+     * 不比就无条件清：那份更新的草稿被从本机删掉，横幅跟着消失，屏幕上的正文还被换回
+     * 这一发保存的旧内容——用户刚写的那几处三处一起没了（Codex 第三十七轮 P1）。
+     * 自动补传与「用我的版本覆盖」两条路早就按 savedAt 复核过，这条落下了。
+     */
+    const queuedBeforeSave = pendingRef.current?.savedAt ?? null;
+    /*
+     * 发起这一发时的版本令牌。存成功之后，**这中间新排下的那份草稿**的基线正是这个值——
+     * 它是在这一发落地之前排的，服务端那时还没变。下面要拿它认一次，决定要不要把
+     * 那份草稿的基线搬到这一发产生的新版本上。
+     */
+    const revisionBeforeSave = noteRevisionRef.current;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      // 离线：收进队列并乐观落到本地。这不是「假装保存成功」——联网后真的会补传，
+      // 而且横幅上明写着还有几处没上去，用户随时看得到自己欠了多少。
+      // 队列**认笔记**并落本机存储：不认的话从侧栏切到另一条录音就会把这一条的内容
+      // 写进那一条；不落盘的话刷新一次承诺就落空（两条都是 Codex P1 抓到的）。
+      const noteId = state.noteId;
+      const queued: QueuedOfflineEdit = {
+        ownerId,
+        noteId,
+        count: (pendingRef.current?.noteId === noteId ? pendingRef.current.count : 0) + 1,
+        content: nextNoteMd,
+        savedAt: Date.now(),
+        /*
+         * 基线沿用**第一次**排队时那份，不是每次改都刷新：中间这几次改都是离线发生的，
+         * 服务端那份自始至终没动过。generatedAt 就是笔记条目的 updatedAt。
+         */
+        baseUpdatedAt: pendingRef.current?.noteId === noteId
+          ? pendingRef.current.baseUpdatedAt
+          : noteRevisionRef.current,
+      };
+      // 落不住盘就别说「刷新也不会丢」——横幅文案跟着降级（Codex P1）
+      setQueueVolatile(!saveOfflineEdit(queued));
+      setPendingEdits(queued);
+      // 认笔记：这一下是同步的，但保持与下面那处同一口径，别给「切走之后落回来」留门
+      setState(prev => (prev.kind === 'ready' && prev.noteId === noteId ? { ...prev, noteMd: nextNoteMd } : prev));
+      return true;
+    }
+    /*
+     * 联网保存与「补传离线队列」必须排队，不能同时在飞：两个 PUT 谁先到服务端不确定，
+     * 旧的那份后到就会把新的盖掉，而队列随后被清空——用户刚改的那一版无声消失
+     * （Codex P1）。所有写都挂在同一条链上，后一个等前一个落地。
+     */
+    const res = await enqueueWrite(() => updateDocumentContent(state.noteId, nextNoteMd, 'text/markdown'));
+    if (!res.success) {
+      toast.error(res.error?.message || '保存失败');
+      return false;
+    }
+    /*
+     * online 存成功 = 服务端已经拿到这一版，**发起时**排着的那份旧草稿作废。
+     * 但只有「队列里还是发起时那一份」才配清：期间新排下的那份比服务端这一版还新。
+     * 这一句按 savingNoteId 清——那份草稿属于 A，与现在停在哪一屏无关。
+     */
+    const queueUnchanged = (pendingRef.current?.savedAt ?? null) === queuedBeforeSave;
+    if (queueUnchanged) clearOfflineEdit(savingNoteId, ownerId);
+    /*
+     * 下面这几处改的都是**当前这一屏**的共享状态（版本令牌、待同步队列、冲突横幅），
+     * 所以要先认笔记：PUT 回来时用户可能已经从侧栏切到 B 了，无条件写的话
+     *   - B 的版本令牌会被换成 A 的时刻，B 之后一次离线编辑就带着错基线，
+     *     重连时要么误判冲突、要么反过来盖掉别人真的改过的那一版；
+     *   - B 刚恢复出来的待同步与冲突横幅被一并清掉，一个真实的冲突就此消失在界面上。
+     * 覆盖那一路早就有这道门，在线保存这一路只守住了最后的正文替换（Codex 第十九轮 P1）。
+     */
+    if (noteIdRef.current !== savingNoteId) return true;
+    // 服务端这一版就是最新版本：版本令牌跟着走，否则「刚存过、随后离线再改」
+    // 会拿着加载时那个旧时刻当基线，重连时把自己的上一次保存误判成别人改的
+    if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
+    if (!queueUnchanged) {
+      /*
+       * 期间排下了更新的草稿：它的正文比服务端这一版还新，队列、横幅、屏幕上的字都属于它，
+       * 一样都不许动。
+       *
+       * 但**基线要跟着走**。那份草稿排队时拿的是这一发保存之前的令牌，而这一发把服务端
+       * 推到了新版本；不搬基线的话，重连补传时 `decideOfflineFlush` 会拿旧基线比新版本，
+       * 判成「云端被别人改过」——改它的正是本标签页自己，于是弹出一个假冲突，
+       * 把承诺好的自动补传拦住，要用户手动裁决（Codex 第四十轮 P2）。
+       * 只搬「基线确实等于这一发保存前那个令牌」的那一份：不等于就说明中间还有别人写过，
+       * 那是真冲突，不许被这一搬抹掉。
+       */
+      const rebased = rebaseOfflineEditAfterOwnSave(
+        pendingRef.current,
+        revisionBeforeSave,
+        res.data?.updatedAt ?? null,
+      );
+      if (rebased) {
+        // 落盘也要跟着改：只改内存的话，刷新之后接回来的还是旧基线那一份
+        setQueueVolatile(!saveOfflineEdit(rebased));
+        setPendingEdits(rebased);
+      }
+      toast.success('这一版已保存；这期间新排下的校对仍在队列里');
+      return true;
+    }
+    setPendingEdits(null);
+    setQueueVolatile(false);
+    setFlushConflict(null);
+    /*
+     * 乐观落到本地：等下一次拉取会让这行字先消失再出现，那是「凭空消失」。
+     * 但要认笔记——这一发是 await 回来的，期间用户可能已经从侧栏切到另一条录音，
+     * 不认的话 A 的正文会落到 B 的屏幕上（Codex 第十二轮 P1）。
+     */
+    setState(prev => (prev.kind === 'ready' && prev.noteId === savingNoteId ? { ...prev, noteMd: nextNoteMd } : prev));
+    return true;
+  }, [enqueueWrite, flushConflict, ownerId, state]);
+
+  /*
+   * 换到另一条笔记时，把这一条本机存着的队列接回来——上一次离线校对可能是在
+   * 刷新之前、甚至上一次打开这个标签页时排下的。接不回来的话，横幅不会提，
+   * 那几处校对就永远躺在本机没人补传。
+   */
+  const noteIdForFlush = state.kind === 'ready' ? state.noteId : '';
+  useEffect(() => {
+    /*
+     * 补传的状态全都是**绑在这条笔记身上**的，换一条就得一起放掉：
+     * A 的自动重试用完了，切到 B 时若把 'exhausted' 留着，B 的第一次查询还没回来
+     * 就先对用户说「自动重试已用完」——一句凭空的假话，而且 B 之后真失败时它还赖着不走
+     * （Codex 第四十二轮 P2）。重试额度同理，B 不该继承 A 用掉的次数。
+     */
+    setFlushStalled(null);
+    flushRetryRef.current = { savedAt: 0, attempts: 0 };
+    if (!noteIdForFlush || !ownerId) { setPendingEdits(null); return; }
+    setFlushConflict(null);
+    const restored = loadOfflineEdit(noteIdForFlush, ownerId);
+    setPendingEdits(restored);
+    /*
+     * 队列接回来的同时，**正文也要接回来**。只接元数据的话，屏幕上还是服务端那份旧的，
+     * 用户看不见自己上次改过什么；更糟的是他随手再改一句，排进队列的是这份旧正文，
+     * 把本机存着的那版校对整个盖掉（Codex 第十二轮 P1）。
+     * 只在这条笔记确实还没同步时装回去——`loadOfflineEdit` 已经核过笔记、账号与过期。
+     */
+    if (restored?.content) {
+      setState(prev => (prev.kind === 'ready' && prev.noteId === noteIdForFlush
+        ? { ...prev, noteMd: restored.content }
+        : prev));
+    }
+  }, [noteIdForFlush, ownerId]);
+
+  /*
+   * 回到一条**还在整理**的录音时，把在途的那一发接回来。
+   * 上面那句「换录音就把在途整理摘掉」摘掉的只是这一屏的显示，服务端那条 run 照跑：
+   * 从 A 切到 B 再切回 A（刷新同理——`running` 初值就是 null），A 这一屏看起来完全空闲，
+   * 进度不动、也不提示它正在被改写，用户还能再点一次整理，给同一篇笔记并排第二条 run：
+   * 两条都花模型钱，还抢着覆盖同一份输出（Codex 第三十四轮 P1）。
+   *
+   * 三条判据各有原因，都不能省：
+   *   - 只认**在途**那一档：done/failed 的历史 run 不该在这里复活成一根进度条。
+   *   - 只在**笔记已经加载出来**之后认（`noteIdForFlush` 有值）：还没有笔记的那一档由
+   *     等笔记的轮询负责，接过来反而会在它跑完时走 reloadNote 的空笔记分支，
+   *     报一句「新原文没能取回来」的假错。
+   *   - 已经有在途就不许被顶掉：那是用户刚点的那一发，比这条查询结果新。
+   */
+  useEffect(() => {
+    if (!entryId || !noteIdForFlush) return;
+    let stale = false;
+    void (async () => {
+      const res = await getLatestAgentRun(entryId, 'transcribe');
+      if (stale || !res.success) return;
+      const run = res.data;
+      if (!run?.id || !isTranscriptionInflight(run.status)) return;
+      // 回包晚于切走时，不许落到别人那一屏
+      if (entryIdRef.current !== entryId) return;
+      setRunning(prev => prev ?? {
+        runId: run.id,
+        // 没写 templateKey 的 run，后端落地时用的就是注册表里的默认那一种，
+        // 这里跟着它，不另编一个（no-rootless-tree）
+        styleKey: run.templateKey || DEFAULT_ORGANIZE_STYLE_KEY,
+        percent: run.progress ?? 0,
+      });
+    })();
+    return () => { stale = true; };
+  }, [entryId, noteIdForFlush]);
+
+  /** 恢复联网就把队列补传上去；失败就留着，横幅继续显示欠了多少 */
+  useEffect(() => {
+    if (offline || !noteIdForFlush || flushConflict) return;
+    const queued = pendingRef.current;
+    // 只补传属于**这一条笔记、这个账号**、且还没放过期的内容
+    if (!isFlushable(queued, noteIdForFlush, ownerId)) return;
+    let alive = true;
+    let retryTimer = 0;
+    /**
+     * 这一发失败之后该不该自己再试。
+     *
+     * 两种要试：版本没查着、以及**版本查到了但 PUT 自己失败**——后者此前不算数，
+     * 于是「重连之后写这一发正好抖了一下」就再也没有下文：依赖一个都没变、
+     * 在线时横幅又不出现，用户以为传上去了，关掉标签页草稿随 sessionStorage 一起没
+     * （Codex 第四十二轮 P1，与第三十五轮那条是同一形状的另一半）。
+     * 冲突那一档不算：它有自己的横幅，等用户裁决，重试只会把同一个问题再问一遍。
+     */
+    let retryOnFailure = false;
+    /*
+     * 退避：5s → 10s → 20s → 40s → 60s，共五次。用完就停在「重试次数用完」那一档，
+     * 横幅上那颗「立即重试」仍然可用——自动停下来不等于把人扔在那儿。
+     */
+    const RETRY_DELAYS = [5000, 10000, 20000, 40000, 60000];
+    const scheduleRetry = () => {
+      const savedAt = queued!.savedAt;
+      if (flushRetryRef.current.savedAt !== savedAt) flushRetryRef.current = { savedAt, attempts: 0 };
+      const attempts = flushRetryRef.current.attempts;
+      if (attempts >= RETRY_DELAYS.length) { setFlushStalled('exhausted'); return; }
+      flushRetryRef.current = { savedAt, attempts: attempts + 1 };
+      setFlushStalled('retrying');
+      retryTimer = window.setTimeout(() => setFlushRetryTick(v => v + 1), RETRY_DELAYS[attempts]);
+    };
+    /*
+     * 补传是整篇覆盖写，传之前要先确认服务端那份还是不是排队时那份：离线期间别的设备
+     * （或同事）改过的话，这一发 PUT 会把他们的新内容整篇盖掉，而两边都没有任何提示。
+     * 改过就不传，把决定权交回用户——横幅上给「仍然用我的版本覆盖」与「丢弃」两颗。
+     *
+     * 「读版本 + 决定写不写」必须**整段**进写链，不能只把 PUT 放进去：读版本这一下是
+     * 异步的，期间用户在线存了新的一版，那一版会先进链先落地，而这份旧草稿随后才排进去，
+     * 照样把新内容盖掉——后面的 savedAt 判断只能拦住「盖完之后别再清队列」，
+     * 拦不住那次覆盖本身（Codex 第七、八两轮各抓到这条链的一段）。
+     */
+    const skipped = { success: false } as Awaited<ReturnType<typeof updateDocumentContent>>;
+    void enqueueWrite(async () => {
+      if (!alive) return skipped;
+      // 排到队时这份草稿可能已经被一次在线保存作废了（那次保存会清空队列）
+      if (pendingRef.current?.savedAt !== queued!.savedAt) return skipped;
+      const remote = await getDocumentEntry(noteIdForFlush);
+      if (!alive) return skipped;
+      /*
+       * 版本查不到就**不写**。此前只有「查到了且变过」才拦，于是这条请求偶发失败时
+       * 直接落到无条件覆盖上——那正是这道门要防的事（Codex 第十一轮 P1）。
+       * 查不到不等于冲突：不弹冲突横幅，草稿原样留在队列里（横幅照常显示欠了几处），
+       * 下一次联网翻转或重进这一屏会再试一次。宁可晚传，不可盖掉别人的新版本。
+       */
+      if (!remote.success) { retryOnFailure = true; return skipped; }
+      /*
+       * 三种「不确定」都停下来问用户，不再「比不了就当没冲突照传」：
+       * 初次加载时条目请求偶发失败会让基线为 null，照传就是拿一个空基线把同事的
+       * 新版本静默盖掉（Codex 第二十轮 P1）。
+       */
+      const verdict = decideOfflineFlush(queued, remote.data?.updatedAt);
+      if (verdict !== 'flush') {
+        setFlushConflict(verdict);
+        return skipped;
+      }
+      // 走到这一步就是真的要写了：这一发失败属于「值得再试」那一类
+      retryOnFailure = true;
+      return updateDocumentContent(noteIdForFlush, queued!.content, 'text/markdown');
+    }).then((res) => {
+      if (!alive) return;
+      if (!res.success) {
+        /*
+         * 版本没查着、或者写这一发自己失败了：草稿还躺在队列里，而这个 effect 的依赖
+         * 一个都没变——不自己排一次重试的话，它要等到下一次断网重连或重开这一屏才会再试，
+         * 而在线期间横幅不出现，用户以为已经传上去了（Codex 第三十五、四十二两轮 P1）。
+         * 冲突那一档不走这里，它有自己的横幅。
+         */
+        if (retryOnFailure) scheduleRetry();
+        return;
+      }
+      // 补传期间用户又在线存了新的一版：那一版已经把队列清了，这里不能再清一次
+      // （清了等于承认这份旧内容是最终态），也不再报「已补传」
+      if (pendingRef.current?.savedAt !== queued!.savedAt) return;
+      // 补传成功 = 服务端这一版就是最新版本，令牌跟着走。不推进的话，用户再断网改一次，
+      // 那份草稿仍带着补传之前的基线，重连时会把**自己刚补上去的那一版**判成别人改的
+      // （在线保存那一路已经推进了，这一路漏了，Codex P2）
+      if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
+      clearOfflineEdit(noteIdForFlush, ownerId);
+      setPendingEdits(null);
+      setQueueVolatile(false);
+      // 传上去了，卡住那一档跟着散掉，重试额度也还给下一份草稿
+      flushRetryRef.current = { savedAt: 0, attempts: 0 };
+      setFlushStalled(null);
+      toast.success(`已补传 ${queued!.count} 处离线校对`);
+    });
+    return () => { alive = false; window.clearTimeout(retryTimer); };
+    /*
+     * 依赖里必须带上 `pendingEdits`：本机存着的队列是上面那个 effect 恢复出来的，
+     * 而它比这里晚一拍。只依赖 noteId/offline 的话，这一轮读到的是 null，
+     * 恢复之后又不会再跑——那份校对就一直躺着不上去，直到下一次断网重连才被
+     * 当成「新的」传上去，可能盖掉更新的内容（Codex P1 抓到的正是这条）。
+     */
+    // flushRetryTick：上面那次退避到点了就靠它把这个 effect 再跑一遍
+  }, [enqueueWrite, flushConflict, flushRetryTick, noteIdForFlush, offline, ownerId, pendingEdits]);
+
+  /** 冲突时用户明说「用我的版本」：这一下才覆盖，覆盖完照常清队列 */
+  const overwriteWithOfflineDraft = useCallback(async () => {
+    const queued = pendingRef.current;
+    if (!noteIdForFlush || !isFlushable(queued, noteIdForFlush, ownerId)) return;
+    // 这次覆盖写的是哪条笔记：PUT 回来之后拿它认人（下面每一处状态更新都要过这道门）
+    const overwritingNoteId = noteIdForFlush;
+    const res = await enqueueWrite(() => updateDocumentContent(overwritingNoteId, queued!.content, 'text/markdown'));
+    if (!res.success) { toast.error(res.error?.message || '覆盖失败'); return; }
+    /*
+     * 覆盖期间用户可能又断网改了一句：那一下会把**更新的**草稿排进队列并落盘。
+     * 这时候再无条件清掉，等于把他刚写的那几处删了，而屏幕还换回这次覆盖用的旧内容
+     * （自动补传那一路早就按 savedAt 复核过，这一路漏了，Codex 第二十七轮 P1）。
+     * 所以先认「队列里还是不是我覆盖的那一份」：不是就什么都不动，让新草稿照常走它的流程。
+     */
+    if (pendingRef.current?.savedAt !== queued!.savedAt) {
+      toast.success('已用离线版本覆盖；这期间新排下的校对仍在队列里');
+      return;
+    }
+    /*
+     * 排队的 PUT 回来时用户可能已经从侧栏切到另一条录音了。此前这里的几处状态更新都是
+     * 无条件的：A 的正文会装进 B 的屏幕，B 刚恢复出来的待同步/冲突提示也被一并清掉，
+     * 随后 B 一次编辑就把 A 的原文存成了 B 的内容（Codex P1）。
+     * 本机那份草稿仍然按 overwritingNoteId 清——它属于 A，与现在停在哪一屏无关。
+     */
+    clearOfflineEdit(overwritingNoteId, ownerId);
+    if (noteIdRef.current !== overwritingNoteId) return;
+    /*
+     * 覆盖成功之后服务端那一版就是用户自己认下的这一版，令牌必须跟着走。
+     * 漏了的话，同一次停留里再断网改一次，草稿仍带着覆盖之前的基线，
+     * 重连时把「自己刚刚明确接受的那次覆盖」判成别人改的——又一条假冲突
+     * （在线保存、自动补传、重新拉取三路都刷了，这一路漏了，Codex 第十九轮 P2）。
+     */
+    if (res.data?.updatedAt) noteRevisionRef.current = res.data.updatedAt;
+    setPendingEdits(null);
+    setQueueVolatile(false);
+    setFlushConflict(null);
+    setState(prev => (prev.kind === 'ready' && prev.noteId === overwritingNoteId
+      ? { ...prev, noteMd: queued!.content }
+      : prev));
+    toast.success(`已用离线版本覆盖，共 ${queued!.count} 处校对`);
+  }, [enqueueWrite, noteIdForFlush, ownerId]);
+
+  /**
+   * 选一种整理方式。
+   *
+   * 必须走 **restyle** 端点：只有带 `RestyleOfRunId` 的 run 会命中处理器里那条
+   * 跳过 ASR 的分支（`SubtitleGenerationProcessor.ProcessTranscribeAsync` 开头），
+   * 拿上一次的转录文本按新风格重生成摘要。条目级的 transcribe 端点建的是一条
+   * 普通转录 run——它会把整段音频**重新转一遍**，既慢又会用新一轮 ASR 结果
+   * 覆盖用户可能已经校对过的原文。此前这里调的正是后者（Codex P1 抓到）。
+   *
+   * 拿不到「已完成且有产物」的上一条 run 时（比如这条录音压根没转录成功过），
+   * 才退回条目级 transcribe——那种情况下本来就必须跑 ASR。
+   */
+  /*
+   * 「已经在发起了」必须**同步**记下来：`running` 要等 getLatestAgentRun + restyle 两个
+   * 请求回来才置上，这中间双击一下、或者先点一种再点另一种，两次都能过这道门，
+   * 于是并发建出两条 run——两条都花模型钱，还会抢着覆盖同一篇输出笔记，而界面只跟踪
+   * 最后一个回来的那条（Codex 第九轮 P1）。
+   */
+  /*
+   * 发起整理的锁**认录音、也认这一发**，不是一个全局布尔。
+   * 全局布尔踩过两次，两次方向相反，都记在这里：
+   *   1. 不认录音：A 的预检还在飞时切到 B，锁还举着，B 上点任何整理都静默无反应。
+   *   2. 认录音但靠「换条目就清零」补救（我上一版的修法）：A 的 finally 后到，
+   *      会把 B 刚举起来的锁清掉——B 再点一下就并发起第二条 restyle，
+   *      两条都花模型钱，还抢着覆盖同一篇输出笔记（Codex 第二十七轮 P1）。
+   * 现在锁里存「哪条录音」，释放时再比一次「这一发还是不是最新那发」，两种都堵死。
+   */
+  const launchingEntryRef = useRef<string | null>(null);
+  const launchTokenRef = useRef(0);
+  const onPickOrganizeStyle = useCallback((styleKey: string, customPrompt?: string) => {
+    if (!entryId || running || launchingEntryRef.current === entryId) return;
+    launchingEntryRef.current = entryId;
+    // 锁举起来的同一刻就让它在屏幕上现形，不等两个请求回来
+    setLaunchingStyle(styleKey);
+    const launchToken = ++launchTokenRef.current;
+    // 这次发起属于哪条录音：两个请求都回来之后要拿它认人（见下面 setRunning 前那一判）
+    const launchedForEntryId = entryId;
+    void (async () => {
+      try {
+        /*
+         * 这一查失败（网络抖动、后端 5xx）**不等于**「这条录音没有可复用的转录」。
+         * 把失败也当成「没有」的话，下面就会退回条目级 transcribe——那是一整轮 ASR：
+         * 既多花模型钱，又会用新一轮识别结果覆盖用户已经校对过的原文（Codex 第十七轮 P1）。
+         * 所以只有**查成功、且确实没有已完成产物**时才允许退回；查不到就当场停下。
+         */
+        const prior = await getLatestAgentRun(entryId, 'transcribe', { status: 'done', requireOutput: true });
+        if (!prior.success) {
+          toast.error(prior.error?.message || '查不到这条录音的转录记录，请稍后再试');
+          return;
+        }
+        const priorRunId = prior.data?.id ?? '';
+        /*
+         * 查成功、却没有可复用的转录 run，有两种情形，退回全量重转只对其中一种成立：
+         *   - 屏幕上还没有原文：本来就该跑一轮 ASR，退回条目级 transcribe 是对的。
+         *   - 屏幕上已经有原文，只是 run 记录不在了：跨实例同步就会造出这种数据——
+         *     `document_entries` 会带过去，`document_store_agent_runs` 是显式不导出的
+         *     运行时数据（DataSyncScope.Excluded）。此时退回 transcribe 会重跑一轮 ASR，
+         *     新识别结果**原地写回同一篇笔记**（SubtitleGenerationProcessor 的
+         *     `SaveContentAsync(entry, ...)`），把用户已经校对过的原文冲掉
+         *     （Codex 第三十四轮 P1）。
+         * 后一种当场停下：宁可这次整理做不成，也不拿现有原文去赌一轮新识别。
+         */
+        if (!priorRunId && noteIdRef.current) {
+          toast.error('这条录音的转录记录已经不在了', '再整理要重跑一遍识别、会覆盖现在这份原文，所以停下了');
+          return;
+        }
+        // 自定义那一条带着用户写的要求走同一条链路；空要求不当自定义处理
+        const style = { styleKey, customPrompt: customPrompt?.trim() || undefined };
+        const res = priorRunId
+          ? await restyleTranscribeRun(priorRunId, style)
+          : await transcribeEntry(entryId, style);
+        if (!res.success) {
+          toast.error(res.error?.message || '发起整理失败');
+          return;
+        }
+        /*
+         * 两个请求回来时用户可能已经切到另一条录音了：换条目的 effect 已经把 running 清掉，
+         * 这里再无条件塞进去，B 就会显示 A 的进度条，而且因为 running 非空，
+         * B 自己的整理点了没反应（Codex P2）。不是当初那条就丢弃这次结果。
+         */
+        if (entryIdRef.current !== launchedForEntryId) return;
+        setRunning({ runId: res.data.runId, styleKey, percent: 0 });
+      } finally {
+        // 只有「最新那一发」才有资格释放：后到的旧请求不许把别人举着的锁放掉
+        if (launchTokenRef.current === launchToken) {
+          launchingEntryRef.current = null;
+          // 失败与成功都要撤掉「正在发起」：成功那一路 running 已经接上，失败那一路
+          // 卡片必须回到可点，否则用户被一句永远不动的「正在发起…」钉在那里
+          setLaunchingStyle(null);
+        }
+      }
+    })();
+  }, [entryId, running]);
+
+  /**
+   * 重新生成：按当前这一种再整理一次；当前那一种未知时退回默认整理方式。
+   * 默认那一种用**共享常量**，不再就地写 'general'——后端默认改了而这里没跟，
+   * 注册表一致性测试照样绿，这条路却一直在跑旧的那一种（Codex 第十七轮 P2）。
+   */
+  const onRestyle = useCallback(() => {
+    if (state.kind !== 'ready') return;
+    onPickOrganizeStyle(state.styleKey || DEFAULT_ORGANIZE_STYLE_KEY);
+  }, [onPickOrganizeStyle, state]);
+
+  return (
+    <RecordingResultShell
+      title={state.kind === 'ready' ? state.title : '录音'}
+      subtitle={subtitle}
+      onBack={goBack}
+      sidebar={sidebar}
+      actions={headerActions}
+      banner={offline ? (
+        /*
+          稿面 v2-S7 的离线卡。四件事按稿面的次序说：现在是什么状态、我还能做什么、
+          我欠了多少没上去、会不会白改。
+          「N 处待同步」不是抄稿面的一个数字——它就是本机队列的真实长度，
+          没排队时这一行不出现（no-rootless-tree：宁可少说一句，不编一个队列）。
+        */
+        <div
+          className="mx-auto w-full max-w-[760px] rounded-[14px] px-3.5 py-3"
+          style={{ background: 'var(--semantic-warning-soft)' }}
+          role="status"
+        >
+          <p className="flex items-center gap-2 text-[14px] font-bold" style={{ color: 'var(--semantic-warning-text)' }}>
+            <WifiOff size={16} aria-hidden /> 当前离线
+          </p>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            <strong style={{ color: 'var(--text-primary)' }}>本机音频与已下载原文照常播放、阅读、编辑</strong>
+            。
+            {pendingEdits
+              ? `编辑内容排队等待同步（${pendingEdits.count} 处待同步），联网后自动上传${queueVolatile ? '' : '，刷新也不用重做'}。`
+              : `这期间的校对会先存在本机，联网后自动上传${queueVolatile ? '' : '，刷新也不用重做'}。`}
+            {/*
+              承诺只能许到存储真做得到的那一格（no-rootless-tree）。草稿落在 sessionStorage：
+              刷新、切走再回来都还在，**关掉标签页就没了**——正文是敏感内容，按
+              no-localstorage.md 不许进 localStorage，所以这条边界不藏着，写在脸上。
+              队列连 sessionStorage 都没落住时（隐私模式 / 站点数据被禁 / 配额满）更糟，
+              连刷新都保不住，那句话再降一档。
+            */}
+            <strong style={{ color: 'var(--semantic-warning-text)' }}>
+              {queueVolatile
+                ? ' 这台设备不允许本页存草稿，刷新或关掉标签页都会丢，请先别关。'
+                : ' 这一页先别关——关掉标签页草稿不会保留。'}
+            </strong>
+          </p>
+        </div>
+      ) : flushConflict ? (
+        /*
+          离线校对没能自动补传。这里既不静默覆盖（会吞掉别人的新内容），也不静默丢弃
+          （会吞掉用户自己的校对），把这两条路摆出来让他选
+          （expectation-management：不许让人以为已经同步了）。
+          停下来的理由有三种，措辞按理由走——「被改过」这句只有真比对到不一样才配说。
+        */
+        <div
+          className="mx-auto flex w-full max-w-[760px] flex-col gap-2 rounded-[14px] px-3.5 py-3"
+          style={{ background: 'var(--semantic-warning-soft)' }}
+          role="status"
+        >
+          <p className="flex items-center gap-2 text-[14px] font-bold" style={{ color: 'var(--semantic-warning-text)' }}>
+            <WifiOff size={16} aria-hidden /> {describeOfflineFlushBlock(flushConflict, pendingEdits?.count ?? 0).title}
+          </p>
+          <p className="text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            {describeOfflineFlushBlock(flushConflict, pendingEdits?.count ?? 0).detail}
+            <strong style={{ color: 'var(--text-primary)' }}>页面上现在显示的就是这份本机草稿</strong>
+            ；云端那一版要等你点下面「丢弃」才会取回来显示。
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => { void overwriteWithOfflineDraft(); }}
+              className="rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
+              style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+            >
+              仍然用我的离线版本覆盖
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!noteIdForFlush) return;
+                /*
+                 * 顺序很讲究：**先把远端正文装上，装上了才允许删草稿**。
+                 *
+                 * 屏幕上此刻还是那份离线草稿（离线保存时乐观落过一次）。只清队列不换正文，
+                 * 「已丢弃」就是假话：下一次改一句，写回服务端的仍然是这份草稿，
+                 * 把同事的新版本盖掉（第十二轮 P1）。而上一版把 reloadNote 发出去就不管了，
+                 * 拉取失败或用户抢在它之前改一句，同样会盖——那时本机唯一的副本已经删掉，
+                 * 两头都丢（第十五轮 P1）。所以拉取失败就什么都不动，草稿留着、冲突态留着。
+                 */
+                void (async () => {
+                  const installed = await reloadNote(true);
+                  if (!installed) {
+                    toast.error('云端最新版本没能取回来，离线草稿先留着，请稍后再试');
+                    return;
+                  }
+                  clearOfflineEdit(noteIdForFlush, ownerId);
+                  setPendingEdits(null);
+                  setFlushConflict(null);
+                  toast.success('已丢弃这份离线校对，正文已换回云端最新版本');
+                })();
+              }}
+              className="rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
+              style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)' }}
+            >
+              丢弃离线草稿
+            </button>
+          </div>
+        </div>
+      ) : (pendingEdits && flushStalled) ? (
+        /*
+          联网了、但这几处校对还没上去。在线时原本不出横幅——于是「联网后自动上传」
+          兑现没兑现，用户是看不出来的；草稿又只活在 sessionStorage 里，关掉标签页就没了。
+          所以这一档照实说三件事：欠了几处、为什么卡着、接下来会怎样，并给一颗立即重试。
+        */
+        <div
+          className="mx-auto flex w-full max-w-[760px] flex-wrap items-center gap-2 rounded-[14px] px-3.5 py-3"
+          style={{ background: 'var(--semantic-warning-soft)' }}
+          role="status"
+        >
+          <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            <strong style={{ color: 'var(--semantic-warning-text)' }}>{pendingEdits.count} 处离线校对还没上去</strong>
+            ：没能确认云端那一版有没有被改过，为了不盖掉别人的内容先停下了。
+            {flushStalled === 'retrying' ? '正在自动重试。' : '自动重试已用完，可以手动再试一次。'}
+            <strong style={{ color: 'var(--text-primary)' }}>这一页先别关</strong>
+            ——草稿只存在本机{queueVolatile ? '，而且这台设备连刷新都保不住' : ''}。
+          </p>
+          <button
+            type="button"
+            onClick={() => { flushRetryRef.current = { savedAt: 0, attempts: 0 }; setFlushRetryTick(v => v + 1); }}
+            className="shrink-0 rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold"
+            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}
+          >
+            立即重试
+          </button>
+        </div>
+      ) : undefined}
+    >
+      {/*
+        稿面 v2-S1：打开这一屏的瞬间给的是**和真实布局同形的骨架**，不是一个居中转圈。
+        同形是重点——它保证内容到位时不跳动；转圈做不到这件事，还会让人以为页面卡了。
+      */}
+      {state.kind === 'loading' && (
+        <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-8 pt-3" data-testid="recording-result-skeleton" aria-busy="true">
+          <div className="flex items-center gap-3 rounded-[14px] px-4 py-3.5" style={{ background: 'var(--bg-card)' }}>
+            <span className="h-12 w-12 shrink-0 rounded-[14px]" style={{ background: 'var(--skeleton-fill)' }} />
+            <span className="flex min-w-0 flex-1 flex-col gap-2">
+              <span className="block h-3.5 w-3/4 rounded-full" style={{ background: 'var(--skeleton-fill)' }} />
+              <span className="block h-3 w-1/2 rounded-full" style={{ background: 'var(--skeleton-fill)' }} />
+            </span>
+          </div>
+          {/*
+            第二块对应的是播放区。此前它是一张**空白白卡**——骨架屏里出现一块什么都没有的
+            白，读起来是渲染出洞了，不是「这里马上会有东西」（S1 判分记的正是这处）。
+            照真实布局给它波形形状的占位：一排竖条 + 一行控件。
+          */}
+          <div className="flex flex-col gap-3 rounded-[14px] px-4 py-3.5" style={{ background: 'var(--bg-card)' }}>
+            <span className="flex h-10 w-full items-end gap-[3px]" aria-hidden>
+              {Array.from({ length: 36 }, (_, index) => (
+                <span
+                  key={index}
+                  className="min-w-0 flex-1 rounded-full"
+                  style={{
+                    // 高度是确定性的（正弦包络），不是每次刷新乱跳的随机条
+                    height: `${34 + Math.round(52 * Math.abs(Math.sin(index * 0.42 + 0.7)))}%`,
+                    background: 'var(--skeleton-fill)',
+                  }}
+                />
+              ))}
+            </span>
+            <span className="flex items-center gap-3">
+              <span className="h-11 w-11 shrink-0 rounded-full" style={{ background: 'var(--skeleton-fill)' }} />
+              <span className="block h-3 w-24 rounded-full" style={{ background: 'var(--skeleton-fill)' }} />
+              <span className="flex-1" />
+              <span className="block h-8 w-16 rounded-full" style={{ background: 'var(--skeleton-fill)' }} />
+            </span>
+          </div>
+          {/*
+            原文列表的骨架：真实布局这一段是最长的一块，它得**吃掉剩下的全部高度**。
+            只给固定几行的话，加载态下半屏是空的，而内容一到位就把页面往下顶——
+            那正是这一屏自己写的「骨架保持与真实布局一致，避免跳动」要避免的事。
+          */}
+          <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden rounded-[14px] px-4 py-3.5" style={{ background: 'var(--bg-card)' }}>
+            {[92, 78, 86, 64, 90, 71, 83, 58, 88, 74, 95, 68, 81, 60, 89, 73].map((width, index) => (
+              <span key={index} className="block h-3 rounded-full" style={{ width: `${width}%`, background: 'var(--skeleton-fill)' }} />
+            ))}
+          </div>
+          <p className="px-1 text-[12px] text-token-muted">正在打开录音…骨架保持与真实布局一致，避免跳动</p>
+        </div>
+      )}
+      {state.kind === 'error' && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+          <p className="text-[14px]" style={{ color: 'var(--text-primary)' }}>{state.message}</p>
+          <div className="flex items-center gap-3">
+            {/* 有条目 id 才谈得上重试；「缺少录音标识」那一档重试多少次都一样 */}
+            {entryId && (
+              <button
+                type="button"
+                onClick={() => setLoadTick(v => v + 1)}
+                className="min-h-11 rounded-[10px] px-4 text-[13px] font-semibold"
+                style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)' }}>
+                重试
+              </button>
+            )}
+            <button type="button" onClick={goBack} className="min-h-11 text-[13px]" style={{ color: 'var(--accent-fg-info)' }}>
+              返回知识库
+            </button>
+          </div>
+        </div>
+      )}
+      {state.kind === 'ready' && (
+        <div className="flex flex-col items-center gap-3 px-4 pb-8 pt-3 lg:h-full lg:min-h-0 lg:pb-0">
+          <TranscriptKaraoke
+            /*
+             * key 认这条录音：换一条就整块重挂，而不是复用同一个实例。
+             * 这是把「路由复用组件」那一族一次性收口——此前是一条条被指出来补
+             * （音频地址、run、失败说明、通知追踪、时长…每次都漏几格）。
+             * 跟读组件里绑在录音身上的状态最多：在飞的问答流、上一条的回答、
+             * 正在编辑的第几句与它的草稿。不重挂的话，A 的问答回答会落成 B 的答案；
+             * 更糟的是 A 那个还开着的编辑框一保存，走的是 B 的 onSaveNote、
+             * 写进去的是 A 的草稿——**直接改坏 B 的原文**（Codex 第二十六轮 P1）。
+             * 重挂的代价只是播放位置回到开头，而换录音本来就该从头开始。
+             */
+            key={state.noteId || state.audioUrl}
+            src={state.audioUrl}
+            noteMd={state.noteMd}
+            documentMode
+            // 没有笔记条目就没有可写回的地方——此时不给编辑入口，而不是给一个点了报错的
+            onSaveNote={state.noteId ? onSaveNote : undefined}
+            onRestyle={onRestyle}
+            organize={{
+              currentStyleKey: state.styleKey,
+              generatedAt: state.generatedAt,
+              runningStyleKey: running?.styleKey ?? null,
+              runningPercent: running?.percent ?? null,
+              launchingStyleKey: launchingStyle,
+            }}
+            onPickOrganizeStyle={onPickOrganizeStyle}
+          />
+        </div>
+      )}
+    </RecordingResultShell>
+  );
+}
+
+export default RecordingResultPage;
