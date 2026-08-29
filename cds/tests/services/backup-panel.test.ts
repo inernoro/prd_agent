@@ -553,6 +553,95 @@ describe('第一屏不许在这两种情况下报绿', () => {
  * Codex review 第六轮 P2 两条。共同点：都是**升级/部署形态**引发的假警报——
  * 面板在没出事的时候喊出事，而这套体检最怕的就是没人再看它。
  */
+describe('陈旧盖过轻档，且从不消失（第九轮 P2）', () => {
+  const OLD = '2026-08-24T09:00:00.000Z'; // 4 天前，远超阈值
+
+  it('三天没跑的轮次里，头条说的是「没跑」，不是「仅本机」', () => {
+    // 原来陈旧排在所有 warn 之后：一个三天没跑的轮次只要有一个目标仅本机，
+    // 头条就只说那句 warn，而页脚同时把调度器停摆报成 critical——轻的那半当了头条。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        completedAt: OLD,
+        objects: [{ id: 'c', projectId: 'web', bytes: 1 }],
+        offsiteOnlyTargets: [{ id: 'c', projectId: 'web', reason: 'y' }],
+      }),
+      files: [],
+    });
+    expect(view.verdict.tone).toBe('bad');
+    expect(view.verdict.headline).toContain('没跑了');
+  });
+
+  it('更重的那档当头条时，陈旧退到第二行，不许消失', () => {
+    // 「本地没备出来」同为 bad、且说的是「手上现在没有那份文件」，该它当头条；
+    // 但陈旧是「屏幕上这些状态有多旧」的注脚，丢了它整屏会被读成此刻的状态。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        completedAt: OLD,
+        objects: [{ id: 'a', projectId: 'web', bytes: 1, remoteObjectKey: 'k' }],
+        failedTargets: [{ id: 'b', projectId: 'web', reason: 'x' }],
+      }),
+      files: [],
+    });
+    expect(view.verdict.headline).toContain('本地就没备出来');
+    expect(view.verdict.subline).toContain('没跑了');
+  });
+
+  it('陈旧当了头条时，第二行不再重复它', () => {
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        completedAt: OLD,
+        objects: [{ id: 'a', projectId: 'web', bytes: 1, remoteObjectKey: 'k' }],
+      }),
+      files: [],
+    });
+    expect(view.verdict.headline).toContain('没跑了');
+    expect(view.verdict.subline ?? '').not.toContain('没跑了');
+  });
+});
+
+describe('升级前写下的缺口不能被整批丢掉（第九轮 P2）', () => {
+  it('旧格式缺口没有 projectId，靠「这个项目已确认拥有的 id」认领', () => {
+    // 升级前写入端给缺口存的是 { id, reason, blocksHealthy }，连 projectId 都没有。
+    // 丢掉它，一个「备成功但只覆盖一个库」的 postgres 会被判成 ok——第一屏宣布
+    // 「都有最近的副本」，而那几个库一份备份都没有。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({
+        objects: [{
+          id: 'postgres',
+          projectId: 'web',
+          fileName: backupFileName('web', 'postgres', 'postgres', '2026-08-28T09:00:00.000Z'),
+          bytes: 10,
+          remoteObjectKey: 'k',
+        }],
+        coverageGaps: [{ id: 'postgres', reason: '只导了 POSTGRES_DB 那一个库' }],
+      }),
+      files: [{ name: backupFileName('web', 'postgres', 'postgres', '2026-08-28T09:00:00.000Z'), bytes: 10 }],
+    });
+    expect(view.targets[0].status).toBe('partial');
+    expect(view.verdict.tone).toBe('warn');
+  });
+
+  it('旧格式缺口不许凭自己新增一个目标', () => {
+    // 只认领本项目已确认拥有的 id；一个本项目从没出现过的 id，不能靠一条无作用域的
+    // 缺口凭空进清单——那等于把别的项目的服务摆进来。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: health({ coverageGaps: [{ id: 'someone-else', reason: 'x' }] }),
+      files: [],
+    });
+    expect(view.targets).toHaveLength(0);
+  });
+});
+
 describe('升级与无状态部署不许喊狼来了', () => {
   it('旧格式的成功记录按文件名认领，不被当成「上一轮没备到」', () => {
     // 升级后的第一次打开：盘上那份健康文件还是旧代码写的，objects 有 fileName、

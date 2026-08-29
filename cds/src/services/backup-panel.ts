@@ -267,7 +267,29 @@ export function buildBackupPanel(input: {
   const objects = (health?.objects || []).filter((o) => o?.id && ownedObject(o, projectId));
   const failed = (health?.failedTargets || []).filter((t) => t?.id && sameProject(t, projectId));
   const offsiteOnly = (health?.offsiteOnlyTargets || []).filter((t) => t?.id && sameProject(t, projectId));
-  const gaps = (health?.coverageGaps || []).filter((g) => g?.id && sameProject(g, projectId));
+  // 缺口的项目归属：比另外三栏多一条兼容路（Codex review 第九轮 P2）。
+  //
+  // 升级前的写入端给缺口存的是 `{ id, reason, blocksHealthy }`——**连 projectId 都没有**
+  // （失败/仅本机两栏那时就带着项目段，只有这一栏没有）。只按 projectId 筛的话，升级后
+  // 第一次打开时所有存量缺口被丢掉：一个「备成功了但只覆盖了一个库」的 postgres，
+  // 成功记录靠文件名兜底留下来了、缺口没留下，于是被判成 ok——第一屏宣布「都有最近的
+  // 副本」，而那几个库一份备份都没有。又是一盏假绿灯，正好是这一整批改动要治的病。
+  //
+  // 缺口里没有文件名可以拿来认领，所以用另一种证据：**只认领这个项目已经确认拥有的
+  // 那些 id**（成功/失败/仅本机三栏里出现过、且各自通过了自己的作用域判据）。它永远
+  // 不会凭自己新增一个目标。残余风险是两个项目都有 `postgres` 时，别人的存量缺口会
+  // 贴到我们的同名目标上——那是**多报一次**（方向偏严、安全），且只存在于下一轮重写
+  // 健康文件之前的那几个小时。
+  const scopedIds = new Set([
+    ...objects.map((o) => String(o.id)),
+    ...failed.map((t) => String(t.id)),
+    ...offsiteOnly.map((t) => String(t.id)),
+  ]);
+  const gaps = (health?.coverageGaps || []).filter((g) => {
+    if (!g?.id) return false;
+    if (String(g.projectId || '')) return sameProject(g, projectId);
+    return scopedIds.has(String(g.id));
+  });
 
   const objectById = new Map(objects.map((o) => [String(o.id), o]));
   const failedById = new Map(failed.map((t) => [String(t.id), t]));
@@ -444,11 +466,25 @@ function buildVerdict(
   const unsupported = count('unsupported');
   const ok = count('ok');
 
+  // 「上一轮是多久以前」要**先算**，因为它可能盖过下面几档的结论：调度器停了三天时，
+  // 屏幕上那些目标状态描述的是三天前那一轮，拿其中一条当头条会让人以为那是此刻的处境
+  // （Codex review 第九轮 P2）。
+  const roundAt = health ? Date.parse(String(health.completedAt || '')) : NaN;
+  const staleBy = Number.isFinite(roundAt) ? now.getTime() - roundAt : null;
+  const stale = staleBy !== null && staleBy > BACKUP_STALE_AFTER_MS;
+  const staleHours = staleBy === null ? 0 : Math.floor(staleBy / 3_600_000);
+
   const rest: string[] = [];
+  // 陈旧这件事**排在第一位**，而且在它不是头条时也一定要出现在第二行——
+  // 它是「屏幕上这些状态有多旧」的注脚，丢了它整屏都会被读成此刻的状态。
+  if (stale) rest.push(`周期备份已经 ${staleHours} 小时没跑了`);
   if (ok > 0) rest.push(`正常 ${ok} 个`);
   if (unprotected > 0) rest.push(`没有备份保护 ${unprotected} 个`);
   if (unsupported > 0) rest.push(`没有需要备份的状态 ${unsupported} 个`);
   const subline = rest.length > 0 ? rest.join(' · ') : null;
+  /** 陈旧已经当了头条时，第二行不必再说一遍。 */
+  const restOnly = rest.filter((r) => !r.startsWith('周期备份已经'));
+  const sublineWithoutStale = restOnly.length > 0 ? restOnly.join(' · ') : null;
 
   // 全是「没有需要备份的状态」的项目，判在读不到之前（Codex review 第六轮 P2）。
   // 同一个结论也挂在 view 上给页脚用（`nothingToBackUp`）：各写一份就会出现
@@ -488,6 +524,29 @@ function buildVerdict(
       subline,
     };
   }
+  // 时间读不出来（字段缺了、写坏了）**不能当没这回事**（Codex review 第五轮 P1）：
+  // 一个说不出年龄的轮次凭什么叫「最近」。每日体检对同一份记录报的是 critical 的
+  // `backup.unknown`，这里必须同调。
+  if (!Number.isFinite(roundAt)) {
+    return {
+      tone: 'bad',
+      headline: '上一轮备份没有记下完成时间，说不出手上这批副本是什么时候的',
+      subline: sublineWithoutStale,
+    };
+  }
+  // **陈旧排在所有 warn 之前**（Codex review 第九轮 P2）。原来它排在最后，于是一个
+  // 三天没跑的轮次里只要有一个目标「仅本机」，头条就只说那一句 warn，而页脚同时把
+  // 调度器停摆报成 critical——同一屏自相矛盾，且轻的那半当了头条。
+  //
+  // 排在 failed / artifact-missing 之后：那两档同为 bad，且说的是「手上现在没有那份
+  // 文件」，比「这批副本有点旧」更该先做。它们当头条时，陈旧退到第二行，不会消失。
+  if (stale) {
+    return {
+      tone: 'bad',
+      headline: `周期备份已经 ${staleHours} 小时没跑了，手上最新的副本就停在那一轮`,
+      subline: sublineWithoutStale,
+    };
+  }
   if (uncovered > 0) {
     return {
       // 比「离机没上去」重：那类手上还有一份本地副本，这类可能一份都没有。
@@ -514,26 +573,6 @@ function buildVerdict(
   // 都成了，但「那一轮」可能是几天前——调度器死了、容器没起来、机器关了都会这样。
   // 只看目标状态就会给出绿色大字，而页脚的每日体检同时在喊「已经陈旧」：同一屏
   // 自己打自己。判据与页脚共用 BACKUP_STALE_AFTER_MS，不另定一个数。
-  const roundAt = Date.parse(String(health.completedAt || ''));
-  // 时间读不出来（字段缺了、写坏了）**不能当没这回事**（Codex review 第五轮 P1）。
-  // 上一版只在时间有效时才判陈旧，无效就直接落到绿色分支——而绿的那句话恰恰在说
-  // 「都拿到了最近一轮的副本」，一个说不出年龄的轮次凭什么叫「最近」。每日体检对
-  // 同一份记录报的是 critical 的 `backup.unknown`，这里必须同调。
-  if (!Number.isFinite(roundAt)) {
-    return {
-      tone: 'bad',
-      headline: '上一轮备份没有记下完成时间，说不出手上这批副本是什么时候的',
-      subline,
-    };
-  }
-  const staleBy = now.getTime() - roundAt;
-  if (staleBy > BACKUP_STALE_AFTER_MS) {
-    return {
-      tone: 'bad',
-      headline: `周期备份已经 ${Math.floor(staleBy / 3_600_000)} 小时没跑了，手上最新的副本就停在那一轮`,
-      subline,
-    };
-  }
   // 排在陈旧之后：调度器死了是「这一轮出事了」，这条是「这台服务从来就不在保护范围里」，
   // 后者急不到前面去。但它必须在绿色之前——有数据没被保护，就不能报绿。
   if (unprotected > 0) {
