@@ -614,18 +614,19 @@ public class DocumentStoreAgentWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[doc-store-agent] Run {RunId} failed", run.Id);
-            var transcriptionFailure = ex is SubtitleAsrException
-                || run.Kind == DocumentStoreAgentRunKind.Transcribe
-                || run.Kind == DocumentStoreAgentRunKind.Subtitle
-                ? AudioTranscriptionUserError.Classify(ex)
-                : null;
+            /*
+             * 说哪句话由 DocumentStoreRunFailureCopy 一处判定。
+             * 此前这里按「Kind == Transcribe」就归成语音转写失败，而「换个整理方式」建的
+             * 也是 Transcribe run（它跳过 ASR、只重生成摘要）：整理失败时用户收到的是
+             * 「语音转写暂时失败。请点击重试；原始音频已保留，不需要重新录制」——转写好好的，
+             * 原文一个字没动，这句话既不对、又让人以为要重录（2026-08-29 正式环境实测复现）。
+             */
+            var failureCopy = DocumentStoreRunFailureCopy.Resolve(run, ex);
             var failedAt = DateTime.UtcNow;
             var willRetry = DocumentRecordingArchiveWorker
                 .HasDeferredTranscriptionAutomaticRetryBudget(run)
-                && (transcriptionFailure?.AutomaticRetryAllowed ?? true);
-            var userMessage = transcriptionFailure is null
-                ? "内容处理暂时失败。请稍后重试；已上传的原始内容仍会保留。"
-                : AudioTranscriptionUserError.ForRetryOutcome(transcriptionFailure, willRetry);
+                && failureCopy.AutomaticRetryAllowed;
+            var userMessage = failureCopy.MessageFor(willRetry);
             UpdateDefinition<DocumentStoreAgentRun> failedUpdate;
             DateTime? retryAt = null;
             if (willRetry)
@@ -655,7 +656,7 @@ public class DocumentStoreAgentWorker : BackgroundService
                 failedUpdate = Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                     .Set(r => r.ErrorMessage, userMessage)
-                    .Set(r => r.FailureCode, transcriptionFailure?.Code)
+                    .Set(r => r.FailureCode, failureCopy.Code)
                     .Set(r => r.HeartbeatAt, null)
                     .Set(r => r.EndedAt, failedAt)
                     .Set(r => r.AutomaticRetryNextAt, null)
