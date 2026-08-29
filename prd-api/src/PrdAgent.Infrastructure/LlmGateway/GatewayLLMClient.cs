@@ -142,7 +142,9 @@ public class GatewayLLMClient : ILLMClient
                 yield return new LLMStreamChunk
                 {
                     Type = "error",
-                    ErrorMessage = chunk.Error ?? "Gateway 返回错误"
+                    ErrorMessage = chunk.Error ?? "Gateway 返回错误",
+                    // 结构化原因跟着走：业务层据它判「配置问题」还是「暂时故障」，不猜文案
+                    ErrorCode = chunk.ErrorCode
                 };
                 yield break;
             }
