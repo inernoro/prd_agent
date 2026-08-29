@@ -80,6 +80,9 @@ if (bodyChars < 200) {
 const found = await page.evaluate((markerSrc) => {
   const re = new RegExp(markerSrc);
   const abs = (el) => Math.round(el.getBoundingClientRect().top + window.scrollY);
+  // 横向也得量。并排摆放的画板纵坐标相同、横坐标不同，只记 y 的话切图会三张都截最左那块，
+  // 却挂着三个不同画板的文件名——文案那一半已经用 scope 修过同一个洞，切图这一半漏了。
+  const absX = (el) => Math.round(el.getBoundingClientRect().left + window.scrollX);
 
   const cssQuote = (v) => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   const byAttr = [...document.querySelectorAll('[data-screen-label],[data-artboard]')].map((el) => {
@@ -89,6 +92,8 @@ const found = await page.evaluate((markerSrc) => {
       label,
       y: abs(el),
       h: Math.round(el.getBoundingClientRect().height),
+      x: absX(el),
+      w: Math.round(el.getBoundingClientRect().width),
       via: 'attr',
       // 记下**精确选择器**：并排摆放的画板（同一行三个上传态）纵坐标完全相同，
       // 只按 y 区间切会把三屏混成一屏 —— 量出来的档位表是三屏的并集，
@@ -110,6 +115,8 @@ const found = await page.evaluate((markerSrc) => {
     label: (el.querySelector('h1,h2,h3')?.textContent || `section-${i + 1}`).trim(),
     y: abs(el),
     h: Math.round(el.getBoundingClientRect().height),
+    x: absX(el),
+    w: Math.round(el.getBoundingClientRect().width),
     via: 'section',
   }));
   return sections;
@@ -124,10 +131,26 @@ found.sort((a, b) => a.y - b.y);
 const pageHeight = await page.evaluate(() => document.body.scrollHeight);
 
 // marker 形态只知道起点，画板高度 = 到下一个 marker 之前
+const pageWidth = await page.evaluate(() => Math.max(document.body.scrollWidth, document.documentElement.scrollWidth));
+
 const boards = found.map((b, i) => {
   const top = Math.max(0, b.y - 24);
   const bottom = b.h > 0 ? b.y + b.h : (found[i + 1] ? found[i + 1].y - 30 : pageHeight);
-  return { ...b, id: `${String(i).padStart(2, '0')}-${slug(b.label)}`, top, height: Math.max(120, bottom - top) };
+  // 横向边界：量到了就按元素自己那一块切（留 24px 边）；marker 形态只认得到一行文字、
+  // 量不出画板的框，那就退回整幅宽度——退回是明确的降级，不是假装量到了。
+  const measured = typeof b.x === 'number' && typeof b.w === 'number' && b.w > 0;
+  const left = measured ? Math.max(0, b.x - 24) : 0;
+  const clipWidth = measured
+    ? Math.max(120, Math.min(pageWidth - left, b.w + 48))
+    : Math.min(width, pageWidth);
+  return {
+    ...b,
+    id: `${String(i).padStart(2, '0')}-${slug(b.label)}`,
+    top,
+    height: Math.max(120, bottom - top),
+    left,
+    clipWidth,
+  };
 });
 
 const index = [];
@@ -139,7 +162,11 @@ for (const b of boards) {
     const y = b.top + p * maxPart;
     const h = Math.min(maxPart, b.top + b.height - y);
     const file = parts === 1 ? `${b.id}.png` : `${b.id}-part${p + 1}.png`;
-    await page.screenshot({ path: path.join(out, file), clip: { x: 0, y, width, height: h }, fullPage: true });
+    await page.screenshot({
+      path: path.join(out, file),
+      clip: { x: b.left, y, width: b.clipWidth, height: h },
+      fullPage: true,
+    });
     files.push(file);
   }
 

@@ -55,12 +55,20 @@ describe('分享页预览接线', () => {
     // 于是把唯一能救场的原文丢掉——正是这条兜底本来要修的那种页面。
     // 「文档加载完了」证明不了「画出了东西」。这条断言当时钉的就是那个不成立的证据，
     // 改成钉真正的不变量：丢弃要有第二个条件，且那个条件不许再是 load 事件。
+    // 2026-08-29 第三十七轮又推翻了半条：按已过时间同样证明不了「直链画出东西没有」，
+    // 它只是把一个不成立的证据换成了另一个。真正不可知的是两件事——那一帧跨源读不到，
+    // 访客攒了多少状态也看不到。所以判据从「丢不丢」改成「换不换」：时间窗只决定
+    // **要不要自动换**，原文一律留着并给出可见出口，由人自己点。
     const guard = source.search(
-      /if\s*\(\s*exposedDirectRef\.current\s*&&\s*elapsed\s*>\s*LATE_SWAP_GUARD_MS\s*\)\s*return;/);
-    expect(guard, '丢弃判据要按已过时间判，不能只看遮罩是否让位').toBeGreaterThan(-1);
+      /if\s*\(\s*exposedDirectRef\.current\s*&&\s*elapsed\s*>\s*LATE_SWAP_GUARD_MS\s*\)/);
+    expect(guard, '自动换的门槛要按已过时间判，不能只看遮罩是否让位').toBeGreaterThan(-1);
 
-    // 光记下来不用等于没接线：拦截必须出现在写 srcDoc 之前
-    const apply = source.indexOf('setEmbeddedHtml({ siteUrl');
+    // 这一支必须是「存起来」而不是丢掉——丢掉会让「直链白屏 + 原文迟到」成为永远的白
+    const branch = source.slice(guard, guard + 400);
+    expect(branch, '迟到分支把原文丢了').toContain('setLateHtml(ready)');
+
+    // 光记下来不用等于没接线：自动换要排在门槛之后
+    const apply = source.indexOf('setEmbeddedHtml(ready)');
     expect(apply).toBeGreaterThan(guard);
 
     // 不许再拿 iframe 的 load 当「已经画出来了」的证据

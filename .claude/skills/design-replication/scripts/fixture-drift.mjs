@@ -69,6 +69,10 @@ const recorded = new Set(fs.readdirSync(fresh).filter((f) => f.endsWith('.json')
 const rows = [];
 let failed = 0;
 let unchecked = 0;
+// 真的做成了几次形状比对。没有它，这个守卫在「一次都没比成」时会绿着退出——
+// 登录过期、页面没发那些请求、录制中途断掉，都会让每一份 fixture 落进 unchecked，
+// 而 failed 仍是 0。那种绿什么都不证明，比没有守卫更糟：它会让下一个人以为验过了。
+let compared = 0;
 
 for (const f of stored) {
   if (!recorded.has(f)) {
@@ -86,6 +90,7 @@ for (const f of stored) {
     unchecked += 1;
     continue;
   }
+  compared += 1;
   const sa = keyShape(a);
   const sb = keyShape(b);
   const gone = [...sa].filter((k) => !sb.has(k));
@@ -101,8 +106,15 @@ for (const f of stored) {
 }
 
 console.log(rows.join('\n'));
-console.log(`\n共 ${stored.length} 份 fixture：失效 ${failed}，未验 ${unchecked}，其余形状一致。`);
+console.log(`\n共 ${stored.length} 份 fixture：实比 ${compared}，失效 ${failed}，未验 ${unchecked}，其余形状一致。`);
 fs.rmSync(fresh, { recursive: true, force: true });
+
+if (compared === 0) {
+  console.error(`\n一次形状比对都没做成（实比 0 / 共 ${stored.length} 份）。这不是「没有漂移」，是**没有证据**：`);
+  console.error('常见原因是登录态过期、页面路径变了不再请求这些端点、或录制中途断掉。');
+  console.error('先确认 --storage 的登录还有效、--url 指向真的会发这些请求的那一屏，再重跑。');
+  process.exit(2);
+}
 
 if (failed) {
   console.error('\n有 fixture 的形状已经跟真机对不上了。回放时应用解析不出内容，页面会渲染成空，');

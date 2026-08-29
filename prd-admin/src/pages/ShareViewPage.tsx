@@ -97,6 +97,22 @@ export const PREVIEW_MASK_TIMEOUT_MS = 1500;
 export const LATE_SWAP_GUARD_MS = 6000;
 
 /**
+ * 盖在预览之上的浮层小片（角落里的一行字 / 一个按钮）共用同一套观感。
+ * 抽出来是为了让这两处永远长得一样——两份各写一遍时，改了一处忘一处就会一深一浅。
+ */
+const OVERLAY_CHIP: React.CSSProperties = {
+  position: 'absolute',
+  padding: '7px 11px',
+  borderRadius: 8,
+  background: 'rgba(17,17,17,0.82)',
+  color: 'rgba(255,255,255,0.86)',
+  fontSize: 12,
+  lineHeight: 1.5,
+  backdropFilter: 'blur(8px)',
+  WebkitBackdropFilter: 'blur(8px)',
+};
+
+/**
  * 该不该用遮罩盖住直链 iframe。抽成纯函数是为了能被测到「加载永远不结束时遮罩必须让位」。
  *
  * 三个条件缺一不可：确实在取原文、还没拿到可用的 srcDoc、短窗口没到点。
@@ -158,6 +174,19 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const exposedDirectRef = useRef(false);
   /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
   const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
+  /**
+   * 迟到的原文——**不自动换上去，但也绝不丢掉**。
+   *
+   * 「该不该换」需要两个我们都拿不到的答案：直链那一帧到底画出东西没有（跨源，读不了），
+   * 以及访客攒了多少状态（滚动发生在那一帧里，同样看不到）。上一版拿 iframe 的 load
+   * 当「画出来了」，那是形状 8；改成按已过时间判，同样证明不了白屏没白屏——它只是把
+   * 一个不成立的证据换成了另一个。
+   *
+   * 两个判据都不可知时，正确的做法不是替用户猜，而是把这份能救场的原文留在手里，
+   * 给他一个看得见的出口。丢掉它就意味着：直链白屏 + 原文回得慢 = 这个人永远停在一片白，
+   * 而那正是这条兜底本来要修的页面。
+   */
+  const [lateHtml, setLateHtml] = useState<{ siteUrl: string; html: string } | null>(null);
   /**
    * 这份托管内容是不是一套幻灯片（决定要不要出键盘邀请条）。
    * 取回原文时立刻判、单独存：它不能跟着 embeddedHtml 走，那个值在遮罩让位后会被丢弃。
@@ -269,6 +298,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     setEmbeddedHtml(null);
     setIsDeck(false);
     setEmbeddedHtmlError(null);
+    setLateHtml(null);
     setEmbeddedHtmlLoading(true);
     // 遮罩只挡一小会儿。到点后即便原文还没回来，也把底下的直链 iframe 露出来——
     // 它多半已经把页面画好了，继续盖着就是拿「可能更好的预览」换「确定看不见」。
@@ -303,8 +333,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           // 拖到很久之后才回来，人多半已经在用了，才保他的现场。两种误判的代价不对等——
           // 丢错了是「什么都看不到」，换错了只是「滚动位置没了」。
           const elapsed = Date.now() - fetchStartedAtRef.current;
-          if (exposedDirectRef.current && elapsed > LATE_SWAP_GUARD_MS) return;
-          setEmbeddedHtml({ siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) });
+          const ready = { siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) };
+          if (exposedDirectRef.current && elapsed > LATE_SWAP_GUARD_MS) {
+            // 迟到了：不自动换（他可能已经滚到一半），但留着并给出口。
+            // 直接 return 会让「直链白屏 + 原文迟到」变成一片永远的白。
+            setLateHtml(ready);
+            return;
+          }
+          setEmbeddedHtml(ready);
           return;
         }
         // 取不回原文时仍回退直链 iframe（多数情况仍能显示），但把原因显式说出来，
@@ -762,21 +798,22 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
 
           {/* 取回原文失败：不遮住 iframe（页面多半仍能直接加载出来），只在角落把原因说清楚。
               静默吞掉失败正是「明明打不开、却不知道为什么」的来源。 */}
+          {/* 迟到的原文没自动换上去时，给一个看得见的出口。
+              直链那一帧到底画出东西没有，我们跨源读不到；访客攒了多少状态，同样看不到。
+              两个判据都不可知，就不该替他猜——把手里这份能救场的原文摆出来，他自己点。
+              没有这个出口时，「直链白屏 + 原文迟到」就是一片永远的白。 */}
+          {lateHtml && !iframeHtml && (
+            <button
+              className="border border-token-subtle"
+              onClick={() => { setEmbeddedHtml(lateHtml); setLateHtml(null); }}
+              style={{ ...OVERLAY_CHIP, right: 12, bottom: 12, cursor: 'pointer' }}
+            >
+              这一页没显示出来？用原文重新加载
+            </button>
+          )}
+
           {embeddedHtmlError && !iframeHtml && !embeddedHtmlLoading && (
-            <div style={{
-              position: 'absolute',
-              left: 12,
-              bottom: 12,
-              maxWidth: 'min(420px, calc(100% - 24px))',
-              padding: '6px 10px',
-              borderRadius: 8,
-              background: 'rgba(17,17,17,0.82)',
-              color: 'rgba(255,255,255,0.86)',
-              fontSize: 12,
-              lineHeight: 1.5,
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
-            }}>
+            <div style={{ ...OVERLAY_CHIP, left: 12, bottom: 12, maxWidth: 'min(420px, calc(100% - 24px))' }}>
               {embeddedHtmlError}
             </div>
           )}

@@ -235,3 +235,7 @@
 | fix | prd-admin | 分享行内操作改函数式更新，两行同时操作时后回来的不再抹掉先回来的结果 |
 | polish | prd-admin | 访客排行与链接表的访客列在样本封顶时标明来源，不把样本说成全量 |
 | fix | scripts | 每日验收的分享页取证改为关页前一次读完，修掉「标记探测排在 page.close() 之后必抛、文本形态永久假红」 |
+| fix | prd-admin | 迟到的网页原文不再丢弃：超时只是不自动换，原文留存并给「用原文重新加载」出口，修掉「直链白屏 + 原文迟到 = 永远的白」 |
+| fix | scripts | 设计稿切图按画板自己的横向边界裁——并排画板此前会截出三张逐字节相同的图却挂三个文件名 |
+| fix | scripts | fixture 漂移守卫在一次比对都没做成时判红，不再拿「零证据」当「没有漂移」 |
+| ci | scripts | 把 extract-design.mjs 与 fixture-drift.mjs 登记进守卫 job 的 path filter |

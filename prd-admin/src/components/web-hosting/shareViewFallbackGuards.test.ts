@@ -64,3 +64,32 @@ describe('一步分享的一句话总结', () => {
     }
   });
 });
+
+describe('迟到的原文不许被丢掉', () => {
+  it('超过时间窗只是「不自动换」，原文要留着并给出口', () => {
+    // 「该不该换」需要两个都拿不到的答案：直链那一帧画出东西没有（跨源读不了），
+    // 以及访客攒了多少状态（滚动发生在那一帧里）。上一版拿 iframe 的 load 当证据是形状 8；
+    // 改成按已过时间同样证明不了白屏没白屏——它只是换了一个不成立的证据。
+    //
+    // 两个判据都不可知时，正确做法是把能救场的原文留在手里、给一个看得见的出口，
+    // 而不是替用户猜。直接 return 会让「直链白屏 + 原文迟到」变成一片永远的白，
+    // 那正是这条兜底本来要修的页面。
+    expect(page).toContain('setLateHtml');
+    // 迟到分支里必须是「存起来」而不是空手 return
+    const branch = page.slice(
+      page.indexOf('if (exposedDirectRef.current && elapsed > LATE_SWAP_GUARD_MS)'),
+      page.indexOf('setEmbeddedHtml(ready)'),
+    );
+    expect(branch).toContain('setLateHtml(ready)');
+    // 出口必须真的渲染出来，否则留着也没人点得到（形状 2：链路只建一半）
+    expect(page).toMatch(/lateHtml && !iframeHtml/);
+    expect(page).toContain('用原文重新加载');
+    expect(page).toMatch(/onClick=\{\(\) => \{ setEmbeddedHtml\(lateHtml\); setLateHtml\(null\); \}\}/);
+  });
+
+  it('每次重新取原文都要清掉上一轮留下的迟到件', () => {
+    // 不清的话，切到另一个站点时会拿着上一份原文的出口，点下去换成别人的内容
+    const head = page.slice(page.indexOf('setEmbeddedHtmlError(null);'), page.indexOf('fetchStartedAtRef.current = Date.now();'));
+    expect(head).toContain('setLateHtml(null);');
+  });
+});

@@ -140,6 +140,10 @@ jobs:
               - '.claude/skills/design-replication/scripts/fixtures.mjs'
               - '.claude/skills/design-replication/scripts/spec-export.mjs'
               - '.claude/skills/design-replication/scripts/spec-diff.mjs'
+              # 切图的横向裁剪边界与漂移守卫的零比对判红。登记在这里是形状 7 的补课：
+              # 守卫只在自己被改时才跑的话，真正会引入漂移的那种 PR（只改被守文件）一路全绿。
+              - '.claude/skills/design-replication/scripts/extract-design.mjs'
+              - '.claude/skills/design-replication/scripts/fixture-drift.mjs'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
             acceptance_report:
