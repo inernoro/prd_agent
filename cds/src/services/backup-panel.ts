@@ -112,6 +112,16 @@ export interface BackupInfraFact {
   id: string;
   dockerImage?: string;
   containerName?: string;
+  /**
+   * 此刻在不在跑。省略视为在跑。
+   *
+   * **停着的也要传进来**（Codex review 第八轮 P2）：只传正在跑的，判定这一侧就分不清
+   * 「这个项目一台数据服务都没有」和「有，但此刻都停着」。前者可以放心说「没有需要
+   * 周期备份的服务」，后者说这句话就是假绿灯——那台停着的库可能装着数据、且从没备过。
+   * 停着的服务本身仍然不进目标清单（运维故意停掉的不该天天报警，见第三轮），
+   * 但这一侧得知道它存在。
+   */
+  running?: boolean;
 }
 
 export interface BackupPanelView {
@@ -135,6 +145,14 @@ export interface BackupPanelView {
     subline: string | null;
   };
   targets: BackupPanelTarget[];
+  /**
+   * 这个项目压根没有需要周期备份的东西（只有无状态服务，或一台数据服务都没有）。
+   *
+   * 路由拿它决定页脚那几条体检结论**整段不出**：没有备份可言时，「读不到上一轮结果」
+   * 与「从来没做过恢复演练」都无从谈起，而它们会以 critical 出现在一个头条写着
+   * 「没有需要周期备份的服务」的页面上。算在这里、读在那边，不给它第二个口径。
+   */
+  nothingToBackUp: boolean;
   /** 这个项目在备份目录里占了多少个文件、多少字节。 */
   files: { count: number; bytes: number };
 }
@@ -264,7 +282,13 @@ export function buildBackupPanel(input: {
   // 任何一行对应得上——文件在，说不出是谁的。这是已知边界，记在台账 E86，下面
   // 有一条用例把这个现状钉住：真去做的时候那条会红，逼人回来一起把「哪些目标该出现
   // 在这一屏」重新想一遍，而不是再补第四块补丁。
-  const infraById = new Map((input.infra || []).filter((s) => s?.id).map((s) => [String(s.id), s]));
+  // 台账里这个项目的全部数据服务（含停着的）。**目标清单只并正在跑的**（第三轮：
+  // 运维故意停掉的不该天天报「上轮没备到」），但「一台都没有」这件事要另算，
+  // 见下面的 nothingToBackUp。
+  const infraAll = (input.infra || []).filter((s) => s?.id);
+  const infraById = new Map(
+    infraAll.filter((s) => s.running !== false).map((s) => [String(s.id), s]),
+  );
   const ids = [...new Set([
     ...objectById.keys(),
     ...failedById.keys(),
@@ -352,6 +376,8 @@ export function buildBackupPanel(input: {
   });
 
   const lastRoundMs = Date.parse(String(health?.completedAt || ''));
+  const nothingToBackUp = computeNothingToBackUp(targets, input.infra ? infraAll.length : null);
+
   return {
     lastRoundAt: health?.completedAt ?? null,
     nextRoundEstimatedAt: Number.isFinite(lastRoundMs)
@@ -359,7 +385,9 @@ export function buildBackupPanel(input: {
       : null,
     localVerifiedAt: health?.localVerifiedAt ?? null,
     remoteVerifiedAt: health?.remoteVerifiedAt ?? null,
-    verdict: buildVerdict(targets, health, now),
+    verdict: buildVerdict(targets, health, now, nothingToBackUp),
+    /** 这个项目压根没有需要周期备份的东西——页脚据此整段不出，见 computeNothingToBackUp。 */
+    nothingToBackUp,
     targets,
     files: {
       count: mine.length,
@@ -371,16 +399,27 @@ export function buildBackupPanel(input: {
 /**
  * 这个项目**压根没有需要周期备份的东西**吗？
  *
- * 判据收得很紧：必须**有目标**，且**每一个**都是「没有需要备份的状态」（memcached
- * 重启即空、没开 JetStream 的 nats）。只要有一个该备的目标，答案就是否。
+ * 两种都算，判据不一样：
  *
- * 导出是为了让**页脚那几条体检结论问同一个问题**。第六轮只把这一档接进了第一屏，
- * 页脚照旧无条件跑：一台只跑 memcached 的部署于是头条说「没有需要周期备份的服务」，
- * 页脚同时喊 critical 的「读不到上一轮结果」和「从来没做过恢复演练」——同一屏自相
- * 矛盾，而这正是这个面板要消灭的东西（Codex review 第七轮 P2，形状 2：只接了一半）。
+ * - 有目标：**每一个**都得是「没有需要备份的状态」（memcached 重启即空、没开
+ *   JetStream 的 nats）。只要有一个该备的目标，答案就是否。
+ * - 一个目标都没有：台账里这个项目**一台数据服务都没有**时才算。有、只是此刻都停着
+ *   的，不算——那台停着的库可能装着数据、且从没备过，说「没有需要周期备份的服务」
+ *   就是假绿灯（Codex review 第八轮 P2 提的是「零目标也该豁免」，但照字面放开会
+ *   踩这个坑，所以判据落在「台账里有没有」而不是「目标列表空不空」）。
+ *
+ * 算出来的结果**挂在 view 上**给页脚用，不导出一个让调用方各跑一遍的函数：第七轮
+ * 页脚与第一屏各写一份语义，就是第六轮那条漂移的成因；一处算、一处读，才没有第二个口径。
  */
-export function nothingNeedsBackup(targets: readonly BackupPanelTarget[]): boolean {
-  return targets.length > 0 && targets.every((t) => t.status === 'unsupported');
+function computeNothingToBackUp(
+  targets: readonly BackupPanelTarget[],
+  infraCount: number | null,
+): boolean {
+  // `infraCount` 为 null = 调用方没给台账，也就是**不知道**这个项目有没有数据服务。
+  // 不知道不等于没有：这种时候不下「没有需要备份的东西」这个结论（读不到就说读不到，
+  // 是这套体检的第一条纪律）。只有台账真的报了「零台」才算。
+  if (targets.length === 0) return infraCount === 0;
+  return targets.every((t) => t.status === 'unsupported');
 }
 
 /**
@@ -393,6 +432,7 @@ function buildVerdict(
   targets: readonly BackupPanelTarget[],
   health: BackupHealthRecord | null,
   now: Date,
+  nothingToBackUp: boolean,
 ): BackupPanelView['verdict'] {
   const count = (s: BackupTargetStatus): number => targets.filter((t) => t.status === s).length;
   const failed = count('failed');
@@ -411,15 +451,15 @@ function buildVerdict(
   const subline = rest.length > 0 ? rest.join(' · ') : null;
 
   // 全是「没有需要备份的状态」的项目，判在读不到之前（Codex review 第六轮 P2）。
-  // 判据本身抽成了 `nothingNeedsBackup`：页脚那几条体检结论要问同一个问题，
-  // 各写一份就会出现「头条说不用管、页脚喊 critical」（Codex review 第七轮 P2）。
+  // 同一个结论也挂在 view 上给页脚用（`nothingToBackUp`）：各写一份就会出现
+  // 「头条说不用管、页脚喊 critical」（Codex review 第七轮 P2）。
   // 一台只跑 memcached 的部署，排程压根没有目标、也没有阻塞缺口，于是**从来不写**
   // 那份结果文件；读不到是这种部署的常态，不是故障。判在后面的话，它会永远挂着
   // 一句「不确定这个项目备份过没有」——一盏永远亮着、又永远不用管的灯。
   //
   // 判据收得很紧：必须**有目标**且**每一个**都是「没有需要备份的状态」。只要有一个
   // 该备的目标，读不到结果就仍然是坏消息。
-  if (nothingNeedsBackup(targets)) {
+  if (nothingToBackUp) {
     return { tone: 'ok', headline: '这个项目没有需要周期备份的服务', subline: null };
   }
   if (!health) {

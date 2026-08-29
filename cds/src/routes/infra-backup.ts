@@ -48,7 +48,6 @@ import {
 } from '../services/infra-backup-schedule.js';
 import {
   buildBackupPanel,
-  nothingNeedsBackup,
   type BackupFileEntry,
   type BackupHealthRecord,
 } from '../services/backup-panel.js';
@@ -809,13 +808,20 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     // 台账里此刻真实存在的数据服务。**必须传**：只看上一轮的记录，新建的库和当时
     // 停着的服务会从清单上整个消失，而第一屏还在说一切正常（Codex review 第二轮 P1）。
     //
-    // **只并「正在跑的」**（Codex review 第三轮 P2）：周期备份对停着的容器本来就
-    // 记的是「不阻塞健康」的跳过——那是有意为之，不是缺口。把停着的服务也算进来，
-    // 面板会为一台运维故意停掉的库天天报一次「上轮没备到」，而那正是一盏没人会看的灯。
-    // 判据用台账的 status，和 planInfraBackups 里 `running: s.status === 'running'` 同一口径。
+    // **停着的也照传，带上 running 标记**（Codex review 第八轮 P2）。
+    //
+    // 第三轮起「目标清单只并正在跑的」这条不变——周期备份对停着的容器记的本就是
+    // 「不阻塞健康」的跳过，把它算进目标会为一台运维故意停掉的库天天报一次
+    // 「上轮没备到」，那是一盏没人会看的灯。但**过滤不能发生在这里**：判定那一侧
+    // 还要回答另一个问题——「这个项目是不是一台数据服务都没有」。只收到正在跑的，
+    // 它就分不清「一台都没有」和「有、但都停着」，于是会对一个只有停机数据库的项目
+    // 说「没有需要周期备份的服务」，那是假绿灯。过滤挪进判定模块，这里如实报台账。
+    // running 的口径与 planInfraBackups 的 `s.status === 'running'` 一致。
     const infra = stateService.getInfraServicesForProject(canonicalId)
-      .filter((s) => s.status === 'running')
-      .map((s) => ({ id: s.id, dockerImage: s.dockerImage, containerName: s.containerName }));
+      .map((s) => ({
+        id: s.id, dockerImage: s.dockerImage, containerName: s.containerName,
+        running: s.status === 'running',
+      }));
     const view = buildBackupPanel({ projectId: canonicalId, health, files, now, infra });
     // 页脚那一行「每日体检怎么说」。喂进去的是**这个项目的**失败与缺口，
     // 时间戳与恢复演练是全平台的——面板不该替某个项目编一份自己的演练记录。
@@ -823,8 +829,8 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     // 压根没有需要备份的东西时，这几条一条都不该出（Codex review 第七轮 P2）：
     // 没有备份可言，「读不到上一轮结果」与「从来没做过恢复演练」都无从谈起，
     // 而它们会以 critical 出现在一个头条写着「没有需要周期备份的服务」的页面上。
-    // 判据问 `nothingNeedsBackup` 那一份，不在这里另写一遍（形状 3）。
-    const findings = nothingNeedsBackup(view.targets) ? [] : backupHealthFindings({
+    // 结论由判定那一侧算好挂在 `view.nothingToBackUp` 上，这里只读，不另判一遍（形状 3）。
+    const findings = view.nothingToBackUp ? [] : backupHealthFindings({
       now,
       backup: {
         lastCompletedAt: view.lastRoundAt,

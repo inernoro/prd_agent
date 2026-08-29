@@ -623,6 +623,30 @@ describe('升级与无状态部署不许喊狼来了', () => {
     expect(view.verdict.headline).toBe('这个项目没有需要周期备份的服务');
   });
 
+  it('一台数据服务都没有的项目，也不该挂着「不确定备份过没有」', () => {
+    // 全新项目、什么库都还没建：没有备份可言，读不到结果是常态（Codex review 第八轮 P2）。
+    const view = buildBackupPanel({ projectId: 'web', now: NOW, health: null, files: [], infra: [] });
+    expect(view.verdict.tone).toBe('ok');
+    expect(view.verdict.headline).toBe('这个项目没有需要周期备份的服务');
+    expect(view.nothingToBackUp).toBe(true);
+  });
+
+  it('库都停着 ≠ 没有库：不许说成「没有需要周期备份的服务」', () => {
+    // 照字面「零目标就豁免」会踩这个坑：停着的库不进目标清单（第三轮：故意停掉的
+    // 不该天天报警），于是目标为空——而它可能装着数据、且一次都没备过。
+    // 说「没有需要备份的服务」就是假绿灯，正是这一整批改动要治的病。
+    const view = buildBackupPanel({
+      projectId: 'web',
+      now: NOW,
+      health: null,
+      files: [],
+      infra: [{ id: 'mysql', dockerImage: 'mysql:8', running: false }],
+    });
+    expect(view.nothingToBackUp).toBe(false);
+    expect(view.verdict.tone).toBe('bad');
+    expect(view.verdict.headline).toContain('读不到');
+  });
+
   it('只要有一个该备的目标，读不到结果就仍然是坏消息', () => {
     const view = buildBackupPanel({
       projectId: 'web',

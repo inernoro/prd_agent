@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, ShieldAlert, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { apiUrl } from '@/lib/api';
+import { createLatestOnly } from '@/lib/latest-only';
 
 /**
  * 项目设置 → 周期备份。
@@ -322,12 +323,18 @@ export function BackupTab({ projectId }: { projectId: string }): JSX.Element {
   const [data, setData] = useState<BackupPanelResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 切项目时同一个组件实例会被复用，上一个项目的请求还在飞。慢一点回来的那份会
+  // 落在后面，把别的项目的备份目标、目录、失败详情摆到这个项目的设置页上，而页面上
+  // 没有任何东西提示这不是它的（Codex review 第八轮 P2）。
+  const latest = useRef(createLatestOnly());
 
   const refresh = useCallback(async () => {
+    const isCurrent = latest.current.begin();
     setBusy(true);
     try {
       const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/backup-health`), { credentials: 'include' });
       const body = await res.json();
+      if (!isCurrent()) return;
       if (!res.ok) {
         setError(`加载失败：${body?.error || res.status}`);
         return;
@@ -335,12 +342,16 @@ export function BackupTab({ projectId }: { projectId: string }): JSX.Element {
       setError(null);
       setData(body as BackupPanelResponse);
     } catch (err) {
+      if (!isCurrent()) return;
       setError(`加载异常：${(err as Error).message}`);
     } finally {
-      setBusy(false);
+      if (isCurrent()) setBusy(false);
     }
   }, [projectId]);
 
+  // 换项目先清空：只丢弃迟到的响应还不够——在新数据到达之前，屏幕上会一直摆着
+  // 上一个项目的那一屏，标题却已经是新项目了。宁可显示「加载中」。
+  useEffect(() => { setData(null); setError(null); }, [projectId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   if (error) return <ErrorBlock message={error} />;

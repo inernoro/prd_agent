@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BackupPanel } from '../../web/src/pages/project-settings/BackupTab.js';
+import { PROJECT_SETTINGS_INDEX, PROJECT_TAB_LABELS } from '../../web/src/lib/settingsSearchIndex.js';
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -138,5 +139,40 @@ describe('周期备份 tab 的三处登记', () => {
     expect(page).toContain("{ value: 'backup', label: '周期备份'");
     expect(page).toContain('<TabsContent value="backup">');
     expect(page).toContain('<BackupTab projectId={project.id} />');
+  });
+});
+
+/**
+ * 设置搜索里找得到（Codex review 第八轮 P2）。
+ *
+ * 侧栏有这个 tab、命令面板搜不到，等于一半用户找不到它——命令面板的项目设置结果
+ * 只从 PROJECT_SETTINGS_INDEX 来，新 tab 没登记就永远搜不出来。
+ *
+ * 第二条是**覆盖守卫**，不是只钉这一个 tab：下一个新 tab 忘了登记时它会红。
+ */
+describe('周期备份要能被设置搜索找到', () => {
+  it('搜「周期备份」「备份」「backup」都能命中，且指向 backup tab', () => {
+    for (const q of ['周期备份', '备份', 'backup']) {
+      const hit = PROJECT_SETTINGS_INDEX.filter(
+        (e) => e.tab === 'backup'
+          && (e.label.includes(q) || e.keywords.some((k) => k.toLowerCase().includes(q.toLowerCase()))),
+      );
+      expect(hit.length, `搜「${q}」应能命中周期备份`).toBeGreaterThan(0);
+    }
+    expect(PROJECT_TAB_LABELS.backup).toBe('周期备份');
+  });
+
+  it('项目设置的每个 tab 都有中文名，少一个就搜不出来', () => {
+    // tab 清单取自页面自己的类型联合——它是「有哪些 tab」的 SSOT。
+    const source = fs.readFileSync(
+      path.resolve(process.cwd(), 'web/src/pages/ProjectSettingsPage.tsx'),
+      'utf8',
+    );
+    const union = /type\s+TabValue\s*=\s*([^;]+);/.exec(source);
+    expect(union, '没找到 TabValue 类型联合——锚点变了就得回来改这条').toBeTruthy();
+    const tabs = [...union![1].matchAll(/'([a-z0-9-]+)'/g)].map((m) => m[1]);
+    expect(tabs.length).toBeGreaterThan(5);
+    const missing = tabs.filter((t) => !PROJECT_TAB_LABELS[t]);
+    expect(missing, `这些 tab 没在 PROJECT_TAB_LABELS 登记，命令面板搜不到：${missing.join(', ')}`).toEqual([]);
   });
 });
