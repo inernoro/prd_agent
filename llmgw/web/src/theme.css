@@ -3113,43 +3113,100 @@ a:focus-visible {
   font-size: var(--fs-secondary);
 }
 
-/* 产物屏页签：一页只讲一件事。 */
-.lg-qs-result-tabs {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 10px;
-}
-
-.lg-qs-result-tabs > button {
+/* 一次性密钥主区：常驻在页签之上，不属于任何一个页签。
+   它是这一屏唯一取不回来的东西——放进页签里，切一下就消失了。 */
+.lg-qs-key-hero {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 12px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  text-align: left;
-  cursor: pointer;
-}
-
-.lg-qs-result-tabs > button:hover,
-.lg-qs-result-tabs > button.is-active {
-  border-color: var(--accent);
+  align-items: center;
+  gap: 28px;
+  flex-wrap: wrap;
+  padding: 24px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
   background: var(--accent-soft);
 }
 
-.lg-qs-result-tabs > button > strong {
-  color: var(--text-primary);
-  font-size: var(--fs-body);
-  font-weight: 650;
+.lg-qs-key-main {
+  flex: 1 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.lg-qs-result-tabs > button > small {
+.lg-qs-key-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lg-qs-key-eyebrow {
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+.lg-qs-key-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-metric);
+  font-weight: 650;
+  line-height: 1.5;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.lg-qs-key-note {
   color: var(--text-muted);
   font-size: var(--fs-secondary);
+  line-height: 1.7;
 }
 
-/* 接入信息页：三张卡横铺，窄屏退回单列。 */
+.lg-qs-key-hero > .lg-qs-key-copy {
+  flex: none;
+  height: 44px;
+  padding: 0 24px;
+}
+
+/* 产物屏页签：分段控件。导航降级——它不该和内容同重，
+   之前三张带副标题的大卡占掉整整一行，把真正的产物挤到折线附近。 */
+.lg-qs-result-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.lg-qs-result-tabs > button {
+  height: 36px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.lg-qs-result-tabs > button:hover {
+  color: var(--text-primary);
+}
+
+.lg-qs-result-tabs > button.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* 接入信息页：地址与用途两张卡横铺，窄屏退回单列。
+   密钥已经提到页签之上，这里不再有第三张。 */
 .lg-qs-access-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -4181,29 +4238,6 @@ a:focus-visible {
   font-size: var(--fs-secondary);
 }
 
-/* 密钥卡：整屏最重的一块——warn 描边 + 染色底 + 更大的等宽字。 */
-.lg-qs-hero.is-secret {
-  gap: 12px;
-  border-color: var(--warn);
-  background: color-mix(in srgb, var(--warn-bg) 55%, var(--bg-surface));
-}
-
-.lg-qs-hero.is-secret > .lg-qs-hero-head > strong {
-  color: var(--text-primary);
-  font-size: var(--fs-heading);
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.lg-qs-hero.is-secret > .lg-qs-hero-value {
-  padding: 16px;
-  border-color: color-mix(in srgb, var(--warn) 35%, var(--border-subtle));
-  font-size: var(--fs-metric);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
 .lg-qs-hero-head {
   display: flex;
   align-items: center;
@@ -4299,19 +4333,6 @@ a:focus-visible {
   font-size: var(--fs-caption);
 }
 
-/* 密钥串在窄屏必须能横向滚动，不能被裁掉——它是这一屏唯一取不回来的东西。 */
-.lg-qs-secret-code {
-  display: block;
-  overflow-x: auto;
-  padding: 14px 16px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--fs-body);
-  white-space: nowrap;
-}
 
 .lg-qs-secret-actions {
   display: flex;

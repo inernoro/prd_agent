@@ -105,11 +105,16 @@ const INTENT_SAMPLES = [
   '后端服务批量做图片理解',
 ];
 
-/** 产物屏三个页签：一页只讲一件事，「怎么接进去」在这里呈现而不是问用户。 */
-const RESULT_TABS: Array<{ id: ResultTab; label: string; hint: string }> = [
-  { id: 'access', label: '接入信息', hint: '地址 / 密钥 / 调用用途码' },
-  { id: 'curl', label: 'cURL', hint: '一条能直接跑的请求' },
-  { id: 'prompt', label: '提示词', hint: '按调用方式取用' },
+/**
+ * 产物屏三个页签：一页只讲一件事。
+ *
+ * 只留标签、不带副标题——它是导航，不该和内容同重（设计稿 Main 画板：分段控件）。
+ * 之前三张带副标题的大卡占掉整整一行，把真正的产物挤到折线附近。
+ */
+const RESULT_TABS: Array<{ id: ResultTab; label: string }> = [
+  { id: 'access', label: '接入信息' },
+  { id: 'curl', label: 'cURL' },
+  { id: 'prompt', label: '提示词' },
 ];
 
 /** 提示词页签下的三种取用方式。 */
@@ -1241,6 +1246,26 @@ export function QuickstartPage() {
 
             {bundle ? (
               <>
+                {/*
+                  一次性密钥常驻在页签之上，**不属于任何一个页签**。
+                  它是这一屏唯一取不回来的东西；放在「接入信息」页签里，切到 cURL 它就消失了。
+                  视觉语言与第 2 步的结果块一致（accent 描边 + accent-soft 底），首尾呼应。
+                */}
+                <div className="lg-qs-key-hero">
+                  <div className="lg-qs-key-main">
+                    <div className="lg-qs-key-head">
+                      <span className="lg-qs-key-eyebrow">一次性密钥</span>
+                      <Chip label="只显示一次" color="var(--warn)" bg="var(--warn-bg)" />
+                    </div>
+                    <code className="lg-qs-key-value">{bundle.key}</code>
+                    <small className="lg-qs-key-note">离开或刷新即不可再取；不要进仓库、截图或日志。</small>
+                  </div>
+                  <Button className="lg-qs-key-copy" onClick={() => void copyText('key', bundle.key)}>
+                    {copied === 'key' ? <Check size={16} /> : <Copy size={16} />}
+                    {copied === 'key' ? '已复制' : '复制密钥'}
+                  </Button>
+                </div>
+
                 <div className="lg-qs-result-tabs" role="tablist" aria-label="接入产物">
                   {RESULT_TABS.map((item) => (
                     <button
@@ -1251,8 +1276,7 @@ export function QuickstartPage() {
                       className={resultTab === item.id ? 'is-active' : ''}
                       onClick={() => setResultTab(item.id)}
                     >
-                      <strong>{item.label}</strong>
-                      <small>{item.hint}</small>
+                      {item.label}
                     </button>
                   ))}
                 </div>
@@ -1266,16 +1290,6 @@ export function QuickstartPage() {
                       </div>
                       <code className="lg-qs-hero-value">{`${displayBundle.baseUrl}${selectedProtocol.path}`}</code>
                       <small className="lg-qs-hero-note">协议在 cURL 页签可切。</small>
-                    </Card>
-
-                    <Card style={CARD_BODY} className="lg-qs-hero is-secret">
-                      <div className="lg-qs-hero-head">
-                        <strong>一次性密钥</strong>
-                        <Chip label="只显示一次" color="var(--warn)" bg="var(--warn-bg)" />
-                        <Button size="sm" onClick={() => void copyText('key', bundle.key)}>{copied === 'key' ? <Check size={14} /> : <Copy size={14} />}{copied === 'key' ? '已复制' : '复制密钥'}</Button>
-                      </div>
-                      <code className="lg-qs-hero-value lg-qs-secret-code">{bundle.key}</code>
-                      <small className="lg-qs-hero-note">离开或刷新即不可再取；不要进仓库、截图或日志。</small>
                     </Card>
 
                     <Card style={CARD_BODY} className="lg-qs-hero is-caller">

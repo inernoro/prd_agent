@@ -310,7 +310,7 @@ check('第三屏是归属与预算', [
 check('第三屏仍显示即将登记的码', (await issuedCode(page).innerText()).trim(), 'xiaomi-speaker.command-intent::chat');
 check('归属团队默认选中当前用户所在团队', await page.locator('.lg-qs-team-list button.is-active').innerText(), '核心平台组');
 check('创建屏不出现任何个人归属控件', await page.locator('.lg-qs-owner-line, .lg-qs-owner-list').count(), 0);
-check('创建屏不出现一次性密钥', await page.locator('.lg-qs-secret-code').count(), 0);
+check('创建屏不出现一次性密钥', await page.locator('.lg-qs-key-hero').count(), 0);
 check('创建屏不出现产物细条', await page.locator('.lg-qs-ribbon').count(), 0);
 // 主行动钉在卡片右下角（向导式的「下一步」位置）：通栏按钮或左对齐都会让这条红。
 check('主行动贴着创建卡右边缘', await page.evaluate(() => {
@@ -344,15 +344,27 @@ check('提交体里不存在 owner 字段', posted.some((item) => item.body && '
 
 // ── 3) 产物屏：表单让位，密钥 + 地址 + 单个复制区，成功也留 requestId ────
 check('产物屏不再有创建向导', await page.locator('.lg-qs-step-card, .lg-qs-ask').count(), 0);
-check('产物屏是三个页签', await page.$$eval('.lg-qs-result-tabs > button strong', (nodes) => nodes.map((n) => n.textContent.trim())), ['接入信息', 'cURL', '提示词']);
+check('产物屏是三个页签', await page.$$eval('.lg-qs-result-tabs > button', (nodes) => nodes.map((n) => n.textContent.trim())), ['接入信息', 'cURL', '提示词']);
 check('默认停在接入信息页', await page.locator('.lg-qs-access-grid').count(), 1);
 check('产物屏出现签发细条', await page.locator('.lg-qs-ribbon').count(), 1);
-check('密钥明文可见', (await page.locator('.lg-qs-secret-code').innerText()).startsWith('gwk_'), true);
+check('密钥明文可见', (await page.locator('.lg-qs-key-value').innerText()).startsWith('gwk_'), true);
 // 页签互斥：接入信息页上不该出现请求片段，反之亦然——「一页只讲一件事」就是这条断言。
-check('接入信息页三张卡、没有片段', [
+// 密钥已经提到页签之上，接入信息页只剩地址与用途两张卡。
+check('接入信息页两张卡、没有片段', [
   await page.locator('.lg-qs-hero').count(),
   await page.locator('.lg-qs-code').count(),
-], [3, 0]);
+], [2, 0]);
+/*
+  密钥常驻在页签之上——这是产物屏最重要的一条结构约束，也是最容易被改回去的一条：
+  它是全屏唯一取不回来的东西，一旦被塞回某个页签，切一下页签它就消失了。
+  判据不是「密钥存在」（那在接入信息页上恒真），而是**它排在页签容器之上**。
+*/
+check('密钥主区排在页签之上', await page.evaluate(() => {
+  const key = document.querySelector('.lg-qs-key-hero');
+  const tabs = document.querySelector('.lg-qs-result-tabs');
+  if (!key || !tabs) return 'missing';
+  return key.getBoundingClientRect().bottom <= tabs.getBoundingClientRect().top + 1;
+}), true);
 check('产物屏露出本次登记的调用用途码', (await page.locator('.lg-qs-hero.is-caller code').innerText()).trim(), 'xiaomi-speaker.command-intent::chat');
 check('提交给控制台的就是模型推出来的码', posted.find((item) => item.api === '/app-callers')?.body?.appCallerCode, 'xiaomi-speaker.command-intent::chat');
 check('调用用途卡标出归属团队', (await page.locator('.lg-qs-hero.is-caller small').innerText()).includes('归属团队 核心平台组'), true);
@@ -364,6 +376,11 @@ check('cURL 页有片段与测试栏、没有接入信息卡', [
   await page.locator('.lg-qs-testbar').count(),
   await page.locator('.lg-qs-hero').count(),
 ], [1, 1, 0]);
+// 切走之后密钥必须还在：把它塞回任何一个页签，这条立刻红。
+check('切到 cURL 页后密钥仍在', [
+  await page.locator('.lg-qs-key-hero').count(),
+  (await page.locator('.lg-qs-key-value').innerText()).startsWith('gwk_'),
+], [1, true]);
 // 候选只能来自这条 appCaller 真正走的那个池：另一个同类型池的成员不许混进来，
 // 否则真实租户上会平铺出 200+ 个模型，且违反「可选模型必须来自获准的池」。
 check('模型候选只来自被路由到的池、且只列健康成员', await page.$$eval('#lg-qs-model-options option', (nodes) => nodes.map((n) => n.value)), ['demo/chat-1', 'demo/chat-2']);
@@ -602,7 +619,7 @@ check('390 产物屏不出现横向滚动', await page.evaluate(() => document.d
 // 真实密钥是 47 个字符，窄屏一行放不下。它取不回来第二次，所以宁可换行也不能被裁：
 // 判据是「整串都在可视范围内」——横向溢出即判红，不管有没有滚动条。
 check('390 密钥完整可见、没有被裁', await page.evaluate(() => {
-  const code = document.querySelector('.lg-qs-secret-code');
+  const code = document.querySelector('.lg-qs-key-value');
   if (!code) return 'missing';
   return code.scrollWidth <= code.clientWidth + 1 ? 'fully-visible' : `clipped:${code.scrollWidth - code.clientWidth}`;
 }), 'fully-visible');
