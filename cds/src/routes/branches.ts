@@ -44,7 +44,7 @@ import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledS
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
-import { recordBuild } from '../services/build-activity-tracker.js';
+import { recordBuild, assessDeployLoop } from '../services/build-activity-tracker.js';
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
@@ -12101,6 +12101,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? req.body.commitSha
         : undefined
     );
+    // 空转部署熔断（2026-08-29）：同一分支反复部署**同一个 commit** 是「部署环」的
+    // 特征，正常连推每次都是新 SHA、永远不命中。判据与阈值见
+    // build-activity-tracker.ts 的 assessDeployLoop 注释（含事故经过）。
+    // 放在 deploymentRun 登记与租约之前——被拦下的请求不该留下 run 记录、不该占租约。
+    // 此处尚未进入 SSE，响应头未发出，可以正常返 JSON。
+    const deployLoopSha = requestCommitSha || entry.githubCommitSha;
+    const loopAssessment = assessDeployLoop(entry.id, deployLoopSha);
+    const ignoreDeployLoopGuard = req.query.ignoreDeployLoopGuard === '1'
+      || req.body?.ignoreDeployLoopGuard === true;
+    if (loopAssessment.level === 'trip' && !ignoreDeployLoopGuard) {
+      stateService.appendActivityLog(entry.projectId || 'default', {
+        type: 'deploy-loop-blocked',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor: resolveActorFromRequest(req),
+        // 用既有的 failed 而不是新增 'blocked'：这次部署确实没发生，
+        // 语义够用，且不必让每个 result 消费方都跟着改（不必要的枚举涟漪）。
+        result: 'failed',
+        note: `空转部署熔断：${loopAssessment.windowMinutes} 分钟内已对同一提交 ${loopAssessment.commitSha} 部署 ${loopAssessment.sameCommitCount} 次，本次已拒绝`,
+      });
+      stateService.save();
+      res.status(429).json({
+        error: 'deploy_loop_detected',
+        message: `空转部署熔断：最近 ${loopAssessment.windowMinutes} 分钟内，本分支已对同一个提交 ${loopAssessment.commitSha} 部署了 ${loopAssessment.sameCommitCount} 次，代码没有任何变化。这通常意味着某个部署步骤在自己重新触发部署，形成无法收敛的环——它会让分支永远停在 building、预览域名长期 503，并独占宿主构建槽把其它分支饿死。请先查清是谁在反复触发。`,
+        branchId: entry.id,
+        commitSha: loopAssessment.commitSha,
+        sameCommitCount: loopAssessment.sameCommitCount,
+        windowMinutes: loopAssessment.windowMinutes,
+        escapeHatch: {
+          hint: '推一个新提交即可自动解除（判据按「分支 + 提交」计数）；确认这次重复部署是有意为之，可附加 ?ignoreDeployLoopGuard=1 强制放行',
+        },
+      });
+      return;
+    }
+    if (loopAssessment.level === 'warn') {
+      stateService.appendActivityLog(entry.projectId || 'default', {
+        type: 'deploy-loop-warning',
+        branchId: entry.id,
+        branchName: entry.branch,
+        actor: resolveActorFromRequest(req),
+        result: 'pending',
+        note: `空转部署告警：${loopAssessment.windowMinutes} 分钟内已对同一提交 ${loopAssessment.commitSha} 部署 ${loopAssessment.sameCommitCount} 次；达到 ${loopAssessment.tripAt} 次将拒绝`,
+      });
+      // 这里不显式 save()：appendActivityLog 只改内存，而告警是放行路径，
+      // 后续部署流程本来就会落盘。上面 trip 分支必须自己存，因为它立即 return。
+    }
+
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const deploymentRun = await deploymentRunService?.begin({
       projectId: entry.projectId || 'default',
@@ -12117,7 +12164,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
     // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
-    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req));
+    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req), deployLoopSha);
 
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy',

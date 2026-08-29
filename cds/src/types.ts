@@ -2847,6 +2847,8 @@ export interface ProjectActivityLog {
     | 'resource-credentials-reset'
     | 'resource-connection-inject'
     | 'resource-data-query'
+    | 'deploy-loop-blocked'   // 空转部署熔断：同一提交反复部署，本次已拒绝
+    | 'deploy-loop-warning'   // 空转部署告警：同一提交重复部署已接近熔断阈值
   ;
   /** 关联分支（如有）。 */
   branchId?: string;
