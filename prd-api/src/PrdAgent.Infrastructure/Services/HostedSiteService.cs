@@ -404,11 +404,14 @@ public class HostedSiteService : IHostedSiteService
             // 换了内容就要重判形态：HTML 站换成 deck 要变、deck 换成普通页也要变回去
             .Set(x => x.IsSlideDeck, replacedIsSlideDeck);
 
-        // 重传把站点换成了不支持提问的形态（如 HTML 站换成视频），提问开关必须一起关掉。
-        // 留着不管的话，已经发出去的分享还挂着提问入口，而每次提问都必定 422 ——
-        // 站点内容变了，基于旧内容开的能力就不该继续声称可用。
-        if (AskAccessPolicy.UnsupportedReason(normalizedType) != null)
-            update = update.Set(x => x.AskEnabled, false);
+        // 重传成不支持提问的形态（如 HTML 站换成视频）时，**不要**去改 AskEnabled。
+        //
+        // 能力已经被 AskAccessPolicy.IsAskOn 压住了——它先看 UnsupportedReason，
+        // 不支持就一律 false，与开关无关。所以这里再写一次是多余的，而且有害：
+        // AskEnabled 现在是三态，false 的含义是「owner 明确拒绝」。把系统强制的停用
+        // 写成 false，就等于替 owner 做了一个他没做过的决定——之后重传回 HTML，
+        // 形态恢复支持了，这个 false 却留在库里，提问永久关闭，而他从没关过。
+        // 「系统当前不支持」和「主人不想开」是两件事，不能共用一个格子。
 
         await _db.HostedSites.UpdateOneAsync(x => x.Id == siteId, update, cancellationToken: ct);
 

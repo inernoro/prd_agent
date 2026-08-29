@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { readSseStream, type SseEvent } from '@/lib/sse';
 import { api } from '@/services/api';
 import { buildApiUrl } from '@/services/real/webPages';
@@ -53,6 +53,25 @@ export function useAskStream(source: AskSource) {
    * reset() 能清但它连消息一起清了，用户刚才问过的几轮会凭空消失。
    */
   const clearGateError = useCallback(() => setGateError(null), []);
+
+  // 额度窗口到点就自己把门收起来。
+  //
+  // 放在这里而不是各个宿主里：gateError 归 useAskStream 持有，两个宿主（右下角的坞、
+  // 预览弹窗里的面板）都从它拿。上一轮只给坞接了「按额度快照收门」那条路，而面板走的是
+  // mode:'site'、拿不到额度快照（useAskQuota 无 token 直接返回 null），于是那条路对它
+  // 完全不生效——owner 在站内预览吃一次 429 就锁到弹窗销毁为止。
+  //
+  // Retry-After 是服务端自己说的「几点可以再来」，到点清掉即可；真要还没恢复，
+  // 下一次提问会拿到新的 429，不会放行到后端之外。
+  useEffect(() => {
+    const at = gateError?.retryAfterMs;
+    if (!at) return;
+    const timer = window.setTimeout(
+      () => setGateError(null),
+      Math.min(Math.max(at - Date.now(), 0), 3_600_000) + 500,
+    );
+    return () => window.clearTimeout(timer);
+  }, [gateError?.retryAfterMs]);
 
   const ask = useCallback(
     async (question: string) => {

@@ -212,3 +212,5 @@
 | fix | prd-api | 提问配额退款改为退「当初实际扣的那两个键」，修掉跨 UTC 零点或访客窗口翻篇时减错窗口、抹掉别人用量的问题 |
 | fix | prd-api | 后端幻灯片判据对齐阅读页那份（reveal 需带内层 slides、兼容单引号与多 class），并加跨语言守卫钉住两边一致 |
 | fix | prd-admin | 分享档续期加载态换 MapSpinner；加载态守卫作用域从单文件扩到整个 web-hosting 目录 |
+| fix | prd-api | 重传成不支持形态时不再把 AskEnabled 写成 false——三态下 false 是「owner 明确拒绝」，写它会让换回 HTML 后提问永久关闭 |
+| fix | prd-admin | 额度窗口到点自动收门下沉到 useAskStream，站内预览面板（mode:site 拿不到额度快照）也能自动恢复 |

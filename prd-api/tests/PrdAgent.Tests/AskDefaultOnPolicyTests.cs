@@ -85,4 +85,48 @@ public class AskDefaultOnPolicyTests
         Assert.True(AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType));
         Assert.True(AskOpeningQuestionGenerator.NeedsGeneration(site));
     }
+
+    /// <summary>
+    /// 不支持的形态必须靠 <see cref="AskAccessPolicy.IsAskOn"/> 压住，
+    /// 不许有人把它写成 AskEnabled=false。
+    ///
+    /// 三态里 false 的含义是「owner 明确拒绝」。重传成视频时若顺手写 false，就等于
+    /// 替 owner 做了一个他没做过的决定：之后重传回 HTML、形态恢复支持，这个 false
+    /// 还留在库里，提问永久关闭，而他从没关过。系统强制停用与主人不想开是两件事。
+    ///
+    /// 判据同时守住两头：能力确实被压住（行为），且没人拿 false 去表达它（源码）。
+    /// </summary>
+    [Fact]
+    public void 不支持形态靠判据压住_不写进开关()
+    {
+        // 行为：视频站无论开关是什么，都不许开
+        Assert.False(AskAccessPolicy.IsAskOn(null, "video"));
+        Assert.False(AskAccessPolicy.IsAskOn(true, "video"));
+
+        // 换回支持的形态后，没表过态就该恢复成开——这正是被 false 覆盖掉的那件事
+        Assert.True(AskAccessPolicy.IsAskOn(null, "html"));
+
+        // 源码：全仓不许再出现「把不支持写成 owner 拒绝」的那一笔
+        var src = LocateSrcRoot();
+        var offenders = Directory.GetFiles(src, "*.cs", SearchOption.AllDirectories)
+            .Where(f => File.ReadAllText(f).Contains("AskEnabled, false"))
+            .Select(f => Path.GetFileName(f))
+            .ToList();
+        Assert.True(offenders.Count == 0,
+            $"这些文件把系统强制停用写成了 owner 拒绝：{string.Join(", ", offenders)}");
+    }
+
+    private static string LocateSrcRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir.FullName, "prd-api", "src");
+            if (Directory.Exists(candidate)) return candidate;
+            candidate = Path.Combine(dir.FullName, "src");
+            if (Directory.Exists(candidate) && File.Exists(Path.Combine(dir.FullName, "PrdAgent.sln"))) return candidate;
+            dir = dir.Parent;
+        }
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src"));
+    }
 }
