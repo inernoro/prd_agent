@@ -140,6 +140,49 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
     }
 
     /// <summary>
+    /// 边界的第三个出口：池选完之后一个成员都用不了。
+    ///
+    /// 前两个出口（expectedModel 的全量池搜索、LLMModels 直连）已经关掉了，但「池空/全不健康」
+    /// 那条退路原本会继续掉到 legacy IsMain 直连——等于从背面绕开承诺过的边界
+    /// （Codex 第五十一轮 P1）。这里把默认池清空、同时在 MAP 库里摆一条可用的 legacy 模型：
+    /// 解析必须失败并报池的失败码，不许把那条 legacy 跑起来。
+    /// </summary>
+    [Fact]
+    public async Task UnregisteredFallback_ShouldFailClosedInsteadOfDroppingToLegacy()
+    {
+        await using var env = await GatewayFixture.CreateAsync();
+        await env.GatewayData.Database
+            .GetCollection<BsonDocument>("llmgw_model_pools")
+            .UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", GatewayFixture.DefaultChatPoolId),
+                Builders<BsonDocument>.Update.Set("Models", new BsonArray()));
+        await env.MapData.LLMPlatforms.InsertOneAsync(new LLMPlatform
+        {
+            Id = "legacy-platform",
+            Name = "老平台",
+            PlatformType = "openai",
+            ApiUrl = "https://legacy.example.test/v1",
+            Enabled = true,
+        });
+        await env.MapData.LLMModels.InsertOneAsync(new LLMModel
+        {
+            Id = "legacy-main-model",
+            Name = "legacy-main",
+            ModelName = "legacy-main",
+            PlatformId = "legacy-platform",
+            IsMain = true,
+            Enabled = true,
+        });
+
+        var result = await env.Resolver.ResolveAsync(
+            "document-store.transcribe-summary::chat",
+            ModelTypes.Chat);
+
+        result.Success.ShouldBeFalse();
+        result.ActualModel.ShouldNotBe("legacy-main");
+    }
+
+    /// <summary>
     /// embedding / asr / video-gen 三类不吃这条兜底：绑定还在、池没了，换个模型出来的东西
     /// 根本不能用（向量维度对不上，写进库就是一批认不出来的垃圾）。这正是
     /// HasDedicatedBinding 那段注释点名要拦的情形，继续失败关闭。

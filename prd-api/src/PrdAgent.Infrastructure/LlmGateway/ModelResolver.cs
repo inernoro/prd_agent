@@ -696,10 +696,15 @@ public class ModelResolver : IModelResolver
                 modelPoolId: originalPool?.Id);
         }
 
-        if (hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+        // usedGatewayDefaultFallback：候选是「只回落到默认池」给的，那这就是硬边界的第三个出口。
+        // 前两个（expectedModel 的全量池搜索与 LLMModels 直连）已经关掉了，这里是池选完之后
+        // 「一个成员都用不了」的退路——不挡的话，它照样会掉到下面的 legacy IsMain 直连，
+        // 把承诺过的边界从背面绕开（Codex 第五十一轮 P1）。池用不了就如实报池的失败码。
+        if ((hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
+            || usedGatewayDefaultFallback)
         {
             _logger.LogWarning(
-                "[ModelResolver] {ModelType} 专属模型池全部不可用，拒绝降级 legacy 直连: AppCallerCode={Code}, Pool={Pool}",
+                "[ModelResolver] {ModelType} 模型池全部不可用，拒绝降级 legacy 直连: AppCallerCode={Code}, Pool={Pool}",
                 modelType, appCallerCode, originalPool?.Name);
             return ModelResolutionResult.NotFound(expectedModel,
                 $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}",
