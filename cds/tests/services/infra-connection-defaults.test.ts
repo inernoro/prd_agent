@@ -301,6 +301,31 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
     expect(source).toContain('?? resolveConfiguredMysqlMaxConnections()');
   });
 
+  /**
+   * Codex 在 PR #1455 的 P2：兜底只喂给了两条复用路径的审计，而**首次建容器**走的是
+   * docker run——注入被跳过时成功事件也跳过，两条审计又都够不着，新库静默停在出厂默认
+   * 且零告警。同一个「既没生效也没告警」在首次部署上原样还在。
+   */
+  it('新建容器时若因命令形态不安全没注入成，也要留痕', () => {
+    const source = containerSource();
+    expect(source).toContain("mysqlDefaults.skippedReason === 'unsafe-command-shape'");
+    expect(source).toContain("action: 'infra.mysql.max-connections-skipped'");
+    // 逃生阀关掉本功能时不该报——那时本就不该有期待
+    expect(source).toContain('&& desiredMysqlMaxConnections !== null');
+  });
+
+  it('红用例：拿掉新建路径的留痕，守卫必须变红', () => {
+    const guard = (source: string) => {
+      expect(source).toContain("action: 'infra.mysql.max-connections-skipped'");
+    };
+    const real = containerSource();
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, "action: 'infra.mysql.max-connections-skipped'", "action: 'noop.skipped'"),
+    );
+  });
+
   it('红用例：拿掉配置默认值兜底，守卫必须变红', () => {
     const guard = (source: string) => {
       expect(source).toContain('?? resolveConfiguredMysqlMaxConnections()');

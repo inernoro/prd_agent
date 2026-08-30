@@ -2943,6 +2943,27 @@ export class ContainerService {
         serviceId: service.id,
         containerName: service.containerName,
       });
+    } else if (
+      mysqlDefaults.skippedReason === 'unsafe-command-shape'
+      && desiredMysqlMaxConnections !== null
+    ) {
+      // 新建容器但没注入成：命令形态不安全（启动被包了一层 shell、或有自定义 entrypoint），
+      // 追加参数会变成那层 shell 的参数而不是数据库的，所以有意跳过。
+      //
+      // 但**跳过必须留痕**。两条复用路径的审计只管已存在的容器，新建这一条走不到它们；
+      // 不在这里说一声，一台新库就静默停在出厂默认，没人知道它没拿到该有的上限
+      // ——正是本 PR 在修的那个「既没生效也没告警」（Codex 在 PR #1455 的 P2）。
+      // desiredMysqlMaxConnections 为 null 时不报：那是逃生阀关了本功能，本就不该有期待。
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'infra-connection-defaults',
+        action: 'infra.mysql.max-connections-skipped',
+        message: `${service.containerName}: 启动命令的形态不安全（包了 shell 或自定义 entrypoint），CDS 无法安全追加 --max-connections=${desiredMysqlMaxConnections}，新容器以镜像默认上限运行。要拿到该上限，请在服务定义里显式声明它。`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        status: 'warn',
+      });
     }
     this.recordContainerEvent({
       severity: 'info',
