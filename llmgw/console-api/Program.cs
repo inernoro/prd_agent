@@ -1077,17 +1077,28 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
         }
         if (membership is null)
         {
-            // 二、文档压根不存在：等值谓词 + upsert 建它。唯一索引保证并发只有一个建成。
+            // 二、文档压根不存在：**只插入，不 upsert**。
+            //
+            // upsert 在这里是错的：第一步之后、这一步之前，另一个请求可能已经把文档建好了，
+            // 而 upsert 的谓词是等值的 tenant+user——它会匹配上那条新文档并执行更新，
+            // 连同 `Inc(Version, 1)` 一起。没有 DuplicateKey，也就走不到第三步，
+            // 于是胜者的版本被落败方 +1，胜者手里那把 token 当场失效——正是这次要消除的症状。
+            // 插入的语义是「只有我建成才算我做的改变」，撞唯一索引就认输。
             try
             {
-                membership = await memberships.FindOneAndUpdateAsync(
-                    membershipFilter,
-                    membershipUpdate,
-                    new FindOneAndUpdateOptions<LlmGwMembership, LlmGwMembership>
-                    {
-                        IsUpsert = true,
-                        ReturnDocument = ReturnDocument.After,
-                    });
+                var created = new LlmGwMembership
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    TenantId = tenant.Id,
+                    UserId = gwUser.Id,
+                    Role = LlmGwTenantRoles.Admin,
+                    Status = "active",
+                    Version = 1,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                };
+                await memberships.InsertOneAsync(created);
+                membership = created;
             }
             catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
             {
@@ -6282,7 +6293,11 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
             await SendAsync(new { type = "stage", stage = "thinking", text = "模型正在推导两段码" });
             using var body2 = await response.Content.ReadAsStreamAsync(draftCt);
             using var reader = new StreamReader(body2, Encoding.UTF8);
-            while (!reader.EndOfStream && !draftCt.IsCancellationRequested)
+            // 不用 EndOfStream 当循环条件：它会先做一次**同步**读去探有没有下一个字节，
+            // 而那次读收不到 deadline 令牌。serving 把响应头发回来之后停住不再吐 body 时，
+            // 请求就卡在那次同步读里，40 秒的承诺又一次静默失效——判据要挂在可取消的读上，
+            // 读回 null 才是 EOF。
+            while (!draftCt.IsCancellationRequested)
             {
                 var line = await reader.ReadLineAsync(draftCt);
                 if (line is null) break;

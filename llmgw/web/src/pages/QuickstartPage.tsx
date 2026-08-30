@@ -261,7 +261,9 @@ export function QuickstartPage() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestId?: string; code?: string }
     | null>(null);
   // 一键测试用的模型候选：只列该调用类型模型池里的成员，不让人随便填一个池外的模型。
-  const [poolModels, setPoolModels] = useState<string[]>([]);
+  // 成员要连**上游 id** 一起留着：钉一个成员的契约是「平台 + 模型」两个都给，
+  // 只给模型名的话解析器根本构造不出 pinned target，回的是 ROUTE_CONFIG_INCOMPATIBLE。
+  const [poolModels, setPoolModels] = useState<Array<{ modelId: string; platformId: string }>>([]);
   const [poolName, setPoolName] = useState('');
   const [poolMemberCount, setPoolMemberCount] = useState(0);
   const [modelQuery, setModelQuery] = useState('');
@@ -294,7 +296,9 @@ export function QuickstartPage() {
   const budgetPair = deriveBudgetPair(budgetUsd, holdCapUsd);
   // 输入框空着就是 auto；填了就必须是这个池里的健康成员，否则不让执行（选了也是白跑）。
   const testModel = modelQuery.trim() || 'auto';
-  const modelValid = testModel === 'auto' || poolModels.includes(testModel);
+  const modelValid = testModel === 'auto' || poolModels.some((model) => model.modelId === testModel);
+  // 钉成员时要一起发的上游 id。取不到就说明这个名字不在池里，上面那条判据已经拦下了。
+  const testPlatformId = poolModels.find((model) => model.modelId === testModel)?.platformId ?? '';
   // 页面各处说「实际执行 X」时必须用这个，不能用输入框里那个：Gemini 钉不住的模型
   // 会退回池调度，照着输入框声称就是在编造一个没发生的执行结果。
   const effectiveTestModel = pinnedTestModel(protocol, testModel);
@@ -361,8 +365,10 @@ export function QuickstartPage() {
       const healthy = members
         .filter((model) => model.healthStatus === 0 && model.modelId)
         .sort((a, b) => a.priority - b.priority)
-        .map((model) => model.modelId);
-      setPoolModels([...new Set(healthy)]);
+        .map((model) => ({ modelId: model.modelId, platformId: model.platformId }));
+      // 同名成员可能挂在多个上游下：按模型名去重，保留优先级最高的那一条的上游。
+      const seen = new Set<string>();
+      setPoolModels(healthy.filter((model) => seen.has(model.modelId) ? false : (seen.add(model.modelId), true)));
       setPoolMemberCount(members.length);
       setPoolName(target?.name ?? '');
     });
@@ -411,7 +417,7 @@ export function QuickstartPage() {
   const snippetMode: TestMode = testMode === 'real' && realRouteReady ? 'real' : 'safe';
   const snippets = useMemo(() => ({
     client: clientSetupSnippet(displayBundle),
-    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel, attachment, testPrompt),
+    curl: exampleFor(displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, snippetMode, testModel, attachment, testPrompt, testPlatformId),
     env: environmentSnippet(displayBundle),
     skill: agentSkillSnippet(displayBundle, snippetMode),
   }), [displayBundle.protocol, displayBundle.requestType, displayBundle.baseUrl, displayBundle.appCallerCode, displayBundle.key, displayBundle.clientCode, displayBundle.environment, displayBundle.clientPreset, snippetMode, testModel, attachment, testPrompt]);
@@ -733,7 +739,7 @@ export function QuickstartPage() {
       const response = await fetch(new URL(protocolPathFor(definition, testModel), `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
         headers,
-        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, false, testPrompt)),
+        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, false, testPrompt, testPlatformId)),
         credentials: 'omit',
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
@@ -794,7 +800,7 @@ export function QuickstartPage() {
           'X-Gateway-App-Caller': target.appCallerCode,
           'X-Request-Id': requestId,
         },
-        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, canStream, testPrompt)),
+        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId, testModel, attachment, canStream, testPrompt, testPlatformId)),
         credentials: 'omit',
       });
       if (!response.ok) {
@@ -1386,7 +1392,7 @@ export function QuickstartPage() {
                             onChange={(event) => { setModelQuery(event.target.value); setTestResult(null); }}
                           />
                           <datalist id="lg-qs-model-options">
-                            {poolModels.map((modelId) => <option key={modelId} value={modelId} />)}
+                            {poolModels.map((model) => <option key={`${model.platformId}:${model.modelId}`} value={model.modelId} />)}
                           </datalist>
                         </label>
                       </div>
@@ -1795,7 +1801,7 @@ function userContentFor(requestType: RequestType, attachment: TestAttachment, fl
   ];
 }
 
-function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string, model = 'auto', attachment: TestAttachment = null, stream = false, prompt = '') {
+function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode: string, requestId: string, model = 'auto', attachment: TestAttachment = null, stream = false, prompt = '', platformId = '') {
   /*
     model=auto 交给池调度；选了具体成员就要**按钉成员的契约**发，不能只把名字塞进 model
     再声明 pool：serving 在 model_policy=pool 时会把 ExpectedModel 当成**池标识**去找，
@@ -1806,7 +1812,12 @@ function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode:
   */
   const pinned = model !== 'auto';
   const policy = pinned ? 'pinned' : 'auto';
-  const pin = pinned ? { pinned_model_id: model } : {};
+  // 两个 id 都要给：解析器只在 pinnedPlatformId 与 pinnedModelId **都非空**时才构造
+  // pinned target，缺一个就落到「PinnedModel 不在 appCaller 专用模型池内」，
+  // 回的仍是 ROUTE_CONFIG_INCOMPATIBLE——与只发模型名时一模一样的失败。
+  const pin = pinned && platformId
+    ? { pinned_platform_id: platformId, pinned_model_id: model }
+    : {};
   if (protocol === 'native') return {
     appCallerCode,
     modelType: requestType,
@@ -2163,14 +2174,14 @@ description: 通过团队 scoped key 使用 LLM Gateway 的 ${definition.label} 
 - 401 时轮换密钥；403 时检查 team、appCaller、协议和 scope，禁止通过扩大到通配 key 绕过。`;
 }
 
-function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode, model = 'auto', attachment: TestAttachment = null, prompt = '') {
+function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: string, appCaller: string, mode: TestMode, model = 'auto', attachment: TestAttachment = null, prompt = '', platformId = '') {
   const definition = protocolDefinition(protocol);
   const requestIdToken = '__LLMGW_REQUEST_ID__';
   const common = `-H "Authorization: Bearer \$LLMGW_API_KEY" \\
   -H "X-Gateway-Source: external" \\
   -H "X-Gateway-App-Caller: ${appCaller}" \\${mode === 'safe' ? '\n  -H "X-Gateway-Dry-Run: quickstart" \\' : ''}
   -H "X-Request-Id: \$REQUEST_ID"`;
-  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model, attachment, false, prompt), null, 2)
+  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model, attachment, false, prompt, platformId), null, 2)
     .replace(requestIdToken, `'"$REQUEST_ID"'`);
   const extra = protocol === 'claude' ? ' \\\n  -H "anthropic-version: 2023-06-01"' : '';
   return `REQUEST_ID="quickstart-\$(date +%s)-\$RANDOM"

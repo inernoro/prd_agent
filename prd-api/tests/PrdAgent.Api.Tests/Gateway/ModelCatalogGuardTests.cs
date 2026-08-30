@@ -94,6 +94,13 @@ public sealed class ModelCatalogGuardTests
         ModelCatalog.Find("private-provider/gpt-4o").ShouldBeNull(
             "没登记过的前缀不是厂商前缀；剥掉它等于把一个陌生别名认成 gpt-4o");
         ModelCatalog.Contains("acme/claude-3.5-sonnet").ShouldBeFalse();
+        // 更隐蔽的一种：两段**各自**都登记过，拼在一起从没登记过。用一张全局
+        // 「见过的厂商段」白名单会放它过去——剥掉 openai/ 之后认成 Anthropic 那条登记，
+        // 一个没人见过的标识就继承了别人的用途与能力。厂商段必须绑到命中的那条登记上。
+        ModelCatalog.Contains("openai/claude-3-opus").ShouldBeFalse(
+            "openai 与 claude-3-opus 各自登记过，但这个组合没有——不能靠全局厂商白名单放行");
+        ModelCatalog.Contains("anthropic/gpt-4o").ShouldBeFalse();
+        PrdAgent.Core.Models.GatewayModelCatalog.Contains("openai/claude-3-opus").ShouldBeFalse();
         PrdAgent.Core.Models.GatewayModelCatalog.Contains("private-provider/gpt-4o").ShouldBeFalse(
             "运行时那道门必须得到同一个结论，否则导入拦住了、请求照样放行");
 
@@ -206,6 +213,7 @@ public sealed class ModelCatalogMirrorGuardTests
             // 前缀口径：登记过的厂商段该命中，没登记过的必须落空——两侧结论要一致，
             // 否则会出现「导入拦住了、请求照样放行」这种两边都自认没错的静默不一致。
             "private-provider/gpt-4o", "openai/o1-preview", "acme/claude-3.5-sonnet",
+            "openai/claude-3-opus", "anthropic/gpt-4o",
         ];
 
         foreach (var probe in probes)

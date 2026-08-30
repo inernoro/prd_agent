@@ -186,36 +186,30 @@ public static class GatewayModelCatalog
     {
         var key = Normalize(modelId);
         if (key.Length == 0) return null;
-        while (true)
-        {
-            if (ByKey.TryGetValue(key, out var model)) return model;
-            var slash = key.IndexOf('/');
-            if (slash <= 0 || slash >= key.Length - 1) return null;
-            if (!KnownVendorSegments.Contains(key[..slash])) return null;
-            key = key[(slash + 1)..];
-        }
+        if (ByKey.TryGetValue(key, out var direct)) return direct;
+
+        // 只剥一层，而且剥掉的那一段必须是**命中的那条登记自己的**厂商段。
+        // 用一张全局「见过的厂商段」白名单是不够的：`openai` 与 `claude-3-opus` 各自
+        // 都登记过，拼在一起的 `openai/claude-3-opus` 从没被登记过，却会被剥成
+        // `claude-3-opus` 认成 Anthropic 那条——一个没人见过的标识就这样继承了
+        // 别人的用途与能力，导入确认与数据面名录门一起放过它。
+        var slash = key.IndexOf('/');
+        if (slash <= 0 || slash >= key.Length - 1) return null;
+        if (!ByKey.TryGetValue(key[(slash + 1)..], out var stripped)) return null;
+        return RegistersVendorSegment(stripped, key[..slash]) ? stripped : null;
     }
 
-    /// <summary>
-    /// 名录自己登记过的厂商段：每条登记的出品方，加上带前缀别名里 `/` 左边那一段。
-    /// 它是白名单，不是「凡是斜杠前面的都算厂商」——后者正是这道门此前的漏法。
-    /// </summary>
-    private static readonly HashSet<string> KnownVendorSegments = BuildVendorSegments();
-
-    private static HashSet<string> BuildVendorSegments()
+    /// <summary>这条登记自己认不认这个厂商段？认它的出品方，或它登记过的带前缀别名。</summary>
+    private static bool RegistersVendorSegment(GatewayCatalogModel model, string vendor)
     {
-        var segments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var model in All)
+        if (string.Equals(Normalize(model.Vendor), vendor, StringComparison.OrdinalIgnoreCase)) return true;
+        foreach (var alias in model.Aliases ?? Array.Empty<string>())
         {
-            if (!string.IsNullOrWhiteSpace(model.Vendor)) segments.Add(Normalize(model.Vendor));
-            foreach (var alias in model.Aliases ?? Array.Empty<string>())
-            {
-                var normalized = Normalize(alias);
-                var slash = normalized.IndexOf('/');
-                if (slash > 0) segments.Add(normalized[..slash]);
-            }
+            var normalized = Normalize(alias);
+            var slash = normalized.IndexOf('/');
+            if (slash > 0 && string.Equals(normalized[..slash], vendor, StringComparison.OrdinalIgnoreCase)) return true;
         }
-        return segments;
+        return false;
     }
 
     public static bool Contains(string? modelId) => Find(modelId) is not null;

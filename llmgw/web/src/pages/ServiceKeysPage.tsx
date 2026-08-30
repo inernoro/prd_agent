@@ -222,6 +222,10 @@ export function ServiceKeysPage() {
     // 复位回默认路径，但 MAP 身份没有自助登记这一档，留在「选择已有」。
     setAppCallerMode(sourceIsMap ? 'existing' : 'generate');
     setAppCallerFeature('');
+    // 标识跟着用途一起清。留着它，下一次新建时它会顶上那个还没填的用途段——
+    // code 拼得出来、按钮可点，用户以为自己填过了；名称也是中文的话还会拼出与上一把
+    // 完全相同的 code，于是两把钥匙静默共用一条路由身份与一份预算。
+    setIdentitySlug('');
     setAppCallerCodes('');
     setTeamId('');
     setAllowedCidrs('');

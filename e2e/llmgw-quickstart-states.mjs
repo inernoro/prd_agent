@@ -493,11 +493,16 @@ check('cURL 跟着所选模型变', memberCurl.includes('"model": "demo/chat-2"'
 // serving 会把它当成池标识去找，严格池契约下直接 ROUTE_CONFIG_INCOMPATIBLE。
 check('选成员时声明 pinned 而不是 pool', memberCurl.includes('"model_policy": "pinned"'), true);
 check('选成员时同时给出 pinned_model_id', memberCurl.includes('"pinned_model_id": "demo/chat-2"'), true);
+// 两个 id 都得给：解析器只在 pinnedPlatformId 与 pinnedModelId **都非空**时才构造
+// pinned target，缺上游 id 会落到「PinnedModel 不在 appCaller 专用模型池内」，
+// 回的仍是 ROUTE_CONFIG_INCOMPATIBLE——与只发模型名时同一个失败，白改一轮。
+check('选成员时一起给出 pinned_platform_id', memberCurl.includes('"pinned_platform_id": "p1"'), true);
 await page.getByLabel('测试模型').fill('');
 await page.waitForTimeout(300);
 const autoCurl = await page.locator('.lg-qs-code').innerText();
 check('清空即回到 auto', autoCurl.includes('"model": "auto"'), true);
 check('auto 时不带 pinned_model_id', autoCurl.includes('pinned_model_id'), false);
+check('auto 时不带 pinned_platform_id', autoCurl.includes('pinned_platform_id'), false);
 check('auto 时策略是 auto', autoCurl.includes('"model_policy": "auto"'), true);
 
 /*
