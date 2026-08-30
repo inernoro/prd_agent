@@ -11,7 +11,7 @@
 //   - 四协议接入片段（cURL / 环境变量 / 技能文件 / 客户端配置）是产品内容不是
 //     解释，逐字保留；本页大量标识符与请求头被 GatewayDataDomainGuardTests 按
 //     字面量断言（见 scripts/check-source-contracts.mjs），改名前先跑那个守卫。
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, ensurePoolTypes, getOrganization, getPools, getPoolTypes, updateGatewayAppCaller } from '@/lib/api';
@@ -35,9 +35,18 @@ type PromptWay = 'system' | 'skill' | 'client';
 type TestMode = 'safe' | 'real';
 type ClientPresetId = 'api' | 'cherry-studio' | 'openclaw';
 
-type RoutePreview = {
-  success: boolean;
+/*
+  一次预检是对**哪一条路**下的结论：地址 + 钉住的成员。三者任一与当前选择不同，
+  这份结论就不再描述这一次会跑的那条路，不能拿来放行（见 currentRoutePreview）。
+*/
+type RouteProbeStamp = {
   checkedBaseUrl: string;
+  checkedModel: string;
+  checkedPlatformId: string;
+};
+
+type RoutePreview = RouteProbeStamp & {
+  success: boolean;
   errorMessage?: string;
   resolutionType?: string;
   actualModel?: string;
@@ -260,6 +269,9 @@ export function QuickstartPage() {
   const [routeChecking, setRouteChecking] = useState(false);
   const [preparingRoute, setPreparingRoute] = useState(false);
   const [routePreview, setRoutePreview] = useState<RoutePreview | null>(null);
+  // 预检的代次与在途请求：并发时只有最新那一代的结论算数（见 checkRealRoute）。
+  const routeProbeSeq = useRef(0);
+  const routeProbeAbort = useRef<AbortController | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // code 是归因的唯一入口（serving 的 error.code），message 只做兜底展示。
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; requestId?: string; code?: string }
@@ -430,7 +442,19 @@ export function QuickstartPage() {
     teamId: bundle?.teamId ?? teamId,
     clientPreset: bundle?.clientPreset ?? clientPreset,
   };
-  const currentRoutePreview = routePreview?.checkedBaseUrl === normalizeBaseUrl(baseUrl) ? routePreview : null;
+  /*
+    只有「对这一次真会跑的那条路」下过的结论才算数：地址要同一个，钉住的成员也要同一个。
+    只比地址的话，上一个成员（或 auto 那条）的结论会替换成员后这条**没验过**的路放行——
+    并发预检里先发后到的那条尤其容易造出这种错配。
+    钉住与否走 pinnedTargetOf 这一个判断，与预检、真实调用、cURL 片段同源。
+  */
+  const activeProbePin = pinnedTargetOf(testModel, testPlatformId);
+  const currentRoutePreview = routePreview
+    && routePreview.checkedBaseUrl === normalizeBaseUrl(baseUrl)
+    && routePreview.checkedModel === (activeProbePin?.model ?? 'auto')
+    && routePreview.checkedPlatformId === (activeProbePin?.platformId ?? '')
+      ? routePreview
+      : null;
   const realRouteReady = !routeChecking && canRunRealTest(currentRoutePreview, baseUrl);
   const snippetMode: TestMode = testMode === 'real' && realRouteReady ? 'real' : 'safe';
   const snippets = useMemo(() => ({
@@ -448,10 +472,14 @@ export function QuickstartPage() {
   */
   useEffect(() => {
     if (!bundle || !modelValid) return;
+    // 触发条件是「手上这份结论不是对当前这条路下的」，不是「有东西变了」。
+    // 后者会兜圈：预检期间候选列表会被清空重填，而候选决定 testPlatformId 与 modelValid，
+    // 于是它每 400ms 自己触发自己一次。已经对得上就什么都不用做。
+    if (currentRoutePreview) return;
     const timer = window.setTimeout(() => { void checkRealRoute(bundle, testModel, testPlatformId, false); }, 400);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bundle?.key, bundle?.appCallerCode, testModel, testPlatformId, modelValid]);
+  }, [bundle?.key, bundle?.appCallerCode, testModel, testPlatformId, modelValid, currentRoutePreview]);
 
   const copyText = async (name: string, value: string) => {
     await navigator.clipboard.writeText(value);
@@ -655,12 +683,38 @@ export function QuickstartPage() {
     resetTestResult = true,
   ) => {
     if (!target) return;
+    /*
+      并发预检只认最后一次发起的那条。换成员时上一条 fetch 往往还在路上，
+      而两条写的是同一个 routePreview、清的是同一个 routeChecking：先发的那条
+      后到，就会把「上一个成员那条路是真的」这个结论盖到当前这个成员头上——
+      打到桩上的调用又一次被报成「真实调用已返回、本次计费」，只是换了个入口进来。
+      所以按代次判：不是最新那一代，既不写结论也不动 checking；同时把旧请求 abort 掉，
+      不让它继续占着网络（它的 AbortError 会落进 catch，那里同样按代次噤声）。
+    */
+    const probeId = ++routeProbeSeq.current;
+    routeProbeAbort.current?.abort();
+    const abortController = new AbortController();
+    routeProbeAbort.current = abortController;
+    const superseded = () => routeProbeSeq.current !== probeId;
     setRouteChecking(true);
-    setRoutePreview(null);
+    /*
+      开跑时**不清**上一份结论。清它看着无害，其实是一条回环：候选成员列表跟着
+      routePreview 走（换池就要换候选），清成 null 会让那个 effect 重跑并先清空候选，
+      而候选又决定 testPlatformId 与 modelValid——这两个正是本预检的触发条件，
+      于是每 400ms 自己触发自己一次，serving 被无休止地问同一个问题。
+      结论过不过期由钉在它身上的 checked 判（见 currentRoutePreview），不靠清空；
+      检查期间界面显示的也是 routeChecking 那一支，看不到旧结论。
+    */
     if (resetTestResult) setTestResult(null);
-    const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+    const pin = pinnedTargetOf(pinModel, pinPlatform);
+    // 结论连着「对哪一条路」一起落盘，消费侧才判得出它说的是不是当前这条。
+    const checked: RouteProbeStamp = {
+      checkedBaseUrl: normalizeBaseUrl(baseUrl),
+      checkedModel: pin?.model ?? 'auto',
+      checkedPlatformId: pin?.platformId ?? '',
+    };
     try {
-      const response = await fetch(new URL('/gw/v1/resolve', `${normalizedBaseUrl}/`).toString(), {
+      const response = await fetch(new URL('/gw/v1/resolve', `${checked.checkedBaseUrl}/`).toString(), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${target.key}`,
@@ -671,23 +725,26 @@ export function QuickstartPage() {
         body: JSON.stringify({
           appCallerCode: target.appCallerCode,
           modelType: target.requestType,
-          ...(pinModel !== 'auto' && pinPlatform
-            ? { modelPolicy: 'pinned', pinnedPlatformId: pinPlatform, pinnedModelId: pinModel, expectedModel: pinModel }
+          ...(pin
+            ? { modelPolicy: 'pinned', pinnedPlatformId: pin.platformId, pinnedModelId: pin.model, expectedModel: pin.model }
             : { modelPolicy: 'auto' }),
           context: { sourceSystem: 'external' },
         }),
+        signal: abortController.signal,
         credentials: 'omit',
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+      if (superseded()) return;
       if (!response.ok) {
-        setRoutePreview({ success: false, checkedBaseUrl: normalizedBaseUrl, errorMessage: readErrorMessage(payload) || `路由预检失败，HTTP ${response.status}` });
+        setRoutePreview({ success: false, ...checked, errorMessage: readErrorMessage(payload) || `路由预检失败，HTTP ${response.status}` });
         return;
       }
-      setRoutePreview(normalizeRoutePreview(payload, normalizedBaseUrl) ?? { success: false, checkedBaseUrl: normalizedBaseUrl, errorMessage: 'Gateway 未返回可识别的路由结果' });
+      setRoutePreview(normalizeRoutePreview(payload, checked) ?? { success: false, ...checked, errorMessage: 'Gateway 未返回可识别的路由结果' });
     } catch (error) {
-      setRoutePreview({ success: false, checkedBaseUrl: normalizedBaseUrl, errorMessage: error instanceof Error ? error.message : '无法连接 Gateway' });
+      if (superseded()) return;
+      setRoutePreview({ success: false, ...checked, errorMessage: error instanceof Error ? error.message : '无法连接 Gateway' });
     } finally {
-      setRouteChecking(false);
+      if (!superseded()) setRouteChecking(false);
     }
   };
 
@@ -1861,12 +1918,8 @@ function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode:
   */
   const pinned = model !== 'auto';
   const policy = pinned ? 'pinned' : 'auto';
-  // 两个 id 都要给：解析器只在 pinnedPlatformId 与 pinnedModelId **都非空**时才构造
-  // pinned target，缺一个就落到「PinnedModel 不在 appCaller 专用模型池内」，
-  // 回的仍是 ROUTE_CONFIG_INCOMPATIBLE——与只发模型名时一模一样的失败。
-  const pin = pinned && platformId
-    ? { pinned_platform_id: platformId, pinned_model_id: model }
-    : {};
+  const target = pinnedTargetOf(model, platformId);
+  const pin = target ? { pinned_platform_id: target.platformId, pinned_model_id: target.model } : {};
   if (protocol === 'native') return {
     appCallerCode,
     modelType: requestType,
@@ -2051,14 +2104,14 @@ function readActualModel(payload: Record<string, unknown> | null) {
     || stringValue(resolution?.actual_model);
 }
 
-function normalizeRoutePreview(payload: Record<string, unknown> | null, checkedBaseUrl: string): RoutePreview | null {
+function normalizeRoutePreview(payload: Record<string, unknown> | null, checked: RouteProbeStamp): RoutePreview | null {
   if (!payload) return null;
   const success = payload.success ?? payload.Success;
   if (typeof success !== 'boolean') return null;
   const value = (camel: string, pascal: string) => stringValue(payload[camel]) || stringValue(payload[pascal]);
   return {
     success,
-    checkedBaseUrl,
+    ...checked,
     errorMessage: value('errorMessage', 'ErrorMessage'),
     resolutionType: value('resolutionType', 'ResolutionType'),
     actualModel: value('actualModel', 'ActualModel'),
@@ -2075,6 +2128,33 @@ function normalizeRoutePreview(payload: Record<string, unknown> | null, checkedB
 
 function normalizeBaseUrl(value: string) {
   return value.trim().replace(/\/$/, '');
+}
+
+/*
+  钉住的是哪一个成员——真实调用、安全试跑、cURL 片段与路由预检问的都是这一个函数。
+
+  两个 id 必须都在：解析器只在 pinnedPlatformId 与 pinnedModelId **都非空**时才构造
+  pinned target，缺一个就落到「PinnedModel 不在 appCaller 专用模型池内」，回的仍是
+  ROUTE_CONFIG_INCOMPATIBLE——与只发模型名时一模一样的失败。
+  这条判断只许有这一处：预检判「钉住了」而发请求判「没钉住」（或反过来）时，
+  预检验的就不是这一次会跑的那条路，而这正是这道闸本身要防的那件事。
+*/
+function pinnedTargetOf(model: string, platformId: string) {
+  return model !== 'auto' && platformId ? { model, platformId } : null;
+}
+
+/** 供 `'…'` 里嵌入的文本：单引号内无法转义，只能关引号、给字面撇号、再开引号。 */
+function shellSingleQuoted(value: string) {
+  return value.split("'").join(`'\\''`);
+}
+
+/**
+ * 供 `"…"` 里嵌入的文本：双引号内 shell 仍会解释 `$` 反引号 `\` 与 `"`。
+ * 片段里的模型名与调用用途码同样是用户写的，和 body 一样要过一次转义——
+ * 只转义 body 就是把同一个洞留在了它上面一行。
+ */
+function shellDoubleQuoted(value: string) {
+  return value.replace(/(["\\$`])/g, '\\$1');
 }
 
 function canRunRealTest(preview: RoutePreview | null, baseUrl: string) {
@@ -2228,13 +2308,22 @@ function exampleFor(protocol: Protocol, requestType: RequestType, baseUrl: strin
   const requestIdToken = '__LLMGW_REQUEST_ID__';
   const common = `-H "Authorization: Bearer \$LLMGW_API_KEY" \\
   -H "X-Gateway-Source: external" \\
-  -H "X-Gateway-App-Caller: ${appCaller}" \\${mode === 'safe' ? '\n  -H "X-Gateway-Dry-Run: quickstart" \\' : ''}
+  -H "X-Gateway-App-Caller: ${shellDoubleQuoted(appCaller)}" \\${mode === 'safe' ? '\n  -H "X-Gateway-Dry-Run: quickstart" \\' : ''}
   -H "X-Request-Id: \$REQUEST_ID"`;
-  const body = JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model, attachment, false, prompt, platformId), null, 2)
-    .replace(requestIdToken, `'"$REQUEST_ID"'`);
+  /*
+    这段 body 会被 `-d '...'` 整个包进单引号，而里面有两样用户写的东西：输入框那句话
+    和上传文本。POSIX 的单引号里没有转义字符，所以只要那句话带一个撇号（`John's report`），
+    -d 的参数就在那里提前收尾——轻则复制走的命令跑不通，重则后面半句被 shell 当成命令。
+    唯一的办法是「关引号 → 给一个字面撇号 → 重新开引号」。
+    次序不能反：先转义、后替换 requestId 占位符——那个占位符本身就要故意破开引号
+    去插 $REQUEST_ID，先替换的话会被这一步再转义回字面量。
+  */
+  const body = shellSingleQuoted(
+    JSON.stringify(dryRunBody(protocol, requestType, appCaller, requestIdToken, model, attachment, false, prompt, platformId), null, 2),
+  ).replace(requestIdToken, `'"$REQUEST_ID"'`);
   const extra = protocol === 'claude' ? ' \\\n  -H "anthropic-version: 2023-06-01"' : '';
   return `REQUEST_ID="quickstart-\$(date +%s)-\$RANDOM"
-curl "${baseUrl}${protocolPathFor(definition, model)}" \\
+curl "${shellDoubleQuoted(`${baseUrl}${protocolPathFor(definition, model)}`)}" \\
   ${common}${extra} \\
   -H "Content-Type: application/json" \\
   -d '${body}'`;

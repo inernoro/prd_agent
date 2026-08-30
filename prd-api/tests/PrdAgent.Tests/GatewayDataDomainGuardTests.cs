@@ -815,8 +815,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystem: 'external'", quickstart);
         Assert.Contains("context: { sourceSystem: 'external' }", quickstart);
         Assert.Contains("payload.success ?? payload.Success", quickstart);
-        Assert.Contains("normalizeRoutePreview(payload, normalizedBaseUrl)", quickstart);
+        Assert.Contains("normalizeRoutePreview(payload, checked)", quickstart);
         Assert.Contains("preview.checkedBaseUrl !== normalizeBaseUrl(baseUrl)", quickstart);
+        // 一次预检的结论钉着「哪一条路」：地址 + 钉住的成员。只比地址的话，换成员之后
+        // 上一个成员的结论仍算数，会替一条没验过的路放行——池里有成员指向开发桩时，
+        // 选中它的那一刻闸门还是绿的，正是这道闸要防的那件事。
+        Assert.Contains("routePreview.checkedModel === (activeProbePin?.model ?? 'auto')", quickstart);
+        Assert.Contains("routePreview.checkedPlatformId === (activeProbePin?.platformId ?? '')", quickstart);
+        // 并发预检只认最后发起的那一代：先发的那条后到，会把旧结论盖到当前成员头上。
+        Assert.Contains("const probeId = ++routeProbeSeq.current;", quickstart);
+        Assert.Contains("if (superseded()) return;", quickstart);
+        // 钉住与否只许判一处，预检与真实调用必须问同一个函数，否则预检的不是会跑的那条路。
+        Assert.Equal(1, CountOccurrences(quickstart, "function pinnedTargetOf("));
+        // 片段里的自由文本（输入框那句、上传的文本、模型名）要过 shell 转义：
+        // 一个撇号就能让 -d 的参数提前收尾，后半句被当成命令跑。
+        Assert.Contains("shellSingleQuoted(", quickstart);
+        Assert.Contains("shellDoubleQuoted(appCaller)", quickstart);
         Assert.Contains("disabled={!realRouteReady || routeChecking}", quickstart);
         Assert.Contains("const snippetMode: TestMode", quickstart);
         Assert.Contains("X-Request-Id: \\$REQUEST_ID", quickstart);
@@ -5549,6 +5563,17 @@ public class GatewayDataDomainGuardTests
 
         Assert.Fail($"方法大括号不配平：{signature}");
         return string.Empty;
+    }
+
+    private static int CountOccurrences(string source, string needle)
+    {
+        var count = 0;
+        for (var at = source.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = source.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     private static string ReadRepoFile(string relativePath)

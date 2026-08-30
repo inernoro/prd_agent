@@ -60,6 +60,10 @@ let draftMode = 'model';
 let streamMode = 'ok';
 /** 路由预解析桩：normal = 正常上游；stub = 识别出开发桩（真实调用必须被拦住）。 */
 let routeMode = 'normal';
+/** 按钉住的成员分流预检结果：modelId -> { mode, delayMs }，没登记的走 routeMode。 */
+const routeMemberRoutes = new Map();
+/** 每次预检钉住的成员：用来断言页面静置时不会自己反复预检。 */
+const resolveCalls = [];
 /** 真实调用发出的请求体：用来断言上传的内容真的进了 payload。 */
 const realBodies = [];
 
@@ -161,10 +165,24 @@ const server = http.createServer((req, res) => {
     }
     return json(res, 200, { model: 'demo/chat-1', gateway: { requestId: REQUEST_ID, upstreamCalled: false } });
   }
-  if (p === '/gw/v1/resolve') return json(res, 200, routeMode === 'stub'
-    // 上游被识别成开发桩：这时按下「真实调用」跑的是假上游，页面却会报「已计费的真实调用成功」。
-    ? { success: true, actualModel: 'stub-chat', actualPlatformName: 'dev stub provider', modelGroupName: '对话默认池', protocol: 'openai' }
-    : { success: true, actualModel: 'demo/chat-1', actualPlatformName: '教程假上游', modelGroupName: '对话默认池', protocol: 'openai' });
+  if (p === '/gw/v1/resolve') {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      const parsed = raw ? JSON.parse(raw) : {};
+      // 钉住的成员各自可以有自己的上游与时延：前者用来验「结论钉着哪个成员」，
+      // 后者用来构造「先发的那条后到」。都没设就沿用全局 routeMode。
+      const perMember = routeMemberRoutes.get(parsed.pinnedModelId ?? '');
+      resolveCalls.push(parsed.pinnedModelId ?? 'auto');
+      const mode = perMember?.mode ?? routeMode;
+      const reply = () => json(res, 200, mode === 'stub'
+        // 上游被识别成开发桩：这时按下「真实调用」跑的是假上游，页面却会报「已计费的真实调用成功」。
+        ? { success: true, actualModel: 'stub-chat', actualPlatformName: 'dev stub provider', modelGroupName: '对话默认池', protocol: 'openai' }
+        : { success: true, actualModel: 'demo/chat-1', actualPlatformName: '教程假上游', modelGroupName: '对话默认池', protocol: 'openai' });
+      if (perMember?.delayMs) setTimeout(reply, perMember.delayMs); else reply();
+    });
+    return undefined;
+  }
   if (p.startsWith('/llmgw/gw/')) {
     const api = p.replace('/llmgw/gw', '');
     authSeen.push({ api, authorization: req.headers.authorization ?? null });
@@ -506,6 +524,50 @@ check('auto 时不带 pinned_platform_id', autoCurl.includes('pinned_platform_id
 check('auto 时策略是 auto', autoCurl.includes('"model_policy": "auto"'), true);
 
 /*
+  ── 预检的结论钉着「哪一个成员」，换人即失效 ──────────────────────
+  换成员之后、新预检回来之前，上一个成员的结论还留在 routePreview 里。若只按地址判
+  「这份结论还算不算数」，它就会替一条**没验过**的路放行：池里只要有一个成员指向开发桩，
+  选中它的那一瞬间闸门仍是绿的——正是这道闸本身要防的那件事，只是换了个入口进来。
+  所以闸门必须在换人那一刻**立即**关上，不能等 400ms 节流加一个网络往返之后才关。
+*/
+routeMemberRoutes.set('flash-demo', { mode: 'stub' });
+await page.getByLabel('测试模型').fill('demo/chat-2');
+await page.waitForTimeout(1000);
+check('正常上游的成员可以真实调用', await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().isDisabled(), false);
+await page.getByLabel('测试模型').fill('flash-demo');
+await page.waitForTimeout(120);
+check('换成员后上一个成员的预检结论立即失效', await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().isDisabled(), true);
+await page.waitForTimeout(1400);
+check('新预检认出开发桩后闸门仍关着', await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().isDisabled(), true);
+
+/*
+  ── 预检不许自己触发自己 ──────────────────────────────────────
+  预检的候选成员列表跟着预检结果走（换池就要换候选），而候选又决定钉住的上游 id 与
+  「这个模型合不合法」——这两个正是重新预检的触发条件。写成「有东西变了就重检」，
+  这条环就闭合了：页面在用户什么都不做的情况下每 400ms 问一次 serving。
+  它不会报错、界面也看不出来，只有把请求数出来才现形——所以判据是「静置时的请求条数」。
+*/
+const settledProbes = resolveCalls.length;
+await page.waitForTimeout(2000);
+check('选定成员后静置不再反复预检', resolveCalls.length - settledProbes <= 1, true);
+
+/*
+  ── 并发预检只认最后发起的那条 ────────────────────────────────
+  换成员时上一条预检往往还在路上，两条写的是同一个 routePreview。让正常上游那条慢 900ms、
+  开发桩那条立刻回：先选正常成员、不等它回来就换到桩成员，「后到的旧结论」如果算数，
+  闸门就会被它重新开开，而屏幕上选中的仍是那个桩成员。
+*/
+routeMemberRoutes.set('demo/chat-2', { mode: 'normal', delayMs: 900 });
+await page.getByLabel('测试模型').fill('demo/chat-2');
+await page.waitForTimeout(500);
+await page.getByLabel('测试模型').fill('flash-demo');
+await page.waitForTimeout(1800);
+check('先发后到的旧预检不给当前成员放行', await page.getByRole('button', { name: /真实调用|再跑一次/ }).first().isDisabled(), true);
+routeMemberRoutes.clear();
+await page.getByLabel('测试模型').fill('');
+await page.waitForTimeout(900);
+
+/*
   ── Gemini 入口：模型只认路由段，页面不许拿 body 里的 model 冒充「钉住了」──────
   serving 的 gemini 端点从 `models/{model}:generateContent` 这一段取模型，body 里的
   `model` 它不读。所以 body 写着 demo/chat-2、路径写着 models/auto 时，真跑的是池调度，
@@ -567,6 +629,19 @@ check('输出块排在输入框下方', Boolean(inputBox && emptyOutBox && empty
 await page.locator('.lg-qs-io-input').fill('用三句话说明什么是模型网关');
 await page.waitForTimeout(300);
 check('输入内容进了 cURL 片段', (await page.locator('.lg-qs-code').innerText()).includes('用三句话说明什么是模型网关'), true);
+
+/*
+  片段里那句话被 `-d '…'` 整个包在单引号里，而 POSIX 的单引号内没有转义字符：
+  用户写一个撇号（`John's report`），-d 的参数就在那里提前收尾——轻则复制走的命令
+  跑不通，重则撇号之后那半句被 shell 当成命令执行（上传的文本同一条路进来）。
+*/
+await page.locator('.lg-qs-io-input').fill("Summarize John's report");
+await page.waitForTimeout(300);
+const quotedCurl = await page.locator('.lg-qs-code').innerText();
+check('撇号按「关引号-给字面撇号-开引号」转义', quotedCurl.includes(`John'\\''s report`), true);
+check('撇号不原样留在 -d 的单引号里', quotedCurl.includes("John's report"), false);
+await page.locator('.lg-qs-io-input').fill('用三句话说明什么是模型网关');
+await page.waitForTimeout(300);
 
 // ── 真实调用：文字必须边收边渲染，且返回内容要显示出来 ────────────────
 realBodies.length = 0;
