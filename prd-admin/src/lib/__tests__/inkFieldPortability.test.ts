@@ -41,6 +41,21 @@ describe('首页墨场的跨显卡一致性', () => {
     expect(glsl).not.toContain('43758.5453');
   });
 
+  it('整数必须显式声明 highp：片元着色器里 int 的默认精度是 mediump', () => {
+    // 只写 precision highp float 是不够的。整数默认 mediump（规范只保证 16 位），
+    // 而下面那个 hash 全押在 32 位无符号溢出和右移 16 位上——mediump 下全被截断，
+    // 噪声又变回设备相关，等于这次改动白做。
+    const glsl = fragmentShader();
+    expect(glsl).toContain('precision highp int;');
+    expect(glsl.indexOf('precision highp int;')).toBeLessThan(glsl.indexOf('uvec2 uhash'));
+  });
+
+  it('运行时还要问一句这台设备的 highp int 到底是几位', () => {
+    // 源码里写了 highp 不等于拿到了 32 位。拿不到就不画这层，回落静态底。
+    expect(SOURCE).toContain('gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_INT)');
+    expect(SOURCE).toMatch(/rangeMax\s*<\s*31/);
+  });
+
   it('hash 走整数位运算：uint 的乘法溢出、移位、异或逐位有定义', () => {
     const glsl = fragmentShader();
     expect(glsl).toContain('uvec2 uhash(uvec2 x)');

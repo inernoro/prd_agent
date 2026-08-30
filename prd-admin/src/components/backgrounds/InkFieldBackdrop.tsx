@@ -29,6 +29,10 @@ void main() { gl_Position = vec4(position, 0.0, 1.0); }
 
 const FRAG = `#version 300 es
 precision highp float;
+// 片元着色器里整数的默认精度是 mediump（规范只保证 16 位）。下面那个 hash 整个靠
+// 32 位无符号溢出、乘法进位和右移 16 位——mediump 下这些全被截断，算出来的噪声又变成
+// 设备相关，等于这次改动白做。必须显式要 highp int。
+precision highp int;
 
 uniform float uTime;
 uniform vec2  uResolution;
@@ -180,6 +184,12 @@ export function InkFieldBackdrop({ colors, intensity = 0.22, className }: InkFie
     // 于是 canvas 挂上了、rAF 循环转起来了、一个像素都不画。这里挡住，回到静态底。
     if (!renderer.isWebgl2) return;
     const gl = renderer.gl;
+    // 光在源码里写 `precision highp int` 不算数——要问一句这台设备的 highp int 到底是几位。
+    // ESSL 3.00 规定片元着色器必须支持 highp，但整数 hash 全押在 32 位溢出上，
+    // 万一某个实现给的不是 32 位，噪声立刻又变成设备相关。拿不到 32 位就不画这层，
+    // 回到底下那张纯 CSS 静态底（rangeMax 是「能表示的最大值的 2 的幂次」）。
+    const intPrecision = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_INT);
+    if (!intPrecision || intPrecision.rangeMax < 31) return;
     gl.clearColor(0, 0, 0, 0);
     host.appendChild(gl.canvas);
     gl.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block';
