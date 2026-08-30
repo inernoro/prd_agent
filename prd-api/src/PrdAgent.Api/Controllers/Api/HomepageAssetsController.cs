@@ -313,7 +313,9 @@ public class HomepageAssetsController : ControllerBase
                 CreatedAt = now,
                 UpdatedAt = now
             };
-            await _db.HomepageAssets.InsertOneAsync(rec, cancellationToken: ct);
+            // 字节已经上传完了，这一步是把它认下来。用 CancellationToken.None：管理员这时
+            // 关掉标签页的话，对象留在存储里而库里没有记录，这次认领白做还留个孤儿。
+            await _db.HomepageAssets.InsertOneAsync(rec, cancellationToken: CancellationToken.None);
             _logger.LogInformation("Adopted image-gen result into homepage slot={Slot} run={Run}", slotNorm, runId);
             return Ok(ApiResponse<HomepageAssetDto>.Ok(ToDto(rec)));
         }
@@ -335,7 +337,9 @@ public class HomepageAssetsController : ControllerBase
                 .Set(x => x.SizeBytes, sizeBytes)
                 .Set(x => x.Prompt, string.IsNullOrWhiteSpace(prompt) ? null : prompt)
                 .Set(x => x.UpdatedAt, now),
-            cancellationToken: ct);
+            // 同上，也是 None。这条尤其不能半路取消：新旧 key 相同时，存储上那个对象已经被
+            // 覆盖成新图了，库里却还留着旧图的 mime / 大小 / 提示词，页面与记录当场对不上。
+            cancellationToken: CancellationToken.None);
 
         // 切换已经落库，这时候删旧对象才安全；删失败也只是留个孤儿，不会让首页裂图。
         // 用 CancellationToken.None：请求这时已经成功了，客户端断开不该把清理掐掉。
