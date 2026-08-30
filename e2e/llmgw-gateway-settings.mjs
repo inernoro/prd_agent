@@ -31,6 +31,8 @@ const nowIso = new Date().toISOString();
 const posted = [];
 /** 测试连接桩的行为：ok = 通了；fail = 系统密钥被撤销。 */
 let testMode = 'ok';
+/** 测试连接桩的拖延时长：模拟真实那一次要等好几秒的调用，用来验等待期屏幕在动。 */
+let testDelayMs = 0;
 /** 当前系统级设置，PUT 之后 GET 要能读回改后的值。 */
 let settings = { modelSource: 'auto', modelGroupId: null, modelName: null };
 
@@ -92,9 +94,12 @@ const server = http.createServer((req, res) => {
     }
     if (api === '/system-settings/test') {
       posted.push({ method: 'POST /system-settings/test', body: null });
-      return json(res, 200, { success: true, error: null, data: testMode === 'ok'
+      const reply = () => json(res, 200, { success: true, error: null, data: testMode === 'ok'
         ? { ok: true, stage: 'done', elapsedMs: 412, servedModel: 'demo/chat-1', message: '通了：412 ms 内拿到回复，实际执行的是 demo/chat-1。' }
         : { ok: false, stage: 'invoke', elapsedMs: 88, message: '网关拒绝了系统自己的密钥（已失效或被撤销）。下次请求会自动重签一把；连续出现请在「服务网关设置」点一次「测试连接」看详情。' } });
+      if (testDelayMs > 0) setTimeout(reply, testDelayMs);
+      else reply();
+      return undefined;
     }
     if (api === '/auth/tenants') return json(res, 200, { success: true, error: null, data: [] });
     return json(res, 200, { success: true, error: null, data: {} });
@@ -181,6 +186,23 @@ check('保存后测试连接恢复可点', await page.getByRole('button', { name
 await page.getByRole('button', { name: '测试连接' }).click();
 await page.waitForTimeout(900);
 check('测试通过时报出实际执行的模型', (await bodyScope.getByRole('status').last().innerText()).includes('demo/chat-1'), true);
+
+// 4. 等待期屏幕必须在动（AGENTS.md 规则 #6）：真实那一次要等好几秒（后端单轮 40 秒上限，
+//    还可能自动重签重试一轮）。按钮上要能读到已等秒数、且秒数真的在往前走——
+//    停在一个不动的「正在测试」就是体验缺陷。
+testDelayMs = 3200;
+await page.getByRole('button', { name: '测试连接' }).click();
+await page.waitForTimeout(400);
+const waitingFirst = await bodyScope.locator('.lg-gws-actions button').first().innerText();
+const waitingHint = await page.locator('.lg-gws-actions-hint').innerText();
+await page.waitForTimeout(1600);
+const waitingSecond = await bodyScope.locator('.lg-gws-actions button').first().innerText();
+check('等待时按钮报出已等秒数', /正在测试\s+\d+s/.test(waitingFirst), true);
+check('秒数在往前走（不是静止的正在测试）', waitingFirst !== waitingSecond, true);
+check('等待时说清了此刻在做什么', waitingHint.includes('密钥') || waitingHint.includes('模型'), true);
+await page.waitForTimeout(2000);
+check('等完回到可点状态', await page.getByRole('button', { name: '测试连接' }).isDisabled(), false);
+testDelayMs = 0;
 
 // 3. 失败必须给得出下一步：不许只丢一个状态码。
 testMode = 'fail';

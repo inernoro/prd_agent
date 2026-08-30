@@ -9,11 +9,11 @@
 // serving 地址、系统 appCaller、密钥全部由后端自己管、失效自愈，在这里只读展示不做输入
 // （minimal-user-input：系统自己知道的值，不许摆成输入框）。
 // 连带义务同样落在这一页：能当场测一次、看得到系统替你配了什么、失败给得出下一步。
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Boxes, Cpu, PlugZap, Sparkles } from 'lucide-react';
 import { getSystemSettings, saveSystemSettings, testSystemSettings } from '@/lib/api';
 import type { SystemGatewaySettings, SystemGatewayTestResult } from '@/lib/types';
-import { Button, Card, InlineAlert, SectionLoader } from '@/components/ui';
+import { Button, Card, InlineAlert, SectionLoader, Spinner } from '@/components/ui';
 import { PageBody, PageHeader, PageShell, Prose } from '@/components/PageShell';
 import { GAP } from '@/lib/surface';
 import { FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE } from '@/lib/typography';
@@ -32,6 +32,16 @@ const CREDENTIAL_TEXT: Record<SystemGatewaySettings['credentialState'], string> 
   'will-reissue': '旧的已失效，下次调用自动重签',
 };
 
+// 这一次测试正走到哪一步：后端是「确保凭据 → 真发一次极短对话」，单轮最长 40 秒，
+// 凭据类失败还会自动重签重试一轮。等待期只挂一个不动的「正在测试」是体验缺陷
+// （AGENTS.md 规则 #6），所以按已等的秒数说清此刻在做什么、大概还要多久。
+function testingStage(seconds: number): string {
+  if (seconds < 5) return '正在确认系统密钥，然后真发一次极短对话。';
+  if (seconds < 15) return '请求已发出，正在等模型回第一个字。一般十几秒内就有结果。';
+  if (seconds < 40) return '比平时慢：单轮最长等 40 秒，超时会如实报失败，不会一直转下去。';
+  return '首轮疑似凭据问题，正在自动重签一把密钥再试一次——这是最后一轮。';
+}
+
 export function GatewaySettingsPage() {
   const [data, setData] = useState<SystemGatewaySettings | null>(null);
   const [source, setSource] = useState<ModelSource>('auto');
@@ -41,7 +51,26 @@ export function GatewaySettingsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testElapsed, setTestElapsed] = useState(0);
   const [testResult, setTestResult] = useState<SystemGatewayTestResult | null>(null);
+  const testTimer = useRef<number | null>(null);
+
+  // 计时器只跟着 testing 起落，组件卸载也要清掉——否则在测试途中离开这一页会留下
+  // 一个还在滴答的 setInterval。
+  useEffect(() => {
+    if (!testing) {
+      if (testTimer.current !== null) { window.clearInterval(testTimer.current); testTimer.current = null; }
+      return;
+    }
+    const startedAt = Date.now();
+    setTestElapsed(0);
+    testTimer.current = window.setInterval(() => {
+      setTestElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => {
+      if (testTimer.current !== null) { window.clearInterval(testTimer.current); testTimer.current = null; }
+    };
+  }, [testing]);
 
   const load = async () => {
     const res = await getSystemSettings();
@@ -149,13 +178,16 @@ export function GatewaySettingsPage() {
 
           <div className="lg-gws-actions">
             <span className="lg-gws-actions-hint">
-              {dirty
-                ? '测试连接测的是已保存的那一份配置，先保存再测，否则会拿旧配置报成功。'
-                : '测试连接会真发一次极短对话，回报耗时与实际执行的模型。'}
+              {testing
+                ? testingStage(testElapsed)
+                : dirty
+                  ? '测试连接测的是已保存的那一份配置，先保存再测，否则会拿旧配置报成功。'
+                  : '测试连接会真发一次极短对话，回报耗时与实际执行的模型。'}
             </span>
             {/* 改了还没保存时禁用：测试端点读的是库里那份，此时测出来的成功与屏幕上选的不是同一件事 */}
             <Button disabled={testing || dirty} onClick={() => void runTest()}>
-              <PlugZap size={15} />{testing ? '正在测试' : '测试连接'}
+              {testing ? <Spinner size={15} /> : <PlugZap size={15} />}
+              {testing ? `正在测试 ${testElapsed}s` : '测试连接'}
             </Button>
             <Button variant="primary" disabled={saving || !dirty} onClick={() => void save()}>
               {saving ? '正在保存' : '保存设置'}

@@ -168,6 +168,35 @@ public sealed class GatewayRoutingWiringGuardTests
     }
 
     /// <summary>
+    /// 兑换所来的模型必须被**显式认出来**，不许靠「llmgw_models 查不到」顺带落进「管不着」。
+    ///
+    /// 两者结果都是放行，所以删掉这段判断不会有任何用例变红（形状 2）——变的是这道门
+    /// 说得出说不出自己为什么放行。落进「管不着」的那种放行是漏判：下一个人读代码会以为
+    /// 兑换所本来就不在门的射程内，于是给兑换所补放行标记这件事永远排不上队。
+    /// </summary>
+    [Fact]
+    public void 兑换所来的模型必须被显式认出而不是顺带落进管不着()
+    {
+        var source = ResolverSource();
+        var start = source.IndexOf("private async Task<CatalogVerdict> JudgeAsync(", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "找不到裁决本体，守卫扫错文件或方法被改名");
+        // 调用点的取值范围只到辅助方法的声明为止：放宽到把声明本身包进来，
+        // 删掉调用、只留下一个没人用的辅助方法，这条守卫照样绿（形状 2 的递归）。
+        var helperAt = source.IndexOf("private async Task<bool> IsGatewayExchangeAsync(", start, StringComparison.Ordinal);
+        helperAt.ShouldBeGreaterThan(start, "找不到兑换所判定辅助，守卫的取值范围需要跟着改");
+        source[start..helperAt].ShouldContain(
+            "IsGatewayExchangeAsync(",
+            customMessage: "名录门没有认出兑换所来的模型：它们会静默落进「管不着」，放行却说不出依据");
+
+        // 判据必须真去查兑换所集合，而不是把「PlatformId 长得像兑换所 id」当证据（形状 8）。
+        var end = source.IndexOf("\n    private static bool IsAllowedOutsideCatalog", helperAt, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(helperAt, "辅助方法与放行标记读取的相邻关系变了，守卫的取值范围需要跟着改");
+        source[helperAt..end].ShouldContain(
+            "llmgw_model_exchanges",
+            customMessage: "认兑换所要真去查那张表；靠 id 前缀之类的形状猜，换个 id 生成方式就静默失效");
+    }
+
+    /// <summary>
     /// 存量放行迁移只许跑一次，且必须由库里的迁移标记记住跑没跑过。
     ///
     /// 「只改没有这个字段的文档」看着幂等，其实判据太窄（形状 1）：它认的是「此刻缺标记」，
@@ -222,6 +251,49 @@ public sealed class GatewayRoutingWiringGuardTests
         console.Split("await RetireStaleSystemKeysAsync(").Length.ShouldBe(
             3,
             "退役必须在签发路径与复用路径各调一次——少一处就会攒下永不退役的系统密钥");
+    }
+
+    /// <summary>
+    /// 作废系统密钥前必须确认「设置里现在这把，就是刚才失败的那把」。
+    ///
+    /// 并发下两个请求可能都拿着 A 去调：第一个失败后已经重签成 B，第二个再进来时
+    /// 设置里已经是 B——不比对就会把好端端的 B 撤掉，第一个请求的重试反而拿到一把
+    /// 刚被撤销的 key，凭据自愈变成互相拆台。删掉比对不会有任何用例变红，只是自愈
+    /// 在并发下变成自伤（形状 5：拿变更后的状态去撤销一个已经不成立的判断）。
+    /// </summary>
+    [Fact]
+    public void 作废系统密钥必须认准刚才失败的那一把()
+    {
+        var console = File.ReadAllText(Path.Combine(RepoRoot(), "llmgw", "console-api", "Program.cs"));
+        var start = console.IndexOf("async Task InvalidateSystemCredentialAsync(", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, "找不到系统密钥作废逻辑，守卫的取值范围需要跟着改");
+        // 取值范围只到这个顶层局部函数的收尾大括号为止——放宽到「下一段注释」的话，
+        // 底下几万行里随便一处 StringComparison.Ordinal 都能把守卫喂饱（形状 6）。
+        var end = console.IndexOf("\n}\n", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, "作废逻辑的收尾大括号找不到，守卫的取值范围需要跟着改");
+        var invalidate = console[start..end];
+
+        invalidate.ShouldContain(
+            "failedKey",
+            customMessage: "作废必须点名是哪一把失败了，否则并发下会撤掉别的请求刚签好的密钥");
+        invalidate.ShouldContain(
+            "ServiceKeyEncrypted",
+            customMessage: "比对要拿设置里当前那把的明文比，只比 keyId 之类的旁证不算");
+        invalidate.ShouldContain(
+            "StringComparison.Ordinal",
+            customMessage: "密钥比对必须逐字，不许大小写不敏感或文化相关比较");
+
+        // 两个调用点都要把失败的那把传进来；少传一处，那条路径就退回旧的「见失败就撤」。
+        var callSites = console.Split("await InvalidateSystemCredentialAsync(");
+        callSites.Length.ShouldBe(
+            3,
+            "测试连接与推导草稿两条路径都要作废刚才失败的那把——数量变了说明有路径漏改或多出一条没设防的");
+        foreach (var tail in callSites.Skip(1))
+        {
+            tail[..Math.Min(tail.Length, 80)].ShouldContain(
+                "access.Key",
+                customMessage: "调用点必须把这次真正用出去的那把 key 传进来，不能让作废逻辑自己猜");
+        }
     }
 
     [Fact]

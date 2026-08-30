@@ -186,7 +186,24 @@ public class ModelResolver : IModelResolver
             .Limit(20)
             .ToListAsync(ct);
 
-        if (docs.Count == 0) return CatalogVerdict.OutOfJurisdiction;
+        if (docs.Count == 0)
+        {
+            // 走兑换所（exchange）解析出来的模型只活在兑换所文档里，llmgw_models 查不到它，
+            // 于是会静默落进「管不着」——结果是放行，但那是**漏判**不是判断：
+            // 下一个人读这段代码会以为这条路径本来就不在门的射程内。
+            // 这里显式认出来并说明依据：兑换所是管理员在控制台建的，模型别名由他当场列出，
+            // 这一步人工声明与「手工新增模型时盖放行标记」是同一件事，所以判放行。
+            // 已知边界（见 debt 台账）：兑换所文档没有 per-model 放行标记，绕过控制台
+            // 直接往兑换所里加别名，这道门同样拦不住——要覆盖得先给兑换所写入路径盖戳。
+            if (!string.IsNullOrWhiteSpace(platformId) && await IsGatewayExchangeAsync(platformId, ct))
+            {
+                _logger.LogDebug(
+                    "[ModelResolver] 名录门：{Model} 由兑换所 {ExchangeId} 声明，按管理员显式声明放行",
+                    trimmed, platformId);
+                return CatalogVerdict.Allowed;
+            }
+            return CatalogVerdict.OutOfJurisdiction;
+        }
 
         // 同名模型可能挂在多个 Provider 下，各自的放行状态可以不同。知道是哪个 Provider
         // 就只认那一条；不知道（解析没给出 PlatformId）才退回「任意一条放行过就算放行」。
@@ -196,6 +213,21 @@ public class ModelResolver : IModelResolver
         if (scoped.Count == 0) return CatalogVerdict.OutOfJurisdiction;
 
         return scoped.Any(IsAllowedOutsideCatalog) ? CatalogVerdict.Allowed : CatalogVerdict.Blocked;
+    }
+
+    /// <summary>
+    /// 这个 PlatformId 其实是一条兑换所记录吗？兑换所解析会把 PlatformId 写成兑换所自己的 id
+    /// （<c>item.PlatformId = exchange.Id</c>），所以按 id 查得到就说明这条模型来自兑换所。
+    /// </summary>
+    private async Task<bool> IsGatewayExchangeAsync(string platformId, CancellationToken ct)
+    {
+        if (_gatewayDb is null) return false;
+        var exchanges = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_model_exchanges");
+        var fb = Builders<BsonDocument>.Filter;
+        return await exchanges
+            .Find(fb.And(fb.Eq("TenantId", CurrentTenantId), fb.Eq("_id", platformId)))
+            .Limit(1)
+            .AnyAsync(ct);
     }
 
     private static bool IsAllowedOutsideCatalog(BsonDocument doc)

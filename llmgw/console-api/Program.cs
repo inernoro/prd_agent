@@ -5661,9 +5661,16 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
 /// 只在「重签能修好」的失败码上调用（见 IsSystemCredentialFixableCode）——
 /// 租户停用、池没绑这类原因重签一万次也修不好，那样就成了自己修不好自己的循环。
 /// </summary>
-async Task InvalidateSystemCredentialAsync(string tenantId)
+async Task InvalidateSystemCredentialAsync(string tenantId, string failedKey)
 {
     var settings = await LoadSystemSettingsAsync(tenantId);
+    // 只作废**刚才真的失败的那一把**。并发下两个请求可能都拿着 A 去调，第一个失败后已经
+    // 重签成 B，第二个再进来时设置里已经是 B——不比对就会把好端端的 B 撤掉，
+    // 第一个请求的重试反而拿到一把刚被撤销的 key，凭据自愈变成互相拆台。
+    var current = GwApiKeyCrypto.Decrypt(settings.AsNullableString("ServiceKeyEncrypted"), builder.Configuration);
+    if (!current.Success || !string.Equals(current.PlainText, failedKey, StringComparison.Ordinal))
+        return;
+
     var staleKeyId = settings.AsNullableString("ServiceKeyId");
     if (!string.IsNullOrWhiteSpace(staleKeyId))
     {
@@ -5907,7 +5914,7 @@ app.MapPost("/gw/system-settings/test", async (HttpContext http) =>
             var (detail, failureCode) = await ReadGatewayFailureDetailAsync(response, http.RequestAborted);
             if (allowReissue && IsSystemCredentialFixableCode(failureCode))
             {
-                await InvalidateSystemCredentialAsync(tenant.TenantId);
+                await InvalidateSystemCredentialAsync(tenant.TenantId, access.Key);
                 return await RunAsync(false);
             }
             return Json(ApiEnvelope<object>.Ok(new { ok = false, stage = "invoke", elapsedMs, message = detail }), jsonOptions);
@@ -6019,7 +6026,7 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
                 // 凭据类失败当场作废那把 key，并在同一次请求里重签、重试，用户那侧看不见这次失败。
                 if (IsSystemCredentialFixableCode(failureCode))
                 {
-                    await InvalidateSystemCredentialAsync(tenantAccess.TenantId);
+                    await InvalidateSystemCredentialAsync(tenantAccess.TenantId, access.Key);
                     if (attempt == 1)
                     {
                         var reissued = await EnsureSystemGatewayAccessAsync(tenantAccess.TenantId, tenantAccess.Username);
