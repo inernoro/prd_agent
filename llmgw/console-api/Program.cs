@@ -630,6 +630,12 @@ if (strictPrefixCount >= 0)
   存量兑换所是在盖戳之前建的，条目上没有这个字段——不补这一手，判据一收紧
   它们就集体开始被拒（又是形状 5：拿变更前的状态去卡这次变更）。所以同样给一个
   一次性窗口：只补**当时确实由管理员在控制台列出过**的那些别名，放行人如实写成迁移。
+
+  **与数据面成对，改一边必须改另一边**：这里只扫有 `Models` 数组的文档。旧形态兑换所
+  （别名在 `ModelAlias` / `ModelAliases` 里、没有 `Models` 数组）在这里扫不到，也无处盖戳——
+  它们由数据面按「逐条放行落地前的既有声明」放行（见 ModelResolver 的兑换所判定）。
+  日后若把数据面改成「旧形态也必须带标记」，这条迁移得先能把旧形态落成 `Models`，
+  否则那一改就是让存量兑换所在 enforce 档下集体断线。
 */
 const string ExchangeStampMigrationId = "exchange-model-allowance-v1";
 var exchangeStampClaimedAt = await ClaimOneShotMigrationAsync(ExchangeStampMigrationId);
