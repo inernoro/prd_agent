@@ -10098,11 +10098,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: 'mode 必须是 empty / reset / clone-main / restore-backup / connect-existing' });
       return;
     }
+    // reset 会 DROP DATABASE，比 data-clear（清表数据，要求 admin）更具破坏性，
+    // 所以不能跟 empty / clone-main 一样落到只要 developer 的 database-clone 上。
+    // 复用既有的 data-clear 而不新开一个枚举值：权限档位相同（admin），
+    // 且避免 ResourcePermissionAction 扩枚举带来的六层涟漪（前端权限摘要、UI 文案等）。
     const cloneAction: ResourcePermissionAction = mode === 'restore-backup'
       ? 'backup-restore'
       : mode === 'connect-existing'
         ? 'database-connect-existing'
-        : 'database-clone';
+        : mode === 'reset'
+          ? 'data-clear'
+          : 'database-clone';
     if (!requireResourcePermission(req, res, cloneAction, branch, resource)) return;
     const runtime = resourceRuntimeKey(resource.runtime);
     const actor = resolveActorFromRequest(req);
@@ -10110,26 +10116,60 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const baseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
       ? resourceDatabaseForRuntime(runtime, rawInfra, branch) || 'app'
       : resolvedServiceDbName(rawInfra) || 'app';
-    const targetDatabase = String(req.body?.targetDatabase || branchDatabaseName(baseDb, branch))
-      .replace(/[^a-zA-Z0-9_]/g, '_')
-      .slice(0, 64);
-    // reset 会 DROP 目标库。唯一真正危险的误用是「把它指到项目共享的基础库上」，
-    // 那会一次性抹掉所有分支共用的数据。分支独立库是可丢弃的，基础库不是——这里硬拦。
-    //
-    // 判据必须用**项目级**基础库名，不能用上面那个 baseDb：baseDb 走的是
-    // `*DatabaseForBranch`，分支 scope 优先，而分支 scope 里存的正是上一次建好的分支库名。
-    // 用它作判据会把 reset 永久挡在「分支库已存在」这个唯一需要它的场景之外。
+    // 项目共享基础库名。**刻意不看分支 scope**——见 projectBaseDatabaseForRuntime 的注释：
+    // baseDb 走 `*DatabaseForBranch`（分支 scope 优先），而分支 scope 里存的正是上一次
+    // 建好的分支库名，拿它当基础库判据会两头出错。
     const projectBaseDb = runtime === 'mysql' || runtime === 'postgres' || runtime === 'mongodb' || runtime === 'redis'
       ? projectBaseDatabaseForRuntime(runtime, rawInfra)
       : (resolvedServiceDbName(rawInfra) || 'app');
-    if (mode === 'reset' && targetDatabase === projectBaseDb) {
-      res.status(400).json({
-        error: 'reset_refuses_base_database',
-        message: `reset 会 DROP 目标库，拒绝对项目共享基础库 "${projectBaseDb}" 执行。它只用于推倒重建分支独立库。`,
-        baseDatabase: projectBaseDb,
-        targetDatabase,
-      });
-      return;
+    const sanitizeDbName = (v: string) => String(v).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+    /**
+     * 这个分支「拥有」的库有哪些——reset 的白名单。
+     *
+     * 两个来源，缺一不可：
+     *   - baseDb：分支 scope 当前绑定的库。项目自建的命名（如 mdimp 的 `imp_b_<token>`）
+     *     只在这里出现，CDS 推不出来，漏了它就等于对真实存量分支库全部不可用。
+     *   - branchDatabaseName(projectBaseDb, branch)：CDS 自己约定的分支库名，
+     *     用于分支 scope 还没注入（第一次建库前）的情况。
+     * 注意基数必须用 projectBaseDb：用 baseDb 会在分支库已存在时再叠一层分支后缀，
+     * 算出一个谁都不是的名字。
+     */
+    const branchOwnedDatabases = new Set(
+      [baseDb, branchDatabaseName(projectBaseDb, branch)]
+        .filter(Boolean)
+        .map(sanitizeDbName),
+    );
+    // reset 默认目标：分支当前绑定的那个库；没有绑定过才回落到 CDS 约定名。
+    // 其余 mode 维持原语义（建一个新的分支库）。
+    const defaultTarget = mode === 'reset'
+      ? (baseDb && baseDb !== projectBaseDb ? baseDb : branchDatabaseName(projectBaseDb, branch))
+      : branchDatabaseName(baseDb, branch);
+    const targetDatabase = sanitizeDbName(String(req.body?.targetDatabase || defaultTarget));
+    if (mode === 'reset') {
+      // reset 会 DROP 目标库。最危险的误用是把它指到项目共享基础库上，
+      // 那会一次性抹掉所有分支共用的数据。基础库不可丢弃，分支独立库可以。
+      if (targetDatabase === projectBaseDb) {
+        res.status(400).json({
+          error: 'reset_refuses_base_database',
+          message: `reset 会 DROP 目标库，拒绝对项目共享基础库 "${projectBaseDb}" 执行。它只用于推倒重建分支独立库。`,
+          baseDatabase: projectBaseDb,
+          targetDatabase,
+        });
+        return;
+      }
+      // 白名单而非黑名单：只排除基础库是不够的——targetDatabase 来自请求体，
+      // 排除掉基础库之后，任何其它库名（包括**兄弟分支预览的库**）仍会被 root 权限的
+      // 建库助手 DROP 掉。跨分支互删是 cross-project-isolation 意义上的穿透，
+      // 所以这里只放行本分支自己拥有的那几个名字。
+      if (!branchOwnedDatabases.has(targetDatabase)) {
+        res.status(400).json({
+          error: 'reset_refuses_foreign_database',
+          message: `reset 只能推倒重建本分支自己的库。"${targetDatabase}" 不属于分支 "${branch.branch}"，允许的目标：${[...branchOwnedDatabases].join(' / ')}。`,
+          targetDatabase,
+          allowedDatabases: [...branchOwnedDatabases],
+        });
+        return;
+      }
     }
 
     const strategy = mode === 'connect-existing'
@@ -12233,10 +12273,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (deploymentRun) res.setHeader('X-CDS-Deployment-Run-Id', deploymentRun.id);
     if (managedPlan && deploymentRun) managedProjectService?.persistPlan(managedPlan);
 
-    // 资源面板：记录一次构建活动（webhook / 手动 / reconciler 重试统一在此计数），
-    // 让「分支少但反复构建」的项目能在资源占用面板按频次排到前面。
-    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req), deployLoopSha);
-
     const branchOperationLease = beginBranchOperation(req, res, entry, {
       kind: 'deploy',
       commitSha: requestCommitSha || entry.githubCommitSha || null,
@@ -12255,6 +12291,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       cancelDeploymentRun(deploymentRun?.id, '部署请求未取得分支操作租约');
       return;
     }
+
+    // 记一次构建活动。**必须在拿到分支操作租约之后**——这个账本同时喂着资源面板的
+    // 构建频次和 assessDeployLoop 的空转熔断计数。
+    //
+    // 记在租约之前的话，被协调器 409 拒掉、或合并进 pending 的请求也会计数：
+    // 一次部署在途时 agent 连打六次同 SHA 重试，实际只会产生一个 pending 部署，
+    // 熔断计数却已经满了，于是把**下一个真实请求**429 掉——熔断的反效果。
+    // （Codex 在 PR #1453 的 P1；判据算的是「请求数」，要判的是「真实部署数」。）
+    // 资源面板那一侧口径也因此更准：它要的是「这个分支真的重建了多少次」。
+    recordBuild(entry.projectId || 'default', entry.id, triggerFromRequest(req), deployLoopSha);
+
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const stopAttribution = stopAttributionFromRequest(req);
 

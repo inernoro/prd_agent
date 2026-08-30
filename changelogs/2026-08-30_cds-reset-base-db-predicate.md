@@ -1,2 +1,6 @@
 | fix | cds | reset 的基础库硬拦改用项目级库名解析，修掉「分支库建好后 reset 被自己永久挡死」 |
-| test | cds | 补两条守卫锁住判据不得回退成分支感知的 baseDb，含红绿闭环 |
+| security | cds | reset 提到 admin 档权限（原先 DROP DATABASE 只需 developer，比清数据门槛还低） |
+| security | cds | reset 目标改白名单，只允许本分支自己的库，堵住跨分支互删 |
+| fix | cds | 空转熔断改在取得分支操作租约后计数，避免被拒请求把计数填满误伤真实部署 |
+| fix | cds | MySQL 连接上限「已注入」事件只在真建容器时发，复用路径改报「尚未生效」并给出重建路径 |
+| test | cds | 补 14 条守卫覆盖上述五项，含红绿闭环；两处魔数切片窗口改为语义边界 |

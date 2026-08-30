@@ -123,10 +123,25 @@ describe('assessDeployLoop：判定「同一分支反复部署同一个提交」
  * 只扫 deploy 处理器里那一段，不做全文 contains：函数名在 import 行、注释里也会
  * 出现，全文匹配会给出假绿（判定被摘掉、import 还留着，守卫照样通过）。
  */
+/**
+ * 截取 deploy 处理器里「判熔断 → 登记 run → 取租约 → 记账」这一段。
+ *
+ * 窗口下界不写死长度：2026-08-30 把 recordBuild 从租约前挪到租约后之后，
+ * 原来 4000 字符的窗口正好把它切在外面，守卫对着**修好了的**代码判红——
+ * 判据自己漂了。所以改成「一直截到记账那一行之后」，并断言窗口确实覆盖到了
+ * 每条断言要找的锚点，覆盖不到就明确报错，而不是静默给出半截文本。
+ */
 function deployHandlerSlice(source: string): string {
   const anchor = source.indexOf('const requestCommitSha = selectedDeploymentVersion?.commitSha');
   expect(anchor).toBeGreaterThan(-1);
-  return source.slice(anchor, anchor + 4000);
+  const recordAt = source.indexOf('recordBuild(entry.projectId', anchor);
+  expect(recordAt, 'deploy 处理器里找不到 recordBuild').toBeGreaterThan(anchor);
+  const end = source.indexOf('\n', recordAt) + 1;
+  const slice = source.slice(anchor, end);
+  for (const needle of ['assessDeployLoop(', 'deploymentRunService?.begin(', 'beginBranchOperation(']) {
+    expect(slice, `deploy 切片没覆盖到 ${needle}`).toContain(needle);
+  }
+  return slice;
 }
 
 describe('接线守卫：deploy 端点真的在用这条判定', () => {
@@ -165,6 +180,40 @@ describe('接线守卫：deploy 端点真的在用这条判定', () => {
     // 否定字符组跨不过它那个右括号 —— 判据会对着正确的代码判红。
     const call = source.slice(at, source.indexOf('\n', at));
     expect(call).toContain('deployLoopSha');
+  });
+
+  /**
+   * Codex 在 PR #1453 的 P1：recordBuild 原先排在 beginBranchOperation **之前**，
+   * 于是被协调器 409 拒掉、或合并进 pending 的请求也计了数。一次部署在途时
+   * agent 连打六次同 SHA 重试，实际只产生一个 pending 部署，熔断计数却已满，
+   * 把**下一个真实请求**429 掉——熔断的反效果。
+   *
+   * 判据要数的是「真实部署数」，所以只有拿到分支操作租约之后才算数。
+   */
+  it('recordBuild 必须排在取得分支操作租约之后，否则数的是请求数不是部署数', () => {
+    const source = read('src/routes/branches.ts');
+    const slice = deployHandlerSlice(source);
+    const leaseAt = slice.indexOf('const branchOperationLease = beginBranchOperation(');
+    const recordAt = slice.indexOf('recordBuild(entry.projectId');
+    expect(leaseAt, '找不到租约获取').toBeGreaterThan(-1);
+    expect(recordAt, '找不到 recordBuild').toBeGreaterThan(-1);
+    expect(recordAt).toBeGreaterThan(leaseAt);
+    // 还要在「没拿到租约就 return」那道闸之后，否则等于没挪
+    const bailAt = slice.indexOf('cancelDeploymentRun(deploymentRun?.id, \'部署请求未取得分支操作租约\')');
+    expect(bailAt, '找不到未取得租约的提前返回').toBeGreaterThan(-1);
+    expect(recordAt).toBeGreaterThan(bailAt);
+  });
+
+  it('红用例：把 recordBuild 挪回租约之前，守卫必须变红', () => {
+    const source = read('src/routes/branches.ts');
+    const slice = deployHandlerSlice(source);
+    const leaseAt = slice.indexOf('const branchOperationLease = beginBranchOperation(');
+    const recordAt = slice.indexOf('recordBuild(entry.projectId');
+    // 模拟回退：把 recordBuild 那一行搬到租约之前
+    const line = slice.slice(recordAt, slice.indexOf('\n', recordAt) + 1);
+    const regressed = slice.slice(0, leaseAt) + line + slice.slice(leaseAt, recordAt) + slice.slice(recordAt + line.length);
+    expect(regressed.indexOf('recordBuild(entry.projectId'))
+      .toBeLessThan(regressed.indexOf('const branchOperationLease = beginBranchOperation('));
   });
 
   it('红用例：把判定或拒绝摘掉，守卫必须变红', () => {

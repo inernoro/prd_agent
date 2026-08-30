@@ -13,7 +13,7 @@ import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } 
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
-import { applyMysqlConnectionDefaults } from './infra-connection-defaults.js';
+import { applyMysqlConnectionDefaults, declaresMaxConnections } from './infra-connection-defaults.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -2623,16 +2623,12 @@ export class ContainerService {
       entrypoint: resolvedEntrypoint,
     });
     const resolvedCommand = mysqlDefaults.command;
-    if (mysqlDefaults.injected !== null) {
-      this.recordContainerEvent({
-        severity: 'info',
-        source: 'infra-connection-defaults',
-        action: 'infra.mysql.max-connections-defaulted',
-        message: `${service.containerName}: 未声明连接上限，按 CDS 分支扇出注入 --max-connections=${mysqlDefaults.injected}`,
-        projectId: service.projectId,
-        containerName: service.containerName,
-      });
-    }
+    // 注意：这里只是**算出**要注入的命令，还没生效。下面的幂等启动分三档，
+    // 只有 `docker run` 那一档真的用 resolvedCommand；running 直接复用、
+    // stopped 走 docker start，两者都沿用容器**创建时**的命令。
+    // 所以「已注入」的事件必须发在 docker run 那一档，复用档要如实报「尚未生效」。
+    // 在这里无条件发事件是 predicate-and-wiring-discipline 形状 8：
+    // 把一份不生效的声明当成了生效的证据（Codex 在 PR #1453 的 P1）。
     const authDecision = evaluateInfraAuthentication({
       dockerImage: service.dockerImage,
       id: service.id,
@@ -2724,6 +2720,9 @@ export class ContainerService {
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         await this.auditInfraLogLimit(service);
+        // 复用既有容器不改启动命令：如实报告连接上限还没生效，别让上面算出的
+        // resolvedCommand 冒充「已应用」。
+        await this.auditMysqlConnectionLimit(service, mysqlDefaults.injected);
         this.recordContainerEvent({
           severity: 'info',
           source: 'cds-container-service',
@@ -2743,6 +2742,8 @@ export class ContainerService {
         // 同样:wake 后保证 network attach
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         await this.auditInfraLogLimit(service);
+        // docker start 沿用容器创建时的命令，同上：如实报告尚未生效。
+        await this.auditMysqlConnectionLimit(service, mysqlDefaults.injected);
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 120);
         this.recordContainerEvent({
           severity: 'info',
@@ -2915,6 +2916,18 @@ export class ContainerService {
         `启动基础设施服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`
         + infraPublishBindHint(combinedOutput(result), this.infraPublishHosts()),
       );
+    }
+    if (mysqlDefaults.injected !== null) {
+      // 只有走到这里（真的 docker run 建了容器）注入才生效，事件才说得出口。
+      this.recordContainerEvent({
+        severity: 'info',
+        source: 'infra-connection-defaults',
+        action: 'infra.mysql.max-connections-defaulted',
+        message: `${service.containerName}: 未声明连接上限，新建容器时按 CDS 分支扇出注入 --max-connections=${mysqlDefaults.injected}`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+      });
     }
     this.recordContainerEvent({
       severity: 'info',
@@ -3196,6 +3209,59 @@ export class ContainerService {
    * `--filter label!=cds.protected=true` 的安全清理命令照样能把它 prune 掉 ——
    * 恰恰是这条标记要保护的东西。两项必须分别判、分别报。
    */
+  /**
+   * 复用/唤醒既有 MySQL 容器时，如实报告连接上限有没有生效。
+   *
+   * 事故背景（2026-08-29）：mdimp 两台 MySQL 跑在出厂默认 max_connections=151 上，
+   * 五个分支同时起来实测要 294 个连接，抢输的 Flyway 迁移直接 `Too many connections`。
+   * CDS 因此在启动 infra 时补 `--max-connections`——但那只在 `docker run` 建容器时
+   * 才写得进去。**升级和事故恢复恰恰走的是复用路径**：容器已经在跑（直接 return）
+   * 或已停止（`docker start` 沿用创建时的命令），补的值一个字都没生效。
+   *
+   * 所以这里不去读 service 定义（那是「我们打算注入什么」），而是 inspect
+   * **容器自己的 Config.Cmd**（那才是「现在真正在跑的命令」）——
+   * predicate-and-wiring-discipline 形状 6：判据要读真正生效的那个值。
+   *
+   * 判定为「尚未生效」时只发 warn 并指出显式路径，不自动重建：
+   * 共享 MySQL 是 long-lived 的，重建会掐断所有分支在用的连接，那是停机不是修复。
+   * 要让它生效走 `POST /api/infra/:id/restart`（stop + rm，下次 startInfraService
+   * 看不到容器就会用新命令 docker run 重建）。
+   */
+  private async auditMysqlConnectionLimit(
+    service: InfraService,
+    pendingMax: number | null,
+  ): Promise<void> {
+    if (pendingMax === null) return;
+    try {
+      const r = await this.shell.exec(
+        `docker inspect --format='{{json .Config.Cmd}}' ${service.containerName}`,
+      );
+      if (r.exitCode !== 0) return;
+      const raw = (r.stdout || '').trim().replace(/^'|'$/g, '');
+      let cmd: string[] = [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) cmd = parsed.map((c) => String(c));
+      } catch {
+        // inspect 输出不是合法 JSON（容器无 Cmd 时为 null）——当作没声明处理。
+        cmd = [];
+      }
+      if (declaresMaxConnections(cmd)) return;
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'infra-connection-defaults',
+        action: 'infra.mysql.max-connections-pending',
+        message: `${service.containerName}: 仍在用镜像默认连接上限运行，CDS 要补的 --max-connections=${pendingMax} 未生效（复用既有容器不会改启动命令）。让它生效请走 POST /api/infra/${service.id}/restart 重建容器。`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        status: 'warn',
+      });
+    } catch {
+      // 审计失败不该拦住启动。
+    }
+  }
+
   private async auditInfraLogLimit(service: InfraService): Promise<void> {
     try {
       const r = await this.shell.exec(

@@ -200,3 +200,92 @@ describe('接线守卫：infra 启动路径真的在用这条兜底', () => {
     expect(stripped).not.toContain('applyMysqlConnectionDefaults(');
   });
 });
+
+/**
+ * Codex 在 PR #1453 的 P1，属实且是四条里最该认下的一条。
+ *
+ * 兜底只写得进 `docker run` 那一档。infra 启动是幂等三档：
+ *   running → 直接 return；stopped → docker start（沿用**创建时**的命令）；不存在 → docker run。
+ * 升级和事故恢复恰恰走前两档，注入一个字都没生效——**而第一版在 inspect 之前就
+ * 无条件发了「已注入」事件**。那是把一份不生效的声明当成生效的证据
+ * （predicate-and-wiring-discipline 形状 8）：日志说修好了，MySQL 还是 151。
+ */
+describe('连接上限：事件只在真生效时说「已注入」，复用路径如实报「尚未生效」', () => {
+  function containerSource(): string {
+    return fs.readFileSync(path.join(CDS_ROOT, 'src/services/container.ts'), 'utf8');
+  }
+
+  it('「已注入」事件发在 docker run 真的执行之后，不在算出命令的地方', () => {
+    const source = containerSource();
+    const computedAt = source.indexOf('const resolvedCommand = mysqlDefaults.command;');
+    const dockerRunAt = source.indexOf('const result = await this.shell.exec(cmd);');
+    const appliedAt = source.indexOf("action: 'infra.mysql.max-connections-defaulted'");
+    const runStartedAt = source.indexOf("action: 'infra.run.started'");
+    expect(computedAt, '找不到命令计算处').toBeGreaterThan(-1);
+    expect(dockerRunAt, '找不到 docker run 执行处').toBeGreaterThan(-1);
+    expect(appliedAt, '找不到已注入事件').toBeGreaterThan(-1);
+    expect(runStartedAt).toBeGreaterThan(-1);
+    // 判据用语义位置而不是字符距离：注入只有走到 docker run 才真的写进容器，
+    // 所以事件必须排在那次 exec 之后、并在 infra.run.started 之前那一段里。
+    expect(appliedAt).toBeGreaterThan(dockerRunAt);
+    expect(runStartedAt).toBeGreaterThan(appliedAt);
+  });
+
+  it('两条复用路径都接了「尚未生效」审计', () => {
+    const source = containerSource();
+    const reuseAt = source.indexOf("action: 'infra.reuse-running'");
+    const wakeAt = source.indexOf("action: 'infra.start-existing.completed'");
+    expect(reuseAt).toBeGreaterThan(-1);
+    expect(wakeAt).toBeGreaterThan(-1);
+    // 每条路径在发自己的复用事件之前，先跑一次连接上限审计
+    const beforeReuse = source.slice(Math.max(0, reuseAt - 900), reuseAt);
+    const beforeWake = source.slice(Math.max(0, wakeAt - 900), wakeAt);
+    expect(beforeReuse, 'running 复用路径没接审计').toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+    expect(beforeWake, 'stopped 唤醒路径没接审计').toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+  });
+
+  it('审计读的是容器自己的 Config.Cmd，不是 service 定义（形状 6）', () => {
+    const source = containerSource();
+    const at = source.indexOf('private async auditMysqlConnectionLimit(');
+    expect(at, '找不到 auditMysqlConnectionLimit').toBeGreaterThan(-1);
+    const fn = source.slice(at, at + 2200);
+    // 真正生效的值只能从运行中的容器读
+    expect(fn).toContain('.Config.Cmd');
+    expect(fn).toContain('declaresMaxConnections(cmd)');
+    // 判定为未生效时给得出可执行的下一步，而不是只喊一声
+    expect(fn).toContain("action: 'infra.mysql.max-connections-pending'");
+    expect(fn).toContain('/restart');
+    // 不许自动重建：共享 MySQL 重建会掐断所有分支的连接，那是停机不是修复
+    expect(fn).not.toContain('docker rm');
+    expect(fn).not.toContain('stopInfraService');
+  });
+
+  it('红用例：把「已注入」事件挪回计算处，守卫必须变红', () => {
+    // 真的做一次文本回退，而不是断言两个常量的大小关系——那种「红用例」永远不会红，
+    // 等于没有（predicate-and-wiring-discipline 形状 4）。
+    const source = containerSource();
+    const eventStart = source.lastIndexOf('if (mysqlDefaults.injected !== null) {', source.indexOf("action: 'infra.mysql.max-connections-defaulted'"));
+    expect(eventStart).toBeGreaterThan(-1);
+    const eventEnd = source.indexOf('\n    }\n', eventStart) + '\n    }\n'.length;
+    const eventBlock = source.slice(eventStart, eventEnd);
+    expect(eventBlock).toContain("action: 'infra.mysql.max-connections-defaulted'");
+
+    const anchor = 'const resolvedCommand = mysqlDefaults.command;';
+    const regressed = source.slice(0, eventStart) + source.slice(eventEnd);
+    const insertAt = regressed.indexOf(anchor) + anchor.length + 1;
+    const moved = regressed.slice(0, insertAt) + eventBlock + regressed.slice(insertAt);
+
+    // 回退之后，事件就排在 docker run 之前了——上一条守卫的判据必然翻转。
+    const dockerRunAt = moved.indexOf('const result = await this.shell.exec(cmd);');
+    const appliedAt = moved.indexOf("action: 'infra.mysql.max-connections-defaulted'");
+    expect(dockerRunAt).toBeGreaterThan(-1);
+    expect(appliedAt).toBeGreaterThan(-1);
+    expect(appliedAt).toBeLessThan(dockerRunAt);
+  });
+
+  it('红用例：摘掉复用路径的审计，守卫必须变红', () => {
+    const source = containerSource();
+    const stripped = source.replace(/auditMysqlConnectionLimit\(service, mysqlDefaults\.injected\)/g, 'noop()');
+    expect(stripped).not.toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+  });
+});

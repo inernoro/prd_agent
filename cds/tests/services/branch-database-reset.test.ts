@@ -33,11 +33,23 @@ function createMysqlBranchDatabaseSlice(source: string): string {
   return source.slice(at, at + 1800);
 }
 
-/** 只截 clone-tasks 路由那一段。 */
+/**
+ * 只截 clone-tasks 路由那一段，避免全文 contains 给出假绿。
+ *
+ * 边界取「下一个 router.<method>( 声明」而不是一个魔数长度：2026-08-30 这段
+ * 路由加了权限档位与白名单之后长了约 40 行，原来写死的 6000 字符窗口把断言要找的
+ * 内容切在了外面，四条用例一起变红——**判据自己漂了**，而不是被守的东西坏了。
+ * 一个会因为无关改动而误报的守卫，和一个不会红的守卫一样不可信。
+ */
 function cloneTasksRouteSlice(source: string): string {
   const at = source.indexOf("router.post('/branches/:id/resources/:resourceId/clone-tasks'");
   expect(at, '找不到 clone-tasks 路由').toBeGreaterThan(-1);
-  return source.slice(at, at + 6000);
+  const nextRoute = source.slice(at + 1).search(/\n {2}router\.(get|post|put|patch|delete)\(/);
+  const end = nextRoute === -1 ? source.length : at + 1 + nextRoute;
+  const slice = source.slice(at, end);
+  // 切片必须真的覆盖到这条路由的执行体，否则后面的断言是在半截文本上找东西。
+  expect(slice, 'clone-tasks 切片没覆盖到执行体').toContain('createMysqlBranchDatabase(rawInfra');
+  return slice;
 }
 
 describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
@@ -56,9 +68,60 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
     expect(cloneTasksRouteSlice(source)).toContain("{ dropFirst: mode === 'reset' }");
   });
 
+  /**
+   * Codex 在 PR #1453 的 P1：reset 走 `cloneAction` 的 fallback 落到 `database-clone`，
+   * 只要 developer；而破坏性更弱的 `data-clear`（清表数据）要求 admin。
+   * DROP DATABASE 比清数据更狠，门槛却更低——权限档位反了。
+   */
+  it('reset 必须走 admin 档权限，不得落到 developer 档的 database-clone', () => {
+    const slice = cloneTasksRouteSlice(readBranchesRoute());
+    expect(slice).toContain("mode === 'reset'\n          ? 'data-clear'");
+    // data-clear 在权限表里确实是 admin 档，否则上面那行等于没提权
+    const source = readBranchesRoute();
+    const at = source.indexOf('function requiredResourceRole(');
+    expect(at, '找不到 requiredResourceRole').toBeGreaterThan(-1);
+    const roleFn = source.slice(at, at + 700);
+    expect(roleFn).toContain("action === 'data-clear'");
+    expect(roleFn).toContain("return 'admin'");
+  });
+
+  it('红用例：把 reset 放回 database-clone，守卫必须变红', () => {
+    const slice = cloneTasksRouteSlice(readBranchesRoute());
+    const regressed = slice.replace("mode === 'reset'\n          ? 'data-clear'", "mode === 'reset'\n          ? 'database-clone'");
+    expect(regressed).not.toContain("mode === 'reset'\n          ? 'data-clear'");
+  });
+
+  /**
+   * Codex 在 PR #1453 的另一条 P1：只排除基础库是黑名单思路，
+   * targetDatabase 来自请求体，排掉基础库之后**兄弟分支预览的库**照样能被
+   * root 权限的建库助手 DROP 掉。必须改成白名单。
+   */
+  it('白名单：reset 只允许落到本分支拥有的库', () => {
+    const slice = cloneTasksRouteSlice(readBranchesRoute());
+    expect(slice).toContain('branchOwnedDatabases');
+    expect(slice).toContain('reset_refuses_foreign_database');
+    expect(slice).toContain('!branchOwnedDatabases.has(targetDatabase)');
+    // 白名单必须同时含「分支 scope 当前绑定的库」与「CDS 约定的分支库名」，
+    // 前者覆盖项目自建命名（mdimp 的 imp_b_<token>），少了它对存量分支全不可用。
+    expect(slice).toContain('[baseDb, branchDatabaseName(projectBaseDb, branch)]');
+  });
+
+  it('reset 的默认目标不得再叠一层分支后缀', () => {
+    // baseDb 在分支库已存在时就是分支库本身，再套 branchDatabaseName 会算出
+    // 一个谁都不是的名字，把脏库留在原地。
+    const slice = cloneTasksRouteSlice(readBranchesRoute());
+    expect(slice).toContain("mode === 'reset'\n      ? (baseDb && baseDb !== projectBaseDb ? baseDb : branchDatabaseName(projectBaseDb, branch))");
+  });
+
+  it('红用例：白名单拿掉后守卫必须变红', () => {
+    const slice = cloneTasksRouteSlice(readBranchesRoute());
+    const regressed = slice.replace(/reset_refuses_foreign_database/g, 'noop_code');
+    expect(regressed).not.toContain('reset_refuses_foreign_database');
+  });
+
   it('硬拦：reset 绝不允许落到项目共享基础库上', () => {
     const slice = cloneTasksRouteSlice(readBranchesRoute());
-    expect(slice).toContain("mode === 'reset' && targetDatabase === projectBaseDb");
+    expect(slice).toContain('targetDatabase === projectBaseDb');
     expect(slice).toContain('reset_refuses_base_database');
     // 拦截必须在真正执行之前返回
     const guardAt = slice.indexOf('reset_refuses_base_database');
@@ -89,11 +152,8 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
 
   it('红用例：把判据改回分支感知的 baseDb，守卫必须变红', () => {
     const slice = cloneTasksRouteSlice(readBranchesRoute());
-    const regressed = slice.replace(
-      "mode === 'reset' && targetDatabase === projectBaseDb",
-      "mode === 'reset' && targetDatabase === baseDb",
-    );
-    expect(regressed).not.toContain("mode === 'reset' && targetDatabase === projectBaseDb");
+    const regressed = slice.replace('targetDatabase === projectBaseDb', 'targetDatabase === baseDb');
+    expect(regressed).not.toContain('targetDatabase === projectBaseDb');
   });
 
   it('不支持 reset 的 runtime 显式报错，而不是静默退化成 empty', () => {
