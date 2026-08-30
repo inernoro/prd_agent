@@ -383,10 +383,26 @@ public sealed class GatewayRoutingWiringGuardTests
             2,
             "两条归属判定路径都要拒绝并说明原因；少一条就是有一条路径会默默接管别人的 appCaller");
 
-        // 二、推导端点必须认流里夹着的失败帧（与前端真实调用同一形状）。
-        console.ShouldContain(
+        // 二、推导端点的读流段：既要认流里夹着的失败帧，也要认「流根本没读完」。
+        // 取值范围限定在读流到解析之间——放宽到全文件的话，底下那个辅助方法的定义
+        // 就能把断言喂饱，删掉调用点照样绿（建了一半的接线正是这么活下来的）。
+        var drainAt = console.IndexOf("var streamCompleted = false;", StringComparison.Ordinal);
+        drainAt.ShouldBeGreaterThanOrEqualTo(0, "推导端点必须跟踪完成标记；没有它，EOF 就等于「收完了」");
+        var drainEnd = console.IndexOf("var parsed = ParseIntentDraft(", drainAt, StringComparison.Ordinal);
+        drainEnd.ShouldBeGreaterThan(drainAt, "读流段与解析段的相邻关系变了，守卫的取值范围需要跟着改");
+        var drain = console[drainAt..drainEnd];
+        drain.ShouldContain(
             "TryReadIntentDraftStreamError(",
             customMessage: "推导端点不认失败帧的话，会对一次失败且计费的调用回 ok:true");
+        // 认失败帧还不够：serving 的取消路径既不发失败帧也不发 [DONE]，直接把响应关掉。
+        // 只认「有没有失败帧」的话，EOF 就等于收完了——模型在断流前恰好吐出一段可解析 JSON 时，
+        // 一次被取消/截断的计费调用会被当成成功的推导结果交出去。
+        drain.ShouldContain(
+            "payload == \"[DONE]\") { streamCompleted = true;",
+            customMessage: "收到结束标记才算收完；只 continue 掉它等于没有完成判据");
+        drain.ShouldContain(
+            "if (!streamCompleted)",
+            customMessage: "没有完成标记就不许把这段文本交给解析器——那是一次被截断的计费调用");
         // 三、成本闸：上限本身 + 累积体积上限，两道都要在。
         console.ShouldContain(
             "max_tokens = IntentDraftMaxCompletionTokens",

@@ -68,6 +68,8 @@ function ScopeHelp() {
         <dd>决定这把 key 能调用哪项业务。一把 key 只在这里列出的调用用途内有效，换一项业务要换一把。</dd>
         <dt>标识怎么来的</dt>
         <dd>由密钥名称推出的 clientCode、你填的用途和调用类型拼成 {'{app-key}.{feature}::{chat|vision}'}，创建时一并登记。想复用已登记的调用用途就切到「选择已有」。</dd>
+        <dt>用途写的是中文时</dt>
+        <dd>标识里的段只收拉丁字母，中文压不出来，所以会多问你要一个短英文名。这一段系统无从得知：若替你挑一个通用词，所有同样情况的登记会拼出同一条 code，而登记对同团队同码是幂等复用的——不同集成于是共用一条路由身份与一份预算，页面上还看不出来。</dd>
         <dt>入口协议</dt>
         <dd>客户端用哪种协议发请求就列哪种，默认给全 {DEFAULT_PROTOCOLS} 四种。</dd>
         <dt>Scope</dt>
@@ -101,6 +103,8 @@ export function ServiceKeysPage() {
   const [purpose, setPurpose] = useState<'runtime' | 'release-gate' | 'canary' | 'external-platform'>('external-platform');
   const [appCallerMode, setAppCallerMode] = useState<'generate' | 'existing'>('generate');
   const [appCallerFeature, setAppCallerFeature] = useState('');
+  // 用途写的是中文时，标识里那一段拼不出来——由用户在这里给一个短英文名。
+  const [identitySlug, setIdentitySlug] = useState('');
   const [appCallerRequestType, setAppCallerRequestType] = useState<SelfServiceRequestType>('chat');
   const [appCallerCodes, setAppCallerCodes] = useState('');
   const [teams, setTeams] = useState<OrganizationData['teams']>([]);
@@ -299,8 +303,11 @@ export function ServiceKeysPage() {
   };
 
   // 生成态下这把钥匙只授权一条调用用途；选择已有时仍支持逗号分隔的多条。
-  const generatedAppCallerCode = buildAppCallerCode(clientCode || normalizeClientCode(name), appCallerFeature, appCallerRequestType);
+  const generatedAppCallerCode = buildAppCallerCode(clientCode || normalizeClientCode(name), appCallerFeature, appCallerRequestType, identitySlug);
   const generatedAppCallerValid = SELF_SERVICE_APP_CALLER.test(generatedAppCallerCode) && generatedAppCallerCode.length <= 200;
+  // 用途栏里那句话拼不出拉丁字母（中文用途最常见）时，标识就缺一段。这一段系统无从得知，
+  // 只能由用户给——摆出来让他填，而不是替他挑一个常量（那会让不同集成共用一条身份）。
+  const needsIdentitySlug = appCallerMode === 'generate' && !toAppCallerSegment(appCallerFeature);
   const effectiveAppCallerCodes = appCallerMode === 'generate' ? [generatedAppCallerCode] : splitValues(appCallerCodes);
   // 登记归属：优先密钥自己选的团队，其次当前身份唯一的团队，最后租户里第一个可用团队。
   // 三者都取不到就是「租户还没有团队」，提交时明确报出来，不静默失败。
@@ -424,6 +431,18 @@ export function ServiceKeysPage() {
                       {REQUEST_TYPES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                     </select>
                   </div>
+                  {needsIdentitySlug ? (
+                    <div className="lg-service-key-identity-slug">
+                      <input
+                        value={identitySlug}
+                        onChange={(event) => setIdentitySlug(event.target.value)}
+                        placeholder="例如 desktop-client"
+                        aria-label="调用身份的英文标识"
+                        style={inputStyle}
+                      />
+                      <small style={BODY_TEXT}>这一段拼不出来，你来定。</small>
+                    </div>
+                  ) : null}
                 </label>
               ) : (
                 <label style={labelStyle}>
@@ -443,7 +462,9 @@ export function ServiceKeysPage() {
             <div className="lg-service-key-defaults">
               <span>自动设置</span>
               <strong>{clientCode || '根据名称生成 clientCode'}</strong>
-              {appCallerMode === 'generate' ? <strong className="lg-service-key-generated-caller">{generatedAppCallerCode}</strong> : null}
+              {appCallerMode === 'generate'
+                ? <strong className="lg-service-key-generated-caller">{generatedAppCallerCode || '还差一个英文标识'}</strong>
+                : null}
               {appCallerMode === 'generate' && appCallerTeamName ? <span>登记到 {appCallerTeamName}</span> : null}
               <span>生产环境</span>
               <span>四种兼容协议</span>
@@ -604,28 +625,45 @@ function splitValues(value: string) {
 
 function normalizeClientCode(value: string) {
   const normalized = value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z]+/, '').slice(0, 80);
-  return normalized.length >= 2 ? normalized : 'external-client';
+  return normalized.length >= 2 ? normalized : FALLBACK_APP_SEGMENT;
 }
 
 /**
  * 把一段人写的文字压成 appCallerCode 的一节。段内只允许 `[a-z][a-z0-9-]*`——
  * clientCode 允许的点和下划线在这里都是非法字符，必须换成短横线，否则拼出来的 code
- * 会被 console-api 的 IsValidSelfServiceAppCaller 挡回来。压不出合法段就退回 fallback，
- * 让中文用途（拼不出拉丁字母）也能拿到一个能用的标识，而不是把错误甩给用户。
+ * 会被 console-api 的 IsValidSelfServiceAppCaller 挡回来。
+ *
+ * 压不出合法段时返回空串，**不**替用户挑一个常量：那样两套毫不相干的中文集成
+ * （「桌面客户端」与「数据同步」都拼不出拉丁字母）会一起塌成同一个
+ * `external-client.access::chat`，而登记端点对同团队同码是幂等复用的——
+ * 于是它们共用一条路由身份与一份预算，谁超了都算在对方头上，页面上还看不出来。
+ * 拼不出来的那一段由用户自己给（见 identitySlug），这是系统无从得知的信息。
  */
-function toAppCallerSegment(value: string, fallback: string) {
+function toAppCallerSegment(value: string) {
   const normalized = value.toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40)
     .replace(/-+$/, '');
-  return /^[a-z][a-z0-9-]*$/.test(normalized) ? normalized : fallback;
+  return /^[a-z][a-z0-9-]*$/.test(normalized) ? normalized : '';
 }
 
-/** 用户填的是「谁用、干什么、什么类型」，网关要的是这串标识，由这里唯一负责拼装。 */
-function buildAppCallerCode(clientCode: string, feature: string, requestType: SelfServiceRequestType) {
-  return `${toAppCallerSegment(clientCode, FALLBACK_APP_SEGMENT)}.${toAppCallerSegment(feature, FALLBACK_FEATURE)}::${requestType}`;
+/**
+ * 用户填的是「谁用、干什么、什么类型」，网关要的是这串标识，由这里唯一负责拼装。
+ * `slug` 是用户为「拼不出拉丁字母」那一半自己给的名字：只有 app 段缺时它顶 app 段，
+ * 只有 feature 段缺时它顶 feature 段，两段都缺时它顶 app 段、feature 段用通用词——
+ * 此时区分度由 app 段承担，不同集成不会再撞成同一条身份。
+ */
+function buildAppCallerCode(clientCode: string, feature: string, requestType: SelfServiceRequestType, slug: string) {
+  const app = toAppCallerSegment(clientCode);
+  const featureSegment = toAppCallerSegment(feature);
+  const slugSegment = toAppCallerSegment(slug);
+  if (app && featureSegment) return `${app}.${featureSegment}::${requestType}`;
+  if (!slugSegment) return '';
+  if (app) return `${app}.${slugSegment}::${requestType}`;
+  if (featureSegment) return `${slugSegment}.${featureSegment}::${requestType}`;
+  return `${slugSegment}.${FALLBACK_FEATURE}::${requestType}`;
 }
 
 function formatTime(value?: string | null) {

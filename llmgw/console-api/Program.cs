@@ -6108,6 +6108,11 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
     await SendAsync(new { type = "stage", stage = "connecting", text = "正在把这句话交给网关自己的模型" });
     var raw = new StringBuilder();
     var usedModel = string.Empty;
+    // 这条流「收完了」有两种成立方式：收到 [DONE]，或我方主动到顶收工（下面的体积闸）。
+    // 两个都没有就是 EOF 提前到了——serving 的取消路径正是这样：既不发失败帧也不发 [DONE]，
+    // 直接把响应关掉。不区分的话，模型在断流前恰好吐出一段可解析 JSON 时，
+    // 这个端点会把一次被取消/截断的**计费**调用当成成功的推导结果交出去。
+    var streamCompleted = false;
     // 整条推导（含流式读）共用一个 deadline。只挂 http.RequestAborted 的话，serving 把响应头
     // 发回来之后再卡住，HttpClient.Timeout 已经不管事、ReadLineAsync 又只在浏览器断开时才醒，
     // 于是这一屏会无限停在「模型正在推导」——承诺的 40 秒兜底静默失效。
@@ -6185,7 +6190,8 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
                 if (line is null) break;
                 if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
                 var payload = line[5..].Trim();
-                if (payload.Length == 0 || payload == "[DONE]") continue;
+                if (payload == "[DONE]") { streamCompleted = true; continue; }
+                if (payload.Length == 0) continue;
                 try
                 {
                     using var doc = JsonDocument.Parse(payload);
@@ -6209,7 +6215,10 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
                     if (raw.Length + text.Length > IntentDraftMaxRawChars)
                     {
                         // 到顶就收工：已经拿到的片段照常去解析（多半够了），不再继续收。
+                        // 这是我方主动停的，不是流断了，所以按「收完了」计——否则下面的完成判定
+                        // 会把一次正常到顶的推导误判成截断。
                         raw.Append(text.AsSpan(0, Math.Max(0, IntentDraftMaxRawChars - raw.Length)));
+                        streamCompleted = true;
                         break;
                     }
                     raw.Append(text);
@@ -6236,6 +6245,20 @@ app.MapPost("/gw/app-callers/draft", async (HttpContext http, [FromBody] DraftAp
     catch (Exception ex)
     {
         await SendAsync(new { type = "error", code = "INTENT_DRAFT_UNAVAILABLE", message = $"推导模型调用失败（{ex.GetType().Name}），已退回本地关键词判定。" });
+        return;
+    }
+
+    // 没有完成标记就不许把这段文本当成模型的结论：它可能只是被取消/截断的前半截，
+    // 而前半截恰好可解析时（`{"app":"x","feature":"y",...` 少了尾巴仍可能被容错解析器接受）
+    // 用户会拿到一个看起来正常、其实来自一次失败调用的推导结果。
+    if (!streamCompleted)
+    {
+        await SendAsync(new
+        {
+            type = "error",
+            code = "INTENT_DRAFT_UNAVAILABLE",
+            message = "推导的返回在中途断了（没有收到结束标记），已退回本地关键词判定。",
+        });
         return;
     }
 

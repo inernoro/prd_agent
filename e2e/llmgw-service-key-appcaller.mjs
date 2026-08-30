@@ -138,14 +138,32 @@ const generatedCode = () => page.locator('.lg-service-key-generated-caller').inn
 const nameInput = page.locator('.lg-service-key-fast-fields input').first();
 const featureInput = page.locator('input[aria-label="调用用途"]');
 
-// 1) 中文名称拼不出 clientCode 时退回 external-client；中文用途退回 access。
-//    这一档以前的结果是让用户对着一个自己看不懂、也改不对的 code 发呆。
+// 1) 中文用途拼不出拉丁字母时，那一段必须由用户自己给，不许系统替他挑一个常量。
+//    以前这里退回固定的 `external-client.access::chat`：两套毫不相干的中文集成
+//    （「桌面客户端」与「数据同步」）会塌成同一条 code，而登记端点对同团队同码是
+//    幂等复用的——于是它们共用一条路由身份与一份预算，页面上还看不出来。
 await nameInput.fill('测试环境');
 await featureInput.fill('桌面客户端');
 await page.waitForTimeout(120);
+const slugInput = page.locator('input[aria-label="调用身份的英文标识"]');
+check('中文用途会要一个英文标识', await slugInput.count(), 1);
+check('还没给标识时拼不出 code', (await generatedCode()).includes('::'), false);
+check('还没给标识时不能提交', await page.getByRole('button', { name: '生成 API Key' }).isDisabled(), true);
+
+await slugInput.fill('desktop-client');
+await page.waitForTimeout(120);
 const chineseCode = await generatedCode();
-check('中文名称与中文用途也拼得出 code', chineseCode, 'external-client.access::chat');
+check('给了标识才拼得出 code', chineseCode, 'external-client.desktop-client::chat');
 check('中文档位的 code 过 console-api 判据', SELF_SERVICE_APP_CALLER.test(chineseCode), true);
+
+// 同一份中文用途换一个标识必须换一条身份——这条才是上面那个洞的真正判据：
+// 两套集成能不能被区分开，而不是「拼不拼得出一个合法 code」。
+await featureInput.fill('数据同步');
+await slugInput.fill('data-sync');
+await page.waitForTimeout(120);
+const otherChineseCode = await generatedCode();
+check('另一套中文集成拿到的是另一条身份', otherChineseCode === chineseCode, false);
+check('另一条身份同样合法', SELF_SERVICE_APP_CALLER.test(otherChineseCode), true);
 
 // 2) 拉丁用途按字面进 feature 段；下划线、空格、连续分隔符都压成单个短横线。
 await featureInput.fill('Desktop  Client_v2');

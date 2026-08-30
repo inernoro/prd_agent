@@ -7048,6 +7048,13 @@ a:focus-visible {
   gap: 6px;
 }
 
+/* 用途拼不出拉丁字母时才出现的补充一栏：输入框 + 一句为什么要它。 */
+.lg-service-key-identity-slug {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
 /* 模式切换写成 button（不是导航），所以要自己抹掉浏览器默认按钮外观。 */
 .lg-service-key-defaults > .lg-service-key-caller-switch {
   padding: 0;
