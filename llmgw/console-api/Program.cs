@@ -520,10 +520,9 @@ var gwMigrations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_migrations
   会把日后绕过控制台写库塞进来的模型也一起放行。所以两者必须成对出现，
   也因此收敛成这一个函数——多一份拷贝就多一处会漏掉迁移标记的写法。
 */
-async Task<long> RunCatalogGrandfatherAsync(string migrationId, string stampedBy)
+async Task<DateTime?> ClaimOneShotMigrationAsync(string migrationId)
 {
     var claimedAt = DateTime.UtcNow;
-    var claimed = false;
     try
     {
         // 抢占式认领：_id 唯一索引保证多副本同时启动时只有一个能插进去。
@@ -533,7 +532,7 @@ async Task<long> RunCatalogGrandfatherAsync(string migrationId, string stampedBy
             { "_id", migrationId },
             { "ClaimedAt", claimedAt },
         });
-        claimed = true;
+        return claimedAt;
     }
     catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
     {
@@ -543,21 +542,31 @@ async Task<long> RunCatalogGrandfatherAsync(string migrationId, string stampedBy
                 Builders<BsonDocument>.Filter.Exists("CompletedAt", false),
                 Builders<BsonDocument>.Filter.Lt("ClaimedAt", claimedAt.AddMinutes(-10))),
             Builders<BsonDocument>.Update.Set("ClaimedAt", claimedAt));
-        claimed = takeover is not null;
+        return takeover is null ? null : claimedAt;
     }
-    if (!claimed) return -1;
+}
+
+async Task CompleteOneShotMigrationAsync(string migrationId, long stampedCount)
+{
+    await gwMigrations.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.Eq("_id", migrationId),
+        Builders<BsonDocument>.Update
+            .Set("CompletedAt", DateTime.UtcNow)
+            .Set("StampedCount", stampedCount));
+}
+
+async Task<long> RunCatalogGrandfatherAsync(string migrationId, string stampedBy)
+{
+    var claimedAt = await ClaimOneShotMigrationAsync(migrationId);
+    if (claimedAt is null) return -1;
 
     var result = await gwModels.UpdateManyAsync(
         Builders<BsonDocument>.Filter.Exists("AllowedOutsideCatalog", false),
         Builders<BsonDocument>.Update
             .Set("AllowedOutsideCatalog", true)
             .Set("AllowedOutsideCatalogBy", stampedBy)
-            .Set("AllowedOutsideCatalogAt", claimedAt));
-    await gwMigrations.UpdateOneAsync(
-        Builders<BsonDocument>.Filter.Eq("_id", migrationId),
-        Builders<BsonDocument>.Update
-            .Set("CompletedAt", DateTime.UtcNow)
-            .Set("StampedCount", result.ModifiedCount));
+            .Set("AllowedOutsideCatalogAt", claimedAt.Value));
+    await CompleteOneShotMigrationAsync(migrationId, result.ModifiedCount);
     return result.ModifiedCount;
 }
 
@@ -608,6 +617,56 @@ if (strictPrefixCount >= 0)
     app.Logger.LogInformation(
         "[ModelCatalog] 归一化口径收紧迁移已执行（一次性）：为 {Count} 条存量模型补上放行标记（未经人工审阅，来历见审计字段）",
         strictPrefixCount);
+}
+
+/*
+  存量放行之三（一次性，幂等）：兑换所的 per-model 放行标记。
+
+  数据面此前对兑换所来的模型认的是**容器**——「这个 PlatformId 是一条兑换所记录吗」，
+  是就整条放行。容器判据太宽：往兑换所里加一个从没被人看过的别名照样过，
+  那正是名录门要拦的形态，只是换了个集合。现在改成认**条目**上的放行标记，
+  与手工新增模型同一套依据；写入路径（BuildExchangeModels）逐条盖戳。
+
+  存量兑换所是在盖戳之前建的，条目上没有这个字段——不补这一手，判据一收紧
+  它们就集体开始被拒（又是形状 5：拿变更前的状态去卡这次变更）。所以同样给一个
+  一次性窗口：只补**当时确实由管理员在控制台列出过**的那些别名，放行人如实写成迁移。
+*/
+const string ExchangeStampMigrationId = "exchange-model-allowance-v1";
+var exchangeStampClaimedAt = await ClaimOneShotMigrationAsync(ExchangeStampMigrationId);
+if (exchangeStampClaimedAt is not null)
+{
+    var stampedAliases = 0L;
+    using var exchangeCursor = await gwModelExchanges
+        .Find(Builders<BsonDocument>.Filter.Exists("Models"))
+        .ToCursorAsync();
+    while (await exchangeCursor.MoveNextAsync())
+    {
+        foreach (var exchange in exchangeCursor.Current)
+        {
+            if (!exchange.TryGetValue("Models", out var rawModels) || rawModels is not BsonArray declaredModels) continue;
+            var touched = false;
+            foreach (var declared in declaredModels.OfType<BsonDocument>())
+            {
+                if (declared.Contains("AllowedOutsideCatalog")) continue;
+                var alias = declared.GetValue("ModelId", string.Empty).AsString;
+                // 名录内的不盖标记（它本来就在白名单里），与写入路径同一口径。
+                if (alias.Length == 0 || ModelCatalog.Contains(alias)) continue;
+                declared["AllowedOutsideCatalog"] = true;
+                declared["AllowedOutsideCatalogBy"] = "存量迁移（兑换所逐条放行标记落地前已声明，未经人工审阅）";
+                declared["AllowedOutsideCatalogAt"] = exchangeStampClaimedAt.Value;
+                touched = true;
+                stampedAliases++;
+            }
+            if (!touched) continue;
+            await gwModelExchanges.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", exchange.GetValue("_id", string.Empty)),
+                Builders<BsonDocument>.Update.Set("Models", declaredModels));
+        }
+    }
+    await CompleteOneShotMigrationAsync(ExchangeStampMigrationId, stampedAliases);
+    app.Logger.LogInformation(
+        "[ModelCatalog] 兑换所逐条放行迁移已执行（一次性）：为 {Count} 条已声明的名录外别名补上放行标记（未经人工审阅，来历见审计字段）",
+        stampedAliases);
 }
 
 app.Use(async (http, next) =>
@@ -3884,7 +3943,8 @@ app.MapPost("/gw/capabilities/image-layering/install", async (
             tenantId,
             exchangeId,
             encryptedApiKey,
-            now);
+            now,
+            access.Username);
         await gwModelExchanges.InsertOneAsync(exchangeDocument, cancellationToken: http.RequestAborted);
     }
     else
@@ -3894,7 +3954,7 @@ app.MapPost("/gw/capabilities/image-layering/install", async (
             Builders<BsonDocument>.Update
                 .Set("Name", exchangeDraft.Name)
                 .Set("NameNormalized", exchangeDraft.NameNormalized)
-                .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(exchangeDraft.Models))
+                .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(exchangeDraft.Models, access.Username, now))
                 .Set("TargetUrl", exchangeDraft.TargetUrl)
                 .Set("TargetApiKeyEncrypted", encryptedApiKey)
                 .Set("TargetAuthScheme", exchangeDraft.TargetAuthScheme)
@@ -10313,7 +10373,8 @@ app.MapPost("/gw/exchanges", async (HttpContext http, [FromBody] CreateExchangeR
 
     var id = $"gw-exchange-{Guid.NewGuid():N}";
     var now = DateTime.UtcNow;
-    var document = GatewayConfigurationProvisioning.BuildExchangeDocument(draft, tenantId, id, encryptedApiKey, now);
+    var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
+        draft, tenantId, id, encryptedApiKey, now, TenantAccess.GetRequired(http).Username);
     string requiredAuditId;
     try
     {
@@ -10478,7 +10539,8 @@ app.MapPut("/gw/exchanges/{id}", async (HttpContext http, string id, [FromBody] 
     var update = Builders<BsonDocument>.Update
         .Set("Name", draft.Name)
         .Set("NameNormalized", draft.NameNormalized)
-        .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(draft.Models))
+        .Set("Models", GatewayConfigurationProvisioning.BuildExchangeModels(
+            draft.Models, TenantAccess.GetRequired(http).Username, DateTime.UtcNow))
         .Set("TargetUrl", draft.TargetUrl)
         .Set("TargetAuthScheme", draft.TargetAuthScheme)
         .Set("TransformerType", draft.TransformerType)

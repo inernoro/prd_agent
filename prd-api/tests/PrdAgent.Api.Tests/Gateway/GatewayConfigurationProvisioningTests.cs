@@ -387,7 +387,7 @@ public sealed class GatewayConfigurationProvisioningTests
         }, out var draft, out var error).ShouldBeTrue(error);
 
         var document = GatewayConfigurationProvisioning.BuildExchangeDocument(
-            draft!, "tenant-from-session", "gw-exchange-1", "encrypted-only", DateTime.UnixEpoch);
+            draft!, "tenant-from-session", "gw-exchange-1", "encrypted-only", DateTime.UnixEpoch, "admin@example.com");
 
         document["TenantId"].AsString.ShouldBe("tenant-from-session");
         document["NameNormalized"].AsString.ShouldBe("教程原生中继");
@@ -396,6 +396,16 @@ public sealed class GatewayConfigurationProvisioningTests
         document.Contains("ApiKey").ShouldBeFalse();
         document["Models"].AsBsonArray.Count.ShouldBe(2);
         document["Version"].AsInt64.ShouldBe(1);
+
+        // 名录外的别名必须逐条盖上放行标记：数据面只认这个标记，不认「它来自兑换所」。
+        // 认容器不认条目的话，往兑换所里加一个没人看过的别名照样能过名录门。
+        foreach (var model in document["Models"].AsBsonArray.OfType<BsonDocument>())
+        {
+            model["AllowedOutsideCatalog"].AsBoolean.ShouldBeTrue(
+                $"{model["ModelId"].AsString} 不在名录里，写入时就该记下是谁放行的");
+            model["AllowedOutsideCatalogBy"].AsString.ShouldBe("admin@example.com");
+            model["AllowedOutsideCatalogAt"].ToUniversalTime().ShouldBe(DateTime.UnixEpoch);
+        }
     }
 
     [Fact]

@@ -200,16 +200,19 @@ public class ModelResolver : IModelResolver
             // 走兑换所（exchange）解析出来的模型只活在兑换所文档里，llmgw_models 查不到它，
             // 于是会静默落进「管不着」——结果是放行，但那是**漏判**不是判断：
             // 下一个人读这段代码会以为这条路径本来就不在门的射程内。
-            // 这里显式认出来并说明依据：兑换所是管理员在控制台建的，模型别名由他当场列出，
-            // 这一步人工声明与「手工新增模型时盖放行标记」是同一件事，所以判放行。
-            // 已知边界（见 debt 台账）：兑换所文档没有 per-model 放行标记，绕过控制台
-            // 直接往兑换所里加别名，这道门同样拦不住——要覆盖得先给兑换所写入路径盖戳。
-            if (!string.IsNullOrWhiteSpace(platformId) && await IsGatewayExchangeAsync(platformId, ct))
+            // 这里显式认出来，并且判的是**这一条别名**有没有被放行，不是「它是不是一条兑换所记录」。
+            // 后者太宽：兑换所是个容器，认容器等于「进了这个门的都算放行」，往里加一个
+            // 从没被人看过的别名照样过——那正是这道门要拦的形态，只是换了个集合。
+            if (!string.IsNullOrWhiteSpace(platformId))
             {
-                _logger.LogDebug(
-                    "[ModelResolver] 名录门：{Model} 由兑换所 {ExchangeId} 声明，按管理员显式声明放行",
-                    trimmed, platformId);
-                return CatalogVerdict.Allowed;
+                var exchangeVerdict = await JudgeExchangeModelAsync(platformId, trimmed, ct);
+                if (exchangeVerdict is not null)
+                {
+                    _logger.LogDebug(
+                        "[ModelResolver] 名录门：{Model} 来自兑换所 {ExchangeId}，判定 {Verdict}",
+                        trimmed, platformId, exchangeVerdict);
+                    return exchangeVerdict.Value;
+                }
             }
             return CatalogVerdict.OutOfJurisdiction;
         }
@@ -220,18 +223,39 @@ public class ModelResolver : IModelResolver
     }
 
     /// <summary>
-    /// 这个 PlatformId 其实是一条兑换所记录吗？兑换所解析会把 PlatformId 写成兑换所自己的 id
-    /// （<c>item.PlatformId = exchange.Id</c>），所以按 id 查得到就说明这条模型来自兑换所。
+    /// 这条模型是兑换所里的吗？是的话它该不该放行？
+    ///
+    /// 兑换所解析会把 PlatformId 写成兑换所自己的 id（<c>item.PlatformId = exchange.Id</c>），
+    /// 所以按 id 查得到就说明这条模型来自兑换所。但「来自兑换所」只回答了管辖问题，
+    /// 放行与否要看**这一条别名**：走到这里的一定是名录外的（名录内的在方法开头就放行了），
+    /// 所以它必须带着控制台写入时盖的 per-model 放行标记（谁放的、什么时候），
+    /// 与手工新增模型那道门同一套依据。
+    ///
+    /// 返回 null 表示「这个 PlatformId 不是兑换所」——那是管辖之外，交回上层按原样处理。
     /// </summary>
-    private async Task<bool> IsGatewayExchangeAsync(string platformId, CancellationToken ct)
+    private async Task<CatalogVerdict?> JudgeExchangeModelAsync(string platformId, string modelId, CancellationToken ct)
     {
-        if (_gatewayDb is null) return false;
+        if (_gatewayDb is null) return null;
         var exchanges = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_model_exchanges");
         var fb = Builders<BsonDocument>.Filter;
-        return await exchanges
+        var exchange = await exchanges
             .Find(fb.And(fb.Eq("TenantId", CurrentTenantId), fb.Eq("_id", platformId)))
-            .Limit(1)
-            .AnyAsync(ct);
+            .FirstOrDefaultAsync(ct);
+        if (exchange is null) return null;
+
+        // 兑换所里没有这条别名 = 它不是这个兑换所声明过的东西，一律拦下。
+        // （解析器正常走下来不该出现这种情况；出现了说明有人在别处拼了个 PlatformId。）
+        var declared = exchange.TryGetValue("Models", out var raw) && raw is BsonArray array
+            ? array.OfType<BsonDocument>().FirstOrDefault(item =>
+                string.Equals(item.GetValue("ModelId", string.Empty).AsString, modelId, StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (declared is null) return CatalogVerdict.Blocked;
+
+        // 名录内的在方法开头就放行了，走到这里的一定是名录外的：所以只看放行标记。
+        // （不在这里再判一次名录——那一档永远为假，读的人会以为它在起作用。）
+        return declared.TryGetValue("AllowedOutsideCatalog", out var allowed) && allowed.IsBoolean && allowed.AsBoolean
+            ? CatalogVerdict.Allowed
+            : CatalogVerdict.Blocked;
     }
 
     private static bool IsAllowedOutsideCatalog(BsonDocument doc)

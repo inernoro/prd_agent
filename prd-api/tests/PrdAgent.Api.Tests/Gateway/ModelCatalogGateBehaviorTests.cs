@@ -103,6 +103,132 @@ public sealed class ModelCatalogGateBehaviorTests
         }
     }
 
+    /// <summary>
+    /// 兑换所来的模型：门判的是**这一条别名**有没有被放行，不是「它来自兑换所」。
+    ///
+    /// 认容器不认条目的写法看不出毛病——兑换所确实是管理员建的，里面的别名也确实是他列的。
+    /// 但那是「进了这个门的都算放行」：往兑换所的 Models 数组里加一个从没被人看过的别名，
+    /// 名录门照样放它出去，而这正是它要拦的形态，只是换了个集合。
+    ///
+    /// 这里造的就是那件事：兑换所声明了一条名录外别名、但没有 per-model 放行标记。
+    /// 补上标记之后必须不再被这道门拦——「拦的依据是标记」由此钉死。
+    /// </summary>
+    [Fact]
+    public async Task 兑换所里没盖放行标记的别名_必须被拦下()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                               ?? "mongodb://127.0.0.1:27018";
+        var settings = MongoClientSettings.FromConnectionString(connectionString);
+        settings.ServerSelectionTimeout = TimeSpan.FromSeconds(3);
+        var client = new MongoClient(settings);
+        await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+
+        var gatewayDatabaseName = $"catalog_gate_exchange_{Guid.NewGuid():N}";
+        var mapDatabaseName = $"catalog_gate_exchange_map_{Guid.NewGuid():N}";
+        var gatewayData = new LlmGatewayDataContext(connectionString, gatewayDatabaseName);
+        var mapData = new MongoDbContext(connectionString, mapDatabaseName);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["LlmGateway:InternalTenantId"] = GatewayTenantDefaults.InternalTenantId,
+                ["ApiKeyCrypto:Secret"] = "catalog-gate-test-secret-2026",
+            })
+            .Build();
+
+        const string exchangeId = "gw-exchange-catalog-gate";
+        const string exchangeAlias = "some-vendor/exchange-only-model";
+        try
+        {
+            await SeedExchangeAsync(gatewayData.Database, exchangeId, exchangeAlias);
+            var resolver = new ModelResolver(
+                mapData, configuration, NullLogger<ModelResolver>.Instance, gatewayData);
+
+            // 兑换所声明了它，但条目上没有放行标记 → 必须被这道门拦下并点名错误码。
+            var blocked = await resolver.ResolveAsync(
+                Caller, ModelTypes.Chat,
+                expectedModel: exchangeAlias, pinnedPlatformId: exchangeId, pinnedModelId: exchangeAlias);
+            blocked.Success.ShouldBeFalse("兑换所里没盖过放行标记的别名不该被解析出来");
+            blocked.FailureCode.ShouldBe(
+                GatewayRouteFailure.ModelNotInCatalog,
+                "拦下来还要点名是名录门拦的，否则管理员分不清是兑换所配错了还是这条别名不该用");
+
+            // 补上标记 → 这道门不再拦。
+            // 这里只断言「不再是名录门拦的」而不是断言解析成功：兑换所的执行还需要目标地址、
+            // 凭据、转换器等一整套配置，那不是这条用例要验的东西，凑齐它们只会让判据变糊。
+            await gatewayData.Database.GetCollection<BsonDocument>("llmgw_model_exchanges").UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", exchangeId),
+                Builders<BsonDocument>.Update.Set("Models.0.AllowedOutsideCatalog", true));
+
+            var afterStamp = await resolver.ResolveAsync(
+                Caller, ModelTypes.Chat,
+                expectedModel: exchangeAlias, pinnedPlatformId: exchangeId, pinnedModelId: exchangeAlias);
+            afterStamp.FailureCode.ShouldNotBe(
+                GatewayRouteFailure.ModelNotInCatalog,
+                "盖过放行标记之后，名录门不该再拦它——拦的依据必须是标记本身");
+        }
+        finally
+        {
+            await client.DropDatabaseAsync(gatewayDatabaseName);
+            await client.DropDatabaseAsync(mapDatabaseName);
+        }
+    }
+
+    /// <summary>
+    /// 兑换所那一支的种子：模型**只**活在兑换所文档里（llmgw_models 里没有它），
+    /// 这正是走到「查不到任何文档」那一支的前提。
+    /// </summary>
+    private static async Task SeedExchangeAsync(IMongoDatabase database, string exchangeId, string alias)
+    {
+        await database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+            .InsertOneAsync(new GatewayAppCallerRecord
+            {
+                TenantId = GatewayTenantDefaults.InternalTenantId,
+                AppCallerCode = Caller,
+                RequestType = ModelTypes.Chat,
+                Status = "configured",
+                ModelPoolId = PoolId,
+            });
+
+        var pool = new ModelGroup
+        {
+            Id = PoolId,
+            Name = "兑换所用例池",
+            Code = "catalog-gate-exchange",
+            ModelType = ModelTypes.Chat,
+            Models =
+            [
+                new ModelGroupItem
+                {
+                    PlatformId = exchangeId, ModelId = alias,
+                    Priority = 0, HealthStatus = ModelHealthStatus.Healthy,
+                },
+            ],
+        };
+        var poolDocument = pool.ToBsonDocument();
+        poolDocument["TenantId"] = GatewayTenantDefaults.InternalTenantId;
+        await database.GetCollection<BsonDocument>("llmgw_model_pools").InsertOneAsync(poolDocument);
+
+        await database.GetCollection<BsonDocument>("llmgw_model_exchanges").InsertOneAsync(new BsonDocument
+        {
+            { "_id", exchangeId },
+            { "TenantId", GatewayTenantDefaults.InternalTenantId },
+            { "Name", "名录门兑换所用例" },
+            { "Enabled", true },
+            {
+                "Models", new BsonArray
+                {
+                    // 刻意不带 AllowedOutsideCatalog：这就是「绕过盖戳」的形态。
+                    new BsonDocument
+                    {
+                        { "ModelId", alias },
+                        { "ModelType", ModelTypes.Chat },
+                        { "Enabled", true },
+                    },
+                }
+            },
+        });
+    }
+
     private static async Task SeedAsync(IMongoDatabase database, IConfiguration configuration)
     {
         await database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")

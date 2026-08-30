@@ -169,32 +169,42 @@ public sealed class GatewayRoutingWiringGuardTests
     }
 
     /// <summary>
-    /// 兑换所来的模型必须被**显式认出来**，不许靠「llmgw_models 查不到」顺带落进「管不着」。
+    /// 兑换所来的模型必须被**显式认出来**，而且判的是**这一条别名**、不是「它来自兑换所」。
     ///
-    /// 两者结果都是放行，所以删掉这段判断不会有任何用例变红（形状 2）——变的是这道门
-    /// 说得出说不出自己为什么放行。落进「管不着」的那种放行是漏判：下一个人读代码会以为
-    /// 兑换所本来就不在门的射程内，于是给兑换所补放行标记这件事永远排不上队。
+    /// 两层都「删掉不会红」：
+    /// - 不认出来 → 静默落进「管不着」，结果同样是放行，只是这道门说不出自己为什么放行（形状 2）；
+    /// - 认容器不认条目 → 往兑换所里加一个从没被人看过的别名照样过，正是名录门要拦的形态，
+    ///   只是换了个集合（形状 1：判据比它该管的范围宽）。
     /// </summary>
     [Fact]
-    public void 兑换所来的模型必须被显式认出而不是顺带落进管不着()
+    public void 兑换所来的模型必须逐条判放行而不是认整个兑换所()
     {
         var source = ResolverSource();
         var start = source.IndexOf("private async Task<CatalogVerdict> JudgeAsync(", StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0, "找不到裁决本体，守卫扫错文件或方法被改名");
         // 调用点的取值范围只到辅助方法的声明为止：放宽到把声明本身包进来，
         // 删掉调用、只留下一个没人用的辅助方法，这条守卫照样绿（形状 2 的递归）。
-        var helperAt = source.IndexOf("private async Task<bool> IsGatewayExchangeAsync(", start, StringComparison.Ordinal);
+        var helperAt = source.IndexOf("private async Task<CatalogVerdict?> JudgeExchangeModelAsync(", start, StringComparison.Ordinal);
         helperAt.ShouldBeGreaterThan(start, "找不到兑换所判定辅助，守卫的取值范围需要跟着改");
         source[start..helperAt].ShouldContain(
-            "IsGatewayExchangeAsync(",
+            "JudgeExchangeModelAsync(",
             customMessage: "名录门没有认出兑换所来的模型：它们会静默落进「管不着」，放行却说不出依据");
 
-        // 判据必须真去查兑换所集合，而不是把「PlatformId 长得像兑换所 id」当证据（形状 8）。
         var end = source.IndexOf("\n    private static bool IsAllowedOutsideCatalog", helperAt, StringComparison.Ordinal);
         end.ShouldBeGreaterThan(helperAt, "辅助方法与放行标记读取的相邻关系变了，守卫的取值范围需要跟着改");
-        source[helperAt..end].ShouldContain(
+        var helper = source[helperAt..end];
+
+        // 判据必须真去查兑换所集合，而不是把「PlatformId 长得像兑换所 id」当证据（形状 8）。
+        helper.ShouldContain(
             "llmgw_model_exchanges",
-            customMessage: "认兑换所要真去查那张表；靠 id 前缀之类的形状猜，换个 id 生成方式就静默失效");
+            customMessage: "兑换所判定必须真的查那个集合");
+        // 并且必须判到条目这一层：声明过这条别名 + 这条别名带着放行标记。
+        helper.ShouldContain(
+            "AllowedOutsideCatalog",
+            customMessage: "认「它来自兑换所」就放行等于认容器：往兑换所加一个没人看过的别名照样过门");
+        helper.ShouldContain(
+            "ModelId",
+            customMessage: "必须核对兑换所里确实声明过这条别名，否则别处拼一个 PlatformId 就能借道");
     }
 
     /// <summary>
@@ -217,6 +227,10 @@ public sealed class GatewayRoutingWiringGuardTests
         console.ShouldContain(
             "model-catalog-grandfather-v2-strict-vendor-prefix",
             customMessage: "归一化口径收紧没有配套的一次性窗口，存量模型会在 enforce 档下当场开始被拒");
+        // 兑换所改判逐条放行标记，同样要给存量一个一次性窗口——存量兑换所是在盖戳之前建的。
+        console.ShouldContain(
+            "exchange-model-allowance-v1",
+            customMessage: "兑换所逐条放行没有配套的一次性窗口，存量兑换所的别名会集体开始被拒");
 
         // 补标记的那次写入必须落在「认领成功」的分支里，不能挂在启动路径上无条件执行。
         // 判据（「此刻缺标记」）本身太窄，全靠认领把它限定在某一个时刻。
@@ -231,7 +245,7 @@ public sealed class GatewayRoutingWiringGuardTests
         var stampAt = runner.IndexOf(stamp, StringComparison.Ordinal);
         stampAt.ShouldBeGreaterThanOrEqualTo(0, "找不到存量放行的盖戳写入，守卫的取值范围需要跟着改");
 
-        var claimAt = runner.IndexOf("if (!claimed) return -1;", StringComparison.Ordinal);
+        var claimAt = runner.IndexOf("if (claimedAt is null) return -1;", StringComparison.Ordinal);
         claimAt.ShouldBeGreaterThanOrEqualTo(0, "存量放行迁移没有认领判断，等于每次启动都跑一遍");
         claimAt.ShouldBeLessThan(stampAt, "盖戳写入必须在认领判断之后，否则每次重启都会把新塞进来的模型一并放行");
 
