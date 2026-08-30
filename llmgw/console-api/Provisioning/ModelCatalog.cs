@@ -166,8 +166,13 @@ public static class ModelCatalog
 
     /// <summary>
     /// 归一化模型标识，让「同一个模型的不同写法」落到同一条登记上：
-    /// 去掉厂商前缀（<c>openai/gpt-4o</c>）、去掉日期快照后缀（<c>gpt-4o-2024-08-06</c>）、
-    /// 去掉 <c>-latest</c>，并统一小写与分隔符。
+    /// 去掉日期快照后缀（<c>gpt-4o-2024-08-06</c>）、去掉 <c>-latest</c>，并统一小写与分隔符。
+    ///
+    /// **厂商前缀保留**，不在这里剥。它是标识的一部分：`private-provider/gpt-4o` 与 `gpt-4o`
+    /// 是两个东西，无条件剥掉前缀等于把一个从没登记过的别名认成登记过的那个，连带继承它的
+    /// 用途与能力——而两道门用的是同一个判据，于是导入确认与数据面名录门一起失守。
+    /// 已知上游的前缀写法（<c>openai/gpt-4o</c> 一类）由名录**逐条登记为别名**，走的是白名单，
+    /// 不是猜；<see cref="Find"/> 里那一档只剥名录自己登记过的厂商段。
     ///
     /// 刻意**不**做模糊匹配（不做前缀包含、不做编辑距离）：名录是白名单，
     /// 「差不多像」不能等于「就是它」——那正是关键词猜测出问题的地方。
@@ -176,9 +181,6 @@ public static class ModelCatalog
     {
         var id = (modelId ?? string.Empty).Trim().ToLowerInvariant();
         if (id.Length == 0) return string.Empty;
-
-        var slash = id.LastIndexOf('/');
-        if (slash >= 0 && slash < id.Length - 1) id = id[(slash + 1)..];
 
         id = id.Replace('.', '-').Replace('_', '-');
 
@@ -190,9 +192,49 @@ public static class ModelCatalog
         return id;
     }
 
-    /// <summary>查名录。命中返回登记，未命中返回 null——**不猜**。</summary>
+    /// <summary>
+    /// 查名录。命中返回登记，未命中返回 null——**不猜**。
+    ///
+    /// 先按完整标识查（前缀是标识的一部分）。没查到且带前缀时，只在那个前缀是
+    /// **名录自己登记过的厂商段**时才剥掉它再查一次：`openai/o1-preview` 该落到
+    /// `o1-preview` 上，而 `private-provider/gpt-4o` 必须查不到——它跟 `gpt-4o`
+    /// 不是同一个模型，认成同一个就等于让一个没登记过的别名继承了别人的能力登记。
+    /// </summary>
     public static CatalogModel? Find(string? modelId)
-        => ByKey.TryGetValue(Normalize(modelId), out var model) ? model : null;
+    {
+        var key = Normalize(modelId);
+        if (key.Length == 0) return null;
+        while (true)
+        {
+            if (ByKey.TryGetValue(key, out var model)) return model;
+            var slash = key.IndexOf('/');
+            if (slash <= 0 || slash >= key.Length - 1) return null;
+            if (!KnownVendorSegments.Contains(key[..slash])) return null;
+            key = key[(slash + 1)..];
+        }
+    }
+
+    /// <summary>
+    /// 名录自己登记过的厂商段：每条登记的出品方，加上带前缀别名里 `/` 左边那一段。
+    /// 它是白名单，不是「凡是斜杠前面的都算厂商」——后者正是这道门此前的漏法。
+    /// </summary>
+    private static readonly HashSet<string> KnownVendorSegments = BuildVendorSegments();
+
+    private static HashSet<string> BuildVendorSegments()
+    {
+        var segments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in All)
+        {
+            if (!string.IsNullOrWhiteSpace(model.Vendor)) segments.Add(Normalize(model.Vendor));
+            foreach (var alias in model.Aliases ?? Array.Empty<string>())
+            {
+                var normalized = Normalize(alias);
+                var slash = normalized.IndexOf('/');
+                if (slash > 0) segments.Add(normalized[..slash]);
+            }
+        }
+        return segments;
+    }
 
     public static bool Contains(string? modelId) => Find(modelId) is not null;
 

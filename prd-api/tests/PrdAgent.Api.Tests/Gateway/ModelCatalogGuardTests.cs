@@ -56,7 +56,9 @@ public sealed class ModelCatalogGuardTests
     }
 
     [Theory]
-    // 归一化要吃掉的三种写法：厂商前缀、日期快照、-latest。三者都必须落回同一条登记。
+    // 同一个模型的三种等价写法都必须落回同一条登记：登记过的厂商前缀、日期快照、-latest。
+    // 前两者的处置不同——日期与 -latest 由归一化吃掉，而厂商前缀是**逐条登记的别名**，
+    // 查不到时才按「名录自己登记过的厂商段」剥一层（没登记过的前缀一律不剥，见下一条用例）。
     [InlineData("gpt-4o", "openai/gpt-4o")]
     [InlineData("gpt-4o", "gpt-4o-2024-08-06")]
     [InlineData("gpt-4o", "GPT-4O-latest")]
@@ -80,6 +82,25 @@ public sealed class ModelCatalogGuardTests
         // 白名单就退化成又一个关键词猜测。
         ModelCatalog.Find("gpt-4o-my-private-finetune-v2").ShouldBeNull();
         ModelCatalog.Contains("some-vendor/never-heard-of-this").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void UnknownVendorPrefix_DoesNotInheritTheCatalogEntry()
+    {
+        // 归一化曾把斜杠前的**任意**前缀都当厂商剥掉。于是任何人只要把自家模型命名成
+        // `{自定义前缀}/{知名模型名}`，它就被认成那个知名模型：继承它登记的用途与能力，
+        // 并且因为「判成名录内」而不需要任何放行标记——导入确认与数据面名录门一起失守。
+        // 两侧镜像同一份归一化，所以两道门会一起放行，日志里毫无异常。
+        ModelCatalog.Find("private-provider/gpt-4o").ShouldBeNull(
+            "没登记过的前缀不是厂商前缀；剥掉它等于把一个陌生别名认成 gpt-4o");
+        ModelCatalog.Contains("acme/claude-3.5-sonnet").ShouldBeFalse();
+        PrdAgent.Core.Models.GatewayModelCatalog.Contains("private-provider/gpt-4o").ShouldBeFalse(
+            "运行时那道门必须得到同一个结论，否则导入拦住了、请求照样放行");
+
+        // 反过来也要成立：名录自己登记过的厂商段照旧认得出来，否则这次收紧就成了误伤。
+        ModelCatalog.Find("openai/gpt-4o")!.CanonicalId.ShouldBe("gpt-4o");
+        ModelCatalog.Find("openai/o1-preview").ShouldNotBeNull(
+            "`o1-preview` 是登记过的别名，openai 是登记过的厂商段，这一档必须仍然命中");
     }
 
     [Fact]
@@ -182,6 +203,9 @@ public sealed class ModelCatalogMirrorGuardTests
         [
             "gpt-4o", "openai/gpt-4o-mini", "claude-3-5-sonnet-20241022", "qwen-vl-max-latest",
             "o3-mini", "acme/unknown", "gpt-4o-my-private-finetune", "",
+            // 前缀口径：登记过的厂商段该命中，没登记过的必须落空——两侧结论要一致，
+            // 否则会出现「导入拦住了、请求照样放行」这种两边都自认没错的静默不一致。
+            "private-provider/gpt-4o", "openai/o1-preview", "acme/claude-3.5-sonnet",
         ];
 
         foreach (var probe in probes)

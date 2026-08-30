@@ -212,18 +212,31 @@ public sealed class GatewayRoutingWiringGuardTests
 
         console.ShouldContain("llmgw_migrations", customMessage: "迁移标记要落库，跑过就永不再跑");
         console.ShouldContain("model-catalog-grandfather-v1");
+        // 归一化口径收紧会把一批「旧口径判成名录内、因而导入时没盖过标记」的存量模型变成名录外，
+        // 而上一条迁移早跑完了——它们没有补戳的时机。所以口径收紧要自带它自己的一次性窗口。
+        console.ShouldContain(
+            "model-catalog-grandfather-v2-strict-vendor-prefix",
+            customMessage: "归一化口径收紧没有配套的一次性窗口，存量模型会在 enforce 档下当场开始被拒");
 
         // 补标记的那次写入必须落在「认领成功」的分支里，不能挂在启动路径上无条件执行。
-        const string stamp = "\"AllowedOutsideCatalogBy\", \"存量迁移（名录门上线前已入库，未经人工审阅）\"";
-        var stampAt = console.IndexOf(stamp, StringComparison.Ordinal);
+        // 判据（「此刻缺标记」）本身太窄，全靠认领把它限定在某一个时刻。
+        var runnerAt = console.IndexOf(
+            "async Task<long> RunCatalogGrandfatherAsync(", StringComparison.Ordinal);
+        runnerAt.ShouldBeGreaterThanOrEqualTo(0, "找不到存量放行的执行体，守卫的取值范围需要跟着改");
+        var runnerEnd = console.IndexOf("\n/*", runnerAt, StringComparison.Ordinal);
+        runnerEnd.ShouldBeGreaterThan(runnerAt, "执行体与随后的注释相邻关系变了，守卫的取值范围需要跟着改");
+        var runner = console[runnerAt..runnerEnd];
+
+        const string stamp = "\"AllowedOutsideCatalog\", true)";
+        var stampAt = runner.IndexOf(stamp, StringComparison.Ordinal);
         stampAt.ShouldBeGreaterThanOrEqualTo(0, "找不到存量放行的盖戳写入，守卫的取值范围需要跟着改");
 
-        var claimAt = console.IndexOf("if (grandfatherClaimed)", StringComparison.Ordinal);
+        var claimAt = runner.IndexOf("if (!claimed) return -1;", StringComparison.Ordinal);
         claimAt.ShouldBeGreaterThanOrEqualTo(0, "存量放行迁移没有认领判断，等于每次启动都跑一遍");
-        claimAt.ShouldBeLessThan(stampAt, "盖戳写入必须在认领判断之内，否则每次重启都会把新塞进来的模型一并放行");
+        claimAt.ShouldBeLessThan(stampAt, "盖戳写入必须在认领判断之后，否则每次重启都会把新塞进来的模型一并放行");
 
         // 只许有这一处盖戳：再抄一份出去，标记守卫就形同虚设。
-        console.Split(stamp).Length.ShouldBe(2, "存量放行的盖戳只允许出现在迁移这一处");
+        console.Split(stamp).Length.ShouldBe(2, "存量放行的盖戳只允许出现在迁移执行体这一处");
     }
 
     /// <summary>

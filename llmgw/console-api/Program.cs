@@ -512,8 +512,57 @@ await gwModels.Indexes.CreateManyAsync(new[]
         new CreateIndexOptions { Name = "idx_llmgw_model_tenant_platform_updated" }),
 });
 
+var gwMigrations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_migrations");
+
 /*
-  存量放行（一次性，幂等）。
+  一次性存量放行的执行体。判据（「此刻缺标记」）之所以能用，全靠外面这层
+  「这个 id 跑过没有」的持久标记把它限定在**某一个时刻**；单独看它太窄，
+  会把日后绕过控制台写库塞进来的模型也一起放行。所以两者必须成对出现，
+  也因此收敛成这一个函数——多一份拷贝就多一处会漏掉迁移标记的写法。
+*/
+async Task<long> RunCatalogGrandfatherAsync(string migrationId, string stampedBy)
+{
+    var claimedAt = DateTime.UtcNow;
+    var claimed = false;
+    try
+    {
+        // 抢占式认领：_id 唯一索引保证多副本同时启动时只有一个能插进去。
+        // 认领后崩溃的情况用 ClaimedAt 兜底——超过 10 分钟没写完成时间，允许下一个进程接手。
+        await gwMigrations.InsertOneAsync(new BsonDocument
+        {
+            { "_id", migrationId },
+            { "ClaimedAt", claimedAt },
+        });
+        claimed = true;
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        var takeover = await gwMigrations.FindOneAndUpdateAsync(
+            Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("_id", migrationId),
+                Builders<BsonDocument>.Filter.Exists("CompletedAt", false),
+                Builders<BsonDocument>.Filter.Lt("ClaimedAt", claimedAt.AddMinutes(-10))),
+            Builders<BsonDocument>.Update.Set("ClaimedAt", claimedAt));
+        claimed = takeover is not null;
+    }
+    if (!claimed) return -1;
+
+    var result = await gwModels.UpdateManyAsync(
+        Builders<BsonDocument>.Filter.Exists("AllowedOutsideCatalog", false),
+        Builders<BsonDocument>.Update
+            .Set("AllowedOutsideCatalog", true)
+            .Set("AllowedOutsideCatalogBy", stampedBy)
+            .Set("AllowedOutsideCatalogAt", claimedAt));
+    await gwMigrations.UpdateOneAsync(
+        Builders<BsonDocument>.Filter.Eq("_id", migrationId),
+        Builders<BsonDocument>.Update
+            .Set("CompletedAt", DateTime.UtcNow)
+            .Set("StampedCount", result.ModifiedCount));
+    return result.ModifiedCount;
+}
+
+/*
+  存量放行之一（一次性，幂等）：名录门上线。
 
   名录门是后加的：在它存在之前导入的模型没有「放行标记」这回事，而数据面那道门
   只认标记不认来历。不补这一手，升级的那一刻所有名录外的存量模型会集体开始被拒——
@@ -529,47 +578,36 @@ await gwModels.Indexes.CreateManyAsync(new[]
   （正是这道门要拦的那一种）同样缺标记，下一次重启就会被这段代码自动放行，
   门相当于每重启一次自己开一道缝。所以标记记在库里，跑过就永不再跑。
 */
-var gwMigrations = gatewayDatabase.GetCollection<BsonDocument>("llmgw_migrations");
-const string ModelCatalogGrandfatherMigrationId = "model-catalog-grandfather-v1";
-var grandfatherClaimedAt = DateTime.UtcNow;
-var grandfatherClaimed = false;
-try
+var grandfatherCount = await RunCatalogGrandfatherAsync(
+    "model-catalog-grandfather-v1",
+    "存量迁移（名录门上线前已入库，未经人工审阅）");
+if (grandfatherCount >= 0)
 {
-    // 抢占式认领：_id 唯一索引保证多副本同时启动时只有一个能插进去。
-    // 认领后崩溃的情况用 ClaimedAt 兜底——超过 10 分钟没写完成时间，允许下一个进程接手。
-    await gwMigrations.InsertOneAsync(new BsonDocument
-    {
-        { "_id", ModelCatalogGrandfatherMigrationId },
-        { "ClaimedAt", grandfatherClaimedAt },
-    });
-    grandfatherClaimed = true;
-}
-catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-{
-    var takeover = await gwMigrations.FindOneAndUpdateAsync(
-        Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("_id", ModelCatalogGrandfatherMigrationId),
-            Builders<BsonDocument>.Filter.Exists("CompletedAt", false),
-            Builders<BsonDocument>.Filter.Lt("ClaimedAt", grandfatherClaimedAt.AddMinutes(-10))),
-        Builders<BsonDocument>.Update.Set("ClaimedAt", grandfatherClaimedAt));
-    grandfatherClaimed = takeover is not null;
-}
-if (grandfatherClaimed)
-{
-    var grandfatherResult = await gwModels.UpdateManyAsync(
-        Builders<BsonDocument>.Filter.Exists("AllowedOutsideCatalog", false),
-        Builders<BsonDocument>.Update
-            .Set("AllowedOutsideCatalog", true)
-            .Set("AllowedOutsideCatalogBy", "存量迁移（名录门上线前已入库，未经人工审阅）")
-            .Set("AllowedOutsideCatalogAt", grandfatherClaimedAt));
-    await gwMigrations.UpdateOneAsync(
-        Builders<BsonDocument>.Filter.Eq("_id", ModelCatalogGrandfatherMigrationId),
-        Builders<BsonDocument>.Update
-            .Set("CompletedAt", DateTime.UtcNow)
-            .Set("StampedCount", grandfatherResult.ModifiedCount));
     app.Logger.LogInformation(
         "[ModelCatalog] 名录门上线迁移已执行（一次性）：为 {Count} 条存量模型补上放行标记（未经人工审阅，来历见审计字段）",
-        grandfatherResult.ModifiedCount);
+        grandfatherCount);
+}
+
+/*
+  存量放行之二（一次性，幂等）：归一化口径收紧。
+
+  名录归一化此前把斜杠前的**任意**前缀都当厂商剥掉，于是 `private-provider/gpt-4o`
+  会被认成登记过的 `gpt-4o` 并继承它的能力登记。收紧成「只剥名录自己登记过的厂商段」
+  之后，一批**在旧口径下判成名录内、因而导入时没有盖过放行标记**的存量模型，
+  会在新口径下变成名录外——而上一条迁移早就跑完了，它们没有任何补戳的时机，
+  enforce 档下会当场开始被拒。那同样是形状 5：拿口径变更之前的状态去卡这次变更。
+
+  所以口径收紧要自带**它自己的**一次性窗口：同一套认领机制、另一个迁移 id，
+  跑完即关。放行人如实写成「口径收紧前已入库」，不冒充有人审过。
+*/
+var strictPrefixCount = await RunCatalogGrandfatherAsync(
+    "model-catalog-grandfather-v2-strict-vendor-prefix",
+    "存量迁移（名录归一化口径收紧前已入库，未经人工审阅）");
+if (strictPrefixCount >= 0)
+{
+    app.Logger.LogInformation(
+        "[ModelCatalog] 归一化口径收紧迁移已执行（一次性）：为 {Count} 条存量模型补上放行标记（未经人工审阅，来历见审计字段）",
+        strictPrefixCount);
 }
 
 app.Use(async (http, next) =>
