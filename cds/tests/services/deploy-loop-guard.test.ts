@@ -7,6 +7,7 @@ import {
   recordBuild,
   __resetBuildActivityForTests,
 } from '../../src/services/build-activity-tracker.js';
+import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 /**
  * 空转部署熔断的行为用例 + 接线守卫。
@@ -205,22 +206,41 @@ describe('接线守卫：deploy 端点真的在用这条判定', () => {
   });
 
   it('红用例：把 recordBuild 挪回租约之前，守卫必须变红', () => {
-    const source = read('src/routes/branches.ts');
-    const slice = deployHandlerSlice(source);
-    const leaseAt = slice.indexOf('const branchOperationLease = beginBranchOperation(');
-    const recordAt = slice.indexOf('recordBuild(entry.projectId');
-    // 模拟回退：把 recordBuild 那一行搬到租约之前
-    const line = slice.slice(recordAt, slice.indexOf('\n', recordAt) + 1);
-    const regressed = slice.slice(0, leaseAt) + line + slice.slice(leaseAt, recordAt) + slice.slice(recordAt + line.length);
-    expect(regressed.indexOf('recordBuild(entry.projectId'))
-      .toBeLessThan(regressed.indexOf('const branchOperationLease = beginBranchOperation('));
+    // 守卫谓词与上一条绿用例同一个，分别跑真源码与变异源码。
+    const guard = (source: string) => {
+      const slice = deployHandlerSlice(source);
+      const leaseAt = slice.indexOf('const branchOperationLease = beginBranchOperation(');
+      const recordAt = slice.indexOf('recordBuild(entry.projectId');
+      expect(leaseAt).toBeGreaterThan(-1);
+      expect(recordAt).toBeGreaterThan(-1);
+      expect(recordAt).toBeGreaterThan(leaseAt);
+    };
+    const real = read('src/routes/branches.ts');
+    // 真做一次搬移：把 recordBuild 那一行挪到租约获取之前。
+    const recordAt = real.indexOf('recordBuild(entry.projectId');
+    const lineStart = real.lastIndexOf('\n', recordAt) + 1;
+    const lineEnd = real.indexOf('\n', recordAt) + 1;
+    const line = real.slice(lineStart, lineEnd);
+    const withoutLine = real.slice(0, lineStart) + real.slice(lineEnd);
+    const leaseAt = withoutLine.indexOf('    const branchOperationLease = beginBranchOperation(');
+    expect(leaseAt, '找不到租约获取行').toBeGreaterThan(-1);
+    const moved = withoutLine.slice(0, leaseAt) + line + withoutLine.slice(leaseAt);
+    expectGuardRedOnMutation(guard, real, moved);
   });
 
-  it('红用例：把判定或拒绝摘掉，守卫必须变红', () => {
-    const source = read('src/routes/branches.ts');
-    const withoutAssess = deployHandlerSlice(source).replace(/assessDeployLoop\(/g, 'noopAssess(');
-    expect(withoutAssess).not.toContain('assessDeployLoop(');
-    const withoutReject = deployHandlerSlice(source).replace('res.status(429)', 'res.status(200)');
-    expect(withoutReject).not.toContain('res.status(429)');
+  it('红用例：把判定摘掉，守卫必须变红', () => {
+    const guard = (source: string) => {
+      expect(deployHandlerSlice(source)).toContain('assessDeployLoop(');
+    };
+    const real = read('src/routes/branches.ts');
+    expectGuardRedOnMutation(guard, real, mutate(real, 'assessDeployLoop(entry.id', 'noopAssess(entry.id'));
+  });
+
+  it('红用例：把拒绝改成放行，守卫必须变红', () => {
+    const guard = (source: string) => {
+      expect(deployHandlerSlice(source)).toContain('res.status(429)');
+    };
+    const real = read('src/routes/branches.ts');
+    expectGuardRedOnMutation(guard, real, mutate(real, 'res.status(429)', 'res.status(200)'));
   });
 });

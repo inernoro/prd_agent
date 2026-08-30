@@ -10,6 +10,7 @@ import {
   isMysqlFamilyImage,
   resolveConfiguredMysqlMaxConnections,
 } from '../../src/services/infra-connection-defaults.js';
+import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 /**
  * 事故（2026-08-29，mdimp）：项目的两台 MySQL 都跑在 mysql:8.0 出厂默认
@@ -194,10 +195,13 @@ describe('接线守卫：infra 启动路径真的在用这条兜底', () => {
   });
 
   it('红用例：把兜底摘掉，守卫必须变红', () => {
-    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/container.ts'), 'utf8');
-    const at = source.indexOf('const resolvedCommandRaw = resolveCommandTemplate(service.command');
-    const stripped = source.slice(at, at + 1200).replace(/applyMysqlConnectionDefaults\(/g, 'noop(');
-    expect(stripped).not.toContain('applyMysqlConnectionDefaults(');
+    const guard = (source: string) => {
+      const at = source.indexOf('const resolvedCommandRaw = resolveCommandTemplate(service.command');
+      expect(at).toBeGreaterThan(-1);
+      expect(source.slice(at, at + 1200)).toContain('applyMysqlConnectionDefaults(');
+    };
+    const real = fs.readFileSync(path.join(CDS_ROOT, 'src/services/container.ts'), 'utf8');
+    expectGuardRedOnMutation(guard, real, mutate(real, 'applyMysqlConnectionDefaults({', 'noopDefaults({'));
   });
 });
 
@@ -261,31 +265,40 @@ describe('连接上限：事件只在真生效时说「已注入」，复用路�
   });
 
   it('红用例：把「已注入」事件挪回计算处，守卫必须变红', () => {
-    // 真的做一次文本回退，而不是断言两个常量的大小关系——那种「红用例」永远不会红，
-    // 等于没有（predicate-and-wiring-discipline 形状 4）。
-    const source = containerSource();
-    const eventStart = source.lastIndexOf('if (mysqlDefaults.injected !== null) {', source.indexOf("action: 'infra.mysql.max-connections-defaulted'"));
-    expect(eventStart).toBeGreaterThan(-1);
-    const eventEnd = source.indexOf('\n    }\n', eventStart) + '\n    }\n'.length;
-    const eventBlock = source.slice(eventStart, eventEnd);
+    // 守卫谓词与上面那条绿用例同一个，分别跑真源码与变异源码。
+    const guard = (source: string) => {
+      const dockerRunAt = source.indexOf('const result = await this.shell.exec(cmd);');
+      const appliedAt = source.indexOf("action: 'infra.mysql.max-connections-defaulted'");
+      expect(dockerRunAt).toBeGreaterThan(-1);
+      expect(appliedAt).toBeGreaterThan(-1);
+      expect(appliedAt).toBeGreaterThan(dockerRunAt);
+    };
+    const real = containerSource();
+    // 真做一次搬移：把整个事件块挪回「算出命令」那一行之后。
+    const eventStart = real.lastIndexOf('if (mysqlDefaults.injected !== null) {', real.indexOf("action: 'infra.mysql.max-connections-defaulted'"));
+    expect(eventStart, '找不到事件块起点').toBeGreaterThan(-1);
+    const eventEnd = real.indexOf('\n    }\n', eventStart) + '\n    }\n'.length;
+    const eventBlock = real.slice(eventStart, eventEnd);
     expect(eventBlock).toContain("action: 'infra.mysql.max-connections-defaulted'");
-
     const anchor = 'const resolvedCommand = mysqlDefaults.command;';
-    const regressed = source.slice(0, eventStart) + source.slice(eventEnd);
-    const insertAt = regressed.indexOf(anchor) + anchor.length + 1;
-    const moved = regressed.slice(0, insertAt) + eventBlock + regressed.slice(insertAt);
-
-    // 回退之后，事件就排在 docker run 之前了——上一条守卫的判据必然翻转。
-    const dockerRunAt = moved.indexOf('const result = await this.shell.exec(cmd);');
-    const appliedAt = moved.indexOf("action: 'infra.mysql.max-connections-defaulted'");
-    expect(dockerRunAt).toBeGreaterThan(-1);
-    expect(appliedAt).toBeGreaterThan(-1);
-    expect(appliedAt).toBeLessThan(dockerRunAt);
+    const withoutEvent = real.slice(0, eventStart) + real.slice(eventEnd);
+    const insertAt = withoutEvent.indexOf(anchor) + anchor.length + 1;
+    const moved = withoutEvent.slice(0, insertAt) + eventBlock + withoutEvent.slice(insertAt);
+    expectGuardRedOnMutation(guard, real, moved);
   });
 
   it('红用例：摘掉复用路径的审计，守卫必须变红', () => {
-    const source = containerSource();
-    const stripped = source.replace(/auditMysqlConnectionLimit\(service, mysqlDefaults\.injected\)/g, 'noop()');
-    expect(stripped).not.toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+    const guard = (source: string) => {
+      const reuseAt = source.indexOf("action: 'infra.reuse-running'");
+      expect(reuseAt).toBeGreaterThan(-1);
+      expect(source.slice(Math.max(0, reuseAt - 900), reuseAt))
+        .toContain('auditMysqlConnectionLimit(service, mysqlDefaults.injected)');
+    };
+    const real = containerSource();
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, 'auditMysqlConnectionLimit(service, mysqlDefaults.injected)', 'noopAudit()'),
+    );
   });
 });

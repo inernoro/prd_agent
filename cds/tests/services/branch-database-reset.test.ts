@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
 /**
  * 分支库推倒重建（mode=reset）的源码契约守卫。
@@ -86,9 +87,15 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
   });
 
   it('红用例：把 reset 放回 database-clone，守卫必须变红', () => {
-    const slice = cloneTasksRouteSlice(readBranchesRoute());
-    const regressed = slice.replace("mode === 'reset'\n          ? 'data-clear'", "mode === 'reset'\n          ? 'database-clone'");
-    expect(regressed).not.toContain("mode === 'reset'\n          ? 'data-clear'");
+    const guard = (source: string) => {
+      expect(cloneTasksRouteSlice(source)).toContain("mode === 'reset'\n          ? 'data-clear'");
+    };
+    const real = readBranchesRoute();
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(real, "mode === 'reset'\n          ? 'data-clear'", "mode === 'reset'\n          ? 'database-clone'"),
+    );
   });
 
   /**
@@ -114,9 +121,13 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
   });
 
   it('红用例：白名单拿掉后守卫必须变红', () => {
-    const slice = cloneTasksRouteSlice(readBranchesRoute());
-    const regressed = slice.replace(/reset_refuses_foreign_database/g, 'noop_code');
-    expect(regressed).not.toContain('reset_refuses_foreign_database');
+    const guard = (source: string) => {
+      const slice = cloneTasksRouteSlice(source);
+      expect(slice).toContain('reset_refuses_foreign_database');
+      expect(slice).toContain('!branchOwnedDatabases.has(targetDatabase)');
+    };
+    const real = readBranchesRoute();
+    expectGuardRedOnMutation(guard, real, mutate(real, 'reset_refuses_foreign_database', 'noop_code'));
   });
 
   it('硬拦：reset 绝不允许落到项目共享基础库上', () => {
@@ -151,9 +162,11 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
   });
 
   it('红用例：把判据改回分支感知的 baseDb，守卫必须变红', () => {
-    const slice = cloneTasksRouteSlice(readBranchesRoute());
-    const regressed = slice.replace('targetDatabase === projectBaseDb', 'targetDatabase === baseDb');
-    expect(regressed).not.toContain('targetDatabase === projectBaseDb');
+    const guard = (source: string) => {
+      expect(cloneTasksRouteSlice(source)).toContain('targetDatabase === projectBaseDb');
+    };
+    const real = readBranchesRoute();
+    expectGuardRedOnMutation(guard, real, mutate(real, 'targetDatabase === projectBaseDb', 'targetDatabase === baseDb'));
   });
 
   it('不支持 reset 的 runtime 显式报错，而不是静默退化成 empty', () => {
@@ -169,17 +182,26 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
   });
 
   it('红用例：去掉基础库硬拦，守卫必须变红', () => {
-    const slice = cloneTasksRouteSlice(readBranchesRoute());
-    const stripped = slice.replace(/reset_refuses_base_database/g, 'noop_error_code');
-    expect(stripped).not.toContain('reset_refuses_base_database');
+    const guard = (source: string) => {
+      expect(cloneTasksRouteSlice(source)).toContain('reset_refuses_base_database');
+    };
+    const real = readBranchesRoute();
+    expectGuardRedOnMutation(guard, real, mutate(real, 'reset_refuses_base_database', 'noop_error_code'));
   });
 
   it('红用例：把 DROP 改成无条件执行，守卫必须变红', () => {
-    const fn = createMysqlBranchDatabaseSlice(readBranchesRoute());
-    const unconditional = fn.replace(
-      /\.\.\.\(options\.dropFirst \? \[`DROP DATABASE IF EXISTS \$\{sqlIdent\(targetDatabase\)\}`\] : \[\]\),/,
-      '`DROP DATABASE IF EXISTS ${sqlIdent(targetDatabase)}`,',
+    const guard = (source: string) => {
+      expect(createMysqlBranchDatabaseSlice(source)).toMatch(/options\.dropFirst\s*\?\s*\[`DROP DATABASE IF EXISTS/);
+    };
+    const real = readBranchesRoute();
+    expectGuardRedOnMutation(
+      guard,
+      real,
+      mutate(
+        real,
+        '...(options.dropFirst ? [`DROP DATABASE IF EXISTS ${sqlIdent(targetDatabase)}`] : []),',
+        '`DROP DATABASE IF EXISTS ${sqlIdent(targetDatabase)}`,',
+      ),
     );
-    expect(unconditional).not.toMatch(/options\.dropFirst\s*\?\s*\[`DROP DATABASE IF EXISTS/);
   });
 });

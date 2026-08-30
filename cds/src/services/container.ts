@@ -3251,7 +3251,10 @@ export class ContainerService {
         severity: 'warn',
         source: 'infra-connection-defaults',
         action: 'infra.mysql.max-connections-pending',
-        message: `${service.containerName}: 仍在用镜像默认连接上限运行，CDS 要补的 --max-connections=${pendingMax} 未生效（复用既有容器不会改启动命令）。让它生效请走 POST /api/infra/${service.id}/restart 重建容器。`,
+        // 补救 URL 必须带 ?project=：同名 infra id（如 `mysql`）在多个项目都存在时，
+        // /infra/:id/restart 的 resolveInfraProject 会判 ambiguous 并 400 要求带项目。
+        // 一个点了就 400 的「下一步」等于没给（minimal-user-input 的可诊断义务）。
+        message: `${service.containerName}: 仍在用镜像默认连接上限运行，CDS 要补的 --max-connections=${pendingMax} 未生效（复用既有容器不会改启动命令）。让它生效请走 POST /api/infra/${service.id}/restart?project=${service.projectId} 重建容器。`,
         projectId: service.projectId,
         serviceId: service.id,
         containerName: service.containerName,
