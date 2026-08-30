@@ -126,6 +126,22 @@ void main() {
 `;
 
 /**
+ * 这台设备的 highp int 够不够 32 位？
+ *
+ * `getShaderPrecisionFormat` 返回的是**范围的以 2 为底的对数**，而且有符号整数两端不对称：
+ * 32 位是 `-2^31 .. 2^31-1`，于是正常实现报的是 `rangeMin = 31, rangeMax = 30`
+ * ——`rangeMax` 永远差一。拿 `rangeMax >= 31` 当判据会在**所有**合规实现上判否，
+ * 把整层背景关掉（这个洞真发生过，见 PR #1457 第三轮评审）。
+ *
+ * 实测值（Chromium / ANGLE-SwiftShader）：highp int 31/30、mediump int 与 lowp int 15/14。
+ * 所以两端都要看，且各自按真实值定。
+ */
+export function isHighpIntUsable(fmt: { rangeMin: number; rangeMax: number } | null): boolean {
+  if (!fmt) return false;
+  return fmt.rangeMin >= 31 && fmt.rangeMax >= 30;
+}
+
+/**
  * 自检的判据：**墨糊成一层滤镜了吗？**
  *
  * 换成整数 hash 之后，「同一段 shader 在不同显卡上算出不同噪声」这一类原因已经堵掉。
@@ -187,9 +203,8 @@ export function InkFieldBackdrop({ colors, intensity = 0.22, className }: InkFie
     // 光在源码里写 `precision highp int` 不算数——要问一句这台设备的 highp int 到底是几位。
     // ESSL 3.00 规定片元着色器必须支持 highp，但整数 hash 全押在 32 位溢出上，
     // 万一某个实现给的不是 32 位，噪声立刻又变成设备相关。拿不到 32 位就不画这层，
-    // 回到底下那张纯 CSS 静态底（rangeMax 是「能表示的最大值的 2 的幂次」）。
-    const intPrecision = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_INT);
-    if (!intPrecision || intPrecision.rangeMax < 31) return;
+    // 回到底下那张纯 CSS 静态底。判据见 isHighpIntUsable —— 那里解释了为什么不能只看 rangeMax。
+    if (!isHighpIntUsable(gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_INT))) return;
     gl.clearColor(0, 0, 0, 0);
     host.appendChild(gl.canvas);
     gl.canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block';

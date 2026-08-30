@@ -1,7 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { INK_FIELD_SATURATION_CEILING, isInkFieldSaturated } from '@/components/backgrounds/InkFieldBackdrop';
+import {
+  INK_FIELD_SATURATION_CEILING,
+  isHighpIntUsable,
+  isInkFieldSaturated,
+} from '@/components/backgrounds/InkFieldBackdrop';
 
 /**
  * 守卫首页那层全屏墨场的两件事：**同一份代码在不同显卡上算出同一张图**，
@@ -62,7 +66,7 @@ describe('首页墨场的跨显卡一致性', () => {
   it('运行时还要问一句这台设备的 highp int 到底是几位', () => {
     // 源码里写了 highp 不等于拿到了 32 位。拿不到就不画这层，回落静态底。
     expect(SOURCE).toContain('gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_INT)');
-    expect(SOURCE).toMatch(/rangeMax\s*<\s*31/);
+    expect(SOURCE).toContain('isHighpIntUsable(gl.getShaderPrecisionFormat');
   });
 
   it('hash 走整数位运算：uint 的乘法溢出、移位、异或逐位有定义', () => {
@@ -84,6 +88,39 @@ describe('首页墨场的跨显卡一致性', () => {
   it('第一帧画完要读回来自检一次', () => {
     expect(SOURCE).toContain('gl.readPixels');
     expect(SOURCE).toMatch(/if\s*\(!checked\)\s*\{\s*checked\s*=\s*true;\s*selfCheck\(\);\s*\}/);
+  });
+});
+
+describe('isHighpIntUsable —— 这台设备的整数够不够 32 位', () => {
+  /**
+   * 下面这些不是编的，是在 Chromium（ANGLE / SwiftShader）里
+   * `getShaderPrecisionFormat(FRAGMENT_SHADER, ...)` 真实读回来的值。
+   */
+  const MEASURED = {
+    highInt: { rangeMin: 31, rangeMax: 30 },
+    mediumInt: { rangeMin: 15, rangeMax: 14 },
+    lowInt: { rangeMin: 15, rangeMax: 14 },
+  };
+
+  it('正常的 32 位 highp int 判为可用', () => {
+    expect(isHighpIntUsable(MEASURED.highInt)).toBe(true);
+  });
+
+  it('rangeMax 天生比 rangeMin 小 1，判据不许因此把它拒掉', () => {
+    // 这条是回归：上一版写的是 rangeMax < 31 就拒绝。有符号 32 位是 -2^31..2^31-1，
+    // 取以 2 为底的对数就是 31 与 30——于是那句在**所有**合规实现上都成立，
+    // 整层背景被永久关掉，而单元测试和 CI 一个都没红（页面照常渲染，只是少了一层）。
+    expect(MEASURED.highInt.rangeMax).toBe(MEASURED.highInt.rangeMin - 1);
+    expect(isHighpIntUsable(MEASURED.highInt)).toBe(true);
+  });
+
+  it('mediump / lowp 整数判为不可用', () => {
+    expect(isHighpIntUsable(MEASURED.mediumInt)).toBe(false);
+    expect(isHighpIntUsable(MEASURED.lowInt)).toBe(false);
+  });
+
+  it('拿不到格式信息时判为不可用', () => {
+    expect(isHighpIntUsable(null)).toBe(false);
   });
 });
 
