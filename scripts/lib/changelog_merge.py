@@ -15,8 +15,10 @@ python 没法红绿闭环）。
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import tempfile
 
 UNRELEASED_RE = re.compile(r"^## \[未发布\]")
 RELEASE_RE = re.compile(r"^## \[")
@@ -129,9 +131,31 @@ def main() -> int:
     if dry:
         print("\n".join(plan(text, payload)))
         return 0
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(merge(text, payload))
+    write_atomic(path, merge(text, payload))
     return 0
+
+
+def write_atomic(path: str, content: str) -> None:
+    """先写同目录临时文件再原子替换。
+
+    直接 `open(path, "w")` 会先把 CHANGELOG.md 截断：写到一半被打断（磁盘满、Ctrl-C）
+    就留下一个空的或半截的台账。原来的 shell 实现是「写 .tmp 再 mv」，换成 Python 时
+    这条性质被我丢了——这是回归，不是新要求。同目录是为了让 os.replace 走同一文件系统，
+    保证它是原子的。
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".changelog-merge-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # 替换没成功就把临时文件清掉，原文件一个字节都没动过
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 if __name__ == "__main__":

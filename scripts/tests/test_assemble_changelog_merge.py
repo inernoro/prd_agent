@@ -17,7 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from changelog_merge import merge, plan  # noqa: E402
+import os  # noqa: E402
+import tempfile  # noqa: E402
+
+import changelog_merge  # noqa: E402
+from changelog_merge import merge, plan, write_atomic  # noqa: E402
 
 BASE = """# 更新日志
 
@@ -132,6 +136,30 @@ def test_does_not_touch_released_sections() -> None:
     check(day_headers(out, "2026-05-10") == 2, "已发版段里那个 2026-05-10 头被动过")
 
 
+def test_write_is_atomic_on_failure() -> None:
+    """写到一半失败时，目标文件必须一个字节都没动过（原 shell 是写 .tmp 再 mv 的）。"""
+    with tempfile.TemporaryDirectory() as d:
+        target = os.path.join(d, "CHANGELOG.md")
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(BASE)
+        real_replace = changelog_merge.os.replace
+        changelog_merge.os.replace = lambda *a, **k: (_ for _ in ()).throw(OSError("磁盘满"))
+        try:
+            write_atomic(target, "被打断的半截内容")
+        except OSError:
+            pass
+        else:
+            FAILURES.append("注入替换失败后 write_atomic 没有抛出")
+        finally:
+            changelog_merge.os.replace = real_replace
+        check(
+            open(target, encoding="utf-8").read() == BASE,
+            "替换失败后目标文件被改动了——写入不是原子的",
+        )
+        leftovers = [f for f in os.listdir(d) if f.startswith(".changelog-merge-")]
+        check(not leftovers, f"失败后残留了临时文件：{leftovers}")
+
+
 def main() -> int:
     for fn in (
         test_merges_into_existing_day,
@@ -140,13 +168,14 @@ def main() -> int:
         test_backfilled_middle_date_lands_between,
         test_dry_run_plan_matches_real_merge,
         test_does_not_touch_released_sections,
+        test_write_is_atomic_on_failure,
     ):
         fn()
     if FAILURES:
         for f in FAILURES:
             print(f"[FAIL] {f}")
         return 1
-    print("[OK] changelog 合并守卫全绿（同日期并段 / 新日期按序插入 / 补登旧日期不乱序 / dry-run 与真跑一致 / 不碰已发版段）")
+    print("[OK] changelog 合并守卫全绿（同日期并段 / 新日期按序插入 / 补登旧日期不乱序 / dry-run 与真跑一致 / 不碰已发版段 / 写入原子）")
     return 0
 
 
