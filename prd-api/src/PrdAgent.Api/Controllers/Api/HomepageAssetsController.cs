@@ -297,7 +297,11 @@ public class HomepageAssetsController : ControllerBase
         if (prompt.Length > 4000) prompt = prompt[..4000];
 
         var now = DateTime.UtcNow;
-        var existing = await _db.HomepageAssets.Find(x => x.Slot == slotNorm).Limit(1).FirstOrDefaultAsync(ct);
+        // 这一句只是读，但它排在上传**之后**——被取消的话，下面那两处 CancellationToken.None
+        // 的写库一句都跑不到，等于白保护：字节已经落在存储上（同 key 时线上那张图已经被换掉），
+        // 库里还是旧的。上传之后的每一步都不再看请求还连不连着。
+        var existing = await _db.HomepageAssets.Find(x => x.Slot == slotNorm).Limit(1)
+            .FirstOrDefaultAsync(CancellationToken.None);
         if (existing == null)
         {
             var rec = new HomepageAsset

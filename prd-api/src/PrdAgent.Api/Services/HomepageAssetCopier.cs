@@ -98,7 +98,10 @@ public sealed class HomepageAssetCopier
             ?? throw new CopyFailedException("取回的内容不是我们认得的图片（PNG / JPEG / WebP / GIF / AVIF），没有存进来");
         var objectKey = objectKeyFor(ExtensionFor(mime));
 
-        await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, ct);
+        // 下载可以被取消（还没产生任何副作用），上传不行：key 是确定性的，替换同一个槽位时
+        // 这一步是在**原地覆盖**线上那个对象。写到一半被掐断，公网上留下的就是半张图。
+        // 从这里开始不再看请求还连不连着（server-authority 第 1 条）。
+        await _assetStorage.UploadToKeyAsync(objectKey, bytes, mime, CancellationToken.None);
         return new Copied(objectKey, _assetStorage.BuildUrlForKey(objectKey), mime, bytes.LongLength);
     }
 

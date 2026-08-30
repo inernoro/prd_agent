@@ -153,6 +153,24 @@ public sealed class HomepageAssetCopierTests
     }
 
     /// <summary>
+    /// key 是确定性的，替换同一个槽位时上传是在**原地覆盖**线上那个对象。把请求的
+    /// CancellationToken 传进去，管理员这时关掉标签页就会把覆盖写到一半掐断——公网上
+    /// 留下半张图（server-authority 第 1 条）。判据读的是替身真正收到的那个 token，
+    /// 不是源码里有没有出现 CancellationToken.None。
+    /// </summary>
+    [Fact]
+    public async Task 上传那一步不吃请求的取消令牌()
+    {
+        var storage = new RecordingAssetStorage();
+        var copier = Build(storage, PngBytes, "image/png");
+        using var cts = new CancellationTokenSource();
+
+        await copier.CopyAsync(ProviderUrl, e => $"icon/homepage/landing/hero.{e}", cts.Token);
+
+        storage.UploadTokens.ShouldHaveSingleItem().CanBeCanceled.ShouldBeFalse();
+    }
+
+    /// <summary>
     /// 这个地址来自模型供应商的响应，而发请求的是我们的服务端——它站在内网里。
     /// 一个指向 169.254.169.254 / 127.0.0.1 / 内网段的地址，会让首页认领变成
     /// 「让服务器替你去打内网，再把打回来的东西存进公网可读的存储」。
@@ -320,10 +338,12 @@ public sealed class HomepageAssetCopierTests
     private sealed class RecordingAssetStorage : IAssetStorage
     {
         public Dictionary<string, (byte[] bytes, string? mime)> Uploaded { get; } = new();
+        public List<CancellationToken> UploadTokens { get; } = [];
 
         public Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
         {
             Uploaded[key] = (bytes, contentType);
+            UploadTokens.Add(ct);
             return Task.CompletedTask;
         }
 
