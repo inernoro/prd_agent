@@ -1380,6 +1380,14 @@ public class OpenAIImageClient : IImageGenerationClient
             return ApiResponse<ImageGenResult>.Fail(ErrorCodes.CONTENT_EMPTY, "请至少添加一张参考图。");
         }
 
+        // 先按既有上限选择参考图，只校验后续真正会发送的图片。
+        const int MaxImages = 6;
+        if (imageRefs.Count > MaxImages)
+        {
+            _logger.LogWarning("[Vision API] 图片数量超过限制({Max}张)，将只使用前{Max}张", MaxImages, MaxImages);
+            imageRefs = imageRefs.Take(MaxImages).ToList();
+        }
+
         try
         {
             imageRefs = imageRefs.Select(reference =>
@@ -1400,14 +1408,6 @@ public class OpenAIImageClient : IImageGenerationClient
         catch (ImageInputException ex)
         {
             return ApiResponse<ImageGenResult>.Fail(ImageInputNormalizer.ErrorCode, ex.Message);
-        }
-
-        // Vision API 限制：最多 6 张图片
-        const int MaxImages = 6;
-        if (imageRefs.Count > MaxImages)
-        {
-            _logger.LogWarning("[Vision API] 图片数量超过限制({Max}张)，将只使用前{Max}张", MaxImages, MaxImages);
-            imageRefs = imageRefs.Take(MaxImages).ToList();
         }
 
         var ctx = _ctxAccessor?.Current;

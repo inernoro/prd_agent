@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Core.LlmGateway;
@@ -87,6 +88,32 @@ public class ImageInputNormalizerTests
         Assert.False(response.Success);
         Assert.Equal(ImageInputNormalizer.ErrorCode, response.Error?.Code);
         Assert.Contains("重新上传", response.Error?.Message);
+    }
+
+    [Theory]
+    [InlineData(5, 0)]
+    [InlineData(6, 1)]
+    [InlineData(19, 1)]
+    public async Task ImageClient_ValidatesOnlyTheFirstSixReferences(int brokenIndex, int expectedResolveCalls)
+    {
+        var http = new ResolutionOnlyHttpFactory();
+        var config = new ConfigurationBuilder().Build();
+        var gateway = new HttpLlmGatewayClient(http, config, NullLogger<HttpLlmGatewayClient>.Instance);
+        var client = new OpenAIImageClient(null!, gateway, http, config,
+            NullLogger<OpenAIImageClient>.Instance, null!, null!, null!);
+        var valid = ImageInputTestData.DataUri("image/jpeg");
+        var references = Enumerable.Repeat(valid, 20).ToList();
+        references[brokenIndex] = "broken";
+
+        var response = await client.GenerateUnifiedAsync("修改参考图", 1, null, null,
+            CancellationToken.None, "visual-agent.image.vision::generation", references);
+
+        // 只在已选参考图通过校验后到达可控的解析失败，不发出真正生图请求。
+        Assert.Equal(expectedResolveCalls, http.Calls);
+        Assert.Equal(expectedResolveCalls == 0 ? ImageInputNormalizer.ErrorCode
+            : ImageGenerationUserError.ModelUnavailable().Code, response.Error?.Code);
+        Assert.Equal(20, references.Count);
+        Assert.Equal("broken", references[brokenIndex]);
     }
 
     [Fact]
@@ -182,6 +209,25 @@ public class ImageInputNormalizerTests
         ActualPlatformId = "image", PlatformType = "openai", Protocol = "openai",
         ApiUrl = "https://provider.example.com", ApiKey = "test", SupportsImageGeneration = true,
     };
+
+    private sealed class ResolutionOnlyHttpFactory : IHttpClientFactory
+    {
+        internal int Calls;
+        public HttpClient CreateClient(string name) => new(new Handler(this));
+
+        private sealed class Handler(ResolutionOnlyHttpFactory owner) : HttpMessageHandler
+        {
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            {
+                Assert.Equal("/gw/v1/resolve", request.RequestUri!.AbsolutePath);
+                owner.Calls++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"Success\":false}"),
+                });
+            }
+        }
+    }
 
     private sealed class InspectingHttpFactory : IHttpClientFactory
     {
