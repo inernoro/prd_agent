@@ -1099,3 +1099,24 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 | 有意的对外暴露（不受收窄影响） | `cds/src/routes/branches.ts`（`applyResourceExternalFirewall`，allowlist + 防火墙兜底） |
 | 角色偏好存储（债务 C） | `cds/web/src/lib/agent-role-store.ts`（读写与 declared 语义）、`cds/web/src/hooks/useAgentRoleSelection.ts`（订阅） |
 | 弹窗内项目缓存（债务 D） | `cds/web/src/components/GlobalAgentAccess.tsx`（持有并只在打开时抓一次）、`cds/web/src/components/AgentStarterTab.tsx`（写入点）、`cds/web/src/components/AgentAccessMap.tsx`（展示角色的那一栏） |
+
+---
+
+## 分支库推倒重建（reset）只覆盖 CDS 派生命名（2026-08-30）
+
+**现状**：`POST /branches/:id/resources/:resourceId/clone-tasks` 的 `mode=reset` 只允许一个目标——CDS 按命名规则为该分支算出的那个库名。项目自建命名的分支库（典型是 mdimp 的 `imp_b_<16 位 token>`，由项目 bootstrap 脚本指定而非 CDS 派生）**不在覆盖范围内**，对它调 reset 会被拒。
+
+**为什么收成这样**：reset 会以 root 凭据 `DROP DATABASE`，所以必须先回答「这个库是不是本分支的」。这个问题在 review 里被连续打穿三次，每次都是「所有权的证据不成立」：
+
+| 尝试的证据 | 为什么不成立 |
+|---|---|
+| 分支 scope 的 `MYSQL_DATABASE` | 可写配置。改成兄弟分支的库名即可越权删别人的库 |
+| 已完成建库任务的台账记录 | `mode=empty` 接受调用方指定库名，建库走 `CREATE DATABASE IF NOT EXISTS`——指向一个**已存在的兄弟库**照样写出 completed 记录。台账证明的是「这条任务跑过」，不是「这个库是本分支建的」 |
+
+于是不再列举所有权，改为**复算一个不可伪造的名字**：后缀取自本分支自己的标识，别的分支的库在算术上不可能等于它。判据没有留给伪造的输入面，代价是覆盖面变窄。
+
+**要覆盖项目自建命名，需要补的是什么**：CDS 必须真正记录「这个库是我新建的」这一事实——建库时区分「新建」与「已存在」（`CREATE DATABASE` 的受影响行数或先 `SHOW DATABASES LIKE`），把该事实落进 `ResourceCloneTask`，reset 只认带此标记的记录。这是独立一次改动，涉及建库路径与台账字段，未在 PR #1454 展开。
+
+**在此之前的绕行**：这类分支库出现脏 Flyway 状态时，只能由有权限的人直连该 MySQL 手工 `DROP DATABASE` 后重新部署。CDS 侧不提供这个动作。
+
+**已有守卫**：clone-task 路由的 reset 目标计算有源码守卫盯着，其中一条专门锁「不得再出现可伪造的所有权来源」，防止后来者把分支 env 或建库台账重新接回判据。

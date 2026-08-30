@@ -61,9 +61,9 @@ function cloneTasksRouteSlice(source: string): string {
  */
 function ownershipCodeOnly(source: string): string {
   const slice = cloneTasksRouteSlice(source);
-  const from = slice.indexOf('const ownedFromLedger');
+  const from = slice.indexOf('const resetTargetDatabase');
   const to = slice.indexOf('const targetDatabase');
-  expect(from, '找不到所有权白名单起点').toBeGreaterThan(-1);
+  expect(from, '找不到 reset 目标计算起点').toBeGreaterThan(-1);
   expect(to, '找不到 targetDatabase').toBeGreaterThan(from);
   // 结束于 defaultTarget 的**非 reset 分支**：那一支正当地用 baseDb（其余 mode 就是
   // 「按当前绑定库派生一个新分支库」），不属于本判据要管的范围。
@@ -129,20 +129,32 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
    * targetDatabase 来自请求体，排掉基础库之后**兄弟分支预览的库**照样能被
    * root 权限的建库助手 DROP 掉。必须改成白名单。
    */
-  it('白名单：reset 只允许落到本分支拥有的库', () => {
+  /**
+   * reset 的目标是**一个复算出来的名字**，不是一张「哪些库算我的」清单。
+   *
+   * 前后被 review 打穿三次，全是「所有权的证据不成立」：分支 scope env 可写；
+   * 建库台账也不行——mode=empty 接受调用方指定库名且建库走 CREATE DATABASE IF NOT
+   * EXISTS，指向一个已存在的兄弟库照样写出 completed 记录。于是改为只认
+   * branchDatabaseName(projectBaseDb, branch)：后缀来自本分支自己的标识，
+   * 别的分支的库在算术上不可能等于它，不留伪造输入面。
+   */
+  it('reset 目标只认那一个复算出来的名字', () => {
     const slice = cloneTasksRouteSlice(readBranchesRoute());
-    expect(slice).toContain('branchOwnedDatabases');
+    expect(slice).toContain('const resetTargetDatabase = sanitizeDbName(branchDatabaseName(projectBaseDb, branch))');
+    expect(slice).toContain('targetDatabase !== resetTargetDatabase');
     expect(slice).toContain('reset_refuses_foreign_database');
-    expect(slice).toContain('!branchOwnedDatabases.has(targetDatabase)');
-    // 白名单只许由「CDS 能证明的事实」构成：可复算的命名规则 + CDS 自己写的建库台账。
-    expect(slice).toContain('[branchDatabaseName(projectBaseDb, branch), ...ownedFromLedger]');
-    expect(slice).toContain("listResourceCloneTasks({ projectId, branchId: branch.id, resourceId })");
-    expect(slice).toContain("t.status === 'completed'");
   });
 
-  it('reset 的默认目标来自台账，不叠分支后缀也不读可变 env', () => {
+  it('不得再出现可伪造的所有权来源（分支 env / 建库台账）', () => {
+    const code = ownershipCodeOnly(readBranchesRoute());
+    expect(code, 'reset 目标不该读分支 scope 的可变 env').not.toContain('baseDb');
+    expect(code, 'reset 目标不该读建库台账——台账证明的是任务跑过，不是库是本分支建的')
+      .not.toContain('listResourceCloneTasks');
+  });
+
+  it('reset 的默认目标与允许目标是同一个值', () => {
     const slice = cloneTasksRouteSlice(readBranchesRoute());
-    expect(slice).toContain('ownedFromLedger[ownedFromLedger.length - 1]');
+    expect(slice).toContain("mode === 'reset'\n      ? resetTargetDatabase");
   });
 
   /**
@@ -151,13 +163,7 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
    * 白名单会把别人的库认成「本分支拥有」，reset 用 root 凭据 DROP 掉。
    * 护栏被自己的取值来源绕开了。所有权必须从不可变记录推导。
    */
-  it('白名单与默认目标都不得读分支 scope 的可变 env', () => {
-    // 只看代码行：注释里正当地解释了「为什么不用 baseDb」，把散文算进判据会误报。
-    expect(ownershipCodeOnly(readBranchesRoute()), '白名单/默认目标的代码里不该出现 baseDb')
-      .not.toContain('baseDb');
-  });
-
-  it('红用例：把 baseDb 放回白名单，守卫必须变红', () => {
+  it('红用例：把 reset 目标换回可伪造的来源，守卫必须变红', () => {
     const guard = (source: string) => {
       expect(ownershipCodeOnly(source)).not.toContain('baseDb');
     };
@@ -165,15 +171,19 @@ describe('mode=reset：CDS 能把坏掉的分支库推倒重建', () => {
     expectGuardRedOnMutation(
       guard,
       real,
-      mutate(real, '[branchDatabaseName(projectBaseDb, branch), ...ownedFromLedger]', '[baseDb, branchDatabaseName(projectBaseDb, branch), ...ownedFromLedger]'),
+      mutate(
+        real,
+        'const resetTargetDatabase = sanitizeDbName(branchDatabaseName(projectBaseDb, branch));',
+        'const resetTargetDatabase = sanitizeDbName(baseDb);',
+      ),
     );
   });
 
-  it('红用例：白名单拿掉后守卫必须变红', () => {
+  it('红用例：目标限制拿掉后守卫必须变红', () => {
     const guard = (source: string) => {
       const slice = cloneTasksRouteSlice(source);
       expect(slice).toContain('reset_refuses_foreign_database');
-      expect(slice).toContain('!branchOwnedDatabases.has(targetDatabase)');
+      expect(slice).toContain('targetDatabase !== resetTargetDatabase');
     };
     const real = readBranchesRoute();
     expectGuardRedOnMutation(guard, real, mutate(real, 'reset_refuses_foreign_database', 'noop_code'));

@@ -10124,37 +10124,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
       : (resolvedServiceDbName(rawInfra) || 'app');
     const sanitizeDbName = (v: string) => String(v).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
     /**
-     * 这个分支「拥有」的库有哪些——reset 的白名单。
+     * reset 唯一允许的目标库——**只有一个名字，由 CDS 的命名规则算出来**。
      *
-     * 两个来源都必须是**CDS 自己能证明的事实**，不能是任何可被改写的运行时状态：
-     *   - `branchDatabaseName(projectBaseDb, branch)`：CDS 约定的命名规则，可复算、
-     *     不可伪造。基数必须用 projectBaseDb——用 baseDb 会在分支库已存在时再叠一层
-     *     分支后缀，算出一个谁都不是的名字。
-     *   - 本分支 + 本资源下**已完成的建库任务**记下的 targetDatabase。这条台账是
-     *     CDS 自己写的（`stateService.updateResourceCloneTask`），项目自建的命名
-     *     （如 mdimp 的 `imp_b_<token>`）只在这里留痕，漏了它等于对真实存量分支库全不可用。
+     * 这条限制是收窄的结果，不是第一版设计。前后被 review 打穿过三次，每次都是
+     * 「所有权的证据不成立」：
+     *   1. 用分支 scope 的 MYSQL_DATABASE —— 那是可写配置，改成兄弟分支的库名即可越权；
+     *   2. 用「已完成建库任务」台账 —— 但 mode=empty 接受调用方指定库名，且建库走
+     *      `CREATE DATABASE IF NOT EXISTS`，指向一个**已存在的兄弟库**照样会写出一条
+     *      completed 记录。台账证明的是「这条任务跑过」，不是「这个库是本分支建的」。
      *
-     * **刻意不含 baseDb**：它来自分支 scope 的 `MYSQL_DATABASE`，是**可变**的项目配置。
-     * 那个值一旦被手工改过、或过期指向兄弟分支的库，白名单就会把别人的库认成「本分支
-     * 拥有」，reset 用 root 凭据把它 DROP 掉——护栏被自己的取值来源绕开
-     * （Codex 在 PR #1454 的 P1）。所有权必须从不可变记录推导，不能从可写状态推导。
+     * 所以不再找「哪些库算本分支的」，改为只认一个可复算、不可伪造的名字：
+     * `branchDatabaseName(projectBaseDb, branch)` 的后缀来自本分支自己的标识，
+     * 别的分支的库**在算术上不可能**等于它。判据从「列举所有权」变成「复算一个名字」，
+     * 没有留给伪造的输入面。
+     *
+     * 已知代价（写进 doc/debt.cds.md）：项目自建命名的分支库（如 mdimp 的
+     * `imp_b_<token>`，由项目 bootstrap 指定而非 CDS 派生）**不在 reset 覆盖范围内**。
+     * 要覆盖它，需要 CDS 真正记录「这个库是我建的」这一事实（建库时区分「新建」与
+     * 「已存在」并落库），那是独立的一次改动，不在本 PR 展开。
      */
-    const ownedFromLedger = stateService
-      .listResourceCloneTasks({ projectId, branchId: branch.id, resourceId })
-      .filter((t) => t.status === 'completed' && t.targetDatabase)
-      .map((t) => sanitizeDbName(String(t.targetDatabase)));
-    const branchOwnedDatabases = new Set(
-      [branchDatabaseName(projectBaseDb, branch), ...ownedFromLedger]
-        .filter(Boolean)
-        .map(sanitizeDbName),
-    );
-    // reset 默认目标：台账里最近一次建成的那个库；没有台账才回落到 CDS 约定名。
-    // 同样不读 baseDb —— 默认值也不能被可写状态牵着走。
-    // 其余 mode 维持原语义（建一个新的分支库）。
+    const resetTargetDatabase = sanitizeDbName(branchDatabaseName(projectBaseDb, branch));
+    // 其余 mode 维持原语义（按当前绑定库派生一个新的分支库）。
     const defaultTarget = mode === 'reset'
-      ? (ownedFromLedger.length > 0
-        ? ownedFromLedger[ownedFromLedger.length - 1]
-        : branchDatabaseName(projectBaseDb, branch))
+      ? resetTargetDatabase
       : branchDatabaseName(baseDb, branch);
     const targetDatabase = sanitizeDbName(String(req.body?.targetDatabase || defaultTarget));
     if (mode === 'reset') {
@@ -10169,19 +10161,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         return;
       }
-      // 白名单而非黑名单：只排除基础库是不够的——targetDatabase 来自请求体，
-      // 排除掉基础库之后，任何其它库名（包括**兄弟分支预览的库**）仍会被 root 权限的
-      // 建库助手 DROP 掉。跨分支互删是 cross-project-isolation 意义上的穿透，
-      // 所以这里只放行本分支自己拥有的那几个名字。
-      if (!branchOwnedDatabases.has(targetDatabase)) {
+      // 只排除基础库是不够的：targetDatabase 来自请求体，排掉基础库之后任何其它库名
+      // （包括**兄弟分支预览的库**）仍会被 root 权限的建库助手 DROP 掉。跨分支互删是
+      // cross-project-isolation 意义上的穿透，所以这里只放行那一个复算出来的名字。
+      if (targetDatabase !== resetTargetDatabase) {
         res.status(400).json({
           error: 'reset_refuses_foreign_database',
-          message: `reset 只能推倒重建本分支自己的库。"${targetDatabase}" 不属于分支 "${branch.branch}"，允许的目标：${[...branchOwnedDatabases].join(' / ')}。`,
+          message: `reset 只能推倒重建 CDS 为分支 "${branch.branch}" 派生的库 "${resetTargetDatabase}"，收到的是 "${targetDatabase}"。项目自建命名的分支库暂不在覆盖范围内（见 doc/debt.cds.md）。`,
           targetDatabase,
-          allowedDatabases: [...branchOwnedDatabases],
+          allowedDatabase: resetTargetDatabase,
         });
         return;
-      }
+    }
     }
 
     const strategy = mode === 'connect-existing'

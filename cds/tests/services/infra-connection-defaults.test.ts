@@ -103,6 +103,12 @@ describe('parseDeclaredMaxConnections：取出实际生效的数值', () => {
     expect(parseDeclaredMaxConnections('mysqld --max-connections=1000 --max_connections=200')).toBe(200);
   });
 
+  it('同一串里混用两种写法时按出现顺序取，不许优先某一种', () => {
+    // 先扫完 `=N` 再扫 `空格 N` 会因为先命中 300 就跳过后面的 1000。
+    expect(parseDeclaredMaxConnections('mysqld --max-connections=300 --max-connections 1000')).toBe(1000);
+    expect(parseDeclaredMaxConnections('mysqld --max_connections 1000 --max-connections=300')).toBe(300);
+  });
+
   it('没声明返回 null，且不被形近选项骗到', () => {
     expect(parseDeclaredMaxConnections(undefined)).toBeNull();
     expect(parseDeclaredMaxConnections([])).toBeNull();
