@@ -13,6 +13,7 @@ import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } 
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
+import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
 
 /**
  * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
@@ -2612,8 +2613,37 @@ export class ContainerService {
     const resolvedEnv = customEnv
       ? resolveEnvTemplates(service.env, customEnv)
       : service.env;
-    const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
+    const resolvedCommandRaw = resolveCommandTemplate(service.command, customEnv);
     const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
+    // MySQL 连接上限兜底：CDS 把 N 个分支复用到同一台库，扇出是 CDS 造的，
+    // 默认值就该由 CDS 给。只在项目没显式声明时补，判据见 infra-connection-defaults.ts。
+    const mysqlDefaults = applyMysqlConnectionDefaults({
+      dockerImage: service.dockerImage,
+      command: resolvedCommandRaw,
+      entrypoint: resolvedEntrypoint,
+    });
+    const resolvedCommand = mysqlDefaults.command;
+    // 复用既有容器时要比对的「目标上限」是**想要多少**，不是「这次注没注入」。
+    // 用 mysqlDefaults.injected 当目标值会漏掉一整类：service 命令已显式声明 1000 时
+    // injected 为 null（already-declared），审计整个跳过，而复用的旧容器可能还停在 300
+    // （Codex 在 PR #1454 的 P2）。所以从解析后的命令里取声明值，没有才用注入值。
+    // 三个来源按优先级取：命令里声明的值 > 本次注入的值 > 配置的默认值。
+    // 最后那个兜底不能少：命令形态不安全（例如启动被包了一层 shell）时，
+    // applyMysqlConnectionDefaults 会有意跳过注入并返回 null，解析器也取不到值——
+    // 于是目标值成了 null，两条复用路径的审计双双直接早退，容器**既没拿到默认值、
+    // 也没有任何告警**，静默停在出厂默认（Codex 在 PR #1454 的 P2）。
+    // 逃生阀（CDS_MYSQL_MAX_CONNECTIONS=0/off）仍然优先：它返回 null，此处也就不告警。
+    const desiredMysqlMaxConnections = isMysqlFamilyImage(service.dockerImage)
+      ? (parseDeclaredMaxConnections(resolvedCommand)
+        ?? mysqlDefaults.injected
+        ?? resolveConfiguredMysqlMaxConnections())
+      : null;
+    // 注意：这里只是**算出**要注入的命令，还没生效。下面的幂等启动分三档，
+    // 只有 `docker run` 那一档真的用 resolvedCommand；running 直接复用、
+    // stopped 走 docker start，两者都沿用容器**创建时**的命令。
+    // 所以「已注入」的事件必须发在 docker run 那一档，复用档要如实报「尚未生效」。
+    // 在这里无条件发事件是 predicate-and-wiring-discipline 形状 8：
+    // 把一份不生效的声明当成了生效的证据（Codex 在 PR #1453 的 P1）。
     const authDecision = evaluateInfraAuthentication({
       dockerImage: service.dockerImage,
       id: service.id,
@@ -2705,6 +2735,9 @@ export class ContainerService {
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         await this.auditInfraLogLimit(service);
+        // 复用既有容器不改启动命令：如实报告连接上限还没生效，别让上面算出的
+        // resolvedCommand 冒充「已应用」。
+        await this.auditMysqlConnectionLimit(service, desiredMysqlMaxConnections);
         this.recordContainerEvent({
           severity: 'info',
           source: 'cds-container-service',
@@ -2724,6 +2757,8 @@ export class ContainerService {
         // 同样:wake 后保证 network attach
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
         await this.auditInfraLogLimit(service);
+        // docker start 沿用容器创建时的命令，同上：如实报告尚未生效。
+        await this.auditMysqlConnectionLimit(service, desiredMysqlMaxConnections);
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 120);
         this.recordContainerEvent({
           severity: 'info',
@@ -2896,6 +2931,39 @@ export class ContainerService {
         `启动基础设施服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`
         + infraPublishBindHint(combinedOutput(result), this.infraPublishHosts()),
       );
+    }
+    if (mysqlDefaults.injected !== null) {
+      // 只有走到这里（真的 docker run 建了容器）注入才生效，事件才说得出口。
+      this.recordContainerEvent({
+        severity: 'info',
+        source: 'infra-connection-defaults',
+        action: 'infra.mysql.max-connections-defaulted',
+        message: `${service.containerName}: 未声明连接上限，新建容器时按 CDS 分支扇出注入 --max-connections=${mysqlDefaults.injected}`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+      });
+    } else if (
+      mysqlDefaults.skippedReason === 'unsafe-command-shape'
+      && desiredMysqlMaxConnections !== null
+    ) {
+      // 新建容器但没注入成：命令形态不安全（启动被包了一层 shell、或有自定义 entrypoint），
+      // 追加参数会变成那层 shell 的参数而不是数据库的，所以有意跳过。
+      //
+      // 但**跳过必须留痕**。两条复用路径的审计只管已存在的容器，新建这一条走不到它们；
+      // 不在这里说一声，一台新库就静默停在出厂默认，没人知道它没拿到该有的上限
+      // ——正是本 PR 在修的那个「既没生效也没告警」（Codex 在 PR #1455 的 P2）。
+      // desiredMysqlMaxConnections 为 null 时不报：那是逃生阀关了本功能，本就不该有期待。
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'infra-connection-defaults',
+        action: 'infra.mysql.max-connections-skipped',
+        message: `${service.containerName}: 启动命令的形态不安全（包了 shell 或自定义 entrypoint），CDS 无法安全追加 --max-connections=${desiredMysqlMaxConnections}，新容器以镜像默认上限运行。要拿到该上限，请在服务定义里显式声明它。`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        status: 'warn',
+      });
     }
     this.recordContainerEvent({
       severity: 'info',
@@ -3177,6 +3245,68 @@ export class ContainerService {
    * `--filter label!=cds.protected=true` 的安全清理命令照样能把它 prune 掉 ——
    * 恰恰是这条标记要保护的东西。两项必须分别判、分别报。
    */
+  /**
+   * 复用/唤醒既有 MySQL 容器时，如实报告连接上限有没有生效。
+   *
+   * 事故背景（2026-08-29）：mdimp 两台 MySQL 跑在出厂默认 max_connections=151 上，
+   * 五个分支同时起来实测要 294 个连接，抢输的 Flyway 迁移直接 `Too many connections`。
+   * CDS 因此在启动 infra 时补 `--max-connections`——但那只在 `docker run` 建容器时
+   * 才写得进去。**升级和事故恢复恰恰走的是复用路径**：容器已经在跑（直接 return）
+   * 或已停止（`docker start` 沿用创建时的命令），补的值一个字都没生效。
+   *
+   * 所以这里不去读 service 定义（那是「我们打算注入什么」），而是 inspect
+   * **容器自己的 Config.Cmd**（那才是「现在真正在跑的命令」）——
+   * predicate-and-wiring-discipline 形状 6：判据要读真正生效的那个值。
+   *
+   * 判定为「尚未生效」时只发 warn 并指出显式路径，不自动重建：
+   * 共享 MySQL 是 long-lived 的，重建会掐断所有分支在用的连接，那是停机不是修复。
+   * 要让它生效走 `POST /api/infra/:id/restart`（stop + rm，下次 startInfraService
+   * 看不到容器就会用新命令 docker run 重建）。
+   */
+  private async auditMysqlConnectionLimit(
+    service: InfraService,
+    pendingMax: number | null,
+  ): Promise<void> {
+    if (pendingMax === null) return;
+    try {
+      const r = await this.shell.exec(
+        `docker inspect --format='{{json .Config.Cmd}}' ${service.containerName}`,
+      );
+      if (r.exitCode !== 0) return;
+      const raw = (r.stdout || '').trim().replace(/^'|'$/g, '');
+      let cmd: string[] = [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) cmd = parsed.map((c) => String(c));
+      } catch {
+        // inspect 输出不是合法 JSON（容器无 Cmd 时为 null）——当作没声明处理。
+        cmd = [];
+      }
+      // 判「声明的值够不够」，不是判「有没有声明」。容器创建时可能带着一个更低的
+      // 旧值（例如 --max-connections=300），而现在 CDS 想要 1000——只看有没有声明
+      // 会把这种欠配静默放过（Codex 在 PR #1454 的 P2，形状 8：一份声明不等于
+      // 想要的值已生效）。
+      const declared = parseDeclaredMaxConnections(cmd);
+      if (declared !== null && declared >= pendingMax) return;
+      const currentDesc = declared === null ? '镜像默认' : `--max-connections=${declared}`;
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'infra-connection-defaults',
+        action: 'infra.mysql.max-connections-pending',
+        // 补救 URL 必须带 ?project=：同名 infra id（如 `mysql`）在多个项目都存在时，
+        // /infra/:id/restart 的 resolveInfraProject 会判 ambiguous 并 400 要求带项目。
+        // 一个点了就 400 的「下一步」等于没给（minimal-user-input 的可诊断义务）。
+        message: `${service.containerName}: 当前以 ${currentDesc} 运行，低于 CDS 按分支扇出要补的 --max-connections=${pendingMax}（复用既有容器不会改启动命令）。让它生效请走 POST /api/infra/${service.id}/restart?project=${service.projectId} 重建容器。`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        status: 'warn',
+      });
+    } catch {
+      // 审计失败不该拦住启动。
+    }
+  }
+
   private async auditInfraLogLimit(service: InfraService): Promise<void> {
     try {
       const r = await this.shell.exec(
