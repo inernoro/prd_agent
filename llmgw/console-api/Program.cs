@@ -5672,6 +5672,7 @@ async Task InvalidateSystemCredentialAsync(string tenantId, string failedKey)
         return;
 
     var staleKeyId = settings.AsNullableString("ServiceKeyId");
+    var staleEncrypted = settings.AsNullableString("ServiceKeyEncrypted");
     if (!string.IsNullOrWhiteSpace(staleKeyId))
     {
         await serviceKeys.UpdateOneAsync(
@@ -5680,8 +5681,13 @@ async Task InvalidateSystemCredentialAsync(string tenantId, string failedKey)
                 Builders<BsonDocument>.Filter.Eq("TenantId", tenantId)),
             Builders<BsonDocument>.Update.Set("Enabled", false).Set("RotationState", "revoked").Set("UpdatedAt", DateTime.UtcNow));
     }
+    // 清设置这一步同样要认那把密文：上面比对完到这一句之间，别的请求可能已经重签并写进了 B。
+    // 只按租户 id 清，就会把 B 一起抹掉——比对白做了，凭据自愈又变回互相拆台。
+    // 写进谓词让库自己判：密文还是刚才那把才清，被人换过就一条也不动。
     await systemSettings.UpdateOneAsync(
-        Builders<BsonDocument>.Filter.Eq("_id", tenantId),
+        Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("_id", tenantId),
+            Builders<BsonDocument>.Filter.Eq("ServiceKeyEncrypted", staleEncrypted)),
         Builders<BsonDocument>.Update
             .Unset("ServiceKeyId")
             .Unset("ServiceKeyEncrypted")

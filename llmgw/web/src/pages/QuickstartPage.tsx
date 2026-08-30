@@ -815,6 +815,10 @@ export function QuickstartPage() {
         const decoder = new TextDecoder();
         let buffer = '';
         let text = '';
+        // 上游在响应头发出之后才失败时，HTTP 状态已经是 200 了，失败只能夹在流里回来
+        // （finishReason: "error" + 一个 error 对象）。只挑 delta 不看这一帧，就会把一次
+        // 真花了钱的失败调用报成成功——用户拿着「成功」去排查，而账单上是失败。
+        let streamError: { message: string; code?: string } | null = null;
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -822,11 +826,24 @@ export function QuickstartPage() {
           const lines = buffer.split('\n');
           buffer = lines.pop() ?? '';
           for (const line of lines) {
+            streamError = streamError ?? readStreamError(line);
             const delta = readStreamDelta(line);
             if (delta === null) continue;
             text += delta;
             setLiveOutput({ kind: 'text', text, done: false });
           }
+          if (streamError) break;
+        }
+        if (streamError) {
+          // 已经吐出来的片段留着：它是「跑到一半断了」的证据，比清空更有用。
+          setLiveOutput(text ? { kind: 'text', text, done: true } : null);
+          setTestResult({
+            ok: false,
+            message: `真实调用失败：${streamError.message}（上游在流中途报错，这次调用仍会计入用量）`,
+            requestId: actualRequestId,
+            code: streamError.code || 'UPSTREAM_STREAM_ERROR',
+          });
+          return;
         }
         setLiveOutput({ kind: 'text', text, done: true });
       } else {
@@ -1840,6 +1857,36 @@ function chainState(broken: ChainLinkId | null) {
     ...link,
     tone: brokenIndex < 0 ? 'unknown' : index < brokenIndex ? 'ok' : index === brokenIndex ? 'bad' : 'unknown',
   }));
+}
+
+/**
+ * 流里夹着的失败帧。serving 在响应头已发出后才发现上游失败时只能这样回：
+ * HTTP 仍是 200，帧里带 `finishReason: "error"` 和一个 error 对象，随后 [DONE]。
+ * 认不出它，页面就会把一次真扣了钱的失败报成成功。
+ */
+function readStreamError(line: string): { message: string; code?: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) return null;
+  const data = trimmed.slice(5).trim();
+  if (data.length === 0 || data === '[DONE]') return null;
+  try {
+    const parsed = JSON.parse(data) as {
+      error?: { message?: unknown; code?: unknown; type?: unknown };
+      choices?: Array<{ finishReason?: unknown; finish_reason?: unknown }>;
+    };
+    const finish = parsed.choices?.[0]?.finishReason ?? parsed.choices?.[0]?.finish_reason;
+    const errored = parsed.error !== undefined || finish === 'error';
+    if (!errored) return null;
+    const message = typeof parsed.error?.message === 'string' && parsed.error.message.length > 0
+      ? parsed.error.message
+      : '上游模型调用失败';
+    const code = typeof parsed.error?.code === 'string' ? parsed.error.code
+      : typeof parsed.error?.type === 'string' ? parsed.error.type
+      : undefined;
+    return { message, code };
+  } catch {
+    return null;
+  }
 }
 
 /** 解析一行 SSE：返回这一帧的文字增量；不是内容帧就返回 null。 */

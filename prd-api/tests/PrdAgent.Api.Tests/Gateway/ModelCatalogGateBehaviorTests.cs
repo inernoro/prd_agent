@@ -84,7 +84,10 @@ public sealed class ModelCatalogGateBehaviorTests
             await gatewayData.Database.GetCollection<BsonDocument>("llmgw_models").UpdateOneAsync(
                 Builders<BsonDocument>.Filter.And(
                     Builders<BsonDocument>.Filter.Eq("TenantId", GatewayTenantDefaults.InternalTenantId),
-                    Builders<BsonDocument>.Filter.Eq("ModelName", OutsideModel)),
+                    Builders<BsonDocument>.Filter.Eq("ModelName", OutsideModel),
+                    // 必须带 PlatformId：库里还有一批同名的诱饵文档（见 SeedAsync），
+                    // 只按名字改会改到诱饵头上，这一步就证明不了「拦的依据是标记」。
+                    Builders<BsonDocument>.Filter.Eq("PlatformId", PlatformId)),
                 Builders<BsonDocument>.Update.Set("AllowedOutsideCatalog", true));
 
             var afterAllowlisting = await resolver.ResolveAsync(
@@ -146,6 +149,24 @@ public sealed class ModelCatalogGateBehaviorTests
             ApiKeyEncrypted = encryptedKey,
             Enabled = true,
         });
+
+        // 同名诱饵：24 条同名、但挂在**别的** Provider 下的模型文档，先于真正那条写进去。
+        // 它们不进池、不影响解析，唯一作用是让「先按名字取一页、再在内存里按 Provider 过滤」
+        // 这种写法暴露出来——那样取到的一页里根本没有当前 Provider 的记录，过滤后为空、
+        // 判成「管不着」，于是下面第二步该被拦的模型反而放行。Provider 收窄必须写进
+        // Mongo 谓词、在 Limit 之前生效，这一批诱饵就是它的红绿闭环。
+        for (var i = 0; i < 24; i++)
+        {
+            await InsertAsync(database, "llmgw_models", new LLMModel
+            {
+                Id = $"catalog-gate-decoy-{i}",
+                Name = OutsideModel,
+                ModelName = OutsideModel,
+                PlatformId = $"{PlatformId}-decoy-{i}",
+                Protocol = "openai",
+                Enabled = true,
+            });
+        }
 
         // 两条模型文档都**不带**放行标记：名录内那条靠名录放行，名录外那条正是要被拦的形态。
         foreach (var name in new[] { CatalogModel, OutsideModel })

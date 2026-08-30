@@ -56,6 +56,8 @@ const drafted = [];
 const authSeen = [];
 /** 推导桩的行为：model = 给出草案；unavailable = 模型没接通，前端应降级到本地关键词表。 */
 let draftMode = 'model';
+/** 真实调用桩的流式行为：ok = 正常收完；inband-error = 上游在流中途失败（HTTP 已经 200 了）。 */
+let streamMode = 'ok';
 /** 真实调用发出的请求体：用来断言上传的内容真的进了 payload。 */
 const realBodies = [];
 
@@ -124,6 +126,18 @@ const server = http.createServer((req, res) => {
         const frames = ['你好', '，这是', '流式', '输出'];
         let i = 0;
         const timer = setInterval(() => {
+          // 上游在响应头发出之后才失败：HTTP 已经是 200，失败只能夹在流里回来。
+          // serving 真实吐的就是这个形状（finishReason: "error" + 一个 error 对象，随后 [DONE]）。
+          if (streamMode === 'inband-error' && i === 2) {
+            clearInterval(timer);
+            res.write(`data: ${JSON.stringify({
+              choices: [{ index: 0, delta: {}, finishReason: 'error' }],
+              error: { message: '上游模型返回 502，调用未完成', type: 'api_error', code: 'upstream_error' },
+            })}\n\n`);
+            res.write('data: [DONE]\n\n');
+            res.end();
+            return;
+          }
           if (i < frames.length) {
             res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: frames[i] } }] })}\n\n`);
             i += 1;
@@ -549,6 +563,23 @@ check('跑完之后主按钮变成再跑一次', await page.getByRole('button', 
 check('框里写的那句进了真实请求体', realBodies[0]?.messages?.[0]?.content, '用三句话说明什么是模型网关');
 check('真实调用请求体带 stream:true', realBodies[0]?.stream, true);
 check('真实调用不带 dry-run 头（桩已按此分流）', realBodies.length, 1);
+
+/*
+  ── 流里夹着的失败必须被认出来 ────────────────────────────────────
+  上游在响应头发出之后才失败时，HTTP 状态已经是 200 了，失败只能夹在 SSE 帧里回来。
+  只挑 delta 不看那一帧，就会把一次**真花了钱**的失败调用报成「已返回」——用户拿着
+  这个「成功」去排查，账单上却是一次失败调用。
+*/
+streamMode = 'inband-error';
+await page.getByRole('button', { name: '再跑一次' }).click();
+await page.waitForTimeout(1400);
+const inbandResult = await page.locator('.lg-qs-failure').innerText();
+check('流中途失败判成失败（不是「已返回」）', inbandResult.includes('真实调用失败'), true);
+check('流中途失败带出上游原因', inbandResult.includes('上游模型返回 502'), true);
+check('流中途失败说明这次仍会计费', inbandResult.includes('计入用量'), true);
+// 已经吐出来的半截仍留着：它是「跑到一半断了」的证据，比清空更有用。
+check('流中途失败保留已收到的半截输出', (await page.locator('.lg-qs-output pre').innerText()).length > 0, true);
+streamMode = 'ok';
 
 // ── 上传：上传的文本要填进那个输入框（用户看得见、能改），再进请求体与 cURL ──
 await page.getByLabel('上传测试输入').setInputFiles({ name: 'prompt.txt', mimeType: 'text/plain', buffer: Buffer.from('用三个字回答：你好吗') });

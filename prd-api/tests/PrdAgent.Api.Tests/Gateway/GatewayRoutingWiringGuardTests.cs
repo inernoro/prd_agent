@@ -282,6 +282,12 @@ public sealed class GatewayRoutingWiringGuardTests
         invalidate.ShouldContain(
             "StringComparison.Ordinal",
             customMessage: "密钥比对必须逐字，不许大小写不敏感或文化相关比较");
+        // 比对完到清设置之间还有一段空档：这期间别人可能已经重签并写进了新的那把。
+        // 清设置只按租户 id 过滤，就会把新的一起抹掉——比对白做。谓词里必须带上密文，
+        // 让库自己判「还是不是刚才那把」（形状 5：拿变更前的判断去执行变更后的动作）。
+        invalidate.ShouldContain(
+            "Eq(\"ServiceKeyEncrypted\", staleEncrypted)",
+            customMessage: "清设置必须带上刚才那把的密文做条件，否则并发下会抹掉别人刚签好的密钥");
 
         // 两个调用点都要把失败的那把传进来；少传一处，那条路径就退回旧的「见失败就撤」。
         var callSites = console.Split("await InvalidateSystemCredentialAsync(");

@@ -177,12 +177,21 @@ public class ModelResolver : IModelResolver
         // 两个名字字段都认：`ModelNameNormalized` 是控制台导入路径写的，但不是每条模型文档
         // 都有它（更早的写入、别的写入方只写了 ModelName）。只认归一化字段，那些文档就永远
         // 查不到、被判成「管不着」而放过去——同一个模型换个写法得到相反结论（形状 1）。
+        // 知道是哪个 Provider 就把它写进谓词，**在 Limit 之前**收窄。
+        // 先取 20 条再在内存里按 PlatformId 过滤，等于让「同名模型挂在几个 Provider 下」
+        // 决定这道门的结论：同名文档超过 20 条时，那一页里可能根本没有当前这个 Provider 的记录，
+        // 于是过滤后为空、判成「管不着」——没盖放行标记的模型反而被放过去（形状 1：
+        // 判据取的是任意一页，不是它该管的那条）。
+        var nameFilter = fb.And(
+            fb.Eq("TenantId", CurrentTenantId),
+            fb.Or(
+                fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
+                fb.Eq("ModelName", trimmed)));
+        var scopedFilter = string.IsNullOrWhiteSpace(platformId)
+            ? nameFilter
+            : fb.And(nameFilter, fb.Eq("PlatformId", platformId));
         var docs = await models
-            .Find(fb.And(
-                fb.Eq("TenantId", CurrentTenantId),
-                fb.Or(
-                    fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
-                    fb.Eq("ModelName", trimmed))))
+            .Find(scopedFilter)
             .Limit(20)
             .ToListAsync(ct);
 
@@ -205,14 +214,9 @@ public class ModelResolver : IModelResolver
             return CatalogVerdict.OutOfJurisdiction;
         }
 
-        // 同名模型可能挂在多个 Provider 下，各自的放行状态可以不同。知道是哪个 Provider
-        // 就只认那一条；不知道（解析没给出 PlatformId）才退回「任意一条放行过就算放行」。
-        var scoped = string.IsNullOrWhiteSpace(platformId)
-            ? docs
-            : docs.Where(d => d.TryGetValue("PlatformId", out var p) && p.IsString && p.AsString == platformId).ToList();
-        if (scoped.Count == 0) return CatalogVerdict.OutOfJurisdiction;
-
-        return scoped.Any(IsAllowedOutsideCatalog) ? CatalogVerdict.Allowed : CatalogVerdict.Blocked;
+        // 走到这里 docs 已经是「该管的那些」：给了 PlatformId 就只有那个 Provider 的，
+        // 没给就是同名的全部（退回「任意一条放行过就算放行」）。
+        return docs.Any(IsAllowedOutsideCatalog) ? CatalogVerdict.Allowed : CatalogVerdict.Blocked;
     }
 
     /// <summary>
