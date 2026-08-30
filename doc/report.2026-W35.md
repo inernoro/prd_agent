@@ -325,11 +325,12 @@
 | 落地主干的 PR | 38 |
 | 变更文件（去重） | 613 |
 | 行数 | +80,218 / −17,413 |
-| 提交类型分布 | fix 122 / docs 29 / feat 27 / test 6 / polish 5 / design 5 / ops 4 / chore 4 / refactor 3 / merge 2 / security 1 / revert 1 / perf 1 |
+| 提交类型分布（按 Conventional 前缀，小计 **210**） | fix 122 / docs 29 / feat 27 / test 6 / polish 5 / design 5 / ops 4 / chore 4 / refactor 3 / merge 2 / security 1 / revert 1 / perf 1 |
+| 无 Conventional 前缀 | **24**（中文标题的「首页重构」「每日熵减计划」等，以及分支合并提交）。210 + 24 = 234，与提交总数对得上 |
 | 改动最集中的目录 | prd-admin/src 281 · prd-api/src 60 · prd-api/tests 49 · cds/tests 35 · .claude/skills 24 · cds/src 20 |
 | 每日提交 | 08-24: 1 · 08-25: 49 · 08-26: 41 · 08-27: 28 · 08-28: 29 · 08-29: 77 · 08-30: 9 |
 | 部署平台债务台账 | 总量 89 条，本周新增 38 条（E52–E88 等） |
 
-**fix 占 52%** 这个比例本身说明了本周的性质：大部分投入不在造新东西，在把三条长线功能里自己引入的缺陷收口（首页 11 轮评审、网页托管 18 轮、跨实例同步的附件 key 契约 4 轮）。这不是返工率高，是**评审在提交前就把缺陷挡下来了**——它们从未变成线上问题。唯一的例外是 #1453 的四条严重问题，评审送达晚于合并，已随自更新上线后由 #1454 修掉。
+**fix 122 次，占全部 234 次提交的 52%**（分母是提交总数，不是上面那 210 的小计）——这个比例本身说明了本周的性质：大部分投入不在造新东西，在把三条长线功能里自己引入的缺陷收口（首页 11 轮评审、网页托管 18 轮、跨实例同步的附件 key 契约 4 轮）。这不是返工率高，是**评审在提交前就把缺陷挡下来了**——它们从未变成线上问题。唯一的例外是 #1453 的四条严重问题，评审送达晚于合并，已随自更新上线后由 #1454 修掉。
 
 **引用**：备份与安全的完整台账见 [debt.cds.md](./debt.cds.md)；基础设施加固看板见 [plan.cds.infra-hardening.md](./plan.cds.infra-hardening.md)（**注意该看板最后更新仍停在 2026-08-18，本周的备份可见性工作未回写**）；跨实例同步边界见 [debt.platform.cross-instance-data-sync.md](./debt.platform.cross-instance-data-sync.md)；网页托管边界见 [debt.web-hosting.md](./debt.web-hosting.md)。
