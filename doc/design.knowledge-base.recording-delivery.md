@@ -98,6 +98,7 @@
 
 - 债务台账：[debt.knowledge-base.md](./debt.knowledge-base.md)
 - 约束这件事的三条规则：产物可见才算完成、等待期与最小惊讶、系统知道的别问用户。
+- 设计稿逐像素还原工程（40 块画板 + 判分流水线 + 看板）：[plan.prd-admin.recording-design-restoration.md](./plan.prd-admin.recording-design-restoration.md)
 
 ## 实现来源
 
